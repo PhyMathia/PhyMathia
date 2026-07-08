@@ -332,19 +332,25 @@
         // 添加当前用户消息
         contextMessages.push({ role: 'user', content: text + LEVEL_PROMPTS[currentLevel] });
 
-        const resp = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'agent',
-            messages: contextMessages,
-            session_id: SESSION_ID,
-            stream: true,
-            agent_model: currentModels.agent_model || '',
-            html_model: currentModels.html_model || ''
-          }),
-          signal: abortController.signal
-        });
+        const agentModel = getActiveModelForRole('agent');
+        let resp;
+        if (agentModel) {
+          showProgress('tool');
+          resp = await proxyChat(contextMessages);
+          if (!resp) throw new Error('无法连接到 AI 服务');
+        } else {
+          resp = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'agent',
+              messages: contextMessages,
+              session_id: SESSION_ID,
+              stream: true,
+            }),
+            signal: abortController.signal
+          });
+        }
 
         if (!resp.ok) {
           const errText = await resp.text();

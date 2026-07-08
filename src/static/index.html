@@ -119,6 +119,7 @@
   <script src="/js/render.js"></script>
   <script src="/js/chat.js"></script>
   <script src="/js/knowledge.js"></script>
+  <script src="/js/models.js"></script>
   <script src="/js/ui.js"></script>
 
   <div class="knowledge-panel" id="knowledgePanel">
@@ -193,18 +194,82 @@
     <div class="model-section">
       <div class="model-section-title">Agent 推理模型</div>
       <select class="model-select" id="agentModelSelect" onchange="onModelChange('agent')">
-        <option value="">加载中...</option>
+        <option value="">— 使用本地 Mock —</option>
       </select>
-      <div class="model-desc" id="agentModelDesc"></div>
-      <div class="model-tags" id="agentModelTags"></div>
+      <div class="model-desc" id="agentModelDesc">使用本地 Mock 回答进行测试</div>
+      <div class="model-tags" id="agentModelTags"><span class="model-tag">🔄 Mock</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">HTML 生成模型</div>
       <select class="model-select" id="htmlModelSelect" onchange="onModelChange('html')">
-        <option value="">加载中...</option>
+        <option value="">— 使用本地 Mock —</option>
       </select>
-      <div class="model-desc" id="htmlModelDesc"></div>
-      <div class="model-tags" id="htmlModelTags"></div>
+      <div class="model-desc" id="htmlModelDesc">使用本地 Mock 回答进行测试</div>
+      <div class="model-tags" id="htmlModelTags"><span class="model-tag">🔄 Mock</span></div>
+    </div>
+    <div class="model-section model-section-mgmt">
+      <div class="model-section-title">管理自定义模型</div>
+      <div class="model-list" id="modelList"></div>
+      <button class="model-add-btn" onclick="showAddModelDialog()">＋ 添加模型</button>
+    </div>
+  </div>
+
+  <div class="model-dialog-overlay" id="addModelDialog">
+    <div class="model-dialog">
+      <h3>添加模型</h3>
+      <div class="md-field">
+        <label>服务商</label>
+        <select id="newProvider" onchange="updateNewModelPreset()">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+          <option value="llama">llama.ccp (本地)</option>
+          <option value="__custom__">自定义</option>
+        </select>
+      </div>
+      <div class="md-field" id="newCustomProviderField" style="display:none">
+        <label>自定义服务商名称</label>
+        <input type="text" id="newCustomProvider" placeholder="llama.cpp, Ollama, 自定义...">
+      </div>
+      <div class="md-field">
+        <label>模型名称</label>
+        <input type="text" id="newModel" placeholder="deepseek-v4-flash, gpt-4o, ...">
+      </div>
+      <div class="md-field">
+        <label>API 密钥 <span style="color:var(--text-secondary);font-size:11px">（可选，本地 AI 可留空）</span></label>
+        <input type="password" id="newApiKey" placeholder="sk-...">
+      </div>
+      <div class="md-field">
+        <label>API 地址</label>
+        <input type="text" id="newBaseUrl" placeholder="https://api.deepseek.com">
+      </div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeAddModelDialog()">取消</button>
+        <button class="md-btn md-btn-save" onclick="saveNewModel()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="model-dialog-overlay" id="modelConfigDialog">
+    <div class="model-dialog">
+      <h3>配置模型 — <span id="mcPresetName"></span></h3>
+      <input type="hidden" id="mcId">
+      <input type="hidden" id="mcProvider">
+      <div class="md-field">
+        <label>模型名称</label>
+        <input type="text" id="mcModel" placeholder="deepseek-chat">
+      </div>
+      <div class="md-field">
+        <label>API 密钥</label>
+        <input type="password" id="mcApiKey" placeholder="sk-...">
+      </div>
+      <div class="md-field">
+        <label>API 地址</label>
+        <input type="text" id="mcBaseUrl" placeholder="https://api.deepseek.com/v1">
+      </div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeModelConfig()">取消</button>
+        <button class="md-btn md-btn-save" onclick="saveModelConfig()">保存</button>
+      </div>
     </div>
   </div>
   <div class="model-panel" id="dataPanel">

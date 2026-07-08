@@ -1031,6 +1031,32 @@
       transform: translateX(-50%) translateY(0);
       opacity: 1;
     }
+    .model-section-mgmt { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+    .model-list { max-height: 200px; overflow-y: auto; margin-bottom: 8px; }
+    .model-empty { font-size: 12px; color: var(--text-secondary); padding: 8px 0; text-align: center; }
+    .model-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--surface-container); margin-bottom: 4px; }
+    .model-item:last-child { margin-bottom: 0; }
+    .model-item-info { flex: 1; min-width: 0; }
+    .model-item-name { font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-item-key { font-size: 10px; color: var(--text-secondary); margin-top: 1px; }
+    .model-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .model-item-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 4px; }
+    .model-item-btn:hover { background: var(--btn-active-bg); }
+    .model-item-btn-del:hover { color: #ef4444; }
+    .model-add-btn { width: 100%; padding: 8px; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--accent); font-size: 13px; cursor: pointer; }
+    .model-add-btn:hover { background: var(--btn-active-bg); border-color: var(--accent); }
+    .model-dialog-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10001; align-items: center; justify-content: center; }
+    .model-dialog-overlay.show { display: flex; }
+    .model-dialog { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 320px; max-width: 400px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    .model-dialog h3 { font-size: 15px; margin: 0 0 14px; color: var(--text-primary); }
+    .md-field { margin-bottom: 12px; }
+    .md-field label { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+    .md-field input,.md-field select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font-size: 13px; outline: none; box-sizing: border-box; }
+    .md-field input:focus,.md-field select:focus { border-color: var(--accent); }
+    .md-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .md-btn { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; cursor: pointer; background: var(--surface-container); color: var(--text-primary); }
+    .md-btn-save { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .md-btn-cancel:hover { background: var(--btn-active-bg); }
     .header-btn.model-btn {
       background: var(--btn-active-bg);
       border-color: var(--btn-active-border);

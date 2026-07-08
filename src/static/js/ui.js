@@ -21,94 +21,7 @@ document.addEventListener('click', (e) => {
 });
 updateLevelUI();
 
-// ====== 模型设置管理 ======
-let availableModels = [];
-let currentModels = { agent_model: '', html_model: '' };
-
-async function fetchModels() {
-  try {
-    const resp = await fetch('/api/models', { cache: 'no-cache' });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    availableModels = data.available_models || [];
-    currentModels = data.current || {};
-    renderModelSelects();
-  } catch(e) {
-    console.warn('Failed to fetch models:', e);
-  }
-}
-
-function renderModelSelects() {
-  const agentSelect = document.getElementById('agentModelSelect');
-  const htmlSelect = document.getElementById('htmlModelSelect');
-
-  // Build options
-  const optionsHtml = availableModels.map(m =>
-    `<option value="${m.id}" ${m.id === currentModels.agent_model || m.id === currentModels.html_model ? '' : ''}>${m.name} — ${m.desc}</option>`
-  ).join('');
-
-  agentSelect.innerHTML = availableModels.map(m =>
-    `<option value="${m.id}">${m.name} — ${m.desc}</option>`
-  ).join('');
-  htmlSelect.innerHTML = availableModels.map(m =>
-    `<option value="${m.id}">${m.name} — ${m.desc}</option>`
-  ).join('');
-
-  // Set current values
-  agentSelect.value = currentModels.agent_model || availableModels[0]?.id || '';
-  htmlSelect.value = currentModels.html_model || availableModels[0]?.id || '';
-
-  updateModelMeta('agent');
-  updateModelMeta('html');
-}
-
-function updateModelMeta(type) {
-  const select = document.getElementById(type === 'agent' ? 'agentModelSelect' : 'htmlModelSelect');
-  const descEl = document.getElementById(type === 'agent' ? 'agentModelDesc' : 'htmlModelDesc');
-  const tagsEl = document.getElementById(type === 'agent' ? 'agentModelTags' : 'htmlModelTags');
-  const model = availableModels.find(m => m.id === select.value);
-  if (model) {
-    descEl.textContent = model.desc || '';
-    tagsEl.innerHTML = (model.tags || []).map(t => `<span class="model-tag">${t}</span>`).join('');
-  } else {
-    descEl.textContent = '';
-    tagsEl.innerHTML = '';
-  }
-}
-
-async function onModelChange(type) {
-  const select = document.getElementById(type === 'agent' ? 'agentModelSelect' : 'htmlModelSelect');
-  updateModelMeta(type);
-
-  const payload = {};
-  if (type === 'agent') payload.agent_model = select.value;
-  else payload.html_model = select.value;
-
-  try {
-    const resp = await fetch('/api/models/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      cache: 'no-cache'
-    });
-    if (!resp.ok) {
-      let detail = '未知错误';
-      try { const err = await resp.json(); detail = err.detail || detail; } catch(_){}
-      showModelToast('切换失败: ' + detail, true);
-      fetchModels(); // Revert
-      return;
-    }
-    const data = await resp.json();
-    currentModels = data.current || {};
-    const model = availableModels.find(m => m.id === select.value);
-    const label = type === 'agent' ? 'Agent 推理' : 'HTML 生成';
-    showModelToast(`${label}模型已切换为 ${model ? model.name : select.value}`);
-  } catch(e) {
-    console.error('[Model] Switch failed:', e);
-    showModelToast('切换失败: ' + (e.message || '网络错误'), true);
-    fetchModels();
-  }
-}
+// ====== 模型设置管理（由 models.js 模块接管）=====
 
 function showModelToast(msg, isError) {
   const toast = document.getElementById('modelToast');
@@ -144,6 +57,7 @@ function _positionPanel(panelId, triggerEl) {
 }
 
 function toggleModelPanel(e) {
+  e?.stopPropagation();
   const panel = document.getElementById('modelPanel');
   const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
@@ -151,8 +65,8 @@ function toggleModelPanel(e) {
   document.getElementById('levelPanel').classList.remove('show');
   document.getElementById('dataPanel').classList.remove('show');
   if (willShow) {
+    renderModelList();
     const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('modelBtn');
-    // Force reflow so offsetWidth/offsetHeight are available
     void panel.offsetHeight;
     _positionPanel('modelPanel', trigger);
   }

@@ -9,11 +9,13 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -297,6 +299,70 @@ async def stream_run(request: Request):
     except Exception as e:
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====== AI 模型代理 API ======
+AI_PROVIDERS = {
+    "deepseek": {"base_url": "https://api.deepseek.com"},
+    "openai": {"base_url": "https://api.openai.com/v1"},
+}
+
+@app.post("/api/models/chat")
+async def api_models_chat(request: Request):
+    """代理请求到 DeepSeek / OpenAI API，流式返回 OpenAI 格式 SSE"""
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    provider = payload.get("provider", "")
+    api_key = payload.get("api_key", "")
+    model_name = payload.get("model", "")
+    base_url = payload.get("base_url", "")
+    messages = payload.get("messages", [])
+    stream = payload.get("stream", True)
+
+    if not base_url:
+        provider_info = AI_PROVIDERS.get(provider)
+        if provider_info:
+            base_url = provider_info["base_url"]
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}' and no base_url provided")
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    body = {
+        "model": model_name,
+        "messages": messages,
+        "stream": stream,
+    }
+
+    logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")
+
+    async def proxy_stream():
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, json=body, headers=headers) as resp:
+                    logger.info(f"AI proxy response: {resp.status_code} from {url}")
+                    if resp.status_code != 200:
+                        error_body = await resp.aread()
+                        error_text = error_body.decode(errors='replace')[:500]
+                        yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            yield line + "\n\n"
+        except Exception as e:
+            logger.error(f"AI proxy error: {e}")
+            yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(proxy_stream(), media_type="text/event-stream")
 
 
 # ====== 会话管理 API ======
