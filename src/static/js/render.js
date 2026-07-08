@@ -416,7 +416,7 @@ function renderMath(element) {
 
 // ====== 智能滚动 ======
 let userScrolledUp = false;
-const SCROLL_THRESHOLD = 80; // px from bottom to consider "at bottom"
+
 
 function initSmartScroll() {
   const messages = document.getElementById('chatMessages');

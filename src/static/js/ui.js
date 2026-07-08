@@ -330,102 +330,6 @@ function formatRelativeTime(ts) {
   return formatTime(ts);
 }
 
-// ====== 进度指示器 ======
-let progressTimer = null;
-let waitingTipTimer = null;
-let progressStartTime = 0;
-let lastChunkTime = 0;
-let currentStage = '';
-
-function showProgress(stage) {
-  currentStage = stage;
-  const bar = document.getElementById('progressBar');
-  const statusEl = document.getElementById('progressStatus');
-  if (bar) bar.classList.add('active');
-  if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage); }
-  if (!progressTimer) {
-    progressStartTime = Date.now();
-    lastChunkTime = Date.now();
-    progressTimer = setInterval(() => {
-      updateElapsedTime();
-      if (Date.now() - lastChunkTime > 5000 && currentStage !== 'waiting') {
-        updateProgressText('waiting');
-        currentStage = 'waiting';
-        waitingTipTimer = setInterval(() => updateProgressText('waiting'), 8000);
-      }
-    }, 500);
-  }
-}
-function updateProgressText(stage) {
-  const textEl = document.querySelector('#progressStatus .status-text');
-  if (!textEl) return;
-  const msgs = { 'thinking':'PhyMathia 正在深度思考，可能需要一点时间...', 'tool':'正在调用工具进行计算和可视化生成，请耐心等待...', 'generating':'正在精心组织回复...', 'waiting':'', 'done':'回复完成' };
-  if (stage === 'waiting') {
-    waitingTipIndex = (waitingTipIndex + 1) % waitingTips.length;
-    textEl.textContent = waitingTips[waitingTipIndex];
-  } else {
-    textEl.textContent = msgs[stage] || msgs['thinking'];
-  }
-}
-var waitingTipIndex = -1;
-function updateElapsedTime() {
-  const timeEl = document.querySelector('#progressStatus .elapsed-time');
-  if (!timeEl) return;
-  const elapsed = Math.floor((Date.now() - progressStartTime) / 1000);
-  const min = Math.floor(elapsed / 60);
-  const sec = elapsed % 60;
-  timeEl.textContent = min > 0 ? `${min}m${sec.toString().padStart(2,'0')}s` : `${sec}s`;
-}
-function hideProgress() {
-  const bar = document.getElementById('progressBar');
-  const statusEl = document.getElementById('progressStatus');
-  if (bar) bar.classList.remove('active');
-  if (statusEl && statusEl.classList.contains('active')) {
-    updateProgressText('done');
-    setTimeout(() => { statusEl.classList.remove('active'); }, 1500);
-  }
-  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-  if (waitingTipTimer) { clearInterval(waitingTipTimer); waitingTipTimer = null; }
-}
-
-function handleKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-function autoResize(textarea) {
-  textarea.style.height = 'auto';
-  textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-}
-document.getElementById('userInput').addEventListener('input', function() { autoResize(this); });
-
-function formatTime(ts) {
-  const d = new Date(ts);
-  return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-}
-
-function formatDuration(ms) {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return sec + 's';
-  const min = Math.floor(sec / 60);
-  const remSec = sec % 60;
-  return min + 'm' + (remSec < 10 ? '0' : '') + remSec + 's';
-}
-
-function sendQuick(text) {
-  document.getElementById('userInput').value = text;
-  autoResize(document.getElementById('userInput'));
-  sendMessage();
-}
-
-// URL 参数自动提问
-(function() {
-  const params = new URLSearchParams(window.location.search);
-  const question = params.get('question');
-  if (question) {
-    window.history.replaceState({}, '', window.location.pathname);
-    setTimeout(() => sendQuick(decodeURIComponent(question)), 500);
-  }
-})();
-
 /* ====================================================
  * 漂浮数学物理符号（海面漂浮效果 + 鼠标交互）
  * ==================================================== */
@@ -994,8 +898,9 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ====== 页面加载 ======
-window.addEventListener('load', () => {
-  renderCurrentChat();
+window.addEventListener('load', async () => {
+  // 必须先初始化应用（加载 session、恢复聊天状态）
+  await initApp();
   scrollToBottom();
   // 移动端提示
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);

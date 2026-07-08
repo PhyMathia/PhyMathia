@@ -442,7 +442,7 @@
     }
 
     // ====== 对话图标切换 ======
-    const ICON_OPTIONS = ['📐', '⚛️', '🧲', '⚡', '🌀', '🔭', '📏', '🧪'];
+
     let activeIconPicker = null;
 
     function toggleIconPicker(event, sessionId) {
@@ -542,19 +542,17 @@
 
     // ====== 初始化会话 ======
     let SESSION_ID = '';
-    initSmartScroll();
 
-    // 定期刷新侧边栏对话列表的相对时间
-    setInterval(() => {
-      if (document.querySelector('.session-item')) renderSessionList();
-    }, 60000);
-
-    // 先从服务端同步数据，再加载本地
-    (async function initStorage() {
+    // 初始化入口 —— 由 ui.js 的 load 事件调用（确保所有模块已加载）
+    async function initApp() {
+      initSmartScroll();
+      setInterval(() => {
+        if (document.querySelector('.session-item')) renderSessionList();
+      }, 60000);
       await _syncFromServer();
       loadSessions();
       await initSessionState();
-    })();
+    }
 
     async function initSessionState() {
       const savedCurrent = getCurrentSessionId();
