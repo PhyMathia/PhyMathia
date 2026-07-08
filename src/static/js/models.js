@@ -230,7 +230,7 @@ function saveNewModel() {
   renderModelSelects();
 }
 
-async function proxyChat(messages, stream = true) {
+async function proxyChat(prompt, level, sessionId, stream = true) {
   const agentModel = getActiveModelForRole('agent');
   if (!agentModel) return null;
   const resp = await fetch('/api/models/chat', {
@@ -241,7 +241,9 @@ async function proxyChat(messages, stream = true) {
       api_key: agentModel.apiKey,
       model: agentModel.model,
       base_url: agentModel.baseUrl,
-      messages,
+      prompt,
+      level,
+      session_id: sessionId,
       stream,
     }),
   });

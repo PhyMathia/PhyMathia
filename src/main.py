@@ -75,8 +75,62 @@ def _get_messages_path(session_id: str) -> Path:
     return MESSAGES_DIR / f"{session_id}.json"
 
 
+# ====== System Prompt & Level Prompts ======
+SYSTEM_PROMPT = """你是一个物理数学双域解释与可视化助手 PhyMathia。
+请按以下格式组织回答，用 XML 标签包裹各部分，不要省略任何部分：
+
+<physics>
+物理视角的内容...
+</physics>
+
+<math>
+数学视角的内容...
+</math>
+
+<graph>
+知识图谱 Mermaid 代码...
+</graph>
+
+<extend>
+延伸思考的问题...
+</extend>
+
+规则：
+- 物理视角：侧重物理直觉、实验现象、能量角度，少量公式
+- 数学视角：侧重数学推导、微分方程、对称性，可深入公式
+- 知识图谱：输出 Mermaid 代码，用 ```mermaid ... ``` 包裹
+- 延伸思考：2-3个引导性问题，可带难度标注
+- 如果问题只偏一方，两个标题都要保留，内容可简短
+- 可视化 HTML 用 ```html ... ``` 包裹（必要时可单独输出）
+"""
+
+LEVEL_PROMPTS = {
+    "middle": "（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）",
+    "university": "（用户是大学生，请用标准大学物理/数学的教学深度讲解，可以使用专业术语但需要解释，推导步骤完整）",
+    "research": "（用户是科研人员，请用学术深度讲解，可以使用高级数学工具和前沿研究视角，推导可以简略关键步骤，关注物理本质和数学结构的深层联系）",
+}
+
+
+def _load_session_context(session_id: str, max_rounds: int = 3) -> list:
+    """加载会话上下文消息，返回最近 max_rounds 轮对话"""
+    messages_path = _get_messages_path(session_id)
+    all_messages = _read_json(messages_path, [])
+    if not all_messages:
+        return []
+    result = []
+    rounds = 0
+    for msg in reversed(all_messages):
+        result.insert(0, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
+        if msg.get("role") == "user":
+            rounds += 1
+            if rounds >= max_rounds:
+                break
+    return result
+
+
 # ====== 固定 Mock 回答 ======
-MOCK_ANSWER = r"""## 🔬 物理视角
+MOCK_ANSWER = r"""<physics>
+## 🔬 物理视角
 
 简谐运动是物体在回复力 $F=-kx$ 作用下的周期性运动。想象一个弹簧振子：当你拉长弹簧后松手，物体会在平衡位置附近来回振荡。
 
@@ -88,6 +142,8 @@ MOCK_ANSWER = r"""## 🔬 物理视角
 在振动过程中，动能和势能不断相互转换，但总机械能守恒：
 $$E_{\text{total}} = \frac{1}{2}kA^2$$
 
+</physics>
+<math>
 ## 📐 数学视角
 
 简谐运动的位移随时间变化满足正弦函数：
@@ -102,6 +158,8 @@ $$a(t) = -A\omega^2\cos(\omega t + \varphi_0) = -\omega^2 x(t)$$
 可见加速度始终与位移方向相反、大小成正比，这正是简谐运动的数学本质——二阶线性微分方程：
 $$\frac{d^2x}{dt^2} + \omega^2 x = 0$$
 
+</math>
+<graph>
 ## 🧠 知识图谱
 
 ```mermaid
@@ -118,12 +176,14 @@ graph TD
     H --> K[ẍ+ω²x=0]
 ```
 
+</graph>
+<extend>
 ## 💡 延伸思考
 
 1. 阻尼振动中能量如何耗散？微分方程会变成什么形式？
 2. 受迫振动在驱动频率接近固有频率时会发生什么？（共振！）
 3. 复数和相量如何简化简谐运动的叠加分析？
-"""
+</extend>"""
 
 
 MOCK_HTML_VISUALIZATION = r"""<!DOCTYPE html>
@@ -246,7 +306,7 @@ async def openai_chat_completions(request: Request):
     try:
         payload = await request.json()
         stream = payload.get("stream", False)
-        logger.info(f"OpenAI mock request: {len(payload.get('messages', []))} msgs, stream={stream}")
+        logger.info(f"OpenAI mock request: prompt={payload.get('prompt', '')[:50]}, level={payload.get('level', 'university')}, stream={stream}")
 
         if stream:
             async def generate():
@@ -309,7 +369,13 @@ AI_PROVIDERS = {
 
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
-    """代理请求到 DeepSeek / OpenAI API，流式返回 OpenAI 格式 SSE"""
+    """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
+    支持两种调用格式：
+    1. 新格式：{prompt, level, session_id, provider, api_key, model, base_url}
+       → 后端构建消息（系统提示词 + 会话上下文 + 难度后缀）
+    2. 旧格式：{messages, provider, api_key, model, base_url}
+       → 直接使用传入的 messages
+    """
     try:
         payload = await request.json()
     except json.JSONDecodeError:
@@ -319,8 +385,28 @@ async def api_models_chat(request: Request):
     api_key = payload.get("api_key", "")
     model_name = payload.get("model", "")
     base_url = payload.get("base_url", "")
-    messages = payload.get("messages", [])
     stream = payload.get("stream", True)
+
+    # 构建消息列表
+    prompt = payload.get("prompt", "")
+    if prompt:
+        # 新格式：后端构建消息
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+        session_id = payload.get("session_id", "")
+        if session_id:
+            context = _load_session_context(session_id)
+            messages.extend(context)
+
+        level = payload.get("level", "university")
+        level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
+        messages.append({"role": "user", "content": prompt + level_suffix})
+
+        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, ctx_rounds={len([m for m in messages if m['role'] != 'system'])}")
+    else:
+        # 旧格式：直接使用传入的 messages（兼容向后）
+        messages = payload.get("messages", [])
+        logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}")
 
     if not base_url:
         provider_info = AI_PROVIDERS.get(provider)

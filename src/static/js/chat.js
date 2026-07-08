@@ -317,26 +317,11 @@
       showProgress('thinking');
 
       try {
-        // 构建上下文：最近 3 轮对话（3 对 user+assistant）+ 当前用户消息
-        const MAX_CONTEXT_ROUNDS = 3;
-        const contextMessages = [];
-        // 从 chatHistory 中取最近 3 轮（从后往前取 user+assistant 对）
-        const historyCopy = [...chatHistory];
-        let rounds = 0;
-        for (let i = historyCopy.length - 1; i >= 0 && rounds < MAX_CONTEXT_ROUNDS; i--) {
-          const msg = historyCopy[i];
-          // 跳过当前刚 push 的用户消息（因为 text 还没 push，chatHistory 此时只有历史）
-          contextMessages.unshift({ role: msg.role, content: msg.content });
-          if (msg.role === 'user') rounds++;
-        }
-        // 添加当前用户消息
-        contextMessages.push({ role: 'user', content: text + LEVEL_PROMPTS[currentLevel] });
-
         const agentModel = getActiveModelForRole('agent');
         let resp;
         if (agentModel) {
           showProgress('tool');
-          resp = await proxyChat(contextMessages);
+          resp = await proxyChat(text, currentLevel, SESSION_ID);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           resp = await fetch('/v1/chat/completions', {
@@ -344,7 +329,8 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               model: 'agent',
-              messages: contextMessages,
+              prompt: text,
+              level: currentLevel,
               session_id: SESSION_ID,
               stream: true,
             }),
@@ -426,7 +412,7 @@
                       if (fileInfo.file_url) {
                         assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
-                        assistantDiv.innerHTML = renderMarkdown(assistantContent);
+              assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent));
                         _initVizIframes(assistantDiv);
                         renderMathInElement(assistantDiv);
                         scrollToBottom();
@@ -450,16 +436,21 @@
           }
         }
 
-        // 最终渲染
+        // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {
-          assistantDiv.innerHTML = renderMarkdown(assistantContent);
-          _initVizIframes(assistantDiv);
-          renderMath(assistantDiv);
-          await renderMermaidInElement(assistantDiv);
-          // 双域折叠区域渲染
-          wrapDualDomainSections(assistantDiv);
-          // 重新渲染双域内的数学公式
-          renderMath(assistantDiv);
+          const sections = parseXmlSections(assistantContent);
+          if (Object.keys(sections).length > 0) {
+            renderModuleSections(assistantDiv, sections);
+            await renderMermaidInElement(assistantDiv);
+            renderMath(assistantDiv);
+          } else {
+            assistantDiv.innerHTML = renderMarkdown(assistantContent);
+            _initVizIframes(assistantDiv);
+            renderMath(assistantDiv);
+            await renderMermaidInElement(assistantDiv);
+            wrapDualDomainSections(assistantDiv);
+            renderMath(assistantDiv);
+          }
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
           chatHistory.push({ role: 'assistant', content: assistantContent, timestamp: ts, duration });

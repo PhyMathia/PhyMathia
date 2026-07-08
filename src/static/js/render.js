@@ -155,7 +155,51 @@ function renderMarkdown(text) {
   return html;
 }
 
-// ====== 双域折叠区域渲染 ======
+// ====== XML 标签处理（流式&最终渲染） ======
+function stripXmlTags(text) {
+  return text.replace(/<\/?(physics|math|graph|extend)>/gi, '');
+}
+
+function parseXmlSections(content) {
+  var tags = ['physics', 'math', 'graph', 'extend'];
+  var sections = {};
+  for (var i = 0; i < tags.length; i++) {
+    var tag = tags[i];
+    var re = new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>', 'i');
+    var m = content.match(re);
+    if (m) sections[tag] = m[1].trim();
+  }
+  return sections;
+}
+
+function renderModuleSections(container, sections) {
+  var config = [
+    { key: 'physics', icon: '\uD83D\uDD2C', label: '\u7269\u7406\u89C6\u89D2', colorClass: 'physics-section', collapsible: true },
+    { key: 'math', icon: '\uD83D\uDCD0', label: '\u6570\u5B66\u89C6\u89D2', colorClass: 'math-section', collapsible: true },
+    { key: 'graph', icon: '\uD83E\uDDE0', label: '\u77E5\u8BC6\u56FE\u8C31', colorClass: 'graph-section', collapsible: true },
+    { key: 'extend', icon: '\uD83D\uDCA1', label: '\u5EF6\u4F38\u601D\u8003', colorClass: 'extend-section', collapsible: true },
+  ];
+  var html = '';
+  for (var i = 0; i < config.length; i++) {
+    var cfg = config[i];
+    if (!sections[cfg.key]) continue;
+    var sid = cfg.key + '_' + Math.random().toString(36).substr(2, 9);
+    html += '<div class="dual-domain-section ' + cfg.colorClass + '" id="' + sid + '">'
+      + '<div class="dual-domain-header" onclick="toggleDualDomain(\'' + sid + '\')">'
+      + '<span class="header-left"><span class="section-icon">' + cfg.icon + '</span> ' + cfg.label + '</span>'
+      + '<span class="header-right">'
+      + (cfg.collapsible && (cfg.key === 'physics' || cfg.key === 'math') ? '<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain(\'' + cfg.key + '\')">\u8FFD\u95EE</button>' : '')
+      + '<span class="dual-domain-chevron">\u25BC</span>'
+      + '</span></div>'
+      + '<div class="dual-domain-body">' + renderMarkdown(sections[cfg.key]) + '</div>'
+      + '</div>';
+  }
+  container.innerHTML = html;
+  _initVizIframes(container);
+  renderMath(container);
+}
+
+// ====== 双域折叠区域渲染（heading 正则兜底） ======
 function wrapDualDomainSections(element) {
   const html = element.innerHTML;
   

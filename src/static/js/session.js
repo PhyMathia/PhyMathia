@@ -627,11 +627,16 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        contentDiv.innerHTML = renderMarkdown(content);
-        _initVizIframes(contentDiv);
-        renderMath(contentDiv);
-        wrapDualDomainSections(contentDiv);
-        renderMath(contentDiv);
+        const sections = parseXmlSections(content);
+        if (Object.keys(sections).length > 0) {
+          renderModuleSections(contentDiv, sections);
+        } else {
+          contentDiv.innerHTML = renderMarkdown(content);
+          _initVizIframes(contentDiv);
+          renderMath(contentDiv);
+          wrapDualDomainSections(contentDiv);
+          renderMath(contentDiv);
+        }
       }
 
       body.appendChild(contentDiv);
