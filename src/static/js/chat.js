@@ -1,0 +1,635 @@
+    // ====== 进度指示器 ======
+    let progressTimer = null;
+    let waitingTipTimer = null;
+    let progressStartTime = 0;
+    let lastChunkTime = 0;
+    let currentStage = '';
+
+    function showProgress(stage) {
+      currentStage = stage;
+      const bar = document.getElementById('progressBar');
+      const statusEl = document.getElementById('progressStatus');
+      if (bar) bar.classList.add('active');
+      if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage); }
+      if (!progressTimer) {
+        progressStartTime = Date.now();
+        lastChunkTime = Date.now();
+        progressTimer = setInterval(() => {
+          updateElapsedTime();
+          if (Date.now() - lastChunkTime > 5000 && currentStage !== 'waiting') {
+            updateProgressText('waiting');
+            currentStage = 'waiting';
+            waitingTipTimer = setInterval(() => updateProgressText('waiting'), 8000);
+          }
+        }, 500);
+      }
+    }
+    function updateProgressText(stage) {
+      const textEl = document.querySelector('#progressStatus .status-text');
+      if (!textEl) return;
+      const msgs = { 'thinking':'PhyMathia 正在深度思考，可能需要一点时间...', 'tool':'正在调用工具进行计算和可视化生成，请耐心等待...', 'generating':'正在精心组织回复...', 'waiting':'', 'done':'回复完成' };
+      if (stage === 'waiting') {
+        waitingTipIndex = (waitingTipIndex + 1) % waitingTips.length;
+        textEl.textContent = waitingTips[waitingTipIndex];
+      } else {
+        textEl.textContent = msgs[stage] || msgs['thinking'];
+      }
+    }
+    const waitingTips = [
+      '仍在处理中，好内容值得等待...',
+      '小贴士：试试点击延伸思考的问题按钮，一键深入探索！',
+      '正在为你深度解析，请稍候...',
+      '小贴士：生成的交互式HTML可以拖动滑块实时调参，体验感拉满！',
+      '公式推导需要点时间，马上就好~',
+      '小贴士：知识图谱里的概念都可以继续追问，探索更多关联',
+      '可视化正在生成中，精彩即将呈现...',
+      '小贴士：点击左上角菜单可以管理多个对话会话',
+      '知识图谱正在构建，请耐心等待...',
+      '小贴士：试试切换难度等级（中学/大学/科研），不同深度不同收获',
+      '小贴士：点击右上角可以切换深色/浅色模式',
+      '小贴士：可视化HTML里的「没看懂」按钮可以一键复制问题回来问',
+      '小贴士：长按麦克风按钮说话，松开自动发送，上滑可取消',
+      '小贴士：追问「换个类比解释」可以让PhyMathia用新方式讲解',
+      '小贴士：推荐使用电脑端访问，交互式可视化效果最佳',
+    ];
+    var waitingTipIndex = -1;
+    function updateElapsedTime() {
+      const timeEl = document.querySelector('#progressStatus .elapsed-time');
+      if (!timeEl) return;
+      const elapsed = Math.floor((Date.now() - progressStartTime) / 1000);
+      const min = Math.floor(elapsed / 60);
+      const sec = elapsed % 60;
+      timeEl.textContent = min > 0 ? `${min}m${sec.toString().padStart(2,'0')}s` : `${sec}s`;
+    }
+    function hideProgress() {
+      const bar = document.getElementById('progressBar');
+      const statusEl = document.getElementById('progressStatus');
+      if (bar) bar.classList.remove('active');
+      if (statusEl && statusEl.classList.contains('active')) {
+        updateProgressText('done');
+        setTimeout(() => { statusEl.classList.remove('active'); }, 1500);
+      }
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+      if (waitingTipTimer) { clearInterval(waitingTipTimer); waitingTipTimer = null; }
+    }
+
+    function handleKeydown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    }
+    function autoResize(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    }
+    document.getElementById('userInput').addEventListener('input', function() { autoResize(this); });
+
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    }
+
+    function formatDuration(ms) {
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      const remSec = sec % 60;
+      return min + 'm' + (remSec < 10 ? '0' : '') + remSec + 's';
+    }
+
+    // ===== Regenerate Response =====
+    function regenerateResponse(btnEl) {
+      if (isStreaming) { alert('正在生成回复，请稍候'); return; }
+      const bodyEl = btnEl.closest('.message-body');
+      const messageEl = bodyEl?.closest('.message');
+      if (!messageEl) return;
+
+      // Find the index of this assistant message in the DOM
+      const allMsgEls = Array.from(document.querySelectorAll('#chatMessages .message'));
+      const domIndex = allMsgEls.indexOf(messageEl);
+      if (domIndex === -1) return;
+
+      // Map DOM index to chatHistory index (they should be 1:1)
+      // chatHistory and DOM messages should have the same order
+      if (domIndex >= chatHistory.length) {
+        alert('消息索引不匹配，请刷新页面');
+        return;
+      }
+
+      const targetEntry = chatHistory[domIndex];
+      if (targetEntry.role !== 'assistant') {
+        alert('无法重新生成该消息');
+        return;
+      }
+
+      // Find the user message immediately before this assistant message
+      let userMsg = '';
+      let userMsgIndex = -1;
+      for (let i = domIndex - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user') {
+          userMsg = chatHistory[i].content;
+          userMsgIndex = i;
+          break;
+        }
+      }
+
+      if (!userMsg) {
+        alert('未找到对应的问题，请手动输入后重新发送');
+        return;
+      }
+
+      // Remove this assistant message and all after it from chatHistory
+      chatHistory = chatHistory.slice(0, domIndex);
+      saveSessionMessages(currentSessionId, chatHistory);
+
+      // Remove the DOM element and all after it
+      let el = messageEl;
+      while (el) {
+        const next = el.nextElementSibling;
+        el.remove();
+        el = next;
+      }
+
+      // Re-send the user message
+      document.getElementById('userInput').value = userMsg;
+      sendMessage();
+    }
+
+    // ===== Auto Extract after AI response =====
+    async function autoExtractKnowledge(sessionId, messages) {
+      if (!messages || messages.length === 0) return;
+      if (messages.length < 2) return; // Need at least 1 exchange
+
+      const extractingEl = document.getElementById('kpExtracting');
+      try {
+        extractingEl?.classList.add('active');
+        const resp = await fetch('/api/extract_knowledge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: messages, sessionId: sessionId })
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const items = data.items || [];
+        if (items.length === 0) return;
+
+        // Get last assistant message ID for linking
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+        const messageId = lastAssistant ? (lastAssistant.timestamp || '') : '';
+
+        for (const item of items) {
+          // Check if similar knowledge already exists (by title in this session)
+          const existing = getKnowledgeItems();
+          const isDuplicate = Object.values(existing).some(e =>
+            e.sessionId === sessionId && e.title === item.title
+          );
+          if (isDuplicate) continue;
+
+          addKnowledgeItem({
+            id: 'ki_' + crypto.randomUUID().replace(/-/g, ''),
+            title: item.title,
+            category: item.category || 'other',
+            tags: item.tags || [],
+            summary: item.summary || '',
+            formulas: item.formulas || [],
+            source: 'ai_extract',
+            sessionId: sessionId,
+            messageId: String(messageId),
+            createdAt: Date.now()
+          });
+        }
+      } catch (err) {
+        console.warn('Auto extract knowledge failed:', err);
+      } finally {
+        extractingEl?.classList.remove('active');
+      }
+    }
+
+    // ===== Bookmark (manual collection) =====
+    function openBookmarkModal(messageEl) {
+      const msgBody = messageEl.closest('.message-body');
+      if (!msgBody) return;
+      const msgContent = msgBody.querySelector('.message-content');
+      const text = msgContent ? msgContent.textContent.trim() : '';
+      const msgId = msgBody.dataset.messageId || '';
+      const sessionId = currentSessionId;
+
+      // 查找该会话中 AI 自动提取的知识条目，用于预填
+      const allItems = getKnowledgeItems();
+      const aiItems = Object.values(allItems).filter(
+        it => it.source === 'ai_extract' && it.sessionId === sessionId
+      );
+
+      // 如果有 AI 提取条目，用第一条预填表单
+      let prefill = null;
+      let aiItemIds = [];
+      if (aiItems.length > 0) {
+        prefill = aiItems[0];
+        aiItemIds = aiItems.map(it => it.id);
+      }
+
+      document.getElementById('bmContent').value = text;
+      document.getElementById('bmSessionId').value = sessionId;
+      document.getElementById('bmMessageId').value = msgId;
+
+      // 预填：有 AI 提取则用 AI 内容，否则留空
+      document.getElementById('bmTitle').value = prefill ? prefill.title : '';
+      document.getElementById('bmSummary').value = prefill ? prefill.summary : text.substring(0, 100);
+      document.getElementById('bmTags').value = prefill ? prefill.tags.join('，') : '';
+      document.getElementById('bmFormulas').value = prefill ? (prefill.formulas || []).join('\n') : '';
+      document.getElementById('bmCategory').value = prefill ? prefill.category : 'physics';
+
+      // 记录要替换的 AI 条目 ID 列表
+      document.getElementById('bmReplaceIds').value = aiItemIds.join(',');
+
+      // 显示/隐藏"保存并替换"按钮
+      const replaceBtn = document.getElementById('bmBtnReplace');
+      if (replaceBtn) {
+        replaceBtn.style.display = aiItemIds.length > 0 ? '' : 'none';
+      }
+
+      document.getElementById('bookmarkModal').classList.add('active');
+    }
+
+    function closeBookmarkModal() {
+      document.getElementById('bookmarkModal').classList.remove('active');
+    }
+
+    function saveBookmark(andReplace) {
+      const title = document.getElementById('bmTitle').value.trim();
+      if (!title) { document.getElementById('bmTitle').focus(); return; }
+
+      const item = {
+        id: 'ki_' + crypto.randomUUID().replace(/-/g, ''),
+        title: title,
+        category: document.getElementById('bmCategory').value,
+        summary: document.getElementById('bmSummary').value.trim(),
+        tags: document.getElementById('bmTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+        formulas: document.getElementById('bmFormulas').value.split('\n').map(s => s.trim()).filter(Boolean),
+        source: 'manual',
+        sessionId: document.getElementById('bmSessionId').value,
+        messageId: document.getElementById('bmMessageId').value,
+        createdAt: Date.now()
+      };
+      addKnowledgeItem(item);
+
+      // 如果选择了"保存并替换"，删除该会话中 AI 自动提取的条目
+      if (andReplace) {
+        const replaceIds = document.getElementById('bmReplaceIds').value;
+        if (replaceIds) {
+          replaceIds.split(',').filter(Boolean).forEach(id => deleteKnowledgeItem(id));
+        }
+      }
+
+      closeBookmarkModal();
+
+      // Update bookmark button state
+      const msgId = item.messageId;
+      if (msgId) {
+        const btn = document.querySelector(`[data-bookmark-msg="${msgId}"]`);
+        if (btn) btn.classList.add('bookmarked');
+      }
+    }
+
+    function sendQuick(text) {
+      document.getElementById('userInput').value = text;
+      autoResize(document.getElementById('userInput'));
+      sendMessage();
+    }
+
+    // URL 参数自动提问
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const question = params.get('question');
+      if (question) {
+        window.history.replaceState({}, '', window.location.pathname);
+        setTimeout(() => sendQuick(decodeURIComponent(question)), 500);
+      }
+    })();
+
+    async function sendMessage() {
+      const input = document.getElementById('userInput');
+      const btn = document.getElementById('sendBtn');
+      const text = input.value.trim();
+      if (!text || isStreaming) return;
+
+      userScrolledUp = false; // 用户发送消息时重置滚动状态
+
+      document.getElementById('welcomeTip')?.remove();
+
+      const now = Date.now();
+      addMessage('user', text, now);
+      chatHistory.push({ role: 'user', content: text, timestamp: now });
+      await saveCurrentSession();
+      input.value = '';
+      input.style.height = 'auto';
+      isStreaming = true;
+      lastFailedMessage = text;
+
+      // 切换为停止按钮
+      btn.disabled = false;
+      btn.classList.add('stop-btn');
+      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+      btn.onclick = () => { if (abortController) abortController.abort(); };
+
+      abortController = new AbortController();
+      showProgress('thinking');
+
+      try {
+        // 构建上下文：最近 3 轮对话（3 对 user+assistant）+ 当前用户消息
+        const MAX_CONTEXT_ROUNDS = 3;
+        const contextMessages = [];
+        // 从 chatHistory 中取最近 3 轮（从后往前取 user+assistant 对）
+        const historyCopy = [...chatHistory];
+        let rounds = 0;
+        for (let i = historyCopy.length - 1; i >= 0 && rounds < MAX_CONTEXT_ROUNDS; i--) {
+          const msg = historyCopy[i];
+          // 跳过当前刚 push 的用户消息（因为 text 还没 push，chatHistory 此时只有历史）
+          contextMessages.unshift({ role: msg.role, content: msg.content });
+          if (msg.role === 'user') rounds++;
+        }
+        // 添加当前用户消息
+        contextMessages.push({ role: 'user', content: text + LEVEL_PROMPTS[currentLevel] });
+
+        const resp = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'agent',
+            messages: contextMessages,
+            session_id: SESSION_ID,
+            stream: true,
+            agent_model: currentModels.agent_model || '',
+            html_model: currentModels.html_model || ''
+          }),
+          signal: abortController.signal
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 200)}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let assistantContent = '';
+        let assistantDiv = null;
+        let buffer = '';
+        let streamRenderPending = false;
+
+        function scheduleStreamRender() {
+          if (streamRenderPending) return;
+          streamRenderPending = true;
+          requestAnimationFrame(() => {
+            if (assistantDiv && assistantContent) {
+              assistantDiv.innerHTML = renderMarkdown(assistantContent);
+              _initVizIframes(assistantDiv);
+              renderMath(assistantDiv);
+            }
+            streamRenderPending = false;
+          });
+        }
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') continue;
+
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.error) {
+                  const errMsg = data.error.message || JSON.stringify(data.error);
+                  if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
+                  assistantContent += '\n\n⚠️ ' + errMsg;
+                  assistantDiv.textContent = assistantContent;
+                  scrollToBottom();
+                  continue;
+                }
+                const choice = data.choices?.[0];
+                const delta = choice?.delta;
+                if (!delta) continue;
+
+                if (delta.role === 'tool') {
+                  lastChunkTime = Date.now();
+                  if (currentStage !== 'tool') showProgress('tool');
+                  continue;
+                }
+                if (delta.tool_calls) {
+                  lastChunkTime = Date.now();
+                  if (currentStage !== 'tool') showProgress('tool');
+                  continue;
+                }
+                if (delta.role === 'tool_done') {
+                  // 处理生成的文件（如交互式HTML）
+                  lastChunkTime = Date.now();
+                  const fileMatch = delta.content?.match(/__PHYMATHIA_FILE__:(.+)__/);
+                  if (fileMatch) {
+                    try {
+                      const fileInfo = JSON.parse(fileMatch[1]);
+                      if (fileInfo.file_url) {
+                        assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
+                        if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
+                        assistantDiv.innerHTML = renderMarkdown(assistantContent);
+                        _initVizIframes(assistantDiv);
+                        renderMathInElement(assistantDiv);
+                        scrollToBottom();
+                      }
+                      console.log('[ToolDone] File info:', fileInfo);
+                    } catch(e) { console.warn('[ToolDone] Parse error:', e); }
+                  }
+                  continue;
+                }
+                if (delta.content) {
+                  lastChunkTime = Date.now();
+                  if (currentStage !== 'generating') showProgress('generating');
+                  if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
+                  assistantContent += delta.content;
+                  // 实时渲染 Markdown 和 LaTeX（节流）
+                  scheduleStreamRender();
+                  scrollToBottom();
+                }
+              } catch (e) {}
+            }
+          }
+        }
+
+        // 最终渲染
+        if (assistantDiv && assistantContent) {
+          assistantDiv.innerHTML = renderMarkdown(assistantContent);
+          _initVizIframes(assistantDiv);
+          renderMath(assistantDiv);
+          await renderMermaidInElement(assistantDiv);
+          // 双域折叠区域渲染
+          wrapDualDomainSections(assistantDiv);
+          // 重新渲染双域内的数学公式
+          renderMath(assistantDiv);
+          const ts = Date.now();
+          const duration = progressStartTime ? (ts - progressStartTime) : null;
+          chatHistory.push({ role: 'assistant', content: assistantContent, timestamp: ts, duration });
+
+          await saveCurrentSession();
+          renderSessionList(); // 更新侧边栏时间显示
+          const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
+          if (metaEl) {
+            const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
+            const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
+            metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
+          }
+          scrollToBottom(); // 最终渲染后滚动
+        }
+
+      } catch (err) {
+        hideProgress();
+        if (err.name === 'AbortError') {
+          // 用户主动中止，保留已接收的内容
+          const msgs = document.querySelectorAll('.message.assistant .message-content');
+          const lastContent = msgs[msgs.length - 1];
+          if (lastContent && !lastContent.textContent.trim()) {
+            lastContent.closest('.message.assistant').remove();
+          } else if (lastContent) {
+            // 已有部分内容，在 meta 中标记已中止
+            const metaEl = lastContent.closest('.message-body')?.querySelector('.message-meta');
+            if (metaEl) {
+              const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
+              if (elapsed > 0) {
+                const durTag = document.createElement('span');
+                durTag.className = 'msg-duration';
+                durTag.title = '回答耗时';
+                durTag.textContent = '⏱ ' + formatDuration(elapsed);
+                metaEl.appendChild(durTag);
+              }
+              const stopTag = document.createElement('span');
+              stopTag.style.cssText = 'color:var(--accent);font-style:italic;';
+              stopTag.textContent = '已中止';
+              metaEl.appendChild(stopTag);
+            }
+          }
+          // 保存已接收的部分内容（含耗时）
+          const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
+          if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
+            chatHistory[chatHistory.length - 1].duration = abortDuration;
+          }
+          saveCurrentSession();
+        } else {
+          const errDiv = addMessage('assistant', '', Date.now());
+          errDiv.innerHTML = `
+            <div style="color:#ff6b6b">⚠️ 请求失败: ${escapeHtml(err.message)}</div>
+            <div class="error-actions">
+              <button class="error-retry-btn" onclick="retryLast()">🔄 重新发送</button>
+            </div>`;
+          console.error('Chat error:', err);
+        }
+      } finally {
+        hideProgress();
+        isStreaming = false;
+        abortController = null;
+        // Auto-extract knowledge after AI response
+        if (chatHistory.length > 0) {
+          autoExtractKnowledge(currentSessionId, chatHistory);
+        }
+        // 恢复发送按钮
+        btn.classList.remove('stop-btn');
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
+        btn.onclick = sendMessage;
+        input.focus();
+      }
+    }
+
+    function retryLast() {
+      if (!lastFailedMessage || isStreaming) return;
+      const msgs = document.querySelectorAll('.message.assistant');
+      const lastMsg = msgs[msgs.length - 1];
+      if (lastMsg && lastMsg.querySelector('.error-actions')) lastMsg.remove();
+      if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
+        if (chatHistory[chatHistory.length - 1].content.includes('请求失败')) chatHistory.pop();
+      }
+      document.getElementById('userInput').value = lastFailedMessage;
+      sendMessage();
+    }
+
+    function regenerateLast() {
+      if (isStreaming) return;
+      // 找到最后一条助手消息并删除
+      const msgs = document.querySelectorAll('.message.assistant');
+      const lastMsg = msgs[msgs.length - 1];
+      if (lastMsg) lastMsg.remove();
+      // 从 chatHistory 中删掉最后的助手消息
+      if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
+        chatHistory.pop();
+      }
+      // 找到最后一条用户消息
+      let userMsg = '';
+      for (let i = chatHistory.length - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user') { userMsg = chatHistory[i].content; break; }
+      }
+      if (userMsg) {
+        lastFailedMessage = userMsg;
+        document.getElementById('userInput').value = userMsg;
+        sendMessage();
+      }
+    }
+
+    function addMessage(role, content, timestamp) {
+      const messages = document.getElementById('chatMessages');
+      const msg = document.createElement('div');
+      msg.className = 'message ' + role;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = role === 'user' ? '👤' : ''; if (role === 'assistant') { avatar.innerHTML = '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAKOmlDQ1BzUkdCIElFQzYxOTY2LTIuMQAASImdU3dYU3cXPvfe7MFKiICMsJdsgQAiI+whU5aoxCRAGCGGBNwDERWsKCqyFEWqAhasliF1IoqDgqjgtiBFRK3FKi4cfaLP09o+/b6vX98/7n2f8zvn3t9533MAaAEhInEWqgKQKZZJI/292XHxCWxiD6BABgLYAfD42ZLQKL9oAIBAXy47O9LfG/6ElwOAKN5XrQLC2Wz4/6DKl0hlAEg4ADgIhNl8ACQfADJyZRJFfBwAmAvSFRzFKbg0Lj4BANVQ8JTPfNqnnM/cU8EFmWIBAKq4s0SQKVDwTgBYnyMXCgCwEAAoyBEJcwGwawBglCHPFAFgrxW1mUJeNgCOpojLhPxUAJwtANCk0ZFcANwMABIt5Qu+4AsuEy6SKZriZkkWS0UpqTK2Gd+cbefiwmEHCHMzhDKZVTiPn86TCtjcrEwJT7wY4HPPn6Cm0JYd6Mt1snNxcrKyt7b7Qqj/evgPofD2M3se8ckzhNX9R+zv8rJqADgTANjmP2ILygFa1wJo3PojZrQbQDkfoKX3i35YinlJlckkrjY2ubm51iIh31oh6O/4nwn/AF/8z1rxud/lYfsIk3nyDBlboRs/KyNLLmVnS3h8Idvqr0P8rwv//h7TIoXJQqlQzBeyY0TCXJE4hc3NEgtEMlGWmC0S/ycT/2XZX/B5rgGAUfsBmPOtQaWXCdjP3YBjUAFL3KVw/XffQsgxoNi8WL3Rz3P/CZ+2+c9AixWPbFHKpzpuZDSbL5fmfD5TrCXggQLKwARN0AVDMAMrsAdncANP8IUgCINoiId5wIdUyAQp5MIyWA0FUASbYTtUQDXUQh00wmFohWNwGs7BJbgM/XAbBmEEHsM4vIRJBEGICB1hIJqIHmKMWCL2CAeZifgiIUgkEo8kISmIGJEjy5A1SBFSglQge5A65FvkKHIauYD0ITeRIWQM+RV5i2IoDWWiOqgJaoNyUC80GI1G56Ip6EJ0CZqPbkLL0Br0INqCnkYvof3oIPoYncAAo2IsTB+zwjgYFwvDErBkTIqtwAqxUqwGa8TasS7sKjaIPcHe4Ag4Bo6Ns8K54QJws3F83ELcCtxGXAXuAK4F14m7ihvCjeM+4Ol4bbwl3hUfiI/Dp+Bz8QX4Uvw+fDP+LL4fP4J/SSAQWARTgjMhgBBPSCMsJWwk7CQ0EU4R+gjDhAkikahJtCS6E8OIPKKMWEAsJx4kniReIY4QX5OoJD2SPcmPlEASk/JIpaR60gnSFdIoaZKsQjYmu5LDyALyYnIxuZbcTu4lj5AnKaoUU4o7JZqSRllNKaM0Us5S7lCeU6lUA6oLNYIqoq6illEPUc9Th6hvaGo0CxqXlkiT0zbR9tNO0W7SntPpdBO6Jz2BLqNvotfRz9Dv0V8rMZSslQKVBEorlSqVWpSuKD1VJisbK3spz1NeolyqfES5V/mJClnFRIWrwlNZoVKpclTlusqEKkPVTjVMNVN1o2q96gXVh2pENRM1XzWBWr7aXrUzasMMjGHI4DL4jDWMWsZZxgiTwDRlBjLTmEXMb5g9zHF1NfXp6jHqi9Qr1Y+rD7IwlgkrkJXBKmYdZg2w3k7RmeI1RThlw5TGKVemvNKYquGpIdQo1GjS6Nd4q8nW9NVM19yi2ap5VwunZaEVoZWrtUvrrNaTqcypblP5UwunHp56SxvVttCO1F6qvVe7W3tCR1fHX0eiU65zRueJLkvXUzdNd5vuCd0xPYbeTD2R3ja9k3qP2OpsL3YGu4zdyR7X19YP0Jfr79Hv0Z80MDWYbZBn0GRw... (line truncated to 2000 chars)';
+
+      const body = document.createElement('div');
+      body.className = 'message-body';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      if (role === 'user') {
+        contentDiv.textContent = content;
+      } else if (content) {
+        contentDiv.innerHTML = renderMarkdown(content);
+        _initVizIframes(contentDiv);
+      }
+
+      body.appendChild(contentDiv);
+
+      const meta = document.createElement('div');
+      meta.className = 'message-meta';
+      meta.style.color = '#909090';
+      meta.innerHTML = `<span>${formatTime(timestamp || Date.now())}</span>`;
+      body.appendChild(meta);
+
+      // 收藏按钮（仅助手消息）
+      if (role === 'assistant') {
+        const bookmarkBtn = document.createElement('button');
+        bookmarkBtn.className = 'bookmark-btn';
+        bookmarkBtn.title = '收藏到知识总览';
+        bookmarkBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+        bookmarkBtn.onclick = function() {
+          openBookmarkModal(this);
+        };
+        body.appendChild(bookmarkBtn);
+
+        // 重新生成按钮
+        const regenBtn = document.createElement('button');
+        regenBtn.className = 'regenerate-btn';
+        regenBtn.title = '重新生成';
+        regenBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> 重新生成';
+        regenBtn.onclick = function() { regenerateResponse(this); };
+        body.appendChild(regenBtn);
+      }
+
+      msg.appendChild(avatar);
+      msg.appendChild(body);
+      messages.appendChild(msg);
+      scrollToBottom();
+      return contentDiv;
+    }
