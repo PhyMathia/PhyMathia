@@ -27,6 +27,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ====== .env 加载（无第三方依赖）======
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file(Path(__file__).resolve().parent.parent / ".env")
+
 # ====== 数据持久化目录 ======
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
@@ -76,7 +93,15 @@ def _get_messages_path(session_id: str) -> Path:
 
 
 # ====== System Prompt & Level Prompts ======
-SYSTEM_PROMPT = """你是一个物理数学双域解释与可视化助手 PhyMathia。
+def _load_system_prompt() -> str:
+    """从 system prompt.md 加载系统提示词，失败时使用默认提示词"""
+    prompt_path = BASE_DIR / "system prompt.md"
+    if prompt_path.exists():
+        content = prompt_path.read_text(encoding="utf-8").strip()
+        logger.info(f"Loaded system prompt from {prompt_path} ({len(content)} chars)")
+        return content
+    logger.warning(f"System prompt file not found: {prompt_path}, using default")
+    return """你是一个物理数学双域解释与可视化助手 PhyMathia。
 请按以下格式组织回答，用 XML 标签包裹各部分，不要省略任何部分：
 
 <physics>
@@ -103,6 +128,8 @@ SYSTEM_PROMPT = """你是一个物理数学双域解释与可视化助手 PhyMat
 - 如果问题只偏一方，两个标题都要保留，内容可简短
 - 可视化 HTML 用 ```html ... ``` 包裹（必要时可单独输出）
 """
+
+SYSTEM_PROMPT = _load_system_prompt()
 
 LEVEL_PROMPTS = {
     "middle": "（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）",
@@ -383,9 +410,19 @@ async def api_models_chat(request: Request):
 
     provider = payload.get("provider", "")
     api_key = payload.get("api_key", "")
+    if not api_key and provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY", "")
     model_name = payload.get("model", "")
+    if not model_name and provider == "deepseek":
+        model_name = "deepseek-chat"
     base_url = payload.get("base_url", "")
     stream = payload.get("stream", True)
+
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未配置 {provider} API Key：请在项目根目录 .env 中设置 DEEPSEEK_API_KEY，或在模型配置中填写密钥",
+        )
 
     # 构建消息列表
     prompt = payload.get("prompt", "")
@@ -439,6 +476,10 @@ async def api_models_chat(request: Request):
                         error_text = error_body.decode(errors='replace')[:500]
                         yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
                         yield "data: [DONE]\n\n"
+                        return
+                    if not stream:
+                        raw = await resp.aread()
+                        yield raw.decode(errors="replace")
                         return
                     async for line in resp.aiter_lines():
                         if line.startswith("data: "):

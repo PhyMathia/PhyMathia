@@ -1,5 +1,5 @@
 const MODEL_PRESETS = {
-  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], apiKeyHint: 'sk-' },
+  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'], apiKeyHint: 'sk-' },
   openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini'], apiKeyHint: 'sk-' },
   llama: { name: 'llama.ccp (本地)', baseUrl: 'http://localhost:8080/v1', models: [], apiKeyHint: '可选，留空' },
 };
@@ -98,7 +98,7 @@ function updateModelMeta(type) {
   if (model) {
     const preset = MODEL_PRESETS[model.provider];
     descEl.textContent = (preset?.name || model.provider) + ' · ' + model.model;
-    tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? '✅ 已配置密钥' : '⚠️ 未配置密钥'}</span>`;
+    tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? '✅ 已配置密钥' : '🔑 密钥可留空'}</span>`;
   } else {
     descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
     tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">🔄 Mock</span>';
@@ -111,10 +111,6 @@ async function onModelChange(type) {
   if (type === 'agent') activeModels.agent_model = select.value;
   else activeModels.html_model = select.value;
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
-  const model = getModelById(select.value);
-  if (model && !model.apiKey) {
-    setTimeout(() => { if (confirm('该模型尚未配置 API 密钥，是否立即配置？')) openModelConfig(model.id); }, 300);
-  }
 }
 
 function toggleModelPanel(e) {
@@ -136,7 +132,7 @@ function renderModelList() {
     return `<div class="model-item">
       <div class="model-item-info">
         <div class="model-item-name">${preset?.name || m.provider} · ${m.model}</div>
-        <div class="model-item-key">${m.apiKey ? '✅ 密钥已配置' : '⚠️ 未配置密钥'}</div>
+        <div class="model-item-key">${m.apiKey ? '✅ 密钥已配置' : '🔑 密钥可留空（后端环境变量）'}</div>
       </div>
       <div class="model-item-actions">
         <button class="model-item-btn" onclick="openModelConfig('${m.id}')" title="配置">⚙️</button>

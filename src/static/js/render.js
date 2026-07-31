@@ -205,9 +205,9 @@ function wrapDualDomainSections(element) {
   
   // 定义四个可识别的域标题：物理视角、数学视角为可折叠区域；知识图谱、延伸思考为独立区块
   const domainDefs = [
-    { key: 'physics', icon: '🔬', label: '物理视角', colorClass: 'physics-section', regex: /<h[1-6][^>]*>[^<]*🔬[^<]*物理视角[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'math', icon: '📐', label: '数学视角', colorClass: 'math-section', regex: /<h[1-6][^>]*>[^<]*📐[^<]*数学视角[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'graph', icon: '🧠', label: '知识图谱', colorClass: 'graph-section', regex: /<h[1-6][^>]*>[^<]*(?:🧠|知识图谱)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'physics', icon: '🔬', label: '物理视角', colorClass: 'physics-section', regex: /<h[1-6][^>]*>[^<]*(?:🔭|🔬)[^<]*(?:物理直觉|物理视角)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'math', icon: '📐', label: '数学视角', colorClass: 'math-section', regex: /<h[1-6][^>]*>[^<]*(?:🧮|📐)[^<]*(?:数学本质|数学视角)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'graph', icon: '🧠', label: '知识图谱', colorClass: 'graph-section', regex: /<h[1-6][^>]*>[^<]*(?:🧠|🗺️|知识图谱)[^<]*<\/h[1-6]>/i, collapsible: true },
     { key: 'extend', icon: '💡', label: '延伸思考', colorClass: 'extend-section', regex: /<h[1-6][^>]*>[^<]*(?:💡|延伸思考)[^<]*<\/h[1-6]>/i, collapsible: true },
   ];
   
