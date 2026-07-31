@@ -144,10 +144,26 @@
       const extractingEl = document.getElementById('kpExtracting');
       try {
         extractingEl?.classList.add('active');
+        const agentModel = getActiveModelForRole('agent');
+        const descriptorModel = getActiveModelForRole('descriptor');
+        const payload = { messages: messages, sessionId: sessionId };
+        if (agentModel) {
+          payload.provider = agentModel.provider;
+          payload.api_key = agentModel.apiKey;
+          payload.model = agentModel.model;
+          payload.base_url = agentModel.baseUrl;
+        }
+        // 公式描述模型（可选）：为公式速查库中的公式生成简要描述
+        if (descriptorModel) {
+          payload.descriptor_provider = descriptorModel.provider;
+          payload.descriptor_api_key = descriptorModel.apiKey;
+          payload.descriptor_model = descriptorModel.model;
+          payload.descriptor_base_url = descriptorModel.baseUrl;
+        }
         const resp = await fetch('/api/extract_knowledge', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: messages, sessionId: sessionId })
+          body: JSON.stringify(payload)
         });
         if (!resp.ok) return;
         const data = await resp.json();
@@ -183,6 +199,20 @@
         console.warn('Auto extract knowledge failed:', err);
       } finally {
         extractingEl?.classList.remove('active');
+        // 数据已保存，同步刷新界面（根治"要刷新才出现"：面板开着时自动更新）
+        try {
+          const panel = document.getElementById('knowledgePanel');
+          if (panel && panel.classList.contains('active')) {
+            if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+            if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+            const activeTab = document.querySelector('.kp-tab.active');
+            if (activeTab && activeTab.dataset.tab === 'formulas' && typeof loadFormulas === 'function') {
+              loadFormulas();
+            }
+          }
+        } catch (e) {
+          console.warn('Refresh knowledge panel failed:', e);
+        }
       }
     }
 
@@ -253,6 +283,19 @@
         createdAt: Date.now()
       };
       addKnowledgeItem(item);
+
+      // 同步公式到公式库
+      if (item.formulas && item.formulas.length > 0) {
+        saveFormulasToServer(item.formulas.map(f => ({
+          latex: f,
+          concept: item.title,
+          meaning: item.summary,
+          topic: '',
+          related: item.tags,
+          sessionId: item.sessionId,
+          createdAt: Date.now()
+        })));
+      }
 
       // 如果选择了"保存并替换"，删除该会话中 AI 自动提取的条目
       if (andReplace) {

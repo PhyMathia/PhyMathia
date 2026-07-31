@@ -29,7 +29,16 @@ function _sanitizeVizHtml(html) {
 
 function buildVizCard(htmlContent, vizId) {
   const safe = _sanitizeVizHtml(htmlContent);
-  _vizStore[vizId] = safe;  // 保存原始内容供全屏/复制/新标签页使用
+  // 注入主题桥接脚本（在 sanitize 之后，避免被清理）：
+  // 监听父页面主题切换消息 + 加载时读取父主题，设置 data-theme 并尝试调用页面内主题机制
+  let finalHtml = safe.replace(/<\/head>/i, _VIZ_THEME_BRIDGE + '</head>');
+  if (finalHtml === safe) {
+    finalHtml = safe.replace(/<\/body>/i, _VIZ_THEME_BRIDGE + '</body>');
+  }
+  if (finalHtml === safe) {
+    finalHtml = safe + _VIZ_THEME_BRIDGE;
+  }
+  _vizStore[vizId] = finalHtml;  // 保存（含桥接脚本）供全屏/复制/新标签页使用
 
   const isTall = safe.length > 8000 || /canvas|svg|three|chart|d3/i.test(safe);
   const heightClass = isTall ? ' viz-iframe-tall' : '';
@@ -39,6 +48,7 @@ function buildVizCard(htmlContent, vizId) {
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
+    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz()" title="没看懂，请求解释">❓ 没看懂</button>'
     + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">⛶ 全屏</button>'
     + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">📋 复制</button>'
     + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">↗ 新窗口</button>'
@@ -46,6 +56,61 @@ function buildVizCard(htmlContent, vizId) {
     + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts allow-same-origin" data-viz-id="' + vizId + '" loading="lazy"></iframe>'
     + '</div>';
 }
+
+// ====== 可视化 iframe 主题桥接 ======
+// 注入到 AI 生成的 HTML 中：应用父页面主题（data-theme 属性 + 按钮点击兜底 + setter 函数），
+// 并检测页面是否自带主题机制（有则通知父页面走原生切换，无则父页面用滤镜兜底深色化）。
+const _VIZ_THEME_BRIDGE = '<script>(function(){'
+  + 'try{var st=document.createElement("style");'
+  + 'st.textContent="html[data-theme] *,html[data-theme] *::before,html[data-theme] *::after{transition:background-color .4s ease,color .4s ease,border-color .4s ease,fill .4s ease,stroke .4s ease!important}";'
+  + 'document.head.appendChild(st);}catch(e){}'
+  + 'function applyT(t){'
+  + 'try{'
+  + 'document.documentElement.setAttribute("data-theme",t);'
+  + 'document.body.setAttribute("data-theme",t);'
+  + 'var btns=document.querySelectorAll("button,[class*=\\"theme\\" i],[id*=\\"theme\\" i]");'
+  + 'for(var i=0;i<btns.length;i++){'
+  + 'var b=btns[i],txt=(b.textContent||"")+(b.title||"");'
+  + 'if(t==="light"&&/🌙|暗|深色/.test(txt)){b.click();return;}'
+  + 'if(t==="dark"&&/☀️|亮|浅色/.test(txt)){b.click();return;}'
+  + '}'
+  + 'if(typeof window.applyTheme==="function"){window.applyTheme(t);return;}'
+  + 'if(typeof window.setTheme==="function"){window.setTheme(t);return;}'
+  + '}catch(e){}}'
+  + 'try{var p=window["parent"];if(p&&p.document&&p.document.documentElement){'
+  + 'var pt=p.document.documentElement.getAttribute("data-theme");'
+  + 'if(pt==="light"||pt==="dark")applyT(pt);}}catch(e){}'
+  + 'window.addEventListener("message",function(e){var d=e.data;'
+  + 'if(d&&d.type==="phymathia-theme"&&(d.theme==="light"||d.theme==="dark"))applyT(d.theme);});'
+  + 'try{var has=false,nodes=document.querySelectorAll("button,[class*=\\"theme\\" i],[id*=\\"theme\\" i]");'
+  + 'for(var i=0;i<nodes.length;i++){var txt=(nodes[i].textContent||"")+(nodes[i].title||"");'
+  + 'if(/🌙|☀️|深色|浅色|暗色|亮色|dark|light/i.test(txt)){has=true;break;}}'
+  + 'if(!has&&(typeof window.applyTheme==="function"||typeof window.setTheme==="function"||typeof window.toggleTheme==="function"))has=true;'
+  + 'window["parent"].postMessage({type:"phymathia-theme-native",has:has},"*");'
+  + '}catch(e){window["parent"]&&window["parent"].postMessage({type:"phymathia-theme-native",has:false},"*");}'
+  + '})();<\/script>';
+
+// 父页面主题切换时，向所有可视化 iframe（含全屏 iframe）广播
+function syncVizThemes(theme) {
+  const frames = document.querySelectorAll('.viz-iframe, #vizFullscreenIframe');
+  frames.forEach(f => {
+    try { f.contentWindow.postMessage({ type: 'phymathia-theme', theme: theme }, '*'); } catch (e) {}
+  });
+}
+
+// 接收 iframe 的原生主题检测结果：
+// 有原生主题机制的走原生切换（不加滤镜）；没有的加滤镜兜底深色化
+window.addEventListener('message', function(e) {
+  const d = e.data;
+  if (!d || d.type !== 'phymathia-theme-native') return;
+  const frames = document.querySelectorAll('.viz-iframe, #vizFullscreenIframe');
+  for (let i = 0; i < frames.length; i++) {
+    if (frames[i].contentWindow === e.source) {
+      frames[i].classList.toggle('viz-theme-filtered', !d.has);
+      break;
+    }
+  }
+});
 
 // 延迟设置 srcdoc（DOM 插入后调用）
 function _initVizIframes(container) {
@@ -103,13 +168,37 @@ function openVizNewTab(vizId) {
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
 function renderMarkdown(text) {
   if (!text) return '';
+  // AI 按规范标注的 <formula> 标签 → 转换为 $..$（KaTeX 正常渲染，标签本身不显示）
+  text = text.replace(/<formula>([\s\S]*?)<\/formula>/gi, (match, latex) => {
+    return '$$' + latex.trim() + '$$';
+  });
+  // <summary> 摘要标签仅用于知识库/公式描述，不渲染给用户
+  text = text.replace(/<summary>[\s\S]*?<\/summary>/gi, '');
   const mermaidBlocks = [];
   let processed = text.replace(/```mermaid\s*\n([\s\S]*?)```/g, (match, code) => {
     const idx = mermaidBlocks.length;
     mermaidBlocks.push(code.trim());
     return `<!--MERMAID_PLACEHOLDER_${idx}-->`;
   });
+  // 公式占位符保护：marked 遵循 CommonMark 会把 \( 的反斜杠当转义符剥掉，
+  // 导致 KaTeX 找不到公式边界。先提取公式为占位符，marked 解析后还原。
+  const mathBlocks = [];
+  const extractMath = (match) => {
+    const idx = mathBlocks.length;
+    mathBlocks.push(match);
+    return `<!--MATH_PLACEHOLDER_${idx}-->`;
+  };
+  processed = processed
+    .replace(/\$\$[\s\S]+?\$\$/g, extractMath)        // display: $$..$$
+    .replace(/\\\[[\s\S]+?\\\]/g, extractMath)        // display: \[..\]
+    .replace(/\$[^$\n]+?\$/g, extractMath)            // inline: $..$（不跨行，避免贪婪误匹配）
+    .replace(/\\\([\s\S]+?\\\)/g, extractMath);       // inline: \(..\)
   let html = marked.parse(processed);
+  // 还原公式占位符（HTML 转义防 < > & 被当作标签；KaTeX auto-render 在文本节点中识别）
+  // 同时匹配 marked 转义后的形式（&lt;!--...--&gt;），覆盖代码块内的占位符
+  html = html.replace(/&lt;!--MATH_PLACEHOLDER_(\d+)--&gt;|<!--MATH_PLACEHOLDER_(\d+)-->/g, (match, escapedIdx, rawIdx) => {
+    return escapeHtml(mathBlocks[parseInt(escapedIdx != null ? escapedIdx : rawIdx)]);
+  });
   html = html.replace(/<!--MERMAID_PLACEHOLDER_(\d+)-->/g, (match, idx) => {
     const id = 'mermaid_' + Math.random().toString(36).substr(2, 9);
     return `<div class="mermaid-container"><pre class="mermaid-source" data-mermaid-src="${encodeURIComponent(mermaidBlocks[parseInt(idx)])}" style="display:none"></pre><div class="mermaid" id="${id}"></div><div class="mermaid-scroll-hint">← 左右滑动查看完整图谱 →</div></div>`;
@@ -188,7 +277,7 @@ function renderModuleSections(container, sections) {
       + '<div class="dual-domain-header" onclick="toggleDualDomain(\'' + sid + '\')">'
       + '<span class="header-left"><span class="section-icon">' + cfg.icon + '</span> ' + cfg.label + '</span>'
       + '<span class="header-right">'
-      + (cfg.collapsible && (cfg.key === 'physics' || cfg.key === 'math') ? '<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain(\'' + cfg.key + '\')">\u8FFD\u95EE</button>' : '')
+      + (cfg.collapsible && (cfg.key === 'physics' || cfg.key === 'math') ? '<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain(\'' + cfg.key + '\')">\u8FFD\u95EE</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain(\'' + cfg.key + '\')">\u2753 \u6CA1\u770B\u61C2</button>' : '')
       + '<span class="dual-domain-chevron">\u25BC</span>'
       + '</span></div>'
       + '<div class="dual-domain-body">' + renderMarkdown(sections[cfg.key]) + '</div>'
@@ -245,7 +334,7 @@ function wrapDualDomainSections(element) {
       <div class="dual-domain-header" onclick="toggleDualDomain('${sid}')">
         <span class="header-left"><span class="section-icon">${sec.icon}</span> ${sec.label}</span>
         <span class="header-right">
-          ${sec.collapsible && (sec.key === 'physics' || sec.key === 'math') ? `<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain('${sec.key}')">追问</button>` : ''}
+          ${sec.collapsible && (sec.key === 'physics' || sec.key === 'math') ? `<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain('${sec.key}')">追问</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain('${sec.key}')">❓ 没看懂</button>` : ''}
           <span class="dual-domain-chevron">▼</span>
         </span>
       </div>
@@ -281,6 +370,39 @@ function followUpDomain(domain) {
   const followUpText = prompt + originalQuestion;
   document.getElementById('userInput').value = followUpText;
   sendMessage();
+}
+
+// ====== 没看懂（填入输入框，用户确认后发送） ======
+function dontUnderstandDomain(domain) {
+  let originalQuestion = '';
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    if (chatHistory[i].role === 'user') {
+      originalQuestion = chatHistory[i].content;
+      break;
+    }
+  }
+  const prompt = domain === 'physics'
+    ? '你刚才从「物理视角」讲解的部分我没看懂，请换一种更简单、更生活化的方式重新讲解：' + originalQuestion
+    : '你刚才从「数学视角」讲解的部分我没看懂，请放慢推导步骤，逐一解释每个符号的含义：' + originalQuestion;
+  const input = document.getElementById('userInput');
+  input.value = prompt;
+  autoResize(input);
+  input.focus();
+}
+
+function dontUnderstandViz() {
+  let originalQuestion = '';
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    if (chatHistory[i].role === 'user') {
+      originalQuestion = chatHistory[i].content;
+      break;
+    }
+  }
+  const prompt = '你生成的交互式可视化演示我没看懂，请逐步讲解图表/动画中的每个元素如何对应物理现象和公式：' + originalQuestion;
+  const input = document.getElementById('userInput');
+  input.value = prompt;
+  autoResize(input);
+  input.focus();
 }
 
 function convertLearnDirections(html) {

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -54,6 +55,7 @@ MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_PATH = DATA_DIR / "sessions.json"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
 KV_PATH = DATA_DIR / "kv_store.json"
+FORMULAS_PATH = DATA_DIR / "formulas.json"
 
 # ====== FastAPI 应用 ======
 app = FastAPI(title="PhyMathia", description="物理数学双域解释与可视化助手 (离线测试版)")
@@ -159,31 +161,31 @@ def _load_session_context(session_id: str, max_rounds: int = 3) -> list:
 MOCK_ANSWER = r"""<physics>
 ## 🔬 物理视角
 
-简谐运动是物体在回复力 $F=-kx$ 作用下的周期性运动。想象一个弹簧振子：当你拉长弹簧后松手，物体会在平衡位置附近来回振荡。
+简谐运动是物体在回复力 <formula>F=-kx</formula> 作用下的周期性运动。想象一个弹簧振子：当你拉长弹簧后松手，物体会在平衡位置附近来回振荡。
 
 关键物理量：
 - **振幅 A**：最大偏离距离
-- **周期 T**：完成一次完整振动的时间，$T = 2\pi\sqrt{\frac{m}{k}}$
-- **频率 f**：单位时间内振动次数，$f = 1/T$
+- **周期 T**：完成一次完整振动的时间，<formula>T = 2\pi\sqrt{\frac{m}{k}}</formula>
+- **频率 f**：单位时间内振动次数，<formula>f = 1/T</formula>
 
 在振动过程中，动能和势能不断相互转换，但总机械能守恒：
-$$E_{\text{total}} = \frac{1}{2}kA^2$$
+<formula>E_{\text{total}} = \frac{1}{2}kA^2</formula>
 
 </physics>
 <math>
 ## 📐 数学视角
 
 简谐运动的位移随时间变化满足正弦函数：
-$$x(t) = A\cos(\omega t + \varphi_0)$$
+<formula>x(t) = A\cos(\omega t + \varphi_0)</formula>
 
-其中角频率 $\omega = \sqrt{\frac{k}{m}}$，$\varphi_0$ 是初相位。
+其中角频率 <formula>\omega = \sqrt{\frac{k}{m}}</formula>，φ₀ 是初相位。
 
 速度与加速度：
-$$v(t) = -A\omega\sin(\omega t + \varphi_0)$$
-$$a(t) = -A\omega^2\cos(\omega t + \varphi_0) = -\omega^2 x(t)$$
+<formula>v(t) = -A\omega\sin(\omega t + \varphi_0)</formula>
+<formula>a(t) = -A\omega^2\cos(\omega t + \varphi_0) = -\omega^2 x(t)</formula>
 
 可见加速度始终与位移方向相反、大小成正比，这正是简谐运动的数学本质——二阶线性微分方程：
-$$\frac{d^2x}{dt^2} + \omega^2 x = 0$$
+<formula>\frac{d^2x}{dt^2} + \omega^2 x = 0</formula>
 
 </math>
 <graph>
@@ -210,7 +212,9 @@ graph TD
 1. 阻尼振动中能量如何耗散？微分方程会变成什么形式？
 2. 受迫振动在驱动频率接近固有频率时会发生什么？（共振！）
 3. 复数和相量如何简化简谐运动的叠加分析？
-</extend>"""
+</extend>
+
+<summary>简谐运动是回复力与位移成正比的周期运动，能量在动能与势能间周期转换</summary>"""
 
 
 MOCK_HTML_VISUALIZATION = r"""<!DOCTYPE html>
@@ -580,6 +584,7 @@ async def api_clear_all_sessions():
     for f in MESSAGES_DIR.glob("*.json"):
         f.unlink()
     _write_json(KNOWLEDGE_PATH, {})
+    _write_json(FORMULAS_PATH, {})
     _write_json(KV_PATH, {})
     return {"ok": True}
 
@@ -612,9 +617,31 @@ async def api_clear_messages(session_id: str):
 
 
 # ====== 知识条目 API ======
+def _normalize_knowledge(data) -> dict:
+    """将 knowledge 数据归一化为 id->item 映射。
+
+    兼容三种历史格式：
+    - {"items": [...]} 包装（POST 直写 payload 的历史残留）
+    - {"items": {...}} 包装
+    - 纯数组 [item, ...]
+    以及垃圾数据 {"items": null} -> {}
+    """
+    if not isinstance(data, dict):
+        return {}
+    if "items" in data:
+        items = data.get("items")
+        if isinstance(items, dict):
+            return items
+        if isinstance(items, list):
+            return {it.get("id") or ("k_" + uuid.uuid4().hex[:12]): it
+                    for it in items if isinstance(it, dict)}
+        return {}
+    return data
+
+
 @app.get("/api/knowledge")
 async def api_get_knowledge():
-    return _read_json(KNOWLEDGE_PATH, {})
+    return _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
 
 
 @app.post("/api/knowledge")
@@ -624,17 +651,434 @@ async def api_save_knowledge(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    items = payload if isinstance(payload, dict) else payload.get("items", {})
-    _write_json(KNOWLEDGE_PATH, items)
-    return {"ok": True, "count": len(items)}
+    incoming = _normalize_knowledge(payload)
+    data = _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+    # 合并：同 id 以新数据为准；全量上传时等价于覆盖
+    data.update(incoming)
+    _write_json(KNOWLEDGE_PATH, data)
+    return {"ok": True, "count": len(data)}
 
 
 @app.delete("/api/knowledge/{item_id}")
 async def api_delete_knowledge(item_id: str):
-    data = _read_json(KNOWLEDGE_PATH, {})
+    data = _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     data.pop(item_id, None)
     _write_json(KNOWLEDGE_PATH, data)
     return {"ok": True}
+
+
+# ====== 公式库 API ======
+def _normalize_formula(latex: str) -> str:
+    """标准化公式：\$→$、去首尾 $、统一包 $..$；无效返回空串"""
+    s = (latex or "").strip()
+    s = s.replace("\\$", "$").strip()
+    s = re.sub(r"^\$+|\$+$", "", s).strip()
+    # 清洗 PowerShell 转义等产生的无效 LaTeX 命令（\= 等）
+    s = re.sub(r"\\([=,;:])", r"\1", s)
+    if not s:
+        return ""
+    return f"${s}$"
+
+
+def _looks_like_formula(latex: str) -> bool:
+    """判断提取的文本是否像真正的公式（排除单字符、纯命令、纯单位、短字母串）。
+
+    KaTeX 等解析工具只能校验语法合法性（单字符 m、纯命令 \\omega 都是合法 LaTeX），
+    是否"算公式"是语义判断，需结构启发式：保留含运算符/函数/数字/上下标的结构。
+    """
+    s = (latex or "").strip().strip("$").strip()
+    if not s:
+        return False
+    # 单个字符（字母/数字/符号）不算公式：m、k、ω
+    if len(s) == 1:
+        return False
+    # 纯短字母串（≤3 个字母，无结构）：rad、kg、Hz
+    if re.fullmatch(r"[A-Za-z]{1,3}", s):
+        return False
+    # 纯符号命令：\omega、\pi、\theta
+    if re.fullmatch(r"\\[A-Za-z]+", s):
+        return False
+    # 纯 \text{...}（单位/文字）：\text{rad/s}
+    if re.fullmatch(r"\\text\{[^{}]*\}", s):
+        return False
+    # 纯短字母+斜杠（单位）：rad/s、m/s
+    if re.fullmatch(r"[A-Za-z]{1,4}(/[A-Za-z]{1,4})+", s):
+        return False
+    # 其余视为公式（含 = + - ( ) { } 数字、函数结构等）
+    return True
+
+
+@app.get("/api/formulas")
+async def api_get_formulas(q: str = ""):
+    data = _read_json(FORMULAS_PATH, {})
+    items = list(data.values())
+    if q:
+        ql = q.lower()
+        items = [it for it in items if
+                 ql in (it.get("concept") or "").lower() or
+                 ql in (it.get("meaning") or "").lower() or
+                 ql in (it.get("topic") or "").lower() or
+                 ql in (it.get("latex") or "").lower() or
+                 any(ql in (t or "").lower() for t in (it.get("related") or []))]
+    items.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/api/formulas")
+async def api_save_formulas(request: Request):
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    data = _read_json(FORMULAS_PATH, {})
+    items = payload if isinstance(payload, list) else payload.get("items", [])
+    count = 0
+    for it in items:
+        latex = _normalize_formula(it.get("latex") or "")
+        if not latex:
+            continue
+        # 去重：同会话同公式不重复入库
+        if any(v.get("latex") == latex and v.get("sessionId") == it.get("sessionId") for v in data.values()):
+            continue
+        fid = str(it.get("id") or "") or ("f_" + uuid.uuid4().hex[:12])
+        data[fid] = {
+            "id": fid,
+            "latex": latex,
+            "concept": (it.get("concept") or "")[:80],
+            "meaning": (it.get("meaning") or "")[:200],
+            "topic": (it.get("topic") or "")[:60],
+            "related": [str(t) for t in (it.get("related") or [])][:8],
+            "sessionId": it.get("sessionId", ""),
+            "createdAt": it.get("createdAt") or int(time.time() * 1000),
+        }
+        count += 1
+    _write_json(FORMULAS_PATH, data)
+    return {"ok": True, "count": count}
+
+
+@app.delete("/api/formulas")
+async def api_delete_formulas_by_session(session_id: str = ""):
+    """按会话删除公式（session_id 为空时删除全部）"""
+    data = _read_json(FORMULAS_PATH, {})
+    if session_id:
+        removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
+        for k in removed:
+            data.pop(k, None)
+    else:
+        removed = list(data.keys())
+        data = {}
+    if removed:
+        _write_json(FORMULAS_PATH, data)
+    return {"ok": True, "count": len(removed)}
+
+
+@app.delete("/api/formulas/{formula_id}")
+async def api_delete_formula(formula_id: str):
+    data = _read_json(FORMULAS_PATH, {})
+    data.pop(formula_id, None)
+    _write_json(FORMULAS_PATH, data)
+    return {"ok": True}
+
+
+# ====== 知识提取 API ======
+EXTRACT_PROMPT = """你是知识提取助手。请从下面这段对话中提取关键知识点（1-5 个），
+只输出 JSON，不要输出任何其他内容或解释：
+{"items": [{"title": "知识点名称", "category": "physics|math|other", "tags": ["标签1", "标签2"], "summary": "一句话摘要", "formulas": ["$F=ma$"]}]}
+要求：
+- title 是具体概念名，如"简谐运动"
+- category 三选一：physics（物理现象/定律）、math（数学结构/定理）、other
+- formulas 中公式用 $...$ 或 $$...$$ 包裹，没有公式则为空数组
+- 不要编造对话中不存在的知识点"""
+
+
+def _parse_extract_json(text: str) -> list:
+    """容错解析模型输出的 JSON"""
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if m:
+        text = m.group(1)
+    else:
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    items = data.get("items", []) if isinstance(data, dict) else []
+    result = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title", "")).strip()
+        title = re.sub(r"^#+\s*", "", title).splitlines()[0].strip() if title else ""
+        if not title:
+            continue
+        category = it.get("category")
+        if category not in ("physics", "math", "other"):
+            category = "other"
+        formulas = []
+        for f in (it.get("formulas") or []):
+            fs = str(f).strip()
+            if fs and _looks_like_formula(fs):
+                formulas.append(fs)
+        result.append({
+            "title": title[:80],
+            "category": category,
+            "tags": [str(t).strip() for t in (it.get("tags") or []) if str(t).strip()][:6],
+            "summary": str(it.get("summary", ""))[:200],
+            "formulas": formulas[:8],
+        })
+    return result[:6]
+
+
+def _local_extract_knowledge(messages: list) -> list:
+    """本地正则兜底提取：从最近的 assistant 消息提取公式与标题"""
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content") or ""
+        if not content.strip():
+            continue
+
+        formulas = []
+        # 优先提取 AI 按规范标注的 <formula>...</formula> 标签（精准公式）
+        tagged = re.findall(r"<formula>([\s\S]*?)</formula>", content, re.I)
+        if tagged:
+            for expr in tagged:
+                normalized = _normalize_formula(expr)
+                if normalized and _looks_like_formula(normalized) and normalized not in formulas:
+                    formulas.append(normalized)
+                if len(formulas) >= 8:
+                    break
+        # 无标注时回退：同时匹配 $$..$$、\(..\)（AI 实际输出格式）、\[..\]、$..$
+        if not formulas:
+            for m in re.finditer(r"\$\$([^$\n]+)\$\$|\\\((.+?)\\\)|\\\[(.+?)\\\]|\$([^$\n]+)\$", content):
+                expr = next((g for g in m.groups() if g), "")
+                normalized = _normalize_formula(expr)
+                # 过滤单字符/纯命令/纯单位等非公式（如 \(m\)、\(\omega\)、\text{rad/s}）
+                if normalized and _looks_like_formula(normalized) and normalized not in formulas:
+                    formulas.append(normalized)
+                if len(formulas) >= 8:
+                    break
+
+        titles = [t.strip() for t in re.findall(r"^#{1,3}\s+(.+?)\s*$", content, re.M) if t.strip()]
+        skip_words = ("物理直觉", "数学本质", "知识图谱", "延伸思考", "学习卡片", "PhyMathia")
+        candidates = [t for t in titles if not any(k in t for k in skip_words)]
+        if candidates:
+            title = candidates[0]
+        elif titles:
+            # 去掉视角后缀，如"简谐运动的物理直觉" → "简谐运动"
+            title = re.sub(r"的?(物理直觉|数学本质|知识图谱|延伸思考)$", "", titles[0]).strip()
+            title = title or (content.strip()[:40] + ("..." if len(content) > 40 else ""))
+        else:
+            title = content.strip()[:40] + ("..." if len(content) > 40 else "")
+
+        c = content[:2000]
+        has_math_kw = any(k in c for k in ("方程", "函数", "导数", "积分", "矩阵", "几何", "代数", "微分", "定理", "证明", "数学"))
+        has_phy_kw = any(k in c for k in ("物理", "力学", "电磁", "光学", "热", "振动", "波", "场", "力", "能量", "实验"))
+        if has_phy_kw and not has_math_kw:
+            category = "physics"
+        elif has_math_kw and not has_phy_kw:
+            category = "math"
+        elif has_phy_kw and has_math_kw:
+            category = "math" if ("数学本质" in c or "数学视角" in c) else "physics"
+        else:
+            category = "other"
+
+        summary = re.sub(r"\s+", " ", content)[:120]
+        return [{
+            "title": title[:80],
+            "category": category,
+            "tags": ["物理" if category == "physics" else "数学" if category == "math" else "其他"],
+            "summary": summary,
+            "formulas": formulas,
+        }]
+    return []
+
+
+async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str) -> list:
+    """调用 AI 模型提取知识点（非流式）"""
+    if not base_url:
+        base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
+    if not base_url:
+        return []
+
+    # 取最近一轮对话（最后一条 user 消息及之后）
+    msgs = [{"role": "system", "content": EXTRACT_PROMPT}]
+    last_user_idx = -1
+    for i, m in enumerate(messages):
+        if m.get("role") == "user":
+            last_user_idx = i
+    if last_user_idx >= 0:
+        recent = messages[last_user_idx:]
+    else:
+        recent = messages[-4:]
+    msgs.extend({"role": m.get("role", "user"), "content": (m.get("content") or "")[:4000]} for m in recent)
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=body, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return _parse_extract_json(content)
+
+
+def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None) -> int:
+    """将提取出的公式自动写入公式库，返回新增数量；descriptions 为 {latex: 简要描述}"""
+    if not items:
+        return 0
+    descriptions = descriptions or {}
+    data = _read_json(FORMULAS_PATH, {})
+    now = int(time.time() * 1000)
+    count = 0
+    for it in items:
+        title = it.get("title", "")
+        summary = it.get("summary", "")
+        tags = it.get("tags", [])
+        for f in (it.get("formulas") or []):
+            latex = _normalize_formula(str(f).strip())
+            # 过滤单字符/纯命令/纯单位（双保险：提取层已过滤，入库层再拦一道）
+            if not latex or not _looks_like_formula(latex):
+                continue
+            if any(v.get("latex") == latex and v.get("sessionId") == session_id for v in data.values()):
+                continue
+            fid = "f_" + uuid.uuid4().hex[:12]
+            # 描述模型生成的简要描述优先，否则回退摘要截断
+            meaning = (descriptions.get(latex) or "").strip() or summary[:200]
+            data[fid] = {
+                "id": fid,
+                "latex": latex,
+                "concept": title[:80],
+                "meaning": meaning[:200],
+                "topic": "",
+                "related": tags[:8],
+                "sessionId": session_id,
+                "createdAt": now,
+            }
+            count += 1
+    if count:
+        _write_json(FORMULAS_PATH, data)
+    return count
+
+
+def _extract_summary(messages: list) -> str:
+    """从最近 assistant 消息提取 <summary> 标签内容（主模型输出的一句话摘要）"""
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        m = re.search(r"<summary>([\s\S]*?)</summary>", msg.get("content") or "", re.I)
+        if m:
+            return m.group(1).strip()[:200]
+    return ""
+
+
+DESCRIBE_PROMPT = """你是公式解说助手。根据下面的对话摘要，为每个公式生成一句简短的中文描述（不超过30字，说明公式的含义或用途）。
+只输出 JSON，不要输出任何其他内容：
+{"descriptions": {"<公式原文>": "描述"}}
+要求：
+- 公式原文作为键，保持原样
+- 描述要具体，例如"胡克定律：弹簧弹力与形变量成正比"
+- 无法确定含义的公式，描述用空字符串
+- 不要编造摘要中不存在的概念"""
+
+
+async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str) -> dict:
+    """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
+    if not formulas or not api_key or not model:
+        return {}
+    if not base_url:
+        base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
+    if not base_url:
+        return {}
+    msgs = [
+        {"role": "system", "content": DESCRIBE_PROMPT},
+        {"role": "user", "content": f"对话摘要：{summary[:300]}\n公式列表：\n" + "\n".join(f"- {f}" for f in formulas)},
+    ]
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        m = re.search(r"\{[\s\S]*\}", content)
+        if not m:
+            return {}
+        parsed = json.loads(m.group(0))
+        descs = parsed.get("descriptions", {}) if isinstance(parsed, dict) else {}
+        result = {}
+        for k, v in descs.items():
+            if isinstance(v, str) and v.strip():
+                result[k.strip()] = v.strip()[:80]
+        return result
+    except Exception as e:
+        logger.warning(f"Describe formulas failed: {e}")
+        return {}
+
+
+@app.post("/api/extract_knowledge")
+async def api_extract_knowledge(request: Request):
+    """从对话中提取知识点（优先 AI，失败或无模型时本地正则兜底），并自动入库公式"""
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    messages = payload.get("messages", [])
+    session_id = payload.get("sessionId", "")
+    provider = payload.get("provider", "")
+    api_key = payload.get("api_key", "")
+    model = payload.get("model", "")
+    base_url = payload.get("base_url", "")
+    # 公式描述模型（前端传入，可选；未配置时回退默认摘要）
+    desc_provider = payload.get("descriptor_provider", "")
+    desc_api_key = payload.get("descriptor_api_key", "")
+    desc_model = payload.get("descriptor_model", "")
+    desc_base_url = payload.get("descriptor_base_url", "")
+
+    items = []
+    if api_key and model:
+        try:
+            items = await _ai_extract_knowledge(messages, provider, api_key, model, base_url)
+            if items:
+                logger.info(f"AI extract: {len(items)} items for session {session_id}")
+        except Exception as e:
+            logger.warning(f"AI extract failed, fallback to local: {e}")
+    if not items:
+        items = _local_extract_knowledge(messages)
+        if items:
+            logger.info(f"Local extract: {len(items)} items for session {session_id}")
+
+    # 摘要双重用途：主模型 <summary> 标签 → 知识条目 summary（替代内容截断）
+    summary_text = _extract_summary(messages)
+    if summary_text:
+        for it in items:
+            it["summary"] = summary_text[:200]
+
+    # 公式描述：配置了描述模型且有公式时，为新增公式生成简要描述
+    descriptions = {}
+    all_formulas = []
+    for it in items:
+        for f in (it.get("formulas") or []):
+            latex = _normalize_formula(str(f).strip())
+            if latex and _looks_like_formula(latex) and latex not in all_formulas:
+                all_formulas.append(latex)
+    if all_formulas and desc_model and desc_api_key:
+        descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url)
+        if descriptions:
+            logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
+
+    added = _add_formulas_from_items(items, session_id, descriptions)
+    if added:
+        logger.info(f"Auto added {added} formulas to library")
+
+    return {"items": items}
 
 
 # ====== 键值存储 API ======

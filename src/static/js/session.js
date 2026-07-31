@@ -97,13 +97,18 @@
         if (knowResp.ok) {
           const kItems = await knowResp.json();
           const localKnowRaw = localStorage.getItem(STORAGE_KEY_KNOWLEDGE);
-          const localKnow = localKnowRaw ? JSON.parse(localKnowRaw) : [];
-          // 知识条目也取更多的一方
-          if (kItems.length >= localKnow.length) {
-            localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(kItems));
-          } else if (localKnow.length > kItems.length) {
-            // 本地更多，上传到服务端
-            try { await _postToServer('/api/knowledge', localKnow); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
+          const localKnow = localKnowRaw ? JSON.parse(localKnowRaw) : {};
+          // 服务端返回 id->item 映射（后端已归一化）；防御性兜底：非对象时视为空
+          const serverMap = (kItems && typeof kItems === 'object' && !Array.isArray(kItems)) ? kItems : {};
+          // 并集合并：服务端优先、本地独有不丢（避免"取更多一方"覆盖本地独有数据）
+          const merged = { ...(localKnow || {}), ...serverMap };
+          const serverCount = Object.keys(serverMap).length;
+          const localCount = Object.keys(localKnow || {}).length;
+          if (serverCount > 0) {
+            localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(merged));
+          } else if (localCount > 0) {
+            // 本地有数据但服务端为空：上传补全服务端
+            try { await _postToServer('/api/knowledge', { items: localKnow }); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
           }
         }
         if (currResp.ok) {
@@ -191,10 +196,29 @@
       }
     }
 
-    // 定期自动同步（每 15 秒）
+    // 定期自动同步（每 15 秒）：推送当前消息 + 全量拉取 + 刷新界面
+    // （根治跨标签页/服务端变化时"要刷新才出现"的问题）
     setInterval(async () => {
-      if (currentSessionId && chatHistory.length > 0) {
-        await _saveMessagesToServer(currentSessionId, chatHistory);
+      try {
+        if (currentSessionId && chatHistory.length > 0) {
+          await _saveMessagesToServer(currentSessionId, chatHistory);
+        }
+        const synced = await _syncFromServer();
+        if (synced) {
+          // 服务端有更新则刷新界面
+          renderSessionList();
+          const panel = document.getElementById('knowledgePanel');
+          if (panel && panel.classList.contains('active')) {
+            if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+            if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+            const activeTab = document.querySelector('.kp-tab.active');
+            if (activeTab && activeTab.dataset.tab === 'formulas' && typeof loadFormulas === 'function') {
+              loadFormulas();
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Storage] Periodic sync failed:', e);
       }
     }, 15000);
 
@@ -318,6 +342,7 @@
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
       await deleteKnowledgeBySession(id);
+      await deleteFormulasBySession(id);
       delete sessions[id];
       saveSessions();
       await _deleteOnServer('/api/sessions/' + id);
@@ -554,6 +579,12 @@
       await initSessionState();
     }
 
+    // 暴露给其他模块（如知识面板打开时即时拉取最新数据）
+    window.syncFromServer = _syncFromServer;
+    // 暴露给知识面板（公式定位会话）：切换会话 + 查询会话信息
+    window.switchToSession = switchToSession;
+    window.getSessionById = (id) => sessions[id] || null;
+
     async function initSessionState() {
       const savedCurrent = getCurrentSessionId();
       const sessionKeys = Object.keys(sessions);
@@ -684,6 +715,7 @@
         await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE' });
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
       await deleteKnowledgeBySession(currentSessionId);
+      await deleteFormulasBySession(currentSessionId);
       if (sessions[currentSessionId]) {
         sessions[currentSessionId].title = '新对话';
         sessions[currentSessionId].updatedAt = Date.now();

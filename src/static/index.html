@@ -4,6 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>PhyMathia — 物理数学双域解释与可视化</title>
+  <script>
+    // 预置主题（在样式加载前执行，消灭首屏闪烁）
+    // 首次访问（localStorage 无值）跟随系统偏好；手动切换后以手动选择为准
+    (function() {
+      try {
+        var t = localStorage.getItem('phymathia_theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -127,28 +142,38 @@
       <h2>知识总览</h2>
       <button class="kp-close" onclick="closeKnowledgePanel()">&times;</button>
     </div>
-    <div class="kp-stats" id="kpStats">
-      <div class="kp-stat-card"><div class="kp-stat-num" id="kpTotal">0</div><div class="kp-stat-label">累计条目</div></div>
-      <div class="kp-stat-card"><div class="kp-stat-num" id="kpPhysics">0</div><div class="kp-stat-label">物理概念</div></div>
-      <div class="kp-stat-card"><div class="kp-stat-num" id="kpMath">0</div><div class="kp-stat-label">数学概念</div></div>
-      <div class="kp-stat-card"><div class="kp-stat-num" id="kpThisWeek">0</div><div class="kp-stat-label">本周新增</div></div>
+    <div class="kp-tabs">
+      <button class="kp-tab active" data-tab="knowledge" onclick="switchKpTab('knowledge')">📚 知识点</button>
+      <button class="kp-tab" data-tab="formulas" onclick="switchKpTab('formulas')">📋 公式速查</button>
     </div>
-    <div class="kp-filters">
-      <div class="kp-filter-group">
-        <button class="kp-filter-btn active" data-filter="category" data-value="all" onclick="setKpFilter(this)">全部</button>
-        <button class="kp-filter-btn" data-filter="category" data-value="physics" onclick="setKpFilter(this)">物理</button>
-        <button class="kp-filter-btn" data-filter="category" data-value="math" onclick="setKpFilter(this)">数学</button>
-        <button class="kp-filter-btn" data-filter="category" data-value="other" onclick="setKpFilter(this)">其他</button>
+    <div id="kpKnowledgeView">
+      <div class="kp-stats" id="kpStats">
+        <div class="kp-stat-card"><div class="kp-stat-num" id="kpTotal">0</div><div class="kp-stat-label">累计条目</div></div>
+        <div class="kp-stat-card"><div class="kp-stat-num" id="kpPhysics">0</div><div class="kp-stat-label">物理概念</div></div>
+        <div class="kp-stat-card"><div class="kp-stat-num" id="kpMath">0</div><div class="kp-stat-label">数学概念</div></div>
+        <div class="kp-stat-card"><div class="kp-stat-num" id="kpThisWeek">0</div><div class="kp-stat-label">本周新增</div></div>
       </div>
-      <div class="kp-filter-group">
-        <button class="kp-filter-btn active" data-filter="source" data-value="all" onclick="setKpFilter(this)">全部来源</button>
-        <button class="kp-filter-btn" data-filter="source" data-value="ai_extract" onclick="setKpFilter(this)">AI提取</button>
-        <button class="kp-filter-btn" data-filter="source" data-value="manual" onclick="setKpFilter(this)">收藏</button>
+      <div class="kp-filters">
+        <div class="kp-filter-group">
+          <button class="kp-filter-btn active" data-filter="category" data-value="all" onclick="setKpFilter(this)">全部</button>
+          <button class="kp-filter-btn" data-filter="category" data-value="physics" onclick="setKpFilter(this)">物理</button>
+          <button class="kp-filter-btn" data-filter="category" data-value="math" onclick="setKpFilter(this)">数学</button>
+          <button class="kp-filter-btn" data-filter="category" data-value="other" onclick="setKpFilter(this)">其他</button>
+        </div>
+        <div class="kp-filter-group">
+          <button class="kp-filter-btn active" data-filter="source" data-value="all" onclick="setKpFilter(this)">全部来源</button>
+          <button class="kp-filter-btn" data-filter="source" data-value="ai_extract" onclick="setKpFilter(this)">AI提取</button>
+          <button class="kp-filter-btn" data-filter="source" data-value="manual" onclick="setKpFilter(this)">收藏</button>
+        </div>
+        <input class="kp-search" type="text" placeholder="搜索知识..." oninput="filterKnowledge()" id="kpSearch">
       </div>
-      <input class="kp-search" type="text" placeholder="搜索知识..." oninput="filterKnowledge()" id="kpSearch">
+      <div class="kp-extracting" id="kpExtracting"><div class="kp-spinner"></div><span>AI 正在提取知识...</span></div>
+      <div class="kp-timeline" id="kpTimeline"></div>
     </div>
-    <div class="kp-extracting" id="kpExtracting"><div class="kp-spinner"></div><span>AI 正在提取知识...</span></div>
-    <div class="kp-timeline" id="kpTimeline"></div>
+    <div id="kpFormulasView" style="display:none">
+      <input class="kp-search" type="text" placeholder="搜索公式（概念/含义/主题/关联概念）..." oninput="filterFormulas()" id="kpFormulaSearch">
+      <div class="kp-formula-list" id="kpFormulaList"></div>
+    </div>
   </div>
 
   <div class="bookmark-modal-overlay" id="bookmarkModal">
@@ -206,6 +231,14 @@
       </select>
       <div class="model-desc" id="htmlModelDesc">使用本地 Mock 回答进行测试</div>
       <div class="model-tags" id="htmlModelTags"><span class="model-tag">🔄 Mock</span></div>
+    </div>
+    <div class="model-section">
+      <div class="model-section-title">公式描述模型</div>
+      <select class="model-select" id="descriptorModelSelect" onchange="onModelChange('descriptor')">
+        <option value="">— 不启用（回退默认摘要）—</option>
+      </select>
+      <div class="model-desc" id="descriptorModelDesc">为公式速查库中的公式生成简要描述</div>
+      <div class="model-tags" id="descriptorModelTags"><span class="model-tag">💡 可选</span></div>
     </div>
     <div class="model-section model-section-mgmt">
       <div class="model-section-title">管理自定义模型</div>

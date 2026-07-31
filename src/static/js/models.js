@@ -7,7 +7,7 @@ const MODEL_PRESETS = {
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
 
 let userModelConfigs = [];
-let activeModels = { agent_model: '', html_model: '' };
+let activeModels = { agent_model: '', html_model: '', descriptor_model: '' };
 
 function loadUserModels() {
   try {
@@ -40,6 +40,7 @@ function deleteUserModel(id) {
   userModelConfigs = userModelConfigs.filter(m => m.id !== id);
   if (activeModels.agent_model === id) activeModels.agent_model = '';
   if (activeModels.html_model === id) activeModels.html_model = '';
+  if (activeModels.descriptor_model === id) activeModels.descriptor_model = '';
   saveUserModels();
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
@@ -58,7 +59,7 @@ function getModelById(id) {
 }
 
 function getActiveModelForRole(role) {
-  const key = role === 'agent' ? 'agent_model' : 'html_model';
+  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : 'descriptor_model';
   const id = activeModels[key];
   if (!id) return null;
   return getModelById(id);
@@ -74,25 +75,33 @@ function renderModelSelects() {
   const allModels = getAllModels();
   const agentSelect = document.getElementById('agentModelSelect');
   const htmlSelect = document.getElementById('htmlModelSelect');
+  const descriptorSelect = document.getElementById('descriptorModelSelect');
   if (!agentSelect || !htmlSelect) return;
 
   const emptyOpt = '<option value="">— 使用本地 Mock —</option>';
+  const descriptorEmptyOpt = '<option value="">— 不启用（回退默认摘要）—</option>';
   const opts = allModels.map(m =>
     `<option value="${m.id}">${m.name}</option>`
   ).join('');
 
   agentSelect.innerHTML = emptyOpt + opts;
   htmlSelect.innerHTML = emptyOpt + opts;
+  if (descriptorSelect) descriptorSelect.innerHTML = descriptorEmptyOpt + opts;
   agentSelect.value = activeModels.agent_model || '';
   htmlSelect.value = activeModels.html_model || '';
+  if (descriptorSelect) descriptorSelect.value = activeModels.descriptor_model || '';
   updateModelMeta('agent');
   updateModelMeta('html');
+  updateModelMeta('descriptor');
 }
 
 function updateModelMeta(type) {
-  const select = document.getElementById(type === 'agent' ? 'agentModelSelect' : 'htmlModelSelect');
-  const descEl = document.getElementById(type === 'agent' ? 'agentModelDesc' : 'htmlModelDesc');
-  const tagsEl = document.getElementById(type === 'agent' ? 'agentModelTags' : 'htmlModelTags');
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect' };
+  const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc' };
+  const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags' };
+  const select = document.getElementById(selectMap[type]);
+  const descEl = document.getElementById(descMap[type]);
+  const tagsEl = document.getElementById(tagsMap[type]);
   if (!select || !descEl || !tagsEl) return;
   const model = getModelById(select.value);
   if (model) {
@@ -106,10 +115,12 @@ function updateModelMeta(type) {
 }
 
 async function onModelChange(type) {
-  const select = document.getElementById(type === 'agent' ? 'agentModelSelect' : 'htmlModelSelect');
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect' };
+  const select = document.getElementById(selectMap[type]);
   updateModelMeta(type);
   if (type === 'agent') activeModels.agent_model = select.value;
-  else activeModels.html_model = select.value;
+  else if (type === 'html') activeModels.html_model = select.value;
+  else activeModels.descriptor_model = select.value;
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
 
