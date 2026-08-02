@@ -2,7 +2,7 @@
 let currentLevel = localStorage.getItem(STORAGE_KEY_LEVEL) || 'university';
 
 function updateLevelUI() {
-  document.getElementById('levelBtn').textContent = LEVEL_LABELS[currentLevel];
+  document.getElementById('levelBtn').innerHTML = LEVEL_ICON_SVG[currentLevel] + ' ' + LEVEL_LABELS[currentLevel];
   document.querySelectorAll('.level-option').forEach(el => {
     el.classList.toggle('active', el.dataset.level === currentLevel);
   });
@@ -13,7 +13,19 @@ function setLevel(level) {
   updateLevelUI();
   toggleLevelPanel();
 }
-function toggleLevelPanel() { document.getElementById('levelPanel').classList.toggle('show'); }
+function toggleLevelPanel(e) {
+  e?.stopPropagation();
+  const panel = document.getElementById('levelPanel');
+  const willShow = !panel.classList.contains('show');
+  panel.classList.toggle('show');
+  if (willShow) {
+    document.getElementById('modelPanel').classList.remove('show');
+    document.getElementById('dataPanel').classList.remove('show');
+    void panel.offsetHeight;
+    const trigger = e?.currentTarget || document.getElementById('levelBtn');
+    _positionPanel('levelPanel', trigger);
+  }
+}
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('levelPanel');
   const btn = document.getElementById('levelBtn');
@@ -577,23 +589,23 @@ const _obSteps = [
     icon: '<img src="/logo.png" style="width:48px;height:48px;border-radius:12px;" />',
     title: '欢迎来到 PhyMathia',
     features: [
-      { icon: '🔬', text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
-      { icon: '🎨', text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
-      { icon: '📐', text: '<strong>公式渲染</strong> — LaTeX 公式实时渲染，支持知识图谱' },
-      { icon: '🧠', text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
+      { icon: UI_ICON_SVG.formula, text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
+      { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
+      { icon: UI_ICON_SVG.formula, text: '<strong>公式渲染</strong> — LaTeX 公式实时渲染，支持知识图谱' },
+      { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
     ]
   },
   {
     type: 'spotlight',
     target: '#userInput',
-    icon: '✍️',
+    icon: UI_ICON_SVG.pencil,
     title: '输入你的问题',
     desc: '在输入框中输入任何<strong>物理或数学</strong>问题，也可以点击快捷按钮直接开始。支持<strong>长按语音输入</strong>和<strong>Enter 发送</strong>。'
   },
   {
     type: 'spotlight',
     get target() { return _isMobile() ? '.header-secondary-bar' : '.header-actions'; },
-    icon: '⚙️',
+    icon: UI_ICON_SVG.sliders,
     title: '个性化设置',
     get desc() {
       return _isMobile()
@@ -604,7 +616,7 @@ const _obSteps = [
   {
     type: 'click',
     target: '.menu-btn',
-    icon: '👆',
+    icon: UI_ICON_SVG.book,
     title: '试试点击菜单按钮',
     desc: '点击左上角的菜单按钮，打开侧边栏管理<strong>多个对话</strong>，随时切换不同话题。',
     onClick() { document.getElementById('sidebar').classList.add('open'); }
@@ -612,10 +624,10 @@ const _obSteps = [
   {
     type: 'spotlight',
     get target() { return _isMobile() ? '.sidebar-sessions' : '.session-item'; },
-    icon: '✏️',
+    icon: UI_ICON_SVG.pencil,
     title: '个性化对话',
     get desc() {
-      return '点击对话图标可以<strong>切换图标</strong>（📐⚛️🧲等），点击 ✏️ 按钮可以<strong>重命名对话</strong>，让你的对话列表更清晰有序。';
+      return '点击对话图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名对话</strong>，让你的对话列表更清晰有序。';
     },
     beforeShow() { document.getElementById('sidebar').classList.add('open'); }
   }
@@ -670,7 +682,7 @@ function _renderObStep() {
           </div>
           <div class="onboarding-actions">
             <button class="ob-btn ob-btn-skip" onclick="endOnboarding()">跳过</button>
-            <button class="ob-btn ob-btn-next" onclick="nextObStep()">开始了解 →</button>
+            <button class="ob-btn ob-btn-next" onclick="nextObStep()">开始了解 ${UI_ICON_SVG.arrowRight}</button>
           </div>
         </div>
       `;
@@ -725,10 +737,10 @@ function _renderObStep() {
           <div class="onboarding-actions">
             <button class="ob-btn ob-btn-skip" onclick="endOnboarding()">跳过</button>
             ${isLast
-              ? '<button class="ob-btn ob-btn-finish" onclick="endOnboarding()">开始使用 ✨</button>'
+              ? '<button class="ob-btn ob-btn-finish" onclick="endOnboarding()">开始使用 ' + UI_ICON_SVG.sparkles + '</button>'
               : step.type === 'click'
-                ? '<span class="ob-hint" style="color:var(--text-secondary);font-size:12px;">👆 点击高亮区域继续</span>'
-                : '<button class="ob-btn ob-btn-next" onclick="nextObStep()">下一步 →</button>'
+                ? '<span class="ob-hint">' + UI_ICON_SVG.pointer + ' 点击高亮区域继续</span>'
+                : '<button class="ob-btn ob-btn-next" onclick="nextObStep()">下一步 ' + UI_ICON_SVG.arrowRight + '</button>'
             }
           </div>
         </div>
@@ -867,7 +879,7 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem(STORAGE_KEY_THEME, theme);
   const btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+  if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
   updateBgImage();
   // 同步所有可视化 iframe 的主题（含全屏）
   if (typeof syncVizThemes === 'function') syncVizThemes(theme);
@@ -880,7 +892,7 @@ function applyTheme(theme) {
       mermaid.initialize({
         startOnLoad: false,
         theme: 'base',
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         themeVariables: isDark ? {
           primaryColor: '#0c2d3e', primaryTextColor: '#a5f3fc',
           primaryBorderColor: '#0891b2', lineColor: '#22d3ee',

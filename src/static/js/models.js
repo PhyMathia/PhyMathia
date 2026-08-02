@@ -107,7 +107,7 @@ function updateModelMeta(type) {
   if (model) {
     const preset = MODEL_PRESETS[model.provider];
     descEl.textContent = (preset?.name || model.provider) + ' · ' + model.model;
-    tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? '✅ 已配置密钥' : '🔑 密钥可留空'}</span>`;
+      tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else {
     descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
     tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">🔄 Mock</span>';
@@ -143,11 +143,11 @@ function renderModelList() {
     return `<div class="model-item">
       <div class="model-item-info">
         <div class="model-item-name">${preset?.name || m.provider} · ${m.model}</div>
-        <div class="model-item-key">${m.apiKey ? '✅ 密钥已配置' : '🔑 密钥可留空（后端环境变量）'}</div>
+        <div class="model-item-key">${m.apiKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
       </div>
       <div class="model-item-actions">
-        <button class="model-item-btn" onclick="openModelConfig('${m.id}')" title="配置">⚙️</button>
-        <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${m.id}')" title="删除">🗑️</button>
+        <button class="model-item-btn" onclick="openModelConfig('${m.id}')" title="配置">${UI_ICON_SVG.sliders}</button>
+        <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${m.id}')" title="删除">${UI_ICON_SVG.trash}</button>
       </div>
     </div>`;
   }).join('');
@@ -237,21 +237,17 @@ function saveNewModel() {
   renderModelSelects();
 }
 
-async function proxyChat(prompt, level, sessionId, stream = true) {
-  const agentModel = getActiveModelForRole('agent');
-  if (!agentModel) return null;
+async function proxyChatWithModel(model, body, signal) {
   const resp = await fetch('/api/models/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal,
     body: JSON.stringify({
-      provider: agentModel.provider,
-      api_key: agentModel.apiKey,
-      model: agentModel.model,
-      base_url: agentModel.baseUrl,
-      prompt,
-      level,
-      session_id: sessionId,
-      stream,
+      provider: model.provider,
+      api_key: model.apiKey,
+      model: model.model,
+      base_url: model.baseUrl,
+      ...body,
     }),
   });
   if (!resp.ok) {
@@ -259,6 +255,17 @@ async function proxyChat(prompt, level, sessionId, stream = true) {
     throw new Error(`API ${resp.status}: ${errText.substring(0, 200)}`);
   }
   return resp;
+}
+
+async function proxyChat(prompt, level, sessionId, stream = true, signal) {
+  const agentModel = getActiveModelForRole('agent');
+  if (!agentModel) return null;
+  return proxyChatWithModel(agentModel, {
+    prompt,
+    level,
+    session_id: sessionId,
+    stream,
+  }, signal);
 }
 
 loadUserModels();

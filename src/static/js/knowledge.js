@@ -61,14 +61,15 @@ async function saveKnowledgeItems(items) {
 // 链路最短最可靠——打开面板后几百毫秒内即为服务端最新数据。
 async function _quickRefreshKnowledge() {
   try {
+    const fetchPromise = Promise.all([
+      fetch('/api/knowledge', { cache: 'no-cache' }),
+      fetch('/api/formulas', { cache: 'no-cache' }),
+    ]);
     await Promise.all([
       kpKnowledgeSaveQueue.catch(() => false),
       kpFormulaSaveQueue.catch(() => false),
     ]);
-    const [knowResp, formulaResp] = await Promise.all([
-      fetch('/api/knowledge', { cache: 'no-cache' }),
-      fetch('/api/formulas', { cache: 'no-cache' }),
-    ]);
+    const [knowResp, formulaResp] = await fetchPromise;
     if (knowResp.ok) {
       const serverMap = await knowResp.json();
       if (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) {
@@ -118,13 +119,11 @@ async function deleteKnowledgeBySession(sessionId) {
 // Toggle panel
 function toggleKnowledgePanel() {
   const panel = document.getElementById('knowledgePanel');
-  const overlay = document.getElementById('knowledgeOverlay');
   const isOpen = panel.classList.contains('active');
   if (isOpen) {
     closeKnowledgePanel();
   } else {
     panel.classList.add('active');
-    overlay.classList.add('active');
     // 清缓存强制重读 localStorage（内存缓存可能持有旧数据/空对象）
     invalidateKnowledgeCache();
     renderKnowledgePanel();
@@ -142,7 +141,6 @@ function toggleKnowledgePanel() {
 
 function closeKnowledgePanel() {
   document.getElementById('knowledgePanel').classList.remove('active');
-  document.getElementById('knowledgeOverlay').classList.remove('active');
 }
 
 // Filter
@@ -216,7 +214,7 @@ function renderKnowledgePanel() {
 
   const timeline = document.getElementById('kpTimeline');
   if (filtered.length === 0) {
-    timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">📚</div><div class="kp-empty-text">${search ? '没有找到匹配的知识条目' : '还没有知识条目，开始对话或收藏回复吧'}</div></div>`;
+      timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.book}</div><div class="kp-empty-text">${search ? '没有找到匹配的知识条目' : '还没有知识条目，开始对话或收藏回复吧'}</div></div>`;
     return;
   }
 
@@ -326,6 +324,13 @@ function _normalizeFormulaLatex(latex) {
   return s ? '$' + s + '$' : '';
 }
 
+function _formulaKey(latex) {
+  return _stripFormulaDelimiters(_normalizeFormulaLatex(latex))
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([=,;:+\-*/])\s*/g, '$1')
+    .trim();
+}
+
 function getFormulaCache() {
   if (kpFormulaCache) return kpFormulaCache;
   try {
@@ -333,6 +338,8 @@ function getFormulaCache() {
     kpFormulaCache = raw ? JSON.parse(raw) : {};
     // 清洗旧坏缓存（含 \= 等异常转义的历史脏数据）
     let dirty = false;
+    const seen = new Set();
+    const duplicateIds = [];
     for (const id in kpFormulaCache) {
       const it = kpFormulaCache[id];
       if (it && typeof it.latex === 'string') {
@@ -341,7 +348,17 @@ function getFormulaCache() {
           it.latex = normalized;
           dirty = true;
         }
+        const key = _formulaKey(it.latex) + '|' + (it.sessionId || '');
+        if (seen.has(key)) {
+          duplicateIds.push(id);
+        } else {
+          seen.add(key);
+        }
       }
+    }
+    if (duplicateIds.length) {
+      for (const id of duplicateIds) delete kpFormulaCache[id];
+      dirty = true;
     }
     if (dirty) setFormulaCache(kpFormulaCache);
   } catch { kpFormulaCache = {}; }
@@ -380,11 +397,24 @@ async function saveFormulasToServer(formulas) {
     const latex = _normalizeFormulaLatex(item.latex);
     const normalized = _stripFormulaDelimiters(latex);
     if (!_looksLikeFormula(normalized)) continue;
+    const key = _formulaKey(latex);
     const existing = Object.values(cache).find(it =>
       it.sessionId === (item.sessionId || '') &&
-      _stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)) === normalized
+      _formulaKey(it.latex) === key
     );
-    if (existing) continue;
+    if (existing) {
+      let merged = false;
+      if (item.concept && (!existing.concept || /(相关公式|物理视角|数学视角)/.test(existing.concept))) {
+        existing.concept = item.concept;
+        merged = true;
+      }
+      if (item.meaning && existing.meaning !== item.meaning) {
+        existing.meaning = item.meaning;
+        merged = true;
+      }
+      if (merged) changed = true;
+      continue;
+    }
 
     const id = item.id || ('f_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12));
     const saved = {
@@ -401,8 +431,8 @@ async function saveFormulasToServer(formulas) {
     pending.push(saved);
     changed = true;
   }
-  if (!pending.length) return;
   if (changed) setFormulaCache(cache);
+  if (!pending.length) return;
 
   const snapshot = pending.map(item => ({ ...item }));
   kpFormulaSaveQueue = kpFormulaSaveQueue
@@ -454,6 +484,25 @@ async function loadFormulas() {
 
 function filterFormulas() { renderFormulaList(); }
 
+function _cleanFormulaConcept(item) {
+  const raw = String(item.concept || '')
+    .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
+    .trim();
+  const moduleHeading = /(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|PhyMathia|学习卡片)/;
+  if (!raw || moduleHeading.test(raw)) {
+    const meaning = String(item.meaning || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const colonMatch = meaning.match(/^([^：，。；、]{2,24})[：:]/);
+    if (colonMatch && !moduleHeading.test(colonMatch[1])) return colonMatch[1].trim();
+    const match = meaning.match(/^([^，。；、]{2,24})是/);
+    if (match && !moduleHeading.test(match[1])) return match[1].trim();
+    return '相关公式';
+  }
+  return raw.replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/, '').trim();
+}
+
 function renderFormulaList() {
   const listEl = document.getElementById('kpFormulaList');
   const items = Object.values(getFormulaCache());
@@ -471,7 +520,7 @@ function renderFormulaList() {
   filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   if (filtered.length === 0) {
-    listEl.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">📋</div><div class="kp-empty-text">${search ? '没有找到匹配的公式' : '还没有公式，对话回答会自动收集公式，收藏回复时也可手动填写'}</div></div>`;
+      listEl.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.formula}</div><div class="kp-empty-text">${search ? '没有找到匹配的公式' : '还没有公式，对话回答会自动收集公式，收藏回复时也可手动填写'}</div></div>`;
     return;
   }
 
@@ -489,8 +538,27 @@ function renderFormulaList() {
     } catch (e) {
       continue;
     }
-    const relatedHtml = (it.related || []).map(t => `<span class="kp-tag">${escapeHtml(String(t))}</span>`).join('');
+    let relatedTags = (it.related || []).map(t => String(t).trim()).filter(Boolean);
+    const rawConcept = String(it.concept || '');
+    if (/物理视角|物理直觉/.test(rawConcept)) {
+      relatedTags = relatedTags.filter(t => t !== '数学');
+      if (!relatedTags.includes('物理')) relatedTags.unshift('物理');
+    } else if (/数学视角|数学本质/.test(rawConcept)) {
+      relatedTags = relatedTags.filter(t => t !== '物理');
+      if (!relatedTags.includes('数学')) relatedTags.unshift('数学');
+    }
+    const relatedHtml = relatedTags.map(t => {
+      const tag = t;
+      const tagClass = tag === '物理' ? 'kp-tag kp-tag-physics' : tag === '数学' ? 'kp-tag kp-tag-math' : 'kp-tag';
+      return `<span class="${tagClass}">${escapeHtml(tag)}</span>`;
+    }).join('');
     const timeStr = it.createdAt ? new Date(it.createdAt).toLocaleDateString('zh-CN') : '';
+    const concept = _cleanFormulaConcept(it);
+    const meaning = String(it.meaning || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const meaningHtml = meaning ? escapeHtml(meaning.length > 180 ? meaning.slice(0, 180) + '...' : meaning) : '';
     // 来源会话：存在则显示可点击定位（跳转到产生该公式的对话）
     const srcSession = it.sessionId && typeof window.getSessionById === 'function' ? window.getSessionById(it.sessionId) : null;
     const srcHtml = srcSession
@@ -500,10 +568,10 @@ function renderFormulaList() {
       <div class="kp-formula-card">
         <div class="kp-formula-latex">${latexHtml}</div>
         <div class="kp-formula-info">
-          <div class="kp-formula-concept">${escapeHtml(it.concept || '')}</div>
+          <div class="kp-formula-concept">${escapeHtml(concept)}</div>
           ${srcHtml}
           <div class="kp-formula-meta">${escapeHtml(it.topic || '')}${it.topic ? ' · ' : ''}${timeStr}</div>
-          ${it.meaning ? `<div class="kp-formula-meaning">${escapeHtml(it.meaning)}</div>` : ''}
+          ${meaningHtml ? `<div class="kp-formula-meaning">${meaningHtml}</div>` : ''}
           ${relatedHtml ? `<div class="kp-card-tags">${relatedHtml}</div>` : ''}
         </div>
         <button class="kp-action-btn kp-btn-danger" onclick="confirmDeleteFormula('${it.id}')">删除</button>

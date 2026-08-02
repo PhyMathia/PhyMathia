@@ -18,11 +18,40 @@ function _decodeHTMLEntities(str) {
   return ta.value;
 }
 
+function _sanitizeMarkdownHtml(html) {
+  const protectPlaceholders = (marker, attr) => {
+    const re = new RegExp(`<!--${marker}_(\\d+)-->`, 'g');
+    html = html.replace(re, `<span data-phymathia-${attr}="$1"></span>`);
+  };
+  protectPlaceholders('MATH_PLACEHOLDER', 'math');
+  protectPlaceholders('MERMAID_PLACEHOLDER', 'mermaid');
+
+  if (window.DOMPurify) {
+    html = DOMPurify.sanitize(html, {
+      ADD_ATTR: ['target', 'data-phymathia-math', 'data-phymathia-mermaid'],
+    });
+  } else {
+    html = html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, '')
+      .replace(/<embed\b[^>]*>/gi, '')
+      .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '$1="#"');
+  }
+
+  html = html.replace(/<span data-phymathia-math="(\d+)"><\/span>/g, '<!--MATH_PLACEHOLDER_$1-->');
+  html = html.replace(/<span data-phymathia-mermaid="(\d+)"><\/span>/g, '<!--MERMAID_PLACEHOLDER_$1-->');
+  return html;
+}
+
 function _sanitizeVizHtml(html) {
   // 移除对 parent/top/window.open 的危险引用，保留正常脚本
   return html
     .replace(/\bparent\s*\./g, '/* removed */.')
     .replace(/\btop\s*\./g, '/* removed */.')
+    .replace(/\bwindow\[["']parent["']\]/g, '/* removed */')
+    .replace(/\bwindow\[["']top["']\]/g, '/* removed */')
     .replace(/\bwindow\.open\s*\(/g, '/* removed */(')
     .replace(/\bwindow\.close\s*\(/g, '/* removed */(');
 }
@@ -48,12 +77,12 @@ function buildVizCard(htmlContent, vizId) {
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
-    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz()" title="没看懂，请求解释">❓ 没看懂</button>'
-    + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">⛶ 全屏</button>'
-    + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">📋 复制</button>'
-    + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">↗ 新窗口</button>'
+    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz()" title="没看懂，请求解释">' + UI_ICON_SVG.question + ' 没看懂</button>'
+    + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + ' 全屏</button>'
+    + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + ' 复制</button>'
+    + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + ' 新窗口</button>'
     + '</div></div>'
-    + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts allow-same-origin" data-viz-id="' + vizId + '" loading="lazy"></iframe>'
+    + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts" data-viz-id="' + vizId + '" loading="lazy"></iframe>'
     + '</div>';
 }
 
@@ -193,7 +222,7 @@ function renderMarkdown(text) {
     .replace(/\\\[[\s\S]+?\\\]/g, extractMath)        // display: \[..\]
     .replace(/\$[^$\n]+?\$/g, extractMath)            // inline: $..$（不跨行，避免贪婪误匹配）
     .replace(/\\\([\s\S]+?\\\)/g, extractMath);       // inline: \(..\)
-  let html = marked.parse(processed);
+  let html = _sanitizeMarkdownHtml(marked.parse(processed));
   // 还原公式占位符（HTML 转义防 < > & 被当作标签；KaTeX auto-render 在文本节点中识别）
   // 同时匹配 marked 转义后的形式（&lt;!--...--&gt;），覆盖代码块内的占位符
   html = html.replace(/&lt;!--MATH_PLACEHOLDER_(\d+)--&gt;|<!--MATH_PLACEHOLDER_(\d+)-->/g, (match, escapedIdx, rawIdx) => {
@@ -263,10 +292,10 @@ function parseXmlSections(content) {
 
 function renderModuleSections(container, sections) {
   var config = [
-    { key: 'physics', icon: '\uD83D\uDD2C', label: '\u7269\u7406\u89C6\u89D2', colorClass: 'physics-section', collapsible: true },
-    { key: 'math', icon: '\uD83D\uDCD0', label: '\u6570\u5B66\u89C6\u89D2', colorClass: 'math-section', collapsible: true },
-    { key: 'graph', icon: '\uD83E\uDDE0', label: '\u77E5\u8BC6\u56FE\u8C31', colorClass: 'graph-section', collapsible: true },
-    { key: 'extend', icon: '\uD83D\uDCA1', label: '\u5EF6\u4F38\u601D\u8003', colorClass: 'extend-section', collapsible: true },
+    { key: 'physics', icon: (ICON_OPTIONS.find(o => o.id === 'mechanics') || {}).svg, label: '物理视角', colorClass: 'physics-section', collapsible: true },
+    { key: 'math', icon: (ICON_OPTIONS.find(o => o.id === 'function') || {}).svg, label: '数学视角', colorClass: 'math-section', collapsible: true },
+    { key: 'graph', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg, label: '知识图谱', colorClass: 'graph-section', collapsible: true },
+    { key: 'extend', icon: UI_ICON_SVG.lightbulb, label: '延伸思考', colorClass: 'extend-section', collapsible: true },
   ];
   var html = '';
   for (var i = 0; i < config.length; i++) {
@@ -294,10 +323,10 @@ function wrapDualDomainSections(element) {
   
   // 定义四个可识别的域标题：物理视角、数学视角为可折叠区域；知识图谱、延伸思考为独立区块
   const domainDefs = [
-    { key: 'physics', icon: '🔬', label: '物理视角', colorClass: 'physics-section', regex: /<h[1-6][^>]*>[^<]*(?:🔭|🔬)[^<]*(?:物理直觉|物理视角)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'math', icon: '📐', label: '数学视角', colorClass: 'math-section', regex: /<h[1-6][^>]*>[^<]*(?:🧮|📐)[^<]*(?:数学本质|数学视角)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'graph', icon: '🧠', label: '知识图谱', colorClass: 'graph-section', regex: /<h[1-6][^>]*>[^<]*(?:🧠|🗺️|知识图谱)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'extend', icon: '💡', label: '延伸思考', colorClass: 'extend-section', regex: /<h[1-6][^>]*>[^<]*(?:💡|延伸思考)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'physics', icon: (ICON_OPTIONS.find(o => o.id === 'mechanics') || {}).svg, label: '物理视角', colorClass: 'physics-section', regex: /<h[1-6][^>]*>[^<]*(?:🔭|🔬)[^<]*(?:物理直觉|物理视角)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'math', icon: (ICON_OPTIONS.find(o => o.id === 'function') || {}).svg, label: '数学视角', colorClass: 'math-section', regex: /<h[1-6][^>]*>[^<]*(?:🧮|📐)[^<]*(?:数学本质|数学视角)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'graph', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg, label: '知识图谱', colorClass: 'graph-section', regex: /<h[1-6][^>]*>[^<]*(?:🧠|🗺️|知识图谱)[^<]*<\/h[1-6]>/i, collapsible: true },
+    { key: 'extend', icon: UI_ICON_SVG.lightbulb, label: '延伸思考', colorClass: 'extend-section', regex: /<h[1-6][^>]*>[^<]*(?:💡|延伸思考)[^<]*<\/h[1-6]>/i, collapsible: true },
   ];
   
   // 找到所有匹配的标题位置
@@ -334,7 +363,7 @@ function wrapDualDomainSections(element) {
       <div class="dual-domain-header" onclick="toggleDualDomain('${sid}')">
         <span class="header-left"><span class="section-icon">${sec.icon}</span> ${sec.label}</span>
         <span class="header-right">
-          ${sec.collapsible && (sec.key === 'physics' || sec.key === 'math') ? `<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain('${sec.key}')">追问</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain('${sec.key}')">❓ 没看懂</button>` : ''}
+      ${sec.collapsible && (sec.key === 'physics' || sec.key === 'math') ? `<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain('${sec.key}')">追问</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain('${sec.key}')">${UI_ICON_SVG.question} 没看懂</button>` : ''}
           <span class="dual-domain-chevron">▼</span>
         </span>
       </div>

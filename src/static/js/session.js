@@ -25,6 +25,12 @@
     // 页面加载时从服务端同步数据到 localStorage（合并策略：取消息更多的一方）
     async function _syncFromServer() {
       if (!(await _checkServer())) return false;
+      if (typeof window.waitForKnowledgeSave === 'function') {
+        await window.waitForKnowledgeSave();
+      }
+      if (typeof window.waitForFormulaSave === 'function') {
+        await window.waitForFormulaSave();
+      }
       try {
         const [sessResp, knowResp, currResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache' }),
@@ -346,6 +352,9 @@
       delete sessions[id];
       saveSessions();
       await _deleteOnServer('/api/sessions/' + id);
+      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+      if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+      if (typeof loadFormulas === 'function') loadFormulas();
 
       if (currentSessionId === id) {
         // 删除的是当前会话，切换到最近的或新建
@@ -378,12 +387,12 @@
               <button class="quick-btn" onclick="sendQuick('请解释热力学第二定律的物理意义和数学表述')">热力学第二定律</button>
             </div>
             <div style="margin-top:20px;font-size:11px;color:var(--tip-color);display:flex;align-items:center;justify-content:center;gap:6px;">
-              <span>💻</span> 推荐使用电脑端访问，获得最佳交互式可视化体验
+              ${UI_ICON_SVG.monitor} 推荐使用电脑端访问，获得最佳交互式可视化体验
             </div>
           </div>`;
       } else {
         for (const msg of chatHistory) {
-          restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration);
+          restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration, msg.aborted);
         }
         // 渲染 Mermaid（串行执行避免并发冲突）
         setTimeout(async () => {
@@ -394,6 +403,12 @@
         }, 200);
       }
       scrollToBottom();
+    }
+
+    // 渲染会话图标
+    function getSessionIconHtml(icon) {
+      const option = (ICON_OPTIONS || []).find(o => o.id === icon);
+      return option ? option.svg : escapeHtml(icon);
     }
 
     // 渲染会话列表
@@ -412,7 +427,7 @@
         const s = sessions[id];
         const isActive = id === currentSessionId;
         const time = formatRelativeTime(s.updatedAt || s.createdAt);
-        const icon = s.icon || (isActive ? '💬' : '📄');
+        const icon = getSessionIconHtml(s.icon || 'wave');
         return `
           <div class="session-item ${isActive ? 'active' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
             <span class="session-icon" onclick="toggleIconPicker(event, '${id}')" title="切换图标">${icon}</span>
@@ -420,8 +435,8 @@
               <div class="session-title">${escapeHtml(s.title)}</div>
               <div class="session-time">${time}</div>
             </div>
-            <button class="session-rename-btn" onclick="startRenameSession(event, '${id}')" title="重命名">✏️</button>
-            <button class="session-delete" onclick="deleteSession('${id}', event)" title="删除">🗑</button>
+            <button class="session-rename-btn" onclick="startRenameSession(event, '${id}')" title="重命名">${UI_ICON_SVG.pencil}</button>
+            <button class="session-delete" onclick="deleteSession('${id}', event)" title="删除">${UI_ICON_SVG.trash}</button>
           </div>`;
       }).join('');
     }
@@ -477,12 +492,16 @@
       const iconEl = event.currentTarget;
       const panel = document.createElement('div');
       panel.className = 'icon-picker-panel';
-      panel.innerHTML = ICON_OPTIONS.map(ic =>
-        `<span class="icon-picker-item" data-icon="${ic}" onclick="selectSessionIcon(event, '${sessionId}', '${ic}')">${ic}</span>`
-      ).join('') + `<span class="icon-picker-item icon-picker-reset" onclick="selectSessionIcon(event, '${sessionId}', '')">↩️</span>`;
-
       // 挂载到 body，避免被 sidebar overflow 裁剪
       document.body.appendChild(panel);
+      activeIconPicker = { panel, sessionId, iconEl, page: 0, icons: ICON_OPTIONS };
+      renderIconPickerPage();
+
+      // 点击外部关闭
+      setTimeout(() => document.addEventListener('click', closeIconPicker), 0);
+    }
+
+    function positionIconPicker(panel, iconEl) {
       const rect = iconEl.getBoundingClientRect();
       panel.style.position = 'fixed';
       panel.style.zIndex = '9999';
@@ -497,10 +516,38 @@
         panel.style.top = rect.top - panel.offsetHeight - 4 + 'px';
       }
       panel.style.left = left + 'px';
-      activeIconPicker = { panel, sessionId, iconEl };
+    }
 
-      // 点击外部关闭
-      setTimeout(() => document.addEventListener('click', closeIconPicker), 0);
+    function renderIconPickerPage(reposition = true) {
+      if (!activeIconPicker) return;
+      const { panel, sessionId, icons, page } = activeIconPicker;
+      const totalPages = Math.max(1, Math.ceil(icons.length / ICON_PAGE_SIZE));
+      const start = page * ICON_PAGE_SIZE;
+      const pageIcons = icons.slice(start, start + ICON_PAGE_SIZE);
+      const grid = pageIcons.map(ic => {
+        const escapedId = escapeHtml(ic.id);
+        const escapedLabel = escapeHtml(ic.label);
+        const content = ic.svg || escapeHtml(ic.id);
+        return `<span class="icon-picker-item" data-icon="${escapedId}" title="${escapedLabel}" onclick="selectSessionIcon(event, '${sessionId}', '${escapedId}')">${content}</span>`;
+      }).join('');
+      const nav = `
+        <button class="icon-picker-nav" onclick="pageIconPicker(-1, event)" ${page === 0 ? 'disabled' : ''}>‹</button>
+        <span class="icon-picker-page">${page + 1}/${totalPages}</span>
+        <button class="icon-picker-nav" onclick="pageIconPicker(1, event)" ${page >= totalPages - 1 ? 'disabled' : ''}>›</button>
+      `;
+      panel.innerHTML = `
+        <div class="icon-picker-grid">${grid}</div>
+        <div class="icon-picker-footer">${nav}<span class="icon-picker-item icon-picker-reset" title="恢复默认" onclick="selectSessionIcon(event, '${sessionId}', '')">${UI_ICON_SVG.reset}</span></div>
+      `;
+      if (reposition) positionIconPicker(panel, activeIconPicker.iconEl);
+    }
+
+    function pageIconPicker(delta, event) {
+      event.stopPropagation();
+      if (!activeIconPicker) return;
+      const totalPages = Math.max(1, Math.ceil(activeIconPicker.icons.length / ICON_PAGE_SIZE));
+      activeIconPicker.page = Math.min(totalPages - 1, Math.max(0, activeIconPicker.page + delta));
+      renderIconPickerPage(false);
     }
 
     function closeIconPicker() {
@@ -640,7 +687,7 @@
       }
     }
 
-    function restoreMessage(role, content, timestamp, duration) {
+    function restoreMessage(role, content, timestamp, duration, aborted) {
       const messages = document.getElementById('chatMessages');
       const msg = document.createElement('div');
       msg.className = 'message ' + role;
@@ -675,7 +722,7 @@
       const meta = document.createElement('div');
       meta.className = 'message-meta';
       meta.style.color = '#909090';
-      meta.innerHTML = `<span>${formatTime(timestamp || Date.now())}</span>${duration ? '<span class="msg-duration">⏱ ' + formatDuration(duration) + '</span>' : ''}`;
+      meta.innerHTML = `<span>${formatTime(timestamp || Date.now())}</span>${duration ? '<span class="msg-duration">⏱ ' + formatDuration(duration) + '</span>' : ''}${aborted ? '<span class="msg-aborted">已中止</span>' : ''}`;
       body.appendChild(meta);
 
       // Add bookmark button for assistant messages
@@ -716,6 +763,9 @@
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
       await deleteKnowledgeBySession(currentSessionId);
       await deleteFormulasBySession(currentSessionId);
+      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+      if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+      if (typeof loadFormulas === 'function') loadFormulas();
       if (sessions[currentSessionId]) {
         sessions[currentSessionId].title = '新对话';
         sessions[currentSessionId].updatedAt = Date.now();
@@ -741,9 +791,12 @@
         k.startsWith('phymathia_msgs_') ||
         k === STORAGE_KEY_SESSIONS ||
         k === STORAGE_KEY_CURRENT ||
-        k === STORAGE_KEY_KNOWLEDGE
+        k === STORAGE_KEY_KNOWLEDGE ||
+        k === 'phymathia_formulas'
       );
       keys.forEach(k => localStorage.removeItem(k));
+      if (typeof setFormulaCache === 'function') setFormulaCache({});
+      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
 
       // 4. 创建新会话并刷新 UI
       createNewSession();

@@ -159,6 +159,49 @@
       return formulas.slice(0, 8);
     }
 
+    function buildFormulaTags(content, formulas) {
+      const sections = parseXmlSections(content);
+      const result = {};
+      for (const formula of formulas) {
+        const stripped = _stripFormulaDelimiters(formula);
+        const tags = [];
+        if ((sections.physics || '').includes(stripped)) tags.push('物理');
+        if ((sections.math || '').includes(stripped)) tags.push('数学');
+        if (tags.length) result[formula] = tags;
+      }
+      return result;
+    }
+
+    function describeFormula(latex, summary, concept) {
+      const clean = _stripFormulaDelimiters(_normalizeFormulaLatex(latex))
+        .replace(/\s+/g, ' ')
+        .trim();
+      const rules = [
+        [/(\\sum|\\int).*e\^/i, '傅里叶级数/变换：用指数基元把信号分解为频率成分'],
+        [/\\sum/, '傅里叶级数：用离散频率谐波叠加表示周期信号'],
+        [/\\int/, '傅里叶变换：把信号分解为连续频率分量的积分表示'],
+        [/^F\s*=\s*-?\s*k\s*x/, '胡克定律：回复力与位移大小成正比、方向相反'],
+        [/^T\s*=\s*2\\pi\\sqrt\{\\frac\{m\}\{k\}\}/, '简谐运动周期由质量与劲度系数决定'],
+        [/^f\s*=\s*1\s*\/\s*T/, '频率是周期的倒数'],
+        [/\\omega\s*=\s*\\sqrt\{\\frac\{k\}\{m\}\}/, '角频率由劲度系数与质量共同决定'],
+        [/E\s*=\s*\\frac\{1\}\{2\}kA\^2/, '简谐运动总机械能与振幅平方成正比'],
+        [/v\(t\).*\\sin/, '速度随时间呈正弦变化，相位落后于位移'],
+        [/a\(t\).*\\omega\^2.*x/, '加速度与位移反向且成正比'],
+        [/x\(t\).*\\cos/, '位移随时间余弦变化，A 为振幅'],
+        [/\\frac\{d\^2x\}\{dt\^2\}.*\\omega\^2.*x/, '二阶线性微分方程：加速度与位移成正比且反向'],
+      ];
+      for (const [regex, description] of rules) {
+        if (regex.test(clean)) return description;
+      }
+      if (concept && concept !== '相关公式') {
+        const cleanConcept = String(concept)
+          .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/, '')
+          .trim();
+        return `${cleanConcept}相关公式：用于描述${cleanConcept}的定量关系`;
+      }
+      return '该公式用于描述物理量之间的定量关系';
+    }
+
     function extractLocalKnowledge(messages) {
       const assistant = [...messages].reverse().find(message =>
         message.role === 'assistant' && (message.content || '').trim()
@@ -167,17 +210,28 @@
 
       const content = String(assistant.content || '');
       const formulas = extractLocalFormulas(content);
+      const formulaTags = buildFormulaTags(content, formulas);
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
         .map(match => match[1].trim())
         .filter(Boolean);
-      const usefulTitles = allTitles.filter(title =>
-        !/(物理直觉|数学本质|知识图谱|延伸思考|学习卡片|PhyMathia)/.test(title)
-      );
-      let title = (usefulTitles[0] || allTitles[0] || '')
-        .replace(/的?(物理直觉|数学本质|知识图谱|延伸思考)$/, '')
+      const moduleHeading = /(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向|学习方向)/;
+      const usefulTitles = allTitles.filter(title => !moduleHeading.test(title));
+      const cardTitle = usefulTitles.find(title => /PhyMathia\s*学习卡片/.test(title));
+      let title = (cardTitle || usefulTitles[0] || '')
         .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
+        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/, '')
+        .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/, '')
+        .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
         .trim();
-      title = title || content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (!title) {
+        const fallbackText = content
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/^\s*#{1,3}\s*(?:[🔬📐🧠💡🗺️]+\s*)?(?:物理视角|数学视角|物理直觉|数学本质|知识图谱|延伸思考)\s*/, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const conceptMatch = fallbackText.match(/^([^，。；、]{2,24})是/);
+        title = conceptMatch ? conceptMatch[1] : fallbackText.slice(0, 40);
+      }
       if (!title) return [];
 
       const sample = content.slice(0, 2000);
@@ -194,6 +248,7 @@
         tags: [category === 'physics' ? '物理' : category === 'math' ? '数学' : '其他'],
         summary,
         formulas,
+        formulaTags,
       }];
     }
 
@@ -204,9 +259,9 @@
           formulas.push({
             latex,
             concept: item.title,
-            meaning: item.summary,
+            meaning: describeFormula(latex, item.summary, item.title),
             topic: '',
-            related: item.tags || [],
+            related: (item.formulaTags && item.formulaTags[latex]) || item.tags || [],
             sessionId,
             createdAt: Date.now(),
           });
@@ -342,6 +397,90 @@
       }
     }
 
+    // ===== HTML 生成模型（可选）：主回答缺少可视化时补充生成 =====
+    function extractHtmlFromModelReply(text) {
+      const fenced = text.match(/```html\s*([\s\S]*?)```/i);
+      if (fenced && /<html[\s>]|<!doctype|<body[\s>]/i.test(fenced[1])) {
+        return fenced[1].trim();
+      }
+      if (/<html[\s>]|<!doctype|<body[\s>]/i.test(text)) {
+        const start = text.search(/<!doctype|<html[\s>]/i);
+        const endMatch = text.match(/<\/html>/i);
+        const end = endMatch ? endMatch.index + endMatch[0].length : text.length;
+        return text.slice(start, end).trim();
+      }
+      return '';
+    }
+
+    async function collectStreamText(resp) {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let content = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const dataStr = line.slice(6).trim();
+            if (dataStr === '[DONE]') continue;
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.error) continue;
+              const delta = data.choices?.[0]?.delta;
+              if (delta?.content) content += delta.content;
+            } catch (e) {}
+          }
+        }
+      }
+      return content;
+    }
+
+    async function renderAssistantContent(contentDiv, content) {
+      const sections = parseXmlSections(content);
+      if (Object.keys(sections).length > 0) {
+        renderModuleSections(contentDiv, sections);
+        await renderMermaidInElement(contentDiv);
+        renderMath(contentDiv);
+      } else {
+        contentDiv.innerHTML = renderMarkdown(content);
+        _initVizIframes(contentDiv);
+        renderMath(contentDiv);
+        await renderMermaidInElement(contentDiv);
+        wrapDualDomainSections(contentDiv);
+        renderMath(contentDiv);
+      }
+    }
+
+    async function ensureVisualization(content, signal) {
+      const htmlModel = getActiveModelForRole('html');
+      if (!htmlModel) return content;
+      const sections = parseXmlSections(content);
+      if (Object.keys(sections).length === 0) return content;
+      if (/```html[\s\S]*?(?:<\/html>|<\/body>)[\s\S]*?```/i.test(content)) return content;
+
+      showProgress('tool');
+      const prompt = '请根据下面的物理数学学习内容，生成一个完整、独立、可交互的 HTML 可视化页面。'
+        + '只输出完整 HTML，不要解释；必须包含滑块或按钮等交互控件，并适配深色/浅色主题。';
+      try {
+        const resp = await proxyChatWithModel(htmlModel, {
+          messages: [{ role: 'user', content: prompt + '\n\n' + content.slice(0, 12000) }],
+          stream: true,
+        }, signal);
+        const reply = await collectStreamText(resp);
+        const html = extractHtmlFromModelReply(reply);
+        if (!html) return content;
+        return content + '\n\n```html\n' + html + '\n```\n';
+      } catch (err) {
+        console.warn('HTML model generation failed:', err);
+        return content;
+      }
+    }
+
     // ===== Bookmark (manual collection) =====
     function openBookmarkModal(messageEl) {
       const msgBody = messageEl.closest('.message-body');
@@ -415,7 +554,7 @@
         saveFormulasToServer(item.formulas.map(f => ({
           latex: f,
           concept: item.title,
-          meaning: item.summary,
+          meaning: describeFormula(f, item.summary, item.title),
           topic: '',
           related: item.tags,
           sessionId: item.sessionId,
@@ -484,13 +623,25 @@
 
       abortController = new AbortController();
       showProgress('thinking');
+      let assistantContent = '';
+      let assistantDiv = null;
+      let streamRenderPending = false;
+      let streamRenderFrame = null;
+
+      function cancelPendingStreamRender() {
+        if (streamRenderFrame !== null) {
+          cancelAnimationFrame(streamRenderFrame);
+          streamRenderFrame = null;
+        }
+        streamRenderPending = false;
+      }
 
       try {
         const agentModel = getActiveModelForRole('agent');
         let resp;
         if (agentModel) {
           showProgress('tool');
-          resp = await proxyChat(text, currentLevel, SESSION_ID);
+          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           resp = await fetch('/v1/chat/completions', {
@@ -514,15 +665,13 @@
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
-        let assistantContent = '';
-        let assistantDiv = null;
         let buffer = '';
-        let streamRenderPending = false;
 
         function scheduleStreamRender() {
           if (streamRenderPending) return;
           streamRenderPending = true;
-          requestAnimationFrame(() => {
+          streamRenderFrame = requestAnimationFrame(() => {
+            streamRenderFrame = null;
             if (assistantDiv && assistantContent) {
               assistantDiv.innerHTML = renderMarkdown(assistantContent);
               _initVizIframes(assistantDiv);
@@ -607,18 +756,12 @@
 
         // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {
-          const sections = parseXmlSections(assistantContent);
-          if (Object.keys(sections).length > 0) {
-            renderModuleSections(assistantDiv, sections);
-            await renderMermaidInElement(assistantDiv);
-            renderMath(assistantDiv);
-          } else {
-            assistantDiv.innerHTML = renderMarkdown(assistantContent);
-            _initVizIframes(assistantDiv);
-            renderMath(assistantDiv);
-            await renderMermaidInElement(assistantDiv);
-            wrapDualDomainSections(assistantDiv);
-            renderMath(assistantDiv);
+          cancelPendingStreamRender();
+          await renderAssistantContent(assistantDiv, assistantContent);
+          const originalContent = assistantContent;
+          assistantContent = await ensureVisualization(assistantContent, abortController.signal);
+          if (assistantContent !== originalContent) {
+            await renderAssistantContent(assistantDiv, assistantContent);
           }
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
@@ -641,21 +784,23 @@
       } catch (err) {
         hideProgress();
         if (err.name === 'AbortError') {
-          // 用户主动中止，保留已接收的内容
-          const msgs = document.querySelectorAll('.message.assistant .message-content');
-          const lastContent = msgs[msgs.length - 1];
-          if (lastContent && !lastContent.textContent.trim()) {
-            lastContent.closest('.message.assistant').remove();
-          } else if (lastContent) {
-            // 已有部分内容，在 meta 中标记已中止
-            const metaEl = lastContent.closest('.message-body')?.querySelector('.message-meta');
+          const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
+          if (assistantDiv && assistantContent.trim()) {
+            const ts = Date.now();
+            chatHistory.push({
+              role: 'assistant',
+              content: assistantContent,
+              timestamp: ts,
+              duration: abortDuration,
+              aborted: true,
+            });
+            const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
             if (metaEl) {
-              const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
-              if (elapsed > 0) {
+              if (abortDuration > 0) {
                 const durTag = document.createElement('span');
                 durTag.className = 'msg-duration';
                 durTag.title = '回答耗时';
-                durTag.textContent = '⏱ ' + formatDuration(elapsed);
+                durTag.textContent = '⏱ ' + formatDuration(abortDuration);
                 metaEl.appendChild(durTag);
               }
               const stopTag = document.createElement('span');
@@ -663,13 +808,10 @@
               stopTag.textContent = '已中止';
               metaEl.appendChild(stopTag);
             }
+            await saveCurrentSession();
+          } else if (assistantDiv) {
+            assistantDiv.closest('.message.assistant')?.remove();
           }
-          // 保存已接收的部分内容（含耗时）
-          const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
-          if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
-            chatHistory[chatHistory.length - 1].duration = abortDuration;
-          }
-          saveCurrentSession();
         } else {
           const errDiv = addMessage('assistant', '', Date.now());
           errDiv.innerHTML = `
@@ -680,6 +822,7 @@
           console.error('Chat error:', err);
         }
       } finally {
+        cancelPendingStreamRender();
         hideProgress();
         isStreaming = false;
         abortController = null;

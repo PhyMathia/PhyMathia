@@ -687,7 +687,19 @@
     .session-item:hover { background: var(--sidebar-hover); }
     .session-item.active { background: var(--btn-active-bg); }
     .session-item .session-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
       font-size: 16px;
+      line-height: 1;
+      color: var(--accent);
+      background: var(--btn-active-bg);
+      border: 1px solid var(--btn-active-border);
+      font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', 'Segoe UI Symbol', serif;
+      box-sizing: border-box;
       flex-shrink: 0;
     }
     .session-item .session-info {
@@ -737,7 +749,7 @@
     .session-item .session-rename-btn:hover { background: var(--btn-hover-bg); color: var(--accent); }
 
     /* 对话图标交互 */
-    .session-item .session-icon { cursor: pointer; transition: transform 0.15s; }
+    .session-item .session-icon { cursor: pointer; transition: transform 0.15s, background 0.15s, border-color 0.15s, color 0.15s; }
     .session-item .session-icon:hover { transform: scale(1.2); }
 
     /* 重命名输入框 */
@@ -760,14 +772,24 @@
     /* 图标选择面板 */
     .icon-picker-panel {
       z-index: 9999;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 4px;
+      display: block;
       padding: 6px;
       background: var(--icon-picker-bg);
       border: 1px solid var(--icon-picker-border);
       border-radius: 8px;
       box-shadow: 0 8px 24px var(--icon-picker-shadow);
+    }
+    .icon-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+    .icon-picker-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 6px;
     }
     .icon-picker-item {
       display: flex;
@@ -778,11 +800,113 @@
       border-radius: 6px;
       cursor: pointer;
       font-size: 18px;
-      transition: background 0.15s;
+      color: var(--accent);
+      background: var(--btn-active-bg);
+      border: 1px solid var(--btn-active-border);
+      font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', 'Segoe UI Symbol', serif;
+      box-sizing: border-box;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
-    .icon-picker-item:hover { background: var(--btn-hover-bg); }
-    .icon-picker-reset { font-size: 14px; opacity: 0.6; }
+    .icon-picker-item:hover { background: var(--btn-hover-bg); border-color: var(--accent); }
+    .icon-picker-reset { width: auto; height: 24px; padding: 0 6px; font-size: 14px; opacity: 0.6; background: transparent; border-color: transparent; color: var(--text-secondary); }
     .icon-picker-reset:hover { opacity: 1; }
+    .icon-picker-nav {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid var(--icon-picker-border);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .icon-picker-nav:hover:not(:disabled) { background: var(--btn-hover-bg); }
+    .icon-picker-nav:disabled { opacity: 0.35; cursor: default; }
+    .icon-picker-page { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+
+    /* ====== SVG 图标尺寸与按钮对齐 ====== */
+    .session-icon svg,
+    .icon-picker-item svg {
+      display: block;
+    }
+    .session-icon svg { width: 18px; height: 18px; }
+    .icon-picker-item svg { width: 20px; height: 20px; }
+    .icon-picker-reset svg { width: 14px; height: 14px; }
+    .session-rename-btn svg,
+    .session-delete svg,
+    .model-item-btn svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+    .header-btn svg,
+    .new-chat-btn svg,
+    .clear-all-btn svg,
+    .sidebar-help-btn svg,
+    .model-add-btn svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      flex-shrink: 0;
+    }
+    .header-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .kp-tab {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .kp-tab svg { width: 15px; height: 15px; display: block; }
+    .section-icon svg { width: 15px; height: 15px; display: block; }
+    .model-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .model-tag svg { width: 12px; height: 12px; display: block; }
+    .model-item-key svg { width: 12px; height: 12px; display: inline-block; vertical-align: -1px; }
+    .viz-btn svg { width: 14px; height: 14px; display: block; }
+    .kp-empty-icon svg { width: 40px; height: 40px; display: block; margin: 0 auto; }
+    .model-add-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .model-item-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .level-option svg,
+    .level-emoji svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
+    .level-emoji {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+    }
+    .ob-feature-icon svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+    .onboarding-card .ob-icon svg {
+      width: 40px;
+      height: 40px;
+      display: block;
+    }
 
     /* ====== 主应用容器 ====== */
     .app-container {
@@ -863,8 +987,12 @@
       position: absolute;
       right: 16px;
       display: flex;
-      gap: 6px;
+      gap: 2px;
       align-items: center;
+      padding: 3px;
+      background: var(--btn-bg);
+      border: 1px solid var(--btn-border);
+      border-radius: 10px;
     }
     .header-btn {
       background: var(--btn-bg);
@@ -922,9 +1050,9 @@
     /* 难度选择面板 */
     .level-panel {
       display: none;
-      position: absolute;
-      top: 100%;
-      right: 16px;
+      position: fixed;
+      top: 0;
+      left: 0;
       background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -1075,6 +1203,23 @@
     .header-btn.model-btn:hover {
       background: var(--btn-active-hover-bg);
       border-color: var(--accent);
+    }
+    .chat-header .header-actions .header-btn,
+    .chat-header .header-actions .header-btn.model-btn,
+    .chat-header .header-actions .header-btn.level-btn,
+    .chat-header .header-actions .header-btn.theme-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-secondary);
+      box-shadow: none;
+    }
+    .chat-header .header-actions .header-btn:hover,
+    .chat-header .header-actions .header-btn.model-btn:hover,
+    .chat-header .header-actions .header-btn.level-btn:hover,
+    .chat-header .header-actions .header-btn.theme-btn:hover {
+      background: var(--btn-hover-bg);
+      border-color: transparent;
+      color: var(--accent);
     }
 
     /* ====== 消息区域 ====== */
@@ -1290,6 +1435,24 @@
       color: #fff;
       border-color: var(--accent, #8b5cf6);
     }
+    .physics-section .dual-domain-followup {
+      color: var(--domain-physics);
+      border-color: color-mix(in srgb, var(--domain-physics) 35%, transparent);
+    }
+    .physics-section .dual-domain-followup:hover {
+      background: var(--domain-physics);
+      border-color: var(--domain-physics);
+      color: #fff;
+    }
+    .math-section .dual-domain-followup {
+      color: var(--domain-math);
+      border-color: color-mix(in srgb, var(--domain-math) 35%, transparent);
+    }
+    .math-section .dual-domain-followup:hover {
+      background: var(--domain-math);
+      border-color: var(--domain-math);
+      color: #fff;
+    }
     .dual-domain-dontget {
       font-size: 12px;
       padding: 3px 10px;
@@ -1363,6 +1526,12 @@
       font-size: 10px;
       opacity: 0.55;
       color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .message-meta .msg-aborted {
+      font-size: 10px;
+      font-style: italic;
+      color: var(--accent);
       white-space: nowrap;
     }
 
@@ -1842,7 +2011,7 @@
       .header-actions .header-btn:nth-child(6) { display: none; }
       /* 竖屏显示二级工具栏 */
       .header-secondary-bar { display: flex; }
-      .level-panel { right: 8px; min-width: 120px; }
+      .level-panel { right: auto; min-width: 120px; }
       .model-panel { min-width: 260px; max-width: 90vw; padding: 12px; }
       .model-section-title { font-size: 11px; }
 
@@ -2207,6 +2376,14 @@
       padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 500;
       background: var(--kp-tag-bg); color: var(--kp-tag-color);
     }
+    .kp-tag-physics {
+      background: color-mix(in srgb, var(--domain-physics) 16%, transparent);
+      color: var(--domain-physics);
+    }
+    .kp-tag-math {
+      background: color-mix(in srgb, var(--domain-math) 16%, transparent);
+      color: var(--domain-math);
+    }
 
     /* Card detail (expanded) */
     .kp-card-detail {
@@ -2386,6 +2563,7 @@
       font-size: 40px;
       margin-bottom: 12px;
       display: block;
+      color: var(--accent);
     }
     .onboarding-card .ob-title {
       font-size: 20px;
@@ -2436,7 +2614,16 @@
       font-weight: 600;
       cursor: pointer;
       border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       transition: all 0.2s;
+    }
+    .ob-btn svg,
+    .ob-hint svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
     }
     .ob-btn-skip {
       background: transparent;
@@ -2455,6 +2642,14 @@
       padding: 8px 22px;
     }
     .ob-btn-finish:hover { filter: brightness(1.1); }
+    .ob-hint {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      min-width: 0;
+    }
     /* 欢迎步骤全屏居中卡片 */
     .onboarding-card.ob-welcome {
       left: 50% !important;
@@ -2489,7 +2684,7 @@
       background: var(--btn-active-bg);
       border: 1px solid var(--btn-active-border);
     }
-    .ob-feature-icon { font-size: 18px; flex-shrink: 0; }
+    .ob-feature-icon { font-size: 18px; flex-shrink: 0; color: var(--accent); }
     .ob-feature-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
     .ob-feature-text strong { color: var(--text-primary); font-weight: 600; }
     /* 帮助按钮 (侧边栏底部) */

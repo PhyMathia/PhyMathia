@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -77,6 +78,9 @@ STATIC_EXTENSIONS = {
 
 
 # ====== JSON 文件持久化工具 ======
+_JSON_LOCK = threading.RLock()
+
+
 def _read_json(path: Path, default=None):
     if path.exists():
         try:
@@ -87,7 +91,41 @@ def _read_json(path: Path, default=None):
 
 
 def _write_json(path: Path, data):
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with _JSON_LOCK:
+        try:
+            tmp_path.write_text(content, encoding="utf-8")
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+
+def _mutate_json(path: Path, updater, default=None):
+    """串行执行 JSON 文件的读-改-写，避免并发请求互相覆盖。"""
+    with _JSON_LOCK:
+        data = _read_json(path, default)
+        result = updater(data)
+        if result is not None:
+            _write_json(path, result)
+            return result
+        return data
+
+
+def _delete_by_session(path: Path, session_id: str) -> int:
+    """删除数据中属于指定会话的条目，返回删除数量。"""
+    removed = []
+
+    def updater(data):
+        nonlocal removed
+        removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
+        for k in removed:
+            data.pop(k, None)
+        return data if removed else None
+
+    _mutate_json(path, updater)
+    return len(removed)
 
 
 def _get_messages_path(session_id: str) -> Path:
@@ -509,29 +547,29 @@ async def api_save_sessions(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    data = _read_json(SESSIONS_PATH, {})
-
-    if isinstance(payload, dict) and "id" in payload:
-        data[payload["id"]] = {
-            "id": payload["id"],
-            "title": payload.get("title", "新对话"),
-            "icon": payload.get("icon", ""),
-            "sessionId": payload.get("sessionId", ""),
-            "createdAt": payload.get("createdAt", int(time.time() * 1000)),
-            "updatedAt": payload.get("updatedAt", int(time.time() * 1000)),
-        }
-    elif isinstance(payload, dict):
-        for sid, sdata in payload.items():
-            data[sid] = {
-                "id": sdata.get("id", sid),
-                "title": sdata.get("title", "新对话"),
-                "icon": sdata.get("icon", ""),
-                "sessionId": sdata.get("sessionId", ""),
-                "createdAt": sdata.get("createdAt", int(time.time() * 1000)),
-                "updatedAt": sdata.get("updatedAt", int(time.time() * 1000)),
+    def updater(data):
+        if isinstance(payload, dict) and "id" in payload:
+            data[payload["id"]] = {
+                "id": payload["id"],
+                "title": payload.get("title", "新对话"),
+                "icon": payload.get("icon", ""),
+                "sessionId": payload.get("sessionId", ""),
+                "createdAt": payload.get("createdAt", int(time.time() * 1000)),
+                "updatedAt": payload.get("updatedAt", int(time.time() * 1000)),
             }
+        elif isinstance(payload, dict):
+            for sid, sdata in payload.items():
+                data[sid] = {
+                    "id": sdata.get("id", sid),
+                    "title": sdata.get("title", "新对话"),
+                    "icon": sdata.get("icon", ""),
+                    "sessionId": sdata.get("sessionId", ""),
+                    "createdAt": sdata.get("createdAt", int(time.time() * 1000)),
+                    "updatedAt": sdata.get("updatedAt", int(time.time() * 1000)),
+                }
+        return data
 
-    _write_json(SESSIONS_PATH, data)
+    _mutate_json(SESSIONS_PATH, updater)
     return {"ok": True, "count": len(payload) if isinstance(payload, dict) else 1}
 
 
@@ -542,39 +580,42 @@ async def api_update_session(session_id: str, request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    data = _read_json(SESSIONS_PATH, {})
-    now = int(time.time() * 1000)
+    def updater(data):
+        now = int(time.time() * 1000)
+        if session_id not in data:
+            data[session_id] = {
+                "id": session_id,
+                "title": "新对话",
+                "icon": "",
+                "sessionId": "",
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        if "title" in payload:
+            data[session_id]["title"] = payload["title"]
+        if "icon" in payload:
+            data[session_id]["icon"] = payload["icon"]
+        if "sessionId" in payload:
+            data[session_id]["sessionId"] = payload["sessionId"]
+        data[session_id]["updatedAt"] = now
+        return data
 
-    if session_id not in data:
-        data[session_id] = {
-            "id": session_id,
-            "title": "新对话",
-            "icon": "",
-            "sessionId": "",
-            "createdAt": now,
-            "updatedAt": now,
-        }
-
-    if "title" in payload:
-        data[session_id]["title"] = payload["title"]
-    if "icon" in payload:
-        data[session_id]["icon"] = payload["icon"]
-    if "sessionId" in payload:
-        data[session_id]["sessionId"] = payload["sessionId"]
-    data[session_id]["updatedAt"] = now
-
-    _write_json(SESSIONS_PATH, data)
+    _mutate_json(SESSIONS_PATH, updater)
     return {"ok": True}
 
 
 @app.delete("/api/sessions/{session_id}")
 async def api_delete_session(session_id: str):
-    data = _read_json(SESSIONS_PATH, {})
-    data.pop(session_id, None)
-    _write_json(SESSIONS_PATH, data)
+    def updater(data):
+        data.pop(session_id, None)
+        return data
+
+    _mutate_json(SESSIONS_PATH, updater)
     msgs_path = _get_messages_path(session_id)
     if msgs_path.exists():
         msgs_path.unlink()
+    _delete_by_session(KNOWLEDGE_PATH, session_id)
+    _delete_by_session(FORMULAS_PATH, session_id)
     return {"ok": True}
 
 
@@ -613,6 +654,8 @@ async def api_clear_messages(session_id: str):
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
+    _delete_by_session(KNOWLEDGE_PATH, session_id)
+    _delete_by_session(FORMULAS_PATH, session_id)
     return {"ok": True}
 
 
@@ -652,18 +695,25 @@ async def api_save_knowledge(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     incoming = _normalize_knowledge(payload)
-    data = _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
-    # 合并：同 id 以新数据为准；全量上传时等价于覆盖
-    data.update(incoming)
-    _write_json(KNOWLEDGE_PATH, data)
+
+    def updater(data):
+        data = _normalize_knowledge(data)
+        # 合并：同 id 以新数据为准；全量上传时等价于覆盖
+        data.update(incoming)
+        return data
+
+    data = _mutate_json(KNOWLEDGE_PATH, updater)
     return {"ok": True, "count": len(data)}
 
 
 @app.delete("/api/knowledge/{item_id}")
 async def api_delete_knowledge(item_id: str):
-    data = _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
-    data.pop(item_id, None)
-    _write_json(KNOWLEDGE_PATH, data)
+    def updater(data):
+        data = _normalize_knowledge(data)
+        data.pop(item_id, None)
+        return data
+
+    _mutate_json(KNOWLEDGE_PATH, updater)
     return {"ok": True}
 
 
@@ -678,6 +728,14 @@ def _normalize_formula(latex: str) -> str:
     if not s:
         return ""
     return f"${s}$"
+
+
+def _formula_key(latex: str) -> str:
+    """生成用于跨来源去重的公式键，忽略定界符和常见空白差异。"""
+    s = _normalize_formula(latex).strip("$").strip()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s*([=,;:+\-*/])\s*", r"\1", s)
+    return s.strip()
 
 
 def _looks_like_formula(latex: str) -> bool:
@@ -708,9 +766,25 @@ def _looks_like_formula(latex: str) -> bool:
     return True
 
 
+def _dedupe_formula_map(data: dict) -> dict:
+    """按会话+规范化公式去重，保留较新的记录。"""
+    seen = set()
+    result = {}
+    for fid in sorted(data, key=lambda k: data[k].get("createdAt", 0) or 0, reverse=True):
+        item = data[fid]
+        key = (_formula_key(item.get("latex") or ""), item.get("sessionId"))
+        if key not in seen:
+            result[fid] = item
+            seen.add(key)
+    return result
+
+
 @app.get("/api/formulas")
 async def api_get_formulas(q: str = ""):
-    data = _read_json(FORMULAS_PATH, {})
+    raw = _read_json(FORMULAS_PATH, {})
+    data = _dedupe_formula_map(raw)
+    if len(data) != len(raw):
+        _write_json(FORMULAS_PATH, data)
     items = list(data.values())
     if q:
         ql = q.lower()
@@ -731,64 +805,75 @@ async def api_save_formulas(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    data = _read_json(FORMULAS_PATH, {})
     items = payload if isinstance(payload, list) else payload.get("items", [])
     count = 0
-    for it in items:
-        latex = _normalize_formula(it.get("latex") or "")
-        if not latex:
-            continue
-        # 去重：同会话同公式不重复入库
-        existing = next((v for v in data.values()
-                         if v.get("latex") == latex and v.get("sessionId") == it.get("sessionId")), None)
-        if existing:
-            # 本地快速提取先入库，后续 AI 结果可以补充更完整的说明。
-            changed = False
-            for key in ("concept", "meaning", "topic", "related"):
-                value = it.get(key)
-                if value and not existing.get(key):
-                    existing[key] = value
-                    changed = True
-            if changed:
-                count += 1
-            continue
-        fid = str(it.get("id") or "") or ("f_" + uuid.uuid4().hex[:12])
-        data[fid] = {
-            "id": fid,
-            "latex": latex,
-            "concept": (it.get("concept") or "")[:80],
-            "meaning": (it.get("meaning") or "")[:200],
-            "topic": (it.get("topic") or "")[:60],
-            "related": [str(t) for t in (it.get("related") or [])][:8],
-            "sessionId": it.get("sessionId", ""),
-            "createdAt": it.get("createdAt") or int(time.time() * 1000),
-        }
-        count += 1
-    _write_json(FORMULAS_PATH, data)
+
+    def updater(data):
+        nonlocal count
+        for it in items:
+            latex = _normalize_formula(it.get("latex") or "")
+            if not latex:
+                continue
+            # 去重：同会话同公式不重复入库
+            existing = next((v for v in data.values()
+                             if _formula_key(v.get("latex")) == _formula_key(latex)
+                             and v.get("sessionId") == it.get("sessionId")), None)
+            if existing:
+                # 本地快速提取先入库，后续 AI 结果可以补充更完整的说明。
+                changed = False
+                for key in ("concept", "meaning", "topic", "related"):
+                    value = it.get(key)
+                    if value and not existing.get(key):
+                        existing[key] = value
+                        changed = True
+                if changed:
+                    count += 1
+                continue
+            fid = str(it.get("id") or "") or ("f_" + uuid.uuid4().hex[:12])
+            data[fid] = {
+                "id": fid,
+                "latex": latex,
+                "concept": (it.get("concept") or "")[:80],
+                "meaning": (it.get("meaning") or "")[:200],
+                "topic": (it.get("topic") or "")[:60],
+                "related": [str(t) for t in (it.get("related") or [])][:8],
+                "sessionId": it.get("sessionId", ""),
+                "createdAt": it.get("createdAt") or int(time.time() * 1000),
+            }
+            count += 1
+        return data if count else None
+
+    _mutate_json(FORMULAS_PATH, updater)
     return {"ok": True, "count": count}
 
 
 @app.delete("/api/formulas")
 async def api_delete_formulas_by_session(session_id: str = ""):
     """按会话删除公式（session_id 为空时删除全部）"""
-    data = _read_json(FORMULAS_PATH, {})
-    if session_id:
-        removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
-        for k in removed:
-            data.pop(k, None)
-    else:
-        removed = list(data.keys())
-        data = {}
-    if removed:
-        _write_json(FORMULAS_PATH, data)
+    removed = 0
+
+    def updater(data):
+        nonlocal removed
+        if session_id:
+            removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
+            for k in removed:
+                data.pop(k, None)
+        else:
+            removed = list(data.keys())
+            data.clear()
+        return data if removed else None
+
+    _mutate_json(FORMULAS_PATH, updater)
     return {"ok": True, "count": len(removed)}
 
 
 @app.delete("/api/formulas/{formula_id}")
 async def api_delete_formula(formula_id: str):
-    data = _read_json(FORMULAS_PATH, {})
-    data.pop(formula_id, None)
-    _write_json(FORMULAS_PATH, data)
+    def updater(data):
+        data.pop(formula_id, None)
+        return data
+
+    _mutate_json(FORMULAS_PATH, updater)
     return {"ok": True}
 
 
@@ -821,8 +906,7 @@ def _parse_extract_json(text: str) -> list:
     for it in items:
         if not isinstance(it, dict):
             continue
-        title = str(it.get("title", "")).strip()
-        title = re.sub(r"^#+\s*", "", title).splitlines()[0].strip() if title else ""
+        title = _clean_knowledge_title(str(it.get("title", "")))
         if not title:
             continue
         category = it.get("category")
@@ -841,6 +925,85 @@ def _parse_extract_json(text: str) -> list:
             "formulas": formulas[:8],
         })
     return result[:6]
+
+
+def _clean_knowledge_title(title: str) -> str:
+    """把学习卡片标题规范成具体知识点名，过滤视角/图谱/追问等模块标题。"""
+    title = str(title or "").strip()
+    title = re.sub(r"^#+\s*", "", title).splitlines()[0].strip() if title else ""
+    title = re.sub(r"^.*?PhyMathia\s*学习卡片\s*[:：]\s*", "", title).strip()
+    title = re.sub(r"的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$", "", title).strip()
+    title = re.sub(r"的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$", "", title).strip()
+    title = re.sub(r"^[🔬📐🧠💡🗺️]+\s*", "", title).strip()
+    return title
+
+
+def _pick_knowledge_title(titles: list, content: str) -> str:
+    """优先取学习卡片标题，其次取第一个非模块标题。"""
+    module_keywords = (
+        "物理直觉", "数学本质", "物理视角", "数学视角",
+        "知识图谱", "延伸思考", "进阶学习方向", "学习方向",
+    )
+    card_title = next((t for t in titles if "PhyMathia" in t and "学习卡片" in t), None)
+    if card_title:
+        cleaned = _clean_knowledge_title(card_title)
+        if cleaned:
+            return cleaned
+    for t in titles:
+        if any(k in t for k in module_keywords):
+            continue
+        cleaned = _clean_knowledge_title(t)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _formula_tags_from_content(content: str, formulas: list) -> dict:
+    """按公式所在的 <physics>/<math> 区块给公式打标签。"""
+    def _section(tag: str) -> str:
+        m = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", content, re.I)
+        return m.group(1) if m else ""
+
+    physics_content = _section("physics")
+    math_content = _section("math")
+    result = {}
+    for formula in formulas:
+        stripped = formula.strip("$").strip()
+        tags = []
+        if stripped and stripped in physics_content:
+            tags.append("物理")
+        if stripped and stripped in math_content:
+            tags.append("数学")
+        if tags:
+            result[formula] = tags
+    return result
+
+
+def _local_formula_meaning(latex: str, summary: str, concept: str) -> str:
+    """没有描述模型时，为单个公式生成一句具体、简短的含义。"""
+    s = _normalize_formula(latex).strip("$").strip()
+    s = re.sub(r"\s+", " ", s)
+    rules = [
+        (r"(\\sum|\\int).*e\^", "傅里叶级数/变换：用指数基元把信号分解为频率成分"),
+        (r"\\sum", "傅里叶级数：用离散频率谐波叠加表示周期信号"),
+        (r"\\int", "傅里叶变换：把信号分解为连续频率分量的积分表示"),
+        (r"^F\s*=\s*-?\s*k\s*x", "胡克定律：回复力与位移大小成正比、方向相反"),
+        (r"^T\s*=\s*2\\pi\\sqrt\{\\frac\{m\}\{k\}\}", "简谐运动周期由质量与劲度系数决定"),
+        (r"^f\s*=\s*1\s*/\s*T", "频率是周期的倒数"),
+        (r"\\omega\s*=\s*\\sqrt\{\\frac\{k\}\{m\}\}", "角频率由劲度系数与质量共同决定"),
+        (r"E\s*=\s*\\frac\{1\}\{2\}kA\^2", "简谐运动总机械能与振幅平方成正比"),
+        (r"v\(t\).*\\sin", "速度随时间呈正弦变化，相位落后于位移"),
+        (r"a\(t\).*\\omega\^2.*x", "加速度与位移反向且成正比"),
+        (r"x\(t\).*\\cos", "位移随时间余弦变化，A 为振幅"),
+        (r"\\frac\{d\^2x\}\{dt\^2\}.*\\omega\^2.*x", "二阶线性微分方程：加速度与位移成正比且反向"),
+    ]
+    for pattern, description in rules:
+        if re.search(pattern, s):
+            return description
+    if concept and concept != "相关公式":
+        clean_concept = re.sub(r"的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$", "", concept).strip()
+        return f"{clean_concept}相关公式：用于描述{clean_concept}的定量关系"
+    return "该公式用于描述物理量之间的定量关系"
 
 
 def _local_extract_knowledge(messages: list) -> list:
@@ -874,16 +1037,17 @@ def _local_extract_knowledge(messages: list) -> list:
                     break
 
         titles = [t.strip() for t in re.findall(r"^#{1,3}\s+(.+?)\s*$", content, re.M) if t.strip()]
-        skip_words = ("物理直觉", "数学本质", "知识图谱", "延伸思考", "学习卡片", "PhyMathia")
-        candidates = [t for t in titles if not any(k in t for k in skip_words)]
-        if candidates:
-            title = candidates[0]
-        elif titles:
-            # 去掉视角后缀，如"简谐运动的物理直觉" → "简谐运动"
-            title = re.sub(r"的?(物理直觉|数学本质|知识图谱|延伸思考)$", "", titles[0]).strip()
-            title = title or (content.strip()[:40] + ("..." if len(content) > 40 else ""))
-        else:
-            title = content.strip()[:40] + ("..." if len(content) > 40 else "")
+        title = _pick_knowledge_title(titles, content)
+        if not title:
+            text = re.sub(r"<[^>]+>", " ", content)
+            text = re.sub(
+                r"^\s*#{1,3}\s*(?:[🔬📐🧠💡🗺️]+\s*)?(?:物理视角|数学视角|物理直觉|数学本质|知识图谱|延伸思考)\s*",
+                "",
+                text,
+            )
+            text = re.sub(r"\s+", " ", text).strip()
+            concept_match = re.match(r"^([^，。；、]{2,24})是", text)
+            title = concept_match.group(1) if concept_match else (text[:40] + ("..." if len(text) > 40 else ""))
 
         c = content[:2000]
         has_math_kw = any(k in c for k in ("方程", "函数", "导数", "积分", "矩阵", "几何", "代数", "微分", "定理", "证明", "数学"))
@@ -897,6 +1061,7 @@ def _local_extract_knowledge(messages: list) -> list:
         else:
             category = "other"
 
+        formula_tags = _formula_tags_from_content(content, formulas)
         summary = re.sub(r"\s+", " ", content)[:120]
         return [{
             "title": title[:80],
@@ -904,6 +1069,7 @@ def _local_extract_knowledge(messages: list) -> list:
             "tags": ["物理" if category == "physics" else "数学" if category == "math" else "其他"],
             "summary": summary,
             "formulas": formulas,
+            "formula_tags": formula_tags,
         }]
     return []
 
@@ -943,44 +1109,52 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
     if not items:
         return 0
     descriptions = descriptions or {}
-    data = _read_json(FORMULAS_PATH, {})
     now = int(time.time() * 1000)
     count = 0
     changed = False
-    for it in items:
-        title = it.get("title", "")
-        summary = it.get("summary", "")
-        tags = it.get("tags", [])
-        for f in (it.get("formulas") or []):
-            latex = _normalize_formula(str(f).strip())
-            # 过滤单字符/纯命令/纯单位（双保险：提取层已过滤，入库层再拦一道）
-            if not latex or not _looks_like_formula(latex):
-                continue
-            existing = next((v for v in data.values()
-                             if v.get("latex") == latex and v.get("sessionId") == session_id), None)
-            if existing:
-                # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
-                description = (descriptions.get(latex) or "").strip()
-                if description and existing.get("meaning") != description[:200]:
-                    existing["meaning"] = description[:200]
-                    changed = True
-                continue
-            fid = "f_" + uuid.uuid4().hex[:12]
-            # 描述模型生成的简要描述优先，否则回退摘要截断
-            meaning = (descriptions.get(latex) or "").strip() or summary[:200]
-            data[fid] = {
-                "id": fid,
-                "latex": latex,
-                "concept": title[:80],
-                "meaning": meaning[:200],
-                "topic": "",
-                "related": tags[:8],
-                "sessionId": session_id,
-                "createdAt": now,
-            }
-            count += 1
-    if count or changed:
-        _write_json(FORMULAS_PATH, data)
+
+    def updater(data):
+        nonlocal count, changed
+        for it in items:
+            title = it.get("title", "")
+            summary = it.get("summary", "")
+            tags = it.get("tags", [])
+            formula_tags = it.get("formula_tags") or {}
+            for f in (it.get("formulas") or []):
+                latex = _normalize_formula(str(f).strip())
+                # 过滤单字符/纯命令/纯单位（双保险：提取层已过滤，入库层再拦一道）
+                if not latex or not _looks_like_formula(latex):
+                    continue
+                existing = next((v for v in data.values()
+                                 if _formula_key(v.get("latex")) == _formula_key(latex)
+                                 and v.get("sessionId") == session_id), None)
+                if existing:
+                    # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
+                    description = (descriptions.get(latex) or "").strip() or _local_formula_meaning(latex, summary, title)
+                    old_meaning = (existing.get("meaning") or "").strip()
+                    if description and old_meaning != description[:200] and (
+                        not old_meaning or old_meaning == summary or old_meaning.startswith("该公式")
+                    ):
+                        existing["meaning"] = description[:200]
+                        changed = True
+                    continue
+                fid = "f_" + uuid.uuid4().hex[:12]
+                # 描述模型生成的简要描述优先，否则为单个公式生成具体说明
+                meaning = (descriptions.get(latex) or "").strip() or _local_formula_meaning(latex, summary, title)
+                data[fid] = {
+                    "id": fid,
+                    "latex": latex,
+                    "concept": title[:80],
+                    "meaning": meaning[:200],
+                    "topic": "",
+                    "related": formula_tags.get(latex) or tags[:8],
+                    "sessionId": session_id,
+                    "createdAt": now,
+                }
+                count += 1
+        return data if count or changed else None
+
+    _mutate_json(FORMULAS_PATH, updater)
     return count
 
 
@@ -995,12 +1169,14 @@ def _extract_summary(messages: list) -> str:
     return ""
 
 
-DESCRIBE_PROMPT = """你是公式解说助手。根据下面的对话摘要，为每个公式生成一句简短的中文描述（不超过30字，说明公式的含义或用途）。
+DESCRIBE_PROMPT = """你是公式解说助手。针对下面的每个公式，分别生成一句只解释该公式本身的简短中文描述（不超过30字）。
+不要给所有公式复用同一句对话摘要；例如 F=-kx 应写"胡克定律：回复力与位移成正比"。
 只输出 JSON，不要输出任何其他内容：
 {"descriptions": {"<公式原文>": "描述"}}
 要求：
 - 公式原文作为键，保持原样
 - 描述要具体，例如"胡克定律：弹簧弹力与形变量成正比"
+- 每个公式必须单独描述，禁止所有公式共用同一句话
 - 无法确定含义的公式，描述用空字符串
 - 不要编造摘要中不存在的概念"""
 
@@ -1114,17 +1290,21 @@ async def api_set_kv(key: str, request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    data = _read_json(KV_PATH, {})
-    data[key] = payload.get("value", "")
-    _write_json(KV_PATH, data)
+    def updater(data):
+        data[key] = payload.get("value", "")
+        return data
+
+    _mutate_json(KV_PATH, updater)
     return {"ok": True}
 
 
 @app.delete("/api/kv/{key}")
 async def api_delete_kv(key: str):
-    data = _read_json(KV_PATH, {})
-    data.pop(key, None)
-    _write_json(KV_PATH, data)
+    def updater(data):
+        data.pop(key, None)
+        return data
+
+    _mutate_json(KV_PATH, updater)
     return {"ok": True}
 
 
