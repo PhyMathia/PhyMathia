@@ -386,8 +386,8 @@
               <button class="quick-btn" onclick="sendQuick('请用物理直觉和数学推导解释傅里叶变换的本质')">傅里叶变换</button>
               <button class="quick-btn" onclick="sendQuick('请解释热力学第二定律的物理意义和数学表述')">热力学第二定律</button>
             </div>
-            <div style="margin-top:20px;font-size:11px;color:var(--tip-color);display:flex;align-items:center;justify-content:center;gap:6px;">
-              ${UI_ICON_SVG.monitor} 推荐使用电脑端访问，获得最佳交互式可视化体验
+            <div style="margin-top:20px;font-size:11px;color:var(--tip-color);display:flex;align-items:center;justify-content:center;gap:20px;">
+              ${UI_ICON_SVG.monitor} 推荐使用电脑端访问，获得最佳交互体验
             </div>
           </div>`;
       } else {

@@ -1258,6 +1258,7 @@
       letter-spacing: 1px;
     }
     .welcome-tip p { max-width: 500px; margin: 0 auto 28px; font-size: 15px; }
+    [data-theme="light"] .welcome-tip svg { opacity: 0.5; }
 
     .quick-actions {
       display: flex;
