@@ -2,6 +2,9 @@
 let kpFilterCategory = 'all';
 let kpFilterSource = 'all';
 let kpKnowledgeCache = null;
+let kpKnowledgeSaveQueue = Promise.resolve();
+let kpFormulaSaveQueue = Promise.resolve();
+let kpFormulaLoadSeq = 0;
 
 // 强制失效知识缓存：下次 getKnowledgeItems() 重新读取 localStorage
 // （_syncFromServer 等服务端同步只写 localStorage 不更新内存缓存，渲染前必须失效）
@@ -46,7 +49,11 @@ function getKnowledgeItems() {
 async function saveKnowledgeItems(items) {
   kpKnowledgeCache = items;
   localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(items));
-  _saveKnowledgeToServer(items);
+  const snapshot = JSON.parse(JSON.stringify(items));
+  kpKnowledgeSaveQueue = kpKnowledgeSaveQueue
+    .catch(() => false)
+    .then(() => _saveKnowledgeToServer(snapshot));
+  return kpKnowledgeSaveQueue;
 }
 
 // 面板打开时的快速刷新通道：直接 fetch 知识+公式（不经 _checkServer/全量同步），
@@ -54,6 +61,10 @@ async function saveKnowledgeItems(items) {
 // 链路最短最可靠——打开面板后几百毫秒内即为服务端最新数据。
 async function _quickRefreshKnowledge() {
   try {
+    await Promise.all([
+      kpKnowledgeSaveQueue.catch(() => false),
+      kpFormulaSaveQueue.catch(() => false),
+    ]);
     const [knowResp, formulaResp] = await Promise.all([
       fetch('/api/knowledge', { cache: 'no-cache' }),
       fetch('/api/formulas', { cache: 'no-cache' }),
@@ -362,15 +373,53 @@ async function deleteFormulasBySession(sessionId) {
 
 async function saveFormulasToServer(formulas) {
   if (!formulas || formulas.length === 0) return;
-  try {
-    await fetch('/api/formulas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: formulas })
-    });
-  } catch (err) {
-    console.warn('Save formulas to server failed:', err);
+  const cache = getFormulaCache();
+  const pending = [];
+  let changed = false;
+  for (const item of formulas) {
+    const latex = _normalizeFormulaLatex(item.latex);
+    const normalized = _stripFormulaDelimiters(latex);
+    if (!_looksLikeFormula(normalized)) continue;
+    const existing = Object.values(cache).find(it =>
+      it.sessionId === (item.sessionId || '') &&
+      _stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)) === normalized
+    );
+    if (existing) continue;
+
+    const id = item.id || ('f_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12));
+    const saved = {
+      id,
+      latex,
+      concept: item.concept || '',
+      meaning: item.meaning || '',
+      topic: item.topic || '',
+      related: item.related || [],
+      sessionId: item.sessionId || '',
+      createdAt: item.createdAt || Date.now(),
+    };
+    cache[id] = saved;
+    pending.push(saved);
+    changed = true;
   }
+  if (!pending.length) return;
+  if (changed) setFormulaCache(cache);
+
+  const snapshot = pending.map(item => ({ ...item }));
+  kpFormulaSaveQueue = kpFormulaSaveQueue
+    .catch(() => false)
+    .then(async () => {
+      try {
+        return await fetch('/api/formulas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: snapshot })
+        });
+      } catch (err) {
+        console.warn('Save formulas to server failed:', err);
+        return false;
+      }
+    });
+  return kpFormulaSaveQueue;
 }
 
 function switchKpTab(tab) {
@@ -381,14 +430,19 @@ function switchKpTab(tab) {
 }
 
 async function loadFormulas() {
-  const cache = getFormulaCache();
+  const requestSeq = ++kpFormulaLoadSeq;
+  // 先显示本地缓存，服务端请求只负责补齐，避免保存期间界面为空。
+  renderFormulaList();
+  await kpFormulaSaveQueue.catch(() => false);
   try {
-    const resp = await fetch('/api/formulas');
+    const resp = await fetch('/api/formulas', { cache: 'no-cache' });
     if (resp.ok) {
       const data = await resp.json();
+      if (requestSeq !== kpFormulaLoadSeq) return;
       const merged = {};
       for (const it of (data.items || [])) merged[it.id] = it;
       // 保留本地有而服务端没有的（离线收藏兜底）
+      const cache = getFormulaCache();
       for (const id in cache) if (!merged[id]) merged[id] = cache[id];
       setFormulaCache(merged);
     }
@@ -484,3 +538,5 @@ async function confirmDeleteFormula(id) {
 
 // 暴露缓存失效接口给其他模块（session.js 定时同步、chat.js 提取刷新使用）
 window.invalidateKnowledgeCache = invalidateKnowledgeCache;
+window.waitForKnowledgeSave = () => kpKnowledgeSaveQueue.catch(() => false);
+window.waitForFormulaSave = () => kpFormulaSaveQueue.catch(() => false);

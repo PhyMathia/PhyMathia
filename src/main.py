@@ -739,7 +739,18 @@ async def api_save_formulas(request: Request):
         if not latex:
             continue
         # 去重：同会话同公式不重复入库
-        if any(v.get("latex") == latex and v.get("sessionId") == it.get("sessionId") for v in data.values()):
+        existing = next((v for v in data.values()
+                         if v.get("latex") == latex and v.get("sessionId") == it.get("sessionId")), None)
+        if existing:
+            # 本地快速提取先入库，后续 AI 结果可以补充更完整的说明。
+            changed = False
+            for key in ("concept", "meaning", "topic", "related"):
+                value = it.get(key)
+                if value and not existing.get(key):
+                    existing[key] = value
+                    changed = True
+            if changed:
+                count += 1
             continue
         fid = str(it.get("id") or "") or ("f_" + uuid.uuid4().hex[:12])
         data[fid] = {
@@ -935,6 +946,7 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
     data = _read_json(FORMULAS_PATH, {})
     now = int(time.time() * 1000)
     count = 0
+    changed = False
     for it in items:
         title = it.get("title", "")
         summary = it.get("summary", "")
@@ -944,7 +956,14 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
             # 过滤单字符/纯命令/纯单位（双保险：提取层已过滤，入库层再拦一道）
             if not latex or not _looks_like_formula(latex):
                 continue
-            if any(v.get("latex") == latex and v.get("sessionId") == session_id for v in data.values()):
+            existing = next((v for v in data.values()
+                             if v.get("latex") == latex and v.get("sessionId") == session_id), None)
+            if existing:
+                # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
+                description = (descriptions.get(latex) or "").strip()
+                if description and existing.get("meaning") != description[:200]:
+                    existing["meaning"] = description[:200]
+                    changed = True
                 continue
             fid = "f_" + uuid.uuid4().hex[:12]
             # 描述模型生成的简要描述优先，否则回退摘要截断
@@ -960,7 +979,7 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
                 "createdAt": now,
             }
             count += 1
-    if count:
+    if count or changed:
         _write_json(FORMULAS_PATH, data)
     return count
 

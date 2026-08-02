@@ -137,16 +137,178 @@
     }
 
     // ===== Auto Extract after AI response =====
+    function extractLocalFormulas(content) {
+      const formulas = [];
+      const addFormula = (expr) => {
+        const normalized = _normalizeFormulaLatex(expr);
+        const latex = _stripFormulaDelimiters(normalized);
+        if (latex && _looksLikeFormula(latex) && !formulas.includes(normalized)) {
+          formulas.push(normalized);
+        }
+      };
+
+      const tagged = content.match(/<formula>[\s\S]*?<\/formula>/gi) || [];
+      for (const match of tagged) addFormula(match.replace(/<\/?formula>/gi, ''));
+      if (formulas.length === 0) {
+        const fallback = /\$\$([^$\n]+)\$\$|\\\((.+?)\\\)|\\\[(.+?)\\\]|\$([^$\n]+)\$/g;
+        let match;
+        while ((match = fallback.exec(content)) && formulas.length < 8) {
+          addFormula(match.slice(1).find(Boolean) || '');
+        }
+      }
+      return formulas.slice(0, 8);
+    }
+
+    function extractLocalKnowledge(messages) {
+      const assistant = [...messages].reverse().find(message =>
+        message.role === 'assistant' && (message.content || '').trim()
+      );
+      if (!assistant) return [];
+
+      const content = String(assistant.content || '');
+      const formulas = extractLocalFormulas(content);
+      const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
+        .map(match => match[1].trim())
+        .filter(Boolean);
+      const usefulTitles = allTitles.filter(title =>
+        !/(物理直觉|数学本质|知识图谱|延伸思考|学习卡片|PhyMathia)/.test(title)
+      );
+      let title = (usefulTitles[0] || allTitles[0] || '')
+        .replace(/的?(物理直觉|数学本质|知识图谱|延伸思考)$/, '')
+        .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
+        .trim();
+      title = title || content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+      if (!title) return [];
+
+      const sample = content.slice(0, 2000);
+      const hasMath = /(方程|函数|导数|积分|矩阵|几何|代数|微分|定理|证明|数学)/.test(sample);
+      const hasPhysics = /(物理|力学|电磁|光学|热|振动|波|场|力|能量|实验)/.test(sample);
+      const category = hasPhysics && !hasMath ? 'physics' : hasMath && !hasPhysics ? 'math' : hasMath ? 'math' : 'other';
+      const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/i);
+      const summary = (summaryMatch ? summaryMatch[1] : content)
+        .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+      return [{
+        title: title.slice(0, 80),
+        category,
+        tags: [category === 'physics' ? '物理' : category === 'math' ? '数学' : '其他'],
+        summary,
+        formulas,
+      }];
+    }
+
+    function saveExtractedFormulas(sessionId, items) {
+      const formulas = [];
+      for (const item of items || []) {
+        for (const latex of item.formulas || []) {
+          formulas.push({
+            latex,
+            concept: item.title,
+            meaning: item.summary,
+            topic: '',
+            related: item.tags || [],
+            sessionId,
+            createdAt: Date.now(),
+          });
+        }
+      }
+      if (formulas.length > 0) saveFormulasToServer(formulas);
+    }
+
+    async function requestKnowledgeExtraction(payload) {
+      const resp = await fetch('/api/extract_knowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      return data.items || [];
+    }
+
+    function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false) {
+      if (!items || items.length === 0) return;
+
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+      const messageId = lastAssistant ? (lastAssistant.timestamp || '') : '';
+      const existingItems = getKnowledgeItems();
+      let changed = false;
+      const messageItems = Object.values(existingItems).filter(e =>
+        e.sessionId === sessionId && String(e.messageId || '') === String(messageId)
+      );
+
+      for (const item of items) {
+        const existing = Object.values(existingItems).find(e =>
+          e.sessionId === sessionId && e.title === item.title
+        ) || (updateExisting && items.length === 1 && messageItems.length === 1 ? messageItems[0] : null);
+        if (existing) {
+          // 本地快速结果先展示，AI 结果回来后用更完整的内容覆盖它。
+          if (updateExisting && existing.source === 'ai_extract') {
+            Object.assign(existing, {
+              category: item.category || existing.category,
+              tags: item.tags || existing.tags,
+              summary: item.summary || existing.summary,
+              formulas: item.formulas && item.formulas.length ? item.formulas : existing.formulas,
+            });
+            changed = true;
+          }
+          continue;
+        }
+
+        const id = 'ki_' + crypto.randomUUID().replace(/-/g, '');
+        existingItems[id] = {
+          id: id,
+          title: item.title,
+          category: item.category || 'other',
+          tags: item.tags || [],
+          summary: item.summary || '',
+          formulas: item.formulas || [],
+          source: 'ai_extract',
+          sessionId: sessionId,
+          messageId: String(messageId),
+          createdAt: Date.now()
+        };
+        changed = true;
+      }
+
+      if (changed) saveKnowledgeItems(existingItems);
+    }
+
+    function refreshKnowledgePanelIfOpen() {
+      try {
+        const panel = document.getElementById('knowledgePanel');
+        if (!panel || !panel.classList.contains('active')) return;
+        if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+        if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+        const activeTab = document.querySelector('.kp-tab.active');
+        if (activeTab && activeTab.dataset.tab === 'formulas' && typeof loadFormulas === 'function') {
+          loadFormulas();
+        }
+      } catch (e) {
+        console.warn('Refresh knowledge panel failed:', e);
+      }
+    }
+
     async function autoExtractKnowledge(sessionId, messages) {
       if (!messages || messages.length === 0) return;
       if (messages.length < 2) return; // Need at least 1 exchange
 
       const extractingEl = document.getElementById('kpExtracting');
+      // 后台增强可能跨越下一轮对话，固定本轮消息避免结果串入新回答。
+      const extractionMessages = messages.map(message => ({ ...message }));
       try {
         extractingEl?.classList.add('active');
         const agentModel = getActiveModelForRole('agent');
         const descriptorModel = getActiveModelForRole('descriptor');
-        const payload = { messages: messages, sessionId: sessionId };
+        const basePayload = { messages: extractionMessages, sessionId: sessionId };
+
+        // 浏览器本地先提取，不等待消息保存或任何模型响应。
+        const localItems = extractLocalKnowledge(extractionMessages);
+        saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems);
+        saveExtractedFormulas(sessionId, localItems);
+        refreshKnowledgePanelIfOpen();
+
+        const payload = { ...basePayload };
         if (agentModel) {
           payload.provider = agentModel.provider;
           payload.api_key = agentModel.apiKey;
@@ -160,59 +322,23 @@
           payload.descriptor_model = descriptorModel.model;
           payload.descriptor_base_url = descriptorModel.baseUrl;
         }
-        const resp = await fetch('/api/extract_knowledge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const items = data.items || [];
-        if (items.length === 0) return;
 
-        // Get last assistant message ID for linking
-        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-        const messageId = lastAssistant ? (lastAssistant.timestamp || '') : '';
-
-        for (const item of items) {
-          // Check if similar knowledge already exists (by title in this session)
-          const existing = getKnowledgeItems();
-          const isDuplicate = Object.values(existing).some(e =>
-            e.sessionId === sessionId && e.title === item.title
-          );
-          if (isDuplicate) continue;
-
-          addKnowledgeItem({
-            id: 'ki_' + crypto.randomUUID().replace(/-/g, ''),
-            title: item.title,
-            category: item.category || 'other',
-            tags: item.tags || [],
-            summary: item.summary || '',
-            formulas: item.formulas || [],
-            source: 'ai_extract',
-            sessionId: sessionId,
-            messageId: String(messageId),
-            createdAt: Date.now()
-          });
+        // AI 提取作为后台增强，不再阻塞本地知识条目的首次显示。
+        if (agentModel || descriptorModel) {
+          let aiItems = [];
+          try {
+            aiItems = await requestKnowledgeExtraction(payload);
+          } catch (err) {
+            console.warn('AI knowledge extraction failed:', err);
+          }
+          saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true);
+          saveExtractedFormulas(sessionId, aiItems);
+          refreshKnowledgePanelIfOpen();
         }
       } catch (err) {
         console.warn('Auto extract knowledge failed:', err);
       } finally {
         extractingEl?.classList.remove('active');
-        // 数据已保存，同步刷新界面（根治"要刷新才出现"：面板开着时自动更新）
-        try {
-          const panel = document.getElementById('knowledgePanel');
-          if (panel && panel.classList.contains('active')) {
-            if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
-            if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
-            const activeTab = document.querySelector('.kp-tab.active');
-            if (activeTab && activeTab.dataset.tab === 'formulas' && typeof loadFormulas === 'function') {
-              loadFormulas();
-            }
-          }
-        } catch (e) {
-          console.warn('Refresh knowledge panel failed:', e);
-        }
       }
     }
 
@@ -498,6 +624,9 @@
           const duration = progressStartTime ? (ts - progressStartTime) : null;
           chatHistory.push({ role: 'assistant', content: assistantContent, timestamp: ts, duration });
 
+          // 先生成本地知识条目，消息上传继续在后台进行。
+          autoExtractKnowledge(currentSessionId, chatHistory);
+
           await saveCurrentSession();
           renderSessionList(); // 更新侧边栏时间显示
           const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
@@ -554,10 +683,6 @@
         hideProgress();
         isStreaming = false;
         abortController = null;
-        // Auto-extract knowledge after AI response
-        if (chatHistory.length > 0) {
-          autoExtractKnowledge(currentSessionId, chatHistory);
-        }
         // 恢复发送按钮
         btn.classList.remove('stop-btn');
         btn.disabled = false;

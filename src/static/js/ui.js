@@ -66,6 +66,7 @@ function toggleModelPanel(e) {
   document.getElementById('dataPanel').classList.remove('show');
   if (willShow) {
     renderModelList();
+    renderModelSelects();
     const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('modelBtn');
     void panel.offsetHeight;
     _positionPanel('modelPanel', trigger);
@@ -120,7 +121,7 @@ function exportData() {
   // Export settings
   data.currentSession = localStorage.getItem('phymathia_current_session') || '';
   data.level = localStorage.getItem('phymathia_level') || 'university';
-  data.theme = localStorage.getItem('phymathia_theme') || 'dark';
+  data.theme = _getInitialTheme();
   // Version for forward compatibility
   data.version = 1;
   data.exportTime = new Date().toISOString();
@@ -228,8 +229,8 @@ document.addEventListener('click', (e) => {
   });
 });
 
-// Init: fetch models on load
-fetchModels();
+// models.js is loaded before the model panel markup in index.html.
+// The initial render is performed from the window load handler below.
 
 // ====== 相对时间 ======
 function formatRelativeTime(ts) {
@@ -813,6 +814,7 @@ document.addEventListener('keydown', (e) => {
 
 // ====== 页面加载 ======
 window.addEventListener('load', async () => {
+  await fetchModels();
   // 必须先初始化应用（加载 session、恢复聊天状态）
   await initApp();
   scrollToBottom();
@@ -847,7 +849,15 @@ window.addEventListener('load', async () => {
   img.src = src;
 });
 
-let currentTheme = localStorage.getItem(STORAGE_KEY_THEME) || 'dark';
+// 首次访问（localStorage 无值）跟随系统偏好，手动切换后以手动选择为准
+function _getInitialTheme() {
+  let t = null;
+  try { t = localStorage.getItem(STORAGE_KEY_THEME); } catch (e) {}
+  if (t === 'light' || t === 'dark') return t;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+}
+
+let currentTheme = _getInitialTheme();
 
 // 延迟更新 mermaid 配置的定时器
 let _mermaidThemeTimer = null;
@@ -859,6 +869,8 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (btn) btn.textContent = theme === 'dark' ? '🌙' : '☀️';
   updateBgImage();
+  // 同步所有可视化 iframe 的主题（含全屏）
+  if (typeof syncVizThemes === 'function') syncVizThemes(theme);
   // CSS 变量过渡驱动现有 Mermaid 图表颜色平滑变化
   // 等 CSS 过渡完成后再更新 mermaid.initialize 配置，确保未来新图表使用正确主题
   if (typeof mermaid !== 'undefined') {
