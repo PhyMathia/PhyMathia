@@ -21,7 +21,7 @@
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css?v=9">
-  <link rel="stylesheet" href="/css/graph-override.css?v=17">
+  <link rel="stylesheet" href="/css/graph-override.css?v=23">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -145,18 +145,32 @@
         </div>
       </div>
     </div>
+
+    <div class="socratic-modal-overlay" id="branchModal" hidden>
+      <div class="socratic-modal" role="dialog" aria-modal="true">
+        <div class="socratic-modal-header">
+          <span id="branchModalTitle">追问</span>
+          <button class="socratic-modal-close" type="button" onclick="closeBranchModal()" aria-label="关闭">&times;</button>
+        </div>
+        <textarea id="branchModalText" rows="6"></textarea>
+        <div class="socratic-modal-actions">
+          <button class="socratic-modal-cancel" type="button" onclick="closeBranchModal()">取消</button>
+          <button class="socratic-modal-submit" type="button" onclick="submitBranchModal()">发送</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="model-toast" id="modelToast"></div>
 
   <script src="/js/config.js?v=4"></script>
-  <script src="/js/session.js?v=5"></script>
-  <script src="/js/render.js?v=4"></script>
-  <script src="/js/chat.js?v=7"></script>
-  <script src="/js/graph.js?v=15"></script>
+  <script src="/js/session.js?v=6"></script>
+  <script src="/js/render.js?v=7"></script>
+  <script src="/js/chat.js?v=9"></script>
+  <script src="/js/graph.js?v=23"></script>
   <script src="/js/knowledge.js?v=4"></script>
   <script src="/js/models.js?v=4"></script>
-  <script src="/js/ui.js?v=7"></script>
+  <script src="/js/ui.js?v=8"></script>
 
   <div class="knowledge-panel" id="knowledgePanel">
     <div class="kp-header">

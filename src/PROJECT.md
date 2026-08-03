@@ -15,6 +15,11 @@ PhyMathia 是一个基于 Web 的物理数学 AI 助手，用聊天方式同时�
 - 苏格拉底追问：延伸思考以支线形式展开，不污染普通问答上下文
 - 主题切换：深色/浅色模式，可视化 iframe 同步主题
 
+### 演示与功能文档
+
+- 功能演示：`src/static/demo.html`，访问 `http://localhost:5000/demo.html`
+- 功能说明：`FUNCTION.md`，覆盖核心流程、网络画布、气泡操作、分支探索、知识总览、可视化和设置说明
+
 ## 2. 技术栈
 
 - 后端：Python + FastAPI + Uvicorn

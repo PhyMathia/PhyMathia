@@ -72,7 +72,7 @@ app.add_middleware(
 # ====== 静态文件配置 ======
 STATIC_DIR = BASE_DIR / "static"
 STATIC_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico",
+    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".html",
     ".webp", ".css", ".js", ".woff", ".woff2", ".ttf",
 }
 
@@ -165,8 +165,12 @@ def _load_system_prompt() -> str:
 </math>
 
 <graph>
-知识图谱 Mermaid 代码...
+知识图谱 Mermaid 代码，只放 Mermaid，不要放 HTML...
 </graph>
+
+<viz>
+HTML 可视化代码（可选，用 ```html ... ``` 包裹）
+</viz>
 
 <extend>
 延伸思考的问题...
@@ -175,7 +179,8 @@ def _load_system_prompt() -> str:
 规则：
 - 物理视角：侧重物理直觉、实验现象、能量角度，少量公式
 - 数学视角：侧重数学推导、微分方程、对称性，可深入公式
-- 知识图谱：输出 Mermaid 代码，用 ```mermaid ... ``` 包裹
+- 知识图谱：输出 Mermaid 代码，用 ```mermaid ... ``` 包裹；<graph> 内不要放 HTML
+- 可视化：如果适合，在 <viz> 标签内输出完整 HTML，用 ```html ... ``` 包裹
 - 延伸思考：2-3个引导性问题，可带难度标注
 - 如果问题只偏一方，两个标题都要保留，内容可简短
 - 可视化 HTML 用 ```html ... ``` 包裹（必要时可单独输出）
@@ -234,6 +239,9 @@ def _branch_source_content(content: str, source_module: str) -> str:
     if source_module in ("physics", "math", "graph", "extend"):
         return _extract_section(content, source_module)
     if source_module in ("viz", "visualization"):
+        viz = _extract_section(content, "viz")
+        if viz:
+            return viz
         graph = _extract_section(content, "graph")
         html_match = re.search(r"```html\s*([\s\S]*?)```", graph, re.I)
         if html_match:
@@ -467,6 +475,12 @@ graph TD
 ```
 
 </graph>
+<viz>
+## 🎮 交互探索
+```html
+__PHYMATHIA_VISUALIZATION__
+```
+</viz>
 <extend>
 ## 💡 延伸思考
 
@@ -558,6 +572,9 @@ async def _mock_stream_openai(content: str = MOCK_ANSWER, include_html: bool = T
     }
     await asyncio.sleep(0.3)
 
+    if include_html and "__PHYMATHIA_VISUALIZATION__" in content:
+        content = content.replace("__PHYMATHIA_VISUALIZATION__", MOCK_HTML_VISUALIZATION)
+
     # 逐 chunk 发送 markdown 内容
     chunk_size = 4
     for i in range(0, len(content), chunk_size):
@@ -572,18 +589,6 @@ async def _mock_stream_openai(content: str = MOCK_ANSWER, include_html: bool = T
         await asyncio.sleep(0.015)
 
     await asyncio.sleep(0.2)
-
-    if include_html:
-        # 发送可视化 HTML（前端会识别 ` ```html `...` ``` ` 并转为 iframe 卡片）
-        html_block = f"\n\n```html\n{MOCK_HTML_VISUALIZATION}\n```\n"
-        yield {
-            "id": "phymathia-chat",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": "phymathia-mock",
-            "choices": [{"index": 0, "delta": {"content": html_block}, "finish_reason": None}],
-        }
-        await asyncio.sleep(0.1)
 
     # 结束标记
     yield {

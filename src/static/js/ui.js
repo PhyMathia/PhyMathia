@@ -488,7 +488,7 @@ const _obSteps = [
     get desc() {
       return document.querySelector('.graph-new-session-node')
         ? '在画布中央的<strong>中心节点</strong>输入物理或数学问题，答案会从中心向外展开成探索网。'
-        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>继续问</strong>，答案会继续向外延伸。';
+        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>删除</strong>，管理当前对话分支。';
     }
   },
   {

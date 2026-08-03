@@ -638,7 +638,7 @@
       const input = document.getElementById('userInput');
       if (input) {
         input.placeholder = activeBranchAnchor
-          ? '围绕「' + (activeBranchAnchor.branchLabel || '当前气泡') + '」继续询问...'
+          ? '围绕「' + (activeBranchAnchor.branchLabel || '当前气泡') + '」提问...'
           : '问一个物理或数学问题...';
       }
     }
@@ -737,6 +737,96 @@
       setActiveBranchAnchor(null);
     }
 
+    let pendingBranchModal = null;
+    function openBranchModal(title, question, anchor) {
+      pendingBranchModal = anchor || null;
+      const modal = document.getElementById('branchModal');
+      const titleEl = document.getElementById('branchModalTitle');
+      const textEl = document.getElementById('branchModalText');
+      if (!modal || !titleEl || !textEl) return;
+      titleEl.textContent = title || '追问';
+      textEl.value = question || '';
+      modal.hidden = false;
+      modal.classList.add('active');
+      setTimeout(() => textEl.focus(), 50);
+    }
+
+    function closeBranchModal() {
+      const modal = document.getElementById('branchModal');
+      if (modal) {
+        modal.hidden = true;
+        modal.classList.remove('active');
+      }
+      pendingBranchModal = null;
+    }
+
+    function submitBranchModal() {
+      const textEl = document.getElementById('branchModalText');
+      const text = textEl ? textEl.value.trim() : '';
+      if (!text) {
+        textEl?.focus();
+        return;
+      }
+      const anchor = pendingBranchModal;
+      closeBranchModal();
+      if (anchor && typeof window.sendBranchQuick === 'function') {
+        window.sendBranchQuick(text, anchor);
+      } else if (typeof window.sendQuick === 'function') {
+        window.sendQuick(text);
+      }
+    }
+
+    document.getElementById('branchModalText')?.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitBranchModal();
+      }
+    });
+
+    let pendingDeleteTimestamp = null;
+    async function _performDeleteMessages(timestamp) {
+      const target = String(timestamp || '');
+      if (!target) return;
+      const removed = new Set([target]);
+      const targetIndex = chatHistory.findIndex(msg => String(msg.timestamp || '') === target);
+      if (targetIndex >= 0 && chatHistory[targetIndex].role === 'user') {
+        for (let i = targetIndex + 1; i < chatHistory.length; i++) {
+          if (chatHistory[i].role === 'assistant') {
+            removed.add(String(chatHistory[i].timestamp || ''));
+          } else {
+            break;
+          }
+        }
+      }
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const next = [];
+        for (const msg of chatHistory) {
+          const ts = String(msg.timestamp || '');
+          const parent = String(msg.parentId || '');
+          if (removed.has(ts) || removed.has(parent)) {
+            if (!removed.has(ts)) removed.add(ts);
+            changed = true;
+            continue;
+          }
+          next.push(msg);
+        }
+        chatHistory = next;
+      }
+      await saveCurrentSession();
+      renderSessionList();
+      await renderCurrentChat();
+    }
+    function deleteGraphMessageByTimestamp(timestamp) {
+      if (isStreaming) {
+        pendingDeleteTimestamp = String(timestamp || '');
+        if (abortController) abortController.abort();
+        return;
+      }
+      return _performDeleteMessages(timestamp);
+    }
+
     document.getElementById('socraticModalAnswer')?.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -754,6 +844,10 @@
     window.clearBranchAnchor = clearBranchAnchor;
     window.sendBranchQuick = sendBranchQuick;
     window.sendQuick = sendQuick;
+    window.openBranchModal = openBranchModal;
+    window.closeBranchModal = closeBranchModal;
+    window.submitBranchModal = submitBranchModal;
+    window.deleteGraphMessageByTimestamp = deleteGraphMessageByTimestamp;
     window.getChatHistory = () => chatHistory.slice();
     window.getStreamingAssistant = () => streamingAssistant;
     function stopGeneration() {
@@ -1084,6 +1178,11 @@
         btn.onclick = sendMessage;
         streamingAssistant = null;
         if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+        if (pendingDeleteTimestamp) {
+          const ts = pendingDeleteTimestamp;
+          pendingDeleteTimestamp = null;
+          await _performDeleteMessages(ts);
+        }
       }
     }
 

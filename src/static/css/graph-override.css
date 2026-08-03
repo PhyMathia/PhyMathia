@@ -198,6 +198,83 @@
   opacity: 0.55;
 }
 
+.graph-node.minimized .graph-node-full-content,
+.graph-node.minimized .graph-node-actions,
+.graph-node.minimized .graph-resize-handle {
+  display: none !important;
+}
+
+.graph-node.minimized.graph-node-module.graph-module-viz .graph-node-full-content {
+  display: none !important;
+}
+
+.graph-node.minimized {
+  width: auto !important;
+  min-width: 120px !important;
+  max-width: 260px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 10px 14px !important;
+}
+
+.graph-node.minimized.graph-node-module.graph-module-viz {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+.graph-node.minimized .graph-node-badge,
+.graph-node.minimized .graph-node-sub {
+  display: none !important;
+}
+
+.graph-node.minimized .graph-node-label {
+  font-size: 14px !important;
+  overflow-wrap: anywhere !important;
+}
+
+.graph-node-minimize-toggle {
+  margin-left: auto !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 7px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--btn-bg) !important;
+  color: var(--text-secondary) !important;
+  font-size: 15px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-node-minimize-toggle:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+
+.graph-node-delete-toggle {
+  margin-left: 2px !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 7px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--btn-bg) !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-node-delete-toggle:hover {
+  color: #ff6b6b !important;
+  border-color: rgba(255, 107, 107, 0.5) !important;
+  background: rgba(255, 107, 107, 0.1) !important;
+}
+
 .graph-node-user {
   border-left: 6px solid #4a9eff !important;
 }
@@ -238,6 +315,7 @@
   border-color: #10b981 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
+  min-height: 560px !important;
 }
 
 .graph-node-module.graph-module-extend {
@@ -297,7 +375,10 @@
 }
 
 .graph-node-full-content {
-  display: block !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
   width: 100% !important;
   margin-top: 10px !important;
   color: var(--text-primary) !important;
@@ -306,11 +387,25 @@
   overflow-wrap: anywhere !important;
   max-height: 520px !important;
   overflow-y: auto !important;
-  scrollbar-width: none !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--border) transparent !important;
+}
+
+.graph-node.resized .graph-node-full-content {
+  max-height: none !important;
 }
 
 .graph-node-full-content::-webkit-scrollbar {
-  display: none !important;
+  width: 6px !important;
+}
+
+.graph-node-full-content::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.graph-node-full-content::-webkit-scrollbar-thumb {
+  background: var(--border) !important;
+  border-radius: 3px !important;
 }
 
 .graph-node-full-content img,
@@ -324,6 +419,8 @@
   flex-direction: column !important;
   max-height: none !important;
   overflow: visible !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
 }
 
 .graph-node-module.graph-module-viz .viz-card {
@@ -335,18 +432,28 @@
 
 .graph-node-module.graph-module-viz .viz-iframe {
   flex: 1 1 auto !important;
-  height: auto !important;
-  min-height: 320px !important;
+  height: 100% !important;
+  min-height: 0 !important;
 }
 
 .graph-node .mermaid-container {
   overflow-x: auto !important;
   overflow-y: hidden !important;
-  scrollbar-width: none !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--border) transparent !important;
 }
 
 .graph-node .mermaid-container::-webkit-scrollbar {
-  display: none !important;
+  height: 6px !important;
+}
+
+.graph-node .mermaid-container::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.graph-node .mermaid-container::-webkit-scrollbar-thumb {
+  background: var(--border) !important;
+  border-radius: 3px !important;
 }
 
 .graph-node .mermaid-scroll-hint {
@@ -357,7 +464,10 @@
   display: flex !important;
   flex-wrap: wrap !important;
   gap: 8px !important;
-  margin-top: 12px !important;
+  margin-top: auto !important;
+  padding-top: 12px !important;
+  position: relative !important;
+  z-index: 2 !important;
   width: 100% !important;
 }
 

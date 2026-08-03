@@ -283,11 +283,11 @@ function renderMarkdown(text, renderCtx = {}) {
 
 // ====== XML 标签处理（流式&最终渲染） ======
 function stripXmlTags(text) {
-  return text.replace(/<\/?(physics|math|graph|extend)>/gi, '');
+  return text.replace(/<\/?(physics|math|graph|viz|extend)>/gi, '');
 }
 
 function parseXmlSections(content) {
-  var tags = ['physics', 'math', 'graph', 'extend'];
+  var tags = ['physics', 'math', 'graph', 'viz', 'extend'];
   var sections = {};
   for (var i = 0; i < tags.length; i++) {
     var tag = tags[i];
@@ -373,10 +373,11 @@ function followUpModule(moduleKey, messageId, event) {
     branchId: _genBranchId(),
     branchLabel: '追问：' + meta.label,
   };
-  if (typeof window.sendBranchQuick === 'function') {
-    window.sendBranchQuick(_modulePrompt(moduleKey, 'followup', originalQuestion), anchor);
+  const question = _modulePrompt(moduleKey, 'followup', originalQuestion);
+  if (typeof window.openBranchModal === 'function') {
+    window.openBranchModal('追问：' + meta.label, question, anchor);
   } else {
-    document.getElementById('userInput').value = _modulePrompt(moduleKey, 'followup', originalQuestion);
+    document.getElementById('userInput').value = question;
     sendQuick(document.getElementById('userInput').value);
   }
 }
@@ -392,29 +393,12 @@ function dontUnderstandModule(moduleKey, messageId, event) {
     branchId: _genBranchId(),
     branchLabel: '没看懂：' + meta.label,
   };
-  if (typeof window.sendBranchQuick === 'function') {
-    window.sendBranchQuick(_modulePrompt(moduleKey, 'confused', originalQuestion), anchor);
+  const question = _modulePrompt(moduleKey, 'confused', originalQuestion);
+  if (typeof window.openBranchModal === 'function') {
+    window.openBranchModal('没看懂：' + meta.label, question, anchor);
   } else {
-    document.getElementById('userInput').value = _modulePrompt(moduleKey, 'confused', originalQuestion);
+    document.getElementById('userInput').value = question;
     document.getElementById('userInput').focus();
-  }
-}
-
-function continueOnModule(moduleKey, messageId, event) {
-  event?.stopPropagation();
-  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const anchor = {
-    parentId: messageId || '',
-    sourceModule: moduleKey,
-    branchType: 'continue',
-    branchId: _genBranchId(),
-    branchLabel: '继续询问：' + meta.label,
-  };
-  if (typeof window.setActiveBranchAnchor === 'function') window.setActiveBranchAnchor(anchor);
-  const input = document.getElementById('userInput');
-  if (input) {
-    input.focus();
-    autoResize(input);
   }
 }
 
@@ -424,15 +408,6 @@ function toggleModuleBubble(messageId, moduleKey) {
   const collapsed = state && state.collapsed && state.collapsed[key];
   if (typeof window.setModuleVisibility === 'function') {
     window.setModuleVisibility(messageId, moduleKey, 'collapsed', collapsed);
-  }
-}
-
-function hideModuleBubble(messageId, moduleKey) {
-  const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
-  const key = String(messageId) + ':' + String(moduleKey);
-  const hidden = state && state.hidden && state.hidden[key];
-  if (typeof window.setModuleVisibility === 'function') {
-    window.setModuleVisibility(messageId, moduleKey, 'hidden', hidden);
   }
 }
 
@@ -476,13 +451,10 @@ function renderModuleSections(container, sections, rawContent) {
     const meta = MODULE_BUBBLE_META[cfg.key] || MODULE_BUBBLE_META.extend;
     const key = messageId + ':' + cfg.key;
     const collapsed = !!collapsedMap[key];
-    const hidden = !!hiddenMap[key];
     const actions = '<button class="module-action" onclick="event.stopPropagation(); followUpModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="追问">追问</button>'
       + '<button class="module-action" onclick="event.stopPropagation(); dontUnderstandModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="没看懂">没看懂</button>'
-      + '<button class="module-action" onclick="event.stopPropagation(); continueOnModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="围绕此气泡继续问">继续问</button>'
       + '<button class="module-action icon-action" onclick="event.stopPropagation(); toggleModuleBubble(\'' + messageId + '\',\'' + cfg.key + '\')" title="' + (collapsed ? '展开' : '折叠') + '">' + (collapsed ? '+' : '−') + '</button>'
-      + '<button class="module-action icon-action" onclick="event.stopPropagation(); hideModuleBubble(\'' + messageId + '\',\'' + cfg.key + '\')" title="' + (hidden ? '恢复' : '隐藏') + '">' + (hidden ? '恢复' : '×') + '</button>';
-    html += '<div class="module-bubble ' + meta.colorClass + (collapsed ? ' collapsed' : '') + (hidden ? ' hidden' : '') + '" data-module="' + cfg.key + '" data-message-id="' + messageId + '">'
+    html += '<div class="module-bubble ' + meta.colorClass + (collapsed ? ' collapsed' : '') + '" data-module="' + cfg.key + '" data-message-id="' + messageId + '">'
       + '<div class="module-bubble-header"><span class="module-bubble-icon">' + (meta.icon || '') + '</span><span class="module-bubble-title">' + meta.label + '</span><span class="module-bubble-actions">' + actions + '</span></div>'
       + '<div class="module-bubble-body">' + renderMarkdown(cfg.content, { parentId: messageId, sourceModule: cfg.key }) + '</div>'
       + '</div>';
@@ -496,9 +468,7 @@ function renderModuleSections(container, sections, rawContent) {
 window.refreshMessageBubbles = _refreshMessageBubbles;
 window.followUpModule = followUpModule;
 window.dontUnderstandModule = dontUnderstandModule;
-window.continueOnModule = continueOnModule;
 window.toggleModuleBubble = toggleModuleBubble;
-window.hideModuleBubble = hideModuleBubble;
 window._genBranchId = _genBranchId;
 
 // ====== 双域折叠区域渲染（heading 正则兜底） ======

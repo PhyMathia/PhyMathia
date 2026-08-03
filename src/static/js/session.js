@@ -322,7 +322,9 @@
       if (visible) delete bucket[key];
       else bucket[key] = true;
       saveGraphState(currentSessionId, state);
-      if (typeof window.refreshMessageBubbles === 'function') window.refreshMessageBubbles();
+      if (document.querySelector('.app-container')?.classList.contains('linear-mode') && typeof window.refreshMessageBubbles === 'function') {
+        window.refreshMessageBubbles();
+      }
     }
 
     window.getGraphState = getGraphState;

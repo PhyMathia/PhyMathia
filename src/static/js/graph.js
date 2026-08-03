@@ -33,7 +33,7 @@ const graphView = {
   nodeStartY: 0,
 };
 
-const LAYOUT_VERSION = 3;
+const LAYOUT_VERSION = 4;
 const TARGET_R = [0, 420, 940, 1460, 2000, 2560, 3120, 3680];
 const MAX_ITERATIONS = 120;
 
@@ -101,6 +101,7 @@ function _buildGraphData(messages, state) {
   const edges = [];
   const nodeById = {};
   const hiddenMap = state.hidden || {};
+  const collapsedMap = state.collapsed || {};
   const savedPositions = state.layoutVersion === LAYOUT_VERSION ? (state.positions || {}) : {};
   const pinnedMap = state.pinned || {};
   const savedSizes = state.sizes || {};
@@ -165,6 +166,7 @@ function _buildGraphData(messages, state) {
         branchType: msg.branchType || 'main',
         branchLabel: msg.branchLabel || '',
         parentId: msg.parentId || '',
+        minimized: !!collapsedMap[String(msg.timestamp) + ':answer'],
         pinned: !!(saved && pinnedMap[id]),
         fixedX: saved ? saved.x : null,
         fixedY: saved ? saved.y : null,
@@ -252,6 +254,7 @@ function _buildGraphData(messages, state) {
           branchLabel: msg.branchLabel || '',
           parentId: msg.parentId || '',
           hidden: !!hiddenMap[String(msg.timestamp) + ':' + key],
+          minimized: !!collapsedMap[String(msg.timestamp) + ':' + key],
           pinned: !!(savedM && pinnedMap[moduleId]),
           fixedX: savedM ? savedM.x : null,
           fixedY: savedM ? savedM.y : null,
@@ -269,6 +272,18 @@ function _buildGraphData(messages, state) {
   return { nodes, edges, nodeById };
 }
 
+function _stripModuleHeading(content, moduleKey) {
+  const patterns = {
+    physics: /^#{1,6}\s*[^\n]*(物理直觉|物理视角)[^\n]*\n?/i,
+    math: /^#{1,6}\s*[^\n]*(数学本质|数学视角)[^\n]*\n?/i,
+    graph: /^#{1,6}\s*[^\n]*知识图谱[^\n]*\n?/i,
+    viz: /^#{1,6}\s*[^\n]*(交互探索|交互式可视化)[^\n]*\n?/i,
+    extend: /^#{1,6}\s*[^\n]*延伸思考[^\n]*\n?/i,
+  };
+  const pattern = patterns[moduleKey];
+  return pattern ? String(content || '').replace(pattern, '').trim() : String(content || '').trim();
+}
+
 function _nodeContent(message, node) {
   if (!message) return '';
   if (node.kind === 'user') return message.content || '';
@@ -281,8 +296,8 @@ function _nodeContent(message, node) {
   }
   if (node.kind === 'module') {
     const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
-    if (node.moduleKey === 'viz' && sections.viz) return sections.viz;
-    return sections[node.moduleKey] || '';
+    if (node.moduleKey === 'viz' && sections.viz) return _stripModuleHeading(sections.viz, 'viz');
+    return _stripModuleHeading(sections[node.moduleKey] || '', node.moduleKey);
   }
   return '';
 }
@@ -291,22 +306,16 @@ function _nodeSub(node) {
   if (node.isRoot) return '核心问题';
   if (node.kind === 'user') return node.isBranch ? (node.branchLabel || '延伸追问') : '问题';
   if (node.kind === 'answer') return node.branchLabel || 'AI 回答簇';
-  if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
+  if (node.kind === 'module') return '';
   return '';
 }
 
 function _nodeActions(node) {
   if (node.kind === 'module') {
-    const hidden = node.hidden;
     return '<div class="graph-node-actions">'
       + '<button onclick="graphModuleAction(\'followup\',\'' + node.id + '\')">追问</button>'
       + '<button onclick="graphModuleAction(\'confused\',\'' + node.id + '\')">没看懂</button>'
-      + '<button onclick="graphModuleAction(\'continue\',\'' + node.id + '\')">继续问</button>'
-      + '<button onclick="graphModuleAction(\'hide\',\'' + node.id + '\')">' + (hidden ? '恢复' : '隐藏') + '</button>'
       + '</div>';
-  }
-  if (node.kind === 'answer') {
-    return '<div class="graph-node-actions"><button onclick="graphModuleAction(\'continue\',\'' + node.id + '\')">围绕回答继续问</button></div>';
   }
   return '';
 }
@@ -319,16 +328,25 @@ function _renderNodeHtml(node, messages) {
   const branchClass = node.isBranch ? ' graph-node-branch' : '';
   const selectedClass = node.id === graphView.selectedNodeId ? ' selected' : '';
   const dimmedClass = node.hidden ? ' dimmed' : '';
+  const minimizedClass = node.minimized ? ' minimized' : '';
+  const resizedClass = node.customHeight ? ' resized' : '';
   const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
   const customHeight = node.customHeight
-    ? 'min-height:' + node.customHeight + 'px !important;' + (node.moduleKey === 'viz' ? 'height:' + node.customHeight + 'px !important;' : '')
+    ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
   const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? 'AI 回答簇' : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.kind === 'module' ? ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey) : _nodeContent(message, node);
   const body = node.kind === 'module' ? (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))) : '';
-  return '<div class="' + baseClass + modClass + rootClass + branchClass + selectedClass + dimmedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);' + customWidth + customHeight + '">'
-    + '<div class="graph-node-header">' + badgeHtml + '<span class="graph-node-sub">' + escapeHtml(_nodeSub(node)) + '</span></div>'
+  const sub = _nodeSub(node);
+  const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
+  const minimizeToggle = (node.kind === 'module' || node.kind === 'answer')
+    ? '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>'
+    : '';
+  const deleteBtn = node.isRoot ? '' : '<button class="graph-node-delete-toggle" onclick="graphModuleAction(\'delete\',\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
+  const sizeStyle = node.minimized ? '' : customWidth + customHeight;
+  return '<div class="' + baseClass + modClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);' + sizeStyle + '">'
+    + '<div class="graph-node-header">' + badgeHtml + subHtml + minimizeToggle + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(label) + '</div>'
     + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
     + _nodeActions(node)
@@ -351,7 +369,7 @@ function _updateNodeTransforms() {
   if (!graphInner) return;
   graphView.nodes.forEach(node => {
     const el = graphInner.querySelector('[data-node-id="' + node.id + '"]');
-    if (el) el.style.transform = 'translate(' + node.x + 'px, ' + node.y + 'px)';
+    if (el) el.style.transform = 'translate(' + (node.x - (node.w || 0) / 2) + 'px, ' + (node.y - (node.h || 0) / 2) + 'px)';
   });
 }
 
@@ -361,10 +379,10 @@ function _redrawEdges() {
     const a = graphView.nodeById[edge.from];
     const b = graphView.nodeById[edge.to];
     if (!a || !b) return '';
-    const x1 = a.x + (a.w || 120) / 2;
-    const y1 = a.y + (a.h || 60) / 2;
-    const x2 = b.x + (b.w || 120) / 2;
-    const y2 = b.y + (b.h || 60) / 2;
+    const x1 = a.x;
+    const y1 = a.y;
+    const x2 = b.x;
+    const y2 = b.y;
     const mx = (x1 + x2) / 2;
     const my = (y1 + y2) / 2;
     const dx = x2 - x1;
@@ -572,6 +590,7 @@ function _patchGraphStreaming(messages, state) {
   graphView.edges = data.edges;
   _measureNodes();
   _redrawEdges();
+  _updateNodeTransforms();
 }
 
 function renderGraphCanvas(streaming) {
@@ -681,23 +700,46 @@ function graphModuleAction(action, nodeId) {
     if (typeof followUpModule === 'function') followUpModule(node.moduleKey, parentId);
   } else if (action === 'confused') {
     if (typeof dontUnderstandModule === 'function') dontUnderstandModule(node.moduleKey, parentId);
-  } else if (action === 'continue') {
-    if (typeof window.setActiveBranchAnchor === 'function') {
-      window.setActiveBranchAnchor({
-        parentId,
-        sourceModule: node.moduleKey || '',
-        branchType: 'continue',
-        branchId: (typeof _genBranchId === 'function') ? _genBranchId() : ('br_' + Date.now()),
-        branchLabel: '继续询问：' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '回答簇'),
-      });
-      const input = document.getElementById('userInput');
-      if (input) input.focus();
+  } else if (action === 'delete') {
+    if (confirm('确定删除这个节点及其子分支吗？') && typeof window.deleteGraphMessageByTimestamp === 'function') {
+      window.deleteGraphMessageByTimestamp(message.timestamp);
     }
-  } else if (action === 'hide' && node.moduleKey) {
+  } else if (action === 'minimize' && (node.kind === 'module' || node.kind === 'answer')) {
+    const nextMinimized = !node.minimized;
+    const moduleKey = node.kind === 'module' ? node.moduleKey : 'answer';
     if (typeof window.setModuleVisibility === 'function') {
-      window.setModuleVisibility(parentId, node.moduleKey, 'hidden', !!node.hidden);
+      window.setModuleVisibility(parentId, moduleKey, 'collapsed', nextMinimized);
     }
-    setTimeout(renderGraphCanvas, 0);
+    node.minimized = nextMinimized;
+    const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
+    if (el) {
+      el.classList.toggle('minimized', nextMinimized);
+      if (nextMinimized) {
+        el.style.removeProperty('width');
+        el.style.removeProperty('min-width');
+        el.style.removeProperty('max-width');
+        el.style.removeProperty('height');
+        el.style.removeProperty('min-height');
+      } else {
+        if (node.customWidth) {
+          el.style.setProperty('width', node.customWidth + 'px', 'important');
+          el.style.setProperty('min-width', node.customWidth + 'px', 'important');
+          el.style.setProperty('max-width', node.customWidth + 'px', 'important');
+        }
+        if (node.customHeight) {
+          el.style.setProperty('height', node.customHeight + 'px', 'important');
+          el.style.setProperty('min-height', node.customHeight + 'px', 'important');
+        }
+      }
+      const toggle = el.querySelector('.graph-node-minimize-toggle');
+      if (toggle) {
+        toggle.textContent = nextMinimized ? '+' : '−';
+        toggle.title = nextMinimized ? '展开' : '最小化';
+      }
+      _measureNodes();
+      _updateNodeTransforms();
+      _redrawEdges();
+    }
   }
 }
 
@@ -723,10 +765,10 @@ function fitGraph() {
   const state = _graphState();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of graphView.nodes) {
-    minX = Math.min(minX, n.x);
-    minY = Math.min(minY, n.y);
-    maxX = Math.max(maxX, n.x + (n.w || 120));
-    maxY = Math.max(maxY, n.y + (n.h || 60));
+    minX = Math.min(minX, n.x - (n.w || 120) / 2);
+    minY = Math.min(minY, n.y - (n.h || 60) / 2);
+    maxX = Math.max(maxX, n.x + (n.w || 120) / 2);
+    maxY = Math.max(maxY, n.y + (n.h || 60) / 2);
   }
   const width = maxX - minX + 200;
   const height = maxY - minY + 200;
@@ -800,11 +842,8 @@ function _handlePointerMove(event) {
       el.style.setProperty('min-width', node.customWidth + 'px', 'important');
       el.style.setProperty('max-width', node.customWidth + 'px', 'important');
       el.style.setProperty('min-height', node.customHeight + 'px', 'important');
-      if (node.moduleKey === 'viz') {
-        el.style.setProperty('height', node.customHeight + 'px', 'important');
-      } else {
-        el.style.removeProperty('height');
-      }
+      el.style.setProperty('height', node.customHeight + 'px', 'important');
+      el.classList.add('resized');
       node.w = node.customWidth;
       node.h = el.getBoundingClientRect().height / (graphView.zoom || 1);
       _redrawEdges();
@@ -865,6 +904,8 @@ function _endPointerDrag(event) {
 function _initGraphCanvasEvents() {
   if (!graphCanvas) return;
   graphCanvas.addEventListener('wheel', e => {
+    const scroller = e.target.closest('.graph-node-full-content, .graph-node .mermaid-container');
+    if (scroller) return;
     e.preventDefault();
     zoomGraph(e.deltaY < 0 ? 1.08 : 0.92, e.clientX, e.clientY);
   }, { passive: false });
