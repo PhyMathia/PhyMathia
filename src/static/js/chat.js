@@ -216,6 +216,7 @@
 
       const content = String(assistant.content || '');
       if (_isSocraticFollowup(content)) return [];
+      if (assistant.branchType && ['followup', 'confused', 'socratic'].includes(assistant.branchType)) return [];
       const formulas = extractLocalFormulas(content);
       const formulaTags = buildFormulaTags(content, formulas);
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
@@ -475,7 +476,7 @@
     async function renderAssistantContent(contentDiv, content) {
       const sections = parseXmlSections(content);
       if (Object.keys(sections).length > 0) {
-        renderModuleSections(contentDiv, sections);
+        renderModuleSections(contentDiv, sections, content);
         await renderMermaidInElement(contentDiv);
         renderMath(contentDiv);
       } else {
@@ -485,6 +486,12 @@
         await renderMermaidInElement(contentDiv);
         wrapDualDomainSections(contentDiv);
         renderMath(contentDiv);
+      }
+      if (contentDiv.dataset.branchLabel) {
+        const tag = document.createElement('div');
+        tag.className = 'branch-tag ' + (contentDiv.dataset.branchType || 'branch');
+        tag.textContent = contentDiv.dataset.branchLabel;
+        contentDiv.prepend(tag);
       }
     }
 
@@ -614,12 +621,47 @@
 
     let pendingSocraticQuestion = '';
     let pendingSocraticLevel = 'basic';
+    let pendingSocraticBranchId = '';
+    let pendingSocraticParentMsg = '';
     let socraticSubmitting = false;
     let currentBranch = null;
+    let currentBranchId = null;
+    let activeBranchAnchor = null;
 
-    function startSocraticAnswer(question, level) {
+    function setActiveBranchAnchor(anchor) {
+      activeBranchAnchor = anchor ? { ...anchor } : null;
+      const bar = document.getElementById('branchAnchorBar');
+      const textEl = document.getElementById('branchAnchorText');
+      if (bar) bar.hidden = !activeBranchAnchor;
+      if (textEl) textEl.textContent = activeBranchAnchor ? '当前锚点：' + (activeBranchAnchor.branchLabel || '当前气泡') : '';
+      const input = document.getElementById('userInput');
+      if (input) {
+        input.placeholder = activeBranchAnchor
+          ? '围绕「' + (activeBranchAnchor.branchLabel || '当前气泡') + '」继续询问...'
+          : '问一个物理或数学问题...';
+      }
+    }
+
+    function clearBranchAnchor() {
+      setActiveBranchAnchor(null);
+    }
+
+    function sendBranchQuick(text, anchor) {
+      setActiveBranchAnchor(anchor || null);
+      sendQuick(text);
+    }
+
+    function _consumePendingBranch() {
+      const anchor = activeBranchAnchor ? { ...activeBranchAnchor } : null;
+      setActiveBranchAnchor(null);
+      return anchor;
+    }
+
+    function startSocraticAnswer(question, level, parentMsg) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
+      pendingSocraticParentMsg = parentMsg || '';
+      pendingSocraticBranchId = _genBranchId();
       const modal = document.getElementById('socraticModal');
       const questionEl = document.getElementById('socraticModalQuestion');
       const answerEl = document.getElementById('socraticModalAnswer');
@@ -650,10 +692,10 @@
         return;
       }
       const message = '[苏格拉底回答]\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
-      const sessionId = typeof SESSION_ID !== 'undefined' ? SESSION_ID : '';
+      const branchId = pendingSocraticBranchId || _genBranchId();
       socraticSubmitting = true;
       try {
-        if (sessionId) {
+        if (branchId) {
           const state = {
             active: true,
             level: pendingSocraticLevel,
@@ -663,7 +705,7 @@
             updatedAt: Date.now(),
           };
           try {
-            await fetch('/api/kv/' + encodeURIComponent('socratic:' + sessionId), {
+            await fetch('/api/kv/' + encodeURIComponent('socratic:' + branchId), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ value: state }),
@@ -674,6 +716,14 @@
         }
         closeSocraticModal();
         currentBranch = 'socratic';
+        currentBranchId = branchId;
+        setActiveBranchAnchor({
+          parentId: pendingSocraticParentMsg,
+          sourceModule: 'extend',
+          branchType: 'socratic',
+          branchId,
+          branchLabel: '苏格拉底：' + (pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础'),
+        });
         sendQuick(message);
       } finally {
         socraticSubmitting = false;
@@ -682,6 +732,8 @@
 
     function resetSocraticBranch() {
       currentBranch = null;
+      currentBranchId = null;
+      setActiveBranchAnchor(null);
     }
 
     document.getElementById('socraticModalAnswer')?.addEventListener('keydown', function(e) {
@@ -697,7 +749,11 @@
       sendMessage();
     }
 
+    window.setActiveBranchAnchor = setActiveBranchAnchor;
+    window.clearBranchAnchor = clearBranchAnchor;
+    window.sendBranchQuick = sendBranchQuick;
     window.sendQuick = sendQuick;
+    window.getChatHistory = () => chatHistory.slice();
     window.startSocraticAnswer = startSocraticAnswer;
     window.closeSocraticModal = closeSocraticModal;
     window.submitSocraticAnswer = submitSocraticAnswer;
@@ -724,11 +780,16 @@
       document.getElementById('welcomeTip')?.remove();
 
       const now = Date.now();
-      const isSocraticBranchSend = text.startsWith('[苏格拉底回答]');
+      const branchMeta = _consumePendingBranch() || {};
+      const isSocraticBranchSend = text.startsWith('[苏格拉底回答]') || branchMeta.branchType === 'socratic';
       currentBranch = isSocraticBranchSend ? 'socratic' : null;
-      addMessage('user', text, now);
-      const userMessage = { role: 'user', content: text, timestamp: now };
-      if (isSocraticBranchSend) userMessage.branch = 'socratic';
+      currentBranchId = isSocraticBranchSend && branchMeta.branchId ? branchMeta.branchId : null;
+      addMessage('user', text, now, branchMeta);
+      const userMessage = { role: 'user', content: text, timestamp: now, ...branchMeta };
+      if (isSocraticBranchSend) {
+        userMessage.branch = 'socratic';
+        userMessage.branchId = userMessage.branchId || currentBranchId;
+      }
       chatHistory.push(userMessage);
       await saveCurrentSession();
       input.value = '';
@@ -762,7 +823,7 @@
         let resp;
         if (agentModel) {
           showProgress('tool');
-          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal);
+          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           resp = await fetch('/v1/chat/completions', {
@@ -774,6 +835,11 @@
               level: currentLevel,
               session_id: SESSION_ID,
               stream: true,
+              branch_id: branchMeta.branchId || '',
+              branch_type: branchMeta.branchType || '',
+              source_module: branchMeta.sourceModule || '',
+              parent_id: branchMeta.parentId || '',
+              branch_label: branchMeta.branchLabel || '',
             }),
             signal: abortController.signal
           });
@@ -878,6 +944,10 @@
         // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {
           cancelPendingStreamRender();
+          if (branchMeta.branchLabel) {
+            assistantDiv.dataset.branchLabel = branchMeta.branchLabel;
+            assistantDiv.dataset.branchType = branchMeta.branchType || 'branch';
+          }
           await renderAssistantContent(assistantDiv, assistantContent);
           const originalContent = assistantContent;
           assistantContent = await ensureVisualization(assistantContent, abortController.signal);
@@ -887,15 +957,21 @@
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
           const wasSocraticBranch = currentBranch === 'socratic';
+          const assistantMeta = { ...branchMeta };
+          if (wasSocraticBranch) {
+            assistantMeta.branch = 'socratic';
+            assistantMeta.branchId = assistantMeta.branchId || currentBranchId;
+          }
           chatHistory.push({
             role: 'assistant',
             content: assistantContent,
             timestamp: ts,
             duration,
-            ...(wasSocraticBranch ? { branch: 'socratic' } : {}),
+            ...assistantMeta,
           });
           if (wasSocraticBranch && /<socratic_meta\b[^>]*done\s*=\s*["']true["']/i.test(assistantContent)) {
             currentBranch = null;
+            currentBranchId = null;
           }
 
           // 先生成本地知识条目，消息上传继续在后台进行。
@@ -919,13 +995,18 @@
           if (assistantDiv && assistantContent.trim()) {
             const ts = Date.now();
             const wasSocraticBranch = currentBranch === 'socratic';
+            const assistantMeta = { ...branchMeta };
+            if (wasSocraticBranch) {
+              assistantMeta.branch = 'socratic';
+              assistantMeta.branchId = assistantMeta.branchId || currentBranchId;
+            }
             chatHistory.push({
               role: 'assistant',
               content: assistantContent,
               timestamp: ts,
               duration: abortDuration,
               aborted: true,
-              ...(wasSocraticBranch ? { branch: 'socratic' } : {}),
+              ...assistantMeta,
             });
             const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
             if (metaEl) {
@@ -964,6 +1045,7 @@
         btn.disabled = false;
         btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
         btn.onclick = sendMessage;
+        if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
         input.focus();
       }
     }
@@ -1002,7 +1084,7 @@
       }
     }
 
-    function addMessage(role, content, timestamp) {
+    function addMessage(role, content, timestamp, branchMeta) {
       const messages = document.getElementById('chatMessages');
       const msg = document.createElement('div');
       msg.className = 'message ' + role;
@@ -1012,6 +1094,7 @@
       if (role === 'user') { avatar.textContent = '👤'; } else if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
       const body = document.createElement('div');
       body.className = 'message-body';
+      body.dataset.messageId = String(timestamp || Date.now());
 
       const contentDiv = document.createElement('div');
       contentDiv.className = 'message-content';
@@ -1020,6 +1103,17 @@
       } else if (content) {
         contentDiv.innerHTML = renderMarkdown(content);
         _initVizIframes(contentDiv);
+      }
+      const metaObj = branchMeta || {};
+      if (metaObj.branchLabel) {
+        contentDiv.dataset.branchLabel = metaObj.branchLabel;
+        contentDiv.dataset.branchType = metaObj.branchType || 'branch';
+        if (role === 'user') {
+          const tag = document.createElement('div');
+          tag.className = 'branch-tag ' + (metaObj.branchType || 'branch');
+          tag.textContent = metaObj.branchLabel;
+          contentDiv.prepend(tag);
+        }
       }
 
       body.appendChild(contentDiv);

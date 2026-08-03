@@ -7,6 +7,7 @@ PhyMathia 是一个基于 Web 的物理数学 AI 助手，用聊天方式同时�
 核心能力：
 
 - 双域解释：同一问题同时输出物理直觉、数学本质、知识图谱和延伸思考
+- 思维导图画布：默认以可拖拽/缩放/平移的探索网呈现问答与模块气泡
 - 交互式可视化：AI 生成独立 HTML 演示，前端以 sandbox iframe 展示
 - 多会话管理：创建、切换、删除会话，本地与服务端 JSON 同步
 - 难度等级：初高中、大学、科研三档
@@ -144,6 +145,22 @@ $$<formula>F=-kx</formula>$$
 - 公式：同一会话内按 `sessionId + formula key` 去重
 - 苏格拉底追问轮次不会自动生成知识条目或公式
 
+### 4.6 探索网分支
+
+AI 完整回答渲染为“回答簇”：核心摘要节点 + 物理、数学、知识图谱、交互可视化、延伸思考模块气泡。
+用户可以从任意气泡发起分支：
+
+- `followup`：对当前气泡继续追问
+- `confused`：没看懂当前气泡，要求换一种方式重讲
+- `socratic`：回答延伸思考中的苏格拉底问题
+- `learn`：选择进阶学习方向，生成新的完整探索回答簇
+- `continue`：在当前气泡上自由续问，问题无关时可切回新主线
+
+分支消息记录 `branchType / branchId / parentId / sourceModule / branchLabel`。
+后端上下文加载优先使用分支链 + 父回答聚焦模块，普通问答继续过滤苏格拉底支线。
+苏格拉底状态从会话级改为分支级，键为 `socratic:{branch_id}`。
+模块气泡的折叠/隐藏状态按 `messageId + module` 保存在 `phymathia_graph_{sid}`。
+
 ## 5. 数据契约
 
 ### 会话
@@ -166,11 +183,16 @@ $$<formula>F=-kx</formula>$$
   "role": "user",
   "content": "消息内容",
   "timestamp": 0,
-  "branch": "socratic"
+  "branch": "socratic",
+  "branchType": "followup|confused|socratic|learn|continue",
+  "branchId": "br_sess_xxx_abc",
+  "parentId": "1710000000000",
+  "sourceModule": "physics|math|graph|viz|extend",
+  "branchLabel": "追问：物理视角"
 }
 ```
 
-`branch` 为可选项；普通消息没有该字段。
+`branch` 为苏格拉底兼容字段；普通主线消息没有这些字段。
 
 ### 知识点
 
@@ -258,6 +280,7 @@ phymathia_msgs_{sid}
 phymathia_theme
 phymathia_user_models
 phymathia_active_models
+phymathia_graph_{sid}
 phymathia_onboarding_done
 ```
 

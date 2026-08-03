@@ -284,6 +284,50 @@
       return _saveMessagesToServer(sessionId, msgs); // 传入消息数据而非从 localStorage 重读
     }
 
+    // ====== 探索网 UI 状态 ======
+    function getGraphState(sessionId) {
+      const sid = sessionId || currentSessionId || '';
+      try {
+        const raw = localStorage.getItem('phymathia_graph_' + sid);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return {
+            collapsed: parsed.collapsed || {},
+            hidden: parsed.hidden || {},
+            positions: parsed.positions || {},
+            pan: parsed.pan || { x: 80, y: 80 },
+            zoom: typeof parsed.zoom === 'number' ? parsed.zoom : 0.9,
+            focus: parsed.focus || null,
+            linear: !!parsed.linear,
+            layoutVersion: parsed.layoutVersion || 1,
+          };
+        }
+      } catch (e) {}
+      return { collapsed: {}, hidden: {}, positions: {}, pan: { x: 80, y: 80 }, zoom: 0.9, focus: null, linear: false, layoutVersion: 1 };
+    }
+
+    function saveGraphState(sessionId, state) {
+      const sid = sessionId || currentSessionId || '';
+      if (!sid) return;
+      localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(state));
+    }
+
+    function setModuleVisibility(messageId, moduleKey, type, visible) {
+      if (!messageId || !moduleKey) return;
+      const state = getGraphState();
+      const bucket = type === 'hidden' ? state.hidden : state.collapsed;
+      const key = String(messageId) + ':' + String(moduleKey);
+      if (visible) delete bucket[key];
+      else bucket[key] = true;
+      saveGraphState(currentSessionId, state);
+      if (typeof window.refreshMessageBubbles === 'function') window.refreshMessageBubbles();
+    }
+
+    window.getGraphState = getGraphState;
+    window.saveGraphState = saveGraphState;
+    window.setModuleVisibility = setModuleVisibility;
+    window.getCurrentSessionId = () => currentSessionId;
+
     // 获取当前会话ID
     function getCurrentSessionId() {
       return localStorage.getItem(STORAGE_KEY_CURRENT);
@@ -332,12 +376,14 @@
       // 切换
       setCurrentSessionId(id);
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
+      if (typeof window.clearBranchAnchor === 'function') window.clearBranchAnchor();
       chatHistory = loadSessionMessages(id);
       SESSION_ID = sessions[id].sessionId;
 
       // 重新渲染
       renderCurrentChat();
       renderSessionList();
+      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     }
 
     // 删除会话
@@ -348,6 +394,7 @@
 
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
+      localStorage.removeItem('phymathia_graph_' + id);
       await deleteKnowledgeBySession(id);
       await deleteFormulasBySession(id);
       delete sessions[id];
@@ -393,7 +440,7 @@
           </div>`;
       } else {
         for (const msg of chatHistory) {
-          restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration, msg.aborted);
+          restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration, msg.aborted, msg);
         }
         // 渲染 Mermaid（串行执行避免并发冲突）
         setTimeout(async () => {
@@ -404,6 +451,7 @@
         }, 200);
       }
       scrollToBottom();
+      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     }
 
     // 渲染会话图标
@@ -688,7 +736,7 @@
       }
     }
 
-    function restoreMessage(role, content, timestamp, duration, aborted) {
+    function restoreMessage(role, content, timestamp, duration, aborted, branchMeta) {
       const messages = document.getElementById('chatMessages');
       const msg = document.createElement('div');
       msg.className = 'message ' + role;
@@ -708,7 +756,7 @@
       } else if (content) {
         const sections = parseXmlSections(content);
         if (Object.keys(sections).length > 0) {
-          renderModuleSections(contentDiv, sections);
+          renderModuleSections(contentDiv, sections, content);
         } else {
           contentDiv.innerHTML = renderMarkdown(content);
           _initVizIframes(contentDiv);
@@ -716,6 +764,13 @@
           wrapDualDomainSections(contentDiv);
           renderMath(contentDiv);
         }
+      }
+      const branchMetaObj = branchMeta || {};
+      if (branchMetaObj.branchLabel) {
+        const branchTag = document.createElement('div');
+        branchTag.className = 'branch-tag ' + (branchMetaObj.branchType || 'branch');
+        branchTag.textContent = branchMetaObj.branchLabel;
+        contentDiv.prepend(branchTag);
       }
 
       body.appendChild(contentDiv);
@@ -759,6 +814,7 @@
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
+      localStorage.removeItem('phymathia_graph_' + currentSessionId);
       // 直接调用 DELETE 清除服务端消息
       try {
         await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE' });
@@ -792,6 +848,7 @@
       const keys = Object.keys(localStorage).filter(k =>
         k.startsWith('phymathia_session_') ||
         k.startsWith('phymathia_msgs_') ||
+        k.startsWith('phymathia_graph_') ||
         k === STORAGE_KEY_SESSIONS ||
         k === STORAGE_KEY_CURRENT ||
         k === STORAGE_KEY_KNOWLEDGE ||

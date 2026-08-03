@@ -195,7 +195,7 @@ function openVizNewTab(vizId) {
 }
 
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
-function renderMarkdown(text) {
+function renderMarkdown(text, renderCtx = {}) {
   if (!text) return '';
   // 苏格拉底状态标签只用于后端/知识过滤，不显示给用户
   text = text
@@ -276,8 +276,8 @@ function renderMarkdown(text) {
     if (!/\brel=/.test(attrs)) attrs += ' rel="noopener noreferrer"';
     return '<a' + attrs + '>';
   });
-  html = convertLearnDirections(html);
-  html = convertSocraticQuestions(html);
+  html = convertLearnDirections(html, renderCtx);
+  html = convertSocraticQuestions(html, renderCtx);
   return html;
 }
 
@@ -298,32 +298,208 @@ function parseXmlSections(content) {
   return sections;
 }
 
-function renderModuleSections(container, sections) {
-  var config = [
-    { key: 'physics', icon: (ICON_OPTIONS.find(o => o.id === 'mechanics') || {}).svg, label: '物理视角', colorClass: 'physics-section', collapsible: true },
-    { key: 'math', icon: (ICON_OPTIONS.find(o => o.id === 'function') || {}).svg, label: '数学视角', colorClass: 'math-section', collapsible: true },
-    { key: 'graph', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg, label: '知识图谱', colorClass: 'graph-section', collapsible: true },
-    { key: 'extend', icon: UI_ICON_SVG.lightbulb, label: '延伸思考', colorClass: 'extend-section', collapsible: true },
-  ];
-  var html = '';
-  for (var i = 0; i < config.length; i++) {
-    var cfg = config[i];
-    if (!sections[cfg.key]) continue;
-    var sid = cfg.key + '_' + Math.random().toString(36).substr(2, 9);
-    html += '<div class="dual-domain-section ' + cfg.colorClass + '" id="' + sid + '">'
-      + '<div class="dual-domain-header" onclick="toggleDualDomain(\'' + sid + '\')">'
-      + '<span class="header-left"><span class="section-icon">' + cfg.icon + '</span> ' + cfg.label + '</span>'
-      + '<span class="header-right">'
-      + (cfg.collapsible && (cfg.key === 'physics' || cfg.key === 'math') ? '<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain(\'' + cfg.key + '\')">\u8FFD\u95EE</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain(\'' + cfg.key + '\')">\u2753 \u6CA1\u770B\u61C2</button>' : '')
-      + '<span class="dual-domain-chevron">\u25BC</span>'
-      + '</span></div>'
-      + '<div class="dual-domain-body">' + renderMarkdown(sections[cfg.key]) + '</div>'
+const MODULE_BUBBLE_META = {
+  physics: { label: '物理视角', colorClass: 'physics-bubble', icon: (ICON_OPTIONS.find(o => o.id === 'mechanics') || {}).svg },
+  math: { label: '数学视角', colorClass: 'math-bubble', icon: (ICON_OPTIONS.find(o => o.id === 'function') || {}).svg },
+  graph: { label: '知识图谱', colorClass: 'graph-bubble', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg },
+  viz: { label: '交互可视化', colorClass: 'viz-bubble', icon: UI_ICON_SVG.monitor },
+  extend: { label: '延伸思考', colorClass: 'extend-bubble', icon: UI_ICON_SVG.lightbulb },
+};
+
+function _extractSummaryFromContent(content) {
+  const match = String(content || '').match(/<summary>([\s\S]*?)<\/summary>/i);
+  return match ? match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+function _splitVizFromGraph(graphRaw) {
+  let graphContent = String(graphRaw || '');
+  let vizContent = '';
+  const htmlMatch = graphContent.match(/```html[\s\S]*?```/gi);
+  if (htmlMatch) {
+    vizContent = htmlMatch.join('\n\n');
+    graphContent = graphContent.replace(/```html[\s\S]*?```/gi, '').trim();
+  }
+  return { graphContent, vizContent };
+}
+
+function _genBranchId() {
+  const sessionPart = (typeof currentSessionId !== 'undefined' ? currentSessionId : 'sess').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 18);
+  return 'br_' + (sessionPart || 'sess') + '_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+}
+
+function _findOriginalQuestion() {
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    if (chatHistory[i].role === 'user') return chatHistory[i].content;
+  }
+  return '';
+}
+
+function _modulePrompt(moduleKey, type, originalQuestion) {
+  const question = originalQuestion || '当前问题';
+  const prompts = {
+    physics: {
+      followup: '请从物理视角继续深入讲解：' + question,
+      confused: '你刚才从「物理视角」讲解的部分我没看懂，请换一种更简单、更生活化的方式重新讲解：' + question,
+    },
+    math: {
+      followup: '请从数学视角进一步深入讲解：' + question,
+      confused: '你刚才从「数学视角」讲解的部分我没看懂，请放慢推导步骤，逐一解释每个符号的含义：' + question,
+    },
+    graph: {
+      followup: '请进一步解释知识图谱中的概念关系和箭头含义：' + question,
+      confused: '你生成的「知识图谱」我没看懂，请用更直白的语言解释图中每个节点和关系：' + question,
+    },
+    viz: {
+      followup: '请进一步解释交互式可视化中的元素如何对应物理现象和公式：' + question,
+      confused: '你生成的「交互式可视化」我没看懂，请逐步讲解图表或动画中的每个元素：' + question,
+    },
+    extend: {
+      followup: '请围绕延伸思考继续展开讲解：' + question,
+      confused: '延伸思考里的内容我没看懂，请换一种更简单的方式解释：' + question,
+    },
+  };
+  const modulePrompts = prompts[moduleKey] || prompts.extend;
+  return modulePrompts[type] || modulePrompts.followup;
+}
+
+function followUpModule(moduleKey, messageId, event) {
+  event?.stopPropagation();
+  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
+  const originalQuestion = _findOriginalQuestion();
+  const anchor = {
+    parentId: messageId || '',
+    sourceModule: moduleKey,
+    branchType: 'followup',
+    branchId: _genBranchId(),
+    branchLabel: '追问：' + meta.label,
+  };
+  if (typeof window.sendBranchQuick === 'function') {
+    window.sendBranchQuick(_modulePrompt(moduleKey, 'followup', originalQuestion), anchor);
+  } else {
+    document.getElementById('userInput').value = _modulePrompt(moduleKey, 'followup', originalQuestion);
+    sendQuick(document.getElementById('userInput').value);
+  }
+}
+
+function dontUnderstandModule(moduleKey, messageId, event) {
+  event?.stopPropagation();
+  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
+  const originalQuestion = _findOriginalQuestion();
+  const anchor = {
+    parentId: messageId || '',
+    sourceModule: moduleKey,
+    branchType: 'confused',
+    branchId: _genBranchId(),
+    branchLabel: '没看懂：' + meta.label,
+  };
+  if (typeof window.sendBranchQuick === 'function') {
+    window.sendBranchQuick(_modulePrompt(moduleKey, 'confused', originalQuestion), anchor);
+  } else {
+    document.getElementById('userInput').value = _modulePrompt(moduleKey, 'confused', originalQuestion);
+    document.getElementById('userInput').focus();
+  }
+}
+
+function continueOnModule(moduleKey, messageId, event) {
+  event?.stopPropagation();
+  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
+  const anchor = {
+    parentId: messageId || '',
+    sourceModule: moduleKey,
+    branchType: 'continue',
+    branchId: _genBranchId(),
+    branchLabel: '继续询问：' + meta.label,
+  };
+  if (typeof window.setActiveBranchAnchor === 'function') window.setActiveBranchAnchor(anchor);
+  const input = document.getElementById('userInput');
+  if (input) {
+    input.focus();
+    autoResize(input);
+  }
+}
+
+function toggleModuleBubble(messageId, moduleKey) {
+  const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
+  const key = String(messageId) + ':' + String(moduleKey);
+  const collapsed = state && state.collapsed && state.collapsed[key];
+  if (typeof window.setModuleVisibility === 'function') {
+    window.setModuleVisibility(messageId, moduleKey, 'collapsed', collapsed);
+  }
+}
+
+function hideModuleBubble(messageId, moduleKey) {
+  const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
+  const key = String(messageId) + ':' + String(moduleKey);
+  const hidden = state && state.hidden && state.hidden[key];
+  if (typeof window.setModuleVisibility === 'function') {
+    window.setModuleVisibility(messageId, moduleKey, 'hidden', hidden);
+  }
+}
+
+function _refreshMessageBubbles() {
+  document.querySelectorAll('.message.assistant .message-content').forEach((el, index) => {
+    const body = el.closest('.message-body');
+    const messageId = body?.dataset.messageId || '';
+    const msg = chatHistory.find(m => String(m.timestamp) === String(messageId));
+    if (!msg) return;
+    const sections = parseXmlSections(msg.content || '');
+    if (Object.keys(sections).length > 0) {
+      renderModuleSections(el, sections, msg.content || '');
+      _initVizIframes(el);
+      renderMath(el);
+      setTimeout(() => renderMermaidInElement(el), 0);
+    }
+  });
+}
+
+function renderModuleSections(container, sections, rawContent) {
+  const messageId = container.closest('.message-body')?.dataset.messageId || '';
+  const graphState = typeof window.getGraphState === 'function' ? window.getGraphState() : { collapsed: {}, hidden: {} };
+  const collapsedMap = graphState.collapsed || {};
+  const hiddenMap = graphState.hidden || {};
+  const summary = _extractSummaryFromContent(rawContent || '');
+  const splitGraph = _splitVizFromGraph(sections.graph || '');
+  const configs = [
+    { key: 'physics', content: sections.physics || '' },
+    { key: 'math', content: sections.math || '' },
+    { key: 'graph', content: splitGraph.graphContent || '' },
+    { key: 'viz', content: splitGraph.vizContent || '' },
+    { key: 'extend', content: sections.extend || '' },
+  ].filter(cfg => cfg.content && cfg.content.trim());
+
+  let html = '<div class="answer-cluster" data-message-id="' + messageId + '">';
+  if (summary) {
+    html += '<div class="answer-hub"><span class="answer-hub-mark">摘要</span><span class="answer-hub-text">' + escapeHtml(summary) + '</span></div>';
+  }
+  html += '<div class="module-bubbles">';
+  for (const cfg of configs) {
+    const meta = MODULE_BUBBLE_META[cfg.key] || MODULE_BUBBLE_META.extend;
+    const key = messageId + ':' + cfg.key;
+    const collapsed = !!collapsedMap[key];
+    const hidden = !!hiddenMap[key];
+    const actions = '<button class="module-action" onclick="event.stopPropagation(); followUpModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="追问">追问</button>'
+      + '<button class="module-action" onclick="event.stopPropagation(); dontUnderstandModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="没看懂">没看懂</button>'
+      + '<button class="module-action" onclick="event.stopPropagation(); continueOnModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="围绕此气泡继续问">继续问</button>'
+      + '<button class="module-action icon-action" onclick="event.stopPropagation(); toggleModuleBubble(\'' + messageId + '\',\'' + cfg.key + '\')" title="' + (collapsed ? '展开' : '折叠') + '">' + (collapsed ? '+' : '−') + '</button>'
+      + '<button class="module-action icon-action" onclick="event.stopPropagation(); hideModuleBubble(\'' + messageId + '\',\'' + cfg.key + '\')" title="' + (hidden ? '恢复' : '隐藏') + '">' + (hidden ? '恢复' : '×') + '</button>';
+    html += '<div class="module-bubble ' + meta.colorClass + (collapsed ? ' collapsed' : '') + (hidden ? ' hidden' : '') + '" data-module="' + cfg.key + '" data-message-id="' + messageId + '">'
+      + '<div class="module-bubble-header"><span class="module-bubble-icon">' + (meta.icon || '') + '</span><span class="module-bubble-title">' + meta.label + '</span><span class="module-bubble-actions">' + actions + '</span></div>'
+      + '<div class="module-bubble-body">' + renderMarkdown(cfg.content, { parentId: messageId, sourceModule: cfg.key }) + '</div>'
       + '</div>';
   }
+  html += '</div></div>';
   container.innerHTML = html;
   _initVizIframes(container);
   renderMath(container);
 }
+
+window.refreshMessageBubbles = _refreshMessageBubbles;
+window.followUpModule = followUpModule;
+window.dontUnderstandModule = dontUnderstandModule;
+window.continueOnModule = continueOnModule;
+window.toggleModuleBubble = toggleModuleBubble;
+window.hideModuleBubble = hideModuleBubble;
+window._genBranchId = _genBranchId;
 
 // ====== 双域折叠区域渲染（heading 正则兜底） ======
 function wrapDualDomainSections(element) {
@@ -390,59 +566,26 @@ function toggleDualDomain(sectionId) {
 }
 
 function followUpDomain(domain) {
-  // 找到当前消息中的上一个用户消息，构建追问
-  const prompt = domain === 'physics'
-    ? '请从物理视角进一步深入讲解：'
-    : '请从数学视角进一步深入讲解：';
-  
-  // 获取原始用户问题
-  let originalQuestion = '';
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    if (chatHistory[i].role === 'user') {
-      originalQuestion = chatHistory[i].content;
-      break;
-    }
-  }
-  
-  const followUpText = prompt + originalQuestion;
-  document.getElementById('userInput').value = followUpText;
-  sendMessage();
+  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
+  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
+  followUpModule(domain || 'physics', messageId);
 }
 
 // ====== 没看懂（填入输入框，用户确认后发送） ======
 function dontUnderstandDomain(domain) {
-  let originalQuestion = '';
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    if (chatHistory[i].role === 'user') {
-      originalQuestion = chatHistory[i].content;
-      break;
-    }
-  }
-  const prompt = domain === 'physics'
-    ? '你刚才从「物理视角」讲解的部分我没看懂，请换一种更简单、更生活化的方式重新讲解：' + originalQuestion
-    : '你刚才从「数学视角」讲解的部分我没看懂，请放慢推导步骤，逐一解释每个符号的含义：' + originalQuestion;
-  const input = document.getElementById('userInput');
-  input.value = prompt;
-  autoResize(input);
-  input.focus();
+  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
+  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
+  dontUnderstandModule(domain || 'physics', messageId);
 }
 
 function dontUnderstandViz() {
-  let originalQuestion = '';
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    if (chatHistory[i].role === 'user') {
-      originalQuestion = chatHistory[i].content;
-      break;
-    }
-  }
-  const prompt = '你生成的交互式可视化演示我没看懂，请逐步讲解图表/动画中的每个元素如何对应物理现象和公式：' + originalQuestion;
-  const input = document.getElementById('userInput');
-  input.value = prompt;
-  autoResize(input);
-  input.focus();
+  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
+  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
+  dontUnderstandModule('viz', messageId);
 }
 
-function convertLearnDirections(html) {
+function convertLearnDirections(html, renderCtx = {}) {
+  const parentId = _escapeAttr(renderCtx.parentId || '');
   return html.replace(
     /(<h[1-6][^>]*>.*?进阶学习方向.*?<\/h[1-6]>)(\s*(?:<ul>|<ol>))([\s\S]*?)(<\/ul>|<\/ol>)/gi,
     (match, header, openTag, listContent, closeTag) => {
@@ -457,14 +600,15 @@ function convertLearnDirections(html) {
       const buttons = items.map(item => {
         const question = '请详细讲解：' + item;
         const encoded = encodeURIComponent(question);
-        return `<button class="learn-dir-btn" type="button" data-send="${encoded}">${escapeHtml(item)}</button>`;
+        return `<button class="learn-dir-btn" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="extend" data-branch-type="learn" data-branch-label="${_escapeAttr('进阶学习：' + item)}">${escapeHtml(item)}</button>`;
       }).join('');
       return `${header}<div class="learn-dir-section">${buttons}</div>`;
     }
   );
 }
 
-function convertSocraticQuestions(html) {
+function convertSocraticQuestions(html, renderCtx = {}) {
+  const parentId = _escapeAttr(renderCtx.parentId || '');
   return html.replace(/<li>([\s\S]*?)<\/li>/g, (match, inner) => {
     const rawText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const levelMatch = rawText.match(/^\s*\[?(基础|进阶|拓展)(?:题|层)?\]?\s*[:：]?\s*(.*)$/);
@@ -477,8 +621,8 @@ function convertSocraticQuestions(html) {
     return `<li class="socratic-item" data-socratic-level="${level}">
       <div class="socratic-question">${escapeHtml(question)}</div>
       <div class="socratic-actions">
-        <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}">我来回答</button>
-        <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}">直接问AI</button>
+        <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}">我来回答</button>
+        <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="extend" data-branch-type="continue" data-branch-label="${_escapeAttr('直接问AI：' + question)}">直接问AI</button>
       </div>
     </li>`;
   });
@@ -491,7 +635,7 @@ document.addEventListener('click', function(e) {
     const question = decodeURIComponent(answerBtn.getAttribute('data-socratic-answer'));
     const level = answerBtn.getAttribute('data-socratic-level') || 'basic';
     if (typeof window.startSocraticAnswer === 'function') {
-      window.startSocraticAnswer(question, level);
+      window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '');
     } else {
       document.getElementById('userInput').value = question;
       sendQuick(question);
@@ -502,7 +646,19 @@ document.addEventListener('click', function(e) {
   if (quickBtn) {
     e.preventDefault();
     const question = decodeURIComponent(quickBtn.getAttribute('data-send'));
-    if (typeof window.sendQuick === 'function') window.sendQuick(question);
+    const branchType = quickBtn.getAttribute('data-branch-type');
+    const anchor = branchType ? {
+      parentId: quickBtn.getAttribute('data-parent-msg') || '',
+      sourceModule: quickBtn.getAttribute('data-source-module') || 'extend',
+      branchType,
+      branchId: _genBranchId(),
+      branchLabel: quickBtn.getAttribute('data-branch-label') || question,
+    } : null;
+    if (anchor && typeof window.sendBranchQuick === 'function') {
+      window.sendBranchQuick(question, anchor);
+    } else if (typeof window.sendQuick === 'function') {
+      window.sendQuick(question);
+    }
   }
 });
 

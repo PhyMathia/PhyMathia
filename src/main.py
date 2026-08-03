@@ -194,7 +194,7 @@ def _is_socratic_message(msg) -> bool:
     """识别苏格拉底支线消息，兼容新 branch 字段和历史内容标记。"""
     if not isinstance(msg, dict):
         return False
-    if msg.get("branch") == "socratic":
+    if msg.get("branch") == "socratic" or msg.get("branchType") == "socratic":
         return True
     content = str(msg.get("content") or "")
     if content.lstrip().startswith("[苏格拉底回答]"):
@@ -208,21 +208,14 @@ def _is_socratic_message(msg) -> bool:
     return False
 
 
-def _load_session_context(session_id: str, max_rounds: int = 3, include_socratic: bool = False) -> list:
-    """加载会话上下文消息，返回最近 max_rounds 轮对话。
-
-    苏格拉底追问作为独立支线：普通问答默认过滤 branch="socratic" 的消息，
-    只有苏格拉底支线内才把主线与支线一起提供给模型。
-    """
-    messages_path = _resolve_messages_path(session_id)
-    all_messages = _read_json(messages_path, [])
-    if not all_messages:
-        return []
+def _recent_context_messages(all_messages: list, max_rounds: int = 3, include_socratic: bool = False) -> list:
+    """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。"""
+    messages = all_messages
     if not include_socratic:
-        all_messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
+        messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
     result = []
     rounds = 0
-    for msg in reversed(all_messages):
+    for msg in reversed(messages):
         result.insert(0, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
         if msg.get("role") == "user":
             rounds += 1
@@ -231,40 +224,151 @@ def _load_session_context(session_id: str, max_rounds: int = 3, include_socratic
     return result
 
 
+def _extract_section(content: str, tag: str) -> str:
+    match = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", content or "", re.I)
+    return match.group(1).strip() if match else ""
+
+
+def _branch_source_content(content: str, source_module: str) -> str:
+    """从父回答中只取出当前分支聚焦的模块内容。"""
+    if source_module in ("physics", "math", "graph", "extend"):
+        return _extract_section(content, source_module)
+    if source_module in ("viz", "visualization"):
+        graph = _extract_section(content, "graph")
+        html_match = re.search(r"```html\s*([\s\S]*?)```", graph, re.I)
+        if html_match:
+            return f"```html\n{html_match.group(1)}\n```"
+        return graph
+    return content or ""
+
+
+def _load_session_context(
+    session_id: str,
+    max_rounds: int = 3,
+    include_socratic: bool = False,
+    branch_id: str = "",
+    branch_type: str = "",
+    source_module: str = "",
+    parent_id: str = "",
+) -> list:
+    """加载会话上下文消息，支持探索网分支隔离。
+
+    普通问答默认过滤苏格拉底支线；当传入 branch_id 时，保留主线最近内容、
+    父回答中聚焦模块的内容，以及该分支自己的消息链。
+    """
+    messages_path = _resolve_messages_path(session_id)
+    all_messages = _read_json(messages_path, [])
+    if not all_messages:
+        return []
+    if not branch_id:
+        return _recent_context_messages(all_messages, max_rounds, include_socratic)
+
+    branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
+    main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
+    result = _recent_context_messages(main_messages, min(2, max_rounds), False)
+    seen = {item["content"] for item in result}
+
+    target_parent = parent_id or (branch_messages[0].get("parentId") if branch_messages else "")
+    if target_parent:
+        for msg in all_messages:
+            if msg.get("role") == "assistant" and str(msg.get("timestamp")) == str(target_parent):
+                source = _branch_source_content(msg.get("content", ""), source_module)
+                if source and source not in seen:
+                    result.append({"role": "assistant", "content": source})
+                    seen.add(source)
+                break
+
+    for item in _recent_context_messages(branch_messages, max_rounds, True):
+        if item["content"] not in seen:
+            result.append(item)
+            seen.add(item["content"])
+    return result
+
+
+def _branch_context_instruction(
+    branch_type: str = "",
+    source_module: str = "",
+    branch_label: str = "",
+    parent_id: str = "",
+) -> str:
+    """为 AI 提供当前探索网分支的显式上下文。"""
+    labels = {
+        "followup": "追问",
+        "confused": "没看懂",
+        "socratic": "苏格拉底追问",
+        "learn": "进阶学习",
+        "continue": "自由续问",
+    }
+    module_labels = {
+        "physics": "物理视角",
+        "math": "数学视角",
+        "graph": "知识图谱",
+        "viz": "交互可视化",
+        "extend": "延伸思考",
+    }
+    lines = ["\n\n# 探索网分支上下文"]
+    lines.append(f"- 当前分支类型：{labels.get(branch_type, branch_type or '主线')}")
+    if source_module:
+        lines.append(f"- 当前聚焦气泡：{module_labels.get(source_module, source_module)}")
+    if branch_label:
+        lines.append(f"- 分支标签：{branch_label}")
+    if parent_id:
+        lines.append(f"- 父回答消息 ID：{parent_id}")
+    if branch_type == "confused":
+        lines.append("- 用户没有看懂当前聚焦气泡，请换更简单、更生活化的方式只重讲这个模块，不要重复其他模块。")
+    elif branch_type == "followup":
+        lines.append("- 用户希望对当前聚焦气泡继续深入，只围绕该模块增量讲解，不重新生成完整学习卡片。")
+    elif branch_type == "socratic":
+        lines.append("- 用户正在回答苏格拉底追问，请按闭环规则只推进一层，不直接给出完整答案。")
+    elif branch_type == "learn":
+        lines.append("- 用户选择了进阶学习方向，请以该方向为目标，基于父回答生成新的完整探索回答簇。")
+    elif branch_type == "continue":
+        lines.append("- 用户在当前节点自由续问；若问题与当前气泡无关，可以作为新主线回答。")
+    return "\n".join(lines)
+
+
 # ====== 苏格拉底追问状态 ======
 SOCRATIC_STATE_PREFIX = "socratic:"
 
 
-def _socratic_key(session_id: str) -> str:
-    return f"{SOCRATIC_STATE_PREFIX}{session_id}"
+def _socratic_key(ref: str) -> str:
+    return f"{SOCRATIC_STATE_PREFIX}{ref}"
 
 
-def _read_socratic_state(session_id: str):
+def _read_socratic_state(ref: str):
     data = _read_json(KV_PATH, {})
-    state = data.get(_socratic_key(session_id))
+    state = data.get(_socratic_key(ref))
     if isinstance(state, dict) and state.get("active"):
         return state
     return None
 
 
-def _write_socratic_state(session_id: str, state) -> None:
+def _write_socratic_state(ref: str, state) -> None:
     def updater(data):
         if state is None:
-            data.pop(_socratic_key(session_id), None)
+            data.pop(_socratic_key(ref), None)
         else:
             state["updatedAt"] = int(time.time() * 1000)
-            data[_socratic_key(session_id)] = state
+            data[_socratic_key(ref)] = state
         return data
 
     _mutate_json(KV_PATH, updater)
 
 
-def _delete_socratic_state(session_id: str) -> None:
-    _write_socratic_state(session_id, None)
+def _delete_socratic_state(ref: str) -> None:
+    def updater(data):
+        if not ref:
+            return data
+        remove_keys = [key for key in data if key.startswith(SOCRATIC_STATE_PREFIX) and ref in key]
+        for key in remove_keys:
+            data.pop(key, None)
+        return data
+
+    _mutate_json(KV_PATH, updater)
 
 
-def _socratic_state_instruction(session_id: str) -> str:
-    state = _read_socratic_state(session_id)
+def _socratic_state_instruction(ref: str) -> str:
+    state = _read_socratic_state(ref)
     if not state:
         return ""
     level = state.get("level", "") or "basic"
@@ -277,9 +381,9 @@ def _socratic_state_instruction(session_id: str) -> str:
     )
 
 
-def _update_socratic_state_from_content(content: str, session_id: str) -> None:
-    """解析模型输出的 <socratic_meta>，更新或结束会话级追问状态。"""
-    if not content or not session_id:
+def _update_socratic_state_from_content(content: str, ref: str) -> None:
+    """解析模型输出的 <socratic_meta>，更新或结束分支级追问状态。"""
+    if not content or not ref:
         return
     if not _is_socratic_followup(content):
         return
@@ -294,7 +398,7 @@ def _update_socratic_state_from_content(content: str, session_id: str) -> None:
 
     correct = attr("correct", "").strip().lower()
     done = attr("done", "").strip().lower() in ("1", "true", "yes")
-    state = _read_socratic_state(session_id) or {
+    state = _read_socratic_state(ref) or {
         "active": True,
         "level": "",
         "question": "",
@@ -309,9 +413,9 @@ def _update_socratic_state_from_content(content: str, session_id: str) -> None:
     state["answeredCount"] = int(state.get("answeredCount", 0) or 0) + 1
 
     if done or int(state.get("correctStreak", 0) or 0) >= 2:
-        _delete_socratic_state(session_id)
+        _delete_socratic_state(ref)
     else:
-        _write_socratic_state(session_id, state)
+        _write_socratic_state(ref, state)
 
 
 # ====== 固定 Mock 回答 ======
@@ -519,10 +623,12 @@ async def openai_chat_completions(request: Request):
         logger.info(f"OpenAI mock request: prompt={payload.get('prompt', '')[:50]}, level={payload.get('level', 'university')}, stream={stream}")
 
         session_id = payload.get("session_id", "")
-        socratic_state = _read_socratic_state(session_id) if session_id else None
+        branch_id = payload.get("branch_id", "")
+        socratic_ref = branch_id or session_id
+        socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
         is_socratic_prompt = str(payload.get("prompt") or "").lstrip().startswith("[苏格拉底回答]")
         if socratic_state and not is_socratic_prompt:
-            _delete_socratic_state(session_id)
+            _delete_socratic_state(socratic_ref)
             socratic_state = None
         reply_content = MOCK_ANSWER
         if socratic_state:
@@ -531,7 +637,7 @@ async def openai_chat_completions(request: Request):
                 if int(socratic_state.get("correctStreak", 0) or 0) >= 1
                 else MOCK_SOCRATIC_ANSWER_1
             )
-            _update_socratic_state_from_content(reply_content, session_id)
+            _update_socratic_state_from_content(reply_content, socratic_ref)
 
         if stream:
             async def generate():
@@ -625,24 +731,38 @@ async def api_models_chat(request: Request):
     # 构建消息列表
     prompt = payload.get("prompt", "")
     session_id = payload.get("session_id", "")
+    branch_id = payload.get("branch_id", "")
+    branch_type = payload.get("branch_type", "")
+    source_module = payload.get("source_module", "")
+    parent_id = payload.get("parent_id", "")
+    socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
         is_socratic_prompt = prompt.lstrip().startswith("[苏格拉底回答]")
-        socratic_state = _read_socratic_state(session_id) if session_id else None
+        socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
         if socratic_state and not is_socratic_prompt:
             # 用户开始新的普通问答时，结束当前苏格拉底支线
-            _delete_socratic_state(session_id)
+            _delete_socratic_state(socratic_ref)
             socratic_state = None
         include_socratic = bool(socratic_state) or is_socratic_prompt
 
         system_content = SYSTEM_PROMPT
-        state_instruction = _socratic_state_instruction(session_id) if session_id and is_socratic_prompt else ""
+        state_instruction = _socratic_state_instruction(socratic_ref) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
+        if branch_id:
+            system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label", ""), parent_id)
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
-            context = _load_session_context(session_id, include_socratic=include_socratic)
+            context = _load_session_context(
+                session_id,
+                include_socratic=include_socratic,
+                branch_id=branch_id,
+                branch_type=branch_type,
+                source_module=source_module,
+                parent_id=parent_id,
+            )
             messages.extend(context)
 
         level = payload.get("level", "university")
@@ -693,7 +813,7 @@ async def api_models_chat(request: Request):
                         try:
                             data = json.loads(text)
                             content = data["choices"][0]["message"]["content"]
-                            _update_socratic_state_from_content(content, session_id)
+                            _update_socratic_state_from_content(content, socratic_ref)
                         except Exception:
                             pass
                         yield text
@@ -711,7 +831,7 @@ async def api_models_chat(request: Request):
                                 except Exception:
                                     pass
                             yield line + "\n\n"
-                    _update_socratic_state_from_content("".join(streamed_content), session_id)
+                    _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
@@ -1264,6 +1384,8 @@ def _local_extract_knowledge(messages: list) -> list:
         content = msg.get("content") or ""
         if not content.strip():
             continue
+        if msg.get("branchType") in ("followup", "confused", "socratic"):
+            return []
         if _is_socratic_followup(content):
             return []
 
@@ -1485,7 +1607,10 @@ async def api_extract_knowledge(request: Request):
     base_url = payload.get("base_url", "")
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-    if latest_assistant and _is_socratic_followup(latest_assistant.get("content", "")):
+    if latest_assistant and (
+        _is_socratic_followup(latest_assistant.get("content", ""))
+        or latest_assistant.get("branchType") in ("followup", "confused", "socratic")
+    ):
         return {"items": []}
     # 公式描述模型（前端传入，可选；未配置时回退默认摘要）
     desc_provider = payload.get("descriptor_provider", "")
