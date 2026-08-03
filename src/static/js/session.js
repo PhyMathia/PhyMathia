@@ -331,6 +331,7 @@
 
       // 切换
       setCurrentSessionId(id);
+      if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       chatHistory = loadSessionMessages(id);
       SESSION_ID = sessions[id].sessionId;
 
@@ -755,6 +756,7 @@
       if (isStreaming) return;
       if (!confirm('确定清空当前对话记录吗？')) return;
       chatHistory = [];
+      if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
       // 直接调用 DELETE 清除服务端消息
@@ -783,6 +785,7 @@
 
       // 2. 清空内存
       sessions = {};
+      if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       chatHistory = [];
 
       // 3. 清空 localStorage 中所有 phymathia 相关数据

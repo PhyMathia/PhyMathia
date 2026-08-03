@@ -6,6 +6,65 @@ let kpKnowledgeSaveQueue = Promise.resolve();
 let kpFormulaSaveQueue = Promise.resolve();
 let kpFormulaLoadSeq = 0;
 
+function _normalizeKnowledgeKey(title) {
+  return String(title || '')
+    .replace(/^#+\s*/, '')
+    .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
+    .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/g, '')
+    .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/g, '')
+    .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
+    .replace(/[，。；、：:()（）\[\]【】\s]+/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function dedupeKnowledgeItems(items) {
+  const map = items && typeof items === 'object' && !Array.isArray(items) ? items : {};
+  const groups = {};
+  for (const id in map) {
+    const item = map[id];
+    if (!item || typeof item !== 'object') continue;
+    const sessionId = item.sessionId || '';
+    const key = _normalizeKnowledgeKey(item.title);
+    if (!sessionId || !key) continue;
+    const groupKey = sessionId + '|' + key;
+    if (!groups[groupKey]) groups[groupKey] = [];
+    groups[groupKey].push(id);
+  }
+
+  const removeIds = new Set();
+  for (const ids of Object.values(groups)) {
+    if (ids.length < 2) continue;
+    const ranked = ids
+      .map(id => ({ id, item: map[id] }))
+      .sort((a, b) => {
+        const score = item => (item.summary || '').length + (item.formulas || []).length * 5 + (item.createdAt || 0) / 100000;
+        return score(b.item) - score(a.item);
+      });
+    const keep = ranked[0].item;
+    const formulas = [];
+    const seen = new Set();
+    for (const entry of ranked) {
+      for (const formula of entry.item.formulas || []) {
+        if (formula && !seen.has(formula)) {
+          seen.add(formula);
+          formulas.push(formula);
+        }
+      }
+    }
+    keep.formulas = formulas;
+    for (let i = 1; i < ranked.length; i++) removeIds.add(ranked[i].id);
+  }
+
+  if (removeIds.size) {
+    for (const id of removeIds) delete map[id];
+    try {
+      localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(map));
+    } catch (e) {}
+  }
+  return map;
+}
+
 // 强制失效知识缓存：下次 getKnowledgeItems() 重新读取 localStorage
 // （_syncFromServer 等服务端同步只写 localStorage 不更新内存缓存，渲染前必须失效）
 function invalidateKnowledgeCache() {
@@ -42,11 +101,13 @@ function getKnowledgeItems() {
         localStorage.setItem(STORAGE_KEY_KNOWLEDGE, '{}');
       }
     }
+    kpKnowledgeCache = dedupeKnowledgeItems(kpKnowledgeCache);
   } catch { kpKnowledgeCache = {}; }
   return kpKnowledgeCache;
 }
 
 async function saveKnowledgeItems(items) {
+  items = dedupeKnowledgeItems(items);
   kpKnowledgeCache = items;
   localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(items));
   const snapshot = JSON.parse(JSON.stringify(items));
@@ -558,7 +619,7 @@ function renderFormulaList() {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    const meaningHtml = meaning ? escapeHtml(meaning.length > 180 ? meaning.slice(0, 180) + '...' : meaning) : '';
+    const meaningHtml = meaning ? escapeHtml(meaning.length > 320 ? meaning.slice(0, 320) + '...' : meaning) : '';
     // 来源会话：存在则显示可点击定位（跳转到产生该公式的对话）
     const srcSession = it.sessionId && typeof window.getSessionById === 'function' ? window.getSessionById(it.sessionId) : null;
     const srcHtml = srcSession

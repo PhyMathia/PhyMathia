@@ -202,6 +202,12 @@
       return '该公式用于描述物理量之间的定量关系';
     }
 
+    function _isSocraticFollowup(content) {
+      const text = String(content || '');
+      if (!/<socratic_meta\b/i.test(text)) return false;
+      return !/(<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片)/i.test(text);
+    }
+
     function extractLocalKnowledge(messages) {
       const assistant = [...messages].reverse().find(message =>
         message.role === 'assistant' && (message.content || '').trim()
@@ -209,6 +215,7 @@
       if (!assistant) return [];
 
       const content = String(assistant.content || '');
+      if (_isSocraticFollowup(content)) return [];
       const formulas = extractLocalFormulas(content);
       const formulaTags = buildFormulaTags(content, formulas);
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
@@ -281,6 +288,22 @@
       return data.items || [];
     }
 
+    function _knowledgeDedupKey(title) {
+      return String(title || '')
+        .replace(/^#+\s*/, '')
+        .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
+        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/g, '')
+        .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/g, '')
+        .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
+        .replace(/[，。；、：:()（）\[\]【】\s]+/g, '')
+        .toLowerCase()
+        .trim();
+    }
+
+    function _mergeUniqueValues(base, extra) {
+      return Array.from(new Set([...(base || []), ...(extra || [])].filter(Boolean)));
+    }
+
     function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false) {
       if (!items || items.length === 0) return;
 
@@ -293,20 +316,23 @@
       );
 
       for (const item of items) {
+        const titleKey = _knowledgeDedupKey(item.title);
         const existing = Object.values(existingItems).find(e =>
-          e.sessionId === sessionId && e.title === item.title
+          e.sessionId === sessionId && _knowledgeDedupKey(e.title) === titleKey
         ) || (updateExisting && items.length === 1 && messageItems.length === 1 ? messageItems[0] : null);
         if (existing) {
-          // 本地快速结果先展示，AI 结果回来后用更完整的内容覆盖它。
-          if (updateExisting && existing.source === 'ai_extract') {
-            Object.assign(existing, {
-              category: item.category || existing.category,
-              tags: item.tags || existing.tags,
-              summary: item.summary || existing.summary,
-              formulas: item.formulas && item.formulas.length ? item.formulas : existing.formulas,
-            });
-            changed = true;
-          }
+          const keepManualSource = existing.source === 'manual';
+          Object.assign(existing, {
+            category: item.category || existing.category,
+            tags: _mergeUniqueValues(existing.tags, item.tags),
+            summary: (item.summary && item.summary.length > (existing.summary || '').length)
+              ? item.summary
+              : existing.summary,
+            formulas: _mergeUniqueValues(existing.formulas, item.formulas),
+            messageId: String(existing.messageId || messageId),
+          });
+          if (keepManualSource) existing.source = 'manual';
+          changed = true;
           continue;
         }
 
@@ -347,6 +373,12 @@
     async function autoExtractKnowledge(sessionId, messages) {
       if (!messages || messages.length === 0) return;
       if (messages.length < 2) return; // Need at least 1 exchange
+
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistant && _isSocraticFollowup(lastAssistant.content)) {
+        console.log('Skip knowledge extraction for Socratic follow-up');
+        return;
+      }
 
       const extractingEl = document.getElementById('kpExtracting');
       // 后台增强可能跨越下一轮对话，固定本轮消息避免结果串入新回答。
@@ -580,11 +612,96 @@
       }
     }
 
+    let pendingSocraticQuestion = '';
+    let pendingSocraticLevel = 'basic';
+    let socraticSubmitting = false;
+    let currentBranch = null;
+
+    function startSocraticAnswer(question, level) {
+      pendingSocraticQuestion = question || '';
+      pendingSocraticLevel = level || 'basic';
+      const modal = document.getElementById('socraticModal');
+      const questionEl = document.getElementById('socraticModalQuestion');
+      const answerEl = document.getElementById('socraticModalAnswer');
+      if (!modal || !questionEl || !answerEl) return;
+      questionEl.textContent = pendingSocraticQuestion;
+      answerEl.value = '';
+      modal.hidden = false;
+      modal.classList.add('active');
+      setTimeout(() => answerEl.focus(), 50);
+    }
+
+    function closeSocraticModal() {
+      const modal = document.getElementById('socraticModal');
+      if (modal) {
+        modal.hidden = true;
+        modal.classList.remove('active');
+      }
+      pendingSocraticQuestion = '';
+      pendingSocraticLevel = 'basic';
+    }
+
+    async function submitSocraticAnswer() {
+      if (isStreaming || socraticSubmitting || !pendingSocraticQuestion) return;
+      const answerEl = document.getElementById('socraticModalAnswer');
+      const answer = answerEl ? answerEl.value.trim() : '';
+      if (!answer) {
+        answerEl?.focus();
+        return;
+      }
+      const message = '[苏格拉底回答]\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
+      const sessionId = typeof SESSION_ID !== 'undefined' ? SESSION_ID : '';
+      socraticSubmitting = true;
+      try {
+        if (sessionId) {
+          const state = {
+            active: true,
+            level: pendingSocraticLevel,
+            question: pendingSocraticQuestion,
+            correctStreak: 0,
+            answeredCount: 0,
+            updatedAt: Date.now(),
+          };
+          try {
+            await fetch('/api/kv/' + encodeURIComponent('socratic:' + sessionId), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: state }),
+            });
+          } catch (err) {
+            console.warn('Failed to start Socratic state:', err);
+          }
+        }
+        closeSocraticModal();
+        currentBranch = 'socratic';
+        sendQuick(message);
+      } finally {
+        socraticSubmitting = false;
+      }
+    }
+
+    function resetSocraticBranch() {
+      currentBranch = null;
+    }
+
+    document.getElementById('socraticModalAnswer')?.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        submitSocraticAnswer();
+      }
+    });
+
     function sendQuick(text) {
       document.getElementById('userInput').value = text;
       autoResize(document.getElementById('userInput'));
       sendMessage();
     }
+
+    window.sendQuick = sendQuick;
+    window.startSocraticAnswer = startSocraticAnswer;
+    window.closeSocraticModal = closeSocraticModal;
+    window.submitSocraticAnswer = submitSocraticAnswer;
+    window.resetSocraticBranch = resetSocraticBranch;
 
     // URL 参数自动提问
     (function() {
@@ -607,8 +724,12 @@
       document.getElementById('welcomeTip')?.remove();
 
       const now = Date.now();
+      const isSocraticBranchSend = text.startsWith('[苏格拉底回答]');
+      currentBranch = isSocraticBranchSend ? 'socratic' : null;
       addMessage('user', text, now);
-      chatHistory.push({ role: 'user', content: text, timestamp: now });
+      const userMessage = { role: 'user', content: text, timestamp: now };
+      if (isSocraticBranchSend) userMessage.branch = 'socratic';
+      chatHistory.push(userMessage);
       await saveCurrentSession();
       input.value = '';
       input.style.height = 'auto';
@@ -765,7 +886,17 @@
           }
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
-          chatHistory.push({ role: 'assistant', content: assistantContent, timestamp: ts, duration });
+          const wasSocraticBranch = currentBranch === 'socratic';
+          chatHistory.push({
+            role: 'assistant',
+            content: assistantContent,
+            timestamp: ts,
+            duration,
+            ...(wasSocraticBranch ? { branch: 'socratic' } : {}),
+          });
+          if (wasSocraticBranch && /<socratic_meta\b[^>]*done\s*=\s*["']true["']/i.test(assistantContent)) {
+            currentBranch = null;
+          }
 
           // 先生成本地知识条目，消息上传继续在后台进行。
           autoExtractKnowledge(currentSessionId, chatHistory);
@@ -787,12 +918,14 @@
           const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
           if (assistantDiv && assistantContent.trim()) {
             const ts = Date.now();
+            const wasSocraticBranch = currentBranch === 'socratic';
             chatHistory.push({
               role: 'assistant',
               content: assistantContent,
               timestamp: ts,
               duration: abortDuration,
               aborted: true,
+              ...(wasSocraticBranch ? { branch: 'socratic' } : {}),
             });
             const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
             if (metaEl) {

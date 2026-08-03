@@ -1188,6 +1188,96 @@
     .model-dialog { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 320px; max-width: 400px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
     .model-dialog h3 { font-size: 15px; margin: 0 0 14px; color: var(--text-primary); }
     .md-field { margin-bottom: 12px; }
+
+    /* ====== 苏格拉底回答小输入框 ====== */
+    .socratic-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 10002;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .socratic-modal-overlay.active {
+      display: flex;
+    }
+    .socratic-modal {
+      width: min(560px, 100%);
+      max-height: 80vh;
+      overflow-y: auto;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .socratic-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .socratic-modal-header span {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .socratic-modal-close {
+      background: none;
+      border: none;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 2px 6px;
+    }
+    .socratic-modal-question {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      background: var(--socratic-bg);
+      border: 1px solid var(--socratic-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .socratic-modal textarea {
+      width: 100%;
+      min-height: 96px;
+      resize: vertical;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--surface-container, rgba(255,255,255,0.06));
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .socratic-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .socratic-modal-cancel,
+    .socratic-modal-submit {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--btn-active-bg);
+      color: var(--text-primary);
+    }
+    .socratic-modal-submit {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
     .md-field label { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
     .md-field input,.md-field select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font-size: 13px; outline: none; box-sizing: border-box; }
     .md-field input:focus,.md-field select:focus { border-color: var(--accent); }
@@ -1668,6 +1758,7 @@
       padding: 6px 14px;
       border-radius: 16px;
       font-size: 13px;
+      font-family: inherit;
       cursor: pointer;
       margin: 0;
       transition: all 0.2s;
@@ -1690,27 +1781,65 @@
       margin-top: 8px;
       width: 100%;
     }
+    .socratic-item {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--socratic-bg);
+      border: 1px solid var(--socratic-border);
+      border-radius: 10px;
+    }
+    .socratic-question {
+      color: var(--text-primary);
+      font-size: 0.9em;
+      line-height: 1.5;
+    }
+    .socratic-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .socratic-btn {
-      display: block;
-      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 96px;
       box-sizing: border-box;
-      padding: 10px 14px;
+      padding: 8px 12px;
       background: var(--socratic-bg);
       border: 1px solid var(--socratic-border);
       border-radius: 10px;
       color: var(--text-primary);
       cursor: pointer;
       font-size: 0.9em;
-      text-align: left;
+      font-family: inherit;
+      text-align: center;
       line-height: 1.5;
       transition: all 0.2s;
       -webkit-user-select: none;
       user-select: none;
     }
+    .socratic-actions .socratic-btn {
+      flex: 1 1 auto;
+    }
+    .socratic-answer {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .socratic-ask {
+      background: var(--socratic-bg);
+      border-color: var(--socratic-border);
+      color: var(--text-primary);
+    }
+    .socratic-answer:hover {
+      background: var(--accent);
+    }
     .socratic-btn:hover {
       background: var(--hover-bg2);
       border-color: var(--accent);
-      transform: translateX(4px);
+      transform: translateY(-1px);
     }
     .socratic-btn.level-basic { border-left: 3px solid #4CAF50; }
     .socratic-btn.level-advanced { border-left: 3px solid #FF9800; }
@@ -2267,8 +2396,8 @@
       background: var(--kp-card-hover-bg); border-color: var(--kp-card-hover-border);
     }
     .kp-formula-latex {
-      flex-shrink: 0; min-width: 90px; max-width: 28%;
-      padding: 8px 10px; border-radius: 10px; font-size: 13px;
+      flex-shrink: 0; min-width: 150px; max-width: 46%;
+      padding: 8px 10px; border-radius: 10px; font-size: 14px;
       font-family: 'Cambria Math', 'Latin Modern Math', serif;
       background: var(--kp-formula-bg); color: var(--kp-formula-color);
       overflow-x: auto;

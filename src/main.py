@@ -132,6 +132,18 @@ def _get_messages_path(session_id: str) -> Path:
     return MESSAGES_DIR / f"{session_id}.json"
 
 
+def _resolve_messages_path(session_id: str) -> Path:
+    """兼容两种会话标识：local key 直接找消息文件，server sessionId 反向查 sessions.json。"""
+    direct = _get_messages_path(session_id)
+    if direct.exists():
+        return direct
+    sessions = _read_json(SESSIONS_PATH, {})
+    for sid, sdata in sessions.items():
+        if isinstance(sdata, dict) and sdata.get("sessionId") == session_id:
+            return _get_messages_path(sid)
+    return direct
+
+
 # ====== System Prompt & Level Prompts ======
 def _load_system_prompt() -> str:
     """从 system prompt.md 加载系统提示词，失败时使用默认提示词"""
@@ -178,12 +190,36 @@ LEVEL_PROMPTS = {
 }
 
 
-def _load_session_context(session_id: str, max_rounds: int = 3) -> list:
-    """加载会话上下文消息，返回最近 max_rounds 轮对话"""
-    messages_path = _get_messages_path(session_id)
+def _is_socratic_message(msg) -> bool:
+    """识别苏格拉底支线消息，兼容新 branch 字段和历史内容标记。"""
+    if not isinstance(msg, dict):
+        return False
+    if msg.get("branch") == "socratic":
+        return True
+    content = str(msg.get("content") or "")
+    if content.lstrip().startswith("[苏格拉底回答]"):
+        return True
+    if content.lstrip().startswith("我的回答："):
+        return True
+    if re.search(r"<socratic_meta\b", content, re.I) and not re.search(
+        r"<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片", content, re.I
+    ):
+        return True
+    return False
+
+
+def _load_session_context(session_id: str, max_rounds: int = 3, include_socratic: bool = False) -> list:
+    """加载会话上下文消息，返回最近 max_rounds 轮对话。
+
+    苏格拉底追问作为独立支线：普通问答默认过滤 branch="socratic" 的消息，
+    只有苏格拉底支线内才把主线与支线一起提供给模型。
+    """
+    messages_path = _resolve_messages_path(session_id)
     all_messages = _read_json(messages_path, [])
     if not all_messages:
         return []
+    if not include_socratic:
+        all_messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
     result = []
     rounds = 0
     for msg in reversed(all_messages):
@@ -193,6 +229,89 @@ def _load_session_context(session_id: str, max_rounds: int = 3) -> list:
             if rounds >= max_rounds:
                 break
     return result
+
+
+# ====== 苏格拉底追问状态 ======
+SOCRATIC_STATE_PREFIX = "socratic:"
+
+
+def _socratic_key(session_id: str) -> str:
+    return f"{SOCRATIC_STATE_PREFIX}{session_id}"
+
+
+def _read_socratic_state(session_id: str):
+    data = _read_json(KV_PATH, {})
+    state = data.get(_socratic_key(session_id))
+    if isinstance(state, dict) and state.get("active"):
+        return state
+    return None
+
+
+def _write_socratic_state(session_id: str, state) -> None:
+    def updater(data):
+        if state is None:
+            data.pop(_socratic_key(session_id), None)
+        else:
+            state["updatedAt"] = int(time.time() * 1000)
+            data[_socratic_key(session_id)] = state
+        return data
+
+    _mutate_json(KV_PATH, updater)
+
+
+def _delete_socratic_state(session_id: str) -> None:
+    _write_socratic_state(session_id, None)
+
+
+def _socratic_state_instruction(session_id: str) -> str:
+    state = _read_socratic_state(session_id)
+    if not state:
+        return ""
+    level = state.get("level", "") or "basic"
+    streak = int(state.get("correctStreak", 0) or 0)
+    question = state.get("question", "") or ""
+    return (
+        f"当前会话处于苏格拉底追问闭环：问题等级={level}，当前问题={question}，已连续答对 {streak} 次。"
+        "用户会以 [苏格拉底回答] 开头携带追问问题与自己的回答；请结合最近一条 AI 讲解、当前问题和用户回答继续，"
+        "按系统提示词中的闭环规则只推进一层，并在回复末尾输出 <socratic_meta .../>。"
+    )
+
+
+def _update_socratic_state_from_content(content: str, session_id: str) -> None:
+    """解析模型输出的 <socratic_meta>，更新或结束会话级追问状态。"""
+    if not content or not session_id:
+        return
+    if not _is_socratic_followup(content):
+        return
+    match = re.search(r"<socratic_meta\b([^>]*?)/?>", content, re.I)
+    if not match:
+        return
+
+    attrs = match.group(1)
+    def attr(name: str, default: str = "") -> str:
+        found = re.search(rf'\b{name}\s*=\s*["\']([^"\']*)["\']', attrs, re.I)
+        return found.group(1) if found else default
+
+    correct = attr("correct", "").strip().lower()
+    done = attr("done", "").strip().lower() in ("1", "true", "yes")
+    state = _read_socratic_state(session_id) or {
+        "active": True,
+        "level": "",
+        "question": "",
+        "correctStreak": 0,
+        "answeredCount": 0,
+    }
+    state["active"] = True
+    if correct == "correct":
+        state["correctStreak"] = int(state.get("correctStreak", 0) or 0) + 1
+    elif correct in ("partial", "wrong"):
+        state["correctStreak"] = 0
+    state["answeredCount"] = int(state.get("answeredCount", 0) or 0) + 1
+
+    if done or int(state.get("correctStreak", 0) or 0) >= 2:
+        _delete_socratic_state(session_id)
+    else:
+        _write_socratic_state(session_id, state)
 
 
 # ====== 固定 Mock 回答 ======
@@ -247,12 +366,33 @@ graph TD
 <extend>
 ## 💡 延伸思考
 
-1. 阻尼振动中能量如何耗散？微分方程会变成什么形式？
-2. 受迫振动在驱动频率接近固有频率时会发生什么？（共振！）
-3. 复数和相量如何简化简谐运动的叠加分析？
+### 苏格拉底追问
+1. [基础] 为什么阻尼振动中的能量会逐渐耗散？可以从哪个物理机制解释？
+2. [进阶] 如果加入线性阻尼项 c(dx/dt)，简谐运动的微分方程会变成什么形式？
+3. [拓展] 复数和相量如何简化简谐运动的叠加分析？
+
+### 进阶学习方向
+1. 阻尼振荡器与品质因数
+2. 受迫振动与共振曲线
+3. 傅里叶分析在振动分解中的应用
 </extend>
 
 <summary>简谐运动是回复力与位移成正比的周期运动，能量在动能与势能间周期转换</summary>"""
+
+
+MOCK_SOCRATIC_ANSWER_1 = r"""你的推理方向是对的。阻尼会持续消耗机械能，所以振幅会衰减。
+
+那如果加入线性阻尼项 <formula>c\dot{x}</formula>，微分方程会变成什么形式？
+
+<socratic_meta correct="correct" done="false" />"""
+
+
+MOCK_SOCRATIC_ANSWER_2 = r"""你已经连续答对两次，这段追问就到这里。
+
+小结：阻尼振动通过耗散机械能降低振幅，数学上用含 <formula>c\dot{x}</formula> 的二阶常系数线性微分方程描述。
+
+<summary>阻尼振动通过耗散机械能降低振幅，由含阻尼项的常微分方程描述</summary>
+<socratic_meta correct="correct" done="true" />"""
 
 
 MOCK_HTML_VISUALIZATION = r"""<!DOCTYPE html>
@@ -302,7 +442,7 @@ var t=0;r()})();
 </body></html>"""
 
 
-async def _mock_stream_openai():
+async def _mock_stream_openai(content: str = MOCK_ANSWER, include_html: bool = True):
     """生成 OpenAI 格式的 mock SSE 流，模拟逐字输出"""
     # 首个空 chunk（触发前端进度显示）
     yield {
@@ -316,8 +456,8 @@ async def _mock_stream_openai():
 
     # 逐 chunk 发送 markdown 内容
     chunk_size = 4
-    for i in range(0, len(MOCK_ANSWER), chunk_size):
-        chunk = MOCK_ANSWER[i : i + chunk_size]
+    for i in range(0, len(content), chunk_size):
+        chunk = content[i : i + chunk_size]
         yield {
             "id": "phymathia-chat",
             "object": "chat.completion.chunk",
@@ -329,16 +469,17 @@ async def _mock_stream_openai():
 
     await asyncio.sleep(0.2)
 
-    # 发送可视化 HTML（前端会识别 ` ```html `...` ``` ` 并转为 iframe 卡片）
-    html_block = f"\n\n```html\n{MOCK_HTML_VISUALIZATION}\n```\n"
-    yield {
-        "id": "phymathia-chat",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": "phymathia-mock",
-        "choices": [{"index": 0, "delta": {"content": html_block}, "finish_reason": None}],
-    }
-    await asyncio.sleep(0.1)
+    if include_html:
+        # 发送可视化 HTML（前端会识别 ` ```html `...` ``` ` 并转为 iframe 卡片）
+        html_block = f"\n\n```html\n{MOCK_HTML_VISUALIZATION}\n```\n"
+        yield {
+            "id": "phymathia-chat",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "phymathia-mock",
+            "choices": [{"index": 0, "delta": {"content": html_block}, "finish_reason": None}],
+        }
+        await asyncio.sleep(0.1)
 
     # 结束标记
     yield {
@@ -377,9 +518,24 @@ async def openai_chat_completions(request: Request):
         stream = payload.get("stream", False)
         logger.info(f"OpenAI mock request: prompt={payload.get('prompt', '')[:50]}, level={payload.get('level', 'university')}, stream={stream}")
 
+        session_id = payload.get("session_id", "")
+        socratic_state = _read_socratic_state(session_id) if session_id else None
+        is_socratic_prompt = str(payload.get("prompt") or "").lstrip().startswith("[苏格拉底回答]")
+        if socratic_state and not is_socratic_prompt:
+            _delete_socratic_state(session_id)
+            socratic_state = None
+        reply_content = MOCK_ANSWER
+        if socratic_state:
+            reply_content = (
+                MOCK_SOCRATIC_ANSWER_2
+                if int(socratic_state.get("correctStreak", 0) or 0) >= 1
+                else MOCK_SOCRATIC_ANSWER_1
+            )
+            _update_socratic_state_from_content(reply_content, session_id)
+
         if stream:
             async def generate():
-                async for chunk in _mock_stream_openai():
+                async for chunk in _mock_stream_openai(reply_content, include_html=reply_content is MOCK_ANSWER):
                     yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
 
@@ -392,7 +548,7 @@ async def openai_chat_completions(request: Request):
                 "model": "phymathia-mock",
                 "choices": [{
                     "index": 0,
-                    "message": {"role": "assistant", "content": MOCK_ANSWER},
+                    "message": {"role": "assistant", "content": reply_content},
                     "finish_reason": "stop",
                 }],
             }
@@ -468,13 +624,25 @@ async def api_models_chat(request: Request):
 
     # 构建消息列表
     prompt = payload.get("prompt", "")
+    session_id = payload.get("session_id", "")
     if prompt:
         # 新格式：后端构建消息
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        is_socratic_prompt = prompt.lstrip().startswith("[苏格拉底回答]")
+        socratic_state = _read_socratic_state(session_id) if session_id else None
+        if socratic_state and not is_socratic_prompt:
+            # 用户开始新的普通问答时，结束当前苏格拉底支线
+            _delete_socratic_state(session_id)
+            socratic_state = None
+        include_socratic = bool(socratic_state) or is_socratic_prompt
 
-        session_id = payload.get("session_id", "")
+        system_content = SYSTEM_PROMPT
+        state_instruction = _socratic_state_instruction(session_id) if session_id and is_socratic_prompt else ""
+        if state_instruction:
+            system_content += "\n\n" + state_instruction
+        messages = [{"role": "system", "content": system_content}]
+
         if session_id:
-            context = _load_session_context(session_id)
+            context = _load_session_context(session_id, include_socratic=include_socratic)
             messages.extend(context)
 
         level = payload.get("level", "university")
@@ -521,11 +689,29 @@ async def api_models_chat(request: Request):
                         return
                     if not stream:
                         raw = await resp.aread()
-                        yield raw.decode(errors="replace")
+                        text = raw.decode(errors="replace")
+                        try:
+                            data = json.loads(text)
+                            content = data["choices"][0]["message"]["content"]
+                            _update_socratic_state_from_content(content, session_id)
+                        except Exception:
+                            pass
+                        yield text
                         return
+                    streamed_content = []
                     async for line in resp.aiter_lines():
                         if line.startswith("data: "):
+                            data_str = line[6:].strip()
+                            if data_str != "[DONE]":
+                                try:
+                                    data = json.loads(data_str)
+                                    delta = data.get("choices", [{}])[0].get("delta", {})
+                                    if delta.get("content"):
+                                        streamed_content.append(delta["content"])
+                                except Exception:
+                                    pass
                             yield line + "\n\n"
+                    _update_socratic_state_from_content("".join(streamed_content), session_id)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
@@ -616,6 +802,7 @@ async def api_delete_session(session_id: str):
         msgs_path.unlink()
     _delete_by_session(KNOWLEDGE_PATH, session_id)
     _delete_by_session(FORMULAS_PATH, session_id)
+    _delete_socratic_state(session_id)
     return {"ok": True}
 
 
@@ -656,6 +843,7 @@ async def api_clear_messages(session_id: str):
     _write_json(msgs_path, [])
     _delete_by_session(KNOWLEDGE_PATH, session_id)
     _delete_by_session(FORMULAS_PATH, session_id)
+    _delete_socratic_state(session_id)
     return {"ok": True}
 
 
@@ -684,7 +872,7 @@ def _normalize_knowledge(data) -> dict:
 
 @app.get("/api/knowledge")
 async def api_get_knowledge():
-    return _normalize_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+    return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
 
 
 @app.post("/api/knowledge")
@@ -700,7 +888,7 @@ async def api_save_knowledge(request: Request):
         data = _normalize_knowledge(data)
         # 合并：同 id 以新数据为准；全量上传时等价于覆盖
         data.update(incoming)
-        return data
+        return _dedupe_knowledge(data)
 
     data = _mutate_json(KNOWLEDGE_PATH, updater)
     return {"ok": True, "count": len(data)}
@@ -938,6 +1126,68 @@ def _clean_knowledge_title(title: str) -> str:
     return title
 
 
+def _is_socratic_followup(content: str) -> bool:
+    content = content or ""
+    if not re.search(r"<socratic_meta\b", content, re.I):
+        return False
+    return not re.search(r"<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片", content, re.I)
+
+
+def _normalize_knowledge_key(title: str) -> str:
+    s = _clean_knowledge_title(title)
+    s = re.sub(r"^[#*\-•·>\s]+", "", s)
+    s = re.sub(r"[，。；、：:()（）\[\]【】\s]+", "", s)
+    return s.lower().strip()
+
+
+def _dedupe_knowledge(data) -> dict:
+    """按 sessionId + 规范化标题合并同一会话内的重复知识点。"""
+    data = _normalize_knowledge(data)
+    groups = {}
+    for item_id, item in data.items():
+        if not isinstance(item, dict):
+            continue
+        session_id = item.get("sessionId", "")
+        title_key = _normalize_knowledge_key(item.get("title", ""))
+        if not session_id or not title_key:
+            continue
+        groups.setdefault((session_id, title_key), []).append((item_id, item))
+
+    remove_ids = []
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda kv: (
+            len(str(kv[1].get("summary") or "")),
+            len(kv[1].get("formulas") or []),
+            kv[1].get("createdAt") or 0,
+        ))
+        keep_id, keep = group[-1]
+        formulas = []
+        seen = set()
+        for _, it in group:
+            for formula in it.get("formulas") or []:
+                normalized = _normalize_formula(str(formula))
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    formulas.append(normalized)
+        keep["formulas"] = formulas
+        for item_id, _ in group:
+            if item_id != keep_id:
+                remove_ids.append(item_id)
+
+    for item_id in remove_ids:
+        data.pop(item_id, None)
+    return data
+
+
+def _dedupe_knowledge_file() -> None:
+    def updater(data):
+        return _dedupe_knowledge(data)
+
+    _mutate_json(KNOWLEDGE_PATH, updater)
+
+
 def _pick_knowledge_title(titles: list, content: str) -> str:
     """优先取学习卡片标题，其次取第一个非模块标题。"""
     module_keywords = (
@@ -1014,6 +1264,8 @@ def _local_extract_knowledge(messages: list) -> list:
         content = msg.get("content") or ""
         if not content.strip():
             continue
+        if _is_socratic_followup(content):
+            return []
 
         formulas = []
         # 优先提取 AI 按规范标注的 <formula>...</formula> 标签（精准公式）
@@ -1231,6 +1483,10 @@ async def api_extract_knowledge(request: Request):
     api_key = payload.get("api_key", "")
     model = payload.get("model", "")
     base_url = payload.get("base_url", "")
+
+    latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+    if latest_assistant and _is_socratic_followup(latest_assistant.get("content", "")):
+        return {"items": []}
     # 公式描述模型（前端传入，可选；未配置时回退默认摘要）
     desc_provider = payload.get("descriptor_provider", "")
     desc_api_key = payload.get("descriptor_api_key", "")
@@ -1321,6 +1577,10 @@ async def serve_static_file(filename: str):
     raise HTTPException(status_code=404, detail="Not found")
 
 
+# 启动前清理历史重复知识点
+_dedupe_knowledge_file()
+
+
 # ====== 启动 ======
 def parse_args():
     parser = argparse.ArgumentParser(description="Start PhyMathia (offline test mode)")
@@ -1339,7 +1599,7 @@ if __name__ == "__main__":
     logger.info(f"访问地址: http://localhost:{args.port}")
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=args.port,
         reload=args.reload,
         workers=1,

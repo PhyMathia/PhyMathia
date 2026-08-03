@@ -197,6 +197,14 @@ function openVizNewTab(vizId) {
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
 function renderMarkdown(text) {
   if (!text) return '';
+  // 苏格拉底状态标签只用于后端/知识过滤，不显示给用户
+  text = text
+    .replace(/<socratic_meta\b[^>]*>[\s\S]*?<\/socratic_meta>/gi, '')
+    .replace(/<socratic_meta\b[^>]*\/?>/gi, '');
+  // 兼容 AI 将 <formula> 包在 $$..$$ 或 $..$ 内的输出，避免双层定界符
+  text = text.replace(/\${1,2}\s*<formula>([\s\S]*?)<\/formula>\s*\${1,2}/gi, (match, latex) => {
+    return '$$' + latex.trim() + '$$';
+  });
   // AI 按规范标注的 <formula> 标签 → 转换为 $..$（KaTeX 正常渲染，标签本身不显示）
   text = text.replace(/<formula>([\s\S]*?)<\/formula>/gi, (match, latex) => {
     return '$$' + latex.trim() + '$$';
@@ -448,8 +456,8 @@ function convertLearnDirections(html) {
       if (items.length === 0) return match;
       const buttons = items.map(item => {
         const question = '请详细讲解：' + item;
-        const escaped = question.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-        return `<span class="learn-dir-btn" onclick="sendQuick('${escaped}')">${item}</span>`;
+        const encoded = encodeURIComponent(question);
+        return `<button class="learn-dir-btn" type="button" data-send="${encoded}">${escapeHtml(item)}</button>`;
       }).join('');
       return `${header}<div class="learn-dir-section">${buttons}</div>`;
     }
@@ -457,30 +465,46 @@ function convertLearnDirections(html) {
 }
 
 function convertSocraticQuestions(html) {
-  return html.replace(
-    /(<h[1-6][^>]*>.*?(?:延伸思考|追问|苏格拉底|深入思考).*?<\/h[1-6]>)([\s\S]*?)((?:<ul>|<ol>))([\s\S]*?)(<\/ul>|<\/ol>)/gi,
-    (match, header, between, openTag, listContent, closeTag) => {
-      const items = [];
-      const liRegex = /<li>([\s\S]*?)<\/li>/g;
-      let liMatch;
-      while ((liMatch = liRegex.exec(listContent)) !== null) {
-        const text = liMatch[1].replace(/<[^>]+>/g, '').trim();
-        if (text) items.push(text);
-      }
-      if (items.length === 0) return match;
-      const buttons = items.map(item => {
-        const cleanText = item.replace(/^❓\s*/, '').trim();
-        const escaped = cleanText.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-        let level = '';
-        if (cleanText.includes('基础层')) level = 'level-basic';
-        else if (cleanText.includes('进阶层')) level = 'level-advanced';
-        else if (cleanText.includes('拓展层')) level = 'level-expand';
-        return `<span class="socratic-btn ${level}" onclick="sendQuick('${escaped}')">${item}</span>`;
-      }).join('');
-      return `${header}${between}<div class="socratic-section">${buttons}</div>`;
-    }
-  );
+  return html.replace(/<li>([\s\S]*?)<\/li>/g, (match, inner) => {
+    const rawText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const levelMatch = rawText.match(/^\s*\[?(基础|进阶|拓展)(?:题|层)?\]?\s*[:：]?\s*(.*)$/);
+    if (!levelMatch) return match;
+    const levelName = levelMatch[1];
+    const question = (levelMatch[2] || rawText).replace(/^❓\s*/, '').trim();
+    if (!question) return match;
+    const level = levelName === '基础' ? 'basic' : levelName === '进阶' ? 'advanced' : 'expand';
+    const encoded = encodeURIComponent(question);
+    return `<li class="socratic-item" data-socratic-level="${level}">
+      <div class="socratic-question">${escapeHtml(question)}</div>
+      <div class="socratic-actions">
+        <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}">我来回答</button>
+        <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}">直接问AI</button>
+      </div>
+    </li>`;
+  });
 }
+
+document.addEventListener('click', function(e) {
+  const answerBtn = e.target.closest('[data-socratic-answer]');
+  if (answerBtn) {
+    e.preventDefault();
+    const question = decodeURIComponent(answerBtn.getAttribute('data-socratic-answer'));
+    const level = answerBtn.getAttribute('data-socratic-level') || 'basic';
+    if (typeof window.startSocraticAnswer === 'function') {
+      window.startSocraticAnswer(question, level);
+    } else {
+      document.getElementById('userInput').value = question;
+      sendQuick(question);
+    }
+    return;
+  }
+  const quickBtn = e.target.closest('[data-send]');
+  if (quickBtn) {
+    e.preventDefault();
+    const question = decodeURIComponent(quickBtn.getAttribute('data-send'));
+    if (typeof window.sendQuick === 'function') window.sendQuick(question);
+  }
+});
 
 function sanitizeMermaidCode(code) {
   // 1. 确保 flowchart 声明存在
