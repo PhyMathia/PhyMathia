@@ -1,70 +1,102 @@
 /* === PhyMathia 知识网络画布：最终视觉覆盖层 ===
    覆盖 styles.css 中更早的 graph 相关样式，保持桌面与移动端一致。 */
 
-/* ---------- 1. 整体画布：非全屏、居中、保留头尾 ---------- */
+/* ---------- 1. 整体画布：全屏、保留顶栏 ---------- */
 .app-container {
-  max-width: 1240px !important;
-  margin: 0 auto !important;
+  max-width: none !important;
+  margin: 0 !important;
 }
 
 .app-container:not(.linear-mode) .chat-header,
 .app-container:not(.linear-mode) .header-secondary-bar {
-  position: relative !important;
-  inset: auto !important;
+  position: fixed !important;
+  inset: 0 0 auto 0 !important;
   background: var(--bg-panel) !important;
   border-bottom: 1px solid var(--border) !important;
   z-index: 10 !important;
 }
 
 .app-container:not(.linear-mode) .header-secondary-bar {
-  top: auto !important;
+  inset: 50px 0 auto 0 !important;
   padding: 6px 14px !important;
 }
 
 .app-container:not(.linear-mode) .graph-workspace {
-  position: relative !important;
-  inset: auto !important;
+  position: fixed !important;
+  inset: 0 !important;
   display: flex !important;
   flex: 1 !important;
   min-height: 0 !important;
-  max-height: calc(100vh - 180px) !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-height: none !important;
   overflow: hidden !important;
-  border-radius: 0 0 16px 16px !important;
-  border-top: 1px solid var(--border) !important;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(74, 158, 255, 0.06) 0%, transparent 70%),
-    radial-gradient(circle at 12px 12px, rgba(74, 158, 255, 0.10) 1px, transparent 1px),
-    var(--bg-panel) !important;
-  background-size: 100% 100%, 24px 24px, 100% 100% !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
   z-index: 1 !important;
 }
 
 .app-container:not(.linear-mode) .graph-canvas {
-  position: relative !important;
-  inset: auto !important;
+  position: absolute !important;
+  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  border-radius: 0 0 16px 16px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
 }
 
 .app-container:not(.linear-mode) .input-area {
-  position: relative !important;
-  left: auto !important;
-  bottom: auto !important;
-  transform: none !important;
-  width: 100% !important;
-  max-width: 800px !important;
-  margin: 0 auto !important;
-  padding: 10px 0 !important;
+  display: block !important;
+}
+
+.app-container:not(.linear-mode).graph-empty-active .input-area {
+  display: none !important;
+}
+
+.input-area {
+  border-top: none !important;
   background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.app-container:not(.linear-mode) .input-area {
+  left: auto !important;
+  right: 20px !important;
+  bottom: 18px !important;
+  transform: none !important;
+  width: auto !important;
+}
+
+.input-container {
   border: none !important;
-  z-index: 10 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  padding: 0 !important;
+  width: auto !important;
+}
+
+#sendBtn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  position: fixed;
+  right: 20px;
+  bottom: 18px;
+  z-index: 80;
+}
+
+#sendBtn[hidden] {
+  display: none !important;
 }
 
 .app-container:not(.linear-mode) .input-container {
-  border: 1px solid var(--border) !important;
-  background: var(--bg-panel) !important;
+  border: none !important;
+  background: transparent !important;
   box-shadow: none !important;
+  backdrop-filter: none !important;
 }
 
 .app-container:not(.linear-mode) .chat-messages {
@@ -93,14 +125,6 @@
   vector-effect: none !important;
 }
 
-.graph-edge-secondary {
-  stroke: rgba(148, 190, 255, 0.55) !important;
-  stroke-width: 4px !important;
-  stroke-dasharray: 12 10 !important;
-  filter: none !important;
-  opacity: 0.6 !important;
-}
-
 /* ---------- 3. 气泡节点：动态尺寸、直接显示完整内容 ---------- */
 .graph-node {
   position: absolute !important;
@@ -121,12 +145,11 @@
   cursor: grab !important;
   user-select: none !important;
   overflow: visible !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
   z-index: 2 !important;
 }
 
 .graph-node:hover {
-  transform: translateY(-2px) !important;
   border-color: var(--accent) !important;
   box-shadow: 0 20px 56px rgba(0, 0, 0, 0.45), 0 0 24px rgba(74, 158, 255, 0.16) !important;
 }
@@ -142,24 +165,53 @@
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55) !important;
 }
 
+.graph-resize-handle {
+  position: absolute !important;
+  right: 4px !important;
+  bottom: 4px !important;
+  width: 16px !important;
+  height: 16px !important;
+  cursor: nwse-resize !important;
+  opacity: 0.55 !important;
+  z-index: 6 !important;
+}
+
+.graph-resize-handle::before,
+.graph-resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 9px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  transform-origin: 100% 100%;
+}
+
+.graph-resize-handle::before {
+  transform: rotate(-45deg);
+}
+
+.graph-resize-handle::after {
+  transform: rotate(-45deg) translate(-3px, 3px);
+  opacity: 0.55;
+}
+
 .graph-node-user {
   border-left: 6px solid #4a9eff !important;
-  background: linear-gradient(135deg, rgba(74, 158, 255, 0.12) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
 }
 
 .graph-node-answer {
   border-left: 6px solid #10b981 !important;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
 }
 
 .graph-node-root {
   border: 2px solid #ffffff !important;
-  background: linear-gradient(135deg, rgba(74, 158, 255, 0.25) 0%, rgba(16, 24, 46, 0.97) 70%) !important;
-  box-shadow: 0 0 50px rgba(74, 158, 255, 0.45), 0 18px 50px rgba(0, 0, 0, 0.45) !important;
 }
 
 .graph-node-branch {
-  border-style: dashed !important;
+  border-style: solid !important;
   border-color: var(--accent) !important;
   opacity: 0.92 !important;
 }
@@ -168,40 +220,30 @@
   border-color: #f59e0b !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.14) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
-  box-shadow: 0 0 44px rgba(245, 158, 11, 0.22), 0 14px 44px rgba(0, 0, 0, 0.38) !important;
 }
 
 .graph-node-module.graph-module-math {
   border-color: #3b82f6 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.14) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
-  box-shadow: 0 0 44px rgba(59, 130, 246, 0.22), 0 14px 44px rgba(0, 0, 0, 0.38) !important;
 }
 
 .graph-node-module.graph-module-graph {
   border-color: #0891b2 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
-  background: linear-gradient(135deg, rgba(8, 145, 178, 0.14) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
-  box-shadow: 0 0 44px rgba(8, 145, 178, 0.22), 0 14px 44px rgba(0, 0, 0, 0.38) !important;
 }
 
 .graph-node-module.graph-module-viz {
   border-color: #10b981 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.14) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
-  box-shadow: 0 0 44px rgba(16, 185, 129, 0.22), 0 14px 44px rgba(0, 0, 0, 0.38) !important;
 }
 
 .graph-node-module.graph-module-extend {
   border-color: #a855f7 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.14) 0%, rgba(16, 24, 46, 0.97) 60%) !important;
-  box-shadow: 0 0 44px rgba(168, 85, 247, 0.22), 0 14px 44px rgba(0, 0, 0, 0.38) !important;
 }
 
 .graph-node.dimmed {
@@ -264,12 +306,51 @@
   overflow-wrap: anywhere !important;
   max-height: 520px !important;
   overflow-y: auto !important;
+  scrollbar-width: none !important;
+}
+
+.graph-node-full-content::-webkit-scrollbar {
+  display: none !important;
 }
 
 .graph-node-full-content img,
 .graph-node-full-content iframe {
   max-width: 100% !important;
   border-radius: 8px !important;
+}
+
+.graph-node-module.graph-module-viz .graph-node-full-content {
+  display: flex !important;
+  flex-direction: column !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.graph-node-module.graph-module-viz .viz-card {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+.graph-node-module.graph-module-viz .viz-iframe {
+  flex: 1 1 auto !important;
+  height: auto !important;
+  min-height: 320px !important;
+}
+
+.graph-node .mermaid-container {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none !important;
+}
+
+.graph-node .mermaid-container::-webkit-scrollbar {
+  display: none !important;
+}
+
+.graph-node .mermaid-scroll-hint {
+  display: none !important;
 }
 
 .graph-node-actions {
@@ -339,10 +420,75 @@
   padding: 24px !important;
 }
 
+.graph-new-session-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(680px, 90vw);
+  display: flex;
+  justify-content: center;
+  z-index: 2;
+}
+
+.graph-new-session-node {
+  position: relative !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 680px !important;
+}
+
+.graph-new-session-node .graph-node-label {
+  font-size: 17px !important;
+}
+
+.graph-new-session-input {
+  width: 100%;
+  min-height: 56px;
+  max-height: 160px;
+  resize: vertical;
+  box-sizing: border-box;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.6;
+  outline: none;
+}
+
+.graph-new-session-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--btn-active-border);
+}
+
+.graph-new-session-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.graph-new-session-btn {
+  border: 1px solid var(--accent);
+  background: var(--btn-active-bg);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* ---------- 6. 移动端适配 ---------- */
 @media (max-width: 768px) {
   .app-container:not(.linear-mode) .graph-workspace {
-    max-height: calc(100vh - 160px) !important;
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-height: none !important;
   }
 
   .graph-node {
@@ -356,6 +502,240 @@
   }
 
   .graph-node-full-content {
-    max-height: 360px !important;
+    max-height: 420px !important;
+    overflow-y: auto !important;
   }
+
+  .graph-new-session-wrap {
+    width: min(520px, 92vw);
+  }
+
+  .graph-new-session-node {
+    padding: 12px 14px !important;
+  }
+
+  .graph-new-session-input {
+    font-size: 16px;
+  }
+}
+
+
+/* ---------- 7. 浅色模式优化 ----------
+   节点/连线的浅色值统一由第 9 节变量驱动，
+   避免这里的高优先级 box-shadow/filter 绕过变量过渡，
+   导致“深色→浅色”切换时气泡光晕瞬间跳变。 */
+[data-theme="light"] .graph-tool-btn {
+  background: #fbf6ec !important;
+  border-color: rgba(120, 100, 70, 0.2) !important;
+  color: #2a2418 !important;
+}
+
+
+/* ---------- 8. 模式切换与主题过渡 ---------- */
+.graph-node {
+  transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease, opacity 0.35s ease !important;
+}
+
+/* ---------- 9. 深浅色统一主题系统 ---------- */
+@property --graph-bubble-start { syntax: '<color>'; inherits: true; initial-value: rgba(16, 24, 46, 0.97); }
+@property --graph-bubble-end { syntax: '<color>'; inherits: true; initial-value: rgba(16, 24, 46, 0.97); }
+@property --graph-bubble-border { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, 0.12); }
+@property --graph-bubble-glow { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.32); }
+@property --graph-bubble-shadow { syntax: '<color>'; inherits: true; initial-value: rgba(0, 0, 0, 0.38); }
+@property --graph-edge-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
+@property --graph-edge-glow { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.45); }
+
+:root {
+  --graph-bubble-start: rgba(16, 24, 46, 0.97);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: rgba(255, 255, 255, 0.12);
+  --graph-bubble-glow: rgba(74, 158, 255, 0.28);
+  --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
+  --graph-edge-color: #4a9eff;
+  --graph-edge-glow: rgba(74, 158, 255, 0.45);
+}
+
+[data-theme="light"] {
+  --graph-bubble-start: rgba(120, 100, 70, 0.10);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: rgba(120, 100, 70, 0.2);
+  --graph-bubble-glow: rgba(255, 255, 255, 0);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.16);
+  --graph-edge-color: #8b6914;
+  --graph-edge-glow: rgba(139, 105, 20, 0.22);
+}
+
+.graph-node-user {
+  --graph-bubble-start: rgba(74, 158, 255, 0.12);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #4a9eff;
+  --graph-bubble-glow: rgba(74, 158, 255, 0.38);
+}
+
+.graph-node-answer {
+  --graph-bubble-start: rgba(16, 185, 129, 0.12);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #10b981;
+  --graph-bubble-glow: rgba(16, 185, 129, 0.38);
+}
+
+.graph-node-root {
+  --graph-bubble-start: rgba(74, 158, 255, 0.25);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #ffffff;
+  --graph-bubble-glow: rgba(74, 158, 255, 0.45);
+}
+
+.graph-node-module.graph-module-physics {
+  --graph-bubble-start: rgba(245, 158, 11, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #f59e0b;
+  --graph-bubble-glow: rgba(245, 158, 11, 0.30);
+}
+
+.graph-node-module.graph-module-math {
+  --graph-bubble-start: rgba(59, 130, 246, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #3b82f6;
+  --graph-bubble-glow: rgba(59, 130, 246, 0.30);
+}
+
+.graph-node-module.graph-module-graph {
+  --graph-bubble-start: rgba(8, 145, 178, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #0891b2;
+  --graph-bubble-glow: rgba(8, 145, 178, 0.30);
+}
+
+.graph-node-module.graph-module-viz {
+  --graph-bubble-start: rgba(16, 185, 129, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #10b981;
+  --graph-bubble-glow: rgba(16, 185, 129, 0.30);
+}
+
+.graph-node-module.graph-module-extend {
+  --graph-bubble-start: rgba(168, 85, 247, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #a855f7;
+  --graph-bubble-glow: rgba(168, 85, 247, 0.30);
+}
+
+[data-theme="light"] .graph-node-user {
+  --graph-bubble-start: rgba(74, 158, 255, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #4a9eff;
+  --graph-bubble-glow: rgba(74, 158, 255, 0.30);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-answer {
+  --graph-bubble-start: rgba(16, 185, 129, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #10b981;
+  --graph-bubble-glow: rgba(16, 185, 129, 0.28);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-root {
+  --graph-bubble-start: rgba(139, 105, 20, 0.20);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #8b6914;
+  --graph-bubble-glow: rgba(139, 105, 20, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-physics {
+  --graph-bubble-start: rgba(245, 158, 11, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #f59e0b;
+  --graph-bubble-glow: rgba(245, 158, 11, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-math {
+  --graph-bubble-start: rgba(59, 130, 246, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #3b82f6;
+  --graph-bubble-glow: rgba(59, 130, 246, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-graph {
+  --graph-bubble-start: rgba(8, 145, 178, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #0891b2;
+  --graph-bubble-glow: rgba(8, 145, 178, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-viz {
+  --graph-bubble-start: rgba(16, 185, 129, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #10b981;
+  --graph-bubble-glow: rgba(16, 185, 129, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-extend {
+  --graph-bubble-start: rgba(168, 85, 247, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #a855f7;
+  --graph-bubble-glow: rgba(168, 85, 247, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+.graph-node,
+[data-theme="dark"] .graph-node,
+[data-theme="light"] .graph-node {
+  background: linear-gradient(135deg, var(--graph-bubble-start) 0%, var(--graph-bubble-end) 60%) !important;
+  border-color: var(--graph-bubble-border) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 34px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
+  transition: --graph-bubble-start 0.35s ease, --graph-bubble-end 0.35s ease, --graph-bubble-border 0.35s ease, --graph-bubble-glow 0.35s ease, --graph-bubble-shadow 0.35s ease, box-shadow 0.35s ease, border-color 0.35s ease !important;
+}
+
+[data-theme="dark"] .graph-node-user,
+[data-theme="light"] .graph-node-user,
+[data-theme="dark"] .graph-node-answer,
+[data-theme="light"] .graph-node-answer,
+[data-theme="dark"] .graph-node-root,
+[data-theme="light"] .graph-node-root,
+[data-theme="dark"] .graph-node-module.graph-module-physics,
+[data-theme="light"] .graph-node-module.graph-module-physics,
+[data-theme="dark"] .graph-node-module.graph-module-math,
+[data-theme="light"] .graph-node-module.graph-module-math,
+[data-theme="dark"] .graph-node-module.graph-module-graph,
+[data-theme="light"] .graph-node-module.graph-module-graph,
+[data-theme="dark"] .graph-node-module.graph-module-viz,
+[data-theme="light"] .graph-node-module.graph-module-viz,
+[data-theme="dark"] .graph-node-module.graph-module-extend,
+[data-theme="light"] .graph-node-module.graph-module-extend {
+  background: linear-gradient(135deg, var(--graph-bubble-start) 0%, var(--graph-bubble-end) 60%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 34px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
+}
+
+[data-theme="dark"] .graph-node:hover,
+[data-theme="light"] .graph-node:hover {
+  border-color: var(--graph-bubble-border) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 40px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
+}
+
+[data-theme="dark"] .graph-node.selected,
+[data-theme="light"] .graph-node.selected {
+  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25), 0 20px 56px var(--graph-bubble-shadow) !important;
+}
+
+[data-theme="dark"] .graph-node.dragging,
+[data-theme="light"] .graph-node.dragging {
+  box-shadow: 0 24px 64px var(--graph-bubble-shadow) !important;
+}
+
+.graph-edge {
+  stroke: var(--graph-edge-color) !important;
+  filter: drop-shadow(0 0 6px var(--graph-edge-glow)) !important;
+  transition: --graph-edge-color 0.35s ease, --graph-edge-glow 0.35s ease, filter 0.35s ease, opacity 0.35s ease !important;
+}
+
+.graph-node {
+  will-change: transform;
 }

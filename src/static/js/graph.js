@@ -17,6 +17,11 @@ const graphView = {
   nodeById: {},
   selectedNodeId: null,
   dragNodeId: null,
+  resizeNodeId: null,
+  resizeStartX: 0,
+  resizeStartY: 0,
+  resizeStartW: 0,
+  resizeStartH: 0,
   panning: false,
   moved: false,
   pointerId: null,
@@ -36,7 +41,7 @@ function _graphState() {
   if (typeof window.getGraphState === 'function') {
     return window.getGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : '');
   }
-  return { collapsed: {}, hidden: {}, positions: {}, pan: { x: 80, y: 80 }, zoom: 0.9, linear: false, layoutVersion: 1 };
+  return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, linear: false, layoutVersion: 1 };
 }
 
 function _saveGraphState(state) {
@@ -46,7 +51,9 @@ function _saveGraphState(state) {
 }
 
 function _getChatHistory() {
-  return typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+  const base = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+  const live = typeof window.getStreamingAssistant === 'function' ? window.getStreamingAssistant() : null;
+  return live ? base.concat([live]) : base;
 }
 
 function _graphNodeId(kind, timestamp, moduleKey) {
@@ -63,12 +70,20 @@ function _graphModuleKeys(sections) {
   const keys = [];
   if (sections.physics) keys.push('physics');
   if (sections.math) keys.push('math');
-  if (sections.graph) {
-    if (sections.graph.indexOf('```html') !== -1) keys.push('viz');
-    keys.push('graph');
-  }
+  if (sections.graph) keys.push('graph');
+  if (sections.viz) keys.push('viz');
   if (sections.extend) keys.push('extend');
   return keys;
+}
+
+function _splitGraphSections(sections) {
+  const out = { ...(sections || {}) };
+  if (out.graph && typeof _splitVizFromGraph === 'function') {
+    const split = _splitVizFromGraph(out.graph);
+    out.graph = split.graphContent;
+    out.viz = split.vizContent;
+  }
+  return out;
 }
 
 function _findGraphNode(nodeId) {
@@ -87,12 +102,11 @@ function _buildGraphData(messages, state) {
   const nodeById = {};
   const hiddenMap = state.hidden || {};
   const savedPositions = state.layoutVersion === LAYOUT_VERSION ? (state.positions || {}) : {};
+  const pinnedMap = state.pinned || {};
+  const savedSizes = state.sizes || {};
 
-  const mainUsers = messages.filter(m => m.role === 'user' && (!m.branchType || m.branchType === 'main'));
-  const mainCount = Math.max(1, mainUsers.length);
-  let mainIndex = 0;
   let rootQuestionId = null;
-  let lastAnswerId = null;
+  let lastMainAnswerId = null;
   let lastUserNode = null;
   const answerParentQuestion = {};
   const branchCounter = {};
@@ -110,9 +124,9 @@ function _buildGraphData(messages, state) {
       if (isRoot) {
         rootQuestionId = id;
       } else if (!isBranch) {
-        depth = 1;
-        mainIndex = Math.max(0, mainUsers.findIndex(m => m.timestamp === msg.timestamp));
-        targetAngle = -Math.PI / 2 + (mainIndex / mainCount) * Math.PI * 2;
+        const prevAnswer = lastMainAnswerId ? nodeById[lastMainAnswerId] : null;
+        depth = prevAnswer ? prevAnswer.depth + 1 : 1;
+        targetAngle = prevAnswer ? prevAnswer.targetAngle + 0.04 : -Math.PI / 2;
       } else {
         const parentTs = String(msg.parentId || '');
         let parentId = null;
@@ -151,6 +165,11 @@ function _buildGraphData(messages, state) {
         branchType: msg.branchType || 'main',
         branchLabel: msg.branchLabel || '',
         parentId: msg.parentId || '',
+        pinned: !!(saved && pinnedMap[id]),
+        fixedX: saved ? saved.x : null,
+        fixedY: saved ? saved.y : null,
+        customWidth: savedSizes[id] ? savedSizes[id].w : null,
+        customHeight: savedSizes[id] ? savedSizes[id].h : null,
         w: 0, h: 0, vx: 0, vy: 0,
       };
       nodes.push(node);
@@ -171,10 +190,8 @@ function _buildGraphData(messages, state) {
           if (nodeById[answerId]) parentId = answerId;
         }
         if (parentId) _pushEdge(edges, parentId, id, 'primary');
-        if (parentQuestionId) _pushEdge(edges, parentQuestionId, id, 'secondary');
       } else {
-        if (rootQuestionId && rootQuestionId !== id) _pushEdge(edges, rootQuestionId, id, 'secondary');
-        if (lastAnswerId) _pushEdge(edges, lastAnswerId, id, 'secondary');
+        if (lastMainAnswerId) _pushEdge(edges, lastMainAnswerId, id, 'primary');
       }
     } else {
       const parentQuestionId = lastUserNode ? lastUserNode.id : (rootQuestionId || null);
@@ -198,15 +215,20 @@ function _buildGraphData(messages, state) {
         branchType: msg.branchType || 'main',
         branchLabel: msg.branchLabel || '',
         parentId: msg.parentId || '',
+        pinned: !!(saved && pinnedMap[id]),
+        fixedX: saved ? saved.x : null,
+        fixedY: saved ? saved.y : null,
+        customWidth: savedSizes[id] ? savedSizes[id].w : null,
+        customHeight: savedSizes[id] ? savedSizes[id].h : null,
         w: 0, h: 0, vx: 0, vy: 0,
       };
       nodes.push(node);
       nodeById[id] = node;
       answerParentQuestion[id] = parentQuestionId;
       if (parentQuestionId) _pushEdge(edges, parentQuestionId, id, 'primary');
-      lastAnswerId = id;
+      if (!(msg.branchType && msg.branchType !== 'main')) lastMainAnswerId = id;
 
-      const sections = (typeof parseXmlSections === 'function') ? parseXmlSections(msg.content || '') : {};
+      const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(msg.content || '') : {});
       const keys = _graphModuleKeys(sections);
       const spread = Math.max(0.28, 0.36 * keys.length / 5);
       keys.forEach((key, idx) => {
@@ -230,12 +252,16 @@ function _buildGraphData(messages, state) {
           branchLabel: msg.branchLabel || '',
           parentId: msg.parentId || '',
           hidden: !!hiddenMap[String(msg.timestamp) + ':' + key],
+          pinned: !!(savedM && pinnedMap[moduleId]),
+          fixedX: savedM ? savedM.x : null,
+          fixedY: savedM ? savedM.y : null,
+          customWidth: savedSizes[moduleId] ? savedSizes[moduleId].w : null,
+          customHeight: savedSizes[moduleId] ? savedSizes[moduleId].h : null,
           w: 0, h: 0, vx: 0, vy: 0,
         };
         nodes.push(mNode);
         nodeById[moduleId] = mNode;
         _pushEdge(edges, id, moduleId, 'primary');
-        if (parentQuestionId) _pushEdge(edges, moduleId, parentQuestionId, 'secondary');
       });
     }
   }
@@ -254,15 +280,8 @@ function _nodeContent(message, node) {
     return p.slice(0, 240) + (p.length > 240 ? '...' : '');
   }
   if (node.kind === 'module') {
-    const sections = (typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {};
-    if (node.moduleKey === 'viz' && sections.graph) {
-      const idx = sections.graph.indexOf('```html');
-      if (idx !== -1) {
-        const end = sections.graph.indexOf('```', idx + 7);
-        return end === -1 ? sections.graph.slice(idx) : sections.graph.slice(idx, end + 3);
-      }
-      return sections.graph;
-    }
+    const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
+    if (node.moduleKey === 'viz' && sections.viz) return sections.viz;
     return sections[node.moduleKey] || '';
   }
   return '';
@@ -300,15 +319,20 @@ function _renderNodeHtml(node, messages) {
   const branchClass = node.isBranch ? ' graph-node-branch' : '';
   const selectedClass = node.id === graphView.selectedNodeId ? ' selected' : '';
   const dimmedClass = node.hidden ? ' dimmed' : '';
+  const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const customHeight = node.customHeight
+    ? 'min-height:' + node.customHeight + 'px !important;' + (node.moduleKey === 'viz' ? 'height:' + node.customHeight + 'px !important;' : '')
+    : '';
   const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? 'AI 回答簇' : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.kind === 'module' ? ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey) : _nodeContent(message, node);
-  const body = node.kind === 'module' ? (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node)) : escapeHtml(_nodeContent(message, node))) : '';
-  return '<div class="' + baseClass + modClass + rootClass + branchClass + selectedClass + dimmedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);">'
+  const body = node.kind === 'module' ? (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))) : '';
+  return '<div class="' + baseClass + modClass + rootClass + branchClass + selectedClass + dimmedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);' + customWidth + customHeight + '">'
     + '<div class="graph-node-header">' + badgeHtml + '<span class="graph-node-sub">' + escapeHtml(_nodeSub(node)) + '</span></div>'
     + '<div class="graph-node-label">' + escapeHtml(label) + '</div>'
     + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
     + _nodeActions(node)
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>';
 }
 
@@ -349,7 +373,7 @@ function _redrawEdges() {
     const offset = Math.min(70, d * 0.22);
     const cx = mx - (dy / d) * offset;
     const cy = my + (dx / d) * offset;
-    const cls = edge.type === 'secondary' ? 'graph-edge graph-edge-secondary' : 'graph-edge';
+    const cls = 'graph-edge';
     return '<path d="M' + x1.toFixed(1) + ' ' + y1.toFixed(1) + ' Q' + cx.toFixed(1) + ' ' + cy.toFixed(1) + ' ' + x2.toFixed(1) + ' ' + y2.toFixed(1) + '" class="' + cls + '"></path>';
   }).join('');
   graphEdgeLayer.innerHTML = html;
@@ -359,8 +383,10 @@ function _savePositions() {
   const state = _graphState();
   state.layoutVersion = LAYOUT_VERSION;
   state.positions = state.positions || {};
+  state.sizes = state.sizes || {};
   graphView.nodes.forEach(n => {
-    state.positions[n.id] = { x: n.x, y: n.y };
+    state.positions[n.id] = n.pinned && n.fixedX != null ? { x: n.fixedX, y: n.fixedY } : { x: n.x, y: n.y };
+    state.sizes[n.id] = { w: n.customWidth || n.w || 120, h: n.customHeight || n.h || 60 };
   });
   _saveGraphState(state);
 }
@@ -370,12 +396,11 @@ function _tick() {
   const edges = graphView.edges;
   if (!nodes.length) return;
 
-  const kRepulse = 12000;
-  const kAttract = 0.06;
-  const kRadial = 0.009;
-  const kCenter = 0.0003;
-  const damping = 0.82;
-  const margin = 44;
+  const kRepulse = 9000;
+  const kAttract = 0.05;
+  const kRadial = 0.006;
+  const kCenter = 0.0002;
+  const damping = 0.88;
 
   for (let i = 0; i < nodes.length; i++) {
     const a = nodes[i];
@@ -385,18 +410,12 @@ function _tick() {
       let dx = b.x - a.x;
       let dy = b.y - a.y;
       let d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const half = ((a.w || 120) + (b.w || 120)) / 2 + margin;
-      if (d < half) {
-        const overlap = half - d;
-        const fx = (dx / d) * overlap * 0.5;
-        const fy = (dy / d) * overlap * 0.5;
-        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
-      }
       const area = Math.max(1, Math.sqrt(((a.w || 120) * (a.h || 60)) * ((b.w || 120) * (b.h || 60))) / 1200);
       const f = kRepulse * Math.max(1, area) / (d * d);
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
-      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+      if (!a.pinned) { a.vx -= fx; a.vy -= fy; }
+      if (!b.pinned) { b.vx += fx; b.vy += fy; }
     }
   }
 
@@ -411,11 +430,12 @@ function _tick() {
     const f = (d - target) * kAttract;
     const fx = (dx / d) * f;
     const fy = (dy / d) * f;
-    a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    if (!a.pinned) { a.vx += fx; a.vy += fy; }
+    if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
   }
 
   for (const n of nodes) {
-    if (n.isRoot) continue;
+    if (n.isRoot || n.pinned) continue;
     const targetR = TARGET_R[n.depth] || 1800;
     const ix = targetR * Math.cos(n.targetAngle);
     const iy = targetR * Math.sin(n.targetAngle);
@@ -430,10 +450,22 @@ function _tick() {
 
   for (const n of nodes) {
     if (n.isRoot) continue;
+    if (n.id === graphView.dragNodeId) {
+      n.vx = 0;
+      n.vy = 0;
+      continue;
+    }
+    if (n.pinned) {
+      n.x = n.fixedX;
+      n.y = n.fixedY;
+      n.vx = 0;
+      n.vy = 0;
+      continue;
+    }
     n.vx *= damping;
     n.vy *= damping;
     const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
-    if (speed > 40) { n.vx = (n.vx / speed) * 40; n.vy = (n.vy / speed) * 40; }
+    if (speed > 14) { n.vx = (n.vx / speed) * 14; n.vy = (n.vy / speed) * 14; }
     n.x += n.vx;
     n.y += n.vy;
   }
@@ -441,19 +473,13 @@ function _tick() {
 
 function _runLayout(needsFit) {
   if (!graphView.nodes.length) return;
-  let iter = 0;
-  function step() {
-    if (iter++ >= MAX_ITERATIONS) {
-      _savePositions();
-      if (needsFit) setTimeout(fitGraph, 0);
-      return;
-    }
+  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     _tick();
-    _updateNodeTransforms();
-    _redrawEdges();
-    requestAnimationFrame(step);
   }
-  requestAnimationFrame(step);
+  _updateNodeTransforms();
+  _redrawEdges();
+  _savePositions();
+  if (needsFit) fitGraph();
 }
 
 function _applyGraphTransform() {
@@ -463,18 +489,123 @@ function _applyGraphTransform() {
   graphView.zoom = state.zoom;
 }
 
-function renderGraphCanvas() {
+function _patchGraphStreaming(messages, state) {
+  if (!graphInner) return;
+  const data = _buildGraphData(messages, state);
+  const nextIds = new Set(data.nodes.map(n => n.id));
+  const oldById = graphView.nodeById || {};
+
+  graphInner.querySelectorAll('.graph-node').forEach(el => {
+    if (!nextIds.has(el.dataset.nodeId)) el.remove();
+  });
+
+  const nextNodes = [];
+  const nextById = {};
+  for (const next of data.nodes) {
+    const old = oldById[next.id];
+    const existingEl = graphInner.querySelector('[data-node-id="' + next.id + '"]');
+    if (old && existingEl) {
+      const oldX = old.x;
+      const oldY = old.y;
+      const oldW = old.w;
+      const oldH = old.h;
+      const oldFixedX = old.fixedX;
+      const oldFixedY = old.fixedY;
+      const oldPinned = old.pinned;
+      const oldCustomWidth = old.customWidth;
+      const oldCustomHeight = old.customHeight;
+      Object.assign(old, next, {
+        x: oldX,
+        y: oldY,
+        w: oldW,
+        h: oldH,
+        fixedX: oldFixedX,
+        fixedY: oldFixedY,
+        pinned: oldPinned,
+        customWidth: oldCustomWidth,
+        customHeight: oldCustomHeight,
+      });
+
+      const nextHtml = _renderNodeHtml(old, messages);
+      const tmp = document.createElement('div');
+      tmp.innerHTML = nextHtml;
+      const nextEl = tmp.firstElementChild;
+      const bodyChanged = (nextEl.querySelector('.graph-node-full-content')?.innerHTML || '')
+        !== (existingEl.querySelector('.graph-node-full-content')?.innerHTML || '');
+      const labelChanged = (nextEl.querySelector('.graph-node-label')?.innerHTML || '')
+        !== (existingEl.querySelector('.graph-node-label')?.innerHTML || '');
+      const subChanged = (nextEl.querySelector('.graph-node-sub')?.innerHTML || '')
+        !== (existingEl.querySelector('.graph-node-sub')?.innerHTML || '');
+      if (labelChanged) {
+        const labelEl = existingEl.querySelector('.graph-node-label');
+        const nextLabelEl = nextEl.querySelector('.graph-node-label');
+        if (labelEl && nextLabelEl) labelEl.innerHTML = nextLabelEl.innerHTML;
+      }
+      if (subChanged) {
+        const subEl = existingEl.querySelector('.graph-node-sub');
+        const nextSubEl = nextEl.querySelector('.graph-node-sub');
+        if (subEl && nextSubEl) subEl.innerHTML = nextSubEl.innerHTML;
+      }
+      if (bodyChanged) {
+        const bodyEl = existingEl.querySelector('.graph-node-full-content');
+        const nextBodyEl = nextEl.querySelector('.graph-node-full-content');
+        if (nextBodyEl) {
+          if (bodyEl) bodyEl.innerHTML = nextBodyEl.innerHTML;
+          else existingEl.insertAdjacentHTML('beforeend', nextBodyEl.outerHTML);
+        } else if (bodyEl) {
+          bodyEl.remove();
+        }
+      }
+      if (existingEl.className !== nextEl.className) {
+        existingEl.className = nextEl.className;
+      }
+      nextNodes.push(old);
+    } else {
+      graphInner.insertAdjacentHTML('beforeend', _renderNodeHtml(next, messages));
+      nextNodes.push(next);
+    }
+  }
+
+  nextNodes.forEach(n => { nextById[n.id] = n; });
+  graphView.nodes = nextNodes;
+  graphView.nodeById = nextById;
+  graphView.edges = data.edges;
+  _measureNodes();
+  _redrawEdges();
+}
+
+function renderGraphCanvas(streaming) {
   graphCanvas = document.getElementById('graphCanvas');
   if (!graphCanvas) return;
   const state = _graphState();
   const messages = _getChatHistory();
   graphView.selectedNodeId = null;
-
-  graphCanvas.innerHTML = '';
-  if (!messages.length) {
-    graphCanvas.innerHTML = '<div class="graph-empty" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:15px;color:var(--text-secondary);padding:24px;text-align:center;">从下方输入框开始提问，答案会以知识网络铺展。</div>';
+  if (streaming && graphInner && graphView.nodes.length && messages.length) {
+    _patchGraphStreaming(messages, state);
     return;
   }
+  const appContainer = document.querySelector('.app-container');
+
+  graphCanvas.innerHTML = '';
+  graphView.nodes = [];
+  graphView.edges = [];
+  graphView.nodeById = {};
+  if (!messages.length) {
+    appContainer?.classList.add('graph-empty-active');
+    graphCanvas.innerHTML = `
+      <div class="graph-new-session-wrap">
+        <div class="graph-node graph-node-root graph-new-session-node">
+          <div class="graph-node-header"><span class="graph-node-badge">新对话</span></div>
+          <div class="graph-node-label">PhyMathia 探索网</div>
+          <textarea class="graph-new-session-input" placeholder="问一个物理或数学问题..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.sendGraphNewSession(this)}"></textarea>
+          <div class="graph-new-session-actions">
+            <button class="graph-new-session-btn" onclick="sendGraphNewSession(this)">提问</button>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+  appContainer?.classList.remove('graph-empty-active');
 
   const toolbar = document.createElement('div');
   toolbar.className = 'graph-canvas-toolbar';
@@ -527,8 +658,16 @@ function resetGraphLayout() {
   const state = _graphState();
   state.layoutVersion = 0;
   state.positions = {};
+  state.pinned = {};
   _saveGraphState(state);
   renderGraphCanvas();
+}
+
+function sendGraphNewSession(el) {
+  const node = el && el.closest ? el.closest('.graph-new-session-node') : null;
+  const input = node && node.querySelector('.graph-new-session-input');
+  const text = input ? input.value.trim() : '';
+  if (text && typeof window.sendQuick === 'function') window.sendQuick(text);
 }
 
 function graphModuleAction(action, nodeId) {
@@ -600,6 +739,19 @@ function fitGraph() {
   _applyGraphTransform();
 }
 
+function _startNodeResize(event, nodeEl) {
+  const node = _findGraphNode(nodeEl.dataset.nodeId);
+  if (!node) return;
+  event.preventDefault();
+  event.stopPropagation();
+  graphView.resizeNodeId = node.id;
+  graphView.pointerId = event.pointerId;
+  graphView.resizeStartX = event.clientX;
+  graphView.resizeStartY = event.clientY;
+  graphView.resizeStartW = node.customWidth || node.w || 320;
+  graphView.resizeStartH = node.customHeight || node.h || 120;
+  graphView.moved = false;
+}
 
 function _startNodeDrag(event, nodeEl) {
   const node = _findGraphNode(nodeEl.dataset.nodeId);
@@ -634,6 +786,31 @@ function _handlePointerMove(event) {
   const dy = event.clientY - graphView.startY;
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) graphView.moved = true;
   const state = _graphState();
+  if (graphView.resizeNodeId) {
+    const node = _findGraphNode(graphView.resizeNodeId);
+    const el = graphInner?.querySelector('[data-node-id="' + graphView.resizeNodeId + '"]');
+    if (node && el) {
+      const resizeDx = (event.clientX - graphView.resizeStartX) / (graphView.zoom || 1);
+      const resizeDy = (event.clientY - graphView.resizeStartY) / (graphView.zoom || 1);
+      const nextW = Math.max(260, graphView.resizeStartW + resizeDx);
+      const nextH = Math.max(90, graphView.resizeStartH + resizeDy);
+      node.customWidth = Math.round(nextW);
+      node.customHeight = Math.round(nextH);
+      el.style.setProperty('width', node.customWidth + 'px', 'important');
+      el.style.setProperty('min-width', node.customWidth + 'px', 'important');
+      el.style.setProperty('max-width', node.customWidth + 'px', 'important');
+      el.style.setProperty('min-height', node.customHeight + 'px', 'important');
+      if (node.moduleKey === 'viz') {
+        el.style.setProperty('height', node.customHeight + 'px', 'important');
+      } else {
+        el.style.removeProperty('height');
+      }
+      node.w = node.customWidth;
+      node.h = el.getBoundingClientRect().height / (graphView.zoom || 1);
+      _redrawEdges();
+    }
+    return;
+  }
   if (graphView.dragNodeId) {
     const node = _findGraphNode(graphView.dragNodeId);
     if (node) {
@@ -652,13 +829,29 @@ function _handlePointerMove(event) {
 
 function _endPointerDrag(event) {
   if (graphView.pointerId !== event.pointerId) return;
+  if (graphView.resizeNodeId) {
+    const node = _findGraphNode(graphView.resizeNodeId);
+    if (node) _savePositions();
+    graphView.resizeNodeId = null;
+    graphView.pointerId = null;
+    graphView.panning = false;
+    graphView.moved = false;
+    graphCanvas?.classList.remove('panning');
+    return;
+  }
   if (graphView.dragNodeId) {
     const node = _findGraphNode(graphView.dragNodeId);
     if (node) {
       const state = _graphState();
       state.positions = state.positions || {};
+      state.pinned = state.pinned || {};
+      node.pinned = true;
+      node.fixedX = node.x;
+      node.fixedY = node.y;
       state.positions[node.id] = { x: node.x, y: node.y };
+      state.pinned[node.id] = true;
       _saveGraphState(state);
+      _savePositions();
     }
     graphInner?.querySelectorAll('.graph-node.dragging').forEach(el => el.classList.remove('dragging'));
   }
@@ -677,6 +870,11 @@ function _initGraphCanvasEvents() {
   }, { passive: false });
   graphCanvas.addEventListener('pointerdown', e => {
     if (e.target.closest('.graph-canvas-toolbar')) return;
+    if (e.target.closest('.graph-resize-handle')) {
+      const nodeEl = e.target.closest('.graph-node');
+      if (nodeEl) _startNodeResize(e, nodeEl);
+      return;
+    }
     const nodeEl = e.target.closest('.graph-node');
     if (nodeEl && !e.target.closest('button, a, input, textarea, iframe')) _startNodeDrag(e, nodeEl);
     else _startCanvasPan(e);
@@ -725,6 +923,7 @@ function initGraphCanvas() {
 }
 
 window.renderGraphCanvas = renderGraphCanvas;
+window.sendGraphNewSession = sendGraphNewSession;
 window.graphModuleAction = graphModuleAction;
 window.zoomGraph = zoomGraph;
 window.fitGraph = fitGraph;

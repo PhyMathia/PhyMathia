@@ -4,6 +4,7 @@
     let progressStartTime = 0;
     let lastChunkTime = 0;
     let currentStage = '';
+    let streamingAssistant = null;
 
     function showProgress(stage) {
       currentStage = stage;
@@ -754,6 +755,11 @@
     window.sendBranchQuick = sendBranchQuick;
     window.sendQuick = sendQuick;
     window.getChatHistory = () => chatHistory.slice();
+    window.getStreamingAssistant = () => streamingAssistant;
+    function stopGeneration() {
+      if (abortController) abortController.abort();
+    }
+    window.stopGeneration = stopGeneration;
     window.startSocraticAnswer = startSocraticAnswer;
     window.closeSocraticModal = closeSocraticModal;
     window.submitSocraticAnswer = submitSocraticAnswer;
@@ -772,6 +778,7 @@
     async function sendMessage() {
       const input = document.getElementById('userInput');
       const btn = document.getElementById('sendBtn');
+      const stopBtn = document.getElementById('stopBtn');
       const text = input.value.trim();
       if (!text || isStreaming) return;
 
@@ -797,9 +804,14 @@
       isStreaming = true;
       lastFailedMessage = text;
 
+      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+      streamingAssistant = { role: 'assistant', content: '', timestamp: Date.now(), ...branchMeta };
+
       // 切换为停止按钮
+      btn.hidden = false;
       btn.disabled = false;
       btn.classList.add('stop-btn');
+      if (stopBtn) stopBtn.disabled = false;
       btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
       btn.onclick = () => { if (abortController) abortController.abort(); };
 
@@ -809,13 +821,20 @@
       let assistantDiv = null;
       let streamRenderPending = false;
       let streamRenderFrame = null;
+      let graphRenderPending = false;
+      let graphRenderFrame = null;
 
       function cancelPendingStreamRender() {
         if (streamRenderFrame !== null) {
           cancelAnimationFrame(streamRenderFrame);
           streamRenderFrame = null;
         }
+        if (graphRenderFrame !== null) {
+          clearTimeout(graphRenderFrame);
+          graphRenderFrame = null;
+        }
         streamRenderPending = false;
+        graphRenderPending = false;
       }
 
       try {
@@ -868,6 +887,16 @@
           });
         }
 
+        function scheduleGraphStreamRender() {
+          if (graphRenderPending) return;
+          graphRenderPending = true;
+          graphRenderFrame = setTimeout(() => {
+            graphRenderFrame = null;
+            graphRenderPending = false;
+            if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas(true);
+          }, 250);
+        }
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -916,11 +945,13 @@
                       const fileInfo = JSON.parse(fileMatch[1]);
                       if (fileInfo.file_url) {
                         assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
+                        streamingAssistant.content = assistantContent;
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
               assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent));
                         _initVizIframes(assistantDiv);
                         renderMathInElement(assistantDiv);
                         scrollToBottom();
+                        scheduleGraphStreamRender();
                       }
                       console.log('[ToolDone] File info:', fileInfo);
                     } catch(e) { console.warn('[ToolDone] Parse error:', e); }
@@ -932,8 +963,10 @@
                   if (currentStage !== 'generating') showProgress('generating');
                   if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
                   assistantContent += delta.content;
+                  streamingAssistant.content = assistantContent;
                   // 实时渲染 Markdown 和 LaTeX（节流）
                   scheduleStreamRender();
+                  scheduleGraphStreamRender();
                   scrollToBottom();
                 }
               } catch (e) {}
@@ -944,6 +977,7 @@
         // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {
           cancelPendingStreamRender();
+          streamingAssistant = null;
           if (branchMeta.branchLabel) {
             assistantDiv.dataset.branchLabel = branchMeta.branchLabel;
             assistantDiv.dataset.branchType = branchMeta.branchType || 'branch';
@@ -994,6 +1028,7 @@
           const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
           if (assistantDiv && assistantContent.trim()) {
             const ts = Date.now();
+            streamingAssistant = null;
             const wasSocraticBranch = currentBranch === 'socratic';
             const assistantMeta = { ...branchMeta };
             if (wasSocraticBranch) {
@@ -1042,11 +1077,13 @@
         abortController = null;
         // 恢复发送按钮
         btn.classList.remove('stop-btn');
+        btn.hidden = true;
         btn.disabled = false;
+        if (stopBtn) stopBtn.disabled = true;
         btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
         btn.onclick = sendMessage;
+        streamingAssistant = null;
         if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-        input.focus();
       }
     }
 

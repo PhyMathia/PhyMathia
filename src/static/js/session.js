@@ -295,6 +295,8 @@
             collapsed: parsed.collapsed || {},
             hidden: parsed.hidden || {},
             positions: parsed.positions || {},
+            pinned: parsed.pinned || {},
+            sizes: parsed.sizes || {},
             pan: parsed.pan || { x: 80, y: 80 },
             zoom: typeof parsed.zoom === 'number' ? parsed.zoom : 0.9,
             focus: parsed.focus || null,
@@ -303,7 +305,7 @@
           };
         }
       } catch (e) {}
-      return { collapsed: {}, hidden: {}, positions: {}, pan: { x: 80, y: 80 }, zoom: 0.9, focus: null, linear: false, layoutVersion: 1 };
+      return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, focus: null, linear: false, layoutVersion: 1 };
     }
 
     function saveGraphState(sessionId, state) {

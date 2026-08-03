@@ -407,121 +407,6 @@ function formatRelativeTime(ts) {
   };
 })();
 
-// ====== 语音输入（长按模式）======
-let recognition = null;
-let isRecording = false;
-let voiceCancelled = false;     // 上滑取消标记
-let voiceStartY = 0;           // 按下时 Y 坐标
-let voiceCancelZone = null;     // 取消提示区域
-
-// 创建取消提示区域
-(function initVoiceCancelZone() {
-  voiceCancelZone = document.createElement('div');
-  voiceCancelZone.className = 'voice-cancel-zone';
-  voiceCancelZone.innerHTML = '<span>↑ 上滑取消录音</span>';
-  document.body.appendChild(voiceCancelZone);
-})();
-
-// 长按开始
-function voicePressStart(e) {
-  e.preventDefault();
-  if (isRecording) return;
-  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    // 不支持语音时 fallback 为点击提示
-    showToast('您的浏览器不支持语音输入，请使用 Chrome 浏览器');
-    return;
-  }
-  voiceCancelled = false;
-  voiceStartY = e.touches ? e.touches[0].clientY : e.clientY;
-  startVoice();
-}
-
-// 长按中移动（检测上滑取消）
-function voicePressMove(e) {
-  if (!isRecording) return;
-  const currentY = e.touches ? e.touches[0].clientY : e.clientY;
-  const deltaY = voiceStartY - currentY;
-  if (deltaY > VOICE_CANCEL_THRESHOLD) {
-    if (!voiceCancelled) {
-      voiceCancelled = true;
-      voiceCancelZone.classList.add('active', 'cancelled');
-      voiceCancelZone.querySelector('span').textContent = '✕ 松开取消录音';
-      document.getElementById('voiceBtn').style.opacity = '0.4';
-    }
-  } else {
-    if (voiceCancelled) {
-      voiceCancelled = false;
-      voiceCancelZone.classList.remove('cancelled');
-      voiceCancelZone.querySelector('span').textContent = '↑ 上滑取消录音';
-      document.getElementById('voiceBtn').style.opacity = '1';
-    }
-    if (deltaY > 20) {
-      voiceCancelZone.classList.add('active');
-    } else {
-      voiceCancelZone.classList.remove('active');
-    }
-  }
-}
-
-// 长按结束
-function voicePressEnd(e) {
-  if (!isRecording) return;
-  stopVoice();
-  voiceCancelZone.classList.remove('active', 'cancelled');
-  document.getElementById('voiceBtn').style.opacity = '1';
-
-  if (voiceCancelled) {
-    // 上滑取消：清空输入，不发送
-    document.getElementById('userInput').value = '';
-    autoResize(document.getElementById('userInput'));
-    voiceCancelled = false;
-    return;
-  }
-
-  // 正常松开：自动发送
-  if (document.getElementById('userInput').value.trim()) {
-    setTimeout(() => sendMessage(), 300);
-  }
-}
-
-// 绑定事件
-(function bindVoiceEvents() {
-  const btn = document.getElementById('voiceBtn');
-  // 鼠标事件（桌面端）
-  btn.addEventListener('mousedown', voicePressStart);
-  btn.addEventListener('mousemove', voicePressMove);
-  document.addEventListener('mouseup', voicePressEnd);
-  // 触摸事件（移动端）
-  btn.addEventListener('touchstart', voicePressStart, { passive: false });
-  btn.addEventListener('touchmove', voicePressMove, { passive: false });
-  document.addEventListener('touchend', voicePressEnd);
-  // 防止长按菜单
-  btn.addEventListener('contextmenu', e => e.preventDefault());
-})();
-
-function startVoice() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SR();
-  recognition.lang = 'zh-CN';
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.onstart = () => { isRecording = true; document.getElementById('voiceBtn').classList.add('recording'); };
-  recognition.onresult = (event) => {
-    let t = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) t += event.results[i][0].transcript;
-    document.getElementById('userInput').value = t;
-    autoResize(document.getElementById('userInput'));
-  };
-  recognition.onend = () => { isRecording = false; document.getElementById('voiceBtn').classList.remove('recording'); if (recognition) { recognition = null; } };
-  recognition.onerror = (event) => { isRecording = false; document.getElementById('voiceBtn').classList.remove('recording'); if (event.error === 'not-allowed') showToast('请允许麦克风权限'); };
-  recognition.start();
-}
-function stopVoice() {
-  isRecording = false;
-  document.getElementById('voiceBtn').classList.remove('recording');
-  if (recognition) { recognition.stop(); recognition = null; }
-}
-
 // ====== 简易 Toast ======
 function showToast(msg, duration = 2500) {
   let toast = document.getElementById('phymathia_toast');
@@ -591,16 +476,20 @@ const _obSteps = [
     features: [
       { icon: UI_ICON_SVG.formula, text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
       { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
-      { icon: UI_ICON_SVG.formula, text: '<strong>公式渲染</strong> — LaTeX 公式实时渲染，支持知识图谱' },
+      { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新会话从中心节点开始，答案与模块向外铺展' },
       { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
     ]
   },
   {
     type: 'spotlight',
-    target: '#userInput',
+    get target() { return document.querySelector('.graph-new-session-node') ? '.graph-new-session-node' : '.graph-canvas'; },
     icon: UI_ICON_SVG.pencil,
-    title: '输入你的问题',
-    desc: '在输入框中输入任何<strong>物理或数学</strong>问题，也可以点击快捷按钮直接开始。支持<strong>长按语音输入</strong>和<strong>Enter 发送</strong>。'
+    get title() { return document.querySelector('.graph-new-session-node') ? '在中心节点提问' : '继续探索'; },
+    get desc() {
+      return document.querySelector('.graph-new-session-node')
+        ? '在画布中央的<strong>中心节点</strong>输入物理或数学问题，答案会从中心向外展开成探索网。'
+        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>继续问</strong>，答案会继续向外延伸。';
+    }
   },
   {
     type: 'spotlight',
