@@ -896,6 +896,7 @@ function _savePositions() {
     state.sizes[n.id] = { w: n.customWidth || n.w || 120, h: n.customHeight || n.h || 60 };
   });
   _saveGraphState(state);
+  if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
 }
 
 function _tick() {
@@ -987,6 +988,207 @@ function _runLayout(needsFit) {
   _redrawEdges();
   _savePositions();
   if (needsFit) fitGraph();
+}
+
+function _layoutChildMap(nodes, edges) {
+  const byId = {};
+  const children = {};
+  nodes.forEach(node => {
+    byId[node.id] = node;
+    children[node.id] = [];
+  });
+  edges.forEach(edge => {
+    const from = byId[edge.from];
+    const to = byId[edge.to];
+    if (!from || !to || from.kind === 'draft' || to.kind === 'draft') return;
+    if (!children[edge.from].includes(edge.to)) children[edge.from].push(edge.to);
+  });
+  return { byId, children };
+}
+
+function _layoutBfsDepths(roots, children, byId) {
+  const depths = {};
+  const queue = [];
+  roots.forEach(root => {
+    depths[root.id] = 0;
+    queue.push(root.id);
+  });
+  while (queue.length) {
+    const id = queue.shift();
+    const nextDepth = (depths[id] || 0) + 1;
+    for (const childId of (children[id] || [])) {
+      if (!byId[childId]) continue;
+      if (depths[childId] == null || nextDepth < depths[childId]) {
+        depths[childId] = nextDepth;
+        queue.push(childId);
+      }
+    }
+  }
+  return depths;
+}
+
+function _layoutSubtreeWeight(nodeId, children, weights, visited) {
+  if (visited.has(nodeId)) return 0;
+  visited.add(nodeId);
+  let weight = 1;
+  for (const childId of (children[nodeId] || [])) {
+    weight += _layoutSubtreeWeight(childId, children, weights, visited);
+  }
+  weights[nodeId] = weight;
+  return weight;
+}
+
+function _placeTreeSubtree(
+  nodeId,
+  x,
+  top,
+  bottom,
+  colGap,
+  children,
+  weights,
+  byId,
+  placed
+) {
+  const node = byId[nodeId];
+  if (!node || placed.has(nodeId) || node.kind === 'draft') return;
+  placed.add(nodeId);
+  node.x = x;
+  node.y = (top + bottom) / 2;
+
+  const kids = (children[nodeId] || [])
+    .filter(childId => byId[childId] && !placed.has(childId))
+    .sort((a, b) => (byId[a].timestamp || 0) - (byId[b].timestamp || 0));
+  const totalWeight = kids.reduce((sum, childId) => sum + (weights[childId] || 1), 0) || 1;
+  const verticalSpan = bottom - top;
+  let cursor = top;
+  for (const childId of kids) {
+    const childWeight = weights[childId] || 1;
+    const childTop = cursor;
+    const childBottom = cursor + verticalSpan * (childWeight / totalWeight);
+    _placeTreeSubtree(
+      childId,
+      x + colGap,
+      childTop,
+      childBottom,
+      colGap,
+      children,
+      weights,
+      byId,
+      placed
+    );
+    cursor = childBottom;
+  }
+}
+
+function _resolveLayoutCollisions(nodes, preservePinned) {
+  const active = nodes.filter(node => node.kind !== 'draft' && !node.isRoot && !(preservePinned && node.pinned));
+  for (let pass = 0; pass < 12; pass++) {
+    let moved = false;
+    for (let i = 0; i < active.length; i++) {
+      for (let j = i + 1; j < active.length; j++) {
+        const a = active[i];
+        const b = active[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const minX = ((a.w || 120) + (b.w || 120)) / 2;
+        const minY = ((a.h || 60) + (b.h || 60)) / 2;
+        const overlapX = minX - Math.abs(dx);
+        const overlapY = minY - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        const signX = dx >= 0 ? 1 : -1;
+        const signY = dy >= 0 ? 1 : -1;
+        if (overlapX < overlapY) {
+          const push = overlapX * 0.5;
+          if (!a.pinned) { a.x -= signX * push; moved = true; }
+          if (!b.pinned) { b.x += signX * push; moved = true; }
+        } else {
+          const push = overlapY * 0.5;
+          if (!a.pinned) { a.y -= signY * push; moved = true; }
+          if (!b.pinned) { b.y += signY * push; moved = true; }
+        }
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+function autoArrangeGraph(preservePinned = false) {
+  if (!graphView.nodes.length) return;
+  _measureNodes();
+  graphView.nodes.forEach(node => {
+    node.pinned = false;
+    node.fixedX = null;
+    node.fixedY = null;
+  });
+
+  const { byId, children } = _layoutChildMap(graphView.nodes, graphView.edges);
+  const roots = graphView.nodes.filter(node => node.isRoot && node.kind !== 'draft');
+  if (!roots.length) {
+    const firstUser = graphView.nodes.find(node => node.kind === 'user');
+    if (firstUser) roots.push(firstUser);
+  }
+  if (!roots.length && graphView.nodes.length) roots.push(graphView.nodes[0]);
+  const depths = _layoutBfsDepths(roots, children, byId);
+
+  const weights = {};
+  roots.forEach(root => {
+    _layoutSubtreeWeight(root.id, children, weights, new Set());
+  });
+
+  const maxNodeW = Math.max(
+    160,
+    ...graphView.nodes
+      .filter(node => node.kind !== 'draft')
+      .map(node => node.w || 120)
+  );
+  const colGap = Math.max(420, maxNodeW + 140);
+  const maxSubtreeWeight = Math.max(1, ...roots.map(root => weights[root.id] || 1));
+  const verticalSpan = Math.max(900, Math.min(2600, maxSubtreeWeight * 320));
+
+  const placed = new Set();
+  roots.forEach((root, index) => {
+    const rootCount = roots.length;
+    const top = -verticalSpan / 2 + (index / rootCount) * verticalSpan;
+    const bottom = -verticalSpan / 2 + ((index + 1) / rootCount) * verticalSpan;
+    _placeTreeSubtree(
+      root.id,
+      0,
+      top,
+      bottom,
+      colGap,
+      children,
+      weights,
+      byId,
+      placed
+    );
+  });
+
+  const remaining = graphView.nodes.filter(node =>
+    !placed.has(node.id)
+    && node.kind !== 'draft'
+  );
+  const maxDepth = Math.max(0, ...Object.values(depths));
+  const remainingX = (maxDepth + 1) * colGap;
+  const remainingRows = Math.max(1, Math.ceil(Math.sqrt(remaining.length)));
+  remaining.forEach((node, index) => {
+    node.x = remainingX + Math.floor(index / remainingRows) * colGap;
+    node.y = ((index % remainingRows) - (remainingRows - 1) / 2) * 320;
+  });
+
+  _resolveLayoutCollisions(graphView.nodes, false);
+  const state = _graphState();
+  state.layoutVersion = LAYOUT_VERSION;
+  state.positions = {};
+  state.pinned = {};
+  graphView.nodes.forEach(node => {
+    if (node.kind === 'draft') return;
+    state.positions[node.id] = { x: node.x, y: node.y };
+  });
+  _saveGraphState(state);
+  if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+  _updateNodeTransforms();
+  _redrawEdges();
+  fitGraph();
 }
 
 function _applyGraphTransform() {
@@ -1135,8 +1337,8 @@ function renderGraphCanvas(streaming) {
   toolbar.innerHTML = '<button class="graph-tool-btn" onclick="zoomGraph(1.2)" title="放大">+</button>'
     + '<button class="graph-tool-btn" onclick="zoomGraph(0.85)" title="缩小">−</button>'
     + '<button class="graph-tool-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
-    + '<button class="graph-tool-btn" onclick="resetGraphLayout()" title="重新布局">↻</button>'
-    + '<button class="graph-tool-btn" onclick="resetGraphConnections()" title="恢复默认连线">⇄</button>';
+    + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
+    + '<button class="graph-tool-btn" onclick="resetGraphLayout()" title="全部重排">↻</button>';
   graphCanvas.appendChild(toolbar);
 
   graphInner = document.createElement('div');
@@ -1169,7 +1371,8 @@ function renderGraphCanvas(streaming) {
     if (typeof _initVizIframes === 'function') _initVizIframes(graphInner);
     _measureNodes();
     _redrawEdges();
-    _runLayout(needsFit);
+    if (needsFit) _runLayout(true);
+    else _updateNodeTransforms();
     if (typeof renderMermaidInElement === 'function') setTimeout(() => renderMermaidInElement(graphInner), 0);
   });
 
@@ -1180,12 +1383,7 @@ function renderGraphCanvas(streaming) {
 }
 
 function resetGraphLayout() {
-  const state = _graphState();
-  state.layoutVersion = 0;
-  state.positions = {};
-  state.pinned = {};
-  _saveGraphState(state);
-  renderGraphCanvas();
+  autoArrangeGraph(false);
 }
 
 function sendGraphNewSession(el) {
@@ -1713,6 +1911,7 @@ function graphRemoveOutputPort(nodeId, portIndex) {
   renderGraphCanvas();
 }
 
+// 恢复默认连线按钮已从工具栏移除；函数保留，后续如需恢复 UI 入口可直接调用。
 function resetGraphConnections() {
   if (!confirm('恢复默认连线？新增的输出端口也会一并重置。')) return;
   const state = _graphState();
@@ -2011,6 +2210,7 @@ function _endPointerDrag(event) {
     graphView.moved = false;
     graphCanvas?.classList.remove('linking');
     _redrawEdges();
+    if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
     return;
   }
   if (graphView.resizeNodeId) {
@@ -2219,6 +2419,7 @@ window.submitRegenerateNode = submitRegenerateNode;
 window.zoomGraph = zoomGraph;
 window.fitGraph = fitGraph;
 window.resetGraphLayout = resetGraphLayout;
+window.autoArrangeGraph = autoArrangeGraph;
 window.toggleLinearMode = toggleLinearMode;
 window.applyLinearMode = applyLinearMode;
 window.toggleGraphView = () => {

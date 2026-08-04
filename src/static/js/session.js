@@ -305,6 +305,7 @@
             connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
             removedEdges: parsed.removedEdges || [],
             portCounts: parsed.portCounts || {},
+            updatedAt: parsed.updatedAt || 0,
           };
         }
       } catch (e) {}
@@ -322,13 +323,79 @@
         connections: null,
         removedEdges: [],
         portCounts: {},
+        updatedAt: 0,
       };
+    }
+
+    let _graphStateSyncTimer = null;
+    let _graphStatePendingSave = null;
+
+    async function _postGraphState(sid, state) {
+      try {
+        await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: state }),
+        });
+      } catch (err) {
+        console.warn('[GraphState] Failed to save server state:', err);
+      }
+    }
+
+    async function _loadGraphStateFromServer(sessionId) {
+      const sid = sessionId || currentSessionId || '';
+      if (!sid) return;
+      try {
+        const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid));
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const serverState = data.value;
+        if (!serverState || typeof serverState !== 'object') return;
+        const local = getGraphState(sid);
+        const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
+        if (useServer) {
+          localStorage.setItem('phymathia_graph_' + sid, JSON.stringify({ ...local, ...serverState }));
+        }
+      } catch (err) {
+        console.warn('[GraphState] Failed to load server state:', err);
+      }
+    }
+
+    function _scheduleGraphStateServerSave(sid, state) {
+      _graphStatePendingSave = { sid, state };
+      clearTimeout(_graphStateSyncTimer);
+      _graphStateSyncTimer = setTimeout(async () => {
+        const pending = _graphStatePendingSave;
+        _graphStatePendingSave = null;
+        if (pending) await _postGraphState(pending.sid, pending.state);
+      }, 400);
+    }
+
+    async function _flushGraphStateServerSave() {
+      clearTimeout(_graphStateSyncTimer);
+      _graphStateSyncTimer = null;
+      const pending = _graphStatePendingSave;
+      _graphStatePendingSave = null;
+      if (pending) await _postGraphState(pending.sid, pending.state);
     }
 
     function saveGraphState(sessionId, state) {
       const sid = sessionId || currentSessionId || '';
       if (!sid) return;
-      localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(state));
+      const snap = { ...state, updatedAt: Date.now() };
+      localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(snap));
+      _scheduleGraphStateServerSave(sid, snap);
+    }
+
+    async function _deleteGraphStateOnServer(sid) {
+      if (!sid) return;
+      if (sid === currentSessionId) clearTimeout(_graphStateSyncTimer);
+      _graphStatePendingSave = null;
+      try {
+        await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), { method: 'DELETE' });
+      } catch (err) {
+        console.warn('[GraphState] Failed to delete server state:', err);
+      }
     }
 
     function setModuleVisibility(messageId, moduleKey, type, visible) {
@@ -346,6 +413,7 @@
 
     window.getGraphState = getGraphState;
     window.saveGraphState = saveGraphState;
+    window.flushGraphStateServerSave = _flushGraphStateServerSave;
     window.setModuleVisibility = setModuleVisibility;
     window.getCurrentSessionId = () => currentSessionId;
 
@@ -376,13 +444,13 @@
     }
 
     // 切换到指定会话
-    function switchToSession(id) {
+    async function switchToSession(id) {
       if (isStreaming) return;
       if (!sessions[id]) return;
 
       // 保存当前会话的消息
       if (currentSessionId) {
-        saveSessionMessages(currentSessionId, chatHistory);
+        await saveSessionMessages(currentSessionId, chatHistory);
         if (sessions[currentSessionId]) {
           sessions[currentSessionId].updatedAt = Date.now();
           // 更新标题为第一条用户消息
@@ -400,6 +468,7 @@
       if (typeof window.clearBranchAnchor === 'function') window.clearBranchAnchor();
       chatHistory = loadSessionMessages(id);
       SESSION_ID = sessions[id].sessionId;
+      await _loadGraphStateFromServer(id);
 
       // 重新渲染
       renderCurrentChat();
@@ -416,6 +485,7 @@
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
       localStorage.removeItem('phymathia_graph_' + id);
+      await _deleteGraphStateOnServer(id);
       await deleteKnowledgeBySession(id);
       await deleteFormulasBySession(id);
       delete sessions[id];
@@ -745,6 +815,8 @@
         chatHistory = [];
       }
 
+      await _loadGraphStateFromServer(currentSessionId);
+
       // 渲染
       renderCurrentChat();
       renderSessionList();
@@ -843,6 +915,7 @@
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
       localStorage.removeItem('phymathia_graph_' + currentSessionId);
+      await _deleteGraphStateOnServer(currentSessionId);
       // 直接调用 DELETE 清除服务端消息
       try {
         await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE' });
