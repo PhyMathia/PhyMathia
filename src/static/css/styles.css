@@ -3046,6 +3046,12 @@
     .graph-module-extend {
       border-color: rgba(168, 85, 247, 0.6);
     }
+    .graph-module-socratic {
+      border: 1px solid rgba(244, 63, 94, 0.6);
+    }
+    .graph-module-learn {
+      border: 1px solid rgba(168, 85, 247, 0.6);
+    }
     .graph-node.dimmed {
       opacity: 0.42;
     }
@@ -3340,6 +3346,16 @@
       background: rgba(70, 22, 104, 0.28) !important;
       box-shadow: 0 0 34px rgba(168, 85, 247, 0.4), 0 18px 50px rgba(0, 0, 0, 0.42);
     }
+    .graph-node-module.graph-module-socratic {
+      border: 4px solid #f43f5e !important;
+      background: rgba(87, 16, 38, 0.28) !important;
+      box-shadow: 0 0 34px rgba(244, 63, 94, 0.4), 0 18px 50px rgba(0, 0, 0, 0.42);
+    }
+    .graph-node-module.graph-module-learn {
+      border: 4px solid #a855f7 !important;
+      background: rgba(70, 22, 104, 0.28) !important;
+      box-shadow: 0 0 34px rgba(168, 85, 247, 0.4), 0 18px 50px rgba(0, 0, 0, 0.42);
+    }
     .graph-edge {
       stroke: rgba(140, 190, 255, 0.95) !important;
       stroke-width: 7px !important;
@@ -3513,6 +3529,12 @@
       border-left: 3px solid #10b981;
     }
     .module-bubble.extend-bubble {
+      border-left: 3px solid #a855f7;
+    }
+    .module-bubble.socratic-bubble {
+      border-left: 3px solid #f43f5e;
+    }
+    .module-bubble.learn-bubble {
       border-left: 3px solid #a855f7;
     }
     .module-bubble.viz-bubble .module-bubble-body {
@@ -3719,6 +3741,12 @@
     }
     .graph-module-extend {
       border-color: rgba(168, 85, 247, 0.55);
+    }
+    .graph-module-socratic {
+      border: 1px solid rgba(244, 63, 94, 0.55);
+    }
+    .graph-module-learn {
+      border: 1px solid rgba(168, 85, 247, 0.55);
     }
     .graph-focus-panel {
       overflow-y: auto;

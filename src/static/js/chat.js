@@ -624,6 +624,7 @@
     let pendingSocraticLevel = 'basic';
     let pendingSocraticBranchId = '';
     let pendingSocraticParentMsg = '';
+    let pendingSocraticSourceModule = 'extend';
     let socraticSubmitting = false;
     let currentBranch = null;
     let currentBranchId = null;
@@ -658,10 +659,11 @@
       return anchor;
     }
 
-    function startSocraticAnswer(question, level, parentMsg) {
+    function startSocraticAnswer(question, level, parentMsg, sourceModule) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
+      pendingSocraticSourceModule = sourceModule || 'extend';
       pendingSocraticBranchId = _genBranchId();
       const modal = document.getElementById('socraticModal');
       const questionEl = document.getElementById('socraticModalQuestion');
@@ -682,6 +684,7 @@
       }
       pendingSocraticQuestion = '';
       pendingSocraticLevel = 'basic';
+      pendingSocraticSourceModule = 'extend';
     }
 
     async function submitSocraticAnswer() {
@@ -720,7 +723,7 @@
         currentBranchId = branchId;
         setActiveBranchAnchor({
           parentId: pendingSocraticParentMsg,
-          sourceModule: 'extend',
+          sourceModule: pendingSocraticSourceModule,
           branchType: 'socratic',
           branchId,
           branchLabel: '苏格拉底：' + (pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础'),

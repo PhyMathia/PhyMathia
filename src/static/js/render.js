@@ -304,6 +304,8 @@ const MODULE_BUBBLE_META = {
   graph: { label: '知识图谱', colorClass: 'graph-bubble', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg },
   viz: { label: '交互可视化', colorClass: 'viz-bubble', icon: UI_ICON_SVG.monitor },
   extend: { label: '延伸思考', colorClass: 'extend-bubble', icon: UI_ICON_SVG.lightbulb },
+  socratic: { label: '苏格拉底追问', colorClass: 'socratic-bubble', icon: UI_ICON_SVG.question },
+  learn: { label: '进阶学习', colorClass: 'learn-bubble', icon: UI_ICON_SVG.cap },
 };
 
 function _extractSummaryFromContent(content) {
@@ -322,14 +324,73 @@ function _splitVizFromGraph(graphRaw) {
   return { graphContent, vizContent };
 }
 
+function _cleanModuleContent(content, moduleKey) {
+  let text = String(content || '').trim();
+  text = text.replace(/^#{1,6}\s*[^\n]*PhyMathia\s*学习卡片\s*[:：]?\s*[^\n]*\n?/i, '').trim();
+  const patterns = {
+    physics: /^#{1,6}\s*[^\n]*(物理直觉|物理视角)[^\n]*\n?/i,
+    math: /^#{1,6}\s*[^\n]*(数学本质|数学视角)[^\n]*\n?/i,
+    graph: /^#{1,6}\s*[^\n]*知识图谱[^\n]*\n?/i,
+    viz: /^#{1,6}\s*[^\n]*(交互探索|交互式可视化)[^\n]*\n?/i,
+    extend: /^#{1,6}\s*[^\n]*延伸思考[^\n]*\n?/i,
+    socratic: /^#{1,6}\s*[^\n]*(苏格拉底追问|延伸思考)[^\n]*\n?/i,
+    learn: /^#{1,6}\s*[^\n]*(进阶学习方向|进阶学习)[^\n]*\n?/i,
+  };
+  const pattern = patterns[moduleKey];
+  return pattern ? text.replace(pattern, '').trim() : text;
+}
+
 function _genBranchId() {
   const sessionPart = (typeof currentSessionId !== 'undefined' ? currentSessionId : 'sess').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 18);
   return 'br_' + (sessionPart || 'sess') + '_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 }
 
-function _findOriginalQuestion() {
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    if (chatHistory[i].role === 'user') return chatHistory[i].content;
+function _extractBranchTopic(msg, content) {
+  const text = String(content || '').trim();
+  if (!text) return '';
+
+  if (msg.branchType === 'socratic') {
+    const socraticMatch = text.match(/追问问题[：:]\s*([^\n]+)/);
+    if (socraticMatch && socraticMatch[1].trim()) return socraticMatch[1].trim();
+    return text.replace(/^\[苏格拉底回答\]\s*/i, '').split('\n')[0].trim() || text;
+  }
+
+  const promptPatterns = [
+    /^请从(?:物理|数学)视角(?:继续深入|进一步深入)?讲解[：:]\s*/,
+    /^请围绕延伸思考继续展开讲解[：:]\s*/,
+    /^请围绕苏格拉底追问继续展开讲解[：:]\s*/,
+    /^苏格拉底追问里的问题我没看懂[^：:]*[：:]\s*/,
+    /^请围绕进阶学习方向继续展开讲解[：:]\s*/,
+    /^进阶学习方向里的内容我没看懂[^：:]*[：:]\s*/,
+    /^请进一步解释(?:知识图谱中的概念关系和箭头含义|交互式可视化中的元素如何对应物理现象和公式)[：:]\s*/,
+    /^你刚才从「[^」]+」讲解的部分我没看懂[^：:]*[：:]\s*/,
+    /^你生成的「[^」]+」我没看懂[^：:]*[：:]\s*/,
+    /^延伸思考里的内容我没看懂[^：:]*[：:]\s*/,
+    /^请详细讲解[：:]\s*/,
+  ];
+  for (const pattern of promptPatterns) {
+    if (pattern.test(text)) {
+      const topic = text.replace(pattern, '').trim();
+      return topic || text;
+    }
+  }
+  return text;
+}
+
+function _findOriginalQuestion(messageId) {
+  let searchFrom = chatHistory.length - 1;
+  const targetId = String(messageId || '');
+  if (targetId) {
+    const targetIndex = chatHistory.findIndex(msg => String(msg.timestamp || '') === targetId);
+    if (targetIndex >= 0) searchFrom = targetIndex;
+  }
+  for (let i = searchFrom; i >= 0; i--) {
+    const msg = chatHistory[i];
+    if (msg.role !== 'user') continue;
+    const content = String(msg.content || '').trim();
+    if (!content) continue;
+    if (msg.branchType && msg.branchType !== 'main') return _extractBranchTopic(msg, content);
+    return content;
   }
   return '';
 }
@@ -357,6 +418,14 @@ function _modulePrompt(moduleKey, type, originalQuestion) {
       followup: '请围绕延伸思考继续展开讲解：' + question,
       confused: '延伸思考里的内容我没看懂，请换一种更简单的方式解释：' + question,
     },
+    socratic: {
+      followup: '请围绕苏格拉底追问继续展开讲解：' + question,
+      confused: '苏格拉底追问里的问题我没看懂，请换一种更简单的方式解释：' + question,
+    },
+    learn: {
+      followup: '请围绕进阶学习方向继续展开讲解：' + question,
+      confused: '进阶学习方向里的内容我没看懂，请换一种更简单的方式解释：' + question,
+    },
   };
   const modulePrompts = prompts[moduleKey] || prompts.extend;
   return modulePrompts[type] || modulePrompts.followup;
@@ -365,7 +434,7 @@ function _modulePrompt(moduleKey, type, originalQuestion) {
 function followUpModule(moduleKey, messageId, event) {
   event?.stopPropagation();
   const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const originalQuestion = _findOriginalQuestion();
+  const originalQuestion = _findOriginalQuestion(messageId);
   const anchor = {
     parentId: messageId || '',
     sourceModule: moduleKey,
@@ -385,7 +454,7 @@ function followUpModule(moduleKey, messageId, event) {
 function dontUnderstandModule(moduleKey, messageId, event) {
   event?.stopPropagation();
   const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const originalQuestion = _findOriginalQuestion();
+  const originalQuestion = _findOriginalQuestion(messageId);
   const anchor = {
     parentId: messageId || '',
     sourceModule: moduleKey,
@@ -435,11 +504,11 @@ function renderModuleSections(container, sections, rawContent) {
   const summary = _extractSummaryFromContent(rawContent || '');
   const splitGraph = _splitVizFromGraph(sections.graph || '');
   const configs = [
-    { key: 'physics', content: sections.physics || '' },
-    { key: 'math', content: sections.math || '' },
-    { key: 'graph', content: splitGraph.graphContent || '' },
-    { key: 'viz', content: splitGraph.vizContent || '' },
-    { key: 'extend', content: sections.extend || '' },
+    { key: 'physics', content: _cleanModuleContent(sections.physics || '', 'physics') },
+    { key: 'math', content: _cleanModuleContent(sections.math || '', 'math') },
+    { key: 'graph', content: _cleanModuleContent(splitGraph.graphContent || '', 'graph') },
+    { key: 'viz', content: _cleanModuleContent(splitGraph.vizContent || '', 'viz') },
+    { key: 'extend', content: _cleanModuleContent(sections.extend || '', 'extend') },
   ].filter(cfg => cfg.content && cfg.content.trim());
 
   let html = '<div class="answer-cluster" data-message-id="' + messageId + '">';
@@ -556,29 +625,42 @@ function dontUnderstandViz() {
 
 function convertLearnDirections(html, renderCtx = {}) {
   const parentId = _escapeAttr(renderCtx.parentId || '');
+  const sourceModule = _escapeAttr(renderCtx.sourceModule || 'extend');
+  const buildButtons = (listContent) => {
+    const items = [];
+    const liRegex = /<li>([\s\S]*?)<\/li>/g;
+    let liMatch;
+    while ((liMatch = liRegex.exec(listContent)) !== null) {
+      const text = liMatch[1].replace(/<[^>]+>/g, '').trim();
+      if (text) items.push(text);
+    }
+    if (items.length === 0) return '';
+    return items.map(item => {
+      const question = '请详细讲解：' + item;
+      const encoded = encodeURIComponent(question);
+      return `<button class="learn-dir-btn" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="${sourceModule}" data-branch-type="learn" data-branch-label="${_escapeAttr('进阶学习：' + item)}">${escapeHtml(item)}</button>`;
+    }).join('');
+  };
+
+  if (renderCtx.sourceModule === 'learn') {
+    return html.replace(/(<ul>|<ol>)([\s\S]*?)(<\/ul>|<\/ol>)/gi, (match, openTag, listContent, closeTag) => {
+      const buttons = buildButtons(listContent);
+      return buttons ? `<div class="learn-dir-section">${buttons}</div>` : match;
+    });
+  }
+
   return html.replace(
     /(<h[1-6][^>]*>.*?进阶学习方向.*?<\/h[1-6]>)(\s*(?:<ul>|<ol>))([\s\S]*?)(<\/ul>|<\/ol>)/gi,
     (match, header, openTag, listContent, closeTag) => {
-      const items = [];
-      const liRegex = /<li>([\s\S]*?)<\/li>/g;
-      let liMatch;
-      while ((liMatch = liRegex.exec(listContent)) !== null) {
-        const text = liMatch[1].replace(/<[^>]+>/g, '').trim();
-        if (text) items.push(text);
-      }
-      if (items.length === 0) return match;
-      const buttons = items.map(item => {
-        const question = '请详细讲解：' + item;
-        const encoded = encodeURIComponent(question);
-        return `<button class="learn-dir-btn" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="extend" data-branch-type="learn" data-branch-label="${_escapeAttr('进阶学习：' + item)}">${escapeHtml(item)}</button>`;
-      }).join('');
-      return `${header}<div class="learn-dir-section">${buttons}</div>`;
+      const buttons = buildButtons(listContent);
+      return buttons ? `${header}<div class="learn-dir-section">${buttons}</div>` : match;
     }
   );
 }
 
 function convertSocraticQuestions(html, renderCtx = {}) {
   const parentId = _escapeAttr(renderCtx.parentId || '');
+  const sourceModule = _escapeAttr(renderCtx.sourceModule || 'extend');
   return html.replace(/<li>([\s\S]*?)<\/li>/g, (match, inner) => {
     const rawText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const levelMatch = rawText.match(/^\s*\[?(基础|进阶|拓展)(?:题|层)?\]?\s*[:：]?\s*(.*)$/);
@@ -591,8 +673,8 @@ function convertSocraticQuestions(html, renderCtx = {}) {
     return `<li class="socratic-item" data-socratic-level="${level}">
       <div class="socratic-question">${escapeHtml(question)}</div>
       <div class="socratic-actions">
-        <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}">我来回答</button>
-        <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="extend" data-branch-type="continue" data-branch-label="${_escapeAttr('直接问AI：' + question)}">直接问AI</button>
+        <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}" data-socratic-source="${sourceModule}">我来回答</button>
+        <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="${sourceModule}" data-branch-type="continue" data-branch-label="${_escapeAttr('直接问AI：' + question)}">直接问AI</button>
       </div>
     </li>`;
   });
@@ -605,7 +687,7 @@ document.addEventListener('click', function(e) {
     const question = decodeURIComponent(answerBtn.getAttribute('data-socratic-answer'));
     const level = answerBtn.getAttribute('data-socratic-level') || 'basic';
     if (typeof window.startSocraticAnswer === 'function') {
-      window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '');
+      window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '', answerBtn.getAttribute('data-socratic-source') || 'extend');
     } else {
       document.getElementById('userInput').value = question;
       sendQuick(question);

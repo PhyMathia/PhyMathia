@@ -5,6 +5,8 @@ const GRAPH_MODULE_META = {
   graph: { label: '知识图谱', color: '#0891b2' },
   viz: { label: '交互可视化', color: '#10b981' },
   extend: { label: '延伸思考', color: '#a855f7' },
+  socratic: { label: '苏格拉底追问', color: '#f43f5e' },
+  learn: { label: '进阶学习', color: '#a855f7' },
 };
 
 let graphCanvas = null;
@@ -72,8 +74,33 @@ function _graphModuleKeys(sections) {
   if (sections.math) keys.push('math');
   if (sections.graph) keys.push('graph');
   if (sections.viz) keys.push('viz');
-  if (sections.extend) keys.push('extend');
+  if (sections.socratic) keys.push('socratic');
+  if (sections.learn) keys.push('learn');
+  if (sections.extend && !sections.socratic && !sections.learn) keys.push('extend');
   return keys;
+}
+
+function _splitExtendSections(content) {
+  const text = String(content || '').trim();
+  if (!text) return {};
+  const markers = [
+    { key: 'socratic', pattern: /^#{1,6}\s*[^\n]*苏格拉底追问[^\n]*\n?/im },
+    { key: 'learn', pattern: /^#{1,6}\s*[^\n]*进阶学习方向[^\n]*\n?/im },
+  ];
+  const found = [];
+  for (const marker of markers) {
+    const match = text.match(marker.pattern);
+    if (match) found.push({ key: marker.key, index: match.index });
+  }
+  if (!found.length) return {};
+  found.sort((a, b) => a.index - b.index);
+  const out = {};
+  for (let i = 0; i < found.length; i++) {
+    const start = found[i].index;
+    const end = i + 1 < found.length ? found[i + 1].index : text.length;
+    out[found[i].key] = text.slice(start, end).trim();
+  }
+  return out;
 }
 
 function _splitGraphSections(sections) {
@@ -82,6 +109,12 @@ function _splitGraphSections(sections) {
     const split = _splitVizFromGraph(out.graph);
     out.graph = split.graphContent;
     out.viz = split.vizContent;
+  }
+  const extendSplit = _splitExtendSections(out.extend || '');
+  if (extendSplit.socratic || extendSplit.learn) {
+    if (extendSplit.socratic) out.socratic = extendSplit.socratic;
+    if (extendSplit.learn) out.learn = extendSplit.learn;
+    delete out.extend;
   }
   return out;
 }
@@ -273,15 +306,19 @@ function _buildGraphData(messages, state) {
 }
 
 function _stripModuleHeading(content, moduleKey) {
+  let text = String(content || '').trim();
+  text = text.replace(/^#{1,6}\s*[^\n]*PhyMathia\s*学习卡片\s*[:：]?\s*[^\n]*\n?/i, '').trim();
   const patterns = {
     physics: /^#{1,6}\s*[^\n]*(物理直觉|物理视角)[^\n]*\n?/i,
     math: /^#{1,6}\s*[^\n]*(数学本质|数学视角)[^\n]*\n?/i,
     graph: /^#{1,6}\s*[^\n]*知识图谱[^\n]*\n?/i,
     viz: /^#{1,6}\s*[^\n]*(交互探索|交互式可视化)[^\n]*\n?/i,
     extend: /^#{1,6}\s*[^\n]*延伸思考[^\n]*\n?/i,
+    socratic: /^#{1,6}\s*[^\n]*(苏格拉底追问|延伸思考)[^\n]*\n?/i,
+    learn: /^#{1,6}\s*[^\n]*(进阶学习方向|进阶学习)[^\n]*\n?/i,
   };
   const pattern = patterns[moduleKey];
-  return pattern ? String(content || '').replace(pattern, '').trim() : String(content || '').trim();
+  return pattern ? text.replace(pattern, '').trim() : text;
 }
 
 function _nodeContent(message, node) {
@@ -312,9 +349,10 @@ function _nodeSub(node) {
 
 function _nodeActions(node) {
   if (node.kind === 'module') {
+    const confusedAction = node.moduleKey === 'learn' ? '' : '<button onclick="graphModuleAction(\'confused\',\'' + node.id + '\')">没看懂</button>';
     return '<div class="graph-node-actions">'
       + '<button onclick="graphModuleAction(\'followup\',\'' + node.id + '\')">追问</button>'
-      + '<button onclick="graphModuleAction(\'confused\',\'' + node.id + '\')">没看懂</button>'
+      + confusedAction
       + '</div>';
   }
   return '';

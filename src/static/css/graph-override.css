@@ -324,6 +324,18 @@
   border-left-width: 7px !important;
 }
 
+.graph-node-module.graph-module-socratic {
+  border-color: #f43f5e !important;
+  border-width: 4px !important;
+  border-left-width: 7px !important;
+}
+
+.graph-node-module.graph-module-learn {
+  border-color: #a855f7 !important;
+  border-width: 4px !important;
+  border-left-width: 7px !important;
+}
+
 .graph-node.dimmed {
   opacity: 0.22 !important;
   filter: grayscale(0.6) !important;
@@ -731,6 +743,20 @@
   --graph-bubble-glow: rgba(168, 85, 247, 0.30);
 }
 
+.graph-node-module.graph-module-socratic {
+  --graph-bubble-start: rgba(244, 63, 94, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #f43f5e;
+  --graph-bubble-glow: rgba(244, 63, 94, 0.30);
+}
+
+.graph-node-module.graph-module-learn {
+  --graph-bubble-start: rgba(168, 85, 247, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #a855f7;
+  --graph-bubble-glow: rgba(168, 85, 247, 0.30);
+}
+
 [data-theme="light"] .graph-node-user {
   --graph-bubble-start: rgba(74, 158, 255, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
@@ -795,6 +821,22 @@
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
+[data-theme="light"] .graph-node-module.graph-module-socratic {
+  --graph-bubble-start: rgba(244, 63, 94, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #f43f5e;
+  --graph-bubble-glow: rgba(244, 63, 94, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-module.graph-module-learn {
+  --graph-bubble-start: rgba(168, 85, 247, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #a855f7;
+  --graph-bubble-glow: rgba(168, 85, 247, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
 .graph-node,
 [data-theme="dark"] .graph-node,
 [data-theme="light"] .graph-node {
@@ -819,7 +861,11 @@
 [data-theme="dark"] .graph-node-module.graph-module-viz,
 [data-theme="light"] .graph-node-module.graph-module-viz,
 [data-theme="dark"] .graph-node-module.graph-module-extend,
-[data-theme="light"] .graph-node-module.graph-module-extend {
+[data-theme="light"] .graph-node-module.graph-module-extend,
+[data-theme="dark"] .graph-node-module.graph-module-socratic,
+[data-theme="light"] .graph-node-module.graph-module-socratic,
+[data-theme="dark"] .graph-node-module.graph-module-learn,
+[data-theme="light"] .graph-node-module.graph-module-learn {
   background: linear-gradient(135deg, var(--graph-bubble-start) 0%, var(--graph-bubble-end) 60%) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 34px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
 }
