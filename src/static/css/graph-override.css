@@ -312,7 +312,7 @@
 }
 
 .graph-node-module.graph-module-viz {
-  border-color: #10b981 !important;
+  border-color: #f472b6 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
   min-height: 560px !important;
@@ -429,10 +429,10 @@
 .graph-node-module.graph-module-viz .graph-node-full-content {
   display: flex !important;
   flex-direction: column !important;
-  max-height: none !important;
-  overflow: visible !important;
   flex: 1 1 auto !important;
   min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
 }
 
 .graph-node-module.graph-module-viz .viz-card {
@@ -440,12 +440,15 @@
   flex-direction: column !important;
   flex: 1 1 auto !important;
   min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
 }
 
 .graph-node-module.graph-module-viz .viz-iframe {
   flex: 1 1 auto !important;
-  height: 100% !important;
+  height: auto !important;
   min-height: 0 !important;
+  max-height: 100% !important;
 }
 
 .graph-node .mermaid-container {
@@ -673,8 +676,8 @@
   --graph-bubble-border: rgba(255, 255, 255, 0.12);
   --graph-bubble-glow: rgba(74, 158, 255, 0.28);
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
-  --graph-edge-color: #4a9eff;
-  --graph-edge-glow: rgba(74, 158, 255, 0.45);
+  --graph-edge-color: #22d3ee;
+  --graph-edge-glow: rgba(34, 211, 238, 0.42);
 }
 
 [data-theme="light"] {
@@ -683,8 +686,8 @@
   --graph-bubble-border: rgba(120, 100, 70, 0.2);
   --graph-bubble-glow: rgba(255, 255, 255, 0);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.16);
-  --graph-edge-color: #8b6914;
-  --graph-edge-glow: rgba(139, 105, 20, 0.22);
+  --graph-edge-color: #eab308;
+  --graph-edge-glow: rgba(234, 179, 8, 0.30);
 }
 
 .graph-node-user {
@@ -730,10 +733,10 @@
 }
 
 .graph-node-module.graph-module-viz {
-  --graph-bubble-start: rgba(16, 185, 129, 0.14);
+  --graph-bubble-start: rgba(244, 114, 182, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #10b981;
-  --graph-bubble-glow: rgba(16, 185, 129, 0.30);
+  --graph-bubble-border: #f472b6;
+  --graph-bubble-glow: rgba(244, 114, 182, 0.30);
 }
 
 .graph-node-module.graph-module-extend {
@@ -806,10 +809,10 @@
 }
 
 [data-theme="light"] .graph-node-module.graph-module-viz {
-  --graph-bubble-start: rgba(16, 185, 129, 0.18);
+  --graph-bubble-start: rgba(244, 114, 182, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #10b981;
-  --graph-bubble-glow: rgba(16, 185, 129, 0.26);
+  --graph-bubble-border: #f472b6;
+  --graph-bubble-glow: rgba(244, 114, 182, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
@@ -894,4 +897,469 @@
 
 .graph-node {
   will-change: transform;
+}
+
+/* ---------- 10. ComfyUI 风格端口与可编辑连线 ---------- */
+.graph-node {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+}
+
+.graph-node-main {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.graph-port-col {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+  padding: 10px 0 !important;
+  flex-shrink: 0 !important;
+  max-width: 116px !important;
+  z-index: 4 !important;
+}
+
+.graph-input-col {
+  align-items: flex-start !important;
+  margin-left: -10px !important;
+}
+
+.graph-output-col {
+  align-items: flex-end !important;
+  margin-right: -10px !important;
+}
+
+.graph-port {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  height: 20px !important;
+  cursor: crosshair !important;
+  user-select: none !important;
+  position: relative !important;
+}
+
+.graph-input-port {
+  flex-direction: row !important;
+  padding-left: 12px !important;
+}
+
+.graph-output-port {
+  flex-direction: row-reverse !important;
+  padding-right: 12px !important;
+}
+
+.graph-port-dot {
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 50% !important;
+  border: 2px solid var(--port-color, var(--accent)) !important;
+  background: #0b1020 !important;
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.12), 0 0 10px var(--graph-edge-glow) !important;
+  flex-shrink: 0 !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease !important;
+}
+
+.graph-output-port .graph-port-dot {
+  background: var(--port-color, var(--accent)) !important;
+}
+
+.graph-port-label {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  color: var(--text-secondary) !important;
+  white-space: nowrap !important;
+  max-width: 88px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1 !important;
+}
+
+.graph-port:hover .graph-port-dot {
+  transform: scale(1.35) !important;
+  box-shadow: 0 0 0 4px rgba(74, 158, 255, 0.16), 0 0 14px var(--graph-edge-glow) !important;
+}
+
+.graph-port:hover .graph-port-label {
+  color: var(--text-primary) !important;
+}
+
+.graph-add-port-btn {
+  width: 22px !important;
+  height: 22px !important;
+  border: 1px dashed var(--border) !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-add-port-btn:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  background: var(--btn-active-bg) !important;
+}
+
+.graph-node.minimized .graph-port-label,
+.graph-node.minimized .graph-add-port-btn {
+  display: none !important;
+}
+
+.graph-edge {
+  pointer-events: stroke !important;
+  cursor: pointer !important;
+}
+
+.graph-edge-custom {
+  stroke: var(--graph-edge-color) !important;
+  filter: drop-shadow(0 0 8px var(--graph-edge-glow)) !important;
+}
+
+.graph-link-drag {
+  stroke-dasharray: 8 8 !important;
+  opacity: 0.75 !important;
+  pointer-events: none !important;
+}
+
+.graph-selection-box {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+  z-index: 6 !important;
+  border: 1.5px dashed #22d3ee !important;
+  border-radius: 4px !important;
+  background: rgba(34, 211, 238, 0.10) !important;
+  pointer-events: none !important;
+}
+
+.graph-canvas.box-selecting {
+  cursor: crosshair !important;
+}
+
+.graph-canvas.linking .graph-node {
+  cursor: crosshair !important;
+}
+
+[data-theme="light"] .graph-port-dot {
+  background: #fffdf7 !important;
+  border-color: var(--port-color, #8b6914) !important;
+  box-shadow: 0 0 0 2px rgba(139, 105, 20, 0.12), 0 0 8px rgba(139, 105, 20, 0.18) !important;
+}
+
+[data-theme="light"] .graph-output-port .graph-port-dot {
+  background: var(--port-color, #8b6914) !important;
+}
+
+@media (max-width: 768px) {
+  .graph-port-label {
+    max-width: 58px !important;
+    font-size: 9px !important;
+  }
+
+  .graph-port-col {
+    max-width: 82px !important;
+  }
+}
+
+/* ---------- 11. 拖出端口创建的提问节点 ---------- */
+.graph-node-draft {
+  width: 340px !important;
+  min-width: 340px !important;
+  max-width: 420px !important;
+  border-color: #22d3ee !important;
+  background: linear-gradient(135deg, rgba(8, 51, 68, 0.96), rgba(14, 22, 44, 0.98)) !important;
+  box-shadow: 0 0 34px rgba(34, 211, 238, 0.22), 0 18px 48px rgba(0, 0, 0, 0.42) !important;
+}
+
+.graph-draft-body {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  width: 100% !important;
+  margin-top: 8px !important;
+}
+
+.graph-draft-body.socratic {
+  padding: 4px 0 2px;
+}
+
+.graph-draft-question {
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+  overflow-wrap: anywhere !important;
+}
+
+.graph-draft-input {
+  width: 100% !important;
+  min-height: 64px !important;
+  max-height: 140px !important;
+  resize: vertical !important;
+  box-sizing: border-box !important;
+  padding: 8px 10px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  background: var(--input-bg) !important;
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  outline: none !important;
+  font-family: inherit !important;
+}
+
+.graph-draft-input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--btn-active-border) !important;
+}
+
+.graph-draft-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  margin-top: 4px !important;
+}
+
+.graph-draft-btn {
+  border: 1px solid var(--btn-active-border) !important;
+  background: var(--btn-active-bg) !important;
+  color: var(--text-primary) !important;
+  border-radius: 8px !important;
+  padding: 7px 12px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: background 0.15s, border-color 0.15s, color 0.15s !important;
+}
+
+.graph-draft-btn:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: var(--btn-active-hover-bg) !important;
+}
+
+.graph-socratic-actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px !important;
+  margin-top: 6px !important;
+}
+
+.graph-socratic-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  padding: 10px 12px !important;
+  border-radius: 10px !important;
+  font-size: 12.5px !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+  background: var(--socratic-bg) !important;
+  border-color: var(--socratic-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.graph-socratic-btn:hover {
+  background: var(--hover-bg2) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.graph-draft-send {
+  margin-left: auto !important;
+  background: rgba(34, 211, 238, 0.14) !important;
+  border-color: rgba(34, 211, 238, 0.36) !important;
+  color: #22d3ee !important;
+}
+
+.graph-draft-close {
+  margin-left: auto !important;
+  width: 26px !important;
+  height: 26px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 7px !important;
+  background: var(--btn-bg) !important;
+  color: var(--text-secondary) !important;
+  font-size: 15px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-draft-close:hover {
+  color: #ff6b6b !important;
+  border-color: rgba(255, 107, 107, 0.5) !important;
+  background: rgba(255, 107, 107, 0.1) !important;
+}
+
+[data-theme="light"] .graph-node-draft {
+  background: linear-gradient(135deg, rgba(224, 242, 254, 0.96), rgba(255, 253, 247, 0.98)) !important;
+  box-shadow: 0 0 28px rgba(34, 211, 238, 0.2), 0 14px 36px rgba(90, 70, 40, 0.14) !important;
+}
+
+/* ---------- 12. ComfyUI 属性色与端口删除 ---------- */
+.graph-node-attribute {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 2px 8px !important;
+  border: 1px solid currentColor !important;
+  border-radius: 6px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  line-height: 1.4 !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-port-remove {
+  width: 16px !important;
+  height: 16px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 50% !important;
+  background: rgba(20, 28, 52, 0.9) !important;
+  color: var(--text-secondary) !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-output-port:hover .graph-port-remove {
+  opacity: 1 !important;
+}
+
+.graph-port-remove:hover {
+  color: #ff6b6b !important;
+  border-color: rgba(255, 107, 107, 0.55) !important;
+  background: rgba(255, 107, 107, 0.12) !important;
+}
+
+.graph-canvas.invalid-link .graph-link-drag {
+  stroke: #ff5f5f !important;
+  filter: drop-shadow(0 0 8px rgba(255, 95, 95, 0.65)) !important;
+}
+
+.graph-canvas.invalid-link .graph-port {
+  cursor: not-allowed !important;
+}
+
+@media (hover: none) {
+  .graph-port-remove {
+    opacity: 0.85 !important;
+  }
+}
+
+/* ---------- 13. 没看懂：原地重讲面板 ---------- */
+.graph-regen-btn {
+  border: 1px solid var(--btn-active-border) !important;
+  background: var(--btn-active-bg) !important;
+  color: var(--text-primary) !important;
+  border-radius: 8px !important;
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: background 0.15s, border-color 0.15s, color 0.15s !important;
+}
+
+.graph-regen-btn:hover {
+  border-color: #f59e0b !important;
+  color: #f59e0b !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+}
+
+.graph-regenerate-panel {
+  width: 100% !important;
+  margin-top: 10px !important;
+  padding: 10px !important;
+  border: 1px solid rgba(245, 158, 11, 0.32) !important;
+  border-radius: 8px !important;
+  background: rgba(245, 158, 11, 0.08) !important;
+  box-sizing: border-box !important;
+}
+
+.graph-regenerate-input {
+  width: 100% !important;
+  min-height: 64px !important;
+  max-height: 140px !important;
+  resize: vertical !important;
+  box-sizing: border-box !important;
+  padding: 8px 10px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  background: var(--input-bg) !important;
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  outline: none !important;
+  font-family: inherit !important;
+}
+
+.graph-regenerate-input:focus {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.16) !important;
+}
+
+.graph-regenerate-actions {
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  margin-top: 8px !important;
+}
+
+.graph-regenerate-error {
+  margin-top: 8px !important;
+  color: #ff6b6b !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.graph-regenerate-panel.busy {
+  opacity: 0.7 !important;
+  pointer-events: none !important;
+}
+
+/* ---------- 14. 多选与框选反馈 ---------- */
+.graph-node.selected,
+[data-theme="dark"] .graph-node.selected,
+[data-theme="light"] .graph-node.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--node-attr) 42%, transparent),
+    0 0 0 12px color-mix(in srgb, var(--node-attr) 18%, transparent),
+    0 0 52px 12px color-mix(in srgb, var(--node-attr) 38%, transparent),
+    0 18px 60px rgba(0, 0, 0, 0.45) !important;
+}
+
+.graph-node.selected .graph-node-attribute {
+  color: var(--node-attr) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 85%, transparent) !important;
+  background: color-mix(in srgb, var(--node-attr) 18%, transparent) !important;
+}
+
+.graph-node.dragging {
+  z-index: 40 !important;
 }

@@ -258,6 +258,7 @@ def _load_session_context(
     branch_type: str = "",
     source_module: str = "",
     parent_id: str = "",
+    graph_path: list = None,
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
@@ -268,6 +269,14 @@ def _load_session_context(
     all_messages = _read_json(messages_path, [])
     if not all_messages:
         return []
+    if graph_path:
+        return _load_session_context_from_path(
+            session_id,
+            graph_path,
+            branch_id=branch_id,
+            source_module=source_module,
+            max_rounds=max_rounds,
+        )
     if not branch_id:
         return _recent_context_messages(all_messages, max_rounds, include_socratic)
 
@@ -333,6 +342,102 @@ def _branch_context_instruction(
     elif branch_type == "continue":
         lines.append("- 用户在当前节点自由续问；若问题与当前气泡无关，可以作为新主线回答。")
     return "\n".join(lines)
+
+
+def _graph_message_summary(message: dict, module_key: str = "") -> str:
+    content = str(message.get("content") or "")
+    if module_key:
+        content = _branch_source_content(content, module_key)
+    match = re.search(r"<summary>([\s\S]*?)</summary>", content, re.I)
+    if match:
+        return match.group(1).strip()[:200]
+    text = re.sub(r"<[^>]+>", " ", content)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:180]
+
+
+def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
+    if not graph_path:
+        return ""
+    labels = {
+        "user": "问题",
+        "answer": "AI 回答簇",
+        "module": "模块",
+    }
+    module_labels = {
+        "physics": "物理视角",
+        "math": "数学视角",
+        "graph": "知识图谱",
+        "viz": "交互可视化",
+        "extend": "延伸思考",
+        "socratic": "苏格拉底追问",
+        "learn": "进阶学习",
+    }
+    lines = ["\n\n# 当前探索路径"]
+    for index, item in enumerate(graph_path):
+        kind = item.get("kind") or ""
+        module_key = item.get("module") or ""
+        branch_type = item.get("branchType") or item.get("branch_type") or ""
+        if kind == "module":
+            label = module_labels.get(module_key, module_key or "模块")
+        elif kind == "answer":
+            label = labels.get("answer", "AI 回答簇")
+        elif kind == "user":
+            label = "延伸追问" if branch_type else labels.get("user", "问题")
+        else:
+            label = kind or "节点"
+        lines.append(f"{index + 1}. {label}（消息 ID：{item.get('timestamp') or ''}）")
+    if source_module:
+        lines.append(f"- 当前聚焦气泡：{module_labels.get(source_module, source_module)}")
+    lines.append("- 上下文只围绕当前探索路径展开；上游节点以摘要形式提供，当前节点可提供完整内容。")
+    lines.append("- 不要重新展开无关分支，也不要重复其他模块的完整内容。")
+    return "\n".join(lines)
+
+
+def _load_session_context_from_path(
+    session_id: str,
+    graph_path: list,
+    branch_id: str = "",
+    source_module: str = "",
+    max_rounds: int = 3,
+) -> list:
+    messages_path = _resolve_messages_path(session_id)
+    all_messages = _read_json(messages_path, [])
+    if not all_messages or not graph_path:
+        return []
+    by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
+    result = []
+    seen = set()
+    active_index = len(graph_path) - 1
+
+    for index, item in enumerate(graph_path):
+        msg = by_ts.get(str(item.get("timestamp") or ""))
+        if not msg:
+            continue
+        is_active = index == active_index
+        role = msg.get("role") or "assistant"
+        module_key = item.get("module") or item.get("moduleKey") or ""
+        if role == "user":
+            content = str(msg.get("content") or "")
+        elif module_key and is_active:
+            content = _branch_source_content(msg.get("content") or "", module_key)
+        else:
+            content = _graph_message_summary(msg, module_key if not is_active else "")
+        if not content or content in seen:
+            continue
+        result.append({"role": role, "content": content})
+        seen.add(content)
+
+    if branch_id:
+        branch_messages = [
+            msg for msg in all_messages
+            if str(msg.get("branchId") or "") == str(branch_id)
+        ]
+        for item in _recent_context_messages(branch_messages, max_rounds, True):
+            if item["content"] not in seen:
+                result.append(item)
+                seen.add(item["content"])
+    return result
 
 
 # ====== 苏格拉底追问状态 ======
@@ -740,6 +845,7 @@ async def api_models_chat(request: Request):
     branch_type = payload.get("branch_type", "")
     source_module = payload.get("source_module", "")
     parent_id = payload.get("parent_id", "")
+    graph_path = payload.get("graph_path") or payload.get("graphPath") or []
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
@@ -757,6 +863,8 @@ async def api_models_chat(request: Request):
             system_content += "\n\n" + state_instruction
         if branch_id:
             system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label", ""), parent_id)
+        if graph_path:
+            system_content += _graph_path_instruction(graph_path, source_module)
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
@@ -767,6 +875,7 @@ async def api_models_chat(request: Request):
                 branch_type=branch_type,
                 source_module=source_module,
                 parent_id=parent_id,
+                graph_path=graph_path,
             )
             messages.extend(context)
 

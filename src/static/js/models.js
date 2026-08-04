@@ -260,12 +260,14 @@ async function proxyChatWithModel(model, body, signal) {
 async function proxyChat(prompt, level, sessionId, stream = true, signal, branchMeta = {}) {
   const agentModel = getActiveModelForRole('agent');
   if (!agentModel) return null;
+  const { graphPath, ...rest } = branchMeta;
   return proxyChatWithModel(agentModel, {
     prompt,
     level,
     session_id: sessionId,
     stream,
-    ...branchMeta,
+    ...rest,
+    graph_path: graphPath || [],
   }, signal);
 }
 

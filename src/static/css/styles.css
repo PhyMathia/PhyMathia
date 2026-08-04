@@ -1860,27 +1860,28 @@
     .socratic-actions .socratic-btn {
       flex: 1 1 auto;
     }
-    .socratic-answer {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
+    .socratic-answer,
     .socratic-ask {
       background: var(--socratic-bg);
       border-color: var(--socratic-border);
       color: var(--text-primary);
     }
-    .socratic-answer:hover {
-      background: var(--accent);
+    .socratic-answer:hover,
+    .socratic-ask:hover {
+      background: var(--hover-bg2);
+      border-color: var(--accent);
+      color: var(--text-primary);
     }
     .socratic-btn:hover {
       background: var(--hover-bg2);
       border-color: var(--accent);
       transform: translateY(-1px);
     }
-    .socratic-btn.level-basic { border-left: 3px solid #4CAF50; }
-    .socratic-btn.level-advanced { border-left: 3px solid #FF9800; }
-    .socratic-btn.level-expand { border-left: 3px solid #E040FB; }
+    .socratic-btn.level-basic,
+    .socratic-btn.level-advanced,
+    .socratic-btn.level-expand {
+      border-left: 1px solid var(--socratic-border);
+    }
 
     /* 打字动画 */
     .typing-indicator {

@@ -302,10 +302,27 @@
             focus: parsed.focus || null,
             linear: !!parsed.linear,
             layoutVersion: parsed.layoutVersion || 1,
+            connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
+            removedEdges: parsed.removedEdges || [],
+            portCounts: parsed.portCounts || {},
           };
         }
       } catch (e) {}
-      return { collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, focus: null, linear: false, layoutVersion: 1 };
+      return {
+        collapsed: {},
+        hidden: {},
+        positions: {},
+        pinned: {},
+        sizes: {},
+        pan: { x: 80, y: 80 },
+        zoom: 0.9,
+        focus: null,
+        linear: false,
+        layoutVersion: 1,
+        connections: null,
+        removedEdges: [],
+        portCounts: {},
+      };
     }
 
     function saveGraphState(sessionId, state) {
@@ -681,6 +698,13 @@
 
     // 暴露给其他模块（如知识面板打开时即时拉取最新数据）
     window.syncFromServer = _syncFromServer;
+    window.updateChatHistoryMessage = (timestamp, updater) => {
+      const idx = chatHistory.findIndex(item => String(item.timestamp) === String(timestamp));
+      if (idx < 0) return false;
+      const next = updater(chatHistory[idx]);
+      if (next !== undefined) chatHistory[idx] = next;
+      return true;
+    };
     // 暴露给知识面板（公式定位会话）：切换会话 + 查询会话信息
     window.switchToSession = switchToSession;
     window.getSessionById = (id) => sessions[id] || null;

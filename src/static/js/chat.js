@@ -655,6 +655,9 @@
 
     function _consumePendingBranch() {
       const anchor = activeBranchAnchor ? { ...activeBranchAnchor } : null;
+      if (anchor && !anchor.graphPath && typeof window.buildGraphPathForAnchor === 'function') {
+        anchor.graphPath = window.buildGraphPathForAnchor(anchor);
+      }
       setActiveBranchAnchor(null);
       return anchor;
     }
@@ -787,17 +790,21 @@
     });
 
     let pendingDeleteTimestamp = null;
-    async function _performDeleteMessages(timestamp) {
-      const target = String(timestamp || '');
-      if (!target) return;
-      const removed = new Set([target]);
-      const targetIndex = chatHistory.findIndex(msg => String(msg.timestamp || '') === target);
-      if (targetIndex >= 0 && chatHistory[targetIndex].role === 'user') {
-        for (let i = targetIndex + 1; i < chatHistory.length; i++) {
-          if (chatHistory[i].role === 'assistant') {
-            removed.add(String(chatHistory[i].timestamp || ''));
-          } else {
-            break;
+    async function _performDeleteMessages(timestamps) {
+      const targets = Array.isArray(timestamps)
+        ? timestamps.map(String).filter(Boolean)
+        : [String(timestamps || '')];
+      if (!targets.length) return;
+      const removed = new Set(targets);
+      for (const target of targets) {
+        const targetIndex = chatHistory.findIndex(msg => String(msg.timestamp || '') === target);
+        if (targetIndex >= 0 && chatHistory[targetIndex].role === 'user') {
+          for (let i = targetIndex + 1; i < chatHistory.length; i++) {
+            if (chatHistory[i].role === 'assistant') {
+              removed.add(String(chatHistory[i].timestamp || ''));
+            } else {
+              break;
+            }
           }
         }
       }
@@ -829,6 +836,16 @@
       }
       return _performDeleteMessages(timestamp);
     }
+    function deleteGraphMessagesByTimestamps(timestamps) {
+      const list = Array.from(timestamps || []).map(String).filter(Boolean);
+      if (!list.length) return Promise.resolve();
+      if (isStreaming) {
+        pendingDeleteTimestamp = list;
+        if (abortController) abortController.abort();
+        return Promise.resolve();
+      }
+      return _performDeleteMessages(list);
+    }
 
     document.getElementById('socraticModalAnswer')?.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -851,6 +868,7 @@
     window.closeBranchModal = closeBranchModal;
     window.submitBranchModal = submitBranchModal;
     window.deleteGraphMessageByTimestamp = deleteGraphMessageByTimestamp;
+    window.deleteGraphMessagesByTimestamps = deleteGraphMessagesByTimestamps;
     window.getChatHistory = () => chatHistory.slice();
     window.getStreamingAssistant = () => streamingAssistant;
     function stopGeneration() {
@@ -956,6 +974,7 @@
               source_module: branchMeta.sourceModule || '',
               parent_id: branchMeta.parentId || '',
               branch_label: branchMeta.branchLabel || '',
+              graph_path: branchMeta.graphPath || [],
             }),
             signal: abortController.signal
           });
