@@ -173,7 +173,7 @@ HTML 可视化代码（可选，用 ```html ... ``` 包裹）
 </viz>
 
 <extend>
-延伸思考的问题...
+进阶学习与引导，包含苏格拉底追问与进阶学习方向...
 </extend>
 
 规则：
@@ -322,7 +322,6 @@ def _branch_context_instruction(
         "math": "数学视角",
         "graph": "知识图谱",
         "viz": "交互可视化",
-        "extend": "延伸思考",
         "socratic": "苏格拉底追问",
         "learn": "进阶学习",
     }
@@ -374,7 +373,6 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
         "math": "数学视角",
         "graph": "知识图谱",
         "viz": "交互可视化",
-        "extend": "延伸思考",
         "socratic": "苏格拉底追问",
         "learn": "进阶学习",
     }
@@ -396,6 +394,42 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
         lines.append(f"- 当前聚焦气泡：{module_labels.get(source_module, source_module)}")
     lines.append("- 上下文只围绕当前探索路径展开；上游节点以摘要形式提供，当前节点可提供完整内容。")
     lines.append("- 不要重新展开无关分支，也不要重复其他模块的完整内容。")
+    return "\n".join(lines)
+
+
+def _workflow_context_instruction(workflow_context) -> str:
+    if not isinstance(workflow_context, dict):
+        return ""
+    mode = workflow_context.get("mode") or ""
+    target = workflow_context.get("target") or {}
+    question = str(workflow_context.get("question") or "").strip()
+    analysis = str(workflow_context.get("analysis") or "").strip()
+    requirements = str(workflow_context.get("requirements") or "").strip()
+    upstream = workflow_context.get("upstream") or []
+    lines = ["\n\n# 工作流节点上下文"]
+    if mode == "analysis":
+        lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")
+    if target:
+        target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
+        lines.append(f"- 当前生成目标：{target_label}")
+        if target.get("module"):
+            lines.append(f"- 当前模块：{target['module']}")
+        if target.get("kind") == "module":
+            lines.append("- 当前为局部节点生成模式：只生成该模块正文，不要输出完整学习卡片，不要输出其他模块。")
+        elif target.get("kind") == "answer":
+            lines.append("- AI 回答节点是分发节点，不生成正文内容。")
+    if question:
+        lines.append(f"- 原始问题：{question[:1200]}")
+    if analysis:
+        lines.append(f"- 隐藏问题分析（用于保持一致）：{analysis[:1200]}")
+    for item in upstream[:8]:
+        label = item.get("label") or item.get("kind") or "上游节点"
+        content = str(item.get("summary") or item.get("content") or "").strip()
+        if content:
+            lines.append(f"- {label}：{content[:800]}")
+    if requirements:
+        lines.append(f"- 用户额外要求：{requirements[:600]}")
+    lines.append("- 只生成当前目标节点内容，不重新生成完整回答；上游内容以摘要形式提供，不要重复无关模块。")
     return "\n".join(lines)
 
 
@@ -853,6 +887,7 @@ async def api_models_chat(request: Request):
     source_module = payload.get("source_module", "")
     parent_id = payload.get("parent_id", "")
     graph_path = payload.get("graph_path") or payload.get("graphPath") or []
+    workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
@@ -872,6 +907,8 @@ async def api_models_chat(request: Request):
             system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label", ""), parent_id)
         if graph_path:
             system_content += _graph_path_instruction(graph_path, source_module)
+        if workflow_context:
+            system_content += _workflow_context_instruction(workflow_context)
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
@@ -1162,8 +1199,11 @@ def _normalize_formula(latex: str) -> str:
 def _formula_key(latex: str) -> str:
     """生成用于跨来源去重的公式键，忽略定界符和常见空白差异。"""
     s = _normalize_formula(latex).strip("$").strip()
+    s = s.replace("\\qquad", " ").replace("\\quad", " ").replace("\\,", " ")
+    s = s.replace("\\;", " ").replace(";", " ")
+    s = s.replace("\\cdot", " ")
     s = re.sub(r"\s+", " ", s)
-    s = re.sub(r"\s*([=,;:+\-*/])\s*", r"\1", s)
+    s = re.sub(r"\s*([=,+\-*/])\s*", r"\1", s)
     return s.strip()
 
 
@@ -1197,14 +1237,25 @@ def _looks_like_formula(latex: str) -> bool:
 
 def _dedupe_formula_map(data: dict) -> dict:
     """按会话+规范化公式去重，保留较新的记录。"""
-    seen = set()
-    result = {}
-    for fid in sorted(data, key=lambda k: data[k].get("createdAt", 0) or 0, reverse=True):
-        item = data[fid]
+    groups = {}
+    for fid, item in data.items():
+        if not isinstance(item, dict):
+            continue
         key = (_formula_key(item.get("latex") or ""), item.get("sessionId"))
-        if key not in seen:
-            result[fid] = item
-            seen.add(key)
+        groups.setdefault(key, []).append((fid, item))
+    result = {}
+    merge_fields = ("concept", "meaning", "meaningSource", "topic", "related", "messageId", "moduleKey")
+    for entries in groups.values():
+        entries.sort(key=lambda kv: (
+            0 if (kv[1].get("meaningSource") or "") == "model" else 1,
+            -(kv[1].get("createdAt", 0) or 0),
+        ))
+        keep_id, keep = entries[0]
+        for _, other in entries[1:]:
+            for field in merge_fields:
+                if not keep.get(field) and other.get(field):
+                    keep[field] = other[field]
+        result[keep_id] = keep
     return result
 
 
@@ -1250,7 +1301,16 @@ async def api_save_formulas(request: Request):
             if existing:
                 # 本地快速提取先入库，后续 AI 结果可以补充更完整的说明。
                 changed = False
-                for key in ("concept", "meaning", "topic", "related"):
+                incoming_source = str(it.get("meaningSource") or "local")
+                existing_source = str(existing.get("meaningSource") or "local")
+                incoming_meaning = (it.get("meaning") or "").strip()
+                if incoming_meaning and (
+                    incoming_source == "model" or existing_source != "model"
+                ):
+                    existing["meaning"] = incoming_meaning[:200]
+                    existing["meaningSource"] = incoming_source
+                    changed = True
+                for key in ("concept", "topic", "related", "messageId", "moduleKey"):
                     value = it.get(key)
                     if value and not existing.get(key):
                         existing[key] = value
@@ -1264,9 +1324,12 @@ async def api_save_formulas(request: Request):
                 "latex": latex,
                 "concept": (it.get("concept") or "")[:80],
                 "meaning": (it.get("meaning") or "")[:200],
+                "meaningSource": it.get("meaningSource") or "local",
                 "topic": (it.get("topic") or "")[:60],
                 "related": [str(t) for t in (it.get("related") or [])][:8],
                 "sessionId": it.get("sessionId", ""),
+                "messageId": it.get("messageId", ""),
+                "moduleKey": it.get("moduleKey", ""),
                 "createdAt": it.get("createdAt") or int(time.time() * 1000),
             }
             count += 1
@@ -1346,12 +1409,26 @@ def _parse_extract_json(text: str) -> list:
             fs = str(f).strip()
             if fs and _looks_like_formula(fs):
                 formulas.append(fs)
+        tags = [str(t).strip() for t in (it.get("tags") or []) if str(t).strip()][:6]
+        module_key = str(it.get("moduleKey") or "")
+        if not module_key:
+            if "数学" in tags:
+                module_key = "math"
+            elif "物理" in tags:
+                module_key = "physics"
+            elif category == "math":
+                module_key = "math"
+            elif category == "physics":
+                module_key = "physics"
+            else:
+                module_key = "answer"
         result.append({
             "title": title[:80],
             "category": category,
-            "tags": [str(t).strip() for t in (it.get("tags") or []) if str(t).strip()][:6],
+            "tags": tags,
             "summary": str(it.get("summary", ""))[:200],
             "formulas": formulas[:8],
+            "moduleKey": module_key,
         })
     return result[:6]
 
@@ -1558,13 +1635,25 @@ def _local_extract_knowledge(messages: list) -> list:
 
         formula_tags = _formula_tags_from_content(content, formulas)
         summary = re.sub(r"\s+", " ", content)[:120]
+        tags = ["物理" if category == "physics" else "数学" if category == "math" else "其他"]
+        module_key = ""
+        for formula in formulas:
+            module_key = _formula_module_key(
+                {"formula_tags": formula_tags, "tags": tags, "category": category},
+                formula,
+            )
+            if module_key:
+                break
+        if not module_key:
+            module_key = "math" if category == "math" else "physics" if category == "physics" else "answer"
         return [{
             "title": title[:80],
             "category": category,
-            "tags": ["物理" if category == "physics" else "数学" if category == "math" else "其他"],
+            "tags": tags,
             "summary": summary,
             "formulas": formulas,
             "formula_tags": formula_tags,
+            "moduleKey": module_key,
         }]
     return []
 
@@ -1600,7 +1689,24 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     return _parse_extract_json(content)
 
 
-def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None) -> int:
+def _formula_module_key(item: dict, formula: str) -> str:
+    module_key = item.get("moduleKey")
+    if module_key in ("physics", "math"):
+        return module_key
+    tags = (item.get("formula_tags") or {}).get(formula) or item.get("tags") or []
+    if "数学" in tags:
+        return "math"
+    if "物理" in tags:
+        return "physics"
+    category = item.get("category")
+    if category == "math":
+        return "math"
+    if category == "physics":
+        return "physics"
+    return ""
+
+
+def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None, message_id: str = "") -> int:
     """将提取出的公式自动写入公式库，返回新增数量；descriptions 为 {latex: 简要描述}"""
     if not items:
         return 0
@@ -1626,25 +1732,46 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
                                  and v.get("sessionId") == session_id), None)
                 if existing:
                     # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
-                    description = (descriptions.get(latex) or "").strip() or _local_formula_meaning(latex, summary, title)
+                    model_description = (descriptions.get(latex) or "").strip()
+                    meaning_source = "model" if model_description else "local"
+                    description = model_description or _local_formula_meaning(latex, summary, title)
                     old_meaning = (existing.get("meaning") or "").strip()
-                    if description and old_meaning != description[:200] and (
-                        not old_meaning or old_meaning == summary or old_meaning.startswith("该公式")
-                    ):
-                        existing["meaning"] = description[:200]
+                    old_source = str(existing.get("meaningSource") or "local")
+                    module_key = _formula_module_key(it, latex)
+                    if message_id and not existing.get("messageId"):
+                        existing["messageId"] = message_id
                         changed = True
+                    if module_key and not existing.get("moduleKey"):
+                        existing["moduleKey"] = module_key
+                        changed = True
+                    if description and old_meaning != description[:200]:
+                        can_update = meaning_source == "model" or old_source != "model"
+                        if can_update and (
+                            not old_meaning
+                            or old_meaning == summary
+                            or old_meaning.startswith("该公式")
+                            or meaning_source == "model"
+                        ):
+                            existing["meaning"] = description[:200]
+                            existing["meaningSource"] = meaning_source
+                            changed = True
                     continue
                 fid = "f_" + uuid.uuid4().hex[:12]
                 # 描述模型生成的简要描述优先，否则为单个公式生成具体说明
-                meaning = (descriptions.get(latex) or "").strip() or _local_formula_meaning(latex, summary, title)
+                model_description = (descriptions.get(latex) or "").strip()
+                meaning_source = "model" if model_description else "local"
+                meaning = model_description or _local_formula_meaning(latex, summary, title)
                 data[fid] = {
                     "id": fid,
                     "latex": latex,
                     "concept": title[:80],
                     "meaning": meaning[:200],
+                    "meaningSource": meaning_source,
                     "topic": "",
                     "related": formula_tags.get(latex) or tags[:8],
                     "sessionId": session_id,
+                    "messageId": message_id,
+                    "moduleKey": _formula_module_key(it, latex),
                     "createdAt": now,
                 }
                 count += 1
@@ -1706,7 +1833,9 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
         result = {}
         for k, v in descs.items():
             if isinstance(v, str) and v.strip():
-                result[k.strip()] = v.strip()[:80]
+                normalized_key = _normalize_formula(k)
+                if normalized_key:
+                    result[normalized_key] = v.strip()[:80]
         return result
     except Exception as e:
         logger.warning(f"Describe formulas failed: {e}")
@@ -1728,6 +1857,8 @@ async def api_extract_knowledge(request: Request):
     model = payload.get("model", "")
     base_url = payload.get("base_url", "")
     level = payload.get("level", "university")
+    if not api_key and provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     if latest_assistant and (
@@ -1740,6 +1871,8 @@ async def api_extract_knowledge(request: Request):
     desc_api_key = payload.get("descriptor_api_key", "")
     desc_model = payload.get("descriptor_model", "")
     desc_base_url = payload.get("descriptor_base_url", "")
+    if not desc_api_key and desc_provider == "deepseek":
+        desc_api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     items = []
     if api_key and model:
@@ -1773,11 +1906,12 @@ async def api_extract_knowledge(request: Request):
         if descriptions:
             logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
 
-    added = _add_formulas_from_items(items, session_id, descriptions)
+    message_id = str(latest_assistant.get("timestamp") or "") if latest_assistant else ""
+    added = _add_formulas_from_items(items, session_id, descriptions, message_id)
     if added:
         logger.info(f"Auto added {added} formulas to library")
 
-    return {"items": items}
+    return {"items": items, "descriptions": descriptions}
 
 
 # ====== 键值存储 API ======

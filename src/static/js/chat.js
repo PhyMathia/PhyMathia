@@ -250,6 +250,25 @@
       const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/i);
       const summary = (summaryMatch ? summaryMatch[1] : content)
         .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+      let mathTagCount = 0;
+      let physicsTagCount = 0;
+      for (const tags of Object.values(formulaTags || {})) {
+        if (tags.includes('数学')) mathTagCount += 1;
+        if (tags.includes('物理')) physicsTagCount += 1;
+      }
+      const moduleKey = mathTagCount > physicsTagCount
+        ? 'math'
+        : physicsTagCount > mathTagCount
+          ? 'physics'
+          : mathTagCount
+            ? 'math'
+            : physicsTagCount
+              ? 'physics'
+              : category === 'math'
+                ? 'math'
+                : category === 'physics'
+                  ? 'physics'
+                  : 'answer';
 
       return [{
         title: title.slice(0, 80),
@@ -258,20 +277,47 @@
         summary,
         formulas,
         formulaTags,
+        moduleKey,
       }];
     }
 
-    function saveExtractedFormulas(sessionId, items) {
+    function _formulaModuleKeyFromItem(item, latex) {
+      const formulaTags = item.formulaTags && item.formulaTags[latex];
+      if (formulaTags) {
+        if (formulaTags.includes('数学')) return 'math';
+        if (formulaTags.includes('物理')) return 'physics';
+      }
+      if (item.moduleKey && item.moduleKey !== 'answer') return item.moduleKey;
+      const tags = item.tags || [];
+      if (tags.includes('数学')) return 'math';
+      if (tags.includes('物理')) return 'physics';
+      if (item.category === 'math') return 'math';
+      if (item.category === 'physics') return 'physics';
+      return '';
+    }
+
+    function saveExtractedFormulas(sessionId, items, messages, descriptions = {}) {
       const formulas = [];
+      const lastAssistant = [...(messages || [])].reverse().find(m => m.role === 'assistant');
+      const messageId = lastAssistant ? String(lastAssistant.timestamp || '') : '';
       for (const item of items || []) {
         for (const latex of item.formulas || []) {
+          const normalizedLatex = _normalizeFormulaLatex(latex);
+          const modelMeaning = String(
+            descriptions[normalizedLatex] ||
+            descriptions[_stripFormulaDelimiters(normalizedLatex)] ||
+            ''
+          ).trim();
           formulas.push({
             latex,
             concept: item.title,
-            meaning: describeFormula(latex, item.summary, item.title),
+            meaning: modelMeaning || describeFormula(latex, item.summary, item.title),
+            meaningSource: modelMeaning ? 'model' : 'local',
             topic: '',
             related: (item.formulaTags && item.formulaTags[latex]) || item.tags || [],
             sessionId,
+            messageId,
+            moduleKey: _formulaModuleKeyFromItem(item, latex),
             createdAt: Date.now(),
           });
         }
@@ -285,9 +331,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!resp.ok) return [];
+      if (!resp.ok) return { items: [], descriptions: {} };
       const data = await resp.json();
-      return data.items || [];
+      return { items: data.items || [], descriptions: data.descriptions || {} };
     }
 
     function _knowledgeDedupKey(title) {
@@ -304,6 +350,16 @@
 
     function _mergeUniqueValues(base, extra) {
       return Array.from(new Set([...(base || []), ...(extra || [])].filter(Boolean)));
+    }
+
+    function _knowledgeModuleKeyFallback(item) {
+      if (item.moduleKey && item.moduleKey !== 'answer') return item.moduleKey;
+      const tags = item.tags || [];
+      if (tags.includes('数学')) return 'math';
+      if (tags.includes('物理')) return 'physics';
+      if (item.category === 'math') return 'math';
+      if (item.category === 'physics') return 'physics';
+      return 'answer';
     }
 
     function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false) {
@@ -331,7 +387,10 @@
               ? item.summary
               : existing.summary,
             formulas: _mergeUniqueValues(existing.formulas, item.formulas),
-            messageId: String(existing.messageId || messageId),
+            messageId: String(messageId || existing.messageId),
+            moduleKey: (item.moduleKey && item.moduleKey !== 'answer')
+              ? item.moduleKey
+              : existing.moduleKey || _knowledgeModuleKeyFallback(item),
           });
           if (keepManualSource) existing.source = 'manual';
           changed = true;
@@ -349,6 +408,7 @@
           source: 'ai_extract',
           sessionId: sessionId,
           messageId: String(messageId),
+          moduleKey: _knowledgeModuleKeyFallback(item),
           createdAt: Date.now()
         };
         changed = true;
@@ -394,7 +454,7 @@
         // 浏览器本地先提取，不等待消息保存或任何模型响应。
         const localItems = extractLocalKnowledge(extractionMessages);
         saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems);
-        saveExtractedFormulas(sessionId, localItems);
+        saveExtractedFormulas(sessionId, localItems, extractionMessages);
         refreshKnowledgePanelIfOpen();
 
         const payload = { ...basePayload };
@@ -414,14 +474,15 @@
 
         // AI 提取作为后台增强，不再阻塞本地知识条目的首次显示。
         if (agentModel || descriptorModel) {
-          let aiItems = [];
+          let aiResult = { items: [], descriptions: {} };
           try {
-            aiItems = await requestKnowledgeExtraction(payload);
+            aiResult = await requestKnowledgeExtraction(payload);
           } catch (err) {
             console.warn('AI knowledge extraction failed:', err);
           }
+          const aiItems = aiResult.items || [];
           saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true);
-          saveExtractedFormulas(sessionId, aiItems);
+          saveExtractedFormulas(sessionId, aiItems, extractionMessages, aiResult.descriptions || {});
           refreshKnowledgePanelIfOpen();
         }
       } catch (err) {
@@ -586,6 +647,10 @@
         source: 'manual',
         sessionId: document.getElementById('bmSessionId').value,
         messageId: document.getElementById('bmMessageId').value,
+        moduleKey: _knowledgeModuleKeyFallback({
+          category: document.getElementById('bmCategory').value,
+          tags: document.getElementById('bmTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+        }),
         createdAt: Date.now()
       };
       addKnowledgeItem(item);
@@ -596,9 +661,12 @@
           latex: f,
           concept: item.title,
           meaning: describeFormula(f, item.summary, item.title),
+          meaningSource: 'local',
           topic: '',
           related: item.tags,
           sessionId: item.sessionId,
+          messageId: item.messageId,
+          moduleKey: item.moduleKey,
           createdAt: Date.now()
         })));
       }
@@ -880,6 +948,7 @@
     window.getStreamingAssistant = () => streamingAssistant;
     function stopGeneration() {
       if (abortController) abortController.abort();
+      if (typeof window.stopWorkflowRun === 'function') window.stopWorkflowRun();
     }
     window.stopGeneration = stopGeneration;
     window.startSocraticAnswer = startSocraticAnswer;

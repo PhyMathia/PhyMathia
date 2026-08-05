@@ -46,13 +46,21 @@ function dedupeKnowledgeItems(items) {
     const seen = new Set();
     for (const entry of ranked) {
       for (const formula of entry.item.formulas || []) {
-        if (formula && !seen.has(formula)) {
-          seen.add(formula);
+        const key = _canonicalFormulaText(formula);
+        if (formula && key && !seen.has(key)) {
+          seen.add(key);
           formulas.push(formula);
         }
       }
     }
     keep.formulas = formulas;
+    for (const entry of ranked.slice(1)) {
+      if (!keep.moduleKey && entry.item.moduleKey) keep.moduleKey = entry.item.moduleKey;
+      if (!keep.messageId && entry.item.messageId) keep.messageId = entry.item.messageId;
+      if ((!keep.tags || !keep.tags.length) && entry.item.tags && entry.item.tags.length) {
+        keep.tags = entry.item.tags.slice();
+      }
+    }
     for (let i = 1; i < ranked.length; i++) removeIds.add(ranked[i].id);
   }
 
@@ -135,7 +143,7 @@ async function _quickRefreshKnowledge() {
       const serverMap = await knowResp.json();
       if (serverMap && typeof serverMap === 'object' && !Array.isArray(serverMap)) {
         const local = getKnowledgeItems() || {};
-        const merged = { ...local, ...serverMap };
+        const merged = dedupeKnowledgeItems({ ...local, ...serverMap });
         kpKnowledgeCache = merged;
         localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(merged));
       }
@@ -145,7 +153,7 @@ async function _quickRefreshKnowledge() {
       const serverFormulas = {};
       for (const it of (data.items || [])) serverFormulas[it.id] = it;
       const localFormulas = getFormulaCache() || {};
-      const mergedFormulas = { ...localFormulas, ...serverFormulas };
+      const mergedFormulas = dedupeFormulaItems({ ...localFormulas, ...serverFormulas });
       setFormulaCache(mergedFormulas);
     }
   } catch (e) {
@@ -315,7 +323,7 @@ function renderKnowledgePanel() {
             <div class="kp-card-detail-inner">
               ${formulasHtml ? `<div class="kp-formulas">${formulasHtml}</div>` : ''}
               <div class="kp-detail-actions">
-                <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToOriginalMessage('${item.sessionId}','${item.messageId || ''}')">查看原对话</button>
+                <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToKnowledgeNode('${item.id}')">跳转到节点</button>
                 <button class="kp-action-btn kp-btn-danger" onclick="event.stopPropagation(); confirmDeleteKnowledge('${item.id}')">删除</button>
               </div>
             </div>
@@ -337,22 +345,102 @@ async function confirmDeleteKnowledge(id) {
   renderKnowledgePanel();
 }
 
-function goToOriginalMessage(sessionId, messageId) {
-  closeKnowledgePanel();
-  if (sessionId && sessionId !== currentSessionId) {
-    switchToSession(sessionId);
-  }
-  // Scroll to message after a short delay
-  setTimeout(() => {
-    if (messageId) {
-      const msgEl = document.querySelector(`[data-message-id="${messageId}"]`);
-      if (msgEl) {
-        msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        msgEl.style.outline = '2px solid var(--accent)';
-        setTimeout(() => { msgEl.style.outline = ''; }, 2000);
-      }
+function _messageByTimestamp(messages, messageId) {
+  return (messages || []).find(m => String(m.timestamp) === String(messageId)) || null;
+}
+
+async function _ensureSessionMessages(sessionId) {
+  if (typeof window.getChatHistory === 'function' && window.getChatHistory().length) return;
+  try {
+    const resp = await fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/messages', { cache: 'no-cache' });
+    if (resp.ok && typeof window.replaceChatHistory === 'function') {
+      const messages = await resp.json();
+      await window.replaceChatHistory(messages);
     }
-  }, 500);
+  } catch (e) {
+    console.warn('Load session messages for knowledge jump failed:', e);
+  }
+}
+
+function _contentContainsFormula(content, latex) {
+  const target = _canonicalFormulaText(latex);
+  if (!target || typeof extractLocalFormulas !== 'function') return false;
+  return extractLocalFormulas(String(content || '')).some(f => _canonicalFormulaText(f) === target);
+}
+
+function _moduleKeyForFormulaInMessage(message, latex) {
+  if (!message) return '';
+  const sections = typeof parseXmlSections === 'function' ? parseXmlSections(message.content || '') : {};
+  for (const key of ['physics', 'math', 'graph', 'viz']) {
+    if (sections[key] && _contentContainsFormula(sections[key], latex)) return key;
+  }
+  return '';
+}
+
+function _resolveKnowledgeAnchor(item, messages) {
+  const messageId = String(item.messageId || '');
+  let moduleKey = '';
+  const message = _messageByTimestamp(messages, messageId);
+  for (const formula of (item.formulas || [])) {
+    const key = _moduleKeyForFormulaInMessage(message, formula);
+    if (key) {
+      moduleKey = key;
+      break;
+    }
+  }
+  if (!moduleKey && item.moduleKey && item.moduleKey !== 'answer') moduleKey = item.moduleKey;
+  if (!moduleKey) {
+    const tags = item.tags || [];
+    if (tags.includes('数学')) moduleKey = 'math';
+    else if (tags.includes('物理')) moduleKey = 'physics';
+    else if (item.category === 'math') moduleKey = 'math';
+    else if (item.category === 'physics') moduleKey = 'physics';
+  }
+  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '' };
+}
+
+async function goToKnowledgeNode(itemId) {
+  const item = getKnowledgeItems()[itemId];
+  if (!item) return;
+  const sessionId = item.sessionId;
+  const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
+  if (!session) {
+    alert('来源会话已删除，无法定位');
+    return;
+  }
+  closeKnowledgePanel();
+  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
+  if (sessionId !== currentId && typeof window.switchToSession === 'function') {
+    await window.switchToSession(sessionId);
+  }
+  await _ensureSessionMessages(sessionId);
+  const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+  const anchor = _resolveKnowledgeAnchor(item, messages);
+  if (!anchor.messageId) {
+    alert('对应节点不存在，无法定位');
+    return;
+  }
+  if (typeof window.focusGraphNode !== 'function') return;
+  const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
+  if (!ok) alert('对应节点不存在，无法定位');
+}
+
+function goToOriginalMessage(sessionId, messageId, moduleKey) {
+  const item = Object.values(getKnowledgeItems()).find(it =>
+    it.sessionId === sessionId && String(it.messageId || '') === String(messageId || '')
+  );
+  if (item) {
+    goToKnowledgeNode(item.id);
+    return;
+  }
+  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
+  if (sessionId && sessionId !== currentId && typeof window.switchToSession === 'function') {
+    window.switchToSession(sessionId).then(() => {
+      if (typeof window.focusGraphNode === 'function') window.focusGraphNode(sessionId, messageId, moduleKey);
+    });
+  } else if (typeof window.focusGraphNode === 'function') {
+    window.focusGraphNode(sessionId, messageId, moduleKey);
+  }
 }
 
 // ====== 公式速查库 ======
@@ -386,49 +474,67 @@ function _normalizeFormulaLatex(latex) {
 }
 
 function _formulaKey(latex) {
-  return _stripFormulaDelimiters(_normalizeFormulaLatex(latex))
-    .replace(/\s+/g, ' ')
-    .replace(/\s*([=,;:+\-*/])\s*/g, '$1')
-    .trim();
+  return _canonicalFormulaText(latex);
+}
+
+function _canonicalFormulaText(latex) {
+  let s = _stripFormulaDelimiters(_normalizeFormulaLatex(latex));
+  s = s.replace(/\\qquad|\\quad|\\,/g, ' ');
+  s = s.replace(/\\;/g, ' ').replace(/;/g, ' ');
+  s = s.replace(/\\cdot/g, ' ');
+  s = s.replace(/\s+/g, ' ').replace(/\s*([=,+\-*/])\s*/g, '$1');
+  return s.trim();
+}
+
+function dedupeFormulaItems(items) {
+  const map = items && typeof items === 'object' && !Array.isArray(items) ? items : {};
+  const groups = {};
+  for (const id in map) {
+    const it = map[id];
+    if (!it || typeof it.latex !== 'string') continue;
+    const latex = _normalizeFormulaLatex(it.latex);
+    if (latex) it.latex = latex;
+    const key = _formulaKey(it.latex) + '|' + (it.sessionId || '');
+    if (!groups[key]) groups[key] = [];
+    groups[key].push([id, it]);
+  }
+  const normalized = {};
+  const mergeFields = ['concept', 'meaning', 'meaningSource', 'topic', 'related', 'messageId', 'moduleKey'];
+  for (const entries of Object.values(groups)) {
+    const sourceRank = item => ((item.meaningSource || '') === 'model' ? 0 : 1);
+    entries.sort((a, b) =>
+      (sourceRank(a[1]) - sourceRank(b[1])) ||
+      ((b[1].createdAt || 0) - (a[1].createdAt || 0))
+    );
+    const keepId = entries[0][0];
+    const keep = entries[0][1];
+    for (const [, other] of entries.slice(1)) {
+      for (const field of mergeFields) {
+        if (!keep[field] && other[field]) keep[field] = other[field];
+      }
+    }
+    normalized[keepId] = keep;
+  }
+  return normalized;
 }
 
 function getFormulaCache() {
   if (kpFormulaCache) return kpFormulaCache;
   try {
     const raw = localStorage.getItem(FORMULAS_STORAGE_KEY);
-    kpFormulaCache = raw ? JSON.parse(raw) : {};
-    // 清洗旧坏缓存（含 \= 等异常转义的历史脏数据）
-    let dirty = false;
-    const seen = new Set();
-    const duplicateIds = [];
-    for (const id in kpFormulaCache) {
-      const it = kpFormulaCache[id];
-      if (it && typeof it.latex === 'string') {
-        const normalized = _normalizeFormulaLatex(it.latex);
-        if (normalized && normalized !== it.latex) {
-          it.latex = normalized;
-          dirty = true;
-        }
-        const key = _formulaKey(it.latex) + '|' + (it.sessionId || '');
-        if (seen.has(key)) {
-          duplicateIds.push(id);
-        } else {
-          seen.add(key);
-        }
-      }
-    }
-    if (duplicateIds.length) {
-      for (const id of duplicateIds) delete kpFormulaCache[id];
-      dirty = true;
-    }
-    if (dirty) setFormulaCache(kpFormulaCache);
+    kpFormulaCache = dedupeFormulaItems(raw ? JSON.parse(raw) : {});
+    setFormulaCache(kpFormulaCache);
   } catch { kpFormulaCache = {}; }
   return kpFormulaCache;
 }
 
 function setFormulaCache(items) {
   kpFormulaCache = items;
-  try { localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(items)); } catch (e) {}
+  try {
+    const cleaned = dedupeFormulaItems(items);
+    kpFormulaCache = cleaned;
+    localStorage.setItem(FORMULAS_STORAGE_KEY, JSON.stringify(cleaned));
+  } catch (e) {}
 }
 
 async function deleteFormulasBySession(sessionId) {
@@ -465,15 +571,33 @@ async function saveFormulasToServer(formulas) {
     );
     if (existing) {
       let merged = false;
+      const incomingSource = item.meaningSource || 'local';
+      const existingSource = existing.meaningSource || 'local';
+      if (
+        item.meaning &&
+        existing.meaning !== item.meaning &&
+        (incomingSource === 'model' || existingSource !== 'model')
+      ) {
+        existing.meaning = item.meaning;
+        existing.meaningSource = incomingSource;
+        merged = true;
+      }
       if (item.concept && (!existing.concept || /(相关公式|物理视角|数学视角)/.test(existing.concept))) {
         existing.concept = item.concept;
         merged = true;
       }
-      if (item.meaning && existing.meaning !== item.meaning) {
-        existing.meaning = item.meaning;
+      if (item.messageId && !existing.messageId) {
+        existing.messageId = item.messageId;
         merged = true;
       }
-      if (merged) changed = true;
+      if (item.moduleKey && !existing.moduleKey) {
+        existing.moduleKey = item.moduleKey;
+        merged = true;
+      }
+      if (merged) {
+        changed = true;
+        pending.push(existing);
+      }
       continue;
     }
 
@@ -483,9 +607,12 @@ async function saveFormulasToServer(formulas) {
       latex,
       concept: item.concept || '',
       meaning: item.meaning || '',
+      meaningSource: item.meaningSource || 'local',
       topic: item.topic || '',
       related: item.related || [],
       sessionId: item.sessionId || '',
+      messageId: item.messageId || '',
+      moduleKey: item.moduleKey || '',
       createdAt: item.createdAt || Date.now(),
     };
     cache[id] = saved;
@@ -535,7 +662,7 @@ async function loadFormulas() {
       // 保留本地有而服务端没有的（离线收藏兜底）
       const cache = getFormulaCache();
       for (const id in cache) if (!merged[id]) merged[id] = cache[id];
-      setFormulaCache(merged);
+      setFormulaCache(dedupeFormulaItems(merged));
     }
   } catch (err) {
     console.warn('Load formulas failed, use local cache:', err);
@@ -623,7 +750,7 @@ function renderFormulaList() {
     // 来源会话：存在则显示可点击定位（跳转到产生该公式的对话）
     const srcSession = it.sessionId && typeof window.getSessionById === 'function' ? window.getSessionById(it.sessionId) : null;
     const srcHtml = srcSession
-      ? `<div class="kp-formula-src" onclick="locateFormulaSession('${it.sessionId}')" title="点击跳转到来源会话">📌 ${escapeHtml(srcSession.title || '来源会话')}</div>`
+      ? `<div class="kp-formula-src" onclick="locateFormulaNode('${it.id}')" title="点击跳转到对应节点">📌 ${escapeHtml(srcSession.title || '来源会话')}</div>`
       : '';
     html += `
       <div class="kp-formula-card">
@@ -635,13 +762,80 @@ function renderFormulaList() {
           ${meaningHtml ? `<div class="kp-formula-meaning">${meaningHtml}</div>` : ''}
           ${relatedHtml ? `<div class="kp-card-tags">${relatedHtml}</div>` : ''}
         </div>
-        <button class="kp-action-btn kp-btn-danger" onclick="confirmDeleteFormula('${it.id}')">删除</button>
+        <div class="kp-formula-actions">
+          <button class="kp-action-btn kp-btn-primary" onclick="locateFormulaNode('${it.id}')">定位节点</button>
+          <button class="kp-action-btn kp-btn-danger" onclick="confirmDeleteFormula('${it.id}')">删除</button>
+        </div>
       </div>`;
   }
   listEl.innerHTML = html;
 }
 
-// 公式定位到来源会话：切换会话并关闭知识面板
+function _resolveFormulaAnchor(item, messages) {
+  let messageId = String(item.messageId || '');
+  let moduleKey = '';
+  let message = _messageByTimestamp(messages, messageId);
+
+  if (!messageId) {
+    const conceptKey = _normalizeKnowledgeKey(item.concept);
+    if (conceptKey) {
+      const knowledgeItem = Object.values(getKnowledgeItems()).find(k =>
+        k.sessionId === item.sessionId && _normalizeKnowledgeKey(k.title) === conceptKey
+      );
+      if (knowledgeItem && knowledgeItem.messageId) {
+        messageId = String(knowledgeItem.messageId);
+        message = _messageByTimestamp(messages, messageId);
+      }
+    }
+  }
+
+  if (!messageId || !message) {
+    for (const m of [...(messages || [])].reverse()) {
+      if (m.role === 'assistant' && _contentContainsFormula(m.content, item.latex)) {
+        message = m;
+        messageId = String(m.timestamp);
+        break;
+      }
+    }
+  }
+
+  if (!messageId) return null;
+  if (!moduleKey && message) moduleKey = _moduleKeyForFormulaInMessage(message, item.latex);
+  if (!moduleKey && item.moduleKey && item.moduleKey !== 'answer') moduleKey = item.moduleKey;
+  if (!moduleKey) {
+    const tags = item.related || [];
+    if (tags.includes('数学')) moduleKey = 'math';
+    else if (tags.includes('物理')) moduleKey = 'physics';
+  }
+  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '' };
+}
+
+async function locateFormulaNode(formulaId) {
+  const item = getFormulaCache()[formulaId];
+  if (!item) return;
+  const session = typeof window.getSessionById === 'function' ? window.getSessionById(item.sessionId) : null;
+  if (!session) {
+    alert('来源会话已删除，无法定位');
+    return;
+  }
+  closeKnowledgePanel();
+  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
+  if (item.sessionId !== currentId && typeof window.switchToSession === 'function') {
+    await window.switchToSession(item.sessionId);
+  }
+  await _ensureSessionMessages(item.sessionId);
+  const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+  const anchor = _resolveFormulaAnchor(item, messages);
+  if (!anchor) {
+    alert('找不到公式对应的节点');
+    return;
+  }
+  if (typeof window.focusGraphNode !== 'function') return;
+  const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
+  if (!ok) alert('对应节点不存在，无法定位');
+}
+
+// 旧接口兼容：只切换会话并关闭知识面板
 function locateFormulaSession(sessionId) {
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
   if (!session) {

@@ -21,7 +21,7 @@
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css?v=16">
-  <link rel="stylesheet" href="/css/graph-override.css?v=50">
+  <link rel="stylesheet" href="/css/graph-override.css?v=56">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -69,6 +69,9 @@
         <div class="brand-subtitle">物理绘万象之形，数学穷天地之理</div>
       </div>
       <div class="header-actions">
+        <button class="header-btn run-gen-btn" id="runAllBtn" title="全部开始" onclick="runAllWorkflowNodes()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
         <button class="header-btn stop-gen-btn" id="stopBtn" title="停止生成" disabled onclick="stopGeneration()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
         </button>
@@ -166,10 +169,10 @@
   <div class="model-toast" id="modelToast"></div>
 
   <script src="/js/config.js?v=5"></script>
-  <script src="/js/session.js?v=13"></script>
+  <script src="/js/session.js?v=14"></script>
   <script src="/js/render.js?v=8"></script>
-  <script src="/js/chat.js?v=13"></script>
-  <script src="/js/graph.js?v=56"></script>
+  <script src="/js/chat.js?v=14"></script>
+  <script src="/js/graph.js?v=69"></script>
   <script src="/js/knowledge.js?v=4"></script>
   <script src="/js/models.js?v=6"></script>
   <script src="/js/ui.js?v=8"></script>

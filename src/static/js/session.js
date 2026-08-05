@@ -107,7 +107,9 @@
           // 服务端返回 id->item 映射（后端已归一化）；防御性兜底：非对象时视为空
           const serverMap = (kItems && typeof kItems === 'object' && !Array.isArray(kItems)) ? kItems : {};
           // 并集合并：服务端优先、本地独有不丢（避免"取更多一方"覆盖本地独有数据）
-          const merged = { ...(localKnow || {}), ...serverMap };
+          const merged = (typeof dedupeKnowledgeItems === 'function')
+            ? dedupeKnowledgeItems({ ...(localKnow || {}), ...serverMap })
+            : { ...(localKnow || {}), ...serverMap };
           const serverCount = Object.keys(serverMap).length;
           const localCount = Object.keys(localKnow || {}).length;
           if (serverCount > 0) {
@@ -305,6 +307,7 @@
             connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
             removedEdges: parsed.removedEdges || [],
             portCounts: parsed.portCounts || {},
+            inputPortCounts: parsed.inputPortCounts || {},
             groups: Array.isArray(parsed.groups) ? parsed.groups : [],
             customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
             updatedAt: parsed.updatedAt || 0,
@@ -325,6 +328,7 @@
         connections: null,
         removedEdges: [],
         portCounts: {},
+        inputPortCounts: {},
         groups: [],
         customNodes: [],
         updatedAt: 0,
@@ -783,6 +787,19 @@
     // 暴露给知识面板（公式定位会话）：切换会话 + 查询会话信息
     window.switchToSession = switchToSession;
     window.getSessionById = (id) => sessions[id] || null;
+    window.getSessionIdVariants = (sessionId) => {
+      const ids = new Set([sessionId]);
+      for (const [localId, item] of Object.entries(sessions)) {
+        if (!item) continue;
+        if (localId === sessionId || item.sessionId === sessionId) {
+          ids.add(localId);
+          if (item.sessionId) ids.add(item.sessionId);
+        }
+      }
+      const direct = sessions[sessionId];
+      if (direct && direct.sessionId) ids.add(direct.sessionId);
+      return Array.from(ids);
+    };
 
     async function initSessionState() {
       const savedCurrent = getCurrentSessionId();

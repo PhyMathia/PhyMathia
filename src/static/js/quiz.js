@@ -79,7 +79,7 @@ let quizState = null;
 let quizDataCache = null;
 let quizAiRequestId = 0;
 let quizAiController = null;
-const QUIZ_AI_TIMEOUT_MS = 8000;
+const QUIZ_AI_TIMEOUT_MS = 20000;
 
 function _quizEscape(text) {
   const div = document.createElement('div');
@@ -187,6 +187,19 @@ function _quizCurrentSessionIds() {
     : (typeof currentSessionId !== 'undefined' ? currentSessionId : '');
   if (localId) ids.add(localId);
   if (typeof SESSION_ID !== 'undefined' && SESSION_ID) ids.add(SESSION_ID);
+  return ids;
+}
+
+function _quizSessionIdVariants(sessionId) {
+  const ids = new Set([sessionId]);
+  if (typeof window.getSessionIdVariants === 'function') {
+    for (const id of (window.getSessionIdVariants(sessionId) || [])) ids.add(id);
+    return ids;
+  }
+  if (typeof getSessionById === 'function') {
+    const session = getSessionById(sessionId);
+    if (session && session.sessionId) ids.add(session.sessionId);
+  }
   return ids;
 }
 
@@ -772,7 +785,7 @@ async function _aiVerifyQuizQuestions(pool, questions) {
 async function _generateQuestions(pool) {
   const requestId = ++quizAiRequestId;
   if (quizAiController) quizAiController.abort();
-  const ai = await _aiGenerateQuizQuestions(pool, requestId, false) || [];
+  const ai = await _aiGenerateQuizQuestions(pool, requestId) || [];
   return _mergeQuizQuestions(ai, _generateQuizQuestions(pool));
 }
 
@@ -780,15 +793,26 @@ function _startQuizGeneration(pool) {
   const requestId = ++quizAiRequestId;
   if (quizAiController) quizAiController.abort();
   const local = _generateQuizQuestions(pool);
-  _aiGenerateQuizQuestions(pool, requestId).then(ai => {
-    if (requestId !== quizAiRequestId || !quizState || quizState.phase !== 'intro') return;
+  const promise = _aiGenerateQuizQuestions(pool, requestId).then(ai => {
+    if (requestId !== quizAiRequestId || !quizState) return null;
     const merged = _mergeQuizQuestions(ai || [], local);
     if (merged.length >= 2) {
       quizState.questions = merged;
+    }
+    quizState.aiPending = false;
+    if (quizState.phase === 'intro') {
       renderQuiz();
     }
-  }).catch(() => {});
-  return local;
+    return merged;
+  }).catch(() => {
+    if (quizState) quizState.aiPending = false;
+    return null;
+  });
+  if (quizState) {
+    quizState.aiPromise = promise;
+    quizState.aiPending = true;
+  }
+  return { local, promise };
 }
 
 function _readQuizStats() {
@@ -971,11 +995,13 @@ async function openQuiz() {
     quizDataCache = pool;
     quizState = { phase: 'loading', pool };
     renderQuiz();
-    const questions = _startQuizGeneration(pool);
+    const generation = _startQuizGeneration(pool);
     quizState = {
       phase: 'intro',
       pool,
-      questions,
+      questions: generation.local,
+      aiPromise: generation.promise,
+      aiPending: true,
       openQuestions: _generateOpenQuestions(pool),
       wrongList: _readWrongQuestions(),
       explaining: false,
@@ -1007,8 +1033,15 @@ function closeQuiz() {
   document.body.style.overflow = '';
 }
 
-function startQuiz() {
-  if (!quizState || !quizState.questions || quizState.questions.length === 0) {
+async function startQuiz() {
+  if (!quizState) return;
+  if (quizState.aiPending && quizState.aiPromise) {
+    quizState.phase = 'loading';
+    renderQuiz();
+    await quizState.aiPromise;
+  }
+  if (!quizState.questions || quizState.questions.length === 0) {
+    quizState.phase = 'intro';
     renderQuiz();
     return;
   }
@@ -1124,7 +1157,9 @@ function nextOpenQuestion() {
 }
 
 async function _scoreOpenAnswer(question, answer) {
-  const model = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+  const model = typeof getActiveModelForRole === 'function'
+    ? (getActiveModelForRole('agent') || getActiveModelForRole('quiz'))
+    : null;
   if (!model) return { error: '未配置模型，无法评分' };
   const context = question.context || {};
   const formulas = Array.isArray(context.formulas) ? context.formulas.join('\n') : '';
@@ -1285,7 +1320,9 @@ async function askQuizExplain() {
   quizState.explainError = '';
   renderQuiz();
 
-  const model = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+  const model = typeof getActiveModelForRole === 'function'
+    ? (getActiveModelForRole('agent') || getActiveModelForRole('quiz'))
+    : null;
   if (!model) {
     quizState.explaining = false;
     quizState.explainText = _localQuizExplain(question);
@@ -1600,18 +1637,19 @@ function clearAllQuizStats() {
 
 function deleteQuizStatsBySession(sessionId) {
   if (!sessionId) return;
+  const sessionIds = _quizSessionIdVariants(sessionId);
   const stats = _readQuizStats();
   let changed = false;
   for (const key of Object.keys(stats)) {
     if (key === '_meta') continue;
-    if (stats[key] && stats[key].sessionId === sessionId) {
+    if (stats[key] && sessionIds.has(stats[key].sessionId)) {
       delete stats[key];
       changed = true;
     }
   }
   if (stats._meta && Array.isArray(stats._meta.wrongQuestions)) {
     const before = stats._meta.wrongQuestions.length;
-    stats._meta.wrongQuestions = stats._meta.wrongQuestions.filter(item => item.sessionId !== sessionId);
+    stats._meta.wrongQuestions = stats._meta.wrongQuestions.filter(item => !sessionIds.has(item.sessionId));
     if (stats._meta.wrongQuestions.length !== before) changed = true;
   }
   if (changed) _saveQuizStats(stats);
