@@ -144,6 +144,8 @@
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.38) !important;
   cursor: grab !important;
   user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
   overflow: visible !important;
   transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
   z-index: 2 !important;
@@ -523,6 +525,7 @@
   background: rgba(16, 24, 46, 0.92) !important;
   color: var(--text-primary) !important;
   font-size: 18px !important;
+  font-weight: 400 !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -1362,4 +1365,338 @@
 
 .graph-node.dragging {
   z-index: 40 !important;
+}
+
+/* ---------- 15. ComfyUI 风格分组 ---------- */
+.graph-node {
+  z-index: 1;
+}
+
+.graph-group {
+  position: absolute;
+  z-index: 0;
+  min-width: 220px;
+  min-height: 140px;
+  border: 2px solid var(--group-color, #38bdf8);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--group-color, #38bdf8) 16%, transparent);
+  box-shadow:
+    inset 0 0 34px color-mix(in srgb, var(--group-color, #38bdf8) 8%, transparent),
+    0 8px 30px rgba(0, 0, 0, 0.18);
+  cursor: move;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.graph-group.dragging {
+  opacity: 0.92;
+  box-shadow:
+    inset 0 0 44px color-mix(in srgb, var(--group-color, #38bdf8) 10%, transparent),
+    0 18px 46px rgba(0, 0, 0, 0.3);
+}
+
+.graph-group-header {
+  position: absolute;
+  top: -21px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  max-width: calc(100% - 36px);
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--group-color, #38bdf8);
+  color: #fff;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--group-color, #38bdf8) 36%, transparent);
+  pointer-events: auto;
+  cursor: default;
+}
+
+.graph-group-name-input {
+  width: 192px;
+  min-width: 105px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 0;
+}
+
+.graph-group-color-input {
+  width: 33px;
+  height: 33px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.graph-group-add-btn,
+.graph-group-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 33px;
+  height: 33px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.graph-group-add-btn:hover,
+.graph-group-delete-btn:hover {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.graph-group-resize-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 50%;
+  background: var(--group-color, #38bdf8);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  cursor: nwse-resize;
+  pointer-events: auto;
+}
+
+.graph-canvas,
+.graph-canvas *,
+.graph-node-main,
+.graph-node-label,
+.graph-node-sub,
+.graph-node-full-content,
+.graph-blank-content,
+.graph-draft-body,
+.graph-regenerate-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.graph-canvas input,
+.graph-canvas textarea,
+.graph-node-main input,
+.graph-node-main textarea,
+.graph-node-full-content input,
+.graph-node-full-content textarea,
+.graph-blank-content input,
+.graph-blank-content textarea,
+.graph-draft-body input,
+.graph-draft-body textarea,
+.graph-regenerate-panel input,
+.graph-regenerate-panel textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.graph-canvas.graph-select-mode {
+  cursor: default;
+}
+
+.graph-canvas.graph-select-mode .graph-node,
+.graph-canvas.graph-select-mode .graph-node * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}
+
+.graph-canvas.graph-select-mode .graph-node {
+  cursor: text;
+}
+
+.graph-canvas.graph-select-mode .graph-node-full-content,
+.graph-canvas.graph-select-mode .graph-blank-content {
+  touch-action: pan-y;
+}
+
+.graph-tool-btn.graph-select-btn {
+  width: 38px !important;
+  min-width: 38px !important;
+  padding: 0 !important;
+  font-family: inherit !important;
+  font-size: 18px !important;
+  font-weight: 400 !important;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s !important;
+}
+
+.graph-tool-btn.graph-select-btn.active {
+  color: #fff !important;
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 0 22px color-mix(in srgb, var(--accent) 72%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24) !important;
+}
+
+[data-theme="light"] .graph-tool-btn.graph-select-btn.active {
+  color: #fff !important;
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  box-shadow:
+    0 0 0 4px rgba(0, 0, 0, 0.1),
+    0 0 26px color-mix(in srgb, var(--accent) 82%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28) !important;
+}
+
+.graph-node-blank {
+  min-width: 360px !important;
+  background: var(--assistant-msg) !important;
+}
+
+.graph-blank-content {
+  width: 100%;
+  margin-top: 10px;
+  max-height: 520px;
+  overflow-y: auto;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.graph-blank-requirement {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.graph-blank-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.graph-blank-input:focus {
+  border-color: var(--accent);
+}
+
+.graph-blank-generate-btn {
+  flex: 0 0 auto;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.graph-blank-generate-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.graph-add-node-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(7px);
+}
+
+.graph-add-node-dialog {
+  width: min(560px, 94vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: var(--modal-shadow, 0 24px 80px rgba(0, 0, 0, 0.42));
+}
+
+.graph-add-node-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.graph-add-node-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.graph-add-node-close {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.graph-add-node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.graph-add-node-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.graph-add-node-item:hover {
+  background: var(--hover-bg);
+  border-color: var(--node-color, var(--accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color, var(--accent)) 20%, transparent);
+}
+
+.graph-add-node-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--node-color, var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--node-color, var(--accent)) 55%, transparent);
 }

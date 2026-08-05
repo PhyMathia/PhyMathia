@@ -503,11 +503,12 @@ function renderModuleSections(container, sections, rawContent) {
   const hiddenMap = graphState.hidden || {};
   const summary = _extractSummaryFromContent(rawContent || '');
   const splitGraph = _splitVizFromGraph(sections.graph || '');
+  const vizRaw = sections.viz || splitGraph.vizContent || '';
   const configs = [
     { key: 'physics', content: _cleanModuleContent(sections.physics || '', 'physics') },
     { key: 'math', content: _cleanModuleContent(sections.math || '', 'math') },
     { key: 'graph', content: _cleanModuleContent(splitGraph.graphContent || '', 'graph') },
-    { key: 'viz', content: _cleanModuleContent(splitGraph.vizContent || '', 'viz') },
+    { key: 'viz', content: _cleanModuleContent(vizRaw, 'viz') },
     { key: 'extend', content: _cleanModuleContent(sections.extend || '', 'extend') },
   ].filter(cfg => cfg.content && cfg.content.trim());
 

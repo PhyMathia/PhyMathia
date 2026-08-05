@@ -7,7 +7,7 @@ const MODEL_PRESETS = {
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
 
 let userModelConfigs = [];
-let activeModels = { agent_model: '', html_model: '', descriptor_model: '' };
+let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '' };
 
 function loadUserModels() {
   try {
@@ -41,6 +41,7 @@ function deleteUserModel(id) {
   if (activeModels.agent_model === id) activeModels.agent_model = '';
   if (activeModels.html_model === id) activeModels.html_model = '';
   if (activeModels.descriptor_model === id) activeModels.descriptor_model = '';
+  if (activeModels.quiz_model === id) activeModels.quiz_model = '';
   saveUserModels();
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
@@ -59,7 +60,7 @@ function getModelById(id) {
 }
 
 function getActiveModelForRole(role) {
-  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : 'descriptor_model';
+  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : role === 'quiz' ? 'quiz_model' : 'descriptor_model';
   const id = activeModels[key];
   if (!id) return null;
   return getModelById(id);
@@ -76,10 +77,12 @@ function renderModelSelects() {
   const agentSelect = document.getElementById('agentModelSelect');
   const htmlSelect = document.getElementById('htmlModelSelect');
   const descriptorSelect = document.getElementById('descriptorModelSelect');
-  if (!agentSelect || !htmlSelect) return;
+  const quizSelect = document.getElementById('quizModelSelect');
+  if (!agentSelect || !htmlSelect || !quizSelect) return;
 
   const emptyOpt = '<option value="">— 使用本地 Mock —</option>';
   const descriptorEmptyOpt = '<option value="">— 不启用（回退默认摘要）—</option>';
+  const quizEmptyOpt = '<option value="">— 不启用（默认用主模型）—</option>';
   const opts = allModels.map(m =>
     `<option value="${m.id}">${m.name}</option>`
   ).join('');
@@ -87,18 +90,21 @@ function renderModelSelects() {
   agentSelect.innerHTML = emptyOpt + opts;
   htmlSelect.innerHTML = emptyOpt + opts;
   if (descriptorSelect) descriptorSelect.innerHTML = descriptorEmptyOpt + opts;
+  quizSelect.innerHTML = quizEmptyOpt + opts;
   agentSelect.value = activeModels.agent_model || '';
   htmlSelect.value = activeModels.html_model || '';
   if (descriptorSelect) descriptorSelect.value = activeModels.descriptor_model || '';
+  quizSelect.value = activeModels.quiz_model || '';
   updateModelMeta('agent');
   updateModelMeta('html');
   updateModelMeta('descriptor');
+  updateModelMeta('quiz');
 }
 
 function updateModelMeta(type) {
-  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect' };
-  const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc' };
-  const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags' };
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect' };
+  const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc', quiz: 'quizModelDesc' };
+  const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags', quiz: 'quizModelTags' };
   const select = document.getElementById(selectMap[type]);
   const descEl = document.getElementById(descMap[type]);
   const tagsEl = document.getElementById(tagsMap[type]);
@@ -109,17 +115,23 @@ function updateModelMeta(type) {
     descEl.textContent = (preset?.name || model.provider) + ' · ' + model.model;
       tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else {
-    descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
-    tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">🔄 Mock</span>';
+    if (type === 'quiz') {
+      descEl.textContent = select.value ? '' : '未配置时默认使用主模型生成检测题';
+      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
+    } else {
+      descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
+      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">🔄 Mock</span>';
+    }
   }
 }
 
 async function onModelChange(type) {
-  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect' };
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect' };
   const select = document.getElementById(selectMap[type]);
   updateModelMeta(type);
   if (type === 'agent') activeModels.agent_model = select.value;
   else if (type === 'html') activeModels.html_model = select.value;
+  else if (type === 'quiz') activeModels.quiz_model = select.value;
   else activeModels.descriptor_model = select.value;
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }

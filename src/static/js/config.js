@@ -14,6 +14,20 @@ const LEVEL_PROMPTS = {
   'research': '（用户是科研人员，请用学术深度讲解，可以使用高级数学工具和前沿研究视角，推导可以简略关键步骤，关注物理本质和数学结构的深层联系）'
 };
 
+function getCurrentLevelValue() {
+  if (typeof currentLevel !== 'undefined' && currentLevel) return currentLevel;
+  try {
+    return localStorage.getItem(STORAGE_KEY_LEVEL) || 'university';
+  } catch (e) {
+    return 'university';
+  }
+}
+
+function getLevelPrompt(level) {
+  const resolved = level || getCurrentLevelValue();
+  return '难度要求：' + (LEVEL_PROMPTS[resolved] || LEVEL_PROMPTS.university);
+}
+
 // ====== 通用线条图标 ======
 const makeLineIcon = (body) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
 const UI_ICON_SVG = {

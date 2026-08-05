@@ -389,7 +389,7 @@
         extractingEl?.classList.add('active');
         const agentModel = getActiveModelForRole('agent');
         const descriptorModel = getActiveModelForRole('descriptor');
-        const basePayload = { messages: extractionMessages, sessionId: sessionId };
+        const basePayload = { messages: extractionMessages, sessionId: sessionId, level: getCurrentLevelValue() };
 
         // 浏览器本地先提取，不等待消息保存或任何模型响应。
         const localItems = extractLocalKnowledge(extractionMessages);
@@ -505,7 +505,8 @@
 
       showProgress('tool');
       const prompt = '请根据下面的物理数学学习内容，生成一个完整、独立、可交互的 HTML 可视化页面。'
-        + '只输出完整 HTML，不要解释；必须包含滑块或按钮等交互控件，并适配深色/浅色主题。';
+        + '只输出完整 HTML，不要解释；必须包含滑块或按钮等交互控件，并适配深色/浅色主题。\n\n'
+        + getLevelPrompt();
       try {
         const resp = await proxyChatWithModel(htmlModel, {
           messages: [{ role: 'user', content: prompt + '\n\n' + content.slice(0, 12000) }],
@@ -870,6 +871,12 @@
     window.deleteGraphMessageByTimestamp = deleteGraphMessageByTimestamp;
     window.deleteGraphMessagesByTimestamps = deleteGraphMessagesByTimestamps;
     window.getChatHistory = () => chatHistory.slice();
+    window.replaceChatHistory = async (messages) => {
+      chatHistory = Array.isArray(messages) ? JSON.parse(JSON.stringify(messages)) : [];
+      await saveCurrentSession();
+      renderSessionList();
+      await renderCurrentChat();
+    };
     window.getStreamingAssistant = () => streamingAssistant;
     function stopGeneration() {
       if (abortController) abortController.abort();

@@ -72,7 +72,7 @@ app.add_middleware(
 # ====== 静态文件配置 ======
 STATIC_DIR = BASE_DIR / "static"
 STATIC_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".html",
+    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".html", ".md",
     ".webp", ".css", ".js", ".woff", ".woff2", ".ttf",
 }
 
@@ -315,6 +315,7 @@ def _branch_context_instruction(
         "socratic": "苏格拉底追问",
         "learn": "进阶学习",
         "continue": "自由续问",
+        "blank": "空白节点",
     }
     module_labels = {
         "physics": "物理视角",
@@ -322,6 +323,8 @@ def _branch_context_instruction(
         "graph": "知识图谱",
         "viz": "交互可视化",
         "extend": "延伸思考",
+        "socratic": "苏格拉底追问",
+        "learn": "进阶学习",
     }
     lines = ["\n\n# 探索网分支上下文"]
     lines.append(f"- 当前分支类型：{labels.get(branch_type, branch_type or '主线')}")
@@ -341,6 +344,8 @@ def _branch_context_instruction(
         lines.append("- 用户选择了进阶学习方向，请以该方向为目标，基于父回答生成新的完整探索回答簇。")
     elif branch_type == "continue":
         lines.append("- 用户在当前节点自由续问；若问题与当前气泡无关，可以作为新主线回答。")
+    elif branch_type == "blank":
+        lines.append("- 用户通过空白画布节点要求生成该模块的完整正文；只输出该模块内容，不要输出完整学习卡片的 XML 标签。")
     return "\n".join(lines)
 
 
@@ -419,8 +424,10 @@ def _load_session_context_from_path(
         module_key = item.get("module") or item.get("moduleKey") or ""
         if role == "user":
             content = str(msg.get("content") or "")
-        elif module_key and is_active:
-            content = _branch_source_content(msg.get("content") or "", module_key)
+        elif is_active:
+            content = str(msg.get("content") or "")
+            if module_key:
+                content = _branch_source_content(content, module_key)
         else:
             content = _graph_message_summary(msg, module_key if not is_active else "")
         if not content or content in seen:
@@ -1562,7 +1569,7 @@ def _local_extract_knowledge(messages: list) -> list:
     return []
 
 
-async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str) -> list:
+async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> list:
     """调用 AI 模型提取知识点（非流式）"""
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
@@ -1570,7 +1577,8 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         return []
 
     # 取最近一轮对话（最后一条 user 消息及之后）
-    msgs = [{"role": "system", "content": EXTRACT_PROMPT}]
+    level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
+    msgs = [{"role": "system", "content": EXTRACT_PROMPT + "\n\n难度要求：" + level_suffix}]
     last_user_idx = -1
     for i, m in enumerate(messages):
         if m.get("role") == "user":
@@ -1669,7 +1677,7 @@ DESCRIBE_PROMPT = """你是公式解说助手。针对下面的每个公式，�
 - 不要编造摘要中不存在的概念"""
 
 
-async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str) -> dict:
+async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
     """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
     if not formulas or not api_key or not model:
         return {}
@@ -1678,7 +1686,7 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
     if not base_url:
         return {}
     msgs = [
-        {"role": "system", "content": DESCRIBE_PROMPT},
+        {"role": "system", "content": DESCRIBE_PROMPT + "\n\n难度要求：" + LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])},
         {"role": "user", "content": f"对话摘要：{summary[:300]}\n公式列表：\n" + "\n".join(f"- {f}" for f in formulas)},
     ]
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -1719,6 +1727,7 @@ async def api_extract_knowledge(request: Request):
     api_key = payload.get("api_key", "")
     model = payload.get("model", "")
     base_url = payload.get("base_url", "")
+    level = payload.get("level", "university")
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     if latest_assistant and (
@@ -1735,7 +1744,7 @@ async def api_extract_knowledge(request: Request):
     items = []
     if api_key and model:
         try:
-            items = await _ai_extract_knowledge(messages, provider, api_key, model, base_url)
+            items = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
             if items:
                 logger.info(f"AI extract: {len(items)} items for session {session_id}")
         except Exception as e:
@@ -1760,7 +1769,7 @@ async def api_extract_knowledge(request: Request):
             if latex and _looks_like_formula(latex) and latex not in all_formulas:
                 all_formulas.append(latex)
     if all_formulas and desc_model and desc_api_key:
-        descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url)
+        descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url, level)
         if descriptions:
             logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
 

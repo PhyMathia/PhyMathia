@@ -305,6 +305,8 @@
             connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
             removedEdges: parsed.removedEdges || [],
             portCounts: parsed.portCounts || {},
+            groups: Array.isArray(parsed.groups) ? parsed.groups : [],
+            customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
             updatedAt: parsed.updatedAt || 0,
           };
         }
@@ -323,6 +325,8 @@
         connections: null,
         removedEdges: [],
         portCounts: {},
+        groups: [],
+        customNodes: [],
         updatedAt: 0,
       };
     }
@@ -488,6 +492,7 @@
       await _deleteGraphStateOnServer(id);
       await deleteKnowledgeBySession(id);
       await deleteFormulasBySession(id);
+      if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(id);
       delete sessions[id];
       saveSessions();
       await _deleteOnServer('/api/sessions/' + id);
@@ -922,6 +927,7 @@
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
       await deleteKnowledgeBySession(currentSessionId);
       await deleteFormulasBySession(currentSessionId);
+      if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(currentSessionId);
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
       if (typeof loadFormulas === 'function') loadFormulas();
@@ -953,11 +959,13 @@
         k === STORAGE_KEY_SESSIONS ||
         k === STORAGE_KEY_CURRENT ||
         k === STORAGE_KEY_KNOWLEDGE ||
-        k === 'phymathia_formulas'
+        k === 'phymathia_formulas' ||
+        k === 'phymathia_quiz_stats'
       );
       keys.forEach(k => localStorage.removeItem(k));
       if (typeof setFormulaCache === 'function') setFormulaCache({});
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+      if (typeof window.clearAllQuizStats === 'function') window.clearAllQuizStats();
 
       // 4. 创建新会话并刷新 UI
       createNewSession();
