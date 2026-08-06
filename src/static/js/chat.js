@@ -1,39 +1,114 @@
     // ====== 进度指示器 ======
     let progressTimer = null;
-    let waitingTipTimer = null;
     let progressStartTime = 0;
     let lastChunkTime = 0;
     let currentStage = '';
     let streamingAssistant = null;
+    let progressPercent = 0;
+    let progressLabel = '';
+    let progressFinalLabel = '';
+    let progressHidden = false;
+    let progressBarHideTimer = null;
+    let progressStatusHideTimer = null;
 
-    function showProgress(stage) {
+    const PROGRESS_PHASE = {
+      thinking: { percent: 8, label: '正在理解问题' },
+      tool: { percent: 32, label: '正在调用工具进行计算和可视化生成' },
+      generating: { percent: 46, label: '正在生成回答' },
+      waiting: { percent: null, label: '' },
+      rendering: { percent: 92, label: '正在整理回答' },
+      done: { percent: 100, label: '回复完成' }
+    };
+    const STREAM_SECTION_PROGRESS = [
+      { key: 'physics', weight: 12, label: '物理直觉', open: /<physics>/i, close: /<\/physics>/i },
+      { key: 'math', weight: 12, label: '数学本质', open: /<math>/i, close: /<\/math>/i },
+      { key: 'graph', weight: 8, label: '知识图谱', open: /<graph>/i, close: /<\/graph>/i },
+      { key: 'viz', weight: 8, label: '交互可视化', open: /<viz>/i, close: /<\/viz>/i },
+      { key: 'extend', weight: 7, label: '进阶学习', open: /<extend>/i, close: /<\/extend>/i },
+      { key: 'summary', weight: 3, label: '摘要', open: /<summary>/i, close: /<\/summary>/i }
+    ];
+
+    function _clampProgress(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return 0;
+      return Math.max(0, Math.min(100, Math.round(num)));
+    }
+
+    function _setProgress(percent, label) {
+      progressPercent = _clampProgress(percent);
+      if (label) progressLabel = label;
+      const bar = document.getElementById('progressBar');
+      const fill = bar ? bar.querySelector('.progress-fill') : null;
+      if (fill) {
+        fill.style.width = progressPercent + '%';
+        fill.style.animation = 'none';
+        fill.style.transform = 'none';
+      }
+      if (bar) bar.setAttribute('aria-valuenow', String(progressPercent));
+      const statusFill = document.getElementById('statusProgressFill');
+      if (statusFill) statusFill.style.width = progressPercent + '%';
+      const textEl = document.querySelector('#progressStatus .status-text');
+      if (textEl) {
+        const suffix = progressPercent < 100 ? ' · ' + progressPercent + '%' : '';
+        textEl.textContent = progressLabel + suffix;
+      }
+    }
+
+    function _streamProgressFromContent(content) {
+      let percent = PROGRESS_PHASE.generating.percent;
+      let label = PROGRESS_PHASE.generating.label;
+      let sawSection = false;
+      for (const cfg of STREAM_SECTION_PROGRESS) {
+        const opened = cfg.open.test(content);
+        const closed = cfg.close.test(content);
+        if (closed) {
+          percent += cfg.weight;
+          sawSection = true;
+        } else if (opened) {
+          percent += Math.round(cfg.weight * 0.35);
+          sawSection = true;
+        }
+      }
+      if (sawSection) {
+        for (const cfg of STREAM_SECTION_PROGRESS) {
+          if (cfg.open.test(content) && !cfg.close.test(content)) {
+            label = '正在生成' + cfg.label;
+            break;
+          }
+        }
+      }
+      return { percent: Math.min(90, percent), label };
+    }
+
+    function showProgress(stage, percent, label) {
       currentStage = stage;
+      progressHidden = false;
+      if (progressBarHideTimer) { clearTimeout(progressBarHideTimer); progressBarHideTimer = null; }
+      if (progressStatusHideTimer) { clearTimeout(progressStatusHideTimer); progressStatusHideTimer = null; }
       const bar = document.getElementById('progressBar');
       const statusEl = document.getElementById('progressStatus');
       if (bar) bar.classList.add('active');
-      if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage); }
+      if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage, percent, label); }
       if (!progressTimer) {
         progressStartTime = Date.now();
         lastChunkTime = Date.now();
         progressTimer = setInterval(() => {
           updateElapsedTime();
-          if (Date.now() - lastChunkTime > 5000 && currentStage !== 'waiting') {
-            updateProgressText('waiting');
-            currentStage = 'waiting';
-            waitingTipTimer = setInterval(() => updateProgressText('waiting'), 8000);
-          }
         }, 500);
       }
     }
-    function updateProgressText(stage) {
+    function updateProgressText(stage, percent, label) {
       const textEl = document.querySelector('#progressStatus .status-text');
       if (!textEl) return;
+      const base = PROGRESS_PHASE[stage] || {};
+      const pct = percent !== undefined && percent !== null
+        ? _clampProgress(percent)
+        : (base.percent !== undefined && base.percent !== null ? _clampProgress(base.percent) : progressPercent);
       const msgs = { 'thinking':'PhyMathia 正在深度思考，可能需要一点时间...', 'tool':'正在调用工具进行计算和可视化生成，请耐心等待...', 'generating':'正在精心组织回复...', 'waiting':'', 'done':'回复完成' };
       if (stage === 'waiting') {
-        waitingTipIndex = (waitingTipIndex + 1) % waitingTips.length;
-        textEl.textContent = waitingTips[waitingTipIndex];
+        _setProgress(pct, '正在继续生成...');
       } else {
-        textEl.textContent = msgs[stage] || msgs['thinking'];
+        _setProgress(pct, label || base.label || msgs[stage] || msgs['thinking']);
       }
     }
     var waitingTipIndex = -1;
@@ -45,17 +120,105 @@
       const sec = elapsed % 60;
       timeEl.textContent = min > 0 ? `${min}m${sec.toString().padStart(2,'0')}s` : `${sec}s`;
     }
-    function hideProgress() {
+    function hideProgress(finalLabel) {
+      if (progressHidden) return;
+      progressHidden = true;
+      const finalText = finalLabel || progressFinalLabel || '回复完成';
+      progressFinalLabel = '';
       const bar = document.getElementById('progressBar');
       const statusEl = document.getElementById('progressStatus');
-      if (bar) bar.classList.remove('active');
+      if (bar) {
+        _setProgress(100, finalText);
+        progressBarHideTimer = setTimeout(() => {
+          bar.classList.remove('active');
+          progressBarHideTimer = null;
+        }, 300);
+      }
       if (statusEl && statusEl.classList.contains('active')) {
-        updateProgressText('done');
-        setTimeout(() => { statusEl.classList.remove('active'); }, 1500);
+        progressStatusHideTimer = setTimeout(() => {
+          statusEl.classList.remove('active');
+          _setProgress(0, '生成进度');
+          const timeEl = document.querySelector('#progressStatus .elapsed-time');
+          if (timeEl) timeEl.textContent = '0s';
+          progressStatusHideTimer = null;
+        }, 1500);
       }
       if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-      if (waitingTipTimer) { clearInterval(waitingTipTimer); waitingTipTimer = null; }
     }
+
+    const PROGRESS_POS_KEY = 'phymathia_progress_pos';
+    function _applySavedProgressPosition() {
+      try {
+        const raw = localStorage.getItem(PROGRESS_POS_KEY);
+        const pos = raw ? JSON.parse(raw) : null;
+        if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+        const status = document.getElementById('progressStatus');
+        if (!status) return;
+        status.classList.add('dragged');
+        status.style.left = pos.x + 'px';
+        status.style.top = pos.y + 'px';
+        status.style.transform = 'none';
+      } catch (e) {}
+    }
+
+    function initProgressDragging() {
+      const status = document.getElementById('progressStatus');
+      if (!status) return;
+      _applySavedProgressPosition();
+      const handle = status.querySelector('.status-drag-handle');
+      if (!handle) return;
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let originX = 0;
+      let originY = 0;
+      const onDown = (e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = status.getBoundingClientRect();
+        originX = rect.left;
+        originY = rect.top;
+        status.classList.add('dragging');
+        status.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      };
+      const onMove = (e) => {
+        if (!dragging) return;
+        const nextX = Math.max(4, Math.min(window.innerWidth - status.offsetWidth - 4, originX + e.clientX - startX));
+        const nextY = Math.max(4, Math.min(window.innerHeight - status.offsetHeight - 4, originY + e.clientY - startY));
+        status.classList.add('dragged');
+        status.style.left = nextX + 'px';
+        status.style.top = nextY + 'px';
+        status.style.transform = 'none';
+      };
+      const onUp = () => {
+        if (!dragging) return;
+        dragging = false;
+        status.classList.remove('dragging');
+        try {
+          const rect = status.getBoundingClientRect();
+          localStorage.setItem(PROGRESS_POS_KEY, JSON.stringify({
+            x: Math.round(rect.left),
+            y: Math.round(rect.top)
+          }));
+        } catch (e) {}
+      };
+      handle.addEventListener('pointerdown', onDown);
+      status.addEventListener('pointermove', onMove);
+      status.addEventListener('pointerup', onUp);
+      status.addEventListener('pointercancel', onUp);
+    }
+    initProgressDragging();
+
+    function _syncProgressMiniButtons(running) {
+      const runBtn = document.getElementById('statusRunBtn');
+      const stopBtn = document.getElementById('statusStopBtn');
+      if (runBtn) runBtn.disabled = running;
+      if (stopBtn) stopBtn.disabled = !running;
+    }
+    window.getCurrentProgress = () => progressPercent;
 
     function handleKeydown(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -507,7 +670,7 @@
       return '';
     }
 
-    async function collectStreamText(resp) {
+    async function collectStreamText(resp, onProgress) {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -526,8 +689,14 @@
             try {
               const data = JSON.parse(dataStr);
               if (data.error) continue;
+              if (typeof onProgress === 'function' && typeof data.progress === 'number') {
+                onProgress(data.progress, content.length);
+              }
               const delta = data.choices?.[0]?.delta;
-              if (delta?.content) content += delta.content;
+              if (delta?.content) {
+                content += delta.content;
+                if (typeof onProgress === 'function') onProgress(null, content.length);
+              }
             } catch (e) {}
           }
         }
@@ -564,7 +733,7 @@
       if (Object.keys(sections).length === 0) return content;
       if (/```html[\s\S]*?(?:<\/html>|<\/body>)[\s\S]*?```/i.test(content)) return content;
 
-      showProgress('tool');
+      showProgress('tool', 88, '正在生成交互可视化');
       const prompt = '请根据下面的物理数学学习内容，生成一个完整、独立、可交互的 HTML 可视化页面。'
         + '只输出完整 HTML，不要解释；必须包含滑块或按钮等交互控件，并适配深色/浅色主题。\n\n'
         + getLevelPrompt();
@@ -573,7 +742,12 @@
           messages: [{ role: 'user', content: prompt + '\n\n' + content.slice(0, 12000) }],
           stream: true,
         }, signal);
-        const reply = await collectStreamText(resp);
+        const reply = await collectStreamText(resp, (progress, length) => {
+          const pct = progress !== null && progress !== undefined
+            ? Math.max(88, Math.min(93, progress))
+            : Math.min(93, 88 + Math.min(length / 20000, 1) * 5);
+          _setProgress(pct, '正在生成交互可视化');
+        });
         const html = extractHtmlFromModelReply(reply);
         if (!html) return content;
         return content + '\n\n```html\n' + html + '\n```\n';
@@ -1003,10 +1177,12 @@
       btn.disabled = false;
       btn.classList.add('stop-btn');
       if (stopBtn) stopBtn.disabled = false;
+      _syncProgressMiniButtons(true);
       btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
       btn.onclick = () => { if (abortController) abortController.abort(); };
 
       abortController = new AbortController();
+      progressFinalLabel = '';
       showProgress('thinking');
       let assistantContent = '';
       let assistantDiv = null;
@@ -1032,7 +1208,7 @@
         const agentModel = getActiveModelForRole('agent');
         let resp;
         if (agentModel) {
-          showProgress('tool');
+          showProgress('tool', 26, '正在连接 AI 服务');
           resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
@@ -1064,6 +1240,7 @@
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let streamChunkCount = 0;
 
         function scheduleStreamRender() {
           if (streamRenderPending) return;
@@ -1114,18 +1291,25 @@
                   scrollToBottom();
                   continue;
                 }
+                if (typeof data.progress === 'number') {
+                  const pct = Math.max(progressPercent, data.progress);
+                  const label = data.progress >= 30 || currentStage === 'waiting'
+                    ? '正在生成回答'
+                    : (progressLabel || '正在生成回答');
+                  _setProgress(pct, label);
+                }
                 const choice = data.choices?.[0];
                 const delta = choice?.delta;
                 if (!delta) continue;
 
                 if (delta.role === 'tool') {
                   lastChunkTime = Date.now();
-                  if (currentStage !== 'tool') showProgress('tool');
+                  if (currentStage !== 'tool') showProgress('tool', Math.max(progressPercent, PROGRESS_PHASE.tool.percent), '正在调用工具');
                   continue;
                 }
                 if (delta.tool_calls) {
                   lastChunkTime = Date.now();
-                  if (currentStage !== 'tool') showProgress('tool');
+                  if (currentStage !== 'tool') showProgress('tool', Math.max(progressPercent, PROGRESS_PHASE.tool.percent), '正在调用工具');
                   continue;
                 }
                 if (delta.role === 'tool_done') {
@@ -1152,10 +1336,16 @@
                 }
                 if (delta.content) {
                   lastChunkTime = Date.now();
-                  if (currentStage !== 'generating') showProgress('generating');
+                  if (currentStage !== 'generating') showProgress('generating', Math.max(progressPercent, PROGRESS_PHASE.generating.percent), '正在生成回答');
                   if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
                   assistantContent += delta.content;
                   streamingAssistant.content = assistantContent;
+                  const streamProgress = _streamProgressFromContent(assistantContent);
+                  if (streamProgress.percent > progressPercent) _setProgress(streamProgress.percent, streamProgress.label);
+                  streamChunkCount++;
+                  if (streamChunkCount % 4 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                  }
                   // 实时渲染 Markdown 和 LaTeX（节流）
                   scheduleStreamRender();
                   scheduleGraphStreamRender();
@@ -1166,20 +1356,25 @@
           }
         }
 
+        _setProgress(90, '正在整理回答');
+
         // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {
           cancelPendingStreamRender();
           streamingAssistant = null;
+          _setProgress(92, '正在整理回答');
           if (branchMeta.branchLabel) {
             assistantDiv.dataset.branchLabel = branchMeta.branchLabel;
             assistantDiv.dataset.branchType = branchMeta.branchType || 'branch';
           }
           await renderAssistantContent(assistantDiv, assistantContent);
+          _setProgress(94, '正在整理回答');
           const originalContent = assistantContent;
           assistantContent = await ensureVisualization(assistantContent, abortController.signal);
           if (assistantContent !== originalContent) {
             await renderAssistantContent(assistantDiv, assistantContent);
           }
+          _setProgress(97, '正在保存回答');
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
           const wasSocraticBranch = currentBranch === 'socratic';
@@ -1201,6 +1396,7 @@
           }
 
           // 先生成本地知识条目，消息上传继续在后台进行。
+          _setProgress(98, '正在提取知识');
           autoExtractKnowledge(currentSessionId, chatHistory);
 
           await saveCurrentSession();
@@ -1215,6 +1411,7 @@
         }
 
       } catch (err) {
+        progressFinalLabel = err.name === 'AbortError' ? '已停止' : '请求失败';
         hideProgress();
         if (err.name === 'AbortError') {
           const abortDuration = progressStartTime ? (Date.now() - progressStartTime) : null;
@@ -1272,6 +1469,7 @@
         btn.hidden = true;
         btn.disabled = false;
         if (stopBtn) stopBtn.disabled = true;
+        _syncProgressMiniButtons(false);
         btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
         btn.onclick = sendMessage;
         streamingAssistant = null;

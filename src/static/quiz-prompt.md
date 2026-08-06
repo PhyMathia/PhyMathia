@@ -14,12 +14,14 @@
 - 正确答案必须由素材中的概述、公式或分类直接推出；素材不足或答案不能唯一确定时，宁可不出这一题。
 - 解析必须解释为什么，并引用素材中的概述或公式，不能引入素材之外的新结论。
 - title 必须是素材中的知识点标题或公式概念，不能是“出题素材”“当前会话知识上下文”等占位名称。
-- 生成 5 道选择题，题型可包含：概述匹配、公式含义、公式归属、知识点涉及公式、学科分类。
+- 生成 {{QUESTION_COUNT}} 道选择题，题型可包含：概述匹配、公式含义、公式归属、知识点涉及公式、学科分类。
 - 每题必须有 4 个选项，且只有一个正确答案。
 - 干扰项必须明显错误或来自不同概念，不能出现多个选项都正确的情况。
+- title 必须是素材中的知识点标题或公式概念；sourceRef 必须填素材中给出的 id。
+- 每题标记 difficulty：easy/medium/hard；解释尽量引用素材原文。
 - 不要用“苏格拉底追问”“延伸思考”“知识图谱”等模块标题当知识点。
 - 输出严格 JSON，不要输出其他内容：
-{"questions":[{"type":"concept","title":"知识点标题","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}
+{"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}
 
 ## 审题
 
@@ -30,5 +32,6 @@
 - 如果题干、选项或正确索引有误，直接修正。
 - 如果某题无法由素材唯一确定答案，删除该题。
 - 题目数量可以减少，但不要新增素材之外的知识点。
+- 保留 sourceRef、difficulty；如果修正了题目，explanation 要同步修正。
 - 只输出严格 JSON，不要输出其他内容：
-{"questions":[{"type":"concept","title":"知识点标题","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}
+{"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}

@@ -1,9 +1,15 @@
 /* ====== 知识检测 ====== */
 const QUIZ_STATS_KEY = 'phymathia_quiz_stats';
 const QUIZ_QUESTION_COUNT = 5;
+const QUIZ_MAX_WRONG = 100;
+const QUIZ_MAX_OPEN_RESULTS = 20;
+const QUIZ_AI_VERIFY_ENABLED = true;
 const QUIZ_PROMPT_PATH = '/quiz-prompt.md';
 let quizPromptCache = null;
 let quizPromptCachePromise = null;
+let quizTargetCount = QUIZ_QUESTION_COUNT;
+let quizFilterTopic = 'all';
+let quizAiStatusText = '';
 
 const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用户消息中的“出题素材”是从当前会话提取的真实知识点与公式，请只基于其中的知识点标题、概述、公式和分类生成物理数学检测题。
 {{LEVEL_PROMPT}}
@@ -13,13 +19,14 @@ const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用�
 - 每道题的题干、公式或选项中必须体现素材里的具体知识点标题、概述、公式或概念。
 - 正确答案必须由素材中的概述、公式或分类直接推出；素材不足或答案不能唯一确定时，宁可不出这一题。
 - 解析必须解释为什么，并引用素材中的概述或公式，不能引入素材之外的新结论。
-- title 必须是素材中的知识点标题或公式概念，不能是“出题素材”“当前会话知识上下文”等占位名称。
-- 生成 5 道选择题，题型可包含：概述匹配、公式含义、公式归属、知识点涉及公式、学科分类。
+- title 必须是素材中的知识点标题或公式概念；sourceRef 必须填素材中给出的 id。
+- 生成 {{QUESTION_COUNT}} 道选择题，题型可包含：概述匹配、公式含义、公式归属、知识点涉及公式、学科分类。
 - 每题必须有 4 个选项，且只有一个正确答案。
 - 干扰项必须明显错误或来自不同概念，不能出现多个选项都正确的情况。
+- 每题标记 difficulty：easy/medium/hard；解释尽量引用素材原文。
 - 不要用“苏格拉底追问”“延伸思考”“知识图谱”等模块标题当知识点。
 - 输出严格 JSON，不要输出其他内容：
-{"questions":[{"type":"concept","title":"知识点标题","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
+{"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
 
 const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。请根据出题素材审核下面的检测题，只保留能由素材直接推出且没有物理或数学错误的题目。
 {{LEVEL_PROMPT}}
@@ -28,8 +35,9 @@ const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。请根据
 - 如果题干、选项或正确索引有误，直接修正。
 - 如果某题无法由素材唯一确定答案，删除该题。
 - 题目数量可以减少，但不要新增素材之外的知识点。
+- 保留 sourceRef、difficulty；如果修正了题目，explanation 要同步修正。
 - 只输出严格 JSON，不要输出其他内容：
-{"questions":[{"type":"concept","title":"知识点标题","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
+{"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
 
 function _parseQuizPromptFile(text) {
   const source = String(text || '');
@@ -87,12 +95,36 @@ function _quizEscape(text) {
   return div.innerHTML;
 }
 
+function _renderQuizRichText(text) {
+  if (typeof renderMarkdown === 'function') {
+    try { return renderMarkdown(String(text || '')); } catch (e) {}
+  }
+  return _quizEscape(text);
+}
+
 function _quizCleanText(text, max = 180) {
   const s = String(text || '')
     .replace(/<[^>]*>/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '')
+    .replace(/`/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
   return max > 0 && s.length > max ? s.slice(0, max).trim() + '…' : s;
+}
+
+function _quizCleanSummary(text, max = 180) {
+  const s = _quizCleanText(text, max > 0 ? max * 3 : 0);
+  if (!s || s === '无') return '';
+  const cardIdx = s.search(/PhyMathia\s*学习卡片/);
+  const summary = cardIdx >= 0 ? s.slice(cardIdx).replace(/PhyMathia\s*学习卡片\s*[:：]?\s*/g, '') : s;
+  const cleaned = summary
+    .replace(/^[🔬📐🧠💡🗺️\s]+/g, '')
+    .replace(/(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考)[：:]\s*/g, '')
+    .trim();
+  return max > 0 && cleaned.length > max ? cleaned.slice(0, max).trim() + '…' : cleaned;
 }
 
 function _quizFormulaText(latex) {
@@ -122,6 +154,25 @@ function _quizLooksLikeFormula(text) {
   if (/^[A-Za-z]{1,3}$/.test(s)) return false;
   if (/^\\[A-Za-z]+$/.test(s)) return false;
   return true;
+}
+
+function _quizUsableFormula(latex) {
+  const s = _quizFormulaText(latex);
+  if (!s) return '';
+  if (typeof _looksLikeFormula === 'function' && !_looksLikeFormula(s)) return '';
+  if (/\\dots|\\cdots|\\langle|\\rangle/.test(s) && !/[=<>]/.test(s)) return '';
+  if (/^[A-Za-z0-9_(){}.\s]+$/.test(s) && !/[=+\-*/^]/.test(s) && s.length < 6) return '';
+  return s;
+}
+
+function _quizTopicKey(item) {
+  const title = String(item && (item.title || item.concept || item.latex) || '').trim();
+  return _quizOptionKey((item && item.sessionId || '') + '|' + title.replace(/[^\w\u4e00-\u9fff]+/g, ''));
+}
+
+function _quizDifficultyKey(value) {
+  const v = String(value || '').toLowerCase();
+  return ['easy', 'medium', 'hard'].includes(v) ? v : 'medium';
 }
 
 const QUIZ_MODULE_TITLE_KEYWORDS = [
@@ -272,33 +323,35 @@ function _buildQuizPool(data) {
     const rawFormulas = Array.isArray(item.formulas) ? item.formulas : [];
     const formulaSet = new Set();
     for (const raw of rawFormulas) {
-      const latex = _quizFormulaText(raw);
+      const latex = _quizUsableFormula(raw);
       if (!latex) continue;
-      if (typeof _looksLikeFormula === 'function' && !_looksLikeFormula(latex)) continue;
       formulaSet.add(latex);
     }
-    knowledge.push({
+    const knowledgeItem = {
       id: id || 'k_' + knowledge.length,
       title: _quizCleanTitle(item.title) || '未命名知识点',
-      summary: _quizCleanText(item.summary, 170),
+      summary: _quizCleanSummary(item.summary, 170),
       formulas: Array.from(formulaSet),
       category: item.category || 'other',
       sessionId: item.sessionId || ''
-    });
+    };
+    knowledgeItem.topicKey = _quizTopicKey(knowledgeItem);
+    knowledge.push(knowledgeItem);
   }
 
   for (const [id, item] of Object.entries(data.formulas || {})) {
     if (!item || typeof item !== 'object') continue;
-    const latex = _quizFormulaText(item.latex);
+    const latex = _quizUsableFormula(item.latex);
     if (!latex) continue;
-    if (typeof _looksLikeFormula === 'function' && !_looksLikeFormula(latex)) continue;
-    formulas.push({
+    const formulaItem = {
       id: id || 'f_' + formulas.length,
       latex,
       concept: _quizCleanText(item.concept, 80),
-      meaning: _quizCleanText(item.meaning, 170),
+      meaning: _quizCleanSummary(item.meaning, 170),
       sessionId: item.sessionId || ''
-    });
+    };
+    formulaItem.topicKey = _quizTopicKey(formulaItem);
+    formulas.push(formulaItem);
   }
 
   const seenFormulas = new Set();
@@ -364,6 +417,14 @@ function _quizSignature(q) {
   return q.type + '|' + q.prompt + '|' + (q.promptHtml || '') + '|' + _quizOptionKey(correct);
 }
 
+function _decorateQuizQuestion(q, item) {
+  q.topicKey = item.topicKey || _quizTopicKey(item);
+  q.sourceRef = item.id || '';
+  q.sourceType = item.latex ? 'formula' : 'knowledge';
+  q.difficulty = q.difficulty || 'medium';
+  return q;
+}
+
 function _buildConceptQuestions(pool) {
   const items = pool.knowledge.filter(k => k.title && k.summary);
   const result = [];
@@ -387,6 +448,40 @@ function _buildConceptQuestions(pool) {
       sessionId: item.sessionId,
       explanation: '正确答案：' + item.summary
     };
+    _decorateQuizQuestion(q, item);
+    const sig = _quizSignature(q);
+    if (!seen.has(sig)) {
+      seen.add(sig);
+      result.push(q);
+    }
+  }
+  return result;
+}
+
+function _buildReverseConceptQuestions(pool) {
+  const items = pool.knowledge.filter(k => k.title && k.summary);
+  const result = [];
+  const seen = new Set();
+  for (const item of _quizShuffle(items)) {
+    const distractors = items
+      .filter(o => o.id !== item.id && o.title)
+      .map(o => o.title)
+      .filter(s => _quizOptionKey(s) !== _quizOptionKey(item.title));
+    if (distractors.length < 1) continue;
+    const made = _makeQuizOptions(item.title, distractors, Math.min(4, distractors.length + 1));
+    const q = {
+      id: 'reverse_concept_' + result.length,
+      type: 'reverse_concept',
+      title: item.title,
+      prompt: '“' + _quizCleanSummary(item.summary, 90) + '”最可能指哪个知识点？',
+      promptHtml: '',
+      options: made.options,
+      correctIndex: made.correctIndex,
+      refId: item.id,
+      sessionId: item.sessionId,
+      explanation: item.summary
+    };
+    _decorateQuizQuestion(q, item);
     const sig = _quizSignature(q);
     if (!seen.has(sig)) {
       seen.add(sig);
@@ -420,6 +515,7 @@ function _buildFormulaMeaningQuestions(pool) {
       sessionId: item.sessionId,
       explanation: item.meaning
     };
+    _decorateQuizQuestion(q, item);
     const sig = _quizSignature(q);
     if (!seen.has(sig)) {
       seen.add(sig);
@@ -465,6 +561,7 @@ function _buildFormulaConceptQuestions(pool) {
       sessionId: item.sessionId,
       explanation: item.concept + ' 相关公式示例：' + item.latex
     };
+    _decorateQuizQuestion(q, item);
     const sig = _quizSignature(q);
     if (!seen.has(sig)) {
       seen.add(sig);
@@ -515,6 +612,7 @@ function _buildKnowledgeFormulaQuestions(pool) {
       sessionId: item.sessionId,
       explanation: item.title + '：' + correct
     };
+    _decorateQuizQuestion(q, item);
     const sig = _quizSignature(q);
     if (!seen.has(sig)) {
       seen.add(sig);
@@ -547,6 +645,7 @@ function _buildCategoryQuestions(pool) {
       sessionId: item.sessionId,
       explanation: labels[item.category] || item.category
     };
+    _decorateQuizQuestion(q, item);
     const sig = _quizSignature(q);
     if (!seen.has(sig)) {
       seen.add(sig);
@@ -559,6 +658,7 @@ function _buildCategoryQuestions(pool) {
 function _generateQuizQuestions(pool) {
   const builders = [
     _buildConceptQuestions,
+    _buildReverseConceptQuestions,
     _buildFormulaMeaningQuestions,
     _buildFormulaConceptQuestions,
     _buildKnowledgeFormulaQuestions,
@@ -578,14 +678,14 @@ function _generateQuizQuestions(pool) {
   const result = [];
   const types = Object.keys(byType);
   let added = true;
-  while (result.length < QUIZ_QUESTION_COUNT && added) {
+  while (result.length < quizTargetCount && added) {
     added = false;
     for (const type of types) {
       const next = byType[type].shift();
       if (!next) continue;
       result.push(next);
       added = true;
-      if (result.length >= QUIZ_QUESTION_COUNT) break;
+      if (result.length >= quizTargetCount) break;
     }
   }
   return result;
@@ -601,7 +701,7 @@ function _buildQuizGenerationContext(pool) {
   if (pool.knowledge.length) {
     lines.push('## 知识点');
     for (const item of pool.knowledge) {
-      lines.push(`- 知识点：${item.title}`);
+      lines.push(`- id: ${item.id} | 知识点：${item.title}`);
       lines.push(`  概述：${item.summary || '无'}`);
       if (item.formulas.length) lines.push(`  公式：${item.formulas.join('；')}`);
     }
@@ -609,7 +709,7 @@ function _buildQuizGenerationContext(pool) {
   if (pool.formulas.length) {
     lines.push('## 公式库');
     for (const item of pool.formulas) {
-      lines.push(`- ${item.latex}${item.concept ? `（概念：${item.concept}）` : ''}${item.meaning ? `；含义：${item.meaning}` : ''}`);
+      lines.push(`- id: ${item.id} | ${item.latex}${item.concept ? `（概念：${item.concept}）` : ''}${item.meaning ? `；含义：${item.meaning}` : ''}`);
     }
   }
   return lines.join('\n');
@@ -628,7 +728,7 @@ function _sanitizeAIQuestions(raw, pool) {
   const list = Array.isArray(data) ? data : (data.questions || data.items || []);
   const result = [];
   const now = Date.now();
-  for (let i = 0; i < list.length && result.length < QUIZ_QUESTION_COUNT; i++) {
+  for (let i = 0; i < list.length && result.length < quizTargetCount; i++) {
     const item = list[i];
     if (!item || typeof item !== 'object') continue;
     const prompt = _quizCleanText(item.prompt, 300);
@@ -651,37 +751,50 @@ function _sanitizeAIQuestions(raw, pool) {
     const formulaText = item.formulaText || item.formula || '';
     const questionText = [prompt, title, formulaText, ...options.map(option => option.text)].join('\n');
     if (_quizIsMetaPrompt(questionText)) continue;
-    if (!_quizMentionsPoolContent(questionText, options, pool)) continue;
-    const matched = pool.knowledge.find(k => title && _quizOptionKey(k.title) === _quizOptionKey(title))
-      || pool.formulas.find(f => title && _quizOptionKey(f.concept) === _quizOptionKey(title))
+    const sourceRef = String(item.sourceRef || item.topicId || '');
+    const titleKey = _quizOptionKey(title.replace(/[^\w\u4e00-\u9fff]+/g, ''));
+    const keyOf = value => _quizOptionKey(String(value || '').replace(/[^\w\u4e00-\u9fff]+/g, ''));
+    const sourceMatched = !!(sourceRef && (pool.knowledge.find(k => k.id === sourceRef) || pool.formulas.find(f => f.id === sourceRef)));
+    const matched = (sourceRef && (pool.knowledge.find(k => k.id === sourceRef) || pool.formulas.find(f => f.id === sourceRef)))
+      || (titleKey && pool.knowledge.find(k => keyOf(k.title) === titleKey))
+      || (titleKey && pool.formulas.find(f => keyOf(f.concept) === titleKey))
+      || (titleKey && pool.knowledge.find(k => keyOf(k.title).includes(titleKey) || titleKey.includes(keyOf(k.title))))
       || null;
+    if (!matched) continue;
+    if (!sourceMatched && !_quizMentionsPoolContent(questionText, options, pool)) continue;
     result.push({
       id: 'ai_' + now + '_' + i,
       type: ['concept', 'formula_meaning', 'formula_concept', 'knowledge_formula', 'category'].includes(item.type) ? item.type : 'ai',
-      title: title || (matched ? matched.title || matched.concept || '' : '检测题'),
+      title: title || matched.title || matched.concept || '检测题',
       prompt,
       promptHtml: formulaText ? _quizFormulaHtml(formulaText) : '',
       formulaText: formulaText ? _quizFormulaText(formulaText) : '',
       options,
       correctIndex,
       explanation: _quizCleanText(item.explanation, 300) || '正确答案：' + options[correctIndex].text,
-      refId: matched ? matched.id : (pool.knowledge[0] ? pool.knowledge[0].id : ''),
-      sessionId: matched ? matched.sessionId : (pool.knowledge[0] ? pool.knowledge[0].sessionId : '')
+      refId: matched.id,
+      sourceRef: matched.id,
+      sourceType: matched.latex ? 'formula' : 'knowledge',
+      topicKey: matched.topicKey || _quizTopicKey(matched),
+      difficulty: _quizDifficultyKey(item.difficulty),
+      sessionId: matched.sessionId
     });
   }
   return result;
 }
 
-async function _aiGenerateQuizQuestions(pool, requestId, verify = true) {
+async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY_ENABLED) {
   const model = _pickQuizModel();
   if (!model) return null;
   const prompts = await _loadQuizPromptFile();
   const systemPrompt = (prompts.generate || DEFAULT_QUIZ_GENERATION_PROMPT)
-    .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt());
+    .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
+    .replace(/\{\{QUESTION_COUNT\}\}/g, quizTargetCount);
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), QUIZ_AI_TIMEOUT_MS) : null;
   if (controller) quizAiController = controller;
   const context = _buildQuizGenerationContext(pool);
+  quizAiStatusText = 'AI 正在生成检测题…';
   try {
     const resp = await fetch('/api/models/chat', {
       method: 'POST',
@@ -704,7 +817,9 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = true) {
     const questions = _sanitizeAIQuestions(raw, pool);
     if (requestId !== undefined && requestId !== quizAiRequestId) return null;
     if (verify && questions.length >= 2) {
+      quizAiStatusText = 'AI 正在校验题目…';
       const verified = await _aiVerifyQuizQuestions(pool, questions);
+      if (requestId !== undefined && requestId !== quizAiRequestId) return null;
       if (verified && verified.length >= 2) return verified;
     }
     return questions.length >= 2 ? questions : null;
@@ -715,6 +830,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = true) {
   } finally {
     if (timer) clearTimeout(timer);
     if (controller && quizAiController === controller) quizAiController = null;
+    quizAiStatusText = '';
   }
 }
 
@@ -726,7 +842,7 @@ function _mergeQuizQuestions(aiQuestions, localQuestions) {
     if (seen.has(sig)) continue;
     seen.add(sig);
     result.push(q);
-    if (result.length >= QUIZ_QUESTION_COUNT) break;
+    if (result.length >= quizTargetCount) break;
   }
   return result;
 }
@@ -736,7 +852,8 @@ async function _aiVerifyQuizQuestions(pool, questions) {
   if (!model || !questions || questions.length < 2) return null;
   const prompts = await _loadQuizPromptFile();
   const systemPrompt = (prompts.verify || DEFAULT_QUIZ_VERIFY_PROMPT)
-    .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt());
+    .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
+    .replace(/\{\{QUESTION_COUNT\}\}/g, quizTargetCount);
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), QUIZ_AI_TIMEOUT_MS) : null;
   if (controller) quizAiController = controller;
@@ -745,6 +862,8 @@ async function _aiVerifyQuizQuestions(pool, questions) {
     id: q.id || '',
     type: q.type || 'concept',
     title: q.title || '',
+    sourceRef: q.sourceRef || q.refId || '',
+    difficulty: q.difficulty || 'medium',
     prompt: q.prompt || '',
     formulaText: q.formulaText || '',
     options: (q.options || []).map(option => option.text || ''),
@@ -847,31 +966,64 @@ async function _loadQuizStatsFromServer() {
     const local = _readQuizStats();
     const localUpdated = (local._meta && local._meta.updatedAt) || 0;
     const serverUpdated = (server._meta && server._meta.updatedAt) || 0;
-    const merged = serverUpdated >= localUpdated ? { ...local, ...server } : local;
+    const merged = serverUpdated >= localUpdated
+      ? { ...local, ...server, _meta: { ...(local._meta || {}), ...(server._meta || {}) } }
+      : local;
     localStorage.setItem(QUIZ_STATS_KEY, JSON.stringify(merged));
   } catch (e) {
     console.warn('Load quiz stats failed:', e);
   }
 }
 
+function _quizTopicStatsKey(question) {
+  return question.topicKey || _quizTopicKey({
+    sessionId: question.sessionId || '',
+    title: question.title || '',
+    concept: question.title || '',
+    latex: question.formulaText || ''
+  });
+}
+
+function _quizMastery(item) {
+  const c = item.correct || 0;
+  const w = item.wrong || 0;
+  const total = c + w;
+  const history = Array.isArray(item.history) ? item.history : [];
+  const recent = history.slice(-10);
+  const recentCorrect = recent.filter(entry => entry && entry.correct).length;
+  const recentRate = recent.length ? recentCorrect / recent.length : (total ? c / total : 0);
+  const streakBonus = Math.min(10, (item.correctStreak || 0));
+  return Math.max(0, Math.min(100, Math.round(recentRate * 80 + (total ? c / total * 15 : 0) + streakBonus)));
+}
+
 function _recordQuizAnswer(question, correct) {
   const stats = _readQuizStats();
-  const key = question.refId || question.id;
+  const key = _quizTopicStatsKey(question);
   const current = stats[key] || {
     correct: 0,
     wrong: 0,
     last: 0,
     sessionId: question.sessionId || '',
-    title: question.title || ''
+    title: question.title || '',
+    topicKey: key,
+    history: []
   };
   current.correct = (current.correct || 0) + (correct ? 1 : 0);
   current.wrong = (current.wrong || 0) + (correct ? 0 : 1);
+  current.correctStreak = correct ? (current.correctStreak || 0) + 1 : 0;
+  current.wrongStreak = correct ? 0 : (current.wrongStreak || 0) + 1;
   current.last = Date.now();
   current.sessionId = question.sessionId || current.sessionId || '';
   current.title = question.title || current.title || '';
+  current.topicKey = current.topicKey || key;
+  current.history = Array.isArray(current.history) ? current.history : [];
+  current.history.push({ correct, at: current.last, questionId: question.id || '', difficulty: question.difficulty || 'medium' });
+  current.history = current.history.slice(-20);
+  current.mastery = _quizMastery(current);
   stats[key] = current;
   stats._meta = {
     ...(stats._meta || {}),
+    version: 2,
     attempts: (stats._meta && stats._meta.attempts || 0) + 1,
     updatedAt: Date.now()
   };
@@ -881,7 +1033,7 @@ function _recordQuizAnswer(question, correct) {
     const wrongKey = _wrongQuestionKey(snapshot);
     const nextWrong = wrongList.filter(w => _wrongQuestionKey(w) !== wrongKey);
     nextWrong.push(snapshot);
-    stats._meta.wrongQuestions = nextWrong.slice(-50);
+    stats._meta.wrongQuestions = nextWrong.slice(-QUIZ_MAX_WRONG);
   } else {
     const wrongKey = _wrongQuestionKey(question);
     stats._meta.wrongQuestions = wrongList.filter(w => _wrongQuestionKey(w) !== wrongKey);
@@ -907,6 +1059,9 @@ function _quizQuestionSnapshot(question, selectedIndex) {
     correctIndex: question.correctIndex,
     explanation: question.explanation || '',
     refId: question.refId || '',
+    sourceRef: question.sourceRef || question.refId || '',
+    topicKey: _quizTopicStatsKey(question),
+    difficulty: question.difficulty || 'medium',
     sessionId: question.sessionId || '',
     selectedIndex,
     wrongAt: Date.now()
@@ -916,7 +1071,15 @@ function _quizQuestionSnapshot(question, selectedIndex) {
 function _readWrongQuestions() {
   const stats = _readQuizStats();
   const list = Array.isArray(stats._meta && stats._meta.wrongQuestions) ? stats._meta.wrongQuestions : [];
-  return list.filter(item => {
+  return list.map(item => {
+    if (!item.topicKey) item.topicKey = _quizTopicKey({
+      sessionId: item.sessionId || '',
+      title: item.title || '',
+      concept: item.title || '',
+      latex: item.formulaText || ''
+    });
+    return item;
+  }).filter(item => {
     if (!_quizItemInSession(item)) return false;
     const text = [item.prompt || '', item.title || '', item.formulaText || '',
       ...(Array.isArray(item.options) ? item.options.map(option => option.text || '') : [])].join('\n');
@@ -928,23 +1091,51 @@ function _quizStatSummary() {
   const stats = _readQuizStats();
   let correct = 0;
   let wrong = 0;
-  const weak = [];
+  const buckets = {};
   for (const [key, item] of Object.entries(stats)) {
     if (key === '_meta' || !item || typeof item !== 'object') continue;
     if (!_quizItemInSession(item)) continue;
     const c = item.correct || 0;
     const w = item.wrong || 0;
+    const topicKey = item.topicKey || _quizTopicKey({ sessionId: item.sessionId || '', title: item.title || '', concept: item.title || '' });
     correct += c;
     wrong += w;
-    if (w > 0 && w >= c) weak.push({ key, title: item.title || '未命名知识点', correct: c, wrong: w });
+    const bucket = buckets[topicKey] || {
+      key: topicKey,
+      title: item.title || '未命名知识点',
+      correct: 0,
+      wrong: 0,
+      last: 0,
+      history: [],
+      sessionId: item.sessionId || ''
+    };
+    bucket.correct += c;
+    bucket.wrong += w;
+    bucket.last = Math.max(bucket.last, item.last || 0);
+    bucket.history = bucket.history.concat(Array.isArray(item.history) ? item.history : []);
+    bucket.sessionId = item.sessionId || bucket.sessionId || '';
+    buckets[topicKey] = bucket;
   }
-  weak.sort((a, b) => b.wrong - a.wrong);
+  const topics = Object.values(buckets);
+  for (const item of topics) item.mastery = _quizMastery(item);
+  const weak = topics
+    .filter(item => item.wrong > 0 && (item.wrong >= item.correct || item.mastery < 70))
+    .sort((a, b) => (a.mastery - b.mastery) || (b.wrong - a.wrong));
+  const review = topics
+    .filter(item => item.wrong > 0)
+    .sort((a, b) => (a.mastery - b.mastery) || ((a.last || 0) - (b.last || 0)))
+    .slice(0, 8);
+  const openResults = Array.isArray(stats._meta && stats._meta.openResults) ? stats._meta.openResults : [];
+  const openCount = openResults.filter(item => _quizItemInSession(item)).length;
   return {
     correct,
     wrong,
     total: correct + wrong,
     rate: correct + wrong ? Math.round(correct / (correct + wrong) * 100) : 0,
     weak: weak.slice(0, 5),
+    review,
+    reviewCount: review.length,
+    openCount,
     wrongCount: _readWrongQuestions().length
   };
 }
@@ -956,7 +1147,27 @@ const QUIZ_OPEN_TEMPLATES = [
 ];
 
 function _generateOpenQuestions(pool) {
-  const items = pool.knowledge.filter(k => k.title);
+  const knowledgeItems = pool.knowledge.filter(k => k.title).map(item => ({
+    id: item.id,
+    title: item.title,
+    summary: item.summary || '',
+    category: item.category || '',
+    formulas: item.formulas || [],
+    sessionId: item.sessionId || '',
+    topicKey: item.topicKey || _quizTopicKey(item)
+  }));
+  const formulaItems = pool.formulas
+    .filter(f => f.latex && (f.concept || f.meaning))
+    .map(item => ({
+      id: item.id,
+      title: item.concept || ('公式 ' + item.latex),
+      summary: item.meaning || item.concept || '',
+      category: 'formula',
+      formulas: [item.latex],
+      sessionId: item.sessionId || '',
+      topicKey: item.topicKey || _quizTopicKey(item)
+    }));
+  const items = [...knowledgeItems, ...formulaItems];
   const result = [];
   for (const item of items) {
     for (const makePrompt of QUIZ_OPEN_TEMPLATES) {
@@ -970,8 +1181,10 @@ function _generateOpenQuestions(pool) {
           title: item.title,
           summary: item.summary || '',
           category: item.category || '',
-          formulas: item.formulas || []
+          formulas: item.formulas || [],
+          topicKey: item.topicKey || ''
         },
+        topicKey: item.topicKey || '',
         sessionId: item.sessionId || ''
       });
     }
@@ -982,6 +1195,7 @@ function _generateOpenQuestions(pool) {
 async function openQuiz() {
   const overlay = document.getElementById('quizModal');
   if (!overlay) return;
+  quizFilterTopic = 'all';
   overlay.hidden = false;
   overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
@@ -1052,7 +1266,7 @@ async function startQuiz() {
   renderQuiz();
 }
 
-async function reshuffleQuiz() {
+async function reshuffleQuiz(startAfter = true) {
   if (!quizState || !quizState.pool) return;
   quizState.phase = 'loading';
   renderQuiz();
@@ -1064,7 +1278,7 @@ async function reshuffleQuiz() {
     renderQuiz();
     return;
   }
-  startQuiz();
+  if (startAfter) startQuiz(); else renderQuiz();
 }
 
 function redoQuiz() {
@@ -1073,6 +1287,7 @@ function redoQuiz() {
 
 function openWrongReview() {
   if (!quizState) return;
+  quizFilterTopic = 'all';
   quizState.phase = 'wrong';
   quizState.wrongList = _readWrongQuestions();
   renderQuiz();
@@ -1093,6 +1308,9 @@ function startWrongQuiz() {
     correctIndex: item.correctIndex || 0,
     explanation: item.explanation || '',
     refId: item.refId || '',
+    sourceRef: item.sourceRef || item.refId || '',
+    topicKey: item.topicKey || '',
+    difficulty: item.difficulty || 'medium',
     sessionId: item.sessionId || ''
   }));
   quizState.phase = 'question';
@@ -1118,6 +1336,30 @@ function openOpenQuiz() {
   renderQuiz();
 }
 
+function _saveOpenResult(question, answer, result) {
+  const stats = _readQuizStats();
+  stats._meta = {
+    ...(stats._meta || {}),
+    version: 2,
+    updatedAt: Date.now()
+  };
+  const list = Array.isArray(stats._meta.openResults) ? stats._meta.openResults : [];
+  list.push({
+    id: 'open_' + Date.now(),
+    questionId: question.id || '',
+    title: question.title || '',
+    prompt: question.prompt || '',
+    answer,
+    scores: result.scores || {},
+    feedback: result.feedback || '',
+    sessionId: question.sessionId || '',
+    topicKey: question.topicKey || '',
+    at: Date.now()
+  });
+  stats._meta.openResults = list.slice(-QUIZ_MAX_OPEN_RESULTS);
+  _saveQuizStats(stats);
+}
+
 async function submitOpenAnswer() {
   if (!quizState || quizState.phase !== 'open' || quizState.openScoring) return;
   const textarea = document.getElementById('quizOpenAnswer');
@@ -1136,6 +1378,7 @@ async function submitOpenAnswer() {
   if (result && result.scores) {
     quizState.openResults.push({ questionId: question.id, answer, result });
     quizState.openResult = result;
+    _saveOpenResult(question, answer, result);
   } else {
     quizState.openScoreError = result && result.error ? result.error : '模型评分失败';
   }
@@ -1175,10 +1418,13 @@ ${getLevelPrompt()}
 只输出 JSON，不要输出其他内容：
 {"scores":{"physics":7,"math":8,"connection":9,"clarity":8},"feedback":"一句到三句中文反馈"}`;
   const userContent = `知识点上下文：\n${knowledgeContext}\n\n问题：${question.prompt}\n\n学生回答：\n${answer}\n\n请评分。`;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 30000) : null;
   try {
     const resp = await fetch('/api/models/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      ...(controller ? { signal: controller.signal } : {}),
       body: JSON.stringify({
         messages: [
           { role: 'system', content: systemPrompt },
@@ -1209,6 +1455,8 @@ ${getLevelPrompt()}
   } catch (e) {
     console.warn('Open answer scoring failed:', e);
     return { error: '模型评分失败' };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1368,13 +1616,57 @@ async function askQuizExplain() {
   renderQuiz();
 }
 
+function changeQuizQuestionCount() {
+  const select = document.getElementById('quizCountSelect');
+  const count = parseInt(select && select.value, 10);
+  if (!count || count < 3 || count > 10 || count === quizTargetCount) return;
+  quizTargetCount = count;
+  if (quizState && quizState.pool && quizState.phase === 'intro') reshuffleQuiz(false);
+}
+
+function useLocalQuiz() {
+  if (!quizState) return;
+  quizAiRequestId++;
+  if (quizAiController) quizAiController.abort();
+  quizState.aiPending = false;
+  quizState.aiPromise = null;
+  quizState.questions = _generateQuizQuestions(quizState.pool || { knowledge: [], formulas: [] });
+  if (!quizState.questions.length) {
+    if (typeof showToast === 'function') showToast('本地题不足，暂无法生成');
+    renderQuiz();
+    return;
+  }
+  startQuiz();
+}
+
+function filterWrongByTopic(value) {
+  const topic = value === 'all' ? 'all' : decodeURIComponent(value || '');
+  quizFilterTopic = topic;
+  if (!quizState) return;
+  quizState.wrongList = _readWrongQuestions().filter(item => topic === 'all' || item.topicKey === topic);
+  renderQuiz();
+}
+
+function deleteWrongQuestion(encodedKey) {
+  const target = decodeURIComponent(encodedKey || '');
+  const stats = _readQuizStats();
+  if (stats._meta && Array.isArray(stats._meta.wrongQuestions)) {
+    stats._meta.wrongQuestions = stats._meta.wrongQuestions.filter(item => _wrongQuestionKey(item) !== target);
+  }
+  _saveQuizStats(stats);
+  if (quizState) {
+    quizState.wrongList = _readWrongQuestions().filter(item => quizFilterTopic === 'all' || item.topicKey === quizFilterTopic);
+  }
+  renderQuiz();
+}
+
 function _renderQuizIntro() {
   const body = document.getElementById('quizBody');
   const stats = _quizStatSummary();
   const hasQuestions = !!(quizState && quizState.questions && quizState.questions.length);
   const hasOpen = !!(quizState && quizState.openQuestions && quizState.openQuestions.length);
   const hasWrong = stats.wrongCount > 0;
-  if (!hasQuestions) {
+  if (!hasQuestions && !(quizState && quizState.aiPending)) {
     body.innerHTML = `
       <div class="quiz-empty">
         <div class="quiz-empty-icon">${UI_ICON_SVG.book}</div>
@@ -1388,16 +1680,34 @@ function _renderQuizIntro() {
       </div>`;
     return;
   }
+  if (!hasQuestions && quizState && quizState.aiPending) {
+    body.innerHTML = `
+      <div class="quiz-ai-status">
+        <span>${_quizEscape(quizAiStatusText || 'AI 正在生成检测题…')}</span>
+        <button class="quiz-btn-secondary" onclick="useLocalQuiz()">立即用本地题</button>
+        <button class="quiz-btn-secondary" onclick="closeQuiz()">关闭</button>
+      </div>`;
+    return;
+  }
+  const countOptions = [3, 5, 8, 10].map(n =>
+    `<option value="${n}" ${n === quizTargetCount ? 'selected' : ''}>${n} 题</option>`
+  ).join('');
   body.innerHTML = `
     <div class="quiz-stats">
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.total}</span><span class="quiz-stat-label">已测</span></div>
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.rate}%</span><span class="quiz-stat-label">正确率</span></div>
-      <div class="quiz-stat"><span class="quiz-stat-num">${stats.weak.length}</span><span class="quiz-stat-label">待复习</span></div>
+      <div class="quiz-stat"><span class="quiz-stat-num">${stats.reviewCount}</span><span class="quiz-stat-label">待复习</span></div>
+      <div class="quiz-stat"><span class="quiz-stat-num">${stats.openCount}</span><span class="quiz-stat-label">深度问答</span></div>
+    </div>
+    ${quizState && quizState.aiPending ? `<div class="quiz-ai-status"><span>${_quizEscape(quizAiStatusText || 'AI 正在生成检测题…')}</span><button class="quiz-btn-secondary" onclick="useLocalQuiz()">立即用本地题</button></div>` : ''}
+    <div class="quiz-setting-row">
+      <span>题量</span>
+      <select id="quizCountSelect" onchange="changeQuizQuestionCount()">${countOptions}</select>
     </div>
     <div class="quiz-start">
       <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
       <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'}>重新出题</button>
-      <button class="quiz-btn-primary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答</button>
+      <button class="quiz-btn-primary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答${stats.openCount ? `(${stats.openCount})` : ''}</button>
       <button class="quiz-btn-primary" onclick="openWrongReview()" ${hasWrong ? '' : 'disabled'}>错题回顾${hasWrong ? `(${hasWrong})` : ''}</button>
       <button class="quiz-btn-secondary" onclick="clearQuizRecords()">清空记录</button>
       <button class="quiz-btn-secondary" onclick="closeQuiz()">关闭</button>
@@ -1410,6 +1720,12 @@ function _renderQuizQuestion() {
   const question = quizState.questions[quizState.index];
   const answered = quizState.answers.find(a => a.questionId === question.id);
   const progress = Math.round((quizState.index + (answered ? 1 : 0)) / quizState.questions.length * 100);
+  const difficultyLabels = { easy: '易', medium: '中', hard: '难' };
+  const metaHtml = `<div class="quiz-question-meta">
+    <span class="quiz-tag">${difficultyLabels[question.difficulty] || '中'}</span>
+    <span class="quiz-tag">${question.sourceType === 'formula' ? '公式' : '知识点'}</span>
+    <span class="quiz-tag">${_quizEscape(question.title || '检测题')}</span>
+  </div>`;
   const optionsHtml = question.options.map((option, index) => {
     let className = 'quiz-option';
     let disabled = '';
@@ -1427,7 +1743,7 @@ function _renderQuizQuestion() {
   const feedback = answered ? `
     <div class="quiz-feedback ${answered.correct ? 'ok' : 'bad'}">
       <strong>${answered.correct ? '回答正确' : '回答错误'}</strong>
-      <div>${_quizEscape(question.explanation)}</div>
+      <div>${_renderQuizRichText(question.explanation)}</div>
     </div>
     <button class="quiz-btn-primary" onclick="nextQuizQuestion()">${quizState.index === quizState.questions.length - 1 ? '查看结果' : '下一题'}</button>
   ` : '';
@@ -1436,7 +1752,7 @@ function _renderQuizQuestion() {
     : quizState.explainText
       ? `<div class="quiz-explain">
           <div class="quiz-explain-head">Phymathia 解析</div>
-          <div class="quiz-explain-content">${_quizEscape(quizState.explainText)}</div>
+          <div class="quiz-explain-content">${_renderQuizRichText(quizState.explainText)}</div>
           ${quizState.explainError ? `<div class="quiz-explain-error">${_quizEscape(quizState.explainError)}</div>` : ''}
         </div>`
       : '';
@@ -1449,6 +1765,7 @@ function _renderQuizQuestion() {
     <div class="quiz-question">
       <div class="quiz-question-prompt">${_quizEscape(question.prompt)}</div>
       ${question.promptHtml ? `<div class="quiz-latex">${question.promptHtml}</div>` : ''}
+      ${metaHtml}
       <div class="quiz-options">${optionsHtml}</div>
       <div class="quiz-question-help">
         <button class="quiz-help-btn" onclick="askQuizExplain()" ${quizState.explaining ? 'disabled' : ''}>${quizState.explaining ? '正在问 Phymathia...' : '这题没看懂，问 Phymathia'}</button>
@@ -1465,14 +1782,15 @@ function _renderQuizResult() {
   const correct = quizState.answers.filter(a => a.correct).length;
   const rate = total ? Math.round(correct / total * 100) : 0;
   const stats = _quizStatSummary();
-  const weakHtml = stats.weak.length ? `
+  const hasOpen = !!(quizState && quizState.openQuestions && quizState.openQuestions.length);
+  const weakHtml = stats.review.length ? `
     <div class="quiz-weak-section">
-      <div class="quiz-weak-title">待复习</div>
+      <div class="quiz-weak-title">建议复习</div>
       <div class="quiz-weak-list">
-        ${stats.weak.map(item => `
+        ${stats.review.map(item => `
           <div class="quiz-weak-item">
             <span>${_quizEscape(item.title)}</span>
-            <span>${item.wrong} 次答错</span>
+            <span>掌握度 ${item.mastery || 0}% · ${item.wrong} 次答错</span>
           </div>`).join('')}
       </div>
     </div>
@@ -1486,7 +1804,7 @@ function _renderQuizResult() {
         <button class="quiz-btn-primary" onclick="reshuffleQuiz()">重新出题</button>
         <button class="quiz-btn-primary" onclick="redoQuiz()">重做本组</button>
         <button class="quiz-btn-secondary" onclick="openWrongReview()">错题回顾${stats.wrongCount ? `(${stats.wrongCount})` : ''}</button>
-        <button class="quiz-btn-secondary" onclick="openOpenQuiz()">深度问答</button>
+        <button class="quiz-btn-secondary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答${stats.openCount ? `(${stats.openCount})` : ''}</button>
         <button class="quiz-btn-secondary" onclick="closeQuiz()">关闭</button>
       </div>
     </div>`;
@@ -1498,16 +1816,29 @@ function _renderWrongReview() {
     ? quizState.wrongList
     : _readWrongQuestions();
   if (!list.length) {
+    const emptyTitle = quizFilterTopic !== 'all' ? '当前筛选下没有错题' : '暂时没有错题';
     body.innerHTML = `
       <div class="quiz-empty">
         <div class="quiz-empty-icon">${UI_ICON_SVG.check}</div>
-        <div class="quiz-empty-title">暂时没有错题</div>
+        <div class="quiz-empty-title">${emptyTitle}</div>
         <div class="quiz-empty-actions">
           <button class="quiz-btn-primary" onclick="backToQuizIntro()">返回</button>
         </div>
       </div>`;
     return;
   }
+  const topics = Array.from(new Set(list.map(item => item.topicKey || 'other')));
+  const topicLabels = {};
+  for (const item of list) {
+    const topic = item.topicKey || 'other';
+    if (!topicLabels[topic]) topicLabels[topic] = item.title || '其他';
+  }
+  const topicOptions = [
+    `<option value="all" ${quizFilterTopic === 'all' ? 'selected' : ''}>全部知识点</option>`,
+    ...topics.map(topic =>
+      `<option value="${encodeURIComponent(topic)}" ${quizFilterTopic === topic ? 'selected' : ''}>${_quizEscape(topicLabels[topic] || topic)}</option>`
+    )
+  ].join('');
   const itemsHtml = list.map((item, index) => {
     const correct = item.options && item.options[item.correctIndex]
       ? item.options[item.correctIndex].text
@@ -1519,17 +1850,23 @@ function _renderWrongReview() {
     const wrongTime = item.wrongAt ? new Date(item.wrongAt).toLocaleString('zh-CN', { hour12: false }) : '';
     return `
       <div class="quiz-wrong-card">
-        <div class="quiz-wrong-title">${index + 1}. ${_quizEscape(item.title || '错题')}</div>
+        <div class="quiz-wrong-title-row">
+          <div class="quiz-wrong-title">${index + 1}. ${_quizEscape(item.title || '错题')}</div>
+          <button class="quiz-wrong-delete" onclick="deleteWrongQuestion('${encodeURIComponent(_wrongQuestionKey(item))}')" title="移除该题">移除</button>
+        </div>
         <div class="quiz-wrong-prompt">${_quizEscape(item.prompt)}</div>
         ${formulaHtml}
         <div class="quiz-wrong-line"><span>你的答案</span>${_quizEscape(yourAnswer)}</div>
         <div class="quiz-wrong-line correct"><span>正确答案</span>${_quizEscape(correct)}</div>
-        <div class="quiz-wrong-explain">${_quizEscape(item.explanation)}</div>
+        <div class="quiz-wrong-explain">${_renderQuizRichText(item.explanation)}</div>
         ${wrongTime ? `<div class="quiz-wrong-date">${_quizEscape(wrongTime)}</div>` : ''}
       </div>`;
   }).join('');
   body.innerHTML = `
-    <div class="quiz-wrong-head">错题回顾</div>
+    <div class="quiz-wrong-head">
+      <span>错题回顾</span>
+      <select onchange="filterWrongByTopic(this.value)">${topicOptions}</select>
+    </div>
     <div class="quiz-wrong-list">${itemsHtml}</div>
     <div class="quiz-result-actions">
       <button class="quiz-btn-primary" onclick="startWrongQuiz()">重做错题</button>
@@ -1554,7 +1891,7 @@ function _renderOpenQuestion() {
       <div class="quiz-open-score"><span>数理联系</span><strong>${quizState.openResult.scores.connection}</strong></div>
       <div class="quiz-open-score"><span>表达清晰</span><strong>${quizState.openResult.scores.clarity}</strong></div>
     </div>
-    <div class="quiz-feedback ok"><div>${_quizEscape(quizState.openResult.feedback || '')}</div></div>
+    <div class="quiz-feedback ok"><div>${_renderQuizRichText(quizState.openResult.feedback || '')}</div></div>
     <button class="quiz-btn-primary" onclick="nextOpenQuestion()">${quizState.openIndex === quizState.openQuestions.length - 1 ? '查看总结' : '下一题'}</button>
   ` : `
     <textarea id="quizOpenAnswer" rows="6" placeholder="写下你的理解...">${_quizEscape(quizState.openDraftAnswer || '')}</textarea>
@@ -1575,12 +1912,25 @@ function _renderOpenQuestion() {
 
 function _renderOpenResult() {
   const body = document.getElementById('quizBody');
-  const results = quizState.openResults || [];
+  const stats = _readQuizStats();
+  const stored = Array.isArray(stats._meta && stats._meta.openResults)
+    ? stats._meta.openResults.filter(item => _quizItemInSession(item)).slice(-8)
+    : [];
+  const current = quizState.openResults || [];
+  const results = current.length
+    ? current
+    : stored.map(item => ({ questionId: item.questionId, answer: item.answer, result: item }));
   if (!results.length) {
     body.innerHTML = '<div class="quiz-empty"><div class="quiz-empty-title">还没有深度问答记录</div><div class="quiz-empty-actions"><button class="quiz-btn-primary" onclick="backToQuizIntro()">返回</button></div></div>';
     return;
   }
   const avg = key => Math.round(results.reduce((sum, item) => sum + (item.result.scores[key] || 0), 0) / results.length);
+  const historyHtml = stored.slice(-3).reverse().map(item => `
+    <div class="quiz-open-history-item">
+      <span>${_quizEscape(item.title || '深度问答')}</span>
+      <span>${(item.scores && item.scores.physics) || 0} / ${(item.scores && item.scores.math) || 0} / ${(item.scores && item.scores.connection) || 0} / ${(item.scores && item.scores.clarity) || 0}</span>
+    </div>
+  `).join('');
   body.innerHTML = `
     <div class="quiz-open-result">
       <div class="quiz-open-scores">
@@ -1589,6 +1939,7 @@ function _renderOpenResult() {
         <div class="quiz-open-score"><span>数理联系</span><strong>${avg('connection')}</strong></div>
         <div class="quiz-open-score"><span>表达清晰</span><strong>${avg('clarity')}</strong></div>
       </div>
+      ${historyHtml ? `<div class="quiz-open-history"><div class="quiz-weak-title">最近记录</div>${historyHtml}</div>` : ''}
       <div class="quiz-result-actions">
         <button class="quiz-btn-primary" onclick="openOpenQuiz()">再答一组</button>
         <button class="quiz-btn-secondary" onclick="backToQuizIntro()">返回</button>
@@ -1652,6 +2003,11 @@ function deleteQuizStatsBySession(sessionId) {
     stats._meta.wrongQuestions = stats._meta.wrongQuestions.filter(item => !sessionIds.has(item.sessionId));
     if (stats._meta.wrongQuestions.length !== before) changed = true;
   }
+  if (stats._meta && Array.isArray(stats._meta.openResults)) {
+    const before = stats._meta.openResults.length;
+    stats._meta.openResults = stats._meta.openResults.filter(item => !sessionIds.has(item.sessionId));
+    if (stats._meta.openResults.length !== before) changed = true;
+  }
   if (changed) _saveQuizStats(stats);
 }
 
@@ -1660,6 +2016,8 @@ window.closeQuiz = closeQuiz;
 window.startQuiz = startQuiz;
 window.reshuffleQuiz = reshuffleQuiz;
 window.redoQuiz = redoQuiz;
+window.changeQuizQuestionCount = changeQuizQuestionCount;
+window.useLocalQuiz = useLocalQuiz;
 window.openWrongReview = openWrongReview;
 window.startWrongQuiz = startWrongQuiz;
 window.openOpenQuiz = openOpenQuiz;
@@ -1668,6 +2026,8 @@ window.nextOpenQuestion = nextOpenQuestion;
 window.chooseQuizOption = chooseQuizOption;
 window.nextQuizQuestion = nextQuizQuestion;
 window.askQuizExplain = askQuizExplain;
+window.filterWrongByTopic = filterWrongByTopic;
+window.deleteWrongQuestion = deleteWrongQuestion;
 window.clearQuizRecords = clearQuizRecords;
 window.clearWrongQuestions = clearWrongQuestions;
 window.backToQuizIntro = backToQuizIntro;

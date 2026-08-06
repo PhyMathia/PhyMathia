@@ -105,6 +105,8 @@ function toggleDataPanel(e) {
 function updateDataStats() {
   const sessions = JSON.parse(localStorage.getItem('phymathia_sessions') || '{}');
   const knowledge = JSON.parse(localStorage.getItem('phymathia_knowledge') || '{}');
+  const formulas = (typeof getFormulaCache === 'function' ? getFormulaCache() : {}) || {};
+  const quizStats = JSON.parse(localStorage.getItem('phymathia_quiz_stats') || '{}');
   const sessionCount = Object.keys(sessions).length;
   let msgCount = 0;
   Object.keys(sessions).forEach(sid => {
@@ -112,32 +114,66 @@ function updateDataStats() {
     msgCount += msgs.length;
   });
   const knowledgeCount = Object.keys(knowledge).length;
+  const formulaCount = Object.keys(formulas).length;
+  const graphCount = Object.keys(localStorage).filter(k => k.startsWith('phymathia_graph_')).length;
+  const quizCount = Object.keys(quizStats).filter(k => k !== '_meta').length;
   const el = document.getElementById('dataStats');
   if (el) {
-    el.innerHTML = `当前存储：${sessionCount} 个会话 · ${msgCount} 条消息 · ${knowledgeCount} 条知识点`;
+    el.innerHTML = `当前存储：${sessionCount} 个会话 · ${msgCount} 条消息 · ${knowledgeCount} 条知识点 · ${formulaCount} 条公式 · ${graphCount} 个探索网 · ${quizCount} 个检测主题`;
   }
   updateStorageDebug();
 }
 
-function exportData() {
-  const data = {};
-  // Export sessions
-  data.sessions = JSON.parse(localStorage.getItem('phymathia_sessions') || '{}');
-  // Export messages for each session
-  data.messages = {};
-  Object.keys(data.sessions).forEach(sid => {
-    data.messages[sid] = JSON.parse(localStorage.getItem('phymathia_msgs_' + sid) || '[]');
-  });
-  // Export knowledge
-  data.knowledge = JSON.parse(localStorage.getItem('phymathia_knowledge') || '{}');
-  // Export settings
-  data.currentSession = localStorage.getItem('phymathia_current_session') || '';
-  data.level = localStorage.getItem('phymathia_level') || 'university';
-  data.theme = _getInitialTheme();
-  // Version for forward compatibility
-  data.version = 1;
-  data.exportTime = new Date().toISOString();
+function _safeParseJSON(raw, fallback) {
+  try {
+    const value = raw ? JSON.parse(raw) : fallback;
+    return value === null || value === undefined ? fallback : value;
+  } catch (e) {
+    return fallback;
+  }
+}
 
+function _mergeMaps(base, extra) {
+  const result = { ...(base || {}) };
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
+function _collectLocalBackup() {
+  const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
+  const messages = {};
+  Object.keys(sessions).forEach(sid => {
+    messages[sid] = _safeParseJSON(localStorage.getItem('phymathia_msgs_' + sid), []);
+  });
+  const graphs = {};
+  Object.keys(localStorage).forEach(key => {
+    if (key.startsWith('phymathia_graph_')) {
+      graphs[key.slice('phymathia_graph_'.length)] = _safeParseJSON(localStorage.getItem(key), {});
+    }
+  });
+  const rawModels = _safeParseJSON(localStorage.getItem('phymathia_user_models'), []);
+  const userModels = Array.isArray(rawModels) ? rawModels.map(m => ({ ...m, apiKey: '' })) : [];
+  const activeModels = _safeParseJSON(localStorage.getItem('phymathia_active_models'), {});
+  const formulas = (typeof getFormulaCache === 'function' ? getFormulaCache() : {}) || {};
+  return {
+    sessions,
+    messages,
+    knowledge: _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {}),
+    formulas,
+    graphs,
+    quizStats: _safeParseJSON(localStorage.getItem('phymathia_quiz_stats'), {}),
+    userModels,
+    activeModels,
+    currentSession: localStorage.getItem('phymathia_current_session') || '',
+    level: localStorage.getItem('phymathia_level') || 'university',
+    theme: _getInitialTheme(),
+    onboarding: localStorage.getItem('phymathia_onboarding_done') || ''
+  };
+}
+
+function _downloadBackup(data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -145,6 +181,62 @@ function exportData() {
   a.download = 'phymathia_backup_' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+async function exportData() {
+  const local = _collectLocalBackup();
+  let data = { ...local, version: 2, exportTime: new Date().toISOString() };
+  try {
+    const resp = await fetch('/api/backup/export', { cache: 'no-cache' });
+    if (resp.ok) {
+      const server = await resp.json();
+      const serverGraphs = {};
+      const kv = server.kv || {};
+      for (const [key, value] of Object.entries(kv)) {
+        if (key.startsWith('graph:')) serverGraphs[key.slice(6)] = value;
+      }
+      data = {
+        version: 2,
+        exportTime: new Date().toISOString(),
+        sessions: _mergeMaps(server.sessions, local.sessions),
+        messages: { ...(server.messages || {}), ...local.messages },
+        knowledge: _mergeMaps(server.knowledge, local.knowledge),
+        formulas: _mergeMaps(server.formulas, local.formulas),
+        kv,
+        graphs: _mergeMaps(serverGraphs, local.graphs),
+        quizStats: _mergeMaps(kv['phymathia_quiz_stats'] || {}, local.quizStats),
+        userModels: local.userModels,
+        activeModels: local.activeModels,
+        currentSession: local.currentSession,
+        level: local.level,
+        theme: local.theme,
+        onboarding: local.onboarding
+      };
+    }
+  } catch (e) {
+    console.warn('[Export] Server backup unavailable, use local snapshot:', e);
+  }
+  _downloadBackup(data);
+}
+
+function _normalizeBackup(data) {
+  const result = { ...data };
+  result.sessions = result.sessions && typeof result.sessions === 'object' && !Array.isArray(result.sessions)
+    ? result.sessions
+    : Array.isArray(result.sessions)
+      ? Object.fromEntries(result.sessions.map(item => [item.id, item]).filter(([id]) => id))
+      : {};
+  result.messages = result.messages && typeof result.messages === 'object' ? result.messages : {};
+  result.knowledge = result.knowledge && typeof result.knowledge === 'object' ? result.knowledge : {};
+  if (result.formulas && typeof result.formulas === 'object' && !Array.isArray(result.formulas) && result.formulas.items) {
+    result.formulas = Array.isArray(result.formulas.items)
+      ? Object.fromEntries(result.formulas.items.map(item => [item.id, item]).filter(([id]) => id))
+      : result.formulas.items;
+  }
+  result.formulas = result.formulas && typeof result.formulas === 'object' ? result.formulas : {};
+  result.graphs = result.graphs && typeof result.graphs === 'object' ? result.graphs : {};
+  result.quizStats = result.quizStats && typeof result.quizStats === 'object' ? result.quizStats : {};
+  return result;
 }
 
 function updateStorageDebug() {
@@ -163,57 +255,134 @@ function updateStorageDebug() {
   el.innerHTML = lines.join('<br>');
 }
 
+function _applyLocalSettings(data) {
+  if (data.theme) localStorage.setItem('phymathia_theme', data.theme);
+  if (data.level) localStorage.setItem('phymathia_level', data.level);
+  if (data.currentSession) localStorage.setItem('phymathia_current_session', data.currentSession);
+  if (data.onboarding) localStorage.setItem('phymathia_onboarding_done', data.onboarding);
+  if (Array.isArray(data.userModels)) localStorage.setItem('phymathia_user_models', JSON.stringify(data.userModels));
+  if (data.activeModels && typeof data.activeModels === 'object') localStorage.setItem('phymathia_active_models', JSON.stringify(data.activeModels));
+  const quizStats = data.quizStats && typeof data.quizStats === 'object'
+    ? data.quizStats
+    : (data.kv && data.kv['phymathia_quiz_stats']) || {};
+  if (quizStats && typeof quizStats === 'object') localStorage.setItem('phymathia_quiz_stats', JSON.stringify(quizStats));
+}
+
+function _applyLocalBackup(data, replace) {
+  if (replace) {
+    Object.keys(localStorage).filter(k => k.startsWith('phymathia_')).forEach(k => localStorage.removeItem(k));
+  }
+  const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
+  Object.assign(sessions, data.sessions || {});
+  localStorage.setItem('phymathia_sessions', JSON.stringify(sessions));
+
+  for (const [sid, msgs] of Object.entries(data.messages || {})) {
+    if (!Array.isArray(msgs)) continue;
+    const key = 'phymathia_msgs_' + sid;
+    const existing = _safeParseJSON(localStorage.getItem(key), []);
+    const existingKeys = new Set(existing.map(m => m.timestamp || JSON.stringify(m)));
+    const merged = [...existing];
+    for (const msg of msgs) {
+      const msgKey = msg.timestamp || JSON.stringify(msg);
+      if (!existingKeys.has(msgKey)) {
+        existingKeys.add(msgKey);
+        merged.push(msg);
+      }
+    }
+    localStorage.setItem(key, JSON.stringify(merged));
+  }
+
+  const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
+  Object.assign(knowledge, data.knowledge || {});
+  localStorage.setItem('phymathia_knowledge', JSON.stringify(knowledge));
+
+  const formulas = _safeParseJSON(localStorage.getItem('phymathia_formulas'), {});
+  Object.assign(formulas, data.formulas || {});
+  if (typeof setFormulaCache === 'function') setFormulaCache(formulas); else localStorage.setItem('phymathia_formulas', JSON.stringify(formulas));
+
+  for (const [sid, state] of Object.entries(data.graphs || {})) {
+    if (state && typeof state === 'object') localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(state));
+  }
+  _applyLocalSettings(data);
+}
+
+async function _pushBackupToExistingApis(data) {
+  try {
+    if (data.sessions) await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data.sessions)
+    });
+    for (const [sid, msgs] of Object.entries(data.messages || {})) {
+      if (typeof saveSessionMessages === 'function') await saveSessionMessages(sid, msgs);
+    }
+    if (data.knowledge) await fetch('/api/knowledge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: data.knowledge })
+    });
+    if (data.formulas) await fetch('/api/formulas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: Object.values(data.formulas) })
+    });
+    const graphEntries = Object.entries(data.graphs || {});
+    for (const [sid, state] of graphEntries) {
+      await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: state })
+      });
+    }
+    if (data.quizStats) await fetch('/api/kv/phymathia_quiz_stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: data.quizStats })
+    });
+    for (const [key, value] of Object.entries(data.kv || {})) {
+      if (key.startsWith('graph:') || key === 'phymathia_quiz_stats') continue;
+      await fetch('/api/kv/' + encodeURIComponent(key), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value })
+      });
+    }
+  } catch (e) {
+    console.warn('[Import] Fallback server push failed:', e);
+  }
+}
+
 async function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async function(e) {
     try {
-      const data = JSON.parse(e.target.result);
-      // Validate format
-      if (!data.sessions && !data.messages && !data.knowledge) {
+      const data = _normalizeBackup(JSON.parse(e.target.result));
+      if (!data.sessions && !data.messages && !data.knowledge && !data.formulas && !data.kv && !data.quizStats) {
         alert('导入失败：文件格式不正确，缺少有效数据');
         return;
       }
-      // Import sessions (merge with existing)
-      if (data.sessions) {
-        const existing = JSON.parse(localStorage.getItem('phymathia_sessions') || '{}');
-        Object.assign(existing, data.sessions);
-        localStorage.setItem('phymathia_sessions', JSON.stringify(existing));
-      }
-      // Import messages (merge, skip duplicates by timestamp)
-      if (data.messages) {
-        Object.entries(data.messages).forEach(([sid, msgs]) => {
-          if (!Array.isArray(msgs)) return;
-          const key = 'phymathia_msgs_' + sid;
-          const existing = JSON.parse(localStorage.getItem(key) || '[]');
-          // Deduplicate by timestamp (field is 'timestamp', not 'time')
-          const existingTimes = new Set(existing.map(m => m.timestamp));
-          msgs.forEach(m => { if (!existingTimes.has(m.timestamp)) existing.push(m); });
-          localStorage.setItem(key, JSON.stringify(existing));
+      const modeSelect = document.getElementById('importModeSelect');
+      const mode = modeSelect && modeSelect.value ? modeSelect.value : 'merge';
+      let serverResp = null;
+      try {
+        serverResp = await fetch('/api/backup/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, backup: data })
         });
+      } catch (serverErr) {
+        console.warn('[Import] Server import unavailable, use local:', serverErr);
       }
-      // Import knowledge
-      if (data.knowledge) {
-        const existing = JSON.parse(localStorage.getItem('phymathia_knowledge') || '{}');
-        Object.assign(existing, data.knowledge);
-        localStorage.setItem('phymathia_knowledge', JSON.stringify(existing));
+      if (!serverResp || !serverResp.ok) {
+        _applyLocalBackup(data, mode === 'replace');
+        await _pushBackupToExistingApis(data);
+      } else {
+        _applyLocalBackup(data, mode === 'replace');
       }
-      // Import settings
-      if (data.currentSession) localStorage.setItem('phymathia_current_session', data.currentSession);
-      if (data.level) localStorage.setItem('phymathia_level', data.level);
-      if (data.theme) localStorage.setItem('phymathia_theme', data.theme);
-
-      // Sync all imported data to server
-      await _flushToServer();
-      // Also sync individual session messages
-      if (data.sessions) {
-        for (const sid of Object.keys(data.sessions)) {
-          const msgs = JSON.parse(localStorage.getItem('phymathia_msgs_' + sid) || '[]');
-          await saveSessionMessages(sid, msgs);
-        }
-      }
-
+      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+      if (typeof setFormulaCache === 'function') setFormulaCache(_safeParseJSON(localStorage.getItem('phymathia_formulas'), {}));
       updateDataStats();
       alert('数据导入成功！页面即将刷新。');
       location.reload();

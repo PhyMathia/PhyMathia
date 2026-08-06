@@ -194,6 +194,8 @@ LEVEL_PROMPTS = {
     "research": "（用户是科研人员，请用学术深度讲解，可以使用高级数学工具和前沿研究视角，推导可以简略关键步骤，关注物理本质和数学结构的深层联系）",
 }
 
+STRICT_MODULE_MAX_TOKENS = 1000
+
 
 def _is_socratic_message(msg) -> bool:
     """识别苏格拉底支线消息，兼容新 branch 字段和历史内容标记。"""
@@ -344,8 +346,33 @@ def _branch_context_instruction(
     elif branch_type == "continue":
         lines.append("- 用户在当前节点自由续问；若问题与当前气泡无关，可以作为新主线回答。")
     elif branch_type == "blank":
-        lines.append("- 用户通过空白画布节点要求生成该模块的完整正文；只输出该模块内容，不要输出完整学习卡片的 XML 标签。")
+        lines.append("- 用户通过空白画布节点要求生成该模块的正文；只输出该模块内容，不要输出完整学习卡片的 XML 标签。")
+        strict_instruction = _module_output_instruction(source_module)
+        if strict_instruction:
+            lines.append(strict_instruction)
     return "\n".join(lines)
+
+
+def _module_output_instruction(module_key: str) -> str:
+    if module_key == "socratic":
+        return (
+            "严格输出苏格拉底追问小节，格式如下，不得增加任何前言、答案、解释或无关小节：\n"
+            "### 苏格拉底追问\n"
+            "1. [基础] 只写一个基础引导问题\n"
+            "2. [进阶] 只写一个进阶引导问题\n"
+            "3. [拓展] 只写一个拓展引导问题\n"
+            "禁止输出 XML 标签，禁止输出“进阶学习方向”，禁止展开问题背景或写“想一想”等引导语。"
+        )
+    if module_key == "learn":
+        return (
+            "严格输出进阶学习方向小节，格式如下，不得增加任何前言、公式段、步骤讲解或无关小节：\n"
+            "### 进阶学习方向\n"
+            "1. 方向1\n"
+            "2. 方向2\n"
+            "3. 方向3\n"
+            "禁止输出 XML 标签，禁止输出“苏格拉底追问”，每条方向只保留一个短句。"
+        )
+    return ""
 
 
 def _graph_message_summary(message: dict, module_key: str = "") -> str:
@@ -392,7 +419,9 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
         lines.append(f"{index + 1}. {label}（消息 ID：{item.get('timestamp') or ''}）")
     if source_module:
         lines.append(f"- 当前聚焦气泡：{module_labels.get(source_module, source_module)}")
-    lines.append("- 上下文只围绕当前探索路径展开；上游节点以摘要形式提供，当前节点可提供完整内容。")
+    lines.append("- 上下文只围绕当前探索路径展开；上游节点以摘要形式提供，当前节点可提供该模块正文。")
+    if source_module in ("socratic", "learn"):
+        lines.append("- 当前节点为 socratic/learn 局部节点，必须只输出三行列表，不要展开为完整讲解。")
     lines.append("- 不要重新展开无关分支，也不要重复其他模块的完整内容。")
     return "\n".join(lines)
 
@@ -416,8 +445,19 @@ def _workflow_context_instruction(workflow_context) -> str:
             lines.append(f"- 当前模块：{target['module']}")
         if target.get("kind") == "module":
             lines.append("- 当前为局部节点生成模式：只生成该模块正文，不要输出完整学习卡片，不要输出其他模块。")
+            strict_instruction = _module_output_instruction(target.get("module", ""))
+            if strict_instruction:
+                lines.append(strict_instruction)
         elif target.get("kind") == "answer":
             lines.append("- AI 回答节点是分发节点，不生成正文内容。")
+        elif target.get("kind") == "summary":
+            lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
+            lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
+            lines.append("- 总结中如出现公式，仍按全局 <formula> 规范标注，不标注单个符号或单位。")
+        elif target.get("kind") == "hub":
+            lines.append("- 汇聚节点只负责收集上游内容，不生成正文。")
+        elif target.get("kind") == "note":
+            lines.append("- 人工总结节点由用户手动填写，AI 不生成正文。")
     if question:
         lines.append(f"- 原始问题：{question[:1200]}")
     if analysis:
@@ -714,6 +754,7 @@ async def _mock_stream_openai(content: str = MOCK_ANSWER, include_html: bool = T
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": "phymathia-mock",
+        "progress": 2,
         "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": None}],
     }
     await asyncio.sleep(0.3)
@@ -723,13 +764,15 @@ async def _mock_stream_openai(content: str = MOCK_ANSWER, include_html: bool = T
 
     # 逐 chunk 发送 markdown 内容
     chunk_size = 4
-    for i in range(0, len(content), chunk_size):
+    total_chunks = max(1, (len(content) + chunk_size - 1) // chunk_size)
+    for index, i in enumerate(range(0, len(content), chunk_size)):
         chunk = content[i : i + chunk_size]
         yield {
             "id": "phymathia-chat",
             "object": "chat.completion.chunk",
             "created": int(time.time()),
             "model": "phymathia-mock",
+            "progress": min(85, 3 + round((index + 1) / total_chunks * 72)),
             "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}],
         }
         await asyncio.sleep(0.015)
@@ -946,11 +989,21 @@ async def api_models_chat(request: Request):
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
+    module_key = target.get("module") or source_module
+    is_strict_module = module_key in ("socratic", "learn") and (
+        target.get("kind") == "module" or branch_type == "blank"
+    )
+    max_tokens = payload.get("max_tokens")
+    if is_strict_module and not max_tokens:
+        max_tokens = STRICT_MODULE_MAX_TOKENS
     body = {
         "model": model_name,
         "messages": messages,
         "stream": stream,
     }
+    if max_tokens:
+        body["max_tokens"] = int(max_tokens)
 
     logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")
 
@@ -1012,7 +1065,20 @@ async def api_save_sessions(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     def updater(data):
-        if isinstance(payload, dict) and "id" in payload:
+        if isinstance(payload, list):
+            for sdata in payload:
+                if not isinstance(sdata, dict) or not sdata.get("id"):
+                    continue
+                sid = sdata["id"]
+                data[sid] = {
+                    "id": sid,
+                    "title": sdata.get("title", "新对话"),
+                    "icon": sdata.get("icon", ""),
+                    "sessionId": sdata.get("sessionId", ""),
+                    "createdAt": sdata.get("createdAt", int(time.time() * 1000)),
+                    "updatedAt": sdata.get("updatedAt", int(time.time() * 1000)),
+                }
+        elif isinstance(payload, dict) and "id" in payload:
             data[payload["id"]] = {
                 "id": payload["id"],
                 "title": payload.get("title", "新对话"),
@@ -1034,7 +1100,7 @@ async def api_save_sessions(request: Request):
         return data
 
     _mutate_json(SESSIONS_PATH, updater)
-    return {"ok": True, "count": len(payload) if isinstance(payload, dict) else 1}
+    return {"ok": True, "count": len(payload) if isinstance(payload, (dict, list)) else 1}
 
 
 @app.put("/api/sessions/{session_id}")
@@ -1944,6 +2010,153 @@ async def api_delete_kv(key: str):
 
     _mutate_json(KV_PATH, updater)
     return {"ok": True}
+
+
+# ====== 数据备份导出/导入 API ======
+def _normalize_formula_map(data) -> dict:
+    if isinstance(data, dict):
+        if "items" in data:
+            items = data["items"]
+            if isinstance(items, dict):
+                return items
+            if isinstance(items, list):
+                return {it.get("id") or ("f_" + uuid.uuid4().hex[:12]): it
+                        for it in items if isinstance(it, dict)}
+            return {}
+        return data
+    if isinstance(data, list):
+        return {it.get("id") or ("f_" + uuid.uuid4().hex[:12]): it
+                for it in data if isinstance(it, dict)}
+    return {}
+
+
+def _build_backup_payload() -> dict:
+    sessions = _read_json(SESSIONS_PATH, {})
+    messages = {}
+    for sid in sessions:
+        if not isinstance(sessions[sid], dict):
+            continue
+        path = _get_messages_path(sid)
+        value = _read_json(path, [])
+        messages[sid] = value if isinstance(value, list) else []
+    for path in sorted(MESSAGES_DIR.glob("*.json")):
+        sid = path.stem
+        if sid in messages:
+            continue
+        value = _read_json(path, [])
+        messages[sid] = value if isinstance(value, list) else []
+    return {
+        "version": 2,
+        "exportedAt": time.time(),
+        "sessions": sessions,
+        "messages": messages,
+        "knowledge": _read_json(KNOWLEDGE_PATH, {}),
+        "formulas": _read_json(FORMULAS_PATH, {}),
+        "kv": _read_json(KV_PATH, {}),
+    }
+
+
+def _restore_sessions(data: dict, replace: bool) -> int:
+    sessions = _read_json(SESSIONS_PATH, {})
+    if replace:
+        sessions = {}
+    if not isinstance(data, (dict, list)):
+        return 0
+    count = 0
+    entries = data.items() if isinstance(data, dict) else [(None, item) for item in data]
+    for raw_key, sdata in entries:
+        if not isinstance(sdata, dict):
+            continue
+        sid = str(sdata.get("id") or raw_key or "")
+        if not sid:
+            continue
+        now = int(time.time() * 1000)
+        sessions[sid] = {
+            "id": sid,
+            "title": sdata.get("title", "新对话"),
+            "icon": sdata.get("icon", ""),
+            "sessionId": sdata.get("sessionId", ""),
+            "createdAt": sdata.get("createdAt", now),
+            "updatedAt": sdata.get("updatedAt", now),
+        }
+        count += 1
+    _write_json(SESSIONS_PATH, sessions)
+    return count
+
+
+def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
+    if replace:
+        for path in MESSAGES_DIR.glob("*.json"):
+            path.unlink(missing_ok=True)
+    if not isinstance(data, dict):
+        return 0
+    alias_to_sid = {}
+    for sid, sdata in sessions.items():
+        if isinstance(sdata, dict) and sdata.get("sessionId"):
+            alias_to_sid[sdata["sessionId"]] = sid
+    count = 0
+    for raw_sid, msgs in data.items():
+        sid = alias_to_sid.get(raw_sid, raw_sid)
+        if not isinstance(msgs, list):
+            continue
+        _write_json(_get_messages_path(sid), msgs)
+        count += len(msgs)
+    return count
+
+
+def _restore_backup(backup: dict, replace: bool) -> dict:
+    sessions = backup.get("sessions") or {}
+    session_count = _restore_sessions(sessions, replace)
+    saved_sessions = _read_json(SESSIONS_PATH, {})
+    message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace)
+
+    knowledge = _normalize_knowledge(backup.get("knowledge") or {})
+    if replace:
+        _write_json(KNOWLEDGE_PATH, {})
+        _write_json(FORMULAS_PATH, {})
+        _write_json(KV_PATH, {})
+    if knowledge:
+        existing_knowledge = _read_json(KNOWLEDGE_PATH, {})
+        _write_json(KNOWLEDGE_PATH, _dedupe_knowledge({**existing_knowledge, **knowledge}))
+
+    formulas = _normalize_formula_map(backup.get("formulas") or {})
+    if formulas:
+        existing_formulas = _read_json(FORMULAS_PATH, {})
+        _write_json(FORMULAS_PATH, _dedupe_formula_map({**existing_formulas, **formulas}))
+
+    kv_data = backup.get("kv") or {}
+    if isinstance(kv_data, dict):
+        existing_kv = {} if replace else _read_json(KV_PATH, {})
+        _write_json(KV_PATH, {**existing_kv, **kv_data})
+
+    return {
+        "ok": True,
+        "sessions": session_count,
+        "messages": message_count,
+        "knowledge": len(knowledge),
+        "formulas": len(formulas),
+        "kv": len(kv_data) if isinstance(kv_data, dict) else 0,
+    }
+
+
+@app.get("/api/backup/export")
+async def api_backup_export():
+    return _build_backup_payload()
+
+
+@app.post("/api/backup/import")
+async def api_backup_import(request: Request):
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    backup = payload.get("backup") if isinstance(payload.get("backup"), dict) else payload
+    if not isinstance(backup, dict):
+        raise HTTPException(status_code=400, detail="Backup payload must be an object")
+    mode = str(payload.get("mode") or "merge").lower()
+    if mode not in ("merge", "replace"):
+        raise HTTPException(status_code=400, detail="mode must be merge or replace")
+    return _restore_backup(backup, mode == "replace")
 
 
 # ====== 静态文件 catch-all（必须放在所有 API 路由之后）======

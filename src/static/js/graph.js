@@ -7,6 +7,9 @@ const GRAPH_MODULE_META = {
   socratic: { label: '苏格拉底追问', color: '#f43f5e' },
   learn: { label: '进阶学习', color: '#a855f7' },
   manual: { label: '非 AI 回答', color: '#64748b' },
+  hub: { label: '汇聚', color: '#eab308' },
+  summary: { label: 'AI 总结', color: '#0d9488' },
+  note: { label: '人工总结', color: '#f97316' },
 };
 
 const GRAPH_MODULE_DEFAULT_OUTPUTS = {
@@ -19,8 +22,8 @@ const GRAPH_MODULE_DEFAULT_OUTPUTS = {
 };
 
 const GRAPH_NODE_ATTRIBUTES = {
-  question: { key: 'question', label: '问题', color: '#64748b' },
-  followup: { key: 'followup', label: '追问', color: '#4a9eff' },
+  question: { key: 'question', label: '问题', color: '#4a9eff' },
+  followup: { key: 'followup', label: '追问', color: '#6366f1' },
   answer: { key: 'answer', label: 'AI 回答', color: '#10b981' },
   physics: { key: 'physics', label: '物理视角', color: '#f59e0b' },
   math: { key: 'math', label: '数学视角', color: '#3b82f6' },
@@ -29,13 +32,16 @@ const GRAPH_NODE_ATTRIBUTES = {
   socratic: { key: 'socratic', label: '苏格拉底追问', color: '#f43f5e' },
   learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
   manual: { key: 'manual', label: '非 AI 回答', color: '#64748b' },
+  hub: { key: 'hub', label: '汇聚', color: '#eab308' },
+  summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
+  note: { key: 'note', label: '人工总结', color: '#f97316' },
 };
 
 const ANSWER_OUTPUT_SCHEMA = ['physics', 'math', 'graph', 'viz', 'learn', 'socratic'];
 const ANSWER_OUTPUT_INDEX = { physics: 0, math: 1, graph: 2, viz: 3, learn: 4, socratic: 5 };
 
 const MANUAL_NODE_OPTIONS = [
-  { key: 'question', kind: 'user', label: '问题', color: '#64748b' },
+  { key: 'question', kind: 'user', label: '问题', color: '#4a9eff' },
   { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981' },
   { key: 'manual', kind: 'answer', label: '非 AI 回答', color: '#64748b' },
   { key: 'physics', kind: 'module', label: '物理视角', color: '#f59e0b' },
@@ -44,7 +50,12 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'viz', kind: 'module', label: '交互可视化', color: '#f472b6' },
   { key: 'learn', kind: 'module', label: '进阶学习', color: '#a855f7' },
   { key: 'socratic', kind: 'module', label: '苏格拉底追问', color: '#f43f5e' },
+  { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308' },
+  { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488' },
+  { key: 'note', kind: 'note', label: '人工总结', color: '#f97316' },
 ];
+
+const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note'];
 
 let graphCanvas = null;
 let graphInner = null;
@@ -641,14 +652,14 @@ function _buildGraphData(messages, state) {
   (state.customNodes || []).forEach(cn => {
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
-    const kind = cn.kind === 'user' || cn.kind === 'answer' || cn.kind === 'module' ? cn.kind : 'blank';
+    const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
     const node = {
       ...cn,
       id: cn.id,
       kind,
       x: saved.x != null ? saved.x : (cn.x || 0),
       y: saved.y != null ? saved.y : (cn.y || 0),
-      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module') ? 3 : kind === 'answer' ? 2 : 1),
+      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module' || kind === 'hub') ? 3 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 1)),
       targetAngle: cn.targetAngle != null ? cn.targetAngle : 0,
       w: 0,
       h: 0,
@@ -699,9 +710,11 @@ function _resolveGraphEdges(state, defaults, nodeById) {
 
   for (const customEdge of custom) {
     const inputKey = customEdge.to + ':' + customEdge.toPort;
-    if (occupiedInputs.has(inputKey)) continue;
+    const toNode = nodeById[customEdge.to];
+    const isHubInput = toNode && toNode.kind === 'hub';
+    if (!isHubInput && occupiedInputs.has(inputKey)) continue;
     edges.push({ ...customEdge, type: customEdge.type || 'custom', custom: true });
-    occupiedInputs.add(inputKey);
+    if (!isHubInput) occupiedInputs.add(inputKey);
     occupiedOutputs.add(customEdge.from + ':' + customEdge.fromPort);
   }
 
@@ -757,6 +770,9 @@ function _nodeSub(node) {
   if (node.isRoot) return '核心问题';
   if (node.kind === 'user') return node.isBranch ? (node.branchLabel || '延伸追问') : '问题';
   if (node.kind === 'answer') return node.manual ? '非 AI 回答' : (node.branchLabel || 'AI 回答簇');
+  if (node.kind === 'hub') return '汇聚节点';
+  if (node.kind === 'summary') return 'AI 总结';
+  if (node.kind === 'note') return '人工总结';
   if (node.kind === 'module') return '';
   if (node.kind === 'blank') return '空白节点';
   return '';
@@ -773,6 +789,9 @@ function _nodeAttribute(node) {
     return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.question;
   }
   if (node.kind === 'answer') return node.manual ? GRAPH_NODE_ATTRIBUTES.manual : GRAPH_NODE_ATTRIBUTES.answer;
+  if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
+    return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
+  }
   if (node.kind === 'user') {
     if (node.attribute && GRAPH_NODE_ATTRIBUTES[node.attribute]) return GRAPH_NODE_ATTRIBUTES[node.attribute];
     if (node.moduleKey && GRAPH_NODE_ATTRIBUTES[node.moduleKey]) return GRAPH_NODE_ATTRIBUTES[node.moduleKey];
@@ -786,6 +805,9 @@ function _nodeAttribute(node) {
 
 function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+  if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
+  if (toNode.kind === 'summary' || toNode.kind === 'note') return fromNode.kind === 'hub';
+  if (fromNode.kind === 'hub') return false;
   const messages = _getChatHistory();
   const fromAttr = _portAttribute(fromNode, fromPort, messages);
   const toAttr = _nodeAttribute(toNode).key;
@@ -818,6 +840,7 @@ function _flashInvalidConnection() {
 
 function _nodeActions(node) {
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) return '';
+  if (node.messageIndex < 0 && (node.manual || node.kind === 'hub')) return '';
   if (node.messageIndex < 0) {
     const isBusy = !!node.busy;
     const label = isBusy ? '生成中...' : node.content ? '重新生成' : '生成';
@@ -955,6 +978,9 @@ function _nodeInputLabel(node) {
   if (node.kind === 'answer') return node.manual ? '非 AI 回答' : 'AI 回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   if (node.kind === 'blank') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || '空白节点';
+  if (node.kind === 'hub') return '汇聚输入';
+  if (node.kind === 'summary') return 'AI 总结';
+  if (node.kind === 'note') return '人工总结';
   if (node.kind === 'user') return '问题';
   return '来源';
 }
@@ -969,6 +995,8 @@ function _nodeOutputLabels(node, messages) {
   if (node.kind === 'answer') {
     return _answerOutputPorts(node, messages).map(item => item.label);
   }
+  if (node.kind === 'hub') return ['AI 总结'];
+  if (node.kind === 'summary' || node.kind === 'note') return [];
   return ['输出'];
 }
 
@@ -996,6 +1024,7 @@ function _portAttribute(node, portId, messages) {
       return (ports[index] && ports[index].attribute) || 'answer';
     }
     if (node.kind === 'user') return index === 0 ? 'answer' : 'manual';
+    if (node.kind === 'hub') return index === 0 ? 'summary' : 'followup';
     return 'followup';
   }
   return _nodeAttribute(node).key;
@@ -1003,13 +1032,14 @@ function _portAttribute(node, portId, messages) {
 
 function _nodeOutputCount(node, messages, state) {
   if (node.kind === 'draft') return 0;
+  if (node.kind === 'summary' || node.kind === 'note') return 0;
   const savedCount = state.portCounts && state.portCounts[node.id];
   return Math.max(1, _nodeOutputLabels(node, messages).length, savedCount || 0);
 }
 
 function _renderInputPorts(node, state) {
   const attr = _nodeAttribute(node);
-  const canAddInput = node.kind === 'user';
+  const canAddInput = node.kind === 'user' || node.kind === 'hub';
   const savedCount = canAddInput && state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
@@ -1033,6 +1063,7 @@ function _renderInputPorts(node, state) {
 
 function _renderOutputPorts(node, messages, state) {
   if (node.kind === 'draft') return '';
+  if (node.kind === 'summary' || node.kind === 'note') return '';
   let ports = [];
   if (node.kind === 'user') {
     ports = [
@@ -1051,6 +1082,14 @@ function _renderOutputPorts(node, messages, state) {
     ports = _answerOutputPorts(node, messages);
   } else if (node.kind === 'module') {
     ports = _moduleOutputPorts(node, messages[node.messageIndex]);
+  } else if (node.kind === 'hub') {
+    ports = [{
+      label: 'AI 总结',
+      type: 'branch',
+      branchType: 'summary',
+      attribute: 'summary',
+      question: '',
+    }];
   } else {
     const labels = _nodeOutputLabels(node, messages);
     ports = labels.map((label, index) => ({
@@ -1064,6 +1103,7 @@ function _renderOutputPorts(node, messages, state) {
   const canAddPort = node.kind === 'module' && node.moduleKey === 'socratic';
   const savedCount = canAddPort && state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
   const count = Math.max(ports.length, savedCount);
+  if (count <= 0) return '';
   let html = '<div class="graph-port-col graph-output-col">';
   for (let i = 0; i < count; i++) {
     const meta = ports[i] || {
@@ -1148,7 +1188,7 @@ function _cleanBlankNodeContent(node, rawContent) {
 function _renderCustomNodeContentHtml(node) {
   let text = String(node.content || '');
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
-  else if (node.kind === 'answer' && typeof stripXmlTags === 'function') text = stripXmlTags(text);
+  else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   if (typeof renderMarkdown === 'function') {
     return renderMarkdown(text, { sourceModule: node.moduleKey || '' });
   }
@@ -1156,6 +1196,11 @@ function _renderCustomNodeContentHtml(node) {
 }
 
 function _customNodeStatusText(node) {
+  if (node.kind === 'hub') {
+    const connected = (graphView.edges || []).some(edge => edge.to === node.id && !edge.draft);
+    return connected ? '已汇聚' : '等待连接';
+  }
+  if (node.manual) return (node.content || '').trim() ? '完成' : '待填写';
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) {
     if (node.busy || node.status === 'running') return '分析中';
     return '分发';
@@ -1189,22 +1234,28 @@ function _renderNodeHtml(node, messages, state) {
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.kind === 'module'
     ? ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey)
-    : (node.kind === 'answer' && node.messageIndex < 0
-      ? (node.manual ? '非 AI 回答' : 'AI 回答')
-      : _nodeContent(message, node));
+    : node.kind === 'hub'
+      ? '汇聚'
+      : node.kind === 'summary'
+        ? 'AI 总结'
+        : node.kind === 'note'
+          ? '人工总结'
+          : (node.kind === 'answer' && node.messageIndex < 0
+            ? (node.manual ? '非 AI 回答' : 'AI 回答')
+            : _nodeContent(message, node));
   const hasCustomContent = !!((node.content || '').trim());
   const customFill = node.messageIndex < 0 && node.manual && !hasCustomContent
     ? '<textarea class="graph-custom-node-content" rows="5" onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'
     : '';
   const customBody = node.messageIndex < 0
     ? (customFill
-        || (node.kind === 'module'
+        || ((node.kind === 'module' || node.kind === 'summary')
           ? (hasCustomContent
               ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
               : (node.busy || node.status === 'running'
                   ? '<div class="graph-custom-node-render"></div>'
                   : '<div class="graph-custom-node-empty">等待生成</div>'))
-          : (node.kind === 'answer' && node.manual
+          : ((node.kind === 'answer' || node.kind === 'note') && node.manual
               ? (hasCustomContent
                   ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
                   : '')
@@ -1212,7 +1263,7 @@ function _renderNodeHtml(node, messages, state) {
     : '';
   const body = node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
-    : (node.kind === 'answer' ? customBody : '');
+    : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : '');
   const sub = _nodeSub(node);
   const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
   const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
@@ -1226,6 +1277,9 @@ function _renderNodeHtml(node, messages, state) {
     ? 'deleteCustomNode(\'' + node.id + '\')'
     : 'graphModuleAction(\'delete\',\'' + node.id + '\')';
   const deleteBtn = node.isRoot ? '' : '<button class="graph-node-delete-toggle" onclick="' + deleteAction + '" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
+  const quickConnectBtn = node.kind === 'hub'
+    ? '<button class="graph-hub-connect-btn" onclick="event.stopPropagation();quickConnectToHub(\'' + node.id + '\')" title="一键接入选中节点输出"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg></button>'
+    : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const graphState = state || _graphState();
   const inputHtml = _renderInputPorts(node, graphState);
@@ -1236,7 +1290,7 @@ function _renderNodeHtml(node, messages, state) {
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
     + _nodeActions(node)
@@ -1342,7 +1396,7 @@ function _savePositions() {
   });
   state.groups = graphView.groups.map(group => ({ ...group }));
   state.customNodes = graphView.nodes
-    .filter(node => node.messageIndex < 0 && (node.kind === 'blank' || node.kind === 'user' || node.kind === 'answer' || node.kind === 'module'))
+    .filter(node => node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind))
     .map(node => ({ ...node }));
   _saveGraphState(state);
   if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
@@ -1960,6 +2014,7 @@ function graphModuleAction(action, nodeId) {
     if (typeof dontUnderstandModule === 'function') dontUnderstandModule(node.moduleKey, parentId);
   } else if (action === 'delete') {
     if (confirm('确定删除这个节点及其子分支吗？') && typeof window.deleteGraphMessageByTimestamp === 'function') {
+      _pushGraphUndo(true);
       window.deleteGraphMessageByTimestamp(message.timestamp);
     }
   } else if (action === 'minimize' && (node.kind === 'module' || node.kind === 'answer')) {
@@ -2045,10 +2100,11 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   const state = _graphState();
   state.connections = state.connections || [];
   state.removedEdges = state.removedEdges || [];
-  state.connections = state.connections.filter(c =>
-    !(c.from === fromNodeId && (c.fromPort || 'out-0') === fromPort)
-    && !(c.to === toNodeId && (c.toPort || 'in-0') === toPort)
-  );
+  state.connections = state.connections.filter(c => {
+    const sameSource = c.from === fromNodeId && (c.fromPort || 'out-0') === fromPort;
+    const sameInput = c.to === toNodeId && (c.toPort || 'in-0') === toPort;
+    return !sameSource && (toNode.kind !== 'hub' || !sameInput);
+  });
   const edge = {
     from: fromNodeId,
     fromPort: fromPort || 'out-0',
@@ -2152,8 +2208,8 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
   state.customNodes.push({
     id: nodeId,
     kind: option.kind,
-    moduleKey: option.kind === 'module' ? option.key : '',
-    manual: option.key === 'manual',
+    moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
+    manual: option.key === 'manual' || option.key === 'note',
     content: '',
     status: 'empty',
     summary: '',
@@ -2166,7 +2222,7 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     generated: false,
     x,
     y,
-    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : 3,
+    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
     timestamp: Date.now(),
@@ -2503,7 +2559,7 @@ function graphAddOutputPort(nodeId) {
 
 function graphAddInputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'user') return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -2514,13 +2570,21 @@ function graphAddInputPort(nodeId) {
 
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'user' || portIndex <= 0) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub') || portIndex <= 0) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
   state.connections = state.connections || [];
   state.inputPortCounts[nodeId] = Math.max(0, (state.inputPortCounts[nodeId] || 0) - 1);
-  state.connections = state.connections.filter(c => !(c.to === nodeId && c.toPort === ('in-' + portIndex)));
+  state.connections = state.connections
+    .map(c => {
+      if (c.to !== nodeId || !/^in-\d+$/.test(String(c.toPort || ''))) return c;
+      const idx = parseInt(String(c.toPort).replace('in-', ''), 10);
+      if (idx === portIndex) return null;
+      if (idx > portIndex) return { ...c, toPort: 'in-' + (idx - 1) };
+      return c;
+    })
+    .filter(Boolean);
   _saveGraphState(state);
   renderGraphCanvas();
 }
@@ -2531,6 +2595,8 @@ function _baseOutputPortCount(node) {
   if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]).length;
   if (node.kind === 'user') return 1;
   if (node.kind === 'answer') return _nodeOutputLabels(node, messages).length;
+  if (node.kind === 'hub') return 1;
+  if (node.kind === 'summary' || node.kind === 'note') return 0;
   return 0;
 }
 
@@ -3136,7 +3202,7 @@ async function _deleteSelectedGraphNodes(ids) {
       drafts.push(id);
       continue;
     }
-    if (node.messageIndex < 0 && (node.kind === 'user' || node.kind === 'answer' || node.kind === 'module')) {
+    if (node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind)) {
       customs.push(id);
       continue;
     }
@@ -3164,10 +3230,82 @@ async function _deleteSelectedGraphNodes(ids) {
   }
 }
 
+function quickConnectToHub(hubId) {
+  const hub = _findGraphNode(hubId);
+  if (!hub || hub.kind !== 'hub') return;
+  const selectedIds = Array.from(graphView.selectedNodeIds || []);
+  if (!selectedIds.length) {
+    if (typeof showToast === 'function') showToast('请先选中要接入的节点');
+    return;
+  }
+
+  const messages = _getChatHistory();
+  const state = _graphState();
+  const existingExtraPorts = (state.inputPortCounts && state.inputPortCounts[hubId]) || 0;
+  const usedHubPorts = new Set(
+    (state.connections || [])
+      .filter(c => c.to === hubId)
+      .map(c => String(c.toPort || 'in-0'))
+  );
+  let totalHubPorts = 1 + existingExtraPorts;
+  const newConnections = [];
+
+  for (const id of selectedIds) {
+    const source = _findGraphNode(id);
+    if (!source || source.kind === 'hub' || source.kind === 'draft') continue;
+    const outputCount = _nodeOutputCount(source, messages, state);
+    for (let i = 0; i < outputCount; i++) {
+      const fromPort = 'out-' + i;
+      const alreadyConnected = (state.connections || []).some(c =>
+        c.from === id
+        && (c.fromPort || 'out-0') === fromPort
+        && c.to === hubId
+      );
+      if (alreadyConnected) continue;
+      newConnections.push({
+        from: id,
+        fromPort,
+        to: hubId,
+        toPort: '',
+        type: 'custom',
+        custom: true,
+      });
+    }
+  }
+
+  if (!newConnections.length) {
+    const hasOutput = selectedIds.some(id => {
+      const source = _findGraphNode(id);
+      return source && _nodeOutputCount(source, messages, state) > 0;
+    });
+    if (typeof showToast === 'function') {
+      showToast(hasOutput ? '选中的输出已全部接入' : '选中的节点没有可连接的输出端口');
+    }
+    return;
+  }
+
+  for (const connection of newConnections) {
+    let portIndex = 0;
+    while (usedHubPorts.has('in-' + portIndex)) portIndex++;
+    if (portIndex >= totalHubPorts) totalHubPorts = portIndex + 1;
+    connection.toPort = 'in-' + portIndex;
+    usedHubPorts.add('in-' + portIndex);
+  }
+
+  _pushGraphUndo();
+  state.connections = state.connections || [];
+  state.connections.push(...newConnections);
+  state.inputPortCounts = state.inputPortCounts || {};
+  state.inputPortCounts[hubId] = Math.max(existingExtraPorts, totalHubPorts - 1);
+  _saveGraphState(state);
+  renderGraphCanvas();
+  if (typeof showToast === 'function') showToast('已接入 ' + newConnections.length + ' 个输出，并按需补齐输入端口');
+}
+
 function _saveCustomNodes() {
   const state = _graphState();
   state.customNodes = graphView.nodes
-    .filter(node => node.messageIndex < 0 && (node.kind === 'blank' || node.kind === 'user' || node.kind === 'answer' || node.kind === 'module'))
+    .filter(node => node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind))
     .map(node => ({ ...node }));
   _saveGraphState(state);
 }
@@ -3213,8 +3351,8 @@ function createManualNode(nodeKind) {
   state.customNodes.push({
     id: option.key + '-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     kind: option.kind,
-    moduleKey: option.kind === 'module' ? option.key : '',
-    manual: option.key === 'manual',
+    moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
+    manual: option.key === 'manual' || option.key === 'note',
     content: '',
     status: 'empty',
     summary: '',
@@ -3227,7 +3365,7 @@ function createManualNode(nodeKind) {
     generated: false,
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
-    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : 3,
+    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
     timestamp: Date.now(),
@@ -3285,7 +3423,7 @@ function updateCustomNodeContent(nodeId, value) {
   node.summary = _graphSummary(node.content);
   const state = _graphState();
   state.customNodes = graphView.nodes
-    .filter(item => item.messageIndex < 0 && (item.kind === 'blank' || item.kind === 'user' || item.kind === 'answer' || item.kind === 'module'))
+    .filter(item => item.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(item.kind))
     .map(item => ({ ...item }));
   _saveGraphState(state);
 }
@@ -3349,8 +3487,18 @@ function _findQuestionContentUpstream(node) {
   return walk(node);
 }
 
-function _nodeOutputContent(node) {
+function _nodeOutputContent(node, seen) {
   if (!node) return '';
+  seen = seen || new Set();
+  if (seen.has(node.id)) return '';
+  seen.add(node.id);
+  if (node.kind === 'hub') {
+    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
+    return incoming
+      .map(edge => _nodeOutputContent(_findGraphNode(edge.from), seen))
+      .filter(Boolean)
+      .join('\n\n');
+  }
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) {
     return node.analysis || _findQuestionContentUpstream(node) || '';
   }
@@ -3392,7 +3540,13 @@ function _buildWorkflowContextForNode(node) {
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
       ? { label: node.manual ? '非 AI 回答' : 'AI 回答' }
-      : { label: '问题' };
+      : node.kind === 'hub'
+        ? { label: '汇聚' }
+        : node.kind === 'summary'
+          ? { label: 'AI 总结' }
+          : node.kind === 'note'
+            ? { label: '人工总结' }
+            : { label: '问题' };
   const allUpstream = _collectUpstreamPath(node);
   const analysisNode = allUpstream.find(item => item.kind === 'answer' && !item.manual);
   const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
@@ -3444,19 +3598,54 @@ function _nodeInputHash(node) {
 
 function _workflowPromptForNode(node, workflowContext) {
   const targetLabel = workflowContext.target.label || '节点';
+  if (node.kind === 'hub') {
+    return '这是汇聚节点，由上游连线收集内容，不需要 AI 生成。';
+  }
+  if (node.kind === 'summary') {
+    const upstreamText = (workflowContext.upstream || [])
+      .map(item => (item.content ? item.label + '：\n' + item.content : ''))
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 8000);
+    return '请根据以下已连接内容生成一份简明、结构化的 AI 总结。'
+      + '要求：提炼物理直觉、数学本质、关键结论、公式和后续建议；只输出总结正文；不要输出完整学习卡片 XML，不要输出 <summary> 标签，不要输出其他模块正文；如出现公式仍按 <formula> 规范标注。\n\n'
+      + (upstreamText || '（暂无已连接的上游内容）');
+  }
   if (node.kind === 'answer' && !node.manual) {
     return '请根据用户问题生成 AI 回答节点的完整内容。'
       + '按 PhyMathia 系统提示词输出完整学习卡片 XML，包含 physics/math/graph/viz/learn/socratic 等标签，末尾输出 <summary>。';
   }
   if (node.kind === 'module') {
+    const strictInstruction = _strictModuleOutputInstruction(node.moduleKey || workflowContext.target.module || '');
     return '请基于工作流上下文中的隐藏问题分析保持一致性，但不要重复分析内容。'
       + '请生成「' + targetLabel + '」节点内容。'
-      + '只输出该模块正文，不要输出完整学习卡片的 XML 标签，不要重复其他模块内容。';
+      + '只输出该模块正文，不要输出完整学习卡片的 XML 标签，不要重复其他模块内容。'
+      + (strictInstruction ? '\n\n' + strictInstruction : '');
   }
   if (node.manual) {
     return '这是非 AI 回答节点，由用户手动填写即可，不需要 AI 生成。';
   }
   return '请生成问题节点内容。';
+}
+
+function _strictModuleOutputInstruction(moduleKey) {
+  if (moduleKey === 'socratic') {
+    return '严格按以下格式输出，不得增加前言、答案、解释或任何其他模块：\n'
+      + '### 苏格拉底追问\n'
+      + '1. [基础] 只写一个基础引导问题\n'
+      + '2. [进阶] 只写一个进阶引导问题\n'
+      + '3. [拓展] 只写一个拓展引导问题\n'
+      + '不要使用 XML 标签，不要输出“进阶学习方向”，不要展开问题背景，不要写“想一想”等引导语。';
+  }
+  if (moduleKey === 'learn') {
+    return '严格按以下格式输出，不得增加前言、公式段、步骤讲解或任何其他模块：\n'
+      + '### 进阶学习方向\n'
+      + '1. 方向1\n'
+      + '2. 方向2\n'
+      + '3. 方向3\n'
+      + '不要使用 XML 标签，不要输出“苏格拉底追问”，每条方向只保留一个短句，不要展开学习步骤。';
+  }
+  return '';
 }
 
 async function _streamCustomNodeResponse(resp, node) {
@@ -3465,6 +3654,7 @@ async function _streamCustomNodeResponse(resp, node) {
   let buffer = '';
   let content = '';
   let renderPending = false;
+  let streamChunkCount = 0;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -3500,6 +3690,9 @@ async function _streamCustomNodeResponse(resp, node) {
           const delta = data.choices && data.choices[0] && data.choices[0].delta;
           if (delta && delta.content) {
             content += delta.content;
+            _scheduleWorkflowStreamProgress(content.length);
+            streamChunkCount++;
+            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
             scheduleRender();
           }
         } catch (e) {}
@@ -3529,6 +3722,7 @@ async function _readStreamText(resp) {
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
+  let streamChunkCount = 0;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -3543,7 +3737,12 @@ async function _readStreamText(resp) {
         try {
           const data = JSON.parse(dataStr);
           const delta = data.choices && data.choices[0] && data.choices[0].delta;
-          if (delta && delta.content) content += delta.content;
+          if (delta && delta.content) {
+            content += delta.content;
+            _scheduleWorkflowStreamProgress(content.length);
+            streamChunkCount++;
+            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+          }
         } catch (e) {}
       }
     }
@@ -3647,6 +3846,7 @@ async function _generateAnalysis(node) {
 async function _generateCustomNode(node) {
   if (!node || node.busy) return;
   if (node.kind === 'answer' && !node.manual) return;
+  if (node.kind === 'hub') return;
   node.busy = true;
   node.status = 'running';
   _saveCustomNodes();
@@ -3722,10 +3922,78 @@ async function _generateCustomNode(node) {
 
 function _workflowProgressLabel(node) {
   if (!node) return '';
-  if (node.manual) return '非 AI 回答';
+  if (node.manual) return node.kind === 'note' ? '人工总结' : '非 AI 回答';
+  if (node.kind === 'hub') return '汇聚';
+  if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'answer') return 'AI 回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   return node.kind;
+}
+
+function _workflowItemNeedsProgress(node) {
+  if (!node) return false;
+  if (node.messageIndex >= 0) return false;
+  if (node.manual) return false;
+  if (node.kind === 'user') return false;
+  if (node.kind === 'hub') return false;
+  if (node.kind === 'summary') {
+    const inputHash = _nodeInputHash(node);
+    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
+  }
+  if (node.kind === 'answer' && !node.manual) {
+    const question = _findQuestionContentUpstream(node);
+    const analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
+    return !node.analysis || node.analysisHash !== analysisHash;
+  }
+  if (node.kind === 'module') {
+    const inputHash = _nodeInputHash(node);
+    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
+  }
+  return false;
+}
+
+function _markWorkflowCurrentNode(current) {
+  const label = _workflowProgressLabel(current);
+  workflowProgressCurrentLabel = label ? '正在生成' + label : '正在运行工作流';
+  const pct = workflowProgressTotal ? Math.round(workflowProgressDone / workflowProgressTotal * 100) : 0;
+  const el = document.querySelector('.graph-workflow-progress');
+  if (el) {
+    const text = el.querySelector('.graph-workflow-progress-text');
+    const fill = el.querySelector('.graph-workflow-progress-fill');
+    if (text) text.textContent = label ? (workflowProgressDone + 1) + '/' + workflowProgressTotal + ' 正在生成 ' + label : (workflowProgressDone + 1) + '/' + workflowProgressTotal;
+    if (fill) fill.style.width = pct + '%';
+  }
+  if (typeof showProgress === 'function') {
+    showProgress('tool', pct, label ? '正在生成' + label + ' · ' + (workflowProgressDone + 1) + '/' + workflowProgressTotal : '正在运行工作流');
+  }
+}
+
+let workflowProgressTimer = null;
+let workflowProgressLength = 0;
+let workflowProgressTotal = 0;
+let workflowProgressDone = 0;
+let workflowProgressCurrentLabel = '';
+
+function _applyWorkflowStreamProgress() {
+  workflowProgressTimer = null;
+  const total = workflowProgressTotal;
+  const done = workflowProgressDone;
+  if (!total) return;
+  const streamFraction = Math.min(0.85, workflowProgressLength / 20000);
+  const pct = Math.round((done / total) * 100 + streamFraction * (100 / total));
+  const label = workflowProgressCurrentLabel || '正在运行工作流';
+  const target = Math.max((done / total) * 100, Math.min(99, pct));
+  const current = typeof window.getCurrentProgress === 'function' ? window.getCurrentProgress() : 0;
+  if (target < current) return;
+  if (typeof showProgress === 'function') {
+    showProgress('tool', target, label);
+  }
+}
+
+function _scheduleWorkflowStreamProgress(length) {
+  workflowProgressLength = length || 0;
+  if (workflowProgressTimer) return;
+  workflowProgressTimer = setTimeout(_applyWorkflowStreamProgress, 120);
 }
 
 function _setWorkflowStopButton(active) {
@@ -3733,9 +4001,21 @@ function _setWorkflowStopButton(active) {
   if (btn) btn.disabled = !active;
   const runBtn = document.getElementById('runAllBtn');
   if (runBtn) runBtn.disabled = active;
+  const miniRunBtn = document.getElementById('statusRunBtn');
+  const miniStopBtn = document.getElementById('statusStopBtn');
+  if (miniRunBtn) miniRunBtn.disabled = active;
+  if (miniStopBtn) miniStopBtn.disabled = !active;
 }
 
 function _showWorkflowProgress(total) {
+  if (workflowProgressTimer) {
+    clearTimeout(workflowProgressTimer);
+    workflowProgressTimer = null;
+  }
+  workflowProgressLength = 0;
+  workflowProgressTotal = total || 0;
+  workflowProgressDone = 0;
+  workflowProgressCurrentLabel = '准备运行工作流';
   let el = document.querySelector('.graph-workflow-progress');
   if (!el && graphCanvas) {
     el = document.createElement('div');
@@ -3743,38 +4023,67 @@ function _showWorkflowProgress(total) {
     el.innerHTML = '<div class="graph-workflow-progress-fill"></div><span class="graph-workflow-progress-text"></span>';
     graphCanvas.appendChild(el);
   }
-  if (!el) return;
-  el.hidden = false;
-  el.dataset.total = String(total || 0);
-  el.dataset.done = '0';
-  const fill = el.querySelector('.graph-workflow-progress-fill');
-  const text = el.querySelector('.graph-workflow-progress-text');
-  if (fill) fill.style.width = '0%';
-  if (text) text.textContent = '0/' + (total || 0);
+  if (el) {
+    el.hidden = false;
+    el.dataset.total = String(workflowProgressTotal);
+    el.dataset.done = '0';
+    const fill = el.querySelector('.graph-workflow-progress-fill');
+    const text = el.querySelector('.graph-workflow-progress-text');
+    if (fill) fill.style.width = '0%';
+    if (text) text.textContent = '0/' + workflowProgressTotal;
+  }
+  if (typeof showProgress === 'function') showProgress('tool', 0, '准备运行工作流 · 0/' + workflowProgressTotal);
 }
 
 function _advanceWorkflowProgress(label) {
+  if (workflowProgressTimer) {
+    clearTimeout(workflowProgressTimer);
+    workflowProgressTimer = null;
+  }
+  workflowProgressLength = 0;
+  workflowProgressDone = Math.min(workflowProgressTotal, workflowProgressDone + 1);
+  workflowProgressCurrentLabel = label ? '正在生成' + label : '正在运行工作流';
+  const total = workflowProgressTotal;
+  const done = workflowProgressDone;
   const el = document.querySelector('.graph-workflow-progress');
-  if (!el) return;
-  el.hidden = false;
-  const total = parseInt(el.dataset.total || '0', 10) || 0;
-  const done = Math.min(total, (parseInt(el.dataset.done || '0', 10) || 0) + 1);
-  el.dataset.done = String(done);
-  const fill = el.querySelector('.graph-workflow-progress-fill');
-  const text = el.querySelector('.graph-workflow-progress-text');
-  if (fill) fill.style.width = total ? Math.round(done / total * 100) + '%' : '0%';
-  if (text) text.textContent = label ? done + '/' + total + ' ' + label : done + '/' + total;
+  if (el) {
+    el.hidden = false;
+    el.dataset.total = String(total);
+    el.dataset.done = String(done);
+    const fill = el.querySelector('.graph-workflow-progress-fill');
+    const text = el.querySelector('.graph-workflow-progress-text');
+    if (fill) fill.style.width = total ? Math.round(done / total * 100) + '%' : '0%';
+    if (text) text.textContent = label ? done + '/' + total + ' ' + label : done + '/' + total;
+  }
+  if (typeof showProgress === 'function') {
+    const pct = total ? Math.round(done / total * 100) : 0;
+    showProgress('tool', pct, (label ? '正在生成' + label + ' · ' : '正在运行工作流 · ') + done + '/' + total);
+  }
 }
 
 function _hideWorkflowProgress() {
   const el = document.querySelector('.graph-workflow-progress');
   if (el) el.hidden = true;
+  workflowProgressTotal = 0;
+  workflowProgressDone = 0;
+  workflowProgressCurrentLabel = '';
+  if (workflowProgressTimer) {
+    clearTimeout(workflowProgressTimer);
+    workflowProgressTimer = null;
+  }
+  if (typeof hideProgress === 'function') hideProgress();
 }
 
 async function _processWorkflowChainItem(current, force) {
   if (!current) return false;
   if (current.messageIndex >= 0) return true;
   if (workflowAbortController?.signal.aborted) return false;
+
+  if (current.kind === 'hub') {
+    const hasInput = (graphView.edges || []).some(edge => String(edge.to) === current.id && !edge.draft);
+    current.status = hasInput ? 'done' : 'waiting';
+    return true;
+  }
 
   if (current.kind === 'answer' && !current.manual) {
     if (current.busy) return false;
@@ -3800,7 +4109,7 @@ async function _processWorkflowChainItem(current, force) {
       current.status = 'waiting';
       _saveCustomNodes();
       renderGraphCanvas();
-      if (typeof showToast === 'function') showToast('请先填写 ' + (current.manual ? '非 AI 回答' : '问题') + ' 内容');
+      if (typeof showToast === 'function') showToast('请先填写 ' + (current.kind === 'note' ? '人工总结' : current.manual ? '非 AI 回答' : '问题') + ' 内容');
       return false;
     }
     current.status = 'done';
@@ -3817,17 +4126,21 @@ async function runWorkflowNode(nodeId, force = false) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || node.busy || workflowRunActive) return;
   const chain = _collectDependencyChain(nodeId);
+  const workChain = chain.filter(item => _workflowItemNeedsProgress(item) || (force && (item.kind === 'module' || item.kind === 'summary')));
   workflowRunActive = true;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
-  _showWorkflowProgress(chain.length);
+  _showWorkflowProgress(workChain.length);
   try {
     for (const item of chain) {
       if (workflowAbortController.signal.aborted) break;
       const current = _findGraphNode(item.id);
       if (!current) continue;
-      const ok = await _processWorkflowChainItem(current, force && item.id === nodeId);
-      _advanceWorkflowProgress(_workflowProgressLabel(current));
+      const shouldForce = force && (current.kind === 'module' || current.kind === 'summary');
+      const shouldCount = _workflowItemNeedsProgress(current) || shouldForce;
+      if (shouldCount) _markWorkflowCurrentNode(current);
+      const ok = await _processWorkflowChainItem(current, shouldForce);
+      if (ok && shouldCount) _advanceWorkflowProgress(_workflowProgressLabel(current));
       if (!ok) break;
       const after = _findGraphNode(item.id);
       if (!after || after.status === 'error') break;
@@ -3844,9 +4157,9 @@ async function runWorkflowNode(nodeId, force = false) {
 
 async function runAllWorkflowNodes() {
   if (workflowRunActive) return;
-  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && node.kind === 'module');
+  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary'));
   if (!targets.length) {
-    if (typeof showToast === 'function') showToast('没有可运行的模块节点');
+    if (typeof showToast === 'function') showToast('没有可运行的模块/总结节点');
     return;
   }
   const chain = [];
@@ -3862,14 +4175,17 @@ async function runAllWorkflowNodes() {
   workflowRunActive = true;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
-  _showWorkflowProgress(chain.length);
+  _showWorkflowProgress(chain.filter(item => _workflowItemNeedsProgress(item) || item.kind === 'module' || item.kind === 'summary').length);
   try {
     for (const item of chain) {
       if (workflowAbortController.signal.aborted) break;
       const current = _findGraphNode(item.id);
       if (!current) continue;
-      const ok = await _processWorkflowChainItem(current, false);
-      _advanceWorkflowProgress(_workflowProgressLabel(current));
+      const shouldForce = current.kind === 'module' || current.kind === 'summary';
+      const shouldCount = _workflowItemNeedsProgress(current) || shouldForce;
+      if (shouldCount) _markWorkflowCurrentNode(current);
+      const ok = await _processWorkflowChainItem(current, shouldForce);
+      if (ok && shouldCount) _advanceWorkflowProgress(_workflowProgressLabel(current));
       if (!ok) break;
       const after = _findGraphNode(item.id);
       if (!after || after.status === 'error') break;
@@ -3917,6 +4233,7 @@ async function _streamBlankNodeResponse(resp, node) {
   let content = '';
   let renderPending = false;
   let saveTimer = null;
+  let streamChunkCount = 0;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -3953,6 +4270,9 @@ async function _streamBlankNodeResponse(resp, node) {
           const delta = data.choices && data.choices[0] && data.choices[0].delta;
           if (delta && delta.content) {
             content += delta.content;
+            _scheduleWorkflowStreamProgress(content.length);
+            streamChunkCount++;
+            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
             scheduleRender();
             scheduleSave();
           }
@@ -4006,13 +4326,16 @@ async function generateBlankNode(nodeId) {
   if (!current) return;
 
   const meta = GRAPH_MODULE_META[current.moduleKey] || { label: current.moduleKey || '空白节点' };
+  if (typeof showProgress === 'function') showProgress('tool', 5, '正在生成' + meta.label);
   const graphPath = _blankNodeGraphPath(current);
   const pathQuestion = graphPath.find(item => item.kind === 'user');
   const question = pathQuestion ? pathQuestion.content || '' : '';
+  const strictInstruction = _strictModuleOutputInstruction(current.moduleKey || '');
   const prompt = '用户问题：' + (question || '未填写') + '\n'
     + '请基于当前探索路径生成「' + meta.label + '」空白节点的完整内容。\n'
     + '用户额外要求：' + (requirements || '无') + '\n\n'
-    + '只输出' + meta.label + '正文，不要输出 XML 标签，不要重复其他模块内容。';
+    + '只输出' + meta.label + '正文，不要输出 XML 标签，不要重复其他模块内容。'
+    + (strictInstruction ? '\n\n' + strictInstruction : '');
   const upstreamNodes = graphPath
     .filter(item => item.kind !== 'blank' && item.kind !== 'draft')
     .map(item => {
@@ -4088,12 +4411,14 @@ async function generateBlankNode(nodeId) {
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
     await _streamBlankNodeResponse(resp, current);
+    if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
     const live = _findGraphNode(nodeId);
     if (live) live.busy = false;
     _saveCustomNodes();
     renderGraphCanvas();
     if (typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
+    if (typeof hideProgress === 'function') hideProgress();
   }
 }
 
@@ -4473,6 +4798,7 @@ function initGraphCanvas() {
 window.renderGraphCanvas = renderGraphCanvas;
 window.sendGraphNewSession = sendGraphNewSession;
 window.graphModuleAction = graphModuleAction;
+window.quickConnectToHub = quickConnectToHub;
 window.buildGraphPathForAnchor = buildGraphPathForAnchor;
 window.graphAddOutputPort = graphAddOutputPort;
 window.graphRemoveOutputPort = graphRemoveOutputPort;

@@ -277,12 +277,45 @@
   background: rgba(255, 107, 107, 0.1) !important;
 }
 
+.graph-hub-connect-btn {
+  margin-left: 2px !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 7px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--btn-bg) !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-hub-connect-btn:hover {
+  color: #eab308 !important;
+  border-color: #eab308 !important;
+  background: rgba(234, 179, 8, 0.12) !important;
+}
+
 .graph-node-user {
   border-left: 6px solid #4a9eff !important;
 }
 
 .graph-node-answer {
   border-left: 6px solid #10b981 !important;
+}
+
+.graph-node-hub {
+  border-left: 6px solid #eab308 !important;
+}
+
+.graph-node-summary {
+  border-left: 6px solid #0d9488 !important;
+}
+
+.graph-node-note {
+  border-left: 6px solid #f97316 !important;
 }
 
 .graph-node-root {
@@ -616,6 +649,26 @@
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
+.app-container:not(.linear-mode) .progress-status {
+  position: fixed;
+  top: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  z-index: 80;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  background: var(--bg-panel);
+  max-width: min(560px, calc(100vw - 24px));
+  white-space: nowrap;
+}
+
+.app-container:not(.linear-mode) .progress-status .status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------- 5. 空状态 ---------- */
 .graph-empty {
   font-size: 14px !important;
@@ -783,6 +836,27 @@
   --graph-bubble-glow: rgba(16, 185, 129, 0.38);
 }
 
+.graph-node-hub {
+  --graph-bubble-start: rgba(234, 179, 8, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #eab308;
+  --graph-bubble-glow: rgba(234, 179, 8, 0.32);
+}
+
+.graph-node-summary {
+  --graph-bubble-start: rgba(13, 148, 136, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #0d9488;
+  --graph-bubble-glow: rgba(13, 148, 136, 0.32);
+}
+
+.graph-node-note {
+  --graph-bubble-start: rgba(249, 115, 22, 0.14);
+  --graph-bubble-end: rgba(16, 24, 46, 0.97);
+  --graph-bubble-border: #f97316;
+  --graph-bubble-glow: rgba(249, 115, 22, 0.32);
+}
+
 .graph-node-root {
   --graph-bubble-start: rgba(74, 158, 255, 0.25);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
@@ -852,6 +926,30 @@
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
   --graph-bubble-border: #10b981;
   --graph-bubble-glow: rgba(16, 185, 129, 0.28);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-hub {
+  --graph-bubble-start: rgba(234, 179, 8, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #eab308;
+  --graph-bubble-glow: rgba(234, 179, 8, 0.28);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-summary {
+  --graph-bubble-start: rgba(13, 148, 136, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #0d9488;
+  --graph-bubble-glow: rgba(13, 148, 136, 0.26);
+  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
+}
+
+[data-theme="light"] .graph-node-note {
+  --graph-bubble-start: rgba(249, 115, 22, 0.18);
+  --graph-bubble-end: rgba(255, 253, 247, 0.98);
+  --graph-bubble-border: #f97316;
+  --graph-bubble-glow: rgba(249, 115, 22, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
