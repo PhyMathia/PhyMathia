@@ -35,6 +35,7 @@ const GRAPH_NODE_ATTRIBUTES = {
   socratic: { key: 'socratic', label: '苏格拉底追问', color: '#f43f5e' },
   learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
   manual: { key: 'manual', label: '非 AI 回答', color: '#64748b' },
+  human_note: { key: 'human_note', label: '我的理解', color: '#64748b' },
   hub: { key: 'hub', label: '汇聚', color: '#eab308' },
   summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
   note: { key: 'note', label: '人工总结', color: '#f97316' },
@@ -53,6 +54,7 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'question', kind: 'user', label: '问题', color: '#4a9eff' },
   { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981' },
   { key: 'manual', kind: 'answer', label: '非 AI 回答', color: '#64748b' },
+  { key: 'human_note', kind: 'human_note', label: '我的理解', color: '#64748b' },
   { key: 'physics', kind: 'module', label: '物理视角', color: '#f59e0b' },
   { key: 'math', kind: 'module', label: '数学视角', color: '#3b82f6' },
   { key: 'graph', kind: 'module', label: '知识图谱', color: '#0891b2' },
@@ -65,7 +67,7 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'relation', kind: 'relation', label: '联系', color: '#f43f5e' },
 ];
 
-const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation'];
+const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation', 'human_note'];
 
 let graphCanvas = null;
 let graphInner = null;
@@ -719,6 +721,18 @@ function _normalizeGraphEdge(edge) {
   };
 }
 
+function _freeModuleInputPort(state, toNodeId, preferredPort) {
+  const used = new Set([
+    ...(state.connections || []),
+    ...(graphView.defaultEdges || []),
+  ]
+    .filter(edge => String(edge.to) === String(toNodeId))
+    .map(edge => edge.toPort || 'in-0'));
+  let index = parseInt(String(preferredPort || 'in-0').replace('in-', ''), 10) || 0;
+  while (used.has('in-' + index)) index += 1;
+  return { port: 'in-' + index, index };
+}
+
 function _resolveGraphEdges(state, defaults, nodeById) {
   const removed = new Set(state.removedEdges || []);
   const custom = (state.connections || [])
@@ -1068,6 +1082,7 @@ function _nodeSub(node) {
   if (node.kind === 'source') return '文件解析入口';
   if (node.kind === 'knowledge') return '知识点节点';
   if (node.kind === 'relation') return '知识联系';
+  if (node.kind === 'human_note') return '我的理解';
   if (node.kind === 'module') return '';
   if (node.kind === 'blank') return '空白节点';
   return '';
@@ -1083,6 +1098,7 @@ function _nodeAttribute(node) {
   if (node.kind === 'blank') {
     return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.question;
   }
+  if (node.kind === 'human_note') return GRAPH_NODE_ATTRIBUTES.human_note;
   if (node.kind === 'answer') return node.manual ? GRAPH_NODE_ATTRIBUTES.manual : GRAPH_NODE_ATTRIBUTES.answer;
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
@@ -1105,10 +1121,14 @@ function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
   if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
   if (toNode.kind === 'summary' || toNode.kind === 'note') return fromNode.kind === 'hub';
+  if (toNode.kind === 'human_note') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note';
   if (toNode.kind === 'user') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note';
   if (toNode.kind === 'relation') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note' && fromNode.kind !== 'relation';
   if (toNode.kind === 'knowledge') return fromNode.kind === 'source' || fromNode.kind === 'knowledge';
   if (fromNode.kind === 'hub') return false;
+  if (fromNode.kind === 'human_note') {
+    return ['human_note', 'module', 'answer', 'blank', 'relation', 'hub', 'user'].includes(toNode.kind);
+  }
   const messages = _getChatHistory();
   const fromAttr = _portAttribute(fromNode, fromPort, messages);
   const toAttr = _nodeAttribute(toNode).key;
@@ -1288,6 +1308,7 @@ function _renderDraftNodeHtml(node) {
 }
 
 function _nodeInputLabel(node) {
+  if (node.kind === 'human_note') return '任意输入';
   if (node.kind === 'answer') return node.manual ? '非 AI 回答' : 'AI 回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   if (node.kind === 'blank') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || '空白节点';
@@ -1304,6 +1325,7 @@ function _nodeInputLabel(node) {
 function _nodeOutputLabels(node, messages) {
   if (node.kind === 'draft') return [];
   if (node.kind === 'blank') return ['追问'];
+  if (node.kind === 'human_note') return ['人工内容'];
   if (node.kind === 'user') return ['AI 回答', '非 AI 回答'];
   if (node.kind === 'source') return (node.items || []).map(item => item.title || '知识点 ' + ((node.items || []).indexOf(item) + 1));
   if (node.kind === 'knowledge') return ['AI 回答', '问题', '联系'];
@@ -1351,6 +1373,7 @@ function _portAttribute(node, portId, messages) {
       const ports = _answerOutputPorts(node, messages);
       return (ports[index] && ports[index].attribute) || 'answer';
     }
+    if (node.kind === 'human_note') return 'human_note';
     if (node.kind === 'knowledge') {
       const ports = _knowledgeOutputPorts(node);
       return (ports[index] && ports[index].attribute) || 'question';
@@ -1377,21 +1400,26 @@ function _nodeOutputCount(node, messages, state) {
 function _renderInputPorts(node, state) {
   const attr = _nodeAttribute(node);
   if (node.kind === 'source') return '';
-  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation';
-  const savedCount = canAddInput && state && state.inputPortCounts && state.inputPortCounts[node.id]
+  const savedCount = state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
+  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation';
   const baseCount = node.kind === 'relation' ? 2 : 1;
-  const count = canAddInput ? baseCount + savedCount : (node.isRoot ? 0 : 1);
+  const count = node.kind === 'module'
+    ? baseCount + savedCount
+    : canAddInput
+      ? baseCount + savedCount
+      : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
   for (let i = 0; i < count; i++) {
-    const label = _nodeInputLabel(node);
-    const anyClass = node.kind === 'user' ? ' graph-port-any-input' : '';
-    const portAttr = canAddInput ? 'any' : attr.key;
-    const portColor = node.kind === 'user' ? '#94a3b8' : attr.color;
-    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
+    const label = node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node);
+    const anyClass = node.kind === 'user' || node.kind === 'human_note' ? ' graph-port-any-input' : '';
+    const portAttr = canAddInput ? 'any' : (node.kind === 'human_note' ? 'any' : attr.key);
+    const portColor = node.kind === 'user' || node.kind === 'human_note' ? '#94a3b8' : attr.color;
+    const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
-      + (canAddInput && i >= baseCount
+      + (canRemove
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveInputPort(\'' + node.id + '\',' + i + ')" title="删除输入端口">×</button>'
         : '')
       + '</div>';
@@ -1418,6 +1446,15 @@ function _renderOutputPorts(node, messages, state) {
       type: 'branch',
       branchType: 'followup',
       attribute: node.moduleKey || 'followup',
+      question: '',
+    }];
+  } else if (node.kind === 'human_note') {
+    ports = [{
+      label: '人工内容',
+      type: 'custom',
+      branchType: '',
+      attribute: 'human_note',
+      group: 'human',
       question: '',
     }];
   } else if (node.kind === 'answer') {
@@ -1692,12 +1729,44 @@ function _renderRelationNodeHtml(node, state) {
     + '</div>';
 }
 
+function _renderHumanNoteNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const statusText = (node.content || '').trim() ? '已填写' : '待填写';
+  const body = (node.content || node.formula)
+    ? '<div class="graph-custom-node-render">' + escapeHtml(node.content || '')
+      + (node.formula ? '<div class="graph-human-note-formula">' + escapeHtml(node.formula) + '</div>' : '')
+      + '</div>'
+    : '<div class="graph-custom-node-empty">双击编辑</div>';
+  const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const customHeight = node.customHeight
+    ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
+    : '';
+  return '<div class="graph-node graph-node-human-note graph-attr-human_note' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + '<div class="graph-node-header">'
+    + '<span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">我的理解</span>'
+    + '<span class="graph-node-badge">人工</span>'
+    + '<button class="graph-node-edit-toggle" onclick="editHumanNoteNode(\'' + node.id + '\')" title="编辑我的理解"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+    + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
+    + '</div>'
+    + '<div class="graph-node-label">' + escapeHtml(node.label || '我的理解') + '</div>'
+    + '<div class="graph-node-sub">' + escapeHtml(statusText) + '</div>'
+    + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state)
+    + '</div>';
+}
+
 function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
   if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
   if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
   if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
+  if (node.kind === 'human_note') return _renderHumanNoteNodeHtml(node, state);
   const message = messages[node.messageIndex];
   const baseClass = 'graph-node graph-node-' + node.kind;
   const attr = _nodeAttribute(node);
@@ -1762,6 +1831,9 @@ function _renderNodeHtml(node, messages, state) {
   const minimizeToggle = node.messageIndex >= 0 && (node.kind === 'module' || node.kind === 'answer')
     ? '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>'
     : '';
+  const editBtn = node.kind === 'module'
+    ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+    : '';
   const deleteAction = node.messageIndex < 0
     ? 'deleteCustomNode(\'' + node.id + '\')'
     : 'graphModuleAction(\'delete\',\'' + node.id + '\')';
@@ -1779,7 +1851,7 @@ function _renderNodeHtml(node, messages, state) {
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + quickConnectBtn + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
     + _nodeActions(node)
@@ -2611,11 +2683,18 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
     const sameInput = c.to === toNodeId && (c.toPort || 'in-0') === toPort;
     return !sameSource && (toNode.kind !== 'hub' || !sameInput);
   });
+  let resolvedToPort = toPort || 'in-0';
+  if (toNode.kind === 'module') {
+    const free = _freeModuleInputPort(state, toNodeId, resolvedToPort);
+    resolvedToPort = free.port;
+    state.inputPortCounts = state.inputPortCounts || {};
+    state.inputPortCounts[toNodeId] = Math.max(state.inputPortCounts[toNodeId] || 0, free.index);
+  }
   const edge = {
     from: fromNodeId,
     fromPort: fromPort || 'out-0',
     to: toNodeId,
-    toPort: toPort || 'in-0',
+    toPort: resolvedToPort,
     type: 'custom',
     custom: true,
   };
@@ -2907,7 +2986,11 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     id: nodeId,
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
-    manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
+    manual: option.key === 'manual' || option.key === 'human_note' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
+    nodeType: option.key === 'human_note' ? 'understanding' : '',
+    label: option.key === 'human_note' ? option.label : '',
+    formula: '',
+    source: option.key === 'manual' || option.key === 'human_note' || option.key === 'note' ? 'human' : 'ai',
     content: '',
     status: 'empty',
     summary: '',
@@ -2936,7 +3019,7 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     pinned: false,
     fixedX: null,
     fixedY: null,
-    customWidth: null,
+    customWidth: option.key === 'human_note' ? 280 : null,
     customHeight: null,
     w: 0,
     h: 0,
@@ -3266,7 +3349,7 @@ function graphAddOutputPort(nodeId) {
 
 function graphAddInputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation')) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -3277,7 +3360,7 @@ function graphAddInputPort(nodeId) {
 
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation')) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module')) return;
   const minPort = node.kind === 'relation' ? 2 : 1;
   if (portIndex < minPort) return;
   _pushGraphUndo();
@@ -3302,6 +3385,7 @@ function _baseOutputPortCount(node) {
   if (!node) return 0;
   const messages = _getChatHistory();
   if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]).length;
+  if (node.kind === 'human_note') return 1;
   if (node.kind === 'user') return 1;
   if (node.kind === 'answer') return _nodeOutputLabels(node, messages).length;
   if (node.kind === 'hub') return 1;
@@ -4051,6 +4135,116 @@ function closeAddBlankNodeModal() {
     addBlankNodeOverlay.remove();
     addBlankNodeOverlay = null;
   }
+}
+
+function _replaceModuleSection(content, moduleKey, newText) {
+  const tag = String(moduleKey || '').trim();
+  if (!tag) return content;
+  const text = String(newText || '').trim();
+  const regex = new RegExp('(<' + tag + '[^>]*>)([\\s\\S]*?)(</' + tag + '>)', 'i');
+  if (regex.test(content || '')) {
+    return String(content || '').replace(regex, '$1\n' + text + '\n$3');
+  }
+  return String(content || '') + '\n<' + tag + '>\n' + text + '\n</' + tag + '>';
+}
+
+let humanNoteModalOverlay = null;
+let moduleNodeModalOverlay = null;
+
+function editHumanNoteNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'human_note') return;
+  closeHumanNoteNodeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-network-modal-overlay';
+  overlay.innerHTML = '<div class="graph-network-modal">'
+    + '<div class="graph-network-modal-head"><span>编辑我的理解</span><button onclick="closeHumanNoteNodeModal()" title="关闭">×</button></div>'
+    + '<label>标题</label>'
+    + '<input id="humanNoteTitle" value="' + escapeHtml(node.label || '我的理解') + '">'
+    + '<label>内容</label>'
+    + '<textarea id="humanNoteContent" rows="6">' + escapeHtml(node.content || '') + '</textarea>'
+    + '<label>公式</label>'
+    + '<input id="humanNoteFormula" value="' + escapeHtml(node.formula || '') + '">'
+    + '<div class="graph-network-modal-actions">'
+    + '<button class="graph-network-modal-save" onclick="saveHumanNoteNode(\'' + node.id + '\')">保存</button>'
+    + '<button onclick="closeHumanNoteNodeModal()">取消</button>'
+    + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  humanNoteModalOverlay = overlay;
+}
+
+function closeHumanNoteNodeModal() {
+  if (humanNoteModalOverlay) {
+    humanNoteModalOverlay.remove();
+    humanNoteModalOverlay = null;
+  }
+}
+
+function saveHumanNoteNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  node.label = document.getElementById('humanNoteTitle')?.value?.trim() || '我的理解';
+  node.content = document.getElementById('humanNoteContent')?.value || '';
+  node.formula = document.getElementById('humanNoteFormula')?.value?.trim() || '';
+  node.status = 'done';
+  node.summary = node.content.slice(0, 120);
+  _saveCustomNodes();
+  closeHumanNoteNodeModal();
+  renderGraphCanvas();
+}
+
+function editModuleNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'module') return;
+  closeModuleNodeModal();
+  const messages = _getChatHistory();
+  const msg = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const current = node.messageIndex >= 0 ? _nodeContent(msg, node) : (node.content || '');
+  const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || '模块';
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-network-modal-overlay';
+  overlay.innerHTML = '<div class="graph-network-modal">'
+    + '<div class="graph-network-modal-head"><span>人工编辑：' + escapeHtml(label) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
+    + '<label>模块内容</label>'
+    + '<textarea id="moduleNodeContent" rows="8">' + escapeHtml(current) + '</textarea>'
+    + '<div class="graph-network-modal-actions">'
+    + '<button class="graph-network-modal-save" onclick="saveModuleNode(\'' + node.id + '\')">保存</button>'
+    + '<button onclick="closeModuleNodeModal()">取消</button>'
+    + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  moduleNodeModalOverlay = overlay;
+}
+
+function closeModuleNodeModal() {
+  if (moduleNodeModalOverlay) {
+    moduleNodeModalOverlay.remove();
+    moduleNodeModalOverlay = null;
+  }
+}
+
+function saveModuleNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'module') return;
+  const content = document.getElementById('moduleNodeContent')?.value || '';
+  if (node.messageIndex >= 0) {
+    const messages = _getChatHistory();
+    const msg = messages[node.messageIndex];
+    if (!msg) return;
+    msg.content = _replaceModuleSection(msg.content, node.moduleKey, content);
+    if (typeof window.updateChatHistoryMessage === 'function') {
+      window.updateChatHistoryMessage(String(msg.timestamp || ''), () => msg);
+    }
+    if (typeof window.saveCurrentSession === 'function') window.saveCurrentSession();
+  } else {
+    node.content = content;
+    node.status = 'done';
+    node.summary = content.slice(0, 120);
+    _saveCustomNodes();
+  }
+  closeModuleNodeModal();
+  renderGraphCanvas();
 }
 
 function createManualNode(nodeKind) {
