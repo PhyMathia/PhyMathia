@@ -84,7 +84,7 @@
               if (!serverSessionIds.includes(sid) && localMsgs.length > 0) {
                 console.log(`[Storage] Uploading local-only session ${sid} to server`);
                 try {
-                  await _postToServer('/api/sessions', [localSessions[sid] || { id: sid, title: '未命名对话' }]);
+                  await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名对话', sessionId: sid });
                   await _saveMessagesToServer(sid, localMsgs);
                 } catch(e) { console.warn('[Storage] Upload local session failed:', e); }
               }
@@ -214,6 +214,7 @@
         const synced = await _syncFromServer();
         if (synced) {
           // 服务端有更新则刷新界面
+          loadSessions();
           renderSessionList();
           const panel = document.getElementById('knowledgePanel');
           if (panel && panel.classList.contains('active')) {
@@ -270,6 +271,24 @@
       // 逐个 upsert 到服务端（不阻塞）
       for (const [sid, sdata] of Object.entries(sessions)) {
         _saveSessionToServer(sid, sdata); // fire-and-forget 但用了单个 upsert
+      }
+    }
+
+    function _saveSessionMeta(sid) {
+      const s = sessions[sid];
+      if (!s) return;
+      s.updatedAt = Date.now();
+      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+      _saveSessionToServer(sid, s);
+    }
+
+    function _maybeAutoTitleSession(sid) {
+      const s = sessions[sid];
+      if (!s) return;
+      if (s.title && s.title !== '新对话' && s.title !== '未命名对话') return;
+      const firstUser = chatHistory.find(m => m.role === 'user');
+      if (firstUser) {
+        s.title = firstUser.content.substring(0, 30) + (firstUser.content.length > 30 ? '...' : '');
       }
     }
 
@@ -457,17 +476,11 @@
       if (!sessions[id]) return;
 
       // 保存当前会话的消息
-      if (currentSessionId) {
+      if (currentSessionId && sessions[currentSessionId]) {
         await saveSessionMessages(currentSessionId, chatHistory);
-        if (sessions[currentSessionId]) {
-          sessions[currentSessionId].updatedAt = Date.now();
-          // 更新标题为第一条用户消息
-          const firstUser = chatHistory.find(m => m.role === 'user');
-          if (firstUser) {
-            sessions[currentSessionId].title = firstUser.content.substring(0, 30) + (firstUser.content.length > 30 ? '...' : '');
-          }
-          saveSessions();
-        }
+        sessions[currentSessionId].updatedAt = Date.now();
+        _maybeAutoTitleSession(currentSessionId);
+        saveSessions();
       }
 
       // 切换
@@ -608,11 +621,15 @@
       input.focus();
       input.select();
 
+      let saved = false;
+      let cancelled = false;
       const doSave = () => {
+        if (saved || cancelled) return;
+        saved = true;
         const newTitle = input.value.trim() || currentTitle;
         if (sessions[sessionId]) {
           sessions[sessionId].title = newTitle;
-          saveCurrentSession();
+          _saveSessionMeta(sessionId);
           // 同步到服务端
           fetch(`/api/sessions/${sessionId}`, {
             method: 'PUT',
@@ -625,7 +642,11 @@
 
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); doSave(); }
-        if (e.key === 'Escape') { e.preventDefault(); renderSessionList(); }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelled = true;
+          renderSessionList();
+        }
       });
       input.addEventListener('blur', doSave);
     }
@@ -711,7 +732,7 @@
       event.stopPropagation();
       if (sessions[sessionId]) {
         sessions[sessionId].icon = icon || undefined;
-        saveCurrentSession();
+        _saveSessionMeta(sessionId);
         // 同步到服务端
         fetch(`/api/sessions/${sessionId}`, {
           method: 'PUT',
@@ -776,7 +797,11 @@
     }
 
     // 暴露给其他模块（如知识面板打开时即时拉取最新数据）
-    window.syncFromServer = _syncFromServer;
+    window.syncFromServer = async () => {
+      const ok = await _syncFromServer();
+      loadSessions();
+      return ok;
+    };
     window.updateChatHistoryMessage = (timestamp, updater) => {
       const idx = chatHistory.findIndex(item => String(item.timestamp) === String(timestamp));
       if (idx < 0) return false;
@@ -787,6 +812,8 @@
     // 暴露给知识面板（公式定位会话）：切换会话 + 查询会话信息
     window.switchToSession = switchToSession;
     window.getSessionById = (id) => sessions[id] || null;
+    window.getAllSessions = () => Object.keys(sessions).map(id => ({ ...sessions[id], id }));
+    window.getSessionMessages = (sessionId) => loadSessionMessages(sessionId);
     window.getSessionIdVariants = (sessionId) => {
       const ids = new Set([sessionId]);
       for (const [localId, item] of Object.entries(sessions)) {
@@ -850,10 +877,7 @@
       if (currentSessionId && sessions[currentSessionId]) {
         await saveSessionMessages(currentSessionId, chatHistory);
         sessions[currentSessionId].updatedAt = Date.now();
-        const firstUser = chatHistory.find(m => m.role === 'user');
-        if (firstUser) {
-          sessions[currentSessionId].title = firstUser.content.substring(0, 30) + (firstUser.content.length > 30 ? '...' : '');
-        }
+        _maybeAutoTitleSession(currentSessionId);
         saveSessions();
       }
     }

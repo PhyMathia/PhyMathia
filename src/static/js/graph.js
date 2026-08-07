@@ -10,6 +10,9 @@ const GRAPH_MODULE_META = {
   hub: { label: '汇聚', color: '#eab308' },
   summary: { label: 'AI 总结', color: '#0d9488' },
   note: { label: '人工总结', color: '#f97316' },
+  source: { label: '输入', color: '#06b6d4' },
+  knowledge: { label: '知识点', color: '#84cc16' },
+  relation: { label: '联系', color: '#f43f5e' },
 };
 
 const GRAPH_MODULE_DEFAULT_OUTPUTS = {
@@ -35,12 +38,18 @@ const GRAPH_NODE_ATTRIBUTES = {
   hub: { key: 'hub', label: '汇聚', color: '#eab308' },
   summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
   note: { key: 'note', label: '人工总结', color: '#f97316' },
+  source: { key: 'source', label: '输入', color: '#06b6d4' },
+  knowledge: { key: 'knowledge', label: '知识点', color: '#84cc16' },
+  relation: { key: 'relation', label: '联系', color: '#f43f5e' },
+  any: { key: 'any', label: '任意输入', color: '#94a3b8' },
 };
 
 const ANSWER_OUTPUT_SCHEMA = ['physics', 'math', 'graph', 'viz', 'learn', 'socratic'];
 const ANSWER_OUTPUT_INDEX = { physics: 0, math: 1, graph: 2, viz: 3, learn: 4, socratic: 5 };
 
 const MANUAL_NODE_OPTIONS = [
+  { key: 'source', kind: 'source', label: '输入', color: '#06b6d4' },
+  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16' },
   { key: 'question', kind: 'user', label: '问题', color: '#4a9eff' },
   { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981' },
   { key: 'manual', kind: 'answer', label: '非 AI 回答', color: '#64748b' },
@@ -53,9 +62,10 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308' },
   { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488' },
   { key: 'note', kind: 'note', label: '人工总结', color: '#f97316' },
+  { key: 'relation', kind: 'relation', label: '联系', color: '#f43f5e' },
 ];
 
-const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note'];
+const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation'];
 
 let graphCanvas = null;
 let graphInner = null;
@@ -816,6 +826,9 @@ function _graphSearchResultLabel(node, message) {
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'source') return '输入';
+  if (node.kind === 'knowledge') return '知识点';
+  if (node.kind === 'relation') return '联系';
   if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.isBranch ? (node.branchLabel || '延伸追问') : '问题');
   if (node.kind === 'blank') return '空白节点';
   if (node.kind === 'draft') return '待提交追问';
@@ -1052,6 +1065,9 @@ function _nodeSub(node) {
   if (node.kind === 'hub') return '汇聚节点';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'source') return '文件解析入口';
+  if (node.kind === 'knowledge') return '知识点节点';
+  if (node.kind === 'relation') return '知识联系';
   if (node.kind === 'module') return '';
   if (node.kind === 'blank') return '空白节点';
   return '';
@@ -1071,6 +1087,9 @@ function _nodeAttribute(node) {
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
   }
+  if (node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'relation') {
+    return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.question;
+  }
   if (node.kind === 'user') {
     if (node.attribute && GRAPH_NODE_ATTRIBUTES[node.attribute]) return GRAPH_NODE_ATTRIBUTES[node.attribute];
     if (node.moduleKey && GRAPH_NODE_ATTRIBUTES[node.moduleKey]) return GRAPH_NODE_ATTRIBUTES[node.moduleKey];
@@ -1086,6 +1105,9 @@ function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
   if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
   if (toNode.kind === 'summary' || toNode.kind === 'note') return fromNode.kind === 'hub';
+  if (toNode.kind === 'user') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note';
+  if (toNode.kind === 'relation') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note' && fromNode.kind !== 'relation';
+  if (toNode.kind === 'knowledge') return fromNode.kind === 'source' || fromNode.kind === 'knowledge';
   if (fromNode.kind === 'hub') return false;
   const messages = _getChatHistory();
   const fromAttr = _portAttribute(fromNode, fromPort, messages);
@@ -1095,11 +1117,15 @@ function _canConnect(fromNode, fromPort, toNode) {
   const isUserManualOutput = fromNode.kind === 'user' && fromPortKey !== 'out-0';
   if (toNode.kind === 'blank') {
     if (fromNode.kind === 'answer') return fromAttr === toAttr;
+    if (fromNode.kind === 'knowledge') return true;
     return isUserManualOutput;
   }
   if (fromNode.kind === 'answer' && toNode.kind === 'module') return fromAttr === toAttr;
-  if (fromNode.kind === 'user' && toNode.kind === 'answer') {
-    return isUserAiOutput ? !toNode.manual : !!toNode.manual;
+  if ((fromNode.kind === 'user' || fromNode.kind === 'knowledge') && toNode.kind === 'answer') {
+    const isAiOutput = fromNode.kind === 'user'
+      ? isUserAiOutput
+      : String(fromPort || 'out-0') === 'out-0';
+    return isAiOutput ? !toNode.manual : !!toNode.manual;
   }
   if (fromNode.kind === 'draft' && toNode.kind === 'answer') return true;
   if (fromNode.kind === 'module' && toNode.kind === 'user') return true;
@@ -1124,13 +1150,13 @@ function _nodeActions(node) {
     const isBusy = !!node.busy;
     const label = isBusy ? '生成中...' : node.content ? '重新生成' : '生成';
     return '<div class="graph-node-actions">'
-      + '<button class="graph-regen-btn" onclick="runWorkflowNode(\'' + node.id + '\',' + (node.content ? 'true' : 'false') + ')" ' + (isBusy ? 'disabled' : '') + ' title="生成或重新生成此节点">' + label + '</button>'
+      + _iconRegenButton('runWorkflowNode(\'' + node.id + '\',' + (node.content ? 'true' : 'false') + ')', isBusy ? '生成中...' : (node.content ? '重新生成' : '生成'), isBusy)
       + '</div>';
   }
   if (node.kind === 'module' && node.moduleKey !== 'socratic') {
     const label = node.moduleKey === 'graph' ? '重新生成' : '没看懂';
     return '<div class="graph-node-actions">'
-      + '<button class="graph-regen-btn" onclick="graphOpenRegenerate(\'' + node.id + '\')" title="输入没看懂的地方并重新生成此节点">' + label + '</button>'
+      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, false)
       + '</div>';
   }
   return '';
@@ -1139,6 +1165,14 @@ function _nodeActions(node) {
 function _shortLabel(text, max) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   return value.length > max ? value.slice(0, max) + '…' : value;
+}
+
+function _regenIconHtml() {
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.4L3 16"/><path d="M3 21v-5h5"/></svg>';
+}
+
+function _iconRegenButton(onclick, title, disabled) {
+  return '<button class="graph-regen-btn graph-icon-btn" onclick="' + onclick + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _regenIconHtml() + '</button>';
 }
 
 function _parsePortQuestions(content, withLevel) {
@@ -1260,7 +1294,10 @@ function _nodeInputLabel(node) {
   if (node.kind === 'hub') return '汇聚输入';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '人工总结';
-  if (node.kind === 'user') return '问题';
+  if (node.kind === 'user') return '任意输入';
+  if (node.kind === 'source') return '文件输入';
+  if (node.kind === 'knowledge') return '知识点来源';
+  if (node.kind === 'relation') return '联系输入';
   return '来源';
 }
 
@@ -1268,6 +1305,9 @@ function _nodeOutputLabels(node, messages) {
   if (node.kind === 'draft') return [];
   if (node.kind === 'blank') return ['追问'];
   if (node.kind === 'user') return ['AI 回答', '非 AI 回答'];
+  if (node.kind === 'source') return (node.items || []).map(item => item.title || '知识点 ' + ((node.items || []).indexOf(item) + 1));
+  if (node.kind === 'knowledge') return ['AI 回答', '问题', '联系'];
+  if (node.kind === 'relation') return [];
   if (node.kind === 'module') {
     return _moduleOutputPorts(node, messages[node.messageIndex]).map(item => item.label);
   }
@@ -1289,11 +1329,20 @@ function _answerOutputPorts(node, messages) {
   }));
 }
 
+function _knowledgeOutputPorts(node) {
+  return [
+    { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
+    { label: '问题', type: 'branch', branchType: 'followup', attribute: 'question', group: 'question', question: '' },
+    { label: '联系', type: 'relation', branchType: '', attribute: 'relation', group: 'relation', question: '' },
+  ];
+}
+
 function _portAttribute(node, portId, messages) {
   const isOutput = /^out-/.test(String(portId || ''));
   if (isOutput) {
     const index = parseInt(String(portId).replace('out-', ''), 10);
     if (node.kind === 'blank') return node.moduleKey || 'followup';
+    if (node.kind === 'source') return 'knowledge';
     if (node.kind === 'module') {
       const ports = _moduleOutputPorts(node, messages[node.messageIndex]);
       return (ports[index] && ports[index].attribute) || 'followup';
@@ -1301,6 +1350,10 @@ function _portAttribute(node, portId, messages) {
     if (node.kind === 'answer') {
       const ports = _answerOutputPorts(node, messages);
       return (ports[index] && ports[index].attribute) || 'answer';
+    }
+    if (node.kind === 'knowledge') {
+      const ports = _knowledgeOutputPorts(node);
+      return (ports[index] && ports[index].attribute) || 'question';
     }
     if (node.kind === 'user') return index === 0 ? 'answer' : 'manual';
     if (node.kind === 'hub') return index === 0 ? 'summary' : 'followup';
@@ -1312,23 +1365,33 @@ function _portAttribute(node, portId, messages) {
 function _nodeOutputCount(node, messages, state) {
   if (node.kind === 'draft') return 0;
   if (node.kind === 'summary' || node.kind === 'note') return 0;
+  if (node.kind === 'relation') return 0;
+  if (node.kind === 'source') {
+    const savedCount = state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
+    return Math.max((node.items || []).length, savedCount || 0);
+  }
   const savedCount = state.portCounts && state.portCounts[node.id];
   return Math.max(1, _nodeOutputLabels(node, messages).length, savedCount || 0);
 }
 
 function _renderInputPorts(node, state) {
   const attr = _nodeAttribute(node);
-  const canAddInput = node.kind === 'user' || node.kind === 'hub';
+  if (node.kind === 'source') return '';
+  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation';
   const savedCount = canAddInput && state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
-  const count = canAddInput ? 1 + savedCount : (node.isRoot ? 0 : 1);
+  const baseCount = node.kind === 'relation' ? 2 : 1;
+  const count = canAddInput ? baseCount + savedCount : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
   for (let i = 0; i < count; i++) {
     const label = _nodeInputLabel(node);
-    html += '<div class="graph-port graph-input-port" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + (canAddInput ? 'any' : attr.key) + '" style="--port-color:' + attr.color + ';" title="输入端口：拖到右侧输出可重连来源">'
+    const anyClass = node.kind === 'user' ? ' graph-port-any-input' : '';
+    const portAttr = canAddInput ? 'any' : attr.key;
+    const portColor = node.kind === 'user' ? '#94a3b8' : attr.color;
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
-      + (canAddInput && i > 0
+      + (canAddInput && i >= baseCount
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveInputPort(\'' + node.id + '\',' + i + ')" title="删除输入端口">×</button>'
         : '')
       + '</div>';
@@ -1361,6 +1424,20 @@ function _renderOutputPorts(node, messages, state) {
     ports = _answerOutputPorts(node, messages);
   } else if (node.kind === 'module') {
     ports = _moduleOutputPorts(node, messages[node.messageIndex]);
+  } else if (node.kind === 'source') {
+    ports = (node.items || []).map((item, index) => ({
+      label: item.title || '知识点 ' + (index + 1),
+      type: 'knowledge',
+      branchType: '',
+      attribute: 'knowledge',
+      group: 'knowledge',
+      question: '',
+      item: item,
+    }));
+  } else if (node.kind === 'knowledge') {
+    ports = _knowledgeOutputPorts(node);
+  } else if (node.kind === 'relation') {
+    return '';
   } else if (node.kind === 'hub') {
     ports = [{
       label: 'AI 总结',
@@ -1379,17 +1456,21 @@ function _renderOutputPorts(node, messages, state) {
       question: '',
     }));
   }
-  const canAddPort = node.kind === 'module' && node.moduleKey === 'socratic';
+  const canAddPort = (node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge';
   const savedCount = canAddPort && state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
   const count = Math.max(ports.length, savedCount);
   if (count <= 0) return '';
   let html = '<div class="graph-port-col graph-output-col">';
   for (let i = 0; i < count; i++) {
     const meta = ports[i] || {
-      label: '追问 ' + (i - ports.length + 1),
-      type: 'custom',
+      label: node.kind === 'source'
+        ? '知识点 ' + (i + 1)
+        : node.kind === 'knowledge'
+          ? '问题 ' + (i - ports.length + 1)
+          : '追问 ' + (i - ports.length + 1),
+      type: node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'branch' : 'custom',
       branchType: 'followup',
-      attribute: 'followup',
+      attribute: node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'question' : 'followup',
       question: '',
       custom: true,
     };
@@ -1403,6 +1484,7 @@ function _renderOutputPorts(node, messages, state) {
       + ' data-port-level="' + (meta.level || '') + '"'
       + ' data-port-label="' + encodeURIComponent(label) + '"'
       + ' data-port-group="' + (meta.group || '') + '"'
+      + (meta.item ? ' data-port-item="' + encodeURIComponent(JSON.stringify(meta.item)) + '"' : '')
       + ' style="--port-color:' + attr.color + ';"'
       + ' title="输出端口：拖到空处创建提问节点，或拖到输入端口重连">'
       + '<span class="graph-port-label">' + escapeHtml(label) + '</span>'
@@ -1443,7 +1525,7 @@ function _renderBlankNodeHtml(node, state) {
     + contentHtml
     + '<div class="graph-blank-requirement">'
     + '<textarea class="graph-blank-input" rows="2" placeholder="输入额外要求" ' + (node.busy ? 'disabled' : '') + '>' + escapeHtml(node.requirements || '') + '</textarea>'
-    + '<button class="graph-blank-generate-btn" onclick="generateBlankNode(\'' + node.id + '\')" ' + (node.busy ? 'disabled' : '') + '>' + (node.busy ? '生成中' : generateLabel) + '</button>'
+    + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : generateLabel, node.busy)
     + '</div>'
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
@@ -1491,6 +1573,18 @@ function _refreshWorkflowNodeUi(node) {
 }
 
 function _customNodeStatusText(node) {
+  if (node.kind === 'source') {
+    if (node.busy || node.status === 'running') return '解析中';
+    return node.items && node.items.length ? '已解析' : '待解析';
+  }
+  if (node.kind === 'knowledge') {
+    if (node.busy || node.status === 'running') return '生成中';
+    return (node.content || '').trim() ? '已填写' : '待填写';
+  }
+  if (node.kind === 'relation') {
+    if (node.busy || node.status === 'running') return '生成联系中';
+    return (node.content || '').trim() ? '已编辑' : '待编辑';
+  }
   if (node.kind === 'hub') {
     const connected = (graphView.edges || []).some(edge => edge.to === node.id && !edge.draft);
     return connected ? '已汇聚' : '等待连接';
@@ -1507,9 +1601,103 @@ function _customNodeStatusText(node) {
   return '待生成';
 }
 
+function _customNodeHeaderHtml(node, attr, extraButtons) {
+  const sub = _nodeSub(node);
+  const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
+  const statusHtml = statusText
+    ? '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>'
+    : '';
+  return '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>'
+    + (sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '')
+    + statusHtml
+    + (extraButtons || '')
+    + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>'
+    + '</div>';
+}
+
+function _renderSourceNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const fileName = node.fileName ? '<div class="graph-source-filename">' + escapeHtml(node.fileName) + '</div>' : '';
+  const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
+  const body = node.busy
+    ? '<div class="graph-source-busy"><span class="graph-source-spinner"></span>正在解析文件...</div>'
+    : '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
+      + '<label class="graph-source-file-btn">选择/拖入文件<input type="file" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
+      + '<div class="graph-source-controls"><label>最多 <input type="number" class="graph-source-max-input" min="1" max="50" value="' + (node.maxItems || 5) + '" onchange="updateSourceNodeMax(\'' + node.id + '\',this.value)"></label>'
+      + (node.fileId ? _iconRegenButton('reparseSourceNode(\'' + node.id + '\')', '重新解析', false) : '')
+      + '</div>' + fileName + itemCount
+      + '</div>';
+  return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + _customNodeHeaderHtml(node, attr, '')
+    + '<div class="graph-node-label">输入</div>'
+    + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
+function _renderKnowledgeNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const formulas = (node.formulas || []).slice(0, 4).map(f => {
+    const latex = String(f || '').replace(/^\$+|\$+$/g, '').trim();
+    let latexHtml = escapeHtml(latex);
+    try {
+      if (window.katex) latexHtml = katex.renderToString(latex, { throwOnError: false, displayMode: false });
+    } catch (e) {}
+    return '<div class="graph-knowledge-formula">' + latexHtml + '</div>';
+  }).join('');
+  const body = '<div class="graph-knowledge-body">'
+    + (formulas ? '<div class="graph-knowledge-formulas">' + formulas + '</div>' : '')
+    + '<textarea class="graph-custom-node-content" rows="3" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)">' + escapeHtml(node.content || node.summary || '') + '</textarea>'
+    + '<div class="graph-knowledge-actions">' + _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy) + '</div>'
+    + '</div>';
+  return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + _customNodeHeaderHtml(node, attr, '')
+    + '<div class="graph-node-label">' + escapeHtml(node.title || '知识点') + '</div>'
+    + '<div class="graph-node-full-content">' + body + '</div>'
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
+function _renderRelationNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const statusText = _customNodeStatusText(node);
+  const statusHtml = '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>';
+  const body = '<div class="graph-relation-body">'
+    + '<textarea class="graph-custom-node-content" rows="2" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)" placeholder="联系说明">' + escapeHtml(node.content || '') + '</textarea>'
+    + '<div class="graph-relation-actions">'
+    + statusHtml
+    + _iconRegenButton('generateRelationNode(\'' + node.id + '\')', node.busy ? '生成中' : '生成联系', node.busy)
+    + '</div></div>';
+  return '<div class="graph-node graph-node-relation graph-attr-relation graph-node-compact' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + '<div class="graph-node-full-content">' + body + '</div>'
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
 function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
+  if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
+  if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
+  if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
   const message = messages[node.messageIndex];
   const baseClass = 'graph-node graph-node-' + node.kind;
   const attr = _nodeAttribute(node);
@@ -2379,6 +2567,10 @@ function _startLinkDrag(event, portEl) {
   const decodeAttr = (value) => {
     try { return value ? decodeURIComponent(value) : ''; } catch (e) { return value || ''; }
   };
+  let itemMeta = null;
+  if (portEl.dataset.portItem) {
+    try { itemMeta = JSON.parse(decodeAttr(portEl.dataset.portItem)); } catch (e) { itemMeta = null; }
+  }
   graphView.linkDrag = {
     mode: isInput ? 'input' : 'output',
     nodeId: node.id,
@@ -2390,6 +2582,7 @@ function _startLinkDrag(event, portEl) {
       question: decodeAttr(portEl.dataset.portQuestion),
       level: portEl.dataset.portLevel || '',
       label: decodeAttr(portEl.dataset.portLabel),
+      item: itemMeta,
     },
     pointerId: event.pointerId,
     currentX: null,
@@ -2433,6 +2626,186 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   _redrawEdges();
 }
 
+function _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
+  const item = portMeta.item || {};
+  const state = _graphState();
+  _pushGraphUndo();
+  const nodeId = 'knowledge-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  state.customNodes = state.customNodes || [];
+  state.customNodes.push({
+    id: nodeId,
+    kind: 'knowledge',
+    moduleKey: 'knowledge',
+    manual: true,
+    content: item.summary || item.title || '',
+    status: 'done',
+    summary: item.summary || '',
+    analysis: '',
+    analysisHash: '',
+    inputHash: '',
+    generatedAt: 0,
+    requirements: '',
+    busy: false,
+    generated: false,
+    maxItems: 0,
+    items: [],
+    edges: [],
+    fileId: sourceNode.fileId || '',
+    fileName: sourceNode.fileName || '',
+    generatedNodeIds: [],
+    title: item.title || '知识点',
+    category: item.category || 'other',
+    tags: item.tags || [],
+    formulas: item.formulas || [],
+    knowledgeKey: item.id || item.title || nodeId,
+    sourceNodeId: sourceNode.id,
+    x,
+    y,
+    depth: 3,
+    targetAngle: 0,
+    isRoot: false,
+    timestamp: Date.now(),
+    pinned: false,
+    fixedX: null,
+    fixedY: null,
+    customWidth: 260,
+    customHeight: null,
+    w: 0,
+    h: 0,
+    vx: 0,
+    vy: 0,
+  });
+  state.connections = state.connections || [];
+  state.connections.push({
+    from: sourceNode.id,
+    fromPort: sourcePortId || 'out-0',
+    to: nodeId,
+    toPort: 'in-0',
+    type: 'custom',
+    custom: true,
+  });
+  _saveGraphState(state);
+  renderGraphCanvas();
+}
+
+function _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
+  const state = _graphState();
+  _pushGraphUndo();
+  const nodeId = 'question-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const sourceText = sourceNode.title || sourceNode.summary || _nodeStoredContent(sourceNode) || '该知识点';
+  state.customNodes = state.customNodes || [];
+  state.customNodes.push({
+    id: nodeId,
+    kind: 'user',
+    moduleKey: '',
+    manual: true,
+    content: '请讲解：' + sourceText,
+    status: 'done',
+    summary: '',
+    analysis: '',
+    analysisHash: '',
+    inputHash: '',
+    generatedAt: 0,
+    requirements: '',
+    busy: false,
+    generated: false,
+    maxItems: 0,
+    items: [],
+    edges: [],
+    fileId: sourceNode.fileId || '',
+    fileName: sourceNode.fileName || '',
+    generatedNodeIds: [],
+    category: sourceNode.category || 'other',
+    formulas: sourceNode.formulas || [],
+    knowledgeKey: sourceNode.knowledgeKey || '',
+    sourceNodeId: sourceNode.id,
+    x,
+    y,
+    depth: 2,
+    targetAngle: 0,
+    isRoot: false,
+    timestamp: Date.now(),
+    pinned: false,
+    fixedX: null,
+    fixedY: null,
+    customWidth: 300,
+    customHeight: null,
+    w: 0,
+    h: 0,
+    vx: 0,
+    vy: 0,
+  });
+  state.connections = state.connections || [];
+  state.connections.push({
+    from: sourceNode.id,
+    fromPort: sourcePortId || 'out-0',
+    to: nodeId,
+    toPort: 'in-0',
+    type: 'custom',
+    custom: true,
+  });
+  _saveGraphState(state);
+  renderGraphCanvas();
+}
+
+function _createRelationNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
+  const state = _graphState();
+  _pushGraphUndo();
+  const nodeId = 'relation-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  state.customNodes = state.customNodes || [];
+  state.customNodes.push({
+    id: nodeId,
+    kind: 'relation',
+    moduleKey: 'relation',
+    manual: true,
+    content: '',
+    status: 'empty',
+    summary: '',
+    analysis: '',
+    analysisHash: '',
+    inputHash: '',
+    generatedAt: 0,
+    requirements: '',
+    busy: false,
+    generated: false,
+    maxItems: 0,
+    items: [],
+    edges: [],
+    fileId: sourceNode.fileId || '',
+    fileName: sourceNode.fileName || '',
+    generatedNodeIds: [],
+    category: '',
+    formulas: [],
+    knowledgeKey: '',
+    x,
+    y,
+    depth: 4,
+    targetAngle: 0,
+    isRoot: false,
+    timestamp: Date.now(),
+    pinned: false,
+    fixedX: null,
+    fixedY: null,
+    customWidth: 280,
+    customHeight: null,
+    w: 0,
+    h: 0,
+    vx: 0,
+    vy: 0,
+  });
+  state.connections = state.connections || [];
+  state.connections.push({
+    from: sourceNode.id,
+    fromPort: sourcePortId || 'out-0',
+    to: nodeId,
+    toPort: 'in-0',
+    type: 'custom',
+    custom: true,
+  });
+  _saveGraphState(state);
+  renderGraphCanvas();
+}
+
 function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y) {
   const sourceNode = graphView.nodeById[sourceNodeId];
   if (!sourceNode || !portMeta) return;
@@ -2441,6 +2814,18 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   const type = String(portMeta.type || '');
   const branchType = String(portMeta.branchType || '');
   const option = _findManualOptionByPort(portMeta);
+  if (type === 'knowledge') {
+    _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
+    return;
+  }
+  if (type === 'relation' || label === '联系') {
+    _createRelationNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
+    return;
+  }
+  if (sourceNode.kind === 'knowledge' && (label === '问题' || portMeta.attribute === 'question')) {
+    _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
+    return;
+  }
   const questionLike = label === '追问' || label === '直接问AI' || label === '没看懂' || label === '回答练习'
     || /^追问/.test(label)
     || type === 'socratic'
@@ -2522,7 +2907,7 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     id: nodeId,
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
-    manual: option.key === 'manual' || option.key === 'note',
+    manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
     content: '',
     status: 'empty',
     summary: '',
@@ -2533,6 +2918,15 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     requirements: '',
     busy: false,
     generated: false,
+    maxItems: option.key === 'source' ? 5 : 0,
+    items: [],
+    edges: [],
+    fileId: '',
+    fileName: '',
+    generatedNodeIds: [],
+    category: '',
+    formulas: [],
+    knowledgeKey: '',
     x,
     y,
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
@@ -2770,7 +3164,7 @@ function graphOpenRegenerate(nodeId) {
     + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里没看懂？例如：第三步推导跳步了"></textarea>'
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'
-    + '<button class="graph-draft-btn graph-draft-send" onclick="submitRegenerateNode(\'' + nodeId + '\')">重新生成此节点</button>'
+    + '<button class="graph-draft-btn graph-draft-send graph-icon-btn" onclick="submitRegenerateNode(\'' + nodeId + '\')" title="重新生成此节点">' + _regenIconHtml() + '</button>'
     + '</div></div>'
   );
   _measureNodes();
@@ -2861,7 +3255,7 @@ function _removeGraphEdge(edgeKey) {
 
 function graphAddOutputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'module' || node.moduleKey !== 'socratic') return;
+  if (!node || !((node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.portCounts = state.portCounts || {};
@@ -2872,7 +3266,7 @@ function graphAddOutputPort(nodeId) {
 
 function graphAddInputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub')) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -2883,7 +3277,9 @@ function graphAddInputPort(nodeId) {
 
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub') || portIndex <= 0) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation')) return;
+  const minPort = node.kind === 'relation' ? 2 : 1;
+  if (portIndex < minPort) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -2909,13 +3305,15 @@ function _baseOutputPortCount(node) {
   if (node.kind === 'user') return 1;
   if (node.kind === 'answer') return _nodeOutputLabels(node, messages).length;
   if (node.kind === 'hub') return 1;
+  if (node.kind === 'source') return (node.items || []).length;
+  if (node.kind === 'knowledge') return _nodeOutputLabels(node, messages).length;
   if (node.kind === 'summary' || node.kind === 'note') return 0;
   return 0;
 }
 
 function graphRemoveOutputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'module' || node.moduleKey !== 'socratic') return;
+  if (!node || !((node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge')) return;
   const baseCount = _baseOutputPortCount(node);
   if (portIndex < baseCount) return;
   const state = _graphState();
@@ -3665,7 +4063,7 @@ function createManualNode(nodeKind) {
     id: option.key + '-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
-    manual: option.key === 'manual' || option.key === 'note',
+    manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
     content: '',
     status: 'empty',
     summary: '',
@@ -3676,6 +4074,15 @@ function createManualNode(nodeKind) {
     requirements: '',
     busy: false,
     generated: false,
+    maxItems: option.key === 'source' ? 5 : 0,
+    items: [],
+    edges: [],
+    fileId: '',
+    fileName: '',
+    generatedNodeIds: [],
+    category: '',
+    formulas: [],
+    knowledgeKey: '',
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
@@ -3739,6 +4146,410 @@ function updateCustomNodeContent(nodeId, value) {
     .filter(item => item.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(item.kind))
     .map(item => ({ ...item }));
   _saveGraphState(state);
+}
+
+function updateSourceNodeMax(nodeId, value) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source') return;
+  const next = Math.max(1, Math.min(50, parseInt(value, 10) || 5));
+  node.maxItems = next;
+  _saveCustomNodes();
+  renderGraphCanvas();
+}
+
+function _clearSourceGeneratedNodes(node) {
+  const state = _graphState();
+  const oldIds = new Set(node.generatedNodeIds || []);
+  state.customNodes = (state.customNodes || []).filter(item => !oldIds.has(item.id));
+  state.connections = (state.connections || []).filter(edge => !oldIds.has(edge.from) && !oldIds.has(edge.to));
+  if (state.positions) {
+    for (const id of oldIds) delete state.positions[id];
+  }
+  if (state.inputPortCounts) {
+    for (const id of oldIds) delete state.inputPortCounts[id];
+  }
+  node.generatedNodeIds = [];
+  _saveGraphState(state);
+}
+
+function _sourceNodePosition(node, index, count) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count))));
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  const colSpan = Math.max(1, count - 1);
+  return {
+    x: node.x + 430 + (col - (cols - 1) / 2) * Math.min(240, 900 / cols),
+    y: node.y + (row - Math.max(0, Math.ceil(count / cols) - 1) / 2) * 170,
+  };
+}
+
+function _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes) {
+  if (!items || !items.length || typeof saveKnowledgeItems !== 'function') return;
+  const current = typeof getKnowledgeItems === 'function' ? getKnowledgeItems() : {};
+  const now = Date.now();
+  const pending = { ...current };
+  items.forEach((item, index) => {
+    const knowledgeNode = knowledgeNodes[index];
+    const id = 'kf_' + (item.id || item.title || index) + '_' + _simpleHash(node.id + ':' + index);
+    pending[id] = {
+      id,
+      title: item.title || '知识点',
+      category: item.category || 'other',
+      tags: item.tags || [],
+      summary: item.summary || '',
+      formulas: item.formulas || [],
+      source: 'file',
+      sourceType: 'file',
+      fileId: node.fileId || '',
+      fileName: node.fileName || '',
+      sessionId: typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '',
+      messageId: '',
+      moduleKey: 'knowledge',
+      nodeId: knowledgeNode ? knowledgeNode.id : '',
+      createdAt: now,
+    };
+  });
+  saveKnowledgeItems(pending);
+  if (typeof saveFormulasToServer === 'function') {
+    const formulas = [];
+    items.forEach((item, index) => {
+      for (const latex of item.formulas || []) {
+        formulas.push({
+          latex,
+          concept: item.title || '知识点',
+          meaning: '',
+          meaningSource: 'local',
+          topic: '',
+          related: item.tags || [],
+          sessionId: typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '',
+          messageId: '',
+          moduleKey: item.category === 'math' ? 'math' : item.category === 'physics' ? 'physics' : 'knowledge',
+          nodeId: knowledgeNodes[index] ? knowledgeNodes[index].id : '',
+          createdAt: now,
+        });
+      }
+    });
+    if (formulas.length) saveFormulasToServer(formulas);
+  }
+}
+
+function _relationScore(rel, fallback) {
+  const score = Number(rel && rel.score);
+  if (Number.isFinite(score)) return Math.max(0, Math.min(1, score));
+  return fallback == null ? 0.75 : fallback;
+}
+
+function _isWeakRelationText(value) {
+  return /^(相关|有联系|关联|联系|有关|包含|关系|本质联系)$/i.test(String(value || '').trim());
+}
+
+function _relationGroupsFromData(relations, edges) {
+  const groups = [];
+  if (Array.isArray(relations)) {
+    for (const rel of relations) {
+      if (!rel || typeof rel !== 'object') continue;
+      const label = String(rel.label || rel.meaning || rel.type || '').trim();
+      if (_isWeakRelationText(label)) continue;
+      const nodes = Array.isArray(rel.nodes)
+        ? rel.nodes.map(item => String(item || '')).filter(Boolean)
+        : [];
+      if (!nodes.length && rel.from && rel.to) nodes.push(String(rel.from), String(rel.to));
+      const unique = Array.from(new Set(nodes));
+      if (unique.length < 2) continue;
+      groups.push({
+        nodes: unique.slice(0, 4),
+        label,
+        type: String(rel.type || '本质联系') || '本质联系',
+        score: _relationScore(rel, label ? 0.75 : 0.5),
+      });
+    }
+  }
+  if (!groups.length && Array.isArray(edges)) {
+    for (const edge of edges) {
+      if (!edge || typeof edge !== 'object') continue;
+      const label = String(edge.label || edge.type || '').trim();
+      if (_isWeakRelationText(label)) continue;
+      const from = String(edge.from || '');
+      const to = String(edge.to || '');
+      if (!from || !to || from === to) continue;
+      groups.push({
+        nodes: [from, to],
+        label,
+        type: String(edge.type || '本质联系') || '本质联系',
+        score: _relationScore(edge, label ? 0.7 : 0.5),
+      });
+    }
+  }
+  groups.sort((a, b) => b.score - a.score);
+  return groups.filter(group => group.score >= 0.6).slice(0, 3);
+}
+
+function _applyParsedDocumentToNode(node, data) {
+  if (!node) return;
+  node = _findGraphNode(node.id) || node;
+  _clearSourceGeneratedNodes(node);
+  const items = Array.isArray(data.nodes) ? data.nodes.slice(0, Math.max(1, node.maxItems || 5)) : [];
+  const edges = Array.isArray(data.edges) ? data.edges : [];
+  const relationGroups = _relationGroupsFromData(data.relations, edges);
+  node.items = items;
+  node.edges = edges;
+  node.relations = relationGroups;
+  node.fileId = data.fileId || node.fileId;
+  node.fileName = data.fileName || node.fileName;
+  node.status = 'done';
+  node.busy = false;
+
+  const state = _graphState();
+  state.customNodes = (state.customNodes || []).map(item => item.id === node.id ? ({ ...node }) : item);
+  state.connections = state.connections || [];
+  const itemToNode = {};
+  const knowledgeNodes = [];
+  const createdIds = [];
+
+  items.forEach((item, index) => {
+    const pos = _sourceNodePosition(node, index, items.length);
+    const nodeId = 'knowledge-custom-' + Date.now() + '-' + index + '-' + Math.random().toString(36).slice(2, 7);
+    const knowledgeNode = {
+      id: nodeId,
+      kind: 'knowledge',
+      moduleKey: 'knowledge',
+      manual: true,
+      content: item.summary || item.title || '',
+      status: 'done',
+      summary: item.summary || '',
+      analysis: '',
+      analysisHash: '',
+      inputHash: '',
+      generatedAt: Date.now(),
+      requirements: '',
+      busy: false,
+      generated: false,
+      maxItems: 0,
+      items: [],
+      edges: [],
+      fileId: node.fileId || '',
+      fileName: node.fileName || '',
+      generatedNodeIds: [],
+      title: item.title || '知识点',
+      category: item.category || 'other',
+      tags: item.tags || [],
+      formulas: item.formulas || [],
+      knowledgeKey: item.id || item.title || nodeId,
+      sourceNodeId: node.id,
+      x: pos.x,
+      y: pos.y,
+      depth: 3,
+      targetAngle: 0,
+      isRoot: false,
+      timestamp: Date.now(),
+      pinned: false,
+      fixedX: null,
+      fixedY: null,
+      customWidth: 260,
+      customHeight: null,
+      w: 0,
+      h: 0,
+      vx: 0,
+      vy: 0,
+    };
+    state.customNodes.push(knowledgeNode);
+    knowledgeNodes.push(knowledgeNode);
+    itemToNode[String(item.id || item.title || index)] = nodeId;
+    createdIds.push(nodeId);
+    state.connections.push({
+      from: node.id,
+      fromPort: 'out-' + index,
+      to: nodeId,
+      toPort: 'in-0',
+      type: 'knowledge',
+      custom: true,
+    });
+  });
+
+  const relationInputCounts = {};
+  relationGroups.forEach((rel, index) => {
+    const nodeIds = (rel.nodes || [])
+      .map(raw => itemToNode[String(raw)])
+      .filter(Boolean);
+    const uniqueNodeIds = Array.from(new Set(nodeIds));
+    if (uniqueNodeIds.length < 2) return;
+    const relationId = 'relation-custom-' + Date.now() + '-' + index + '-' + Math.random().toString(36).slice(2, 7);
+    const pos = _sourceNodePosition(node, items.length + index, items.length + relationGroups.length);
+    const relationNode = {
+      id: relationId,
+      kind: 'relation',
+      moduleKey: 'relation',
+      manual: true,
+      content: rel.label || rel.type || '',
+      status: rel.label || rel.type ? 'done' : 'empty',
+      summary: '',
+      analysis: '',
+      analysisHash: '',
+      inputHash: '',
+      generatedAt: Date.now(),
+      requirements: '',
+      busy: false,
+      generated: false,
+      maxItems: 0,
+      items: [],
+      edges: [],
+      fileId: node.fileId || '',
+      fileName: node.fileName || '',
+      generatedNodeIds: [],
+      category: '',
+      formulas: [],
+      knowledgeKey: '',
+      x: pos.x,
+      y: pos.y + 60,
+      depth: 4,
+      targetAngle: 0,
+      isRoot: false,
+      timestamp: Date.now(),
+      pinned: false,
+      fixedX: null,
+      fixedY: null,
+      customWidth: 280,
+      customHeight: null,
+      w: 0,
+      h: 0,
+      vx: 0,
+      vy: 0,
+    };
+    state.customNodes.push(relationNode);
+    createdIds.push(relationId);
+    uniqueNodeIds.forEach((fromId, portIndex) => {
+      const toPort = 'in-' + (relationInputCounts[relationId] || 0);
+      relationInputCounts[relationId] = (relationInputCounts[relationId] || 0) + 1;
+      state.connections.push({
+        from: fromId,
+        fromPort: 'out-2',
+        to: relationId,
+        toPort,
+        type: rel.type || '本质联系',
+        custom: true,
+      });
+    });
+  });
+
+  for (const [relationId, count] of Object.entries(relationInputCounts)) {
+    state.inputPortCounts = state.inputPortCounts || {};
+    state.inputPortCounts[relationId] = Math.max(0, count - 2);
+  }
+  node.generatedNodeIds = createdIds;
+  _saveGraphState(state);
+  _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes);
+  renderGraphCanvas();
+  if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+  if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
+  if (typeof showToast === 'function') {
+    showToast('已解析 ' + items.length + ' 个知识点' + (relationGroups.length ? '，' + relationGroups.length + ' 条本质联系' : ''));
+  }
+}
+
+async function _parseSourceNodeFile(node, fileName, contentBase64, maxItems) {
+  if (!node || node.busy) return;
+  node.busy = true;
+  node.status = 'running';
+  node.fileName = fileName || node.fileName;
+  node.maxItems = Math.max(1, Math.min(50, maxItems || node.maxItems || 5));
+  _saveCustomNodes();
+  renderGraphCanvas();
+  node = _findGraphNode(node.id) || node;
+  if (typeof showProgress === 'function') showProgress('tool', 12, '正在读取文件并解析知识点...');
+
+  const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+  const payload = {
+    fileName: node.fileName,
+    maxItems: node.maxItems,
+    level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
+    provider: agentModel ? agentModel.provider : '',
+    api_key: agentModel ? agentModel.apiKey : '',
+    model: agentModel ? agentModel.model : '',
+    base_url: agentModel ? agentModel.baseUrl : '',
+  };
+  if (node.fileId) payload.fileId = node.fileId;
+  else if (contentBase64) payload.contentBase64 = contentBase64;
+
+  try {
+    if (typeof showProgress === 'function') showProgress('tool', 40, '正在调用解析服务...');
+    const resp = await fetch('/api/documents/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 404 || resp.status === 405) {
+      throw new Error('后端未加载文件解析接口，请先重启 python src/main.py');
+    }
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.detail || data.error || '文件解析失败');
+    if (!data.nodes || !data.nodes.length) throw new Error('未提取到知识点，请调整文件内容或数量限制');
+    if (typeof showProgress === 'function') showProgress('tool', 85, '正在生成知识网络...');
+    _applyParsedDocumentToNode(node, data);
+    if (typeof hideProgress === 'function') hideProgress('文件解析完成');
+  } catch (err) {
+    node.busy = false;
+    node.status = 'error';
+    _saveCustomNodes();
+    renderGraphCanvas();
+    if (typeof hideProgress === 'function') hideProgress('文件解析失败');
+    if (typeof showToast === 'function') showToast('解析失败：' + (err.message || err));
+  }
+}
+
+function _loadSourceNodeFile(node, file, maxItems) {
+  if (!node || !file) return;
+  node.fileId = '';
+  const reader = new FileReader();
+  reader.onload = () => {
+    const base64 = String(reader.result || '').split(',')[1] || '';
+    _parseSourceNodeFile(node, file.name, base64, maxItems);
+  };
+  reader.readAsDataURL(file);
+}
+
+function handleSourceNodeFile(inputEl, nodeId) {
+  const file = inputEl && inputEl.files && inputEl.files[0];
+  if (!file) return;
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  const maxEl = inputEl.closest('.graph-node')?.querySelector('.graph-source-max-input');
+  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
+  _loadSourceNodeFile(node, file, maxItems);
+  if (inputEl) inputEl.value = '';
+}
+
+function handleSourceNodeDrop(event, nodeId) {
+  event.preventDefault();
+  const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+  if (!file) return;
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  const maxEl = event.target.closest('.graph-node')?.querySelector('.graph-source-max-input');
+  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
+  _loadSourceNodeFile(node, file, maxItems);
+}
+
+function reparseSourceNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || !node.fileId) return;
+  _parseSourceNodeFile(node, node.fileName, '', node.maxItems);
+}
+
+function generateKnowledgeNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'knowledge' || node.busy) return;
+  _generateCustomNode(node);
+}
+
+function generateRelationNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'relation') return;
+  const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
+  if (incoming.length < 2) {
+    if (typeof showToast === 'function') showToast('请先连接至少两个上游节点');
+    return;
+  }
+  _generateCustomNode(node);
 }
 
 function _blankNodeGraphPath(node) {
@@ -3857,8 +4668,14 @@ function _buildWorkflowContextForNode(node) {
         ? { label: '汇聚' }
         : node.kind === 'summary'
           ? { label: 'AI 总结' }
-          : node.kind === 'note'
-            ? { label: '人工总结' }
+      : node.kind === 'note'
+          ? { label: '人工总结' }
+          : node.kind === 'source'
+            ? { label: '输入' }
+            : node.kind === 'knowledge'
+              ? { label: '知识点' }
+              : node.kind === 'relation'
+                ? { label: '知识联系' }
             : { label: '问题' };
   const allUpstream = _collectUpstreamPath(node);
   const analysisNode = allUpstream.find(item => item.kind === 'answer' && !item.manual);
@@ -3875,6 +4692,12 @@ function _buildWorkflowContextForNode(node) {
       module: item.module,
       label: item.kind === 'user'
         ? '问题'
+        : item.kind === 'knowledge'
+          ? '知识点'
+          : item.kind === 'relation'
+            ? '知识联系'
+            : item.kind === 'source'
+              ? '输入'
         : item.kind === 'answer'
           ? (item.manual ? '非 AI 回答' : 'AI 回答')
           : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
@@ -3923,6 +4746,26 @@ function _workflowPromptForNode(node, workflowContext) {
     return '请根据以下已连接内容生成一份简明、结构化的 AI 总结。'
       + '要求：提炼物理直觉、数学本质、关键结论、公式和后续建议；只输出总结正文；不要输出完整学习卡片 XML，不要输出 <summary> 标签，不要输出其他模块正文；如出现公式仍按 <formula> 规范标注。\n\n'
       + (upstreamText || '（暂无已连接的上游内容）');
+  }
+  if (node.kind === 'relation') {
+    const upstreamText = (workflowContext.upstream || [])
+      .map(item => (item.content ? item.label + '：\n' + item.content : ''))
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 8000);
+    return '请基于以下已连接节点，用一句简短中文说明它们之间的联系。'
+      + '要求：内容简短，最好不超过100字；如果涉及多个节点，说明它们之间共同的知识关系；不要输出XML标签，不要重复完整节点内容；如出现公式仍按 <formula> 规范标注。\n\n'
+      + (upstreamText || '（暂无已连接的上游内容）');
+  }
+  if (node.kind === 'knowledge') {
+    const sourceText = [
+      node.title || '知识点',
+      node.summary || '',
+      (node.formulas || []).join('\n'),
+    ].filter(Boolean).join('\n\n');
+    return '请为以下知识点生成一段准确、简洁的中文解释。'
+      + '要求：说明核心含义、物理或数学本质、适用条件；不要输出XML标签；如出现公式仍按 <formula> 规范标注；不要重复来源文件全文。\n\n'
+      + (sourceText || '（暂无知识点内容）');
   }
   if (node.kind === 'answer' && !node.manual) {
     return '请根据用户问题生成 AI 回答节点的完整内容。'
@@ -4302,6 +5145,9 @@ async function _generateCustomNode(node) {
 
 function _workflowProgressLabel(node) {
   if (!node) return '';
+  if (node.kind === 'source') return '输入';
+  if (node.kind === 'knowledge') return '知识点';
+  if (node.kind === 'relation') return '知识联系';
   if (node.manual) return node.kind === 'note' ? '人工总结' : '非 AI 回答';
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
@@ -4439,6 +5285,15 @@ async function _processWorkflowChainItem(current, force) {
   if (current.kind === 'hub') {
     const hasInput = (graphView.edges || []).some(edge => String(edge.to) === current.id && !edge.draft);
     current.status = hasInput ? 'done' : 'waiting';
+    return true;
+  }
+
+  if (current.kind === 'source') {
+    current.status = current.items && current.items.length ? 'done' : 'waiting';
+    return true;
+  }
+  if (current.kind === 'knowledge' || current.kind === 'relation') {
+    current.status = (current.content || '').trim() ? 'done' : 'waiting';
     return true;
   }
 
@@ -4709,11 +5564,11 @@ function _renderBlankNodeLive(node, content) {
 
 function _syncBlankNodeControls(node) {
   const root = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
-  const btn = root?.querySelector('.graph-blank-generate-btn');
+  const btn = root?.querySelector('.graph-blank-generate-btn, .graph-regen-btn.graph-icon-btn');
   const input = root?.querySelector('.graph-blank-input');
   if (btn) {
     btn.disabled = false;
-    btn.textContent = node.content ? '重新生成' : '生成';
+    btn.title = node.content ? '重新生成' : '生成';
   }
   if (input) input.disabled = false;
 }
@@ -5332,6 +6187,12 @@ window.graphAddInputPort = graphAddInputPort;
 window.graphRemoveInputPort = graphRemoveInputPort;
 window.deleteCustomNode = deleteCustomNode;
 window.updateCustomNodeContent = updateCustomNodeContent;
+window.updateSourceNodeMax = updateSourceNodeMax;
+window.handleSourceNodeFile = handleSourceNodeFile;
+window.handleSourceNodeDrop = handleSourceNodeDrop;
+window.reparseSourceNode = reparseSourceNode;
+window.generateKnowledgeNode = generateKnowledgeNode;
+window.generateRelationNode = generateRelationNode;
 window.resetGraphConnections = resetGraphConnections;
 window.graphCreateGroup = graphCreateGroup;
 window.graphRenameGroup = graphRenameGroup;

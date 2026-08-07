@@ -293,8 +293,8 @@ function renderKnowledgePanel() {
     html += `<div class="kp-date-group"><div class="kp-date-label">${label}</div>`;
     for (const item of groupItems) {
       const catClass = item.category || 'other';
-      const sourceIcon = item.source === 'ai_extract' ? '🤖' : '⭐';
-      const sourceText = item.source === 'ai_extract' ? 'AI提取' : '手动收藏';
+      const sourceIcon = item.source === 'ai_extract' ? '🤖' : item.source === 'file' ? '📄' : '⭐';
+      const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'file' ? '文件导入' : '手动收藏';
       const tagsHtml = (item.tags || []).map(t => `<span class="kp-tag">${escapeHtml(t)}</span>`).join('');
       const formulasHtml = (item.formulas || [])
         .filter(f => _looksLikeFormula(_stripFormulaDelimiters(f)))
@@ -396,7 +396,7 @@ function _resolveKnowledgeAnchor(item, messages) {
     else if (item.category === 'math') moduleKey = 'math';
     else if (item.category === 'physics') moduleKey = 'physics';
   }
-  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '' };
+  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '', nodeId: item.nodeId || '' };
 }
 
 function _showJumpError(message) {
@@ -428,6 +428,10 @@ async function goToKnowledgeNode(itemId) {
   const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const anchor = _resolveKnowledgeAnchor(item, messages);
   if (!anchor.messageId) {
+    if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
+      const ok = await window.focusGraphNodeById(anchor.nodeId);
+      if (ok) return true;
+    }
     _showJumpError('对应节点不存在，无法定位');
     return false;
   }
@@ -631,6 +635,7 @@ async function saveFormulasToServer(formulas) {
       sessionId: item.sessionId || '',
       messageId: item.messageId || '',
       moduleKey: item.moduleKey || '',
+      nodeId: item.nodeId || '',
       createdAt: item.createdAt || Date.now(),
     };
     cache[id] = saved;
@@ -817,7 +822,12 @@ function _resolveFormulaAnchor(item, messages) {
     }
   }
 
-  if (!messageId) return null;
+  if (!messageId) {
+    if (item.nodeId) {
+      return { sessionId: item.sessionId, messageId: '', moduleKey: moduleKey || '', nodeId: item.nodeId };
+    }
+    return null;
+  }
   if (!moduleKey && message) moduleKey = _moduleKeyForFormulaInMessage(message, item.latex);
   if (!moduleKey && item.moduleKey && item.moduleKey !== 'answer') moduleKey = item.moduleKey;
   if (!moduleKey) {
@@ -825,7 +835,7 @@ function _resolveFormulaAnchor(item, messages) {
     if (tags.includes('数学')) moduleKey = 'math';
     else if (tags.includes('物理')) moduleKey = 'physics';
   }
-  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '' };
+  return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '', nodeId: item.nodeId || '' };
 }
 
 async function locateFormulaNode(formulaId) {
@@ -848,6 +858,14 @@ async function locateFormulaNode(formulaId) {
   const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const anchor = _resolveFormulaAnchor(item, messages);
   if (!anchor) {
+    _showJumpError('找不到公式对应的节点');
+    return false;
+  }
+  if (!anchor.messageId) {
+    if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
+      const ok = await window.focusGraphNodeById(anchor.nodeId);
+      if (ok) return true;
+    }
     _showJumpError('找不到公式对应的节点');
     return false;
   }
