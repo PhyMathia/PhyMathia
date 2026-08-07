@@ -329,6 +329,9 @@
             inputPortCounts: parsed.inputPortCounts || {},
             groups: Array.isArray(parsed.groups) ? parsed.groups : [],
             customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
+            networkMode: !!parsed.networkMode,
+            auditLog: Array.isArray(parsed.auditLog) ? parsed.auditLog : [],
+            checkpoints: Array.isArray(parsed.checkpoints) ? parsed.checkpoints : [],
             updatedAt: parsed.updatedAt || 0,
           };
         }
@@ -350,6 +353,9 @@
         inputPortCounts: {},
         groups: [],
         customNodes: [],
+        networkMode: false,
+        auditLog: [],
+        checkpoints: [],
         updatedAt: 0,
       };
     }

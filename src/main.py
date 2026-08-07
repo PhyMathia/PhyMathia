@@ -479,6 +479,52 @@ def _workflow_context_instruction(workflow_context) -> str:
     return "\n".join(lines)
 
 
+def _knowledge_network_instruction(graph_snapshot, graph_instruction) -> str:
+    if not isinstance(graph_snapshot, dict):
+        return ""
+    graph_json = json.dumps(graph_snapshot, ensure_ascii=False, indent=2)[:20000]
+    instruction = str(graph_instruction or "请审阅并完善这张人工知识网络").strip()
+    lines = [
+        "\n\n# 人工知识网络审阅模式",
+        f"用户提交了一张人工搭建的知识网络。用户指令：{instruction}",
+        "你的任务是审阅这张网络，指出错误和缺口，并直接返回一组图操作来完善它。",
+        "不要输出 Markdown 正文，不要解释，不要输出坐标，只输出一个 JSON 对象。",
+        "不要返回新的 nodes/edges 数组，不要返回 topic/title/is_correct/feedback 字段；图已经存在于快照中，你只能通过 operations 修改它。",
+        "默认必须返回 operations；不要只返回 comments 就算完成。",
+        "如果图中存在 human_note 或人工编辑过的模块，至少给出对应的 update_node、add_edge 或 create_node 操作。",
+        "只有确认图已经完全正确且不需要任何变化时，才返回 operations: []。",
+        "JSON 只允许这些键：summary, comments, operations。",
+        "",
+        "JSON 格式：",
+        '{',
+        '  "summary": "一句话总结",',
+        '  "comments": [',
+        '    {"targetId": "节点或连线 id", "severity": "error|warning|info", "text": "说明"}',
+        '  ],',
+        '  "operations": [',
+        '    {"op": "create_node", "label": "节点名", "nodeType": "concept", "content": "说明", "formula": "", "reason": "为什么新增"},',
+        '    {"op": "update_node", "id": "n1", "label": "新标题", "content": "新内容", "reason": "为什么修改"},',
+        '    {"op": "delete_node", "id": "n2", "reason": "为什么删除"},',
+        '    {"op": "add_edge", "source": "n1", "target": "n3", "relation": "supports", "reason": "为什么连接"},',
+        '    {"op": "remove_edge", "edgeId": "e1", "reason": "为什么删除这条边"},',
+        '    {"op": "update_edge", "edgeId": "e1", "relation": "depends_on", "reason": "为什么修改关系"}',
+        '  ]',
+        '}',
+        "",
+        "节点类型可以是：human_note, user, answer, physics, math, graph, viz, socratic, learn, concept, law, formula, condition, example, analogy, understanding, question。",
+        "连线关系只能是：depends_on, derives, supports, contradicts, applies_to, equivalent_to, needs_detail。",
+        "允许通过 update_node 修改已有的 physics/math/graph/viz/socratic/learn 模块节点，update_node 的 content 应只包含该模块正文。",
+        "不要删除 user 问题节点、AI 回答节点或消息派生模块节点。",
+        "删除节点时必须给 reason，且不要删除整个网络的核心节点，除非它是重复或错误节点。",
+        "只能引用下面快照中已经存在的 id，新建节点不要指定坐标。",
+        "不确定但可能重要的发现放进 comments，不要用破坏性操作表达。",
+        "",
+        "网络快照：",
+        graph_json,
+    ]
+    return "\n".join(lines)
+
+
 def _load_session_context_from_path(
     session_id: str,
     graph_path: list,
@@ -940,6 +986,8 @@ async def api_models_chat(request: Request):
     parent_id = payload.get("parent_id", "")
     graph_path = payload.get("graph_path") or payload.get("graphPath") or []
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
+    graph_snapshot = payload.get("graph_snapshot") or payload.get("graphSnapshot") or {}
+    graph_instruction = payload.get("graph_instruction") or payload.get("graphInstruction") or ""
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
@@ -961,6 +1009,8 @@ async def api_models_chat(request: Request):
             system_content += _graph_path_instruction(graph_path, source_module)
         if workflow_context:
             system_content += _workflow_context_instruction(workflow_context)
+        if isinstance(graph_snapshot, dict) and graph_snapshot:
+            system_content += _knowledge_network_instruction(graph_snapshot, graph_instruction)
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
