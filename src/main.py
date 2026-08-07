@@ -890,7 +890,10 @@ async def stream_run(request: Request):
 AI_PROVIDERS = {
     "deepseek": {"base_url": "https://api.deepseek.com"},
     "openai": {"base_url": "https://api.openai.com/v1"},
+    "opencode": {"base_url": "https://opencode.ai/zen/v1"},
 }
+
+OPENCODE_DEFAULT_API_KEY = ""
 
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
@@ -916,7 +919,7 @@ async def api_models_chat(request: Request):
     base_url = payload.get("base_url", "")
     stream = payload.get("stream", True)
 
-    if not api_key:
+    if not api_key and provider != "opencode":
         raise HTTPException(
             status_code=400,
             detail=f"未配置 {provider} API Key：请在项目根目录 .env 中设置 DEEPSEEK_API_KEY，或在模型配置中填写密钥",
@@ -987,7 +990,7 @@ async def api_models_chat(request: Request):
     headers = {
         "Content-Type": "application/json",
     }
-    if api_key:
+    if api_key and provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
     target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
     module_key = target.get("module") or source_module
@@ -1730,6 +1733,8 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return []
+    if not api_key and provider == "opencode":
+        api_key = OPENCODE_DEFAULT_API_KEY
 
     # 取最近一轮对话（最后一条 user 消息及之后）
     level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
@@ -1745,7 +1750,9 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     msgs.extend({"role": m.get("role", "user"), "content": (m.get("content") or "")[:4000]} for m in recent)
 
     url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    headers = {"Content-Type": "application/json"}
+    if provider != "opencode":
+        headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(url, json=body, headers=headers)
@@ -1872,7 +1879,11 @@ DESCRIBE_PROMPT = """你是公式解说助手。针对下面的每个公式，�
 
 async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
     """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
-    if not formulas or not api_key or not model:
+    if not api_key and provider == "opencode":
+        api_key = OPENCODE_DEFAULT_API_KEY
+    if not formulas or not model:
+        return {}
+    if not api_key and provider != "opencode":
         return {}
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
@@ -1883,7 +1894,9 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
         {"role": "user", "content": f"对话摘要：{summary[:300]}\n公式列表：\n" + "\n".join(f"- {f}" for f in formulas)},
     ]
     url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    headers = {"Content-Type": "application/json"}
+    if provider != "opencode":
+        headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1925,6 +1938,8 @@ async def api_extract_knowledge(request: Request):
     level = payload.get("level", "university")
     if not api_key and provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key and provider == "opencode":
+        api_key = OPENCODE_DEFAULT_API_KEY
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     if latest_assistant and (
@@ -1939,9 +1954,11 @@ async def api_extract_knowledge(request: Request):
     desc_base_url = payload.get("descriptor_base_url", "")
     if not desc_api_key and desc_provider == "deepseek":
         desc_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not desc_api_key and desc_provider == "opencode":
+        desc_api_key = OPENCODE_DEFAULT_API_KEY
 
     items = []
-    if api_key and model:
+    if (api_key or provider == "opencode") and model:
         try:
             items = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
             if items:
@@ -1967,7 +1984,7 @@ async def api_extract_knowledge(request: Request):
             latex = _normalize_formula(str(f).strip())
             if latex and _looks_like_formula(latex) and latex not in all_formulas:
                 all_formulas.append(latex)
-    if all_formulas and desc_model and desc_api_key:
+    if all_formulas and desc_model and (desc_api_key or desc_provider == "opencode"):
         descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url, level)
         if descriptions:
             logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
@@ -2179,7 +2196,7 @@ _dedupe_knowledge_file()
 # ====== 启动 ======
 def parse_args():
     parser = argparse.ArgumentParser(description="Start PhyMathia (offline test mode)")
-    parser.add_argument("-p", "--port", type=int, default=5000, help="Server port")
+    parser.add_argument("-p", "--port", type=int, default=5050, help="Server port")
     parser.add_argument("--reload", action="store_true", help="Enable auto reload")
     return parser.parse_args()
 

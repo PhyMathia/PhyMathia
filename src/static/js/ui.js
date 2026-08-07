@@ -164,6 +164,7 @@ function _collectLocalBackup() {
     formulas,
     graphs,
     quizStats: _safeParseJSON(localStorage.getItem('phymathia_quiz_stats'), {}),
+    quizBank: _safeParseJSON(localStorage.getItem('phymathia_quiz_bank'), null),
     userModels,
     activeModels,
     currentSession: localStorage.getItem('phymathia_current_session') || '',
@@ -181,6 +182,12 @@ function _downloadBackup(data) {
   a.download = 'phymathia_backup_' + new Date().toISOString().slice(0, 10) + '.json';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function _pickNewerQuizBank(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return (Number(a.updatedAt || 0) >= Number(b.updatedAt || 0)) ? a : b;
 }
 
 async function exportData() {
@@ -205,6 +212,7 @@ async function exportData() {
         kv,
         graphs: _mergeMaps(serverGraphs, local.graphs),
         quizStats: _mergeMaps(kv['phymathia_quiz_stats'] || {}, local.quizStats),
+        quizBank: _pickNewerQuizBank(kv['phymathia_quiz_bank'] || null, local.quizBank),
         userModels: local.userModels,
         activeModels: local.activeModels,
         currentSession: local.currentSession,
@@ -236,6 +244,7 @@ function _normalizeBackup(data) {
   result.formulas = result.formulas && typeof result.formulas === 'object' ? result.formulas : {};
   result.graphs = result.graphs && typeof result.graphs === 'object' ? result.graphs : {};
   result.quizStats = result.quizStats && typeof result.quizStats === 'object' ? result.quizStats : {};
+  result.quizBank = result.quizBank && typeof result.quizBank === 'object' ? result.quizBank : null;
   return result;
 }
 
@@ -266,6 +275,8 @@ function _applyLocalSettings(data) {
     ? data.quizStats
     : (data.kv && data.kv['phymathia_quiz_stats']) || {};
   if (quizStats && typeof quizStats === 'object') localStorage.setItem('phymathia_quiz_stats', JSON.stringify(quizStats));
+  const quizBank = data.quizBank || (data.kv && data.kv['phymathia_quiz_bank']) || null;
+  if (quizBank && typeof quizBank === 'object') localStorage.setItem('phymathia_quiz_bank', JSON.stringify(quizBank));
 }
 
 function _applyLocalBackup(data, replace) {
@@ -339,8 +350,14 @@ async function _pushBackupToExistingApis(data) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: data.quizStats })
     });
+    const quizBank = data.quizBank || (data.kv && data.kv['phymathia_quiz_bank']) || null;
+    if (quizBank) await fetch('/api/kv/phymathia_quiz_bank', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: quizBank })
+    });
     for (const [key, value] of Object.entries(data.kv || {})) {
-      if (key.startsWith('graph:') || key === 'phymathia_quiz_stats') continue;
+      if (key.startsWith('graph:') || key === 'phymathia_quiz_stats' || key === 'phymathia_quiz_bank') continue;
       await fetch('/api/kv/' + encodeURIComponent(key), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -359,7 +376,7 @@ async function importData(event) {
   reader.onload = async function(e) {
     try {
       const data = _normalizeBackup(JSON.parse(e.target.result));
-      if (!data.sessions && !data.messages && !data.knowledge && !data.formulas && !data.kv && !data.quizStats) {
+      if (!data.sessions && !data.messages && !data.knowledge && !data.formulas && !data.kv && !data.quizStats && !data.quizBank) {
         alert('导入失败：文件格式不正确，缺少有效数据');
         return;
       }
@@ -596,6 +613,56 @@ function showToast(msg, duration = 2500) {
     toast.style.transform = 'translateX(-50%) translateY(10px)';
   }, duration);
 }
+
+let _completionAudioContext = null;
+
+function playCompletionSound() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!_completionAudioContext) _completionAudioContext = new AudioContextClass();
+    const ctx = _completionAudioContext;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+    const tones = [
+      { at: 0, frequency: 880, duration: 0.18 },
+      { at: 0.16, frequency: 1174.66, duration: 0.22 }
+    ];
+    for (const tone of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = tone.frequency;
+      gain.gain.setValueAtTime(0.0001, now + tone.at);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + tone.at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + tone.at + tone.duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + tone.at);
+      osc.stop(now + tone.at + tone.duration + 0.02);
+    }
+  } catch (e) {
+    // 浏览器限制或音频设备不可用时静默跳过提示音
+  }
+}
+
+function notifyTaskCompleted(durationMs, label = '任务完成') {
+  const ms = Math.max(0, Number(durationMs) || 0);
+  const durationText = typeof formatDuration === 'function' ? formatDuration(ms) : Math.ceil(ms / 1000) + 's';
+  showToast(`${label} · 用时 ${durationText}`, 3500);
+  playCompletionSound();
+}
+
+document.addEventListener('pointerdown', () => {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass || _completionAudioContext) return;
+    _completionAudioContext = new AudioContextClass();
+    if (_completionAudioContext.state === 'suspended') _completionAudioContext.resume().catch(() => {});
+  } catch (e) {
+    // 音频上下文预热失败不影响任务本身
+  }
+}, { passive: true });
 
 // ====== 移动端键盘适配 ======
 function handleVisualViewport() {

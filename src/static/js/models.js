@@ -1,7 +1,31 @@
+const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
+const OPENCODE_DEFAULT_KEY = '';
+const OPENCODE_FREE_MODEL_LABELS = {
+  'big-pickle': 'Big Pickle',
+  'mimo-v2.5-free': 'MiMo V2.5 Free',
+  'laguna-s-2.1-free': 'Laguna S 2.1 Free',
+  'ling-3.0-flash-free': 'Ling-3.0-flash Free',
+  'longcat-2.0-free': 'LongCat-2.0 Free',
+  'north-mini-code-free': 'North Mini Code Free',
+  'nemotron-3-ultra-free': 'Nemotron 3 Ultra Free',
+  'deepseek-v4-flash-free': 'DeepSeek V4 Flash Free',
+};
+const OPENCODE_FREE_MODELS = [
+  'big-pickle',
+  'mimo-v2.5-free',
+  'laguna-s-2.1-free',
+  'ling-3.0-flash-free',
+  'longcat-2.0-free',
+  'north-mini-code-free',
+  'nemotron-3-ultra-free',
+  'deepseek-v4-flash-free',
+];
+
 const MODEL_PRESETS = {
   deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'], apiKeyHint: 'sk-' },
   openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini'], apiKeyHint: 'sk-' },
   llama: { name: 'llama.ccp (本地)', baseUrl: 'http://localhost:8080/v1', models: [], apiKeyHint: '可选，留空' },
+  opencode: { name: 'OpenCode', baseUrl: OPENCODE_BASE_URL, models: OPENCODE_FREE_MODELS, apiKeyHint: '可填任意内容' },
 };
 
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
@@ -14,6 +38,46 @@ function loadUserModels() {
     const raw = localStorage.getItem(MODELS_STORAGE_KEY);
     userModelConfigs = raw ? JSON.parse(raw) : [];
   } catch { userModelConfigs = []; }
+  _ensureOpencodeFreeModels();
+}
+
+function _ensureOpencodeFreeModels() {
+  const aliasToId = Object.fromEntries(
+    Object.entries(OPENCODE_FREE_MODEL_LABELS).map(([id, label]) => [label, id])
+  );
+  let firstId = '';
+  let changed = false;
+  const legacyCount = userModelConfigs.length;
+  userModelConfigs = userModelConfigs.filter(cfg =>
+    !(cfg.provider === 'opencode' && String(cfg.baseUrl || '').includes('opencode.ai/zen/go'))
+  );
+  if (userModelConfigs.length !== legacyCount) changed = true;
+  for (const modelId of OPENCODE_FREE_MODELS) {
+    const label = OPENCODE_FREE_MODEL_LABELS[modelId];
+    let cfg = userModelConfigs.find(c =>
+      c.provider === 'opencode'
+      && (c.model === modelId || aliasToId[c.model] === modelId)
+    );
+    if (!cfg) {
+      cfg = { provider: 'opencode', apiKey: OPENCODE_DEFAULT_KEY, model: modelId, label, baseUrl: OPENCODE_BASE_URL };
+      addUserModel(cfg);
+    } else {
+      const next = {
+        ...cfg,
+        apiKey: OPENCODE_DEFAULT_KEY,
+        model: modelId,
+        label,
+        baseUrl: OPENCODE_BASE_URL,
+      };
+      if (cfg.apiKey !== next.apiKey || cfg.model !== next.model || cfg.label !== next.label || cfg.baseUrl !== next.baseUrl) {
+        Object.assign(cfg, next);
+        changed = true;
+      }
+    }
+    if (!firstId && cfg.id) firstId = cfg.id;
+  }
+  if (changed) saveUserModels();
+  return firstId;
 }
 
 function saveUserModels() {
@@ -50,7 +114,8 @@ function getAllModels() {
   const result = [];
   for (const cfg of userModelConfigs) {
     const preset = MODEL_PRESETS[cfg.provider];
-    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + cfg.model, desc: preset?.name || cfg.provider, tags: [cfg.model], provider: cfg.provider, hasKey: !!cfg.apiKey });
+    const display = cfg.label || cfg.model;
+    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!cfg.apiKey });
   }
   return result;
 }
@@ -69,6 +134,15 @@ function getActiveModelForRole(role) {
 async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
+  const fallbackOpencode = userModelConfigs.find(m => m.provider === 'opencode') || null;
+  for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model']) {
+    const model = getModelById(activeModels[key]);
+    if (model && model.provider === 'opencode' && !OPENCODE_FREE_MODELS.includes(model.model)) {
+      activeModels[key] = fallbackOpencode ? fallbackOpencode.id : '';
+    }
+  }
+  if (!activeModels.agent_model && fallbackOpencode) activeModels.agent_model = fallbackOpencode.id;
+  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
   renderModelSelects();
 }
 
@@ -112,11 +186,11 @@ function updateModelMeta(type) {
   const model = getModelById(select.value);
   if (model) {
     const preset = MODEL_PRESETS[model.provider];
-    descEl.textContent = (preset?.name || model.provider) + ' · ' + model.model;
+    descEl.textContent = (preset?.name || model.provider) + ' · ' + (model.label || model.model);
       tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else {
     if (type === 'quiz') {
-      descEl.textContent = select.value ? '' : '未配置时默认使用主模型生成检测题';
+      descEl.textContent = select.value ? '' : '未配置时默认用主模型生成检测题、深度问答评分与单题解析';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     } else {
       descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
@@ -154,7 +228,7 @@ function renderModelList() {
     const preset = MODEL_PRESETS[m.provider];
     return `<div class="model-item">
       <div class="model-item-info">
-        <div class="model-item-name">${preset?.name || m.provider} · ${m.model}</div>
+        <div class="model-item-name">${preset?.name || m.provider} · ${m.label || m.model}</div>
         <div class="model-item-key">${m.apiKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
       </div>
       <div class="model-item-actions">

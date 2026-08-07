@@ -107,9 +107,19 @@ const graphView = {
 
 let workflowAbortController = null;
 let workflowRunActive = false;
+const WORKFLOW_MAX_CONCURRENCY = 3;
+let workflowProgressActive = new Set();
+let _graphMermaidTimer = null;
 
 const GRAPH_UNDO_LIMIT = 10;
 const graphUndoStack = [];
+
+let graphSearchOpen = false;
+let graphSearchScope = 'current';
+let graphSearchQuery = '';
+let graphSearchIndexCache = new Map();
+let graphSearchDebounce = null;
+let graphSearchAllSynced = false;
 
 const LAYOUT_VERSION = 4;
 const TARGET_R = [0, 420, 940, 1460, 2000, 2560, 3120, 3680];
@@ -766,6 +776,275 @@ function _nodeContent(message, node) {
   return '';
 }
 
+function _graphSearchPlainText(text) {
+  let out = String(text || '');
+  if (typeof stripXmlTags === 'function') out = stripXmlTags(out);
+  out = out.replace(/<[^>]+>/g, ' ');
+  out = out.replace(/```[\s\S]*?```/g, ' ');
+  out = out.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  out = out.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  out = out.replace(/\$\$?/g, ' ');
+  out = out.replace(/\s+/g, ' ').trim();
+  return out;
+}
+
+function _graphNodeSearchText(message, node) {
+  const parts = [];
+  const base = _nodeContent(message, node);
+  if (base) parts.push(base);
+  if (message && node.kind === 'answer') parts.push(message.content || '');
+  if (message && node.kind === 'module') {
+    const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
+    if (sections[node.moduleKey]) parts.push(sections[node.moduleKey]);
+  }
+  if (node.content) parts.push(node.content);
+  if (node.summary) parts.push(node.summary);
+  if (node.requirements) parts.push(node.requirements);
+  if (node.label) parts.push(node.label);
+  if (node.title) parts.push(node.title);
+  if (node.branchLabel) parts.push(node.branchLabel);
+  const attr = _nodeAttribute(node);
+  if (attr && attr.label) parts.push(attr.label);
+  const sub = _nodeSub(node);
+  if (sub) parts.push(sub);
+  return _graphSearchPlainText(parts.join('\n'));
+}
+
+function _graphSearchResultLabel(node, message) {
+  if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || { label: '模块' }).label;
+  if (node.kind === 'answer') return node.manual ? '非 AI 回答' : 'AI 回答簇';
+  if (node.kind === 'hub') return '汇聚';
+  if (node.kind === 'summary') return 'AI 总结';
+  if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.isBranch ? (node.branchLabel || '延伸追问') : '问题');
+  if (node.kind === 'blank') return '空白节点';
+  if (node.kind === 'draft') return '待提交追问';
+  return node.label || '节点';
+}
+
+function _graphSearchSnippet(text, query, width) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  const q = String(query || '').trim().toLowerCase();
+  const max = width || 120;
+  if (!q) return clean.slice(0, max);
+  const idx = clean.toLowerCase().indexOf(q);
+  if (idx < 0) return clean.slice(0, max);
+  const start = Math.max(0, idx - Math.floor(max * 0.35));
+  const end = Math.min(clean.length, start + max);
+  return (start > 0 ? '…' : '') + clean.slice(start, end) + (end < clean.length ? '…' : '');
+}
+
+function _graphSearchHighlight(text, query) {
+  const snippet = _graphSearchSnippet(text, query, 130);
+  const q = String(query || '').trim();
+  const highlighted = q
+    ? snippet.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>')
+    : snippet;
+  return escapeHtml(highlighted)
+    .replace(/&lt;mark&gt;/g, '<mark>')
+    .replace(/&lt;\/mark&gt;/g, '</mark>');
+}
+
+function _graphSearchIndexVersion(messages, state) {
+  return String(messages.length)
+    + ':' + (state.updatedAt || 0)
+    + ':' + ((state.customNodes || []).length)
+    + ':' + (state.positions ? Object.keys(state.positions).length : 0);
+}
+
+function _buildGraphSearchIndex(sessionId) {
+  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
+  const sid = sessionId || currentId;
+  if (!sid) return [];
+  const messages = sid === currentId
+    ? _getChatHistory()
+    : (typeof window.getSessionMessages === 'function' ? window.getSessionMessages(sid) : []);
+  const state = typeof window.getGraphState === 'function' ? window.getGraphState(sid) : _graphState();
+  const version = _graphSearchIndexVersion(messages, state);
+  const cached = graphSearchIndexCache.get(sid);
+  if (cached && cached.version === version) return cached.entries;
+
+  const data = _buildGraphData(messages, state);
+  const entries = [];
+  for (const node of data.nodes) {
+    const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+    const text = _graphNodeSearchText(message, node);
+    if (!text) continue;
+    entries.push({
+      sessionId: sid,
+      nodeId: node.id,
+      kind: node.kind,
+      moduleKey: node.moduleKey || '',
+      timestamp: String(node.timestamp || ''),
+      custom: node.messageIndex < 0,
+      label: _graphSearchResultLabel(node, message),
+      sub: _nodeSub(node),
+      text,
+    });
+  }
+  graphSearchIndexCache.set(sid, { version, entries });
+  return entries;
+}
+
+function _graphSearchAllEntries() {
+  const allSessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+  const entries = [];
+  for (const sess of allSessions) {
+    const sid = sess.id || sess.sessionId;
+    if (sid) entries.push(..._buildGraphSearchIndex(sid));
+  }
+  return entries;
+}
+
+function _renderGraphSearchResults(matches, query, showSession) {
+  const resultsEl = document.getElementById('graphSearchResults');
+  if (!resultsEl) return;
+  if (!matches.length) {
+    resultsEl.innerHTML = '<div class="graph-search-empty">未找到匹配节点</div>';
+    return;
+  }
+  resultsEl.innerHTML = matches.map(entry => {
+    const sess = showSession && typeof window.getSessionById === 'function' ? window.getSessionById(entry.sessionId) : null;
+    const sessName = sess ? sess.title : '';
+    return '<button class="graph-search-result"'
+      + ' data-session-id="' + escapeHtml(entry.sessionId) + '"'
+      + ' data-node-id="' + escapeHtml(entry.nodeId) + '"'
+      + ' data-timestamp="' + escapeHtml(entry.timestamp) + '"'
+      + ' data-module-key="' + escapeHtml(entry.moduleKey) + '"'
+      + ' data-node-kind="' + escapeHtml(entry.kind) + '"'
+      + ' data-custom="' + (entry.custom ? '1' : '0') + '"'
+      + ' onclick="focusGraphSearchResult(this)">'
+      + '<span class="graph-search-result-main">'
+      + '<span class="graph-search-result-label">' + escapeHtml(entry.label || '节点') + '</span>'
+      + (entry.sub ? '<span class="graph-search-result-sub">' + escapeHtml(entry.sub) + '</span>' : '')
+      + (sessName ? '<span class="graph-search-result-session">' + escapeHtml(sessName) + '</span>' : '')
+      + '</span>'
+      + '<span class="graph-search-result-snippet">' + _graphSearchHighlight(entry.text, query) + '</span>'
+      + '</button>';
+  }).join('');
+}
+
+function _performGraphSearch() {
+  if (!graphSearchOpen) return;
+  const q = String(graphSearchQuery || '').trim();
+  const resultsEl = document.getElementById('graphSearchResults');
+  if (!q) {
+    if (resultsEl) resultsEl.innerHTML = '<div class="graph-search-empty">输入关键词搜索节点</div>';
+    return;
+  }
+  const all = graphSearchScope === 'all';
+  const entries = all ? _graphSearchAllEntries() : _buildGraphSearchIndex();
+  const lower = q.toLowerCase();
+  const matches = [];
+  for (const entry of entries) {
+    if (String(entry.text || '').toLowerCase().includes(lower)) {
+      matches.push(entry);
+      if (matches.length >= 50) break;
+    }
+  }
+  _renderGraphSearchResults(matches, q, all);
+}
+
+function _syncGraphSearchButtonState() {
+  const btn = document.querySelector('.graph-search-btn');
+  if (btn) btn.classList.toggle('active', graphSearchOpen);
+}
+
+function openGraphSearchPanel() {
+  const panel = document.getElementById('graphSearchPanel');
+  if (!panel) return;
+  graphSearchOpen = true;
+  panel.hidden = false;
+  const input = document.getElementById('graphSearchInput');
+  if (input) {
+    input.value = graphSearchQuery;
+    input.focus();
+    input.select();
+  }
+  _syncGraphSearchButtonState();
+  _performGraphSearch();
+}
+
+function closeGraphSearchPanel() {
+  const panel = document.getElementById('graphSearchPanel');
+  graphSearchOpen = false;
+  if (panel) panel.hidden = true;
+  _syncGraphSearchButtonState();
+}
+
+function toggleGraphSearchPanel() {
+  if (graphSearchOpen) closeGraphSearchPanel();
+  else openGraphSearchPanel();
+}
+
+function graphSearchInputChanged(value) {
+  graphSearchQuery = String(value || '');
+  clearTimeout(graphSearchDebounce);
+  graphSearchDebounce = setTimeout(_performGraphSearch, 140);
+}
+
+function graphSearchKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeGraphSearchPanel();
+  } else if (event.key === 'Enter') {
+    const first = document.querySelector('.graph-search-result');
+    if (first) {
+      event.preventDefault();
+      focusGraphSearchResult(first);
+    }
+  }
+}
+
+function setGraphSearchScope(scope, btn) {
+  if (scope !== 'current' && scope !== 'all') return;
+  graphSearchScope = scope;
+  document.querySelectorAll('#graphSearchScope .graph-search-scope-btn').forEach(b => {
+    b.classList.toggle('active', b === btn || b.dataset.scope === scope);
+  });
+  if (scope === 'all' && !graphSearchAllSynced && typeof window.syncFromServer === 'function') {
+    graphSearchAllSynced = true;
+    window.syncFromServer().finally(() => {
+      if (graphSearchOpen && graphSearchScope === 'all') _performGraphSearch();
+    });
+  }
+  _performGraphSearch();
+}
+
+async function focusGraphSearchResult(btn) {
+  if (!btn) return;
+  const sessionId = btn.dataset.sessionId || '';
+  const nodeId = btn.dataset.nodeId || '';
+  const timestamp = btn.dataset.timestamp || '';
+  const moduleKey = btn.dataset.moduleKey || '';
+  const nodeKind = btn.dataset.nodeKind || '';
+  const isCustom = btn.dataset.custom === '1';
+  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
+  let ok = false;
+  let failed = false;
+  try {
+    if (sessionId && sessionId !== currentId && typeof window.switchToSession === 'function') {
+      await window.switchToSession(sessionId);
+      if (typeof window.getCurrentSessionId === 'function' && window.getCurrentSessionId() !== sessionId) {
+        if (typeof showToast === 'function') showToast('当前正在生成，暂不能跳转');
+        return;
+      }
+    }
+    if (isCustom) {
+      ok = await focusGraphNodeById(nodeId);
+    } else if (timestamp) {
+      ok = await focusGraphNode(sessionId || currentId, timestamp, moduleKey, nodeKind);
+    }
+  } catch (err) {
+    failed = true;
+    console.error('Graph search jump failed:', err);
+    if (typeof showToast === 'function') showToast('跳转失败，请稍后重试');
+  } finally {
+    closeGraphSearchPanel();
+  }
+  if (!failed && !ok && typeof showToast === 'function') showToast('未找到该节点，请刷新后重试');
+}
+
 function _nodeSub(node) {
   if (node.isRoot) return '核心问题';
   if (node.kind === 'user') return node.isBranch ? (node.branchLabel || '延伸追问') : '问题';
@@ -1186,13 +1465,29 @@ function _cleanBlankNodeContent(node, rawContent) {
 }
 
 function _renderCustomNodeContentHtml(node) {
-  let text = String(node.content || '');
+  let text = String(node.kind === 'answer' && !node.manual ? (node.analysis || node.content || '') : (node.content || ''));
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   if (typeof renderMarkdown === 'function') {
     return renderMarkdown(text, { sourceModule: node.moduleKey || '' });
   }
   return escapeHtml(text);
+}
+
+function _refreshWorkflowNodeUi(node) {
+  if (!node || !graphInner) return;
+  const currentEl = graphInner.querySelector('[data-node-id="' + node.id + '"]');
+  if (!currentEl) return;
+  const nextHtml = _renderNodeHtml(node, _getChatHistory(), _graphState());
+  const temp = document.createElement('div');
+  temp.innerHTML = nextHtml;
+  const nextEl = temp.firstElementChild;
+  if (nextEl) {
+    currentEl.replaceWith(nextEl);
+    _measureNodes();
+    _updateNodeTransforms();
+    _redrawEdges();
+  }
 }
 
 function _customNodeStatusText(node) {
@@ -1243,7 +1538,7 @@ function _renderNodeHtml(node, messages, state) {
           : (node.kind === 'answer' && node.messageIndex < 0
             ? (node.manual ? '非 AI 回答' : 'AI 回答')
             : _nodeContent(message, node));
-  const hasCustomContent = !!((node.content || '').trim());
+  const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
   const customFill = node.messageIndex < 0 && node.manual && !hasCustomContent
     ? '<textarea class="graph-custom-node-content" rows="5" onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'
     : '';
@@ -1255,11 +1550,17 @@ function _renderNodeHtml(node, messages, state) {
               : (node.busy || node.status === 'running'
                   ? '<div class="graph-custom-node-render"></div>'
                   : '<div class="graph-custom-node-empty">等待生成</div>'))
-          : ((node.kind === 'answer' || node.kind === 'note') && node.manual
+          : (node.kind === 'answer' && !node.manual
+              ? (hasCustomContent
+                  ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
+                  : (node.busy || node.status === 'running'
+                      ? '<div class="graph-custom-node-render"></div>'
+                      : '<div class="graph-custom-node-empty">等待分析</div>'))
+              : ((node.kind === 'answer' || node.kind === 'note') && node.manual
               ? (hasCustomContent
                   ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
                   : '')
-              : '')))
+              : ''))))
     : '';
   const body = node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
@@ -1886,9 +2187,21 @@ function _patchGraphStreaming(messages, state) {
   _updateNodeTransforms();
 }
 
+function _scheduleGraphMermaidRender() {
+  clearTimeout(_graphMermaidTimer);
+  _graphMermaidTimer = setTimeout(() => {
+    _graphMermaidTimer = null;
+    if (typeof renderMermaidInElement === 'function') renderMermaidInElement(graphInner);
+  }, 500);
+}
+
 function renderGraphCanvas(streaming) {
   graphCanvas = document.getElementById('graphCanvas');
   if (!graphCanvas) return;
+  if (streaming) {
+    clearTimeout(_graphMermaidTimer);
+    _graphMermaidTimer = null;
+  }
   const state = _graphState();
   const messages = _getChatHistory();
   graphView.selectedNodeIds = new Set();
@@ -1928,7 +2241,11 @@ function renderGraphCanvas(streaming) {
 
   const toolbar = document.createElement('div');
   toolbar.className = 'graph-canvas-toolbar';
-  toolbar.innerHTML = '<button class="graph-tool-btn" onclick="zoomGraph(1.2)" title="放大">+</button>'
+  toolbar.innerHTML = '<button class="graph-tool-btn graph-search-btn" onclick="toggleGraphSearchPanel()" title="搜索节点" aria-label="搜索节点" aria-pressed="false">'
+    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>'
+    + '</svg></button>'
+    + '<button class="graph-tool-btn" onclick="zoomGraph(1.2)" title="放大">+</button>'
     + '<button class="graph-tool-btn" onclick="zoomGraph(0.85)" title="缩小">−</button>'
     + '<button class="graph-tool-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
     + '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" title="选择文字" aria-label="选择文字" aria-pressed="false">'
@@ -1943,12 +2260,8 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>';
   graphCanvas.appendChild(toolbar);
   _applyGraphTextSelectionMode();
-
-  const progressEl = document.createElement('div');
-  progressEl.className = 'graph-workflow-progress';
-  progressEl.hidden = true;
-  progressEl.innerHTML = '<div class="graph-workflow-progress-fill"></div><span class="graph-workflow-progress-text"></span>';
-  graphCanvas.appendChild(progressEl);
+  _syncGraphSearchButtonState();
+  if (graphSearchOpen) requestAnimationFrame(_performGraphSearch);
 
   graphInner = document.createElement('div');
   graphInner.className = 'graph-canvas-inner';
@@ -1985,7 +2298,7 @@ function renderGraphCanvas(streaming) {
     if (needsFit) _runLayout(true);
     else _updateNodeTransforms();
     _redrawEdges();
-    if (typeof renderMermaidInElement === 'function') setTimeout(() => renderMermaidInElement(graphInner), 0);
+    _scheduleGraphMermaidRender();
   });
 
   if (state.layoutVersion !== LAYOUT_VERSION) {
@@ -3671,6 +3984,9 @@ async function _streamCustomNodeResponse(resp, node) {
       const textarea = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-content');
       if (textarea) textarea.value = content;
       if (node.kind === 'blank') _renderBlankNodeLive(node, content);
+      _measureNodes();
+      _updateNodeTransforms();
+      _redrawEdges();
     });
   }
 
@@ -3713,7 +4029,7 @@ async function _streamCustomNodeResponse(resp, node) {
   }
   _saveCustomNodes();
   if (node.kind === 'blank') _renderBlankNodeLive(node, cleaned);
-  renderGraphCanvas();
+  if (!workflowRunActive) renderGraphCanvas();
 }
 
 async function _readStreamText(resp) {
@@ -3750,20 +4066,93 @@ async function _readStreamText(resp) {
   return content;
 }
 
+async function _streamAnalysisResponse(resp, node, question) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let analysis = '';
+  let renderPending = false;
+  let streamChunkCount = 0;
+
+  function scheduleRender() {
+    if (renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => {
+      renderPending = false;
+      const live = _findGraphNode(node.id);
+      if (!live) return;
+      live.analysis = analysis;
+      const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
+      if (renderBox) {
+        renderBox.innerHTML = _renderCustomNodeContentHtml(live);
+        if (typeof renderMath === 'function') renderMath(renderBox);
+      }
+      _measureNodes();
+      _updateNodeTransforms();
+      _redrawEdges();
+    });
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop();
+    for (const part of parts) {
+      for (const line of part.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const dataStr = line.slice(6).trim();
+        if (dataStr === '[DONE]') continue;
+        try {
+          const data = JSON.parse(dataStr);
+          const delta = data.choices && data.choices[0] && data.choices[0].delta;
+          if (delta && delta.content) {
+            analysis += delta.content;
+            _scheduleWorkflowStreamProgress(analysis.length);
+            streamChunkCount++;
+            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+            scheduleRender();
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  let cleaned = analysis.trim();
+  if (typeof stripXmlTags === 'function') cleaned = stripXmlTags(cleaned).trim();
+  if (cleaned.length > 1200) cleaned = cleaned.slice(0, 1200);
+  const live = _findGraphNode(node.id);
+  if (live) {
+    live.analysis = cleaned;
+    live.analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
+    live.status = 'done';
+    live.busy = false;
+  }
+  const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
+  if (renderBox && live) {
+    renderBox.innerHTML = _renderCustomNodeContentHtml(live);
+    if (typeof renderMath === 'function') renderMath(renderBox);
+  }
+  _saveCustomNodes();
+  if (!workflowRunActive) renderGraphCanvas();
+}
+
 async function _generateAnalysis(node) {
   if (!node || node.busy) return;
   const question = _findQuestionContentUpstream(node);
   if (!question.trim()) {
     node.status = 'waiting';
     _saveCustomNodes();
-    renderGraphCanvas();
+    if (!workflowRunActive) renderGraphCanvas();
     if (typeof showToast === 'function') showToast('请先连接并填写问题节点');
     return;
   }
   node.busy = true;
   node.status = 'running';
   _saveCustomNodes();
-  renderGraphCanvas();
+  if (workflowRunActive) _refreshWorkflowNodeUi(node);
+  else renderGraphCanvas();
 
   const workflowContext = {
     mode: 'analysis',
@@ -3784,6 +4173,7 @@ async function _generateAnalysis(node) {
     workflowContext,
   };
   const signal = workflowAbortController ? workflowAbortController.signal : new AbortController().signal;
+  const blankStartedAt = Date.now();
 
   try {
     let resp = null;
@@ -3819,18 +4209,7 @@ async function _generateAnalysis(node) {
       const errText = await resp.text();
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
-    let analysis = (await _readStreamText(resp)).trim();
-    if (typeof stripXmlTags === 'function') analysis = stripXmlTags(analysis).trim();
-    if (analysis.length > 1200) analysis = analysis.slice(0, 1200);
-    const live = _findGraphNode(node.id);
-    if (live) {
-      live.analysis = analysis;
-      live.analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
-      live.status = 'done';
-      live.busy = false;
-    }
-    _saveCustomNodes();
-    renderGraphCanvas();
+    await _streamAnalysisResponse(resp, node, question);
   } catch (err) {
     const live = _findGraphNode(node.id);
     if (live) {
@@ -3838,7 +4217,7 @@ async function _generateAnalysis(node) {
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
     }
     _saveCustomNodes();
-    renderGraphCanvas();
+    if (!workflowRunActive) renderGraphCanvas();
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('问题分析失败：' + (err.message || err));
   }
 }
@@ -3850,7 +4229,8 @@ async function _generateCustomNode(node) {
   node.busy = true;
   node.status = 'running';
   _saveCustomNodes();
-  renderGraphCanvas();
+  if (workflowRunActive) _refreshWorkflowNodeUi(node);
+  else renderGraphCanvas();
 
   const workflowContext = _buildWorkflowContextForNode(node);
   const prompt = _workflowPromptForNode(node, workflowContext);
@@ -3915,7 +4295,7 @@ async function _generateCustomNode(node) {
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
     }
     _saveCustomNodes();
-    renderGraphCanvas();
+    if (!workflowRunActive) renderGraphCanvas();
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
   }
 }
@@ -3954,18 +4334,20 @@ function _workflowItemNeedsProgress(node) {
 
 function _markWorkflowCurrentNode(current) {
   const label = _workflowProgressLabel(current);
+  if (label) workflowProgressActive.add(label);
   workflowProgressCurrentLabel = label ? '正在生成' + label : '正在运行工作流';
+  const statusText = _workflowProgressStatusText();
   const pct = workflowProgressTotal ? Math.round(workflowProgressDone / workflowProgressTotal * 100) : 0;
-  const el = document.querySelector('.graph-workflow-progress');
-  if (el) {
-    const text = el.querySelector('.graph-workflow-progress-text');
-    const fill = el.querySelector('.graph-workflow-progress-fill');
-    if (text) text.textContent = label ? (workflowProgressDone + 1) + '/' + workflowProgressTotal + ' 正在生成 ' + label : (workflowProgressDone + 1) + '/' + workflowProgressTotal;
-    if (fill) fill.style.width = pct + '%';
-  }
   if (typeof showProgress === 'function') {
-    showProgress('tool', pct, label ? '正在生成' + label + ' · ' + (workflowProgressDone + 1) + '/' + workflowProgressTotal : '正在运行工作流');
+    showProgress('tool', pct, '工作流 ' + statusText);
   }
+}
+
+function _workflowProgressStatusText() {
+  const active = Array.from(workflowProgressActive).filter(Boolean);
+  let text = workflowProgressDone + '/' + workflowProgressTotal;
+  if (active.length) text += ' · 运行中 ' + active.length + ' · ' + active.slice(0, 3).join('、');
+  return text;
 }
 
 let workflowProgressTimer = null;
@@ -3981,17 +4363,16 @@ function _applyWorkflowStreamProgress() {
   if (!total) return;
   const streamFraction = Math.min(0.85, workflowProgressLength / 20000);
   const pct = Math.round((done / total) * 100 + streamFraction * (100 / total));
-  const label = workflowProgressCurrentLabel || '正在运行工作流';
   const target = Math.max((done / total) * 100, Math.min(99, pct));
   const current = typeof window.getCurrentProgress === 'function' ? window.getCurrentProgress() : 0;
   if (target < current) return;
   if (typeof showProgress === 'function') {
-    showProgress('tool', target, label);
+    showProgress('tool', target, '工作流 ' + _workflowProgressStatusText());
   }
 }
 
 function _scheduleWorkflowStreamProgress(length) {
-  workflowProgressLength = length || 0;
+  workflowProgressLength = Math.max(workflowProgressLength, length || 0);
   if (workflowProgressTimer) return;
   workflowProgressTimer = setTimeout(_applyWorkflowStreamProgress, 120);
 }
@@ -4015,23 +4396,8 @@ function _showWorkflowProgress(total) {
   workflowProgressLength = 0;
   workflowProgressTotal = total || 0;
   workflowProgressDone = 0;
+  workflowProgressActive.clear();
   workflowProgressCurrentLabel = '准备运行工作流';
-  let el = document.querySelector('.graph-workflow-progress');
-  if (!el && graphCanvas) {
-    el = document.createElement('div');
-    el.className = 'graph-workflow-progress';
-    el.innerHTML = '<div class="graph-workflow-progress-fill"></div><span class="graph-workflow-progress-text"></span>';
-    graphCanvas.appendChild(el);
-  }
-  if (el) {
-    el.hidden = false;
-    el.dataset.total = String(workflowProgressTotal);
-    el.dataset.done = '0';
-    const fill = el.querySelector('.graph-workflow-progress-fill');
-    const text = el.querySelector('.graph-workflow-progress-text');
-    if (fill) fill.style.width = '0%';
-    if (text) text.textContent = '0/' + workflowProgressTotal;
-  }
   if (typeof showProgress === 'function') showProgress('tool', 0, '准备运行工作流 · 0/' + workflowProgressTotal);
 }
 
@@ -4041,31 +4407,22 @@ function _advanceWorkflowProgress(label) {
     workflowProgressTimer = null;
   }
   workflowProgressLength = 0;
+  if (workflowProgressActive.has(label)) workflowProgressActive.delete(label);
   workflowProgressDone = Math.min(workflowProgressTotal, workflowProgressDone + 1);
   workflowProgressCurrentLabel = label ? '正在生成' + label : '正在运行工作流';
   const total = workflowProgressTotal;
   const done = workflowProgressDone;
-  const el = document.querySelector('.graph-workflow-progress');
-  if (el) {
-    el.hidden = false;
-    el.dataset.total = String(total);
-    el.dataset.done = String(done);
-    const fill = el.querySelector('.graph-workflow-progress-fill');
-    const text = el.querySelector('.graph-workflow-progress-text');
-    if (fill) fill.style.width = total ? Math.round(done / total * 100) + '%' : '0%';
-    if (text) text.textContent = label ? done + '/' + total + ' ' + label : done + '/' + total;
-  }
+  const statusText = _workflowProgressStatusText();
   if (typeof showProgress === 'function') {
     const pct = total ? Math.round(done / total * 100) : 0;
-    showProgress('tool', pct, (label ? '正在生成' + label + ' · ' : '正在运行工作流 · ') + done + '/' + total);
+    showProgress('tool', pct, '工作流 ' + statusText);
   }
 }
 
 function _hideWorkflowProgress() {
-  const el = document.querySelector('.graph-workflow-progress');
-  if (el) el.hidden = true;
   workflowProgressTotal = 0;
   workflowProgressDone = 0;
+  workflowProgressActive.clear();
   workflowProgressCurrentLabel = '';
   if (workflowProgressTimer) {
     clearTimeout(workflowProgressTimer);
@@ -4091,7 +4448,7 @@ async function _processWorkflowChainItem(current, force) {
     if (!question.trim()) {
       current.status = 'waiting';
       _saveCustomNodes();
-      renderGraphCanvas();
+      if (!workflowRunActive) renderGraphCanvas();
       if (typeof showToast === 'function') showToast('请先连接并填写问题节点');
       return false;
     }
@@ -4108,7 +4465,7 @@ async function _processWorkflowChainItem(current, force) {
     if (!(current.content || '').trim()) {
       current.status = 'waiting';
       _saveCustomNodes();
-      renderGraphCanvas();
+      if (!workflowRunActive) renderGraphCanvas();
       if (typeof showToast === 'function') showToast('请先填写 ' + (current.kind === 'note' ? '人工总结' : current.manual ? '非 AI 回答' : '问题') + ' 内容');
       return false;
     }
@@ -4122,37 +4479,197 @@ async function _processWorkflowChainItem(current, force) {
   return !workflowAbortController?.signal.aborted;
 }
 
-async function runWorkflowNode(nodeId, force = false) {
-  const node = _findGraphNode(nodeId);
-  if (!node || node.messageIndex >= 0 || node.busy || workflowRunActive) return;
-  const chain = _collectDependencyChain(nodeId);
-  const workChain = chain.filter(item => _workflowItemNeedsProgress(item) || (force && (item.kind === 'module' || item.kind === 'summary')));
+function _workflowDependencyEdges() {
+  const seen = new Set();
+  return (graphView.edges || []).filter(edge => {
+    if (edge.draft || !edge.from || !edge.to || edge.from === edge.to) return false;
+    const key = String(edge.from) + '|' + String(edge.to);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function _buildWorkflowSubgraph(targetIds) {
+  const allEdges = _workflowDependencyEdges();
+  const ids = new Set();
+  const stack = (targetIds || []).filter(id => _findGraphNode(id));
+  while (stack.length) {
+    const id = stack.pop();
+    if (ids.has(id)) continue;
+    ids.add(id);
+    for (const edge of allEdges) {
+      if (edge.to === id && !ids.has(edge.from)) stack.push(edge.from);
+    }
+  }
+  const edges = allEdges.filter(edge => ids.has(edge.from) && ids.has(edge.to));
+  return { ids, edges };
+}
+
+function _workflowReadyNodes(subgraph, processed, failed, blocked) {
+  const ready = [];
+  for (const id of subgraph.ids) {
+    if (processed.has(id) || failed.has(id) || blocked.has(id)) continue;
+    const node = _findGraphNode(id);
+    if (!node || node.busy) continue;
+    const deps = subgraph.edges.filter(edge => edge.to === id);
+    if (deps.every(edge => processed.has(edge.from))) ready.push(node);
+  }
+  ready.sort((a, b) => {
+    const pa = a.moduleKey === 'viz' ? 0 : 1;
+    const pb = b.moduleKey === 'viz' ? 0 : 1;
+    return pa - pb;
+  });
+  return ready;
+}
+
+function _workflowPendingNodeIds(subgraph, processed, failed, blocked) {
+  return [...subgraph.ids].filter(id => !processed.has(id) && !failed.has(id) && !blocked.has(id));
+}
+
+function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked) {
+  const stack = [failedId];
+  while (stack.length) {
+    const id = stack.pop();
+    for (const edge of subgraph.edges) {
+      if (edge.from !== id || processed.has(edge.to) || blocked.has(edge.to)) continue;
+      blocked.add(edge.to);
+      const node = _findGraphNode(edge.to);
+      if (node && node.status !== 'done') node.status = 'waiting';
+      stack.push(edge.to);
+    }
+  }
+}
+
+async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked) {
+  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary');
+  const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
+  if (shouldCount) _markWorkflowCurrentNode(node);
+  let ok = false;
+  try {
+    ok = await _processWorkflowChainItem(node, shouldForce);
+  } catch (err) {
+    console.error('Workflow node failed:', err);
+    const live = _findGraphNode(node.id);
+    if (live && live.status !== 'error') live.status = 'error';
+  }
+  const live = _findGraphNode(node.id);
+  const errored = !!(live && live.status === 'error');
+  const aborted = !!workflowAbortController?.signal.aborted;
+  if (errored || (!ok && !aborted)) {
+    failed.add(node.id);
+    _markWorkflowDependentsBlocked(node.id, subgraph, processed, blocked);
+  } else {
+    processed.add(node.id);
+  }
+  if (shouldCount && !aborted) _advanceWorkflowProgress(_workflowProgressLabel(node));
+}
+
+async function _runWorkflowGraph(subgraph, force) {
+  const processed = new Set();
+  const failed = new Set();
+  const blocked = new Set();
+  const pendingQueue = [];
+  const inFlight = new Set();
+  let runningWorkers = 0;
+  let completed = true;
+
+  function enqueueReadyNodes() {
+    const ready = _workflowReadyNodes(subgraph, processed, failed, blocked);
+    for (const node of ready) {
+      if (!inFlight.has(node.id) && !pendingQueue.some(item => item.id === node.id)) {
+        pendingQueue.push(node);
+      }
+    }
+  }
+
+  async function runWorker() {
+    runningWorkers++;
+    try {
+      while (true) {
+        if (workflowAbortController?.signal.aborted) {
+          completed = false;
+          break;
+        }
+        const node = pendingQueue.shift();
+        if (!node) {
+          if (inFlight.size > 0) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            enqueueReadyNodes();
+            continue;
+          }
+          const pending = _workflowPendingNodeIds(subgraph, processed, failed, blocked);
+          if (pending.length) {
+            completed = false;
+            if (typeof showToast === 'function') {
+              const hasCycle = pending.some(id =>
+                subgraph.edges.some(edge =>
+                  edge.to === id
+                  && !processed.has(edge.from)
+                  && !failed.has(edge.from)
+                  && !blocked.has(edge.from)
+                )
+              );
+              showToast(hasCycle ? '检测到循环依赖，已停止' : '存在失败依赖，已跳过相关节点');
+            }
+          }
+          break;
+        }
+        inFlight.add(node.id);
+        try {
+          await _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked);
+        } finally {
+          inFlight.delete(node.id);
+          enqueueReadyNodes();
+        }
+      }
+    } finally {
+      runningWorkers--;
+    }
+  }
+
+  enqueueReadyNodes();
+  const workerCount = Math.min(WORKFLOW_MAX_CONCURRENCY, Math.max(1, subgraph.ids.size));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return completed && failed.size === 0 && blocked.size === 0;
+}
+
+async function _executeParallelWorkflow(targetIds, force) {
+  const subgraph = _buildWorkflowSubgraph(targetIds);
+  if (!subgraph.ids.size) {
+    if (typeof showToast === 'function') showToast('没有可运行的节点');
+    return;
+  }
+  const workflowStartedAt = Date.now();
   workflowRunActive = true;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
-  _showWorkflowProgress(workChain.length);
+  const totalWork = [...subgraph.ids].filter(id => {
+    const node = _findGraphNode(id);
+    return _workflowItemNeedsProgress(node) || (force && node && (node.kind === 'module' || node.kind === 'summary'));
+  }).length;
+  _showWorkflowProgress(totalWork);
+  let completed = false;
   try {
-    for (const item of chain) {
-      if (workflowAbortController.signal.aborted) break;
-      const current = _findGraphNode(item.id);
-      if (!current) continue;
-      const shouldForce = force && (current.kind === 'module' || current.kind === 'summary');
-      const shouldCount = _workflowItemNeedsProgress(current) || shouldForce;
-      if (shouldCount) _markWorkflowCurrentNode(current);
-      const ok = await _processWorkflowChainItem(current, shouldForce);
-      if (ok && shouldCount) _advanceWorkflowProgress(_workflowProgressLabel(current));
-      if (!ok) break;
-      const after = _findGraphNode(item.id);
-      if (!after || after.status === 'error') break;
-    }
+    completed = await _runWorkflowGraph(subgraph, force);
   } finally {
+    const wasAborted = !!(workflowAbortController && workflowAbortController.signal.aborted);
     workflowRunActive = false;
     workflowAbortController = null;
     _setWorkflowStopButton(false);
     _hideWorkflowProgress();
     _saveCustomNodes();
     renderGraphCanvas();
+    if (!wasAborted && completed && typeof notifyTaskCompleted === 'function') {
+      notifyTaskCompleted(Date.now() - workflowStartedAt, '工作流完成');
+    }
   }
+}
+
+async function runWorkflowNode(nodeId, force = false) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.messageIndex >= 0 || node.busy || workflowRunActive) return;
+  await _executeParallelWorkflow([nodeId], force);
 }
 
 async function runAllWorkflowNodes() {
@@ -4162,42 +4679,7 @@ async function runAllWorkflowNodes() {
     if (typeof showToast === 'function') showToast('没有可运行的模块/总结节点');
     return;
   }
-  const chain = [];
-  const seen = new Set();
-  for (const target of targets) {
-    for (const item of _collectDependencyChain(target.id)) {
-      if (!seen.has(item.id)) {
-        seen.add(item.id);
-        chain.push(item);
-      }
-    }
-  }
-  workflowRunActive = true;
-  workflowAbortController = new AbortController();
-  _setWorkflowStopButton(true);
-  _showWorkflowProgress(chain.filter(item => _workflowItemNeedsProgress(item) || item.kind === 'module' || item.kind === 'summary').length);
-  try {
-    for (const item of chain) {
-      if (workflowAbortController.signal.aborted) break;
-      const current = _findGraphNode(item.id);
-      if (!current) continue;
-      const shouldForce = current.kind === 'module' || current.kind === 'summary';
-      const shouldCount = _workflowItemNeedsProgress(current) || shouldForce;
-      if (shouldCount) _markWorkflowCurrentNode(current);
-      const ok = await _processWorkflowChainItem(current, shouldForce);
-      if (ok && shouldCount) _advanceWorkflowProgress(_workflowProgressLabel(current));
-      if (!ok) break;
-      const after = _findGraphNode(item.id);
-      if (!after || after.status === 'error') break;
-    }
-  } finally {
-    workflowRunActive = false;
-    workflowAbortController = null;
-    _setWorkflowStopButton(false);
-    _hideWorkflowProgress();
-    _saveCustomNodes();
-    renderGraphCanvas();
-  }
+  await _executeParallelWorkflow(targets.map(node => node.id), true);
 }
 
 function stopWorkflowRun() {
@@ -4205,7 +4687,17 @@ function stopWorkflowRun() {
 }
 
 function _renderBlankNodeLive(node, content) {
-  const el = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-blank-content');
+  let el = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-blank-content');
+  if (!el && graphInner && node) {
+    const host = graphInner.querySelector('[data-node-id="' + node.id + '"] .graph-node-main');
+    const requirement = host?.querySelector('.graph-blank-requirement');
+    if (host) {
+      el = document.createElement('div');
+      el.className = 'graph-blank-content';
+      if (requirement) host.insertBefore(el, requirement);
+      else host.appendChild(el);
+    }
+  }
   if (!el || !content) return;
   const cleaned = _cleanBlankNodeContent(node, content);
   el.innerHTML = typeof renderMarkdown === 'function'
@@ -4243,6 +4735,9 @@ async function _streamBlankNodeResponse(resp, node) {
       const live = _findGraphNode(node.id);
       if (live) live.content = content;
       _renderBlankNodeLive(node, content);
+      _measureNodes();
+      _updateNodeTransforms();
+      _redrawEdges();
     });
   }
 
@@ -4411,6 +4906,9 @@ async function generateBlankNode(nodeId) {
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
     await _streamBlankNodeResponse(resp, current);
+    if (typeof notifyTaskCompleted === 'function') {
+      notifyTaskCompleted(Date.now() - blankStartedAt, meta.label + '生成完成');
+    }
     if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
     const live = _findGraphNode(nodeId);
@@ -4708,19 +5206,25 @@ function toggleLinearMode() {
 }
 
 function _unhideGraphNodeForFocus(node) {
-  if (!node || !node.moduleKey) return;
+  if (!node) return;
   const state = _graphState();
-  const key = String(node.timestamp || '') + ':' + node.moduleKey;
   let changed = false;
-  if (state.hidden[key]) {
-    delete state.hidden[key];
-    node.hidden = false;
-    changed = true;
-  }
-  if (state.collapsed[key]) {
-    delete state.collapsed[key];
-    node.minimized = false;
-    changed = true;
+  const keys = [];
+  const timestamp = String(node.timestamp || '');
+  if (node.kind === 'module' && node.moduleKey) keys.push(timestamp + ':' + node.moduleKey);
+  if (node.kind === 'answer') keys.push(timestamp + ':answer');
+  if (node.id) keys.push(String(node.id));
+  for (const key of keys) {
+    if (state.hidden[key]) {
+      delete state.hidden[key];
+      node.hidden = false;
+      changed = true;
+    }
+    if (state.collapsed[key]) {
+      delete state.collapsed[key];
+      node.minimized = false;
+      changed = true;
+    }
   }
   if (changed) _saveGraphState(state);
   const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
@@ -4758,7 +5262,7 @@ function _centerGraphOnNode(nodeId) {
   return true;
 }
 
-function focusGraphNode(sessionId, messageId, moduleKey) {
+function focusGraphNode(sessionId, messageId, moduleKey, nodeKind) {
   if (!messageId) return Promise.resolve(false);
   const state = _graphState();
   if (state.linear) {
@@ -4768,9 +5272,14 @@ function focusGraphNode(sessionId, messageId, moduleKey) {
   applyLinearMode();
   renderGraphCanvas();
   return new Promise(resolve => {
-    const hasModule = !!moduleKey && moduleKey !== 'answer';
-    const focusId = hasModule ? _graphNodeId('m', messageId, moduleKey) : _graphNodeId('a', messageId);
-    const fallbackId = hasModule ? _graphNodeId('a', messageId) : '';
+    const kind = nodeKind || (moduleKey === 'question' ? 'user' : '');
+    const hasModule = kind !== 'user' && !!moduleKey && moduleKey !== 'answer';
+    const focusId = kind === 'user'
+      ? _graphNodeId('q', messageId)
+      : hasModule
+        ? _graphNodeId('m', messageId, moduleKey)
+        : _graphNodeId('a', messageId);
+    const fallbackId = kind === 'user' ? '' : (hasModule ? _graphNodeId('a', messageId) : '');
     const run = () => {
       _measureNodes();
       if (_centerGraphOnNode(focusId)) {
@@ -4784,6 +5293,23 @@ function focusGraphNode(sessionId, messageId, moduleKey) {
       resolve(false);
     };
     requestAnimationFrame(() => requestAnimationFrame(run));
+  });
+}
+
+function focusGraphNodeById(nodeId) {
+  if (!nodeId) return Promise.resolve(false);
+  const state = _graphState();
+  if (state.linear) {
+    state.linear = false;
+    _saveGraphState(state);
+  }
+  applyLinearMode();
+  renderGraphCanvas();
+  return new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      _measureNodes();
+      resolve(_centerGraphOnNode(nodeId));
+    }));
   });
 }
 
@@ -4831,6 +5357,13 @@ window.submitRegenerateNode = submitRegenerateNode;
 window.zoomGraph = zoomGraph;
 window.fitGraph = fitGraph;
 window.focusGraphNode = focusGraphNode;
+window.focusGraphNodeById = focusGraphNodeById;
+window.toggleGraphSearchPanel = toggleGraphSearchPanel;
+window.closeGraphSearchPanel = closeGraphSearchPanel;
+window.graphSearchInputChanged = graphSearchInputChanged;
+window.graphSearchKeydown = graphSearchKeydown;
+window.setGraphSearchScope = setGraphSearchScope;
+window.focusGraphSearchResult = focusGraphSearchResult;
 window.graphToggleTextSelection = graphToggleTextSelection;
 window.autoArrangeGraph = autoArrangeGraph;
 window.toggleLinearMode = toggleLinearMode;

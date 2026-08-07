@@ -399,14 +399,25 @@ function _resolveKnowledgeAnchor(item, messages) {
   return { sessionId: item.sessionId, messageId, moduleKey: moduleKey || '' };
 }
 
+function _showJumpError(message) {
+  if (typeof showToast === 'function') {
+    showToast(message);
+  } else {
+    alert(message);
+  }
+}
+
 async function goToKnowledgeNode(itemId) {
   const item = getKnowledgeItems()[itemId];
-  if (!item) return;
+  if (!item) {
+    _showJumpError('找不到对应的知识点');
+    return false;
+  }
   const sessionId = item.sessionId;
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
   if (!session) {
-    alert('来源会话已删除，无法定位');
-    return;
+    _showJumpError('来源会话已删除，无法定位');
+    return false;
   }
   closeKnowledgePanel();
   const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
@@ -417,12 +428,19 @@ async function goToKnowledgeNode(itemId) {
   const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const anchor = _resolveKnowledgeAnchor(item, messages);
   if (!anchor.messageId) {
-    alert('对应节点不存在，无法定位');
-    return;
+    _showJumpError('对应节点不存在，无法定位');
+    return false;
   }
-  if (typeof window.focusGraphNode !== 'function') return;
+  if (typeof window.focusGraphNode !== 'function') {
+    _showJumpError('探索网节点定位功能暂不可用');
+    return false;
+  }
   const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
-  if (!ok) alert('对应节点不存在，无法定位');
+  if (!ok) {
+    _showJumpError('对应节点不存在，无法定位');
+    return false;
+  }
+  return true;
 }
 
 function goToOriginalMessage(sessionId, messageId, moduleKey) {
@@ -812,11 +830,14 @@ function _resolveFormulaAnchor(item, messages) {
 
 async function locateFormulaNode(formulaId) {
   const item = getFormulaCache()[formulaId];
-  if (!item) return;
+  if (!item) {
+    _showJumpError('找不到对应的公式');
+    return false;
+  }
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(item.sessionId) : null;
   if (!session) {
-    alert('来源会话已删除，无法定位');
-    return;
+    _showJumpError('来源会话已删除，无法定位');
+    return false;
   }
   closeKnowledgePanel();
   const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
@@ -827,12 +848,19 @@ async function locateFormulaNode(formulaId) {
   const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const anchor = _resolveFormulaAnchor(item, messages);
   if (!anchor) {
-    alert('找不到公式对应的节点');
-    return;
+    _showJumpError('找不到公式对应的节点');
+    return false;
   }
-  if (typeof window.focusGraphNode !== 'function') return;
+  if (typeof window.focusGraphNode !== 'function') {
+    _showJumpError('探索网节点定位功能暂不可用');
+    return false;
+  }
   const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
-  if (!ok) alert('对应节点不存在，无法定位');
+  if (!ok) {
+    _showJumpError('对应节点不存在，无法定位');
+    return false;
+  }
+  return true;
 }
 
 // 旧接口兼容：只切换会话并关闭知识面板
@@ -861,5 +889,7 @@ async function confirmDeleteFormula(id) {
 
 // 暴露缓存失效接口给其他模块（session.js 定时同步、chat.js 提取刷新使用）
 window.invalidateKnowledgeCache = invalidateKnowledgeCache;
+window.goToKnowledgeNode = goToKnowledgeNode;
+window.locateFormulaNode = locateFormulaNode;
 window.waitForKnowledgeSave = () => kpKnowledgeSaveQueue.catch(() => false);
 window.waitForFormulaSave = () => kpFormulaSaveQueue.catch(() => false);

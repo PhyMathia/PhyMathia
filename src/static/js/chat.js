@@ -1407,6 +1407,9 @@
             const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
             metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
           }
+          if (typeof notifyTaskCompleted === 'function' && duration) {
+            notifyTaskCompleted(duration, '回复完成');
+          }
           scrollToBottom(); // 最终渲染后滚动
         }
 
