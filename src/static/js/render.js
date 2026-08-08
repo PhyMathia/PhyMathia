@@ -1,10 +1,3 @@
-// ====== HTML 转义（供渲染使用） ======
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 // ====== 可视化卡片 (iframe sandbox) ======
 const _vizStore = {};  // vizId -> htmlContent
 
@@ -340,11 +333,6 @@ function _cleanModuleContent(content, moduleKey) {
   return pattern ? text.replace(pattern, '').trim() : text;
 }
 
-function _genBranchId() {
-  const sessionPart = (typeof currentSessionId !== 'undefined' ? currentSessionId : 'sess').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 18);
-  return 'br_' + (sessionPart || 'sess') + '_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
-}
-
 function _extractBranchTopic(msg, content) {
   const text = String(content || '').trim();
   if (!text) return '';
@@ -539,7 +527,6 @@ window.refreshMessageBubbles = _refreshMessageBubbles;
 window.followUpModule = followUpModule;
 window.dontUnderstandModule = dontUnderstandModule;
 window.toggleModuleBubble = toggleModuleBubble;
-window._genBranchId = _genBranchId;
 
 // ====== 双域折叠区域渲染（heading 正则兜底） ======
 function wrapDualDomainSections(element) {

@@ -1188,7 +1188,7 @@
   font-size: 11px !important;
   font-weight: 600 !important;
   paint-order: stroke !important;
-  stroke: var(--panel-bg, #0b1626) !important;
+  stroke: var(--bg-panel) !important;
   stroke-width: 3px !important;
   pointer-events: none !important;
 }
@@ -1523,6 +1523,29 @@
   border-color: color-mix(in srgb, var(--node-attr) 85%, transparent) !important;
   background: color-mix(in srgb, var(--node-attr) 18%, transparent) !important;
 }
+
+/* 节点属性色（与 graph.js GRAPH_NODE_ATTRIBUTES 一致，驱动选中高亮与属性标签） */
+.graph-attr-question { --node-attr: #4a9eff; }
+.graph-attr-followup { --node-attr: #6366f1; }
+.graph-attr-answer { --node-attr: #10b981; }
+.graph-attr-physics { --node-attr: #f59e0b; }
+.graph-attr-math { --node-attr: #3b82f6; }
+.graph-attr-graph { --node-attr: #0891b2; }
+.graph-attr-viz { --node-attr: #f472b6; }
+.graph-attr-socratic { --node-attr: #f43f5e; }
+.graph-attr-learn { --node-attr: #a855f7; }
+.graph-attr-manual { --node-attr: #64748b; }
+.graph-attr-human_note { --node-attr: #64748b; }
+.graph-attr-ai_eval { --node-attr: #f59e0b; }
+.graph-attr-hub { --node-attr: #eab308; }
+.graph-attr-summary { --node-attr: #0d9488; }
+.graph-attr-note { --node-attr: #f97316; }
+.graph-attr-source { --node-attr: #06b6d4; }
+.graph-attr-knowledge { --node-attr: #84cc16; }
+.graph-attr-relation { --node-attr: #f43f5e; }
+.graph-attr-any { --node-attr: #94a3b8; }
+
+
 
 .graph-node.dragging {
   z-index: 40 !important;
@@ -2446,7 +2469,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(2, 8, 23, 0.58);
+  background: var(--harness-overlay-bg);
   backdrop-filter: blur(3px);
 }
 
@@ -2455,11 +2478,11 @@
   max-height: calc(100vh - 48px);
   overflow: auto;
   border-radius: 8px;
-  border: 1px solid var(--border, #334155);
-  background: var(--panel-bg, #0b1626);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
   padding: 16px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--harness-window-shadow);
 }
 
 .graph-network-modal-head {
@@ -2535,7 +2558,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(2, 8, 23, 0.58);
+  background: var(--harness-overlay-bg);
   backdrop-filter: blur(3px);
 }
 
@@ -2554,10 +2577,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--panel-bg, #0b1626);
-  border: 1px solid var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  box-shadow: var(--harness-pet-shadow);
   cursor: grab;
   user-select: none;
   z-index: 9800;
@@ -2581,10 +2604,10 @@
   display: flex;
   flex-direction: column;
   border-radius: 10px;
-  border: 1px solid var(--border, #334155);
-  background: var(--panel-bg, #0b1626);
-  color: var(--text-primary, #e2e8f0);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: var(--harness-window-shadow);
   overflow: hidden;
   z-index: 9700;
 }
@@ -2611,9 +2634,9 @@
   max-width: 88%;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border, #334155);
-  background: rgba(15, 23, 42, 0.65);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--harness-msg-bg);
+  color: var(--text-primary);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -2622,8 +2645,8 @@
 
 .graph-harness-message-user {
   align-self: flex-end;
-  border-color: rgba(56, 189, 248, 0.35);
-  background: rgba(56, 189, 248, 0.10);
+  border-color: var(--harness-msg-user-border);
+  background: var(--harness-msg-user-bg);
 }
 
 .graph-harness-message-assistant {
@@ -2732,10 +2755,10 @@
   max-height: calc(100vh - 48px);
   overflow: auto;
   border-radius: 8px;
-  border: 1px solid var(--border, #334155);
-  background: var(--panel-bg, #0b1626);
-  color: var(--text-primary, #e2e8f0);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: var(--harness-window-shadow);
 }
 
 .graph-harness-head {
@@ -2844,8 +2867,8 @@
 .graph-harness-error {
   padding: 10px 12px;
   border-radius: 6px;
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid var(--border, #334155);
+  background: var(--harness-summary-bg);
+  border: 1px solid var(--border);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -2873,8 +2896,8 @@
   align-items: start;
   padding: 10px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border, #334155);
-  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid var(--border);
+  background: var(--harness-op-bg);
   cursor: pointer;
 }
 
@@ -2914,8 +2937,8 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border, #334155);
-  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid var(--border);
+  background: var(--harness-op-bg);
 }
 
 .graph-harness-clarify button {
@@ -2954,53 +2977,7 @@
   flex: 1;
 }
 
-[data-theme="light"] .graph-harness-overlay {
-  background: rgba(15, 23, 42, 0.18);
-}
 
-[data-theme="light"] .graph-harness-panel {
-  background: #ffffff;
-  color: #0f172a;
-  border-color: #cbd5e1;
-  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
-}
-
-[data-theme="light"] .graph-harness-head {
-  border-bottom-color: #e2e8f0;
-}
-
-[data-theme="light"] .graph-harness-head button,
-[data-theme="light"] .graph-harness-body label,
-[data-theme="light"] .graph-harness-op-reason,
-[data-theme="light"] .graph-harness-status {
-  color: #475569;
-}
-
-[data-theme="light"] .graph-harness-body textarea,
-[data-theme="light"] .graph-harness-op {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  color: #0f172a;
-}
-
-[data-theme="light"] .graph-harness-summary,
-[data-theme="light"] .graph-harness-empty,
-[data-theme="light"] .graph-harness-error {
-  background: #f1f5f9;
-  border-color: #e2e8f0;
-}
-
-[data-theme="light"] .graph-harness-apply-actions button {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #0f172a;
-}
-
-[data-theme="light"] .graph-harness-actions button {
-  background: #10b981;
-  border-color: #10b981;
-  color: #042f2e;
-}
 
 /* ---------- AI evaluation node ---------- */
 .graph-node-ai-eval {
@@ -3137,47 +3114,7 @@
   color: #1e293b;
 }
 
-[data-theme="light"] .graph-harness-pet {
-  background: #ffffff;
-  border-color: #0284c7;
-  color: #0284c7;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
-}
 
-[data-theme="light"] .graph-harness-pet.active {
-  border-color: #d97706;
-  color: #d97706;
-}
-
-[data-theme="light"] .graph-harness-window {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #0f172a;
-  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
-}
-
-[data-theme="light"] .graph-harness-message {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  color: #0f172a;
-}
-
-[data-theme="light"] .graph-harness-message-user {
-  background: #e0f2fe;
-  border-color: #7dd3fc;
-}
-
-[data-theme="light"] .graph-harness-composer textarea {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  color: #0f172a;
-}
-
-[data-theme="light"] .graph-harness-message-actions button {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #475569;
-}
 
 /* ---------- Harness preview ---------- */
 .graph-harness-preview-layer {
@@ -3185,7 +3122,7 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  z-index: 60;
+  z-index: 70;
 }
 
 .graph-harness-preview-layer-edges {
@@ -3209,18 +3146,28 @@
   gap: 6px;
   padding: 10px 12px;
   box-sizing: border-box;
-  border: 2px dashed rgba(56, 189, 248, 0.72);
+  border: 2px dashed var(--harness-preview-node-border);
   border-radius: 8px;
-  background: rgba(56, 189, 248, 0.08);
-  color: var(--text-primary, #e2e8f0);
-  pointer-events: none;
+  background: var(--harness-preview-node-bg);
+  color: var(--text-primary);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   z-index: 8;
   opacity: 0.82;
 }
 
+.graph-harness-preview-node.dragging {
+  cursor: grabbing;
+  opacity: 1;
+  z-index: 9;
+}
+
 .graph-harness-preview-node.graph-harness-preview-eval {
-  border-color: rgba(251, 191, 36, 0.72);
-  background: rgba(251, 191, 36, 0.07);
+  border-color: var(--harness-preview-eval-border);
+  background: var(--harness-preview-eval-bg);
 }
 
 .graph-harness-preview-badge {
@@ -3247,25 +3194,11 @@
 
 .graph-harness-preview-edge {
   fill: none;
-  stroke: rgba(56, 189, 248, 0.75);
+  stroke: var(--harness-preview-edge);
   stroke-width: 2;
   stroke-dasharray: 7 5;
   pointer-events: none;
-  filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.35));
+  filter: drop-shadow(0 0 5px var(--harness-preview-edge-shadow));
 }
 
-[data-theme="light"] .graph-harness-preview-node {
-  color: #0f172a;
-  border-color: rgba(2, 132, 199, 0.75);
-  background: rgba(224, 242, 254, 0.72);
-}
 
-[data-theme="light"] .graph-harness-preview-node.graph-harness-preview-eval {
-  border-color: rgba(217, 119, 6, 0.75);
-  background: rgba(255, 247, 237, 0.75);
-}
-
-[data-theme="light"] .graph-harness-preview-edge {
-  stroke: rgba(2, 132, 199, 0.75);
-  filter: drop-shadow(0 0 5px rgba(2, 132, 199, 0.25));
-}

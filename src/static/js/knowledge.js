@@ -469,32 +469,6 @@ function goToOriginalMessage(sessionId, messageId, moduleKey) {
 const FORMULAS_STORAGE_KEY = 'phymathia_formulas';
 let kpFormulaCache = null;
 
-// KaTeX renderToString 不识别 $ 定界符（$ 会作为文本渲染），渲染前剥离
-function _stripFormulaDelimiters(latex) {
-  return String(latex || '').replace(/^\$+|\$+$/g, '').trim();
-}
-
-// 与后端 _looks_like_formula 一致：排除单字符/纯短字母/纯命令/纯 \text{}/单位斜杠
-function _looksLikeFormula(latex) {
-  const s = String(latex || '').trim();
-  if (!s) return false;
-  if (s.length === 1) return false;                        // 单字符：m、k
-  if (/^[A-Za-z]{1,3}$/.test(s)) return false;             // 纯短字母：rad、Hz
-  if (/^\\[A-Za-z]+$/.test(s)) return false;               // 纯符号命令：\omega
-  if (/^\\text\{[^{}]*\}$/.test(s)) return false;          // 纯 \text{...}：\text{rad/s}
-  if (/^[A-Za-z]{1,4}(\/[A-Za-z]{1,4})+$/.test(s)) return false; // 单位：rad/s、m/s
-  return true;
-}
-
-// 与后端 _normalize_formula 一致：\$→$、去首尾 $、统一包 $..$，并清洗 \= 等无效命令
-function _normalizeFormulaLatex(latex) {
-  let s = String(latex || '').trim();
-  s = s.replace(/\\\$/g, '$').trim();
-  s = s.replace(/^\$+|\$+$/g, '').trim();
-  s = s.replace(/\\([=,;:])/g, '$1');
-  return s ? '$' + s + '$' : '';
-}
-
 function _formulaKey(latex) {
   return _canonicalFormulaText(latex);
 }

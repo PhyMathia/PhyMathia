@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhyMathia 功能演示</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1220;
+      --bg-soft: #0f172a;
+      --panel: #111c30;
+      --panel-2: #16233b;
+      --line: #26344d;
+      --line-strong: #35465f;
+      --text: #e7edf7;
+      --muted: #93a3bd;
+      --subtle: #6c7b94;
+      --accent: #38bdf8;
+      --accent-2: #22d3ee;
+      --physics: #f59e0b;
+      --math: #60a5fa;
+      --graph: #22d3ee;
+      --viz: #34d399;
+      --extend: #c084fc;
+      --danger: #fb7185;
+      --ok: #4ade80;
+      --shadow: 0 12px 30px rgba(0, 0, 0, 0.32);
+      --radius: 8px;
+      --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    }
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg: #f3f6fb;
+      --bg-soft: #e8eef7;
+      --panel: #ffffff;
+      --panel-2: #f7faff;
+      --line: #d7e0ec;
+      --line-strong: #b8c6d8;
+      --text: #1f2937;
+      --muted: #52627a;
+      --subtle: #7d8ca3;
+      --accent: #0284c7;
+      --accent-2: #0891b2;
+      --physics: #d97706;
+      --math: #2563eb;
+      --graph: #0891b2;
+      --viz: #059669;
+      --extend: #9333ea;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.10);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    svg { display: block; flex: 0 0 auto; }
+    .demo-header {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      border-bottom: 1px solid var(--line);
+      position: relative;
+      z-index: 30;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--extend));
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 17px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.16) inset;
+    }
+    .brand-title { font-size: 15px; font-weight: 700; line-height: 1.2; }
+    .brand-subtitle { font-size: 11px; color: var(--muted); line-height: 1.2; }
+    .header-actions { display: flex; align-items: center; gap: 6px; }
+    .top-btn {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      white-space: nowrap;
+      transition: border-color .18s, background .18s, transform .12s;
+    }
+    .top-btn:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel-2)); }
+    .top-btn:disabled { opacity: .38; cursor: default; }
+    .top-btn.primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #04121f;
+      font-weight: 700;
+    }
+    .demo-shell {
+      height: calc(100vh - 56px);
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      overflow: hidden;
+    }
+    .demo-nav {
+      background: color-mix(in srgb, var(--panel) 76%, transparent);
+      border-right: 1px solid var(--line);
+      padding: 12px 10px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .nav-caption {
+      font-size: 10px;
+      letter-spacing: .08em;
+      color: var(--subtle);
+      padding: 8px 8px 2px;
+      text-transform: uppercase;
+    }
+    .nav-item {
+      width: 100%;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font-size: 13px;
+      transition: color .16s, background .16s, border-color .16s;
+    }
+    .nav-item:hover { color: var(--text); background: var(--panel-2); }
+    .nav-item.active {
+      color: var(--text);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+      border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    }
+    .nav-item svg { color: var(--subtle); }
+    .nav-item.active svg { color: var(--accent); }
+    .demo-main { overflow: auto; background: var(--bg-soft); }
+    .demo-section {
+      min-height: 100%;
+      padding: 20px;
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .demo-section.active { display: flex; }
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .section-head h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.3;
+    }
+    .section-head p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      max-width: 760px;
+    }
+    .tool-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tool-btn {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .tool-btn:hover { border-color: var(--accent); }
+    .tool-btn.primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #04121f;
+      font-weight: 700;
+    }
+    .tool-btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+    .stage {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+      position: relative;
+    }
+    .graph-stage {
+      height: min(62vh, 620px);
+      min-height: 420px;
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        var(--panel);
+      background-size: 28px 28px;
+    }
+    .graph-canvas-demo {
+      position: absolute;
+      inset: 42px 0 0 0;
+      overflow: hidden;
+      cursor: grab;
+      touch-action: none;
+    }
+    .graph-canvas-demo.panning { cursor: grabbing; }
+    .canvas-tools {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .canvas-tools .tool-btn { pointer-events: auto; height: 30px; padding: 0 9px; background: color-mix(in srgb, var(--panel) 92%, transparent); }
+    .canvas-tools .spacer { flex: 1; }
+    .graph-world {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1900px;
+      height: 1700px;
+      transform-origin: 0 0;
+    }
+    .edge-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1900px;
+      height: 1700px;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .edge-layer path {
+      fill: none;
+      stroke: var(--line-strong);
+      stroke-width: 2;
+      stroke-linecap: round;
+      opacity: .75;
+      marker-end: none;
+    }
+    .demo-node {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      min-width: 170px;
+      max-width: 340px;
+      min-height: 64px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--panel-2) 96%, transparent);
+      box-shadow: var(--shadow);
+      padding: 0;
+      overflow: hidden;
+      user-select: none;
+      cursor: grab;
+      transition: box-shadow .18s, border-color .18s;
+    }
+    .demo-node:hover { border-color: var(--accent); }
+    .demo-node.dragging, .demo-node.selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent), var(--shadow); }
+    .demo-node-root { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--panel-2)), var(--panel-2)); border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+    .demo-node-answer { border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line)); }
+    .demo-node-physics { border-left: 4px solid var(--physics); }
+    .demo-node-math { border-left: 4px solid var(--math); }
+    .demo-node-graph { border-left: 4px solid var(--graph); }
+    .demo-node-viz { border-left: 4px solid var(--viz); }
+    .demo-node-extend { border-left: 4px solid var(--extend); }
+    .demo-node.minimized {
+      min-width: 118px;
+      max-width: 170px;
+      height: 44px !important;
+      min-height: 44px !important;
+      cursor: pointer;
+    }
+    .node-header {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 7px;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+      background: color-mix(in srgb, var(--panel) 72%, transparent);
+    }
+    .node-badge {
+      font-size: 9px;
+      line-height: 1;
+      padding: 4px 6px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--line-strong);
+      white-space: nowrap;
+    }
+    .node-badge.core { background: var(--accent); color: #04121f; }
+    .node-badge.physics { background: var(--physics); }
+    .node-badge.math { background: var(--math); }
+    .node-badge.graph { background: var(--graph); color: #031720; }
+    .node-badge.viz { background: var(--viz); color: #03271a; }
+    .node-badge.extend { background: var(--extend); color: #1b062e; }
+    .node-badge.branch { background: #64748b; }
+    .node-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .node-icon-btn {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+    }
+    .node-icon-btn:hover { color: var(--text); background: var(--line); }
+    .node-icon-btn.delete:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+    .node-content { flex: 1; min-height: 0; overflow: hidden; }
+    .node-body {
+      height: 100%;
+      padding: 8px 10px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.55;
+      white-space: pre-line;
+      color: var(--muted);
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+    .node-body::-webkit-scrollbar { width: 6px; }
+    .node-body::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; }
+    .node-formula {
+      font-family: var(--mono);
+      color: var(--text);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 4px 6px;
+      margin: 5px 0;
+      display: inline-block;
+      max-width: 100%;
+      overflow: auto;
+      white-space: nowrap;
+    }
+    .node-actions {
+      display: flex;
+      gap: 5px;
+      padding: 7px 8px;
+      border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+    }
+    .node-actions button {
+      height: 24px;
+      padding: 0 7px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .node-actions button:hover { color: var(--accent); border-color: var(--accent); }
+    .resize-handle {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 18px;
+      height: 18px;
+      cursor: nwse-resize;
+      opacity: .7;
+      z-index: 3;
+    }
+    .resize-handle::after {
+      content: "";
+      position: absolute;
+      right: 3px;
+      bottom: 3px;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid var(--muted);
+      border-bottom: 2px solid var(--muted);
+    }
+    .demo-node.minimized .node-content, .demo-node.minimized .node-actions, .demo-node.minimized .resize-handle { display: none; }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .feature-chip {
+      min-height: 84px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .feature-chip strong { display: block; font-size: 12px; margin-bottom: 5px; }
+    .feature-chip span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .split-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 980px) {
+      .demo-shell { grid-template-columns: 1fr; grid-template-rows: 48px minmax(0, 1fr); }
+      .demo-nav {
+        flex-direction: row;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 7px 10px;
+      }
+      .nav-caption { display: none; }
+      .nav-item { width: auto; height: 34px; flex: 0 0 auto; }
+      .split-grid { grid-template-columns: 1fr; }
+      .graph-stage { height: 58vh; min-height: 360px; }
+      .demo-header .brand-subtitle { display: none; }
+    }
+    .answer-module {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .answer-module-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .answer-module-head .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .answer-module-head .actions { margin-left: auto; display: flex; gap: 5px; }
+    .answer-module-body { padding: 12px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+    .answer-module-body strong { color: var(--text); }
+    .answer-module-body .formula-block {
+      font-family: var(--mono);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      padding: 8px;
+      border-radius: 6px;
+      color: var(--text);
+      overflow-x: auto;
+      margin: 6px 0;
+    }
+    .answer-module-body pre {
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.55;
+      font-family: var(--mono);
+      color: var(--text);
+    }
+    .progress-track {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--line);
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-track > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--extend));
+      transition: width .25s ease;
+    }
+    .knowledge-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .stat-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 12px;
+    }
+    .stat-card .num { font-size: 24px; font-weight: 800; }
+    .stat-card .label { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .knowledge-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+    .k-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .k-card .k-title { font-size: 13px; font-weight: 700; }
+    .k-card .k-meta { font-size: 10px; color: var(--subtle); }
+    .k-card .k-summary { font-size: 11px; color: var(--muted); line-height: 1.55; }
+    .k-card .k-formula {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .k-card .k-actions { display: flex; gap: 6px; margin-top: auto; }
+    .mini-btn {
+      height: 26px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .mini-btn:hover { border-color: var(--accent); color: var(--text); }
+    .mini-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .settings-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 14px; }
+    .settings-card h3 { margin: 0 0 10px; font-size: 13px; }
+    .settings-card p { margin: 0 0 10px; font-size: 11px; color: var(--muted); line-height: 1.55; }
+    .settings-card select, .settings-card input {
+      width: 100%;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg-soft);
+      padding: 0 8px;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .level-row { display: flex; gap: 6px; }
+    .level-option {
+      flex: 1;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .level-option.active { background: var(--accent); border-color: transparent; color: #04121f; font-weight: 700; }
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 620px;
+    }
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 10px 12px;
+    }
+    .session-item.active { border-color: var(--accent); }
+    .session-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      color: var(--accent);
+    }
+    .session-item .title { font-size: 12px; font-weight: 700; min-width: 0; flex: 1; }
+    .session-item .time { font-size: 10px; color: var(--subtle); }
+    .viz-stage {
+      min-height: 420px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 0;
+    }
+    .viz-canvas-wrap { position: relative; background: #04101d; }
+    [data-theme="light"] .viz-canvas-wrap { background: #f8fbff; }
+    .viz-canvas-wrap canvas { width: 100%; height: 100%; display: block; }
+    .viz-controls {
+      border-left: 1px solid var(--line);
+      background: var(--panel);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .viz-controls label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--muted); }
+    .viz-controls input[type="range"] { width: 100%; }
+    .code-block {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #0a1322;
+      color: #b9e7ff;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .api-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .api-item { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 12px; }
+    .api-item .method { display: inline-block; font-size: 9px; font-weight: 800; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); border-radius: 4px; padding: 3px 5px; margin-bottom: 6px; }
+    .api-item h4 { margin: 0 0 6px; font-size: 12px; }
+    .api-item p { margin: 0; font-size: 10px; color: var(--muted); line-height: 1.5; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 12px;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s, transform .2s;
+      z-index: 1000;
+      max-width: min(90vw, 420px);
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 8, 20, .58);
+      display: grid;
+      place-items: center;
+      z-index: 500;
+      padding: 20px;
+    }
+    .overlay[hidden] { display: none; }
+    .modal {
+      width: min(560px, 92vw);
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .modal h3 { margin: 0 0 12px; font-size: 15px; }
+    .modal textarea {
+      width: 100%;
+      min-height: 130px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg-soft);
+      color: var(--text);
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: vertical;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+    .guide-card {
+      width: min(520px, 92vw);
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+    .guide-card h2 { margin: 0 0 8px; font-size: 18px; }
+    .guide-card p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0 0 14px; }
+    .guide-steps { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .guide-step { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.5; color: var(--text); }
+    .guide-step b { color: var(--accent); }
+    .guide-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 11px; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel-2));
+      color: var(--accent);
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+      font-size: 10px;
+    }
+    .tag.physics { color: var(--physics); border-color: color-mix(in srgb, var(--physics) 35%, var(--line)); background: color-mix(in srgb, var(--physics) 10%, var(--panel-2)); }
+    .tag.math { color: var(--math); border-color: color-mix(in srgb, var(--math) 35%, var(--line)); background: color-mix(in srgb, var(--math) 10%, var(--panel-2)); }
+    .tag.graph { color: var(--graph); border-color: color-mix(in srgb, var(--graph) 35%, var(--line)); background: color-mix(in srgb, var(--graph) 10%, var(--panel-2)); }
+    .tag.viz { color: var(--viz); border-color: color-mix(in srgb, var(--viz) 35%, var(--line)); background: color-mix(in srgb, var(--viz) 10%, var(--panel-2)); }
+    .tag.extend { color: var(--extend); border-color: color-mix(in srgb, var(--extend) 35%, var(--line)); background: color-mix(in srgb, var(--extend) 10%, var(--panel-2)); }
+  </style>
+</head>
+<body>
+  <header class="demo-header">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div>
+        <div class="brand-title">PhyMathia 功能演示</div>
+        <div class="brand-subtitle">物理直觉 · 数学本质 · 知识网络 · 交互可视化</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="top-btn" id="stopDemoBtn" title="停止生成" onclick="demoStopStream()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        <span>停止</span>
+      </button>
+      <button class="top-btn" onclick="startGuide()" title="使用引导">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"></path></svg>
+        <span>引导</span>
+      </button>
+      <button class="top-btn" id="themeBtn" onclick="toggleDemoTheme()" title="切换深色/浅色模式">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+        <span id="themeLabel">浅色</span>
+      </button>
+      <a class="top-btn primary" href="/" title="打开完整应用">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>
+        <span>完整应用</span>
+      </a>
+    </div>
+  </header>
+
+  <div class="demo-shell">
+    <aside class="demo-nav" aria-label="功能演示导航">
+      <div class="nav-caption">功能演示</div>
+      <button class="nav-item active" data-section="graph" onclick="switchDemoSection('graph')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="10" cy="17" r="2"/><path d="M8 7l8 0M7.5 8l1.5 7M17.5 9.5l-5.5 5.5"/></svg>
+        <span>网络画布</span>
+      </button>
+      <button class="nav-item" data-section="answer" onclick="switchDemoSection('answer')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="16" y2="7"/></svg>
+        <span>回答卡片</span>
+      </button>
+      <button class="nav-item" data-section="knowledge" onclick="switchDemoSection('knowledge')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="16" y2="7"/><line x1="9" y1="11" x2="14" y2="11"/></svg>
+        <span>知识总览</span>
+      </button>
+      <button class="nav-item" data-section="settings" onclick="switchDemoSection('settings')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        <span>设置与数据</span>
+      </button>
+      <button class="nav-item" data-section="session" onclick="switchDemoSection('session')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>会话管理</span>
+      </button>
+      <button class="nav-item" data-section="viz" onclick="switchDemoSection('viz')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><line x1="8" y1="22" x2="16" y2="22"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+        <span>交互可视化</span>
+      </button>
+      <button class="nav-item" data-section="backend" onclick="switchDemoSection('backend')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>
+        <span>后端能力</span>
+      </button>
+    </aside>
+
+    <main class="demo-main">
+      <section id="section-graph" class="demo-section active">
+        <div class="section-head">
+          <div>
+            <h1>网络画布</h1>
+            <p>新会话从一个中心问题节点开始，提问后答案、物理、数学、图谱、可视化和延伸思考会从中心向外生长。拖动气泡、滚轮缩放、右下角拉尺寸、最小化和删除都在这里演示。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn primary" onclick="demoStream()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              流式生成
+            </button>
+            <button class="tool-btn" onclick="addDemoBranch('extend','learn')">进阶学习</button>
+            <button class="tool-btn" onclick="openDemoBranch('physics','followup')">追问</button>
+            <button class="tool-btn" onclick="openDemoBranch('math','confused')">没看懂</button>
+          </div>
+        </div>
+        <div class="stage graph-stage">
+          <div class="canvas-tools">
+            <button class="tool-btn" onclick="demoZoom(1.2)" title="放大">+</button>
+            <button class="tool-btn" onclick="demoZoom(0.85)" title="缩小">−</button>
+            <button class="tool-btn" onclick="demoFit()" title="适配画布">⌂</button>
+            <button class="tool-btn" onclick="demoReset()" title="重新布局">↻</button>
+            <div class="spacer"></div>
+            <span class="tag" id="graphModeTag">网络模式</span>
+          </div>
+          <div class="graph-canvas-demo" id="demoCanvas">
+            <div class="graph-world" id="demoWorld">
+              <svg class="edge-layer" id="demoEdges"></svg>
+            </div>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-chip"><strong>中心连线</strong><span>节点从中心向四周延伸，拖到任意位置后连线仍指向气泡中心。</span></div>
+          <div class="feature-chip"><strong>气泡操作</strong><span>最小化只保留标题，删除移除整条分支，右下角可调整宽高。</span></div>
+          <div class="feature-chip"><strong>分支探索</strong><span>追问、没看懂、进阶学习都会连接到来源气泡，形成树状网络。</span></div>
+          <div class="feature-chip"><strong>内容滚动</strong><span>气泡内内容过长时使用细滚动条，滚轮在内容区滚动不会缩放画布。</span></div>
+        </div>
+      </section>
+
+      <section id="section-answer" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>双域回答卡片</h1>
+            <p>完整回答会拆成摘要、物理视角、数学视角、知识图谱、交互可视化和延伸思考。模块支持折叠、追问和没看懂。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn" onclick="toggleLinearDemo()" id="linearModeBtn">线性模式</button>
+            <button class="tool-btn primary" onclick="demoStream()">模拟流式输出</button>
+          </div>
+        </div>
+        <div id="linearDemo" class="split-grid">
+          <div class="answer-module">
+            <div class="answer-module-head">
+              <span class="dot" style="background:var(--physics)"></span>
+              物理视角
+              <div class="actions">
+                <button class="mini-btn" onclick="openDemoBranch('physics','followup')">追问</button>
+                <button class="mini-btn" onclick="openDemoBranch('physics','confused')">没看懂</button>
+              </div>
+            </div>
+            <div class="answer-module-body">
+              <strong>回复力决定周期。</strong>弹簧把物体拉离平衡位置后，回复力始终指向平衡位置，且大小与位移成正比。这个“指向平衡位置 + 线性回复”的组合，是简谐运动能稳定重复的关键。
+              <div class="progress-track"><span id="physicsProgress" style="width:100%"></span></div>
+            </div>
+          </div>
+          <div class="answer-module">
+            <div class="answer-module-head">
+              <span class="dot" style="background:var(--math)"></span>
+              数学视角
+              <div class="actions">
+                <button class="mini-btn" onclick="openDemoBranch('math','followup')">追问</button>
+                <button class="mini-btn" onclick="openDemoBranch('math','confused')">没看懂</button>
+              </div>
+            </div>
+            <div class="answer-module-body">
+              二阶线性常微分方程的解给出位移随时间的变化：
+              <div class="formula-block">x(t) = A cos(ωt + φ)</div>
+              <div class="formula-block">ω = √(k / m),  T = 2π / ω</div>
+              <div class="progress-track"><span id="mathProgress" style="width:100%"></span></div>
+            </div>
+          </div>
+          <div class="answer-module">
+            <div class="answer-module-head">
+              <span class="dot" style="background:var(--graph)"></span>
+              知识图谱
+              <div class="actions">
+                <button class="mini-btn" onclick="openDemoBranch('graph','followup')">追问</button>
+              </div>
+            </div>
+            <div class="answer-module-body">
+              <pre>回复力 → 位移 → 速度 → 加速度
+     ↓         ↓        ↓
+  势能变化    动能变化    能量守恒</pre>
+              <div class="progress-track"><span id="graphProgress" style="width:100%"></span></div>
+            </div>
+          </div>
+          <div class="answer-module">
+            <div class="answer-module-head">
+              <span class="dot" style="background:var(--extend)"></span>
+              延伸思考
+              <div class="actions">
+                <button class="mini-btn" onclick="openDemoBranch('extend','followup')">追问</button>
+                <button class="mini-btn" onclick="openDemoBranch('extend','socratic')">我来回答</button>
+              </div>
+            </div>
+            <div class="answer-module-body">
+              基础：如果没有摩擦和空气阻力，振动会不会永远持续？
+              <br>进阶：弹簧并联后，等效劲度系数为什么变大？
+              <br>拓展：量子力学中的谐振子为什么如此重要？
+              <div class="progress-track"><span id="extendProgress" style="width:100%"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-chip"><strong>公式标注</strong><span>AI 输出用 <b>&lt;formula&gt;</b> 包裹 LaTeX，前端统一转为 KaTeX 渲染。</span></div>
+          <div class="feature-chip"><strong>摘要提取</strong><span>回答末尾的 <b>&lt;summary&gt;</b> 被收集为知识摘要，不显示在卡片正文中。</span></div>
+          <div class="feature-chip"><strong>模块动作</strong><span>每个模块都可以从对应气泡继续追问，不会错误地变成一条孤立主线。</span></div>
+          <div class="feature-chip"><strong>线性模式</strong><span>从网络图切回传统对话卡片时，保留同样的模块动作和可视化。</span></div>
+        </div>
+      </section>
+
+      <section id="section-knowledge" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>知识总览</h1>
+            <p>对话回答后自动提取知识点和公式，也可以手动收藏。支持分类、来源、搜索、展开详情、跳转原对话和删除。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn" onclick="switchKpTabs('knowledge')">知识点</button>
+            <button class="tool-btn" onclick="switchKpTabs('formula')">公式速查</button>
+          </div>
+        </div>
+        <div class="knowledge-grid" id="demoStats">
+          <div class="stat-card"><div class="num" id="statTotal">12</div><div class="label">累计条目</div></div>
+          <div class="stat-card"><div class="num" id="statPhysics">6</div><div class="label">物理概念</div></div>
+          <div class="stat-card"><div class="num" id="statMath">4</div><div class="label">数学概念</div></div>
+          <div class="stat-card"><div class="num" id="statWeek">2</div><div class="label">本周新增</div></div>
+        </div>
+        <div class="tool-row">
+          <span class="tag physics">物理</span>
+          <span class="tag math">数学</span>
+          <span class="tag graph">图谱</span>
+          <span class="tag viz">可视化</span>
+          <span class="tag extend">延伸</span>
+        </div>
+        <div id="kpView">
+          <div class="knowledge-list" id="knowledgeList"></div>
+        </div>
+        <div id="formulaView" hidden>
+          <div class="knowledge-list">
+            <div class="k-card">
+              <div class="k-title">简谐运动位移方程</div>
+              <div class="k-meta">物理 · 数学 · 今天 09:42</div>
+              <div class="k-formula">x(t) = A cos(ωt + φ)</div>
+              <div class="k-summary">位移随时间呈余弦变化，A 是振幅，ω 是角频率，φ 是初相。</div>
+              <div class="k-actions"><button class="mini-btn" onclick="demoToast('已演示：公式速查')">查看来源</button><button class="mini-btn danger" onclick="demoToast('演示中不执行真实删除')">删除</button></div>
+            </div>
+            <div class="k-card">
+              <div class="k-title">角频率</div>
+              <div class="k-meta">数学 · 今天 09:42</div>
+              <div class="k-formula">ω = √(k / m)</div>
+              <div class="k-summary">角频率由弹簧劲度系数和质量决定，与周期成反比。</div>
+              <div class="k-actions"><button class="mini-btn" onclick="demoToast('已演示：公式速查')">查看来源</button><button class="mini-btn danger" onclick="demoToast('演示中不执行真实删除')">删除</button></div>
+            </div>
+            <div class="k-card">
+              <div class="k-title">总机械能</div>
+              <div class="k-meta">物理 · 昨天</div>
+              <div class="k-formula">E = (1/2) k A²</div>
+              <div class="k-summary">简谐运动总机械能与振幅平方成正比，守恒于动能和势能之间。</div>
+              <div class="k-actions"><button class="mini-btn" onclick="demoToast('已演示：公式速查')">查看来源</button><button class="mini-btn danger" onclick="demoToast('演示中不执行真实删除')">删除</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-chip"><strong>自动提取</strong><span>完整学习卡片生成后，本地立即提取并异步请求 AI 增强。</span></div>
+          <div class="feature-chip"><strong>去重合并</strong><span>同一会话内知识点和公式按规范化键值合并，保留信息更全的版本。</span></div>
+          <div class="feature-chip"><strong>会话定位</strong><span>公式卡片可跳转到来源会话，并高亮对应的原始回答。</span></div>
+          <div class="feature-chip"><strong>手动收藏</strong><span>任意回答都可收藏为知识点，可补充标题、分类、摘要、标签和公式。</span></div>
+        </div>
+      </section>
+
+      <section id="section-settings" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>设置与数据</h1>
+            <p>演示 Agent、HTML 生成、公式描述三个模型槽位，难度等级、主题切换和本地数据导出导入。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn" onclick="demoToast('已切换主题；可视化 iframe 会同步广播主题')">主题同步</button>
+            <button class="tool-btn" onclick="exportDemoData()">导出数据</button>
+            <button class="tool-btn" onclick="document.getElementById('demoImportFile').click()">导入数据</button>
+            <input type="file" id="demoImportFile" accept=".json" hidden onchange="importDemoData(event)">
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>Agent 推理模型</h3>
+            <p>负责对话、双域解释、知识提取和分支回答。未配置时使用内置 Mock SSE。</p>
+            <select id="demoAgentModel" onchange="demoModelChange()">
+              <option value="">本地 Mock</option>
+              <option>DeepSeek · deepseek-chat</option>
+              <option>OpenAI · gpt-4o-mini</option>
+            </select>
+            <span class="tag">Mock</span>
+          </div>
+          <div class="settings-card">
+            <h3>HTML 生成模型</h3>
+            <p>主回答缺少可视化时补充生成独立 HTML 页面，前端以 sandbox iframe 展示。</p>
+            <select id="demoHtmlModel" onchange="demoModelChange()">
+              <option value="">本地 Mock</option>
+              <option>DeepSeek · deepseek-chat</option>
+              <option>OpenAI · gpt-4o-mini</option>
+            </select>
+            <span class="tag viz">可选</span>
+          </div>
+          <div class="settings-card">
+            <h3>公式描述模型</h3>
+            <p>为公式速查库生成简短说明；未配置时回退到回答摘要。</p>
+            <select id="demoDescriptorModel" onchange="demoModelChange()">
+              <option value="">不启用</option>
+              <option>DeepSeek · deepseek-chat</option>
+              <option>OpenAI · gpt-4o-mini</option>
+            </select>
+            <span class="tag">可选</span>
+          </div>
+          <div class="settings-card">
+            <h3>难度等级</h3>
+            <p>中学、大学、科研三档会改变解释深度、术语密度和推导详细程度。</p>
+            <div class="level-row">
+              <button class="level-option" data-level="中学" onclick="setDemoLevel(this)">中学</button>
+              <button class="level-option active" data-level="大学" onclick="setDemoLevel(this)">大学</button>
+              <button class="level-option" data-level="科研" onclick="setDemoLevel(this)">科研</button>
+            </div>
+            <div class="small muted" id="demoLevelDesc" style="margin-top:8px">当前：大学深度，适合标准教学推导。</div>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <h3>添加自定义模型</h3>
+            <p>支持 DeepSeek、OpenAI、llama.cpp 本地服务和任意 OpenAI 兼容地址。</p>
+            <input id="demoProvider" value="DeepSeek" placeholder="服务商">
+            <input id="demoModelName" value="deepseek-chat" placeholder="模型名称">
+            <input id="demoBaseUrl" value="https://api.deepseek.com" placeholder="API 地址">
+            <button class="tool-btn" onclick="addDemoModel()">保存模型配置</button>
+          </div>
+          <div class="settings-card">
+            <h3>存储策略</h3>
+            <p>真实应用会同时写入 localStorage 和服务端 JSON，并通过 15 秒同步与关闭前 flush 保证不丢数据。</p>
+            <div class="tag graph" style="margin-bottom:8px">本地优先 · 服务端合并</div>
+            <div class="small muted">清除当前会话会同时清理该会话消息、知识点和公式；删除会话也保持对称清理。</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="section-session" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>会话管理</h1>
+            <p>多会话支持新建、切换、重命名、图标切换和删除。每个会话拥有独立的聊天记录、网络布局、知识点和公式来源。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn primary" onclick="addDemoSession()">新建对话</button>
+            <button class="tool-btn" onclick="startGuide()">首次引导</button>
+          </div>
+        </div>
+        <div class="session-list" id="demoSessionList"></div>
+        <div class="feature-grid">
+          <div class="feature-chip"><strong>独立布局</strong><span>每个会话保存自己的节点位置、尺寸、折叠和线性/网络模式。</span></div>
+          <div class="feature-chip"><strong>自动标题</strong><span>第一条用户问题会作为会话标题，也可以手动重命名。</span></div>
+          <div class="feature-chip"><strong>图标管理</strong><span>力学、电磁、量子、微积分等几十种图标可快速切换。</span></div>
+          <div class="feature-chip"><strong>跨端同步</strong><span>服务端可恢复 localStorage 中未上传的会话和消息。</span></div>
+        </div>
+      </section>
+
+      <section id="section-viz" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>交互式可视化</h1>
+            <p>AI 生成完整 HTML 后，前端用 sandbox iframe 展示，支持全屏、复制源码、新标签页打开和主题同步。</p>
+          </div>
+          <div class="tool-row">
+            <button class="tool-btn" onclick="openVizFullscreen()">全屏</button>
+            <button class="tool-btn" onclick="copyVizDemo()">复制源码</button>
+            <button class="tool-btn" onclick="openVizDemoTab()">新窗口</button>
+          </div>
+        </div>
+        <div class="stage viz-stage">
+          <div class="viz-canvas-wrap"><canvas id="vizCanvas"></canvas></div>
+          <div class="viz-controls">
+            <label>角频率 ω
+              <input type="range" id="vizOmega" min="1" max="6" value="2" step="0.1" oninput="drawVizDemo()">
+            </label>
+            <label>阻尼 β
+              <input type="range" id="vizDamping" min="0" max="1" value="0.04" step="0.01" oninput="drawVizDemo()">
+            </label>
+            <label>振幅 A
+              <input type="range" id="vizAmp" min="0.4" max="1.5" value="1" step="0.05" oninput="drawVizDemo()">
+            </label>
+            <div class="small muted">拖动参数实时更新波形，模拟 AI 可视化中的可调参数交互。</div>
+            <button class="tool-btn" onclick="demoToast('已演示：可视化 iframe 主题桥接')">主题同步</button>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-chip"><strong>安全隔离</strong><span>HTML 放在 sandbox iframe 中运行，并清理 parent/top/window.open 等危险引用。</span></div>
+          <div class="feature-chip"><strong>主题桥接</strong><span>父页面切换主题时向 iframe 广播，iframe 可走原生主题或滤镜兜底。</span></div>
+          <div class="feature-chip"><strong>工具链</strong><span>可视化卡片提供没看懂、全屏、复制源码、新标签页打开。</span></div>
+          <div class="feature-chip"><strong>非完整片段</strong><span>过短的 HTML 代码块不会被误判为可视化页面，保留为普通代码。</span></div>
+        </div>
+      </section>
+
+      <section id="section-backend" class="demo-section">
+        <div class="section-head">
+          <div>
+            <h1>后端能力</h1>
+            <p>FastAPI 提供 OpenAI 兼容代理、Mock SSE、会话/消息/知识/公式/键值存储、知识提取和模型配置转发。</p>
+          </div>
+          <div class="tool-row">
+            <span class="tag graph">FastAPI</span>
+            <span class="tag viz">Mock 可用</span>
+            <span class="tag">JSON 存储</span>
+          </div>
+        </div>
+        <div class="api-list">
+          <div class="api-item"><span class="method">GET /health</span><h4>健康检查</h4><p>确认服务与 Mock 模式是否可用。</p></div>
+          <div class="api-item"><span class="method">POST /api/models/chat</span><h4>AI 模型代理</h4><p>OpenAI 兼容流式/非流式转发，支持自定义 Base URL 和密钥。</p></div>
+          <div class="api-item"><span class="method">GET/POST /api/sessions</span><h4>会话</h4><p>会话列表读写、合并、创建与全量清空。</p></div>
+          <div class="api-item"><span class="method">GET/POST/DELETE /api/sessions/{id}/messages</span><h4>消息</h4><p>单个会话消息读写、恢复、分支元数据和删除。</p></div>
+          <div class="api-item"><span class="method">GET/POST /api/knowledge</span><h4>知识点</h4><p>按 id 映射存储，前端负责去重、统计和搜索。</p></div>
+          <div class="api-item"><span class="method">GET/POST/DELETE /api/formulas</span><h4>公式速查</h4><p>公式标准化、去重、按会话删除。</p></div>
+          <div class="api-item"><span class="method">POST /api/extract_knowledge</span><h4>知识提取</h4><p>AI 增强提取，本地正则回退，公式描述模型可选。</p></div>
+          <div class="api-item"><span class="method">GET/POST/DELETE /api/kv/{key}</span><h4>键值存储</h4><p>保存当前会话、苏格拉底状态等 KV 数据。</p></div>
+        </div>
+        <div class="code-block"># 启动服务
+cd D:\PhyMathia前端
+python src/main.py -p 5000
+
+# 打开功能演示
+http://localhost:5000/demo.html
+
+# 打开完整应用
+http://localhost:5000/</div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="demoToast"></div>
+
+  <div class="overlay" id="branchOverlay" hidden>
+    <div class="modal">
+      <h3 id="branchTitle">追问</h3>
+      <textarea id="branchText"></textarea>
+      <div class="modal-actions">
+        <button class="tool-btn" onclick="closeBranchOverlay()">取消</button>
+        <button class="tool-btn primary" onclick="submitBranchOverlay()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="fullscreenOverlay" hidden>
+    <div class="modal" style="width:min(900px, 94vw); height:min(700px, 90vh); display:flex; flex-direction:column;">
+      <div class="section-head" style="flex:0 0 auto;">
+        <div>
+          <h3>交互式可视化全屏</h3>
+          <p class="muted small">模拟完整应用中的可视化全屏查看。</p>
+        </div>
+        <button class="tool-btn" onclick="closeVizFullscreen()">退出全屏</button>
+      </div>
+      <div class="viz-canvas-wrap" style="flex:1; min-height:0; border-radius:6px; overflow:hidden;"><canvas id="fullVizCanvas"></canvas></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="guideOverlay" hidden>
+    <div class="guide-card">
+      <h2>PhyMathia 功能演示</h2>
+      <p>先了解核心流程，再回到网络画布实际操作。</p>
+      <div class="guide-steps" id="guideSteps"></div>
+      <div class="guide-actions">
+        <button class="tool-btn" onclick="closeGuide()">跳过</button>
+        <button class="tool-btn primary" id="guideNextBtn" onclick="nextGuideStep()">开始</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const saved = localStorage.getItem('phymathia_demo_theme');
+      const theme = saved === 'light' || saved === 'dark' ? saved : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+
+    let demoTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    let demoStreamTimer = null;
+    let demoStreamActive = false;
+    let guideStep = 0;
+    let activeBranch = null;
+    let branchOverlayOpen = false;
+    let demoZoomLevel = 1;
+    let demoPan = { x: 0, y: 0 };
+    let graphModeLinear = false;
+    let selectedNodeId = null;
+    let dragState = null;
+    let resizeState = null;
+    let panState = null;
+    let streamParts = [];
+    let demoStreamQueue = [];
+    let demoNodeSeq = 100;
+
+    const demoNodes = [
+      { id: 'q-root', kind: 'core', title: '简谐运动为什么是周期运动？', badge: '核心问题', x: 600, y: 420, w: 240, h: 82, body: '', actions: [] },
+      { id: 'a-main', kind: 'answer', title: 'AI 回答簇', badge: 'AI 回答簇', x: 600, y: 690, w: 220, h: 96, body: '摘要：回复力与位移反向成正比，使物体围绕平衡位置重复往返。', actions: [] },
+      { id: 'm-physics', kind: 'module', module: 'physics', title: '物理视角', badge: '物理', x: 340, y: 990, w: 230, h: 170, body: '受力分析：F = -kx。回复力总是指向平衡位置，系统因此形成稳定往返。', actions: ['followup','confused'] },
+      { id: 'm-math', kind: 'module', module: 'math', title: '数学视角', badge: '数学', x: 620, y: 1000, w: 250, h: 190, body: '方程：d²x/dt² + (k/m)x = 0。解为 x(t) = A cos(ωt + φ)。', actions: ['followup','confused'] },
+      { id: 'm-graph', kind: 'module', module: 'graph', title: '知识图谱', badge: '图谱', x: 900, y: 980, w: 230, h: 150, body: '回复力 → 位移 → 速度 → 加速度 → 能量守恒', actions: ['followup','confused'] },
+      { id: 'm-viz', kind: 'module', module: 'viz', title: '交互可视化', badge: '可视化', x: 620, y: 1220, w: 270, h: 190, body: '拖动滑块可观察 ω、β、A 对波形的影响。', actions: ['followup','confused'] },
+      { id: 'm-extend', kind: 'module', module: 'extend', title: '延伸思考', badge: '延伸', x: 620, y: 1460, w: 270, h: 180, body: '基础：没有阻力会一直振动吗？\n进阶：并联弹簧为什么更“硬”？\n拓展：量子谐振子为什么重要？', actions: ['followup','confused','socratic','learn'] },
+    ];
+
+    const demoEdges = [
+      { from: 'q-root', to: 'a-main' },
+      { from: 'a-main', to: 'm-physics' },
+      { from: 'a-main', to: 'm-math' },
+      { from: 'a-main', to: 'm-graph' },
+      { from: 'a-main', to: 'm-viz' },
+      { from: 'm-viz', to: 'm-extend' },
+    ];
+
+    const initialNodes = demoNodes.map(n => ({ ...n, minimized: false, customW: n.w, customH: n.h }));
+    const demoSessions = [
+      { id: 's1', title: '简谐运动的物理与数学本质', icon: 'wave', time: '2分钟前' },
+      { id: 's2', title: '傅里叶变换为什么有用', icon: 'calculus', time: '昨天' },
+      { id: 's3', title: '热力学第二定律', icon: 'thermal', time: '3天前' },
+    ];
+
+    const demoKnowledge = [
+      { id: 'k1', title: '简谐运动', cat: 'physics', source: 'AI提取', time: '今天 09:42', summary: '回复力与位移成正比且反向，系统围绕平衡位置做周期性往返运动。', formula: 'F = -kx' },
+      { id: 'k2', title: '二阶线性微分方程', cat: 'math', source: 'AI提取', time: '今天 09:42', summary: '弹簧振子的运动方程是二阶线性齐次微分方程，通解为余弦函数。', formula: 'd²x/dt² + (k/m)x = 0' },
+      { id: 'k3', title: '周期与角频率', cat: 'math', source: 'AI提取', time: '今天 09:42', summary: '角频率由系统参数决定，周期与角频率互为倒数关系。', formula: 'ω = √(k/m), T = 2π/ω' },
+      { id: 'k4', title: '能量守恒', cat: 'physics', source: '手动收藏', time: '昨天', summary: '动能与弹性势能不断转换，总机械能保持恒定。', formula: 'E = (1/2) k A²' },
+    ];
+
+    const guideSteps = [
+      { title: '在中心节点提问', desc: '新画布没有消息输入栏，而是在画布中央生成中心节点。提交问题后，答案会从这里向外铺展。' },
+      { title: '气泡就是知识模块', desc: '每个模块气泡都可以拖动、缩放、最小化、删除，并从它自己继续追问或要求换一种方式讲解。' },
+      { title: '分支会连接来源', desc: '点击某个气泡的追问或进阶学习，新节点会从那个气泡连接，而不是变成断裂的新问题。' },
+      { title: '知识会持续积累', desc: '回答完成后，知识点和公式自动进入知识总览；也可以手动收藏任意回答。' },
+      { title: '可视化可交互', desc: 'AI 生成的 HTML 在沙箱中运行，可全屏、复制源码、新窗口打开，并跟随深色/浅色主题。' },
+    ];
+
+    const icons = {
+      wave: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12c1.6-5 3.2-5 4.8 0s3.2 5 4.8 0 3.2-5 4.8 0 3.2 5 4.8 0"/></svg>',
+      calculus: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 17c2-11 6-11 8 0s6 11 8 0M12 6v12"/></svg>',
+      thermal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a2 2 0 0 1 2 2v8.3a4.5 4.5 0 1 1-4 0V5a2 2 0 0 1 2-2z"/><path d="M12 8v6"/></svg>',
+      quantum: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.2"/><ellipse cx="12" cy="12" rx="8.5" ry="3.4" transform="rotate(28 12 12)"/></svg>',
+    };
+
+    function nodeById(id) { return demoNodes.find(n => n.id === id); }
+    function saveDemoTheme() { localStorage.setItem('phymathia_demo_theme', demoTheme); }
+
+    function toggleDemoTheme() {
+      demoTheme = demoTheme === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', demoTheme);
+      saveDemoTheme();
+      document.getElementById('themeLabel').textContent = demoTheme === 'dark' ? '浅色' : '深色';
+      demoToast('已切换为' + (demoTheme === 'dark' ? '深色' : '浅色') + '模式');
+      drawVizDemo();
+      drawFullViz();
+    }
+
+    function demoToast(msg) {
+      const el = document.getElementById('demoToast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove('show'), 2200);
+    }
+
+    function switchDemoSection(id) {
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.section === id));
+      document.querySelectorAll('.demo-section').forEach(s => s.classList.toggle('active', s.id === 'section-' + id));
+      if (id === 'viz') requestAnimationFrame(drawVizDemo);
+      if (id === 'session') renderDemoSessions();
+      if (id === 'knowledge') renderDemoKnowledge();
+      if (id === 'graph') requestAnimationFrame(renderGraph);
+    }
+
+    function setDemoLevel(btn) {
+      document.querySelectorAll('.level-option').forEach(b => b.classList.toggle('active', b === btn));
+      const level = btn.dataset.level;
+      const desc = document.getElementById('demoLevelDesc');
+      desc.textContent = level === '中学' ? '当前：通俗类比，公式简化，步骤详细。' : level === '大学' ? '当前：标准大学物理/数学教学深度。' : '当前：学术深度，关注物理本质与数学结构。';
+      demoToast('已切换难度：' + level);
+    }
+
+    function demoModelChange() { demoToast('模型槽位已更新（演示）'); }
+    function addDemoModel() {
+      const provider = document.getElementById('demoProvider').value.trim();
+      const model = document.getElementById('demoModelName').value.trim();
+      const base = document.getElementById('demoBaseUrl').value.trim();
+      if (!provider || !model || !base) { demoToast('请填写服务商、模型和 API 地址'); return; }
+      demoToast('已保存演示模型：' + provider + ' · ' + model);
+    }
+
+    function exportDemoData() {
+      const data = { version: 1, exportedAt: new Date().toISOString(), sessions: demoSessions, knowledge: demoKnowledge, settings: { theme: demoTheme, level: 'university' } };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'phymathia_demo_backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      demoToast('已导出演示数据');
+    }
+
+    function importDemoData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.sessions && Array.isArray(data.sessions)) {
+            demoSessions.length = 0;
+            demoSessions.push(...data.sessions);
+            renderDemoSessions();
+          }
+          demoToast('已导入演示数据');
+        } catch (err) {
+          demoToast('导入失败：JSON 格式不正确');
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function renderDemoSessions() {
+      const list = document.getElementById('demoSessionList');
+      list.innerHTML = demoSessions.map((s, idx) => `
+        <div class="session-item ${idx === 0 ? 'active' : ''}">
+          <button class="session-icon" title="切换图标" onclick="cycleDemoIcon('${s.id}')">${icons[s.icon] || icons.wave}</button>
+          <div class="title">${s.title}</div>
+          <div class="time">${s.time}</div>
+          <button class="mini-btn" onclick="renameDemoSession('${s.id}')">重命名</button>
+          <button class="mini-btn danger" onclick="deleteDemoSession('${s.id}')">删除</button>
+        </div>
+      `).join('');
+    }
+
+    function addDemoSession() {
+      const id = 's' + Date.now();
+      demoSessions.unshift({ id, title: '新对话', icon: 'wave', time: '刚刚' });
+      renderDemoSessions();
+      demoToast('已创建新会话');
+    }
+
+    function cycleDemoIcon(id) {
+      const s = demoSessions.find(x => x.id === id);
+      if (!s) return;
+      const keys = Object.keys(icons);
+      s.icon = keys[(keys.indexOf(s.icon) + 1) % keys.length];
+      renderDemoSessions();
+    }
+
+    function renameDemoSession(id) {
+      const s = demoSessions.find(x => x.id === id);
+      if (!s) return;
+      const next = prompt('新会话名称', s.title);
+      if (next) { s.title = next; renderDemoSessions(); demoToast('会话已重命名'); }
+    }
+
+    function deleteDemoSession(id) {
+      const idx = demoSessions.findIndex(x => x.id === id);
+      if (idx >= 0) { demoSessions.splice(idx, 1); renderDemoSessions(); demoToast('会话已删除（演示）'); }
+    }
+
+    function renderDemoKnowledge() {
+      const list = document.getElementById('knowledgeList');
+      list.innerHTML = demoKnowledge.map(k => `
+        <div class="k-card">
+          <div class="k-title">${k.title}</div>
+          <div class="k-meta">${k.cat === 'physics' ? '物理' : '数学'} · ${k.source} · ${k.time}</div>
+          <div class="k-formula">${k.formula}</div>
+          <div class="k-summary">${k.summary}</div>
+          <div class="k-actions">
+            <button class="mini-btn" onclick="demoToast('已演示：跳转来源会话')">查看原对话</button>
+            <button class="mini-btn danger" onclick="deleteDemoKnowledge('${k.id}')">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function deleteDemoKnowledge(id) {
+      const idx = demoKnowledge.findIndex(k => k.id === id);
+      if (idx >= 0) { demoKnowledge.splice(idx, 1); renderDemoKnowledge(); updateDemoStats(); demoToast('知识条目已删除（演示）'); }
+    }
+
+    function updateDemoStats() {
+      document.getElementById('statTotal').textContent = demoKnowledge.length;
+      document.getElementById('statPhysics').textContent = demoKnowledge.filter(k => k.cat === 'physics').length;
+      document.getElementById('statMath').textContent = demoKnowledge.filter(k => k.cat === 'math').length;
+    }
+
+    function switchKpTabs(tab) {
+      document.getElementById('kpView').hidden = tab !== 'knowledge';
+      document.getElementById('formulaView').hidden = tab !== 'formula';
+    }
+
+    function toggleLinearDemo() {
+      graphModeLinear = !graphModeLinear;
+      const btn = document.getElementById('linearModeBtn');
+      btn.textContent = graphModeLinear ? '画布模式' : '线性模式';
+      document.getElementById('linearDemo').style.display = graphModeLinear ? 'block' : '';
+      document.getElementById('graphModeTag').textContent = graphModeLinear ? '线性模式' : '网络模式';
+      demoToast(graphModeLinear ? '已切换为线性卡片' : '已切换为网络画布');
+    }
+
+    function startGuide() {
+      guideStep = 0;
+      document.getElementById('guideOverlay').hidden = false;
+      renderGuideStep();
+    }
+
+    function renderGuideStep() {
+      const step = guideSteps[guideStep];
+      document.getElementById('guideSteps').innerHTML = guideSteps.map((s, i) =>
+        `<div class="guide-step"><b>${i === guideStep ? '●' : i < guideStep ? '✓' : '○'}</b><span>${s.title}</span></div>`
+      ).join('');
+      const desc = document.createElement('p');
+      desc.textContent = step.desc;
+      const old = document.querySelector('#guideSteps + p');
+      if (old) old.remove();
+      document.getElementById('guideSteps').after(desc);
+      document.getElementById('guideNextBtn').textContent = guideStep === guideSteps.length - 1 ? '完成' : '下一步';
+    }
+
+    function nextGuideStep() {
+      guideStep++;
+      if (guideStep >= guideSteps.length) { closeGuide(); switchDemoSection('graph'); return; }
+      renderGuideStep();
+    }
+
+    function closeGuide() { document.getElementById('guideOverlay').hidden = true; }
+
+    function openDemoBranch(module, type) {
+      const labels = { physics: '物理视角', math: '数学视角', graph: '知识图谱', viz: '交互可视化', extend: '延伸思考' };
+      const label = labels[module] || module;
+      const titles = { followup: '追问', confused: '没看懂', socratic: '苏格拉底追问' };
+      const prefix = {
+        followup: '请从' + label + '继续深入讲解：',
+        confused: '你刚才从' + label + '讲解的内容我没看懂，请换一种更简单的方式重新讲解：',
+        socratic: '请回答这个延伸思考问题：',
+        learn: '请详细讲解：'
+      };
+      const question = prefix[type] || prefix.followup;
+      document.getElementById('branchTitle').textContent = titles[type] || '追问';
+      document.getElementById('branchText').value = question;
+      activeBranch = { module, type };
+      document.getElementById('branchOverlay').hidden = false;
+      branchOverlayOpen = true;
+      setTimeout(() => document.getElementById('branchText').focus(), 50);
+    }
+
+    function closeBranchOverlay() {
+      document.getElementById('branchOverlay').hidden = true;
+      branchOverlayOpen = false;
+      activeBranch = null;
+    }
+
+    function submitBranchOverlay() {
+      const text = document.getElementById('branchText').value.trim();
+      if (!text) { demoToast('请输入内容'); return; }
+      const sourceId = activeBranch && activeBranch.module ? 'm-' + activeBranch.module : 'a-main';
+      const source = nodeById(sourceId);
+      const type = activeBranch ? activeBranch.type : 'followup';
+      const branchId = 'q-' + (++demoNodeSeq);
+      const label = type === 'socratic' ? '苏格拉底追问' : type === 'learn' ? '进阶学习' : '追问分支';
+      const angle = (demoNodes.indexOf(source) % 5) - 2;
+      demoNodes.push({
+        id: branchId,
+        kind: 'branch',
+        title: label,
+        badge: '分支',
+        x: source.x + angle * 130,
+        y: source.y + 230,
+        w: 230,
+        h: 120,
+        body: text,
+        actions: [],
+        parentId: sourceId,
+      });
+      demoEdges.push({ from: sourceId, to: branchId });
+      closeBranchOverlay();
+      renderGraph();
+      demoToast('新节点已连接到' + source.title);
+    }
+
+    function addDemoBranch(module, type) {
+      openDemoBranch(module, type);
+    }
+
+    function demoStream() {
+      if (demoStreamActive) return;
+      const source = nodeById('m-viz') || nodeById('a-main');
+      const branchId = 'q-' + (++demoNodeSeq);
+      demoNodes.push({
+        id: branchId,
+        kind: 'branch',
+        title: '流式回答',
+        badge: '生成中',
+        x: source.x + 220,
+        y: source.y + 250,
+        w: 250,
+        h: 150,
+        body: '',
+        actions: [],
+        parentId: source.id,
+      });
+      demoEdges.push({ from: source.id, to: branchId });
+      demoStreamQueue = [
+        '物理上，回复力始终指向平衡位置，',
+        '因此系统会形成周期性往返。',
+        '数学上，运动方程的解是余弦函数。',
+        '完整公式：x(t) = A cos(ωt + φ)。'
+      ];
+      renderGraph();
+      demoStreamActive = true;
+      document.getElementById('stopDemoBtn').disabled = false;
+      document.getElementById('stopDemoBtn').classList.add('primary');
+      let idx = 0;
+      demoStreamTimer = setInterval(() => {
+        const node = nodeById(branchId);
+        if (!node || idx >= demoStreamQueue.length) { demoStopStream(); return; }
+        node.body += (node.body ? ' ' : '') + demoStreamQueue[idx];
+        idx++;
+        const el = document.querySelector('.demo-node[data-id="' + branchId + '"] .node-body');
+        if (el) el.textContent = node.body;
+        if (idx === demoStreamQueue.length) {
+          const badge = document.querySelector('.demo-node[data-id="' + branchId + '"] .node-badge');
+          if (badge) badge.textContent = '流式回答';
+        }
+      }, 380);
+    }
+
+    function demoStopStream() {
+      clearInterval(demoStreamTimer);
+      demoStreamTimer = null;
+      demoStreamActive = false;
+      document.getElementById('stopDemoBtn').disabled = true;
+      document.getElementById('stopDemoBtn').classList.remove('primary');
+      if (demoStreamQueue.length) {
+        demoStreamQueue = [];
+        renderGraph();
+        demoToast('生成已停止');
+      }
+    }
+
+    function renderGraph() {
+      const world = document.getElementById('demoWorld');
+      const edges = document.getElementById('demoEdges');
+      const canvas = document.getElementById('demoCanvas');
+      world.querySelectorAll('.demo-node').forEach(n => n.remove());
+      demoNodes.forEach(n => {
+        const el = document.createElement('div');
+        el.className = 'demo-node demo-node-' + n.kind + (n.module ? ' demo-node-' + n.module : '') + (n.minimized ? ' minimized' : '') + (n.id === selectedNodeId ? ' selected' : '');
+        el.dataset.id = n.id;
+        el.style.left = (n.x - n.w / 2) + 'px';
+        el.style.top = (n.y - (n.minimized ? 44 : n.h) / 2) + 'px';
+        el.style.width = (n.minimized ? 140 : n.w) + 'px';
+        el.style.height = (n.minimized ? 44 : n.h) + 'px';
+        const actions = (n.actions || []).map(a => {
+          const labels = { followup: '追问', confused: '没看懂', socratic: '我来回答', learn: '进阶学习' };
+          return `<button onclick="openDemoBranch('${n.module || 'extend'}','${a}')">${labels[a] || a}</button>`;
+        }).join('');
+        el.innerHTML = `
+          <div class="node-header">
+            <span class="node-badge ${n.kind === 'core' ? 'core' : n.module || ''}">${n.badge}</span>
+            <span class="node-title">${n.title}</span>
+            ${n.kind === 'module' || n.kind === 'answer' || n.kind === 'branch' ? `<button class="node-icon-btn" title="${n.minimized ? '展开' : '最小化'}" onclick="toggleDemoMinimize('${n.id}')">${n.minimized ? '+' : '−'}</button>` : ''}
+            ${n.kind !== 'core' ? `<button class="node-icon-btn delete" title="删除节点" onclick="deleteDemoNode('${n.id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>` : ''}
+          </div>
+          <div class="node-content">
+            <div class="node-body">${n.body}</div>
+          </div>
+          ${actions ? `<div class="node-actions">${actions}</div>` : ''}
+          ${n.minimized ? '' : '<span class="resize-handle"></span>'}
+        `;
+        world.appendChild(el);
+      });
+      edges.innerHTML = demoEdges.map(e => {
+        const a = nodeById(e.from);
+        const b = nodeById(e.to);
+        if (!a || !b) return '';
+        const x1 = a.x, y1 = a.y, x2 = b.x, y2 = b.y;
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const dx = x2 - x1, dy = y2 - y1;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const off = Math.min(70, d * 0.18);
+        const cx = mx - (dy / d) * off;
+        const cy = my + (dx / d) * off;
+        return `<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}"></path>`;
+      }).join('');
+      applyDemoTransform();
+    }
+
+    function applyDemoTransform() {
+      const world = document.getElementById('demoWorld');
+      world.style.transform = `translate(${demoPan.x}px, ${demoPan.y}px) scale(${demoZoomLevel})`;
+    }
+
+    function demoZoom(factor) {
+      const canvas = document.getElementById('demoCanvas');
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.width / 2, cy = rect.height / 2;
+      const wx = (cx - demoPan.x) / demoZoomLevel;
+      const wy = (cy - demoPan.y) / demoZoomLevel;
+      demoZoomLevel = Math.min(2.2, Math.max(0.3, demoZoomLevel * factor));
+      demoPan.x = cx - wx * demoZoomLevel;
+      demoPan.y = cy - wy * demoZoomLevel;
+      applyDemoTransform();
+    }
+
+    function demoFit() {
+      if (!demoNodes.length) return;
+      const canvas = document.getElementById('demoCanvas');
+      const rect = canvas.getBoundingClientRect();
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      demoNodes.forEach(n => {
+        minX = Math.min(minX, n.x - n.w / 2);
+        minY = Math.min(minY, n.y - n.h / 2);
+        maxX = Math.max(maxX, n.x + n.w / 2);
+        maxY = Math.max(maxY, n.y + n.h / 2);
+      });
+      const w = maxX - minX + 160;
+      const h = maxY - minY + 160;
+      demoZoomLevel = Math.max(0.25, Math.min((rect.width - 40) / w, (rect.height - 40) / h, 1.05));
+      demoPan.x = (rect.width - w * demoZoomLevel) / 2 - minX * demoZoomLevel;
+      demoPan.y = (rect.height - h * demoZoomLevel) / 2 - minY * demoZoomLevel;
+      applyDemoTransform();
+    }
+
+    function demoReset() {
+      demoZoomLevel = 1;
+      demoPan.x = 0;
+      demoPan.y = 0;
+      applyDemoTransform();
+      demoToast('已重新布局');
+    }
+
+    function toggleDemoMinimize(id) {
+      const node = nodeById(id);
+      if (!node) return;
+      node.minimized = !node.minimized;
+      renderGraph();
+      demoToast(node.minimized ? '节点已最小化，仅保留标题' : '节点已展开');
+    }
+
+    function deleteDemoNode(id) {
+      const node = nodeById(id);
+      if (!node || node.kind === 'core') return;
+      const children = demoEdges.filter(e => e.from === id).map(e => e.to);
+      demoNodes.splice(demoNodes.indexOf(node), 1);
+      demoEdges.splice(0, demoEdges.length, ...demoEdges.filter(e => e.from !== id && e.to !== id));
+      children.forEach(childId => deleteDemoNode(childId));
+      if (selectedNodeId === id) selectedNodeId = null;
+      renderGraph();
+      demoToast('节点及其子分支已删除');
+    }
+
+    function initGraphEvents() {
+      const canvas = document.getElementById('demoCanvas');
+      canvas.addEventListener('wheel', e => {
+        if (e.target.closest('.node-body')) return;
+        e.preventDefault();
+        demoZoom(e.deltaY < 0 ? 1.08 : 0.92);
+      }, { passive: false });
+
+      canvas.addEventListener('pointerdown', e => {
+        const handle = e.target.closest('.resize-handle');
+        if (handle) {
+          const el = e.target.closest('.demo-node');
+          const node = nodeById(el.dataset.id);
+          if (!node) return;
+          e.preventDefault();
+          resizeState = { id: node.id, startX: e.clientX, startY: e.clientY, w: node.w, h: node.h };
+          canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+        const nodeEl = e.target.closest('.demo-node');
+        if (nodeEl && !e.target.closest('button')) {
+          const node = nodeById(nodeEl.dataset.id);
+          if (!node) return;
+          e.preventDefault();
+          dragState = { id: node.id, startX: e.clientX, startY: e.clientY, x: node.x, y: node.y };
+          canvas.setPointerCapture(e.pointerId);
+          nodeEl.classList.add('dragging');
+          selectedNodeId = node.id;
+          renderGraph();
+          return;
+        }
+        panState = { startX: e.clientX, startY: e.clientY, panX: demoPan.x, panY: demoPan.y };
+        canvas.classList.add('panning');
+        canvas.setPointerCapture(e.pointerId);
+      });
+
+      canvas.addEventListener('pointermove', e => {
+        if (resizeState) {
+          const node = nodeById(resizeState.id);
+          if (!node) return;
+          const dx = (e.clientX - resizeState.startX) / demoZoomLevel;
+          const dy = (e.clientY - resizeState.startY) / demoZoomLevel;
+          node.w = Math.max(170, Math.round(resizeState.w + dx));
+          node.h = Math.max(70, Math.round(resizeState.h + dy));
+          renderGraph();
+          return;
+        }
+        if (dragState) {
+          const node = nodeById(dragState.id);
+          if (!node) return;
+          node.x = dragState.x + (e.clientX - dragState.startX) / demoZoomLevel;
+          node.y = dragState.y + (e.clientY - dragState.startY) / demoZoomLevel;
+          renderGraph();
+          return;
+        }
+        if (panState) {
+          demoPan.x = panState.panX + e.clientX - panState.startX;
+          demoPan.y = panState.panY + e.clientY - panState.startY;
+          applyDemoTransform();
+        }
+      });
+
+      const end = () => {
+        if (dragState) {
+          const el = document.querySelector('.demo-node[data-id="' + dragState.id + '"]');
+          if (el) el.classList.remove('dragging');
+        }
+        dragState = null;
+        resizeState = null;
+        panState = null;
+        canvas.classList.remove('panning');
+      };
+      canvas.addEventListener('pointerup', end);
+      canvas.addEventListener('pointercancel', end);
+    }
+
+    function initViz() {
+      const canvas = document.getElementById('vizCanvas');
+      const full = document.getElementById('fullVizCanvas');
+      const draw = (ctx, w, h, omega, damping, amp) => {
+        ctx.clearRect(0, 0, w, h);
+        const bg = demoTheme === 'dark' ? '#04101d' : '#f8fbff';
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, w, h);
+        const pad = 30;
+        const midY = h / 2;
+        ctx.strokeStyle = demoTheme === 'dark' ? 'rgba(34,211,238,.12)' : 'rgba(8,145,178,.10)';
+        ctx.lineWidth = 1;
+        for (let x = pad; x <= w - pad; x += 36) { ctx.beginPath(); ctx.moveTo(x, 14); ctx.lineTo(x, h - 14); ctx.stroke(); }
+        for (let y = 18; y <= h - 18; y += 36) { ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke(); }
+        ctx.strokeStyle = demoTheme === 'dark' ? '#22d3ee' : '#0891b2';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const decay = Math.exp(-damping * 2.4);
+        for (let i = 0; i <= w - pad * 2; i += 1) {
+          const t = i / (w - pad * 2) * 4 * Math.PI;
+          const y = midY - amp * decay * Math.sin(omega * t) * (h * 0.34);
+          if (i === 0) ctx.moveTo(pad + i, y); else ctx.lineTo(pad + i, y);
+        }
+        ctx.stroke();
+        const ballX = pad + ((w - pad * 2) * 0.55);
+        const t0 = 2.3;
+        const y0 = midY - amp * Math.exp(-damping * 2.4) * Math.sin(omega * t0) * (h * 0.34);
+        ctx.fillStyle = demoTheme === 'dark' ? '#34d399' : '#059669';
+        ctx.beginPath();
+        ctx.arc(ballX, y0, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = demoTheme === 'dark' ? '#a7f3d0' : '#064e3b';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(ballX, y0);
+        ctx.lineTo(ballX, midY);
+        ctx.stroke();
+      };
+      const drawCurrent = () => {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        const w = Math.max(100, rect.width);
+        const h = Math.max(100, rect.height);
+        canvas.width = w * devicePixelRatio;
+        canvas.height = h * devicePixelRatio;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        draw(ctx, w, h, +document.getElementById('vizOmega').value, +document.getElementById('vizDamping').value, +document.getElementById('vizAmp').value);
+      };
+      const drawFull = () => {
+        const rect = full.parentElement.getBoundingClientRect();
+        const w = Math.max(100, rect.width);
+        const h = Math.max(100, rect.height);
+        full.width = w * devicePixelRatio;
+        full.height = h * devicePixelRatio;
+        const ctx = full.getContext('2d');
+        ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        draw(ctx, w, h, +document.getElementById('vizOmega').value, +document.getElementById('vizDamping').value, +document.getElementById('vizAmp').value);
+      };
+      window.drawVizDemo = drawCurrent;
+      window.drawFullViz = drawFull;
+      window.openVizFullscreen = () => {
+        document.getElementById('fullscreenOverlay').hidden = false;
+        requestAnimationFrame(drawFull);
+      };
+      window.closeVizFullscreen = () => { document.getElementById('fullscreenOverlay').hidden = true; };
+      window.copyVizDemo = () => {
+        const html = '<!DOCTYPE html><html><body><canvas id="c"></canvas><scr' + 'ipt>/* demo */</' + 'script></body></html>';
+        navigator.clipboard && navigator.clipboard.writeText(html).then(() => demoToast('可视化源码已复制')).catch(() => demoToast('复制失败'));
+      };
+      window.openVizDemoTab = () => {
+        const blob = new Blob(['<html><body style="margin:0;background:#04101d;color:#e2e8f0;display:grid;place-items:center;font:14px sans-serif">交互式可视化演示</body></html>'], { type: 'text/html' });
+        window.open(URL.createObjectURL(blob), '_blank');
+      };
+      window.addEventListener('resize', () => { drawCurrent(); });
+      requestAnimationFrame(drawCurrent);
+    }
+
+    window.demoStopStream = demoStopStream;
+    window.demoToast = demoToast;
+    window.toggleDemoTheme = toggleDemoTheme;
+    window.switchDemoSection = switchDemoSection;
+    window.startGuide = startGuide;
+    window.nextGuideStep = nextGuideStep;
+    window.closeGuide = closeGuide;
+    window.setDemoLevel = setDemoLevel;
+    window.demoModelChange = demoModelChange;
+    window.addDemoModel = addDemoModel;
+    window.exportDemoData = exportDemoData;
+    window.importDemoData = importDemoData;
+    window.renderDemoSessions = renderDemoSessions;
+    window.addDemoSession = addDemoSession;
+    window.cycleDemoIcon = cycleDemoIcon;
+    window.renameDemoSession = renameDemoSession;
+    window.deleteDemoSession = deleteDemoSession;
+    window.renderDemoKnowledge = renderDemoKnowledge;
+    window.deleteDemoKnowledge = deleteDemoKnowledge;
+    window.updateDemoStats = updateDemoStats;
+    window.switchKpTabs = switchKpTabs;
+    window.toggleLinearDemo = toggleLinearDemo;
+    window.demoStream = demoStream;
+    window.openDemoBranch = openDemoBranch;
+    window.closeBranchOverlay = closeBranchOverlay;
+    window.submitBranchOverlay = submitBranchOverlay;
+    window.addDemoBranch = addDemoBranch;
+    window.toggleDemoMinimize = toggleDemoMinimize;
+    window.deleteDemoNode = deleteDemoNode;
+    window.demoZoom = demoZoom;
+    window.demoFit = demoFit;
+    window.demoReset = demoReset;
+    document.getElementById('themeLabel').textContent = demoTheme === 'dark' ? '浅色' : '深色';
+    renderGraph();
+    renderDemoSessions();
+    renderDemoKnowledge();
+    initGraphEvents();
+    initViz();
+    demoFit();
+  </script>
+</body>
+</html>
