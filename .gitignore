@@ -90,3 +90,5 @@ logs/
 # Preview files
 .preview
 .codegraph
+data/
+example/
