@@ -36,6 +36,7 @@ const GRAPH_NODE_ATTRIBUTES = {
   learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
   manual: { key: 'manual', label: '非 AI 回答', color: '#64748b' },
   human_note: { key: 'human_note', label: '我的理解', color: '#64748b' },
+  ai_eval: { key: 'ai_eval', label: 'AI 评价', color: '#f59e0b' },
   hub: { key: 'hub', label: '汇聚', color: '#eab308' },
   summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
   note: { key: 'note', label: '人工总结', color: '#f97316' },
@@ -67,7 +68,7 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'relation', kind: 'relation', label: '联系', color: '#f43f5e' },
 ];
 
-const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation', 'human_note'];
+const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation', 'human_note', 'ai_eval'];
 
 let graphCanvas = null;
 let graphInner = null;
@@ -78,6 +79,8 @@ const graphView = {
   edges: [],
   defaultEdges: [],
   nodeById: {},
+  previewNodes: [],
+  previewEdges: [],
   selectedNodeIds: new Set(),
   selectedGroupIds: new Set(),
   dragNodeId: null,
@@ -159,6 +162,8 @@ function _graphState() {
     inputPortCounts: {},
     groups: [],
     customNodes: [],
+    harnessDeleted: {},
+    harnessCheckpoint: null,
   };
 }
 
@@ -461,6 +466,7 @@ function _buildGraphData(messages, state) {
   const edges = [];
   const nodeById = {};
   const hiddenMap = state.hidden || {};
+  const harnessDeleted = state.harnessDeleted || {};
   const collapsedMap = state.collapsed || {};
   const savedPositions = state.layoutVersion === LAYOUT_VERSION ? (state.positions || {}) : {};
   const pinnedMap = state.pinned || {};
@@ -478,6 +484,7 @@ function _buildGraphData(messages, state) {
       const isBranch = msg.branchType && msg.branchType !== 'main';
       const isRoot = !isBranch && !rootQuestionId;
       const id = _graphNodeId('q', msg.timestamp);
+      if (harnessDeleted[id]) continue;
       let depth = 0;
       let targetAngle = 0;
       let parentQuestionId = null;
@@ -583,6 +590,7 @@ function _buildGraphData(messages, state) {
       const parentQuestionId = lastUserNode ? lastUserNode.id : (rootQuestionId || null);
       const parentQuestion = parentQuestionId ? nodeById[parentQuestionId] : null;
       const id = _graphNodeId('a', msg.timestamp);
+      if (harnessDeleted[id]) continue;
       const isBranchAnswer = !!(msg.branchType && msg.branchType !== 'main');
       const depth = parentQuestion ? parentQuestion.depth + 1 : 1;
       const targetAngle = parentQuestion ? parentQuestion.targetAngle + 0.04 : -Math.PI / 2;
@@ -629,6 +637,7 @@ function _buildGraphData(messages, state) {
       const spread = Math.max(0.28, 0.36 * keys.length / 5);
       keys.forEach((key, idx) => {
         const moduleId = _graphNodeId('m', msg.timestamp, key);
+        if (harnessDeleted[moduleId]) return;
         const mDepth = depth + 1;
         const mAngle = targetAngle + (idx - (keys.length - 1) / 2) * spread;
         const savedM = savedPositions[moduleId];
@@ -672,6 +681,7 @@ function _buildGraphData(messages, state) {
   }
 
   (state.customNodes || []).forEach(cn => {
+    if (harnessDeleted[cn.id] || cn.hidden) return;
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
     const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
@@ -823,6 +833,8 @@ function _graphNodeSearchText(message, node) {
   }
   if (node.content) parts.push(node.content);
   if (node.summary) parts.push(node.summary);
+  if (node.suggestion) parts.push(node.suggestion);
+  if (node.target_label) parts.push(node.target_label);
   if (node.requirements) parts.push(node.requirements);
   if (node.label) parts.push(node.label);
   if (node.title) parts.push(node.title);
@@ -843,6 +855,7 @@ function _graphSearchResultLabel(node, message) {
   if (node.kind === 'source') return '输入';
   if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '联系';
+  if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.isBranch ? (node.branchLabel || '延伸追问') : '问题');
   if (node.kind === 'blank') return '空白节点';
   if (node.kind === 'draft') return '待提交追问';
@@ -1082,6 +1095,7 @@ function _nodeSub(node) {
   if (node.kind === 'source') return '文件解析入口';
   if (node.kind === 'knowledge') return '知识点节点';
   if (node.kind === 'relation') return '知识联系';
+  if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'human_note') return '我的理解';
   if (node.kind === 'module') return '';
   if (node.kind === 'blank') return '空白节点';
@@ -1099,6 +1113,7 @@ function _nodeAttribute(node) {
     return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.question;
   }
   if (node.kind === 'human_note') return GRAPH_NODE_ATTRIBUTES.human_note;
+  if (node.kind === 'ai_eval') return GRAPH_NODE_ATTRIBUTES.ai_eval;
   if (node.kind === 'answer') return node.manual ? GRAPH_NODE_ATTRIBUTES.manual : GRAPH_NODE_ATTRIBUTES.answer;
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
@@ -1610,6 +1625,9 @@ function _refreshWorkflowNodeUi(node) {
 }
 
 function _customNodeStatusText(node) {
+  if (node.kind === 'ai_eval') {
+    return node.status === 'applied' ? '已采纳' : '待采纳';
+  }
   if (node.kind === 'source') {
     if (node.busy || node.status === 'running') return '解析中';
     return node.items && node.items.length ? '已解析' : '待解析';
@@ -1760,6 +1778,38 @@ function _renderHumanNoteNodeHtml(node, state) {
     + '</div>';
 }
 
+function _renderAiEvalNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const targetLabel = node.target_label || node.label || '目标节点';
+  const priorityMap = { high: '高优先级', medium: '中优先级', low: '低优先级' };
+  const priorityLabel = priorityMap[node.priority] || '';
+  const priorityHtml = priorityLabel
+    ? '<span class="graph-ai-eval-priority priority-' + escapeHtml(node.priority || 'medium') + '">' + escapeHtml(priorityLabel) + '</span>'
+    : '';
+  const body = '<div class="graph-ai-eval-suggestion">' + escapeHtml(node.suggestion || node.content || '') + '</div>' + priorityHtml;
+  const evalActions = '<button class="graph-ai-eval-accept" onclick="acceptAiEvalNode(\'' + node.id + '\')" title="采纳这条建议">采纳</button>'
+    + '<button class="graph-ai-eval-ignore" onclick="ignoreAiEvalNode(\'' + node.id + '\')" title="忽略这条建议">忽略</button>';
+  const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const customHeight = node.customHeight
+    ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
+    : '';
+  const zigzag = '<svg class="graph-ai-eval-zigzag" width="100%" height="100%" aria-hidden="true">'
+    + '<polygon class="graph-ai-eval-zigzag-shape" points="0 0"></polygon>'
+    + '</svg>';
+  return '<div class="graph-node graph-node-ai-eval graph-attr-ai_eval' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
+    + zigzag
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + _customNodeHeaderHtml(node, attr, evalActions)
+    + '<div class="graph-node-label">对「' + escapeHtml(targetLabel) + '」的建议</div>'
+    + '<div class="graph-node-full-content">' + body + '</div>'
+    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
 function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
@@ -1767,6 +1817,7 @@ function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
   if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
   if (node.kind === 'human_note') return _renderHumanNoteNodeHtml(node, state);
+  if (node.kind === 'ai_eval') return _renderAiEvalNodeHtml(node, state);
   const message = messages[node.messageIndex];
   const baseClass = 'graph-node graph-node-' + node.kind;
   const attr = _nodeAttribute(node);
@@ -1869,8 +1920,222 @@ function _measureNodes() {
     const r = el.getBoundingClientRect();
     node.w = r.width / (graphView.zoom || 1);
     node.h = r.height / (graphView.zoom || 1);
+    if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
   });
   _syncGroupMembersByContainment();
+}
+
+function clearGraphDiffHighlights() {
+  graphInner?.querySelectorAll('.graph-diff-add, .graph-diff-update, .graph-diff-delete').forEach(el => {
+    el.classList.remove('graph-diff-add', 'graph-diff-update', 'graph-diff-delete');
+  });
+}
+
+function applyGraphDiffHighlights(ops) {
+  clearGraphDiffHighlights();
+  const addNodes = new Set();
+  const updateNodes = new Set();
+  const deleteNodes = new Set();
+  const addEdges = new Set();
+  const updateEdges = new Set();
+  const deleteEdges = new Set();
+  (ops || []).forEach(op => {
+    const name = op.op || op.type || '';
+    const nodeId = op.assigned_id || op.id;
+    if (name === 'create_node' || name === 'create_eval_node') {
+      if (nodeId) addNodes.add(nodeId);
+    } else if (name === 'update_node') {
+      if (nodeId) updateNodes.add(nodeId);
+    } else if (name === 'delete_node') {
+      if (nodeId) deleteNodes.add(nodeId);
+    }
+    const edgeKey = op.edge_key || op.key;
+    if (name === 'add_edge') {
+      if (edgeKey) addEdges.add(edgeKey);
+    } else if (name === 'update_edge') {
+      if (edgeKey) updateEdges.add(edgeKey);
+    } else if (name === 'remove_edge') {
+      if (edgeKey) deleteEdges.add(edgeKey);
+    }
+  });
+  graphView.nodes.forEach(node => {
+    const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
+    if (!el) return;
+    if (deleteNodes.has(node.id)) el.classList.add('graph-diff-delete');
+    else if (updateNodes.has(node.id)) el.classList.add('graph-diff-update');
+    else if (addNodes.has(node.id)) el.classList.add('graph-diff-add');
+  });
+  graphView.edges.forEach(edge => {
+    const el = graphEdgeLayer?.querySelector('[data-edge-key="' + _edgeKey(edge) + '"]');
+    if (!el) return;
+    const key = _edgeKey(edge);
+    if (deleteEdges.has(key)) el.classList.add('graph-diff-delete');
+    else if (updateEdges.has(key)) el.classList.add('graph-diff-update');
+    else if (addEdges.has(key)) el.classList.add('graph-diff-add');
+  });
+}
+
+function clearGraphHarnessPreview() {
+  graphView.previewNodes = [];
+  graphView.previewEdges = [];
+  graphCanvas?.querySelector('.graph-harness-preview-layer')?.remove();
+}
+
+function _renderGraphHarnessPreview() {
+  if (!graphCanvas) return;
+  graphCanvas.querySelector('.graph-harness-preview-layer')?.remove();
+  if (!graphView.previewNodes.length && !graphView.previewEdges.length) return;
+
+  const state = _graphState();
+  const zoom = state.zoom || 0.9;
+  const pan = state.pan || { x: 0, y: 0 };
+  const layer = document.createElement('div');
+  layer.className = 'graph-harness-preview-layer';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'graph-harness-preview-layer-edges');
+  layer.appendChild(svg);
+  const previewById = new Map(graphView.previewNodes.map(node => [node.id, node]));
+
+  graphView.previewEdges.forEach(edge => {
+    const from = graphView.nodeById[edge.from] || previewById.get(edge.from);
+    const to = graphView.nodeById[edge.to] || previewById.get(edge.to);
+    if (!from || !to) return;
+    const fromWidth = from.w || 220;
+    const toWidth = to.w || 220;
+    const x1 = pan.x + (from.x + fromWidth / 2) * zoom;
+    const y1 = pan.y + from.y * zoom;
+    const x2 = pan.x + (to.x - toWidth / 2) * zoom;
+    const y2 = pan.y + to.y * zoom;
+    const offset = Math.max(60, Math.min(180, Math.abs(x2 - x1) * 0.45));
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'graph-harness-preview-edge');
+    path.setAttribute('data-preview-edge', _edgeKey(edge));
+    path.setAttribute('d', 'M' + x1.toFixed(1) + ' ' + y1.toFixed(1)
+      + ' C' + (x1 + offset).toFixed(1) + ' ' + y1.toFixed(1)
+      + ', ' + (x2 - offset).toFixed(1) + ' ' + y2.toFixed(1)
+      + ', ' + x2.toFixed(1) + ' ' + y2.toFixed(1));
+    svg.appendChild(path);
+  });
+
+  graphView.previewNodes.forEach(node => {
+    const el = document.createElement('div');
+    el.className = 'graph-harness-preview-node' + (node.kind === 'ai_eval' ? ' graph-harness-preview-eval' : '');
+    el.dataset.previewId = node.id;
+    const width = node.w || 220;
+    const height = node.h || 80;
+    el.style.width = Math.max(160, width * zoom) + 'px';
+    el.style.transform = 'translate(' + (pan.x + (node.x - width / 2) * zoom) + 'px, '
+      + (pan.y + (node.y - height / 2) * zoom) + 'px)';
+    el.innerHTML = '<span class="graph-harness-preview-badge">待确认</span>'
+      + '<span class="graph-harness-preview-label">' + escapeHtml(node.label || '新节点') + '</span>';
+    layer.appendChild(el);
+  });
+  graphCanvas.appendChild(layer);
+}
+
+function _ensureGraphModeForPreview() {
+  const app = document.querySelector('.app-container');
+  if (!app || !app.classList.contains('linear-mode')) return false;
+  const state = _graphState();
+  state.linear = false;
+  _saveGraphState(state);
+  if (typeof applyLinearMode === 'function') applyLinearMode();
+  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+  return true;
+}
+
+function _harnessVisibleCanvasRect() {
+  const canvasRect = graphCanvas?.getBoundingClientRect();
+  if (!canvasRect || !canvasRect.width || !canvasRect.height) {
+    return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  }
+  const rect = {
+    left: canvasRect.left,
+    top: canvasRect.top,
+    right: canvasRect.right,
+    bottom: canvasRect.bottom,
+    width: canvasRect.width,
+    height: canvasRect.height,
+  };
+  const panel = document.querySelector('.graph-harness-window');
+  if (panel && !panel.hidden) {
+    const p = panel.getBoundingClientRect();
+    const overlapLeft = Math.max(rect.left, p.left);
+    const overlapRight = Math.min(rect.right, p.right);
+    const overlapTop = Math.max(rect.top, p.top);
+    const overlapBottom = Math.min(rect.bottom, p.bottom);
+    if (overlapRight > overlapLeft && overlapBottom > overlapTop) {
+      const leftW = overlapLeft - rect.left;
+      const rightW = rect.right - overlapRight;
+      const topH = overlapTop - rect.top;
+      const bottomH = rect.bottom - overlapBottom;
+      if (leftW >= rightW) rect.right = overlapLeft; else rect.left = overlapRight;
+      if (topH >= bottomH) rect.bottom = overlapTop; else rect.top = overlapBottom;
+      rect.width = Math.max(0, rect.right - rect.left);
+      rect.height = Math.max(0, rect.bottom - rect.top);
+    }
+  }
+  return rect;
+}
+
+function showGraphHarnessPreview(nodes, edges) {
+  graphView.previewNodes = Array.isArray(nodes) ? nodes : [];
+  graphView.previewEdges = Array.isArray(edges) ? edges : [];
+  const switched = _ensureGraphModeForPreview();
+  _renderGraphHarnessPreview();
+  _centerGraphOnPreview();
+  return switched;
+}
+
+function _centerGraphOnPreview() {
+  if (!graphView.previewNodes.length || !graphCanvas) return;
+  const state = _graphState();
+  const canvasRect = graphCanvas.getBoundingClientRect();
+  const rect = _harnessVisibleCanvasRect();
+  const avgX = graphView.previewNodes.reduce((sum, node) => sum + (node.x || 0), 0) / graphView.previewNodes.length;
+  const avgY = graphView.previewNodes.reduce((sum, node) => sum + (node.y || 0), 0) / graphView.previewNodes.length;
+  const zoom = state.zoom || 0.9;
+  state.pan.x = (rect.left - canvasRect.left) + rect.width / 2 - avgX * zoom;
+  state.pan.y = (rect.top - canvasRect.top) + rect.height / 2 - avgY * zoom;
+  _saveGraphState(state);
+  _applyGraphTransform();
+  _updateNodeTransforms();
+  if (typeof _redrawEdges === 'function') _redrawEdges();
+}
+function _aiEvalZigzagPoints(w, h) {
+  const step = 7;
+  const depth = 6;
+  const points = [];
+  function edge(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const ux = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+    const uy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+    const ox = uy;
+    const oy = -ux;
+    const length = Math.abs(dx) + Math.abs(dy);
+    let t = 0;
+    points.push([x1, y1]);
+    while (t < length) {
+      const t1 = Math.min(t + step / 2, length);
+      const t2 = Math.min(t + step, length);
+      points.push([Math.round(x1 + ux * t1 + ox * depth), Math.round(y1 + uy * t1 + oy * depth)]);
+      if (t2 > t1) points.push([x1 + ux * t2, y1 + uy * t2]);
+      t = t2;
+    }
+  }
+  edge(0, 0, w, 0);
+  edge(w, 0, w, h);
+  edge(w, h, 0, h);
+  edge(0, h, 0, 0);
+  return points.map(point => point.join(',')).join(' ');
+}
+
+function _updateAiEvalZigzag(node) {
+  if (!node || !graphInner) return;
+  const shape = graphInner.querySelector('[data-node-id="' + node.id + '"] .graph-ai-eval-zigzag-shape');
+  if (!shape) return;
+  shape.setAttribute('points', _aiEvalZigzagPoints(node.w || 260, node.h || 140));
 }
 
 function _updateNodeTransforms() {
@@ -1940,7 +2205,14 @@ function _redrawEdges() {
       + ', ' + (p2.x - offset).toFixed(1) + ' ' + p2.y.toFixed(1)
       + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
     const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '');
-    return '<path d="' + d + '" class="' + cls + '" data-edge-key="' + _edgeKey(edge) + '" title="双击删除连线"></path>';
+    const label = (edge.relation || edge.label || '').toString().trim();
+    const hintHtml = label
+      ? '<title>' + escapeHtml(label) + '</title>'
+      : '';
+    return '<g class="' + cls + '" data-edge-key="' + _edgeKey(edge) + '" title="双击删除连线">'
+      + '<path d="' + d + '"></path>'
+      + hintHtml
+      + '</g>';
   }).join('');
   graphEdgeLayer.innerHTML = html + _linkDragPathHtml();
 }
@@ -2332,6 +2604,7 @@ function _applyGraphTransform() {
   const state = _graphState();
   graphInner.style.transform = 'translate(' + state.pan.x + 'px, ' + state.pan.y + 'px) scale(' + state.zoom + ')';
   graphView.zoom = state.zoom;
+  if (graphView.previewNodes.length || graphView.previewEdges.length) _renderGraphHarnessPreview();
 }
 
 function _patchGraphStreaming(messages, state) {
@@ -2517,6 +2790,11 @@ function renderGraphCanvas(streaming) {
     + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
     + '</svg></button>'
+    + '<button class="graph-tool-btn graph-harness-btn" onclick="openGraphHarness()" title="AI 网络助手" aria-label="AI 网络助手">'
+    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<circle cx="5" cy="6" r="2"></circle><circle cx="13" cy="5" r="2"></circle><circle cx="9" cy="13" r="2"></circle>'
+    + '<path d="M6.7 7.2 11 11.6M7 5.9 11 5.2M10.8 12.2 13 6.9"></path>'
+    + '</svg></button>'
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>';
   graphCanvas.appendChild(toolbar);
   _applyGraphTextSelectionMode();
@@ -2558,6 +2836,7 @@ function renderGraphCanvas(streaming) {
     if (needsFit) _runLayout(true);
     else _updateNodeTransforms();
     _redrawEdges();
+    _renderGraphHarnessPreview();
     _scheduleGraphMermaidRender();
   });
 
@@ -3756,6 +4035,7 @@ function _handlePointerMove(event) {
       el.classList.add('resized');
       node.w = node.customWidth;
       node.h = el.getBoundingClientRect().height / (graphView.zoom || 1);
+      if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
       _redrawEdges();
     }
     return;
@@ -6423,6 +6703,16 @@ window.graphToggleTextSelection = graphToggleTextSelection;
 window.autoArrangeGraph = autoArrangeGraph;
 window.toggleLinearMode = toggleLinearMode;
 window.applyLinearMode = applyLinearMode;
+window.getGraphViewNodes = () => graphView.nodes.map(node => ({ ...node }));
+window.getGraphViewEdges = () => graphView.edges.map(edge => ({ ...edge }));
+window.getGraphViewDefaultEdges = () => (graphView.defaultEdges || []).map(edge => ({ ...edge }));
+window.getSelectedGraphNodeIds = () => Array.from(graphView.selectedNodeIds || []);
+window.freeModuleInputPort = _freeModuleInputPort;
+window.pushGraphUndo = _pushGraphUndo;
+window.applyGraphDiffHighlights = applyGraphDiffHighlights;
+window.clearGraphDiffHighlights = clearGraphDiffHighlights;
+window.showGraphHarnessPreview = showGraphHarnessPreview;
+window.clearGraphHarnessPreview = clearGraphHarnessPreview;
 window.toggleGraphView = () => {
   const state = _graphState();
   state.linear = false;

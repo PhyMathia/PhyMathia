@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -50,6 +51,7 @@ _load_env_file(Path(__file__).resolve().parent.parent / ".env")
 
 # ====== 数据持久化目录 ======
 BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent
 DATA_DIR = BASE_DIR.parent / "data"
 MESSAGES_DIR = DATA_DIR / "messages"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,6 +68,13 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ====== FastAPI 应用 ======
 app = FastAPI(title="PhyMathia", description="物理数学双域解释与可视化助手 (离线测试版)")
+
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from harness.api import router as harness_router
+
+app.include_router(harness_router, prefix="/api/harness")
 
 app.add_middleware(
     CORSMiddleware,
@@ -193,6 +202,7 @@ HTML 可视化代码（可选，用 ```html ... ``` 包裹）
 """
 
 SYSTEM_PROMPT = _load_system_prompt()
+app.state.harness_context = SYSTEM_PROMPT
 
 LEVEL_PROMPTS = {
     "middle": "（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）",

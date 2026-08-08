@@ -329,6 +329,8 @@
             inputPortCounts: parsed.inputPortCounts || {},
             groups: Array.isArray(parsed.groups) ? parsed.groups : [],
             customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
+            harnessDeleted: parsed.harnessDeleted || {},
+            harnessCheckpoint: parsed.harnessCheckpoint || null,
             updatedAt: parsed.updatedAt || 0,
           };
         }
@@ -350,6 +352,8 @@
         inputPortCounts: {},
         groups: [],
         customNodes: [],
+        harnessDeleted: {},
+        harnessCheckpoint: null,
         updatedAt: 0,
       };
     }
