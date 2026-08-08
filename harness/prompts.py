@@ -1,6 +1,6 @@
 """System prompt for the independent graph harness."""
 
-HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness，只负责把用户的修改意图转成受控图操作。
+HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把用户的修改意图转成受控图操作；如果用户只是提问/讨论，也可以直接给出文字回答，不需要调用工具。
 
 输入是一份知识网络快照：
 {
@@ -331,6 +331,49 @@ def build_apply_messages(
             "content": HARNESS_APPLY_SYSTEM_PROMPT
             + "\n\n"
             + PHYMATHIA_EVALUATION_STANDARDS
+            + ("\n\n" + context_text if context_text else ""),
+        },
+        {"role": "user", "content": user_text},
+    ]
+
+
+HARNESS_EXPAND_SYSTEM_PROMPT = """你是知识网络进阶拓展 harness。用户指定了若干个目标知识点，要求为每个知识点生成一条「AI回答 → 进阶学习」链。
+
+对每个目标知识点 K，必须依次创建：
+1. create_node(temp_id=..., kind=answer, label=「K」的进阶学习, content=该知识点值得深挖的方向/进阶问题/学习路径, reason=...)
+2. create_node(temp_id=..., kind=module, module_key=learn, label=进阶学习, content=具体进阶内容（定义、定理、公式 <formula>纯LaTeX</formula>、关联方向、学习建议）, reason=...)
+3. add_edge(from=K, to=answer节点temp_id, relation=进阶, label=..., reason=...)
+4. add_edge(from=answer节点temp_id, to=learn模块temp_id, relation=模块, reason=...)
+
+规则：
+- 每个目标知识点都必须生成完整链条，不要合并、不要只生成一个。
+- 只创建新的 answer/learn 节点，不要修改已有节点。
+- 新节点只使用 temp_id，最终 ID 由 harness 分配；add_edge 可以直接引用同批 temp_id。
+- 每个操作必须有 reason。
+- 只引用快照中真实存在的目标节点 ID。
+- 不要输出坐标、颜色等 UI 状态。
+"""
+
+
+def build_expand_messages(
+    snapshot: dict,
+    instruction: str,
+    retry_errors: str = "",
+    context: str = "",
+    level: str = "",
+    focus_node_ids=None,
+) -> list:
+    user_text = f"当前知识网络快照：\n{json_dumps(snapshot)}\n\n用户指令：{instruction}\n\n请为每个目标知识点生成完整的「AI回答 → 进阶学习」链。"
+    if retry_errors:
+        user_text += f"\n\n上一次输出不合法：\n{retry_errors}\n请修正后重新输出。"
+    focus_text = _focus_text(focus_node_ids, snapshot)
+    if focus_text:
+        user_text += "\n\n" + focus_text
+    context_text = _context_block(context, level)
+    return [
+        {
+            "role": "system",
+            "content": HARNESS_EXPAND_SYSTEM_PROMPT
             + ("\n\n" + context_text if context_text else ""),
         },
         {"role": "user", "content": user_text},

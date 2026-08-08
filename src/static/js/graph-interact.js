@@ -70,14 +70,12 @@ function renderGraphCanvas(streaming) {
     + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
     + '</svg></button>'
-    + '<button class="graph-tool-btn graph-harness-btn" onclick="openGraphHarness()" title="AI 网络助手" aria-label="AI 网络助手">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<circle cx="5" cy="6" r="2"></circle><circle cx="13" cy="5" r="2"></circle><circle cx="9" cy="13" r="2"></circle>'
-    + '<path d="M6.7 7.2 11 11.6M7 5.9 11 5.2M10.8 12.2 13 6.9"></path>'
-    + '</svg></button>'
+    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 桌宠" aria-label="Φ 桌宠" aria-pressed="true">'
+    + '<span class="graph-harness-btn-phi">Φ</span></button>'
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>';
   graphCanvas.appendChild(toolbar);
   _applyGraphTextSelectionMode();
+  if (typeof window.syncGraphPetToggleButton === 'function') window.syncGraphPetToggleButton();
   _syncGraphSearchButtonState();
   if (graphSearchOpen) requestAnimationFrame(_performGraphSearch);
 

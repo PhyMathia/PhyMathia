@@ -463,6 +463,18 @@ function _findCustomBranchParent(customNodes, parentTs, sourceModule) {
   return match;
 }
 
+function _applyHarnessOverrides(node, state) {
+  const overrides = (state && state.harnessNodeOverrides) || {};
+  const ov = overrides[node.id];
+  if (!ov) return node;
+  if (ov.label != null && node.kind !== 'module' && node.kind !== 'hub' && node.kind !== 'summary' && node.kind !== 'note') {
+    node.label = String(ov.label);
+  }
+  if (ov.content != null) node.content = String(ov.content);
+  if (ov.formula != null) node.formula = String(ov.formula);
+  return node;
+}
+
 function _buildGraphData(messages, state) {
   const nodes = [];
   const edges = [];
@@ -563,6 +575,7 @@ function _buildGraphData(messages, state) {
         customHeight: savedSizes[id] ? savedSizes[id].h : null,
         w: 0, h: 0, vx: 0, vy: 0,
       };
+      node = _applyHarnessOverrides(node, state);
       nodes.push(node);
       nodeById[id] = node;
       lastUserNode = node;
@@ -627,6 +640,7 @@ function _buildGraphData(messages, state) {
         customHeight: savedSizes[id] ? savedSizes[id].h : null,
         w: 0, h: 0, vx: 0, vy: 0,
       };
+      node = _applyHarnessOverrides(node, state);
       nodes.push(node);
       nodeById[id] = node;
       answerParentQuestion[id] = parentQuestionId;
@@ -675,6 +689,7 @@ function _buildGraphData(messages, state) {
           customHeight: savedSizes[moduleId] ? savedSizes[moduleId].h : null,
           w: 0, h: 0, vx: 0, vy: 0,
         };
+        mNode = _applyHarnessOverrides(mNode, state);
         nodes.push(mNode);
         nodeById[moduleId] = mNode;
         _pushEdge(edges, id, moduleId, 'primary');
@@ -795,6 +810,13 @@ function _stripModuleHeading(content, moduleKey) {
 
 function _nodeContent(message, node) {
   if (!message) return node.content || '';
+    const _state = typeof _graphState === 'function' ? _graphState() : {};
+    const _ov = ((_state && _state.harnessNodeOverrides) || {})[node.id];
+    if (_ov && _ov.content != null) {
+      const _text = String(_ov.content);
+      if (node.kind === 'answer') return _text.slice(0, 240) + (_text.length > 240 ? '...' : '');
+      return _text;
+    }
   if (node.kind === 'user') return message.content || '';
   if (node.kind === 'answer') {
     const summary = _graphSummary(message.content);

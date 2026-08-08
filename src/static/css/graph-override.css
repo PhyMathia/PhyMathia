@@ -573,6 +573,14 @@
   background: rgba(24, 36, 68, 0.96) !important;
 }
 
+.graph-harness-btn-phi {
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 700;
+  pointer-events: none;
+  font-family: "Cambria Math", "Times New Roman", serif;
+}
+
 .graph-tool-btn svg {
   width: 18px !important;
   height: 18px !important;
@@ -1726,7 +1734,8 @@
   transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s !important;
 }
 
-.graph-tool-btn.graph-select-btn.active {
+.graph-tool-btn.graph-select-btn.active,
+.graph-tool-btn.graph-harness-btn.active {
   color: #fff !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
@@ -1736,7 +1745,8 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.24) !important;
 }
 
-[data-theme="light"] .graph-tool-btn.graph-select-btn.active {
+[data-theme="light"] .graph-tool-btn.graph-select-btn.active,
+[data-theme="light"] .graph-tool-btn.graph-harness-btn.active {
   color: #fff !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
@@ -2567,32 +2577,46 @@
 }
 
 /* ---------- Desktop pet + chat window ---------- */
-.graph-harness-pet {
+/* ---------- Φ 桌宠（harness 化身）+ chat window ---------- */
+.phi-pet-root {
   position: fixed;
   right: 18px;
   bottom: 92px;
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-panel);
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  box-shadow: var(--harness-pet-shadow);
+  width: 108px;
+  height: 108px;
+  font-size: 100px;
   cursor: grab;
   user-select: none;
   z-index: 9800;
+  filter: drop-shadow(0 6px 18px rgba(2, 6, 23, 0.45));
+  transition: transform 180ms ease, filter 180ms ease;
 }
-
-.graph-harness-pet.active {
-  border-color: #f59e0b;
-  color: #f59e0b;
+.phi-pet-root:active {
+  cursor: grabbing;
 }
-
-.graph-harness-pet svg {
+.phi-pet-root:hover {
+  filter: drop-shadow(0 8px 22px rgba(59, 130, 246, 0.5));
+  transform: scale(1.04);
+}
+.phi-pet-root.active .phi-pet {
+  filter: drop-shadow(0 0 14px rgba(245, 158, 11, 0.55));
+}
+.phi-pet-root .phi-part,
+.phi-pet-root .phi-code-symbols,
+.phi-pet-root .phi-celebrate,
+.phi-pet-root .phi-bubbles,
+.phi-pet-root .phi-keyboard,
+.phi-pet-root .phi-happy-eyes,
+.phi-pet-root .phi-success-glow {
   pointer-events: none;
+}
+@media (max-width: 640px) {
+  .phi-pet-root {
+    right: 10px;
+    bottom: 76px;
+    width: 84px;
+    height: 84px;
+  }
 }
 
 .graph-harness-window {
@@ -2835,6 +2859,19 @@
 .graph-harness-apply-actions button:hover {
   border-color: var(--accent, #38bdf8);
   color: var(--accent, #38bdf8);
+}
+
+#graphHarnessStopBtn {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+#graphHarnessStopBtn:hover {
+  border-color: #f87171;
+  color: #fecaca;
+}
+#graphHarnessStopBtn[hidden] {
+  display: none;
 }
 
 .graph-harness-status {
@@ -3202,3 +3239,34 @@
 }
 
 
+/* ===== harness 语义自检 / 警告 ===== */
+.graph-harness-warnings {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  background: rgba(250, 204, 21, 0.08);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.graph-harness-warnings strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.graph-harness-selfcheck {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.08);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.graph-harness-selfcheck strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.graph-harness-selfcheck-ok {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.08);
+}

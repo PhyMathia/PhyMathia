@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Φ 桌宠预览</title>
+<style>
+  :root { color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    font-family: "Cascadia Mono", Consolas, "Microsoft YaHei", sans-serif;
+    background: #0b1220;
+    transition: background 300ms ease;
+  }
+  html[data-theme="light"] body { background: #f8fafc; }
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(148,163,184,0.25);
+  }
+  html[data-theme="light"] .toolbar {
+    background: rgba(15,23,42,0.05);
+    border-color: rgba(15,23,42,0.12);
+  }
+  .toolbar button {
+    font: inherit;
+    font-size: 14px;
+    color: #e2e8f0;
+    background: transparent;
+    border: 1px solid rgba(148,163,184,0.35);
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  html[data-theme="light"] .toolbar button { color: #334155; border-color: rgba(51,65,85,0.3); }
+  .toolbar button:hover { background: rgba(148,163,184,0.15); }
+  .stage { position: relative; width: 220px; height: 220px; }
+  /* 复刻应用内 .phi-pet-root：仅改为居中、放大展示 */
+  .phi-pet-root {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 200px;
+    height: 200px;
+    font-size: 180px;
+    cursor: default;
+    user-select: none;
+    z-index: 1;
+    filter: drop-shadow(0 6px 18px rgba(2, 6, 23, 0.45));
+    transition: transform 180ms ease, filter 180ms ease;
+  }
+  .phi-pet-root .phi-part,
+  .phi-pet-root .phi-code-symbols,
+  .phi-pet-root .phi-celebrate,
+  .phi-pet-root .phi-bubbles,
+  .phi-pet-root .phi-keyboard,
+  .phi-pet-root .phi-happy-eyes,
+  .phi-pet-root .phi-success-glow { pointer-events: none; }
+  .tip { color: #64748b; font-size: 13px; }
+  html[data-theme="light"] .tip { color: #94a3b8; }
+  /* 以下为桌宠本体样式（与 src/static/phi/phi-pet.css 完全一致） */
+  .phi-pet {
+    position: absolute;
+    inset: 0;
+    animation: phi-idle-float 3.2s ease-in-out infinite;
+    transform-origin: 50% 82%;
+  }
+  
+  /* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
+  .phi-pet {
+    --phi-outline: rgba(96, 165, 250, 0.72); /* 深色模式描边调细：保持蓝色但半透明，视觉上更轻 */
+    --phi-body-shadow: #172554;
+    --phi-body: #1e40af;
+    --phi-body-hi: #3b82f6;
+    --phi-eye: #fbbf24;
+    --phi-eye-dark: #b45309;
+    --phi-error: #f87171;
+    --phi-lamp-on: #fde047;
+    --phi-lamp-on-dark: #f59e0b;
+    --phi-lamp-off: var(--phi-body-hi);
+    --phi-lamp-off-dark: var(--phi-body);
+  }
+  /* 浅色模式：暖橘、无硬黑边，只保留柔和暖色投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
+  [data-theme="light"] .phi-pet {
+    --phi-outline: transparent;
+    --phi-body-shadow: #c2410c;
+    --phi-body: #f97316;
+    --phi-body-hi: #fdba74;
+    --phi-eye: #93c5fd;
+    --phi-eye-dark: #60a5fa;
+    --phi-error: #b91c1c;
+    --phi-lamp-off: #94a3b8;
+    --phi-lamp-off-dark: #475569;
+  }
+  
+  .phi-code-symbols {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 420ms ease;
+  }
+  
+  .phi-pet.is-working .phi-code-symbols {
+    opacity: 1;
+  }
+  
+  .phi-code-symbol {
+    position: absolute;
+    color: #fde047;
+    font: 800 0.13em/1 "Cascadia Mono", Consolas, monospace;
+    text-shadow: 0 0 50px rgba(250, 204, 21, 0.62);
+    animation: phi-code-float 1.6s ease-in-out infinite;
+  }
+  
+  .phi-code-symbol-1 { left: 11%; top: 31%; animation-delay: -0.3s; }
+  .phi-code-symbol-2 { right: 9%; top: 43%; animation-delay: -0.9s; color: #93c5fd; text-shadow: 0 0 10px rgba(96, 165, 250, 0.62); }
+  .phi-code-symbol-3 { left: 16%; top: 68%; animation-delay: -1.2s; color: #c4b5fd; text-shadow: 0 0 10px rgba(167, 139, 250, 0.62); }
+  .phi-code-symbol-4 { right: 16%; top: 66%; animation-delay: -0.6s; }
+  .phi-code-symbol-5 { right: 5%; top: 26%; animation-delay: -1.5s; color: #86efac; text-shadow: 0 0 10px rgba(74, 222, 128, 0.62); }
+  
+  .phi-character {
+    position: absolute;
+    inset: 0;
+    animation: phi-bounce 3.2s ease-in-out infinite;
+    transform-origin: 50% 82%;
+    will-change: transform;
+  }
+  
+  .phi-part {
+    position: absolute;
+    display: block;
+    max-width: none;
+    image-rendering: pixelated;
+    shape-rendering: crispEdges;
+    user-select: none;
+    pointer-events: none;
+  }
+  
+  .phi-body {
+    left: 27%;
+    top: 29%;
+    width: 46%;
+    height: 54%;
+  }
+  
+  /* 视觉左侧是角色的右手。 */
+  .phi-hand-right {
+    left: 20%;
+    top: 58%;
+    width: 11%;
+    height: 14%;
+    transform-origin: 100% 16%;
+    animation: phi-hand-sway-right 2.8s ease-in-out infinite;
+  }
+  
+  /* 视觉右侧是角色的左手。 */
+  .phi-hand-left {
+    left: 69%;
+    top: 59%;
+    width: 11%;
+    height: 14%;
+    transform-origin: 0% 16%;
+    animation: phi-hand-sway-left 2.8s ease-in-out infinite;
+  }
+  
+  .phi-eyes {
+    left: 38.5%;
+    top: 45%;
+    width: 23%;
+    height: 12%;
+    transform-origin: 50% 50%;
+  }
+  
+  .phi-eyes.is-blinking {
+    animation: phi-blink 170ms steps(3, end) both;
+  }
+  
+  .phi-eyes {
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-happy-eyes {
+    position: absolute;
+    left: 38.5%;
+    top: 48.2%;
+    width: 23%;
+    height: 12%;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-happy-eye {
+    position: absolute;
+    top: 24%;
+    width: 2.7%;
+    height: 1.9%;
+    border: 3px solid #2d3242;
+    border-bottom: none;
+    border-radius: 100% 100% 0 0;
+    box-shadow: 0 0 6px rgba(45, 50, 66, 0.35);
+  }
+  
+  .phi-happy-eye-left { left: 11%; }
+  .phi-happy-eye-right { right: 11%; }
+  
+  .phi-success-glow {
+    position: absolute;
+    left: 48.4%;
+    top: 5%;
+    width: 3.2%;
+    height: 4.8%;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-success-glow::before,
+  .phi-success-glow::after {
+    content: "";
+    position: absolute;
+    background: #fde047;
+    box-shadow: 0 0 12px 4px rgba(253, 224, 71, 0.85);
+  }
+  
+  .phi-success-glow::before {
+    left: 0;
+    top: 50%;
+    width: 100%;
+    height: 34%;
+    transform: translateY(-50%);
+  }
+  
+  .phi-success-glow::after {
+    left: 50%;
+    top: 0;
+    width: 34%;
+    height: 100%;
+    transform: translateX(-50%);
+  }
+  
+  .phi-eyes-x {
+    opacity: 0;
+  }
+  
+  .phi-keyboard {
+    position: absolute;
+    left: 14%;
+    right: 12%;
+    top: 70%;
+    height: 13%;
+    padding: 2.4% 3.2%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 2.4%;
+    background: #1e293b;
+    border: 2px solid #475569;
+    border-radius: 10%;
+    box-shadow: 0 2px 0 rgba(15, 23, 42, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-kb-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 3%;
+    flex: 1;
+  }
+  
+  .phi-kb-row i {
+    flex: 1;
+    background: #334155;
+    border: 1px solid #0f172a;
+    border-radius: 14%;
+  }
+  
+  .phi-pet.is-working .phi-keyboard {
+    opacity: 1;
+  }
+  
+  .phi-bubbles {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-bubble {
+    position: absolute;
+    bottom: 10%;
+    color: #111827;
+    font: 700 0.12em/1 "Cascadia Mono", Consolas, monospace;
+    text-shadow: 0 0 6px rgba(17, 24, 39, 0.8);
+    animation: phi-bubble-rise 1.1s ease-in infinite;
+  }
+  
+  .phi-bubble-1 { left: 26%; --phi-bubble-x: 7px;  animation-delay: -0.1s; }
+  .phi-bubble-2 { left: 34%; --phi-bubble-x: -6px; animation-delay: -0.45s; }
+  .phi-bubble-3 { left: 45%; --phi-bubble-x: 5px;  animation-delay: -0.8s; }
+  .phi-bubble-4 { left: 56%; --phi-bubble-x: -7px; animation-delay: -0.3s; }
+  .phi-bubble-5 { left: 64%; --phi-bubble-x: 4px;  animation-delay: -0.95s; }
+  .phi-bubble-6 { left: 72%; --phi-bubble-x: -4px; animation-delay: -0.65s; }
+  
+  .phi-lamp {
+    left: 43%;
+    top: 18%;
+    width: 14%;
+    height: 11%;
+    transform-origin: 50% 100%;
+    will-change: opacity;
+  }
+  
+  .phi-lamp-on {
+    animation: phi-lamp-on-state 3.8s ease-in-out infinite;
+  }
+  
+  .phi-lamp-off {
+    opacity: 0;
+    animation: phi-lamp-off-state 3.8s ease-in-out infinite;
+  }
+  
+  .phi-celebrate {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms ease;
+  }
+  
+  .phi-confetti {
+    position: absolute;
+    left: var(--phi-confetti-x, 10%);
+    bottom: var(--phi-confetti-y, 30%);
+    margin-left: -0.5em;
+    color: var(--phi-confetti-color, #fef08a);
+    font: 700 var(--phi-confetti-size, 0.16em)/1 "Cascadia Mono", Consolas, monospace;
+    text-shadow: 0 0 10px currentColor;
+    animation: phi-confetti-rise 1.5s ease-in infinite;
+    animation-delay: var(--phi-confetti-delay, 0s);
+    will-change: transform;
+  }
+  
+  /* 庆祝状态：工作成功，动作活泼欢快。 */
+  .phi-pet.is-celebrating .phi-character {
+    animation: phi-celebrate-body 2.6s ease-in-out infinite;
+  }
+  
+  .phi-pet.is-celebrating .phi-hand-right {
+    animation: phi-celebrate-wave-right 560ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-celebrating .phi-hand-left {
+    animation: phi-celebrate-wave-left 560ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-celebrating .phi-eyes {
+    opacity: 0;
+  }
+  
+  .phi-pet.is-celebrating .phi-happy-eyes {
+    opacity: 1;
+  }
+  
+  .phi-pet.is-celebrating .phi-lamp-on {
+    opacity: 1;
+    animation: phi-celebrate-lamp 640ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-celebrating .phi-lamp-off {
+    opacity: 0;
+    animation: none;
+  }
+  
+  .phi-pet.is-celebrating .phi-success-glow {
+    opacity: 1;
+    animation: phi-cross-glow 900ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-celebrating .phi-celebrate {
+    opacity: 1;
+  }
+  
+  .phi-pet.is-celebrating .phi-code-symbols {
+    opacity: 0;
+  }
+  
+  /* 报错状态：故障抖动，慌乱烦躁。 */
+  .phi-pet.is-erroring .phi-character {
+    animation: phi-error-shake 180ms linear infinite;
+  }
+  
+  .phi-pet.is-erroring .phi-hand-right {
+    animation: phi-error-flail-right 240ms linear infinite;
+  }
+  
+  .phi-pet.is-erroring .phi-hand-left {
+    animation: phi-error-flail-left 240ms linear infinite;
+  }
+  
+  .phi-pet.is-erroring .phi-eyes,
+  .phi-pet.is-erroring .phi-happy-eyes {
+    opacity: 0;
+  }
+  
+  .phi-pet.is-erroring .phi-eyes-x {
+    opacity: 1;
+  }
+  
+  .phi-pet.is-erroring .phi-lamp-on {
+    opacity: 0;
+    animation: none;
+  }
+  
+  .phi-pet.is-erroring .phi-lamp-off {
+    opacity: 1;
+    animation: none;
+  }
+  
+  .phi-pet.is-erroring .phi-success-glow {
+    opacity: 1;
+    animation: phi-error-glow 420ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-erroring .phi-success-glow::before,
+  .phi-pet.is-erroring .phi-success-glow::after {
+    background: #4b5563;
+    box-shadow: 0 0 8px 3px rgba(75, 85, 99, 0.7);
+  }
+  
+  .phi-pet.is-erroring .phi-bubbles {
+    opacity: 1;
+  }
+  
+  .phi-pet.is-erroring .phi-code-symbols {
+    opacity: 0;
+  }
+  
+  /* 工作状态：身体收紧，动作明显快于待机。 */
+  .phi-pet.is-working .phi-character {
+    animation: phi-work-body 720ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-working .phi-hand-right {
+    animation: phi-work-tap-right 340ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-working .phi-hand-left {
+    animation: phi-work-tap-left 340ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-working .phi-eyes {
+    transform: scaleY(0.24);
+    transition: transform 380ms ease;
+  }
+  
+  .phi-pet.is-working .phi-eyes.is-blinking {
+    animation: phi-work-blink 170ms steps(3, end) both;
+  }
+  
+  .phi-pet.is-working .phi-lamp-on {
+    opacity: 1;
+    animation: phi-work-lamp-glow 900ms ease-in-out infinite;
+  }
+  
+  .phi-pet.is-working .phi-lamp-off {
+    opacity: 0;
+    animation: none;
+  }
+  
+  .phi-pet.is-phi-mode-transitioning .phi-character {
+    animation: phi-mode-transition 420ms ease both;
+  }
+  
+  .phi-pet.is-phi-mode-transitioning .phi-hand,
+  .phi-pet.is-phi-mode-transitioning .phi-eyes,
+  .phi-pet.is-phi-mode-transitioning .phi-lamp-on,
+  .phi-pet.is-phi-mode-transitioning .phi-lamp-off {
+    animation-play-state: paused;
+  }
+  
+    transform: scale(0.96);
+  }
+  
+  @keyframes phi-bounce {
+    0%, 100% { transform: translateY(0) scaleY(1); }
+    50% { transform: translateY(-6%) scaleY(1.02); }
+  }
+  
+  @keyframes phi-shadow-breathe {
+    0%, 100% { transform: scaleX(1); opacity: 0.75; }
+    50% { transform: scaleX(0.86); opacity: 0.48; }
+  }
+  
+  @keyframes phi-idle-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  
+  @keyframes phi-hand-sway-right {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(-7deg); }
+  }
+  
+  @keyframes phi-hand-sway-left {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(7deg); }
+  }
+  
+  @keyframes phi-blink {
+    0%, 100% { transform: scaleY(1); }
+    45%, 58% { transform: scaleY(0.08); }
+  }
+  
+  @keyframes phi-work-body {
+    0%, 100% { transform: translateY(0.3%) scale(0.985, 0.975); }
+    50% { transform: translateY(0) scale(0.97, 0.955); }
+  }
+  
+  @keyframes phi-work-tap-right {
+    0%, 100% { transform: rotate(-2deg) translateY(0); }
+    50% { transform: rotate(9deg) translateY(6%); }
+  }
+  
+  @keyframes phi-work-tap-left {
+    0%, 100% { transform: rotate(2deg) translateY(0); }
+    50% { transform: rotate(-9deg) translateY(6%); }
+  }
+  
+  @keyframes phi-work-blink {
+    0%, 100% { transform: scaleY(0.24); }
+    45%, 58% { transform: scaleY(0.06); }
+  }
+  
+  @keyframes phi-work-lamp-glow {
+    0%, 100% { filter: brightness(1.05) saturate(1); }
+    50% { filter: brightness(1.65) saturate(1.3); }
+  }
+  
+  @keyframes phi-code-float {
+    0%, 100% { transform: translate(0, 3px) rotate(-4deg); opacity: 0.45; }
+    50% { transform: translate(0, -10px) rotate(4deg); opacity: 1; }
+  }
+  
+  @keyframes phi-mode-transition {
+    0% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-1.2%) scale(0.975, 0.965); }
+    100% { transform: translateY(0) scale(1); }
+  }
+  
+  @keyframes phi-celebrate-body {
+    0%, 100% { transform: translateY(0) scale(1); }
+    8% { transform: translateY(-1%) scale(0.985, 1.02); }
+    16% { transform: translateY(-9%) scale(0.99, 1.05); }
+    26% { transform: translateY(0) scale(1.04, 0.96); }
+    36% { transform: translateY(-6.5%) scale(0.995, 1.03); }
+    46% { transform: translateY(0) scale(1.03, 0.97); }
+    58% { transform: translateY(-1.2%) scale(1); }
+    70% { transform: translateY(0) scale(1.015, 0.99); }
+    82% { transform: translateY(-0.4%) scale(1); }
+  }
+  
+  @keyframes phi-celebrate-wave-right {
+    0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(-10deg); }
+    50% { transform: translateY(-136%) scaleY(-1) rotate(-25deg); }
+  }
+  
+  @keyframes phi-celebrate-wave-left {
+    0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(10deg); }
+    50% { transform: translateY(-136%) scaleY(-1) rotate(25deg); }
+  }
+  
+  @keyframes phi-celebrate-lamp {
+    0%, 100% { filter: brightness(1.25) saturate(1.2); }
+    50% { filter: brightness(1.9) saturate(1.5); }
+  }
+  
+  @keyframes phi-cross-glow {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50% { transform: scale(1.25); opacity: 1; }
+  }
+  
+  @keyframes phi-confetti-rise {
+    0% { transform: translateY(0) rotate(0) scale(0.4); opacity: 0; }
+    15% { transform: translateY(-8px) rotate(8deg) scale(0.9); opacity: 1; }
+    100% { transform: translateY(-92px) rotate(var(--phi-confetti-spin, 24deg)) scale(var(--phi-confetti-scale, 1.15)); opacity: 0; }
+  }
+  
+  @keyframes phi-error-shake {
+    0%, 100% { transform: translateX(0) rotate(12deg); }
+    10% { transform: translateX(-2.2%) rotate(11deg); }
+    20% { transform: translateX(1.8%) rotate(13deg); }
+    30% { transform: translateX(-1.5%) rotate(11.2deg); }
+    40% { transform: translateX(2.2%) rotate(13.2deg); }
+    50% { transform: translateX(-2%) rotate(10.8deg); }
+    60% { transform: translateX(1.6%) rotate(12.8deg); }
+    70% { transform: translateX(-1.8%) rotate(11deg); }
+    80% { transform: translateX(2%) rotate(13deg); }
+    90% { transform: translateX(-1.2%) rotate(11.4deg); }
+  }
+  
+  @keyframes phi-error-flail-right {
+    0% { transform: rotate(12deg); }
+    20% { transform: rotate(-20deg); }
+    40% { transform: rotate(24deg); }
+    60% { transform: rotate(-26deg); }
+    80% { transform: rotate(16deg); }
+    100% { transform: rotate(-14deg); }
+  }
+  
+  @keyframes phi-error-flail-left {
+    0% { transform: rotate(-12deg); }
+    20% { transform: rotate(20deg); }
+    40% { transform: rotate(-24deg); }
+    60% { transform: rotate(26deg); }
+    80% { transform: rotate(-16deg); }
+    100% { transform: rotate(14deg); }
+  }
+  
+  @keyframes phi-error-glow {
+    0%, 100% { transform: scale(0.88); opacity: 0.55; }
+    50% { transform: scale(1.08); opacity: 1; }
+  }
+  
+  @keyframes phi-bubble-rise {
+    0% { transform: translate(0, 0) scale(0.7); opacity: 0; }
+    20% { transform: translate(calc(var(--phi-bubble-x, 6px) * 0.3), -10px) scale(0.9); opacity: 1; }
+    100% { transform: translate(var(--phi-bubble-x, 6px), -88px) scale(1.1); opacity: 0; }
+  }
+  
+  @keyframes phi-lamp-on-state {
+    0%, 36%, 82%, 100% { opacity: 1; }
+    47%, 68% { opacity: 0; }
+  }
+  
+  @keyframes phi-lamp-off-state {
+    0%, 36%, 82%, 100% { opacity: 0; }
+    47%, 68% { opacity: 1; }
+  }
+  
+  /* 浅色主题适配：气泡/阴影/辉光更柔和，保证在浅色背景下可见 */
+  [data-theme="light"] .phi-pet-root,
+  html[data-theme="light"] .phi-pet-root {
+    filter: drop-shadow(0 3px 10px rgba(124, 45, 18, 0.22));
+  }
+  [data-theme="light"] .phi-bubble {
+    color: #1f2937;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+  }
+  [data-theme="light"] .phi-code-symbol {
+    text-shadow: 0 0 14px rgba(250, 204, 21, 0.35);
+  }
+  [data-theme="light"] .phi-code-symbol-2 {
+    text-shadow: 0 0 10px rgba(96, 165, 250, 0.35);
+  }
+  [data-theme="light"] .phi-code-symbol-3 {
+    text-shadow: 0 0 10px rgba(167, 139, 250, 0.35);
+  }
+  [data-theme="light"] .phi-code-symbol-5 {
+    text-shadow: 0 0 10px rgba(74, 222, 128, 0.35);
+  }
+  [data-theme="light"] .phi-keyboard {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    box-shadow: 0 2px 0 rgba(15, 23, 42, 0.12);
+  }
+  [data-theme="light"] .phi-kb-row i {
+    background: #e2e8f0;
+    border-color: #94a3b8;
+  }
+  
+  @media (prefers-reduced-motion: reduce) {
+    .phi-pet,
+    .phi-character,
+    .phi-hand,
+    .phi-shadow {
+      animation: none;
+    }
+  
+    .phi-lamp-on {
+      animation: none;
+      opacity: 1;
+    }
+  
+    .phi-lamp-off {
+      animation: none;
+      opacity: 0;
+    }
+  
+    .phi-code-symbols,
+    .mode-toggle {
+      transition: none;
+    }
+  
+    .phi-pet.is-working .phi-code-symbol,
+    .phi-pet.is-working .phi-lamp-on,
+    .phi-pet.is-working .phi-hand,
+    .phi-pet.is-working .phi-character {
+      animation: none;
+    }
+  
+    .phi-pet.is-working .phi-eyes {
+      transform: scaleY(0.24);
+    }
+  
+    .phi-pet.is-celebrating .phi-confetti,
+    .phi-pet.is-celebrating .phi-lamp-on,
+    .phi-pet.is-celebrating .phi-hand,
+    .phi-pet.is-celebrating .phi-character,
+    .phi-pet.is-celebrating .phi-success-glow {
+      animation: none;
+    }
+  
+    .phi-pet.is-celebrating .phi-eyes {
+      opacity: 0;
+    }
+  
+    .phi-pet.is-celebrating .phi-happy-eyes,
+    .phi-pet.is-celebrating .phi-success-glow {
+      opacity: 1;
+    }
+  
+    .phi-pet.is-erroring .phi-character,
+    .phi-pet.is-erroring .phi-hand,
+    .phi-pet.is-erroring .phi-success-glow,
+    .phi-pet.is-erroring .phi-bubble {
+      animation: none;
+    }
+  
+    .phi-pet.is-erroring .phi-eyes,
+    .phi-pet.is-erroring .phi-happy-eyes {
+      opacity: 0;
+    }
+  
+    .phi-pet.is-erroring .phi-eyes-x,
+    .phi-pet.is-erroring .phi-success-glow {
+      opacity: 1;
+    }
+  }
+  
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button id="themeBtn" type="button">切换浅色/深色</button>
+    <button id="modeBtn" type="button">切换状态：idle</button>
+  </div>
+  <div class="stage">
+    <div class="phi-pet-root" id="petRoot"><div class="phi-pet" data-phi-pet data-phi-mode="idle"><div class="phi-code-symbols" aria-hidden="true"><span class="phi-code-symbol phi-code-symbol-1">{}</span><span class="phi-code-symbol phi-code-symbol-2">&lt;&gt;</span><span class="phi-code-symbol phi-code-symbol-3">01</span><span class="phi-code-symbol phi-code-symbol-4">/</span><span class="phi-code-symbol phi-code-symbol-5">&lt;/&gt;</span></div><div class="phi-celebrate" aria-hidden="true"><span class="phi-confetti">★</span><span class="phi-confetti">♥</span><span class="phi-confetti">✦</span><span class="phi-confetti">♥</span><span class="phi-confetti">★</span><span class="phi-confetti">✿</span><span class="phi-confetti">❖</span></div><div class="phi-bubbles" aria-hidden="true"><span class="phi-bubble phi-bubble-1">●</span><span class="phi-bubble phi-bubble-2">▪</span><span class="phi-bubble phi-bubble-3">●</span><span class="phi-bubble phi-bubble-4">█</span><span class="phi-bubble phi-bubble-5">▪</span><span class="phi-bubble phi-bubble-6">●</span></div><div class="phi-character"><svg class="phi-part phi-body" viewBox="0 0 48 56" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="20" y="0" width="8" height="1" fill="var(--phi-outline)"/><rect x="14" y="1" width="7" height="1" fill="var(--phi-outline)"/><rect x="27" y="1" width="7" height="1" fill="var(--phi-outline)"/><rect x="13" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="33" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="3" width="3" height="1" fill="var(--phi-outline)"/><rect x="34" y="3" width="3" height="1" fill="var(--phi-outline)"/><rect x="10" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="13" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="34" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="36" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="8" y="5" width="3" height="1" fill="var(--phi-outline)"/><rect x="37" y="5" width="3" height="1" fill="var(--phi-outline)"/><rect x="7" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="39" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="6" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="40" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="5" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="41" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="9" width="2" height="1" fill="var(--phi-outline)"/><rect x="16" y="9" width="5" height="1" fill="var(--phi-outline)"/><rect x="27" y="9" width="5" height="1" fill="var(--phi-outline)"/><rect x="42" y="9" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="15" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="31" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="43" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="11" width="3" height="1" fill="var(--phi-outline)"/><rect x="13" y="11" width="3" height="1" fill="var(--phi-outline)"/><rect x="20" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="32" y="11" width="3" height="1" fill="var(--phi-outline)"/><rect x="43" y="11" width="3" height="1" fill="var(--phi-outline)"/><rect x="2" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="12" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="34" y="12" width="2" height="1" fill="var(--phi-outline)"/><rect x="45" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="13" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="35" y="13" width="2" height="1" fill="var(--phi-outline)"/><rect x="45" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="14" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="14" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="14" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="14" width="1" height="1" fill="var(--phi-outline)"/><rect x="36" y="14" width="2" height="1" fill="var(--phi-outline)"/><rect x="45" y="14" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="15" width="3" height="1" fill="var(--phi-outline)"/><rect x="9" y="15" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="15" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="15" width="1" height="1" fill="var(--phi-outline)"/><rect x="37" y="15" width="2" height="1" fill="var(--phi-outline)"/><rect x="45" y="15" width="3" height="1" fill="var(--phi-outline)"/><rect x="0" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="9" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="38" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="16" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="17" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="17" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="17" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="17" width="1" height="1" fill="var(--phi-outline)"/><rect x="38" y="17" width="2" height="1" fill="var(--phi-outline)"/><rect x="47" y="17" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="18" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="19" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="20" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="21" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="22" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="23" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="24" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="25" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="39" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="26" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="27" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="27" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="27" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="27" width="1" height="1" fill="var(--phi-outline)"/><rect x="38" y="27" width="2" height="1" fill="var(--phi-outline)"/><rect x="47" y="27" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="9" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="38" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="47" y="28" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="29" width="2" height="1" fill="var(--phi-outline)"/><rect x="9" y="29" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="29" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="29" width="1" height="1" fill="var(--phi-outline)"/><rect x="38" y="29" width="1" height="1" fill="var(--phi-outline)"/><rect x="46" y="29" width="2" height="1" fill="var(--phi-outline)"/><rect x="1" y="30" width="1" height="1" fill="var(--phi-outline)"/><rect x="9" y="30" width="3" height="1" fill="var(--phi-outline)"/><rect x="20" y="30" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="30" width="1" height="1" fill="var(--phi-outline)"/><rect x="36" y="30" width="3" height="1" fill="var(--phi-outline)"/><rect x="46" y="30" width="1" height="1" fill="var(--phi-outline)"/><rect x="1" y="31" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="31" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="31" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="31" width="1" height="1" fill="var(--phi-outline)"/><rect x="36" y="31" width="1" height="1" fill="var(--phi-outline)"/><rect x="45" y="31" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="32" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="32" width="3" height="1" fill="var(--phi-outline)"/><rect x="20" y="32" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="32" width="1" height="1" fill="var(--phi-outline)"/><rect x="34" y="32" width="3" height="1" fill="var(--phi-outline)"/><rect x="45" y="32" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="33" width="2" height="1" fill="var(--phi-outline)"/><rect x="13" y="33" width="3" height="1" fill="var(--phi-outline)"/><rect x="20" y="33" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="33" width="1" height="1" fill="var(--phi-outline)"/><rect x="32" y="33" width="3" height="1" fill="var(--phi-outline)"/><rect x="44" y="33" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="15" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="32" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="44" y="34" width="1" height="1" fill="var(--phi-outline)"/><rect x="3" y="35" width="2" height="1" fill="var(--phi-outline)"/><rect x="15" y="35" width="6" height="1" fill="var(--phi-outline)"/><rect x="27" y="35" width="6" height="1" fill="var(--phi-outline)"/><rect x="43" y="35" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="36" width="3" height="1" fill="var(--phi-outline)"/><rect x="41" y="36" width="3" height="1" fill="var(--phi-outline)"/><rect x="6" y="37" width="1" height="1" fill="var(--phi-outline)"/><rect x="41" y="37" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="38" width="3" height="1" fill="var(--phi-outline)"/><rect x="39" y="38" width="3" height="1" fill="var(--phi-outline)"/><rect x="8" y="39" width="3" height="1" fill="var(--phi-outline)"/><rect x="37" y="39" width="3" height="1" fill="var(--phi-outline)"/><rect x="10" y="40" width="1" height="1" fill="var(--phi-outline)"/><rect x="37" y="40" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="41" width="4" height="1" fill="var(--phi-outline)"/><rect x="34" y="41" width="4" height="1" fill="var(--phi-outline)"/><rect x="13" y="42" width="2" height="1" fill="var(--phi-outline)"/><rect x="33" y="42" width="2" height="1" fill="var(--phi-outline)"/><rect x="14" y="43" width="7" height="1" fill="var(--phi-outline)"/><rect x="27" y="43" width="7" height="1" fill="var(--phi-outline)"/><rect x="20" y="44" width="2" height="1" fill="var(--phi-outline)"/><rect x="26" y="44" width="2" height="1" fill="var(--phi-outline)"/><rect x="21" y="45" width="1" height="1" fill="var(--phi-outline)"/><rect x="26" y="45" width="1" height="1" fill="var(--phi-outline)"/><rect x="20" y="46" width="2" height="1" fill="var(--phi-outline)"/><rect x="26" y="46" width="2" height="1" fill="var(--phi-outline)"/><rect x="20" y="47" width="1" height="1" fill="var(--phi-outline)"/><rect x="27" y="47" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="48" width="3" height="1" fill="var(--phi-outline)"/><rect x="27" y="48" width="3" height="1" fill="var(--phi-outline)"/><rect x="17" y="49" width="2" height="1" fill="var(--phi-outline)"/><rect x="29" y="49" width="2" height="1" fill="var(--phi-outline)"/><rect x="17" y="50" width="1" height="1" fill="var(--phi-outline)"/><rect x="30" y="50" width="1" height="1" fill="var(--phi-outline)"/><rect x="17" y="51" width="2" height="1" fill="var(--phi-outline)"/><rect x="29" y="51" width="2" height="1" fill="var(--phi-outline)"/><rect x="18" y="52" width="1" height="1" fill="var(--phi-outline)"/><rect x="29" y="52" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="53" width="3" height="1" fill="var(--phi-outline)"/><rect x="27" y="53" width="3" height="1" fill="var(--phi-outline)"/><rect x="20" y="54" width="2" height="1" fill="var(--phi-outline)"/><rect x="26" y="54" width="2" height="1" fill="var(--phi-outline)"/><rect x="21" y="55" width="6" height="1" fill="var(--phi-outline)"/><rect x="21" y="1" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="15" y="2" width="18" height="1" fill="var(--phi-body-hi)"/><rect x="14" y="3" width="20" height="1" fill="var(--phi-body-hi)"/><rect x="12" y="4" width="1" height="1" fill="var(--phi-body-hi)"/><rect x="14" y="4" width="20" height="1" fill="var(--phi-body-hi)"/><rect x="35" y="4" width="1" height="1" fill="var(--phi-body-hi)"/><rect x="11" y="5" width="26" height="1" fill="var(--phi-body-hi)"/><rect x="9" y="6" width="30" height="1" fill="var(--phi-body-hi)"/><rect x="8" y="7" width="32" height="1" fill="var(--phi-body-hi)"/><rect x="7" y="8" width="34" height="1" fill="var(--phi-body-hi)"/><rect x="6" y="9" width="10" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="9" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="32" y="9" width="10" height="1" fill="var(--phi-body-hi)"/><rect x="5" y="10" width="10" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="10" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="33" y="10" width="10" height="1" fill="var(--phi-body-hi)"/><rect x="5" y="11" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="11" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="35" y="11" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="3" y="12" width="9" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="12" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="36" y="12" width="9" height="1" fill="var(--phi-body-hi)"/><rect x="3" y="13" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="13" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="37" y="13" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="3" y="14" width="7" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="14" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="38" y="14" width="7" height="1" fill="var(--phi-body-hi)"/><rect x="3" y="15" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="15" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="39" y="15" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="1" y="16" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="21" y="16" width="6" height="1" fill="var(--phi-body-hi)"/><rect x="39" y="16" width="8" height="1" fill="var(--phi-body-hi)"/><rect x="1" y="17" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="17" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="17" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="18" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="18" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="18" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="19" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="19" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="19" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="20" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="20" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="20" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="21" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="21" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="21" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="22" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="22" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="22" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="23" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="23" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="23" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="24" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="24" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="24" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="25" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="25" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="25" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="26" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="26" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="26" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="27" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="27" width="6" height="1" fill="var(--phi-body)"/><rect x="40" y="27" width="7" height="1" fill="var(--phi-body)"/><rect x="1" y="28" width="8" height="1" fill="var(--phi-body)"/><rect x="21" y="28" width="6" height="1" fill="var(--phi-body)"/><rect x="39" y="28" width="8" height="1" fill="var(--phi-body)"/><rect x="2" y="29" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="29" width="6" height="1" fill="var(--phi-body)"/><rect x="39" y="29" width="7" height="1" fill="var(--phi-body)"/><rect x="2" y="30" width="7" height="1" fill="var(--phi-body)"/><rect x="21" y="30" width="6" height="1" fill="var(--phi-body)"/><rect x="39" y="30" width="7" height="1" fill="var(--phi-body)"/><rect x="3" y="31" width="8" height="1" fill="var(--phi-body)"/><rect x="21" y="31" width="6" height="1" fill="var(--phi-body)"/><rect x="37" y="31" width="8" height="1" fill="var(--phi-body)"/><rect x="3" y="32" width="8" height="1" fill="var(--phi-body)"/><rect x="21" y="32" width="6" height="1" fill="var(--phi-body)"/><rect x="37" y="32" width="8" height="1" fill="var(--phi-body)"/><rect x="4" y="33" width="9" height="1" fill="var(--phi-body)"/><rect x="21" y="33" width="6" height="1" fill="var(--phi-body)"/><rect x="35" y="33" width="9" height="1" fill="var(--phi-body)"/><rect x="4" y="34" width="11" height="1" fill="var(--phi-body)"/><rect x="21" y="34" width="6" height="1" fill="var(--phi-body)"/><rect x="33" y="34" width="11" height="1" fill="var(--phi-body)"/><rect x="5" y="35" width="10" height="1" fill="var(--phi-body)"/><rect x="21" y="35" width="6" height="1" fill="var(--phi-body)"/><rect x="33" y="35" width="10" height="1" fill="var(--phi-body)"/><rect x="7" y="36" width="34" height="1" fill="var(--phi-body)"/><rect x="7" y="37" width="34" height="1" fill="var(--phi-body)"/><rect x="9" y="38" width="30" height="1" fill="var(--phi-body)"/><rect x="11" y="39" width="26" height="1" fill="var(--phi-body)"/><rect x="11" y="40" width="26" height="1" fill="var(--phi-body)"/><rect x="14" y="41" width="20" height="1" fill="var(--phi-body)"/><rect x="15" y="42" width="18" height="1" fill="var(--phi-body)"/><rect x="21" y="43" width="6" height="1" fill="var(--phi-body)"/><rect x="22" y="44" width="4" height="1" fill="var(--phi-body)"/><rect x="22" y="45" width="4" height="1" fill="var(--phi-body-shadow)"/><rect x="22" y="46" width="4" height="1" fill="var(--phi-body-shadow)"/><rect x="21" y="47" width="6" height="1" fill="var(--phi-body-shadow)"/><rect x="21" y="48" width="6" height="1" fill="var(--phi-body-shadow)"/><rect x="19" y="49" width="10" height="1" fill="var(--phi-body-shadow)"/><rect x="18" y="50" width="12" height="1" fill="var(--phi-body-shadow)"/><rect x="19" y="51" width="10" height="1" fill="var(--phi-body-shadow)"/><rect x="19" y="52" width="10" height="1" fill="var(--phi-body-shadow)"/><rect x="21" y="53" width="6" height="1" fill="var(--phi-body-shadow)"/><rect x="22" y="54" width="4" height="1" fill="var(--phi-body-shadow)"/></svg><svg class="phi-part phi-hand phi-hand-right" viewBox="0 0 13 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="6" y="0" width="5" height="1" fill="var(--phi-outline)"/><rect x="5" y="1" width="2" height="1" fill="var(--phi-outline)"/><rect x="10" y="1" width="1" height="1" fill="var(--phi-outline)"/><rect x="5" y="2" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="3" width="3" height="1" fill="var(--phi-outline)"/><rect x="11" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="3" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="6" width="3" height="1" fill="var(--phi-outline)"/><rect x="11" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="7" width="3" height="1" fill="var(--phi-outline)"/><rect x="0" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="13" width="3" height="1" fill="var(--phi-outline)"/><rect x="9" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="13" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="14" width="2" height="1" fill="var(--phi-outline)"/><rect x="9" y="14" width="3" height="1" fill="var(--phi-outline)"/><rect x="3" y="15" width="7" height="1" fill="var(--phi-outline)"/><rect x="7" y="1" width="3" height="1" fill="var(--phi-body-hi)"/><rect x="6" y="2" width="4" height="1" fill="var(--phi-body-hi)"/><rect x="6" y="3" width="5" height="1" fill="var(--phi-body-hi)"/><rect x="4" y="4" width="7" height="1" fill="var(--phi-body-hi)"/><rect x="4" y="5" width="7" height="1" fill="var(--phi-body)"/><rect x="3" y="6" width="8" height="1" fill="var(--phi-body)"/><rect x="1" y="7" width="9" height="1" fill="var(--phi-body)"/><rect x="1" y="8" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="9" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="10" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="11" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="12" width="11" height="1" fill="var(--phi-body-shadow)"/><rect x="3" y="13" width="6" height="1" fill="var(--phi-body-shadow)"/><rect x="10" y="13" width="1" height="1" fill="var(--phi-body-shadow)"/><rect x="4" y="14" width="5" height="1" fill="var(--phi-body-shadow)"/></svg><svg class="phi-part phi-hand phi-hand-left" viewBox="0 0 13 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="2" y="0" width="5" height="1" fill="var(--phi-outline)"/><rect x="2" y="1" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="1" width="2" height="1" fill="var(--phi-outline)"/><rect x="1" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="7" y="2" width="1" height="1" fill="var(--phi-outline)"/><rect x="1" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="7" y="3" width="3" height="1" fill="var(--phi-outline)"/><rect x="1" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="9" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="1" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="9" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="1" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="6" width="3" height="1" fill="var(--phi-outline)"/><rect x="0" y="7" width="3" height="1" fill="var(--phi-outline)"/><rect x="12" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="12" y="12" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="13" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="13" width="1" height="1" fill="var(--phi-outline)"/><rect x="10" y="13" width="3" height="1" fill="var(--phi-outline)"/><rect x="1" y="14" width="3" height="1" fill="var(--phi-outline)"/><rect x="9" y="14" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="15" width="7" height="1" fill="var(--phi-outline)"/><rect x="3" y="1" width="3" height="1" fill="var(--phi-body-hi)"/><rect x="3" y="2" width="4" height="1" fill="var(--phi-body-hi)"/><rect x="2" y="3" width="5" height="1" fill="var(--phi-body-hi)"/><rect x="2" y="4" width="7" height="1" fill="var(--phi-body-hi)"/><rect x="2" y="5" width="7" height="1" fill="var(--phi-body)"/><rect x="2" y="6" width="8" height="1" fill="var(--phi-body)"/><rect x="3" y="7" width="9" height="1" fill="var(--phi-body)"/><rect x="1" y="8" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="9" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="10" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="11" width="11" height="1" fill="var(--phi-body)"/><rect x="1" y="12" width="11" height="1" fill="var(--phi-body-shadow)"/><rect x="2" y="13" width="1" height="1" fill="var(--phi-body-shadow)"/><rect x="4" y="13" width="6" height="1" fill="var(--phi-body-shadow)"/><rect x="4" y="14" width="5" height="1" fill="var(--phi-body-shadow)"/></svg><svg class="phi-part phi-eyes" viewBox="0 0 25 14" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="0" y="2" width="7" height="1" fill="var(--phi-outline)"/><rect x="18" y="2" width="7" height="1" fill="var(--phi-outline)"/><rect x="0" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="3" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="9" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="18" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="24" y="10" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="11" width="2" height="1" fill="var(--phi-outline)"/><rect x="5" y="11" width="2" height="1" fill="var(--phi-outline)"/><rect x="18" y="11" width="2" height="1" fill="var(--phi-outline)"/><rect x="23" y="11" width="2" height="1" fill="var(--phi-outline)"/><rect x="1" y="12" width="5" height="1" fill="var(--phi-outline)"/><rect x="19" y="12" width="5" height="1" fill="var(--phi-outline)"/><rect x="1" y="3" width="5" height="1" fill="var(--phi-eye)"/><rect x="19" y="3" width="5" height="1" fill="var(--phi-eye)"/><rect x="1" y="4" width="5" height="1" fill="var(--phi-eye)"/><rect x="19" y="4" width="5" height="1" fill="var(--phi-eye)"/><rect x="1" y="5" width="5" height="1" fill="var(--phi-eye)"/><rect x="19" y="5" width="5" height="1" fill="var(--phi-eye)"/><rect x="1" y="6" width="5" height="1" fill="var(--phi-eye)"/><rect x="19" y="6" width="5" height="1" fill="var(--phi-eye)"/><rect x="1" y="7" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="19" y="7" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="1" y="8" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="19" y="8" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="1" y="9" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="19" y="9" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="1" y="10" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="19" y="10" width="5" height="1" fill="var(--phi-eye-dark)"/><rect x="2" y="11" width="3" height="1" fill="var(--phi-eye-dark)"/><rect x="20" y="11" width="3" height="1" fill="var(--phi-eye-dark)"/></svg><svg class="phi-part phi-lamp phi-lamp-on" viewBox="0 0 16 13" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="4" y="1" width="8" height="1" fill="var(--phi-outline)"/><rect x="3" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="3" width="2" height="1" fill="var(--phi-outline)"/><rect x="12" y="3" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="12" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="9" width="3" height="1" fill="var(--phi-outline)"/><rect x="10" y="9" width="3" height="1" fill="var(--phi-outline)"/><rect x="4" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="10" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="4" y="12" width="8" height="1" fill="var(--phi-outline)"/><rect x="5" y="2" width="6" height="1" fill="var(--phi-lamp-on)"/><rect x="4" y="3" width="8" height="1" fill="var(--phi-lamp-on)"/><rect x="3" y="4" width="10" height="1" fill="var(--phi-lamp-on)"/><rect x="3" y="5" width="10" height="1" fill="var(--phi-lamp-on)"/><rect x="3" y="6" width="10" height="1" fill="var(--phi-lamp-on)"/><rect x="3" y="7" width="10" height="1" fill="var(--phi-lamp-on-dark)"/><rect x="4" y="8" width="8" height="1" fill="var(--phi-lamp-on-dark)"/><rect x="6" y="9" width="4" height="1" fill="var(--phi-lamp-on-dark)"/><rect x="6" y="10" width="4" height="1" fill="var(--phi-lamp-on-dark)"/><rect x="5" y="11" width="6" height="1" fill="var(--phi-lamp-on-dark)"/></svg><svg class="phi-part phi-lamp phi-lamp-off" viewBox="0 0 16 13" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="4" y="1" width="8" height="1" fill="var(--phi-outline)"/><rect x="3" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="2" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="3" width="2" height="1" fill="var(--phi-outline)"/><rect x="12" y="3" width="2" height="1" fill="var(--phi-outline)"/><rect x="2" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="6" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="13" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="12" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="9" width="2" height="1" fill="var(--phi-outline)"/><rect x="11" y="9" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="10" y="10" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="11" y="11" width="1" height="1" fill="var(--phi-outline)"/><rect x="4" y="12" width="8" height="1" fill="var(--phi-outline)"/><rect x="5" y="2" width="6" height="1" fill="var(--phi-lamp-off)"/><rect x="4" y="3" width="8" height="1" fill="var(--phi-lamp-off)"/><rect x="3" y="4" width="10" height="1" fill="var(--phi-lamp-off)"/><rect x="3" y="5" width="10" height="1" fill="var(--phi-lamp-off)"/><rect x="3" y="6" width="10" height="1" fill="var(--phi-lamp-off-dark)"/><rect x="3" y="7" width="10" height="1" fill="var(--phi-lamp-off-dark)"/><rect x="4" y="8" width="8" height="1" fill="var(--phi-lamp-off-dark)"/><rect x="5" y="9" width="6" height="1" fill="var(--phi-lamp-off-dark)"/><rect x="6" y="10" width="4" height="1" fill="var(--phi-lamp-off-dark)"/><rect x="5" y="11" width="6" height="1" fill="var(--phi-lamp-off-dark)"/></svg><svg class="phi-part phi-eyes phi-eyes-x" viewBox="0 0 25 14" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" draggable="false"><rect x="0" y="3" width="10" height="1" fill="var(--phi-outline)"/><rect x="15" y="3" width="10" height="1" fill="var(--phi-outline)"/><rect x="0" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="6" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="9" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="15" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="17" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="21" y="4" width="2" height="1" fill="var(--phi-outline)"/><rect x="24" y="4" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="15" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="18" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="21" y="5" width="1" height="1" fill="var(--phi-outline)"/><rect x="23" y="5" width="2" height="1" fill="var(--phi-outline)"/><rect x="1" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="4" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="7" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="16" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="19" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="22" y="6" width="2" height="1" fill="var(--phi-outline)"/><rect x="0" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="3" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="6" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="8" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="15" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="18" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="21" y="7" width="1" height="1" fill="var(--phi-outline)"/><rect x="23" y="7" width="2" height="1" fill="var(--phi-outline)"/><rect x="0" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="2" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="6" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="9" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="15" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="17" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="21" y="8" width="2" height="1" fill="var(--phi-outline)"/><rect x="24" y="8" width="1" height="1" fill="var(--phi-outline)"/><rect x="0" y="9" width="10" height="1" fill="var(--phi-outline)"/><rect x="15" y="9" width="10" height="1" fill="var(--phi-outline)"/><rect x="1" y="4" width="1" height="1" fill="var(--phi-error)"/><rect x="4" y="4" width="2" height="1" fill="var(--phi-error)"/><rect x="8" y="4" width="1" height="1" fill="var(--phi-error)"/><rect x="16" y="4" width="1" height="1" fill="var(--phi-error)"/><rect x="19" y="4" width="2" height="1" fill="var(--phi-error)"/><rect x="23" y="4" width="1" height="1" fill="var(--phi-error)"/><rect x="2" y="5" width="1" height="1" fill="var(--phi-error)"/><rect x="4" y="5" width="2" height="1" fill="var(--phi-error)"/><rect x="7" y="5" width="1" height="1" fill="var(--phi-error)"/><rect x="17" y="5" width="1" height="1" fill="var(--phi-error)"/><rect x="19" y="5" width="2" height="1" fill="var(--phi-error)"/><rect x="22" y="5" width="1" height="1" fill="var(--phi-error)"/><rect x="3" y="6" width="1" height="1" fill="var(--phi-error)"/><rect x="6" y="6" width="1" height="1" fill="var(--phi-error)"/><rect x="18" y="6" width="1" height="1" fill="var(--phi-error)"/><rect x="21" y="6" width="1" height="1" fill="var(--phi-error)"/><rect x="2" y="7" width="1" height="1" fill="var(--phi-error)"/><rect x="4" y="7" width="2" height="1" fill="var(--phi-error)"/><rect x="7" y="7" width="1" height="1" fill="var(--phi-error)"/><rect x="17" y="7" width="1" height="1" fill="var(--phi-error)"/><rect x="19" y="7" width="2" height="1" fill="var(--phi-error)"/><rect x="22" y="7" width="1" height="1" fill="var(--phi-error)"/><rect x="1" y="8" width="1" height="1" fill="var(--phi-error)"/><rect x="4" y="8" width="2" height="1" fill="var(--phi-error)"/><rect x="8" y="8" width="1" height="1" fill="var(--phi-error)"/><rect x="16" y="8" width="1" height="1" fill="var(--phi-error)"/><rect x="19" y="8" width="2" height="1" fill="var(--phi-error)"/><rect x="23" y="8" width="1" height="1" fill="var(--phi-error)"/></svg></div></div>
+  </div>
+  <div class="tip">可切换主题与状态（idle → working → celebrate → error），发送本文件给对方用浏览器打开即可查看</div>
+<script>
+// ===== Φ (Phi) 桌宠：四状态状态机 =====
+// 待机 idle / 工作 working / 庆祝 celebrate / 报错 error
+// 命名规范：CSS 类 .phi-*、data 属性 data-phi-*、API window.PhiPet
+(function () {
+  "use strict";
+
+  var MODES = ["idle", "working", "celebrate", "error"];
+
+  var MODE_TEXT = {
+    idle:      { status: "待机中",   detail: "随机眨眼已开启", toggle: "开始工作" },
+    working:   { status: "工作中",   detail: "快速敲代码",     toggle: "完成工作" },
+    celebrate: { status: "庆祝中",   detail: "工作成功",       toggle: "报错演示" },
+    error:     { status: "报错中",   detail: "故障抖动",       toggle: "返回待机" }
+  };
+
+  function getMode(root) {
+    return root.dataset.phiMode === "working" ? "working"
+         : root.dataset.phiMode === "celebrate" ? "celebrate"
+         : root.dataset.phiMode === "error" ? "error"
+         : "idle";
+  }
+
+  function updateModeText(root, mode) {
+    var card = root.closest(".phi-card");
+    if (!card) return;
+
+    var info = MODE_TEXT[mode] || MODE_TEXT.idle;
+    var status = card.querySelector("[data-phi-status]");
+    var detail = card.querySelector("[data-phi-detail]");
+    var toggle = card.querySelector("[data-phi-mode-toggle]");
+
+    if (status) status.textContent = info.status;
+    if (detail) detail.textContent = info.detail;
+    if (toggle) toggle.textContent = info.toggle;
+  }
+
+  var CONFETTI_COLORS = [
+    "#fde047", "#93c5fd", "#c4b5fd", "#86efac", "#fda4af", "#fbbf24", "#67e8f9"
+  ];
+
+  function randomizeConfetti(root) {
+    var items = root.querySelectorAll(".phi-confetti");
+    var bucket = 88 / items.length;
+    for (var i = 0; i < items.length; i++) {
+      var el = items[i];
+      var style = el.style;
+      style.setProperty("--phi-confetti-x", (4 + bucket * i + Math.random() * bucket * 0.8).toFixed(1) + "%");
+      style.setProperty("--phi-confetti-y", (8 + Math.random() * 48).toFixed(1) + "%");
+      style.setProperty("--phi-confetti-delay", (-Math.random() * 1.5).toFixed(2) + "s");
+      style.setProperty("--phi-confetti-size", (0.10 + Math.random() * 0.12).toFixed(2) + "em");
+      style.setProperty("--phi-confetti-spin", (Math.random() < 0.5 ? -1 : 1) * (20 + Math.random() * 40).toFixed(0) + "deg");
+      style.setProperty("--phi-confetti-scale", (1 + Math.random() * 0.5).toFixed(2));
+      style.setProperty("--phi-confetti-color", CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]);
+    }
+  }
+
+  function setPhiPetMode(root, mode) {
+    var nextMode = MODES.indexOf(mode) !== -1 ? mode : "idle";
+
+    root.classList.add("is-mode-transitioning");
+    root.classList.toggle("is-working", nextMode === "working");
+    root.classList.toggle("is-celebrating", nextMode === "celebrate");
+    root.classList.toggle("is-erroring", nextMode === "error");
+    root.dataset.phiMode = nextMode;
+    if (nextMode === "celebrate") randomizeConfetti(root);
+    updateModeText(root, nextMode);
+
+    window.setTimeout(function () {
+      root.classList.remove("is-mode-transitioning");
+    }, 420);
+  }
+
+  function initPhiPet(root) {
+    if (!root || root.__phiInited) return function () {};
+    root.__phiInited = true;
+
+    var eyes = root.querySelector(".phi-eyes");
+    if (!eyes) return function () {};
+
+    var toggle = root.closest(".phi-card")?.querySelector("[data-phi-mode-toggle]");
+    var blinkTimer = 0;
+    var blinkEndTimer = 0;
+    var destroyed = false;
+
+    function scheduleBlink() {
+      if (destroyed) return;
+      var mode = getMode(root);
+      var delay;
+      if (mode === "working") {
+        delay = 3800 + Math.random() * 3000;
+      } else if (mode === "celebrate" || mode === "error") {
+        delay = 5000 + Math.random() * 3000;
+      } else {
+        delay = 2600 + Math.random() * 4300;
+      }
+
+      blinkTimer = window.setTimeout(function () {
+        if (document.visibilityState !== "hidden" && getMode(root) !== "celebrate" && getMode(root) !== "error") {
+          eyes.classList.remove("is-blinking");
+          void eyes.offsetWidth;
+          eyes.classList.add("is-blinking");
+          blinkEndTimer = window.setTimeout(function () {
+            eyes.classList.remove("is-blinking");
+          }, 190);
+        }
+        scheduleBlink();
+      }, delay);
+    }
+
+    function handleToggle() {
+      var order = { idle: "working", working: "celebrate", celebrate: "error", error: "idle" };
+      setPhiPetMode(root, order[getMode(root)]);
+    }
+
+    if (toggle) toggle.addEventListener("click", handleToggle);
+    updateModeText(root, getMode(root));
+    if (getMode(root) === "working") root.classList.add("is-working");
+    if (getMode(root) === "celebrate") root.classList.add("is-celebrating");
+    if (getMode(root) === "error") root.classList.add("is-erroring");
+    randomizeConfetti(root);
+    scheduleBlink();
+
+    return function destroy() {
+      destroyed = true;
+      window.clearTimeout(blinkTimer);
+      window.clearTimeout(blinkEndTimer);
+      if (toggle) toggle.removeEventListener("click", handleToggle);
+      eyes.classList.remove("is-blinking");
+    };
+  }
+
+  window.PhiPet = {
+    init: initPhiPet,
+    setMode: setPhiPetMode
+  };
+
+  document.querySelectorAll("[data-phi-pet]").forEach(initPhiPet);
+})();
+
+</script>
+<script>
+  (function () {
+    var root = document.getElementById('petRoot');
+    var phi = root.querySelector('[data-phi-pet]');
+    var order = ['idle', 'working', 'celebrate', 'error'];
+    var idx = 0;
+    var themeBtn = document.getElementById('themeBtn');
+    var modeBtn = document.getElementById('modeBtn');
+    themeBtn.addEventListener('click', function () {
+      var html = document.documentElement;
+      var next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      html.setAttribute('data-theme', next);
+    });
+    modeBtn.addEventListener('click', function () {
+      idx = (idx + 1) % order.length;
+      var mode = order[idx];
+      window.PhiPet.setMode(phi, mode);
+      modeBtn.textContent = '切换状态：' + mode;
+    });
+  })();
+</script>
+</body>
+</html>

@@ -66,6 +66,11 @@ UPDATEABLE_EDGE_FIELDS = {"relation", "label"}
 MAX_NODE_CONTENT_LENGTH = 1200
 MAX_OPERATIONS = 80
 
+# 大图守护：超过阈值时压缩非焦点节点，超过硬阈值直接拒绝
+MAX_SNAPSHOT_CHARS = 40000
+MAX_SNAPSHOT_HARD_CHARS = 60000
+NON_FOCUS_CONTENT_CHARS = 120
+
 
 def _text(value: Any, default: str = "") -> str:
     if value is None:
@@ -217,11 +222,34 @@ def build_next_snapshot(
     warnings: List[Dict[str, Any]] = []
     temp_to_assigned: Dict[str, str] = {}
 
+    # ---- 冲突预检：同一批次内“既改又删 / 引用即将被删除的节点” ----
+    blocked_indices: set = set()
+    deleted_ids: set = set()
+    for op in ops:
+        if _text(op.get("op")) == "delete_node":
+            node_id = _text(op.get("id"))
+            if node_id:
+                deleted_ids.add(node_id)
+    for index, op in enumerate(ops):
+        op_name = _text(op.get("op"))
+        if op_name == "update_node" and _text(op.get("id")) in deleted_ids:
+            errors.append({"index": index, "op": op_name, "reason": f"节点 {_text(op.get('id'))} 在同一批中将被删除，update 操作被跳过"})
+            blocked_indices.add(index)
+        elif op_name == "add_edge":
+            from_id = _text(op.get("from") or op.get("source"))
+            to_id = _text(op.get("to") or op.get("target"))
+            if from_id in deleted_ids or to_id in deleted_ids:
+                target = from_id if from_id in deleted_ids else to_id
+                errors.append({"index": index, "op": op_name, "reason": f"add_edge 引用了即将被删除的节点 {target}，已跳过"})
+                blocked_indices.add(index)
+
     def resolve_ref(value: Any) -> str:
         key = _text(value)
         return temp_to_assigned.get(key, key)
 
     for index, op in enumerate(ops):
+        if index in blocked_indices:
+            continue
         op_name = _text(op.get("op"))
         reason = _text(op.get("reason"))
         label = f"operation[{index}]"

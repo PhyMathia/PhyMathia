@@ -5,7 +5,7 @@
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
     const model = typeof window.getActiveModelForRole === 'function'
-      ? window.getActiveModelForRole('agent')
+      ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
       : null;
     if (!model) {
       _setHarnessStatus('请先配置主模型', 'error');
@@ -38,7 +38,7 @@
     let focusIds = [];
     if (!harnessSingleEvalId) {
       const candidateFocusIds = _detectFocusNodeIds(instruction, _graphNodes().filter(node => !deleted.has(node.id)));
-      if (candidateFocusIds.length > 1) {
+      if (candidateFocusIds.length !== 1) {
         _setHarnessBusy(true);
         _setHarnessStatus('正在理解目标...', 'running');
         let resolved = null;
@@ -67,8 +67,18 @@
         focusIds = candidateFocusIds;
       }
     }
+    if (harnessPhase === 'expand' && !focusIds.length) {
+      focusIds = typeof window.getSelectedGraphNodeIds === 'function'
+        ? Array.from(window.getSelectedGraphNodeIds())
+        : [];
+    }
     const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
     harnessSnapshot = snapshot;
+    const _snapshotMeta = snapshot.snapshot_meta || {};
+    if (_snapshotMeta.est_tokens > 30000) {
+      _setHarnessStatus('图太大（约 ' + Math.round(_snapshotMeta.est_tokens / 1000) + 'k tokens），请先选中局部节点或缩小范围后再让 AI 修改', 'error');
+      return;
+    }
     if (!snapshot.nodes.length) {
       _setHarnessStatus('当前没有可审阅节点', 'error');
       return;
@@ -85,6 +95,7 @@
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     _setHarnessBusy(true);
 
+    harnessAbortController = new AbortController();
     try {
       const resp = await fetch(HARNESS_API, {
         method: 'POST',
@@ -105,6 +116,7 @@
           conversation_context: _buildConversationContext(),
           retries: 2,
         }),
+          signal: harnessAbortController.signal,
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -115,9 +127,13 @@
       _appendHarnessHistory({
         id: _historyId(),
         role: 'assistant',
-        content: (data.summary || '模型没有提出可执行修改')
+        content: ((data.summary || '').trim()
+          || ((data.operations || []).length ? '已生成 ' + (data.operations || []).length + ' 条图修改建议' : '模型没有提出可执行修改'))
           + ((data.operations || []).length
             ? '\n\n' + data.operations.map(op => '• ' + _opDescription(op)).join('\n')
+            : '')
+          + ((data.warnings || []).length
+            ? '\n\n⚠️ ' + data.warnings.map(w => w.reason || '').join('；')
             : ''),
         instruction,
         summary: data.summary || '',
@@ -138,13 +154,18 @@
         }
       }
     } catch (err) {
-      _setHarnessStatus('审阅失败：' + err.message, 'error');
-      _showHarnessRetry('审阅失败：' + err.message);
-      if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
-      if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+      if (err && err.name === 'AbortError') {
+        _setHarnessStatus('已取消', 'ok');
+      } else {
+        _setHarnessStatus('审阅失败：' + err.message, 'error');
+        _showHarnessRetry('审阅失败：' + err.message);
+        if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
+        if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+      }
     } finally {
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
+      harnessAbortController = null;
     }
   }
 
@@ -324,4 +345,17 @@
       return '修改连线：' + (op.edge_key || op.key || '');
     }
     return name || '未知操作';
+  }
+
+  function runHarnessExpandQuick() {
+    const selected = typeof window.getSelectedGraphNodeIds === 'function'
+      ? window.getSelectedGraphNodeIds()
+      : [];
+    const inputEl = document.getElementById('graphHarnessInstruction');
+    if (inputEl) {
+      inputEl.value = selected.length
+        ? '为选中的 ' + selected.length + ' 个知识点生成进阶学习链'
+        : '为当前知识点生成进阶学习链';
+    }
+    runGraphHarness();
   }

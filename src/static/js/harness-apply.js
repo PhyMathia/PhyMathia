@@ -38,23 +38,38 @@
       return;
     }
     if (name === 'update_node') {
-      const node = state.customNodes.find(item => item.id === op.id);
-      if (!node) return;
       const patch = op.patch || {};
-      if (patch.label != null || patch.title != null) {
-        const label = String((patch.label ?? patch.title) || node.label || node.title || '');
-        node.label = label;
-        if (node.kind === 'knowledge') node.title = label;
+      const customNode = state.customNodes.find(item => item.id === op.id);
+      if (customNode) {
+        if (patch.label != null || patch.title != null) {
+          const label = String((patch.label ?? patch.title) || customNode.label || customNode.title || '');
+          customNode.label = label;
+          if (customNode.kind === 'knowledge') customNode.title = label;
+        }
+        if (patch.content != null) {
+          customNode.content = String(patch.content || '');
+          customNode.summary = customNode.content.slice(0, 120);
+        }
+        if (patch.formula != null) {
+          customNode.formula = String(patch.formula || '');
+          customNode.formulas = customNode.formula ? [customNode.formula] : [];
+        }
+        if (patch.status != null) customNode.status = String(patch.status || '');
+        return;
       }
-      if (patch.content != null) {
-        node.content = String(patch.content || '');
-        node.summary = node.content.slice(0, 120);
+      const allNodes = typeof window.getGraphViewNodes === 'function' ? window.getGraphViewNodes() : [];
+      const target = allNodes.find(item => item.id === op.id);
+      if (target) {
+        state.harnessNodeOverrides = state.harnessNodeOverrides || {};
+        const ov = state.harnessNodeOverrides[op.id] || {};
+        if (patch.label != null || patch.title != null) {
+          ov.label = String((patch.label ?? patch.title) || target.label || target.title || ov.label || '');
+        }
+        if (patch.content != null) ov.content = String(patch.content || '');
+        if (patch.formula != null) ov.formula = String(patch.formula || '');
+        if (patch.status != null) ov.status = String(patch.status || '');
+        state.harnessNodeOverrides[op.id] = ov;
       }
-      if (patch.formula != null) {
-        node.formula = String(patch.formula || '');
-        node.formulas = node.formula ? [node.formula] : [];
-      }
-      if (patch.status != null) node.status = String(patch.status || '');
       return;
     }
     if (name === 'delete_node') {
@@ -62,6 +77,7 @@
       state.customNodes = state.customNodes.filter(node => node.id !== id);
       state.connections = state.connections.filter(edge => edge.from !== id && edge.to !== id);
       state.harnessDeleted[id] = true;
+      if (state.harnessNodeOverrides) delete state.harnessNodeOverrides[id];
       delete state.positions[id];
       delete state.sizes[id];
       delete state.pinned[id];
@@ -140,6 +156,7 @@
     state.customNodes = Array.isArray(state.customNodes) ? state.customNodes : [];
     state.connections = Array.isArray(state.connections) ? state.connections : [];
     state.harnessDeleted = state.harnessDeleted || {};
+    state.harnessNodeOverrides = state.harnessNodeOverrides || {};
     state.removedEdges = Array.isArray(state.removedEdges) ? state.removedEdges : [];
     state.positions = state.positions || {};
     state.sizes = state.sizes || {};
@@ -180,6 +197,11 @@
         : '已应用 ' + ops.length + ' 条修改',
       'ok'
     );
+    harnessPhiCelebrate = true;
+    _setPhiMode('celebrate');
+    window.setTimeout(() => {
+      if (!harnessBusy) _setPhiMode(harnessPhiError ? 'error' : 'idle');
+    }, 2600);
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
     setTimeout(() => { _generateHarnessCreatedContent(ops); }, 100);
@@ -207,6 +229,11 @@
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     _setHarnessStatus('已撤销本次修改', 'ok');
+    harnessPhiCelebrate = true;
+    _setPhiMode('celebrate');
+    window.setTimeout(() => {
+      if (!harnessBusy) _setPhiMode(harnessPhiError ? 'error' : 'idle');
+    }, 2600);
   }
 
   function _removeAllEvalNodes() {

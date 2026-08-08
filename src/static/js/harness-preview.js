@@ -15,13 +15,30 @@
     const ops = Array.isArray(data.operations) ? data.operations : [];
     const errors = (data.errors || []).map(item => item.reason || '').filter(Boolean);
     let html = '';
-    if (summary) html += '<div class="graph-harness-summary">' + _escapeHtml(summary) + '</div>';
+    if (summary) html += '<div class="graph-harness-summary">' + (typeof renderMarkdown === 'function' ? renderMarkdown(summary) : _escapeHtml(summary)) + '</div>';
     if (errors.length) {
       html += '<div class="graph-harness-errors"><strong>跳过的操作</strong>'
         + errors.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
     }
+    const warnings = (data.warnings || []).map(item => item.reason || '').filter(Boolean);
+    if (warnings.length) {
+      html += '<div class="graph-harness-warnings"><strong>⚠️ 注意</strong>'
+        + warnings.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
+    }
+    const critic = (data.self_check && data.self_check.critic) || {};
+    if (critic.ok === true) {
+      html += '<div class="graph-harness-selfcheck graph-harness-selfcheck-ok"><strong>🔍 自检通过</strong></div>';
+    } else if (critic.ok === false) {
+      const scIssues = (critic.issues || []).concat((critic.missing || []).map(item => '缺少：' + item));
+      if (scIssues.length) {
+        html += '<div class="graph-harness-selfcheck"><strong>🔍 自检未通过</strong>'
+          + scIssues.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
+      }
+    }
     if (!ops.length) {
-      html += '<div class="graph-harness-empty">模型没有提出可执行修改</div>';
+      html += summary
+        ? '<div class="graph-harness-empty graph-harness-chat-answer">本次为对话回答，未修改图</div>'
+        : '<div class="graph-harness-empty">模型没有提出可执行修改</div>';
     } else {
       html += ops.map((op, index) => ''
         + '<label class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'

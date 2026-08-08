@@ -1,0 +1,685 @@
+.phi-pet {
+  position: absolute;
+  inset: 0;
+  animation: phi-idle-float 3.2s ease-in-out infinite;
+  transform-origin: 50% 82%;
+}
+
+/* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
+.phi-pet {
+  --phi-outline: rgba(96, 165, 250, 0.72); /* 深色模式描边调细：保持蓝色但半透明，视觉上更轻 */
+  --phi-body-shadow: #172554;
+  --phi-body: #1e40af;
+  --phi-body-hi: #3b82f6;
+  --phi-eye: #fbbf24;
+  --phi-eye-dark: #b45309;
+  --phi-error: #f87171;
+  --phi-lamp-on: #fde047;
+  --phi-lamp-on-dark: #f59e0b;
+  --phi-lamp-off: var(--phi-body-hi);
+  --phi-lamp-off-dark: var(--phi-body);
+}
+/* 浅色模式：暖橘、无硬黑边，只保留柔和暖色投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
+[data-theme="light"] .phi-pet {
+  --phi-outline: transparent;
+  --phi-body-shadow: #c2410c;
+  --phi-body: #f97316;
+  --phi-body-hi: #fdba74;
+  --phi-eye: #93c5fd;
+  --phi-eye-dark: #60a5fa;
+  --phi-error: #b91c1c;
+  --phi-lamp-off: #94a3b8;
+  --phi-lamp-off-dark: #475569;
+}
+
+.phi-code-symbols {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+}
+
+.phi-pet.is-working .phi-code-symbols {
+  opacity: 1;
+}
+
+.phi-code-symbol {
+  position: absolute;
+  color: #fde047;
+  font: 800 0.13em/1 "Cascadia Mono", Consolas, monospace;
+  text-shadow: 0 0 50px rgba(250, 204, 21, 0.62);
+  animation: phi-code-float 1.6s ease-in-out infinite;
+}
+
+.phi-code-symbol-1 { left: 11%; top: 31%; animation-delay: -0.3s; }
+.phi-code-symbol-2 { right: 9%; top: 43%; animation-delay: -0.9s; color: #93c5fd; text-shadow: 0 0 10px rgba(96, 165, 250, 0.62); }
+.phi-code-symbol-3 { left: 16%; top: 68%; animation-delay: -1.2s; color: #c4b5fd; text-shadow: 0 0 10px rgba(167, 139, 250, 0.62); }
+.phi-code-symbol-4 { right: 16%; top: 66%; animation-delay: -0.6s; }
+.phi-code-symbol-5 { right: 5%; top: 26%; animation-delay: -1.5s; color: #86efac; text-shadow: 0 0 10px rgba(74, 222, 128, 0.62); }
+
+.phi-character {
+  position: absolute;
+  inset: 0;
+  animation: phi-bounce 3.2s ease-in-out infinite;
+  transform-origin: 50% 82%;
+  will-change: transform;
+}
+
+.phi-part {
+  position: absolute;
+  display: block;
+  max-width: none;
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+  user-select: none;
+  pointer-events: none;
+}
+
+.phi-body {
+  left: 27%;
+  top: 29%;
+  width: 46%;
+  height: 54%;
+}
+
+/* 视觉左侧是角色的右手。 */
+.phi-hand-right {
+  left: 20%;
+  top: 58%;
+  width: 11%;
+  height: 14%;
+  transform-origin: 100% 16%;
+  animation: phi-hand-sway-right 2.8s ease-in-out infinite;
+}
+
+/* 视觉右侧是角色的左手。 */
+.phi-hand-left {
+  left: 69%;
+  top: 59%;
+  width: 11%;
+  height: 14%;
+  transform-origin: 0% 16%;
+  animation: phi-hand-sway-left 2.8s ease-in-out infinite;
+}
+
+.phi-eyes {
+  left: 38.5%;
+  top: 45%;
+  width: 23%;
+  height: 12%;
+  transform-origin: 50% 50%;
+}
+
+.phi-eyes.is-blinking {
+  animation: phi-blink 170ms steps(3, end) both;
+}
+
+.phi-eyes {
+  transition: opacity 320ms ease;
+}
+
+.phi-happy-eyes {
+  position: absolute;
+  left: 38.5%;
+  top: 48.2%;
+  width: 23%;
+  height: 12%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.phi-happy-eye {
+  position: absolute;
+  top: 24%;
+  width: 2.7%;
+  height: 1.9%;
+  border: 3px solid #2d3242;
+  border-bottom: none;
+  border-radius: 100% 100% 0 0;
+  box-shadow: 0 0 6px rgba(45, 50, 66, 0.35);
+}
+
+.phi-happy-eye-left { left: 11%; }
+.phi-happy-eye-right { right: 11%; }
+
+.phi-success-glow {
+  position: absolute;
+  left: 48.4%;
+  top: 5%;
+  width: 3.2%;
+  height: 4.8%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.phi-success-glow::before,
+.phi-success-glow::after {
+  content: "";
+  position: absolute;
+  background: #fde047;
+  box-shadow: 0 0 12px 4px rgba(253, 224, 71, 0.85);
+}
+
+.phi-success-glow::before {
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 34%;
+  transform: translateY(-50%);
+}
+
+.phi-success-glow::after {
+  left: 50%;
+  top: 0;
+  width: 34%;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+.phi-eyes-x {
+  opacity: 0;
+}
+
+.phi-keyboard {
+  position: absolute;
+  left: 14%;
+  right: 12%;
+  top: 70%;
+  height: 13%;
+  padding: 2.4% 3.2%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2.4%;
+  background: #1e293b;
+  border: 2px solid #475569;
+  border-radius: 10%;
+  box-shadow: 0 2px 0 rgba(15, 23, 42, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.phi-kb-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 3%;
+  flex: 1;
+}
+
+.phi-kb-row i {
+  flex: 1;
+  background: #334155;
+  border: 1px solid #0f172a;
+  border-radius: 14%;
+}
+
+.phi-pet.is-working .phi-keyboard {
+  opacity: 1;
+}
+
+.phi-bubbles {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.phi-bubble {
+  position: absolute;
+  bottom: 10%;
+  color: #111827;
+  font: 700 0.12em/1 "Cascadia Mono", Consolas, monospace;
+  text-shadow: 0 0 6px rgba(17, 24, 39, 0.8);
+  animation: phi-bubble-rise 1.1s ease-in infinite;
+}
+
+.phi-bubble-1 { left: 26%; --phi-bubble-x: 7px;  animation-delay: -0.1s; }
+.phi-bubble-2 { left: 34%; --phi-bubble-x: -6px; animation-delay: -0.45s; }
+.phi-bubble-3 { left: 45%; --phi-bubble-x: 5px;  animation-delay: -0.8s; }
+.phi-bubble-4 { left: 56%; --phi-bubble-x: -7px; animation-delay: -0.3s; }
+.phi-bubble-5 { left: 64%; --phi-bubble-x: 4px;  animation-delay: -0.95s; }
+.phi-bubble-6 { left: 72%; --phi-bubble-x: -4px; animation-delay: -0.65s; }
+
+.phi-lamp {
+  left: 43%;
+  top: 18%;
+  width: 14%;
+  height: 11%;
+  transform-origin: 50% 100%;
+  will-change: opacity;
+}
+
+.phi-lamp-on {
+  animation: phi-lamp-on-state 3.8s ease-in-out infinite;
+}
+
+.phi-lamp-off {
+  opacity: 0;
+  animation: phi-lamp-off-state 3.8s ease-in-out infinite;
+}
+
+.phi-celebrate {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+.phi-confetti {
+  position: absolute;
+  left: var(--phi-confetti-x, 10%);
+  bottom: var(--phi-confetti-y, 30%);
+  margin-left: -0.5em;
+  color: var(--phi-confetti-color, #fef08a);
+  font: 700 var(--phi-confetti-size, 0.16em)/1 "Cascadia Mono", Consolas, monospace;
+  text-shadow: 0 0 10px currentColor;
+  animation: phi-confetti-rise 1.5s ease-in infinite;
+  animation-delay: var(--phi-confetti-delay, 0s);
+  will-change: transform;
+}
+
+/* 庆祝状态：工作成功，动作活泼欢快。 */
+.phi-pet.is-celebrating .phi-character {
+  animation: phi-celebrate-body 2.6s ease-in-out infinite;
+}
+
+.phi-pet.is-celebrating .phi-hand-right {
+  animation: phi-celebrate-wave-right 560ms ease-in-out infinite;
+}
+
+.phi-pet.is-celebrating .phi-hand-left {
+  animation: phi-celebrate-wave-left 560ms ease-in-out infinite;
+}
+
+.phi-pet.is-celebrating .phi-eyes {
+  opacity: 0;
+}
+
+.phi-pet.is-celebrating .phi-happy-eyes {
+  opacity: 1;
+}
+
+.phi-pet.is-celebrating .phi-lamp-on {
+  opacity: 1;
+  animation: phi-celebrate-lamp 640ms ease-in-out infinite;
+}
+
+.phi-pet.is-celebrating .phi-lamp-off {
+  opacity: 0;
+  animation: none;
+}
+
+.phi-pet.is-celebrating .phi-success-glow {
+  opacity: 1;
+  animation: phi-cross-glow 900ms ease-in-out infinite;
+}
+
+.phi-pet.is-celebrating .phi-celebrate {
+  opacity: 1;
+}
+
+.phi-pet.is-celebrating .phi-code-symbols {
+  opacity: 0;
+}
+
+/* 报错状态：故障抖动，慌乱烦躁。 */
+.phi-pet.is-erroring .phi-character {
+  animation: phi-error-shake 180ms linear infinite;
+}
+
+.phi-pet.is-erroring .phi-hand-right {
+  animation: phi-error-flail-right 240ms linear infinite;
+}
+
+.phi-pet.is-erroring .phi-hand-left {
+  animation: phi-error-flail-left 240ms linear infinite;
+}
+
+.phi-pet.is-erroring .phi-eyes,
+.phi-pet.is-erroring .phi-happy-eyes {
+  opacity: 0;
+}
+
+.phi-pet.is-erroring .phi-eyes-x {
+  opacity: 1;
+}
+
+.phi-pet.is-erroring .phi-lamp-on {
+  opacity: 0;
+  animation: none;
+}
+
+.phi-pet.is-erroring .phi-lamp-off {
+  opacity: 1;
+  animation: none;
+}
+
+.phi-pet.is-erroring .phi-success-glow {
+  opacity: 1;
+  animation: phi-error-glow 420ms ease-in-out infinite;
+}
+
+.phi-pet.is-erroring .phi-success-glow::before,
+.phi-pet.is-erroring .phi-success-glow::after {
+  background: #4b5563;
+  box-shadow: 0 0 8px 3px rgba(75, 85, 99, 0.7);
+}
+
+.phi-pet.is-erroring .phi-bubbles {
+  opacity: 1;
+}
+
+.phi-pet.is-erroring .phi-code-symbols {
+  opacity: 0;
+}
+
+/* 工作状态：身体收紧，动作明显快于待机。 */
+.phi-pet.is-working .phi-character {
+  animation: phi-work-body 720ms ease-in-out infinite;
+}
+
+.phi-pet.is-working .phi-hand-right {
+  animation: phi-work-tap-right 340ms ease-in-out infinite;
+}
+
+.phi-pet.is-working .phi-hand-left {
+  animation: phi-work-tap-left 340ms ease-in-out infinite;
+}
+
+.phi-pet.is-working .phi-eyes {
+  transform: scaleY(0.24);
+  transition: transform 380ms ease;
+}
+
+.phi-pet.is-working .phi-eyes.is-blinking {
+  animation: phi-work-blink 170ms steps(3, end) both;
+}
+
+.phi-pet.is-working .phi-lamp-on {
+  opacity: 1;
+  animation: phi-work-lamp-glow 900ms ease-in-out infinite;
+}
+
+.phi-pet.is-working .phi-lamp-off {
+  opacity: 0;
+  animation: none;
+}
+
+.phi-pet.is-phi-mode-transitioning .phi-character {
+  animation: phi-mode-transition 420ms ease both;
+}
+
+.phi-pet.is-phi-mode-transitioning .phi-hand,
+.phi-pet.is-phi-mode-transitioning .phi-eyes,
+.phi-pet.is-phi-mode-transitioning .phi-lamp-on,
+.phi-pet.is-phi-mode-transitioning .phi-lamp-off {
+  animation-play-state: paused;
+}
+
+  transform: scale(0.96);
+}
+
+@keyframes phi-bounce {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-6%) scaleY(1.02); }
+}
+
+@keyframes phi-shadow-breathe {
+  0%, 100% { transform: scaleX(1); opacity: 0.75; }
+  50% { transform: scaleX(0.86); opacity: 0.48; }
+}
+
+@keyframes phi-idle-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes phi-hand-sway-right {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-7deg); }
+}
+
+@keyframes phi-hand-sway-left {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(7deg); }
+}
+
+@keyframes phi-blink {
+  0%, 100% { transform: scaleY(1); }
+  45%, 58% { transform: scaleY(0.08); }
+}
+
+@keyframes phi-work-body {
+  0%, 100% { transform: translateY(0.3%) scale(0.985, 0.975); }
+  50% { transform: translateY(0) scale(0.97, 0.955); }
+}
+
+@keyframes phi-work-tap-right {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50% { transform: rotate(9deg) translateY(6%); }
+}
+
+@keyframes phi-work-tap-left {
+  0%, 100% { transform: rotate(2deg) translateY(0); }
+  50% { transform: rotate(-9deg) translateY(6%); }
+}
+
+@keyframes phi-work-blink {
+  0%, 100% { transform: scaleY(0.24); }
+  45%, 58% { transform: scaleY(0.06); }
+}
+
+@keyframes phi-work-lamp-glow {
+  0%, 100% { filter: brightness(1.05) saturate(1); }
+  50% { filter: brightness(1.65) saturate(1.3); }
+}
+
+@keyframes phi-code-float {
+  0%, 100% { transform: translate(0, 3px) rotate(-4deg); opacity: 0.45; }
+  50% { transform: translate(0, -10px) rotate(4deg); opacity: 1; }
+}
+
+@keyframes phi-mode-transition {
+  0% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-1.2%) scale(0.975, 0.965); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes phi-celebrate-body {
+  0%, 100% { transform: translateY(0) scale(1); }
+  8% { transform: translateY(-1%) scale(0.985, 1.02); }
+  16% { transform: translateY(-9%) scale(0.99, 1.05); }
+  26% { transform: translateY(0) scale(1.04, 0.96); }
+  36% { transform: translateY(-6.5%) scale(0.995, 1.03); }
+  46% { transform: translateY(0) scale(1.03, 0.97); }
+  58% { transform: translateY(-1.2%) scale(1); }
+  70% { transform: translateY(0) scale(1.015, 0.99); }
+  82% { transform: translateY(-0.4%) scale(1); }
+}
+
+@keyframes phi-celebrate-wave-right {
+  0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(-10deg); }
+  50% { transform: translateY(-136%) scaleY(-1) rotate(-25deg); }
+}
+
+@keyframes phi-celebrate-wave-left {
+  0%, 100% { transform: translateY(-72%) scaleY(-1) rotate(10deg); }
+  50% { transform: translateY(-136%) scaleY(-1) rotate(25deg); }
+}
+
+@keyframes phi-celebrate-lamp {
+  0%, 100% { filter: brightness(1.25) saturate(1.2); }
+  50% { filter: brightness(1.9) saturate(1.5); }
+}
+
+@keyframes phi-cross-glow {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+@keyframes phi-confetti-rise {
+  0% { transform: translateY(0) rotate(0) scale(0.4); opacity: 0; }
+  15% { transform: translateY(-8px) rotate(8deg) scale(0.9); opacity: 1; }
+  100% { transform: translateY(-92px) rotate(var(--phi-confetti-spin, 24deg)) scale(var(--phi-confetti-scale, 1.15)); opacity: 0; }
+}
+
+@keyframes phi-error-shake {
+  0%, 100% { transform: translateX(0) rotate(12deg); }
+  10% { transform: translateX(-2.2%) rotate(11deg); }
+  20% { transform: translateX(1.8%) rotate(13deg); }
+  30% { transform: translateX(-1.5%) rotate(11.2deg); }
+  40% { transform: translateX(2.2%) rotate(13.2deg); }
+  50% { transform: translateX(-2%) rotate(10.8deg); }
+  60% { transform: translateX(1.6%) rotate(12.8deg); }
+  70% { transform: translateX(-1.8%) rotate(11deg); }
+  80% { transform: translateX(2%) rotate(13deg); }
+  90% { transform: translateX(-1.2%) rotate(11.4deg); }
+}
+
+@keyframes phi-error-flail-right {
+  0% { transform: rotate(12deg); }
+  20% { transform: rotate(-20deg); }
+  40% { transform: rotate(24deg); }
+  60% { transform: rotate(-26deg); }
+  80% { transform: rotate(16deg); }
+  100% { transform: rotate(-14deg); }
+}
+
+@keyframes phi-error-flail-left {
+  0% { transform: rotate(-12deg); }
+  20% { transform: rotate(20deg); }
+  40% { transform: rotate(-24deg); }
+  60% { transform: rotate(26deg); }
+  80% { transform: rotate(-16deg); }
+  100% { transform: rotate(14deg); }
+}
+
+@keyframes phi-error-glow {
+  0%, 100% { transform: scale(0.88); opacity: 0.55; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes phi-bubble-rise {
+  0% { transform: translate(0, 0) scale(0.7); opacity: 0; }
+  20% { transform: translate(calc(var(--phi-bubble-x, 6px) * 0.3), -10px) scale(0.9); opacity: 1; }
+  100% { transform: translate(var(--phi-bubble-x, 6px), -88px) scale(1.1); opacity: 0; }
+}
+
+@keyframes phi-lamp-on-state {
+  0%, 36%, 82%, 100% { opacity: 1; }
+  47%, 68% { opacity: 0; }
+}
+
+@keyframes phi-lamp-off-state {
+  0%, 36%, 82%, 100% { opacity: 0; }
+  47%, 68% { opacity: 1; }
+}
+
+/* 浅色主题适配：气泡/阴影/辉光更柔和，保证在浅色背景下可见 */
+[data-theme="light"] .phi-pet-root,
+html[data-theme="light"] .phi-pet-root {
+  filter: drop-shadow(0 3px 10px rgba(124, 45, 18, 0.22));
+}
+[data-theme="light"] .phi-bubble {
+  color: #1f2937;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+}
+[data-theme="light"] .phi-code-symbol {
+  text-shadow: 0 0 14px rgba(250, 204, 21, 0.35);
+}
+[data-theme="light"] .phi-code-symbol-2 {
+  text-shadow: 0 0 10px rgba(96, 165, 250, 0.35);
+}
+[data-theme="light"] .phi-code-symbol-3 {
+  text-shadow: 0 0 10px rgba(167, 139, 250, 0.35);
+}
+[data-theme="light"] .phi-code-symbol-5 {
+  text-shadow: 0 0 10px rgba(74, 222, 128, 0.35);
+}
+[data-theme="light"] .phi-keyboard {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 0 rgba(15, 23, 42, 0.12);
+}
+[data-theme="light"] .phi-kb-row i {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phi-pet,
+  .phi-character,
+  .phi-hand,
+  .phi-shadow {
+    animation: none;
+  }
+
+  .phi-lamp-on {
+    animation: none;
+    opacity: 1;
+  }
+
+  .phi-lamp-off {
+    animation: none;
+    opacity: 0;
+  }
+
+  .phi-code-symbols,
+  .mode-toggle {
+    transition: none;
+  }
+
+  .phi-pet.is-working .phi-code-symbol,
+  .phi-pet.is-working .phi-lamp-on,
+  .phi-pet.is-working .phi-hand,
+  .phi-pet.is-working .phi-character {
+    animation: none;
+  }
+
+  .phi-pet.is-working .phi-eyes {
+    transform: scaleY(0.24);
+  }
+
+  .phi-pet.is-celebrating .phi-confetti,
+  .phi-pet.is-celebrating .phi-lamp-on,
+  .phi-pet.is-celebrating .phi-hand,
+  .phi-pet.is-celebrating .phi-character,
+  .phi-pet.is-celebrating .phi-success-glow {
+    animation: none;
+  }
+
+  .phi-pet.is-celebrating .phi-eyes {
+    opacity: 0;
+  }
+
+  .phi-pet.is-celebrating .phi-happy-eyes,
+  .phi-pet.is-celebrating .phi-success-glow {
+    opacity: 1;
+  }
+
+  .phi-pet.is-erroring .phi-character,
+  .phi-pet.is-erroring .phi-hand,
+  .phi-pet.is-erroring .phi-success-glow,
+  .phi-pet.is-erroring .phi-bubble {
+    animation: none;
+  }
+
+  .phi-pet.is-erroring .phi-eyes,
+  .phi-pet.is-erroring .phi-happy-eyes {
+    opacity: 0;
+  }
+
+  .phi-pet.is-erroring .phi-eyes-x,
+  .phi-pet.is-erroring .phi-success-glow {
+    opacity: 1;
+  }
+}

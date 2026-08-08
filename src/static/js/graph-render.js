@@ -743,7 +743,7 @@ function _renderNodeHtml(node, messages, state) {
           ? '人工总结'
           : (node.kind === 'answer' && node.messageIndex < 0
             ? (node.manual ? '非 AI 回答' : 'AI 回答')
-            : _nodeContent(message, node));
+            : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
   const customFill = node.messageIndex < 0 && node.manual && !hasCustomContent
     ? '<textarea class="graph-custom-node-content" rows="5" onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'

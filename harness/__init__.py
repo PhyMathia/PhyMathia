@@ -7,6 +7,7 @@ from .core import (
     normalize_operations,
 )
 from .review import review_graph
+from .tools import PHASE_TOOLS, build_tools, parse_tool_calls
 
 __all__ = [
     "build_next_snapshot",
@@ -14,4 +15,7 @@ __all__ = [
     "normalize_snapshot",
     "normalize_operations",
     "review_graph",
+    "build_tools",
+    "parse_tool_calls",
+    "PHASE_TOOLS",
 ]

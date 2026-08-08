@@ -29,6 +29,8 @@ async def graph_review(request: Request):
         focus_node_ids = payload.get("focus_node_ids") or []
         conversation_context = str(payload.get("conversation_context") or "")
         retries = int(payload.get("retries") or 2)
+        mode = str(payload.get("mode") or "auto")
+        self_check = str(payload.get("self_check") or "auto")
         result = await review_graph(
             snapshot=payload.get("snapshot"),
             instruction=payload.get("instruction", ""),
@@ -40,6 +42,8 @@ async def graph_review(request: Request):
             focus_node_ids=focus_node_ids,
             conversation_context=conversation_context,
             retries=retries,
+            mode=mode,
+            self_check=self_check,
         )
         result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
         return result
@@ -69,6 +73,7 @@ async def graph_resolve(request: Request):
         level = str(payload.get("level") or "")
         conversation_context = str(payload.get("conversation_context") or "")
         retries = int(payload.get("retries") or 2)
+        mode = str(payload.get("mode") or "auto")
         result = await resolve_focus(
             snapshot=payload.get("snapshot"),
             instruction=payload.get("instruction", ""),
@@ -78,6 +83,7 @@ async def graph_resolve(request: Request):
             level=level,
             conversation_context=conversation_context,
             retries=retries,
+            mode=mode,
         )
         return result
     except HarnessError as exc:

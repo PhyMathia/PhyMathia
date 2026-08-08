@@ -22,7 +22,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css?v=39">
   <link rel="stylesheet" href="/css/styles-panels.css?v=1">
-  <link rel="stylesheet" href="/css/graph-override.css?v=89">
+  <link rel="stylesheet" href="/css/graph-override.css?v=94">
+  <link rel="stylesheet" href="/phi/phi-pet.css?v=12">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -198,18 +199,19 @@
   <script src="/js/chat.js?v=24"></script>
   <script src="/js/chat-features.js?v=1"></script>
   <script src="/js/chat-branch.js?v=1"></script>
-  <script src="/js/graph.js?v=125"></script>
+  <script src="/js/graph.js?v=126"></script>
   <script src="/js/graph-search.js?v=1"></script>
   <script src="/js/graph-render.js?v=1"></script>
-  <script src="/js/graph-interact.js?v=1"></script>
+  <script src="/js/graph-interact.js?v=2"></script>
   <script src="/js/graph-custom.js?v=1"></script>
   <script src="/js/graph-workflow.js?v=1"></script>
   <script src="/js/knowledge.js?v=9"></script>
-  <script src="/js/models.js?v=10"></script>
-  <script src="/js/harness.js?v=21"></script>
-  <script src="/js/harness-run.js?v=1"></script>
-  <script src="/js/harness-preview.js?v=1"></script>
-  <script src="/js/harness-apply.js?v=1"></script>
+  <script src="/js/models.js?v=11"></script>
+  <script src="/phi/phi-pet.js?v=2" defer></script>
+  <script src="/js/harness.js?v=31"></script>
+  <script src="/js/harness-run.js?v=6"></script>
+  <script src="/js/harness-preview.js?v=3"></script>
+  <script src="/js/harness-apply.js?v=2"></script>
   <script src="/js/ui.js?v=12"></script>
   <script src="/js/quiz.js?v=34"></script>
   <script src="/js/quiz-ai.js?v=1"></script>
@@ -327,6 +329,14 @@
       </select>
       <div class="model-desc" id="htmlModelDesc">使用本地 Mock 回答进行测试</div>
       <div class="model-tags" id="htmlModelTags"><span class="model-tag">🔄 Mock</span></div>
+    </div>
+    <div class="model-section">
+      <div class="model-section-title">图编辑模型</div>
+      <select class="model-select" id="graphModelSelect" onchange="onModelChange('graph')">
+        <option value="">— 不启用（默认用主模型）—</option>
+      </select>
+      <div class="model-desc" id="graphModelDesc">未配置时默认使用主模型（建议选擅长结构化输出的模型）</div>
+      <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">公式描述模型</div>
