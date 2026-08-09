@@ -1182,8 +1182,8 @@
     .model-panel {
       display: none;
       position: fixed;
-      top: 0;
-      left: 0;
+      top: 52px;
+      left: 8px;
       background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 12px;

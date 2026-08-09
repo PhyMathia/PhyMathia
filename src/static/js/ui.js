@@ -89,6 +89,7 @@ function toggleDataPanel(e) {
   const panel = document.getElementById('dataPanel');
   const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
+  if (willShow && typeof window._positionPanelBelowBtn === 'function') window._positionPanelBelowBtn(panel, e?.currentTarget);
   // Close other panels
   document.getElementById('levelPanel').classList.remove('show');
   document.getElementById('modelPanel').classList.remove('show');
@@ -119,7 +120,7 @@ function updateDataStats() {
   const quizCount = Object.keys(quizStats).filter(k => k !== '_meta').length;
   const el = document.getElementById('dataStats');
   if (el) {
-    el.innerHTML = `当前存储：${sessionCount} 个会话 · ${msgCount} 条消息 · ${knowledgeCount} 条知识点 · ${formulaCount} 条公式 · ${graphCount} 个探索网 · ${quizCount} 个检测主题`;
+    el.innerHTML = `当前存储：${sessionCount} 张画布 · ${msgCount} 条消息 · ${knowledgeCount} 条知识点 · ${formulaCount} 条公式 · ${graphCount} 个探索网 · ${quizCount} 个检测主题`;
   }
   updateStorageDebug();
 }
@@ -700,7 +701,7 @@ const _obSteps = [
     features: [
       { icon: UI_ICON_SVG.formula, text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
       { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
-      { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新会话从中心节点开始，答案与模块向外铺展' },
+      { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新画布从中心节点开始，答案与模块向外铺展' },
       { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
     ]
   },
@@ -712,7 +713,7 @@ const _obSteps = [
     get desc() {
       return document.querySelector('.graph-new-session-node')
         ? '在画布中央的<strong>中心节点</strong>输入物理或数学问题，答案会从中心向外展开成探索网。'
-        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>删除</strong>，管理当前对话分支。';
+        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>删除</strong>，管理当前画布分支。';
     }
   },
   {
@@ -722,7 +723,7 @@ const _obSteps = [
     title: '个性化设置',
     get desc() {
       return _isMobile()
-        ? '顶栏可切换<strong>深色/浅色主题</strong>和<strong>难度等级</strong>；这里可设置<strong>AI 模型</strong>、打开<strong>知识总览</strong>、管理数据和清空对话。'
+        ? '顶栏可切换<strong>深色/浅色主题</strong>和<strong>难度等级</strong>；这里可设置<strong>AI 模型</strong>、打开<strong>知识总览</strong>、管理数据和清空画布。'
         : '在这里切换<strong>深色/浅色主题</strong>、选择<strong>AI 模型</strong>和<strong>难度等级</strong>（中学 / 大学 / 科研），点击书本图标打开<strong>知识总览</strong>面板，查看 AI 自动提取的知识点和你收藏的内容。';
     }
   },
@@ -731,16 +732,16 @@ const _obSteps = [
     target: '.menu-btn',
     icon: UI_ICON_SVG.book,
     title: '试试点击菜单按钮',
-    desc: '点击左上角的菜单按钮，打开侧边栏管理<strong>多个对话</strong>，随时切换不同话题。',
+    desc: '点击左上角的菜单按钮，打开侧边栏管理<strong>多张画布</strong>，随时切换不同话题。',
     onClick() { document.getElementById('sidebar').classList.add('open'); }
   },
   {
     type: 'spotlight',
     get target() { return _isMobile() ? '.sidebar-sessions' : '.session-item'; },
     icon: UI_ICON_SVG.pencil,
-    title: '个性化对话',
+    title: '个性化画布',
     get desc() {
-      return '点击对话图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名对话</strong>，让你的对话列表更清晰有序。';
+      return '点击画布图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名画布</strong>，让你的画布列表更清晰有序。';
     },
     beforeShow() { document.getElementById('sidebar').classList.add('open'); }
   }

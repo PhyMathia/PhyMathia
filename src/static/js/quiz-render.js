@@ -36,7 +36,7 @@ function _renderQuizIntro() {
   ).join('');
   const quizModel = _pickQuizModel();
   const quizModelLabel = quizModel ? (quizModel.label || quizModel.model || quizModel.provider) : '本地出题（未配置 AI 模型）';
-  const entryLabel = quizMode === 'global' ? '全局检测' : '会话检测';
+  const entryLabel = quizMode === 'global' ? '全局检测' : '画布检测';
   const sourceModeLabel = quizState && quizState.aiPending
     ? 'AI 生成中'
     : quizState && quizState.sourceMode === 'ai'
@@ -224,7 +224,7 @@ function _renderQuizBank() {
       <button class="quiz-btn-secondary" onclick="backToQuizIntro()">← 返回</button>
       <button class="quiz-btn-primary" onclick="addQuizBankQuestions()">补充AI题</button>
     </div>
-    <div class="quiz-wrong-head"><span>${quizBankFilterSession ? '会话题库' : (quizMode === 'global' ? '全局题库' : '会话题库')}</span><span>${questions.length} 题</span></div>
+    <div class="quiz-wrong-head"><span>${quizBankFilterSession ? '画布题库' : (quizMode === 'global' ? '全局题库' : '画布题库')}</span><span>${questions.length} 题</span></div>
     <div class="quiz-wrong-list">${itemsHtml}</div>
     <div class="quiz-result-actions">
       <button class="quiz-btn-primary" onclick="startBankQuiz()">用题库开始</button>
@@ -339,7 +339,7 @@ function _renderQuizGlobalDashboard() {
     const total = correct + wrong;
     const rate = total ? Math.round(correct / total * 100) : 0;
     const bankCount = bankQuestions.filter(q => q && variants.has(q.sessionId || '')).length;
-    const title = session.title || session.id || '未命名会话';
+    const title = session.title || session.id || '未命名画布';
     return `
       <div class="quiz-global-session-card">
         <div class="quiz-global-session-title">${_quizEscape(title)}</div>
@@ -352,7 +352,7 @@ function _renderQuizGlobalDashboard() {
   }).join('');
   body.innerHTML = `
     <div class="quiz-stats">
-      <div class="quiz-stat"><span class="quiz-stat-num">${sessions.length}</span><span class="quiz-stat-label">会话</span></div>
+      <div class="quiz-stat"><span class="quiz-stat-num">${sessions.length}</span><span class="quiz-stat-label">画布</span></div>
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.total}</span><span class="quiz-stat-label">已测</span></div>
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.rate}%</span><span class="quiz-stat-label">正确率</span></div>
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.reviewCount}</span><span class="quiz-stat-label">待复习</span></div>
@@ -360,7 +360,7 @@ function _renderQuizGlobalDashboard() {
     </div>
     <div class="quiz-charts">
       <div class="quiz-chart-card">
-        <div class="quiz-chart-title">会话正确率分布</div>
+        <div class="quiz-chart-title">画布正确率分布</div>
         ${_quizPieHtml(chartSegments)}
       </div>
       <div class="quiz-chart-card">
@@ -373,8 +373,8 @@ function _renderQuizGlobalDashboard() {
       <button class="quiz-btn-secondary" onclick="openQuizBank()">全局题库</button>
       <button class="quiz-btn-secondary" onclick="openWrongReview()">全局错题</button>
     </div>
-    <div class="quiz-global-title">会话答题概览</div>
-    <div class="quiz-global-session-list">${sessionCards || '<div class="quiz-weak-empty">暂无会话</div>'}</div>`;
+    <div class="quiz-global-title">画布答题概览</div>
+    <div class="quiz-global-session-list">${sessionCards || '<div class="quiz-weak-empty">暂无画布</div>'}</div>`;
 }
 
 function _renderWrongReview() {

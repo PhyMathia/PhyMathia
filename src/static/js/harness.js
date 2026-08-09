@@ -350,13 +350,13 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (harnessPanel) return harnessPanel;
     harnessPet = document.createElement('div');
     harnessPet.className = 'phi-pet-root';
-    harnessPet.title = 'Φ · AI 网络助手';
+    harnessPet.title = 'Φ 网络助手';
     harnessPet.innerHTML = PHI_PET_HTML;
     harnessPanel = document.createElement('div');
     harnessPanel.className = 'graph-harness-window';
     harnessPanel.hidden = true;
     harnessPanel.innerHTML = ''
-      + '<div class="graph-harness-head" id="graphHarnessWindowHead"><span>AI 网络助手</span>'
+      + '<div class="graph-harness-head" id="graphHarnessWindowHead"><span>Φ 网络助手</span>'
       + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">&times;</button></div>'
       + '<div class="graph-harness-chat" id="graphHarnessChat"></div>'
       + '<div class="graph-harness-composer">'
@@ -435,7 +435,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (btn) {
       btn.classList.toggle('active', visible);
       btn.setAttribute('aria-pressed', String(visible));
-      btn.title = visible ? 'Φ 桌宠（点击隐藏）' : 'Φ 桌宠（点击显示）';
+      btn.title = visible ? 'Φ 网络助手（点击隐藏）' : 'Φ 网络助手（点击显示）';
     }
   }
 
@@ -512,7 +512,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (!chat) return;
     chat.innerHTML = harnessHistory.length
       ? harnessHistory.map(entry => _historyMessageHtml(entry)).join('')
-      : '<div class="graph-harness-empty">还没有 harness 对话记录</div>';
+      : '<div class="graph-harness-empty">还没有助手操作记录</div>';
     chat.scrollTop = chat.scrollHeight;
   }
 

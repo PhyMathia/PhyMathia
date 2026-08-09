@@ -460,19 +460,7 @@ async function _generateAnalysis(node) {
       }
     }
     if (!resp) {
-      resp = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'agent',
-          prompt,
-          level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-          stream: true,
-          workflow_context: branchMeta.workflowContext || {},
-        }),
-        signal,
-      });
+      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
     }
     if (!resp.ok) {
       const errText = await resp.text();
@@ -532,25 +520,7 @@ async function _generateCustomNode(node) {
       }
     }
     if (!resp) {
-      resp = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'agent',
-          prompt,
-          level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-          stream: true,
-          branch_id: branchMeta.branchId || '',
-          branch_type: branchMeta.branchType || '',
-          source_module: branchMeta.sourceModule || '',
-          parent_id: branchMeta.parentId || '',
-          branch_label: branchMeta.branchLabel || '',
-          graph_path: branchMeta.graphPath || [],
-          workflow_context: branchMeta.workflowContext || {},
-        }),
-        signal,
-      });
+      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
     }
     if (!resp.ok) {
       const errText = await resp.text();
@@ -1178,25 +1148,7 @@ async function generateBlankNode(nodeId) {
       }
     }
     if (!resp) {
-      resp = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'agent',
-          prompt,
-          level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-          stream: true,
-          branch_id: branchMeta.branchId || '',
-          branch_type: branchMeta.branchType || '',
-          source_module: branchMeta.sourceModule || '',
-          parent_id: branchMeta.parentId || '',
-          branch_label: branchMeta.branchLabel || '',
-          graph_path: branchMeta.graphPath || [],
-          workflow_context: branchMeta.workflowContext || {},
-        }),
-        signal,
-      });
+      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
     }
     if (!resp.ok) {
       const errText = await resp.text();

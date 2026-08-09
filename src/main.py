@@ -1,7 +1,7 @@
 """
 PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线测试版)
 
-使用固定 mock 回答代替 AI API，方便前端功能测试。
+使用 opencode 免费模型（无需 API Key），也支持自定义 OpenAI 兼容模型。
 数据持久化使用 JSON 文件存储，无需 Supabase 或任何外部服务。
 """
 
@@ -21,13 +21,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from server import backup, context, documents, knowledge, mock, prompts, storage  # noqa: F401
+# 确保 src/ 在模块搜索路径（兼容 embeddable python 等不自动加脚本目录的环境）
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from server import backup, context, documents, knowledge, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
 from server.documents import *
 from server.knowledge import *
-from server.mock import *
 from server.prompts import *
 from server.storage import *
 
@@ -76,89 +80,15 @@ async def chat_ui():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "PhyMathia offline test mode", "mock": True}
+    return {"status": "ok", "message": "PhyMathia is running"}
 
 
 
-# ====== Mock 流式接口 (OpenAI 格式，前端实际调用) ======
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
-    try:
-        payload = await request.json()
-        stream = payload.get("stream", False)
-        logger.info(f"OpenAI mock request: prompt={payload.get('prompt', '')[:50]}, level={payload.get('level', 'university')}, stream={stream}")
+    """兼容占位：本地 Mock 已移除，请通过前端模型设置使用真实模型（可用 opencode 免费模型）。"""
+    raise HTTPException(status_code=400, detail="本地 Mock 已移除，请在模型设置中配置 AI 模型（可直接使用免费模型）")
 
-        session_id = payload.get("session_id", "")
-        branch_id = payload.get("branch_id", "")
-        socratic_ref = branch_id or session_id
-        socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
-        is_socratic_prompt = str(payload.get("prompt") or "").lstrip().startswith("[苏格拉底回答]")
-        if socratic_state and not is_socratic_prompt:
-            _delete_socratic_state(socratic_ref)
-            socratic_state = None
-        reply_content = MOCK_ANSWER
-        if socratic_state:
-            reply_content = (
-                MOCK_SOCRATIC_ANSWER_2
-                if int(socratic_state.get("correctStreak", 0) or 0) >= 1
-                else MOCK_SOCRATIC_ANSWER_1
-            )
-            _update_socratic_state_from_content(reply_content, socratic_ref)
-
-        if stream:
-            async def generate():
-                async for chunk in _mock_stream_openai(reply_content, include_html=reply_content is MOCK_ANSWER):
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(generate(), media_type="text/event-stream")
-        else:
-            return {
-                "id": "phymathia-chat",
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": "phymathia-mock",
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": reply_content},
-                    "finish_reason": "stop",
-                }],
-            }
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON format")
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-# ====== Mock 流式接口 (内部 SSE 格式，兼容保留) ======
-@app.post("/stream_run")
-async def stream_run(request: Request):
-    try:
-        payload = await request.json()
-        message = payload.get("text", payload.get("message", ""))
-        logger.info(f"Stream run mock: {message[:50]}")
-
-        async def generate_sse():
-            async for chunk in _mock_stream_openai():
-                choices = chunk.get("choices", [])
-                if choices:
-                    delta = choices[0].get("delta", {})
-                    content = delta.get("content", "")
-                    done = choices[0].get("finish_reason") == "stop"
-                    if content:
-                        yield f"event: message\ndata: {json.dumps({'type': 'content', 'content': content, 'done': False}, ensure_ascii=False)}\n\n"
-            yield f"event: message\ndata: {json.dumps({'type': 'content', 'content': '', 'done': True}, ensure_ascii=False)}\n\n"
-
-        return StreamingResponse(generate_sse(), media_type="text/event-stream")
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON format")
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
@@ -868,7 +798,7 @@ if __name__ == "__main__":
     logger.info("=" * 50)
     logger.info("PhyMathia (Offline Test Mode)")
     logger.info(f"  - Port: {args.port}")
-    logger.info(f"  - Mock: Enabled (no AI API required)")
+    logger.info(f"  - 模型：免费模型模式（opencode，无需 API Key）")
     logger.info("=" * 50)
     logger.info(f"访问地址: http://localhost:{args.port}")
     # 打包版（PyInstaller）自动打开浏览器；开发模式不自动打开

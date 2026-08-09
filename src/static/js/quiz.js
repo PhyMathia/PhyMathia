@@ -30,13 +30,13 @@ let quizMode = 'session';
 
 let quizBankFilterSession = '';
 
-const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用户消息中的“出题素材”是从当前会话提取的真实知识点与公式，请只基于其中的知识点标题、概述、公式和分类生成物理数学检测题。
+const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用户消息中的“出题素材”是从当前画布提取的真实知识点与公式，请只基于其中的知识点标题、概述、公式和分类生成物理数学检测题。
 {{LEVEL_PROMPT}}
 要求：
 - 只根据给定内容出题，不要编造上下文之外的概念。
 - 题目尽量联系现实生活、常见现象或工程场景，题干要具体、生动、有画面感。
 - 现实场景不能改变正确答案；解析可以给简短类比或实际例子，但不能编造事实。
-- 不要对“出题素材”“知识上下文”“标题”“格式”“字符数”“字符串长度”“包含多少个汉字”等元信息出题；不要把“出题素材”或“当前会话知识上下文”当作知识点。
+- 不要对“出题素材”“知识上下文”“标题”“格式”“字符数”“字符串长度”“包含多少个汉字”等元信息出题；不要把“出题素材”或“当前画布知识上下文”当作知识点。
 - 每道题的题干、公式或选项中必须体现素材里的具体知识点标题、概述、公式或概念。
 - 正确答案必须由素材中的概述、公式或分类直接推出；素材不足或答案不能唯一确定时，宁可不出这一题。
 - 解析必须解释为什么，并引用素材中的概述或公式，不能引入素材之外的新结论。
@@ -299,7 +299,7 @@ function _quizUsableTitle(title) {
   const s = _quizCleanTitle(title).toLowerCase().replace(/\s+/g, ' ').trim();
   if (!s || s.length < 2) return false;
   if (QUIZ_MODULE_TITLE_KEYWORDS.some(keyword => s.includes(keyword))) return false;
-  if (/^(当前会话知识上下文|知识上下文|出题素材)$/.test(s)) return false;
+  if (/^(当前画布知识上下文|当前会话知识上下文|知识上下文|出题素材)$/.test(s)) return false;
   if (/^(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向|学习方向)[：:]/.test(s)) return false;
   return true;
 }
@@ -307,7 +307,7 @@ function _quizUsableTitle(title) {
 function _quizIsMetaPrompt(text) {
   const s = _quizOptionKey(text);
   if (!s) return false;
-  return /当前会话知识上下文|知识上下文|出题素材|多少个汉字|多少汉字|多少个字|有几个汉字|字符数|字符串长度|知识点数量|知识点个数|知识点总数|题干数量|题干个数|标题长度|格式长度/.test(s);
+  return /当前画布知识上下文|当前会话知识上下文|知识上下文|出题素材|多少个汉字|多少汉字|多少个字|有几个汉字|字符数|字符串长度|知识点数量|知识点个数|知识点总数|题干数量|题干个数|标题长度|格式长度/.test(s);
 }
 
 function _quizMentionsPoolContent(text, options, pool) {

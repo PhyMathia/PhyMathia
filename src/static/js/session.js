@@ -84,7 +84,7 @@
               if (!serverSessionIds.includes(sid) && localMsgs.length > 0) {
                 console.log(`[Storage] Uploading local-only session ${sid} to server`);
                 try {
-                  await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名对话', sessionId: sid });
+                  await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名画布', sessionId: sid });
                   await _saveMessagesToServer(sid, localMsgs);
                 } catch(e) { console.warn('[Storage] Upload local session failed:', e); }
               }
@@ -285,7 +285,7 @@
     function _maybeAutoTitleSession(sid) {
       const s = sessions[sid];
       if (!s) return;
-      if (s.title && s.title !== '新对话' && s.title !== '未命名对话') return;
+      if (s.title && !['新对话', '新画布', '未命名对话', '未命名画布'].includes(s.title)) return;
       const firstUser = chatHistory.find(m => m.role === 'user');
       if (firstUser) {
         s.title = firstUser.content.substring(0, 30) + (firstUser.content.length > 30 ? '...' : '');
@@ -464,7 +464,7 @@
       const sessionId = 'phymathia_' + crypto.randomUUID().replace(/-/g, '');
       sessions[id] = {
         id: id,
-        title: '新对话',
+        title: '新画布',
         sessionId: sessionId,
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -505,7 +505,7 @@
     async function deleteSession(id, e) {
       if (e) e.stopPropagation();
       if (isStreaming) return;
-      if (!confirm('确定删除此对话？')) return;
+      if (!confirm('确定删除此画布？')) return;
 
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
@@ -585,7 +585,7 @@
       keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
 
       if (keys.length === 0) {
-        list.innerHTML = '<div style="font-size:11px;color:var(--text-secondary);opacity:0.5;text-align:center;padding:8px;">暂无对话</div>';
+        list.innerHTML = '<div style="font-size:11px;color:var(--text-secondary);opacity:0.5;text-align:center;padding:8px;">暂无画布</div>';
         return;
       }
 
@@ -838,7 +838,7 @@
         SESSION_ID = 'phymathia_' + crypto.randomUUID().replace(/-/g, '');
         sessions[id] = {
           id: id,
-          title: '新对话',
+          title: '新画布',
           sessionId: SESSION_ID,
           createdAt: Date.now(),
           updatedAt: Date.now()
@@ -939,7 +939,7 @@
 
     async function clearChat() {
       if (isStreaming) return;
-      if (!confirm('确定清空当前对话记录吗？')) return;
+      if (!confirm('确定清空当前画布吗？')) return;
       chatHistory = [];
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       // 清除 localStorage
@@ -966,7 +966,7 @@
 
     async function clearAllSessions() {
       if (isStreaming) return;
-      if (!confirm('确定清空所有会话吗？此操作不可撤销！')) return;
+      if (!confirm('确定清空所有画布吗？此操作不可撤销！')) return;
 
       // 1. 批量删除服务端所有会话、消息和知识条目
       await _deleteOnServer('/api/sessions');

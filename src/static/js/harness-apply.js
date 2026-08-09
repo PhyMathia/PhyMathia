@@ -333,7 +333,7 @@
   function undoGraphHarness() {
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
-    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销整个 AI 会话' });
+    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销整张画布的修改' });
     const state = _graphState();
     const checkpoint = state?.harnessCheckpoint;
     if (!checkpoint?.before) {

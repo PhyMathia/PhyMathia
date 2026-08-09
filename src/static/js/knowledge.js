@@ -283,7 +283,7 @@ function renderKnowledgePanel() {
 
   const timeline = document.getElementById('kpTimeline');
   if (filtered.length === 0) {
-      timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.book}</div><div class="kp-empty-text">${search ? '没有找到匹配的知识条目' : '还没有知识条目，开始对话或收藏回复吧'}</div></div>`;
+      timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.book}</div><div class="kp-empty-text">${search ? '没有找到匹配的知识条目' : '还没有知识条目，开始提问或收藏回复吧'}</div></div>`;
     return;
   }
 
@@ -416,7 +416,7 @@ async function goToKnowledgeNode(itemId) {
   const sessionId = item.sessionId;
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
   if (!session) {
-    _showJumpError('来源会话已删除，无法定位');
+    _showJumpError('来源画布已删除，无法定位');
     return false;
   }
   closeKnowledgePanel();
@@ -705,7 +705,7 @@ function renderFormulaList() {
   filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   if (filtered.length === 0) {
-      listEl.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.formula}</div><div class="kp-empty-text">${search ? '没有找到匹配的公式' : '还没有公式，对话回答会自动收集公式，收藏回复时也可手动填写'}</div></div>`;
+      listEl.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.formula}</div><div class="kp-empty-text">${search ? '没有找到匹配的公式' : '还没有公式，提问回答会自动收集公式，收藏回复时也可手动填写'}</div></div>`;
     return;
   }
 
@@ -747,7 +747,7 @@ function renderFormulaList() {
     // 来源会话：存在则显示可点击定位（跳转到产生该公式的对话）
     const srcSession = it.sessionId && typeof window.getSessionById === 'function' ? window.getSessionById(it.sessionId) : null;
     const srcHtml = srcSession
-      ? `<div class="kp-formula-src" onclick="locateFormulaNode('${it.id}')" title="点击跳转到对应节点">📌 ${escapeHtml(srcSession.title || '来源会话')}</div>`
+      ? `<div class="kp-formula-src" onclick="locateFormulaNode('${it.id}')" title="点击跳转到对应节点">📌 ${escapeHtml(srcSession.title || '来源画布')}</div>`
       : '';
     html += `
       <div class="kp-formula-card">
@@ -820,7 +820,7 @@ async function locateFormulaNode(formulaId) {
   }
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(item.sessionId) : null;
   if (!session) {
-    _showJumpError('来源会话已删除，无法定位');
+    _showJumpError('来源画布已删除，无法定位');
     return false;
   }
   closeKnowledgePanel();
@@ -859,7 +859,7 @@ async function locateFormulaNode(formulaId) {
 function locateFormulaSession(sessionId) {
   const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
   if (!session) {
-    alert('来源会话已删除，无法定位');
+    alert('来源画布已删除，无法定位');
     return;
   }
   if (typeof window.switchToSession === 'function') window.switchToSession(sessionId);

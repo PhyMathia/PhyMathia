@@ -61,7 +61,7 @@
     }
     if (!ops.length) {
       html += summary
-        ? '<div class="graph-harness-empty graph-harness-chat-answer">本次为对话回答，未修改图</div>'
+        ? '<div class="graph-harness-empty graph-harness-chat-answer">本次为直接回答，未修改图</div>'
         : '<div class="graph-harness-empty">模型没有提出可执行修改</div>';
     } else {
       html += ops.map((op, index) => ''

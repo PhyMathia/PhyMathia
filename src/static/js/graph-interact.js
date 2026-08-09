@@ -37,7 +37,7 @@ function renderGraphCanvas(streaming) {
       graphCanvas.innerHTML = `
         <div class="graph-new-session-wrap">
           <div class="graph-node graph-node-root graph-new-session-node">
-            <div class="graph-node-header"><span class="graph-node-badge">新对话</span></div>
+            <div class="graph-node-header"><span class="graph-node-badge">新问题</span></div>
             <div class="graph-node-label">PhyMathia 探索网</div>
             <textarea class="graph-new-session-input" placeholder="问一个物理或数学问题..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.sendGraphNewSession(this)}"></textarea>
             <div class="graph-new-session-actions">
@@ -78,7 +78,7 @@ function renderGraphCanvas(streaming) {
     + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
     + '</svg></button>'
-    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 桌宠" aria-label="Φ 桌宠" aria-pressed="true">'
+    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
     + '<span class="graph-harness-btn-phi">Φ</span></button>'
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>';
   graphCanvas.appendChild(toolbar);
@@ -776,22 +776,8 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
     }
   }
 
-  const fallbackResp = await fetch('/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'agent',
-      prompt,
-      level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-      session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-      stream: false,
-    }),
-  });
-  if (!fallbackResp.ok) throw new Error('重新生成请求失败：' + fallbackResp.status);
-  const data = await fallbackResp.json();
-  reply = data.choices?.[0]?.message?.content || '';
-  if (!reply.trim()) throw new Error('AI 未返回可用的重新生成内容');
-  return _replaceModuleContent(message?.content || '', moduleKey, reply);
+  if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+  throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
 }
 
 function graphOpenRegenerate(nodeId) {

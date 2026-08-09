@@ -156,7 +156,7 @@ function renderModelSelects() {
   const graphSelect = document.getElementById('graphModelSelect');
   if (!agentSelect || !htmlSelect || !quizSelect || !graphSelect) return;
 
-  const emptyOpt = '<option value="">— 使用本地 Mock —</option>';
+  const emptyOpt = '<option value="">— 请选择模型 —</option>';
   const descriptorEmptyOpt = '<option value="">— 不启用（回退默认摘要）—</option>';
   const quizEmptyOpt = '<option value="">— 不启用（默认用主模型）—</option>';
   const opts = allModels.map(m =>
@@ -201,8 +201,8 @@ function updateModelMeta(type) {
       descEl.textContent = select.value ? '' : '未配置时默认使用主模型（建议选擅长结构化输出的模型）';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     } else {
-      descEl.textContent = select.value ? '' : '使用本地 Mock 回答进行测试';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">🔄 Mock</span>';
+      descEl.textContent = select.value ? '' : '未配置模型。请选择模型（可直接使用免费模型）';
+      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">未配置</span>';
     }
   }
 }
@@ -219,10 +219,21 @@ async function onModelChange(type) {
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
 
+function _positionPanelBelowBtn(panel, btn) {
+  if (!panel || !btn) return;
+  const r = btn.getBoundingClientRect();
+  const pw = panel.offsetWidth || 320;
+  panel.style.top = (r.bottom + 6) + 'px';
+  panel.style.left = Math.max(8, Math.min(r.right - pw, window.innerWidth - pw - 8)) + 'px';
+}
+window._positionPanelBelowBtn = _positionPanelBelowBtn;
+
 function toggleModelPanel(e) {
   e?.stopPropagation();
   const panel = document.getElementById('modelPanel');
+  const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
+  if (willShow) _positionPanelBelowBtn(panel, e?.currentTarget);
   renderModelList();
 }
 

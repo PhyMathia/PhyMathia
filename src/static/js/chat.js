@@ -364,50 +364,8 @@
           resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta, { quick: isCasual, max_tokens: isCasual ? 300 : undefined });
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
-          resp = await fetch('/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'agent',
-              prompt: text,
-              level: currentLevel,
-              session_id: SESSION_ID,
-              stream: true,
-              quick: isCasual,
-              max_tokens: isCasual ? 300 : undefined,
-              branch_id: branchMeta.branchId || '',
-              branch_type: branchMeta.branchType || '',
-              source_module: branchMeta.sourceModule || '',
-              parent_id: branchMeta.parentId || '',
-              branch_label: branchMeta.branchLabel || '',
-              graph_path: branchMeta.graphPath || [],
-            }),
-            signal: abortController.signal
-          });
-        }
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 200)}`);
-        }
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let streamChunkCount = 0;
-
-        function scheduleStreamRender() {
-          if (streamRenderPending) return;
-          streamRenderPending = true;
-          streamRenderFrame = requestAnimationFrame(() => {
-            streamRenderFrame = null;
-            if (assistantDiv && assistantContent) {
-              assistantDiv.innerHTML = renderMarkdown(assistantContent);
-              _initVizIframes(assistantDiv);
-              renderMath(assistantDiv);
-            }
-            streamRenderPending = false;
-          });
+          if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+          throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
         }
 
         function scheduleGraphStreamRender() {

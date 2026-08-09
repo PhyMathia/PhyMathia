@@ -1,6 +1,6 @@
 # Φ（Phi）桌宠
 
-Φ 是 PhyMathia 的桌面宠物，也是 AI 网络助手（harness）的化身。
+Φ 是 PhyMathia 的桌面宠物，也是 Φ 网络助手（harness）的化身。
 
 ## 命名规范
 - 目录：`src/static/phi/`（由 FastAPI 静态服务托管）
