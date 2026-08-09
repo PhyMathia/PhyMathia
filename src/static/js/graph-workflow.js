@@ -20,92 +20,6 @@ function _nodeStoredContent(node) {
   return node.summary || node.content || '';
 }
 
-const GRAPH_MODULE_KEY_ALIAS = {
-  '物理视角': 'physics', '物理': 'physics',
-  '数学视角': 'math', '数学': 'math',
-  '知识图谱': 'graph', '图谱': 'graph',
-  '交互可视化': 'viz', '可视化': 'viz',
-  '苏格拉底追问': 'socratic', '苏格拉底': 'socratic',
-  '进阶学习': 'learn', '进阶学习方向': 'learn',
-};
-
-function _parseSuggestedModules(text) {
-  const m = String(text || '').match(/建议模块[：:]\s*([^\n]+)/);
-  const keys = [];
-  if (m) {
-    for (const token of m[1].split(/[、,，;；\s]+/)) {
-      const key = GRAPH_MODULE_KEY_ALIAS[token.trim()];
-      if (key && !keys.includes(key)) keys.push(key);
-    }
-  }
-  return keys.length ? keys : ['physics', 'math'];
-}
-
-function _autoAnswerNodeId(ts) {
-  return 'a-' + String(ts || '').replace(/[^0-9]/g, '');
-}
-
-function _existingModuleForAnswer(answerId, moduleKey) {
-  const state = _graphState();
-  const connections = state.connections || [];
-  const answerNode = _findGraphNode(answerId);
-  return graphView.nodes.some(node =>
-    node.kind === 'module'
-    && node.moduleKey === moduleKey
-    && (connections.some(e => e.from === answerId && e.to === node.id)
-      || (answerNode && node.messageIndex >= 0 && String(node.timestamp) === String(answerNode.timestamp)))
-  );
-}
-
-function _createAutoModuleNode(moduleKey, answerId) {
-  const state = _graphState();
-  state.customNodes = state.customNodes || [];
-  const answerNode = _findGraphNode(answerId) || {};
-  const idx = state.customNodes.length;
-  const id = 'module-auto-' + Date.now() + '-' + moduleKey + '-' + Math.random().toString(36).slice(2, 7);
-  const node = {
-    id, kind: 'module', moduleKey, manual: false,
-    content: '', status: 'empty', summary: '', analysis: '', analysisHash: '', inputHash: '',
-    generatedAt: 0, requirements: '', busy: false, generated: false, maxItems: 0, items: [], edges: [],
-    fileId: '', fileName: '', generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
-    x: (answerNode.x || 0) + 360,
-    y: (answerNode.y || 0) + (idx % 4 - 1.5) * 140,
-    depth: (answerNode.depth || 1) + 1, targetAngle: 0, isRoot: false, timestamp: Date.now(),
-    pinned: false, fixedX: null, fixedY: null, customWidth: 260, customHeight: null,
-    w: 0, h: 0, vx: 0, vy: 0,
-    branchType: answerNode.branchType || '',
-    branchLabel: answerNode.branchLabel || '',
-    parentId: answerNode.parentId || '',
-  };
-  state.customNodes.push(node);
-  state.connections = state.connections || [];
-  state.connections.push({ from: answerId, to: id, type: 'primary', fromPort: 'out-0', toPort: 'in-0', custom: true });
-  _saveCustomNodes();
-  return id;
-}
-
-async function _autoGenerateModulesFromAnalysis(analysisText, ts, branchMeta) {
-  try {
-    if (!analysisText || typeof window.runWorkflowNodes !== 'function') return;
-    const answerId = _autoAnswerNodeId(ts);
-    if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-    const keys = _parseSuggestedModules(analysisText);
-    const created = [];
-    for (const key of keys) {
-      if (_existingModuleForAnswer(answerId, key)) continue;
-      const id = _createAutoModuleNode(key, answerId);
-      if (id) created.push(id);
-    }
-    if (created.length) {
-      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-      await window.runWorkflowNodes(created, true);
-    }
-  } catch (err) {
-    console.error('自动生成模块失败:', err);
-  }
-}
-window._autoGenerateModulesFromAnalysis = _autoGenerateModulesFromAnalysis;
-
 function _findQuestionContentUpstream(node) {
   const visited = new Set();
   function walk(current) {
@@ -164,9 +78,7 @@ function _collectUpstreamPath(node) {
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
       manual: !!item.manual,
-      analysis: item.kind === 'answer' && !item.manual
-        ? (item.analysis || (item.messageIndex >= 0 ? ((_getChatHistory()[item.messageIndex] || {}).content || '') : '') || '')
-        : '',
+      analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
     };
