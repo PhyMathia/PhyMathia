@@ -136,6 +136,8 @@ let graphHistorySession = "";
 let graphHistoryPanel = null;
 let graphHistoryPreviewing = -1;
 let graphPendingLiveMeta = null;
+let graphHistoryTimer = null;
+let graphHistoryLastSignature = "";
 let graphSearchOpen = false;
 let graphSearchScope = 'current';
 let graphSearchQuery = '';
@@ -202,6 +204,10 @@ function _graphEdgeKeyOf(e) {
   return String(e.key || e.edge_key || (e.from + ">" + e.to));
 }
 
+function _graphNodeLabelOf(node, id) {
+  return String((node && (node.label || node.title || node.summary)) || "") || "节点" + String(id || "").slice(0, 12);
+}
+
 function _graphShortList(items) {
   const arr = items.slice(0, 5);
   let s = "「" + arr.join("」「") + "」";
@@ -240,16 +246,16 @@ function _diffGraphStates(prev, next) {
     const nn = nextNodes[id];
     if (!pn) {
       layoutOnly.value = false;
-      ops.push({ op: "create_node", id: id, label: nn.node.label || nn.node.kind || "" });
+      ops.push({ op: "create_node", id: id, label: _graphNodeLabelOf(nn.node, id) });
     } else if (JSON.stringify(pn.node) !== JSON.stringify(nn.node)) {
       layoutOnly.value = false;
-      ops.push({ op: "update_node", id: id, label: nn.node.label || "" });
+      ops.push({ op: "update_node", id: id, label: _graphNodeLabelOf(nn.node, id) });
     }
   });
   prevIds.forEach(function (id) {
     if (seen[id]) return;
     layoutOnly.value = false;
-    ops.push({ op: "delete_node", id: id, label: (prevNodes[id].node && prevNodes[id].node.label) || "" });
+    ops.push({ op: "delete_node", id: id, label: _graphNodeLabelOf(prevNodes[id].node, id) });
   });
   const prevDel = Object.keys((prev && prev.harnessDeleted) || {});
   const nextDel = Object.keys((next && next.harnessDeleted) || {});
@@ -517,10 +523,13 @@ function openGraphHistoryPanel() {
     document.body.appendChild(graphHistoryPanel);
   }
   graphHistoryPanel.hidden = false;
+  if (graphHistoryTimer) clearInterval(graphHistoryTimer);
+  graphHistoryTimer = setInterval(function () { _refreshGraphHistoryPanel(); }, 800);
   _refreshGraphHistoryPanel();
 }
 
 function closeGraphHistoryPanel() {
+  if (graphHistoryTimer) { clearInterval(graphHistoryTimer); graphHistoryTimer = null; }
   if (graphHistoryPanel) graphHistoryPanel.hidden = true;
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
   graphHistoryPreviewing = -1;
@@ -529,6 +538,9 @@ function closeGraphHistoryPanel() {
 function _refreshGraphHistoryPanel() {
   if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
   const versions = _graphVersions();
+  const sig = versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
+  if (sig === graphHistoryLastSignature) return;
+  graphHistoryLastSignature = sig;
   const listEl = document.getElementById("graphHistoryList");
   if (!listEl) return;
   const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };

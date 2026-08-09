@@ -3296,6 +3296,7 @@
 }
 
 /* ===== 修改历史面板（v1.1.16） ===== */
+.graph-history-panel[hidden] { display: none; }
 .graph-history-panel {
   position: fixed;
   right: 16px;
@@ -3323,7 +3324,8 @@
 .graph-history-close {
   background: none;
   border: none;
-  font-size: 18px;
+  font-size: 22px;
+  font-weight: 700;
   cursor: pointer;
   color: var(--text-secondary, #888);
   line-height: 1;
