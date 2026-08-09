@@ -524,15 +524,3 @@
     return parts.join('\n\n');
   }
 
-  function runHarnessExpandQuick() {
-    const selected = typeof window.getSelectedGraphNodeIds === 'function'
-      ? window.getSelectedGraphNodeIds()
-      : [];
-    const inputEl = document.getElementById('graphHarnessInstruction');
-    if (inputEl) {
-      inputEl.value = selected.length
-        ? '为选中的 ' + selected.length + ' 个知识点生成进阶学习链'
-        : '为当前知识点生成进阶学习链';
-    }
-    runGraphHarness();
-  }
