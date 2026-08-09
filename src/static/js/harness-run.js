@@ -25,6 +25,28 @@
     });
   }
 
+  function _isHarnessCasualInstruction(text) {
+    const t = String(text || '').trim();
+    if (!t || t.length > 40) return false;
+    const casual = /^(你好|您好|嗨|哈喽|hello|hi|hey|谢谢|感谢|哈哈|嘿嘿|在吗|在不在|随便聊聊|聊聊|没事|好的|嗯|再见|拜拜|晚安|早安|辛苦了|厉害|不错|666|嗯嗯|ok|好的吧|可以|没问题|了解|明白|你是谁|你叫什么|你会什么|能干什么)[!！。.~～\s]*$/i;
+    if (casual.test(t)) return true;
+    const learning = /什么是|为什么|怎么|如何|解释|讲|公式|导数|积分|物理|数学|题目|作业|求|帮我|区别|证明|推导|求解|请问|写|做|整理|新增|删除|修改|连线|节点|扩展|评价|进阶|建议|审阅/;
+    if (learning.test(t)) return false;
+    return /(你好|您好|嗨|谢谢|感谢|哈哈|嘿嘿|在吗|随便聊聊|聊聊|辛苦|不错|再见|拜拜|晚安|早安|你是谁|你叫什么|你会什么|能干什么)/.test(t) && t.length <= 25;
+  }
+
+  function _harnessCasualReply(text) {
+    const t = String(text || '').trim();
+    if (/谢谢|感谢/.test(t)) return '不客气～需要我帮你整理知识点、连线或拓展进阶链，随时说一声！';
+    if (/你是谁|你叫什么/.test(t)) return '我是你的 AI 网络助手（Φ），专门帮你打理知识网络：梳理知识点、建立连线、生成进阶学习链，也可以陪你聊聊天～';
+    if (/你会什么|能干什么/.test(t)) return '我可以帮你：① 提取和整理知识点 ② 建立/修正知识点之间的连线 ③ 生成物理/数学视角与进阶学习链 ④ 评价你的理解并给出改进建议。想先试哪个？';
+    if (/在吗|在不在/.test(t)) return '在的～想整理知识网络、补个视角，还是随便聊聊？';
+    if (/再见|拜拜|晚安/.test(t)) return '再见～有想梳理的概念随时来找我！';
+    if (/早安/.test(t)) return '早上好！今天想先整理哪个知识点？';
+    if (/哈哈|嘿嘿|666|厉害|不错/.test(t)) return '哈哈，过奖啦～需要我做点什么吗？';
+    return '你好呀！我是你的 AI 网络助手，随时可以帮你整理知识点、连线或拓展学习链，也可以随便聊聊～';
+  }
+
   function runGraphHarnessWithText(text) {
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = String(text || '');
@@ -43,6 +65,15 @@
     const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
+    if (_isHarnessCasualInstruction(instruction)) {
+      const reply = _harnessCasualReply(instruction);
+      _appendHarnessHistory({
+        id: _historyId(), role: 'assistant', content: reply, instruction,
+        summary: reply, operations: [], phase: 'normal', timestamp: Date.now(),
+      });
+      _setHarnessStatus('已回复', 'ok');
+      return;
+    }
     const model = typeof window.getActiveModelForRole === 'function'
       ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
       : null;

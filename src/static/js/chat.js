@@ -260,6 +260,18 @@
       return /(你好|您好|嗨|谢谢|感谢|哈哈|嘿嘿|在吗|随便聊聊|聊聊|辛苦|不错|再见|拜拜|晚安|早安)/.test(t) && t.length <= 20;
     }
 
+    function _localCasualReply(text) {
+      const t = String(text || '').trim();
+      const pure = /^(你好|您好|嗨|哈喽|hello|hi|hey|谢谢|感谢|哈哈|嘿嘿|在吗|在不在|再见|拜拜|晚安|早安|辛苦了|嗯嗯|ok|好的吧|666)[!！。.~～\s]*$/i;
+      if (!pure.test(t)) return '';
+      if (/谢谢|感谢/.test(t)) return '不客气～有什么物理/数学问题，或者想整理知识网络，随时找我！';
+      if (/在吗|在不在/.test(t)) return '在的～我一直都在。想聊点什么？物理、数学还是你的知识网络？';
+      if (/再见|拜拜|晚安/.test(t)) return '再见～有想探索的概念随时回来找我！';
+      if (/早安/.test(t)) return '早上好！今天想探索点什么？';
+      if (/你好|您好|嗨|哈喽|hello|hi|hey/.test(t)) return '你好呀！我是 PhyMathia，可以帮你从物理直觉和数学本质两个角度理解问题，也可以聊聊知识网络～有什么想问的？';
+      return '哈哈，我在呢～有什么想聊的？';
+    }
+
     function stopGeneration() {
       if (abortController) abortController.abort();
       if (typeof window.stopWorkflowRun === 'function') window.stopWorkflowRun();
@@ -292,6 +304,20 @@
       await saveCurrentSession();
       input.value = '';
       input.style.height = 'auto';
+      const localReply = isCasual ? _localCasualReply(text) : '';
+      if (localReply) {
+        const ts = Date.now();
+        const div = addMessage('assistant', localReply, ts);
+        streamingAssistant = { role: 'assistant', content: localReply, timestamp: ts, ...branchMeta };
+        if (div && typeof renderAssistantContent === 'function') {
+          renderAssistantContent(div, localReply).catch(() => {});
+        }
+        chatHistory.push({ role: 'assistant', content: localReply, timestamp: ts, ...branchMeta });
+        await saveCurrentSession();
+        renderSessionList();
+        if (typeof scrollToBottom === 'function') scrollToBottom();
+        return;
+      }
       isStreaming = true;
       lastFailedMessage = text;
 
