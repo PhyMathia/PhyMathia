@@ -3300,9 +3300,10 @@
 .graph-history-panel {
   position: fixed;
   right: 16px;
-  top: 16px;
+  top: auto;
+  bottom: 72px;
   width: 340px;
-  max-height: 72vh;
+  max-height: min(70vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
   background: var(--bg-panel, #fff);
@@ -3419,9 +3420,10 @@
 .graph-consistency-panel {
   position: fixed;
   right: 16px;
-  top: 16px;
+  top: auto;
+  bottom: 72px;
   width: 340px;
-  max-height: 70vh;
+  max-height: min(70vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
   background: var(--bg-panel, #fff);
