@@ -461,16 +461,18 @@ function _renderBlankNodeHtml(node, state) {
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
+  const minimizedClass = node.minimized ? ' minimized' : '';
+  const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const content = _cleanBlankNodeContent(node, node.content || '');
   const contentHtml = content
     ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
     : '';
   const generateLabel = content ? '重新生成' : '生成';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
-  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
+  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">空白节点</span>' + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">空白节点</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
     + contentHtml
     + '<div class="graph-blank-requirement">'
@@ -554,6 +556,18 @@ function _customNodeStatusText(node) {
   return '待生成';
 }
 
+function _canMinimizeGraphNode(node) {
+  if (!node) return false;
+  if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation') return false;
+  if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'human_note') return true;
+  return node.kind === 'module' || node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
+}
+
+function _graphMinimizeToggleHtml(node) {
+  if (!_canMinimizeGraphNode(node)) return '';
+  return '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>';
+}
+
 function _customNodeHeaderHtml(node, attr, extraButtons) {
   const sub = _nodeSub(node);
   const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
@@ -563,6 +577,7 @@ function _customNodeHeaderHtml(node, attr, extraButtons) {
   return '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>'
     + (sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '')
     + statusHtml
+    + _graphMinimizeToggleHtml(node)
     + (extraButtons || '')
     + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>'
     + '</div>';
@@ -571,7 +586,8 @@ function _customNodeHeaderHtml(node, attr, extraButtons) {
 function _renderSourceNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
-  const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const minimizedClass = node.minimized ? ' minimized' : '';
+  const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
   const fileName = node.fileName ? '<div class="graph-source-filename">' + escapeHtml(node.fileName) + '</div>' : '';
   const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
   const body = node.busy
@@ -585,7 +601,7 @@ function _renderSourceNodeHtml(node, state) {
       + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" onclick="openHarnessOrganizeRelations(\'' + node.id + '\')">🤖 AI 整理关系</button>' : '')
       + '</div>' + fileName + itemCount
       + '</div>';
-  return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + _customNodeHeaderHtml(node, attr, '')
@@ -600,7 +616,8 @@ function _renderSourceNodeHtml(node, state) {
 function _renderKnowledgeNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
-  const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
+  const minimizedClass = node.minimized ? ' minimized' : '';
+  const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
   const formulas = (node.formulas || []).slice(0, 4).map(f => {
     const latex = String(f || '').replace(/^\$+|\$+$/g, '').trim();
     let latexHtml = escapeHtml(latex);
@@ -614,7 +631,7 @@ function _renderKnowledgeNodeHtml(node, state) {
     + '<textarea class="graph-custom-node-content" rows="3" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)">' + escapeHtml(node.content || node.summary || '') + '</textarea>'
     + '<div class="graph-knowledge-actions">' + _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy) + '</div>'
     + '</div>';
-  return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + _customNodeHeaderHtml(node, attr, '')
@@ -661,12 +678,15 @@ function _renderHumanNoteNodeHtml(node, state) {
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
-  return '<div class="graph-node graph-node-human-note graph-attr-human_note' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + customWidth + customHeight + '">'
+  const minimizedClass = node.minimized ? ' minimized' : '';
+  const sizeStyle = node.minimized ? '' : customWidth + customHeight;
+  return '<div class="graph-node graph-node-human-note graph-attr-human_note' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header">'
     + '<span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">我的理解</span>'
     + '<span class="graph-node-badge">人工</span>'
+    + _graphMinimizeToggleHtml(node)
     + '<button class="graph-node-edit-toggle" onclick="editHumanNoteNode(\'' + node.id + '\')" title="编辑我的理解"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
     + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
     + '</div>'
@@ -780,9 +800,7 @@ function _renderNodeHtml(node, messages, state) {
   const statusHtml = statusText
     ? '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>'
     : '';
-  const minimizeToggle = node.messageIndex >= 0 && (node.kind === 'module' || node.kind === 'answer')
-    ? '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>'
-    : '';
+  const minimizeToggle = _graphMinimizeToggleHtml(node);
   const editBtn = node.kind === 'module'
     ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
     : '';

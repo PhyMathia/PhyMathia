@@ -187,6 +187,17 @@ function openVizNewTab(vizId) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
+// 公式内容清洗：去掉外层 $/$$、转义 \$、清理 \= 等无效命令，避免生成 $$$..$$$ 导致 KaTeX 错位
+function _cleanFormulaLatex(latex) {
+  let s = String(latex || '').trim();
+  if (typeof _stripFormulaDelimiters === 'function') s = _stripFormulaDelimiters(s);
+  else s = s.replace(/^\$+|\$+$/g, '').trim();
+  return s
+    .replace(/\\\$/g, '$')
+    .replace(/\\([=,;:])/g, '$1')
+    .trim();
+}
+
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
 function renderMarkdown(text, renderCtx = {}) {
   if (!text) return '';
@@ -196,11 +207,11 @@ function renderMarkdown(text, renderCtx = {}) {
     .replace(/<socratic_meta\b[^>]*\/?>/gi, '');
   // 兼容 AI 将 <formula> 包在 $$..$$ 或 $..$ 内的输出，避免双层定界符
   text = text.replace(/\${1,2}\s*<formula>([\s\S]*?)<\/formula>\s*\${1,2}/gi, (match, latex) => {
-    return '$$' + latex.trim() + '$$';
+    return '$$' + _cleanFormulaLatex(latex) + '$$';
   });
   // AI 按规范标注的 <formula> 标签 → 转换为 $..$（KaTeX 正常渲染，标签本身不显示）
   text = text.replace(/<formula>([\s\S]*?)<\/formula>/gi, (match, latex) => {
-    return '$$' + latex.trim() + '$$';
+    return '$$' + _cleanFormulaLatex(latex) + '$$';
   });
   // <summary> 摘要标签仅用于知识库/公式描述，不渲染给用户
   text = text.replace(/<summary>[\s\S]*?<\/summary>/gi, '');
@@ -815,18 +826,64 @@ async function rerenderAllMermaid() {
   // 不再重新渲染现有图表，CSS 变量过渡已处理颜色变化
 }
 
-function renderMath(element) {
-  if (window.renderMathInElement) {
-    renderMathInElement(element, {
-      delimiters: [
-        { left: '$$', right: '$$', display: true },
-        { left: '$', right: '$', display: false },
-        { left: '\\[', right: '\\]', display: true },
-        { left: '\\(', right: '\\)', display: false }
-      ],
-      throwOnError: false
-    });
+const _KATEX_OPTIONS = {
+  delimiters: [
+    { left: '$$', right: '$$', display: true },
+    { left: '$', right: '$', display: false },
+    { left: '\\[', right: '\\]', display: true },
+    { left: '\\(', right: '\\)', display: false }
+  ],
+  throwOnError: false
+};
+let _katexFallbackState = 0; // 0=未加载 1=加载中 2=成功 3=失败
+let _katexFallbackQueue = [];
+
+function _runKaTeX(element) {
+  if (!element || !window.renderMathInElement) return;
+  try {
+    renderMathInElement(element, _KATEX_OPTIONS);
+  } catch (e) {
+    console.warn('KaTeX 渲染失败：', e);
   }
+}
+
+function _ensureKaTeX(callback) {
+  if (window.renderMathInElement) { callback && callback(); return; }
+  if (_katexFallbackState === 2) { callback && callback(); return; }
+  if (_katexFallbackState === 3) {
+    console.warn('KaTeX 备用 CDN 加载失败，公式将保持原文');
+    return;
+  }
+  if (_katexFallbackState === 1) { if (callback) _katexFallbackQueue.push(callback); return; }
+  _katexFallbackState = 1;
+  if (!document.querySelector('link[href*="katex.min.css"]')) {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/katex@0.16.9/dist/katex.min.css';
+    document.head.appendChild(css);
+  }
+  const js = document.createElement('script');
+  js.src = 'https://unpkg.com/katex@0.16.9/dist/katex.min.js';
+  const auto = document.createElement('script');
+  auto.src = 'https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js';
+  auto.onload = function () {
+    _katexFallbackState = 2;
+    const queue = _katexFallbackQueue.slice();
+    _katexFallbackQueue = [];
+    queue.forEach(function (fn) { fn && fn(); });
+    // 补渲：加载完成前已渲染的内容重新走一遍公式渲染
+    if (typeof graphInner !== 'undefined' && graphInner) { try { _runKaTeX(graphInner); } catch (e) {} }
+    const chatEl = document.getElementById('chatMessages');
+    if (chatEl) { try { _runKaTeX(chatEl); } catch (e) {} }
+  };
+  auto.onerror = function () { _katexFallbackState = 3; };
+  document.head.appendChild(js);
+  document.head.appendChild(auto);
+}
+
+function renderMath(element) {
+  if (!element) return;
+  _ensureKaTeX(function () { _runKaTeX(element); });
 }
 
 // ====== 智能滚动 ======

@@ -202,6 +202,8 @@
 
 .graph-node.minimized .graph-node-full-content,
 .graph-node.minimized .graph-node-actions,
+.graph-node.minimized .graph-blank-content,
+.graph-node.minimized .graph-blank-requirement,
 .graph-node.minimized .graph-resize-handle {
   display: none !important;
 }
@@ -3416,6 +3418,9 @@
   margin-top: 6px;
 }
 .graph-history-diff {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--border, rgba(128,128,128,.2));
   color: var(--text-secondary, #666);
@@ -3423,6 +3428,26 @@
   max-height: 80px;
   overflow-y: auto;
   white-space: pre-wrap;
+}
+.graph-history-diff-summary {
+  flex: 1;
+  min-width: 0;
+}
+.graph-history-exit-preview {
+  flex: none;
+  background: var(--btn-bg, #f0f0f0);
+  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
+  color: var(--text-primary, #222);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.graph-history-exit-preview:hover {
+  background: var(--btn-active-bg, #e2e2e2);
+  border-color: var(--accent, #4f8cff);
+  color: var(--accent, #4f8cff);
 }
 
 /* ===== 图体检面板（v1.1.18） ===== */

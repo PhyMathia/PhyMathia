@@ -142,6 +142,11 @@ function sendGraphNewSession(el) {
 function graphModuleAction(action, nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node) return;
+  // 最小化对消息派生节点与自定义节点统一处理（自定义节点没有 messageIndex）
+  if (action === 'minimize') {
+    _toggleGraphNodeMinimize(node);
+    return;
+  }
   const messages = _getChatHistory();
   const message = messages[node.messageIndex];
   if (!message) return;
@@ -155,42 +160,58 @@ function graphModuleAction(action, nodeId) {
       _pushGraphUndo(true);
       window.deleteGraphMessageByTimestamp(message.timestamp);
     }
-  } else if (action === 'minimize' && (node.kind === 'module' || node.kind === 'answer')) {
-    const nextMinimized = !node.minimized;
+  }
+}
+
+function _toggleGraphNodeMinimize(node) {
+  const nextMinimized = !node.minimized;
+  node.minimized = nextMinimized;
+  const state = _graphState();
+  if (node.messageIndex >= 0 && (node.kind === 'module' || node.kind === 'answer')) {
+    // 消息派生模块/回答簇：沿用 collapsed 映射持久化
+    const messages = _getChatHistory();
+    const message = messages[node.messageIndex];
+    const parentId = message ? String(message.timestamp || '') : '';
     const moduleKey = node.kind === 'module' ? node.moduleKey : 'answer';
     if (typeof window.setModuleVisibility === 'function') {
       window.setModuleVisibility(parentId, moduleKey, 'collapsed', nextMinimized);
     }
-    node.minimized = nextMinimized;
-    const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
-    if (el) {
-      el.classList.toggle('minimized', nextMinimized);
-      if (nextMinimized) {
-        el.style.removeProperty('width');
-        el.style.removeProperty('min-width');
-        el.style.removeProperty('max-width');
-        el.style.removeProperty('height');
-        el.style.removeProperty('min-height');
-      } else {
-        if (node.customWidth) {
-          el.style.setProperty('width', node.customWidth + 'px', 'important');
-          el.style.setProperty('min-width', node.customWidth + 'px', 'important');
-          el.style.setProperty('max-width', node.customWidth + 'px', 'important');
-        }
-        if (node.customHeight) {
-          el.style.setProperty('height', node.customHeight + 'px', 'important');
-          el.style.setProperty('min-height', node.customHeight + 'px', 'important');
-        }
-      }
-      const toggle = el.querySelector('.graph-node-minimize-toggle');
-      if (toggle) {
-        toggle.textContent = nextMinimized ? '+' : '−';
-        toggle.title = nextMinimized ? '展开' : '最小化';
-      }
-      _measureNodes();
-      _updateNodeTransforms();
-      _redrawEdges();
+  } else if (state && Array.isArray(state.customNodes)) {
+    // 自定义节点：minimized 状态直接写入 customNodes 并保存
+    const idx = state.customNodes.findIndex(function (cn) { return String(cn.id) === String(node.id); });
+    if (idx >= 0) {
+      state.customNodes[idx].minimized = nextMinimized;
+      _saveGraphState(state);
     }
+  }
+  const el = graphInner && graphInner.querySelector ? graphInner.querySelector('[data-node-id="' + node.id + '"]') : null;
+  if (el) {
+    el.classList.toggle('minimized', nextMinimized);
+    if (nextMinimized) {
+      el.style.removeProperty('width');
+      el.style.removeProperty('min-width');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('height');
+      el.style.removeProperty('min-height');
+    } else {
+      if (node.customWidth) {
+        el.style.setProperty('width', node.customWidth + 'px', 'important');
+        el.style.setProperty('min-width', node.customWidth + 'px', 'important');
+        el.style.setProperty('max-width', node.customWidth + 'px', 'important');
+      }
+      if (node.customHeight) {
+        el.style.setProperty('height', node.customHeight + 'px', 'important');
+        el.style.setProperty('min-height', node.customHeight + 'px', 'important');
+      }
+    }
+    const toggle = el.querySelector('.graph-node-minimize-toggle');
+    if (toggle) {
+      toggle.textContent = nextMinimized ? '+' : '−';
+      toggle.title = nextMinimized ? '展开' : '最小化';
+    }
+    _measureNodes();
+    _updateNodeTransforms();
+    _redrawEdges();
   }
 }
 

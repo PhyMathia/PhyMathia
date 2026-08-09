@@ -461,7 +461,7 @@
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
               assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent));
                         _initVizIframes(assistantDiv);
-                        renderMathInElement(assistantDiv);
+                        renderMath(assistantDiv);
                         scrollToBottom();
                         scheduleGraphStreamRender();
                       }

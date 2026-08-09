@@ -2490,3 +2490,45 @@
         align-items: stretch;
       }
     }
+/* ===== 题库/错题跳转知识点后的返回入口（问题4） ===== */
+.quiz-return-pill {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent, #4f8cff);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.3);
+  padding: 4px 6px 4px 4px;
+}
+.quiz-return-pill[hidden] { display: none; }
+.quiz-return-pill-btn {
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.quiz-return-pill-btn:hover { background: rgba(255,255,255,.18); }
+.quiz-return-pill-close {
+  border: none;
+  background: rgba(255,255,255,.18);
+  color: #fff;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.quiz-return-pill-close:hover { background: rgba(255,255,255,.3); }

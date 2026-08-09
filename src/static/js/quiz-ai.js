@@ -1,5 +1,8 @@
 /* ====== 知识检测：AI 出题/审题与题库 ====== */
 
+// 题库/错题跳转查看知识点后的返回现场（由 quiz-ui.js 消费）
+let quizReturnState = null;
+
 function _pickQuizModel() {
   if (typeof getActiveModelForRole !== 'function') return null;
   return getActiveModelForRole('quiz') || getActiveModelForRole('agent');
@@ -327,6 +330,14 @@ async function jumpQuizToSource(encodedId) {
     return;
   }
   const isFormula = question.sourceType === 'formula' || !!(question.formulaText || question.latex);
+  // 记录返回现场：从题库/错题视图跳转时，保留“返回题库/错题”入口
+  if (quizState && (quizState.phase === 'bank' || quizState.phase === 'wrong')) {
+    quizReturnState = {
+      phase: quizState.phase,
+      filterSession: quizBankFilterSession || '',
+      topic: quizFilterTopic || 'all'
+    };
+  }
   try {
     if (isFormula) {
       if (typeof window.locateFormulaNode !== 'function') {
@@ -334,14 +345,20 @@ async function jumpQuizToSource(encodedId) {
         return;
       }
       const ok = await window.locateFormulaNode(refId);
-      if (ok && typeof closeQuiz === 'function') closeQuiz();
+      if (ok) {
+        if (typeof closeQuiz === 'function') closeQuiz();
+        if (typeof showQuizReturnPill === 'function') showQuizReturnPill();
+      }
     } else {
       if (typeof window.goToKnowledgeNode !== 'function') {
         _quizShowToast('跳转功能暂不可用');
         return;
       }
       const ok = await window.goToKnowledgeNode(refId);
-      if (ok && typeof closeQuiz === 'function') closeQuiz();
+      if (ok) {
+        if (typeof closeQuiz === 'function') closeQuiz();
+        if (typeof showQuizReturnPill === 'function') showQuizReturnPill();
+      }
     }
   } catch (e) {
     console.warn('Quiz source jump failed:', e);

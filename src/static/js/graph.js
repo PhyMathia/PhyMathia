@@ -135,6 +135,7 @@ let graphRedoStack = [];
 let graphHistorySession = "";
 let graphHistoryPanel = null;
 let graphHistoryPreviewing = -1;
+let graphHistoryDiffSummary = "";
 let graphPendingLiveMeta = null;
 let graphHistoryTimer = null;
 let graphHistoryLastSignature = "";
@@ -466,6 +467,7 @@ async function _jumpGraphVersion(versionIndex) {
   graphRedoStack = [];
   graphPendingLiveMeta = null;
   graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
   await _restoreGraphVersion(target);
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
@@ -477,17 +479,36 @@ function _previewGraphVersion(versionIndex) {
   const target = versions[versionIndex];
   const live = _graphState();
   if (!target || !live) return;
-  if (target.isLive) {
-    if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
-    graphHistoryPreviewing = -1;
-    _refreshGraphHistoryPanel();
+  // 再次点击正在对比的版本（或点击当前版本）→ 退出对比
+  if (target.isLive || graphHistoryPreviewing === versionIndex) {
+    exitGraphVersionPreview();
     return;
   }
   const diff = _diffGraphStates(live, target.state);
   graphHistoryPreviewing = versionIndex;
+  graphHistoryDiffSummary = "版本 " + (versionIndex + 1) + " 与当前差异：" + diff.summary;
   if (typeof window.applyGraphDiffHighlights === "function") window.applyGraphDiffHighlights(diff.ops);
+  _renderGraphHistoryFooter();
+  _refreshGraphHistoryPanel();
+}
+
+function _renderGraphHistoryFooter() {
   const footer = document.getElementById("graphHistoryDiffText");
-  if (footer) footer.textContent = "版本 " + (versionIndex + 1) + " 与当前差异：" + diff.summary;
+  if (!footer) return;
+  if (graphHistoryPreviewing >= 0 && graphHistoryDiffSummary) {
+    const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+    footer.innerHTML = '<span class="graph-history-diff-summary">' + esc(graphHistoryDiffSummary) + '</span>'
+      + '<button type="button" class="graph-history-exit-preview" onclick="exitGraphVersionPreview()">✕ 退出对比</button>';
+  } else {
+    footer.innerHTML = '';
+  }
+}
+
+function exitGraphVersionPreview() {
+  if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
+  _renderGraphHistoryFooter();
   _refreshGraphHistoryPanel();
 }
 
@@ -537,12 +558,13 @@ function closeGraphHistoryPanel() {
   if (graphHistoryPanel) graphHistoryPanel.hidden = true;
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
   graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
 }
 
 function _refreshGraphHistoryPanel() {
   if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
   const versions = _graphVersions();
-  const sig = versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
+  const sig = graphHistoryPreviewing + "|" + versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
   if (sig === graphHistoryLastSignature) return;
   graphHistoryLastSignature = sig;
   const listEl = document.getElementById("graphHistoryList");
@@ -569,12 +591,14 @@ function _refreshGraphHistoryPanel() {
       + actions
       + '</div>';
   }).join('');
+  _renderGraphHistoryFooter();
 }
 
 window.undoGraphAction = _undoGraphAction;
 window.redoGraphAction = _redoGraphAction;
 window.jumpGraphVersion = _jumpGraphVersion;
 window.previewGraphVersion = _previewGraphVersion;
+window.exitGraphVersionPreview = exitGraphVersionPreview;
 window.openGraphHistoryPanel = openGraphHistoryPanel;
 window.toggleGraphHistoryPanel = toggleGraphHistoryPanel;
 window.closeGraphHistoryPanel = closeGraphHistoryPanel;
@@ -1252,25 +1276,46 @@ function _scanGraphConsistency() {
     if (incident[id]) return;
     issues.push({ type: "orphan", severity: "warning", nodeId: id, label: String(n.label || n.title || id), message: "节点没有任何连线（孤儿）" });
   });
+  // 重复检测：知识点按“标签+内容”判定，避免同名但内容不同的节点被误报
+  const _nodeContentSig = function (n) {
+    return String(n.content || n.summary || n.analysis || n.label || n.title || "").replace(/\s+/g, " ").trim();
+  };
   const byLabel = {};
   nodes.forEach(function (n) {
     if (n.kind !== "knowledge") return;
     const label = String(n.label || n.title || "").trim();
     if (!label) return;
-    (byLabel[label] = byLabel[label] || []).push(n);
+    const sig = _nodeContentSig(n);
+    const key = label + "\u0000" + sig;
+    (byLabel[key] = byLabel[key] || []).push(n);
   });
-  Object.keys(byLabel).forEach(function (label) {
-    if (byLabel[label].length > 1) issues.push({ type: "duplicate_label", severity: "info", nodeId: String(byLabel[label][0].id), label: label, message: "存在 " + byLabel[label].length + " 个同名知识点「" + label + "」" });
+  Object.keys(byLabel).forEach(function (key) {
+    const list = byLabel[key];
+    if (list.length > 1) {
+      const label = String(list[0].label || list[0].title || "").trim();
+      const sig = _nodeContentSig(list[0]);
+      issues.push({ type: "duplicate_label", severity: "info", nodeId: String(list[0].id), label: label, message: "存在 " + list.length + " 个" + (sig ? "内容相同" : "同名") + "的知识点「" + label + "」" });
+    }
   });
+  // 模块重复按“来源回答（消息索引）+ 模块键”判定：不同回答各自带物理/数学视角不算重复；
+  // 自定义模块则额外比较内容，仅内容也相同时才判重复。
   const byModule = {};
   nodes.forEach(function (n) {
     if (n.kind !== "module") return;
     const key = String(n.moduleKey || n.module_key || "").trim();
     if (!key) return;
-    (byModule[key] = byModule[key] || []).push(n);
+    const group = n.messageIndex >= 0 ? "msg:" + n.messageIndex : "custom:" + _nodeContentSig(n);
+    const gkey = group + "\u0000" + key;
+    (byModule[gkey] = byModule[gkey] || []).push(n);
   });
-  Object.keys(byModule).forEach(function (key) {
-    if (byModule[key].length > 1) issues.push({ type: "duplicate_module", severity: "info", nodeId: String(byModule[key][0].id), label: key, message: "存在 " + byModule[key].length + " 个「" + key + "」模块" });
+  Object.keys(byModule).forEach(function (gkey) {
+    const list = byModule[gkey];
+    if (list.length > 1) {
+      const key = String(list[0].moduleKey || list[0].module_key || "").trim();
+      const isMsg = list[0].messageIndex >= 0;
+      const metaLabel = (GRAPH_MODULE_META[key] || {}).label || key;
+      issues.push({ type: "duplicate_module", severity: "info", nodeId: String(list[0].id), label: key, message: "存在 " + list.length + " 个" + (isMsg ? "「" + metaLabel + "」模块（同一回答）" : "内容相同的「" + metaLabel + "」模块") });
+    }
   });
   return issues;
 }

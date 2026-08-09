@@ -1487,6 +1487,15 @@ function _unhideGraphNodeForFocus(node) {
       changed = true;
     }
   }
+  // 自定义节点的最小化状态存在 customNodes 里，定位时一并清除
+  if (node.messageIndex < 0 && Array.isArray(state.customNodes)) {
+    const cn = state.customNodes.find(function (x) { return String(x.id) === String(node.id); });
+    if (cn && cn.minimized) {
+      cn.minimized = false;
+      node.minimized = false;
+      changed = true;
+    }
+  }
   if (changed) _saveGraphState(state);
   const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
   if (el) {

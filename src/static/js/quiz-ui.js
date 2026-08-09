@@ -117,6 +117,67 @@ function closeQuiz() {
   document.body.style.overflow = '';
 }
 
+// ====== 题库/错题跳转知识点后的“返回题库”入口 ======
+let _quizReturnPillTimer = null;
+
+function showQuizReturnPill() {
+  hideQuizReturnPill();
+  let pill = document.getElementById('quizReturnPill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'quizReturnPill';
+    pill.className = 'quiz-return-pill';
+    pill.innerHTML = '<button type="button" class="quiz-return-pill-btn" onclick="resumeQuizFromJump()"></button>'
+      + '<button type="button" class="quiz-return-pill-close" onclick="hideQuizReturnPill()" aria-label="关闭" title="关闭">&times;</button>';
+    document.body.appendChild(pill);
+  }
+  const label = quizReturnState && quizReturnState.phase === 'wrong' ? '返回错题' : '返回题库';
+  const btn = pill.querySelector('.quiz-return-pill-btn');
+  if (btn) btn.textContent = '⬅ ' + label;
+  pill.hidden = false;
+  pill.classList.add('active');
+  if (_quizReturnPillTimer) clearTimeout(_quizReturnPillTimer);
+  _quizReturnPillTimer = setTimeout(hideQuizReturnPill, 60000);
+}
+
+function hideQuizReturnPill() {
+  if (_quizReturnPillTimer) { clearTimeout(_quizReturnPillTimer); _quizReturnPillTimer = null; }
+  const pill = document.getElementById('quizReturnPill');
+  if (pill) {
+    pill.hidden = true;
+    pill.classList.remove('active');
+  }
+}
+
+async function resumeQuizFromJump() {
+  hideQuizReturnPill();
+  const overlay = document.getElementById('quizModal');
+  if (!overlay) return;
+  const phase = quizReturnState && quizReturnState.phase === 'wrong' ? 'wrong' : 'bank';
+  overlay.hidden = false;
+  overlay.classList.add('active');
+  document.body.style.overflow = 'hidden';
+  if (quizState) {
+    quizState.phase = phase;
+    if (quizReturnState) {
+      quizBankFilterSession = quizReturnState.filterSession || '';
+      quizFilterTopic = quizReturnState.topic || 'all';
+    }
+    if (phase === 'wrong') quizState.wrongList = _readWrongQuestions();
+    renderQuiz();
+  } else {
+    // 页面已刷新：重新打开并进入目标视图
+    await openQuiz();
+    if (phase === 'wrong') openWrongReview();
+    else openQuizBank(quizReturnState ? quizReturnState.filterSession : '');
+  }
+  quizReturnState = null;
+}
+
+window.showQuizReturnPill = showQuizReturnPill;
+window.hideQuizReturnPill = hideQuizReturnPill;
+window.resumeQuizFromJump = resumeQuizFromJump;
+
 function handleQuizBack() {
   if (!quizState) return;
   if (quizState.phase === 'loading' || quizState.phase === 'intro' || quizState.phase === 'global') {
