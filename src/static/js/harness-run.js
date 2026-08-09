@@ -66,6 +66,9 @@
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
     if (_isHarnessCasualInstruction(instruction)) {
+      _appendHarnessHistory({
+        id: _historyId(), role: 'user', content: instruction, phase: 'normal', timestamp: Date.now(),
+      });
       const reply = _harnessCasualReply(instruction);
       _appendHarnessHistory({
         id: _historyId(), role: 'assistant', content: reply, instruction,
