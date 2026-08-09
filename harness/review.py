@@ -129,22 +129,32 @@ def _undo_scope(instruction: str, focus_node_ids) -> str:
 
 
 def _history_block(history) -> str:
+    """多轮编辑历史：最近 6 条详细（含操作摘要），更早条目压缩为一行，控制上下文体积。"""
     if not history:
         return ""
     lines = ["\n\n此前多轮编辑历史（最新在后）："]
+    recent_start = max(0, len(history) - 6)
     for i, item in enumerate(history):
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "user")
         if role == "user":
-            lines.append(f"{i + 1}. 用户：{str(item.get('instruction') or '')[:200]}")
+            text = str(item.get("instruction") or "")
+            if i < recent_start:
+                lines.append(f"{i + 1}. 用户：{text[:100]}")
+            else:
+                lines.append(f"{i + 1}. 用户：{text[:200]}")
         else:
-            ops = item.get("operations") or []
-            op_desc = "；".join(
-                f"{o.get('op')}({o.get('id') or o.get('temp_id') or o.get('label') or ''})"
-                for o in ops[:20]
-            )
-            lines.append(f"{i + 1}. 助手：{str(item.get('summary') or '')[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
+            summary = str(item.get("summary") or "")
+            if i < recent_start:
+                lines.append(f"{i + 1}. 助手：{summary[:80]}")
+            else:
+                ops = item.get("operations") or []
+                op_desc = "；".join(
+                    f"{o.get('op')}({o.get('id') or o.get('temp_id') or o.get('label') or ''})"
+                    for o in ops[:20]
+                )
+                lines.append(f"{i + 1}. 助手：{summary[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
     return "\n".join(lines)
 
 

@@ -121,7 +121,12 @@
     let focusIds = [];
     if (!harnessSingleEvalId) {
       const candidateFocusIds = _detectFocusNodeIds(instruction, _graphNodes().filter(node => !deleted.has(node.id)));
-      if (candidateFocusIds.length !== 1) {
+      if (candidateFocusIds.length === 1) {
+        focusIds = candidateFocusIds;
+      } else if (harnessPhase === 'evaluate' && candidateFocusIds.length === 0) {
+        // 整体评价：没有引用具体节点，无需解析目标，直接整图评价
+        focusIds = [];
+      } else {
         _setHarnessBusy(true);
         _setHarnessStatus('正在理解目标...', 'running');
         let resolved = null;
@@ -146,8 +151,6 @@
         } else if (resolved) {
           focusIds = resolved.focus_node_ids || [];
         }
-      } else if (candidateFocusIds.length === 1) {
-        focusIds = candidateFocusIds;
       }
     }
     if (harnessPhase === 'expand' && !focusIds.length) {

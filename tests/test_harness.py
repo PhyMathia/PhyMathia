@@ -1963,5 +1963,35 @@ class HarnessSelfCheckSkipTest(unittest.TestCase):
 
 
 
+class HarnessResolvePromptTest(unittest.TestCase):
+    def test_resolve_prompt_distinguishes_overall_eval(self):
+        from harness.prompts import HARNESS_RESOLVE_SYSTEM_PROMPT, build_resolve_messages
+        self.assertIn("整体评价", HARNESS_RESOLVE_SYSTEM_PROMPT)
+        self.assertIn("focus_node_ids: []", HARNESS_RESOLVE_SYSTEM_PROMPT)
+        msgs = build_resolve_messages({"nodes": [], "edges": []}, "你觉得这个做的怎么样")
+        self.assertIn("整体评价", msgs[0]["content"])
+
+
+class HarnessHistoryBlockTest(unittest.TestCase):
+    def test_history_block_compresses_old_entries(self):
+        from harness.review import _history_block
+        history = []
+        for i in range(8):
+            history.append({"role": "user", "instruction": "指令" + str(i) + "长" * 200})
+            history.append({"role": "assistant", "summary": "摘要" + str(i) + "长" * 200,
+                            "operations": [{"op": "add_edge", "id": "e" + str(i)}]})
+        block = _history_block(history)
+        # 最近 6 条详细（3 条助手含操作摘要），更早压缩
+        self.assertEqual(block.count("；操作："), 3)
+        self.assertIn("1. 用户：指令0", block)
+        self.assertNotIn("指令0" + "长" * 200, block)
+        lines = block.split("\n")
+        first = lines[1]
+        self.assertLessEqual(len(first), 130)
+        self.assertIn("；操作：add_edge(e7)", block)
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

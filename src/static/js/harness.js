@@ -168,6 +168,8 @@ let harnessLastAppliedBeforeSnapshot = null;
     return Array.from(new Set(matches));
   }
 
+  const HARNESS_NEIGHBORHOOD_THRESHOLD = 40;
+
   function _connectedNodeIds(nodes, edges, seedIds) {
     const seeds = new Set(seedIds || []);
     const nodeById = new Map(nodes.map(node => [node.id, node]));
@@ -189,6 +191,30 @@ let harnessLastAppliedBeforeSnapshot = null;
           queue.push(next);
         }
       }
+    }
+    return Array.from(seen);
+  }
+
+  function _neighborhoodNodeIds(nodes, edges, seedIds, maxDepth) {
+    const seeds = new Set(seedIds || []);
+    const adjacency = new Map();
+    nodes.forEach(node => adjacency.set(node.id, []));
+    edges.forEach(edge => {
+      if (adjacency.has(edge.from) && adjacency.has(edge.to)) {
+        adjacency.get(edge.from).push(edge.to);
+        adjacency.get(edge.to).push(edge.from);
+      }
+    });
+    const seen = new Set(seeds);
+    let frontier = Array.from(seeds);
+    for (let depth = 0; depth < maxDepth && frontier.length; depth++) {
+      const next = [];
+      for (const id of frontier) {
+        for (const nb of adjacency.get(id) || []) {
+          if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
+        }
+      }
+      frontier = next;
     }
     return Array.from(seen);
   }
@@ -237,10 +263,20 @@ let harnessLastAppliedBeforeSnapshot = null;
     (focusIds || []).forEach(id => focusSet.add(id));
     if (singleEvalId) focusSet.add(singleEvalId);
 
+    // P2：大图且有焦点时，非 1-2 跳邻域节点降级为目录行（仅身份字段），
+    // 模型仍可引用其 id/label，但不携带正文/公式以控制快照 token。
+    const largeGraph = nodes.length > HARNESS_NEIGHBORHOOD_THRESHOLD;
+    const neighborSet = largeGraph && focusSet.size
+      ? new Set(_neighborhoodNodeIds(nodes, _graphEdges(), Array.from(focusSet), 2))
+      : null;
+
     const snapshot = {
       version: 1,
       nodes: scopeNodes.map(node => {
         const isFocus = focusSet.has(node.id) || node.kind === 'ai_eval';
+        if (neighborSet && !isFocus && !neighborSet.has(node.id)) {
+          return { id: node.id, kind: node.kind, module_key: node.moduleKey || '', label: _nodeLabel(node).slice(0, 80), directory: true };
+        }
         return {
           id: node.id,
           kind: node.kind,
@@ -297,6 +333,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges });
     snapshot.snapshot_meta = {
       total_nodes: nodes.length,
+      directory_nodes: snapshot.nodes.filter(n => n.directory).length,
       sent_nodes: snapshot.nodes.length,
       truncated: snapshot.nodes.length < nodes.length,
       est_tokens: _estimateTokens(serialized),

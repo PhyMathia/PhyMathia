@@ -206,6 +206,8 @@ HARNESS_RESOLVE_SYSTEM_PROMPT = """你是知识网络目标解析器。根据用
 - 如果确实无法判断，ambiguous 设为 true，并在 candidates 中给出候选：
   {"id": "A", "label": "导数定义", "hint": "与极限直接相连"}
 - 如果用户指令缺少信息，可以只返回 question，不要猜测 focus_node_ids。
+- 如果指令是对整个知识网络/当前成果的整体评价、审阅、讨论或寒暄（例如“你觉得这个做的怎么样”“整体怎么样”“帮我看看这个网络”），或“这个/它/图”只是整体指代、用户没有指向任何具体节点，返回 focus_node_ids: []、ambiguous: false、question: ""、candidates: []，不要猜测候选节点，也不要弹出节点选择。
+- 判断区分：整体评价/讨论/寒暄 → 空 focus；若用户明确要修改/操作某个节点但目标不明（如“帮我改一下这个”）→ 仍按 ambiguous 处理并给出候选。
 """
 
 
