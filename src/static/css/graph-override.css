@@ -3450,6 +3450,18 @@
   color: var(--accent, #4f8cff);
 }
 
+/* ===== 节点/消息加粗强调（主题色） ===== */
+.graph-node strong,
+.message-content strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+/* 深色模式：强调色偏白、略带蓝调，避免纯蓝过重 */
+html[data-theme="dark"] .graph-node strong,
+html[data-theme="dark"] .message-content strong {
+  color: #bfdbfe;
+}
+
 /* ===== 图体检面板（v1.1.18） ===== */
 .graph-consistency-panel {
   position: fixed;

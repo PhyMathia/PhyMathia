@@ -171,7 +171,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
       body: JSON.stringify({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `出题素材：\n${context}\n\n请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。` }
+          { role: 'user', content: `出题素材：\n${context}\n\n请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。\n\n公式格式要求：题干、选项、解析中的公式一律用 <formula>纯LaTeX</formula> 或 $...$ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出不带定界符的裸 LaTeX。` }
         ],
         provider: model.provider,
         api_key: model.apiKey,

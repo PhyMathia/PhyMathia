@@ -41,6 +41,7 @@ const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用�
 - 正确答案必须由素材中的概述、公式或分类直接推出；素材不足或答案不能唯一确定时，宁可不出这一题。
 - 解析必须解释为什么，并引用素材中的概述或公式，不能引入素材之外的新结论。
 - 解析和选项中不得出现 id、sourceRef、f_xxx、k_xxx 等内部标识；引用公式时写公式名称或公式本身。
+- 所有公式必须用 <formula>纯LaTeX</formula> 包裹；题干、选项或解析正文中的内联公式也可以用单个 $ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出裸露的 LaTeX 源码。
 - 所有公式必须用 <formula>纯LaTeX</formula> 包裹，禁止输出裸露的 LaTeX 源码。
 - 题干、选项和解析中不得出现未包裹的 \frac、\partial、\sqrt、\int 等公式源码。
 - 公式必须放在公式标签内，不要用 Markdown 代码块包裹公式。
@@ -62,6 +63,7 @@ const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。请根据
 - 保留生动、现实的题干场景，但场景不能引入素材之外的新结论。
 - 题目数量可以减少，但不要新增素材之外的知识点。
 - 解析和选项中不得出现 id、sourceRef、f_xxx、k_xxx 等内部标识；引用公式时写公式名称或公式本身。
+- 所有公式必须用 <formula>纯LaTeX</formula> 包裹；题干、选项或解析正文中的内联公式也可以用单个 $ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出裸露的 LaTeX 源码。
 - 所有公式必须用 <formula>纯LaTeX</formula> 包裹，禁止输出裸露的 LaTeX 源码。
 - 题干、选项和解析中不得出现未包裹的 \frac、\partial、\sqrt、\int 等公式源码。
 - 公式必须放在公式标签内，不要用 Markdown 代码块包裹公式。
@@ -153,11 +155,36 @@ function _quizEscape(text) {
 
 function _renderQuizRichText(text) {
   if (typeof renderMarkdown === 'function') {
-    try { return renderMarkdown(String(text || '')); } catch (e) {}
+    try { return renderMarkdown(_quizWrapBareLatex(String(text || ''))); } catch (e) {}
   }
   return _quizEscape(text);
 }
 
+// 题库文本兜底：把 AI 输出中未包裹的裸 LaTeX 片段包成 $...$，交给 renderMarkdown/KaTeX 渲染
+function _quizWrapBareLatex(text) {
+  const s = String(text || '');
+  if (!s.includes('\\')) return s;
+  // 保护已包裹的公式，避免二次包裹
+  const blocks = [];
+  const protect = function (m) { blocks.push(m); return '\uE000' + (blocks.length - 1) + '\uE001'; };
+  let t = s
+    .replace(/\$\$[\s\S]+?\$\$/g, protect)
+    .replace(/\$[^$\n]+?\$/g, protect)
+    .replace(/\\\[[\s\S]+?\\\]/g, protect)
+    .replace(/\\\([\s\S]+?\\\)/g, protect)
+    .replace(/<formula>[\s\S]*?<\/formula>/gi, protect);
+  // 裸片段：以 \ 命令 开头，延续到中文/句读/空白边界
+  t = t.replace(/(?<![\\$A-Za-z0-9])(\\[A-Za-z]+(?:\s*\{[^{}]*\})*(?:\s*(?:\\[A-Za-z]+(?:\s*\{[^{}]*\})*|\{[^{}]*\}|[0-9A-Za-z_=+\-*/^.,;:<>()\[\]]+))*)/g, function (frag) {
+    if (frag.length > 240) return frag;
+    // 强公式命令直接判为公式；弱命令（bar/hat/to 等）需要后跟花括号参数，避免误伤路径/英文
+    if (!/\\?(?:frac|partial|nabla|cdot|vec|int|sum|sqrt|begin|end|text|mathrm|overline|underline|dfrac|displaystyle|limits|lim|sin|cos|tan|log|ln|exp|infty|pi|theta|lambda|sigma|omega|alpha|beta|gamma|phi|Delta)(?![A-Za-z])/.test(frag)
+        && !/\\?(?:bar|hat|dot|ddot|to|rightarrow|leftarrow|in|div|pm|mp|times|leq|geq|neq|approx|left|right|quad|qquad)\s*\{/.test(frag)) return frag;
+    return frag.indexOf('\n') >= 0 ? ('$$' + frag + '$$') : ('$' + frag + '$');
+  });
+  // 还原保护块
+  t = t.replace(/\uE000(\d+)\uE001/g, function (m, idx) { return blocks[parseInt(idx, 10)] || m; });
+  return t;
+}
 function _quizInlineRichText(text) {
   return String(_renderQuizRichText(text) || '').replace(/^<p>|<\/p>$/g, '');
 }
@@ -783,4 +810,4 @@ function _generateQuizQuestions(pool) {
     }
   }
   return result;
-}
+}

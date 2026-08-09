@@ -1953,7 +1953,8 @@
       flex-shrink: 0;
       color: var(--text-secondary);
     }
-    .quiz-wrong-line.correct {
+    .quiz-wrong-line.correct,
+    .quiz-wrong-line.correct span {
       color: #10b981;
     }
     .quiz-wrong-explain {
@@ -2330,7 +2331,7 @@
 .quiz-return-pill {
   position: fixed;
   right: 24px;
-  bottom: 24px;
+  bottom: 96px;
   z-index: 10050;
   display: flex;
   align-items: center;

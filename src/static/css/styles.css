@@ -1672,7 +1672,7 @@
 
     /* KaTeX */
     .katex { font-size: 1em; }
-    .katex { color: var(--katex-color, inherit); }
+    .katex { color: inherit; }
 
     /* Mermaid 图表 */
     .mermaid-container {
