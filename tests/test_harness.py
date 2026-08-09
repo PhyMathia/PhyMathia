@@ -1769,6 +1769,40 @@ class HarnessExpandCompletionTest(unittest.TestCase):
         learns = [op for op in result["operations"] if op.get("op") == "create_node" and op.get("kind") == "module" and op.get("module_key") == "learn"]
         self.assertTrue(learns, "应自动补全 learn 模块")
 
+    def test_expand_auto_completes_missing_answer_chain(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        # 模型只给 A 建了 answer，完全遗漏 B（弱模型合并/遗漏目标的已知行为）
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"summary": "进阶", "operations": [{"op": "create_node", "temp_id": "ans_A", "kind": "answer", "label": "「导数」的进阶学习", "content": "学习方向", "reason": "进阶"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}, {"id": "B", "kind": "knowledge", "label": "极限"}], "edges": []},
+                "为导数和极限都生成进阶学习链",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                phase="expand",
+                focus_node_ids=["A", "B"],
+                retries=1,
+            ))
+        self.assertEqual(result["status"], "ok", result["errors"])
+        ops = result["operations"]
+        answers = [op for op in ops if op.get("op") == "create_node" and op.get("kind") == "answer"]
+        learns = [op for op in ops if op.get("op") == "create_node" and op.get("kind") == "module" and op.get("module_key") == "learn"]
+        self.assertGreaterEqual(len(answers), 2, "应自动为遗漏目标 B 补全 answer 节点")
+        self.assertGreaterEqual(len(learns), 2, "应自动补全对应的 learn 模块")
+        edges = [(str(op.get("from")), str(op.get("to"))) for op in ops if op.get("op") == "add_edge"]
+        answer_ids = set(str(op.get("assigned_id") or op.get("id") or op.get("temp_id")) for op in answers)
+        self.assertTrue(any(frm == "B" and to in answer_ids for frm, to in edges), "B 应连到自动补全的 answer 节点")
+        self.assertTrue(any(frm in answer_ids and to not in answer_ids for frm, to in edges), "answer 应连到 learn 模块")
+
 
 class HarnessConcatenatedJsonTest(unittest.TestCase):
     def test_repair_json_concatenated_objects_takes_first(self):

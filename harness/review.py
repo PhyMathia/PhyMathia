@@ -262,9 +262,13 @@ async def _call_model(
 
 
 def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
-    """Deterministic safety net for expand phase: when the model created answer
-    nodes but forgot the corresponding learn module, auto-create one and connect
-    it (answer -> learn). Only applies to created answers."""
+    """Deterministic safety net for expand phase:
+    1. When the model created answer nodes but forgot the corresponding learn module,
+       auto-create one and connect it (answer -> learn).
+    2. When the model omitted an answer chain entirely for a focus target
+       (known weak-model behavior: merging/omitting multi-target expands),
+       auto-create the full chain (answer + learn + target->answer + answer->learn).
+    Only runs for created/answered targets; never touches existing nodes."""
     ops = list(result.get("operations") or [])
     answers = []
     learn_ids = set()
@@ -281,16 +285,20 @@ def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], foc
         elif name == "add_edge":
             edges.append((str(op.get("from") or ""), str(op.get("to") or "")))
     edge_pairs = set(edges)
-    missing = [
-        op for op in answers
-        if not any((str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or ""), learn) in edge_pairs for learn in learn_ids)
-    ]
-    if not missing:
-        return result
+
+    def _ans_id(op):
+        return str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
+
     extra_ops = []
-    for op in missing:
-        answer_id = str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
+    auto_learn_count = 0
+    auto_chain_count = 0
+
+    # pass 1: missing learn module for created answers
+    for op in answers:
+        answer_id = _ans_id(op)
         if not answer_id:
+            continue
+        if any((answer_id, learn) in edge_pairs for learn in learn_ids):
             continue
         extra_ops.append({
             "op": "create_node",
@@ -309,19 +317,77 @@ def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], foc
             "label": "进入进阶内容",
             "reason": "自动补全进阶学习链",
         })
+        auto_learn_count += 1
+
+    # pass 2: full missing chain per focus target
+    current_nodes = {str(n.get("id")): n for n in (current.get("nodes") or [])}
+    answer_ids = set(_ans_id(op) for op in answers if _ans_id(op))
+    covered_targets = {
+        frm for (frm, to) in edge_pairs
+        if to in answer_ids
+    }
+    for tid in (focus_node_ids or []):
+        tid = str(tid)
+        if tid in covered_targets or tid not in current_nodes:
+            continue
+        target_label = str(current_nodes[tid].get("label") or current_nodes[tid].get("title") or tid)
+        ans_temp = "auto_ans_" + tid
+        learn_temp = "auto_learn_" + tid
+        extra_ops.append({
+            "op": "create_node",
+            "temp_id": ans_temp,
+            "kind": "answer",
+            "label": target_label + "的进阶学习",
+            "content": "深入「" + target_label + "」的高阶方向与应用（正文由内容生成流程填充）",
+            "reason": "自动补全进阶学习链（模型遗漏该目标）",
+        })
+        extra_ops.append({
+            "op": "create_node",
+            "temp_id": learn_temp,
+            "kind": "module",
+            "module_key": "learn",
+            "label": "进阶学习",
+            "content": "进阶方向占位（正文由内容生成流程填充）",
+            "reason": "自动补全进阶学习链（模型遗漏该目标）",
+        })
+        extra_ops.append({
+            "op": "add_edge",
+            "from": tid,
+            "to": ans_temp,
+            "relation": "进阶",
+            "label": "深入" + target_label,
+            "reason": "自动补全进阶学习链",
+        })
+        extra_ops.append({
+            "op": "add_edge",
+            "from": ans_temp,
+            "to": learn_temp,
+            "relation": "模块",
+            "label": "进入进阶内容",
+            "reason": "自动补全进阶学习链",
+        })
+        auto_chain_count += 1
+
+    if not extra_ops:
+        return result
     merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
     result["operations"] = ops + list(merged.get("operations") or [])
     result["next_snapshot"] = merged["next_snapshot"]
     result["diff"] = diff_snapshots(current, merged["next_snapshot"])
     for err in merged.get("errors") or []:
         result.setdefault("errors", []).append(err)
-    result.setdefault("warnings", []).append({
-        "index": "auto-learn",
-        "op": "create_node",
-        "reason": "为 " + str(len(missing)) + " 个 AI 回答节点自动补全进阶学习模块",
-    })
+    reasons = []
+    if auto_learn_count:
+        reasons.append("为 " + str(auto_learn_count) + " 个 AI 回答节点自动补全进阶学习模块")
+    if auto_chain_count:
+        reasons.append("为 " + str(auto_chain_count) + " 个目标知识点自动补全进阶学习链（模型遗漏）")
+    if reasons:
+        result.setdefault("warnings", []).append({
+            "index": "auto-expand",
+            "op": "create_node",
+            "reason": "；".join(reasons),
+        })
     return result
-
 
 def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids, instruction: str = "") -> Dict[str, Any]:
     """Deterministic safety net: connect created nodes that ended up isolated
