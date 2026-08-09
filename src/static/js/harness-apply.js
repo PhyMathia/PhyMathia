@@ -151,6 +151,8 @@
     const state = _graphState();
     if (!state) return;
     const before = JSON.parse(JSON.stringify(state));
+    harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
+    harnessLastAppliedBeforeSnapshot = harnessSnapshot ? JSON.parse(JSON.stringify(harnessSnapshot)) : null;
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo();
     const nodeKindById = new Map(_graphNodes().map(node => [node.id, node.kind]));
     state.customNodes = Array.isArray(state.customNodes) ? state.customNodes : [];
@@ -217,6 +219,8 @@
   }
 
   function undoGraphHarness() {
+    harnessLastAppliedOps = [];
+    harnessLastAppliedBeforeSnapshot = null;
     const state = _graphState();
     const checkpoint = state?.harnessCheckpoint;
     if (!checkpoint?.before) {
@@ -334,6 +338,8 @@
   window.closeGraphHarness = closeGraphHarness;
   window.toggleGraphHarnessWindow = toggleGraphHarnessWindow;
   window.runGraphHarness = runGraphHarness;
+window.runGraphHarnessWithText = runGraphHarnessWithText;
+window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.runGraphHarnessWithFocus = runGraphHarnessWithFocus;
   window.chooseHarnessClarifyNode = chooseHarnessClarifyNode;
   window.confirmHarnessClarifyInput = confirmHarnessClarifyInput;

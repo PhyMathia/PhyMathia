@@ -44,6 +44,11 @@ async def graph_review(request: Request):
             retries=retries,
             mode=mode,
             self_check=self_check,
+            history=payload.get("harness_history") or payload.get("history"),
+            previous_ops=payload.get("previous_ops") or payload.get("last_ops"),
+            previous_snapshot=payload.get("previous_snapshot") or payload.get("before_snapshot"),
+            all_previous_ops=payload.get("all_previous_ops"),
+            initial_snapshot=payload.get("initial_snapshot"),
         )
         result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
         return result
@@ -60,6 +65,31 @@ async def graph_apply(request: Request):
     except Exception as exc:
         return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
     return build_next_snapshot(payload.get("snapshot"), payload.get("operations") or [])
+
+
+
+
+@router.post("/graph/undo")
+async def graph_undo(request: Request):
+    """Deterministic undo: compute inverse ops from a before-snapshot + the ops
+    that were applied, then apply them to the current (after) snapshot."""
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+    try:
+        from .core import build_inverse_ops, build_next_snapshot, normalize_snapshot
+
+        current = normalize_snapshot(payload.get("snapshot") or payload.get("after_snapshot"))
+        inverse_ops = build_inverse_ops(payload.get("before_snapshot") or current, payload.get("operations") or [], current)
+        result = build_next_snapshot(current, inverse_ops)
+        result["status"] = "undo"
+        result["phase"] = "undo"
+        result["summary"] = "已撤销上一步修改"
+        result["undo_ops"] = inverse_ops
+        return result
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]}
 
 
 @router.post("/graph/resolve")

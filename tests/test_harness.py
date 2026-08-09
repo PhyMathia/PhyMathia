@@ -892,12 +892,780 @@ class HarnessChatTest(unittest.TestCase):
             result = asyncio.run(review_mod.review_graph(
                 {"nodes": [{"id": "H", "kind": "knowledge", "label": "超纲"}], "edges": []},
                 "把 H 删掉",
-                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                model={"provider": "deepseek", "model": "deepseek-chat", "base_url": "https://api.deepseek.com", "api_key": ""},
                 mode="tools",
                 self_check="off",
             ))
         self.assertEqual(captured["tool_choice"], "required")
         self.assertEqual(result["operations"][0]["op"], "delete_node")
+
+
+
+class HarnessSummaryFallbackTest(unittest.TestCase):
+    def test_fallback_summary_generated_when_model_content_empty(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "module", "module_key": "physics", "label": "物理视角", "reason": "用户要求"}'}},
+                    {"function": {"name": "add_edge", "arguments": '{"from": "A", "to": "n1", "relation": "物理意义", "reason": "补充视角"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "给导数加物理视角",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["summary"].strip())
+        self.assertIn("新增", result["summary"])
+
+    def test_chat_answer_keeps_model_summary(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": "导数描述的是瞬时变化率……", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "解释一下导数是什么",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+            ))
+        self.assertEqual(result["summary"], "导数描述的是瞬时变化率……")
+
+
+class HarnessDedupWarningTest(unittest.TestCase):
+    def test_rule_selfcheck_warns_duplicate_module(self):
+        from harness.semantics import rule_selfcheck
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
+            ],
+            "edges": [],
+        }
+        ops = [
+            {"op": "create_node", "temp_id": "n_phy2", "kind": "module", "module_key": "physics", "label": "物理视角2"},
+        ]
+        check = rule_selfcheck(snapshot, "给导数加物理视角", [], ops)
+        self.assertFalse(check["ok"])
+        self.assertTrue(any("重复" in issue for issue in check["issues"]))
+
+    def test_rule_selfcheck_no_warning_for_new_module_key(self):
+        from harness.semantics import rule_selfcheck
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
+            ],
+            "edges": [],
+        }
+        ops = [
+            {"op": "create_node", "temp_id": "n_math", "kind": "module", "module_key": "math", "label": "数学视角"},
+        ]
+        check = rule_selfcheck(snapshot, "给导数加数学视角", [], ops)
+        self.assertTrue(check["ok"])
+
+
+class HarnessJsonExtractHardeningTest(unittest.TestCase):
+    def test_extract_json_trailing_comma(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r",},],}')
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["operations"][0]["op"], "create_node")
+
+    def test_extract_json_truncated_tail(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]}')
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["summary"], "x")
+
+    def test_extract_json_prose_after_json(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json('结果如下：{"summary": "s", "operations": []}，以上是修改建议。')
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["summary"], "s")
+
+
+class HarnessArrayPayloadTest(unittest.TestCase):
+    def test_extract_json_top_level_array(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json('[{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]')
+        self.assertIsInstance(payload, list)
+        self.assertEqual(payload[0]["op"], "create_node")
+
+    def test_extract_json_fenced_array(self):
+        from harness.json_utils import extract_json
+
+        payload = extract_json("""```json
+[{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]
+```""")
+        self.assertIsInstance(payload, list)
+
+    def test_review_graph_accepts_top_level_array_with_action_alias(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '[{"action": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "极限", "content": "趋近过程", "reason": "补全基础"}]',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "新增一个极限知识点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["operations"][0]["op"], "create_node")
+
+    def test_review_graph_normalizes_operation_alias(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"summary": "s", "operations": [{"operation": "delete_node", "id": "A", "reason": "删除"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "把 A 删掉",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["operations"][0]["op"], "delete_node")
+
+
+class HarnessRobustnessTest(unittest.TestCase):
+    def test_evaluate_phase_retries_when_empty_ops(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"content": '{"summary": "先看看", "operations": []}', "tool_calls": []}
+            return {
+                "content": '{"summary": "评价", "operations": [{"op": "create_eval_node", "temp_id": "e1", "target_node_id": "D", "suggestion": "建议补充极限", "priority": "high", "reason": "不够严谨"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [
+                    {"id": "A", "kind": "knowledge", "label": "导数"},
+                    {"id": "D", "kind": "human_note", "label": "我的理解"},
+                ], "edges": []},
+                "评价一下我的理解",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                phase="evaluate",
+                focus_node_ids=["D"],
+                retries=1,
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["operations"][0]["op"], "create_eval_node")
+
+    def test_auto_connect_isolated_created_node(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "knowledge", "label": "链式法则", "reason": "新增"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "新增知识点：链式法则",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=1,
+            ))
+        ops = result["operations"]
+        add_edges = [op for op in ops if op.get("op") == "add_edge"]
+        self.assertTrue(add_edges, "应自动补一条连线避免孤立节点")
+        self.assertTrue(any("自动连接" in str(w.get("reason", "")) for w in result.get("warnings", [])))
+
+
+class HarnessFallbackSummaryEvalTest(unittest.TestCase):
+    def test_fallback_summary_names_eval_target(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "create_eval_node", "arguments": '{"temp_id": "e1", "target_node_id": "D", "suggestion": "建议补充极限", "priority": "high", "reason": "不够严谨"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [
+                    {"id": "A", "kind": "knowledge", "label": "导数"},
+                    {"id": "D", "kind": "human_note", "label": "我的理解"},
+                ], "edges": []},
+                "评价一下我的理解",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                phase="evaluate",
+                focus_node_ids=["D"],
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("D", result["summary"])
+
+
+class HarnessNestedArgsTest(unittest.TestCase):
+    def test_create_node_with_nested_node_object(self):
+        from harness.core import build_next_snapshot
+
+        result = build_next_snapshot(
+            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            [
+                {
+                    "op": "create_node",
+                    "reason": "新增",
+                    "node": {"temp_id": "n1", "kind": "knowledge", "label": "极限", "content": "趋近过程"},
+                },
+                {
+                    "op": "add_edge",
+                    "reason": "连线",
+                    "edge": {"from": "n1", "to": "A", "relation": "依赖"},
+                },
+            ],
+        )
+        self.assertEqual(result["status"], "ok", result["errors"])
+        self.assertEqual(len(result["operations"]), 2)
+        created = [op for op in result["operations"] if op.get("op") == "create_node"][0]
+        self.assertTrue(created.get("assigned_id"))
+
+    def test_eval_node_on_ai_eval_is_rejected(self):
+        from harness.core import build_next_snapshot
+
+        result = build_next_snapshot(
+            {"nodes": [
+                {"id": "D", "kind": "human_note", "label": "我的理解"},
+                {"id": "E1", "kind": "ai_eval", "label": "对「我的理解」的建议"},
+            ], "edges": []},
+            [
+                {"op": "create_eval_node", "temp_id": "e_bad", "target_node_id": "E1", "suggestion": "评价评价", "priority": "low", "reason": "测试"},
+            ],
+        )
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("不能评价 AI 评价节点" in str(e.get("reason")) for e in result["errors"]))
+
+
+class HarnessNoOpsSummaryTest(unittest.TestCase):
+    def test_empty_instruction_gets_fallback_summary(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": "", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertTrue(result["summary"].strip())
+
+
+class HarnessRepairJsonTest(unittest.TestCase):
+    def test_repair_json_truncated_string_and_object(self):
+        from harness.json_utils import repair_json
+
+        payload = repair_json('{"temp_id": "eval_B", "target_node_id": "B", "reason": "当前正文过于口语化，')
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["target_node_id"], "B")
+
+    def test_repair_json_truncated_before_close(self):
+        from harness.json_utils import repair_json
+
+        payload = repair_json('{"temp_id": "n1", "kind": "knowledge", "label": "极限", "reason": "新增"')
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["label"], "极限")
+
+    def test_parse_tool_calls_salvages_truncated_args(self):
+        from harness.tools import parse_tool_calls
+
+        ops, errors = parse_tool_calls([
+            {"function": {"name": "create_eval_node", "arguments": '{"temp_id": "e1", "target_node_id": "B", "suggestion": "补全", "reason": "严谨"'}},
+        ])
+        self.assertEqual(errors, [])
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0]["op"], "create_eval_node")
+
+    def test_tool_choice_auto_for_opencode(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {"tool_choice": None}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            captured["tool_choice"] = tool_choice
+            return {"content": "", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "评价一下",
+                model={"provider": "opencode", "model": "deepseek-v4-flash-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                phase="evaluate",
+                retries=0,
+            ))
+        self.assertEqual(captured["tool_choice"], "auto")
+
+
+class HarnessEdgeRemapTest(unittest.TestCase):
+    def test_update_edge_on_readonly_auto_remaps(self):
+        from harness.core import build_next_snapshot
+
+        result = build_next_snapshot(
+            {"nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "B", "kind": "knowledge", "label": "极限"},
+            ], "edges": [
+                {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖", "label": "需要先掌握", "custom": False},
+            ]},
+            [
+                {"op": "update_edge", "edge_key": "B:out-0->A:in-0", "patch": {"relation": "前置"}, "reason": "用户要求"},
+            ],
+        )
+        self.assertEqual(result["status"], "ok", result["errors"])
+        self.assertEqual(result["operations"][0]["op"], "update_edge")
+        edge = result["next_snapshot"]["edges"][0]
+        self.assertEqual(edge["relation"], "前置")
+
+
+class HarnessUndoTest(unittest.TestCase):
+    def _apply(self, snapshot, ops):
+        from harness.core import build_next_snapshot
+
+        return build_next_snapshot(snapshot, ops)
+
+    def test_undo_roundtrip_restores_snapshot(self):
+        from harness.core import build_inverse_ops, normalize_snapshot
+
+        before = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原内容", "formula": ""},
+                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容", "formula": ""},
+            ],
+            "edges": [
+                {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
+            ],
+        }
+        ops = [
+            {"op": "update_node", "id": "A", "patch": {"content": "新内容"}, "reason": "修改"},
+            {"op": "create_node", "temp_id": "n1", "kind": "module", "module_key": "physics", "label": "物理视角", "content": "物理", "reason": "新增"},
+            {"op": "add_edge", "from": "A", "to": "n1", "relation": "物理意义", "reason": "连线"},
+            {"op": "delete_node", "id": "B", "reason": "删除"},
+        ]
+        applied = self._apply(before, ops)
+        self.assertEqual(applied["status"], "ok", applied["errors"])
+        inverse = build_inverse_ops(before, applied["operations"])
+        restored = self._apply(applied["next_snapshot"], inverse)
+        self.assertEqual(restored["status"], "ok", restored["errors"])
+        from harness.core import normalize_snapshot
+
+        def semantic(s):
+            nodes = sorted(
+                [
+                    {
+                        "id": n.get("id"),
+                        "kind": n.get("kind"),
+                        "label": n.get("label"),
+                        "content": n.get("content"),
+                        "formula": n.get("formula"),
+                        "module_key": n.get("module_key"),
+                    }
+                    for n in s["nodes"]
+                ],
+                key=lambda n: n["id"],
+            )
+            edges = sorted(
+                [
+                    {
+                        "key": e.get("key"),
+                        "from": e.get("from"),
+                        "to": e.get("to"),
+                        "relation": e.get("relation"),
+                        "label": e.get("label"),
+                    }
+                    for e in s["edges"]
+                ],
+                key=lambda e: e["key"],
+            )
+            return {"nodes": nodes, "edges": edges}
+
+        self.assertEqual(semantic(restored["next_snapshot"]), semantic(normalize_snapshot(before)))
+
+    def test_undo_detected_in_review_graph_without_model_call(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "不应被调用", "tool_calls": []}
+
+        before = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
+        after = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                after,
+                "撤销刚才的修改",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                previous_snapshot=before,
+                previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}],
+            ))
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(result["status"], "undo")
+        self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+
+    def test_clarify_passthrough(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"clarify": {"question": "想改哪个节点？", "options": ["导数", "极限"]}}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "帮我改一下这个",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "clarify")
+        self.assertEqual(result["clarify"]["question"], "想改哪个节点？")
+
+    def test_history_block_injected_into_messages(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            captured["user_content"] = messages[-1]["content"]
+            return {"content": "明白了", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "再深入一点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                history=[
+                    {"role": "user", "instruction": "给导数加物理视角"},
+                    {"role": "assistant", "summary": "已新增物理视角", "operations": [{"op": "create_node", "temp_id": "n1", "label": "物理视角"}]},
+                ],
+            ))
+        self.assertIn("此前多轮编辑历史", captured["user_content"])
+        self.assertIn("给导数加物理视角", captured["user_content"])
+
+
+class HarnessFullUndoTest(unittest.TestCase):
+    def test_full_undo_uses_cumulative_ops(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        initial = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"},
+            ],
+            "edges": [],
+        }
+        after_all = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新"},
+                {"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"},
+                {"id": "M", "kind": "module", "module_key": "math", "label": "数学视角", "content": "数学"},
+            ],
+            "edges": [],
+        }
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                after_all,
+                "把刚才所有修改全部撤销",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                previous_snapshot={"nodes": [{"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"}], "edges": []},
+                previous_ops=[{"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"}],
+                initial_snapshot=initial,
+                all_previous_ops=[
+                    {"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"},
+                    {"op": "create_node", "temp_id": "n_m", "kind": "module", "module_key": "math", "label": "数学视角", "content": "数学", "reason": "新增"},
+                    {"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"},
+                ],
+            ))
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(result["status"], "undo")
+        ids = [n["id"] for n in result["next_snapshot"]["nodes"]]
+        self.assertNotIn("M", ids)
+        self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+        self.assertEqual(result["next_snapshot"]["nodes"][1]["label"], "极限")
+
+    def test_normal_phase_edit_intent_retries_when_no_ops(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"content": "链式法则是复合函数求导的规则……", "tool_calls": []}
+            return {
+                "content": '{"summary": "新增", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "链式法则", "reason": "新增"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "新增知识点：链式法则",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=1,
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["operations"][0]["op"], "create_node")
+
+
+class HarnessExpandCompletionTest(unittest.TestCase):
+    def test_expand_auto_completes_missing_learn_module(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"summary": "进阶", "operations": [{"op": "create_node", "temp_id": "ans_A", "kind": "answer", "label": "「导数」的进阶学习", "content": "学习方向", "reason": "进阶"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "为导数生成进阶学习链",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                phase="expand",
+                focus_node_ids=["A"],
+                retries=1,
+            ))
+        self.assertEqual(result["status"], "ok", result["errors"])
+        learns = [op for op in result["operations"] if op.get("op") == "create_node" and op.get("kind") == "module" and op.get("module_key") == "learn"]
+        self.assertTrue(learns, "应自动补全 learn 模块")
+
+
+class HarnessConcatenatedJsonTest(unittest.TestCase):
+    def test_repair_json_concatenated_objects_takes_first(self):
+        from harness.json_utils import repair_json
+
+        args = '{"node_id": "D", "patch": {"content": "更深入的理解"}, "reason": "深入"}{"from": "n_math", "to": "A", "relation": "数学意义", "reason": "连线"}'
+        payload = repair_json(args)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["node_id"], "D")
+
+    def test_parse_tool_calls_salvages_concatenated_args(self):
+        from harness.tools import parse_tool_calls
+
+        ops, errors = parse_tool_calls([
+            {"function": {"name": "update_node", "arguments": '{"node_id": "D", "patch": {"content": "x"}, "reason": "r"}{"from": "A", "to": "B", "reason": "e"}'}},
+        ])
+        self.assertEqual(errors, [])
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0]["op"], "update_node")
+
+
+class HarnessNodeIdAliasTest(unittest.TestCase):
+    def test_review_graph_accepts_node_id_alias(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": '{"summary": "改", "operations": [{"op": "update_node", "node_id": "A", "patch": {"content": "新"}, "reason": "改"}]}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "改一下",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(result["status"], "ok", result["errors"])
+        self.assertEqual(result["operations"][0]["id"], "A")
+
+    def test_create_node_with_kind_ai_eval_rejected(self):
+        from harness.core import build_next_snapshot
+
+        result = build_next_snapshot(
+            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            [{"op": "create_node", "temp_id": "e1", "kind": "ai_eval", "label": "评价", "reason": "绕过"}],
+        )
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("只能通过 create_eval_node" in str(e.get("reason")) for e in result["errors"]))
+
+
+class HarnessReadOnlyDeleteTest(unittest.TestCase):
+    def test_read_only_node_cannot_be_deleted_by_default(self):
+        from harness.core import build_next_snapshot
+
+        result = build_next_snapshot(
+            {"nodes": [{"id": "ROOT", "kind": "user", "label": "根问题", "read_only": True}], "edges": []},
+            [{"op": "delete_node", "id": "ROOT", "reason": "删除根"}],
+        )
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("只读节点不能删除" in str(e.get("reason")) for e in result["errors"]))
+
+
+class HarnessApplyPhaseGuardTest(unittest.TestCase):
+    def test_apply_phase_rejects_create_eval_node(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {
+                    "content": '{"summary": "评价", "operations": [{"op": "create_eval_node", "temp_id": "e1", "target_node_id": "A", "suggestion": "建议", "priority": "high", "reason": "评价"}]}',
+                    "tool_calls": [],
+                }
+            return {
+                "content": '{"summary": "应用", "operations": [{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "应用建议"}]}',
+                "tool_calls": [],
+            }
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "E1", "kind": "ai_eval", "label": "对「导数」的建议", "target_node_id": "A", "suggestion": "改内容"},
+            ],
+            "edges": [{"key": "A:out-0->E1:in-0", "from": "A", "to": "E1", "relation": "评价"}],
+        }
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                snapshot,
+                "应用建议",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="json",
+                self_check="off",
+                phase="apply",
+                retries=1,
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["status"], "ok", result["errors"])
+        ops = result["operations"]
+        self.assertTrue(all(o.get("op") != "create_eval_node" for o in ops))
+
+
+class HarnessPlaceholderContentTest(unittest.TestCase):
+    def test_created_node_content_capped_to_placeholder(self):
+        from harness.core import build_next_snapshot
+
+        long_content = "这是一段非常长的正文" * 20
+        result = build_next_snapshot(
+            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            [{"op": "create_node", "temp_id": "n1", "kind": "module", "module_key": "physics", "label": "物理视角", "content": long_content, "reason": "新增"}],
+        )
+        self.assertEqual(result["status"], "ok", result["errors"])
+        created = result["next_snapshot"]["nodes"][-1]
+        self.assertLessEqual(len(created["content"]), 80)
 
 
 if __name__ == "__main__":

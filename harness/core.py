@@ -64,6 +64,8 @@ UPDATEABLE_NODE_FIELDS = {"label", "title", "content", "summary", "formula", "st
 UPDATEABLE_EDGE_FIELDS = {"relation", "label"}
 
 MAX_NODE_CONTENT_LENGTH = 1200
+# 新建节点只允许占位内容（正文由内容生成流程填充）
+MAX_CREATED_NODE_CONTENT = 80
 MAX_OPERATIONS = 80
 
 # 大图守护：超过阈值时压缩非焦点节点，超过硬阈值直接拒绝
@@ -166,13 +168,30 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     return {"version": 1, "nodes": nodes, "edges": edges}
 
 
+
+def _flatten_op(op: Any) -> Any:
+    """Flatten nested argument objects some models emit, e.g.
+    {"op": "create_node", "node": {"temp_id": "n1", "kind": "knowledge", ...}}."""
+    if not isinstance(op, dict):
+        return op
+    for key in ("node", "edge", "data", "properties"):
+        sub = op.get(key)
+        if isinstance(sub, dict):
+            merged = dict(op)
+            for k, v in sub.items():
+                if k not in merged or merged[k] in (None, ""):
+                    merged[k] = v
+            return merged
+    return op
+
+
 def normalize_operations(operations: Any) -> List[Dict[str, Any]]:
     if not isinstance(operations, list):
         return []
     result: List[Dict[str, Any]] = []
     for item in operations:
         if isinstance(item, dict):
-            result.append(item)
+            result.append(_flatten_op(item))
     return result[:MAX_OPERATIONS]
 
 
@@ -205,7 +224,7 @@ def build_next_snapshot(
     snapshot: Any,
     operations: Any,
     *,
-    allow_read_only_delete: bool = True,
+    allow_read_only_delete: bool = False,
 ) -> Dict[str, Any]:
     """Validate operations and return the resulting snapshot.
 
@@ -274,8 +293,15 @@ def build_next_snapshot(
             if temp_id in temp_to_assigned:
                 errors.append({"index": index, "op": op_name, "reason": f"temp_id 重复: {temp_id}"})
                 continue
+            force_id = _text(op.get("force_id"))
+            if force_id and (force_id in nodes or force_id in temp_to_assigned):
+                errors.append({"index": index, "op": op_name, "reason": f"force_id 与现有节点冲突: {force_id}"})
+                continue
             if kind not in ALLOWED_CREATE_KINDS:
                 errors.append({"index": index, "op": op_name, "reason": f"不允许新建节点类型: {kind}"})
+                continue
+            if kind == "ai_eval":
+                errors.append({"index": index, "op": op_name, "reason": "AI 评价节点只能通过 create_eval_node 创建，不能使用 create_node"})
                 continue
             if not node_label:
                 errors.append({"index": index, "op": op_name, "reason": "缺少节点标题"})
@@ -284,12 +310,12 @@ def build_next_snapshot(
             if kind == "module" and module_key not in ALLOWED_MODULE_KEYS:
                 errors.append({"index": index, "op": op_name, "reason": f"无效模块类型: {module_key or '空'}"})
                 continue
-            assigned_id = _next_temp_id(nodes, index)
+            assigned_id = force_id if force_id else _next_temp_id(nodes, index)
             nodes[assigned_id] = {
                 "id": assigned_id,
                 "kind": kind,
                 "label": node_label,
-                "content": _text(op.get("content") or op.get("summary"))[:MAX_NODE_CONTENT_LENGTH],
+                "content": _text(op.get("content") or op.get("summary"))[:MAX_CREATED_NODE_CONTENT],
                 "formula": _text(op.get("formula"))[:500],
                 "module_key": module_key,
                 "manual": _bool(op.get("manual")),
@@ -310,6 +336,9 @@ def build_next_snapshot(
                 continue
             if not target_node:
                 errors.append({"index": index, "op": op_name, "reason": f"评价目标节点不存在: {target_id}"})
+                continue
+            if target_node.get("kind") == "ai_eval":
+                errors.append({"index": index, "op": op_name, "reason": "不能评价 AI 评价节点本身，请改为评价真实节点"})
                 continue
             if not suggestion:
                 errors.append({"index": index, "op": op_name, "reason": "缺少评价建议"})
@@ -431,7 +460,7 @@ def build_next_snapshot(
                 "toPort": to_port,
                 "relation": _text(op.get("relation")),
                 "label": _text(op.get("label")),
-                "custom": True,
+                "custom": str(op.get("custom")).lower() in {"1", "true", "yes", "y", "on"} if op.get("custom") is not None else True,
             }
             valid_ops.append(
                 {
@@ -460,10 +489,21 @@ def build_next_snapshot(
             if not key or not edge:
                 errors.append({"index": index, "op": op_name, "reason": f"连线不存在: {key or ''}"})
                 continue
-            if not edge.get("custom"):
-                errors.append({"index": index, "op": op_name, "reason": "只读连线不能修改"})
-                continue
             patch = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+            if not edge.get("custom"):
+                # 只读连线不能原地修改：自动转为 remove+add（同端点、应用 patch），
+                # 避免模型反复报错。对外仍记录为 update_edge。
+                removed = edges.pop(key, None)
+                if removed is None:
+                    errors.append({"index": index, "op": op_name, "reason": f"连线不存在: {key or ''}"})
+                    continue
+                edges[key] = {
+                    **removed,
+                    "relation": _text(patch.get("relation"), removed.get("relation", "")),
+                    "label": _text(patch.get("label"), removed.get("label", "")),
+                }
+                valid_ops.append({**op, "edge_key": key, "auto_remap": True})
+                continue
             for field in UPDATEABLE_EDGE_FIELDS:
                 if field in patch:
                     edges[key][field] = _text(patch.get(field), "")
@@ -489,6 +529,118 @@ def build_next_snapshot(
         "warnings": warnings,
     }
 
+
+
+
+def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any = None) -> List[Dict[str, Any]]:
+    """Deterministically compute inverse operations that undo the given operations.
+
+    ``before_snapshot`` is the snapshot the operations were applied to (used to
+    recover old node/edge values). ``after_snapshot`` optionally helps resolve
+    created-node ids when operations lack assigned_id. The returned ops can be applied to the
+    current (after) snapshot to restore the before state. Restored nodes keep
+    their original ids via ``force_id`` so undo is byte-for-byte reproducible.
+    """
+    before = normalize_snapshot(before_snapshot)
+    before_nodes = {node["id"]: node for node in before["nodes"]}
+    before_edges = {edge["key"]: edge for edge in before["edges"]}
+    after = normalize_snapshot(after_snapshot) if after_snapshot is not None else None
+    after_nodes = {node["id"]: node for node in after["nodes"]} if after else {}
+    inverse: List[Dict[str, Any]] = []
+    for op in reversed(list(normalize_operations(operations))):
+        name = _text(op.get("op"))
+        reason = "撤销上一步修改"
+        if name == "create_node":
+            node_id = _text(op.get("assigned_id") or op.get("id") or op.get("temp_id"))
+            if node_id and node_id not in before_nodes and after is not None and node_id not in after_nodes:
+                # 原始操作可能只有 temp_id：用 kind+label+content 在 after 中定位真实节点
+                created_key = (
+                    str(op.get("kind") or ""),
+                    str(op.get("label") or ""),
+                    str(op.get("content") or ""),
+                )
+                for nid, node in after_nodes.items():
+                    if (
+                        nid not in before_nodes
+                        and (str(node.get("kind") or ""), str(node.get("label") or ""), str(node.get("content") or "")) == created_key
+                    ):
+                        node_id = nid
+                        break
+            if node_id:
+                inverse.append({"op": "delete_node", "id": node_id, "reason": reason})
+        elif name == "create_eval_node":
+            node_id = _text(op.get("assigned_id") or op.get("id") or op.get("temp_id"))
+            if node_id:
+                inverse.append({"op": "delete_node", "id": node_id, "reason": reason})
+        elif name == "update_node":
+            node_id = _text(op.get("id"))
+            old = before_nodes.get(node_id)
+            if old:
+                patch = {}
+                for field in UPDATEABLE_NODE_FIELDS:
+                    if field in (op.get("patch") or {}):
+                        patch[field] = old.get(field, "")
+                if patch:
+                    inverse.append({"op": "update_node", "id": node_id, "patch": patch, "reason": reason})
+        elif name == "delete_node":
+            node_id = _text(op.get("id"))
+            old = before_nodes.get(node_id)
+            if old:
+                inverse.append({
+                    "op": "create_node",
+                    "temp_id": "restore_" + node_id,
+                    "force_id": node_id,
+                    "kind": old.get("kind") or "knowledge",
+                    "label": old.get("label") or node_id,
+                    "content": old.get("content") or "",
+                    "formula": old.get("formula") or "",
+                    "module_key": old.get("module_key") or "",
+                    "status": old.get("status") or "",
+                    "manual": old.get("manual") or False,
+                    "reason": reason,
+                })
+                for edge in before_edges.values():
+                    if edge["from"] == node_id or edge["to"] == node_id:
+                        inverse.append({
+                            "op": "add_edge",
+                            "from": edge["from"],
+                            "to": edge["to"],
+                            "fromPort": edge.get("fromPort", "out-0"),
+                            "toPort": edge.get("toPort", "in-0"),
+                            "relation": edge.get("relation", ""),
+                            "label": edge.get("label", ""),
+                            "custom": edge.get("custom", True),
+                            "reason": reason,
+                        })
+        elif name == "add_edge":
+            key = _text(op.get("edge_key") or op.get("key"))
+            if key:
+                inverse.append({"op": "remove_edge", "edge_key": key, "reason": reason})
+        elif name == "remove_edge":
+            key = _text(op.get("edge_key") or op.get("key"))
+            old = before_edges.get(key)
+            if old:
+                inverse.append({
+                    "op": "add_edge",
+                    "from": old["from"],
+                    "to": old["to"],
+                    "fromPort": old.get("fromPort", "out-0"),
+                    "toPort": old.get("toPort", "in-0"),
+                    "relation": old.get("relation", ""),
+                    "label": old.get("label", ""),
+                    "reason": reason,
+                })
+        elif name == "update_edge":
+            key = _text(op.get("edge_key"))
+            old = before_edges.get(key)
+            if old:
+                inverse.append({
+                    "op": "update_edge",
+                    "edge_key": key,
+                    "patch": {"relation": old.get("relation", ""), "label": old.get("label", "")},
+                    "reason": reason,
+                })
+    return inverse
 
 def _node_signature(node: Dict[str, Any]) -> tuple:
     return (

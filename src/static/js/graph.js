@@ -551,7 +551,7 @@ function _buildGraphData(messages, state) {
       const branchY = branchParentNode && branchParentNode.y != null
         ? branchParentNode.y + ((branchCount % 7) - 3) * 130
         : radialY;
-      const node = {
+      let node = {
         id,
         kind: 'user',
         x: saved ? saved.x : (isRoot ? 0 : branchX),
@@ -618,7 +618,7 @@ function _buildGraphData(messages, state) {
       const branchY = isBranchAnswer && parentQuestion && parentQuestion.y != null
         ? parentQuestion.y + 150
         : radialY;
-      const node = {
+      let node = {
         id,
         kind: 'answer',
         x: saved ? saved.x : branchX,
@@ -665,7 +665,7 @@ function _buildGraphData(messages, state) {
         const mBranchY = node.isBranch && node.y != null
           ? node.y + 250
           : mRadialY;
-        const mNode = {
+        let mNode = {
           id: moduleId,
           kind: 'module',
           x: savedM ? savedM.x : mBranchX,
@@ -702,7 +702,7 @@ function _buildGraphData(messages, state) {
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
     const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
-    const node = {
+    let node = {
       ...cn,
       id: cn.id,
       kind,

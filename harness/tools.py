@@ -13,6 +13,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from .core import ALLOWED_CREATE_KINDS, ALLOWED_MODULE_KEYS
+from .json_utils import repair_json
 
 REASON_DESC = "修改理由：为什么执行这个操作（必填，没有理由的操作不会被应用）"
 NODE_ID_DESC = "快照中真实存在的节点 ID（不能是新建节点的 temp_id）"
@@ -131,7 +132,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
 
     update_edge = _tool(
         "update_edge",
-        "修改一条已有连线的关系/说明（只读连线不能修改）。可用 edge_key 精确定位，或提供 from/to/from_port/to_port 由系统推导。",
+        "修改一条已有连线的关系/说明（只读连线会自动转为删除后重建）。可用 edge_key 精确定位，或提供 from/to/from_port/to_port 由系统推导。",
         {
             "edge_key": _str_prop("连线 key，格式：from:out-0->to:in-0"),
             "from": _str_prop("起点节点 ID（未提供 edge_key 时用于推导）"),
@@ -332,8 +333,12 @@ def parse_tool_calls(tool_calls: Any) -> Tuple[List[Dict[str, Any]], List[Dict[s
         try:
             args = json.loads(raw_args) if _text(raw_args) else {}
         except (json.JSONDecodeError, ValueError):
-            errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数不是合法 JSON"})
-            continue
+            repaired = repair_json(raw_args)
+            if isinstance(repaired, dict):
+                args = repaired
+            else:
+                errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数不是合法 JSON（可能被截断）"})
+                continue
         if not isinstance(args, dict):
             errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数必须是对象"})
             continue

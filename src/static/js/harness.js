@@ -9,6 +9,8 @@
   let harnessSingleEvalId = null;
   let harnessPendingClarify = null;
   let harnessHistory = [];
+let harnessLastAppliedOps = [];
+let harnessLastAppliedBeforeSnapshot = null;
   let harnessBusy = false;
   let harnessLastInstruction = '';
   let harnessLastPhase = 'normal';
@@ -309,6 +311,7 @@
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对 harness 说话..."></textarea>'
       + '<div class="graph-harness-actions">'
+      + '<button type="button" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
       + '<button type="button" onclick="runHarnessExpandQuick()" title="为选中节点生成进阶学习链">✨ 进阶学习</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'

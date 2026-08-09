@@ -3,6 +3,30 @@
   function renderHarnessResult(data) {
     const resultBox = document.getElementById('graphHarnessResult');
     if (!resultBox) return;
+    if (data.status === 'clarify' || data.clarify) {
+      const c = data.clarify || {};
+      const question = String(c.question || data.summary || '需要向你确认一下');
+      const options = Array.isArray(c.options) ? c.options : [];
+      let html = '<div class="graph-harness-summary">' + _escapeHtml(question) + '</div>';
+      if (options.length) {
+        html += '<div class="graph-harness-clarify-options">'
+          + options.map(opt => '<button type="button" class="graph-harness-clarify-opt" onclick="runGraphHarnessWithText(this.textContent)">'
+            + _escapeHtml(String(opt)) + '</button>').join('')
+          + '</div>';
+      }
+      resultBox.innerHTML = html;
+      document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
+      _setHarnessStatus('需要你确认后再继续', 'ok');
+      return;
+    }
+    if (data.status === 'undo') {
+      const ops = Array.isArray(data.operations) ? data.operations : [];
+      resultBox.innerHTML = '<div class="graph-harness-summary">↩ ' + _escapeHtml(data.summary || '已撤销上一条修改') + '</div>'
+        + (ops.length ? '<div class="graph-harness-empty">已自动应用 ' + ops.length + ' 条撤销操作，可继续对 harness 说话。</div>' : '');
+      document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
+      _setHarnessStatus('已撤销上一条修改', 'ok');
+      return;
+    }
     if (data.status === 'error' || data.status === 'parse_error' || data.status === 'invalid') {
       const errors = (data.errors || []).map(item => item.reason || '未知错误').join('<br>');
       resultBox.innerHTML = '<div class="graph-harness-error">' + _escapeHtml(errors || data.status) + '</div>';

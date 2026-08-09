@@ -3270,3 +3270,27 @@
   border-color: rgba(52, 211, 153, 0.4);
   background: rgba(52, 211, 153, 0.08);
 }
+
+/* ===== harness clarify / undo（AI 网络助手多轮交互） ===== */
+.graph-harness-clarify-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.graph-harness-clarify-opt {
+  border: 1px solid var(--phi-border, #164e63);
+  background: var(--phi-surface, rgba(15, 60, 80, 0.55));
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s ease;
+}
+.graph-harness-clarify-opt:hover {
+  background: var(--phi-accent, rgba(34, 211, 238, 0.18));
+}
+.graph-harness-composer .graph-harness-actions button {
+  margin-left: 6px;
+}

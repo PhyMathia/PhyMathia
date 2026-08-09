@@ -92,3 +92,6 @@ logs/
 .codegraph
 data/
 example/
+# Local dev tools (python embeddable, logs)
+.tools/
+scripts/battery-*.json

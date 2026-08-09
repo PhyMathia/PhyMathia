@@ -1,5 +1,44 @@
 // ===== PhyMathia 图编辑 harness：评审运行与澄清 =====
 
+
+  function _buildStructuredHarnessHistory() {
+    return (Array.isArray(harnessHistory) ? harnessHistory : []).slice(-20).map(entry => {
+      if (entry.role === 'user') {
+        return { role: 'user', instruction: String(entry.instruction || entry.content || '').slice(0, 400) };
+      }
+      return {
+        role: 'assistant',
+        summary: String(entry.summary || entry.content || '').slice(0, 400),
+        operations: Array.isArray(entry.operations) ? entry.operations.slice(0, 20).map(op => ({
+          op: op.op || op.type || '',
+          id: op.id || '',
+          temp_id: op.temp_id || '',
+          assigned_id: op.assigned_id || '',
+          from: op.from || '',
+          to: op.to || '',
+          edge_key: op.edge_key || op.key || '',
+          label: op.label || '',
+          kind: op.kind || '',
+          patch: op.patch || undefined,
+        })) : [],
+      };
+    });
+  }
+
+  function runGraphHarnessWithText(text) {
+    const inputEl = document.getElementById('graphHarnessInstruction');
+    if (inputEl) inputEl.value = String(text || '');
+    runGraphHarness();
+  }
+
+  function undoLastHarnessEdit() {
+    if (!(Array.isArray(harnessLastAppliedOps) && harnessLastAppliedOps.length)) {
+      _setHarnessStatus('没有可撤销的已应用修改', 'error');
+      return;
+    }
+    runGraphHarnessWithText('撤销刚才的修改，恢复原样');
+  }
+
   async function runGraphHarness(phase = 'normal') {
     const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
     const inputEl = document.getElementById('graphHarnessInstruction');
@@ -109,11 +148,14 @@
             model: model.model,
             base_url: model.baseUrl,
           },
-          max_tokens: 4000,
+          max_tokens: 6000,
           phase: harnessPhase,
           level: localStorage.getItem('phymathia_level') || 'university',
           focus_node_ids: focusIds,
           conversation_context: _buildConversationContext(),
+          harness_history: _buildStructuredHarnessHistory(),
+          previous_ops: Array.isArray(harnessLastAppliedOps) ? harnessLastAppliedOps : [],
+          previous_snapshot: harnessLastAppliedBeforeSnapshot || null,
           retries: 2,
         }),
           signal: harnessAbortController.signal,
@@ -124,6 +166,14 @@
       }
       harnessResult = data;
       renderHarnessResult(data);
+      if (data.status === 'undo' && (data.operations || []).length) {
+        if (typeof _applyOps === 'function') {
+          _applyOps(data.operations, false);
+          harnessLastAppliedOps = [];
+          harnessLastAppliedBeforeSnapshot = null;
+          _setHarnessStatus('已撤销上一条修改', 'ok');
+        }
+      }
       _appendHarnessHistory({
         id: _historyId(),
         role: 'assistant',
@@ -269,11 +319,14 @@
             model: model.model,
             base_url: model.baseUrl,
           },
-          max_tokens: 4000,
+          max_tokens: 6000,
           phase: harnessPhase,
           level: localStorage.getItem('phymathia_level') || 'university',
           focus_node_ids: focusIds,
           conversation_context: _buildConversationContext(),
+          harness_history: _buildStructuredHarnessHistory(),
+          previous_ops: Array.isArray(harnessLastAppliedOps) ? harnessLastAppliedOps : [],
+          previous_snapshot: harnessLastAppliedBeforeSnapshot || null,
           retries: 2,
         }),
       });

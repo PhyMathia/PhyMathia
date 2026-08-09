@@ -117,6 +117,19 @@ def rule_selfcheck(
     if not op_list and any(word in text for word in ACTION_WORDS):
         issues.append("指令包含明确的修改意图，但模型没有提出任何操作")
 
+
+    # 重复模块检查：新建 module 时若图中已有同 module_key 的模块，给出警告
+    existing_modules = {}
+    for node in snapshot.get("nodes", []):
+        if node.get("kind") == "module" and node.get("module_key"):
+            existing_modules.setdefault(str(node.get("module_key")), []).append(str(node.get("label") or node.get("id") or node.get("module_key")))
+    for op in op_list:
+        if str(op.get("op")) == "create_node" and str(op.get("kind")) == "module":
+            mk = str(op.get("module_key") or op.get("moduleKey") or "")
+            if mk and mk in existing_modules:
+                dup_labels = "、".join(existing_modules[mk])
+                issues.append(f"图中已有同类型模块节点（{dup_labels}），新增会造成重复；若用户明确要求再新增一个可忽略本提示")
+
     deletes = sum(1 for op in op_list if str(op.get("op")) == "delete_node")
     if deletes > 5 and total and deletes > 0.4 * total:
         issues.append(f"本次删除节点较多（{deletes}/{total}），请确认是否符合预期")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from .json_utils import extract_json
+from .json_utils import extract_json, repair_json
 
 SELFCHECK_SYSTEM_PROMPT = """你是图修改结果质检员。下面给出用户指令、图快照（精简）和已经生成的操作。
 检查这些操作是否准确、完整地执行了用户指令：有没有选错节点、漏做关键动作、做了多余或冲突的修改。
@@ -58,7 +58,9 @@ def parse_selfcheck_tool(tool_calls):
         try:
             args = json.loads(str(fn.get("arguments") or "{}"))
         except (json.JSONDecodeError, ValueError):
-            return None
+            args = repair_json(str(fn.get("arguments") or ""))
+            if not isinstance(args, dict):
+                return None
         if not isinstance(args, dict):
             return None
         issues = [str(item) for item in (args.get("issues") or []) if str(item)]

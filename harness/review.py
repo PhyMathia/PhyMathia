@@ -20,6 +20,7 @@ from .core import (
     MAX_SNAPSHOT_CHARS,
     MAX_SNAPSHOT_HARD_CHARS,
     NON_FOCUS_CONTENT_CHARS,
+    build_inverse_ops,
     build_next_snapshot,
     diff_snapshots,
     normalize_snapshot,
@@ -69,8 +70,56 @@ TOOLS_AUTO_HINT = (
 )
 
 
+
+UNDO_HINTS = (
+    "撤销", "回退", "恢复", "还原", "撤回", "不要刚才", "重来", "undo", "rollback",
+)
+
+
+def _detect_undo_intent(instruction: str) -> bool:
+    text = str(instruction or "")
+    return any(hint in text.lower() for hint in UNDO_HINTS)
+
+
+def _filter_inverse_by_targets(inverse_ops: list, targets) -> list:
+    targets = {str(item) for item in (targets or []) if str(item)}
+    if not targets:
+        return inverse_ops
+    kept = []
+    for op in inverse_ops:
+        ids = [op.get("id"), op.get("from"), op.get("to"), op.get("temp_id"), op.get("force_id")]
+        if any(str(item) in targets for item in ids if item):
+            kept.append(op)
+    return kept
+
+
+def _history_block(history) -> str:
+    if not history:
+        return ""
+    lines = ["\n\n此前多轮编辑历史（最新在后）："]
+    for i, item in enumerate(history):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "user")
+        if role == "user":
+            lines.append(f"{i + 1}. 用户：{str(item.get('instruction') or '')[:200]}")
+        else:
+            ops = item.get("operations") or []
+            op_desc = "；".join(
+                f"{o.get('op')}({o.get('id') or o.get('temp_id') or o.get('label') or ''})"
+                for o in ops[:20]
+            )
+            lines.append(f"{i + 1}. 助手：{str(item.get('summary') or '')[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
+    return "\n".join(lines)
+
+
 class HarnessError(RuntimeError):
     pass
+
+
+def _supports_required_tool_choice(provider: str) -> bool:
+    """Providers that accept tool_choice="required" (some free/open proxies do not)."""
+    return str(provider or "").strip().lower() in ("deepseek", "openai")
 
 
 def _supports_json_mode(provider: str) -> bool:
@@ -174,6 +223,153 @@ async def _call_model(
     }
 
 
+
+
+
+def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
+    """Deterministic safety net for expand phase: when the model created answer
+    nodes but forgot the corresponding learn module, auto-create one and connect
+    it (answer -> learn). Only applies to created answers."""
+    ops = list(result.get("operations") or [])
+    answers = []
+    learn_ids = set()
+    edges = []
+    for op in ops:
+        name = str(op.get("op") or "")
+        node_id = str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
+        if name == "create_node":
+            if str(op.get("kind") or "") == "answer":
+                answers.append(op)
+            elif str(op.get("kind") or "") == "module" and str(op.get("module_key") or "") == "learn":
+                if node_id:
+                    learn_ids.add(node_id)
+        elif name == "add_edge":
+            edges.append((str(op.get("from") or ""), str(op.get("to") or "")))
+    edge_pairs = set(edges)
+    missing = [
+        op for op in answers
+        if not any((str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or ""), learn) in edge_pairs for learn in learn_ids)
+    ]
+    if not missing:
+        return result
+    extra_ops = []
+    for op in missing:
+        answer_id = str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
+        if not answer_id:
+            continue
+        extra_ops.append({
+            "op": "create_node",
+            "temp_id": "auto_learn_" + answer_id,
+            "kind": "module",
+            "module_key": "learn",
+            "label": "进阶学习",
+            "content": str(op.get("content") or "")[:300] or "进阶学习内容",
+            "reason": "自动补全进阶学习模块（模型遗漏）",
+        })
+        extra_ops.append({
+            "op": "add_edge",
+            "from": answer_id,
+            "to": "auto_learn_" + answer_id,
+            "relation": "模块",
+            "label": "进入进阶内容",
+            "reason": "自动补全进阶学习链",
+        })
+    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
+    result["operations"] = ops + list(merged.get("operations") or [])
+    result["next_snapshot"] = merged["next_snapshot"]
+    result["diff"] = diff_snapshots(current, merged["next_snapshot"])
+    for err in merged.get("errors") or []:
+        result.setdefault("errors", []).append(err)
+    result.setdefault("warnings", []).append({
+        "index": "auto-learn",
+        "op": "create_node",
+        "reason": "为 " + str(len(missing)) + " 个 AI 回答节点自动补全进阶学习模块",
+    })
+    return result
+
+
+def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids, instruction: str = "") -> Dict[str, Any]:
+    """Deterministic safety net: connect created nodes that ended up isolated
+    (no add_edge referencing them) to the focus node, or to the first existing
+    node when there is no focus. Never runs for evaluate/apply phases."""
+    text = str(instruction or "")
+    if any(word in text for word in ("独立", "单独", "不要连接", "不连接")):
+        return result
+    ops = list(result.get("operations") or [])
+    created = [op for op in ops if str(op.get("op")) == "create_node"]
+    if not created:
+        return result
+    edge_endpoints = set()
+    for op in ops:
+        if str(op.get("op")) == "add_edge":
+            if op.get("from"):
+                edge_endpoints.add(str(op.get("from")))
+            if op.get("to"):
+                edge_endpoints.add(str(op.get("to")))
+    isolated = [
+        op for op in created
+        if str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "") not in edge_endpoints
+    ]
+    if not isolated:
+        return result
+    existing_ids = [str(node.get("id")) for node in current.get("nodes", [])]
+    anchors = [str(item) for item in (focus_node_ids or []) if str(item) in existing_ids]
+    anchor = anchors[0] if anchors else (existing_ids[0] if existing_ids else None)
+    if not anchor:
+        return result
+    extra_ops = [
+        {
+            "op": "add_edge",
+            "from": anchor,
+            "to": str(op.get("assigned_id") or op.get("id") or op.get("temp_id")),
+            "relation": "关联",
+            "label": "自动连接（避免孤立节点）",
+            "reason": "自动连接（避免孤立节点）",
+        }
+        for op in isolated
+    ]
+    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
+    result["operations"] = ops + list(merged.get("operations") or [])
+    result["next_snapshot"] = merged["next_snapshot"]
+    result["diff"] = diff_snapshots(current, merged["next_snapshot"])
+    for err in merged.get("errors") or []:
+        result.setdefault("errors", []).append(err)
+    result.setdefault("warnings", []).append({
+        "index": "auto-connect",
+        "op": "add_edge",
+        "reason": "为 " + str(len(extra_ops)) + " 个孤立新节点自动连接到「" + anchor + "」",
+    })
+    return result
+
+
+def _fallback_summary(ops: list) -> str:
+    """Build a compact Chinese summary from validated operations when the model
+    returned no text (common with tool-calling where content is empty)."""
+    parts = []
+    for op in ops or []:
+        name = str(op.get("op") or op.get("type") or "")
+        label = str(op.get("label") or op.get("title") or op.get("id") or "")
+        target = str(op.get("target_label") or op.get("target") or op.get("target_node_id") or op.get("from") or "")
+        if name == "create_node":
+            parts.append("新增「" + (label or "节点") + "」")
+        elif name == "create_eval_node":
+            parts.append("为「" + (target or label or "目标节点") + "」生成评价")
+        elif name == "update_node":
+            parts.append("修改「" + (label or op.get("id") or "节点") + "」")
+        elif name == "delete_node":
+            parts.append("删除「" + (label or op.get("id") or "节点") + "」")
+        elif name == "add_edge":
+            parts.append("新增连线 " + str(op.get("from") or "") + "→" + str(op.get("to") or ""))
+        elif name == "remove_edge":
+            parts.append("删除连线 " + str(op.get("edge_key") or ""))
+        elif name == "update_edge":
+            parts.append("修改连线 " + str(op.get("edge_key") or ""))
+    if not parts:
+        return ""
+    head = "已生成 " + str(len(ops or [])) + " 条图修改：" + "；".join(parts)
+    return head[:200]
+
+
 def _summarize_errors(errors) -> str:
     lines = []
     for item in errors or []:
@@ -231,6 +427,11 @@ async def review_graph(
     conversation_context: str = "",
     mode: str = "auto",
     self_check: str = "auto",
+    history=None,
+    previous_ops=None,
+    previous_snapshot=None,
+    all_previous_ops=None,
+    initial_snapshot=None,
 ) -> Dict[str, Any]:
     """Review the snapshot and return validated graph operations.
 
@@ -246,15 +447,34 @@ async def review_graph(
     provider = resolved_model["provider"]
 
     mode = str(mode or "auto").strip().lower()
+    # ---- 确定性撤销：指令含撤销意图且有上一步操作时，不调用模型 ----
+    undo_intent = _detect_undo_intent(instruction)
+    text_lower = str(instruction or "").lower()
+    use_full = ("全部" in text_lower or "所有" in text_lower) and (all_previous_ops or [])
+    prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
+    prev_before = initial_snapshot if use_full else previous_snapshot
+    if undo_intent and prev_ops:
+        current = normalize_snapshot(snapshot)
+        inverse_ops = build_inverse_ops(prev_before or current, prev_ops, current)
+        inverse_ops = _filter_inverse_by_targets(inverse_ops, focus_node_ids)
+        if inverse_ops:
+            undo_result = build_next_snapshot(current, inverse_ops)
+            undo_result["summary"] = "已撤销上一步修改" + (
+                "（仅撤销指定节点相关改动）" if focus_node_ids else ""
+            )
+            undo_result["status"] = "undo"
+            undo_result["phase"] = "undo"
+            undo_result["raw_has_ops"] = bool(inverse_ops)
+            undo_result["undo_ops"] = inverse_ops
+            return undo_result
     tools = build_tools(phase) if mode in ("auto", "tools") else None
+    can_require = _supports_required_tool_choice(provider)
     if not tools:
         tool_choice = None
-    elif phase == "expand":
-        tool_choice = "required"
-    elif phase in ("evaluate", "apply"):
-        tool_choice = "required"
+    elif phase in ("expand", "evaluate", "apply"):
+        tool_choice = "required" if can_require else "auto"
     else:
-        tool_choice = "required" if _has_edit_intent(instruction) else "auto"
+        tool_choice = "required" if (_has_edit_intent(instruction) and can_require) else "auto"
     json_mode = _supports_json_mode(provider) if mode != "tools" else False
     self_check_mode = str(self_check or "auto").strip().lower()
     self_check_enabled = (
@@ -281,6 +501,9 @@ async def review_graph(
         current_json = json_mode if not current_tools else False
         if current_tools:
             messages[-1]["content"] += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
+        history_text = _history_block(history)
+        if history_text:
+            messages[-1]["content"] += history_text
 
         try:
             raw = await _call_model(
@@ -293,16 +516,28 @@ async def review_graph(
             )
         except HarnessError as exc:
             if current_tools and mode == "auto":
-                logger.warning("工具调用失败，降级为自由 JSON: %s", exc)
-                tools = None
-                tool_choice = None
-                messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "")
-                raw = await _call_model(
-                    messages,
-                    resolved_model,
-                    max_tokens,
-                    json_mode=_supports_json_mode(provider),
-                )
+                if tool_choice == "required":
+                    # 部分 provider（如 opencode 免费模型）不支持 required，先降级为 auto
+                    logger.warning("tool_choice=required 失败，降级为 auto: %s", exc)
+                    tool_choice = "auto"
+                    raw = await _call_model(
+                        messages,
+                        resolved_model,
+                        max_tokens,
+                        tools=current_tools,
+                        tool_choice="auto",
+                    )
+                else:
+                    logger.warning("工具调用失败，降级为自由 JSON: %s", exc)
+                    tools = None
+                    tool_choice = None
+                    messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "")
+                    raw = await _call_model(
+                        messages,
+                        resolved_model,
+                        max_tokens,
+                        json_mode=_supports_json_mode(provider),
+                    )
             else:
                 raise
 
@@ -324,33 +559,91 @@ async def review_graph(
                 last_errors = [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]
                 logger.warning("模型输出不是合法 JSON: %s", last_raw[:300])
                 continue
+            elif isinstance(payload, list):
+                # 模型直接输出了顶层操作数组
+                raw_ops = payload
+                summary = ""
             else:
                 raw_ops = payload.get("operations") or payload.get("ops") or []
                 if not isinstance(raw_ops, list):
                     last_errors = [{"index": "schema", "op": "operations", "reason": "operations 必须是数组"}]
                     continue
                 summary = str(payload.get("summary") or "").strip()
+                if isinstance(payload.get("clarify"), dict):
+                    return {
+                        "status": "clarify",
+                        "summary": summary or "需要向你确认一下",
+                        "clarify": payload["clarify"],
+                        "operations": [],
+                        "next_snapshot": current,
+                        "diff": [],
+                        "errors": [],
+                        "warnings": [],
+                        "raw_has_ops": False,
+                    }
+
+        # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
+        normalized_ops = []
+        for op in raw_ops:
+            if not isinstance(op, dict):
+                normalized_ops.append(op)
+                continue
+            op = dict(op)
+            op["op"] = str(op.get("op") or op.get("action") or op.get("operation") or op.get("type") or "")
+            if not op.get("id") and op.get("node_id"):
+                op["id"] = op.get("node_id")
+            normalized_ops.append(op)
+        raw_ops = normalized_ops
 
         if phase == "evaluate":
             raw_ops = [
                 op for op in raw_ops
                 if isinstance(op, dict) and op.get("op") == "create_eval_node"
             ]
-        elif phase == "normal":
+        elif phase in ("normal", "apply"):
             eval_ops = [
                 op for op in raw_ops
                 if isinstance(op, dict) and op.get("op") == "create_eval_node"
             ]
             if eval_ops:
+                reason = "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令" if phase == "normal" else "应用阶段不能创建 AI 评价节点，请根据已有评价节点执行真实修改"
                 last_errors = [{
                     "index": "phase",
                     "op": "create_eval_node",
-                    "reason": "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令",
+                    "reason": reason,
+                }]
+                continue
+
+        if phase == "evaluate" and not raw_ops:
+            if attempt < retries:
+                last_errors = [{
+                    "index": "evaluate",
+                    "op": "create_eval_node",
+                    "reason": "评价阶段必须生成 create_eval_node 操作，不要只返回文字或空操作",
+                }]
+                continue
+
+        if phase == "normal" and not raw_ops and _has_edit_intent(instruction) and not _detect_undo_intent(instruction):
+            if attempt < retries:
+                last_errors = [{
+                    "index": "normal",
+                    "op": "operation",
+                    "reason": "指令包含明确的修改意图（新增/删除/修改/补充等），请输出真实图操作，不要只返回文字",
+                }]
+                continue
+
+        if phase == "apply" and not raw_ops:
+            if attempt < retries:
+                last_errors = [{
+                    "index": "apply",
+                    "op": "update_node",
+                    "reason": "应用阶段必须根据 ai_eval 节点输出真实修改操作（update/delete/add_edge/remove_edge/update_edge），不要只返回文字",
                 }]
                 continue
 
         result = build_next_snapshot(current, raw_ops)
-        result["summary"] = summary
+        ops_for_summary = result.get("operations") or []
+        result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
         result["raw_has_ops"] = bool(raw_ops)
         if phase == "apply":
             result = _cleanup_remaining_eval_nodes(result, current)
@@ -423,6 +716,11 @@ async def review_graph(
         if result["errors"] and attempt < retries:
             last_errors = result["errors"]
             continue
+        if phase in ("normal", "expand"):
+            result = _auto_connect_isolated(current, result, focus_node_ids, instruction)
+        if phase == "expand":
+            result = _complete_expand_chains(current, result, focus_node_ids)
+        result["phase"] = phase
         return result
 
     return {
