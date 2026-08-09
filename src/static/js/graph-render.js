@@ -1019,14 +1019,7 @@ function _updateHarnessPreviewPositions() {
 }
 
 function _ensureGraphModeForPreview() {
-  const app = document.querySelector('.app-container');
-  if (!app || !app.classList.contains('linear-mode')) return false;
-  const state = _graphState();
-  state.linear = false;
-  _saveGraphState(state);
-  if (typeof applyLinearMode === 'function') applyLinearMode();
-  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
-  return true;
+  return false;
 }
 
 function _harnessVisibleCanvasRect() {

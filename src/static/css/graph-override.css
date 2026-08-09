@@ -7,8 +7,8 @@
   margin: 0 !important;
 }
 
-.app-container:not(.linear-mode) .chat-header,
-.app-container:not(.linear-mode) .header-secondary-bar {
+.app-container .chat-header,
+.app-container .header-secondary-bar {
   position: fixed !important;
   inset: 0 0 auto 0 !important;
   background: var(--bg-panel) !important;
@@ -16,12 +16,12 @@
   z-index: 10 !important;
 }
 
-.app-container:not(.linear-mode) .header-secondary-bar {
+.app-container .header-secondary-bar {
   inset: 50px 0 auto 0 !important;
   padding: 6px 14px !important;
 }
 
-.app-container:not(.linear-mode) .graph-workspace {
+.app-container .graph-workspace {
   position: fixed !important;
   inset: 0 !important;
   display: flex !important;
@@ -37,7 +37,7 @@
   z-index: 1 !important;
 }
 
-.app-container:not(.linear-mode) .graph-canvas {
+.app-container .graph-canvas {
   position: absolute !important;
   inset: 0 !important;
   width: 100% !important;
@@ -46,11 +46,11 @@
   background: transparent !important;
 }
 
-.app-container:not(.linear-mode) .input-area {
+.app-container .input-area {
   display: block !important;
 }
 
-.app-container:not(.linear-mode).graph-empty-active .input-area {
+.app-container.graph-empty-active .input-area {
   display: none !important;
 }
 
@@ -61,7 +61,7 @@
   margin: 0 !important;
 }
 
-.app-container:not(.linear-mode) .input-area {
+.app-container .input-area {
   left: auto !important;
   right: 20px !important;
   bottom: 18px !important;
@@ -92,14 +92,14 @@
   display: none !important;
 }
 
-.app-container:not(.linear-mode) .input-container {
+.app-container .input-container {
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
 }
 
-.app-container:not(.linear-mode) .chat-messages {
+.app-container .chat-messages {
   display: none !important;
 }
 
@@ -630,7 +630,7 @@
   color: #fff !important;
 }
 
-.app-container:not(.linear-mode) .progress-status {
+.app-container .progress-status {
   position: fixed;
   top: 104px;
   left: 50%;
@@ -646,7 +646,7 @@
   white-space: nowrap;
 }
 
-.app-container:not(.linear-mode) .progress-status .status-text {
+.app-container .progress-status .status-text {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 260px;
@@ -725,7 +725,7 @@
 
 /* ---------- 6. 移动端适配 ---------- */
 @media (max-width: 768px) {
-  .app-container:not(.linear-mode) .graph-workspace {
+  .app-container .graph-workspace {
     position: fixed !important;
     inset: 0 !important;
     width: 100vw !important;

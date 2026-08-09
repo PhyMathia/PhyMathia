@@ -1308,8 +1308,6 @@ function _handleGraphKeydown(event) {
   if (event.key !== 'Delete' && event.key !== 'Backspace') return;
   if (!graphCanvas || (!graphView.selectedNodeIds.size && !graphView.selectedGroupIds.size)) return;
   if (inTextInput) return;
-  const app = document.querySelector('.app-container');
-  if (app && app.classList.contains('linear-mode')) return;
   event.preventDefault();
   if (graphView.selectedGroupIds.size) {
     _deleteSelectedGraphGroups(Array.from(graphView.selectedGroupIds));
@@ -1432,15 +1430,6 @@ function _initGraphCanvasEvents() {
   });
 }
 
-function applyLinearMode() {
-  const app = document.querySelector('.app-container');
-  if (!app) return;
-  const state = _graphState();
-  app.classList.toggle('linear-mode', !!state.linear);
-  const btn = document.getElementById('linearModeBtn');
-  if (btn) btn.textContent = state.linear ? '画布' : '线性';
-}
-
 function _applyGraphTextSelectionMode() {
   if (!graphCanvas) return;
   graphCanvas.classList.toggle('graph-select-mode', !!graphView.selectMode);
@@ -1456,14 +1445,6 @@ function _applyGraphTextSelectionMode() {
 function graphToggleTextSelection() {
   graphView.selectMode = !graphView.selectMode;
   _applyGraphTextSelectionMode();
-}
-
-function toggleLinearMode() {
-  const state = _graphState();
-  state.linear = !state.linear;
-  _saveGraphState(state);
-  applyLinearMode();
-  if (!state.linear) setTimeout(renderGraphCanvas, 0);
 }
 
 function _unhideGraphNodeForFocus(node) {
@@ -1534,12 +1515,6 @@ function _centerGraphOnNode(nodeId) {
 
 function focusGraphNode(sessionId, messageId, moduleKey, nodeKind) {
   if (!messageId) return Promise.resolve(false);
-  const state = _graphState();
-  if (state.linear) {
-    state.linear = false;
-    _saveGraphState(state);
-  }
-  applyLinearMode();
   renderGraphCanvas();
   return new Promise(resolve => {
     const kind = nodeKind || (moduleKey === 'question' ? 'user' : '');
@@ -1568,12 +1543,6 @@ function focusGraphNode(sessionId, messageId, moduleKey, nodeKind) {
 
 function focusGraphNodeById(nodeId) {
   if (!nodeId) return Promise.resolve(false);
-  const state = _graphState();
-  if (state.linear) {
-    state.linear = false;
-    _saveGraphState(state);
-  }
-  applyLinearMode();
   renderGraphCanvas();
   return new Promise(resolve => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -1587,7 +1556,6 @@ function initGraphCanvas() {
   graphCanvas = document.getElementById('graphCanvas');
   if (!graphCanvas) return;
   _initGraphCanvasEvents();
-  applyLinearMode();
   renderGraphCanvas();
 }
 
@@ -1694,10 +1662,6 @@ window.graphToggleTextSelection = graphToggleTextSelection;
 
 window.autoArrangeGraph = autoArrangeGraph;
 
-window.toggleLinearMode = toggleLinearMode;
-
-window.applyLinearMode = applyLinearMode;
-
 window.getGraphViewNodes = () => graphView.nodes.map(node => ({ ...node }));
 
 window.getGraphViewEdges = () => graphView.edges.map(edge => ({ ...edge }));
@@ -1721,10 +1685,6 @@ window.clearGraphHarnessPreview = clearGraphHarnessPreview;
 window.getGraphPreviewNodes = () => graphView.previewNodes.map(node => ({ ...node }));
 
 window.toggleGraphView = () => {
-  const state = _graphState();
-  state.linear = false;
-  _saveGraphState(state);
-  applyLinearMode();
   renderGraphCanvas();
 };
 
@@ -1787,8 +1747,6 @@ window.setGraphSearchScope = setGraphSearchScope;
 window.focusGraphSearchResult = focusGraphSearchResult;
 window.graphToggleTextSelection = graphToggleTextSelection;
 window.autoArrangeGraph = autoArrangeGraph;
-window.toggleLinearMode = toggleLinearMode;
-window.applyLinearMode = applyLinearMode;
 window.getGraphViewNodes = () => graphView.nodes.map(node => ({ ...node }));
 window.getGraphViewEdges = () => graphView.edges.map(edge => ({ ...edge }));
 window.getGraphViewDefaultEdges = () => (graphView.defaultEdges || []).map(edge => ({ ...edge }));
@@ -1801,10 +1759,6 @@ window.showGraphHarnessPreview = showGraphHarnessPreview;
 window.clearGraphHarnessPreview = clearGraphHarnessPreview;
 window.getGraphPreviewNodes = () => graphView.previewNodes.map(node => ({ ...node }));
 window.toggleGraphView = () => {
-  const state = _graphState();
-  state.linear = false;
-  _saveGraphState(state);
-  applyLinearMode();
   renderGraphCanvas();
 };
 window.closeGraphView = () => {};

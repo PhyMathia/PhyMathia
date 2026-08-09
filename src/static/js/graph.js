@@ -153,7 +153,7 @@ let addBlankNodePoint = { x: 0, y: 0 };
 let addBlankNodeOverlay = null;
 
 
-const GRAPH_LAYOUT_FIELDS = ["positions", "sizes", "pan", "zoom", "collapsed", "hidden", "pinned", "linear", "layoutVersion", "groups", "portCounts", "inputPortCounts"];
+const GRAPH_LAYOUT_FIELDS = ["positions", "sizes", "pan", "zoom", "collapsed", "hidden", "pinned", "layoutVersion", "groups", "portCounts", "inputPortCounts"];
 
 function _graphHistoryKey(sessionId) {
   return "phymathia_graph_history_" + (sessionId || "default");
@@ -293,7 +293,6 @@ function _graphState() {
     sizes: {},
     pan: { x: 80, y: 80 },
     zoom: 0.9,
-    linear: false,
     layoutVersion: 1,
     connections: null,
     removedEdges: [],

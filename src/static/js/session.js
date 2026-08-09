@@ -321,7 +321,6 @@
             pan: parsed.pan || { x: 80, y: 80 },
             zoom: typeof parsed.zoom === 'number' ? parsed.zoom : 0.9,
             focus: parsed.focus || null,
-            linear: !!parsed.linear,
             layoutVersion: parsed.layoutVersion || 1,
             connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
             removedEdges: parsed.removedEdges || [],
@@ -344,7 +343,6 @@
         pan: { x: 80, y: 80 },
         zoom: 0.9,
         focus: null,
-        linear: false,
         layoutVersion: 1,
         connections: null,
         removedEdges: [],
@@ -437,9 +435,6 @@
       if (visible) delete bucket[key];
       else bucket[key] = true;
       saveGraphState(currentSessionId, state);
-      if (document.querySelector('.app-container')?.classList.contains('linear-mode') && typeof window.refreshMessageBubbles === 'function') {
-        window.refreshMessageBubbles();
-      }
     }
 
     window.getGraphState = getGraphState;
@@ -884,16 +879,9 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        const sections = parseXmlSections(content);
-        if (Object.keys(sections).length > 0) {
-          renderModuleSections(contentDiv, sections, content);
-        } else {
-          contentDiv.innerHTML = renderMarkdown(content);
-          _initVizIframes(contentDiv);
-          renderMath(contentDiv);
-          wrapDualDomainSections(contentDiv);
-          renderMath(contentDiv);
-        }
+        contentDiv.innerHTML = renderMarkdown(content);
+        _initVizIframes(contentDiv);
+        renderMath(contentDiv);
       }
       const branchMetaObj = branchMeta || {};
       if (branchMetaObj.branchLabel) {

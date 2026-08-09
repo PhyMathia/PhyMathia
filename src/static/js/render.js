@@ -312,11 +312,6 @@ const MODULE_BUBBLE_META = {
   learn: { label: '进阶学习', colorClass: 'learn-bubble', icon: UI_ICON_SVG.cap },
 };
 
-function _extractSummaryFromContent(content) {
-  const match = String(content || '').match(/<summary>([\s\S]*?)<\/summary>/i);
-  return match ? match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
-}
-
 function _splitVizFromGraph(graphRaw) {
   let graphContent = String(graphRaw || '');
   let vizContent = '';
@@ -326,22 +321,6 @@ function _splitVizFromGraph(graphRaw) {
     graphContent = graphContent.replace(/```html[\s\S]*?```/gi, '').trim();
   }
   return { graphContent, vizContent };
-}
-
-function _cleanModuleContent(content, moduleKey) {
-  let text = String(content || '').trim();
-  text = text.replace(/^#{1,6}\s*[^\n]*PhyMathia\s*学习卡片\s*[:：]?\s*[^\n]*\n?/i, '').trim();
-  const patterns = {
-    physics: /^#{1,6}\s*[^\n]*(物理直觉|物理视角)[^\n]*\n?/i,
-    math: /^#{1,6}\s*[^\n]*(数学本质|数学视角)[^\n]*\n?/i,
-    graph: /^#{1,6}\s*[^\n]*知识图谱[^\n]*\n?/i,
-    viz: /^#{1,6}\s*[^\n]*(交互探索|交互式可视化)[^\n]*\n?/i,
-    extend: /^#{1,6}\s*[^\n]*延伸思考[^\n]*\n?/i,
-    socratic: /^#{1,6}\s*[^\n]*(苏格拉底追问|延伸思考)[^\n]*\n?/i,
-    learn: /^#{1,6}\s*[^\n]*(进阶学习方向|进阶学习)[^\n]*\n?/i,
-  };
-  const pattern = patterns[moduleKey];
-  return pattern ? text.replace(pattern, '').trim() : text;
 }
 
 function _extractBranchTopic(msg, content) {
@@ -470,152 +449,8 @@ function dontUnderstandModule(moduleKey, messageId, event) {
   }
 }
 
-function toggleModuleBubble(messageId, moduleKey) {
-  const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
-  const key = String(messageId) + ':' + String(moduleKey);
-  const collapsed = state && state.collapsed && state.collapsed[key];
-  if (typeof window.setModuleVisibility === 'function') {
-    window.setModuleVisibility(messageId, moduleKey, 'collapsed', collapsed);
-  }
-}
-
-function _refreshMessageBubbles() {
-  document.querySelectorAll('.message.assistant .message-content').forEach((el, index) => {
-    const body = el.closest('.message-body');
-    const messageId = body?.dataset.messageId || '';
-    const msg = chatHistory.find(m => String(m.timestamp) === String(messageId));
-    if (!msg) return;
-    const sections = parseXmlSections(msg.content || '');
-    if (Object.keys(sections).length > 0) {
-      renderModuleSections(el, sections, msg.content || '');
-      _initVizIframes(el);
-      renderMath(el);
-      setTimeout(() => renderMermaidInElement(el), 0);
-    }
-  });
-}
-
-function renderModuleSections(container, sections, rawContent) {
-  const messageId = container.closest('.message-body')?.dataset.messageId || '';
-  const graphState = typeof window.getGraphState === 'function' ? window.getGraphState() : { collapsed: {}, hidden: {} };
-  const collapsedMap = graphState.collapsed || {};
-  const hiddenMap = graphState.hidden || {};
-  const summary = _extractSummaryFromContent(rawContent || '');
-  const splitGraph = _splitVizFromGraph(sections.graph || '');
-  const vizRaw = sections.viz || splitGraph.vizContent || '';
-  const configs = [
-    { key: 'physics', content: _cleanModuleContent(sections.physics || '', 'physics') },
-    { key: 'math', content: _cleanModuleContent(sections.math || '', 'math') },
-    { key: 'graph', content: _cleanModuleContent(splitGraph.graphContent || '', 'graph') },
-    { key: 'viz', content: _cleanModuleContent(vizRaw, 'viz') },
-    { key: 'extend', content: _cleanModuleContent(sections.extend || '', 'extend') },
-  ].filter(cfg => cfg.content && cfg.content.trim());
-
-  let html = '<div class="answer-cluster" data-message-id="' + messageId + '">';
-  if (summary) {
-    html += '<div class="answer-hub"><span class="answer-hub-mark">摘要</span><span class="answer-hub-text">' + escapeHtml(summary) + '</span></div>';
-  }
-  html += '<div class="module-bubbles">';
-  for (const cfg of configs) {
-    const meta = MODULE_BUBBLE_META[cfg.key] || MODULE_BUBBLE_META.extend;
-    const key = messageId + ':' + cfg.key;
-    const collapsed = !!collapsedMap[key];
-    const actions = '<button class="module-action" onclick="event.stopPropagation(); followUpModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="追问">追问</button>'
-      + '<button class="module-action" onclick="event.stopPropagation(); dontUnderstandModule(\'' + cfg.key + '\',\'' + messageId + '\',event)" title="没看懂">没看懂</button>'
-      + '<button class="module-action icon-action" onclick="event.stopPropagation(); toggleModuleBubble(\'' + messageId + '\',\'' + cfg.key + '\')" title="' + (collapsed ? '展开' : '折叠') + '">' + (collapsed ? '+' : '−') + '</button>'
-    html += '<div class="module-bubble ' + meta.colorClass + (collapsed ? ' collapsed' : '') + '" data-module="' + cfg.key + '" data-message-id="' + messageId + '">'
-      + '<div class="module-bubble-header"><span class="module-bubble-icon">' + (meta.icon || '') + '</span><span class="module-bubble-title">' + meta.label + '</span><span class="module-bubble-actions">' + actions + '</span></div>'
-      + '<div class="module-bubble-body">' + renderMarkdown(cfg.content, { parentId: messageId, sourceModule: cfg.key }) + '</div>'
-      + '</div>';
-  }
-  html += '</div></div>';
-  container.innerHTML = html;
-  _initVizIframes(container);
-  renderMath(container);
-}
-
-window.refreshMessageBubbles = _refreshMessageBubbles;
 window.followUpModule = followUpModule;
 window.dontUnderstandModule = dontUnderstandModule;
-window.toggleModuleBubble = toggleModuleBubble;
-
-// ====== 双域折叠区域渲染（heading 正则兜底） ======
-function wrapDualDomainSections(element) {
-  const html = element.innerHTML;
-  
-  // 定义四个可识别的域标题：物理视角、数学视角为可折叠区域；知识图谱、延伸思考为独立区块
-  const domainDefs = [
-    { key: 'physics', icon: (ICON_OPTIONS.find(o => o.id === 'mechanics') || {}).svg, label: '物理视角', colorClass: 'physics-section', regex: /<h[1-6][^>]*>[^<]*(?:🔭|🔬)[^<]*(?:物理直觉|物理视角)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'math', icon: (ICON_OPTIONS.find(o => o.id === 'function') || {}).svg, label: '数学视角', colorClass: 'math-section', regex: /<h[1-6][^>]*>[^<]*(?:🧮|📐)[^<]*(?:数学本质|数学视角)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'graph', icon: (ICON_OPTIONS.find(o => o.id === 'graph') || {}).svg, label: '知识图谱', colorClass: 'graph-section', regex: /<h[1-6][^>]*>[^<]*(?:🧠|🗺️|知识图谱)[^<]*<\/h[1-6]>/i, collapsible: true },
-    { key: 'extend', icon: UI_ICON_SVG.lightbulb, label: '延伸思考', colorClass: 'extend-section', regex: /<h[1-6][^>]*>[^<]*(?:💡|延伸思考)[^<]*<\/h[1-6]>/i, collapsible: true },
-  ];
-  
-  // 找到所有匹配的标题位置
-  const matches = [];
-  for (const def of domainDefs) {
-    const m = html.match(def.regex);
-    if (m) {
-      matches.push({ ...def, match: m[0], idx: html.indexOf(m[0]) });
-    }
-  }
-  
-  if (matches.length === 0) return; // 没有域标题则不处理
-  
-  // 按位置排序
-  matches.sort((a, b) => a.idx - b.idx);
-  
-  // 切分内容：每个标题到下一个标题之间的内容属于当前域
-  const sections = [];
-  for (let i = 0; i < matches.length; i++) {
-    const startIdx = matches[i].idx;
-    const endIdx = (i + 1 < matches.length) ? matches[i + 1].idx : html.length;
-    const content = html.substring(startIdx + matches[i].match.length, endIdx);
-    sections.push({ ...matches[i], content });
-  }
-  
-  // 标题之前的内容（如开头引言）
-  const beforeContent = html.substring(0, matches[0].idx);
-  
-  // 重建 HTML
-  let newHtml = beforeContent;
-  for (const sec of sections) {
-    const sid = sec.key + '_' + Math.random().toString(36).substr(2, 9);
-    newHtml += `<div class="dual-domain-section ${sec.colorClass}" id="${sid}">
-      <div class="dual-domain-header" onclick="toggleDualDomain('${sid}')">
-        <span class="header-left"><span class="section-icon">${sec.icon}</span> ${sec.label}</span>
-        <span class="header-right">
-      ${sec.collapsible && (sec.key === 'physics' || sec.key === 'math') ? `<button class="dual-domain-followup" onclick="event.stopPropagation(); followUpDomain('${sec.key}')">追问</button><button class="dual-domain-dontget" onclick="event.stopPropagation(); dontUnderstandDomain('${sec.key}')">${UI_ICON_SVG.question} 没看懂</button>` : ''}
-          <span class="dual-domain-chevron">▼</span>
-        </span>
-      </div>
-      <div class="dual-domain-body">${sec.match}${sec.content}</div>
-    </div>`;
-  }
-  
-  element.innerHTML = newHtml;
-}
-
-function toggleDualDomain(sectionId) {
-  const section = document.getElementById(sectionId);
-  if (!section) return;
-  section.classList.toggle('collapsed');
-  scrollToBottom();
-}
-
-function followUpDomain(domain) {
-  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
-  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
-  followUpModule(domain || 'physics', messageId);
-}
-
-// ====== 没看懂（填入输入框，用户确认后发送） ======
-function dontUnderstandDomain(domain) {
-  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
-  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
-  dontUnderstandModule(domain || 'physics', messageId);
-}
-
 function dontUnderstandViz() {
   const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
   const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';

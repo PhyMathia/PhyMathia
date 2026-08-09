@@ -464,19 +464,10 @@
     }
 
     async function renderAssistantContent(contentDiv, content) {
-      const sections = parseXmlSections(content);
-      if (Object.keys(sections).length > 0) {
-        renderModuleSections(contentDiv, sections, content);
-        await renderMermaidInElement(contentDiv);
-        renderMath(contentDiv);
-      } else {
-        contentDiv.innerHTML = renderMarkdown(content);
-        _initVizIframes(contentDiv);
-        renderMath(contentDiv);
-        await renderMermaidInElement(contentDiv);
-        wrapDualDomainSections(contentDiv);
-        renderMath(contentDiv);
-      }
+      contentDiv.innerHTML = renderMarkdown(content);
+      _initVizIframes(contentDiv);
+      renderMath(contentDiv);
+      await renderMermaidInElement(contentDiv);
       if (contentDiv.dataset.branchLabel) {
         const tag = document.createElement('div');
         tag.className = 'branch-tag ' + (contentDiv.dataset.branchType || 'branch');
