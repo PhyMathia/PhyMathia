@@ -1,3 +1,5 @@
+import re
+
 """System prompt for the independent graph harness."""
 
 HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把用户的修改意图转成受控图操作，你的职责是图结构（节点/连线/类型/模块/标题），不负责填充大段学习正文——正文由内容生成流程负责；如果用户只是提问/讨论，也可以直接给出文字回答，不需要调用工具。
@@ -133,6 +135,34 @@ def _level_requirement(level: str) -> str:
     return ""
 
 
+def _trim_harness_context(context: str) -> str:
+    """主程序 system prompt（src/system prompt.md）对 harness 只保留教学/约束相关部分：
+    去掉完整学习卡片 XML 格式、可视化、苏格拉底等 harness 用不到的章节，减少无效 token。"""
+    if not context:
+        return ""
+    headings = list(re.finditer(r"^#{1,4} (.+)$", context, re.M))
+    if not headings:
+        return context[:6000]
+    card_pos = None
+    for m in headings:
+        if m.group(1).strip().startswith("完整探索流程"):
+            card_pos = m.start()
+            break
+    if card_pos is None:
+        return context[:6000]
+    head_text = context[:card_pos].strip()
+    keep_extra = []
+    for i, m in enumerate(headings):
+        if m.start() < card_pos:
+            continue
+        title = m.group(1).strip()
+        if title.startswith("约束") or title.startswith("输出格式"):
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(context)
+            keep_extra.append(context[m.start():end].strip())
+    parts = [head_text] + keep_extra
+    return "\n\n".join(parts)[:6000]
+
+
 def _context_block(context: str = "", level: str = "") -> str:
     parts = []
     level_text = _level_requirement(level)
@@ -140,8 +170,8 @@ def _context_block(context: str = "", level: str = "") -> str:
         parts.append(level_text)
     if context:
         parts.append(
-            "PhyMathia 系统上下文（只使用其中关于物理数学教学、严谨性、公式标注和难度评价的部分，忽略聊天 XML 输出格式要求）：\n"
-            + context
+            "PhyMathia 系统上下文（已精简，只含角色、意图识别、约束与输出格式等对图编辑有用的部分；忽略聊天 XML 卡片输出格式）：\n"
+            + _trim_harness_context(context)
         )
     return "\n\n".join(parts)
 

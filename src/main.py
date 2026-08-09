@@ -199,6 +199,8 @@ async def api_models_chat(request: Request):
     parent_id = payload.get("parent_id", "")
     graph_path = payload.get("graph_path") or payload.get("graphPath") or []
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
+    quick = bool(payload.get("quick"))
+    is_quick = False
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
@@ -210,7 +212,8 @@ async def api_models_chat(request: Request):
             socratic_state = None
         include_socratic = bool(socratic_state) or is_socratic_prompt
 
-        system_content = SYSTEM_PROMPT
+        is_quick = quick and not branch_id and not graph_path and not workflow_context
+        system_content = QUICK_SYSTEM_PROMPT if is_quick else SYSTEM_PROMPT
         state_instruction = _socratic_state_instruction(socratic_ref) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
@@ -231,12 +234,17 @@ async def api_models_chat(request: Request):
                 source_module=source_module,
                 parent_id=parent_id,
                 graph_path=graph_path,
+                max_rounds=(1 if is_quick else 3),
+                current_prompt=prompt,
             )
             messages.extend(context)
 
         level = payload.get("level", "university")
-        level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-        messages.append({"role": "user", "content": prompt + level_suffix})
+        if not is_quick:
+            level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
+            messages.append({"role": "user", "content": prompt + level_suffix})
+        else:
+            messages.append({"role": "user", "content": prompt})
 
         logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, ctx_rounds={len([m for m in messages if m['role'] != 'system'])}")
     else:
@@ -265,6 +273,8 @@ async def api_models_chat(request: Request):
     max_tokens = payload.get("max_tokens")
     if is_strict_module and not max_tokens:
         max_tokens = STRICT_MODULE_MAX_TOKENS
+    if is_quick and not max_tokens:
+        max_tokens = 400
     body = {
         "model": model_name,
         "messages": messages,
@@ -445,6 +455,13 @@ async def api_save_messages(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     messages = payload if isinstance(payload, list) else payload.get("messages", [])
+    if isinstance(messages, list):
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "assistant" and not str(msg.get("summary") or "").strip():
+                try:
+                    msg["summary"] = _graph_message_summary(msg)
+                except Exception:
+                    pass
     _write_json(_get_messages_path(session_id), messages)
     return {"ok": True, "count": len(messages)}
 

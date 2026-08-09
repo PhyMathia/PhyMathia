@@ -134,6 +134,54 @@ class ContextTest(unittest.TestCase):
         self.assertNotIn("[苏格拉底回答] 我的回答", [m["content"] for m in result])
 
 
+    def test_prompt_wants_viz(self):
+        self.assertTrue(context_mod._prompt_wants_viz("这个可视化没看懂"))
+        self.assertTrue(context_mod._prompt_wants_viz("图里的动画是什么意思"))
+        self.assertFalse(context_mod._prompt_wants_viz("讲讲物理意义"))
+
+    def test_trim_context_content_replaces_viz(self):
+        big = "<physics>物理正文</physics>\n<viz>```html\n" + ("<div>html内容" * 1500) + "```</viz>\n<summary>一句话摘要</summary>"
+        out = context_mod._trim_context_content(big)
+        self.assertIn("[交互可视化内容已省略]", out)
+        self.assertIn("一句话摘要", out)
+        self.assertNotIn("<div>html内容", out)
+
+    def test_trim_context_content_keeps_viz_when_requested(self):
+        big = "<viz>```html\n" + ("<div>html内容" * 1500) + "```</viz>"
+        out = context_mod._trim_context_content(big, keep_viz=True)
+        self.assertIn("<div>html内容", out)
+
+    def test_recent_context_summarizes_old_assistant(self):
+        big = "<physics>正文</physics>\n<summary>摘要内容</summary>" + ("很长" * 5000)
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": big},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "短回复"},
+        ]
+        result = context_mod._recent_context_messages(msgs, max_rounds=2)
+        self.assertEqual(result[0]["content"], "u1")
+        self.assertIn("摘要内容", result[1]["content"])
+        self.assertLess(len(result[1]["content"]), 300)
+        self.assertEqual(result[2]["content"], "u2")
+        self.assertEqual(result[3]["content"], "短回复")
+
+    def test_recent_context_keeps_viz_on_viz_prompt(self):
+        big = "<viz>```html\n" + ("<div>html内容" * 1500) + "```</viz>"
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": big},
+        ]
+        default = context_mod._recent_context_messages(msgs, max_rounds=1)
+        self.assertNotIn("<div>html内容", default[1]["content"])
+        viz = context_mod._recent_context_messages(msgs, max_rounds=1, current_prompt="这个可视化没看懂")
+        self.assertIn("<div>html内容", viz[1]["content"])
+
+    def test_graph_message_summary_uses_cached(self):
+        msg = {"content": "<physics>超长正文</physics>" + ("很长" * 5000), "summary": "缓存的摘要"}
+        self.assertEqual(context_mod._graph_message_summary(msg), "缓存的摘要")
+
+
 class DocumentTest(unittest.TestCase):
     def test_sanitize_filename(self):
         self.assertEqual(documents_mod._sanitize_filename("../evil/name.txt"), "name.txt")

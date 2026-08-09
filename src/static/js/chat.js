@@ -250,6 +250,16 @@
       sendMessage();
     }
 
+    function _isCasualPrompt(text) {
+      const t = String(text || '').trim();
+      if (!t || t.length > 60) return false;
+      const pure = /^(你好|您好|嗨|哈喽|hello|hi|hey|谢谢|感谢|哈哈|嘿嘿|在吗|在不在|随便聊聊|聊聊|没事|好的|嗯|再见|拜拜|晚安|早安|辛苦了|厉害|不错|666|嗯嗯|ok|好的吧|可以|没问题|了解|明白)[!！。.~～\s]*$/i;
+      if (pure.test(t)) return true;
+      const learning = /什么是|为什么|怎么|如何|解释|讲|公式|导数|积分|物理|数学|题目|作业|求|帮我|区别|证明|推导|求解|请问|写|做/;
+      if (learning.test(t)) return false;
+      return /(你好|您好|嗨|谢谢|感谢|哈哈|嘿嘿|在吗|随便聊聊|聊聊|辛苦|不错|再见|拜拜|晚安|早安)/.test(t) && t.length <= 20;
+    }
+
     function stopGeneration() {
       if (abortController) abortController.abort();
       if (typeof window.stopWorkflowRun === 'function') window.stopWorkflowRun();
@@ -260,6 +270,7 @@
       const btn = document.getElementById('sendBtn');
       const stopBtn = document.getElementById('stopBtn');
       const text = input.value.trim();
+      const isCasual = _isCasualPrompt(text);
       if (!text || isStreaming) return;
 
       userScrolledUp = false; // 用户发送消息时重置滚动状态
@@ -324,7 +335,7 @@
         let resp;
         if (agentModel) {
           showProgress('tool', 26, '正在连接 AI 服务');
-          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta);
+          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta, { quick: isCasual, max_tokens: isCasual ? 300 : undefined });
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           resp = await fetch('/v1/chat/completions', {
@@ -336,6 +347,8 @@
               level: currentLevel,
               session_id: SESSION_ID,
               stream: true,
+              quick: isCasual,
+              max_tokens: isCasual ? 300 : undefined,
               branch_id: branchMeta.branchId || '',
               branch_type: branchMeta.branchType || '',
               source_module: branchMeta.sourceModule || '',
@@ -512,7 +525,7 @@
 
           // 先生成本地知识条目，消息上传继续在后台进行。
           _setProgress(98, '正在提取知识');
-          autoExtractKnowledge(currentSessionId, chatHistory);
+          if (!isCasual) autoExtractKnowledge(currentSessionId, chatHistory);
 
           await saveCurrentSession();
           renderSessionList(); // 更新侧边栏时间显示

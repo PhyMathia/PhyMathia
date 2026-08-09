@@ -5,6 +5,47 @@ import time
 
 from .config import KV_PATH
 from .storage import _mutate_json, _read_json, _resolve_messages_path
+# ====== 普通聊天上下文瘦身 ======
+_CONTEXT_MAX_USER_CHARS = 4000
+_CONTEXT_RECENT_FULL_MAX = 8000
+_CONTEXT_VIZ_KEEP_MAX = 6000
+VIZ_PLACEHOLDER = "[交互可视化内容已省略]"
+_VIZ_WANT_RE = re.compile(r"可视化|交互|动画|没看懂|看不懂|HTML|html|演示|3D|这个图|那张图|图里|图上的|画面", re.I)
+
+
+def _prompt_wants_viz(prompt: str) -> bool:
+    """判断当前提问是否与可视化相关（决定是否在上下文中保留整段 HTML）。"""
+    if not prompt:
+        return False
+    return bool(_VIZ_WANT_RE.search(prompt))
+
+
+def _trim_context_content(content: str, keep_viz: bool = False) -> str:
+    """压缩大段 assistant 消息：保留 <summary> 摘要标签；<viz>/```html``` 大块
+    HTML 默认替换为占位符（keep_viz=True 时保留并截断到上限）；超出上限再截断。"""
+    if not content:
+        return ""
+    if len(content) <= _CONTEXT_RECENT_FULL_MAX:
+        return content
+    summary = ""
+    match = re.search(r"<summary>([\s\S]*?)</summary>", content, re.I)
+    if match:
+        summary = match.group(1).strip()[:200]
+
+    def _viz_repl(match_obj):
+        if keep_viz:
+            return match_obj.group(0)[:_CONTEXT_VIZ_KEEP_MAX] + "\n<!-- 可视化内容过长，已截断 -->"
+        return VIZ_PLACEHOLDER
+
+    text = re.sub(r"<viz>[\s\S]*?</viz>", _viz_repl, content, flags=re.I)
+    text = re.sub(r"```html\s*[\s\S]*?```", _viz_repl, text, flags=re.I)
+    if len(text) <= _CONTEXT_RECENT_FULL_MAX:
+        return text
+    head = text[:_CONTEXT_RECENT_FULL_MAX]
+    if summary:
+        head += "\n\n<summary>" + summary + "</summary>"
+    return head + "\n…（上下文已截断）"
+
 
 def _is_socratic_message(msg) -> bool:
     """识别苏格拉底支线消息，兼容新 branch 字段和历史内容标记。"""
@@ -24,21 +65,46 @@ def _is_socratic_message(msg) -> bool:
     return False
 
 
-def _recent_context_messages(all_messages: list, max_rounds: int = 3, include_socratic: bool = False) -> list:
-    """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。"""
+def _recent_context_messages(
+    all_messages: list,
+    max_rounds: int = 3,
+    include_socratic: bool = False,
+    current_prompt: str = "",
+) -> list:
+    """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。
+
+    上下文瘦身策略（普通聊天/无 graph_path 路径）：
+    - 用户消息：保留完整（超长时截断到上限）。
+    - 最近一条 assistant 消息：完整保留；其中 <viz>/```html``` 大段 HTML
+      默认替换为占位符，仅当当前提问涉及可视化时才保留。
+    - 更早的 assistant 消息：只保留摘要（优先缓存 summary，其次 <summary>
+      标签，最后截断文本）。
+    """
     messages = all_messages
     if not include_socratic:
         messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
+    keep_viz = _prompt_wants_viz(current_prompt)
     result = []
     rounds = 0
+    assistant_count = 0
     for msg in reversed(messages):
-        result.insert(0, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
-        if msg.get("role") == "user":
+        role = msg.get("role", "user")
+        content = str(msg.get("content") or "")
+        if role == "user":
+            if len(content) > _CONTEXT_MAX_USER_CHARS:
+                content = content[:_CONTEXT_MAX_USER_CHARS] + "\n…（已截断）"
+        else:
+            if assistant_count == 0:
+                content = _trim_context_content(content, keep_viz=keep_viz)
+            else:
+                content = _graph_message_summary(msg)
+            assistant_count += 1
+        result.insert(0, {"role": role, "content": content})
+        if role == "user":
             rounds += 1
             if rounds >= max_rounds:
                 break
     return result
-
 
 def _extract_section(content: str, tag: str) -> str:
     match = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", content or "", re.I)
@@ -70,6 +136,7 @@ def _load_session_context(
     source_module: str = "",
     parent_id: str = "",
     graph_path: list = None,
+    current_prompt: str = "",
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
@@ -87,13 +154,14 @@ def _load_session_context(
             branch_id=branch_id,
             source_module=source_module,
             max_rounds=max_rounds,
+            current_prompt=current_prompt,
         )
     if not branch_id:
-        return _recent_context_messages(all_messages, max_rounds, include_socratic)
+        return _recent_context_messages(all_messages, max_rounds, include_socratic, current_prompt)
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
-    result = _recent_context_messages(main_messages, min(2, max_rounds), False)
+    result = _recent_context_messages(main_messages, min(2, max_rounds), False, current_prompt)
     seen = {item["content"] for item in result}
 
     target_parent = parent_id or (branch_messages[0].get("parentId") if branch_messages else "")
@@ -106,7 +174,7 @@ def _load_session_context(
                     seen.add(source)
                 break
 
-    for item in _recent_context_messages(branch_messages, max_rounds, True):
+    for item in _recent_context_messages(branch_messages, max_rounds, True, current_prompt):
         if item["content"] not in seen:
             result.append(item)
             seen.add(item["content"])
@@ -186,6 +254,10 @@ def _module_output_instruction(module_key: str) -> str:
 
 def _graph_message_summary(message: dict, module_key: str = "") -> str:
     content = str(message.get("content") or "")
+    if not module_key:
+        cached = str(message.get("summary") or "").strip()
+        if cached:
+            return cached[:200]
     if module_key:
         content = _branch_source_content(content, module_key)
     match = re.search(r"<summary>([\s\S]*?)</summary>", content, re.I)
@@ -288,6 +360,7 @@ def _load_session_context_from_path(
     branch_id: str = "",
     source_module: str = "",
     max_rounds: int = 3,
+    current_prompt: str = "",
 ) -> list:
     messages_path = _resolve_messages_path(session_id)
     all_messages = _read_json(messages_path, [])
@@ -323,7 +396,7 @@ def _load_session_context_from_path(
             msg for msg in all_messages
             if str(msg.get("branchId") or "") == str(branch_id)
         ]
-        for item in _recent_context_messages(branch_messages, max_rounds, True):
+        for item in _recent_context_messages(branch_messages, max_rounds, True, current_prompt):
             if item["content"] not in seen:
                 result.append(item)
                 seen.add(item["content"])
@@ -434,6 +507,7 @@ __all__ = [
     "_branch_source_content", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
+    "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
     "SOCRATIC_STATE_PREFIX", "_socratic_key", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_socratic_state_instruction",
     "_update_socratic_state_from_content", "_is_socratic_followup",

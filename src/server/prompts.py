@@ -73,4 +73,8 @@ DESCRIBE_PROMPT = """你是公式解说助手。针对下面的每个公式，�
 - 不要编造摘要中不存在的概念"""
 
 
-__all__ = ["SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT"]
+QUICK_SYSTEM_PROMPT = """你是 PhyMathia，一个友好的物理数学助手。用户现在只是在轻松聊天/寒暄，并不是要深入学习。请用简短、自然、亲切的中文回复（一般 2~4 句，不超过 100 字）。不要输出学习卡片 XML，不要输出公式，不要生成可视化，不要列清单。如果用户其实问了学习问题，就正常回答即可。"""
+
+
+
+__all__ = ["SYSTEM_PROMPT", "QUICK_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT"]

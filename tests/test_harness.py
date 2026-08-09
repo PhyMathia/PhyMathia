@@ -1928,5 +1928,20 @@ class HarnessPlaceholderContentTest(unittest.TestCase):
         self.assertLessEqual(len(created["content"]), 80)
 
 
+class HarnessContextTrimTest(unittest.TestCase):
+    def test_trim_harness_context_drops_card_sections(self):
+        from harness.prompts import _trim_harness_context
+        full = "# 角色\n你是 PhyMathia。\n\n## 完整探索流程\n<physics>...</physics>\n\n## 约束\n1. 禁止编造\n\n## 输出格式\n物理讲述=散文\n\n## 公式查询流程\n直接给出公式"
+        out = _trim_harness_context(full)
+        self.assertIn("你是 PhyMathia", out)
+        self.assertIn("禁止编造", out)
+        self.assertNotIn("<physics>", out)
+        self.assertNotIn("公式查询流程", out)
+
+    def test_trim_harness_context_short_input_unchanged(self):
+        from harness.prompts import _trim_harness_context
+        self.assertEqual(_trim_harness_context("简短内容"), "简短内容")
+
+
 if __name__ == "__main__":
     unittest.main()
