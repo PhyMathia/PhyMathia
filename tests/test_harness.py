@@ -599,7 +599,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
             return {
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "update_node", "arguments": '{"node_id": "B", "patch": {"label": "改"}, "reason": "改"}'}},
+                    {"function": {"name": "delete_node", "arguments": '{"node_id": "H", "reason": "超纲"}'}},
                 ],
             }
 
@@ -1941,6 +1941,26 @@ class HarnessContextTrimTest(unittest.TestCase):
     def test_trim_harness_context_short_input_unchanged(self):
         from harness.prompts import _trim_harness_context
         self.assertEqual(_trim_harness_context("简短内容"), "简短内容")
+
+
+class HarnessSelfCheckSkipTest(unittest.TestCase):
+    def test_small_edge_ops_skip_selfcheck(self):
+        from harness.review import _should_selfcheck_ops
+        self.assertFalse(_should_selfcheck_ops([{"op": "add_edge", "from": "A", "to": "B"}]))
+        self.assertFalse(_should_selfcheck_ops([
+            {"op": "update_node", "id": "A", "patch": {"label": "x"}},
+            {"op": "remove_edge", "edge_key": "k"},
+        ]))
+
+    def test_create_delete_or_many_ops_keep_selfcheck(self):
+        from harness.review import _should_selfcheck_ops
+        self.assertTrue(_should_selfcheck_ops([{"op": "create_node", "temp_id": "n1"}]))
+        self.assertTrue(_should_selfcheck_ops([{"op": "delete_node", "id": "A"}]))
+        self.assertTrue(_should_selfcheck_ops([{"op": "create_eval_node", "id": "e1"}]))
+        many = [{"op": "add_edge", "from": "A", "to": "B" + str(i)} for i in range(4)]
+        self.assertTrue(_should_selfcheck_ops(many))
+
+
 
 
 if __name__ == "__main__":

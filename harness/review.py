@@ -524,6 +524,16 @@ def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any
     return snapshot
 
 
+def _should_selfcheck_ops(ops: list) -> bool:
+    """小改动（≤3 条且无创建/删除节点）跳过模型批判自检，省一次串行模型调用。"""
+    if len(ops) > 3:
+        return True
+    return any(
+        isinstance(op, dict) and op.get("op") in ("create_node", "create_eval_node", "delete_node")
+        for op in ops
+    )
+
+
 async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any]) -> Dict[str, Any]:
     """One lightweight critic call checking instruction coverage. Never blocks on failure."""
     messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops)
@@ -850,7 +860,7 @@ async def review_graph(
                 })
 
         # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
-        if self_check_enabled and raw_ops and attempt == 0:
+        if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
             critic = await _selfcheck_ops(current, instruction, raw_ops, resolved_model)
             result["self_check"]["critic"] = critic
             if not critic.get("ok", True) and attempt < retries:

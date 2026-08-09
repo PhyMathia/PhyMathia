@@ -122,7 +122,10 @@ class ContextTest(unittest.TestCase):
     def test_recent_context_messages_rounds(self):
         msgs = [{"role": "user", "content": f"u{i}"} for i in range(5)]
         result = context_mod._recent_context_messages(msgs, max_rounds=2)
-        self.assertEqual([m["content"] for m in result], ["u3", "u4"])
+        # 最近 2 轮完整 + 更早 3 轮一行摘要
+        self.assertEqual([m["content"] for m in result], [
+            "（更早对话）用户：u0", "（更早对话）用户：u1", "（更早对话）用户：u2", "u3", "u4",
+        ])
 
     def test_recent_context_filters_socratic(self):
         msgs = [
@@ -210,6 +213,67 @@ class BackupTest(unittest.TestCase):
                 self.assertIn("s2", data)
             finally:
                 backup_mod.SESSIONS_PATH = old_path
+
+
+class ContextOptimizationTest(unittest.TestCase):
+    def test_recent_context_digest_for_old_rounds(self):
+        msgs = []
+        for i in range(10):
+            msgs.append({"role": "user", "content": "问题" + str(i), "timestamp": "u" + str(i)})
+            msgs.append({"role": "assistant", "content": "<summary>答案摘要" + str(i) + "</summary>", "timestamp": "a" + str(i)})
+        out = context_mod._recent_context_messages(msgs, max_rounds=3)
+        self.assertIn("答案摘要9", out[-1]["content"])
+        self.assertEqual(out[-2]["content"], "问题9")
+        full_count = sum(1 for m in out if "（更早对话）" not in m["content"])
+        digest_count = sum(1 for m in out if "（更早对话）" in m["content"])
+        self.assertEqual(full_count, 6)
+        self.assertEqual(digest_count, 7)
+        self.assertIn("问题0", out[0]["content"])
+        self.assertIn("答案摘要0", out[0]["content"])
+
+    def test_from_path_skips_upstream_when_workflow_context(self):
+        msgs = [
+            {"role": "user", "content": "q1", "timestamp": "t1"},
+            {"role": "assistant", "content": "<physics>A1正文</physics><summary>摘要1</summary>", "timestamp": "t2"},
+            {"role": "user", "content": "q2", "timestamp": "t3"},
+            {"role": "assistant", "content": "<physics>active正文</physics><summary>摘要2</summary>", "timestamp": "t4"},
+        ]
+        path = [
+            {"timestamp": "t1", "kind": "user"},
+            {"timestamp": "t2", "kind": "answer", "module": "physics"},
+            {"timestamp": "t3", "kind": "user"},
+            {"timestamp": "t4", "kind": "answer", "module": "physics"},
+        ]
+        orig = context_mod._read_json
+        context_mod._read_json = lambda _path, default=None: msgs
+        try:
+            out = context_mod._load_session_context_from_path(
+                "sess_x", path, workflow_context={"upstream": [{"label": "x", "content": "..."}]}
+            )
+        finally:
+            context_mod._read_json = orig
+        contents = [item["content"] for item in out]
+        self.assertIn("q1", contents)
+        self.assertIn("q2", contents)
+        self.assertIn("active正文", contents)
+        self.assertNotIn("A1正文", contents)
+
+        context_mod._read_json = lambda _path, default=None: msgs
+        try:
+            out2 = context_mod._load_session_context_from_path("sess_x", path)
+        finally:
+            context_mod._read_json = orig
+        contents2 = [item["content"] for item in out2]
+        self.assertTrue(any("A1正文" in c for c in contents2))
+
+    def test_module_system_prompt_has_formula_rules(self):
+        from server import prompts as prompts_mod
+        self.assertTrue(prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertIn("<formula>", prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertIn("不输出完整探索卡片", prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertLess(len(prompts_mod.MODULE_SYSTEM_PROMPT), 1200)
+
+
 
 
 if __name__ == "__main__":

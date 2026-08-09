@@ -76,41 +76,58 @@ def _recent_context_messages(
     max_rounds: int = 3,
     include_socratic: bool = False,
     current_prompt: str = "",
+    summary_rounds: int = 7,
 ) -> list:
     """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。
 
     上下文瘦身策略（普通聊天/无 graph_path 路径）：
-    - 用户消息：保留完整（超长时截断到上限）。
-    - 最近一条 assistant 消息：完整保留；其中 <viz>/```html``` 大段 HTML
-      默认替换为占位符，仅当当前提问涉及可视化时才保留。
-    - 更早的 assistant 消息：只保留摘要（优先缓存 summary，其次 <summary>
-      标签，最后截断文本）。
+    - 最近 max_rounds 轮：用户消息完整保留（超长时截断到上限）；最近一条
+      assistant 消息完整保留（<viz>/```html``` 大段 HTML 默认替换为占位符，
+      仅当当前提问涉及可视化时才保留）；更早的 assistant 只保留摘要。
+    - 更早的 summary_rounds 轮：每轮只保留一行摘要（用户问题前 80 字 + AI
+      摘要前 120 字），帮助长会话里理解"之前说过/继续"类指代，成本极低。
     """
     messages = all_messages
     if not include_socratic:
         messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
     keep_viz = _prompt_wants_viz(current_prompt)
-    result = []
+    full = []
+    digest = []
     rounds = 0
     assistant_count = 0
+    summary_rounds_seen = 0
+    pending_ai = ""
     for msg in reversed(messages):
         role = msg.get("role", "user")
         content = str(msg.get("content") or "")
         if role == "user":
-            if len(content) > _CONTEXT_MAX_USER_CHARS:
-                content = content[:_CONTEXT_MAX_USER_CHARS] + "\n…（已截断）"
-        else:
-            if assistant_count == 0:
-                content = _trim_context_content(content, keep_viz=keep_viz)
+            if rounds < max_rounds:
+                if len(content) > _CONTEXT_MAX_USER_CHARS:
+                    content = content[:_CONTEXT_MAX_USER_CHARS] + "\n…（已截断）"
+                full.insert(0, {"role": "user", "content": content})
+                rounds += 1
+            elif summary_rounds_seen < summary_rounds:
+                line = "（更早对话）用户：" + content[:80]
+                if pending_ai:
+                    line += "；AI：" + pending_ai
+                    pending_ai = ""
+                digest.insert(0, {"role": "user", "content": line})
+                summary_rounds_seen += 1
             else:
-                content = _graph_message_summary(msg)
-            assistant_count += 1
-        result.insert(0, {"role": role, "content": content})
-        if role == "user":
-            rounds += 1
-            if rounds >= max_rounds:
                 break
-    return result
+        else:
+            if rounds < max_rounds:
+                if assistant_count == 0:
+                    content = _trim_context_content(content, keep_viz=keep_viz)
+                else:
+                    content = _graph_message_summary(msg)
+                full.insert(0, {"role": "assistant", "content": content})
+                assistant_count += 1
+            elif summary_rounds_seen < summary_rounds:
+                pending_ai = _graph_message_summary(msg)[:120]
+            else:
+                break
+    return digest + full
 
 def _extract_section(content: str, tag: str) -> str:
     match = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", content or "", re.I)
@@ -143,6 +160,7 @@ def _load_session_context(
     parent_id: str = "",
     graph_path: list = None,
     current_prompt: str = "",
+    workflow_context: dict = None,
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
@@ -161,6 +179,7 @@ def _load_session_context(
             source_module=source_module,
             max_rounds=max_rounds,
             current_prompt=current_prompt,
+            workflow_context=workflow_context,
         )
     if not branch_id:
         return _recent_context_messages(all_messages, max_rounds, include_socratic, current_prompt)
@@ -367,6 +386,7 @@ def _load_session_context_from_path(
     source_module: str = "",
     max_rounds: int = 3,
     current_prompt: str = "",
+    workflow_context: dict = None,
 ) -> list:
     messages_path = _resolve_messages_path(session_id)
     all_messages = _read_json(messages_path, [])
@@ -376,6 +396,7 @@ def _load_session_context_from_path(
     result = []
     seen = set()
     active_index = len(graph_path) - 1
+    skip_upstream = bool(workflow_context and workflow_context.get("upstream"))
 
     for index, item in enumerate(graph_path):
         msg = by_ts.get(str(item.get("timestamp") or ""))
@@ -390,6 +411,8 @@ def _load_session_context_from_path(
             content = str(msg.get("content") or "")
             if module_key:
                 content = _branch_source_content(content, module_key)
+        elif skip_upstream:
+            continue
         else:
             content = _graph_message_summary(msg, module_key if not is_active else "")
         if not content or content in seen:

@@ -1,6 +1,16 @@
 // ===== PhyMathia 图编辑 harness：评审运行与澄清 =====
 
 
+  function _capOpPatch(patch) {
+    if (patch === undefined || patch === null) return undefined;
+    if (typeof patch === 'object') {
+      const out = {};
+      for (const k of Object.keys(patch)) out[k] = String(patch[k] ?? '').slice(0, 200);
+      return out;
+    }
+    return String(patch).slice(0, 200);
+  }
+
   function _buildStructuredHarnessHistory() {
     return (Array.isArray(harnessHistory) ? harnessHistory : []).slice(-20).map(entry => {
       if (entry.role === 'user') {
@@ -19,7 +29,7 @@
           edge_key: op.edge_key || op.key || '',
           label: op.label || '',
           kind: op.kind || '',
-          patch: op.patch || undefined,
+          patch: _capOpPatch(op.patch),
         })) : [],
       };
     });

@@ -213,7 +213,12 @@ async def api_models_chat(request: Request):
         include_socratic = bool(socratic_state) or is_socratic_prompt
 
         is_quick = quick and not branch_id and not graph_path and not workflow_context
-        system_content = QUICK_SYSTEM_PROMPT if is_quick else SYSTEM_PROMPT
+        if is_quick:
+            system_content = QUICK_SYSTEM_PROMPT
+        elif workflow_context:
+            system_content = MODULE_SYSTEM_PROMPT
+        else:
+            system_content = SYSTEM_PROMPT
         state_instruction = _socratic_state_instruction(socratic_ref) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
@@ -236,6 +241,7 @@ async def api_models_chat(request: Request):
                 graph_path=graph_path,
                 max_rounds=(1 if is_quick else 3),
                 current_prompt=prompt,
+                workflow_context=workflow_context,
             )
             messages.extend(context)
 
