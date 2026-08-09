@@ -12,6 +12,12 @@ _CONTEXT_VIZ_KEEP_MAX = 6000
 VIZ_PLACEHOLDER = "[交互可视化内容已省略]"
 _VIZ_WANT_RE = re.compile(r"可视化|交互|动画|没看懂|看不懂|HTML|html|演示|3D|这个图|那张图|图里|图上的|画面", re.I)
 
+def estimate_tokens(text: str) -> int:
+    """Cheap token estimate mirroring the frontend: CJK chars count 1, ASCII ~4/1."""
+    s = str(text or "")
+    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef")
+    return (4 * cjk + (len(s) - cjk) + 3) // 4
+
 
 def _prompt_wants_viz(prompt: str) -> bool:
     """判断当前提问是否与可视化相关（决定是否在上下文中保留整段 HTML）。"""
@@ -508,7 +514,7 @@ __all__ = [
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "_socratic_key", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "estimate_tokens", "_socratic_key", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_socratic_state_instruction",
     "_update_socratic_state_from_content", "_is_socratic_followup",
 ]

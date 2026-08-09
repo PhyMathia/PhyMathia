@@ -27,7 +27,6 @@ async def graph_review(request: Request):
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
         focus_node_ids = payload.get("focus_node_ids") or []
-        conversation_context = str(payload.get("conversation_context") or "")
         retries = int(payload.get("retries") or 2)
         mode = str(payload.get("mode") or "auto")
         self_check = str(payload.get("self_check") or "auto")
@@ -40,7 +39,6 @@ async def graph_review(request: Request):
             context=context,
             level=level,
             focus_node_ids=focus_node_ids,
-            conversation_context=conversation_context,
             retries=retries,
             mode=mode,
             self_check=self_check,
@@ -120,7 +118,6 @@ async def graph_resolve(request: Request):
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
-        conversation_context = str(payload.get("conversation_context") or "")
         retries = int(payload.get("retries") or 2)
         mode = str(payload.get("mode") or "auto")
         result = await resolve_focus(
@@ -130,7 +127,6 @@ async def graph_resolve(request: Request):
             max_tokens=int(payload.get("max_tokens") or 900),
             context=context,
             level=level,
-            conversation_context=conversation_context,
             retries=retries,
             mode=mode,
         )

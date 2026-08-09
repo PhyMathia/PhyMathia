@@ -541,6 +541,33 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
             return {"ok": True, "issues": [], "missing": [], "error": "自检调用失败，已跳过"}
 
 
+def _estimate_tokens(text: str) -> int:
+    """Cheap token estimate mirroring the frontend: CJK chars count 1, ASCII ~4/1."""
+    s = str(text or "")
+    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef")
+    return (4 * cjk + (len(s) - cjk) + 3) // 4
+
+
+def _log_context_metrics(messages: list, snapshot: dict, phase: str) -> None:
+    """Log per-request context sizes for the harness review/resolve endpoints."""
+    try:
+        sys_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") == "system")
+        user_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") != "system")
+        all_text = "".join(str(m.get("content") or "") for m in messages)
+        logger.info(
+            "harness context: phase=%s nodes=%d edges=%d snapshot_chars=%d system_chars=%d user_chars=%d est_tokens=%d",
+            phase,
+            len(snapshot.get("nodes") or []),
+            len(snapshot.get("edges") or []),
+            len(json.dumps(snapshot, ensure_ascii=False)),
+            sys_chars,
+            user_chars,
+            _estimate_tokens(all_text),
+        )
+    except Exception:
+        pass
+
+
 async def review_graph(
     snapshot: Any,
     instruction: str,
@@ -551,7 +578,6 @@ async def review_graph(
     context: str = "",
     level: str = "",
     focus_node_ids=None,
-    conversation_context: str = "",
     mode: str = "auto",
     self_check: str = "auto",
     history=None,
@@ -569,7 +595,7 @@ async def review_graph(
     current = _compact_snapshot(current, focus_node_ids)
     instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
     phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
-    full_context = "\n\n".join([part for part in (context, conversation_context) if part])
+    full_context = str(context or "")
     resolved_model = _resolve_model(model)
     provider = resolved_model["provider"]
 
@@ -632,6 +658,8 @@ async def review_graph(
         history_text = _history_block(history)
         if history_text:
             messages[-1]["content"] += history_text
+        if attempt == 0:
+            _log_context_metrics(messages, current, phase)
 
         try:
             raw = await _call_model(
@@ -871,12 +899,11 @@ async def resolve_focus(
     retries: int = 1,
     context: str = "",
     level: str = "",
-    conversation_context: str = "",
     mode: str = "auto",
 ) -> Dict[str, Any]:
     current = normalize_snapshot(snapshot)
     node_ids = {node["id"] for node in current["nodes"]}
-    full_context = "\n\n".join([part for part in (context, conversation_context) if part])
+    full_context = str(context or "")
     resolved_model = _resolve_model(model)
     json_mode = _supports_json_mode(resolved_model["provider"])
     last_errors = []
@@ -888,6 +915,8 @@ async def resolve_focus(
             level,
             _summarize_errors(last_errors) if attempt else "",
         )
+        if attempt == 0:
+            _log_context_metrics(messages, current, "resolve")
         raw = await _call_model(messages, resolved_model, max_tokens, json_mode=json_mode)
         payload = extract_json(raw["content"])
         if payload is None:

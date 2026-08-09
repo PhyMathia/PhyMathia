@@ -507,14 +507,6 @@ let harnessLastAppliedBeforeSnapshot = null;
     _saveHarnessHistory().then(_renderHarnessChat);
   }
 
-  function _buildConversationContext() {
-    return harnessHistory.slice(-10).map(entry => {
-      const role = entry.role === 'user' ? '用户' : 'Harness';
-      const content = String(entry.content || '').slice(0, 600);
-      return role + '：' + content;
-    }).join('\n');
-  }
-
   function _showHarnessRetry(text) {
     const chat = document.getElementById('graphHarnessChat');
     if (!chat) return;
@@ -554,7 +546,6 @@ let harnessLastAppliedBeforeSnapshot = null;
         },
         level: localStorage.getItem('phymathia_level') || 'university',
         retries: 2,
-        conversation_context: _buildConversationContext(),
       }),
     });
     const data = await resp.json();

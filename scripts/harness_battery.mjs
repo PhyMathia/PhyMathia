@@ -652,7 +652,6 @@ function buildTurnPayload(snapshot, turn, history, prevOps, prevSnapshot, allPre
     phase: turn.phase || 'normal',
     level: turn.level || 'university',
     focus_node_ids: turn.focus || [],
-    conversation_context: '用户正在学习微积分，已经学过极限。',
     harness_history: history,
     previous_ops: prevOps || [],
     previous_snapshot: prevSnapshot || null,

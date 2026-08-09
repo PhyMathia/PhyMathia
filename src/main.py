@@ -246,11 +246,13 @@ async def api_models_chat(request: Request):
         else:
             messages.append({"role": "user", "content": prompt})
 
-        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, ctx_rounds={len([m for m in messages if m['role'] != 'system'])}")
+        ctx_text = "".join(str(m.get("content") or "") for m in messages)
+        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}")
     else:
         # 旧格式：直接使用传入的 messages（兼容向后）
         messages = payload.get("messages", [])
-        logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}")
+        raw_text = "".join(str(m.get("content") or "") for m in messages)
+        logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}, ctx_chars={len(raw_text)}, est_tokens={estimate_tokens(raw_text)}")
 
     if not base_url:
         provider_info = AI_PROVIDERS.get(provider)
