@@ -871,8 +871,14 @@ if __name__ == "__main__":
     logger.info(f"  - Mock: Enabled (no AI API required)")
     logger.info("=" * 50)
     logger.info(f"访问地址: http://localhost:{args.port}")
+    # 打包版（PyInstaller）自动打开浏览器；开发模式不自动打开
+    if getattr(sys, "frozen", False):
+        import threading
+        import webbrowser
+        threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
+
     uvicorn.run(
-        "main:app",
+        app,
         host="127.0.0.1",
         port=args.port,
         reload=args.reload,

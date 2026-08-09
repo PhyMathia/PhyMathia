@@ -1,6 +1,7 @@
 """PhyMathia 服务端配置：路径、常量与环境变量加载。"""
 
 import os
+import sys
 from pathlib import Path
 
 # ====== .env 加载（无第三方依赖）======
@@ -17,8 +18,15 @@ def _load_env_file(path: Path) -> None:
         if key and key not in os.environ:
             os.environ[key] = value
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-ROOT_DIR = BASE_DIR.parent
+# PyInstaller 打包兼容：静态资源/提示词从解包目录读取（只读），
+# 数据（data/）始终写到 exe 所在目录，便于持久化且不携带开发机数据。
+if getattr(sys, "frozen", False):
+    _BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    BASE_DIR = _BUNDLE_DIR / "src"
+    ROOT_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    ROOT_DIR = BASE_DIR.parent
 DATA_DIR = ROOT_DIR / "data"
 MESSAGES_DIR = DATA_DIR / "messages"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
