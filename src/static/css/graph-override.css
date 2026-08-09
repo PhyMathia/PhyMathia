@@ -587,6 +587,15 @@
   flex: none !important;
   pointer-events: none !important;
 }
+.graph-tool-btn.graph-tool-glyph-lg {
+  font-size: 21px !important;
+  line-height: 1 !important;
+  font-weight: 600 !important;
+}
+.graph-tool-btn.graph-tool-fit-btn {
+  font-weight: 800 !important;
+  transform: translateY(-1px);
+}
 
 .graph-tool-btn.graph-run-all-btn {
   width: auto;

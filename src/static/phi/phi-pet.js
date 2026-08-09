@@ -34,6 +34,8 @@
     if (toggle) toggle.textContent = info.toggle;
   }
 
+  var LOOK_DIRS = ["up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right"];
+
   var CONFETTI_COLORS = [
     "#fde047", "#93c5fd", "#c4b5fd", "#86efac", "#fda4af", "#fbbf24", "#67e8f9"
   ];
@@ -80,6 +82,8 @@
     var toggle = root.closest(".phi-card")?.querySelector("[data-phi-mode-toggle]");
     var blinkTimer = 0;
     var blinkEndTimer = 0;
+    var lookTimer = 0;
+    var lookEndTimer = 0;
     var destroyed = false;
 
     function scheduleBlink() {
@@ -107,6 +111,32 @@
       }, delay);
     }
 
+    // 随机“看”动作：与眨眼同机制，仅待机时轻微上下左右看，位移后随机停留
+    function scheduleLook() {
+      if (destroyed) return;
+      var mode = getMode(root);
+      var delay;
+      if (mode === "working") {
+        delay = 6000 + Math.random() * 5000;
+      } else if (mode === "celebrate" || mode === "error") {
+        delay = 9000 + Math.random() * 6000;
+      } else {
+        delay = 2800 + Math.random() * 5200;
+      }
+
+      lookTimer = window.setTimeout(function () {
+        if (document.visibilityState !== "hidden" && getMode(root) === "idle") {
+          var dir = LOOK_DIRS[Math.floor(Math.random() * LOOK_DIRS.length)];
+          eyes.classList.remove("is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
+          eyes.classList.add("is-looking-" + dir);
+          lookEndTimer = window.setTimeout(function () {
+            eyes.classList.remove("is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
+          }, 400 + Math.random() * 800);
+        }
+        scheduleLook();
+      }, delay);
+    }
+
     function handleToggle() {
       var order = { idle: "working", working: "celebrate", celebrate: "error", error: "idle" };
       setPhiPetMode(root, order[getMode(root)]);
@@ -119,13 +149,16 @@
     if (getMode(root) === "error") root.classList.add("is-erroring");
     randomizeConfetti(root);
     scheduleBlink();
+    scheduleLook();
 
     return function destroy() {
       destroyed = true;
       window.clearTimeout(blinkTimer);
       window.clearTimeout(blinkEndTimer);
+      window.clearTimeout(lookTimer);
+      window.clearTimeout(lookEndTimer);
       if (toggle) toggle.removeEventListener("click", handleToggle);
-      eyes.classList.remove("is-blinking");
+      eyes.classList.remove("is-blinking", "is-looking-up", "is-looking-down", "is-looking-left", "is-looking-right", "is-looking-up-left", "is-looking-up-right", "is-looking-down-left", "is-looking-down-right");
     };
   }
 

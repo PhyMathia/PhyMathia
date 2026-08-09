@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="400" height="400" shape-rendering="crispEdges">
   <style>
     :root {
-    --phi-outline: transparent;
-    --phi-body-shadow: #c2410c;
-    --phi-body: #f97316;
+    --phi-outline: #fdba74;
+    --phi-body-shadow: #9a3412;
+    --phi-body: #ea580c;
     --phi-body-hi: #fdba74;
     --phi-eye: #93c5fd;
-    --phi-eye-dark: #60a5fa;
-    --phi-lamp-on: #fde047;
-    --phi-lamp-on-dark: #f59e0b;
+    --phi-eye-dark: #3b82f6;
+    --phi-lamp-on: #fef08a;
+    --phi-lamp-on-dark: #fbbf24;
     }
   </style>
   <title>Φ 桌宠（浅色模式）</title>

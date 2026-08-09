@@ -1,3 +1,16 @@
+/* ====== @property 注册：让 Φ 配色变量可被动画化（与全局主题系统一致，0.35s 渐变） ====== */
+@property --phi-outline { syntax: '<color>'; inherits: true; initial-value: rgba(147, 197, 253, 0.85); }
+@property --phi-body-shadow { syntax: '<color>'; inherits: true; initial-value: #172554; }
+@property --phi-body { syntax: '<color>'; inherits: true; initial-value: #1d4ed8; }
+@property --phi-body-hi { syntax: '<color>'; inherits: true; initial-value: #60a5fa; }
+@property --phi-eye { syntax: '<color>'; inherits: true; initial-value: #fbbf24; }
+@property --phi-eye-dark { syntax: '<color>'; inherits: true; initial-value: #d97706; }
+@property --phi-error { syntax: '<color>'; inherits: true; initial-value: #f87171; }
+@property --phi-lamp-on { syntax: '<color>'; inherits: true; initial-value: #fde047; }
+@property --phi-lamp-on-dark { syntax: '<color>'; inherits: true; initial-value: #f59e0b; }
+@property --phi-lamp-off { syntax: '<color>'; inherits: true; initial-value: #94a3b8; }
+@property --phi-lamp-off-dark { syntax: '<color>'; inherits: true; initial-value: #475569; }
+
 .phi-pet {
   position: absolute;
   inset: 0;
@@ -7,29 +20,37 @@
 
 /* Φ 主题色板（深色=深蓝、浅色=暖橘；致敬 Claude Code buddy） */
 .phi-pet {
-  --phi-outline: rgba(96, 165, 250, 0.72); /* 深色模式描边调细：保持蓝色但半透明，视觉上更轻 */
+  --phi-outline: rgba(147, 197, 253, 0.85); /* 深色描边（朋友版）：浅蓝、更清晰 */
   --phi-body-shadow: #172554;
-  --phi-body: #1e40af;
-  --phi-body-hi: #3b82f6;
+  --phi-body: #1d4ed8;
+  --phi-body-hi: #60a5fa;
   --phi-eye: #fbbf24;
-  --phi-eye-dark: #b45309;
+  --phi-eye-dark: #d97706;
   --phi-error: #f87171;
   --phi-lamp-on: #fde047;
   --phi-lamp-on-dark: #f59e0b;
   --phi-lamp-off: var(--phi-body-hi);
   --phi-lamp-off-dark: var(--phi-body);
+  /* 主题切换渐变：与全局 0.35s ease 一致 */
+  transition:
+    --phi-outline 0.35s ease, --phi-body 0.35s ease, --phi-body-hi 0.35s ease,
+    --phi-body-shadow 0.35s ease, --phi-eye 0.35s ease, --phi-eye-dark 0.35s ease,
+    --phi-error 0.35s ease, --phi-lamp-on 0.35s ease, --phi-lamp-on-dark 0.35s ease,
+    --phi-lamp-off 0.35s ease, --phi-lamp-off-dark 0.35s ease;
 }
-/* 浅色模式：暖橘、无硬黑边，只保留柔和暖色投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
+/* 浅色模式：暖橘+暖棕描边（朋友版）、柔和投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
 [data-theme="light"] .phi-pet {
-  --phi-outline: transparent;
-  --phi-body-shadow: #c2410c;
-  --phi-body: #f97316;
+  --phi-outline: #fdba74; /* 浅色描边（用户反馈）：浅橙色，不深色 */
+  --phi-body-shadow: #9a3412;
+  --phi-body: #ea580c;
   --phi-body-hi: #fdba74;
   --phi-eye: #93c5fd;
-  --phi-eye-dark: #60a5fa;
+  --phi-eye-dark: #3b82f6; /* 浅色：眼睛深蓝部分再深一点 */
   --phi-error: #b91c1c;
-  --phi-lamp-off: #94a3b8;
-  --phi-lamp-off-dark: #475569;
+  --phi-lamp-on: #fef08a;      /* 浅色：灯亮更亮（嫩黄） */
+  --phi-lamp-on-dark: #fbbf24; /* 浅色：灯亮暗部（亮琥珀） */
+  --phi-lamp-off: #93c5fd;     /* 浅色：灯灭（浅蓝，再深一点点） */
+  --phi-lamp-off-dark: #60a5fa; /* 浅色：灯灭暗部（再深一点点） */
 }
 
 .phi-code-symbols {
@@ -91,7 +112,7 @@
   width: 11%;
   height: 14%;
   transform-origin: 100% 16%;
-  animation: phi-hand-sway-right 2.8s ease-in-out infinite;
+  animation: phi-hand-sway-right 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
 }
 
 /* 视觉右侧是角色的左手。 */
@@ -101,7 +122,7 @@
   width: 11%;
   height: 14%;
   transform-origin: 0% 16%;
-  animation: phi-hand-sway-left 2.8s ease-in-out infinite;
+  animation: phi-hand-sway-left 3.2s ease-in-out infinite; /* 随呼吸同频摆动 */
 }
 
 .phi-eyes {
@@ -117,8 +138,18 @@
 }
 
 .phi-eyes {
-  transition: opacity 320ms ease;
+  transition: opacity 320ms ease, transform 240ms ease;
 }
+
+/* 随机“看”动作：8 方向，位移落在椭圆轨迹上（半长轴 h=4/3px 左右，半短轴 v=1px 上下；斜向 = (h/√2, v/√2)，非 x+y 简单叠加） */
+.phi-eyes.is-looking-up    { transform: translateY(-1px); }
+.phi-eyes.is-looking-down  { transform: translateY(1px); }
+.phi-eyes.is-looking-left  { transform: translateX(-1.3333px); }
+.phi-eyes.is-looking-right { transform: translateX(1.3333px); }
+.phi-eyes.is-looking-up-left    { transform: translate(-0.9428px, -0.7071px); }
+.phi-eyes.is-looking-up-right   { transform: translate(0.9428px, -0.7071px); }
+.phi-eyes.is-looking-down-left  { transform: translate(-0.9428px, 0.7071px); }
+.phi-eyes.is-looking-down-right { transform: translate(0.9428px, 0.7071px); }
 
 .phi-happy-eyes {
   position: absolute;
@@ -128,7 +159,7 @@
   height: 12%;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 320ms ease;
+  transition: opacity 320ms ease, background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
 }
 
 .phi-happy-eye {
@@ -216,6 +247,7 @@
   background: #334155;
   border: 1px solid #0f172a;
   border-radius: 14%;
+  transition: background-color 0.35s ease, border-color 0.35s ease;
 }
 
 .phi-pet.is-working .phi-keyboard {
@@ -425,8 +457,6 @@
   animation-play-state: paused;
 }
 
-  transform: scale(0.96);
-}
 
 @keyframes phi-bounce {
   0%, 100% { transform: translateY(0) scaleY(1); }
@@ -444,13 +474,13 @@
 }
 
 @keyframes phi-hand-sway-right {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(-7deg); }
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  50% { transform: rotate(-10deg) translateY(1%); }
 }
 
 @keyframes phi-hand-sway-left {
-  0%, 100% { transform: rotate(0deg); }
-  50% { transform: rotate(7deg); }
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  50% { transform: rotate(10deg) translateY(1%); }
 }
 
 @keyframes phi-blink {
@@ -605,6 +635,10 @@ html[data-theme="light"] .phi-pet-root {
 [data-theme="light"] .phi-code-symbol-5 {
   text-shadow: 0 0 10px rgba(74, 222, 128, 0.35);
 }
+[data-theme="light"] .phi-lamp-on {
+  filter: brightness(1.25) saturate(1.15) drop-shadow(0 0 2px rgba(253, 224, 71, 0.9));
+  transition: filter 0.35s ease;
+}
 [data-theme="light"] .phi-keyboard {
   background: #f1f5f9;
   border-color: #cbd5e1;
@@ -621,6 +655,11 @@ html[data-theme="light"] .phi-pet-root {
   .phi-hand,
   .phi-shadow {
     animation: none;
+    transition: none !important;
+  }
+
+  .phi-eyes {
+    transition: none !important;
   }
 
   .phi-lamp-on {
@@ -634,6 +673,8 @@ html[data-theme="light"] .phi-pet-root {
   }
 
   .phi-code-symbols,
+  .phi-keyboard,
+  .phi-kb-row i,
   .mode-toggle {
     transition: none;
   }
