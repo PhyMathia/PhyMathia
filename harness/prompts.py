@@ -37,7 +37,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 
 你必须只输出一个 JSON 对象，不要输出 Markdown 说明，不要输出代码块以外的内容。结构：
 {
-  "summary": "一句话说明本次修改思路",
+  "summary": "以助手口吻用 2~4 句自然语言说明：你理解到的意图、本次做了什么（按类别计数，如“新增 3 个知识点、2 个视角、5 条连线”）、关键取舍理由、下一步建议。禁止出现节点 id/temp_id/edge_key 等原始标识，禁止罗列 operations。",
   "operations": [
     {
       "op": "create_node",
@@ -230,7 +230,7 @@ HARNESS_EVALUATE_SYSTEM_PROMPT = """你是知识网络评价 harness，只负责
 
 输入是一份知识网络快照，其中包含真实节点。你必须只输出 JSON：
 {
-  "summary": "一句话说明这次评价思路（必填，不能为空）",
+  "summary": "以助手口吻用 2~3 句自然语言说明评价了哪些节点（用节点名）、发现什么问题、建议怎么改（必填，不能为空）。禁止出现节点 id 等原始标识，禁止罗列 operations。",
   "operations": [
     {
       "op": "create_eval_node",
@@ -244,7 +244,7 @@ HARNESS_EVALUATE_SYSTEM_PROMPT = """你是知识网络评价 harness，只负责
 }
 
 规则：
-- summary 必填，一句话概括本次评价了哪些节点、发现什么问题。
+- summary 必填，用助手口吻 2~3 句概括本次评价了哪些节点（用节点名）、发现什么问题、建议方向；不要出现节点 id 等原始标识，不要罗列 operations。
 - 如果输入标注了重点节点（“用户重点指定的节点”），只评价这些节点，不要评价其他节点；只有未标注重点节点时才整体评价。
 - 只能使用 create_eval_node，不要输出 update_node、delete_node、add_edge 等真实修改操作。
 - 不要使用 create_node 创建 kind=summary 或 kind=note 的节点；AI 评价只能使用 create_eval_node。
@@ -291,7 +291,7 @@ HARNESS_APPLY_SYSTEM_PROMPT = """你是知识网络修改 harness。当前图中
 
 请根据这些评价节点执行真实修改。输出 JSON：
 {
-  "summary": "一句话说明本次应用建议后的修改（必填，不能为空）",
+  "summary": "以助手口吻用 2~3 句自然语言说明本次按评价建议做了什么修改（按类别计数）。禁止出现节点 id/edge_key 等原始标识，禁止罗列 operations。",
   "operations": [
     {
       "op": "update_node",
@@ -321,6 +321,7 @@ HARNESS_APPLY_SYSTEM_PROMPT = """你是知识网络修改 harness。当前图中
 - 根据评价节点中的 suggestion 修改；不要凭空大改。
 - 应用修改后，原 ai_eval 节点可以由 harness 自动清理，不需要专门删除。
 - 如果多个 ai_eval 节点对同一个目标给出冲突建议，选择最符合用户指令且更合理的方案，并在 summary 中说明取舍。
+- summary 用节点名概括修改，不要出现原始 id/edge_key，不要罗列操作清单。
 """
 
 
@@ -360,7 +361,7 @@ HARNESS_EXPAND_SYSTEM_PROMPT = """你是知识网络进阶拓展 harness。用�
 4. add_edge(from=answer节点temp_id, to=learn模块temp_id, relation=模块, reason=...)
 
 规则：
-- summary 必填，一句话概括为哪些知识点生成了进阶链。
+- summary 必填，用助手口吻 2~3 句说明为哪些知识点（用节点名）生成了进阶链、各自方向；不要出现节点 id 等原始标识，不要罗列 operations。
 - 每个目标知识点都必须生成完整链条，不要合并、不要只生成一个。
 - 只创建新的 answer/learn 节点，不要修改已有节点。
 - 新节点只使用 temp_id，最终 ID 由 harness 分配；add_edge 可以直接引用同批 temp_id。

@@ -132,6 +132,7 @@
 
   async function _generateHarnessCreatedContent(ops) {
     const ids = (ops || []).filter(op => (op.op || op.type) === 'create_node').map(op => op.assigned_id || op.id || op.temp_id).filter(Boolean);
+    const workflowIds = [];
     for (const id of ids) {
       const node = (typeof window.getGraphViewNodes === 'function' ? window.getGraphViewNodes() : []).find(item => item.id === id);
       if (!node) continue;
@@ -139,8 +140,15 @@
         window.generateKnowledgeNode(id);
       } else if (node.kind === 'relation' && typeof window.generateRelationNode === 'function') {
         window.generateRelationNode(id);
-      } else if ((node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || (node.kind === 'answer' && !node.manual)) && typeof window.runWorkflowNode === 'function') {
-        await window.runWorkflowNode(id, true);
+      } else if (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || (node.kind === 'answer' && !node.manual)) {
+        workflowIds.push(id);
+      }
+    }
+    if (workflowIds.length) {
+      if (typeof window.runWorkflowNodes === 'function') {
+        await window.runWorkflowNodes(workflowIds);
+      } else if (typeof window.runWorkflowNode === 'function') {
+        for (const id of workflowIds) await window.runWorkflowNode(id, true);
       }
     }
   }

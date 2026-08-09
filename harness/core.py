@@ -415,7 +415,7 @@ def build_next_snapshot(
                     changed = True
             if not changed:
                 warnings.append({"index": index, "op": op_name, "reason": "修改前后没有变化"})
-            valid_ops.append({**op, "id": node_id})
+            valid_ops.append({**op, "id": node_id, "label": _text(nodes[node_id].get("label"), node_id)})
             continue
 
         if op_name == "delete_node":
@@ -431,7 +431,7 @@ def build_next_snapshot(
             removed_edge_keys = [key for key, edge in edges.items() if edge["from"] == node_id or edge["to"] == node_id]
             for key in removed_edge_keys:
                 edges.pop(key, None)
-            valid_ops.append({**op, "id": node_id, "cascade_edges": removed_edge_keys})
+            valid_ops.append({**op, "id": node_id, "label": _text(node.get("label"), node_id), "cascade_edges": removed_edge_keys})
             continue
 
         if op_name == "add_edge":
@@ -470,6 +470,8 @@ def build_next_snapshot(
                     "fromPort": from_port,
                     "toPort": to_port,
                     "edge_key": key,
+                    "from_label": _text(nodes[from_id].get("label"), from_id),
+                    "to_label": _text(nodes[to_id].get("label"), to_id),
                 }
             )
             continue
@@ -479,8 +481,10 @@ def build_next_snapshot(
             if not key or key not in edges:
                 errors.append({"index": index, "op": op_name, "reason": f"连线不存在: {key or ''}"})
                 continue
-            edges.pop(key, None)
-            valid_ops.append({**op, "edge_key": key})
+            removed_edge = edges.pop(key, None) or {}
+            valid_ops.append({**op, "edge_key": key,
+                "from_label": _text(nodes.get(removed_edge.get("from"), {}).get("label"), removed_edge.get("from", "")),
+                "to_label": _text(nodes.get(removed_edge.get("to"), {}).get("label"), removed_edge.get("to", ""))})
             continue
 
         if op_name == "update_edge":
@@ -502,12 +506,16 @@ def build_next_snapshot(
                     "relation": _text(patch.get("relation"), removed.get("relation", "")),
                     "label": _text(patch.get("label"), removed.get("label", "")),
                 }
-                valid_ops.append({**op, "edge_key": key, "auto_remap": True})
+                valid_ops.append({**op, "edge_key": key, "auto_remap": True,
+                    "from_label": _text(nodes.get(edge.get("from"), {}).get("label"), edge.get("from", "")),
+                    "to_label": _text(nodes.get(edge.get("to"), {}).get("label"), edge.get("to", ""))})
                 continue
             for field in UPDATEABLE_EDGE_FIELDS:
                 if field in patch:
                     edges[key][field] = _text(patch.get(field), "")
-            valid_ops.append({**op, "edge_key": key})
+            valid_ops.append({**op, "edge_key": key,
+                "from_label": _text(nodes.get(edge.get("from"), {}).get("label"), edge.get("from", "")),
+                "to_label": _text(nodes.get(edge.get("to"), {}).get("label"), edge.get("to", ""))})
             continue
 
     next_snapshot = {

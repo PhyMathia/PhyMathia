@@ -957,6 +957,18 @@ async function runWorkflowNode(nodeId, force = false) {
   await _executeParallelWorkflow([nodeId], force);
 }
 
+async function runWorkflowNodes(nodeIds, force = true) {
+  if (workflowRunActive) return false;
+  const targets = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
+    const node = _findGraphNode(id);
+    return node && node.messageIndex < 0 && !node.busy
+      && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer');
+  });
+  if (!targets.length) return false;
+  await _executeParallelWorkflow(targets, !!force);
+  return true;
+}
+
 async function runAllWorkflowNodes() {
   if (workflowRunActive) return;
   const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary'));
@@ -1673,6 +1685,7 @@ window.createBlankNode = createBlankNode;
 window.createManualNode = createManualNode;
 
 window.runWorkflowNode = runWorkflowNode;
+window.runWorkflowNodes = runWorkflowNodes;
 
 window.runAllWorkflowNodes = runAllWorkflowNodes;
 

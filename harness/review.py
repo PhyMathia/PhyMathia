@@ -378,31 +378,57 @@ def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focu
 
 
 def _fallback_summary(ops: list) -> str:
-    """Build a compact Chinese summary from validated operations when the model
-    returned no text (common with tool-calling where content is empty)."""
-    parts = []
+    """Build a compact, human-readable Chinese summary from validated operations
+    when the model returned no text (common with tool-calling where content is empty).
+    Uses labels attached by core.py; never exposes raw node ids or edge keys."""
+    counts = {
+        "create_node": 0, "create_eval_node": 0, "update_node": 0,
+        "delete_node": 0, "add_edge": 0, "remove_edge": 0, "update_edge": 0,
+    }
+    details = []
     for op in ops or []:
         name = str(op.get("op") or op.get("type") or "")
-        label = str(op.get("label") or op.get("title") or op.get("id") or "")
-        target = str(op.get("target_label") or op.get("target") or op.get("target_node_id") or op.get("from") or "")
+        if name in counts:
+            counts[name] += 1
+        label = str(op.get("label") or op.get("title") or "")
+        frm = str(op.get("from_label") or op.get("from") or "")
+        to = str(op.get("to_label") or op.get("to") or "")
+        target = str(op.get("target_label") or op.get("target") or op.get("target_node_id") or "")
         if name == "create_node":
-            parts.append("新增「" + (label or "节点") + "」")
+            details.append("新增「" + (label or "节点") + "」")
         elif name == "create_eval_node":
-            parts.append("为「" + (target or label or "目标节点") + "」生成评价")
+            details.append("为「" + (target or label or "目标节点") + "」生成评价")
         elif name == "update_node":
-            parts.append("修改「" + (label or op.get("id") or "节点") + "」")
+            details.append("修改「" + (label or "节点") + "」")
         elif name == "delete_node":
-            parts.append("删除「" + (label or op.get("id") or "节点") + "」")
+            details.append("删除「" + (label or "节点") + "」")
         elif name == "add_edge":
-            parts.append("新增连线 " + str(op.get("from") or "") + "→" + str(op.get("to") or ""))
+            details.append("新增连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
         elif name == "remove_edge":
-            parts.append("删除连线 " + str(op.get("edge_key") or ""))
+            details.append("删除连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
         elif name == "update_edge":
-            parts.append("修改连线 " + str(op.get("edge_key") or ""))
-    if not parts:
+            details.append("调整连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
+    if not details:
         return ""
-    head = "已生成 " + str(len(ops or [])) + " 条图修改：" + "；".join(parts)
-    return head[:200]
+    count_parts = []
+    if counts["create_node"]:
+        count_parts.append("新增 " + str(counts["create_node"]) + " 个节点")
+    if counts["add_edge"]:
+        count_parts.append(str(counts["add_edge"]) + " 条连线")
+    if counts["update_node"]:
+        count_parts.append("修改 " + str(counts["update_node"]) + " 处")
+    if counts["update_edge"]:
+        count_parts.append("调整 " + str(counts["update_edge"]) + " 条连线")
+    if counts["delete_node"]:
+        count_parts.append("删除 " + str(counts["delete_node"]) + " 个节点")
+    if counts["remove_edge"]:
+        count_parts.append("移除 " + str(counts["remove_edge"]) + " 条连线")
+    if counts["create_eval_node"]:
+        count_parts.append(str(counts["create_eval_node"]) + " 条评价建议")
+    head = ""
+    if count_parts:
+        head = "好的，已按你的要求完成梳理，共 " + str(len(ops or [])) + " 处调整（" + "、".join(count_parts) + "）。"
+    return (head + " " + "；".join(details)).strip()[:300]
 
 
 def _summarize_errors(errors) -> str:

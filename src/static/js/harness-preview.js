@@ -67,7 +67,7 @@
       html += ops.map((op, index) => ''
         + '<label class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
         + '<input type="checkbox" checked data-op-index="' + index + '">'
-        + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op)) + '</span>'
+        + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops)) + '</span>'
         + '<span class="graph-harness-op-reason">' + _escapeHtml(op.reason || '') + '</span>'
         + '</label>').join('');
     }

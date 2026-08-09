@@ -177,14 +177,7 @@
       _appendHarnessHistory({
         id: _historyId(),
         role: 'assistant',
-        content: ((data.summary || '').trim()
-          || ((data.operations || []).length ? '已生成 ' + (data.operations || []).length + ' 条图修改建议' : '模型没有提出可执行修改'))
-          + ((data.operations || []).length
-            ? '\n\n' + data.operations.map(op => '• ' + _opDescription(op)).join('\n')
-            : '')
-          + ((data.warnings || []).length
-            ? '\n\n⚠️ ' + data.warnings.map(w => w.reason || '').join('；')
-            : ''),
+        content: _harnessAssistantContent(data),
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
@@ -339,10 +332,7 @@
       _appendHarnessHistory({
         id: _historyId(),
         role: 'assistant',
-        content: (data.summary || '模型没有提出可执行修改')
-          + ((data.operations || []).length
-            ? '\n\n' + data.operations.map(op => '• ' + _opDescription(op)).join('\n')
-            : ''),
+        content: _harnessAssistantContent(data),
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
@@ -371,7 +361,40 @@
     }
   }
 
-  function _opDescription(op) {
+  function _nodeLabelById(id, allOps) {
+    const raw = String(id || '');
+    if (!raw) return '';
+    const opsList = Array.isArray(allOps) ? allOps : [];
+    const byId = {};
+    opsList.forEach(op => {
+      if ((op.op || op.type) === 'create_node') {
+        const label = op.label || op.title || '';
+        const aid = op.assigned_id || op.id || op.temp_id;
+        const tid = op.temp_id;
+        if (aid) byId[String(aid)] = label;
+        if (tid) byId[String(tid)] = label;
+      }
+    });
+    if (byId[raw]) return byId[raw];
+    if (typeof window.getGraphViewNodes === 'function') {
+      const node = window.getGraphViewNodes().find(item => String(item.id) === raw);
+      if (node) return node.label || node.title || _moduleLabel(node.moduleKey || node.module_key) || '';
+    }
+    if (typeof harnessSnapshot !== 'undefined' && harnessSnapshot && Array.isArray(harnessSnapshot.nodes)) {
+      const sn = harnessSnapshot.nodes.find(item => String(item.id) === raw);
+      if (sn) return sn.label || sn.title || '';
+    }
+    return raw;
+  }
+
+  function _edgeEndpointsOf(key) {
+    const parts = typeof _edgeParts === 'function' ? _edgeParts(key) : null;
+    if (parts) return parts;
+    const m = String(key || '').match(/^([^:]+):[^>]*->([^:]+):/);
+    return m ? { from: m[1], to: m[2] } : null;
+  }
+
+  function _opDescription(op, allOps) {
     const name = op.op || op.type || '';
     if (name === 'create_node') {
       const moduleKey = op.module_key || op.moduleKey || '';
@@ -383,21 +406,77 @@
       return '为「' + target + '」生成 AI 评价节点';
     }
     if (name === 'update_node') {
-      return '修改节点「' + (op.label || op.id || '') + '」';
+      return '修改节点「' + _nodeLabelById(op.label || op.id, allOps) + '」';
     }
     if (name === 'delete_node') {
-      return '删除节点「' + (op.label || op.id || '') + '」';
+      return '删除节点「' + _nodeLabelById(op.label || op.id, allOps) + '」';
     }
     if (name === 'add_edge') {
-      return '新增连线：' + (op.from || '') + ' → ' + (op.to || '') + (op.relation ? '（' + op.relation + '）' : '');
+      const from = op.from_label || _nodeLabelById(op.from, allOps);
+      const to = op.to_label || _nodeLabelById(op.to, allOps);
+      return '新增连线：「' + (from || '上游') + '」→「' + (to || '下游') + '」' + (op.relation ? '（' + op.relation + '）' : '');
     }
     if (name === 'remove_edge') {
-      return '删除连线：' + (op.edge_key || op.key || '');
+      const ends = _edgeEndpointsOf(op.edge_key || op.key || '');
+      const from = op.from_label || (ends ? _nodeLabelById(ends.from, allOps) : '');
+      const to = op.to_label || (ends ? _nodeLabelById(ends.to, allOps) : '');
+      return '删除连线：「' + (from || '上游') + '」→「' + (to || '下游') + '」';
     }
     if (name === 'update_edge') {
-      return '修改连线：' + (op.edge_key || op.key || '');
+      const ends = _edgeEndpointsOf(op.edge_key || op.key || '');
+      const from = op.from_label || (ends ? _nodeLabelById(ends.from, allOps) : '');
+      const to = op.to_label || (ends ? _nodeLabelById(ends.to, allOps) : '');
+      return '调整连线：「' + (from || '上游') + '」→「' + (to || '下游') + '」';
     }
     return name || '未知操作';
+  }
+
+  function _buildHumanReadableReport(ops) {
+    const list = Array.isArray(ops) ? ops : [];
+    if (!list.length) return '';
+    const MAX_PER_GROUP = 6;
+    const groups = [
+      { key: 'create_node', title: '新增' },
+      { key: 'add_edge', title: '新增连线' },
+      { key: 'update_node', title: '修改节点' },
+      { key: 'update_edge', title: '调整连线' },
+      { key: 'delete_node', title: '删除节点' },
+      { key: 'remove_edge', title: '删除连线' },
+      { key: 'create_eval_node', title: 'AI 评价' },
+    ];
+    const counts = {};
+    list.forEach(op => { const k = op.op || op.type || ''; counts[k] = (counts[k] || 0) + 1; });
+    const countParts = [];
+    if (counts.create_node) countParts.push('新增 ' + counts.create_node + ' 个节点');
+    if (counts.add_edge) countParts.push(counts.add_edge + ' 条连线');
+    if (counts.update_node) countParts.push('修改 ' + counts.update_node + ' 处');
+    if (counts.update_edge) countParts.push('调整 ' + counts.update_edge + ' 条连线');
+    if (counts.delete_node) countParts.push('删除 ' + counts.delete_node + ' 个节点');
+    if (counts.remove_edge) countParts.push('移除 ' + counts.remove_edge + ' 条连线');
+    if (counts.create_eval_node) countParts.push(counts.create_eval_node + ' 条评价建议');
+    const sections = [];
+    for (const group of groups) {
+      const items = list.filter(op => (op.op || op.type) === group.key);
+      if (!items.length) continue;
+      const lines = items.slice(0, MAX_PER_GROUP).map(op => '• ' + _opDescription(op, list));
+      let block = '**' + group.title + '（' + items.length + '）**\n' + lines.join('\n');
+      if (items.length > MAX_PER_GROUP) block += '\n… 等 ' + items.length + ' 项';
+      sections.push(block);
+    }
+    const head = countParts.length ? '**共 ' + list.length + ' 处调整**：' + countParts.join('、') + '。' : '';
+    return (head ? head + '\n\n' : '') + sections.join('\n\n');
+  }
+
+  function _harnessAssistantContent(data) {
+    const ops = Array.isArray(data.operations) ? data.operations : [];
+    const summary = String((data.summary || '').trim())
+      || (ops.length ? '已生成 ' + ops.length + ' 条图修改建议' : '模型没有提出可执行修改');
+    const parts = [summary];
+    const report = _buildHumanReadableReport(ops);
+    if (report) parts.push(report);
+    if ((data.warnings || []).length) parts.push('⚠️ ' + data.warnings.map(w => w.reason || '').join('；'));
+    if (ops.length && data.status !== 'undo') parts.push('可点「查看预览」确认效果，满意后点击保留；不满意可随时撤销或重跑。');
+    return parts.join('\n\n');
   }
 
   function runHarnessExpandQuick() {

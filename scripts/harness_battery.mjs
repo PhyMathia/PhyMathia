@@ -320,6 +320,12 @@ const complexScenarios = [
     expect: { healthAfter: true },
   },
   {
+    id: 'readable-summary', label: '人性化摘要：多操作后 summary 不含原始 ID',
+    turns: [
+      { instruction: '给导数补一个数学视角，并新增两个知识点：链式法则和隐函数求导，把它们连到导数上并说明关系', phase: 'normal', focus: ['A'], expect: { summaryReadable: true, hasAddEdge: true, createCount: 2, noCrash: true } },
+    ],
+  },
+  {
     id: 'c9-conversation', label: '对话：先问答后按上下文建点', graphs: ['G9'],
     turns: [
       { instruction: '简谐运动的回复力有什么特点？', phase: 'normal', focus: [], expect: { noOps: true } },
@@ -528,6 +534,14 @@ function scoreScenario(sc, data) {
     if (!connected) issues.push('新模块未从期望节点引出连线');
   }
   if (!String(data.summary || '').trim()) issues.push('缺少 summary');
+  if (ex.summaryReadable) {
+    const s = String(data.summary || '');
+    const rawId = /(hn_\d+|knowledge-custom-\d+|:\w+-\d+->|edge_key|temp_id|\b[A-Za-z]+-\d{6,}\b)/;
+    const longDigit = /\d{10,}/;
+    const actionWords = /新增|修改|删除|连线|评价|进阶|调整|补充|整理|扩展/;
+    if (rawId.test(s) || longDigit.test(s)) issues.push('summary 包含原始标识: ' + s.slice(0, 100));
+    else if (!actionWords.test(s)) issues.push('summary 缺少动作性描述: ' + s.slice(0, 100));
+  }
   if (ex.noEvalCreate && ops.some(o => opName(o) === 'create_eval_node')) issues.push('apply 阶段仍创建了评价节点');
   if (ex.hasRealEdit && !ops.some(o => ['update_node', 'delete_node', 'add_edge', 'remove_edge', 'update_edge'].includes(opName(o)))) issues.push('apply 阶段没有真实修改操作');
   if (ex.updateEdge) {
