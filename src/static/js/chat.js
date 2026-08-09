@@ -361,7 +361,16 @@
         let resp;
         if (agentModel) {
           showProgress('tool', 26, '正在连接 AI 服务');
-          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta, { quick: isCasual, max_tokens: isCasual ? 300 : undefined });
+          const wfCtx = isCasual ? undefined : {
+            mode: 'analysis',
+            target: { kind: 'answer', label: 'AI 回答' },
+            question: text,
+          };
+          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta, {
+            quick: isCasual,
+            max_tokens: isCasual ? 300 : undefined,
+            ...(wfCtx ? { workflow_context: wfCtx } : {}),
+          });
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
@@ -526,6 +535,11 @@
             duration,
             ...assistantMeta,
           });
+
+          // 两阶段：AI 回答节点只保存方向分析，随后按建议模块自动生成对应模块节点
+          if (!isCasual && typeof window._autoGenerateModulesFromAnalysis === 'function') {
+            window._autoGenerateModulesFromAnalysis(assistantContent, ts, branchMeta).catch(() => {});
+          }
           if (wasSocraticBranch && /<socratic_meta\b[^>]*done\s*=\s*["']true["']/i.test(assistantContent)) {
             currentBranch = null;
             currentBranchId = null;

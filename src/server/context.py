@@ -344,6 +344,7 @@ def _workflow_context_instruction(workflow_context) -> str:
     lines = ["\n\n# 工作流节点上下文"]
     if mode == "analysis":
         lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")
+        lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
     if target:
         target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
         lines.append(f"- 当前生成目标：{target_label}")

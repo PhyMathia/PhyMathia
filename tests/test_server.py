@@ -276,5 +276,18 @@ class ContextOptimizationTest(unittest.TestCase):
 
 
 
+class WorkflowAnalysisInstructionTest(unittest.TestCase):
+    def test_analysis_mode_lists_suggested_modules(self):
+        inst = context_mod._workflow_context_instruction({"mode": "analysis", "target": {"kind": "answer", "label": "AI 回答"}, "question": "解释简谐运动"})
+        self.assertIn("只输出简洁问题概要", inst)
+        self.assertIn("建议模块：", inst)
+        self.assertIn("物理视角/数学视角", inst)
+
+    def test_module_mode_keeps_analysis_injection(self):
+        inst = context_mod._workflow_context_instruction({"mode": "module", "target": {"kind": "module", "module": "physics", "label": "物理视角"}, "analysis": "核心是回复力与位移成正比", "question": "简谐运动"})
+        self.assertIn("隐藏问题分析", inst)
+        self.assertIn("核心是回复力与位移成正比", inst)
+
+
 if __name__ == "__main__":
     unittest.main()
