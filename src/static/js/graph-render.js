@@ -578,8 +578,11 @@ function _renderSourceNodeHtml(node, state) {
     ? '<div class="graph-source-busy"><span class="graph-source-spinner"></span>正在解析文件...</div>'
     : '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
       + '<label class="graph-source-file-btn">选择/拖入文件<input type="file" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
+      + '<textarea class="graph-source-text-input" rows="2" placeholder="或直接粘贴文本/题目/讲义内容..."></textarea>'
+      + '<button type="button" class="graph-source-paste-btn" onclick="pasteSourceNodeText(\'' + node.id + '\')">粘贴文本解析</button>'
       + '<div class="graph-source-controls"><label>最多 <input type="number" class="graph-source-max-input" min="1" max="50" value="' + (node.maxItems || 5) + '" onchange="updateSourceNodeMax(\'' + node.id + '\',this.value)"></label>'
       + (node.fileId ? _iconRegenButton('reparseSourceNode(\'' + node.id + '\')', '重新解析', false) : '')
+      + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" onclick="openHarnessOrganizeRelations(\'' + node.id + '\')">🤖 AI 整理关系</button>' : '')
       + '</div>' + fileName + itemCount
       + '</div>';
   return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'

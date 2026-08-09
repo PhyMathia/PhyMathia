@@ -263,6 +263,18 @@ const complexScenarios = [
     ],
   },
   {
+    id: 'organize-relations-fix', label: '整理关系：删除空泛的“相关”连线', snapshotExtra: 'weak-edge',
+    turns: [
+      { instruction: '整理这些知识点之间的关系：把“相关/有联系”这类空泛、牵强的连线删掉或改成有明确逻辑依据的关系，只保留能说清理由的连线；不要创建单独的“联系”节点', phase: 'normal', focus: [], expect: { noRelationNode: true, hasEdgeCleanup: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'organize-relations', label: '整理关系：只用连线，不建联系节点', graphs: ['G9'],
+    turns: [
+      { instruction: '整理这些知识点之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线必须用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
+    ],
+  },
+  {
     id: 'c9-health-after', label: '复杂图修改后一致性体检（断链/孤儿/重复不增加）', graphs: ['G9'],
     turns: [
       { instruction: '给「简谐运动」的物理视角补充更深入的内容，结合回复力与位移成正比', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
@@ -357,6 +369,13 @@ function makeConflictSnapshot() {
     { key: 'D:out-0->E1:in-0', from: 'D', to: 'E1', relation: '评价', label: '评价' },
     { key: 'D:out-0->E2:in-0', from: 'D', to: 'E2', relation: '评价', label: '评价' },
   );
+  return s;
+}
+
+function makeWeakEdgeSnapshot() {
+  const s = makeSnapshot();
+  // 故意加一条空泛的“相关”边：C(物理视角) -> D(我的理解)
+  s.edges.push({ key: 'C:out-0->D:in-0', from: 'C', to: 'D', relation: '相关', label: '有联系' });
   return s;
 }
 
@@ -499,6 +518,12 @@ function scoreScenario(sc, data) {
     if (answers < ex.expandAllTargets.length) issues.push('answer 节点数不足: ' + answers + '/' + ex.expandAllTargets.length);
     if (learns < ex.expandAllTargets.length) issues.push('learn 模块数不足: ' + learns + '/' + ex.expandAllTargets.length);
   }
+  if (ex.hasEdgeCleanup && !ops.some(o => opName(o) === 'remove_edge' || opName(o) === 'update_edge')) {
+    issues.push('应修改/删除至少一条牵强连线（remove_edge 或 update_edge）');
+  }
+  if (ex.noRelationNode && ops.some(o => opName(o) === 'create_node' && (o.kind === 'relation'))) {
+    issues.push('不应创建 kind=relation 的联系节点（关系应直接用连线表达）');
+  }
   if (ex.noEvalOnEval) {
     const evalTargets = ops.filter(o => opName(o) === 'create_eval_node').map(o => o.target_node_id || o.target);
     const bad = evalTargets.filter(t => ['E1', 'E2'].includes(t));
@@ -564,6 +589,7 @@ function buildTurnPayload(snapshot, turn, history, prevOps, prevSnapshot, allPre
 
 function makeInitialSnapshot(sc, graph) {
   if (graph) return { version: 1, nodes: graph.nodes, edges: graph.edges };
+  if (sc.snapshotExtra === 'weak-edge') return makeWeakEdgeSnapshot();
   if (sc.snapshotExtra === 'evals') return makeEvalSnapshot();
   if (sc.snapshotExtra === 'evals-conflict') return makeConflictSnapshot();
   if (sc.snapshotExtra === 'big') return makeBigSnapshot();

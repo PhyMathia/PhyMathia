@@ -331,56 +331,6 @@ function _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes) {
   }
 }
 
-function _relationScore(rel, fallback) {
-  const score = Number(rel && rel.score);
-  if (Number.isFinite(score)) return Math.max(0, Math.min(1, score));
-  return fallback == null ? 0.75 : fallback;
-}
-
-function _isWeakRelationText(value) {
-  return /^(相关|有联系|关联|联系|有关|包含|关系|本质联系)$/i.test(String(value || '').trim());
-}
-
-function _relationGroupsFromData(relations, edges) {
-  const groups = [];
-  if (Array.isArray(relations)) {
-    for (const rel of relations) {
-      if (!rel || typeof rel !== 'object') continue;
-      const label = String(rel.label || rel.meaning || rel.type || '').trim();
-      if (_isWeakRelationText(label)) continue;
-      const nodes = Array.isArray(rel.nodes)
-        ? rel.nodes.map(item => String(item || '')).filter(Boolean)
-        : [];
-      if (!nodes.length && rel.from && rel.to) nodes.push(String(rel.from), String(rel.to));
-      const unique = Array.from(new Set(nodes));
-      if (unique.length < 2) continue;
-      groups.push({
-        nodes: unique.slice(0, 4),
-        label,
-        type: String(rel.type || '本质联系') || '本质联系',
-        score: _relationScore(rel, label ? 0.75 : 0.5),
-      });
-    }
-  }
-  if (!groups.length && Array.isArray(edges)) {
-    for (const edge of edges) {
-      if (!edge || typeof edge !== 'object') continue;
-      const label = String(edge.label || edge.type || '').trim();
-      if (_isWeakRelationText(label)) continue;
-      const from = String(edge.from || '');
-      const to = String(edge.to || '');
-      if (!from || !to || from === to) continue;
-      groups.push({
-        nodes: [from, to],
-        label,
-        type: String(edge.type || '本质联系') || '本质联系',
-        score: _relationScore(edge, label ? 0.7 : 0.5),
-      });
-    }
-  }
-  groups.sort((a, b) => b.score - a.score);
-  return groups.filter(group => group.score >= 0.6).slice(0, 3);
-}
 
 function _applyParsedDocumentToNode(node, data) {
   if (!node) return;
@@ -388,10 +338,8 @@ function _applyParsedDocumentToNode(node, data) {
   _clearSourceGeneratedNodes(node);
   const items = Array.isArray(data.nodes) ? data.nodes.slice(0, Math.max(1, node.maxItems || 5)) : [];
   const edges = Array.isArray(data.edges) ? data.edges : [];
-  const relationGroups = _relationGroupsFromData(data.relations, edges);
   node.items = items;
   node.edges = edges;
-  node.relations = relationGroups;
   node.fileId = data.fileId || node.fileId;
   node.fileName = data.fileName || node.fileName;
   node.status = 'done';
@@ -464,75 +412,6 @@ function _applyParsedDocumentToNode(node, data) {
     });
   });
 
-  const relationInputCounts = {};
-  relationGroups.forEach((rel, index) => {
-    const nodeIds = (rel.nodes || [])
-      .map(raw => itemToNode[String(raw)])
-      .filter(Boolean);
-    const uniqueNodeIds = Array.from(new Set(nodeIds));
-    if (uniqueNodeIds.length < 2) return;
-    const relationId = 'relation-custom-' + Date.now() + '-' + index + '-' + Math.random().toString(36).slice(2, 7);
-    const pos = _sourceNodePosition(node, items.length + index, items.length + relationGroups.length);
-    const relationNode = {
-      id: relationId,
-      kind: 'relation',
-      moduleKey: 'relation',
-      manual: true,
-      content: rel.label || rel.type || '',
-      status: rel.label || rel.type ? 'done' : 'empty',
-      summary: '',
-      analysis: '',
-      analysisHash: '',
-      inputHash: '',
-      generatedAt: Date.now(),
-      requirements: '',
-      busy: false,
-      generated: false,
-      maxItems: 0,
-      items: [],
-      edges: [],
-      fileId: node.fileId || '',
-      fileName: node.fileName || '',
-      generatedNodeIds: [],
-      category: '',
-      formulas: [],
-      knowledgeKey: '',
-      x: pos.x,
-      y: pos.y + 60,
-      depth: 4,
-      targetAngle: 0,
-      isRoot: false,
-      timestamp: Date.now(),
-      pinned: false,
-      fixedX: null,
-      fixedY: null,
-      customWidth: 280,
-      customHeight: null,
-      w: 0,
-      h: 0,
-      vx: 0,
-      vy: 0,
-    };
-    state.customNodes.push(relationNode);
-    createdIds.push(relationId);
-    uniqueNodeIds.forEach((fromId, portIndex) => {
-      const toPort = 'in-' + (relationInputCounts[relationId] || 0);
-      relationInputCounts[relationId] = (relationInputCounts[relationId] || 0) + 1;
-      state.connections.push({
-        from: fromId,
-        fromPort: 'out-2',
-        to: relationId,
-        toPort,
-        type: rel.type || '本质联系',
-        custom: true,
-      });
-    });
-  });
-
-  for (const [relationId, count] of Object.entries(relationInputCounts)) {
-    state.inputPortCounts = state.inputPortCounts || {};
-    state.inputPortCounts[relationId] = Math.max(0, count - 2);
-  }
   node.generatedNodeIds = createdIds;
   _saveGraphState(state);
   _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes);
@@ -540,7 +419,7 @@ function _applyParsedDocumentToNode(node, data) {
   if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
   if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
   if (typeof showToast === 'function') {
-    showToast('已解析 ' + items.length + ' 个知识点' + (relationGroups.length ? '，' + relationGroups.length + ' 条本质联系' : ''));
+    showToast('已解析 ' + items.length + ' 个知识点');
   }
 }
 
@@ -633,6 +512,34 @@ function reparseSourceNode(nodeId) {
   _parseSourceNodeFile(node, node.fileName, '', node.maxItems);
 }
 
+function pasteSourceNodeText(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source') return;
+  const inputEl = document.querySelector('.graph-node[data-node-id="' + nodeId + '"] .graph-source-text-input');
+  const text = inputEl ? String(inputEl.value || '').trim() : '';
+  if (!text) { if (typeof showToast === 'function') showToast('请先粘贴文本'); return; }
+  const maxEl = document.querySelector('.graph-node[data-node-id="' + nodeId + '"] .graph-source-max-input');
+  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
+  try {
+    const file = new File([text], '粘贴文本.txt', { type: 'text/plain' });
+    _loadSourceNodeFile(node, file, maxItems);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('解析失败：' + (e.message || e));
+  }
+}
+
+function openHarnessOrganizeRelations(sourceNodeId) {
+  if (typeof window.openGraphHarness === 'function') window.openGraphHarness();
+  const inputEl = document.getElementById('graphHarnessInstruction');
+  if (inputEl) {
+    inputEl.value = '请整理这些知识点之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线都要用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可。';
+  }
+  const children = (graphView && graphView.edges || []).filter(e => String(e.from) === String(sourceNodeId)).map(e => String(e.to));
+  const focusIds = [String(sourceNodeId)].concat(children).filter((v, i, a) => v && a.indexOf(v) === i);
+  if (typeof window.runGraphHarnessWithFocus === 'function') {
+    window.runGraphHarnessWithFocus('normal', focusIds);
+  }
+}
 function generateKnowledgeNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'knowledge' || node.busy) return;
@@ -670,4 +577,7 @@ function _blankNodeGraphPath(node) {
       ? _nodeContent(_getChatHistory()[item.messageIndex] || null, item)
       : (item.content || ''),
   }));
-}
+}
+
+window.pasteSourceNodeText = pasteSourceNodeText;
+window.openHarnessOrganizeRelations = openHarnessOrganizeRelations;

@@ -3518,3 +3518,37 @@
   border-radius: 8px;
 }
 .graph-harness-status-warning { color: #d97706; }
+/* ===== 输入节点：粘贴文本 / AI 整理关系（v1.1.21） ===== */
+.graph-source-text-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, rgba(128,128,128,.35));
+  border-radius: 6px;
+  background: var(--input-bg, rgba(128,128,128,.08));
+  color: var(--text-primary, #222);
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 42px;
+}
+.graph-source-paste-btn,
+.graph-source-organize-btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
+  background: var(--btn-bg, #f0f0f0);
+  color: var(--text-primary, #222);
+  font-size: 12px;
+  cursor: pointer;
+}
+.graph-source-paste-btn:hover { background: var(--btn-active-bg, #e2e2e2); }
+.graph-source-organize-btn {
+  background: var(--accent, #4f8cff);
+  border-color: var(--accent, #4f8cff);
+  color: #fff;
+}
+.graph-source-organize-btn:hover { background: var(--accent-hover, #3b78e6); }

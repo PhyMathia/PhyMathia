@@ -332,13 +332,11 @@ async def _ai_extract_document_knowledge(
         return [], [], []
 
     prompt = (
-        "你是 PhyMathia 的文件知识抽取助手。请从用户上传的文件中抽取最重要的知识点及其联系。\n"
+        "你是 PhyMathia 的文件知识抽取助手。请从用户上传的文件中抽取最重要的知识点。\n"
         f"要求：最多输出 {max_items} 个知识点；每个知识点给出具体名称、分类、简短摘要和公式；"
-        "只输出最重要的本质联系，最多 3 条；不要输出‘相关’‘有联系’‘关联’这类空泛关系；"
-        "每条 relations 的 nodes 至少包含 2 个知识点，label 必须用一句具体的话说明知识点之间为什么存在本质联系；"
-        "score 是 0 到 1 的置信度，低于 0.6 不要输出。\n"
+        "不要抽取知识点之间的关系（关系由后续 AI 网络助手按用户意图整理）。\n"
         '只输出 JSON，不要输出其他内容：\n'
-        '{"nodes":[{"id":"n1","title":"知识点名称","category":"physics|math|other","tags":["标签"],"summary":"一句话摘要","formulas":["$F=ma$"]}],"relations":[{"nodes":["n1","n2"],"label":"一句话说明本质联系","type":"推导出","score":0.9}]}'
+        '{"nodes":[{"id":"n1","title":"知识点名称","category":"physics|math|other","tags":["标签"],"summary":"一句话摘要","formulas":["$F=ma$"]}]}'
     )
     level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
     user_content = f"文件名：{filename}\n\n{text[:12000]}" if text else f"文件名：{filename}"

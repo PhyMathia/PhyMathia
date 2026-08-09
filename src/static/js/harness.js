@@ -250,6 +250,15 @@ let harnessLastAppliedBeforeSnapshot = null;
           label: _nodeLabel(node).slice(0, 80),
           content: (isFocus ? _harnessNodeContent(node) : _harnessNodeContent(node).slice(0, 80)).slice(0, 600),
           formula: isFocus ? String(node.formula || '').slice(0, 200) : '',
+          items: node.kind === 'source' && Array.isArray(node.items)
+            ? node.items.slice(0, 20).map(function (it) {
+              return {
+                title: String(it.title || it.label || '').slice(0, 80),
+                summary: String(it.summary || '').slice(0, 200),
+                formulas: Array.isArray(it.formulas) ? it.formulas.slice(0, 4).map(function (f) { return String(f); }) : [],
+              };
+            })
+            : undefined,
           target_node_id: node.target_node_id || '',
           target_label: node.target_label || '',
           suggestion: node.suggestion || '',
