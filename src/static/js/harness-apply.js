@@ -145,6 +145,98 @@
     }
   }
 
+  function _collectHarnessKnowledgeOps(ops) {
+    const map = {};
+    for (const op of ops || []) {
+      const name = op.op || op.type || '';
+      if (name === 'create_node') {
+        const id = op.assigned_id || op.id || op.temp_id;
+        if (!id) continue;
+        map[id] = { kind: op.kind || '', label: op.label || '', content: op.content || op.summary || '', formula: op.formula || '', moduleKey: op.module_key || op.moduleKey || '' };
+      } else if (name === 'update_node') {
+        const id = op.id;
+        if (!id) continue;
+        const patch = op.patch || {};
+        const cur = map[id] || { kind: '', label: '', content: '', formula: '', moduleKey: '' };
+        if (patch.label != null) cur.label = String(patch.label);
+        if (patch.title != null && !cur.label) cur.label = String(patch.title);
+        if (patch.content != null) cur.content = String(patch.content);
+        if (patch.formula != null) cur.formula = String(patch.formula);
+        if (patch.module_key != null) cur.moduleKey = String(patch.module_key);
+        map[id] = cur;
+      }
+    }
+    return map;
+  }
+
+  function _syncHarnessNodesToKnowledge(ops) {
+    try {
+      const sessionId = _sessionId();
+      const touched = _collectHarnessKnowledgeOps(ops);
+      const ids = Object.keys(touched);
+      if (!ids.length) return;
+      const nodes = (typeof window.getGraphViewNodes === 'function') ? window.getGraphViewNodes() : [];
+      const byId = {};
+      nodes.forEach(n => { byId[String(n.id)] = n; });
+      const state = _graphState() || {};
+      const overrides = state.harnessNodeOverrides || {};
+      const finalData = {};
+      ids.forEach(id => {
+        const n = byId[id] || {};
+        const ov = overrides[id] || {};
+        const t = touched[id] || {};
+        finalData[id] = {
+          kind: n.kind || t.kind || '',
+          label: String(n.label || n.title || ov.label || t.label || ''),
+          content: String(n.content || n.summary || ov.content || t.content || ''),
+          formula: String(n.formula || ov.formula || t.formula || ''),
+          moduleKey: String(n.moduleKey || n.module_key || ov.module_key || t.moduleKey || ''),
+        };
+      });
+      const existing = (typeof getKnowledgeItems === 'function') ? getKnowledgeItems() : {};
+      const formulas = [];
+      let changed = false;
+      const dedup = (title) => (typeof _knowledgeDedupKey === 'function') ? _knowledgeDedupKey(title) : String(title || '').trim().toLowerCase();
+      Object.keys(finalData).forEach(id => {
+        const d = finalData[id];
+        if (d.kind === 'knowledge' && d.label) {
+          const key = dedup(d.label);
+          const found = Object.values(existing).find(e => e.sessionId === sessionId && dedup(e.title) === key);
+          if (found) {
+            if (d.content && d.content.length > (found.summary || '').length) found.summary = d.content;
+            if (d.formula && !(found.formulas || []).includes(d.formula)) found.formulas = (found.formulas || []).concat([d.formula]);
+            changed = true;
+          } else {
+            const id2 = 'ki_' + (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : String(Date.now()) + Math.random().toString(36).slice(2, 8));
+            existing[id2] = {
+              id: id2,
+              title: d.label,
+              category: 'other',
+              tags: [],
+              summary: d.content || '',
+              content: d.content || '',
+              formulas: d.formula ? [d.formula] : [],
+              source: 'harness',
+              sessionId: sessionId,
+              messageId: '',
+              moduleKey: d.moduleKey || 'knowledge',
+              createdAt: Date.now(),
+            };
+            changed = true;
+          }
+        }
+        if (d.formula) {
+          formulas.push({ latex: d.formula, concept: d.label || d.kind || '知识点', meaning: '', meaningSource: 'local', topic: '', related: [], sessionId: sessionId, messageId: '', moduleKey: d.moduleKey || d.kind || '', createdAt: Date.now() });
+        }
+      });
+      if (changed && typeof saveKnowledgeItems === 'function') saveKnowledgeItems(existing);
+      if (formulas.length && typeof saveFormulasToServer === 'function') saveFormulasToServer(formulas);
+      if (typeof window.invalidateKnowledgeCache === 'function') window.invalidateKnowledgeCache();
+      if (typeof refreshKnowledgePanelIfOpen === 'function') refreshKnowledgePanelIfOpen();
+    } catch (e) {
+      console.warn('Harness knowledge sync failed:', e);
+    }
+  }
   async function _applyOps(ops, cleanupEval) {
     if (!ops.length) return;
     const sessionId = _sessionId();
@@ -207,7 +299,9 @@
     }, 2600);
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
-    setTimeout(() => { _generateHarnessCreatedContent(ops); }, 100);
+    setTimeout(() => {
+      Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => _syncHarnessNodesToKnowledge(ops));
+    }, 100);
     if (typeof window.scanGraphConsistency === 'function') {
       const postIssues = window.scanGraphConsistency();
       const sig = function (i) { return i.type + '|' + (i.nodeId || '') + '|' + (i.edgeKey || '') + '|' + (i.message || ''); };
@@ -366,4 +460,5 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.applyGraphHarness = applyGraphHarness;
   window.applySelectedGraphHarness = applySelectedGraphHarness;
   window.undoGraphHarness = undoGraphHarness;
+  window.syncHarnessNodesToKnowledge = _syncHarnessNodesToKnowledge;
   window.buildHarnessSnapshot = buildHarnessSnapshot;

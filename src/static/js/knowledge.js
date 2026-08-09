@@ -293,8 +293,8 @@ function renderKnowledgePanel() {
     html += `<div class="kp-date-group"><div class="kp-date-label">${label}</div>`;
     for (const item of groupItems) {
       const catClass = item.category || 'other';
-      const sourceIcon = item.source === 'ai_extract' ? '🤖' : item.source === 'file' ? '📄' : '⭐';
-      const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'file' ? '文件导入' : '手动收藏';
+      const sourceIcon = item.source === 'ai_extract' ? '🤖' : item.source === 'file' ? '📄' : item.source === 'harness' ? '🧩' : '⭐';
+      const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'file' ? '文件导入' : item.source === 'harness' ? 'AI 编辑' : '手动收藏';
       const tagsHtml = (item.tags || []).map(t => `<span class="kp-tag">${escapeHtml(t)}</span>`).join('');
       const formulasHtml = (item.formulas || [])
         .filter(f => _looksLikeFormula(_stripFormulaDelimiters(f)))

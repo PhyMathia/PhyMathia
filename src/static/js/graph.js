@@ -528,6 +528,10 @@ function openGraphHistoryPanel() {
   _refreshGraphHistoryPanel();
 }
 
+function toggleGraphHistoryPanel() {
+  if (graphHistoryPanel && !graphHistoryPanel.hidden) { closeGraphHistoryPanel(); return; }
+  openGraphHistoryPanel();
+}
 function closeGraphHistoryPanel() {
   if (graphHistoryTimer) { clearInterval(graphHistoryTimer); graphHistoryTimer = null; }
   if (graphHistoryPanel) graphHistoryPanel.hidden = true;
@@ -572,6 +576,7 @@ window.redoGraphAction = _redoGraphAction;
 window.jumpGraphVersion = _jumpGraphVersion;
 window.previewGraphVersion = _previewGraphVersion;
 window.openGraphHistoryPanel = openGraphHistoryPanel;
+window.toggleGraphHistoryPanel = toggleGraphHistoryPanel;
 window.closeGraphHistoryPanel = closeGraphHistoryPanel;
 window.getGraphVersionList = _graphVersions;
 
@@ -1301,6 +1306,10 @@ function openGraphConsistencyPanel() {
   _refreshGraphConsistencyPanel();
 }
 
+function toggleGraphConsistencyPanel() {
+  if (graphConsistencyPanel && !graphConsistencyPanel.hidden) { closeGraphConsistencyPanel(); return; }
+  openGraphConsistencyPanel();
+}
 function closeGraphConsistencyPanel() {
   if (graphConsistencyPanel) graphConsistencyPanel.hidden = true;
   _clearConsistencyTarget();
@@ -1347,6 +1356,7 @@ function refreshGraphConsistency() {
 
 window.scanGraphConsistency = _scanGraphConsistency;
 window.openGraphConsistencyPanel = openGraphConsistencyPanel;
+window.toggleGraphConsistencyPanel = toggleGraphConsistencyPanel;
 window.closeGraphConsistencyPanel = closeGraphConsistencyPanel;
 window.refreshGraphConsistency = refreshGraphConsistency;
 window.focusConsistencyIssue = focusConsistencyIssue;
