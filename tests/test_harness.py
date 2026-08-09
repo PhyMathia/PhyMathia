@@ -1650,6 +1650,98 @@ class HarnessContextualUndoTest(unittest.TestCase):
         self.assertEqual(result["next_snapshot"]["edges"], [])
 
 
+class HarnessConsistencyTest(unittest.TestCase):
+    """C：图一致性体检——断链/孤儿/重复标签/重复模块。"""
+
+    def test_clean_graph_ok(self):
+        from harness.selfcheck import check_snapshot_consistency
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角"},
+            ],
+            "edges": [
+                {"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "物理意义"},
+            ],
+        }
+        result = check_snapshot_consistency(snapshot)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["total"], 0)
+
+    def test_broken_edge_reported(self):
+        from harness.selfcheck import check_snapshot_consistency
+
+        snapshot = {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+            "edges": [
+                {"key": "A:out-0->X:in-0", "from": "A", "to": "X", "relation": "导出"},
+            ],
+        }
+        result = check_snapshot_consistency(snapshot)
+        self.assertFalse(result["ok"])
+        types = [item["type"] for item in result["issues"]]
+        self.assertIn("broken_edge", types)
+        broken = [item for item in result["issues"] if item["type"] == "broken_edge"]
+        self.assertTrue(any(item["node_id"] == "X" for item in broken))
+
+    def test_orphan_detected(self):
+        from harness.selfcheck import check_snapshot_consistency
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "B", "kind": "knowledge", "label": "极限"},
+                {"id": "C", "kind": "knowledge", "label": "连续"},
+            ],
+            "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖"}],
+        }
+        result = check_snapshot_consistency(snapshot)
+        self.assertTrue(result["ok"])
+        orphan = [item for item in result["issues"] if item["type"] == "orphan"]
+        self.assertEqual([item["node_id"] for item in orphan], ["C"])
+
+    def test_duplicate_label_and_module(self):
+        from harness.selfcheck import check_snapshot_consistency
+
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "B", "kind": "knowledge", "label": "导数"},
+                {"id": "M1", "kind": "module", "module_key": "physics", "label": "物理视角"},
+                {"id": "M2", "kind": "module", "module_key": "physics", "label": "物理视角"},
+            ],
+            "edges": [],
+        }
+        result = check_snapshot_consistency(snapshot)
+        types = [item["type"] for item in result["issues"]]
+        self.assertIn("duplicate_label", types)
+        self.assertIn("duplicate_module", types)
+        self.assertIn("orphan", types)
+
+    def test_health_api_route(self):
+        import asyncio
+
+        from harness.api import router
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/harness")
+        client = TestClient(app)
+        resp = client.post("/api/harness/graph/health", json={
+            "snapshot": {
+                "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+                "edges": [{"key": "A:out-0->X:in-0", "from": "A", "to": "X"}],
+            }
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertFalse(data["ok"])
+        self.assertTrue(any(i["type"] == "broken_edge" for i in data["issues"]))
+
+
 class HarnessExpandCompletionTest(unittest.TestCase):
     def test_expand_auto_completes_missing_learn_module(self):
         import asyncio

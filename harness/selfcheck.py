@@ -100,3 +100,115 @@ def parse_selfcheck(text: str) -> Dict[str, Any]:
     missing = [str(item) for item in (payload.get("missing") or []) if str(item)]
     ok = bool(payload.get("ok")) and not issues and not missing
     return {"ok": ok, "issues": issues, "missing": missing}
+
+def check_snapshot_consistency(snapshot: Any) -> Dict[str, Any]:
+    """Deterministic structural health check for a graph snapshot.
+
+    注意：这里不经过 normalize_snapshot（它会静默丢弃断链边），而是基于原始快照检查：
+    - broken_edge: 边指向不存在的节点（error，导致 ok=False）
+    - orphan: 节点没有任何连线（warning）
+    - duplicate_label: 同名知识点（info）
+    - duplicate_module: 同 module_key 的模块（info）
+    """
+    raw = snapshot if isinstance(snapshot, dict) else {}
+    nodes = []
+    seen_ids = set()
+    for n in raw.get("nodes") or []:
+        if not isinstance(n, dict):
+            continue
+        nid = str(n.get("id") or "")
+        if nid and nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid,
+                "kind": str(n.get("kind") or ""),
+                "label": str(n.get("label") or "").strip(),
+                "module_key": str(n.get("module_key") or n.get("moduleKey") or "").strip(),
+            })
+    edges = []
+    seen_keys = set()
+    for e in raw.get("edges") or []:
+        if not isinstance(e, dict):
+            continue
+        key = str(e.get("key") or e.get("edge_key") or "")
+        if key and key in seen_keys:
+            continue
+        if key:
+            seen_keys.add(key)
+        edges.append({
+            "key": key,
+            "from": str(e.get("from") or ""),
+            "to": str(e.get("to") or ""),
+        })
+
+    node_ids = {n["id"] for n in nodes}
+    issues: list = []
+    seen_broken = set()
+    for e in edges:
+        for field in ("from", "to"):
+            nid = e[field]
+            if nid and nid not in node_ids:
+                tag = (e["key"], field, nid)
+                if tag in seen_broken:
+                    continue
+                seen_broken.add(tag)
+                issues.append({
+                    "type": "broken_edge",
+                    "severity": "error",
+                    "edge_key": e["key"],
+                    "node_id": nid,
+                    "message": "连线%s指向不存在的节点「%s」" % (("「" + e["key"] + "」") if e["key"] else "", nid),
+                })
+
+    incident = set()
+    for e in edges:
+        if e["from"]:
+            incident.add(e["from"])
+        if e["to"]:
+            incident.add(e["to"])
+    for n in nodes:
+        if n["id"] in incident:
+            continue
+        issues.append({
+            "type": "orphan",
+            "severity": "warning",
+            "node_id": n["id"],
+            "label": n["label"],
+            "message": "节点「%s」没有任何连线" % (n["label"] or n["id"]),
+        })
+
+    by_label: Dict[str, list] = {}
+    for n in nodes:
+        if n["kind"] == "knowledge" and n["label"]:
+            by_label.setdefault(n["label"], []).append(n)
+    for label, items in by_label.items():
+        if len(items) > 1:
+            issues.append({
+                "type": "duplicate_label",
+                "severity": "info",
+                "node_id": items[0]["id"],
+                "label": label,
+                "message": "存在 %d 个同名知识点「%s」" % (len(items), label),
+            })
+
+    by_key: Dict[str, list] = {}
+    for n in nodes:
+        if n["kind"] == "module" and n["module_key"]:
+            by_key.setdefault(n["module_key"], []).append(n)
+    for key, items in by_key.items():
+        if len(items) > 1:
+            issues.append({
+                "type": "duplicate_module",
+                "severity": "info",
+                "node_id": items[0]["id"],
+                "label": key,
+                "message": "存在 %d 个「%s」模块" % (len(items), key),
+            })
+
+    return {
+        "ok": not any(item["severity"] == "error" for item in issues),
+        "total": len(issues),
+        "issues": issues,
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+    }

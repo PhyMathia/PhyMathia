@@ -92,6 +92,25 @@ async def graph_undo(request: Request):
         return {"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]}
 
 
+@router.post("/graph/health")
+async def graph_health(request: Request):
+    """Structural health check for a snapshot: broken edges, orphan nodes,
+    duplicate knowledge labels / modules. Uses the raw snapshot so broken
+    edges are reported instead of silently dropped."""
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+    try:
+        from .selfcheck import check_snapshot_consistency
+
+        result = check_snapshot_consistency(payload.get("snapshot"))
+        result["status"] = "ok"
+        return result
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": f"体检失败: {exc}"}]}
+
+
 @router.post("/graph/resolve")
 async def graph_resolve(request: Request):
     try:

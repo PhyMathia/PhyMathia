@@ -263,6 +263,13 @@ const complexScenarios = [
     ],
   },
   {
+    id: 'c9-health-after', label: '复杂图修改后一致性体检（断链/孤儿/重复不增加）', graphs: ['G9'],
+    turns: [
+      { instruction: '给「简谐运动」的物理视角补充更深入的内容，结合回复力与位移成正比', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+    ],
+    expect: { healthAfter: true },
+  },
+  {
     id: 'c9-conversation', label: '对话：先问答后按上下文建点', graphs: ['G9'],
     turns: [
       { instruction: '简谐运动的回复力有什么特点？', phase: 'normal', focus: [], expect: { noOps: true } },
@@ -522,6 +529,13 @@ function scoreScenario(sc, data) {
   return { passed, issues, opCount: ops.length, opsSummary: ops.map(o => opName(o) + ':' + (o.label || o.id || '')).slice(0, 10) };
 }
 
+async function callHealth(snapshot) {
+  const r = await fetch(BASE + '/api/harness/graph/health', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snapshot }), signal: AbortSignal.timeout(60000),
+  });
+  return await r.json();
+}
+
 async function callReview(payload) {
   const r = await fetch(BASE + '/api/harness/graph/review', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(240000),
@@ -653,6 +667,19 @@ async function runTurns(sc, idx, graph) {
   const ex = sc.expect || {};
   if (ex.finalSnapshotEquals === 'before' && !snapshotsEqual(snapshot, beforeSnapshot)) {
     overallIssues.push('最终快照未恢复到修改前');
+  }
+  if (ex.healthAfter) {
+    try {
+      const healthInitial = await callHealth(initialSnapshot);
+      const healthFinal = await callHealth(snapshot);
+      const cnt = function (issues, type) { return (issues || []).filter(function (i) { return i.type === type; }).length; };
+      if (cnt(healthFinal.issues, 'broken_edge') > 0) overallIssues.push('体检：最终图存在断链');
+      if (cnt(healthFinal.issues, 'orphan') > cnt(healthInitial.issues, 'orphan')) overallIssues.push('体检：孤儿节点数量增加（初始 ' + cnt(healthInitial.issues, 'orphan') + ' → 最终 ' + cnt(healthFinal.issues, 'orphan') + '）');
+      if (cnt(healthFinal.issues, 'duplicate_label') > cnt(healthInitial.issues, 'duplicate_label')) overallIssues.push('体检：重复知识点增加');
+      if (cnt(healthFinal.issues, 'duplicate_module') > cnt(healthInitial.issues, 'duplicate_module')) overallIssues.push('体检：重复模块增加');
+    } catch (e) {
+      overallIssues.push('体检请求失败: ' + e.message);
+    }
   }
   if (ex.restoreTargets) {
     for (const id of ex.restoreTargets) {

@@ -151,6 +151,7 @@
     const state = _graphState();
     if (!state) return;
     const before = JSON.parse(JSON.stringify(state));
+    const preIssues = (typeof window.scanGraphConsistency === 'function') ? window.scanGraphConsistency() : [];
     harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
     harnessLastAppliedBeforeSnapshot = harnessSnapshot ? JSON.parse(JSON.stringify(harnessSnapshot)) : null;
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'harness', summary: (harnessResult && harnessResult.summary) || 'AI 修改' });
@@ -207,6 +208,15 @@
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
     setTimeout(() => { _generateHarnessCreatedContent(ops); }, 100);
+    if (typeof window.scanGraphConsistency === 'function') {
+      const postIssues = window.scanGraphConsistency();
+      const sig = function (i) { return i.type + '|' + (i.nodeId || '') + '|' + (i.edgeKey || '') + '|' + (i.message || ''); };
+      const preSigs = preIssues.map(sig);
+      const newIssues = postIssues.filter(function (i) { return preSigs.indexOf(sig(i)) < 0; });
+      if (newIssues.length) {
+        _setHarnessStatus('⚠ 体检：本次修改后新增 ' + newIssues.length + ' 个问题（孤儿/断链/重复），可点工具栏体检查看', 'warning');
+      }
+    }
   }
 
   function applyGraphHarness() {
