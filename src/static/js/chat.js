@@ -368,6 +368,30 @@
           throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
         }
 
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 200)}`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamChunkCount = 0;
+
+        function scheduleStreamRender() {
+          if (streamRenderPending) return;
+          streamRenderPending = true;
+          streamRenderFrame = requestAnimationFrame(() => {
+            streamRenderFrame = null;
+            if (assistantDiv && assistantContent) {
+              assistantDiv.innerHTML = renderMarkdown(assistantContent);
+              _initVizIframes(assistantDiv);
+              renderMath(assistantDiv);
+            }
+            streamRenderPending = false;
+          });
+        }
+
         function scheduleGraphStreamRender() {
           if (graphRenderPending) return;
           graphRenderPending = true;
