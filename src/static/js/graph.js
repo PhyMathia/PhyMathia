@@ -128,9 +128,14 @@ const WORKFLOW_MAX_CONCURRENCY = 3;
 let workflowProgressActive = new Set();
 let _graphMermaidTimer = null;
 
-const GRAPH_UNDO_LIMIT = 10;
-const graphUndoStack = [];
-
+const GRAPH_UNDO_LIMIT = 30;
+const GRAPH_HISTORY_STORAGE_MAX = 1500000;
+let graphUndoStack = [];
+let graphRedoStack = [];
+let graphHistorySession = "";
+let graphHistoryPanel = null;
+let graphHistoryPreviewing = -1;
+let graphPendingLiveMeta = null;
 let graphSearchOpen = false;
 let graphSearchScope = 'current';
 let graphSearchQuery = '';
@@ -142,11 +147,136 @@ const LAYOUT_VERSION = 4;
 const TARGET_R = [0, 420, 940, 1460, 2000, 2560, 3120, 3680];
 const MAX_ITERATIONS = 120;
 let addBlankNodePoint = { x: 0, y: 0 };
-let addBlankNodeOverlay = null;
+let addBlankNodeOverlay = null;
+
+
+const GRAPH_LAYOUT_FIELDS = ["positions", "sizes", "pan", "zoom", "collapsed", "hidden", "pinned", "linear", "layoutVersion", "groups", "portCounts", "inputPortCounts"];
+
+function _graphHistoryKey(sessionId) {
+  return "phymathia_graph_history_" + (sessionId || "default");
+}
+
+function _currentSessionId() {
+  return typeof window.getCurrentSessionId === "function" ? window.getCurrentSessionId() : "";
+}
+
+function _ensureGraphHistory() {
+  const sid = _currentSessionId();
+  if (graphHistorySession === sid && graphUndoStack.length) return;
+  graphHistorySession = sid;
+  graphUndoStack = [];
+  graphRedoStack = [];
+  try {
+    const raw = localStorage.getItem(_graphHistoryKey(sid));
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) graphUndoStack = arr.filter(function (x) { return x && x.state; });
+    }
+  } catch (e) { graphUndoStack = []; }
+}
+
+function _persistGraphHistory() {
+  try {
+    const sid = graphHistorySession;
+    let arr = graphUndoStack.map(function (x) {
+      return { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
+    });
+    let s = JSON.stringify(arr);
+    if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
+      const per = Math.max(1, Math.floor(s.length / (arr.length || 1)));
+      const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
+      arr = arr.slice(-keep);
+      s = JSON.stringify(arr);
+    }
+    localStorage.setItem(_graphHistoryKey(sid), s);
+  } catch (e) { /* 容量满/不可用则忽略 */ }
+}
+
+function _graphVersionNodeIndex(state) {
+  const idx = {};
+  (state && state.customNodes || []).forEach(function (n, i) { idx[String(n.id)] = { index: i, node: n }; });
+  return idx;
+}
+
+function _graphEdgeKeyOf(e) {
+  return String(e.key || e.edge_key || (e.from + ">" + e.to));
+}
+
+function _graphShortList(items) {
+  const arr = items.slice(0, 5);
+  let s = "「" + arr.join("」「") + "」";
+  if (items.length > 5) s += " 等" + items.length + "个";
+  return s;
+}
+
+function _graphDiffSummary(diff) {
+  const parts = [];
+  const created = (diff.ops || []).filter(function (o) { return o.op === "create_node"; }).map(function (o) { return o.label || o.id; });
+  const updated = (diff.ops || []).filter(function (o) { return o.op === "update_node"; }).map(function (o) { return o.label || o.id; });
+  const deleted = (diff.ops || []).filter(function (o) { return o.op === "delete_node"; }).map(function (o) { return o.label || o.id; });
+  const addEdges = (diff.ops || []).filter(function (o) { return o.op === "add_edge"; }).length;
+  const remEdges = (diff.ops || []).filter(function (o) { return o.op === "remove_edge"; }).length;
+  if (created.length) parts.push("新增节点" + _graphShortList(created));
+  if (deleted.length) parts.push("删除节点" + _graphShortList(deleted));
+  if (updated.length) parts.push("修改节点" + _graphShortList(updated));
+  if (diff.newDeleted && diff.newDeleted.length) parts.push("隐藏节点" + _graphShortList(diff.newDeleted));
+  if (diff.unDeleted && diff.unDeleted.length) parts.push("恢复节点" + _graphShortList(diff.unDeleted));
+  if (addEdges) parts.push("新增连线" + addEdges + "条");
+  if (remEdges) parts.push("删除连线" + remEdges + "条");
+  return parts.join("；") || "修改了图";
+}
+
+function _diffGraphStates(prev, next) {
+  const layoutOnly = { value: true };
+  const ops = [];
+  const prevNodes = _graphVersionNodeIndex(prev);
+  const nextNodes = _graphVersionNodeIndex(next);
+  const prevIds = Object.keys(prevNodes);
+  const nextIds = Object.keys(nextNodes);
+  const seen = {};
+  nextIds.forEach(function (id) {
+    seen[id] = true;
+    const pn = prevNodes[id];
+    const nn = nextNodes[id];
+    if (!pn) {
+      layoutOnly.value = false;
+      ops.push({ op: "create_node", id: id, label: nn.node.label || nn.node.kind || "" });
+    } else if (JSON.stringify(pn.node) !== JSON.stringify(nn.node)) {
+      layoutOnly.value = false;
+      ops.push({ op: "update_node", id: id, label: nn.node.label || "" });
+    }
+  });
+  prevIds.forEach(function (id) {
+    if (seen[id]) return;
+    layoutOnly.value = false;
+    ops.push({ op: "delete_node", id: id, label: (prevNodes[id].node && prevNodes[id].node.label) || "" });
+  });
+  const prevDel = Object.keys((prev && prev.harnessDeleted) || {});
+  const nextDel = Object.keys((next && next.harnessDeleted) || {});
+  const newDeleted = nextDel.filter(function (k) { return prevDel.indexOf(k) < 0; });
+  const unDeleted = prevDel.filter(function (k) { return nextDel.indexOf(k) < 0; });
+  if (newDeleted.length || unDeleted.length) layoutOnly.value = false;
+  const prevRem = {};
+  ((prev && prev.removedEdges) || []).forEach(function (e) { prevRem[_graphEdgeKeyOf(e)] = true; });
+  const nextRem = {};
+  ((next && next.removedEdges) || []).forEach(function (e) { nextRem[_graphEdgeKeyOf(e)] = true; });
+  Object.keys(nextRem).forEach(function (k) { if (!prevRem[k]) { layoutOnly.value = false; ops.push({ op: "remove_edge", edge_key: k }); } });
+  Object.keys(prevRem).forEach(function (k) { if (!nextRem[k]) { layoutOnly.value = false; ops.push({ op: "add_edge", edge_key: k }); } });
+  const prevConn = {};
+  ((prev && prev.connections) || []).forEach(function (e) { prevConn[_graphEdgeKeyOf(e)] = true; });
+  const nextConn = {};
+  ((next && next.connections) || []).forEach(function (e) { nextConn[_graphEdgeKeyOf(e)] = true; });
+  Object.keys(nextConn).forEach(function (k) { if (!prevConn[k]) { layoutOnly.value = false; ops.push({ op: "add_edge", edge_key: k }); } });
+  Object.keys(prevConn).forEach(function (k) { if (!nextConn[k]) { layoutOnly.value = false; ops.push({ op: "remove_edge", edge_key: k }); } });
+  ["groups", "portCounts", "inputPortCounts"].forEach(function (f) {
+    if (JSON.stringify((prev || {})[f] || null) !== JSON.stringify((next || {})[f] || null)) layoutOnly.value = false;
+  });
+  return { layoutOnly: layoutOnly.value, ops: ops, newDeleted: newDeleted, unDeleted: unDeleted, summary: _graphDiffSummary({ ops: ops, newDeleted: newDeleted, unDeleted: unDeleted }) };
+}
 
 function _graphState() {
-  if (typeof window.getGraphState === 'function') {
-    return window.getGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : '');
+  if (typeof window.getGraphState === "function") {
+    return window.getGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "");
   }
   return {
     collapsed: {},
@@ -170,47 +300,268 @@ function _graphState() {
 }
 
 function _saveGraphState(state) {
-  if (typeof window.saveGraphState === 'function') {
-    window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : '', state);
+  if (typeof window.saveGraphState === "function") {
+    window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "", state);
   }
 }
 
-function _pushGraphUndo(withMessages) {
+function _pushGraphUndo(withMessages, meta) {
+  if (meta && meta.layout === true) return;
+  const state = _graphState();
+  if (!state) return;
+  _ensureGraphHistory();
+  graphPendingLiveMeta = null;
+  const sid = _currentSessionId();
   const snapshot = {
-    sessionId: typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '',
-    state: JSON.parse(JSON.stringify(_graphState())),
+    sessionId: sid,
+    state: JSON.parse(JSON.stringify(state)),
     messages: null,
+    meta: null,
   };
-  if (withMessages && typeof window.getChatHistory === 'function') {
+  if (withMessages && typeof window.getChatHistory === "function") {
     snapshot.messages = JSON.parse(JSON.stringify(window.getChatHistory()));
   }
   const last = graphUndoStack[graphUndoStack.length - 1];
-  if (last && JSON.stringify(last) === JSON.stringify(snapshot)) return;
+  if (last && last.sessionId && sid && last.sessionId !== sid) {
+    graphUndoStack = [];
+    graphRedoStack = [];
+  }
+  if (last && last.sessionId === snapshot.sessionId) {
+    if (JSON.stringify(last.state) === JSON.stringify(snapshot.state)) return;
+    const diff = _diffGraphStates(last.state, snapshot.state);
+    if (diff.layoutOnly) {
+      // 布局变化不占版本：直接忽略，保持栈顶为“上次编辑前”的完整快照
+      return;
+    }
+  }
+  let source = "user";
+  let summary = "";
+  if (meta && typeof meta === "object" && (meta.summary || meta.source)) {
+    graphPendingLiveMeta = { source: meta.source || "user", summary: String(meta.summary || "修改"), ts: Date.now() };
+  }
+  // 显式 meta（如 harness 摘要）只作为“即将发生的编辑”描述，供 live 版本展示；
+  // 落库条目的 meta 始终由自动 diff 生成，避免错位。
+  if (!summary) {
+    if (last) {
+      const diff = _diffGraphStates(last.state, snapshot.state);
+      summary = diff.summary;
+      source = diff.layoutOnly ? "user" : source;
+    } else {
+      summary = "初始状态";
+      source = "init";
+    }
+  }
+  snapshot.meta = { source: source, summary: summary, ts: Date.now() };
+  graphRedoStack = [];
   graphUndoStack.push(snapshot);
   if (graphUndoStack.length > GRAPH_UNDO_LIMIT) graphUndoStack.shift();
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
 }
 
-async function _undoGraphAction() {
-  const currentSessionId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
-  const snapshot = graphUndoStack[graphUndoStack.length - 1];
-  if (!snapshot) return;
-  if (snapshot.sessionId && currentSessionId && snapshot.sessionId !== currentSessionId) return;
-  graphUndoStack.pop();
-
+async function _restoreGraphVersion(snapshot) {
   graphView.selectMode = false;
   _applyGraphTextSelectionMode();
   graphView.selectedNodeIds = new Set();
   graphView.selectedGroupIds = new Set();
-
-  if (snapshot.messages && typeof window.replaceChatHistory === 'function') {
+  if (snapshot.messages && typeof window.replaceChatHistory === "function") {
     await window.replaceChatHistory(snapshot.messages);
   }
   if (snapshot.state) {
     _saveGraphState(snapshot.state);
-    if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+    if (typeof window.flushGraphStateServerSave === "function") window.flushGraphStateServerSave();
   }
   renderGraphCanvas();
+  if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
 }
+
+async function _undoGraphAction() {
+  _ensureGraphHistory();
+  const currentSessionId = _currentSessionId();
+  const snapshot = graphUndoStack[graphUndoStack.length - 1];
+  if (!snapshot) return;
+  if (snapshot.sessionId && currentSessionId && snapshot.sessionId !== currentSessionId) return;
+  graphUndoStack.pop();
+  graphPendingLiveMeta = null;
+  const liveState = _graphState();
+  const liveMessages = typeof window.getChatHistory === "function" ? JSON.parse(JSON.stringify(window.getChatHistory())) : null;
+  graphRedoStack.push({
+    sessionId: currentSessionId,
+    state: liveState ? JSON.parse(JSON.stringify(liveState)) : null,
+    messages: liveMessages,
+    meta: { source: "undo", summary: "撤销：" + ((snapshot.meta && snapshot.meta.summary) || "上一步修改"), ts: Date.now() },
+    prev: snapshot,
+  });
+  if (graphRedoStack.length > GRAPH_UNDO_LIMIT) graphRedoStack.shift();
+  await _restoreGraphVersion(snapshot);
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+}
+
+async function _redoGraphAction() {
+  _ensureGraphHistory();
+  const currentSessionId = _currentSessionId();
+  const entry = graphRedoStack[graphRedoStack.length - 1];
+  if (!entry) return;
+  if (entry.sessionId && currentSessionId && entry.sessionId !== currentSessionId) return;
+  graphRedoStack.pop();
+  graphPendingLiveMeta = null;
+  if (entry.prev && entry.prev.sessionId === currentSessionId) {
+    graphUndoStack.push(entry.prev);
+    if (graphUndoStack.length > GRAPH_UNDO_LIMIT) graphUndoStack.shift();
+  }
+  await _restoreGraphVersion(entry);
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+}
+
+function _graphVersions() {
+  _ensureGraphHistory();
+  const sid = _currentSessionId();
+  const list = graphUndoStack.map(function (entry, i) {
+    return {
+      index: i,
+      isLive: false,
+      state: entry.state,
+      messages: entry.messages,
+      meta: entry.meta || { source: "user", summary: "", ts: 0 },
+      sessionId: entry.sessionId,
+    };
+  });
+  let liveMeta = graphPendingLiveMeta;
+  if (!liveMeta) {
+    const last = graphUndoStack[graphUndoStack.length - 1];
+    const liveState = _graphState();
+    if (last && liveState) {
+      const diff = _diffGraphStates(last.state, liveState);
+      if (!diff.layoutOnly) liveMeta = { source: "user", summary: diff.summary, ts: Date.now() };
+    }
+  }
+  if (!liveMeta) liveMeta = { source: "now", summary: "当前状态", ts: Date.now() };
+  list.push({
+    index: graphUndoStack.length,
+    isLive: true,
+    state: null,
+    messages: null,
+    meta: liveMeta,
+    sessionId: sid,
+  });
+  return list;
+}
+
+async function _jumpGraphVersion(versionIndex) {
+  _ensureGraphHistory();
+  const currentSessionId = _currentSessionId();
+  if (versionIndex === graphUndoStack.length) return;
+  if (versionIndex < 0 || versionIndex >= graphUndoStack.length) return;
+  const target = graphUndoStack[versionIndex];
+  if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
+  graphUndoStack = graphUndoStack.slice(0, versionIndex);
+  graphRedoStack = [];
+  graphPendingLiveMeta = null;
+  graphHistoryPreviewing = -1;
+  await _restoreGraphVersion(target);
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+}
+
+function _previewGraphVersion(versionIndex) {
+  _ensureGraphHistory();
+  const versions = _graphVersions();
+  const target = versions[versionIndex];
+  const live = _graphState();
+  if (!target || !live) return;
+  if (target.isLive) {
+    if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
+    graphHistoryPreviewing = -1;
+    _refreshGraphHistoryPanel();
+    return;
+  }
+  const diff = _diffGraphStates(live, target.state);
+  graphHistoryPreviewing = versionIndex;
+  if (typeof window.applyGraphDiffHighlights === "function") window.applyGraphDiffHighlights(diff.ops);
+  const footer = document.getElementById("graphHistoryDiffText");
+  if (footer) footer.textContent = "版本 " + (versionIndex + 1) + " 与当前差异：" + diff.summary;
+  _refreshGraphHistoryPanel();
+}
+
+function _graphHistorySourceLabel(source) {
+  if (source === "harness") return "AI";
+  if (source === "undo") return "撤销";
+  if (source === "init") return "初始";
+  if (source === "now") return "现在";
+  return "手动";
+}
+
+function _graphHistoryTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const pad = function (n) { return n < 10 ? "0" + n : String(n); };
+  return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+}
+
+function openGraphHistoryPanel() {
+  _ensureGraphHistory();
+  if (!graphHistoryPanel) {
+    graphHistoryPanel = document.createElement("div");
+    graphHistoryPanel.className = "graph-history-panel";
+    graphHistoryPanel.innerHTML = ''
+      + '<div class="graph-history-head-row"><span class="graph-history-title">修改历史</span>'
+      + '<button type="button" class="graph-history-close" onclick="closeGraphHistoryPanel()" aria-label="关闭">&times;</button></div>'
+      + '<div class="graph-history-tools">'
+      + '<button type="button" onclick="undoGraphAction()" title="Ctrl+Z">↩ 撤销</button>'
+      + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y">↪ 重做</button>'
+      + '</div>'
+      + '<div class="graph-history-list" id="graphHistoryList"></div>'
+      + '<div class="graph-history-diff" id="graphHistoryDiffText"></div>';
+    document.body.appendChild(graphHistoryPanel);
+  }
+  graphHistoryPanel.hidden = false;
+  _refreshGraphHistoryPanel();
+}
+
+function closeGraphHistoryPanel() {
+  if (graphHistoryPanel) graphHistoryPanel.hidden = true;
+  if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
+  graphHistoryPreviewing = -1;
+}
+
+function _refreshGraphHistoryPanel() {
+  if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
+  const versions = _graphVersions();
+  const listEl = document.getElementById("graphHistoryList");
+  if (!listEl) return;
+  const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+  listEl.innerHTML = versions.map(function (v) {
+    const label = _graphHistorySourceLabel(v.meta && v.meta.source);
+    const summary = esc((v.meta && v.meta.summary) || "");
+    const time = _graphHistoryTime(v.meta && v.meta.ts);
+    const cls = v.isLive ? "graph-history-item current" : "graph-history-item";
+    const srcCls = "src-" + ((v.meta && v.meta.source) || "user");
+    const previewCls = (graphHistoryPreviewing === v.index) ? " previewing" : "";
+    let actions = '';
+    if (!v.isLive) {
+      actions = '<div class="graph-history-actions">'
+        + '<button type="button" onclick="previewGraphVersion(' + v.index + ')">对比</button>'
+        + '<button type="button" onclick="jumpGraphVersion(' + v.index + ')">回到此版本</button>'
+        + '</div>';
+    }
+    return '<div class="' + cls + previewCls + '">'
+      + '<div class="graph-history-head"><span class="graph-history-badge ' + srcCls + '">' + label + '</span>'
+      + '<span class="graph-history-summary">' + summary + '</span>'
+      + '<span class="graph-history-time">' + time + '</span></div>'
+      + actions
+      + '</div>';
+  }).join('');
+}
+
+window.undoGraphAction = _undoGraphAction;
+window.redoGraphAction = _redoGraphAction;
+window.jumpGraphVersion = _jumpGraphVersion;
+window.previewGraphVersion = _previewGraphVersion;
+window.openGraphHistoryPanel = openGraphHistoryPanel;
+window.closeGraphHistoryPanel = closeGraphHistoryPanel;
+window.getGraphVersionList = _graphVersions;
 
 function _getChatHistory() {
   const base = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];

@@ -3294,3 +3294,121 @@
 .graph-harness-composer .graph-harness-actions button {
   margin-left: 6px;
 }
+
+/* ===== 修改历史面板（v1.1.16） ===== */
+.graph-history-panel {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: 340px;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel, #fff);
+  border: 1px solid var(--border, rgba(128,128,128,.35));
+  border-radius: 12px;
+  box-shadow: var(--modal-shadow, 0 8px 30px rgba(0,0,0,.25));
+  z-index: 10001;
+  overflow: hidden;
+  font-size: 13px;
+}
+.graph-history-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border, rgba(128,128,128,.25));
+}
+.graph-history-title { font-weight: 600; color: var(--text-primary, #222); }
+.graph-history-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-secondary, #888);
+  line-height: 1;
+}
+.graph-history-tools {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(128,128,128,.2));
+}
+.graph-history-tools button,
+.graph-history-actions button {
+  background: var(--btn-bg, #f0f0f0);
+  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
+  color: var(--text-primary, #222);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.graph-history-tools button:hover,
+.graph-history-actions button:hover {
+  background: var(--btn-active-bg, #e2e2e2);
+}
+.graph-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+.graph-history-item {
+  border: 1px solid var(--border, rgba(128,128,128,.22));
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--harness-msg-bg, rgba(128,128,128,.06));
+}
+.graph-history-item.current {
+  border-color: var(--accent, #4f8cff);
+  box-shadow: 0 0 0 1px var(--accent, #4f8cff);
+}
+.graph-history-item.previewing {
+  border-color: var(--graph-bubble-border, #f59e0b);
+  box-shadow: 0 0 0 1px var(--graph-bubble-border, #f59e0b);
+}
+.graph-history-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.graph-history-badge {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: #fff;
+  background: #888;
+}
+.graph-history-badge.src-harness { background: var(--accent, #4f8cff); }
+.graph-history-badge.src-user { background: #16a34a; }
+.graph-history-badge.src-undo { background: #ea580c; }
+.graph-history-badge.src-init { background: #64748b; }
+.graph-history-badge.src-now { background: #0d9488; }
+.graph-history-summary {
+  flex: 1;
+  color: var(--text-primary, #222);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-history-time {
+  flex: none;
+  color: var(--text-secondary, #888);
+  font-size: 11px;
+}
+.graph-history-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.graph-history-diff {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border, rgba(128,128,128,.2));
+  color: var(--text-secondary, #666);
+  font-size: 12px;
+  max-height: 80px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}

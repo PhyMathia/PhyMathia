@@ -153,7 +153,7 @@
     const before = JSON.parse(JSON.stringify(state));
     harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
     harnessLastAppliedBeforeSnapshot = harnessSnapshot ? JSON.parse(JSON.stringify(harnessSnapshot)) : null;
-    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo();
+    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'harness', summary: (harnessResult && harnessResult.summary) || 'AI 修改' });
     const nodeKindById = new Map(_graphNodes().map(node => [node.id, node.kind]));
     state.customNodes = Array.isArray(state.customNodes) ? state.customNodes : [];
     state.connections = Array.isArray(state.connections) ? state.connections : [];
@@ -221,6 +221,7 @@
   function undoGraphHarness() {
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
+    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销整个 AI 会话' });
     const state = _graphState();
     const checkpoint = state?.harnessCheckpoint;
     if (!checkpoint?.before) {
@@ -247,7 +248,7 @@
       .filter(node => node.kind === 'ai_eval')
       .map(node => node.id);
     if (!evalIds.length) return;
-    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo();
+    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '移除全部 AI 评价节点' });
     state.customNodes = state.customNodes.filter(node => node.kind !== 'ai_eval');
     state.connections = state.connections.filter(edge => !evalIds.includes(edge.from) && !evalIds.includes(edge.to));
     evalIds.forEach(id => {

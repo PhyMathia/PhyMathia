@@ -1507,7 +1507,7 @@ function _layoutByLevel(nodes, edges, depths, colGap, rowHeight) {
 
 function autoArrangeGraph(preservePinned = false) {
   if (!graphView.nodes.length) return;
-  _pushGraphUndo();
+  _pushGraphUndo(false, { layout: true });
   _measureNodes();
   graphView.nodes.forEach(node => {
     node.pinned = false;

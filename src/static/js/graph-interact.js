@@ -61,6 +61,7 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn" onclick="zoomGraph(1.2)" title="放大">+</button>'
     + '<button class="graph-tool-btn" onclick="zoomGraph(0.85)" title="缩小">−</button>'
     + '<button class="graph-tool-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
+    + '<button class="graph-tool-btn" onclick="openGraphHistoryPanel()" title="修改历史（撤销/重做/回到任意版本）">⏱</button>'
     + '<button class="graph-tool-btn graph-select-btn" onclick="graphToggleTextSelection()" title="选择文字" aria-label="选择文字" aria-pressed="false">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M8 4v16"></path><path d="M16 4v16"></path><path d="M12 2v20"></path>'
@@ -1406,7 +1407,7 @@ function _endPointerDrag(event) {
   if (graphView.resizeNodeId) {
     const node = _findGraphNode(graphView.resizeNodeId);
     if (node && graphView.moved) {
-      _pushGraphUndo();
+      _pushGraphUndo(false, { layout: true });
       _syncGroupMembersByContainment();
       _savePositions();
     }
@@ -1420,7 +1421,7 @@ function _endPointerDrag(event) {
   if (graphView.resizeGroupId) {
     const group = _graphGroupById(graphView.resizeGroupId);
     if (group && graphView.moved) {
-      _pushGraphUndo();
+      _pushGraphUndo(false, { layout: true });
       _syncGroupMembersByContainment();
       const state = _graphState();
       state.groups = graphView.groups.map(item => ({ ...item }));
@@ -1442,7 +1443,7 @@ function _endPointerDrag(event) {
   if (graphView.dragGroupId) {
     const group = _graphGroupById(graphView.dragGroupId);
     if (group && graphView.moved) {
-      _pushGraphUndo();
+      _pushGraphUndo(false, { layout: true });
       _syncGroupMembersByContainment();
       const state = _graphState();
       state.groups = graphView.groups.map(item => ({ ...item }));
@@ -1498,7 +1499,7 @@ function _endPointerDrag(event) {
         }
         _syncGraphSelectionClasses();
       }
-      _pushGraphUndo();
+      _pushGraphUndo(false, { layout: true });
       const state = _graphState();
       state.positions = state.positions || {};
       state.pinned = state.pinned || {};

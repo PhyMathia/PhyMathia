@@ -1322,7 +1322,19 @@ function _handleGraphKeydown(event) {
   const target = event.target;
   const inTextInput = target && typeof target.closest === 'function'
     && target.closest('input, textarea, [contenteditable], iframe');
-  if ((event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z')) {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
+    if (inTextInput) return;
+    event.preventDefault();
+    if (typeof window.redoGraphAction === 'function') window.redoGraphAction();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || event.key === 'Y')) {
+    if (inTextInput) return;
+    event.preventDefault();
+    if (typeof window.redoGraphAction === 'function') window.redoGraphAction();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
     if (inTextInput) return;
     event.preventDefault();
     _undoGraphAction();
