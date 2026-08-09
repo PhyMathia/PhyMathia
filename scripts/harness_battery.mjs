@@ -194,6 +194,83 @@ const compositeScenarios = [
   },
 ];
 
+// ===== 第三轮：复杂图 G9 + 对话式迭代场景 =====
+const complexScenarios = [
+  {
+    id: 'c9-feedback-deepen', label: '反馈迭代：内容不够好→按建议改好', graphs: ['G9'],
+    turns: [
+      { instruction: '给「简谐运动」的物理视角补充更深入的内容，结合回复力与位移成正比', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+      { instruction: '还是太简单了。我想要的物理视角是：明确写出回复力 F=-kx、与位移成正比，并和数学视角的 x=Acos(wt+phi) 对应起来', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'], noNewPhysicsModule: true } },
+    ],
+  },
+  {
+    id: 'c9-feedback-structural', label: '反馈迭代：结构建议→补连线', graphs: ['G9'],
+    turns: [
+      { instruction: '给「简谐运动」的物理视角补充内容', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+      { instruction: '你补的内容没有和数学视角建立联系，请把物理视角和数学视角连接起来，关系标为「对应」', phase: 'normal', focus: ['m1-phy'], expect: { connectPair: ['m1-phy', 'm1-math'] } },
+    ],
+  },
+  {
+    id: 'c9-undo-selective', label: '选择性反悔：只撤简谐运动簇，保留导数簇', graphs: ['G9'],
+    turns: [
+      { instruction: '把「简谐运动」的物理视角内容改得更严谨', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+      { instruction: '把「导数」的物理视角也改得更严谨', phase: 'normal', focus: ['m3-phy'], expect: { updateTargets: ['m3-phy'] } },
+      { instruction: '刚才简谐运动那边的改动不要了，恢复原样，导数那边保留', phase: 'normal', focus: ['m1-phy'], expect: { noCrash: true } },
+    ],
+    expect: { restoreTargets: ['m1-phy'], changedTargets: ['m3-phy'] },
+  },
+  {
+    id: 'c9-undo-natural', label: '自然措辞反悔：改回去', graphs: ['G9'],
+    turns: [
+      { instruction: '把「简谐运动」的物理视角内容改得更严谨', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+      { instruction: '我觉得还是改回去比较好', phase: 'normal', focus: ['m1-phy'], expect: { noCrash: true } },
+    ],
+    expect: { finalSnapshotEquals: 'before' },
+  },
+  {
+    id: 'c9-undo-created', label: '反悔新建对象：把刚才加的节点撤掉', graphs: ['G9'],
+    turns: [
+      { instruction: '给「简谐运动」新增一个知识点：固有频率，内容为系统自由振动的频率', phase: 'normal', focus: ['m1-phy'], expect: { createCount: 1, noIsolated: true } },
+      { instruction: '把刚才加的「固有频率」撤掉', phase: 'normal', focus: ['@last:node:固有频率'], expect: { noCrash: true } },
+    ],
+    expect: { finalSnapshotEquals: 'before' },
+  },
+  {
+    id: 'c9-undo-all', label: '复杂图全部撤销', graphs: ['G9'],
+    turns: [
+      { instruction: '把「简谐运动」的物理视角内容改得更严谨', phase: 'normal', focus: ['m1-phy'], expect: { updateTargets: ['m1-phy'] } },
+      { instruction: '把「导数」的数学视角内容改得更严谨', phase: 'normal', focus: ['m3-math'], expect: { updateTargets: ['m3-math'] } },
+      { instruction: '把所有修改全部撤销，回到最初', phase: 'normal', focus: [], expect: { statusUndo: true } },
+    ],
+    expect: { finalSnapshotEquals: 'before' },
+  },
+  {
+    id: 'c9-clarify-duplicate', label: '同名歧义：改「我的理解」', graphs: ['G9'],
+    turns: [
+      { instruction: '把「我的理解」的内容改得更清楚一些', phase: 'normal', focus: [], expect: { noCrash: true, allowedUpdateLabels: ['我的理解'] } },
+    ],
+  },
+  {
+    id: 'c9-multi-cluster', label: '跨簇不串：只改导数的物理视角', graphs: ['G9'],
+    turns: [
+      { instruction: '给「导数」的物理视角补充内容', phase: 'normal', focus: ['m3-phy'], expect: { updateTargets: ['m3-phy'], allowedUpdateIds: ['m3-phy'] } },
+    ],
+  },
+  {
+    id: 'c9-apply-eval', label: '复杂图应用评价建议', graphs: ['G9'],
+    turns: [
+      { instruction: '应用建议', phase: 'normal', focus: [], expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'c9-conversation', label: '对话：先问答后按上下文建点', graphs: ['G9'],
+    turns: [
+      { instruction: '简谐运动的回复力有什么特点？', phase: 'normal', focus: [], expect: { noOps: true } },
+      { instruction: '把刚才说的内容整理成一个知识点加进图里', phase: 'normal', focus: [], expect: { createCount: 1, noIsolated: true, noCrash: true } },
+    ],
+  },
+];
+
 const crossScenarios = [
   {
     id: 'x-eval-understanding', label: '跨图：评价「我的理解」', graphs: ['G2', 'G3', 'G4'],
@@ -523,9 +600,14 @@ async function runTurns(sc, idx, graph) {
   let lastOps = [];
   let lastBeforeSnapshot = null;
   let allOps = [];
+  let lastMarkers = {};
   const initialSnapshot = JSON.parse(JSON.stringify(snapshot));
   for (let ti = 0; ti < turns.length; ti++) {
-    const turn = turns[ti];
+    const rawTurn = turns[ti];
+    const turn = { ...rawTurn, focus: (rawTurn.focus || []).map(f => {
+      if (typeof f === 'string' && f.startsWith('@last:')) return lastMarkers[f] || f;
+      return f;
+    }) };
     const payload = buildTurnPayload(snapshot, turn, history, lastOps, lastBeforeSnapshot, allOps, initialSnapshot);
     try {
       const data = await callReview(payload);
@@ -536,6 +618,21 @@ async function runTurns(sc, idx, graph) {
         lastOps = (data.operations || []).slice();
         if (data.status === 'ok') allOps = allOps.concat((data.operations || []).slice());
         snapshot = data.next_snapshot;
+      }
+      {
+        const markers = {};
+        for (const o of (data.operations || [])) {
+          if (opName(o) === 'create_node') {
+            const id = o.assigned_id || o.id || o.temp_id;
+            if (!id) continue;
+            markers['@last:any'] = id;
+            const key = o.module_key || o.moduleKey || '';
+            if (key) markers['@last:module:' + key] = id;
+            const label = o.label || '';
+            if (label) markers['@last:node:' + label] = id;
+          }
+        }
+        if (Object.keys(markers).length) lastMarkers = markers;
       }
       history.push({ role: 'user', instruction: turn.instruction, phase: data.phase || turn.phase || 'normal' });
       history.push({
@@ -557,6 +654,27 @@ async function runTurns(sc, idx, graph) {
   if (ex.finalSnapshotEquals === 'before' && !snapshotsEqual(snapshot, beforeSnapshot)) {
     overallIssues.push('最终快照未恢复到修改前');
   }
+  if (ex.restoreTargets) {
+    for (const id of ex.restoreTargets) {
+      const beforeNode = (beforeSnapshot.nodes || []).find(n => String(n.id) === String(id));
+      const finalNode = (snapshot.nodes || []).find(n => String(n.id) === String(id));
+      if (!finalNode) { overallIssues.push('restoreTarget 节点已不存在: ' + id); continue; }
+      for (const f of ['content', 'label', 'formula']) {
+        if (String((beforeNode || {})[f] || '') !== String(finalNode[f] || '')) {
+          overallIssues.push('restoreTarget 未恢复: ' + id + '.' + f);
+        }
+      }
+    }
+  }
+  if (ex.changedTargets) {
+    for (const id of ex.changedTargets) {
+      const beforeNode = (beforeSnapshot.nodes || []).find(n => String(n.id) === String(id));
+      const finalNode = (snapshot.nodes || []).find(n => String(n.id) === String(id));
+      if (!finalNode) { overallIssues.push('changedTarget 节点不存在: ' + id); continue; }
+      const same = ['content', 'label', 'formula'].every(f => String((beforeNode || {})[f] || '') === String(finalNode[f] || ''));
+      if (same) overallIssues.push('changedTarget 未保留修改: ' + id);
+    }
+  }
   const passed = overallIssues.length === 0;
   const opCount = turnResults.reduce((acc, tr) => acc + (tr.score.opCount || 0), 0);
   console.log('[' + (idx + 1) + '/' + filtered.length + '] ' + sc.id + '@' + gid + ' (' + (Date.now() - t0) + 'ms) ' + (passed ? 'PASS' : 'FAIL') + ' turns=' + turns.length);
@@ -569,7 +687,7 @@ async function runTurns(sc, idx, graph) {
 
 const tierArg = process.argv[6] || '';
 const graphArg = process.argv[7] || '';
-const allScenarios = [...scenarios, ...compositeScenarios, ...crossScenarios];
+const allScenarios = [...scenarios, ...compositeScenarios, ...complexScenarios, ...crossScenarios];
 const filtered = (only.length ? allScenarios.filter(s => only.includes(s.id)) : allScenarios)
   .filter(s => !tierArg || tierOf(s) === tierArg)
   .map(s => ({ ...s, tier: tierOf(s) }));

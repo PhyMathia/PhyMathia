@@ -72,7 +72,9 @@ TOOLS_AUTO_HINT = (
 
 
 UNDO_HINTS = (
-    "撤销", "回退", "恢复", "还原", "撤回", "不要刚才", "重来", "undo", "rollback",
+    "撤销", "回退", "恢复", "还原", "撤回", "不要刚才", "重来",
+    "改回去", "改回", "退回", "退回去", "撤掉", "撤了", "不要了",
+    "刚加的", "删掉刚才", "undo", "rollback",
 )
 
 
@@ -81,16 +83,49 @@ def _detect_undo_intent(instruction: str) -> bool:
     return any(hint in text.lower() for hint in UNDO_HINTS)
 
 
-def _filter_inverse_by_targets(inverse_ops: list, targets) -> list:
+def _filter_inverse_by_targets(inverse_ops: list, targets, snapshot=None) -> list:
     targets = {str(item) for item in (targets or []) if str(item)}
     if not targets:
         return inverse_ops
+    edge_ends = {}
+    if snapshot is not None:
+        try:
+            norm = normalize_snapshot(snapshot)
+            for e in norm["edges"]:
+                key = str(e.get("key") or "")
+                if key:
+                    edge_ends[key] = {str(e.get("from") or ""), str(e.get("to") or "")}
+        except Exception:
+            edge_ends = {}
     kept = []
     for op in inverse_ops:
         ids = [op.get("id"), op.get("from"), op.get("to"), op.get("temp_id"), op.get("force_id")]
         if any(str(item) in targets for item in ids if item):
             kept.append(op)
+            continue
+        ek = str(op.get("edge_key") or op.get("key") or "")
+        ends = edge_ends.get(ek)
+        if ends and ends & targets:
+            kept.append(op)
     return kept
+
+
+def _undo_scope(instruction: str, focus_node_ids) -> str:
+    """Decide how much history an undo request should revert.
+
+    - 'full': 撤销全部/所有修改（回到最初快照）
+    - 'targeted': 指定了目标节点，且表达“恢复原样/改回去/撤掉”等上下文反悔
+      —— 撤销该目标相关的全部历史改动，保留其它改动
+    - 'last': 只撤销上一步修改
+    """
+    text = str(instruction or "")
+    if "全部" in text or "所有" in text:
+        return "full"
+    if focus_node_ids and any(k in text for k in (
+        "恢复", "还原", "原样", "改回", "退回", "撤掉", "撤了", "不要了", "刚加的", "那边",
+    )):
+        return "targeted"
+    return "last"
 
 
 def _history_block(history) -> str:
@@ -450,13 +485,14 @@ async def review_graph(
     # ---- 确定性撤销：指令含撤销意图且有上一步操作时，不调用模型 ----
     undo_intent = _detect_undo_intent(instruction)
     text_lower = str(instruction or "").lower()
-    use_full = ("全部" in text_lower or "所有" in text_lower) and (all_previous_ops or [])
+    scope = _undo_scope(instruction, focus_node_ids)
+    use_full = scope in ("full", "targeted") and (all_previous_ops or [])
     prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
     prev_before = initial_snapshot if use_full else previous_snapshot
     if undo_intent and prev_ops:
         current = normalize_snapshot(snapshot)
         inverse_ops = build_inverse_ops(prev_before or current, prev_ops, current)
-        inverse_ops = _filter_inverse_by_targets(inverse_ops, focus_node_ids)
+        inverse_ops = _filter_inverse_by_targets(inverse_ops, focus_node_ids, current)
         if inverse_ops:
             undo_result = build_next_snapshot(current, inverse_ops)
             undo_result["summary"] = "已撤销上一步修改" + (

@@ -95,3 +95,4 @@ example/
 # Local dev tools (python embeddable, logs)
 .tools/
 scripts/battery-*.json
+out-*.json

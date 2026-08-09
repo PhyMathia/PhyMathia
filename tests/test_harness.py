@@ -1516,6 +1516,140 @@ class HarnessFullUndoTest(unittest.TestCase):
         self.assertEqual(result["operations"][0]["op"], "create_node")
 
 
+class HarnessContextualUndoTest(unittest.TestCase):
+    """第三轮：上下文反悔——自然措辞识别、选择性撤销跨历史、边联动过滤。"""
+
+    def test_undo_intent_new_phrases(self):
+        from harness.review import _detect_undo_intent
+
+        for phrase in ("我觉得还是改回去比较好", "把刚才加的固有频率撤掉", "这个改动不要了", "刚加的模块撤了"):
+            self.assertTrue(_detect_undo_intent(phrase), phrase)
+        for phrase in ("把极限节点改一下", "给导数加一个物理视角", "新增知识点：链式法则"):
+            self.assertFalse(_detect_undo_intent(phrase), phrase)
+
+    def test_undo_scope_classification(self):
+        from harness.review import _undo_scope
+
+        self.assertEqual(_undo_scope("把刚才所有修改全部撤销", []), "full")
+        self.assertEqual(_undo_scope("把所有修改全部撤销，回到最初", []), "full")
+        self.assertEqual(_undo_scope("刚才简谐运动那边的改动不要了，恢复原样，导数那边保留", ["m1-phy"]), "targeted")
+        self.assertEqual(_undo_scope("我觉得还是改回去比较好", ["m1-phy"]), "targeted")
+        self.assertEqual(_undo_scope("把刚才加的固有频率撤掉", ["hn_1"]), "targeted")
+        self.assertEqual(_undo_scope("撤销刚才的修改", ["A"]), "last")
+        self.assertEqual(_undo_scope("撤销刚才的修改", []), "last")
+
+    def test_filter_inverse_keeps_edges_touching_target(self):
+        from harness.review import _filter_inverse_by_targets
+
+        inverse = [
+            {"op": "remove_edge", "edge_key": "A:out-0->M:in-0", "reason": "撤销"},
+            {"op": "delete_node", "id": "M", "reason": "撤销"},
+        ]
+        current = {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}, {"id": "M", "kind": "knowledge", "label": "固有频率"}],
+            "edges": [{"key": "A:out-0->M:in-0", "from": "A", "to": "M", "relation": "导出"}],
+        }
+        kept = _filter_inverse_by_targets(inverse, ["M"], current)
+        self.assertEqual([op["op"] for op in kept], ["remove_edge", "delete_node"])
+
+    def test_targeted_undo_reverts_only_focus_across_history(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        initial = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"},
+            ],
+            "edges": [],
+        }
+        after_all = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新"},
+                {"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"},
+            ],
+            "edges": [],
+        }
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                after_all,
+                "刚才 A 那边的改动不要了，恢复原样，B 保留",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                focus_node_ids=["A"],
+                previous_snapshot={"nodes": [{"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"}], "edges": []},
+                previous_ops=[{"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"}],
+                initial_snapshot=initial,
+                all_previous_ops=[
+                    {"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"},
+                    {"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"},
+                ],
+            ))
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(result["status"], "undo")
+        nodes = {n["id"]: n for n in result["next_snapshot"]["nodes"]}
+        self.assertEqual(nodes["A"]["content"], "原")
+        self.assertEqual(nodes["B"]["label"], "极限的定义")
+
+    def test_targeted_undo_created_node_with_edge(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        initial = {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}],
+            "edges": [],
+        }
+        after_all = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
+                {"id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率"},
+            ],
+            "edges": [
+                {"key": "A:out-0->M:in-0", "from": "A", "to": "M", "relation": "导出"},
+            ],
+        }
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                after_all,
+                "把刚才加的固有频率撤掉",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                focus_node_ids=["M"],
+                previous_snapshot=initial,
+                previous_ops=[
+                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
+                    {"op": "add_edge", "from": "A", "to": "M", "relation": "导出", "edge_key": "A:out-0->M:in-0", "reason": "连线"},
+                ],
+                initial_snapshot=initial,
+                all_previous_ops=[
+                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
+                    {"op": "add_edge", "from": "A", "to": "M", "relation": "导出", "edge_key": "A:out-0->M:in-0", "reason": "连线"},
+                ],
+            ))
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(result["status"], "undo")
+        self.assertEqual([n["id"] for n in result["next_snapshot"]["nodes"]], ["A"])
+        self.assertEqual(result["next_snapshot"]["edges"], [])
+
+
 class HarnessExpandCompletionTest(unittest.TestCase):
     def test_expand_auto_completes_missing_learn_module(self):
         import asyncio

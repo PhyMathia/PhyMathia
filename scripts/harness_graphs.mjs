@@ -214,7 +214,67 @@ const G8 = {
   edges: [],
 };
 
-export const GRAPHS = [G1, G2, G3, G4, G5, G6, G7, G8].map(g => ({ ...g, index: idx(g.nodes) }));
+
+const G9 = {
+  id: 'G9',
+  label: '力学与微积分综合图（26 节点：双簇/同名/评价遗留/孤立组件/结构缺陷）',
+  nodes: [
+    { id: 'u1', kind: 'user', label: '根问题：什么是简谐运动？', content: '什么是简谐运动？', read_only: true },
+    { id: 'a1', kind: 'answer', label: 'AI 回答（简谐运动）', content: '简谐运动是回复力与位移成正比的振动。' },
+    { id: 'm1-phy', kind: 'module', module_key: 'physics', label: '物理视角', content: '弹簧振子来回运动。', formula: '' },
+    { id: 'm1-math', kind: 'module', module_key: 'math', label: '数学视角', content: 'x=Acos(wt+phi)。', formula: 'x(t)=A\\cos(\\omega t+\\varphi)' },
+    { id: 'm1-viz', kind: 'module', module_key: 'viz', label: '交互可视化', content: 'HTML 演示。', formula: '' },
+    { id: 'm1-soc', kind: 'module', module_key: 'socratic', label: '苏格拉底追问', content: '为什么回复力与位移成正比？', formula: '' },
+    { id: 'm1-learn', kind: 'module', module_key: 'learn', label: '进阶学习', content: '阻尼振动与受迫振动。', formula: '' },
+    { id: 'h1', kind: 'human_note', label: '我的理解', content: '简谐运动就是来回摆动。', formula: '' },
+    { id: 'e1', kind: 'ai_eval', label: '对「物理视角」的建议', target_node_id: 'm1-phy', target_label: '物理视角', suggestion: '补充 F=-kx、回复力与位移成正比的严格表述，并把物理视角连接到数学视角', priority: 'high' },
+    { id: 'u2', kind: 'user', label: '追问：为什么振幅会减小？', content: '为什么振幅会减小？' },
+    { id: 'a2', kind: 'answer', label: 'AI 回答（阻尼振动）', content: '因为有阻力做负功，能量不断耗散。' },
+    { id: 'f1', kind: 'knowledge', label: '阻尼振动', content: '振幅随时间衰减的振动。', formula: '' },
+    { id: 'f2', kind: 'knowledge', label: '受迫振动', content: '在外界周期性驱动力下的振动。', formula: '' },
+    { id: 'u3', kind: 'user', label: '根问题：什么是导数？', content: '什么是导数？', read_only: true },
+    { id: 'a3', kind: 'answer', label: 'AI 回答（导数）', content: '导数是函数在某一点的瞬时变化率。' },
+    { id: 'm3-phy', kind: 'module', module_key: 'physics', label: '物理视角', content: '速度是位移对时间的导数。', formula: '' },
+    { id: 'm3-math', kind: 'module', module_key: 'math', label: '数学视角', content: '导数是差商的极限。', formula: '' },
+    { id: 'h3', kind: 'human_note', label: '我的理解', content: '导数就是斜率。', formula: '' },
+    { id: 'd1', kind: 'knowledge', label: '极限', content: '当自变量趋近某值时函数值趋近的值。', formula: '' },
+    { id: 'd2', kind: 'knowledge', label: '连续', content: '函数在某点连续的定义。', formula: '' },
+    { id: 'd3', kind: 'knowledge', label: '瞬时速度', content: '位移对时间的导数。', formula: '' },
+    { id: 'r1', kind: 'relation', label: '导数与简谐运动', content: '简谐运动方程对时间求导可得速度。', formula: '' },
+    { id: 's1', kind: 'summary', label: 'AI 总结', content: '简谐运动与导数相互联系。', formula: '' },
+    { id: 'p1', kind: 'knowledge', label: '概率', content: '概率定义（孤立组件）。', formula: '' },
+    { id: 'p2', kind: 'knowledge', label: '期望', content: '期望定义（孤立组件）。', formula: '' },
+    { id: 'p3', kind: 'knowledge', label: '方差', content: '方差定义（孤立组件）。', formula: '' },
+  ],
+  edges: [
+    { key: 'u1:out->a1:in', from: 'u1', to: 'a1', relation: '回答' },
+    { key: 'a1:out->m1-phy:in', from: 'a1', to: 'm1-phy', relation: '模块' },
+    { key: 'a1:out->m1-math:in', from: 'a1', to: 'm1-math', relation: '模块' },
+    { key: 'a1:out->m1-viz:in', from: 'a1', to: 'm1-viz', relation: '模块' },
+    { key: 'a1:out->m1-soc:in', from: 'a1', to: 'm1-soc', relation: '追问' },
+    { key: 'a1:out->m1-learn:in', from: 'a1', to: 'm1-learn', relation: '进阶' },
+    { key: 'a1:out->h1:in', from: 'a1', to: 'h1', relation: '补充视角' },
+    { key: 'm1-phy:out->e1:in', from: 'm1-phy', to: 'e1', relation: '评价' },
+    { key: 'u2:out->a2:in', from: 'u2', to: 'a2', relation: '回答' },
+    { key: 'a2:out->f1:in', from: 'a2', to: 'f1', relation: '导出' },
+    { key: 'f1:out->f2:in', from: 'f1', to: 'f2', relation: '拓展' },
+    { key: 'u3:out->a3:in', from: 'u3', to: 'a3', relation: '回答' },
+    { key: 'a3:out->m3-phy:in', from: 'a3', to: 'm3-phy', relation: '模块' },
+    { key: 'a3:out->m3-math:in', from: 'a3', to: 'm3-math', relation: '模块' },
+    { key: 'a3:out->h3:in', from: 'a3', to: 'h3', relation: '补充视角' },
+    { key: 'a3:out->d1:in', from: 'a3', to: 'd1', relation: '依赖' },
+    { key: 'd1:out->d2:in', from: 'd1', to: 'd2', relation: '导出' },
+    { key: 'a3:out->d3:in', from: 'a3', to: 'd3', relation: '应用' },
+    { key: 'd3:out->m1-phy:in', from: 'd3', to: 'm1-phy', relation: '应用' },
+    { key: 'a1:out->r1:in', from: 'a1', to: 'r1', relation: '联系' },
+    { key: 'r1:out->a3:in', from: 'r1', to: 'a3', relation: '联系' },
+    { key: 'a1:out->s1:in', from: 'a1', to: 's1', relation: '总结' },
+    { key: 'p1:out->p2:in', from: 'p1', to: 'p2', relation: '导出' },
+    { key: 'p2:out->p3:in', from: 'p2', to: 'p3', relation: '导出' },
+  ],
+};
+
+export const GRAPHS = [G1, G2, G3, G4, G5, G6, G7, G8, G9].map(g => ({ ...g, index: idx(g.nodes) }));
 
 export function graphById(id) {
   return GRAPHS.find(g => g.id === id) || GRAPHS[0];
