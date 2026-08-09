@@ -263,6 +263,44 @@ const complexScenarios = [
     ],
   },
   {
+    id: 'organize-wrong-edge', label: '整理关系：修正标错的关系', snapshotExtra: 'wrong-edge',
+    turns: [
+      { instruction: '检查这些连线的关系是否标错：把明显标错的关系改对，并给出具体理由；不要创建单独的“联系”节点', phase: 'normal', focus: [], expect: { hasEdgeCleanup: true, noRelationNode: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'organize-multiturn', label: '整理关系（多轮）：先整理再精简', graphs: ['G1'],
+    turns: [
+      { instruction: '整理这些知识点之间的关系：删掉牵强、空泛的连线，保留能说清理由的', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
+      { instruction: '再严格一点：只保留最核心的主线关系，把次要的也删掉', phase: 'normal', focus: [], expect: { hasEdgeCleanup: true, noRelationNode: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'organize-angle', label: '整理关系：按物理意义建立联系', graphs: ['G1'],
+    turns: [
+      { instruction: '从物理意义的角度建立联系：把相关知识点按“物理意义”连起来，并给每条连线一个具体的物理理由', phase: 'normal', focus: [], expect: { hasAddEdge: true, noRelationNode: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'expand-quality', label: '进阶链质量：answer 内容不能空泛', graphs: ['G1'],
+    turns: [
+      { instruction: '为导数生成进阶学习链', phase: 'normal', focus: ['A'], expect: { phase: 'expand', hasAnswer: true, hasLearn: true, noFluffyAnswer: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'expand-feedback', label: '进阶链反馈迭代：太浅了再深入', graphs: ['G1'],
+    turns: [
+      { instruction: '为导数生成进阶学习链', phase: 'normal', focus: ['A'], expect: { phase: 'expand', hasAnswer: true, hasLearn: true } },
+      { instruction: '太浅了，请结合高阶导数的几何意义和泰勒展开再深入展开', phase: 'normal', focus: ['A'], expect: { hasRealEdit: true, noNewLearnModule: true, noCrash: true } },
+    ],
+  },
+  {
+    id: 'expand-level-research', label: '科研难度进阶链', graphs: ['G1'],
+    turns: [
+      { instruction: '用科研深度为导数生成进阶学习链', phase: 'normal', focus: ['A'], level: 'research', expect: { phase: 'expand', hasAnswer: true, hasLearn: true, noCrash: true } },
+    ],
+  },
+  {
     id: 'organize-relations-fix', label: '整理关系：删除空泛的“相关”连线', snapshotExtra: 'weak-edge',
     turns: [
       { instruction: '整理这些知识点之间的关系：把“相关/有联系”这类空泛、牵强的连线删掉或改成有明确逻辑依据的关系，只保留能说清理由的连线；不要创建单独的“联系”节点', phase: 'normal', focus: [], expect: { noRelationNode: true, hasEdgeCleanup: true, noCrash: true } },
@@ -369,6 +407,14 @@ function makeConflictSnapshot() {
     { key: 'D:out-0->E1:in-0', from: 'D', to: 'E1', relation: '评价', label: '评价' },
     { key: 'D:out-0->E2:in-0', from: 'D', to: 'E2', relation: '评价', label: '评价' },
   );
+  return s;
+}
+
+function makeWrongEdgeSnapshot() {
+  const s = makeSnapshot();
+  // 把 A->C 的“物理意义”故意标错为“反例”
+  const e = s.edges.find(x => x.key === 'A:out-0->C:in-0');
+  if (e) { e.relation = '反例'; e.label = '导数是物理视角的反例'; }
   return s;
 }
 
@@ -518,6 +564,21 @@ function scoreScenario(sc, data) {
     if (answers < ex.expandAllTargets.length) issues.push('answer 节点数不足: ' + answers + '/' + ex.expandAllTargets.length);
     if (learns < ex.expandAllTargets.length) issues.push('learn 模块数不足: ' + learns + '/' + ex.expandAllTargets.length);
   }
+  if (ex.hasAddEdge && !ops.some(o => opName(o) === 'add_edge')) {
+    issues.push('应新增至少一条连线');
+  }
+  if (ex.noFluffyAnswer) {
+    const answers = ops.filter(o => opName(o) === 'create_node' && o.kind === 'answer');
+    for (const a of answers) {
+      const c = String(a.content || '').trim();
+      if (!c) issues.push('answer 节点内容为空');
+      else if (/^(深入学习|继续学习|进阶学习|了解更多|建议学习)[^，。!！?？]{0,12}$/.test(c)) issues.push('answer 内容空泛: ' + c.slice(0, 40));
+    }
+  }
+  if (ex.noNewLearnModule) {
+    const dup = ops.filter(o => opName(o) === 'create_node' && o.kind === 'module' && (o.module_key || o.moduleKey) === 'learn');
+    if (dup.length) issues.push('反馈迭代时又新建了 learn 模块（应扩展现有节点）');
+  }
   if (ex.hasEdgeCleanup && !ops.some(o => opName(o) === 'remove_edge' || opName(o) === 'update_edge')) {
     issues.push('应修改/删除至少一条牵强连线（remove_edge 或 update_edge）');
   }
@@ -590,6 +651,7 @@ function buildTurnPayload(snapshot, turn, history, prevOps, prevSnapshot, allPre
 function makeInitialSnapshot(sc, graph) {
   if (graph) return { version: 1, nodes: graph.nodes, edges: graph.edges };
   if (sc.snapshotExtra === 'weak-edge') return makeWeakEdgeSnapshot();
+  if (sc.snapshotExtra === 'wrong-edge') return makeWrongEdgeSnapshot();
   if (sc.snapshotExtra === 'evals') return makeEvalSnapshot();
   if (sc.snapshotExtra === 'evals-conflict') return makeConflictSnapshot();
   if (sc.snapshotExtra === 'big') return makeBigSnapshot();
