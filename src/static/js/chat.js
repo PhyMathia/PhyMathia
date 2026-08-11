@@ -533,6 +533,21 @@
             currentBranchId = null;
           }
 
+          if (wasSocraticBranch) {
+            const socraticMetaMatch = assistantContent.match(/<socratic_meta\b[^>]*correct\s*=\s*["']([^"']+)["'][^>]*\/?>/i);
+            if (socraticMetaMatch && typeof window.recordSocraticAnswer === 'function') {
+              const qm = text.match(/追问问题[：:]\s*([^\n]+)/);
+              const lm = text.match(/追问等级[：:]\s*(基础|进阶|拓展)/);
+              window.recordSocraticAnswer({
+                title: (qm && qm[1] ? qm[1].trim() : '') || '苏格拉底追问',
+                question: (qm && qm[1] ? qm[1].trim() : '') || '',
+                correct: socraticMetaMatch[1].toLowerCase() === 'correct',
+                sessionId: (typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID) || '',
+                level: lm ? lm[1] : '',
+              });
+            }
+          }
+
           // 先生成本地知识条目，消息上传继续在后台进行。
           _setProgress(98, '正在提取知识');
           if (!isCasual) autoExtractKnowledge(currentSessionId, chatHistory);

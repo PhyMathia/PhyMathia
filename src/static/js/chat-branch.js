@@ -1,6 +1,7 @@
 // ===== PhyMathia 对话分支：苏格拉底追问、分支探索与删除（含 window 导出）=====
 
     var pendingSocraticNewLoop = false;
+    var pendingSocraticConfidence = 'ok';
     function clearBranchAnchor() {
       setActiveBranchAnchor(null);
     }
@@ -19,11 +20,16 @@
       return anchor;
     }
 
+    function _socraticLevelLabel(level) {
+      return level === 'advanced' ? '进阶' : level === 'expand' ? '拓展' : '基础';
+    }
+
     function startSocraticAnswer(question, level, parentMsg, sourceModule) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
       pendingSocraticSourceModule = sourceModule || 'extend';
+      pendingSocraticConfidence = 'ok';
       // 若当前已有未结束的苏格拉底闭环，沿用同一分支，保证连对次数与上下文跨轮连续
       pendingSocraticNewLoop = !(currentBranch === 'socratic' && currentBranchId);
       pendingSocraticBranchId = pendingSocraticNewLoop ? _genBranchId() : currentBranchId;
@@ -35,6 +41,9 @@
       answerEl.value = '';
       modal.hidden = false;
       modal.classList.add('active');
+      document.querySelectorAll('.socratic-confidence button').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.socraticConfidence === pendingSocraticConfidence);
+      });
       setTimeout(() => answerEl.focus(), 50);
     }
 
@@ -49,6 +58,13 @@
       pendingSocraticSourceModule = 'extend';
     }
 
+    function setSocraticConfidence(value, btn) {
+      pendingSocraticConfidence = value || 'ok';
+      document.querySelectorAll('.socratic-confidence button').forEach(function(b) {
+        b.classList.toggle('active', b === btn);
+      });
+    }
+
     async function submitSocraticAnswer() {
       if (isStreaming || socraticSubmitting || !pendingSocraticQuestion) return;
       const answerEl = document.getElementById('socraticModalAnswer');
@@ -58,7 +74,8 @@
         return;
       }
       const levelLabel = pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础';
-      const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
+      const confidenceLabel = pendingSocraticConfidence === 'confident' ? '很有把握' : pendingSocraticConfidence === 'guess' ? '猜的' : '一般';
+      const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n把握程度：' + confidenceLabel + '\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
       const branchId = pendingSocraticBranchId || _genBranchId();
       socraticSubmitting = true;
       try {
@@ -96,6 +113,39 @@
       } finally {
         socraticSubmitting = false;
       }
+    }
+
+    function _socraticExitMessage(prefix, level, question) {
+      const levelLabel = _socraticLevelLabel(level);
+      return prefix + '\n追问等级：' + levelLabel + '\n追问问题：' + question;
+    }
+
+    function startSocraticHint(question, level, parentMsg, sourceModule) {
+      if (isStreaming) return;
+      const message = _socraticExitMessage('[苏格拉底提示]', level, question);
+      const reuse = currentBranch === 'socratic' && currentBranchId;
+      setActiveBranchAnchor({
+        parentId: parentMsg || '',
+        sourceModule: sourceModule || 'extend',
+        branchType: 'socratic',
+        branchId: reuse ? currentBranchId : _genBranchId(),
+        branchLabel: '苏格拉底提示',
+      });
+      sendQuick(message);
+    }
+
+    function startSocraticExplain(question, level, parentMsg, sourceModule) {
+      if (isStreaming) return;
+      const message = _socraticExitMessage('[苏格拉底讲解]', level, question);
+      const reuse = currentBranch === 'socratic' && currentBranchId;
+      setActiveBranchAnchor({
+        parentId: parentMsg || '',
+        sourceModule: sourceModule || 'extend',
+        branchType: 'socratic',
+        branchId: reuse ? currentBranchId : _genBranchId(),
+        branchLabel: '苏格拉底讲解',
+      });
+      sendQuick(message);
     }
 
     function resetSocraticBranch() {
@@ -239,6 +289,9 @@
     window.getStreamingAssistant = () => streamingAssistant;
     window.stopGeneration = stopGeneration;
     window.startSocraticAnswer = startSocraticAnswer;
+    window.setSocraticConfidence = setSocraticConfidence;
+    window.startSocraticHint = startSocraticHint;
+    window.startSocraticExplain = startSocraticExplain;
     window.closeSocraticModal = closeSocraticModal;
     window.submitSocraticAnswer = submitSocraticAnswer;
     window.resetSocraticBranch = resetSocraticBranch;

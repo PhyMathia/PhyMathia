@@ -196,6 +196,51 @@ function _recordQuizAnswer(question, correct) {
   _saveQuizStats(stats);
 }
 
+function recordSocraticAnswer({ title, question, correct, sessionId, level, at } = {}) {
+  const stats = _readQuizStats();
+  const now = at || Date.now();
+  const item = {
+    title: String(title || question || '苏格拉底追问').slice(0, 120),
+    sessionId: sessionId || '',
+    formulaText: ''
+  };
+  const key = _quizTopicStatsKey(item);
+  const current = stats[key] || {
+    correct: 0,
+    wrong: 0,
+    last: 0,
+    sessionId: item.sessionId,
+    title: item.title,
+    topicKey: key,
+    history: [],
+    reps: 0,
+    lapses: 0,
+    intervalDays: 1,
+    dueAt: 0,
+    ease: 2.5
+  };
+  current.correct = (current.correct || 0) + (correct ? 1 : 0);
+  current.wrong = (current.wrong || 0) + (correct ? 0 : 1);
+  _quizScheduleAfterAnswer(current, correct);
+  current.sessionId = item.sessionId || current.sessionId || '';
+  current.title = item.title || current.title || '';
+  current.topicKey = current.topicKey || key;
+  current.history = Array.isArray(current.history) ? current.history : [];
+  current.history.push({ correct: !!correct, at: now, questionId: 'socratic', difficulty: level || 'basic' });
+  current.history = current.history.slice(-20);
+  current.mastery = _quizMastery(current);
+  stats[key] = current;
+  stats._meta = {
+    ...(stats._meta || {}),
+    version: 3,
+    attempts: ((stats._meta && stats._meta.attempts) || 0) + 1,
+    updatedAt: now
+  };
+  _saveQuizStats(stats);
+  return current;
+}
+
+
 function _wrongQuestionKey(question) {
   const correct = question && Array.isArray(question.options) && question.options[question.correctIndex]
     ? question.options[question.correctIndex].text

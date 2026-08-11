@@ -53,6 +53,14 @@ def _trim_context_content(content: str, keep_viz: bool = False) -> str:
     return head + "\n…（上下文已截断）"
 
 
+_SOCRATIC_PROMPT_PREFIXES = ("[苏格拉底回答]", "[苏格拉底提示]", "[苏格拉底讲解]")
+
+
+def _is_socratic_prompt_text(prompt: str) -> bool:
+    """判断消息是否属于苏格拉底闭环（回答/提示/讲解三种前缀）。"""
+    return bool(prompt and prompt.lstrip().startswith(_SOCRATIC_PROMPT_PREFIXES))
+
+
 def _is_socratic_message(msg) -> bool:
     """识别苏格拉底支线消息，兼容新 branch 字段和历史内容标记。"""
     if not isinstance(msg, dict):
@@ -60,7 +68,7 @@ def _is_socratic_message(msg) -> bool:
     if msg.get("branch") == "socratic" or msg.get("branchType") == "socratic":
         return True
     content = str(msg.get("content") or "")
-    if content.lstrip().startswith("[苏格拉底回答]"):
+    if content.lstrip().startswith("[苏格拉底回答]") or content.lstrip().startswith("[苏格拉底提示]") or content.lstrip().startswith("[苏格拉底讲解]"):
         return True
     if content.lstrip().startswith("我的回答："):
         return True
@@ -547,7 +555,7 @@ def _resolve_socratic_branch(session_id: str) -> str:
     return ""
 
 
-def _socratic_state_instruction(ref: str) -> str:
+def _socratic_state_instruction(ref: str, mode: str = "answer") -> str:
     state = _read_socratic_state(ref)
     if not state:
         return ""
@@ -555,13 +563,36 @@ def _socratic_state_instruction(ref: str) -> str:
     streak = int(state.get("correctStreak", 0) or 0)
     answered = int(state.get("answeredCount", 0) or 0)
     question = state.get("question", "") or ""
-    return (
+    last_correct = state.get("lastCorrect", "") or ""
+    last_confidence = state.get("lastConfidence", "") or ""
+    lines = [
         f"当前会话处于苏格拉底追问闭环：问题等级={level}，当前问题={question}，"
         f"已连续答对 {streak} 次，本轮闭环已问答 {answered} 轮。"
-        "用户会以 [苏格拉底回答] 开头携带追问问题与自己的回答；请结合最近一条 AI 讲解、当前问题和用户回答继续，"
-        "按系统提示词中的闭环规则只推进一层，并在回复末尾输出 <socratic_meta .../>。"
-        "若本轮闭环已问答 4 轮仍未连续答对 2 次，请直接给出小结并结束闭环（done=\"true\"）。"
-    )
+    ]
+    if last_correct:
+        lines.append(
+            f"上一轮判定：{last_correct}（正确→下一题可升一级加深角度；部分正确→同级换类比再问；有误→降一级并用更生活化的类比）。"
+        )
+    if last_confidence:
+        lines.append(
+            f"用户上次自评把握：{last_confidence}（答对但没把握→请其再解释一遍；答错但很有把握→制造认知冲突重点纠偏）。"
+        )
+    if mode == "hint":
+        lines.append(
+            "用户请求【提示】：只给出最小提示，不要展开完整讲解、不要直接给答案；"
+            "然后再次用带难度前缀的问题请其重试（本次回复不输出 <socratic_meta>）。"
+        )
+    elif mode == "explain":
+        lines.append(
+            "用户请求【讲解】：直接给出完整讲解与小结，末尾输出 <socratic_meta ... done=\"true\" /> 结束闭环。"
+        )
+    else:
+        lines.append(
+            "用户会以 [苏格拉底回答] 开头携带追问问题、把握程度与自己的回答；请结合最近一条 AI 讲解、当前问题和用户回答继续，"
+            "按系统提示词中的闭环规则只推进一层，并在回复末尾输出 <socratic_meta .../>。"
+        )
+    lines.append("若本轮闭环已问答 4 轮仍未连续答对 2 次，请直接给出小结并结束闭环（done=\"true\"）。")
+    return " ".join(lines)
 
 
 def _sync_socratic_state_from_prompt(state: dict, prompt: str) -> None:
@@ -575,6 +606,9 @@ def _sync_socratic_state_from_prompt(state: dict, prompt: str) -> None:
     question_match = re.search(r"追问问题[：:]\s*([^\n]+)", prompt)
     if question_match and question_match.group(1).strip():
         state["question"] = question_match.group(1).strip()
+    confidence_match = re.search(r"把握程度[：:]\s*(很有把握|一般|猜的)", prompt)
+    if confidence_match:
+        state["lastConfidence"] = confidence_match.group(1)
 
 
 def _update_socratic_state_from_content(content: str, ref: str) -> None:
@@ -602,6 +636,7 @@ def _update_socratic_state_from_content(content: str, ref: str) -> None:
         "answeredCount": 0,
     }
     state["active"] = True
+    state["lastCorrect"] = correct
     if correct == "correct":
         state["correctStreak"] = int(state.get("correctStreak", 0) or 0) + 1
     elif correct in ("partial", "wrong"):
@@ -623,7 +658,7 @@ def _is_socratic_followup(content: str) -> bool:
 
 
 __all__ = [
-    "_is_socratic_message", "_recent_context_messages", "_extract_section",
+    "_is_socratic_message", "_is_socratic_prompt_text", "_recent_context_messages", "_extract_section",
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",

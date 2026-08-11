@@ -162,4 +162,24 @@ finally:
     context._resolve_messages_path = orig_resolve
     context._read_json = orig_read
 
+# 9) _is_socratic_prompt_text / _is_socratic_message 新前缀 / 指令 mode 与 lastCorrect/lastConfidence
+assert context._is_socratic_prompt_text("[苏格拉底回答]\n追问问题：x")
+assert context._is_socratic_prompt_text("[苏格拉底提示]\n追问问题：x")
+assert context._is_socratic_prompt_text("[苏格拉底讲解]\n追问问题：x")
+assert not context._is_socratic_prompt_text("普通问题")
+assert not context._is_socratic_prompt_text("")
+assert context._is_socratic_message({"role": "user", "content": "[苏格拉底提示]\n追问问题：x"})
+assert context._is_socratic_message({"role": "user", "content": "[苏格拉底讲解]\n追问问题：x"})
+state9 = {"active": True, "level": "advanced", "question": "q?", "correctStreak": 1, "answeredCount": 2, "lastCorrect": "partial", "lastConfidence": "很有把握"}
+context._read_socratic_state = lambda ref: state9
+inst9 = context._socratic_state_instruction("br_x", "answer")
+assert "上一轮判定：partial" in inst9, inst9
+assert "用户上次自评把握：很有把握" in inst9, inst9
+instHint = context._socratic_state_instruction("br_x", "hint")
+assert "【提示】" in instHint and "不输出 <socratic_meta>" in instHint, instHint
+instExplain = context._socratic_state_instruction("br_x", "explain")
+assert "【讲解】" in instExplain and 'done="true"' in instExplain, instExplain
+context._read_socratic_state = lambda ref: None
+assert context._socratic_state_instruction("br_x", "hint") == ""
+
 print("ALL SOCRATIC FIX TESTS PASSED")

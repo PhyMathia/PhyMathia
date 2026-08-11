@@ -517,6 +517,8 @@ function convertSocraticQuestions(html, renderCtx = {}) {
       <div class="socratic-actions">
         <button class="socratic-btn socratic-answer level-${level}" type="button" data-socratic-answer="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}" data-socratic-source="${sourceModule}">我来回答</button>
         <button class="socratic-btn socratic-ask level-${level}" type="button" data-send="${encoded}" data-parent-msg="${parentId}" data-source-module="${sourceModule}" data-branch-type="continue" data-branch-label="${_escapeAttr('直接问AI：' + question)}">直接问AI</button>
+        <button class="socratic-btn socratic-hint level-${level}" type="button" data-socratic-hint="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}" data-socratic-source="${sourceModule}">给点提示</button>
+        <button class="socratic-btn socratic-explain level-${level}" type="button" data-socratic-explain="${encoded}" data-socratic-level="${level}" data-parent-msg="${parentId}" data-socratic-source="${sourceModule}">看讲解</button>
       </div>
     </li>`;
   });
@@ -533,6 +535,26 @@ document.addEventListener('click', function(e) {
     } else {
       document.getElementById('userInput').value = question;
       sendQuick(question);
+    }
+    return;
+  }
+  const hintBtn = e.target.closest('[data-socratic-hint]');
+  if (hintBtn) {
+    e.preventDefault();
+    const question = decodeURIComponent(hintBtn.getAttribute('data-socratic-hint'));
+    const level = hintBtn.getAttribute('data-socratic-level') || 'basic';
+    if (typeof window.startSocraticHint === 'function') {
+      window.startSocraticHint(question, level, hintBtn.getAttribute('data-parent-msg') || '', hintBtn.getAttribute('data-socratic-source') || 'extend');
+    }
+    return;
+  }
+  const explainBtn = e.target.closest('[data-socratic-explain]');
+  if (explainBtn) {
+    e.preventDefault();
+    const question = decodeURIComponent(explainBtn.getAttribute('data-socratic-explain'));
+    const level = explainBtn.getAttribute('data-socratic-level') || 'basic';
+    if (typeof window.startSocraticExplain === 'function') {
+      window.startSocraticExplain(question, level, explainBtn.getAttribute('data-parent-msg') || '', explainBtn.getAttribute('data-socratic-source') || 'extend');
     }
     return;
   }

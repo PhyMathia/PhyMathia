@@ -20,7 +20,7 @@
     })();
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.css?v=41">
+  <link rel="stylesheet" href="/css/styles.css?v=42">
   <link rel="stylesheet" href="/css/styles-panels.css?v=5">
   <link rel="stylesheet" href="/css/graph-override.css?v=107">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=22">
@@ -167,6 +167,12 @@
         </div>
         <div class="socratic-modal-question" id="socraticModalQuestion"></div>
         <textarea id="socraticModalAnswer" rows="4" placeholder="输入你的回答..."></textarea>
+        <div class="socratic-confidence">
+          <span>把握程度</span>
+          <button type="button" data-socratic-confidence="confident" onclick="setSocraticConfidence('confident', this)">很有把握</button>
+          <button type="button" data-socratic-confidence="ok" class="active" onclick="setSocraticConfidence('ok', this)">一般</button>
+          <button type="button" data-socratic-confidence="guess" onclick="setSocraticConfidence('guess', this)">猜的</button>
+        </div>
         <div class="socratic-modal-actions">
           <button class="socratic-modal-cancel" type="button" onclick="closeSocraticModal()">取消</button>
           <button class="socratic-modal-submit" type="button" onclick="submitSocraticAnswer()">发送回答</button>
@@ -195,10 +201,10 @@
 <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/js/utils.js?v=1"></script>
   <script src="/js/session.js?v=21"></script>
-  <script src="/js/render.js?v=12"></script>
-  <script src="/js/chat.js?v=28"></script>
+  <script src="/js/render.js?v=13"></script>
+  <script src="/js/chat.js?v=29"></script>
   <script src="/js/chat-features.js?v=4"></script>
-  <script src="/js/chat-branch.js?v=2"></script>
+  <script src="/js/chat-branch.js?v=3"></script>
   <script src="/js/graph.js?v=132"></script>
   <script src="/js/graph-search.js?v=1"></script>
   <script src="/js/graph-render.js?v=4"></script>
@@ -215,7 +221,7 @@
   <script src="/js/ui.js?v=13"></script>
   <script src="/js/quiz.js?v=35"></script>
   <script src="/js/quiz-ai.js?v=3"></script>
-  <script src="/js/quiz-stats.js?v=1"></script>
+  <script src="/js/quiz-stats.js?v=2"></script>
   <script src="/js/quiz-ui.js?v=2"></script>
   <script src="/js/quiz-render.js?v=1"></script>
 

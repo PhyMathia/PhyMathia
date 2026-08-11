@@ -1819,6 +1819,35 @@
       border-left: 1px solid var(--socratic-border);
     }
 
+    .socratic-confidence {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 2px;
+    }
+    .socratic-confidence span {
+      font-size: 0.85em;
+      color: var(--text-secondary, #909090);
+      margin-right: 2px;
+    }
+    .socratic-confidence button {
+      padding: 6px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--socratic-border);
+      background: var(--socratic-bg);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85em;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .socratic-confidence button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
     /* 打字动画 */
     .typing-indicator {
       display: flex;

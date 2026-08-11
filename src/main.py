@@ -134,7 +134,14 @@ async def api_models_chat(request: Request):
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
-        is_socratic_prompt = prompt.lstrip().startswith("[苏格拉底回答]")
+        is_socratic_prompt = _is_socratic_prompt_text(prompt)
+        if is_socratic_prompt:
+            if prompt.lstrip().startswith("[苏格拉底提示]"):
+                socratic_mode = "hint"
+            elif prompt.lstrip().startswith("[苏格拉底讲解]"):
+                socratic_mode = "explain"
+            else:
+                socratic_mode = "answer"
         if not branch_id and is_socratic_prompt:
             # 手动输入 [苏格拉底回答] 且未带分支时，自动定位最近仍在进行的苏格拉底分支
             resolved_branch = _resolve_socratic_branch(session_id)
@@ -163,7 +170,7 @@ async def api_models_chat(request: Request):
             system_content = MODULE_SYSTEM_PROMPT
         else:
             system_content = SYSTEM_PROMPT
-        state_instruction = _socratic_state_instruction(socratic_ref) if socratic_ref and is_socratic_prompt else ""
+        state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
         if branch_id:
