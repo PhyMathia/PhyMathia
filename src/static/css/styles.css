@@ -1060,6 +1060,8 @@
       color: var(--text-primary);
       letter-spacing: 0.5px;
     }
+    .chat-header .brand-title-row { display: flex; align-items: center; gap: 6px; }
+    .chat-header .brand-version { font-size: 10px; font-weight: 600; color: var(--text-secondary); background: var(--btn-bg); border: 1px solid var(--btn-border); border-radius: 8px; padding: 0 6px; line-height: 1.5; }
     .chat-header .brand-subtitle {
       font-size: 11px;
       color: var(--text-secondary);
@@ -2054,7 +2056,9 @@
       .chat-header .menu-btn { left: 8px; }
       .chat-header .logo { width: 30px; height: 30px; border-radius: 6px; }
       .chat-header .brand-title { font-size: 15px; letter-spacing: 0; }
-      .chat-header .brand-subtitle { display: none; }
+      .chat-header .brand-title-row { display: flex; align-items: center; gap: 6px; }
+    .chat-header .brand-version { font-size: 10px; font-weight: 600; color: var(--text-secondary); background: var(--btn-bg); border: 1px solid var(--btn-border); border-radius: 8px; padding: 0 6px; line-height: 1.5; }
+    .chat-header .brand-subtitle { display: none; }
       .header-actions { right: 8px; gap: 4px; }
       .header-btn { font-size: 11px; padding: 3px 6px; border-radius: 5px; }
       .header-btn.theme-btn { font-size: 12px; padding: 3px 6px; }

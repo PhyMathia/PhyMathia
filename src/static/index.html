@@ -74,7 +74,7 @@
       </button>
       <div class="logo"><img id="logo-img" src="/logo.png" alt="PhyMathia"></div>
       <div class="brand">
-        <div class="brand-title">PhyMathia</div>
+        <div class="brand-title-row"><div class="brand-title">PhyMathia</div><span class="brand-version" id="appVersion"></span></div>
         <div class="brand-subtitle">物理绘万象之形，数学穷天地之理</div>
       </div>
       <div class="header-actions">
@@ -191,7 +191,8 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/config.js?v=5"></script>
+  <script src="/js/config.js?v=6"></script>
+<script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/js/utils.js?v=1"></script>
   <script src="/js/session.js?v=19"></script>
   <script src="/js/render.js?v=11"></script>
@@ -205,13 +206,13 @@
   <script src="/js/graph-custom.js?v=2"></script>
   <script src="/js/graph-workflow.js?v=5"></script>
   <script src="/js/knowledge.js?v=10"></script>
-  <script src="/js/models.js?v=12"></script>
+  <script src="/js/models.js?v=13"></script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
   <script src="/js/harness.js?v=36"></script>
   <script src="/js/harness-run.js?v=13"></script>
   <script src="/js/harness-preview.js?v=4"></script>
   <script src="/js/harness-apply.js?v=5"></script>
-  <script src="/js/ui.js?v=12"></script>
+  <script src="/js/ui.js?v=13"></script>
   <script src="/js/quiz.js?v=35"></script>
   <script src="/js/quiz-ai.js?v=3"></script>
   <script src="/js/quiz-stats.js?v=1"></script>

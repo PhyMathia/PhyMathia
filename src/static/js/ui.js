@@ -48,7 +48,6 @@ function _positionPanel(panelId, triggerEl) {
   if (!panel || !triggerEl) return;
   const rect = triggerEl.getBoundingClientRect();
   const panelW = panel.offsetWidth;
-  const panelH = panel.offsetHeight;
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
   // 水平：优先按钮左对齐，如果超出右边则右对齐
@@ -57,15 +56,16 @@ function _positionPanel(panelId, triggerEl) {
     left = viewW - panelW - 8;
   }
   if (left < 8) left = 8;
-  // 垂直：按钮下方，如果超出底部则按钮上方
-  let top = rect.bottom + 6;
-  if (top + panelH > viewH - 8) {
-    top = rect.top - panelH - 6;
-  }
-  if (top < 8) top = 8;
+  // 垂直：面板顶部紧贴所在工具栏（顶栏 / 二级工具栏）的底部，避免遮挡工具栏
+  const toolbar = triggerEl.closest('.chat-header, .header-secondary-bar');
+  const top = Math.max(8, (toolbar ? toolbar.getBoundingClientRect().bottom : rect.bottom) + 6);
+  // 高度不足时限制最大高度并内部滚动，避免面板翻到工具栏上方遮挡
+  const maxH = Math.max(120, viewH - top - 8);
   panel.style.left = left + 'px';
   panel.style.right = 'auto';
   panel.style.top = top + 'px';
+  panel.style.maxHeight = maxH + 'px';
+  panel.style.overflowY = 'auto';
 }
 
 function toggleModelPanel(e) {

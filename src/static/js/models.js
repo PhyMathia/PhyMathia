@@ -223,8 +223,13 @@ function _positionPanelBelowBtn(panel, btn) {
   if (!panel || !btn) return;
   const r = btn.getBoundingClientRect();
   const pw = panel.offsetWidth || 320;
-  panel.style.top = (r.bottom + 6) + 'px';
+  const toolbar = btn.closest('.chat-header, .header-secondary-bar');
+  const top = Math.max(8, (toolbar ? toolbar.getBoundingClientRect().bottom : r.bottom) + 6);
+  const maxH = Math.max(120, window.innerHeight - top - 8);
+  panel.style.top = top + 'px';
   panel.style.left = Math.max(8, Math.min(r.right - pw, window.innerWidth - pw - 8)) + 'px';
+  panel.style.maxHeight = maxH + 'px';
+  panel.style.overflowY = 'auto';
 }
 window._positionPanelBelowBtn = _positionPanelBelowBtn;
 
