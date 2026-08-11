@@ -6,6 +6,7 @@
     let lastChunkTime = 0;
     let currentStage = '';
     let streamingAssistant = null;
+    let lastFailedBranchMeta = null;
     let progressPercent = 0;
     let progressLabel = '';
     let progressFinalLabel = '';
@@ -291,6 +292,7 @@
 
       const now = Date.now();
       const branchMeta = _consumePendingBranch() || {};
+      lastFailedBranchMeta = branchMeta;
       const isSocraticBranchSend = text.startsWith('[苏格拉底回答]') || branchMeta.branchType === 'socratic';
       currentBranch = isSocraticBranchSend ? 'socratic' : null;
       currentBranchId = isSocraticBranchSend && branchMeta.branchId ? branchMeta.branchId : null;
@@ -384,7 +386,7 @@
           streamRenderFrame = requestAnimationFrame(() => {
             streamRenderFrame = null;
             if (assistantDiv && assistantContent) {
-              assistantDiv.innerHTML = renderMarkdown(assistantContent, { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '' });
+              assistantDiv.innerHTML = renderMarkdown(assistantContent, { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '', socraticFallback: true });
               _initVizIframes(assistantDiv);
               renderMath(assistantDiv);
             }
@@ -459,7 +461,7 @@
                         assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
                         streamingAssistant.content = assistantContent;
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
-              assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent), { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '' });
+              assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent), { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '', socraticFallback: true });
                         _initVizIframes(assistantDiv);
                         renderMath(assistantDiv);
                         scrollToBottom();
@@ -630,6 +632,9 @@
         if (chatHistory[chatHistory.length - 1].content.includes('请求失败')) chatHistory.pop();
       }
       document.getElementById('userInput').value = lastFailedMessage;
+      if (lastFailedBranchMeta && (lastFailedBranchMeta.branchId || lastFailedBranchMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
+        window.setActiveBranchAnchor({ ...lastFailedBranchMeta });
+      }
       sendMessage();
     }
 
@@ -645,11 +650,21 @@
       }
       // 找到最后一条用户消息
       let userMsg = '';
+      let userMeta = null;
       for (let i = chatHistory.length - 1; i >= 0; i--) {
-        if (chatHistory[i].role === 'user') { userMsg = chatHistory[i].content; break; }
+        if (chatHistory[i].role === 'user') { userMsg = chatHistory[i].content; userMeta = chatHistory[i]; break; }
       }
       if (userMsg) {
         lastFailedMessage = userMsg;
+        if (userMeta && (userMeta.branchId || userMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
+          window.setActiveBranchAnchor({
+            parentId: userMeta.parentId || '',
+            sourceModule: userMeta.sourceModule || 'extend',
+            branchType: userMeta.branchType || '',
+            branchId: userMeta.branchId || '',
+            branchLabel: userMeta.branchLabel || '',
+          });
+        }
         document.getElementById('userInput').value = userMsg;
         sendMessage();
       }
@@ -672,7 +687,7 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || '') });
+        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || ''), socraticFallback: true });
         _initVizIframes(contentDiv);
       }
       const metaObj = branchMeta || {};

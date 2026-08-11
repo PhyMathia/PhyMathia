@@ -128,4 +128,38 @@ assert "为什么加速度指向平衡位置" in joined2, joined2   # 回退到�
 assert "加速度由合力决定" in joined2, joined2            # 上一轮 AI 反馈
 assert "由弹簧劲度系数和位移决定" in joined2, joined2   # 当前回答
 
+# 8) _resolve_socratic_branch：手动路径定位最近活动分支 / 消息回退 / 空
+kv_fake = {
+    "socratic:sess_abc": {"active": True, "updatedAt": 100},
+    "socratic:br_sess_abc_old": {"active": True, "updatedAt": 200},
+    "socratic:br_sess_abc_new": {"active": True, "updatedAt": 300},
+    "socratic:br_sess_abc_done": {"active": False, "updatedAt": 400},
+    "other": 1,
+}
+def fake_read3(path, default):
+    if str(path) == "fake_messages":
+        return fake_messages
+    if str(path) == str(context.KV_PATH):
+        return kv_fake
+    return default
+context._resolve_messages_path = lambda sid: "fake_messages"
+context._read_json = fake_read3
+try:
+    assert context._resolve_socratic_branch("sess_abc") == "br_sess_abc_new", context._resolve_socratic_branch("sess_abc")
+    # 无活动分支状态时，回退到消息里最近一条苏格拉底消息的分支
+    kv_fake.pop("socratic:br_sess_abc_old")
+    kv_fake.pop("socratic:br_sess_abc_new")
+    assert context._resolve_socratic_branch("sess_abc") == "br_sess_abc_111", context._resolve_socratic_branch("sess_abc")
+    # 都没有：无活动状态且消息里也没有苏格拉底消息
+    kv_fake.pop("socratic:sess_abc")
+    def fake_read_empty(path, default):
+        if str(path) == "fake_messages":
+            return [{"role": "user", "content": "普通问题", "timestamp": 1}]
+        return kv_fake
+    context._read_json = fake_read_empty
+    assert context._resolve_socratic_branch("sess_abc") == "", context._resolve_socratic_branch("sess_abc")
+finally:
+    context._resolve_messages_path = orig_resolve
+    context._read_json = orig_read
+
 print("ALL SOCRATIC FIX TESTS PASSED")

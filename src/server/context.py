@@ -517,6 +517,36 @@ def _delete_socratic_state(ref: str) -> None:
     _mutate_json(KV_PATH, updater)
 
 
+def _resolve_socratic_branch(session_id: str) -> str:
+    """手动输入 [苏格拉底回答] 且未带分支时，定位最近仍在进行的苏格拉底分支。
+
+    优先使用 KV 中该会话最新的活动分支状态；没有活动状态时，回退到消息里
+    最近一条苏格拉底消息所在的分支（用于上下文隔离）。
+    """
+    if not session_id:
+        return ""
+    data = _read_json(KV_PATH, {})
+    session_part = re.sub(r"[^A-Za-z0-9_-]", "", session_id)[:18]
+    prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
+    best_ref = ""
+    best_ts = -1
+    for key, state in data.items():
+        if key.startswith(prefix) and isinstance(state, dict) and state.get("active"):
+            ts = int(state.get("updatedAt") or 0)
+            if ts > best_ts:
+                best_ts = ts
+                best_ref = key[len(SOCRATIC_STATE_PREFIX):]
+    if best_ref:
+        return best_ref
+    messages = _read_json(_resolve_messages_path(session_id), [])
+    for msg in reversed(messages):
+        if msg.get("role") == "user" and _is_socratic_message(msg):
+            bid = str(msg.get("branchId") or "")
+            if bid:
+                return bid
+    return ""
+
+
 def _socratic_state_instruction(ref: str) -> str:
     state = _read_socratic_state(ref)
     if not state:
@@ -599,6 +629,6 @@ __all__ = [
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
     "SOCRATIC_STATE_PREFIX", "estimate_tokens", "_socratic_key", "_read_socratic_state",
-    "_write_socratic_state", "_delete_socratic_state", "_socratic_state_instruction",
+    "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
 ]

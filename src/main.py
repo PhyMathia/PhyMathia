@@ -135,6 +135,16 @@ async def api_models_chat(request: Request):
     if prompt:
         # 新格式：后端构建消息
         is_socratic_prompt = prompt.lstrip().startswith("[苏格拉底回答]")
+        if not branch_id and is_socratic_prompt:
+            # 手动输入 [苏格拉底回答] 且未带分支时，自动定位最近仍在进行的苏格拉底分支
+            resolved_branch = _resolve_socratic_branch(session_id)
+            if resolved_branch:
+                branch_id = resolved_branch
+                socratic_ref = resolved_branch
+                if not branch_type:
+                    branch_type = "socratic"
+                if not source_module:
+                    source_module = "extend"
         socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
         if socratic_state and not is_socratic_prompt:
             # 用户开始新的普通问答时，结束当前苏格拉底支线

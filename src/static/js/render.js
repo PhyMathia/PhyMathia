@@ -494,13 +494,21 @@ function convertLearnDirections(html, renderCtx = {}) {
 
 function convertSocraticQuestions(html, renderCtx = {}) {
   const parentId = _escapeAttr(renderCtx.parentId || '');
+  const allowFallback = renderCtx.socraticFallback === true;
   const sourceModule = _escapeAttr(renderCtx.sourceModule || 'extend');
   return html.replace(/<li>([\s\S]*?)<\/li>/g, (match, inner) => {
     const rawText = inner.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    let levelName = '';
+    let question = '';
     const levelMatch = rawText.match(/^\s*\[?(基础|进阶|拓展)(?:题|层)?\]?\s*[:：]?\s*(.*)$/);
-    if (!levelMatch) return match;
-    const levelName = levelMatch[1];
-    const question = (levelMatch[2] || rawText).replace(/^❓\s*/, '').trim();
+    if (levelMatch) {
+      levelName = levelMatch[1];
+      question = (levelMatch[2] || rawText).replace(/^❓\s*/, '').trim();
+    } else if (allowFallback && /[？?]\s*$/.test(rawText) && rawText.length <= 60) {
+      // 兜底：AI 未按 [基础]/[进阶]/[拓展] 前缀输出时，把短问句也转成「我来回答」入口
+      levelName = '基础';
+      question = rawText;
+    }
     if (!question) return match;
     const level = levelName === '基础' ? 'basic' : levelName === '进阶' ? 'advanced' : 'expand';
     const encoded = encodeURIComponent(question);

@@ -879,7 +879,7 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || '') });
+        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || ''), socraticFallback: true });
         _initVizIframes(contentDiv);
         renderMath(contentDiv);
       }
