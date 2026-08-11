@@ -371,13 +371,19 @@ async function proxyChatWithModel(model, body, signal) {
 async function proxyChat(prompt, level, sessionId, stream = true, signal, branchMeta = {}, extra = {}) {
   const agentModel = getActiveModelForRole('agent');
   if (!agentModel) return null;
-  const { graphPath, ...rest } = branchMeta;
+  // 分支锚点使用 camelCase，后端契约是 snake_case：在 API 边界统一转换
+  const { graphPath, parentId, sourceModule, branchType, branchId, branchLabel, ...rest } = branchMeta;
   return proxyChatWithModel(agentModel, {
     prompt,
     level,
     session_id: sessionId,
     stream,
     ...rest,
+    parent_id: parentId || '',
+    source_module: sourceModule || '',
+    branch_type: branchType || '',
+    branch_id: branchId || '',
+    branch_label: branchLabel || '',
     graph_path: graphPath || [],
     ...extra,
   }, signal);

@@ -150,6 +150,14 @@ def _branch_source_content(content: str, source_module: str) -> str:
     return content or ""
 
 
+def _extract_parent_source(all_messages: list, parent_id: str, source_module: str) -> str:
+    """从父消息中提取当前分支聚焦模块的正文；找不到时返回空串。"""
+    for msg in all_messages:
+        if msg.get("role") == "assistant" and str(msg.get("timestamp")) == str(parent_id):
+            return _branch_source_content(str(msg.get("content") or ""), source_module)
+    return ""
+
+
 def _load_session_context(
     session_id: str,
     max_rounds: int = 3,
@@ -191,13 +199,15 @@ def _load_session_context(
 
     target_parent = parent_id or (branch_messages[0].get("parentId") if branch_messages else "")
     if target_parent:
-        for msg in all_messages:
-            if msg.get("role") == "assistant" and str(msg.get("timestamp")) == str(target_parent):
-                source = _branch_source_content(msg.get("content", ""), source_module)
-                if source and source not in seen:
-                    result.append({"role": "assistant", "content": source})
-                    seen.add(source)
-                break
+        source = _extract_parent_source(all_messages, target_parent, source_module)
+        if not source and branch_messages:
+            # 父消息不是完整卡片（如苏格拉底中间轮）时，回退到分支起点引用的父消息（原始学习卡片）
+            fallback_parent = branch_messages[0].get("parentId") or ""
+            if fallback_parent and str(fallback_parent) != str(target_parent):
+                source = _extract_parent_source(all_messages, fallback_parent, source_module)
+        if source and source not in seen:
+            result.append({"role": "assistant", "content": source})
+            seen.add(source)
 
     for item in _recent_context_messages(branch_messages, max_rounds, True, current_prompt):
         if item["content"] not in seen:
@@ -396,6 +406,7 @@ def _load_session_context_from_path(
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
     result = []
     seen = set()
+    active_parent_missing = False
     active_index = len(graph_path) - 1
     skip_upstream = bool(workflow_context and workflow_context.get("upstream"))
 
@@ -412,6 +423,8 @@ def _load_session_context_from_path(
             content = str(msg.get("content") or "")
             if module_key:
                 content = _branch_source_content(content, module_key)
+                if not content:
+                    active_parent_missing = True
         elif skip_upstream:
             continue
         else:
@@ -420,6 +433,19 @@ def _load_session_context_from_path(
             continue
         result.append({"role": role, "content": content})
         seen.add(content)
+
+    if active_parent_missing and branch_id:
+        # 父消息不是完整卡片（如苏格拉底中间轮）时，回退到分支起点引用的父消息（原始学习卡片）
+        branch_messages = [
+            msg for msg in all_messages
+            if str(msg.get("branchId") or "") == str(branch_id)
+        ]
+        fallback_parent = branch_messages[0].get("parentId") if branch_messages else ""
+        if fallback_parent:
+            source = _extract_parent_source(all_messages, fallback_parent, source_module)
+            if source and source not in seen:
+                result.append({"role": "assistant", "content": source})
+                seen.add(source)
 
     if branch_id:
         branch_messages = [
@@ -462,10 +488,28 @@ def _write_socratic_state(ref: str, state) -> None:
 
 
 def _delete_socratic_state(ref: str) -> None:
+    """删除指定会话/分支的苏格拉底状态。
+
+    兼容三种 key：
+    - 精确 key：socratic:{ref}（手动输入路径 / 会话级状态）
+    - 分支链前缀：socratic:br_{会话id前18字符}_{uuid}（“我来回答”弹窗路径）
+    - 旧逻辑子串匹配兜底
+    """
     def updater(data):
         if not ref:
             return data
-        remove_keys = [key for key in data if key.startswith(SOCRATIC_STATE_PREFIX) and ref in key]
+        remove_keys = []
+        exact = f"{SOCRATIC_STATE_PREFIX}{ref}"
+        if exact in data:
+            remove_keys.append(exact)
+        session_part = re.sub(r"[^A-Za-z0-9_-]", "", ref)[:18]
+        if session_part:
+            prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
+            remove_keys.extend(k for k in data if k.startswith(prefix) and k not in remove_keys)
+        # 兼容旧逻辑：子串匹配（如短会话 id / 手动输入路径）
+        for key in list(data):
+            if key.startswith(SOCRATIC_STATE_PREFIX) and ref in key and key not in remove_keys:
+                remove_keys.append(key)
         for key in remove_keys:
             data.pop(key, None)
         return data
@@ -479,12 +523,28 @@ def _socratic_state_instruction(ref: str) -> str:
         return ""
     level = state.get("level", "") or "basic"
     streak = int(state.get("correctStreak", 0) or 0)
+    answered = int(state.get("answeredCount", 0) or 0)
     question = state.get("question", "") or ""
     return (
-        f"当前会话处于苏格拉底追问闭环：问题等级={level}，当前问题={question}，已连续答对 {streak} 次。"
+        f"当前会话处于苏格拉底追问闭环：问题等级={level}，当前问题={question}，"
+        f"已连续答对 {streak} 次，本轮闭环已问答 {answered} 轮。"
         "用户会以 [苏格拉底回答] 开头携带追问问题与自己的回答；请结合最近一条 AI 讲解、当前问题和用户回答继续，"
         "按系统提示词中的闭环规则只推进一层，并在回复末尾输出 <socratic_meta .../>。"
+        "若本轮闭环已问答 4 轮仍未连续答对 2 次，请直接给出小结并结束闭环（done=\"true\"）。"
     )
+
+
+def _sync_socratic_state_from_prompt(state: dict, prompt: str) -> None:
+    """延续中的闭环：用 [苏格拉底回答] 消息里的问题/等级刷新状态，保留连对次数与已答轮数。"""
+    if not state or not prompt:
+        return
+    level_match = re.search(r"追问等级[：:]\s*(基础|进阶|拓展)", prompt)
+    if level_match:
+        level_map = {"基础": "basic", "进阶": "advanced", "拓展": "expand"}
+        state["level"] = level_map.get(level_match.group(1), state.get("level", ""))
+    question_match = re.search(r"追问问题[：:]\s*([^\n]+)", prompt)
+    if question_match and question_match.group(1).strip():
+        state["question"] = question_match.group(1).strip()
 
 
 def _update_socratic_state_from_content(content: str, ref: str) -> None:
@@ -534,11 +594,11 @@ def _is_socratic_followup(content: str) -> bool:
 
 __all__ = [
     "_is_socratic_message", "_recent_context_messages", "_extract_section",
-    "_branch_source_content", "_load_session_context", "_branch_context_instruction",
+    "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
     "SOCRATIC_STATE_PREFIX", "estimate_tokens", "_socratic_key", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_socratic_state_instruction",
-    "_update_socratic_state_from_content", "_is_socratic_followup",
+    "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
 ]

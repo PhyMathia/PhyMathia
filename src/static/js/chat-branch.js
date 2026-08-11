@@ -1,5 +1,6 @@
 // ===== PhyMathia 对话分支：苏格拉底追问、分支探索与删除（含 window 导出）=====
 
+    var pendingSocraticNewLoop = false;
     function clearBranchAnchor() {
       setActiveBranchAnchor(null);
     }
@@ -23,7 +24,9 @@
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
       pendingSocraticSourceModule = sourceModule || 'extend';
-      pendingSocraticBranchId = _genBranchId();
+      // 若当前已有未结束的苏格拉底闭环，沿用同一分支，保证连对次数与上下文跨轮连续
+      pendingSocraticNewLoop = !(currentBranch === 'socratic' && currentBranchId);
+      pendingSocraticBranchId = pendingSocraticNewLoop ? _genBranchId() : currentBranchId;
       const modal = document.getElementById('socraticModal');
       const questionEl = document.getElementById('socraticModalQuestion');
       const answerEl = document.getElementById('socraticModalAnswer');
@@ -54,11 +57,12 @@
         answerEl?.focus();
         return;
       }
-      const message = '[苏格拉底回答]\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
+      const levelLabel = pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础';
+      const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
       const branchId = pendingSocraticBranchId || _genBranchId();
       socraticSubmitting = true;
       try {
-        if (branchId) {
+        if (branchId && pendingSocraticNewLoop) {
           const state = {
             active: true,
             level: pendingSocraticLevel,
@@ -78,6 +82,7 @@
           }
         }
         closeSocraticModal();
+        pendingSocraticNewLoop = false;
         currentBranch = 'socratic';
         currentBranchId = branchId;
         setActiveBranchAnchor({

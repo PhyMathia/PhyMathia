@@ -464,7 +464,7 @@
     }
 
     async function renderAssistantContent(contentDiv, content) {
-      contentDiv.innerHTML = renderMarkdown(content);
+      contentDiv.innerHTML = renderMarkdown(content, { parentId: contentDiv.closest('.message-body')?.dataset.messageId || '' });
       _initVizIframes(contentDiv);
       renderMath(contentDiv);
       await renderMermaidInElement(contentDiv);

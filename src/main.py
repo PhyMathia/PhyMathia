@@ -123,10 +123,10 @@ async def api_models_chat(request: Request):
     # 构建消息列表
     prompt = payload.get("prompt", "")
     session_id = payload.get("session_id", "")
-    branch_id = payload.get("branch_id", "")
-    branch_type = payload.get("branch_type", "")
-    source_module = payload.get("source_module", "")
-    parent_id = payload.get("parent_id", "")
+    branch_id = payload.get("branch_id") or payload.get("branchId") or ""
+    branch_type = payload.get("branch_type") or payload.get("branchType") or ""
+    source_module = payload.get("source_module") or payload.get("sourceModule") or ""
+    parent_id = payload.get("parent_id") or payload.get("parentId") or ""
     graph_path = payload.get("graph_path") or payload.get("graphPath") or []
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
     quick = bool(payload.get("quick"))
@@ -141,6 +141,10 @@ async def api_models_chat(request: Request):
             _delete_socratic_state(socratic_ref)
             socratic_state = None
         include_socratic = bool(socratic_state) or is_socratic_prompt
+        if socratic_state and is_socratic_prompt:
+            # 延续中的闭环：用本次消息里的问题/等级刷新状态（保留连对次数与已答轮数）
+            _sync_socratic_state_from_prompt(socratic_state, prompt)
+            _write_socratic_state(socratic_ref, socratic_state)
 
         is_quick = quick and not branch_id and not graph_path and not workflow_context
         if is_quick:
@@ -153,7 +157,7 @@ async def api_models_chat(request: Request):
         if state_instruction:
             system_content += "\n\n" + state_instruction
         if branch_id:
-            system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label", ""), parent_id)
+            system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id)
         if graph_path:
             system_content += _graph_path_instruction(graph_path, source_module)
         if workflow_context:

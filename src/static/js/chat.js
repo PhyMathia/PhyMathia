@@ -384,7 +384,7 @@
           streamRenderFrame = requestAnimationFrame(() => {
             streamRenderFrame = null;
             if (assistantDiv && assistantContent) {
-              assistantDiv.innerHTML = renderMarkdown(assistantContent);
+              assistantDiv.innerHTML = renderMarkdown(assistantContent, { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '' });
               _initVizIframes(assistantDiv);
               renderMath(assistantDiv);
             }
@@ -459,7 +459,7 @@
                         assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
                         streamingAssistant.content = assistantContent;
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
-              assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent));
+              assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent), { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '' });
                         _initVizIframes(assistantDiv);
                         renderMath(assistantDiv);
                         scrollToBottom();
@@ -672,7 +672,7 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        contentDiv.innerHTML = renderMarkdown(content);
+        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || '') });
         _initVizIframes(contentDiv);
       }
       const metaObj = branchMeta || {};
