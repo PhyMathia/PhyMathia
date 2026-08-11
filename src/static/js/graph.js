@@ -8,10 +8,10 @@ const GRAPH_MODULE_META = {
   viz: { label: '交互可视化', color: '#f472b6' },
   socratic: { label: '苏格拉底追问', color: '#f43f5e' },
   learn: { label: '进阶学习', color: '#a855f7' },
-  manual: { label: '非 AI 回答', color: '#64748b' },
+  manual: { label: '我的回答', color: '#64748b' },
   hub: { label: '汇聚', color: '#eab308' },
   summary: { label: 'AI 总结', color: '#0d9488' },
-  note: { label: '人工总结', color: '#f97316' },
+  note: { label: '我的总结', color: '#f97316' },
   source: { label: '输入', color: '#06b6d4' },
   knowledge: { label: '知识点', color: '#84cc16' },
   relation: { label: '联系', color: '#f43f5e' },
@@ -36,12 +36,12 @@ const GRAPH_NODE_ATTRIBUTES = {
   viz: { key: 'viz', label: '交互可视化', color: '#f472b6' },
   socratic: { key: 'socratic', label: '苏格拉底追问', color: '#f43f5e' },
   learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
-  manual: { key: 'manual', label: '非 AI 回答', color: '#64748b' },
+  manual: { key: 'manual', label: '我的回答', color: '#64748b' },
   human_note: { key: 'human_note', label: '我的理解', color: '#64748b' },
   ai_eval: { key: 'ai_eval', label: 'AI 评价', color: '#f59e0b' },
   hub: { key: 'hub', label: '汇聚', color: '#eab308' },
   summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
-  note: { key: 'note', label: '人工总结', color: '#f97316' },
+  note: { key: 'note', label: '我的总结', color: '#f97316' },
   source: { key: 'source', label: '输入', color: '#06b6d4' },
   knowledge: { key: 'knowledge', label: '知识点', color: '#84cc16' },
   relation: { key: 'relation', label: '联系', color: '#f43f5e' },
@@ -52,25 +52,25 @@ const ANSWER_OUTPUT_SCHEMA = ['physics', 'math', 'graph', 'viz', 'learn', 'socra
 const ANSWER_OUTPUT_INDEX = { physics: 0, math: 1, graph: 2, viz: 3, learn: 4, socratic: 5 };
 
 const MANUAL_NODE_OPTIONS = [
-  { key: 'source', kind: 'source', label: '输入', color: '#06b6d4' },
-  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16' },
-  { key: 'question', kind: 'user', label: '问题', color: '#4a9eff' },
-  { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981' },
-  { key: 'manual', kind: 'answer', label: '非 AI 回答', color: '#64748b' },
-  { key: 'human_note', kind: 'human_note', label: '我的理解', color: '#64748b' },
-  { key: 'physics', kind: 'module', label: '物理视角', color: '#f59e0b' },
-  { key: 'math', kind: 'module', label: '数学视角', color: '#3b82f6' },
-  { key: 'graph', kind: 'module', label: '知识图谱', color: '#0891b2' },
-  { key: 'viz', kind: 'module', label: '交互可视化', color: '#f472b6' },
-  { key: 'learn', kind: 'module', label: '进阶学习', color: '#a855f7' },
-  { key: 'socratic', kind: 'module', label: '苏格拉底追问', color: '#f43f5e' },
-  { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308' },
-  { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488' },
-  { key: 'note', kind: 'note', label: '人工总结', color: '#f97316' },
-  { key: 'relation', kind: 'relation', label: '联系', color: '#f43f5e' },
+  { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: '#94a3b8', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
+  { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981', group: 'ai', desc: 'AI 回答节点（含摘要）' },
+  { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488', group: 'ai', desc: 'AI 生成总结' },
+  { key: 'physics', kind: 'module', label: '物理视角', color: '#f59e0b', group: 'modules' },
+  { key: 'math', kind: 'module', label: '数学视角', color: '#3b82f6', group: 'modules' },
+  { key: 'graph', kind: 'module', label: '知识图谱', color: '#0891b2', group: 'modules' },
+  { key: 'viz', kind: 'module', label: '交互可视化', color: '#f472b6', group: 'modules' },
+  { key: 'learn', kind: 'module', label: '进阶学习', color: '#a855f7', group: 'modules' },
+  { key: 'socratic', kind: 'module', label: '苏格拉底追问', color: '#f43f5e', group: 'modules' },
+  { key: 'source', kind: 'source', label: '输入', color: '#06b6d4', group: 'data', desc: '导入文件/文本，解析出知识点' },
+  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16', group: 'data', desc: '手动记录一个知识点' },
+  { key: 'question', kind: 'user', label: '问题', color: '#4a9eff', group: 'data', desc: '提问节点，可接 AI 回答' },
+  { key: 'manual', kind: 'answer', label: '我的回答', color: '#64748b', group: 'human', desc: '手写回答，可继续发散（无摘要）' },
+  { key: 'human_note', kind: 'human_note', label: '我的理解', color: '#64748b', group: 'human', desc: '批注/笔记，可附公式' },
+  { key: 'note', kind: 'note', label: '我的总结', color: '#f97316', group: 'human', desc: '汇聚后的手动总结' },
+  { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308', group: 'structure', desc: '汇总多路输入，可总结或追问' },
 ];
 
-const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'relation', 'human_note', 'ai_eval'];
+const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'human_note', 'ai_eval'];
 
 let graphCanvas = null;
 let graphInner = null;
@@ -93,6 +93,8 @@ const graphView = {
   boxSelect: null,
   suppressClick: false,
   selectMode: false,
+  linkMode: false,
+  linkFirstNodeId: null,
   keyHandlerBound: false,
   resizeNodeId: null,
   resizeStartX: 0,
@@ -845,12 +847,12 @@ function _findCustomBranchParent(customNodes, parentTs, sourceModule) {
   let match = null;
   if (sourceModule) {
     match = list.find(cn =>
-      (cn.kind === 'module' || cn.kind === 'blank') &&
+      (cn.kind === 'module' || cn.kind === 'blank' || cn.kind === 'hub') &&
       String(cn.moduleKey || '') === String(sourceModule || '')
     ) || null;
   }
   if (!match) match = list.find(cn => cn.kind === 'answer') || null;
-  if (!match) match = list.find(cn => cn.kind === 'user' || cn.kind === 'module' || cn.kind === 'blank') || null;
+  if (!match) match = list.find(cn => cn.kind === 'user' || cn.kind === 'module' || cn.kind === 'blank' || cn.kind === 'hub') || null;
   return match;
 }
 

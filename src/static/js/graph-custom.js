@@ -13,18 +13,27 @@ function openAddBlankNodeModal(x, y) {
   closeAddBlankNodeModal();
   const overlay = document.createElement('div');
   overlay.className = 'graph-add-node-overlay';
-  const items = MANUAL_NODE_OPTIONS.map(option => {
-    return '<button class="graph-add-node-item" style="--node-color:' + option.color + '" onclick="createManualNode(\'' + option.key + '\')">'
-      + '<span class="graph-add-node-dot"></span>'
-      + escapeHtml(option.label)
-      + '</button>';
+  const groups = ['ai', 'modules', 'data', 'human', 'structure'];
+  const groupLabels = { ai: 'AI 生成', modules: '视角模块', data: '基础素材', human: '人工内容', structure: '结构' };
+  const items = groups.map(group => {
+    const opts = MANUAL_NODE_OPTIONS.filter(option => (option.group || 'ai') === group);
+    if (!opts.length) return '';
+    return '<div class="graph-add-node-group"><div class="graph-add-node-group-title">' + groupLabels[group] + '</div>'
+      + '<div class="graph-add-node-grid">'
+      + opts.map(option => {
+          return '<button class="graph-add-node-item" style="--node-color:' + option.color + '" title="' + escapeHtml(option.desc || option.label) + '" onclick="createManualNode(\'' + option.key + '\')">'
+            + '<span class="graph-add-node-dot"></span>'
+            + escapeHtml(option.label)
+            + '</button>';
+        }).join('')
+      + '</div></div>';
   }).join('');
   overlay.innerHTML = '<div class="graph-add-node-dialog">'
     + '<div class="graph-add-node-head">'
     + '<div class="graph-add-node-title">添加节点</div>'
     + '<button class="graph-add-node-close" onclick="closeAddBlankNodeModal()" title="关闭">×</button>'
     + '</div>'
-    + '<div class="graph-add-node-grid">' + items + '</div>'
+    + items
     + '</div>';
   overlay.addEventListener('pointerdown', event => {
     if (event.target === overlay) closeAddBlankNodeModal();
@@ -581,3 +590,149 @@ function _blankNodeGraphPath(node) {
 
 window.pasteSourceNodeText = pasteSourceNodeText;
 window.openHarnessOrganizeRelations = openHarnessOrganizeRelations;
+
+
+// ===== 联系箭头（改法 A）：节点之间的注释性连线 =====
+let graphLinkModalOverlay = null;
+
+function toggleGraphLinkMode() {
+  graphView.linkMode = !graphView.linkMode;
+  graphView.linkFirstNodeId = null;
+  _applyGraphLinkMode();
+}
+
+function _applyGraphLinkMode() {
+  if (!graphCanvas) return;
+  graphCanvas.classList.toggle('graph-link-mode', !!graphView.linkMode);
+  const btn = graphCanvas.querySelector('.graph-link-btn');
+  if (btn) {
+    btn.classList.toggle('active', !!graphView.linkMode);
+    btn.title = graphView.linkMode ? '退出联系模式' : '联系模式（点两个节点添加联系箭头）';
+    btn.setAttribute('aria-pressed', String(!!graphView.linkMode));
+  }
+  if (!graphView.linkMode) graphView.linkFirstNodeId = null;
+}
+
+function _graphLinkPickNode(nodeId) {
+  if (!graphView.linkMode) return;
+  if (!graphView.linkFirstNodeId) {
+    graphView.linkFirstNodeId = nodeId;
+    if (typeof showToast === 'function') showToast('已选起点，再点一个节点作为终点');
+    return;
+  }
+  if (graphView.linkFirstNodeId === nodeId) {
+    if (typeof showToast === 'function') showToast('不能连到同一个节点');
+    return;
+  }
+  const fromId = graphView.linkFirstNodeId;
+  graphView.linkFirstNodeId = null;
+  toggleGraphLinkMode();
+  openLinkEdgeModal(null, fromId, nodeId);
+}
+
+function openLinkEdgeModal(edgeKey, fromId, toId) {
+  closeLinkEdgeModal();
+  let edge = null;
+  if (edgeKey) {
+    edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
+    if (!edge) return;
+    fromId = edge.from;
+    toId = edge.to;
+  }
+  const fromNode = _findGraphNode(fromId);
+  const toNode = _findGraphNode(toId);
+  if (!fromNode || !toNode) return;
+  const fromLabel = _shortGraphNodeLabel(fromNode);
+  const toLabel = _shortGraphNodeLabel(toNode);
+  const text = edge ? String(edge.relation || edge.label || '') : '';
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-network-modal-overlay';
+  overlay.innerHTML = '<div class="graph-network-modal">'
+    + '<div class="graph-network-modal-head"><span>联系箭头</span><button onclick="closeLinkEdgeModal()" title="关闭">×</button></div>'
+    + '<div class="graph-link-edge-info">' + escapeHtml(fromLabel) + ' <span class="graph-link-edge-arrow">↔</span> ' + escapeHtml(toLabel) + '</div>'
+    + '<label>关系说明（一句话，为什么有关）</label>'
+    + '<textarea id="linkEdgeRelation" rows="3" placeholder="例如：两者都描述局部变化率">' + escapeHtml(text) + '</textarea>'
+    + '<label>箭头方向</label>'
+    + '<div class="graph-link-arrow-options">'
+    + '<button type="button" class="graph-link-arrow-option" data-arrow="right" onclick="selectLinkArrow(this)" title="向右箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="19" y2="12"></line><polyline points="13 6 19 12 13 18"></polyline></svg></button>'
+    + '<button type="button" class="graph-link-arrow-option" data-arrow="left" onclick="selectLinkArrow(this)" title="向左箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="12" x2="5" y2="12"></line><polyline points="11 6 5 12 11 18"></polyline></svg></button>'
+    + '<button type="button" class="graph-link-arrow-option" data-arrow="both" onclick="selectLinkArrow(this)" title="双向箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><polyline points="11 6 5 12 11 18"></polyline><polyline points="13 6 19 12 13 18"></polyline></svg></button>'
+    + '<button type="button" class="graph-link-arrow-option" data-arrow="none" onclick="selectLinkArrow(this)" title="无箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"></line></svg></button>'
+    + '</div>'
+    + '<div class="graph-network-modal-actions">'
+    + '<button class="graph-network-modal-save" onclick="saveLinkEdge(\'' + (edgeKey || '') + '\',\'' + fromId + '\',\'' + toId + '\')">' + (edge ? '保存修改' : '添加联系') + '</button>'
+    + (edge ? '<button class="graph-link-edge-delete" onclick="deleteLinkEdge(\'' + edgeKey + '\')">删除</button>' : '')
+    + '<button onclick="closeLinkEdgeModal()">取消</button>'
+    + '</div>'
+    + '</div>';
+  overlay.addEventListener('pointerdown', event => {
+    if (event.target === overlay) closeLinkEdgeModal();
+  });
+  document.body.appendChild(overlay);
+  const arrow = edge ? String(edge.arrow || 'right') : 'right';
+  overlay.querySelector('[data-arrow="' + arrow + '"]')?.classList.add('active');
+  graphLinkModalOverlay = overlay;
+}
+
+function _shortGraphNodeLabel(node) {
+  return String(node && (node.label || node.title || node.summary || node.content || '')).trim().slice(0, 24) || '节点';
+}
+
+function selectLinkArrow(btn) {
+  const parent = btn && btn.closest ? btn.closest('.graph-link-arrow-options') : null;
+  if (!parent) return;
+  parent.querySelectorAll('.graph-link-arrow-option').forEach(item => item.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function closeLinkEdgeModal() {
+  if (graphLinkModalOverlay) {
+    graphLinkModalOverlay.remove();
+    graphLinkModalOverlay = null;
+  }
+}
+
+function saveLinkEdge(edgeKey, fromId, toId) {
+  const text = (document.getElementById('linkEdgeRelation')?.value || '').trim();
+  const fromNode = _findGraphNode(fromId);
+  const toNode = _findGraphNode(toId);
+  if (!fromNode || !toNode || fromId === toId) return;
+  _pushGraphUndo();
+  const state = _graphState();
+  state.connections = state.connections || [];
+  let conn = null;
+  if (edgeKey) {
+    conn = state.connections.find(item => _edgeKey(item) === edgeKey) || null;
+  }
+  if (!conn) {
+    conn = state.connections.find(item => item.link && String(item.from) === String(fromId) && String(item.to) === String(toId)) || null;
+  }
+  if (!conn) {
+    conn = { from: fromId, fromPort: 'link-0', to: toId, toPort: 'link-0', type: 'custom', custom: true, link: true };
+    state.connections.push(conn);
+  }
+  conn.link = true;
+  conn.relation = text;
+  conn.label = text;
+  conn.arrow = document.querySelector('.graph-link-arrow-option.active')?.dataset?.arrow || conn.arrow || 'right';
+  _saveGraphState(state);
+  closeLinkEdgeModal();
+  renderGraphCanvas();
+}
+
+function deleteLinkEdge(edgeKey) {
+  if (!edgeKey) return;
+  _pushGraphUndo();
+  const state = _graphState();
+  state.connections = (state.connections || []).filter(item => _edgeKey(item) !== edgeKey);
+  _saveGraphState(state);
+  closeLinkEdgeModal();
+  renderGraphCanvas();
+}
+
+window.selectLinkArrow = selectLinkArrow;
+window.toggleGraphLinkMode = toggleGraphLinkMode;
+window.openLinkEdgeModal = openLinkEdgeModal;
+window.closeLinkEdgeModal = closeLinkEdgeModal;
+window.saveLinkEdge = saveLinkEdge;
+window.deleteLinkEdge = deleteLinkEdge;

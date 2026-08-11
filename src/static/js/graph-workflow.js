@@ -26,7 +26,7 @@ function _findQuestionContentUpstream(node) {
     if (!current || visited.has(current.id)) return '';
     visited.add(current.id);
     if (current.kind === 'user') return _nodeStoredContent(current);
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft);
+    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
       const found = walk(source);
@@ -43,7 +43,7 @@ function _nodeOutputContent(node, seen) {
   if (seen.has(node.id)) return '';
   seen.add(node.id);
   if (node.kind === 'hub') {
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
+    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
     return incoming
       .map(edge => _nodeOutputContent(_findGraphNode(edge.from), seen))
       .filter(Boolean)
@@ -60,7 +60,7 @@ function _collectUpstreamPath(node) {
   const orderedIds = new Set();
   function collect(current) {
     if (!current || orderedIds.has(current.id)) return;
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft);
+    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
       if (source) collect(source);
@@ -89,13 +89,13 @@ function _buildWorkflowContextForNode(node) {
   const meta = node.kind === 'module'
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
-      ? { label: node.manual ? '非 AI 回答' : 'AI 回答' }
+      ? { label: node.manual ? '我的回答' : 'AI 回答' }
       : node.kind === 'hub'
         ? { label: '汇聚' }
         : node.kind === 'summary'
           ? { label: 'AI 总结' }
       : node.kind === 'note'
-          ? { label: '人工总结' }
+          ? { label: '我的总结' }
           : node.kind === 'source'
             ? { label: '输入' }
             : node.kind === 'knowledge'
@@ -125,7 +125,7 @@ function _buildWorkflowContextForNode(node) {
             : item.kind === 'source'
               ? '输入'
         : item.kind === 'answer'
-          ? (item.manual ? '非 AI 回答' : 'AI 回答')
+          ? (item.manual ? '我的回答' : 'AI 回答')
           : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
       summary: item.summary,
       analysis: item.analysis || '',
@@ -142,7 +142,7 @@ function _collectDependencyChain(nodeId) {
     visited.add(id);
     const node = _findGraphNode(id);
     if (!node) return;
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === id && !edge.draft);
+    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === id && !edge.draft && !edge.link);
     for (const edge of incoming) visit(edge.from);
     chain.push(node);
   }
@@ -151,7 +151,7 @@ function _collectDependencyChain(nodeId) {
 }
 
 function _nodeInputHash(node) {
-  const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
+  const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
   const parts = incoming
     .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from)))
     .sort();
@@ -205,7 +205,7 @@ function _workflowPromptForNode(node, workflowContext) {
       + (strictInstruction ? '\n\n' + strictInstruction : '');
   }
   if (node.manual) {
-    return '这是非 AI 回答节点，由用户手动填写即可，不需要 AI 生成。';
+    return '这是“我的回答”节点，由用户手动填写即可，不需要 AI 生成。';
   }
   return '请生成问题节点内容。';
 }
@@ -544,7 +544,7 @@ function _workflowProgressLabel(node) {
   if (node.kind === 'source') return '输入';
   if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '知识联系';
-  if (node.manual) return node.kind === 'note' ? '人工总结' : '非 AI 回答';
+  if (node.manual) return node.kind === 'note' ? '我的总结' : '我的回答';
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'answer') return 'AI 回答';
@@ -721,7 +721,7 @@ async function _processWorkflowChainItem(current, force) {
       current.status = 'waiting';
       _saveCustomNodes();
       if (!workflowRunActive) renderGraphCanvas();
-      if (typeof showToast === 'function') showToast('请先填写 ' + (current.kind === 'note' ? '人工总结' : current.manual ? '非 AI 回答' : '问题') + ' 内容');
+      if (typeof showToast === 'function') showToast('请先填写 ' + (current.kind === 'note' ? '我的总结' : current.manual ? '我的回答' : '问题') + ' 内容');
       return false;
     }
     current.status = 'done';
@@ -1087,7 +1087,7 @@ async function generateBlankNode(nodeId) {
   const current = _findGraphNode(nodeId);
   if (!current) return;
 
-  const meta = GRAPH_MODULE_META[current.moduleKey] || { label: current.moduleKey || '空白节点' };
+  const meta = GRAPH_MODULE_META[current.moduleKey] || { label: current.moduleKey || 'AI 生成空白' };
   if (typeof showProgress === 'function') showProgress('tool', 5, '正在生成' + meta.label);
   const graphPath = _blankNodeGraphPath(current);
   const pathQuestion = graphPath.find(item => item.kind === 'user');
@@ -1363,8 +1363,10 @@ function _initGraphCanvasEvents() {
       return;
     }
     const nodeEl = e.target.closest('.graph-node');
-    if (nodeEl && !e.target.closest('button, a, input, textarea, iframe')) _startNodeDrag(e, nodeEl);
-    else _startCanvasPan(e);
+    if (nodeEl && !e.target.closest('button, a, input, textarea, iframe')) {
+      if (graphView.linkMode) return;
+      _startNodeDrag(e, nodeEl);
+    } else _startCanvasPan(e);
   });
   graphCanvas.addEventListener('pointermove', _handlePointerMove);
   window.addEventListener('pointerup', _endPointerDrag);
@@ -1385,6 +1387,16 @@ function _initGraphCanvasEvents() {
     if (graphView.selectMode) return;
     if (graphView.moved) return;
     if (e.target.closest('button, a, input, textarea, iframe, .graph-port')) return;
+    const linkEdgeEl = e.target.closest('.graph-edge-link, .graph-edge-link-label');
+    if (linkEdgeEl && linkEdgeEl.dataset.edgeKey) {
+      openLinkEdgeModal(linkEdgeEl.dataset.edgeKey);
+      return;
+    }
+    if (graphView.linkMode) {
+      const linkNodeEl = e.target.closest('.graph-node');
+      if (linkNodeEl) _graphLinkPickNode(linkNodeEl.dataset.nodeId);
+      return;
+    }
     const groupEl = e.target.closest('.graph-group');
     if (groupEl) {
       const id = groupEl.dataset.groupId;
@@ -1414,13 +1426,23 @@ function _initGraphCanvasEvents() {
     }
   });
   graphCanvas.addEventListener('dblclick', e => {
-    if (graphView.selectMode) return;
+    if (graphView.selectMode || graphView.linkMode) return;
     const edgeEl = e.target.closest('.graph-edge');
     if (edgeEl && edgeEl.dataset.edgeKey) {
       e.preventDefault();
       e.stopPropagation();
       _removeGraphEdge(edgeEl.dataset.edgeKey);
       return;
+    }
+    const dblNodeEl = e.target.closest('.graph-node');
+    if (dblNodeEl) {
+      const dblNode = _findGraphNode(dblNodeEl.dataset.nodeId);
+      if (dblNode && dblNode.kind === 'human_note') {
+        e.preventDefault();
+        e.stopPropagation();
+        editHumanNoteNode(dblNode.id);
+        return;
+      }
     }
     if (e.target.closest('.graph-node, .graph-group, .graph-port, .graph-canvas-toolbar')) return;
     const point = _clientToGraphLocal(e.clientX, e.clientY);

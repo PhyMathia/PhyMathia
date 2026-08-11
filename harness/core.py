@@ -35,7 +35,6 @@ ALLOWED_CREATE_KINDS = {
     "note",
     "source",
     "knowledge",
-    "relation",
     "human_note",
     "ai_eval",
 }

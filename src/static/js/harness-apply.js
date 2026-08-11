@@ -407,8 +407,8 @@
     const entry = harnessHistory.find(item => item.id === entryId);
     if (!entry || typeof window.showGraphHarnessPreview !== 'function') return;
     const preview = _buildHarnessPreview(entry.operations || []);
-    const _previewSwitched = window.showGraphHarnessPreview(preview.nodes, preview.edges);
-    _setHarnessStatus('已显示 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线' + (_previewSwitched ? '（已切换到画布视图）' : ''), 'ok');
+    window.showGraphHarnessPreview(preview.nodes, preview.edges);
+    _setHarnessStatus('已显示 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
   }
 
   function restoreHarnessSuggestion(entryId) {

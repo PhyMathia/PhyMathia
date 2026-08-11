@@ -355,11 +355,6 @@
   min-height: 560px !important;
 }
 
-.graph-node-module.graph-module-extend {
-  border-color: #a855f7 !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
-}
 
 .graph-node-module.graph-module-socratic {
   border-color: #f43f5e !important;
@@ -877,12 +872,6 @@
   --graph-bubble-glow: rgba(244, 114, 182, 0.30);
 }
 
-.graph-node-module.graph-module-extend {
-  --graph-bubble-start: rgba(168, 85, 247, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #a855f7;
-  --graph-bubble-glow: rgba(168, 85, 247, 0.30);
-}
 
 .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.14);
@@ -978,13 +967,6 @@
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
-[data-theme="light"] .graph-node-module.graph-module-extend {
-  --graph-bubble-start: rgba(168, 85, 247, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #a855f7;
-  --graph-bubble-glow: rgba(168, 85, 247, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
 
 [data-theme="light"] .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.18);
@@ -1025,8 +1007,6 @@
 [data-theme="light"] .graph-node-module.graph-module-graph,
 [data-theme="dark"] .graph-node-module.graph-module-viz,
 [data-theme="light"] .graph-node-module.graph-module-viz,
-[data-theme="dark"] .graph-node-module.graph-module-extend,
-[data-theme="light"] .graph-node-module.graph-module-extend,
 [data-theme="dark"] .graph-node-module.graph-module-socratic,
 [data-theme="light"] .graph-node-module.graph-module-socratic,
 [data-theme="dark"] .graph-node-module.graph-module-learn,
@@ -3628,3 +3608,133 @@ html[data-theme="dark"] .message-content strong {
   color: #fff;
 }
 .graph-source-organize-btn:hover { background: var(--accent-hover, #3b78e6); }
+/* ===== 联系箭头（联系模式 / link edge）===== */
+.graph-tool-btn.graph-link-btn {
+  width: 38px !important;
+  min-width: 38px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.graph-tool-btn.graph-link-btn.active {
+  color: #fff !important;
+  border-color: #f43f5e !important;
+  background: #f43f5e !important;
+  box-shadow:
+    0 0 0 4px rgba(244, 63, 94, 0.25),
+    0 0 22px rgba(244, 63, 94, 0.6),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24) !important;
+}
+[data-theme="light"] .graph-tool-btn.graph-link-btn.active {
+  color: #fff !important;
+  border-color: #f43f5e !important;
+  background: #f43f5e !important;
+  box-shadow:
+    0 0 0 4px rgba(244, 63, 94, 0.18),
+    0 0 26px rgba(244, 63, 94, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28) !important;
+}
+.graph-canvas.graph-link-mode {
+  cursor: crosshair !important;
+}
+.graph-edge-link path {
+  stroke-dasharray: 10 6 !important;
+  stroke: #f43f5e !important;
+  opacity: 0.9 !important;
+  filter: drop-shadow(0 0 4px rgba(244, 63, 94, 0.35)) !important;
+}
+.graph-edge-link-label {
+  fill: #f43f5e !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+.graph-edge-link-bg {
+  fill: var(--bg-panel) !important;
+  fill-opacity: 0.96 !important;
+  stroke: rgba(244, 63, 94, 0.45) !important;
+  stroke-width: 1px !important;
+  pointer-events: none !important;
+}
+.graph-edge-link-arrow {
+  fill: #f43f5e !important;
+}
+.graph-link-arrow-options {
+  display: flex !important;
+  gap: 8px !important;
+  margin-bottom: 12px !important;
+}
+.graph-link-arrow-option {
+  width: 40px !important;
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 8px !important;
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #94a3b8) 40%, transparent) !important;
+  background: transparent !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  cursor: pointer !important;
+  transition: all 0.15s !important;
+}
+.graph-link-arrow-option:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+.graph-link-arrow-option.active {
+  border-color: #f43f5e !important;
+  background: rgba(244, 63, 94, 0.12) !important;
+  color: #f43f5e !important;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18) !important;
+}
+.graph-blank-hint {
+  font-size: 11px !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  padding: 4px 2px 2px !important;
+  opacity: 0.85 !important;
+}
+.graph-link-edge-info {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 8px 12px !important;
+  margin-bottom: 10px !important;
+  border-radius: 8px !important;
+  background: color-mix(in srgb, #f43f5e 10%, transparent) !important;
+  border: 1px solid color-mix(in srgb, #f43f5e 35%, transparent) !important;
+  color: var(--text-primary, #e2e8f0) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  word-break: break-all !important;
+}
+.graph-link-edge-arrow {
+  color: #f43f5e !important;
+  font-weight: 800 !important;
+}
+.graph-link-edge-delete {
+  background: #ef4444 !important;
+  color: #fff !important;
+}
+.graph-link-edge-delete:hover {
+  background: #dc2626 !important;
+}
+
+/* ===== 添加节点面板分组 ===== */
+.graph-add-node-group {
+  padding: 4px 0 2px !important;
+}
+.graph-add-node-group-title {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  padding: 6px 4px 4px !important;
+  text-transform: uppercase !important;
+}
+.graph-add-node-group .graph-add-node-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+  gap: 6px !important;
+}
+

@@ -73,6 +73,10 @@ function renderGraphCanvas(streaming) {
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M8 4v16"></path><path d="M16 4v16"></path><path d="M12 2v20"></path>'
     + '</svg></button>'
+    + '<button class="graph-tool-btn graph-link-btn" onclick="toggleGraphLinkMode()" title="联系模式（点两个节点添加联系箭头）" aria-label="联系模式" aria-pressed="false">'
+    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path d="M9 12h6"></path><path d="M9 12a3 3 0 1 1-3-3"></path><path d="M15 12a3 3 0 1 0 3-3"></path><line x1="12" y1="5" x2="12" y2="19"></line>'
+    + '</svg></button>'
     + '<button class="graph-tool-btn" onclick="graphCreateGroup()" title="将选中节点创建为分组" aria-label="将选中节点创建为分组">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
@@ -83,6 +87,7 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>';
   graphCanvas.appendChild(toolbar);
   _applyGraphTextSelectionMode();
+  _applyGraphLinkMode();
   if (typeof window.syncGraphPetToggleButton === 'function') window.syncGraphPetToggleButton();
   _syncGraphSearchButtonState();
   if (graphSearchOpen) requestAnimationFrame(_performGraphSearch);
@@ -413,64 +418,6 @@ function _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
   renderGraphCanvas();
 }
 
-function _createRelationNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
-  const state = _graphState();
-  _pushGraphUndo();
-  const nodeId = 'relation-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  state.customNodes = state.customNodes || [];
-  state.customNodes.push({
-    id: nodeId,
-    kind: 'relation',
-    moduleKey: 'relation',
-    manual: true,
-    content: '',
-    status: 'empty',
-    summary: '',
-    analysis: '',
-    analysisHash: '',
-    inputHash: '',
-    generatedAt: 0,
-    requirements: '',
-    busy: false,
-    generated: false,
-    maxItems: 0,
-    items: [],
-    edges: [],
-    fileId: sourceNode.fileId || '',
-    fileName: sourceNode.fileName || '',
-    generatedNodeIds: [],
-    category: '',
-    formulas: [],
-    knowledgeKey: '',
-    x,
-    y,
-    depth: 4,
-    targetAngle: 0,
-    isRoot: false,
-    timestamp: Date.now(),
-    pinned: false,
-    fixedX: null,
-    fixedY: null,
-    customWidth: 280,
-    customHeight: null,
-    w: 0,
-    h: 0,
-    vx: 0,
-    vy: 0,
-  });
-  state.connections = state.connections || [];
-  state.connections.push({
-    from: sourceNode.id,
-    fromPort: sourcePortId || 'out-0',
-    to: nodeId,
-    toPort: 'in-0',
-    type: 'custom',
-    custom: true,
-  });
-  _saveGraphState(state);
-  renderGraphCanvas();
-}
-
 function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y) {
   const sourceNode = graphView.nodeById[sourceNodeId];
   if (!sourceNode || !portMeta) return;
@@ -481,10 +428,6 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   const option = _findManualOptionByPort(portMeta);
   if (type === 'knowledge') {
     _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
-    return;
-  }
-  if (type === 'relation' || label === '联系') {
-    _createRelationNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
     return;
   }
   if (sourceNode.kind === 'knowledge' && (label === '问题' || portMeta.attribute === 'question')) {
@@ -921,7 +864,7 @@ function graphAddOutputPort(nodeId) {
 
 function graphAddInputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module')) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module' && node.kind !== 'blank')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -932,7 +875,7 @@ function graphAddInputPort(nodeId) {
 
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module')) return;
+  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module' && node.kind !== 'blank')) return;
   const minPort = node.kind === 'relation' ? 2 : 1;
   if (portIndex < minPort) return;
   _pushGraphUndo();

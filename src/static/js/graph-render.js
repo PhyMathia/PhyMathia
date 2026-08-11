@@ -8,7 +8,7 @@ function _nodeAttribute(node) {
     return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.question;
   }
   if (node.kind === 'blank') {
-    return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.question;
+    return GRAPH_NODE_ATTRIBUTES[node.moduleKey] || GRAPH_NODE_ATTRIBUTES.any;
   }
   if (node.kind === 'human_note') return GRAPH_NODE_ATTRIBUTES.human_note;
   if (node.kind === 'ai_eval') return GRAPH_NODE_ATTRIBUTES.ai_eval;
@@ -33,12 +33,16 @@ function _nodeAttribute(node) {
 function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
   if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
-  if (toNode.kind === 'summary' || toNode.kind === 'note') return fromNode.kind === 'hub';
-  if (toNode.kind === 'human_note') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note';
-  if (toNode.kind === 'user') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note';
-  if (toNode.kind === 'relation') return fromNode.kind !== 'hub' && fromNode.kind !== 'summary' && fromNode.kind !== 'note' && fromNode.kind !== 'relation';
+  if (toNode.kind === 'summary') return fromNode.kind === 'hub' && String(fromPort || 'out-0') === 'out-0';
+  if (toNode.kind === 'note') return fromNode.kind === 'hub' && String(fromPort || 'out-1') === 'out-1';
+  if (fromNode.kind === 'hub') {
+    const hubPort = String(fromPort || 'out-0');
+    if (hubPort === 'out-0' || hubPort === 'out-1') return false;
+    return ['user', 'blank', 'module', 'answer'].includes(toNode.kind);
+  }
+  if (toNode.kind === 'human_note') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
+  if (toNode.kind === 'user') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
   if (toNode.kind === 'knowledge') return fromNode.kind === 'source' || fromNode.kind === 'knowledge';
-  if (fromNode.kind === 'hub') return false;
   if (fromNode.kind === 'human_note') {
     return ['human_note', 'module', 'answer', 'blank', 'relation', 'hub', 'user'].includes(toNode.kind);
   }
@@ -49,9 +53,7 @@ function _canConnect(fromNode, fromPort, toNode) {
   const isUserAiOutput = fromNode.kind === 'user' && fromPortKey === 'out-0';
   const isUserManualOutput = fromNode.kind === 'user' && fromPortKey !== 'out-0';
   if (toNode.kind === 'blank') {
-    if (fromNode.kind === 'answer') return fromAttr === toAttr;
-    if (fromNode.kind === 'knowledge') return true;
-    return isUserManualOutput;
+    return fromNode.kind !== 'draft' && fromNode.kind !== 'blank';
   }
   if (fromNode.kind === 'answer' && toNode.kind === 'module') return fromAttr === toAttr;
   if ((fromNode.kind === 'user' || fromNode.kind === 'knowledge') && toNode.kind === 'answer') {
@@ -60,6 +62,7 @@ function _canConnect(fromNode, fromPort, toNode) {
       : String(fromPort || 'out-0') === 'out-0';
     return isAiOutput ? !toNode.manual : !!toNode.manual;
   }
+  if (fromNode.kind === 'blank') return ['user', 'answer', 'module', 'hub', 'summary', 'note'].includes(toNode.kind);
   if (fromNode.kind === 'draft' && toNode.kind === 'answer') return true;
   if (fromNode.kind === 'module' && toNode.kind === 'user') return true;
   if (fromNode.kind === 'module' && toNode.kind === 'draft') {
@@ -222,12 +225,12 @@ function _renderDraftNodeHtml(node) {
 
 function _nodeInputLabel(node) {
   if (node.kind === 'human_note') return '任意输入';
-  if (node.kind === 'answer') return node.manual ? '非 AI 回答' : 'AI 回答';
+  if (node.kind === 'answer') return node.manual ? '我的回答' : 'AI 回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
-  if (node.kind === 'blank') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || '空白节点';
+  if (node.kind === 'blank') return '任意输入';
   if (node.kind === 'hub') return '汇聚输入';
   if (node.kind === 'summary') return 'AI 总结';
-  if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'note') return '我的总结';
   if (node.kind === 'user') return '任意输入';
   if (node.kind === 'source') return '文件输入';
   if (node.kind === 'knowledge') return '知识点来源';
@@ -239,9 +242,9 @@ function _nodeOutputLabels(node, messages) {
   if (node.kind === 'draft') return [];
   if (node.kind === 'blank') return ['追问'];
   if (node.kind === 'human_note') return ['人工内容'];
-  if (node.kind === 'user') return ['AI 回答', '非 AI 回答'];
+  if (node.kind === 'user') return ['AI 回答', '我的回答'];
   if (node.kind === 'source') return (node.items || []).map(item => item.title || '知识点 ' + ((node.items || []).indexOf(item) + 1));
-  if (node.kind === 'knowledge') return ['AI 回答', '问题', '联系'];
+  if (node.kind === 'knowledge') return ['AI 回答', '问题'];
   if (node.kind === 'relation') return [];
   if (node.kind === 'module') {
     return _moduleOutputPorts(node, messages[node.messageIndex]).map(item => item.label);
@@ -249,7 +252,7 @@ function _nodeOutputLabels(node, messages) {
   if (node.kind === 'answer') {
     return _answerOutputPorts(node, messages).map(item => item.label);
   }
-  if (node.kind === 'hub') return ['AI 总结'];
+  if (node.kind === 'hub') return ['AI 总结', '我的总结', '追问'];
   if (node.kind === 'summary' || node.kind === 'note') return [];
   return ['输出'];
 }
@@ -268,7 +271,6 @@ function _knowledgeOutputPorts(node) {
   return [
     { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
     { label: '问题', type: 'branch', branchType: 'followup', attribute: 'question', group: 'question', question: '' },
-    { label: '联系', type: 'relation', branchType: '', attribute: 'relation', group: 'relation', question: '' },
   ];
 }
 
@@ -292,7 +294,7 @@ function _portAttribute(node, portId, messages) {
       return (ports[index] && ports[index].attribute) || 'question';
     }
     if (node.kind === 'user') return index === 0 ? 'answer' : 'manual';
-    if (node.kind === 'hub') return index === 0 ? 'summary' : 'followup';
+    if (node.kind === 'hub') return index === 0 ? 'summary' : (index === 1 ? 'note' : 'followup');
     return 'followup';
   }
   return _nodeAttribute(node).key;
@@ -316,7 +318,7 @@ function _renderInputPorts(node, state) {
   const savedCount = state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
-  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation';
+  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation' || node.kind === 'blank';
   const baseCount = node.kind === 'relation' ? 2 : 1;
   const count = node.kind === 'module'
     ? baseCount + savedCount
@@ -326,9 +328,9 @@ function _renderInputPorts(node, state) {
   let html = '<div class="graph-port-col graph-input-col">';
   for (let i = 0; i < count; i++) {
     const label = node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node);
-    const anyClass = node.kind === 'user' || node.kind === 'human_note' ? ' graph-port-any-input' : '';
-    const portAttr = canAddInput ? 'any' : (node.kind === 'human_note' ? 'any' : attr.key);
-    const portColor = node.kind === 'user' || node.kind === 'human_note' ? '#94a3b8' : attr.color;
+    const anyClass = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' ? ' graph-port-any-input' : '';
+    const portAttr = canAddInput ? 'any' : (node.kind === 'human_note' || node.kind === 'blank' ? 'any' : attr.key);
+    const portColor = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' ? '#94a3b8' : attr.color;
     const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
     html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
@@ -351,7 +353,7 @@ function _renderOutputPorts(node, messages, state) {
   if (node.kind === 'user') {
     ports = [
       { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
-      { label: '非 AI 回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
+      { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
     ];
   } else if (node.kind === 'blank') {
     ports = [{
@@ -394,6 +396,18 @@ function _renderOutputPorts(node, messages, state) {
       type: 'branch',
       branchType: 'summary',
       attribute: 'summary',
+      question: '',
+    }, {
+      label: '我的总结',
+      type: 'branch',
+      branchType: 'note',
+      attribute: 'note',
+      question: '',
+    }, {
+      label: '追问',
+      type: 'branch',
+      branchType: 'followup',
+      attribute: 'question',
       question: '',
     }];
   } else {
@@ -453,7 +467,7 @@ function _renderOutputPorts(node, messages, state) {
 
 function _renderBlankNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
-  const meta = GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '空白节点', color: attr.color };
+  const meta = GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || 'AI 生成空白', color: attr.color };
   const attrClass = ' graph-attr-' + attr.key;
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const busyClass = node.busy ? ' graph-blank-busy' : '';
@@ -472,11 +486,12 @@ function _renderBlankNodeHtml(node, state) {
   return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">空白节点</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
     + contentHtml
+    + (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求 → 点生成</div>')
     + '<div class="graph-blank-requirement">'
-    + '<textarea class="graph-blank-input" rows="2" placeholder="输入额外要求" ' + (node.busy ? 'disabled' : '') + '>' + escapeHtml(node.requirements || '') + '</textarea>'
+    + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + '>' + escapeHtml(node.requirements || '') + '</textarea>'
     + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : generateLabel, node.busy)
     + '</div>'
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
@@ -754,7 +769,7 @@ function _renderNodeHtml(node, messages, state) {
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
-  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '非 AI 回答' : 'AI 回答簇') : ''));
+  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : 'AI 回答簇') : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.kind === 'module'
     ? ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey)
@@ -763,9 +778,9 @@ function _renderNodeHtml(node, messages, state) {
       : node.kind === 'summary'
         ? 'AI 总结'
         : node.kind === 'note'
-          ? '人工总结'
+          ? '我的总结'
           : (node.kind === 'answer' && node.messageIndex < 0
-            ? (node.manual ? '非 AI 回答' : 'AI 回答')
+            ? (node.manual ? '我的回答' : 'AI 回答')
             : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
   const customFill = node.messageIndex < 0 && node.manual && !hasCustomContent
@@ -1018,10 +1033,6 @@ function _updateHarnessPreviewPositions() {
   }
 }
 
-function _ensureGraphModeForPreview() {
-  return false;
-}
-
 function _harnessVisibleCanvasRect() {
   const canvasRect = graphCanvas?.getBoundingClientRect();
   if (!canvasRect || !canvasRect.width || !canvasRect.height) {
@@ -1059,10 +1070,8 @@ function _harnessVisibleCanvasRect() {
 function showGraphHarnessPreview(nodes, edges) {
   graphView.previewNodes = Array.isArray(nodes) ? nodes : [];
   graphView.previewEdges = Array.isArray(edges) ? edges : [];
-  const switched = _ensureGraphModeForPreview();
   _renderGraphHarnessPreview();
   _centerGraphOnPreview();
-  return switched;
 }
 
 function _centerGraphOnPreview() {
@@ -1170,6 +1179,7 @@ function _linkDragPathHtml() {
 
 function _redrawEdges() {
   if (!graphEdgeLayer) return;
+  const defs = '<defs><marker id="graph-link-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="graph-edge-link-arrow"></path></marker></defs>';
   const html = graphView.edges.map(edge => {
     const a = graphView.nodeById[edge.from];
     const b = graphView.nodeById[edge.to];
@@ -1183,17 +1193,38 @@ function _redrawEdges() {
       + ' C' + (p1.x + offset).toFixed(1) + ' ' + p1.y.toFixed(1)
       + ', ' + (p2.x - offset).toFixed(1) + ' ' + p2.y.toFixed(1)
       + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
-    const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '');
+    const isLink = !!edge.link;
+    const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '') + (isLink ? ' graph-edge-link' : '');
+    const arrow = isLink ? String(edge.arrow || 'right') : '';
+    let markerStart = '';
+    let markerEnd = '';
+    if (isLink) {
+      if (arrow === 'left' || arrow === 'both') markerStart = ' marker-start="url(#graph-link-arrow)"';
+      if (arrow === 'right' || arrow === 'both') markerEnd = ' marker-end="url(#graph-link-arrow)"';
+    }
     const label = (edge.relation || edge.label || '').toString().trim();
-    const hintHtml = label
+    let labelHtml = '';
+    if (isLink && label) {
+      const c1 = { x: p1.x + offset, y: p1.y };
+      const c2 = { x: p2.x - offset, y: p2.y };
+      const mx = (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8;
+      const my = (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8;
+      const textW = Array.from(label).length * 12 + 16;
+      labelHtml = '<g class="graph-edge-link-label-group" data-edge-key="' + _edgeKey(edge) + '">'
+        + '<rect class="graph-edge-link-bg" x="' + (mx - textW / 2).toFixed(1) + '" y="' + (my - 15.5).toFixed(1) + '" width="' + textW.toFixed(1) + '" height="17" rx="8.5"></rect>'
+        + '<text class="graph-edge-label graph-edge-link-label" x="' + mx.toFixed(1) + '" y="' + (my - 2.5).toFixed(1) + '" text-anchor="middle" data-edge-key="' + _edgeKey(edge) + '">' + escapeHtml(label) + '</text>'
+        + '</g>';
+    }
+    const hintHtml = label && !isLink
       ? '<title>' + escapeHtml(label) + '</title>'
       : '';
     return '<g class="' + cls + '" data-edge-key="' + _edgeKey(edge) + '" title="双击删除连线">'
-      + '<path d="' + d + '"></path>'
+      + '<path d="' + d + '"' + markerStart + markerEnd + '></path>'
+      + labelHtml
       + hintHtml
       + '</g>';
   }).join('');
-  graphEdgeLayer.innerHTML = html + _linkDragPathHtml();
+  graphEdgeLayer.innerHTML = defs + html + _linkDragPathHtml();
 }
 
 function _savePositions() {

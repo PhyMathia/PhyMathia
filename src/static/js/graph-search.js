@@ -26,16 +26,16 @@ function _graphNodeSearchText(message, node) {
 
 function _graphSearchResultLabel(node, message) {
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || { label: '模块' }).label;
-  if (node.kind === 'answer') return node.manual ? '非 AI 回答' : 'AI 回答簇';
+  if (node.kind === 'answer') return node.manual ? '我的回答' : 'AI 回答簇';
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
-  if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'note') return '我的总结';
   if (node.kind === 'source') return '输入';
   if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '联系';
   if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.isBranch ? (node.branchLabel || '延伸追问') : '问题');
-  if (node.kind === 'blank') return '空白节点';
+  if (node.kind === 'blank') return 'AI 生成空白';
   if (node.kind === 'draft') return '待提交追问';
   return node.label || '节点';
 }
@@ -266,16 +266,16 @@ async function focusGraphSearchResult(btn) {
 function _nodeSub(node) {
   if (node.isRoot) return '核心问题';
   if (node.kind === 'user') return node.isBranch ? (node.branchLabel || '延伸追问') : '问题';
-  if (node.kind === 'answer') return node.manual ? '非 AI 回答' : (node.branchLabel || 'AI 回答簇');
+  if (node.kind === 'answer') return node.manual ? '我的回答' : (node.branchLabel || 'AI 回答簇');
   if (node.kind === 'hub') return '汇聚节点';
   if (node.kind === 'summary') return 'AI 总结';
-  if (node.kind === 'note') return '人工总结';
+  if (node.kind === 'note') return '我的总结';
   if (node.kind === 'source') return '文件解析入口';
   if (node.kind === 'knowledge') return '知识点节点';
   if (node.kind === 'relation') return '知识联系';
   if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'human_note') return '我的理解';
   if (node.kind === 'module') return '';
-  if (node.kind === 'blank') return '空白节点';
+  if (node.kind === 'blank') return 'AI 生成空白';
   return '';
 }

@@ -237,9 +237,9 @@
       if (typeof window.showGraphHarnessPreview === 'function') {
         const preview = _buildHarnessPreview(data.operations || []);
         window.__lastHarnessPreview = preview;
-        const _previewSwitched = window.showGraphHarnessPreview(preview.nodes, preview.edges);
+        window.showGraphHarnessPreview(preview.nodes, preview.edges);
         if (preview.nodes.length || preview.edges.length) {
-          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线' + (_previewSwitched ? '（已切换到画布视图）' : ''), 'ok');
+          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
         }
       }
     } catch (err) {
@@ -391,9 +391,9 @@
       if (typeof window.showGraphHarnessPreview === 'function') {
         const preview = _buildHarnessPreview(data.operations || []);
         window.__lastHarnessPreview = preview;
-        const _previewSwitched = window.showGraphHarnessPreview(preview.nodes, preview.edges);
+        window.showGraphHarnessPreview(preview.nodes, preview.edges);
         if (preview.nodes.length || preview.edges.length) {
-          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线' + (_previewSwitched ? '（已切换到画布视图）' : ''), 'ok');
+          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
         }
       }
     } catch (err) {

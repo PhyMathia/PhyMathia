@@ -816,7 +816,6 @@
             <button class="tool-btn" onclick="demoFit()" title="适配画布">⌂</button>
             <button class="tool-btn" onclick="demoReset()" title="重新布局">↻</button>
             <div class="spacer"></div>
-            <span class="tag" id="graphModeTag">网络模式</span>
           </div>
           <div class="graph-canvas-demo" id="demoCanvas">
             <div class="graph-world" id="demoWorld">
@@ -839,11 +838,10 @@
             <p>完整回答会拆成摘要、物理视角、数学视角、知识图谱、交互可视化和延伸思考。模块支持折叠、追问和没看懂。</p>
           </div>
           <div class="tool-row">
-            <button class="tool-btn" onclick="toggleLinearDemo()" id="linearModeBtn">线性模式</button>
             <button class="tool-btn primary" onclick="demoStream()">模拟流式输出</button>
           </div>
         </div>
-        <div id="linearDemo" class="split-grid">
+        <div id="answerCards" class="split-grid">
           <div class="answer-module">
             <div class="answer-module-head">
               <span class="dot" style="background:var(--physics)"></span>
@@ -910,7 +908,6 @@
           <div class="feature-chip"><strong>公式标注</strong><span>AI 输出用 <b>&lt;formula&gt;</b> 包裹 LaTeX，前端统一转为 KaTeX 渲染。</span></div>
           <div class="feature-chip"><strong>摘要提取</strong><span>回答末尾的 <b>&lt;summary&gt;</b> 被收集为知识摘要，不显示在卡片正文中。</span></div>
           <div class="feature-chip"><strong>模块动作</strong><span>每个模块都可以从对应气泡继续追问，不会错误地变成一条孤立主线。</span></div>
-          <div class="feature-chip"><strong>线性模式</strong><span>从网络图切回传统对话卡片时，保留同样的模块动作和可视化。</span></div>
         </div>
       </section>
 
@@ -1060,7 +1057,7 @@
         </div>
         <div class="session-list" id="demoSessionList"></div>
         <div class="feature-grid">
-          <div class="feature-chip"><strong>独立布局</strong><span>每个会话保存自己的节点位置、尺寸、折叠和线性/网络模式。</span></div>
+          <div class="feature-chip"><strong>独立布局</strong><span>每个会话保存自己的节点位置、尺寸和折叠状态。</span></div>
           <div class="feature-chip"><strong>自动标题</strong><span>第一条用户问题会作为会话标题，也可以手动重命名。</span></div>
           <div class="feature-chip"><strong>图标管理</strong><span>力学、电磁、量子、微积分等几十种图标可快速切换。</span></div>
           <div class="feature-chip"><strong>跨端同步</strong><span>服务端可恢复 localStorage 中未上传的会话和消息。</span></div>
@@ -1191,7 +1188,6 @@ http://localhost:5000/</div>
     let branchOverlayOpen = false;
     let demoZoomLevel = 1;
     let demoPan = { x: 0, y: 0 };
-    let graphModeLinear = false;
     let selectedNodeId = null;
     let dragState = null;
     let resizeState = null;
@@ -1398,15 +1394,6 @@ http://localhost:5000/</div>
     function switchKpTabs(tab) {
       document.getElementById('kpView').hidden = tab !== 'knowledge';
       document.getElementById('formulaView').hidden = tab !== 'formula';
-    }
-
-    function toggleLinearDemo() {
-      graphModeLinear = !graphModeLinear;
-      const btn = document.getElementById('linearModeBtn');
-      btn.textContent = graphModeLinear ? '画布模式' : '线性模式';
-      document.getElementById('linearDemo').style.display = graphModeLinear ? 'block' : '';
-      document.getElementById('graphModeTag').textContent = graphModeLinear ? '线性模式' : '网络模式';
-      demoToast(graphModeLinear ? '已切换为线性卡片' : '已切换为网络画布');
     }
 
     function startGuide() {
@@ -1835,7 +1822,6 @@ http://localhost:5000/</div>
     window.deleteDemoKnowledge = deleteDemoKnowledge;
     window.updateDemoStats = updateDemoStats;
     window.switchKpTabs = switchKpTabs;
-    window.toggleLinearDemo = toggleLinearDemo;
     window.demoStream = demoStream;
     window.openDemoBranch = openDemoBranch;
     window.closeBranchOverlay = closeBranchOverlay;
