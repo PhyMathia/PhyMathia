@@ -530,6 +530,13 @@ let harnessLastAppliedBeforeSnapshot = null;
       actions += '<button type="button" onclick="reapplyHarnessSuggestion(\'' + entry.id + '\')">重新应用</button>'
         + '<button type="button" onclick="restoreHarnessSuggestion(\'' + entry.id + '\')">恢复为待处理</button>';
     }
+    if (entry.role === 'assistant') {
+      const fb = entry.feedback || '';
+      actions += '<span class="graph-harness-feedback">'
+        + '<button type="button" class="graph-harness-feedback-btn' + (fb === 'good' ? ' active-good' : '') + '" onclick="_sendHarnessFeedback(\'' + entry.id + '\', \'good\')" title="这次回答有用">👍</button>'
+        + '<button type="button" class="graph-harness-feedback-btn' + (fb === 'bad' ? ' active-bad' : '') + '" onclick="_sendHarnessFeedback(\'' + entry.id + '\', \'bad\')" title="没懂/改错了，点这里反馈">👎</button>'
+        + '</span>';
+    }
     actions += '<button type="button" onclick="deleteHarnessHistoryEntry(\'' + entry.id + '\')">删除记录</button>';
     const meta = entry.role === 'assistant'
       ? '<div class="graph-harness-meta">' + (entry.phase || '') + '</div>'
@@ -563,6 +570,37 @@ let harnessLastAppliedBeforeSnapshot = null;
     const instructionEl = document.getElementById('graphHarnessInstruction');
     if (instructionEl && harnessLastInstruction) instructionEl.value = harnessLastInstruction;
     runGraphHarness(harnessLastPhase);
+  }
+
+  async function _sendHarnessFeedback(entryId, kind) {
+    const entry = (harnessHistory || []).find(item => item.id === entryId);
+    if (!entry || entry.feedback) return;
+    let note = '';
+    if (kind === 'bad') {
+      note = window.prompt('Φ 哪里没懂 / 做错了？（一句话，可选）', '') || '';
+    }
+    entry.feedback = kind;
+    if (note) entry.feedbackNote = note;
+    _saveHarnessHistory().then(_renderHarnessChat);
+    try {
+      const resp = await fetch('/api/harness/graph/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind,
+          instruction: entry.instruction || entry.content || '',
+          summary: entry.summary || entry.content || '',
+          ops_count: Array.isArray(entry.operations) ? entry.operations.length : 0,
+          phase: entry.phase || '',
+          note,
+          session_id: _sessionId(),
+        }),
+      });
+      if (!resp.ok) throw new Error('反馈保存失败');
+      _setHarnessStatus('已记录反馈', 'ok');
+    } catch (err) {
+      _setHarnessStatus('反馈保存失败：' + err.message, 'error');
+    }
   }
 
   async function _resolveHarnessFocus(candidates, instruction) {
@@ -682,6 +720,7 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   // 页面加载即创建 Φ 桌宠（默认显示）；工具栏 Φ 按钮作为显隐开关，点击桌宠开关对话框
   ensureHarnessPanel();
+  window._sendHarnessFeedback = _sendHarnessFeedback;
   window.toggleGraphPet = toggleGraphPet;
   window.stopGraphHarness = stopGraphHarness;
   window.syncGraphPetToggleButton = _syncGraphPetToggleButton;

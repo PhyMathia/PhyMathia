@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
+
 from fastapi import APIRouter, Request
 
 from .core import build_next_snapshot, normalize_snapshot
@@ -11,6 +15,46 @@ from .review import HarnessError, resolve_focus, review_graph
 router = APIRouter()
 
 
+# ===== 阶段 0：真实使用日志与反馈收集 =====
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_USAGE_LOG = _LOG_DIR / "harness_usage.jsonl"
+
+
+def _log_usage(entry: dict) -> None:
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_USAGE_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _usage_entry(payload: dict, result: dict, t0: float, endpoint: str) -> dict:
+    try:
+        snap = payload.get("snapshot") or {}
+        nodes = len(snap.get("nodes") or [])
+        edges = len(snap.get("edges") or [])
+    except Exception:
+        nodes = edges = 0
+    errors = result.get("errors") or []
+    first_error = str(errors[0].get("reason") or "")[:200] if errors else ""
+    return {
+        "ts": round(time.time(), 3),
+        "endpoint": endpoint,
+        "phase": str(result.get("phase") or payload.get("phase") or ""),
+        "status": str(result.get("status") or ""),
+        "instruction": str(payload.get("instruction") or "")[:200],
+        "model": str((payload.get("model") or {}).get("model") or ""),
+        "nodes": nodes,
+        "edges": edges,
+        "focus_count": len(payload.get("focus_node_ids") or []),
+        "ops_count": len(result.get("operations") or []),
+        "warnings_count": len(result.get("warnings") or []),
+        "error": first_error,
+        "latency_ms": round((time.time() - t0) * 1000),
+    }
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "graph-harness"}
@@ -18,6 +62,8 @@ async def health():
 
 @router.post("/graph/review")
 async def graph_review(request: Request):
+    t0 = time.time()
+    payload = {}
     try:
         payload = await request.json()
     except Exception as exc:
@@ -49,11 +95,16 @@ async def graph_review(request: Request):
             initial_snapshot=payload.get("initial_snapshot"),
         )
         result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
+        _log_usage(_usage_entry(payload, result, t0, "review"))
         return result
     except HarnessError as exc:
-        return {"status": "error", "errors": [{"reason": str(exc)}]}
+        err = {"status": "error", "errors": [{"reason": str(exc)}]}
+        _log_usage(_usage_entry(payload, err, t0, "review"))
+        return err
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
+        err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
+        _log_usage(_usage_entry(payload, err, t0, "review"))
+        return err
 
 
 @router.post("/graph/apply")
@@ -111,6 +162,8 @@ async def graph_health(request: Request):
 
 @router.post("/graph/resolve")
 async def graph_resolve(request: Request):
+    t0 = time.time()
+    payload = {}
     try:
         payload = await request.json()
     except Exception as exc:
@@ -130,8 +183,49 @@ async def graph_resolve(request: Request):
             retries=retries,
             mode=mode,
         )
+        _log_usage(_usage_entry(payload, result, t0, "resolve"))
         return result
     except HarnessError as exc:
-        return {"status": "error", "errors": [{"reason": str(exc)}]}
+        err = {"status": "error", "errors": [{"reason": str(exc)}]}
+        _log_usage(_usage_entry(payload, err, t0, "resolve"))
+        return err
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"目标解析失败: {exc}"}]}
+        err = {"status": "error", "errors": [{"reason": f"目标解析失败: {exc}"}]}
+        _log_usage(_usage_entry(payload, err, t0, "resolve"))
+        return err
+
+@router.post("/graph/feedback")
+async def graph_feedback(request: Request):
+    """收集用户对 harness 回答的反馈（阶段 0）：存到 data/harness_feedback.json。"""
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+    try:
+        from src.server.config import DATA_DIR
+        entry = {
+            "ts": round(time.time(), 3),
+            "kind": str(payload.get("kind") or "bad")[:10],
+            "instruction": str(payload.get("instruction") or "")[:500],
+            "summary": str(payload.get("summary") or "")[:1000],
+            "ops_count": int(payload.get("ops_count") or 0),
+            "phase": str(payload.get("phase") or "")[:20],
+            "note": str(payload.get("note") or "")[:500],
+            "session_id": str(payload.get("session_id") or "")[:100],
+        }
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        path = DATA_DIR / "harness_feedback.json"
+        items = []
+        if path.exists():
+            try:
+                items = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                items = []
+        if not isinstance(items, list):
+            items = []
+        items.append(entry)
+        items = items[-2000:]
+        path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "ok", "count": len(items)}
+    except Exception as exc:
+        return {"status": "error", "errors": [{"reason": str(exc)}]}

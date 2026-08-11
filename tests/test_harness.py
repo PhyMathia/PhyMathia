@@ -1995,3 +1995,70 @@ class HarnessHistoryBlockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class HarnessJsonShellSummaryTest(unittest.TestCase):
+    """v1.2.1：纯问答时模型把 JSON 整体写进正文（引号未转义）→ 兜底只保留内层 summary。"""
+
+    def test_extract_summary_from_json_shell(self):
+        from harness.review import _extract_summary_from_json_shell
+        raw = '{\n  "summary": "导数的物理意义本质上就是"变化率"：它刻画瞬时快慢。",\n  "operations": []\n}'
+        out = _extract_summary_from_json_shell(raw)
+        self.assertIsNotNone(out)
+        self.assertIn("变化率", out)
+        self.assertNotIn("operations", out)
+        self.assertNotIn('"summary"', out)
+
+    def test_extract_summary_plain_text_returns_none(self):
+        from harness.review import _extract_summary_from_json_shell
+        self.assertIsNone(_extract_summary_from_json_shell("导数的物理意义就是变化率。"))
+        self.assertIsNone(_extract_summary_from_json_shell(""))
+        self.assertIsNone(_extract_summary_from_json_shell(None))
+
+    def test_extract_summary_escaped_quotes_preserved(self):
+        from harness.review import _extract_summary_from_json_shell
+        raw = '{\n  "summary": "他说\\"好的\\"，没问题。",\n  "operations": []\n}'
+        out = _extract_summary_from_json_shell(raw)
+        self.assertIsNotNone(out)
+        self.assertIn('"好的"', out)
+
+
+class HarnessAnchorAddWarningTest(unittest.TestCase):
+    """v1.2.1：给 X 加视角类指令，模型扩展现有模块（未直接动 X）不应误报 focus 未涉及。"""
+
+    def _snapshot(self):
+        return {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
+            ],
+            "edges": [
+                {"key": "A:out-0->C:in-0", "from": "A", "to": "C", "relation": "物理意义"},
+            ],
+        }
+
+    def test_anchor_add_extend_module_no_warning(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck(
+            self._snapshot(),
+            "给导数加一个物理视角",
+            ["A"],
+            [{"op": "update_node", "id": "C", "patch": {"content": "更完整"}, "reason": "扩展现有物理视角"}],
+        )
+        self.assertTrue(result["ok"])
+        self.assertFalse(any("未在本次操作中涉及" in issue for issue in result["issues"]))
+
+    def test_non_anchor_modify_still_warns(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck(
+            self._snapshot(),
+            "把导数改得更严谨",
+            ["A"],
+            [{"op": "update_node", "id": "C", "patch": {"content": "x"}, "reason": "改错了目标"}],
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("未在本次操作中涉及" in issue for issue in result["issues"]))
+
+    def test_anchor_add_with_no_ops_still_warns(self):
+        from harness.semantics import rule_selfcheck
+        result = rule_selfcheck(self._snapshot(), "给导数加一个物理视角", ["A"], [])
+        self.assertFalse(result["ok"])

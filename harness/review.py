@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Optional
 
 import httpx
@@ -156,6 +157,29 @@ def _history_block(history) -> str:
                 )
                 lines.append(f"{i + 1}. 助手：{summary[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
     return "\n".join(lines)
+
+
+def _extract_summary_from_json_shell(text):
+    """模型偶尔把整个 JSON 对象写进正文，且字符串内含未转义引号导致解析失败。
+    此时按"纯文字回答"兜底时，剥掉 JSON 外壳只保留 summary 文本，避免用户看到原始 JSON。"""
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if not cleaned.startswith("{") or '"summary"' not in cleaned:
+        return None
+    marker = '"operations"'
+    prefix = cleaned[: cleaned.index(marker)] if marker in cleaned else cleaned
+    m = re.search(r'"summary"\s*:\s*"', prefix)
+    if not m:
+        return None
+    start = m.end()
+    end = prefix.rfind('"')
+    if end <= start:
+        return None
+    value = prefix[start:end].strip()
+    if not value:
+        return None
+    return value.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t")
 
 
 class HarnessError(RuntimeError):
@@ -728,8 +752,9 @@ async def review_graph(
         else:
             payload = extract_json(last_raw)
             if payload is None and current_tools is not None:
-                # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作
-                summary = last_raw.strip()
+                # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作；
+                # 若文本是“JSON 外壳”（模型把 JSON 写进正文且引号未转义），只保留内层 summary
+                summary = _extract_summary_from_json_shell(last_raw) or last_raw.strip()
                 raw_ops = []
             elif payload is None:
                 last_errors = [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]

@@ -9,7 +9,42 @@ These checks run after operation validation and complement the model critic:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
+
+_ANCHOR_ADD_RE = re.compile(r"(给|为|在|把)[^，。；\n]{0,30}?(加|补|新增|添加|创建|生成)")
+
+
+def _connected_node_ids(snapshot: Any, seed_ids) -> set:
+    """沿连线 BFS，返回与 seed 节点连通的所有节点 id。"""
+    seeds = {str(s) for s in (seed_ids or []) if str(s)}
+    if not seeds:
+        return set()
+    adj: Dict[str, set] = {}
+    for e in snapshot.get("edges") or []:
+        f = str(e.get("from") or "")
+        t = str(e.get("to") or "")
+        if f and t:
+            adj.setdefault(f, set()).add(t)
+            adj.setdefault(t, set()).add(f)
+    seen = set(seeds)
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        for nb in adj.get(cur, set()):
+            if nb not in seen:
+                seen.add(nb)
+                stack.append(nb)
+    return seen
+
+
+def _anchor_add_covered(text: str, snapshot: Any, touched, untouched) -> bool:
+    """“给 X 加一个物理视角”这类指令里 X 只是锚点：模型改为扩展现有模块（不直接动 X）是合理行为，不报 warning。"""
+    if not _ANCHOR_ADD_RE.search(str(text or "")):
+        return False
+    neighbors = _connected_node_ids(snapshot, untouched)
+    return any(str(t) in neighbors for t in (touched or []))
+
 
 ACTION_WORDS = (
     "删除", "删掉", "去掉", "新增", "补充", "创建", "加上", "添加", "连接",
@@ -111,7 +146,7 @@ def rule_selfcheck(
     focus = [str(item) for item in (focus_node_ids or []) if str(item)]
     if focus:
         untouched = [node_id for node_id in focus if node_id not in touched]
-        if untouched:
+        if untouched and not _anchor_add_covered(text, snapshot, touched, untouched):
             issues.append("指令指向的节点未在本次操作中涉及：" + "、".join(untouched))
 
     if not op_list and any(word in text for word in ACTION_WORDS):
