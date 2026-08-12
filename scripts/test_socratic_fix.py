@@ -3,6 +3,7 @@
 import sys
 sys.path.insert(0, 'D:/PhyMathia/src')
 from server import context
+_orig_fns = {name: getattr(context, name) for name in ("_mutate_json", "_read_socratic_state", "_write_socratic_state", "_delete_socratic_state")}
 
 # 1) _sync_socratic_state_from_prompt：保留连对次数/已答轮数，刷新问题与等级
 state = {"active": True, "level": "basic", "question": "旧问题", "correctStreak": 2, "answeredCount": 3}
@@ -181,5 +182,8 @@ instExplain = context._socratic_state_instruction("br_x", "explain")
 assert "【讲解】" in instExplain and 'done="true"' in instExplain, instExplain
 context._read_socratic_state = lambda ref: None
 assert context._socratic_state_instruction("br_x", "hint") == ""
+
+for _name, _fn in _orig_fns.items():
+    setattr(context, _name, _fn)
 
 print("ALL SOCRATIC FIX TESTS PASSED")

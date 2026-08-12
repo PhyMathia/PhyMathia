@@ -21,6 +21,39 @@ def _read_json(path: Path, default=None):
     return default if default is not None else {}
 
 
+_JSON_READ_CACHE = {}
+_JSON_READ_CACHE_MAX = 32
+
+
+def _invalidate_json_cache(path) -> None:
+    """使指定路径的读取缓存失效（写入后调用）。"""
+    if path is not None:
+        with _JSON_LOCK:
+            _JSON_READ_CACHE.pop(str(path), None)
+
+
+def _read_json_cached(path, default=None):
+    """带 mtime+size 失效的内存缓存读取，适合高频只读路径（如会话消息）。
+
+    - 写入方通过 _write_json 自动失效缓存；
+    - 读取方不应原地修改返回的数据（如需修改请先拷贝）。
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return _read_json(path, default)
+    key = str(path)
+    with _JSON_LOCK:
+        cached = _JSON_READ_CACHE.get(key)
+        if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+            return cached[2]
+    data = _read_json(path, default)
+    with _JSON_LOCK:
+        if len(_JSON_READ_CACHE) >= _JSON_READ_CACHE_MAX:
+            _JSON_READ_CACHE.clear()
+        _JSON_READ_CACHE[key] = (stat.st_mtime_ns, stat.st_size, data)
+    return data
+
 def _write_json(path: Path, data):
     content = json.dumps(data, ensure_ascii=False, indent=2)
     tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -28,6 +61,7 @@ def _write_json(path: Path, data):
         try:
             tmp_path.write_text(content, encoding="utf-8")
             os.replace(tmp_path, path)
+            _invalidate_json_cache(path)
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
@@ -74,9 +108,11 @@ def _resolve_messages_path(session_id: str) -> Path:
             return _get_messages_path(sid)
     return direct
 
-
+
+
 
 __all__ = [
     "_read_json", "_write_json", "_mutate_json", "_delete_by_session",
+    "_read_json_cached", "_invalidate_json_cache",
     "_get_messages_path", "_resolve_messages_path",
 ]

@@ -152,7 +152,8 @@ class ContextTest(unittest.TestCase):
     def test_trim_context_content_keeps_viz_when_requested(self):
         big = "<viz>```html\n" + ("<div>html内容" * 1500) + "```</viz>"
         out = context_mod._trim_context_content(big, keep_viz=True)
-        self.assertIn("<div>html内容", out)
+        self.assertIn("[交互可视化摘要]", out)
+        self.assertNotIn("<div>html内容", out)
 
     def test_recent_context_summarizes_old_assistant(self):
         big = "<physics>正文</physics>\n<summary>摘要内容</summary>" + ("很长" * 5000)
@@ -178,7 +179,8 @@ class ContextTest(unittest.TestCase):
         default = context_mod._recent_context_messages(msgs, max_rounds=1)
         self.assertNotIn("<div>html内容", default[1]["content"])
         viz = context_mod._recent_context_messages(msgs, max_rounds=1, current_prompt="这个可视化没看懂")
-        self.assertIn("<div>html内容", viz[1]["content"])
+        self.assertNotIn("<div>html内容", viz[1]["content"])
+        self.assertIn("[交互可视化摘要]", viz[1]["content"])
 
     def test_graph_message_summary_uses_cached(self):
         msg = {"content": "<physics>超长正文</physics>" + ("很长" * 5000), "summary": "缓存的摘要"}
@@ -351,13 +353,16 @@ class ContextOptimizationTest(unittest.TestCase):
             {"timestamp": "t4", "kind": "answer", "module": "physics"},
         ]
         orig = context_mod._read_json
+        orig_resolve6 = context_mod._resolve_messages_path
         context_mod._read_json = lambda _path, default=None: msgs
+        context_mod._resolve_messages_path = lambda sid: "fake"
         try:
             out = context_mod._load_session_context_from_path(
                 "sess_x", path, workflow_context={"upstream": [{"label": "x", "content": "..."}]}
             )
         finally:
             context_mod._read_json = orig
+            context_mod._resolve_messages_path = orig_resolve6
         contents = [item["content"] for item in out]
         self.assertIn("q1", contents)
         self.assertIn("q2", contents)
@@ -365,10 +370,12 @@ class ContextOptimizationTest(unittest.TestCase):
         self.assertNotIn("A1正文", contents)
 
         context_mod._read_json = lambda _path, default=None: msgs
+        context_mod._resolve_messages_path = lambda sid: "fake"
         try:
             out2 = context_mod._load_session_context_from_path("sess_x", path)
         finally:
             context_mod._read_json = orig
+            context_mod._resolve_messages_path = orig_resolve6
         contents2 = [item["content"] for item in out2]
         self.assertTrue(any("A1正文" in c for c in contents2))
 
@@ -393,6 +400,80 @@ class WorkflowAnalysisInstructionTest(unittest.TestCase):
         inst = context_mod._workflow_context_instruction({"mode": "module", "target": {"kind": "module", "module": "physics", "label": "物理视角"}, "analysis": "核心是回复力与位移成正比", "question": "简谐运动"})
         self.assertIn("隐藏问题分析", inst)
         self.assertIn("核心是回复力与位移成正比", inst)
+
+
+
+class Wave2OptimizationTest(unittest.TestCase):
+    def test_trim_context_keeps_viz_digest(self):
+        big = "<viz>```html\n<div>真实页面</div><script>let a=1; /*逻辑*/</script><p>这张图展示简谐运动</p>```</viz><summary>摘要</summary>" + ("很长" * 4000)
+        out = context_mod._trim_context_content(big, keep_viz=True)
+        self.assertIn("[交互可视化摘要]", out)
+        self.assertIn("页面文字", out)
+        self.assertIn("脚本片段", out)
+        self.assertNotIn("<div>真实页面", out)
+        self.assertLess(len(out), len(big))
+        self.assertLess(len(out), 9000)
+
+    def test_viz_digest_no_script(self):
+        big = "<viz>```html\n<p>只有文字说明</p>```</viz>"
+        out = context_mod._viz_digest(big)
+        self.assertIn("页面文字", out)
+        self.assertIn("只有文字说明", out)
+
+    def test_read_json_cached_invalidation(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "msg.json"
+            storage_mod._write_json(path, {"n": 1})
+            first = storage_mod._read_json_cached(path)
+            second = storage_mod._read_json_cached(path)
+            self.assertIs(first, second)
+            storage_mod._write_json(path, {"n": 2})
+            third = storage_mod._read_json_cached(path)
+            self.assertIsNot(first, third)
+            self.assertEqual(third["n"], 2)
+
+    def test_socratic_state_expired(self):
+        import time as _time
+        now = int(_time.time())
+        self.assertFalse(context_mod._socratic_state_expired({"active": True, "updatedAt": now}, now))
+        self.assertTrue(context_mod._socratic_state_expired({"active": True, "updatedAt": now - 25 * 3600}, now))
+        self.assertFalse(context_mod._socratic_state_expired({"active": True}, now))
+        self.assertFalse(context_mod._socratic_state_expired(None, now))
+
+    def test_read_socratic_state_expired_cleans(self):
+        import time as _time
+        orig_read = context_mod._read_json
+        orig_delete = context_mod._delete_socratic_state
+        deleted = []
+        context_mod._read_json = lambda path, default=None: {context_mod._socratic_key("br_x"): {"active": True, "updatedAt": int(_time.time()) - 25 * 3600}}
+        context_mod._delete_socratic_state = lambda ref: deleted.append(ref)
+        try:
+            state = context_mod._read_socratic_state("br_x")
+        finally:
+            context_mod._read_json = orig_read
+            context_mod._delete_socratic_state = orig_delete
+        self.assertIsNone(state)
+        self.assertEqual(deleted, ["br_x"])
+
+    def test_resolve_socratic_branch_skips_expired(self):
+        import time as _time
+        orig_read = context_mod._read_json
+        orig_mutate = context_mod._mutate_json
+        orig_resolve = context_mod._resolve_messages_path
+        kv = {"socratic:br_sess_1234567890abc_1": {"active": True, "updatedAt": int(_time.time()) - 25 * 3600}}
+        mutated = []
+        context_mod._read_json = lambda path, default=None: kv if str(path) == str(context_mod.KV_PATH) else (default if default is not None else [])
+        context_mod._mutate_json = lambda path, updater: mutated.append(updater(dict(kv)))
+        context_mod._resolve_messages_path = lambda sid: "fake"
+        try:
+            ref = context_mod._resolve_socratic_branch("sess_1234567890abcdef123456")
+        finally:
+            context_mod._read_json = orig_read
+            context_mod._mutate_json = orig_mutate
+            context_mod._resolve_messages_path = orig_resolve
+        self.assertEqual(ref, "")
+        self.assertTrue(mutated)
+        self.assertNotIn("socratic:br_sess_1234567890abc_1", mutated[0])
 
 
 if __name__ == "__main__":

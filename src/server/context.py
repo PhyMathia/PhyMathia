@@ -4,11 +4,11 @@ import re
 import time
 
 from .config import KV_PATH
-from .storage import _mutate_json, _read_json, _resolve_messages_path
+from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messages_path
 # ====== 普通聊天上下文瘦身 ======
 _CONTEXT_MAX_USER_CHARS = 4000
 _CONTEXT_RECENT_FULL_MAX = 8000
-_CONTEXT_VIZ_KEEP_MAX = 6000
+_VIZ_DIGEST_MAX = 1200
 VIZ_PLACEHOLDER = "[交互可视化内容已省略]"
 _VIZ_WANT_RE = re.compile(r"可视化|交互|动画|没看懂|看不懂|HTML|html|演示|3D|这个图|那张图|图里|图上的|画面", re.I)
 
@@ -139,7 +139,7 @@ def _prompt_wants_viz(prompt: str) -> bool:
 
 def _trim_context_content(content: str, keep_viz: bool = False) -> str:
     """压缩大段 assistant 消息：保留 <summary> 摘要标签；<viz>/```html``` 大块
-    HTML 默认替换为占位符（keep_viz=True 时保留并截断到上限）；超出上限再截断。"""
+    HTML 默认替换为占位符（keep_viz=True 时替换为可视化摘要）；超出上限再截断。"""
     if not content:
         return ""
     if len(content) <= _CONTEXT_RECENT_FULL_MAX:
@@ -151,11 +151,11 @@ def _trim_context_content(content: str, keep_viz: bool = False) -> str:
 
     def _viz_repl(match_obj):
         if keep_viz:
-            return match_obj.group(0)[:_CONTEXT_VIZ_KEEP_MAX] + "\n<!-- 可视化内容过长，已截断 -->"
+            return "[交互可视化摘要]" + "\n" + _viz_digest(match_obj.group(0))
         return VIZ_PLACEHOLDER
 
     text = re.sub(r"<viz>[\s\S]*?</viz>", _viz_repl, content, flags=re.I)
-    text = re.sub(r"```html\s*[\s\S]*?```", _viz_repl, text, flags=re.I)
+    text = re.sub(r"```html```\s*[\s\S]*?```html```", _viz_repl, text, flags=re.I)
     if len(text) <= _CONTEXT_RECENT_FULL_MAX:
         return text
     head = text[:_CONTEXT_RECENT_FULL_MAX]
@@ -163,6 +163,37 @@ def _trim_context_content(content: str, keep_viz: bool = False) -> str:
         head += "\n\n<summary>" + summary + "</summary>"
     return head + "\n…（上下文已截断）"
 
+
+def _viz_digest(content: str, max_chars: int = _VIZ_DIGEST_MAX) -> str:
+    """从可视化 HTML 中提取模型可用的精简信息：可见文字 + 脚本片段。
+
+    追问可视化时不再发送整段 HTML，避免占用大量 token。
+    """
+    if not content:
+        return ""
+    html = content
+    viz = _extract_section(content, "viz")
+    if viz:
+        html = viz
+    else:
+        m = re.search(r"```html```\s*([\s\S]*?)```html```", content, re.I)
+        if m:
+            html = m.group(1)
+    scripts = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html, re.I)
+    script_snippet = ""
+    if scripts:
+        joined = " ".join(scripts)
+        script_snippet = re.sub(r"\s+", " ", joined).strip()[:_VIZ_DIGEST_MAX // 2]
+    text = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    lines = []
+    if text:
+        lines.append("页面文字：" + text[:800])
+    if script_snippet:
+        lines.append("脚本片段：" + script_snippet)
+    return "\n".join(lines)[:max_chars]
 
 _SOCRATIC_PROMPT_PREFIXES = ("[苏格拉底回答]", "[苏格拉底提示]", "[苏格拉底讲解]")
 
@@ -283,6 +314,14 @@ def _extract_parent_source(all_messages: list, parent_id: str, source_module: st
     return ""
 
 
+def _load_messages(session_id: str) -> list:
+    """读取会话消息；真实路径走缓存，字符串/测试兼容路径回退普通读取。"""
+    messages_path = _resolve_messages_path(session_id)
+    if hasattr(messages_path, "stat"):
+        return _read_json_cached(messages_path, [])
+    return _read_json(messages_path, [])
+
+
 def _load_session_context(
     session_id: str,
     max_rounds: int = 3,
@@ -302,8 +341,7 @@ def _load_session_context(
     父回答中聚焦模块的内容，以及该分支自己的消息链。
     budget_tokens > 0 时按 token 预算收缩（保留最后一条消息）。
     """
-    messages_path = _resolve_messages_path(session_id)
-    all_messages = _read_json(messages_path, [])
+    all_messages = _load_messages(session_id)
     if not all_messages:
         return []
     if graph_path:
@@ -562,8 +600,7 @@ def _load_session_context_from_path(
     workflow_context: dict = None,
     budget_tokens: int = 0,
 ) -> list:
-    messages_path = _resolve_messages_path(session_id)
-    all_messages = _read_json(messages_path, [])
+    all_messages = _load_messages(session_id)
     if not all_messages or not graph_path:
         return []
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
@@ -639,6 +676,21 @@ def _load_session_context_from_path(
 
 SOCRATIC_STATE_PREFIX = "socratic:"
 
+SOCRATIC_STATE_TTL_SECONDS = 24 * 60 * 60
+# 低于该值的时间戳视为旧版占位值（非真实 epoch），不做 TTL 清理
+SOCRATIC_STATE_TS_SANITY = 100_000_000
+
+
+def _socratic_state_expired(state, now: int = None) -> bool:
+    """苏格拉底状态超过 TTL 未更新视为过期；无 updatedAt 或旧版占位时间戳不主动清理。"""
+    if not isinstance(state, dict):
+        return False
+    updated = int(state.get("updatedAt") or 0)
+    if not updated or updated < SOCRATIC_STATE_TS_SANITY:
+        return False
+    now = now if now is not None else int(time.time())
+    return now - updated > SOCRATIC_STATE_TTL_SECONDS
+
 
 def _socratic_key(ref: str) -> str:
     return f"{SOCRATIC_STATE_PREFIX}{ref}"
@@ -648,6 +700,9 @@ def _read_socratic_state(ref: str):
     data = _read_json(KV_PATH, {})
     state = data.get(_socratic_key(ref))
     if isinstance(state, dict) and state.get("active"):
+        if _socratic_state_expired(state):
+            _delete_socratic_state(ref)
+            return None
         return state
     return None
 
@@ -698,7 +753,7 @@ def _resolve_socratic_branch(session_id: str) -> str:
     """手动输入 [苏格拉底回答] 且未带分支时，定位最近仍在进行的苏格拉底分支。
 
     优先使用 KV 中该会话最新的活动分支状态；没有活动状态时，回退到消息里
-    最近一条苏格拉底消息所在的分支（用于上下文隔离）。
+    最近一条苏格拉底消息所在的分支（用于上下文隔离）。过期状态会被清理。
     """
     if not session_id:
         return ""
@@ -707,15 +762,25 @@ def _resolve_socratic_branch(session_id: str) -> str:
     prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
     best_ref = ""
     best_ts = -1
+    expired_keys = []
     for key, state in data.items():
         if key.startswith(prefix) and isinstance(state, dict) and state.get("active"):
+            if _socratic_state_expired(state):
+                expired_keys.append(key)
+                continue
             ts = int(state.get("updatedAt") or 0)
             if ts > best_ts:
                 best_ts = ts
                 best_ref = key[len(SOCRATIC_STATE_PREFIX):]
+    if expired_keys:
+        def updater(d):
+            for k in expired_keys:
+                d.pop(k, None)
+            return d
+        _mutate_json(KV_PATH, updater)
     if best_ref:
         return best_ref
-    messages = _read_json(_resolve_messages_path(session_id), [])
+    messages = _load_messages(session_id)
     for msg in reversed(messages):
         if msg.get("role") == "user" and _is_socratic_message(msg):
             bid = str(msg.get("branchId") or "")
@@ -834,7 +899,7 @@ __all__ = [
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_key", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
 ]
