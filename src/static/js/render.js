@@ -50,23 +50,16 @@ function _sanitizeVizHtml(html) {
 }
 
 function buildVizCard(htmlContent, vizId) {
-  const safe = _sanitizeVizHtml(htmlContent).replace(/<formula>([\s\S]*?)<\/formula>/gi, function (m, latex) { return '$' + latex + '$'; });
+  const safe = _sanitizeVizHtml(htmlContent);
   // 注入主题桥接脚本（在 sanitize 之后，避免被清理）：
   // 监听父页面主题切换消息 + 加载时读取父主题，设置 data-theme 并尝试调用页面内主题机制
-  // 注入用函数替换：String.replace 会把替换串里的 $ 当特殊模式处理，会破坏桥接脚本里的 $/$ 定界符
-  let finalHtml = safe.replace(/<\/head>/i, function () { return _VIZ_THEME_BRIDGE + '</head>'; });
+  let finalHtml = safe.replace(/<\/head>/i, _VIZ_THEME_BRIDGE + '</head>');
   if (finalHtml === safe) {
-    finalHtml = safe.replace(/<\/body>/i, function () { return _VIZ_THEME_BRIDGE + '</body>'; });
+    finalHtml = safe.replace(/<\/body>/i, _VIZ_THEME_BRIDGE + '</body>');
   }
   if (finalHtml === safe) {
     finalHtml = safe + _VIZ_THEME_BRIDGE;
   }
-  // 注入公式渲染桥（KaTeX），放在 </body> 前，确保 body 已解析
-  let withMath = finalHtml.replace(/<\/body>/i, function () { return _VIZ_MATH_BRIDGE + '</body>'; });
-  if (withMath === finalHtml) {
-    withMath = finalHtml + _VIZ_MATH_BRIDGE;
-  }
-  finalHtml = withMath;
   _vizStore[vizId] = finalHtml;  // 保存（含桥接脚本）供全屏/复制/新标签页使用
 
   const isTall = safe.length > 8000 || /canvas|svg|three|chart|d3/i.test(safe);
@@ -118,66 +111,6 @@ const _VIZ_THEME_BRIDGE = '<script>(function(){'
   + 'window["parent"].postMessage({type:"phymathia-theme-native",has:has},"*");'
   + '}catch(e){window["parent"]&&window["parent"].postMessage({type:"phymathia-theme-native",has:false},"*");}'
   + '})();<\/script>';
-
-// ====== 可视化 iframe 公式渲染桥（KaTeX） ======
-// AI 生成的 HTML 是独立页面，不含 KaTeX；此桥在 iframe 内加载 KaTeX 并自动渲染 $...$/$$...$$/\(...\)/\[...\] 公式。
-const _VIZ_MATH_BRIDGE = `<script>
-(function(){
-  if (window.__phymathiaMathInited) return;
-  window.__phymathiaMathInited = true;
-  function boot(){
-    var doc = document;
-    if (!doc.body) return;
-    // 注意：绝不能用 body.innerHTML 替换来转换 <formula>——那会销毁已绘制的 canvas/DOM 状态
-    // <formula> 已在 buildVizCard 里做字符串级转换，这里只负责 KaTeX 渲染
-    var attempts = 0;
-    function render(){
-      attempts++;
-      if (window.renderMathInElement) {
-        try {
-          var BS = String.fromCharCode(92);
-          window.renderMathInElement(doc.body, {
-            delimiters: [
-              {left:'$$', right:'$$', display:true},
-              {left:'$', right:'$', display:false},
-              {left: BS + '(', right: BS + ')', display:false},
-              {left: BS + '[', right: BS + ']', display:true}
-            ],
-            throwOnError: false,
-            ignoredTags: ['script', 'noscript', 'style', 'textarea', 'annotation', 'annotation-xml']
-          });
-        } catch(e) {
-          if (typeof console !== 'undefined' && console.warn) console.warn('phymathia viz math render error', e);
-        }
-      }
-      if (attempts < 3) setTimeout(render, attempts === 1 ? 800 : 2500);
-    }
-    if (window.katex && window.renderMathInElement) { render(); return; }
-    var css = doc.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';
-    doc.head.appendChild(css);
-    var s = doc.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js';
-    s.onload = function(){
-      var ar = doc.createElement('script');
-      ar.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js';
-      ar.onload = render;
-      doc.head.appendChild(ar);
-    };
-    s.onerror = function(){
-      if (typeof console !== 'undefined' && console.warn) console.warn('phymathia viz katex load failed');
-    };
-    doc.head.appendChild(s);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
-  } else {
-    boot();
-  }
-})();
-</script>`;
-
 
 // 父页面主题切换时，向所有可视化 iframe（含全屏 iframe）广播
 function syncVizThemes(theme) {
