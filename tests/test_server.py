@@ -185,6 +185,111 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(context_mod._graph_message_summary(msg), "缓存的摘要")
 
 
+
+    def test_recent_context_digest_pairs_roles(self):
+        msgs = [
+            {"role": "user", "content": "u0"},
+            {"role": "assistant", "content": "<summary>a0</summary>"},
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "<summary>a1</summary>"},
+            {"role": "user", "content": "u2"},
+        ]
+        result = context_mod._recent_context_messages(msgs, max_rounds=1, summary_rounds=2)
+        roles = [m["role"] for m in result]
+        self.assertEqual(roles, ["user", "assistant", "user", "assistant", "user"])
+        self.assertEqual(result[0]["content"], "（更早对话）用户：u0")
+        self.assertIn("a0", result[1]["content"])
+        self.assertEqual(result[2]["content"], "（更早对话）用户：u1")
+        self.assertIn("a1", result[3]["content"])
+        self.assertEqual(result[4]["content"], "u2")
+
+    def test_recent_context_budget_applied(self):
+        msgs = [{"role": "user", "content": "问题%d" % i + "很长" * 30} for i in range(20)]
+        result = context_mod._recent_context_messages(msgs, max_rounds=3, budget_tokens=100)
+        total = sum(context_mod.estimate_tokens(m["content"]) for m in result)
+        self.assertLessEqual(total, 100)
+        self.assertEqual(result[-1]["content"], "问题19" + "很长" * 30)
+
+    def test_shrink_history_to_budget(self):
+        msgs = [
+            {"role": "user", "content": "u0"},
+            {"role": "assistant", "content": "a0 " + "很长" * 500},
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "<summary>最近摘要</summary>" + ("很长" * 5000)},
+        ]
+        result = context_mod._shrink_history_to_budget(msgs, 400)
+        total = sum(context_mod.estimate_tokens(m["content"]) for m in result)
+        self.assertLessEqual(total, 400)
+        self.assertEqual(result[-1]["role"], "assistant")
+
+    def test_shrink_history_to_budget_protected(self):
+        protected = "当前模块正文" + ("很长" * 200)
+        msgs = [
+            {"role": "user", "content": "u0"},
+            {"role": "assistant", "content": "旧回答" + ("很长" * 300)},
+            {"role": "assistant", "content": protected},
+        ]
+        result = context_mod._shrink_history_to_budget(msgs, 150, {protected})
+        self.assertEqual(result, [{"role": "assistant", "content": protected}])
+
+    def test_graph_message_summary_cuts_at_sentence(self):
+        long_run = "没有标点的补充" * 40
+        msg = {"content": "第一句话是物理直觉的完整说明并且足够长超过四十个字符还加了一些额外内容保证句号位置靠后。" + long_run}
+        s = context_mod._graph_message_summary(msg)
+        self.assertTrue(s.endswith("…"))
+        self.assertNotIn("没有标点的补充", s)
+
+    def test_resolve_context_budget(self):
+        self.assertEqual(context_mod.resolve_context_budget("deepseek-chat"), 16000)
+        self.assertEqual(context_mod.resolve_context_budget("gpt-4o"), 16000)
+        self.assertGreaterEqual(context_mod.resolve_context_budget("unknown-model"), 2048)
+
+    def test_path_dedupe_by_ts_and_content(self):
+        msgs = [
+            {"role": "user", "content": "第一个问题", "timestamp": 1},
+            {"role": "assistant", "content": "<summary>回答一</summary>物理正文", "timestamp": 2},
+            {"role": "user", "content": "第一个问题", "timestamp": 3},
+            {"role": "assistant", "content": "<summary>回答二</summary>数学正文", "timestamp": 4},
+        ]
+        path = [
+            {"kind": "user", "timestamp": 1},
+            {"kind": "answer", "timestamp": 2},
+            {"kind": "user", "timestamp": 3},
+            {"kind": "answer", "timestamp": 4},
+        ]
+        orig_resolve = context_mod._resolve_messages_path
+        orig_read = context_mod._read_json
+        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._read_json = lambda path_, default: msgs
+        try:
+            result = context_mod._load_session_context_from_path("s1", path)
+        finally:
+            context_mod._resolve_messages_path = orig_resolve
+            context_mod._read_json = orig_read
+        contents = [m["content"] for m in result]
+        self.assertEqual(contents.count("第一个问题"), 2)
+        self.assertTrue(any("回答一" in c for c in contents))
+        self.assertTrue(any("回答二" in c for c in contents))
+
+    def test_path_dedupe_same_ts_same_content(self):
+        msgs = [{"role": "user", "content": "重复问题", "timestamp": 1}]
+        path = [
+            {"kind": "user", "timestamp": 1},
+            {"kind": "user", "timestamp": 1},
+        ]
+        orig_resolve = context_mod._resolve_messages_path
+        orig_read = context_mod._read_json
+        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._read_json = lambda path_, default: msgs
+        try:
+            result = context_mod._load_session_context_from_path("s1", path)
+        finally:
+            context_mod._resolve_messages_path = orig_resolve
+            context_mod._read_json = orig_read
+        contents = [m["content"] for m in result]
+        self.assertEqual(contents.count("重复问题"), 1)
+
+
 class DocumentTest(unittest.TestCase):
     def test_sanitize_filename(self):
         self.assertEqual(documents_mod._sanitize_filename("../evil/name.txt"), "name.txt")
@@ -227,9 +332,10 @@ class ContextOptimizationTest(unittest.TestCase):
         full_count = sum(1 for m in out if "（更早对话）" not in m["content"])
         digest_count = sum(1 for m in out if "（更早对话）" in m["content"])
         self.assertEqual(full_count, 6)
-        self.assertEqual(digest_count, 7)
+        # 每个更早轮次拆成「用户一行 + AI 一行」摘要对：7 轮 * 2 = 14 条
+        self.assertEqual(digest_count, 14)
         self.assertIn("问题0", out[0]["content"])
-        self.assertIn("答案摘要0", out[0]["content"])
+        self.assertIn("答案摘要0", out[1]["content"])
 
     def test_from_path_skips_upstream_when_workflow_context(self):
         msgs = [

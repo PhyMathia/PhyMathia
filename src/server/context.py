@@ -18,6 +18,117 @@ def estimate_tokens(text: str) -> int:
     cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef")
     return (4 * cjk + (len(s) - cjk) + 3) // 4
 
+# ====== 上下文 token 预算 ======
+MODEL_CONTEXT_WINDOWS = {
+    "deepseek-chat": 65536,
+    "deepseek-reasoner": 65536,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+}
+DEFAULT_CONTEXT_WINDOW = 128000
+CONTEXT_OUTPUT_RESERVE_TOKENS = 8192
+MAX_CONTEXT_BUDGET_TOKENS = 16000
+MIN_CONTEXT_BUDGET_TOKENS = 2048
+
+
+def resolve_context_budget(model_name: str = "") -> int:
+    """按模型上下文窗口计算本次请求的输入 token 预算。
+
+    预算 = min(全局上限, 窗口 - 输出预留)，至少 MIN_CONTEXT_BUDGET_TOKENS；
+    未知模型按 DEFAULT_CONTEXT_WINDOW 处理。
+    """
+    key = str(model_name or "").strip().lower()
+    window = MODEL_CONTEXT_WINDOWS.get(key, DEFAULT_CONTEXT_WINDOW)
+    return max(MIN_CONTEXT_BUDGET_TOKENS, min(MAX_CONTEXT_BUDGET_TOKENS, window - CONTEXT_OUTPUT_RESERVE_TOKENS))
+
+
+def _content_timestamp_map(messages: list) -> dict:
+    """content -> 首次出现的 timestamp，用于跨消息按 (timestamp, content) 去重。"""
+    mapping = {}
+    for msg in messages or []:
+        content = str(msg.get("content") or "")
+        if content and content not in mapping:
+            mapping[content] = str(msg.get("timestamp") or "")
+    return mapping
+
+
+def _shrink_history_to_budget(messages: list, budget_tokens: int, protected: set = None) -> list:
+    """按 token 预算收缩历史消息，保持消息顺序。
+
+    策略（从低优先到高优先逐级压缩）：
+    1. 把较早的 assistant 消息替换为摘要（受保护内容与最后一条消息除外）；
+    2. 从最早开始丢弃非受保护、非最后一条消息；
+    3. 最后一条 assistant 兜底截断为摘要；
+    4. 极端情况把最早的消息截短。
+    """
+    if not messages or not budget_tokens or budget_tokens <= 0:
+        return messages
+    protected = protected or set()
+    total = sum(estimate_tokens(str(m.get("content") or "")) for m in messages)
+    if total <= budget_tokens:
+        return messages
+
+    last_idx = len(messages) - 1
+    # 阶段1：较早 assistant -> 摘要
+    for i, m in enumerate(messages):
+        if total <= budget_tokens:
+            break
+        if i >= last_idx:
+            break
+        if m.get("role") != "assistant":
+            continue
+        content = str(m.get("content") or "")
+        if content in protected:
+            continue
+        summary = _graph_message_summary(m)[:200]
+        if not summary or summary == content:
+            continue
+        delta = estimate_tokens(content) - estimate_tokens(summary)
+        if delta <= 0:
+            continue
+        m["content"] = summary
+        total -= delta
+
+    # 阶段2：从最早开始丢弃非受保护、非最后一条消息
+    i = 0
+    while total > budget_tokens and i < last_idx:
+        m = messages[i]
+        content = str(m.get("content") or "")
+        if content in protected:
+            i += 1
+            continue
+        total -= estimate_tokens(content)
+        messages.pop(i)
+        last_idx = len(messages) - 1
+
+    # 阶段3：最后一条 assistant 兜底截断
+    if total > budget_tokens and messages and messages[-1].get("role") == "assistant":
+        content = str(messages[-1].get("content") or "")
+        if content not in protected:
+            summary = _graph_message_summary(messages[-1])[:160]
+            if summary and summary != content:
+                total -= estimate_tokens(content) - estimate_tokens(summary)
+                messages[-1]["content"] = summary
+
+    # 阶段4：极端情况把最早的消息截短（保留最后一条）
+    i = 0
+    while total > budget_tokens and i < len(messages) - 1:
+        m = messages[i]
+        content = str(m.get("content") or "")
+        if content in protected:
+            i += 1
+            continue
+        truncated = content[:200] + "…（已截断）"
+        delta = estimate_tokens(content) - estimate_tokens(truncated)
+        if delta > 0:
+            m["content"] = truncated
+            total -= delta
+            i += 1
+        else:
+            total -= estimate_tokens(content)
+            messages.pop(i)
+    return messages
+
 
 def _prompt_wants_viz(prompt: str) -> bool:
     """判断当前提问是否与可视化相关（决定是否在上下文中保留整段 HTML）。"""
@@ -85,6 +196,7 @@ def _recent_context_messages(
     include_socratic: bool = False,
     current_prompt: str = "",
     summary_rounds: int = 7,
+    budget_tokens: int = 0,
 ) -> list:
     """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。
 
@@ -92,8 +204,9 @@ def _recent_context_messages(
     - 最近 max_rounds 轮：用户消息完整保留（超长时截断到上限）；最近一条
       assistant 消息完整保留（<viz>/```html``` 大段 HTML 默认替换为占位符，
       仅当当前提问涉及可视化时才保留）；更早的 assistant 只保留摘要。
-    - 更早的 summary_rounds 轮：每轮只保留一行摘要（用户问题前 80 字 + AI
-      摘要前 120 字），帮助长会话里理解"之前说过/继续"类指代，成本极低。
+    - 更早的 summary_rounds 轮：每轮拆成「用户一行 + AI 一行」的摘要对，
+      帮助长会话里理解"之前说过/继续"类指代，成本极低。
+    - budget_tokens > 0 时，最后按 token 预算收缩，避免上下文溢出。
     """
     messages = all_messages
     if not include_socratic:
@@ -115,11 +228,10 @@ def _recent_context_messages(
                 full.insert(0, {"role": "user", "content": content})
                 rounds += 1
             elif summary_rounds_seen < summary_rounds:
-                line = "（更早对话）用户：" + content[:80]
+                digest.insert(0, {"role": "user", "content": "（更早对话）用户：" + content[:80]})
                 if pending_ai:
-                    line += "；AI：" + pending_ai
-                    pending_ai = ""
-                digest.insert(0, {"role": "user", "content": line})
+                    digest.insert(1, {"role": "assistant", "content": "（更早对话）AI：" + pending_ai})
+                pending_ai = ""
                 summary_rounds_seen += 1
             else:
                 break
@@ -135,7 +247,12 @@ def _recent_context_messages(
                 pending_ai = _graph_message_summary(msg)[:120]
             else:
                 break
-    return digest + full
+    if pending_ai and summary_rounds_seen < summary_rounds:
+        digest.insert(0, {"role": "assistant", "content": "（更早对话）AI：" + pending_ai})
+    result = digest + full
+    if budget_tokens and budget_tokens > 0:
+        result = _shrink_history_to_budget(result, budget_tokens)
+    return result
 
 def _extract_section(content: str, tag: str) -> str:
     match = re.search(rf"<{tag}>([\s\S]*?)</{tag}>", content or "", re.I)
@@ -177,11 +294,13 @@ def _load_session_context(
     graph_path: list = None,
     current_prompt: str = "",
     workflow_context: dict = None,
+    budget_tokens: int = 0,
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
     普通问答默认过滤苏格拉底支线；当传入 branch_id 时，保留主线最近内容、
     父回答中聚焦模块的内容，以及该分支自己的消息链。
+    budget_tokens > 0 时按 token 预算收缩（保留最后一条消息）。
     """
     messages_path = _resolve_messages_path(session_id)
     all_messages = _read_json(messages_path, [])
@@ -196,33 +315,45 @@ def _load_session_context(
             max_rounds=max_rounds,
             current_prompt=current_prompt,
             workflow_context=workflow_context,
+            budget_tokens=budget_tokens,
         )
     if not branch_id:
-        return _recent_context_messages(all_messages, max_rounds, include_socratic, current_prompt)
+        return _recent_context_messages(
+            all_messages, max_rounds, include_socratic, current_prompt,
+            budget_tokens=budget_tokens,
+        )
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
     result = _recent_context_messages(main_messages, min(2, max_rounds), False, current_prompt)
-    seen = {item["content"] for item in result}
+    seen = {}
+    main_ts = _content_timestamp_map(main_messages)
+    for item in result:
+        seen.setdefault((main_ts.get(item["content"], ""), item["content"]), True)
 
     target_parent = parent_id or (branch_messages[0].get("parentId") if branch_messages else "")
+    source_ts = target_parent
     if target_parent:
         source = _extract_parent_source(all_messages, target_parent, source_module)
         if not source and branch_messages:
-            # 父消息不是完整卡片（如苏格拉底中间轮）时，回退到分支起点引用的父消息（原始学习卡片）
             fallback_parent = branch_messages[0].get("parentId") or ""
             if fallback_parent and str(fallback_parent) != str(target_parent):
                 source = _extract_parent_source(all_messages, fallback_parent, source_module)
-        if source and source not in seen:
+                source_ts = fallback_parent
+        if source and (str(source_ts), source) not in seen:
             result.append({"role": "assistant", "content": source})
-            seen.add(source)
+            seen[(str(source_ts), source)] = True
 
+    branch_ts = _content_timestamp_map(branch_messages)
     for item in _recent_context_messages(branch_messages, max_rounds, True, current_prompt):
-        if item["content"] not in seen:
+        key = (branch_ts.get(item["content"], ""), item["content"])
+        if key not in seen:
             result.append(item)
-            seen.add(item["content"])
-    return result
+            seen[key] = True
 
+    if budget_tokens and budget_tokens > 0:
+        result = _shrink_history_to_budget(result, budget_tokens)
+    return result
 
 def _branch_context_instruction(
     branch_type: str = "",
@@ -324,8 +455,15 @@ def _graph_message_summary(message: dict, module_key: str = "") -> str:
         return match.group(1).strip()[:200]
     text = re.sub(r"<[^>]+>", " ", content)
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:180]
-
+    if len(text) <= 180:
+        return text
+    # 按句子边界截断，避免切在公式/半句话中间
+    head = text[:180]
+    for sep in ("。", "！", "？", ". ", "! ", "? "):
+        idx = head.rfind(sep)
+        if idx > 40:
+            return head[:idx + len(sep)].strip() + "…"
+    return head + "…"
 
 def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
     if not graph_path:
@@ -422,6 +560,7 @@ def _load_session_context_from_path(
     max_rounds: int = 3,
     current_prompt: str = "",
     workflow_context: dict = None,
+    budget_tokens: int = 0,
 ) -> list:
     messages_path = _resolve_messages_path(session_id)
     all_messages = _read_json(messages_path, [])
@@ -429,8 +568,9 @@ def _load_session_context_from_path(
         return []
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
     result = []
-    seen = set()
+    seen = {}
     active_parent_missing = False
+    active_content = ""
     active_index = len(graph_path) - 1
     skip_upstream = bool(workflow_context and workflow_context.get("upstream"))
 
@@ -441,6 +581,7 @@ def _load_session_context_from_path(
         is_active = index == active_index
         role = msg.get("role") or "assistant"
         module_key = item.get("module") or item.get("moduleKey") or ""
+        ts = str(item.get("timestamp") or "")
         if role == "user":
             content = str(msg.get("content") or "")
         elif is_active:
@@ -449,17 +590,20 @@ def _load_session_context_from_path(
                 content = _branch_source_content(content, module_key)
                 if not content:
                     active_parent_missing = True
+            active_content = content
         elif skip_upstream:
             continue
         else:
             content = _graph_message_summary(msg, module_key if not is_active else "")
-        if not content or content in seen:
+        if not content:
+            continue
+        key = (ts, content)
+        if key in seen:
             continue
         result.append({"role": role, "content": content})
-        seen.add(content)
+        seen[key] = True
 
     if active_parent_missing and branch_id:
-        # 父消息不是完整卡片（如苏格拉底中间轮）时，回退到分支起点引用的父消息（原始学习卡片）
         branch_messages = [
             msg for msg in all_messages
             if str(msg.get("branchId") or "") == str(branch_id)
@@ -467,22 +611,30 @@ def _load_session_context_from_path(
         fallback_parent = branch_messages[0].get("parentId") if branch_messages else ""
         if fallback_parent:
             source = _extract_parent_source(all_messages, fallback_parent, source_module)
-            if source and source not in seen:
-                result.append({"role": "assistant", "content": source})
-                seen.add(source)
+            if source:
+                key = (str(fallback_parent), source)
+                if key not in seen:
+                    result.append({"role": "assistant", "content": source})
+                    seen[key] = True
+                    if not active_content:
+                        active_content = source
 
     if branch_id:
         branch_messages = [
             msg for msg in all_messages
             if str(msg.get("branchId") or "") == str(branch_id)
         ]
+        branch_ts = _content_timestamp_map(branch_messages)
         for item in _recent_context_messages(branch_messages, max_rounds, True, current_prompt):
-            if item["content"] not in seen:
+            key = (branch_ts.get(item["content"], ""), item["content"])
+            if key not in seen:
                 result.append(item)
-                seen.add(item["content"])
+                seen[key] = True
+
+    if budget_tokens and budget_tokens > 0:
+        protected = {active_content} if active_content else set()
+        result = _shrink_history_to_budget(result, budget_tokens, protected)
     return result
-
-
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"
@@ -682,7 +834,7 @@ __all__ = [
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "estimate_tokens", "_socratic_key", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_key", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
 ]

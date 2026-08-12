@@ -113,6 +113,7 @@ async def api_models_chat(request: Request):
         model_name = "deepseek-chat"
     base_url = payload.get("base_url", "")
     stream = payload.get("stream", True)
+    context_budget = resolve_context_budget(model_name)
 
     if not api_key and provider != "opencode":
         raise HTTPException(
@@ -193,6 +194,7 @@ async def api_models_chat(request: Request):
                 max_rounds=(1 if is_quick else 3),
                 current_prompt=prompt,
                 workflow_context=workflow_context,
+                budget_tokens=context_budget,
             )
             messages.extend(context)
 
@@ -204,7 +206,7 @@ async def api_models_chat(request: Request):
             messages.append({"role": "user", "content": prompt})
 
         ctx_text = "".join(str(m.get("content") or "") for m in messages)
-        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}")
+        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}, budget={context_budget}")
     else:
         # 旧格式：直接使用传入的 messages（兼容向后）
         messages = payload.get("messages", [])
