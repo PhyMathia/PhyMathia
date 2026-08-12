@@ -141,7 +141,7 @@ function sendGraphNewSession(el) {
   const node = el && el.closest ? el.closest('.graph-new-session-node') : null;
   const input = node && node.querySelector('.graph-new-session-input');
   const text = input ? input.value.trim() : '';
-  if (text && typeof window.sendQuick === 'function') window.sendQuick(text);
+  if (text && typeof window.startQuestionWorkflow === 'function') window.startQuestionWorkflow(text);
 }
 
 function graphModuleAction(action, nodeId) {
@@ -604,6 +604,11 @@ function buildGraphPathForAnchor(anchor) {
   }));
 }
 
+function _findDraftSourceNodeId(nodeId) {
+  const edge = (graphView.edges || []).find(e => String(e.to) === String(nodeId) && e.draft);
+  return edge ? edge.from : '';
+}
+
 function submitDraftQuestion(nodeId) {
   const node = _findDraftNode(nodeId);
   if (!node) return;
@@ -611,21 +616,10 @@ function submitDraftQuestion(nodeId) {
   const text = (input?.value || '').trim();
   if (!text) return;
   const meta = node.portMeta || {};
-  const branchType = meta.branchType === 'learn' ? 'learn' : meta.branchType === 'confused' ? 'confused' : 'followup';
-  const anchor = {
-    parentId: meta.parentId || '',
-    sourceModule: meta.sourceModule || '',
-    attribute: meta.attribute || '',
-    branchType,
-    branchId: typeof window._genBranchId === 'function' ? window._genBranchId() : 'br_' + Date.now(),
-    branchLabel: branchType === 'learn'
-      ? '进阶学习：' + (meta.question || meta.label || text)
-      : branchType === 'confused'
-        ? '没看懂：' + (meta.label || text)
-        : '追问：' + (meta.label || text),
-    fromPort: meta.fromPort || '',
-  };
-  if (typeof window.sendBranchQuick === 'function') window.sendBranchQuick(text, anchor);
+  const sourceNodeId = _findDraftSourceNodeId(nodeId);
+  if (typeof window.startQuestionWorkflow === 'function') {
+    window.startQuestionWorkflow(text, { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId });
+  }
 }
 
 function draftSocraticAnswer(nodeId) {
@@ -643,16 +637,10 @@ function draftAskAi(nodeId) {
   const meta = node.portMeta || {};
   const question = meta.question || '';
   if (!question) return;
-  const anchor = {
-    parentId: meta.parentId || '',
-    sourceModule: meta.sourceModule || '',
-    attribute: meta.attribute || '',
-    branchType: 'continue',
-    branchId: typeof window._genBranchId === 'function' ? window._genBranchId() : 'br_' + Date.now(),
-    branchLabel: '直接问AI：' + question,
-    fromPort: meta.fromPort || '',
-  };
-  if (typeof window.sendBranchQuick === 'function') window.sendBranchQuick(question, anchor);
+  const sourceNodeId = _findDraftSourceNodeId(nodeId);
+  if (typeof window.startQuestionWorkflow === 'function') {
+    window.startQuestionWorkflow(question, { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId });
+  }
 }
 
 function removeDraftNode(nodeId) {
@@ -1612,4 +1600,5 @@ function quickConnectToHub(hubId) {
   _saveGraphState(state);
   renderGraphCanvas();
   if (typeof showToast === 'function') showToast('已接入 ' + newConnections.length + ' 个输出，并按需补齐输入端口');
-}
+}
+

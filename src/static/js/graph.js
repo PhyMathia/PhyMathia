@@ -126,7 +126,7 @@ const graphView = {
 
 let workflowAbortController = null;
 let workflowRunActive = false;
-const WORKFLOW_MAX_CONCURRENCY = 3;
+const WORKFLOW_MAX_CONCURRENCY = 6;
 let workflowProgressActive = new Set();
 let _graphMermaidTimer = null;
 

@@ -533,6 +533,10 @@
     // 渲染当前聊天
     async function renderCurrentChat() {
       const container = document.getElementById('chatMessages');
+      if (!container) {
+        if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+        return;
+      }
       container.innerHTML = '';
 
       if (chatHistory.length === 0) {
@@ -863,6 +867,7 @@
 
     function restoreMessage(role, content, timestamp, duration, aborted, branchMeta) {
       const messages = document.getElementById('chatMessages');
+      if (!messages) return;
       const msg = document.createElement('div');
       msg.className = 'message ' + role;
 

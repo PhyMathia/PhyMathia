@@ -230,7 +230,8 @@
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
     }
-    document.getElementById('userInput').addEventListener('input', function() { autoResize(this); });
+    const userInputEl = document.getElementById('userInput');
+    if (userInputEl) userInputEl.addEventListener('input', function() { autoResize(this); });
 
     function formatTime(ts) {
       const d = new Date(ts);
@@ -243,11 +244,17 @@
       const min = Math.floor(sec / 60);
       const remSec = sec % 60;
       return min + 'm' + (remSec < 10 ? '0' : '') + remSec + 's';
-    }
+    }
 
+
+    let pendingQuickText = '';
     function sendQuick(text) {
-      document.getElementById('userInput').value = text;
-      autoResize(document.getElementById('userInput'));
+      pendingQuickText = String(text || '');
+      const input = document.getElementById('userInput');
+      if (input) {
+        input.value = pendingQuickText;
+        autoResize(input);
+      }
       sendMessage();
     }
 
@@ -282,7 +289,8 @@
       const input = document.getElementById('userInput');
       const btn = document.getElementById('sendBtn');
       const stopBtn = document.getElementById('stopBtn');
-      const text = input.value.trim();
+      const text = ((input && input.value.trim()) || pendingQuickText || '').trim();
+      pendingQuickText = '';
       const isCasual = _isCasualPrompt(text);
       if (!text || isStreaming) return;
 
@@ -304,8 +312,10 @@
       }
       chatHistory.push(userMessage);
       await saveCurrentSession();
-      input.value = '';
-      input.style.height = 'auto';
+      if (input) {
+        input.value = '';
+        input.style.height = 'auto';
+      }
       const localReply = isCasual ? _localCasualReply(text) : '';
       if (localReply) {
         const ts = Date.now();
@@ -327,13 +337,15 @@
       streamingAssistant = { role: 'assistant', content: '', timestamp: Date.now(), ...branchMeta };
 
       // 切换为停止按钮
-      btn.hidden = false;
-      btn.disabled = false;
-      btn.classList.add('stop-btn');
+      if (btn) {
+        btn.hidden = false;
+        btn.disabled = false;
+        btn.classList.add('stop-btn');
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+        btn.onclick = () => { if (abortController) abortController.abort(); };
+      }
       if (stopBtn) stopBtn.disabled = false;
       _syncProgressMiniButtons(true);
-      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
-      btn.onclick = () => { if (abortController) abortController.abort(); };
 
       abortController = new AbortController();
       progressFinalLabel = '';
@@ -621,13 +633,15 @@
         isStreaming = false;
         abortController = null;
         // 恢复发送按钮
-        btn.classList.remove('stop-btn');
-        btn.hidden = true;
-        btn.disabled = false;
+        if (btn) {
+          btn.classList.remove('stop-btn');
+          btn.hidden = true;
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
+          btn.onclick = sendMessage;
+        }
         if (stopBtn) stopBtn.disabled = true;
         _syncProgressMiniButtons(false);
-        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>';
-        btn.onclick = sendMessage;
         streamingAssistant = null;
         if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
         if (pendingDeleteTimestamp) {
@@ -646,7 +660,8 @@
       if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
         if (chatHistory[chatHistory.length - 1].content.includes('请求失败')) chatHistory.pop();
       }
-      document.getElementById('userInput').value = lastFailedMessage;
+      const userInputEl = document.getElementById('userInput');
+      if (userInputEl) userInputEl.value = lastFailedMessage;
       if (lastFailedBranchMeta && (lastFailedBranchMeta.branchId || lastFailedBranchMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
         window.setActiveBranchAnchor({ ...lastFailedBranchMeta });
       }
@@ -680,7 +695,8 @@
             branchLabel: userMeta.branchLabel || '',
           });
         }
-        document.getElementById('userInput').value = userMsg;
+        const userInputEl = document.getElementById('userInput');
+        if (userInputEl) userInputEl.value = userMsg;
         sendMessage();
       }
     }
@@ -747,7 +763,8 @@
 
       msg.appendChild(avatar);
       msg.appendChild(body);
-      messages.appendChild(msg);
+      if (messages) messages.appendChild(msg);
       scrollToBottom();
       return contentDiv;
-    }
+    }
+

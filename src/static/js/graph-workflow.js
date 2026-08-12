@@ -227,6 +227,20 @@ function _strictModuleOutputInstruction(moduleKey) {
       + '3. 方向3\n'
       + '不要使用 XML 标签，不要输出“苏格拉底追问”，每条方向只保留一个短句，不要展开学习步骤。';
   }
+  if (moduleKey === 'graph') {
+    return '严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n'
+      + '用 ```mermaid ... ``` 代码块包裹；至少 3 个上游 + 3 个下游概念，中文标注，箭头表示关系，节点文字避免括号（可用下划线替代）。';
+  }
+  if (moduleKey === 'viz') {
+    return '严格输出 ```html ... ``` 完整 HTML 交互可视化页面，禁止只输出文字描述而不输出 HTML：\n'
+      + '页面内顶部必须包含图说四段（用页面内可见标题/提示框呈现，缺一不可）：\n'
+      + '**这张图在讲什么**：2~4 句大白话说明图的核心结论；\n'
+      + '**怎么看这张图**：1. 2. 3. 编号观察步骤，每步“操作 → 会看到什么”；\n'
+      + '**和公式的联系**：图中现象与公式如何互相印证；\n'
+      + '**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n'
+      + '每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n'
+      + '不要输出 XML 标签，不要输出其他模块内容。';
+  }
   return '';
 }
 
@@ -249,6 +263,7 @@ async function _streamCustomNodeResponse(resp, node) {
       if (renderBox && live) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);
         if (typeof renderMath === 'function') renderMath(renderBox);
+        if (typeof _initVizIframes === 'function') _initVizIframes(renderBox);
       }
       const textarea = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-content');
       if (textarea) textarea.value = content;
@@ -539,6 +554,166 @@ async function _generateCustomNode(node) {
   }
 }
 
+// ===== 主页面提问 → 工作流模板（替代旧聊天全卡路径） =====
+
+const WORKFLOW_MODULE_KEY_BY_LABEL = {
+  '物理视角': 'physics',
+  '数学视角': 'math',
+  '知识图谱': 'graph',
+  '交互可视化': 'viz',
+  '苏格拉底追问': 'socratic',
+  '进阶学习': 'learn',
+};
+
+function _parseSuggestedModules(analysisText) {
+  const match = String(analysisText || '').match(/建议模块[：:]\s*([^\n]+)/);
+  const keys = [];
+  if (match) {
+    for (const part of match[1].split(/[、,，;；\s]+/)) {
+      const label = part.replace(/[（(][^）)]*[)）]/g, '').trim();
+      const key = WORKFLOW_MODULE_KEY_BY_LABEL[label];
+      if (key && !keys.includes(key)) keys.push(key);
+    }
+  }
+  if (!keys.length) keys.push('physics', 'math');
+  return keys;
+}
+
+function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort) {
+  const state = _graphState();
+  state.customNodes = state.customNodes || [];
+  state.connections = state.connections || [];
+  const now = Date.now();
+  const uid = () => Math.random().toString(36).slice(2, 7);
+  const baseY = sourceNodeId ? 120 : 40;
+  const userNode = {
+    id: 'user-custom-' + now + '-' + uid(),
+    kind: 'user', moduleKey: '', manual: true, nodeType: '', label: '', formula: '',
+    source: 'human', content: questionText, status: 'done', summary: '', analysis: '',
+    analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
+    generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
+    generatedNodeIds: [], category: 'other', formulas: [], knowledgeKey: '',
+    x: 120, y: baseY, depth: 1, targetAngle: 0, isRoot: false, timestamp: now,
+    pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
+    w: 0, h: 0, vx: 0, vy: 0,
+  };
+  const answerNode = {
+    id: 'answer-custom-' + now + '-' + uid(),
+    kind: 'answer', moduleKey: '', manual: false, nodeType: '', label: '', formula: '',
+    source: 'ai', content: '', status: 'empty', summary: '', analysis: '',
+    analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
+    generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
+    generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
+    x: 120, y: baseY + 170, depth: 2, targetAngle: 0, isRoot: false, timestamp: now + 1,
+    pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
+    w: 0, h: 0, vx: 0, vy: 0,
+  };
+  state.customNodes.push(userNode, answerNode);
+  if (sourceNodeId) {
+    state.connections.push({ from: sourceNodeId, fromPort: sourcePort || 'out-0', to: userNode.id, toPort: 'in-0', type: 'custom', custom: true });
+  }
+  state.connections.push({ from: userNode.id, fromPort: 'out-0', to: answerNode.id, toPort: 'in-0', type: 'custom', custom: true });
+  _saveGraphState(state);
+  renderGraphCanvas();
+  return { userNode, answerNode };
+}
+
+function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
+  const state = _graphState();
+  state.customNodes = state.customNodes || [];
+  state.connections = state.connections || [];
+  const now = Date.now();
+  const ids = [];
+  moduleKeys.forEach((key, i) => {
+    const meta = GRAPH_MODULE_META[key] || { label: key };
+    const id = key + '-custom-' + now + '-' + Math.random().toString(36).slice(2, 7);
+    ids.push(id);
+    state.customNodes.push({
+      id, kind: 'module', moduleKey: key, manual: false, nodeType: '', label: meta.label || key, formula: '',
+      source: 'ai', content: '', status: 'empty', summary: '', analysis: '',
+      analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
+      generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
+      generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
+      x: 620, y: 20 + i * 210, depth: 3, targetAngle: 0, isRoot: false, timestamp: now + i,
+      pinned: false, fixedX: null, fixedY: null, customWidth: 320, customHeight: null,
+      w: 0, h: 0, vx: 0, vy: 0,
+    });
+    const outIndex = Math.max(0, ANSWER_OUTPUT_SCHEMA.indexOf(key));
+    state.connections.push({ from: answerNodeId, fromPort: 'out-' + outIndex, to: id, toPort: 'in-0', type: 'custom', custom: true });
+  });
+  _saveGraphState(state);
+  renderGraphCanvas();
+  return ids;
+}
+
+function _workflowNodesToExtractionMessages(question, moduleIds) {
+  const userMsg = { role: 'user', content: String(question || ''), timestamp: Date.now() };
+  const parts = [];
+  for (const id of moduleIds || []) {
+    const node = _findGraphNode(id);
+    if (!node || !(node.content || '').trim()) continue;
+    const meta = GRAPH_MODULE_META[node.moduleKey] || {};
+    const label = meta.label || node.moduleKey || '内容';
+    parts.push('### ' + label + '\n\n' + node.content);
+  }
+  if (!parts.length) return [];
+  return [userMsg, { role: 'assistant', content: parts.join('\n\n'), timestamp: Date.now() + 1 }];
+}
+
+async function _extractKnowledgeFromWorkflow(question, moduleIds) {
+  const messages = _workflowNodesToExtractionMessages(question, moduleIds);
+  if (!messages || messages.length < 2) return;
+  try {
+    if (typeof autoExtractKnowledge === 'function') {
+      await autoExtractKnowledge(typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID, messages);
+    }
+  } catch (err) {
+    console.warn('Workflow knowledge extraction failed:', err);
+  }
+}
+
+async function startQuestionWorkflow(text, opts) {
+  const question = String((text || '').trim());
+  if (!question) return;
+  if (typeof isStreaming !== 'undefined' && isStreaming) return;
+  const options = opts || {};
+  if (options.draftNodeId && typeof removeDraftNode === 'function') removeDraftNode(options.draftNodeId);
+
+  if (typeof sessions !== 'undefined' && sessions && currentSessionId && sessions[currentSessionId]) {
+    const s = sessions[currentSessionId];
+    if (!s.title || ['新对话', '新画布', '未命名对话', '未命名画布'].includes(s.title)) {
+      s.title = question.substring(0, 30) + (question.length > 30 ? '...' : '');
+    }
+    s.updatedAt = Date.now();
+    if (typeof saveSessions === 'function') saveSessions();
+  }
+
+  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '');
+  const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
+  await _generateAnalysis(liveAnswer);
+
+  const liveAnswer2 = _findGraphNode(template.answerNode.id);
+  if (!liveAnswer2 || !(liveAnswer2.analysis || '').trim()) {
+    if (liveAnswer2) {
+      liveAnswer2.status = 'error';
+      liveAnswer2.busy = false;
+    }
+    _saveCustomNodes();
+    if (typeof showToast === 'function') showToast('问题分析为空，请检查模型配置或重试');
+    return;
+  }
+  const moduleKeys = _parseSuggestedModules(liveAnswer2.analysis);
+  if (!moduleKeys.length) return;
+  // 主界面直接提问：必定生成 进阶学习 + 苏格拉底追问（画布手动追问不强制）
+  if (!options.sourceNodeId) {
+    if (!moduleKeys.includes('learn')) moduleKeys.push('learn');
+    if (!moduleKeys.includes('socratic')) moduleKeys.push('socratic');
+  }
+  const moduleIds = _createWorkflowModuleNodes(moduleKeys, liveAnswer2.id);
+  await _executeParallelWorkflow(moduleIds, true);
+  await _extractKnowledgeFromWorkflow(question, moduleIds);
+}
+
 function _workflowProgressLabel(node) {
   if (!node) return '';
   if (node.kind === 'source') return '输入';
@@ -800,6 +975,8 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   const shouldForce = force && (node.kind === 'module' || node.kind === 'summary');
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   if (shouldCount) _markWorkflowCurrentNode(node);
+  (window.__wfLogs = window.__wfLogs || []).push({ type: 'start', label: _workflowProgressLabel(node), t: Date.now() });
+  console.log('[Workflow] start', _workflowProgressLabel(node), Date.now());
   let ok = false;
   try {
     ok = await _processWorkflowChainItem(node, shouldForce);
@@ -808,6 +985,8 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
     const live = _findGraphNode(node.id);
     if (live && live.status !== 'error') live.status = 'error';
   }
+  (window.__wfLogs = window.__wfLogs || []).push({ type: 'done', label: _workflowProgressLabel(node), t: Date.now() });
+  console.log('[Workflow] done ', _workflowProgressLabel(node), Date.now());
   const live = _findGraphNode(node.id);
   const errored = !!(live && live.status === 'error');
   const aborted = !!workflowAbortController?.signal.aborted;
@@ -896,6 +1075,7 @@ async function _executeParallelWorkflow(targetIds, force) {
     return;
   }
   const workflowStartedAt = Date.now();
+  window.__wfLogs = [];
   workflowRunActive = true;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
@@ -916,7 +1096,16 @@ async function _executeParallelWorkflow(targetIds, force) {
     _saveCustomNodes();
     renderGraphCanvas();
     if (!wasAborted && completed && typeof notifyTaskCompleted === 'function') {
-      notifyTaskCompleted(Date.now() - workflowStartedAt, '工作流完成');
+      let parallelInfo = '';
+      const wfLogs = window.__wfLogs || [];
+      const moduleStarts = wfLogs
+        .filter(e => e.type === 'start' && e.label && e.label !== '我的回答' && e.label !== 'AI 回答')
+        .map(e => e.t);
+      if (moduleStarts.length > 1) {
+        const spread = Math.max.apply(null, moduleStarts) - Math.min.apply(null, moduleStarts);
+        parallelInfo = ' · 并行开始 ' + moduleStarts.length + ' 个 · 时间差 ' + spread + 'ms';
+      }
+      notifyTaskCompleted(Date.now() - workflowStartedAt, '工作流完成' + parallelInfo);
     }
   }
 }
@@ -927,7 +1116,7 @@ async function runWorkflowNode(nodeId, force = false) {
   await _executeParallelWorkflow([nodeId], force);
 }
 
-async function runWorkflowNodes(nodeIds, force = true) {
+async function runWorkflowNodes(nodeIds, force = false) {
   if (workflowRunActive) return false;
   const targets = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
     const node = _findGraphNode(id);
@@ -941,12 +1130,13 @@ async function runWorkflowNodes(nodeIds, force = true) {
 
 async function runAllWorkflowNodes() {
   if (workflowRunActive) return;
-  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary'));
+  // 防重跑：只运行空节点/依赖发生变化的节点，已生成且未变化的直接跳过
+  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary') && _workflowItemNeedsProgress(node));
   if (!targets.length) {
-    if (typeof showToast === 'function') showToast('没有可运行的模块/总结节点');
+    if (typeof showToast === 'function') showToast('没有需要生成的模块/总结节点');
     return;
   }
-  await _executeParallelWorkflow(targets.map(node => node.id), true);
+  await _executeParallelWorkflow(targets.map(node => node.id), false);
 }
 
 function stopWorkflowRun() {
@@ -1636,6 +1826,7 @@ window.createBlankNode = createBlankNode;
 window.createManualNode = createManualNode;
 
 window.runWorkflowNode = runWorkflowNode;
+window.startQuestionWorkflow = startQuestionWorkflow;
 window.runWorkflowNodes = runWorkflowNodes;
 
 window.runAllWorkflowNodes = runAllWorkflowNodes;
@@ -1746,6 +1937,7 @@ window.closeAddBlankNodeModal = closeAddBlankNodeModal;
 window.createBlankNode = createBlankNode;
 window.createManualNode = createManualNode;
 window.runWorkflowNode = runWorkflowNode;
+window.startQuestionWorkflow = startQuestionWorkflow;
 window.runAllWorkflowNodes = runAllWorkflowNodes;
 window.stopWorkflowRun = stopWorkflowRun;
 window.deleteBlankNode = deleteBlankNode;

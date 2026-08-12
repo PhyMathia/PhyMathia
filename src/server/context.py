@@ -292,6 +292,22 @@ def _module_output_instruction(module_key: str) -> str:
             "3. 方向3\n"
             "禁止输出 XML 标签，禁止输出“苏格拉底追问”，每条方向只保留一个短句。"
         )
+    if module_key == "graph":
+        return (
+            "严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n"
+            "用 ```mermaid ... ``` 代码块包裹；至少 3 个上游 + 3 个下游概念，中文标注，箭头表示关系，节点文字避免括号（可用下划线替代）。"
+        )
+    if module_key == "viz":
+        return (
+            "严格输出 ```html ... ``` 完整 HTML 交互可视化页面，禁止只输出文字描述而不输出 HTML：\n"
+            "页面内顶部必须包含图说四段（用页面内可见标题/提示框呈现，缺一不可）：\n"
+            "**这张图在讲什么**：2~4 句大白话说明图的核心结论；\n"
+            "**怎么看这张图**：1. 2. 3. 编号观察步骤，每步“操作 → 会看到什么”；\n"
+            "**和公式的联系**：图中现象与公式如何互相印证；\n"
+            "**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n"
+            "每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n"
+            "不要输出 XML 标签，不要输出其他模块内容。"
+        )
     return ""
 
 
@@ -466,7 +482,8 @@ def _load_session_context_from_path(
                 seen.add(item["content"])
     return result
 
-
+
+
 
 SOCRATIC_STATE_PREFIX = "socratic:"
 
@@ -648,14 +665,16 @@ def _update_socratic_state_from_content(content: str, ref: str) -> None:
     else:
         _write_socratic_state(ref, state)
 
-
+
+
 
 def _is_socratic_followup(content: str) -> bool:
     content = content or ""
     if not re.search(r"<socratic_meta\b", content, re.I):
         return False
     return not re.search(r"<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片", content, re.I)
-
+
+
 
 __all__ = [
     "_is_socratic_message", "_is_socratic_prompt_text", "_recent_context_messages", "_extract_section",

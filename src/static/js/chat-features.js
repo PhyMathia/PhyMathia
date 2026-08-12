@@ -53,8 +53,8 @@
       }
 
       // Re-send the user message
-      document.getElementById('userInput').value = userMsg;
-      sendMessage();
+      if (typeof sendQuick === 'function') sendQuick(userMsg);
+      else sendMessage();
     }
 
     // ===== Auto Extract after AI response =====

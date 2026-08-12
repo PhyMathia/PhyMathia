@@ -424,8 +424,9 @@ function followUpModule(moduleKey, messageId, event) {
   if (typeof window.openBranchModal === 'function') {
     window.openBranchModal('追问：' + meta.label, question, anchor);
   } else {
-    document.getElementById('userInput').value = question;
-    sendQuick(document.getElementById('userInput').value);
+    const userInputEl = document.getElementById('userInput');
+    if (userInputEl) userInputEl.value = question;
+    sendQuick(question);
   }
 }
 
@@ -444,8 +445,8 @@ function dontUnderstandModule(moduleKey, messageId, event) {
   if (typeof window.openBranchModal === 'function') {
     window.openBranchModal('没看懂：' + meta.label, question, anchor);
   } else {
-    document.getElementById('userInput').value = question;
-    document.getElementById('userInput').focus();
+    const userInputEl = document.getElementById('userInput');
+    if (userInputEl) { userInputEl.value = question; userInputEl.focus(); }
   }
 }
 
@@ -533,7 +534,8 @@ document.addEventListener('click', function(e) {
     if (typeof window.startSocraticAnswer === 'function') {
       window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '', answerBtn.getAttribute('data-socratic-source') || 'extend');
     } else {
-      document.getElementById('userInput').value = question;
+      const userInputEl = document.getElementById('userInput');
+      if (userInputEl) userInputEl.value = question;
       sendQuick(question);
     }
     return;
@@ -757,6 +759,7 @@ let userScrolledUp = false;
 
 function initSmartScroll() {
   const messages = document.getElementById('chatMessages');
+  if (!messages) return;
   messages.addEventListener('scroll', () => {
     const distFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
     userScrolledUp = distFromBottom > SCROLL_THRESHOLD;
@@ -766,5 +769,6 @@ function initSmartScroll() {
 function scrollToBottom(force = false) {
   if (!force && userScrolledUp) return;
   const messages = document.getElementById('chatMessages');
+  if (!messages) return;
   messages.scrollTop = messages.scrollHeight;
 }

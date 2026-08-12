@@ -22,7 +22,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css?v=42">
   <link rel="stylesheet" href="/css/styles-panels.css?v=5">
-  <link rel="stylesheet" href="/css/graph-override.css?v=107">
+  <link rel="stylesheet" href="/css/graph-override.css?v=108">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=22">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
@@ -103,25 +103,6 @@
       <button class="header-btn" onclick="clearChat()" title="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> 清空</button>
     </div>
 
-    <div class="chat-messages" id="chatMessages">
-      <div class="welcome-tip" id="welcomeTip">
-        <h2>欢迎来到 PhyMathia</h2>
-        <p>我是你的物理数学双域解释与可视化助手。<br>会同时用物理直觉和数学本质来解释，并生成交互式可视化让你亲手探索。</p>
-        <div class="quick-actions">
-          <button class="quick-btn" onclick="sendQuick('请解释简谐运动的物理和数学本质，并生成交互式可视化')">简谐运动</button>
-          <button class="quick-btn" onclick="sendQuick('请解释抛体运动的物理和数学本质，并生成交互式可视化')">抛体运动</button>
-          <button class="quick-btn" onclick="sendQuick('请用物理直觉和数学推导解释傅里叶变换的本质')">傅里叶变换</button>
-          <button class="quick-btn" onclick="sendQuick('请解释热力学第二定律的物理意义和数学表述')">热力学第二定律</button>
-        </div>
-        <div style="margin-top:20px;font-size:11px;color:var(--tip-color);display:flex;align-items:center;justify-content:center;gap:20px;">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"></rect><line x1="8" y1="22" x2="16" y2="22"></line><line x1="12" y1="18" x2="12" y2="22"></line></svg> 推荐使用电脑端访问，获得最佳交互式可视化体验
-        </div>
-        <div id="mobileHint" style="display:none;margin-top:12px;font-size:12px;color:var(--accent);background:var(--btn-active-bg);border:1px solid var(--btn-active-border);border-radius:8px;padding:8px 12px;max-width:340px;">
-          移动端已适配基础功能。点击屏幕可触发粒子特效，触摸滑动可交互漂浮符号。
-        </div>
-      </div>
-    </div>
-
     <div class="graph-workspace" id="graphWorkspace">
       <div class="graph-canvas" id="graphCanvas"></div>
       <div class="graph-search-panel" id="graphSearchPanel" hidden>
@@ -144,19 +125,6 @@
       <span class="status-text" aria-live="polite">生成进度 · 0%</span>
       <div class="status-progress"><div class="status-progress-fill" id="statusProgressFill"></div></div>
       <span class="elapsed-time">0s</span>
-    </div>
-
-    <div class="input-area">
-      <div class="branch-anchor-bar" id="branchAnchorBar" hidden>
-        <span id="branchAnchorText"></span>
-        <button class="branch-anchor-clear" onclick="clearBranchAnchor()">清除锚点</button>
-      </div>
-      <div class="input-container">
-        <textarea id="userInput" style="display:none" rows="1"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()" style="display:none">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-        </button>
-      </div>
     </div>
 
     <div class="socratic-modal-overlay" id="socraticModal" hidden>
@@ -200,17 +168,17 @@
   <script src="/js/config.js?v=6"></script>
 <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/js/utils.js?v=1"></script>
-  <script src="/js/session.js?v=21"></script>
-  <script src="/js/render.js?v=13"></script>
-  <script src="/js/chat.js?v=29"></script>
-  <script src="/js/chat-features.js?v=4"></script>
+  <script src="/js/session.js?v=22"></script>
+  <script src="/js/render.js?v=14"></script>
+  <script src="/js/chat.js?v=30"></script>
+  <script src="/js/chat-features.js?v=5"></script>
   <script src="/js/chat-branch.js?v=3"></script>
-  <script src="/js/graph.js?v=132"></script>
+  <script src="/js/graph.js?v=133"></script>
   <script src="/js/graph-search.js?v=1"></script>
-  <script src="/js/graph-render.js?v=4"></script>
-  <script src="/js/graph-interact.js?v=9"></script>
+  <script src="/js/graph-render.js?v=5"></script>
+  <script src="/js/graph-interact.js?v=10"></script>
   <script src="/js/graph-custom.js?v=2"></script>
-  <script src="/js/graph-workflow.js?v=5"></script>
+  <script src="/js/graph-workflow.js?v=10"></script>
   <script src="/js/knowledge.js?v=10"></script>
   <script src="/js/models.js?v=14"></script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
@@ -218,7 +186,7 @@
   <script src="/js/harness-run.js?v=13"></script>
   <script src="/js/harness-preview.js?v=4"></script>
   <script src="/js/harness-apply.js?v=5"></script>
-  <script src="/js/ui.js?v=13"></script>
+  <script src="/js/ui.js?v=14"></script>
   <script src="/js/quiz.js?v=35"></script>
   <script src="/js/quiz-ai.js?v=3"></script>
   <script src="/js/quiz-stats.js?v=2"></script>

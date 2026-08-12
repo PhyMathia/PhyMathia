@@ -953,7 +953,7 @@ window.addEventListener('load', async () => {
   setTimeout(() => startOnboarding(), 600);
 
   // 消息内容中的链接委托处理（移动端友好）
-  document.getElementById('chatMessages').addEventListener('click', function(e) {
+  document.getElementById('chatMessages')?.addEventListener('click', function(e) {
     const link = e.target.closest('a[href]');
     if (!link) return;
     const href = link.getAttribute('href');
