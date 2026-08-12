@@ -542,6 +542,55 @@ def _summarize_errors(errors) -> str:
 
 
 
+def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2, max_nodes: int = 40) -> Optional[Dict[str, Any]]:
+    """快照过大且有焦点时，抽取焦点节点邻域子图（焦点 + 至多 max_hops 跳邻居）。
+
+    返回新快照（含 omitted_node_count），无法抽取（无焦点/无邻居）时返回 None。
+    只保留焦点邻域内的节点与连线，显著减小发送给模型的上下文。
+    """
+    nodes = snapshot.get("nodes") or []
+    edges = snapshot.get("edges") or []
+    focus = {str(item) for item in (focus_node_ids or []) if str(item)}
+    if not focus:
+        return None
+    node_by_id = {str(n.get("id")): n for n in nodes}
+    adj = {}
+    for e in edges:
+        frm = str(e.get("from") or "")
+        to = str(e.get("to") or "")
+        if frm:
+            adj.setdefault(frm, set()).add(to)
+        if to:
+            adj.setdefault(to, set()).add(frm)
+    kept = {nid for nid in focus if nid in node_by_id}
+    if not kept:
+        return None
+    frontier = set(kept)
+    for _ in range(max_hops):
+        if len(kept) >= max_nodes:
+            break
+        nxt = set()
+        for nid in frontier:
+            for nb in adj.get(nid, ()):
+                if nb in node_by_id and nb not in kept and len(kept) < max_nodes:
+                    kept.add(nb)
+                    nxt.add(nb)
+        if not nxt:
+            break
+        frontier = nxt
+    # 保留 AI 评价节点
+    for n in nodes:
+        if n.get("kind") == "ai_eval" and str(n.get("id")) not in kept and len(kept) < max_nodes:
+            kept.add(str(n.get("id")))
+    kept_edges = [e for e in edges if str(e.get("from") or "") in kept and str(e.get("to") or "") in kept]
+    kept_nodes = [node_by_id[nid] for nid in kept if nid in node_by_id]
+    return {
+        "nodes": kept_nodes,
+        "edges": kept_edges,
+        "omitted_node_count": len(nodes) - len(kept_nodes),
+    }
+
+
 def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
     """Trim non-focus node content for large snapshots; raise when still too big."""
     if len(json.dumps(snapshot, ensure_ascii=False)) <= MAX_SNAPSHOT_CHARS:
@@ -636,6 +685,11 @@ async def review_graph(
     or "auto" (try tools, fall back to JSON when the provider rejects them).
     """
     current = normalize_snapshot(snapshot)
+    if len(json.dumps(current, ensure_ascii=False)) > MAX_SNAPSHOT_CHARS:
+        sub = _focus_subgraph(current, focus_node_ids)
+        if sub is not None:
+            current = sub
+            context = str(context or "") + f"\n（本次快照过大，已省略 {sub.get('omitted_node_count', 0)} 个非焦点节点，仅保留焦点邻域供审阅。）"
     current = _compact_snapshot(current, focus_node_ids)
     instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
     phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)

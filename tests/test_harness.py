@@ -2062,3 +2062,36 @@ class HarnessAnchorAddWarningTest(unittest.TestCase):
         from harness.semantics import rule_selfcheck
         result = rule_selfcheck(self._snapshot(), "给导数加一个物理视角", ["A"], [])
         self.assertFalse(result["ok"])
+
+class FocusSubgraphTest(unittest.TestCase):
+    def test_focus_subgraph_keeps_neighborhood(self):
+        from harness.review import _focus_subgraph
+        snap = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角"},
+                {"id": "C", "kind": "knowledge", "label": "极限"},
+                {"id": "D", "kind": "knowledge", "label": "远节点"},
+                {"id": "E", "kind": "ai_eval", "label": "AI 评价"},
+            ],
+            "edges": [
+                {"key": "A->B", "from": "A", "to": "B"},
+                {"key": "C->A", "from": "C", "to": "A"},
+                {"key": "D->C", "from": "D", "to": "C"},
+            ],
+        }
+        sub = _focus_subgraph(snap, ["A"], max_hops=1, max_nodes=40)
+        self.assertIsNotNone(sub)
+        ids = {str(n["id"]) for n in sub["nodes"]}
+        self.assertIn("A", ids)
+        self.assertIn("B", ids)
+        self.assertIn("C", ids)
+        self.assertNotIn("D", ids)
+        self.assertIn("E", ids)
+        self.assertEqual(sub["omitted_node_count"], 1)
+        self.assertEqual(len(sub["edges"]), 2)
+
+    def test_focus_subgraph_none_without_focus(self):
+        from harness.review import _focus_subgraph
+        snap = {"nodes": [{"id": "A", "kind": "knowledge"}], "edges": []}
+        self.assertIsNone(_focus_subgraph(snap, []))

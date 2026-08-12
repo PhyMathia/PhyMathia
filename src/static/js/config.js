@@ -1,5 +1,5 @@
 // ====== 应用版本 ======
-const APP_VERSION = '1.2.5';
+const APP_VERSION = '1.2.6';
 
 // ====== 存储键名常量 ======
 const STORAGE_KEY_THEME = 'phymathia_theme';

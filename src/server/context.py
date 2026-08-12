@@ -322,6 +322,92 @@ def _load_messages(session_id: str) -> list:
     return _read_json(messages_path, [])
 
 
+# ====== 滚动会话记忆（长会话） ======
+ROLLING_MEMORY_KEY_PREFIX = "mem:"
+ROLLING_MEMORY_TRIGGER_MESSAGES = 15
+ROLLING_MEMORY_REFRESH_GAP = 8
+ROLLING_MEMORY_MAX_CHARS = 1500
+ROLLING_MEMORY_INPUT_MAX_CHARS = 4000
+
+
+def _rolling_memory_key(session_id: str) -> str:
+    return f"{ROLLING_MEMORY_KEY_PREFIX}{session_id}"
+
+
+def _read_rolling_memory(session_id: str):
+    if not session_id:
+        return None
+    data = _read_json(KV_PATH, {})
+    if not isinstance(data, dict):
+        return None
+    mem = data.get(_rolling_memory_key(session_id))
+    if isinstance(mem, dict) and mem.get("summary"):
+        return mem
+    return None
+
+
+def _write_rolling_memory(session_id: str, summary: str, message_count: int) -> None:
+    if not session_id or not summary:
+        return
+
+    def updater(data):
+        data[_rolling_memory_key(session_id)] = {
+            "summary": str(summary).strip()[:ROLLING_MEMORY_MAX_CHARS],
+            "messageCount": int(message_count or 0),
+            "updatedAt": int(time.time() * 1000),
+        }
+        return data
+
+    _mutate_json(KV_PATH, updater)
+
+
+def _rolling_summary_due(session_id: str) -> int:
+    """返回需要生成/刷新滚动记忆时的当前消息数；不需要返回 0。"""
+    if not session_id:
+        return 0
+    messages = _load_messages(session_id)
+    count = len(messages)
+    if count < ROLLING_MEMORY_TRIGGER_MESSAGES:
+        return 0
+    mem = _read_rolling_memory(session_id)
+    if not mem:
+        return count
+    if count - int(mem.get("messageCount") or 0) >= ROLLING_MEMORY_REFRESH_GAP:
+        return count
+    return 0
+
+
+def _rolling_memory_input(session_id: str, max_old_pairs: int = 6) -> str:
+    """构造滚动记忆输入：旧记忆 + 最早的若干轮对话摘要。"""
+    messages = _load_messages(session_id)
+    mem = _read_rolling_memory(session_id)
+    parts = []
+    if mem:
+        parts.append("旧记忆：" + str(mem.get("summary") or ""))
+    digest = _recent_context_messages(messages, max_rounds=0, summary_rounds=999)
+    if digest:
+        # 取最旧的前 max_old_pairs 轮（即将被完整上下文遗忘的内容）
+        lines = []
+        for m in digest[:max_old_pairs * 2]:
+            role = "用户" if m.get("role") == "user" else "AI"
+            lines.append(role + "：" + str(m.get("content") or "")[:300])
+        parts.append("最早对话：\n" + "\n".join(lines))
+    text = "\n\n".join(parts)
+    return text[:ROLLING_MEMORY_INPUT_MAX_CHARS]
+
+
+def _inject_rolling_memory(session_id: str, result: list, budget_tokens: int = 0) -> list:
+    """在上下文最前面注入滚动会话记忆（如有），并保护其不被预算收缩丢弃。"""
+    mem = _read_rolling_memory(session_id)
+    if not mem:
+        return result
+    mem_text = "（会话记忆）" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS]
+    result.insert(0, {"role": "user", "content": mem_text})
+    if budget_tokens and budget_tokens > 0:
+        result = _shrink_history_to_budget(result, budget_tokens, {mem_text})
+    return result
+
+
 def _load_session_context(
     session_id: str,
     max_rounds: int = 3,
@@ -356,10 +442,11 @@ def _load_session_context(
             budget_tokens=budget_tokens,
         )
     if not branch_id:
-        return _recent_context_messages(
+        result = _recent_context_messages(
             all_messages, max_rounds, include_socratic, current_prompt,
             budget_tokens=budget_tokens,
         )
+        return _inject_rolling_memory(session_id, result, budget_tokens)
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
@@ -671,7 +758,7 @@ def _load_session_context_from_path(
     if budget_tokens and budget_tokens > 0:
         protected = {active_content} if active_content else set()
         result = _shrink_history_to_budget(result, budget_tokens, protected)
-    return result
+    return _inject_rolling_memory(session_id, result, budget_tokens)
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"
@@ -725,7 +812,6 @@ def _delete_socratic_state(ref: str) -> None:
     兼容三种 key：
     - 精确 key：socratic:{ref}（手动输入路径 / 会话级状态）
     - 分支链前缀：socratic:br_{会话id前18字符}_{uuid}（“我来回答”弹窗路径）
-    - 旧逻辑子串匹配兜底
     """
     def updater(data):
         if not ref:
@@ -738,10 +824,6 @@ def _delete_socratic_state(ref: str) -> None:
         if session_part:
             prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
             remove_keys.extend(k for k in data if k.startswith(prefix) and k not in remove_keys)
-        # 兼容旧逻辑：子串匹配（如短会话 id / 手动输入路径）
-        for key in list(data):
-            if key.startswith(SOCRATIC_STATE_PREFIX) and ref in key and key not in remove_keys:
-                remove_keys.append(key)
         for key in remove_keys:
             data.pop(key, None)
         return data
@@ -899,7 +981,7 @@ __all__ = [
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "_inject_rolling_memory", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
 ]

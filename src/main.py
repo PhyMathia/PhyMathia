@@ -5,6 +5,7 @@ PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线�
 数据持久化使用 JSON 文件存储，无需 Supabase 或任何外部服务。
 """
 
+import asyncio
 import argparse
 import base64
 import json
@@ -34,6 +35,7 @@ from server.documents import *
 from server.knowledge import *
 from server.prompts import *
 from server.storage import *
+from server.context_preview import router as context_preview_router  # 开发调试用，正式版可删
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +47,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="PhyMathia", description="物理数学双域解释与可视化助手 (离线测试版)")
 
 
-app.state.harness_context = SYSTEM_PROMPT
+app.state.harness_context = get_system_prompt()
 
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -53,6 +55,7 @@ if str(ROOT_DIR) not in sys.path:
 from harness.api import router as harness_router
 
 app.include_router(harness_router, prefix="/api/harness")
+app.include_router(context_preview_router)  # 开发调试用，正式版可删
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +66,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _refresh_harness_context(request: Request, call_next):
+    request.app.state.harness_context = get_system_prompt()
+    return await call_next(request)
 
 # ====== 页面路由 ======
 @app.get("/")
@@ -170,7 +178,7 @@ async def api_models_chat(request: Request):
         elif workflow_context:
             system_content = MODULE_SYSTEM_PROMPT
         else:
-            system_content = SYSTEM_PROMPT
+            system_content = get_system_prompt()
         state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
@@ -244,6 +252,9 @@ async def api_models_chat(request: Request):
     if max_tokens:
         body["max_tokens"] = int(max_tokens)
 
+    if session_id and prompt and not is_quick:
+        _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url)
+
     logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")
 
     async def proxy_stream():
@@ -263,24 +274,31 @@ async def api_models_chat(request: Request):
                         try:
                             data = json.loads(text)
                             content = data["choices"][0]["message"]["content"]
+                            if data.get("usage"):
+                                logger.info(f"AI proxy usage: {data['usage']}")
                             _update_socratic_state_from_content(content, socratic_ref)
                         except Exception:
                             pass
                         yield text
                         return
                     streamed_content = []
+                    last_usage = None
                     async for line in resp.aiter_lines():
                         if line.startswith("data: "):
                             data_str = line[6:].strip()
                             if data_str != "[DONE]":
                                 try:
                                     data = json.loads(data_str)
+                                    if data.get("usage"):
+                                        last_usage = data["usage"]
                                     delta = data.get("choices", [{}])[0].get("delta", {})
                                     if delta.get("content"):
                                         streamed_content.append(delta["content"])
                                 except Exception:
                                     pass
                             yield line + "\n\n"
+                    if last_usage:
+                        logger.info(f"AI proxy usage: {last_usage}")
                     _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
@@ -290,6 +308,61 @@ async def api_models_chat(request: Request):
     return StreamingResponse(proxy_stream(), media_type="text/event-stream")
 
 
+
+# ====== 滚动会话记忆（长会话后台摘要，不阻塞当前请求） ======
+_summary_tasks = set()
+
+
+def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url):
+    """长会话后台滚动记忆：不阻塞当前请求，下次提问即可用上。"""
+    if not session_id:
+        return
+    try:
+        due = context._rolling_summary_due(session_id)
+    except Exception:
+        return
+    if not due:
+        return
+    key = f"{session_id}:{model_name}"
+    if key in _summary_tasks:
+        return
+    _summary_tasks.add(key)
+    asyncio.create_task(
+        _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due)
+    )
+
+
+async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count):
+    try:
+        input_text = context._rolling_memory_input(session_id)
+        if not input_text:
+            return
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if api_key and provider != "opencode":
+            headers["Authorization"] = f"Bearer {api_key}"
+        body = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": ROLLING_SUMMARY_PROMPT},
+                {"role": "user", "content": input_text},
+            ],
+            "stream": False,
+            "max_tokens": 300,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            if resp.status_code != 200:
+                return
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+        context._write_rolling_memory(session_id, content, count)
+        logger.info("rolling memory updated: session=%s count=%d", session_id, count)
+    except Exception as e:
+        logger.warning("rolling memory update failed: %s", e)
+    finally:
+        _summary_tasks.discard(f"{session_id}:{model_name}")
+
 
 # ====== 会话管理 API ======
 @app.get("/api/sessions")

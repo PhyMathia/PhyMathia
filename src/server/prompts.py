@@ -48,7 +48,27 @@ HTML 可视化代码（可选，用 ```html ... ``` 包裹）
 - 可视化 HTML 用 ```html ... ``` 包裹（必要时可单独输出）
 """
 
-SYSTEM_PROMPT = _load_system_prompt()
+SYSTEM_PROMPT = _load_system_prompt()
+
+
+_prompt_mtime = None
+_prompt_cache = None
+
+
+def get_system_prompt() -> str:
+    """热重载：dev 下按文件 mtime 检测 system prompt.md 是否变化，变化则重新加载。"""
+    global _prompt_mtime, _prompt_cache
+    prompt_path = BASE_DIR / "system prompt.md"
+    try:
+        mtime = prompt_path.stat().st_mtime_ns if prompt_path.exists() else None
+    except OSError:
+        mtime = None
+    if mtime is not None and mtime == _prompt_mtime and _prompt_cache is not None:
+        return _prompt_cache
+    content = _load_system_prompt()
+    _prompt_cache = content
+    _prompt_mtime = mtime
+    return content
 
 EXTRACT_PROMPT = """你是知识提取助手。请从下面这段对话中提取关键知识点（1-5 个），
 只输出 JSON，不要输出任何其他内容或解释：
@@ -97,4 +117,10 @@ MODULE_SYSTEM_PROMPT = """你是 PhyMathia 的知识网络节点内容生成器�
 
 
 
-__all__ = ["SYSTEM_PROMPT", "QUICK_SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT"]
+
+ROLLING_SUMMARY_PROMPT = """你是会话记忆压缩助手。把下面的对话历史压缩成一段中文会话记忆（3~5 句话，不超过 200 字）：
+- 保留：主题、关键概念、公式主题、用户已学过/追问过什么、卡在哪里
+- 不要：流水账、客套话、重复内容
+- 如果前面已有一段旧记忆，只在其基础上补充新变化，不要复述旧内容
+只输出压缩后的记忆文本本身，不要输出任何其他内容。"""
+__all__ = ["SYSTEM_PROMPT", "QUICK_SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT", "ROLLING_SUMMARY_PROMPT", "get_system_prompt"]

@@ -476,5 +476,71 @@ class Wave2OptimizationTest(unittest.TestCase):
         self.assertNotIn("socratic:br_sess_1234567890abc_1", mutated[0])
 
 
+
+
+class RollingMemoryTest(unittest.TestCase):
+    def test_write_rolling_memory(self):
+        orig_mutate = context_mod._mutate_json
+        captured = {}
+        context_mod._mutate_json = lambda path, updater: captured.update(updater({}))
+        try:
+            context_mod._write_rolling_memory("sess_abc", "用户学过简谐运动", 20)
+        finally:
+            context_mod._mutate_json = orig_mutate
+        self.assertIn("mem:sess_abc", captured)
+        self.assertEqual(captured["mem:sess_abc"]["summary"], "用户学过简谐运动")
+        self.assertEqual(captured["mem:sess_abc"]["messageCount"], 20)
+
+    def test_rolling_summary_due(self):
+        orig_load = context_mod._load_messages
+        orig_read = context_mod._read_rolling_memory
+        context_mod._load_messages = lambda sid: [{"role": "user", "content": "x"}] * 20
+        context_mod._read_rolling_memory = lambda sid: None
+        try:
+            self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 20)
+            context_mod._read_rolling_memory = lambda sid: {"summary": "旧", "messageCount": 18}
+            self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 0)
+            context_mod._read_rolling_memory = lambda sid: {"summary": "旧", "messageCount": 10}
+            self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 20)
+        finally:
+            context_mod._load_messages = orig_load
+            context_mod._read_rolling_memory = orig_read
+
+    def test_rolling_memory_input(self):
+        orig_load = context_mod._load_messages
+        orig_read = context_mod._read_rolling_memory
+        context_mod._load_messages = lambda sid: [
+            {"role": "user", "content": "问题%d" % i, "timestamp": i}
+            for i in range(10)
+        ]
+        context_mod._read_rolling_memory = lambda sid: {"summary": "旧记忆内容", "messageCount": 10}
+        try:
+            text = context_mod._rolling_memory_input("sess_abc", max_old_pairs=3)
+        finally:
+            context_mod._load_messages = orig_load
+            context_mod._read_rolling_memory = orig_read
+        self.assertIn("旧记忆内容", text)
+        self.assertIn("问题0", text)
+
+    def test_load_session_context_injects_memory(self):
+        msgs = [
+            {"role": "user", "content": "问题1", "timestamp": 1},
+            {"role": "assistant", "content": "回答1", "timestamp": 2},
+        ]
+        orig_read = context_mod._read_json
+        orig_resolve = context_mod._resolve_messages_path
+        orig_rm = context_mod._read_rolling_memory
+        context_mod._read_json = lambda path, default=None: msgs
+        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._read_rolling_memory = lambda sid: {"summary": "之前聊过简谐运动", "messageCount": 2}
+        try:
+            result = context_mod._load_session_context("sess_abc", max_rounds=2)
+        finally:
+            context_mod._read_json = orig_read
+            context_mod._resolve_messages_path = orig_resolve
+            context_mod._read_rolling_memory = orig_rm
+        self.assertEqual(result[0]["content"], "（会话记忆）之前聊过简谐运动")
+
+
 if __name__ == "__main__":
     unittest.main()
