@@ -227,6 +227,16 @@ function _strictModuleOutputInstruction(moduleKey) {
       + '3. 方向3\n'
       + '不要使用 XML 标签，不要输出“苏格拉底追问”，每条方向只保留一个短句，不要展开学习步骤。';
   }
+  if (moduleKey === 'viz') {
+    return '严格输出 ```html ... ``` 完整 HTML 交互可视化页面，禁止只输出文字描述而不输出 HTML：\n'
+      + '页面内顶部必须包含图说四段（用页面内可见标题/提示框呈现，缺一不可）：\n'
+      + '**这张图在讲什么**：2~4 句大白话说明图的核心结论；\n'
+      + '**怎么看这张图**：1. 2. 3. 编号观察步骤，每步“操作 → 会看到什么”；\n'
+      + '**和公式的联系**：图中现象与公式如何互相印证；\n'
+      + '**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n'
+      + '每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n'
+      + '不要输出 XML 标签，不要输出其他模块内容。';
+  }
   return '';
 }
 
@@ -249,6 +259,7 @@ async function _streamCustomNodeResponse(resp, node) {
       if (renderBox && live) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);
         if (typeof renderMath === 'function') renderMath(renderBox);
+        if (typeof _initVizIframes === 'function') _initVizIframes(renderBox);
       }
       const textarea = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-content');
       if (textarea) textarea.value = content;
@@ -927,7 +938,7 @@ async function runWorkflowNode(nodeId, force = false) {
   await _executeParallelWorkflow([nodeId], force);
 }
 
-async function runWorkflowNodes(nodeIds, force = true) {
+async function runWorkflowNodes(nodeIds, force = false) {
   if (workflowRunActive) return false;
   const targets = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
     const node = _findGraphNode(id);
@@ -946,7 +957,7 @@ async function runAllWorkflowNodes() {
     if (typeof showToast === 'function') showToast('没有可运行的模块/总结节点');
     return;
   }
-  await _executeParallelWorkflow(targets.map(node => node.id), true);
+  await _executeParallelWorkflow(targets.map(node => node.id), false);
 }
 
 function stopWorkflowRun() {

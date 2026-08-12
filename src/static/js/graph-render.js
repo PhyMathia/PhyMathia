@@ -533,6 +533,7 @@ function _refreshWorkflowNodeUi(node) {
   const nextEl = temp.firstElementChild;
   if (nextEl) {
     currentEl.replaceWith(nextEl);
+    if (typeof _initVizIframes === 'function') _initVizIframes(nextEl);
     _measureNodes();
     _updateNodeTransforms();
     _redrawEdges();

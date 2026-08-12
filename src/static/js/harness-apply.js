@@ -146,7 +146,7 @@
     }
     if (workflowIds.length) {
       if (typeof window.runWorkflowNodes === 'function') {
-        await window.runWorkflowNodes(workflowIds);
+        await window.runWorkflowNodes(workflowIds, true);
       } else if (typeof window.runWorkflowNode === 'function') {
         for (const id of workflowIds) await window.runWorkflowNode(id, true);
       }
