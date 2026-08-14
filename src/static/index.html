@@ -61,6 +61,9 @@
     </div>
     <div class="sidebar-sessions" id="sessionList"></div>
     <div class="sidebar-help">
+      <button class="sidebar-help-btn" onclick="closeSidebar();openMemoryPanel();">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a2 2 0 0 1 2 2v8.3a4.5 4.5 0 1 1-4 0V5a2 2 0 0 1 2-2z"></path><path d="M12 8v6"></path></svg> 记忆
+      </button>
       <button class="sidebar-help-btn" onclick="closeSidebar();startOnboarding(true);">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"></path></svg> 使用引导
       </button>
@@ -193,6 +196,62 @@
   <script src="/js/quiz-stats.js?v=2"></script>
   <script src="/js/quiz-ui.js?v=2"></script>
   <script src="/js/quiz-render.js?v=1"></script>
+
+  <div class="knowledge-panel memory-panel" id="memoryPanel">
+    <div class="kp-header">
+      <h2>记忆</h2>
+      <button class="kp-close" onclick="closeMemoryPanel()">&times;</button>
+    </div>
+    <div class="memory-body">
+      <div class="memory-section">
+        <div class="memory-switch-row">
+          <div class="memory-switch-text">
+            <div class="memory-switch-title">记忆功能</div>
+            <div class="memory-switch-desc">记住你的学习画像（学段、目标、兴趣、薄弱点、回答偏好），让回答风格、出题与延伸思考更贴合你</div>
+          </div>
+          <label class="memory-toggle">
+            <input type="checkbox" id="memoryEnabledToggle" onchange="memoryToggleChanged(this.checked)">
+            <span class="memory-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="memory-disabled-banner" id="memoryDisabledBanner" hidden>记忆已停用：AI 不再读取或写入画像。已保存的画像会保留，重新开启即可恢复；也可以随时清除。</div>
+        <div class="memory-impact">
+          <div class="memory-impact-title">画像影响面</div>
+          <div class="memory-impact-list" id="memoryImpactList"></div>
+        </div>
+      </div>
+      <div class="memory-section">
+        <div class="memory-section-title">我的画像</div>
+        <div class="memory-form" id="memoryExplicitForm"></div>
+      </div>
+      <div class="memory-section">
+        <div class="memory-section-title">自动记忆 <span class="memory-count" id="memoryFactCount"></span></div>
+        <div class="memory-list" id="memoryFactList"></div>
+      </div>
+      <div class="memory-section">
+        <div class="memory-section-title">建议区 <span class="memory-count" id="memoryPendingCount"></span></div>
+        <div class="memory-list" id="memoryPendingList"></div>
+      </div>
+      <div class="memory-section memory-danger-zone">
+        <button class="memory-clear-btn" onclick="memoryOpenClearDialog()">清除记忆</button>
+        <div class="memory-clear-desc">清除后 AI 不再使用你的画像；学习数据（知识库 / 公式 / 错题统计）不受影响，除非勾选一并清除。清除前自动生成备份，可从「数据管理-导入数据」恢复。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="memory-dialog-overlay" id="memoryClearDialog">
+    <div class="memory-dialog">
+      <h3>清除记忆</h3>
+      <p class="memory-dialog-desc">将删除此设备上的画像事实与回答偏好，AI 将不再基于画像个性化回答。清除前会自动生成一份备份文件。</p>
+      <label class="memory-dialog-option">
+        <input type="checkbox" id="memoryClearIncludeLearning"> 同时清除学习数据（知识库 / 公式 / 错题统计）
+      </label>
+      <div class="memory-dialog-actions">
+        <button class="memory-dialog-cancel" onclick="closeMemoryClearDialog()">取消</button>
+        <button class="memory-dialog-danger" onclick="memoryConfirmClear()">确认清除</button>
+      </div>
+    </div>
+  </div>
 
   <div class="knowledge-panel" id="knowledgePanel">
     <div class="kp-header">

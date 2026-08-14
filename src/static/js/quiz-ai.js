@@ -144,6 +144,20 @@ function _sanitizeAIQuestions(raw, pool) {
 async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY_ENABLED) {
   const model = _pickQuizModel();
   if (!model) return null;
+  // 画像薄弱点注入（记忆开启且有薄弱信息时，出题优先考察）
+  let weakProfileText = '';
+  try {
+    const profile = await memoryGetProfile();
+    if (profile && profile.enabled) {
+      const weakParts = [];
+      if (String(profile.explicit && profile.explicit.weakAreas || '').trim()) weakParts.push('薄弱章节：' + profile.explicit.weakAreas.trim());
+      const weakFacts = (profile.facts || [])
+        .filter(f => f.category === 'weakness' && String(f.fact || '').trim())
+        .map(f => f.fact);
+      if (weakFacts.length) weakParts.push('薄弱点：' + weakFacts.slice(0, 3).join('；'));
+      if (weakParts.length) weakProfileText = weakParts.join('；');
+    }
+  } catch (e) { /* 画像不可用时静默降级 */ }
   const prompts = await _loadQuizPromptFile();
   const systemPrompt = (prompts.generate || DEFAULT_QUIZ_GENERATION_PROMPT)
     .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
@@ -171,7 +185,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
       body: JSON.stringify({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `出题素材：\n${context}\n\n请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。\n\n公式格式要求：题干、选项、解析中的公式一律用 <formula>纯LaTeX</formula> 或 $...$ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出不带定界符的裸 LaTeX。` }
+          { role: 'user', content: `出题素材：\n${context}\n\n${weakProfileText ? '用户薄弱点（请优先出相关题目）：' + weakProfileText + '\n\n' : ''}请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。\n\n公式格式要求：题干、选项、解析中的公式一律用 <formula>纯LaTeX</formula> 或 $...$ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出不带定界符的裸 LaTeX。` }
         ],
         provider: model.provider,
         api_key: model.apiKey,
@@ -554,4 +568,4 @@ function _startQuizGeneration(pool) {
     quizState.aiPending = true;
   }
   return { local, promise };
-}
+}

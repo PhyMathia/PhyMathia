@@ -744,6 +744,17 @@ const _obSteps = [
       return '点击画布图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名画布</strong>，让你的画布列表更清晰有序。';
     },
     beforeShow() { document.getElementById('sidebar').classList.add('open'); }
+  },
+  {
+    type: 'welcome',
+    icon: UI_ICON_SVG.sparkles,
+    title: '记忆功能（默认开启）',
+    desc: 'PhyMathia 会记住你的<strong>学习画像</strong>（学段、目标、兴趣、薄弱点、回答偏好），让回答风格、出题方向更贴合你。画像仅存本机，可随时关闭或清除。',
+    features: [
+      { icon: UI_ICON_SVG.check, text: '<strong>个性化</strong> — 回答详略、术语密度、检测出题按你的画像调整' },
+      { icon: UI_ICON_SVG.book, text: '<strong>本地存储</strong> — 画像保存在本机；对话内容仍会发送给模型服务商' },
+      { icon: UI_ICON_SVG.sliders, text: '<strong>完全可控</strong> — 侧边栏「记忆」中可查看、编辑、删除，也可一键关闭或清除' },
+    ]
   }
 ];
 

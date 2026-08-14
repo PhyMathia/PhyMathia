@@ -2358,3 +2358,51 @@
   justify-content: center;
 }
 .quiz-return-pill-close:hover { background: rgba(255,255,255,.3); }
+
+/* ====== 记忆面板（memory） ====== */
+.memory-panel .memory-body { padding: 14px 18px 26px; overflow-y: auto; flex: 1; }
+.memory-section { margin-bottom: 18px; }
+.memory-switch-row { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.memory-switch-text { flex: 1; min-width: 0; }
+.memory-switch-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.memory-switch-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-top: 4px; }
+.memory-toggle { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; margin-top: 2px; }
+.memory-toggle input { opacity: 0; width: 0; height: 0; }
+.memory-toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 12px; transition: background .2s; cursor: pointer; }
+.memory-toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.memory-toggle input:checked + .memory-toggle-slider { background: var(--accent, #0891b2); }
+.memory-toggle input:checked + .memory-toggle-slider::before { transform: translateX(20px); }
+.memory-disabled-banner { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border); border-left: 3px solid #f59e0b; border-radius: 8px; font-size: 12px; color: var(--text-secondary); background: var(--surface-container); line-height: 1.5; }
+.memory-impact { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.memory-impact-title { font-size: 11px; color: var(--text-secondary); margin-bottom: 6px; }
+.memory-impact-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.memory-impact-chip { font-size: 11px; padding: 3px 8px; border-radius: 10px; background: var(--surface-container); border: 1px solid var(--border); color: var(--text-primary); }
+.memory-section-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+.memory-count { font-size: 11px; color: var(--text-secondary); font-weight: 400; margin-left: 4px; }
+.memory-form-field { margin-bottom: 10px; }
+.memory-form-field label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.memory-form-field input, .memory-form-field select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-container); color: var(--text-primary); font-size: 13px; box-sizing: border-box; }
+.memory-form-style-row { display: flex; gap: 8px; }
+.memory-form-style-row .memory-form-field { flex: 1; }
+.memory-list { display: flex; flex-direction: column; gap: 6px; }
+.memory-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-container); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-primary); }
+.memory-item-fact { flex: 1; min-width: 0; word-break: break-all; }
+.memory-item-tag { flex-shrink: 0; font-size: 10px; padding: 2px 6px; border-radius: 8px; background: var(--border); color: var(--text-secondary); }
+.memory-item-btn { flex-shrink: 0; border: none; background: transparent; color: var(--text-secondary); cursor: pointer; padding: 2px 5px; border-radius: 4px; font-size: 11px; }
+.memory-item-btn:hover { color: var(--text-primary); background: var(--border); }
+.memory-item-btn-danger:hover { color: #ef4444; }
+.memory-empty { font-size: 12px; color: var(--text-secondary); padding: 6px 2px; }
+.memory-danger-zone { border-top: 1px solid var(--border); padding-top: 14px; }
+.memory-clear-btn { width: 100%; padding: 10px; border: 1px solid #ef4444; border-radius: 8px; background: transparent; color: #ef4444; font-size: 13px; font-weight: 600; cursor: pointer; }
+.memory-clear-btn:hover { background: rgba(239, 68, 68, .1); }
+.memory-clear-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin-top: 8px; }
+.memory-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 300; }
+.memory-dialog-overlay.show { display: flex; }
+.memory-dialog { width: min(420px, 92vw); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+.memory-dialog h3 { margin: 0 0 10px; font-size: 16px; color: var(--text-primary); }
+.memory-dialog-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 14px; }
+.memory-dialog-option { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); padding: 10px; background: var(--surface-container); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.memory-dialog-actions { display: flex; gap: 10px; margin-top: 18px; justify-content: flex-end; }
+.memory-dialog-actions button { padding: 8px 18px; border-radius: 8px; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--surface-container); color: var(--text-primary); }
+.memory-dialog-actions .memory-dialog-danger { background: #ef4444; border-color: #ef4444; color: #fff; }
+

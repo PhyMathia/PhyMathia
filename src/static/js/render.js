@@ -405,6 +405,21 @@ function _modulePrompt(moduleKey, type, originalQuestion) {
       confused: '进阶学习方向里的内容我没看懂，请换一种更简单的方式解释：' + question,
     },
   };
+  // 画像化：学习画像开启时，延伸思考/进阶学习结合目标与薄弱点（静默生效，文本自然带依据）
+  try {
+    const _profileCtx = (typeof memoryCachedContext === 'function') ? memoryCachedContext() : '';
+    if (_profileCtx) {
+      if (moduleKey === 'learn') {
+        if (type === 'followup') {
+          return '请结合我的学习画像（' + _profileCtx + '），围绕进阶学习方向推荐并讲解接下来最值得学习的内容：' + question;
+        }
+        return '进阶学习方向里的内容我没看懂，请结合我的学习情况（' + _profileCtx + '）用更简单的方式解释：' + question;
+      }
+      if (moduleKey === 'extend' && type === 'followup') {
+        return '请结合我的学习画像（' + _profileCtx + '），围绕延伸思考继续展开讲解：' + question;
+      }
+    }
+  } catch (e) { /* 画像不可用时静默降级 */ }
   const modulePrompts = prompts[moduleKey] || prompts.extend;
   return modulePrompts[type] || modulePrompts.followup;
 }
