@@ -43,7 +43,7 @@ def _normalize_knowledge(data) -> dict:
         return {}
     return data
 
-
+
 
 def _normalize_formula(latex: str) -> str:
     """标准化公式：\$→$、去首尾 $、统一包 $..$；无效返回空串"""
@@ -119,7 +119,7 @@ def _dedupe_formula_map(data: dict) -> dict:
         result[keep_id] = keep
     return result
 
-
+
 
 def _parse_extract_json(text: str) -> list:
     """容错解析模型输出的 JSON"""
@@ -184,7 +184,7 @@ def _clean_knowledge_title(title: str) -> str:
     title = re.sub(r"^[🔬📐🧠💡🗺️]+\s*", "", title).strip()
     return title
 
-
+
 
 def _normalize_knowledge_key(title: str) -> str:
     s = _clean_knowledge_title(title)
@@ -392,14 +392,38 @@ def _local_extract_knowledge(messages: list) -> list:
         }]
     return []
 
-
 
-async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> list:
-    """调用 AI 模型提取知识点（非流式）"""
+
+_PROFILE_FACTS_RE = re.compile(r'"profile_facts"\s*:\s*(\[[\s\S]*?\])')
+
+
+def _parse_profile_facts(text: str) -> list:
+    """从提取模型输出中容错解析 profile_facts 候选（失败返回空列表）。"""
+    if not text:
+        return []
+    m = _PROFILE_FACTS_RE.search(text)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return []
+    result = []
+    for it in data if isinstance(data, list) else []:
+        if isinstance(it, dict) and str(it.get("fact") or "").strip():
+            result.append({
+                "fact": str(it["fact"]).strip()[:120],
+                "category": str(it.get("category") or "other")[:20],
+            })
+    return result
+
+
+async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> tuple:
+    """调用 AI 模型提取知识点（非流式），返回 (items, profile_facts) 二元组。"""
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
-        return []
+        return [], []
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
 
@@ -426,9 +450,11 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         resp.raise_for_status()
         data = resp.json()
     content = data["choices"][0]["message"]["content"]
-    return _parse_extract_json(content)
+    items = _parse_extract_json(content)
+    profile_facts = _parse_profile_facts(content)
+    return items, profile_facts
 
-
+
 
 def _formula_module_key(item: dict, formula: str) -> str:
     module_key = item.get("moduleKey")
@@ -446,7 +472,7 @@ def _formula_module_key(item: dict, formula: str) -> str:
         return "physics"
     return ""
 
-
+
 
 def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None, message_id: str = "") -> int:
     """将提取出的公式自动写入公式库，返回新增数量；descriptions 为 {latex: 简要描述}"""
@@ -522,7 +548,7 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
     _mutate_json(FORMULAS_PATH, updater)
     return count
 
-
+
 
 def _extract_summary(messages: list) -> str:
     """从最近 assistant 消息提取 <summary> 标签内容（主模型输出的一句话摘要）"""
@@ -534,7 +560,7 @@ def _extract_summary(messages: list) -> str:
             return m.group(1).strip()[:200]
     return ""
 
-
+
 
 
 async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
@@ -580,7 +606,7 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
         logger.warning(f"Describe formulas failed: {e}")
         return {}
 
-
+
 
 def _normalize_formula_map(data) -> dict:
     if isinstance(data, dict):
@@ -598,12 +624,12 @@ def _normalize_formula_map(data) -> dict:
                 for it in data if isinstance(it, dict)}
     return {}
 
-
+
 
 __all__ = [
     "_normalize_knowledge", "_normalize_formula", "_formula_key",
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
-    "_parse_extract_json", "_clean_knowledge_title", "_normalize_knowledge_key",
+    "_parse_extract_json", "_parse_profile_facts", "_clean_knowledge_title", "_normalize_knowledge_key",
     "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",
     "_formula_tags_from_content", "_local_formula_meaning", "_local_extract_knowledge",
     "_ai_extract_knowledge", "_formula_module_key", "_add_formulas_from_items",

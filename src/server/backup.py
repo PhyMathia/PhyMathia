@@ -9,6 +9,7 @@ from .knowledge import (
     _normalize_formula_map,
     _normalize_knowledge,
 )
+from .profile import PROFILES_DIR, save_profile
 from .storage import _get_messages_path, _read_json, _write_json
 
 def _build_backup_payload() -> dict:
@@ -26,14 +27,20 @@ def _build_backup_payload() -> dict:
             continue
         value = _read_json(path, [])
         messages[sid] = value if isinstance(value, list) else []
+    profiles = {}
+    for path in sorted(PROFILES_DIR.glob("*.json")):
+        value = _read_json(path, None)
+        if isinstance(value, dict):
+            profiles[path.stem] = value
     return {
-        "version": 2,
+        "version": 3,
         "exportedAt": time.time(),
         "sessions": sessions,
         "messages": messages,
         "knowledge": _read_json(KNOWLEDGE_PATH, {}),
         "formulas": _read_json(FORMULAS_PATH, {}),
         "kv": _read_json(KV_PATH, {}),
+        "profiles": profiles,
     }
 
 
@@ -110,6 +117,17 @@ def _restore_backup(backup: dict, replace: bool) -> dict:
         existing_kv = {} if replace else _read_json(KV_PATH, {})
         _write_json(KV_PATH, {**existing_kv, **kv_data})
 
+    profiles = backup.get("profiles") or {}
+    profile_count = 0
+    if isinstance(profiles, dict) and profiles:
+        if replace:
+            for p in PROFILES_DIR.glob("*.json"):
+                p.unlink(missing_ok=True)
+        for device_id, pdata in profiles.items():
+            if isinstance(pdata, dict):
+                save_profile(str(device_id), pdata)
+                profile_count += 1
+
     return {
         "ok": True,
         "sessions": session_count,
@@ -117,8 +135,9 @@ def _restore_backup(backup: dict, replace: bool) -> dict:
         "knowledge": len(knowledge),
         "formulas": len(formulas),
         "kv": len(kv_data) if isinstance(kv_data, dict) else 0,
+        "profiles": profile_count,
     }
 
-
+
 
 __all__ = ["_build_backup_payload", "_restore_backup"]

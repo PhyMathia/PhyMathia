@@ -250,7 +250,7 @@
       const resp = await fetch('/api/extract_knowledge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(memoryWithDevice(payload))
       });
       if (!resp.ok) return { items: [], descriptions: {} };
       const data = await resp.json();

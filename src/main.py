@@ -4,7 +4,7 @@ PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线�
 使用 opencode 免费模型（无需 API Key），也支持自定义 OpenAI 兼容模型。
 数据持久化使用 JSON 文件存储，无需 Supabase 或任何外部服务。
 """
-
+
 import asyncio
 import argparse
 import base64
@@ -27,7 +27,7 @@ _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from server import backup, context, documents, knowledge, prompts, storage  # noqa: F401
+from server import backup, context, documents, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -41,11 +41,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # ====== FastAPI 应用 ======
 app = FastAPI(title="PhyMathia", description="物理数学双域解释与可视化助手 (离线测试版)")
-
+
 
 app.state.harness_context = get_system_prompt()
 
@@ -65,7 +65,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+
 
 @app.middleware("http")
 async def _refresh_harness_context(request: Request, call_next):
@@ -90,7 +90,7 @@ async def chat_ui():
 async def health_check():
     return {"status": "ok", "message": "PhyMathia is running"}
 
-
+
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
@@ -188,6 +188,12 @@ async def api_models_chat(request: Request):
             system_content += _graph_path_instruction(graph_path, source_module)
         if workflow_context:
             system_content += _workflow_context_instruction(workflow_context)
+        # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）
+        if not is_quick and not workflow_context:
+            _device_id = payload.get("device_id") or payload.get("deviceId") or ""
+            _profile_text = profile.profile_context_text(_device_id)
+            if _profile_text:
+                system_content += "\n\n" + _profile_text
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
@@ -307,7 +313,7 @@ async def api_models_chat(request: Request):
 
     return StreamingResponse(proxy_stream(), media_type="text/event-stream")
 
-
+
 
 # ====== 滚动会话记忆（长会话后台摘要，不阻塞当前请求） ======
 _summary_tasks = set()
@@ -473,7 +479,7 @@ async def api_clear_all_sessions():
     _write_json(KV_PATH, {})
     return {"ok": True}
 
-
+
 
 # ====== 消息管理 API ======
 @app.get("/api/sessions/{session_id}/messages")
@@ -511,7 +517,7 @@ async def api_clear_messages(session_id: str):
     _delete_socratic_state(session_id)
     return {"ok": True}
 
-
+
 
 @app.get("/api/knowledge")
 async def api_get_knowledge():
@@ -547,7 +553,7 @@ async def api_delete_knowledge(item_id: str):
     _mutate_json(KNOWLEDGE_PATH, updater)
     return {"ok": True}
 
-
+
 
 @app.get("/api/formulas")
 async def api_get_formulas(q: str = ""):
@@ -658,7 +664,7 @@ async def api_delete_formula(formula_id: str):
     _mutate_json(FORMULAS_PATH, updater)
     return {"ok": True}
 
-
+
 
 @app.post("/api/extract_knowledge")
 async def api_extract_knowledge(request: Request):
@@ -697,9 +703,14 @@ async def api_extract_knowledge(request: Request):
         desc_api_key = OPENCODE_DEFAULT_API_KEY
 
     items = []
+    profile_facts = []
     if (api_key or provider == "opencode") and model:
         try:
-            items = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
+            extracted = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
+            if isinstance(extracted, tuple):
+                items, profile_facts = extracted
+            else:
+                items = extracted
             if items:
                 logger.info(f"AI extract: {len(items)} items for session {session_id}")
         except Exception as e:
@@ -708,6 +719,18 @@ async def api_extract_knowledge(request: Request):
         items = _local_extract_knowledge(messages)
         if items:
             logger.info(f"Local extract: {len(items)} items for session {session_id}")
+
+    # 搭车画像候选：记忆开关关闭时后端自动忽略（enabled=False 不写入）
+    device_id = payload.get("device_id") or payload.get("deviceId") or ""
+    if device_id and profile_facts:
+        try:
+            for pf in profile_facts:
+                pf.setdefault("sourceSession", session_id)
+            accepted = profile.add_fact_candidates(device_id, profile_facts)
+            if accepted:
+                logger.info(f"Profile facts accepted for device {device_id[:8]}: {accepted}")
+        except Exception as e:
+            logger.warning(f"Profile fact ingest failed: {e}")
 
     # 摘要双重用途：主模型 <summary> 标签 → 知识条目 summary（替代内容截断）
     summary_text = _extract_summary(messages)
@@ -735,7 +758,7 @@ async def api_extract_knowledge(request: Request):
 
     return {"items": items, "descriptions": descriptions}
 
-
+
 
 @app.post("/api/documents/parse")
 async def api_parse_document(request: Request):
@@ -809,7 +832,7 @@ async def api_parse_document(request: Request):
         "extractedTextPreview": text[:500],
     }
 
-
+
 
 # ====== 键值存储 API ======
 @app.get("/api/kv/{key}")
@@ -842,7 +865,32 @@ async def api_delete_kv(key: str):
     _mutate_json(KV_PATH, updater)
     return {"ok": True}
 
-
+
+# ====== 用户画像（记忆）API ======
+@app.get("/api/profile")
+async def api_get_profile(device_id: str = ""):
+    return profile.get_profile(device_id)
+
+
+@app.put("/api/profile")
+async def api_update_profile(request: Request):
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    device_id = str(payload.get("device_id") or "")
+    updates = payload.get("updates")
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="updates must be an object")
+    return profile.update_profile(device_id, updates)
+
+
+@app.delete("/api/profile")
+async def api_delete_profile(device_id: str = ""):
+    profile.delete_profile(device_id)
+    return {"ok": True}
+
+
 
 @app.get("/api/backup/export")
 async def api_backup_export():
@@ -863,7 +911,7 @@ async def api_backup_import(request: Request):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
     return _restore_backup(backup, mode == "replace")
 
-
+
 
 # ====== 静态文件 catch-all（必须放在所有 API 路由之后）======
 @app.get("/{filename:path}")
@@ -876,10 +924,10 @@ async def serve_static_file(filename: str):
         # 防目录穿越：仅允许解析后仍位于 STATIC_DIR 内的文件
         if file_path.is_relative_to(STATIC_DIR.resolve()) and file_path.exists() and file_path.is_file():
             return FileResponse(str(file_path))
-    raise HTTPException(status_code=404, detail="Not found")
+    raise HTTPException(status_code=404, detail="Not found")
 
 # 启动前清理历史重复知识点
-_dedupe_knowledge_file()
+_dedupe_knowledge_file()
 
 # ====== 启动 ======
 def parse_args():
@@ -909,4 +957,4 @@ if __name__ == "__main__":
         port=args.port,
         reload=args.reload,
         workers=1,
-    )
+    )

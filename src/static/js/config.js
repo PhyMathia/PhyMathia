@@ -8,6 +8,21 @@ const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
 const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
+const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
+
+// ====== 匿名设备 ID（用户画像隔离）======
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem(STORAGE_KEY_DEVICE_ID);
+    if (!id) {
+      id = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(STORAGE_KEY_DEVICE_ID, id);
+    }
+    return id;
+  } catch (e) {
+    return 'dev_local';
+  }
+}
 
 // ====== 难度等级配置 ======
 const LEVEL_LABELS = { 'middle': '中学', 'university': '大学', 'research': '科研' };
