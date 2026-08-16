@@ -725,12 +725,67 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort)
   return { userNode, answerNode };
 }
 
+function _nodeRectForPlacement(node) {
+  const w = node.w || node.customWidth || 320;
+  const h = node.h || node.customHeight || 120;
+  return { x: node.x || 0, y: node.y || 0, w, h };
+}
+
+function _rectsOverlap(a, b, gap = 40) {
+  return !(
+    a.x + a.w / 2 + gap <= b.x - b.w / 2 ||
+    a.x - a.w / 2 - gap >= b.x + b.w / 2 ||
+    a.y + a.h / 2 + gap <= b.y - b.h / 2 ||
+    a.y - a.h / 2 - gap >= b.y + b.h / 2
+  );
+}
+
+function _workflowModulePositions(moduleKeys, answerNodeId) {
+  const answer = _findGraphNode(answerNodeId);
+  const ax = answer ? answer.x : 120;
+  const ay = answer ? answer.y : 200;
+  const aw = answer ? (answer.w || answer.customWidth || 300) : 300;
+  const ah = answer ? (answer.h || answer.customHeight || 120) : 120;
+  const count = moduleKeys.length;
+  const gapY = 230;
+  const startY = Math.max(60, ay - ((count - 1) * gapY) / 2);
+  const baseX = ax + aw / 2 + 260;
+  const positions = moduleKeys.map((_, i) => ({
+    x: baseX,
+    y: startY + i * gapY,
+    w: 320,
+    h: 120,
+  }));
+
+  const existing = (graphView.nodes || []).filter(n =>
+    n.kind !== 'draft' && !n.isRoot
+  );
+  if (!existing.length) return positions.map(p => ({ x: p.x, y: p.y }));
+
+  // 先尝试右侧，再尝试左侧，找到一块不与已有节点重叠的空白区域。
+  const offsets = [];
+  for (let i = 0; i <= 15; i++) {
+    offsets.push(i * 80);
+    if (i > 0) offsets.push(-i * 80);
+  }
+  for (const offset of offsets) {
+    const candidate = positions.map(p => ({ ...p, x: p.x + offset }));
+    const hasOverlap = candidate.some(c =>
+      existing.some(e => _rectsOverlap(c, _nodeRectForPlacement(e)))
+    );
+    if (!hasOverlap) return candidate.map(p => ({ x: p.x, y: p.y }));
+  }
+
+  return positions.map(p => ({ x: p.x, y: p.y }));
+}
+
 function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
   const state = _graphState();
   state.customNodes = state.customNodes || [];
   state.connections = state.connections || [];
   const now = Date.now();
   const ids = [];
+  const positions = _workflowModulePositions(moduleKeys, answerNodeId);
   moduleKeys.forEach((key, i) => {
     const meta = GRAPH_MODULE_META[key] || { label: key };
     const id = key + '-custom-' + now + '-' + Math.random().toString(36).slice(2, 7);
@@ -741,7 +796,7 @@ function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
       analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
       generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
       generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
-      x: 620, y: 20 + i * 210, depth: 3, targetAngle: 0, isRoot: false, timestamp: now + i,
+      x: positions[i].x, y: positions[i].y, depth: 3, targetAngle: 0, isRoot: false, timestamp: now + i,
       pinned: false, fixedX: null, fixedY: null, customWidth: 320, customHeight: null,
       w: 0, h: 0, vx: 0, vy: 0,
     });

@@ -1279,6 +1279,89 @@
       transform: translateX(-50%) translateY(0);
       opacity: 1;
     }
+
+    /* ====== 完成通知卡片 ====== */
+
+    .completion-card {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 10002;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      min-width: 280px;
+      max-width: 420px;
+      padding: 14px 16px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-left: 4px solid #10b981;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      color: var(--text-primary);
+      transform: translateX(calc(100% + 40px));
+      opacity: 0;
+      transition: transform 0.35s ease, opacity 0.35s ease;
+      pointer-events: auto;
+    }
+
+    .completion-card.show {
+      transform: translateX(0);
+      opacity: 1;
+    }
+
+    .completion-card-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      flex-shrink: 0;
+    }
+
+    .completion-card-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .completion-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .completion-card-subtitle {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .completion-card-close {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+
+    .completion-card-close:hover {
+      color: var(--text-primary);
+    }
+
+    @media (max-width: 600px) {
+      .completion-card {
+        top: auto;
+        bottom: 90px;
+        right: 10px;
+        left: 10px;
+        min-width: 0;
+      }
+    }
     .model-section-mgmt { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
     .model-list { max-height: 200px; overflow-y: auto; margin-bottom: 8px; }
     .model-empty { font-size: 12px; color: var(--text-secondary); padding: 8px 0; text-align: center; }

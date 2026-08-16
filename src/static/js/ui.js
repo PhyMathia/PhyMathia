@@ -603,6 +603,43 @@ function showToast(msg, duration = 2500) {
   }, duration);
 }
 
+function showCompletionCard(title, subtitle, duration = 4000) {
+  let card = document.getElementById('phymathia_completion_card');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'phymathia_completion_card';
+    card.className = 'completion-card';
+    card.innerHTML =
+      '<div class="completion-card-icon">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+      '</div>' +
+      '<div class="completion-card-content">' +
+      '<div class="completion-card-title"></div>' +
+      '<div class="completion-card-subtitle"></div>' +
+      '</div>' +
+      '<button class="completion-card-close" title="关闭" aria-label="关闭">×</button>';
+    card.querySelector('.completion-card-close').addEventListener('click', function () {
+      hideCompletionCard(card);
+    });
+    document.body.appendChild(card);
+  }
+  card.querySelector('.completion-card-title').textContent = title;
+  card.querySelector('.completion-card-subtitle').textContent = subtitle || '';
+  requestAnimationFrame(function () {
+    card.classList.add('show');
+  });
+  clearTimeout(card._timer);
+  card._timer = setTimeout(function () {
+    hideCompletionCard(card);
+  }, duration);
+}
+
+function hideCompletionCard(card) {
+  if (!card) card = document.getElementById('phymathia_completion_card');
+  if (!card) return;
+  card.classList.remove('show');
+}
+
 let _completionAudioContext = null;
 
 function playCompletionSound() {
@@ -638,7 +675,15 @@ function playCompletionSound() {
 function notifyTaskCompleted(durationMs, label = '任务完成') {
   const ms = Math.max(0, Number(durationMs) || 0);
   const durationText = typeof formatDuration === 'function' ? formatDuration(ms) : Math.ceil(ms / 1000) + 's';
-  showToast(`${label} · 用时 ${durationText}`, 3500);
+  const labelText = String(label || '任务完成');
+  let title = labelText;
+  let rest = '';
+  if (labelText.indexOf('工作流完成') === 0) {
+    title = '工作流完成';
+    rest = labelText.slice('工作流完成'.length).replace(/^[·\s]+/, '');
+  }
+  const subtitle = [rest, '用时 ' + durationText].filter(Boolean).join(' · ');
+  showCompletionCard(title, subtitle);
   playCompletionSound();
 }
 
