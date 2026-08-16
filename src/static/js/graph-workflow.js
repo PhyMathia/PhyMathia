@@ -285,17 +285,20 @@ async function _streamCustomNodeResponse(resp, node) {
         if (!line.startsWith('data: ')) continue;
         const dataStr = line.slice(6).trim();
         if (dataStr === '[DONE]') continue;
-        try {
-          const data = JSON.parse(dataStr);
-          const delta = data.choices && data.choices[0] && data.choices[0].delta;
-          if (delta && delta.content) {
-            content += delta.content;
-            _scheduleWorkflowStreamProgress(content.length);
-            streamChunkCount++;
-            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-            scheduleRender();
-          }
-        } catch (e) {}
+        let data = null;
+        try { data = JSON.parse(dataStr); } catch (e) {}
+        if (data && data.error) {
+          const message = data.error.message || data.error.detail || JSON.stringify(data.error);
+          throw new Error('AI 流式返回错误：' + message);
+        }
+        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+        if (delta && delta.content) {
+          content += delta.content;
+          _scheduleWorkflowStreamProgress(content.length);
+          streamChunkCount++;
+          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+          scheduleRender();
+        }
       }
     }
   }
@@ -313,7 +316,7 @@ async function _streamCustomNodeResponse(resp, node) {
   }
   _saveCustomNodes();
   if (node.kind === 'blank') _renderBlankNodeLive(node, cleaned);
-  if (!workflowRunActive) renderGraphCanvas();
+  _refreshWorkflowNodeStatusUi(live);
 }
 
 async function _readStreamText(resp) {
@@ -388,23 +391,27 @@ async function _streamAnalysisResponse(resp, node, question) {
         if (!line.startsWith('data: ')) continue;
         const dataStr = line.slice(6).trim();
         if (dataStr === '[DONE]') continue;
-        try {
-          const data = JSON.parse(dataStr);
-          const delta = data.choices && data.choices[0] && data.choices[0].delta;
-          if (delta && delta.content) {
-            analysis += delta.content;
-            _scheduleWorkflowStreamProgress(analysis.length);
-            streamChunkCount++;
-            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-            scheduleRender();
-          }
-        } catch (e) {}
+        let data = null;
+        try { data = JSON.parse(dataStr); } catch (e) {}
+        if (data && data.error) {
+          const message = data.error.message || data.error.detail || JSON.stringify(data.error);
+          throw new Error('AI 流式返回错误：' + message);
+        }
+        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+        if (delta && delta.content) {
+          analysis += delta.content;
+          _scheduleWorkflowStreamProgress(analysis.length);
+          streamChunkCount++;
+          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+          scheduleRender();
+        }
       }
     }
   }
 
   let cleaned = analysis.trim();
   if (typeof stripXmlTags === 'function') cleaned = stripXmlTags(cleaned).trim();
+  if (!cleaned) throw new Error('问题分析返回空内容');
   if (cleaned.length > 1200) cleaned = cleaned.slice(0, 1200);
   const live = _findGraphNode(node.id);
   if (live) {
@@ -419,7 +426,16 @@ async function _streamAnalysisResponse(resp, node, question) {
     if (typeof renderMath === 'function') renderMath(renderBox);
   }
   _saveCustomNodes();
-  if (!workflowRunActive) renderGraphCanvas();
+  _refreshWorkflowNodeStatusUi(live);
+}
+
+function _refreshWorkflowNodeStatusUi(node) {
+  if (!node) return;
+  if (workflowRunActive) {
+    if (typeof _refreshWorkflowNodeUi === 'function') _refreshWorkflowNodeUi(node);
+  } else {
+    renderGraphCanvas();
+  }
 }
 
 async function _generateAnalysis(node) {
@@ -428,7 +444,7 @@ async function _generateAnalysis(node) {
   if (!question.trim()) {
     node.status = 'waiting';
     _saveCustomNodes();
-    if (!workflowRunActive) renderGraphCanvas();
+    _refreshWorkflowNodeStatusUi(node);
     if (typeof showToast === 'function') showToast('请先连接并填写问题节点');
     return;
   }
@@ -489,9 +505,27 @@ async function _generateAnalysis(node) {
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
     }
     _saveCustomNodes();
-    if (!workflowRunActive) renderGraphCanvas();
+    _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('问题分析失败：' + (err.message || err));
   }
+}
+
+function _modelForWorkflowNode(node) {
+  if (node && node.kind === 'module' && node.moduleKey === 'viz' && typeof getActiveModelForRole === 'function') {
+    // 交互可视化优先使用专门配置的 HTML 生成模型，避免弱主模型反复输出空内容。
+    const htmlModel = getActiveModelForRole('html');
+    if (htmlModel) return htmlModel;
+  }
+  if (typeof getActiveModelForRole === 'function') return getActiveModelForRole('agent');
+  return null;
+}
+
+function _normalizeWorkflowVizContent(content) {
+  const html = typeof extractHtmlFromModelReply === 'function' ? extractHtmlFromModelReply(content) : '';
+  if (html && (typeof _looksLikeCompleteHtml === 'function' ? _looksLikeCompleteHtml(html) : html)) {
+    return '```html\n' + html + '\n```';
+  }
+  return '';
 }
 
 async function _generateCustomNode(node) {
@@ -521,18 +555,21 @@ async function _generateCustomNode(node) {
 
   try {
     let resp = null;
-    if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
-      const agentModel = getActiveModelForRole('agent');
-      if (agentModel) {
-        resp = await proxyChat(
-          prompt,
-          typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-          true,
-          signal,
-          branchMeta
-        );
-      }
+    const model = _modelForWorkflowNode(node);
+    if (model && typeof proxyChatWithModel === 'function') {
+      resp = await proxyChatWithModel(model, {
+        prompt,
+        level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
+        session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
+        stream: true,
+        parent_id: branchMeta.parentId,
+        source_module: branchMeta.sourceModule,
+        branch_type: branchMeta.branchType,
+        branch_id: branchMeta.branchId,
+        branch_label: branchMeta.branchLabel,
+        graph_path: branchMeta.graphPath,
+        workflow_context: branchMeta.workflowContext,
+      }, signal);
     }
     if (!resp) {
       throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
@@ -542,6 +579,56 @@ async function _generateCustomNode(node) {
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
     await _streamCustomNodeResponse(resp, node);
+
+    const live = _findGraphNode(node.id);
+    if (live && !(live.content || '').trim()) {
+      live.status = 'error';
+      live.busy = false;
+      _saveCustomNodes();
+      _refreshWorkflowNodeStatusUi(live);
+      if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
+      return;
+    }
+    if (node.kind === 'module' && node.moduleKey === 'viz' && live) {
+      let normalized = _normalizeWorkflowVizContent(live.content || '');
+      if (!normalized && typeof _requestVisualizationHtml === 'function') {
+        // 自动重试一次：改用更严格的独立 HTML 生成提示词，减少“节点为空/只有文字”的情况。
+        const sourceText = [
+          workflowContext.question,
+          workflowContext.analysis,
+          ...(workflowContext.upstream || []).map(item => item.label + '：' + (item.summary || item.content || '')),
+        ].filter(Boolean).join('\n\n').slice(0, 12000);
+        try {
+          const retryHtml = await _requestVisualizationHtml(
+            sourceText || prompt,
+            signal,
+            '上一次尝试没有返回完整 HTML。请务必只输出从 <!DOCTYPE html> 到 </html> 的完整页面。'
+          );
+          normalized = '```html\n' + retryHtml + '\n```';
+        } catch (retryErr) {
+          console.warn('Viz module automatic retry failed:', retryErr);
+        }
+      }
+      if (!normalized) {
+        const wasAborted = !!(workflowAbortController && workflowAbortController.signal.aborted);
+        live.content = '';
+        live.summary = '';
+        live.status = wasAborted ? 'waiting' : 'error';
+        live.busy = false;
+        _saveCustomNodes();
+        if (workflowRunActive) _refreshWorkflowNodeUi(live);
+        else renderGraphCanvas();
+        if (!wasAborted && typeof showToast === 'function') showToast('交互可视化生成失败：模型未返回完整 HTML，请点击该节点重试');
+        return;
+      }
+      live.content = normalized;
+      live.summary = _graphSummary(normalized);
+      live.status = 'done';
+      live.busy = false;
+      _saveCustomNodes();
+      if (workflowRunActive) _refreshWorkflowNodeUi(live);
+      else renderGraphCanvas();
+    }
   } catch (err) {
     const live = _findGraphNode(node.id);
     if (live) {
@@ -549,7 +636,7 @@ async function _generateCustomNode(node) {
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
     }
     _saveCustomNodes();
-    if (!workflowRunActive) renderGraphCanvas();
+    _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
   }
 }
@@ -878,7 +965,7 @@ async function _processWorkflowChainItem(current, force) {
     if (!question.trim()) {
       current.status = 'waiting';
       _saveCustomNodes();
-      if (!workflowRunActive) renderGraphCanvas();
+      _refreshWorkflowNodeStatusUi(current);
       if (typeof showToast === 'function') showToast('请先连接并填写问题节点');
       return false;
     }
@@ -895,7 +982,7 @@ async function _processWorkflowChainItem(current, force) {
     if (!(current.content || '').trim()) {
       current.status = 'waiting';
       _saveCustomNodes();
-      if (!workflowRunActive) renderGraphCanvas();
+      _refreshWorkflowNodeStatusUi(current);
       if (typeof showToast === 'function') showToast('请先填写 ' + (current.kind === 'note' ? '我的总结' : current.manual ? '我的回答' : '问题') + ' 内容');
       return false;
     }
@@ -966,6 +1053,7 @@ function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked) 
       blocked.add(edge.to);
       const node = _findGraphNode(edge.to);
       if (node && node.status !== 'done') node.status = 'waiting';
+      _refreshWorkflowNodeStatusUi(node);
       stack.push(edge.to);
     }
   }
@@ -983,7 +1071,12 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   } catch (err) {
     console.error('Workflow node failed:', err);
     const live = _findGraphNode(node.id);
-    if (live && live.status !== 'error') live.status = 'error';
+    if (live) {
+      live.busy = false;
+      if (live.status !== 'error') live.status = 'error';
+    }
+    _saveCustomNodes();
+    _refreshWorkflowNodeStatusUi(live);
   }
   (window.__wfLogs = window.__wfLogs || []).push({ type: 'done', label: _workflowProgressLabel(node), t: Date.now() });
   console.log('[Workflow] done ', _workflowProgressLabel(node), Date.now());
@@ -1947,6 +2040,7 @@ window.draftSocraticAnswer = draftSocraticAnswer;
 window.draftAskAi = draftAskAi;
 window.removeDraftNode = removeDraftNode;
 window.graphOpenRegenerate = graphOpenRegenerate;
+window.generateVizNode = generateVizNode;
 window.closeRegeneratePanel = closeRegeneratePanel;
 window.submitRegenerateNode = submitRegenerateNode;
 window.zoomGraph = zoomGraph;

@@ -704,6 +704,17 @@ function _replaceModuleContent(content, moduleKey, reply) {
 }
 
 async function _regenerateModuleContent(message, moduleKey, confusion) {
+  if (moduleKey === 'viz') {
+    // 可视化模块必须返回完整 HTML 页面，优先使用专门的 HTML 模型，失败时回退主模型。
+    if (typeof _requestVisualizationHtml !== 'function') throw new Error('可视化生成模块未加载，请刷新页面后重试');
+    const html = await _requestVisualizationHtml(
+      message?.content || '',
+      new AbortController().signal,
+      '用户没看懂/有新要求：' + confusion
+    );
+    return _replaceModuleContent(message?.content || '', moduleKey, '## 交互探索\n\n```html\n' + html + '\n```');
+  }
+
   const moduleLabel = (GRAPH_MODULE_META[moduleKey] || {}).label || moduleKey;
   const original = _extractRawModuleSection(message?.content || '', moduleKey) || '（没有原内容）';
   const prompt = '用户对下面「' + moduleLabel + '」中的内容有没看懂的地方。'
@@ -730,6 +741,42 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
 
   if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
   throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+}
+
+const _generatingVizNodes = new Set();
+
+async function generateVizNode(nodeId) {
+  if (_generatingVizNodes.has(nodeId)) return;
+  if (typeof isStreaming !== 'undefined' && isStreaming) return;
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'module' || node.moduleKey !== 'viz') return;
+  const messages = _getChatHistory();
+  const message = messages[node.messageIndex];
+  if (!message) return;
+
+  _generatingVizNodes.add(nodeId);
+  try {
+    const nextContent = await ensureVisualization(message.content || '', new AbortController().signal);
+    if (nextContent === message.content) {
+      throw new Error('模型未返回完整 HTML 页面，请检查模型配置后重试');
+    }
+    const updated = typeof window.updateChatHistoryMessage === 'function'
+      ? window.updateChatHistoryMessage(message.timestamp, item => ({ ...item, content: nextContent }))
+      : false;
+    if (!updated) throw new Error('未找到对应的回答消息');
+    if (typeof saveCurrentSession === 'function') await saveCurrentSession();
+    if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+    if (typeof renderCurrentChat === 'function') await renderCurrentChat();
+    else if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+    if (typeof hideProgress === 'function') hideProgress('交互可视化已生成');
+    if (typeof showToast === 'function') showToast('交互可视化已生成');
+  } catch (err) {
+    console.warn('Generate visualization node failed:', err);
+    if (typeof hideProgress === 'function') hideProgress('生成可视化失败');
+    if (typeof showToast === 'function') showToast('生成可视化失败：' + (err.message || err));
+  } finally {
+    _generatingVizNodes.delete(nodeId);
+  }
 }
 
 function graphOpenRegenerate(nodeId) {

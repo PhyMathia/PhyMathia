@@ -90,6 +90,17 @@ function _nodeActions(node) {
       + '</div>';
   }
   if (node.kind === 'module' && node.moduleKey !== 'socratic') {
+    if (node.moduleKey === 'viz') {
+      const messages = _getChatHistory();
+      const message = messages[node.messageIndex];
+      const vizContent = _nodeContent(message, node);
+      const hasVisualization = typeof _hasVisualizationHtml === 'function' && _hasVisualizationHtml(vizContent);
+      if (!hasVisualization) {
+        return '<div class="graph-node-actions">'
+          + _iconRegenButton('generateVizNode(\'' + node.id + '\')', '生成可视化', false)
+          + '</div>';
+      }
+    }
     const label = node.moduleKey === 'graph' ? '重新生成' : '没看懂';
     return '<div class="graph-node-actions">'
       + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, false)
@@ -534,6 +545,10 @@ function _refreshWorkflowNodeUi(node) {
   if (nextEl) {
     currentEl.replaceWith(nextEl);
     if (typeof _initVizIframes === 'function') _initVizIframes(nextEl);
+    if (typeof renderMath === 'function') renderMath(nextEl);
+    if (node && node.kind === 'module' && node.moduleKey === 'graph' && typeof renderMermaidInElement === 'function') {
+      setTimeout(() => { renderMermaidInElement(nextEl).catch(() => {}); }, 60);
+    }
     _measureNodes();
     _updateNodeTransforms();
     _redrawEdges();

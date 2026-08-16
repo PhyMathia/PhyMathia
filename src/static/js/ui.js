@@ -693,6 +693,7 @@ if (window.visualViewport) {
 // ====== 首次使用引导 ======
 let _obStep = -1;
 const _isMobile = () => window.innerWidth <= 768;
+const ONBOARDING_EXAMPLE_QUESTION = '请解释简谐运动的物理和数学本质，并生成交互式可视化';
 const _obSteps = [
   {
     type: 'welcome',
@@ -703,6 +704,20 @@ const _obSteps = [
       { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
       { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新画布从中心节点开始，答案与模块向外铺展' },
       { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
+    ]
+  },
+  {
+    type: 'welcome',
+    example: true,
+    icon: UI_ICON_SVG.sparkles,
+    title: '内置示例图讲解',
+    desc: '打开一张内置的「简谐运动」示例探索网，在<strong>真实画布</strong>上逐步讲解：双击添加节点、端口拖线、节点类型、工具栏、选择编辑和状态显示。',
+    exampleQuestion: ONBOARDING_EXAMPLE_QUESTION,
+    exampleNote: '演示图不会调用模型，关闭后会恢复你原来的画布。',
+    features: [
+      { icon: UI_ICON_SVG.pencil, text: '<strong>边点边学</strong> — 聚光灯指到哪，右侧就讲解到哪' },
+      { icon: UI_ICON_SVG.monitor, text: '<strong>真实画布</strong> — 可直接拖动、缩放、双击和拉线体验' },
+      { icon: UI_ICON_SVG.book, text: '<strong>不产生数据</strong> — 演示改动不会写入当前会话或知识库' },
     ]
   },
   {
@@ -766,6 +781,550 @@ function startOnboarding(force) {
   _renderObStep();
 }
 
+function startOnboardingExample() {
+  openExampleGuide();
+}
+
+// ====== 内置示例图讲解：载入演示图，在真实画布上边点边讲 ======
+let _exampleGuideStep = 0;
+let _exampleGuideOriginal = null;
+let _exampleGuideDemoState = null;
+let _exampleGuideSuspendedOnboarding = false;
+let _exampleGuideLastPanelSide = null;
+let _exampleGuideSpotlightRaf = 0;
+
+const EXAMPLE_GUIDE_VIZ_HTML = [
+  '<!DOCTYPE html>',
+  '<html lang="zh-CN">',
+  '<head><meta charset="UTF-8"><style>',
+  ':root{color-scheme:dark}',
+  'html,body{margin:0;padding:0;background:transparent;color:#e8eefc;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
+  'body{padding:12px}',
+  'h3{margin:0 0 6px;font-size:14px}',
+  'p{margin:6px 0;font-size:11px;line-height:1.6;color:#b9c7dd}',
+  '.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}',
+  'label{font-size:11px;color:#dbe6f6}',
+  'input{width:120px;accent-color:#38bdf8}',
+  '.note{margin-top:6px;font-size:11px;color:#7dd3a7}',
+  '</style></head>',
+  '<body>',
+  '<h3>简谐运动位移曲线</h3>',
+  '<p>回复力 F=-kx 把物体拉回平衡位置。</p>',
+  '<div class="row"><label>振幅 A <input id="a" type="range" min="0.5" max="2" step="0.1" value="1"></label><label>角频率 ω <input id="w" type="range" min="0.5" max="3" step="0.1" value="1.5"></label></div>',
+  '<canvas id="c" width="500" height="170"></canvas>',
+  '<div class="note" id="t"></div>',
+  '<script>',
+  '(function(){var cv=document.getElementById("c"),ctx=cv.getContext("2d");var A=1,w=1.5;',
+  'function draw(){ctx.clearRect(0,0,cv.width,cv.height);ctx.strokeStyle="#38bdf8";ctx.lineWidth=2;ctx.beginPath();',
+  'for(var x=0;x<=cv.width;x++){var t=x/cv.width*12;var y=85-A*40*Math.sin(w*t);if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}',
+  'ctx.stroke();ctx.strokeStyle="rgba(148,163,184,.5)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,85);ctx.lineTo(cv.width,85);ctx.stroke();',
+  'document.getElementById("t").textContent="x(t)="+A.toFixed(1)+"·cos("+w.toFixed(1)+"t)。拖动滑块观察振幅和角频率的影响。";}',
+  'document.getElementById("a").oninput=function(){A=parseFloat(this.value);draw();};',
+  'document.getElementById("w").oninput=function(){w=parseFloat(this.value);draw();};draw();',
+  '})();',
+  '<\/script>',
+  '</body></html>'
+].join('\n');
+
+function _demoNode(id, kind, x, y, options) {
+  const opt = options || {};
+  const now = Date.now();
+  return {
+    id,
+    kind,
+    moduleKey: opt.moduleKey || '',
+    manual: !!opt.manual,
+    label: opt.label || '',
+    content: opt.content || '',
+    status: opt.status || ((opt.content || opt.analysis || kind === 'hub') ? 'done' : 'waiting'),
+    summary: opt.summary || '',
+    analysis: opt.analysis || '',
+    analysisHash: '',
+    inputHash: '',
+    generatedAt: now,
+    requirements: opt.requirements || '',
+    busy: false,
+    generated: false,
+    maxItems: kind === 'source' ? 3 : 0,
+    items: opt.items || [],
+    edges: [],
+    fileId: '',
+    fileName: '',
+    generatedNodeIds: [],
+    category: opt.category || '',
+    formulas: opt.formulas || [],
+    knowledgeKey: '',
+    x,
+    y,
+    depth: kind === 'user' ? 1 : kind === 'answer' ? 2 : 3,
+    targetAngle: 0,
+    isRoot: false,
+    timestamp: now,
+    pinned: false,
+    fixedX: null,
+    fixedY: null,
+    customWidth: opt.width || null,
+    customHeight: opt.height || null,
+    w: 0,
+    h: 0,
+    vx: 0,
+    vy: 0,
+  };
+}
+
+function _buildExampleGraphDemoState() {
+  const nodes = [
+    _demoNode('demo-question', 'user', -700, -260, { manual: true, content: '请解释简谐运动的物理和数学本质，并生成交互式可视化' }),
+    _demoNode('demo-answer', 'answer', -220, -260, { analysis: '核心概念：回复力 F=-kx；数学结构：二阶线性微分方程；建议模块：物理视角、数学视角、知识图谱、交互可视化、进阶学习、苏格拉底追问。' }),
+    _demoNode('demo-physics', 'module', 340, -540, { moduleKey: 'physics', content: '物体偏离平衡位置越远，回复力越大。回复力 <formula>F=-kx</formula> 总指向平衡位置，动能和弹性势能不断转换。' }),
+    _demoNode('demo-math', 'module', 350, -180, { moduleKey: 'math', content: '由牛顿第二定律得到 <formula>m\\frac{d^2x}{dt^2}=-kx</formula>，通解为 <formula>x(t)=A\\cos(\\omega t+\\phi)</formula>。' }),
+    _demoNode('demo-graph', 'module', 350, 180, { moduleKey: 'graph', content: '知识图谱：回复力 → 位移 → 速度 → 加速度 → 能量守恒。' }),
+    _demoNode('demo-viz', 'module', 350, 540, { moduleKey: 'viz', content: '```html\n' + EXAMPLE_GUIDE_VIZ_HTML + '\n```' }),
+    _demoNode('demo-learn', 'module', 900, 0, { moduleKey: 'learn', content: '### 进阶学习方向\n1. 阻尼振动与受迫振动\n2. 共振现象\n3. 耦合振子与简正模式' }),
+    _demoNode('demo-socratic', 'module', 900, 360, { moduleKey: 'socratic', content: '### 苏格拉底追问\n1. [基础] 弹簧变硬后振动会怎样？\n2. [进阶] 能量为什么与振幅平方成正比？\n3. [拓展] 加入阻尼后方程如何变化？' }),
+    _demoNode('demo-blank', 'blank', -720, 260, { requirements: '用动画解释共振现象', status: 'waiting' }),
+    _demoNode('demo-source', 'source', -260, 560, { manual: true, items: [{ title: '简谐运动' }, { title: '回复力' }, { title: '角频率' }] }),
+    _demoNode('demo-knowledge', 'knowledge', 320, 820, { manual: true, content: '简谐运动：回复力与位移成正比且反向，系统围绕平衡位置做周期性运动。', formulas: ['F=-kx'] }),
+    _demoNode('demo-human', 'human_note', -720, 640, { manual: true, label: '我的理解', content: '回复力像“拉回平衡位置的橡皮筋”，偏离越多拉得越强。' }),
+    _demoNode('demo-hub', 'hub', 900, -420, {}),
+    _demoNode('demo-note', 'note', 900, 720, { manual: true, content: '我的总结：简谐运动的核心是线性回复力，它同时决定了运动方程与能量关系。' }),
+  ];
+  const positions = {};
+  nodes.forEach(node => { positions[node.id] = { x: node.x, y: node.y }; });
+  return {
+    collapsed: {},
+    hidden: {},
+    positions,
+    pinned: {},
+    sizes: {},
+    pan: { x: 140, y: 60 },
+    zoom: 0.62,
+    focus: null,
+    layoutVersion: 4,
+    connections: [
+      { from: 'demo-question', fromPort: 'out-0', to: 'demo-answer', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-0', to: 'demo-physics', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-1', to: 'demo-math', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-2', to: 'demo-graph', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-3', to: 'demo-viz', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-4', to: 'demo-learn', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-answer', fromPort: 'out-5', to: 'demo-socratic', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-physics', fromPort: 'out-0', to: 'demo-hub', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-math', fromPort: 'out-0', to: 'demo-hub', toPort: 'in-1', type: 'custom', custom: true },
+      { from: 'demo-graph', fromPort: 'out-0', to: 'demo-human', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-learn', fromPort: 'out-0', to: 'demo-blank', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-source', fromPort: 'out-0', to: 'demo-knowledge', toPort: 'in-0', type: 'custom', custom: true },
+    ],
+    removedEdges: [],
+    portCounts: {},
+    inputPortCounts: { 'demo-hub': 1 },
+    groups: [],
+    customNodes: nodes,
+    harnessDeleted: {},
+    harnessCheckpoint: null,
+    updatedAt: Date.now(),
+  };
+}
+
+const EXAMPLE_GUIDE_STEPS = [
+  {
+    title: '这是内置演示图',
+    icon: UI_ICON_SVG.sparkles,
+    desc: '已经载入一张以「简谐运动」为主题的示例探索网，并已使用画布自带的<strong>自动整理</strong>重新排布：问题 → AI 回答 → 各模块 → 延伸与结构节点，层级更清晰。',
+    points: ['演示期间不会调用模型，也不会写入你的会话。', '你也可以随时点击右下角工具栏的“自动整理”再次重排。', '关闭示例后，画布会恢复成你原来的图。'],
+    target: '[data-node-id="demo-answer"]',
+  },
+  {
+    title: '双击空白处添加节点',
+    icon: UI_ICON_SVG.plus,
+    desc: '在画布空白处<strong>双击</strong>，会弹出“添加节点”菜单，可选择 AI 生成、视角模块、基础素材、人工内容和结构节点。',
+    points: ['可以现在就双击右侧空白区域试一试。', '选择节点后，它会出现在你双击的位置。'],
+    spot: 'blank',
+  },
+  {
+    title: '问题节点：探索的起点',
+    icon: UI_ICON_SVG.pencil,
+    desc: '问题节点保存原始问题，右侧有两个输出端口：<strong>AI 回答</strong>和<strong>我的回答</strong>，分别连接自动回答或手写回答。',
+    points: ['把输出端口拖到空白处可快速创建下一级节点。', '问题文本可以直接在节点中编辑。'],
+    target: '[data-node-id="demo-question"]',
+  },
+  {
+    title: 'AI 回答节点：模块分发器',
+    icon: UI_ICON_SVG.sparkles,
+    desc: 'AI 回答节点根据问题分析结果，把回答拆成物理视角、数学视角、知识图谱、交互可视化、进阶学习和苏格拉底追问等模块。',
+    points: ['每个输出端口对应一个模块。', '状态徽标会显示“分析中 / 完成 / 失败”。'],
+    target: '[data-node-id="demo-answer"]',
+  },
+  {
+    title: '模块节点：独立可追问',
+    icon: UI_ICON_SVG.book,
+    desc: '物理、数学、图谱、可视化等模块都是独立节点，可以单独<strong>追问</strong>、<strong>没看懂</strong>、<strong>编辑</strong>、<strong>最小化</strong>或删除。',
+    points: ['节点右下角按钮可重新生成或追问。', '双击节点标题/内容区不会误触添加节点。'],
+    target: '[data-node-id="demo-physics"]',
+  },
+  {
+    title: '拖动输出端口生成节点',
+    icon: UI_ICON_SVG.external,
+    desc: '按住任意节点的<strong>右侧输出端口</strong>，拖到空白处松手，会按端口类型创建追问、进阶学习、苏格拉底回答等新节点。',
+    points: ['试试拖动“物理视角”右侧的端口到空白处。', '新节点会自动连接到来源节点。'],
+    target: '[data-node-id="demo-physics"] .graph-output-port',
+  },
+  {
+    title: '输入端口：重连或断开',
+    icon: UI_ICON_SVG.monitor,
+    desc: '按住<strong>左侧输入端口</strong>拖动：拖到其他节点的输出端口可以重连来源；拖到空白处松手则断开当前输入。',
+    points: ['模块节点默认有一个输入端口。', '问题、汇聚、空白节点可点击 + 增加输入端口。'],
+    target: '[data-node-id="demo-math"] .graph-input-port',
+  },
+  {
+    title: '交互可视化节点',
+    icon: UI_ICON_SVG.monitor,
+    desc: '可视化模块内嵌可交互 HTML：可以拖动滑块、全屏、复制源码或新窗口打开。真实生成失败时会显示红色“失败”。',
+    points: ['在示例图中直接拖动滑块试试。', '“没看懂”会只要求重讲这个可视化。'],
+    target: '[data-node-id="demo-viz"]',
+  },
+  {
+    title: '基础素材：输入、知识点、我的理解',
+    icon: UI_ICON_SVG.database,
+    desc: '画布还支持<strong>输入节点</strong>（文件/文本解析为知识点）、<strong>知识点节点</strong>和<strong>我的理解</strong>批注。',
+    points: ['输入节点把内容分发为多个知识点。', '双击“我的理解”节点可直接编辑标题、正文和公式。'],
+    target: '[data-node-id="demo-source"]',
+  },
+  {
+    title: '结构节点：汇聚与总结',
+    icon: UI_ICON_SVG.book,
+    desc: '<strong>汇聚节点</strong>收集多条上游输入，再分发到 AI 总结、我的总结或追问。<strong>我的总结</strong>用于人工收束一条探索路径；本示例中它被收拢在右侧素材区。',
+    points: ['汇聚节点可以点击 + 增加输入端口。', '总结节点没有输出端口，表示路径暂告一段落。'],
+    target: '[data-node-id="demo-hub"]',
+  },
+  {
+    title: '空白节点：自由生成',
+    icon: UI_ICON_SVG.plus,
+    desc: '通过双击添加的<strong>AI 生成空白</strong>节点，可以写任意要求（如“用动画解释共振”），点生成后由 AI 生成任意内容。',
+    points: ['演示模式不会真的调用模型。', '真实使用时，生成失败会变红并可单独重试。'],
+    target: '[data-node-id="demo-blank"]',
+  },
+  {
+    title: '画布工具栏',
+    icon: UI_ICON_SVG.sliders,
+    desc: '右下角工具栏提供搜索、图体检、缩放/适配、修改历史、文字选择、联系模式、分组、Φ 助手和自动整理。讲解本步时面板已临时移到左侧，不会再遮挡工具栏。',
+    points: ['联系模式：依次点两个节点即可添加联系箭头。', '选中多个节点后可创建分组或批量删除。', '自动整理会按节点层级重新排布并适配画布。'],
+    target: '.graph-canvas-toolbar',
+    panelSide: 'left',
+  },
+  {
+    title: '选择、编辑、删除与撤销',
+    icon: UI_ICON_SVG.pencil,
+    desc: '单击选中节点，按住 Ctrl/Cmd 多选，空白处拖拽可框选；拖动节点、右下角缩放尺寸，Delete 删除，顶部历史按钮可撤销/重做。',
+    points: ['节点右上角按钮：最小化、编辑、删除。', '拖拽分组框可整体移动组内节点。'],
+    target: '[data-node-id="demo-blank"]',
+  },
+  {
+    title: '结束演示',
+    icon: UI_ICON_SVG.check,
+    desc: '你已经看完探索网的核心操作。关闭本示例后，画布会恢复为你原来的会话图，演示中产生的任何改动都不会保留。',
+    points: ['在真实画布中双击空白处即可开始搭建自己的网络。', '随时可从侧边栏“示例讲解”重新打开本演示。'],
+    spot: 'none',
+  },
+];
+
+function _exampleGuideSpotRect(step) {
+  const canvas = document.getElementById('graphCanvas');
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (step.spot === 'blank') {
+    const left = rect.left + rect.width * 0.36;
+    const top = rect.top + rect.height * 0.30;
+    const width = Math.min(360, rect.width * 0.30);
+    const height = Math.min(240, rect.height * 0.30);
+    return { left, top, width, height };
+  }
+  if (step.spot === 'none') return null;
+  if (step.spot === 'canvas') {
+    return { left: rect.left + 12, top: rect.top + 12, width: rect.width - 24, height: rect.height - 24 };
+  }
+  const el = step.target ? document.querySelector(step.target) : null;
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  const pad = step.spot === 'port' ? 10 : 8;
+  return { left: r.left - pad, top: r.top - pad, width: r.width + pad * 2, height: r.height + pad * 2 };
+}
+
+function _compactDemoMaterialNodes() {
+  const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
+  if (!state || !state.positions) return;
+  const treeIds = ['demo-question', 'demo-answer', 'demo-physics', 'demo-math', 'demo-graph', 'demo-viz', 'demo-learn', 'demo-socratic', 'demo-hub', 'demo-human', 'demo-blank'];
+  let maxX = -Infinity;
+  treeIds.forEach(id => {
+    const pos = state.positions[id];
+    if (pos && typeof pos.x === 'number') maxX = Math.max(maxX, pos.x);
+  });
+  if (!Number.isFinite(maxX)) return;
+  const materialX = maxX + 560;
+  ['demo-source', 'demo-knowledge', 'demo-note'].forEach((id, index) => {
+    state.positions[id] = { x: materialX, y: (index - 1) * 300 };
+    if (typeof graphView !== 'undefined' && graphView.nodeById && graphView.nodeById[id]) {
+      graphView.nodeById[id].x = materialX;
+      graphView.nodeById[id].y = (index - 1) * 300;
+    }
+  });
+  if (typeof window.saveGraphState === 'function') window.saveGraphState('', state);
+  if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
+  if (typeof _redrawEdges === 'function') _redrawEdges();
+}
+
+function _fitDemoGraphForPanel(panelLeft) {
+  if (typeof window.getGraphState !== 'function') return;
+  const dialog = document.querySelector('.example-guide-dialog');
+  if (!dialog) return;
+  const state = window.getGraphState();
+  if (!state || !state.pan) return;
+  if (window.innerWidth <= 760) {
+    _exampleGuideLastPanelSide = panelLeft;
+    return;
+  }
+  const panelWidth = Math.max(280, dialog.getBoundingClientRect().width || 360);
+  const shift = Math.min(170, panelWidth * 0.34);
+  if (_exampleGuideLastPanelSide === null) {
+    state.pan.x -= shift;
+  } else if (panelLeft !== _exampleGuideLastPanelSide) {
+    state.pan.x += (panelLeft ? 1 : -1) * shift * 2;
+  }
+  _exampleGuideLastPanelSide = panelLeft;
+  if (typeof window.saveGraphState === 'function') window.saveGraphState('', state);
+  if (typeof _applyGraphTransform === 'function') _applyGraphTransform();
+}
+
+function _renderExampleGuideStep() {
+  const step = EXAMPLE_GUIDE_STEPS[_exampleGuideStep] || EXAMPLE_GUIDE_STEPS[0];
+  const iconEl = document.getElementById('exampleGuideStepIcon');
+  const titleEl = document.getElementById('exampleGuideStepTitle');
+  const descEl = document.getElementById('exampleGuideStepDesc');
+  const pointsEl = document.getElementById('exampleGuidePoints');
+  const dotsEl = document.getElementById('exampleGuideDots');
+  const prevBtn = document.getElementById('exampleGuidePrevBtn');
+  const nextBtn = document.getElementById('exampleGuideNextBtn');
+  if (iconEl) iconEl.innerHTML = step.icon || '';
+  if (titleEl) titleEl.textContent = step.title;
+  if (descEl) descEl.innerHTML = step.desc;
+  if (pointsEl) pointsEl.innerHTML = (step.points || []).map(point => '<li>' + point + '</li>').join('');
+  if (dotsEl) dotsEl.innerHTML = EXAMPLE_GUIDE_STEPS.map((item, index) =>
+    '<button class="example-guide-dot' + (index === _exampleGuideStep ? ' active' : '') + '" onclick="jumpExampleGuideStep(' + index + ')" title="' + item.title + '"></button>'
+  ).join('');
+  if (prevBtn) prevBtn.disabled = _exampleGuideStep === 0;
+  if (nextBtn) {
+    const isLast = _exampleGuideStep === EXAMPLE_GUIDE_STEPS.length - 1;
+    nextBtn.innerHTML = isLast ? '完成' : '下一步 <span class="example-guide-next-icon">→</span>';
+  }
+  const dialog = document.querySelector('.example-guide-dialog');
+  const useLeftPanel = step.panelSide === 'left' || (_exampleGuideStep >= 5 && _exampleGuideStep <= 13);
+  if (dialog) dialog.classList.toggle('example-guide-panel-left', useLeftPanel);
+  _fitDemoGraphForPanel(useLeftPanel);
+  _updateExampleGuideSpotlight(step);
+}
+
+function _updateExampleGuideSpotlight(step) {
+  const spotlight = document.getElementById('exampleGuideSpotlight');
+  if (!spotlight) return;
+  const currentStep = step || EXAMPLE_GUIDE_STEPS[_exampleGuideStep] || EXAMPLE_GUIDE_STEPS[0];
+  const rect = _exampleGuideSpotRect(currentStep);
+  if (rect && rect.left >= -20 && rect.top >= -20 && rect.width > 10 && rect.height > 10) {
+    spotlight.style.left = rect.left + 'px';
+    spotlight.style.top = rect.top + 'px';
+    spotlight.style.width = rect.width + 'px';
+    spotlight.style.height = rect.height + 'px';
+    spotlight.classList.add('show');
+  } else {
+    spotlight.classList.remove('show');
+  }
+}
+
+function _startExampleGuideSpotlightLoop() {
+  if (_exampleGuideSpotlightRaf) return;
+  const tick = () => {
+    const overlay = document.getElementById('exampleGuideOverlay');
+    if (!overlay || !overlay.classList.contains('active')) {
+      _exampleGuideSpotlightRaf = 0;
+      return;
+    }
+    _updateExampleGuideSpotlight();
+    _exampleGuideSpotlightRaf = requestAnimationFrame(tick);
+  };
+  _exampleGuideSpotlightRaf = requestAnimationFrame(tick);
+}
+
+function _stopExampleGuideSpotlightLoop() {
+  if (_exampleGuideSpotlightRaf) {
+    cancelAnimationFrame(_exampleGuideSpotlightRaf);
+    _exampleGuideSpotlightRaf = 0;
+  }
+}
+
+function _restoreExampleGraphBindings() {
+  if (!_exampleGuideOriginal) return;
+  const original = _exampleGuideOriginal;
+  const restore = (name, value) => {
+    try { window[name] = value; } catch (e) {}
+  };
+  restore('getGraphState', original.getGraphState);
+  restore('saveGraphState', original.saveGraphState);
+  restore('flushGraphStateServerSave', original.flushGraphStateServerSave);
+  restore('getChatHistory', original.getChatHistory);
+  restore('getStreamingAssistant', original.getStreamingAssistant);
+  restore('getCurrentSessionId', original.getCurrentSessionId);
+  restore('getActiveModelForRole', original.getActiveModelForRole);
+  restore('proxyChatWithModel', original.proxyChatWithModel);
+  restore('proxyChat', original.proxyChat);
+  restore('runWorkflowNode', original.runWorkflowNode);
+  restore('runWorkflowNodes', original.runWorkflowNodes);
+  restore('runAllWorkflowNodes', original.runAllWorkflowNodes);
+  restore('startQuestionWorkflow', original.startQuestionWorkflow);
+  restore('generateBlankNode', original.generateBlankNode);
+  restore('generateKnowledgeNode', original.generateKnowledgeNode);
+  restore('generateRelationNode', original.generateRelationNode);
+  restore('submitRegenerateNode', original.submitRegenerateNode);
+  restore('generateVizNode', original.generateVizNode);
+  restore('draftAskAi', original.draftAskAi);
+  restore('toggleGraphPet', original.toggleGraphPet);
+  restore('submitDraftQuestion', original.submitDraftQuestion);
+  restore('draftSocraticAnswer', original.draftSocraticAnswer);
+  restore('sendGraphNewSession', original.sendGraphNewSession);
+  _exampleGuideOriginal = null;
+  _exampleGuideDemoState = null;
+  try { localStorage.removeItem('phymathia_graph_history___example_graph_demo__'); } catch (e) {}
+}
+
+function _enterExampleGraphDemo() {
+  if (_exampleGuideOriginal) return;
+  const state = _buildExampleGraphDemoState();
+  const original = {
+    getGraphState: window.getGraphState,
+    saveGraphState: window.saveGraphState,
+    flushGraphStateServerSave: window.flushGraphStateServerSave,
+    getChatHistory: window.getChatHistory,
+    getStreamingAssistant: window.getStreamingAssistant,
+    getCurrentSessionId: window.getCurrentSessionId,
+    getActiveModelForRole: window.getActiveModelForRole,
+    proxyChatWithModel: window.proxyChatWithModel,
+    proxyChat: window.proxyChat,
+    runWorkflowNode: window.runWorkflowNode,
+    runWorkflowNodes: window.runWorkflowNodes,
+    runAllWorkflowNodes: window.runAllWorkflowNodes,
+    startQuestionWorkflow: window.startQuestionWorkflow,
+    generateBlankNode: window.generateBlankNode,
+    generateKnowledgeNode: window.generateKnowledgeNode,
+    generateRelationNode: window.generateRelationNode,
+    submitRegenerateNode: window.submitRegenerateNode,
+    generateVizNode: window.generateVizNode,
+    draftAskAi: window.draftAskAi,
+    toggleGraphPet: window.toggleGraphPet,
+    submitDraftQuestion: window.submitDraftQuestion,
+    draftSocraticAnswer: window.draftSocraticAnswer,
+    sendGraphNewSession: window.sendGraphNewSession,
+  };
+  _exampleGuideOriginal = original;
+  _exampleGuideDemoState = state;
+  window.getGraphState = () => _exampleGuideDemoState;
+  window.flushGraphStateServerSave = () => Promise.resolve();
+  window.saveGraphState = (sid, nextState) => {
+    if (nextState && typeof nextState === 'object') _exampleGuideDemoState = nextState;
+  };
+  window.getChatHistory = () => [];
+  window.getStreamingAssistant = () => null;
+  window.getCurrentSessionId = () => '__example_graph_demo__';
+  window.getActiveModelForRole = () => null;
+  window.proxyChatWithModel = () => Promise.reject(new Error('演示模式不调用模型'));
+  window.proxyChat = () => Promise.resolve(null);
+  const blockAi = () => {
+    if (typeof showToast === 'function') showToast('演示模式：这里不会调用模型，退出示例后可在真实画布使用');
+  };
+  ['runWorkflowNode', 'runWorkflowNodes', 'runAllWorkflowNodes', 'startQuestionWorkflow', 'generateBlankNode', 'generateKnowledgeNode', 'generateRelationNode', 'submitRegenerateNode', 'generateVizNode', 'draftAskAi', 'toggleGraphPet', 'submitDraftQuestion', 'draftSocraticAnswer', 'sendGraphNewSession'].forEach(name => {
+    try { window[name] = blockAi; } catch (e) {}
+  });
+  document.body.classList.add('example-graph-demo-active');
+  if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+}
+
+function _exitExampleGraphDemo() {
+  document.body.classList.remove('example-graph-demo-active');
+  if (typeof closeAddBlankNodeModal === 'function') closeAddBlankNodeModal();
+  if (typeof closeModuleNodeModal === 'function') closeModuleNodeModal();
+  if (typeof closeHumanNoteNodeModal === 'function') closeHumanNoteNodeModal();
+  if (typeof closeGraphSearchPanel === 'function') closeGraphSearchPanel();
+  _restoreExampleGraphBindings();
+  if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+}
+
+function openExampleGuide() {
+  const overlay = document.getElementById('exampleGuideOverlay');
+  if (!overlay) return;
+  if (typeof isStreaming !== 'undefined' && isStreaming) {
+    if (typeof showToast === 'function') showToast('请先等待当前回答完成，再打开示例讲解');
+    return;
+  }
+  if (typeof workflowRunActive !== 'undefined' && workflowRunActive) {
+    if (typeof showToast === 'function') showToast('请先停止或等待当前工作流结束，再打开示例讲解');
+    return;
+  }
+  if (typeof closeSidebar === 'function') closeSidebar();
+  const onboarding = document.getElementById('onboardingOverlay');
+  if (onboarding && onboarding.classList.contains('active')) {
+    _exampleGuideSuspendedOnboarding = true;
+    onboarding.classList.remove('active');
+  }
+  _enterExampleGraphDemo();
+  _exampleGuideStep = 0;
+  overlay.classList.add('active');
+  setTimeout(() => {
+    // 直接使用项目自带的“自动整理”：按问题根节点、层级和端口顺序重新排布示例图。
+    if (typeof autoArrangeGraph === 'function') autoArrangeGraph();
+    // 自动整理后，再把“素材/总结”类节点收拢到主树右侧，避免分散节点把整张图拉得过宽。
+    _compactDemoMaterialNodes();
+    if (typeof fitGraph === 'function') fitGraph();
+    _exampleGuideLastPanelSide = null;
+    _renderExampleGuideStep();
+    _startExampleGuideSpotlightLoop();
+  }, 120);
+}
+
+function closeExampleGuide() {
+  const overlay = document.getElementById('exampleGuideOverlay');
+  overlay?.classList.remove('active');
+  const spotlight = document.getElementById('exampleGuideSpotlight');
+  spotlight?.classList.remove('show');
+  _exampleGuideLastPanelSide = null;
+  _stopExampleGuideSpotlightLoop();
+  _exitExampleGraphDemo();
+  if (_exampleGuideSuspendedOnboarding) {
+    _exampleGuideSuspendedOnboarding = false;
+    const onboarding = document.getElementById('onboardingOverlay');
+    if (onboarding && _obStep >= 0 && _obStep < _obSteps.length) {
+      onboarding.classList.add('active');
+      _renderObStep();
+    }
+  }
+}
+
+function prevExampleGuideStep() {
+  if (_exampleGuideStep <= 0) return;
+  _exampleGuideStep--;
+  _renderExampleGuideStep();
+}
+
+function nextExampleGuideStep() {
+  if (_exampleGuideStep >= EXAMPLE_GUIDE_STEPS.length - 1) {
+    closeExampleGuide();
+    return;
+  }
+  _exampleGuideStep++;
+  _renderExampleGuideStep();
+}
+
+function jumpExampleGuideStep(index) {
+  _exampleGuideStep = Math.max(0, Math.min(EXAMPLE_GUIDE_STEPS.length - 1, Number(index) || 0));
+  _renderExampleGuideStep();
+}
+
 function _renderObStep() {
   if (_obStep < 0 || _obStep >= _obSteps.length) { endOnboarding(); return; }
   const step = _obSteps[_obStep];
@@ -790,11 +1349,24 @@ function _renderObStep() {
     if (step.type === 'welcome') {
       spotlight.style.display = 'none';
       card.className = 'onboarding-card ob-welcome';
+      const isLast = _obStep === _obSteps.length - 1;
+      const primaryAction = step.example
+        ? '<button class="ob-btn ob-btn-ghost" onclick="nextObStep()">稍后再说</button>'
+          + '<button class="ob-btn ob-btn-next" onclick="openExampleGuide()">进入示例图 ' + UI_ICON_SVG.arrowRight + '</button>'
+        : '<button class="ob-btn ' + (isLast ? 'ob-btn-finish' : 'ob-btn-next') + '" onclick="' + (isLast ? 'endOnboarding()' : 'nextObStep()') + '">' + (isLast ? '开始使用 ' + UI_ICON_SVG.sparkles : '开始了解 ' + UI_ICON_SVG.arrowRight) + '</button>';
       card.innerHTML = `
         <span class="ob-icon">${step.icon}</span>
         <div class="ob-title">${step.title}</div>
+        ${step.desc ? `<div class="ob-desc">${step.desc}</div>` : ''}
+        ${step.exampleQuestion ? `
+          <div class="ob-example-box">
+            <div class="ob-example-label">${UI_ICON_SVG.pencil} 示例问题</div>
+            <div class="ob-example-question">${step.exampleQuestion}</div>
+            <div class="ob-example-note">${step.exampleNote || ''}</div>
+            ${step.exampleLink ? `<a class="ob-example-link" href="${step.exampleLink}" target="_blank" rel="noopener noreferrer">${UI_ICON_SVG.external} 打开内置演示页</a>` : ''}
+          </div>` : ''}
         <div class="ob-features">
-          ${step.features.map(f => `
+          ${(step.features || []).map(f => `
             <div class="ob-feature">
               <span class="ob-feature-icon">${f.icon}</span>
               <span class="ob-feature-text">${f.text}</span>
@@ -807,7 +1379,7 @@ function _renderObStep() {
           </div>
           <div class="onboarding-actions">
             <button class="ob-btn ob-btn-skip" onclick="endOnboarding()">跳过</button>
-            <button class="ob-btn ob-btn-next" onclick="nextObStep()">开始了解 ${UI_ICON_SVG.arrowRight}</button>
+            ${primaryAction}
           </div>
         </div>
       `;
@@ -933,6 +1505,8 @@ function endOnboarding() {
 // Handle resize during onboarding
 window.addEventListener('resize', () => {
   if (_obStep >= 0) _renderObStep();
+  const exampleOverlay = document.getElementById('exampleGuideOverlay');
+  if (exampleOverlay && exampleOverlay.classList.contains('active')) _renderExampleGuideStep();
   // Close floating panels on resize to avoid mispositioning
   document.getElementById('modelPanel')?.classList.remove('show');
   document.getElementById('dataPanel')?.classList.remove('show');
@@ -942,6 +1516,11 @@ window.addEventListener('resize', () => {
 // ESC 关闭可视化全屏
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    const exampleGuide = document.getElementById('exampleGuideOverlay');
+    if (exampleGuide && exampleGuide.classList.contains('active')) {
+      closeExampleGuide();
+      return;
+    }
     const overlay = document.getElementById('vizFullscreenOverlay');
     if (overlay && overlay.classList.contains('active')) {
       closeVizFullscreen();

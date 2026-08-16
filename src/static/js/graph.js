@@ -1220,8 +1220,17 @@ function _nodeContent(message, node) {
   }
   if (node.kind === 'module') {
     const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
-    if (node.moduleKey === 'viz' && sections.viz) return _stripModuleHeading(sections.viz, 'viz');
-    if (node.moduleKey === 'viz') return '暂未生成交互式可视化内容';
+    if (node.moduleKey === 'viz') {
+      const section = sections.viz ? _stripModuleHeading(sections.viz, 'viz') : '';
+      if (section && (typeof _hasVisualizationHtml === 'function' ? _hasVisualizationHtml(section) : /```html[\s\S]*?```/i.test(section))) {
+        return section;
+      }
+      // 兼容旧消息：主模型生成/补齐的 HTML 可能不在 <viz> 内，画布节点回退显示完整 HTML 块。
+      const fallback = typeof _findCompleteHtmlBlock === 'function' ? _findCompleteHtmlBlock(message.content || '') : '';
+      if (fallback) return fallback;
+      if (section) return section;
+      return '暂未生成交互式可视化内容';
+    }
     return _stripModuleHeading(sections[node.moduleKey] || '', node.moduleKey);
   }
   return '';

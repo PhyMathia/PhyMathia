@@ -565,6 +565,8 @@
           if (!isCasual) autoExtractKnowledge(currentSessionId, chatHistory);
 
           await saveCurrentSession();
+          // 确保画布读取的是补齐可视化后的最终内容，而不是流式阶段的空 <viz> 旧快照。
+          if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
           renderSessionList(); // 更新侧边栏时间显示
           const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
           if (metaEl) {

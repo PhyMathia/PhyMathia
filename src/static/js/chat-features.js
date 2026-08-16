@@ -413,20 +413,119 @@
       }
     }
 
-    // ===== HTML 生成模型（可选）：主回答缺少可视化时补充生成 =====
+    // ===== HTML 生成模型：主回答缺少可视化时自动补齐（补进 <viz> 而不是追加到文末） =====
 
-    function extractHtmlFromModelReply(text) {
-      const fenced = text.match(/```html\s*([\s\S]*?)```/i);
-      if (fenced && /<html[\s>]|<!doctype|<body[\s>]/i.test(fenced[1])) {
-        return fenced[1].trim();
-      }
-      if (/<html[\s>]|<!doctype|<body[\s>]/i.test(text)) {
-        const start = text.search(/<!doctype|<html[\s>]/i);
-        const endMatch = text.match(/<\/html>/i);
-        const end = endMatch ? endMatch.index + endMatch[0].length : text.length;
-        return text.slice(start, end).trim();
+    function _looksLikeCompleteHtml(html) {
+      const text = String(html || '').trim();
+      if (text.length < 100) return false;
+      if (!/<html[\s>]|<!doctype|<body[\s>]/i.test(text)) return false;
+      return /<\/html>|<\/body>/i.test(text);
+    }
+
+    function _findCompleteHtmlBlock(text) {
+      const source = String(text || '');
+      const re = /```html\s*([\s\S]*?)```/gi;
+      let match;
+      while ((match = re.exec(source)) !== null) {
+        if (_looksLikeCompleteHtml(match[1])) {
+          return '```html\n' + match[1].trim() + '\n```';
+        }
       }
       return '';
+    }
+
+    function _hasVisualizationHtml(text) {
+      return !!_findCompleteHtmlBlock(text);
+    }
+
+    function extractHtmlFromModelReply(text) {
+      const source = String(text || '');
+      const block = _findCompleteHtmlBlock(source);
+      if (block) {
+        const inner = block.replace(/^```html\s*/i, '').replace(/\s*```$/i, '');
+        return inner.trim();
+      }
+      if (/<html[\s>]|<!doctype|<body[\s>]/i.test(source)) {
+        const start = source.search(/<!doctype|<html[\s>]/i);
+        const endMatch = source.match(/<\/html>/i);
+        const end = endMatch ? endMatch.index + endMatch[0].length : source.length;
+        const html = source.slice(start, end).trim();
+        if (_looksLikeCompleteHtml(html)) return html;
+      }
+      return '';
+    }
+
+    function _insertVisualizationHtml(content, html) {
+      const text = String(content || '');
+      const htmlBlock = '\n\n```html\n' + String(html || '').trim() + '\n```\n';
+      const vizTag = /<viz>[\s\S]*?<\/viz>/i;
+      const existing = text.match(vizTag);
+      if (existing) {
+        return text.replace(vizTag, () => {
+          const oldText = String(existing[1] || '')
+            .trim()
+            .replace(/```html\s*[\s\S]*?```/gi, '')
+            .replace(/^#{1,6}\s*(交互探索|交互式可视化)[^\n]*\n?/i, '')
+            .trim();
+          const section = (oldText ? oldText + '\n\n' : '## 交互探索\n') + htmlBlock;
+          return '<viz>\n' + section.trim() + '\n</viz>';
+        });
+      }
+      const section = '<viz>\n## 交互探索\n' + htmlBlock.trim() + '\n</viz>\n\n';
+      if (/<extend>/i.test(text)) return text.replace(/<extend>/i, () => section + '<extend>');
+      if (/<summary>/i.test(text)) return text.replace(/<summary>/i, () => section + '<summary>');
+      return text + '\n\n' + section.trim();
+    }
+
+    function _buildVisualizationPrompt(sourceContent, extraInstruction) {
+      let prompt = '你是 PhyMathia 的交互可视化生成器。请根据下面的物理数学学习内容，生成一个完整、独立、可交互的 HTML 可视化页面。\n'
+        + '只输出完整 HTML，不要输出任何解释、Markdown 代码块以外的文字；必须包含至少一个滑块或按钮等交互控件，并适配深色/浅色主题。\n'
+        + '页面内顶部必须用可见中文写出四段图说：\n'
+        + '**这张图在讲什么**：2~4 句大白话说明图的核心结论；\n'
+        + '**怎么看这张图**：用 1. 2. 3. 编号说明观察步骤，每步写“操作 → 会看到什么”；\n'
+        + '**和公式的联系**：图中现象与公式如何互相印证；\n'
+        + '**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n'
+        + '每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n\n'
+        + getLevelPrompt();
+      if (extraInstruction) prompt += '\n\n' + extraInstruction;
+      return prompt;
+    }
+
+    async function _requestVisualizationHtml(sourceContent, signal, extraInstruction) {
+      const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
+      const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+      const models = [];
+      if (htmlModel) models.push(htmlModel);
+      if (agentModel && (!htmlModel || agentModel.id !== htmlModel.id)) models.push(agentModel);
+      if (!models.length) throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+
+      let lastError = null;
+      for (let index = 0; index < models.length; index++) {
+        const model = models[index];
+        try {
+          const retryInstruction = index > 0
+            ? '上一次尝试没有返回完整 HTML。请务必从 <!DOCTYPE html> 开始输出，直到 </html> 结束。'
+            : '';
+          const combinedInstruction = [extraInstruction, retryInstruction].filter(Boolean).join('\n');
+          const prompt = _buildVisualizationPrompt(sourceContent, combinedInstruction);
+          const resp = await proxyChatWithModel(model, {
+            messages: [{ role: 'user', content: prompt + '\n\n' + String(sourceContent || '').slice(0, 12000) }],
+            stream: true,
+          }, signal);
+          const reply = await collectStreamText(resp, (progress, length) => {
+            const pct = progress !== null && progress !== undefined
+              ? Math.max(88, Math.min(93, progress))
+              : Math.min(93, 88 + Math.min(length / 20000, 1) * 5);
+            _setProgress(pct, '正在生成交互可视化');
+          });
+          const html = extractHtmlFromModelReply(reply);
+          if (_looksLikeCompleteHtml(html)) return html;
+          lastError = new Error('模型未返回完整 HTML 页面');
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error('交互可视化生成失败');
     }
 
     async function collectStreamText(resp, onProgress) {
@@ -477,32 +576,35 @@
     }
 
     async function ensureVisualization(content, signal) {
-      const htmlModel = getActiveModelForRole('html');
-      if (!htmlModel) return content;
       const sections = parseXmlSections(content);
       if (Object.keys(sections).length === 0) return content;
-      if (/```html[\s\S]*?(?:<\/html>|<\/body>)[\s\S]*?```/i.test(content)) return content;
+      if (_hasVisualizationHtml(sections.viz || '')) return content;
+
+      // 兼容旧版回答：HTML 曾补在 <viz> 之外。把它迁回 <viz>，让画布节点不再为空。
+      const strayRe = /```html\s*([\s\S]*?)```/gi;
+      let strayMatch = null;
+      while ((strayMatch = strayRe.exec(String(content))) !== null) {
+        if (_looksLikeCompleteHtml(strayMatch[1])) break;
+      }
+      if (strayMatch) {
+        const strayHtml = strayMatch[1].trim();
+        if (strayHtml) {
+          const withoutStray = String(content).replace(strayMatch[0], '');
+          return _insertVisualizationHtml(withoutStray, strayHtml);
+        }
+      }
+
+      const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
+      const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+      if (!htmlModel && !agentModel) return content;
 
       showProgress('tool', 88, '正在生成交互可视化');
-      const prompt = '请根据下面的物理数学学习内容，生成一个完整、独立、可交互的 HTML 可视化页面。'
-        + '只输出完整 HTML，不要解释；必须包含滑块或按钮等交互控件，并适配深色/浅色主题。\n\n'
-        + getLevelPrompt();
       try {
-        const resp = await proxyChatWithModel(htmlModel, {
-          messages: [{ role: 'user', content: prompt + '\n\n' + content.slice(0, 12000) }],
-          stream: true,
-        }, signal);
-        const reply = await collectStreamText(resp, (progress, length) => {
-          const pct = progress !== null && progress !== undefined
-            ? Math.max(88, Math.min(93, progress))
-            : Math.min(93, 88 + Math.min(length / 20000, 1) * 5);
-          _setProgress(pct, '正在生成交互可视化');
-        });
-        const html = extractHtmlFromModelReply(reply);
-        if (!html) return content;
-        return content + '\n\n```html\n' + html + '\n```\n';
+        const html = await _requestVisualizationHtml(content, signal);
+        return _insertVisualizationHtml(content, html);
       } catch (err) {
         console.warn('HTML model generation failed:', err);
+        if (typeof showToast === 'function') showToast('交互可视化生成失败，可在画布的可视化节点上点击“生成可视化”重试');
         return content;
       }
     }
