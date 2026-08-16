@@ -464,8 +464,40 @@ async function _jumpGraphVersion(versionIndex) {
   if (versionIndex < 0 || versionIndex >= graphUndoStack.length) return;
   const target = graphUndoStack[versionIndex];
   if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
+
+  // 保留跳转前的新版本，允许用户“回退错了”后再重做回来。
+  const liveState = _graphState();
+  const liveMessages = typeof window.getChatHistory === 'function'
+    ? JSON.parse(JSON.stringify(window.getChatHistory()))
+    : null;
+  const discarded = graphUndoStack.slice(versionIndex + 1);
+  const lastDiscarded = discarded.length ? discarded[discarded.length - 1] : null;
+
+  const newRedo = [];
+  // 最新 live 状态放在 redo 栈底，最后重做时恢复。
+  newRedo.push({
+    sessionId: currentSessionId,
+    state: liveState ? JSON.parse(JSON.stringify(liveState)) : null,
+    messages: liveMessages,
+    meta: { source: 'redo', summary: '回到最新版本', ts: Date.now() },
+    prev: lastDiscarded || target,
+  });
+  // 被跳过的历史快照按从新到旧依次放入 redo，保证重做顺序正确。
+  // 每个 redo 条目的 prev 是“恢复该版本后应放回 undo 栈的上一个快照”。
+  for (let i = discarded.length - 1; i >= 0; i--) {
+    const snap = discarded[i];
+    const prevSnap = i === 0 ? target : discarded[i - 1];
+    newRedo.push({
+      sessionId: currentSessionId,
+      state: snap.state ? JSON.parse(JSON.stringify(snap.state)) : null,
+      messages: snap.messages ? JSON.parse(JSON.stringify(snap.messages)) : null,
+      meta: { source: 'redo', summary: '前进到：' + ((snap.meta && snap.meta.summary) || '历史版本'), ts: Date.now() },
+      prev: prevSnap,
+    });
+  }
+
   graphUndoStack = graphUndoStack.slice(0, versionIndex);
-  graphRedoStack = [];
+  graphRedoStack = newRedo;
   graphPendingLiveMeta = null;
   graphHistoryPreviewing = -1;
   graphHistoryDiffSummary = "";
