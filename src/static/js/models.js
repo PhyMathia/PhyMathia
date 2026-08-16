@@ -358,7 +358,7 @@ async function proxyChatWithModel(model, body, signal) {
       api_key: model.apiKey,
       model: model.model,
       base_url: model.baseUrl,
-      device_id: getDeviceId(),
+      device_id: (typeof getDeviceId === 'function' ? getDeviceId() : ''),
       ...body,
     }),
   });
