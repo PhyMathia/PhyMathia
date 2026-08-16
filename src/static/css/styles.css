@@ -1284,7 +1284,7 @@
 
     .completion-card {
       position: fixed;
-      top: 20px;
+      top: 76px;
       right: 20px;
       z-index: 10002;
       display: flex;
