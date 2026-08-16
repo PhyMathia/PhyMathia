@@ -22,6 +22,39 @@
       return _serverAvailable;
     }
 
+    async function _fetchServerMessagesBatch(sessionIds) {
+      if (!sessionIds || sessionIds.length === 0) return {};
+      try {
+        const resp = await fetch('/api/sessions/messages-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_ids: sessionIds }),
+          cache: 'no-cache'
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const map = data && data.messages && typeof data.messages === 'object' && !Array.isArray(data.messages)
+            ? data.messages
+            : {};
+          return map;
+        }
+      } catch (e) {
+        console.warn('[Storage] Batch message fetch failed, falling back to parallel fetches:', e);
+      }
+      // 旧服务端/异常时退回并行单会话请求，仍比串行快一个数量级
+      const entries = await Promise.all(sessionIds.map(async (sid) => {
+        try {
+          const msgsResp = await fetch(`/api/sessions/${sid}/messages`, { cache: 'no-cache' });
+          const msgs = msgsResp.ok ? await msgsResp.json() : [];
+          return [sid, Array.isArray(msgs) ? msgs : []];
+        } catch (e) {
+          console.warn('[Storage] Failed to fetch messages for', sid, e);
+          return [sid, []];
+        }
+      }));
+      return Object.fromEntries(entries);
+    }
+
     // 页面加载时从服务端同步数据到 localStorage（合并策略：取消息更多的一方）
     async function _syncFromServer() {
       if (!(await _checkServer())) return false;
@@ -57,7 +90,8 @@
           }
           localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(merged));
 
-          // 合并消息：对每个 session，取消息更多的那一方
+          // 合并消息：一次批量拉取所有服务端会话消息，再按会话逐条合并
+          const serverMessages = await _fetchServerMessagesBatch(serverSessionIds);
           const allSessionIds = new Set([...localSessionIds, ...serverSessionIds]);
           for (const sid of allSessionIds) {
             try {
@@ -65,19 +99,15 @@
               const localMsgs = localMsgsRaw ? JSON.parse(localMsgsRaw) : [];
 
               if (serverSessionIds.includes(sid)) {
-                // 服务端有这个 session，尝试获取服务端消息
-                const msgsResp = await fetch(`/api/sessions/${sid}/messages`, { cache: 'no-cache' });
-                if (msgsResp.ok) {
-                  const serverMsgs = await msgsResp.json();
-                  // 取消息更多的那一方
-                  if (serverMsgs.length >= localMsgs.length) {
-                    localStorage.setItem('phymathia_msgs_' + sid, JSON.stringify(serverMsgs));
-                  }
-                  // 否则保留本地更多的消息，但把多出的消息补录到服务端
-                  if (localMsgs.length > serverMsgs.length) {
-                    console.log(`[Storage] Local has more messages for ${sid}: ${localMsgs.length} vs server ${serverMsgs.length}, uploading`);
-                    try { await _saveMessagesToServer(sid, localMsgs); } catch(e) { console.warn('[Storage] Upload failed:', e); }
-                  }
+                const serverMsgs = Array.isArray(serverMessages[sid]) ? serverMessages[sid] : [];
+                // 取消息更多的那一方
+                if (serverMsgs.length >= localMsgs.length) {
+                  localStorage.setItem('phymathia_msgs_' + sid, JSON.stringify(serverMsgs));
+                }
+                // 否则保留本地更多的消息，但把多出的消息补录到服务端
+                if (localMsgs.length > serverMsgs.length) {
+                  console.log(`[Storage] Local has more messages for ${sid}: ${localMsgs.length} vs server ${serverMsgs.length}, uploading`);
+                  try { await _saveMessagesToServer(sid, localMsgs); } catch(e) { console.warn('[Storage] Upload failed:', e); }
                 }
               }
               // 服务端不存在的 session（本地独有），保留本地数据，同时上传到服务端
@@ -774,9 +804,24 @@
       setInterval(() => {
         if (document.querySelector('.session-item')) renderSessionList();
       }, 60000);
-      await _syncFromServer();
+
       loadSessions();
-      await initSessionState();
+      const hasLocalData = Object.keys(sessions).length > 0 || !!getCurrentSessionId();
+
+      if (!hasLocalData) {
+        // 首次访问：本地没有任何画布，先等一次服务端同步，避免创建重复会话
+        await _syncFromServer();
+        loadSessions();
+        await initSessionState();
+      } else {
+        // 本地已有数据：先立即渲染本地会话（首屏不阻塞），再后台同步服务端
+        await initSessionState();
+        _syncFromServer().then((synced) => {
+          if (!synced) return;
+          loadSessions();
+          renderSessionList();
+        }).catch(() => {});
+      }
     }
 
     // 暴露给其他模块（如知识面板打开时即时拉取最新数据）

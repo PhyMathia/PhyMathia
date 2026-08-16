@@ -7,7 +7,7 @@ import re
 import time
 from pathlib import Path
 
-import httpx
+from http_client import get_http_client
 
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, OPENCODE_DEFAULT_API_KEY, UPLOAD_DIR, UPLOADS_META_PATH
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula
@@ -366,14 +366,15 @@ async def _ai_extract_document_knowledge(
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": messages, "stream": False, "temperature": 0.2}
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(url, json=body, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+    client = get_http_client()
+    resp = await client.post(url, json=body, headers=headers, timeout=120.0)
+    resp.raise_for_status()
+    data = resp.json()
     content = data["choices"][0]["message"]["content"]
     return _parse_document_extract_json(content, max_items)
 
-
+
+
 
 __all__ = [
     "_sanitize_filename", "_read_upload", "_save_upload", "_extract_document_text",

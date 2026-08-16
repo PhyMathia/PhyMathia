@@ -1588,33 +1588,11 @@ function applyTheme(theme) {
   // 同步所有可视化 iframe 的主题（含全屏）
   if (typeof syncVizThemes === 'function') syncVizThemes(theme);
   // CSS 变量过渡驱动现有 Mermaid 图表颜色平滑变化
-  // 等 CSS 过渡完成后再更新 mermaid.initialize 配置，确保未来新图表使用正确主题
-  if (typeof mermaid !== 'undefined') {
+  // 等 CSS 过渡完成后再更新 Mermaid 配置，确保未来新图表使用正确主题
+  if (typeof configureMermaid === 'function' && typeof getMermaidConfig === 'function') {
     if (_mermaidThemeTimer) clearTimeout(_mermaidThemeTimer);
     _mermaidThemeTimer = setTimeout(() => {
-      const isDark = theme === 'dark';
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: 'base',
-        securityLevel: 'strict',
-        themeVariables: isDark ? {
-          primaryColor: '#0c2d3e', primaryTextColor: '#a5f3fc',
-          primaryBorderColor: '#0891b2', lineColor: '#22d3ee',
-          secondaryColor: '#0f3649', tertiaryColor: '#0a2533',
-          mainBkg: '#0c2d3e', nodeBorder: '#0891b2',
-          clusterBkg: '#0a2533', clusterBorder: '#0891b2',
-          titleColor: '#a5f3fc', edgeLabelBackground: '#0c2d3e',
-          fontFamily: 'inherit'
-        } : {
-          primaryColor: '#f0fdfa', primaryTextColor: '#134e4a',
-          primaryBorderColor: '#0891b2', lineColor: '#0891b2',
-          secondaryColor: '#f0fdfa', tertiaryColor: '#ecfdf5',
-          mainBkg: '#f0fdfa', nodeBorder: '#0891b2',
-          clusterBkg: '#ecfdf5', clusterBorder: '#0891b2',
-          titleColor: '#134e4a', edgeLabelBackground: '#f0fdfa',
-          fontFamily: 'inherit'
-        }
-      });
+      configureMermaid(getMermaidConfig(theme === 'dark'));
     }, 400);
   }
 }

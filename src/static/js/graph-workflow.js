@@ -288,7 +288,7 @@ async function _streamCustomNodeResponse(resp, node) {
         let data = null;
         try { data = JSON.parse(dataStr); } catch (e) {}
         if (data && data.error) {
-          const message = data.error.message || data.error.detail || JSON.stringify(data.error);
+          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
           throw new Error('AI 流式返回错误：' + message);
         }
         const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
@@ -337,16 +337,19 @@ async function _readStreamText(resp) {
         if (!line.startsWith('data: ')) continue;
         const dataStr = line.slice(6).trim();
         if (dataStr === '[DONE]') continue;
-        try {
-          const data = JSON.parse(dataStr);
-          const delta = data.choices && data.choices[0] && data.choices[0].delta;
-          if (delta && delta.content) {
-            content += delta.content;
-            _scheduleWorkflowStreamProgress(content.length);
-            streamChunkCount++;
-            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-          }
-        } catch (e) {}
+        let data = null;
+        try { data = JSON.parse(dataStr); } catch (e) {}
+        if (data && data.error) {
+          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
+          throw new Error('AI 流式返回错误：' + message);
+        }
+        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+        if (delta && delta.content) {
+          content += delta.content;
+          _scheduleWorkflowStreamProgress(content.length);
+          streamChunkCount++;
+          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
       }
     }
   }
@@ -394,7 +397,7 @@ async function _streamAnalysisResponse(resp, node, question) {
         let data = null;
         try { data = JSON.parse(dataStr); } catch (e) {}
         if (data && data.error) {
-          const message = data.error.message || data.error.detail || JSON.stringify(data.error);
+          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
           throw new Error('AI 流式返回错误：' + message);
         }
         const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
@@ -578,19 +581,23 @@ async function _generateCustomNode(node) {
       const errText = await resp.text();
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
-    await _streamCustomNodeResponse(resp, node);
+    let streamError = null;
+    try {
+      await _streamCustomNodeResponse(resp, node);
+    } catch (err) {
+      streamError = err;
+      console.warn('Viz module direct stream failed, will try fallback:', err);
+      const failedLive = _findGraphNode(node.id);
+      if (failedLive) {
+        failedLive.content = '';
+        failedLive.busy = false;
+      }
+    }
 
     const live = _findGraphNode(node.id);
-    if (live && !(live.content || '').trim()) {
-      live.status = 'error';
-      live.busy = false;
-      _saveCustomNodes();
-      _refreshWorkflowNodeStatusUi(live);
-      if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
-      return;
-    }
     if (node.kind === 'module' && node.moduleKey === 'viz' && live) {
       let normalized = _normalizeWorkflowVizContent(live.content || '');
+      let vizRetryMessage = streamError && streamError.message ? streamError.message : '';
       if (!normalized && typeof _requestVisualizationHtml === 'function') {
         // 自动重试一次：改用更严格的独立 HTML 生成提示词，减少“节点为空/只有文字”的情况。
         const sourceText = [
@@ -606,6 +613,7 @@ async function _generateCustomNode(node) {
           );
           normalized = '```html\n' + retryHtml + '\n```';
         } catch (retryErr) {
+          vizRetryMessage = retryErr && retryErr.message ? retryErr.message : String(retryErr || '');
           console.warn('Viz module automatic retry failed:', retryErr);
         }
       }
@@ -618,7 +626,9 @@ async function _generateCustomNode(node) {
         _saveCustomNodes();
         if (workflowRunActive) _refreshWorkflowNodeUi(live);
         else renderGraphCanvas();
-        if (!wasAborted && typeof showToast === 'function') showToast('交互可视化生成失败：模型未返回完整 HTML，请点击该节点重试');
+        if (!wasAborted && typeof showToast === 'function') {
+          showToast('交互可视化生成失败：' + (vizRetryMessage || '模型未返回完整 HTML，请点击该节点重试'));
+        }
         return;
       }
       live.content = normalized;
@@ -628,6 +638,16 @@ async function _generateCustomNode(node) {
       _saveCustomNodes();
       if (workflowRunActive) _refreshWorkflowNodeUi(live);
       else renderGraphCanvas();
+      return;
+    }
+    if (streamError) throw streamError;
+    if (live && !(live.content || '').trim()) {
+      live.status = 'error';
+      live.busy = false;
+      _saveCustomNodes();
+      _refreshWorkflowNodeStatusUi(live);
+      if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
+      return;
     }
   } catch (err) {
     const live = _findGraphNode(node.id);
@@ -1310,18 +1330,21 @@ async function _streamBlankNodeResponse(resp, node) {
         if (!line.startsWith('data: ')) continue;
         const dataStr = line.slice(6).trim();
         if (dataStr === '[DONE]') continue;
-        try {
-          const data = JSON.parse(dataStr);
-          const delta = data.choices && data.choices[0] && data.choices[0].delta;
-          if (delta && delta.content) {
-            content += delta.content;
-            _scheduleWorkflowStreamProgress(content.length);
-            streamChunkCount++;
-            if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-            scheduleRender();
-            scheduleSave();
-          }
-        } catch (e) {}
+        let data = null;
+        try { data = JSON.parse(dataStr); } catch (e) {}
+        if (data && data.error) {
+          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
+          throw new Error('AI 流式返回错误：' + message);
+        }
+        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+        if (delta && delta.content) {
+          content += delta.content;
+          _scheduleWorkflowStreamProgress(content.length);
+          streamChunkCount++;
+          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+          scheduleRender();
+          scheduleSave();
+        }
       }
     }
   }

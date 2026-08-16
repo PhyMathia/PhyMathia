@@ -17,6 +17,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from http_client import get_http_client
+
 from .core import (
     MAX_SNAPSHOT_CHARS,
     MAX_SNAPSHOT_HARD_CHARS,
@@ -270,8 +272,8 @@ async def _call_model(
     elif json_mode:
         body["response_format"] = {"type": "json_object"}
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
+        client = get_http_client()
+        resp = await client.post(url, json=body, headers=headers, timeout=90.0)
     except httpx.HTTPError as exc:
         raise HarnessError(f"模型请求失败: {exc}") from exc
     if resp.status_code != 200:

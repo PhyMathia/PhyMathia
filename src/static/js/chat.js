@@ -519,11 +519,6 @@
           }
           await renderAssistantContent(assistantDiv, assistantContent);
           _setProgress(94, '正在整理回答');
-          const originalContent = assistantContent;
-          assistantContent = await ensureVisualization(assistantContent, abortController.signal);
-          if (assistantContent !== originalContent) {
-            await renderAssistantContent(assistantDiv, assistantContent);
-          }
           _setProgress(97, '正在保存回答');
           const ts = Date.now();
           const duration = progressStartTime ? (ts - progressStartTime) : null;
@@ -540,6 +535,31 @@
             duration,
             ...assistantMeta,
           });
+
+          // 交互可视化缺失时改为后台补齐：先保存/显示主回答，模型生成完成后原地回填。
+          if (typeof scheduleVisualizationInBackground === 'function') {
+            scheduleVisualizationInBackground(assistantContent, (updatedContent) => {
+              try {
+                const idx = chatHistory.findIndex(
+                  (m) => m.role === 'assistant' && String(m.timestamp) === String(ts)
+                );
+                if (idx >= 0) chatHistory[idx].content = updatedContent;
+                try {
+                  localStorage.setItem('phymathia_msgs_' + currentSessionId, JSON.stringify(chatHistory));
+                } catch (e) {}
+                if (assistantDiv && assistantDiv.isConnected) {
+                  renderAssistantContent(assistantDiv, updatedContent).then(() => {
+                    // 新消息流式生成期间不主动写服务端，交给下一次保存/定时同步。
+                    if (!isStreaming) saveSessionMessages(currentSessionId, chatHistory);
+                    if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+                  }).catch(() => {});
+                }
+              } catch (err) {
+                console.warn('Failed to apply background visualization:', err);
+              }
+            });
+          }
+
           if (wasSocraticBranch && /<socratic_meta\b[^>]*done\s*=\s*["']true["']/i.test(assistantContent)) {
             currentBranch = null;
             currentBranchId = null;
@@ -565,7 +585,6 @@
           if (!isCasual) autoExtractKnowledge(currentSessionId, chatHistory);
 
           await saveCurrentSession();
-          // 确保画布读取的是补齐可视化后的最终内容，而不是流式阶段的空 <viz> 旧快照。
           if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
           renderSessionList(); // 更新侧边栏时间显示
           const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');

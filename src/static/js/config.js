@@ -162,26 +162,32 @@ const MAX_CONTEXT_ROUNDS = 3;
 // ====== 主题初始化 ======
 const initIsDark = localStorage.getItem(STORAGE_KEY_THEME) !== 'light';
 
-// ====== Mermaid 初始化 ======
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'base',
-  securityLevel: 'strict',
-  themeVariables: initIsDark ? {
-    primaryColor: '#0c2d3e', primaryTextColor: '#a5f3fc',
-    primaryBorderColor: '#0891b2', lineColor: '#22d3ee',
-    secondaryColor: '#0f3649', tertiaryColor: '#0a2533',
-    mainBkg: '#0c2d3e', nodeBorder: '#0891b2',
-    clusterBkg: '#0a2533', clusterBorder: '#0891b2',
-    titleColor: '#a5f3fc', edgeLabelBackground: '#0c2d3e',
-    fontFamily: 'inherit'
-  } : {
-    primaryColor: '#f0fdfa', primaryTextColor: '#134e4a',
-    primaryBorderColor: '#0891b2', lineColor: '#0891b2',
-    secondaryColor: '#f0fdfa', tertiaryColor: '#ecfdf5',
-    mainBkg: '#f0fdfa', nodeBorder: '#0891b2',
-    clusterBkg: '#ecfdf5', clusterBorder: '#0891b2',
-    titleColor: '#134e4a', edgeLabelBackground: '#f0fdfa',
-    fontFamily: 'inherit'
-  }
-});
+// ====== Mermaid 配置（懒加载，由 mermaid-loader 在首次需要时应用） ======
+function getMermaidConfig(isDark) {
+  return {
+    startOnLoad: false,
+    theme: 'base',
+    securityLevel: 'strict',
+    themeVariables: isDark ? {
+      primaryColor: '#0c2d3e', primaryTextColor: '#a5f3fc',
+      primaryBorderColor: '#0891b2', lineColor: '#22d3ee',
+      secondaryColor: '#0f3649', tertiaryColor: '#0a2533',
+      mainBkg: '#0c2d3e', nodeBorder: '#0891b2',
+      clusterBkg: '#0a2533', clusterBorder: '#0891b2',
+      titleColor: '#a5f3fc', edgeLabelBackground: '#0c2d3e',
+      fontFamily: 'inherit'
+    } : {
+      primaryColor: '#f0fdfa', primaryTextColor: '#134e4a',
+      primaryBorderColor: '#0891b2', lineColor: '#0891b2',
+      secondaryColor: '#f0fdfa', tertiaryColor: '#ecfdf5',
+      mainBkg: '#f0fdfa', nodeBorder: '#0891b2',
+      clusterBkg: '#ecfdf5', clusterBorder: '#0891b2',
+      titleColor: '#134e4a', edgeLabelBackground: '#f0fdfa',
+      fontFamily: 'inherit'
+    }
+  };
+}
+
+if (typeof configureMermaid === 'function') {
+  configureMermaid(getMermaidConfig(initIsDark));
+}

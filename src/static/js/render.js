@@ -648,7 +648,11 @@ async function renderMermaidInElement(element) {
       // 预处理 mermaid 代码，修正常见语法问题
       code = sanitizeMermaidCode(code);
       const id = div.id || ('m_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 5));
-      const { svg } = await mermaid.render(id + '_svg', code);
+      const mermaidInstance = (typeof ensureMermaid === 'function')
+        ? await ensureMermaid()
+        : (window.mermaid || null);
+      if (!mermaidInstance) throw new Error('Mermaid 未加载');
+      const { svg } = await mermaidInstance.render(id + '_svg', code);
       div.innerHTML = svg;
       div.setAttribute('data-processed', 'true');
       // 移动端：给知识图谱容器添加捏合缩放
@@ -741,13 +745,13 @@ function _ensureKaTeX(callback) {
   if (!document.querySelector('link[href*="katex.min.css"]')) {
     const css = document.createElement('link');
     css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/katex@0.16.9/dist/katex.min.css';
+    css.href = '/vendor/katex/katex.min.css';
     document.head.appendChild(css);
   }
   const js = document.createElement('script');
-  js.src = 'https://unpkg.com/katex@0.16.9/dist/katex.min.js';
+  js.src = '/vendor/katex/katex.min.js';
   const auto = document.createElement('script');
-  auto.src = 'https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js';
+  auto.src = '/vendor/katex/contrib/auto-render.min.js';
   auto.onload = function () {
     _katexFallbackState = 2;
     const queue = _katexFallbackQueue.slice();

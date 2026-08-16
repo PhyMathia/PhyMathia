@@ -5,8 +5,8 @@ PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线�
 数据持久化使用 JSON 文件存储，无需 Supabase 或任何外部服务。
 """
 
-import asyncio
 import argparse
+import asyncio
 import base64
 import json
 import logging
@@ -14,18 +14,23 @@ import os
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
-# 确保 src/ 在模块搜索路径（兼容 embeddable python 等不自动加脚本目录的环境）
+# 确保 src/ 与项目根目录都在模块搜索路径（兼容 embeddable python 等环境）
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
+_ROOT_DIR = os.path.dirname(_SRC_DIR)
+for _path in (_SRC_DIR, _ROOT_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from http_client import close_http_client, get_http_client  # noqa: E402
 
 from server import backup, context, documents, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
@@ -44,8 +49,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ====== FastAPI 应用 ======
-app = FastAPI(title="PhyMathia", description="物理数学双域解释与可视化助手 (离线测试版)")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _app.state.http_client = get_http_client()
+    try:
+        yield
+    finally:
+        await close_http_client()
 
+
+app = FastAPI(
+    title="PhyMathia",
+    description="物理数学双域解释与可视化助手 (离线测试版)",
+    lifespan=lifespan,
+)
 
 app.state.harness_context = get_system_prompt()
 
@@ -65,11 +82,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 静态 JS/CSS/JSON 走 gzip；SSE（text/event-stream）会自动跳过压缩。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
 async def _refresh_harness_context(request: Request, call_next):
-    request.app.state.harness_context = get_system_prompt()
+    # 只在 harness 请求前热刷新系统提示词；普通/静态请求不再产生文件 stat 开销。
+    if request.url.path.startswith("/api/harness"):
+        request.app.state.harness_context = get_system_prompt()
     return await call_next(request)
 
 # ====== 页面路由 ======
@@ -265,47 +286,47 @@ async def api_models_chat(request: Request):
 
     async def proxy_stream():
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream("POST", url, json=body, headers=headers) as resp:
-                    logger.info(f"AI proxy response: {resp.status_code} from {url}")
-                    if resp.status_code != 200:
-                        error_body = await resp.aread()
-                        error_text = error_body.decode(errors='replace')[:500]
-                        yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-                    if not stream:
-                        raw = await resp.aread()
-                        text = raw.decode(errors="replace")
-                        try:
-                            data = json.loads(text)
-                            content = data["choices"][0]["message"]["content"]
-                            if data.get("usage"):
-                                logger.info(f"AI proxy usage: {data['usage']}")
-                            _update_socratic_state_from_content(content, socratic_ref)
-                        except Exception:
-                            pass
-                        yield text
-                        return
-                    streamed_content = []
-                    last_usage = None
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:].strip()
-                            if data_str != "[DONE]":
-                                try:
-                                    data = json.loads(data_str)
-                                    if data.get("usage"):
-                                        last_usage = data["usage"]
-                                    delta = data.get("choices", [{}])[0].get("delta", {})
-                                    if delta.get("content"):
-                                        streamed_content.append(delta["content"])
-                                except Exception:
-                                    pass
-                            yield line + "\n\n"
-                    if last_usage:
-                        logger.info(f"AI proxy usage: {last_usage}")
-                    _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
+            client = get_http_client()
+            async with client.stream("POST", url, json=body, headers=headers) as resp:
+                logger.info(f"AI proxy response: {resp.status_code} from {url}")
+                if resp.status_code != 200:
+                    error_body = await resp.aread()
+                    error_text = error_body.decode(errors='replace')[:500]
+                    yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                if not stream:
+                    raw = await resp.aread()
+                    text = raw.decode(errors="replace")
+                    try:
+                        data = json.loads(text)
+                        content = data["choices"][0]["message"]["content"]
+                        if data.get("usage"):
+                            logger.info(f"AI proxy usage: {data['usage']}")
+                        _update_socratic_state_from_content(content, socratic_ref)
+                    except Exception:
+                        pass
+                    yield text
+                    return
+                streamed_content = []
+                last_usage = None
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str != "[DONE]":
+                            try:
+                                data = json.loads(data_str)
+                                if data.get("usage"):
+                                    last_usage = data["usage"]
+                                delta = data.get("choices", [{}])[0].get("delta", {})
+                                if delta.get("content"):
+                                    streamed_content.append(delta["content"])
+                            except Exception:
+                                pass
+                        yield line + "\n\n"
+                if last_usage:
+                    logger.info(f"AI proxy usage: {last_usage}")
+                _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
@@ -356,12 +377,12 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             "stream": False,
             "max_tokens": 300,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            if resp.status_code != 200:
-                return
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+        client = get_http_client()
+        resp = await client.post(url, json=body, headers=headers, timeout=30.0)
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
         context._write_rolling_memory(session_id, content, count)
         logger.info("rolling memory updated: session=%s count=%d", session_id, count)
     except Exception as e:
@@ -482,9 +503,42 @@ async def api_clear_all_sessions():
 
 
 # ====== 消息管理 API ======
+@app.post("/api/sessions/messages-batch")
+async def api_get_messages_batch(request: Request):
+    """一次读取多个会话的消息，供前端启动/定时同步使用，避免 N 次串行请求。"""
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    raw_ids = payload.get("session_ids") or payload.get("ids") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    session_ids = []
+    for raw_sid in raw_ids:
+        sid = str(raw_sid).strip()
+        # 防止批量接口被用来做路径穿越
+        if (
+            sid
+            and sid not in (".", "..")
+            and "/" not in sid
+            and "\\" not in sid
+            and Path(sid).name == sid
+        ):
+            session_ids.append(sid)
+        if len(session_ids) >= 500:
+            break
+
+    result = {}
+    for sid in session_ids:
+        msgs = _read_json_cached(_get_messages_path(sid), [])
+        result[sid] = msgs if isinstance(msgs, list) else []
+    return {"messages": result}
+
+
 @app.get("/api/sessions/{session_id}/messages")
 async def api_get_messages(session_id: str):
-    return _read_json(_get_messages_path(session_id), [])
+    return _read_json_cached(_get_messages_path(session_id), [])
 
 
 @app.post("/api/sessions/{session_id}/messages")

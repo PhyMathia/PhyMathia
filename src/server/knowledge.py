@@ -7,7 +7,7 @@ import re
 import time
 import uuid
 
-import httpx
+from http_client import get_http_client
 
 from .config import (
     AI_PROVIDERS,
@@ -445,10 +445,10 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, json=body, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+    client = get_http_client()
+    resp = await client.post(url, json=body, headers=headers)
+    resp.raise_for_status()
+    data = resp.json()
     content = data["choices"][0]["message"]["content"]
     items = _parse_extract_json(content)
     profile_facts = _parse_profile_facts(content)
@@ -585,10 +585,10 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
         headers["Authorization"] = f"Bearer {api_key}"
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        client = get_http_client()
+        resp = await client.post(url, json=body, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
         content = data["choices"][0]["message"]["content"]
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:

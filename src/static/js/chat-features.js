@@ -491,6 +491,17 @@
       return prompt;
     }
 
+    function _isRateLimitError(err) {
+      const msg = String((err && err.message) || err || '').toLowerCase();
+      return msg.includes('429') || msg.includes('rate limit') || msg.includes('freeusagelimiterror') || msg.includes('free usage limit');
+    }
+
+    function _sameModelService(a, b) {
+      if (!a || !b) return false;
+      const norm = (s) => String(s || '').replace(/\/+$/, '').toLowerCase();
+      return norm(a.provider) === norm(b.provider) && norm(a.baseUrl) === norm(b.baseUrl);
+    }
+
     async function _requestVisualizationHtml(sourceContent, signal, extraInstruction) {
       const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
       const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
@@ -523,6 +534,11 @@
           lastError = new Error('模型未返回完整 HTML 页面');
         } catch (err) {
           lastError = err;
+          const next = models[index + 1];
+          // 同一个上游服务已经明确限流时，继续用同服务另一个模型只会再撞一次 429。
+          if (_isRateLimitError(err) && next && _sameModelService(model, next)) {
+            break;
+          }
         }
       }
       throw lastError || new Error('交互可视化生成失败');
@@ -546,7 +562,10 @@
             if (dataStr === '[DONE]') continue;
             try {
               const data = JSON.parse(dataStr);
-              if (data.error) continue;
+              if (data.error) {
+                const errMsg = data.detail || data.error?.detail || data.error?.message || JSON.stringify(data.error);
+                throw new Error('AI 流式返回错误：' + errMsg);
+              }
               if (typeof onProgress === 'function' && typeof data.progress === 'number') {
                 onProgress(data.progress, content.length);
               }
@@ -555,7 +574,9 @@
                 content += delta.content;
                 if (typeof onProgress === 'function') onProgress(null, content.length);
               }
-            } catch (e) {}
+            } catch (e) {
+              if (e && e.message && e.message.indexOf('AI 流式返回错误') === 0) throw e;
+            }
           }
         }
       }
@@ -572,6 +593,40 @@
         tag.className = 'branch-tag ' + (contentDiv.dataset.branchType || 'branch');
         tag.textContent = contentDiv.dataset.branchLabel;
         contentDiv.prepend(tag);
+      }
+    }
+
+    async function scheduleVisualizationInBackground(content, onReady) {
+      if (!content || typeof onReady !== 'function') return;
+      try {
+        const sections = parseXmlSections(content);
+        if (Object.keys(sections).length === 0) return;
+        if (_hasVisualizationHtml(sections.viz || '')) return;
+
+        // 旧版回答：HTML 补在 <viz> 之外，直接迁回，不发起模型请求。
+        const strayRe = /```html\s*([\s\S]*?)```/gi;
+        let strayMatch = null;
+        while ((strayMatch = strayRe.exec(String(content))) !== null) {
+          if (_looksLikeCompleteHtml(strayMatch[1])) break;
+        }
+        if (strayMatch) {
+          const strayHtml = strayMatch[1].trim();
+          if (strayHtml) {
+            const withoutStray = String(content).replace(strayMatch[0], '');
+            onReady(_insertVisualizationHtml(withoutStray, strayHtml));
+          }
+          return;
+        }
+
+        const htmlModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('html') : null;
+        const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
+        if (!htmlModel && !agentModel) return;
+
+        // 后台补齐，不阻塞主回答保存和下一次提问。
+        const html = await _requestVisualizationHtml(content, new AbortController().signal);
+        onReady(_insertVisualizationHtml(content, html));
+      } catch (err) {
+        console.warn('Background HTML model generation failed:', err);
       }
     }
 
@@ -604,8 +659,7 @@
         return _insertVisualizationHtml(content, html);
       } catch (err) {
         console.warn('HTML model generation failed:', err);
-        if (typeof showToast === 'function') showToast('交互可视化生成失败，可在画布的可视化节点上点击“生成可视化”重试');
-        return content;
+        throw err;
       }
     }
 
