@@ -430,6 +430,7 @@ async function _streamAnalysisResponse(resp, node, question) {
   }
   _saveCustomNodes();
   _refreshWorkflowNodeStatusUi(live);
+  if (typeof hideProgress === 'function') hideProgress('问题分析完成');
 }
 
 function _refreshWorkflowNodeStatusUi(node) {
@@ -456,6 +457,7 @@ async function _generateAnalysis(node) {
   _saveCustomNodes();
   if (workflowRunActive) _refreshWorkflowNodeUi(node);
   else renderGraphCanvas();
+  if (typeof showProgress === 'function') showProgress('thinking', 8, '正在分析问题');
 
   const workflowContext = {
     mode: 'analysis',
@@ -510,6 +512,7 @@ async function _generateAnalysis(node) {
     _saveCustomNodes();
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('问题分析失败：' + (err.message || err));
+    if (typeof hideProgress === 'function') hideProgress();
   }
 }
 
