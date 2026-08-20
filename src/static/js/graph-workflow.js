@@ -3,6 +3,26 @@
 // 六大模块（物理/数学/知识图谱/交互可视化/进阶学习/苏格拉底）的默认节点宽度（原 640，×2.5）
 const MODULE_DEFAULT_WIDTH = 1600;
 
+// 流式渲染节流：多路并行流式时，把“全图 measure + 节点 transform + 边重绘”合并为
+// 最长 ~150ms 一次，避免每个流式块都全图强刷（原实现每帧对全部节点/全部边做同步布局
+// 与整层 SVG 重建，图越大越闪烁）。流式内容本身仍即时局部更新。
+let _graphSyncTimer = null;
+function _scheduleGraphSync() {
+  if (_graphSyncTimer) return;
+  _graphSyncTimer = setTimeout(() => {
+    _graphSyncTimer = null;
+    if (typeof _measureNodes === 'function') _measureNodes();
+    if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
+    if (typeof _redrawEdges === 'function') _redrawEdges();
+  }, 150);
+}
+function _flushGraphSync() {
+  if (_graphSyncTimer) { clearTimeout(_graphSyncTimer); _graphSyncTimer = null; }
+  if (typeof _measureNodes === 'function') _measureNodes();
+  if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
+  if (typeof _redrawEdges === 'function') _redrawEdges();
+}
+
 function _simpleHash(value) {
   let hash = 5381;
   const text = String(value || '');
@@ -263,7 +283,10 @@ async function _streamCustomNodeResponse(resp, node) {
       const live = _findGraphNode(node.id);
       if (live) live.content = content;
       const renderBox = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-render');
-      if (renderBox && live) {
+      // 可视化卡片一旦挂载就不再每帧重建 iframe（巨型可视化反复重载 = “全屏节点不停闪”的直接来源），
+      // 流式中只更新源码文本框；内容完成时由统一渲染一次性重新挂载。
+      const vizMounted = renderBox && (renderBox.querySelector('.viz-card') || renderBox.querySelector('.viz-iframe'));
+      if (renderBox && live && !vizMounted) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);
         if (typeof renderMath === 'function') renderMath(renderBox);
         if (typeof _initVizIframes === 'function') _initVizIframes(renderBox);
@@ -271,9 +294,7 @@ async function _streamCustomNodeResponse(resp, node) {
       const textarea = graphInner?.querySelector('[data-node-id="' + node.id + '"] .graph-custom-node-content');
       if (textarea) textarea.value = content;
       if (node.kind === 'blank') _renderBlankNodeLive(node, content);
-      _measureNodes();
-      _updateNodeTransforms();
-      _redrawEdges();
+      _scheduleGraphSync();
     });
   }
 
@@ -380,9 +401,7 @@ async function _streamAnalysisResponse(resp, node, question) {
         renderBox.innerHTML = _renderCustomNodeContentHtml(live);
         if (typeof renderMath === 'function') renderMath(renderBox);
       }
-      _measureNodes();
-      _updateNodeTransforms();
-      _redrawEdges();
+      _scheduleGraphSync();
     });
   }
 
@@ -1397,9 +1416,7 @@ async function _streamBlankNodeResponse(resp, node) {
       const live = _findGraphNode(node.id);
       if (live) live.content = content;
       _renderBlankNodeLive(node, content);
-      _measureNodes();
-      _updateNodeTransforms();
-      _redrawEdges();
+      _scheduleGraphSync();
     });
   }
 
