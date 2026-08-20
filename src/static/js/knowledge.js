@@ -534,7 +534,7 @@ function dedupeFormulaItems(items) {
     groups[key].push([id, it]);
   }
   const normalized = {};
-  const mergeFields = ['concept', 'meaning', 'meaningSource', 'topic', 'related', 'messageId', 'moduleKey'];
+  const mergeFields = ['concept', 'meaning', 'meaningSource', 'topic', 'related', 'messageId', 'moduleKey', 'nodeId'];
   for (const entries of Object.values(groups)) {
     const sourceRank = item => ((item.meaningSource || '') === 'model' ? 0 : 1);
     entries.sort((a, b) =>
@@ -697,7 +697,13 @@ async function loadFormulas() {
       for (const it of (data.items || [])) merged[it.id] = it;
       // 保留本地有而服务端没有的（离线收藏兜底）
       const cache = getFormulaCache();
-      for (const id in cache) if (!merged[id]) merged[id] = cache[id];
+      for (const id in cache) {
+        if (!merged[id]) {
+          merged[id] = cache[id];
+        } else if (!merged[id].nodeId && cache[id].nodeId) {
+          merged[id].nodeId = cache[id].nodeId;
+        }
+      }
       setFormulaCache(dedupeFormulaItems(merged));
     }
   } catch (err) {

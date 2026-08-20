@@ -411,7 +411,10 @@ async function proxyChat(prompt, level, sessionId, stream = true, signal, branch
   let agentModel = getActiveModelForRole('agent');
   if (!agentModel) return null;
   const branchType = branchMeta.branchType;
-  if ((branchType === 'socratic' || branchType === 'learn') && activeModels.branch_model) {
+  const srcMod = branchMeta.sourceModule || '';
+  const isSocraticOrLearn = branchType === 'socratic' || branchType === 'learn'
+    || srcMod === 'socratic' || srcMod === 'learn';
+  if (isSocraticOrLearn && activeModels.branch_model) {
     const branchModel = getModelById(activeModels.branch_model);
     if (branchModel) agentModel = branchModel;
   }

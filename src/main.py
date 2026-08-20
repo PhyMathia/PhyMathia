@@ -667,7 +667,7 @@ async def api_save_formulas(request: Request):
                     existing["meaning"] = incoming_meaning[:200]
                     existing["meaningSource"] = incoming_source
                     changed = True
-                for key in ("concept", "topic", "related", "messageId", "moduleKey"):
+                for key in ("concept", "topic", "related", "messageId", "moduleKey", "nodeId"):
                     value = it.get(key)
                     if value and not existing.get(key):
                         existing[key] = value
@@ -687,6 +687,7 @@ async def api_save_formulas(request: Request):
                 "sessionId": it.get("sessionId", ""),
                 "messageId": it.get("messageId", ""),
                 "moduleKey": it.get("moduleKey", ""),
+                "nodeId": it.get("nodeId", ""),
                 "createdAt": it.get("createdAt") or int(time.time() * 1000),
             }
             count += 1
