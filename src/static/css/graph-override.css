@@ -159,6 +159,8 @@
 .graph-node-module {
   min-width: 640px !important;
   max-width: min(1280px, 92vw) !important;
+  /* 六大模块默认高度 = 默认宽 640 × 0.8 = 512；只抬最小值，内容长时仍自动撑开 */
+  min-height: 512px !important;
 }
 
 .graph-node.selected {
