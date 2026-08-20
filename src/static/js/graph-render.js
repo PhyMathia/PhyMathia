@@ -1541,14 +1541,33 @@ function _arrangeTreeLayout(nodes, edges, colGap, rowUnit) {
 
   const miscNodes = nodes.filter(n => rank[n.id] == null);
   const totalLeaves = leafCounter || 1;
+  const nodeDepthOf = n => (depth[n.id] != null ? depth[n.id] : maxDepth + 1);
+
+  // 自适应列宽：统计每列最大节点宽度，列中心 x 按“前一列最大宽/2 + 本列最大宽/2 + 边距”累进。
+  // 小列保持约 colGap(420) 的默认间距；宽模块/巨可视化所在列自动加宽，跨列不再压叠，
+  // 且不放大其它列 —— 修掉“巨节点把同簇组框撑大、把相邻游离节点挤进边界”的残留。
+  const colMaxW = {};
+  nodes.forEach(n => {
+    const dd = nodeDepthOf(n);
+    const w = _layoutNodeSize(n).w;
+    colMaxW[dd] = Math.max(colMaxW[dd] || 0, w);
+  });
+  const colX = {};
+  const cols = Object.keys(colMaxW).map(Number).sort((a, b) => a - b);
+  cols.forEach((d, idx) => {
+    if (idx === 0) { colX[d] = 0; return; }
+    const prevD = cols[idx - 1];
+    colX[d] = colX[prevD] + Math.max(colGap, (colMaxW[prevD] || 0) / 2 + (colMaxW[d] || 0) / 2 + 48);
+  });
+
   nodes.forEach(n => {
     if (rank[n.id] == null) return;
-    n.x = (depth[n.id] != null ? depth[n.id] : maxDepth + 1) * colGap;
+    n.x = colX[nodeDepthOf(n)];
     n.y = (rank[n.id] - (totalLeaves - 1) / 2) * rowUnit;
   });
   // 游离/杂散节点（无父边且非主根，或仅被杂散节点引用）→ 最右侧竖排
   if (miscNodes.length) {
-    const miscX = (maxDepth + 1) * colGap;
+    const miscX = colX[maxDepth + 1] || 0;
     miscNodes.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
     const startY = -((miscNodes.length - 1) / 2) * rowUnit;
     miscNodes.forEach((node, i) => {

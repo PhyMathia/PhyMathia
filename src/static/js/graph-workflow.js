@@ -1,5 +1,8 @@
 // ===== PhyMathia 知识网络画布：工作流、分组、事件与启动 =====
 
+// 六大模块（物理/数学/知识图谱/交互可视化/进阶学习/苏格拉底）的默认节点宽度（原 640，×2.5）
+const MODULE_DEFAULT_WIDTH = 1600;
+
 function _simpleHash(value) {
   let hash = 5381;
   const text = String(value || '');
@@ -773,7 +776,7 @@ function _workflowModulePositions(moduleKeys, answerNodeId) {
   const positions = moduleKeys.map((_, i) => ({
     x: baseX,
     y: startY + i * gapY,
-    w: 640,
+    w: MODULE_DEFAULT_WIDTH,
     h: 120,
   }));
 
@@ -817,7 +820,7 @@ function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
       generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
       generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
       x: positions[i].x, y: positions[i].y, depth: 3, targetAngle: 0, isRoot: false, timestamp: now + i,
-      pinned: false, fixedX: null, fixedY: null, customWidth: 640, customHeight: null,
+      pinned: false, fixedX: null, fixedY: null, customWidth: MODULE_DEFAULT_WIDTH, customHeight: null,
       w: 0, h: 0, vx: 0, vy: 0,
     });
     const outIndex = Math.max(0, ANSWER_OUTPUT_SCHEMA.indexOf(key));
