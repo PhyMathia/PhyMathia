@@ -1556,6 +1556,38 @@ function _arrangeTreeLayout(nodes, edges, colGap, rowUnit) {
       node.y = startY + i * rowUnit;
     });
   }
+
+  // 同列纵向自适应：同一列（同一 x）成员按 tidy 顺序排列，间距按“半高之和+边距”撑开，
+  // 让高模块/大可视化节点只撑开它所在那一列，不放大其它列间距，且保持走廊的纵向顺序。
+  _resolveColumnVerticalSpacing(nodes, 48);
+}
+
+// 同列节点纵向防重叠：按当前 y 排序（≈tidy 顺序），相邻两节点之间强制满足
+// (h_a+h_b)/2 + gap 的垂直间距，迭代至收敛；顺序不变、走廊排序不破坏，仅撑开同列间距。
+function _resolveColumnVerticalSpacing(nodes, gap) {
+  const cols = {};
+  nodes.forEach(n => { const c = Math.round(n.x); (cols[c] = cols[c] || []).push(n); });
+  Object.keys(cols).forEach(c => {
+    const list = cols[c].slice().sort((a, b) => a.y - b.y);
+    if (list.length < 2) return;
+    let guard = 0;
+    while (guard++ < 100) {
+      let moved = false;
+      for (let k = 0; k < list.length - 1; k++) {
+        const a = list[k];
+        const b = list[k + 1];
+        const minY = (a.h + b.h) / 2 + gap;
+        const dy = b.y - a.y;
+        if (dy < minY) {
+          const push = (minY - dy) * 0.5;
+          a.y -= push;
+          b.y += push;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+  });
 }
 
 // 分组：成员保持树状/走廊位置不再重排成网格，整组作为原子矩形交给碰撞处理。
