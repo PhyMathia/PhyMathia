@@ -351,6 +351,14 @@
       <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
+      <div class="model-section-title">苏格拉底 / 进阶学习模型</div>
+      <select class="model-select" id="branchModelSelect" onchange="onModelChange('branch')">
+        <option value="">— 不启用（跟随主模型）—</option>
+      </select>
+      <div class="model-desc" id="branchModelDesc">未配置时苏格拉底/进阶学习跟随主模型；配置后单独走该模型（可填本地 llama.cpp）</div>
+      <div class="model-tags" id="branchModelTags"><span class="model-tag">可选</span></div>
+    </div>
+    <div class="model-section">
       <div class="model-section-title">公式描述模型</div>
       <select class="model-select" id="descriptorModelSelect" onchange="onModelChange('descriptor')">
         <option value="">— 不启用（回退默认摘要）—</option>

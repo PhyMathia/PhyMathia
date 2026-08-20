@@ -144,7 +144,7 @@ async def api_models_chat(request: Request):
     stream = payload.get("stream", True)
     context_budget = resolve_context_budget(model_name)
 
-    if not api_key and provider != "opencode":
+    if not api_key and provider not in ("opencode", "llama", "local"):
         raise HTTPException(
             status_code=400,
             detail=f"未配置 {provider} API Key：请在项目根目录 .env 中设置 DEEPSEEK_API_KEY，或在模型配置中填写密钥",
@@ -292,6 +292,7 @@ async def api_models_chat(request: Request):
                 if resp.status_code != 200:
                     error_body = await resp.aread()
                     error_text = error_body.decode(errors='replace')[:500]
+                    logger.error(f"AI proxy upstream error: status={resp.status_code} body={error_text} url={url}")
                     yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
                     yield "data: [DONE]\n\n"
                     return

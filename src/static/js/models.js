@@ -31,7 +31,7 @@ const MODEL_PRESETS = {
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
 
 let userModelConfigs = [];
-let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '' };
+let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' };
 
 function loadUserModels() {
   try {
@@ -107,6 +107,7 @@ function deleteUserModel(id) {
   if (activeModels.descriptor_model === id) activeModels.descriptor_model = '';
   if (activeModels.quiz_model === id) activeModels.quiz_model = '';
   if (activeModels.graph_model === id) activeModels.graph_model = '';
+  if (activeModels.branch_model === id) activeModels.branch_model = '';
   saveUserModels();
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
@@ -126,7 +127,7 @@ function getModelById(id) {
 }
 
 function getActiveModelForRole(role) {
-  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : role === 'graph' ? 'graph_model' : role === 'quiz' ? 'quiz_model' : 'descriptor_model';
+  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : role === 'graph' ? 'graph_model' : role === 'quiz' ? 'quiz_model' : role === 'branch' ? 'branch_model' : 'descriptor_model';
   const id = activeModels[key];
   if (!id) return null;
   return getModelById(id);
@@ -136,7 +137,7 @@ async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
   const fallbackOpencode = userModelConfigs.find(m => m.provider === 'opencode') || null;
-  for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model']) {
+  for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
     const model = getModelById(activeModels[key]);
     if (model && model.provider === 'opencode' && !OPENCODE_FREE_MODELS.includes(model.model)) {
       activeModels[key] = fallbackOpencode ? fallbackOpencode.id : '';
@@ -154,6 +155,7 @@ function renderModelSelects() {
   const descriptorSelect = document.getElementById('descriptorModelSelect');
   const quizSelect = document.getElementById('quizModelSelect');
   const graphSelect = document.getElementById('graphModelSelect');
+  const branchSelect = document.getElementById('branchModelSelect');
   if (!agentSelect || !htmlSelect || !quizSelect || !graphSelect) return;
 
   const emptyOpt = '<option value="">— 请选择模型 —</option>';
@@ -173,17 +175,22 @@ function renderModelSelects() {
   if (descriptorSelect) descriptorSelect.value = activeModels.descriptor_model || '';
   quizSelect.value = activeModels.quiz_model || '';
   graphSelect.value = activeModels.graph_model || '';
+  if (branchSelect) {
+    branchSelect.innerHTML = '<option value="">— 不启用（跟随主模型）—</option>' + opts;
+    branchSelect.value = activeModels.branch_model || '';
+  }
   updateModelMeta('agent');
   updateModelMeta('html');
   updateModelMeta('descriptor');
   updateModelMeta('quiz');
   updateModelMeta('graph');
+  updateModelMeta('branch');
 }
 
 function updateModelMeta(type) {
-  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect', graph: 'graphModelSelect' };
-  const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc', quiz: 'quizModelDesc', graph: 'graphModelDesc' };
-  const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags', quiz: 'quizModelTags', graph: 'graphModelTags' };
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect', graph: 'graphModelSelect', branch: 'branchModelSelect' };
+  const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc', quiz: 'quizModelDesc', graph: 'graphModelDesc', branch: 'branchModelDesc' };
+  const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags', quiz: 'quizModelTags', graph: 'graphModelTags', branch: 'branchModelTags' };
   const select = document.getElementById(selectMap[type]);
   const descEl = document.getElementById(descMap[type]);
   const tagsEl = document.getElementById(tagsMap[type]);
@@ -200,6 +207,9 @@ function updateModelMeta(type) {
     } else if (type === 'graph') {
       descEl.textContent = select.value ? '' : '未配置时默认使用主模型（建议选擅长结构化输出的模型）';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
+    } else if (type === 'branch') {
+      descEl.textContent = select.value ? '' : '未配置时苏格拉底/进阶学习跟随主模型；配置后单独走该模型';
+      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     } else {
       descEl.textContent = select.value ? '' : '未配置模型。请选择模型（可直接使用免费模型）';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">未配置</span>';
@@ -208,13 +218,14 @@ function updateModelMeta(type) {
 }
 
 async function onModelChange(type) {
-  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect', graph: 'graphModelSelect' };
+  const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect', graph: 'graphModelSelect', branch: 'branchModelSelect' };
   const select = document.getElementById(selectMap[type]);
   updateModelMeta(type);
   if (type === 'agent') activeModels.agent_model = select.value;
   else if (type === 'html') activeModels.html_model = select.value;
   else if (type === 'quiz') activeModels.quiz_model = select.value;
   else if (type === 'graph') activeModels.graph_model = select.value;
+  else if (type === 'branch') activeModels.branch_model = select.value;
   else activeModels.descriptor_model = select.value;
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
@@ -370,10 +381,17 @@ async function proxyChatWithModel(model, body, signal) {
 }
 
 async function proxyChat(prompt, level, sessionId, stream = true, signal, branchMeta = {}, extra = {}) {
-  const agentModel = getActiveModelForRole('agent');
+  // 临时分支模型：苏格拉底追问(socratic)和进阶学习(learn)可单独指定模型
+  // 若配置了 branch_model，则这两个节点走独立模型，方便用 llama.cpp 本地服务测试
+  let agentModel = getActiveModelForRole('agent');
   if (!agentModel) return null;
+  const branchType = branchMeta.branchType;
+  if ((branchType === 'socratic' || branchType === 'learn') && activeModels.branch_model) {
+    const branchModel = getModelById(activeModels.branch_model);
+    if (branchModel) agentModel = branchModel;
+  }
   // 分支锚点使用 camelCase，后端契约是 snake_case：在 API 边界统一转换
-  const { graphPath, parentId, sourceModule, branchType, branchId, branchLabel, ...rest } = branchMeta;
+  const { graphPath, parentId, sourceModule, branchId, branchLabel, position, ...rest } = branchMeta;
   return proxyChatWithModel(agentModel, {
     prompt,
     level,

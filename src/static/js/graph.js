@@ -970,12 +970,13 @@ function _buildGraphData(messages, state) {
       const saved = savedPositions[id];
       const radialX = (TARGET_R[depth] || 400) * Math.cos(targetAngle);
       const radialY = (TARGET_R[depth] || 400) * Math.sin(targetAngle);
-      const branchX = branchParentNode && branchParentNode.x != null
-        ? branchParentNode.x + 420
-        : radialX;
-      const branchY = branchParentNode && branchParentNode.y != null
-        ? branchParentNode.y + ((branchCount % 7) - 3) * 130
-        : radialY;
+      const positioned = isBranch && msg.position && Number.isFinite(msg.position.x) && Number.isFinite(msg.position.y);
+      const branchX = positioned
+        ? msg.position.x
+        : (branchParentNode && branchParentNode.x != null ? branchParentNode.x + 420 : radialX);
+      const branchY = positioned
+        ? msg.position.y
+        : (branchParentNode && branchParentNode.y != null ? branchParentNode.y + ((branchCount % 7) - 3) * 130 : radialY);
       let node = {
         id,
         kind: 'user',
@@ -1037,12 +1038,13 @@ function _buildGraphData(messages, state) {
       const saved = savedPositions[id];
       const radialX = (TARGET_R[depth] || 400) * Math.cos(targetAngle);
       const radialY = (TARGET_R[depth] || 400) * Math.sin(targetAngle);
-      const branchX = isBranchAnswer && parentQuestion && parentQuestion.x != null
-        ? parentQuestion.x + 360
-        : radialX;
-      const branchY = isBranchAnswer && parentQuestion && parentQuestion.y != null
-        ? parentQuestion.y + 150
-        : radialY;
+      const positionedAnswer = isBranchAnswer && msg.position && Number.isFinite(msg.position.x) && Number.isFinite(msg.position.y);
+      const branchX = positionedAnswer
+        ? msg.position.x
+        : (isBranchAnswer && parentQuestion && parentQuestion.x != null ? parentQuestion.x + 360 : radialX);
+      const branchY = positionedAnswer
+        ? msg.position.y + 170
+        : (isBranchAnswer && parentQuestion && parentQuestion.y != null ? parentQuestion.y + 150 : radialY);
       let node = {
         id,
         kind: 'answer',

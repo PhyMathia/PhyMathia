@@ -514,6 +514,11 @@ async function _generateAnalysis(node) {
 }
 
 function _modelForWorkflowNode(node) {
+  if (node && node.kind === 'module' && (node.moduleKey === 'socratic' || node.moduleKey === 'learn') && typeof getActiveModelForRole === 'function') {
+    // 苏格拉底追问/进阶学习优先使用单独配置的 branch 模型，未配置时再跟随主模型。
+    const branchModel = getActiveModelForRole('branch');
+    if (branchModel) return branchModel;
+  }
   if (node && node.kind === 'module' && node.moduleKey === 'viz' && typeof getActiveModelForRole === 'function') {
     // 交互可视化优先使用专门配置的 HTML 生成模型，避免弱主模型反复输出空内容。
     const htmlModel = getActiveModelForRole('html');
@@ -686,13 +691,25 @@ function _parseSuggestedModules(analysisText) {
   return keys;
 }
 
-function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort) {
+function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort, placement) {
   const state = _graphState();
   state.customNodes = state.customNodes || [];
   state.connections = state.connections || [];
   const now = Date.now();
   const uid = () => Math.random().toString(36).slice(2, 7);
-  const baseY = sourceNodeId ? 120 : 40;
+  let baseX = 120;
+  let baseY = sourceNodeId ? 120 : 40;
+  if (placement && Number.isFinite(placement.x) && Number.isFinite(placement.y)) {
+    baseX = placement.x;
+    baseY = placement.y;
+  } else if (sourceNodeId) {
+    const sourceNode = _findGraphNode(sourceNodeId);
+    if (sourceNode) {
+      const sourceW = sourceNode.w || sourceNode.customWidth || 300;
+      baseX = (Number.isFinite(sourceNode.x) ? sourceNode.x : 120) + sourceW / 2 + 240;
+      baseY = Number.isFinite(sourceNode.y) ? sourceNode.y : 120;
+    }
+  }
   const userNode = {
     id: 'user-custom-' + now + '-' + uid(),
     kind: 'user', moduleKey: '', manual: true, nodeType: '', label: '', formula: '',
@@ -700,7 +717,7 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort)
     analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
     generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
     generatedNodeIds: [], category: 'other', formulas: [], knowledgeKey: '',
-    x: 120, y: baseY, depth: 1, targetAngle: 0, isRoot: false, timestamp: now,
+    x: baseX, y: baseY, depth: 1, targetAngle: 0, isRoot: false, timestamp: now,
     pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
     w: 0, h: 0, vx: 0, vy: 0,
   };
@@ -711,7 +728,7 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort)
     analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
     generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
     generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
-    x: 120, y: baseY + 170, depth: 2, targetAngle: 0, isRoot: false, timestamp: now + 1,
+    x: baseX, y: baseY + 170, depth: 2, targetAngle: 0, isRoot: false, timestamp: now + 1,
     pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
     w: 0, h: 0, vx: 0, vy: 0,
   };
@@ -749,11 +766,11 @@ function _workflowModulePositions(moduleKeys, answerNodeId) {
   const count = moduleKeys.length;
   const gapY = 230;
   const startY = Math.max(60, ay - ((count - 1) * gapY) / 2);
-  const baseX = ax + aw / 2 + 260;
+  const baseX = ax + aw / 2 + 420;
   const positions = moduleKeys.map((_, i) => ({
     x: baseX,
     y: startY + i * gapY,
-    w: 320,
+    w: 640,
     h: 120,
   }));
 
@@ -797,7 +814,7 @@ function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
       generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
       generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
       x: positions[i].x, y: positions[i].y, depth: 3, targetAngle: 0, isRoot: false, timestamp: now + i,
-      pinned: false, fixedX: null, fixedY: null, customWidth: 320, customHeight: null,
+      pinned: false, fixedX: null, fixedY: null, customWidth: 640, customHeight: null,
       w: 0, h: 0, vx: 0, vy: 0,
     });
     const outIndex = Math.max(0, ANSWER_OUTPUT_SCHEMA.indexOf(key));
@@ -839,6 +856,13 @@ async function startQuestionWorkflow(text, opts) {
   if (!question) return;
   if (typeof isStreaming !== 'undefined' && isStreaming) return;
   const options = opts || {};
+  let draftPlacement = null;
+  if (options.draftNodeId && typeof _findDraftNode === 'function') {
+    const draft = _findDraftNode(options.draftNodeId);
+    if (draft && Number.isFinite(draft.x) && Number.isFinite(draft.y)) {
+      draftPlacement = { x: draft.x, y: draft.y };
+    }
+  }
   if (options.draftNodeId && typeof removeDraftNode === 'function') removeDraftNode(options.draftNodeId);
 
   if (typeof sessions !== 'undefined' && sessions && currentSessionId && sessions[currentSessionId]) {
@@ -850,7 +874,7 @@ async function startQuestionWorkflow(text, opts) {
     if (typeof saveSessions === 'function') saveSessions();
   }
 
-  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '');
+  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   await _generateAnalysis(liveAnswer);
 

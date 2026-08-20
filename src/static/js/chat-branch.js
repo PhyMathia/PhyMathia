@@ -2,6 +2,7 @@
 
     var pendingSocraticNewLoop = false;
     var pendingSocraticConfidence = 'ok';
+    var pendingSocraticPosition = null;
     function clearBranchAnchor() {
       setActiveBranchAnchor(null);
     }
@@ -24,12 +25,13 @@
       return level === 'advanced' ? '进阶' : level === 'expand' ? '拓展' : '基础';
     }
 
-    function startSocraticAnswer(question, level, parentMsg, sourceModule) {
+    function startSocraticAnswer(question, level, parentMsg, sourceModule, posX, posY) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
       pendingSocraticSourceModule = sourceModule || 'extend';
       pendingSocraticConfidence = 'ok';
+      pendingSocraticPosition = (Number.isFinite(posX) && Number.isFinite(posY)) ? { x: posX, y: posY } : null;
       // 若当前已有未结束的苏格拉底闭环，沿用同一分支，保证连对次数与上下文跨轮连续
       pendingSocraticNewLoop = !(currentBranch === 'socratic' && currentBranchId);
       pendingSocraticBranchId = pendingSocraticNewLoop ? _genBranchId() : currentBranchId;
@@ -56,6 +58,7 @@
       pendingSocraticQuestion = '';
       pendingSocraticLevel = 'basic';
       pendingSocraticSourceModule = 'extend';
+      pendingSocraticPosition = null;
     }
 
     function setSocraticConfidence(value, btn) {
@@ -77,6 +80,7 @@
       const confidenceLabel = pendingSocraticConfidence === 'confident' ? '很有把握' : pendingSocraticConfidence === 'guess' ? '猜的' : '一般';
       const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n把握程度：' + confidenceLabel + '\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
       const branchId = pendingSocraticBranchId || _genBranchId();
+      const socraticPosition = pendingSocraticPosition ? { ...pendingSocraticPosition } : null;
       socraticSubmitting = true;
       try {
         if (branchId && pendingSocraticNewLoop) {
@@ -108,6 +112,7 @@
           branchType: 'socratic',
           branchId,
           branchLabel: '苏格拉底：' + (pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础'),
+          ...(socraticPosition ? { position: socraticPosition } : {}),
         });
         sendQuick(message);
       } finally {

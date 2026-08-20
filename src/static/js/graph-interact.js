@@ -627,7 +627,7 @@ function draftSocraticAnswer(nodeId) {
   if (!node) return;
   const meta = node.portMeta || {};
   if (typeof window.startSocraticAnswer === 'function') {
-    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend');
+    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend', node.x, node.y);
   }
 }
 
@@ -725,7 +725,11 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
   let reply = '';
 
   if (typeof getActiveModelForRole === 'function') {
-    const agentModel = getActiveModelForRole('agent');
+    let agentModel = getActiveModelForRole('agent');
+    if ((moduleKey === 'socratic' || moduleKey === 'learn') && typeof getActiveModelForRole === 'function') {
+      const branchModel = getActiveModelForRole('branch');
+      if (branchModel) agentModel = branchModel;
+    }
     if (agentModel && typeof proxyChatWithModel === 'function' && typeof collectStreamText === 'function') {
       const resp = await proxyChatWithModel(agentModel, {
         messages: [
