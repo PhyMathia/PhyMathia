@@ -230,7 +230,19 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     provider = str(model.get("provider") or "deepseek").strip()
     model_name = str(model.get("model") or model.get("model_name") or "deepseek-chat").strip()
     base_url = str(model.get("base_url") or model.get("baseUrl") or "").strip()
-    api_key = str(model.get("api_key") or model.get("apiKey") or os.getenv("DEEPSEEK_API_KEY", "")).strip()
+    api_key = str(model.get("api_key") or model.get("apiKey") or "").strip()
+    # 服务端密钥回退：与 src/main.py 的 /api/models/chat 保持一致。
+    # opencode-go（hy3/hy3-preview）必须带 Bearer，否则上游返回 401 "Invalid API key"；
+    # 免费 opencode（zen/v1）不需要 key。前端可留空密钥，靠这里的环境变量兜底。
+    if not api_key:
+        is_opencode_go = (
+            provider.lower() in ("opencode-go", "opencode_go", "opencodego", "go")
+            or "zen/go" in base_url.lower()
+        )
+        if is_opencode_go:
+            api_key = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_API_KEY") or ""
+        if not api_key:
+            api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not base_url:
         base_url = DEFAULT_PROVIDER_URLS.get(provider, "")
     if not model_name:
@@ -288,8 +300,11 @@ async def _call_model(
         "harness model call: %s/%s tools=%s tool_choice=%s json_mode=%s",
         model["provider"], model["model"], bool(tools), tool_choice or "-", json_mode,
     )
+    # hy3 等推理模型：正文可能落在 reasoning_content、content 为空，回退取 reasoning_content
+    # （与 src/main.py /api/models/chat 的流式转发处理保持一致）。
+    message_content = str(message.get("content") or message.get("reasoning_content") or "")
     return {
-        "content": str(message.get("content") or ""),
+        "content": message_content,
         "tool_calls": message.get("tool_calls") or [],
     }
 

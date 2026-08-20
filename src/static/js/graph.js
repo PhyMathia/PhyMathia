@@ -204,7 +204,12 @@ function _graphVersionNodeIndex(state) {
 }
 
 function _graphEdgeKeyOf(e) {
-  return String(e.key || e.edge_key || (e.from + ">" + e.to));
+  // removedEdges 里存的是 _edgeKey 产出的完整字符串（from:port->to:port），
+  // connections 里是带 from/to/fromPort/toPort 的对象；统一转成带端口的关键字，
+  // 才能与画布 DOM 的 data-edge-key / _edgeKey 匹配。
+  if (typeof e === 'string') return e;
+  if (e && (e.key || e.edge_key)) return String(e.key || e.edge_key);
+  return _edgeKey(e || {});
 }
 
 function _graphNodeLabelOf(node, id) {
@@ -517,10 +522,18 @@ function _previewGraphVersion(versionIndex) {
     exitGraphVersionPreview();
     return;
   }
-  const diff = _diffGraphStates(live, target.state);
+  // 语义对齐：把「选中的历史版本」作为旧版本、当前状态作为新版本做 diff，
+  // 这样 create=当前新增、delete=相对该版本已被删除、update=被修改，
+  // 与 _graphVersions/_pushGraphUndo 里 live summary 的方向一致。
+  const diff = _diffGraphStates(target.state, live);
   graphHistoryPreviewing = versionIndex;
   graphHistoryDiffSummary = "版本 " + (versionIndex + 1) + " 与当前差异：" + diff.summary;
-  if (typeof window.applyGraphDiffHighlights === "function") window.applyGraphDiffHighlights(diff.ops);
+  if (typeof window.applyGraphDiffHighlights === "function") {
+    window.applyGraphDiffHighlights(diff.ops, {
+      state: target.state,
+      messages: target.messages || [],
+    });
+  }
   _renderGraphHistoryFooter();
   _refreshGraphHistoryPanel();
 }
