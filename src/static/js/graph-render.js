@@ -1464,12 +1464,6 @@ function _runLayout(needsFit) {
   if (needsFit) fitGraph();
 }
 
-function _layoutLevelOf(node) {
-  const d = node && node.depth;
-  if (d != null && Number.isFinite(d) && d >= 0) return d;
-  return null;
-}
-
 function _layoutNodeSize(node) {
   return {
     w: node.w || node.customWidth || 120,
@@ -1477,91 +1471,99 @@ function _layoutNodeSize(node) {
   };
 }
 
-// 自由节点：按语义层级（node.depth）分列，同一级保持基本相同的横坐标。
-// 列间距固定为默认档，不随大节点放大——修复“巨可视化节点让整图空隙变大”。
-function _arrangeFreeByLevel(freeNodes, colGap, rowStep) {
-  if (!freeNodes.length) return;
-  const levels = {};
-  let maxLevel = 0;
-  freeNodes.forEach(node => {
-    const level = _layoutLevelOf(node);
-    if (level == null) {
-      if (!levels.__misc) levels.__misc = [];
-      levels.__misc.push(node);
-    } else {
-      (levels[level] = levels[level] || []).push(node);
-      if (level > maxLevel) maxLevel = level;
+// 层级由连线的“父子”结构推导（不信任节点上硬编码的 depth）：
+//   · 每个节点认第一条入边为父 → 构成一棵树（森林）；
+//   · BFS 深度 = 根到该节点的边数 → 同一深度同一横坐标（x = depth*colGap）；
+//   · 纵向用 tidy 中序排名 → 每个分支（如“物理视角 → 追问 → 追问回答 → 追问模块”）
+//     占据一条连续纵带，物理的追问与数学的追问各自的走廊互不混杂，并随深度逐级右移。
+function _arrangeTreeLayout(nodes, edges, colGap, rowUnit) {
+  if (!nodes.length) return;
+  const byId = {};
+  nodes.forEach(n => { byId[n.id] = n; });
+  const children = {};
+  const parent = {};
+  const portOf = {};
+  nodes.forEach(n => { children[n.id] = []; });
+  edges.forEach((e, ei) => {
+    if (e.draft || e.link) return; // 忽略草稿与“联系”横连，避免串层
+    const from = byId[e.from];
+    const to = byId[e.to];
+    if (!from || !to) return;
+    if (parent[to.id] == null) { // 每个节点只认第一条入边，保证无环森林
+      parent[to.id] = from.id;
+      portOf[to.id] = e.fromPort || ei;
     }
   });
-  const miscLevel = maxLevel + 1;
-  (levels.__misc || []).forEach(node => {
-    (levels[miscLevel] = levels[miscLevel] || []).push(node);
+  nodes.forEach(n => {
+    if (parent[n.id] != null) children[parent[n.id]].push(n.id);
   });
-  delete levels.__misc;
 
-  Object.keys(levels)
-    .map(Number)
-    .sort((a, b) => a - b)
-    .forEach(level => {
-      const list = levels[level].slice().sort((a, b) => {
-        const ab = a.isBranch ? 1 : 0;
-        const bb = b.isBranch ? 1 : 0;
-        if (ab !== bb) return ab - bb;
-        return (a.timestamp || 0) - (b.timestamp || 0);
-      });
-      const x = level * colGap;
-      const y0 = -((list.length - 1) / 2) * rowStep;
-      list.forEach((node, i) => {
-        node.x = x;
-        node.y = y0 + i * rowStep;
-      });
+  const parentless = nodes.filter(n => parent[n.id] == null);
+  let roots = parentless.filter(n => n.isRoot);
+  if (!roots.length) roots = parentless.filter(n => n.kind === 'user');
+  if (!roots.length) roots = parentless.slice();
+
+  // BFS 深度
+  const depth = {};
+  const queue = [];
+  roots.forEach(r => { depth[r.id] = 0; queue.push(r.id); });
+  while (queue.length) {
+    const id = queue.shift();
+    (children[id] || []).forEach(cid => {
+      if (depth[cid] == null) { depth[cid] = depth[id] + 1; queue.push(cid); }
     });
+  }
+  let maxDepth = 0;
+  nodes.forEach(n => { if (depth[n.id] != null && depth[n.id] > maxDepth) maxDepth = depth[n.id]; });
+
+  // tidy 中序排名：叶节点顺序编号，内部节点取子节点排名中点 → 纵向坐标
+  const rank = {};
+  let leafCounter = 0;
+  function visit(id) {
+    const kids = (children[id] || []).map(cid => ({ id: cid })).sort((a, b) => {
+      const pa = String(portOf[a.id] != null ? portOf[a.id] : a.id);
+      const pb = String(portOf[b.id] != null ? portOf[b.id] : b.id);
+      const d = pa.localeCompare(pb, undefined, { numeric: true });
+      return d || (byId[a.id].timestamp || 0) - (byId[b.id].timestamp || 0);
+    });
+    if (!kids.length) { rank[id] = leafCounter++; return rank[id]; }
+    let lo = Infinity;
+    let hi = -Infinity;
+    kids.forEach(k => {
+      const rk = visit(k.id);
+      if (rk < lo) lo = rk;
+      if (rk > hi) hi = rk;
+    });
+    rank[id] = (lo + hi) / 2;
+    return rank[id];
+  }
+  roots.forEach(r => visit(r.id));
+
+  const miscNodes = nodes.filter(n => rank[n.id] == null);
+  const totalLeaves = leafCounter || 1;
+  nodes.forEach(n => {
+    if (rank[n.id] == null) return;
+    n.x = (depth[n.id] != null ? depth[n.id] : maxDepth + 1) * colGap;
+    n.y = (rank[n.id] - (totalLeaves - 1) / 2) * rowUnit;
+  });
+  // 游离/杂散节点（无父边且非主根，或仅被杂散节点引用）→ 最右侧竖排
+  if (miscNodes.length) {
+    const miscX = (maxDepth + 1) * colGap;
+    miscNodes.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    const startY = -((miscNodes.length - 1) / 2) * rowUnit;
+    miscNodes.forEach((node, i) => {
+      node.x = miscX;
+      node.y = startY + i * rowUnit;
+    });
+  }
 }
 
-// 分组：成员按紧凑网格排布，整组作为一个原子矩形，锚定在其代表层级列（取成员最小深度）。
-function _arrangeGroupGrid(group, groupOf, colGap) {
+// 分组：成员保持树状/走廊位置不再重排成网格，整组作为原子矩形交给碰撞处理。
+function _groupBlockFor(group) {
   const members = (group.nodeIds || [])
     .map(id => graphView.nodeById[id])
     .filter(node => node && node.kind !== 'draft');
   if (!members.length) return null;
-
-  let minLevel = Infinity;
-  members.forEach(n => {
-    const lv = _layoutLevelOf(n);
-    if (lv != null && lv < minLevel) minLevel = lv;
-  });
-  if (!Number.isFinite(minLevel)) minLevel = 0;
-  const col = minLevel;
-
-  let cellW = 0;
-  let cellH = 0;
-  members.forEach(n => {
-    const s = _layoutNodeSize(n);
-    if (s.w > cellW) cellW = s.w;
-    if (s.h > cellH) cellH = s.h;
-  });
-  cellW = Math.max(140, cellW);
-  cellH = Math.max(80, cellH);
-
-  const gapX = 36;
-  const gapY = 48;
-  const cols = Math.max(1, Math.ceil(Math.sqrt(members.length)));
-  const rows = Math.ceil(members.length / cols);
-  const gridW = cols * cellW + (cols - 1) * gapX;
-  const gridH = rows * cellH + (rows - 1) * gapY;
-  const centerX = col * colGap;
-  const centerY = 0;
-  const startX = centerX - gridW / 2;
-  const startY = centerY - gridH / 2;
-
-  members.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-  members.forEach((node, index) => {
-    const c = index % cols;
-    const r = Math.floor(index / cols);
-    node.x = startX + c * (cellW + gapX) + cellW / 2;
-    node.y = startY + r * (cellH + gapY) + cellH / 2;
-  });
-
   const bounds = _graphGroupBounds(members.map(m => m.id));
   group.x = bounds.x;
   group.y = bounds.y;
@@ -1647,30 +1649,26 @@ function autoArrangeGraph(preservePinned) {
     node.fixedY = null;
   });
 
-  const COL_GAP = 420;   // 默认列间距档，不随大节点放大（修复“空隙很大”）
+  const COL_GAP = 420;   // 默认列间距档，不随大节点放大
   const ROW_STEP = 300;  // 默认行距档
 
   const groupOf = {};
   (graphView.groups || []).forEach(g => (g.nodeIds || []).forEach(id => { groupOf[id] = g; }));
   const usable = graphView.nodes.filter(node => node.kind !== 'draft');
   const usableIds = new Set(usable.map(n => n.id));
+
+  // 1) 树状层级排布：层级=连线父子深度，追问逐级右移成分支走廊
+  _arrangeTreeLayout(usable, graphView.edges, COL_GAP, ROW_STEP);
+
+  // 2) 自由节点 + 分组块 统一矩形碰撞，避免组/大节点/相邻列互相压叠
   const freeNodes = usable.filter(n => !groupOf[n.id]);
   const groups = (graphView.groups || [])
     .filter(g => (g.nodeIds || []).some(id => usableIds.has(id)));
-
-  // 1) 自由节点：按语义层级分列（同一级相同横坐标）
-  _arrangeFreeByLevel(freeNodes, COL_GAP, ROW_STEP);
-
-  // 2) 分组：成员网格化，整组作为原子矩形锚定到其代表层级列
-  const groupBlocks = groups
-    .map(g => _arrangeGroupGrid(g, groupOf, COL_GAP))
-    .filter(Boolean);
-
-  // 3) 统一矩形碰撞：自由节点 + 分组块整体避开重叠（含大节点局部让位）
+  const groupBlocks = groups.map(g => _groupBlockFor(g)).filter(Boolean);
   const blocks = _collectLayoutBlocks(freeNodes, groupBlocks);
   _resolveLayoutRectOverlaps(blocks, 80);
 
-  // 4) 收尾：解固定、按最终成员重算组边界、落位
+  // 3) 收尾：解固定、按最终成员重算组边界、落位
   graphView.nodes.forEach(node => {
     node.pinned = false;
     node.fixedX = null;
