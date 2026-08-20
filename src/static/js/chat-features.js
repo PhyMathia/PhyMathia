@@ -144,12 +144,13 @@
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
         .map(match => match[1].trim())
         .filter(Boolean);
-      const moduleHeading = /(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向|学习方向)/;
+      const moduleHeading = /(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向)/;
       const usefulTitles = allTitles.filter(title => !moduleHeading.test(title));
       const cardTitle = usefulTitles.find(title => /PhyMathia\s*学习卡片/.test(title));
       let title = (cardTitle || usefulTitles[0] || '')
         .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
-        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/, '')
+        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向|相关公式)$/g, '')
+        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向|相关公式)$/g, '')
         .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/, '')
         .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
         .trim();
@@ -217,10 +218,11 @@
       return '';
     }
 
-    function saveExtractedFormulas(sessionId, items, messages, descriptions = {}) {
+    function saveExtractedFormulas(sessionId, items, messages, descriptions = {}, opts = {}) {
       const formulas = [];
       const lastAssistant = [...(messages || [])].reverse().find(m => m.role === 'assistant');
       const messageId = lastAssistant ? String(lastAssistant.timestamp || '') : '';
+      const nodeIdByModuleKey = (opts && opts.nodeIdByModuleKey) || {};
       for (const item of items || []) {
         for (const latex of item.formulas || []) {
           const normalizedLatex = _normalizeFormulaLatex(latex);
@@ -229,6 +231,7 @@
             descriptions[_stripFormulaDelimiters(normalizedLatex)] ||
             ''
           ).trim();
+          const formulaModuleKey = _formulaModuleKeyFromItem(item, latex);
           formulas.push({
             latex,
             concept: item.title,
@@ -238,7 +241,8 @@
             related: (item.formulaTags && item.formulaTags[latex]) || item.tags || [],
             sessionId,
             messageId,
-            moduleKey: _formulaModuleKeyFromItem(item, latex),
+            moduleKey: formulaModuleKey,
+            nodeId: (nodeIdByModuleKey[formulaModuleKey] || ''),
             createdAt: Date.now(),
           });
         }
@@ -261,7 +265,7 @@
       return String(title || '')
         .replace(/^#+\s*/, '')
         .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
-        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/g, '')
+        .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向)$/g, '')
         .replace(/的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$/g, '')
         .replace(/^[🔬📐🧠💡🗺️]+\s*/, '')
         .replace(/[，。；、：:()（）\[\]【】\s]+/g, '')
@@ -283,11 +287,12 @@
       return 'answer';
     }
 
-    function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false) {
+    function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false, opts = {}) {
       if (!items || items.length === 0) return;
 
       const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
       const messageId = lastAssistant ? (lastAssistant.timestamp || '') : '';
+      const nodeIdByModuleKey = (opts && opts.nodeIdByModuleKey) || {};
       const existingItems = getKnowledgeItems();
       let changed = false;
       const messageItems = Object.values(existingItems).filter(e =>
@@ -312,6 +317,7 @@
             moduleKey: (item.moduleKey && item.moduleKey !== 'answer')
               ? item.moduleKey
               : existing.moduleKey || _knowledgeModuleKeyFallback(item),
+            nodeId: (nodeIdByModuleKey[item.moduleKey] || existing.nodeId || ''),
           });
           if (keepManualSource) existing.source = 'manual';
           changed = true;
@@ -330,6 +336,7 @@
           sessionId: sessionId,
           messageId: String(messageId),
           moduleKey: _knowledgeModuleKeyFallback(item),
+          nodeId: (nodeIdByModuleKey[item.moduleKey] || nodeIdByModuleKey[_knowledgeModuleKeyFallback(item)] || ''),
           createdAt: Date.now()
         };
         changed = true;
@@ -353,7 +360,7 @@
       }
     }
 
-    async function autoExtractKnowledge(sessionId, messages) {
+    async function autoExtractKnowledge(sessionId, messages, opts = {}) {
       if (!messages || messages.length === 0) return;
       if (messages.length < 2) return; // Need at least 1 exchange
 
@@ -374,8 +381,8 @@
 
         // 浏览器本地先提取，不等待消息保存或任何模型响应。
         const localItems = extractLocalKnowledge(extractionMessages);
-        saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems);
-        saveExtractedFormulas(sessionId, localItems, extractionMessages);
+        saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems, false, opts);
+        saveExtractedFormulas(sessionId, localItems, extractionMessages, {}, opts);
         refreshKnowledgePanelIfOpen();
 
         const payload = { ...basePayload };
@@ -402,8 +409,8 @@
             console.warn('AI knowledge extraction failed:', err);
           }
           const aiItems = aiResult.items || [];
-          saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true);
-          saveExtractedFormulas(sessionId, aiItems, extractionMessages, aiResult.descriptions || {});
+          saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true, opts);
+          saveExtractedFormulas(sessionId, aiItems, extractionMessages, aiResult.descriptions || {}, opts);
           refreshKnowledgePanelIfOpen();
         }
       } catch (err) {

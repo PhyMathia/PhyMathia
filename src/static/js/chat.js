@@ -484,11 +484,11 @@
                   }
                   continue;
                 }
-                if (delta.content) {
+                if (delta.content || delta.reasoning_content) {
                   lastChunkTime = Date.now();
                   if (currentStage !== 'generating') showProgress('generating', Math.max(progressPercent, PROGRESS_PHASE.generating.percent), '正在生成回答');
                   if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
-                  assistantContent += delta.content;
+                  assistantContent += delta.content || delta.reasoning_content || '';
                   streamingAssistant.content = assistantContent;
                   const streamProgress = _streamProgressFromContent(assistantContent);
                   if (streamProgress.percent > progressPercent) _setProgress(streamProgress.percent, streamProgress.label);

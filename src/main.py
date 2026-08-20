@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -137,6 +138,8 @@ async def api_models_chat(request: Request):
     api_key = payload.get("api_key", "")
     if not api_key and provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     model_name = payload.get("model", "")
     if not model_name and provider == "deepseek":
         model_name = "deepseek-chat"
@@ -144,7 +147,7 @@ async def api_models_chat(request: Request):
     stream = payload.get("stream", True)
     context_budget = resolve_context_budget(model_name)
 
-    if not api_key and provider not in ("opencode", "llama", "local"):
+    if not api_key and provider not in ("opencode", "opencode-go", "llama", "local"):
         raise HTTPException(
             status_code=400,
             detail=f"未配置 {provider} API Key：请在项目根目录 .env 中设置 DEEPSEEK_API_KEY，或在模型配置中填写密钥",
@@ -287,7 +290,7 @@ async def api_models_chat(request: Request):
     async def proxy_stream():
         try:
             client = get_http_client()
-            async with client.stream("POST", url, json=body, headers=headers) as resp:
+            async with client.stream("POST", url, json=body, headers=headers, timeout=httpx.Timeout(180.0, connect=15.0)) as resp:
                 logger.info(f"AI proxy response: {resp.status_code} from {url}")
                 if resp.status_code != 200:
                     error_body = await resp.aread()
@@ -320,8 +323,11 @@ async def api_models_chat(request: Request):
                                 if data.get("usage"):
                                     last_usage = data["usage"]
                                 delta = data.get("choices", [{}])[0].get("delta", {})
-                                if delta.get("content"):
-                                    streamed_content.append(delta["content"])
+                                delta_text = delta.get("content")
+                                if not delta_text:
+                                    delta_text = delta.get("reasoning_content") or ""
+                                if delta_text:
+                                    streamed_content.append(delta_text)
                             except Exception:
                                 pass
                         yield line + "\n\n"
@@ -367,7 +373,7 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             return
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {"Content-Type": "application/json"}
-        if api_key and provider != "opencode":
+        if api_key and provider not in ("opencode", "opencode-go"):
             headers["Authorization"] = f"Bearer {api_key}"
         body = {
             "model": model_name,
@@ -738,6 +744,8 @@ async def api_extract_knowledge(request: Request):
     level = payload.get("level", "university")
     if not api_key and provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
 
@@ -754,12 +762,14 @@ async def api_extract_knowledge(request: Request):
     desc_base_url = payload.get("descriptor_base_url", "")
     if not desc_api_key and desc_provider == "deepseek":
         desc_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not desc_api_key and desc_provider == "opencode-go":
+        desc_api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not desc_api_key and desc_provider == "opencode":
         desc_api_key = OPENCODE_DEFAULT_API_KEY
 
     items = []
     profile_facts = []
-    if (api_key or provider == "opencode") and model:
+    if (api_key or provider in ("opencode", "opencode-go")) and model:
         try:
             extracted = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
             if isinstance(extracted, tuple):
@@ -801,7 +811,7 @@ async def api_extract_knowledge(request: Request):
             latex = _normalize_formula(str(f).strip())
             if latex and _looks_like_formula(latex) and latex not in all_formulas:
                 all_formulas.append(latex)
-    if all_formulas and desc_model and (desc_api_key or desc_provider == "opencode"):
+    if all_formulas and desc_model and (desc_api_key or desc_provider in ("opencode", "opencode-go")):
         descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url, level)
         if descriptions:
             logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
@@ -859,11 +869,13 @@ async def api_parse_document(request: Request):
     level = str(payload.get("level") or "university")
     if not api_key and provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
 
     nodes, edges, relations = [], [], []
-    if model and (api_key or provider == "opencode"):
+    if model and (api_key or provider in ("opencode", "opencode-go")):
         try:
             nodes, edges, relations = await _ai_extract_document_knowledge(
                 text, filename, is_image, image_b64, provider, api_key, model, base_url, level, max_items

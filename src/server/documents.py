@@ -3,6 +3,7 @@
 import io
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -326,9 +327,11 @@ async def _ai_extract_document_knowledge(
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], [], []
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
-    if not api_key and provider != "opencode":
+    if not api_key and provider not in ("opencode", "opencode-go"):
         return [], [], []
 
     prompt = (

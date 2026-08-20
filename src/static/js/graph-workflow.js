@@ -828,23 +828,30 @@ function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
 function _workflowNodesToExtractionMessages(question, moduleIds) {
   const userMsg = { role: 'user', content: String(question || ''), timestamp: Date.now() };
   const parts = [];
+  const nodeIdByModuleKey = {};
   for (const id of moduleIds || []) {
     const node = _findGraphNode(id);
     if (!node || !(node.content || '').trim()) continue;
     const meta = GRAPH_MODULE_META[node.moduleKey] || {};
     const label = meta.label || node.moduleKey || '内容';
     parts.push('### ' + label + '\n\n' + node.content);
+    if (node.moduleKey && !nodeIdByModuleKey[node.moduleKey]) {
+      nodeIdByModuleKey[node.moduleKey] = node.id;
+    }
   }
-  if (!parts.length) return [];
-  return [userMsg, { role: 'assistant', content: parts.join('\n\n'), timestamp: Date.now() + 1 }];
+  if (!parts.length) return { messages: [], nodeIdByModuleKey };
+  return {
+    messages: [userMsg, { role: 'assistant', content: parts.join('\n\n'), timestamp: Date.now() + 1 }],
+    nodeIdByModuleKey,
+  };
 }
 
 async function _extractKnowledgeFromWorkflow(question, moduleIds) {
-  const messages = _workflowNodesToExtractionMessages(question, moduleIds);
+  const { messages, nodeIdByModuleKey } = _workflowNodesToExtractionMessages(question, moduleIds);
   if (!messages || messages.length < 2) return;
   try {
     if (typeof autoExtractKnowledge === 'function') {
-      await autoExtractKnowledge(typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID, messages);
+      await autoExtractKnowledge(typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID, messages, { nodeIdByModuleKey });
     }
   } catch (err) {
     console.warn('Workflow knowledge extraction failed:', err);

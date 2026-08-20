@@ -1,4 +1,6 @@
 const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
+const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
+const OPENCODE_GO_MODELS = ['hy3', 'hy3-preview'];
 const OPENCODE_DEFAULT_KEY = '';
 const OPENCODE_FREE_MODEL_LABELS = {
   'big-pickle': 'Big Pickle',
@@ -26,6 +28,7 @@ const MODEL_PRESETS = {
   openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini'], apiKeyHint: 'sk-' },
   llama: { name: 'llama.ccp (本地)', baseUrl: 'http://localhost:8080/v1', models: [], apiKeyHint: '可选，留空' },
   opencode: { name: 'OpenCode', baseUrl: OPENCODE_BASE_URL, models: OPENCODE_FREE_MODELS, apiKeyHint: '可填任意内容' },
+  'opencode-go': { name: 'OpenCode Go', baseUrl: OPENCODE_GO_BASE_URL, models: OPENCODE_GO_MODELS, apiKeyHint: '需要密钥' },
 };
 
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
@@ -39,6 +42,26 @@ function loadUserModels() {
     userModelConfigs = raw ? JSON.parse(raw) : [];
   } catch { userModelConfigs = []; }
   _ensureOpencodeFreeModels();
+  _ensureOpencodeGoModels();
+}
+
+function _ensureOpencodeGoModels() {
+  let changed = false;
+  let firstId = '';
+  for (const modelId of OPENCODE_GO_MODELS) {
+    const label = modelId;
+    let cfg = userModelConfigs.find(c =>
+      c.provider === 'opencode-go' && c.model === modelId
+    );
+    if (!cfg) {
+      cfg = { provider: 'opencode-go', apiKey: '', model: modelId, label, baseUrl: OPENCODE_GO_BASE_URL };
+      addUserModel(cfg);
+      changed = true;
+    }
+    if (!firstId && cfg.id) firstId = cfg.id;
+  }
+  if (changed) saveUserModels();
+  return firstId;
 }
 
 function _ensureOpencodeFreeModels() {
@@ -137,13 +160,15 @@ async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
   const fallbackOpencode = userModelConfigs.find(m => m.provider === 'opencode') || null;
+  const fallbackOpencodeGo = userModelConfigs.find(m => m.provider === 'opencode-go' && m.model === 'hy3')
+    || userModelConfigs.find(m => m.provider === 'opencode-go') || null;
   for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
     const model = getModelById(activeModels[key]);
     if (model && model.provider === 'opencode' && !OPENCODE_FREE_MODELS.includes(model.model)) {
       activeModels[key] = fallbackOpencode ? fallbackOpencode.id : '';
     }
   }
-  if (!activeModels.agent_model && fallbackOpencode) activeModels.agent_model = fallbackOpencode.id;
+  if (!activeModels.agent_model) activeModels.agent_model = (fallbackOpencodeGo || fallbackOpencode)?.id || '';
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
   renderModelSelects();
 }

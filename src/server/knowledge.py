@@ -179,7 +179,8 @@ def _clean_knowledge_title(title: str) -> str:
     title = str(title or "").strip()
     title = re.sub(r"^#+\s*", "", title).splitlines()[0].strip() if title else ""
     title = re.sub(r"^.*?PhyMathia\s*学习卡片\s*[:：]\s*", "", title).strip()
-    title = re.sub(r"的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$", "", title).strip()
+    for _ in range(2):
+        title = re.sub(r"的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向|相关公式)$", "", title).strip()
     title = re.sub(r"的?(本质|原理|物理意义|数学意义|数学本质|含义|解释|相关公式)$", "", title).strip()
     title = re.sub(r"^[🔬📐🧠💡🗺️]+\s*", "", title).strip()
     return title
@@ -245,7 +246,8 @@ def _pick_knowledge_title(titles: list, content: str) -> str:
     """优先取学习卡片标题，其次取第一个非模块标题。"""
     module_keywords = (
         "物理直觉", "数学本质", "物理视角", "数学视角",
-        "知识图谱", "延伸思考", "进阶学习方向", "学习方向",
+        "知识图谱", "延伸思考", "进阶学习", "学习方向",
+        "苏格拉底追问",
     )
     card_title = next((t for t in titles if "PhyMathia" in t and "学习卡片" in t), None)
     if card_title:
@@ -424,6 +426,8 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], []
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
 
@@ -565,11 +569,13 @@ def _extract_summary(messages: list) -> str:
 
 async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
     """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
     if not formulas or not model:
         return {}
-    if not api_key and provider != "opencode":
+    if not api_key and provider not in ("opencode", "opencode-go"):
         return {}
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")

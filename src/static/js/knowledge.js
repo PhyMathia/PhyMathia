@@ -427,24 +427,63 @@ async function goToKnowledgeNode(itemId) {
   await _ensureSessionMessages(sessionId);
   const messages = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const anchor = _resolveKnowledgeAnchor(item, messages);
-  if (!anchor.messageId) {
-    if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
-      const ok = await window.focusGraphNodeById(anchor.nodeId);
-      if (ok) return true;
+  if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
+    const ok = await window.focusGraphNodeById(anchor.nodeId);
+    if (ok) return true;
+  }
+  if (anchor.messageId && typeof window.focusGraphNode === 'function') {
+    const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
+    if (ok) return true;
+  }
+  const matched = await _focusKnowledgeNodeByContent(item, anchor.moduleKey);
+  if (matched) return true;
+  _showJumpError('对应节点不存在，无法定位');
+  return false;
+}
+
+function _summaryFragmentsForMatch(text) {
+  const clean = String(text || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[#*`_>\[\]()\\$|~^+\-]/g, '')
+    .replace(/\s+/g, '');
+  const frags = [];
+  for (let i = 0; i < clean.length; i++) {
+    const frag = clean.slice(i, i + 6);
+    if (frag.length >= 4) frags.push(frag);
+  }
+  return frags;
+}
+
+async function _focusKnowledgeNodeByContent(item, moduleKey) {
+  if (typeof window.getGraphViewNodes !== 'function') return false;
+  const formulas = (item.formulas && item.formulas.length) ? item.formulas
+    : (item.latex ? [item.latex] : []);
+  const frags = _summaryFragmentsForMatch(item.summary || item.concept || item.title || '');
+  const nodes = window.getGraphViewNodes().filter(n =>
+    n && n.messageIndex === -1 && (!moduleKey || !n.moduleKey || n.moduleKey === moduleKey)
+  );
+  for (const node of nodes) {
+    const text = String(node.content || node.label || '');
+    if (formulas.length && formulas.some(f => _contentContainsFormula(text, f))) {
+      if (await _tryFocusGraphNodeById(node.id)) return true;
     }
-    _showJumpError('对应节点不存在，无法定位');
+  }
+  for (const node of nodes) {
+    const text = String(node.content || node.label || '');
+    if (frags.length && frags.some(f => text.includes(f))) {
+      if (await _tryFocusGraphNodeById(node.id)) return true;
+    }
+  }
+  return false;
+}
+
+async function _tryFocusGraphNodeById(nodeId) {
+  if (!nodeId || typeof window.focusGraphNodeById !== 'function') return false;
+  try {
+    return !!await window.focusGraphNodeById(nodeId);
+  } catch (e) {
     return false;
   }
-  if (typeof window.focusGraphNode !== 'function') {
-    _showJumpError('探索网节点定位功能暂不可用');
-    return false;
-  }
-  const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
-  if (!ok) {
-    _showJumpError('对应节点不存在，无法定位');
-    return false;
-  }
-  return true;
 }
 
 function goToOriginalMessage(sessionId, messageId, moduleKey) {
@@ -835,24 +874,18 @@ async function locateFormulaNode(formulaId) {
     _showJumpError('找不到公式对应的节点');
     return false;
   }
-  if (!anchor.messageId) {
-    if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
-      const ok = await window.focusGraphNodeById(anchor.nodeId);
-      if (ok) return true;
-    }
-    _showJumpError('找不到公式对应的节点');
-    return false;
+  if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
+    const ok = await window.focusGraphNodeById(anchor.nodeId);
+    if (ok) return true;
   }
-  if (typeof window.focusGraphNode !== 'function') {
-    _showJumpError('探索网节点定位功能暂不可用');
-    return false;
+  if (anchor.messageId && typeof window.focusGraphNode === 'function') {
+    const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
+    if (ok) return true;
   }
-  const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
-  if (!ok) {
-    _showJumpError('对应节点不存在，无法定位');
-    return false;
-  }
-  return true;
+  const matched = await _focusKnowledgeNodeByContent(item, anchor.moduleKey);
+  if (matched) return true;
+  _showJumpError('找不到公式对应的节点');
+  return false;
 }
 
 // 旧接口兼容：只切换会话并关闭知识面板
