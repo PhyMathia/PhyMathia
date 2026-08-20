@@ -1464,263 +1464,220 @@ function _runLayout(needsFit) {
   if (needsFit) fitGraph();
 }
 
-function _layoutChildMap(nodes, edges) {
-  const byId = {};
-  const children = {};
-  const childPorts = {};
-  nodes.forEach(node => {
-    byId[node.id] = node;
-    children[node.id] = [];
-  });
-  edges.forEach(edge => {
-    const from = byId[edge.from];
-    const to = byId[edge.to];
-    if (!from || !to || from.kind === 'draft' || to.kind === 'draft') return;
-    if (!children[edge.from].includes(edge.to)) children[edge.from].push(edge.to);
-    childPorts[edge.from] = childPorts[edge.from] || {};
-    childPorts[edge.from][edge.to] = edge.fromPort || 'out-0';
-  });
-  return { byId, children, childPorts };
+function _layoutLevelOf(node) {
+  const d = node && node.depth;
+  if (d != null && Number.isFinite(d) && d >= 0) return d;
+  return null;
 }
 
-function _layoutBfsDepths(roots, children, byId) {
-  const depths = {};
-  const queue = [];
-  roots.forEach(root => {
-    depths[root.id] = 0;
-    queue.push(root.id);
-  });
-  while (queue.length) {
-    const id = queue.shift();
-    const nextDepth = (depths[id] || 0) + 1;
-    for (const childId of (children[id] || [])) {
-      if (!byId[childId]) continue;
-      if (depths[childId] == null || nextDepth < depths[childId]) {
-        depths[childId] = nextDepth;
-        queue.push(childId);
-      }
+function _layoutNodeSize(node) {
+  return {
+    w: node.w || node.customWidth || 120,
+    h: node.h || node.customHeight || 60,
+  };
+}
+
+// 自由节点：按语义层级（node.depth）分列，同一级保持基本相同的横坐标。
+// 列间距固定为默认档，不随大节点放大——修复“巨可视化节点让整图空隙变大”。
+function _arrangeFreeByLevel(freeNodes, colGap, rowStep) {
+  if (!freeNodes.length) return;
+  const levels = {};
+  let maxLevel = 0;
+  freeNodes.forEach(node => {
+    const level = _layoutLevelOf(node);
+    if (level == null) {
+      if (!levels.__misc) levels.__misc = [];
+      levels.__misc.push(node);
+    } else {
+      (levels[level] = levels[level] || []).push(node);
+      if (level > maxLevel) maxLevel = level;
     }
-  }
-  return depths;
-}
+  });
+  const miscLevel = maxLevel + 1;
+  (levels.__misc || []).forEach(node => {
+    (levels[miscLevel] = levels[miscLevel] || []).push(node);
+  });
+  delete levels.__misc;
 
-function _layoutSubtreeWeight(nodeId, children, weights, visited) {
-  if (visited.has(nodeId)) return 0;
-  visited.add(nodeId);
-  let weight = 1;
-  for (const childId of (children[nodeId] || [])) {
-    weight += _layoutSubtreeWeight(childId, children, weights, visited);
-  }
-  weights[nodeId] = weight;
-  return weight;
-}
-
-function _placeTreeSubtree(
-  nodeId,
-  x,
-  top,
-  bottom,
-  colGap,
-  children,
-  weights,
-  byId,
-  placed,
-  childPorts
-) {
-  const node = byId[nodeId];
-  if (!node || placed.has(nodeId) || node.kind === 'draft') return;
-  placed.add(nodeId);
-  node.x = x;
-  node.y = (top + bottom) / 2;
-
-  const kids = (children[nodeId] || [])
-    .filter(childId => byId[childId] && !placed.has(childId))
-    .sort((a, b) => {
-      const portA = String(childPorts?.[nodeId]?.[a] || 'out-0');
-      const portB = String(childPorts?.[nodeId]?.[b] || 'out-0');
-      const portDiff = portA.localeCompare(portB, undefined, { numeric: true });
-      return portDiff || ((byId[a].timestamp || 0) - (byId[b].timestamp || 0));
+  Object.keys(levels)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .forEach(level => {
+      const list = levels[level].slice().sort((a, b) => {
+        const ab = a.isBranch ? 1 : 0;
+        const bb = b.isBranch ? 1 : 0;
+        if (ab !== bb) return ab - bb;
+        return (a.timestamp || 0) - (b.timestamp || 0);
+      });
+      const x = level * colGap;
+      const y0 = -((list.length - 1) / 2) * rowStep;
+      list.forEach((node, i) => {
+        node.x = x;
+        node.y = y0 + i * rowStep;
+      });
     });
-  const totalWeight = kids.length || 1;
-  const verticalSpan = bottom - top;
-  let cursor = top;
-  for (const childId of kids) {
-    const childWeight = 1;
-    const childTop = cursor;
-    const childBottom = cursor + verticalSpan * (childWeight / totalWeight);
-    _placeTreeSubtree(
-      childId,
-      x + colGap,
-      childTop,
-      childBottom,
-      colGap,
-      children,
-      weights,
-      byId,
-      placed,
-      childPorts
-    );
-    cursor = childBottom;
-  }
 }
 
-function _resolveLayoutCollisions(nodes, preservePinned) {
-  const active = nodes.filter(node => node.kind !== 'draft' && !node.isRoot && !(preservePinned && node.pinned));
-  const gap = 20;
-  for (let pass = 0; pass < 40; pass++) {
+// 分组：成员按紧凑网格排布，整组作为一个原子矩形，锚定在其代表层级列（取成员最小深度）。
+function _arrangeGroupGrid(group, groupOf, colGap) {
+  const members = (group.nodeIds || [])
+    .map(id => graphView.nodeById[id])
+    .filter(node => node && node.kind !== 'draft');
+  if (!members.length) return null;
+
+  let minLevel = Infinity;
+  members.forEach(n => {
+    const lv = _layoutLevelOf(n);
+    if (lv != null && lv < minLevel) minLevel = lv;
+  });
+  if (!Number.isFinite(minLevel)) minLevel = 0;
+  const col = minLevel;
+
+  let cellW = 0;
+  let cellH = 0;
+  members.forEach(n => {
+    const s = _layoutNodeSize(n);
+    if (s.w > cellW) cellW = s.w;
+    if (s.h > cellH) cellH = s.h;
+  });
+  cellW = Math.max(140, cellW);
+  cellH = Math.max(80, cellH);
+
+  const gapX = 36;
+  const gapY = 48;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(members.length)));
+  const rows = Math.ceil(members.length / cols);
+  const gridW = cols * cellW + (cols - 1) * gapX;
+  const gridH = rows * cellH + (rows - 1) * gapY;
+  const centerX = col * colGap;
+  const centerY = 0;
+  const startX = centerX - gridW / 2;
+  const startY = centerY - gridH / 2;
+
+  members.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  members.forEach((node, index) => {
+    const c = index % cols;
+    const r = Math.floor(index / cols);
+    node.x = startX + c * (cellW + gapX) + cellW / 2;
+    node.y = startY + r * (cellH + gapY) + cellH / 2;
+  });
+
+  const bounds = _graphGroupBounds(members.map(m => m.id));
+  group.x = bounds.x;
+  group.y = bounds.y;
+  group.width = bounds.width;
+  group.height = bounds.height;
+  return {
+    cx: bounds.x + bounds.width / 2,
+    cy: bounds.y + bounds.height / 2,
+    w: bounds.width,
+    h: bounds.height,
+    group,
+    members,
+  };
+}
+
+// 把自由节点与各分组块合成统一矩形碰撞集（大节点作为普通矩形参与局部让位）。
+function _collectLayoutBlocks(freeNodes, groupBlocks) {
+  const blocks = [];
+  freeNodes.forEach(node => {
+    const s = _layoutNodeSize(node);
+    blocks.push({
+      cx: node.x, cy: node.y, w: s.w, h: s.h,
+      move: (dx, dy) => { node.x += dx; node.y += dy; },
+    });
+  });
+  groupBlocks.forEach(gb => {
+    blocks.push({
+      cx: gb.cx, cy: gb.cy, w: gb.w, h: gb.h,
+      move: (dx, dy) => {
+        gb.group.x += dx;
+        gb.group.y += dy;
+        gb.members.forEach(m => { m.x += dx; m.y += dy; });
+      },
+    });
+  });
+  return blocks;
+}
+
+// 矩形重叠消除：自由节点与分组块一律可推（整理=全面重置，不保留固定），
+// 分组之间、大节点与相邻列都不互相压叠；按“局部让位”推开，不放大全局间距。
+function _resolveLayoutRectOverlaps(blocks, maxPasses) {
+  const gap = 24;
+  let pass = 0;
+  while (pass < (maxPasses || 80)) {
     let moved = false;
-    for (let i = 0; i < active.length; i++) {
-      for (let j = i + 1; j < active.length; j++) {
-        const a = active[i];
-        const b = active[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const minX = ((a.w || 120) + (b.w || 120)) / 2 + gap;
-        const minY = ((a.h || 60) + (b.h || 60)) / 2 + gap;
-        const overlapX = minX - Math.abs(dx);
-        const overlapY = minY - Math.abs(dy);
-        if (overlapX <= 0 || overlapY <= 0) continue;
-        const signX = dx >= 0 ? 1 : -1;
-        const signY = dy >= 0 ? 1 : -1;
-        if (overlapX < overlapY) {
-          const push = overlapX * 0.8;
-          if (!a.pinned) { a.x -= signX * push; moved = true; }
-          if (!b.pinned) { b.x += signX * push; moved = true; }
-        } else {
-          const push = overlapY * 0.8;
-          if (!a.pinned) { a.y -= signY * push; moved = true; }
-          if (!b.pinned) { b.y += signY * push; moved = true; }
-        }
+    for (let i = 0; i < blocks.length; i++) {
+      for (let j = i + 1; j < blocks.length; j++) {
+        const a = blocks[i];
+        const b = blocks[j];
+        const dx = b.cx - a.cx;
+        const dy = b.cy - a.cy;
+        const minX = (a.w + b.w) / 2 + gap;
+        const minY = (a.h + b.h) / 2 + gap;
+        const ox = minX - Math.abs(dx);
+        const oy = minY - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+        const sx = dx >= 0 ? 1 : -1;
+        const sy = dy >= 0 ? 1 : -1;
+        let pushX = 0;
+        let pushY = 0;
+        if (ox < oy) pushX = ox * 0.5;
+        else pushY = oy * 0.5;
+        a.cx -= sx * pushX; a.cy -= sy * pushY;
+        b.cx += sx * pushX; b.cy += sy * pushY;
+        if (a.move) a.move(-sx * pushX, -sy * pushY);
+        if (b.move) b.move(sx * pushX, sy * pushY);
+        moved = true;
       }
     }
     if (!moved) break;
+    pass++;
   }
 }
 
-function _arrangeGroupMembers() {
-  for (const group of (graphView.groups || [])) {
-    const members = (group.nodeIds || [])
-      .map(id => graphView.nodeById[id])
-      .filter(node => node && node.kind !== 'draft');
-    if (!members.length) continue;
-    const centerX = members.reduce((sum, node) => sum + node.x, 0) / members.length;
-    const centerY = members.reduce((sum, node) => sum + node.y, 0) / members.length;
-    const maxW = Math.max(140, ...members.map(node => node.w || 120));
-    const maxH = Math.max(80, ...members.map(node => node.h || 60));
-    const cols = Math.max(1, Math.ceil(Math.sqrt(members.length)));
-    const rows = Math.ceil(members.length / cols);
-    const gapX = 36;
-    const gapY = 48;
-    const gridW = cols * maxW + (cols - 1) * gapX;
-    const gridH = rows * maxH + (rows - 1) * gapY;
-    const startX = centerX - gridW / 2;
-    const startY = centerY - gridH / 2;
-    members.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-    members.forEach((node, index) => {
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      node.x = startX + col * (maxW + gapX) + maxW / 2;
-      node.y = startY + row * (maxH + gapY) + maxH / 2;
-      node.pinned = true;
-      node.fixedX = node.x;
-      node.fixedY = node.y;
-    });
-    _fitGroupToMembers(group);
-  }
-}
-
-function _layoutByLevel(nodes, edges, depths, colGap, rowHeight) {
-  const parentByNode = {};
-  const portByNode = {};
-  edges.forEach(edge => {
-    if (!parentByNode[edge.to]) {
-      parentByNode[edge.to] = edge.from;
-      portByNode[edge.to] = edge.fromPort || 'out-0';
-    }
-  });
-  const levels = {};
-  nodes.forEach(node => {
-    if (node.kind === 'draft') return;
-    const depth = depths[node.id] != null ? depths[node.id] : -1;
-    (levels[depth] = levels[depth] || []).push(node);
-  });
-  const levelKeys = Object.keys(levels)
-    .filter(key => Number(key) >= 0)
-    .sort((a, b) => Number(a) - Number(b));
-  const maxDepth = levelKeys.length ? Number(levelKeys[levelKeys.length - 1]) : 0;
-  for (const key of levelKeys) {
-    const level = levels[key].slice().sort((a, b) => {
-      const parentA = parentByNode[a.id] || '';
-      const parentB = parentByNode[b.id] || '';
-      if (parentA !== parentB) return parentA < parentB ? -1 : 1;
-      const portA = String(portByNode[a.id] || 'out-0');
-      const portB = String(portByNode[b.id] || 'out-0');
-      const portDiff = portA.localeCompare(portB, undefined, { numeric: true });
-      return portDiff || ((a.timestamp || 0) - (b.timestamp || 0));
-    });
-    level.forEach((node, index) => {
-      node.x = Number(key) * colGap;
-      node.y = (index - (level.length - 1) / 2) * rowHeight;
-    });
-  }
-  const disconnected = levels[-1] || [];
-  if (disconnected.length) {
-    const rows = Math.max(1, Math.ceil(Math.sqrt(disconnected.length)));
-    const startX = (maxDepth + 1) * colGap;
-    disconnected
-      .slice()
-      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-      .forEach((node, index) => {
-        node.x = startX + Math.floor(index / rows) * colGap;
-        node.y = ((index % rows) - (rows - 1) / 2) * rowHeight;
-      });
-  }
-}
-
-function autoArrangeGraph(preservePinned = false) {
+function autoArrangeGraph(preservePinned) {
   if (!graphView.nodes.length) return;
   _pushGraphUndo(false, { layout: true });
   _measureNodes();
+  // 整理 = 全面重置：不保留手动固定/尺寸（保持原有语义）
   graphView.nodes.forEach(node => {
     node.pinned = false;
     node.fixedX = null;
     node.fixedY = null;
   });
 
-  const { byId, children, childPorts } = _layoutChildMap(graphView.nodes, graphView.edges);
-  const roots = graphView.nodes.filter(node => node.isRoot && node.kind !== 'draft');
-  if (!roots.length) {
-    const firstUser = graphView.nodes.find(node => node.kind === 'user');
-    if (firstUser) roots.push(firstUser);
-  }
-  if (!roots.length && graphView.nodes.length) roots.push(graphView.nodes[0]);
-  const depths = _layoutBfsDepths(roots, children, byId);
+  const COL_GAP = 420;   // 默认列间距档，不随大节点放大（修复“空隙很大”）
+  const ROW_STEP = 300;  // 默认行距档
 
-  const maxNodeW = Math.max(
-    160,
-    ...graphView.nodes
-      .filter(node => node.kind !== 'draft')
-      .map(node => node.w || 120)
-  );
-  const maxNodeH = Math.max(
-    120,
-    ...graphView.nodes
-      .filter(node => node.kind !== 'draft')
-      .map(node => node.h || 60)
-  );
-  const colGap = Math.max(420, maxNodeW + 140);
-  const rowHeight = Math.max(300, maxNodeH * 0.55 + 60);
-  _layoutByLevel(graphView.nodes, graphView.edges, depths, colGap, rowHeight);
+  const groupOf = {};
+  (graphView.groups || []).forEach(g => (g.nodeIds || []).forEach(id => { groupOf[id] = g; }));
+  const usable = graphView.nodes.filter(node => node.kind !== 'draft');
+  const usableIds = new Set(usable.map(n => n.id));
+  const freeNodes = usable.filter(n => !groupOf[n.id]);
+  const groups = (graphView.groups || [])
+    .filter(g => (g.nodeIds || []).some(id => usableIds.has(id)));
 
-  _resolveLayoutCollisions(graphView.nodes, false);
-  _arrangeGroupMembers();
-  _resolveLayoutCollisions(graphView.nodes, false);
+  // 1) 自由节点：按语义层级分列（同一级相同横坐标）
+  _arrangeFreeByLevel(freeNodes, COL_GAP, ROW_STEP);
+
+  // 2) 分组：成员网格化，整组作为原子矩形锚定到其代表层级列
+  const groupBlocks = groups
+    .map(g => _arrangeGroupGrid(g, groupOf, COL_GAP))
+    .filter(Boolean);
+
+  // 3) 统一矩形碰撞：自由节点 + 分组块整体避开重叠（含大节点局部让位）
+  const blocks = _collectLayoutBlocks(freeNodes, groupBlocks);
+  _resolveLayoutRectOverlaps(blocks, 80);
+
+  // 4) 收尾：解固定、按最终成员重算组边界、落位
   graphView.nodes.forEach(node => {
     node.pinned = false;
     node.fixedX = null;
     node.fixedY = null;
   });
   _fitAllGroupsToMembers();
+
   const state = _graphState();
   state.layoutVersion = LAYOUT_VERSION;
   state.positions = {};
