@@ -72,12 +72,20 @@
         + '</label>').join('');
     }
     resultBox.innerHTML = html;
-    const statusLabel = harnessPhase === 'evaluate'
-      ? '评价节点生成候选'
-      : harnessPhase === 'apply'
-        ? '建议应用候选'
-        : '审阅完成';
-    _setHarnessStatus(statusLabel + '：' + (ops.length ? ops.length + ' 条操作' : '无修改'), 'ok');
+    // 渲染结果摘要中的公式（<formula>/$$..$$ → KaTeX）
+    if (typeof renderMath === 'function') {
+      try { renderMath(resultBox); } catch (e) {}
+    }
+    if (!ops.length) {
+      _setHarnessStatus('已回复（未改图）', 'ok');
+    } else {
+      const statusLabel = harnessPhase === 'evaluate'
+        ? '评价节点生成候选'
+        : harnessPhase === 'apply'
+          ? '建议应用候选'
+          : '审阅完成';
+      _setHarnessStatus(statusLabel + '：' + ops.length + ' 条操作', 'ok');
+    }
     document.getElementById('graphHarnessApplyActions')?.toggleAttribute('hidden', !ops.length);
   }
 

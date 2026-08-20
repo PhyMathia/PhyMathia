@@ -761,6 +761,10 @@ function _ensureKaTeX(callback) {
     if (typeof graphInner !== 'undefined' && graphInner) { try { _runKaTeX(graphInner); } catch (e) {} }
     const chatEl = document.getElementById('chatMessages');
     if (chatEl) { try { _runKaTeX(chatEl); } catch (e) {} }
+    ['graphHarnessChat', 'graphHarnessResult'].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) { try { _runKaTeX(el); } catch (e) {} }
+    });
   };
   auto.onerror = function () { _katexFallbackState = 3; };
   document.head.appendChild(js);

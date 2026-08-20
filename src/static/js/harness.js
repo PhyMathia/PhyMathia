@@ -355,19 +355,28 @@ let harnessLastAppliedBeforeSnapshot = null;
     harnessPanel.className = 'graph-harness-window';
     harnessPanel.hidden = true;
     harnessPanel.innerHTML = ''
-      + '<div class="graph-harness-head" id="graphHarnessWindowHead"><span>Φ 网络助手</span>'
-      + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">&times;</button></div>'
+      + '<div class="graph-harness-head" id="graphHarnessWindowHead">'
+      + '<span class="graph-harness-title">网络助手</span>'
+      + '<span class="graph-harness-head-actions">'
+      + '<button type="button" onclick="toggleHarnessGuide()" title="使用引导">?</button>'
+      + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">&times;</button>'
+      + '</span>'
+      + '</div>'
       + '<div class="graph-harness-chat" id="graphHarnessChat"></div>'
+      + '<div class="graph-harness-result" id="graphHarnessResult"></div>'
+      + '<div class="graph-harness-apply-actions" id="graphHarnessApplyActions" hidden>'
+      + '<button type="button" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
+      + '<button type="button" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
+      + '<button type="button" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
+      + '</div>'
       + '<div class="graph-harness-composer">'
-      + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对 harness 说话..."></textarea>'
+      + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
       + '<div class="graph-harness-actions">'
-      + '<button type="button" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
+      + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'
       + '</div>'
       + '<div id="graphHarnessStatus" class="graph-harness-status"></div>'
-      + '</div>'
-      + '</div>'
       + '</div>';
     document.body.appendChild(harnessPet);
     const phiEl = harnessPet.querySelector('[data-phi-pet]');
@@ -509,9 +518,15 @@ let harnessLastAppliedBeforeSnapshot = null;
   function _renderHarnessChat() {
     const chat = document.getElementById('graphHarnessChat');
     if (!chat) return;
+    chat._guideOpen = false;
     chat.innerHTML = harnessHistory.length
       ? harnessHistory.map(entry => _historyMessageHtml(entry)).join('')
       : '<div class="graph-harness-empty">还没有助手操作记录</div>';
+    // 消息正文里的 <formula>/$$..$$ 由 renderMarkdown 转成 KaTeX 定界符，
+    // 这里再跑一遍 renderMath 真正渲染公式（与主聊天一致）。
+    if (typeof renderMath === 'function') {
+      try { renderMath(chat); } catch (e) {}
+    }
     chat.scrollTop = chat.scrollHeight;
   }
 
@@ -540,12 +555,23 @@ let harnessLastAppliedBeforeSnapshot = null;
     const meta = entry.role === 'assistant'
       ? '<div class="graph-harness-meta">' + (entry.phase || '') + '</div>'
       : '';
-    return '<div class="graph-harness-message graph-harness-message-' + (entry.role || 'system') + '">'
-      + '<div class="graph-harness-message-content">' + (entry.role === 'assistant' && typeof renderMarkdown === 'function'
+    const role = entry.role || 'system';
+    const avatar = role === 'assistant'
+      ? '<span class="graph-harness-avatar" aria-hidden="true">Φ</span>'
+      : (role === 'user' ? '<span class="graph-harness-avatar graph-harness-avatar-user" aria-hidden="true">我</span>' : '');
+    const timeHtml = entry.timestamp
+      ? '<span class="graph-harness-time">' + (typeof formatRelativeTime === 'function' ? formatRelativeTime(entry.timestamp) : '') + '</span>'
+      : '';
+    return '<div class="graph-harness-message graph-harness-message-' + role + '">'
+      + avatar
+      + '<div class="graph-harness-message-main">'
+      + '<div class="graph-harness-message-content">' + (role === 'assistant' && typeof renderMarkdown === 'function'
         ? renderMarkdown(entry.content || '')
         : _escapeHtml(entry.content || '')) + '</div>'
+      + timeHtml
       + meta
       + (actions ? '<div class="graph-harness-message-actions">' + actions + '</div>' : '')
+      + '</div>'
       + '</div>';
   }
 
@@ -616,18 +642,16 @@ let harnessLastAppliedBeforeSnapshot = null;
       body: JSON.stringify({
         snapshot,
         instruction,
-        model: {
-          provider: model.provider,
-          api_key: model.apiKey,
-          model: model.model,
-          base_url: model.baseUrl,
-        },
+        model: _harnessModelForRequest(model),
         level: localStorage.getItem('phymathia_level') || 'university',
         retries: 2,
       }),
     });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.errors?.[0]?.reason || '目标解析失败');
+    if (!resp.ok) throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || '目标解析失败');
+    if (data.status === 'error' || (data.errors && data.errors.length)) {
+      throw new Error(_harnessErrorToHuman((data.errors || []).map(item => (item && (item.reason || item.message)) || '').filter(Boolean).join('；') || '目标解析失败'));
+    }
     return data;
   }
 
@@ -708,6 +732,52 @@ let harnessLastAppliedBeforeSnapshot = null;
     else closeGraphHarness();
   }
 
+  const HARNESS_GUIDE_TEXT = [
+    '# Φ 网络助手 · 使用引导',
+    '',
+    '我既是**改图助手**，也是**小问答助手**：既能增删、整理你的知识网络，也能直接回答物理 / 数学问题。',
+    '',
+    '## 改图示例',
+    '- 「帮我新增一个关于『导数』的知识点」',
+    '- 「给『导数』补一个物理视角，连上去」',
+    '- 「在『导数』后面加一条进阶学习链：AI回答 → 进阶学习」',
+    '- 「评价一下『我的理解』这个节点，哪里不对」',
+    '- 「把 A 和 B 连起来，说明它们的顺序」',
+    '- 「撤销刚才的修改」',
+    '',
+    '## 问答示例（空画布也能问）',
+    '- 「什么是牛顿第二定律？」',
+    '- 「解释一下傅里叶变换的物理意义和数学本质」',
+    '- 「导数和积分是什么关系？」',
+    '- 「$$E=mc^2$$ 是什么？」',
+    '',
+    '## 使用技巧',
+    '- 想改局部：先在画布**选中相关节点**再让我改，范围更准、更快。',
+    '- 图太大时我只处理你选中的节点邻域，避免超长。',
+    '- 修改不是立刻落图：结果里可「预览 / 应用所选 / 应用全部 / 撤销本次」。',
+    '- 公式会自动用 KaTeX 渲染，markdown 也完整支持。',
+    '',
+  ].join('\n');
+
+  function toggleHarnessGuide() {
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat) return;
+    if (chat._guideOpen) {
+      chat._guideOpen = false;
+      _renderHarnessChat();
+      return;
+    }
+    chat._guideOpen = true;
+    chat.innerHTML = '<div class="graph-harness-guide">'
+      + (typeof renderMarkdown === 'function' ? renderMarkdown(HARNESS_GUIDE_TEXT) : _escapeHtml(HARNESS_GUIDE_TEXT))
+      + '<div class="graph-harness-guide-back"><button type="button" onclick="toggleHarnessGuide()">← 返回聊天</button></div>'
+      + '</div>';
+    if (typeof renderMath === 'function') {
+      try { renderMath(chat); } catch (e) {}
+    }
+    chat.scrollTop = 0;
+  }
+
   function closeGraphHarness() {
     if (harnessPanel) harnessPanel.hidden = true;
     if (harnessPet) harnessPet.classList.remove('active');
@@ -723,4 +793,5 @@ let harnessLastAppliedBeforeSnapshot = null;
   window.toggleGraphPet = toggleGraphPet;
   window.stopGraphHarness = stopGraphHarness;
   window.syncGraphPetToggleButton = _syncGraphPetToggleButton;
+  window.toggleHarnessGuide = toggleHarnessGuide;
   window.getGraphPetVisible = () => !!(harnessPet && harnessPet.style.display !== 'none');

@@ -45,6 +45,16 @@
     return /(你好|您好|嗨|谢谢|感谢|哈哈|嘿嘿|在吗|随便聊聊|聊聊|辛苦|不错|再见|拜拜|晚安|早安|你是谁|你叫什么|你会什么|能干什么)/.test(t) && t.length <= 25;
   }
 
+  // 纯问答：用户只是在提问（物理/数学/讲解），没有改图意图。
+  // 这类请求不依赖画布节点，空画布也能直接回答，且不走图的焦点解析/快照压缩。
+  function _isHarnessPureQuestion(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const editIntent = /新增|创建|删除|删掉|去掉|连线|连接|加上|加一|补一|整理|梳理|扩展|评价|审阅|修改|改成|重写|更新|合并|拆分|视角|模块|建议|改进|完善|链接|撤销|回退/.test(t);
+    if (editIntent) return false;
+    return /什么是|是什么|为什么|怎么|如何|解释|讲讲|讲一下|介绍一下|说明|公式|区别|证明|推导|求解|请问|求导|积分|作业|题目|会不会|对吗|对不对|讲讲/.test(t);
+  }
+
   function _harnessCasualReply(text) {
     const t = String(text || '').trim();
     if (/谢谢|感谢/.test(t)) return '不客气～需要我帮你整理知识点、连线或拓展进阶链，随时说一声！';
@@ -55,6 +65,43 @@
     if (/早安/.test(t)) return '早上好！今天想先整理哪个知识点？';
     if (/哈哈|嘿嘿|666|厉害|不错/.test(t)) return '哈哈，过奖啦～需要我做点什么吗？';
     return '你好呀！我是 Φ，PhyMathia 的网络助手，随时可以帮你整理知识点、连线或拓展学习链，也可以随便聊聊～';
+  }
+
+  // hy3 系模型统一修正到 OpenCode Go 端点（zen/go），密钥交给服务端 OPENCODE_GO_API_KEY 兜底。
+  // 兼容旧的本地缓存误配（provider=opencode / base_url=zen/v1 会把 hy3 发到免费端点，
+  // 上游会报 "Model hy3 is not supported"），这里在发请求前强制纠正，保证 Φ 能用。
+  function _harnessModelForRequest(model) {
+    if (!model) return null;
+    const out = {
+      provider: model.provider,
+      api_key: model.apiKey,
+      model: model.model,
+      base_url: model.baseUrl,
+    };
+    if (/^(hy3|hy3-preview)$/i.test(String(out.model || '').trim())) {
+      out.provider = 'opencode-go';
+      out.base_url = 'https://opencode.ai/zen/go/v1';
+      out.api_key = '';
+    }
+    return out;
+  }
+
+  // 把上游/后端报错翻译成用户可读的提示
+  function _harnessErrorToHuman(text) {
+    const raw = String(text || '');
+    if (/FreeUsageLimit|Rate limit|429|限流/i.test(raw)) {
+      return '免费模型被限流（429）。请稍后再试，或在“模型设置”里切换到 hy3 模型';
+    }
+    if (/Model hy3 is not supported/i.test(raw)) {
+      return 'hy3 被发往了错误的端点（现已自动改用 OpenCode Go 端点），请重试；若仍失败，请在“模型设置”里选用 OpenCode Go · hy3';
+    }
+    if (/Invalid API key|AuthError|Unauthorized|401/i.test(raw)) {
+      return '模型密钥无效或缺失（401）。hy3 的密钥由服务端 .env 的 OPENCODE_GO_API_KEY 提供，请检查服务端配置';
+    }
+    if (/timeout|Timed out|timed out|timedout/i.test(raw)) {
+      return '请求超时：hy3 是推理模型、响应较慢，请重试或稍等片刻';
+    }
+    return raw;
   }
 
   function runGraphHarnessWithText(text) {
@@ -119,7 +166,8 @@
       return;
     }
     let focusIds = [];
-    if (!harnessSingleEvalId) {
+    const pureQuestion = _isHarnessPureQuestion(instruction);
+    if (!harnessSingleEvalId && !pureQuestion) {
       const candidateFocusIds = _detectFocusNodeIds(instruction, _graphNodes().filter(node => !deleted.has(node.id)));
       if (candidateFocusIds.length === 1) {
         focusIds = candidateFocusIds;
@@ -158,15 +206,18 @@
         ? Array.from(window.getSelectedGraphNodeIds())
         : [];
     }
-    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
+    // 纯问答不依赖画布：用空快照让模型直接回答（省 token、空画布也能问）。
+    const snapshot = pureQuestion
+      ? { version: 1, nodes: [], edges: [], available_node_types: [], scope_node_ids: [] }
+      : buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
       _setHarnessStatus('图太大（约 ' + Math.round(_snapshotMeta.est_tokens / 1000) + 'k tokens），请先选中局部节点或缩小范围后再让 AI 修改', 'error');
       return;
     }
-    if (!snapshot.nodes.length) {
-      _setHarnessStatus('当前没有可审阅节点', 'error');
+    if (!snapshot.nodes.length && !pureQuestion) {
+      _setHarnessStatus('当前画布上没有节点：可直接向我提问，或先在主聊天生成内容后再让我整理', 'error');
       return;
     }
     harnessResult = null;
@@ -189,12 +240,7 @@
         body: JSON.stringify({
           snapshot,
           instruction,
-          model: {
-            provider: model.provider,
-            api_key: model.apiKey,
-            model: model.model,
-            base_url: model.baseUrl,
-          },
+          model: _harnessModelForRequest(model),
           max_tokens: 6000,
           phase: harnessPhase,
           level: localStorage.getItem('phymathia_level') || 'university',
@@ -208,7 +254,12 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.errors?.[0]?.reason || 'harness 请求失败');
+        throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
+      }
+      // 后端把模型失败也返回 HTTP 200 + status:"error"（如 401/429），这里必须显式抛错，
+      // 否则会静默走“无操作”分支、状态永远卡在“审阅中...”。
+      if (data.status === 'error' || (data.errors && data.errors.length)) {
+        throw new Error((data.errors || []).map(item => (item && (item.reason || item.message)) || '未知错误').filter(Boolean).join('；') || '未知错误');
       }
       harnessResult = data;
       renderHarnessResult(data);
@@ -246,8 +297,9 @@
       if (err && err.name === 'AbortError') {
         _setHarnessStatus('已取消', 'ok');
       } else {
-        _setHarnessStatus('审阅失败：' + err.message, 'error');
-        _showHarnessRetry('审阅失败：' + err.message);
+        const human = _harnessErrorToHuman(err && err.message ? err.message : String(err));
+        _setHarnessStatus('审阅失败：' + human, 'error');
+        _showHarnessRetry('审阅失败：' + human);
         if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
         if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
       }
@@ -255,6 +307,11 @@
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
       harnessAbortController = null;
+      // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”
+      const _statusEl = document.getElementById('graphHarnessStatus');
+      if (_statusEl && _statusEl.classList && _statusEl.classList.contains('graph-harness-status-running')) {
+        _setHarnessStatus('已完成', 'ok');
+      }
     }
   }
 
@@ -352,12 +409,7 @@
         body: JSON.stringify({
           snapshot,
           instruction,
-          model: {
-            provider: model.provider,
-            api_key: model.apiKey,
-            model: model.model,
-            base_url: model.baseUrl,
-          },
+          model: _harnessModelForRequest(model),
           max_tokens: 6000,
           phase: harnessPhase,
           level: localStorage.getItem('phymathia_level') || 'university',
@@ -370,7 +422,10 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.errors?.[0]?.reason || 'harness 请求失败');
+        throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
+      }
+      if (data.status === 'error' || (data.errors && data.errors.length)) {
+        throw new Error((data.errors || []).map(item => (item && (item.reason || item.message)) || '未知错误').filter(Boolean).join('；') || '未知错误');
       }
       harnessResult = data;
       renderHarnessResult(data);
@@ -397,12 +452,18 @@
         }
       }
     } catch (err) {
-      _setHarnessStatus('审阅失败：' + err.message, 'error');
-      _showHarnessRetry('审阅失败：' + err.message);
+      const human = _harnessErrorToHuman(err && err.message ? err.message : String(err));
+      _setHarnessStatus('审阅失败：' + human, 'error');
+      _showHarnessRetry('审阅失败：' + human);
       if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
       if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     } finally {
       _setHarnessBusy(false);
+      // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”
+      const _statusEl = document.getElementById('graphHarnessStatus');
+      if (_statusEl && _statusEl.classList && _statusEl.classList.contains('graph-harness-status-running')) {
+        _setHarnessStatus('已完成', 'ok');
+      }
     }
   }
 

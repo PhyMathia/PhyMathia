@@ -230,7 +230,7 @@ function updateModelMeta(type) {
       descEl.textContent = select.value ? '' : '未配置时默认用主模型生成检测题、深度问答评分与单题解析';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     } else if (type === 'graph') {
-      descEl.textContent = select.value ? '' : '未配置时默认使用主模型（建议选擅长结构化输出的模型）';
+      descEl.textContent = select.value ? '' : '未配置时默认使用主模型；负责画布改图与小问答（建议选擅长结构化输出的模型）';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     } else if (type === 'branch') {
       descEl.textContent = select.value ? '' : '未配置时苏格拉底/进阶学习跟随主模型；配置后单独走该模型';
