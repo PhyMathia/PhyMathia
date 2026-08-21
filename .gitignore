@@ -97,3 +97,6 @@ example/
 scripts/battery-*.json
 out-*.json
 out_*.json
+
+# 参赛演示文稿已拆分为独立 git 仓库（见 html/PhyMathia-参赛介绍/.git）
+html/PhyMathia-参赛介绍/
