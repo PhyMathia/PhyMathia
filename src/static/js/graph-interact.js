@@ -578,7 +578,11 @@ function buildGraphPathForAnchor(anchor) {
   const sourceModule = anchor?.sourceModule || '';
   let current = null;
   const candidates = [];
-  if (sourceModule) candidates.push(_graphNodeId('m', parentId, sourceModule));
+  // 复用分支父模块解析（含 extend → socratic/learn 别名），再回退答案节点
+  const modId = (typeof _resolveBranchModuleId === 'function')
+    ? _resolveBranchModuleId(graphView.nodeById || {}, { parentId, sourceModule, branchType: anchor?.branchType || '' })
+    : null;
+  if (modId) candidates.push(modId);
   candidates.push(_graphNodeId('a', parentId));
   for (const id of candidates) {
     current = _findGraphNode(id);
@@ -627,7 +631,8 @@ function draftSocraticAnswer(nodeId) {
   if (!node) return;
   const meta = node.portMeta || {};
   if (typeof window.startSocraticAnswer === 'function') {
-    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend', node.x, node.y);
+    // 第 7 参传来源端口：回答完成后新节点连回被拖出的那个问题端口
+    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend', node.x, node.y, meta.fromPort || '');
   }
 }
 
@@ -876,6 +881,7 @@ function _disconnectInputPort(toNodeId, toPort) {
 function _removeGraphEdge(edgeKey) {
   const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
   if (!edge) return;
+  if (graphView.edgeCurveEditKey === edgeKey) graphView.edgeCurveEditKey = null;
   _pushGraphUndo();
   const state = _graphState();
   state.connections = state.connections || [];
@@ -892,7 +898,7 @@ function _removeGraphEdge(edgeKey) {
 
 function graphAddOutputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || !((node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge')) return;
+  if (!node || !(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
   _pushGraphUndo();
   const state = _graphState();
   state.portCounts = state.portCounts || {};
@@ -951,7 +957,7 @@ function _baseOutputPortCount(node) {
 
 function graphRemoveOutputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || !((node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge')) return;
+  if (!node || !(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
   const baseCount = _baseOutputPortCount(node);
   if (portIndex < baseCount) return;
   const state = _graphState();
@@ -1004,10 +1010,14 @@ function resetGraphConnections() {
   renderGraphCanvas();
 }
 
+// 画布缩放限度：0.10 ~ 4.00（旧值 0.25 ~ 2.50 偏窄，放大不够细、缩小看不全大图）
+const GRAPH_MIN_ZOOM = 0.1;
+const GRAPH_MAX_ZOOM = 4;
+
 function zoomGraph(factor, centerX, centerY) {
   const state = _graphState();
   const oldZoom = state.zoom || 0.9;
-  const newZoom = Math.min(2.5, Math.max(0.25, oldZoom * factor));
+  const newZoom = Math.min(GRAPH_MAX_ZOOM, Math.max(GRAPH_MIN_ZOOM, oldZoom * factor));
   if (!graphCanvas) return;
   const rect = graphCanvas.getBoundingClientRect();
   const cx = (centerX != null ? centerX : rect.left + rect.width / 2) - rect.left;
@@ -1035,7 +1045,7 @@ function fitGraph() {
   const height = maxY - minY + 200;
   const rect = graphCanvas.getBoundingClientRect();
   const zoom = Math.min((rect.width - 120) / width, (rect.height - 160) / height, 1.1);
-  state.zoom = Math.max(0.2, zoom);
+  state.zoom = Math.max(GRAPH_MIN_ZOOM, zoom);
   state.pan.x = (rect.width - width * state.zoom) / 2 - minX * state.zoom;
   state.pan.y = (rect.height - height * state.zoom) / 2 - minY * state.zoom;
   _saveGraphState(state);

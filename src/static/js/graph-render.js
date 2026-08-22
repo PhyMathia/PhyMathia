@@ -32,6 +32,8 @@ function _nodeAttribute(node) {
 
 function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
+  // 知识点节点输入为通用入口：任意来源都可接入（须在 hub 出口白名单之前判断）
+  if (toNode.kind === 'knowledge') return true;
   if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
   if (toNode.kind === 'summary') return fromNode.kind === 'hub' && String(fromPort || 'out-0') === 'out-0';
   if (toNode.kind === 'note') return fromNode.kind === 'hub' && String(fromPort || 'out-1') === 'out-1';
@@ -42,7 +44,6 @@ function _canConnect(fromNode, fromPort, toNode) {
   }
   if (toNode.kind === 'human_note') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
   if (toNode.kind === 'user') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
-  if (toNode.kind === 'knowledge') return fromNode.kind === 'source' || fromNode.kind === 'knowledge';
   if (fromNode.kind === 'human_note') {
     return ['human_note', 'module', 'answer', 'blank', 'relation', 'hub', 'user'].includes(toNode.kind);
   }
@@ -337,13 +338,14 @@ function _renderInputPorts(node, state) {
       ? baseCount + savedCount
       : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
+  const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge';
   for (let i = 0; i < count; i++) {
     const label = node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node);
-    const anyClass = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' ? ' graph-port-any-input' : '';
-    const portAttr = canAddInput ? 'any' : (node.kind === 'human_note' || node.kind === 'blank' ? 'any' : attr.key);
-    const portColor = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' ? '#94a3b8' : attr.color;
+    const anyClass = isAnyInput ? ' graph-port-any-input' : '';
+    const portAttr = (canAddInput || isAnyInput) ? 'any' : attr.key;
+    const portColor = isAnyInput ? '#94a3b8' : attr.color;
     const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
-    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
       + (canRemove
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveInputPort(\'' + node.id + '\',' + i + ')" title="删除输入端口">×</button>'
@@ -431,7 +433,7 @@ function _renderOutputPorts(node, messages, state) {
       question: '',
     }));
   }
-  const canAddPort = (node.kind === 'module' && node.moduleKey === 'socratic') || node.kind === 'source' || node.kind === 'knowledge';
+  const canAddPort = _moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge';
   const savedCount = canAddPort && state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
   const count = Math.max(ports.length, savedCount);
   if (count <= 0) return '';
@@ -490,7 +492,7 @@ function _renderBlankNodeHtml(node, state) {
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const content = _cleanBlankNodeContent(node, node.content || '');
   const contentHtml = content
-    ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
+    ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
     : '';
   const generateLabel = content ? '重新生成' : '生成';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
@@ -529,7 +531,9 @@ function _renderCustomNodeContentHtml(node) {
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   if (typeof renderMarkdown === 'function') {
-    return renderMarkdown(text, { sourceModule: node.moduleKey || '' });
+    // 传 parentId：自定义节点内容里的苏格拉底“我来回答”按钮需要能解析回父节点，
+    // 否则回答生成的新节点会成为无连线的孤儿（_findCustomBranchParent 按 timestamp 匹配）。
+    return renderMarkdown(text, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey || '' });
   }
   return escapeHtml(text);
 }
@@ -1304,6 +1308,35 @@ function _linkDragPathHtml() {
   return '<path d="' + d + '" class="graph-edge graph-link-drag"></path>';
 }
 
+// 联系线控制点求解：优先用户自定义 curve（相对端点的偏移），否则默认横向贝塞尔
+function _linkEdgeControlPoints(p1, p2, edge) {
+  const curve = edge && edge.curve;
+  if (curve && curve.shape === 'straight') {
+    return {
+      c1x: p1.x + (p2.x - p1.x) / 3,
+      c1y: p1.y + (p2.y - p1.y) / 3,
+      c2x: p1.x + (p2.x - p1.x) * 2 / 3,
+      c2y: p1.y + (p2.y - p1.y) * 2 / 3,
+    };
+  }
+  if (curve && Number.isFinite(curve.dx1) && Number.isFinite(curve.dy1)
+    && Number.isFinite(curve.dx2) && Number.isFinite(curve.dy2)) {
+    return {
+      c1x: p1.x + curve.dx1,
+      c1y: p1.y + curve.dy1,
+      c2x: p2.x + curve.dx2,
+      c2y: p2.y + curve.dy2,
+    };
+  }
+  const o = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
+  return { c1x: p1.x + o, c1y: p1.y, c2x: p2.x - o, c2y: p2.y };
+}
+
+function _linkDefaultCurveOffsets(p1, p2) {
+  const o = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
+  return { dx1: o, dy1: 0, dx2: -o, dy2: 0 };
+}
+
 function _redrawEdges() {
   if (!graphEdgeLayer) return;
   const defs = '<defs><marker id="graph-link-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="graph-edge-link-arrow"></path></marker></defs>';
@@ -1315,13 +1348,15 @@ function _redrawEdges() {
     const targetEl = graphInner?.querySelector('[data-node-id="' + edge.to + '"][data-port-id="' + edge.toPort + '"]');
     const p1 = _portAnchor(a, sourceEl, true);
     const p2 = _portAnchor(b, targetEl, false);
+    const cp = _linkEdgeControlPoints(p1, p2, edge);
     const offset = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
     const d = 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1)
-      + ' C' + (p1.x + offset).toFixed(1) + ' ' + p1.y.toFixed(1)
-      + ', ' + (p2.x - offset).toFixed(1) + ' ' + p2.y.toFixed(1)
+      + ' C' + cp.c1x.toFixed(1) + ' ' + cp.c1y.toFixed(1)
+      + ', ' + cp.c2x.toFixed(1) + ' ' + cp.c2y.toFixed(1)
       + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
     const isLink = !!edge.link;
-    const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '') + (isLink ? ' graph-edge-link' : '');
+    const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '') + (isLink ? ' graph-edge-link' : '')
+      + (isLink && graphView.edgeCurveEditKey === _edgeKey(edge) ? ' graph-edge-editing' : '');
     const arrow = isLink ? String(edge.arrow || 'right') : '';
     let markerStart = '';
     let markerEnd = '';
@@ -1329,11 +1364,25 @@ function _redrawEdges() {
       if (arrow === 'left' || arrow === 'both') markerStart = ' marker-start="url(#graph-link-arrow)"';
       if (arrow === 'right' || arrow === 'both') markerEnd = ' marker-end="url(#graph-link-arrow)"';
     }
+    // 联系线的宽透明命中路径：细线难点，加一条便于点选/双击
+    const hitHtml = isLink
+      ? '<path class="graph-edge-hit" pointer-events="stroke" d="' + d + '"></path>'
+      : '';
+    let handlesHtml = '';
+    if (isLink && graphView.edgeCurveEditKey === _edgeKey(edge)) {
+      handlesHtml = '<line class="graph-edge-guide" x1="' + p1.x.toFixed(1) + '" y1="' + p1.y.toFixed(1) + '" x2="' + cp.c1x.toFixed(1) + '" y2="' + cp.c1y.toFixed(1) + '"></line>'
+        + '<line class="graph-edge-guide" x1="' + p2.x.toFixed(1) + '" y1="' + p2.y.toFixed(1) + '" x2="' + cp.c2x.toFixed(1) + '" y2="' + cp.c2y.toFixed(1) + '"></line>'
+        // 每个手柄配一个更大的隐形命中圆，缩放后也容易抓到
+        + '<circle class="graph-curve-knob-hit" data-edge-key="' + _edgeKey(edge) + '" data-handle="c1" cx="' + cp.c1x.toFixed(1) + '" cy="' + cp.c1y.toFixed(1) + '" r="16" pointer-events="all"></circle>'
+        + '<circle class="graph-curve-knob-hit" data-edge-key="' + _edgeKey(edge) + '" data-handle="c2" cx="' + cp.c2x.toFixed(1) + '" cy="' + cp.c2y.toFixed(1) + '" r="16" pointer-events="all"></circle>'
+        + '<circle class="graph-edge-handle" data-edge-key="' + _edgeKey(edge) + '" data-handle="c1" cx="' + cp.c1x.toFixed(1) + '" cy="' + cp.c1y.toFixed(1) + '" r="9"></circle>'
+        + '<circle class="graph-edge-handle" data-edge-key="' + _edgeKey(edge) + '" data-handle="c2" cx="' + cp.c2x.toFixed(1) + '" cy="' + cp.c2y.toFixed(1) + '" r="9"></circle>';
+    }
     const label = (edge.relation || edge.label || '').toString().trim();
     let labelHtml = '';
     if (isLink && label) {
-      const c1 = { x: p1.x + offset, y: p1.y };
-      const c2 = { x: p2.x - offset, y: p2.y };
+      const c1 = { x: cp.c1x, y: cp.c1y };
+      const c2 = { x: cp.c2x, y: cp.c2y };
       const mx = (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8;
       const my = (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8;
       const textW = Array.from(label).length * 12 + 16;
@@ -1346,8 +1395,10 @@ function _redrawEdges() {
       ? '<title>' + escapeHtml(label) + '</title>'
       : '';
     return '<g class="' + cls + '" data-edge-key="' + _edgeKey(edge) + '" title="双击删除连线">'
+      + hitHtml
       + '<path d="' + d + '"' + markerStart + markerEnd + '></path>'
       + labelHtml
+      + handlesHtml
       + hintHtml
       + '</g>';
   }).join('');
@@ -1401,6 +1452,8 @@ function _tick() {
   }
 
   for (const edge of edges) {
+    // 联系箭头是纯视觉标注：不参与力学布局，避免自动整理时把两端节点拉近
+    if (edge.link) continue;
     const a = graphView.nodeById[edge.from];
     const b = graphView.nodeById[edge.to];
     if (!a || !b) continue;

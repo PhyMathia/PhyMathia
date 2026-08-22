@@ -594,6 +594,14 @@ window.openHarnessOrganizeRelations = openHarnessOrganizeRelations;
 
 // ===== 联系箭头（改法 A）：节点之间的注释性连线 =====
 let graphLinkModalOverlay = null;
+// 曲线样式弹窗的待应用选择：null=保持当前形状；'default'|'straight'|'smooth'|'s'
+let linkCurvePending = null;
+// 曲率滑杆系数（0~0.6 倍连线长度）
+let linkCurveBendFactor = 0.3;
+// 曲线编辑态：当前正在编辑的联系线 edgeKey
+let linkCurveDrag = null;
+let linkCurveUndoPushed = false;
+let linkCurveListenersBound = false;
 
 function toggleGraphLinkMode() {
   graphView.linkMode = !graphView.linkMode;
@@ -632,6 +640,7 @@ function _graphLinkPickNode(nodeId) {
 
 function openLinkEdgeModal(edgeKey, fromId, toId) {
   closeLinkEdgeModal();
+  linkCurvePending = null;
   let edge = null;
   if (edgeKey) {
     edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
@@ -645,6 +654,11 @@ function openLinkEdgeModal(edgeKey, fromId, toId) {
   const fromLabel = _shortGraphNodeLabel(fromNode);
   const toLabel = _shortGraphNodeLabel(toNode);
   const text = edge ? String(edge.relation || edge.label || '') : '';
+  let activeCurve = 'default';
+  if (edge && edge.curve) {
+    if (edge.curve.shape === 'straight') activeCurve = 'straight';
+    else if (Number.isFinite(edge.curve.dx1)) activeCurve = '';
+  }
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
   overlay.innerHTML = '<div class="graph-network-modal">'
@@ -659,8 +673,18 @@ function openLinkEdgeModal(edgeKey, fromId, toId) {
     + '<button type="button" class="graph-link-arrow-option" data-arrow="both" onclick="selectLinkArrow(this)" title="双向箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><polyline points="11 6 5 12 11 18"></polyline><polyline points="13 6 19 12 13 18"></polyline></svg></button>'
     + '<button type="button" class="graph-link-arrow-option" data-arrow="none" onclick="selectLinkArrow(this)" title="无箭头"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"></line></svg></button>'
     + '</div>'
+    + '<label>曲线样式</label>'
+    + '<div class="graph-link-curve-options">'
+    + '<button type="button" class="graph-link-curve-option" data-curve="default" onclick="selectLinkCurve(this)">默认</button>'
+    + '<button type="button" class="graph-link-curve-option" data-curve="straight" onclick="selectLinkCurve(this)">直线</button>'
+    + '<button type="button" class="graph-link-curve-option" data-curve="smooth" onclick="selectLinkCurve(this)">平滑弯</button>'
+    + '<button type="button" class="graph-link-curve-option" data-curve="s" onclick="selectLinkCurve(this)">S 弯</button>'
+    + '</div>'
+    + '<label class="graph-link-bend-row">曲率 <input type="range" id="linkCurveBend" min="0" max="100" value="' + Math.round(linkCurveBendFactor * 100 / 0.6) + '" oninput="updateLinkCurveBend(this.value)"> <span id="linkCurveBendVal"></span></label>'
+    + '<div class="graph-link-curve-hint">提示：单击连线打开此弹窗；点下方“手柄精调”或双击连线，可像钢笔工具一样拖动圆点调整弯曲。</div>'
     + '<div class="graph-network-modal-actions">'
     + '<button class="graph-network-modal-save" onclick="saveLinkEdge(\'' + (edgeKey || '') + '\',\'' + fromId + '\',\'' + toId + '\')">' + (edge ? '保存修改' : '添加联系') + '</button>'
+    + (edge ? '<button class="graph-link-edge-curve-btn" onclick="editLinkCurveFromModal(\'' + edgeKey + '\')" title="关闭弹窗，在线上拖动控制圆点精调曲线">手柄精调曲线</button>' : '')
     + (edge ? '<button class="graph-link-edge-delete" onclick="deleteLinkEdge(\'' + edgeKey + '\')">删除</button>' : '')
     + '<button onclick="closeLinkEdgeModal()">取消</button>'
     + '</div>'
@@ -671,6 +695,8 @@ function openLinkEdgeModal(edgeKey, fromId, toId) {
   document.body.appendChild(overlay);
   const arrow = edge ? String(edge.arrow || 'right') : 'right';
   overlay.querySelector('[data-arrow="' + arrow + '"]')?.classList.add('active');
+  if (activeCurve) overlay.querySelector('[data-curve="' + activeCurve + '"]')?.classList.add('active');
+  updateLinkCurveBend(document.getElementById('linkCurveBend')?.value);
   graphLinkModalOverlay = overlay;
 }
 
@@ -715,6 +741,18 @@ function saveLinkEdge(edgeKey, fromId, toId) {
   conn.relation = text;
   conn.label = text;
   conn.arrow = document.querySelector('.graph-link-arrow-option.active')?.dataset?.arrow || conn.arrow || 'right';
+  // 曲线样式：仅在弹窗里明确选择了样式时才改写，保留手柄精调的自定义曲线
+  if (linkCurvePending === 'default') {
+    delete conn.curve;
+  } else if (linkCurvePending === 'straight') {
+    conn.curve = { shape: 'straight' };
+  } else if (linkCurvePending === 'smooth' || linkCurvePending === 's') {
+    const anchors = _linkCurveAnchors(_edgeKey(conn));
+    if (anchors) {
+      conn.curve = computeLinkCurveOffsets(linkCurvePending, anchors.p1, anchors.p2, linkCurveBendFactor);
+    }
+  }
+  linkCurvePending = null;
   _saveGraphState(state);
   closeLinkEdgeModal();
   renderGraphCanvas();
@@ -725,9 +763,215 @@ function deleteLinkEdge(edgeKey) {
   _pushGraphUndo();
   const state = _graphState();
   state.connections = (state.connections || []).filter(item => _edgeKey(item) !== edgeKey);
+  if (graphView.edgeCurveEditKey === edgeKey) graphView.edgeCurveEditKey = null;
+  linkCurveUndoPushed = false;
   _saveGraphState(state);
   closeLinkEdgeModal();
   renderGraphCanvas();
+}
+
+// ===== 单击/双击入口协调 =====
+// 单击连线延迟开弹窗：给双击（进手柄编辑）留出取消窗口
+let linkSingleClickTimer = null;
+
+function openLinkModalDeferred(edgeKey) {
+  cancelPendingLinkModal();
+  linkSingleClickTimer = setTimeout(() => {
+    linkSingleClickTimer = null;
+    openLinkEdgeModal(edgeKey);
+  }, 240);
+}
+
+function cancelPendingLinkModal() {
+  if (linkSingleClickTimer) {
+    clearTimeout(linkSingleClickTimer);
+    linkSingleClickTimer = null;
+  }
+}
+
+// 弹窗里的「手柄精调曲线」按钮：关弹窗并进入钢笔式编辑态
+function editLinkCurveFromModal(edgeKey) {
+  if (!edgeKey) return;
+  closeLinkCurvePending();
+  closeLinkEdgeModal();
+  enterLinkCurveEdit(edgeKey);
+}
+
+function closeLinkCurvePending() {
+  linkCurvePending = null;
+}
+
+// ===== 联系线贝塞尔曲线：预设样式 + 钢笔式手柄编辑 =====
+
+function selectLinkCurve(btn) {
+  const parent = btn && btn.closest ? btn.closest('.graph-link-curve-options') : null;
+  if (!parent) return;
+  parent.querySelectorAll('.graph-link-curve-option').forEach(item => item.classList.remove('active'));
+  btn.classList.add('active');
+  linkCurvePending = btn.dataset.curve || null;
+}
+
+function updateLinkCurveBend(value) {
+  const factor = Math.max(0, Math.min(100, Number(value) || 0)) / 100;
+  linkCurveBendFactor = factor * 0.6;
+  const valEl = document.getElementById('linkCurveBendVal');
+  if (valEl) valEl.textContent = String(Math.round(factor * 100));
+}
+
+// 按预设形状生成控制点偏移（相对两端锚点），bend 为连线长度比例
+function computeLinkCurveOffsets(shape, p1, p2, bend) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const bow = len * (Number.isFinite(bend) ? bend : 0.3);
+  if (shape === 's') {
+    // S 弯：两个控制点在法线的相反两侧
+    return {
+      dx1: dx * 0.3 + nx * bow,
+      dy1: dy * 0.3 + ny * bow,
+      dx2: -dx * 0.3 - nx * bow,
+      dy2: -dy * 0.3 - ny * bow,
+    };
+  }
+  // 平滑弯：同侧弓形
+  return {
+    dx1: dx * 0.35 + nx * bow,
+    dy1: dy * 0.35 + ny * bow,
+    dx2: -dx * 0.35 + nx * bow,
+    dy2: -dy * 0.35 + ny * bow,
+  };
+}
+
+// 取联系线两端的锚点与边对象（与 _redrawEdges 的取点方式一致）
+function _linkCurveAnchors(edgeKey) {
+  const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
+  if (!edge) return null;
+  const a = graphView.nodeById[edge.from];
+  const b = graphView.nodeById[edge.to];
+  if (!a || !b) return null;
+  const sourceEl = graphInner?.querySelector('[data-node-id="' + edge.from + '"][data-port-id="' + edge.fromPort + '"]');
+  const targetEl = graphInner?.querySelector('[data-node-id="' + edge.to + '"][data-port-id="' + edge.toPort + '"]');
+  return { p1: _portAnchor(a, sourceEl, true), p2: _portAnchor(b, targetEl, false), edge };
+}
+
+function enterLinkCurveEdit(edgeKey) {
+  const found = _linkCurveAnchors(edgeKey);
+  if (!found || !found.edge || !found.edge.link) return;
+  _ensureLinkCurveDragListeners();
+  graphView.edgeCurveEditKey = edgeKey;
+  linkCurveUndoPushed = false;
+  // 尚无自定义曲线时，把当前默认形状物化为偏移，手柄才有合理的初始位置
+  const curve = found.edge.curve;
+  if (!curve || (!Number.isFinite(curve.dx1))) {
+    if (curve && curve.shape === 'straight') {
+      found.edge.curve = {
+        dx1: (found.p2.x - found.p1.x) / 3,
+        dy1: (found.p2.y - found.p1.y) / 3,
+        dx2: (found.p2.x - found.p1.x) / 3,
+        dy2: (found.p2.y - found.p1.y) / 3,
+      };
+    } else {
+      found.edge.curve = _linkDefaultCurveOffsets(found.p1, found.p2);
+    }
+  }
+  if (typeof showToast === 'function') showToast('拖动圆点调整曲线；点击空白处或按 Esc 退出');
+  if (typeof _redrawEdges === 'function') _redrawEdges();
+}
+
+function exitLinkCurveEdit() {
+  if (!graphView.edgeCurveEditKey) return;
+  graphView.edgeCurveEditKey = null;
+  linkCurveUndoPushed = false;
+  if (typeof _redrawEdges === 'function') _redrawEdges();
+}
+
+function _beginLinkCurveDrag(edgeKey, which, event) {
+  const found = _linkCurveAnchors(edgeKey);
+  if (!found || !found.edge || !found.edge.link) return;
+  if (!found.edge.curve || !Number.isFinite(found.edge.curve.dx1)) {
+    found.edge.curve = _linkDefaultCurveOffsets(found.p1, found.p2);
+  }
+  if (!linkCurveUndoPushed) {
+    if (typeof _pushGraphUndo === 'function') _pushGraphUndo();
+    linkCurveUndoPushed = true;
+  }
+  linkCurveDrag = {
+    edgeKey,
+    which,
+    startX: event.clientX,
+    startY: event.clientY,
+    base: {
+      dx1: found.edge.curve.dx1 || 0,
+      dy1: found.edge.curve.dy1 || 0,
+      dx2: found.edge.curve.dx2 || 0,
+      dy2: found.edge.curve.dy2 || 0,
+    },
+  };
+  try { event.target.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+}
+
+function _ensureLinkCurveDragListeners() {
+  if (linkCurveListenersBound) return;
+  linkCurveListenersBound = true;
+  document.addEventListener('pointerdown', event => {
+    const handle = event.target && event.target.closest
+      ? event.target.closest('.graph-edge-handle, .graph-curve-knob-hit')
+      : null;
+    if (handle && handle.dataset.edgeKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      _beginLinkCurveDrag(handle.dataset.edgeKey, handle.dataset.handle, event);
+      return;
+    }
+    // 点击手柄以外区域退出编辑态（双击联系线可再次进入）
+    if (graphView.edgeCurveEditKey) exitLinkCurveEdit();
+  }, true);
+  document.addEventListener('pointermove', event => {
+    if (!linkCurveDrag) return;
+    const zoom = graphView.zoom || 1;
+    const ddx = (event.clientX - linkCurveDrag.startX) / zoom;
+    const ddy = (event.clientY - linkCurveDrag.startY) / zoom;
+    const edge = (graphView.edges || []).find(item => _edgeKey(item) === linkCurveDrag.edgeKey);
+    if (!edge) return;
+    const base = linkCurveDrag.base;
+    edge.curve = {
+      dx1: base.dx1 + (linkCurveDrag.which === 'c1' ? ddx : 0),
+      dy1: base.dy1 + (linkCurveDrag.which === 'c1' ? ddy : 0),
+      dx2: base.dx2 + (linkCurveDrag.which === 'c2' ? ddx : 0),
+      dy2: base.dy2 + (linkCurveDrag.which === 'c2' ? ddy : 0),
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      if (!linkCurveDrag.raf) {
+        linkCurveDrag.raf = requestAnimationFrame(() => {
+          linkCurveDrag && (linkCurveDrag.raf = 0);
+          if (typeof _redrawEdges === 'function') _redrawEdges();
+        });
+      }
+    } else if (typeof _redrawEdges === 'function') {
+      _redrawEdges();
+    }
+  });
+  document.addEventListener('pointerup', () => {
+    if (!linkCurveDrag) return;
+    const drag = linkCurveDrag;
+    linkCurveDrag = null;
+    const viewEdge = (graphView.edges || []).find(item => _edgeKey(item) === drag.edgeKey);
+    const state = _graphState();
+    state.connections = state.connections || [];
+    const conn = state.connections.find(item => item.link && _edgeKey(item) === drag.edgeKey)
+      || state.connections.find(item => _edgeKey(item) === drag.edgeKey);
+    if (conn && viewEdge && viewEdge.curve) {
+      conn.curve = { ...viewEdge.curve };
+      conn.link = true;
+      _saveGraphState(state);
+    }
+    if (typeof _redrawEdges === 'function') _redrawEdges();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && graphView.edgeCurveEditKey) exitLinkCurveEdit();
+  });
 }
 
 window.selectLinkArrow = selectLinkArrow;
@@ -736,3 +980,10 @@ window.openLinkEdgeModal = openLinkEdgeModal;
 window.closeLinkEdgeModal = closeLinkEdgeModal;
 window.saveLinkEdge = saveLinkEdge;
 window.deleteLinkEdge = deleteLinkEdge;
+window.selectLinkCurve = selectLinkCurve;
+window.updateLinkCurveBend = updateLinkCurveBend;
+window.enterLinkCurveEdit = enterLinkCurveEdit;
+window.exitLinkCurveEdit = exitLinkCurveEdit;
+window.openLinkModalDeferred = openLinkModalDeferred;
+window.cancelPendingLinkModal = cancelPendingLinkModal;
+window.editLinkCurveFromModal = editLinkCurveFromModal;

@@ -3777,6 +3777,25 @@ html[data-theme="dark"] .message-content strong {
   pointer-events: auto !important;
   cursor: pointer !important;
 }
+/* 联系线标签/命中区禁止原生选字：避免单击/双击时出现“编辑文字”错觉 */
+.graph-edge-link-label,
+.graph-edge-link-bg,
+.graph-edge-hit {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+.graph-link-edge-curve-btn {
+  padding: 8px 14px !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(244, 63, 94, 0.45) !important;
+  background: rgba(244, 63, 94, 0.08) !important;
+  color: #f43f5e !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+}
+.graph-link-edge-curve-btn:hover {
+  background: rgba(244, 63, 94, 0.16) !important;
+}
 .graph-edge-link-bg {
   fill: var(--bg-panel) !important;
   fill-opacity: 0.96 !important;
@@ -3814,6 +3833,85 @@ html[data-theme="dark"] .message-content strong {
   background: rgba(244, 63, 94, 0.12) !important;
   color: #f43f5e !important;
   box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18) !important;
+}
+/* ===== 联系线贝塞尔曲线编辑（钢笔式手柄） ===== */
+/* 命中路径：用双类+元素选择器压过 .graph-edge path 的 2.2px 细线规则，
+   否则宽命中区会被打回细线导致“很难选中” */
+g.graph-edge-link > path.graph-edge-hit {
+  stroke: transparent !important;
+  stroke-width: 20px !important;
+  stroke-dasharray: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  fill: none !important;
+  pointer-events: stroke !important;
+  cursor: pointer !important;
+}
+.graph-edge-link.graph-edge-editing > path:not(.graph-edge-hit) {
+  stroke-width: 2.5px !important;
+  opacity: 1 !important;
+}
+.graph-edge-guide {
+  stroke: rgba(244, 63, 94, 0.4) !important;
+  stroke-width: 1px !important;
+  stroke-dasharray: 4 4 !important;
+  fill: none !important;
+  pointer-events: none !important;
+}
+.graph-edge-handle {
+  cursor: grab !important;
+}
+g.graph-edge-link > circle.graph-edge-handle {
+  fill: #ffffff !important;
+  stroke: #f43f5e !important;
+  stroke-width: 2px !important;
+  filter: drop-shadow(0 1px 3px rgba(244, 63, 94, 0.45)) !important;
+}
+g.graph-edge-link > circle.graph-edge-handle:hover {
+  fill: #ffe4e6 !important;
+}
+/* 手柄的隐形放大命中圆：小圆点难点的兜底 */
+g.graph-edge-link > circle.graph-curve-knob-hit {
+  fill: transparent !important;
+  stroke: none !important;
+  pointer-events: all !important;
+  cursor: grab !important;
+}
+.graph-link-curve-options {
+  display: flex !important;
+  gap: 8px !important;
+  margin-bottom: 10px !important;
+  flex-wrap: wrap !important;
+}
+.graph-link-curve-option {
+  padding: 6px 14px !important;
+  border-radius: 8px !important;
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #94a3b8) 40%, transparent) !important;
+  background: transparent !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  transition: all 0.15s !important;
+}
+.graph-link-curve-option:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+.graph-link-curve-option.active {
+  border-color: #f43f5e !important;
+  background: rgba(244, 63, 94, 0.12) !important;
+  color: #f43f5e !important;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18) !important;
+}
+.graph-link-bend-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.graph-link-curve-hint {
+  font-size: 11px !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  margin-bottom: 10px !important;
 }
 .graph-blank-hint {
   font-size: 11px !important;
@@ -4837,4 +4935,25 @@ html[data-theme="dark"] .message-content strong {
 }
 [data-theme="light"] .graph-harness-composer {
   background: transparent;
+}
+
+/* ---------- Harness 面板滚动条“隐形”（仅隐藏条身，保留滚轮/触摸/键盘滚动能力） ---------- */
+.graph-harness-window,
+.graph-harness-window *,
+.graph-harness-panel,
+.graph-harness-panel * {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE / 旧版 Edge */
+}
+.graph-harness-window ::-webkit-scrollbar,
+.graph-harness-window ::-webkit-scrollbar-track,
+.graph-harness-window ::-webkit-scrollbar-thumb,
+.graph-harness-panel ::-webkit-scrollbar,
+.graph-harness-panel ::-webkit-scrollbar-track,
+.graph-harness-panel ::-webkit-scrollbar-thumb {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+  -webkit-appearance: none;
 }

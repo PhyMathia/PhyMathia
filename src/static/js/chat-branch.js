@@ -3,6 +3,7 @@
     var pendingSocraticNewLoop = false;
     var pendingSocraticConfidence = 'ok';
     var pendingSocraticPosition = null;
+    var pendingSocraticFromPort = '';
     function clearBranchAnchor() {
       setActiveBranchAnchor(null);
     }
@@ -25,13 +26,15 @@
       return level === 'advanced' ? '进阶' : level === 'expand' ? '拓展' : '基础';
     }
 
-    function startSocraticAnswer(question, level, parentMsg, sourceModule, posX, posY) {
+    function startSocraticAnswer(question, level, parentMsg, sourceModule, posX, posY, fromPort) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
       pendingSocraticSourceModule = sourceModule || 'extend';
       pendingSocraticConfidence = 'ok';
       pendingSocraticPosition = (Number.isFinite(posX) && Number.isFinite(posY)) ? { x: posX, y: posY } : null;
+      // 记录来源端口：画布从苏格拉底问题端口发起时，回答完成后新节点要连回同一端口
+      pendingSocraticFromPort = fromPort || '';
       // 若当前已有未结束的苏格拉底闭环，沿用同一分支，保证连对次数与上下文跨轮连续
       pendingSocraticNewLoop = !(currentBranch === 'socratic' && currentBranchId);
       pendingSocraticBranchId = pendingSocraticNewLoop ? _genBranchId() : currentBranchId;
@@ -59,6 +62,7 @@
       pendingSocraticLevel = 'basic';
       pendingSocraticSourceModule = 'extend';
       pendingSocraticPosition = null;
+      pendingSocraticFromPort = '';
     }
 
     function setSocraticConfidence(value, btn) {
@@ -111,6 +115,7 @@
           sourceModule: pendingSocraticSourceModule,
           branchType: 'socratic',
           branchId,
+          ...(pendingSocraticFromPort ? { fromPort: pendingSocraticFromPort } : {}),
           branchLabel: '苏格拉底：' + (pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础'),
           ...(socraticPosition ? { position: socraticPosition } : {}),
         });
@@ -309,4 +314,4 @@
         window.history.replaceState({}, '', window.location.pathname);
         setTimeout(() => sendQuick(decodeURIComponent(question)), 500);
       }
-    })();
+    })();

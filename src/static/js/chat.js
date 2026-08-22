@@ -708,12 +708,16 @@
       if (userMsg) {
         lastFailedMessage = userMsg;
         if (userMeta && (userMeta.branchId || userMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
+          // 重试时保留画布定位信息（position/fromPort），否则重试后分支会连错端口/漂移
+          const retryPos = userMeta.position;
           window.setActiveBranchAnchor({
             parentId: userMeta.parentId || '',
             sourceModule: userMeta.sourceModule || 'extend',
             branchType: userMeta.branchType || '',
             branchId: userMeta.branchId || '',
             branchLabel: userMeta.branchLabel || '',
+            ...(retryPos && Number.isFinite(retryPos.x) && Number.isFinite(retryPos.y) ? { position: retryPos } : {}),
+            ...(userMeta.fromPort ? { fromPort: userMeta.fromPort } : {}),
           });
         }
         const userInputEl = document.getElementById('userInput');

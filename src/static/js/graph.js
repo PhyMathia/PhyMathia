@@ -26,6 +26,14 @@ const GRAPH_MODULE_DEFAULT_OUTPUTS = {
   learn: ['进阶学习', '追问'],
 };
 
+// 允许手工增加/删除输出端口的模块节点白名单（物理/数学/知识图谱/可视化/苏格拉底/进阶学习），
+// 渲染门控与增删动作共用此判定（source/knowledge 节点的能力另行判断）。
+const GRAPH_MODULE_OUTPUT_EXPANDABLE = Object.keys(GRAPH_MODULE_DEFAULT_OUTPUTS);
+
+function _moduleCanExpandOutputs(node) {
+  return !!node && node.kind === 'module' && GRAPH_MODULE_OUTPUT_EXPANDABLE.includes(node.moduleKey);
+}
+
 const GRAPH_NODE_ATTRIBUTES = {
   question: { key: 'question', label: '问题', color: '#4a9eff' },
   followup: { key: 'followup', label: '追问', color: '#6366f1' },
@@ -901,6 +909,55 @@ function _findCustomBranchParent(customNodes, parentTs, sourceModule) {
   return match;
 }
 
+// 分支消息的父模块解析：sourceModule 可能是旧版伪模块键 'extend'（画布上已拆分为
+// socratic/learn 两个模块，永远查不到），也可能与 branchType 同名。按候选顺序解析，
+// 全部未命中返回 null（由调用方回退答案节点/自定义节点）。
+function _resolveBranchModuleId(nodeById, msg) {
+  const parentTs = String(msg.parentId || '');
+  if (!parentTs) return null;
+  const seen = new Set();
+  const candidates = [];
+  const push = modKey => {
+    if (!modKey) return;
+    const id = _graphNodeId('m', parentTs, modKey);
+    if (!seen.has(id)) { seen.add(id); candidates.push(id); }
+  };
+  const srcMod = String(msg.sourceModule || '');
+  if (srcMod && srcMod !== 'extend') push(srcMod);
+  if (msg.branchType === 'socratic' || msg.branchType === 'learn') push(msg.branchType);
+  if (srcMod === 'extend') { push('socratic'); push('learn'); }
+  for (const id of candidates) {
+    if (nodeById[id]) return id;
+  }
+  return null;
+}
+
+// 无显式 fromPort 时，用消息里的“追问问题：…”（或进阶方向按钮文案）匹配
+// 苏格拉底/进阶学习模块的问题端口，得到 'out-K'；匹配不上返回 ''。
+function _inferBranchFromPort(parentNode, msg, messages) {
+  if (!parentNode || parentNode.kind !== 'module') return '';
+  if (parentNode.moduleKey !== 'socratic' && parentNode.moduleKey !== 'learn') return '';
+  const message = parentNode.messageIndex >= 0 ? messages[parentNode.messageIndex] : null;
+  const content = _nodeContent(message, parentNode) || '';
+  const ports = _parsePortQuestions(content, parentNode.moduleKey === 'socratic');
+  if (!ports.length) return '';
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+  let question = '';
+  const qMatch = String(msg.content || '').match(/追问问题[：:]\s*([^\n]+)/);
+  if (qMatch) question = norm(qMatch[1]);
+  if (question) {
+    const exact = ports.findIndex(item => item.question && norm(item.question) === question);
+    if (exact >= 0) return 'out-' + exact;
+    const loose = ports.findIndex(item => item.question
+      && (norm(item.question).includes(question) || question.includes(norm(item.question))));
+    if (loose >= 0) return 'out-' + loose;
+  }
+  // 进阶学习等没有“追问问题”行的消息：看端口问题是否出现在消息正文里
+  const body = norm(msg.content);
+  const byBody = ports.findIndex(item => item.question && body.includes(norm(item.question)));
+  return byBody >= 0 ? 'out-' + byBody : '';
+}
+
 function _applyHarnessOverrides(node, state) {
   const overrides = (state && state.harnessNodeOverrides) || {};
   const ov = overrides[node.id];
@@ -951,13 +1008,8 @@ function _buildGraphData(messages, state) {
         targetAngle = prevAnswer ? prevAnswer.targetAngle + 0.04 : -Math.PI / 2;
       } else {
         const parentTs = String(msg.parentId || '');
-        let parentId = null;
-        let parentNode = null;
-        if (msg.sourceModule) {
-          const moduleId = _graphNodeId('m', parentTs, msg.sourceModule);
-          parentNode = nodeById[moduleId] || null;
-          parentId = moduleId;
-        }
+        let parentId = _resolveBranchModuleId(nodeById, msg);
+        let parentNode = parentId ? nodeById[parentId] : null;
         if (!parentNode) {
           const answerId = _graphNodeId('a', parentTs);
           parentNode = nodeById[answerId] || null;
@@ -1023,11 +1075,7 @@ function _buildGraphData(messages, state) {
         // 锚点
       } else if (isBranch) {
         const parentTs = String(msg.parentId || '');
-        let parentId = null;
-        if (msg.sourceModule) {
-          const moduleId = _graphNodeId('m', parentTs, msg.sourceModule);
-          if (nodeById[moduleId]) parentId = moduleId;
-        }
+        let parentId = _resolveBranchModuleId(nodeById, msg);
         if (!parentId) {
           const answerId = _graphNodeId('a', parentTs);
           if (nodeById[answerId]) parentId = answerId;
@@ -1036,7 +1084,13 @@ function _buildGraphData(messages, state) {
           const customParent = _findCustomBranchParent(state.customNodes, parentTs, msg.sourceModule);
           if (customParent) parentId = customParent.id;
         }
-        if (parentId) _pushEdge(edges, parentId, id, 'primary', msg.fromPort || '');
+        if (parentId) {
+          const parentNode = nodeById[parentId];
+          // 端口优先级：消息显式 fromPort（新数据）> 按问题文本推断（旧数据）> 顺延分配
+          let fromPort = String(msg.fromPort || '');
+          if (!fromPort) fromPort = _inferBranchFromPort(parentNode, msg, messages);
+          _pushEdge(edges, parentId, id, 'primary', fromPort);
+        }
       } else {
         if (lastMainAnswerId) _pushEdge(edges, lastMainAnswerId, id, 'primary');
       }
@@ -1212,10 +1266,11 @@ function _resolveGraphEdges(state, defaults, nodeById) {
   for (const customEdge of custom) {
     const inputKey = customEdge.to + ':' + customEdge.toPort;
     const toNode = nodeById[customEdge.to];
-    const isHubInput = toNode && toNode.kind === 'hub';
-    if (!isHubInput && occupiedInputs.has(inputKey)) continue;
+    // hub 与 knowledge 的输入允许多路汇入：多条连线可指向同一输入端口
+    const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'knowledge');
+    if (!isFanInInput && occupiedInputs.has(inputKey)) continue;
     edges.push({ ...customEdge, type: customEdge.type || 'custom', custom: true });
-    if (!isHubInput) occupiedInputs.add(inputKey);
+    if (!isFanInInput) occupiedInputs.add(inputKey);
     occupiedOutputs.add(customEdge.from + ':' + customEdge.fromPort);
   }
 
@@ -1224,7 +1279,12 @@ function _resolveGraphEdges(state, defaults, nodeById) {
     if (!nodeById[edge.from] || !nodeById[edge.to] || edge.from === edge.to) continue;
     if (removed.has(_edgeKey(edge))) continue;
     if (occupiedInputs.has(edge.to + ':' + edge.toPort)) continue;
-    if (occupiedOutputs.has(edge.from + ':' + edge.fromPort)) continue;
+    const fromNode = nodeById[edge.from];
+    // 苏格拉底/进阶学习模块的问题端口允许一对多（同一问题可被多次回答），
+    // 不参与输出端口占用去重。
+    const multiOutFrom = fromNode.kind === 'module'
+      && (fromNode.moduleKey === 'socratic' || fromNode.moduleKey === 'learn');
+    if (!multiOutFrom && occupiedOutputs.has(edge.from + ':' + edge.fromPort)) continue;
     edges.push(edge);
     occupiedOutputs.add(edge.from + ':' + edge.fromPort);
   }

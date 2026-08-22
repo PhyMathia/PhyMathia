@@ -1801,7 +1801,9 @@ function _initGraphCanvasEvents() {
     if (e.target.closest('button, a, input, textarea, iframe, .graph-port')) return;
     const linkEdgeEl = e.target.closest('.graph-edge-link, .graph-edge-link-label');
     if (linkEdgeEl && linkEdgeEl.dataset.edgeKey) {
-      openLinkEdgeModal(linkEdgeEl.dataset.edgeKey);
+      // 延迟打开弹窗：快速双击时由 dblclick 取消，改为进入手柄编辑
+      if (typeof window.openLinkModalDeferred === 'function') window.openLinkModalDeferred(linkEdgeEl.dataset.edgeKey);
+      else openLinkEdgeModal(linkEdgeEl.dataset.edgeKey);
       return;
     }
     if (graphView.linkMode) {
@@ -1839,11 +1841,20 @@ function _initGraphCanvasEvents() {
   });
   graphCanvas.addEventListener('dblclick', e => {
     if (graphView.selectMode || graphView.linkMode) return;
+    // 双击前的那次单击可能挂起了“延迟开弹窗”，先取消
+    if (typeof window.cancelPendingLinkModal === 'function') window.cancelPendingLinkModal();
     const edgeEl = e.target.closest('.graph-edge');
     if (edgeEl && edgeEl.dataset.edgeKey) {
       e.preventDefault();
       e.stopPropagation();
-      _removeGraphEdge(edgeEl.dataset.edgeKey);
+      // 联系线：双击进入曲线编辑（钢笔式手柄）；其余连线：双击删除
+      const edgeKey = edgeEl.dataset.edgeKey;
+      const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
+      if (edge && edge.link && typeof window.enterLinkCurveEdit === 'function') {
+        window.enterLinkCurveEdit(edgeKey);
+        return;
+      }
+      _removeGraphEdge(edgeKey);
       return;
     }
     const dblNodeEl = e.target.closest('.graph-node');
@@ -2068,136 +2079,62 @@ window.draftAskAi = draftAskAi;
 window.removeDraftNode = removeDraftNode;
 
 window.graphOpenRegenerate = graphOpenRegenerate;
-
-window.closeRegeneratePanel = closeRegeneratePanel;
-
-window.submitRegenerateNode = submitRegenerateNode;
-
-window.zoomGraph = zoomGraph;
-
-window.fitGraph = fitGraph;
-
-window.focusGraphNode = focusGraphNode;
-
-window.focusGraphNodeById = focusGraphNodeById;
-
-window.toggleGraphSearchPanel = toggleGraphSearchPanel;
-
-window.closeGraphSearchPanel = closeGraphSearchPanel;
-
-window.graphSearchInputChanged = graphSearchInputChanged;
-
-window.graphSearchKeydown = graphSearchKeydown;
-
-window.setGraphSearchScope = setGraphSearchScope;
-
-window.focusGraphSearchResult = focusGraphSearchResult;
-
-window.graphToggleTextSelection = graphToggleTextSelection;
-
-window.autoArrangeGraph = autoArrangeGraph;
-
-window.getGraphViewNodes = () => graphView.nodes.map(node => ({ ...node }));
-
-window.getGraphViewEdges = () => graphView.edges.map(edge => ({ ...edge }));
-
-window.getGraphViewDefaultEdges = () => (graphView.defaultEdges || []).map(edge => ({ ...edge }));
-
-window.getSelectedGraphNodeIds = () => Array.from(graphView.selectedNodeIds || []);
-
-window.freeModuleInputPort = _freeModuleInputPort;
-
-window.pushGraphUndo = _pushGraphUndo;
-
-window.applyGraphDiffHighlights = applyGraphDiffHighlights;
-
-window.clearGraphDiffHighlights = clearGraphDiffHighlights;
-
-window.showGraphHarnessPreview = showGraphHarnessPreview;
-
-window.clearGraphHarnessPreview = clearGraphHarnessPreview;
-
-window.getGraphPreviewNodes = () => graphView.previewNodes.map(node => ({ ...node }));
-
-window.toggleGraphView = () => {
-  renderGraphCanvas();
-};
-
-window.closeGraphView = () => {};
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initGraphCanvas);
-} else {
-  initGraphCanvas();
-}
-
-window.renderGraphCanvas = renderGraphCanvas;
-window.sendGraphNewSession = sendGraphNewSession;
-window.graphModuleAction = graphModuleAction;
-window.quickConnectToHub = quickConnectToHub;
-window.buildGraphPathForAnchor = buildGraphPathForAnchor;
-window.graphAddOutputPort = graphAddOutputPort;
-window.graphRemoveOutputPort = graphRemoveOutputPort;
-window.graphAddInputPort = graphAddInputPort;
-window.graphRemoveInputPort = graphRemoveInputPort;
-window.deleteCustomNode = deleteCustomNode;
-window.updateCustomNodeContent = updateCustomNodeContent;
-window.updateSourceNodeMax = updateSourceNodeMax;
-window.handleSourceNodeFile = handleSourceNodeFile;
-window.handleSourceNodeDrop = handleSourceNodeDrop;
-window.reparseSourceNode = reparseSourceNode;
-window.generateKnowledgeNode = generateKnowledgeNode;
-window.generateRelationNode = generateRelationNode;
-window.resetGraphConnections = resetGraphConnections;
-window.graphCreateGroup = graphCreateGroup;
-window.graphRenameGroup = graphRenameGroup;
-window.graphSetGroupColor = graphSetGroupColor;
-window.graphAddSelectedToGroup = graphAddSelectedToGroup;
-window.graphDeleteGroup = graphDeleteGroup;
-window.openAddBlankNodeModal = openAddBlankNodeModal;
-window.closeAddBlankNodeModal = closeAddBlankNodeModal;
-window.createBlankNode = createBlankNode;
-window.createManualNode = createManualNode;
-window.runWorkflowNode = runWorkflowNode;
-window.startQuestionWorkflow = startQuestionWorkflow;
-window.runAllWorkflowNodes = runAllWorkflowNodes;
-window.stopWorkflowRun = stopWorkflowRun;
-window.deleteBlankNode = deleteBlankNode;
-window.generateBlankNode = generateBlankNode;
-window.submitDraftQuestion = submitDraftQuestion;
-window.draftSocraticAnswer = draftSocraticAnswer;
-window.draftAskAi = draftAskAi;
-window.removeDraftNode = removeDraftNode;
-window.graphOpenRegenerate = graphOpenRegenerate;
 window.generateVizNode = generateVizNode;
+
 window.closeRegeneratePanel = closeRegeneratePanel;
+
 window.submitRegenerateNode = submitRegenerateNode;
+
 window.zoomGraph = zoomGraph;
+
 window.fitGraph = fitGraph;
+
 window.focusGraphNode = focusGraphNode;
+
 window.focusGraphNodeById = focusGraphNodeById;
+
 window.toggleGraphSearchPanel = toggleGraphSearchPanel;
+
 window.closeGraphSearchPanel = closeGraphSearchPanel;
+
 window.graphSearchInputChanged = graphSearchInputChanged;
+
 window.graphSearchKeydown = graphSearchKeydown;
+
 window.setGraphSearchScope = setGraphSearchScope;
+
 window.focusGraphSearchResult = focusGraphSearchResult;
+
 window.graphToggleTextSelection = graphToggleTextSelection;
+
 window.autoArrangeGraph = autoArrangeGraph;
+
 window.getGraphViewNodes = () => graphView.nodes.map(node => ({ ...node }));
+
 window.getGraphViewEdges = () => graphView.edges.map(edge => ({ ...edge }));
+
 window.getGraphViewDefaultEdges = () => (graphView.defaultEdges || []).map(edge => ({ ...edge }));
+
 window.getSelectedGraphNodeIds = () => Array.from(graphView.selectedNodeIds || []);
+
 window.freeModuleInputPort = _freeModuleInputPort;
+
 window.pushGraphUndo = _pushGraphUndo;
+
 window.applyGraphDiffHighlights = applyGraphDiffHighlights;
+
 window.clearGraphDiffHighlights = clearGraphDiffHighlights;
+
 window.showGraphHarnessPreview = showGraphHarnessPreview;
+
 window.clearGraphHarnessPreview = clearGraphHarnessPreview;
+
 window.getGraphPreviewNodes = () => graphView.previewNodes.map(node => ({ ...node }));
+
 window.toggleGraphView = () => {
   renderGraphCanvas();
 };
+
 window.closeGraphView = () => {};
 
 if (document.readyState === 'loading') {
