@@ -24,6 +24,7 @@ const entries = [
   'graph-interact.js',
   'graph-custom.js',
   'graph-workflow.js',
+  'graph-export.js',
   'knowledge.js',
   'models.js',
   'harness.js',

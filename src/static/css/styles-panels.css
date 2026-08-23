@@ -2657,3 +2657,154 @@
 .memory-dialog-actions button { padding: 8px 18px; border-radius: 8px; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: var(--surface-container); color: var(--text-primary); }
 .memory-dialog-actions .memory-dialog-danger { background: #ef4444; border-color: #ef4444; color: #fff; }
 
+
+/* ---------- 探索网超高清导出 ---------- */
+.graph-export-menu {
+  position: absolute;
+  right: 16px;
+  bottom: 66px;
+  z-index: 46;
+  width: 300px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.graph-export-menu-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.graph-export-menu-sub {
+  font-size: 11px;
+  opacity: 0.65;
+  line-height: 1.55;
+}
+
+.graph-export-scale-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.graph-export-scale-row b {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.graph-export-scale-row .graph-export-res {
+  opacity: 0.55;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-export-scale-row:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--btn-active-bg);
+}
+
+.graph-export-scale-row:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.graph-export-menu-opt {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.85;
+  cursor: pointer;
+}
+
+.graph-export-menu-foot {
+  font-size: 10.5px;
+  opacity: 0.45;
+  line-height: 1.5;
+}
+
+/* 导出快照内部净化：随页面样式一起内联进 SVG 生效 */
+.graph-export-root *,
+.graph-export-root *::before,
+.graph-export-root *::after {
+  transition: none !important;
+  animation: none !important;
+  backdrop-filter: none !important;
+}
+
+/* 纯交互控件隐藏但保留布局（连线端口不漂移） */
+.graph-export-root .graph-node-delete-toggle,
+.graph-export-root .graph-node-minimize-toggle,
+.graph-export-root .graph-node-edit-toggle,
+.graph-export-root .graph-port-remove,
+.graph-export-root .graph-add-port-btn,
+.graph-export-root .graph-add-input-btn,
+.graph-export-root .graph-resize-handle,
+.graph-export-root .graph-group-resize-handle,
+.graph-export-root .graph-group-color-input,
+.graph-export-root .graph-group-delete-btn,
+.graph-export-root .graph-group-add-btn,
+.graph-export-root .graph-regen-btn,
+.graph-export-root .graph-hub-connect-btn,
+.graph-export-root .graph-draft-close,
+.graph-export-root .graph-draft-actions,
+.graph-export-root .graph-node-actions,
+.graph-export-root .graph-source-file-btn,
+.graph-export-root .graph-source-paste-btn,
+.graph-export-root .graph-source-controls,
+.graph-export-root .graph-source-file-input,
+.graph-export-root .graph-knowledge-actions,
+.graph-export-root .graph-relation-actions,
+.graph-export-root .graph-ai-eval-accept,
+.graph-export-root .graph-ai-eval-ignore {
+  visibility: hidden !important;
+}
+
+/* 输入框呈现为纯文本观感（内容仍完整可见） */
+.graph-export-root textarea,
+.graph-export-root .graph-group-name-input {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  resize: none !important;
+  outline: none !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  overflow: hidden !important;
+}
+
+/* 描边随输出倍率缩放（覆盖 non-scaling-stroke） */
+.graph-export-root .graph-edge,
+.graph-export-root .graph-edge-link {
+  vector-effect: none !important;
+}
+
+.graph-export-iframe-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(120, 140, 180, 0.5);
+  border-radius: 10px;
+  color: #7c8db5;
+  font-size: 11px;
+  text-align: center;
+  padding: 8px;
+  box-sizing: border-box;
+  background: rgba(127, 150, 190, 0.06);
+}
