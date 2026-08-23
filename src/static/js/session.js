@@ -606,10 +606,19 @@
       return option ? option.svg : escapeHtml(icon);
     }
 
+    // 重命名进行中标志：置位期间推迟 renderSessionList，
+    // 防止 15s 定时同步重建侧栏 DOM 把正在输入的重命名框销毁（输入被打断）
+    let _sessionRenameActive = false;
+
     // 渲染会话列表
     function renderSessionList() {
       const list = document.getElementById('sessionList');
       if (!list) return;
+      if (_sessionRenameActive) {
+        // 自愈兜底：输入框已不在 DOM 却仍处于改名态（异常路径未触发 blur），解除冻结
+        if (!document.querySelector('.session-rename-input')) _sessionRenameActive = false;
+        else return; // 改名进行中：推迟重绘，结束后由 doSave/取消 统一刷新
+      }
       const keys = Object.keys(sessions);
       keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
 
@@ -639,6 +648,7 @@
     // ====== 对话重命名 ======
     function startRenameSession(event, sessionId) {
       event.stopPropagation();
+      _sessionRenameActive = true;
       // 从按钮向上找到 session-item，再找到 session-title
       const itemEl = event.currentTarget.closest('.session-item');
       const titleEl = itemEl?.querySelector('.session-title');
@@ -656,9 +666,11 @@
 
       let saved = false;
       let cancelled = false;
+      const finishRename = () => { _sessionRenameActive = false; };
       const doSave = () => {
         if (saved || cancelled) return;
         saved = true;
+        finishRename();
         const newTitle = input.value.trim() || currentTitle;
         if (sessions[sessionId]) {
           sessions[sessionId].title = newTitle;
@@ -678,6 +690,7 @@
         if (e.key === 'Escape') {
           e.preventDefault();
           cancelled = true;
+          finishRename();
           renderSessionList();
         }
       });

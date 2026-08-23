@@ -195,6 +195,7 @@ function createManualNode(nodeKind) {
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
+    messageIndex: -1,
     timestamp: Date.now(),
     pinned: false,
     fixedX: null,
@@ -240,6 +241,45 @@ function deleteCustomNode(nodeId, pushUndo = true) {
   state.customNodes = (state.customNodes || []).filter(item => item.id !== nodeId);
   state.connections = (state.connections || []).filter(edge => edge.from !== nodeId && edge.to !== nodeId);
   _saveGraphState(state);
+  renderGraphCanvas();
+}
+
+// ===== 总结类节点（AI 总结 / 我的总结）的人工编辑 =====
+// 此前这两类节点一旦有内容即只读：我的总结的内联输入框只在空内容时出现，
+// AI 总结生成完成后无任何修改入口。这里补一个与模块编辑一致的弹窗。
+function editCustomNodeContent(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.messageIndex >= 0 || (node.kind !== 'summary' && node.kind !== 'note')) return;
+  closeModuleNodeModal();
+  const title = node.kind === 'summary' ? '人工编辑：AI 总结' : '人工编辑：我的总结';
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-network-modal-overlay';
+  overlay.innerHTML = '<div class="graph-network-modal">'
+    + '<div class="graph-network-modal-head"><span>' + escapeHtml(title) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
+    + '<label>总结内容</label>'
+    + '<textarea id="customNodeContentBox" rows="8">' + escapeHtml(node.content || '') + '</textarea>'
+    + '<div class="graph-network-modal-actions">'
+    + '<button class="graph-network-modal-save" onclick="saveCustomNodeContent(\'' + node.id + '\')">保存</button>'
+    + '<button onclick="closeModuleNodeModal()">取消</button>'
+    + '</div>'
+    + '</div>';
+  overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeModuleNodeModal(); });
+  document.body.appendChild(overlay);
+  moduleNodeModalOverlay = overlay;
+}
+
+function saveCustomNodeContent(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.messageIndex >= 0 || (node.kind !== 'summary' && node.kind !== 'note')) return;
+  node.content = document.getElementById('customNodeContentBox')?.value || '';
+  node.summary = _graphSummary(node.content);
+  node.status = (node.content || '').trim() ? 'done' : 'waiting';
+  // 人工改写后同步 inputHash 为当前值，避免「全部开始」因上游未变化而误判需要重新生成
+  if (typeof _nodeInputHash === 'function') {
+    try { node.inputHash = _nodeInputHash(node); } catch (e) { /* 保持原值 */ }
+  }
+  _saveCustomNodes();
+  closeModuleNodeModal();
   renderGraphCanvas();
 }
 
@@ -907,7 +947,28 @@ function _ensureLinkCurveDragListeners() {
       _beginLinkCurveDrag(handle.dataset.edgeKey, handle.dataset.handle, event);
       return;
     }
-    // 点击手柄以外区域退出编辑态（双击联系线可再次进入）
+    // 双击检测必须在 pointerdown 做（重渲染前、且不受 click 改派影响）：
+    // 进/出精调态都会重绘替换 SVG 元素，第二次点击的 click 事件常被浏览器
+    // 改派到公共祖先容器，导致原生 dblclick 与 click 分支都收不到连线目标。
+    const linkEl = event.target && event.target.closest
+      ? event.target.closest('.graph-edge-link, .graph-edge-link-label')
+      : null;
+    const pressNow = Date.now();
+    const lastPress = graphView._lastLinkEdgePress || null;
+    if (linkEl && linkEl.dataset.edgeKey) {
+      const pressKey = linkEl.dataset.edgeKey;
+      if (lastPress && lastPress.key === pressKey && (pressNow - lastPress.t) < 450
+          && Math.abs(lastPress.cx - event.clientX) < 10 && Math.abs(lastPress.cy - event.clientY) < 10) {
+        graphView._lastLinkEdgePress = null;
+        graphView.suppressClick = true;      // 吞掉本次手势的 click，避免再次进入精调态
+        graphView.edgeCurveEditKey = null;
+        openLinkEdgeModal(pressKey);
+        return;
+      }
+      graphView._lastLinkEdgePress = { key: pressKey, t: pressNow, cx: event.clientX, cy: event.clientY };
+    } else {
+      graphView._lastLinkEdgePress = null;
+    }
     if (graphView.edgeCurveEditKey) exitLinkCurveEdit();
   }, true);
   document.addEventListener('pointermove', event => {

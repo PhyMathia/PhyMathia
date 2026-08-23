@@ -10,6 +10,11 @@
 @property --phi-lamp-on-dark { syntax: '<color>'; inherits: true; initial-value: #f59e0b; }
 @property --phi-lamp-off { syntax: '<color>'; inherits: true; initial-value: #94a3b8; }
 @property --phi-lamp-off-dark { syntax: '<color>'; inherits: true; initial-value: #475569; }
+@property --phi-kb-bg { syntax: '<color>'; inherits: true; initial-value: #1e293b; }
+@property --phi-kb-border { syntax: '<color>'; inherits: true; initial-value: #475569; }
+@property --phi-kb-key { syntax: '<color>'; inherits: true; initial-value: #334155; }
+@property --phi-kb-key-border { syntax: '<color>'; inherits: true; initial-value: #0f172a; }
+@property --phi-kb-shadow { syntax: '<color>'; inherits: true; initial-value: rgba(15, 23, 42, 0.6); }
 
 .phi-pet {
   position: absolute;
@@ -31,12 +36,20 @@
   --phi-lamp-on-dark: #f59e0b;
   --phi-lamp-off: var(--phi-body-hi);
   --phi-lamp-off-dark: var(--phi-body);
+  /* 桌宠“键盘”（工作状态）配色 */
+  --phi-kb-bg: #1e293b;
+  --phi-kb-border: #475569;
+  --phi-kb-key: #334155;
+  --phi-kb-key-border: #0f172a;
+  --phi-kb-shadow: rgba(15, 23, 42, 0.6);
   /* 主题切换渐变：与全局 0.35s ease 一致 */
   transition:
     --phi-outline 0.35s ease, --phi-body 0.35s ease, --phi-body-hi 0.35s ease,
     --phi-body-shadow 0.35s ease, --phi-eye 0.35s ease, --phi-eye-dark 0.35s ease,
     --phi-error 0.35s ease, --phi-lamp-on 0.35s ease, --phi-lamp-on-dark 0.35s ease,
-    --phi-lamp-off 0.35s ease, --phi-lamp-off-dark 0.35s ease;
+    --phi-lamp-off 0.35s ease, --phi-lamp-off-dark 0.35s ease,
+    --phi-kb-bg 0.35s ease, --phi-kb-border 0.35s ease, --phi-kb-key 0.35s ease,
+    --phi-kb-key-border 0.35s ease, --phi-kb-shadow 0.35s ease;
 }
 /* 浅色模式：暖橘+暖棕描边（朋友版）、柔和投影；眼睛浅蓝；熄灭灯泡保持原灰（深色模式则跟随身体上部颜色） */
 [data-theme="light"] .phi-pet {
@@ -51,6 +64,12 @@
   --phi-lamp-on-dark: #fbbf24; /* 浅色：灯亮暗部（亮琥珀） */
   --phi-lamp-off: #93c5fd;     /* 浅色：灯灭（浅蓝，再深一点点） */
   --phi-lamp-off-dark: #60a5fa; /* 浅色：灯灭暗部（再深一点点） */
+  /* 浅色模式键盘：浅灰底、浅描边、柔和投影（与旧版硬编码一致） */
+  --phi-kb-bg: #f1f5f9;
+  --phi-kb-border: #cbd5e1;
+  --phi-kb-key: #e2e8f0;
+  --phi-kb-key-border: #94a3b8;
+  --phi-kb-shadow: rgba(15, 23, 42, 0.12);
 }
 
 .phi-code-symbols {
@@ -226,13 +245,15 @@
   flex-direction: column;
   justify-content: space-between;
   gap: 2.4%;
-  background: #1e293b;
-  border: 2px solid #475569;
+  background: var(--phi-kb-bg);
+  border: 2px solid var(--phi-kb-border);
   border-radius: 10%;
-  box-shadow: 0 2px 0 rgba(15, 23, 42, 0.6);
+  box-shadow: 0 2px 0 var(--phi-kb-shadow);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 320ms ease;
+  /* opacity 负责显示/隐藏；颜色/阴影随主题变量 0.35s 渐变（与 Φ 主体一致） */
+  transition: opacity 320ms ease,
+    background-color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
 }
 
 .phi-kb-row {
@@ -244,8 +265,8 @@
 
 .phi-kb-row i {
   flex: 1;
-  background: #334155;
-  border: 1px solid #0f172a;
+  background: var(--phi-kb-key);
+  border: 1px solid var(--phi-kb-key-border);
   border-radius: 14%;
   transition: background-color 0.35s ease, border-color 0.35s ease;
 }
@@ -639,15 +660,8 @@ html[data-theme="light"] .phi-pet-root {
   filter: brightness(1.25) saturate(1.15) drop-shadow(0 0 2px rgba(253, 224, 71, 0.9));
   transition: filter 0.35s ease;
 }
-[data-theme="light"] .phi-keyboard {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-  box-shadow: 0 2px 0 rgba(15, 23, 42, 0.12);
-}
-[data-theme="light"] .phi-kb-row i {
-  background: #e2e8f0;
-  border-color: #94a3b8;
-}
+/* 键盘浅色配色已统一收敛到 [data-theme="light"] .phi-pet 的 --phi-kb-* 变量，
+   由 @property + transition 驱动 0.35s 渐变（不再在元素上硬编码，避免切换跳变）。 */
 
 @media (prefers-reduced-motion: reduce) {
   .phi-pet,

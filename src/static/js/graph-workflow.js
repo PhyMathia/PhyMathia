@@ -1801,8 +1801,21 @@ function _initGraphCanvasEvents() {
     if (e.target.closest('button, a, input, textarea, iframe, .graph-port')) return;
     const linkEdgeEl = e.target.closest('.graph-edge-link, .graph-edge-link-label');
     if (linkEdgeEl && linkEdgeEl.dataset.edgeKey) {
-      // 单击联系线：直接进入手柄精调（钢笔式拖拽）
-      if (typeof window.enterLinkCurveEdit === 'function') window.enterLinkCurveEdit(linkEdgeEl.dataset.edgeKey);
+      // 单击联系线：进入手柄精调（钢笔式拖拽）。
+      // 双击必须手动检测：进/出精调态都会 _redrawEdges() 替换 SVG 元素，
+      // 浏览器原生 dblclick 会落在公共祖先容器上，closest('.graph-edge') 永远失配。
+      const linkKey = linkEdgeEl.dataset.edgeKey;
+      const now = Date.now();
+      const last = graphView._lastLinkEdgeClick || null;
+      if (last && last.key === linkKey && (now - last.t) < 450
+          && Math.abs(last.cx - e.clientX) < 10 && Math.abs(last.cy - e.clientY) < 10) {
+        graphView._lastLinkEdgeClick = null;
+        graphView.edgeCurveEditKey = null;
+        openLinkEdgeModal(linkKey);
+        return;
+      }
+      graphView._lastLinkEdgeClick = { key: linkKey, t: now, cx: e.clientX, cy: e.clientY };
+      if (typeof window.enterLinkCurveEdit === 'function') window.enterLinkCurveEdit(linkKey);
       return;
     }
     if (graphView.linkMode) {
@@ -1839,12 +1852,21 @@ function _initGraphCanvasEvents() {
     }
   });
   graphCanvas.addEventListener('dblclick', e => {
-    if (graphView.selectMode || graphView.linkMode) return;
+    if (graphView.selectMode || graphView.linkMode) {
+      // 静默返回会让用户误以为双击编辑坏了；给出原因提示
+      if (typeof showToast === 'function') {
+        showToast(graphView.linkMode
+          ? '联系模式中：完成连线或再次点击工具栏退出后，才能双击编辑'
+          : '文字选择模式中：先点击「选择文字」按钮退出，再双击编辑');
+      }
+      return;
+    }
     const edgeEl = e.target.closest('.graph-edge');
     if (edgeEl && edgeEl.dataset.edgeKey) {
       e.preventDefault();
       e.stopPropagation();
-      // 联系线：双击打开编辑弹窗；其余连线：双击删除
+      // 联系线（联系模式创建的注释性箭头）：双击打开编辑弹窗；
+      // 其余连线（端口拖出的父子关系）：双击=删除（tooltip 有说明）
       const edgeKey = edgeEl.dataset.edgeKey;
       const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
       if (edge && edge.link) {
@@ -1852,6 +1874,7 @@ function _initGraphCanvasEvents() {
         return;
       }
       _removeGraphEdge(edgeKey);
+      if (typeof showToast === 'function') showToast('已删除连线（Ctrl+Z 可撤销）');
       return;
     }
     const dblNodeEl = e.target.closest('.graph-node');

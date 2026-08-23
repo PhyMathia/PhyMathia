@@ -1,6 +1,6 @@
 /* ====== 知识检测：核心状态、工具与出题构造 ====== */
 
-/* ====== 知识检测 ====== */
+/* ====== 知识检测 ====== */
 
 const QUIZ_STATS_KEY = 'phymathia_quiz_stats';
 
@@ -125,7 +125,15 @@ let quizAiRequestId = 0;
 
 let quizAiController = null;
 
-const QUIZ_AI_TIMEOUT_MS = 60000;
+// 出题请求超时：推理类模型生成整份 JSON 题库常超 60s，默认放宽到 3 分钟；
+// 可通过 localStorage['phymathia_quiz_timeout_ms'] 自定义（30s~10min）
+const QUIZ_AI_TIMEOUT_MS = (() => {
+  try {
+    const v = parseInt(localStorage.getItem('phymathia_quiz_timeout_ms'), 10);
+    if (v >= 30000 && v <= 600000) return v;
+  } catch (e) {}
+  return 180000;
+})();
 
 const QUIZ_REVIEW_INTERVALS_DAYS = [1, 3, 7, 14, 30, 60];
 
@@ -138,6 +146,40 @@ const QUIZ_BANK_KEY = 'phymathia_quiz_bank';
 let quizSourcePreference = 'ai';
 
 let quizBank = null;
+
+// 最近一次 AI 出题失败的友好原因（供提示文案展示），空串=无错误
+let quizAiLastError = '';
+
+function _quizFriendlyError(msg) {
+  const s = String(msg || '');
+  if (/abort/i.test(s)) return '请求超时（' + Math.round(QUIZ_AI_TIMEOUT_MS / 1000) + ' 秒无响应）';
+  if (/authentication|api[_ ]?key|401/i.test(s)) return 'API Key 无效或未生效（401）';
+  if (/insufficient|balance|402/i.test(s)) return '账户余额不足（402）';
+  if (/429|rate[- ]?limit/i.test(s)) return '请求过于频繁（429 限流）';
+  if (/HTTP 5\d\d/i.test(s)) return '模型服务端错误';
+  return s.slice(0, 120) || '未知错误';
+}
+
+// 出题请求的中止守卫：空闲超时（每收到一段数据就续期，流式生成再慢也不会被误杀），
+// 另有 10 分钟绝对上限兜底。之前是对整个请求硬掐超时，推理类模型生成整份题库必被误杀。
+function _quizAbortGuard(controller) {
+  if (!controller) return { bump() {}, dispose() {} };
+  const idleMs = QUIZ_AI_TIMEOUT_MS;
+  let idle = null, total = null, done = false;
+  const fire = (why) => {
+    if (done) return;
+    done = true;
+    quizAiLastError = why;
+    try { controller.abort(); } catch (e) {}
+  };
+  const armIdle = () => { idle = setTimeout(() => fire('请求超时（连续 ' + Math.round(idleMs / 1000) + ' 秒无响应）'), idleMs); };
+  armIdle();
+  total = setTimeout(() => fire('生成总时长超过 10 分钟，已中止'), 600000);
+  return {
+    bump() { if (!done) { if (idle) clearTimeout(idle); armIdle(); } },
+    dispose() { done = true; if (idle) clearTimeout(idle); if (total) clearTimeout(total); }
+  };
+}
 
 let quizAiProgressTimer = null;
 try {

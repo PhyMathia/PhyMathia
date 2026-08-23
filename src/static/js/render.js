@@ -51,14 +51,19 @@ function _sanitizeVizHtml(html) {
 
 function buildVizCard(htmlContent, vizId) {
   const safe = _sanitizeVizHtml(htmlContent);
-  // 注入主题桥接脚本（在 sanitize 之后，避免被清理）：
-  // 监听父页面主题切换消息 + 加载时读取父主题，设置 data-theme 并尝试调用页面内主题机制
-  let finalHtml = safe.replace(/<\/head>/i, _VIZ_THEME_BRIDGE + '</head>');
+  // 注入公式桥接 + 主题桥接脚本（在 sanitize 之后，避免被清理）：
+  // 公式桥接：iframe 与主页面 KaTeX 隔离，统一注入本地 KaTeX auto-render，
+  // 保证可视化内 $...$/$$...$$/\(..\)/\[...\] 公式确定性地渲染（不再取决于
+  // 该次生成是否碰巧自带 CDN 数学库）；主题桥接：监听父页面主题切换消息 +
+  // 加载时读取父主题，设置 data-theme 并尝试调用页面内主题机制
+  // 注意：必须用函数形式的 replace——字符串替换里 $$ 是特殊模式（转义为单个 $），
+  // 会把桥接脚本的 $$ 定界符吞掉一个，导致可视化内公式全部渲染失败
+  let finalHtml = safe.replace(/<\/head>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + '</head>');
   if (finalHtml === safe) {
-    finalHtml = safe.replace(/<\/body>/i, _VIZ_THEME_BRIDGE + '</body>');
+    finalHtml = safe.replace(/<\/body>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + '</body>');
   }
   if (finalHtml === safe) {
-    finalHtml = safe + _VIZ_THEME_BRIDGE;
+    finalHtml = safe + _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE;
   }
   _vizStore[vizId] = finalHtml;  // 保存（含桥接脚本）供全屏/复制/新标签页使用
 
@@ -110,6 +115,40 @@ const _VIZ_THEME_BRIDGE = '<script>(function(){'
   + 'if(!has&&(typeof window.applyTheme==="function"||typeof window.setTheme==="function"||typeof window.toggleTheme==="function"))has=true;'
   + 'window["parent"].postMessage({type:"phymathia-theme-native",has:has},"*");'
   + '}catch(e){window["parent"]&&window["parent"].postMessage({type:"phymathia-theme-native",has:false},"*");}'
+  + '})();<\/script>';
+
+// ====== 可视化 iframe 公式桥接 ======
+// 注入到 AI 生成的 HTML 中：从宿主加载本地 KaTeX（/vendor/katex/），auto-render 渲染
+// 页面内的 $...$、$$...$$、\(...\)、\[...\]。路径说明：
+// - srcdoc iframe 相对 URL 继承父页面 base 即可命中宿主 /vendor/katex 本地副本
+// - 「新标签页打开」是 blob URL 文档——blob 属于 cannot-be-a-base URL，任何相对路径
+//   （含 / 开头的根相对路径）都无法解析！必须写死宿主绝对地址（运行时取 location.origin）
+// 让位规则：页面已自带 MathJax 则完全不干预；已自带 KaTeX（renderMathInElement）则直接用。
+// 加载失败静默降级（公式保持原文，不影响页面其余功能）。
+const _VIZ_ASSET_BASE = (function () {
+  try {
+    const o = window.location.origin;
+    return (o && o.indexOf('http') === 0) ? o : '';
+  } catch (e) { return ''; }
+})();
+const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.css">'
+  + '<script>(function(){'
+  + 'if(window.__pmVizMathBooted)return;window.__pmVizMathBooted=true;'
+  + 'var OPTS={delimiters:['
+  + '{left:"$$",right:"$$",display:true},'
+  + '{left:"\\\\[",right:"\\\\]",display:true},'
+  + '{left:"\\\\(",right:"\\\\)",display:false},'
+  + '{left:"$",right:"$",display:false}'
+  + '],throwOnError:false,ignoredTags:["script","noscript","style","textarea","pre","code","option"]};'
+  + 'function run(){try{if(window.renderMathInElement){renderMathInElement(document.body||document.documentElement,OPTS);}}catch(e){}}'
+  + 'function done(){run();try{if(document.fonts&&document.fonts.ready){document.fonts.ready.then(run,function(){});}}catch(e){}}'
+  + 'function load(src,next){var s=document.createElement("script");s.src=src;s.onload=next;s.onerror=function(){};(document.head||document.documentElement).appendChild(s);}'
+  + 'function boot(){'
+  + 'if(window.MathJax)return;'
+  + 'if(window.renderMathInElement){done();return;}'
+  + 'load("' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.js",function(){load("' + _VIZ_ASSET_BASE + '/vendor/katex/contrib/auto-render.min.js",done);});'
+  + '}'
+  + 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",boot);}else{boot();}'
   + '})();<\/script>';
 
 // 父页面主题切换时，向所有可视化 iframe（含全屏 iframe）广播

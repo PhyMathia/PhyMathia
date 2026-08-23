@@ -593,6 +593,22 @@ async function _readModelStream(resp, onProgress) {
     }
     if (typeof onProgress === 'function') onProgress(content.length);
   }
+  // 兜底：代理有时以普通 JSON（非 SSE）返回错误，如 {"detail":"..."}。
+  // 此时上面逐行解析收不到任何 content，若静默返回空串，上层只会报“出题失败”
+  // 却不知道原因。这里显式抛出，让失败原因透出到界面。
+  if (!content) {
+    const trimmed = buffer.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const j = JSON.parse(trimmed);
+        const detail = j.detail || j.error && (j.error.message || JSON.stringify(j.error)) || '';
+        if (detail) throw new Error(String(detail));
+      } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+      }
+    }
+    if (trimmed) throw new Error('上游返回非流式内容：' + trimmed.slice(0, 120));
+  }
   return content;
 }
 
@@ -748,4 +764,4 @@ function deleteWrongQuestion(encodedKey) {
     quizState.wrongList = _readWrongQuestions().filter(item => quizFilterTopic === 'all' || item.topicKey === quizFilterTopic);
   }
   renderQuiz();
-}
+}

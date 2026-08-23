@@ -838,7 +838,9 @@ function _renderNodeHtml(node, messages, state) {
   const minimizeToggle = _graphMinimizeToggleHtml(node);
   const editBtn = node.kind === 'module'
     ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
-    : '';
+    : (((node.kind === 'summary' || node.kind === 'note') && !(node.messageIndex >= 0))
+      ? '<button class="graph-node-edit-toggle" onclick="editCustomNodeContent(\'' + node.id + '\')" title="编辑总结内容"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
+      : '');
   const deleteAction = node.messageIndex < 0
     ? 'deleteCustomNode(\'' + node.id + '\')'
     : 'graphModuleAction(\'delete\',\'' + node.id + '\')';

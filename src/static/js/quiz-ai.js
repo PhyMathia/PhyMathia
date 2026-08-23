@@ -163,7 +163,8 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
     .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
     .replace(/\{\{QUESTION_COUNT\}\}/g, quizTargetCount);
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), QUIZ_AI_TIMEOUT_MS) : null;
+  // 空闲超时守卫：流式有数据就续期，只有持续无响应才中止（推理模型友好）
+  const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
   if (quizState) {
     quizState.aiProgress = 90;
@@ -172,6 +173,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
   }
   const context = _buildQuizGenerationContext(pool);
   quizAiStatusText = 'AI 正在生成检测题…';
+  quizAiLastError = '';
   if (quizState) {
     quizState.aiProgress = 5;
     quizState.aiStage = 'generate';
@@ -196,9 +198,16 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw = await _readModelStream(resp, received => {
+      if (guard) guard.bump();
       if (quizState) quizState.aiProgress = Math.min(85, 10 + Math.round(received / 1200 * 70));
     });
     const questions = _sanitizeAIQuestions(raw, pool);
+    if (questions.length < 2) {
+      // 流本身成功但内容不可用：区分「空返回」与「格式解析失败」，避免静默失败无从排查
+      quizAiLastError = raw.trim()
+        ? '返回内容无法解析为题目（长度 ' + raw.length + '，开头：' + raw.trim().slice(0, 50) + '）'
+        : '上游返回了空内容';
+    }
     if (requestId !== undefined && requestId !== quizAiRequestId) return null;
     if (verify && questions.length >= 2) {
       quizAiStatusText = 'AI 正在校验题目…';
@@ -212,11 +221,13 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
     }
     return questions.length >= 2 ? questions : null;
   } catch (e) {
+    // 记录友好原因，供 aiNotice 提示展示（否则用户只能看到泛泛的“请检查 Key”）
+    quizAiLastError = quizAiLastError || (e && e.name === 'AbortError' ? '请求超时' : _quizFriendlyError(e && e.message));
     if (e && e.name === 'AbortError') console.warn('AI quiz generation timed out or superseded');
     else console.warn('AI quiz generation failed:', e);
     return null;
   } finally {
-    if (timer) clearTimeout(timer);
+    if (guard) guard.dispose();
     if (controller && quizAiController === controller) quizAiController = null;
     quizAiStatusText = '';
     _clearQuizProgressTimer();
@@ -425,7 +436,7 @@ async function _aiVerifyQuizQuestions(pool, questions) {
     .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
     .replace(/\{\{QUESTION_COUNT\}\}/g, quizTargetCount);
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), QUIZ_AI_TIMEOUT_MS) : null;
+  const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
   const context = _buildQuizGenerationContext(pool);
   const payload = questions.map(q => ({
@@ -459,16 +470,21 @@ async function _aiVerifyQuizQuestions(pool, questions) {
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw = await _readModelStream(resp, received => {
+      if (guard) guard.bump();
       if (quizState) quizState.aiProgress = Math.min(98, 90 + Math.round(received / 800 * 8));
     });
     const verified = _sanitizeAIQuestions(raw, pool);
+    if (verified.length < 2) {
+      quizAiLastError = raw.trim() ? '校验返回无法解析为题目' : '校验返回了空内容';
+    }
     return verified.length >= 2 ? verified : null;
   } catch (e) {
+    quizAiLastError = quizAiLastError || (e && e.name === 'AbortError' ? '请求超时' : _quizFriendlyError(e && e.message));
     if (e && e.name === 'AbortError') console.warn('AI quiz verification timed out or superseded');
     else console.warn('AI quiz verification failed:', e);
     return null;
   } finally {
-    if (timer) clearTimeout(timer);
+    if (guard) guard.dispose();
     if (controller && quizAiController === controller) quizAiController = null;
     _clearQuizProgressTimer();
   }
@@ -477,12 +493,25 @@ async function _aiVerifyQuizQuestions(pool, questions) {
 async function _generateQuestions(pool) {
   const requestId = ++quizAiRequestId;
   if (quizAiController) quizAiController.abort();
+  // 素材池为空时直接给出可行动的提示，不再把空素材发给模型（否则模型只能返回空题库）
+  const emptyPool = !(pool.knowledge || []).length && !(pool.formulas || []).length;
+  if (emptyPool && quizSourcePreference !== 'local') {
+    quizAiLastError = '当前范围没有可出题的知识点/公式';
+    if (quizState) {
+      quizState.aiPending = false;
+      quizState.aiProgress = 0;
+      quizState.sourceMode = 'local';
+      quizState.aiNotice = '当前范围（画布检测=仅当前画布）没有可出题的知识点/公式；'
+        + '请改用「全局检测」，或先在画布对话中生成知识点，再重新出题';
+    }
+    return [];
+  }
   if (quizState && quizSourcePreference !== 'local') {
     quizState.aiPending = true;
     quizState.aiProgress = 0;
     quizState.aiStage = 'generate';
   }
-  const ai = quizSourcePreference === 'local' ? [] : (await _aiGenerateQuizQuestions(pool, requestId) || []);
+  const ai = emptyPool ? [] : (await _aiGenerateQuizQuestions(pool, requestId) || []);
   const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool);
   if (quizState) quizState.aiPending = false;
   if (ai.length) _saveQuizBank(pool, ai);
@@ -497,7 +526,7 @@ async function _generateQuestions(pool) {
       ? ''
       : quizSourcePreference === 'local'
         ? (local.length ? '当前为仅本地模式' : '当前为仅本地模式，但本地题不足')
-        : (model ? 'AI 出题失败，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址' : '未配置 AI 模型，已使用本地题');
+        : (model ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址' : '未配置 AI 模型，已使用本地题');
   }
   return _mergeQuizQuestions(ai, local);
 }
@@ -526,10 +555,10 @@ function _startQuizGeneration(pool) {
             : 'local';
         if (!ai) {
           quizState.aiNotice = quizSourcePreference === 'ai'
-            ? 'AI 出题失败，当前为仅AI模式，暂无可用题；请检查出题模型/主模型的 API Key 和地址'
+            ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，当前为仅AI模式，暂无可用题；请检查出题模型/主模型的 API Key 和地址'
             : local.length
-              ? 'AI 出题失败，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址'
-              : 'AI 出题失败，且本地题不足；请检查出题模型/主模型的 API Key 和地址';
+              ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址'
+              : 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，且本地题不足；请检查出题模型/主模型的 API Key 和地址';
         }
         if (quizState.phase === 'intro') {
           renderQuiz();
@@ -542,10 +571,10 @@ function _startQuizGeneration(pool) {
           quizState.aiStage = '';
           quizState.sourceMode = quizSourcePreference === 'ai' ? 'ai' : 'local';
           quizState.aiNotice = quizSourcePreference === 'ai'
-            ? 'AI 出题失败，当前为仅AI模式，暂无可用题；请检查出题模型/主模型的 API Key 和地址'
+            ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，当前为仅AI模式，暂无可用题；请检查出题模型/主模型的 API Key 和地址'
             : local.length
-              ? 'AI 出题失败，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址'
-              : 'AI 出题失败，且本地题不足；请检查出题模型/主模型的 API Key 和地址';
+              ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址'
+              : 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，且本地题不足；请检查出题模型/主模型的 API Key 和地址';
         }
         return null;
       })
