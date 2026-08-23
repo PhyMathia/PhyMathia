@@ -4971,3 +4971,84 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-canvas.graph-heavy-zoom .graph-edge path {
   transition: none !important;
 }
+
+/* ---------- 节点拉伸跟随填充：内容体/文本框随 customWidth/Height 生长 ----------
+   拖拽把手把高度写到 .graph-node（inline !important），既有 flex 链为
+   .graph-node(fixed h) > .graph-node-main(flex:1) > .graph-node-full-content(flex:1)，
+   但 body 容器与 textarea 缺 flex，导致"我的总结/知识点/联系/输入"等节点拉大后
+   文本框原地不动。未拉伸的节点容器高度为 auto，以下规则对它们无副作用。 */
+.graph-node .graph-knowledge-body,
+.graph-node .graph-relation-body,
+.graph-node .graph-source-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+.graph-node .graph-knowledge-formulas,
+.graph-node .graph-knowledge-actions,
+.graph-node .graph-relation-actions {
+  flex-shrink: 0 !important;
+}
+
+.graph-node .graph-knowledge-body .graph-custom-node-content,
+.graph-node .graph-relation-body .graph-custom-node-content,
+.graph-node .graph-source-body textarea {
+  flex: 1 1 auto !important;
+  min-height: 64px !important;
+}
+
+/* 通用渲染器：manual 节点（我的总结等）未填写时的编辑框是 full-content 的直接子元素 */
+.graph-node .graph-node-full-content > textarea.graph-custom-node-content {
+  flex: 1 1 auto !important;
+}
+
+/* 已填写内容的展示区（human_note / AI 总结 / 我的总结 / blank 的 markdown）随节点滚动 */
+.graph-node .graph-custom-node-render,
+.graph-node .graph-node-main > .graph-blank-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+}
+
+/* 问题节点：拖高节点时问题输入框跟随生长 */
+.graph-node.resized .graph-custom-question-input {
+  flex: 1 1 auto !important;
+}
+
+/* ---------- 隐形滚动条：默认融入底色，悬停浮现细条 ---------- */
+.graph-canvas textarea,
+.graph-node-full-content,
+.graph-blank-content,
+.graph-custom-node-render,
+.graph-knowledge-formulas {
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(148, 163, 184, 0.28) transparent !important;
+}
+.graph-canvas textarea:hover,
+.graph-canvas textarea:focus,
+.graph-node:hover > .graph-node-main .graph-node-full-content,
+.graph-node:hover .graph-blank-content {
+  scrollbar-color: var(--border) transparent !important;
+}
+.graph-canvas textarea::-webkit-scrollbar {
+  width: 5px !important;
+  height: 5px !important;
+}
+.graph-canvas textarea::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+.graph-canvas textarea::-webkit-scrollbar-thumb {
+  background: transparent !important;
+  border-radius: 3px !important;
+}
+.graph-canvas textarea:hover::-webkit-scrollbar-thumb,
+.graph-canvas textarea:focus::-webkit-scrollbar-thumb {
+  background: var(--border) !important;
+}
+/* 节点内文本框不再显示原生右下角 resize 手柄（尺寸统一由节点拖拽把手控制） */
+.graph-canvas .graph-custom-node-content,
+.graph-canvas .graph-custom-question-input,
+.graph-canvas .graph-blank-input,
+.graph-canvas .graph-source-text-input {
+  resize: none !important;
+}
