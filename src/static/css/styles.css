@@ -2299,4 +2299,18 @@
         padding-bottom: calc(12px + env(safe-area-inset-bottom));
       }
     }
+
+    /* ====== 性能修复：主题切换期间全局禁用过渡 ======
+       :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，翻转 data-theme 时
+       每个插值帧都要全文档重算样式，节点多的画布会持续卡顿数百毫秒。
+       JS 在切换瞬间给 <html> 挂 .theme-switching，450ms 后摘除；
+       背景图交叉淡入按更高优先级豁免，保留原有的淡入体验。 */
+    html.theme-switching *,
+    html.theme-switching *::before,
+    html.theme-switching *::after {
+      transition: none !important;
+    }
+    html.theme-switching .bg-layer {
+      transition: opacity 0.6s ease-in-out !important;
+    }
 

@@ -1795,11 +1795,18 @@ function autoArrangeGraph(preservePinned) {
   fitGraph();
 }
 
+// 高倍缩放降级阈值：超过后图层纹理面积随 zoom 平方膨胀，重型特效（边光晕/节点投影/过渡）
+// 极易耗尽显存，产生灰白瓦片伪影与卡顿。此时画布挂 .graph-heavy-zoom，由 CSS 关闭重型特效。
+const GRAPH_HEAVY_ZOOM_THRESHOLD = 2.2;
+
 function _applyGraphTransform() {
   if (!graphInner) return;
   const state = _graphState();
   graphInner.style.transform = 'translate(' + state.pan.x + 'px, ' + state.pan.y + 'px) scale(' + state.zoom + ')';
   graphView.zoom = state.zoom;
+  if (typeof graphCanvas !== 'undefined' && graphCanvas) {
+    graphCanvas.classList.toggle('graph-heavy-zoom', (state.zoom || 1) > GRAPH_HEAVY_ZOOM_THRESHOLD);
+  }
   if (graphView.previewNodes.length || graphView.previewEdges.length) _renderGraphHarnessPreview();
 }
 

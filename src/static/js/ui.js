@@ -1343,9 +1343,12 @@ function closeExampleGuide() {
   if (_exampleGuideSuspendedOnboarding) {
     _exampleGuideSuspendedOnboarding = false;
     const onboarding = document.getElementById('onboardingOverlay');
+    const exampleInviteIndex = _obSteps.findIndex(step => step.example);
+    const atExampleInvite = exampleInviteIndex !== -1 && _obStep === exampleInviteIndex;
     if (onboarding && _obStep >= 0 && _obStep < _obSteps.length) {
       onboarding.classList.add('active');
-      _renderObStep();
+      if (atExampleInvite) nextObStep();
+      else _renderObStep();
     }
   }
 }
@@ -1623,9 +1626,19 @@ let currentTheme = _getInitialTheme();
 // 延迟更新 mermaid 配置的定时器
 let _mermaidThemeTimer = null;
 
+// 主题切换过渡抑制：styles.css 在 :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，
+// 翻转主题时每个插值帧都要全文档重算样式，节点多的画布会出现明显卡顿。
+// 切换瞬间给 <html> 挂 theme-switching 全局禁用过渡（CSS 端对 .bg-layer 豁免，
+// 背景图交叉淡入保留），450ms 后摘除，颜色即切即稳。
+let _themeSwitchTimer = null;
+
 function applyTheme(theme) {
+  const root = document.documentElement;
+  root.classList.add('theme-switching');
+  if (_themeSwitchTimer) clearTimeout(_themeSwitchTimer);
+  _themeSwitchTimer = setTimeout(() => root.classList.remove('theme-switching'), 450);
   currentTheme = theme;
-  document.documentElement.setAttribute('data-theme', theme);
+  root.setAttribute('data-theme', theme);
   localStorage.setItem(STORAGE_KEY_THEME, theme);
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;

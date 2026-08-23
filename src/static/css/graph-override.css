@@ -110,8 +110,12 @@
 }
 
 /* ---------- 2. 连线：更粗、更醒目、有主次之分 ---------- */
+/* 性能修复：发光 drop-shadow 从"每条边 <g>+<path> 各一层"收敛为整个边层 SVG 一层。
+   拖拽时 _redrawEdges 全量重建 SVG，逐边滤镜会导致每帧重复光栅化几十上百个模糊——
+   这是画布卡顿的另一主源；整层单滤镜在视觉上几乎等效。 */
 .graph-edge-layer {
   overflow: visible !important;
+  filter: drop-shadow(0 0 6px var(--graph-edge-glow)) !important;
 }
 
 .graph-edge {
@@ -121,7 +125,6 @@
   stroke-linecap: round !important;
   stroke-dasharray: none !important;
   opacity: 0.9 !important;
-  filter: drop-shadow(0 0 6px rgba(74, 158, 255, 0.45)) !important;
   vector-effect: none !important;
 }
 
@@ -1049,13 +1052,12 @@
 
 .graph-edge {
   stroke: var(--graph-edge-color) !important;
-  filter: drop-shadow(0 0 6px var(--graph-edge-glow)) !important;
-  transition: --graph-edge-color 0.35s ease, --graph-edge-glow 0.35s ease, filter 0.35s ease, opacity 0.35s ease !important;
+  transition: --graph-edge-color 0.35s ease, --graph-edge-glow 0.35s ease, opacity 0.35s ease !important;
 }
 
-.graph-node {
-  will-change: transform;
-}
+/* 性能修复：不再给每个节点单独开 GPU 合成层（will-change）。
+   世界容器 .graph-canvas-inner 仍保留 will-change，画布整体平移/缩放依旧走合成器；
+   去掉节点级提升后，图层纹理从 N+1 层降为 1 层，显存压力与灰白瓦片伪影随之消除。 */
 
 /* ---------- 10. ComfyUI 风格端口与可编辑连线 ---------- */
 .graph-node {
@@ -1186,16 +1188,10 @@
   fill: none !important;
   stroke: var(--graph-edge-color) !important;
   stroke-width: 2.2 !important;
-  filter: drop-shadow(0 0 6px var(--graph-edge-glow)) !important;
 }
 
 .graph-edge-custom {
   stroke: var(--graph-edge-color) !important;
-  filter: drop-shadow(0 0 8px var(--graph-edge-glow)) !important;
-}
-
-.graph-edge-custom path {
-  filter: drop-shadow(0 0 8px var(--graph-edge-glow)) !important;
 }
 
 .graph-edge-label {
@@ -4956,4 +4952,22 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   height: 0;
   background: transparent;
   -webkit-appearance: none;
+}
+
+/* ---------- 性能修复：高倍缩放自动降级 ----------
+   zoom > 2.2 时（JS 在 _applyGraphTransform 中挂 .graph-heavy-zoom），
+   图层纹理面积随 zoom 平方膨胀，重型特效极易耗尽显存 → 灰白瓦片伪影 + 卡顿。
+   此区间临时关闭光晕/投影/过渡，缩回后自动恢复。 */
+.graph-canvas.graph-heavy-zoom .graph-edge-layer {
+  filter: none !important;
+}
+
+.graph-canvas.graph-heavy-zoom .graph-node {
+  box-shadow: none !important;
+}
+
+.graph-canvas.graph-heavy-zoom .graph-node,
+.graph-canvas.graph-heavy-zoom .graph-edge,
+.graph-canvas.graph-heavy-zoom .graph-edge path {
+  transition: none !important;
 }
