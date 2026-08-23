@@ -681,7 +681,7 @@ function openLinkEdgeModal(edgeKey, fromId, toId) {
     + '<button type="button" class="graph-link-curve-option" data-curve="s" onclick="selectLinkCurve(this)">S 弯</button>'
     + '</div>'
     + '<label class="graph-link-bend-row">曲率 <input type="range" id="linkCurveBend" min="0" max="100" value="' + Math.round(linkCurveBendFactor * 100 / 0.6) + '" oninput="updateLinkCurveBend(this.value)"> <span id="linkCurveBendVal"></span></label>'
-    + '<div class="graph-link-curve-hint">提示：单击连线打开此弹窗；点下方“手柄精调”或双击连线，可像钢笔工具一样拖动圆点调整弯曲。</div>'
+    + '<div class="graph-link-curve-hint">提示：单击连线进入手柄精调（拖动圆点调整弯曲）；双击连线打开此弹窗。</div>'
     + '<div class="graph-network-modal-actions">'
     + '<button class="graph-network-modal-save" onclick="saveLinkEdge(\'' + (edgeKey || '') + '\',\'' + fromId + '\',\'' + toId + '\')">' + (edge ? '保存修改' : '添加联系') + '</button>'
     + (edge ? '<button class="graph-link-edge-curve-btn" onclick="editLinkCurveFromModal(\'' + edgeKey + '\')" title="关闭弹窗，在线上拖动控制圆点精调曲线">手柄精调曲线</button>' : '')
@@ -770,35 +770,15 @@ function deleteLinkEdge(edgeKey) {
   renderGraphCanvas();
 }
 
-// ===== 单击/双击入口协调 =====
-// 单击连线延迟开弹窗：给双击（进手柄编辑）留出取消窗口
-let linkSingleClickTimer = null;
-
-function openLinkModalDeferred(edgeKey) {
-  cancelPendingLinkModal();
-  linkSingleClickTimer = setTimeout(() => {
-    linkSingleClickTimer = null;
-    openLinkEdgeModal(edgeKey);
-  }, 240);
-}
-
-function cancelPendingLinkModal() {
-  if (linkSingleClickTimer) {
-    clearTimeout(linkSingleClickTimer);
-    linkSingleClickTimer = null;
-  }
-}
+// ===== 单击/双击入口 =====
+// 单击联系线：直接进入手柄精调（由画布 click 处理器调用 enterLinkCurveEdit）
+// 双击联系线：打开本弹窗（由画布 dblclick 处理器调用 openLinkEdgeModal）
 
 // 弹窗里的「手柄精调曲线」按钮：关弹窗并进入钢笔式编辑态
 function editLinkCurveFromModal(edgeKey) {
   if (!edgeKey) return;
-  closeLinkCurvePending();
   closeLinkEdgeModal();
   enterLinkCurveEdit(edgeKey);
-}
-
-function closeLinkCurvePending() {
-  linkCurvePending = null;
 }
 
 // ===== 联系线贝塞尔曲线：预设样式 + 钢笔式手柄编辑 =====
@@ -859,7 +839,8 @@ function _linkCurveAnchors(edgeKey) {
 function enterLinkCurveEdit(edgeKey) {
   const found = _linkCurveAnchors(edgeKey);
   if (!found || !found.edge || !found.edge.link) return;
-  cancelPendingLinkModal();
+  // 已处于同一条线的编辑态（如手柄拖拽结束后的 click 事件）时直接忽略
+  if (graphView.edgeCurveEditKey === edgeKey) return;
   _ensureLinkCurveDragListeners();
   graphView.edgeCurveEditKey = edgeKey;
   linkCurveUndoPushed = false;
@@ -891,8 +872,6 @@ function exitLinkCurveEdit() {
 function _beginLinkCurveDrag(edgeKey, which, event) {
   const found = _linkCurveAnchors(edgeKey);
   if (!found || !found.edge || !found.edge.link) return;
-  // 若单击连线挂起了延迟弹窗，进入拖拽前取消，避免拖拽中途弹窗打断
-  cancelPendingLinkModal();
   if (!found.edge.curve || !Number.isFinite(found.edge.curve.dx1)) {
     found.edge.curve = _linkDefaultCurveOffsets(found.p1, found.p2);
   }
@@ -992,6 +971,4 @@ window.selectLinkCurve = selectLinkCurve;
 window.updateLinkCurveBend = updateLinkCurveBend;
 window.enterLinkCurveEdit = enterLinkCurveEdit;
 window.exitLinkCurveEdit = exitLinkCurveEdit;
-window.openLinkModalDeferred = openLinkModalDeferred;
-window.cancelPendingLinkModal = cancelPendingLinkModal;
 window.editLinkCurveFromModal = editLinkCurveFromModal;

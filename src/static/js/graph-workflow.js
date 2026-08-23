@@ -1801,9 +1801,8 @@ function _initGraphCanvasEvents() {
     if (e.target.closest('button, a, input, textarea, iframe, .graph-port')) return;
     const linkEdgeEl = e.target.closest('.graph-edge-link, .graph-edge-link-label');
     if (linkEdgeEl && linkEdgeEl.dataset.edgeKey) {
-      // 延迟打开弹窗：快速双击时由 dblclick 取消，改为进入手柄编辑
-      if (typeof window.openLinkModalDeferred === 'function') window.openLinkModalDeferred(linkEdgeEl.dataset.edgeKey);
-      else openLinkEdgeModal(linkEdgeEl.dataset.edgeKey);
+      // 单击联系线：直接进入手柄精调（钢笔式拖拽）
+      if (typeof window.enterLinkCurveEdit === 'function') window.enterLinkCurveEdit(linkEdgeEl.dataset.edgeKey);
       return;
     }
     if (graphView.linkMode) {
@@ -1841,17 +1840,15 @@ function _initGraphCanvasEvents() {
   });
   graphCanvas.addEventListener('dblclick', e => {
     if (graphView.selectMode || graphView.linkMode) return;
-    // 双击前的那次单击可能挂起了“延迟开弹窗”，先取消
-    if (typeof window.cancelPendingLinkModal === 'function') window.cancelPendingLinkModal();
     const edgeEl = e.target.closest('.graph-edge');
     if (edgeEl && edgeEl.dataset.edgeKey) {
       e.preventDefault();
       e.stopPropagation();
-      // 联系线：双击进入曲线编辑（钢笔式手柄）；其余连线：双击删除
+      // 联系线：双击打开编辑弹窗；其余连线：双击删除
       const edgeKey = edgeEl.dataset.edgeKey;
       const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
-      if (edge && edge.link && typeof window.enterLinkCurveEdit === 'function') {
-        window.enterLinkCurveEdit(edgeKey);
+      if (edge && edge.link) {
+        openLinkEdgeModal(edgeKey);
         return;
       }
       _removeGraphEdge(edgeKey);
