@@ -104,3 +104,12 @@ html/PhyMathia-参赛介绍/
 # 导出产物与视频工具临时构建目录
 导出图片/
 .video-build/
+
+# 本地大文件：模型权重 / 微调产物 / 临时与部署目录（不入库）
+/Qwen2.5-0.5B-Instruct/
+/finetune/
+/.tmp/
+/windows_deploy/
+
+# 参赛介绍 PPT 构建目录（媒体体积大，与演示文稿同样不入主仓）
+html/PhyMathia-参赛介绍-ppt/
