@@ -859,6 +859,7 @@ function _linkCurveAnchors(edgeKey) {
 function enterLinkCurveEdit(edgeKey) {
   const found = _linkCurveAnchors(edgeKey);
   if (!found || !found.edge || !found.edge.link) return;
+  cancelPendingLinkModal();
   _ensureLinkCurveDragListeners();
   graphView.edgeCurveEditKey = edgeKey;
   linkCurveUndoPushed = false;
@@ -890,6 +891,8 @@ function exitLinkCurveEdit() {
 function _beginLinkCurveDrag(edgeKey, which, event) {
   const found = _linkCurveAnchors(edgeKey);
   if (!found || !found.edge || !found.edge.link) return;
+  // 若单击连线挂起了延迟弹窗，进入拖拽前取消，避免拖拽中途弹窗打断
+  cancelPendingLinkModal();
   if (!found.edge.curve || !Number.isFinite(found.edge.curve.dx1)) {
     found.edge.curve = _linkDefaultCurveOffsets(found.p1, found.p2);
   }
@@ -897,17 +900,17 @@ function _beginLinkCurveDrag(edgeKey, which, event) {
     if (typeof _pushGraphUndo === 'function') _pushGraphUndo();
     linkCurveUndoPushed = true;
   }
+  // 记录画布本地坐标系下的起点与控制点绝对位置：
+  // 之后每帧用实时变换(client→local)反推增量，拖拽中缩放/平移都不会让曲线跳变
+  const startLocal = (typeof _clientToGraphLocal === 'function')
+    ? _clientToGraphLocal(event.clientX, event.clientY)
+    : { x: event.clientX, y: event.clientY };
   linkCurveDrag = {
     edgeKey,
     which,
-    startX: event.clientX,
-    startY: event.clientY,
-    base: {
-      dx1: found.edge.curve.dx1 || 0,
-      dy1: found.edge.curve.dy1 || 0,
-      dx2: found.edge.curve.dx2 || 0,
-      dy2: found.edge.curve.dy2 || 0,
-    },
+    startLocal,
+    startC1: { x: found.p1.x + (found.edge.curve.dx1 || 0), y: found.p1.y + (found.edge.curve.dy1 || 0) },
+    startC2: { x: found.p2.x + (found.edge.curve.dx2 || 0), y: found.p2.y + (found.edge.curve.dy2 || 0) },
   };
   try { event.target.setPointerCapture(event.pointerId); } catch { /* ignore */ }
 }
@@ -930,17 +933,22 @@ function _ensureLinkCurveDragListeners() {
   }, true);
   document.addEventListener('pointermove', event => {
     if (!linkCurveDrag) return;
-    const zoom = graphView.zoom || 1;
-    const ddx = (event.clientX - linkCurveDrag.startX) / zoom;
-    const ddy = (event.clientY - linkCurveDrag.startY) / zoom;
     const edge = (graphView.edges || []).find(item => _edgeKey(item) === linkCurveDrag.edgeKey);
     if (!edge) return;
-    const base = linkCurveDrag.base;
+    // 用实时变换把当前指针位置换算到画布本地坐标系：
+    // 拖拽期间缩放/平移发生变化时，控制点仍严格跟随指针，不会跳变
+    const cur = (typeof _clientToGraphLocal === 'function')
+      ? _clientToGraphLocal(event.clientX, event.clientY)
+      : { x: event.clientX, y: event.clientY };
+    const ddx = cur.x - linkCurveDrag.startLocal.x;
+    const ddy = cur.y - linkCurveDrag.startLocal.y;
+    const anchors = _linkCurveAnchors(linkCurveDrag.edgeKey);
+    if (!anchors) return;
     edge.curve = {
-      dx1: base.dx1 + (linkCurveDrag.which === 'c1' ? ddx : 0),
-      dy1: base.dy1 + (linkCurveDrag.which === 'c1' ? ddy : 0),
-      dx2: base.dx2 + (linkCurveDrag.which === 'c2' ? ddx : 0),
-      dy2: base.dy2 + (linkCurveDrag.which === 'c2' ? ddy : 0),
+      dx1: (linkCurveDrag.startC1.x + (linkCurveDrag.which === 'c1' ? ddx : 0)) - anchors.p1.x,
+      dy1: (linkCurveDrag.startC1.y + (linkCurveDrag.which === 'c1' ? ddy : 0)) - anchors.p1.y,
+      dx2: (linkCurveDrag.startC2.x + (linkCurveDrag.which === 'c2' ? ddx : 0)) - anchors.p2.x,
+      dy2: (linkCurveDrag.startC2.y + (linkCurveDrag.which === 'c2' ? ddy : 0)) - anchors.p2.y,
     };
     if (typeof requestAnimationFrame === 'function') {
       if (!linkCurveDrag.raf) {
