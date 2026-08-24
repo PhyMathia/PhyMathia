@@ -691,18 +691,22 @@ def _log_context_metrics(messages: list, snapshot: dict, phase: str) -> None:
         sys_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") == "system")
         user_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") != "system")
         all_text = "".join(str(m.get("content") or "") for m in messages)
+        metrics = {
+            "phase": phase,
+            "nodes": len(snapshot.get("nodes") or []),
+            "edges": len(snapshot.get("edges") or []),
+            "snapshot_chars": len(json.dumps(snapshot, ensure_ascii=False)),
+            "system_chars": sys_chars,
+            "user_chars": user_chars,
+            "est_tokens": _estimate_tokens(all_text),
+        }
         logger.info(
-            "harness context: phase=%s nodes=%d edges=%d snapshot_chars=%d system_chars=%d user_chars=%d est_tokens=%d",
-            phase,
-            len(snapshot.get("nodes") or []),
-            len(snapshot.get("edges") or []),
-            len(json.dumps(snapshot, ensure_ascii=False)),
-            sys_chars,
-            user_chars,
-            _estimate_tokens(all_text),
+            "harness context: phase=%(phase)s nodes=%(nodes)d edges=%(edges)d snapshot_chars=%(snapshot_chars)d system_chars=%(system_chars)d user_chars=%(user_chars)d est_tokens=%(est_tokens)d",
+            metrics,
         )
+        return metrics
     except Exception:
-        pass
+        return None
 
 
 async def review_graph(
@@ -730,6 +734,7 @@ async def review_graph(
     """
     # ---- 模型调用计数：随结果返回，供延迟归因（次数 vs 单次耗时）与优化验证 ----
     call_counter = {"n": 0}
+    context_metrics: Optional[Dict[str, Any]] = None
 
     async def _counted_call(messages, model_, max_tokens_, **kw):
         call_counter["n"] += 1
@@ -821,7 +826,7 @@ async def review_graph(
         if history_text:
             messages[-1]["content"] += history_text
         if attempt == 0:
-            _log_context_metrics(messages, current, phase)
+            context_metrics = _log_context_metrics(messages, current, phase) or context_metrics
 
         try:
             raw = await _counted_call(
@@ -1042,6 +1047,8 @@ async def review_graph(
             result = _complete_expand_chains(current, result, focus_node_ids)
         result["phase"] = phase
         result["model_calls"] = call_counter["n"]
+        if context_metrics:
+            result["context_metrics"] = context_metrics
         return result
 
     return {

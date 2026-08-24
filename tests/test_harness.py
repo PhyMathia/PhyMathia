@@ -453,6 +453,41 @@ class HarnessReviewModelTest(unittest.TestCase):
         self.assertGreaterEqual(calls["n"], 1)
         self.assertEqual(result["focus_node_ids"], ["N1"])
 
+    def test_context_metrics_attached_to_result(self):
+        """F1-R5: 结果应携带 context_metrics（est_tokens 等）供长期追踪。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": '{"summary": "已修改", "operations": [{"op": "update_node", "node_id": "A", "patch": {"content": "x"}, "reason": "r"}]}', "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "c"}], "edges": []},
+                "改内容",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json", self_check="off",
+            ))
+        cm = result.get("context_metrics") or {}
+        self.assertIn("est_tokens", cm)
+        self.assertGreater(cm.get("est_tokens", 0), 0)
+
+    def test_selfcheck_prompt_compact(self):
+        """F1-R5: selfcheck 提示词应为紧凑序列化（无缩进换行浪费）。"""
+        from harness.selfcheck import build_selfcheck_messages
+
+        msgs = build_selfcheck_messages(
+            "删掉B",
+            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"},
+                       {"id": "B", "kind": "knowledge", "label": "极限"}],
+             "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B"}]},
+            [{"op": "delete_node", "node_id": "B", "reason": "r"}],
+        )
+        text = msgs[-1]["content"]
+        self.assertNotIn('\n  "', text)  # 无两空格缩进的键行
+        self.assertIn('"id":"A"', text.replace(" ", "")) or self.assertIn('{"id"', text)
+
     def test_refusal_explained_accepts_empty_ops_without_retry(self):
         """F1: 目标不存在等合法拒绝（空操作+说明）不应触发强制重试。"""
         import asyncio

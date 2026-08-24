@@ -81,9 +81,11 @@ def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list) -> lis
             for edge in snapshot.get("edges", [])
         ],
     }
+    from .prompts import json_dumps
+
     user_text = (
-        f"用户指令：{instruction}\n\n图快照（精简）：\n{json.dumps(compact, ensure_ascii=False, indent=2)}"
-        f"\n\n已生成操作：\n{json.dumps(ops, ensure_ascii=False, indent=2)}\n\n只输出质检 JSON。"
+        f"用户指令：{instruction}\n\n图快照（精简）：\n{json_dumps(compact)}"
+        f"\n\n已生成操作：\n{json_dumps(ops)}\n\n只输出质检 JSON。"
     )
     return [
         {"role": "system", "content": SELFCHECK_SYSTEM_PROMPT},
