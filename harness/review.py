@@ -204,6 +204,27 @@ def _has_edit_intent(text: str) -> bool:
     return any(hint in str(text or "") for hint in MODIFY_HINTS)
 
 
+# 模型用文字解释"为什么不做操作"时的特征词：目标不存在/已满足/受保护/无内容等。
+# 此时再强制重试只是浪费一次模型调用（线上即数十秒延迟），应直接接受空操作结果。
+_REFUSAL_MARKERS = (
+    "不存在", "没有找到", "未找到", "找不到", "没有名为", "无此节点", "查无",
+    "只读", "无法删除", "无法修改", "不能删除", "不能修改", "受保护", "不适合", "不宜",
+    "已存在", "已经存在", "已有连线", "无需重复", "重复添加", "已经是",
+    "空的", "空图", "没有节点", "暂无节点", "没有可评价", "无可评价", "无从评价", "没有内容",
+)
+
+
+def _refusal_explained(summary: str) -> bool:
+    """模型是否在 summary 里给出了不做操作的具体原因。
+
+    空操作 + 解释 = 合法拒绝（目标不存在 / 操作已满足 / 节点只读 / 图为空），
+    强制重试只会逼模型编造操作；空操作 + 无解释才视为偷懒，需要重试。"""
+    text = str(summary or "").strip()
+    if len(text) < 8:
+        return False
+    return any(marker in text for marker in _REFUSAL_MARKERS)
+
+
 def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=None) -> str:
     """Choose the intended harness phase from explicit phase or instruction hints."""
     text = str(instruction or "")
@@ -710,6 +731,17 @@ async def review_graph(
     current = _compact_snapshot(current, focus_node_ids)
     instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
     phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
+    # ---- 评价阶段确定性短路：图里没有可评价节点时无需调模型 ----
+    if phase == "evaluate":
+        editable_nodes = [
+            n for n in (current.get("nodes") or [])
+            if str(n.get("kind") or "") != "ai_eval"
+        ]
+        if not editable_nodes:
+            result = build_next_snapshot(current, [])
+            result["summary"] = "当前图还没有可评价的节点：先添加知识点或提出问题，我再帮你审阅。"
+            result["raw_has_ops"] = False
+            return result
     full_context = str(context or "")
     resolved_model = _resolve_model(model)
     provider = resolved_model["provider"]
@@ -887,7 +919,7 @@ async def review_graph(
                 continue
 
         if phase == "evaluate" and not raw_ops:
-            if attempt < retries:
+            if attempt < retries and not _refusal_explained(summary):
                 last_errors = [{
                     "index": "evaluate",
                     "op": "create_eval_node",
@@ -896,7 +928,7 @@ async def review_graph(
                 continue
 
         if phase == "normal" and not raw_ops and _has_edit_intent(instruction) and not _detect_undo_intent(instruction):
-            if attempt < retries:
+            if attempt < retries and not _refusal_explained(summary):
                 last_errors = [{
                     "index": "normal",
                     "op": "operation",

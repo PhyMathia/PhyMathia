@@ -374,6 +374,80 @@ class HarnessConflictTest(unittest.TestCase):
 
 
 class HarnessReviewModelTest(unittest.TestCase):
+    def test_refusal_explained_accepts_empty_ops_without_retry(self):
+        """F1: 目标不存在等合法拒绝（空操作+说明）不应触发强制重试。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            return {
+                "content": '{"summary": "当前图里没有找到名为 H 的节点，未做任何修改；现有节点为导数、极限。", "operations": []}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "把 H 节点删掉，它超纲了",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
+                mode="auto",
+                self_check="off",
+            ))
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(result["status"], "no_ops")
+        self.assertIn("没有找到", result["summary"])
+
+    def test_lazy_empty_ops_still_triggers_retry(self):
+        """无解释的空操作仍应被强制重试（防模型偷懒）。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            return {"content": '{"summary": "好的。", "operations": []}', "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "给导数补充内容",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
+                mode="auto",
+                self_check="off",
+                retries=1,
+            ))
+        self.assertEqual(calls["n"], 2)
+
+    def test_evaluate_empty_graph_short_circuits_without_model_call(self):
+        """F1: 空图的评价阶段应零调用直接短路返回。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            return {"content": "{}", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [], "edges": []},
+                "评价一下这个图",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
+                mode="auto",
+                self_check="off",
+            ))
+        self.assertEqual(calls["n"], 0)
+        self.assertNotEqual(result["status"], "error")
+        self.assertEqual(result["operations"], [])
+
     def test_review_graph_uses_tool_calls(self):
         import asyncio
         import unittest.mock

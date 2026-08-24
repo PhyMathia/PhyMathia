@@ -699,7 +699,7 @@ function translateTurnForGraph(graph, turn) {
   return t;
 }
 
-async function runTurns(sc, idx, graph) {
+async function runTurns(sc, idx, graph, total) {
   const gid = graph ? graph.id : 'G1';
   const graphTurns = sc.graphTurns ? sc.graphTurns[gid] : null;
   const rawTurns = graphTurns || sc.turns || [{
@@ -805,7 +805,7 @@ async function runTurns(sc, idx, graph) {
   }
   const passed = overallIssues.length === 0;
   const opCount = turnResults.reduce((acc, tr) => acc + (tr.score.opCount || 0), 0);
-  console.log('[' + (idx + 1) + '/' + filtered.length + '] ' + sc.id + '@' + gid + ' (' + (Date.now() - t0) + 'ms) ' + (passed ? 'PASS' : 'FAIL') + ' turns=' + turns.length);
+  console.log('[' + (idx + 1) + '/' + (total || filtered.length) + '] ' + sc.id + '@' + gid + ' (' + (Date.now() - t0) + 'ms) ' + (passed ? 'PASS' : 'FAIL') + ' turns=' + turns.length);
   if (!passed) console.log('   ' + overallIssues.join('\n   '));
   return {
     ...sc, graph: gid, status: turnResults.length ? turnResults[turnResults.length - 1].status : 'none',
@@ -821,14 +821,19 @@ const filtered = (only.length ? allScenarios.filter(s => only.includes(s.id)) : 
   .map(s => ({ ...s, tier: tierOf(s) }));
 const results = [];
 let ri = 0;
+// 先展开跨图场景（一个场景 × N 张图 = N 次执行），保证进度计数与总数一致
+const runQueue = [];
 for (const sc of filtered) {
   const gs = sc.graphs && sc.graphs.length ? sc.graphs.map(graphById) : [null];
   for (const g of gs) {
     const gidNow = g ? g.id : 'G1';
     if (graphArg && gidNow !== graphArg) continue;
-    results.push(await runTurns(sc, ri, g));
-    ri++;
+    runQueue.push({ sc, g });
   }
+}
+for (const { sc, g } of runQueue) {
+  results.push(await runTurns(sc, ri, g, runQueue.length));
+  ri++;
 }
 
 const passedCount = results.filter(r => r.score.passed).length;
