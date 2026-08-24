@@ -123,6 +123,47 @@ const scenarios = [
     expect: { noCrash: true, hasRealEdit: true },
   },
 ];
+// ===== 真实反馈挖掘场景（Round 3：来自 logs/harness_usage.jsonl 的真实用户指令模式） =====
+const feedbackScenarios = [
+  {
+    id: 'fb-ask-followup', label: '真实反馈：追问某个模块节点',
+    turns: [
+      { instruction: '追问物理视角节点', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, allowClarify: true } },
+    ],
+  },
+  {
+    id: 'fb-confused-module', label: '真实反馈：表达没看懂',
+    turns: [
+      { instruction: '物理视角我没看懂', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, allowClarify: true } },
+    ],
+  },
+  {
+    id: 'fb-genealogy', label: '真实反馈：生成知识谱系',
+    turns: [
+      { instruction: '帮我生成「导数」这个知识点对应的知识谱系', phase: 'normal', focus: [], expect: { noCrash: true, noRelationNode: true } },
+    ],
+  },
+  {
+    id: 'fb-gibberish', label: '真实反馈：纯乱码输入',
+    turns: [
+      { instruction: '5555', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true } },
+      { instruction: '哇哇哇哇', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true } },
+    ],
+  },
+  {
+    id: 'fb-greeting-capability', label: '真实反馈：寒暄+能力询问',
+    turns: [
+      { instruction: '你好，你能做什么？', phase: 'normal', focus: [], expect: { noCrash: true, noOps: true, noDestructive: true } },
+    ],
+  },
+  {
+    id: 'fb-create-quoted-vague', label: '真实反馈：引号目标的模糊新增',
+    turns: [
+      { instruction: '帮我新增一个关于「导数」的知识点', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, allowClarify: true } },
+    ],
+  },
+];
+
 // L1 = 核心冒烟（每次改动后快速回归）；L2 = 边界/复杂场景
 const L1_IDS = [
   'eval-focus','add-physics','delete-node','fix-definition','expand-chain',
@@ -815,7 +856,7 @@ async function runTurns(sc, idx, graph, total) {
 
 const tierArg = process.argv[6] || '';
 const graphArg = process.argv[7] || '';
-const allScenarios = [...scenarios, ...compositeScenarios, ...complexScenarios, ...crossScenarios];
+const allScenarios = [...scenarios, ...compositeScenarios, ...complexScenarios, ...crossScenarios, ...feedbackScenarios];
 const filtered = (only.length ? allScenarios.filter(s => only.includes(s.id)) : allScenarios)
   .filter(s => !tierArg || tierOf(s) === tierArg)
   .map(s => ({ ...s, tier: tierOf(s) }));
