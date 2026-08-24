@@ -140,14 +140,14 @@ const feedbackScenarios = [
   {
     id: 'fb-genealogy', label: '真实反馈：生成知识谱系',
     turns: [
-      { instruction: '帮我生成「导数」这个知识点对应的知识谱系', phase: 'normal', focus: [], expect: { noCrash: true, noRelationNode: true } },
+      { instruction: '帮我生成「导数」这个知识点对应的知识谱系', phase: 'normal', focus: [], expect: { noCrash: true, noRelationNode: true, hasRealEdit: true } },
     ],
   },
   {
     id: 'fb-gibberish', label: '真实反馈：纯乱码输入',
     turns: [
-      { instruction: '5555', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true } },
-      { instruction: '哇哇哇哇', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true } },
+      { instruction: '5555', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, noOps: true } },
+      { instruction: '哇哇哇哇', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, noOps: true } },
     ],
   },
   {
