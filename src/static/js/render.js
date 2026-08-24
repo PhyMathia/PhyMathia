@@ -141,12 +141,33 @@ const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/v
   + '{left:"$",right:"$",display:false}'
   + '],throwOnError:false,ignoredTags:["script","noscript","style","textarea","pre","code","option"]};'
   + 'function run(){try{if(window.renderMathInElement){renderMathInElement(document.body||document.documentElement,OPTS);}}catch(e){}}'
-  + 'function done(){run();try{if(document.fonts&&document.fonts.ready){document.fonts.ready.then(run,function(){});}}catch(e){}}'
+  + 'function done(){run();watch();try{if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){run();},function(){});}}catch(e){}}'
   + 'function load(src,next){var s=document.createElement("script");s.src=src;s.onload=next;s.onerror=function(){};(document.head||document.documentElement).appendChild(s);}'
+  + 'var _t=null,_obs=null;'
+  // 异步补渲：页面脚本在 boot 之后才注入/更新的公式文本（动画、分步揭示等），
+  // 由 MutationObserver 防抖 200ms 后补跑一次 auto-render。
+  // 自渲染期间先 disconnect 再重连——auto-render 自身的 DOM 改动不触发下一轮，避免死循环。
+  + 'function schedule(){if(_t)return;_t=setTimeout(function(){_t=null;try{if(_obs)_obs.disconnect();}catch(e){}run();try{if(_obs)_obs.observe(document.body||document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}},200);}'
+  + 'function watch(){try{if(!window.MutationObserver||_obs)return;_obs=new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var t=ms[i].target;if(t&&t.closest&&t.closest(".katex"))continue;schedule();return;}});_obs.observe(document.body||document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}}'
+  // <formula> 标签兜底转换：模型偶尔把主对话的 <formula> 约定带进可视化页，
+  // 且这类页面的转换钩子常挂在自家数学库启动流程上——库一死转换就没人做了
+  + 'function cvtFormulaTags(){try{var fs=document.querySelectorAll("formula");for(var i=0;i<fs.length;i++){var f=fs[i],el=document.createElement("span"),d=f.hasAttribute("display");el.textContent=(d?"\\\\[":"\\\\(")+f.textContent.trim()+(d?"\\\\]":"\\\\)");f.parentNode.replaceChild(el,f);}}catch(e){}}'
+  + 'function goKatex(){cvtFormulaTags();load("' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.js",function(){load("' + _VIZ_ASSET_BASE + '/vendor/katex/contrib/auto-render.min.js",done);});}'
   + 'function boot(){'
-  + 'if(window.MathJax)return;'
   + 'if(window.renderMathInElement){done();return;}'
-  + 'load("' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.js",function(){load("' + _VIZ_ASSET_BASE + '/vendor/katex/contrib/auto-render.min.js",done);});'
+  // 让位规则升级：页面声明 MathJax ≠ MathJax 可用。CDN 数学库可能被墙/失败，
+  // 死等只会让公式永远裸奔。给 3s 宽限轮询它是否真正就绪（typesetPromise/startup.document），
+  // 就绪则完全让位；超时判为死配置，转宿主本地 KaTeX 兜底
+  + 'if(!window.MathJax){goKatex();return;}'
+  + 'var n=0;'
+  + 'var iv=setInterval(function(){n++;'
+  + 'var mj=window.MathJax,ready=mj&&(mj.typesetPromise||(mj.startup&&mj.startup.document));'
+  // 就绪也不全信：AI 生成的 MathJax 配置常漏定界符（典型：只配圆括号/方括号，丢了双美元），
+  // 延迟 600ms 等它首轮 typeset 落地后用本地 KaTeX 补扫剩余裸公式——
+  // 已被 MathJax 替换成 SVG 的位置不再有定界符文本，KaTeX 只捡漏网之鱼，不会重复渲染
+  + 'if(ready){clearInterval(iv);setTimeout(goKatex,600);return;}'
+  + 'if(n>=15){clearInterval(iv);goKatex();}'
+  + '},200);'
   + '}'
   + 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",boot);}else{boot();}'
   + '})();<\/script>';
