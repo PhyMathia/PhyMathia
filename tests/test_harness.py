@@ -488,6 +488,72 @@ class HarnessReviewModelTest(unittest.TestCase):
         self.assertNotIn('\n  "', text)  # 无两空格缩进的键行
         self.assertIn('"id":"A"', text.replace(" ", "")) or self.assertIn('{"id"', text)
 
+    def test_evaluate_focus_miss_retries_then_hits(self):
+        """F1-R8: 评价未命中重点节点时应带反馈重试并最终命中。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            import json
+            calls["n"] += 1
+            if calls["n"] == 1:
+                target = "C"  # 第一次评错对象
+            else:
+                target = "D"
+            return {"content": json.dumps({
+                "summary": f"评价了节点",
+                "operations": [{"op": "create_eval_node", "temp_id": "e1", "target_node_id": target,
+                                "suggestion": "s", "priority": "high", "reason": "r"}]}, ensure_ascii=False),
+                "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [
+                    {"id": "C", "kind": "module", "label": "物理视角"},
+                    {"id": "D", "kind": "human_note", "label": "我的理解"},
+                 ], "edges": []},
+                "评价一下我对导数的理解",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json", self_check="off",
+                focus_node_ids=["D"],
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["operations"][0]["target_node_id"], "D")
+
+    def test_update_focus_miss_retries_then_hits(self):
+        """F1-R8: 修改未命中重点节点时应带反馈重试并最终命中。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            import json
+            calls["n"] += 1
+            nid = "B" if calls["n"] == 1 else "A"
+            return {"content": json.dumps({
+                "summary": "已修改",
+                "operations": [{"op": "update_node", "node_id": nid, "patch": {"content": "x"}, "reason": "r"}]},
+                ensure_ascii=False), "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [
+                    {"id": "A", "kind": "knowledge", "label": "导数"},
+                    {"id": "B", "kind": "knowledge", "label": "极限"},
+                 ], "edges": []},
+                "把导数的定义改得更严谨一些",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json", self_check="off",
+                focus_node_ids=["A"],
+            ))
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result["operations"][0]["id"], "A")
+
     def test_refusal_explained_accepts_empty_ops_without_retry(self):
         """F1: 目标不存在等合法拒绝（空操作+说明）不应触发强制重试。"""
         import asyncio

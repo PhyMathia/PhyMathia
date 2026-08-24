@@ -939,6 +939,24 @@ async def review_graph(
                 }]
                 continue
 
+        # ---- 焦点遵从校验：指定了重点节点却全部未命中时，带反馈重试 ----
+        focus_set = {str(f) for f in (focus_node_ids or []) if str(f)}
+        if phase == "evaluate" and raw_ops and focus_set and attempt < retries:
+            eval_targets = {str(op.get("target_node_id") or "") for op in raw_ops}
+            if not eval_targets & focus_set:
+                focus_labels = [
+                    str(n.get("label") or n.get("id"))
+                    for n in current.get("nodes") or []
+                    if str(n.get("id")) in focus_set
+                ]
+                last_errors = [{
+                    "index": "evaluate",
+                    "op": "create_eval_node",
+                    "reason": "评价目标未命中用户指定的重点节点（"
+                              + "、".join(focus_labels) + "）。只评价这些节点，不要评价其他节点",
+                }]
+                continue
+
         if phase == "evaluate" and not raw_ops:
             if attempt < retries and not _refusal_explained(summary):
                 last_errors = [{
@@ -954,6 +972,22 @@ async def review_graph(
                     "index": "normal",
                     "op": "operation",
                     "reason": "指令包含明确的修改意图（新增/删除/修改/补充等），请输出真实图操作，不要只返回文字",
+                }]
+                continue
+
+        if phase == "normal" and raw_ops and focus_set and attempt < retries:
+            upd = [op for op in raw_ops if op.get("op") == "update_node"]
+            if upd and not any(str(op.get("id")) in focus_set for op in upd):
+                focus_labels = [
+                    str(n.get("label") or n.get("id"))
+                    for n in current.get("nodes") or []
+                    if str(n.get("id")) in focus_set
+                ]
+                last_errors = [{
+                    "index": "normal",
+                    "op": "update_node",
+                    "reason": "修改目标未命中用户指定的重点节点（"
+                              + "、".join(focus_labels) + "）。请改为修改这些节点",
                 }]
                 continue
 
