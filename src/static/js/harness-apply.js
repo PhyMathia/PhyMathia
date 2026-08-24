@@ -359,7 +359,13 @@
     const evalIds = (state.customNodes || [])
       .filter(node => node.kind === 'ai_eval')
       .map(node => node.id);
-    if (!evalIds.length) return;
+    _removeEvalNodesByIds(evalIds);
+  }
+
+  // 按 id 精确移除节点（只动传入的 id，不做全局清扫）
+  function _removeEvalNodesByIds(evalIds) {
+    const state = _graphState();
+    if (!state || !evalIds || !evalIds.length) return;
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '移除全部 AI 评价节点' });
     state.customNodes = state.customNodes.filter(node => node.kind !== 'ai_eval');
     state.connections = state.connections.filter(edge => !evalIds.includes(edge.from) && !evalIds.includes(edge.to));
@@ -388,7 +394,17 @@
   function discardHarnessSuggestion(entryId) {
     const entry = harnessHistory.find(item => item.id === entryId);
     if (!entry || entry.decision !== 'pending') return;
-    if (entry.phase === 'apply') _removeAllEvalNodes();
+    // 拒绝只清理"本条建议自己创建"的评价节点，不动画布上其他内容（此前全局清场会误伤已保留的图）
+    const ownEvalIds = (entry.operations || [])
+      .filter(op => op && op.op === 'create_eval_node')
+      .map(op => op.assigned_id || op.id)
+      .filter(Boolean);
+    if (entry.phase === 'apply' && ownEvalIds.length) {
+      const alive = (_graphState()?.customNodes || [])
+        .filter(node => node.kind === 'ai_eval' && ownEvalIds.includes(node.id))
+        .map(node => node.id);
+      _removeEvalNodesByIds(alive);
+    }
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     entry.decision = 'discard';
     entry.discardedAt = Date.now();
@@ -411,9 +427,33 @@
     _setHarnessStatus('已显示 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
   }
 
+  // 把某条历史建议创建过的节点从 harnessDeleted 软删除集中解除（恢复出口）
+  function _undeleteEntryNodes(entry) {
+    const state = _graphState();
+    if (!state || !entry) return;
+    const ids = (entry.operations || [])
+      .filter(op => op && String(op.op || '').indexOf('create') === 0)
+      .map(op => op.assigned_id || op.id || op.temp_id)
+      .filter(Boolean);
+    let restored = 0;
+    ids.forEach(id => {
+      if (state.harnessDeleted && state.harnessDeleted[id]) {
+        delete state.harnessDeleted[id];
+        restored++;
+      }
+    });
+    if (restored) {
+      if (typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), state);
+      if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+    }
+    return restored;
+  }
+
   function restoreHarnessSuggestion(entryId) {
     const entry = harnessHistory.find(item => item.id === entryId);
     if (!entry || entry.decision !== 'discard') return;
+    _undeleteEntryNodes(entry);
     entry.decision = 'pending';
     delete entry.appliedAt;
     delete entry.discardedAt;

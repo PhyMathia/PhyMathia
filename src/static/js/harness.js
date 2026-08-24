@@ -244,6 +244,7 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId) {
     const state = _graphState() || {};
+    const rawCanvasCount = _graphNodes().length;
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
     const nodes = _graphNodes().filter(node => !deleted.has(node.id) && !(excludeEval && node.kind === 'ai_eval'));
     const selected = new Set(
@@ -340,10 +341,26 @@ let harnessLastAppliedBeforeSnapshot = null;
       directory_nodes: snapshot.nodes.filter(n => n.directory).length,
       sent_nodes: snapshot.nodes.length,
       truncated: snapshot.nodes.length < nodes.length,
+      deleted_filtered: Math.max(0, rawCount - nodes.length),
       est_tokens: _estimateTokens(serialized),
     };
     return snapshot;
   }
+
+  // 安全阀：此前"拒绝建议全局清场"可能把大量节点标进 harnessDeleted 且无恢复出口。
+  // 该函数一键解除全部软删除标记并重绘，供异常排查/恢复使用（控制台可调）。
+  function restoreAllHarnessDeletedNodes() {
+    const state = _graphState();
+    if (!state || !state.harnessDeleted) return 0;
+    const count = Object.keys(state.harnessDeleted).length;
+    state.harnessDeleted = {};
+    if (count && typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), state);
+    if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+    if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+    if (typeof window._setHarnessStatus === 'function') window._setHarnessStatus('已恢复 ' + count + ' 个被软删除的节点', 'ok');
+    return count;
+  }
+  if (typeof window !== 'undefined') window.restoreHarnessDeletedNodes = restoreAllHarnessDeletedNodes;
 
   function ensureHarnessPanel() {
     if (harnessPanel) return harnessPanel;
