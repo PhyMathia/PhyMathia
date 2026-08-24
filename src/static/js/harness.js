@@ -341,7 +341,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       directory_nodes: snapshot.nodes.filter(n => n.directory).length,
       sent_nodes: snapshot.nodes.length,
       truncated: snapshot.nodes.length < nodes.length,
-      deleted_filtered: Math.max(0, rawCount - nodes.length),
+      deleted_filtered: Math.max(0, rawCanvasCount - nodes.length),
       est_tokens: _estimateTokens(serialized),
     };
     return snapshot;
