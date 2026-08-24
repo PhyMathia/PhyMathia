@@ -85,14 +85,10 @@ function _ensureOpencodeFreeModels() {
       cfg = { provider: 'opencode', apiKey: OPENCODE_DEFAULT_KEY, model: modelId, label, baseUrl: OPENCODE_BASE_URL };
       addUserModel(cfg);
     } else {
-      const next = {
-        ...cfg,
-        apiKey: OPENCODE_DEFAULT_KEY,
-        model: modelId,
-        label,
-        baseUrl: OPENCODE_BASE_URL,
-      };
-      if (cfg.apiKey !== next.apiKey || cfg.model !== next.model || cfg.label !== next.label || cfg.baseUrl !== next.baseUrl) {
+      // 仅规范化 model/label/baseUrl（迁移旧条目）；apiKey 属于用户数据，绝不能覆盖
+      // （否则每次页面加载 loadUserModels() 都会把用户填的密钥重置为空 → “密钥存不住”）
+      const next = { ...cfg, model: modelId, label, baseUrl: OPENCODE_BASE_URL };
+      if (cfg.model !== next.model || cfg.label !== next.label || cfg.baseUrl !== next.baseUrl) {
         Object.assign(cfg, next);
         changed = true;
       }

@@ -113,3 +113,15 @@ html/PhyMathia-参赛介绍/
 
 # 参赛介绍 PPT 构建目录（媒体体积大，与演示文稿同样不入主仓）
 html/PhyMathia-参赛介绍-ppt/
+
+# 本地工具与缓存（2026-08-24）
+.npm-cache/
+.agents/
+_e2e5.mjs
+_split3.cjs
+
+# Remotion 视频工程：依赖与大批量采集帧不入库（成片另行归档）
+Html_video/node_modules/
+Html_video/quiz_real/capture/
+Html_video/quiz_real/out/
+Html_video/quiz_real/frames/

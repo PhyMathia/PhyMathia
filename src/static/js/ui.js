@@ -270,7 +270,21 @@ function _applyLocalSettings(data) {
   if (data.level) localStorage.setItem('phymathia_level', data.level);
   if (data.currentSession) localStorage.setItem('phymathia_current_session', data.currentSession);
   if (data.onboarding) localStorage.setItem('phymathia_onboarding_done', data.onboarding);
-  if (Array.isArray(data.userModels)) localStorage.setItem('phymathia_user_models', JSON.stringify(data.userModels));
+  if (Array.isArray(data.userModels)) {
+    // 备份导出时 apiKey 被安全抹空；导入时按 id（兜底 provider+model）匹配本地条目，
+    // 把本地仍持有的密钥合并回去，避免“恢复一次备份 = 所有模型密钥清零”
+    const incoming = data.userModels;
+    const existing = _safeParseJSON(localStorage.getItem('phymathia_user_models'), []);
+    const localList = Array.isArray(existing) ? existing : [];
+    const byId = new Map(localList.map(m => [m.id, m]));
+    const byProviderModel = new Map(localList.map(m => [String(m.provider) + '|' + String(m.model), m]));
+    const merged = incoming.map(m => {
+      const local = byId.get(m.id) || byProviderModel.get(String(m.provider) + '|' + String(m.model));
+      if (local && local.apiKey && !m.apiKey) return { ...m, apiKey: local.apiKey };
+      return m;
+    });
+    localStorage.setItem('phymathia_user_models', JSON.stringify(merged));
+  }
   if (data.activeModels && typeof data.activeModels === 'object') localStorage.setItem('phymathia_active_models', JSON.stringify(data.activeModels));
   const quizStats = data.quizStats && typeof data.quizStats === 'object'
     ? data.quizStats
