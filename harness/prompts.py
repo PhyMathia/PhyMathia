@@ -428,8 +428,26 @@ def build_expand_messages(
     ]
 
 
+def slim_snapshot(value):
+    """快照瘦身：递归剔除空串/False/None 字段后再序列化。
+
+    normalize_snapshot 会给每个节点补齐 target_node_id/suggestion/status 等
+    十来个默认空字段，逐字发给模型纯属 token 浪费；缺键与空值对模型等价。
+    保守规则：只删值为 "" / False / None 的键，其余（含 priority="medium"）保留。"""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if v is None or v is False or (isinstance(v, str) and not v.strip()):
+                continue
+            out[k] = slim_snapshot(v)
+        return out
+    if isinstance(value, list):
+        return [slim_snapshot(item) for item in value]
+    return value
+
+
 def json_dumps(value) -> str:
     import json
 
-    return json.dumps(value, ensure_ascii=False, indent=2)
+    return json.dumps(slim_snapshot(value), ensure_ascii=False, separators=(",", ":"))
 

@@ -655,10 +655,15 @@ def _should_selfcheck_ops(ops: list) -> bool:
     )
 
 
-async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any]) -> Dict[str, Any]:
+async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """One lightweight critic call checking instruction coverage. Never blocks on failure."""
+    def _tick():
+        if counter is not None:
+            counter["n"] += 1
+
     messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops)
     try:
+        _tick()
         raw = await _call_model(messages, model, 600, tools=[SELFCHECK_TOOL], tool_choice="required")
         parsed = parse_selfcheck_tool(raw["tool_calls"])
         if parsed is not None:
@@ -666,6 +671,7 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
         return parse_selfcheck(raw["content"])
     except HarnessError:
         try:
+            _tick()
             raw = await _call_model(messages, model, 600, json_mode=_supports_json_mode(model["provider"]))
             return parse_selfcheck(raw["content"])
         except HarnessError:
@@ -722,6 +728,13 @@ async def review_graph(
     mode: "tools" (force function calling), "json" (force free-form JSON),
     or "auto" (try tools, fall back to JSON when the provider rejects them).
     """
+    # ---- 模型调用计数：随结果返回，供延迟归因（次数 vs 单次耗时）与优化验证 ----
+    call_counter = {"n": 0}
+
+    async def _counted_call(messages, model_, max_tokens_, **kw):
+        call_counter["n"] += 1
+        return await _call_model(messages, model_, max_tokens_, **kw)
+
     current = normalize_snapshot(snapshot)
     if len(json.dumps(current, ensure_ascii=False)) > MAX_SNAPSHOT_CHARS:
         sub = _focus_subgraph(current, focus_node_ids)
@@ -741,6 +754,7 @@ async def review_graph(
             result = build_next_snapshot(current, [])
             result["summary"] = "当前图还没有可评价的节点：先添加知识点或提出问题，我再帮你审阅。"
             result["raw_has_ops"] = False
+            result["model_calls"] = 0
             return result
     full_context = str(context or "")
     resolved_model = _resolve_model(model)
@@ -767,6 +781,7 @@ async def review_graph(
             undo_result["phase"] = "undo"
             undo_result["raw_has_ops"] = bool(inverse_ops)
             undo_result["undo_ops"] = inverse_ops
+            undo_result["model_calls"] = call_counter["n"]
             return undo_result
     tools = build_tools(phase) if mode in ("auto", "tools") else None
     can_require = _supports_required_tool_choice(provider)
@@ -809,7 +824,7 @@ async def review_graph(
             _log_context_metrics(messages, current, phase)
 
         try:
-            raw = await _call_model(
+            raw = await _counted_call(
                 messages,
                 resolved_model,
                 max_tokens,
@@ -823,7 +838,7 @@ async def review_graph(
                     # 部分 provider（如 opencode 免费模型）不支持 required，先降级为 auto
                     logger.warning("tool_choice=required 失败，降级为 auto: %s", exc)
                     tool_choice = "auto"
-                    raw = await _call_model(
+                    raw = await _counted_call(
                         messages,
                         resolved_model,
                         max_tokens,
@@ -835,7 +850,7 @@ async def review_graph(
                     tools = None
                     tool_choice = None
                     messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "")
-                    raw = await _call_model(
+                    raw = await _counted_call(
                         messages,
                         resolved_model,
                         max_tokens,
@@ -884,6 +899,7 @@ async def review_graph(
                         "errors": [],
                         "warnings": [],
                         "raw_has_ops": False,
+                        "model_calls": call_counter["n"],
                     }
 
         # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
@@ -999,7 +1015,7 @@ async def review_graph(
 
         # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
         if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
-            critic = await _selfcheck_ops(current, instruction, raw_ops, resolved_model)
+            critic = await _selfcheck_ops(current, instruction, raw_ops, resolved_model, counter=call_counter)
             result["self_check"]["critic"] = critic
             if not critic.get("ok", True) and attempt < retries:
                 critic_errors = [
@@ -1025,6 +1041,7 @@ async def review_graph(
         if phase == "expand":
             result = _complete_expand_chains(current, result, focus_node_ids)
         result["phase"] = phase
+        result["model_calls"] = call_counter["n"]
         return result
 
     return {
@@ -1039,6 +1056,31 @@ async def review_graph(
     }
 
 
+def _deterministic_focus(instruction: str, current: Dict[str, Any]) -> list:
+    """指令里的「引号标签」全部能唯一定位到节点时，免模型直接给出焦点。
+
+    返回去重后的节点 id 列表；任一词未命中或有歧义、或根本没有引号词，
+    返回空列表交回模型解析（保守：宁可多调一次也不猜）。"""
+    import re
+
+    text = str(instruction or "")
+    terms = re.findall(r"[「『\"“]([^」』\"”]{1,30})[」』\"”]", text)
+    if not terms:
+        return []
+    nodes = current.get("nodes") or []
+    ids = []
+    for term in terms:
+        matches = [
+            str(n.get("id"))
+            for n in nodes
+            if str(n.get("label") or "") == term or str(n.get("id")) == term
+        ]
+        if len(matches) != 1:
+            return []
+        ids.append(matches[0])
+    return list(dict.fromkeys(ids))
+
+
 async def resolve_focus(
     snapshot: Any,
     instruction: str,
@@ -1050,6 +1092,20 @@ async def resolve_focus(
     mode: str = "auto",
 ) -> Dict[str, Any]:
     current = normalize_snapshot(snapshot)
+
+    # ---- 确定性快路径：引号标签唯一定位时零模型调用 ----
+    fast_ids = _deterministic_focus(instruction, current)
+    if fast_ids:
+        return {
+            "status": "ok",
+            "focus_node_ids": fast_ids,
+            "ambiguous": False,
+            "question": "",
+            "candidates": [],
+            "model_calls": 0,
+            "deterministic": True,
+        }
+
     node_ids = {node["id"] for node in current["nodes"]}
     full_context = str(context or "")
     resolved_model = _resolve_model(model)

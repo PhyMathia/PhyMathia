@@ -52,6 +52,7 @@ def _usage_entry(payload: dict, result: dict, t0: float, endpoint: str) -> dict:
         "warnings_count": len(result.get("warnings") or []),
         "error": first_error,
         "latency_ms": round((time.time() - t0) * 1000),
+        "model_calls": int(result.get("model_calls") or 0),
     }
 
 

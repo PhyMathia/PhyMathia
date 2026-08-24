@@ -374,6 +374,85 @@ class HarnessConflictTest(unittest.TestCase):
 
 
 class HarnessReviewModelTest(unittest.TestCase):
+    def test_model_calls_counted_on_result(self):
+        """F1-R4: 结果应携带 model_calls 计数（主路径 1 次调用）。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": '{"summary": "已修改导数内容", "operations": [{"op": "update_node", "node_id": "A", "patch": {"content": "新内容"}, "reason": "r"}]}', "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "把导数内容改掉",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json", self_check="off",
+            ))
+        self.assertEqual(result.get("model_calls"), 1)
+
+    def test_snapshot_prompt_slimmed(self):
+        """F1-R4: 提示词里的快照应剔除空/默认字段并紧凑序列化。"""
+        from harness.prompts import build_review_messages
+
+        snap = {"version": 1, "nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "c", "formula": "",
+             "module_key": "", "manual": False, "target_node_id": "", "target_label": "",
+             "suggestion": "", "priority": "medium", "status": "", "read_only": False},
+        ], "edges": []}
+        msgs = build_review_messages(snap, "改一下")
+        text = msgs[-1]["content"]
+        self.assertNotIn('"target_node_id"', text)
+        self.assertNotIn('"manual"', text)
+        self.assertIn('"label"', text)
+
+    def test_resolve_deterministic_fast_path_zero_calls(self):
+        """F1-R4: 引号标签唯一定位时 resolve 零模型调用。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            return {"content": "{}", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.resolve_focus(
+                {"nodes": [{"id": "D", "kind": "human_note", "label": "我的理解"}], "edges": []},
+                "把「我的理解」的内容改得更清楚一些",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+            ))
+        self.assertEqual(calls["n"], 0)
+        self.assertEqual(result["focus_node_ids"], ["D"])
+        self.assertTrue(result.get("deterministic"))
+
+    def test_resolve_ambiguous_quoted_term_falls_back_to_model(self):
+        """引号词命中多个/零个节点时应回退模型解析，不能瞎猜。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            return {"content": '{"focus_node_ids": ["N1"]}', "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.resolve_focus(
+                {"nodes": [
+                    {"id": "N1", "kind": "knowledge", "label": "导数"},
+                    {"id": "N2", "kind": "knowledge", "label": "导数"},
+                 ], "edges": []},
+                "把「导数」删掉",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+            ))
+        self.assertGreaterEqual(calls["n"], 1)
+        self.assertEqual(result["focus_node_ids"], ["N1"])
+
     def test_refusal_explained_accepts_empty_ops_without_retry(self):
         """F1: 目标不存在等合法拒绝（空操作+说明）不应触发强制重试。"""
         import asyncio
@@ -677,7 +756,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 ],
             }
 
-        async def fake_selfcheck(snapshot, instruction, ops, model):
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None):
             return {"ok": False, "issues": ["用户要求删除 H，但操作只修改了 B"], "missing": []}
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
@@ -709,7 +788,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 ],
             }
 
-        async def fake_selfcheck(snapshot, instruction, ops, model):
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None):
             return {"ok": True, "issues": [], "missing": []}
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
