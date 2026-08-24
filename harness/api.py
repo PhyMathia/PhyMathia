@@ -54,6 +54,9 @@ def _usage_entry(payload: dict, result: dict, t0: float, endpoint: str) -> dict:
         "latency_ms": round((time.time() - t0) * 1000),
         "model_calls": int(result.get("model_calls") or 0),
         "est_tokens": int((result.get("context_metrics") or {}).get("est_tokens") or 0),
+        # 推理模型观测：输出长度与思考剥离事件（deepseek-v4-flash 等排障用）
+        "out_chars": int(result.get("out_chars") or 0),
+        "think_stripped": bool(result.get("reasoning_stripped")),
     }
 
 

@@ -35,7 +35,7 @@ from .selfcheck import (
     parse_selfcheck_tool,
 )
 from .semantics import find_isolated_created_nodes, find_missing_expansion_chains, rule_selfcheck
-from .json_utils import extract_json
+from .json_utils import extract_json, strip_reasoning
 from .prompts import (
     build_apply_messages,
     build_evaluate_messages,
@@ -159,6 +159,15 @@ def _history_block(history) -> str:
                 )
                 lines.append(f"{i + 1}. 助手：{summary[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
     return "\n".join(lines)
+
+
+def _clamp_display_summary(text, limit: int = 800) -> str:
+    """纯文字兜底 summary 的展示截断：推理模型的长篇思考即使剥离后仍可能
+    留下超长正文，面板只展示前 limit 字，避免“输出一大堆”刷屏。"""
+    t = str(text or "").strip()
+    if len(t) <= limit:
+        return t
+    return t[:limit].rstrip() + "……（模型输出过长，已截断显示）"
 
 
 def _extract_summary_from_json_shell(text):
@@ -321,12 +330,28 @@ async def _call_model(
         "harness model call: %s/%s tools=%s tool_choice=%s json_mode=%s",
         model["provider"], model["model"], bool(tools), tool_choice or "-", json_mode,
     )
-    # hy3 等推理模型：正文可能落在 reasoning_content、content 为空，回退取 reasoning_content
-    # （与 src/main.py /api/models/chat 的流式转发处理保持一致）。
-    message_content = str(message.get("content") or message.get("reasoning_content") or "")
+    # 推理模型（deepseek-v4-flash / hy3 等）两种形态都要防：
+    # ① 正文带 <think>…</think> 思考块（思考里还可能草拟残缺 JSON 干扰解析）；
+    # ② 正文为空、全文落在 reasoning_content。
+    # 先剥离再返回，避免思考文本污染 JSON 解析与 summary 展示。
+    raw_content = str(message.get("content") or "")
+    cleaned = strip_reasoning(raw_content)
+    fallback_reasoning = False
+    if not cleaned.strip():
+        alt = strip_reasoning(str(message.get("reasoning_content") or ""))
+        if alt.strip():
+            cleaned = alt
+            fallback_reasoning = True
+    if cleaned != raw_content or fallback_reasoning:
+        logger.info(
+            "harness think-strip: %d -> %d chars (fallback_reasoning=%s)",
+            len(raw_content), len(cleaned), fallback_reasoning,
+        )
     return {
-        "content": message_content,
+        "content": cleaned,
         "tool_calls": message.get("tool_calls") or [],
+        "reasoning_stripped": bool(cleaned != raw_content) and not fallback_reasoning,
+        "reasoning_fallback": fallback_reasoning,
     }
 
 
@@ -735,6 +760,7 @@ async def review_graph(
     # ---- 模型调用计数：随结果返回，供延迟归因（次数 vs 单次耗时）与优化验证 ----
     call_counter = {"n": 0}
     context_metrics: Optional[Dict[str, Any]] = None
+    reasoning_seen = {"hit": False}
 
     async def _counted_call(messages, model_, max_tokens_, **kw):
         call_counter["n"] += 1
@@ -864,7 +890,16 @@ async def review_graph(
             else:
                 raise
 
-        last_raw = raw["content"] or ""
+        # 消费端再剥一次（幂等）：即使 _call_model 未经过（测试桩/旧路径）也能兜住
+        last_raw = strip_reasoning(raw["content"] or "")
+        if not last_raw.strip() and raw.get("reasoning_content"):
+            # 正文为空时回退 reasoning_content（推理模型全文落在思考字段）
+            alt = strip_reasoning(str(raw["reasoning_content"]))
+            if alt.strip():
+                last_raw = alt
+                reasoning_seen["hit"] = True
+        if raw.get("reasoning_stripped") or raw.get("reasoning_fallback"):
+            reasoning_seen["hit"] = True
         if raw.get("tool_calls"):
             raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
             if tool_errors:
@@ -877,7 +912,9 @@ async def review_graph(
             if payload is None and current_tools is not None:
                 # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作；
                 # 若文本是“JSON 外壳”（模型把 JSON 写进正文且引号未转义），只保留内层 summary
-                summary = _extract_summary_from_json_shell(last_raw) or last_raw.strip()
+                summary = _clamp_display_summary(
+                    _extract_summary_from_json_shell(last_raw) or last_raw
+                )
                 raw_ops = []
             elif payload is None:
                 last_errors = [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]
@@ -905,6 +942,8 @@ async def review_graph(
                         "warnings": [],
                         "raw_has_ops": False,
                         "model_calls": call_counter["n"],
+                        "out_chars": len(last_raw),
+                        "reasoning_stripped": reasoning_seen["hit"],
                     }
 
         # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
@@ -1081,6 +1120,8 @@ async def review_graph(
             result = _complete_expand_chains(current, result, focus_node_ids)
         result["phase"] = phase
         result["model_calls"] = call_counter["n"]
+        result["out_chars"] = len(last_raw)
+        result["reasoning_stripped"] = reasoning_seen["hit"]
         if context_metrics:
             result["context_metrics"] = context_metrics
         return result
@@ -1094,6 +1135,8 @@ async def review_graph(
         "errors": last_errors or [{"reason": "模型输出解析失败"}],
         "warnings": [],
         "raw_has_ops": bool(last_raw.strip()),
+        "out_chars": len(last_raw),
+        "reasoning_stripped": reasoning_seen["hit"],
     }
 
 
@@ -1163,7 +1206,7 @@ async def resolve_focus(
         if attempt == 0:
             _log_context_metrics(messages, current, "resolve")
         raw = await _call_model(messages, resolved_model, max_tokens, json_mode=json_mode)
-        payload = extract_json(raw["content"])
+        payload = extract_json(strip_reasoning(raw["content"] or ""))
         if payload is None:
             last_errors = [{"index": "parse", "op": "resolve", "reason": "目标解析输出不是合法 JSON"}]
             continue

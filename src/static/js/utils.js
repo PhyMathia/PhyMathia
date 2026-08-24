@@ -53,3 +53,14 @@ function _normalizeFormulaLatex(latex) {
 }
 
 window._genBranchId = _genBranchId;
+
+// 推理模型（deepseek-v4-flash 等）正文常带 <think>…</think> 思考块；
+// 后端 harness 已剥离，这里做前端兜底（主聊天/旧缓存响应仍可能含思考文本）。
+function _stripThinkText(text) {
+  let s = String(text || '');
+  s = s.replace(/<(think|thinking|reasoning|thought)>[\s\S]*?<\/\s*\1\s*>/gi, '');
+  const open = s.match(/<(think|thinking|reasoning|thought)>/i);
+  if (open) s = s.slice(0, open.index);
+  return s.trim();
+}
+window._stripThinkText = _stripThinkText;

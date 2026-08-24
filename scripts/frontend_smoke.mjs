@@ -134,5 +134,19 @@ check('_detectHarnessPhase 分类', () => {
   return true;
 });
 
+check('_stripThinkText 思考块剥离（回归：推理模型刷屏事故）', () => {
+  const strip = sandbox._stripThinkText;
+  if (typeof strip !== 'function') throw new Error('_stripThinkText 未暴露');
+  // 成对块：整段删除，保留正式回答
+  if (strip('<think>先想想 {"op": "bad"</think>\n{"summary": "s"}') !== '{"summary": "s"}') return false;
+  // 未闭合块（max_tokens 截断）：从开标签截断
+  if (strip('{"summary": "ok"} <think>被截断……') !== '{"summary": "ok"}') return false;
+  // 纯文本不受影响
+  if (strip('正常回答') !== '正常回答') return false;
+  // 空值
+  if (strip('') !== '') return false;
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

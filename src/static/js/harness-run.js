@@ -583,7 +583,9 @@
 
   function _harnessAssistantContent(data) {
     const ops = Array.isArray(data.operations) ? data.operations : [];
-    const summary = String((data.summary || '').trim())
+    // 前端兜底：剥离推理模型可能残留的 <think> 思考块
+    const rawSummary = typeof _stripThinkText === 'function' ? _stripThinkText(String(data.summary || '')) : String(data.summary || '').trim();
+    const summary = rawSummary
       || (ops.length ? '已生成 ' + ops.length + ' 条图修改建议' : '模型没有提出可执行修改');
     const parts = [summary];
     const report = _buildHumanReadableReport(ops);

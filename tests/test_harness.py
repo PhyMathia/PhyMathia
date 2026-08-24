@@ -2317,6 +2317,82 @@ class HarnessAnchorAddWarningTest(unittest.TestCase):
         result = rule_selfcheck(self._snapshot(), "给导数加一个物理视角", ["A"], [])
         self.assertFalse(result["ok"])
 
+class ReasoningStripTest(unittest.TestCase):
+    """推理模型（deepseek-v4-flash 等）思考块剥离：解析与展示两条防线。"""
+
+    def _review(self, fake_payload, instruction="评价一下"):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return dict(fake_payload)
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            return asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                instruction,
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json", self_check="off",
+            ))
+
+    def test_strip_reasoning_removes_closed_block(self):
+        from harness.json_utils import strip_reasoning
+        text = '<think>先分析一下 {"ops": [残缺</think>\n{"summary": "s"}'
+        self.assertEqual(strip_reasoning(text), '{"summary": "s"}')
+
+    def test_strip_reasoning_cuts_unclosed_block(self):
+        from harness.json_utils import strip_reasoning
+        text = '{"summary": "ok"} <think>被截断的思考……'
+        self.assertEqual(strip_reasoning(text), '{"summary": "ok"}')
+
+    def test_strip_reasoning_keeps_plain_text(self):
+        from harness.json_utils import strip_reasoning
+        self.assertEqual(strip_reasoning('{"summary": "s"}'), '{"summary": "s"}')
+        self.assertEqual(strip_reasoning(""), "")
+
+    def test_review_parses_through_think_block(self):
+        payload = {
+            "content": '<think>用户想让我评价导数节点，先草拟 {"op": "bad"</think>\n'
+                       '{"summary": "图结构清晰", "operations": []}',
+            "tool_calls": [],
+            "reasoning_stripped": True,
+        }
+        result = self._review(payload)
+        self.assertEqual(result["status"], "no_ops")
+        self.assertEqual(result["summary"], "图结构清晰")
+        self.assertTrue(result.get("reasoning_stripped"))
+
+    def test_review_falls_back_to_clean_reasoning_content(self):
+        payload = {
+            "content": "",
+            "reasoning_content": '<think>思考</think>{"summary": "来自reasoning", "operations": []}',
+        }
+        result = self._review(payload)
+        self.assertEqual(result["status"], "no_ops")
+        self.assertEqual(result["summary"], "来自reasoning")
+
+    def test_text_summary_clamped_for_display(self):
+        from harness.review import _clamp_display_summary
+        clamped = _clamp_display_summary("字" * 2000)
+        self.assertLess(len(clamped), 900)
+        self.assertIn("已截断", clamped)
+        self.assertEqual(_clamp_display_summary("短"), "短")
+        self.assertEqual(_clamp_display_summary(None), "")
+
+    def test_usage_entry_records_out_chars_and_think_flag(self):
+        from harness.api import _usage_entry
+        entry = _usage_entry(
+            {"snapshot": {"nodes": [], "edges": []}, "instruction": "x",
+             "model": {"model": "m"}, "focus_node_ids": []},
+            {"status": "no_ops", "operations": [], "warnings": [], "errors": [],
+             "model_calls": 1, "out_chars": 1234, "reasoning_stripped": True},
+            0.0, "review",
+        )
+        self.assertEqual(entry["out_chars"], 1234)
+        self.assertTrue(entry["think_stripped"])
+
+
 class FocusSubgraphTest(unittest.TestCase):
     def test_focus_subgraph_keeps_neighborhood(self):
         from harness.review import _focus_subgraph

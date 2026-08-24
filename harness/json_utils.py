@@ -14,6 +14,28 @@ def _try_parse(text: str):
         return None
 
 
+# 推理模型（deepseek-v4-flash / hy3 等）常在正文里先输出 <think>…</think>
+# 思考块再给正式回答；思考里还可能草拟残缺 JSON，干扰 extract_json 的
+# 平衡扫描。成对块整段删除；未闭合（max_tokens 截断）从开标签截到结尾。
+_REASONING_BLOCK_RE = re.compile(
+    r"<(think|thinking|reasoning|thought)>[\s\S]*?</\1\s*>",
+    re.IGNORECASE,
+)
+_REASONING_OPEN_RE = re.compile(r"<(think|thinking|reasoning|thought)>", re.IGNORECASE)
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove chain-of-thought blocks (<think>…</think> etc.) from a response."""
+    if not isinstance(text, str) or not text:
+        return text
+    cleaned = _REASONING_BLOCK_RE.sub("", text)
+    m = _REASONING_OPEN_RE.search(cleaned)
+    if m:
+        # 未闭合的思考块：开标签之后全是被截断的推理过程，直接丢弃
+        cleaned = cleaned[: m.start()]
+    return cleaned.strip()
+
+
 
 def repair_json(text: str):
     """Try to salvage truncated JSON (common when a model hits max_tokens and

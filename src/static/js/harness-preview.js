@@ -35,7 +35,8 @@
       return;
     }
 
-    const summary = String(data.summary || '').trim();
+    // 前端兜底：剥离推理模型可能残留的 <think> 思考块，避免面板刷屏
+    const summary = (typeof _stripThinkText === 'function' ? _stripThinkText(String(data.summary || '')) : String(data.summary || '').trim());
     const ops = Array.isArray(data.operations) ? data.operations : [];
     const errors = (data.errors || []).map(item => item.reason || '').filter(Boolean);
     let html = '';
