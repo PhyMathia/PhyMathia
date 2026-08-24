@@ -362,6 +362,18 @@ let harnessLastAppliedBeforeSnapshot = null;
   }
   if (typeof window !== 'undefined') window.restoreHarnessDeletedNodes = restoreAllHarnessDeletedNodes;
 
+  function restoreHarnessDeletedNodesConfirm() {
+    const state = _graphState();
+    const count = state && state.harnessDeleted ? Object.keys(state.harnessDeleted).length : 0;
+    if (!count) {
+      if (typeof window._setHarnessStatus === 'function') window._setHarnessStatus('没有需要恢复的节点', 'ok');
+      return;
+    }
+    if (typeof window.confirm === 'function' && !window.confirm('检测到 ' + count + ' 个节点被此前的撤销/拒绝标记为删除，确定全部恢复吗？')) return;
+    restoreAllHarnessDeletedNodes();
+  }
+  if (typeof window !== 'undefined') window.restoreHarnessDeletedNodesConfirm = restoreHarnessDeletedNodesConfirm;
+
   function ensureHarnessPanel() {
     if (harnessPanel) return harnessPanel;
     harnessPet = document.createElement('div');
@@ -375,7 +387,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div class="graph-harness-head" id="graphHarnessWindowHead">'
       + '<span class="graph-harness-title">网络助手</span>'
       + '<span class="graph-harness-head-actions">'
-      + '<button type="button" onclick="toggleHarnessGuide()" title="使用引导">?</button>'
+      + '<button type="button" onclick="restoreHarnessDeletedNodesConfirm()" title="恢复被撤销/拒绝标记删除的节点">↺</button><button type="button" onclick="toggleHarnessGuide()" title="使用引导">?</button>'
       + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">&times;</button>'
       + '</span>'
       + '</div>'
