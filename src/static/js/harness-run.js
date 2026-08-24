@@ -206,10 +206,10 @@
         ? Array.from(window.getSelectedGraphNodeIds())
         : [];
     }
-    // 纯问答不依赖画布：用空快照让模型直接回答（省 token、空画布也能问）。
-    const snapshot = pureQuestion
-      ? { version: 1, nodes: [], edges: [], available_node_types: [], scope_node_ids: [] }
-      : buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
+    // 快照一律用真实画布内容：有图发真图，空画布自然为空。
+    // 此前纯问答故意发空快照，一旦意图误判就会让模型看到"空图"而答非所问
+    // （真实事故：用户拒绝建议后所有请求 nodes=0，模型回答"没有任何节点"）。
+    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
@@ -245,6 +245,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           snapshot,
+          pure_chat: !!pureQuestion,
           instruction,
           model: _harnessModelForRequest(model),
           max_tokens: 6000,
@@ -414,6 +415,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           snapshot,
+          pure_chat: !!pureQuestion,
           instruction,
           model: _harnessModelForRequest(model),
           max_tokens: 6000,

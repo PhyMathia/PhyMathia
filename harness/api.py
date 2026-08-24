@@ -78,6 +78,23 @@ async def graph_review(request: Request):
         retries = int(payload.get("retries") or 2)
         mode = str(payload.get("mode") or "auto")
         self_check = str(payload.get("self_check") or "auto")
+        snap_nodes = len((payload.get("snapshot") or {}).get("nodes") or [])
+        if snap_nodes == 0 and not payload.get("pure_chat"):
+            # 空快照防御：模型无法评价/修改不存在的图。纯问答聊天仍放行，
+            # 其余情况直接返回结构化提示，省一次注定无效的模型调用。
+            empty_hint = {
+                "status": "no_ops",
+                "summary": "我没有收到画布内容（快照为空），所以没法评价或修改。请确认：① 画布上确实有节点且当前会话正确；② 若此前用过「撤销/不保留」，点 Φ 面板右上角「↺」恢复被标记删除的节点后重试。",
+                "operations": [],
+                "next_snapshot": {"version": 1, "nodes": [], "edges": []},
+                "diff": [],
+                "errors": [],
+                "warnings": [{"index": "snapshot", "op": "empty", "reason": "empty snapshot"}],
+                "raw_has_ops": False,
+                "model_calls": 0,
+            }
+            _log_usage(_usage_entry(payload, empty_hint, t0, "review"))
+            return empty_hint
         result = await review_graph(
             snapshot=payload.get("snapshot"),
             instruction=payload.get("instruction", ""),
