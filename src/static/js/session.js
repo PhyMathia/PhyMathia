@@ -546,6 +546,7 @@
       await deleteKnowledgeBySession(id);
       await deleteFormulasBySession(id);
       if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(id);
+      if (typeof window.deleteQuizBankBySession === 'function') window.deleteQuizBankBySession(id);
       delete sessions[id];
       saveSessions();
       await _deleteOnServer('/api/sessions/' + id);
@@ -1011,6 +1012,7 @@
       await deleteKnowledgeBySession(currentSessionId);
       await deleteFormulasBySession(currentSessionId);
       if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(currentSessionId);
+      if (typeof window.deleteQuizBankBySession === 'function') window.deleteQuizBankBySession(currentSessionId);
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
       if (typeof loadFormulas === 'function') loadFormulas();

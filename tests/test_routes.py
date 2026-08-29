@@ -9,6 +9,7 @@
 避免污染真实 data/。
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -26,8 +27,13 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
+from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
+from server import profile as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
+
+
+_MISSING = object()
 
 
 def _patched_paths(td):
@@ -38,6 +44,7 @@ def _patched_paths(td):
         "KNOWLEDGE_PATH": Path(td) / "knowledge.json",
         "FORMULAS_PATH": Path(td) / "formulas.json",
         "KV_PATH": Path(td) / "kv_store.json",
+        "PROFILES_DIR": Path(td) / "profiles",
     }
 
 
@@ -48,6 +55,12 @@ class RouteTestBase(unittest.TestCase):
         self._td = tempfile.TemporaryDirectory()
         paths = _patched_paths(self._td.name)
         paths["MESSAGES_DIR"].mkdir(parents=True, exist_ok=True)
+        # backup/profile 模块是 from-import，命名空间里有自己的路径引用，需一并补丁
+        self._orig_extra = {}
+        for mod in (backup_mod, profile_mod):
+            for name, value in paths.items():
+                self._orig_extra[(id(mod), name)] = getattr(mod, name, _MISSING)
+                setattr(mod, name, value)
         self._orig = {}
         for mod in (main_mod, storage_mod):
             for name, value in paths.items():
@@ -61,6 +74,14 @@ class RouteTestBase(unittest.TestCase):
         self.client = TestClient(main_mod.app)
 
     def tearDown(self):
+        for mod in (backup_mod, profile_mod):
+            for (mid, name), value in self._orig_extra.items():
+                if id(mod) == mid:
+                    if value is _MISSING:
+                        if hasattr(mod, name):
+                            delattr(mod, name)
+                    else:
+                        setattr(mod, name, value)
         for mod in (main_mod, storage_mod):
             for (mid, name), value in self._orig.items():
                 if id(mod) == mid:
@@ -208,6 +229,70 @@ class GetMessagesPathUnitTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError, msg=sid):
                 storage_mod._get_messages_path(sid)
+
+
+class BackupRestoreRollbackTest(RouteTestBase):
+    """备份恢复原子性：中途写失败必须整体回滚，不留半恢复状态。"""
+
+    def _read_raw(self, path):
+        p = Path(path)
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+    def test_failed_restore_rolls_back_all_sections(self):
+        td = Path(self._td.name)
+        (td / "profiles").mkdir(exist_ok=True)
+        # 导入前的现状
+        storage_mod._write_json(td / "sessions.json", {
+            "s1": {"id": "s1", "title": "旧会话", "createdAt": 1, "updatedAt": 1},
+        })
+        storage_mod._write_json(td / "messages" / "s1.json",
+                                [{"role": "user", "content": "旧消息", "timestamp": 1}])
+        payload = {
+            "sessions": [{"id": "s2", "title": "新会话"}],
+            "messages": {"s2": [{"role": "user", "content": "新消息", "timestamp": 2}]},
+            "knowledge": {"k9": {"id": "k9", "title": "新知识"}},
+            "profiles": {"dev9": {"enabled": True}},
+        }
+        # 注入故障：写 knowledge.json 时抛 OSError（模拟文件被占用）——
+        # 此时 sessions 与 s2 消息文件已落盘，正是旧实现留半恢复状态的时点
+        orig_write = backup_mod._write_json
+
+        def failing_write(path, data):
+            if Path(path).name == "knowledge.json":
+                raise OSError("file locked")
+            return orig_write(path, data)
+
+        backup_mod._write_json = failing_write
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                backup_mod._restore_backup(payload, replace=False)
+        finally:
+            backup_mod._write_json = orig_write
+        self.assertIn("回滚", str(ctx.exception))
+
+        # sessions 回到导入前（s2 消失、s1 保留）
+        sessions_now = self._read_raw(td / "sessions.json")
+        self.assertIn("s1", sessions_now)
+        self.assertNotIn("s2", sessions_now)
+        # 新会话消息文件被回滚删除，旧会话消息原样保留
+        self.assertFalse((td / "messages" / "s2.json").exists())
+        self.assertEqual(self._read_raw(td / "messages" / "s1.json"),
+                         [{"role": "user", "content": "旧消息", "timestamp": 1}])
+        # knowledge 从未成功写入
+        self.assertIsNone(self._read_raw(td / "knowledge.json"))
+
+    def test_successful_restore_still_merges(self):
+        td = Path(self._td.name)
+        (td / "profiles").mkdir(exist_ok=True)
+        payload = {
+            "sessions": [{"id": "s2", "title": "新会话"}],
+            "messages": {"s2": [{"role": "user", "content": "hi", "timestamp": 2}]},
+        }
+        result = backup_mod._restore_backup(payload, replace=False)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["sessions"], 1)
+        self.assertIn("s2", self._read_raw(td / "sessions.json"))
+        self.assertTrue((td / "messages" / "s2.json").exists())
 
 
 if __name__ == "__main__":

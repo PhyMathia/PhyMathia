@@ -1,6 +1,9 @@
 """数据备份导出与导入。"""
 
+import os
 import time
+import uuid
+from pathlib import Path
 
 from .config import FORMULAS_PATH, KNOWLEDGE_PATH, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
 from .knowledge import (
@@ -10,7 +13,7 @@ from .knowledge import (
     _normalize_knowledge,
 )
 from .profile import PROFILES_DIR, save_profile
-from .storage import _get_messages_path, _read_json, _write_json
+from .storage import _get_messages_path, _invalidate_json_cache, _read_json, _write_json
 
 def _build_backup_payload() -> dict:
     sessions = _read_json(SESSIONS_PATH, {})
@@ -92,7 +95,69 @@ def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
     return count
 
 
+def _restore_target_paths() -> list:
+    paths = [SESSIONS_PATH, KNOWLEDGE_PATH, FORMULAS_PATH, KV_PATH]
+    paths.extend(sorted(MESSAGES_DIR.glob("*.json")))
+    paths.extend(sorted(PROFILES_DIR.glob("*.json")))
+    return paths
+
+
+def _snapshot_restore_targets() -> dict:
+    """恢复前对将触碰的数据文件做内容级快照（None 表示原本不存在）。"""
+    snap = {}
+    for p in _restore_target_paths():
+        try:
+            snap[str(p)] = p.read_bytes() if p.exists() else None
+        except OSError:
+            snap[str(p)] = None
+    return snap
+
+
+def _rollback_restore_targets(snap: dict) -> list:
+    """尽力把数据文件恢复到快照状态；返回仍然失败的目标名。"""
+    failed = []
+    for path_str, content in snap.items():
+        p = Path(path_str)
+        try:
+            if content is None:
+                p.unlink(missing_ok=True)
+            else:
+                tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
+                try:
+                    tmp.write_bytes(content)
+                    os.replace(tmp, p)
+                finally:
+                    if tmp.exists():
+                        tmp.unlink()
+            _invalidate_json_cache(p)
+        except OSError:
+            failed.append(p.name)
+    # 恢复过程中新建、快照里不存在的文件也一并移除
+    for p in _restore_target_paths():
+        if str(p) not in snap:
+            try:
+                p.unlink(missing_ok=True)
+                _invalidate_json_cache(p)
+            except OSError:
+                failed.append(p.name)
+    return failed
+
+
 def _restore_backup(backup: dict, replace: bool) -> dict:
+    # 恢复按 sessions→消息→知识→公式→kv→画像 依次落盘，中途异常（文件被占用/
+    # 磁盘满）会留下半恢复状态。这里先做内容级快照，任一环节失败即整体回滚。
+    snapshot = _snapshot_restore_targets()
+    try:
+        return _apply_restore(backup, replace)
+    except Exception as exc:
+        rollback_failed = _rollback_restore_targets(snapshot)
+        detail = f"恢复失败，已回滚到导入前状态：{exc}"
+        if rollback_failed:
+            detail += f"；以下文件回滚仍失败，请手动检查：{', '.join(rollback_failed)}"
+        raise RuntimeError(detail) from exc
+
+
+def _apply_restore(backup: dict, replace: bool) -> dict:
     sessions = backup.get("sessions") or {}
     session_count = _restore_sessions(sessions, replace)
     saved_sessions = _read_json(SESSIONS_PATH, {})
@@ -140,4 +205,10 @@ def _restore_backup(backup: dict, replace: bool) -> dict:
 
 
 
-__all__ = ["_build_backup_payload", "_restore_backup"]
+__all__ = [
+    "_build_backup_payload",
+    "_restore_backup",
+    "_apply_restore",
+    "_snapshot_restore_targets",
+    "_rollback_restore_targets",
+]

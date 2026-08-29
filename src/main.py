@@ -997,7 +997,13 @@ async def api_backup_import(request: Request):
     mode = str(payload.get("mode") or "merge").lower()
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
-    return _restore_backup(backup, mode == "replace")
+    try:
+        return _restore_backup(backup, mode == "replace")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # _restore_backup 失败时已整体回滚，把回滚报告带回给调用方
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 

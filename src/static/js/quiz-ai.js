@@ -312,6 +312,22 @@ function deleteQuizBankQuestion(encodedId) {
   if (quizState && quizState.phase === 'bank') renderQuiz();
 }
 
+// 会话删除联动：题库与统计/错题不同，此前没有删除钩子——已删会话的题
+// 会一直残留在全局题库里。行为对齐 deleteQuizStatsBySession。
+function deleteQuizBankBySession(sessionId) {
+  if (!sessionId) return;
+  const bank = quizBank || _readQuizBank();
+  if (!bank || !Array.isArray(bank.questions) || !bank.questions.length) return;
+  const sessionIds = _quizSessionIdVariants(sessionId);
+  const kept = bank.questions.filter(q => q && !sessionIds.has(q.sessionId || ''));
+  if (kept.length === bank.questions.length) return;
+  bank.questions = kept;
+  bank.updatedAt = Date.now();
+  _persistQuizBank(bank);
+  if (quizState && quizState.phase === 'bank') renderQuiz();
+}
+window.deleteQuizBankBySession = deleteQuizBankBySession;
+
 function _quizShowToast(message) {
   if (typeof showToast === 'function') showToast(message);
   else alert(message);

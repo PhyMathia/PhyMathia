@@ -30,44 +30,26 @@ let quizMode = 'session';
 
 let quizBankFilterSession = '';
 
-const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。用户消息中的“出题素材”是从当前画布提取的真实知识点与公式，请只基于其中的知识点标题、概述、公式和分类生成物理数学检测题。
+// 兜底提示词：仅在 /quiz-prompt.md 加载失败（静态资源缺失/离线）时使用。
+// 正式提示词以 src/static/quiz-prompt.md 为单源，两处不要各自演化。
+const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。只根据用户消息中“出题素材”里的知识点标题、概述、公式和分类出题，不要编造素材之外的概念。
 {{LEVEL_PROMPT}}
 要求：
-- 只根据给定内容出题，不要编造上下文之外的概念。
-- 题目尽量联系现实生活、常见现象或工程场景，题干要具体、生动、有画面感。
-- 现实场景不能改变正确答案；解析可以给简短类比或实际例子，但不能编造事实。
-- 不要对“出题素材”“知识上下文”“标题”“格式”“字符数”“字符串长度”“包含多少个汉字”等元信息出题；不要把“出题素材”或“当前画布知识上下文”当作知识点。
-- 每道题的题干、公式或选项中必须体现素材里的具体知识点标题、概述、公式或概念。
-- 正确答案必须由素材中的概述、公式或分类直接推出；素材不足或答案不能唯一确定时，宁可不出这一题。
-- 解析必须解释为什么，并引用素材中的概述或公式，不能引入素材之外的新结论。
-- 解析和选项中不得出现 id、sourceRef、f_xxx、k_xxx 等内部标识；引用公式时写公式名称或公式本身。
-- 所有公式必须用 <formula>纯LaTeX</formula> 包裹；题干、选项或解析正文中的内联公式也可以用单个 $ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出裸露的 LaTeX 源码。
-- 所有公式必须用 <formula>纯LaTeX</formula> 包裹，禁止输出裸露的 LaTeX 源码。
-- 题干、选项和解析中不得出现未包裹的 \frac、\partial、\sqrt、\int 等公式源码。
-- 公式必须放在公式标签内，不要用 Markdown 代码块包裹公式。
-- title 必须是素材中的知识点标题或公式概念；sourceRef 必须填素材中给出的 id。
-- 生成 {{QUESTION_COUNT}} 道选择题，题型可包含：概述匹配、公式含义、公式归属、知识点涉及公式、学科分类。
-- 每题必须有 4 个选项，且只有一个正确答案。
-- 干扰项必须明显错误或来自不同概念，不能出现多个选项都正确的情况。
-- 每题标记 difficulty：easy/medium/hard；解释尽量引用素材原文。
-- 不要用“苏格拉底追问”“延伸思考”“知识图谱”等模块标题当知识点。
+- 正确答案必须由素材直接唯一推出；素材不足或答案不能唯一确定时，宁可不出这一题。
+- 题目尽量联系现实场景，题干具体、生动；场景不能改变正确答案。
+- 不要对“出题素材”“知识上下文”“标题”等元信息出题。
+- 生成 {{QUESTION_COUNT}} 道选择题，每题 4 个选项、唯一正确答案，标记 difficulty：easy/medium/hard。
+- 所有公式用 <formula>纯LaTeX</formula> 包裹（内联公式可用单个 $ 包裹），禁止裸露 LaTeX 源码。
+- title 用素材中的知识点标题；sourceRef 填素材给出的 id；解析引用素材原文，不引入新结论。
 - 输出严格 JSON，不要输出其他内容：
 {"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
 
-const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。请根据出题素材审核下面的检测题，只保留能由素材直接推出且没有物理或数学错误的题目。
+const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。根据出题素材审核检测题：答案、选项和解析必须严格来自素材，有误直接修正，无法唯一确定答案的删除该题，不要新增素材之外的知识点。
 {{LEVEL_PROMPT}}
 要求：
-- 正确答案、正确选项和解析必须严格来自素材，不能引入素材之外的新事实。
-- 如果题干、选项或正确索引有误，直接修正。
-- 如果某题无法由素材唯一确定答案，删除该题。
 - 保留生动、现实的题干场景，但场景不能引入素材之外的新结论。
-- 题目数量可以减少，但不要新增素材之外的知识点。
-- 解析和选项中不得出现 id、sourceRef、f_xxx、k_xxx 等内部标识；引用公式时写公式名称或公式本身。
-- 所有公式必须用 <formula>纯LaTeX</formula> 包裹；题干、选项或解析正文中的内联公式也可以用单个 $ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出裸露的 LaTeX 源码。
-- 所有公式必须用 <formula>纯LaTeX</formula> 包裹，禁止输出裸露的 LaTeX 源码。
-- 题干、选项和解析中不得出现未包裹的 \frac、\partial、\sqrt、\int 等公式源码。
-- 公式必须放在公式标签内，不要用 Markdown 代码块包裹公式。
-- 保留 sourceRef、difficulty；如果修正了题目，explanation 要同步修正。
+- 保留 sourceRef、difficulty；修正题目时同步修正 explanation。
+- 所有公式用 <formula>纯LaTeX</formula> 包裹（内联公式可用单个 $ 包裹），禁止裸露 LaTeX 源码。
 - 只输出严格 JSON，不要输出其他内容：
 {"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
 
