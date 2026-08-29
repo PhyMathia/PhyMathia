@@ -125,3 +125,6 @@ Html_video/node_modules/
 Html_video/quiz_real/capture/
 Html_video/quiz_real/out/
 Html_video/quiz_real/frames/
+
+# opencode 内部状态（计划/会话缓存，禁止入库）
+.zcode/
