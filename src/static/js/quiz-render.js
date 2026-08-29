@@ -208,7 +208,7 @@ function _renderQuizBank() {
       <div class="quiz-wrong-card">
         <div class="quiz-wrong-title-row">
           <div class="quiz-wrong-title">${index + 1}. ${_quizEscape(q.title || 'AI题')}</div>
-          <span class="quiz-tag">${q.difficulty || 'medium'}</span>
+          <span class="quiz-tag">${_quizEscape(q.difficulty || 'medium')}</span>
           <button class="quiz-wrong-delete" onclick="deleteQuizBankQuestion('${encodeURIComponent(q.id || '')}')" title="移除该题">移除</button>
         </div>
         <div class="quiz-wrong-prompt">${_renderQuizRichText(_quizHumanizeQuestionText(q.prompt, q))}</div>
@@ -610,7 +610,7 @@ function deleteQuizStatsBySession(sessionId) {
     if (stats._meta.openResults.length !== before) changed = true;
   }
   if (changed) _saveQuizStats(stats);
-}
+}
 
 window.openQuiz = openQuiz;
 window.openQuizGlobalDashboard = openQuizGlobalDashboard;
@@ -644,4 +644,4 @@ window.clearQuizRecords = clearQuizRecords;
 window.clearWrongQuestions = clearWrongQuestions;
 window.backToQuizIntro = backToQuizIntro;
 window.clearAllQuizStats = clearAllQuizStats;
-window.deleteQuizStatsBySession = deleteQuizStatsBySession;
+window.deleteQuizStatsBySession = deleteQuizStatsBySession;

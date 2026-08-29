@@ -40,12 +40,19 @@
         return;
       }
 
-      // Remove this assistant message and all after it from chatHistory
-      chatHistory = chatHistory.slice(0, domIndex);
+      // 截断到该用户消息之前（连同用户消息一并移除）：
+      // sendQuick/sendMessage 会无条件重新 push 用户消息，保留原条目会导致历史重复
+      chatHistory = chatHistory.slice(0, userMsgIndex);
       saveSessionMessages(currentSessionId, chatHistory);
 
-      // Remove the DOM element and all after it
-      let el = messageEl;
+      // DOM：从被点击的助手消息向前找最近的用户消息节点，从它起整段移除
+      let startEl = messageEl;
+      let prev = messageEl.previousElementSibling;
+      while (prev) {
+        if (prev.classList && prev.classList.contains('user')) { startEl = prev; break; }
+        prev = prev.previousElementSibling;
+      }
+      let el = startEl;
       while (el) {
         const next = el.nextElementSibling;
         el.remove();

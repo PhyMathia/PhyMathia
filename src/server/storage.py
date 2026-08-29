@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -11,12 +12,15 @@ from .config import MESSAGES_DIR, SESSIONS_PATH
 # ====== JSON 文件持久化工具 ======
 _JSON_LOCK = threading.RLock()
 
+# 会话标识白名单：字母/数字/下划线/连字符，杜绝路径分隔符与 Windows 反斜杠穿越
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
 
 def _read_json(path: Path, default=None):
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             pass
     return default if default is not None else {}
 
@@ -94,19 +98,32 @@ def _delete_by_session(path: Path, session_id: str) -> int:
 
 
 def _get_messages_path(session_id: str) -> Path:
+    # 单会话路由的 session_id 直接拼文件路径，必须白名单校验，
+    # 否则 URL 编码的 "..%5C" 反斜杠在 Windows 下可穿越到 data 目录之外
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+        raise ValueError(f"invalid session id: {session_id!r}")
     return MESSAGES_DIR / f"{session_id}.json"
 
 
 def _resolve_messages_path(session_id: str) -> Path:
     """兼容两种会话标识：local key 直接找消息文件，server sessionId 反向查 sessions.json。"""
-    direct = _get_messages_path(session_id)
-    if direct.exists():
-        return direct
+    direct = None
+    try:
+        direct = _get_messages_path(session_id)
+        if direct.exists():
+            return direct
+    except ValueError:
+        pass
     sessions = _read_json(SESSIONS_PATH, {})
     for sid, sdata in sessions.items():
         if isinstance(sdata, dict) and sdata.get("sessionId") == session_id:
-            return _get_messages_path(sid)
-    return direct
+            try:
+                return _get_messages_path(sid)
+            except ValueError:
+                continue
+    if direct is not None:
+        return direct
+    raise ValueError(f"invalid session id: {session_id!r}")
 
 
 

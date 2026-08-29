@@ -673,14 +673,28 @@
       }
     }
 
+    // 移除末尾的用户消息（chatHistory 条目 + DOM 节点）。
+    // 重试/重新生成前必须调用：sendMessage 会无条件重新 push 用户消息，
+    // 不移除则同一问题在历史中重复出现（并被持久化、进入后续上下文）
+    function _popTrailingUserMessage() {
+      if (!chatHistory.length || chatHistory[chatHistory.length - 1].role !== 'user') return null;
+      const entry = chatHistory.pop();
+      const ts = String(entry.timestamp || '');
+      if (ts) {
+        const body = document.querySelector('#chatMessages .message-body[data-message-id="' + ts + '"]');
+        const node = body && body.closest('.message');
+        if (node) node.remove();
+      }
+      return entry;
+    }
+
     function retryLast() {
       if (!lastFailedMessage || isStreaming) return;
       const msgs = document.querySelectorAll('.message.assistant');
       const lastMsg = msgs[msgs.length - 1];
       if (lastMsg && lastMsg.querySelector('.error-actions')) lastMsg.remove();
-      if (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant') {
-        if (chatHistory[chatHistory.length - 1].content.includes('请求失败')) chatHistory.pop();
-      }
+      // 发送失败时用户消息已入 chatHistory：重发前移除，避免重复
+      _popTrailingUserMessage();
       const userInputEl = document.getElementById('userInput');
       if (userInputEl) userInputEl.value = lastFailedMessage;
       if (lastFailedBranchMeta && (lastFailedBranchMeta.branchId || lastFailedBranchMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
@@ -706,6 +720,8 @@
         if (chatHistory[i].role === 'user') { userMsg = chatHistory[i].content; userMeta = chatHistory[i]; break; }
       }
       if (userMsg) {
+        // 重发前移除原用户消息（历史+DOM），sendMessage 会重新 push
+        _popTrailingUserMessage();
         lastFailedMessage = userMsg;
         if (userMeta && (userMeta.branchId || userMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
           // 重试时保留画布定位信息（position/fromPort），否则重试后分支会连错端口/漂移

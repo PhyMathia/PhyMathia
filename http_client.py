@@ -27,7 +27,8 @@ def get_http_client() -> httpx.AsyncClient:
             _client = httpx.AsyncClient(
                 timeout=_DEFAULT_TIMEOUT,
                 limits=_DEFAULT_LIMITS,
-                follow_redirects=True,
+                # 不跟随重定向：携带 API Key 的请求经 302 可被引向任意主机
+                follow_redirects=False,
             )
         return _client
 

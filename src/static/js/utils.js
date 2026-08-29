@@ -1,10 +1,14 @@
 // ===== PhyMathia 共享工具函数（避免多文件重复定义）=====
 
-// HTML 转义（DOM 方式）
+// HTML 转义（DOM 方式 + 引号补齐）
+// 引号必须转义：结果会被拼进 value="..." 属性与 onclick 单引号字符串，
+// 不转义会造成属性逃逸注入
 function escapeHtml(text) {
   const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  div.textContent = text == null ? '' : String(text);
+  return div.innerHTML
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // 相对时间：超过 7 天回退到全局 formatTime（chat.js 提供）

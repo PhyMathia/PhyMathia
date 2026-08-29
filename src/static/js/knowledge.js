@@ -167,7 +167,22 @@ function addKnowledgeItem(item) {
   saveKnowledgeItems(items);
 }
 
+async function _deleteKnowledgeOnServer(ids) {
+  // 后端 POST /api/knowledge 是纯 merge：本地删除必须逐条调 DELETE，
+  // 否则 15 秒定时同步会把服务端残留条目整表拉回（“删了又复活”）
+  const list = (ids || []).filter(Boolean);
+  for (const id of list) {
+    try {
+      await fetch('/api/knowledge/' + encodeURIComponent(id), { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Delete knowledge on server failed:', id, err);
+    }
+  }
+}
+
 async function deleteKnowledgeItem(id) {
+  // 先删服务端再删本地，避免删除瞬间被定时同步的并集合并拉回
+  await _deleteKnowledgeOnServer([id]);
   const items = getKnowledgeItems();
   delete items[id];
   await saveKnowledgeItems(items);
@@ -175,14 +190,18 @@ async function deleteKnowledgeItem(id) {
 
 async function deleteKnowledgeBySession(sessionId) {
   const items = getKnowledgeItems();
-  let changed = false;
+  const removedIds = [];
   for (const id in items) {
     if (items[id].sessionId === sessionId) {
-      delete items[id];
-      changed = true;
+      removedIds.push(id);
     }
   }
-  if (changed) await saveKnowledgeItems(items);
+  if (!removedIds.length) return;
+  await _deleteKnowledgeOnServer(removedIds);
+  for (const id of removedIds) {
+    delete items[id];
+  }
+  await saveKnowledgeItems(items);
 }
 
 // Toggle panel

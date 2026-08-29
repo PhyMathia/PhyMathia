@@ -6,13 +6,14 @@ import logging
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 from http_client import get_http_client
 
-from .config import AI_PROVIDERS, LEVEL_PROMPTS, OPENCODE_DEFAULT_API_KEY, UPLOAD_DIR, UPLOADS_META_PATH
+from .config import AI_PROVIDERS, LEVEL_PROMPTS, OPENCODE_DEFAULT_API_KEY, UPLOAD_DIR, UPLOADS_META_PATH, validate_model_target
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula
-from .storage import _read_json, _write_json
+from .storage import _mutate_json, _read_json, _write_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,12 @@ def _read_upload(file_id: str):
 
 
 def _save_upload(file_id: str, filename: str, content: bytes) -> None:
-    meta = _read_json(UPLOADS_META_PATH, {})
-    meta[file_id] = {
+    # meta 走 _mutate_json 锁内读-改-写：并发上传时后写者不再覆盖前者的条目
+    _mutate_json(UPLOADS_META_PATH, lambda meta: {**meta, file_id: {
         "id": file_id,
         "filename": filename,
         "savedAt": int(time.time() * 1000),
-    }
-    _write_json(UPLOADS_META_PATH, meta)
+    }})
     (UPLOAD_DIR / f"{file_id}.bin").write_bytes(content)
 
 
@@ -49,14 +49,20 @@ def _extract_image_text(content: bytes) -> str:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError:
         return ""
+    # 唯一临时文件名：并发图片解析共用固定名会互相覆盖；用完即删不留残留
+    tmp_path = UPLOAD_DIR / f"ocr_tmp_{uuid.uuid4().hex[:8]}.png"
     try:
-        tmp_path = UPLOAD_DIR / "ocr_tmp.png"
         tmp_path.write_bytes(content)
         result, _ = RapidOCR()(str(tmp_path))
         if result:
             return "\n".join(str(item[1]) for item in result if len(item) > 1)
     except Exception as e:
         logger.warning(f"Image OCR failed: {e}")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     return ""
 
 
@@ -327,11 +333,17 @@ async def _ai_extract_document_knowledge(
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], [], []
+    env_key_used = False
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        env_key_used = bool(api_key)
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
     if not api_key and provider not in ("opencode", "opencode-go"):
+        return [], [], []
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError:
         return [], [], []
 
     prompt = (

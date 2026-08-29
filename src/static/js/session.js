@@ -8,16 +8,19 @@
 
     // ====== 服务端持久化存储层 ======
     let _serverAvailable = null;
-    let _pendingSaves = []; // 跟踪未完成的服务端保存
+    let _serverAvailableCheckedAt = 0;
+    const SERVER_CHECK_TTL_MS = 30000; // 失败结果 30 秒后允许重试，避免首轮探测失败被永久缓存
 
     async function _checkServer() {
-      if (_serverAvailable !== null) return _serverAvailable;
+      if (_serverAvailable === true) return true;
+      if (_serverAvailable === false && (Date.now() - _serverAvailableCheckedAt) < SERVER_CHECK_TTL_MS) return false;
       try {
         const resp = await fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) });
         _serverAvailable = resp.ok;
       } catch {
         _serverAvailable = false;
       }
+      _serverAvailableCheckedAt = Date.now();
       console.log('[Storage] Server available:', _serverAvailable);
       return _serverAvailable;
     }
@@ -238,6 +241,9 @@
     // （根治跨标签页/服务端变化时"要刷新才出现"的问题）
     setInterval(async () => {
       try {
+        // 流式生成期间不推不拉：此时 assistant 消息尚未完整入 history，
+        // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染
+        if (isStreaming) return;
         if (currentSessionId && chatHistory.length > 0) {
           await _saveMessagesToServer(currentSessionId, chatHistory);
         }
@@ -262,29 +268,30 @@
     }, 15000);
 
     // 页面关闭前保护
+    // 注意：同步 XHR 在 Chrome 88+ 的卸载阶段会被丢弃，改用 sendBeacon
+    // （fire-and-forget、不受卸载打断影响）；不可用时退回 fetch keepalive
     window.addEventListener('beforeunload', () => {
-      // beforeunload 中不能用 async/await，用 sync XHR 尝试保存
+      const beacon = (url, payload) => {
+        try {
+          const body = JSON.stringify(payload);
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+          } else {
+            fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+          }
+        } catch (e) { /* best effort */ }
+      };
       try {
         if (currentSessionId && chatHistory.length > 0) {
-          const data = JSON.stringify({ messages: chatHistory });
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', `/api/sessions/${currentSessionId}/messages`, false); // sync
-          xhr.setRequestHeader('Content-Type', 'application/json');
-          xhr.send(data);
+          beacon(`/api/sessions/${currentSessionId}/messages`, { messages: chatHistory });
         }
         // 保存所有会话元数据
         for (const [sid, sdata] of Object.entries(sessions)) {
-          const xhr2 = new XMLHttpRequest();
-          xhr2.open('POST', '/api/sessions', false);
-          xhr2.setRequestHeader('Content-Type', 'application/json');
-          xhr2.send(JSON.stringify({ ...sdata, id: sid }));
+          beacon('/api/sessions', { ...sdata, id: sid });
         }
         // 保存当前会话 ID
         if (currentSessionId) {
-          const xhr3 = new XMLHttpRequest();
-          xhr3.open('POST', '/api/kv/phymathia_current_session', false);
-          xhr3.setRequestHeader('Content-Type', 'application/json');
-          xhr3.send(JSON.stringify({ value: currentSessionId }));
+          beacon('/api/kv/phymathia_current_session', { value: currentSessionId });
         }
       } catch (e) { /* best effort */ }
     });

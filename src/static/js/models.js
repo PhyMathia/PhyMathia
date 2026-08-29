@@ -183,7 +183,7 @@ function renderModelSelects() {
   const descriptorEmptyOpt = '<option value="">— 不启用（回退默认摘要）—</option>';
   const quizEmptyOpt = '<option value="">— 不启用（默认用主模型）—</option>';
   const opts = allModels.map(m =>
-    `<option value="${m.id}">${m.name}</option>`
+    `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`
   ).join('');
 
   agentSelect.innerHTML = emptyOpt + opts;
@@ -265,14 +265,8 @@ function _positionPanelBelowBtn(panel, btn) {
 }
 window._positionPanelBelowBtn = _positionPanelBelowBtn;
 
-function toggleModelPanel(e) {
-  e?.stopPropagation();
-  const panel = document.getElementById('modelPanel');
-  const willShow = !panel.classList.contains('show');
-  panel.classList.toggle('show');
-  if (willShow) _positionPanelBelowBtn(panel, e?.currentTarget);
-  renderModelList();
-}
+// toggleModelPanel 统一定义在 ui.js（打包顺序在后、实现更完整：联动关闭
+// level/data 面板 + renderModelSelects）；此处不再重复定义，避免两份实现漂移
 
 function renderModelList() {
   const container = document.getElementById('modelList');
@@ -283,14 +277,16 @@ function renderModelList() {
   }
   container.innerHTML = userModelConfigs.map(m => {
     const preset = MODEL_PRESETS[m.provider];
+    // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
+    const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     return `<div class="model-item">
       <div class="model-item-info">
-        <div class="model-item-name">${preset?.name || m.provider} · ${m.label || m.model}</div>
+        <div class="model-item-name">${escapeHtml((preset && preset.name) || m.provider)} · ${escapeHtml(m.label || m.model)}</div>
         <div class="model-item-key">${m.apiKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
       </div>
       <div class="model-item-actions">
-        <button class="model-item-btn" onclick="openModelConfig('${m.id}')" title="配置">${UI_ICON_SVG.sliders}</button>
-        <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${m.id}')" title="删除">${UI_ICON_SVG.trash}</button>
+        <button class="model-item-btn" onclick="openModelConfig('${jsId}')" title="配置">${UI_ICON_SVG.sliders}</button>
+        <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${jsId}')" title="删除">${UI_ICON_SVG.trash}</button>
       </div>
     </div>`;
   }).join('');

@@ -166,11 +166,6 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
   // 空闲超时守卫：流式有数据就续期，只有持续无响应才中止（推理模型友好）
   const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
-  if (quizState) {
-    quizState.aiProgress = 90;
-    quizState.aiStage = 'verify';
-    _startQuizProgress(98);
-  }
   const context = _buildQuizGenerationContext(pool);
   quizAiStatusText = 'AI 正在生成检测题…';
   quizAiLastError = '';
@@ -301,7 +296,9 @@ function _saveQuizBank(pool, aiQuestions) {
   }
   _persistQuizBank({
     poolKey: _quizPoolSignature(pool),
-    questions: merged.slice(0, 30),
+    // merged 是旧题在前、新题在后：保尾 30 保留最新题。
+    // 此前 slice(0, 30) 在题库满后会把新生成的题全部静默丢弃（“补充AI题”看似成功实则无效）
+    questions: merged.slice(-30),
     updatedAt: Date.now()
   });
 }
@@ -410,8 +407,13 @@ async function _loadQuizBankFromServer() {
 }
 
 function _bankForPool(pool) {
-  const questions = _quizBankQuestions();
-  return questions.length >= 2 ? questions : null;
+  const bank = quizBank || _readQuizBank();
+  if (!bank || !Array.isArray(bank.questions) || bank.questions.length < 2) return null;
+  // 素材池已变化（知识点/公式增删）时旧题库过期，强制重新生成：
+  // 此前 poolKey 只存不校验，会话知识更新后仍复用与当前知识脱节的旧题
+  const expected = _quizPoolSignature(pool);
+  if (expected && bank.poolKey && bank.poolKey !== expected) return null;
+  return bank.questions;
 }
 
 function _quizBankQuestions() {
@@ -512,6 +514,9 @@ async function _generateQuestions(pool) {
     quizState.aiStage = 'generate';
   }
   const ai = emptyPool ? [] : (await _aiGenerateQuizQuestions(pool, requestId) || []);
+  // 等待期间被新一代请求取代（useLocalQuiz/重新出题/重开检测）：放弃本次结果。
+  // 不再写 quizState——否则迟到的续尾会把用户已开始的答题拽回第 1 题并清空回答记录
+  if (requestId !== quizAiRequestId) return null;
   const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool);
   if (quizState) quizState.aiPending = false;
   if (ai.length) _saveQuizBank(pool, ai);

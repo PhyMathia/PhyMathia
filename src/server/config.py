@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 # ====== .env 加载（无第三方依赖）======
 def _load_env_file(path: Path) -> None:
@@ -16,7 +17,7 @@ def _load_env_file(path: Path) -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
-            os.environ[key] = value
+            os.environ[key] = value
 
 # PyInstaller 打包兼容：静态资源/提示词从解包目录读取（只读），
 # 数据（data/）始终写到 exe 所在目录，便于持久化且不携带开发机数据。
@@ -39,7 +40,7 @@ FORMULAS_PATH = DATA_DIR / "formulas.json"
 UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOADS_META_PATH = DATA_DIR / "uploads.json"
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 _load_env_file(ROOT_DIR / ".env")
 
@@ -48,7 +49,7 @@ STATIC_DIR = BASE_DIR / "static"
 STATIC_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".html", ".md",
     ".webp", ".css", ".js", ".woff", ".woff2", ".ttf",
-}
+}
 
 LEVEL_PROMPTS = {
     "middle": "（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）",
@@ -56,7 +57,7 @@ LEVEL_PROMPTS = {
     "research": "（用户是科研人员，请用学术深度讲解，可以使用高级数学工具和前沿研究视角，推导可以简略关键步骤，关注物理本质和数学结构的深层联系）",
 }
 
-STRICT_MODULE_MAX_TOKENS = 1000
+STRICT_MODULE_MAX_TOKENS = 1000
 
 AI_PROVIDERS = {
     "deepseek": {"base_url": "https://api.deepseek.com"},
@@ -64,7 +65,54 @@ AI_PROVIDERS = {
     "opencode": {"base_url": "https://opencode.ai/zen/v1"},
 }
 
-OPENCODE_DEFAULT_API_KEY = ""
+OPENCODE_DEFAULT_API_KEY = ""
+
+
+def _official_host(provider: str) -> str:
+    info = AI_PROVIDERS.get(provider)
+    if info:
+        return urlparse(info["base_url"]).netloc
+    # opencode-go 的 env 兜底 key 对应 opencode 官方域名
+    if provider == "opencode-go":
+        return urlparse(AI_PROVIDERS["opencode"]["base_url"]).netloc
+    return ""
+
+
+def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> str:
+    """校验 AI 代理目标，返回最终 base_url；非法目标抛 ValueError。
+
+    - base_url 必须是合法 http(s) URL（本机模型允许 http://127.0.0.1|localhost）；
+    - 使用 .env 兜底密钥时，目标域名必须是该 provider 的官方域名，
+      防止「请求体指定 provider=deepseek + 任意 base_url」把 .env 真实密钥外发。
+    """
+    if not base_url:
+        info = AI_PROVIDERS.get(provider)
+        if not info:
+            raise ValueError(f"Unknown provider '{provider}' and no base_url provided")
+        base_url = info["base_url"]
+        return base_url
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        raise ValueError("Invalid base_url")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("Invalid base_url: must be a valid http(s) URL")
+    host = parsed.netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
+    is_local = parsed.scheme == "http" and (
+        host in ("127.0.0.1", "localhost", "::1", "localhost.localdomain")
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+        or host.startswith("169.254.")
+        # 172.16.0.0 – 172.31.255.255 私网段
+        or (host.startswith("172.") and host.split(".")[1].isdigit() and 16 <= int(host.split(".")[1]) <= 31)
+    )
+    if parsed.scheme != "https" and not is_local:
+        raise ValueError("Invalid base_url: remote endpoints must use https")
+    if env_key_used:
+        official = _official_host(provider)
+        if official and host != official:
+            raise ValueError("Env fallback API key can only be sent to the provider's official endpoint")
+    return base_url
 
 __all__ = [
     "BASE_DIR", "ROOT_DIR", "DATA_DIR", "MESSAGES_DIR",
@@ -73,4 +121,5 @@ __all__ = [
     "STATIC_DIR", "STATIC_EXTENSIONS",
     "LEVEL_PROMPTS", "STRICT_MODULE_MAX_TOKENS",
     "AI_PROVIDERS", "OPENCODE_DEFAULT_API_KEY",
+    "validate_model_target",
 ]

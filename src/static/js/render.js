@@ -240,11 +240,20 @@ function copyVizCode(vizId) {
 function openVizNewTab(vizId) {
   const html = _vizStore[vizId];
   if (!html) return;
-  const blob = new Blob([html], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
-  // 延迟释放，确保新标签页已加载
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  // 内容经 sessionStorage 交给同源预览页，在 sandbox iframe 内渲染。
+  // 不要退回 Blob URL 直接打开：Blob 文档继承主站 origin，AI 生成的脚本
+  // 将能读取 localStorage 明文密钥并调用全部 /api/*（XSS 提权链）。
+  try {
+    sessionStorage.setItem('phymathia_viz_preview', html);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('可视化内容过大，无法在新窗口打开');
+    return;
+  }
+  const win = window.open('/viz-preview.html', '_blank');
+  if (!win) {
+    try { sessionStorage.removeItem('phymathia_viz_preview'); } catch (e) {}
+    if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
+  }
 }
 
 // 公式内容清洗：去掉外层 $/$$、转义 \$、清理 \= 等无效命令，避免生成 $$$..$$$ 导致 KaTeX 错位

@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from .config import DATA_DIR
-from .storage import _invalidate_json_cache, _read_json, _write_json
+from .storage import _invalidate_json_cache, _mutate_json, _read_json, _write_json
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,8 @@ def _profile_path(device_id: str) -> Path:
     return PROFILES_DIR / f"{safe}.json"
 
 
-def get_profile(device_id: str) -> dict:
-    """读取画像；不存在或损坏时返回默认画像。"""
-    path = _profile_path(device_id)
-    data = _read_json(path, None)
+def _normalize_profile(data) -> dict:
+    """把任意磁盘数据归一化为完整画像结构（缺失/损坏字段回退默认值）。"""
     if not isinstance(data, dict):
         return _default_profile()
     base = _default_profile()
@@ -85,8 +83,15 @@ def get_profile(device_id: str) -> dict:
                     base["explicit"]["style"][key] = exp["style"][key]
     for key in ("facts", "pending"):
         if isinstance(data.get(key), list):
-            base[key] = [it for it in data[key] if isinstance(it, dict)][: (MAX_FACTS if key == "facts" else MAX_PENDING)]
+            # 与写入侧一致：容量超限时保留最新（尾部）
+            limit = MAX_FACTS if key == "facts" else MAX_PENDING
+            base[key] = [it for it in data[key] if isinstance(it, dict)][-limit:]
     return base
+
+
+def get_profile(device_id: str) -> dict:
+    """读取画像；不存在或损坏时返回默认画像。"""
+    return _normalize_profile(_read_json(_profile_path(device_id), None))
 
 
 def save_profile(device_id: str, profile: dict) -> dict:
@@ -96,25 +101,34 @@ def save_profile(device_id: str, profile: dict) -> dict:
 
 
 def update_profile(device_id: str, updates: dict) -> dict:
-    """合并更新：支持 explicit / enabled / facts / pending 局部更新。"""
-    profile = get_profile(device_id)
+    """合并更新：支持 explicit / enabled / facts / pending 局部更新。
+
+    读-改-写全程在 _mutate_json 锁内，并发更新不再互相覆盖。
+    """
     if not isinstance(updates, dict):
+        return get_profile(device_id)
+
+    def updater(raw):
+        profile = _normalize_profile(raw)
+        if "enabled" in updates:
+            profile["enabled"] = bool(updates["enabled"])
+        if isinstance(updates.get("explicit"), dict):
+            exp = updates["explicit"]
+            for key in ("stage", "goal", "interests", "weakAreas"):
+                if isinstance(exp.get(key), str):
+                    profile["explicit"][key] = exp[key][:200]
+            if isinstance(exp.get("style"), dict):
+                for key, allowed in STYLE_VALUES.items():
+                    if exp["style"].get(key) in allowed:
+                        profile["explicit"]["style"][key] = exp["style"][key]
+        for key in ("facts", "pending"):
+            if isinstance(updates.get(key), list):
+                limit = MAX_FACTS if key == "facts" else MAX_PENDING
+                profile[key] = updates[key][-limit:]
+        profile["updatedAt"] = time.time()
         return profile
-    if "enabled" in updates:
-        profile["enabled"] = bool(updates["enabled"])
-    if isinstance(updates.get("explicit"), dict):
-        exp = updates["explicit"]
-        for key in ("stage", "goal", "interests", "weakAreas"):
-            if isinstance(exp.get(key), str):
-                profile["explicit"][key] = exp[key][:200]
-        if isinstance(exp.get("style"), dict):
-            for key, allowed in STYLE_VALUES.items():
-                if exp["style"].get(key) in allowed:
-                    profile["explicit"]["style"][key] = exp["style"][key]
-    for key in ("facts", "pending"):
-        if isinstance(updates.get(key), list):
-            profile[key] = updates[key][: (MAX_FACTS if key == "facts" else MAX_PENDING)]
-    return save_profile(device_id, profile)
+
+    return _mutate_json(_profile_path(device_id), updater)
 
 
 def delete_profile(device_id: str) -> bool:
@@ -131,64 +145,72 @@ def add_fact_candidates(device_id: str, candidates: list) -> int:
     """搭车提取入口：候选进入 pending；同一事实出现 >=2 次固化进 facts。
 
     开关关闭时直接忽略（不写入）。返回处理条数（0 表示无变化/已忽略）。
+    读-改-写在 _mutate_json 锁内执行，并发提取不再丢更新。
     """
-    profile = get_profile(device_id)
-    if not profile.get("enabled", True):
-        return 0
     if not isinstance(candidates, list) or not candidates:
         return 0
-    changed = 0
-    for cand in candidates:
-        if not isinstance(cand, dict):
-            continue
-        fact = str(cand.get("fact") or "").strip()
-        if not fact or len(fact) > 120:
-            continue
-        category = str(cand.get("category") or "other").strip()
-        if category not in FACT_CATEGORIES:
-            category = "other"
-        source = str(cand.get("sourceSession") or "")[:64]
-        now = time.time()
+    state = {"changed": 0}
 
-        hit = next((f for f in profile["facts"] if str(f.get("fact") or "").strip() == fact), None)
-        if hit:
-            hit["occurrences"] = int(hit.get("occurrences", 1)) + 1
-            hit["updatedAt"] = now
-            if source:
-                hit["sourceSession"] = source
+    def updater(raw):
+        profile = _normalize_profile(raw)
+        if not profile.get("enabled", True):
+            return None
+        changed = 0
+        for cand in candidates:
+            if not isinstance(cand, dict):
+                continue
+            fact = str(cand.get("fact") or "").strip()
+            if not fact or len(fact) > 120:
+                continue
+            category = str(cand.get("category") or "other").strip()
+            if category not in FACT_CATEGORIES:
+                category = "other"
+            source = str(cand.get("sourceSession") or "")[:64]
+            now = time.time()
+
+            hit = next((f for f in profile["facts"] if str(f.get("fact") or "").strip() == fact), None)
+            if hit:
+                hit["occurrences"] = int(hit.get("occurrences", 1)) + 1
+                hit["updatedAt"] = now
+                if source:
+                    hit["sourceSession"] = source
+                changed += 1
+                continue
+
+            pend = next((p for p in profile["pending"] if str(p.get("fact") or "").strip() == fact), None)
+            if pend:
+                pend["occurrences"] = int(pend.get("occurrences", 1)) + 1
+                pend["updatedAt"] = now
+                if source:
+                    pend["sourceSession"] = source
+                if pend["occurrences"] >= 2:
+                    profile["facts"].append(pend)
+                    profile["pending"].remove(pend)
+                changed += 1
+                continue
+
+            profile["pending"].append({
+                "id": "pf_" + uuid.uuid4().hex[:12],
+                "fact": fact,
+                "category": category,
+                "sourceSession": source,
+                "occurrences": 1,
+                "createdAt": now,
+                "updatedAt": now,
+            })
             changed += 1
-            continue
 
-        pend = next((p for p in profile["pending"] if str(p.get("fact") or "").strip() == fact), None)
-        if pend:
-            pend["occurrences"] = int(pend.get("occurrences", 1)) + 1
-            pend["updatedAt"] = now
-            if source:
-                pend["sourceSession"] = source
-            if pend["occurrences"] >= 2:
-                profile["facts"].append(pend)
-                profile["pending"].remove(pend)
-            changed += 1
-            continue
+        if not changed:
+            return None
+        # 容量裁剪：保留最新
+        profile["pending"] = profile["pending"][-MAX_PENDING:]
+        profile["facts"] = profile["facts"][-MAX_FACTS:]
+        profile["updatedAt"] = time.time()
+        state["changed"] = changed
+        return profile
 
-        profile["pending"].append({
-            "id": "pf_" + uuid.uuid4().hex[:12],
-            "fact": fact,
-            "category": category,
-            "sourceSession": source,
-            "occurrences": 1,
-            "createdAt": now,
-            "updatedAt": now,
-        })
-        changed += 1
-
-    if not changed:
-        return 0
-    # 容量裁剪：保留最新
-    profile["pending"] = profile["pending"][-MAX_PENDING:]
-    profile["facts"] = profile["facts"][-MAX_FACTS:]
-    save_profile(device_id, profile)
-    return changed
+    _mutate_json(_profile_path(device_id), updater)
+    return state["changed"]
 
 
 def profile_context_text(device_id: str, max_chars: int = 1200) -> str:

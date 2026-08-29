@@ -9,10 +9,25 @@ function _readQuizStats() {
   }
 }
 
-function _saveQuizStats(stats) {
+async function _saveQuizStats(stats) {
   try {
     localStorage.setItem(QUIZ_STATS_KEY, JSON.stringify(stats));
   } catch (e) {}
+  // 乐观合并：先把服务端数据按主题时间戳并入本地再整表写回。
+  // 直接 POST 本地整表会在双标签页同时答题时覆盖掉另一端在服务端的新增记录
+  try {
+    const resp = await fetch('/api/kv/phymathia_quiz_stats', { cache: 'no-cache' });
+    if (resp.ok) {
+      const data = await resp.json();
+      const server = data && data.value;
+      if (server && typeof server === 'object') {
+        stats = _mergeQuizStats(stats, server);
+        try {
+          localStorage.setItem(QUIZ_STATS_KEY, JSON.stringify(stats));
+        } catch (e) {}
+      }
+    }
+  } catch (e) { /* 服务端不可用时按本地整表写（旧行为） */ }
   try {
     fetch('/api/kv/phymathia_quiz_stats', {
       method: 'POST',
@@ -400,4 +415,4 @@ function _generateOpenQuestions(pool) {
     }
   }
   return result.slice(0, 3);
-}
+}

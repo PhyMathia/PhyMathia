@@ -119,8 +119,6 @@ const QUIZ_GENERIC_FORMULAS = [
 
 let quizState = null;
 
-let quizDataCache = null;
-
 let quizAiRequestId = 0;
 
 let quizAiController = null;
@@ -215,13 +213,15 @@ function _quizWrapBareLatex(text) {
     .replace(/\\\[[\s\S]+?\\\]/g, protect)
     .replace(/\\\([\s\S]+?\\\)/g, protect)
     .replace(/<formula>[\s\S]*?<\/formula>/gi, protect);
-  // 裸片段：以 \ 命令 开头，延续到中文/句读/空白边界
-  t = t.replace(/(?<![\\$A-Za-z0-9])(\\[A-Za-z]+(?:\s*\{[^{}]*\})*(?:\s*(?:\\[A-Za-z]+(?:\s*\{[^{}]*\})*|\{[^{}]*\}|[0-9A-Za-z_=+\-*/^.,;:<>()\[\]]+))*)/g, function (frag) {
-    if (frag.length > 240) return frag;
+  // 裸片段：以 \ 命令 开头，延续到中文/句读/空白边界。
+  // 用捕获组表达「前面不是 \$A-Za-z0-9」而非后行断言：Safari < 16.4 不支持
+  // 后行断言，且会在脚本解析期抛 SyntaxError 导致整站不可用
+  t = t.replace(/(^|[^\\$A-Za-z0-9])(\\[A-Za-z]+(?:\s*\{[^{}]*\})*(?:\s*(?:\\[A-Za-z]+(?:\s*\{[^{}]*\})*|\{[^{}]*\}|[0-9A-Za-z_=+\-*/^.,;:<>()\[\]]+))*)/g, function (match, pre, frag) {
+    if (frag.length > 240) return match;
     // 强公式命令直接判为公式；弱命令（bar/hat/to 等）需要后跟花括号参数，避免误伤路径/英文
     if (!/\\?(?:frac|partial|nabla|cdot|vec|int|sum|sqrt|begin|end|text|mathrm|overline|underline|dfrac|displaystyle|limits|lim|sin|cos|tan|log|ln|exp|infty|pi|theta|lambda|sigma|omega|alpha|beta|gamma|phi|Delta)(?![A-Za-z])/.test(frag)
-        && !/\\?(?:bar|hat|dot|ddot|to|rightarrow|leftarrow|in|div|pm|mp|times|leq|geq|neq|approx|left|right|quad|qquad)\s*\{/.test(frag)) return frag;
-    return frag.indexOf('\n') >= 0 ? ('$$' + frag + '$$') : ('$' + frag + '$');
+        && !/\\?(?:bar|hat|dot|ddot|to|rightarrow|leftarrow|in|div|pm|mp|times|leq|geq|neq|approx|left|right|quad|qquad)\s*\{/.test(frag)) return match;
+    return pre + (frag.indexOf('\n') >= 0 ? ('$$' + frag + '$$') : ('$' + frag + '$'));
   });
   // 还原保护块
   t = t.replace(/\uE000(\d+)\uE001/g, function (m, idx) { return blocks[parseInt(idx, 10)] || m; });
@@ -377,21 +377,6 @@ function _quizIsMetaPrompt(text) {
   const s = _quizOptionKey(text);
   if (!s) return false;
   return /当前画布知识上下文|当前会话知识上下文|知识上下文|出题素材|多少个汉字|多少汉字|多少个字|有几个汉字|字符数|字符串长度|知识点数量|知识点个数|知识点总数|题干数量|题干个数|标题长度|格式长度/.test(s);
-}
-
-function _quizMentionsPoolContent(text, options, pool) {
-  const haystack = _quizOptionKey([text, ...(options || []).map(option => option.text || '')].join('\n'));
-  if (!haystack) return false;
-  const needles = [];
-  for (const item of pool.knowledge || []) {
-    if (item.title && item.title.length >= 2) needles.push(_quizOptionKey(item.title));
-    if (item.summary && item.summary.length >= 4 && item.summary !== '无') needles.push(_quizOptionKey(item.summary));
-  }
-  for (const item of pool.formulas || []) {
-    if (item.latex && item.latex.length >= 2) needles.push(_quizOptionKey(item.latex));
-    if (item.concept && item.concept.length >= 2) needles.push(_quizOptionKey(item.concept));
-  }
-  return needles.some(needle => needle.length >= 2 && (haystack.includes(needle) || needle.includes(haystack)));
 }
 
 function _quizCurrentSessionIds() {
@@ -550,7 +535,14 @@ function _genericFormulaDistractors(excludeKeys, conceptLabel, limit = 4) {
 }
 
 function _quizOptionKey(text) {
-  return String(text || '').replace(/\s+/g, ' ').toLowerCase();
+  // 归一化到「无空白 + 无定界符 + 无 \text 类包裹」形态：
+  // 使 "F = -kx" / "$F=-kx$" / "\text{F}=-kx" 视为同一选项/同一道题，
+  // 修复题库去重与错题键无法识别排版变体导致的重复入库
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\\[()\[\]]|\$\$?/g, '')
+    .replace(/\\(?:text|mathrm|mathbf|mathit|mathsf|textrm)\{([^{}]*)\}/g, '$1')
+    .replace(/\s+/g, '');
 }
 
 function _makeQuizOptions(correct, distractors, count = 4) {
@@ -577,7 +569,8 @@ function _makeQuizOptions(correct, distractors, count = 4) {
 
 function _quizSignature(q) {
   const correct = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex].text : '';
-  return q.type + '|' + q.prompt + '|' + (q.promptHtml || '') + '|' + _quizOptionKey(correct);
+  // 题干/HTML/正确项全部过 _quizOptionKey：排版等价的题生成相同签名
+  return q.type + '|' + _quizOptionKey(q.prompt) + '|' + _quizOptionKey(q.promptHtml || '') + '|' + _quizOptionKey(correct);
 }
 
 function _decorateQuizQuestion(q, item) {

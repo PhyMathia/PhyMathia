@@ -18,7 +18,6 @@ async function openQuiz(mode = 'session') {
   try {
     const data = await _fetchQuizData();
     const pool = _buildQuizPool(data);
-    quizDataCache = pool;
     quizBank = _readQuizBank();
     quizState = { phase: 'loading', pool };
     renderQuiz();
@@ -178,6 +177,17 @@ window.showQuizReturnPill = showQuizReturnPill;
 window.hideQuizReturnPill = hideQuizReturnPill;
 window.resumeQuizFromJump = resumeQuizFromJump;
 
+// Esc 关闭/返回：与头部返回箭头同语义（intro/loading/global 关窗，其余回 intro）
+if (!window._quizEscBound) {
+  window._quizEscBound = true;
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    const overlay = document.getElementById('quizModal');
+    if (!overlay || overlay.hidden || !overlay.classList.contains('active')) return;
+    handleQuizBack();
+  });
+}
+
 function handleQuizBack() {
   if (!quizState) return;
   if (quizState.phase === 'loading' || quizState.phase === 'intro' || quizState.phase === 'global') {
@@ -220,6 +230,8 @@ async function reshuffleQuiz(startAfter = true) {
   renderQuiz();
   _resetQuizPromptFile();
   const questions = await _generateQuestions(quizState.pool);
+  // null = 等待期间被新请求取代（如用户点了「立即用本地题」），状态已由新流程接管
+  if (questions === null) return;
   quizState.questions = questions;
   if (!questions.length) {
     quizState.phase = 'intro';
@@ -239,7 +251,9 @@ async function addQuizBankQuestions() {
   }
   renderQuiz();
   _resetQuizPromptFile();
-  await _generateQuestions(quizState.pool);
+  const generated = await _generateQuestions(quizState.pool);
+  // null = 被新请求取代，避免迟到的 phase 覆盖用户新状态
+  if (generated === null) return;
   quizState.phase = 'bank';
   renderQuiz();
 }
@@ -437,6 +451,31 @@ function _localScoreOpenAnswer(question, answer) {
   };
 }
 
+// 提取文本中首个平衡的 JSON 对象（考虑字符串内的花括号与转义）；找不到返回 null
+function _firstJsonObject(text) {
+  const s = String(text || '');
+  const start = s.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(s.slice(start, i + 1)); } catch (e) { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 async function _scoreOpenAnswer(question, answer) {
   const model = _pickQuizModel();
   if (!model) return _localScoreOpenAnswer(question, answer);
@@ -475,9 +514,10 @@ ${getLevelPrompt()}
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw = await _readModelStream(resp);
-    const match = String(raw || '').match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON');
-    const data = JSON.parse(match[0]);
+    // 首个平衡花括号对象：贪婪 \{[\s\S]*\} 在模型输出多段 JSON
+    // 或前后缀含 } 时会解析失败
+    const data = _firstJsonObject(raw);
+    if (!data) throw new Error('No JSON');
     const scores = data.scores || {};
     return {
       scores: {
@@ -620,6 +660,12 @@ function _localQuizExplain(question) {
 async function askQuizExplain() {
   if (!quizState || quizState.phase !== 'question' || quizState.explaining) return;
   const question = quizState.questions[quizState.index];
+  const questionId = question && question.id;
+  // 完成时校验仍是同一道题：等待期间用户答完点「下一题」后，迟到的解析
+  // 直接丢弃，避免上一题的解析显示在下一题下方（串题）
+  const stillSameQuestion = () =>
+    quizState && quizState.phase === 'question' &&
+    quizState.questions[quizState.index] && quizState.questions[quizState.index].id === questionId;
   const optionLines = question.options
     .map(option => `${option.key}. ${_quizCleanText(option.text, 220)}`)
     .join('\n');
@@ -630,10 +676,9 @@ async function askQuizExplain() {
   quizState.explainError = '';
   renderQuiz();
 
-  const model = typeof getActiveModelForRole === 'function'
-    ? (getActiveModelForRole('agent') || getActiveModelForRole('quiz'))
-    : null;
+  const model = typeof _pickQuizModel === 'function' ? _pickQuizModel() : null;
   if (!model) {
+    if (!stillSameQuestion()) return;
     quizState.explaining = false;
     quizState.explainText = _localQuizExplain(question);
     renderQuiz();
@@ -661,6 +706,7 @@ async function askQuizExplain() {
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw = await _readModelStream(resp);
+    if (!stillSameQuestion()) return;
     const cleaned = String(raw || '')
       .replace(/<[^>]*>/g, '')
       .replace(/```html[\s\S]*?```/g, '')
@@ -671,6 +717,7 @@ async function askQuizExplain() {
     quizState.explainError = '';
   } catch (e) {
     console.warn('Quiz explain failed:', e);
+    if (!stillSameQuestion()) return;
     quizState.explaining = false;
     quizState.explainText = _localQuizExplain(question);
     quizState.explainError = 'AI 暂时不可用，已显示本地解析';
@@ -722,7 +769,8 @@ function startBankQuiz() {
     if (typeof showToast === 'function') showToast('题库还没有AI题');
     return;
   }
-  quizState.questions = questions.slice(0, quizTargetCount);
+  // 洗牌后截取：反复「用题库开始」不再恒定命中同一批题（与本地题行为一致）
+  quizState.questions = _quizShuffle(questions).slice(0, quizTargetCount);
   quizState.phase = 'question';
   quizState.index = 0;
   quizState.answers = [];

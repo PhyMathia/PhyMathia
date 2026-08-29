@@ -155,7 +155,10 @@ def _trim_context_content(content: str, keep_viz: bool = False) -> str:
         return VIZ_PLACEHOLDER
 
     text = re.sub(r"<viz>[\s\S]*?</viz>", _viz_repl, content, flags=re.I)
-    text = re.sub(r"```html```\s*[\s\S]*?```html```", _viz_repl, text, flags=re.I)
+    # 独立 ```html 围栏代码块（无 <viz> 标签时的形态）：
+    # 开始标记是 ```html + 换行，结束标记是单独一行 ```（原正则把开始写成
+    # "```html```"，与真实模型输出永不匹配，压缩逻辑从未生效）
+    text = re.sub(r"```html\s*\n[\s\S]*?\n```", _viz_repl, text, flags=re.I)
     if len(text) <= _CONTEXT_RECENT_FULL_MAX:
         return text
     head = text[:_CONTEXT_RECENT_FULL_MAX]
@@ -176,7 +179,7 @@ def _viz_digest(content: str, max_chars: int = _VIZ_DIGEST_MAX) -> str:
     if viz:
         html = viz
     else:
-        m = re.search(r"```html```\s*([\s\S]*?)```html```", content, re.I)
+        m = re.search(r"```html\s*\n([\s\S]*?)\n```", content, re.I)
         if m:
             html = m.group(1)
     scripts = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html, re.I)
@@ -213,7 +216,11 @@ def _is_socratic_message(msg) -> bool:
     if content.lstrip().startswith("[苏格拉底回答]") or content.lstrip().startswith("[苏格拉底提示]") or content.lstrip().startswith("[苏格拉底讲解]"):
         return True
     if content.lstrip().startswith("我的回答："):
-        return True
+        # “我的回答：”仅是旧版苏格拉底痕迹，普通用户消息也可能以此开头
+        # （回答提问、转述答案），必须同时带有分支元数据才视为苏格拉底支线；
+        # 否则该轮对话会被上下文过滤静默丢弃
+        if msg.get("branch") or msg.get("branchType") or msg.get("branchId"):
+            return True
     if re.search(r"<socratic_meta\b", content, re.I) and not re.search(
         r"<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片", content, re.I
     ):
@@ -316,7 +323,10 @@ def _extract_parent_source(all_messages: list, parent_id: str, source_module: st
 
 def _load_messages(session_id: str) -> list:
     """读取会话消息；真实路径走缓存，字符串/测试兼容路径回退普通读取。"""
-    messages_path = _resolve_messages_path(session_id)
+    try:
+        messages_path = _resolve_messages_path(session_id)
+    except ValueError:
+        return []
     if hasattr(messages_path, "stat"):
         return _read_json_cached(messages_path, [])
     return _read_json(messages_path, [])

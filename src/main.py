@@ -113,6 +113,18 @@ async def health_check():
     return {"status": "ok", "message": "PhyMathia is running"}
 
 
+async def _parse_json_object(request: Request) -> dict:
+    """统一解析 JSON 对象 body：非法 JSON / 非对象（list/str/number）一律 400，
+    避免后续 payload.get(...) 抛 AttributeError 变成 500。"""
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object expected")
+    return payload
+
+
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
@@ -125,21 +137,22 @@ async def api_models_chat(request: Request):
     """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
     支持两种调用格式：
     1. 新格式：{prompt, level, session_id, provider, api_key, model, base_url}
-       → 后端构建消息（系统提示词 + 会话上下文 + 难度后缀）
+       → 后端构建消息（系统提示词 + 难度后缀 + 会话上下文）
     2. 旧格式：{messages, provider, api_key, model, base_url}
        → 直接使用传入的 messages
     """
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
+
 
     provider = payload.get("provider", "")
     api_key = payload.get("api_key", "")
+    env_key_used = False
     if not api_key and provider == "deepseek":
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        env_key_used = bool(api_key)
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        env_key_used = bool(api_key)
     model_name = payload.get("model", "")
     if not model_name and provider == "deepseek":
         model_name = "deepseek-chat"
@@ -164,6 +177,7 @@ async def api_models_chat(request: Request):
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
     quick = bool(payload.get("quick"))
     is_quick = False
+    socratic_mode = "answer"  # 显式初始化：此前靠三个前缀分支隐式保证，漏一个分支就 NameError
     socratic_ref = branch_id or session_id
     if prompt:
         # 新格式：后端构建消息
@@ -221,7 +235,9 @@ async def api_models_chat(request: Request):
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
-            context = _load_session_context(
+            # 命名为 history：局部变量不能遮蔽模块名 context（server.context），
+            # 否则后续在函数内补用 context._xxx 会拿到 list 而 AttributeError
+            history = _load_session_context(
                 session_id,
                 include_socratic=include_socratic,
                 branch_id=branch_id,
@@ -234,7 +250,7 @@ async def api_models_chat(request: Request):
                 workflow_context=workflow_context,
                 budget_tokens=context_budget,
             )
-            messages.extend(context)
+            messages.extend(history)
 
         level = payload.get("level", "university")
         if not is_quick:
@@ -258,6 +274,12 @@ async def api_models_chat(request: Request):
         else:
             raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}' and no base_url provided")
 
+    # 防 SSRF 外发 .env 密钥：env 兜底 key 只允许发往官方域名；远程端点强制 https
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -280,7 +302,10 @@ async def api_models_chat(request: Request):
         "stream": stream,
     }
     if max_tokens:
-        body["max_tokens"] = int(max_tokens)
+        try:
+            body["max_tokens"] = int(max_tokens)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="max_tokens must be an integer")
 
     if session_id and prompt and not is_quick:
         _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url)
@@ -452,10 +477,7 @@ async def api_save_sessions(request: Request):
 
 @app.put("/api/sessions/{session_id}")
 async def api_update_session(session_id: str, request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     def updater(data):
         now = int(time.time() * 1000)
@@ -488,7 +510,10 @@ async def api_delete_session(session_id: str):
         return data
 
     _mutate_json(SESSIONS_PATH, updater)
-    msgs_path = _get_messages_path(session_id)
+    try:
+        msgs_path = _get_messages_path(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
     if msgs_path.exists():
         msgs_path.unlink()
     _delete_by_session(KNOWLEDGE_PATH, session_id)
@@ -513,10 +538,7 @@ async def api_clear_all_sessions():
 @app.post("/api/sessions/messages-batch")
 async def api_get_messages_batch(request: Request):
     """一次读取多个会话的消息，供前端启动/定时同步使用，避免 N 次串行请求。"""
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     raw_ids = payload.get("session_ids") or payload.get("ids") or []
     if isinstance(raw_ids, str):
@@ -524,14 +546,8 @@ async def api_get_messages_batch(request: Request):
     session_ids = []
     for raw_sid in raw_ids:
         sid = str(raw_sid).strip()
-        # 防止批量接口被用来做路径穿越
-        if (
-            sid
-            and sid not in (".", "..")
-            and "/" not in sid
-            and "\\" not in sid
-            and Path(sid).name == sid
-        ):
+        # 与 _get_messages_path 的白名单一致，防止批量接口被用来做路径穿越
+        if storage._SESSION_ID_RE.match(sid):
             session_ids.append(sid)
         if len(session_ids) >= 500:
             break
@@ -545,7 +561,11 @@ async def api_get_messages_batch(request: Request):
 
 @app.get("/api/sessions/{session_id}/messages")
 async def api_get_messages(session_id: str):
-    return _read_json_cached(_get_messages_path(session_id), [])
+    try:
+        path = _get_messages_path(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    return _read_json_cached(path, [])
 
 
 @app.post("/api/sessions/{session_id}/messages")
@@ -563,13 +583,30 @@ async def api_save_messages(session_id: str, request: Request):
                     msg["summary"] = _graph_message_summary(msg)
                 except Exception:
                     pass
-    _write_json(_get_messages_path(session_id), messages)
+    try:
+        msgs_path = _get_messages_path(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
+
+    def msgs_updater(existing):
+        # 双标签页并发保存时按「消息更多的一方」取胜（与前端 _syncFromServer
+        # 的合并语义一致），避免旧的短列表整体覆盖新的长列表丢消息
+        if not isinstance(existing, list):
+            return messages
+        if not messages or len(existing) <= len(messages):
+            return messages
+        return None  # 已存历史更长：保留，不写
+
+    _mutate_json(msgs_path, msgs_updater, default=[])
     return {"ok": True, "count": len(messages)}
 
 
 @app.delete("/api/sessions/{session_id}/messages")
 async def api_clear_messages(session_id: str):
-    msgs_path = _get_messages_path(session_id)
+    try:
+        msgs_path = _get_messages_path(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
@@ -587,10 +624,7 @@ async def api_get_knowledge():
 
 @app.post("/api/knowledge")
 async def api_save_knowledge(request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     incoming = _normalize_knowledge(payload)
 
@@ -618,10 +652,9 @@ async def api_delete_knowledge(item_id: str):
 
 @app.get("/api/formulas")
 async def api_get_formulas(q: str = ""):
-    raw = _read_json(FORMULAS_PATH, {})
-    data = _dedupe_formula_map(raw)
-    if len(data) != len(raw):
-        _write_json(FORMULAS_PATH, data)
+    # 只读视图：去重不回写。GET 内写文件与并发 POST 存在「读→去重→覆盖」竞态，
+    # 会把窗口期内新增的公式回滚丢失；物理去重改在 POST 写入路径执行
+    data = _dedupe_formula_map(_read_json(FORMULAS_PATH, {}))
     items = list(data.values())
     if q:
         ql = q.lower()
@@ -647,6 +680,8 @@ async def api_save_formulas(request: Request):
 
     def updater(data):
         nonlocal count
+        # 写入时物理去重（原挂在 GET 里的清理逻辑挪到这里）
+        data = _dedupe_formula_map(data)
         for it in items:
             latex = _normalize_formula(it.get("latex") or "")
             if not latex:
@@ -731,10 +766,7 @@ async def api_delete_formula(formula_id: str):
 @app.post("/api/extract_knowledge")
 async def api_extract_knowledge(request: Request):
     """从对话中提取知识点（优先 AI，失败或无模型时本地正则兜底），并自动入库公式"""
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     messages = payload.get("messages", [])
     session_id = payload.get("sessionId", "")
@@ -828,10 +860,7 @@ async def api_extract_knowledge(request: Request):
 
 @app.post("/api/documents/parse")
 async def api_parse_document(request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     filename = _sanitize_filename(payload.get("fileName") or "")
     try:
@@ -911,10 +940,7 @@ async def api_get_kv(key: str):
 
 @app.post("/api/kv/{key}")
 async def api_set_kv(key: str, request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
 
     def updater(data):
         data[key] = payload.get("value", "")
@@ -942,10 +968,7 @@ async def api_get_profile(device_id: str = ""):
 
 @app.put("/api/profile")
 async def api_update_profile(request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
     device_id = str(payload.get("device_id") or "")
     updates = payload.get("updates")
     if not isinstance(updates, dict):
@@ -967,10 +990,7 @@ async def api_backup_export():
 
 @app.post("/api/backup/import")
 async def api_backup_import(request: Request):
-    try:
-        payload = await request.json()
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+    payload = await _parse_json_object(request)
     backup = payload.get("backup") if isinstance(payload.get("backup"), dict) else payload
     if not isinstance(backup, dict):
         raise HTTPException(status_code=400, detail="Backup payload must be an object")

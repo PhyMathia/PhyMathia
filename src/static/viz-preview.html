@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhyMathia 可视化预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: #0f142d; color: #cfd6f4;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; font-size: 13px; color: #8b93b8;
+    border-bottom: 1px solid rgba(139, 147, 184, .18);
+  }
+  header svg { flex: none; }
+  main { flex: 1; position: relative; min-height: 0; }
+  #vizFrame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+  #hint {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #8b93b8; font-size: 14px; padding: 24px; text-align: center;
+  }
+</style>
+</head>
+<body>
+<header>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg>
+  <span>PhyMathia 交互式可视化（沙箱预览）</span>
+</header>
+<main id="stage">
+  <iframe id="vizFrame" sandbox="allow-scripts"></iframe>
+  <div id="hint">未找到可视化内容，请回到应用内重新点击「新窗口」。</div>
+</main>
+<script>
+// 预览页本身是可信的同源页面；AI 生成的 HTML 只进入 sandbox iframe（与主站
+// 页内卡片同等隔离），杜绝 Blob URL 直接打开时 AI 脚本继承主站 origin 的提权风险。
+try {
+  var html = sessionStorage.getItem('phymathia_viz_preview');
+  sessionStorage.removeItem('phymathia_viz_preview');
+  if (html) {
+    document.getElementById('vizFrame').srcdoc = html;
+    document.getElementById('hint').style.display = 'none';
+  } else {
+    document.getElementById('vizFrame').style.display = 'none';
+  }
+} catch (e) {
+  document.getElementById('vizFrame').style.display = 'none';
+}
+</script>
+</body>
+</html>

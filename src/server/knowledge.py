@@ -15,6 +15,7 @@ from .config import (
     KNOWLEDGE_PATH,
     LEVEL_PROMPTS,
     OPENCODE_DEFAULT_API_KEY,
+    validate_model_target,
 )
 from .context import _is_socratic_followup
 from .prompts import DESCRIBE_PROMPT, EXTRACT_PROMPT
@@ -426,10 +427,17 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], []
+    env_key_used = False
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        env_key_used = bool(api_key)
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError:
+        # 目标非法（SSRF 防护）：放弃 AI 提取，回退本地规则提取
+        return [], []
 
     # 取最近一轮对话（最后一条 user 消息及之后）
     level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
@@ -569,8 +577,10 @@ def _extract_summary(messages: list) -> str:
 
 async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
     """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
+    env_key_used = False
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        env_key_used = bool(api_key)
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
     if not formulas or not model:
@@ -580,6 +590,10 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
+        return {}
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError:
         return {}
     msgs = [
         {"role": "system", "content": DESCRIBE_PROMPT + "\n\n难度要求：" + LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])},
