@@ -1,5 +1,49 @@
 // ====== 可视化卡片 (iframe sandbox) ======
-const _vizStore = {};  // vizId -> htmlContent
+const _vizStore = {};        // vizId -> htmlContent（含桥接脚本），供全屏/复制/新窗口使用
+const _vizSlotKeys = {};     // 渲染上下文+代码块序号 -> vizId：流式期间同一消息反复重渲染时复用同一 id
+const _vizContentIndex = {}; // 内容 hash -> vizId：跨渲染去重（切回会话重放历史时不重复占用内存）
+const _vizHashOfId = {};     // vizId -> 当前内容 hash：覆盖更新时同步修正 _vizContentIndex
+const _vizLastUsed = {};     // vizId -> 最近使用时间戳，LRU 清理依据
+let _vizSeq = 0;
+const VIZ_STORE_MAX_ENTRIES = 60;    // 常驻上限（页面同时可见的卡片远少于此）
+const VIZ_PRUNE_MIN_AGE_MS = 60000;  // 保护期：刚生成、innerHTML 尚未挂到 DOM 的条目不会被误删
+
+function _vizHash(s) {
+  // 双 32 位哈希拼成 64 位：单个 32 位在数百条目下碰撞概率不可忽略，
+  // 复用到错误 id 会把旧内容渲染进新卡片
+  let h1 = 5381, h2 = 52711;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = ((h1 << 5) + h1 + c) >>> 0;
+    h2 = ((h2 << 5) + h2 + c) >>> 0;
+  }
+  return h1.toString(36) + h2.toString(36);
+}
+
+// 清理 _vizStore：删除「已不在 DOM 且超过保护期」的条目；超过上限时按最久未用强制淘汰不在 DOM 的条目
+function pruneVizStore() {
+  const now = Date.now();
+  const ids = Object.keys(_vizStore);
+  const notInDom = id => !document.getElementById(id);
+  const byAge = (a, b) => (_vizLastUsed[a] || 0) - (_vizLastUsed[b] || 0);
+  const doomed = new Set(ids.filter(id => notInDom(id) && now - (_vizLastUsed[id] || 0) > VIZ_PRUNE_MIN_AGE_MS));
+  const overflow = ids.length - VIZ_STORE_MAX_ENTRIES;
+  if (overflow > 0) {
+    for (const id of ids.filter(id => !doomed.has(id) && notInDom(id)).sort(byAge)) {
+      doomed.add(id);
+      if (doomed.size >= overflow) break;
+    }
+  }
+  if (!doomed.size) return;
+  for (const id of doomed) {
+    delete _vizStore[id];
+    delete _vizLastUsed[id];
+    const h = _vizHashOfId[id];
+    if (h && _vizContentIndex[h] === id) delete _vizContentIndex[h];
+    delete _vizHashOfId[id];
+  }
+  for (const k in _vizSlotKeys) if (doomed.has(_vizSlotKeys[k])) delete _vizSlotKeys[k];
+}
 
 function _escapeAttr(str) {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -66,6 +110,7 @@ function buildVizCard(htmlContent, vizId) {
     finalHtml = safe + _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE;
   }
   _vizStore[vizId] = finalHtml;  // 保存（含桥接脚本）供全屏/复制/新标签页使用
+  _vizLastUsed[vizId] = Date.now();
 
   const isTall = safe.length > 8000 || /canvas|svg|three|chart|d3/i.test(safe);
   const heightClass = isTall ? ' viz-iframe-tall' : '';
@@ -314,15 +359,38 @@ function renderMarkdown(text, renderCtx = {}) {
     return `<div class="mermaid-container"><pre class="mermaid-source" data-mermaid-src="${encodeURIComponent(mermaidBlocks[parseInt(idx)])}" style="display:none"></pre><div class="mermaid" id="${id}"></div><div class="mermaid-scroll-hint">← 左右滑动查看完整图谱 →</div></div>`;
   });
   // 识别 HTML 代码块，替换为 iframe 可视化卡片
+  let vizSlot = 0;
   html = html.replace(/<pre><code class="language-html">([\s\S]*?)<\/code><\/pre>/gi, function(match, codeContent) {
     const decodedHtml = _decodeHTMLEntities(codeContent);
     // 过滤太短的片段（不是完整的可视化页面）
     if (decodedHtml.trim().length < 100 || !/<html[\s>]|<!doctype|<body[\s>]/i.test(decodedHtml)) {
       return match;  // 非完整 HTML 页面，保留代码块
     }
-    const vizId = 'viz_' + Math.random().toString(36).substr(2, 9);
+    // 流式期间同一消息每帧重渲染都会走到这里：按「渲染上下文+代码块序号」复用
+    // 同一 vizId 覆盖式更新，避免每次都新建条目把几十~几百 KB 的完整 HTML
+    // （含桥接脚本）反复塞进 _vizStore 只增不减；内容 hash 再做一层跨消息去重
+    const contentHash = _vizHash(decodedHtml);
+    const slotKey = (renderCtx.parentId || 'anon') + ':' + vizSlot++;
+    let vizId = _vizSlotKeys[slotKey];
+    if (!vizId || !_vizStore[vizId]) {
+      const byHash = _vizContentIndex[contentHash];
+      if (byHash && _vizStore[byHash]) {
+        vizId = byHash;
+      } else {
+        vizId = 'viz_' + (++_vizSeq).toString(36) + Math.random().toString(36).slice(2, 6);
+        _vizContentIndex[contentHash] = vizId;
+      }
+      _vizSlotKeys[slotKey] = vizId;
+    }
+    const prevHash = _vizHashOfId[vizId];
+    if (prevHash && prevHash !== contentHash && _vizContentIndex[prevHash] === vizId) {
+      delete _vizContentIndex[prevHash];  // 流式增长覆盖后，旧前缀内容的 hash 映射作废
+    }
+    _vizHashOfId[vizId] = contentHash;
+    _vizContentIndex[contentHash] = vizId;
     return buildVizCard(decodedHtml, vizId);
   });
+  pruneVizStore();
   // 为 .html 链接添加 target="_blank" 和 download 属性
   // 先处理已存在 target 的链接（替换 target 值）
   html = html.replace(/<a\b([^>]*?)href="([^"]*\.html[^"]*)"([^>]*?)>/gi, function(match, before, url, after) {

@@ -488,7 +488,9 @@ def _load_session_context(
 
     if budget_tokens and budget_tokens > 0:
         result = _shrink_history_to_budget(result, budget_tokens)
-    return result
+    # 分支追问同样是长会话的一部分：滚动记忆注入与主线/graph_path 路径保持一致，
+    # 否则分支上下文会比主线「失忆」
+    return _inject_rolling_memory(session_id, result, budget_tokens)
 
 def _branch_context_instruction(
     branch_type: str = "",

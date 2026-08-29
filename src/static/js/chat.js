@@ -434,7 +434,8 @@
               try {
                 const data = JSON.parse(dataStr);
                 if (data.error) {
-                  const errMsg = data.error.message || JSON.stringify(data.error);
+                  // 后端错误帧形如 {error: <状态码数字>, detail: '...'}，对齐 chat-features.js collectStreamText 的读法
+                  const errMsg = data.detail || data.error?.detail || data.error?.message || JSON.stringify(data.error);
                   if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
                   assistantContent += '\n\n⚠️ ' + errMsg;
                   assistantDiv.textContent = assistantContent;
