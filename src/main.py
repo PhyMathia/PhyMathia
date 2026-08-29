@@ -20,7 +20,7 @@ from pathlib import Path
 import uvicorn
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -312,64 +312,86 @@ async def api_models_chat(request: Request):
 
     logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")
 
+    # 上游请求先发出、拿到状态码之后再决定响应形态：
+    # 旧实现把上游非 200 塞进 SSE 错误帧、HTTP 状态仍是 200，调用方无法用
+    # resp.ok 分辨失败；stream=false 分支也裸吐上游 JSON 却带 event-stream 媒体类型
+    client = get_http_client()
+    req = client.build_request("POST", url, json=body, headers=headers,
+                               timeout=httpx.Timeout(180.0, connect=15.0))
+    try:
+        resp = await client.send(req, stream=True)
+    except httpx.HTTPError as e:
+        logger.error(f"AI proxy connect error: {e}")
+        raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+    logger.info(f"AI proxy response: {resp.status_code} from {url}")
+
+    if resp.status_code != 200:
+        try:
+            error_body = await resp.aread()
+        finally:
+            await resp.aclose()
+        error_text = error_body.decode(errors='replace')[:500]
+        logger.error(f"AI proxy upstream error: status={resp.status_code} body={error_text} url={url}")
+        raise HTTPException(status_code=502, detail=f"上游返回 {resp.status_code}: {error_text}")
+
+    if not stream:
+        try:
+            raw = await resp.aread()
+        finally:
+            await resp.aclose()
+        text = raw.decode(errors="replace")
+        try:
+            data = json.loads(text)
+            content = data["choices"][0]["message"]["content"]
+            if data.get("usage"):
+                logger.info(f"AI proxy usage: {data['usage']}")
+            _update_socratic_state_from_content(content, socratic_ref)
+        except Exception:
+            pass
+        return Response(content=raw, media_type="application/json")
+
     async def proxy_stream():
         try:
-            client = get_http_client()
-            async with client.stream("POST", url, json=body, headers=headers, timeout=httpx.Timeout(180.0, connect=15.0)) as resp:
-                logger.info(f"AI proxy response: {resp.status_code} from {url}")
-                if resp.status_code != 200:
-                    error_body = await resp.aread()
-                    error_text = error_body.decode(errors='replace')[:500]
-                    logger.error(f"AI proxy upstream error: status={resp.status_code} body={error_text} url={url}")
-                    yield f"data: {json.dumps({'error': resp.status_code, 'detail': error_text})}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-                if not stream:
-                    raw = await resp.aread()
-                    text = raw.decode(errors="replace")
-                    try:
-                        data = json.loads(text)
-                        content = data["choices"][0]["message"]["content"]
-                        if data.get("usage"):
-                            logger.info(f"AI proxy usage: {data['usage']}")
-                        _update_socratic_state_from_content(content, socratic_ref)
-                    except Exception:
-                        pass
-                    yield text
-                    return
-                streamed_content = []
-                last_usage = None
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:].strip()
-                        if data_str != "[DONE]":
-                            try:
-                                data = json.loads(data_str)
-                                if data.get("usage"):
-                                    last_usage = data["usage"]
-                                delta = data.get("choices", [{}])[0].get("delta", {})
-                                delta_text = delta.get("content")
-                                if not delta_text:
-                                    delta_text = delta.get("reasoning_content") or ""
-                                if delta_text:
-                                    streamed_content.append(delta_text)
-                            except Exception:
-                                pass
-                        yield line + "\n\n"
-                if last_usage:
-                    logger.info(f"AI proxy usage: {last_usage}")
-                _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
+            streamed_content = []
+            streamed_len = 0
+            last_usage = None
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str != "[DONE]":
+                        try:
+                            data = json.loads(data_str)
+                            if data.get("usage"):
+                                last_usage = data["usage"]
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            delta_text = delta.get("content")
+                            if not delta_text:
+                                delta_text = delta.get("reasoning_content") or ""
+                            if delta_text and streamed_len < 200_000:
+                                # 仅用于结束后提取苏格拉底状态，封顶防止超长流式回复无上限累积
+                                streamed_content.append(delta_text)
+                                streamed_len += len(delta_text)
+                        except Exception:
+                            pass
+                    yield line + "\n\n"
+            if last_usage:
+                logger.info(f"AI proxy usage: {last_usage}")
+            _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            await resp.aclose()
 
     return StreamingResponse(proxy_stream(), media_type="text/event-stream")
 
 
 
 # ====== 滚动会话记忆（长会话后台摘要，不阻塞当前请求） ======
-_summary_tasks = set()
+# key -> asyncio.Task：必须存任务对象的强引用——只存 key 时 create_task 返回的
+# Task 可能被 GC 中途取消（asyncio 官方文档警告）；key 用于同会话去重
+_summary_tasks = {}
 
 
 def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url):
@@ -385,10 +407,11 @@ def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, b
     key = f"{session_id}:{model_name}"
     if key in _summary_tasks:
         return
-    _summary_tasks.add(key)
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due)
     )
+    _summary_tasks[key] = task
+    task.add_done_callback(lambda _t, _key=key: _summary_tasks.pop(_key, None))
 
 
 async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count):
@@ -419,14 +442,12 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
         logger.info("rolling memory updated: session=%s count=%d", session_id, count)
     except Exception as e:
         logger.warning("rolling memory update failed: %s", e)
-    finally:
-        _summary_tasks.discard(f"{session_id}:{model_name}")
 
 
 # ====== 会话管理 API ======
 @app.get("/api/sessions")
 async def api_get_sessions():
-    return _read_json(SESSIONS_PATH, {})
+    return _read_json_cached(SESSIONS_PATH, {})
 
 
 @app.post("/api/sessions")

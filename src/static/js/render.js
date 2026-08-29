@@ -68,12 +68,17 @@ function _sanitizeMarkdownHtml(html) {
       ADD_ATTR: ['target', 'data-phymathia-math', 'data-phymathia-mermaid'],
     });
   } else {
+    // DOMPurify vendor 404 时的正则降级：能力远弱于白名单过滤，至少拦掉
+    // <style> 注入 / meta 刷新 / 外链样式与内联 style 等向量
     html = html
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
       .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, '')
       .replace(/<embed\b[^>]*>/gi, '')
+      .replace(/<\/?(meta|link|base)\b[^>]*>/gi, '')
       .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
       .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '$1="#"');
   }
 
@@ -366,6 +371,9 @@ function renderMarkdown(text, renderCtx = {}) {
     if (decodedHtml.trim().length < 100 || !/<html[\s>]|<!doctype|<body[\s>]/i.test(decodedHtml)) {
       return match;  // 非完整 HTML 页面，保留代码块
     }
+    // DOMPurify vendor 加载失败时拒绝转可执行 iframe，降级保留纯代码文本
+    // （叠加 URL ?question= 自动发送的暴露面，降级模式下不再执行 AI 生成的脚本）
+    if (!window.DOMPurify) return match;
     // 流式期间同一消息每帧重渲染都会走到这里：按「渲染上下文+代码块序号」复用
     // 同一 vizId 覆盖式更新，避免每次都新建条目把几十~几百 KB 的完整 HTML
     // （含桥接脚本）反复塞进 _vizStore 只增不减；内容 hash 再做一层跨消息去重
@@ -738,8 +746,8 @@ function sanitizeMermaidCode(code) {
   const firstLine = lines[0].trim().toLowerCase();
   const isFlowchart = firstLine.startsWith('graph') || firstLine.startsWith('flowchart');
   if (!isFlowchart) {
-    // 尝试添加 flowchart 声明
-    if (firstLine.match(/^[A-Za-z]\s*-->/) || firstLine.match(/^[A-Za-z]\s*-->/)) {
+    // 尝试添加 flowchart 声明（--> 与 -> 两种边写法；原代码同一条件写了两遍，单箭头漏配）
+    if (firstLine.match(/^[A-Za-z]\s*-->/) || firstLine.match(/^[A-Za-z]\s*->/)) {
       lines.unshift('graph TD');
     }
   }

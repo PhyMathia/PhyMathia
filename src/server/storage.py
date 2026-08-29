@@ -88,7 +88,13 @@ def _delete_by_session(path: Path, session_id: str) -> int:
 
     def updater(data):
         nonlocal removed
-        removed = [k for k, v in data.items() if v.get("sessionId") == session_id]
+        if not isinstance(data, dict):
+            return None
+        # 兼容旧版 {"items": {...}} 包装格式（POST 直写的历史残留）：
+        # 不解包的话删除会静默失效、包装原样写回
+        if set(data.keys()) == {"items"} and isinstance(data.get("items"), dict):
+            data = data["items"]
+        removed = [k for k, v in data.items() if isinstance(v, dict) and v.get("sessionId") == session_id]
         for k in removed:
             data.pop(k, None)
         return data if removed else None

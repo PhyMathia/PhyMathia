@@ -440,7 +440,9 @@ class Wave2OptimizationTest(unittest.TestCase):
         self.assertFalse(context_mod._socratic_state_expired({"active": True}, now))
         self.assertFalse(context_mod._socratic_state_expired(None, now))
 
-    def test_read_socratic_state_expired_cleans(self):
+    def test_read_socratic_state_expired_is_read_only(self):
+        # 读路径不再有写副作用：过期状态返回 None 但不删除，
+        # TTL 清理职责在 _resolve_socratic_branch（见 test_resolve_socratic_branch_skips_expired）
         import time as _time
         orig_read = context_mod._read_json
         orig_delete = context_mod._delete_socratic_state
@@ -453,7 +455,7 @@ class Wave2OptimizationTest(unittest.TestCase):
             context_mod._read_json = orig_read
             context_mod._delete_socratic_state = orig_delete
         self.assertIsNone(state)
-        self.assertEqual(deleted, ["br_x"])
+        self.assertEqual(deleted, [])
 
     def test_resolve_socratic_branch_skips_expired(self):
         import time as _time
@@ -474,6 +476,27 @@ class Wave2OptimizationTest(unittest.TestCase):
         self.assertEqual(ref, "")
         self.assertTrue(mutated)
         self.assertNotIn("socratic:br_sess_1234567890abc_1", mutated[0])
+
+    def test_socratic_delete_no_cross_session_prefix_collision(self):
+        # 旧版按「会话标识前 18 个安全字符」匹配分支前缀：前缀相同的两个会话
+        # 会互相误删状态；现按完整标识精确匹配（18 截断旧格式仍单独兼容）
+        orig_mutate = context_mod._mutate_json
+        results = []
+
+        def fake_mutate(path, updater):
+            data = {
+                "socratic:br_sess_1234567890abcdef123456_aa11bb22cc": {"active": True, "updatedAt": 1},
+                "socratic:br_sess_1234567890abcdefZZZZZZ_bb22cc33dd": {"active": True, "updatedAt": 1},
+            }
+            results.append(updater(data))
+
+        context_mod._mutate_json = fake_mutate
+        try:
+            context_mod._delete_socratic_state("sess_1234567890abcdef123456")
+        finally:
+            context_mod._mutate_json = orig_mutate
+        self.assertNotIn("socratic:br_sess_1234567890abcdef123456_aa11bb22cc", results[0])
+        self.assertIn("socratic:br_sess_1234567890abcdefZZZZZZ_bb22cc33dd", results[0])
 
 
 

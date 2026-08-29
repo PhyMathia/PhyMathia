@@ -367,6 +367,8 @@
       }
     }
 
+    let _extractFailToastShown = false;
+
     async function autoExtractKnowledge(sessionId, messages, opts = {}) {
       if (!messages || messages.length === 0) return;
       if (messages.length < 2) return; // Need at least 1 exchange
@@ -414,6 +416,11 @@
             aiResult = await requestKnowledgeExtraction(payload);
           } catch (err) {
             console.warn('AI knowledge extraction failed:', err);
+            // 完全静默会让用户误以为知识增强成功：提示一次（不弹每轮）
+            if (!_extractFailToastShown && typeof showToast === 'function') {
+              _extractFailToastShown = true;
+              showToast('AI 知识增强提取失败，本轮仅保留本地提取结果');
+            }
           }
           const aiItems = aiResult.items || [];
           saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true, opts);

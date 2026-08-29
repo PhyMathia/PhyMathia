@@ -795,12 +795,30 @@ def _socratic_key(ref: str) -> str:
     return f"{SOCRATIC_STATE_PREFIX}{ref}"
 
 
+def _socratic_branch_prefixes(session_raw: str) -> list:
+    """会话的分支状态 key 前缀列表。
+
+    分支 id 形如 br_{会话标识}_{10位hex}。旧版会话标识截前 18 个安全字符，
+    前缀相同的两个会话会互相误删/误认状态；现按完整会话标识精确匹配，
+    并保留 18 截断的旧前缀以兼容 TTL（24h）内已存的旧格式状态。
+    """
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", str(session_raw or ""))
+    prefixes = []
+    if safe:
+        prefixes.append(f"{SOCRATIC_STATE_PREFIX}br_{safe}_")
+        legacy = safe[:18]
+        if legacy and legacy != safe:
+            prefixes.append(f"{SOCRATIC_STATE_PREFIX}br_{legacy}_")
+    return prefixes
+
+
 def _read_socratic_state(ref: str):
+    # 纯读：过期状态的清理由 _resolve_socratic_branch / 显式删除负责，
+    # 读路径不做写副作用
     data = _read_json(KV_PATH, {})
     state = data.get(_socratic_key(ref))
     if isinstance(state, dict) and state.get("active"):
         if _socratic_state_expired(state):
-            _delete_socratic_state(ref)
             return None
         return state
     return None
@@ -823,7 +841,8 @@ def _delete_socratic_state(ref: str) -> None:
 
     兼容三种 key：
     - 精确 key：socratic:{ref}（手动输入路径 / 会话级状态）
-    - 分支链前缀：socratic:br_{会话id前18字符}_{uuid}（“我来回答”弹窗路径）
+    - 分支链前缀：socratic:br_{会话标识}_{10位hex}（“我来回答”弹窗路径）；
+      ref 本身是分支 id 时先解出会话标识，按完整标识 + 旧版 18 截断前缀匹配
     """
     def updater(data):
         if not ref:
@@ -832,9 +851,9 @@ def _delete_socratic_state(ref: str) -> None:
         exact = f"{SOCRATIC_STATE_PREFIX}{ref}"
         if exact in data:
             remove_keys.append(exact)
-        session_part = re.sub(r"[^A-Za-z0-9_-]", "", ref)[:18]
-        if session_part:
-            prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
+        m = re.match(r"^br_(?P<sess>.+)_[0-9a-fA-F]{10}$", ref)
+        session_raw = m.group("sess") if m else ref
+        for prefix in _socratic_branch_prefixes(session_raw):
             remove_keys.extend(k for k in data if k.startswith(prefix) and k not in remove_keys)
         for key in remove_keys:
             data.pop(key, None)
@@ -852,13 +871,12 @@ def _resolve_socratic_branch(session_id: str) -> str:
     if not session_id:
         return ""
     data = _read_json(KV_PATH, {})
-    session_part = re.sub(r"[^A-Za-z0-9_-]", "", session_id)[:18]
-    prefix = f"{SOCRATIC_STATE_PREFIX}br_{session_part}_"
+    prefixes = _socratic_branch_prefixes(session_id)
     best_ref = ""
     best_ts = -1
     expired_keys = []
     for key, state in data.items():
-        if key.startswith(prefix) and isinstance(state, dict) and state.get("active"):
+        if any(key.startswith(p) for p in prefixes) and isinstance(state, dict) and state.get("active"):
             if _socratic_state_expired(state):
                 expired_keys.append(key)
                 continue

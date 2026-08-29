@@ -51,6 +51,8 @@ def _normalize_formula(latex: str) -> str:
     s = (latex or "").strip()
     s = s.replace("\\$", "$").strip()
     s = re.sub(r"^\$+|\$+$", "", s).strip()
+    # 内部残留的 $ 会在包上 $..$ 后形成畸形嵌套定界符（KaTeX 扫描时提前截断），移除
+    s = s.replace("$", "")
     # 清洗 PowerShell 转义等产生的无效 LaTeX 命令（\= 等）
     s = re.sub(r"\\([=,;:])", r"\1", s)
     if not s:
@@ -92,6 +94,9 @@ def _looks_like_formula(latex: str) -> bool:
         return False
     # 纯短字母+斜杠（单位）：rad/s、m/s
     if re.fullmatch(r"[A-Za-z]{1,4}(/[A-Za-z]{1,4})+", s):
+        return False
+    # 纯中文（含中文标点/全角字符）：是概念名不是公式——能量守恒、动量定理
+    if re.fullmatch(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+", s):
         return False
     # 其余视为公式（含 = + - ( ) { } 数字、函数结构等）
     return True

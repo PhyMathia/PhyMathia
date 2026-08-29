@@ -250,9 +250,11 @@ function closeMemoryClearDialog() {
 async function memoryConfirmClear() {
   const includeLearning = document.getElementById('memoryClearIncludeLearning').checked;
   closeMemoryClearDialog();
-  // 1. 自动备份（复用现有导出链路，产出与导入对称）
+  // 1. 自动备份（复用现有导出链路，产出与导入对称）。
+  // 必须 await：否则下载尚未完成就执行后面的 DELETE，备份与服务端清空竞态；
+  // 且 async rejection 不会被同步调用处的 try/catch 捕获
   try {
-    if (typeof exportData === 'function') exportData();
+    if (typeof exportData === 'function') await exportData();
   } catch (e) { console.warn('Backup before clear failed:', e); }
   // 2. 清除画像
   try { await memoryClearProfile(); } catch (e) { console.warn('Profile clear failed:', e); }

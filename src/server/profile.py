@@ -8,6 +8,7 @@
 """
 
 import copy
+import hashlib
 import logging
 import re
 import time
@@ -58,8 +59,13 @@ def _default_profile() -> dict:
 
 def _profile_path(device_id: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9._-]", "", str(device_id or ""))
-    if not safe or len(safe) > 64:
+    if not safe:
         safe = "default"
+    elif len(safe) > 64:
+        # 超长 id 不能折叠到 default：多个设备会互相串画像。
+        # 保留可读前缀 + 全 id 短哈希（48+1+12=61 ≤ 64，稳定且互不碰撞）
+        digest = hashlib.sha1(str(device_id).encode("utf-8")).hexdigest()[:12]
+        safe = safe[:48] + "-" + digest
     return PROFILES_DIR / f"{safe}.json"
 
 
@@ -250,7 +256,14 @@ def profile_context_text(device_id: str, max_chars: int = 1200) -> str:
         + "\n".join(parts)
         + "\n</user_profile>"
     )
-    return text[:max_chars]
+    if len(text) <= max_chars:
+        return text
+    # 截断不能吃掉闭合标签：按行回退避免半行残留，再补回 </user_profile>
+    body = text[:max_chars]
+    nl = body.rfind("\n")
+    if nl > 0:
+        body = body[:nl]
+    return body + "\n</user_profile>"
 
 
 __all__ = [

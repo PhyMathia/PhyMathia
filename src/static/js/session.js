@@ -1037,6 +1037,8 @@
       chatHistory = [];
 
       // 3. 清空 localStorage 中所有 phymathia 相关数据
+      // 键清单与 memory.js memoryConfirmClear 对齐：题库 phymathia_quiz_bank 与
+      // 检测素材源偏好 phymathia_quiz_source 此前漏清，清空后仍残留在全局题库
       const keys = Object.keys(localStorage).filter(k =>
         k.startsWith('phymathia_session_') ||
         k.startsWith('phymathia_msgs_') ||
@@ -1045,12 +1047,15 @@
         k === STORAGE_KEY_CURRENT ||
         k === STORAGE_KEY_KNOWLEDGE ||
         k === 'phymathia_formulas' ||
-        k === 'phymathia_quiz_stats'
+        k === 'phymathia_quiz_stats' ||
+        k === 'phymathia_quiz_bank' ||
+        k === 'phymathia_quiz_source'
       );
       keys.forEach(k => localStorage.removeItem(k));
       if (typeof setFormulaCache === 'function') setFormulaCache({});
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof window.clearAllQuizStats === 'function') window.clearAllQuizStats();
+      try { fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE' }).catch(() => {}); } catch (e) {}
 
       // 4. 创建新会话并刷新 UI
       createNewSession();
