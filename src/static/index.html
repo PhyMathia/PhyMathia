@@ -170,7 +170,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=7fe09166"></script>
+  <script src="/js/app.js?v=e54e37b9"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -337,41 +337,41 @@
     <div class="model-section">
       <div class="model-section-title">HTML 生成模型</div>
       <select class="model-select" id="htmlModelSelect" onchange="onModelChange('html')">
-        <option value="">— 请选择模型 —</option>
+        <option value="">— 与主模型相同（默认）—</option>
       </select>
-      <div class="model-desc" id="htmlModelDesc">未配置模型。请选择模型（可直接使用免费模型）</div>
-      <div class="model-tags" id="htmlModelTags"><span class="model-tag">未配置</span></div>
+      <div class="model-desc" id="htmlModelDesc">默认与主模型相同，无需单独配置</div>
+      <div class="model-tags" id="htmlModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">Φ 助手模型</div>
       <select class="model-select" id="graphModelSelect" onchange="onModelChange('graph')">
-        <option value="">— 不启用（默认用主模型）—</option>
+        <option value="">— 与主模型相同（默认）—</option>
       </select>
-      <div class="model-desc" id="graphModelDesc">未配置时默认使用主模型；负责画布改图与小问答（建议选擅长结构化输出的模型）</div>
+      <div class="model-desc" id="graphModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">苏格拉底 / 进阶学习模型</div>
       <select class="model-select" id="branchModelSelect" onchange="onModelChange('branch')">
-        <option value="">— 不启用（跟随主模型）—</option>
+        <option value="">— 与主模型相同（默认）—</option>
       </select>
-      <div class="model-desc" id="branchModelDesc">未配置时苏格拉底/进阶学习跟随主模型；配置后单独走该模型（可填本地 llama.cpp）</div>
+      <div class="model-desc" id="branchModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="branchModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">公式描述模型</div>
       <select class="model-select" id="descriptorModelSelect" onchange="onModelChange('descriptor')">
-        <option value="">— 不启用（回退默认摘要）—</option>
+        <option value="">— 与主模型相同（默认）—</option>
       </select>
-      <div class="model-desc" id="descriptorModelDesc">为公式速查库中的公式生成简要描述</div>
-      <div class="model-tags" id="descriptorModelTags"><span class="model-tag"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"></path></svg> 可选</span></div>
+      <div class="model-desc" id="descriptorModelDesc">默认与主模型相同，无需单独配置</div>
+      <div class="model-tags" id="descriptorModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section">
       <div class="model-section-title">出题模型</div>
       <select class="model-select" id="quizModelSelect" onchange="onModelChange('quiz')">
-        <option value="">— 不启用（默认用主模型）—</option>
+        <option value="">— 与主模型相同（默认）—</option>
       </select>
-      <div class="model-desc" id="quizModelDesc">未配置时默认使用主模型生成检测题</div>
+      <div class="model-desc" id="quizModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="quizModelTags"><span class="model-tag">可选</span></div>
     </div>
     <div class="model-section model-section-mgmt">

@@ -180,24 +180,25 @@ function renderModelSelects() {
   if (!agentSelect || !htmlSelect || !quizSelect || !graphSelect) return;
 
   const emptyOpt = '<option value="">— 请选择模型 —</option>';
-  const descriptorEmptyOpt = '<option value="">— 不启用（回退默认摘要）—</option>';
-  const quizEmptyOpt = '<option value="">— 不启用（默认用主模型）—</option>';
+  // 非主模型角色留空 = 跟随主模型（各调用点均为 getActiveModelForRole(角色) || 主模型），
+  // 统一用同一份选项文案，避免五种角色各写一套描述漂移
+  const sameAsMainOpt = '<option value="">— 与主模型相同（默认）—</option>';
   const opts = allModels.map(m =>
     `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`
   ).join('');
 
   agentSelect.innerHTML = emptyOpt + opts;
-  htmlSelect.innerHTML = emptyOpt + opts;
-  if (descriptorSelect) descriptorSelect.innerHTML = descriptorEmptyOpt + opts;
-  quizSelect.innerHTML = quizEmptyOpt + opts;
-  graphSelect.innerHTML = '<option value="">— 不启用（默认用主模型）—</option>' + opts;
+  htmlSelect.innerHTML = sameAsMainOpt + opts;
+  if (descriptorSelect) descriptorSelect.innerHTML = sameAsMainOpt + opts;
+  quizSelect.innerHTML = sameAsMainOpt + opts;
+  graphSelect.innerHTML = sameAsMainOpt + opts;
   agentSelect.value = activeModels.agent_model || '';
   htmlSelect.value = activeModels.html_model || '';
   if (descriptorSelect) descriptorSelect.value = activeModels.descriptor_model || '';
   quizSelect.value = activeModels.quiz_model || '';
   graphSelect.value = activeModels.graph_model || '';
   if (branchSelect) {
-    branchSelect.innerHTML = '<option value="">— 不启用（跟随主模型）—</option>' + opts;
+    branchSelect.innerHTML = sameAsMainOpt + opts;
     branchSelect.value = activeModels.branch_model || '';
   }
   updateModelMeta('agent');
@@ -222,18 +223,13 @@ function updateModelMeta(type) {
     descEl.textContent = (preset?.name || model.provider) + ' · ' + (model.label || model.model);
       tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else {
-    if (type === 'quiz') {
-      descEl.textContent = select.value ? '' : '未配置时默认用主模型生成检测题、深度问答评分与单题解析';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
-    } else if (type === 'graph') {
-      descEl.textContent = select.value ? '' : '未配置时默认使用主模型；负责画布改图与小问答（建议选擅长结构化输出的模型）';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
-    } else if (type === 'branch') {
-      descEl.textContent = select.value ? '' : '未配置时苏格拉底/进阶学习跟随主模型；配置后单独走该模型';
-      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
-    } else {
+    if (type === 'agent') {
       descEl.textContent = select.value ? '' : '未配置模型。请选择模型（可直接使用免费模型）';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">未配置</span>';
+    } else {
+      // 其余角色统一口径：留空即与主模型相同，仅描述回退行为，不再各写一份角色说明
+      descEl.textContent = select.value ? '' : '默认与主模型相同，无需单独配置';
+      tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">可选</span>';
     }
   }
 }
