@@ -26,6 +26,7 @@ const entries = [
   'graph-custom.js',
   'graph-workflow.js',
   'graph-export.js',
+  'graph-contextmenu.js',
   'knowledge.js',
   'models.js',
   'harness.js',

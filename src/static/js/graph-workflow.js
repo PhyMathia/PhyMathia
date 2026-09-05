@@ -1737,6 +1737,13 @@ function _initGraphCanvasEvents() {
     zoomGraph(e.deltaY < 0 ? 1.08 : 0.92, e.clientX, e.clientY);
   }, { passive: false });
   graphCanvas.addEventListener('pointerdown', e => {
+    // 右键/中键不进入拖拽与点选链路（右键菜单由 contextmenu 监听单独处理）：
+    // 过滤必须在本处理器入口生效，_startNodeDrag/_startGroupDrag/_startCanvasPan 才不会被
+    // 右键按下误触发；graph-custom.js 的 document 捕获 pointerdown（曲线拖拽 + 联系线
+    // 450ms 双击检测）先于本监听且不分按键——右键按压联系线也会计入双击检测（既有
+    // 行为，快速右双击会开联系线弹窗），节点/空白不受影响；联系线菜单（P5）落地时再按
+    // button 细化。
+    if (e.button !== 0) return;
     graphView.suppressClick = false;
     if (graphView.selectMode) {
       if (e.target.closest('.graph-canvas-toolbar')) return;
@@ -1779,6 +1786,18 @@ function _initGraphCanvasEvents() {
       if (graphView.linkMode) return;
       _startNodeDrag(e, nodeEl);
     } else _startCanvasPan(e);
+  });
+  graphCanvas.addEventListener('contextmenu', e => {
+    // 自绘右键菜单（graph-contextmenu.js）。只在图谱画布内接管，画布外仍是浏览器原生菜单。
+    // 1) 输入类元素放行：节点内 textarea/输入框保留粘贴、拼写等原生编辑菜单
+    if (e.target && typeof e.target.closest === 'function'
+      && e.target.closest('input, textarea, [contenteditable], iframe')) return;
+    // 2) 文字选择模式放行：不与「选择文字/复制」抢交互
+    if (graphView.selectMode) return;
+    // 3) 拖动/框选过的手势不弹菜单（graphView.moved 由现有拖拽链路维护）
+    if (graphView.moved) return;
+    e.preventDefault();
+    openGraphContextMenu(e);
   });
   graphCanvas.addEventListener('pointermove', _handlePointerMove);
   window.addEventListener('pointerup', _endPointerDrag);

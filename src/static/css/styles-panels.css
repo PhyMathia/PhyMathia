@@ -2808,3 +2808,71 @@
   box-sizing: border-box;
   background: rgba(127, 150, 190, 0.06);
 }
+
+/* ---------- 探索网右键菜单 ---------- */
+/* 单例弹层挂 document.body（position:fixed 用视口坐标），仿 .graph-export-menu 一族 */
+.graph-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 170px;
+  max-width: 264px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-primary);
+}
+
+.graph-context-menu-title {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.graph-context-menu-item:hover {
+  background: var(--btn-active-bg);
+  color: var(--accent);
+}
+
+.graph-context-menu-item.danger:hover {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+}
+
+.graph-context-menu-item:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.graph-context-menu-item:disabled:hover {
+  background: transparent;
+  color: inherit;
+}
+
+.graph-context-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
