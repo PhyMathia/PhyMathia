@@ -128,3 +128,5 @@ Html_video/quiz_real/frames/
 
 # opencode 内部状态（计划/会话缓存，禁止入库）
 .zcode/
+.venv-linux/*
+.venv-windows/*
