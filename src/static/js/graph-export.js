@@ -520,7 +520,11 @@
     return String(n);
   }
 
-  function toggleGraphExportMenu() {
+  // anchor（可选）：{ x, y } 视口坐标（如右键菜单传入的光标位置）。
+  // 无参调用 = 工具栏入口现状不变（CSS 右下角 right:16px / bottom:66px 定位）；
+  // 有参 = 菜单改在锚点附近弹出并做视口钳制（口径参考 graph-contextmenu.js 的边缘翻转）。
+  // 菜单挂在 graphCanvas 内（absolute），锚点须从视口坐标换算画布局部坐标。
+  function toggleGraphExportMenu(anchor) {
     if (_menuEl) { if (_menuEl.isConnected) { _closeGraphExportMenu(); return; } _menuEl = null; }
     if (!graphCanvas) graphCanvas = document.getElementById('graphCanvas');
     if (!graphCanvas) return;
@@ -564,6 +568,23 @@
 
     graphCanvas.appendChild(menu);
     _menuEl = menu;
+
+    // 锚点模式（M2）：视口钳制后换算画布局部坐标，并清掉 CSS 的 right/bottom 定位
+    if (anchor && isFinite(anchor.x) && isFinite(anchor.y)) {
+      var vw = window.innerWidth || 1280;
+      var vh = window.innerHeight || 800;
+      var mw = menu.offsetWidth || 300;
+      var mh = menu.offsetHeight || 200;
+      var px = anchor.x;
+      var py = anchor.y;
+      if (px + mw > vw - 8) px = Math.max(8, vw - mw - 8);
+      if (py + mh > vh - 8) py = Math.max(8, vh - mh - 8);
+      var rect = graphCanvas.getBoundingClientRect();
+      menu.style.left = (px - rect.left) + 'px';
+      menu.style.top = (py - rect.top) + 'px';
+      menu.style.right = 'auto';
+      menu.style.bottom = 'auto';
+    }
 
     _outsideCloser = function (event) {
       if (_menuEl && !_menuEl.contains(event.target)) _closeGraphExportMenu();

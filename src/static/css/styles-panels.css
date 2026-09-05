@@ -2887,3 +2887,9 @@
   margin: 4px 6px;
   background: var(--border);
 }
+
+/* 右键菜单打开期间的目标节点临时高亮（M2；关闭即移除，元素被重渲则静默跳过） */
+.graph-node.graph-ctx-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

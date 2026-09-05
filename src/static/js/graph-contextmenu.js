@@ -4,11 +4,14 @@
 // 菜单零新业务逻辑：每一项都复用既有动作函数，本文件只做目标定位、按节点能力裁剪与弹层生命周期。
 // 依赖：运行期用到 graph*/chat-features/knowledge/utils 的全局函数与 showToast；全部惰性调用。
 // 联系线（.graph-edge-link）菜单：编辑联系 / 曲线精调 / 删除联系（原第二期 P5，M1 承接落地）。
+// M2 语义补强：撤销/重做禁用态（栈顶判空 + 跨会话守卫）、多选感知（已选 N 语境）、
+// 目标节点临时高亮、居中/复制节点、新建分组/缩放复位/全选节点、导出菜单锚点跟随光标。
 
 // ---------- 单例弹层状态 ----------
 let _graphCtxMenuEl = null;
 let _graphCtxOutsideCloser = null;
 let _graphCtxEscCloser = null;
+let _graphCtxTargetEls = []; // 菜单打开期间加 .graph-ctx-target 高亮的目标节点元素（M2）
 
 function _graphCtxToast(msg) {
   if (typeof showToast === 'function') showToast(String(msg || ''));
@@ -27,6 +30,31 @@ function closeGraphContextMenu() {
     document.removeEventListener('keydown', _graphCtxEscCloser, true);
     _graphCtxEscCloser = null;
   }
+  _graphCtxUnmarkTarget();
+}
+
+// ---------- 目标节点临时高亮（M2） ----------
+// 菜单打开期间给目标节点元素加 .graph-ctx-target（多选语境高亮整个选择集），
+// 关闭时移除；元素可能已被 renderGraphCanvas() 重渲脱离 DOM，移除时判空容错跳过。
+function _graphCtxUnmarkTarget() {
+  _graphCtxTargetEls.forEach(el => {
+    try {
+      if (el && el.classList && typeof el.classList.remove === 'function') el.classList.remove('graph-ctx-target');
+    } catch (e) { /* 已被重渲的元素忽略 */ }
+  });
+  _graphCtxTargetEls = [];
+}
+
+function _graphCtxMarkTarget(nodeIds) {
+  _graphCtxUnmarkTarget();
+  if (!graphInner || typeof graphInner.querySelector !== 'function') return;
+  (nodeIds || []).forEach(id => {
+    const el = graphInner.querySelector('[data-node-id="' + id + '"]');
+    if (el && el.classList && typeof el.classList.add === 'function') {
+      el.classList.add('graph-ctx-target');
+      _graphCtxTargetEls.push(el);
+    }
+  });
 }
 
 // ---------- 菜单项构造（纯描述，供弹层渲染与静态回归） ----------
@@ -43,10 +71,13 @@ function _graphContextTargetKind(target) {
   return 'canvas';
 }
 
-// A 类节点菜单：按节点能力白名单裁剪（门控复用渲染层与动作函数的同一判定）
+// A 类节点菜单：按节点能力白名单裁剪（门控复用渲染层与动作函数的同一判定）。
+// 右键目标已属于多选集（size > 1）时改走多选语境（M2）——见 _graphCtxMultiSelection。
 function _graphContextItemsForNode(node) {
   const items = [];
   if (!node || !node.id) return items;
+  const multi = _graphCtxMultiSelection(node);
+  if (multi) return _graphContextItemsForMultiNodes(multi);
   const content = typeof _nodeStoredContent === 'function'
     ? _nodeStoredContent(node)
     : (node.content || node.summary || '');
@@ -58,10 +89,24 @@ function _graphContextItemsForNode(node) {
   if (hasContent) {
     items.push({ key: 'copy', label: '复制全文', run: () => _graphCtxCopyText(String(content || '')) });
   }
+  // 居中：focusGraphNodeById 内部重渲 + 测量 + _centerGraphOnNode（任何节点可用）
+  items.push({
+    key: 'focus',
+    label: '居中此节点',
+    run: () => { if (typeof focusGraphNodeById === 'function') focusGraphNodeById(node.id); },
+  });
+  // 复制节点：复用「粘贴为节点」同一条落地链路（draft 不提供，与收藏同口径）
+  if (hasContent && node.kind !== 'draft') {
+    items.push({
+      key: 'duplicate',
+      label: '复制节点',
+      run: () => _graphCtxDuplicateNode(node, content),
+    });
+  }
   if (typeof _canMinimizeGraphNode === 'function' && _canMinimizeGraphNode(node)) {
     items.push({
       key: 'minimize',
-      label: node.minimized ? '展开' : '折叠',
+      label: node.minimized ? '展开节点' : '折叠节点',
       run: () => { if (typeof _toggleGraphNodeMinimize === 'function') _toggleGraphNodeMinimize(node); },
     });
   }
@@ -87,8 +132,78 @@ function _graphContextItemsForNode(node) {
   return items;
 }
 
-// C 类空白画布菜单
-function _graphContextItemsForCanvas(point) {
+// 多选语境判定（M2）：右键目标 ∈ graphView.selectedNodeIds 且选择集不止一个节点时返回选择集
+// 节点数组；未选中/单选/选择集混入查不到数据的节点（空态卡等）一律返回 null（退回单目标语境，
+// 行为与现状完全一致）。右键本身不改变选择——不做自动改选，保持 P1 以来的现状。
+function _graphCtxMultiSelection(node) {
+  if (!node || !node.id || typeof _findGraphNode !== 'function') return null;
+  const sel = graphView && graphView.selectedNodeIds;
+  if (!sel || typeof sel.has !== 'function' || typeof sel.size !== 'number') return null;
+  if (!sel.has(node.id) || sel.size <= 1) return null;
+  const nodes = [];
+  for (const id of sel) {
+    const item = _findGraphNode(id);
+    if (!item) return null;
+    nodes.push(item);
+  }
+  return nodes.length > 1 ? nodes : null;
+}
+
+// 多选语境菜单（M2）：删除作用于整个选择集（_deleteSelectedGraphNodes 本就接受 id 数组，
+// 沿用其确认路径）；折叠/展开在集内全部满足 _canMinimizeGraphNode 时作用于选择集，否则隐藏
+// （混合状态统一方向：任一未折叠即「折叠节点」，仅切换不在目标态的节点）；收藏/复制全文/
+// 居中/复制节点/端口等单目标项在多选语境隐藏，避免歧义。
+function _graphContextItemsForMultiNodes(nodes) {
+  const items = [];
+  const canToggleAll = (typeof _canMinimizeGraphNode === 'function')
+    && nodes.every(n => _canMinimizeGraphNode(n));
+  if (canToggleAll) {
+    const anyExpanded = nodes.some(n => !n.minimized);
+    items.push({
+      key: 'minimize',
+      label: anyExpanded ? '折叠节点' : '展开节点',
+      run: () => {
+        if (typeof _toggleGraphNodeMinimize !== 'function') return;
+        nodes.forEach(n => { if (!!n.minimized !== anyExpanded) _toggleGraphNodeMinimize(n); });
+      },
+    });
+  }
+  items.push({ key: 'sep' });
+  items.push({
+    key: 'delete',
+    label: '删除 ' + nodes.length + ' 个节点',
+    danger: true,
+    // 作用于菜单打开时捕获的选择集（与 label 计数同源）：菜单存活期间的外部重渲
+    // （流式回答/定时同步）会经 renderGraphCanvas 清空 selectedNodeIds，届时再读
+    // 活选择集会静默一个都删不掉；节点 id 跨重渲稳定，_deleteSelectedGraphNodes
+    // 内部按 id 重新解析，选择集未变时与读活集行为完全一致
+    run: () => {
+      if (typeof _deleteSelectedGraphNodes !== 'function') return;
+      _deleteSelectedGraphNodes(nodes.map(n => n.id));
+    },
+  });
+  return items;
+}
+
+// 撤销/重做可用性（M2）：栈顶判空 + 会话一致性守卫——对齐 _undoGraphAction（graph.js）的
+// no-op 条件（栈顶快照属其他会话时动作本身就是静默返回），菜单提前禁用并给 title 提示。
+// graphUndoStack/graphRedoStack 为 graph.js 顶层 let，打包同域可直接引用（graphView 先例）。
+function _graphCtxCurrentSessionId() {
+  if (typeof _currentSessionId !== 'function') return '';
+  try { return String(_currentSessionId() || ''); } catch (e) { return ''; }
+}
+
+function _graphCtxHistoryUsable(stack) {
+  if (!Array.isArray(stack) || !stack.length) return false;
+  const top = stack[stack.length - 1];
+  if (!top) return false;
+  const sid = _graphCtxCurrentSessionId();
+  if (top.sessionId && sid && String(top.sessionId) !== sid) return false;
+  return true;
+}
+
+// C 类空白画布菜单。client 为右键光标的视口坐标（缩放复位锚点 / 导出菜单锚点用），可缺省。
+function _graphContextItemsForCanvas(point, client) {
   const pt = point || { x: 0, y: 0 };
   const canReadClipboard = typeof navigator !== 'undefined'
     && navigator.clipboard && typeof navigator.clipboard.readText === 'function';
@@ -107,22 +222,68 @@ function _graphContextItemsForCanvas(point) {
   });
   items.push({ key: 'sep' });
   items.push({ key: 'fit', label: '适配画布', run: () => fitGraph() });
+  // 缩放复位 100%：zoomGraph(1/当前zoom) 口径——zoomGraph 自行读写 state.zoom 并受
+  // GRAPH_MIN/MAX_ZOOM 钳制，光标为锚保持该点视口位置不动
+  items.push({
+    key: 'zoom-reset',
+    label: '缩放复位 100%',
+    run: () => {
+      if (typeof zoomGraph !== 'function') return;
+      const state = typeof _graphState === 'function' ? _graphState() : null;
+      const zoom = Number(state && state.zoom) || 0.9;
+      zoomGraph(1 / zoom, client ? client.x : null, client ? client.y : null);
+    },
+  });
   items.push({ key: 'arrange', label: '自动整理', run: () => autoArrangeGraph() });
+  items.push({
+    key: 'create-group',
+    label: '新建分组',
+    run: () => { if (typeof graphCreateGroup === 'function') graphCreateGroup(); },
+  });
+  // 全选节点：纯组合既有原语（选择集赋值 + _syncGraphSelectionClasses），
+  // 同时清掉分组选择，避免「全选节点后按 Del 误删分组」的歧义
+  items.push({
+    key: 'select-all',
+    label: '全选节点',
+    run: () => {
+      const nodes = (graphView && Array.isArray(graphView.nodes)) ? graphView.nodes : [];
+      graphView.selectedNodeIds = new Set(nodes.map(n => n.id));
+      graphView.selectedGroupIds = new Set();
+      if (typeof _syncGraphSelectionClasses === 'function') _syncGraphSelectionClasses();
+    },
+  });
   items.push({ key: 'sep' });
   items.push({
     key: 'export',
     label: '导出超高清 PNG…',
-    run: () => { if (typeof window.toggleGraphExportMenu === 'function') window.toggleGraphExportMenu(); },
+    // 有光标坐标时把导出菜单锚到光标附近（M2）；无参调用 = 工具栏入口现状不变
+    run: () => {
+      if (typeof window.toggleGraphExportMenu !== 'function') return;
+      window.toggleGraphExportMenu(client ? { x: client.x, y: client.y } : undefined);
+    },
   });
   items.push({ key: 'sep' });
+  // 判读前先按当前会话同步撤销栈——与 _undoGraphAction/_redoGraphAction 首行的
+  // _ensureGraphHistory 同一步：刚启动/刚切换会话时内存栈还是空的或旧会话的，而
+  // localStorage 里可能已有本会话历史（Ctrl+Z 实际可撤销），不同步会把可撤销误判成
+  // 「没有可撤销的操作」；同步后栈顶判空 + 会话守卫即与动作函数的 no-op 条件严格对齐
+  if (typeof _ensureGraphHistory === 'function') {
+    try { _ensureGraphHistory(); } catch (e) { /* localStorage 不可用时按原栈判读 */ }
+  }
+  const canUndo = _graphCtxHistoryUsable(graphUndoStack);
   items.push({
     key: 'undo',
     label: '撤销',
+    disabled: !canUndo,
+    title: canUndo ? '' : '没有可撤销的操作',
     run: () => { if (typeof window.undoGraphAction === 'function') window.undoGraphAction(); },
   });
+  const canRedo = _graphCtxHistoryUsable(graphRedoStack);
   items.push({
     key: 'redo',
     label: '重做',
+    disabled: !canRedo,
+    title: canRedo ? '' : '没有可重做的操作',
     run: () => { if (typeof window.redoGraphAction === 'function') window.redoGraphAction(); },
   });
   return items;
@@ -307,6 +468,16 @@ function _graphCtxPasteNode(point) {
   });
 }
 
+// 复制节点（M2）：复用「粘贴为节点」同一条落地链路——createManualNode('blank') 建节点
+// （含撤销栈/持久化/重渲）+ updateCustomNodeContent 写入原节点内容（_nodeStoredContent 同源）；
+// 落点为原节点旁偏移 +24/+24。
+function _graphCtxDuplicateNode(node, content) {
+  _graphCtxCreateBlankNodeWithText(
+    { x: (Number(node.x) || 0) + 24, y: (Number(node.y) || 0) + 24 },
+    String(content || ''),
+  );
+}
+
 // ---------- 弹层渲染 ----------
 
 function openGraphContextMenu(event) {
@@ -319,23 +490,30 @@ function openGraphContextMenu(event) {
   const point = (typeof _clientToGraphLocal === 'function')
     ? _clientToGraphLocal(event.clientX, event.clientY)
     : { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
+  // 光标视口坐标（画布菜单的缩放复位锚点 / 导出菜单锚点用）
+  const client = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
 
   let title = '画布';
   let items;
+  let markIds = null; // 确认弹菜单后再给目标加高亮（items 意外为空时不留无人清理的类）
   if (kind === 'node') {
     const nodeEl = target.closest('.graph-node');
     const node = _findGraphNode(nodeEl.dataset.nodeId);
-    title = _graphCtxNodeTitle(node);
+    const multi = _graphCtxMultiSelection(node);
+    title = multi ? '已选 ' + multi.length + ' 个节点' : _graphCtxNodeTitle(node);
     items = _graphContextItemsForNode(node);
+    markIds = multi ? multi.map(n => n.id) : [node.id];
   } else if (kind === 'link') {
     const edge = _graphCtxLinkFromTarget(target);
     title = _graphCtxLinkTitle(edge);
     items = _graphContextItemsForLink(edge);
   } else {
-    items = _graphContextItemsForCanvas(point);
+    items = _graphContextItemsForCanvas(point, client);
   }
   items = _graphCtxCleanSeparators((items || []).filter(item => item && (item.key === 'sep' || item.label)));
   if (!items.length) return;
+  // 菜单打开期间高亮目标节点（多选语境高亮整个选择集，M2）
+  if (markIds) _graphCtxMarkTarget(markIds);
 
   const menu = document.createElement('div');
   menu.className = 'graph-context-menu';
