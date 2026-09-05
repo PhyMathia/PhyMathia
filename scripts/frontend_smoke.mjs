@@ -81,9 +81,24 @@ try {
 }
 
 let failed = 0;
+const pendingChecks = [];
 const check = (name, fn) => {
   try {
-    if (fn() === false) throw new Error('断言未通过');
+    const result = fn();
+    if (result && typeof result.then === 'function') {
+      // 异步断言（如批量任务中止行为）：等待完成后才统计与退出。
+      // 兑现值 false 同步口径一致视为失败——否则断言函数里 return false 的
+      // 行为检查会被静默当作通过（审查修复：此前 6 条写回/不触碰断言因此失效）
+      pendingChecks.push(result.then(
+        (r) => {
+          if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+          else console.log('✓', name);
+        },
+        (e) => { failed++; console.error('❌', name, '->', (e && e.message) || e); },
+      ));
+      return;
+    }
+    if (result === false) throw new Error('断言未通过');
     console.log('✓', name);
   } catch (e) {
     failed++;
@@ -298,5 +313,148 @@ check('knowledge: 定位锚点优先 anchorSummary、旧数据回退 summary（�
   return src.slice(at, at + 120).includes('item.summary');
 });
 
+// ===== 存量摘要优化入口（P3：方案 B 批量重述 + 可停止注册表）静态/沙箱回归 =====
+
+check('knowledge: P3 isLegacyCardSummaryItem 判定边界（manual 永不触碰、锚点比对、file/harness 不碰）', () => {
+  const is = sandbox.isLegacyCardSummaryItem;
+  if (typeof is !== 'function') throw new Error('isLegacyCardSummaryItem 未暴露');
+  // 目标：旧数据（source=ai_extract，无 summarySource/anchorSummary）——旧提取链路必写整卡摘要
+  if (is({ id: 'a', title: '导数', summary: '整卡摘要原文', source: 'ai_extract' }) !== true) return false;
+  // 目标：P2 local 条目且 summary 等于 anchorSummary
+  if (is({ id: 'b', title: '导数', summary: '整卡摘要', summarySource: 'local', anchorSummary: '整卡摘要', source: 'ai_extract' }) !== true) return false;
+  // 非目标：summary 已与锚点不同（已优化/模板化）
+  if (is({ id: 'c', title: '导数', summary: '具体摘要', summarySource: 'local', anchorSummary: '整卡摘要', source: 'ai_extract' }) !== false) return false;
+  // 非目标：summarySource=model / manual
+  if (is({ id: 'd', title: '导数', summary: 'x', summarySource: 'model', source: 'ai_extract' }) !== false) return false;
+  if (is({ id: 'e', title: '导数', summary: 'x', summarySource: 'manual' }) !== false) return false;
+  // 非目标：旧数据手动收藏（无 summarySource，source=manual）也不得触碰
+  if (is({ id: 'f', title: '导数', summary: '手写摘要', source: 'manual' }) !== false) return false;
+  // 非目标：file/harness 是文档/节点内容摘要，无锚点回退不适用
+  if (is({ id: 'g', title: '导数', summary: '文档段落摘要', source: 'file' }) !== false) return false;
+  if (is({ id: 'h', title: '导数', summary: '节点内容', source: 'harness' }) !== false) return false;
+  // 非目标：空摘要 / 空值
+  if (is({ id: 'i', title: '导数', summary: '   ', source: 'ai_extract' }) !== false) return false;
+  if (is(null) !== false) return false;
+  return true;
+});
+
+check('knowledge: P3 重述提示词按 (title, formulas, meaning) 组装 + 公式含义同会话优先 + 回复清洗', () => {
+  const meaningsOf = sandbox._knowledgeFormulaMeanings;
+  const build = sandbox._buildSummaryRestatePrompt;
+  const clean = sandbox._cleanRestatedSummaryText;
+  if (typeof meaningsOf !== 'function' || typeof build !== 'function' || typeof clean !== 'function') {
+    throw new Error('P3 提示词/清洗函数未暴露');
+  }
+  // 公式含义查找：同会话优先，跨会话同名公式兜底（_formulaKey 忽略空格差异）
+  storageData['phymathia_formulas'] = JSON.stringify({
+    f1: { id: 'f1', latex: '$F = -kx$', meaning: '回复力与位移成正比', sessionId: 'sessA', meaningSource: 'model' },
+    f2: { id: 'f2', latex: '$G=mg$', meaning: '重力与质量成正比', sessionId: 'sessB', meaningSource: 'model' },
+  });
+  const m1 = meaningsOf({ sessionId: 'sessA', formulas: ['F=-kx'] });
+  const m2 = meaningsOf({ sessionId: 'sessC', formulas: ['G = mg'] });
+  if (m1.length !== 1 || m1[0].meaning !== '回复力与位移成正比') return false;
+  if (m2.length !== 1 || m2[0].meaning !== '重力与质量成正比') return false;
+  // 提示词含标题/公式/含义/旧摘要/60 字约束
+  const prompt = build(
+    { title: '简谐运动', category: 'physics', summary: '整卡摘要原文', formulas: ['F=-kx'] },
+    m1,
+  );
+  for (const frag of ['简谐运动', 'F=-kx', '回复力与位移成正比', '整卡摘要原文', '60 字']) {
+    if (!prompt.includes(frag)) throw new Error('重述提示词缺: ' + frag);
+  }
+  // 回复清洗：思考块/前缀/引号/多行解释
+  if (clean('<think>推理</think>摘要：**重述摘要正文**') !== '重述摘要正文') return false;
+  if (clean('“带引号的模型回复”') !== '带引号的模型回复') return false;
+  if (clean('第一行摘要\n第二行解释') !== '第一行摘要') return false;
+  if (clean('好的，以下是摘要：\n真正摘要行') !== '真正摘要行') return false;
+  delete storageData['phymathia_formulas'];
+  return true;
+});
+
+check('knowledge: P3 批量任务中止后不再发后续请求 + 目标写回 + 非目标不触碰（沙箱行为断言）', async () => {
+  const realProxy = sandbox.proxyChatWithModel;
+  const realGetActive = sandbox.getActiveModelForRole;
+  const RealAbortController = sandbox.AbortController;
+  // 宽松 DOM 代理对任意属性都返回代理（含 Symbol.match），真实字符串 .includes(代理)
+  // 会被当成 RegExp 抛 TypeError——批量路径涉及的 getElementById 换成哑元素，
+  // knowledgePanel 视为未打开（跳过重渲），结束后还原。
+  const realGetElementById = sandbox.document.getElementById;
+  const fakeEl = () => ({
+    classList: { contains: () => false, add: () => {}, remove: () => {}, toggle: () => {} },
+    style: {}, textContent: '', innerHTML: '',
+  });
+  sandbox.document.getElementById = () => fakeEl();
+  try {
+    // 三条 local 整卡摘要目标 + 一条手动条目（必须不触碰）
+    storageData['phymathia_knowledge'] = JSON.stringify({
+      ki_a: { id: 'ki_a', title: '简谐运动', sessionId: 's1', source: 'ai_extract', summary: '整卡摘要A', summarySource: 'local', anchorSummary: '整卡摘要A', formulas: [], createdAt: 1 },
+      ki_b: { id: 'ki_b', title: '胡克定律', sessionId: 's1', source: 'ai_extract', summary: '整卡摘要B', summarySource: 'local', anchorSummary: '整卡摘要B', formulas: [], createdAt: 2 },
+      ki_c: { id: 'ki_c', title: '导数', sessionId: 's1', source: 'ai_extract', summary: '整卡摘要C', summarySource: 'local', anchorSummary: '整卡摘要C', formulas: [], createdAt: 3 },
+      ki_m: { id: 'ki_m', title: '手动条目', sessionId: 's1', source: 'manual', summary: '手动摘要', summarySource: 'manual', formulas: [], createdAt: 4 },
+    });
+    sandbox.invalidateKnowledgeCache();
+    sandbox.getActiveModelForRole = (role) => (role === 'descriptor'
+      ? { id: 'desc', provider: 'test', model: 'test-model', baseUrl: 'https://example.test', apiKey: 'k' }
+      : null); // descriptor 槽位优先
+    let proxyCalls = 0;
+    sandbox.proxyChatWithModel = async (model, body, signal) => {
+      proxyCalls++;
+      if (proxyCalls === 1) {
+        const prompt = body.messages.map(m => m.content).join('\n');
+        if (!prompt.includes('简谐运动')) throw new Error('第一条请求应针对目标条目');
+        if (body.stream !== false) throw new Error('重述调用应走 stream:false');
+        return { json: async () => ({ choices: [{ message: { content: '重述后的摘要A' } }] }) };
+      }
+      // 第二条请求进行中被用户中止：置 aborted（模拟 AbortController.abort 效果）并拒绝在途 fetch
+      signal.aborted = true;
+      throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    };
+    sandbox.AbortController = class {
+      constructor() { this.signal = { aborted: false }; this.abort = () => { this.signal.aborted = true; }; }
+    };
+    await sandbox.optimizeKnowledgeSummaries();
+    if (proxyCalls !== 2) throw new Error('中止后应不再发出后续请求，实际调用 ' + proxyCalls + ' 次（应为 2）');
+    const after = JSON.parse(storageData['phymathia_knowledge']);
+    if (after.ki_a.summary !== '重述后的摘要A' || after.ki_a.summarySource !== 'model') return false; // 完成条目写回
+    if (after.ki_a.anchorSummary !== '整卡摘要A') return false; // 定位锚点保留
+    if (after.ki_b.summary !== '整卡摘要B' || after.ki_b.summarySource !== 'local') return false; // 失败条目不写回
+    if (after.ki_c.summary !== '整卡摘要C' || after.ki_c.summarySource !== 'local') return false; // 中止后未触碰
+    if (after.ki_m.summary !== '手动摘要' || after.ki_m.summarySource !== 'manual') return false; // manual 不触碰
+    return true;
+  } finally {
+    sandbox.proxyChatWithModel = realProxy;
+    sandbox.getActiveModelForRole = realGetActive;
+    sandbox.AbortController = RealAbortController;
+    sandbox.document.getElementById = realGetElementById;
+    delete storageData['phymathia_knowledge'];
+    sandbox.invalidateKnowledgeCache();
+  }
+});
+
+check('knowledge: P3 中断注册表接线（关闭面板/再次点击/Esc 三路径 + 循环前查 signal）与入口静态断言', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const frag of [
+    'let _kpSummaryOptimizeAbort',                                    // 模块级注册表：中断路径的唯一持有者
+    'function abortKnowledgeSummaryOptimize',                         // 统一中断入口
+    "if (event.key === 'Escape') abortKnowledgeSummaryOptimize()",    // Esc 路径
+    'abortKnowledgeSummaryOptimize();\n  document.getElementById(\'knowledgePanel\').classList.remove', // 关闭面板路径
+    'if (_knowledgeSummaryTaskRunning())',                            // 再次点击 = 中断（批量入口首行分流）
+    'if (controller.signal.aborted) { aborted = true; break; } // 中止后不再发出后续请求',   // 循环每轮先查
+    'if (controller.signal.aborted) { aborted = true; break; } // 用户中断不计为失败',       // 在途 fetch 拒绝后 break
+    "restatKnowledgeItemSummary('${item.id}')",                       // 卡片单条入口（渲染层接线）
+    "isLegacyCardSummaryItem(item) ? `<button class=\"kp-action-btn kp-btn-primary\" onclick=\"event.stopPropagation(); restatKnowledgeItemSummary", // 非目标条目不渲染入口
+  ]) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺中断/入口接线: ' + frag);
+  }
+  for (const frag of ['optimizeKnowledgeSummaries', 'isLegacyCardSummaryItem', 'restatKnowledgeItemSummary', '_kpSummaryOptimizeAbort']) {
+    if (!code.includes(frag)) throw new Error('打包产物缺符号: ' + frag);
+  }
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('kpOptimizeBtn') || !html.includes('optimizeKnowledgeSummaries()')) return false;
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  return css.includes('.kp-tool-btn');
+});
+
+await Promise.all(pendingChecks).catch(() => {});
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

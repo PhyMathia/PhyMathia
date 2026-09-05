@@ -246,6 +246,8 @@ function toggleKnowledgePanel() {
 }
 
 function closeKnowledgePanel() {
+  // 中断进行中的批量摘要优化（可停止注册表：关闭面板即中止，不再发出后续请求）
+  abortKnowledgeSummaryOptimize();
   document.getElementById('knowledgePanel').classList.remove('active');
 }
 
@@ -361,6 +363,7 @@ function renderKnowledgePanel() {
               ${formulasHtml ? `<div class="kp-formulas">${formulasHtml}</div>` : ''}
               <div class="kp-detail-actions">
                 <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToKnowledgeNode('${item.id}')">跳转到节点</button>
+                ${isLegacyCardSummaryItem(item) ? `<button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); restatKnowledgeItemSummary('${item.id}')">重述摘要</button>` : ''}
                 <button class="kp-action-btn kp-btn-danger" onclick="event.stopPropagation(); confirmDeleteKnowledge('${item.id}')">删除</button>
               </div>
             </div>
@@ -380,6 +383,243 @@ async function confirmDeleteKnowledge(id) {
   if (!confirm('确定删除此知识条目？')) return;
   await deleteKnowledgeItem(id);
   renderKnowledgePanel();
+}
+
+// ===== 存量摘要优化（P3 方案 B：AI 重述入口） =====
+
+// 摘要比对用的纯文本口径：剥标签 + 折叠空白（与提取侧 summary 的清洗口径一致）
+function _normalizePlainSummaryText(text) {
+  return String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// 重述目标判定：summary 仍是「整卡摘要」的条目。
+// 口径：summarySource 为空或 'local'，且 summary 等于整卡摘要——即 anchorSummary
+//（保存时的 <summary> 原文 / 正文前 120 字，P2 anchor 契约语义）；
+// 旧数据无 anchorSummary 时，仅聊天提取链路（source 缺省或 'ai_extract'）的摘要
+// 必然是整卡摘要（旧提取两条路径都写整卡摘要）；file/harness 是文档/节点内容摘要不碰；
+// 手动收藏（source='manual'，含旧数据无 summarySource 的手动条目）永不触碰。
+function isLegacyCardSummaryItem(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.source === 'manual') return false;
+  if ((item.summarySource || 'local') !== 'local') return false;
+  const summary = _normalizePlainSummaryText(item.summary);
+  if (!summary) return false;
+  const anchor = _normalizePlainSummaryText(item.anchorSummary);
+  if (anchor) return summary === anchor;
+  return !item.source || item.source === 'ai_extract';
+}
+
+// 从公式速查库取条目公式的 meaning（同会话优先，跨会话同名公式兜底）
+function _knowledgeFormulaMeanings(item) {
+  const cache = typeof getFormulaCache === 'function' ? getFormulaCache() : {};
+  const out = [];
+  for (const latex of (item.formulas || [])) {
+    const key = _formulaKey(latex);
+    if (!key) continue;
+    let hit = null;
+    for (const f of Object.values(cache)) {
+      if (_formulaKey(f.latex) !== key) continue;
+      if (f.sessionId === item.sessionId) { hit = f; break; }
+      if (!hit) hit = f;
+    }
+    out.push({ latex, meaning: _normalizePlainSummaryText(hit && hit.meaning) });
+  }
+  return out;
+}
+
+// 重述提示词：按 (title, formulas, meaning) 组装（计划 §2 P3 口径）
+function _buildSummaryRestatePrompt(item, meanings) {
+  const lines = [];
+  lines.push('请为下面的知识点重写一句摘要，替换掉旧的整卡复述摘要。');
+  lines.push('');
+  lines.push('知识点标题：' + String(item.title || '').trim());
+  lines.push('分类：' + (item.category === 'physics' ? '物理' : item.category === 'math' ? '数学' : '其他'));
+  if (meanings && meanings.length) {
+    lines.push('关联公式：');
+    for (const m of meanings) {
+      lines.push('- ' + m.latex + (m.meaning ? '（含义：' + m.meaning + '）' : '（含义待补充）'));
+    }
+  }
+  lines.push('旧摘要（整卡复述，必须替换，不要复用其中的措辞）：' + _normalizePlainSummaryText(item.summary));
+  lines.push('');
+  lines.push('要求：');
+  lines.push('1. 摘要必须描述「该知识点本身」：它是什么、有什么物理/数学意义；');
+  lines.push('2. 若有关联公式，需点出公式的物理/数学含义（可参考上面给出的含义说明）；');
+  lines.push('3. 不超过 60 字，一句通顺的中文；');
+  lines.push('4. 只输出摘要正文，不要任何解释或前缀。');
+  return lines.join('\n');
+}
+
+// 模型回复清洗：剥思考块 → 丢解释行/前缀/引号 → 单行限长
+function _cleanRestatedSummaryText(raw) {
+  const text = (typeof _stripThinkText === 'function' ? _stripThinkText(String(raw || '')) : String(raw || ''))
+    .replace(/<[^>]+>/g, ' ');
+  const lines = text.split('\n').map(s => s.trim()).filter(Boolean)
+    .filter(s => !/[：:]$/.test(s)); // 丢「以下是摘要：」类引导行
+  let out = lines[0] || '';
+  out = out
+    .replace(/^(摘要|总结|一句话摘要|知识点摘要)\s*[：:]\s*/, '')
+    .replace(/^[\*\\"'“”‘’「『【（(]+/, '').replace(/[\*\\"'“”‘’」』】》）)]+$/, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return out.slice(0, 120);
+}
+
+// 重述单条调用：优先公式描述模型（descriptor 槽位），未配置回退主模型；
+// 走既有 /api/models/chat 代理逐条调用（messages 直传旧格式，stream:false），不新增后端端点。
+async function _requestRestatedSummary(item, model, signal) {
+  const messages = [
+    { role: 'system', content: '你是物理数学知识库的摘要助手。只输出一句知识点摘要正文，不要解释、前缀、引号或列表。' },
+    { role: 'user', content: _buildSummaryRestatePrompt(item, _knowledgeFormulaMeanings(item)) },
+  ];
+  const resp = await proxyChatWithModel(model, { messages, stream: false }, signal);
+  const data = await resp.json();
+  const raw = data && data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : '';
+  return _cleanRestatedSummaryText(raw);
+}
+
+// 写回：旧摘要先落为定位锚点（P2 契约：无锚点时替换前先保锚），再更新摘要与来源标记
+function _applyRestatedSummary(item, text) {
+  if (!String(item.anchorSummary || '').trim() && item.summary) item.anchorSummary = item.summary;
+  item.summary = text;
+  item.summarySource = 'model';
+}
+
+// === 批量任务可停止注册表 ===
+// 吸取交接文档 A2「AbortController 无人持有无法中止」教训：控制器挂模块级注册表
+// `_kpSummaryOptimizeAbort`，Esc 监听随任务注册/注销——关闭面板、再次点击、Esc
+// 任一路径都经 abortKnowledgeSummaryOptimize() 中止；中止后批量循环不再发后续请求
+//（循环每轮先查 signal + 在途 fetch 被拒后 break，双保险）。
+let _kpSummaryOptimizeAbort = null;
+let _kpSummaryOptimizeEscCloser = null;
+
+function _knowledgeSummaryTaskRunning() {
+  return !!_kpSummaryOptimizeAbort;
+}
+
+function abortKnowledgeSummaryOptimize() {
+  const controller = _kpSummaryOptimizeAbort;
+  _kpSummaryOptimizeAbort = null;
+  if (controller) {
+    try { controller.abort(); } catch (e) {}
+  }
+  if (_kpSummaryOptimizeEscCloser) {
+    document.removeEventListener('keydown', _kpSummaryOptimizeEscCloser, true);
+    _kpSummaryOptimizeEscCloser = null;
+  }
+  _setKpOptimizeButtonRunning(false);
+}
+
+function _setKpOptimizeButtonRunning(running) {
+  const btn = document.getElementById('kpOptimizeBtn');
+  if (!btn) return;
+  btn.classList.toggle('running', running);
+  btn.textContent = running ? '■ 停止优化' : '✦ 优化摘要';
+}
+
+function _activeModelForSummaryRestate() {
+  if (typeof getActiveModelForRole !== 'function') return null;
+  return getActiveModelForRole('descriptor') || getActiveModelForRole('agent');
+}
+
+// 批量入口（面板工具按钮）：再次点击即中断；目标逐条现判现发，manual/model 条目绝不触碰
+async function optimizeKnowledgeSummaries() {
+  if (_knowledgeSummaryTaskRunning()) {
+    abortKnowledgeSummaryOptimize();
+    showToast('已停止优化摘要，已完成条目保留');
+    return;
+  }
+  const targetIds = Object.values(getKnowledgeItems())
+    .filter(isLegacyCardSummaryItem)
+    .map(it => it.id);
+  if (!targetIds.length) {
+    showToast('没有需要优化的旧摘要（均为手动/模型摘要或已优化）');
+    return;
+  }
+  const model = _activeModelForSummaryRestate();
+  if (!model) {
+    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    return;
+  }
+  const controller = new AbortController();
+  _kpSummaryOptimizeAbort = controller;
+  _kpSummaryOptimizeEscCloser = (event) => {
+    if (event.key === 'Escape') abortKnowledgeSummaryOptimize();
+  };
+  document.addEventListener('keydown', _kpSummaryOptimizeEscCloser, true);
+  _setKpOptimizeButtonRunning(true);
+
+  const total = targetIds.length;
+  let done = 0, ok = 0, failed = 0, skipped = 0;
+  let aborted = false;
+  try {
+    for (const id of targetIds) {
+      if (controller.signal.aborted) { aborted = true; break; } // 中止后不再发出后续请求
+      const currentMap = getKnowledgeItems();
+      const current = currentMap[id] || null;
+      // 任务期间数据可能变化（15 秒同步/手动编辑）：发送前现判，非目标条目直接跳过
+      if (!current || !isLegacyCardSummaryItem(current)) { skipped++; continue; }
+      done++;
+      showToast('优化摘要 ' + done + '/' + total + '：' + String(current.title || '').slice(0, 16) + '...', 4000);
+      try {
+        const text = await _requestRestatedSummary(current, model, controller.signal);
+        if (!text) { failed++; continue; }
+        _applyRestatedSummary(current, text);
+        await saveKnowledgeItems(currentMap);
+        ok++;
+      } catch (err) {
+        if (controller.signal.aborted) { aborted = true; break; } // 用户中断不计为失败
+        failed++;
+        console.warn('Optimize knowledge summary failed:', (current && current.title) || id, err);
+      }
+    }
+  } finally {
+    const wasAborted = aborted || controller.signal.aborted;
+    abortKnowledgeSummaryOptimize(); // 清注册表 + 注销 Esc 监听 + 复位按钮
+    invalidateKnowledgeCache();
+    const panel = document.getElementById('knowledgePanel');
+    if (panel && panel.classList && panel.classList.contains('active')) renderKnowledgePanel();
+    const skipText = skipped ? '，跳过 ' + skipped + ' 条（期间已变更）' : '';
+    if (wasAborted) showToast('已停止：优化 ' + ok + ' 条，失败 ' + failed + ' 条' + skipText, 4000);
+    else if (failed) showToast('优化完成：' + ok + '/' + total + ' 成功，失败 ' + failed + ' 条' + skipText, 4000);
+    else showToast('优化完成：已重述 ' + ok + ' 条旧摘要' + skipText, 4000);
+  }
+}
+
+// 单条入口（知识卡片按钮）：重验判定规则，manual/model 条目拒绝重述
+async function restatKnowledgeItemSummary(itemId) {
+  if (_knowledgeSummaryTaskRunning()) {
+    showToast('批量优化进行中，请先点击「优化摘要」停止');
+    return;
+  }
+  const items = getKnowledgeItems();
+  const item = items[itemId];
+  if (!item) { showToast('找不到对应的知识点'); return; }
+  if (!isLegacyCardSummaryItem(item)) {
+    showToast('该条目为手动/模型摘要，不自动重述');
+    return;
+  }
+  const model = _activeModelForSummaryRestate();
+  if (!model) {
+    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    return;
+  }
+  showToast('正在重述摘要：' + String(item.title || '').slice(0, 16) + '...', 4000);
+  try {
+    const text = await _requestRestatedSummary(item, model, new AbortController().signal);
+    if (!text) { showToast('模型未返回有效摘要，请稍后重试'); return; }
+    _applyRestatedSummary(item, text);
+    await saveKnowledgeItems(items);
+    invalidateKnowledgeCache();
+    renderKnowledgePanel();
+    showToast('摘要已重述');
+  } catch (err) {
+    console.warn('Restate knowledge summary failed:', itemId, err);
+    showToast('重述失败：' + ((err && err.message) || err));
+  }
 }
 
 function _messageByTimestamp(messages, messageId) {
@@ -719,6 +959,9 @@ function switchKpTab(tab) {
   document.querySelectorAll('.kp-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('kpKnowledgeView').style.display = tab === 'knowledge' ? '' : 'none';
   document.getElementById('kpFormulasView').style.display = tab === 'formulas' ? '' : 'none';
+  // 「优化摘要」只作用于知识点，公式速查页隐藏入口
+  const optimizeBtn = document.getElementById('kpOptimizeBtn');
+  if (optimizeBtn) optimizeBtn.style.display = tab === 'knowledge' ? '' : 'none';
   if (tab === 'formulas') loadFormulas();
 }
 

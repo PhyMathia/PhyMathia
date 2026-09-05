@@ -170,7 +170,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=b4b06a44"></script>
+  <script src="/js/app.js?v=0719f0b3"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -233,7 +233,10 @@
   <div class="knowledge-panel" id="knowledgePanel">
     <div class="kp-header">
       <h2>知识总览</h2>
-      <button class="kp-close" onclick="closeKnowledgePanel()">&times;</button>
+      <div class="kp-header-actions">
+        <button class="kp-tool-btn" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
+        <button class="kp-close" onclick="closeKnowledgePanel()">&times;</button>
+      </div>
     </div>
     <div class="kp-tabs">
       <button class="kp-tab active" data-tab="knowledge" onclick="switchKpTab('knowledge')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="9" y1="7" x2="16" y2="7"></line><line x1="9" y1="11" x2="14" y2="11"></line></svg> 知识点</button>

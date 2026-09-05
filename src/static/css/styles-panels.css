@@ -71,6 +71,17 @@
     .kp-close:hover {
       background: var(--kp-close-hover-bg); color: var(--kp-close-hover-color);
     }
+    .kp-header-actions { display: flex; align-items: center; gap: 8px; }
+    .kp-tool-btn {
+      padding: 6px 12px; border-radius: 8px; border: 1px solid var(--kp-card-border);
+      font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+      background: var(--kp-filter-bg); color: var(--kp-filter-color);
+      transition: background 0.2s, color 0.2s;
+    }
+    .kp-tool-btn:hover,
+    .kp-tool-btn.running {
+      background: var(--kp-filter-active-bg); color: var(--kp-filter-active-color);
+    }
 
     /* Tabs */
     .kp-tabs {
