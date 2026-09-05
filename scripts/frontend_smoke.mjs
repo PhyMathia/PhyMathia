@@ -242,6 +242,69 @@ check('graph-contextmenu: 画布菜单项齐备且「粘贴为节点」受剪贴
   return ok;
 });
 
+check('graph-contextmenu: 联系线菜单三动作齐备（M1：编辑联系/曲线精调/删除联系）', () => {
+  if (typeof sandbox._graphContextItemsForLink !== 'function') throw new Error('_graphContextItemsForLink 未暴露');
+  if (typeof sandbox._graphCtxLinkFromTarget !== 'function') throw new Error('_graphCtxLinkFromTarget 未暴露');
+  if (typeof sandbox._graphCtxLinkTitle !== 'function') throw new Error('_graphCtxLinkTitle 未暴露');
+  const edge = { from: 'n1', fromPort: 'out-0', to: 'n2', toPort: 'in-0', link: true, relation: '都描述局部变化率' };
+  const items = sandbox._graphContextItemsForLink(edge);
+  const keys = items.map(i => i.key);
+  for (const k of ['edit-link', 'curve-edit', 'delete-link']) {
+    if (!keys.includes(k)) throw new Error('联系线菜单缺 key: ' + k);
+  }
+  // 三项 label 全部锁定（审查补强：edit-link 带省略号，与「新建节点…」等弹窗类菜单项同风格）
+  const edit = items.find(i => i.key === 'edit-link');
+  if (edit.label !== '编辑联系…') return false;
+  // 删除项 danger；曲线精调默认分支文案（沙箱 graphView.edgeCurveEditKey 为空）
+  const del = items.find(i => i.key === 'delete-link');
+  if (del.danger !== true || del.label !== '删除联系') return false;
+  const curve = items.find(i => i.key === 'curve-edit');
+  if (curve.label !== '曲线精调') return false;
+  // 编辑联系/曲线精调的动作在空图沙箱下安全 no-op（openLinkEdgeModal/enterLinkCurveEdit
+  // 查不到边数据即返回）；删除联系会走真实 _pushGraphUndo/renderGraphCanvas 链路，不做沙箱执行
+  items.forEach(i => { if (i.key === 'edit-link' || i.key === 'curve-edit') i.run(); });
+  // 空/坏输入守卫
+  if (sandbox._graphContextItemsForLink(null).length !== 0) return false;
+  // 标题：label 截断 24 字 + 无 label 兜底「联系线」
+  if (sandbox._graphCtxLinkTitle(edge) !== '都描述局部变化率') return false;
+  if (sandbox._graphCtxLinkTitle({ link: true }) !== '联系线') return false;
+  if (sandbox._graphCtxLinkTitle({ link: true, label: '很'.repeat(30) }).length !== 24) return false;
+  // 边定位：data-edge-key 解析 + 查不到边数据返回 null（静默回落口径）
+  if (sandbox._graphCtxLinkFromTarget({ closest: () => null }) !== null) return false;
+  const ghost = sandbox._graphCtxLinkFromTarget({ closest: () => ({ dataset: { edgeKey: 'ghost:out-0->nobody:in-0' } }) });
+  if (ghost !== null) return false;
+  return true;
+});
+
+check('graph-contextmenu: 联系线菜单接线静态断言（data-edge-key 定位 + 编辑态互斥 + 双击检测按按键细化）', () => {
+  const src = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
+  // openGraphContextMenu 接入 link 分支：查不到边数据静默回落 + 三动作 + 删除 danger
+  if (!src.includes("if (kind === 'link' && !_graphCtxLinkFromTarget(target)) return;")) {
+    throw new Error('openGraphContextMenu 缺联系线边数据回落守卫');
+  }
+  if (!src.includes('danger: true,\n    run: () => { if (typeof deleteLinkEdge')) {
+    throw new Error('删除联系项缺 danger 标记或动作接线');
+  }
+  // 曲线精调编辑态互斥：已在编辑态的同一条线改呈「退出精调」（enterLinkCurveEdit 对此是 no-op）
+  if (!src.includes('graphView.edgeCurveEditKey === edgeKey') || !src.includes("label: '退出精调'")) {
+    throw new Error('曲线精调缺编辑态互斥分支');
+  }
+  if (!code.includes('_graphContextItemsForLink')) throw new Error('打包产物缺 _graphContextItemsForLink');
+  // M1 双击检测按按键细化：graph-custom.js 的 document 捕获 pointerdown 入口必须先按
+  // button 过滤，才轮到手柄拖拽与 450ms 双击检测（右键按压不计入，快速右双击不再误开弹窗）
+  const gc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  const pd = gc.indexOf("document.addEventListener('pointerdown'");
+  if (pd < 0) throw new Error('graph-custom.js document 捕获 pointerdown 未找到');
+  const head = gc.slice(pd, pd + 800);
+  const filterAt = head.indexOf('if (event.button !== 0) return;');
+  if (filterAt < 0) throw new Error('双击检测入口缺 event.button 过滤');
+  const detectAt = head.indexOf('_lastLinkEdgePress');
+  const handleAt = head.indexOf(".graph-edge-handle, .graph-curve-knob-hit");
+  if (detectAt >= 0 && detectAt < filterAt) throw new Error('button 过滤晚于双击检测');
+  if (handleAt >= 0 && handleAt < filterAt) throw new Error('button 过滤晚于手柄拖拽');
+  return true;
+});
+
 check('graph-contextmenu: 画布事件接线（pointerdown 右键过滤 + contextmenu 三分支放行）', () => {
   const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
   // 防冲突（P1 核心修复回归）：pointerdown 处理器入口必须先按 button 过滤，

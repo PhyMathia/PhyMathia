@@ -1,9 +1,9 @@
-// ===== PhyMathia 知识网络画布：右键菜单（空白画布 + 节点） =====
+// ===== PhyMathia 知识网络画布：右键菜单（空白画布 + 节点 + 联系线） =====
 // 仿 graph-export.js 的单例弹层模式：同一时刻至多一个菜单实例；DOM 挂 document.body
 // （renderGraphCanvas() 会 graphCanvas.innerHTML='' 整体重建，挂在画布里会被重渲摧毁）。
 // 菜单零新业务逻辑：每一项都复用既有动作函数，本文件只做目标定位、按节点能力裁剪与弹层生命周期。
 // 依赖：运行期用到 graph*/chat-features/knowledge/utils 的全局函数与 showToast；全部惰性调用。
-// 联系线（.graph-edge-link）菜单属第二期：本期右键联系线只抑制原生菜单，不弹自绘菜单。
+// 联系线（.graph-edge-link）菜单：编辑联系 / 曲线精调 / 删除联系（原第二期 P5，M1 承接落地）。
 
 // ---------- 单例弹层状态 ----------
 let _graphCtxMenuEl = null;
@@ -124,6 +124,67 @@ function _graphContextItemsForCanvas(point) {
     key: 'redo',
     label: '重做',
     run: () => { if (typeof window.redoGraphAction === 'function') window.redoGraphAction(); },
+  });
+  return items;
+}
+
+// ---------- B 类联系线菜单（M1，承接旧计划 P5） ----------
+
+// 右键目标 → 联系线边数据：边 <g>、标签组 <g> 与标签 <text> 都携带 data-edge-key
+// （graph-render.js _redrawEdges），宽命中路径 .graph-edge-hit 也在边 <g> 内；
+// 键 → graphView.edges 用 _edgeKey（graph.js）比对。查不到边数据返回 null（静默不弹菜单）。
+function _graphCtxLinkFromTarget(target) {
+  if (!target || typeof target.closest !== 'function') return null;
+  const keyEl = target.closest('[data-edge-key]');
+  const edgeKey = keyEl && keyEl.dataset ? keyEl.dataset.edgeKey : '';
+  if (!edgeKey || typeof _edgeKey !== 'function') return null;
+  const edge = (graphView.edges || []).find(item => _edgeKey(item) === edgeKey);
+  return edge && edge.link ? edge : null;
+}
+
+// 菜单标题：联系线 label 截断 24 字，无 label 用「联系线」
+function _graphCtxLinkTitle(edge) {
+  const raw = String((edge && (edge.relation || edge.label)) || '').trim();
+  return raw ? raw.slice(0, 24) : '联系线';
+}
+
+// B 类联系线菜单：三个动作函数（openLinkEdgeModal/enterLinkCurveEdit/deleteLinkEdge）
+// 均为 graph-custom.js 既有暴露，直接复用；删除项内部自带 _pushGraphUndo 撤销。
+function _graphContextItemsForLink(edge) {
+  const items = [];
+  if (!edge || typeof _edgeKey !== 'function') return items;
+  const edgeKey = _edgeKey(edge);
+  if (!edgeKey) return items;
+  items.push({
+    key: 'edit-link',
+    label: '编辑联系…',
+    // openLinkEdgeModal：edgeKey 命中边时 fromId/toId 由边自身覆盖（参数仅新建路径使用），
+    // 此处按计划传入解析所得两端，语义自文档化
+    run: () => {
+      if (typeof openLinkEdgeModal === 'function') openLinkEdgeModal(edgeKey, edge.from, edge.to);
+    },
+  });
+  // 曲线精调的编辑态互斥：enterLinkCurveEdit 对已在编辑态的同一条线是静默 no-op，
+  // 此时该项改呈「退出精调」，run 走 exitLinkCurveEdit（M1 实现者决策）
+  if (graphView.edgeCurveEditKey === edgeKey) {
+    items.push({
+      key: 'curve-edit',
+      label: '退出精调',
+      run: () => { if (typeof exitLinkCurveEdit === 'function') exitLinkCurveEdit(); },
+    });
+  } else {
+    items.push({
+      key: 'curve-edit',
+      label: '曲线精调',
+      run: () => { if (typeof enterLinkCurveEdit === 'function') enterLinkCurveEdit(edgeKey); },
+    });
+  }
+  items.push({ key: 'sep' });
+  items.push({
+    key: 'delete-link',
+    label: '删除联系',
+    danger: true,
+    run: () => { if (typeof deleteLinkEdge === 'function') deleteLinkEdge(edgeKey); },
   });
   return items;
 }
@@ -253,8 +314,7 @@ function openGraphContextMenu(event) {
   if (!event) return;
   const target = event.target && typeof event.target.closest === 'function' ? event.target : null;
   const kind = _graphContextTargetKind(target);
-  // B 类联系线菜单属第二期（P5）：调用方已 preventDefault，这里静默不弹
-  if (kind === 'link') return;
+  if (kind === 'link' && !_graphCtxLinkFromTarget(target)) return; // 查不到边数据：静默回落（不弹菜单，口径同空态容错）
 
   const point = (typeof _clientToGraphLocal === 'function')
     ? _clientToGraphLocal(event.clientX, event.clientY)
@@ -267,6 +327,10 @@ function openGraphContextMenu(event) {
     const node = _findGraphNode(nodeEl.dataset.nodeId);
     title = _graphCtxNodeTitle(node);
     items = _graphContextItemsForNode(node);
+  } else if (kind === 'link') {
+    const edge = _graphCtxLinkFromTarget(target);
+    title = _graphCtxLinkTitle(edge);
+    items = _graphContextItemsForLink(edge);
   } else {
     items = _graphContextItemsForCanvas(point);
   }
@@ -339,6 +403,6 @@ function openGraphContextMenu(event) {
   }, 0);
 }
 
-// 全局暴露（graph-workflow 的 contextmenu 监听与后续 P5 联系线菜单复用）
+// 全局暴露（graph-workflow 的 contextmenu 监听调用；smoke 静态回归断言符号存在）
 window.openGraphContextMenu = openGraphContextMenu;
 window.closeGraphContextMenu = closeGraphContextMenu;

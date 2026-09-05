@@ -1740,9 +1740,8 @@ function _initGraphCanvasEvents() {
     // 右键/中键不进入拖拽与点选链路（右键菜单由 contextmenu 监听单独处理）：
     // 过滤必须在本处理器入口生效，_startNodeDrag/_startGroupDrag/_startCanvasPan 才不会被
     // 右键按下误触发；graph-custom.js 的 document 捕获 pointerdown（曲线拖拽 + 联系线
-    // 450ms 双击检测）先于本监听且不分按键——右键按压联系线也会计入双击检测（既有
-    // 行为，快速右双击会开联系线弹窗），节点/空白不受影响；联系线菜单（P5）落地时再按
-    // button 细化。
+    // 450ms 双击检测）同样已在入口按 button 过滤（已随联系线菜单 M1 落地细化）——右键按压
+    // 不再计入双击检测，快速右双击不会误开联系线弹窗。
     if (e.button !== 0) return;
     graphView.suppressClick = false;
     if (graphView.selectMode) {

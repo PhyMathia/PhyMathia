@@ -938,6 +938,9 @@ function _ensureLinkCurveDragListeners() {
   if (linkCurveListenersBound) return;
   linkCurveListenersBound = true;
   document.addEventListener('pointerdown', event => {
+    // 右键/中键不计入双击检测、不进入手柄拖拽（与 graph-workflow.js 的 pointerdown
+    // 入口过滤同口径，M1 细化）：快速右双击联系线不再误开编辑弹窗，右键只走菜单链路
+    if (event.button !== 0) return;
     const handle = event.target && event.target.closest
       ? event.target.closest('.graph-edge-handle, .graph-curve-knob-hit')
       : null;
