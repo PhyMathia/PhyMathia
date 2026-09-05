@@ -233,16 +233,105 @@ class KnowledgeSummaryTest(unittest.TestCase):
         self.assertEqual(items[0]["summary"], "回复力与位移成正比的周期性振动")
         self.assertEqual(items[1]["summary"], "弹簧弹力与形变量成正比")
 
-    def test_local_extract_knowledge_sets_anchor_and_local_source(self):
+    def test_local_extract_knowledge_templates_summary_and_keeps_anchor(self):
         messages = [{"role": "assistant", "content":
-            "# 简谐运动\n物体做简谐运动。<formula>F=-kx</formula>\n"
+            "# 简谐运动\n物体受回复力作用做简谐运动。<formula>F=-kx</formula>\n"
             "<summary>简谐运动核心摘要</summary>"}]
         items = knowledge_mod._local_extract_knowledge(messages)
         self.assertEqual(len(items), 1)
         it = items[0]
         self.assertEqual(it["summarySource"], "local")
-        # 本地兜底阶段摘要仍为整卡摘要原文，且同时落为定位锚点
-        self.assertEqual(it["anchorSummary"], it["summary"])
+        # P4 模板化：展示摘要 = 「{标题}」：{首个公式含义（规则表）}（{分类}），
+        # 不再是整卡摘要原文；整卡摘要原文仅落为定位锚点
+        self.assertEqual(
+            it["summary"],
+            "「简谐运动」：胡克定律：回复力与位移大小成正比、方向相反（物理）")
+        self.assertNotEqual(it["anchorSummary"], it["summary"])
+        self.assertIn("简谐运动核心摘要", it["anchorSummary"])
+
+    def test_local_knowledge_summary_without_formulas(self):
+        # 无公式退化模板：标题 + 分类，不同标题文案不同
+        s1 = knowledge_mod._local_knowledge_summary("导数", [], "math")
+        s2 = knowledge_mod._local_knowledge_summary("动量守恒", [], "physics")
+        self.assertEqual(s1, "「导数」：数学知识点")
+        self.assertEqual(s2, "「动量守恒」：物理知识点")
+        self.assertNotEqual(s1, s2)
+
+    def test_local_knowledge_summary_long_title_keeps_structure(self):
+        # 审查修复回归：120 硬截断不得截出残缺文案——超长标题先按预算压缩，
+        # 「」/公式含义/分类括注保持完整；概念回退含义以标题为原料（≈2×标题长），
+        # 收紧时先用 24 字标题上限压含义；原本适配的短标题输出逐字不变
+        unit = "很长的知识点标题"
+        long_title = unit * 15  # 120 字标题
+        s = knowledge_mod._local_knowledge_summary(long_title, ["F=ma"], "physics")
+        self.assertEqual(len(s), 120)
+        self.assertTrue(s.startswith("「"))
+        self.assertTrue(s.endswith("（物理）"))
+        # 概念回退含义完整（含义基于 24 字标题上限，不再被截断）
+        self.assertIn(unit * 3 + "相关公式：用于描述" + unit * 3 + "的定量关系", s)
+        s2 = knowledge_mod._local_knowledge_summary(long_title, [], "math")
+        self.assertEqual(len(s2), 120)
+        self.assertTrue(s2.startswith("「"))
+        self.assertTrue(s2.endswith("」：数学知识点"))
+        # 规则表命中的公式：超长标题压缩后含义仍逐字完整
+        s3 = knowledge_mod._local_knowledge_summary(long_title, ["$F=-kx$"], "physics")
+        self.assertEqual(len(s3), 120)
+        self.assertIn("胡克定律：回复力与位移大小成正比、方向相反", s3)
+        self.assertTrue(s3.endswith("（物理）"))
+        # 原本适配的短标题输出逐字不变（口径回归）
+        self.assertEqual(
+            knowledge_mod._local_knowledge_summary("简谐运动", ["$F=-kx$"], "physics"),
+            "「简谐运动」：胡克定律：回复力与位移大小成正比、方向相反（物理）")
+        self.assertEqual(
+            knowledge_mod._local_knowledge_summary("导数", [], "math"),
+            "「导数」：数学知识点")
+
+    def test_local_extract_summaries_differ_for_multi_formula_answers(self):
+        # P4 验收：同一回答多公式输入 → 本地提取各条 summary 互不相同。
+        # 本地兜底链路每次从最近一条 assistant 提取一条；对同一会话的多条
+        # （多公式）回答逐条提取，各条 summary 必须互不相同（离线不再千篇一律），
+        # 且都不等于各自 anchorSummary（整卡摘要仅作定位锚点）。
+        answers = [
+            # 多公式回答：摘要取首个公式的规则含义（胡克定律），不串到第二公式（周期）
+            "# 简谐运动\n回复力让物体振动。\n<formula>F=-kx</formula>\n"
+            "<formula>T=2\\pi\\sqrt{\\frac{m}{k}}</formula>\n<summary>甲卡整卡摘要</summary>",
+            "# 傅里叶级数\n周期信号可分解为谐波叠加。\n"
+            "<formula>\\sum_{n=1}^{\\infty}a_n e^{inx}</formula>\n<summary>乙卡整卡摘要</summary>",
+            "# 傅里叶变换\n把信号分解为连续频率分量。\n"
+            "<formula>\\int_0^{T}f(t)dt</formula>\n<summary>丙卡整卡摘要</summary>",
+            "# 简谐运动能量\n总机械能与振幅平方成正比。\n"
+            "<formula>E=\\frac{1}{2}kA^2</formula>\n<summary>丁卡整卡摘要</summary>",
+            "# 导数\n刻画函数的瞬时变化率，本卡没有公式。",
+        ]
+        summaries, anchors = [], []
+        for content in answers:
+            items = knowledge_mod._local_extract_knowledge(
+                [{"role": "assistant", "content": content}])
+            self.assertEqual(len(items), 1)
+            summaries.append(items[0]["summary"])
+            anchors.append(items[0]["anchorSummary"])
+        # 逐字锁定模板口径（与 frontend_smoke 的 P4 用例同一组期望文案，
+        # 前端 _buildLocalKnowledgeSummary 逐字同口径，两侧摘要不冲突）
+        self.assertEqual(summaries, [
+            "「简谐运动」：胡克定律：回复力与位移大小成正比、方向相反（物理）",
+            "「傅里叶级数」：傅里叶级数/变换：用指数基元把信号分解为频率成分（物理）",
+            "「傅里叶变换」：傅里叶变换：把信号分解为连续频率分量的积分表示（其他）",
+            "「简谐运动能量」：简谐运动总机械能与振幅平方成正比（物理）",
+            "「导数」：数学知识点",
+        ])
+        # 各条互不相同（不同公式/概念 → 不同文案）
+        self.assertEqual(len(set(summaries)), len(summaries))
+        for summary, anchor in zip(summaries, anchors):
+            self.assertNotEqual(summary, anchor)
+        # 多公式回答取首个公式的含义（胡克定律），不取第二公式（周期）含义
+        self.assertIn("胡克定律", summaries[0])
+        self.assertNotIn("周期", summaries[0])
+        # 无公式回答退化为「标题 + 分类」模板
+        self.assertEqual(summaries[4], "「导数」：数学知识点")
+        # 同一回答多公式的每条公式含义互不相同（互异性的确定性来源）
+        meanings = [knowledge_mod._local_formula_meaning(f, "", "简谐运动") for f in
+                    ("$F=-kx$", "$T=2\\pi\\sqrt{\\frac{m}{k}}$", "$E=\\frac{1}{2}kA^2$")]
+        self.assertEqual(len(set(meanings)), len(meanings))
 
     def test_describe_formulas_returns_formula_and_knowledge_blocks(self):
         payload = {"choices": [{"message": {"content": json.dumps({

@@ -47,7 +47,7 @@ def _normalize_knowledge(data) -> dict:
 
 
 def _normalize_formula(latex: str) -> str:
-    """标准化公式：\$→$、去首尾 $、统一包 $..$；无效返回空串"""
+    r"""标准化公式：\$→$、去首尾 $、统一包 $..$；无效返回空串"""
     s = (latex or "").strip()
     s = s.replace("\\$", "$").strip()
     s = re.sub(r"^\$+|\$+$", "", s).strip()
@@ -350,6 +350,37 @@ def _local_formula_meaning(latex: str, summary: str, concept: str) -> str:
     return "该公式用于描述物理量之间的定量关系"
 
 
+def _local_knowledge_summary(title: str, formulas: list, category: str) -> str:
+    """本地兜底的展示用摘要模板（P4 方案 C，离线确定性）。
+
+    口径：「{标题}」：{首个公式含义（_local_formula_meaning 规则表）}（{分类}）；
+    无公式退化为「{标题}」：{分类}知识点。标题与公式含义随条目变化，
+    保证不同公式/概念的本地摘要至少文案不同（不再共用同一句整卡摘要）。
+    与前端 _buildLocalKnowledgeSummary（chat-features.js）逐字同口径，
+    合并保优按 summarySource 等级天然兼容。
+
+    超长（>120）时按预算压缩标题保结构（「」/含义/分类括注保持完整），
+    概念回退含义以标题为原料（≈2×标题长），收紧时先用 24 字标题上限压含义；
+    末位 120 硬截断仅作兜底——不改变原本就适配的短标题输出（审查修复）。
+    """
+    t = str(title or "").strip()
+    label = "物理" if category == "physics" else "数学" if category == "math" else "其他"
+    first_formula = next((str(f).strip() for f in (formulas or []) if str(f or "").strip()), "")
+    meaning = _local_formula_meaning(first_formula, "", t).strip() if first_formula else ""
+    if meaning:
+        s = f"「{t}」：{meaning}（{label}）"
+        if len(s) > 120:
+            m2 = _local_formula_meaning(first_formula, "", t[:24]).strip() or meaning
+            budget = max(120 - len(m2) - len(label) - 5, 1)  # 固定开销：「」：（）共 5 字
+            s = f"「{t[:budget]}」：{m2}（{label}）"
+        return s[:120]
+    s = f"「{t}」：{label}知识点"
+    if len(s) > 120:
+        budget = max(120 - len(label) - 6, 1)  # 固定开销：「」：知识点共 6 字
+        s = f"「{t[:budget]}」：{label}知识点"
+    return s[:120]
+
+
 def _local_extract_knowledge(messages: list) -> list:
     """本地正则兜底提取：从最近的 assistant 消息提取公式与标题"""
     for msg in reversed(messages):
@@ -410,7 +441,12 @@ def _local_extract_knowledge(messages: list) -> list:
             category = "other"
 
         formula_tags = _formula_tags_from_content(content, formulas)
-        summary = re.sub(r"\s+", " ", content)[:120]
+        # 整卡摘要原文（正文头 120 字）仅作画布定位锚点（P2 anchorSummary 契约）；
+        # 有 <summary> 标签时 main.py 会用其内容覆盖锚点（_extract_summary 口径）
+        anchor = re.sub(r"\s+", " ", content)[:120]
+        # 展示用摘要（P4 模板化）：「{title}」+ 首个公式含义（本地规则表）+ 分类，
+        # 不同公式/概念文案不同；无模型/弱网时不再千篇一律
+        summary = _local_knowledge_summary(title, formulas, category)
         tags = ["物理" if category == "physics" else "数学" if category == "math" else "其他"]
         module_key = ""
         for formula in formulas:
@@ -427,8 +463,8 @@ def _local_extract_knowledge(messages: list) -> list:
             "category": category,
             "tags": tags,
             "summary": summary,
-            # 本地兜底：摘要即整卡摘要原文，同时落为定位锚点（P4 再模板化展示摘要）
-            "anchorSummary": summary,
+            # 整卡摘要原文仅作定位锚点（P4 起展示摘要为模板文案，两者分离）
+            "anchorSummary": anchor,
             "summarySource": "local",
             "formulas": formulas,
             "formula_tags": formula_tags,
@@ -720,7 +756,8 @@ __all__ = [
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
     "_parse_extract_json", "_parse_profile_facts", "_clean_knowledge_title", "_normalize_knowledge_key",
     "_summary_source_rank", "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",
-    "_formula_tags_from_content", "_local_formula_meaning", "_local_extract_knowledge",
+    "_formula_tags_from_content", "_local_formula_meaning", "_local_knowledge_summary",
+    "_local_extract_knowledge",
     "_ai_extract_knowledge", "_formula_module_key", "_add_formulas_from_items",
     "_extract_summary", "_describe_formulas",
 ]

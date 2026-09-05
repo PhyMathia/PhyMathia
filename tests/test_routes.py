@@ -383,6 +383,41 @@ class ExtractKnowledgeEndpointTest(RouteTestBase):
         self.assertEqual(called["n"], 0)
         self.assertEqual(resp.json()["items"], [])
 
+    def test_local_fallback_templates_summary_and_keeps_anchor(self):
+        # P4：本地兜底条目的展示 summary 为模板文案（标题+首个公式含义+分类），
+        # 不再是整卡摘要；锚点优先级——有 <summary> 用其原文落锚，无 <summary>
+        # 保留本地提取的整卡摘要头（锚点绝不落到模板文案上，否则画布定位
+        # 滑窗失配，且 P3 isLegacyCardSummaryItem 会把新条目误判为旧摘要）
+        resp = self.client.post("/api/extract_knowledge", json=self._payload(
+            messages=[
+                {"role": "user", "content": "解释简谐运动"},
+                {"role": "assistant",
+                 "content": "# 简谐运动\n回复力让物体振动。<formula>F=-kx</formula>\n"
+                            "<summary>甲卡整卡摘要</summary>"},
+            ],
+        ))
+        self.assertEqual(resp.status_code, 200)
+        it = resp.json()["items"][0]
+        self.assertEqual(it["summarySource"], "local")
+        self.assertEqual(
+            it["summary"],
+            "「简谐运动」：胡克定律：回复力与位移大小成正比、方向相反（物理）")
+        self.assertEqual(it["anchorSummary"], "甲卡整卡摘要")
+
+        # 无 <summary>：锚点 = 本地提取的整卡摘要头（正文头 120 字），而非模板
+        resp2 = self.client.post("/api/extract_knowledge", json=self._payload(
+            messages=[
+                {"role": "user", "content": "解释简谐运动"},
+                {"role": "assistant",
+                 "content": "# 简谐运动\n回复力让物体振动。<formula>F=-kx</formula>"},
+            ],
+        ))
+        self.assertEqual(resp2.status_code, 200)
+        it2 = resp2.json()["items"][0]
+        self.assertIn("胡克定律", it2["summary"])
+        self.assertNotEqual(it2["anchorSummary"], it2["summary"])
+        self.assertIn("回复力让物体振动", it2["anchorSummary"])
+
 
 if __name__ == "__main__":
     unittest.main()

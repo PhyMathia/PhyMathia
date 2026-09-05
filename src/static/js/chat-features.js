@@ -131,6 +131,37 @@
       return '该公式用于描述物理量之间的定量关系';
     }
 
+    // 本地兜底的展示用摘要模板（P4 方案 C，离线确定性）：
+    // 「{title}」：{首个公式含义（describeFormula 本地规则路径）}（{分类}）；
+    // 无公式退化为「{title}」：{分类}知识点。标题与公式含义随条目变化，
+    // 保证不同公式/概念的本地摘要至少文案不同（不再共用同一句整卡摘要）。
+    // 与后端 _local_knowledge_summary（knowledge.py）逐字同口径，
+    // 合并保优按 summarySource 等级天然兼容。
+    // 超长（>120）时按预算压缩标题保结构（「」/含义/分类括注保持完整），
+    // 概念回退含义以标题为原料（≈2×标题长），收紧时先用 24 字标题上限压含义；
+    // 末位 120 硬截断仅作兜底——不改变原本就适配的短标题输出（审查修复）。
+    function _buildLocalKnowledgeSummary(title, formulas, category) {
+      const t = String(title || '').trim();
+      const label = category === 'physics' ? '物理' : category === 'math' ? '数学' : '其他';
+      const firstFormula = (formulas || []).find(f => String(f || '').trim());
+      const meaning = firstFormula ? String(describeFormula(firstFormula, '', t) || '').trim() : '';
+      if (meaning) {
+        let summary = `「${t}」：${meaning}（${label}）`;
+        if (summary.length > 120) {
+          const m2 = String(describeFormula(firstFormula, '', t.slice(0, 24)) || '').trim() || meaning;
+          const budget = Math.max(120 - m2.length - label.length - 5, 1); // 固定开销：「」：（）共 5 字
+          summary = `「${t.slice(0, budget)}」：${m2}（${label}）`;
+        }
+        return summary.slice(0, 120);
+      }
+      let summary = `「${t}」：${label}知识点`;
+      if (summary.length > 120) {
+        const budget = Math.max(120 - label.length - 6, 1); // 固定开销：「」：知识点共 6 字
+        summary = `「${t.slice(0, budget)}」：${label}知识点`;
+      }
+      return summary.slice(0, 120);
+    }
+
     function _isSocraticFollowup(content) {
       const text = String(content || '');
       if (!/<socratic_meta\b/i.test(text)) return false;
@@ -177,8 +208,12 @@
       const hasPhysics = /(物理|力学|电磁|光学|热|振动|波|场|力|能量|实验)/.test(sample);
       const category = hasPhysics && !hasMath ? 'physics' : hasMath && !hasPhysics ? 'math' : hasMath ? 'math' : 'other';
       const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/i);
-      const summary = (summaryMatch ? summaryMatch[1] : content)
+      // 整卡摘要原文（<summary> 优先，回退正文头 120 字）：仅作画布定位锚点（P2 契约）
+      const anchorSummary = (summaryMatch ? summaryMatch[1] : content)
         .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+      // 展示用摘要（P4 模板化）：「{title}」+ 首个公式含义（本地规则路径）+ 分类，
+      // 不同公式/概念文案不同；无模型/弱网时不再千篇一律
+      const summary = _buildLocalKnowledgeSummary(title, formulas, category);
       let mathTagCount = 0;
       let physicsTagCount = 0;
       for (const tags of Object.values(formulaTags || {})) {
@@ -204,8 +239,8 @@
         category,
         tags: [category === 'physics' ? '物理' : category === 'math' ? '数学' : '其他'],
         summary,
-        // 整卡摘要原文作为画布定位锚点（展示摘要 P4 再模板化）；本地来源标记
-        anchorSummary: summary,
+        // 整卡摘要原文仅作画布定位锚点（P4 起展示摘要为模板文案，两者分离）
+        anchorSummary,
         summarySource: 'local',
         formulas,
         formulaTags,

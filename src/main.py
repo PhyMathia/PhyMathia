@@ -852,11 +852,14 @@ async def api_extract_knowledge(request: Request):
             logger.warning(f"Profile fact ingest failed: {e}")
 
     # 整卡摘要双重用途（P2 起）：主模型 <summary> 只落 anchorSummary（画布定位锚点），
-    # 不再覆盖各条目的 summary——AI 逐条摘要保优合并靠 summarySource 等级，本地兜底
-    # 条目保持整卡摘要（P4 再模板化）。无 <summary> 时回退条目自身摘要作锚点。
+    # 不再覆盖各条目的展示 summary——AI 逐条摘要保优合并靠 summarySource 等级；
+    # 本地兜底条目（P4 起）展示 summary 为模板文案，整卡摘要原文由
+    # _local_extract_knowledge 自行落 anchorSummary。无 <summary> 时优先保留
+    # 条目既有锚点（本地提取的整卡摘要原文），AI 条目再回退其自身摘要作锚点
+    # ——锚点绝不能落到模板文案上，否则定位滑窗匹配失效且 P3 旧摘要判定误报。
     summary_text = _extract_summary(messages)
     for it in items:
-        anchor = summary_text or it.get("summary") or ""
+        anchor = summary_text or it.get("anchorSummary") or it.get("summary") or ""
         if anchor:
             it["anchorSummary"] = anchor[:200]
 

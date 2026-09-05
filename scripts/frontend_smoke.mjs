@@ -455,6 +455,58 @@ check('knowledge: P3 中断注册表接线（关闭面板/再次点击/Esc 三�
   return css.includes('.kp-tool-btn');
 });
 
+check('knowledge: P4 extractLocalKnowledge 模板化摘要（多公式回答逐条互异 + anchor 保整卡 + 前后端同文案）', () => {
+  // 与 pytest test_local_extract_summaries_differ_for_multi_formula_answers 同一组输入：
+  // 期望文案两侧逐字一致（前端 _buildLocalKnowledgeSummary / 后端 _local_knowledge_summary）
+  const answers = [
+    '# 简谐运动\n回复力让物体振动。\n<formula>F=-kx</formula>\n'
+      + '<formula>T=2\\pi\\sqrt{\\frac{m}{k}}</formula>\n<summary>甲卡整卡摘要</summary>',
+    '# 傅里叶级数\n周期信号可分解为谐波叠加。\n'
+      + '<formula>\\sum_{n=1}^{\\infty}a_n e^{inx}</formula>\n<summary>乙卡整卡摘要</summary>',
+    '# 傅里叶变换\n把信号分解为连续频率分量。\n'
+      + '<formula>\\int_0^{T}f(t)dt</formula>\n<summary>丙卡整卡摘要</summary>',
+    '# 简谐运动能量\n总机械能与振幅平方成正比。\n'
+      + '<formula>E=\\frac{1}{2}kA^2</formula>\n<summary>丁卡整卡摘要</summary>',
+    '# 导数\n刻画函数的瞬时变化率，本卡没有公式。',
+  ];
+  const anchorParts = ['甲卡整卡摘要', '乙卡整卡摘要', '丙卡整卡摘要', '丁卡整卡摘要', '瞬时变化率'];
+  const expected = [
+    '「简谐运动」：胡克定律：回复力与位移大小成正比、方向相反（物理）',
+    '「傅里叶级数」：傅里叶级数/变换：用指数基元把信号分解为频率成分（物理）',
+    '「傅里叶变换」：傅里叶变换：把信号分解为连续频率分量的积分表示（其他）',
+    '「简谐运动能量」：简谐运动总机械能与振幅平方成正比（物理）',
+    '「导数」：数学知识点',
+  ];
+  const items = answers.map(c => sandbox.extractLocalKnowledge([{ role: 'assistant', content: c }])[0]);
+  if (items.some(it => !it || it.summarySource !== 'local')) return false;
+  for (let i = 0; i < expected.length; i++) {
+    if (items[i].summary !== expected[i]) {
+      throw new Error('模板文案偏离（须与后端 _local_knowledge_summary 同口径）: ' + items[i].summary);
+    }
+    if (items[i].anchorSummary === items[i].summary) return false; // 整卡摘要仍是锚点，不再充当展示摘要
+    if (!String(items[i].anchorSummary).includes(anchorParts[i])) return false; // 锚点保留整卡摘要原文
+  }
+  const summaries = items.map(it => it.summary);
+  if (new Set(summaries).size !== summaries.length) return false; // 各条互不相同
+  // 多公式回答取首个公式的规则含义（胡克定律），不串到第二公式（周期）含义
+  if (!summaries[0].includes('胡克定律') || summaries[0].includes('周期')) return false;
+  // 超长标题（审查修复回归）：预算压缩标题保结构——「」/含义/分类括注完整、≤120，
+  // 期望串与 pytest test_local_knowledge_summary_long_title_keeps_structure 同口径
+  const unit = '很长的知识点标题';
+  const longAns = [{ role: 'assistant', content: `# ${unit.repeat(15)}\n受力分析如下。\n<formula>F=ma</formula>` }];
+  const longItem = sandbox.extractLocalKnowledge(longAns)[0];
+  const longExpected = `「${unit.repeat(6)}很长的」：${unit.repeat(3)}相关公式：用于描述${unit.repeat(3)}的定量关系（物理）`;
+  if (!longItem || longItem.summary !== longExpected) {
+    throw new Error('超长标题模板偏离（须与后端 _local_knowledge_summary 同口径）: ' + (longItem && longItem.summary));
+  }
+  const longNoFormula = sandbox.extractLocalKnowledge(
+    [{ role: 'assistant', content: `# ${unit.repeat(15)}\n本卡没有公式。` }])[0];
+  if (!longNoFormula || !longNoFormula.summary.startsWith('「')) return false;
+  if (!longNoFormula.summary.endsWith('」：其他知识点') || longNoFormula.summary.length > 120) return false;
+  if (!code.includes('_buildLocalKnowledgeSummary')) throw new Error('打包产物缺 _buildLocalKnowledgeSummary');
+  return true;
+});
+
 await Promise.all(pendingChecks).catch(() => {});
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);
