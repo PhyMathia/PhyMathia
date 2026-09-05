@@ -204,6 +204,9 @@
         category,
         tags: [category === 'physics' ? '物理' : category === 'math' ? '数学' : '其他'],
         summary,
+        // 整卡摘要原文作为画布定位锚点（展示摘要 P4 再模板化）；本地来源标记
+        anchorSummary: summary,
+        summarySource: 'local',
         formulas,
         formulaTags,
         moduleKey,
@@ -263,9 +266,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(memoryWithDevice(payload))
       });
-      if (!resp.ok) return { items: [], descriptions: {} };
+      if (!resp.ok) return { items: [], descriptions: {}, summaries: {} };
       const data = await resp.json();
-      return { items: data.items || [], descriptions: data.descriptions || {} };
+      return { items: data.items || [], descriptions: data.descriptions || {}, summaries: data.summaries || {} };
     }
 
     function _knowledgeDedupKey(title) {
@@ -294,6 +297,11 @@
       return 'answer';
     }
 
+    // 摘要来源保优等级：manual > model > local（旧数据无 summarySource 视为 local）
+    function _summarySourceRank(source) {
+      return source === 'manual' ? 0 : source === 'model' ? 1 : 2;
+    }
+
     function saveExtractedKnowledgeItems(sessionId, messages, items, updateExisting = false, opts = {}) {
       if (!items || items.length === 0) return;
 
@@ -313,12 +321,30 @@
         ) || (updateExisting && items.length === 1 && messageItems.length === 1 ? messageItems[0] : null);
         if (existing) {
           const keepManualSource = existing.source === 'manual';
+          // 摘要保优（P2）：manual > model > local，同源才比长度；
+          // 空摘要永不覆盖非空摘要——修复「手动摘要被更长的 AI 摘要覆盖」
+          const incomingSummary = String(item.summary || '').trim();
+          const existingSummary = String(existing.summary || '').trim();
+          const incomingSrc = item.summarySource || 'local';
+          const existingSrc = existing.summarySource || 'local';
+          let nextSummary = existing.summary;
+          let nextSummarySource = existingSrc;
+          if (incomingSummary) {
+            if (!existingSummary
+              || _summarySourceRank(incomingSrc) < _summarySourceRank(existingSrc)
+              || (incomingSrc === existingSrc && incomingSummary.length > existingSummary.length)) {
+              // 旧数据无 anchorSummary 时，被替换的旧摘要先落为定位锚点
+              if (!existing.anchorSummary && existingSummary) existing.anchorSummary = existing.summary;
+              nextSummary = item.summary;
+              nextSummarySource = incomingSrc;
+            }
+          }
           Object.assign(existing, {
             category: item.category || existing.category,
             tags: _mergeUniqueValues(existing.tags, item.tags),
-            summary: (item.summary && item.summary.length > (existing.summary || '').length)
-              ? item.summary
-              : existing.summary,
+            summary: nextSummary,
+            summarySource: nextSummarySource,
+            anchorSummary: existing.anchorSummary || item.anchorSummary || '',
             formulas: _mergeUniqueValues(existing.formulas, item.formulas),
             messageId: String(messageId || existing.messageId),
             moduleKey: (item.moduleKey && item.moduleKey !== 'answer')
@@ -338,6 +364,8 @@
           category: item.category || 'other',
           tags: item.tags || [],
           summary: item.summary || '',
+          summarySource: item.summarySource || 'local',
+          anchorSummary: item.anchorSummary || '',
           formulas: item.formulas || [],
           source: 'ai_extract',
           sessionId: sessionId,
@@ -350,6 +378,34 @@
       }
 
       if (changed) saveKnowledgeItems(existingItems);
+    }
+
+    // 知识点摘要（DESCRIBE_PROMPT summaries 块，随公式描述同一次调用返回）：
+    // 只把 local 来源（或摘要为空）的既有条目升级为模型摘要；manual 永不触碰，
+    // 已是 model 的条目保留提取模型基于对话原文的逐条摘要，避免两路模型摘要来回翻转。
+    function applyModelKnowledgeSummaries(sessionId, summaries) {
+      const entries = summaries && typeof summaries === 'object' && !Array.isArray(summaries)
+        ? Object.entries(summaries) : [];
+      if (!entries.length) return;
+      const items = getKnowledgeItems();
+      let changed = false;
+      for (const [title, text] of entries) {
+        const summary = String(text || '').trim();
+        if (!summary) continue;
+        const key = _knowledgeDedupKey(title);
+        if (!key) continue;
+        const existing = Object.values(items).find(e =>
+          e.sessionId === sessionId && _knowledgeDedupKey(e.title) === key);
+        if (!existing) continue;
+        const src = existing.summarySource || 'local';
+        if (src === 'manual') continue;
+        if (src === 'model' && String(existing.summary || '').trim()) continue;
+        if (!existing.anchorSummary && existing.summary) existing.anchorSummary = existing.summary;
+        existing.summary = summary;
+        existing.summarySource = 'model';
+        changed = true;
+      }
+      if (changed) saveKnowledgeItems(items);
     }
 
     function refreshKnowledgePanelIfOpen() {
@@ -411,7 +467,7 @@
 
         // AI 提取作为后台增强，不再阻塞本地知识条目的首次显示。
         if (agentModel || descriptorModel) {
-          let aiResult = { items: [], descriptions: {} };
+          let aiResult = { items: [], descriptions: {}, summaries: {} };
           try {
             aiResult = await requestKnowledgeExtraction(payload);
           } catch (err) {
@@ -423,7 +479,13 @@
             }
           }
           const aiItems = aiResult.items || [];
+          // 后端 AI 提取条目缺 summarySource 时按模型增强来源补标
+          // （后端本地兜底条目已自带 'local'，不会被误标）
+          for (const it of aiItems) {
+            if (it && !it.summarySource) it.summarySource = 'model';
+          }
           saveExtractedKnowledgeItems(sessionId, extractionMessages, aiItems, true, opts);
+          applyModelKnowledgeSummaries(sessionId, aiResult.summaries);
           saveExtractedFormulas(sessionId, aiItems, extractionMessages, aiResult.descriptions || {}, opts);
           refreshKnowledgePanelIfOpen();
         }
@@ -744,6 +806,7 @@
         title: title,
         category: document.getElementById('bmCategory').value,
         summary: document.getElementById('bmSummary').value.trim(),
+        summarySource: 'manual',
         tags: document.getElementById('bmTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean),
         formulas: document.getElementById('bmFormulas').value.split('\n').map(s => s.trim()).filter(Boolean),
         source: 'manual',

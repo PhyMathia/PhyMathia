@@ -18,6 +18,13 @@ function _normalizeKnowledgeKey(title) {
     .trim();
 }
 
+// 摘要来源保优等级：manual > model > local（与后端 _dedupe_knowledge 的
+// _summary_source_rank 同一口径；旧数据无 summarySource 视为 local）
+function _summarySourceRankOf(item) {
+  const s = (item && item.summarySource) || 'local';
+  return s === 'manual' ? 0 : s === 'model' ? 1 : 2;
+}
+
 function dedupeKnowledgeItems(items) {
   const map = items && typeof items === 'object' && !Array.isArray(items) ? items : {};
   const groups = {};
@@ -37,14 +44,19 @@ function dedupeKnowledgeItems(items) {
     if (ids.length < 2) continue;
     const ranked = ids
       .map(id => ({ id, item: map[id] }))
-      .sort((a, b) => {
-        const score = item => (item.summary || '').length + (item.formulas || []).length * 5 + (item.createdAt || 0) / 100000;
-        return score(b.item) - score(a.item);
-      });
+      .sort((a, b) =>
+        // 保优排序：summarySource 等级优先，长度仅作同源 tie-break
+        // （与后端 _dedupe_knowledge 同步，保证 15 秒定时同步并集合并不来回覆盖）
+        (_summarySourceRankOf(a.item) - _summarySourceRankOf(b.item)) ||
+        ((b.item.summary || '').length - (a.item.summary || '').length) ||
+        ((b.item.formulas || []).length - (a.item.formulas || []).length) ||
+        ((b.item.createdAt || 0) - (a.item.createdAt || 0))
+      );
     const keep = ranked[0].item;
     const formulas = [];
     const seen = new Set();
     for (const entry of ranked) {
+      if (!keep.anchorSummary && entry.item.anchorSummary) keep.anchorSummary = entry.item.anchorSummary;
       for (const formula of entry.item.formulas || []) {
         const key = _canonicalFormulaText(formula);
         if (formula && key && !seen.has(key)) {
@@ -54,6 +66,12 @@ function dedupeKnowledgeItems(items) {
       }
     }
     keep.formulas = formulas;
+    // 保留条目摘要为空时不丢整组摘要：只继承摘要文本与锚点；
+    // summarySource 保留保留条自身的标记（降级会让 manual 条目在下轮去重中被误删）
+    if (!String(keep.summary || '').trim()) {
+      const donor = ranked.find(e => String(e.item.summary || '').trim());
+      if (donor) keep.summary = donor.item.summary;
+    }
     for (const entry of ranked.slice(1)) {
       if (!keep.moduleKey && entry.item.moduleKey) keep.moduleKey = entry.item.moduleKey;
       if (!keep.messageId && entry.item.messageId) keep.messageId = entry.item.messageId;
@@ -477,7 +495,9 @@ async function _focusKnowledgeNodeByContent(item, moduleKey) {
   if (typeof window.getGraphViewNodes !== 'function') return false;
   const formulas = (item.formulas && item.formulas.length) ? item.formulas
     : (item.latex ? [item.latex] : []);
-  const frags = _summaryFragmentsForMatch(item.summary || item.concept || item.title || '');
+  // 定位锚点：优先 anchorSummary（保存时的整卡摘要原文），旧数据无该字段回退
+  // summary——摘要被保优合并改写后仍能按原文本匹配画布节点
+  const frags = _summaryFragmentsForMatch(item.anchorSummary || item.summary || item.concept || item.title || '');
   const nodes = window.getGraphViewNodes().filter(n =>
     n && n.messageIndex === -1 && (!moduleKey || !n.moduleKey || n.moduleKey === moduleKey)
   );

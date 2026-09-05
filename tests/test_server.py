@@ -1,11 +1,13 @@
 """Unit tests for the refactored src/server package (PhyMathia backend modules)."""
 
+import asyncio
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
@@ -18,6 +20,7 @@ from server import config as config_mod
 from server import context as context_mod
 from server import documents as documents_mod
 from server import knowledge as knowledge_mod
+from server import prompts as prompts_mod
 from server import storage as storage_mod
 
 
@@ -106,6 +109,225 @@ class KnowledgeTest(unittest.TestCase):
             knowledge_mod._normalize_formula_map([{"id": "f1", "latex": "$a$"}]),
             {"f1": {"id": "f1", "latex": "$a$"}},
         )
+
+
+class KnowledgeSummaryTest(unittest.TestCase):
+    """P2 知识点摘要方案 A：summarySource/anchorSummary 契约与保优合并。"""
+
+    def test_summary_source_rank(self):
+        self.assertEqual(knowledge_mod._summary_source_rank({"summarySource": "manual"}), 0)
+        self.assertEqual(knowledge_mod._summary_source_rank({"summarySource": "model"}), 1)
+        self.assertEqual(knowledge_mod._summary_source_rank({"summarySource": "local"}), 2)
+        # 旧数据无该字段一律视为 local
+        self.assertEqual(knowledge_mod._summary_source_rank({}), 2)
+        self.assertEqual(knowledge_mod._summary_source_rank(None), 2)
+
+    def test_dedupe_knowledge_manual_beats_longer_model(self):
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "手动写的摘要", "summarySource": "manual"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "模型生成的更长的导数摘要，不应覆盖手动摘要",
+                    "summarySource": "model"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(list(result.values())[0]["summary"], "手动写的摘要")
+        self.assertEqual(list(result.values())[0]["summarySource"], "manual")
+
+    def test_dedupe_knowledge_model_beats_longer_local(self):
+        # 整卡摘要（local）更长也不得把模型逐条摘要（model）拉回去：长度只在同源时比
+        data = {
+            "k1": {"title": "简谐运动", "sessionId": "s1", "summary": "很长的本地整卡摘要" * 10},
+            "k2": {"title": "简谐运动", "sessionId": "s1", "summary": "回复力与位移成正比的周期性振动",
+                    "summarySource": "model"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(len(result), 1)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summary"], "回复力与位移成正比的周期性振动")
+        self.assertEqual(kept["summarySource"], "model")
+
+    def test_dedupe_knowledge_same_source_length_tiebreak(self):
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "短", "summarySource": "local"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "更长的同源摘要", "summarySource": "local"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(list(result.values())[0]["summary"], "更长的同源摘要")
+
+    def test_dedupe_knowledge_missing_source_treated_as_local(self):
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "旧数据无来源字段"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "模型摘要", "summarySource": "model"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summary"], "模型摘要")
+        self.assertEqual(kept["summarySource"], "model")
+
+    def test_dedupe_knowledge_keeps_group_when_keeper_summary_empty(self):
+        # 手动条目摘要在收藏时可留空：保优保留该条目本身，但摘要从组内非空成员继承
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "", "summarySource": "manual"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "本地整卡摘要", "summarySource": "local",
+                    "anchorSummary": "本地整卡摘要"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(len(result), 1)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summarySource"], "manual")  # 条目本身保留（手动收藏不丢）
+        self.assertEqual(kept["summary"], "本地整卡摘要")  # 摘要内容不丢
+        self.assertEqual(kept["anchorSummary"], "本地整卡摘要")
+
+    def test_dedupe_knowledge_anchor_summary_inherited_from_group(self):
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "模型逐条摘要", "summarySource": "model"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "整卡摘要", "summarySource": "local",
+                    "anchorSummary": "整卡摘要"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summarySource"], "model")
+        self.assertEqual(kept["anchorSummary"], "整卡摘要")
+
+    def test_dedupe_knowledge_empty_summary_inherits_best_ranked_donor(self):
+        # 保留条（manual 空摘要）从组内最高保优等级的非空成员继承摘要，
+        # 与前端 dedupeKnowledgeItems 的 ranked（最优在前）同方向——
+        # 曾经从最低等级成员取，manual 空摘要条目会拿到 local 整卡摘要而非模型摘要
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "", "summarySource": "manual"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "模型逐条摘要", "summarySource": "model"},
+            "k3": {"title": "导数", "sessionId": "s1", "summary": "本地整卡摘要更长", "summarySource": "local"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(len(result), 1)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summarySource"], "manual")
+        self.assertEqual(kept["summary"], "模型逐条摘要")
+
+    def test_dedupe_knowledge_anchor_prefers_best_ranked_donor(self):
+        # 保留条无锚点时从组内最高保优等级成员继承锚点（与前端 ranked 顺序一致）
+        data = {
+            "k1": {"title": "导数", "sessionId": "s1", "summary": "短", "summarySource": "local",
+                    "anchorSummary": "锚A"},
+            "k2": {"title": "导数", "sessionId": "s1", "summary": "更长的本地摘要", "summarySource": "local",
+                    "anchorSummary": "锚B"},
+            "k3": {"title": "导数", "sessionId": "s1", "summary": "模型摘要", "summarySource": "model"},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        kept = list(result.values())[0]
+        self.assertEqual(kept["summarySource"], "model")
+        self.assertEqual(kept["anchorSummary"], "锚B")
+
+    def test_parse_extract_json_stamps_model_source(self):
+        text = json.dumps({"items": [
+            {"title": "简谐运动", "category": "physics", "summary": "回复力与位移成正比的周期性振动",
+             "formulas": ["$F=-kx$"]},
+            {"title": "胡克定律", "category": "physics", "summary": "弹簧弹力与形变量成正比",
+             "formulas": ["$F=-kx$"]},
+        ]}, ensure_ascii=False)
+        items = knowledge_mod._parse_extract_json(f"```json\n{text}\n```")
+        self.assertEqual(len(items), 2)
+        for it in items:
+            self.assertEqual(it["summarySource"], "model")
+        # 同次多条 summary 各自保留（互异性的解析基础，不被整卡摘要覆盖）
+        self.assertEqual(items[0]["summary"], "回复力与位移成正比的周期性振动")
+        self.assertEqual(items[1]["summary"], "弹簧弹力与形变量成正比")
+
+    def test_local_extract_knowledge_sets_anchor_and_local_source(self):
+        messages = [{"role": "assistant", "content":
+            "# 简谐运动\n物体做简谐运动。<formula>F=-kx</formula>\n"
+            "<summary>简谐运动核心摘要</summary>"}]
+        items = knowledge_mod._local_extract_knowledge(messages)
+        self.assertEqual(len(items), 1)
+        it = items[0]
+        self.assertEqual(it["summarySource"], "local")
+        # 本地兜底阶段摘要仍为整卡摘要原文，且同时落为定位锚点
+        self.assertEqual(it["anchorSummary"], it["summary"])
+
+    def test_describe_formulas_returns_formula_and_knowledge_blocks(self):
+        payload = {"choices": [{"message": {"content": json.dumps({
+            "descriptions": {"$F=-kx$": "胡克定律：弹力与形变量成正比"},
+            "summaries": {"简谐运动": "回复力与位移成正比的周期性振动，F=-kx 表征回复力线性特征"},
+        }, ensure_ascii=False)}}]}
+        fake = _FakeDescribeClient(payload)
+        with mock.patch.object(knowledge_mod, "get_http_client", return_value=fake):
+            descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+                "整卡摘要", ["$F=-kx$"], [{"title": "简谐运动", "formulas": ["$F=-kx$"]}],
+                "deepseek", "key", "test-model", "https://api.example.com", "university"))
+        self.assertEqual(descs, {"$F=-kx$": "胡克定律：弹力与形变量成正比"})
+        self.assertEqual(summaries, {"简谐运动": "回复力与位移成正比的周期性振动，F=-kx 表征回复力线性特征"})
+        # 知识点列表并入同一次请求（不增加请求数）
+        self.assertEqual(len(fake.calls), 1)
+        user_content = fake.calls[0]["json"]["messages"][1]["content"]
+        self.assertIn("公式列表", user_content)
+        self.assertIn("知识点列表", user_content)
+        self.assertIn("简谐运动", user_content)
+
+    def test_describe_formulas_runs_for_knowledge_without_formulas(self):
+        # 只配置描述模型、无公式时也要能为知识点生成摘要（descriptor-only 场景）
+        payload = {"choices": [{"message": {"content": json.dumps({
+            "summaries": {"简谐运动": "回复力与位移成正比的周期性振动"}}, ensure_ascii=False)}}]}
+        fake = _FakeDescribeClient(payload)
+        with mock.patch.object(knowledge_mod, "get_http_client", return_value=fake):
+            descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+                "整卡摘要", [], [{"title": "简谐运动", "formulas": []}],
+                "deepseek", "key", "test-model", "https://api.example.com", "university"))
+        self.assertEqual(descs, {})
+        self.assertEqual(summaries["简谐运动"], "回复力与位移成正比的周期性振动")
+
+    def test_describe_formulas_without_model_returns_empty_pair(self):
+        descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+            "整卡摘要", ["$F=-kx$"], [{"title": "简谐运动"}],
+            "deepseek", "key", "", "https://api.example.com", "university"))
+        self.assertEqual((descs, summaries), ({}, {}))
+
+    def test_describe_formulas_rejected_target_returns_empty_pair(self):
+        # 描述目标被拒（SSRF 校验失败 / 未知 provider 无官方地址）时也必须返回
+        # 二元组空值——main.py 对返回值做元组解包，裸 {} 会让端点直接 500
+        descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+            "整卡摘要", ["$F=-kx$"], [{"title": "简谐运动"}],
+            "deepseek", "key", "test-model", "http://evil.example.com", "university"))
+        self.assertEqual((descs, summaries), ({}, {}))
+        descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+            "整卡摘要", ["$F=-kx$"], [{"title": "简谐运动"}],
+            "nosuch-provider", "key", "test-model", "", "university"))
+        self.assertEqual((descs, summaries), ({}, {}))
+        # 非 opencode 系 provider 缺 api_key 的拒绝路径同样返回二元组
+        descs, summaries = asyncio.run(knowledge_mod._describe_formulas(
+            "整卡摘要", ["$F=-kx$"], [{"title": "简谐运动"}],
+            "deepseek", "", "test-model", "https://api.example.com", "university"))
+        self.assertEqual((descs, summaries), ({}, {}))
+
+    def test_prompts_carry_summary_constraints(self):
+        # 提示词契约回归：摘要约束（≤60 字、禁止近义复述）与双块 JSON 键必须存在
+        self.assertIn("60", prompts_mod.EXTRACT_PROMPT)
+        self.assertIn("不得相同", prompts_mod.EXTRACT_PROMPT)
+        self.assertIn("近义复述", prompts_mod.EXTRACT_PROMPT)
+        self.assertIn("summaries", prompts_mod.DESCRIBE_PROMPT)
+        self.assertIn("60", prompts_mod.DESCRIBE_PROMPT)
+
+
+class _FakeDescribeClient:
+    """_describe_formulas 的 HTTP 客户端桩：记录请求并返回固定补全响应。"""
+
+    def __init__(self, payload):
+        self._payload = payload
+        self.calls = []
+
+    async def post(self, url, json=None, headers=None):
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        return _FakeDescribeResponse(self._payload)
+
+
+class _FakeDescribeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
 
 
 class ContextTest(unittest.TestCase):

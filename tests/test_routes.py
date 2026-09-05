@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
@@ -293,6 +294,94 @@ class BackupRestoreRollbackTest(RouteTestBase):
         self.assertEqual(result["sessions"], 1)
         self.assertIn("s2", self._read_raw(td / "sessions.json"))
         self.assertTrue((td / "messages" / "s2.json").exists())
+
+
+class ExtractKnowledgeEndpointTest(RouteTestBase):
+    """P2 知识点摘要：/api/extract_knowledge 的描述模型链路回归。
+
+    覆盖两类纯函数层测不到的端点级缺陷：
+    1. 描述目标非法（SSRF 校验拒绝）时端点必须 200——曾经 _describe_formulas
+       漏改 return {}，main.py 元组解包 ValueError → 整个端点 500；
+    2. 无公式仅有知识点（descriptor-only 场景）也要发起 DESCRIBE 调用。
+    """
+
+    def _payload(self, **overrides):
+        payload = {
+            "sessionId": "sess_extract",
+            "messages": [
+                {"role": "user", "content": "解释简谐运动"},
+                {"role": "assistant", "content": "# 简谐运动\n简谐运动是周期性振动。"},
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_invalid_descriptor_base_url_returns_200_not_500(self):
+        # 未配置主模型 → 本地提取兜底；内容含公式触发 DESCRIBE 调用，
+        # 描述模型 base_url 未过 SSRF 校验时端点仍须 200（曾经
+        # _describe_formulas 漏改 return {} → 元组解包 ValueError → 500）
+        resp = self.client.post("/api/extract_knowledge", json=self._payload(
+            messages=[
+                {"role": "user", "content": "解释简谐运动"},
+                {"role": "assistant",
+                 "content": "# 简谐运动\n简谐运动是周期性振动。<formula>F=-kx</formula>"},
+            ],
+            descriptor_provider="deepseek",
+            descriptor_api_key="k",
+            descriptor_model="m",
+            descriptor_base_url="http://evil.example.com",
+        ))
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["descriptions"], {})
+        self.assertEqual(data["summaries"], {})
+        self.assertTrue(data["items"])
+
+    def test_describe_fired_for_knowledge_without_formulas(self):
+        # 无公式但有知识点：DESCRIBE 也要发起（summaries 是 local 条目升级
+        # 为模型摘要的唯一通道）；mock 掉真实调用，断言调用参数与响应透传
+        calls = {}
+
+        async def fake_describe(summary, formulas, items, provider, api_key, model, base_url, level="university"):
+            calls["formulas"] = list(formulas)
+            calls["titles"] = [it.get("title") for it in items]
+            return {}, {"简谐运动": "回复力与位移成正比的周期性振动"}
+
+        with mock.patch.object(main_mod, "_describe_formulas", new=fake_describe):
+            resp = self.client.post("/api/extract_knowledge", json=self._payload(
+                descriptor_provider="deepseek",
+                descriptor_api_key="k",
+                descriptor_model="m",
+                descriptor_base_url="https://api.example.com",
+            ))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(calls.get("formulas"), [])
+        self.assertTrue(calls.get("titles"))
+        self.assertEqual(resp.json()["summaries"],
+                         {"简谐运动": "回复力与位移成正比的周期性振动"})
+
+    def test_describe_not_fired_when_nothing_to_extract(self):
+        # 消息里没有可提取内容（assistant 空文本 → items 为空）时不发起调用
+        called = {"n": 0}
+
+        async def fake_describe(*args, **kwargs):
+            called["n"] += 1
+            return {}, {}
+
+        with mock.patch.object(main_mod, "_describe_formulas", new=fake_describe):
+            resp = self.client.post("/api/extract_knowledge", json=self._payload(
+                messages=[
+                    {"role": "user", "content": "解释简谐运动"},
+                    {"role": "assistant", "content": ""},
+                ],
+                descriptor_provider="deepseek",
+                descriptor_api_key="k",
+                descriptor_model="m",
+                descriptor_base_url="https://api.example.com",
+            ))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(resp.json()["items"], [])
 
 
 if __name__ == "__main__":

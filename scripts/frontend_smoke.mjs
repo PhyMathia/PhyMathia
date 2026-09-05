@@ -262,5 +262,41 @@ check('graph-contextmenu: 打包注册与产物符号（静态断言）', () => 
   return css.includes('.graph-context-menu');
 });
 
+// ===== 知识点摘要（P2：summarySource/anchorSummary 契约）静态/沙箱回归 =====
+
+check('knowledge: dedupeKnowledgeItems 按 summarySource 保优（manual > model > local，长度仅同源 tie-break）', () => {
+  const d = sandbox.dedupeKnowledgeItems;
+  if (typeof d !== 'function') throw new Error('dedupeKnowledgeItems 未暴露');
+  // model 摘要短于 local 整卡摘要也不被拉回去：来源等级优先
+  const r1 = d({
+    a: { id: 'a', title: '简谐运动', sessionId: 's1', summary: '很长的本地整卡摘要，比模型摘要长得多', summarySource: 'local', formulas: [], createdAt: 9 },
+    b: { id: 'b', title: '简谐运动', sessionId: 's1', summary: '回复力与位移成正比的周期性振动', summarySource: 'model', formulas: [], createdAt: 1 },
+  });
+  if (!r1.b || r1.a) return false;
+  if (r1.b.summary !== '回复力与位移成正比的周期性振动') return false;
+  // 同源才比长度：local 更长者胜
+  const r2 = d({
+    a: { id: 'a', title: '导数', sessionId: 's1', summary: '短', summarySource: 'local', formulas: [], createdAt: 9 },
+    b: { id: 'b', title: '导数', sessionId: 's1', summary: '更长的同源摘要', summarySource: 'local', formulas: [], createdAt: 1 },
+  });
+  if (!r2.b || r2.a) return false;
+  // 旧数据（无 summarySource）视为 local：manual 仍胜出
+  const r3 = d({
+    a: { id: 'a', title: '动量', sessionId: 's1', summary: '旧数据无来源字段的很长摘要', formulas: [], createdAt: 9 },
+    b: { id: 'b', title: '动量', sessionId: 's1', summary: '手动摘要', summarySource: 'manual', formulas: [], createdAt: 1 },
+  });
+  return !!(r3.b && !r3.a && r3.b.summary === '手动摘要');
+});
+
+check('knowledge: 定位锚点优先 anchorSummary、旧数据回退 summary（契约两侧字段齐备）', () => {
+  if (!code.includes('summarySource') || !code.includes('anchorSummary')) {
+    throw new Error('打包产物缺 summarySource/anchorSummary 字段');
+  }
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const at = src.indexOf('_summaryFragmentsForMatch(item.anchorSummary');
+  if (at < 0) throw new Error('_focusKnowledgeNodeByContent 未优先使用 anchorSummary');
+  return src.slice(at, at + 120).includes('item.summary');
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

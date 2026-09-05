@@ -851,31 +851,40 @@ async def api_extract_knowledge(request: Request):
         except Exception as e:
             logger.warning(f"Profile fact ingest failed: {e}")
 
-    # 摘要双重用途：主模型 <summary> 标签 → 知识条目 summary（替代内容截断）
+    # 整卡摘要双重用途（P2 起）：主模型 <summary> 只落 anchorSummary（画布定位锚点），
+    # 不再覆盖各条目的 summary——AI 逐条摘要保优合并靠 summarySource 等级，本地兜底
+    # 条目保持整卡摘要（P4 再模板化）。无 <summary> 时回退条目自身摘要作锚点。
     summary_text = _extract_summary(messages)
-    if summary_text:
-        for it in items:
-            it["summary"] = summary_text[:200]
+    for it in items:
+        anchor = summary_text or it.get("summary") or ""
+        if anchor:
+            it["anchorSummary"] = anchor[:200]
 
-    # 公式描述：配置了描述模型且有公式时，为新增公式生成简要描述
+    # 公式描述 + 知识点摘要：配置了描述模型时并入同一次调用（不增加请求数），
+    # 为新增公式生成简要描述，并为各知识点生成逐条摘要。
+    # 无公式但有知识点（纯概念回答）也要发起：DESCRIBE 的 summaries 块是
+    # local 来源条目升级为模型摘要的唯一通道（descriptor-only 场景）。
     descriptions = {}
+    knowledge_summaries = {}
     all_formulas = []
     for it in items:
         for f in (it.get("formulas") or []):
             latex = _normalize_formula(str(f).strip())
             if latex and _looks_like_formula(latex) and latex not in all_formulas:
                 all_formulas.append(latex)
-    if all_formulas and desc_model and (desc_api_key or desc_provider in ("opencode", "opencode-go")):
-        descriptions = await _describe_formulas(summary_text, all_formulas, desc_provider, desc_api_key, desc_model, desc_base_url, level)
-        if descriptions:
-            logger.info(f"Generated {len(descriptions)} formula descriptions for session {session_id}")
+    has_knowledge_items = any(str(it.get("title") or "").strip() for it in items)
+    if (all_formulas or has_knowledge_items) and desc_model and (desc_api_key or desc_provider in ("opencode", "opencode-go")):
+        descriptions, knowledge_summaries = await _describe_formulas(
+            summary_text, all_formulas, items, desc_provider, desc_api_key, desc_model, desc_base_url, level)
+        if descriptions or knowledge_summaries:
+            logger.info(f"Generated {len(descriptions)} formula descriptions / {len(knowledge_summaries)} knowledge summaries for session {session_id}")
 
     message_id = str(latest_assistant.get("timestamp") or "") if latest_assistant else ""
     added = _add_formulas_from_items(items, session_id, descriptions, message_id)
     if added:
         logger.info(f"Auto added {added} formulas to library")
 
-    return {"items": items, "descriptions": descriptions}
+    return {"items": items, "descriptions": descriptions, "summaries": knowledge_summaries}
 
 
 

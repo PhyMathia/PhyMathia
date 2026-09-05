@@ -173,7 +173,10 @@ def _parse_extract_json(text: str) -> list:
             "title": title[:80],
             "category": category,
             "tags": tags,
+            # AI 增强路径的逐条摘要：summarySource 标记为 model（≤60 字由
+            # EXTRACT_PROMPT 约束，此处 200 仅作防御性截断兜底）
             "summary": str(it.get("summary", ""))[:200],
+            "summarySource": "model",
             "formulas": formulas[:8],
             "moduleKey": module_key,
         })
@@ -200,8 +203,26 @@ def _normalize_knowledge_key(title: str) -> str:
     return s.lower().strip()
 
 
+def _summary_source_rank(item: dict) -> int:
+    """摘要来源保优等级：manual(0) > model(1) > local/缺失(2)，数值越小越优。
+
+    旧数据无 summarySource 字段一律视为 'local'。
+    """
+    src = str((item or {}).get("summarySource") or "local")
+    if src == "manual":
+        return 0
+    if src == "model":
+        return 1
+    return 2
+
+
 def _dedupe_knowledge(data) -> dict:
-    """按 sessionId + 规范化标题合并同一会话内的重复知识点。"""
+    """按 sessionId + 规范化标题合并同一会话内的重复知识点。
+
+    保优排序：summarySource 等级优先（manual > model > local），长度仅在
+    同源时作为 tie-break——避免「手动摘要被更长的 AI 摘要覆盖」以及本地
+    整卡摘要把模型逐条摘要又拉回去的来回覆盖。
+    """
     data = _normalize_knowledge(data)
     groups = {}
     for item_id, item in data.items():
@@ -218,6 +239,7 @@ def _dedupe_knowledge(data) -> dict:
         if len(group) < 2:
             continue
         group.sort(key=lambda kv: (
+            -_summary_source_rank(kv[1]),
             len(str(kv[1].get("summary") or "")),
             len(kv[1].get("formulas") or []),
             kv[1].get("createdAt") or 0,
@@ -225,13 +247,24 @@ def _dedupe_knowledge(data) -> dict:
         keep_id, keep = group[-1]
         formulas = []
         seen = set()
-        for _, it in group:
+        # 锚点/摘要继承从最高保优等级成员向下找（reversed：升序排列的组尾是保留条），
+        # 与前端 dedupeKnowledgeItems 的 ranked（最优在前）同方向，保证前后端同口径
+        for _, it in reversed(group):
+            if not keep.get("anchorSummary") and it.get("anchorSummary"):
+                keep["anchorSummary"] = it["anchorSummary"]
             for formula in it.get("formulas") or []:
                 normalized = _normalize_formula(str(formula))
                 if normalized and normalized not in seen:
                     seen.add(normalized)
                     formulas.append(normalized)
         keep["formulas"] = formulas
+        # 保留条目摘要为空时不丢整组摘要：从组内非空成员继承摘要文本与锚点；
+        # summarySource 保留保留条自身的标记（降级会让 manual 条目在下轮去重中被误删）
+        if not str(keep.get("summary") or "").strip():
+            for _, other in reversed(group):
+                if str(other.get("summary") or "").strip():
+                    keep["summary"] = other["summary"]
+                    break
         for item_id, _ in group:
             if item_id != keep_id:
                 remove_ids.append(item_id)
@@ -394,6 +427,9 @@ def _local_extract_knowledge(messages: list) -> list:
             "category": category,
             "tags": tags,
             "summary": summary,
+            # 本地兜底：摘要即整卡摘要原文，同时落为定位锚点（P4 再模板化展示摘要）
+            "anchorSummary": summary,
+            "summarySource": "local",
             "formulas": formulas,
             "formula_tags": formula_tags,
             "moduleKey": module_key,
@@ -580,29 +616,51 @@ def _extract_summary(messages: list) -> str:
 
 
 
-async def _describe_formulas(summary: str, formulas: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> dict:
-    """调用描述模型为公式生成简要描述，返回 {latex: 描述}；失败返回空 dict"""
+async def _describe_formulas(summary: str, formulas: list, knowledge_items: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> tuple:
+    """调用描述模型，一次返回公式描述与知识点摘要两块（不增加请求数）。
+
+    返回 (descriptions, summaries) 二元组：
+    - descriptions: {latex: 公式描述}
+    - summaries: {知识点名: 该知识点本身的摘要（≤60字，含公式含义）}
+    失败返回 ({}, {})。
+    """
     env_key_used = False
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
         env_key_used = bool(api_key)
     if not api_key and provider == "opencode":
         api_key = OPENCODE_DEFAULT_API_KEY
-    if not formulas or not model:
-        return {}
+    knowledge_lines = []
+    for it in (knowledge_items or []):
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        fs = "、".join(str(f) for f in (it.get("formulas") or []) if str(f).strip())
+        knowledge_lines.append(f"- {title}" + (f"（公式：{fs}）" if fs else ""))
+    if (not formulas and not knowledge_lines) or not model:
+        return {}, {}
+    # 以下三条拒绝路径也必须返回二元组：main.py 对返回值做元组解包，
+    # 漏改成裸 {} 会让 /api/extract_knowledge 整个 500
     if not api_key and provider not in ("opencode", "opencode-go"):
-        return {}
+        return {}, {}
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
-        return {}
+        return {}, {}
     try:
         base_url = validate_model_target(provider, base_url, env_key_used)
     except ValueError:
-        return {}
+        return {}, {}
+    user_parts = [f"对话摘要：{summary[:300]}"]
+    if formulas:
+        user_parts.append("公式列表：\n" + "\n".join(f"- {f}" for f in formulas))
+    if knowledge_lines:
+        user_parts.append("知识点列表：\n" + "\n".join(knowledge_lines))
     msgs = [
         {"role": "system", "content": DESCRIBE_PROMPT + "\n\n难度要求：" + LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])},
-        {"role": "user", "content": f"对话摘要：{summary[:300]}\n公式列表：\n" + "\n".join(f"- {f}" for f in formulas)},
+        {"role": "user", "content": "\n".join(user_parts)},
     ]
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -617,7 +675,7 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
         content = data["choices"][0]["message"]["content"]
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:
-            return {}
+            return {}, {}
         parsed = json.loads(m.group(0))
         descs = parsed.get("descriptions", {}) if isinstance(parsed, dict) else {}
         result = {}
@@ -626,10 +684,16 @@ async def _describe_formulas(summary: str, formulas: list, provider: str, api_ke
                 normalized_key = _normalize_formula(k)
                 if normalized_key:
                     result[normalized_key] = v.strip()[:80]
-        return result
+        summaries = {}
+        raw_summaries = parsed.get("summaries", {}) if isinstance(parsed, dict) else {}
+        if isinstance(raw_summaries, dict):
+            for k, v in raw_summaries.items():
+                if isinstance(v, str) and v.strip():
+                    summaries[str(k).strip()[:80]] = v.strip()[:200]
+        return result, summaries
     except Exception as e:
         logger.warning(f"Describe formulas failed: {e}")
-        return {}
+        return {}, {}
 
 
 
@@ -655,7 +719,7 @@ __all__ = [
     "_normalize_knowledge", "_normalize_formula", "_formula_key",
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
     "_parse_extract_json", "_parse_profile_facts", "_clean_knowledge_title", "_normalize_knowledge_key",
-    "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",
+    "_summary_source_rank", "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",
     "_formula_tags_from_content", "_local_formula_meaning", "_local_extract_knowledge",
     "_ai_extract_knowledge", "_formula_module_key", "_add_formulas_from_items",
     "_extract_summary", "_describe_formulas",
