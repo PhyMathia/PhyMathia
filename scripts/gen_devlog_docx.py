@@ -373,13 +373,13 @@ grid_table(
 
 # ================= 十、附件与参考链接 =================
 h("十、附件与参考链接（如有）", 1)
-bullet("需求文档：docs/创新赛道-开发日志-底稿.md、docs/产品介绍文档.md（本仓库 docs/ 下）", "1、需求文档：")
+bullet("需求文档：docs/创新赛道-开发日志-底稿.md、docs/参赛材料/产品介绍文档.md（本仓库 docs/ 下）", "1、需求文档：")
 bullet("本项目中 AI 用于：①双域讲解（主模型生成物理/数学/图谱/延伸结构化回答）；②交互可视化 HTML 生成（HTML 模型槽位）；③Φ 助手改图与问答（graph 模型槽位，确定性撤销不调模型）；④公式中文说明（descriptor 模型）；⑤知识检测出题/审题（quiz 模型）；⑥端侧小模型微调数据采集与训练（Qwen2.5-0.5B）。以 OpenAI 兼容 API 接入，无 Key 时走内置 mock 离线流。", "2、AI 使用场景说明：")
 bullet("设计稿：CSS 样式核心（styles.css / styles-panels.css）、探索网画布与 Φ 桌宠视觉（见前端源码）", "3、设计稿：")
 bullet("代码仓库：本地 git 仓库 PhyMathia（99 次提交，2026-07-08 至 2026-08-27）", "4、代码仓库：")
 bullet("路演 PPT：参赛演示文稿（独立仓库，由 B 整理）", "5、路演 PPT：")
-bullet("视频 Demo：Html_video/ 交互可视化录屏版（带字幕/干净版 mp4）、Φ 智能体视频脚本、大图 S 形巡览视频", "6、视频 Demo：")
-bullet("其他材料：docs/火山杯的文档.md、docs/工作日志.md、微调支线脚本（finetune/ 采集平台）", "7、其他材料：")
+bullet("视频 Demo：交互可视化录屏版（带字幕/干净版 mp4，成片本地归档）、Φ 智能体视频脚本、大图 S 形巡览视频", "6、视频 Demo：")
+bullet("其他材料：docs/归档/火山杯的文档.md、docs/日志/工作日志.md、微调支线脚本（finetune/ 采集平台）", "7、其他材料：")
 
 doc.save(OUT)
 print("saved:", os.path.abspath(OUT))

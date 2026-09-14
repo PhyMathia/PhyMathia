@@ -120,12 +120,6 @@ html/PhyMathia-参赛介绍-ppt/
 _e2e5.mjs
 _split3.cjs
 
-# Remotion 视频工程：依赖与大批量采集帧不入库（成片另行归档）
-Html_video/node_modules/
-Html_video/quiz_real/capture/
-Html_video/quiz_real/out/
-Html_video/quiz_real/frames/
-
 # opencode 内部状态（计划/会话缓存，禁止入库）
 .zcode/
 .venv-linux/*
