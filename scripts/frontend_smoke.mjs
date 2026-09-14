@@ -543,10 +543,59 @@ check('graph-export: 完整内容模式（解除节点内滚动裁剪 + 展开�
   return true;
 });
 
+check('utopia: .pmu 快照格式（解析校验/摘要/文件名 + 导出接线 + 查看器只读边界）', () => {
+  const u = fs.readFileSync('src/static/js/utopia.js', 'utf8');
+  if (!u.includes("const UTOPIA_FORMAT = 'phymath-utopia/graph';")) throw new Error('格式 id 不符合约定');
+  if (!u.includes("const UTOPIA_EXT = '.pmu';")) throw new Error('扩展名应为 .pmu');
+  // 解析：正常 + 四类拒绝（非法 JSON / 非本格式 / 版本过高 / 缺 nodes）
+  const parse = sandbox.parseUtopiaSnapshot;
+  if (typeof parse !== 'function') throw new Error('parseUtopiaSnapshot 未暴露');
+  if (!parse(JSON.stringify({ format: 'phymath-utopia/graph', version: 1, nodes: [] })).ok) throw new Error('合法快照被判失败');
+  if (parse('{not json').ok !== false) throw new Error('非法 JSON 应被拒');
+  if (parse(JSON.stringify({ format: 'other/graph', version: 1, nodes: [] })).ok !== false) throw new Error('非本格式应被拒');
+  if (parse(JSON.stringify({ format: 'phymath-utopia/graph', version: 99, nodes: [] })).ok !== false) throw new Error('版本过高应被拒');
+  if (parse(JSON.stringify({ format: 'phymath-utopia/graph', version: 1 })).ok !== false) throw new Error('缺 nodes 应被拒');
+  // 摘要素函数
+  const sum = sandbox.utopiaSnapshotSummary({
+    title: 'T', nodes: [{ content: 'abcd' }, { content: 'ef' }], edges: [1], groups: [1, 2], messages: [1],
+  });
+  if (sum.nodes !== 2 || sum.edges !== 1 || sum.groups !== 2 || sum.messages !== 1 || sum.chars !== 6) {
+    throw new Error('摘要统计错误：' + JSON.stringify(sum));
+  }
+  // 文件名：带非法字符的标题必须被洗净且以 .pmu 结尾
+  const fn = sandbox.utopiaSnapshotFilename('会话 名/带*字符?');
+  if (!fn.endsWith('.pmu')) throw new Error('文件名缺扩展名');
+  if (/[\\/:*?"<>|]/.test(fn)) throw new Error('文件名残留非法字符：' + fn);
+  // 主应用接线：产物含 utopia.js、导出菜单有入口
+  if (!code.includes('buildUtopiaSnapshot') || !code.includes('exportUtopiaSnapshot')) throw new Error('主包未注册快照模块');
+  const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  if (!ge.includes('graphExportUtopia')) throw new Error('导出菜单缺 Utopia 快照入口');
+  if (!ge.includes('window.exportUtopiaSnapshot')) throw new Error('入口未调快照导出');
+  // 查看器只读边界：打包子集含渲染子系统与桩，且绝不含会话/AI/检测/Φ 包
+  const bv = fs.readFileSync('scripts/build_viewer.mjs', 'utf8');
+  for (const need of ['viewer-shims.js', 'graph-render.js', 'graph-workflow.js', 'utopia.js', 'viewer-main.js']) {
+    if (!bv.includes(`'${need}'`)) throw new Error('查看器打包缺 ' + need);
+  }
+  for (const banned of ['session.js', 'chat.js', 'chat-features.js', 'quiz.js', 'harness.js', 'models.js', 'ui.js', 'knowledge.js']) {
+    if (bv.includes(`'${banned}'`)) throw new Error('只读查看器不该打包 ' + banned);
+  }
+  const shims = fs.readFileSync('src/static/js/viewer-shims.js', 'utf8');
+  if (!/window\.saveGraphState = function \(\) \{\};/.test(shims)) throw new Error('查看器 saveGraphState 必须是空操作');
+  if (!shims.includes("Object.defineProperty(window, 'localStorage'")) throw new Error('查看器缺 localStorage 只读门面');
+  if (!['viewer.html'].every(f => fs.existsSync('src/static/' + f))) throw new Error('缺 src/static/viewer.html');
+  return true;
+});
+
 check('graph-contextmenu: 打包注册与产物符号（静态断言）', () => {
   const buildSrc = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
-  // 注册位置：graph-export.js 之后（graph-workflow.js 在实际构建顺序中位于 graph-export.js 之前）
-  if (!/'graph-export\.js',\s*'graph-contextmenu\.js',\s*'knowledge\.js'/.test(buildSrc)) return false;
+  // 注册的相对顺序：graph-export.js → utopia.js → graph-contextmenu.js → knowledge.js
+  // （utopia.js 与 graph-export.js 同属导出族；右键菜单须在 graph-export 之后注册）
+  let last = -1;
+  for (const f of ['graph-export.js', 'utopia.js', 'graph-contextmenu.js', 'knowledge.js']) {
+    const i = buildSrc.indexOf("'" + f + "'");
+    if (i < 0 || i < last) return false;
+    last = i;
+  }
   if (!code.includes('function openGraphContextMenu')) return false;
   if (!code.includes('graph-context-menu')) return false;
   if (!code.includes('if(e.button!==0)return;')) return false; // 产物含 pointerdown 右键过滤
