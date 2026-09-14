@@ -33,7 +33,7 @@ for _path in (_SRC_DIR, _ROOT_DIR):
 
 from http_client import close_http_client, get_http_client  # noqa: E402
 
-from server import backup, context, documents, knowledge, profile, prompts, storage  # noqa: F401
+from server import backup, concept, context, documents, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -240,6 +240,14 @@ async def api_models_chat(request: Request):
             system_content += _graph_path_instruction(graph_path, source_module)
         if workflow_context:
             system_content += _workflow_context_instruction(workflow_context)
+        # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
+        # 消息层管「我们聊到哪」，这一段管「这个话题的地基是什么」。
+        # 与画像注入同一范围（默认完整回答路径，不含 quick / 画布模块生成 / 支线）：
+        # 支线与模块重生成是局部动作，多这一层只会挤 token。查空返回空串 = 零回归。
+        if not is_quick and not workflow_context and not branch_id:
+            concept_text = concept.concept_context_text(prompt, session_id=session_id)
+            if concept_text:
+                system_content += "\n\n" + concept_text
         # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）
         if not is_quick and not workflow_context:
             _device_id = payload.get("device_id") or payload.get("deviceId") or ""

@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter
 
+from . import concept as concept_mod
 from . import context as context_mod
 from .config import LEVEL_PROMPTS
 from .prompts import MODULE_SYSTEM_PROMPT, QUICK_SYSTEM_PROMPT, get_system_prompt
@@ -39,6 +40,11 @@ async def preview_context(
     else:
         system_content = get_system_prompt()
     budget = context_mod.resolve_context_budget(model_name)
+    # 概念地基（M4）：体检工具必须与真实 chat 路径同构，否则「预览里没有」会被当成没生效
+    if not is_quick and not workflow and not branch_id:
+        concept_text = concept_mod.concept_context_text(prompt, session_id=session_id)
+        if concept_text:
+            system_content += "\n\n" + concept_text
     messages = [{"role": "system", "content": system_content}]
     if session_id:
         messages.extend(
