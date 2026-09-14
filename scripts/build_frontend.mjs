@@ -39,6 +39,7 @@ const entries = [
   'quiz-stats.js',
   'quiz-ui.js',
   'quiz-render.js',
+  'quiz-relearn.js',
 ];
 
 const chunks = [];

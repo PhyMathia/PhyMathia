@@ -2425,3 +2425,96 @@ class FocusSubgraphTest(unittest.TestCase):
         from harness.review import _focus_subgraph
         snap = {"nodes": [{"id": "A", "kind": "knowledge"}], "edges": []}
         self.assertIsNone(_focus_subgraph(snap, []))
+
+
+class QuizWeakSnapshotPromptTest(unittest.TestCase):
+    """M2（P0-A 检测闭环）：检测侧薄弱点随快照进提示词，并明文禁止状态类图元素。"""
+
+    def _snapshot(self):
+        return {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "简谐运动"}],
+            "edges": [],
+            "quiz_weak": [
+                {"title": "等时性", "wrong": 2, "mastery": 40, "sessionId": "sess_x"},
+            ],
+        }
+
+    def test_review_prompt_forbids_state_nodes(self):
+        from harness.prompts import HARNESS_SYSTEM_PROMPT
+        # 快照字段本身要被提示词解释（否则模型把 quiz_weak 当节点数据）
+        self.assertIn("quiz_weak", HARNESS_SYSTEM_PROMPT)
+        # 只许口头提示 + 内容性动作，禁状态类图元素（网无状态立场）
+        for token in ("禁止", "染色", "徽标", "内容性"):
+            self.assertIn(token, HARNESS_SYSTEM_PROMPT)
+        self.assertIn("口头", HARNESS_SYSTEM_PROMPT)
+
+    def test_quiz_weak_reaches_review_user_message(self):
+        from harness.prompts import build_review_messages
+        messages = build_review_messages(self._snapshot(), "梳理一下这张图")
+        user_text = messages[1]["content"]
+        self.assertIn("quiz_weak", user_text)
+        self.assertIn("等时性", user_text)
+        # 系统提示词同时在场（两者缺一都会让模型失去约束）
+        self.assertIn("quiz_weak", messages[0]["content"])
+
+    def test_snapshot_without_weak_stays_clean(self):
+        from harness.prompts import build_review_messages
+        messages = build_review_messages({"nodes": [], "edges": []}, "梳理一下这张图")
+        self.assertNotIn("quiz_weak", messages[1]["content"])
+
+    def test_normalize_snapshot_keeps_weak_field(self):
+        # 快照进入 harness 前会过 normalize_snapshot：附加字段不能被丢掉
+        snap = normalize_snapshot(self._snapshot())
+        self.assertIn("quiz_weak", snap)
+        self.assertEqual(snap["quiz_weak"][0]["title"], "等时性")
+
+    def test_focus_subgraph_keeps_weak_field(self):
+        # 大图降采样走 _focus_subgraph：薄弱点不是图元素，必须原样带过去
+        from harness.review import _focus_subgraph
+        sub = _focus_subgraph(self._snapshot(), ["A"], max_hops=1, max_nodes=40)
+        self.assertIsNotNone(sub)
+        self.assertEqual(sub.get("quiz_weak"), self._snapshot()["quiz_weak"])
+
+    def test_normalize_quiz_weak_sanitizes(self):
+        from harness.core import normalize_quiz_weak
+        self.assertEqual(normalize_quiz_weak(None), [])
+        self.assertEqual(normalize_quiz_weak("不是数组"), [])
+        # 无标题/非字典条目丢弃；数字字段安全转换
+        cleaned = normalize_quiz_weak([
+            {"title": "", "wrong": 1},
+            "junk",
+            {"title": "等时性", "wrong": "2", "mastery": None},
+        ])
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0]["wrong"], 2)
+        self.assertEqual(cleaned[0]["mastery"], 0)
+        # 条数上限（当前会话 Top3）
+        self.assertEqual(len(normalize_quiz_weak([{"title": f"t{i}"} for i in range(10)])), 3)
+
+    def test_review_graph_actually_sends_weak_points(self):
+        """端到端（normalize → 子图/压缩 → 提示词 → 模型调用）：薄弱点必须真的发出去。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            captured["messages"] = messages
+            return {
+                "content": '{"summary": "等时性你错了 2 次，建议优先重学", "operations": []}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            asyncio.run(review_mod.review_graph(
+                self._snapshot(),
+                "梳理一下这张图",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json",
+                self_check="off",
+            ))
+        joined = "\n".join(str(m.get("content") or "") for m in captured["messages"])
+        self.assertIn("等时性", joined)
+        # 模型侧的唯一防线（禁止状态类图元素）必须与快照同时到场
+        self.assertIn("禁止", joined)

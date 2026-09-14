@@ -879,6 +879,219 @@ check('model-group：组密钥写入同步到组内全部条目（组外不触�
   return true;
 });
 
+// ===== M2 检测闭环收口（quiz-relearn.js）：建议复习动作 / 同主题重测 / 重学引导 =====
+const M2_TOPIC_KEY = 'topic-HM';
+const M2_SESSION = 'sess_test';
+
+function m2SeedQuizStats(extra) {
+  const now = Date.now();
+  const stats = {
+    _meta: { version: 2, updatedAt: now, wrongQuestions: [] },
+    know_hm: {
+      title: '简谐运动', correct: 0, wrong: 2, topicKey: M2_TOPIC_KEY,
+      sessionId: M2_SESSION, dueAt: now - 3600000, history: [{ correct: false }],
+    },
+    know_hk: {
+      title: '胡克定律', correct: 0, wrong: 3, topicKey: 'topic-HK',
+      sessionId: M2_SESSION, dueAt: now - 3600000, history: [{ correct: false }],
+    },
+  };
+  if (extra) Object.assign(stats, extra);
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(stats));
+  return stats;
+}
+
+function m2WrongQuestion() {
+  return {
+    id: 'w_hm', title: '简谐运动', prompt: '简谐运动的周期由什么决定？',
+    options: [{ key: 'A', text: 'm 与 k' }, { key: 'B', text: '振幅' }],
+    correctIndex: 0, refId: 'kp_hm', sourceRef: 'kp_hm', sourceType: 'knowledge',
+    topicKey: M2_TOPIC_KEY, sessionId: M2_SESSION, wrongAt: Date.now(),
+  };
+}
+
+check('quiz-relearn：建议复习动作接线（两按钮 + 打包注册）静态断言', () => {
+  if (!code.includes('/* quiz-relearn.js */')) throw new Error('打包未注册 quiz-relearn.js');
+  if (!code.includes('quiz-weak-item-actions')) throw new Error('建议复习条目缺动作容器');
+  if (!code.includes("quizLocateTopic('")) throw new Error('缺「定位到画布」按钮接线');
+  if (!code.includes("quizRetestTopic('")) throw new Error('缺「重测同类题」按钮接线');
+  if (typeof sandbox.quizLocateTopic !== 'function' || typeof sandbox.quizRetestTopic !== 'function') {
+    throw new Error('入口未挂 window');
+  }
+  return true;
+});
+
+check('quiz-relearn：主题→定位目标解析（错题 sourceRef 优先，回退按标题匹配知识条目）', () => {
+  sandbox.window.getCurrentSessionId = () => M2_SESSION;
+  sandbox.invalidateKnowledgeCache();
+  sandbox.localStorage.setItem('phymathia_knowledge', JSON.stringify({
+    kp_hm: { id: 'kp_hm', title: '简谐运动', sessionId: M2_SESSION },
+  }));
+  // A：主题有错题快照且带 sourceRef → 直接用错题的落点
+  m2SeedQuizStats();
+  const stats = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_stats'));
+  stats._meta.wrongQuestions = [m2WrongQuestion()];
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(stats));
+  const viaWrong = sandbox._quizResolveTopicTarget(encodeURIComponent(M2_TOPIC_KEY));
+  if (!viaWrong || viaWrong.refId !== 'kp_hm' || viaWrong.isFormula !== false) {
+    throw new Error('错题 sourceRef 未优先生效: ' + JSON.stringify(viaWrong));
+  }
+  if (viaWrong.title !== '简谐运动') throw new Error('应带主题标题，实际 ' + viaWrong.title);
+  // B：无该主题错题 → 回退按标题匹配知识条目
+  m2SeedQuizStats();
+  const viaTitle = sandbox._quizResolveTopicTarget(encodeURIComponent(M2_TOPIC_KEY));
+  if (!viaTitle || viaTitle.refId !== 'kp_hm') throw new Error('标题回退未命中: ' + JSON.stringify(viaTitle));
+  // C：主题在该画布不存在 → null（查空是正常路径）
+  if (sandbox._quizResolveTopicTarget(encodeURIComponent('topic-none')) !== null) {
+    throw new Error('未知主题应返回 null');
+  }
+  return true;
+});
+
+check('quiz-relearn：同主题重测组卷（素材收缩 + 错题打头 + 去重截断，不动全量 pool）', () => {
+  const pool = {
+    knowledge: [
+      { id: 'kp_hm', title: '简谐运动', topicKey: M2_TOPIC_KEY, summary: 's' },
+      { id: 'kp_hk', title: '胡克定律', topicKey: 'topic-HK', summary: 's' },
+    ],
+    formulas: [{ id: 'f_zq', latex: 'T=2\\pi\\sqrt{m/k}', topicKey: M2_TOPIC_KEY }],
+  };
+  const scoped = sandbox._quizPoolForTopic(M2_TOPIC_KEY, pool);
+  if (scoped.knowledge.length !== 1 || scoped.knowledge[0].id !== 'kp_hm') throw new Error('知识条目未按主题收缩');
+  if (scoped.formulas.length !== 1 || scoped.formulas[0].id !== 'f_zq') throw new Error('公式条目未按主题收缩');
+  if (pool.knowledge.length !== 2) throw new Error('不得改动传入的全量素材');
+  // 组卷：2 道原错题打头，新题补齐到目标题数，同题干同答案去重（题型不同也算同一题）
+  const m2Opts = () => [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }];
+  const wrong = [
+    { id: 'w1', prompt: 'p1', options: m2Opts(), correctIndex: 0 },
+    { id: 'w2', prompt: 'p2', options: m2Opts(), correctIndex: 0 },
+    { id: 'w3', prompt: 'p3', options: m2Opts(), correctIndex: 0 },
+  ];
+  const generated = [
+    { id: 'g1', type: 'concept', prompt: 'p1', options: m2Opts(), correctIndex: 0 }, // 与 w1 同题干同答案 → 去重
+    { id: 'g2', type: 'concept', prompt: 'p2x', options: m2Opts(), correctIndex: 0 },
+    { id: 'g3', type: 'concept', prompt: 'p3x', options: m2Opts(), correctIndex: 0 },
+    { id: 'g4', type: 'concept', prompt: 'p4x', options: m2Opts(), correctIndex: 0 },
+  ];
+  const composed = sandbox._quizComposeTopicQuestions(wrong, generated, 4);
+  if (composed.length !== 4) throw new Error('应截断到目标题数 4，实际 ' + composed.length);
+  if (composed[0].id !== 'w1' || composed[1].id !== 'w2') throw new Error('同主题原错题应打头');
+  if (composed.some(q => q.id === 'g1')) throw new Error('同签名新题未去重');
+  if (composed.some(q => q.id === 'w3')) throw new Error('原错题最多取 2 道');
+  // 无选项的脏题不得进卷
+  if (sandbox._quizComposeTopicQuestions([{ id: 'bad', prompt: 'x' }], [], 4).length !== 0) {
+    throw new Error('无选项的题应被过滤');
+  }
+  return true;
+});
+
+check('quiz-relearn：重学引导（pill 两动作 + 我的理解节点 + 落点 + 联系模式预选起点）', () => {
+  sandbox.window.getCurrentSessionId = () => M2_SESSION;
+  sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: 'n1' });
+  const ctx = sandbox._quizRelearnCtxGet();
+  if (!ctx || ctx.title !== '简谐运动' || ctx.nodeId !== 'n1') throw new Error('引导上下文未建立');
+  const html = sandbox.quizRelearnPillHtml();
+  if (!html.includes('quizRelearnCreateNote()') || !html.includes('quizRelearnConnect()')) {
+    throw new Error('pill 缺两个建议动作');
+  }
+  if (!html.includes('写下总结节点') || !html.includes('连接先导概念')) throw new Error('动作文案缺失');
+  if (sandbox._quizRelearnNoteLabel('简谐运动') !== '我的理解：简谐运动') throw new Error('总结节点标题不符');
+  // 落点：定位节点旁 +24/+24；节点未知时退回画布默认落点（不抛错）
+  const realFind = sandbox._findGraphNode;
+  try {
+    sandbox._findGraphNode = id => (id === 'n1' ? { id: 'n1', x: 100, y: 200 } : null);
+    const near = sandbox._quizRelearnAnchorPoint('n1');
+    if (near.x !== 124 || near.y !== 224) throw new Error('落点应为源节点 +24/+24，实际 ' + JSON.stringify(near));
+    const fallback = sandbox._quizRelearnAnchorPoint('');
+    if (!Number.isFinite(fallback.x) || !Number.isFinite(fallback.y)) throw new Error('退化落点应仍为有效坐标');
+  } finally {
+    sandbox._findGraphNode = realFind;
+  }
+  // 真建节点：必须是 kind=human_note（「我的理解」，有手写弹窗）——blank 是「写要求→AI 生成」
+  // 的 AI 节点，没有手写路径，不能用来表达「我自己懂了的证据」
+  const store = { customNodes: [], connections: [], positions: {}, collapsed: {}, hidden: {}, groups: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, harnessDeleted: {}, pan: { x: 0, y: 0 }, zoom: 0.9 };
+  const realGetState = sandbox.window.getGraphState;
+  const realSaveState = sandbox.window.saveGraphState;
+  const realGetChat = sandbox.window.getChatHistory;
+  const realEdit = sandbox.editHumanNoteNode;
+  // renderGraphCanvas 每次都会重新 getElementById 取画布：并发段的 knowledge 用例会把
+  // getElementById 换成哑元素（无 appendChild），此处须自己钉住一个宽松元素（本检查是同步
+  // 用例，不会与其它用例交错）
+  const realGetById = sandbox.document.getElementById;
+  let edited = null;
+  try {
+    sandbox.document.getElementById = () => loose('smokeGraphCanvasEl');
+    sandbox.window.getGraphState = () => store;
+    sandbox.window.saveGraphState = (sid, next) => Object.assign(store, next);
+    sandbox.window.getChatHistory = () => [];
+    sandbox.editHumanNoteNode = (id) => { edited = id; };
+    sandbox.quizRelearnCreateNote();
+    const created = (vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note');
+    if (created.length !== 1) throw new Error('应创建 1 个「我的理解」节点，实际 ' + created.length);
+    if (created[0].label !== '我的理解：简谐运动') throw new Error('节点标题未带主题：' + created[0].label);
+    if (edited !== created[0].id) throw new Error('未打开「编辑我的理解」弹窗');
+    const ctx2 = sandbox._quizRelearnCtxGet();
+    if (ctx2.noteNodeId !== created[0].id) throw new Error('引导未记住总结节点');
+    if (!sandbox.quizRelearnPillHtml().includes('继续写总结')) throw new Error('pill 文案未切到续写态');
+    // 连接：把总结节点设为既有联系模式起点
+    sandbox.quizRelearnConnect();
+    if (vm.runInContext('graphView.linkMode', sandbox) !== true) throw new Error('未进入联系模式');
+    if (vm.runInContext('graphView.linkFirstNodeId', sandbox) !== created[0].id) throw new Error('未预选总结节点为起点');
+    // 再点一次不重复建节点，改为聚焦 + 打开编辑器
+    sandbox.quizRelearnCreateNote();
+    if ((vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note').length !== 1) {
+      throw new Error('重复点击不应再建节点');
+    }
+    if (edited !== created[0].id) throw new Error('重复点击应重新打开编辑器');
+  } finally {
+    sandbox.window.getGraphState = realGetState;
+    sandbox.window.saveGraphState = realSaveState;
+    sandbox.window.getChatHistory = realGetChat;
+    sandbox.editHumanNoteNode = realEdit;
+    sandbox.document.getElementById = realGetById;
+  }
+  // 落点未知时「连接先导概念」走既有联系模式兜底分支（不崩、不预设起点）
+  sandbox.clearQuizRelearnGuide();
+  sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: '' });
+  sandbox.quizRelearnConnect();
+  sandbox.clearQuizRelearnGuide();
+  if (sandbox.quizRelearnPillHtml() !== '') throw new Error('清空引导后 pill 不应再出动作');
+  return true;
+});
+
+check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）', () => {
+  sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
+  sandbox.window.getCurrentSessionId = () => M2_SESSION;
+  sandbox.window.getGraphViewNodes = () => [{ id: 'A', kind: 'knowledge', label: '简谐运动', content: '往复运动' }];
+  sandbox.window.getGraphViewEdges = () => [];
+  sandbox.window.getSelectedGraphNodeIds = () => [];
+  m2SeedQuizStats();
+  const snap = sandbox.buildHarnessSnapshot(false, [], null);
+  if (!Array.isArray(snap.quiz_weak)) throw new Error('quiz_weak 未注入');
+  if (snap.quiz_weak.length !== 2) throw new Error('应注入当前会话 2 条薄弱点，实际 ' + snap.quiz_weak.length);
+  for (const key of ['title', 'wrong', 'mastery', 'sessionId']) {
+    if (!(key in snap.quiz_weak[0])) throw new Error('薄弱点字段缺 ' + key);
+  }
+  // Top3 截断
+  const many = { _meta: { version: 2, wrongQuestions: [] } };
+  for (let i = 0; i < 5; i++) {
+    many['k' + i] = { title: '薄弱' + i, correct: 0, wrong: 2, topicKey: 'topic-' + i, sessionId: M2_SESSION, dueAt: 1 };
+  }
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(many));
+  const capped = sandbox.buildHarnessSnapshot(false, [], null);
+  if (capped.quiz_weak.length !== 3) throw new Error('应截断到 Top3，实际 ' + capped.quiz_weak.length);
+  // 无薄弱点 → 不带该字段（避免空数组噪声）
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify({ _meta: { version: 2, wrongQuestions: [] } }));
+  const clean = sandbox.buildHarnessSnapshot(false, [], null);
+  if ('quiz_weak' in clean) throw new Error('无薄弱点时应省略 quiz_weak');
+  // 清理污染
+  sandbox.localStorage.removeItem('phymathia_quiz_stats');
+  sandbox.localStorage.removeItem('phymathia_knowledge');
+  sandbox.invalidateKnowledgeCache();
+  return true;
+});
+
+
 await Promise.all(pendingChecks).catch(() => {});
 // 串行边界用例：proxyChatWithModel 需替换全局 fetch，放到全部并发检查结束后单独跑
 try {
@@ -906,5 +1119,107 @@ try {
   failed++;
   console.error('❌ model-group：请求边界携带同步后的组密钥 ->', e.message);
 }
+// ===== 串行边界：以下用例改共享状态（localStorage 知识/统计键）且会 await，
+// 必须放在全部并发检查之后——否则会与在途的 knowledge/quiz 异步用例互相踩键 =====
+
+check('quiz-relearn：quizRetestTopic 全链路（真实检测态按主题组卷，不改全量素材池）', async () => {
+  sandbox.window.getCurrentSessionId = () => M2_SESSION;
+  // 顶层 let（quizSourcePreference/quizState）不是沙箱全局属性，用同 context 的词法读/写访问
+  const prevPref = vm.runInContext('quizSourcePreference', sandbox);
+  vm.runInContext('quizSourcePreference = "local"', sandbox); // 只走本地出题，不触发 AI 链路
+  try {
+    await sandbox.openQuiz('session'); // 真实建立 quizState（沙箱 fetch 返回空数据）
+    m2SeedQuizStats();
+    const stats = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_stats'));
+    stats._meta.wrongQuestions = [m2WrongQuestion()];
+    sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(stats));
+    const ok = await sandbox.quizRetestTopic(encodeURIComponent(M2_TOPIC_KEY));
+    if (ok !== true) throw new Error('重测应返回 true');
+    const phase = vm.runInContext('quizState && quizState.phase', sandbox);
+    const qlen = vm.runInContext('quizState && quizState.questions ? quizState.questions.length : -1', sandbox);
+    const filter = vm.runInContext('typeof quizFilterTopic === "string" ? quizFilterTopic : ""', sandbox);
+    const poolLen = vm.runInContext('quizState && quizState.pool ? quizState.pool.knowledge.length : -1', sandbox);
+    if (phase !== 'question') throw new Error('应进入答题相位，实际 ' + phase);
+    if (qlen < 1) throw new Error('同主题原错题应进卷，实际 ' + qlen);
+    if (filter !== M2_TOPIC_KEY) throw new Error('主题过滤未生效：' + filter);
+    if (poolLen !== 0) throw new Error('不得改动全量素材池，实际 ' + poolLen);
+    // 无素材又无错题的主题：优雅返回 false（不抛错、不改相位）
+    const miss = await sandbox.quizRetestTopic(encodeURIComponent('topic-none'));
+    if (miss !== false) throw new Error('无素材主题应返回 false');
+    const phaseAfter = vm.runInContext('quizState && quizState.phase', sandbox);
+    if (phaseAfter !== 'question') throw new Error('查空路径不应改相位，实际 ' + phaseAfter);
+  } finally {
+    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}`, sandbox);
+    sandbox.localStorage.removeItem('phymathia_quiz_stats');
+  }
+  return true;
+});
+
+check('quiz-relearn：quizLocateTopic 全链路（主题解析 → 定位内核 → 重学引导带落点）', async () => {
+  sandbox.window.getCurrentSessionId = () => M2_SESSION;
+  sandbox.invalidateKnowledgeCache();
+  sandbox.localStorage.setItem('phymathia_knowledge', JSON.stringify({
+    kp_hm: { id: 'kp_hm', title: '简谐运动', sessionId: M2_SESSION },
+  }));
+  m2SeedQuizStats();
+  const stats = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_stats'));
+  stats._meta.wrongQuestions = [m2WrongQuestion()];
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(stats));
+  const realGoTo = sandbox.window.goToKnowledgeNode;
+  const realLocate = sandbox.window.locateFormulaNode;
+  const realGetLast = sandbox.window.getLastLocatedGraphNodeId;
+  const calls = [];
+  try {
+    sandbox.window.goToKnowledgeNode = async (refId) => {
+      calls.push({ kind: 'knowledge', refId });
+      sandbox._rememberLocatedGraphNode('node_kp_hm'); // 模拟定位内核回填落点
+      return true;
+    };
+    sandbox.window.locateFormulaNode = async (refId) => {
+      calls.push({ kind: 'formula', refId });
+      return true;
+    };
+    const ok = await sandbox.quizLocateTopic(encodeURIComponent(M2_TOPIC_KEY));
+    if (ok !== true) throw new Error('定位应成功');
+    if (!calls.length || calls[0].kind !== 'knowledge' || calls[0].refId !== 'kp_hm') {
+      throw new Error('应按错题 sourceRef 走知识点定位，实际 ' + JSON.stringify(calls));
+    }
+    const ctx = sandbox._quizRelearnCtxGet();
+    if (!ctx || ctx.title !== '简谐运动' || ctx.nodeId !== 'node_kp_hm') {
+      throw new Error('引导上下文未带标题/落点: ' + JSON.stringify(ctx));
+    }
+    if (sandbox.window.getLastLocatedGraphNodeId() !== 'node_kp_hm') throw new Error('落点回填未生效');
+    if (!sandbox.quizRelearnPillHtml().includes('quizRelearnCreateNote()')) throw new Error('pill 缺引导动作');
+    // 公式类主题走公式定位分支
+    const fStats = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_stats'));
+    fStats._meta.wrongQuestions = [Object.assign(m2WrongQuestion(), {
+      id: 'w_f', sourceRef: 'f_zq', sourceType: 'formula', formulaText: 'T=2\\pi\\sqrt{m/k}', topicKey: 'topic-F',
+    })];
+    fStats.k_f = { title: '弹簧振子周期', correct: 0, wrong: 2, topicKey: 'topic-F', sessionId: M2_SESSION, dueAt: 1 };
+    sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify(fStats));
+    const okF = await sandbox.quizLocateTopic(encodeURIComponent('topic-F'));
+    if (okF !== true) throw new Error('公式主题定位应成功');
+    if (!calls.some(c => c.kind === 'formula' && c.refId === 'f_zq')) {
+      throw new Error('公式主题应走 locateFormulaNode，实际 ' + JSON.stringify(calls));
+    }
+    // 未知主题：静默失败，不跳转
+    const before = calls.length;
+    const miss = await sandbox.quizLocateTopic(encodeURIComponent('topic-none'));
+    if (miss !== false || calls.length !== before) throw new Error('未知主题不应触发跳转');
+  } finally {
+    sandbox.window.goToKnowledgeNode = realGoTo;
+    sandbox.window.locateFormulaNode = realLocate;
+    if (realGetLast) sandbox.window.getLastLocatedGraphNodeId = realGetLast;
+    sandbox.clearQuizRelearnGuide();
+    sandbox.localStorage.removeItem('phymathia_quiz_stats');
+    sandbox.localStorage.removeItem('phymathia_knowledge');
+    sandbox.invalidateKnowledgeCache();
+  }
+  return true;
+});
+
+// 串行段里的异步用例同样进 pendingChecks——必须再收一次，否则断言结果赶不上退出判定
+await Promise.all(pendingChecks).catch(() => {});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

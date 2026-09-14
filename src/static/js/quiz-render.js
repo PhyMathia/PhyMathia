@@ -159,8 +159,14 @@ function _renderQuizResult() {
       <div class="quiz-weak-list">
         ${stats.review.map(item => `
           <div class="quiz-weak-item">
-            <span>${_quizEscape(item.title)}</span>
-            <span>掌握度 ${item.mastery || 0}% · ${item.wrong} 次答错 · ${item.dueAt ? '下次复习 ' + _quizDueLabel(item.dueAt) : '等待安排'}</span>
+            <div class="quiz-weak-item-main">
+              <span>${_quizEscape(item.title)}</span>
+              <span>掌握度 ${item.mastery || 0}% · ${item.wrong} 次答错 · ${item.dueAt ? '下次复习 ' + _quizDueLabel(item.dueAt) : '等待安排'}</span>
+            </div>
+            <div class="quiz-weak-item-actions">
+              <button class="quiz-help-btn" onclick="quizLocateTopic('${encodeURIComponent(item.key || '')}')" title="跳到画布上这个知识点的位置（看完可返回）">定位到画布</button>
+              <button class="quiz-help-btn" onclick="quizRetestTopic('${encodeURIComponent(item.key || '')}')" title="只按这个主题重新组一组题">重测同类题</button>
+            </div>
           </div>`).join('')}
       </div>
     </div>

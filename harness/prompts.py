@@ -10,8 +10,11 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
     {"id": "A", "kind": "knowledge", "label": "导数", "content": "...", "formula": ""},
     {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角", "content": "...", "formula": ""}
   ],
-  "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖", "label": "需要先掌握"}]
+  "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖", "label": "需要先掌握"}],
+  "quiz_weak": [{"title": "等时性", "wrong": 2, "mastery": 40, "sessionId": "sess_x"}]
 }
+
+快照可能带 quiz_weak 字段（可选）：用户在知识检测里的薄弱知识点，含答错次数与掌握度，限当前会话前三条。
 
 可用节点类型，必须严格使用 kind 和 module_key：
 - kind=module, module_key=physics：物理视角
@@ -112,6 +115,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 - 如果用户说“撤销/回退/恢复刚才的修改”，且输入中提供了上一步操作，系统会自动执行确定性撤销，你不需要再输出删除/恢复操作；如果没有提供上一步操作，请文字说明无法撤销什么。
 - 如果指令缺少必要信息且无法从历史推断（例如没有指定任何节点、也没有明确操作），可以只输出 JSON：{"clarify": {"question": "需要确认的问题", "options": ["选项1", "选项2"]}}，不要编造大改动。
 - 如果输入标注了重点节点（“用户重点指定的节点”），优先只操作这些节点；未指定重点节点时才全局审阅。
+- 快照若带 quiz_weak（用户在检测中的薄弱知识点），可以在 summary 里【口头】提示，例如“等时性你错了 2 次，建议优先重学，或补一条它与先导概念的连线”。但严禁据此创建任何状态类图元素：不要新增“薄弱/待复习/掌握度/进度”节点，不要给节点染色、加徽标或评级，也不要改写标题去表达状态。只允许建议【内容性】动作——补连线、写总结节点、回到该知识点重学。
 """
 
 PHYMATHIA_EVALUATION_STANDARDS = """PhyMathia 评价标准：

@@ -356,20 +356,17 @@ function _findQuizJumpQuestion(encodedId) {
   return null;
 }
 
-async function jumpQuizToSource(encodedId) {
-  const question = _findQuizJumpQuestion(encodedId);
-  if (!question) {
-    _quizShowToast('找不到这道题的来源');
-    return;
-  }
-  const refId = question.sourceRef || question.refId || '';
+// 定位内核：题库/错题/建议复习（M2）三处共用——只认 (refId, isFormula)，
+// 由调用方负责从题目/主题解析出引用（见 quiz-relearn.js 的 _quizResolveTopicTarget）。
+async function _quizJumpToRef(refId, isFormula) {
+  // 上一次定位留下的重学引导先清掉（quizLocateTopic 会在定位成功后重新挂上）
+  if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
   if (!refId) {
     _quizShowToast('这道题没有关联知识点');
-    return;
+    return false;
   }
-  const isFormula = question.sourceType === 'formula' || !!(question.formulaText || question.latex);
-  // 记录返回现场：从题库/错题视图跳转时，保留“返回题库/错题”入口
-  if (quizState && (quizState.phase === 'bank' || quizState.phase === 'wrong')) {
+  // 记录返回现场：从题库/错题/结果视图跳转时，保留「返回题库/错题/检测结果」入口
+  if (quizState && (quizState.phase === 'bank' || quizState.phase === 'wrong' || quizState.phase === 'result')) {
     quizReturnState = {
       phase: quizState.phase,
       filterSession: quizBankFilterSession || '',
@@ -380,28 +377,41 @@ async function jumpQuizToSource(encodedId) {
     if (isFormula) {
       if (typeof window.locateFormulaNode !== 'function') {
         _quizShowToast('跳转功能暂不可用');
-        return;
+        return false;
       }
       const ok = await window.locateFormulaNode(refId);
       if (ok) {
         if (typeof closeQuiz === 'function') closeQuiz();
         if (typeof showQuizReturnPill === 'function') showQuizReturnPill();
       }
-    } else {
-      if (typeof window.goToKnowledgeNode !== 'function') {
-        _quizShowToast('跳转功能暂不可用');
-        return;
-      }
-      const ok = await window.goToKnowledgeNode(refId);
-      if (ok) {
-        if (typeof closeQuiz === 'function') closeQuiz();
-        if (typeof showQuizReturnPill === 'function') showQuizReturnPill();
-      }
+      return !!ok;
     }
+    if (typeof window.goToKnowledgeNode !== 'function') {
+      _quizShowToast('跳转功能暂不可用');
+      return false;
+    }
+    const ok = await window.goToKnowledgeNode(refId);
+    if (ok) {
+      if (typeof closeQuiz === 'function') closeQuiz();
+      if (typeof showQuizReturnPill === 'function') showQuizReturnPill();
+    }
+    return !!ok;
   } catch (e) {
     console.warn('Quiz source jump failed:', e);
     _quizShowToast('跳转失败，请重试');
+    return false;
   }
+}
+
+async function jumpQuizToSource(encodedId) {
+  const question = _findQuizJumpQuestion(encodedId);
+  if (!question) {
+    _quizShowToast('找不到这道题的来源');
+    return false;
+  }
+  const refId = question.sourceRef || question.refId || '';
+  const isFormula = question.sourceType === 'formula' || !!(question.formulaText || question.latex);
+  return _quizJumpToRef(refId, isFormula);
 }
 
 async function _loadQuizBankFromServer() {
