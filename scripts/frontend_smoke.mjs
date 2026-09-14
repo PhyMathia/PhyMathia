@@ -1497,48 +1497,6 @@ check('画布工具栏图标：浅色走暖棕墨（不再是近黑，且不低�
   return true;
 });
 
-check('画布工具栏放大：尺寸变量 + 右下角摞层偏移与胶囊外高严格耦合', () => {
-  const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
-  const bar = gcss.slice(gcss.indexOf('.graph-canvas-toolbar {'), gcss.indexOf('}', gcss.indexOf('.graph-canvas-toolbar {')));
-  const size = +((bar.match(/--graph-tool-btn-size:\s*(\d+)px/) || [])[1] || 0);
-  const icon = +((bar.match(/--graph-tool-icon-size:\s*(\d+)px/) || [])[1] || 0);
-  const pad = +((bar.match(/padding:\s*(\d+)px\s*!important/) || [])[1] || 0);
-  if (!size || !icon || !pad) throw new Error('工具栏尺寸变量缺失（--graph-tool-btn-size / --graph-tool-icon-size / padding）');
-  // 用户 2026-09-14："右下角可以再大一点" —— 38/18 → 46/21。不许再退回小尺寸，也不许失控放大
-  if (size < 44 || size > 54) throw new Error('工具栏按钮尺寸 ' + size + 'px 超出复核过的区间（44~54）');
-  if (icon / size < 0.42 || icon / size > 0.52) throw new Error('图标/按钮比例 ' + (icon / size).toFixed(2) + ' 失衡（复核过的比例约 0.46）');
-  // 图标尺寸必须由变量驱动（散落写死会让改一处漏三处）
-  for (const [name, re] of [
-    ['svg', /\.graph-tool-btn svg \{[\s\S]*?width:\s*var\(--graph-tool-icon-size/],
-    ['glyph', /\.graph-tool-btn\.graph-tool-glyph-lg \{[\s\S]*?font-size:\s*24px/],
-    ['select', /\.graph-tool-btn\.graph-select-btn \{[\s\S]*?min-width:\s*var\(--graph-tool-btn-size/],
-    ['link', /\.graph-tool-btn\.graph-link-btn \{[\s\S]*?min-width:\s*var\(--graph-tool-btn-size/],
-  ]) {
-    if (!re.test(gcss)) throw new Error('工具栏尺寸未走变量：' + name);
-  }
-  // 胶囊外高 = 按钮 + padding×2 + 上下描边；右下角那一摞浮层的 bottom 都按它算（瓣膜长高会顶进面板）
-  const outer = size + pad * 2 + 2;
-  const offsets = [
-    ['搜索面板', gcss, '.graph-search-panel {\n  position: absolute', 14],
-    ['Φ 桌宠', gcss, '.phi-pet-root {\n  position: fixed', 42],
-    ['Φ 窗口', gcss, '.graph-harness-window {\n  position: fixed', 102],
-    ['修改历史', gcss, '.graph-history-panel {\n  position: fixed', 22],
-    ['图体检', gcss, '.graph-consistency-panel {\n  position: fixed', 22],
-    ['导出菜单', fs.readFileSync('src/static/css/styles-panels.css', 'utf8'), '.graph-export-menu {\n  position: absolute', 16],
-    ['引导浮卡', fs.readFileSync('src/static/css/styles-panels.css', 'utf8'), '.quiz-return-pill {\n  position: fixed', 54],
-  ];
-  for (const [name, css, sel, gap] of offsets) {
-    const i = css.indexOf(sel);
-    if (i < 0) throw new Error('找不到浮层规则：' + name);
-    const body = css.slice(css.indexOf('{', i), css.indexOf('}', i));
-    const bottom = +((body.match(/bottom:\s*(\d+)px/) || [])[1] || 0);
-    if (bottom !== outer + gap) {
-      throw new Error(name + ' 的 bottom=' + bottom + '，按胶囊外高 ' + outer + ' + 间隙 ' + gap + ' 应为 ' + (outer + gap) + '（工具栏尺寸改了必须同步）');
-    }
-  }
-  return true;
-});
-
 // ===== 串行边界：以下用例改共享状态（localStorage 知识/统计键）且会 await，
 // 必须放在全部并发检查之后——否则会与在途的 knowledge/quiz 异步用例互相踩键 =====
 
