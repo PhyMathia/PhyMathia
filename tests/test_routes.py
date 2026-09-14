@@ -14,6 +14,8 @@ import os
 import sys
 import tempfile
 import unittest
+
+import httpx
 from pathlib import Path
 from unittest import mock
 
@@ -417,6 +419,60 @@ class ExtractKnowledgeEndpointTest(RouteTestBase):
         self.assertIn("胡克定律", it2["summary"])
         self.assertNotEqual(it2["anchorSummary"], it2["summary"])
         self.assertIn("回复力让物体振动", it2["anchorSummary"])
+
+
+class ProxyOpencodeSessionHeaderTest(RouteTestBase):
+    """OpenCode 网关会话头（x-opencode-session）：同会话稳定注入 + 客户端 UA。
+
+    OpenCode 要求/建议代理请求携带 x-opencode-session（网关按会话路由并优化
+    prompt 缓存），并用可识别 User-Agent 标明客户端。用 MockTransport 截获
+    代理实际发出的请求头做断言，不触网。
+    """
+
+    def _capture_upstream(self, provider, base_url, session_id=None):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["headers"] = dict(request.headers)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(main_mod, "get_http_client", return_value=async_client):
+            payload = {
+                "messages": [{"role": "user", "content": "hi"}],
+                "provider": provider,
+                "api_key": "sk-user-supplied",
+                "base_url": base_url,
+                "model": "test-model",
+                "stream": False,
+            }
+            if session_id is not None:
+                payload["session_id"] = session_id
+            resp = self.client.post("/api/models/chat", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        return seen
+
+    def test_opencode_request_carries_session_and_ua(self):
+        seen = self._capture_upstream(
+            "opencode-go", "https://opencode.ai/zen/go/v1", "sess_abc123"
+        )
+        self.assertEqual(seen["headers"].get("x-opencode-session"), "sess_abc123")
+        self.assertTrue(
+            seen["headers"].get("user-agent", "").startswith("PhyMathia/"),
+            f"UA 应标明客户端，实际 {seen['headers'].get('user-agent')}",
+        )
+
+    def test_opencode_without_session_falls_back_to_stable_id(self):
+        seen = self._capture_upstream("opencode", "https://opencode.ai/zen/v1", None)
+        self.assertEqual(seen["headers"].get("x-opencode-session"), "phymathia-anonymous")
+
+    def test_non_opencode_target_has_no_session_header(self):
+        seen = self._capture_upstream("deepseek", "https://api.deepseek.com", "sess_abc123")
+        self.assertNotIn("x-opencode-session", seen["headers"])
+        self.assertNotIn("User-Agent", seen["headers"])
+
+
 
 
 if __name__ == "__main__":

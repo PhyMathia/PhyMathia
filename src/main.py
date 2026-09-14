@@ -132,6 +132,20 @@ async def openai_chat_completions(request: Request):
     raise HTTPException(status_code=400, detail="本地 Mock 已移除，请在模型设置中配置 AI 模型（可直接使用免费模型）")
 
 
+def _opencode_session_headers(base_url: str, session_id: str) -> dict:
+    """OpenCode 网关（opencode.ai）的会话标识头：
+    x-opencode-session 取当前聊天会话 id——同会话保持稳定，网关按它路由并优化
+    prompt 缓存（官方文档：缺失会被列入 problematic clients，缓存降级并受滥用监控）；
+    User-Agent 按其文档要求标明客户端身份而非通用 http 库名（与 config.js APP_VERSION 同步）。
+    非 opencode.ai 域名不附加任何头。"""
+    if "opencode.ai" not in base_url:
+        return {}
+    return {
+        "x-opencode-session": session_id or "phymathia-anonymous",
+        "User-Agent": "PhyMathia/1.4.1",
+    }
+
+
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
     """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
@@ -286,6 +300,7 @@ async def api_models_chat(request: Request):
     }
     if api_key and provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
+    headers.update(_opencode_session_headers(base_url, session_id))
     target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
     module_key = target.get("module") or source_module
     is_strict_module = module_key in ("socratic", "learn") and (
@@ -423,6 +438,7 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
         headers = {"Content-Type": "application/json"}
         if api_key and provider not in ("opencode", "opencode-go"):
             headers["Authorization"] = f"Bearer {api_key}"
+        headers.update(_opencode_session_headers(base_url, session_id))
         body = {
             "model": model_name,
             "messages": [
