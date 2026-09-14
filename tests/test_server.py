@@ -18,6 +18,7 @@ for p in (ROOT, SRC):
 from server import backup as backup_mod
 from server import config as config_mod
 from server import context as context_mod
+from server import concept as concept_mod
 from server import documents as documents_mod
 from server import knowledge as knowledge_mod
 from server import prompts as prompts_mod
@@ -874,6 +875,205 @@ class RollingMemoryTest(unittest.TestCase):
             context_mod._resolve_messages_path = orig_resolve
             context_mod._read_rolling_memory = orig_rm
         self.assertEqual(result[0]["content"], "（会话记忆）之前聊过简谐运动")
+
+
+class ConceptGroundingTest(unittest.TestCase):
+    """M4 概念先导链上下文：匹配闸门、三级推导、预算与零回归。"""
+
+    def _fixture(self):
+        return {
+            "shm": {
+                "id": "shm", "title": "简谐运动", "sessionId": "sess_old",
+                "summary": "回复力与位移成正比且反向，运动方程的解是正弦函数，周期由系统参数决定。",
+                "summarySource": "model",
+                "formulas": ["$F=-kx$", r"$\omega=\sqrt{k/m}$", r"$T=2\pi\sqrt{m/k}$"],
+            },
+            "hooke": {
+                "id": "hooke", "title": "胡克定律", "sessionId": "sess_old",
+                "summary": "弹性限度内弹力与形变量成正比，是线性回复力的来源。",
+                "summarySource": "model", "formulas": ["$F=-kx$"],
+            },
+            "damped": {
+                "id": "damped", "title": "阻尼振动", "sessionId": "sess_old",
+                "summary": "存在阻尼时振幅随时间指数衰减，能量被耗散。",
+                "summarySource": "model", "formulas": [r"$m\ddot{x}+c\dot{x}+kx=0$"],
+            },
+            "template": {
+                "id": "template", "title": "梯度的定义与坐标表达", "sessionId": "sess_old",
+                "summary": "### 数学视角 梯度是向量分析中的核心算子……", "summarySource": "local",
+                "formulas": [r"$\nabla f$"],
+            },
+        }
+
+    # ====== 匹配闸门 ======
+
+    def test_formula_symbol_in_prompt_matches(self):
+        """问题里出现条目公式符号（`F=-kx`）→ 命中。"""
+        refs = concept_mod.match_concept_details("F=-kx 里的 k 代表什么？", self._fixture())
+        self.assertIn("hooke", [r["id"] for r in refs])
+        self.assertTrue(any("kx" in r["hits"] for r in refs))
+
+    def test_single_letter_symbol_does_not_match(self):
+        """单字母公式符号（x/t）不参与检索——否则「解释梯度」会连到「简谐运动」。"""
+        item = {"only": {"id": "only", "title": "无关条目", "formulas": ["$x = t$"]}}
+        self.assertEqual(concept_mod.match_concepts("请解释 x 与 t 的关系", item), [])
+
+    def test_title_run_matches_concept_name(self):
+        refs = concept_mod.match_concepts("简谐运动的周期由什么决定？", self._fixture())
+        self.assertEqual(refs[:1], ["shm"])
+
+    def test_weak_run_needs_domain_term_support(self):
+        """2 字串只在「跨条目领域词」或公式符号支撑时放行（宁可漏报不可误报）。
+
+        注：「阻尼振动」这类 4 字整名重叠属实质证据（强串），不受此闸门限制；
+        这里用只有 2 字重叠的「振动分析」验证闸门本身。
+        """
+        lone = {"damped": {"id": "damped", "title": "阻尼振动", "formulas": []}}
+        self.assertEqual(concept_mod.match_concepts("振动分析怎么做", lone), [])
+        with_sibling = dict(lone, forced={"id": "forced", "title": "受迫振动", "formulas": []})
+        self.assertIn("damped", concept_mod.match_concepts("振动分析怎么做", with_sibling))
+
+    def test_exact_concept_name_always_admitted(self):
+        """问题里写出的完整概念名是强证据，不需要额外支撑。"""
+        lone = {"damped": {"id": "damped", "title": "阻尼振动", "formulas": []}}
+        self.assertEqual(concept_mod.match_concepts("阻尼振动为什么振幅会衰减", lone), ["damped"])
+
+    def test_generic_term_does_not_trigger_alone(self):
+        """「运动」这类泛后缀词不单独触发（无实质重叠 + 无公式支撑时查空）。"""
+        item = {"x": {"id": "x", "title": "运动", "formulas": []}}
+        self.assertEqual(concept_mod.match_concepts("请描述运动的相对性", item), [])
+
+    def test_shared_runs_takes_maximal_common_substring(self):
+        """共享串是「极大公共子串」，不是整串包含：整名重叠与 2 字领域词都要能拿到。"""
+        self.assertIn("简谐运动", concept_mod._shared_runs("简谐运动的周期", "简谐运动", 2, 4))
+        self.assertIn("阻尼振动", concept_mod._shared_runs("阻尼振动为什么衰减", "阻尼振动", 2, 4))
+        # 单字命中（「动」在「运动」里）不足阈值，不算证据
+        self.assertEqual(concept_mod._shared_runs("非线性振动的特点", "简谐运动", 2, 4), [])
+
+    def test_stop_char_fragments_rejected(self):
+        """达长度的共享串含功能字时仍要丢弃——判定看串里有没有功能字，不看整串相等。
+
+        「和线」长度 2、满足长度阈值，但含「和」，是碎片不是术语；这条闸门在匹配层
+        （而不是 _shared_runs 里）执行，因为它要区分「振动」（真术语）与「和线」。
+        """
+        self.assertEqual(concept_mod._shared_runs("它和线性情况", "运动", 2, 4), [])
+        self.assertTrue(concept_mod._STOP_CHARS & set("和线"))
+        self.assertFalse(concept_mod._STOP_CHARS & set("振动"))
+        self.assertEqual(
+            concept_mod.match_concepts("它和线性情况有什么本质区别",
+                                       {"x": {"id": "x", "title": "运动", "formulas": []}}), [])
+
+    def test_unrelated_question_matches_nothing(self):
+        for q in ("今天午饭吃什么", "帮我写一首诗"):
+            self.assertEqual(concept_mod.match_concepts(q, self._fixture()), [])
+
+    def test_same_session_scope_option(self):
+        items = self._fixture()
+        self.assertEqual(
+            concept_mod.match_concepts("简谐运动的周期", items, session_id="sess_new",
+                                       allow_cross_session=False), [])
+        self.assertEqual(
+            concept_mod.match_concepts("简谐运动的周期", items, session_id="sess_old",
+                                       allow_cross_session=False)[:1], ["shm"])
+
+    # ====== 三级推导 ======
+
+    def test_shared_formula_gives_prerequisites(self):
+        """结构边：与命中概念共享公式的条目成为先导（简谐运动 → 胡克定律）。
+
+        注：夹具里「阻尼振动」也含 kx，共享公式的邻居不止一个；这里断言胡克定律在列，
+        且 via 标成结构边（顺序由共享 token 数决定，不在测试里锁死）。
+        """
+        data = concept_mod.build_grounding(self._fixture(), ["shm"], session_id="sess_new")
+        by_title = {row["title"]: row for row in data["one"]}
+        self.assertIn("胡克定律", by_title)
+        self.assertEqual(by_title["胡克定律"]["via"], "formula")
+
+    def test_explicit_canvas_edge_wins(self):
+        """显式边（画布联系线）优先于结构边，并带上用户写的关系说明。"""
+        data = concept_mod.build_grounding(
+            self._fixture(), ["damped"],
+            pairs=[("damped", "shm", "小阻尼近似"), ("damped", "hooke", "")])
+        first = data["one"][0]
+        self.assertEqual(first["via"], "explicit")
+        self.assertEqual(first["relation"], "小阻尼近似")
+
+    def test_self_fallback_when_no_prerequisite(self):
+        """第 3 级：没有先导可推时只带概念自身（净增益，不硬凑）。"""
+        items = {"solo": {"id": "solo", "title": "熵", "formulas": [],
+                          "summary": "无序度的度量。", "summarySource": "model"}}
+        data = concept_mod.build_grounding(items, ["solo"], session_id="s")
+        self.assertEqual([row["via"] for row in data["one"]], ["self"])
+
+    def test_local_template_summary_not_used(self):
+        """local 兜底摘要（模板文案）不当「地基」用——只认 model/manual 摘要。"""
+        items = {"t": {"id": "t", "title": "熵", "formulas": [],
+                       "summary": "这是模板文案", "summarySource": "local"}}
+        data = concept_mod.build_grounding(items, ["t"], session_id="s")
+        self.assertEqual(data["one"][0]["summary"], "")
+
+    def test_cross_session_label(self):
+        data = concept_mod.build_grounding(self._fixture(), ["shm"], session_id="sess_new")
+        self.assertTrue(data["one"][0]["cross_session"])
+
+    def test_missing_refs_returns_empty(self):
+        self.assertEqual(concept_mod.build_grounding(self._fixture(), ["nope"], session_id="s"), {})
+        self.assertEqual(concept_mod.build_grounding(self._fixture(), [], session_id="s"), {})
+
+    # ====== 渲染、预算与零回归 ======
+
+    def test_render_contains_rules_and_concepts(self):
+        text = concept_mod.render_concept_grounding(
+            concept_mod.build_grounding(["shm"], session_id="sess_new") if False
+            else concept_mod.build_grounding(self._fixture(), ["shm"], session_id="sess_new"))
+        self.assertIn("【概念地基】", text)
+        self.assertIn("先导概念", text)
+        self.assertIn("胡克定律", text)
+        self.assertIn("规则：1.", text)
+
+    def test_no_match_returns_empty_string(self):
+        """查空是正常路径：返回空串 → 调用方追加空串即零回归。"""
+        items = self._fixture()
+        self.assertEqual(concept_mod.concept_context_text("今天午饭吃什么", items=items), "")
+        self.assertEqual(concept_mod.concept_context_text("", items=items), "")
+        self.assertEqual(concept_mod.concept_context_text("简谐运动", items={}), "")
+
+    def test_prompt_block_byte_identical_without_match(self):
+        base = "基础提示词"
+        text = concept_mod.concept_context_text("今天午饭吃什么", items=self._fixture())
+        self.assertEqual(base + text, base)
+
+    def test_context_text_deterministic_and_budgeted(self):
+        items = self._fixture()
+        text = concept_mod.concept_context_text("简谐运动的周期由什么决定", items=items)
+        self.assertTrue(text.startswith("【概念地基】"))
+        self.assertEqual(text, concept_mod.concept_context_text("简谐运动的周期由什么决定", items=items))
+        self.assertLessEqual(context_mod.estimate_tokens(text),
+                             concept_mod.CONCEPT_BLOCK_MAX_TOKENS)
+        self.assertLessEqual(len(text.split("\n")),
+                             3 + concept_mod.ONESHOT_LIMIT + 1 + concept_mod.TWOSHOT_LIMIT)
+
+    def test_explicit_pairs_reads_graph_state(self):
+        """显式边从 KV 的 graph:{session} 读；模块气泡 nodeId 不算知识点节点。"""
+        with tempfile.TemporaryDirectory() as td:
+            kv_path = Path(td) / "kv_store.json"
+            storage_mod._write_json(kv_path, {
+                "graph:sess_cur": {
+                    "customNodes": [
+                        {"id": "knowledge-custom-1", "kind": "knowledge", "knowledgeKey": "shm"},
+                        {"id": "knowledge-custom-2", "kind": "knowledge", "knowledgeKey": "hooke"},
+                        {"id": "math-custom-9", "kind": "module"},
+                    ],
+                    "connections": [
+                        {"from": "knowledge-custom-1", "to": "knowledge-custom-2",
+                         "relation": "线性回复力"},
+                        {"from": "math-custom-9", "to": "knowledge-custom-1"},
+                    ],
+                },
+            })
+            self.assertEqual(concept_mod.explicit_pairs("sess_cur", kv_path=kv_path),
+                             [("shm", "hooke", "线性回复力")])
+            self.assertEqual(concept_mod.explicit_pairs("sess_other", kv_path=kv_path), [])
 
 
 if __name__ == "__main__":
