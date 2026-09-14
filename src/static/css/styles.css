@@ -1967,7 +1967,7 @@
        用途：引导浮卡 / 右键菜单 / 生成进度胶囊 等「浮在内容之上」的小面板。
        三层构成：① 半透明底色（--glass-tint）② 三团极光色斑（radial-gradient，缓慢漂移）
        ③ 顶部高光 + 内描边（inset shadow）；磨砂由 backdrop-filter 提供。
-       深浅两模式各一套极光色（深色=冷蓝/紫/青，浅色=同色系降饱和提亮）；
+       深浅两模式各一套极光色（深色=冷蓝/紫/青；浅色=纯暖调，禁蓝绿——琥珀/蜜桃/暖陶土）；
        不依赖 color-mix（老浏览器退化仍有底色）；减弱动效时不漂移；
        不支持 backdrop-filter 时自动加深底色保对比度。 */
     .aurora-glass {
@@ -2007,11 +2007,13 @@
     html[data-theme="light"] .aurora-glass,
     [data-theme="light"] .aurora-glass {
       /* 浅色：应用浅色主题是暖米色系（--bg-panel #faf6ee / --accent #8b6914）。
-         用户反馈"有蓝色调不好看" → 去掉天蓝与青，只留暖金三色
-         （琥珀 = --domain-physics / 蜜桃 / 极低青玉），底色米白偏暖。 */
+         用户反馈"有蓝色调不好看" → 去掉天蓝与冷紫；
+         第三轮反馈"还有蓝绿色调" → 连极低青玉也删掉，三团色斑全走暖调
+         （琥珀 = --domain-physics / 蜜桃 / 暖陶土），底色米白偏暖。
+         **浅色极光里不许再出现任何青/绿/蓝**（smoke 逐色排查，青玉 45,212,191 已进黑名单）。 */
       --aurora-1: rgba(251, 191, 36, 0.30);
       --aurora-2: rgba(249, 168, 132, 0.22);
-      --aurora-3: rgba(45, 212, 191, 0.13);
+      --aurora-3: rgba(214, 148, 96, 0.14);
       --glass-tint: rgba(252, 249, 243, 0.76);
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 252, 246, 0.14) 70%);
       --glass-inner-line: rgba(255, 253, 248, 0.92);
@@ -2019,7 +2021,8 @@
       box-shadow:
         0 16px 36px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(120, 150, 220, 0.22);
+        /* 内描边走暖棕：原来是 rgba(120,150,220) 的蓝灰，贴在暖米色上就是那道"发蓝的边" */
+        inset 0 0 0 1px rgba(150, 120, 74, 0.22);
     }
 
     /* 紧凑变体：小尺寸控件（药丸按钮 / 进度胶囊）用——色斑铺得更大，
@@ -2036,7 +2039,7 @@
     [data-theme="light"] .aurora-glass--compact {
       --aurora-1: rgba(251, 191, 36, 0.24);
       --aurora-2: rgba(249, 168, 132, 0.16);
-      --aurora-3: rgba(45, 212, 191, 0.10);
+      --aurora-3: rgba(214, 148, 96, 0.11);
     }
 
     /* 大面积载体变体：侧边栏 / 顶栏这类「整条 chrome」——底色更实、色斑更弱、模糊更浅。
@@ -2056,7 +2059,7 @@
     [data-theme="light"] .aurora-glass--panel {
       --aurora-1: rgba(251, 191, 36, 0.16);
       --aurora-2: rgba(249, 168, 132, 0.12);
-      --aurora-3: rgba(45, 212, 191, 0.08);
+      --aurora-3: rgba(214, 148, 96, 0.09);
       --glass-tint: rgba(253, 250, 244, 0.82);
     }
 

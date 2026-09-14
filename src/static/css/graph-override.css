@@ -598,7 +598,9 @@
      hover / 激活态才描边着色，否则胶囊内部会"碎成一格格小方块" */
   border: 1px solid transparent !important;
   background: transparent !important;
-  color: var(--text-primary) !important;
+  /* 图标墨色走主题变量：浅色是暖棕墨（--graph-tool-ink #54452a），不再是近黑的 #2a2418——
+     纯黑线性图标压在暖米色玻璃上像"贴上去的"，暖棕墨与环境同调又保住 8:1 以上对比度 */
+  color: var(--graph-tool-ink) !important;
   font-size: 18px !important;
   font-weight: 400 !important;
   display: inline-flex !important;
@@ -612,7 +614,8 @@
 .graph-tool-btn:hover {
   border-color: var(--accent) !important;
   color: var(--accent) !important;
-  background: rgba(24, 36, 68, 0.96) !important;
+  /* 底板走主题变量：深色是墨蓝，浅色是暖米（原来是写死的深墨蓝，浅色下 hover 会突兀发黑） */
+  background: var(--btn-active-bg) !important;
 }
 
 .graph-harness-btn-phi {
@@ -807,9 +810,11 @@
    避免这里的高优先级 box-shadow/filter 绕过变量过渡，
    导致“深色→浅色”切换时气泡光晕瞬间跳变。 */
 [data-theme="light"] .graph-tool-btn {
-  background: transparent !important;
+  /* 只收窄到"浅色下描边更淡"这一件事：background / color 一律交回基础规则。
+     原因：本条特指性（0,2,1）高于基础 `.graph-tool-btn`（0,1,1）**也高于** `.graph-tool-btn:hover`（0,2,1 但更靠前），
+     在这里写 `background: transparent` 或写死 `color`，会把 :hover/:active 的底板与字色一起压掉——
+     浅色下悬停就只剩描边变化（用户看不出按钮"活"了没有）。图标墨色同理走基础规则的 --graph-tool-ink。 */
   border-color: rgba(120, 100, 70, 0.2) !important;
-  color: #2a2418 !important;
 }
 
 
@@ -837,10 +842,13 @@
   --graph-edge-glow: rgba(34, 211, 238, 0.42);
   /* 玻璃节点底座（blank / human_note 等皮肤分层的最底一层；深浅各一套） */
   --node-glass-base: rgba(12, 18, 36, 0.90);
+  /* 画布工具栏图标墨色：深色=冷白，浅色=暖棕墨（用户反馈浅色下纯黑图标与暖米色环境违和） */
+  --graph-tool-ink: #f0f4f8;
 }
 
 [data-theme="light"] {
   --node-glass-base: rgba(255, 252, 246, 0.94);
+  --graph-tool-ink: #54452a;
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
   --graph-bubble-border: rgba(120, 100, 70, 0.2);
