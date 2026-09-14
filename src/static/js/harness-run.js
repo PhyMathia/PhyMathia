@@ -67,9 +67,10 @@
     return '你好呀！我是 Φ，PhyMathia 的网络助手，随时可以帮你整理知识点、连线或拓展学习链，也可以随便聊聊～';
   }
 
-  // hy3 系模型统一修正到 OpenCode Go 端点（zen/go），密钥交给服务端 OPENCODE_GO_API_KEY 兜底。
-  // 兼容旧的本地缓存误配（provider=opencode / base_url=zen/v1 会把 hy3 发到免费端点，
-  // 上游会报 "Model hy3 is not supported"），这里在发请求前强制纠正，保证 Φ 能用。
+  // hy3 系模型统一修正到 OpenCode Go 端点（zen/go）。端点纠正后：条目自带密钥（分组密钥
+  // 同步/手填）原样携带；留空才交给服务端 OPENCODE_GO_API_KEY 兜底。兼容旧的本地缓存误配
+  // （provider=opencode / base_url=zen/v1 会把 hy3 发到免费端点，上游报 "Model hy3 is not
+  //  supported"），这里在发请求前强制纠正，保证 Φ 能用。
   function _harnessModelForRequest(model) {
     if (!model) return null;
     const out = {
@@ -78,10 +79,10 @@
       model: model.model,
       base_url: model.baseUrl,
     };
-    if (/^(hy3|hy3-preview)$/i.test(String(out.model || '').trim())) {
+    if (/^(hy3|hy3-preview|hy4-preview)$/i.test(String(out.model || '').trim())) {
       out.provider = 'opencode-go';
       out.base_url = 'https://opencode.ai/zen/go/v1';
-      out.api_key = '';
+      if (!out.api_key) out.api_key = '';
     }
     return out;
   }

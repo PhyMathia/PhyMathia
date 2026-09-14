@@ -25,6 +25,7 @@ function loose(name) {
 }
 
 const storageData = { phymathia_level: 'university' };
+let __smokeUuid = 0;
 const localStorage = {
   getItem: (k) => (k in storageData ? storageData[k] : null),
   setItem: (k, v) => { storageData[k] = String(v); },
@@ -64,7 +65,7 @@ const sandbox = {
   scrollTo: () => {}, scrollBy: () => {}, print: () => {},
   crypto: {
     getRandomValues: (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256); return arr; },
-    randomUUID: () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); }),
+    randomUUID: () => 'uu-' + (++__smokeUuid).toString(16).padStart(10, '0'),
   },
 };
 sandbox.window = loose('window');
@@ -838,6 +839,55 @@ check('viz-check：_vizCheckVerdict 四态判定', () => {
   return true;
 });
 
+// ===== 模型分组与分组密钥 =====
+check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup 下拉）静态断言', () => {
+  for (const t of ['phymathia_model_group_keys', 'saveGroupKey', 'toggleModelGroup', 'model-group-key', '<optgroup label=']) {
+    if (!code.includes(t)) throw new Error('打包产物缺：' + t);
+  }
+  return true;
+});
+
+check('model-group：组密钥写入同步到组内全部条目（组外不触碰）', () => {
+  sandbox.loadUserModels();
+  const all = sandbox.getAllModels();
+  const goCount = all.filter(m => m.provider === 'opencode-go').length;
+  if (goCount < 30) throw new Error('opencode-go 预设应已自动补种，实际 ' + goCount);
+  sandbox.saveGroupKey('opencode-go', 'sk-group-test');
+  const after = sandbox.getAllModels();
+  if (!after.filter(m => m.provider === 'opencode-go').every(m => m.hasKey)) return false;
+  if (after.filter(m => m.provider !== 'opencode-go').some(m => m.hasKey)) return false; // 组外不得被污染
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_model_group_keys'))['opencode-go'] !== 'sk-group-test') return false;
+  sandbox.saveGroupKey('opencode-go', '');
+  if (sandbox.getAllModels().filter(m => m.provider === 'opencode-go').some(m => m.hasKey)) return false; // 清空也同步
+  return true;
+});
+
 await Promise.all(pendingChecks).catch(() => {});
+// 串行边界用例：proxyChatWithModel 需替换全局 fetch，放到全部并发检查结束后单独跑
+try {
+  sandbox.loadUserModels();
+  sandbox.saveGroupKey('opencode-go', 'sk-group-e2e');
+  const entry = sandbox.getAllModels().find(m => m.provider === 'opencode-go');
+  const cfg = sandbox.getModelById(entry.id);
+  if (!cfg || cfg.provider !== 'opencode-go') throw new Error('getModelById 未命中 opencode-go 条目');
+  let captured = null;
+  const origFetch = sandbox.fetch;
+  sandbox.fetch = async (url, init) => {
+    captured = { url, body: JSON.parse(init.body) };
+    return { ok: true, status: 200, text: async () => 'ok' };
+  };
+  try {
+    await sandbox.proxyChatWithModel(cfg, { prompt: 'p' });
+  } finally {
+    sandbox.fetch = origFetch;
+  }
+  if (!captured) throw new Error('fetch 未被调用');
+  if (captured.body.api_key !== 'sk-group-e2e') throw new Error('请求应携带组密钥，实际 ' + captured.body.api_key);
+  if (captured.body.model !== cfg.model) throw new Error('请求 model 与条目不符');
+  console.log('✓ model-group：请求边界携带同步后的组密钥');
+} catch (e) {
+  failed++;
+  console.error('❌ model-group：请求边界携带同步后的组密钥 ->', e.message);
+}
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);
