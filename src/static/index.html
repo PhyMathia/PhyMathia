@@ -20,9 +20,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.css?v=43">
-  <link rel="stylesheet" href="/css/styles-panels.css?v=10">
-  <link rel="stylesheet" href="/css/graph-override.css?v=112">
+  <link rel="stylesheet" href="/css/styles.css?v=44">
+  <link rel="stylesheet" href="/css/styles-panels.css?v=11">
+  <link rel="stylesheet" href="/css/graph-override.css?v=113">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=23">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -123,7 +123,7 @@
       </div>
     </div>
 
-    <div class="progress-status" id="progressStatus">
+    <div class="progress-status aurora-glass aurora-glass--compact" id="progressStatus">
       <div class="status-drag-handle" title="拖动调整位置"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="9" cy="8" r="1.2"/><circle cx="3" cy="14" r="1.2"/><circle cx="9" cy="14" r="1.2"/></svg></div>
       <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
       <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
@@ -170,7 +170,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=33f9bc64"></script>
+  <script src="/js/app.js?v=1852de36"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -234,7 +234,7 @@
     <div class="kp-header">
       <h2>知识总览</h2>
       <div class="kp-header-actions">
-        <button class="kp-tool-btn" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
         <button class="kp-close" onclick="closeKnowledgePanel()">&times;</button>
       </div>
     </div>

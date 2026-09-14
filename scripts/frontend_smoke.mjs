@@ -1204,6 +1204,59 @@ check('graph-contextmenu：菜单视觉层（图标列 + 快捷键提示 + 静�
   return true;
 });
 
+check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + 降级）', () => {
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  for (const frag of [
+    '.aurora-glass {',
+    '--aurora-1', '--aurora-2', '--aurora-3', '--glass-tint', '--glass-veil',
+    'backdrop-filter: blur(18px) saturate(170%)',
+    '@keyframes auroraDrift',
+    '.aurora-glass--compact',
+    'prefers-reduced-motion',                       // 减弱动效：停止漂移
+    '@supports not ((backdrop-filter',              // 不支持磨砂时加深底色
+  ]) {
+    if (!css.includes(frag)) throw new Error('极光玻璃 CSS 缺: ' + frag);
+  }
+  // 浅色主题必须走应用的暖色系（--bg-panel #faf6ee / --accent #8b6914），不能塞冷蓝紫
+  const lightBase = css.slice(
+    css.indexOf('html[data-theme="light"] .aurora-glass,'),
+    css.indexOf('.aurora-glass--compact {')
+  );
+  const lightCompact = css.slice(
+    css.indexOf('html[data-theme="light"] .aurora-glass--compact'),
+    css.indexOf('@keyframes auroraDrift')
+  );
+  for (const [name, block] of [['基础', lightBase], ['紧凑', lightCompact]]) {
+    if (!block.includes('rgba(245, 158, 11,')) throw new Error(name + '浅色极光未走暖调（琥珀）');
+    if (block.includes('168, 85, 247')) throw new Error(name + '浅色极光仍残留冷紫，与暖色主题冲突');
+  }
+  // 三处载体：引导浮卡 / 右键菜单（JS 加类）+ 生成进度胶囊 / 知识面板胶囊（静态 HTML 加类）
+  const quizUi = fs.readFileSync('src/static/js/quiz-ui.js', 'utf8');
+  if (!quizUi.includes("'quiz-return-pill aurora-glass'")) throw new Error('引导浮卡未挂极光玻璃');
+  const menu = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
+  if (!menu.includes("'graph-context-menu aurora-glass'")) throw new Error('右键菜单未挂极光玻璃');
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('class="progress-status aurora-glass aurora-glass--compact"')) throw new Error('进度胶囊未挂极光玻璃');
+  if (!html.includes('class="kp-tool-btn aurora-glass aurora-glass--compact"')) throw new Error('知识面板胶囊未挂极光玻璃');
+  // 载体自带的底色不能盖住极光层（kp 胶囊踩过这个坑：background-image: inherit 会抹掉渐变）
+  const panels = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  const kpRuleRaw = panels.slice(panels.indexOf('.kp-tool-btn.aurora-glass {'), panels.indexOf('.kp-tool-btn.aurora-glass.running'));
+  const kpRule = kpRuleRaw.replace(/\/\*[\s\S]*?\*\//g, ''); // 注释里会提到这个坑，断言只看声明
+  if (/background-image:\s*inherit/.test(kpRule)) throw new Error('kp 胶囊的 background-image: inherit 会抹掉极光层');
+  if (!/background-color:\s*transparent/.test(kpRule)) throw new Error('kp 胶囊需置空自身底色让极光透出');
+  // animation 是简写：载体的入场动画必须与 auroraDrift 并列为两项，否则漂移被覆盖掉
+  for (const [name, file, key] of [
+    ['引导浮卡', 'src/static/css/styles-panels.css', 'quizReturnPillIn'],
+    ['右键菜单', 'src/static/css/styles-panels.css', 'graphCtxMenuIn'],
+  ]) {
+    const src = fs.readFileSync(file, 'utf8');
+    const i = src.indexOf(key + ' 0.');
+    const block = src.slice(i, src.indexOf('}', i));
+    if (!/auroraDrift/.test(block)) throw new Error(name + '的入场动画覆盖了极光漂移（需并列）');
+  }
+  return true;
+});
+
 // ===== 串行边界：以下用例改共享状态（localStorage 知识/统计键）且会 await，
 // 必须放在全部并发检查之后——否则会与在途的 knowledge/quiz 异步用例互相踩键 =====
 
