@@ -555,7 +555,7 @@ function openGraphContextMenu(event) {
   if (markIds) _graphCtxMarkTarget(markIds);
 
   const menu = document.createElement('div');
-  menu.className = 'graph-context-menu';
+  menu.className = 'graph-context-menu aurora-glass';
   menu.setAttribute('role', 'menu');
   const head = document.createElement('div');
   head.className = 'graph-context-menu-title';

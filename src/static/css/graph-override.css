@@ -651,10 +651,10 @@
   transform: translateX(-50%);
   margin: 0;
   z-index: 80;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
-  background: var(--bg-panel);
+  border: none;
+  border-radius: 999px;      /* 真胶囊：与极光磨砂玻璃同一套语言 */
+  padding: 7px 14px;
+  overflow: hidden;
   max-width: min(550px, calc(100vw - 24px));
   box-sizing: border-box;
   white-space: nowrap;

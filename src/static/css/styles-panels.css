@@ -82,6 +82,25 @@
     .kp-tool-btn.running {
       background: var(--kp-filter-active-bg); color: var(--kp-filter-active-color);
     }
+    /* 知识面板的「优化摘要 / 停止优化」小胶囊：与引导浮卡、生成进度胶囊同一套极光玻璃。
+       它自带浅色背景，会盖住极光层，故这里让位（透明度交给 aurora-glass 的 tint）。 */
+    .kp-tool-btn.aurora-glass {
+      /* 只让位给 aurora-glass 的底色/极光层：background-color 必须置空，
+         否则 .kp-tool-btn 的 --kp-filter-bg 会盖住极光；
+         注意不要写 background-image: inherit —— 那会把父级的 none 继承下来，
+         特指性还高于 .aurora-glass，极光层直接被抹掉。 */
+      border-radius: 999px;
+      border: none;
+      background-color: transparent;
+      color: var(--text-primary);
+      padding: 6px 14px;
+    }
+    .kp-tool-btn.aurora-glass.running {
+      color: var(--kp-filter-active-color);
+    }
+    .kp-tool-btn.aurora-glass:hover {
+      filter: brightness(1.08);
+    }
 
     /* Tabs */
     .kp-tabs {
@@ -2783,17 +2802,14 @@
   max-width: calc(100vw - 32px);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 12%, var(--bg-panel)),
-      var(--bg-panel) 62%);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+  overflow: hidden;              /* 让极光层随圆角裁切 */
+  border: none;
+  border-radius: 16px;
   color: var(--text-primary);
-  animation: quizReturnPillIn 0.22s cubic-bezier(0.22, 0.8, 0.28, 1) both;
+  /* 入场与极光漂移并存：animation 是简写，两条分开写会互相覆盖 */
+  animation:
+    quizReturnPillIn 0.22s cubic-bezier(0.22, 0.8, 0.28, 1) both,
+    auroraDrift 28s ease-in-out infinite alternate;
 }
 
 .quiz-return-pill[hidden] { display: none; }
@@ -3128,18 +3144,15 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 6px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 8%, var(--bg-panel)),
-    var(--bg-panel) 58%);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.22);
+  border-radius: 16px;
+  border: none;
   display: flex;
   flex-direction: column;
   gap: 1px;
   color: var(--text-primary);
-  animation: graphCtxMenuIn 0.14s cubic-bezier(0.22, 0.8, 0.28, 1) both;
+  animation:
+    graphCtxMenuIn 0.14s cubic-bezier(0.22, 0.8, 0.28, 1) both,
+    auroraDrift 28s ease-in-out infinite alternate;
 }
 
 @keyframes graphCtxMenuIn {

@@ -169,7 +169,7 @@ function showQuizReturnPill() {
   if (!pill) {
     pill = document.createElement('div');
     pill.id = 'quizReturnPill';
-    pill.className = 'quiz-return-pill';
+    pill.className = 'quiz-return-pill aurora-glass';
     pill.addEventListener('mouseenter', () => { _quizReturnPillHover = true; _quizReturnPillPaint(); });
     pill.addEventListener('mouseleave', () => { _quizReturnPillHover = false; _quizReturnPillPaint(); });
     document.body.appendChild(pill);
