@@ -139,6 +139,20 @@ function toggleModelGroup(provider) {
   });
 }
 
+// 分组密钥失焦提交：全量重渲染（刷新组内徽标）+ 输入框闪绿提示保存成功
+function saveGroupKeyCommitted(provider, inputEl) {
+  saveGroupKey(provider, inputEl.value);
+  renderModelList();
+  renderModelSelects();
+  try {
+    const fresh = document.querySelector('#modelList .model-group[data-provider="' + CSS.escape(provider) + '"] .model-group-key');
+    if (fresh) {
+      fresh.classList.add('saved-flash');
+      setTimeout(() => fresh.classList.remove('saved-flash'), 1200);
+    }
+  } catch (e) {}
+}
+
 let userModelConfigs = [];
 let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' };
 
@@ -452,7 +466,7 @@ function renderModelList() {
       <div class="model-group-header">
         <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
         <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
-        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="renderModelList(); renderModelSelects();" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
+        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
       </div>
       ${collapsed ? '' : `<div class="model-group-body">${items}</div>`}
     </div>`;
