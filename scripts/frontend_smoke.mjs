@@ -753,6 +753,91 @@ check('knowledge: P4 extractLocalKnowledge 模板化摘要（多公式回答逐�
   return true;
 });
 
+// ===== M1 可视化数值实验自动校验 =====
+check('viz-check：三桥注入与桥体打包存在', () => {
+  if (!code.includes('_VIZ_CHECK_BRIDGE')) throw new Error('打包产物缺 _VIZ_CHECK_BRIDGE');
+  // 压缩产物会去掉加号两侧空格，用空白容忍匹配三桥拼接
+  if (!/_VIZ_MATH_BRIDGE\s*\+\s*_VIZ_THEME_BRIDGE\s*\+\s*_VIZ_CHECK_BRIDGE/.test(code)) throw new Error('buildVizCard 未注入第三桥');
+  if (!code.includes('"phymathia-viz-check"')) throw new Error('校验消息类型缺失（桥回传或 parent 监听）');
+  if (!code.includes('__PHYMATHIA_VIZ__')) throw new Error('约定对象探测缺失');
+  return true;
+});
+
+check('viz-check：角标三态文案与重生成意图', () => {
+  for (const t of ['校验通过 ✓', '守恒漂移 ⚠ 建议重新生成', '与解析解偏差 ⚠', '校验中…', '重新生成可视化：']) {
+    if (!code.includes(t)) throw new Error('缺文案：' + t);
+  }
+  return true;
+});
+
+check('viz-check：_vizCheckEnergyTotals 分量求和与 NaN 计数', () => {
+  const r = sandbox._vizCheckEnergyTotals([
+    { t: 0, energy: { kinetic: 1, potential: 1 } },
+    { t: 0.25, energy: { kinetic: NaN, potential: 1 } },
+    { t: 0.5, energy: { kinetic: 2, potential: 2 } },
+    { t: 0.75, energy: {} },            // 分量缺失 → 整点跳过
+  ]);
+  if (r.totals.length !== 2 || r.totals[0] !== 2 || r.totals[1] !== 4) throw new Error('求和错误: ' + JSON.stringify(r));
+  if (r.nonFinite !== 1) throw new Error('nonFinite 应为 1');
+  return true;
+});
+
+check('viz-check：_vizCheckComputeDrift 漂移口径', () => {
+  if (sandbox._vizCheckComputeDrift([1, 1, 1, 1]) !== 0) return false;
+  if (sandbox._vizCheckComputeDrift([1, 2, 3]) !== null) return false;          // <4 点
+  if (sandbox._vizCheckComputeDrift([0, 0, 0, 0]) !== null) return false;       // 均值≈0 → 跳过守恒项
+  const d = sandbox._vizCheckComputeDrift([10, 10.5, 10.2, 10.4, 10.3]);        // (10.5−10)/10.28≈4.9%
+  if (!(d > 0.045 && d < 0.055)) throw new Error('漂移计算偏离: ' + d);
+  return true;
+});
+
+check('viz-check：_vizCheckEstimatePeriod 由 KE 序列恢复周期', () => {
+  // 解析 KE：C(1−cos2ωt)，ω=2 → 振子周期 T=2π/ω≈3.1416；250ms×40 点（真实采样节奏）
+  const T = 2 * Math.PI / 2, dt = 0.25, samples = [];
+  for (let i = 0; i < 40; i++) {
+    const t = i * dt;
+    samples.push({ t: t, energy: { kinetic: 0.5 * (1 - Math.cos(4 * t)), potential: 0.5 * (1 + Math.cos(4 * t)) } });
+  }
+  const est = sandbox._vizCheckEstimatePeriod(samples);
+  if (est == null || Math.abs(est - T) / T > 0.005) throw new Error('周期估计偏离: ' + est);
+  return true;
+});
+
+check('viz-check：_vizCheckTheoryPeriod v1 两张标准模型表', () => {
+  const sm = sandbox._vizCheckTheoryPeriod('spring-mass', { m: 0.5, k: 2 });
+  const pd = sandbox._vizCheckTheoryPeriod('pendulum', { L: 1, g: 9.8 });
+  if (Math.abs(sm - Math.PI) > 1e-9) return false;
+  if (Math.abs(pd - 2 * Math.PI * Math.sqrt(1 / 9.8)) > 1e-9) return false;
+  if (sandbox._vizCheckTheoryPeriod('damped-oscillation', {}) !== null) return false;  // 非标准模型不猜
+  if (sandbox._vizCheckTheoryPeriod('spring-mass', { m: 0, k: 2 }) !== null) return false;  // 参数非法不猜
+  return true;
+});
+
+check('viz-check：_vizCheckVerdict 四态判定', () => {
+  const synth = (w) => {
+    const arr = [];
+    for (let i = 0; i < 40; i++) {
+      const t = i * 0.25;
+      arr.push({ t: t, energy: { kinetic: 0.5 * (1 - Math.cos(2 * w * t)), potential: 0.5 * (1 + Math.cos(2 * w * t)) } });
+    }
+    return arr;
+  };
+  const vp = sandbox._vizCheckVerdict(synth(2), 'spring-mass', { m: 0.5, k: 2 });      // 周期与守恒均合
+  if (vp.status !== 'pass') throw new Error('恒能应为 pass: ' + JSON.stringify(vp));
+  const driftSamples = synth(2).map((s, i) => ({ t: s.t, energy: { kinetic: 1 + i * 0.2, potential: 1 } }));
+  const vd = sandbox._vizCheckVerdict(driftSamples, null, null);
+  if (vd.status !== 'fail' || vd.kind !== 'drift') throw new Error('漂移应 fail: ' + JSON.stringify(vd));
+  const nanSamples = synth(2).map((s, i) => ({ t: s.t, energy: { kinetic: i % 3 === 0 ? NaN : 1, potential: 2 } }));
+  const vn = sandbox._vizCheckVerdict(nanSamples, null, null);
+  if (vn.status !== 'fail' || vn.kind !== 'diverge') throw new Error('NaN 多发应 diverge: ' + JSON.stringify(vn));
+  const vw = sandbox._vizCheckVerdict(synth(2.2), 'spring-mass', { m: 0.5, k: 2 });    // 模拟 ω=2.2 vs 理论 ω=2 → 偏差 ~9%
+  if (vw.status !== 'warn') throw new Error('周期偏差应 warn: ' + JSON.stringify(vw));
+  const vq = sandbox._vizCheckVerdict(synth(2.2), null, null);                          // 未声明 model → 不比对解析解
+  if (vq.status !== 'pass') throw new Error('未声明 model 不应 warn: ' + JSON.stringify(vq));
+  if (sandbox._vizCheckVerdict(synth(2).slice(0, 2), 'spring-mass', { m: 0.5, k: 2 }).status !== 'none') return false;
+  return true;
+});
+
 await Promise.all(pendingChecks).catch(() => {});
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

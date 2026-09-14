@@ -107,12 +107,12 @@ function buildVizCard(htmlContent, vizId) {
   // 加载时读取父主题，设置 data-theme 并尝试调用页面内主题机制
   // 注意：必须用函数形式的 replace——字符串替换里 $$ 是特殊模式（转义为单个 $），
   // 会把桥接脚本的 $$ 定界符吞掉一个，导致可视化内公式全部渲染失败
-  let finalHtml = safe.replace(/<\/head>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + '</head>');
+  let finalHtml = safe.replace(/<\/head>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + _VIZ_CHECK_BRIDGE + '</head>');
   if (finalHtml === safe) {
-    finalHtml = safe.replace(/<\/body>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + '</body>');
+    finalHtml = safe.replace(/<\/body>/i, () => _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + _VIZ_CHECK_BRIDGE + '</body>');
   }
   if (finalHtml === safe) {
-    finalHtml = safe + _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE;
+    finalHtml = safe + _VIZ_MATH_BRIDGE + _VIZ_THEME_BRIDGE + _VIZ_CHECK_BRIDGE;
   }
   _vizStore[vizId] = finalHtml;  // 保存（含桥接脚本）供全屏/复制/新标签页使用
   _vizLastUsed[vizId] = Date.now();
@@ -222,6 +222,39 @@ const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/v
   + 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",boot);}else{boot();}'
   + '})();<\/script>';
 
+// ====== 可视化 iframe 校验桥（M1：数值实验自动判卷） ======
+// 约定（system prompt 输出模块3b）：模拟物理系统的页面挂
+//   window.__PHYMATHIA_VIZ__ = { model, params, sample(){ return {t, energy:{...分量}} } }
+// 页面未声明约定 → 轮询超时静默退出，不回报、无角标——宁可漏报不可误报。
+// M0 spike（scripts/spike_viz_check/）三条结论已吸收：
+// ①探测必须轮询（迟挂约定页 1s 后才出现，DOMContentLoaded 一次性判定会漏）；
+// ②回传用 window["parent"] 写法（与主题桥一致，双保险穿过 _sanitizeVizHtml）；
+// ③采样 250ms×40 点回传原始序列，判卷在 parent 侧纯函数完成（见 _vizCheck* 一族）。
+const _VIZ_CHECK_BRIDGE = '<script>(function(){'
+  + 'if(window.__pmVizCheckBooted)return;window.__pmVizCheckBooted=true;'
+  + 'var POLL_MS=200,POLL_MAX=40,SAMPLE_MS=250,SAMPLE_MAX=40;'
+  + 'var tries=0,viz=null;'
+  + 'function post(p){try{p.type="phymathia-viz-check";window["parent"].postMessage(p,"*");}catch(e){}}'
+  + 'var poll=setInterval(function(){'
+  + 'tries++;'
+  + 'var v=window.__PHYMATHIA_VIZ__;'
+  + 'if(v&&typeof v.sample==="function"){viz=v;clearInterval(poll);post({status:"sampling",probeMs:tries*POLL_MS});run();return;}'
+  + 'if(tries>=POLL_MAX){clearInterval(poll);}'
+  + '},POLL_MS);'
+  + 'function run(){'
+  + 'var samples=[],n=0,model=null,params=null;'
+  + 'var iv=setInterval(function(){'
+  + 'n++;'
+  + 'var s=null;'
+  + 'try{s=viz.sample();}catch(err){clearInterval(iv);post({status:"unsupported",reason:"sample-error"});return;}'
+  + 'if(s&&typeof s.t==="number"&&s.energy)samples.push({t:s.t,energy:s.energy});'
+  + 'if(model===null&&viz.model)model=viz.model;'
+  + 'if(params===null&&viz.params)params=viz.params;'
+  + 'if(n>=SAMPLE_MAX){clearInterval(iv);post({status:"result",model:model,params:params,probeMs:tries*POLL_MS,samples:samples});}'
+  + '},SAMPLE_MS);'
+  + '}'
+  + '})();<\/script>';
+
 // 父页面主题切换时，向所有可视化 iframe（含全屏 iframe）广播
 function syncVizThemes(theme) {
   const frames = document.querySelectorAll('.viz-iframe, #vizFullscreenIframe');
@@ -243,6 +276,191 @@ window.addEventListener('message', function(e) {
     }
   }
 });
+
+// ====== 可视化校验：parent 侧判卷（M1） ======
+// 阈值即约定口径：能量漂移 >2% fail；声明 model 且周期偏差 >5% warn；NaN/Infinity 采样多发判数值发散 fail
+const VIZ_CHECK_DRIFT_FAIL = 0.02;
+const VIZ_CHECK_PERIOD_WARN = 0.05;
+const VIZ_CHECK_NONFINITE_FAIL = 3;
+
+// 能量分量求和：任一分量非有限记入 nonFinite（数值发散证据）；分量缺失的采样整点跳过
+function _vizCheckEnergyTotals(samples) {
+  const totals = [];
+  let nonFinite = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const e = samples[i] && samples[i].energy;
+    if (!e) continue;
+    let sum = 0, bad = false, has = false;
+    for (const k in e) {
+      const v = Number(e[k]);
+      if (!Number.isFinite(v)) { bad = true; break; }
+      sum += v; has = true;
+    }
+    if (bad) { nonFinite++; continue; }
+    if (!has) continue;
+    totals.push(sum);
+  }
+  return { totals: totals, nonFinite: nonFinite };
+}
+
+// 守恒漂移：(max−min)/|mean|；有效点不足或均值≈0（分量缺失/恒零）返回 null → 跳过守恒项
+function _vizCheckComputeDrift(totals) {
+  if (!totals || totals.length < 4) return null;
+  let max = -Infinity, min = Infinity, sum = 0;
+  for (let i = 0; i < totals.length; i++) {
+    if (totals[i] > max) max = totals[i];
+    if (totals[i] < min) min = totals[i];
+    sum += totals[i];
+  }
+  const mean = sum / totals.length;
+  if (!Number.isFinite(mean) || Math.abs(mean) < 1e-12) return null;
+  return (max - min) / Math.abs(mean);
+}
+
+// 由 KE 分量估测振荡周期：弹簧振子/单摆 KE(t)=C(1−cos2ωt) 以 2 倍频率摆动，
+// (KE−mean) 相邻过零间隔 = T/4 → T = 4×平均间隔；过零点线性插值取亚采样精度
+// （M0 spike：恒能页精度 ~0.1%；指数漂移序列会被偏置——warn 判定排在守恒通过之后，不受影响）
+function _vizCheckEstimatePeriod(samples) {
+  const kes = [], ts = [];
+  for (let i = 0; i < samples.length; i++) {
+    const e = samples[i] && samples[i].energy;
+    const ke = e ? Number(e.kinetic) : NaN;
+    const t = Number(samples[i] && samples[i].t);
+    if (!Number.isFinite(ke) || !Number.isFinite(t)) return null;
+    kes.push(ke); ts.push(t);
+  }
+  if (kes.length < 8) return null;
+  let sum = 0;
+  for (let i = 0; i < kes.length; i++) sum += kes[i];
+  const mean = sum / kes.length;
+  const crossings = [];
+  for (let i = 1; i < kes.length; i++) {
+    const a = kes[i - 1] - mean, b = kes[i] - mean;
+    if (a === 0) { crossings.push(ts[i - 1]); continue; }
+    if (a * b < 0) crossings.push(ts[i - 1] + (ts[i] - ts[i - 1]) * (0 - a) / (b - a));
+  }
+  if (crossings.length < 5) return null;
+  let gapSum = 0;
+  for (let i = 1; i < crossings.length; i++) gapSum += crossings[i] - crossings[i - 1];
+  return 4 * (gapSum / (crossings.length - 1));
+}
+
+// v1 标准模型表只收两张；「识别为标准模型」由页面声明 model 字段承担，前端不猜
+function _vizCheckTheoryPeriod(model, params) {
+  const p = params || {};
+  const m = Number(p.m), k = Number(p.k), L = Number(p.L), g = Number(p.g);
+  if (model === 'spring-mass' && m > 0 && k > 0) return 2 * Math.PI * Math.sqrt(m / k);
+  if (model === 'pendulum' && L > 0 && g > 0) return 2 * Math.PI * Math.sqrt(L / g);
+  return null;
+}
+
+// 判定：数值发散/守恒漂移 → fail；解析解偏差 → warn；其余 → pass；采样不足 → none（无角标）
+function _vizCheckVerdict(samples, model, params) {
+  if (!samples || samples.length < 4) return { status: 'none', kind: 'none', label: '', detail: '' };
+  const agg = _vizCheckEnergyTotals(samples);
+  if (agg.nonFinite >= VIZ_CHECK_NONFINITE_FAIL) {
+    return { status: 'fail', kind: 'diverge', label: '数值发散 ⚠ 建议重新生成',
+      detail: '采样出现 ' + agg.nonFinite + ' 次 NaN/Infinity，模拟已发散' };
+  }
+  const drift = _vizCheckComputeDrift(agg.totals);
+  const driftPct = drift == null ? null : drift * 100;
+  if (drift != null && drift > VIZ_CHECK_DRIFT_FAIL) {
+    return { status: 'fail', kind: 'drift', label: '守恒漂移 ⚠ 建议重新生成',
+      detail: '能量漂移 ' + driftPct.toFixed(1) + '%（阈值 2%）' };
+  }
+  const theory = _vizCheckTheoryPeriod(model, params);
+  const est = _vizCheckEstimatePeriod(samples);
+  const periodPct = (theory && est) ? (est - theory) / theory * 100 : null;
+  if (periodPct != null && Math.abs(periodPct) > VIZ_CHECK_PERIOD_WARN * 100) {
+    return { status: 'warn', kind: 'period', label: '与解析解偏差 ⚠',
+      detail: '估测周期 ' + est.toFixed(2) + 's，理论 ' + theory.toFixed(2) + 's（偏差 ' + periodPct.toFixed(1) + '%，阈值 5%）' };
+  }
+  const parts = [];
+  if (driftPct != null) parts.push('能量漂移 ' + driftPct.toFixed(1) + '%');
+  if (periodPct != null) parts.push('周期偏差 ' + periodPct.toFixed(1) + '%');
+  return { status: 'pass', kind: 'pass', label: '校验通过 ✓', detail: parts.join('，') || '能量守恒' };
+}
+
+// 定位角标宿主：卡片 → 工具栏（.viz-actions 前）；全屏 → 顶栏常驻位（显示切换，不移除）
+function _vizCheckBadgeFor(iframe) {
+  if (iframe.id === 'vizFullscreenIframe') {
+    return document.getElementById('vizFullscreenCheckBadge');
+  }
+  const card = iframe.closest ? iframe.closest('.viz-card') : null;
+  if (!card) return null;
+  let badge = card.querySelector('.viz-check-badge');
+  if (!badge) {
+    const actions = card.querySelector('.viz-actions');
+    badge = document.createElement('span');
+    badge.className = 'viz-check-badge';
+    if (actions && actions.parentNode) actions.parentNode.insertBefore(badge, actions);
+    else {
+      const bar = card.querySelector('.viz-toolbar');
+      if (!bar) return null;
+      bar.appendChild(badge);
+    }
+  }
+  return badge;
+}
+
+function _vizCheckRemoveBadge(badge) {
+  if (!badge) return;
+  if (badge.id === 'vizFullscreenCheckBadge') badge.style.display = 'none';
+  else if (badge.parentNode) badge.parentNode.removeChild(badge);
+}
+
+function _vizCheckSetBadge(badge, verdict) {
+  badge.className = 'viz-check-badge ' + verdict.status;
+  badge.style.display = '';
+  badge.textContent = verdict.label;
+  badge.title = verdict.detail || '';
+  const clickable = verdict.status === 'fail' || verdict.status === 'warn';
+  if (clickable) badge.classList.add('clickable');
+  badge.onclick = clickable ? function () { _vizCheckRegenerate(verdict); } : null;
+}
+
+// 红/黄角标点击：收起全屏（若在）→ 预填重做意图 → 走既有发送通道（不新增重生成协议）
+function _vizCheckRegenerate(verdict) {
+  const overlay = document.getElementById('vizFullscreenOverlay');
+  if (overlay && overlay.classList.contains('active')) closeVizFullscreen();
+  const what = verdict.kind === 'period' ? '与解析解偏差过大'
+    : verdict.kind === 'diverge' ? '出现数值发散' : '能量不守恒';
+  const text = '重新生成可视化：上次数值实验' + what + '，请检查模型参数与积分步长后重做';
+  if (typeof sendQuick === 'function') { sendQuick(text); return; }
+  const input = document.getElementById('userInput');
+  if (input) { input.value = text; input.focus(); }
+}
+
+// 接收校验桥回报：sampling → 灰角标「校验中」；result → 三态角标；
+// unsupported/采样不足 → 撤角标保持无痕（未声明约定的页面桥自身不回报，同样无角标）
+window.addEventListener('message', function (e) {
+  const d = e.data;
+  if (!d || d.type !== 'phymathia-viz-check') return;
+  const frames = document.querySelectorAll('.viz-iframe, #vizFullscreenIframe');
+  let iframe = null;
+  for (let i = 0; i < frames.length; i++) {
+    if (frames[i].contentWindow === e.source) { iframe = frames[i]; break; }
+  }
+  if (!iframe) return;  // 新标签页预览等无 parent 匹配场景：静默
+  const badge = _vizCheckBadgeFor(iframe);
+  if (!badge) return;
+  if (d.status === 'sampling') {
+    badge.className = 'viz-check-badge pending';
+    badge.style.display = '';
+    badge.textContent = '校验中…';
+    badge.title = '正在采样页面状态（约 10 秒）';
+    badge.onclick = null;
+    return;
+  }
+  if (d.status === 'result') {
+    const verdict = _vizCheckVerdict(d.samples || [], d.model, d.params);
+    if (verdict.status === 'none') { _vizCheckRemoveBadge(badge); return; }
+    _vizCheckSetBadge(badge, verdict);
+    return;
+  }
+  _vizCheckRemoveBadge(badge);  // unsupported（sample 抛错等）：撤「校验中」，保持无角标
+});
+
 
 // 延迟设置 srcdoc（DOM 插入后调用）
 function _initVizIframes(container) {

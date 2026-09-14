@@ -876,6 +876,52 @@
       border-color: var(--domain-graph);
       color: #fff;
     }
+    /* M1 可视化校验角标：pending 灰 / pass 绿 / warn 黄 / fail 红；
+       unsupported 未声明约定的页面不渲染角标（宁可漏报不可误报） */
+    .viz-check-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--viz-btn-border);
+      color: var(--viz-btn-color);
+      white-space: nowrap;
+      flex: none;
+      user-select: none;
+    }
+    .viz-check-badge.pending {
+      opacity: 0.75;
+      border-style: dashed;
+      cursor: default;
+    }
+    .viz-check-badge.pass {
+      color: #2e9e63;
+      border-color: rgba(46, 158, 99, 0.55);
+      background: rgba(46, 158, 99, 0.12);
+      cursor: default;
+    }
+    .viz-check-badge.warn {
+      color: #a87408;
+      border-color: rgba(196, 143, 32, 0.6);
+      background: rgba(196, 143, 32, 0.14);
+      cursor: pointer;
+    }
+    .viz-check-badge.fail {
+      color: #c04545;
+      border-color: rgba(192, 69, 69, 0.6);
+      background: rgba(192, 69, 69, 0.12);
+      cursor: pointer;
+    }
+    .viz-check-badge.clickable:hover {
+      filter: brightness(1.1);
+    }
+    html[data-theme="dark"] .viz-check-badge.pass { color: #6fe3a5; }
+    html[data-theme="dark"] .viz-check-badge.warn { color: #ffd479; }
+    html[data-theme="dark"] .viz-check-badge.fail { color: #ff8585; }
+    /* 全屏顶栏的校验角标：标题与关闭按钮之间 */
+    .viz-fullscreen-bar .viz-check-badge {
+      margin-left: 12px;
+    }
     /* 深色模式下，无原生主题机制的可视化 iframe 用滤镜整体深色化兜底
        （AI 生成的可视化多为硬编码浅色；自带主题机制的会被桥接脚本标记并走原生切换）
        invert(0.93) 而非 1：不完全反转保留色相感；saturate 降低避免反转色刺眼；
