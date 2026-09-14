@@ -1350,6 +1350,9 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏 + 画布工具栏�
     throw new Error('画布工具栏未做成单个玻璃胶囊');
   }
   const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const bar = gcss.slice(gcss.indexOf('.graph-canvas-toolbar {'), gcss.indexOf('}', gcss.indexOf('.graph-canvas-toolbar {')));
+  if (!/border-radius:\s*\d+px !important;/.test(bar)) throw new Error('工具栏容器缺圆角（会呈现直角方板）');
+  if (!/padding:\s*\d+px !important;/.test(bar)) throw new Error('工具栏容器缺内边距（胶囊会贴边）');
   const btn = gcss.slice(gcss.indexOf('.graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn {')));
   if (!/background: transparent !important;/.test(btn)) throw new Error('工具按钮应自身透明（磨砂归整条工具栏）');
   if (!/border: 1px solid transparent !important;/.test(btn)) throw new Error('工具按钮默认不该有描边（胶囊内会碎成一格格）');

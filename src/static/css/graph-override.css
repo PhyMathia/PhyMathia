@@ -572,8 +572,22 @@
   top: auto !important;
   left: auto !important;
   display: flex !important;
-  gap: 8px !important;
+  gap: 4px !important;
+  /* 整条是一个玻璃胶囊 → 圆角矩形 + 内边距（圆角只加在按钮上时，容器本身还是直角的方板） */
+  padding: 6px !important;
+  border-radius: 16px !important;
   z-index: 30 !important;
+}
+
+/* 胶囊里最外侧按钮的活动热区不要顶到圆角上 */
+.graph-canvas-toolbar .graph-tool-btn:first-child {
+  border-top-left-radius: 11px !important;
+  border-bottom-left-radius: 11px !important;
+}
+
+.graph-canvas-toolbar .graph-tool-btn:last-child {
+  border-top-right-radius: 11px !important;
+  border-bottom-right-radius: 11px !important;
 }
 
 .graph-tool-btn {
