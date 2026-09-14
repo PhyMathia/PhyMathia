@@ -809,9 +809,12 @@
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
   --graph-edge-color: #22d3ee;
   --graph-edge-glow: rgba(34, 211, 238, 0.42);
+  /* 玻璃节点底座（blank / human_note 等皮肤分层的最底一层；深浅各一套） */
+  --node-glass-base: rgba(12, 18, 36, 0.90);
 }
 
 [data-theme="light"] {
+  --node-glass-base: rgba(255, 252, 246, 0.94);
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
   --graph-bubble-border: rgba(120, 100, 70, 0.2);
@@ -1759,9 +1762,38 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.28) !important;
 }
 
+/* AI 生成（blank）：纯色底 → 玻璃分层（底色 + 属性色斜向渐变 + 左上角光斑 + 生成中的虚线边）。
+   虚线保留「待生成/可再生成」的语义，只是换成属性色低对比描边，不再是一块死色板。 */
 .graph-node-blank {
   min-width: 360px !important;
-  background: var(--assistant-msg) !important;
+  background:
+    radial-gradient(118% 132% at 10% -4%, color-mix(in srgb, var(--node-attr, #4a9eff) 22%, transparent), transparent 60%),
+    linear-gradient(152deg, color-mix(in srgb, var(--node-attr, #4a9eff) 13%, transparent), transparent 56%),
+    var(--node-glass-base) !important;
+  border: 1px dashed color-mix(in srgb, var(--node-attr, #4a9eff) 52%, transparent) !important;
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 26px color-mix(in srgb, var(--node-attr, #4a9eff) 15%, transparent) !important;
+}
+
+.graph-node-blank:hover {
+  border-color: color-mix(in srgb, var(--node-attr, #4a9eff) 78%, transparent) !important;
+  box-shadow:
+    0 20px 56px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 0 30px color-mix(in srgb, var(--node-attr, #4a9eff) 26%, transparent) !important;
+}
+
+[data-theme="light"] .graph-node-blank {
+  background:
+    radial-gradient(118% 132% at 10% -4%, color-mix(in srgb, var(--node-attr, #8b6914) 20%, transparent), transparent 62%),
+    linear-gradient(152deg, color-mix(in srgb, var(--node-attr, #8b6914) 10%, transparent), transparent 58%),
+    var(--node-glass-base) !important;
+  box-shadow:
+    0 14px 40px rgba(120, 100, 70, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 0 22px color-mix(in srgb, var(--node-attr, #8b6914) 14%, transparent) !important;
 }
 
 .graph-blank-content {
@@ -1944,15 +1976,26 @@
   backdrop-filter: blur(7px);
 }
 
+/* 双击画布空白处打开的「添加节点」面板：走 aurora-glass。
+   注意：这里不能写 background 简写（会重置 background-image 把极光层盖掉），只调圆角/描边/阴影。 */
 .graph-add-node-dialog {
-  width: min(560px, 94vw);
+  width: min(580px, 94vw);
   max-height: 82vh;
   overflow-y: auto;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-panel);
-  box-shadow: var(--modal-shadow, 0 24px 80px rgba(0, 0, 0, 0.42));
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 26%, var(--border));
+  border-radius: 20px;
+  box-shadow:
+    0 26px 74px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+[data-theme="light"] .graph-add-node-dialog {
+  box-shadow:
+    0 26px 64px rgba(120, 100, 70, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .graph-add-node-head {
@@ -2451,12 +2494,33 @@
   border-color: var(--accent) !important;
 }
 
+/* 我的理解（human_note）：原来是「灰虚线框 + 0.9 透明度」的纯色小板子，发灰发闷。
+   改成手写笔记的玻璃卡——左侧属性色书脊 + 极淡横格纹 + 顶部暖光斑，读起来像学生的笔记本。 */
 .graph-node-human-note {
-  min-width: 240px;
-  max-width: 320px;
-  opacity: 0.9;
-  border: 5px solid transparent !important;
-  border-image: repeating-linear-gradient(90deg, #64748b 0 16px, transparent 16px 26px) 1 !important;
+  min-width: 260px;
+  max-width: 340px;
+  opacity: 1;
+  padding-left: 22px !important;
+  border: 1px solid color-mix(in srgb, var(--node-attr, #64748b) 38%, transparent) !important;
+  border-left: 3px solid var(--node-attr, #64748b) !important;
+  border-radius: 16px !important;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 12%, transparent), transparent 64%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 11%, transparent) 26px 27px),
+    var(--node-glass-base) !important;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-theme="light"] .graph-node-human-note {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #8b6914) 14%, transparent), transparent 66%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #8b6914) 10%, transparent) 26px 27px),
+    var(--node-glass-base) !important;
+  box-shadow:
+    0 14px 36px rgba(120, 100, 70, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
 }
 
 .graph-node-human-note .graph-node-attribute {
@@ -2486,16 +2550,28 @@
   backdrop-filter: blur(3px);
 }
 
+/* 双击节点/连线打开的节点面板：走 aurora-glass（玻璃语言），并保持内容可读——
+   背景交给 .aurora-glass，这里绝不能再写 background 简写（会连 background-image 一起重置，
+   极光层被整块盖掉，这个坑在进度胶囊上踩过一次）。 */
 .graph-network-modal {
-  width: min(520px, calc(100vw - 32px));
+  width: min(540px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   overflow: auto;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 26%, var(--border));
   color: var(--text-primary);
-  padding: 16px;
-  box-shadow: var(--harness-window-shadow);
+  padding: 20px 22px 18px;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+[data-theme="light"] .graph-network-modal {
+  box-shadow:
+    0 24px 60px rgba(120, 100, 70, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .graph-network-modal-head {

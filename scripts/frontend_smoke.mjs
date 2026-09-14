@@ -513,33 +513,47 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
   return true;
 });
 
-check('graph-export: 完整内容模式（解除节点内滚动裁剪 + 展开后重算画框 + 菜单开关）', () => {
+check('graph-export: 一页概览图（完整内容模式已按用户要求移除）+ 画框纯函数', () => {
   const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
-  // ① 默认开启 + 菜单开关接线（关掉即回到"按屏幕所见导出"）
-  if (!/var _fullContent = true;/.test(ge)) throw new Error('完整内容模式应默认开启');
-  if (!ge.includes("id=\"graphExportFullContent\"")) throw new Error('导出菜单缺「完整内容」开关');
-  if (!/graphExportFullContent'\)\s*\{\s*_fullContent = !!event\.target\.checked;/.test(ge)) {
-    throw new Error('「完整内容」开关未接回 _fullContent');
+  // 「完整内容」整条链路必须干净移除（长内容交给 .pmu 快照，PNG 回到"按屏幕所见"）
+  for (const gone of ['_fullContent', 'full-content', '_expandCloneFullContent', '_measureExpandedClone',
+                      '_previewExpandedBounds', 'graphExportFullContent']) {
+    if (ge.includes(gone)) throw new Error('完整内容模式残留：' + gone);
   }
-  // ② 解裁剪必须用 inline !important（基础规则是 520px + overflow-y:auto 且带 !important，
-  //    普通 inline 声明压不住），且必须放过用户显式折叠的节点
-  if (!/setProperty\('max-height', 'none', 'important'\)/.test(ge)) throw new Error('解裁剪未用 inline !important');
-  if (!ge.includes("if (el.classList.contains('minimized')) return;")) throw new Error('折叠节点应保持收起');
-  // ③ SVG 侧兜底规则带 .full-content 闸门与 :not(.minimized)
-  if (!/\.graph-export-root\.full-content \.graph-node:not\(\.minimized\)/.test(ge)) {
-    throw new Error('EXPORT_CSS_EXTRA 缺带闸门的解裁剪规则');
-  }
-  // ④ 画框必须按展开后的实测几何重算（否则长内容掉出图外）
-  if (!ge.includes('_measureExpandedClone(clone)')) throw new Error('导出流程未按实测几何重算画框');
-  if (!/bounds = expanded;/.test(ge) || !/out = _resolveOutput\(bounds, scale\);/.test(ge)) {
-    throw new Error('重算后未同步画框与输出尺寸');
-  }
-  // ⑤ 纯函数：包围盒并集（长高后 maxY 必须跟着长）
+  // 菜单仍要有 Utopia 快照入口（PNG 的替代出口）
+  if (!ge.includes('graphExportUtopia')) throw new Error('导出菜单缺 Utopia 快照入口');
+  // 纯函数：包围盒并集
   const union = sandbox.window.graphExportDebug && sandbox.window.graphExportDebug.unionRects;
   if (typeof union !== 'function') throw new Error('unionRects 未暴露');
   const r = union([{ x: 0, y: 0, w: 100, h: 50 }, { x: 200, y: 30, w: 100, h: 500 }]);
   if (r.w !== 300 || r.h !== 530) throw new Error('包围盒并集错误：' + JSON.stringify(r));
   if (union([{ x: NaN, y: 0, w: 10, h: 10 }]) !== null) throw new Error('非法矩形应被忽略');
+  return true;
+});
+
+check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面板走 aurora-glass', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  // 玻璃节点底座深浅两套
+  const baseCount = (css.match(/--node-glass-base:/g) || []).length;
+  if (baseCount < 2) throw new Error('--node-glass-base 需深浅各一套，实际 ' + baseCount);
+  for (const [name, sel] of [['blank（AI 生成）', '.graph-node-blank {'], ['human_note（我的理解）', '.graph-node-human-note {']]) {
+    const i = css.indexOf(sel);
+    if (i < 0) throw new Error('缺 ' + name + ' 规则');
+    const block = css.slice(i, css.indexOf('}', i));
+    if (!block.includes('--node-glass-base')) throw new Error(name + ' 未用玻璃底座（仍是纯色）');
+    if (!/gradient\(/.test(block)) throw new Error(name + ' 缺渐变分层');
+  }
+  // 我的理解：不能再靠 opacity 压暗（旧版发灰的根因）
+  const hn = css.slice(css.indexOf('.graph-node-human-note {'), css.indexOf('}', css.indexOf('.graph-node-human-note {')));
+  if (/opacity:\s*0\.9/.test(hn)) throw new Error('我的理解仍用 opacity 压暗');
+  // 双击节点/连线面板：四个创建点都挂 aurora-glass，且弹窗规则不得再写 background 简写（会盖掉极光）
+  const gc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  if ((gc.match(/graph-network-modal aurora-glass/g) || []).length < 4) {
+    throw new Error('节点弹窗未全部挂 aurora-glass');
+  }
+  const modalRule = css.slice(css.indexOf('.graph-network-modal {'), css.indexOf('}', css.indexOf('.graph-network-modal {')));
+  if (/background:\s*var\(--bg-panel\)/.test(modalRule)) throw new Error('节点弹窗规则仍在写 background 简写（会盖掉极光层）');
+  if (!/backdrop-filter/.test(modalRule)) throw new Error('节点弹窗缺磨砂');
   return true;
 });
 
@@ -582,6 +596,20 @@ check('utopia: .pmu 快照格式（解析校验/摘要/文件名 + 导出接线 
   const shims = fs.readFileSync('src/static/js/viewer-shims.js', 'utf8');
   if (!/window\.saveGraphState = function \(\) \{\};/.test(shims)) throw new Error('查看器 saveGraphState 必须是空操作');
   if (!shims.includes("Object.defineProperty(window, 'localStorage'")) throw new Error('查看器缺 localStorage 只读门面');
+  // 只读化：右下角工具栏整个隐藏 + 右键菜单白名单剪枝（不提供新建/删除/端口增删/收藏知识点）
+  const vmSrc = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  if (!vmSrc.includes('.graph-canvas-toolbar')) throw new Error('查看器未隐藏画布工具栏');
+  if (!vmSrc.includes('READONLY_MENU_LABELS')) throw new Error('查看器缺右键菜单白名单');
+  for (const banned of ['新建节点', '删除节点', '添加输出端口', '收藏为知识点']) {
+    if (new RegExp("READONLY_MENU_LABELS[\\s\\S]{0,400}" + banned).test(vmSrc)) {
+      throw new Error('只读白名单里混入了写操作：' + banned);
+    }
+  }
+  // 界面语言：顶栏/拖放卡/提示条都用极光玻璃
+  const vhtml = fs.readFileSync('src/static/viewer.html', 'utf8');
+  for (const need of ['utopia-bar aurora-glass', 'utopia-drop aurora-glass', 'utopia-toast aurora-glass']) {
+    if (!vhtml.includes(need)) throw new Error('查看器界面缺玻璃载体：' + need);
+  }
   if (!['viewer.html'].every(f => fs.existsSync('src/static/' + f))) throw new Error('缺 src/static/viewer.html');
   return true;
 });

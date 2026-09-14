@@ -45,6 +45,7 @@
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     try { if (typeof window.fitGraph === 'function') window.fitGraph(); } catch (e) {}
     readOnlyGuard();
+    installReadOnlyContextMenu();
     toast('已载入 ' + summaryText(snapshot));
   }
 
@@ -81,12 +82,48 @@
       '.graph-hub-connect-btn,.graph-regen-btn,.graph-blank-actions,.graph-source-controls,',
       '.graph-source-file-btn,.graph-source-paste-btn,.graph-knowledge-actions,.graph-relation-actions,',
       '.graph-ai-eval-accept,.graph-ai-eval-ignore,.graph-link-btn,.graph-tool-btn[title*="新建"],',
-      '.graph-tool-btn[title*="整理"],.graph-tool-btn[title*="分组"],.graph-tool-btn[title*="联系"]',
+      '.graph-tool-btn[title*="整理"],.graph-tool-btn[title*="分组"],.graph-tool-btn[title*="联系"],',
+      // 右下角画布工具栏整个不要（查看器只保留顶栏那几个动作）
+      '.graph-canvas-toolbar,.graph-empty-active .input-area',
       '{display:none !important;}',
       // 只读：节点内滚动 + 文本可选择
       '.graph-node{cursor:default !important;}',
     ].join('');
     document.head.appendChild(css);
+  }
+
+  // 只读右键菜单：open 之后按白名单剪枝——查看器不提供新建/删除/端口增删/收藏知识点等写操作。
+  // 用标签白名单而不是改 graph-contextmenu.js：菜单项定义跟着主应用走，查看器只做减法。
+  var READONLY_MENU_LABELS = [
+    '复制全文', '复制节点', '居中此节点', '折叠此节点', '展开此节点',
+    '适配画布', '缩放复位 100%', '导出超高清 PNG…',
+  ];
+
+  function _labelOf(itemEl) {
+    var labelEl = itemEl.querySelector ? itemEl.querySelector('.graph-context-menu-label') : null;
+    return String((labelEl || itemEl).textContent || '').trim();
+  }
+
+  function installReadOnlyContextMenu() {
+    var origOpen = window.openGraphContextMenu;
+    if (typeof origOpen !== 'function' || origOpen.__utopiaWrapped) return;
+    var wrapped = function (event) {
+      origOpen(event);
+      var menu = document.querySelector('.graph-context-menu');
+      if (!menu) return;
+      Array.prototype.forEach.call(menu.querySelectorAll('.graph-context-menu-item'), function (item) {
+        var label = _labelOf(item);
+        var keep = READONLY_MENU_LABELS.some(function (l) { return label === l || label.indexOf(l) === 0; });
+        if (!keep) item.remove();
+      });
+      // 整张菜单都被剪掉（联系线/多选菜单）→ 直接收起，别留一个空壳
+      if (!menu.querySelector('.graph-context-menu-item')) {
+        if (typeof window.closeGraphContextMenu === 'function') window.closeGraphContextMenu();
+        menu.remove();
+      }
+    };
+    wrapped.__utopiaWrapped = true;
+    window.openGraphContextMenu = wrapped;
   }
 
   // ---------- 打开文件 ----------
@@ -194,6 +231,7 @@
   }
 
   function boot() {
+    installReadOnlyContextMenu();
     initToolbar();
     initDropZone();
     var src = new URLSearchParams(location.search).get('src');

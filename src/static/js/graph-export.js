@@ -20,14 +20,9 @@
   var _menuEl = null;
   var _exporting = false;
   var _transparentBg = false;
-  // 完整内容（默认开）：导出时解除节点内滚动裁剪。节点正文有 max-height:520px + overflow-y:auto
-  // 的基础规则（graph-override.css），截屏式导出只会拿到滚动窗口里的第一屏——用户实测反馈
-  // 「节点里能滚，导出的图不能翻页，内容不全」。开启后节点按实际内容展开、画框按展开后实测重算。
-  var _fullContent = true;
   var _dataUrlCache = {};   // 绝对 url -> dataURL（跨导出复用，字体只抓一次）
   var _outsideCloser = null;
   var _escCloser = null;
-  var _lastMenuAnchor = null;   // 切换「完整内容」后就地重开菜单用（沿用原锚点）
 
   // ---------- 工具 ----------
 
@@ -233,59 +228,6 @@
     return _unionRects(rects);
   }
 
-  // ---------- 完整内容（解除节点内滚动裁剪） ----------
-
-  // 节点正文的 max-height / overflow-y 都写在基础规则里且带 !important，只有 inline !important
-  // 才压得住（层级：inline important > 样式表 important）。手动定高的节点一并改 auto，否则
-  // 内容虽不裁却会溢出卡片外。折叠（minimized）是用户的显式选择，不展开。
-  function _expandCloneFullContent(clone) {
-    var touched = 0;
-    clone.querySelectorAll('.graph-node').forEach(function (el) {
-      if (el.classList.contains('minimized')) return;
-      el.style.setProperty('height', 'auto', 'important');
-      el.style.setProperty('max-height', 'none', 'important');
-      var boxes = el.querySelectorAll('.graph-node-full-content,.graph-blank-content');
-      boxes.forEach(function (box) {
-        box.style.setProperty('max-height', 'none', 'important');
-        box.style.setProperty('overflow', 'visible', 'important');
-        box.style.setProperty('overflow-y', 'visible', 'important');
-      });
-      if (boxes.length) touched++;
-    });
-    return touched;
-  }
-
-  // 展开后必须重新量几何：① 画框原本取的是裁剪后的 n.h（graph-render 实测回写的就是被裁高度），
-  // 长内容会长到图外；② 克隆里的 transform 按裁剪尺寸算过，长高后要按中心重写，否则节点单向下坠。
-  // 量法：把克隆挂到离屏宿主（仍参与布局）读 offsetWidth/offsetHeight，量完摘掉，不影响后续栅格化。
-  function _measureExpandedClone(clone) {
-    var host = document.createElement('div');
-    host.setAttribute('aria-hidden', 'true');
-    host.style.cssText = 'position:absolute;left:-200000px;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;';
-    document.body.appendChild(host);
-    host.appendChild(clone);
-    var rects = [];
-    try {
-      clone.querySelectorAll('.graph-node').forEach(function (el) {
-        var id = el.getAttribute('data-node-id') || '';
-        var node = (id && graphView.nodeById) ? graphView.nodeById[id] : null;
-        if (!node || !isFinite(Number(node.x)) || !isFinite(Number(node.y))) return;
-        var w = el.offsetWidth, h = el.offsetHeight;
-        if (!w || !h) return;
-        var cx = Number(node.x), cy = Number(node.y);
-        el.style.transform = 'translate(' + (cx - w / 2) + 'px,' + (cy - h / 2) + 'px)';
-        rects.push({ x: cx - w / 2, y: cy - h / 2, w: w, h: h });
-      });
-      (graphView.groups || []).forEach(function (g) {
-        rects.push({ x: g.x, y: g.y, w: g.width, h: g.height });
-      });
-    } finally {
-      if (clone.parentNode) clone.parentNode.removeChild(clone);
-      if (host.parentNode) host.parentNode.removeChild(host);
-    }
-    return _unionRects(rects);
-  }
-
   // 浏览器上限内实际可达的输出像素
   function _resolveOutput(bounds, scale) {
     var w = bounds.w + EXPORT_PADDING * 2;
@@ -299,19 +241,6 @@
     return { outW: outW, outH: outH, worldW: w, worldH: h };
   }
 
-  // 菜单尺寸预览：完整内容模式下按"展开后实测"给数，否则菜单会低报（实测 1× 预览 986 高、
-  // 实际输出 4360 高）。菜单打开时量一次（克隆+展开+离屏实测，用完即弃），导出时再量一次。
-  function _previewExpandedBounds() {
-    try {
-      var clone = _buildExportClone();
-      if (!_expandCloneFullContent(clone)) return null;
-      return _measureExpandedClone(clone);
-    } catch (e) {
-      return null;
-    }
-  }
-
-
   // ---------- 克隆世界层 ----------
 
   function _buildExportClone() {
@@ -324,7 +253,6 @@
     }
     var clone = graphInner.cloneNode(true);
     clone.classList.add('graph-export-root');
-    if (_fullContent) clone.classList.add('full-content');
     clone.classList.remove('linking', 'panning');
     clone.classList.add('graph-heavy-zoom'); // 关闭重型特效（光晕/大阴影），既省显存又更“纸面”
     clone.style.transform = 'none';
@@ -412,7 +340,6 @@
 ,    '.graph-export-root .graph-ai-eval-ignore{visibility:hidden !important;}'
 ,    '.graph-export-root textarea,.graph-export-root .graph-group-name-input{border:none !important;background:transparent !important;box-shadow:none !important;resize:none !important;outline:none !important;appearance:none !important;-webkit-appearance:none !important;overflow:hidden !important;}'
 ,    '.graph-export-root .graph-edge,.graph-export-root .graph-edge-link{vector-effect:none !important;}'
-,    '.graph-export-root.full-content .graph-node:not(.minimized) .graph-node-full-content,.graph-export-root.full-content .graph-node:not(.minimized) .graph-blank-content{max-height:none !important;overflow:visible !important;overflow-y:visible !important;}'
   ].join('');
 
   // ---------- 栅格化 ----------
@@ -565,17 +492,6 @@
 
     _buildExportCss(used).then(function (css) {
       var clone = _buildExportClone();
-      if (_fullContent) {
-        // 先展开、再按实测几何重算画框与输出尺寸（顺序不能反：画框依赖展开后的高度）
-        var touched = _expandCloneFullContent(clone);
-        if (touched) {
-          var expanded = _measureExpandedClone(clone);
-          if (expanded && (expanded.w > bounds.w + 1 || expanded.h > bounds.h + 1)) {
-            bounds = expanded;
-            out = _resolveOutput(bounds, scale);
-          }
-        }
-      }
       _toast('正在以 ' + out.outW + '×' + out.outH + ' 渲染，大图需要几秒…');
       return _rasterize(clone, css, bounds, out, 'blob').catch(function (err) {
         if (err && err.security) {
@@ -624,13 +540,6 @@
     try { if (typeof _measureNodes === 'function') _measureNodes(); } catch (e) {}
     var bounds = _exportBounds();
     if (!bounds) { _toast('无法计算画布范围'); return; }
-    _lastMenuAnchor = (anchor && isFinite(anchor.x) && isFinite(anchor.y)) ? { x: anchor.x, y: anchor.y } : null;
-    if (_fullContent) {
-      var previewBounds = _previewExpandedBounds();
-      if (previewBounds && (previewBounds.w > bounds.w + 1 || previewBounds.h > bounds.h + 1)) {
-        bounds = previewBounds;   // 菜单里的倍数尺寸与导出结果同口径
-      }
-    }
 
     var menu = document.createElement('div');
     menu.className = 'graph-export-menu';
@@ -649,16 +558,13 @@
     });
     html += '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
       + (_transparentBg ? ' checked' : '') + '>透明背景（不填充面板底色）</label>'
-      + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportFullContent"'
-      + (_fullContent ? ' checked' : '') + '>完整内容（解除节点内滚动裁剪，长回答整段入图）</label>'
       + '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
       + '<b>Utopia 快照 ' + UTOPIA_EXT + '</b>'
       + '<span class="graph-export-res">可滚动</span>'
       + '</button>'
       + '<div class="graph-export-menu-foot">含 KaTeX 公式、Mermaid 图谱与分组框；可视化 iframe 以占位卡出现。'
-      + '「完整内容」开启时节点按实际内容展开、图片相应变高（折叠的节点保持收起）；关掉即按屏幕所见导出。'
-      + 'PNG 是一页概览图，长回答请用 <b>Utopia 快照</b>——节点内可滚动（翻页语义），用 viewer.html 只读打开。'
-      + '首次导出需抓取字体，之后走缓存。</div>';
+      + 'PNG 是<b>按屏幕所见的一页概览图</b>（节点内滚动的内容不入图）；要看长回答全文请用 <b>Utopia 快照 .pmu</b>'
+      + '——节点内可继续滚动，用 viewer.html 只读打开。首次导出需抓取字体，之后走缓存。</div>';
     menu.innerHTML = html;
 
     menu.addEventListener('click', function (event) {
@@ -678,13 +584,6 @@
     menu.addEventListener('change', function (event) {
       if (event.target && event.target.id === 'graphExportTransparent') {
         _transparentBg = !!event.target.checked;
-      }
-      if (event.target && event.target.id === 'graphExportFullContent') {
-        _fullContent = !!event.target.checked;
-        // 尺寸预览与开关同源：切换后重开菜单（沿用原锚点）重算倍数尺寸
-        var keepAnchor = _lastMenuAnchor;
-        _closeGraphExportMenu();
-        toggleGraphExportMenu(keepAnchor || undefined);
       }
     });
 
@@ -723,13 +622,9 @@
   // 全局暴露（onclick 内联调用）
   window.toggleGraphExportMenu = toggleGraphExportMenu;
   window.exportGraphImage = exportGraphImage;
-  // 调试/测试钩子（完整内容模式的纯函数与展开步骤；smoke 与浏览器实测复用）
+  // 调试/测试钩子（画框纯函数；smoke 与浏览器实测复用）
   window.graphExportDebug = {
     unionRects: _unionRects,
-    expandFullContent: _expandCloneFullContent,
-    measureExpanded: _measureExpandedClone,
-    isFullContent: function () { return _fullContent; },
-    setFullContent: function (on) { _fullContent = !!on; return _fullContent; },
     bounds: _exportBounds,
   };
 })();
