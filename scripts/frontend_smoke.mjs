@@ -841,9 +841,26 @@ check('viz-check：_vizCheckVerdict 四态判定', () => {
 
 // ===== 模型分组与分组密钥 =====
 check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup 下拉）静态断言', () => {
-  for (const t of ['phymathia_model_group_keys', 'saveGroupKey', 'toggleModelGroup', 'model-group-key', '<optgroup label=']) {
+  for (const t of ['phymathia_model_group_keys', 'saveGroupKey', 'toggleModelGroup', 'model-group-key', '<optgroup label=', 'data-provider']) {
     if (!code.includes(t)) throw new Error('打包产物缺：' + t);
   }
+  // 点外关闭监听须跳过已脱离 DOM 的点击目标（分组折叠就地切换的前提）
+  if (!code.includes('isConnected')) throw new Error('点外关闭缺少 detached-target 守卫');
+  return true;
+});
+
+check('model-group：DeepSeek 官方模型自动预置（组内 2 个 + 组密钥继承）', () => {
+  sandbox.loadUserModels();
+  sandbox.saveGroupKey('deepseek', 'sk-ds-group');
+  const ds = sandbox.getAllModels().filter(m => m.provider === 'deepseek');
+  const names = ds.map(m => m.name).join(',');
+  if (ds.length !== 2) throw new Error('deepseek 预设应 2 个，实际 ' + ds.length + ': ' + names);
+  if (!ds.every(m => m.hasKey)) return false; // 组密钥同步到条目
+  if (!names.includes('Reasoner') || !names.includes('Chat')) return false;
+  // 清理组密钥与条目缓存，避免污染后续用例的「组外不触碰」断言
+  sandbox.saveGroupKey('deepseek', '');
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
   return true;
 });
 
