@@ -363,6 +363,45 @@ function _graphCtxCleanSeparators(items) {
   return out;
 }
 
+// ---------- 视觉层（M2 细化）：按键名取线性图标 + 快捷键提示 ----------
+// 图标全部复用 config.js 的 UI_ICON_SVG；缺失即静默留白（不阻断菜单）。
+const GRAPH_CTX_ICONS = {
+  bookmark: 'book',
+  copy: 'copy',
+  focus: 'target',
+  duplicate: 'clipboard',
+  minimize: 'collapse',
+  'add-input-port': 'plus',
+  'add-output-port': 'plus',
+  'add-node': 'plus',
+  'paste-node': 'clipboard',
+  fit: 'frame',
+  'zoom-reset': 'reset',
+  arrange: 'layout',
+  'create-group': 'group',
+  'select-all': 'selectAll',
+  export: 'download',
+  undo: 'undo',
+  redo: 'redo',
+  'edit-link': 'link',
+  'curve-edit': 'curve',
+  delete: 'trash',
+  'delete-link': 'trash',
+};
+
+// 与 _handleGraphKeydown 真实支持的快捷键一致（不写不存在的提示）
+const GRAPH_CTX_KEYS = {
+  undo: 'Ctrl+Z',
+  redo: 'Ctrl+Y',
+  delete: 'Del',
+};
+
+function _graphCtxIconSvg(key) {
+  const iconName = GRAPH_CTX_ICONS[key];
+  if (!iconName || typeof UI_ICON_SVG === 'undefined' || !UI_ICON_SVG[iconName]) return '';
+  return UI_ICON_SVG[iconName];
+}
+
 // ---------- 动作适配（均只组合既有函数，零新业务逻辑） ----------
 
 function _graphCtxNodeTitle(node) {
@@ -532,7 +571,28 @@ function openGraphContextMenu(event) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'graph-context-menu-item' + (item.danger ? ' danger' : '');
-    btn.textContent = item.label;
+    const icon = _graphCtxIconSvg(item.key);
+    if (icon) {
+      const iconEl = document.createElement('span');
+      iconEl.className = 'graph-context-menu-icon';
+      iconEl.innerHTML = icon; // 图标来自本地常量表，非用户输入
+      btn.appendChild(iconEl);
+    } else {
+      const spacer = document.createElement('span');
+      spacer.className = 'graph-context-menu-icon is-empty';
+      btn.appendChild(spacer);
+    }
+    const labelEl = document.createElement('span');
+    labelEl.className = 'graph-context-menu-label';
+    labelEl.textContent = item.label;
+    btn.appendChild(labelEl);
+    const keyHint = GRAPH_CTX_KEYS[item.key];
+    if (keyHint) {
+      const kbd = document.createElement('kbd');
+      kbd.className = 'graph-context-menu-kbd';
+      kbd.textContent = keyHint;
+      btn.appendChild(kbd);
+    }
     btn.dataset.itemIndex = String(index);
     if (item.disabled) btn.disabled = true;
     if (item.title) btn.title = item.title;

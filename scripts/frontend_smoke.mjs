@@ -985,77 +985,83 @@ check('quiz-relearn：同主题重测组卷（素材收缩 + 错题打头 + 去�
   return true;
 });
 
-check('quiz-relearn：重学引导（pill 两动作 + 我的理解节点 + 落点 + 联系模式预选起点）', () => {
+check('quiz-relearn：重学引导（浮卡两动作 + 我的理解节点 + 落点 + 联系模式预选起点）', () => {
   sandbox.window.getCurrentSessionId = () => M2_SESSION;
-  sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: 'n1' });
-  const ctx = sandbox._quizRelearnCtxGet();
-  if (!ctx || ctx.title !== '简谐运动' || ctx.nodeId !== 'n1') throw new Error('引导上下文未建立');
-  const html = sandbox.quizRelearnPillHtml();
-  if (!html.includes('quizRelearnCreateNote()') || !html.includes('quizRelearnConnect()')) {
-    throw new Error('pill 缺两个建议动作');
-  }
-  if (!html.includes('写下总结节点') || !html.includes('连接先导概念')) throw new Error('动作文案缺失');
-  if (sandbox._quizRelearnNoteLabel('简谐运动') !== '我的理解：简谐运动') throw new Error('总结节点标题不符');
-  // 落点：定位节点旁 +24/+24；节点未知时退回画布默认落点（不抛错）
-  const realFind = sandbox._findGraphNode;
-  try {
-    sandbox._findGraphNode = id => (id === 'n1' ? { id: 'n1', x: 100, y: 200 } : null);
-    const near = sandbox._quizRelearnAnchorPoint('n1');
-    if (near.x !== 124 || near.y !== 224) throw new Error('落点应为源节点 +24/+24，实际 ' + JSON.stringify(near));
-    const fallback = sandbox._quizRelearnAnchorPoint('');
-    if (!Number.isFinite(fallback.x) || !Number.isFinite(fallback.y)) throw new Error('退化落点应仍为有效坐标');
-  } finally {
-    sandbox._findGraphNode = realFind;
-  }
-  // 真建节点：必须是 kind=human_note（「我的理解」，有手写弹窗）——blank 是「写要求→AI 生成」
-  // 的 AI 节点，没有手写路径，不能用来表达「我自己懂了的证据」
-  const store = { customNodes: [], connections: [], positions: {}, collapsed: {}, hidden: {}, groups: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, harnessDeleted: {}, pan: { x: 0, y: 0 }, zoom: 0.9 };
-  const realGetState = sandbox.window.getGraphState;
-  const realSaveState = sandbox.window.saveGraphState;
-  const realGetChat = sandbox.window.getChatHistory;
-  const realEdit = sandbox.editHumanNoteNode;
-  // renderGraphCanvas 每次都会重新 getElementById 取画布：并发段的 knowledge 用例会把
-  // getElementById 换成哑元素（无 appendChild），此处须自己钉住一个宽松元素（本检查是同步
-  // 用例，不会与其它用例交错）
+  // 并发段的 knowledge 用例会把 getElementById 换成哑元素（无 querySelector/appendChild）；
+  // 本检查是同步用例，自己钉住一个宽松元素，避免被别人的桩带崩。
   const realGetById = sandbox.document.getElementById;
+  sandbox.document.getElementById = () => loose('smokeEl');
+  let ctx = null;
+  let html = '';
+  let near = null;
+  let fallback = null;
+  let created = [];
   let edited = null;
   try {
-    sandbox.document.getElementById = () => loose('smokeGraphCanvasEl');
-    sandbox.window.getGraphState = () => store;
-    sandbox.window.saveGraphState = (sid, next) => Object.assign(store, next);
-    sandbox.window.getChatHistory = () => [];
-    sandbox.editHumanNoteNode = (id) => { edited = id; };
-    sandbox.quizRelearnCreateNote();
-    const created = (vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note');
-    if (created.length !== 1) throw new Error('应创建 1 个「我的理解」节点，实际 ' + created.length);
-    if (created[0].label !== '我的理解：简谐运动') throw new Error('节点标题未带主题：' + created[0].label);
-    if (edited !== created[0].id) throw new Error('未打开「编辑我的理解」弹窗');
-    const ctx2 = sandbox._quizRelearnCtxGet();
-    if (ctx2.noteNodeId !== created[0].id) throw new Error('引导未记住总结节点');
-    if (!sandbox.quizRelearnPillHtml().includes('继续写总结')) throw new Error('pill 文案未切到续写态');
-    // 连接：把总结节点设为既有联系模式起点
-    sandbox.quizRelearnConnect();
-    if (vm.runInContext('graphView.linkMode', sandbox) !== true) throw new Error('未进入联系模式');
-    if (vm.runInContext('graphView.linkFirstNodeId', sandbox) !== created[0].id) throw new Error('未预选总结节点为起点');
-    // 再点一次不重复建节点，改为聚焦 + 打开编辑器
-    sandbox.quizRelearnCreateNote();
-    if ((vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note').length !== 1) {
-      throw new Error('重复点击不应再建节点');
+    sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: 'n1' });
+    ctx = sandbox._quizRelearnCtxGet();
+    if (!ctx || ctx.title !== '简谐运动' || ctx.nodeId !== 'n1') throw new Error('引导上下文未建立');
+    html = sandbox.quizRelearnPillHtml();
+    if (!html.includes('quizRelearnCreateNote()') || !html.includes('quizRelearnConnect()')) {
+      throw new Error('浮卡缺两个建议动作');
     }
-    if (edited !== created[0].id) throw new Error('重复点击应重新打开编辑器');
+    if (!html.includes('写下总结节点') || !html.includes('连接先导概念')) throw new Error('动作文案缺失');
+    if (sandbox._quizRelearnNoteLabel('简谐运动') !== '我的理解：简谐运动') throw new Error('总结节点标题不符');
+    // 落点：定位节点旁 +24/+24；节点未知时退回画布默认落点（不抛错）
+    const realFind = sandbox._findGraphNode;
+    try {
+      sandbox._findGraphNode = id => (id === 'n1' ? { id: 'n1', x: 100, y: 200 } : null);
+      near = sandbox._quizRelearnAnchorPoint('n1');
+      fallback = sandbox._quizRelearnAnchorPoint('');
+    } finally {
+      sandbox._findGraphNode = realFind;
+    }
+    if (near.x !== 124 || near.y !== 224) throw new Error('落点应为源节点 +24/+24，实际 ' + JSON.stringify(near));
+    if (!Number.isFinite(fallback.x) || !Number.isFinite(fallback.y)) throw new Error('退化落点应仍为有效坐标');
+    // 真建节点：必须是 kind=human_note（「我的理解」，有手写弹窗）——blank 是「写要求→AI 生成」
+    // 的 AI 节点，没有手写路径，不能用来表达「我自己懂了的证据」
+    const store = { customNodes: [], connections: [], positions: {}, collapsed: {}, hidden: {}, groups: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, harnessDeleted: {}, pan: { x: 0, y: 0 }, zoom: 0.9 };
+    const realGetState = sandbox.window.getGraphState;
+    const realSaveState = sandbox.window.saveGraphState;
+    const realGetChat = sandbox.window.getChatHistory;
+    const realEdit = sandbox.editHumanNoteNode;
+    try {
+      sandbox.window.getGraphState = () => store;
+      sandbox.window.saveGraphState = (sid, next) => Object.assign(store, next);
+      sandbox.window.getChatHistory = () => [];
+      sandbox.editHumanNoteNode = (id) => { edited = id; };
+      sandbox.quizRelearnCreateNote();
+      created = (vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note');
+      if (created.length !== 1) throw new Error('应创建 1 个「我的理解」节点，实际 ' + created.length);
+      if (created[0].label !== '我的理解：简谐运动') throw new Error('节点标题未带主题：' + created[0].label);
+      if (edited !== created[0].id) throw new Error('未打开「编辑我的理解」弹窗');
+      if (sandbox._quizRelearnCtxGet().noteNodeId !== created[0].id) throw new Error('引导未记住总结节点');
+      if (!sandbox.quizRelearnPillHtml().includes('继续写总结')) throw new Error('浮卡文案未切到续写态');
+      // 连接：把总结节点设为既有联系模式起点
+      sandbox.quizRelearnConnect();
+      if (vm.runInContext('graphView.linkMode', sandbox) !== true) throw new Error('未进入联系模式');
+      if (vm.runInContext('graphView.linkFirstNodeId', sandbox) !== created[0].id) throw new Error('未预选总结节点为起点');
+      // 再点一次不重复建节点，改为聚焦 + 打开编辑器
+      sandbox.quizRelearnCreateNote();
+      if ((vm.runInContext('graphView.nodes', sandbox) || []).filter(n => n.kind === 'human_note').length !== 1) {
+        throw new Error('重复点击不应再建节点');
+      }
+      if (edited !== created[0].id) throw new Error('重复点击应重新打开编辑器');
+    } finally {
+      sandbox.window.getGraphState = realGetState;
+      sandbox.window.saveGraphState = realSaveState;
+      sandbox.window.getChatHistory = realGetChat;
+      sandbox.editHumanNoteNode = realEdit;
+    }
+    // 落点未知时「连接先导概念」走既有联系模式兜底分支（不崩、不预设起点）
+    sandbox.clearQuizRelearnGuide();
+    sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: '' });
+    sandbox.quizRelearnConnect();
+    sandbox.clearQuizRelearnGuide();
+    if (sandbox.quizRelearnPillHtml() !== '') throw new Error('清空引导后浮卡不应再出动作');
   } finally {
-    sandbox.window.getGraphState = realGetState;
-    sandbox.window.saveGraphState = realSaveState;
-    sandbox.window.getChatHistory = realGetChat;
-    sandbox.editHumanNoteNode = realEdit;
     sandbox.document.getElementById = realGetById;
   }
-  // 落点未知时「连接先导概念」走既有联系模式兜底分支（不崩、不预设起点）
-  sandbox.clearQuizRelearnGuide();
-  sandbox.showQuizRelearnGuide({ title: '简谐运动', nodeId: '' });
-  sandbox.quizRelearnConnect();
-  sandbox.clearQuizRelearnGuide();
-  if (sandbox.quizRelearnPillHtml() !== '') throw new Error('清空引导后 pill 不应再出动作');
   return true;
 });
 
@@ -1119,6 +1125,85 @@ try {
   failed++;
   console.error('❌ model-group：请求边界携带同步后的组密钥 ->', e.message);
 }
+check('quiz-relearn：结果页正确率环形图按真实比例（旧版是与分数无关的静态圈）', () => {
+  const good = sandbox._quizScoreRingHtml(80, 4, 1);
+  if (!good.includes('--p:80')) throw new Error('扇形角度未绑定正确率');
+  if (!good.includes('tone-good')) throw new Error('80% 应用绿档');
+  if (!good.includes('答对 4') || !good.includes('答错 1')) throw new Error('对/错分段缺失');
+  if (!good.includes('aria-label="正确率 80%')) throw new Error('缺无障碍标签');
+  const low = sandbox._quizScoreRingHtml(0, 0, 3);
+  if (!low.includes('--p:0') || !low.includes('tone-low')) throw new Error('0% 应落在红档且扇形为 0');
+  const mid = sandbox._quizScoreRingHtml(60, 3, 2);
+  if (!mid.includes('tone-mid')) throw new Error('60% 应落在黄档');
+  const clamped = sandbox._quizScoreRingHtml(140, 7, 0);
+  if (!clamped.includes('--p:100')) throw new Error('越界分值应夹到 100');
+  if (!sandbox._quizScoreRingHtml(Number.NaN, 0, 0).includes('--p:0')) throw new Error('NaN 应兜底为 0');
+  // 全局概览：会话卡小环 + 饼图口径说明（旧版饼图标题写「正确率分布」但角度编码的是答题量）
+  const mini = sandbox._quizSessionRateRingHtml(45);
+  if (!mini.includes('is-mini') || !mini.includes('--p:45') || !mini.includes('tone-low')) {
+    throw new Error('会话卡小环未按正确率画');
+  }
+  const src = fs.readFileSync('src/static/js/quiz-render.js', 'utf8');
+  if (!src.includes('各画布答题量占比')) throw new Error('饼图标题未纠正为答题量口径');
+  if (!src.includes('已测 ${segment.value} 题')) throw new Error('饼图图例未标注已测题数');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!/conic-gradient/.test(css)) throw new Error('CSS 未用 conic-gradient 画扇形');
+  if (!/quizRingSweep/.test(css)) throw new Error('缺扇形填充动画');
+  if (!/\.quiz-score-ring\.is-mini/.test(css)) throw new Error('缺小号环样式');
+  return true;
+});
+
+check('quiz-relearn：引导浮卡的可见倒计时与生命周期（旧版 60 秒无声消失）', () => {
+  const uiSrc = fs.readFileSync('src/static/js/quiz-ui.js', 'utf8');
+  for (const frag of [
+    'QUIZ_RETURN_PILL_TTL',
+    'quiz-return-pill-bar',                    // 倒计时条
+    'quiz-return-pill-count',                  // 秒数文案
+    '悬停暂停',                                 // 悬停暂停提示
+    '秒后收起',                                 // 剩余时间文案
+    '引导卡已自动收起（60 秒未操作）',            // 自动收起时说明原因
+    "document.querySelector('.graph-network-modal-overlay')", // 编辑弹窗打开时暂停
+  ]) {
+    if (!uiSrc.includes(frag)) throw new Error('浮卡生命周期缺: ' + frag);
+  }
+  const cssSrc = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!cssSrc.includes('.quiz-return-pill-bar')) throw new Error('CSS 缺倒计时条');
+  if (!cssSrc.includes('quizReturnPillIn')) throw new Error('CSS 缺入场动画');
+  if (cssSrc.includes('background: var(--accent, #4f8cff);')) throw new Error('旧版纯蓝胶囊样式未移除');
+  // 行为：启动倒计时后剩余 = TTL，隐藏后定时器清空（不泄漏）
+  const realGetById = sandbox.document.getElementById;
+  sandbox.document.getElementById = () => loose('smokePillEl');
+  try {
+    sandbox.showQuizReturnPill();
+    if (vm.runInContext('_quizReturnPillLeft', sandbox) !== 60000) throw new Error('倒计时未从 60 秒起算');
+    sandbox.hideQuizReturnPill();
+    // 沙箱的 setInterval 桩返回 0（真浏览器返回正数 id）——按「假值」判停止
+    if (vm.runInContext('_quizReturnPillTick', sandbox)) throw new Error('隐藏后倒计时应停止');
+  } finally {
+    sandbox.document.getElementById = realGetById;
+  }
+  return true;
+});
+
+check('graph-contextmenu：菜单视觉层（图标列 + 快捷键提示 + 静态断言）', () => {
+  const src = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
+  for (const frag of ["iconEl.className = 'graph-context-menu-icon'", 'graph-context-menu-kbd', 'GRAPH_CTX_ICONS', 'GRAPH_CTX_KEYS']) {
+    if (!src.includes(frag)) throw new Error('菜单视觉层缺: ' + frag);
+  }
+  // 图标取自 config.js 的线性图标表；未知键静默留白（不阻断菜单）
+  const del = sandbox._graphCtxIconSvg('delete');
+  if (!del || !del.includes('<svg')) throw new Error('删除项未取到图标');
+  if (sandbox._graphCtxIconSvg('不存在的键') !== '') throw new Error('未知键应留白');
+  // GRAPH_CTX_KEYS 是顶层 const（不挂沙箱全局），走词法读取
+  if (vm.runInContext('GRAPH_CTX_KEYS.delete', sandbox) !== 'Del') throw new Error('删除项快捷键提示应对齐真实键位');
+  if (vm.runInContext('GRAPH_CTX_ICONS.delete', sandbox) !== 'trash') throw new Error('删除项应映射到 trash 图标');
+  const cssSrc = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const frag of ['.graph-context-menu-icon', '.graph-context-menu-kbd', 'graphCtxMenuIn', 'backdrop-filter']) {
+    if (!cssSrc.includes(frag)) throw new Error('菜单 CSS 缺: ' + frag);
+  }
+  return true;
+});
+
 // ===== 串行边界：以下用例改共享状态（localStorage 知识/统计键）且会 await，
 // 必须放在全部并发检查之后——否则会与在途的 knowledge/quiz 异步用例互相踩键 =====
 

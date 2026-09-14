@@ -116,8 +116,52 @@ function closeQuiz() {
   document.body.style.overflow = '';
 }
 
-// ====== 题库/错题跳转知识点后的“返回题库”入口 ======
-let _quizReturnPillTimer = null;
+// ====== 跳转后的「返回现场 + 重学引导」浮卡（M2 视觉与生命周期修正）======
+// 旧版是一条纯蓝胶囊，60 秒后无声消失 —— 用户既不知道它长在哪儿算好看，也不知道它
+// 什么时候走、为什么走。现在改成与面板同族的玻璃卡片 + 可见倒计时条 + 悬停/编辑时暂停，
+// 自动收起时给一句 toast 说明原因。
+let _quizReturnPillTimer = null;    // 自动收起兜底
+let _quizReturnPillTick = null;     // 倒计时刷新
+let _quizReturnPillLeft = 0;        // 剩余毫秒
+let _quizReturnPillHover = false;   // 鼠标是否停在卡片上
+const QUIZ_RETURN_PILL_TTL = 60000;
+
+function _quizReturnPillPaint() {
+  const pill = document.getElementById('quizReturnPill');
+  if (!pill) return;
+  const bar = pill.querySelector('.quiz-return-pill-bar');
+  if (bar) bar.style.transform = 'scaleX(' + Math.max(0, _quizReturnPillLeft / QUIZ_RETURN_PILL_TTL).toFixed(4) + ')';
+  const count = pill.querySelector('.quiz-return-pill-count');
+  if (count) count.textContent = _quizReturnPillHover ? '悬停暂停' : Math.max(0, Math.ceil(_quizReturnPillLeft / 1000)) + ' 秒后收起';
+}
+
+function _quizReturnPillStopCountdown() {
+  if (_quizReturnPillTick) { clearInterval(_quizReturnPillTick); _quizReturnPillTick = null; }
+  if (_quizReturnPillTimer) { clearTimeout(_quizReturnPillTimer); _quizReturnPillTimer = null; }
+}
+
+function _quizReturnPillStartCountdown() {
+  _quizReturnPillStopCountdown();
+  _quizReturnPillLeft = QUIZ_RETURN_PILL_TTL;
+  _quizReturnPillPaint();
+  _quizReturnPillTick = setInterval(() => {
+    // 鼠标停在卡片上，或正在编辑弹窗里写字时暂停——用户没空读倒计时，就别把它收走
+    const editing = !!document.querySelector('.graph-network-modal-overlay');
+    if (_quizReturnPillHover || editing) {
+      _quizReturnPillPaint();
+      return;
+    }
+    _quizReturnPillLeft -= 250;
+    if (_quizReturnPillLeft <= 0) {
+      _quizReturnPillStopCountdown();
+      hideQuizReturnPill();
+      if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
+      if (typeof showToast === 'function') showToast('引导卡已自动收起（60 秒未操作）');
+      return;
+    }
+    _quizReturnPillPaint();
+  }, 250);
+}
 
 function showQuizReturnPill() {
   hideQuizReturnPill();
@@ -126,29 +170,40 @@ function showQuizReturnPill() {
     pill = document.createElement('div');
     pill.id = 'quizReturnPill';
     pill.className = 'quiz-return-pill';
+    pill.addEventListener('mouseenter', () => { _quizReturnPillHover = true; _quizReturnPillPaint(); });
+    pill.addEventListener('mouseleave', () => { _quizReturnPillHover = false; _quizReturnPillPaint(); });
     document.body.appendChild(pill);
   }
   const phase = quizReturnState ? quizReturnState.phase : '';
   const label = phase === 'wrong' ? '返回错题' : (phase === 'result' ? '返回检测结果' : '返回题库');
-  // 重学引导（M2）：定位到画布后在同一枚 pill 上挂两个建议动作（由 quiz-relearn.js 提供）
+  // 重学引导（M2）：定位到画布后在同一枚卡片上挂两个建议动作（由 quiz-relearn.js 提供）
   const relearn = typeof quizRelearnPillHtml === 'function' ? quizRelearnPillHtml() : '';
-  pill.innerHTML = '<button type="button" class="quiz-return-pill-btn" onclick="resumeQuizFromJump()">⬅ ' + escapeHtml(label) + '</button>'
+  const backIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.undo) ? UI_ICON_SVG.undo : '';
+  pill.innerHTML = '<div class="quiz-return-pill-head">'
+    + '<span class="quiz-return-pill-dot"></span>'
+    + '<span class="quiz-return-pill-kicker">' + (relearn ? '重学引导' : '返回现场') + '</span>'
+    + '<span class="quiz-return-pill-count"></span>'
+    + '<button type="button" class="quiz-return-pill-close" onclick="closeQuizReturnPill()" aria-label="收起" title="收起">&times;</button>'
+    + '</div>'
+    + '<div class="quiz-return-pill-actions">'
+    + '<button type="button" class="quiz-return-pill-btn primary" onclick="resumeQuizFromJump()">'
+    + backIcon + '<span>' + escapeHtml(label) + '</span></button>'
     + relearn
-    + '<button type="button" class="quiz-return-pill-close" onclick="closeQuizReturnPill()" aria-label="关闭" title="关闭">&times;</button>';
+    + '</div>'
+    + '<i class="quiz-return-pill-bar"></i>';
   pill.hidden = false;
   pill.classList.add('active');
-  if (_quizReturnPillTimer) clearTimeout(_quizReturnPillTimer);
-  _quizReturnPillTimer = setTimeout(hideQuizReturnPill, 60000);
+  _quizReturnPillStartCountdown();
 }
 
-// 显式关闭：连重学引导一起清掉（自动隐藏只收 pill，保留上下文供下一次定位覆盖）
+// 显式关闭：连重学引导一起清掉（自动收起同样清，避免卡片没了引导上下文还留着）
 function closeQuizReturnPill() {
   if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
   hideQuizReturnPill();
 }
 
 function hideQuizReturnPill() {
-  if (_quizReturnPillTimer) { clearTimeout(_quizReturnPillTimer); _quizReturnPillTimer = null; }
+  _quizReturnPillStopCountdown();
   const pill = document.getElementById('quizReturnPill');
   if (pill) {
     pill.hidden = true;
