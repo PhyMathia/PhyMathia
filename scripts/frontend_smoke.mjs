@@ -1316,7 +1316,7 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
   for (const frag of [
     '.aurora-glass {',
     '--aurora-1', '--aurora-2', '--aurora-3', '--glass-tint', '--glass-veil',
-    'backdrop-filter: blur(18px) saturate(170%)',
+    'backdrop-filter: blur(18px) saturate(150%)',
     '@keyframes auroraDrift',
     '.aurora-glass--compact',
     'prefers-reduced-motion',                       // 减弱动效：停止漂移
