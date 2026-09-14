@@ -1,7 +1,49 @@
 const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
 const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
-const OPENCODE_GO_MODELS = ['hy3', 'hy3-preview'];
 const OPENCODE_DEFAULT_KEY = '';
+// OpenCode Go 预设（2026-09-14 自 https://opencode.ai/zen/go/v1/models 实时拉取；
+// 官方列表会滚动更新，过期时以该端点为准增删）。
+// 注意：网关要求请求带 x-opencode-session 头（后端代理已按会话 id 注入，见 main.py）。
+const OPENCODE_GO_MODEL_LABELS = {
+  'glm-5.3': 'GLM-5.3',
+  'glm-5.3-flash': 'GLM-5.3 Flash',
+  'glm-5.2': 'GLM-5.2',
+  'glm-5.1': 'GLM-5.1',
+  'glm-5': 'GLM-5',
+  'kimi-k3': 'Kimi K3',
+  'kimi-k2.7-code': 'Kimi K2.7 Code',
+  'kimi-k2.6': 'Kimi K2.6',
+  'kimi-k2.5': 'Kimi K2.5',
+  'deepseek-v4-pro': 'DeepSeek V4 Pro',
+  'deepseek-v4-flash': 'DeepSeek V4 Flash',
+  'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
+  'deepseek-flash': 'DeepSeek Flash',
+  'deepseek-v4-flash-vision-exp': 'DeepSeek V4 Flash Vision（实验）',
+  'qwen3.8-max': 'Qwen3.8 Max',
+  'qwen3.8-flash': 'Qwen3.8 Flash',
+  'qwen3.7-max': 'Qwen3.7 Max',
+  'qwen3.7-plus': 'Qwen3.7 Plus',
+  'qwen3.6-plus': 'Qwen3.6 Plus',
+  'qwen3.5-plus': 'Qwen3.5 Plus',
+  'minimax-m3': 'MiniMax M3',
+  'minimax-m2.7': 'MiniMax M2.7',
+  'minimax-m2.5': 'MiniMax M2.5',
+  'mimo-v2.5-pro': 'MiMo V2.5 Pro',
+  'mimo-v2.5': 'MiMo V2.5',
+  'mimo-v2-pro': 'MiMo V2 Pro',
+  'mimo-v2-omni': 'MiMo V2 Omni',
+  'longcat-2.0': 'LongCat 2.0',
+  'hy3': '混元 Hy3',
+  'hy3-preview': '混元 Hy3 Preview',
+  'hy4-preview': '混元 Hy4 Preview',
+  'gpt-5.6-luna': 'GPT-5.6 Luna',
+  'grok-4.6': 'Grok 4.6',
+  'grok-4.5': 'Grok 4.5',
+  'muse-spark-1.3-contributor': 'Muse Spark 1.3 Contributor',
+  'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor',
+  'omen-alpha': 'Omen Alpha',
+};
+const OPENCODE_GO_MODELS = Object.keys(OPENCODE_GO_MODEL_LABELS);
 const OPENCODE_FREE_MODEL_LABELS = {
   'big-pickle': 'Big Pickle',
   'mimo-v2.5-free': 'MiMo V2.5 Free',
@@ -49,13 +91,17 @@ function _ensureOpencodeGoModels() {
   let changed = false;
   let firstId = '';
   for (const modelId of OPENCODE_GO_MODELS) {
-    const label = modelId;
+    const label = OPENCODE_GO_MODEL_LABELS[modelId] || modelId;
     let cfg = userModelConfigs.find(c =>
       c.provider === 'opencode-go' && c.model === modelId
     );
     if (!cfg) {
       cfg = { provider: 'opencode-go', apiKey: '', model: modelId, label, baseUrl: OPENCODE_GO_BASE_URL };
       addUserModel(cfg);
+      changed = true;
+    } else if (cfg.label !== label || cfg.baseUrl !== OPENCODE_GO_BASE_URL) {
+      // 仅规范化 label/baseUrl（预设所有物）；apiKey 属于用户数据，绝不能覆盖
+      Object.assign(cfg, { label: label, baseUrl: OPENCODE_GO_BASE_URL });
       changed = true;
     }
     if (!firstId && cfg.id) firstId = cfg.id;
