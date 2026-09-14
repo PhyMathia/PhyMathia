@@ -651,12 +651,24 @@
       + (_transparentBg ? ' checked' : '') + '>透明背景（不填充面板底色）</label>'
       + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportFullContent"'
       + (_fullContent ? ' checked' : '') + '>完整内容（解除节点内滚动裁剪，长回答整段入图）</label>'
+      + '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
+      + '<b>Utopia 快照 ' + UTOPIA_EXT + '</b>'
+      + '<span class="graph-export-res">可滚动</span>'
+      + '</button>'
       + '<div class="graph-export-menu-foot">含 KaTeX 公式、Mermaid 图谱与分组框；可视化 iframe 以占位卡出现。'
       + '「完整内容」开启时节点按实际内容展开、图片相应变高（折叠的节点保持收起）；关掉即按屏幕所见导出。'
+      + 'PNG 是一页概览图，长回答请用 <b>Utopia 快照</b>——节点内可滚动（翻页语义），用 viewer.html 只读打开。'
       + '首次导出需抓取字体，之后走缓存。</div>';
     menu.innerHTML = html;
 
     menu.addEventListener('click', function (event) {
+      var utopiaBtn = event.target.closest ? event.target.closest('#graphExportUtopia') : null;
+      if (utopiaBtn) {
+        _closeGraphExportMenu();
+        if (typeof window.exportUtopiaSnapshot === 'function') window.exportUtopiaSnapshot();
+        else _toast('快照模块未加载（请硬刷新页面）');
+        return;
+      }
       var row = event.target.closest ? event.target.closest('.graph-export-scale-row') : null;
       if (row) {
         var s = parseFloat(row.getAttribute('data-scale'));

@@ -3,7 +3,8 @@
   "version": "1.4.1",
   "private": true,
   "scripts": {
-    "build:js": "node scripts/build_frontend.mjs"
+    "build:js": "node scripts/build_frontend.mjs",
+    "build:viewer": "node scripts/build_viewer.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.6"

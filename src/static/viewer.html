@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Utopia 查看器 · PhyMathia</title>
+<script>
+  // 查看器首屏主题：快照里带主题则在装载时覆盖（见 viewer-main.js）；这里只给个不刺眼的默认
+  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('phymathia_theme') || 'dark'); } catch (e) {}
+</script>
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/css/styles.css">
+<link rel="stylesheet" href="/css/styles-panels.css">
+<link rel="stylesheet" href="/css/graph-override.css">
+<script defer src="/vendor/katex/katex.min.js"></script>
+<script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
+<script defer src="/vendor/marked/marked.min.js"></script>
+<script defer src="/vendor/dompurify/purify.min.js"></script>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg-dark, #0a0e1e); color: var(--text-primary, #e6ebf5); overflow: hidden; }
+  .utopia-shell { display: flex; flex-direction: column; height: 100vh; }
+  .utopia-bar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,.12));
+    background: var(--bg-panel, rgba(16,24,46,.9)); flex-wrap: wrap;
+  }
+  .utopia-brand { display: flex; flex-direction: column; gap: 2px; margin-right: auto; min-width: 0; }
+  .utopia-brand b { font-size: 14px; letter-spacing: .3px; }
+  .utopia-brand span { font-size: 12px; color: var(--text-secondary, #93a1bd); }
+  .utopia-tag {
+    font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border, rgba(255,255,255,.16));
+    color: var(--text-secondary, #93a1bd); white-space: nowrap;
+  }
+  .utopia-btn {
+    font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--border, rgba(255,255,255,.16));
+    background: var(--surface-container, rgba(255,255,255,.06)); color: var(--text-primary, #e6ebf5);
+  }
+  .utopia-btn:hover { border-color: var(--accent, #4a9eff); }
+  .utopia-btn.primary { background: var(--accent, #4a9eff); color: #08101f; border-color: transparent; font-weight: 600; }
+  .utopia-error {
+    margin: 10px 14px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+    border: 1px solid #ef4444; background: rgba(239,68,68,.12); color: #ffd9d9;
+  }
+  .utopia-stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  .utopia-stage .graph-workspace { position: absolute; inset: 0; }
+  .utopia-stage .graph-canvas { position: absolute; inset: 0; overflow: hidden; }
+  .utopia-drop {
+    position: absolute; inset: 18px; border-radius: 18px; z-index: 5;
+    border: 2px dashed var(--border, rgba(255,255,255,.22));
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    background: color-mix(in srgb, var(--bg-panel, #101a2e) 82%, transparent);
+    text-align: center; padding: 24px; pointer-events: none;
+  }
+  .utopia-drop.hidden { display: none; }
+  .utopia-drop.active { border-color: var(--accent, #4a9eff); background: color-mix(in srgb, var(--accent, #4a9eff) 12%, var(--bg-panel, #101a2e)); }
+  .utopia-drop h2 { margin: 0; font-size: 17px; }
+  .utopia-drop p { margin: 0; font-size: 13px; color: var(--text-secondary, #93a1bd); line-height: 1.7; }
+  .utopia-drop .utopia-btn { pointer-events: auto; }
+  .utopia-toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(12px);
+    padding: 9px 14px; border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
+    background: var(--bg-panel, rgba(16,24,46,.94)); border: 1px solid var(--border, rgba(255,255,255,.16));
+    transition: opacity .22s ease, transform .22s ease; z-index: 40; max-width: 86vw;
+  }
+  .utopia-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="utopia-shell">
+  <div class="utopia-bar">
+    <div class="utopia-brand">
+      <b><span id="utopiaTitle">Utopia 查看器</span></b>
+      <span id="utopiaMeta">PhyMath Utopia 快照（.pmu）· 只读 · 离线</span>
+    </div>
+    <span class="utopia-tag">只读</span>
+    <button class="utopia-btn primary" id="utopiaOpenBtn">打开快照</button>
+    <button class="utopia-btn" id="utopiaFitBtn" title="适配画布（F）">适配</button>
+    <button class="utopia-btn" id="utopiaZoomInBtn" title="放大">＋</button>
+    <button class="utopia-btn" id="utopiaZoomOutBtn" title="缩小">－</button>
+    <button class="utopia-btn" id="utopiaSearchBtn" title="搜索节点（/）">搜索</button>
+    <button class="utopia-btn" id="utopiaThemeBtn" title="切换深色/浅色（仅本次查看，不改快照）">主题</button>
+    <button class="utopia-btn" id="utopiaExpandBtn" title="展开所有折叠节点（仅本次查看，不写回）">展开全部</button>
+    <button class="utopia-btn" id="utopiaPngBtn" title="导出 PNG（含完整内容选项）">导出 PNG</button>
+    <input type="file" id="utopiaFile" accept=".pmu,.json,application/json" hidden>
+  </div>
+  <div class="utopia-error" id="utopiaError" hidden></div>
+  <div class="utopia-stage">
+    <div class="graph-workspace" id="graphWorkspace">
+      <div class="graph-canvas" id="graphCanvas"></div>
+      <div class="graph-search-panel" id="graphSearchPanel" hidden>
+        <div class="graph-search-header">
+          <input id="graphSearchInput" type="search" placeholder="搜索节点..." autocomplete="off" oninput="graphSearchInputChanged(this.value)" onkeydown="graphSearchKeydown(event)">
+          <button class="graph-search-close" onclick="closeGraphSearchPanel()" title="关闭搜索" aria-label="关闭搜索">&times;</button>
+        </div>
+        <div class="graph-search-scope" id="graphSearchScope">
+          <button class="graph-search-scope-btn active" data-scope="current" onclick="setGraphSearchScope('current', this)">当前图</button>
+        </div>
+        <div class="graph-search-results" id="graphSearchResults"></div>
+      </div>
+    </div>
+    <div class="utopia-drop" id="utopiaDrop">
+      <h2>把 .pmu 快照拖进来</h2>
+      <p>PhyMath Utopia 快照是 PhyMathia 探索网的可交互产物：<br>
+         节点里可以继续滚动看长回答（不受截图裁剪限制），画布可平移缩放。</p>
+      <button class="utopia-btn primary" onclick="document.getElementById('utopiaFile').click()">选择文件</button>
+    </div>
+  </div>
+</div>
+<div class="utopia-toast" id="utopiaToast"></div>
+<script src="/js/viewer.js?v=276b1138"></script>
+</body>
+</html>
