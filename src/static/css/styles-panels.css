@@ -2798,9 +2798,7 @@
 .quiz-return-pill {
   position: fixed;
   right: 24px;
-  /* 锚在工具栏上方（工具栏外高 60 + 20 间隙；按钮 38→46 时同步 +10），
-     否则引导浮卡会压在工具栏胶囊上 */
-  bottom: 114px;
+  bottom: 104px;
   z-index: 10050;
   width: 296px;
   max-width: calc(100vw - 32px);
@@ -2989,8 +2987,7 @@
 .graph-export-menu {
   position: absolute;
   right: 16px;
-  /* 锚在工具栏上方（工具栏外高 60 + 16 间隙）；工具栏按钮 38→46 时同步 +10 */
-  bottom: 76px;
+  bottom: 66px;
   z-index: 46;
   width: 300px;
   padding: 14px;
