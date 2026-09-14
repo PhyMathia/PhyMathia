@@ -429,6 +429,9 @@ async function importData(event) {
 
 // Close model/data panel on outside click
 document.addEventListener('click', (e) => {
+  // 事件处理器里重建过 DOM 时，e.target 可能已脱离文档（detached）——此时
+  // contains 恒为 false，会把面板内点击误判为“点外部”而关闭；跳过这类事件
+  if (e.target && !e.target.isConnected) return;
   const panels = [
     { el: document.getElementById('modelPanel'), btns: document.querySelectorAll('[onclick*="toggleModelPanel"]') },
     { el: document.getElementById('dataPanel'), btns: document.querySelectorAll('[onclick*="toggleDataPanel"]') }

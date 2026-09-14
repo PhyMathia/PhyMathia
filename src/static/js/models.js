@@ -44,6 +44,12 @@ const OPENCODE_GO_MODEL_LABELS = {
   'omen-alpha': 'Omen Alpha',
 };
 const OPENCODE_GO_MODELS = Object.keys(OPENCODE_GO_MODEL_LABELS);
+// DeepSeek 官方预置（模型 id 见 https://api-docs.deepseek.com/），
+// 密钥在模型面板 DeepSeek 组头统一填一次（platform.deepseek.com 申请）
+const DEEPSEEK_PRESET_MODEL_LABELS = {
+  'deepseek-chat': 'DeepSeek Chat（V4 通用）',
+  'deepseek-reasoner': 'DeepSeek Reasoner（推理）',
+};
 const OPENCODE_FREE_MODEL_LABELS = {
   'big-pickle': 'Big Pickle',
   'mimo-v2.5-free': 'MiMo V2.5 Free',
@@ -119,7 +125,18 @@ function _refreshGroupKeyBadges(provider) {
 
 function toggleModelGroup(provider) {
   _modelGroupCollapsed[provider] = !_modelGroupCollapsed[provider];
-  renderModelList();
+  // 就地切换可见性，不重建列表——重建会让本次点击的按钮脱离 DOM，
+  // 冒泡到 document 的“点外关闭”监听时 contains=false，面板被误关
+  document.querySelectorAll('#modelList .model-group').forEach(g => {
+    if (g.getAttribute('data-provider') !== provider) return;
+    const body = g.querySelector('.model-group-body');
+    const btn = g.querySelector('.model-group-toggle');
+    if (body) body.style.display = _modelGroupCollapsed[provider] ? 'none' : '';
+    if (btn) {
+      btn.textContent = _modelGroupCollapsed[provider] ? '▶' : '▼';
+      btn.title = _modelGroupCollapsed[provider] ? '展开' : '折叠';
+    }
+  });
 }
 
 let userModelConfigs = [];
@@ -133,6 +150,24 @@ function loadUserModels() {
   loadGroupKeys();
   _ensureOpencodeFreeModels();
   _ensureOpencodeGoModels();
+  _ensureDeepseekModels();
+}
+
+function _ensureDeepseekModels() {
+  let changed = false;
+  for (const modelId of Object.keys(DEEPSEEK_PRESET_MODEL_LABELS)) {
+    const label = DEEPSEEK_PRESET_MODEL_LABELS[modelId];
+    let cfg = userModelConfigs.find(c => c.provider === 'deepseek' && c.model === modelId);
+    if (!cfg) {
+      addUserModel({ provider: 'deepseek', apiKey: getGroupKey('deepseek'), model: modelId, label, baseUrl: MODEL_PRESETS.deepseek.baseUrl });
+      changed = true;
+    } else if (cfg.label !== label || cfg.baseUrl !== MODEL_PRESETS.deepseek.baseUrl) {
+      // 仅规范化 label/baseUrl（预设所有物）；apiKey 属于用户数据，绝不能覆盖
+      Object.assign(cfg, { label, baseUrl: MODEL_PRESETS.deepseek.baseUrl });
+      changed = true;
+    }
+  }
+  if (changed) saveUserModels();
 }
 
 function _ensureOpencodeGoModels() {
