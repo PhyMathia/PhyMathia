@@ -1375,6 +1375,9 @@
     .model-group-key { flex: 1; min-width: 0; font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); color: var(--text-primary); }
     .model-group-key:focus { outline: none; border-color: var(--accent); }
     .model-group-key::placeholder { color: var(--text-secondary); }
+    /* 分组密钥失焦保存成功的闪烁反馈 */
+    .model-group-key { transition: border-color 0.3s, box-shadow 0.3s; }
+    .model-group-key.saved-flash { border-color: #34c77b; box-shadow: 0 0 0 2px rgba(52, 199, 123, 0.25); }
     .model-group-body { padding: 6px 8px 4px; }
     .model-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--surface-container); margin-bottom: 4px; }
     .model-item:last-child { margin-bottom: 0; }
