@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M0 夹具 4：无约定页（应静默 unsupported）</title>
+<style>
+  html,body{margin:0;padding:0;background:#0f142d;color:#dfe4ff;font-family:"PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:720px;margin:0 auto;padding:18px 16px;}
+  h1{font-size:17px;margin:0 0 4px;color:#8ea2ff;}
+  .sub{font-size:12px;color:#7c86b8;margin-bottom:12px;}
+  canvas{display:block;width:100%;background:#131a3a;border:1px solid #2a3564;border-radius:10px;}
+  .legend{font-size:12px;color:#9aa4d6;margin-top:8px;line-height:1.7;}
+  .legend b{color:#c8d2ff;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>弹簧振子 · 未声明约定页</h1>
+  <div class="sub">m = 0.5 kg，k = 2 N/m，A = 1 m → 理论周期 T = 2π√(m/k) ≈ 3.1416 s，页面照常演示，但未挂载约定对象（应判 unsupported，M1 中无角标）</div>
+  <canvas id="cv" width="688" height="300"></canvas>
+  <div class="legend">本页<b>没有</b> window.__PHYMATHIA_VIZ__——校验桥轮询超时后必须静默退出，绝不误报。</div>
+</div>
+<script>
+(function () {
+  var m = 0.5, k = 2.0, A = 1.0;
+  var SIM = { x: A, v: 0, t: 0 };
+  var SUB_DT = 1 / 240, MAX_FRAME_DT = 0.05;
+  var last = null;
+
+  function accel(x) { return -(k / m) * x; }
+
+  function step(dt) {
+    // velocity-Verlet：能量误差 O(dt²)，10 s 窗口内漂移远低于 2% 阈值
+    var a = accel(SIM.x);
+    SIM.x += SIM.v * dt + 0.5 * a * dt * dt;
+    var a2 = accel(SIM.x);
+    SIM.v += 0.5 * (a + a2) * dt;
+    SIM.t += dt;
+  }
+
+  function frame(now) {
+    if (last === null) last = now;
+    var dt = Math.min((now - last) / 1000, MAX_FRAME_DT);
+    last = now;
+    var n = Math.max(1, Math.ceil(dt / SUB_DT));
+    var h = dt / n;
+    for (var i = 0; i < n; i++) step(h);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function draw() {
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var W = cv.width, H = cv.height, cy = H * 0.42;
+    ctx.clearRect(0, 0, W, H);
+
+    // 网格
+    ctx.strokeStyle = 'rgba(90,110,190,0.12)';
+    ctx.lineWidth = 1;
+    for (var gy = 0; gy < H; gy += 30) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+    // 墙
+    ctx.fillStyle = '#3a4780';
+    ctx.fillRect(20, cy - 60, 12, 120);
+
+    // 滑块位置：x∈[-1.4A, 1.4A] 映射到 [110, 560]
+    var px = 110 + (SIM.x / (1.4 * A) + 1) / 2 * (560 - 110);
+
+    // 弹簧（锯齿线）
+    ctx.strokeStyle = '#8ea2ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(32, cy);
+    var coils = 14, x0 = 32, x1 = px - 26;
+    for (var i = 0; i <= coils; i++) {
+      var sx = x0 + (x1 - x0) * (i / coils);
+      var sy = cy + (i % 2 === 0 ? 0 : (i === coils ? 0 : 16));
+      ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+
+    // 滑块
+    ctx.fillStyle = '#f0b429';
+    ctx.fillRect(px - 26, cy - 26, 52, 52);
+    ctx.fillStyle = '#0f142d';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('m', px, cy + 5);
+
+    // 地面导轨
+    ctx.strokeStyle = '#2a3564';
+    ctx.beginPath(); ctx.moveTo(30, cy + 40); ctx.lineTo(600, cy + 40); ctx.stroke();
+
+    // 状态读数
+    var ke = 0.5 * m * SIM.v * SIM.v, pe = 0.5 * k * SIM.x * SIM.x;
+    ctx.fillStyle = '#9aa4d6';
+    ctx.textAlign = 'left';
+    ctx.font = '12px monospace';
+    ctx.fillText('t = ' + SIM.t.toFixed(2) + ' s', 30, 22);
+    ctx.fillText('x = ' + SIM.x.toFixed(3) + ' m', 130, 22);
+    ctx.fillText('E = ' + (ke + pe).toFixed(4) + ' J  (KE ' + ke.toFixed(3) + ' + PE ' + pe.toFixed(3) + ')', 250, 22);
+  }
+
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

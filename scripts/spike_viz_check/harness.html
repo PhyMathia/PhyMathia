@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M0 spike 装置：__PHYMATHIA_VIZ__ 约定链路验证</title>
+<style>
+  html,body{margin:0;padding:0;background:#0f142d;color:#dfe4ff;font-family:"PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 16px 60px;}
+  h1{font-size:19px;margin:0 0 6px;color:#8ea2ff;}
+  .desc{font-size:12.5px;color:#8b95c7;line-height:1.8;margin-bottom:6px;}
+  .desc code{background:#1a2350;border:1px solid #2a3564;border-radius:4px;padding:1px 6px;font-size:11.5px;color:#b9c6ff;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;}
+  @media (max-width:900px){.grid{grid-template-columns:1fr;}}
+  .card{background:#131a3a;border:1px solid #2a3564;border-radius:12px;overflow:hidden;}
+  .viz-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #232e5e;background:#161f47;}
+  .viz-label{font-size:13px;font-weight:600;color:#c8d2ff;}
+  .viz-label small{font-weight:400;color:#7c86b8;margin-left:6px;}
+  .viz-iframe{width:100%;height:320px;border:0;display:block;background:#0f142d;}
+  .result{padding:10px 12px;font-size:12.5px;line-height:1.9;color:#9aa4d6;border-top:1px solid #232e5e;min-height:88px;}
+  .result .num{font-family:monospace;color:#c8d2ff;}
+  .result.pass-raw{color:#6fe3a5;}
+  .result.fail-raw{color:#ff8585;}
+  /* M1 三态角标（复刻 .viz-btn 视觉语言） */
+  .viz-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;border-radius:999px;padding:3px 12px;border:1px solid;}
+  .viz-badge.b-pass{color:#6fe3a5;border-color:#34c77b;background:rgba(52,199,123,.12);}
+  .viz-badge.b-fail{color:#ff8585;border-color:#ff5d5d;background:rgba(255,93,93,.12);}
+  .viz-badge.b-warn{color:#ffd479;border-color:#f0b429;background:rgba(240,180,41,.12);}
+  .viz-badge.b-none{color:#7c86b8;border-color:#39406b dashed;background:transparent;border-style:dashed;font-weight:400;}
+  .overall{margin-top:18px;padding:14px 16px;border:1px solid #2a3564;border-radius:12px;background:#131a3a;font-size:13px;line-height:2;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>M0 spike：可视化校验约定链路验证装置</h1>
+  <div class="desc">
+    复刻 <code>render.js buildVizCard</code> 的真实注入机制：<code>_sanitizeVizHtml</code> 清洗 → <code>&lt;/head&gt;</code> 前注入校验桥 →
+    <code>&lt;iframe sandbox="allow-scripts"&gt;</code> + <code>srcdoc</code> → parent 侧按 <code>event.source</code> 匹配卡片。
+    校验桥为 M1 <code>_VIZ_CHECK_BRIDGE</code> 的原型：轮询探测 <code>window.__PHYMATHIA_VIZ__</code>（200ms × 最多 8s）→ 命中则每 250ms 采样 × 40 → 原始采样 postMessage 回 parent → parent 计算守恒漂移与周期估计并出三态角标。<b>未声明约定的页面一律静默（无角标）。</b>
+  </div>
+  <div class="desc">阈值同 M1 拟定值：能量漂移 (max−min)/mean &gt; <b>2%</b> → fail；声明 model 且估测周期偏差 &gt; <b>5%</b> → warn。</div>
+  <div class="grid" id="grid"></div>
+  <div class="overall" id="overall">运行中……全部完成约需 11–19 秒（无约定页需等 8s 轮询超时）。</div>
+</div>
+
+<script>
+(function () {
+  var DRIFT_FAIL = 0.02, PERIOD_WARN = 0.05;
+
+  // 四个夹具：key / 文件 / 预期（用于对照）
+  var CASES = [
+    { key: 'ok',      file: 'viz-spring-ok.html',      expect: '绿：守恒通过',                       theory: { m: 0.5, k: 2 } },
+    { key: 'drift',   file: 'viz-spring-drift.html',   expect: '红：守恒漂移',                       theory: { m: 0.5, k: 2 } },
+    { key: 'late',    file: 'viz-late-mount.html',     expect: '绿：轮询应捕获 1s 后的迟挂约定',      theory: { m: 0.5, k: 2 } },
+    { key: 'noconv',  file: 'viz-no-convention.html',  expect: '静默：unsupported → 无角标',          theory: null }
+  ];
+
+  // ===== 复刻 _sanitizeVizHtml（render.js 同款正则）=====
+  function sanitizeShim(html) {
+    return html
+      .replace(/\bparent\s*\./g, '/* removed */.')
+      .replace(/\btop\s*\./g, '/* removed */.')
+      .replace(/\bwindow\[["']parent["']\]/g, '/* removed */')
+      .replace(/\bwindow\[["']top["']\]/g, '/* removed */')
+      .replace(/\bwindow\.open\s*\(/g, '/* removed */(')
+      .replace(/\bwindow\.close\s*\(/g, '/* removed */(');
+  }
+
+  // ===== M1 _VIZ_CHECK_BRIDGE 原型（注入到页面 </head> 前）=====
+  // 注意 window["parent"] 写法：与既有主题桥一致（双保险，即使被再次 sanitize 也不会被清掉）
+  var _VIZ_CHECK_BRIDGE_SPIKE = '<script>(function(){'
+    + 'var POLL_MS=200,POLL_MAX=40,SAMPLE_MS=250,SAMPLE_MAX=40;'
+    + 'var tries=0,viz=null;'
+    + 'var poll=setInterval(function(){'
+    + 'tries++;'
+    + 'var v=window.__PHYMATHIA_VIZ__;'
+    + 'if(v&&typeof v.sample==="function"){viz=v;clearInterval(poll);post({status:"sampling",probeMs:tries*POLL_MS});run();}'
+    + 'else if(tries>=POLL_MAX){clearInterval(poll);post({status:"unsupported",reason:"no-convention",probeMs:tries*POLL_MS});}'
+    + '},POLL_MS);'
+    + 'function run(){'
+    + 'var samples=[],n=0,model=null,params=null;'
+    + 'var iv=setInterval(function(){'
+    + 'n++;'
+    + 'var s=null;'
+    + 'try{s=viz.sample();}catch(err){clearInterval(iv);post({status:"unsupported",reason:"sample-error",error:String(err)});return;}'
+    + 'if(s&&typeof s.t==="number"&&s.energy)samples.push({t:s.t,energy:s.energy});'
+    + 'if(model===null&&viz.model)model=viz.model;'
+    + 'if(params===null&&viz.params)params=viz.params;'
+    + 'if(n>=SAMPLE_MAX){clearInterval(iv);post({status:"samples",model:model,params:params,probeMs:tries*POLL_MS,samples:samples});}'
+    + '},SAMPLE_MS);'
+    + '}'
+    + 'function post(p){try{p.type="phymathia-viz-check-spike";window["parent"].postMessage(p,"*");}catch(e){}}'
+    + '})();<\/script>';
+
+  // ===== 复刻 buildVizCard 的三步注入 =====
+  function injectBridge(pageHtml) {
+    var safe = sanitizeShim(pageHtml);
+    var out = safe.replace(/<\/head>/i, function () { return _VIZ_CHECK_BRIDGE_SPIKE + '</head>'; });
+    if (out === safe) out = safe.replace(/<\/body>/i, function () { return _VIZ_CHECK_BRIDGE_SPIKE + '</body>'; });
+    if (out === safe) out = safe + _VIZ_CHECK_BRIDGE_SPIKE;
+    return out;
+  }
+
+  // ===== parent 侧纯函数：守恒漂移 =====
+  function computeDrift(samples) {
+    var totals = [];
+    for (var i = 0; i < samples.length; i++) {
+      var e = samples[i].energy || {};
+      var t = (Number(e.kinetic) || 0) + (Number(e.potential) || 0);
+      if (Number.isFinite(t)) totals.push(t);
+    }
+    if (totals.length < 4) return null;
+    var max = -Infinity, min = Infinity, sum = 0;
+    for (var i = 0; i < totals.length; i++) {
+      if (totals[i] > max) max = totals[i];
+      if (totals[i] < min) min = totals[i];
+      sum += totals[i];
+    }
+    var mean = sum / totals.length;
+    if (!Number.isFinite(mean) || mean <= 0) return null;
+    return (max - min) / mean;
+  }
+
+  // ===== parent 侧纯函数：由 KE 分量估测振荡周期 =====
+  // 弹簧振子 KE(t) = C(1−cos2ωt)：以 2 倍频率摆动。(KE−mean) 相邻过零间隔 = T/4 → T = 4×平均间隔。
+  // 过零点做线性插值获得亚采样精度（250ms 采样下仍可达百分之几量级）。
+  function estimatePeriod(samples) {
+    var kes = [], ts = [];
+    for (var i = 0; i < samples.length; i++) {
+      var ke = samples[i].energy ? Number(samples[i].energy.kinetic) : NaN;
+      if (!Number.isFinite(ke)) return null;
+      kes.push(ke); ts.push(samples[i].t);
+    }
+    if (kes.length < 8) return null;
+    var sum = 0;
+    for (var i = 0; i < kes.length; i++) sum += kes[i];
+    var mean = sum / kes.length;
+    var d = kes.map(function (k) { return k - mean; });
+    var crossings = [];
+    for (var i = 1; i < d.length; i++) {
+      if (d[i - 1] === 0) { crossings.push(ts[i - 1]); continue; }
+      if (d[i - 1] * d[i] < 0) crossings.push(ts[i - 1] + (ts[i] - ts[i - 1]) * (0 - d[i - 1]) / (d[i] - d[i - 1]));
+    }
+    if (crossings.length < 5) return null;
+    var gsum = 0;
+    for (var i = 1; i < crossings.length; i++) gsum += crossings[i] - crossings[i - 1];
+    return 4 * (gsum / (crossings.length - 1));
+  }
+
+  function springMassTheoryT(p) {
+    if (!p || !Number(p.m) || !Number(p.k)) return null;
+    return 2 * Math.PI * Math.sqrt(p.m / p.k);
+  }
+
+  // ===== UI =====
+  var grid = document.getElementById('grid');
+  var registry = [];   // {key, iframe, theory, els...}
+  var results = {};    // key -> 汇总（供控制台/断言读取）
+  var doneCount = 0;
+
+  CASES.forEach(function (c) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = '<div class="viz-toolbar"><span class="viz-label">' + c.key
+      + '<small>预期：' + c.expect + '</small></span><span class="viz-badge b-none" data-badge>等待…</span></div>'
+      + '<iframe class="viz-iframe" sandbox="allow-scripts"></iframe>'
+      + '<div class="result" data-result>载入中…</div>';
+    grid.appendChild(card);
+    registry.push({
+      key: c.key, theory: c.theory,
+      iframe: card.querySelector('iframe'),
+      badge: card.querySelector('[data-badge]'),
+      result: card.querySelector('[data-result]')
+    });
+  });
+
+  function setBadge(r, cls, text) {
+    r.badge.className = 'viz-badge ' + cls;
+    r.badge.textContent = text;
+  }
+
+  function finishCase(r, summary) {
+    results[r.key] = summary;
+    doneCount++;
+    console.log('[spike]', r.key, summary);
+    if (doneCount === registry.length) {
+      console.table(Object.keys(results).map(function (k) {
+        var s = results[k];
+        return { case: k, verdict: s.verdict, drift: s.driftPct, periodEst: s.periodEst, periodTheory: s.periodTheory, periodDev: s.periodDevPct, probeMs: s.probeMs };
+      }));
+      window.__SPIKE_RESULTS__ = results;
+      var lines = ['<b>spike 汇总</b>（详细信息见控制台 / window.__SPIKE_RESULTS__）：'];
+      Object.keys(results).forEach(function (k) {
+        var s = results[k];
+        lines.push('· <b>' + k + '</b> → ' + s.verdict
+          + (s.driftPct != null ? '，漂移 <span class="num">' + s.driftPct + '%</span>' : '')
+          + (s.periodDevPct != null ? '，周期偏差 <span class="num">' + s.periodDevPct + '%</span>' : '')
+          + (s.probeMs != null ? '，探测耗时 <span class="num">' + s.probeMs + 'ms</span>' : ''));
+      });
+      document.getElementById('overall').innerHTML = lines.join('<br>');
+    }
+  }
+
+  // ===== parent 侧 message 监听（syncVizThemes 先例：event.source 匹配 contentWindow）=====
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'phymathia-viz-check-spike') return;
+    for (var i = 0; i < registry.length; i++) {
+      if (registry[i].iframe.contentWindow === e.source) { handle(registry[i], d); return; }
+    }
+  });
+
+  function handle(r, d) {
+    if (d.status === 'sampling') {
+      r.result.innerHTML = '已捕获约定对象（探测耗时 <span class="num">' + d.probeMs + 'ms</span>），采样中……';
+      return;
+    }
+    if (d.status === 'unsupported') {
+      var why = d.reason === 'sample-error' ? ('sample() 抛错：' + (d.error || '')) : '未声明 __PHYMATHIA_VIZ__（轮询 ' + d.probeMs + 'ms 超时）';
+      setBadge(r, 'b-none', 'M1 中此处无角标');
+      r.result.innerHTML = '<span class="fail-raw" style="color:#7c86b8">静默（unsupported）</span>：' + why
+        + '<br>✔ 符合「宁可漏报不可误报」——不渲染任何角标。';
+      finishCase(r, { verdict: 'silent/unsupported', driftPct: null, periodEst: null, periodTheory: null, periodDevPct: null, probeMs: d.probeMs });
+      return;
+    }
+    if (d.status !== 'samples') return;
+
+    var drift = computeDrift(d.samples);
+    var driftPct = drift == null ? null : +(drift * 100).toFixed(2);
+    var theoryT = springMassTheoryT(d.params && Object.keys(d.params).length ? d.params : r.theory);
+    var periodEst = estimatePeriod(d.samples);
+    var periodDevPct = (periodEst && theoryT) ? +(((periodEst - theoryT) / theoryT) * 100).toFixed(2) : null;
+
+    var parts = [];
+    parts.push('采样 <span class="num">' + d.samples.length + '</span> 点，model=<span class="num">'
+      + (d.model || '（未声明）') + '</span>，params=<span class="num">' + JSON.stringify(d.params || {}) + '</span>');
+    parts.push('能量漂移 <span class="num">' + (driftPct == null ? 'N/A' : driftPct + '%') + '</span>（阈值 2%）');
+    if (theoryT) parts.push('理论周期 <span class="num">' + theoryT.toFixed(3) + 's</span>');
+    parts.push('估测周期 <span class="num">' + (periodEst ? periodEst.toFixed(3) + 's' : 'N/A') + '</span>'
+      + (periodDevPct != null ? '，偏差 <span class="num">' + periodDevPct + '%</span>（阈值 5%）' : ''));
+
+    var verdict, cls, label;
+    if (driftPct != null && driftPct > DRIFT_FAIL * 100) {
+      verdict = 'FAIL（红角标：守恒漂移）'; cls = 'b-fail'; label = '守恒漂移 ⚠ 建议重新生成';
+    } else if (periodDevPct != null && Math.abs(periodDevPct) > PERIOD_WARN * 100) {
+      verdict = 'WARN（黄角标：与解析解偏差）'; cls = 'b-warn'; label = '与解析解偏差 ⚠';
+    } else {
+      verdict = 'PASS（绿角标：校验通过）'; cls = 'b-pass'; label = '校验通过 ✓';
+    }
+    setBadge(r, cls, label);
+    r.result.innerHTML = parts.join('<br>') + '<br><b>判定：' + verdict + '</b>';
+    finishCase(r, {
+      verdict: verdict, driftPct: driftPct,
+      periodEst: periodEst ? +periodEst.toFixed(4) : null,
+      periodTheory: theoryT ? +theoryT.toFixed(4) : null,
+      periodDevPct: periodDevPct, probeMs: d.probeMs
+    });
+  }
+
+  // ===== 启动：fetch 夹具 → 注入 → srcdoc =====
+  CASES.forEach(function (c, idx) {
+    fetch(c.file, { cache: 'no-store' }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    }).then(function (html) {
+      var r = registry[idx];
+      r.iframe.srcdoc = injectBridge(html);
+      r.result.textContent = '等待 iframe 内校验桥回报……';
+    }).catch(function (err) {
+      registry[idx].result.innerHTML = '夹具加载失败：' + err.message
+        + '。本装置经 fetch 读取同目录夹具，需以 HTTP 服务打开（如 <code>python3 -m http.server 5059</code> 后访问 harness.html），file:// 直开会被浏览器拦截。';
+    });
+  });
+})();
+</script>
+</body>
+</html>
