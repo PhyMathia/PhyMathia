@@ -53,7 +53,9 @@ function renderGraphCanvas(streaming) {
   appContainer?.classList.remove('graph-empty-active');
 
   const toolbar = document.createElement('div');
-  toolbar.className = 'graph-canvas-toolbar';
+  // 整条工具栏作为一个极光玻璃胶囊（一次 backdrop-filter），按钮自身退成透明——
+  // 逐个按钮套磨砂会让视觉变"碎"，且十来个 blur 层白烧性能。
+  toolbar.className = 'graph-canvas-toolbar aurora-glass aurora-glass--compact';
   toolbar.innerHTML = '<button class="graph-tool-btn graph-search-btn" onclick="toggleGraphSearchPanel()" title="搜索节点" aria-label="搜索节点" aria-pressed="false">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>'

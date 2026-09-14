@@ -645,15 +645,14 @@
       opacity: 1;
     }
 
+    /* 底色/磨砂交给 .aurora-glass--panel（本规则若再写 background 简写会重置 background-image
+       把极光层整块盖掉——同特指性且本规则在后） */
     .sidebar {
       position: fixed;
       left: 0;
       top: 0;
       bottom: 0;
       width: 280px;
-      background: var(--bg-panel);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       border-right: 1px solid var(--border);
       z-index: 201;
       display: flex;
@@ -1010,9 +1009,6 @@
       gap: 12px;
       padding: 14px 0;
       border-bottom: 1px solid var(--border);
-      background: var(--bg-panel);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       margin: 0 -16px;
       position: relative;
       z-index: 10;
@@ -1137,7 +1133,6 @@
       justify-content: center;
       gap: 8px;
       padding: 6px 16px;
-      background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
     }
     .header-secondary-bar .header-btn {
@@ -2042,6 +2037,27 @@
       --aurora-1: rgba(251, 191, 36, 0.24);
       --aurora-2: rgba(249, 168, 132, 0.16);
       --aurora-3: rgba(45, 212, 191, 0.10);
+    }
+
+    /* 大面积载体变体：侧边栏 / 顶栏这类「整条 chrome」——底色更实、色斑更弱、模糊更浅。
+       理由：全高/全宽的玻璃每帧要重采样整片背景，且长列表与密集按钮压在高透明底上可读性会掉。
+       小面板（右键菜单/弹窗/胶囊）仍用基础档或 --compact。 */
+    .aurora-glass--panel {
+      --aurora-1: rgba(14, 116, 233, 0.14);
+      --aurora-2: rgba(109, 40, 217, 0.12);
+      --aurora-3: rgba(15, 118, 110, 0.12);
+      --glass-tint: rgba(6, 10, 24, 0.70);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.10) 90%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      backdrop-filter: blur(14px) saturate(140%);
+    }
+
+    html[data-theme="light"] .aurora-glass--panel,
+    [data-theme="light"] .aurora-glass--panel {
+      --aurora-1: rgba(251, 191, 36, 0.16);
+      --aurora-2: rgba(249, 168, 132, 0.12);
+      --aurora-3: rgba(45, 212, 191, 0.08);
+      --glass-tint: rgba(253, 250, 244, 0.82);
     }
 
     @keyframes auroraDrift {

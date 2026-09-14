@@ -38,7 +38,7 @@
 
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
 
-  <div class="sidebar" id="sidebar">
+  <div class="sidebar aurora-glass aurora-glass--panel" id="sidebar">
     <div class="sidebar-header">
       <h3>画布列表</h3>
       <button class="sidebar-close" onclick="closeSidebar()">&times;</button>
@@ -73,7 +73,7 @@
   </div>
 
   <div class="app-container">
-    <div class="chat-header">
+    <div class="chat-header aurora-glass aurora-glass--panel">
       <button class="menu-btn" onclick="toggleSidebar()" title="画布列表">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
       </button>
@@ -99,7 +99,7 @@
       </div>
     </div>
 
-    <div class="header-secondary-bar">
+    <div class="header-secondary-bar aurora-glass aurora-glass--panel">
       <button class="header-btn" onclick="toggleModelPanel(event)" title="模型设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg> 模型</button>
       <button class="header-btn" onclick="toggleKnowledgePanel()" title="知识总览"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="9" y1="7" x2="16" y2="7"></line><line x1="9" y1="11" x2="14" y2="11"></line></svg> 知识</button>
       <button class="header-btn" onclick="openQuiz()" title="画布知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg> 画布检测</button>
@@ -170,7 +170,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=068f1213"></script>
+  <script src="/js/app.js?v=6f231736"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 

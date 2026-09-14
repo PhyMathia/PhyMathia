@@ -45,6 +45,7 @@
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     try { if (typeof window.fitGraph === 'function') window.fitGraph(); } catch (e) {}
     readOnlyGuard();
+    installReadOnlyPanels();
     installReadOnlyContextMenu();
     toast('已载入 ' + summaryText(snapshot));
   }
@@ -90,6 +91,29 @@
       '.graph-node{cursor:default !important;}',
     ].join('');
     document.head.appendChild(css);
+  }
+
+  // 只读护栏：双击打开的面板一律禁掉
+  // 双击画布空白 → openAddBlankNodeModal（添加节点面板）；双击「我的理解」节点 → editHumanNoteNode；
+  // 另外把编辑类入口一并封住（它们经由已隐藏的编辑按钮，但双击/快捷键路径仍可能摸到）。
+  // 不做静默无反应：给一句 toast，否则用户会以为双击坏了（本仓库有过"无声消失被当成 bug"的教训）。
+  var READONLY_BLOCKED = {
+    openAddBlankNodeModal: '只读快照：不能添加节点',
+    editHumanNoteNode: '只读快照：节点内容不可编辑',
+    editCustomNodeContent: '只读快照：节点内容不可编辑',
+    editModuleNode: '只读快照：模块内容不可编辑',
+    createManualNode: '只读快照：不能新建节点',
+  };
+
+  function installReadOnlyPanels() {
+    Object.keys(READONLY_BLOCKED).forEach(function (name) {
+      var orig = window[name];
+      if (typeof orig !== 'function' || orig.__utopiaBlocked) return;
+      var blocked = function () { toast(READONLY_BLOCKED[name]); return false; };
+      blocked.__utopiaBlocked = true;
+      blocked.__utopiaOriginal = orig;
+      window[name] = blocked;
+    });
   }
 
   // 只读右键菜单：open 之后按白名单剪枝——查看器不提供新建/删除/端口增删/收藏知识点等写操作。
@@ -231,6 +255,7 @@
   }
 
   function boot() {
+    installReadOnlyPanels();
     installReadOnlyContextMenu();
     initToolbar();
     initDropZone();

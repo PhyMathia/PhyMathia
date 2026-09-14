@@ -1311,6 +1311,57 @@ check('graph-contextmenu：菜单视觉层（图标列 + 快捷键提示 + 静�
   return true;
 });
 
+check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏 + 画布工具栏单胶囊（载体不得自带实底）', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const [name, sel] of [
+    ['侧边栏', 'class="sidebar aurora-glass aurora-glass--panel"'],
+    ['顶栏', 'class="chat-header aurora-glass aurora-glass--panel"'],
+    ['二级栏', 'class="header-secondary-bar aurora-glass aurora-glass--panel"'],
+  ]) {
+    if (!html.includes(sel)) throw new Error(name + '未挂玻璃载体类');
+  }
+  // 大面积变体：深浅两套 + 更浅的模糊（全高/全宽玻璃每帧重采样整片背景，且可读性优先）
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!/\.aurora-glass--panel \{/.test(css)) throw new Error('缺 --panel 大面积变体');
+  if (!/\[data-theme="light"\] \.aurora-glass--panel/.test(css)) throw new Error('--panel 缺浅色一套');
+  const panel = css.slice(css.indexOf('.aurora-glass--panel {'), css.indexOf('}', css.indexOf('.aurora-glass--panel {')));
+  if (!/blur\(14px\)/.test(panel)) throw new Error('--panel 应比基础档更浅的模糊');
+  // 载体自身不得再写 background（简写会重置 background-image 盖掉极光；graph-override 那层特指性最高）
+  const strip = (file, sel) => {
+    const text = fs.readFileSync(file, 'utf8');
+    const i = text.indexOf(sel);
+    if (i < 0) return null;
+    return text.slice(i, text.indexOf('}', i));
+  };
+  for (const [file, sel, name] of [
+    ['src/static/css/styles.css', '.sidebar {', '侧边栏'],
+    ['src/static/css/styles.css', '.chat-header {', '顶栏'],
+    ['src/static/css/styles.css', '.header-secondary-bar {', '二级栏'],
+    ['src/static/css/styles-panels.css', '    .app-container .chat-header,\n    .app-container .header-secondary-bar {', '顶栏(panels)'],
+    ['src/static/css/graph-override.css', '.app-container .chat-header,\n.app-container .header-secondary-bar {', '顶栏(override)'],
+  ]) {
+    const block = strip(file, sel);
+    if (block === null) throw new Error('找不到规则：' + name + ' @ ' + file);
+    if (/background(-color)?\s*:/.test(block)) throw new Error(name + ' 仍自带 background，会盖掉极光层');
+  }
+  // 画布工具栏：整条一个玻璃胶囊；按钮自身透明且无框（描边在 hover/激活态才出现）
+  const gi = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!gi.includes("'graph-canvas-toolbar aurora-glass aurora-glass--compact'")) {
+    throw new Error('画布工具栏未做成单个玻璃胶囊');
+  }
+  const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const btn = gcss.slice(gcss.indexOf('.graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn {')));
+  if (!/background: transparent !important;/.test(btn)) throw new Error('工具按钮应自身透明（磨砂归整条工具栏）');
+  if (!/border: 1px solid transparent !important;/.test(btn)) throw new Error('工具按钮默认不该有描边（胶囊内会碎成一格格）');
+  // 查看器：双击打开的面板一律封住（含编辑面板），且必须给提示而不是静默无反应
+  const vm = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  for (const fn of ['openAddBlankNodeModal', 'editHumanNoteNode', 'editCustomNodeContent', 'editModuleNode']) {
+    if (!vm.includes(fn + ':')) throw new Error('查看器未封住双击面板入口：' + fn);
+  }
+  if (!vm.includes('只读快照：不能添加节点')) throw new Error('查看器封禁面板时缺用户提示');
+  return true;
+});
+
 check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + 降级）', () => {
   const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
   for (const frag of [
