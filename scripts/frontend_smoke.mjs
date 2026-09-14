@@ -513,6 +513,36 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
   return true;
 });
 
+check('graph-export: 完整内容模式（解除节点内滚动裁剪 + 展开后重算画框 + 菜单开关）', () => {
+  const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  // ① 默认开启 + 菜单开关接线（关掉即回到"按屏幕所见导出"）
+  if (!/var _fullContent = true;/.test(ge)) throw new Error('完整内容模式应默认开启');
+  if (!ge.includes("id=\"graphExportFullContent\"")) throw new Error('导出菜单缺「完整内容」开关');
+  if (!/graphExportFullContent'\)\s*\{\s*_fullContent = !!event\.target\.checked;/.test(ge)) {
+    throw new Error('「完整内容」开关未接回 _fullContent');
+  }
+  // ② 解裁剪必须用 inline !important（基础规则是 520px + overflow-y:auto 且带 !important，
+  //    普通 inline 声明压不住），且必须放过用户显式折叠的节点
+  if (!/setProperty\('max-height', 'none', 'important'\)/.test(ge)) throw new Error('解裁剪未用 inline !important');
+  if (!ge.includes("if (el.classList.contains('minimized')) return;")) throw new Error('折叠节点应保持收起');
+  // ③ SVG 侧兜底规则带 .full-content 闸门与 :not(.minimized)
+  if (!/\.graph-export-root\.full-content \.graph-node:not\(\.minimized\)/.test(ge)) {
+    throw new Error('EXPORT_CSS_EXTRA 缺带闸门的解裁剪规则');
+  }
+  // ④ 画框必须按展开后的实测几何重算（否则长内容掉出图外）
+  if (!ge.includes('_measureExpandedClone(clone)')) throw new Error('导出流程未按实测几何重算画框');
+  if (!/bounds = expanded;/.test(ge) || !/out = _resolveOutput\(bounds, scale\);/.test(ge)) {
+    throw new Error('重算后未同步画框与输出尺寸');
+  }
+  // ⑤ 纯函数：包围盒并集（长高后 maxY 必须跟着长）
+  const union = sandbox.window.graphExportDebug && sandbox.window.graphExportDebug.unionRects;
+  if (typeof union !== 'function') throw new Error('unionRects 未暴露');
+  const r = union([{ x: 0, y: 0, w: 100, h: 50 }, { x: 200, y: 30, w: 100, h: 500 }]);
+  if (r.w !== 300 || r.h !== 530) throw new Error('包围盒并集错误：' + JSON.stringify(r));
+  if (union([{ x: NaN, y: 0, w: 10, h: 10 }]) !== null) throw new Error('非法矩形应被忽略');
+  return true;
+});
+
 check('graph-contextmenu: 打包注册与产物符号（静态断言）', () => {
   const buildSrc = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
   // 注册位置：graph-export.js 之后（graph-workflow.js 在实际构建顺序中位于 graph-export.js 之前）
