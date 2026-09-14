@@ -74,6 +74,53 @@ const MODEL_PRESETS = {
 };
 
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
+// 模型分组密钥：按 provider 分组，一组共用一个密钥（如 OpenCode Go 订阅 key 组内 37 个模型共用）。
+// 写入时同步落到组内每个条目的 apiKey 上——下游 8 处直读 model.apiKey 的调用点、
+// 「密钥已配置」徽标、hasKey 全部零改动；组内单个条目仍可用模型配置弹窗覆盖自己的密钥。
+const MODEL_GROUP_KEYS_STORAGE = 'phymathia_model_group_keys';
+let modelGroupKeys = {};
+const _modelGroupCollapsed = {};
+
+function loadGroupKeys() {
+  try { modelGroupKeys = JSON.parse(localStorage.getItem(MODEL_GROUP_KEYS_STORAGE) || '{}'); }
+  catch { modelGroupKeys = {}; }
+}
+
+function getGroupKey(provider) {
+  return modelGroupKeys[provider] || '';
+}
+
+function saveGroupKey(provider, key) {
+  modelGroupKeys[provider] = String(key || '');
+  try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch {}
+  let changed = false;
+  for (const cfg of userModelConfigs) {
+    if (cfg.provider === provider && cfg.apiKey !== modelGroupKeys[provider]) {
+      cfg.apiKey = modelGroupKeys[provider];
+      changed = true;
+    }
+  }
+  if (changed) saveUserModels();
+  _refreshGroupKeyBadges(provider);
+}
+
+// 输入过程中就地刷新组内条目的密钥徽标——不重建 DOM（会丢输入框焦点），
+// 完整的重渲染留给 onchange（失焦）触发
+function _refreshGroupKeyBadges(provider) {
+  try {
+    document.querySelectorAll('#modelList .model-group').forEach(g => {
+      if (g.getAttribute('data-provider') !== provider) return;
+      const has = !!getGroupKey(provider);
+      const html = has ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）';
+      g.querySelectorAll('.model-item-key').forEach(el => { el.innerHTML = html; });
+    });
+  } catch (e) {}
+}
+
+function toggleModelGroup(provider) {
+  _modelGroupCollapsed[provider] = !_modelGroupCollapsed[provider];
+  renderModelList();
+}
 
 let userModelConfigs = [];
 let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' };
@@ -83,6 +130,7 @@ function loadUserModels() {
     const raw = localStorage.getItem(MODELS_STORAGE_KEY);
     userModelConfigs = raw ? JSON.parse(raw) : [];
   } catch { userModelConfigs = []; }
+  loadGroupKeys();
   _ensureOpencodeFreeModels();
   _ensureOpencodeGoModels();
 }
@@ -96,7 +144,7 @@ function _ensureOpencodeGoModels() {
       c.provider === 'opencode-go' && c.model === modelId
     );
     if (!cfg) {
-      cfg = { provider: 'opencode-go', apiKey: '', model: modelId, label, baseUrl: OPENCODE_GO_BASE_URL };
+      cfg = { provider: 'opencode-go', apiKey: getGroupKey('opencode-go'), model: modelId, label, baseUrl: OPENCODE_GO_BASE_URL };
       addUserModel(cfg);
       changed = true;
     } else if (cfg.label !== label || cfg.baseUrl !== OPENCODE_GO_BASE_URL) {
@@ -128,7 +176,7 @@ function _ensureOpencodeFreeModels() {
       && (c.model === modelId || aliasToId[c.model] === modelId)
     );
     if (!cfg) {
-      cfg = { provider: 'opencode', apiKey: OPENCODE_DEFAULT_KEY, model: modelId, label, baseUrl: OPENCODE_BASE_URL };
+      cfg = { provider: 'opencode', apiKey: getGroupKey('opencode'), model: modelId, label, baseUrl: OPENCODE_BASE_URL };
       addUserModel(cfg);
     } else {
       // 仅规范化 model/label/baseUrl（迁移旧条目）；apiKey 属于用户数据，绝不能覆盖
@@ -229,9 +277,24 @@ function renderModelSelects() {
   // 非主模型角色留空 = 跟随主模型（各调用点均为 getActiveModelForRole(角色) || 主模型），
   // 统一用同一份选项文案，避免五种角色各写一套描述漂移
   const sameAsMainOpt = '<option value="">— 与主模型相同（默认）—</option>';
-  const opts = allModels.map(m =>
-    `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`
-  ).join('');
+  // 槽位下拉按 provider 分组（<optgroup>）：与模型面板的分组一致，组内模型按序可选
+  const groupOrder = [];
+  const byProvider = {};
+  for (const m of allModels) {
+    if (!byProvider[m.provider]) {
+      byProvider[m.provider] = [];
+      groupOrder.push(m.provider);
+    }
+    byProvider[m.provider].push(m);
+  }
+  const opts = groupOrder.map(provider => {
+    const preset = MODEL_PRESETS[provider];
+    const groupLabel = (preset && preset.name) || provider;
+    const items = byProvider[provider].map(m =>
+      `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`
+    ).join('');
+    return `<optgroup label="${escapeHtml(groupLabel)}">${items}</optgroup>`;
+  }).join('');
 
   agentSelect.innerHTML = emptyOpt + opts;
   htmlSelect.innerHTML = sameAsMainOpt + opts;
@@ -317,19 +380,46 @@ function renderModelList() {
     container.innerHTML = '<div class="model-empty">暂无自定义模型，点击下方按钮添加</div>';
     return;
   }
-  container.innerHTML = userModelConfigs.map(m => {
-    const preset = MODEL_PRESETS[m.provider];
-    // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
-    const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    return `<div class="model-item">
-      <div class="model-item-info">
-        <div class="model-item-name">${escapeHtml((preset && preset.name) || m.provider)} · ${escapeHtml(m.label || m.model)}</div>
-        <div class="model-item-key">${m.apiKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
+  // 按 provider 分组渲染（保持首次出现顺序）：组头统一配置密钥，组内模型可折叠
+  const groupOrder = [];
+  const byProvider = {};
+  for (const m of userModelConfigs) {
+    if (!byProvider[m.provider]) {
+      byProvider[m.provider] = [];
+      groupOrder.push(m.provider);
+    }
+    byProvider[m.provider].push(m);
+  }
+  container.innerHTML = groupOrder.map(provider => {
+    const models = byProvider[provider];
+    const preset = MODEL_PRESETS[provider];
+    const groupName = (preset && preset.name) || provider;
+    // provider 进 onclick/oninput 单引号串需做 JS 转义（自定义 provider 是用户自由输入）
+    const jsProvider = String(provider).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const collapsed = !!_modelGroupCollapsed[provider];
+    const hint = (preset && preset.apiKeyHint) || 'sk-...';
+    const items = models.map(m => {
+      // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
+      const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      const hasKey = !!(m.apiKey || getGroupKey(provider));
+      return `<div class="model-item">
+        <div class="model-item-info">
+          <div class="model-item-name">${escapeHtml(m.label || m.model)}</div>
+          <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
+        </div>
+        <div class="model-item-actions">
+          <button class="model-item-btn" onclick="openModelConfig('${jsId}')" title="配置">${UI_ICON_SVG.sliders}</button>
+          <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${jsId}')" title="删除">${UI_ICON_SVG.trash}</button>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="model-group" data-provider="${escapeHtml(provider)}">
+      <div class="model-group-header">
+        <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
+        <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
+        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="renderModelList(); renderModelSelects();" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
       </div>
-      <div class="model-item-actions">
-        <button class="model-item-btn" onclick="openModelConfig('${jsId}')" title="配置">${UI_ICON_SVG.sliders}</button>
-        <button class="model-item-btn model-item-btn-del" onclick="confirmDeleteModel('${jsId}')" title="删除">${UI_ICON_SVG.trash}</button>
-      </div>
+      ${collapsed ? '' : `<div class="model-group-body">${items}</div>`}
     </div>`;
   }).join('');
 }
@@ -412,7 +502,8 @@ function saveNewModel() {
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
   if (!model) { alert('请填写模型名称'); return; }
   if (!baseUrl) { alert('请填写 API 地址'); return; }
-  addUserModel({ provider: finalProvider, apiKey, model, baseUrl });
+  // 手动添加也继承分组密钥：单条 apiKey 留空时回落到所在组的统一密钥
+  addUserModel({ provider: finalProvider, apiKey: apiKey || getGroupKey(finalProvider), model, baseUrl });
   closeAddModelDialog();
   renderModelList();
   renderModelSelects();

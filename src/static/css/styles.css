@@ -1365,6 +1365,17 @@
     .model-section-mgmt { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
     .model-list { max-height: 200px; overflow-y: auto; margin-bottom: 8px; }
     .model-empty { font-size: 12px; color: var(--text-secondary); padding: 8px 0; text-align: center; }
+    /* 模型分组：组头（组名 + 数量 + 分组密钥 + 折叠）与组内条目 */
+    .model-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; overflow: hidden; }
+    .model-group-header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--surface-container); }
+    .model-group-toggle { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 10px; padding: 2px 4px; flex-shrink: 0; }
+    .model-group-toggle:hover { color: var(--text-primary); }
+    .model-group-title { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+    .model-group-count { font-size: 10px; font-weight: 400; color: var(--text-secondary); margin-left: 4px; }
+    .model-group-key { flex: 1; min-width: 0; font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel); color: var(--text-primary); }
+    .model-group-key:focus { outline: none; border-color: var(--accent); }
+    .model-group-key::placeholder { color: var(--text-secondary); }
+    .model-group-body { padding: 6px 8px 4px; }
     .model-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 8px; background: var(--surface-container); margin-bottom: 4px; }
     .model-item:last-child { margin-bottom: 0; }
     .model-item-info { flex: 1; min-width: 0; }
