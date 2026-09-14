@@ -72,7 +72,22 @@ const UI_ICON_SVG = {
   external: makeLineIcon('<path d="M14 3h7v7M21 3l-9 9"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>'),
   arrowRight: makeLineIcon('<path d="M5 12h14M13 5l7 7-7 7"></path>'),
   pointer: makeLineIcon('<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path>'),
-  sparkles: makeLineIcon('<path d="M12 3l1.9 4.6 4.6 1.9-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path>')
+  sparkles: makeLineIcon('<path d="M12 3l1.9 4.6 4.6 1.9-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path>'),
+  // 探索网右键菜单一族（M2 视觉细化）：菜单项按键名取图标，纯线性风格与上面一致
+  target: makeLineIcon('<circle cx="12" cy="12" r="7.5"></circle><circle cx="12" cy="12" r="2.2"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"></path>'),
+  clipboard: makeLineIcon('<rect x="8" y="3" width="8" height="4" rx="1.4"></rect><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path>'),
+  download: makeLineIcon('<path d="M12 3v12"></path><path d="M7 11l5 5 5-5"></path><path d="M4 20h16"></path>'),
+  undo: makeLineIcon('<path d="M9 14 4 9l5-5"></path><path d="M4 9h9a7 7 0 0 1 0 14H8"></path>'),
+  redo: makeLineIcon('<path d="M15 14l5-5-5-5"></path><path d="M20 9h-9a7 7 0 0 0 0 14h5"></path>'),
+  link: makeLineIcon('<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M13.5 10.5a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7l1-1"></path>'),
+  curve: makeLineIcon('<path d="M3 19c0-9 4-14 9-14 4 0 6 3 6 6"></path><circle cx="3" cy="19" r="1.6"></circle><circle cx="18" cy="11" r="1.6"></circle>'),
+  layout: makeLineIcon('<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"></rect><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"></rect><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"></rect><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"></rect>'),
+  group: makeLineIcon('<rect x="3" y="3" width="18" height="18" rx="2.4" stroke-dasharray="4 3"></rect><rect x="7.5" y="7.5" width="4.6" height="4.6" rx="1"></rect><rect x="12.4" y="12.4" width="4.6" height="4.6" rx="1"></rect>'),
+  selectAll: makeLineIcon('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 12h6"></path>'),
+  frame: makeLineIcon('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path><circle cx="12" cy="12" r="2.4"></circle>'),
+  collapse: makeLineIcon('<path d="M9 4v6H3"></path><path d="M21 9h-6V3"></path><path d="M3 15h6v6"></path><path d="M15 21v-6h6"></path>'),
+  note: makeLineIcon('<path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h4"></path>'),
+  home: makeLineIcon('<path d="M4 20V10l8-6 8 6v10"></path><path d="M9.5 20v-6h5v6"></path>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,

@@ -230,11 +230,15 @@ async function quizRetestTopic(encodedKey) {
 function quizRelearnPillHtml() {
   const ctx = _quizRelearnCtx;
   if (!ctx) return '';
-  const noteLabel = ctx.noteNodeId ? '✎ 继续写总结' : '✎ 写下总结节点';
-  return '<button type="button" class="quiz-return-pill-btn quiz-return-pill-action"'
-    + ' onclick="quizRelearnCreateNote()" title="在该节点旁放一个「我的理解」节点，写下你自己的话">' + noteLabel + '</button>'
-    + '<button type="button" class="quiz-return-pill-btn quiz-return-pill-action"'
-    + ' onclick="quizRelearnConnect()" title="把总结节点（或定位到的节点）设为起点，点一个先导概念完成连线">⇢ 连接先导概念</button>';
+  const noteLabel = ctx.noteNodeId ? '继续写总结' : '写下总结节点';
+  const noteIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.note) ? UI_ICON_SVG.note : '';
+  const linkIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.link) ? UI_ICON_SVG.link : '';
+  return '<button type="button" class="quiz-return-pill-btn action"'
+    + ' onclick="quizRelearnCreateNote()" title="在该节点旁放一个「我的理解」节点，写下你自己的话">'
+    + noteIcon + '<span>' + noteLabel + '</span></button>'
+    + '<button type="button" class="quiz-return-pill-btn action"'
+    + ' onclick="quizRelearnConnect()" title="把总结节点（或定位到的节点）设为起点，点一个先导概念完成连线">'
+    + linkIcon + '<span>连接先导概念</span></button>';
 }
 
 function showQuizRelearnGuide(ctx) {

@@ -145,6 +145,45 @@ function _renderQuizQuestion() {
     </div>`;
 }
 
+// 正确率环形图（M2 视觉修正）：旧版 .quiz-score-ring 是「35% 透明圆环 + 一段强调色」的
+// 装饰性静态圈——不管 0% 还是 100% 都长一样，等于画了个假的统计图。现在按真实比例画：
+// 扇形角度 = 正确率，颜色按档位（≥80 绿 / ≥60 黄 / 其余红），中心是百分比，「错」的那段
+// 单独一色，等于一张「对/错」两段饼图。抽成纯函数便于 smoke 断言。
+function _quizScoreTone(rate) {
+  if (rate >= 80) return 'good';
+  if (rate >= 60) return 'mid';
+  return 'low';
+}
+
+function _quizScoreRingHtml(rate, correct, wrong) {
+  const safe = Math.max(0, Math.min(100, Math.round(Number(rate) || 0)));
+  const right = Math.max(0, Number(correct) || 0);
+  const bad = Math.max(0, Number(wrong) || 0);
+  const tone = _quizScoreTone(safe);
+  const total = right + bad;
+  return `
+      <div class="quiz-score-ring tone-${tone}" style="--p:${safe}" role="img"
+           aria-label="正确率 ${safe}%，答对 ${right} 题，答错 ${bad} 题">
+        <span class="quiz-score-value">${safe}<small>%</small></span>
+        <span class="quiz-score-label">正确率</span>
+      </div>
+      <div class="quiz-score-meta">
+        <span class="quiz-score-chip ok">答对 ${right}</span>
+        <span class="quiz-score-chip bad">答错 ${bad}</span>
+        ${total ? `<span class="quiz-score-total">共 ${total} 题</span>` : ''}
+      </div>`;
+}
+
+// 单会话的正确率小结环（全局概览的会话卡用）：同一套扇形口径，只是尺寸小一号
+function _quizSessionRateRingHtml(rate) {
+  const safe = Math.max(0, Math.min(100, Math.round(Number(rate) || 0)));
+  return `<div class="quiz-score-ring is-mini tone-${_quizScoreTone(safe)}" style="--p:${safe}"
+       role="img" aria-label="正确率 ${safe}%">
+      <span class="quiz-score-value">${safe}<small>%</small></span>
+      <span class="quiz-score-label">正确率</span>
+    </div>`;
+}
+
 function _renderQuizResult() {
   const body = document.getElementById('quizBody');
   if (!quizState) return;
@@ -173,8 +212,7 @@ function _renderQuizResult() {
   ` : '<div class="quiz-weak-empty">本组没有待复习条目</div>';
   body.innerHTML = `
     <div class="quiz-result">
-      <div class="quiz-score-ring">${rate}%</div>
-      <div class="quiz-score-meta">${correct} / ${total} 题正确</div>
+      ${_quizScoreRingHtml(rate, correct, total - correct)}
       ${weakHtml}
       <div class="quiz-result-actions">
         <button class="quiz-btn-primary" onclick="reshuffleQuiz()" title="不会删除AI题库，仅重新生成当前这一组题">换一组题</button>
@@ -277,7 +315,7 @@ function _quizPieHtml(segments) {
   const legend = segments.map(segment => `
     <div class="quiz-chart-legend-item">
       <span style="background:${segment.color}"></span>
-      ${_quizEscape(segment.label)} · 正确率 ${segment.correctRate}%
+      ${_quizEscape(segment.label)} · 已测 ${segment.value} 题 · 正确率 ${segment.correctRate}%
     </div>
   `).join('');
   return `<div class="quiz-chart-pie" style="background:conic-gradient(${stops})"></div><div class="quiz-chart-legend">${legend}</div>`;
@@ -348,11 +386,14 @@ function _renderQuizGlobalDashboard() {
     const title = session.title || session.id || '未命名画布';
     return `
       <div class="quiz-global-session-card">
-        <div class="quiz-global-session-title">${_quizEscape(title)}</div>
-        <div class="quiz-global-session-stats">已测 ${total} · 正确率 ${rate}% · 错题 ${wrong} · 题库 ${bankCount}</div>
-        <div class="quiz-global-actions">
-          <button class="quiz-btn-primary" onclick="openSessionQuizFromGlobal('${id}')">查看答题</button>
-          <button class="quiz-btn-secondary" onclick="openQuizBank('${id}')">查看题库</button>
+        ${_quizSessionRateRingHtml(rate)}
+        <div class="quiz-global-session-body">
+          <div class="quiz-global-session-title">${_quizEscape(title)}</div>
+          <div class="quiz-global-session-stats">已测 ${total} · 错题 ${wrong} · 题库 ${bankCount}</div>
+          <div class="quiz-global-actions">
+            <button class="quiz-btn-primary" onclick="openSessionQuizFromGlobal('${id}')">查看答题</button>
+            <button class="quiz-btn-secondary" onclick="openQuizBank('${id}')">查看题库</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -366,7 +407,7 @@ function _renderQuizGlobalDashboard() {
     </div>
     <div class="quiz-charts">
       <div class="quiz-chart-card">
-        <div class="quiz-chart-title">画布正确率分布</div>
+        <div class="quiz-chart-title">各画布答题量占比<span class="quiz-chart-sub">扇形角度=已测题数，正确率见图例</span></div>
         ${_quizPieHtml(chartSegments)}
       </div>
       <div class="quiz-chart-card">
