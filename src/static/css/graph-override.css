@@ -564,8 +564,15 @@
   background: var(--btn-active-bg) !important;
 }
 
-/* ---------- 4. 工具栏 ---------- */
+/* 画布工具栏尺寸（2026-09-14 用户："右下角可以再大一点"）：
+   按钮边长从 38 提到 46、图标 18 提到 21（约 +21% 观感）。整条胶囊外高 = 按钮 + padding×2 + 描边×2，
+   当前 = 46 + 12 + 2 = 60px。**改这里必须同步右下角那一摞浮层的 bottom 偏移**
+   （搜索面板/导出菜单/修改历史/图体检/Φ 窗口/Φ 桌宠/引导浮卡都锚在工具栏上方，
+   否则胶囊长高会顶进面板里——它们的 bottom 就是按"工具栏外高 + 间隙"算的）。 */
 .graph-canvas-toolbar {
+  /* 单个按钮尺寸（下面各规则共用） */
+  --graph-tool-btn-size: 46px;
+  --graph-tool-icon-size: 21px;
   position: absolute !important;
   right: 16px !important;
   bottom: 16px !important;
@@ -591,8 +598,8 @@
 }
 
 .graph-tool-btn {
-  width: 38px !important;
-  height: 38px !important;
+  width: var(--graph-tool-btn-size, 46px) !important;
+  height: var(--graph-tool-btn-size, 46px) !important;
   border-radius: 10px !important;
   /* 按钮自身透明无框：整条 .graph-canvas-toolbar 才是玻璃载体（一个胶囊，一次磨砂）；
      hover / 激活态才描边着色，否则胶囊内部会"碎成一格格小方块" */
@@ -601,7 +608,7 @@
   /* 图标墨色走主题变量：浅色是暖棕墨（--graph-tool-ink #54452a），不再是近黑的 #2a2418——
      纯黑线性图标压在暖米色玻璃上像"贴上去的"，暖棕墨与环境同调又保住 8:1 以上对比度 */
   color: var(--graph-tool-ink) !important;
-  font-size: 18px !important;
+  font-size: var(--graph-tool-icon-size, 21px) !important;
   font-weight: 400 !important;
   display: inline-flex !important;
   align-items: center !important;
@@ -619,7 +626,7 @@
 }
 
 .graph-harness-btn-phi {
-  font-size: 21px;
+  font-size: 24px;
   line-height: 1;
   font-weight: 700;
   pointer-events: none;
@@ -627,13 +634,13 @@
 }
 
 .graph-tool-btn svg {
-  width: 18px !important;
-  height: 18px !important;
+  width: var(--graph-tool-icon-size, 21px) !important;
+  height: var(--graph-tool-icon-size, 21px) !important;
   flex: none !important;
   pointer-events: none !important;
 }
 .graph-tool-btn.graph-tool-glyph-lg {
-  font-size: 21px !important;
+  font-size: 24px !important;
   line-height: 1 !important;
   font-weight: 600 !important;
 }
@@ -1764,11 +1771,11 @@
 }
 
 .graph-tool-btn.graph-select-btn {
-  width: 38px !important;
-  min-width: 38px !important;
+  width: var(--graph-tool-btn-size, 46px) !important;
+  min-width: var(--graph-tool-btn-size, 46px) !important;
   padding: 0 !important;
   font-family: inherit !important;
-  font-size: 18px !important;
+  font-size: var(--graph-tool-icon-size, 21px) !important;
   font-weight: 400 !important;
   line-height: 1;
   transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s !important;
@@ -2099,7 +2106,8 @@
 .graph-search-panel {
   position: absolute !important;
   right: 16px !important;
-  bottom: 64px !important;
+  /* 锚在工具栏上方：工具栏外高 60（按钮 46 + padding 12 + 描边 2）+ 14 间隙 */
+  bottom: 74px !important;
   z-index: 55 !important;
   width: min(420px, calc(100vw - 32px)) !important;
   max-height: min(520px, calc(100vh - 170px)) !important;
@@ -2281,7 +2289,7 @@
 @media (max-width: 768px) {
   .graph-search-panel {
     right: 10px !important;
-    bottom: 76px !important;
+    bottom: 86px !important;
     width: calc(100vw - 20px) !important;
     max-height: calc(100vh - 180px) !important;
   }
@@ -2694,7 +2702,7 @@
 .phi-pet-root {
   position: fixed;
   right: 18px;
-  bottom: 92px;
+  bottom: 102px;
   width: 108px;
   height: 108px;
   font-size: 100px;
@@ -2726,7 +2734,7 @@
 @media (max-width: 640px) {
   .phi-pet-root {
     right: 10px;
-    bottom: 76px;
+    bottom: 86px;
     width: 84px;
     height: 84px;
   }
@@ -2735,7 +2743,7 @@
 .graph-harness-window {
   position: fixed;
   right: 18px;
-  bottom: 152px;
+  bottom: 162px;
   width: min(400px, calc(100vw - 36px));
   height: min(560px, calc(100vh - 210px));
   display: flex;
@@ -3554,7 +3562,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   position: fixed;
   right: 16px;
   top: auto;
-  bottom: 72px;
+  bottom: 82px;
   width: 340px;
   max-height: min(70vh, calc(100vh - 140px));
   display: flex;
@@ -3709,7 +3717,7 @@ html[data-theme="dark"] .message-content strong {
   position: fixed;
   right: 16px;
   top: auto;
-  bottom: 72px;
+  bottom: 82px;
   width: 340px;
   max-height: min(70vh, calc(100vh - 140px));
   display: flex;
@@ -3842,8 +3850,8 @@ html[data-theme="dark"] .message-content strong {
 .graph-source-organize-btn:hover { background: var(--accent-hover, #3b78e6); }
 /* ===== 联系箭头（联系模式 / link edge）===== */
 .graph-tool-btn.graph-link-btn {
-  width: 38px !important;
-  min-width: 38px !important;
+  width: var(--graph-tool-btn-size, 46px) !important;
+  min-width: var(--graph-tool-btn-size, 46px) !important;
   padding: 0 !important;
   display: flex !important;
   align-items: center !important;
