@@ -19,26 +19,34 @@
 <style>
   html, body { height: 100%; margin: 0; }
   body { background: var(--bg-dark, #0a0e1e); color: var(--text-primary, #e6ebf5); overflow: hidden; }
-  .utopia-shell { display: flex; flex-direction: column; height: 100vh; }
+  .utopia-shell { display: flex; flex-direction: column; height: 100vh; position: relative; }
+  /* 顶栏：极光玻璃浮条（背景交给 .aurora-glass，这里绝不再写 background 简写） */
   .utopia-bar {
-    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-    border-bottom: 1px solid var(--border, rgba(255,255,255,.12));
-    background: var(--bg-panel, rgba(16,24,46,.9)); flex-wrap: wrap;
+    position: absolute; top: 12px; left: 12px; right: 12px; z-index: 20;
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    border-radius: 18px; flex-wrap: wrap;
   }
   .utopia-brand { display: flex; flex-direction: column; gap: 2px; margin-right: auto; min-width: 0; }
   .utopia-brand b { font-size: 14px; letter-spacing: .3px; }
   .utopia-brand span { font-size: 12px; color: var(--text-secondary, #93a1bd); }
   .utopia-tag {
-    font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border, rgba(255,255,255,.16));
-    color: var(--text-secondary, #93a1bd); white-space: nowrap;
+    font-size: 11px; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 34%, transparent);
+    background: color-mix(in srgb, var(--accent, #4a9eff) 12%, transparent);
+    color: var(--text-secondary, #93a1bd);
   }
   .utopia-btn {
-    font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 9px; cursor: pointer;
-    border: 1px solid var(--border, rgba(255,255,255,.16));
-    background: var(--surface-container, rgba(255,255,255,.06)); color: var(--text-primary, #e6ebf5);
+    font: inherit; font-size: 13px; padding: 6px 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--border, rgba(255,255,255,.16)) 80%, transparent);
+    background: color-mix(in srgb, var(--surface-container, rgba(255,255,255,.06)) 70%, transparent);
+    color: var(--text-primary, #e6ebf5); transition: border-color .18s ease, transform .18s ease, background .18s ease;
   }
-  .utopia-btn:hover { border-color: var(--accent, #4a9eff); }
-  .utopia-btn.primary { background: var(--accent, #4a9eff); color: #08101f; border-color: transparent; font-weight: 600; }
+  .utopia-btn:hover { border-color: var(--accent, #4a9eff); transform: translateY(-1px); }
+  .utopia-btn.primary {
+    background: linear-gradient(135deg, var(--accent, #4a9eff), color-mix(in srgb, var(--accent, #4a9eff) 62%, #a78bfa));
+    color: #06101f; border-color: transparent; font-weight: 600;
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent, #4a9eff) 35%, transparent);
+  }
   .utopia-error {
     margin: 10px 14px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px;
     border: 1px solid #ef4444; background: rgba(239,68,68,.12); color: #ffd9d9;
@@ -47,21 +55,22 @@
   .utopia-stage .graph-workspace { position: absolute; inset: 0; }
   .utopia-stage .graph-canvas { position: absolute; inset: 0; overflow: hidden; }
   .utopia-drop {
-    position: absolute; inset: 18px; border-radius: 18px; z-index: 5;
-    border: 2px dashed var(--border, rgba(255,255,255,.22));
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-    background: color-mix(in srgb, var(--bg-panel, #101a2e) 82%, transparent);
-    text-align: center; padding: 24px; pointer-events: none;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(560px, calc(100vw - 48px)); border-radius: 22px; z-index: 5;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    text-align: center; padding: 28px 26px; pointer-events: none;
+    box-shadow: 0 26px 70px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.08);
   }
   .utopia-drop.hidden { display: none; }
-  .utopia-drop.active { border-color: var(--accent, #4a9eff); background: color-mix(in srgb, var(--accent, #4a9eff) 12%, var(--bg-panel, #101a2e)); }
+  .utopia-drop.active { border-color: var(--accent, #4a9eff); box-shadow: 0 26px 70px rgba(0,0,0,.5), 0 0 0 1px var(--accent, #4a9eff) inset; }
   .utopia-drop h2 { margin: 0; font-size: 17px; }
   .utopia-drop p { margin: 0; font-size: 13px; color: var(--text-secondary, #93a1bd); line-height: 1.7; }
   .utopia-drop .utopia-btn { pointer-events: auto; }
   .utopia-toast {
-    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(12px);
-    padding: 9px 14px; border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
-    background: var(--bg-panel, rgba(16,24,46,.94)); border: 1px solid var(--border, rgba(255,255,255,.16));
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(12px);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; opacity: 0; pointer-events: none;
+    border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 26%, var(--border));
+    box-shadow: 0 14px 40px rgba(0,0,0,.34);
     transition: opacity .22s ease, transform .22s ease; z-index: 40; max-width: 86vw;
   }
   .utopia-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -69,7 +78,7 @@
 </head>
 <body>
 <div class="utopia-shell">
-  <div class="utopia-bar">
+  <div class="utopia-bar aurora-glass">
     <div class="utopia-brand">
       <b><span id="utopiaTitle">Utopia 查看器</span></b>
       <span id="utopiaMeta">PhyMath Utopia 快照（.pmu）· 只读 · 离线</span>
@@ -100,15 +109,16 @@
         <div class="graph-search-results" id="graphSearchResults"></div>
       </div>
     </div>
-    <div class="utopia-drop" id="utopiaDrop">
+    <div class="utopia-drop aurora-glass" id="utopiaDrop">
       <h2>把 .pmu 快照拖进来</h2>
       <p>PhyMath Utopia 快照是 PhyMathia 探索网的可交互产物：<br>
          节点里可以继续滚动看长回答（不受截图裁剪限制），画布可平移缩放。</p>
       <button class="utopia-btn primary" onclick="document.getElementById('utopiaFile').click()">选择文件</button>
+      <p style="opacity:.75">快捷键：<b>F</b> 适配画布 · <b>/</b> 搜索 · 节点内直接滚动看长回答</p>
     </div>
   </div>
 </div>
-<div class="utopia-toast" id="utopiaToast"></div>
-<script src="/js/viewer.js?v=276b1138"></script>
+<div class="utopia-toast aurora-glass aurora-glass--compact" id="utopiaToast"></div>
+<script src="/js/viewer.js?v=bff062fb"></script>
 </body>
 </html>
