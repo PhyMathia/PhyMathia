@@ -1427,6 +1427,76 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
   return true;
 });
 
+check('aurora-glass：浅色极光纯暖调（第三轮：连青玉也删掉，禁任何蓝绿）', () => {
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  const lightBlocks = [
+    ['基础', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass,'), css.indexOf('.aurora-glass--compact {'))],
+    ['紧凑', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass--compact'), css.indexOf('.aurora-glass--panel {'))],
+    ['大面积', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass--panel'), css.indexOf('@keyframes auroraDrift'))],
+  ];
+  // 用户否掉的青玉/冷色（45,212,191 青玉、34,211,238 天蓝、96,165,250 冷蓝、168,85,247 冷紫、120,150,220 蓝灰描边）
+  const cold = ['45, 212, 191', '34, 211, 238', '96, 165, 250', '168, 85, 247', '120, 150, 220', '13, 148, 136', '8, 145, 178'];
+  const hexCold = ['#22d3ee', '#60a5fa', '#a78bfa', '#2dd4bf', '#14b8a6', '#0ea5e9'];
+  for (const [name, raw] of lightBlocks) {
+    if (!raw) throw new Error(name + '：取不到浅色极光块（选择器被改名？）');
+    const block = raw.replace(/\/\*[\s\S]*?\*\//g, ''); // 断言只看声明：注释里会提到被否掉的颜色
+    for (const c of [...cold, ...hexCold]) {
+      if (block.includes(c)) throw new Error(name + '浅色极光残留冷色/青绿 ' + c + '（用户已两轮否掉蓝绿调）');
+    }
+    // 三团色斑 + 内描边都必须落在暖色相区间（R > G > B），青绿必然 G > R
+    const rgbas = block.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/g) || [];
+    if (rgbas.length < 3) throw new Error(name + '浅色极光缺色斑声明');
+    for (const decl of rgbas) {
+      const [r, g, b] = decl.match(/\d+/g).slice(0, 3).map(Number);
+      if (g > r && g > b) throw new Error(name + '浅色极光出现绿/青主导色 ' + decl + '（暖调应是 R 最高）');
+      if (b > r) throw new Error(name + '浅色极光出现蓝主导色 ' + decl + '（暖调应是 R 最高）');
+    }
+  }
+  // 浅色三团的暖色家族：琥珀（--domain-physics 系）+ 蜜桃 + 暖陶土
+  const base = lightBlocks[0][1];
+  if (!/rgba\(251, 191, 36,/.test(base)) throw new Error('浅色极光丢了琥珀主色');
+  if (!/rgba\(214, 148, 96,/.test(base)) throw new Error('浅色极光第三团未换成暖陶土（青玉已删）');
+  return true;
+});
+
+check('画布工具栏图标：浅色走暖棕墨（不再是近黑，且不低于 4.5:1 对比度）', () => {
+  const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const rootBlock = gcss.slice(gcss.indexOf(':root {', gcss.indexOf('@property --graph-edge-glow')), gcss.indexOf('}', gcss.indexOf(':root {', gcss.indexOf('@property --graph-edge-glow'))));
+  const lightBlock = gcss.slice(gcss.indexOf('[data-theme="light"] {', gcss.indexOf('--node-glass-base')), gcss.indexOf('}', gcss.indexOf('[data-theme="light"] {', gcss.indexOf('--node-glass-base'))));
+  if (!/--graph-tool-ink:\s*#[0-9a-f]{6}/i.test(rootBlock)) throw new Error('缺 --graph-tool-ink（深色一套），图标墨色无法随主题切换');
+  const lightInk = (lightBlock.match(/--graph-tool-ink:\s*(#[0-9a-f]{6})/i) || [])[1];
+  if (!lightInk) throw new Error('浅色缺 --graph-tool-ink（浅色一套）');
+  const btn = gcss.slice(gcss.indexOf('.graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn {')));
+  if (!/color:\s*var\(--graph-tool-ink\)\s*!important/.test(btn)) throw new Error('工具按钮图标未接 --graph-tool-ink');
+  // 浅色覆盖层（[data-theme="light"] .graph-tool-btn，特指性高于基础 :hover）只能收窄描边：
+  // 一旦在这里写 background / color，就会把 hover 与 .active 的底板、字色一起压掉
+  const lightBtn = gcss.slice(gcss.indexOf('[data-theme="light"] .graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('[data-theme="light"] .graph-tool-btn {')));
+  for (const banned of [/background/, /(^|[^-])color\s*:/m]) {
+    if (banned.test(lightBtn.replace(/\/\*[\s\S]*?\*\//g, ''))) {
+      throw new Error('浅色工具按钮规则写了 background/color，会压掉 :hover 与 .active 的状态样式');
+    }
+  }
+  // hover 底板走主题变量（原来是写死的深墨蓝，浅色下悬停会突兀发黑）
+  const hover = gcss.slice(gcss.indexOf('.graph-tool-btn:hover {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn:hover {')));
+  if (!/background:\s*var\(--btn-active-bg\)/.test(hover)) throw new Error('工具按钮 hover 底板未接主题变量（浅色会发黑）');
+  // 对比度：暖棕墨须压在暖米色玻璃上可读（WCAG 相对亮度）
+  const lum = (hex) => {
+    const v = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const onGlass = ratio(lightInk, '#f7f2e6'); // 工具栏玻璃胶囊的暖米底色
+  if (onGlass < 4.5) throw new Error('浅色图标墨色对比度不足：' + onGlass.toFixed(2) + ':1');
+  if (onGlass > 12) throw new Error('浅色图标仍是近黑（对比度 ' + onGlass.toFixed(2) + ':1），与暖米色环境违和');
+  const [lr, lg, lb] = [1, 3, 5].map(i => parseInt(lightInk.slice(i, i + 2), 16));
+  if (!(lr > lg && lg > lb)) throw new Error('浅色图标墨色不是暖色相（应 R > G > B）');
+  return true;
+});
+
 // ===== 串行边界：以下用例改共享状态（localStorage 知识/统计键）且会 await，
 // 必须放在全部并发检查之后——否则会与在途的 knowledge/quiz 异步用例互相踩键 =====
 
