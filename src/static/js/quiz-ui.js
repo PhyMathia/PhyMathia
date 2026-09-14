@@ -126,17 +126,25 @@ function showQuizReturnPill() {
     pill = document.createElement('div');
     pill.id = 'quizReturnPill';
     pill.className = 'quiz-return-pill';
-    pill.innerHTML = '<button type="button" class="quiz-return-pill-btn" onclick="resumeQuizFromJump()"></button>'
-      + '<button type="button" class="quiz-return-pill-close" onclick="hideQuizReturnPill()" aria-label="关闭" title="关闭">&times;</button>';
     document.body.appendChild(pill);
   }
-  const label = quizReturnState && quizReturnState.phase === 'wrong' ? '返回错题' : '返回题库';
-  const btn = pill.querySelector('.quiz-return-pill-btn');
-  if (btn) btn.textContent = '⬅ ' + label;
+  const phase = quizReturnState ? quizReturnState.phase : '';
+  const label = phase === 'wrong' ? '返回错题' : (phase === 'result' ? '返回检测结果' : '返回题库');
+  // 重学引导（M2）：定位到画布后在同一枚 pill 上挂两个建议动作（由 quiz-relearn.js 提供）
+  const relearn = typeof quizRelearnPillHtml === 'function' ? quizRelearnPillHtml() : '';
+  pill.innerHTML = '<button type="button" class="quiz-return-pill-btn" onclick="resumeQuizFromJump()">⬅ ' + escapeHtml(label) + '</button>'
+    + relearn
+    + '<button type="button" class="quiz-return-pill-close" onclick="closeQuizReturnPill()" aria-label="关闭" title="关闭">&times;</button>';
   pill.hidden = false;
   pill.classList.add('active');
   if (_quizReturnPillTimer) clearTimeout(_quizReturnPillTimer);
   _quizReturnPillTimer = setTimeout(hideQuizReturnPill, 60000);
+}
+
+// 显式关闭：连重学引导一起清掉（自动隐藏只收 pill，保留上下文供下一次定位覆盖）
+function closeQuizReturnPill() {
+  if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
+  hideQuizReturnPill();
 }
 
 function hideQuizReturnPill() {
@@ -150,9 +158,11 @@ function hideQuizReturnPill() {
 
 async function resumeQuizFromJump() {
   hideQuizReturnPill();
+  if (typeof clearQuizRelearnGuide === 'function') clearQuizRelearnGuide();
   const overlay = document.getElementById('quizModal');
   if (!overlay) return;
-  const phase = quizReturnState && quizReturnState.phase === 'wrong' ? 'wrong' : 'bank';
+  const saved = quizReturnState ? quizReturnState.phase : '';
+  const phase = (saved === 'wrong' || saved === 'result') ? saved : 'bank';
   overlay.hidden = false;
   overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
@@ -165,16 +175,17 @@ async function resumeQuizFromJump() {
     if (phase === 'wrong') quizState.wrongList = _readWrongQuestions();
     renderQuiz();
   } else {
-    // 页面已刷新：重新打开并进入目标视图
+    // 页面已刷新：重新打开并进入目标视图（结果页依赖当时的题目状态，无法复原，落回题库）
     await openQuiz();
     if (phase === 'wrong') openWrongReview();
-    else openQuizBank(quizReturnState ? quizReturnState.filterSession : '');
+    else if (phase === 'bank') openQuizBank(quizReturnState ? quizReturnState.filterSession : '');
   }
   quizReturnState = null;
 }
 
 window.showQuizReturnPill = showQuizReturnPill;
 window.hideQuizReturnPill = hideQuizReturnPill;
+window.closeQuizReturnPill = closeQuizReturnPill;
 window.resumeQuizFromJump = resumeQuizFromJump;
 
 // Esc 关闭/返回：与头部返回箭头同语义（intro/loading/global 关窗，其余回 intro）

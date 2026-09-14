@@ -25,6 +25,9 @@ ALLOWED_NODE_KINDS = {
     "ai_eval",
 }
 
+# M2（P0-A 检测闭环）：随快照进提示词的检测侧薄弱点条数上限（当前会话 Top3）
+QUIZ_WEAK_LIMIT = 3
+
 ALLOWED_CREATE_KINDS = {
     "blank",
     "module",
@@ -164,7 +167,44 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     node_ids = {node["id"] for node in nodes}
     edges = [edge for edge in edges if edge["from"] in node_ids and edge["to"] in node_ids]
 
-    return {"version": 1, "nodes": nodes, "edges": edges}
+    normalized: Dict[str, Any] = {"version": 1, "nodes": nodes, "edges": edges}
+    # M2（P0-A 检测闭环）：quiz_weak 是检测侧薄弱点（提示词参考字段，不是图元素），
+    # 必须原样穿过归一化——否则前端注入了、后端一 normalize 就丢，提示词永远看不到。
+    quiz_weak = normalize_quiz_weak(snapshot.get("quiz_weak"))
+    if quiz_weak:
+        normalized["quiz_weak"] = quiz_weak
+    return normalized
+
+
+def normalize_quiz_weak(raw: Any) -> List[Dict[str, Any]]:
+    """检测侧薄弱知识点（M2）：白名单字段 + 限条数，缺失/非法即空（无薄弱点 = 零噪音）。"""
+    if not isinstance(raw, list):
+        return []
+    result: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        result.append(
+            {
+                "title": title[:40],
+                "wrong": _safe_int(item.get("wrong")),
+                "mastery": _safe_int(item.get("mastery")),
+                "sessionId": str(item.get("sessionId") or "")[:80],
+            }
+        )
+        if len(result) >= QUIZ_WEAK_LIMIT:
+            break
+    return result
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 

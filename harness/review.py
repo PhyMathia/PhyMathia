@@ -647,11 +647,15 @@ def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2,
             kept.add(str(n.get("id")))
     kept_edges = [e for e in edges if str(e.get("from") or "") in kept and str(e.get("to") or "") in kept]
     kept_nodes = [node_by_id[nid] for nid in kept if nid in node_by_id]
-    return {
+    result = {
         "nodes": kept_nodes,
         "edges": kept_edges,
         "omitted_node_count": len(nodes) - len(kept_nodes),
     }
+    # M2：薄弱点不是图元素，抽邻域子图时原样带过去（否则大图一降采样提示词就看不到薄弱点）
+    if snapshot.get("quiz_weak"):
+        result["quiz_weak"] = snapshot["quiz_weak"]
+    return result
 
 
 def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:

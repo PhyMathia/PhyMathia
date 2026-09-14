@@ -335,7 +335,11 @@ let harnessLastAppliedBeforeSnapshot = null;
       ],
       scope_node_ids: Array.from(selected),
     };
-    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges });
+    // M2（P0-A 检测闭环）：检测侧薄弱点随快照注入（当前会话 Top3，每条一行）。
+    // 只作口头提示依据——提示词明文禁止据此创建任何状态类图元素；无薄弱点时不带该字段。
+    const weakPoints = _harnessQuizWeak();
+    if (weakPoints.length) snapshot.quiz_weak = weakPoints;
+    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges, quiz_weak: snapshot.quiz_weak });
     snapshot.snapshot_meta = {
       total_nodes: nodes.length,
       directory_nodes: snapshot.nodes.filter(n => n.directory).length,
@@ -345,6 +349,23 @@ let harnessLastAppliedBeforeSnapshot = null;
       est_tokens: _estimateTokens(serialized),
     };
     return snapshot;
+  }
+
+  // 当前会话的薄弱知识点（复用检测侧同一口径 _quizStatSummary('session').weak，取 Top3）
+  function _harnessQuizWeak() {
+    if (typeof _quizStatSummary !== 'function') return [];
+    let summary = null;
+    try {
+      summary = _quizStatSummary('session');
+    } catch (e) {
+      return [];
+    }
+    return ((summary && summary.weak) || []).slice(0, 3).map(item => ({
+      title: String(item.title || '').slice(0, 40),
+      wrong: Number(item.wrong) || 0,
+      mastery: Number(item.mastery) || 0,
+      sessionId: String(item.sessionId || ''),
+    })).filter(item => item.title);
   }
 
   // 安全阀：此前"拒绝建议全局清场"可能把大量节点标进 harnessDeleted 且无恢复出口。

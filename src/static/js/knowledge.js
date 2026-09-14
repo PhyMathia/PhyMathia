@@ -684,7 +684,20 @@ function _showJumpError(message) {
   }
 }
 
+// M2（检测闭环）：最近一次成功定位到的画布节点 id——检测侧的「重学引导」拿它作落点与连线起点
+// （goToKnowledgeNode/locateFormulaNode 的布尔返回契约保持不变，既有调用方零改动）
+let _lastLocatedGraphNodeId = '';
+
+function _rememberLocatedGraphNode(nodeId) {
+  _lastLocatedGraphNodeId = String(nodeId || '');
+}
+
+function getLastLocatedGraphNodeId() {
+  return _lastLocatedGraphNodeId;
+}
+
 async function goToKnowledgeNode(itemId) {
+  _rememberLocatedGraphNode('');
   const item = getKnowledgeItems()[itemId];
   if (!item) {
     _showJumpError('找不到对应的知识点');
@@ -706,7 +719,10 @@ async function goToKnowledgeNode(itemId) {
   const anchor = _resolveKnowledgeAnchor(item, messages);
   if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
     const ok = await window.focusGraphNodeById(anchor.nodeId);
-    if (ok) return true;
+    if (ok) {
+      _rememberLocatedGraphNode(anchor.nodeId);
+      return true;
+    }
   }
   if (anchor.messageId && typeof window.focusGraphNode === 'function') {
     const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
@@ -759,7 +775,9 @@ async function _focusKnowledgeNodeByContent(item, moduleKey) {
 async function _tryFocusGraphNodeById(nodeId) {
   if (!nodeId || typeof window.focusGraphNodeById !== 'function') return false;
   try {
-    return !!await window.focusGraphNodeById(nodeId);
+    const ok = !!await window.focusGraphNodeById(nodeId);
+    if (ok) _rememberLocatedGraphNode(nodeId);
+    return ok;
   } catch (e) {
     return false;
   }
@@ -1140,6 +1158,7 @@ function _resolveFormulaAnchor(item, messages) {
 }
 
 async function locateFormulaNode(formulaId) {
+  _rememberLocatedGraphNode('');
   const item = getFormulaCache()[formulaId];
   if (!item) {
     _showJumpError('找不到对应的公式');
@@ -1164,7 +1183,10 @@ async function locateFormulaNode(formulaId) {
   }
   if (anchor.nodeId && typeof window.focusGraphNodeById === 'function') {
     const ok = await window.focusGraphNodeById(anchor.nodeId);
-    if (ok) return true;
+    if (ok) {
+      _rememberLocatedGraphNode(anchor.nodeId);
+      return true;
+    }
   }
   if (anchor.messageId && typeof window.focusGraphNode === 'function') {
     const ok = await window.focusGraphNode(anchor.sessionId, anchor.messageId, anchor.moduleKey);
@@ -1204,5 +1226,6 @@ async function confirmDeleteFormula(id) {
 window.invalidateKnowledgeCache = invalidateKnowledgeCache;
 window.goToKnowledgeNode = goToKnowledgeNode;
 window.locateFormulaNode = locateFormulaNode;
+window.getLastLocatedGraphNodeId = getLastLocatedGraphNodeId;
 window.waitForKnowledgeSave = () => kpKnowledgeSaveQueue.catch(() => false);
 window.waitForFormulaSave = () => kpFormulaSaveQueue.catch(() => false);

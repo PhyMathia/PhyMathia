@@ -2141,7 +2141,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 8px 12px;
       padding: 9px 12px;
       border: 1px solid var(--btn-active-border);
       border-radius: 8px;
@@ -2152,6 +2153,19 @@
     .quiz-weak-item span:last-child {
       flex-shrink: 0;
       color: var(--text-secondary);
+    }
+    /* M2 检测闭环：建议复习条目的两个动作（定位到画布 / 重测同类题） */
+    .quiz-weak-item-main {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .quiz-weak-item-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+      margin-left: auto;
     }
     .quiz-weak-empty {
       padding: 16px;
@@ -2651,6 +2665,12 @@
   white-space: nowrap;
 }
 .quiz-return-pill-btn:hover { background: rgba(255,255,255,.18); }
+/* M2 重学引导：pill 上的两个建议动作（写下总结节点 / 连接先导概念），与「返回」区分层次 */
+.quiz-return-pill-action {
+  background: rgba(255,255,255,.16);
+  font-weight: 500;
+}
+.quiz-return-pill-action:hover { background: rgba(255,255,255,.3); }
 .quiz-return-pill-close {
   border: none;
   background: rgba(255,255,255,.18);
