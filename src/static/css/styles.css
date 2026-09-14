@@ -1976,14 +1976,14 @@
        不依赖 color-mix（老浏览器退化仍有底色）；减弱动效时不漂移；
        不支持 backdrop-filter 时自动加深底色保对比度。 */
     .aurora-glass {
-      /* 深色：暗玻璃打底，极光三色（青绿 / 紫红 / 天蓝）从边缘透出 */
-      --aurora-1: rgba(56, 189, 248, 0.40);
-      --aurora-2: rgba(168, 85, 247, 0.36);
-      --aurora-3: rgba(16, 185, 129, 0.32);
-      --glass-tint: rgba(6, 10, 26, 0.72);
-      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(0, 0, 0, 0.22) 78%);
-      --glass-inner-line: rgba(255, 255, 255, 0.13);
-      --glass-shadow: rgba(2, 6, 23, 0.48);
+      /* 深色：暗玻璃打底，极光从边缘透出（用户反馈偏亮 → 底更暗、色斑更内敛） */
+      --aurora-1: rgba(56, 189, 248, 0.30);
+      --aurora-2: rgba(147, 51, 234, 0.26);
+      --aurora-3: rgba(13, 148, 136, 0.26);
+      --glass-tint: rgba(4, 7, 18, 0.82);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.30) 80%);
+      --glass-inner-line: rgba(255, 255, 255, 0.10);
+      --glass-shadow: rgba(2, 6, 23, 0.52);
       background-color: var(--glass-tint);
       background-image:
         radial-gradient(118% 90% at 10% 2%, var(--aurora-1), transparent 58%),
@@ -2005,13 +2005,13 @@
     /* 浅色模式：白玻璃 + 同色系淡极光；描边阴影走暖灰，避免发脏 */
     html[data-theme="light"] .aurora-glass,
     [data-theme="light"] .aurora-glass {
-      /* 浅色：应用浅色主题是暖米色系（--bg-panel #faf6ee / --accent #8b6914），
-         极光跟着走暖调——琥珀 + 天蓝(--domain-math) + 青(--domain-graph)，
-         底色用米白而不是纯白，避免在一片暖色界面里冒出一块冷玻璃。 */
-      --aurora-1: rgba(245, 158, 11, 0.28);
-      --aurora-2: rgba(96, 165, 250, 0.22);
-      --aurora-3: rgba(34, 211, 238, 0.20);
-      --glass-tint: rgba(250, 246, 238, 0.74);
+      /* 浅色：应用浅色主题是暖米色系（--bg-panel #faf6ee / --accent #8b6914）。
+         用户反馈"有蓝色调不好看" → 去掉天蓝与青，只留暖金三色
+         （琥珀 = --domain-physics / 蜜桃 / 极低青玉），底色米白偏暖。 */
+      --aurora-1: rgba(251, 191, 36, 0.30);
+      --aurora-2: rgba(249, 168, 132, 0.22);
+      --aurora-3: rgba(45, 212, 191, 0.13);
+      --glass-tint: rgba(252, 249, 243, 0.76);
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 252, 246, 0.14) 70%);
       --glass-inner-line: rgba(255, 253, 248, 0.92);
       --glass-shadow: rgba(122, 100, 66, 0.18);
@@ -2024,18 +2024,18 @@
     /* 紧凑变体：小尺寸控件（药丸按钮 / 进度胶囊）用——色斑铺得更大，
        可见窗口只截到极光的一小段，颜色更克制，不会在小面积上糊成一块高饱和色。 */
     .aurora-glass--compact {
-      --aurora-1: rgba(56, 189, 248, 0.30);
-      --aurora-2: rgba(168, 85, 247, 0.26);
-      --aurora-3: rgba(16, 185, 129, 0.24);
+      --aurora-1: rgba(56, 189, 248, 0.24);
+      --aurora-2: rgba(147, 51, 234, 0.20);
+      --aurora-3: rgba(13, 148, 136, 0.20);
       background-size: 360% 340%, 340% 320%, 380% 360%, 100% 100%;
       animation-duration: 34s;
     }
 
     html[data-theme="light"] .aurora-glass--compact,
     [data-theme="light"] .aurora-glass--compact {
-      --aurora-1: rgba(245, 158, 11, 0.22);
-      --aurora-2: rgba(96, 165, 250, 0.16);
-      --aurora-3: rgba(34, 211, 238, 0.15);
+      --aurora-1: rgba(251, 191, 36, 0.24);
+      --aurora-2: rgba(249, 168, 132, 0.16);
+      --aurora-3: rgba(45, 212, 191, 0.10);
     }
 
     @keyframes auroraDrift {
@@ -2053,7 +2053,7 @@
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .aurora-glass { --glass-tint: rgba(9, 13, 30, 0.90); }
       html[data-theme="light"] .aurora-glass,
-      [data-theme="light"] .aurora-glass { --glass-tint: rgba(250, 246, 238, 0.95); }
+      [data-theme="light"] .aurora-glass { --glass-tint: rgba(252, 249, 243, 0.96); }
     }
 
     /* ====== 进度指示器 ====== */
@@ -2069,8 +2069,10 @@
       z-index: 80;
       font-size: 13px;
       color: var(--text-secondary);
-      background: var(--panel-bg);
-      border-top: 1px solid rgba(128,128,128,0.1);
+      /* 底色/描边交给 .aurora-glass —— 这里若写 background 简写会重置 background-image，
+         把极光层直接盖掉（同特指性且本规则在 .aurora-glass 之后） */
+      background: transparent;
+      border-top: none;
       animation: statusFadeIn 0.3s ease;
       touch-action: none;
     }
@@ -2320,7 +2322,7 @@
       .quick-btn { padding: 8px 14px; font-size: 13px; border-radius: 16px; }
 
       /* ── 进度状态 ── */
-      .progress-status { margin-left: 0; padding: 10px 14px; font-size: 13px; background: var(--panel-bg); }
+      .progress-status { margin-left: 0; padding: 10px 14px; font-size: 13px; }
       .progress-status .status-progress { flex: 0 1 180px; min-width: 100px; height: 12px; }
       .typing-indicator { margin-left: 34px; padding: 10px 14px; }
 

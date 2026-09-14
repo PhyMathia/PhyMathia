@@ -1227,8 +1227,17 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
     css.indexOf('@keyframes auroraDrift')
   );
   for (const [name, block] of [['基础', lightBase], ['紧凑', lightCompact]]) {
-    if (!block.includes('rgba(245, 158, 11,')) throw new Error(name + '浅色极光未走暖调（琥珀）');
-    if (block.includes('168, 85, 247')) throw new Error(name + '浅色极光仍残留冷紫，与暖色主题冲突');
+    if (!/rgba\(251, 191, 36,/.test(block)) throw new Error(name + '浅色极光未走暖调（琥珀）');
+    // 用户明确否掉浅色的蓝调：冷紫/天蓝/青都不许再出现在浅色极光里
+    for (const cold of ['168, 85, 247', '96, 165, 250', '34, 211, 238']) {
+      if (block.includes(cold)) throw new Error(name + '浅色极光残留冷色 ' + cold + '，与暖米色主题冲突');
+    }
+  }
+  // 载体自带的 background 简写会重置 background-image 并盖住极光层——
+  // .progress-status 就栽在这（用户截图里胶囊没极光），基础规则必须让位
+  const baseCapsule = css.slice(css.indexOf('.progress-status {'), css.indexOf('.progress-status.active'));
+  if (/background:\s*var\(--panel-bg\)/.test(baseCapsule)) {
+    throw new Error('基础 .progress-status 自带 background，会盖住极光层');
   }
   // 三处载体：引导浮卡 / 右键菜单（JS 加类）+ 生成进度胶囊 / 知识面板胶囊（静态 HTML 加类）
   const quizUi = fs.readFileSync('src/static/js/quiz-ui.js', 'utf8');
