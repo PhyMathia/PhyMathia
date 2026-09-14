@@ -1159,13 +1159,14 @@
       z-index: 30;
     }
     .graph-tool-btn {
+      background: transparent;
       width: 32px;
       height: 32px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       border: 1px solid var(--border);
-      background: rgba(14, 20, 40, 0.88);
+      background: transparent;
       color: var(--text-primary);
       border-radius: 7px;
       cursor: pointer;
@@ -1244,8 +1245,7 @@
       left: 0;
       right: 0;
       z-index: 60;
-      background: rgba(8, 12, 28, 0.78);
-      backdrop-filter: blur(12px);
+      /* 底色/磨砂归 .aurora-glass--panel（这里写背景会盖掉极光层） */
       border-bottom: 1px solid var(--border);
       padding: 8px 14px;
     }

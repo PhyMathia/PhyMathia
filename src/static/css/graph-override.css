@@ -11,7 +11,8 @@
 .app-container .header-secondary-bar {
   position: fixed !important;
   inset: 0 0 auto 0 !important;
-  background: var(--bg-panel) !important;
+  /* 不再写 background：底色与磨砂归 .aurora-glass--panel。这里特指性最高，
+     一旦写实底就会把极光层整块盖掉（本文件是最后加载的覆盖层）。 */
   border-bottom: 1px solid var(--border) !important;
   z-index: 10 !important;
 }
@@ -19,6 +20,15 @@
 .app-container .header-secondary-bar {
   inset: 50px 0 auto 0 !important;
   padding: 6px 14px !important;
+}
+
+/* 顶栏/二级栏玻璃化后的圆角与描边（载体自身不再有底色） */
+.app-container .chat-header.aurora-glass {
+  border-radius: 0 0 14px 14px;
+}
+
+.app-container .header-secondary-bar.aurora-glass {
+  border-radius: 0 0 12px 12px;
 }
 
 .app-container .graph-workspace {
@@ -570,8 +580,10 @@
   width: 38px !important;
   height: 38px !important;
   border-radius: 10px !important;
-  border: 1px solid var(--border) !important;
-  background: rgba(16, 24, 46, 0.92) !important;
+  /* 按钮自身透明无框：整条 .graph-canvas-toolbar 才是玻璃载体（一个胶囊，一次磨砂）；
+     hover / 激活态才描边着色，否则胶囊内部会"碎成一格格小方块" */
+  border: 1px solid transparent !important;
+  background: transparent !important;
   color: var(--text-primary) !important;
   font-size: 18px !important;
   font-weight: 400 !important;
@@ -580,7 +592,7 @@
   justify-content: center !important;
   cursor: pointer !important;
   transition: background 0.15s, border-color 0.15s, color 0.15s !important;
-  backdrop-filter: blur(8px) !important;
+  backdrop-filter: none !important;
 }
 
 .graph-tool-btn:hover {
@@ -781,7 +793,7 @@
    避免这里的高优先级 box-shadow/filter 绕过变量过渡，
    导致“深色→浅色”切换时气泡光晕瞬间跳变。 */
 [data-theme="light"] .graph-tool-btn {
-  background: #fbf6ec !important;
+  background: transparent !important;
   border-color: rgba(120, 100, 70, 0.2) !important;
   color: #2a2418 !important;
 }
