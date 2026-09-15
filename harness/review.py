@@ -655,6 +655,9 @@ def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2,
     # M2：薄弱点不是图元素，抽邻域子图时原样带过去（否则大图一降采样提示词就看不到薄弱点）
     if snapshot.get("quiz_weak"):
         result["quiz_weak"] = snapshot["quiz_weak"]
+    # 大陆 v3：跨画布共享点同理——它是提示词参考字段，不随节点裁剪丢失
+    if snapshot.get("continent_shared"):
+        result["continent_shared"] = snapshot["continent_shared"]
     return result
 
 

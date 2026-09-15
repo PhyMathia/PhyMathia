@@ -3304,18 +3304,18 @@
   outline-offset: 2px;
 }
 
-/* ===== 知识大陆（大陆计划 v1：只读投影视图）=====
-   分层口径：大陆是盖在画布上的整层视图（层级离散、整层切换），自身只读。
+/* ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市）=====
+   分层口径：大陆是盖在画布上的整层视图（层级离散、整层切换）。
    workspace 被.graph-override.css 固定为全屏（fixed inset:0 !important），
    应用头栏（0-55px，z60）浮在其上——大陆的浮层一律从 68px 起，别顶到头栏底下。
-   大面积载体走实底（不挂 backdrop-filter——全屏 blur 白烧性能），玻璃质感
-   只给浮层胶囊与节点小面积用；颜色全部走主题变量，深浅两口径由变量承担。 */
+   层底透明：全局壁纸（.bg-layer）与星轨粒子从画布一直透到大陆（用户拍板保留），
+   大陆自己的可读性交给簇底板/节点/浮层的小面积底色。 */
 .continent-layer {
   position: absolute;
   inset: 0;
   z-index: 30;
   overflow: hidden;
-  background: var(--bg-panel);
+  background: transparent;
   transition: opacity 0.38s ease;
 }
 .continent-layer.continent-diving,
@@ -3360,6 +3360,49 @@
   font-weight: 400;
   color: var(--text-secondary);
   margin-left: 2px;
+}
+/* v2 工具条：连接 / 撤销 / 清理断线（胶囊内小按钮，不做逐钮磨砂） */
+.continent-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.continent-tool {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.continent-tool:hover { border-color: var(--accent); color: var(--text-primary); }
+.continent-tool.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.continent-tool.is-warn { color: #d9a441; border-color: rgba(217, 164, 65, 0.45); }
+[data-theme="light"] .continent-tool.is-warn { color: #96702a; border-color: rgba(150, 112, 42, 0.4); }
+.continent-tool[hidden] { display: none; }
+.continent-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.continent-hint[hidden] { display: none; }
+/* 连接模式：十字光标 + 首选端点高亮 */
+.continent-layer.is-linking .continent-viewport { cursor: crosshair; }
+.continent-node.is-link-source {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(74, 158, 255, 0.35);
+}
+[data-theme="light"] .continent-node.is-link-source {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(139, 105, 20, 0.3);
 }
 .continent-close {
   width: 26px;
@@ -3430,6 +3473,39 @@
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
+/* v3 边界城市：共享概念的端点——学科相通的视觉具象（徽标 + 描边微光），
+ * 与自动检出的共享连线同色系（accent），一眼能看出「线连到哪两座城」 */
+.continent-node--boundary {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(74, 158, 255, 0.10), var(--bg-dark) 55%);
+}
+[data-theme="light"] .continent-node--boundary {
+  background: linear-gradient(180deg, rgba(160, 120, 42, 0.10), var(--bg-dark) 55%);
+}
+.continent-node--boundary:hover {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(74, 158, 255, 0.28);
+}
+[data-theme="light"] .continent-node--boundary:hover {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(139, 105, 20, 0.25);
+}
+.continent-node-badge {
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+/* 悬停共享标签时点亮两端节点（连线找得到头） */
+.continent-node.is-hot {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(74, 158, 255, 0.3);
+}
+[data-theme="light"] .continent-node.is-hot {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(139, 105, 20, 0.25);
+}
 .continent-node-title {
   padding: 0 10px;
   font-size: 12px;
@@ -3461,6 +3537,50 @@
   stroke-opacity: 0.4;
   stroke-width: 1.5;
 }
+/* v2 我的大陆边：实线暖金、更醒目（用户落笔比自动检出重一档）；可点开操作弹层 */
+.continent-user-link {
+  fill: none;
+  stroke: #e0a83e;
+  stroke-opacity: 0.85;
+  stroke-width: 2;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+[data-theme="light"] .continent-user-link { stroke: #a3722f; }
+.continent-user-link:hover { stroke-opacity: 1; filter: drop-shadow(0 0 3px rgba(224, 168, 62, 0.6)); }
+/* v2 断桥：一端已不在的边——灰色虚线残段 + ✕ 断口，安静但不装没事 */
+.continent-dangle-link {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-opacity: 0.45;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 6;
+}
+.continent-dangle-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: var(--text-secondary);
+  opacity: 0.7;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+.continent-user-link-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 168, 62, 0.5);
+  background: var(--bg-dark);
+  color: #e0a83e;
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-theme="light"] .continent-user-link-label {
+  border-color: rgba(163, 114, 47, 0.45);
+  color: #96702a;
+}
 .continent-link-label {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -3471,7 +3591,7 @@
   color: var(--text-secondary);
   font-size: 10px;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer; /* v3：点开弹层看两边各是哪条 + 确认落笔 */
 }
 .continent-link-label.is-formula { color: var(--accent); }
 .continent-empty {
@@ -3485,6 +3605,56 @@
 }
 /* 类选择器的 display 会压掉 hidden 属性的 UA 样式，必须显式收回 */
 .continent-empty[hidden] { display: none; }
+/* v2/v3 弹层：共享概念详情（含「画成大陆边」确认口）与我的边操作，单例 */
+.continent-popover {
+  position: absolute;
+  z-index: 40;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+}
+.continent-pop-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.continent-pop-line {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+.continent-pop-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.continent-pop-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.continent-pop-actions {
+  display: flex;
+  gap: 8px;
+}
+.continent-pop-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.continent-pop-btn:hover { background: var(--accent); color: var(--bg-panel); }
+.continent-pop-btn.is-danger { border-color: #e36b6b; color: #e36b6b; }
+.continent-pop-btn.is-danger:hover { background: #e36b6b; color: var(--bg-panel); }
 /* 面包屑：既是回程路牌也是入口（top 与大陆顶栏同规：让开 55px 的应用头栏）；
    大陆打开时与画布工具栏一起让位 */
 .continent-breadcrumb {
@@ -3512,6 +3682,11 @@
 }
 .graph-workspace.continent-open .continent-breadcrumb {
   display: none;
+}
+/* 大陆层底透明（透出全局壁纸与星轨粒子），但下层**会话图**不能跟着透出来——
+ * 大陆打开时藏掉画布内容，只留壁纸做底，否则两张图叠在一起读不了 */
+.graph-workspace.continent-open .graph-canvas {
+  visibility: hidden;
 }
 @media (prefers-reduced-motion: reduce) {
   .continent-layer,

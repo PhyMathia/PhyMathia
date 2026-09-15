@@ -1,9 +1,12 @@
-"""大陆投影（大陆计划 v1 只读）：跨会话概念聚簇，知识大陆视图的数据源。
+"""大陆投影（大陆计划 v1 只读投影 + v2 主图簇间边）：跨会话概念聚簇与用户连线。
 
 分层不变量（docs/大陆计划.md）：
-1. **归属分层**：子图（各会话探索网）拥有簇内边，主图只拥有簇间关系——本模块
-   是纯投影层，零写路径，主图数据可随时重算，不怕改坏；
-2. **投影可重算**：只读 knowledge + sessions 推导，无模型调用、无 IO（调用方喂参）。
+1. **归属分层**：子图（各会话探索网）拥有簇内边，主图只拥有簇间关系。本模块
+   对簇内零写路径；v2 起主图拥有自己的簇间边（KV `continent_edges`），但那也是
+   **调用方喂参**——本函数只做校验与合入，仍然无 IO、无模型调用、不改入参；
+2. **投影可重算**：聚簇与共享概念只读 knowledge + sessions 推导，可随时重建。
+   用户边是主图自有的少量数据，端点失效即降级为 danglingEdges（断桥），由
+   前端清理——投影层永远不会因为边悬空而报错。
 
 与 concept.py 的分工与复用：
 - concept 管「这个话题的地基是什么」（喂 prompt），本模块管「跨会话的知识版图」（喂画布）；
@@ -28,7 +31,7 @@ from .concept import (
     _normalize_title,
 )
 
-__all__ = ["build_continent"]
+__all__ = ["build_continent", "normalize_user_edge_payload"]
 
 # 主图最多画多少条簇间连线：多了是毛线球，按强度取前 N
 SHARED_CONCEPT_LIMIT = 24
@@ -36,6 +39,9 @@ SHARED_CONCEPT_LIMIT = 24
 TITLE_MAX_CHARS = 40
 FORMULA_PREVIEW_CHARS = 48
 FORMULA_MAX_CHARS = 200   # 供 KaTeX 渲染的原始 TeX，宽松截断只防脏数据
+# v2 用户簇间边：字段上限与总量护栏（防脏数据无限生长）
+EDGE_LABEL_MAX_CHARS = 40
+USER_EDGE_LIMIT = 120
 
 _WEAK_RUN_SCORE = 8.0     # 2 字弱证据（「振动」级）：能当边界证据，排位靠后
 _STRONG_RUN_SCORE = 60.0  # ≥3 字实质重叠
@@ -131,14 +137,84 @@ def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
              "fromSession": a, "toSession": b} for a, b in pairs]
 
 
-def build_continent(items: dict, sessions: dict = None) -> dict:
+def normalize_user_edge_payload(raw) -> list:
+    """KV `continent_edges` 里存的原始值可能是裸数组或 {edges:[...]} 包装，两种都收；
+    返回原始 dict 列表（不做端点校验——校验要投影数据，见 _split_user_edges）。"""
+    if isinstance(raw, dict):
+        raw = raw.get("edges")
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict)]
+
+
+def _split_user_edges(raw_edges: list, item_session: dict):
+    """用户簇间边按当前投影校验：两端条目都在、且分属不同会话 → userEdges；
+    任一端已不在投影（会话清空/条目删除）→ danglingEdges（断桥，missing 标注
+    哪端悬空，供前端渲染与清理）。端点会话以 item_session 现算为准——条目搬家
+    （换会话）后旧值不作数。同端点对去重，保留 createdAt 最新一条。"""
+    def _norm(edge):
+        return {
+            "id": str(edge.get("id") or "").strip(),
+            "fromItem": str(edge.get("fromItem") or "").strip(),
+            "toItem": str(edge.get("toItem") or "").strip(),
+            # 原会话串只作悬空边的展示/残线定位参考；有效边的会话一律以
+            # item_session 现算覆盖（条目搬家后旧值不作数）
+            "fromSession": str(edge.get("fromSession") or "").strip(),
+            "toSession": str(edge.get("toSession") or "").strip(),
+            "label": _clip(edge.get("label"), EDGE_LABEL_MAX_CHARS),
+            "createdAt": edge.get("createdAt") or 0,
+        }
+
+    seen_pair = {}
+    for edge in sorted(raw_edges, key=lambda e: -(e.get("createdAt") or 0)):
+        e = _norm(edge)
+        if not e["id"] or not e["fromItem"] or not e["toItem"]:
+            continue
+        if e["fromItem"] == e["toItem"]:
+            continue  # 自环不是簇间边
+        pair = frozenset((e["fromItem"], e["toItem"]))
+        if pair in seen_pair:
+            continue  # 同端点对只留 createdAt 最新的一条
+        from_ok = e["fromItem"] in item_session
+        to_ok = e["toItem"] in item_session
+        if from_ok and to_ok and item_session[e["fromItem"]] != item_session[e["toItem"]]:
+            row = dict(e)
+            row["fromSession"] = item_session[e["fromItem"]]
+            row["toSession"] = item_session[e["toItem"]]
+            seen_pair[pair] = ("valid", row)
+        else:
+            # missing=from/to/both：端点条目已不在投影；same_session：两端都在但
+            # 同会话（不是簇间边）——都走断桥通道，前端只渲染 from/to/both 的残线
+            if not from_ok and not to_ok:
+                missing = "both"
+            elif not from_ok:
+                missing = "from"
+            elif not to_ok:
+                missing = "to"
+            else:
+                missing = "same_session"
+            row = dict(e)
+            row["missing"] = missing
+            seen_pair[pair] = ("dangling", row)
+
+    valid, dangling = [], []
+    for kind, row in seen_pair.values():
+        (valid if kind == "valid" else dangling).append(row)
+    valid = valid[:USER_EDGE_LIMIT]
+    return valid, dangling
+
+
+def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
 
-    返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared}：
+    返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared,
+    userEdges, danglingEdges}：
     - clusters: 每个有知识条目的会话一个簇，按会话最近更新排序；簇内条目按
       createdAt 升序（学习顺序）；
     - shared: 跨会话共享概念（kind=title 公共子串 / kind=formula 公式 token），
-      按强度排序取前 SHARED_CONCEPT_LIMIT 条，每条带 links（簇间连线端点）。
+      按强度排序取前 SHARED_CONCEPT_LIMIT 条，每条带 links（簇间连线端点）；
+    - userEdges / danglingEdges（v2）：用户在主图上画的簇间边，经当前投影校验；
+      悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口。
     """
     title_index = _session_title_index(sessions)
 
@@ -216,6 +292,10 @@ def build_continent(items: dict, sessions: dict = None) -> dict:
     shared.sort(key=lambda s: (-s["score"], s["label"]))
     shared = shared[:SHARED_CONCEPT_LIMIT]
 
+    # ===== v2 用户簇间边：主图自有数据（KV continent_edges，调用方喂参）=====
+    valid_edges, dangling_edges = _split_user_edges(
+        normalize_user_edge_payload(user_edges), item_session)
+
     return {
         "generatedAt": int(time.time() * 1000),
         "clusterCount": len(clusters),
@@ -223,4 +303,6 @@ def build_continent(items: dict, sessions: dict = None) -> dict:
         "orphans": orphans,
         "clusters": clusters,
         "shared": shared,
+        "userEdges": valid_edges,
+        "danglingEdges": dangling_edges,
     }

@@ -518,12 +518,35 @@ class ContinentRouteTest(RouteTestBase):
                  (td / "sessions.json").read_bytes())
         self.assertEqual(before, after, "只读端点不得改动数据文件")
 
+    def test_continent_merges_user_edges_from_kv(self):
+        # v2：KV continent_edges 里的用户簇间边按当前投影校验后随响应下发
+        self._seed()
+        td = Path(self._td.name)
+        (td / "kv_store.json").write_text(json.dumps({
+            "continent_edges": {"edges": [
+                {"id": "e1", "fromItem": "k1", "toItem": "k2",
+                 "fromSession": "sess_a", "toSession": "sess_b",
+                 "label": "同为振动", "createdAt": 9},
+                {"id": "e2", "fromItem": "k1", "toItem": "k_gone", "createdAt": 8},
+            ]},
+        }, ensure_ascii=False), encoding="utf-8")
+        storage_mod._JSON_READ_CACHE.clear()
+        resp = self.client.get("/api/continent")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data["userEdges"]), 1)
+        self.assertEqual(data["userEdges"][0]["label"], "同为振动")
+        self.assertEqual(data["danglingEdges"][0]["id"], "e2")
+        self.assertEqual(data["danglingEdges"][0]["missing"], "to")
+
     def test_continent_empty_library_returns_empty_projection(self):
         resp = self.client.get("/api/continent")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["clusters"], [])
         self.assertEqual(data["shared"], [])
+        self.assertEqual(data["userEdges"], [])
+        self.assertEqual(data["danglingEdges"], [])
 
 
 
