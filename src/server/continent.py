@@ -35,6 +35,7 @@ SHARED_CONCEPT_LIMIT = 24
 # 投影节点字段上限（与 concept.py 的裁剪口径一致）
 TITLE_MAX_CHARS = 40
 FORMULA_PREVIEW_CHARS = 48
+FORMULA_MAX_CHARS = 200   # 供 KaTeX 渲染的原始 TeX，宽松截断只防脏数据
 
 _WEAK_RUN_SCORE = 8.0     # 2 字弱证据（「振动」级）：能当边界证据，排位靠后
 _STRONG_RUN_SCORE = 60.0  # ≥3 字实质重叠
@@ -72,6 +73,9 @@ def _item_row(item_id: str, item: dict) -> dict:
     return {
         "itemId": str(item_id),
         "title": _clip(item.get("title"), TITLE_MAX_CHARS),
+        # formula 供 KaTeX 渲染（宽松截断防脏数据撑爆 payload，不带省略号——
+        # 截断的 TeX 渲染失败会走前端纯文本回退）；formulaPreview 是文本兜底展示
+        "formula": str(preview)[:FORMULA_MAX_CHARS],
         "formulaPreview": _clip(preview, FORMULA_PREVIEW_CHARS),
         "formulaCount": len(formulas),
         "category": str(item.get("category") or ""),

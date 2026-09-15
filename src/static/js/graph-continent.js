@@ -10,8 +10,8 @@
 
 const CONTINENT_VIEW_KEY = 'phymathia_continent_view'; // 视口记忆（非会话键）
 const CONTINENT_LINE_LIMIT = 24;      // 与服务端 SHARED_CONCEPT_LIMIT 同口径的二次保险
-const CONTINENT_NODE_W = 168;
-const CONTINENT_NODE_H = 54;
+const CONTINENT_NODE_W = 160;
+const CONTINENT_NODE_H = 46;
 const CONTINENT_COLS = 3;             // 簇内概念排几列
 const CONTINENT_GAP = 10;
 const CONTINENT_PAD = 18;
@@ -39,6 +39,23 @@ function _continentEsc(text) {
   return String(text == null ? '' : text)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// 节点公式：渲成一行小字 KaTeX（不占地图视觉重量）；溢出交给容器裁剪，
+// 库缺失/渲染失败回退纯文本。TeX 先过 _cleanFormulaLatex（剥 $ 定界符等，
+// 与主渲染链路同一把尺子）。
+function _continentRenderFormula(el, latex) {
+  let tex = String(latex || '');
+  if (typeof _cleanFormulaLatex === 'function') tex = _cleanFormulaLatex(tex);
+  else tex = tex.replace(/^\$+|\$+$/g, '').trim();
+  if (!tex) { if (el.textContent !== undefined) el.textContent = ''; return; }
+  if (typeof katex !== 'undefined' && katex && typeof katex.render === 'function') {
+    try {
+      katex.render(tex, el, { throwOnError: false, displayMode: false });
+      return;
+    } catch (e) { /* 回退纯文本 */ }
+  }
+  if (el.textContent !== undefined) el.textContent = tex;
 }
 
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------
@@ -155,7 +172,7 @@ function _continentRender(data) {
     world.appendChild(el);
   });
 
-  // 概念节点（POI）
+  // 概念节点（POI）：标题一行 + 公式渲成一行小字 KaTeX（简略口径，容器裁剪）
   (data.clusters || []).forEach(c => (c.items || []).forEach(item => {
     const p = layout.placements[item.itemId];
     if (!p) return;
@@ -166,10 +183,12 @@ function _continentRender(data) {
     el.style.left = p.x + 'px';
     el.style.top = p.y + 'px';
     let html = '<div class="continent-node-title">' + esc(item.title) + '</div>';
-    if (item.formulaPreview) {
-      html += '<div class="continent-node-formula">' + esc(item.formulaPreview) + '</div>';
+    if (item.formula || item.formulaPreview) {
+      html += '<div class="continent-node-formula"></div>';
     }
     el.innerHTML = html;
+    const fEl = el.querySelector ? el.querySelector('.continent-node-formula') : null;
+    if (fEl) _continentRenderFormula(fEl, item.formula || item.formulaPreview);
     world.appendChild(el);
   }));
 
