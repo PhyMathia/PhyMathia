@@ -179,7 +179,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=62441aa4"></script>
+  <script src="/js/app.js?v=73690bce"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -394,38 +394,57 @@
   </div>
 
   <div class="model-dialog-overlay" id="addModelDialog">
-    <div class="model-dialog">
+    <div class="model-dialog model-dialog-add">
       <h3>添加模型</h3>
-      <div class="md-field">
-        <label>服务商</label>
-        <select id="newProvider" onchange="updateNewModelPreset()">
-          <option value="deepseek">DeepSeek</option>
-          <option value="openai">OpenAI</option>
-          <option value="llama">llama.ccp (本地)</option>
-          <option value="opencode">OpenCode</option>
-          <option value="opencode-go">OpenCode Go</option>
-          <option value="__custom__">自定义</option>
-        </select>
+      <div class="am-tabs">
+        <button type="button" class="am-tab active" id="amTabPreset" onclick="switchAddModelTab('preset')">预设供应商</button>
+        <button type="button" class="am-tab" id="amTabManual" onclick="switchAddModelTab('manual')">手动添加</button>
       </div>
-      <div class="md-field" id="newCustomProviderField" style="display:none">
-        <label>自定义服务商名称</label>
-        <input type="text" id="newCustomProvider" placeholder="llama.cpp, Ollama, 自定义...">
+      <div id="amPresetPane">
+        <div class="md-field">
+          <label>供应商</label>
+          <select id="newProvider" onchange="updateNewModelPreset()"></select>
+        </div>
+        <div class="am-provider-meta" id="newProviderMeta"></div>
+        <div class="md-field">
+          <label>要添加的模型（勾选）</label>
+          <div class="am-model-list" id="presetModelList"></div>
+          <div class="am-model-list-bar">
+            <button type="button" class="am-mini-btn" onclick="toggleAllPresetModels()">全选 / 全不选</button>
+            <button type="button" class="am-mini-btn" id="presetFetchBtn" onclick="fetchProviderModelList()">↻ 获取模型列表</button>
+            <span class="am-fetch-status" id="presetFetchStatus"></span>
+          </div>
+        </div>
+        <div class="md-field">
+          <label>其他模型（预设清单没有的，逗号分隔，可选）</label>
+          <input type="text" id="newExtraModels" placeholder="例如：my-model-1，my-model-2 | 显示名">
+        </div>
+      </div>
+      <div id="amManualPane" hidden>
+        <div class="md-field">
+          <label>供应商名称</label>
+          <input type="text" id="newCustomProvider" placeholder="Ollama、vLLM、公司内网网关…">
+        </div>
+        <div class="md-field">
+          <label>模型（每行一个，可写「id | 显示名」）</label>
+          <textarea id="newManualModels" rows="5" placeholder="qwen3&#10;deepseek-r1 | DeepSeek R1"></textarea>
+          <div class="am-model-list-bar">
+            <button type="button" class="am-mini-btn" id="manualFetchBtn" onclick="fetchManualModelList()">↻ 获取模型列表</button>
+            <span class="am-fetch-status" id="manualFetchStatus"></span>
+          </div>
+        </div>
       </div>
       <div class="md-field">
-        <label>模型名称</label>
-        <input type="text" id="newModel" placeholder="deepseek-v4-flash, gpt-4o, ...">
-      </div>
-      <div class="md-field">
-        <label>API 密钥 <span style="color:var(--text-secondary);font-size:11px">（可选，本地 AI 可留空）</span></label>
+        <label>API 密钥 <span style="color:var(--text-secondary);font-size:11px">（同组模型共用一个，本地服务可留空）</span></label>
         <input type="password" id="newApiKey" placeholder="sk-...">
       </div>
       <div class="md-field">
-        <label>API 地址</label>
-        <input type="text" id="newBaseUrl" placeholder="https://api.deepseek.com">
+        <label>API 地址 <span style="color:var(--text-secondary);font-size:11px">（预设已填好，一般不用改）</span></label>
+        <input type="text" id="newBaseUrl" placeholder="https://api.deepseek.com/v1">
       </div>
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeAddModelDialog()">取消</button>
-        <button class="md-btn md-btn-save" onclick="saveNewModel()">保存</button>
+        <button class="md-btn md-btn-save" onclick="saveNewModel()">添加</button>
       </div>
     </div>
   </div>

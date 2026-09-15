@@ -1383,8 +1383,38 @@
     .model-item-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 4px; }
     .model-item-btn:hover { background: var(--btn-active-bg); }
     .model-item-btn-del:hover { color: #ef4444; }
+    /* 组头「删除整组」按钮：清理旧版自动预置的大分组用 */
+    .model-group-del { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 2px 4px; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; }
+    .model-group-del:hover { color: #ef4444; background: var(--btn-active-bg); }
+    .model-group-del svg { width: 13px; height: 13px; }
     .model-add-btn { width: 100%; padding: 8px; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--accent); font-size: 13px; cursor: pointer; }
     .model-add-btn:hover { background: var(--btn-active-bg); border-color: var(--accent); }
+    /* 添加模型弹窗：预设/手动双选项卡 + 模型勾选清单 */
+    .model-dialog-add { max-width: 470px; width: min(92vw, 470px); }
+    .am-tabs { display: flex; gap: 6px; margin-bottom: 14px; background: var(--surface-container); border-radius: 9px; padding: 3px; }
+    .am-tab { flex: 1; padding: 7px 10px; border: none; background: transparent; color: var(--text-secondary); font-size: 13px; border-radius: 7px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+    .am-tab:hover { color: var(--text-primary); }
+    .am-tab.active { background: var(--accent); color: #fff; }
+    #amPresetPane[hidden], #amManualPane[hidden] { display: none !important; }
+    .am-provider-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin: -6px 0 12px; word-break: break-all; }
+    .am-provider-meta a { color: var(--accent); text-decoration: none; }
+    .am-provider-meta a:hover { text-decoration: underline; }
+    .am-model-list { max-height: 190px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); padding: 4px; }
+    .am-model-check { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; min-width: 0; }
+    .am-model-check:hover { background: var(--btn-active-bg); }
+    .am-model-check input[type="checkbox"] { flex-shrink: 0; accent-color: var(--accent); }
+    .am-model-check-name { font-size: 12px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .am-model-check-id { font-size: 10px; color: var(--text-secondary); margin-left: auto; padding-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%; flex-shrink: 1; }
+    .am-model-empty { font-size: 12px; color: var(--text-secondary); padding: 12px 8px; text-align: center; line-height: 1.6; }
+    .am-model-group-label { font-size: 10px; color: var(--text-secondary); padding: 6px 8px 2px; border-top: 1px dashed var(--border); margin-top: 4px; }
+    .am-model-list-bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    .am-mini-btn { font-size: 11px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-secondary); cursor: pointer; flex-shrink: 0; }
+    .am-mini-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .am-mini-btn:disabled { opacity: 0.5; cursor: default; }
+    .am-fetch-status { font-size: 11px; color: var(--text-secondary); min-width: 0; word-break: break-all; }
+    .am-fetch-status.am-fetch-error { color: #ef4444; }
+    .md-field textarea { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font-size: 13px; font-family: inherit; line-height: 1.6; outline: none; box-sizing: border-box; resize: vertical; }
+    .md-field textarea:focus { border-color: var(--accent); }
     .model-dialog-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10001; align-items: center; justify-content: center; }
     .model-dialog-overlay.show { display: flex; }
     .model-dialog { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 320px; max-width: 400px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }

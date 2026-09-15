@@ -170,6 +170,59 @@ class ModelTargetValidationTest(RouteTestBase):
         self.assertEqual(resp.status_code, 403)
 
 
+class ModelsListEndpointTest(RouteTestBase):
+    """添加模型弹窗「获取模型列表」的后端代理契约（不触网：上游交互走 mock）。"""
+
+    def test_unknown_provider_without_base_url_returns_400(self):
+        resp = self.client.post("/api/models/list", json={"provider": "no-such-provider"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_remote_http_base_url_rejected(self):
+        # 与 /api/models/chat 同一把 SSRF 尺子：远端必须 https
+        resp = self.client.post(
+            "/api/models/list",
+            json={"provider": "custom", "api_key": "sk-x", "base_url": "http://attacker.example.com"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_local_http_allowed_and_models_parsed(self):
+        # 本机 http 端点放行；OpenAI 兼容 {data:[{id}]} 与裸数组两种形态都解析成排序去重的 id 列表
+        def fake_get(url, headers=None, timeout=None):
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"data": [{"id": "b-model"}, {"id": "a-model"}, {"id": "a-model"}, {"id": "c"}]}
+
+            return R()
+
+        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+            resp = self.client.post(
+                "/api/models/list",
+                json={"provider": "ollama", "api_key": "", "base_url": "http://localhost:11434/v1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"models": ["a-model", "b-model", "c"]})
+
+    def test_bare_array_response_parsed(self):
+        def fake_get(url, headers=None, timeout=None):
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return [{"id": "z"}, {"id": "a"}]
+
+            return R()
+
+        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+            resp = self.client.post(
+                "/api/models/list",
+                json={"provider": "lmstudio", "api_key": "", "base_url": "http://localhost:1234/v1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"models": ["a", "z"]})
+
+
 class ValidateModelTargetUnitTest(unittest.TestCase):
     """config.validate_model_target 的纯函数用例（不触网）。"""
 

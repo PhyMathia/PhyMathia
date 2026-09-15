@@ -1,8 +1,7 @@
 const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
 const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
-const OPENCODE_DEFAULT_KEY = '';
 // OpenCode Go 预设（2026-09-14 自 https://opencode.ai/zen/go/v1/models 实时拉取；
-// 官方列表会滚动更新，过期时以该端点为准增删）。
+// 官方列表会滚动更新——预设清单只是初值，弹窗「获取模型列表」可随时在线刷新）。
 // 注意：网关要求请求带 x-opencode-session 头（后端代理已按会话 id 注入，见 main.py）。
 const OPENCODE_GO_MODEL_LABELS = {
   'glm-5.3': 'GLM-5.3',
@@ -13,7 +12,6 @@ const OPENCODE_GO_MODEL_LABELS = {
   'kimi-k3': 'Kimi K3',
   'kimi-k2.7-code': 'Kimi K2.7 Code',
   'kimi-k2.6': 'Kimi K2.6',
-  'kimi-k2.5': 'Kimi K2.5',
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
   'deepseek-v4-flash': 'DeepSeek V4 Flash',
   'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
@@ -43,13 +41,8 @@ const OPENCODE_GO_MODEL_LABELS = {
   'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor',
   'omen-alpha': 'Omen Alpha',
 };
-const OPENCODE_GO_MODELS = Object.keys(OPENCODE_GO_MODEL_LABELS);
 // DeepSeek 官方预置（模型 id 见 https://api-docs.deepseek.com/），
 // 密钥在模型面板 DeepSeek 组头统一填一次（platform.deepseek.com 申请）
-const DEEPSEEK_PRESET_MODEL_LABELS = {
-  'deepseek-chat': 'DeepSeek Chat（V4 通用）',
-  'deepseek-reasoner': 'DeepSeek Reasoner（推理）',
-};
 const OPENCODE_FREE_MODEL_LABELS = {
   'big-pickle': 'Big Pickle',
   'mimo-v2.5-free': 'MiMo V2.5 Free',
@@ -60,27 +53,200 @@ const OPENCODE_FREE_MODEL_LABELS = {
   'nemotron-3-ultra-free': 'Nemotron 3 Ultra Free',
   'deepseek-v4-flash-free': 'DeepSeek V4 Flash Free',
 };
-const OPENCODE_FREE_MODELS = [
-  'big-pickle',
-  'mimo-v2.5-free',
-  'laguna-s-2.1-free',
-  'ling-3.0-flash-free',
-  'longcat-2.0-free',
-  'north-mini-code-free',
-  'nemotron-3-ultra-free',
-  'deepseek-v4-flash-free',
-];
+
+// ====== 模型预设注册表 ======
+// 添加模型弹窗「预设供应商」页的事实源：name/tagline 展示、baseUrl 预填、
+// models 是勾选清单初值（hot = 默认勾选的推荐项）。清单会过期——用户可点
+// 「获取模型列表」在线刷新（POST /api/models/list 代理），或用「其他模型」
+// 手填，所以预设清单只是方便，不是门槛。
+// 模型 id 口径（2026-09-15 核对各家官方文档）：智谱 glm-5.3 系 / Kimi k3 系
+// （k2.5 与 moonshot-v1 已于 2026-08-31 下线，勿再加）/ 百炼 qwen3.8 系 /
+// OpenAI gpt-6-astra + gpt-5.6 三档 / Gemini 3.x 系。
+function _presetModels(labels, hotIds = []) {
+  return Object.entries(labels).map(([id, label]) => ({ id, label, hot: hotIds.includes(id) }));
+}
 
 const MODEL_PRESETS = {
-  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'], apiKeyHint: 'sk-' },
-  openai: { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-4o', 'gpt-4o-mini'], apiKeyHint: 'sk-' },
-  llama: { name: 'llama.ccp (本地)', baseUrl: 'http://localhost:8080/v1', models: [], apiKeyHint: '可选，留空' },
-  opencode: { name: 'OpenCode', baseUrl: OPENCODE_BASE_URL, models: OPENCODE_FREE_MODELS, apiKeyHint: '可填任意内容' },
-  'opencode-go': { name: 'OpenCode Go', baseUrl: OPENCODE_GO_BASE_URL, models: OPENCODE_GO_MODELS, apiKeyHint: '需要密钥' },
+  'opencode-go': {
+    name: 'OpenCode Go',
+    tagline: '订阅制网关：一个密钥用 GLM / Kimi / DeepSeek / Qwen / GPT 等全家桶',
+    baseUrl: OPENCODE_GO_BASE_URL,
+    apiKeyHint: '需要订阅密钥（opencode.ai）',
+    models: _presetModels(OPENCODE_GO_MODEL_LABELS, ['glm-5.3', 'kimi-k3', 'deepseek-v4-pro', 'hy3']),
+  },
+  opencode: {
+    name: 'OpenCode（免费）',
+    tagline: 'zen 免费网关，无需密钥即可使用',
+    baseUrl: OPENCODE_BASE_URL,
+    apiKeyHint: '可填任意内容',
+    keyOptional: true,
+    models: _presetModels(OPENCODE_FREE_MODEL_LABELS, ['deepseek-v4-flash-free', 'mimo-v2.5-free']),
+  },
+  deepseek: {
+    name: 'DeepSeek（深度求索）',
+    tagline: '官方 API：chat 通用 / reasoner 推理，密钥在 platform.deepseek.com 申请',
+    baseUrl: 'https://api.deepseek.com',
+    apiKeyHint: 'sk-...',
+    docs: 'https://platform.deepseek.com/api_keys',
+    models: _presetModels({
+      'deepseek-chat': 'DeepSeek Chat（V4 通用）',
+      'deepseek-reasoner': 'DeepSeek Reasoner（推理）',
+    }, ['deepseek-chat']),
+  },
+  zhipu: {
+    name: '智谱 GLM',
+    tagline: 'BigModel 平台官方 API，GLM-5.3 旗舰（2026-08 上线）',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    apiKeyHint: '密钥在 open.bigmodel.cn 获取',
+    docs: 'https://open.bigmodel.cn/usercenter/apikeys',
+    models: _presetModels({
+      'glm-5.3': 'GLM-5.3（旗舰）',
+      'glm-5.3-flash': 'GLM-5.3 Flash（轻量）',
+      'glm-5.2': 'GLM-5.2',
+      'glm-5': 'GLM-5',
+    }, ['glm-5.3']),
+  },
+  moonshot: {
+    name: 'Kimi（月之暗面）',
+    tagline: '官方 API，Kimi K3 旗舰；k2.5 与 moonshot-v1 系列已于 2026-08-31 下线',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    apiKeyHint: 'sk-...',
+    docs: 'https://platform.kimi.com/docs/get-api-key',
+    models: _presetModels({
+      'kimi-k3': 'Kimi K3（旗舰）',
+      'kimi-k2.7-code': 'Kimi K2.7 Code（编程）',
+      'kimi-k2.6': 'Kimi K2.6（通用）',
+    }, ['kimi-k3']),
+  },
+  qwen: {
+    name: '通义千问（阿里云百炼）',
+    tagline: '百炼 OpenAI 兼容模式；qwen-plus / qwen-flash 是指向最新版的稳定别名',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    apiKeyHint: 'sk-...',
+    docs: 'https://bailian.console.aliyun.com/',
+    models: _presetModels({
+      'qwen3.8-max': 'Qwen3.8 Max（旗舰）',
+      'qwen3.8-flash': 'Qwen3.8 Flash（性价比）',
+      'qwen3.7-plus': 'Qwen3.7 Plus',
+      'qwen-plus': 'Qwen Plus（最新别名）',
+      'qwen-flash': 'Qwen Flash（最新别名）',
+    }, ['qwen3.8-max', 'qwen3.8-flash']),
+  },
+  doubao: {
+    name: '豆包（火山方舟）',
+    tagline: '字节方舟网关；模型 ID / 接入点在方舟控制台查看，或点「获取模型列表」在线拉取',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    apiKeyHint: '密钥在 console.volcengine.com/ark 获取',
+    docs: 'https://www.volcengine.com/docs/82379/1330310',
+    models: [],
+  },
+  minimax: {
+    name: 'MiniMax',
+    tagline: '开放平台官方 API（国内站 api.minimaxi.com；国际站把地址换成 api.minimax.io）',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    apiKeyHint: '密钥在 platform.minimaxi.com 获取',
+    models: _presetModels({
+      'MiniMax-M3': 'MiniMax M3（旗舰）',
+      'MiniMax-M2.7-highspeed': 'MiniMax M2.7 高速版',
+    }, ['MiniMax-M3']),
+  },
+  siliconflow: {
+    name: '硅基流动',
+    tagline: '一个密钥聚合百家开源模型（DeepSeek/Qwen/GLM…），完整清单点「获取模型列表」',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKeyHint: 'sk-...',
+    docs: 'https://cloud.siliconflow.cn/account/ak',
+    models: [
+      { id: 'deepseek-ai/DeepSeek-V4-Pro', label: 'DeepSeek V4 Pro', hot: true },
+      { id: 'Qwen/Qwen3.5-397B-A17B', label: 'Qwen3.5 397B', hot: false },
+      { id: 'Qwen/Qwen3-8B', label: 'Qwen3 8B（轻量）', hot: false },
+    ],
+  },
+  openai: {
+    name: 'OpenAI',
+    tagline: '官方 API：GPT-6 Astra 旗舰 + GPT-5.6 三档（Sol/Terra/Luna）',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKeyHint: 'sk-...',
+    models: _presetModels({
+      'gpt-6-astra': 'GPT-6 Astra（旗舰）',
+      'gpt-5.6-sol': 'GPT-5.6 Sol（强）',
+      'gpt-5.6-terra': 'GPT-5.6 Terra（均衡）',
+      'gpt-5.6-luna': 'GPT-5.6 Luna（低价）',
+    }, ['gpt-5.6-terra']),
+  },
+  gemini: {
+    name: 'Google Gemini',
+    tagline: 'AI Studio 的 OpenAI 兼容端点；密钥在 aistudio.google.com 免费申请',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    apiKeyHint: 'AI Studio API 密钥',
+    docs: 'https://aistudio.google.com/app/apikey',
+    models: _presetModels({
+      'gemini-3.1-pro': 'Gemini 3.1 Pro',
+      'gemini-3.8-flash': 'Gemini 3.8 Flash',
+      'gemini-3.5-flash': 'Gemini 3.5 Flash',
+      'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite（轻量）',
+    }, ['gemini-3.1-pro', 'gemini-3.8-flash']),
+  },
+  anthropic: {
+    name: 'Anthropic Claude',
+    tagline: '官方 OpenAI 兼容端点（api.anthropic.com/v1）',
+    baseUrl: 'https://api.anthropic.com/v1',
+    apiKeyHint: 'sk-ant-...',
+    models: _presetModels({
+      'cla-opus-4-5': 'Claude Opus 4.5',
+      'cla-sonnet-4-5': 'Claude Sonnet 4.5',
+      'cla-haiku-4-5': 'Claude Haiku 4.5（轻量）',
+    }, ['cla-sonnet-4-5']),
+  },
+  openrouter: {
+    name: 'OpenRouter（聚合）',
+    tagline: '数百模型一个密钥；清单变化快，点「获取模型列表」在线拉取（无需密钥）',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    apiKeyHint: 'sk-or-...',
+    docs: 'https://openrouter.ai/keys',
+    models: [],
+  },
+  groq: {
+    name: 'Groq',
+    tagline: '云端超快推理（免费档可用）；完整清单点「获取模型列表」',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    apiKeyHint: 'gsk_...',
+    docs: 'https://console.groq.com/keys',
+    models: [
+      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B', hot: true },
+      { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', hot: false },
+    ],
+  },
+  ollama: {
+    name: 'Ollama（本地）',
+    tagline: '本机 Ollama 服务，无需密钥；点「获取模型列表」列出本机已安装模型',
+    baseUrl: 'http://localhost:11434/v1',
+    apiKeyHint: '本地服务无需密钥',
+    keyOptional: true,
+    models: [],
+  },
+  lmstudio: {
+    name: 'LM Studio（本地）',
+    tagline: '本机 LM Studio 本地服务器（默认端口 1234），无需密钥',
+    baseUrl: 'http://localhost:1234/v1',
+    apiKeyHint: '本地服务无需密钥',
+    keyOptional: true,
+    models: [],
+  },
+  llama: {
+    name: 'llama.cpp（本地）',
+    tagline: '本机 llama-server（默认端口 8080），无需密钥',
+    baseUrl: 'http://localhost:8080/v1',
+    apiKeyHint: '本地服务无需密钥',
+    keyOptional: true,
+    models: [],
+  },
 };
+// const 声明不会挂到全局对象上：显式挂 window，供测试与跨模块读取注册表
+window.MODEL_PRESETS = MODEL_PRESETS;
 
 const MODELS_STORAGE_KEY = 'phymathia_user_models';
-// 模型分组密钥：按 provider 分组，一组共用一个密钥（如 OpenCode Go 订阅 key 组内 37 个模型共用）。
+// 模型分组密钥：按 provider 分组，一组共用一个密钥（如 OpenCode Go 订阅 key 组内共用）。
 // 写入时同步落到组内每个条目的 apiKey 上——下游 8 处直读 model.apiKey 的调用点、
 // 「密钥已配置」徽标、hasKey 全部零改动；组内单个条目仍可用模型配置弹窗覆盖自己的密钥。
 const MODEL_GROUP_KEYS_STORAGE = 'phymathia_model_group_keys';
@@ -162,84 +328,9 @@ function loadUserModels() {
     userModelConfigs = raw ? JSON.parse(raw) : [];
   } catch { userModelConfigs = []; }
   loadGroupKeys();
-  _ensureOpencodeFreeModels();
-  _ensureOpencodeGoModels();
-  _ensureDeepseekModels();
-}
-
-function _ensureDeepseekModels() {
-  let changed = false;
-  for (const modelId of Object.keys(DEEPSEEK_PRESET_MODEL_LABELS)) {
-    const label = DEEPSEEK_PRESET_MODEL_LABELS[modelId];
-    let cfg = userModelConfigs.find(c => c.provider === 'deepseek' && c.model === modelId);
-    if (!cfg) {
-      addUserModel({ provider: 'deepseek', apiKey: getGroupKey('deepseek'), model: modelId, label, baseUrl: MODEL_PRESETS.deepseek.baseUrl });
-      changed = true;
-    } else if (cfg.label !== label || cfg.baseUrl !== MODEL_PRESETS.deepseek.baseUrl) {
-      // 仅规范化 label/baseUrl（预设所有物）；apiKey 属于用户数据，绝不能覆盖
-      Object.assign(cfg, { label, baseUrl: MODEL_PRESETS.deepseek.baseUrl });
-      changed = true;
-    }
-  }
-  if (changed) saveUserModels();
-}
-
-function _ensureOpencodeGoModels() {
-  let changed = false;
-  let firstId = '';
-  for (const modelId of OPENCODE_GO_MODELS) {
-    const label = OPENCODE_GO_MODEL_LABELS[modelId] || modelId;
-    let cfg = userModelConfigs.find(c =>
-      c.provider === 'opencode-go' && c.model === modelId
-    );
-    if (!cfg) {
-      cfg = { provider: 'opencode-go', apiKey: getGroupKey('opencode-go'), model: modelId, label, baseUrl: OPENCODE_GO_BASE_URL };
-      addUserModel(cfg);
-      changed = true;
-    } else if (cfg.label !== label || cfg.baseUrl !== OPENCODE_GO_BASE_URL) {
-      // 仅规范化 label/baseUrl（预设所有物）；apiKey 属于用户数据，绝不能覆盖
-      Object.assign(cfg, { label: label, baseUrl: OPENCODE_GO_BASE_URL });
-      changed = true;
-    }
-    if (!firstId && cfg.id) firstId = cfg.id;
-  }
-  if (changed) saveUserModels();
-  return firstId;
-}
-
-function _ensureOpencodeFreeModels() {
-  const aliasToId = Object.fromEntries(
-    Object.entries(OPENCODE_FREE_MODEL_LABELS).map(([id, label]) => [label, id])
-  );
-  let firstId = '';
-  let changed = false;
-  const legacyCount = userModelConfigs.length;
-  userModelConfigs = userModelConfigs.filter(cfg =>
-    !(cfg.provider === 'opencode' && String(cfg.baseUrl || '').includes('opencode.ai/zen/go'))
-  );
-  if (userModelConfigs.length !== legacyCount) changed = true;
-  for (const modelId of OPENCODE_FREE_MODELS) {
-    const label = OPENCODE_FREE_MODEL_LABELS[modelId];
-    let cfg = userModelConfigs.find(c =>
-      c.provider === 'opencode'
-      && (c.model === modelId || aliasToId[c.model] === modelId)
-    );
-    if (!cfg) {
-      cfg = { provider: 'opencode', apiKey: getGroupKey('opencode'), model: modelId, label, baseUrl: OPENCODE_BASE_URL };
-      addUserModel(cfg);
-    } else {
-      // 仅规范化 model/label/baseUrl（迁移旧条目）；apiKey 属于用户数据，绝不能覆盖
-      // （否则每次页面加载 loadUserModels() 都会把用户填的密钥重置为空 → “密钥存不住”）
-      const next = { ...cfg, model: modelId, label, baseUrl: OPENCODE_BASE_URL };
-      if (cfg.model !== next.model || cfg.label !== next.label || cfg.baseUrl !== next.baseUrl) {
-        Object.assign(cfg, next);
-        changed = true;
-      }
-    }
-    if (!firstId && cfg.id) firstId = cfg.id;
-  }
-  if (changed) saveUserModels();
-  return firstId;
+  // 刻意不预置任何模型：列表里只出现用户在「添加模型」里主动加过的条目。
+  // （旧版 _ensure* 每次 loadUserModels 都把 OpenCode/DeepSeek 预设全量灌进列表，
+  //  用户反馈「没添加过的预设不该出现」——预设只活在添加弹窗里。）
 }
 
 function saveUserModels() {
@@ -262,16 +353,45 @@ function updateUserModel(id, updates) {
   return true;
 }
 
+// 六个槽位键：删除模型后把指向它的槽位引用一并清空
+function _clearActiveModelRefs(ids) {
+  let changed = false;
+  for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
+    if (ids.includes(activeModels[key])) {
+      activeModels[key] = '';
+      changed = true;
+    }
+  }
+  if (changed) localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+}
+
 function deleteUserModel(id) {
   userModelConfigs = userModelConfigs.filter(m => m.id !== id);
-  if (activeModels.agent_model === id) activeModels.agent_model = '';
-  if (activeModels.html_model === id) activeModels.html_model = '';
-  if (activeModels.descriptor_model === id) activeModels.descriptor_model = '';
-  if (activeModels.quiz_model === id) activeModels.quiz_model = '';
-  if (activeModels.graph_model === id) activeModels.graph_model = '';
-  if (activeModels.branch_model === id) activeModels.branch_model = '';
+  _clearActiveModelRefs([id]);
   saveUserModels();
-  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+}
+
+// 整组删除：清理旧版自动预置的大分组（如 37 个 OpenCode Go 条目）的出口
+function deleteModelGroup(provider) {
+  const ids = userModelConfigs.filter(m => m.provider === provider).map(m => m.id);
+  if (!ids.length) return 0;
+  userModelConfigs = userModelConfigs.filter(m => m.provider !== provider);
+  _clearActiveModelRefs(ids);
+  delete modelGroupKeys[provider];
+  try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch {}
+  saveUserModels();
+  return ids.length;
+}
+
+function confirmDeleteModelGroup(provider) {
+  const preset = MODEL_PRESETS[provider];
+  const name = (preset && preset.name) || provider;
+  const count = userModelConfigs.filter(m => m.provider === provider).length;
+  if (!count) return;
+  if (!confirm(`确定删除「${name}」分组的全部 ${count} 个模型吗？（分组密钥也会一并删除）`)) return;
+  deleteModelGroup(provider);
+  renderModelList();
+  renderModelSelects();
 }
 
 function getAllModels() {
@@ -298,16 +418,11 @@ function getActiveModelForRole(role) {
 async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
-  const fallbackOpencode = userModelConfigs.find(m => m.provider === 'opencode') || null;
-  const fallbackOpencodeGo = userModelConfigs.find(m => m.provider === 'opencode-go' && m.model === 'hy3')
-    || userModelConfigs.find(m => m.provider === 'opencode-go') || null;
+  // 悬空引用清理：槽位指向已删除的条目时回空（不强行回退到任何预设——
+  // 列表里只该有用户主动加过的模型，回空由界面提示补配）
   for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
-    const model = getModelById(activeModels[key]);
-    if (model && model.provider === 'opencode' && !OPENCODE_FREE_MODELS.includes(model.model)) {
-      activeModels[key] = fallbackOpencode ? fallbackOpencode.id : '';
-    }
+    if (activeModels[key] && !getModelById(activeModels[key])) activeModels[key] = '';
   }
-  if (!activeModels.agent_model) activeModels.agent_model = (fallbackOpencodeGo || fallbackOpencode)?.id || '';
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
   renderModelSelects();
 }
@@ -382,7 +497,7 @@ function updateModelMeta(type) {
       tagsEl.innerHTML = `<span class="model-tag">${model.provider}</span><span class="model-tag">${model.apiKey ? UI_ICON_SVG.check + ' 已配置密钥' : UI_ICON_SVG.key + ' 密钥可留空'}</span>`;
   } else {
     if (type === 'agent') {
-      descEl.textContent = select.value ? '' : '未配置模型。请选择模型（可直接使用免费模型）';
+      descEl.textContent = select.value ? '' : '未配置模型。请在下方「管理自定义模型」里添加';
       tagsEl.innerHTML = select.value ? '' : '<span class="model-tag">未配置</span>';
     } else {
       // 其余角色统一口径：留空即与主模型相同，仅描述回退行为，不再各写一份角色说明
@@ -426,7 +541,7 @@ function renderModelList() {
   const container = document.getElementById('modelList');
   if (!container) return;
   if (userModelConfigs.length === 0) {
-    container.innerHTML = '<div class="model-empty">暂无自定义模型，点击下方按钮添加</div>';
+    container.innerHTML = '<div class="model-empty">暂无模型。点击下方「添加模型」：<br>从预设供应商勾选添加（只需填密钥），或手动配置</div>';
     return;
   }
   // 按 provider 分组渲染（保持首次出现顺序）：组头统一配置密钥，组内模型可折叠
@@ -467,6 +582,7 @@ function renderModelList() {
         <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
         <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
         <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
+        <button class="model-group-del" onclick="confirmDeleteModelGroup('${jsProvider}')" title="删除该分组的全部模型">${UI_ICON_SVG.trash}</button>
       </div>
       ${collapsed ? '' : `<div class="model-group-body">${items}</div>`}
     </div>`;
@@ -511,13 +627,41 @@ function confirmDeleteModel(id) {
   renderModelSelects();
 }
 
+// ====== 添加模型：预设供应商 / 手动添加 双模式 =====
+// 设计对齐主流 Agent 客户端：预设页只需选供应商 + 填密钥 + 勾模型（地址已预填、
+// 清单可在线刷新）；手动页填供应商名/地址/密钥 + 每行一个模型。
+// 列表里只出现这里加过的条目——预设本身不落库。
+
+let _addModelTab = 'preset'; // 'preset' | 'manual'
+
+function switchAddModelTab(tab) {
+  _addModelTab = tab === 'manual' ? 'manual' : 'preset';
+  const presetBtn = document.getElementById('amTabPreset');
+  const manualBtn = document.getElementById('amTabManual');
+  const presetPane = document.getElementById('amPresetPane');
+  const manualPane = document.getElementById('amManualPane');
+  if (!presetBtn || !manualBtn || !presetPane || !manualPane) return;
+  presetBtn.classList.toggle('active', _addModelTab === 'preset');
+  manualBtn.classList.toggle('active', _addModelTab === 'manual');
+  presetPane.hidden = _addModelTab !== 'preset';
+  manualPane.hidden = _addModelTab !== 'manual';
+}
+
 function showAddModelDialog() {
-  document.getElementById('newProvider').value = 'deepseek';
-  document.getElementById('newCustomProviderField').style.display = 'none';
+  // 供应商下拉选项从 MODEL_PRESETS 现算——注册表是唯一事实源，HTML 不再手写第二份
+  const select = document.getElementById('newProvider');
+  if (select) {
+    select.innerHTML = Object.entries(MODEL_PRESETS)
+      .map(([id, p]) => `<option value="${escapeHtml(id)}">${escapeHtml(p.name)}</option>`).join('');
+    select.value = Object.keys(MODEL_PRESETS)[0];
+  }
   document.getElementById('newCustomProvider').value = '';
   document.getElementById('newApiKey').value = '';
-  document.getElementById('newBaseUrl').value = 'https://api.deepseek.com';
+  document.getElementById('newExtraModels').value = '';
+  document.getElementById('newManualModels').value = '';
+  document.getElementById('manualFetchStatus').textContent = '';
   updateNewModelPreset();
+  switchAddModelTab('preset');
   document.getElementById('addModelDialog').classList.add('show');
 }
 
@@ -525,37 +669,190 @@ function closeAddModelDialog() {
   document.getElementById('addModelDialog').classList.remove('show');
 }
 
+function _presetModelRowHtml(id, label, checked) {
+  // id 进 value 属性做 HTML 转义；label 是注册表文案（同样转义防未来被自由输入污染）
+  return `<label class="am-model-check">
+    <input type="checkbox" value="${escapeHtml(id)}"${checked ? ' checked' : ''}>
+    <span class="am-model-check-name">${escapeHtml(label || id)}</span>
+    <span class="am-model-check-id">${escapeHtml(id)}</span>
+  </label>`;
+}
+
 function updateNewModelPreset() {
   const provider = document.getElementById('newProvider').value;
-  const isCustom = provider === '__custom__';
-  document.getElementById('newCustomProviderField').style.display = isCustom ? 'block' : 'none';
-  document.getElementById('newApiKey').placeholder = isCustom ? '可选，留空则无密钥认证' : MODEL_PRESETS[provider]?.apiKeyHint || 'sk-...';
-  if (isCustom) {
-    document.getElementById('newModel').value = '';
-    document.getElementById('newBaseUrl').value = '';
-  } else {
-    const preset = MODEL_PRESETS[provider];
-    if (preset) {
-      document.getElementById('newModel').value = preset.models[0] || '';
-      document.getElementById('newBaseUrl').value = preset.baseUrl;
+  const preset = MODEL_PRESETS[provider];
+  if (!preset) return;
+  document.getElementById('newBaseUrl').value = preset.baseUrl;
+  document.getElementById('newApiKey').placeholder = preset.keyOptional
+    ? (preset.apiKeyHint || '可选，本地/免费服务可留空')
+    : (preset.apiKeyHint || 'sk-...');
+  const metaEl = document.getElementById('newProviderMeta');
+  if (metaEl) {
+    const link = preset.docs ? ` · <a href="${escapeHtml(preset.docs)}" target="_blank" rel="noopener">获取密钥</a>` : '';
+    metaEl.innerHTML = escapeHtml(preset.tagline || '') + link;
+  }
+  const listEl = document.getElementById('presetModelList');
+  if (listEl) {
+    const rows = preset.models.map(m => _presetModelRowHtml(m.id, m.label, !!m.hot));
+    listEl.innerHTML = rows.length
+      ? rows.join('')
+      : '<div class="am-model-empty">未内置清单——点右侧「获取模型列表」在线拉取，或在下方手动填写</div>';
+  }
+  const statusEl = document.getElementById('presetFetchStatus');
+  if (statusEl) { statusEl.textContent = ''; statusEl.classList.remove('am-fetch-error'); }
+}
+
+function toggleAllPresetModels() {
+  const boxes = Array.from(document.querySelectorAll('#presetModelList input[type="checkbox"]'));
+  if (!boxes.length) return;
+  const checkAll = boxes.some(b => !b.checked);
+  boxes.forEach(b => { b.checked = checkAll; });
+}
+
+// 「其他模型」输入解析：中英文逗号 / 换行分隔，支持「id | 显示名」
+function _parseExtraModelInput(text) {
+  return String(text || '').split(/[,，\n]+/).map(s => s.trim()).filter(Boolean).map(seg => {
+    const sepIdx = seg.indexOf('|');
+    if (sepIdx === -1) return { model: seg, label: '' };
+    return { model: seg.slice(0, sepIdx).trim(), label: seg.slice(sepIdx + 1).trim() };
+  }).filter(e => e.model);
+}
+
+function _setFetchStatus(elId, text, isError) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('am-fetch-error', !!isError);
+}
+
+async function fetchProviderModelList() {
+  const provider = document.getElementById('newProvider').value;
+  const baseUrl = document.getElementById('newBaseUrl').value.trim();
+  const apiKey = document.getElementById('newApiKey').value.trim();
+  const btn = document.getElementById('presetFetchBtn');
+  _setFetchStatus('presetFetchStatus', '正在获取…', false);
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch('/api/models/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `API ${resp.status}`);
+    if (provider !== document.getElementById('newProvider').value) return; // 异步期间换了供应商，弃用
+    const known = new Set((MODEL_PRESETS[provider]?.models || []).map(m => m.id));
+    const listEl = document.getElementById('presetModelList');
+    const fresh = (data.models || []).filter(id => !known.has(id));
+    if (listEl && fresh.length) {
+      const empty = listEl.querySelector('.am-model-empty');
+      if (empty) empty.remove();
+      // 追加段独立标记：全选/统计能区分「内置」与「在线补充」
+      listEl.insertAdjacentHTML('beforeend',
+        `<div class="am-model-group-label">在线获取的补充模型</div>` +
+        fresh.map(id => _presetModelRowHtml(id, id, false)).join(''));
     }
+    _setFetchStatus('presetFetchStatus', fresh.length
+      ? `新增 ${fresh.length} 个可选项（共 ${data.models.length} 个）`
+      : `已列出全部 ${data.models.length} 个模型`, false);
+  } catch (e) {
+    _setFetchStatus('presetFetchStatus', `获取失败：${e.message}（可手填模型名）`, true);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
-function saveNewModel() {
-  const provider = document.getElementById('newProvider').value;
-  const isCustom = provider === '__custom__';
-  const finalProvider = isCustom ? document.getElementById('newCustomProvider').value.trim() || 'custom' : provider;
-  const apiKey = document.getElementById('newApiKey').value.trim();
-  const model = document.getElementById('newModel').value.trim();
+async function fetchManualModelList() {
+  const provider = document.getElementById('newCustomProvider').value.trim();
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
-  if (!model) { alert('请填写模型名称'); return; }
-  if (!baseUrl) { alert('请填写 API 地址'); return; }
-  // 手动添加也继承分组密钥：单条 apiKey 留空时回落到所在组的统一密钥
-  addUserModel({ provider: finalProvider, apiKey: apiKey || getGroupKey(finalProvider), model, baseUrl });
+  const apiKey = document.getElementById('newApiKey').value.trim();
+  if (!baseUrl) { _setFetchStatus('manualFetchStatus', '请先填写 API 地址', true); return; }
+  const btn = document.getElementById('manualFetchBtn');
+  _setFetchStatus('manualFetchStatus', '正在获取…', false);
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch('/api/models/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `API ${resp.status}`);
+    const ids = data.models || [];
+    if (!ids.length) throw new Error('上游返回了空列表');
+    const ta = document.getElementById('newManualModels');
+    if (ta) ta.value = ids.join('\n');
+    _setFetchStatus('manualFetchStatus', `已填入 ${ids.length} 个模型，可删减`, false);
+  } catch (e) {
+    _setFetchStatus('manualFetchStatus', `获取失败：${e.message}（可手动逐行填写）`, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 纯添加核心（无 DOM，冒烟直测）：同 provider+model 重复跳过；密钥走组密钥通道
+// （非空时统一落组并同步既有条目，空则继承组里已有密钥）。返回实际新增条数。
+function addModelsForProvider(provider, apiKey, baseUrl, entries) {
+  const preset = MODEL_PRESETS[provider];
+  const finalBaseUrl = baseUrl || preset?.baseUrl || '';
+  const effectiveKey = apiKey || getGroupKey(provider) || '';
+  let added = 0;
+  for (const e of entries) {
+    if (!e || !e.model) continue;
+    if (userModelConfigs.some(c => c.provider === provider && c.model === e.model)) continue;
+    addUserModel({ provider, apiKey: effectiveKey, model: e.model, label: e.label || e.model, baseUrl: finalBaseUrl });
+    added++;
+  }
+  if (apiKey) saveGroupKey(provider, apiKey);
+  return added;
+}
+
+function _savePresetModels() {
+  const provider = document.getElementById('newProvider').value;
+  const preset = MODEL_PRESETS[provider];
+  if (!preset) { alert('请选择供应商'); return -1; }
+  const apiKey = document.getElementById('newApiKey').value.trim();
+  const baseUrl = document.getElementById('newBaseUrl').value.trim() || preset.baseUrl;
+  const labelOf = id => preset.models.find(m => m.id === id)?.label || '';
+  const entries = [];
+  document.querySelectorAll('#presetModelList input[type="checkbox"]:checked').forEach(cb => {
+    entries.push({ model: cb.value, label: labelOf(cb.value) });
+  });
+  for (const extra of _parseExtraModelInput(document.getElementById('newExtraModels').value)) {
+    if (!entries.some(e => e.model === extra.model)) entries.push(extra);
+  }
+  if (!entries.length) { alert('请至少勾选或填写一个模型'); return -1; }
+  return addModelsForProvider(provider, apiKey, baseUrl, entries);
+}
+
+function _saveManualModels() {
+  const provider = document.getElementById('newCustomProvider').value.trim();
+  const baseUrl = document.getElementById('newBaseUrl').value.trim();
+  const apiKey = document.getElementById('newApiKey').value.trim();
+  if (!provider) { alert('请填写供应商名称'); return -1; }
+  if (!baseUrl) { alert('请填写 API 地址'); return -1; }
+  const entries = [];
+  for (const line of String(document.getElementById('newManualModels').value || '').split('\n')) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const sepIdx = raw.indexOf('|');
+    const model = (sepIdx === -1 ? raw : raw.slice(0, sepIdx)).trim();
+    const label = (sepIdx === -1 ? '' : raw.slice(sepIdx + 1)).trim();
+    if (model) entries.push({ model, label });
+  }
+  if (!entries.length) { alert('请至少填写一个模型（每行一个）'); return -1; }
+  return addModelsForProvider(provider, apiKey, baseUrl, entries);
+}
+
+function saveNewModel() {
+  const added = _addModelTab === 'manual' ? _saveManualModels() : _savePresetModels();
+  if (added < 0) return; // 校验失败已在对应分支提示
   closeAddModelDialog();
   renderModelList();
   renderModelSelects();
+  if (typeof showToast === 'function') {
+    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）', 2600);
+  }
 }
 
 async function proxyChatWithModel(model, body, signal) {
