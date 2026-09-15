@@ -188,6 +188,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
         api_key: model.apiKey,
         model: model.model,
         base_url: model.baseUrl,
+        thinking: model.thinking || '',
         stream: true
       })
     });
@@ -493,6 +494,7 @@ async function _aiVerifyQuizQuestions(pool, questions) {
         api_key: model.apiKey,
         model: model.model,
         base_url: model.baseUrl,
+        thinking: model.thinking || '',
         stream: true
       })
     });

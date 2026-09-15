@@ -146,6 +146,35 @@ def _opencode_session_headers(base_url: str, session_id: str) -> dict:
     }
 
 
+def _thinking_request_params(provider: str, level: str) -> dict:
+    """「思考程度」→ 上游请求参数（纯函数，tests 直测）。
+
+    各家 OpenAI 兼容端点的思考开关字段不统一：OpenAI 系（含 Gemini/OpenRouter/
+    Groq 等兼容层）用 reasoning_effort，千问百炼用 enable_thinking，智谱用
+    thinking.type，Ollama 用 think。只在用户显式选择时注入（level 非空）；
+    '' 表示跟随模型默认，不发送任何思考参数——现状行为零变化。
+    上游不认识注入字段而拒绝整个请求时，由调用方剥掉参数降级重试一次。
+    """
+    p = (provider or "").strip().lower()
+    if level == "off":
+        if p == "qwen":
+            return {"enable_thinking": False}
+        if p == "zhipu":
+            return {"thinking": {"type": "disabled"}}
+        if p == "ollama":
+            return {"think": False}
+        return {"reasoning_effort": "none"}
+    if level in ("medium", "high"):
+        if p == "qwen":
+            return {"enable_thinking": True}
+        if p == "zhipu":
+            return {"thinking": {"type": "enabled"}}
+        if p == "ollama":
+            return {"think": True}
+        return {"reasoning_effort": level}
+    return {}
+
+
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
     """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
@@ -329,6 +358,10 @@ async def api_models_chat(request: Request):
             body["max_tokens"] = int(max_tokens)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="max_tokens must be an integer")
+    # 思考程度（模型配置弹窗按条目设置）：仅显式选择时注入对应供应商的思考参数
+    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""))
+    if thinking_params:
+        body.update(thinking_params)
 
     if session_id and prompt and not is_quick:
         _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url)
@@ -339,13 +372,29 @@ async def api_models_chat(request: Request):
     # 旧实现把上游非 200 塞进 SSE 错误帧、HTTP 状态仍是 200，调用方无法用
     # resp.ok 分辨失败；stream=false 分支也裸吐上游 JSON 却带 event-stream 媒体类型
     client = get_http_client()
-    req = client.build_request("POST", url, json=body, headers=headers,
-                               timeout=httpx.Timeout(180.0, connect=15.0))
+
+    async def _send_upstream():
+        req = client.build_request("POST", url, json=body, headers=headers,
+                                   timeout=httpx.Timeout(180.0, connect=15.0))
+        return await client.send(req, stream=True)
+
     try:
-        resp = await client.send(req, stream=True)
+        resp = await _send_upstream()
     except httpx.HTTPError as e:
         logger.error(f"AI proxy connect error: {e}")
         raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+    if resp.status_code == 400 and thinking_params:
+        # 降级安全网：该供应商不认识思考参数（整请求 400）时剥掉重发一次——
+        # 配错了供应商只会「设置不生效」，绝不能把聊天本身弄坏
+        await resp.aclose()
+        for key in thinking_params:
+            body.pop(key, None)
+        logger.warning(f"AI proxy: upstream rejected thinking params {sorted(thinking_params)}, retried without them")
+        try:
+            resp = await _send_upstream()
+        except httpx.HTTPError as e:
+            logger.error(f"AI proxy connect error: {e}")
+            raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     logger.info(f"AI proxy response: {resp.status_code} from {url}")
 
     if resp.status_code != 200:

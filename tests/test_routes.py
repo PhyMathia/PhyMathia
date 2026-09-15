@@ -223,6 +223,89 @@ class ModelsListEndpointTest(RouteTestBase):
         self.assertEqual(resp.json(), {"models": ["a", "z"]})
 
 
+class ThinkingRequestParamsUnitTest(unittest.TestCase):
+    """思考程度 → 请求参数映射的纯函数用例（不触网）。"""
+
+    def test_empty_level_sends_nothing(self):
+        # '' = 跟随模型默认：现状行为零变化
+        for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
+            self.assertEqual(main_mod._thinking_request_params(provider, ""), {})
+
+    def test_unknown_level_sends_nothing(self):
+        self.assertEqual(main_mod._thinking_request_params("openai", "turbo"), {})
+
+    def test_openai_family_uses_reasoning_effort(self):
+        self.assertEqual(main_mod._thinking_request_params("openai", "medium"), {"reasoning_effort": "medium"})
+        self.assertEqual(main_mod._thinking_request_params("openai", "high"), {"reasoning_effort": "high"})
+        self.assertEqual(main_mod._thinking_request_params("openai", "off"), {"reasoning_effort": "none"})
+
+    def test_unknown_provider_falls_back_to_reasoning_effort(self):
+        self.assertEqual(main_mod._thinking_request_params("custom-gw", "high"), {"reasoning_effort": "high"})
+
+    def test_qwen_uses_enable_thinking(self):
+        self.assertEqual(main_mod._thinking_request_params("qwen", "off"), {"enable_thinking": False})
+        self.assertEqual(main_mod._thinking_request_params("qwen", "high"), {"enable_thinking": True})
+
+    def test_zhipu_uses_thinking_type(self):
+        self.assertEqual(main_mod._thinking_request_params("zhipu", "off"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(main_mod._thinking_request_params("zhipu", "medium"), {"thinking": {"type": "enabled"}})
+
+    def test_ollama_uses_think_flag(self):
+        self.assertEqual(main_mod._thinking_request_params("ollama", "off"), {"think": False})
+        self.assertEqual(main_mod._thinking_request_params("ollama", "high"), {"think": True})
+
+
+class ThinkingEffortProxyTest(RouteTestBase):
+    """/api/models/chat 的思考参数注入与 400 降级重试（上游交互走 MockTransport）。"""
+
+    def _post_chat(self, thinking_value, reject_first=False):
+        captured = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            if len(captured) == 1 and reject_first:
+                return httpx.Response(400, json={"error": {"message": "Unrecognized request argument"}})
+            return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+            resp = self.client.post(
+                "/api/models/chat",
+                json={
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "provider": "deepseek",
+                    "api_key": "sk-test",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-chat",
+                    "stream": False,
+                    "thinking": thinking_value,
+                },
+            )
+        return resp, captured
+
+    def test_thinking_param_reaches_upstream(self):
+        resp, captured = self._post_chat("high")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].get("reasoning_effort"), "high")
+
+    def test_empty_thinking_sends_no_extra_param(self):
+        resp, captured = self._post_chat("")
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("reasoning_effort", captured[0])
+        self.assertNotIn("thinking", captured[0])
+        self.assertNotIn("enable_thinking", captured[0])
+
+    def test_rejected_thinking_param_retries_without_it(self):
+        # 降级安全网：上游不认识思考参数整请求 400 时，剥掉重发一次，聊天不坏
+        resp, captured = self._post_chat("high", reject_first=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(captured), 2)
+        self.assertIn("reasoning_effort", captured[0])
+        self.assertNotIn("reasoning_effort", captured[1])
+        self.assertEqual(captured[1]["messages"], captured[0]["messages"])  # 其余请求体不变
+
+
 class ValidateModelTargetUnitTest(unittest.TestCase):
     """config.validate_model_target 的纯函数用例（不触网）。"""
 
