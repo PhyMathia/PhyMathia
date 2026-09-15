@@ -112,6 +112,75 @@ class KnowledgeTest(unittest.TestCase):
         )
 
 
+class KnowledgeTitleHygieneTest(unittest.TestCase):
+    """v4 标题卫生：一把尺子（章节号 / 指令句 / 整句 / 超长），提取与大陆共用。
+
+    真机现场：一条 40 字推理泄漏条目（标题=用户整句话）在知识大陆上炸出 4 条虚假
+    共享概念（梯度/正交/坐标/表达），全部来自长句里的语法碎片。
+    """
+
+    def test_section_prefix_stripped_from_title(self):
+        self.assertEqual(knowledge_mod._clean_knowledge_title("1. 定义与坐标表达"), "定义与坐标表达")
+        self.assertEqual(
+            knowledge_mod._clean_knowledge_title("二、从微元立方体导出直角坐标表达式"),
+            "从微元立方体导出直角坐标表达式")
+        self.assertEqual(
+            knowledge_mod._clean_knowledge_title("2. 几何意义：方向导数与等值面正交性（续）"),
+            "几何意义：方向导数与等值面正交性")
+
+    def test_junk_title_predicate(self):
+        # 指令句回显 / 整句 → 不是知识
+        self.assertTrue(knowledge_mod._is_junk_knowledge_title(
+            "用户要求：从方向导数最大值推导梯度在直角坐标下的分量表达式。这是一"))
+        self.assertTrue(knowledge_mod._is_junk_knowledge_title("请详细讲解梯度的几何意义。"))
+        # 章节号标题与叙述句是「不是概念名」，但仍是真卡片：不许当垃圾删
+        self.assertFalse(knowledge_mod._is_junk_knowledge_title("1. 定义与坐标表达"))
+        self.assertFalse(knowledge_mod._is_junk_knowledge_title("从微元立方体导出直角坐标表达式"))
+
+    def test_concept_like_title_predicate(self):
+        self.assertTrue(knowledge_mod._is_concept_like_title("简谐运动"))
+        self.assertTrue(knowledge_mod._is_concept_like_title("梯度的几何意义：方向导数与等值超曲面"))
+        # 章节号（即便剥完是像样的短语）/ 叙述口吻 / 超长句都不当共享证据来源
+        self.assertFalse(knowledge_mod._is_concept_like_title("1. 定义与坐标表达"))
+        self.assertFalse(knowledge_mod._is_concept_like_title("2. 几何意义：方向导数与等值面正交性（续）"))
+        self.assertFalse(knowledge_mod._is_concept_like_title("二、从微元立方体导出直角坐标表达式"))
+        self.assertFalse(knowledge_mod._is_concept_like_title("从微元立方体导出直角坐标表达式"))
+        self.assertFalse(knowledge_mod._is_concept_like_title("很长" * 20))
+
+    def test_formula_rejects_chinese_prose(self):
+        # 推理泄漏正文被"提取"成公式的原样：含中文散文且无任何 LaTeX 结构
+        self.assertFalse(knowledge_mod._looks_like_formula(
+            '$标签包裹。物理直觉里"尽量少公式"。如果有公式如 "f"，用 f$'))
+        # 带结构与数字的中文公式照旧是真公式
+        self.assertTrue(knowledge_mod._looks_like_formula(r"$\text{速度} = \frac{ds}{dt}$"))
+        self.assertTrue(knowledge_mod._looks_like_formula("$F=-kx$"))
+
+    def test_parse_extract_json_drops_junk_title(self):
+        text = json.dumps({"items": [
+            {"title": "简谐运动", "category": "physics", "summary": "周期性振动",
+             "formulas": ["$F=-kx$"]},
+            {"title": "用户要求：从方向导数最大值推导梯度在直角坐标下的分量表达式。这是一",
+             "category": "math", "summary": "泄漏正文", "formulas": ["$标签包裹。物理直觉里$"]},
+        ]}, ensure_ascii=False)
+        items = knowledge_mod._parse_extract_json(f"```json\n{text}\n```")
+        self.assertEqual([it["title"] for it in items], ["简谐运动"])
+
+    def test_reasoning_leak_predicate(self):
+        leak = ('用户要求：从方向导数最大值推导梯度在直角坐标下的分量表达式。这是一个数学主题。'
+                '当前分支类型是"进阶学习"，需要生成完整探索回答簇，公式用标签包裹。')
+        self.assertTrue(knowledge_mod._looks_like_reasoning_leak(leak))
+        normal = "## 梯度的定义\n在直角坐标系中，梯度是这样一个向量：<formula>\\nabla f</formula>"
+        self.assertFalse(knowledge_mod._looks_like_reasoning_leak(normal))
+        self.assertFalse(knowledge_mod._looks_like_reasoning_leak(""))
+
+    def test_acceptable_item_gate_exempts_manual(self):
+        junk = {"title": "用户要求：随便写的。这是一句整句", "source": "ai_extract"}
+        self.assertFalse(knowledge_mod._is_acceptable_knowledge_item(junk))
+        self.assertTrue(knowledge_mod._is_acceptable_knowledge_item(dict(junk, source="manual")))
+        self.assertTrue(knowledge_mod._is_acceptable_knowledge_item({"title": "简谐运动", "source": "ai_extract"}))
+        self.assertFalse(knowledge_mod._is_acceptable_knowledge_item(None))
+
+
 class KnowledgeSummaryTest(unittest.TestCase):
     """P2 知识点摘要方案 A：summarySource/anchorSummary 契约与保优合并。"""
 

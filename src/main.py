@@ -686,6 +686,14 @@ async def api_save_knowledge(request: Request):
     payload = await _parse_json_object(request)
 
     incoming = _normalize_knowledge(payload)
+    # 入库闸门：非知识条目（「用户要求：…」这类指令句回显 / 整句标题）拒收。浏览器会把
+    # localStorage 里本地独有的知识点并集推回服务端，入口拒收才保证清掉的垃圾不会被
+    # 另一个标签页推回来（手动条目豁免，见 _is_acceptable_knowledge_item）。
+    rejected = [k for k, v in incoming.items() if not _is_acceptable_knowledge_item(v)]
+    for key in rejected:
+        incoming.pop(key, None)
+    if rejected:
+        logger.info(f"Ingest gate rejected {len(rejected)} non-knowledge items")
 
     def updater(data):
         data = _normalize_knowledge(data)
@@ -846,6 +854,12 @@ async def api_extract_knowledge(request: Request):
         _is_socratic_followup(latest_assistant.get("content", ""))
         or latest_assistant.get("branchType") in ("followup", "confused", "socratic")
     ):
+        return {"items": []}
+    # 推理泄漏闸门（先于 AI/本地两条路径）：正文其实是模型的思维链时，本轮不做提取。
+    # 否则「用户要求：…」这类假标题 + 系统提示词回显的假公式会进库，并顺着
+    # knowledge 流到知识面板、概念地基与大陆投影（实测四条虚假共享概念由此而来）。
+    if latest_assistant and _looks_like_reasoning_leak(latest_assistant.get("content", "")):
+        logger.info(f"Skip knowledge extraction: reasoning leak in assistant content for session {session_id}")
         return {"items": []}
     # 公式描述模型（前端传入，可选；未配置时回退默认摘要）
     desc_provider = payload.get("descriptor_provider", "")

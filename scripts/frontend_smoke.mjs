@@ -1289,6 +1289,69 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
   return true;
 });
 
+check('graph-continent: v4 地图减负（弱证据不上图 / 每对上限 / 同词合并 ×N / 标签错开 / 折叠清单）', () => {
+  const plan = sandbox._continentDrawPlan;
+  const place = sandbox._continentPlaceLabel;
+  if (typeof plan !== 'function' || typeof place !== 'function') throw new Error('v4 纯函数未暴露');
+  const placements = {};
+  const mk = (id, cx, cy) => { placements[id] = { x: cx - 80, y: cy - 23, w: 160, h: 46, cx, cy }; };
+  mk('a1', 100, 100); mk('b1', 600, 100);
+  mk('a2', 100, 200); mk('b2', 600, 200);
+  mk('a3', 100, 300); mk('b3', 600, 300);
+  // 服务端 _links_for 的产物：每会话取一条端点，链路落在不同的会话对上
+  const link = (i, j, s1, s2) => ({ from: 'a' + i, to: 'b' + j, fromSession: s1, toSession: s2 });
+  const shared = [
+    { kind: 'title', label: '振动', strength: 'weak', links: [link(3, 3, 's1', 's2')] },
+    { kind: 'title', label: '简谐运动', strength: 'strong',
+      links: [link(1, 1, 's1', 's2'), link(2, 2, 's1', 's3')] },
+    { kind: 'title', label: '阻尼振动', strength: 'strong', links: [link(3, 3, 's2', 's3')] },
+    { kind: 'title', label: '受迫振动', strength: 'strong', links: [link(2, 2, 's1', 's2')] },
+  ];
+  // 上限 = 1：每对区域只画最强的 1 条
+  const out = plan(shared, placements, 1, 24);
+  if (out.items.some(it => it.entry.strength === 'weak')) throw new Error('弱证据不得画到地图上');
+  // 上限 = 1 时「受迫振动」那条同对连线被截光 → 只剩 2 枚标签（简谐运动/阻尼振动）
+  if (out.items.length !== 2) throw new Error('该画出来的是 2 枚标签，实际 ' + out.items.length);
+  const multi = out.items.find(it => it.entry.label === '简谐运动');
+  if (!multi || multi.links.length !== 2 || multi.total !== 2) {
+    throw new Error('多链路条目应合并成一枚标签（×N 记总链路数），不是每条链路一枚');
+  }
+  if (multi.x === undefined || multi.y === undefined) throw new Error('标签坐标缺失');
+  if (out.lineCount !== 3) throw new Error('画出的连线数错：' + out.lineCount);
+  // 折叠清单：弱证据 + 被每对上限截光的两类都要在，且原因可分辨（不许静默消失）
+  const reasons = out.folded.map(f => f.reason).sort().join(',');
+  if (reasons !== 'capped,weak') throw new Error('折叠清单口径错：' + reasons);
+  // 上限放宽到 3：被截的那条回到地图上，折叠清单只剩弱证据
+  const loose = plan(shared, placements, 3, 24);
+  if (loose.items.length !== 3 || loose.lineCount !== 4) {
+    throw new Error('上限放宽后连线数错：' + loose.items.length + '/' + loose.lineCount);
+  }
+  if (loose.folded.map(f => f.reason).join(',') !== 'weak') throw new Error('上限放宽后弱证据仍须折叠');
+  // 边界城市只认画出来的那些
+  if (!out.boundary.b1 || out.boundary.b1 === '振动') throw new Error('边界城市标注错');
+  // 标签错开：同列且太近的第二枚必须下移，否则两枚叠在一起点不到
+  const placed = [];
+  const p1 = place(placed, 300, 200); placed.push(p1);
+  const p2 = place(placed, 306, 203);
+  if (Math.abs(p2.y - p1.y) < 20) throw new Error('重合标签未错开');
+  // 静态契约：折叠清单入口 + 弹层逐链路落笔 + 样式
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('_continentFoldedPopover')) throw new Error('折叠清单弹层缺失');
+  if (!src.includes('continentWeakBtn')) throw new Error('顶栏折叠入口按钮缺失');
+  if (!src.includes('data-link=')) throw new Error('多链路弹层缺逐链路落笔按钮');
+  // 折叠清单的行必须写清「为什么被折叠」，否则用户没法判断该不该管它
+  const rows = sandbox._continentFoldedRows;
+  if (typeof rows !== 'function') throw new Error('_continentFoldedRows 未暴露');
+  const html = rows(out.folded, { items: { a1: '甲概念', b1: '乙概念', a3: '丙概念', b3: '丁概念' } });
+  if (html.indexOf('弱证据') < 0 || html.indexOf('超出每对上限') < 0) throw new Error('折叠原因未标注');
+  if (html.indexOf('data-fold="0"') < 0 || html.indexOf('data-fold="1"') < 0) throw new Error('折叠清单缺逐条入口');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-pop-row')) throw new Error('弹层行样式缺失');
+  if (!css.includes('.continent-pop-reason')) throw new Error('折叠原因样式缺失');
+  if (!css.includes('.continent-tool.is-quiet')) throw new Error('折叠入口样式缺失');
+  return true;
+});
+
 check('graph-continent: 纯布局（空数据合法 / 坐标契约 / 世界尺寸）', () => {
   const layout = sandbox._continentLayoutClusters;
   if (typeof layout !== 'function') throw new Error('_continentLayoutClusters 未暴露');

@@ -188,6 +188,126 @@ class BuildContinentSharedTest(unittest.TestCase):
         self.assertEqual(edges[0]["toItem"], "kX")  # 入参边不被改写
 
 
+class BuildContinentEvidenceHygieneTest(unittest.TestCase):
+    """v4 证据卫生：一条 40 字推理泄漏标题曾炸出 4 条虚假共享概念（真机数据复现）。
+
+    三条不变量：① 不是概念名的标题（章节号 / 指令句回显 / 叙述句 / 超长句）不作
+    子串证据来源；② 通用公式符号（dx/dt/oint）不算结构共享；③ 强弱分级——2 字弱证据
+    与泛后缀标 weak（前端不上地图，只进清单）。
+    """
+
+    def test_section_numbered_titles_are_not_evidence(self):
+        # 真机现场：「1. 定义与坐标表达」×「二、从微元立方体导出直角坐标表达式」
+        # 曾共享出「坐标」「表达」「坐标表达」「直角坐标」四条（全是语法碎片）
+        items = {
+            "k1": _item("k1", S3, "1. 定义与坐标表达"),
+            "k2": _item("k2", S1, "二、从微元立方体导出直角坐标表达式"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(out["shared"], [])
+
+    def test_instruction_echo_title_is_not_evidence(self):
+        # 真机现场：一条推理泄漏条目（标题=用户整句）曾与真概念共享出
+        # 方向导数/梯度/正交/坐标/表达 五条；去掉它，共享必须归零
+        junk = "用户要求：从方向导数最大值推导梯度在直角坐标与正交曲线坐标下的分量表达式。这是一"
+        items = {
+            "k1": _item("k1", S1, junk),
+            "k2": _item("k2", S3, "梯度的几何意义：方向导数与等值超曲面"),
+            "k3": _item("k3", S3, "泛函梯度与变分法"),
+            "k4": _item("k4", S3, "2. 几何意义：方向导数与等值面正交性（续）"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual([s["label"] for s in out["shared"]], [])
+
+    def test_narrative_and_overlong_titles_are_not_evidence(self):
+        items = {
+            "k1": _item("k1", S1, "从微元立方体导出直角坐标表达式"),
+            "k2": _item("k2", S3, "在柱坐标下求解拉普拉斯方程"),
+            "k3": _item("k3", S2, "这是一段用于验证超长句不当证据的标题" + "很长" * 20),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(out["shared"], [])
+
+    def test_legit_concept_titles_still_share(self):
+        # 收紧只针对「不像概念名」的标题：真概念名之间的共享照旧
+        items = {
+            "k1": _item("k1", S1, "阻尼振动"),
+            "k2": _item("k2", S3, "阻尼振动的能量衰减"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertTrue(any(s["label"] == "阻尼振动" for s in out["shared"]))
+
+    def test_generic_formula_tokens_not_shared(self):
+        # dx/dt/oint 这类通用符号任何微分公式都有，不能当「结构共享」
+        items = {
+            "k1": _item("k1", S1, "微元法", ["$dV = dx\\,dy\\,dz$"]),
+            "k2": _item("k2", S3, "梯度定理", ["$\\oint dx$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual([s for s in out["shared"] if s["kind"] == "formula"], [])
+
+    def test_distinctive_formula_token_still_shared(self):
+        # 黑名单只剔通用符号：有区分度的标识符（kx 这类多字母标识符）照旧是结构证据
+        items = {
+            "k1": _item("k1", S1, "弹簧振子", ["$kx$"]),
+            "k2": _item("k2", S3, "简谐运动", ["$kx = ma$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertTrue(any(s["kind"] == "formula" and s["label"] == "kx" for s in out["shared"]))
+
+    def test_strength_grading(self):
+        items = {
+            # 3 字实质重叠 + 公式 token → strong
+            "k1": _item("k1", S1, "简谐运动", ["$kx$"]),
+            "k2": _item("k2", S3, "简谐运动的能量", ["$kx$"]),
+            # 2 字弱证据 → weak（「振动」级）
+            "k3": _item("k3", S2, "受迫振动"),
+            "k4": _item("k4", S3, "阻尼振动"),
+        }
+        out = build_continent(items, SESSIONS)
+        by_label = {s["label"]: s for s in out["shared"]}
+        self.assertEqual(by_label["简谐运动"]["strength"], "strong")
+        self.assertEqual(by_label["振动"]["strength"], "weak")
+        self.assertEqual(by_label["kx"]["strength"], "strong")
+
+    def test_generic_term_run_is_weak_even_when_long(self):
+        # 泛后缀单独立不住：够 3 字（按长度本该 strong）也只给 weak
+        items = {
+            "k1": _item("k1", S1, "球坐标下的拉普拉斯算子表达式"),
+            "k2": _item("k2", S2, "柱坐标表达式"),
+        }
+        out = build_continent(items, SESSIONS)
+        shared = [s for s in out["shared"] if s["label"] == "表达式"]
+        self.assertTrue(shared, [s["label"] for s in out["shared"]])
+        self.assertEqual(shared[0]["strength"], "weak")
+
+    def test_same_label_multi_session_is_single_entry_with_links(self):
+        # 同词跨 3 会话：一条 shared + C(3,2) 条链路（前端据此画一枚 ×3 标签）
+        items = {
+            "k1": _item("k1", S1, "简谐运动"),
+            "k2": _item("k2", S2, "简谐运动方程"),
+            "k3": _item("k3", S3, "简谐运动的能量"),
+        }
+        out = build_continent(items, SESSIONS)
+        entries = [s for s in out["shared"] if s["label"] == "简谐运动"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(entries[0]["links"]), 3)
+        self.assertEqual(entries[0]["strength"], "strong")
+
+    def test_every_shared_entry_carries_strength(self):
+        # 契约字段：前端按 strength 决定画不画，缺字段会被当成 undefined 全画
+        items = {
+            "k1": _item("k1", S1, "简谐运动", ["$kx$"]),
+            "k2": _item("k2", S3, "简谐运动的能量", ["$kx$"]),
+            "k3": _item("k3", S2, "受迫振动"),
+            "k4": _item("k4", S3, "阻尼振动"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertTrue(out["shared"])
+        for s in out["shared"]:
+            self.assertIn(s["strength"], ("strong", "weak"))
+
+
 class BuildContinentUserEdgeTest(unittest.TestCase):
     """v2 主图簇间边：校验 / 悬空 / 去重。"""
 

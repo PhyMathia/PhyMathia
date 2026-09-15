@@ -406,6 +406,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     const out = [], seen = new Set();
     (data.shared || []).forEach(s => {
       if (seen.has(s.label)) return;
+      // v4：弱证据（2 字共享串「表达」「坐标」级）不喂给 Φ——它是语法碎片不是共享点，
+      // 让模型据此建议「去大陆连起来」只会把用户引向噪声（地图侧同样折叠它们）
+      if (s.strength === 'weak') return;
       (s.links || []).some(l => {
         const mineIsFrom = l.fromSession === mySid;
         const mineIsTo = l.toSession === mySid;

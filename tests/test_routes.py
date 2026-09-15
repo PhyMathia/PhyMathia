@@ -298,6 +298,59 @@ class BackupRestoreRollbackTest(RouteTestBase):
         self.assertTrue((td / "messages" / "s2.json").exists())
 
 
+class KnowledgeIngestGateTest(RouteTestBase):
+    """v4 入库闸门 + 提取闸门：非知识条目进不了库，推理泄漏不触发提取。
+
+    浏览器会把 localStorage 里本地独有的知识点并集推回 /api/knowledge，所以「删掉
+    又被推回来」是常态——入口拒收才是清得掉的保证（实测踩过）。手动条目豁免。
+    """
+
+    def test_ingest_rejects_instruction_echo_item(self):
+        junk = {"id": "ki_junk", "sessionId": "sess_gate", "source": "ai_extract",
+                "title": "用户要求：从方向导数最大值推导梯度在直角坐标下的分量表达式。这是一"}
+        ok = {"id": "ki_ok", "sessionId": "sess_gate", "source": "ai_extract", "title": "梯度的定义与坐标表达"}
+        resp = self.client.post("/api/knowledge", json={"items": {"ki_junk": junk, "ki_ok": ok}})
+        self.assertEqual(resp.status_code, 200)
+        data = self.client.get("/api/knowledge").json()
+        self.assertIn("ki_ok", data)
+        self.assertNotIn("ki_junk", data)
+
+    def test_ingest_keeps_manual_item_even_with_odd_title(self):
+        manual = {"id": "ki_manual", "sessionId": "sess_gate", "source": "manual",
+                  "title": "用户要求：我自己写的笔记标题。保留它"}
+        resp = self.client.post("/api/knowledge", json={"items": {"ki_manual": manual}})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("ki_manual", self.client.get("/api/knowledge").json())
+
+    def test_extract_skips_reasoning_leak_content(self):
+        leak = ("用户要求：从方向导数最大值推导梯度在直角坐标与正交曲线坐标下的分量表达式。"
+                "这是一个数学主题。当前分支类型是\"进阶学习\"，需要生成完整探索回答簇。"
+                "注意上下文说\"必须只输出三行列表\"。公式用标签包裹，尽量少公式。")
+        resp = self.client.post("/api/extract_knowledge", json={
+            "sessionId": "sess_leak",
+            "messages": [
+                {"role": "user", "content": "请详细讲解：从方向导数最大值推导梯度"},
+                {"role": "assistant", "content": leak},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["items"], [])
+
+    def test_extract_still_works_for_normal_answer(self):
+        resp = self.client.post("/api/extract_knowledge", json={
+            "sessionId": "sess_normal",
+            "messages": [
+                {"role": "user", "content": "解释简谐运动"},
+                {"role": "assistant",
+                 "content": "# 简谐运动\n回复力与位移成正比。<formula>F=-kx</formula>"},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200)
+        items = resp.json()["items"]
+        self.assertTrue(items)
+        self.assertEqual(items[0]["title"], "简谐运动")
+
+
 class ExtractKnowledgeEndpointTest(RouteTestBase):
     """P2 知识点摘要：/api/extract_knowledge 的描述模型链路回归。
 
