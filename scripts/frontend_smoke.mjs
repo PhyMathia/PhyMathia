@@ -1773,10 +1773,14 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
 
 check('aurora-glass：浅色极光纯暖调（第三轮：连青玉也删掉，禁任何蓝绿）', () => {
   const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  // 四档变体各一块浅色极光。切块末端必须落在**下一个变体的深色规则**之前：
+  // 若用「下一个浅色选择器」当末端，中间夹着的那档深色声明会被一起吃进来——
+  // 第 4 轮新增 --dialog 时基础块就这么把深色 rgba(14,116,233) 吃进来，误判成「浅色有蓝」。
   const lightBlocks = [
-    ['基础', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass,'), css.indexOf('.aurora-glass--compact {'))],
-    ['紧凑', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass--compact'), css.indexOf('.aurora-glass--panel {'))],
-    ['大面积', css.slice(css.indexOf('html[data-theme="light"] .aurora-glass--panel'), css.indexOf('@keyframes auroraDrift'))],
+    ['基础', css.slice(css.indexOf('/* 浅色模式：白玻璃'), css.indexOf('    .aurora-glass--compact {'))],
+    ['紧凑', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--compact,'), css.indexOf('    .aurora-glass--dialog {'))],
+    ['弹窗', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--dialog,'), css.indexOf('    .aurora-glass--panel {'))],
+    ['大面积', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--panel,'), css.indexOf('@keyframes auroraDrift'))],
   ];
   // 用户否掉的青玉/冷色（45,212,191 青玉、34,211,238 天蓝、96,165,250 冷蓝、168,85,247 冷紫、120,150,220 蓝灰描边）
   const cold = ['45, 212, 191', '34, 211, 238', '96, 165, 250', '168, 85, 247', '120, 150, 220', '13, 148, 136', '8, 145, 178'];
@@ -1800,6 +1804,139 @@ check('aurora-glass：浅色极光纯暖调（第三轮：连青玉也删掉，�
   const base = lightBlocks[0][1];
   if (!/rgba\(251, 191, 36,/.test(base)) throw new Error('浅色极光丢了琥珀主色');
   if (!/rgba\(214, 148, 96,/.test(base)) throw new Error('浅色极光第三团未换成暖陶土（青玉已删）');
+  return true;
+});
+
+check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 轮：模型配置等所有面板统一极光磨砂）', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  const cssAll = {
+    'styles.css': fs.readFileSync('src/static/css/styles.css', 'utf8'),
+    'styles-panels.css': fs.readFileSync('src/static/css/styles-panels.css', 'utf8'),
+    'graph-override.css': fs.readFileSync('src/static/css/graph-override.css', 'utf8'),
+  };
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // ① 静态载体：index.html 里的面板根元素必须挂 aurora-glass（缺一个就是「还有面板是实底」）
+  const carriers = [
+    ['模型面板', 'class="model-panel aurora-glass aurora-glass--dialog" id="modelPanel"'],
+    ['数据管理面板', 'class="model-panel aurora-glass aurora-glass--dialog" id="dataPanel"'],
+    ['难度面板', 'class="level-panel aurora-glass aurora-glass--compact" id="levelPanel"'],
+    ['知识面板', 'class="knowledge-panel aurora-glass aurora-glass--panel" id="knowledgePanel"'],
+    ['记忆面板', 'class="knowledge-panel memory-panel aurora-glass aurora-glass--panel" id="memoryPanel"'],
+    ['添加/配置模型弹窗', 'class="model-dialog model-dialog-add aurora-glass aurora-glass--dialog"'],
+    ['模型配置弹窗', 'class="model-dialog aurora-glass aurora-glass--dialog"'],
+    ['清除记忆弹窗', 'class="memory-dialog aurora-glass aurora-glass--dialog"'],
+    ['收藏弹窗', 'class="bookmark-modal aurora-glass aurora-glass--dialog"'],
+    ['苏格拉底弹窗', 'class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="socraticModalTitle"'],
+    ['追问弹窗', 'class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true"'],
+    ['知识检测弹窗', 'class="quiz-modal aurora-glass aurora-glass--dialog"'],
+    ['节点搜索面板', 'class="graph-search-panel aurora-glass aurora-glass--compact" id="graphSearchPanel"'],
+    ['引导浮卡', 'class="onboarding-card aurora-glass aurora-glass--dialog" id="onboardingCard"'],
+    ['示例图讲解', 'class="example-guide-dialog aurora-glass aurora-glass--panel"'],
+    ['可视化全屏栏', 'class="viz-fullscreen-bar aurora-glass aurora-glass--panel"'],
+  ];
+  for (const [name, sel] of carriers) {
+    if (!html.includes(sel)) throw new Error(name + ' 未挂玻璃载体类（第 4 轮要求全部面板统一极光磨砂）');
+  }
+
+  // ② JS 动态建的面板同样挂类（JS 里 className 是整串赋值，漏了就整块实底）
+  for (const [file, key, name] of [
+    ['src/static/js/graph.js', 'graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog"', '修改历史面板'],
+    ['src/static/js/graph.js', 'graphConsistencyPanel.className = "graph-consistency-panel aurora-glass aurora-glass--dialog"', '图体检面板'],
+    ['src/static/js/graph-export.js', "menu.className = 'graph-export-menu aurora-glass aurora-glass--dialog'", '导出菜单'],
+    ['src/static/js/graph-continent.js', "el.className = 'continent-popover aurora-glass aurora-glass--dialog'", '大陆弹层'],
+    ['src/static/js/session.js', "panel.className = 'icon-picker-panel aurora-glass aurora-glass--dialog'", '图标选择面板'],
+    // 引导浮卡内容每次重渲都会整串重写 className——漏一处就会退回实底（本处踩过）
+    ['src/static/js/ui.js', "card.className = 'onboarding-card aurora-glass aurora-glass--dialog'", '引导浮卡(步骤)'],
+    ['src/static/js/ui.js', "card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog'", '引导浮卡(欢迎页)'],
+  ]) {
+    const src = fs.readFileSync(file, 'utf8');
+    if (!src.includes(key)) throw new Error(name + ' 未挂玻璃载体类 @ ' + file);
+  }
+
+  // ③ 载体自身的规则不得再写实底：background 简写会重置 background-image，
+  //    把极光层整块盖掉（同特指性且规则在后时必现）。允许显式 transparent（那是让位）。
+  //    这里手写一个极小的 CSS 规则扫描器——正则吃不下「选择器组里夹 {}」这类写法，
+  //    而漏判的代价正是这轮修的那批 bug（载体实底把极光整块盖掉）。
+  const scanRules = (text, inheritedAt = null) => {
+    const out = [];
+    // 去注释 + 去字符串（content: "{" 之类），避免把引号里的花括号当块
+    const clean = strip(text).replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+    let i = 0, buf = '';
+    while (i < clean.length) {
+      const ch = clean[i];
+      if (ch === '{') {
+        // 找配对的 '}'
+        let depth = 1, j = i + 1;
+        for (; j < clean.length && depth > 0; j++) {
+          if (clean[j] === '{') depth++;
+          else if (clean[j] === '}') depth--;
+        }
+        const body = clean.slice(i + 1, j - 1);
+        const selector = buf.trim();
+        if (selector.startsWith('@')) out.push(...scanRules(body, selector));
+        else out.push({ selector, body, at: inheritedAt });
+        buf = '';
+        i = j;
+      } else if (ch === '}') {
+        i++; buf = '';
+      } else {
+        buf += ch; i++;
+      }
+    }
+    return out;
+  };
+  const offenders = [];
+  const roots = [
+    '.model-panel', '.level-panel', '.model-dialog', '.socratic-modal', '.quiz-modal',
+    '.bookmark-modal', '.memory-dialog', '.knowledge-panel', '.onboarding-card',
+    '.example-guide-dialog', '.viz-fullscreen-bar', '.graph-search-panel', '.graph-export-menu',
+    '.graph-history-panel', '.graph-consistency-panel', '.continent-popover', '.icon-picker-panel',
+  ];
+  for (const [file, css] of Object.entries(cssAll)) {
+    for (const { selector, body } of scanRules(css)) {
+      if (/^@/.test(selector)) continue; // @media/@supports 外壳，内层规则会被单独扫到
+      // 只看「最右一个复合选择器就是载体本身」的规则（如 '.model-panel' / '[data-theme=x] .model-dialog'）：
+      // 后代规则（'.socratic-modal textarea'）本来就是内部控件，不属于载体自身的底色
+      const lastCompound = selector.split(',').pop().trim().split(/[\s>+~]+/).filter(Boolean).pop() || '';
+      const hit = roots.find((root) => new RegExp('(^|[^\\w-])' + root.replace(/\./g, '\\.') + '(?![-\\w])').test(lastCompound));
+      if (!hit) continue;
+      const decl = body.match(/(?:^|;)\s*background(?:-color|-image)?\s*:\s*([^;]+)/);
+      if (!decl) continue;
+      const val = decl[1].trim();
+      if (val === 'transparent' || val === 'none') continue; // 显式让位
+      offenders.push(`${file} 「${selector.replace(/\s+/g, ' ').slice(0, 60)}」 -> background: ${val.slice(0, 48)}`);
+    }
+  }
+  if (offenders.length) {
+    throw new Error('载体自带实底会盖掉极光层（须删掉 background 或显式 transparent）：\n  ' + offenders.join('\n  '));
+  }
+  return true;
+});
+
+check('aurora-glass--dialog：表单类弹窗档（深浅两套 + 可读性优先的底色 + 降级）', () => {
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!/\.aurora-glass--dialog \{/.test(css)) throw new Error('缺 --dialog 弹窗变体');
+  if (!/\[data-theme="light"\] \.aurora-glass--dialog/.test(css)) throw new Error('--dialog 缺浅色一套');
+  const dialog = css.slice(css.indexOf('.aurora-glass--dialog {'), css.indexOf('}', css.indexOf('.aurora-glass--dialog {')));
+  const panel = css.slice(css.indexOf('.aurora-glass--panel {'), css.indexOf('}', css.indexOf('.aurora-glass--panel {')));
+  const tintOf = (block) => {
+    const m = block.match(/--glass-tint:\s*rgba\(\s*\d+,\s*\d+,\s*\d+,\s*([\d.]+)\s*\)/);
+    return m ? Number(m[1]) : NaN;
+  };
+  // 弹窗里全是表单与密集列表：底色必须比大面积 chrome 更实（可读性优先），否则透出画布会花
+  if (!(tintOf(dialog) > tintOf(panel))) {
+    throw new Error(`--dialog 底色应比 --panel 更实（弹窗可读性优先），当前 ${tintOf(dialog)} vs ${tintOf(panel)}`);
+  }
+  if (!/blur\(16px\)/.test(dialog)) throw new Error('--dialog 应是居中的 16px 模糊（基础档 18 / 大面积 14）');
+  // 降级：不支持 backdrop-filter 时弹窗底色要更实（比基础档更深），否则文字压在透底上读不清
+  const supports = css.slice(css.indexOf('@supports not ((backdrop-filter'), css.indexOf('/* ====== 进度指示器'));
+  if (!/\.aurora-glass--dialog \{ --glass-tint: rgba\(9, 13, 30, 0\.9/.test(supports)) {
+    throw new Error('降级段缺 --dialog 加深底色');
+  }
+  if (!/\[data-theme="light"\] \.aurora-glass--dialog,\s*\n\s*\[data-theme="light"\] \.aurora-glass--dialog \{ --glass-tint: rgba\(252, 249, 243, 0\.9/.test(supports)) {
+    throw new Error('降级段缺 --dialog 浅色加深底色');
+  }
   return true;
 });
 

@@ -715,7 +715,7 @@
       closeIconPicker();
       const iconEl = event.currentTarget;
       const panel = document.createElement('div');
-      panel.className = 'icon-picker-panel';
+      panel.className = 'icon-picker-panel aurora-glass aurora-glass--dialog';
       // 挂载到 body，避免被 sidebar overflow 裁剪
       document.body.appendChild(panel);
       activeIconPicker = { panel, sessionId, iconEl, page: 0, icons: ICON_OPTIONS };

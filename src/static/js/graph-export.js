@@ -542,7 +542,7 @@
     if (!bounds) { _toast('无法计算画布范围'); return; }
 
     var menu = document.createElement('div');
-    menu.className = 'graph-export-menu';
+    menu.className = 'graph-export-menu aurora-glass aurora-glass--dialog';
     var html = '<div class="graph-export-menu-title">导出超高清图片</div>'
       + '<div class="graph-export-menu-sub">整张探索网按倍数重新渲染成 PNG，文字按输出分辨率重排，放大也清晰。当前内容约 '
       + Math.round(bounds.w) + ' × ' + Math.round(bounds.h) + '。</div>';

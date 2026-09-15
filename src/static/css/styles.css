@@ -849,14 +849,13 @@
     }
 
     /* 图标选择面板 */
+    /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
     .icon-picker-panel {
       z-index: 9999;
       display: block;
       padding: 6px;
-      background: var(--icon-picker-bg);
       border: 1px solid var(--icon-picker-border);
       border-radius: 8px;
-      box-shadow: 0 8px 24px var(--icon-picker-shadow);
     }
     .icon-picker-grid {
       display: grid;
@@ -1141,21 +1140,19 @@
       border-radius: 5px;
     }
 
-    /* 难度选择面板 */
+    /* 难度选择面板：底色/磨砂交给 .aurora-glass（本规则再写 background 简写会重置 background-image
+       把极光层整块盖掉，且本规则在后、特指性同为 0-1-0 → 极光直接消失） */
     .level-panel {
       display: none;
       position: fixed;
       top: 0;
       left: 0;
-      background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 8px;
       z-index: 100;
       min-width: 140px;
       opacity: 1;
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
     }
     .level-panel.show { display: block; }
     .level-option {
@@ -1174,19 +1171,18 @@
     .level-option .level-emoji { font-size: 16px; }
 
     /* ====== 模型设置面板 ====== */
+    /* 底色/磨砂交给 .aurora-glass（本规则再写 background 简写会重置 background-image，极光被盖掉） */
     .model-panel {
       display: none;
       position: fixed;
       top: 52px;
       left: 8px;
-      background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 16px;
       z-index: 9998;
       min-width: 300px;
       max-width: 360px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
       color: var(--text-primary);
     }
     .model-panel.show { display: block; }
@@ -1208,7 +1204,8 @@
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: var(--input-bg);
+      /* 半透明底：模型面板已接极光玻璃，实底 inputs 会把极光整块压掉（保留 down-arrow 的 background-image） */
+      background-color: rgba(10, 15, 35, 0.46);
       color: var(--text-primary);
       font-size: 13px;
       cursor: pointer;
@@ -1413,11 +1410,18 @@
     .am-mini-btn:disabled { opacity: 0.5; cursor: default; }
     .am-fetch-status { font-size: 11px; color: var(--text-secondary); min-width: 0; word-break: break-all; }
     .am-fetch-status.am-fetch-error { color: #ef4444; }
-    .md-field textarea { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font-size: 13px; font-family: inherit; line-height: 1.6; outline: none; box-sizing: border-box; resize: vertical; }
+    .md-field textarea { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background-color: rgba(10, 15, 35, 0.46); color: var(--text-primary); font-size: 13px; font-family: inherit; line-height: 1.6; outline: none; box-sizing: border-box; resize: vertical; }
     .md-field textarea:focus { border-color: var(--accent); }
+    /* 浅色：同一批控件的半透明底换成暖白，别用深色墨（浅色主题下会发脏） */
+    html[data-theme="light"] .model-select,
+    html[data-theme="light"] .md-field input,
+    html[data-theme="light"] .md-field select,
+    html[data-theme="light"] .md-field textarea { background-color: rgba(255, 252, 248, 0.55); }
+
     .model-dialog-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10001; align-items: center; justify-content: center; }
     .model-dialog-overlay.show { display: flex; }
-    .model-dialog { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 320px; max-width: 400px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    /* 底色/磨砂/阴影交给 .aurora-glass--dialog（本规则再写 background 简写会盖掉极光层） */
+    .model-dialog { border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 320px; max-width: 400px; }
     .model-dialog { color: var(--text-primary); }
     .model-dialog h3 { font-size: 15px; margin: 0 0 14px; color: var(--text-primary); }
     .md-field { margin-bottom: 12px; }
@@ -1440,11 +1444,10 @@
       width: min(560px, 100%);
       max-height: 80vh;
       overflow-y: auto;
-      background: var(--bg-panel);
+      /* 底色/磨砂/阴影交给 .aurora-glass--dialog */
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 18px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -1512,7 +1515,8 @@
       color: #fff;
     }
     .md-field label { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
-    .md-field input,.md-field select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font-size: 13px; outline: none; box-sizing: border-box; }
+    /* 半透明底：模型面板/添加模型弹窗都接极光玻璃，实底控件会把极光压掉 */
+    .md-field input,.md-field select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background-color: rgba(10, 15, 35, 0.46); color: var(--text-primary); font-size: 13px; outline: none; box-sizing: border-box; }
     .md-field input:focus,.md-field select:focus { border-color: var(--accent); }
     .md-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .md-btn { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; cursor: pointer; background: var(--surface-container); color: var(--text-primary); }
@@ -1994,7 +1998,13 @@
     }
 
     /* ====== 极光磨砂玻璃（共享语言）======
-       用途：引导浮卡 / 右键菜单 / 生成进度胶囊 等「浮在内容之上」的小面板。
+       用途：**全部浮层与面板**——常驻面板（模型/数据/难度/知识/记忆）、对话框（模型配置/清除记忆/
+       收藏/苏格拉底/检测/引导浮卡/示例讲解）、画布浮层（搜索/导出菜单/历史/体检/大陆弹层/图标选择）、
+       右键菜单、生成进度胶囊、画布工具栏。
+       三档按「载体多大」选：
+         · 基础档 / --compact  → 小面板与胶囊（色斑铺大只截一小段，更克制）
+         · --dialog            → 表单类弹窗（底更实，长表单与密集列表可读性优先）
+         · --panel             → 大面积 chrome（侧边栏/顶栏/二级栏，模糊更浅）
        三层构成：① 半透明底色（--glass-tint）② 三团极光色斑（radial-gradient，缓慢漂移）
        ③ 顶部高光 + 内描边（inset shadow）；磨砂由 backdrop-filter 提供。
        深浅两模式各一套极光色（深色=冷蓝/紫/青；浅色=纯暖调，禁蓝绿——琥珀/蜜桃/暖陶土）；
@@ -2072,9 +2082,32 @@
       --aurora-3: rgba(214, 148, 96, 0.11);
     }
 
+    /* 弹窗变体：表单类模态（模型配置 / 清除记忆 / 收藏 / 苏格拉底 / 检测面板 / 引导浮卡）。
+       第 4 轮「所有面板统一极光磨砂」新增——原来的基础档在弹窗上偏透：
+       弹窗里全是 input/textarea/密集列表，压在半透明底上可读性会掉（与 --panel 同一条顾虑）。
+       口径：底色比 --panel 更实（深 .88 / 浅 .94）、色斑更弱、模糊 16px 居中。 */
+    .aurora-glass--dialog {
+      --aurora-1: rgba(14, 116, 233, 0.16);
+      --aurora-2: rgba(109, 40, 217, 0.13);
+      --aurora-3: rgba(15, 118, 110, 0.13);
+      --glass-tint: rgba(6, 10, 24, 0.88);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.10) 92%);
+      -webkit-backdrop-filter: blur(16px) saturate(145%);
+      backdrop-filter: blur(16px) saturate(145%);
+    }
+
+    html[data-theme="light"] .aurora-glass--dialog,
+    [data-theme="light"] .aurora-glass--dialog {
+      --aurora-1: rgba(251, 191, 36, 0.18);
+      --aurora-2: rgba(249, 168, 132, 0.13);
+      --aurora-3: rgba(214, 148, 96, 0.10);
+      --glass-tint: rgba(253, 250, 244, 0.94);
+      --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 252, 246, 0.16) 72%);
+    }
+
     /* 大面积载体变体：侧边栏 / 顶栏这类「整条 chrome」——底色更实、色斑更弱、模糊更浅。
        理由：全高/全宽的玻璃每帧要重采样整片背景，且长列表与密集按钮压在高透明底上可读性会掉。
-       小面板（右键菜单/弹窗/胶囊）仍用基础档或 --compact。 */
+       小面板（右键菜单/胶囊）仍用基础档或 --compact，表单类弹窗用 --dialog。 */
     .aurora-glass--panel {
       --aurora-1: rgba(14, 116, 233, 0.14);
       --aurora-2: rgba(109, 40, 217, 0.12);
@@ -2107,8 +2140,11 @@
     /* 不支持 backdrop-filter 时：加深底色，保证文字对比度 */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .aurora-glass { --glass-tint: rgba(9, 13, 30, 0.86); }
+      .aurora-glass--dialog { --glass-tint: rgba(9, 13, 30, 0.95); }
       html[data-theme="light"] .aurora-glass,
       [data-theme="light"] .aurora-glass { --glass-tint: rgba(252, 249, 243, 0.96); }
+      html[data-theme="light"] .aurora-glass--dialog,
+      [data-theme="light"] .aurora-glass--dialog { --glass-tint: rgba(252, 249, 243, 0.985); }
     }
 
     /* ====== 进度指示器 ====== */

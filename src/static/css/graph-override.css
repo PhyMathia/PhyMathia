@@ -2110,8 +2110,7 @@
   padding: 14px !important;
   border: 1px solid var(--border) !important;
   border-radius: 12px !important;
-  background: var(--bg-panel) !important;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42) !important;
+  /* 底色/磨砂交给 .aurora-glass（本文件的 !important 会把极光层整块盖掉，故这里必须同样收回） */
   color: var(--text-primary) !important;
 }
 
@@ -3559,10 +3558,9 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   max-height: min(70vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel, #fff);
+  /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   border: 1px solid var(--border, rgba(128,128,128,.35));
   border-radius: 12px;
-  box-shadow: var(--modal-shadow, 0 8px 30px rgba(0,0,0,.25));
   z-index: 10001;
   overflow: hidden;
   font-size: 13px;
@@ -3714,10 +3712,9 @@ html[data-theme="dark"] .message-content strong {
   max-height: min(70vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel, #fff);
+  /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   border: 1px solid var(--border, rgba(128,128,128,.35));
   border-radius: 12px;
-  box-shadow: var(--modal-shadow, 0 8px 30px rgba(0,0,0,.25));
   z-index: 10002;
   overflow: hidden;
   font-size: 13px;

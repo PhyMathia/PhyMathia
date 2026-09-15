@@ -119,7 +119,7 @@
     <div class="graph-workspace" id="graphWorkspace">
       <div class="graph-canvas" id="graphCanvas"></div>
       <button class="continent-breadcrumb" id="continentBreadcrumb" hidden onclick="openContinentView()" title="回到知识大陆">‹ 大陆</button>
-      <div class="graph-search-panel" id="graphSearchPanel" hidden>
+      <div class="graph-search-panel aurora-glass aurora-glass--compact" id="graphSearchPanel" hidden>
         <div class="graph-search-header">
           <input id="graphSearchInput" type="search" placeholder="搜索节点..." autocomplete="off" oninput="graphSearchInputChanged(this.value)" onkeydown="graphSearchKeydown(event)">
           <button class="graph-search-close" onclick="closeGraphSearchPanel()" title="关闭搜索" aria-label="关闭搜索">&times;</button>
@@ -142,7 +142,7 @@
     </div>
 
     <div class="socratic-modal-overlay" id="socraticModal" hidden>
-      <div class="socratic-modal" role="dialog" aria-modal="true" aria-labelledby="socraticModalTitle">
+      <div class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="socraticModalTitle">
         <div class="socratic-modal-header">
           <span id="socraticModalTitle">苏格拉底追问</span>
           <button class="socratic-modal-close" type="button" onclick="closeSocraticModal()" aria-label="关闭">&times;</button>
@@ -163,7 +163,7 @@
     </div>
 
     <div class="socratic-modal-overlay" id="branchModal" hidden>
-      <div class="socratic-modal" role="dialog" aria-modal="true">
+      <div class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true">
         <div class="socratic-modal-header">
           <span id="branchModalTitle">追问</span>
           <button class="socratic-modal-close" type="button" onclick="closeBranchModal()" aria-label="关闭">&times;</button>
@@ -179,11 +179,11 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=73690bce"></script>
+  <script src="/js/app.js?v=eb3dd6c0"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
-  <div class="knowledge-panel memory-panel" id="memoryPanel">
+  <div class="knowledge-panel memory-panel aurora-glass aurora-glass--panel" id="memoryPanel">
     <div class="kp-header">
       <h2>记忆</h2>
       <button class="kp-close" onclick="closeMemoryPanel()">&times;</button>
@@ -226,7 +226,7 @@
   </div>
 
   <div class="memory-dialog-overlay" id="memoryClearDialog">
-    <div class="memory-dialog">
+    <div class="memory-dialog aurora-glass aurora-glass--dialog">
       <h3>清除记忆</h3>
       <p class="memory-dialog-desc">将删除此设备上的画像事实与回答偏好，AI 将不再基于画像个性化回答。清除前会自动生成一份备份文件。</p>
       <label class="memory-dialog-option">
@@ -239,7 +239,7 @@
     </div>
   </div>
 
-  <div class="knowledge-panel" id="knowledgePanel">
+  <div class="knowledge-panel aurora-glass aurora-glass--panel" id="knowledgePanel">
     <div class="kp-header">
       <h2>知识总览</h2>
       <div class="kp-header-actions">
@@ -284,7 +284,7 @@
   </div>
 
   <div class="bookmark-modal-overlay" id="bookmarkModal">
-    <div class="bookmark-modal">
+    <div class="bookmark-modal aurora-glass aurora-glass--dialog">
       <h3>收藏到知识总览</h3>
       <input type="hidden" id="bmMessageId">
       <input type="hidden" id="bmSessionId">
@@ -323,7 +323,7 @@
   </div>
 
   <div class="quiz-modal-overlay" id="quizModal" hidden>
-    <div class="quiz-modal" role="dialog" aria-modal="true" aria-labelledby="quizModalTitle">
+    <div class="quiz-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="quizModalTitle">
       <div class="quiz-header">
         <button class="quiz-back-icon" type="button" onclick="handleQuizBack()" aria-label="返回" title="返回">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
@@ -337,7 +337,7 @@
     </div>
   </div>
 
-  <div class="model-panel" id="modelPanel">
+  <div class="model-panel aurora-glass aurora-glass--dialog" id="modelPanel">
     <div class="model-section">
       <div class="model-section-title">Agent 推理模型</div>
       <select class="model-select" id="agentModelSelect" onchange="onModelChange('agent')">
@@ -394,7 +394,7 @@
   </div>
 
   <div class="model-dialog-overlay" id="addModelDialog">
-    <div class="model-dialog model-dialog-add">
+    <div class="model-dialog model-dialog-add aurora-glass aurora-glass--dialog">
       <h3>添加模型</h3>
       <div class="am-tabs">
         <button type="button" class="am-tab active" id="amTabPreset" onclick="switchAddModelTab('preset')">预设供应商</button>
@@ -450,7 +450,7 @@
   </div>
 
   <div class="model-dialog-overlay" id="modelConfigDialog">
-    <div class="model-dialog">
+    <div class="model-dialog aurora-glass aurora-glass--dialog">
       <h3>配置模型 — <span id="mcPresetName"></span></h3>
       <input type="hidden" id="mcId">
       <input type="hidden" id="mcProvider">
@@ -472,12 +472,12 @@
       </div>
     </div>
   </div>
-  <div class="level-panel" id="levelPanel">
+  <div class="level-panel aurora-glass aurora-glass--compact" id="levelPanel">
     <div class="level-option" data-level="middle" onclick="setLevel('middle')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V9l7-5 7 5v12"></path><path d="M9 21v-6h6v6"></path><path d="M9 10h.01M12 10h.01M15 10h.01"></path></svg></span> 中学</div>
     <div class="level-option active" data-level="university" onclick="setLevel('university')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg></span> 大学</div>
     <div class="level-option" data-level="research" onclick="setLevel('research')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h12"></path><path d="M8 18a4 4 0 0 1 8 0"></path><path d="M12 18V8"></path><path d="M9 5h6l1 3H8z"></path></svg></span> 科研</div>
   </div>
-  <div class="model-panel" id="dataPanel">
+  <div class="model-panel aurora-glass aurora-glass--dialog" id="dataPanel">
     <div class="model-section">
       <div class="model-section-title">数据管理</div>
       <p style="font-size:12px;color:var(--text-secondary);margin:8px 0;line-height:1.5;">画布和知识数据自动存储在服务端，刷新不会丢失。如需换设备或备份数据，请使用导出/导入功能。</p>
@@ -501,7 +501,7 @@
   </div>
 
   <div class="viz-fullscreen-overlay" id="vizFullscreenOverlay">
-    <div class="viz-fullscreen-bar">
+    <div class="viz-fullscreen-bar aurora-glass aurora-glass--panel">
       <span class="viz-fullscreen-title" id="vizFullscreenTitle">交互式可视化</span>
       <span class="viz-check-badge" id="vizFullscreenCheckBadge" style="display:none"></span>
       <button class="viz-fullscreen-close" onclick="closeVizFullscreen()">✕ 退出全屏</button>
@@ -512,13 +512,13 @@
   <div class="onboarding-overlay" id="onboardingOverlay">
     <div class="onboarding-backdrop"></div>
     <div class="onboarding-spotlight" id="onboardingSpotlight"></div>
-    <div class="onboarding-card" id="onboardingCard"></div>
+    <div class="onboarding-card aurora-glass aurora-glass--dialog" id="onboardingCard"></div>
   </div>
 
   <div class="example-guide-overlay" id="exampleGuideOverlay">
     <div class="example-guide-backdrop"></div>
     <div class="example-guide-spotlight" id="exampleGuideSpotlight"></div>
-    <aside class="example-guide-dialog" role="dialog" aria-modal="false" aria-label="内置示例图讲解">
+    <aside class="example-guide-dialog aurora-glass aurora-glass--panel" role="dialog" aria-modal="false" aria-label="内置示例图讲解">
       <div class="example-guide-header">
         <div>
           <div class="example-guide-title">内置示例图讲解</div>

@@ -577,7 +577,7 @@ function _continentOpenPopover(html, x, y) {
   const layer = document.getElementById('continentLayer');
   if (!layer) return null;
   const el = document.createElement('div');
-  el.className = 'continent-popover';
+  el.className = 'continent-popover aurora-glass aurora-glass--dialog';
   el.innerHTML = html;
   el.addEventListener('pointerdown', e => e.stopPropagation());  // 场外关闭靠 document 捕获
   layer.appendChild(el);

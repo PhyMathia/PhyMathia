@@ -14,47 +14,13 @@
     }
     .knowledge-panel.active { transform: translateX(0); }
 
-    /* Knowledge panel - uses CSS variables for theme */
+    /* Knowledge panel - 底色/磨砂交给 .aurora-glass--panel（本规则再写 background 简写会盖掉极光层）。
+       第 4 轮「所有面板统一极光磨砂」：这里原来自带一团 CSS 极光（::before/::after 两团 + 两个
+       auroraDrift1/2 关键帧），与共享语言的色斑层是同一件事的两套实现——留着就是两层极光叠着跑，
+       且浅色那两团是冷紫/青绿（与浅色暖调口径冲突）。统一收进 .aurora-glass，此处只留结构。 */
     .knowledge-panel {
-      background: var(--kp-panel-bg); backdrop-filter: blur(28px) saturate(1.4);
       border-left: 1px solid var(--kp-panel-border);
       box-shadow: -4px 0 24px var(--kp-panel-shadow);
-    }
-    [data-theme="dark"] .knowledge-panel::before {
-      content: ''; position: absolute; top: -60px; left: -80px;
-      width: 320px; height: 320px; border-radius: 50%; filter: blur(90px); opacity: 0.3; pointer-events: none;
-      background: radial-gradient(circle, rgba(74,158,255,0.4), rgba(139,92,246,0.25), transparent 70%);
-      animation: auroraDrift1 12s ease-in-out infinite;
-    }
-    [data-theme="dark"] .knowledge-panel::after {
-      content: ''; position: absolute; bottom: -40px; right: -60px;
-      width: 260px; height: 260px; border-radius: 50%; filter: blur(80px); opacity: 0.25; pointer-events: none;
-      background: radial-gradient(circle, rgba(0,229,160,0.35), rgba(74,158,255,0.2), transparent 70%);
-      animation: auroraDrift2 15s ease-in-out infinite;
-    }
-    @keyframes auroraDrift1 {
-      0%,100% { transform: translate(0,0) scale(1); }
-      33% { transform: translate(30px,20px) scale(1.1); }
-      66% { transform: translate(-20px,10px) scale(0.95); }
-    }
-    @keyframes auroraDrift2 {
-      0%,100% { transform: translate(0,0) scale(1); }
-      50% { transform: translate(-25px,-15px) scale(1.08); }
-    }
-
-    /* Light mode aurora */
-    /* Light mode aurora */
-    [data-theme="light"] .knowledge-panel::before {
-      content: ''; position: absolute; top: -50px; left: -70px;
-      width: 280px; height: 280px; border-radius: 50%; filter: blur(80px); opacity: 0.35; pointer-events: none;
-      background: radial-gradient(circle, rgba(99,102,241,0.2), rgba(167,139,250,0.15), transparent 70%);
-      animation: auroraDrift1 12s ease-in-out infinite;
-    }
-    [data-theme="light"] .knowledge-panel::after {
-      content: ''; position: absolute; bottom: -30px; right: -50px;
-      width: 220px; height: 220px; border-radius: 50%; filter: blur(70px); opacity: 0.3; pointer-events: none;
-      background: radial-gradient(circle, rgba(52,211,153,0.2), rgba(99,102,241,0.1), transparent 70%);
-      animation: auroraDrift2 15s ease-in-out infinite;
     }
 
     .kp-header {
@@ -324,11 +290,11 @@
       backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center;
     }
     .bookmark-modal-overlay.active { display: flex; }
+    /* 底色/磨砂/阴影交给 .aurora-glass--dialog（本规则再写 background 简写会盖掉极光层） */
     .bookmark-modal {
       width: min(420px, 90vw); border-radius: 16px; padding: 24px;
       position: relative;
-      background: var(--modal-bg); backdrop-filter: blur(20px);
-      border: 1px solid var(--modal-border); box-shadow: var(--modal-shadow);
+      border: 1px solid var(--modal-border);
     }
     .bookmark-modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--modal-title-color); }
     .bm-field { margin-bottom: 12px; }
@@ -410,18 +376,16 @@
       0%, 100% { opacity: 0.5; transform: scale(1); }
       50% { opacity: 1; transform: scale(1.02); }
     }
+    /* 底色/磨砂交给 .aurora-glass--dialog；入场动画与 auroraDrift 并列（animation 是简写，
+       只写过渡会保留漂移——这里用的是 transition，故不受影响；漂移由 .aurora-glass 的 animation 承担） */
     .onboarding-card {
       position: absolute;
       z-index: 2;
       max-width: 380px;
       width: calc(100vw - 40px);
-      background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 28px 24px 20px;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      box-shadow: var(--onboarding-shadow);
       opacity: 0;
       transform: translateY(12px);
       transition: opacity 0.35s ease, transform 0.35s ease;
@@ -697,10 +661,9 @@
       pointer-events: auto;
       display: flex;
       flex-direction: column;
-      background: var(--bg-panel);
+      /* 底色/磨砂/阴影交给 .aurora-glass--panel */
       border: 1px solid var(--border);
       border-radius: 18px;
-      box-shadow: var(--onboarding-shadow);
       overflow: hidden;
       transform: translateX(calc(100% + 32px));
       transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
@@ -975,12 +938,12 @@
     .viz-fullscreen-overlay.active {
       display: flex;
     }
+    /* 底色/磨砂交给 .aurora-glass--panel（本规则再写 background 简写会盖掉极光层） */
     .viz-fullscreen-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 16px;
-      background: var(--viz-bar-bg);
       border-bottom: 1px solid var(--viz-bar-border);
       flex-shrink: 0;
     }
@@ -1742,6 +1705,7 @@
     .quiz-modal-overlay[hidden] {
       display: none;
     }
+    /* 底色/磨砂/阴影交给 .aurora-glass--dialog */
     .quiz-modal {
       width: min(760px, 94vw);
       max-height: 86vh;
@@ -1749,8 +1713,6 @@
       flex-direction: column;
       border: 1px solid var(--modal-border);
       border-radius: 8px;
-      background: var(--modal-bg);
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
       overflow: hidden;
     }
     .quiz-header {
@@ -2974,7 +2936,8 @@
 .memory-clear-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.5; margin-top: 8px; }
 .memory-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 300; }
 .memory-dialog-overlay.show { display: flex; }
-.memory-dialog { width: min(420px, 92vw); background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+/* 底色/磨砂/阴影交给 .aurora-glass--dialog（本规则再写 background 简写会盖掉极光层） */
+.memory-dialog { width: min(420px, 92vw); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
 .memory-dialog h3 { margin: 0 0 10px; font-size: 16px; color: var(--text-primary); }
 .memory-dialog-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 14px; }
 .memory-dialog-option { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); padding: 10px; background: var(--surface-container); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
@@ -2993,8 +2956,7 @@
   padding: 14px;
   border-radius: 14px;
   border: 1px solid var(--border);
-  background: var(--bg-panel);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3640,9 +3602,7 @@
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--bg-dark);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background/backdrop-filter 会盖掉极光层） */
 }
 .continent-pop-title {
   font-size: 13px;
