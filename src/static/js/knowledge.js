@@ -6,8 +6,29 @@ let kpKnowledgeSaveQueue = Promise.resolve();
 let kpFormulaSaveQueue = Promise.resolve();
 let kpFormulaLoadSeq = 0;
 
+// 标题卫生（与后端 knowledge._strip_knowledge_section / _is_junk_knowledge_title 同一
+// 把尺子）：章节号（「1. 定义与坐标表达」「二、从微元…」）不该进去重键，指令句回显
+// （「用户要求：…」）与整句根本不是知识点。两边口径分叉 = 15 秒并集同步来回覆盖。
+const KP_SECTION_PREFIX_RE = /^\s*(?:\d+\s*[、.．)）]|[一二三四五六七八九十百]+[、.．)）]|第\s*[一二三四五六七八九十百\d]+\s*[节章讲部])/;
+const KP_INSTRUCTION_PREFIX_RE = /^\s*(?:用户要求|用户|请|注意|当前|根据|我们|这里|这是|如上|下面|以上|要求|本题|本节|本章)/;
+const KP_CONTINUATION_RE = /[（(]\s*续\s*[)）]|续\s*$/;
+
+function _stripKnowledgeSection(title) {
+  return String(title || '').trim()
+    .replace(KP_SECTION_PREFIX_RE, '')
+    .replace(KP_CONTINUATION_RE, '')
+    .trim();
+}
+
+function _isJunkKnowledgeTitle(title) {
+  const s = _stripKnowledgeSection(title);
+  if (!s) return true;
+  if (KP_INSTRUCTION_PREFIX_RE.test(s)) return true;
+  return /[。！？]/.test(s);
+}
+
 function _normalizeKnowledgeKey(title) {
-  return String(title || '')
+  return _stripKnowledgeSection(title)
     .replace(/^#+\s*/, '')
     .replace(/^.*?PhyMathia\s*学习卡片\s*[:：]\s*/i, '')
     .replace(/的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习方向)$/g, '')

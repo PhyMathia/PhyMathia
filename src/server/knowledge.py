@@ -98,6 +98,11 @@ def _looks_like_formula(latex: str) -> bool:
     # 纯中文（含中文标点/全角字符）：是概念名不是公式——能量守恒、动量定理
     if re.fullmatch(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+", s):
         return False
+    # 含中文散文但没有任何 LaTeX 结构（\ ^ _ { } = <> 与数字）：是回显的提示词/正文
+    # 片段，不是公式。实测踩过：推理泄漏的正文被 AI 提取成
+    # 「$标签包裹。物理直觉里"尽量少公式"。$」这样的条目公式，全是中文标点散文。
+    if re.search(r"[\u4e00-\u9fff]", s) and not re.search(r"[\\^_={}<>±≤≥→\d]", s):
+        return False
     # 其余视为公式（含 = + - ( ) { } 数字、函数结构等）
     return True
 
@@ -148,6 +153,10 @@ def _parse_extract_json(text: str) -> list:
         title = _clean_knowledge_title(str(it.get("title", "")))
         if not title:
             continue
+        # 非知识内容的标题（指令句回显「用户要求：…」/ 整句）整条丢弃：模型从推理泄漏的
+        # 正文里"提取"出来的不是知识点，收进来只会污染知识库、概念地基与大陆投影
+        if _is_junk_knowledge_title(title):
+            continue
         category = it.get("category")
         if category not in ("physics", "math", "other"):
             category = "other"
@@ -183,10 +192,103 @@ def _parse_extract_json(text: str) -> list:
     return result[:6]
 
 
+# ===== 标题卫生（大陆共享概念 / 提取闸门 / 入库闸门共用的唯一一把尺子）=====
+# 章节号（「1. 定义与坐标表达」「二、从微元立方体导出直角坐标表达式」）、指令句回显
+# （「用户要求：…」）、整句（带句号 / 超长）都不是概念名。大陆的共享概念检测是在标题上
+# 找公共子串，所以这类标题会立刻长出「表达」「坐标」这种语法碎片——实测一条 40 字的
+# 推理泄漏标题就贡献了 4 条虚假共享概念（大陆 v4 修复）。这里定义，knowledge 之外的
+# 模块只准引用，不准各写一份（尺子分叉就会出现「人眼相同、集合不同」）。
+_SECTION_PREFIX_RE = re.compile(
+    r"^\s*(?:\d+\s*[、.．)）]|[一二三四五六七八九十百]+[、.．)）]"
+    r"|第\s*[一二三四五六七八九十百\d]+\s*[节章讲部])")
+_INSTRUCTION_PREFIX_RE = re.compile(
+    r"^\s*(?:用户要求|用户|请|注意|当前|根据|我们|这里|这是|如上|下面|以上|要求|本题|本节|本章)")
+# 叙述/过程口吻：「从微元立方体导出直角坐标表达式」是步骤，不是概念名
+_VERBAL_PREFIX_RE = re.compile(
+    r"^\s*(?:从|在|由|用|对|把|将|通过|利用|导出|推导|说明|解释|计算|求解|证明|分析|讨论|介绍|给出|如何|怎么|为什么|怎样)")
+_CONTINUATION_RE = re.compile(r"[（(]\s*续\s*[)）]|续\s*$")
+_SENTENCE_PUNCT = ("。", "！", "？")
+# 概念名的长度上限：超过就不像名字而像句子（实测库内真实标题最长 31 字）
+CONCEPT_TITLE_MAX_CHARS = 32
+
+
+def _strip_knowledge_section(title: str) -> str:
+    """去掉章节号与「（续）」尾巴：标题该是概念名，不该带回答的小节编号。"""
+    s = _SECTION_PREFIX_RE.sub("", str(title or "").strip()).strip()
+    return _CONTINUATION_RE.sub("", s).strip()
+
+
+def _is_junk_knowledge_title(title: str) -> bool:
+    """非知识内容的标题：指令句回显 / 整句。这类条目不许入库（提取与入库两侧同判）。
+
+    只认「不是知识」的硬证据，不碰口吻问题——「从微元立方体导出直角坐标表达式」
+    虽不是概念名，但它是一张真卡片，过滤器不许越权删它。
+    """
+    s = _strip_knowledge_section(title)
+    if not s:
+        return True
+    if _INSTRUCTION_PREFIX_RE.match(s):
+        return True
+    return any(p in s for p in _SENTENCE_PUNCT)
+
+
+# ===== 推理泄漏闸门（提取入口）=====
+# 模型把思维链当正文输出时（首行是「用户要求：…」这类转述），正文里还夹着系统提示词的
+# 回显。从这种正文里"提取"出来的知识点是假的——实测一条泄漏正文污染了知识库、知识面板
+# 摘要、概念地基与大陆投影四处（40 字假标题 + 2 条中文散文"公式"）。命中即整轮不提取：
+# 宁可这一轮什么都没有，也不往库里塞垃圾。
+_REASONING_LEAK_MARKERS = (
+    "用户要求", "当前分支类型", "注意上下文", "必须只输出", "分支标签是",
+    "我认为这里应该", "规则说", "这属于",
+)
+_REASONING_ECHO_MARKERS = (
+    "标签包裹", "尽量少公式", "探索回答簇", "苏格拉底追问", "分支类型", "局部节点",
+)
+
+
+def _looks_like_reasoning_leak(content: str) -> bool:
+    """正文首 300 字内命中 ≥2 个推理特征 → 判定为思维链泄漏（保守：单命中不算）。"""
+    head = str(content or "")[:300]
+    if not head.strip():
+        return False
+    hits = sum(1 for m in _REASONING_LEAK_MARKERS if m in head)
+    hits += sum(1 for m in _REASONING_ECHO_MARKERS if m in head)
+    return hits >= 2
+
+
+def _is_concept_like_title(title: str, limit: int = CONCEPT_TITLE_MAX_CHARS) -> bool:
+    """标题是否「像概念名」——大陆共享概念只认它（宁可漏报不可误报）。
+
+    比 _is_junk_knowledge_title 更严：章节号、叙述口吻、超长句一律不参与子串匹配，
+    但**不删除条目**（条目照旧是知识卡片，只是不当共享概念的证据来源）。
+    """
+    s = _strip_knowledge_section(title)
+    if _is_junk_knowledge_title(s) or not s:
+        return False
+    if _SECTION_PREFIX_RE.match(str(title or "")) or _VERBAL_PREFIX_RE.match(s):
+        return False
+    return len(_clean_knowledge_title(s)) <= limit
+
+
+def _is_acceptable_knowledge_item(item) -> bool:
+    """入库闸门（POST /api/knowledge）：非知识条目拒收；手动条目永不拦。
+
+    浏览器 localStorage 会把本地独有的知识点并集推回服务端，所以删掉的垃圾条目
+    随时可能被再推一次——入口拒收才是「删得掉」的保证（实测踩过：清库后又被
+    另一个标签页推回来）。
+    """
+    if not isinstance(item, dict):
+        return False
+    if str(item.get("source") or "") == "manual":
+        return True
+    return not _is_junk_knowledge_title(item.get("title"))
+
+
 def _clean_knowledge_title(title: str) -> str:
     """把学习卡片标题规范成具体知识点名，过滤视角/图谱/追问等模块标题。"""
     title = str(title or "").strip()
     title = re.sub(r"^#+\s*", "", title).splitlines()[0].strip() if title else ""
+    title = _strip_knowledge_section(title)
     title = re.sub(r"^.*?PhyMathia\s*学习卡片\s*[:：]\s*", "", title).strip()
     for _ in range(2):
         title = re.sub(r"的?(物理直觉|数学本质|物理视角|数学视角|知识图谱|延伸思考|进阶学习(?:方向)?|苏格拉底追问|学习方向|相关公式)$", "", title).strip()
@@ -427,7 +529,10 @@ def _local_extract_knowledge(messages: list) -> list:
             text = re.sub(r"\s+", " ", text).strip()
             concept_match = re.match(r"^([^，。；、]{2,24})是", text)
             title = concept_match.group(1) if concept_match else (text[:40] + ("..." if len(text) > 40 else ""))
-
+        # 本地兜底的 title 可能是整段正文的前 40 字（模型推理泄漏时尤其如此）——
+        # 与 AI 路径同一把尺子：不像知识点的整条不建，宁缺勿滥
+        if _is_junk_knowledge_title(title):
+            continue
         c = content[:2000]
         has_math_kw = any(k in c for k in ("方程", "函数", "导数", "积分", "矩阵", "几何", "代数", "微分", "定理", "证明", "数学"))
         has_phy_kw = any(k in c for k in ("物理", "力学", "电磁", "光学", "热", "振动", "波", "场", "力", "能量", "实验"))
@@ -755,6 +860,8 @@ __all__ = [
     "_normalize_knowledge", "_normalize_formula", "_formula_key",
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
     "_parse_extract_json", "_parse_profile_facts", "_clean_knowledge_title", "_normalize_knowledge_key",
+    "_strip_knowledge_section", "_is_junk_knowledge_title", "_is_concept_like_title",
+    "_looks_like_reasoning_leak", "_is_acceptable_knowledge_item",
     "_summary_source_rank", "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",
     "_formula_tags_from_content", "_local_formula_meaning", "_local_knowledge_summary",
     "_local_extract_knowledge",

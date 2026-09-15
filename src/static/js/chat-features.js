@@ -168,6 +168,20 @@
       return !/(<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片)/i.test(text);
     }
 
+    // 推理泄漏判定（与后端 knowledge._looks_like_reasoning_leak 同口径）：正文其实是
+    // 模型思维链时不做本地提取——否则「用户要求：…」这类假标题会进 localStorage，
+    // 再被 15 秒并集同步推给服务端（图上会长出虚假共享概念）。
+    const LEAK_MARKERS = ['用户要求', '当前分支类型', '注意上下文', '必须只输出', '分支标签是', '我认为这里应该', '规则说', '这属于'];
+    const ECHO_MARKERS = ['标签包裹', '尽量少公式', '探索回答簇', '苏格拉底追问', '分支类型', '局部节点'];
+    function _looksLikeReasoningLeak(content) {
+      const head = String(content || '').slice(0, 300);
+      if (!head.trim()) return false;
+      let hits = 0;
+      for (const m of LEAK_MARKERS) if (head.indexOf(m) >= 0) hits++;
+      for (const m of ECHO_MARKERS) if (head.indexOf(m) >= 0) hits++;
+      return hits >= 2;
+    }
+
     function extractLocalKnowledge(messages) {
       const assistant = [...messages].reverse().find(message =>
         message.role === 'assistant' && (message.content || '').trim()
@@ -177,6 +191,10 @@
       const content = String(assistant.content || '');
       if (_isSocraticFollowup(content)) return [];
       if (assistant.branchType && ['followup', 'confused', 'socratic'].includes(assistant.branchType)) return [];
+      if (_looksLikeReasoningLeak(content)) {
+        console.log('Skip local knowledge extraction: reasoning leak');
+        return [];
+      }
       const formulas = extractLocalFormulas(content);
       const formulaTags = buildFormulaTags(content, formulas);
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
@@ -201,7 +219,11 @@
         const conceptMatch = fallbackText.match(/^([^，。；、]{2,24})是/);
         title = conceptMatch ? conceptMatch[1] : fallbackText.slice(0, 40);
       }
+      // 章节号是回答的结构，不是概念名（与后端同口径剥掉）；剥完仍像指令句回显/整句
+      // 的，整条不建——本地兜底宁缺勿滥，脏标题会一路流到知识面板与大陆投影
+      if (typeof _stripKnowledgeSection === 'function') title = _stripKnowledgeSection(title);
       if (!title) return [];
+      if (typeof _isJunkKnowledgeTitle === 'function' && _isJunkKnowledgeTitle(title)) return [];
 
       const sample = content.slice(0, 2000);
       const hasMath = /(方程|函数|导数|积分|矩阵|几何|代数|微分|定理|证明|数学)/.test(sample);

@@ -18,23 +18,46 @@
 **查空是正常路径**：空库 / 单会话 / 零跨会话重叠时 `shared` 为空、聚簇照常返回，
 调用方（前端）渲染「只有一个区域的大陆」而不是报错。宁可漏报不可误报：只报
 出现在 ≥2 个会话里的共享概念，同会话内的词面重叠不算。
+
+v4 证据卫生（一条 40 字的推理泄漏标题曾炸出 4 条虚假共享概念，见 docs 大陆计划）：
+- **标题来源闸门**：只有 `knowledge._is_concept_like_title` 认的「像概念名」的标题
+  才参与子串切分——章节号标题、指令句回显、叙述句、超长句一律不当证据来源；
+- **公式 token 黑名单**：`dx`/`dt`/`oint` 这类通用符号不算结构共享（只在本模块剔，
+  不动喂 prompt 的 `concept._formula_tokens`）；
+- **强弱分级** `strength`：strong 才画到地图上，weak（2 字弱证据与泛后缀）只进清单。
 """
 
 import itertools
 import time
 
 from .concept import (
+    _GENERIC_TERMS,
     _STOP_CHARS,
     _TITLE_RUN_MIN_CJK,
     _TITLE_RUN_MIN_LATIN,
+    _TITLE_STRONG_MIN,
     _formula_tokens,
     _normalize_title,
 )
+from .knowledge import _is_concept_like_title
 
 __all__ = ["build_continent", "normalize_user_edge_payload"]
 
 # 主图最多画多少条簇间连线：多了是毛线球，按强度取前 N
 SHARED_CONCEPT_LIMIT = 24
+# 通用符号不算共享证据：任何含微分/积分的公式都带 dx、dt、∂，拿它当「结构共享」会把
+# 两张毫不相干的画布连起来（实测 dx 把「梯度的定义与坐标表达」连到「从微元立方体导出
+# 直角坐标表达式」）。黑名单只放本模块：concept._formula_tokens 是喂 prompt 的检索器，
+# 改它会连带改概念地基的口径。
+_GENERIC_FORMULA_TOKENS = {
+    "dx", "dy", "dz", "dt", "ds", "dv", "du", "dw", "df", "dg", "dh",
+    "oint", "partial", "nabla", "infty", "cdot", "times", "frac", "sqrt",
+    "vec", "hat", "bar", "dot", "left", "right", "text", "mathrm", "mathbf",
+}
+# 泛后缀（单独立不住的词）：concept._GENERIC_TERMS 之外，本模块再补几个够长但同性质的
+# ——「表达式」「坐标系」够 3 字，按长度本该是强证据，其实和「表达」一样立不住
+# （真机上「坐标表达」「表达式」正是从章节标题里长出来的碎片）。
+_GENERIC_TITLE_TERMS = _GENERIC_TERMS | {"表达式", "坐标系", "示意图"}
 # 投影节点字段上限（与 concept.py 的裁剪口径一致）
 TITLE_MAX_CHARS = 40
 FORMULA_PREVIEW_CHARS = 48
@@ -135,6 +158,20 @@ def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
              else zip(sids, sids[1:]))
     return [{"from": by_session[a][0], "to": by_session[b][0],
              "fromSession": a, "toSession": b} for a, b in pairs]
+
+
+def _shared_strength(kind: str, label: str) -> str:
+    """证据分级：strong 才画到地图上，weak 只进清单（弹层里照报）。
+
+    与 concept.py 的 `_TITLE_STRONG_MIN` / `_GENERIC_TERMS` 同一把尺子，但标准只会更严
+    不会更松：那边判「够不够当检索理由」，这边判「够不够占地图视觉」。2 字串（「表达」
+    「坐标」）与泛后缀（「表达」「定义」）单独立不住，只能折叠进清单。
+    """
+    if kind == "formula":
+        return "strong"
+    if len(label) >= _TITLE_STRONG_MIN and label not in _GENERIC_TITLE_TERMS:
+        return "strong"
+    return "weak"
 
 
 def normalize_user_edge_payload(raw) -> list:
@@ -258,6 +295,13 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
 
     run_owners = {}
     for iid, item in all_items:
+        # 只有「像概念名」的标题才参与子串切分：章节号标题（「1. 定义与坐标表达」
+        # 「二、从微元立方体导出直角坐标表达式」）、指令句回显（「用户要求：…」）、
+        # 叙述句与超长句都不是概念名，从它们身上切出来的只会是「表达」「坐标」这类
+        # 语法碎片——实测一条 40 字假标题炸出 4 条虚假共享概念（大陆 v4 修复）。
+        # 尺子复用 knowledge._is_concept_like_title，模块内不许各写一份。
+        if not _is_concept_like_title(item.get("title")):
+            continue
         t = _normalize_title(item.get("title"))
         for size in range(_TITLE_RUN_MIN_CJK, len(t) + 1):
             for i in range(0, len(t) - size + 1):
@@ -270,7 +314,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
 
     token_owners = {}
     for iid, item in all_items:
-        for token in _formula_tokens(item):
+        # 公式是结构证据，不受标题闸门限制（标题不像概念名的条目，它的公式照样是
+        # 真公式）；但通用符号（dx/dt/∂…）要先剔掉，见 _GENERIC_FORMULA_TOKENS
+        for token in _formula_tokens(item) - _GENERIC_FORMULA_TOKENS:
             token_owners.setdefault(token, set()).add(iid)
 
     shared = []
@@ -280,12 +326,14 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         score = (_STRONG_RUN_SCORE + 12.0 * len(label)) / df if len(label) >= 3 \
             else _WEAK_RUN_SCORE + len(sids)
         shared.append({"kind": "title", "label": label, "score": round(score, 2),
+                       "strength": _shared_strength("title", label),
                        "sessions": sorted(sids),
                        "links": _links_for(owners, item_session, session_rank)})
     for token, owners, _sids in _cross_session_owners(token_owners, item_session):
         sids = {item_session[iid] for iid in owners}
         score = _FORMULA_SCORE * len(sids) + min(len(owners), 6)
         shared.append({"kind": "formula", "label": token, "score": round(score, 2),
+                       "strength": _shared_strength("formula", token),
                        "sessions": sorted(sids),
                        "links": _links_for(owners, item_session, session_rank)})
 
