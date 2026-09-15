@@ -33,7 +33,7 @@ for _path in (_SRC_DIR, _ROOT_DIR):
 
 from http_client import close_http_client, get_http_client  # noqa: E402
 
-from server import backup, concept, context, documents, knowledge, profile, prompts, storage  # noqa: F401
+from server import backup, concept, continent, context, documents, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -665,6 +665,18 @@ async def api_clear_messages(session_id: str):
 @app.get("/api/knowledge")
 async def api_get_knowledge():
     return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+
+
+@app.get("/api/continent")
+async def api_get_continent():
+    """大陆投影（v1 只读）：跨会话概念聚簇 + 共享概念，供知识大陆视图渲染。
+
+    纯本地推导（无模型调用、无写路径）：子图（knowledge + sessions）是唯一事实源，
+    每次现算，可随时重算。
+    """
+    items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+    sessions = _read_json(SESSIONS_PATH, {})
+    return continent.build_continent(items, sessions)
 
 
 @app.post("/api/knowledge")

@@ -29,6 +29,7 @@ const entries = [
   'utopia.js',
   'graph-contextmenu.js',
   'knowledge.js',
+  'graph-continent.js',
   'models.js',
   'harness.js',
   'harness-run.js',

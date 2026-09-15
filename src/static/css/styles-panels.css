@@ -3303,3 +3303,217 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ===== 知识大陆（大陆计划 v1：只读投影视图）=====
+   分层口径：大陆是盖在画布上的整层视图（层级离散、整层切换），自身只读。
+   workspace 被.graph-override.css 固定为全屏（fixed inset:0 !important），
+   应用头栏（0-55px，z60）浮在其上——大陆的浮层一律从 68px 起，别顶到头栏底下。
+   大面积载体走实底（不挂 backdrop-filter——全屏 blur 白烧性能），玻璃质感
+   只给浮层胶囊与节点小面积用；颜色全部走主题变量，深浅两口径由变量承担。 */
+.continent-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  background: var(--bg-panel);
+  transition: opacity 0.38s ease;
+}
+.continent-layer.continent-diving,
+.continent-layer.continent-surfacing {
+  opacity: 0;
+  pointer-events: none;
+}
+.continent-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.continent-viewport:active { cursor: grabbing; }
+.continent-topbar {
+  position: absolute;
+  left: 16px;
+  top: 68px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.15);
+}
+.continent-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.continent-brand svg { color: var(--accent); }
+.continent-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+.continent-close {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.continent-close:hover { background: var(--border); color: var(--text-primary); }
+.continent-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.continent-cluster {
+  position: absolute;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(127, 150, 220, 0.07);
+  cursor: pointer;
+}
+[data-theme="light"] .continent-cluster { background: rgba(190, 160, 110, 0.10); }
+.continent-cluster:hover { border-color: var(--accent); }
+.continent-cluster-head {
+  position: absolute;
+  left: 18px;
+  top: 9px;
+  right: 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.continent-cluster-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.continent-cluster-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.continent-node {
+  position: absolute;
+  width: 168px;
+  height: 54px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.continent-node:hover {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.continent-node-title {
+  padding: 7px 10px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.continent-node-formula {
+  padding: 2px 10px 6px;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.continent-links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.continent-link {
+  fill: none;
+  stroke: var(--accent);
+  stroke-opacity: 0.4;
+  stroke-width: 1.5;
+}
+.continent-link-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.continent-link-label.is-formula { color: var(--accent); }
+.continent-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+/* 类选择器的 display 会压掉 hidden 属性的 UA 样式，必须显式收回 */
+.continent-empty[hidden] { display: none; }
+/* 面包屑：既是回程路牌也是入口（top 与大陆顶栏同规：让开 55px 的应用头栏）；
+   大陆打开时与画布工具栏一起让位 */
+.continent-breadcrumb {
+  position: absolute;
+  left: 16px;
+  top: 68px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+.continent-breadcrumb[hidden] { display: none; }
+.continent-breadcrumb:hover { color: var(--text-primary); border-color: var(--accent); }
+/* graph-override.css 对工具栏整排 !important（含 display:flex），让位必须同权重 */
+.graph-workspace.continent-open .graph-canvas-toolbar {
+  display: none !important;
+}
+.graph-workspace.continent-open .continent-breadcrumb {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .continent-layer,
+  .continent-world,
+  .continent-node {
+    transition: none !important;
+  }
+}
