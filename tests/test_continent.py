@@ -1,10 +1,15 @@
-"""大陆投影（大陆计划 v1）纯函数测试：聚簇 / 共享概念 / 契约字段。
+"""大陆投影（大陆计划 v1 + v2）纯函数测试：聚簇 / 共享概念 / 用户簇间边 / 契约字段。
 
 build_continent 必须长期保持三条性质（见模块 docstring）：
 - 纯函数：无 IO、无模型调用、不改入参；
 - 查空是正常路径：空库 / 单会话 / 零跨会话重叠 → shared 为空，不报错；
 - 公式键只有一把：token 必须经 knowledge._formula_key 归一化（TeX 命令名与
   单字母不参与，否则任意两条含积分的公式互相成为「同源概念」）。
+
+v2 用户簇间边（KV continent_edges，调用方喂参）：
+- 两端条目都在且跨会话 → userEdges（会话字段以 item_session 现算为准）；
+- 端点失效 → danglingEdges（missing=from/to/both/same_session），投影永不报错；
+- 同端点对去重留最新、自环与缺 id 直接丢弃。
 """
 
 import os
@@ -19,7 +24,7 @@ for p in (ROOT, SRC):
 
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
-from server.continent import build_continent  # noqa: E402
+from server.continent import build_continent, normalize_user_edge_payload  # noqa: E402
 
 S1, S2, S3 = "sess_aaa", "sess_bbb", "sess_ccc"
 SESSIONS = {
@@ -175,9 +180,90 @@ class BuildContinentSharedTest(unittest.TestCase):
         items = {"k1": _item("k1", S1, "阻尼振动")}
         sessions = dict(SESSIONS)
         before = {k: dict(v) for k, v in items.items()}
-        build_continent(items, sessions)
+        edges = [{"id": "e1", "fromItem": "k1", "toItem": "kX",
+                  "fromSession": S1, "toSession": S2, "label": "桥", "createdAt": 5}]
+        build_continent(items, sessions, edges)
         self.assertEqual(items, before)
         self.assertEqual(sessions, SESSIONS)
+        self.assertEqual(edges[0]["toItem"], "kX")  # 入参边不被改写
+
+
+class BuildContinentUserEdgeTest(unittest.TestCase):
+    """v2 主图簇间边：校验 / 悬空 / 去重。"""
+
+    def _items(self):
+        return {
+            "k1": _item("k1", S1, "阻尼振动", created=1),
+            "k2": _item("k2", S2, "非线性振动", created=2),
+            "k3": _item("k3", S3, "梯度", created=3),
+        }
+
+    def test_valid_edge_passes_with_recomputed_sessions(self):
+        # 端点会话以 item_session 现算为准：存了错的 fromSession 也会被纠正
+        edges = [{"id": "e1", "fromItem": "k1", "toItem": "k2",
+                  "fromSession": "sess_wrong", "toSession": S2,
+                  "label": "同为振动", "createdAt": 9}]
+        out = build_continent(self._items(), SESSIONS, edges)
+        self.assertEqual(len(out["userEdges"]), 1)
+        edge = out["userEdges"][0]
+        self.assertEqual(edge["fromSession"], S1)
+        self.assertEqual(edge["toSession"], S2)
+        self.assertEqual(edge["label"], "同为振动")
+        self.assertEqual(out["danglingEdges"], [])
+
+    def test_missing_endpoint_becomes_dangling(self):
+        edges = [
+            {"id": "e1", "fromItem": "k1", "toItem": "gone", "createdAt": 1},
+            {"id": "e2", "fromItem": "gone1", "toItem": "k2", "createdAt": 2},
+            {"id": "e3", "fromItem": "g1", "toItem": "g2", "createdAt": 3},
+        ]
+        out = build_continent(self._items(), SESSIONS, edges)
+        self.assertEqual(out["userEdges"], [])
+        missing = sorted(e["missing"] for e in out["danglingEdges"])
+        self.assertEqual(missing, ["both", "from", "to"])
+
+    def test_same_session_edge_is_dangling_not_valid(self):
+        # 两端都在但同会话：不是簇间边，走断桥通道等清理，绝不进 userEdges
+        edges = [{"id": "e1", "fromItem": "k1", "toItem": "kX", "createdAt": 1},
+                 {"id": "e2", "fromItem": "k1", "toItem": "k1", "createdAt": 2}]
+        # kX 不存在 → to；自环直接丢弃（连 dangling 都不进）
+        edges.append({"id": "e3", "fromItem": "k1", "toItem": "k2", "createdAt": 3})
+        items = self._items()
+        items["k2"]["sessionId"] = S1  # 挪进同一会话
+        out = build_continent(items, SESSIONS, edges)
+        self.assertEqual(out["userEdges"], [])
+        kinds = sorted(e["missing"] for e in out["danglingEdges"])
+        self.assertEqual(kinds, ["same_session", "to"])
+
+    def test_duplicate_pair_keeps_latest(self):
+        edges = [
+            {"id": "e1", "fromItem": "k1", "toItem": "k2", "label": "旧", "createdAt": 1},
+            {"id": "e2", "fromItem": "k2", "toItem": "k1", "label": "新", "createdAt": 2},
+        ]
+        out = build_continent(self._items(), SESSIONS, edges)
+        self.assertEqual([e["id"] for e in out["userEdges"]], ["e2"])
+        self.assertEqual(out["userEdges"][0]["label"], "新")
+
+    def test_selfloop_and_blank_ids_dropped(self):
+        edges = [
+            {"id": "", "fromItem": "k1", "toItem": "k2", "createdAt": 1},
+            {"id": "e2", "fromItem": "k3", "toItem": "k3", "createdAt": 2},
+        ]
+        out = build_continent(self._items(), SESSIONS, edges)
+        self.assertEqual(out["userEdges"], [])
+        self.assertEqual(out["danglingEdges"], [])
+
+    def test_payload_accepts_bare_list_and_wrapped(self):
+        self.assertEqual(len(normalize_user_edge_payload([{"id": "e"}])), 1)
+        self.assertEqual(len(normalize_user_edge_payload({"edges": [{"id": "e"}]})), 1)
+        self.assertEqual(normalize_user_edge_payload("junk"), [])
+        self.assertEqual(normalize_user_edge_payload(None), [])
+        self.assertEqual(normalize_user_edge_payload({"edges": "junk"}), [])
+
+    def test_no_edges_yields_empty_lists(self):
+        out = build_continent(self._items(), SESSIONS)
+        self.assertEqual(out["userEdges"], [])
+        self.assertEqual(out["danglingEdges"], [])
 
 
 if __name__ == "__main__":

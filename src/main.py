@@ -669,14 +669,16 @@ async def api_get_knowledge():
 
 @app.get("/api/continent")
 async def api_get_continent():
-    """大陆投影（v1 只读）：跨会话概念聚簇 + 共享概念，供知识大陆视图渲染。
+    """大陆投影（v1 只读 + v2 簇间边）：跨会话概念聚簇 + 共享概念 + 用户连线。
 
-    纯本地推导（无模型调用、无写路径）：子图（knowledge + sessions）是唯一事实源，
-    每次现算，可随时重算。
+    聚簇与共享概念纯本地推导（无模型调用）；用户簇间边是主图自有数据
+    （KV `continent_edges`，经 /api/kv 读写），在此合入并按当前投影校验出
+    悬空边。子图（knowledge + sessions）仍是聚簇的唯一事实源，随时可重算。
     """
     items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     sessions = _read_json(SESSIONS_PATH, {})
-    return continent.build_continent(items, sessions)
+    user_edges = _read_json(KV_PATH, {}).get("continent_edges")
+    return continent.build_continent(items, sessions, user_edges)
 
 
 @app.post("/api/knowledge")

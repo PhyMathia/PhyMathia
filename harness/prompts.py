@@ -11,10 +11,12 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
     {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角", "content": "...", "formula": ""}
   ],
   "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖", "label": "需要先掌握"}],
-  "quiz_weak": [{"title": "等时性", "wrong": 2, "mastery": 40, "sessionId": "sess_x"}]
+  "quiz_weak": [{"title": "等时性", "wrong": 2, "mastery": 40, "sessionId": "sess_x"}],
+  "continent_shared": [{"label": "振动", "kind": "title", "my_title": "阻尼振动", "peer_title": "非线性振动", "peer_session": "傅里叶分析"}]
 }
 
 快照可能带 quiz_weak 字段（可选）：用户在知识检测里的薄弱知识点，含答错次数与掌握度，限当前会话前三条。
+快照可能带 continent_shared 字段（可选）：当前画布的概念与其他画布概念的共享点（知识大陆投影检出），每条含共享词、两边概念名与对方画布名，最多四条。
 
 可用节点类型，必须严格使用 kind 和 module_key：
 - kind=module, module_key=physics：物理视角
@@ -116,6 +118,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 - 如果指令缺少必要信息且无法从历史推断（例如没有指定任何节点、也没有明确操作），可以只输出 JSON：{"clarify": {"question": "需要确认的问题", "options": ["选项1", "选项2"]}}，不要编造大改动。
 - 如果输入标注了重点节点（“用户重点指定的节点”），优先只操作这些节点；未指定重点节点时才全局审阅。
 - 快照若带 quiz_weak（用户在检测中的薄弱知识点），可以在 summary 里【口头】提示，例如“等时性你错了 2 次，建议优先重学，或补一条它与先导概念的连线”。但严禁据此创建任何状态类图元素：不要新增“薄弱/待复习/掌握度/进度”节点，不要给节点染色、加徽标或评级，也不要改写标题去表达状态。只允许建议【内容性】动作——补连线、写总结节点、回到该知识点重学。
+- 快照若带 continent_shared（当前画布概念与其他画布的共享点），可以在 summary 里【口头】提及，例如“「阻尼振动」和你在「傅里叶分析」画布学的「非线性振动」共享「振动」，打开知识大陆可以把它连成一条大陆边”。跨画布连线不归本画布的图操作管：严禁为此输出任何 operations，不要在当前画布新建节点或连线来表达跨画布关系——落笔由用户在大陆地图上亲手确认。
 """
 
 PHYMATHIA_EVALUATION_STANDARDS = """PhyMathia 评价标准：

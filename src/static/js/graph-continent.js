@@ -1,15 +1,22 @@
-// ===== 知识大陆（大陆计划 v1：只读投影 + 游戏式分层下钻）=====
-// 主图是投影层：数据全部来自 GET /api/continent（服务端从 knowledge + sessions
-// 现算），本文件零写路径——绝不写任何 phymathia_graph_ 会话键，子图（各会话探索
+// ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市）=====
+// 主图是投影层：聚簇与共享概念全部来自 GET /api/continent（服务端从 knowledge +
+// sessions 现算），本文件绝不写任何 phymathia_graph_ 会话键——子图（各会话探索
 // 网）是唯一事实源，主图随时可重算。
+// v2 起主图拥有**自己的**簇间边（KV `continent_edges`，经 /api/kv 读写）：
+// 「连接」模式点两个不同区域的概念完成落笔；端点失效的边渲染成断桥，工具条提供
+// 清理入口；撤销栈只记边操作（新增/删除/清理/改备注），视口平移缩放不入栈。
+// v3 共享概念升级为「边界城市」：端点节点挂徽标皮肤，连线标签可点开弹层，弹层里
+// 「画成大陆边」= Φ 口头建议之后的用户确认落笔口（确认才写边）。
 // 交互三层口径（游戏地图模型：层级离散、整层切换，不是连续语义缩放）：
 // - 下钻：点簇 / 概念节点 → 镜头向点击处推进（转场动画）→ switchToSession，
 //   概念节点再经 goToKnowledgeNode 直达定位（等于点 POI 而非进城门口）；
 // - 返回：探索网面包屑「‹ 大陆」→ 恢复离开时的平移缩放视口（回来还在原地）；
-// - 视图自身只读：无编辑入口，Esc / 关闭按钮收起；右键留给浏览器原生菜单。
+// - 视图自身克制编辑：只有簇间边一种写路径，Esc / 关闭按钮收起。
 
 const CONTINENT_VIEW_KEY = 'phymathia_continent_view'; // 视口记忆（非会话键）
+const CONTINENT_EDGES_API = '/api/kv/continent_edges'; // 主图簇间边的读写端点（现成 KV 通道）
 const CONTINENT_LINE_LIMIT = 24;      // 与服务端 SHARED_CONCEPT_LIMIT 同口径的二次保险
+const CONTINENT_USER_EDGE_LIMIT = 120; // 与服务端 USER_EDGE_LIMIT 同口径
 const CONTINENT_NODE_W = 160;
 const CONTINENT_NODE_H = 46;
 const CONTINENT_COLS = 3;             // 簇内概念排几列
@@ -33,12 +40,21 @@ let _continentClusterRects = [];
 let _continentKeyHandler = null;
 let _continentDragState = null;
 let _continentSkipViewPersist = false;
+let _continentData = null;         // 最近一次投影数据（边操作后就地刷新）
+let _continentLinkMode = false;    // v2 连接模式
+let _continentLinkSource = null;   // {itemId, sessionId}
+let _continentEdgeUndo = [];       // 撤销栈：只记边操作，视口变化不入栈
+let _continentPopover = null;      // 单例弹层（共享概念详情 / 我的边操作）
 
 function _continentEsc(text) {
   if (typeof escapeHtml === 'function') return escapeHtml(text);
   return String(text == null ? '' : text)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _continentToast(msg) {
+  if (typeof showToast === 'function') showToast(msg);
 }
 
 // 节点公式：渲成一行小字 KaTeX（不占地图视觉重量）；溢出交给容器裁剪，
@@ -117,6 +133,23 @@ async function _continentFetchData() {
   return data;
 }
 
+function _continentItemIndex() {
+  const d = _continentData || {};
+  const items = {}, clusterTitles = {};
+  (d.clusters || []).forEach(c => {
+    clusterTitles[c.sessionId] = c.title || '未命名画布';
+    (c.items || []).forEach(it => { items[it.itemId] = it.title || ''; });
+  });
+  return { items, clusterTitles };
+}
+
+function _continentNodeEl(itemId) {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelector) return null;
+  const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(String(itemId)) : String(itemId);
+  return world.querySelector('.continent-node[data-item-id="' + safe + '"]');
+}
+
 // ---------- DOM ----------
 function _continentEnsureLayer() {
   let layer = document.getElementById('continentLayer');
@@ -131,6 +164,12 @@ function _continentEnsureLayer() {
     '<div class="continent-topbar">' +
       '<div class="continent-brand"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg>' +
       '知识大陆<span class="continent-sub" id="continentStats"></span></div>' +
+      '<div class="continent-tools">' +
+        '<button class="continent-tool" id="continentLinkBtn" title="连接两个不同区域的概念（画一条大陆边）">连接</button>' +
+        '<button class="continent-tool" id="continentUndoBtn" title="撤销上一条边操作 (Ctrl+Z)" hidden>↩ 撤销</button>' +
+        '<button class="continent-tool is-warn" id="continentCleanBtn" title="移除一端已不在大陆上的连线" hidden>清理断线</button>' +
+      '</div>' +
+      '<span class="continent-hint" id="continentHint" hidden></span>' +
       '<button class="continent-close" id="continentCloseBtn" title="收起大陆 (Esc)">&times;</button>' +
     '</div>' +
     '<div class="continent-viewport" id="continentViewport">' +
@@ -141,6 +180,18 @@ function _continentEnsureLayer() {
   _continentBindViewport(document.getElementById('continentViewport'));
   const closeBtn = document.getElementById('continentCloseBtn');
   if (closeBtn && closeBtn.addEventListener) closeBtn.addEventListener('click', () => closeContinentView());
+  const linkBtn = document.getElementById('continentLinkBtn');
+  if (linkBtn && linkBtn.addEventListener) linkBtn.addEventListener('click', () => _continentSetLinkMode(!_continentLinkMode));
+  const undoBtn = document.getElementById('continentUndoBtn');
+  if (undoBtn && undoBtn.addEventListener) undoBtn.addEventListener('click', () => { _continentUndoEdgeOp(); });
+  const cleanBtn = document.getElementById('continentCleanBtn');
+  if (cleanBtn && cleanBtn.addEventListener) cleanBtn.addEventListener('click', () => { _continentCleanDangling(); });
+  // 弹层单例的场外关闭：捕获阶段先于画布交互，点弹层内部不关
+  document.addEventListener('pointerdown', e => {
+    if (!_continentPopover) return;
+    if (_continentPopover.contains && _continentPopover.contains(e.target)) return;
+    _continentClosePopover();
+  }, true);
   return layer;
 }
 
@@ -155,6 +206,11 @@ function _continentRender(data) {
   world.style.height = layout.worldH + 'px';
 
   const esc = _continentEsc;
+  // 边界城市（v3）：共享概念的端点条目 → 概念名 → 共享词，节点挂皮肤与徽标
+  const boundary = {};
+  (data.shared || []).slice(0, CONTINENT_LINE_LIMIT).forEach(s =>
+    (s.links || []).forEach(l => { boundary[l.from] = s.label; boundary[l.to] = s.label; }));
+
   // 簇底板（区域图的地皮）
   layout.clusterRects.forEach(rect => {
     const el = document.createElement('div');
@@ -177,14 +233,20 @@ function _continentRender(data) {
     const p = layout.placements[item.itemId];
     if (!p) return;
     const el = document.createElement('div');
-    el.className = 'continent-node';
+    el.className = 'continent-node' + (boundary[item.itemId] ? ' continent-node--boundary' : '');
     el.dataset.sessionId = c.sessionId || '';
     el.dataset.itemId = item.itemId;
     el.style.left = p.x + 'px';
     el.style.top = p.y + 'px';
+    if (boundary[item.itemId]) {
+      el.title = '边界城市：其他画布也学过（共享「' + boundary[item.itemId] + '」）';
+    }
     let html = '<div class="continent-node-title">' + esc(item.title) + '</div>';
     if (item.formula || item.formulaPreview) {
       html += '<div class="continent-node-formula"></div>';
+    }
+    if (boundary[item.itemId]) {
+      html += '<span class="continent-node-badge" aria-hidden="true">◈</span>';
     }
     el.innerHTML = html;
     const fEl = el.querySelector ? el.querySelector('.continent-node-formula') : null;
@@ -192,45 +254,365 @@ function _continentRender(data) {
     world.appendChild(el);
   }));
 
-  // 簇间连线（大陆最有价值的内容：跨主题的知识连接）
+  // ---------- 连线层：自动检出的共享概念（浅色弧线+标签）+ 我的大陆边（实线）+ 断桥 ----------
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('class', 'continent-links');
   svg.setAttribute('width', String(layout.worldW));
   svg.setAttribute('height', String(layout.worldH));
+
+  const arcPath = (a, b, liftRatio) => {
+    const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
+    const dx = b.cx - a.cx, dy = b.cy - a.cy;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const lift = Math.min(60, len * (liftRatio || 0.14));
+    const qx = mx + (-dy / len) * lift, qy = my + (dx / len) * lift;
+    return { d: 'M ' + a.cx + ' ' + a.cy + ' Q ' + qx + ' ' + qy + ' ' + b.cx + ' ' + b.cy, qx, qy };
+  };
+
   let lineCount = 0;
   (data.shared || []).slice(0, CONTINENT_LINE_LIMIT).forEach(s => {
     (s.links || []).forEach(l => {
       const a = layout.placements[l.from], b = layout.placements[l.to];
       if (!a || !b || lineCount >= CONTINENT_LINE_LIMIT) return;
       lineCount++;
-      const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
-      // 中点沿法线抬一点成弧线，避免直线穿节点；起终点按坐标排序保证弧向稳定
-      const dx = b.cx - a.cx, dy = b.cy - a.cy;
-      const len = Math.max(1, Math.hypot(dx, dy));
-      const lift = Math.min(60, len * 0.14);
-      const qx = mx + (-dy / len) * lift, qy = my + (dx / len) * lift;
+      const arc = arcPath(a, b, 0.14);
       const path = document.createElementNS(svgNS, 'path');
       path.setAttribute('class', 'continent-link');
-      path.setAttribute('d', 'M ' + a.cx + ' ' + a.cy + ' Q ' + qx + ' ' + qy + ' ' + b.cx + ' ' + b.cy);
+      path.setAttribute('d', arc.d);
       svg.appendChild(path);
       const label = document.createElement('div');
       label.className = 'continent-link-label' + (s.kind === 'formula' ? ' is-formula' : '');
-      label.style.left = ((a.cx + 2 * qx + b.cx) / 4) + 'px';
-      label.style.top = ((a.cy + 2 * qy + b.cy) / 4) + 'px';
-      label.textContent = (s.kind === 'formula' ? '∑ ' : '') + (s.label || '');
+      label.style.left = ((a.cx + 2 * arc.qx + b.cx) / 4) + 'px';
+      label.style.top = ((a.cy + 2 * arc.qy + b.cy) / 4) + 'px';
+      label.textContent = (s.kind === 'formula' ? '∑ ' : '◈ ') + (s.label || '');
+      label.title = '共享' + (s.kind === 'formula' ? '公式' : '概念') + '：点开看两边各是哪条';
+      // v3 标签可点：弹层看详情 + 「画成大陆边」确认落笔；悬停点亮两端节点
+      label.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        _continentSharedPopover(s, l, e);
+      });
+      label.addEventListener('mouseenter', () => _continentHighlightPair(l.from, l.to, true));
+      label.addEventListener('mouseleave', () => _continentHighlightPair(l.from, l.to, false));
       world.appendChild(label);
     });
   });
+
+  // 我的大陆边（v2 用户落笔）：实线、可点开操作弹层；有备注挂小标签
+  (data.userEdges || []).forEach(e => {
+    const a = layout.placements[e.fromItem], b = layout.placements[e.toItem];
+    if (!a || !b) return;
+    const arc = arcPath(a, b, 0.1);
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('class', 'continent-user-link');
+    path.setAttribute('d', arc.d);
+    path.addEventListener('pointerdown', ev => {
+      ev.stopPropagation();
+      _continentEdgePopover(e, ev);
+    });
+    svg.appendChild(path);
+    if (e.label) {
+      const label = document.createElement('div');
+      label.className = 'continent-user-link-label';
+      label.style.left = ((a.cx + 2 * arc.qx + b.cx) / 4) + 'px';
+      label.style.top = ((a.cy + 2 * arc.qy + b.cy) / 4) + 'px';
+      label.textContent = e.label;
+      label.title = '我的大陆边：' + e.label;
+      label.addEventListener('pointerdown', ev => {
+        ev.stopPropagation();
+        _continentEdgePopover(e, ev);
+      });
+      world.appendChild(label);
+    }
+  });
+
+  // 断桥（v2）：一端已不在大陆上的边——从幸存端朝目标簇方向画残线，中段断开。
+  // 两端都在但同会话的无效边无残线可画，只进清理清单。
+  (data.danglingEdges || []).forEach(e => {
+    if (e.missing === 'same_session') return;
+    const anchor = e.missing === 'from' ? layout.placements[e.toItem] : layout.placements[e.fromItem];
+    if (!anchor) return;
+    const targetSid = e.missing === 'from' ? e.fromSession : e.toSession;
+    const cluster = layout.clusterRects.find(r => r.sessionId === targetSid);
+    const tx = cluster ? cluster.cx : anchor.cx + 140, ty = cluster ? cluster.cy : anchor.cy + 90;
+    const dx = tx - anchor.cx, dy = ty - anchor.cy;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / len, uy = dy / len;
+    const seg = (t0, t1) => {
+      const p = document.createElementNS(svgNS, 'path');
+      p.setAttribute('class', 'continent-dangle-link');
+      p.setAttribute('d', 'M ' + (anchor.cx + ux * len * t0) + ' ' + (anchor.cy + uy * len * t0) +
+        ' L ' + (anchor.cx + ux * len * t1) + ' ' + (anchor.cy + uy * len * t1));
+      svg.appendChild(p);
+    };
+    seg(0, 0.55); seg(0.68, 0.8);  // 中段留空 = 桥断了
+    const mark = document.createElement('div');
+    mark.className = 'continent-dangle-mark';
+    mark.style.left = (anchor.cx + ux * len * 0.615) + 'px';
+    mark.style.top = (anchor.cy + uy * len * 0.615) + 'px';
+    mark.textContent = '✕';
+    mark.title = '这条大陆边的一端已不在大陆上（画布被清空或概念被删除），可用工具条「清理断线」移除';
+    world.appendChild(mark);
+  });
+
   world.insertBefore(svg, world.firstChild);
 
+  const mineCount = (data.userEdges || []).length;
   const stats = document.getElementById('continentStats');
   if (stats) stats.textContent =
     data.clusterCount + ' 个区域 · ' + data.itemCount + ' 个概念' +
-    (lineCount ? ' · ' + lineCount + ' 条簇间连线' : '');
+    (lineCount ? ' · ' + lineCount + ' 条共享连线' : '') +
+    (mineCount ? ' · 我的连线 ' + mineCount : '');
   const empty = document.getElementById('continentEmpty');
   if (empty) empty.hidden = (data.itemCount || 0) > 0;
   return layout;
+}
+
+function _continentHighlightPair(a, b, on) {
+  [a, b].forEach(id => {
+    const el = _continentNodeEl(id);
+    if (el && el.classList) el.classList.toggle('is-hot', !!on);
+  });
+}
+
+// ---------- 弹层（单例）：共享概念详情 / 我的边操作 ----------
+function _continentClosePopover() {
+  if (_continentPopover && _continentPopover.remove) _continentPopover.remove();
+  _continentPopover = null;
+}
+
+function _continentOpenPopover(html, x, y) {
+  _continentClosePopover();
+  const layer = document.getElementById('continentLayer');
+  if (!layer) return null;
+  const el = document.createElement('div');
+  el.className = 'continent-popover';
+  el.innerHTML = html;
+  el.addEventListener('pointerdown', e => e.stopPropagation());  // 场外关闭靠 document 捕获
+  layer.appendChild(el);
+  const vw = layer.clientWidth || 900, vh = layer.clientHeight || 600;
+  const w = el.offsetWidth || 220, h = el.offsetHeight || 120;
+  el.style.left = Math.max(8, Math.min(x + 12, vw - w - 8)) + 'px';
+  el.style.top = Math.max(64, Math.min(y - h / 2, vh - h - 8)) + 'px';
+  _continentPopover = el;
+  return el;
+}
+
+// v3 确认落笔口：Φ 只会口头建议「去大陆连接」；真正写边在这里，用户亲手点按钮
+function _continentSharedPopover(s, link, ev) {
+  const idx = _continentItemIndex();
+  const fromTitle = idx.items[link.from] || '（概念已不在）';
+  const toTitle = idx.items[link.to] || '（概念已不在）';
+  const fromCluster = idx.clusterTitles[link.fromSession] || '已删除的画布';
+  const toCluster = idx.clusterTitles[link.toSession] || '已删除的画布';
+  const already = ((_continentData && _continentData.userEdges) || []).some(e =>
+    (e.fromItem === link.from && e.toItem === link.to) ||
+    (e.fromItem === link.to && e.toItem === link.from));
+  const kindText = s.kind === 'formula'
+    ? '两边画布的公式共享结构「' + _continentEsc(s.label) + '」'
+    : '两边画布的概念标题共享「' + _continentEsc(s.label) + '」';
+  const html =
+    '<div class="continent-pop-title">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label) + '</div>' +
+    '<div class="continent-pop-line">「' + _continentEsc(fromCluster) + '」的 ' + _continentEsc(fromTitle) +
+    ' ↔ 「' + _continentEsc(toCluster) + '」的 ' + _continentEsc(toTitle) + '</div>' +
+    '<div class="continent-pop-desc">' + kindText + '——自动检出的共享点不会自动连线，要不要由你落笔。</div>' +
+    (already
+      ? '<div class="continent-pop-note">这两条概念已有你的大陆边。</div>'
+      : '<button class="continent-pop-btn" id="continentSharedLinkBtn">画成大陆边</button>');
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el) return;
+  const btn = el.querySelector('#continentSharedLinkBtn');
+  if (btn && btn.addEventListener) btn.addEventListener('click', async () => {
+    try {
+      const ok = await _continentAddUserEdge(link.from, link.to, s.label);
+      if (ok) { _continentClosePopover(); _continentToast('已画上这条大陆边'); }
+    } catch (err) {
+      _continentToast('保存失败：' + (err && err.message || err));
+    }
+  });
+}
+
+function _continentEdgePopover(e, ev) {
+  const idx = _continentItemIndex();
+  const html =
+    '<div class="continent-pop-title">我的大陆边' + (e.label ? ' · ' + _continentEsc(e.label) : '') + '</div>' +
+    '<div class="continent-pop-line">' + _continentEsc(idx.items[e.fromItem] || '？') +
+    ' ↔ ' + _continentEsc(idx.items[e.toItem] || '？') + '</div>' +
+    '<div class="continent-pop-actions">' +
+      '<button class="continent-pop-btn" data-act="rename">改备注</button>' +
+      '<button class="continent-pop-btn is-danger" data-act="remove">删除连线</button>' +
+    '</div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el) return;
+  el.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', async () => {
+    const act = btn.getAttribute('data-act');
+    if (act === 'remove') {
+      _continentClosePopover();
+      try {
+        await _continentRemoveUserEdges([e.id]);
+        _continentToast('已删除（Ctrl+Z 可撤销）');
+      } catch (err) { _continentToast('删除失败：' + (err && err.message || err)); }
+    } else if (act === 'rename') {
+      const next = (typeof window.prompt === 'function')
+        ? (window.prompt('这条大陆边的备注（可留空）：', e.label || '') || '') : e.label;
+      if (next === e.label) return;
+      try {
+        await _continentRenameUserEdge(e.id, String(next).slice(0, 40));
+        _continentClosePopover();
+      } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+    }
+  }));
+}
+
+// ---------- v2 簇间边：KV 读写 + 撤销栈（只记边操作） ----------
+function _continentEdgeList() {
+  const d = _continentData || {};
+  return ((d.userEdges || []).concat(d.danglingEdges || []));
+}
+
+async function _continentCommit(edges, undoEntry) {
+  const resp = await fetch(CONTINENT_EDGES_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: edges.slice(0, CONTINENT_USER_EDGE_LIMIT) }),
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  if (undoEntry) _continentEdgeUndo.push(undoEntry);
+  const data = await _continentFetchData();
+  _continentData = data;
+  if (_continentOpen) _continentRender(data);  // 布局与边无关，重渲不动视口
+  _continentUpdateTools();
+}
+
+async function _continentAddUserEdge(fromItem, toItem, label) {
+  const dup = (((_continentData && _continentData.userEdges) || []).some(e =>
+    (e.fromItem === fromItem && e.toItem === toItem) ||
+    (e.fromItem === toItem && e.toItem === fromItem)));
+  if (dup) { _continentToast('这两条概念已经连过线了'); return false; }
+  const edge = {
+    id: 'ce_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    fromItem: String(fromItem), toItem: String(toItem),
+    label: String(label || '').slice(0, 40),
+    createdAt: Date.now(),
+  };
+  await _continentCommit(_continentEdgeList().concat([edge]), { type: 'add', edge });
+  return true;
+}
+
+async function _continentRemoveUserEdges(removeIds) {
+  const ids = new Set(removeIds);
+  const removed = _continentEdgeList().filter(e => ids.has(e.id));
+  if (!removed.length) return;
+  await _continentCommit(
+    _continentEdgeList().filter(e => !ids.has(e.id)),
+    removeIds.length === 1 ? { type: 'remove', edge: removed[0] } : { type: 'bulk', edges: removed });
+}
+
+async function _continentRenameUserEdge(edgeId, label) {
+  const edges = _continentEdgeList().map(e =>
+    e.id === edgeId ? Object.assign({}, e, { label: label }) : e);
+  const before = _continentEdgeList().find(e => e.id === edgeId);
+  await _continentCommit(edges, before ? { type: 'rename', id: edgeId, before: before.label || '' } : null);
+}
+
+async function _continentUndoEdgeOp() {
+  if (!_continentEdgeUndo.length) { _continentToast('没有可撤销的边操作'); return; }
+  const op = _continentEdgeUndo.pop();
+  _continentUpdateTools();
+  try {
+    if (op.type === 'add') {
+      await _continentCommit(_continentEdgeList().filter(e => e.id !== op.edge.id));
+    } else if (op.type === 'rename') {
+      const edges = _continentEdgeList().map(e =>
+        e.id === op.id ? Object.assign({}, e, { label: op.before }) : e);
+      await _continentCommit(edges);
+    } else {
+      const restore = op.type === 'bulk' ? op.edges : [op.edge];
+      const have = new Set(_continentEdgeList().map(e => e.id));
+      await _continentCommit(_continentEdgeList().concat(restore.filter(e => !have.has(e.id))));
+    }
+    _continentToast('已撤销上一条边操作');
+  } catch (err) {
+    _continentToast('撤销失败：' + (err && err.message || err));
+  }
+}
+
+async function _continentCleanDangling() {
+  const dangling = ((_continentData && _continentData.danglingEdges) || []);
+  if (!dangling.length) return;
+  if (typeof window.confirm === 'function' &&
+      !window.confirm('大陆上有 ' + dangling.length + ' 条连线的一端已不在（画布被清空或概念被删除），确定移除这些断线吗？')) return;
+  try {
+    await _continentRemoveUserEdges(dangling.map(e => e.id));
+    _continentToast('已清理 ' + dangling.length + ' 条断线（Ctrl+Z 可撤销）');
+  } catch (err) {
+    _continentToast('清理失败：' + (err && err.message || err));
+  }
+}
+
+function _continentUpdateTools() {
+  const undoBtn = document.getElementById('continentUndoBtn');
+  if (undoBtn) undoBtn.hidden = _continentEdgeUndo.length === 0;
+  const cleanBtn = document.getElementById('continentCleanBtn');
+  if (cleanBtn) {
+    const n = ((_continentData && _continentData.danglingEdges) || []).length;
+    cleanBtn.hidden = n === 0;
+    cleanBtn.textContent = n ? '清理断线 ' + n : '清理断线';
+  }
+}
+
+// ---------- 连接模式（v2 画边入口） ----------
+function _continentSetLinkMode(on) {
+  _continentLinkMode = !!on;
+  _continentLinkSource = null;
+  const layer = document.getElementById('continentLayer');
+  if (layer && layer.classList) layer.classList.toggle('is-linking', _continentLinkMode);
+  const btn = document.getElementById('continentLinkBtn');
+  if (btn && btn.classList) btn.classList.toggle('active', _continentLinkMode);
+  const hint = document.getElementById('continentHint');
+  if (hint) {
+    hint.hidden = !_continentLinkMode;
+    hint.textContent = '连接模式：先点一个概念，再点另一个区域的概念完成连线（Esc 退出）';
+  }
+  _continentMarkLinkSource(null);
+  _continentClosePopover();
+}
+
+function _continentMarkLinkSource(itemId) {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelectorAll) return;
+  world.querySelectorAll('.continent-node.is-link-source').forEach(el => el.classList.remove('is-link-source'));
+  if (itemId) {
+    const el = _continentNodeEl(itemId);
+    if (el && el.classList) el.classList.add('is-link-source');
+  }
+}
+
+async function _continentLinkPick(itemId, sessionId) {
+  if (!_continentLinkSource) {
+    _continentLinkSource = { itemId: itemId, sessionId: sessionId };
+    _continentMarkLinkSource(itemId);
+    const hint = document.getElementById('continentHint');
+    if (hint) hint.textContent = '再点另一个区域的概念完成连线（再点自己取消，Esc 退出）';
+    return;
+  }
+  if (_continentLinkSource.itemId === itemId) {
+    _continentMarkLinkSource(null);          // 再点自己 = 取消首选
+    _continentLinkSource = null;
+    return;
+  }
+  if (_continentLinkSource.sessionId === sessionId) {
+    _continentToast('大陆连线要连接两个不同区域的概念');
+    return;
+  }
+  const label = (typeof window.prompt === 'function')
+    ? (window.prompt('给这条大陆边写个备注？（可留空，如「同为波动现象」）', '') || '') : '';
+  try {
+    const ok = await _continentAddUserEdge(_continentLinkSource.itemId, itemId, label);
+    if (ok) { _continentSetLinkMode(false); _continentToast('已连线（Ctrl+Z 可撤销）'); }
+  } catch (err) {
+    _continentToast('连线保存失败：' + (err && err.message || err));
+  }
 }
 
 // ---------- 视口：平移缩放（缩放锚点保持光标下的世界点不动） ----------
@@ -296,7 +678,7 @@ function _continentPersistView() {
 function _continentBindViewport(viewport) {
   if (!viewport || !viewport.addEventListener) return;
   viewport.addEventListener('pointerdown', e => {
-    if (e.button !== 0) return; // 右键留给浏览器原生菜单：只读视图不建自建菜单
+    if (e.button !== 0) return; // 右键留给浏览器原生菜单
     // 记下按下时的目标：setPointerCapture 会把 pointerup 重定目标到 viewport，
     // 那时 e.target 不再是被点的节点——点击判定必须用 down 时的目标
     _continentDragState = {
@@ -324,8 +706,11 @@ function _continentBindViewport(viewport) {
       ? st.target.closest('.continent-node, .continent-cluster') : null;
     if (!el || !el.dataset) return;
     if (el.classList && el.classList.contains('continent-node')) {
+      // v2 连接模式：节点点击是选端点，不下钻
+      if (_continentLinkMode) { _continentLinkPick(el.dataset.itemId, el.dataset.sessionId); return; }
       enterContinentSession(el.dataset.sessionId, el.dataset.itemId);
     } else {
+      if (_continentLinkMode) { _continentToast('连接模式要点概念节点（簇内小卡），点空白或标题可先退出'); return; }
       enterContinentSession(el.dataset.sessionId, '');
     }
   });
@@ -376,7 +761,18 @@ async function openContinentView() {
   layer.hidden = false;
   const ws = _continentWorkspace();
   if (ws) ws.classList.add('continent-open');
-  _continentKeyHandler = e => { if (e.key === 'Escape') closeContinentView(); };
+  _continentKeyHandler = e => {
+    if (e.key === 'Escape') {
+      if (_continentPopover) { _continentClosePopover(); return; }
+      if (_continentLinkMode) { _continentSetLinkMode(false); return; }
+      closeContinentView();
+    }
+    // v2：大陆打开时 Ctrl+Z 只作用于大陆边操作栈，不透传给会话图撤销
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      _continentUndoEdgeOp();
+    }
+  };
   document.addEventListener('keydown', _continentKeyHandler);
 
   let data;
@@ -388,8 +784,10 @@ async function openContinentView() {
     return;
   }
   if (!_continentOpen) return; // 加载途中被关
+  _continentData = data;
   _continentRender(data);
   _continentUpdateBreadcrumb(data);
+  _continentUpdateTools();
   _continentRestoreOrFitView();
 
   // 表层转场：世界从 1.14 倍沉到恢复的视口（游戏地图「回来」的落定感）
@@ -407,6 +805,8 @@ function closeContinentView() {
   _continentOpen = false;
   if (!_continentSkipViewPersist) _continentPersistView();
   _continentSkipViewPersist = false;
+  _continentSetLinkMode(false);
+  _continentClosePopover();
   const layer = document.getElementById('continentLayer');
   if (layer) {
     layer.classList.remove('continent-diving', 'continent-surfacing');
@@ -458,6 +858,7 @@ async function enterContinentSession(sessionId, itemId) {
 window.openContinentView = openContinentView;
 window.closeContinentView = closeContinentView;
 window.enterContinentSession = enterContinentSession;
+window._continentLayoutClusters = _continentLayoutClusters;
 
 // 预热面包屑：启动后拉一次投影，有内容才亮「‹ 大陆」入口（失败静默——
 // 查空是正常路径，不弹错）。?continent=1 直开大陆视图（演示/验收捷径）。

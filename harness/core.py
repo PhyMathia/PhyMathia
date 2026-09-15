@@ -27,6 +27,8 @@ ALLOWED_NODE_KINDS = {
 
 # M2（P0-A 检测闭环）：随快照进提示词的检测侧薄弱点条数上限（当前会话 Top3）
 QUIZ_WEAK_LIMIT = 3
+# 大陆计划 v3（Φ 摆渡）：随快照进提示词的跨画布共享点条数上限
+CONTINENT_SHARED_LIMIT = 4
 
 ALLOWED_CREATE_KINDS = {
     "blank",
@@ -173,6 +175,11 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     quiz_weak = normalize_quiz_weak(snapshot.get("quiz_weak"))
     if quiz_weak:
         normalized["quiz_weak"] = quiz_weak
+    # 大陆 v3（Φ 摆渡）：continent_shared 是跨画布共享点（提示词参考字段，不是图
+    # 元素），同样必须穿过归一化——Φ 只口头建议去大陆连接，不落任何图操作。
+    continent_shared = normalize_continent_shared(snapshot.get("continent_shared"))
+    if continent_shared:
+        normalized["continent_shared"] = continent_shared
     return normalized
 
 
@@ -196,6 +203,36 @@ def normalize_quiz_weak(raw: Any) -> List[Dict[str, Any]]:
             }
         )
         if len(result) >= QUIZ_WEAK_LIMIT:
+            break
+    return result
+
+
+def normalize_continent_shared(raw: Any) -> List[Dict[str, Any]]:
+    """跨画布共享点（大陆 v3，Φ 摆渡）：白名单字段 + 限条数。
+
+    每条 = {label(共享词), kind(title|formula), my_title, peer_title,
+    peer_session}；label 为空即丢弃。Φ 的消费口径见 HARNESS_SYSTEM_PROMPT：
+    只许在 summary 口头建议，严禁输出图操作。"""
+    if not isinstance(raw, list):
+        return []
+    result: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        if not label:
+            continue
+        kind = str(item.get("kind") or "").strip()
+        result.append(
+            {
+                "label": label[:40],
+                "kind": kind if kind in ("title", "formula") else "title",
+                "my_title": str(item.get("my_title") or "").strip()[:40],
+                "peer_title": str(item.get("peer_title") or "").strip()[:40],
+                "peer_session": str(item.get("peer_session") or "").strip()[:40],
+            }
+        )
+        if len(result) >= CONTINENT_SHARED_LIMIT:
             break
     return result
 

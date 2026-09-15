@@ -510,3 +510,4 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.undoGraphHarness = undoGraphHarness;
   window.syncHarnessNodesToKnowledge = _syncHarnessNodesToKnowledge;
   window.buildHarnessSnapshot = buildHarnessSnapshot;
+  window._harnessContinentShared = _harnessContinentShared; // 大陆 v3：跨画布共享点口径（smoke 断言用）

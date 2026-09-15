@@ -242,7 +242,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     return labels[kind] || kind || '节点';
   }
 
-  function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId) {
+  function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId, continentData) {
     const state = _graphState() || {};
     const rawCanvasCount = _graphNodes().length;
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
@@ -339,7 +339,11 @@ let harnessLastAppliedBeforeSnapshot = null;
     // 只作口头提示依据——提示词明文禁止据此创建任何状态类图元素；无薄弱点时不带该字段。
     const weakPoints = _harnessQuizWeak();
     if (weakPoints.length) snapshot.quiz_weak = weakPoints;
-    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges, quiz_weak: snapshot.quiz_weak });
+    // 大陆计划 v3（Φ 摆渡）：当前画布概念与其他画布的共享点随快照注入。Φ 只能
+    // 【口头】建议去大陆连接——跨画布连线不是本画布图操作，落笔在大陆弹层里用户确认。
+    const continentShared = continentData ? _harnessContinentShared(continentData) : [];
+    if (continentShared.length) snapshot.continent_shared = continentShared;
+    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges, quiz_weak: snapshot.quiz_weak, continent_shared: snapshot.continent_shared });
     snapshot.snapshot_meta = {
       total_nodes: nodes.length,
       directory_nodes: snapshot.nodes.filter(n => n.directory).length,
@@ -366,6 +370,63 @@ let harnessLastAppliedBeforeSnapshot = null;
       mastery: Number(item.mastery) || 0,
       sessionId: String(item.sessionId || ''),
     })).filter(item => item.title);
+  }
+
+  // ===== 大陆计划 v3（Φ 摆渡）：跨画布共享点随快照注入 =====
+  // /api/continent 是纯本地现算（无模型调用），但也不必每次审阅都拉——60s 缓存，
+  // 失败静默返回 null（大陆查空是正常路径，不阻断 Φ）。
+  let _harnessContinentCache = null;
+  async function _harnessFetchContinent() {
+    const now = Date.now();
+    if (_harnessContinentCache && now - _harnessContinentCache.at < 60000) {
+      return _harnessContinentCache.data;
+    }
+    try {
+      const resp = await fetch('/api/continent', { cache: 'no-cache' });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (!data || !Array.isArray(data.clusters)) return null;
+      _harnessContinentCache = { at: now, data };
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 从大陆投影里挑出**涉及当前会话**的共享概念：每条给「我这边的概念名、
+  // 对面的概念名、对面画布名、共享词」。Φ 拿到后只口头建议，不落任何图操作。
+  function _harnessContinentShared(data) {
+    const mySid = String(_sessionId() || '');
+    if (!mySid || !data) return [];
+    const itemTitle = {}, clusterTitle = {};
+    (data.clusters || []).forEach(c => {
+      clusterTitle[c.sessionId] = c.title || '未命名画布';
+      (c.items || []).forEach(it => { itemTitle[it.itemId] = it.title || ''; });
+    });
+    const out = [], seen = new Set();
+    (data.shared || []).forEach(s => {
+      if (seen.has(s.label)) return;
+      (s.links || []).some(l => {
+        const mineIsFrom = l.fromSession === mySid;
+        const mineIsTo = l.toSession === mySid;
+        if (!mineIsFrom && !mineIsTo) return false;
+        const myItem = mineIsFrom ? l.from : l.to;
+        const peerItem = mineIsFrom ? l.to : l.from;
+        const peerSid = mineIsFrom ? l.toSession : l.fromSession;
+        const myTitle = itemTitle[myItem], peerTitle = itemTitle[peerItem];
+        if (!myTitle || !peerTitle) return false;
+        seen.add(s.label);
+        out.push({
+          label: String(s.label || '').slice(0, 40),
+          kind: s.kind === 'formula' ? 'formula' : 'title',
+          my_title: myTitle.slice(0, 40),
+          peer_title: peerTitle.slice(0, 40),
+          peer_session: String(clusterTitle[peerSid] || '').slice(0, 40),
+        });
+        return true;
+      });
+    });
+    return out.slice(0, 4);
   }
 
   // 安全阀：此前"拒绝建议全局清场"可能把大量节点标进 harnessDeleted 且无恢复出口。

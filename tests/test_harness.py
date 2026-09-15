@@ -2518,3 +2518,93 @@ class QuizWeakSnapshotPromptTest(unittest.TestCase):
         self.assertIn("等时性", joined)
         # 模型侧的唯一防线（禁止状态类图元素）必须与快照同时到场
         self.assertIn("禁止", joined)
+
+
+class ContinentSharedSnapshotPromptTest(unittest.TestCase):
+    """大陆计划 v3（Φ 摆渡）：跨画布共享点随快照进提示词，Φ 只口头建议、不落图操作。"""
+
+    def _snapshot(self):
+        return {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "阻尼振动"}],
+            "edges": [],
+            "continent_shared": [
+                {"label": "振动", "kind": "title", "my_title": "阻尼振动",
+                 "peer_title": "非线性振动", "peer_session": "傅里叶分析"},
+            ],
+        }
+
+    def test_review_prompt_explains_field_and_forbids_ops(self):
+        from harness.prompts import HARNESS_SYSTEM_PROMPT
+        self.assertIn("continent_shared", HARNESS_SYSTEM_PROMPT)
+        # Φ 摆渡口径：只许口头建议去大陆连接，严禁输出图操作（跨画布边不归本画布管）
+        prompt_fragment_ok = "严禁为此输出任何 operations" in HARNESS_SYSTEM_PROMPT
+        self.assertTrue(prompt_fragment_ok)
+        self.assertIn("大陆", HARNESS_SYSTEM_PROMPT)
+
+    def test_continent_shared_reaches_review_user_message(self):
+        from harness.prompts import build_review_messages
+        messages = build_review_messages(self._snapshot(), "梳理一下这张图")
+        user_text = messages[1]["content"]
+        self.assertIn("continent_shared", user_text)
+        self.assertIn("非线性振动", user_text)
+        self.assertIn("continent_shared", messages[0]["content"])
+
+    def test_snapshot_without_shared_stays_clean(self):
+        from harness.prompts import build_review_messages
+        messages = build_review_messages({"nodes": [], "edges": []}, "梳理一下这张图")
+        self.assertNotIn("continent_shared", messages[1]["content"])
+
+    def test_normalize_snapshot_keeps_shared_field(self):
+        snap = normalize_snapshot(self._snapshot())
+        self.assertIn("continent_shared", snap)
+        self.assertEqual(snap["continent_shared"][0]["peer_session"], "傅里叶分析")
+
+    def test_focus_subgraph_keeps_shared_field(self):
+        from harness.review import _focus_subgraph
+        sub = _focus_subgraph(self._snapshot(), ["A"], max_hops=1, max_nodes=40)
+        self.assertIsNotNone(sub)
+        self.assertEqual(sub.get("continent_shared"), self._snapshot()["continent_shared"])
+
+    def test_normalize_continent_shared_sanitizes(self):
+        from harness.core import normalize_continent_shared
+        self.assertEqual(normalize_continent_shared(None), [])
+        self.assertEqual(normalize_continent_shared({"label": "x"}), [])
+        cleaned = normalize_continent_shared([
+            {"label": "", "kind": "title"},
+            "junk",
+            {"label": "振动", "kind": "weird", "my_title": "阻尼振动"},
+        ])
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0]["kind"], "title")  # 非法 kind 收敛回 title
+        self.assertEqual(cleaned[0]["my_title"], "阻尼振动")
+        self.assertEqual(cleaned[0]["peer_title"], "")
+        # 条数上限（大陆共享点最多 4 条）
+        self.assertEqual(len(normalize_continent_shared(
+            [{"label": f"t{i}"} for i in range(10)])), 4)
+
+    def test_review_graph_actually_sends_shared_points(self):
+        """端到端：共享点必须真的穿过 normalize/子图到达模型消息。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            captured["messages"] = messages
+            return {
+                "content": '{"summary": "「阻尼振动」和你在「傅里叶分析」学的「非线性振动」共享「振动」，可以打开知识大陆连起来", "operations": []}',
+                "tool_calls": [],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            asyncio.run(review_mod.review_graph(
+                self._snapshot(),
+                "梳理一下这张图",
+                model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+                mode="json",
+                self_check="off",
+            ))
+        joined = "\n".join(str(m.get("content") or "") for m in captured["messages"])
+        self.assertIn("非线性振动", joined)
+        self.assertIn("大陆", joined)

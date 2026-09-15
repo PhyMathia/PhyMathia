@@ -1220,6 +1220,72 @@ check('graph-continent: 打包块在场且零会话键写路径', () => {
   if (chunk.indexOf('switchToSession') < 0 || chunk.indexOf('goToKnowledgeNode') < 0) {
     throw new Error('下钻必须复用既有 switchToSession/goToKnowledgeNode 通道');
   }
+  // v2：主图唯一写路径是 KV continent_edges（现成端点），别的地方不许落笔
+  if (chunk.indexOf('/api/kv/continent_edges') < 0) throw new Error('大陆边必须走 /api/kv/continent_edges');
+  return true;
+});
+
+check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 边界城市 / 确认落笔口 / 透明层底）', () => {
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('CONTINENT_EDGES_API')) throw new Error('KV 端点常量缺失');
+  if (!src.includes('_continentEdgeUndo')) throw new Error('边操作撤销栈缺失');
+  if (!/undoEntry\)\s*_continentEdgeUndo\.push\((undoEntry)\)/.test(src)) throw new Error('提交必须带 undoEntry 才入栈（视口不入栈）');
+  if (!src.includes('continent-node--boundary')) throw new Error('边界城市皮肤类缺失');
+  if (!src.includes('画成大陆边')) throw new Error('共享弹层缺「确认落笔」按钮');
+  if (!src.includes('same_session')) throw new Error('同会话无效边未按断桥通道处理');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-user-link')) throw new Error('我的大陆边样式缺失');
+  if (!css.includes('.continent-dangle-link')) throw new Error('断桥样式缺失');
+  if (!css.includes('.continent-popover')) throw new Error('大陆弹层样式缺失');
+  // 用户拍板：大陆层透明，壁纸与星轨粒子从画布一直透到大陆
+  const layerRule = css.match(/\.continent-layer\s*\{[^}]*\}/);
+  if (!layerRule || !/background:\s*transparent/.test(layerRule[0])) {
+    throw new Error('大陆层底必须透明（保留全局壁纸与粒子）');
+  }
+  return true;
+});
+
+check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当前会话的共享点）', () => {
+  if (typeof sandbox._harnessContinentShared !== 'function' && typeof sandbox.window._harnessContinentShared !== 'function') {
+    throw new Error('_harnessContinentShared 未暴露');
+  }
+  const fn = sandbox._harnessContinentShared || sandbox.window._harnessContinentShared;
+  const data = {
+    clusters: [
+      { sessionId: 'sess_a', title: '波与振动', items: [{ itemId: 'i1', title: '阻尼振动' }] },
+      { sessionId: 'sess_b', title: '傅里叶分析', items: [{ itemId: 'i2', title: '非线性振动' }, { itemId: 'i3', title: '频谱' }] },
+      { sessionId: 'sess_c', title: ' unrelated', items: [{ itemId: 'i4', title: '矩阵' }] },
+    ],
+    shared: [
+      { kind: 'title', label: '振动', sessions: ['sess_a', 'sess_b'],
+        links: [{ from: 'i1', to: 'i2', fromSession: 'sess_a', toSession: 'sess_b' }] },
+      { kind: 'formula', label: 'grad', sessions: ['sess_b', 'sess_c'],
+        links: [{ from: 'i3', to: 'i4', fromSession: 'sess_b', toSession: 'sess_c' }] },
+      { kind: 'title', label: '振动', sessions: ['sess_a', 'sess_b'],  // 同名共享词：去重
+        links: [{ from: 'i2', to: 'i1', fromSession: 'sess_b', toSession: 'sess_a' }] },
+    ],
+  };
+  const realSid = sandbox.window.getCurrentSessionId;
+  sandbox.window.getCurrentSessionId = () => 'sess_a';
+  try {
+    const out = fn(data);
+    if (out.length !== 1) throw new Error('只应留下涉及当前会话的 1 条（跨会话那条不算、同名去重），实际 ' + out.length);
+    const row = out[0];
+    if (row.my_title !== '阻尼振动' || row.peer_title !== '非线性振动' || row.peer_session !== '傅里叶分析') {
+      throw new Error('共享点字段口径错: ' + JSON.stringify(row));
+    }
+    if (row.kind !== 'title') throw new Error('kind 应原样传递');
+    // 查空是正常路径：当前会话不在任何共享点里 → 空数组
+    sandbox.window.getCurrentSessionId = () => 'sess_zzz';
+    if (fn(data).length !== 0) throw new Error('无共享点时应返回空数组');
+  } finally {
+    sandbox.window.getCurrentSessionId = realSid;
+  }
+  // 快照注入口径：harness.js 必须把 continent_shared 放进快照与 token 估算
+  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!hsrc.includes('snapshot.continent_shared')) throw new Error('快照未注入 continent_shared');
+  const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  if (!rsrc.includes('_harnessFetchContinent')) throw new Error('审阅路径未拉取大陆投影');
   return true;
 });
 

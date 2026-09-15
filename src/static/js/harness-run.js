@@ -210,7 +210,11 @@
     // 快照一律用真实画布内容：有图发真图，空画布自然为空。
     // 此前纯问答故意发空快照，一旦意图误判就会让模型看到"空图"而答非所问
     // （真实事故：用户拒绝建议后所有请求 nodes=0，模型回答"没有任何节点"）。
-    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
+    // 大陆 v3（Φ 摆渡）：审阅快照顺带当前画布的跨画布共享点（60s 缓存、失败
+    // 静默——大陆查空是正常路径）；evaluate/apply 提示词不消费它，不注入。
+    const continentData = await _harnessFetchContinent();
+    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
+      harnessPhase === 'normal' ? continentData : null);
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
