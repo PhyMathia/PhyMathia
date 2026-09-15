@@ -192,9 +192,13 @@
       if (_isSocraticFollowup(content)) return [];
       if (assistant.branchType && ['followup', 'confused', 'socratic'].includes(assistant.branchType)) return [];
       if (_looksLikeReasoningLeak(content)) {
+        // 整轮不提取（与后端同判），但**不能静默**：用户看到的是「我明明学过这个概念，
+        // 大陆/知识库却没有」。记下原因，由 autoExtractKnowledge 明确告知并给出办法。
+        _knowledgeSkipReason = 'reasoning_leak';
         console.log('Skip local knowledge extraction: reasoning leak');
         return [];
       }
+      _knowledgeSkipReason = '';
       const formulas = extractLocalFormulas(content);
       const formulaTags = buildFormulaTags(content, formulas);
       const allTitles = [...content.matchAll(/^#{1,3}\s+(.+?)\s*$/gm)]
@@ -481,6 +485,10 @@
     }
 
     let _extractFailToastShown = false;
+    // 「本轮为什么没进知识库」的原因（目前只有一种：正文里混进了模型思维链）。
+    // 提取是静默的，用户只会看到结果缺失——所以原因必须能传到 UI 上去说清楚。
+    let _knowledgeSkipReason = '';
+    let _knowledgeLeakToastShown = false;
 
     async function autoExtractKnowledge(sessionId, messages, opts = {}) {
       if (!messages || messages.length === 0) return;
@@ -506,6 +514,13 @@
         saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems, false, opts);
         saveExtractedFormulas(sessionId, localItems, extractionMessages, {}, opts);
         refreshKnowledgePanelIfOpen();
+        // 本轮一条都没提取到、而且原因是被判成思维链泄漏 → 明说（一次性提示，不刷屏）。
+        // 静默是这里最大的坑：用户以为「问过了就该进库」，实际上永远进不来。
+        if (!localItems.length && _knowledgeSkipReason === 'reasoning_leak'
+            && !_knowledgeLeakToastShown && typeof showToast === 'function') {
+          _knowledgeLeakToastShown = true;
+          showToast('这轮回答里混进了模型的思考过程，没能提取知识点——换一个模型或重新问一次通常就好');
+        }
 
         const payload = { ...basePayload };
         if (agentModel) {
