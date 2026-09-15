@@ -179,7 +179,7 @@
 
   <div class="model-toast" id="modelToast"></div>
 
-  <script src="/js/app.js?v=30764d11"></script>
+  <script src="/js/app.js?v=7fa7204c"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -467,14 +467,14 @@
         <input type="text" id="mcBaseUrl" placeholder="https://api.deepseek.com/v1">
       </div>
       <div class="md-field">
-        <label>思考程度 <span style="color:var(--text-secondary);font-size:11px">（只有推理/混合模型有效，普通模型保持默认即可）</span></label>
+        <label>思考程度 <span style="color:var(--text-secondary);font-size:11px">（只有推理/混合模型有效，普通模型保持 default 即可）</span></label>
         <select id="mcThinking">
-          <option value="">跟随模型默认（不发送参数）</option>
-          <option value="off">关闭思考：跳过推理直接出答案</option>
-          <option value="medium">标准思考：开启适度推理</option>
-          <option value="high">深入思考：更慢更费，难题更扎实</option>
+          <option value="">default</option>
+          <option value="low">low</option>
+          <option value="high">high</option>
+          <option value="max">max</option>
         </select>
-        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">供应商不支持时会自动去掉该参数重发，不会导致报错。</div>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">default 不发送思考参数；供应商不支持时自动去掉该参数重发，不会导致报错。</div>
       </div>
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeModelConfig()">取消</button>

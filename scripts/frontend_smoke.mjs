@@ -1586,7 +1586,7 @@ try {
     throw new Error('种入测试条目失败');
   }
   const withThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Chat'));
-  sandbox.updateUserModel(withThinking.id, { thinking: 'high' }); // 与配置弹窗「保存」同一写入口
+  sandbox.updateUserModel(withThinking.id, { thinking: 'max' }); // 与配置弹窗「保存」同一写入口
   const withoutThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Reasoner'));
   const bodies = [];
   const origFetch = sandbox.fetch;
@@ -1600,7 +1600,7 @@ try {
   } finally {
     sandbox.fetch = origFetch;
   }
-  if (bodies[0].thinking !== 'high') throw new Error('设置的条目应携带 thinking=high，实际 ' + JSON.stringify(bodies[0].thinking));
+  if (bodies[0].thinking !== 'max') throw new Error('设置的条目应携带 thinking=max，实际 ' + JSON.stringify(bodies[0].thinking));
   if (bodies[1].thinking !== '') throw new Error('未设置的条目应发空串，实际 ' + JSON.stringify(bodies[1].thinking));
   console.log('✓ model-thinking：请求边界携带条目思考程度（未设置为空串）');
 } catch (e) {
