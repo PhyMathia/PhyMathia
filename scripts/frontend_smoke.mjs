@@ -1289,66 +1289,140 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
   return true;
 });
 
-check('graph-continent: v4 地图减负（弱证据不上图 / 每对上限 / 同词合并 ×N / 标签错开 / 折叠清单）', () => {
+check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 不叠岛 / 四种折叠原因 / 重逢清单）', () => {
   const plan = sandbox._continentDrawPlan;
-  const place = sandbox._continentPlaceLabel;
-  if (typeof plan !== 'function' || typeof place !== 'function') throw new Error('v4 纯函数未暴露');
-  const placements = {};
-  const mk = (id, cx, cy) => { placements[id] = { x: cx - 80, y: cy - 23, w: 160, h: 46, cx, cy }; };
-  mk('a1', 100, 100); mk('b1', 600, 100);
-  mk('a2', 100, 200); mk('b2', 600, 200);
-  mk('a3', 100, 300); mk('b3', 600, 300);
-  // 服务端 _links_for 的产物：每会话取一条端点，链路落在不同的会话对上
-  const link = (i, j, s1, s2) => ({ from: 'a' + i, to: 'b' + j, fromSession: s1, toSession: s2 });
-  const shared = [
-    { kind: 'title', label: '振动', strength: 'weak', links: [link(3, 3, 's1', 's2')] },
-    { kind: 'title', label: '简谐运动', strength: 'strong',
-      links: [link(1, 1, 's1', 's2'), link(2, 2, 's1', 's3')] },
-    { kind: 'title', label: '阻尼振动', strength: 'strong', links: [link(3, 3, 's2', 's3')] },
-    { kind: 'title', label: '受迫振动', strength: 'strong', links: [link(2, 2, 's1', 's2')] },
+  const layout = sandbox._continentLayoutClusters;
+  const rows = sandbox._continentReunionRows;
+  const fits = sandbox._continentFits;
+  if (typeof plan !== 'function' || typeof layout !== 'function'
+      || typeof rows !== 'function' || typeof fits !== 'function') {
+    throw new Error('v5.1 纯函数未暴露（drawPlan / layoutClusters / reunionRows / fits）');
+  }
+  // 真布局：三座岛（s1 两张卡，s2/s3 各一张）→ 2×2 网格，岛之间留 CONTINENT_CLUSTER_GAP 走廊
+  const clusters = [
+    { sessionId: 's1', title: '波与振动', items: [{ itemId: 'a1' }, { itemId: 'a2' }] },
+    { sessionId: 's2', title: '傅里叶分析', items: [{ itemId: 'b1' }] },
+    { sessionId: 's3', title: '梯度', items: [{ itemId: 'c1' }] },
   ];
-  // 上限 = 1：每对区域只画最强的 1 条
-  const out = plan(shared, placements, 1, 24);
-  if (out.items.some(it => it.entry.strength === 'weak')) throw new Error('弱证据不得画到地图上');
-  // 上限 = 1 时「受迫振动」那条同对连线被截光 → 只剩 2 枚标签（简谐运动/阻尼振动）
-  if (out.items.length !== 2) throw new Error('该画出来的是 2 枚标签，实际 ' + out.items.length);
-  const multi = out.items.find(it => it.entry.label === '简谐运动');
-  if (!multi || multi.links.length !== 2 || multi.total !== 2) {
-    throw new Error('多链路条目应合并成一枚标签（×N 记总链路数），不是每条链路一枚');
+  const lay = layout(clusters);
+  const entry = {
+    kind: 'title', label: '简谐运动', strength: 'strong',
+    owners: ['a1', 'a2', 'b1', 'c1'],
+    links: [
+      { from: 'a1', to: 'b1', fromSession: 's1', toSession: 's2' },
+      { from: 'a1', to: 'c1', fromSession: 's1', toSession: 's3' },
+      { from: 'b1', to: 'c1', fromSession: 's2', toSession: 's3' },
+    ],
+  };
+  const weak = { kind: 'title', label: '振动', strength: 'weak', owners: ['a1', 'b1'],
+    links: [{ from: 'a1', to: 'b1', fromSession: 's1', toSession: 's2' }] };
+  // 验收口径：一个概念跨三座岛 = 1 座城 + 3 根辐条（不是 3 条弧线围三角）
+  const out = plan([weak, entry], lay.placements, lay.clusterRects, 3, 12);
+  if (out.cityCount !== 1 || out.cities.length !== 1) throw new Error('应是 1 座城，实际 ' + out.cityCount);
+  const city = out.cities[0];
+  if (city.reps.length !== 3 || out.spokeCount !== 3) {
+    throw new Error('应是 3 根辐条（每岛一根），实际 ' + city.reps.length + '/' + out.spokeCount);
   }
-  if (multi.x === undefined || multi.y === undefined) throw new Error('标签坐标缺失');
-  if (out.lineCount !== 3) throw new Error('画出的连线数错：' + out.lineCount);
-  // 折叠清单：弱证据 + 被每对上限截光的两类都要在，且原因可分辨（不许静默消失）
-  const reasons = out.folded.map(f => f.reason).sort().join(',');
-  if (reasons !== 'capped,weak') throw new Error('折叠清单口径错：' + reasons);
-  // 上限放宽到 3：被截的那条回到地图上，折叠清单只剩弱证据
-  const loose = plan(shared, placements, 3, 24);
-  if (loose.items.length !== 3 || loose.lineCount !== 4) {
-    throw new Error('上限放宽后连线数错：' + loose.items.length + '/' + loose.lineCount);
+  if (city.entry.label !== '简谐运动') throw new Error('城市挂错了共享概念');
+  if (!(city.x > 0) || !(city.y > 0) || !city.box) throw new Error('城市坐标缺失');
+  // 铁律：城市绝不叠在岛上，也不压在别的城上
+  if (!fits(city.box, lay.clusterRects, 0)) throw new Error('城市叠到了岛上');
+  // 碰撞检测自检：与自身重叠 → 不放行；隔开 50px（远大于间隙 8）→ 放行
+  if (fits(city.box, [city.box], 0)) throw new Error('碰撞检测漏判重叠');
+  if (!fits({ x: city.box.x + city.box.w + 50, y: city.box.y, w: 10, h: 10 }, [city.box], 8)) {
+    throw new Error('碰撞检测误判：隔开 50px 应当放得下');
   }
-  if (loose.folded.map(f => f.reason).join(',') !== 'weak') throw new Error('上限放宽后弱证据仍须折叠');
-  // 边界城市只认画出来的那些
-  if (!out.boundary.b1 || out.boundary.b1 === '振动') throw new Error('边界城市标注错');
-  // 标签错开：同列且太近的第二枚必须下移，否则两枚叠在一起点不到
-  const placed = [];
-  const p1 = place(placed, 300, 200); placed.push(p1);
-  const p2 = place(placed, 306, 203);
-  if (Math.abs(p2.y - p1.y) < 20) throw new Error('重合标签未错开');
-  // 静态契约：折叠清单入口 + 弹层逐链路落笔 + 样式
+  // 辐条另一端必须是各岛代表卡（岛内最早学的那张：s1 → a1，不是 a2）
+  const reps = city.reps.map(r => r.sessionId + ':' + r.itemId).sort().join(',');
+  if (reps !== 's1:a1,s2:b1,s3:c1') throw new Error('代表卡口径错：' + reps);
+  // 代表卡挂 ◈ 徽标；同岛的第二张卡（a2）不做端点
+  if (!out.boundary.a1 || !out.boundary.b1 || !out.boundary.c1) throw new Error('代表卡徽标缺失');
+  if (out.boundary.a2) throw new Error('非代表卡不该当辐条端点');
+  // 弱证据不上图（照报，原因可分辨）
+  if (out.folded.map(f => f.reason).join(',') !== 'weak') {
+    throw new Error('弱证据折叠口径错：' + JSON.stringify(out.folded.map(f => f.reason)));
+  }
+  // 每对区域上限：上限 1 时，同一对岛的第二座城进清单（原因 capped）
+  const second = Object.assign({}, entry, { label: '简谐运动方程', score: 1 });
+  const capped = plan([entry, second], lay.placements, lay.clusterRects, 1, 12);
+  if (capped.cityCount !== 1) throw new Error('每对上限未生效：' + capped.cityCount);
+  if (capped.folded.map(f => f.reason).join(',') !== 'capped') {
+    throw new Error('超每对上限的折叠原因错：' + capped.folded.map(f => f.reason).join(','));
+  }
+  // 全图上限：上限 1 时第二座城进清单（原因 map_capped）
+  const cappedAll = plan([entry, second], lay.placements, lay.clusterRects, 3, 1);
+  if (cappedAll.cityCount !== 1
+      || cappedAll.folded.map(f => f.reason).join(',') !== 'map_capped') {
+    throw new Error('全图上限口径错：' + cappedAll.folded.map(f => f.reason).join(','));
+  }
+  // 无位可放：两岛之间只有 100px 走廊（城市 112 宽摆不进去）→ 折叠而不是叠在岛上
+  const tight = [
+    { sessionId: 's1', title: 'A', x: 0, y: 0, w: 200, h: 200, cx: 100, cy: 100, itemCount: 1 },
+    { sessionId: 's2', title: 'B', x: 300, y: 0, w: 200, h: 200, cx: 400, cy: 100, itemCount: 1 },
+  ];
+  const tightPlace = {
+    a1: { x: 20, y: 20, w: 160, h: 46, cx: 100, cy: 43 },
+    b1: { x: 320, y: 20, w: 160, h: 46, cx: 400, cy: 43 },
+  };
+  const noRoom = plan([entry], tightPlace, tight, 3, 12);
+  if (noRoom.cityCount !== 0) throw new Error('挤不下时不该硬塞城市');
+  if (noRoom.folded.map(f => f.reason).join(',') !== 'no_room') {
+    throw new Error('无位可放的折叠原因错：' + noRoom.folded.map(f => f.reason).join(','));
+  }
+  // 重逢清单：一岛一行 + 同岛多卡缩进次行，每行自带「去看」（跳转不猜）
+  const idx = {
+    items: { a1: '简谐运动', a2: '简谐运动的相位', b1: '简谐运动方程', c1: '简谐运动的能量' },
+    clusterTitles: { s1: '波与振动', s2: '傅里叶分析', s3: '梯度' },
+    itemSession: { a1: 's1', a2: 's1', b1: 's2', c1: 's3' },
+    itemCreated: { a1: 1000, a2: 2000, b1: 3000, c1: 4000 },
+    rel: () => '3 天前',
+  };
+  const html = (() => {
+    // 沙箱的 document 是宽松代理，utils.escapeHtml 的产物会退化成 '0'：断言行文案前
+    // 换成恒等转义（这条测的是本模块的行拼装，转义实现由 utils 自己的用例守）
+    const realEsc = sandbox.escapeHtml;
+    sandbox.escapeHtml = t => (t == null ? '' : String(t));
+    try { return rows(city, idx); } finally { sandbox.escapeHtml = realEsc; }
+  })();
+  if ((html.match(/data-go=/g) || []).length !== 4) throw new Error('重逢清单行数错（应 3 岛 4 卡）');
+  if ((html.match(/>去看</g) || []).length !== 4) throw new Error('每行都要有「去看」');
+  if (html.indexOf('波与振动') < 0 || html.indexOf('傅里叶分析') < 0) throw new Error('清单未写画布名');
+  if (html.indexOf('同岛还有') < 0) throw new Error('同岛多卡未缩进列出');
+  if (html.indexOf('3 天前') < 0) throw new Error('清单未写学习时间');
+  if (html.indexOf('data-go="s1" data-item="a1"') < 0) throw new Error('「去看」缺跳转目标');
+  // 静态契约：城市弹层 + 复用既有下钻通道（不自建切会话协议）+ 样式
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('_continentCityPopover')) throw new Error('城市弹层缺失');
+  if (!src.includes('enterContinentSession(sid, iid)')) throw new Error('「去看」未复用下钻转场');
+  if (!src.includes('continent-city')) throw new Error('城市节点类缺失');
+  if (!src.includes('画成大陆边')) throw new Error('共享弹层缺「确认落笔」按钮');
   if (!src.includes('_continentFoldedPopover')) throw new Error('折叠清单弹层缺失');
   if (!src.includes('continentWeakBtn')) throw new Error('顶栏折叠入口按钮缺失');
-  if (!src.includes('data-link=')) throw new Error('多链路弹层缺逐链路落笔按钮');
-  // 折叠清单的行必须写清「为什么被折叠」，否则用户没法判断该不该管它
-  const rows = sandbox._continentFoldedRows;
-  if (typeof rows !== 'function') throw new Error('_continentFoldedRows 未暴露');
-  const html = rows(out.folded, { items: { a1: '甲概念', b1: '乙概念', a3: '丙概念', b3: '丁概念' } });
-  if (html.indexOf('弱证据') < 0 || html.indexOf('超出每对上限') < 0) throw new Error('折叠原因未标注');
-  if (html.indexOf('data-fold="0"') < 0 || html.indexOf('data-fold="1"') < 0) throw new Error('折叠清单缺逐条入口');
+  if (!src.includes('data-link=')) throw new Error('落笔按钮缺失');
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-city')) throw new Error('城市样式缺失');
+  if (!css.includes('.continent-spoke')) throw new Error('辐条样式缺失');
+  if (!css.includes('.continent-pop-place')) throw new Error('重逢清单画布名样式缺失');
+  if (!css.includes('.continent-pop-when')) throw new Error('重逢清单时间样式缺失');
   if (!css.includes('.continent-pop-row')) throw new Error('弹层行样式缺失');
   if (!css.includes('.continent-pop-reason')) throw new Error('折叠原因样式缺失');
   if (!css.includes('.continent-tool.is-quiet')) throw new Error('折叠入口样式缺失');
+  // 折叠清单行必须写清「为什么被折叠」，否则用户没法判断该不该管它
+  const foldedRows = sandbox._continentFoldedRows;
+  if (typeof foldedRows !== 'function') throw new Error('_continentFoldedRows 未暴露');
+  const foldedHtml = foldedRows(out.folded, idx);
+  if (foldedHtml.indexOf('弱证据') < 0) throw new Error('折叠原因未标注');
+  if (foldedHtml.indexOf('data-fold="0"') < 0) throw new Error('折叠清单缺逐条入口');
+  // 四种折叠原因都要能翻译成人话（用户才知道该不该管它）
+  const allReasons = foldedRows([
+    { entry: entry, reason: 'weak' },
+    { entry: entry, reason: 'capped' },
+    { entry: entry, reason: 'map_capped' },
+    { entry: entry, reason: 'no_room' },
+  ], idx);
+  ['弱证据', '超出每对上限', '超出全图上限', '无位可放'].forEach(label => {
+    if (allReasons.indexOf(label) < 0) throw new Error('折叠原因缺人话标注：' + label);
+  });
   return true;
 });
 
@@ -1369,6 +1443,25 @@ check('graph-continent: 纯布局（空数据合法 / 坐标契约 / 世界尺�
   }
   if (out.clusterRects.length !== 2) throw new Error('clusterRects 数量错');
   if (!(out.worldW > 300 && out.worldH > 100)) throw new Error('世界尺寸可疑');
+  // 世界尺寸必须真的罩得住所有岛（回归：worldW 曾错用行的累加值 worldW===worldH，
+  // 多列布局下世界宽度算小 → 适配画布按假宽度算，地图一开就被裁掉右半边）
+  const right = Math.max(...out.clusterRects.map(r => r.x + r.w));
+  const bottom = Math.max(...out.clusterRects.map(r => r.y + r.h));
+  if (out.worldW < right || out.worldH < bottom) {
+    throw new Error('世界尺寸罩不住岛：' + out.worldW + 'x' + out.worldH + ' < ' + right + 'x' + bottom);
+  }
+  // 3 岛 2 列布局：宽必须大于高（专守上面那个复制粘贴 bug）
+  const wide = layout([
+    { sessionId: 's1', title: 'A', items: [{ itemId: 'i1' }, { itemId: 'i2' }] },
+    { sessionId: 's2', title: 'B', items: [{ itemId: 'i3' }] },
+    { sessionId: 's3', title: 'C', items: [{ itemId: 'i4' }, { itemId: 'i5' }, { itemId: 'i6' }] },
+  ]);
+  if (!(wide.worldW > wide.worldH)) {
+    throw new Error('多列布局的世界宽度错（worldW 用了行的累加值）：' + wide.worldW + 'x' + wide.worldH);
+  }
+  if (wide.worldW < Math.max(...wide.clusterRects.map(r => r.x + r.w))) {
+    throw new Error('世界宽度罩不住最右的岛');
+  }
   return true;
 });
 

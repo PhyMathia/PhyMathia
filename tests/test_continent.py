@@ -308,6 +308,89 @@ class BuildContinentEvidenceHygieneTest(unittest.TestCase):
             self.assertIn(s["strength"], ("strong", "weak"))
 
 
+class BuildContinentOwnersTest(unittest.TestCase):
+    """v5.1 边界城市：「重逢清单」要按岛列出**全部**命中卡，光有 links（每会话一张
+    代表卡）不够——owners 是本条共享概念的完整命中集合，两种字段并存、分工不同。"""
+
+    def test_owners_list_every_hit_not_just_representative(self):
+        # 同一会话里两张卡都命中：links 只给一张代表卡，owners 必须两张都在
+        items = {
+            "k1": _item("k1", S1, "简谐运动", created=1),
+            "k2": _item("k2", S1, "简谐运动方程", created=2),
+            "k3": _item("k3", S2, "简谐运动的能量", created=3),
+        }
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "简谐运动")
+        self.assertEqual(sorted(entry["owners"]), ["k1", "k2", "k3"])
+        # links 仍旧是「每会话一张代表卡」：S1 的代表是最早学的 k1
+        s1_ends = {l["from"] for l in entry["links"] if l["fromSession"] == S1} | \
+            {l["to"] for l in entry["links"] if l["toSession"] == S1}
+        self.assertEqual(s1_ends, {"k1"})
+
+    def test_owners_in_learning_order(self):
+        # 前端重逢清单按岛分组后照 owners 顺序列卡：**每个会话内部**必须是学习顺序
+        # （createdAt 升序）——跨会话怎么交错无所谓，同岛顺序错了清单就读不懂
+        items = {
+            "k1": _item("k1", S1, "简谐运动", created=30),
+            "k2": _item("k2", S1, "简谐运动的相位", created=10),
+            "k3": _item("k3", S2, "简谐运动方程", created=20),
+        }
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "简谐运动")
+        self.assertEqual([iid for iid in entry["owners"] if iid in ("k1", "k2")], ["k2", "k1"])
+
+    def test_owners_capped_and_never_dangling(self):
+        # 上限只防脏数据撑爆 payload；且 owners 里的 id 必须都在投影里（前端要拿它查标题）
+        items = {}
+        for i in range(60):
+            sid = S1 if i % 2 == 0 else S2
+            items["k%02d" % i] = _item("k%02d" % i, sid, "简谐运动与相位", created=i)
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "简谐运动")
+        self.assertLessEqual(len(entry["owners"]), 40)
+        projected = {it["itemId"] for c in out["clusters"] for it in c["items"]}
+        self.assertTrue(set(entry["owners"]) <= projected)
+
+    def test_every_shared_entry_carries_owners(self):
+        # 契约字段：前端重逢清单按 owners 展开同岛多卡，缺字段只能退回代表卡一张
+        items = {
+            "k1": _item("k1", S1, "简谐运动", ["$kx$"]),
+            "k2": _item("k2", S3, "简谐运动的能量", ["$kx$"]),
+            "k3": _item("k3", S2, "受迫振动"),
+            "k4": _item("k4", S3, "阻尼振动"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertTrue(out["shared"])
+        for s in out["shared"]:
+            self.assertTrue(s["owners"], s["label"])
+            self.assertTrue(set(s["owners"]) <= {i["itemId"] for c in out["clusters"]
+                                                 for i in c["items"]})
+
+    def test_owners_do_not_leak_unrelated_items(self):
+        items = {
+            "k1": _item("k1", S1, "阻尼振动", created=1),
+            "k2": _item("k2", S2, "非线性振动", created=2),
+            "k3": _item("k3", S3, "矩阵分解", created=3),
+        }
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "振动")
+        self.assertNotIn("k3", entry["owners"])
+        self.assertEqual(sorted(entry["owners"]), ["k1", "k2"])
+
+    def test_owners_tolerate_string_and_dirty_timestamps(self):
+        # 真机存量数据里有字符串 createdAt（实测 3 条）：原值当排序键会 int/str 比较
+        # 抛 TypeError，把整条 /api/continent 打成 500（真机踩过，必须兜底）
+        items = {
+            "k1": _item("k1", S1, "简谐运动", created="1788010733166"),
+            "k2": _item("k2", S1, "简谐运动的相位", created=1788010771879),
+            "k3": _item("k3", S2, "简谐运动方程", created=None),
+            "k4": _item("k4", S3, "简谐运动的能量", created="坏时间戳"),
+        }
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "简谐运动")
+        self.assertEqual(sorted(entry["owners"]), ["k1", "k2", "k3", "k4"])
+
+
 class BuildContinentUserEdgeTest(unittest.TestCase):
     """v2 主图簇间边：校验 / 悬空 / 去重。"""
 
