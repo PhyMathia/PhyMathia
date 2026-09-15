@@ -322,11 +322,11 @@ function saveGroupKeyCommitted(provider, inputEl) {
 let userModelConfigs = [];
 let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' };
 
-// 思考程度（模型条目上的 thinking 字段）：'' = 跟随模型默认不发送参数；
-// 后端按供应商族映射成 reasoning_effort / enable_thinking / thinking.type / think，
-// 上游不认识时自动剥掉重发（见 main.py _thinking_request_params）。
-const THINKING_LEVEL_LABELS = { off: '关闭', medium: '标准', high: '深入' };
-window.THINKING_LEVEL_LABELS = THINKING_LEVEL_LABELS;
+// 思考程度（模型条目上的 thinking 字段）：''（default）= 跟随模型默认不发送参数；
+// low/high/max 由后端按供应商族映射（reasoning_effort 三档拉伸 / enable_thinking /
+// thinking.type / think），上游不认识时自动剥掉重发（见 main.py _thinking_request_params）。
+const THINKING_LEVELS = ['low', 'high', 'max'];
+window.THINKING_LEVELS = THINKING_LEVELS;
 
 function loadUserModels() {
   try {
@@ -572,10 +572,10 @@ function renderModelList() {
       // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
       const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       const hasKey = !!(m.apiKey || getGroupKey(provider));
-      const thinkingLabel = THINKING_LEVEL_LABELS[m.thinking] || '';
+      const showThinking = THINKING_LEVELS.includes(m.thinking);
       return `<div class="model-item">
         <div class="model-item-info">
-          <div class="model-item-name">${escapeHtml(m.label || m.model)}${thinkingLabel ? `<span class="model-item-thinking">思考:${escapeHtml(thinkingLabel)}</span>` : ''}</div>
+          <div class="model-item-name">${escapeHtml(m.label || m.model)}${showThinking ? `<span class="model-item-thinking">思考:${escapeHtml(m.thinking)}</span>` : ''}</div>
           <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
         </div>
         <div class="model-item-actions">

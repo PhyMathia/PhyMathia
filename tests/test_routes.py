@@ -226,33 +226,29 @@ class ModelsListEndpointTest(RouteTestBase):
 class ThinkingRequestParamsUnitTest(unittest.TestCase):
     """思考程度 → 请求参数映射的纯函数用例（不触网）。"""
 
-    def test_empty_level_sends_nothing(self):
-        # '' = 跟随模型默认：现状行为零变化
-        for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
-            self.assertEqual(main_mod._thinking_request_params(provider, ""), {})
+    def test_default_and_unknown_sends_nothing(self):
+        # ''/default = 跟随模型默认：现状行为零变化；旧值与乱值一律不发参数
+        for level in ("", "default", "off", "medium", "turbo"):
+            for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
+                self.assertEqual(main_mod._thinking_request_params(provider, level), {})
 
-    def test_unknown_level_sends_nothing(self):
-        self.assertEqual(main_mod._thinking_request_params("openai", "turbo"), {})
+    def test_reasoning_effort_stretches_three_tiers(self):
+        # low/high/max 按序拉伸到 reasoning_effort 的 low/medium/high 三档，
+        # 每个 reasoning_effort 供应商（含自定义网关）上三档都有区分度
+        f = main_mod._thinking_request_params
+        self.assertEqual(f("openai", "low"), {"reasoning_effort": "low"})
+        self.assertEqual(f("openai", "high"), {"reasoning_effort": "medium"})
+        self.assertEqual(f("openai", "max"), {"reasoning_effort": "high"})
+        self.assertEqual(f("deepseek", "low"), {"reasoning_effort": "low"})
+        self.assertEqual(f("custom-gw", "max"), {"reasoning_effort": "high"})
 
-    def test_openai_family_uses_reasoning_effort(self):
-        self.assertEqual(main_mod._thinking_request_params("openai", "medium"), {"reasoning_effort": "medium"})
-        self.assertEqual(main_mod._thinking_request_params("openai", "high"), {"reasoning_effort": "high"})
-        self.assertEqual(main_mod._thinking_request_params("openai", "off"), {"reasoning_effort": "none"})
-
-    def test_unknown_provider_falls_back_to_reasoning_effort(self):
-        self.assertEqual(main_mod._thinking_request_params("custom-gw", "high"), {"reasoning_effort": "high"})
-
-    def test_qwen_uses_enable_thinking(self):
-        self.assertEqual(main_mod._thinking_request_params("qwen", "off"), {"enable_thinking": False})
-        self.assertEqual(main_mod._thinking_request_params("qwen", "high"), {"enable_thinking": True})
-
-    def test_zhipu_uses_thinking_type(self):
-        self.assertEqual(main_mod._thinking_request_params("zhipu", "off"), {"thinking": {"type": "disabled"}})
-        self.assertEqual(main_mod._thinking_request_params("zhipu", "medium"), {"thinking": {"type": "enabled"}})
-
-    def test_ollama_uses_think_flag(self):
-        self.assertEqual(main_mod._thinking_request_params("ollama", "off"), {"think": False})
-        self.assertEqual(main_mod._thinking_request_params("ollama", "high"), {"think": True})
+    def test_qwen_zhipu_ollama_boolean_switch(self):
+        # 布尔开关族只有开/关：low/high/max 三档同为「开启」
+        f = main_mod._thinking_request_params
+        self.assertEqual(f("qwen", "low"), {"enable_thinking": True})
+        self.assertEqual(f("qwen", "max"), {"enable_thinking": True})
+        self.assertEqual(f("zhipu", "high"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("ollama", "max"), {"think": True})
 
 
 class ThinkingEffortProxyTest(RouteTestBase):
@@ -284,10 +280,10 @@ class ThinkingEffortProxyTest(RouteTestBase):
         return resp, captured
 
     def test_thinking_param_reaches_upstream(self):
-        resp, captured = self._post_chat("high")
+        resp, captured = self._post_chat("max")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0].get("reasoning_effort"), "high")
+        self.assertEqual(captured[0].get("reasoning_effort"), "high")  # max → 拉伸映射最高档
 
     def test_empty_thinking_sends_no_extra_param(self):
         resp, captured = self._post_chat("")
@@ -298,10 +294,10 @@ class ThinkingEffortProxyTest(RouteTestBase):
 
     def test_rejected_thinking_param_retries_without_it(self):
         # 降级安全网：上游不认识思考参数整请求 400 时，剥掉重发一次，聊天不坏
-        resp, captured = self._post_chat("high", reject_first=True)
+        resp, captured = self._post_chat("low", reject_first=True)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(captured), 2)
-        self.assertIn("reasoning_effort", captured[0])
+        self.assertEqual(captured[0].get("reasoning_effort"), "low")
         self.assertNotIn("reasoning_effort", captured[1])
         self.assertEqual(captured[1]["messages"], captured[0]["messages"])  # 其余请求体不变
 
