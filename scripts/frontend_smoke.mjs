@@ -1576,6 +1576,47 @@ try {
   failed++;
   console.error('❌ model-group：请求边界携带同步后的组密钥 ->', e.message);
 }
+// 串行边界（依赖替换全局 fetch）：思考程度必须随模型条目走到请求边界；
+// 未设置的条目必须发空串（后端零参数，保持现状行为）
+try {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.loadUserModels();
+  if (sandbox.addModelsForProvider('deepseek', 'sk-think', 'https://api.deepseek.com', [{ model: 'deepseek-chat', label: 'DeepSeek Chat' }, { model: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }]) !== 2) {
+    throw new Error('种入测试条目失败');
+  }
+  const withThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Chat'));
+  sandbox.updateUserModel(withThinking.id, { thinking: 'high' }); // 与配置弹窗「保存」同一写入口
+  const withoutThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Reasoner'));
+  const bodies = [];
+  const origFetch = sandbox.fetch;
+  sandbox.fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return { ok: true, status: 200, text: async () => 'ok' };
+  };
+  try {
+    await sandbox.proxyChatWithModel(sandbox.getModelById(withThinking.id), { prompt: 'p' });
+    await sandbox.proxyChatWithModel(sandbox.getModelById(withoutThinking.id), { prompt: 'p' });
+  } finally {
+    sandbox.fetch = origFetch;
+  }
+  if (bodies[0].thinking !== 'high') throw new Error('设置的条目应携带 thinking=high，实际 ' + JSON.stringify(bodies[0].thinking));
+  if (bodies[1].thinking !== '') throw new Error('未设置的条目应发空串，实际 ' + JSON.stringify(bodies[1].thinking));
+  console.log('✓ model-thinking：请求边界携带条目思考程度（未设置为空串）');
+} catch (e) {
+  failed++;
+  console.error('❌ model-thinking：请求边界携带条目思考程度 ->', e.message);
+}
+check('model-thinking：出题四处自带请求体与配置弹窗下拉就位', () => {
+  for (const f of ['src/static/js/quiz-ai.js', 'src/static/js/quiz-ui.js']) {
+    const src = fs.readFileSync(f, 'utf8');
+    const n = (src.match(/thinking: model\.thinking \|\| ''/g) || []).length;
+    if (n !== 2) throw new Error(f + ' 应有 2 处请求体携带 thinking，实际 ' + n);
+  }
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="mcThinking"')) throw new Error('配置模型弹窗缺「思考程度」下拉');
+  return true;
+});
 check('quiz-relearn：结果页正确率环形图按真实比例（旧版是与分数无关的静态圈）', () => {
   const good = sandbox._quizScoreRingHtml(80, 4, 1);
   if (!good.includes('--p:80')) throw new Error('扇形角度未绑定正确率');
