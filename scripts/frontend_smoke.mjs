@@ -1204,6 +1204,59 @@ check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）
   return true;
 });
 
+// ===== 知识大陆（graph-continent.js，大陆计划 v1）静态/沙箱回归 =====
+// 分层不变量：主图是投影层，前端零写路径——绝不写 phymathia_graph_ 会话键；
+// 下钻复用 switchToSession + goToKnowledgeNode，不自建切会话协议。
+
+check('graph-continent: 打包块在场且零会话键写路径', () => {
+  const marker = code.indexOf('/* graph-continent.js */');
+  if (marker < 0) throw new Error('app.js 缺少 graph-continent.js 块（build_frontend.mjs 未注册？）');
+  let end = code.indexOf('/* ', marker + 5);
+  if (end < 0) end = code.length;
+  const chunk = code.slice(marker, end);
+  if (chunk.indexOf('/api/continent') < 0) throw new Error('块内没有 /api/continent 拉取');
+  if (/phymathia_graph_/.test(chunk)) throw new Error('大陆模块不得读写会话图键 phymathia_graph_*');
+  if (chunk.indexOf('phymathia_continent_view') < 0) throw new Error('视口记忆键缺失');
+  if (chunk.indexOf('switchToSession') < 0 || chunk.indexOf('goToKnowledgeNode') < 0) {
+    throw new Error('下钻必须复用既有 switchToSession/goToKnowledgeNode 通道');
+  }
+  return true;
+});
+
+check('graph-continent: 纯布局（空数据合法 / 坐标契约 / 世界尺寸）', () => {
+  const layout = sandbox._continentLayoutClusters;
+  if (typeof layout !== 'function') throw new Error('_continentLayoutClusters 未暴露');
+  const empty = layout([], { w: 1200, h: 800 });
+  if (!empty || !(empty.worldW > 0) || !(empty.worldH > 0)) throw new Error('空数据布局非法');
+  const out = layout([
+    { sessionId: 's1', title: 'A', items: [{ itemId: 'i1' }, { itemId: 'i2' }] },
+    { sessionId: 's2', title: 'B', items: [{ itemId: 'i3' }] },
+  ]);
+  const ids = Object.keys(out.placements);
+  if (ids.length !== 3) throw new Error('placements 数量错');
+  for (const id of ids) {
+    const p = out.placements[id];
+    if (!(p.cx > p.x && p.cy > p.y && p.w > 0 && p.h > 0)) throw new Error('中心点/尺寸非法');
+  }
+  if (out.clusterRects.length !== 2) throw new Error('clusterRects 数量错');
+  if (!(out.worldW > 300 && out.worldH > 100)) throw new Error('世界尺寸可疑');
+  return true;
+});
+
+check('graph-continent: 开合冒烟（幂等 + 全程不写存储键）', async () => {
+  if (typeof sandbox.openContinentView !== 'function' || typeof sandbox.closeContinentView !== 'function') {
+    throw new Error('开合入口未暴露');
+  }
+  const graphKeys = () => Object.keys(storageData).filter(k => k.indexOf('phymathia_graph_') === 0).length;
+  const before = graphKeys();
+  sandbox.closeContinentView(); // 未开先关必须幂等
+  sandbox.closeContinentView();
+  await sandbox.openContinentView(); // 沙箱 fetch 兜底 {} → 失败分支收场，不抛
+  sandbox.closeContinentView();
+  if (graphKeys() !== before) throw new Error('出现会话图键写入');
+  return true;
+});
+
 
 await Promise.all(pendingChecks).catch(() => {});
 // 串行边界用例：proxyChatWithModel 需替换全局 fetch，放到全部并发检查结束后单独跑

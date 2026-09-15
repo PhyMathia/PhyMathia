@@ -473,6 +473,59 @@ class ProxyOpencodeSessionHeaderTest(RouteTestBase):
         self.assertNotIn("User-Agent", seen["headers"])
 
 
+class ContinentRouteTest(RouteTestBase):
+    """大陆投影（大陆计划 v1）：GET /api/continent 只读端点。
+
+    端点每次现算（knowledge + sessions → 投影），必须保持无写路径：
+    请求前后数据文件字节一致，投影结果与纯函数口径一致。
+    """
+
+    def _seed(self):
+        td = Path(self._td.name)
+        (td / "knowledge.json").write_text(json.dumps({
+            "k1": {"id": "k1", "sessionId": "sess_a", "title": "阻尼振动",
+                   "formulas": [], "category": "", "createdAt": 1},
+            "k2": {"id": "k2", "sessionId": "sess_b", "title": "非线性振动",
+                   "formulas": [], "category": "", "createdAt": 2},
+        }, ensure_ascii=False), encoding="utf-8")
+        (td / "sessions.json").write_text(json.dumps({
+            "sess_a": {"id": "sess_a", "title": "波与振动", "updatedAt": 100},
+            "sess_b": {"id": "sess_b", "title": "傅里叶", "updatedAt": 200},
+        }, ensure_ascii=False), encoding="utf-8")
+        storage_mod._JSON_READ_CACHE.clear()
+
+    def test_continent_projection_shape(self):
+        self._seed()
+        resp = self.client.get("/api/continent")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["clusterCount"], 2)
+        self.assertEqual(data["itemCount"], 2)
+        # 簇按会话 updatedAt 降序：傅里叶(200) → 波与振动(100)
+        self.assertEqual([c["sessionId"] for c in data["clusters"]], ["sess_b", "sess_a"])
+        # 跨会话共享词面「振动」被检出
+        self.assertTrue(any(s["kind"] == "title" and s["label"] == "振动"
+                            for s in data["shared"]))
+
+    def test_continent_endpoint_is_readonly(self):
+        self._seed()
+        td = Path(self._td.name)
+        before = ((td / "knowledge.json").read_bytes(),
+                  (td / "sessions.json").read_bytes())
+        resp = self.client.get("/api/continent")
+        self.assertEqual(resp.status_code, 200)
+        after = ((td / "knowledge.json").read_bytes(),
+                 (td / "sessions.json").read_bytes())
+        self.assertEqual(before, after, "只读端点不得改动数据文件")
+
+    def test_continent_empty_library_returns_empty_projection(self):
+        resp = self.client.get("/api/continent")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["clusters"], [])
+        self.assertEqual(data["shared"], [])
+
+
 
 
 if __name__ == "__main__":
