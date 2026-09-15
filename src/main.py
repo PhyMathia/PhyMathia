@@ -411,6 +411,66 @@ async def api_models_chat(request: Request):
 
 
 
+@app.post("/api/models/list")
+async def api_models_list(request: Request):
+    """代理拉取供应商在线模型列表（OpenAI 兼容 GET {base_url}/models）。
+
+    添加模型弹窗「获取模型列表」按钮的后端：内置预设清单只是初值会过期，
+    在线列表才是事实源；本地服务（Ollama/LM Studio/llama.cpp）同样适用——
+    列出的就是本机已装模型。密钥回退与 SSRF 校验与 /api/models/chat 同口径。
+    """
+    payload = await _parse_json_object(request)
+    provider = payload.get("provider", "")
+    api_key = payload.get("api_key", "")
+    env_key_used = False
+    if not api_key and provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        env_key_used = bool(api_key)
+    if not api_key and provider == "opencode-go":
+        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        env_key_used = bool(api_key)
+
+    base_url = payload.get("base_url", "")
+    if not base_url:
+        provider_info = AI_PROVIDERS.get(provider)
+        if not provider_info:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}' and no base_url provided")
+        base_url = provider_info["base_url"]
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {}
+    if api_key and provider != "opencode":
+        headers["Authorization"] = f"Bearer {api_key}"
+    headers.update(_opencode_session_headers(base_url, ""))
+
+    client = get_http_client()
+    try:
+        resp = await client.get(url, headers=headers, timeout=httpx.Timeout(20.0, connect=8.0))
+    except httpx.HTTPError as e:
+        logger.error(f"models list connect error: {provider} {url}: {e}")
+        raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+    if resp.status_code != 200:
+        logger.error(f"models list upstream error: status={resp.status_code} body={resp.text[:300]} url={url}")
+        raise HTTPException(status_code=502, detail=f"上游返回 {resp.status_code}: {resp.text[:300]}")
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="上游返回的不是 JSON")
+    raw = data.get("data") if isinstance(data, dict) else data
+    ids = []
+    if isinstance(raw, list):
+        for item in raw:
+            mid = item.get("id") if isinstance(item, dict) else None
+            if isinstance(mid, str) and mid.strip():
+                ids.append(mid.strip())
+    return {"models": sorted(set(ids))}
+
+
+
 # ====== 滚动会话记忆（长会话后台摘要，不阻塞当前请求） ======
 # key -> asyncio.Task：必须存任务对象的强引用——只存 key 时 create_task 返回的
 # Task 可能被 GC 中途取消（asyncio 官方文档警告）；key 用于同会话去重

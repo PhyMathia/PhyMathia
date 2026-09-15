@@ -861,7 +861,6 @@ check('knowledge: P4 extractLocalKnowledge 模板化摘要（多公式回答逐�
   return true;
 });
 
-// ===== M1 可视化数值实验自动校验 =====
 check('chat：推理通道不混进正文（混进去 → 整轮知识提取被「思维链泄漏」闸门拒收 → 大陆永远没有这座岛）', () => {
   // 真机事故（2026-09-15）：推理型模型先吐 reasoning_content 再吐 content，前端旧写法
   // `assistantContent += delta.content || delta.reasoning_content` 把思维链灌进正文，
@@ -886,6 +885,7 @@ check('chat：推理通道不混进正文（混进去 → 整轮知识提取被�
   return true;
 });
 
+// ===== M1 可视化数值实验自动校验 =====
 check('viz-check：三桥注入与桥体打包存在', () => {
   if (!code.includes('_VIZ_CHECK_BRIDGE')) throw new Error('打包产物缺 _VIZ_CHECK_BRIDGE');
   // 压缩产物会去掉加号两侧空格，用空白容忍匹配三桥拼接
@@ -980,14 +980,39 @@ check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup
   return true;
 });
 
-check('model-group：DeepSeek 官方模型自动预置（组内 2 个 + 组密钥继承）', () => {
+check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单 + 在线拉取）静态断言', () => {
+  // 打包产物经 esbuild 压缩（键名引号/空白会被改写），只能断言裸标识符存在
+  for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput']) {
+    if (!code.includes(t)) throw new Error('打包产物缺：' + t);
+  }
+  // 自动预置必须已移除：列表里只允许出现用户主动加过的模型（用户反馈的根因）
+  for (const gone of ['_ensureOpencodeGoModels', '_ensureOpencodeFreeModels', '_ensureDeepseekModels']) {
+    if (code.includes(gone)) throw new Error('自动预置函数仍在：' + gone);
+  }
+  // 预设注册表覆盖主流供应商（新增口径的最低门槛；注册表挂 window 供运行时读取）
+  if (!code.includes('window.MODEL_PRESETS')) throw new Error('注册表未挂 window');
+  for (const p of ['zhipu', 'moonshot', 'dashscope', 'bigmodel', 'minimaxi', 'siliconflow', 'generativelanguage', 'anthropic', 'openrouter', 'groq', '11434', '1234']) {
+    if (!code.includes(p)) throw new Error('预设注册表缺供应商特征串：' + p);
+  }
+  return true;
+});
+
+check('model-add：无自动预置（loadUserModels 后列表为空）+ 预设添加核心（勾选入库 + 组密钥同步 + 重复跳过）', () => {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
   sandbox.loadUserModels();
-  sandbox.saveGroupKey('deepseek', 'sk-ds-group');
+  if (sandbox.getAllModels().length !== 0) throw new Error('loadUserModels 不得自动预置任何模型');
+  const preset = sandbox.window.MODEL_PRESETS.deepseek; // const 声明只挂 window，不在沙箱全局
+  if (!preset || !Array.isArray(preset.models) || preset.models.length < 2) throw new Error('deepseek 预设应 ≥2 个模型');
+  const entries = preset.models.map(m => ({ model: m.id, label: m.label }));
+  const n = sandbox.addModelsForProvider('deepseek', 'sk-ds-group', preset.baseUrl, entries);
+  if (n !== preset.models.length) throw new Error('应新增 ' + preset.models.length + ' 个，实际 ' + n);
   const ds = sandbox.getAllModels().filter(m => m.provider === 'deepseek');
-  const names = ds.map(m => m.name).join(',');
-  if (ds.length !== 2) throw new Error('deepseek 预设应 2 个，实际 ' + ds.length + ': ' + names);
-  if (!ds.every(m => m.hasKey)) return false; // 组密钥同步到条目
-  if (!names.includes('Reasoner') || !names.includes('Chat')) return false;
+  if (ds.length !== preset.models.length) throw new Error('入库条数不符: ' + ds.length);
+  if (!ds.every(m => m.hasKey)) throw new Error('组密钥未同步到条目');
+  if (!ds.map(m => m.name).some(s => s.includes('Chat'))) throw new Error('label 未带入: ' + ds.map(m => m.name).join(','));
+  const again = sandbox.addModelsForProvider('deepseek', 'sk-ds-group', preset.baseUrl, entries);
+  if (again !== 0) throw new Error('重复添加应全部跳过，实际新增 ' + again);
   // 清理组密钥与条目缓存，避免污染后续用例的「组外不触碰」断言
   sandbox.saveGroupKey('deepseek', '');
   sandbox.localStorage.removeItem('phymathia_user_models');
@@ -995,18 +1020,35 @@ check('model-group：DeepSeek 官方模型自动预置（组内 2 个 + 组密�
   return true;
 });
 
-check('model-group：组密钥写入同步到组内全部条目（组外不触碰）', () => {
+check('model-add：组密钥写入同步到组内全部条目（组外不触碰）', () => {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
   sandbox.loadUserModels();
-  const all = sandbox.getAllModels();
-  const goCount = all.filter(m => m.provider === 'opencode-go').length;
-  if (goCount < 30) throw new Error('opencode-go 预设应已自动补种，实际 ' + goCount);
+  const goPreset = sandbox.window.MODEL_PRESETS['opencode-go'];
+  const picked = goPreset.models.slice(0, 3);
+  const n = sandbox.addModelsForProvider('opencode-go', '', goPreset.baseUrl, picked.map(m => ({ model: m.id, label: m.label })));
+  if (n !== 3) throw new Error('手动勾选 3 个应入库 3 个，实际 ' + n);
+  if (sandbox.getAllModels().filter(m => m.provider === 'opencode-go').some(m => m.hasKey)) throw new Error('未填密钥不应误标已配置');
   sandbox.saveGroupKey('opencode-go', 'sk-group-test');
   const after = sandbox.getAllModels();
   if (!after.filter(m => m.provider === 'opencode-go').every(m => m.hasKey)) return false;
   if (after.filter(m => m.provider !== 'opencode-go').some(m => m.hasKey)) return false; // 组外不得被污染
   if (JSON.parse(sandbox.localStorage.getItem('phymathia_model_group_keys'))['opencode-go'] !== 'sk-group-test') return false;
+  // 组密钥存在时，后加的条目自动继承（空密钥不覆盖组里已有密钥）
+  const extra = sandbox.addModelsForProvider('opencode-go', '', goPreset.baseUrl, [{ model: 'late-added-model', label: '后加模型' }]);
+  if (extra !== 1) throw new Error('后加条目应入库');
+  // getAllModels 的行项不带 model 原文（只有拼好的 name），按显示名匹配
+  const late = sandbox.getAllModels().find(m => m.provider === 'opencode-go' && m.name.includes('后加模型'));
+  if (!late || !late.hasKey) throw new Error('后加条目未继承组密钥');
   sandbox.saveGroupKey('opencode-go', '');
   if (sandbox.getAllModels().filter(m => m.provider === 'opencode-go').some(m => m.hasKey)) return false; // 清空也同步
+  // 整组删除：条目、组密钥一并清
+  const removed = sandbox.deleteModelGroup('opencode-go');
+  if (removed !== 4) throw new Error('整组删除应清 4 条，实际 ' + removed);
+  if (sandbox.getAllModels().some(m => m.provider === 'opencode-go')) throw new Error('整组删除后仍有残留');
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_model_group_keys') || '{}')['opencode-go'] !== undefined) throw new Error('组密钥未一并删除');
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
   return true;
 });
 
@@ -1507,8 +1549,11 @@ check('graph-continent: 开合冒烟（幂等 + 全程不写存储键）', async
 await Promise.all(pendingChecks).catch(() => {});
 // 串行边界用例：proxyChatWithModel 需替换全局 fetch，放到全部并发检查结束后单独跑
 try {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
   sandbox.loadUserModels();
-  sandbox.saveGroupKey('opencode-go', 'sk-group-e2e');
+  const seeded = sandbox.addModelsForProvider('opencode-go', 'sk-group-e2e', 'https://opencode.ai/zen/go/v1', [{ model: 'hy3', label: '混元 Hy3' }]);
+  if (seeded !== 1) throw new Error('种入测试条目失败');
   const entry = sandbox.getAllModels().find(m => m.provider === 'opencode-go');
   const cfg = sandbox.getModelById(entry.id);
   if (!cfg || cfg.provider !== 'opencode-go') throw new Error('getModelById 未命中 opencode-go 条目');
