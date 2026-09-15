@@ -585,7 +585,7 @@ function openGraphHistoryPanel() {
   _ensureGraphHistory();
   if (!graphHistoryPanel) {
     graphHistoryPanel = document.createElement("div");
-    graphHistoryPanel.className = "graph-history-panel";
+    graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog";
     graphHistoryPanel.innerHTML = ''
       + '<div class="graph-history-head-row"><span class="graph-history-title">修改历史</span>'
       + '<button type="button" class="graph-history-close" onclick="closeGraphHistoryPanel()" aria-label="关闭">&times;</button></div>'
@@ -1453,7 +1453,7 @@ function _clearConsistencyTarget() {
 function openGraphConsistencyPanel() {
   if (!graphConsistencyPanel) {
     graphConsistencyPanel = document.createElement("div");
-    graphConsistencyPanel.className = "graph-consistency-panel";
+    graphConsistencyPanel.className = "graph-consistency-panel aurora-glass aurora-glass--dialog";
     graphConsistencyPanel.innerHTML = ''
       + '<div class="graph-consistency-head"><span class="graph-consistency-title">图体检</span>'
       + '<button type="button" class="graph-consistency-close" onclick="closeGraphConsistencyPanel()" aria-label="关闭">&times;</button></div>'

@@ -1413,7 +1413,7 @@ function _renderObStep() {
   setTimeout(() => {
     if (step.type === 'welcome') {
       spotlight.style.display = 'none';
-      card.className = 'onboarding-card ob-welcome';
+      card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog';
       const isLast = _obStep === _obSteps.length - 1;
       const primaryAction = step.example
         ? '<button class="ob-btn ob-btn-ghost" onclick="nextObStep()">稍后再说</button>'
@@ -1467,7 +1467,7 @@ function _renderObStep() {
         spotlight.style.display = 'none';
       }
 
-      card.className = 'onboarding-card';
+      card.className = 'onboarding-card aurora-glass aurora-glass--dialog';
       const isLast = _obStep === _obSteps.length - 1;
 
       // Position card near the target
