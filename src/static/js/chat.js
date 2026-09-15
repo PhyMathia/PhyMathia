@@ -351,6 +351,11 @@
       progressFinalLabel = '';
       showProgress('thinking');
       let assistantContent = '';
+      // 推理通道单独攒：思维链**不是**回答正文。混进正文的后果不只是难看——知识提取的
+      // v4 闸门（前后端同判 `_looks_like_reasoning_leak`）会把整轮判成「思维链泄漏」而
+      // 拒绝提取，这条概念就永远进不了知识库，大陆上也就永远没有这座岛
+      // （真机复现：推理模型答「旋度」→ 知识库无旋度 → 大陆无旋度岛）。
+      let assistantReasoning = '';
       let assistantDiv = null;
       let streamRenderPending = false;
       let streamRenderFrame = null;
@@ -489,7 +494,10 @@
                   lastChunkTime = Date.now();
                   if (currentStage !== 'generating') showProgress('generating', Math.max(progressPercent, PROGRESS_PHASE.generating.percent), '正在生成回答');
                   if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
-                  assistantContent += delta.content || delta.reasoning_content || '';
+                  // 两个通道分开攒：只有 content 进正文，reasoning_content 留在旁边
+                  // （旧写法 `delta.content || delta.reasoning_content` 会把思维链灌进正文）
+                  if (delta.content) assistantContent += delta.content;
+                  else assistantReasoning += delta.reasoning_content;
                   streamingAssistant.content = assistantContent;
                   const streamProgress = _streamProgressFromContent(assistantContent);
                   if (streamProgress.percent > progressPercent) _setProgress(streamProgress.percent, streamProgress.label);
@@ -508,6 +516,12 @@
         }
 
         _setProgress(90, '正在整理回答');
+
+        // 模型只吐了推理通道、正文一个字都没有时退回思维链：宁可显示思维链，也别给一个
+        // 空气泡（这种轮次知识提取照旧会被闸门拒收——那是对的，思维链不是知识）
+        if (!assistantContent.trim() && assistantReasoning.trim()) {
+          assistantContent = assistantReasoning;
+        }
 
         // 最终渲染：优先 XML 标签解析，兜底 heading 正则
         if (assistantDiv && assistantContent) {

@@ -862,6 +862,30 @@ check('knowledge: P4 extractLocalKnowledge 模板化摘要（多公式回答逐�
 });
 
 // ===== M1 可视化数值实验自动校验 =====
+check('chat：推理通道不混进正文（混进去 → 整轮知识提取被「思维链泄漏」闸门拒收 → 大陆永远没有这座岛）', () => {
+  // 真机事故（2026-09-15）：推理型模型先吐 reasoning_content 再吐 content，前端旧写法
+  // `assistantContent += delta.content || delta.reasoning_content` 把思维链灌进正文，
+  // 正文以「用户要求：…当前分支类型…必须只输出…」开头 → 前后端同判的 _looksLikeReasoningLeak
+  // 命中 → 整轮不提取 → 用户问过「旋度」，知识库与大陆里却永远没有旋度。
+  const src = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  if (/assistantContent \+= delta\.content \|\| delta\.reasoning_content/.test(src)) {
+    throw new Error('思维链又被灌进正文了（知识提取会被闸门整轮拒收）');
+  }
+  if (!/if \(delta\.content\) assistantContent \+= delta\.content;/.test(src)) {
+    throw new Error('正文累加口径缺失（只认 delta.content）');
+  }
+  if (!src.includes('assistantReasoning')) throw new Error('推理通道未单独攒');
+  if (!src.includes('assistantContent = assistantReasoning')) {
+    throw new Error('模型只吐推理、正文为空时的兜底缺失（会留一个空气泡）');
+  }
+  // 被闸门跳过时必须让用户知道原因：静默正是这场事故最坑的地方
+  const feat = fs.readFileSync('src/static/js/chat-features.js', 'utf8');
+  if (!feat.includes("_knowledgeSkipReason = 'reasoning_leak'")) throw new Error('提取被跳过时未记录原因');
+  if (!feat.includes('混进了模型的思考过程')) throw new Error('跳过原因未告知用户（不许静默）');
+  if (!code.includes('混进了模型的思考过程')) throw new Error('打包产物缺提示文案（未 build:js？）');
+  return true;
+});
+
 check('viz-check：三桥注入与桥体打包存在', () => {
   if (!code.includes('_VIZ_CHECK_BRIDGE')) throw new Error('打包产物缺 _VIZ_CHECK_BRIDGE');
   // 压缩产物会去掉加号两侧空格，用空白容忍匹配三桥拼接
