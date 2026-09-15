@@ -25,6 +25,11 @@ v4 证据卫生（一条 40 字的推理泄漏标题曾炸出 4 条虚假共享�
 - **公式 token 黑名单**：`dx`/`dt`/`oint` 这类通用符号不算结构共享（只在本模块剔，
   不动喂 prompt 的 `concept._formula_tokens`）；
 - **强弱分级** `strength`：strong 才画到地图上，weak（2 字弱证据与泛后缀）只进清单。
+
+v5.1 边界城市：`links` 与 `owners` 两个字段分工不同、都要有——`links` 给每会话
+**一张代表卡**（前端画辐条用），`owners` 给**全部命中卡**（前端「重逢清单」按岛
+列出，同岛多卡也照列）。地图怎么画（城市上限 / 每对区域上限 / 无位可放）全在前端
+纯函数里，本模块只负责如实报出证据。
 """
 
 import itertools
@@ -62,6 +67,9 @@ _GENERIC_TITLE_TERMS = _GENERIC_TERMS | {"表达式", "坐标系", "示意图"}
 TITLE_MAX_CHARS = 40
 FORMULA_PREVIEW_CHARS = 48
 FORMULA_MAX_CHARS = 200   # 供 KaTeX 渲染的原始 TeX，宽松截断只防脏数据
+# v5.1 每条共享概念带上全部命中条目 id（前端「重逢清单」要按岛列出同岛多卡）；
+# 上限只防脏数据撑爆 payload，不影响地图与折叠清单
+SHARED_OWNERS_LIMIT = 40
 # v2 用户簇间边：字段上限与总量护栏（防脏数据无限生长）
 EDGE_LABEL_MAX_CHARS = 40
 USER_EDGE_LIMIT = 120
@@ -160,6 +168,30 @@ def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
              "fromSession": a, "toSession": b} for a, b in pairs]
 
 
+def _created_rank(item) -> float:
+    """createdAt 的数值兜底：真机存量数据里有字符串时间戳（实测 3 条）与坏值。
+
+    排序键一旦混用 int/str 就抛 TypeError，会把整条 /api/continent 打成 500——
+    投影层对脏数据的立场是「照常返回，别报错」。
+    """
+    raw = (item or {}).get("createdAt") or 0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _owner_ids(owners: set, items: dict) -> list:
+    """v5.1：命中的**全部**条目 id，按学习顺序（createdAt 升序，同刻按 id 稳定）排。
+
+    links 只给每会话一张代表卡（画图用），owners 给全部命中卡——前端「重逢清单」
+    要按岛分组、把同岛的多张卡也列出来（词面命中是事实，不该被代表卡口径吞掉）。
+    簇内条目本就按 createdAt 排，所以这个全局序在**每个会话内部**就是学习顺序。
+    """
+    return sorted(owners, key=lambda iid: (_created_rank(items.get(iid)), iid))[
+        :SHARED_OWNERS_LIMIT]
+
+
 def _shared_strength(kind: str, label: str) -> str:
     """证据分级：strong 才画到地图上，weak 只进清单（弹层里照报）。
 
@@ -249,7 +281,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
     - clusters: 每个有知识条目的会话一个簇，按会话最近更新排序；簇内条目按
       createdAt 升序（学习顺序）；
     - shared: 跨会话共享概念（kind=title 公共子串 / kind=formula 公式 token），
-      按强度排序取前 SHARED_CONCEPT_LIMIT 条，每条带 links（簇间连线端点）；
+      按强度排序取前 SHARED_CONCEPT_LIMIT 条，每条带 links（每会话一张代表卡的
+      端点，画图用）与 owners（全部命中条目 id，v5.1 重逢清单列同岛多卡用）；
     - userEdges / danglingEdges（v2）：用户在主图上画的簇间边，经当前投影校验；
       悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口。
     """
@@ -279,8 +312,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
     clusters = []
     session_rank = {}  # itemId → 簇内序（共享连线端点取「每会话最前」用）
     for sid in sorted(by_session, key=_cluster_sort_key):
-        iids = sorted(by_session[sid],
-                      key=lambda i: ((items[i].get("createdAt") or 0), i))
+        iids = sorted(by_session[sid], key=lambda i: (_created_rank(items[i]), i))
         for rank, iid in enumerate(iids):
             session_rank[iid] = rank
         clusters.append({
@@ -328,6 +360,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         shared.append({"kind": "title", "label": label, "score": round(score, 2),
                        "strength": _shared_strength("title", label),
                        "sessions": sorted(sids),
+                       "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
     for token, owners, _sids in _cross_session_owners(token_owners, item_session):
         sids = {item_session[iid] for iid in owners}
@@ -335,6 +368,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         shared.append({"kind": "formula", "label": token, "score": round(score, 2),
                        "strength": _shared_strength("formula", token),
                        "sessions": sorted(sids),
+                       "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
 
     shared.sort(key=lambda s: (-s["score"], s["label"]))

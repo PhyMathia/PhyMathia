@@ -1,12 +1,14 @@
-// ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市）=====
+// ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市 + v4 证据卫生 + v5.1 城市进城）=====
 // 主图是投影层：聚簇与共享概念全部来自 GET /api/continent（服务端从 knowledge +
 // sessions 现算），本文件绝不写任何 phymathia_graph_ 会话键——子图（各会话探索
 // 网）是唯一事实源，主图随时可重算。
 // v2 起主图拥有**自己的**簇间边（KV `continent_edges`，经 /api/kv 读写）：
 // 「连接」模式点两个不同区域的概念完成落笔；端点失效的边渲染成断桥，工具条提供
 // 清理入口；撤销栈只记边操作（新增/删除/清理/改备注），视口平移缩放不入栈。
-// v3 共享概念升级为「边界城市」：端点节点挂徽标皮肤，连线标签可点开弹层，弹层里
-// 「画成大陆边」= Φ 口头建议之后的用户确认落笔口（确认才写边）。
+// v3 给共享概念的端点卡挂 ◈ 徽标；v4 做证据卫生（弱证据不上图，只进折叠清单）。
+// v5.1 共享概念从「弧线 + 浮空标签」升级为**边界城市**：城市摆在它所连的岛之间的
+// 走廊里（摆不下进折叠清单，不许叠在岛上），每座岛伸一根辐条连到代表卡；点城市弹
+// **重逢清单**（每座岛一行 + 「去看」），绝不替用户猜该跳哪座岛。
 // 交互三层口径（游戏地图模型：层级离散、整层切换，不是连续语义缩放）：
 // - 下钻：点簇 / 概念节点 → 镜头向点击处推进（转场动画）→ switchToSession，
 //   概念节点再经 goToKnowledgeNode 直达定位（等于点 POI 而非进城门口）；
@@ -16,10 +18,14 @@
 const CONTINENT_VIEW_KEY = 'phymathia_continent_view'; // 视口记忆（非会话键）
 const CONTINENT_EDGES_API = '/api/kv/continent_edges'; // 主图簇间边的读写端点（现成 KV 通道）
 const CONTINENT_LINE_LIMIT = 24;      // 与服务端 SHARED_CONCEPT_LIMIT 同口径的二次保险
-// v4 地图减负：同一对区域最多画几条自动连线（其余进清单）；标签竖向错开步长/同列容差
-const CONTINENT_PAIR_LINK_LIMIT = 3;
-const CONTINENT_LABEL_GAP_Y = 22;
-const CONTINENT_LABEL_SPAN_X = 70;
+// v5.1 边界城市：同一对区域之间最多几座城（沿用 v4「每对上限」的精神）+ 全图总量上限。
+// 城市尺寸按「摆得进两岛之间的走廊」定：CONTINENT_CLUSTER_GAP = 150，城市 112 宽
+// 居中放进去两侧各余 19px，够本；再宽就必然压到岛上。
+const CONTINENT_PAIR_CITY_LIMIT = 3;
+const CONTINENT_CITY_LIMIT = 12;
+const CONTINENT_CITY_W = 112;
+const CONTINENT_CITY_H = 32;
+const CONTINENT_CITY_GAP = 8;         // 城市与岛、城市与城市的最小间隙
 const CONTINENT_USER_EDGE_LIMIT = 120; // 与服务端 USER_EDGE_LIMIT 同口径
 const CONTINENT_NODE_W = 160;
 const CONTINENT_NODE_H = 46;
@@ -100,13 +106,16 @@ function _continentLayoutClusters(clusters) {
     colW[ci] = Math.max(colW[ci] || 0, m.w);
     rowH[ri] = Math.max(rowH[ri] || 0, m.h);
   });
+  // 两个累加器必须分开：以前列、行共用同一个 acc，worldW 实际拿到的是**行**的累加值
+  // （worldW === worldH），多列布局下世界宽度被算小 → 适配画布按假宽度算，地图一开
+  // 就被裁掉右半边（真机截图才发现：岛排到 x=1628，世界却声明 674 宽）
   const colX = [], rowY = [];
-  let acc = CONTINENT_WORLD_MARGIN;
-  for (let i = 0; i < colW.length; i++) { colX.push(acc); acc += colW[i] + CONTINENT_CLUSTER_GAP; }
-  acc = CONTINENT_WORLD_MARGIN;
-  for (let i = 0; i < rowH.length; i++) { rowY.push(acc); acc += rowH[i] + CONTINENT_CLUSTER_GAP; }
-  const worldW = Math.max(400, acc - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
-  const worldH = Math.max(300, acc - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
+  let accX = CONTINENT_WORLD_MARGIN;
+  for (let i = 0; i < colW.length; i++) { colX.push(accX); accX += colW[i] + CONTINENT_CLUSTER_GAP; }
+  let accY = CONTINENT_WORLD_MARGIN;
+  for (let i = 0; i < rowH.length; i++) { rowY.push(accY); accY += rowH[i] + CONTINENT_CLUSTER_GAP; }
+  const worldW = Math.max(400, accX - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
+  const worldH = Math.max(300, accY - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
   measured.forEach((m, i) => {
     const ci = i % cols, ri = Math.floor(i / cols);
     const x = colX[ci] + (colW[ci] - m.w) / 2;
@@ -140,12 +149,16 @@ async function _continentFetchData() {
 
 function _continentItemIndex() {
   const d = _continentData || {};
-  const items = {}, clusterTitles = {};
+  const items = {}, clusterTitles = {}, itemSession = {}, itemCreated = {};
   (d.clusters || []).forEach(c => {
     clusterTitles[c.sessionId] = c.title || '未命名画布';
-    (c.items || []).forEach(it => { items[it.itemId] = it.title || ''; });
+    (c.items || []).forEach(it => {
+      items[it.itemId] = it.title || '';
+      itemSession[it.itemId] = c.sessionId;
+      itemCreated[it.itemId] = it.createdAt || 0;
+    });
   });
-  return { items, clusterTitles };
+  return { items, clusterTitles, itemSession, itemCreated };
 }
 
 function _continentNodeEl(itemId) {
@@ -171,7 +184,7 @@ function _continentEnsureLayer() {
       '知识大陆<span class="continent-sub" id="continentStats"></span></div>' +
       '<div class="continent-tools">' +
         '<button class="continent-tool" id="continentLinkBtn" title="连接两个不同区域的概念（画一条大陆边）">连接</button>' +
-        '<button class="continent-tool is-quiet" id="continentWeakBtn" title="没画到地图上的共享点（弱证据 / 超出每对上限）：照报，可逐条确认落笔" hidden>折叠 0 条</button>' +
+        '<button class="continent-tool is-quiet" id="continentWeakBtn" title="没画到地图上的共享点（弱证据 / 超上限 / 无位可放）：照报，可逐条确认落笔" hidden>折叠 0 条</button>' +
         '<button class="continent-tool" id="continentUndoBtn" title="撤销上一条边操作 (Ctrl+Z)" hidden>↩ 撤销</button>' +
         '<button class="continent-tool is-warn" id="continentCleanBtn" title="移除一端已不在大陆上的连线" hidden>清理断线</button>' +
       '</div>' +
@@ -203,9 +216,11 @@ function _continentEnsureLayer() {
   return layer;
 }
 
-// ---------- v4 画什么：强证据 + 每对区域上限 + 标签错开（纯函数，无 DOM 实测） ----------
-// 一枚标签 = 一条共享概念（同词跨 N 会话标 ×N），不是每条链路一枚。弱证据不上地图：
-// 2 字串（「表达」「坐标」）与泛后缀单独立不住，只进顶栏「弱证据」清单（照报，但不抢视觉）。
+// ---------- v4/v5.1 画什么：城市选位 + 每对区域上限 + 折叠原因（纯函数，无 DOM 实测） ----------
+// 一枚城市 = 一条跨 ≥2 画布的共享概念（同词跨 N 会话仍是一枚，不是每条链路一枚）。
+// v4 的「弧线 + 浮空标签」在 v5.1 整体退役：共享概念升级为岛与岛之间的**城市节点**，
+// 每座岛伸一根辐条连到该岛的代表卡；摆不下（撞岛 / 撞别的城）就进折叠清单（原因
+// 「无位可放」）——绝不叠在别的岛上。弱证据照旧不上图，只进清单。
 function _continentLinkMid(a, b) {
   // 二次贝塞尔（控制点上抬 lift）上 t=0.5 的点：与连线绘制同一公式，标签才落在弧上
   const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2;
@@ -216,59 +231,144 @@ function _continentLinkMid(a, b) {
   return { x: (a.cx + 2 * qx + b.cx) / 4, y: (a.cy + 2 * qy + b.cy) / 4, qx, qy };
 }
 
-function _continentPlaceLabel(placed, x, y) {
-  // 同端点对的标签中点必然重合（同词跨 N 会话 / 端点相同），竖向错开让每一枚都点得到
-  let ty = y;
-  for (let guard = 0; guard < 12; guard++) {
-    const clash = placed.some(p =>
-      Math.abs(p.x - x) < CONTINENT_LABEL_SPAN_X && Math.abs(p.y - ty) < CONTINENT_LABEL_GAP_Y);
-    if (!clash) break;
-    ty += CONTINENT_LABEL_GAP_Y;
+function _continentCityBox(cx, cy) {
+  return {
+    x: cx - CONTINENT_CITY_W / 2, y: cy - CONTINENT_CITY_H / 2,
+    w: CONTINENT_CITY_W, h: CONTINENT_CITY_H, cx: cx, cy: cy,
+  };
+}
+
+// 城市候选落点：所连岛群的质心 + 每对岛的中点（两岛之间的走廊 = 首选），各带一圈
+// 小偏移——走廊被占时挤一挤（同一条走廊竖着摆得下 3 座城），别动不动判「无位可放」。
+function _continentCitySpots(targets) {
+  const pts = (targets || []).filter(t => t && isFinite(t.cx) && isFinite(t.cy));
+  if (pts.length < 2) return [];
+  const seeds = [];
+  let sx = 0, sy = 0;
+  pts.forEach(t => { sx += t.cx; sy += t.cy; });
+  seeds.push({ x: sx / pts.length, y: sy / pts.length });
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      seeds.push({ x: (pts[i].cx + pts[j].cx) / 2, y: (pts[i].cy + pts[j].cy) / 2 });
+    }
   }
-  return { x: x, y: ty };
+  const stepX = CONTINENT_CITY_W + CONTINENT_CITY_GAP;
+  const stepY = CONTINENT_CITY_H + CONTINENT_CITY_GAP;
+  const ring = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
+                [2, 0], [-2, 0], [0, 2], [0, -2],
+                [1, 1], [-1, 1], [1, -1], [-1, -1]];
+  const out = [];
+  seeds.forEach(s => ring.forEach(r => {
+    out.push({ x: s.x + r[0] * stepX, y: s.y + r[1] * stepY });
+  }));
+  return out;
 }
 
-function _continentDrawPlan(shared, placements, pairLimit, lineLimit) {
-  const items = [], boundary = {}, placed = [], pairs = {}, folded = [];
-  let lines = 0;
-  (shared || []).slice(0, lineLimit || CONTINENT_LINE_LIMIT).forEach(s => {
+// 世界边界（岛群包围盒 + 一个走廊宽）：城市属于「岛之间」，不许飘到地图外的荒野
+function _continentWorldBounds(rects) {
+  const list = (rects || []).filter(r => r && isFinite(r.x) && isFinite(r.y) && r.w > 0 && r.h > 0);
+  if (!list.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  list.forEach(r => {
+    minX = Math.min(minX, r.x); minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h);
+  });
+  const pad = CONTINENT_CLUSTER_GAP;
+  return { x: minX - pad, y: minY - pad,
+           w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+}
+
+function _continentFits(box, obstacles, margin) {
+  const m = margin || 0;
+  return !(obstacles || []).some(o => o &&
+    box.x - m < o.x + o.w && box.x + box.w + m > o.x &&
+    box.y - m < o.y + o.h && box.y + box.h + m > o.y);
+}
+
+function _continentInside(box, bounds) {
+  return box.x >= bounds.x && box.y >= bounds.y &&
+    box.x + box.w <= bounds.x + bounds.w && box.y + box.h <= bounds.y + bounds.h;
+}
+
+// 城市选位：候选里挑「不撞岛、不撞别的城、留在世界内」且**离它所连的岛总距离最短**
+// 的那个（辐条最短最好读）。一个都放不下 → null（调用方折叠，原因「无位可放」）。
+function _continentPlaceCity(targets, obstacles, bounds) {
+  const pts = (targets || []).filter(t => t && isFinite(t.cx) && isFinite(t.cy));
+  if (pts.length < 2) return null;
+  let best = null, bestCost = Infinity;
+  _continentCitySpots(pts).forEach(spot => {
+    const box = _continentCityBox(spot.x, spot.y);
+    if (bounds && !_continentInside(box, bounds)) return;
+    if (!_continentFits(box, obstacles, CONTINENT_CITY_GAP)) return;
+    const cost = pts.reduce((acc, t) => acc + Math.hypot(t.cx - spot.x, t.cy - spot.y), 0);
+    if (cost < bestCost - 1e-6) { bestCost = cost; best = box; }
+  });
+  return best;
+}
+
+// 折叠原因：四种都要能分辨，用户才知道该不该管它（弱证据要修标题 / 无位可放是地图太挤）
+const CONTINENT_FOLD_REASON = {
+  weak: '弱证据',
+  capped: '超出每对上限',
+  map_capped: '超出全图上限',
+  no_room: '无位可放',
+};
+
+function _continentDrawPlan(shared, placements, clusterRects, pairLimit, cityLimit) {
+  const rects = clusterRects || [];
+  const pairLimitN = pairLimit || CONTINENT_PAIR_CITY_LIMIT;
+  const cityLimitN = cityLimit || CONTINENT_CITY_LIMIT;
+  const cities = [], boundary = {}, folded = [];
+  const obstacles = rects.slice();
+  const bounds = _continentWorldBounds(rects);
+  const pairs = {};
+  let spokes = 0;
+  (shared || []).slice(0, CONTINENT_LINE_LIMIT).forEach(s => {
     if (s.strength === 'weak') { folded.push({ entry: s, reason: 'weak' }); return; }
-    const links = [], total = (s.links || []).length;
+    if (cities.length >= cityLimitN) { folded.push({ entry: s, reason: 'map_capped' }); return; }
+    // 每会话一张代表卡：服务端 _links_for 已按「岛内最早学的」取端点，这里按会话去重。
+    // placements 里找不到的条目跳过——投影与布局不同步时宁可不画，也不画到错地方。
+    const reps = [], seen = {};
     (s.links || []).forEach(l => {
-      const a = placements[l.from], b = placements[l.to];
-      if (!a || !b || lines >= (lineLimit || CONTINENT_LINE_LIMIT)) return;
-      const key = [l.fromSession, l.toSession].sort().join('|');
-      const used = pairs[key] || 0;
-      if (used >= (pairLimit || CONTINENT_PAIR_LINK_LIMIT)) return;
-      pairs[key] = used + 1;
-      lines++;
-      links.push(l);
+      [[l.fromSession, l.from], [l.toSession, l.to]].forEach(pair => {
+        const sid = pair[0], iid = pair[1];
+        if (!sid || !iid || seen[sid] || !placements[iid]) return;
+        seen[sid] = true;
+        reps.push({ sessionId: sid, itemId: iid });
+      });
     });
-    // 一条都画不上（弱证据之外就是被每对上限截光）→ 进折叠清单，不许静默消失
-    if (!links.length) { folded.push({ entry: s, reason: 'capped' }); return; }
-    let sx = 0, sy = 0, n = 0;
-    links.forEach(l => {
-      const mid = _continentLinkMid(placements[l.from], placements[l.to]);
-      sx += mid.x; sy += mid.y; n++;
-      boundary[l.from] = s.label;
-      boundary[l.to] = s.label;
+    // 一栋楼要有两座以上的岛才叫边界城市（单岛共享是同岛词面重叠，服务端已经不算）
+    if (reps.length < 2) { folded.push({ entry: s, reason: 'no_room' }); return; }
+    const sids = reps.map(r => r.sessionId).slice().sort();
+    let blocked = false;
+    for (let i = 0; i < sids.length && !blocked; i++) {
+      for (let j = i + 1; j < sids.length; j++) {
+        if ((pairs[sids[i] + '|' + sids[j]] || 0) >= pairLimitN) { blocked = true; break; }
+      }
+    }
+    if (blocked) { folded.push({ entry: s, reason: 'capped' }); return; }
+    const targets = reps.map(r => {
+      const rect = rects.find(x => x && x.sessionId === r.sessionId);
+      const p = placements[r.itemId];
+      return { cx: rect ? rect.cx : p.cx, cy: rect ? rect.cy : p.cy };
     });
-    const pos = _continentPlaceLabel(placed, sx / n, sy / n);
-    placed.push(pos);
-    // total 是**这条共享概念的全部链路数**（含被上限截掉的）：标签上的 ×N 说明
-    // 「这条概念在两块画布之外还连着 N 处」，点开弹层逐条看
-    items.push({ entry: s, links: links, total: total, x: pos.x, y: pos.y });
+    const box = _continentPlaceCity(targets, obstacles, bounds);
+    if (!box) { folded.push({ entry: s, reason: 'no_room' }); return; }
+    obstacles.push(box);
+    for (let i = 0; i < sids.length; i++) {
+      for (let j = i + 1; j < sids.length; j++) {
+        const key = sids[i] + '|' + sids[j];
+        pairs[key] = (pairs[key] || 0) + 1;
+      }
+    }
+    spokes += reps.length;
+    // 代表卡挂 ◈ 徽标（辐条一眼看得到头）；同岛的其他命中卡不挂徽标，但进重逢清单
+    reps.forEach(r => { boundary[r.itemId] = s.label; });
+    cities.push({ entry: s, reps: reps, total: reps.length,
+                  x: box.cx, y: box.cy, box: box });
   });
-  return { items: items, boundary: boundary, lineCount: lines, folded: folded };
-}
-
-function _continentEntryEndpoints(planItem) {
-  const ids = [];
-  (planItem.links || []).forEach(l => {
-    if (ids.indexOf(l.from) < 0) ids.push(l.from);
-    if (ids.indexOf(l.to) < 0) ids.push(l.to);
-  });
-  return ids;
+  return { cities: cities, boundary: boundary, cityCount: cities.length,
+           spokeCount: spokes, folded: folded };
 }
 
 function _continentRender(data) {
@@ -282,10 +382,10 @@ function _continentRender(data) {
   world.style.height = layout.worldH + 'px';
 
   const esc = _continentEsc;
-  // 边界城市（v3）：共享概念的端点条目 → 概念名 → 共享词。只认**画出来**的那些
-  // （强证据且没被每对上限截掉）——弱证据不该把节点标成边界城市。
+  // 边界城市（v5.1）：共享概念的端点条目 → 概念名 → 共享词。只认**画到地图上**的那些
+  // （强证据、没超上限、有位置）——弱证据不该把节点标成边界城市。
   const plan = _continentDrawPlan(data.shared || [], layout.placements,
-    CONTINENT_PAIR_LINK_LIMIT, CONTINENT_LINE_LIMIT);
+    layout.clusterRects, CONTINENT_PAIR_CITY_LIMIT, CONTINENT_CITY_LIMIT);
   const boundary = plan.boundary;
   _continentFolded = plan.folded;
 
@@ -332,7 +432,30 @@ function _continentRender(data) {
     world.appendChild(el);
   }));
 
-  // ---------- 连线层：自动检出的共享概念（浅色弧线+标签）+ 我的大陆边（实线）+ 断桥 ----------
+  // 边界城市（v5.1）：共享概念的「地点」——摆在它所连的岛之间的走廊里，每座岛一根
+  // 辐条连到代表卡。点开是**重逢清单**（每座岛学过的那些卡 + 「去看」）：绝不替你猜
+  // 跳哪座岛，机器猜「最近学的」总有一半时候不是你想去的。
+  plan.cities.forEach(city => {
+    const s = city.entry || {};
+    const el = document.createElement('div');
+    el.className = 'continent-city' + (s.kind === 'formula' ? ' is-formula' : '');
+    el.dataset.cityLabel = s.label || '';
+    el.style.left = city.box.x + 'px';
+    el.style.top = city.box.y + 'px';
+    el.title = '边界城市：' + city.reps.length + ' 块画布都学过——点开看重逢清单';
+    el.innerHTML = '<span class="continent-city-name">' +
+      (s.kind === 'formula' ? '∑ ' : '◈ ') + esc(s.label || '') + '</span>';
+    el.addEventListener('pointerdown', e => {
+      e.stopPropagation();  // 标签/用户边同规：不让城市点击进画布拖拽态
+      _continentCityPopover(city, e);
+    });
+    const ends = city.reps.map(r => r.itemId);
+    el.addEventListener('mouseenter', () => _continentHighlightNodes(ends, true));
+    el.addEventListener('mouseleave', () => _continentHighlightNodes(ends, false));
+    world.appendChild(el);
+  });
+
+  // ---------- 连线层：辐条（城市→岛）+ 我的大陆边（实线弧）+ 断桥 ----------
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('class', 'continent-links');
@@ -344,35 +467,22 @@ function _continentRender(data) {
     return { d: 'M ' + a.cx + ' ' + a.cy + ' Q ' + mid.qx + ' ' + mid.qy + ' ' + b.cx + ' ' + b.cy };
   };
 
-  plan.items.forEach(p => {
-    p.links.forEach(l => {
-      const a = layout.placements[l.from], b = layout.placements[l.to];
-      if (!a || !b) return;
-      const path = document.createElementNS(svgNS, 'path');
-      path.setAttribute('class', 'continent-link');
-      path.setAttribute('d', arcPath(a, b, 0.14).d);
-      svg.appendChild(path);
+  // 辐条：城市 → 该岛代表卡。两端都被节点盖住（SVG 是世界层首个子元素，节点画在它
+  // 上面），所以露出来的正好是走廊那一段——「城市连着哪几座岛」一眼可见。
+  plan.cities.forEach(city => {
+    city.reps.forEach(r => {
+      const p = layout.placements[r.itemId];
+      if (!p) return;
+      const spoke = document.createElementNS(svgNS, 'line');
+      spoke.setAttribute('class', 'continent-spoke');
+      spoke.setAttribute('x1', String(city.box.cx));
+      spoke.setAttribute('y1', String(city.box.cy));
+      spoke.setAttribute('x2', String(p.cx));
+      spoke.setAttribute('y2', String(p.cy));
+      svg.appendChild(spoke);
     });
-    const s = p.entry;
-    const label = document.createElement('div');
-    label.className = 'continent-link-label' + (s.kind === 'formula' ? ' is-formula' : '');
-    label.style.left = p.x + 'px';
-    label.style.top = p.y + 'px';
-    label.textContent = (s.kind === 'formula' ? '∑ ' : '◈ ') + (s.label || '') +
-      (p.total > 1 ? ' ×' + p.total : '');
-    label.title = '共享' + (s.kind === 'formula' ? '公式' : '概念') + '：点开看两边各是哪条';
-    // v3 标签可点：弹层看详情 + 「画成大陆边」确认落笔（多链路时每条链路一行）；
-    // 悬停点亮所有端点节点
-    label.addEventListener('pointerdown', e => {
-      e.stopPropagation();
-      _continentSharedPopover(s, e);
-    });
-    const ends = _continentEntryEndpoints(p);
-    label.addEventListener('mouseenter', () => _continentHighlightNodes(ends, true));
-    label.addEventListener('mouseleave', () => _continentHighlightNodes(ends, false));
-    world.appendChild(label);
   });
-  const lineCount = plan.lineCount;
+  const cityCount = plan.cityCount;
 
   // 我的大陆边（v2 用户落笔）：实线、可点开操作弹层；有备注挂小标签
   (data.userEdges || []).forEach(e => {
@@ -437,7 +547,7 @@ function _continentRender(data) {
   const stats = document.getElementById('continentStats');
   if (stats) stats.textContent =
     data.clusterCount + ' 个区域 · ' + data.itemCount + ' 个概念' +
-    (lineCount ? ' · ' + lineCount + ' 条共享连线' : '') +
+    (cityCount ? ' · ' + cityCount + ' 座边界城市' : '') +
     (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '') +
     (mineCount ? ' · 我的连线 ' + mineCount : '');
   const empty = document.getElementById('continentEmpty');
@@ -523,10 +633,111 @@ function _continentSharedPopover(s, ev) {
   }));
 }
 
+// ---------- v5.1 重逢清单：点城市选去哪儿 ----------
+// 铁律「跳转不猜」：一座城市连着 N 座岛就有 N 个目标，绝不替用户猜「最近学的」。
+// 一岛一行（画布名 + 卡片名 + 学的时间 + 「去看」）；同一座岛有多张卡命中同一概念时
+// 全部列出来（缩进次行、各带自己的「去看」）——词面命中是事实，不该被代表卡口径吞掉。
+function _continentRelTime(ts) {
+  const t = Number(ts) || 0;
+  if (!t) return '';
+  if (typeof formatRelativeTime === 'function') {
+    try { return formatRelativeTime(t); } catch (e) { /* 兜底空串 */ }
+  }
+  return '';
+}
+
+// 该岛命中这条共享概念的全部卡（服务端未给 owners 时退回代表卡一张）
+function _continentIslandCards(entry, sessionId, fallbackItemId, idx) {
+  const owners = (entry && entry.owners) || [];
+  const itemSession = (idx && idx.itemSession) || {};
+  const mine = owners.filter(iid => itemSession[iid] === sessionId);
+  if (!mine.length) return fallbackItemId ? [fallbackItemId] : [];
+  const rep = mine.indexOf(fallbackItemId);
+  if (rep > 0) { mine.splice(rep, 1); mine.unshift(fallbackItemId); }  // 代表卡排最前（辐条连的就是它）
+  return mine;
+}
+
+// 重逢清单的行是纯字符串拼装（无 DOM），单独抽出来给 smoke 断言
+function _continentReunionRows(city, idx) {
+  const items = (idx && idx.items) || {};
+  const clusterTitles = (idx && idx.clusterTitles) || {};
+  const itemCreated = (idx && idx.itemCreated) || {};
+  const rel = (idx && idx.rel) || _continentRelTime;
+  const rows = [];
+  ((city && city.reps) || []).forEach(r => {
+    const sid = r.sessionId;
+    const cards = _continentIslandCards(city && city.entry, sid, r.itemId, idx);
+    cards.forEach((iid, k) => {
+      const when = rel(itemCreated[iid]);
+      const head = k === 0
+        ? '<span class="continent-pop-place">' + _continentEsc(clusterTitles[sid] || '已删除的画布') + '</span> · '
+        : '<span class="continent-pop-sub">同岛还有</span> ';
+      rows.push('<div class="continent-pop-row' + (k === 0 ? '' : ' is-sub') + '">' +
+        '<span class="continent-pop-row-text">' + head + _continentEsc(items[iid] || '（概念已不在）') +
+        (when ? '<span class="continent-pop-when">' + _continentEsc(when) + '</span>' : '') +
+        '</span>' +
+        '<button class="continent-pop-btn" data-go="' + _continentEsc(sid) + '"' +
+        ' data-item="' + _continentEsc(iid) + '">去看</button>' +
+        '</div>');
+    });
+  });
+  return rows.join('');
+}
+
+function _continentCityPopover(city, ev) {
+  const idx = _continentItemIndex();
+  const s = (city && city.entry) || {};
+  const reps = (city && city.reps) || [];
+  const rows = _continentReunionRows(city, idx);
+  // 「画成大陆边」= v3 起的用户确认落笔口（Φ 只会口头建议，真要写边得你点）。
+  // 一枚芯片 = 一条链路（两块画布的代表卡之间）；已连过的只标「已连线」。
+  const links = (s.links || []).slice(0, 6);
+  const userEdges = (_continentData && _continentData.userEdges) || [];
+  const chips = links.map((link, i) => {
+    const already = userEdges.some(e =>
+      (e.fromItem === link.from && e.toItem === link.to) ||
+      (e.fromItem === link.to && e.toItem === link.from));
+    if (already) return '<span class="continent-pop-note-inline">已连线</span>';
+    const a = _continentEsc(idx.clusterTitles[link.fromSession] || '已删除的画布');
+    const b = _continentEsc(idx.clusterTitles[link.toSession] || '已删除的画布');
+    return '<button class="continent-pop-btn is-quiet" data-link="' + i + '"' +
+      ' title="把这两块画布的代表卡连成一条我的大陆边">' + a + ' ↔ ' + b + '</button>';
+  }).join('');
+  const html =
+    '<div class="continent-pop-title">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label || '') +
+    '<span class="continent-pop-count">' + reps.length + ' 块画布</span></div>' +
+    (rows || '<div class="continent-pop-desc">这座城市的卡片已不在大陆上了。</div>') +
+    '<div class="continent-pop-desc">' +
+    (s.kind === 'formula'
+      ? '这几块画布的公式共享结构「' + _continentEsc(s.label || '') + '」'
+      : '这几块画布的概念标题共享「' + _continentEsc(s.label || '') + '」') +
+    '——机器检出的共享点不会自动连线。</div>' +
+    (chips ? '<div class="continent-pop-actions is-wrap">' + chips + '</div>' : '');
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const sid = btn.getAttribute('data-go');
+    const iid = btn.getAttribute('data-item');
+    _continentClosePopover();
+    enterContinentSession(sid, iid);   // 复用下钻转场 + goToKnowledgeNode 直达定位
+  }));
+  el.querySelectorAll('[data-link]').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    const link = links[Number(btn.getAttribute('data-link'))];
+    if (!link) return;
+    try {
+      const ok = await _continentAddUserEdge(link.from, link.to, s.label);
+      if (ok) { _continentClosePopover(); _continentToast('已画上这条大陆边'); }
+    } catch (err) {
+      _continentToast('保存失败：' + (err && err.message || err));
+    }
+  }));
+}
+
 // v4 折叠清单：没画到地图上的那些在这里照报，逐条可确认并亲手落笔。
-// 两种折叠原因分开标：weak（2 字串/泛后缀，单独立不住）与 capped（同区域对超上限）。
-// 地图负责概览，清单负责穷尽——谁也不伪装成对方，更不许静默消失。
-const CONTINENT_FOLD_REASON = { weak: '弱证据', capped: '超出每对上限' };
+// 原因口径见 CONTINENT_FOLD_REASON（v5.1 起四种：弱证据 / 超每对上限 / 超全图上限 /
+// 无位可放）。地图负责概览，清单负责穷尽——谁也不伪装成对方，更不许静默消失。
 
 // 折叠清单的行是纯字符串拼装（无 DOM），单独抽出来给 smoke 断言
 function _continentFoldedRows(folded, idx) {
@@ -550,7 +761,8 @@ function _continentFoldedPopover(ev) {
   const html =
     '<div class="continent-pop-title">折叠 ' + folded.length + ' 条</div>' +
     '<div class="continent-pop-desc">「弱证据」是 2 字共享串（「表达」「坐标」级）与泛后缀，' +
-    '单独立不住；「超出每对上限」是同一对区域已经画满了。都不上地图，但照报——' +
+    '单独立不住；「超出每对上限」「超出全图上限」是地图已经画满；「无位可放」是岛之间挤不出' +
+    '放得下一座城市的位置（城市绝不叠在岛上）。都不上地图，但照报——' +
     '点「看两边」可确认并亲手落笔；想让弱证据彻底消失，得修那两条标题本身。</div>' +
     rows;
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
@@ -783,8 +995,10 @@ function _continentFitView() {
   const vp = document.getElementById('continentViewport');
   const vw = (vp && typeof vp.clientWidth === 'number' && vp.clientWidth) || 900;
   const vh = (vp && typeof vp.clientHeight === 'number' && vp.clientHeight) || 600;
-  const ww = Number(world.style.width) || 800;
-  const wh = Number(world.style.height) || 600;
+  // world 尺寸是内联 '1858px' 这样的字符串：Number('1858px') 是 NaN，会让适配永远走
+  // 800×600 兜底（地图一开就是放大的半屏，看不到岛之间有没有城市）——必须 parseFloat
+  const ww = parseFloat(world.style.width) || 800;
+  const wh = parseFloat(world.style.height) || 600;
   _continentZoom = Math.min(CONTINENT_ZOOM_MAX,
     Math.max(CONTINENT_ZOOM_MIN, Math.min(vw / ww, vh / wh) * 0.92));
   _continentPan.x = (vw - ww * _continentZoom) / 2;
@@ -996,10 +1210,14 @@ window.openContinentView = openContinentView;
 window.closeContinentView = closeContinentView;
 window.enterContinentSession = enterContinentSession;
 window._continentLayoutClusters = _continentLayoutClusters;
-// v4 画什么的三件套是纯函数（无 DOM），smoke 直接断言：弱证据不上图 / 每对上限 / 标签不重合
+// v4/v5.1 画什么的纯函数（无 DOM），smoke 直接断言：弱证据不上图 / 每对与全图上限 /
+// 城市选位（不撞岛不撞城）/ 折叠原因可分辨 / 重逢清单行可跳转
 window._continentDrawPlan = _continentDrawPlan;
 window._continentFoldedRows = _continentFoldedRows;
-window._continentPlaceLabel = _continentPlaceLabel;
+window._continentReunionRows = _continentReunionRows;
+window._continentPlaceCity = _continentPlaceCity;
+window._continentCityBox = _continentCityBox;
+window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
 
 // 预热面包屑：启动后拉一次投影，有内容才亮「‹ 大陆」入口（失败静默——

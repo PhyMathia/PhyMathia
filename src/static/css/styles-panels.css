@@ -3533,10 +3533,44 @@
   top: 0;
   pointer-events: none;
 }
-.continent-link {
-  fill: none;
+/* v5.1 边界城市：共享概念在地图上的「地点」——摆在它所连的岛之间的走廊里，
+ * 辐条连到各岛代表卡。比概念卡更小更亮（是路标不是卡片），点击弹重逢清单 */
+.continent-city {
+  position: absolute;
+  width: 112px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--bg-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.10);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+[data-theme="light"] .continent-city {
+  box-shadow: 0 0 0 3px rgba(139, 105, 20, 0.10);
+}
+.continent-city:hover {
+  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.22), 0 0 14px rgba(74, 158, 255, 0.3);
+}
+[data-theme="light"] .continent-city:hover {
+  box-shadow: 0 0 0 3px rgba(139, 105, 20, 0.2), 0 0 14px rgba(139, 105, 20, 0.25);
+}
+.continent-city-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 辐条：城市 → 岛代表卡。两端被节点盖住，露出来的正是走廊那一段 */
+.continent-spoke {
   stroke: var(--accent);
-  stroke-opacity: 0.4;
+  stroke-opacity: 0.45;
   stroke-width: 1.5;
 }
 /* v2 我的大陆边：实线暖金、更醒目（用户落笔比自动检出重一档）；可点开操作弹层 */
@@ -3583,19 +3617,7 @@
   border-color: rgba(163, 114, 47, 0.45);
   color: #96702a;
 }
-.continent-link-label {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-dark);
-  color: var(--text-secondary);
-  font-size: 10px;
-  white-space: nowrap;
-  cursor: pointer; /* v3：点开弹层看两边各是哪条 + 确认落笔 */
-}
-.continent-link-label.is-formula { color: var(--accent); }
+
 .continent-empty {
   position: absolute;
   inset: 0;
@@ -3607,11 +3629,14 @@
 }
 /* 类选择器的 display 会压掉 hidden 属性的 UA 样式，必须显式收回 */
 .continent-empty[hidden] { display: none; }
-/* v2/v3 弹层：共享概念详情（含「画成大陆边」确认口）与我的边操作，单例 */
+/* v2/v3/v5.1 弹层：重逢清单 + 折叠清单 + 我的边操作，单例。
+ * max-height + 滚动：一座城市可能列出好几座岛 × 每岛好几张卡 */
 .continent-popover {
   position: absolute;
   z-index: 40;
-  max-width: 280px;
+  max-width: 300px;
+  max-height: 62vh;
+  overflow-y: auto;
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--border);
@@ -3657,6 +3682,29 @@
   line-height: 1.5;
 }
 .continent-pop-row.is-weak .continent-pop-row-text { color: var(--text-secondary); }
+/* v5.1 重逢清单：一行 = 一座岛（画布名 · 卡片名 时间 + 去看）；同岛多卡走 is-sub 次行 */
+.continent-pop-row.is-sub { border-top: none; padding-top: 0; }
+.continent-pop-row.is-sub .continent-pop-row-text { font-size: 11px; color: var(--text-secondary); }
+.continent-pop-place { color: var(--text-primary); font-weight: 600; }
+.continent-pop-when { margin-left: 6px; font-size: 10px; color: var(--text-secondary); white-space: nowrap; }
+.continent-pop-sub {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+/* 落笔芯片：一枚 = 一条链路（两块画布之间），窄面板里要能换行 */
+.continent-pop-actions.is-wrap { flex-wrap: wrap; }
+.continent-pop-btn.is-quiet {
+  border-color: var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 10px;
+}
+.continent-pop-btn.is-quiet:hover { background: var(--border); color: var(--text-primary); }
 .continent-pop-reason {
   font-size: 10px;
   color: var(--text-secondary);
@@ -3667,7 +3715,7 @@
 }
 .continent-pop-row .continent-pop-btn { flex: none; padding: 2px 10px; font-size: 11px; }
 .continent-pop-note-inline { flex: none; font-size: 11px; color: var(--text-secondary); }
-.continent-pop-count { font-size: 11px; font-weight: 400; color: var(--text-secondary); }
+.continent-pop-count { font-size: 11px; font-weight: 400; color: var(--text-secondary); margin-left: 6px; }
 .continent-pop-actions {
   display: flex;
   gap: 8px;
