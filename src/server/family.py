@@ -31,7 +31,7 @@ import re
 
 __all__ = [
     "BUILTIN_FAMILIES", "ALIASES", "apply_aliases", "families_from_payload",
-    "merge_families", "family_term_index", "match_families",
+    "merge_families", "family_term_index", "prepare_families", "match_families",
     "FAMILY_LIMIT", "FAMILY_TERM_MAX_CHARS", "FAMILY_CANONICAL_MAX_CHARS",
 ]
 
@@ -235,28 +235,58 @@ def family_term_index(families: list) -> set:
 _ASCII_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
+def prepare_families(families: list) -> list:
+    """族表 → 可复用的匹配结构（**热路径必须先走这一步**）。
+
+    投影是每次打开大陆现算的，而 `match_families` 要对每一条卡片标题跑一遍全表：直接把
+    术语的 `lower()/strip()/isascii()` 留在匹配函数里，会在「25 族 × 600 卡」这种规模上
+    白烧 420 万次字符串方法（实测：600 条从几十毫秒涨到 1.7 秒，cProfile 一眼看到）。
+    把术语侧的规范化提到这里做一次、中文/ASCII 分开放，匹配就只剩子串/集合判断。
+    """
+    prepared = []
+    for fam in (families or []):
+        canonical = str(fam.get("canonical") or "").strip()
+        if not canonical:
+            continue
+        cjk, ascii_terms = [], set()
+        for term in (fam.get("terms") or []):
+            t = apply_aliases(str(term or "")).strip().lower()
+            if not t:
+                continue
+            (ascii_terms.add(t) if t.isascii() else cjk.append(t))
+        if not cjk and not ascii_terms:
+            continue
+        prepared.append({"canonical": canonical, "source": str(fam.get("source") or "builtin"),
+                         "cjk": cjk, "ascii": ascii_terms})
+    return prepared
+
+
 def match_families(text: str, families: list) -> list:
     """一段（已归一化的）文本属于哪些族，返回规范名列表。
 
     匹配规则：术语出现在文本里即可（子串）。ASCII 术语按**词边界**匹配——`rlc` 不该在
-    `rlcircuit` 里命中，也不该被 `orlc` 命中；中文术语照旧子串（中文没有词边界，靠表本身
-    写具体即可）。
+    `rlcircuit` 里命中；中文术语照旧子串（中文没有词边界，靠表本身写具体即可）。
+
+    `families` 应当是 `prepare_families()` 的产物；传入原始族列表也能跑（内部补一次
+    准备），但那是 O(卡片数 × 术语数) 的写法，只留给测试与一次性调用。
     """
     s = str(text or "").lower()
     if not s:
         return []
-    words = set(_ASCII_WORD_RE.findall(s))
+    if families and not ("cjk" in families[0] or "ascii" in families[0]):
+        families = prepare_families(families)
+    words = None
     out = []
     for fam in (families or []):
-        canonical = str(fam.get("canonical") or "")
-        if not canonical:
-            continue
-        for term in (fam.get("terms") or []):
-            t = str(term or "").strip().lower()
-            if not t:
-                continue
-            hit = (t in words) if t.isascii() else (t in s)
-            if hit:
-                out.append(canonical)
+        hit = False
+        for t in fam["cjk"]:
+            if t in s:
+                hit = True
                 break
+        if not hit and fam["ascii"]:
+            if words is None:
+                words = set(_ASCII_WORD_RE.findall(s))
+            hit = any(t in words for t in fam["ascii"])
+        if hit:
+            out.append(fam["canonical"])
     return out

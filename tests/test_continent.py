@@ -336,6 +336,38 @@ class BuildContinentFamilyTest(unittest.TestCase):
     def _family_labels(self, out):
         return [s["label"] for s in out["shared"] if s["kind"] == "family"]
 
+    def test_family_matching_is_linear_not_per_family(self):
+        """性能红线：匹配次数必须是 O(卡 + 岛)，不是 O(卡 × 族)。
+
+        曾经的写法把 match_families 放在「族 × 卡」双层循环里：25 族 × 600 卡 = 15,040 次
+        调用，每次还在重新规范化族术语 → 实测 600 条要 1.7 秒（cProfile 抓到 420 万次
+        str.lower）。修法是「每张卡只匹配一次 + 术语预规范化」。这里用**调用计数**把复杂度
+        钉住——计时断言在 CI/别人的机器上必然飘。
+        """
+        import server.continent as cont
+
+        items, sessions = {}, {}
+        for i in range(60):
+            sid = "sess_p%d" % (i % 5)
+            items["k%d" % i] = _item("k%d" % i, sid, "概念%d的推导" % (i % 7))
+        for i in range(5):
+            sessions["sess_p%d" % i] = {"id": "sess_p%d" % i, "title": "岛%d" % i, "updatedAt": i}
+
+        calls = {"n": 0}
+        real = cont.match_families
+
+        def spy(text, fams):
+            calls["n"] += 1
+            return real(text, fams)
+
+        cont.match_families = spy
+        try:
+            build_continent(items, sessions)
+        finally:
+            cont.match_families = real
+        self.assertLessEqual(calls["n"], 60 + 5 + 2,
+                             "匹配次数应约等于卡数+岛数，实际 %d（族×卡 的老写法是 >1500）" % calls["n"])
+
     def test_family_links_two_islands_sharing_one_two_char_term(self):
         items = {
             "k1": _item("k1", S1, "阻尼振动"),
