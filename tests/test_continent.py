@@ -391,6 +391,49 @@ class BuildContinentOwnersTest(unittest.TestCase):
         self.assertEqual(sorted(entry["owners"]), ["k1", "k2", "k3", "k4"])
 
 
+class BuildContinentSummaryFieldTest(unittest.TestCase):
+    """v5.3「问 Φ」：折叠清单行可把两边条目的「标题+摘要」打包给模型判断，条目行
+    因此携带 summary——但只认 model/manual 的真摘要：local 是模板文案，喂给模型
+    反而误导判断（与概念地基「摘要只认 model/manual」同一口径）；旧数据无
+    summarySource 字段视为 local。"""
+
+    def _items(self):
+        return {
+            "k1": _item("k1", S1, "简谐运动", created=1),
+            "k2": _item("k2", S2, "简谐运动的能量", created=2),
+        }
+
+    def _rows(self, items):
+        out = build_continent(items, SESSIONS)
+        return {it["itemId"]: it for c in out["clusters"] for it in c["items"]}
+
+    def test_model_summary_carried_local_dropped(self):
+        items = self._items()
+        items["k1"]["summary"] = "位移随时间按余弦变化的运动"
+        items["k1"]["summarySource"] = "model"
+        items["k2"]["summary"] = "模板文案"
+        items["k2"]["summarySource"] = "local"
+        rows = self._rows(items)
+        self.assertEqual(rows["k1"]["summary"], "位移随时间按余弦变化的运动")
+        self.assertEqual(rows["k2"]["summary"], "")
+
+    def test_manual_summary_carried_and_missing_source_treated_local(self):
+        items = self._items()
+        items["k1"]["summary"] = "用户手写的理解"
+        items["k1"]["summarySource"] = "manual"
+        items["k2"]["summary"] = "旧数据的模板摘要"  # 无 summarySource → 视为 local
+        rows = self._rows(items)
+        self.assertEqual(rows["k1"]["summary"], "用户手写的理解")
+        self.assertEqual(rows["k2"]["summary"], "")
+
+    def test_summary_clipped(self):
+        items = self._items()
+        items["k1"]["summary"] = "长" * 200
+        items["k1"]["summarySource"] = "model"
+        rows = self._rows(items)
+        self.assertLessEqual(len(rows["k1"]["summary"]), 81)  # 80 字 + 省略号
+
+
 class BuildContinentUserEdgeTest(unittest.TestCase):
     """v2 主图簇间边：校验 / 悬空 / 去重。"""
 
