@@ -33,9 +33,9 @@ _RAW_LOG = Path(os.environ.get("HARNESS_RAW_LOG", str(Path(__file__).resolve().p
 _ORIG_CALL_MODEL = harness_review._call_model
 
 
-async def _logged_call_model(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+async def _logged_call_model(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False, on_delta=None):
     result = await _ORIG_CALL_MODEL(
-        messages, model, max_tokens, tools=tools, tool_choice=tool_choice, json_mode=json_mode
+        messages, model, max_tokens, tools=tools, tool_choice=tool_choice, json_mode=json_mode, on_delta=on_delta
     )
     try:
         with _RAW_LOG.open("a", encoding="utf-8") as fh:

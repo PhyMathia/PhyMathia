@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 
 from .core import build_next_snapshot, normalize_snapshot
 from .review import HarnessError, resolve_focus, review_graph
@@ -65,6 +67,71 @@ async def health():
     return {"status": "ok", "service": "graph-harness"}
 
 
+def _review_kwargs(payload: dict, context: str) -> dict:
+    """review_graph 的入参装配：流式与非流式两条路径共用，避免漂移。"""
+    return {
+        "snapshot": payload.get("snapshot"),
+        "instruction": payload.get("instruction", ""),
+        "model": payload.get("model"),
+        "max_tokens": int(payload.get("max_tokens") or 4000),
+        "phase": str(payload.get("phase") or "normal"),
+        "context": context,
+        "level": str(payload.get("level") or ""),
+        "focus_node_ids": payload.get("focus_node_ids") or [],
+        "retries": int(payload.get("retries") or 2),
+        "mode": str(payload.get("mode") or "auto"),
+        "self_check": str(payload.get("self_check") or "auto"),
+        "history": payload.get("harness_history") or payload.get("history"),
+        "previous_ops": payload.get("previous_ops") or payload.get("last_ops"),
+        "previous_snapshot": payload.get("previous_snapshot") or payload.get("before_snapshot"),
+        "all_previous_ops": payload.get("all_previous_ops"),
+        "initial_snapshot": payload.get("initial_snapshot"),
+    }
+
+
+async def _review_event_stream(payload: dict, kwargs: dict):
+    """SSE 流式评审：stage/delta 事件边跑边发，最终以 result 事件下发与
+    非流式完全一致的结果 JSON。断连时取消后台任务，避免模型调用继续空烧。"""
+    t0 = time.time()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def progress(event: dict) -> None:
+        queue.put_nowait(event)
+
+    async def _run():
+        try:
+            result = await review_graph(progress=progress, **kwargs)
+            result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
+            _log_usage(_usage_entry(payload, result, t0, "review"))
+            queue.put_nowait({"type": "result", "data": result})
+        except HarnessError as exc:
+            err = {"status": "error", "errors": [{"reason": str(exc)}]}
+            _log_usage(_usage_entry(payload, err, t0, "review"))
+            queue.put_nowait({"type": "result", "data": err})
+        except Exception as exc:
+            err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
+            _log_usage(_usage_entry(payload, err, t0, "review"))
+            queue.put_nowait({"type": "result", "data": err})
+        finally:
+            queue.put_nowait(None)
+
+    task = asyncio.create_task(_run())
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield "data: " + json.dumps(item, ensure_ascii=False) + "\n\n"
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+
 @router.post("/graph/review")
 async def graph_review(request: Request):
     t0 = time.time()
@@ -76,11 +143,6 @@ async def graph_review(request: Request):
 
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
-        level = str(payload.get("level") or "")
-        focus_node_ids = payload.get("focus_node_ids") or []
-        retries = int(payload.get("retries") or 2)
-        mode = str(payload.get("mode") or "auto")
-        self_check = str(payload.get("self_check") or "auto")
         snap_nodes = len((payload.get("snapshot") or {}).get("nodes") or [])
         if snap_nodes == 0 and not payload.get("pure_chat"):
             # 空快照防御：模型无法评价/修改不存在的图。纯问答聊天仍放行，
@@ -98,24 +160,16 @@ async def graph_review(request: Request):
             }
             _log_usage(_usage_entry(payload, empty_hint, t0, "review"))
             return empty_hint
-        result = await review_graph(
-            snapshot=payload.get("snapshot"),
-            instruction=payload.get("instruction", ""),
-            model=payload.get("model"),
-            max_tokens=int(payload.get("max_tokens") or 4000),
-            phase=str(payload.get("phase") or "normal"),
-            context=context,
-            level=level,
-            focus_node_ids=focus_node_ids,
-            retries=retries,
-            mode=mode,
-            self_check=self_check,
-            history=payload.get("harness_history") or payload.get("history"),
-            previous_ops=payload.get("previous_ops") or payload.get("last_ops"),
-            previous_snapshot=payload.get("previous_snapshot") or payload.get("before_snapshot"),
-            all_previous_ops=payload.get("all_previous_ops"),
-            initial_snapshot=payload.get("initial_snapshot"),
-        )
+        kwargs = _review_kwargs(payload, context)
+        if payload.get("stream"):
+            # 流式通道（前端显式传 stream:true 启用）：SSE 下发进度与最终结果。
+            # 旧非流式协议原样保留，battery 与既有客户端零影响。
+            return StreamingResponse(
+                _review_event_stream(payload, kwargs),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        result = await review_graph(**kwargs)
         result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
         _log_usage(_usage_entry(payload, result, t0, "review"))
         return result
