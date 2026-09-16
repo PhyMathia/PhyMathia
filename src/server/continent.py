@@ -64,6 +64,13 @@ from .concept import (
     _formula_tokens,
     _normalize_title,
 )
+from .family import (
+    BUILTIN_FAMILIES,
+    families_from_payload,
+    family_term_index,
+    match_families,
+    merge_families,
+)
 from .knowledge import _is_concept_like_title
 
 __all__ = ["build_continent", "normalize_user_edge_payload"]
@@ -117,6 +124,7 @@ _WEAK_RUN_SCORE = 8.0     # 2 字弱证据（「振动」级）：能当边界�
 _STRONG_RUN_SCORE = 60.0  # ≥3 字实质重叠
 _TITLE_LEN_BONUS = 12.0   # 同强度下，字更长 = 更具体
 _FORMULA_SCORE = 30.0     # 结构证据：跨会话共享公式 token
+_FAMILY_SCORE = 90.0      # v6 概念族：领域知识（内置表或用户/Φ 确认），基分高于窄标题重叠
 _FALLBACK_TITLE = "未命名画布"
 _DELETED_TITLE = "已删除的画布"
 
@@ -395,7 +403,94 @@ def _split_user_edges(raw_edges: list, item_session: dict):
     return valid, dangling
 
 
-def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict:
+def _session_pairs(sids) -> set:
+    """会话集合 → 无序对集合（判断「族是否只是精确标签的重复」用）。"""
+    ordered = sorted({str(x) for x in (sids or []) if str(x)})
+    return {frozenset(pair) for pair in itertools.combinations(ordered, 2)}
+
+
+def _mark_families_covered(family_entries: list, specific_entries: list) -> None:
+    """族条目是否「已被更精确的共享概念完全覆盖」（就地改 covered 字段）。
+
+    判据：族连接的**每一对岛**都已经被某个 strong 的精确条目（title/formula）连上——
+    此时族没带来任何新联系，画上去就是同一件事的第二座城。weak 条目不算覆盖
+    （它们本来就不上图）。只标记不删除：族照旧进折叠清单、照旧参与摆位亲缘。
+    """
+    covered_pairs = set()
+    for entry in (specific_entries or []):
+        if entry.get("kind") == "family" or entry.get("strength") != "strong":
+            continue
+        covered_pairs |= _session_pairs(entry.get("sessions"))
+    for entry in (family_entries or []):
+        pairs = _session_pairs(entry.get("sessions"))
+        entry["covered"] = bool(pairs) and pairs <= covered_pairs
+
+
+def _family_entries(items: dict, clusters: list, session_rank: dict, item_session: dict,
+                    families: list, family_terms: set) -> list:
+    """概念族 → 跨岛汇聚条目（kind=family，v6）。
+
+    与「字面撞车」的本质区别：族是**领域知识**（内置表 / 用户确认 / Φ 归并），所以
+    `梯度`+`散度`+`旋度` 这类只共享 2 字的关系能作为一族被画出来，而不会退化成
+    「弱证据」躺在折叠清单里。
+
+    证据两个来源，都只看**标题**（卡片名 + 岛名）：卡片标题命中 → 该卡入族；岛名命中
+    （如岛叫「散度」而卡名是章节号）→ 整座岛以**岛内最早学的卡**为代表入族。两处都
+    要求跨 ≥2 座岛才成条目——单岛命中只是这座岛的主题，不是跨画布联系。
+    """
+    if not families:
+        return []
+    titles = {}
+    for iid, item in items.items():
+        if not isinstance(item, dict):
+            continue
+        # 卡片标题先过概念名闸门（与共享概念同一把尺子）：章节号标题、指令句回显、
+        # 叙述句不当族证据——推理泄漏卡曾靠长句把整座岛拖进族里（v4 的老账）。
+        # **岛名不受闸门**：那是用户/AI 起的短名（「散度」），不是自动生成的卡片标题。
+        if not _is_concept_like_title(item.get("title")):
+            continue
+        titles[iid] = _normalize_title(item.get("title"))
+    session_fams = {}
+    for cluster in clusters:
+        sid = cluster["sessionId"]
+        sess_title = _normalize_title(cluster.get("title"))
+        session_fams[sid] = match_families(sess_title, families)
+
+    entries = []
+    for fam in families:
+        canonical = fam["canonical"]
+        reps = []            # 每座岛一张代表卡（画辐条用）
+        owners = []          # 全部按标题命中的卡（重逢清单列全）
+        for cluster in clusters:
+            sid = cluster["sessionId"]
+            iids = [row["itemId"] for row in cluster["items"]]
+            hit = [iid for iid in iids if canonical in match_families(titles.get(iid, ""), families)]
+            if hit:
+                owners.extend(hit)
+                reps.append((sid, hit[0]))          # 岛内最早学的命中卡
+            elif canonical in session_fams.get(sid, []):
+                if iids:
+                    reps.append((sid, iids[0]))     # 岛名命中：以岛内最早学的卡为代表
+                    owners.append(iids[0])
+        sids = {sid for sid, _iid in reps}
+        if len(sids) < 2:
+            continue
+        rep_ids = {iid for _sid, iid in reps}
+        entries.append({
+            "kind": "family", "label": canonical,
+            "score": round(_FAMILY_SCORE * _breadth(len(sids)), 2),
+            "strength": "strong",
+            "covered": False,
+            "source": fam.get("source") or "builtin",
+            "sessions": sorted(sids),
+            "owners": _owner_ids(owners or rep_ids, items),
+            "links": _links_for(rep_ids, item_session, session_rank),
+        })
+    return entries
+
+
+def build_continent(items: dict, sessions: dict = None, user_edges=None,
+                    families=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
 
     返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared,
@@ -408,7 +503,10 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
       v5.1 重逢清单列同岛多卡用）与 covered（v5.5：证据被更具体的标签完全覆盖，
       前端折叠它、不单独成城——条目仍照报，不静默消失）；
     - userEdges / danglingEdges（v2）：用户在主图上画的簇间边，经当前投影校验；
-      悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口。
+      悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口；
+    - families（v6）：概念族条目（kind=family）与标题/公式共享**同一条 shared 通道**——
+      族是领域知识（内置表 + KV 扩展），所以「只共享 2 字领域词」的真关系（梯度/散度/
+      旋度）也能成城；族术语对应的原始标题标签会被去重（同一件事不画两座城）。
     """
     title_index = _session_title_index(sessions)
 
@@ -458,6 +556,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         # 尺子复用 knowledge._is_concept_like_title，模块内不许各写一份。
         if not _is_concept_like_title(item.get("title")):
             continue
+        # 译名归一已收口在 _normalize_title 里（v6）：「傅立叶变换」与「傅里叶变换」
+        # 不归一的话共享串只剩词中间的「叶变换」（真机实测的城市名就是这个碎片）
         t = _normalize_title(item.get("title"))
         for size in range(_TITLE_RUN_MIN_CJK, len(t) + 1):
             for i in range(0, len(t) - size + 1):
@@ -475,6 +575,10 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         # 再剔通用符号（dx/dt/∂…），见 _structural_tokens / _GENERIC_FORMULA_TOKENS
         for token in _structural_tokens(item) - _GENERIC_FORMULA_TOKENS:
             token_owners.setdefault(token, set()).add(iid)
+
+    # ===== v6 概念族：领域知识层（内置表 + KV 扩展）=====
+    accepted_families = merge_families(BUILTIN_FAMILIES, families_from_payload(families))
+    family_terms = family_term_index(accepted_families)
 
     shared = []
     title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session))
@@ -499,6 +603,15 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
                        "sessions": sorted(sids),
                        "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
+
+    family_entries = _family_entries(items, clusters, session_rank, item_session,
+                                     accepted_families, family_terms)
+    # 精确优先、族补缺口：族连接的每一对岛都已被更精确的强共享概念连上时，这座族城
+    # 只是同一件事的第二座城（「简谐运动」两座岛 + 「振动与波动」族 = 重叠的两座城），
+    # 折进折叠清单（原因 covered）而不是画上去。族只要多连上一座岛就照画（真机：
+    # 「矢量分析」连了 4 座岛，其中「散度」岛没有任何精确标签覆盖 → 必须画）。
+    _mark_families_covered(family_entries, shared)
+    shared.extend(family_entries)
 
     # 广度优先（分数里已含广度乘子）；同分按标签稳定排序。covered 条目不删——
     # 前端在分配城市名额之前就把它折进清单，所以它不会挤掉任何一座能画的城。

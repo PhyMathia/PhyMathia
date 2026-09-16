@@ -76,6 +76,22 @@ function _continentEsc(text) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// v6：汇聚条目的三种来源各有一个前缀，一眼分得清「机器算出来的」与「领域知识认的」
+// ◈ = 标题里共享了一段字；∑ = 公式共享了同一个符号/词；❖ = 概念族（内置族表 /
+// 用户或 Φ 确认过的汇聚结果）。族最可信也最"粗"——城市名是族的规范名（如「矢量分析」），
+// 它连的几座岛各自可能只共享 2 字领域词（梯度/散度/旋度），字面尺子认不出这层关系。
+function _continentKindPrefix(kind) {
+  if (kind === 'formula') return '∑ ';
+  if (kind === 'family') return '❖ ';
+  return '◈ ';
+}
+
+function _continentKindClass(kind) {
+  if (kind === 'formula') return ' is-formula';
+  if (kind === 'family') return ' is-family';
+  return '';
+}
+
 function _continentToast(msg) {
   if (typeof showToast === 'function') showToast(msg);
 }
@@ -573,13 +589,13 @@ function _continentRender(data) {
   plan.cities.forEach(city => {
     const s = city.entry || {};
     const el = document.createElement('div');
-    el.className = 'continent-city' + (s.kind === 'formula' ? ' is-formula' : '');
+    el.className = 'continent-city' + _continentKindClass(s.kind);
     el.dataset.cityLabel = s.label || '';
     el.style.left = city.box.x + 'px';
     el.style.top = city.box.y + 'px';
     el.title = '边界城市：' + city.reps.length + ' 块画布都学过——点开看重逢清单';
     el.innerHTML = '<span class="continent-city-name">' +
-      (s.kind === 'formula' ? '∑ ' : '◈ ') + esc(s.label || '') + '</span>';
+      _continentKindPrefix(s.kind) + esc(s.label || '') + '</span>';
     el.addEventListener('pointerdown', e => {
       e.stopPropagation();  // 标签/用户边同规：不让城市点击进画布拖拽态
       _continentCityPopover(city, e);
@@ -779,9 +795,11 @@ function _continentSharedPopover(s, ev) {
   }).join('');
   const kindText = s.kind === 'formula'
     ? '两边画布的公式共享结构「' + _continentEsc(s.label) + '」'
-    : '两边画布的概念标题共享「' + _continentEsc(s.label) + '」';
+    : (s.kind === 'family'
+      ? '两边画布同属概念族「' + _continentEsc(s.label) + '」（族表给的领域关系，不靠字面撞车）'
+      : '两边画布的概念标题共享「' + _continentEsc(s.label) + '」');
   const html =
-    '<div class="continent-pop-title">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label) +
+    '<div class="continent-pop-title">' + _continentKindPrefix(s.kind) + _continentEsc(s.label) +
     (links.length > 1 ? ' <span class="continent-pop-count">×' + links.length + '</span>' : '') + '</div>' +
     rows +
     '<div class="continent-pop-desc">' + kindText + '——自动检出的共享点不会自动连线，要不要由你落笔。</div>';
@@ -905,13 +923,15 @@ function _continentCityPopover(city, ev) {
       ' title="把这两块画布的代表卡连成一条我的大陆边">' + a + ' ↔ ' + b + '</button>';
   }).join('');
   const html =
-    '<div class="continent-pop-title">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label || '') +
+    '<div class="continent-pop-title">' + _continentKindPrefix(s.kind) + _continentEsc(s.label || '') +
     '<span class="continent-pop-count">' + reps.length + ' 块画布</span></div>' +
     (rows || '<div class="continent-pop-desc">这座城市的卡片已不在大陆上了。</div>') +
     '<div class="continent-pop-desc">' +
     (s.kind === 'formula'
       ? '这几块画布的公式共享结构「' + _continentEsc(s.label || '') + '」'
-      : '这几块画布的概念标题共享「' + _continentEsc(s.label || '') + '」') +
+      : (s.kind === 'family'
+        ? '这几块画布同属概念族「' + _continentEsc(s.label || '') + '」（领域知识层认出的同族关系）'
+        : '这几块画布的概念标题共享「' + _continentEsc(s.label || '') + '」')) +
     '——机器检出的共享点不会自动连线。</div>' +
     (chips ? '<div class="continent-pop-actions is-wrap">' + chips + '</div>' : '');
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
@@ -1089,7 +1109,7 @@ function _continentFoldedRows(folded, idx) {
     const s = f.entry || {};
     const link = (s.links || [])[0] || {};
     return '<div class="continent-pop-row">' +
-      '<span class="continent-pop-row-text">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label) +
+      '<span class="continent-pop-row-text">' + _continentKindPrefix(s.kind) + _continentEsc(s.label) +
       ' · ' + _continentEsc(items[link.from] || '？') + ' ↔ ' + _continentEsc(items[link.to] || '？') +
       ' <span class="continent-pop-reason">' + (CONTINENT_FOLD_REASON[f.reason] || '折叠') + '</span></span>' +
       '<button class="continent-pop-btn is-quiet" data-phi="' + i + '" title="让 Φ 判断这两条是否真的相关">问 Φ</button>' +
@@ -1595,6 +1615,7 @@ window._continentPlaceCity = _continentPlaceCity;
 window._continentCityBox = _continentCityBox;
 window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
+window._continentKindPrefix = _continentKindPrefix;
 window._continentEdgeLabelPos = _continentEdgeLabelPos;
 window._continentEdgeLabelScale = _continentEdgeLabelScale;
 window._continentSyncEdgeLabels = _continentSyncEdgeLabels;

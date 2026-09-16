@@ -1340,6 +1340,29 @@ check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 边界�
   return true;
 });
 
+check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种来源分得清）', () => {
+  const prefix = sandbox._continentKindPrefix;
+  if (typeof prefix !== 'function') throw new Error('族前缀纯函数未暴露（_continentKindPrefix）');
+  if (prefix('formula') !== '∑ ') throw new Error('公式条目前缀错：' + prefix('formula'));
+  if (prefix('family') !== '❖ ') throw new Error('概念族前缀错：' + prefix('family'));
+  if (prefix('title') !== '◈ ') throw new Error('标题条目前缀错：' + prefix('title'));
+  if (prefix(undefined) !== '◈ ') throw new Error('未知来源应退回标题前缀（旧后端无 kind 时不能空）');
+  // 静态断言：三处渲染（城市胶囊/共享点弹层/城市弹层/折叠行）都走同一个前缀函数，
+  // 不许再各写一份三元表达式——两处各写一份必然漏一处
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  const inlineTernaries = code.match(/kind === 'formula' \? '∑ '/g) || [];
+  if (inlineTernaries.length) {
+    throw new Error('还有 ' + inlineTernaries.length + ' 处内联前缀三元表达式没走 helper');
+  }
+  if ((code.match(/_continentKindPrefix\(/g) || []).length < 4) {
+    throw new Error('前缀 helper 接入点少于 4 处（城市/共享弹层/城市弹层/折叠行）');
+  }
+  if (!code.includes("kind === 'family'")) throw new Error('家族条目未在渲染层区分');
+  return true;
+});
+
 check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
   const pos = sandbox._continentEdgeLabelPos;
   const mid = sandbox._continentLinkMid;

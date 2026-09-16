@@ -15,6 +15,7 @@
 import re
 
 from .config import KNOWLEDGE_PATH, KV_PATH
+from .family import apply_aliases
 from .knowledge import _formula_key
 from .storage import _read_json_cached
 
@@ -76,14 +77,19 @@ _STOP_CHARS = set("的地得和与跟及或在是有为对把被让使则即也�
 _SYMBOL_HIT_MIN = 2
 
 def _normalize_title(title: str) -> str:
-    """标题归一化：去编号前缀、markdown 噪声、空白与无信息量尾巴，转小写。"""
+    """标题归一化：去编号前缀、markdown 噪声、空白与无信息量尾巴，转小写，再过译名归一。
+
+    v6 起把**译名/写法变体归一**（`傅立叶`→`傅里叶`）收进这一把尺子：概念地基的检索、
+    大陆的共享子串切分、概念族匹配三处都走它，谁也不必各写一份——两处各写一份正是
+    「人眼相同、集合为空」那类事故的温床（与公式键只有一把同一条纪律）。
+    """
     s = _MD_NOISE_RE.sub("", str(title or ""))
     s = _TITLE_NUMBER_PREFIX_RE.sub("", s)
     prev = None
     while prev != s:
         prev = s
         s = _TITLE_NOISE_RE.sub("", s)
-    return s.lower()
+    return apply_aliases(s.lower())
 
 
 def _has_cjk(s: str) -> bool:
