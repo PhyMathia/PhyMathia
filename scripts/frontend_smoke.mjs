@@ -1372,6 +1372,22 @@ check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefi
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (/arc\.q[xy]/.test(code)) throw new Error('备注落点又去读 arcPath 没返回的字段了');
   if (!src.includes('_continentEdgeLabelPos(a, b)')) throw new Error('渲染处未走落点纯函数');
+  // v5.6：备注标签固定字号（不随地图缩放变形）——世界层缩放 2.5 倍时 10px 会变 25px，
+  // 乘 1/zoom 抵消当路牌用；缩放到处与渲染结尾都必须同步，否则新画的边仍是变形字号
+  const scale = sandbox._continentEdgeLabelScale;
+  if (typeof scale !== 'function') throw new Error('固定字号纯函数未暴露（_continentEdgeLabelScale）');
+  if (scale(1) !== 1) throw new Error('zoom=1 应不缩放：' + scale(1));
+  if (Math.abs(scale(2.5) - 0.4) > 1e-9) throw new Error('zoom=2.5 应抵消成 0.4：' + scale(2.5));
+  if (Math.abs(scale(0.5) - 2) > 1e-9) throw new Error('zoom=0.5 应抵消成 2：' + scale(0.5));
+  if (scale(100) !== 0.4) throw new Error('过小倍率未夹住下界：' + scale(100));
+  if (scale(0.01) !== 4) throw new Error('过大倍率未夹住上界：' + scale(0.01));
+  if (scale(NaN) !== 1 || scale(0) !== 1) throw new Error('脏倍率未兜底成 1');
+  if (!/_continentSyncEdgeLabels\(\);/.test(code.split('function _continentApplyTransform')[1] || '')) {
+    throw new Error('缩放路径未同步备注标签字号');
+  }
+  if (!code.includes('_continentSyncEdgeLabels();\n  return layout;')) {
+    throw new Error('渲染结尾未同步备注标签字号（新画的边会保持变形字号）');
+  }
   return true;
 });
 
