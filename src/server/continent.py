@@ -68,6 +68,7 @@ from .family import (
     BUILTIN_FAMILIES,
     families_from_payload,
     match_families,
+    match_family_terms,
     merge_families,
     prepare_families,
 )
@@ -127,6 +128,67 @@ _FORMULA_SCORE = 30.0     # 结构证据：跨会话共享公式 token
 _FAMILY_SCORE = 90.0      # v6 概念族：领域知识（内置表或用户/Φ 确认），基分高于窄标题重叠
 _FALLBACK_TITLE = "未命名画布"
 _DELETED_TITLE = "已删除的画布"
+
+# ===== v7 海域层与 MoE 门控：领域评分核心（softmax 软路由，纯本地现算）=====
+# 「专家名单」就是 v6 的概念族表（canonical = 领域名）。评分核心按动工前优化①一次性
+# 落地：v7.1a 只有三路**本地**证据（岛名 / 标题术语 / 公式指纹），v7.1b 往同一核心加
+# 第四路（模型打标，读 gate KV 产物）——聚合层只建一次，不建「投票」再推翻。
+# 铁律「门控只路由不证明」：这里的输出只进 cluster 的 domain* 字段（分区/配色/摆位
+# 用），**绝不进 shared**（城市与线仍只由强字面/公式/族表断言）。
+GATE_W_ISLAND = 2.0   # 岛名命中：用户/AI 起的短名最能代表主题，且不受标题闸门限制
+GATE_W_TITLE = 1.0    # 标题术语命中（×特异度×IDF×独占度）
+GATE_W_FORMULA = 0.5  # 公式指纹：弱证据，只在打平时起作用
+GATE_W_MODEL = 2.5    # 模型打标（gate KV，×conf）
+GATE_TOP_K = 2        # 一张卡/一座岛最多带几个领域标签
+GATE_MIN_P = 0.25     # 概率低于此的次要领域不带（避免「人人都有第二标签」）
+GATE_PRIOR_WIDE = 0.8  # 宽领域先验：logit 加 log(0.8)——「宁可选窄的」从 prompt 叮嘱变算法
+GATE_WIDE_DOMAINS = frozenset({"微积分", "数学物理方法", "概率统计"})
+DOMAIN_LIST_MAX = 32  # 前端「归到哪个领域」菜单的名单上限（防脏数据撑爆 payload）
+# 公式指纹表（特征算子 → 领域）。**故意这么小**：token 必须先活着穿过 _structural_tokens
+# 的三道卫生（\text 散文、语法命令名、通用符号），能稳定存活的特征算子就这几个
+# （grad/curl/div 经 \operatorname 或 \div、wedge/otimes/oplus/oint/sharp 是保留算子、
+# ψ 是 _GREEK 真符号）。指纹是打平器不是主证据，宁可少而准，也不写一张「看起来全、
+# 命中全是噪声」的大表（默认丢弃是 fail-safe 的同一条纪律）。
+_DOMAIN_OPERATOR_HINTS = {
+    "矢量分析": frozenset({"grad", "curl", "div", "wedge"}),
+    "量子力学": frozenset({"ψ", "sharp"}),
+    "复变函数": frozenset({"oint"}),
+    "线性代数": frozenset({"oplus", "otimes"}),
+}
+# 视觉三档的阈值（前端消费，后端如实报概率）：p≥0.7 实色 / 0.4–0.7 淡色+「?」/
+# <0.4 中性灰进「待确认」——「不确定也要可见」。
+GATE_CONF_SOLID = 0.7
+GATE_CONF_LIGHT = 0.4
+
+
+def gate_version(families: list, weights: dict = None) -> str:
+    """门控产物的版本指纹：专家名单或权重表变了，整批 KV 打标作废重打。
+
+    这是 v7.1b 缓存三层里「version 失效比 hash 更重要」的那一环——名单加了领域、
+    权重调了参数而缓存不失效的话，地图上会新旧口径混着显示还看不出来。
+    """
+    import hashlib
+    import json
+    names = sorted(str(f.get("canonical") or "") for f in (families or []))
+    w = dict(weights or {})
+    digest = hashlib.md5(
+        (json.dumps(names, ensure_ascii=False) + "|" +
+         json.dumps(w, sort_keys=True, ensure_ascii=False)).encode("utf-8")
+    ).hexdigest()
+    return digest[:10]
+
+
+def _gate_weights() -> dict:
+    """评分核心的权重快照（进 gateVersion；调权重必须让缓存失效，见 gate_version）。"""
+    return {"island": GATE_W_ISLAND, "title": GATE_W_TITLE, "formula": GATE_W_FORMULA,
+            "model": GATE_W_MODEL, "prior_wide": GATE_PRIOR_WIDE,
+            "wide": sorted(GATE_WIDE_DOMAINS)}
+
+
+def current_gate_version(families_payload=None) -> str:
+    """当前口径的 gateVersion（build_continent 与测试共用这一把——两处各算一份必然漂）。"""
+    accepted = merge_families(BUILTIN_FAMILIES, families_from_payload(families_payload))
+    return gate_version(accepted, _gate_weights())
 
 
 def _breadth(island_count: int) -> float:
@@ -346,6 +408,29 @@ def normalize_user_edge_payload(raw) -> list:
     return [e for e in raw if isinstance(e, dict)]
 
 
+# v7.2 航线样式的白名单（旧边无 style 走前端默认；未知键丢弃，防脏数据撑爆 KV）
+_EDGE_STYLE_KEYS = ("dash", "color", "width", "route", "hidden", "noLabel")
+
+
+def _norm_edge_style(raw) -> dict:
+    """边上的可选样式（v7.2 单条可调）：只收白名单键，值裁剪成短字符串/布尔。"""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key in _EDGE_STYLE_KEYS:
+        if key not in raw:
+            continue
+        val = raw[key]
+        if key in ("hidden", "noLabel"):
+            if val:
+                out[key] = True
+        else:
+            s = str(val or "").strip()
+            if s and len(s) <= 12:
+                out[key] = s
+    return out
+
+
 def _split_user_edges(raw_edges: list, item_session: dict):
     """用户簇间边按当前投影校验：两端条目都在、且分属不同会话 → userEdges；
     任一端已不在投影（会话清空/条目删除）→ danglingEdges（断桥，missing 标注
@@ -361,6 +446,9 @@ def _split_user_edges(raw_edges: list, item_session: dict):
             "fromSession": str(edge.get("fromSession") or "").strip(),
             "toSession": str(edge.get("toSession") or "").strip(),
             "label": _clip(edge.get("label"), EDGE_LABEL_MAX_CHARS),
+            # v7.2：单条样式（线型/颜色/粗细/走线/隐藏/无标签）随边存取——
+            # 白名单清洗，旧边无此字段就是默认样式，零迁移
+            "style": _norm_edge_style(edge.get("style")),
             "createdAt": edge.get("createdAt") or 0,
         }
 
@@ -426,30 +514,183 @@ def _mark_families_covered(family_entries: list, specific_entries: list) -> None
         entry["covered"] = bool(pairs) and pairs <= covered_pairs
 
 
-def _item_families(items: dict, prepared: list) -> dict:
-    """每张卡片 → 它属于哪些族（**每张卡只匹配一次**）。
+def _item_families(items: dict, prepared: list) -> tuple:
+    """每张卡片 → 它属于哪些族（**每张卡只匹配一次**，返回明细给评分核心用）。
 
-    这里是性能红线：投影每次打开大陆都会跑一遍全库，把 `match_families` 放进「族 × 卡」
-    双层循环里就是 25 倍冗余，实测 600 条从几十毫秒涨到 1.7 秒（cProfile 抓到 420 万次
+    这里是性能红线：投影每次打开大陆都会跑一遍全库，把匹配放进「族 × 卡」双层循环里
+    就是 25 倍冗余，实测 600 条从几十毫秒涨到 1.7 秒（cProfile 抓到 420 万次
     `str.lower`）。所以「哪张卡属于哪些族」在这里一次性算好，后面按族分组只是查集合。
 
     卡片标题先过概念名闸门（与共享概念同一把尺子）：章节号标题、指令句回显、叙述句不当
     族证据——推理泄漏卡曾靠长句把整座岛拖进族里（v4 的老账）。
+
+    v7 起返回三元组 `(mapping, term_df, n_scored)`：mapping[iid] = {族名: [命中术语]}
+    （`_family_entries` 的 `canonical in mapping[iid]` 仍是键判断，行为不变）；
+    term_df 是「术语 → 命中卡数」（IDF 用）；n_scored 是过了闸门的卡数（IDF 的分母）。
     """
-    mapping = {}
-    for iid, item in items.items():
+    mapping, term_df, n_scored = {}, {}, 0
+    for item_id, item in items.items():
         if not isinstance(item, dict):
             continue
         if not _is_concept_like_title(item.get("title")):
             continue
-        hit = match_families(_normalize_title(item.get("title")), prepared)
-        if hit:
-            mapping[iid] = set(hit)
-    return mapping
+        n_scored += 1
+        iid = str(item_id)  # 与投影行 itemId 同形（脏数据里可能有非字符串键）
+        hits = match_family_terms(_normalize_title(item.get("title")), prepared)
+        if hits:
+            mapping[iid] = hits
+            for terms in hits.values():
+                for t in terms:
+                    term_df[t] = term_df.get(t, 0) + 1
+    return mapping, term_df, n_scored
+
+
+def _term_family_counts(prepared: list) -> dict:
+    """术语 → 同属几个族（独占度用：「中心极限」只属概率统计＝1，「极限」跨族→衰减）。"""
+    counts = {}
+    for fam in (prepared or []):
+        for t in list(fam["cjk"]) + list(fam["ascii"]):
+            counts[t] = counts.get(t, 0) + 1
+    return counts
+
+
+def _term_specificity(term: str) -> float:
+    """术语特异度：min(1, 权重字数/4)——中文 1 字记 1、ASCII 2 字符记 1（`nabla`≈2.5）。
+    「振动」这类 2 字领域词是中文数理术语的主力形态，0.5 的特异度让它能参与评分，
+    但压不过「简谐运动」这种 4 字实质术语。"""
+    units = 0.0
+    for ch in str(term or ""):
+        units += 1.0 if ord(ch) > 127 else 0.5
+    return min(1.0, units / 4.0)
+
+
+def _normalize_gate_payload(raw, accepted_names: set, version: str) -> dict:
+    """KV `continent_gate` 的原始值 → {itemId: {name: conf}}。
+
+    只认名单内的领域名（铁律②：模型不许自由发明领域——`new` 建议走折叠清单，不进
+    产物）；conf 夹在 [0,1]；**version 对不上整批作废**（名单/权重变了旧口径不能混着
+    显示）。脏数据照常返回空，不报错。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    if version and str(raw.get("version") or "") != version:
+        return {}
+    entries = raw.get("entries")
+    if not isinstance(entries, dict):
+        return {}
+    out = {}
+    for iid, row in entries.items():
+        if not isinstance(row, dict):
+            continue
+        labels = row.get("domains")
+        if not isinstance(labels, list):
+            continue
+        labels_out = {}
+        for lab in labels[:GATE_TOP_K]:
+            if not isinstance(lab, dict):
+                continue
+            name = str(lab.get("name") or "").strip()
+            if name not in accepted_names:
+                continue
+            try:
+                conf = min(1.0, max(0.0, float(lab.get("conf"))))
+            except (TypeError, ValueError):
+                conf = 0.0
+            if conf > 0:
+                labels_out[name] = conf
+        if labels_out:
+            out[str(iid)] = labels_out
+    return out
+
+
+def _gate_card_scores(hits, struct_tokens, gate_labels, term_df, n_scored, term_k):
+    """一张卡的领域 logits（五路证据里的三路本地 + 一路模型；用户覆盖在前端短路）。
+
+    标题术语：Σ 特异度×IDF×独占度（IDF＝log(1 + 卡数/含该术语的卡数)——「振动」
+    出现在 30% 的卡上时就该贬值；独占度＝1/k，术语同属 k 个族即衰减）。公式指纹：
+    特征算子命中即 +0.5（打平器）。模型打标：+2.5×conf。宽领域先验：+log(0.8)。
+    """
+    scores = {}
+    for domain, terms in (hits or {}).items():
+        s = 0.0
+        for t in terms:
+            idf = math.log(1.0 + n_scored / max(1, term_df.get(t, 1)))
+            s += _term_specificity(t) * idf * (1.0 / max(1, term_k.get(t, 1)))
+        if s > 0:
+            scores[domain] = scores.get(domain, 0.0) + GATE_W_TITLE * s
+    for name, conf in (gate_labels or {}).items():
+        scores[name] = scores.get(name, 0.0) + GATE_W_MODEL * conf
+    # 公式指纹是**打平器**：只有这张卡已有词面/模型证据时才参与（0.5 的弱证据
+    # 单独定归属，会让一座岛凭一个 ∇ 就上实色——比「不归类」更糟）
+    if scores and struct_tokens:
+        for domain, ops in _DOMAIN_OPERATOR_HINTS.items():
+            if ops & struct_tokens:
+                scores[domain] = scores.get(domain, 0.0) + GATE_W_FORMULA
+    for domain in GATE_WIDE_DOMAINS:
+        if domain in scores:
+            scores[domain] += math.log(GATE_PRIOR_WIDE)
+    return scores
+
+
+def _softmax(scores: dict) -> dict:
+    """softmax(logit/T)，T=1。空表返回空（不参与，而不是均匀分给所有领域）。"""
+    if not scores:
+        return {}
+    mx = max(scores.values())
+    exps = {d: math.exp(v - mx) for d, v in scores.items()}
+    total = sum(exps.values()) or 1.0
+    return {d: e / total for d, e in exps.items()}
+
+
+def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
+    """岛级归属＝卡级概率聚合（不是数票）：raw_d = Σ_c 信息量(c)·p_d(c) + 2.0·岛名命中。
+    信息量用 1 + min(3, 公式数)——带公式的卡内容更多，说话更算数；章节号标题的卡
+    没有本地证据，贡献为零（岛名兜底）。归一化后输出 top-K 概率与「谁说了算」。
+
+    domainSource 归属（图例据此标「按概念族推断 / Φ 归类 / 你指定」）：对有打标的卡
+    另算一份**只含本地证据**的概率（card_probs_local），对比主导领域的岛级质量——
+    没有模型证据时它连主导领域都撑不起（质量不到一半、或根本为零）→ 'gate'；
+    否则岛名贡献 ＞ 卡片贡献 → 'island'，其余 → 'vote'。直接比「conf 与 p」不行：
+    模型是唯一证据时 p≡1.0 恒大于 conf，永远判不成 gate。
+    """
+    raw, raw_local = {}, {}
+    vote_contrib, island_contrib = {}, {}
+    for iid in iids:
+        formulas = (items.get(iid) or {}).get("formulas") or []
+        info = 1.0 + min(3, len(formulas))
+        probs = card_probs.get(iid)
+        if probs:
+            for d, p in probs.items():
+                raw[d] = raw.get(d, 0.0) + info * p
+                vote_contrib[d] = vote_contrib.get(d, 0.0) + info * p
+        probs_local = card_probs_local.get(iid)
+        if probs_local:
+            for d, p in probs_local.items():
+                raw_local[d] = raw_local.get(d, 0.0) + info * p
+    for d in (island_fams or []):
+        raw[d] = raw.get(d, 0.0) + GATE_W_ISLAND
+        raw_local[d] = raw_local.get(d, 0.0) + GATE_W_ISLAND
+        island_contrib[d] = island_contrib.get(d, 0.0) + GATE_W_ISLAND
+    if not raw:
+        return {"domain": None, "domains": [], "domainConf": 0.0, "domainSource": None}
+    total = sum(raw.values()) or 1.0
+    ranked = sorted(raw.items(), key=lambda kv: (-kv[1], kv[0]))
+    top_name = ranked[0][0]
+    if raw_local.get(top_name, 0.0) < 0.5 * raw[top_name]:
+        src = "gate"
+    elif island_contrib.get(top_name, 0.0) > vote_contrib.get(top_name, 0.0):
+        src = "island"
+    else:
+        src = "vote"
+    domains = [{"name": d, "p": round(v / total, 3)}
+               for d, v in ranked[:GATE_TOP_K] if v / total >= GATE_MIN_P]
+    return {"domain": top_name, "domains": domains,
+            "domainConf": round(ranked[0][1] / total, 3), "domainSource": src}
 
 
 def _family_entries(items: dict, clusters: list, item_session: dict, session_rank: dict,
-                    families: list, prepared: list, item_families: dict) -> list:
+                    families: list, prepared: list, item_families: dict,
+                    session_fams: dict) -> list:
     """概念族 → 跨岛汇聚条目（kind=family，v6）。
 
     与「字面撞车」的本质区别：族是**领域知识**（内置表 / 用户确认 / Φ 归并），所以
@@ -460,14 +701,10 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
     （如岛叫「散度」而卡名是章节号）→ 整座岛以**岛内最早学的卡**为代表入族。两处都
     要求跨 ≥2 座岛才成条目——单岛命中只是这座岛的主题，不是跨画布联系。
     **岛名不受概念名闸门**：那是用户/AI 起的短名（「散度」），不是自动生成的卡片标题。
+    session_fams 由调用方算好传入（v7 海域层同用一份，不重复匹配）。
     """
     if not families:
         return []
-    session_fams = {}
-    for cluster in clusters:
-        sid = cluster["sessionId"]
-        session_fams[sid] = set(match_families(_normalize_title(cluster.get("title")), prepared))
-
     entries = []
     for fam in families:
         canonical = fam["canonical"]
@@ -502,13 +739,14 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
 
 
 def build_continent(items: dict, sessions: dict = None, user_edges=None,
-                    families=None) -> dict:
+                    families=None, gate=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
 
     返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared,
-    userEdges, danglingEdges}：
+    userEdges, danglingEdges, domainList}：
     - clusters: 每个有知识条目的会话一个簇，按会话最近更新排序；簇内条目按
-      createdAt 升序（学习顺序）；
+      createdAt 升序（学习顺序）；v7 起每簇带 domain / domains / domainConf /
+      domainSource（海域层归属，见 _cluster_domain_row——查空是正常路径，无归属为 null）；
     - shared: 跨会话共享概念（kind=title 公共子串 / kind=formula 公式 token），
       分数以**广度**为先（跨岛越多越靠前，v5.5），取前 SHARED_CONCEPT_LIMIT 条；
       每条带 links（每会话一张代表卡的端点，画图用）、owners（全部命中条目 id，
@@ -518,7 +756,10 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
       悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口；
     - families（v6）：概念族条目（kind=family）与标题/公式共享**同一条 shared 通道**——
       族是领域知识（内置表 + KV 扩展），所以「只共享 2 字领域词」的真关系（梯度/散度/
-      旋度）也能成城；族术语对应的原始标题标签会被去重（同一件事不画两座城）。
+      旋度）也能成城；族术语对应的原始标题标签会被去重（同一件事不画两座城）；
+    - domainList（v7）：全部领域名（族表 canonical，含 KV 扩展）——前端「归到哪个
+      领域」菜单的名单来源；gate 是 KV `continent_gate` 的原始值（v7.1b Φ 打标产物，
+      版本不符整批忽略）。
     """
     title_index = _session_title_index(sessions)
 
@@ -580,18 +821,24 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                     continue
                 run_owners.setdefault(piece, set()).add(iid)
 
+    # 结构 token 每条只算一次：公式共享与 v7 公式指纹共用（热路径不许算两遍）
+    struct_tokens = {iid: _structural_tokens(item) for iid, item in all_items}
     token_owners = {}
     for iid, item in all_items:
         # 公式是结构证据，不受标题闸门限制（标题不像概念名的条目，它的公式照样是
         # 真公式）；但先要过两道卫生（v5.6）——剥 `\text{…}` 散文、剔语法命令名，
         # 再剔通用符号（dx/dt/∂…），见 _structural_tokens / _GENERIC_FORMULA_TOKENS
-        for token in _structural_tokens(item) - _GENERIC_FORMULA_TOKENS:
+        for token in struct_tokens[iid] - _GENERIC_FORMULA_TOKENS:
             token_owners.setdefault(token, set()).add(iid)
 
     # ===== v6 概念族：领域知识层（内置表 + KV 扩展）=====
     accepted_families = merge_families(BUILTIN_FAMILIES, families_from_payload(families))
     prepared_families = prepare_families(accepted_families)
-    item_families = _item_families(items, prepared_families)
+    item_families, term_df, n_scored = _item_families(items, prepared_families)
+    # 岛名 → 族（v7 海域层与 v6 族条目共用一份，只匹配一次）
+    session_fams = {c["sessionId"]:
+                    set(match_families(_normalize_title(c.get("title")), prepared_families))
+                    for c in clusters}
 
     shared = []
     title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session))
@@ -618,7 +865,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                        "links": _links_for(owners, item_session, session_rank)})
 
     family_entries = _family_entries(items, clusters, item_session, session_rank,
-                                     accepted_families, prepared_families, item_families)
+                                     accepted_families, prepared_families, item_families,
+                                     session_fams)
     # 精确优先、族补缺口：族连接的每一对岛都已被更精确的强共享概念连上时，这座族城
     # 只是同一件事的第二座城（「简谐运动」两座岛 + 「振动与波动」族 = 重叠的两座城），
     # 折进折叠清单（原因 covered）而不是画上去。族只要多连上一座岛就照画（真机：
@@ -630,6 +878,32 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     # 前端在分配城市名额之前就把它折进清单，所以它不会挤掉任何一座能画的城。
     shared.sort(key=lambda s: (-s["score"], s["label"]))
     shared = shared[:SHARED_CONCEPT_LIMIT]
+
+    # ===== v7 海域层：softmax 评分核心（本地证据 + gate KV 模型证据，纯现算）=====
+    accepted_names = {f["canonical"] for f in accepted_families}
+    gate_entries = _normalize_gate_payload(
+        gate, accepted_names, current_gate_version(families))
+    term_k = _term_family_counts(prepared_families)
+    # 每张卡的领域概率只算一次；**不只扫有标题命中的卡**——章节号标题的卡没有词面
+    # 证据，但可能有 gate 打标/公式指纹（v7.1b 的主救场正是这类卡）。有打标的卡
+    # 另算一份「只含本地证据」的概率（domainSource 归属基线，见 _cluster_domain_row）
+    card_probs, card_probs_local = {}, {}
+    for iid in item_session:
+        hits = item_families.get(iid) or {}
+        gate_labels = gate_entries.get(iid)
+        struct = struct_tokens.get(iid) or set()
+        local = _softmax(_gate_card_scores(hits, struct, None, term_df, n_scored, term_k))
+        full = (_softmax(_gate_card_scores(hits, struct, gate_labels, term_df, n_scored, term_k))
+                if gate_labels else local)
+        if local:
+            card_probs_local[iid] = local
+        if full:
+            card_probs[iid] = full
+    for cluster in clusters:
+        cluster.update(_cluster_domain_row(
+            [row["itemId"] for row in cluster["items"]],
+            items, card_probs, card_probs_local,
+            session_fams.get(cluster["sessionId"]) or ()))
 
     # ===== v2 用户簇间边：主图自有数据（KV continent_edges，调用方喂参）=====
     valid_edges, dangling_edges = _split_user_edges(
@@ -644,4 +918,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         "shared": shared,
         "userEdges": valid_edges,
         "danglingEdges": dangling_edges,
+        "domainList": [f["canonical"] for f in accepted_families][:DOMAIN_LIST_MAX],
+        # v7.1b：当前评分口径的版本指纹——前端写 gate KV 时带上它，名单/权重变了
+        # 整批作废重打（版本单一来源在此，不许前端自己算）
+        "gateVersion": current_gate_version(families),
     }

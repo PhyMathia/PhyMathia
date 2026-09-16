@@ -32,6 +32,7 @@ import re
 __all__ = [
     "BUILTIN_FAMILIES", "ALIASES", "apply_aliases", "families_from_payload",
     "merge_families", "family_term_index", "prepare_families", "match_families",
+    "match_family_terms", "gate_version",
     "FAMILY_LIMIT", "FAMILY_TERM_MAX_CHARS", "FAMILY_CANONICAL_MAX_CHARS",
 ]
 
@@ -289,4 +290,30 @@ def match_families(text: str, families: list) -> list:
             hit = any(t in words for t in fam["ascii"])
         if hit:
             out.append(fam["canonical"])
+    return out
+
+
+def match_family_terms(text: str, families: list) -> dict:
+    """`match_families` 的明细版：{族名: [命中的术语]}——v7 领域评分要用**哪条术语**
+    命中了（特异度 / IDF / 独占度都按术语算），只给族名不够。
+
+    与 `match_families` 同一套匹配规则（中文子串 / ASCII 词边界），同一份 prepared
+    结构；区别只是不提前 break，把命中的术语全收。调用侧保证每张卡只跑一次
+    （性能红线：见 continent._item_family_evidence）。
+    """
+    s = str(text or "").lower()
+    if not s:
+        return {}
+    if families and not ("cjk" in families[0] or "ascii" in families[0]):
+        families = prepare_families(families)
+    words = None
+    out = {}
+    for fam in (families or []):
+        terms = [t for t in fam["cjk"] if t in s]
+        if fam["ascii"]:
+            if words is None:
+                words = set(_ASCII_WORD_RE.findall(s))
+            terms += [t for t in fam["ascii"] if t in words]
+        if terms:
+            out[fam["canonical"]] = terms
     return out

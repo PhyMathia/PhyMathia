@@ -343,6 +343,9 @@ class BuildContinentFamilyTest(unittest.TestCase):
         调用，每次还在重新规范化族术语 → 实测 600 条要 1.7 秒（cProfile 抓到 420 万次
         str.lower）。修法是「每张卡只匹配一次 + 术语预规范化」。这里用**调用计数**把复杂度
         钉住——计时断言在 CI/别人的机器上必然飘。
+
+        v7 起卡片匹配走 match_family_terms（明细版，评分核心用），岛名匹配照旧
+        match_families——两个都 spy，总数仍须 ≈ 卡数 + 岛数。
         """
         import server.continent as cont
 
@@ -354,17 +357,23 @@ class BuildContinentFamilyTest(unittest.TestCase):
             sessions["sess_p%d" % i] = {"id": "sess_p%d" % i, "title": "岛%d" % i, "updatedAt": i}
 
         calls = {"n": 0}
-        real = cont.match_families
+        real, real_terms = cont.match_families, cont.match_family_terms
 
         def spy(text, fams):
             calls["n"] += 1
             return real(text, fams)
 
+        def spy_terms(text, fams):
+            calls["n"] += 1
+            return real_terms(text, fams)
+
         cont.match_families = spy
+        cont.match_family_terms = spy_terms
         try:
             build_continent(items, sessions)
         finally:
             cont.match_families = real
+            cont.match_family_terms = real_terms
         self.assertLessEqual(calls["n"], 60 + 5 + 2,
                              "匹配次数应约等于卡数+岛数，实际 %d（族×卡 的老写法是 >1500）" % calls["n"])
 
@@ -809,10 +818,187 @@ class BuildContinentUserEdgeTest(unittest.TestCase):
         self.assertEqual(normalize_user_edge_payload(None), [])
         self.assertEqual(normalize_user_edge_payload({"edges": "junk"}), [])
 
+    def test_edge_style_survives_roundtrip_v72(self):
+        """v7.2 航线样式随边存取：白名单键保留、脏键丢弃——真机验收抓过「写了就丢」
+        （_norm 白名单没带 style，虚线/隐藏全部失效）。"""
+        items = self._items()
+        edges = [{
+            "id": "e1", "fromItem": "k1", "toItem": "k2",
+            "fromSession": S1, "toSession": S2, "label": "同源",
+            "style": {"dash": "dashed", "color": "gold", "width": "thick",
+                      "route": "lane", "hidden": True, "noLabel": False,
+                      "junk": "应被丢弃", "dash2": "x"},
+            "createdAt": 5,
+        }]
+        out = build_continent(items, SESSIONS, edges)
+        self.assertEqual(len(out["userEdges"]), 1)
+        style = out["userEdges"][0]["style"]
+        self.assertEqual(style["dash"], "dashed")
+        self.assertEqual(style["color"], "gold")
+        self.assertEqual(style["route"], "lane")
+        self.assertIs(style["hidden"], True)
+        self.assertNotIn("noLabel", style)      # False 不存（默认就是不隐藏标签）
+        self.assertNotIn("junk", style)          # 白名单外的键丢弃
+        # 旧边（无 style）照常，空样式不炸
+        old = [{"id": "e2", "fromItem": "k1", "toItem": "k2",
+                "fromSession": S1, "toSession": S2, "createdAt": 6}]
+        out2 = build_continent(items, SESSIONS, old)
+        self.assertEqual(out2["userEdges"][0]["style"], {})
+
     def test_no_edges_yields_empty_lists(self):
         out = build_continent(self._items(), SESSIONS)
         self.assertEqual(out["userEdges"], [])
         self.assertEqual(out["danglingEdges"], [])
+
+
+class BuildContinentDomainGateTest(unittest.TestCase):
+    """v7.1a/v7.1b 海域层与 MoE 门控：softmax 评分核心 + 岛级概率聚合 + gate KV。
+
+    铁律「门控只路由不证明」在这里的可执行形态：domain* 字段只出现在 cluster 行上，
+    shared 条目（城市与线的证据通道）一个门控字段都不许有。
+    """
+
+    D_SESSIONS = {
+        "sess_g1": {"id": "sess_g1", "title": "梯度", "sessionId": "p1", "updatedAt": 100},
+        "sess_g2": {"id": "sess_g2", "title": "散度", "sessionId": "p2", "updatedAt": 200},
+        "sess_g3": {"id": "sess_g3", "title": "能量守恒", "sessionId": "p3", "updatedAt": 300},
+        "sess_g4": {"id": "sess_g4", "title": "随手记", "sessionId": "p4", "updatedAt": 400},
+    }
+
+    def _gate(self, entries, version):
+        return {"version": version, "entries": entries}
+
+    def test_no_evidence_is_null_normal_path(self):
+        items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        self.assertIsNone(row["domain"])
+        self.assertEqual(row["domains"], [])
+        self.assertEqual(row["domainConf"], 0.0)
+        self.assertIsNone(row["domainSource"])
+
+    def test_island_name_evidence_wins_for_single_card_island(self):
+        # 岛名「梯度」命中矢量分析；唯一一张卡是章节号标题（无词面证据）→ 岛名兜底
+        items = {"k1": _item("k1", "sess_g1", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        self.assertEqual(row["domain"], "矢量分析")
+        self.assertEqual(row["domainSource"], "island")
+        self.assertGreaterEqual(row["domainConf"], 0.99)
+
+    def test_card_vote_wins_for_multi_card_island(self):
+        # 11 张守恒定律卡 vs 岛名「随手记」（不命中任何族）→ 卡片聚合说了算
+        items = {"k%d" % i: _item("k%d" % i, "sess_g4", "能量守恒定律的应用%d" % i, created=i)
+                 for i in range(11)}
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        self.assertEqual(row["domain"], "守恒定律")
+        self.assertEqual(row["domainSource"], "vote")
+        self.assertGreaterEqual(row["domainConf"], 0.7)
+
+    def test_mixed_island_has_secondary_domain(self):
+        # 混合岛：一张卡「梯度」一张卡「能量守恒」，岛名不命中 → 两个领域都在 domains 里
+        items = {
+            "k1": _item("k1", "sess_g4", "梯度的几何意义", created=1),
+            "k2": _item("k2", "sess_g4", "机械能守恒定律", created=2),
+        }
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        names = [d["name"] for d in row["domains"]]
+        self.assertIn(row["domain"], ("矢量分析", "守恒定律"))
+        self.assertEqual(len(names), 2)
+        self.assertIn("矢量分析", names)
+        self.assertIn("守恒定律", names)
+        # 概率按权重降序、和 ≤ 1、主导概率 = domainConf
+        ps = [d["p"] for d in row["domains"]]
+        self.assertGreaterEqual(ps[0], ps[1])
+        self.assertTrue(all(p >= 0.25 for p in ps))
+        self.assertAlmostEqual(row["domainConf"], ps[0], places=3)
+
+    def test_ambiguity_longer_more_exclusive_term_wins(self):
+        # v7.1b 门控细化的招牌回归用例：「中心极限定理」必须判「概率统计」而非「微积分」
+        # ——术语「中心极限」更长（特异度 1.0）且更独占，「极限」只是 2 字（0.5）
+        items = {"k1": _item("k1", "sess_g4", "中心极限定理", created=1)}
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        self.assertEqual(row["domain"], "概率统计")
+
+    def test_idf_penalizes_omnipresent_terms(self):
+        # IDF 单调性（卡内效应）：同一张卡上，「熵」只在全库这 1 张出现、「极限」出现在
+        # 另一座岛的 30 张卡上——同为 2 字术语，高频的那个必须贬值，热力学赢过微积分
+        items = {"k%d" % i: _item("k%d" % i, "sess_g1", "极限与收敛%d" % i, created=i)
+                 for i in range(30)}
+        items["hot"] = _item("hot", "sess_g4", "熵与极限", created=99)
+        out = build_continent(items, self.D_SESSIONS)
+        row = next(c for c in out["clusters"] if c["sessionId"] == "sess_g4")
+        self.assertEqual(row["domain"], "热力学")
+
+    def test_low_confidence_reported_honestly(self):
+        # 三路均分（三个 2 字术语各属一族）→ conf ≈ 1/3 < 0.4：如实报最优猜测，
+        # 由前端走「中性灰 + 待确认」（后端不许硬塞 None 装作没证据）
+        items = {"k1": _item("k1", "sess_g4", "牛顿力学与矩阵守恒", created=1)}
+        out = build_continent(items, self.D_SESSIONS)
+        row = out["clusters"][0]
+        self.assertIsNotNone(row["domain"])
+        self.assertLess(row["domainConf"], 0.4)
+
+    def test_gate_kv_model_evidence(self):
+        from server.continent import current_gate_version
+        # 章节号卡（本地零证据）+ Φ 打标 0.95 → 归进名单内领域，来源标 gate
+        version = current_gate_version(None)
+        gate = self._gate({"k1": {"domains": [{"name": "量子力学", "conf": 0.95}],
+                                  "hash": "x", "at": 1}},
+                          version)
+        items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS, None, None, gate)
+        row = out["clusters"][0]
+        self.assertEqual(row["domain"], "量子力学")
+        self.assertEqual(row["domainSource"], "gate")
+        self.assertGreaterEqual(row["domainConf"], 0.9)
+
+    def test_gate_version_mismatch_invalidates_whole_batch(self):
+        from server.continent import current_gate_version
+        gate = self._gate({"k1": {"domains": [{"name": "量子力学", "conf": 0.95}]}},
+                          "deadbeef00")  # 名单/权重变了之后的老版本
+        items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS, None, None, gate)
+        self.assertIsNone(out["clusters"][0]["domain"])
+        # 版本口径单一来源：同一份 payload 两次计算必须一致，换名单必须变
+        self.assertEqual(current_gate_version(None), current_gate_version(None))
+        self.assertNotEqual(current_gate_version(None),
+                            current_gate_version({"families": [
+                                {"canonical": "新领域", "terms": ["新词"]}]}))
+
+    def test_gate_ignores_names_outside_expert_list(self):
+        from server.continent import current_gate_version
+        gate = self._gate({"k1": {"domains": [{"name": "分析力学", "conf": 0.99},
+                                              {"name": "量子力学", "conf": 0.3}]}},
+                          current_gate_version(None))
+        items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS, None, None, gate)
+        # 名单里没有「分析力学」（铁律②：模型不许发明领域）→ 只有名单内的 0.3 生效
+        self.assertEqual(out["clusters"][0]["domain"], "量子力学")
+
+    def test_gate_fields_never_leak_into_shared(self):
+        # 「门控只路由不证明」的数据层隔离：shared 是城市与线的证据通道，
+        # 任何门控字段（domain/domains/domainSource/gate）都不许出现
+        items = {
+            "k1": _item("k1", "sess_g1", "梯度的几何意义", created=1),
+            "k2": _item("k2", "sess_g2", "散度的定义", created=2),
+            "k3": _item("k3", "sess_g3", "机械能守恒", created=3),
+        }
+        out = build_continent(items, self.D_SESSIONS)
+        forbidden = {"domain", "domains", "domainSource", "domainConf", "gate"}
+        for entry in out["shared"]:
+            self.assertFalse(forbidden & set(entry.keys()),
+                             "shared 条目混进了门控字段：%r" % (forbidden & set(entry.keys())))
+
+    def test_domain_list_exposes_expert_names(self):
+        items = {"k1": _item("k1", "sess_g1", "梯度")}
+        out = build_continent(items, self.D_SESSIONS)
+        self.assertIn("矢量分析", out["domainList"])
+        self.assertIn("守恒定律", out["domainList"])
+        self.assertLessEqual(len(out["domainList"]), 32)
 
 
 if __name__ == "__main__":
