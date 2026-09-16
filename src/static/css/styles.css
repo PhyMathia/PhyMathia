@@ -1251,18 +1251,17 @@
       border: 1px solid var(--btn-active-border);
     }
     .model-toast {
+      /* 第 5 轮磨砂化：底色/磨砂归 .aurora-glass--compact（index.html 挂类），本规则只留结构与动效 */
       position: fixed;
       top: 20px;
       left: 50%;
       transform: translateX(-50%) translateY(-60px);
-      background: var(--bg-panel);
       border: 1px solid var(--accent);
       color: var(--text-primary);
       padding: 8px 20px;
       border-radius: 8px;
       font-size: 13px;
       z-index: 9999;
-      backdrop-filter: blur(12px);
       opacity: 0;
       transition: transform 0.3s ease, opacity 0.3s ease;
       pointer-events: none;
@@ -1275,6 +1274,7 @@
     /* ====== 完成通知卡片 ====== */
 
     .completion-card {
+      /* 第 5 轮磨砂化：底色/阴影归 .aurora-glass（ui.js 挂类），本规则只留结构与动效 */
       position: fixed;
       top: 76px;
       right: 20px;
@@ -1285,11 +1285,9 @@
       min-width: 280px;
       max-width: 420px;
       padding: 14px 16px;
-      background: var(--bg-panel);
       border: 1px solid var(--border);
       border-left: 4px solid #10b981;
       border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
       color: var(--text-primary);
       transform: translateX(calc(100% + 40px));
       opacity: 0;
