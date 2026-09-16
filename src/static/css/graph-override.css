@@ -2889,6 +2889,41 @@
   color: #f87171;
 }
 
+/* 差评备注的内联小表单（替代 window.prompt）：一条输入 + 提交/跳过 */
+.graph-harness-feedback-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.graph-harness-feedback-form input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: rgba(10, 15, 35, 0.46);
+  color: var(--text-primary, #e2e8f0);
+  font-size: 12px;
+}
+
+.graph-harness-feedback-form button {
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: var(--btn-bg, #1e293b);
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-harness-feedback-form button:hover {
+  border-color: var(--accent, #38bdf8);
+  color: var(--accent, #38bdf8);
+}
+
 .graph-harness-decision {
   display: inline-flex;
   align-items: center;

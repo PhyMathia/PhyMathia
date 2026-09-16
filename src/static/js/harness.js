@@ -680,7 +680,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     const timeHtml = entry.timestamp
       ? '<span class="graph-harness-time">' + (typeof formatRelativeTime === 'function' ? formatRelativeTime(entry.timestamp) : '') + '</span>'
       : '';
-    return '<div class="graph-harness-message graph-harness-message-' + role + '">'
+    return '<div class="graph-harness-message graph-harness-message-' + role + '" data-hentry-id="' + _escapeHtml(entry.id || '') + '">'
       + avatar
       + '<div class="graph-harness-message-main">'
       + '<div class="graph-harness-message-content">' + (role === 'assistant' && typeof renderMarkdown === 'function'
@@ -718,10 +718,49 @@ let harnessLastAppliedBeforeSnapshot = null;
   async function _sendHarnessFeedback(entryId, kind) {
     const entry = (harnessHistory || []).find(item => item.id === entryId);
     if (!entry || entry.feedback) return;
-    let note = '';
     if (kind === 'bad') {
-      note = window.prompt('Φ 哪里没懂 / 做错了？（一句话，可选）', '') || '';
+      // 差评备注走面板内联小表单（Enter 提交 / Esc 跳过），不用 window.prompt——
+      // 原生弹窗会打断画布沉浸，且样式与应用完全不搭
+      _showHarnessFeedbackForm(entryId);
+      return;
     }
+    _submitHarnessFeedback(entry, kind, '');
+  }
+
+  function _showHarnessFeedbackForm(entryId) {
+    const msg = (harnessPanel || document).querySelector('.graph-harness-message[data-hentry-id="' + entryId + '"]');
+    if (!msg || msg.querySelector('.graph-harness-feedback-form')) return;
+    const form = document.createElement('div');
+    form.className = 'graph-harness-feedback-form';
+    form.innerHTML = '<input type="text" maxlength="200" placeholder="Φ 哪里没懂 / 做错了？（一句话，可选）">'
+      + '<button type="button" data-act="submit">提交反馈</button>'
+      + '<button type="button" data-act="skip">跳过</button>';
+    (msg.querySelector('.graph-harness-message-main') || msg).appendChild(form);
+    const input = form.querySelector('input');
+    const submitWith = (note) => {
+      form.remove();
+      const entry = (harnessHistory || []).find(item => item.id === entryId);
+      _submitHarnessFeedback(entry, 'bad', note);
+    };
+    form.addEventListener('click', evt => {
+      const act = evt.target && evt.target.dataset ? evt.target.dataset.act : '';
+      if (act === 'submit') submitWith(String(input.value || '').trim());
+      else if (act === 'skip') submitWith('');
+    });
+    input.addEventListener('keydown', evt => {
+      if (evt.key === 'Enter') {
+        evt.preventDefault();
+        submitWith(String(input.value || '').trim());
+      } else if (evt.key === 'Escape') {
+        evt.stopPropagation();
+        submitWith('');
+      }
+    });
+    input.focus();
+  }
+
+  async function _submitHarnessFeedback(entry, kind, note) {
+    if (!entry || entry.feedback) return;
     entry.feedback = kind;
     if (note) entry.feedbackNote = note;
     _saveHarnessHistory().then(_renderHarnessChat);
