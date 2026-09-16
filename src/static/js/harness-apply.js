@@ -324,7 +324,12 @@
   }
 
   function applySelectedGraphHarness() {
-    _applyOps(_selectedOps(), false);
+    const selected = _selectedOps();
+    if (!selected.length) {
+      _setHarnessStatus('没有勾选任何操作：勾选想保留的条目再点「应用所选」，或改用「应用全部」', 'error');
+      return;
+    }
+    _applyOps(selected, false);
   }
 
   function undoGraphHarness() {

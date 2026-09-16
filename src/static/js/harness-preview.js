@@ -98,7 +98,9 @@
       .filter(box => box.checked)
       .map(box => ops[Number(box.dataset.opIndex)])
       .filter(Boolean);
-    return selected.length ? selected : ops;
+    // 全部取消勾选＝什么都不选，不再回退成“应用全部”——旧回退会把用户特意
+    // 排除的删除类操作整包应用。是否放行由调用方提示用户决定。
+    return selected;
   }
 
   function _nextNodePosition(count) {

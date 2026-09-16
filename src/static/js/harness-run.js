@@ -153,10 +153,16 @@
     runGraphHarnessWithText('撤销刚才的修改，恢复原样');
   }
 
-  async function runGraphHarness(phase = 'normal') {
+  async function runGraphHarness(phase = 'normal', opts) {
     const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
+    // 失败路径统一回填输入框：指令没执行成不该让用户重新打一遍
+    const restoreInstruction = () => {
+      if (inputEl && instruction) inputEl.value = instruction;
+    };
+    // 澄清重跑路径（runGraphHarnessWithFocus 委托进来）：目标节点已由用户点选解析好，不再走焦点解析
+    const presetFocusIds = opts && Array.isArray(opts.focusIds) ? opts.focusIds : null;
     if (_isHarnessCasualInstruction(instruction)) {
       _appendHarnessHistory({
         id: _historyId(), role: 'user', content: instruction, phase: 'normal', timestamp: Date.now(),
@@ -174,6 +180,7 @@
       : null;
     if (!model) {
       _setHarnessStatus('请先配置主模型', 'error');
+      restoreInstruction();
       return;
     }
     const state = _graphState() || {};
@@ -185,24 +192,34 @@
       : requestedPhase;
     harnessLastInstruction = instruction;
     harnessLastPhase = harnessPhase;
-    _appendHarnessHistory({
-      id: _historyId(),
-      role: 'user',
-      content: instruction,
-      phase: harnessPhase,
-      timestamp: Date.now(),
-    });
+    // 澄清重跑：首轮已记过这条 user 消息（随后被澄清面板打断、没有 assistant 回复跟随），
+    // 再记一条会出现连续两条一模一样的用户气泡
+    const lastEntry = harnessHistory.length ? harnessHistory[harnessHistory.length - 1] : null;
+    const duplicateUserTurn = !!(lastEntry && lastEntry.role === 'user' && String(lastEntry.content || '') === instruction);
+    if (!duplicateUserTurn) {
+      _appendHarnessHistory({
+        id: _historyId(),
+        role: 'user',
+        content: instruction,
+        phase: harnessPhase,
+        timestamp: Date.now(),
+      });
+    }
     if (harnessPhase === 'evaluate' && evalNodes.length) {
       _setHarnessStatus('请先应用或删除现有 AI 评价节点', 'error');
+      restoreInstruction();
       return;
     }
     if (harnessPhase === 'apply' && !evalNodes.length) {
       _setHarnessStatus('当前没有 AI 评价节点', 'error');
+      restoreInstruction();
       return;
     }
     let focusIds = [];
     const pureQuestion = _isHarnessPureQuestion(instruction);
-    if (!harnessSingleEvalId && !pureQuestion) {
+    if (presetFocusIds) {
+      focusIds = presetFocusIds;
+    } else if (!harnessSingleEvalId && !pureQuestion) {
       const candidateFocusIds = _detectFocusNodeIds(instruction, _graphNodes().filter(node => !deleted.has(node.id)));
       if (candidateFocusIds.length === 1) {
         focusIds = candidateFocusIds;
@@ -253,6 +270,7 @@
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
       _setHarnessStatus('图太大（约 ' + Math.round(_snapshotMeta.est_tokens / 1000) + 'k tokens），请先选中局部节点或缩小范围后再让 AI 修改', 'error');
+      restoreInstruction();
       return;
     }
     if (!snapshot.nodes.length && !pureQuestion) {
@@ -263,6 +281,7 @@
       } else {
         _setHarnessStatus('当前画布上没有节点：可直接向我提问，或先在主聊天生成内容后再让我整理', 'error');
       }
+      restoreInstruction();
       return;
     }
     harnessResult = null;
@@ -364,6 +383,7 @@
         }
       }
     } catch (err) {
+      restoreInstruction();
       if (err && err.name === 'AbortError') {
         _setHarnessStatus('已取消', 'ok');
       } else {
@@ -414,9 +434,7 @@
     const pending = harnessPendingClarify;
     if (!pending) return;
     harnessPendingClarify = null;
-    const instructionEl = document.getElementById('graphHarnessInstruction');
-    if (instructionEl) instructionEl.value = pending.instruction;
-    runGraphHarnessWithFocus(pending.phase, [nodeId]);
+    runGraphHarnessWithFocus(pending.phase, [nodeId], pending.instruction);
   }
 
   function confirmHarnessClarifyInput() {
@@ -429,114 +447,22 @@
     const node = nodes.find(item => item.id === text || _nodeLabel(item) === text);
     harnessPendingClarify = null;
     if (node) {
-      runGraphHarnessWithFocus(pending.phase, [node.id]);
+      runGraphHarnessWithFocus(pending.phase, [node.id], pending.instruction);
     } else {
       _setHarnessStatus('未找到该节点，请选择列表中的节点或检查名称', 'error');
     }
   }
 
-  async function runGraphHarnessWithFocus(phase, focusIds) {
-    const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
-    const inputEl = document.getElementById('graphHarnessInstruction');
-    if (inputEl) inputEl.value = '';
-    const model = typeof window.getActiveModelForRole === 'function'
-      ? window.getActiveModelForRole('agent')
-      : null;
-    if (!model) {
-      _setHarnessStatus('请先配置主模型', 'error');
-      return;
+  // 澄清重跑：把指令回填后委托主路径 runGraphHarness（焦点已解析）。
+  // 旧实现是主路径的手抄删减版，长期缺功能漂移：引用了未定义的 pureQuestion（点选即
+  // ReferenceError）、模型槽位只认主模型、无 token 预检、无停止按钮、无流式预览——统一走
+  // 主路径后这些自动对齐，澄清链路与主链路行为一致。
+  function runGraphHarnessWithFocus(phase, focusIds, instruction) {
+    if (typeof instruction === 'string' && instruction) {
+      const instructionEl = document.getElementById('graphHarnessInstruction');
+      if (instructionEl) instructionEl.value = instruction;
     }
-    const state = _graphState() || {};
-    const deleted = new Set(Object.keys(state.harnessDeleted || {}));
-    const evalNodes = _graphNodes().filter(node => node.kind === 'ai_eval' && !deleted.has(node.id));
-    harnessPhase = phase || 'normal';
-    harnessLastInstruction = instruction;
-    harnessLastPhase = harnessPhase;
-    _appendHarnessHistory({
-      id: _historyId(),
-      role: 'user',
-      content: instruction,
-      phase: harnessPhase,
-      timestamp: Date.now(),
-    });
-    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId);
-    harnessSnapshot = snapshot;
-    if (!snapshot.nodes.length) {
-      _setHarnessStatus('当前没有可审阅节点', 'error');
-      return;
-    }
-    harnessResult = null;
-    _setHarnessStatus(harnessPhase === 'evaluate' ? '生成评价节点中...' : '应用建议中...', 'running');
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (resultBox) resultBox.innerHTML = '';
-    document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
-    if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
-    if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
-    _setHarnessBusy(true);
-    try {
-      const resp = await fetch(HARNESS_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          snapshot,
-          pure_chat: !!pureQuestion,
-          instruction,
-          model: _harnessModelForRequest(model),
-          max_tokens: 6000,
-          phase: harnessPhase,
-          level: localStorage.getItem('phymathia_level') || 'university',
-          focus_node_ids: focusIds,
-          harness_history: _buildStructuredHarnessHistory(),
-          previous_ops: Array.isArray(harnessLastAppliedOps) ? harnessLastAppliedOps : [],
-          previous_snapshot: harnessLastAppliedBeforeSnapshot || null,
-          retries: 2,
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
-      }
-      if (data.status === 'error' || (data.errors && data.errors.length)) {
-        throw new Error((data.errors || []).map(item => (item && (item.reason || item.message)) || '未知错误').filter(Boolean).join('；') || '未知错误');
-      }
-      harnessResult = data;
-      renderHarnessResult(data);
-      _appendHarnessHistory({
-        id: _historyId(),
-        role: 'assistant',
-        content: _harnessAssistantContent(data),
-        instruction,
-        summary: data.summary || '',
-        operations: data.operations || [],
-        phase: harnessPhase,
-        decision: 'pending',
-        timestamp: Date.now(),
-      });
-      if (typeof window.applyGraphDiffHighlights === 'function') {
-        setTimeout(() => window.applyGraphDiffHighlights(data.operations || []), 0);
-      }
-      if (typeof window.showGraphHarnessPreview === 'function') {
-        const preview = _buildHarnessPreview(data.operations || []);
-        window.__lastHarnessPreview = preview;
-        window.showGraphHarnessPreview(preview.nodes, preview.edges);
-        if (preview.nodes.length || preview.edges.length) {
-          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
-        }
-      }
-    } catch (err) {
-      const human = _harnessErrorToHuman(err && err.message ? err.message : String(err));
-      _setHarnessStatus('审阅失败：' + human, 'error');
-      _showHarnessRetry('审阅失败：' + human);
-      if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
-      if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
-    } finally {
-      _setHarnessBusy(false);
-      // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”
-      const _statusEl = document.getElementById('graphHarnessStatus');
-      if (_statusEl && _statusEl.classList && _statusEl.classList.contains('graph-harness-status-running')) {
-        _setHarnessStatus('已完成', 'ok');
-      }
-    }
+    runGraphHarness(phase || 'normal', { focusIds: Array.isArray(focusIds) ? focusIds : [] });
   }
 
   function _nodeLabelById(id, allOps) {
