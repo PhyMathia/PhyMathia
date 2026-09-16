@@ -3551,8 +3551,10 @@
   stroke-opacity: 0.45;
   stroke-width: 1.5;
 }
-/* v2 我的大陆边：实线暖金、更醒目（用户落笔比自动检出重一档）；可点开操作弹层 */
-.continent-user-link {
+/* v2 我的大陆边 → v7.2 航线：端点从岛框边缘出发、绕行不穿岛；颜色/线型/粗细逐条
+ * 可调（stroke 属性由 JS 按 style 写入），这里只管结构态（hover/悬停隔离/锚点短接） */
+.continent-user-link,
+.continent-route {
   fill: none;
   stroke: #e0a83e;
   stroke-opacity: 0.85;
@@ -3560,8 +3562,57 @@
   pointer-events: stroke;
   cursor: pointer;
 }
-[data-theme="light"] .continent-user-link { stroke: #a3722f; }
-.continent-user-link:hover { stroke-opacity: 1; filter: drop-shadow(0 0 3px rgba(224, 168, 62, 0.6)); }
+[data-theme="light"] .continent-user-link,
+[data-theme="light"] .continent-route { stroke: #a3722f; }
+.continent-user-link:hover,
+.continent-route:hover { stroke-opacity: 1; filter: drop-shadow(0 0 3px rgba(224, 168, 62, 0.6)); }
+/* v7.2 锚点短接：锚点卡到出岛点的虚线小段——只在细节档（lod-detail）显示 */
+.continent-route-stub {
+  stroke: var(--text-secondary);
+  stroke-opacity: 0.4;
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  pointer-events: none;
+}
+.continent-world:not(.lod-detail) .continent-route-stub { display: none; }
+/* v7.2 悬停隔离：悬停岛时无关航线淡出、相关航线提亮 */
+.continent-route.is-dim { stroke-opacity: 0.08; }
+.continent-route.is-lit { stroke-opacity: 1; filter: drop-shadow(0 0 4px rgba(224, 168, 62, 0.5)); }
+/* v7.2 航线调整面板（单条可调） */
+.continent-route-form { display: flex; flex-direction: column; gap: 6px; }
+.continent-route-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+}
+.continent-route-grid label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.continent-route-grid select {
+  max-width: 110px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(10, 15, 35, 0.46);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+[data-theme="light"] .continent-route-grid select { background: rgba(255, 252, 248, 0.55); }
+.continent-route-grid select option { background: var(--bg-panel); color: var(--text-primary); }
+.continent-route-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
 /* v2 断桥：一端已不在的边——灰色虚线残段 + ✕ 断口，安静但不装没事 */
 .continent-dangle-link {
   fill: none;
@@ -3771,6 +3822,265 @@
 .graph-workspace.continent-open .graph-canvas {
   visibility: hidden;
 }
+/* ===== v7.1a 海域层：学科地盘（领域配色 / 海域板 / 图例 / 聚焦淡化） ===== */
+/* 颜色只上两层（海域板 + 岛底板），卡片保持原样——三层都上色会与 ◈ 边界卡/城市的
+ * accent 打架。色相由领域名确定性分配（_continentRegionHue），同领域永远同色。 */
+.continent-region {
+  position: absolute;
+  border-radius: 24px;
+  border: 1.5px solid hsla(var(--region-h, 220), 46%, 60%, 0.34);
+  background: hsla(var(--region-h, 220), 52%, 58%, 0.055);
+  box-shadow: inset 0 0 24px hsla(var(--region-h, 220), 55%, 60%, 0.05);
+  transition: opacity 0.25s ease;
+}
+[data-theme="light"] .continent-region {
+  border-color: hsla(var(--region-h, 30), 48%, 45%, 0.4);
+  background: hsla(var(--region-h, 30), 55%, 55%, 0.09);
+  box-shadow: inset 0 0 24px hsla(var(--region-h, 30), 60%, 50%, 0.06);
+}
+/* 并「其他」的尾片：中性灰（色盘不硬造第 13 色） */
+.continent-region.is-gray {
+  border-color: rgba(128, 132, 148, 0.32);
+  background: rgba(128, 132, 148, 0.05);
+  box-shadow: none;
+}
+.continent-region-head {
+  position: absolute;
+  left: 22px;
+  top: 8px;
+  right: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+.continent-region-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: hsla(var(--region-h, 220), 62%, 72%, 0.95);
+}
+[data-theme="light"] .continent-region-name {
+  color: hsla(var(--region-h, 30), 55%, 34%, 0.95);
+}
+.continent-region.is-gray .continent-region-name { color: var(--text-secondary); }
+.continent-region-count { font-size: 11px; color: var(--text-secondary); }
+.continent-region-src {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.85;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+.continent-region-head:hover .continent-region-name { text-decoration: underline dotted; }
+
+/* 岛底板跟海域走：solid 实色、light 更淡、pending 中性灰不划地盘（「不确定也要可见」） */
+.continent-cluster.has-region {
+  border-color: hsla(var(--region-h, 220), 46%, 62%, 0.42);
+  background: hsla(var(--region-h, 220), 50%, 60%, 0.10);
+}
+.continent-cluster.has-region.r-light {
+  border-color: hsla(var(--region-h, 220), 40%, 62%, 0.3);
+  background: hsla(var(--region-h, 220), 45%, 60%, 0.06);
+}
+.continent-cluster.r-pending {
+  border-style: dashed;
+  background: rgba(128, 132, 148, 0.06);
+}
+[data-theme="light"] .continent-cluster.has-region {
+  border-color: hsla(var(--region-h, 30), 46%, 45%, 0.45);
+  background: hsla(var(--region-h, 30), 52%, 55%, 0.13);
+}
+[data-theme="light"] .continent-cluster.has-region.r-light {
+  border-color: hsla(var(--region-h, 30), 40%, 45%, 0.34);
+  background: hsla(var(--region-h, 30), 45%, 55%, 0.08);
+}
+[data-theme="light"] .continent-cluster.r-pending { background: rgba(120, 110, 95, 0.08); }
+
+/* 领域徽标（岛牌上的归类入口）与次领域色点 */
+.continent-domain-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid hsla(var(--region-h, 220), 50%, 62%, 0.5);
+  color: hsla(var(--region-h, 220), 60%, 74%, 0.98);
+  background: hsla(var(--region-h, 220), 55%, 55%, 0.13);
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.continent-domain-badge:hover {
+  background: hsla(var(--region-h, 220), 60%, 55%, 0.26);
+}
+.continent-domain-badge.is-unsure { border-style: dashed; }
+[data-theme="light"] .continent-domain-badge {
+  border-color: hsla(var(--region-h, 30), 48%, 42%, 0.5);
+  color: hsla(var(--region-h, 30), 52%, 30%, 0.96);
+  background: hsla(var(--region-h, 30), 55%, 55%, 0.15);
+}
+[data-theme="light"] .continent-domain-badge:hover {
+  background: hsla(var(--region-h, 30), 60%, 55%, 0.28);
+}
+.continent-cluster.r-pending .continent-domain-badge {
+  border-color: rgba(128, 132, 148, 0.5);
+  color: var(--text-secondary);
+  background: rgba(128, 132, 148, 0.1);
+}
+.continent-domain-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  align-self: center;
+  background: hsla(var(--region-h, 220), 60%, 62%, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* 图例（视口左下角的玻璃胶囊）：每个颜色是什么、谁说的、点一下聚焦 */
+.continent-legend {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 24;
+  max-width: 300px;
+  border-radius: 14px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+.continent-legend[hidden] { display: none; }
+.continent-legend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+}
+.continent-legend-title { font-weight: 600; }
+.continent-legend-pending {
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: transparent;
+}
+.continent-legend-pending:hover { color: var(--accent); border-color: var(--accent); }
+.continent-legend-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.continent-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.continent-legend-item:hover { background: rgba(127, 150, 220, 0.1); }
+[data-theme="light"] .continent-legend-item:hover { background: rgba(150, 120, 60, 0.1); }
+.continent-legend-item.is-active { background: rgba(127, 150, 220, 0.18); }
+[data-theme="light"] .continent-legend-item.is-active { background: rgba(150, 120, 60, 0.16); }
+.continent-legend-chip {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: hsla(var(--region-h, 220), 58%, 60%, 0.85);
+}
+.continent-legend-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.continent-legend-count { color: var(--text-secondary); font-size: 10px; }
+.continent-legend-src { color: var(--text-secondary); font-size: 10px; opacity: 0.85; }
+.continent-legend-over {
+  font-size: 9px;
+  border: 1px solid rgba(217, 164, 65, 0.55);
+  color: #d9a441;
+  border-radius: 999px;
+  padding: 0 5px;
+}
+[data-theme="light"] .continent-legend-over { color: #96702a; border-color: rgba(150, 112, 42, 0.5); }
+.continent-legend-rename {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+.continent-legend-rename:hover { color: var(--accent); opacity: 1; }
+.continent-legend-foot {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+/* 聚焦：只淡化不删不重排（空间记忆是资产） */
+.continent-region.is-dim,
+.continent-cluster.is-dim,
+.continent-node.is-dim,
+.continent-city.is-dim { opacity: 0.16; }
+.continent-spoke.is-dim { opacity: 0.05; }
+.continent-region,
+.continent-cluster,
+.continent-node,
+.continent-city { transition: opacity 0.25s ease; }
+
+/* 归类菜单/改名表单的当前项与输入框（复用大陆弹层玻璃容器） */
+.continent-pop-btn.is-current { border-style: dashed; opacity: 0.9; }
+.continent-pop-input {
+  flex: 1;
+  min-width: 120px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(10, 15, 35, 0.46);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+[data-theme="light"] .continent-pop-input { background: rgba(255, 252, 248, 0.55); }
+
+/* ===== v7.3 渐进披露：三档细节只切 CSS 类（零重建 DOM） =====
+ * 世界档（zoom<0.55）：只画海域板+岛牌+城市+航线——缩小是「变简略」不是「变糊」；
+ * 区域档：加卡片标题；细节档：加公式行与锚点短接。后代选择器显隐，DOM 契约不动 */
+.continent-world.lod-world .continent-node { display: none; }
+.continent-world.lod-region .continent-node-formula { display: none; }
+/* 有 LOD 兜底，缩放下限才敢放到 0.15（修「≥43 岛一屏装不下」） */
+
+/* 岛/海域折叠钮（▾/▸）：小而不抢，悬停才亮 */
+.continent-cluster-fold,
+.continent-region-fold {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  line-height: 15px;
+  text-align: center;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+  pointer-events: auto;
+}
+.continent-cluster-fold:hover,
+.continent-region-fold:hover { color: var(--accent); background: rgba(127, 150, 220, 0.14); }
+/* 收起的岛：只剩岛牌一行（尺寸由布局量好），虚线边表示「还有货」 */
+.continent-cluster.is-collapsed { border-style: dashed; }
+/* 收起的海域＝一枚印章：板自己缩成小胶囊（尺寸由布局量好），名字+岛数 */
+.continent-region.is-stamp { border-radius: 12px; }
+.continent-region.is-stamp .continent-region-head { top: 50%; transform: translateY(-50%); }
+.continent-region.is-stamp .continent-region-src { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .continent-layer,
   .continent-world,
