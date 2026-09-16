@@ -815,7 +815,9 @@ async def api_get_continent():
     user_edges = kv.get("continent_edges")
     # v6 概念族：内置表 + KV 自有扩展（用户/Φ 确认过的汇聚结果，与簇间边同级的主图数据）
     user_families = kv.get("continent_families")
-    return continent.build_continent(items, sessions, user_edges, user_families)
+    # v7.1b 门控产物：Φ 批量打标（只读离线产物，版本不符整批忽略——打开大陆仍是纯本地现算）
+    gate = kv.get("continent_gate")
+    return continent.build_continent(items, sessions, user_edges, user_families, gate)
 
 
 @app.post("/api/knowledge")
