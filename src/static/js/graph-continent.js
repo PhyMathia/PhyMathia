@@ -1,4 +1,4 @@
-// ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市 + v4 证据卫生 + v5.1 城市进城）=====
+// ===== 知识大陆（大陆计划 v1 投影 + v2 簇间边 + v3 边界城市 + v4 证据卫生 + v5 城市与群岛）=====
 // 主图是投影层：聚簇与共享概念全部来自 GET /api/continent（服务端从 knowledge +
 // sessions 现算），本文件绝不写任何 phymathia_graph_ 会话键——子图（各会话探索
 // 网）是唯一事实源，主图随时可重算。
@@ -9,6 +9,12 @@
 // v5.1 共享概念从「弧线 + 浮空标签」升级为**边界城市**：城市摆在它所连的岛之间的
 // 走廊里（摆不下进折叠清单，不许叠在岛上），每座岛伸一根辐条连到代表卡；点城市弹
 // **重逢清单**（每座岛一行 + 「去看」），绝不替用户猜该跳哪座岛。
+// v5.2 群岛布局：岛的摆放从「最近更新排网格」改为**亲缘排序**（强共享概念 + 用户
+// 航线）+ 蛇形填充——讲同一主题的岛自然挨成一片，位置本身就是联系，一根线不画。
+// v5.3 折叠清单「问 Φ」：机器没把握的折叠行可让 Φ 出一句人话判断；判断块里带
+// 「画成大陆边」芯片，落笔权永远在用户（走 /api/models/chat 的 stream:false 通道）。
+// v5.4 岛牌一句话 + 空态引导：岛头副行「前 3 个概念名 + 最近更新」（纯拼接）；
+// 没有共享连线时顶栏明示点亮机制——空态是引导，不是缺陷。
 // 交互三层口径（游戏地图模型：层级离散、整层切换，不是连续语义缩放）：
 // - 下钻：点簇 / 概念节点 → 镜头向点击处推进（转场动画）→ switchToSession，
 //   概念节点再经 goToKnowledgeNode 直达定位（等于点 POI 而非进城门口）；
@@ -56,6 +62,8 @@ let _continentLinkSource = null;   // {itemId, sessionId}
 let _continentEdgeUndo = [];       // 撤销栈：只记边操作，视口变化不入栈
 let _continentPopover = null;      // 单例弹层（共享概念详情 / 我的边操作）
 let _continentFolded = [];         // v4 折叠清单：[{entry, reason}]（weak=弱证据 / capped=超出每对上限）
+let _continentGuideText = '';      // v5.4 顶栏空态引导文案（空串=不该显示）
+const _continentPhiInflight = new Set(); // v5.3 在途「问 Φ」请求：弹层关闭时全部中止
 
 function _continentEsc(text) {
   if (typeof escapeHtml === 'function') return escapeHtml(text);
@@ -85,6 +93,71 @@ function _continentRenderFormula(el, latex) {
   if (el.textContent !== undefined) el.textContent = tex;
 }
 
+// ---------- v5.2 群岛布局：亲缘排序（位置本身就是联系，纯函数无 DOM） ----------
+// 亲缘只有两个来源：① 强共享概念（≥3 字实词或公式共享——weak 的词面撞车不算，
+// v4 的教训：调阈值救不了弱证据，换来源才救得了）；② 用户亲手画的大陆边（人的
+// 认定是最强证据，权重更高）。主题层面的亲近用布局表达，一根线都不用画。
+function _continentKinshipKey(a, b) {
+  return String(a) < String(b) ? a + '|' + b : b + '|' + a;
+}
+
+// 亲缘矩阵：只统计画布上真实存在的会话对；返回 { 'a|b': 权重 }。
+function _continentKinship(sessionIds, shared, userEdges) {
+  const kin = {};
+  const known = new Set(sessionIds || []);
+  const add = (a, b, w) => {
+    if (!a || !b || a === b || !known.has(a) || !known.has(b)) return;
+    const key = _continentKinshipKey(a, b);
+    kin[key] = (kin[key] || 0) + w;
+  };
+  (shared || []).forEach(s => {
+    if (!s || s.strength !== 'strong') return;
+    const sids = (s.sessions || []).filter(sid => known.has(sid));
+    for (let i = 0; i < sids.length; i++) {
+      for (let j = i + 1; j < sids.length; j++) add(sids[i], sids[j], 1);
+    }
+  });
+  (userEdges || []).forEach(e => add(e.fromSession, e.toSession, 2));
+  return kin;
+}
+
+// 贪心链式排序：从亲缘总数最多的岛出发，每步走向与当前岛亲缘最高的下一座
+// （并列看全局亲缘总数，再并列保持原序＝服务端最近更新序）。链 A→B→C→D 折进
+// 网格时配合蛇形填充，行末与下一行行首上下相邻——亲缘链不会在对角线上断开。
+// 无亲缘时每步并列都走原序：输出与输入同序，行为与 v5.1 完全一致（不引入回归）。
+function _continentClusterOrder(clusters, shared, userEdges) {
+  const list = (clusters || []).slice();
+  if (list.length < 3) return list;  // 0–2 座岛怎么排都相邻，不必排
+  const sids = list.map(c => String(c.sessionId || ''));
+  const kin = _continentKinship(sids, shared, userEdges);
+  const total = {};
+  Object.keys(kin).forEach(key => {
+    const pair = key.split('|');
+    total[pair[0]] = (total[pair[0]] || 0) + kin[key];
+    total[pair[1]] = (total[pair[1]] || 0) + kin[key];
+  });
+  const kinOf = (a, b) => kin[_continentKinshipKey(a, b)] || 0;
+  const remaining = list.slice();
+  let startIdx = 0;
+  for (let i = 1; i < remaining.length; i++) {
+    if ((total[sids[i]] || 0) > (total[sids[startIdx]] || 0)) startIdx = i;
+  }
+  const ordered = [remaining.splice(startIdx, 1)[0]];
+  while (remaining.length) {
+    const cur = ordered[ordered.length - 1];
+    let bestIdx = 0, bestKin = -1, bestTotal = -1;
+    remaining.forEach((c, i) => {
+      const k = kinOf(cur.sessionId, c.sessionId);
+      const t = total[c.sessionId] || 0;
+      if (k > bestKin || (k === bestKin && t > bestTotal)) {
+        bestIdx = i; bestKin = k; bestTotal = t;
+      }
+    });
+    ordered.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return ordered;
+}
+
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------
 function _continentLayoutClusters(clusters) {
   const placements = {};
@@ -100,11 +173,17 @@ function _continentLayoutClusters(clusters) {
     };
   });
   const cols = Math.max(1, Math.ceil(Math.sqrt(measured.length)));
+  // v5.2 蛇形填充：奇数行从右往左走。两个循环（列宽/行高统计与落位）必须用同一
+  // 个映射，否则列宽统计与实际落位对不上——岛会摆进没按它撑宽的列里
+  const gridPos = i => {
+    const ri = Math.floor(i / cols), posInRow = i % cols;
+    return { ci: ri % 2 === 1 ? cols - 1 - posInRow : posInRow, ri: ri };
+  };
   const colW = [], rowH = [];
   measured.forEach((m, i) => {
-    const ci = i % cols, ri = Math.floor(i / cols);
-    colW[ci] = Math.max(colW[ci] || 0, m.w);
-    rowH[ri] = Math.max(rowH[ri] || 0, m.h);
+    const g = gridPos(i);
+    colW[g.ci] = Math.max(colW[g.ci] || 0, m.w);
+    rowH[g.ri] = Math.max(rowH[g.ri] || 0, m.h);
   });
   // 两个累加器必须分开：以前列、行共用同一个 acc，worldW 实际拿到的是**行**的累加值
   // （worldW === worldH），多列布局下世界宽度被算小 → 适配画布按假宽度算，地图一开
@@ -117,9 +196,9 @@ function _continentLayoutClusters(clusters) {
   const worldW = Math.max(400, accX - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
   const worldH = Math.max(300, accY - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
   measured.forEach((m, i) => {
-    const ci = i % cols, ri = Math.floor(i / cols);
-    const x = colX[ci] + (colW[ci] - m.w) / 2;
-    const y = rowY[ri] + (rowH[ri] - m.h) / 2;
+    const g = gridPos(i);
+    const x = colX[g.ci] + (colW[g.ci] - m.w) / 2;
+    const y = rowY[g.ri] + (rowH[g.ri] - m.h) / 2;
     clusterRects.push({
       sessionId: m.cluster.sessionId, title: m.cluster.title || '',
       x, y, w: m.w, h: m.h, cx: x + m.w / 2, cy: y + m.h / 2,
@@ -149,16 +228,18 @@ async function _continentFetchData() {
 
 function _continentItemIndex() {
   const d = _continentData || {};
-  const items = {}, clusterTitles = {}, itemSession = {}, itemCreated = {};
+  const items = {}, clusterTitles = {}, itemSession = {}, itemCreated = {}, itemSummary = {};
   (d.clusters || []).forEach(c => {
     clusterTitles[c.sessionId] = c.title || '未命名画布';
     (c.items || []).forEach(it => {
       items[it.itemId] = it.title || '';
       itemSession[it.itemId] = c.sessionId;
       itemCreated[it.itemId] = it.createdAt || 0;
+      // v5.3「问 Φ」的判断素材（服务端只带 model/manual 的真摘要，local 模板为空串）
+      itemSummary[it.itemId] = it.summary || '';
     });
   });
-  return { items, clusterTitles, itemSession, itemCreated };
+  return { items, clusterTitles, itemSession, itemCreated, itemSummary };
 }
 
 function _continentNodeEl(itemId) {
@@ -189,6 +270,7 @@ function _continentEnsureLayer() {
         '<button class="continent-tool is-warn" id="continentCleanBtn" title="移除一端已不在大陆上的连线" hidden>清理断线</button>' +
       '</div>' +
       '<span class="continent-hint" id="continentHint" hidden></span>' +
+      '<span class="continent-hint" id="continentGuide" hidden></span>' +
       '<button class="continent-close" id="continentCloseBtn" title="收起大陆 (Esc)">&times;</button>' +
     '</div>' +
     '<div class="continent-viewport" id="continentViewport">' +
@@ -375,7 +457,10 @@ function _continentRender(data) {
   const world = document.getElementById('continentWorld');
   if (!world) return null;
   world.innerHTML = '';
-  const layout = _continentLayoutClusters(data.clusters || []);
+  // v5.2 群岛布局：亲缘排序（强共享概念 + 用户航线）→ 蛇形网格——讲同一主题的岛
+  // 自然挨成一片，位置本身就是联系；无亲缘时输出与原序一致，行为不变
+  const layout = _continentLayoutClusters(
+    _continentClusterOrder(data.clusters || [], data.shared || [], data.userEdges || []));
   _continentPlacements = layout.placements;
   _continentClusterRects = layout.clusterRects;
   world.style.width = layout.worldW + 'px';
@@ -389,8 +474,11 @@ function _continentRender(data) {
   const boundary = plan.boundary;
   _continentFolded = plan.folded;
 
-  // 簇底板（区域图的地皮）
+  // 簇底板（区域图的地皮）。岛牌一句话（v5.4）：前 3 个概念名 + 最近更新时间——
+  // 纯拼接、不调模型；看懂岛是看懂联系的前提。
   layout.clusterRects.forEach(rect => {
+    const cluster = (data.clusters || []).find(c => c.sessionId === rect.sessionId);
+    const tagline = _continentIslandTagline(cluster, _continentRelTime);
     const el = document.createElement('div');
     el.className = 'continent-cluster';
     el.dataset.sessionId = rect.sessionId || '';
@@ -400,8 +488,11 @@ function _continentRender(data) {
     el.style.height = rect.h + 'px';
     el.innerHTML =
       '<div class="continent-cluster-head">' +
-        '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
-        '<span class="continent-cluster-count">' + rect.itemCount + ' 个概念</span>' +
+        '<span class="continent-cluster-headline">' +
+          '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-count">' + rect.itemCount + ' 个概念</span>' +
+        '</span>' +
+        (tagline ? '<span class="continent-cluster-sub">' + esc(tagline) + '</span>' : '') +
       '</div>';
     world.appendChild(el);
   });
@@ -552,6 +643,27 @@ function _continentRender(data) {
     (mineCount ? ' · 我的连线 ' + mineCount : '');
   const empty = document.getElementById('continentEmpty');
   if (empty) empty.hidden = (data.itemCount || 0) > 0;
+  // 空态引导（v5.4 + 空画布说明）：两句话各自独立成立，用「；」拼进同一条引导——
+  // 「暂无共享连线」管「有岛但 0 城市」；「N 个画布还没有知识点」管「画布为什么
+  // 不在大陆上」（不以上图内容为前提：只有一个空画布时大字提示之外顶栏也要教机制）。
+  // 与连接模式提示互斥的约定不变（见 _continentSetLinkMode）。
+  const guide = document.getElementById('continentGuide');
+  if (guide) {
+    const parts = [];
+    if (cityCount === 0 && (data.itemCount || 0) > 0) {
+      parts.push('暂无共享连线——同一个概念在第二座岛出现时，这里会自动亮起边界城市');
+    }
+    const emptyCount = _continentEmptyCanvasCount(
+      (typeof window !== 'undefined' && typeof window.getAllSessions === 'function')
+        ? window.getAllSessions() : [],
+      (data.clusters || []).map(c => c.sessionId));
+    if (emptyCount > 0) {
+      parts.push('有 ' + emptyCount + ' 个画布还没有知识点，暂时不会出现在大陆上，学出知识点后这里会长出岛');
+    }
+    _continentGuideText = parts.join('；');
+    guide.hidden = !_continentGuideText;
+    guide.textContent = _continentGuideText;
+  }
   return layout;
 }
 
@@ -568,6 +680,11 @@ function _continentHighlightPair(a, b, on) {
 
 // ---------- 弹层（单例）：共享概念详情 / 我的边操作 ----------
 function _continentClosePopover() {
+  // v5.3：在途的「问 Φ」判断没处落了，随弹层关闭一并中止
+  if (_continentPhiInflight.size) {
+    _continentPhiInflight.forEach(c => { try { c.abort(); } catch (e) { /* 容忍 */ } });
+    _continentPhiInflight.clear();
+  }
   if (_continentPopover && _continentPopover.remove) _continentPopover.remove();
   _continentPopover = null;
 }
@@ -644,6 +761,41 @@ function _continentRelTime(ts) {
     try { return formatRelativeTime(t); } catch (e) { /* 兜底空串 */ }
   }
   return '';
+}
+
+// ---------- 空画布说明：大陆只画有知识点的会话，没知识点的画布完全不上图 ----------
+// 用户两次被「我的画布为什么不在大陆里」困扰（docs/日志/2026-09-15.md 排查段）——
+// 顶栏把机制说清。灰色空岛明确不做（轻量版口径，见任务拆解）。
+// 纯函数（无 DOM）：会话记录同时按 id / sessionId 两种标识比对（知识条目存的是
+// sess_xxx 形，会话记录两个字段都有），两种标识都命中不了投影簇才算「还没知识点」。
+function _continentEmptyCanvasCount(sessionRecords, clusterSessionIds) {
+  const onMap = new Set((clusterSessionIds || []).map(s => String(s)));
+  let n = 0;
+  (sessionRecords || []).forEach(s => {
+    if (!s) return;
+    const id = String(s.id || '');
+    const sid = String(s.sessionId || '');
+    if ((!id || !onMap.has(id)) && (!sid || !onMap.has(sid))) n++;
+  });
+  return n;
+}
+
+// ---------- v5.4 岛牌一句话：前 3 个概念名 + 最近更新时间（纯拼接、不调模型） ----------
+// 看懂岛是看懂联系的前提。以后接了 descriptor 槽位可升级成真摘要，拼接口径不变。
+// rel 注入是为了 smoke 可测（formatRelativeTime 依赖当前时钟）。
+function _continentIslandTagline(cluster, rel) {
+  const items = (cluster && cluster.items) || [];
+  const names = [];
+  let latest = 0;
+  (items || []).forEach(it => {
+    const t = String((it && it.title) || '').trim();
+    if (t && names.length < 3) names.push(t);
+    const ts = Number(it && it.createdAt) || 0;
+    if (ts > latest) latest = ts;
+  });
+  const when = latest ? (rel || _continentRelTime)(latest) : '';
+  if (when) names.push(when);
+  return names.join(' · ');
 }
 
 // 该岛命中这条共享概念的全部卡（服务端未给 owners 时退回代表卡一张）
@@ -739,6 +891,147 @@ function _continentCityPopover(city, ev) {
 // 原因口径见 CONTINENT_FOLD_REASON（v5.1 起四种：弱证据 / 超每对上限 / 超全图上限 /
 // 无位可放）。地图负责概览，清单负责穷尽——谁也不伪装成对方，更不许静默消失。
 
+// ---------- v5.3 问 Φ：机器没把握的，交给 Φ 说一句人话，落笔权永远在用户 ----------
+// 通道取舍：走 /api/models/chat 的 stream:false（与知识摘要优化同一口径），模型选
+// Φ 助手槽位（graph，未配置回退主模型）——/api/harness 的评审协议是改图导向
+// （messages 按评审/扩展/应用四套固定模板组装、输出走操作白名单），没有裸问答口，
+// 折叠行的「两条知识点是否真相关」判断用它反而要绕开整套操作协议。
+// 提示词、判读、判断块拼装都是纯函数（无 DOM），单独抽出来给 smoke 断言。
+
+// Φ 必须以「值得连：」或「不建议连：」开头——输出契定了，判读才不是猜谜。
+// 格式约定在 system 与 user 两条消息里都写（模型对最后一条更敏感）。
+function _continentPhiMessages(left, right, label) {
+  const lines = [
+    '用户在知识大陆的折叠清单里看到一条机器没把握的跨画布联系，请你判断这两条知识点是否真的相关（值得在地图上画一条连线），还是只是字面相撞。',
+    '',
+    '共享词：' + (label || '（无）'),
+    '第一条：' + ((left && left.title) || '（无标题）') + ((left && left.summary) ? '——' + left.summary : ''),
+    '第二条：' + ((right && right.title) || '（无标题）') + ((right && right.summary) ? '——' + right.summary : ''),
+    '',
+    '注意：共享词可能是「表达」「坐标」这类通用词，判断依据是两条知识的实质内容，不是共享词本身。',
+    '只输出一行：以「值得连：」或「不建议连：」开头，后接不超过 50 字的理由。',
+  ].join('\n');
+  return [
+    { role: 'system', content: '你是知识大陆的助手 Φ。只输出一行判断：以「值得连：」或「不建议连：」开头，后接不超过 50 字的理由。不要输出任何其他内容。' },
+    { role: 'user', content: lines },
+  ];
+}
+
+// 判读：只认第一行的开头两个约定词；判不出给中性档——判读只影响徽标与语气，
+// 芯片（用户落笔口）两种档位都照给。
+function _continentPhiVerdict(raw) {
+  let text = typeof _stripThinkText === 'function'
+    ? _stripThinkText(String(raw || '')) : String(raw || '');
+  text = text.replace(/<[^>]+>/g, ' ').replace(/\*\*/g, '');
+  const firstLine = (text.split('\n').map(s => s.trim()).filter(Boolean)[0] || '');
+  let verdict = 'unknown';
+  if (firstLine.indexOf('值得连') === 0) verdict = 'worth';
+  else if (firstLine.indexOf('不建议连') === 0) verdict = 'not';
+  const reason = firstLine.replace(/^[「『"']?(值得连|不建议连)[」』"']?[：:、]?\s*/, '').trim();
+  return { verdict: verdict, text: (reason || firstLine).slice(0, 120) };
+}
+
+// 判断块 HTML：徽标（三档）+ 理由 + 每条链路一枚「画成大陆边」芯片（已连线只标注）。
+// userEdges 由调用方传入（smoke 不依赖模块状态）。
+function _continentPhiBlockHtml(entry, verdict, idx, userEdges) {
+  const items = (idx && idx.items) || {};
+  const edges = userEdges || [];
+  const worth = verdict && verdict.verdict === 'worth';
+  const not = verdict && verdict.verdict === 'not';
+  const badge = worth ? '值得连' : not ? '不建议连' : 'Φ 的判断';
+  const links = ((entry && entry.links) || []).slice(0, 6);
+  const chips = links.map((link, i) => {
+    const already = edges.some(e =>
+      (e.fromItem === link.from && e.toItem === link.to) ||
+      (e.fromItem === link.to && e.toItem === link.from));
+    if (already) return '<span class="continent-pop-note-inline">已连线</span>';
+    const a = _continentEsc(items[link.from] || '？');
+    const b = _continentEsc(items[link.to] || '？');
+    return '<button class="continent-pop-btn is-quiet" data-phi-link="' + i + '"' +
+      ' title="把这两条概念连成一条我的大陆边（Ctrl+Z 可撤销）">' + a + ' ↔ ' + b + '</button>';
+  }).join('');
+  return '<div class="continent-pop-phi">' +
+    '<span class="continent-pop-phi-badge' + (worth ? ' is-worth' : '') + (not ? ' is-not' : '') + '">' + badge + '</span> ' +
+    '<span class="continent-pop-phi-text">' + _continentEsc((verdict && verdict.text) || '') + '</span>' +
+    (chips ? '<div class="continent-pop-actions is-wrap">' + chips + '</div>' : '') +
+    '</div>';
+}
+
+// 芯片点击 = 走 v2 既有落笔通道（KV continent_edges）；清单不关——折叠清单是
+// 工作清单，用户要连着过好几条，这行就地变「已连线」。绑定按 dataset 防重：
+// 新判断块插入后按整个弹层查询绑定，上一块的芯片不能被二次挂 handler。
+function _continentBindPhiChips(scope, entry) {
+  if (!scope || !scope.querySelectorAll) return;
+  const links = ((entry && entry.links) || []).slice(0, 6);
+  scope.querySelectorAll('[data-phi-link]').forEach(btn => {
+    if (btn.dataset) {
+      if (btn.dataset.phiBound) return;
+      btn.dataset.phiBound = '1';
+    }
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const link = links[Number(btn.getAttribute('data-phi-link'))];
+      if (!link) return;
+      try {
+        const ok = await _continentAddUserEdge(link.from, link.to, entry.label || '');
+        if (ok) {
+          const span = document.createElement('span');
+          span.className = 'continent-pop-note-inline';
+          span.textContent = '已连线';
+          if (btn.replaceWith) btn.replaceWith(span); else btn.textContent = '已连线';
+          _continentToast('已画上这条大陆边（Ctrl+Z 可撤销）');
+        }
+      } catch (err) {
+        _continentToast('保存失败：' + (err && err.message || err));
+      }
+    });
+  });
+}
+
+// 单行「问 Φ」：按钮进忙碌态 → /api/models/chat（stream:false）→ 判断块插到该行
+// 下方。弹层已换页/关闭时回包静默丢弃（判断没处落）；失败恢复按钮可重问。
+async function _continentAskPhi(f, rowIndex, btn) {
+  const entry = (f && f.entry) || {};
+  const link = (entry.links || [])[0] || {};
+  const idx = _continentItemIndex();
+  const model = (typeof getActiveModelForRole === 'function')
+    ? (getActiveModelForRole('graph') || getActiveModelForRole('agent')) : null;
+  if (!model) { _continentToast('先在「模型设置」里配置主模型，才能问 Φ'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Φ 看着…'; }
+  const popover = _continentPopover;
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  if (ctrl) _continentPhiInflight.add(ctrl);
+  try {
+    const left = { title: idx.items[link.from] || '', summary: idx.itemSummary[link.from] || '' };
+    const right = { title: idx.items[link.to] || '', summary: idx.itemSummary[link.to] || '' };
+    if (typeof proxyChatWithModel !== 'function') throw new Error('模型代理通道不可用');
+    const resp = await proxyChatWithModel(model, {
+      messages: _continentPhiMessages(left, right, entry.label || ''),
+      stream: false,
+    }, ctrl ? ctrl.signal : undefined);
+    const data = await resp.json();
+    const raw = data && data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : '';
+    if (!popover || _continentPopover !== popover) return;  // 弹层已关/换页
+    const v = _continentPhiVerdict(raw);
+    const row = popover.querySelector ? popover.querySelector('[data-fold="' + rowIndex + '"]') : null;
+    const html = _continentPhiBlockHtml(entry, v, idx, (_continentData && _continentData.userEdges) || []);
+    if (row && row.insertAdjacentHTML) {
+      row.insertAdjacentHTML('afterend', html);
+    } else if (popover.insertAdjacentHTML) {
+      popover.insertAdjacentHTML('beforeend', html);
+    }
+    _continentBindPhiChips(popover, entry);
+    if (btn) { btn.textContent = 'Φ 已答'; btn.disabled = true; }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    _continentToast('Φ 判断失败：' + (err && err.message || err));
+    if (btn) { btn.disabled = false; btn.textContent = '问 Φ'; }
+  } finally {
+    if (ctrl) _continentPhiInflight.delete(ctrl);
+  }
+}
+
 // 折叠清单的行是纯字符串拼装（无 DOM），单独抽出来给 smoke 断言
 function _continentFoldedRows(folded, idx) {
   const items = (idx && idx.items) || {};
@@ -749,6 +1042,7 @@ function _continentFoldedRows(folded, idx) {
       '<span class="continent-pop-row-text">' + (s.kind === 'formula' ? '∑ ' : '◈ ') + _continentEsc(s.label) +
       ' · ' + _continentEsc(items[link.from] || '？') + ' ↔ ' + _continentEsc(items[link.to] || '？') +
       ' <span class="continent-pop-reason">' + (CONTINENT_FOLD_REASON[f.reason] || '折叠') + '</span></span>' +
+      '<button class="continent-pop-btn is-quiet" data-phi="' + i + '" title="让 Φ 判断这两条是否真的相关">问 Φ</button>' +
       '<button class="continent-pop-btn" data-fold="' + i + '">看两边</button>' +
       '</div>';
   }).join('');
@@ -763,7 +1057,8 @@ function _continentFoldedPopover(ev) {
     '<div class="continent-pop-desc">「弱证据」是 2 字共享串（「表达」「坐标」级）与泛后缀，' +
     '单独立不住；「超出每对上限」「超出全图上限」是地图已经画满；「无位可放」是岛之间挤不出' +
     '放得下一座城市的位置（城市绝不叠在岛上）。都不上地图，但照报——' +
-    '点「看两边」可确认并亲手落笔；想让弱证据彻底消失，得修那两条标题本身。</div>' +
+    '拿不准就「问 Φ」，它给一句人话判断，要不要连仍由你点「画成大陆边」；' +
+    '想让弱证据彻底消失，得修那两条标题本身。</div>' +
     rows;
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
@@ -771,6 +1066,12 @@ function _continentFoldedPopover(ev) {
     e.stopPropagation();
     const f = folded[Number(btn.getAttribute('data-fold'))];
     if (f && f.entry) _continentSharedPopover(f.entry, ev);
+  }));
+  el.querySelectorAll('[data-phi]').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const rowIndex = Number(btn.getAttribute('data-phi'));
+    const f = folded[rowIndex];
+    if (f) _continentAskPhi(f, rowIndex, btn);
   }));
 }
 
@@ -923,6 +1224,9 @@ function _continentSetLinkMode(on) {
     hint.hidden = !_continentLinkMode;
     hint.textContent = '连接模式：先点一个概念，再点另一个区域的概念完成连线（Esc 退出）';
   }
+  // v5.4 空态引导与连接模式提示互斥（同一条顶栏位置）
+  const guide = document.getElementById('continentGuide');
+  if (guide) guide.hidden = _continentLinkMode || !_continentGuideText;
   _continentMarkLinkSource(null);
   _continentClosePopover();
 }
@@ -1219,6 +1523,14 @@ window._continentPlaceCity = _continentPlaceCity;
 window._continentCityBox = _continentCityBox;
 window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
+// v5.2 群岛布局 / v5.3 问 Φ / v5.4 岛牌：纯函数（无 DOM），smoke 直接断言
+window._continentKinship = _continentKinship;
+window._continentClusterOrder = _continentClusterOrder;
+window._continentPhiMessages = _continentPhiMessages;
+window._continentPhiVerdict = _continentPhiVerdict;
+window._continentPhiBlockHtml = _continentPhiBlockHtml;
+window._continentIslandTagline = _continentIslandTagline;
+window._continentEmptyCanvasCount = _continentEmptyCanvasCount;
 
 // 预热面包屑：启动后拉一次投影，有内容才亮「‹ 大陆」入口（失败静默——
 // 查空是正常路径，不弹错）。?continent=1 直开大陆视图（演示/验收捷径）。

@@ -30,6 +30,10 @@ v5.1 边界城市：`links` 与 `owners` 两个字段分工不同、都要有—
 **一张代表卡**（前端画辐条用），`owners` 给**全部命中卡**（前端「重逢清单」按岛
 列出，同岛多卡也照列）。地图怎么画（城市上限 / 每对区域上限 / 无位可放）全在前端
 纯函数里，本模块只负责如实报出证据。
+
+v5.3 问 Φ：折叠清单行可把两边条目的「标题+摘要」打包给模型出一句人话判断——
+条目行因此携带 `summary`，但只认 model/manual 的真摘要（local 是模板文案，
+喂给模型反而误导判断；旧数据无 summarySource 视为 local）。
 """
 
 import itertools
@@ -67,6 +71,7 @@ _GENERIC_TITLE_TERMS = _GENERIC_TERMS | {"表达式", "坐标系", "示意图"}
 TITLE_MAX_CHARS = 40
 FORMULA_PREVIEW_CHARS = 48
 FORMULA_MAX_CHARS = 200   # 供 KaTeX 渲染的原始 TeX，宽松截断只防脏数据
+SUMMARY_MAX_CHARS = 80    # v5.3「问 Φ」携带的真摘要上限：判断够用，不撑 payload
 # v5.1 每条共享概念带上全部命中条目 id（前端「重逢清单」要按岛列出同岛多卡）；
 # 上限只防脏数据撑爆 payload，不影响地图与折叠清单
 SHARED_OWNERS_LIMIT = 40
@@ -107,6 +112,12 @@ def _item_row(item_id: str, item: dict) -> dict:
         if str(f or "").strip():
             preview = str(f)
             break
+    # v5.3「问 Φ」的判断素材：只带 model/manual 的真摘要——local 是模板文案
+    # （与概念地基「摘要只认 model/manual」同一口径），喂给模型反而误导判断；
+    # 旧数据无 summarySource 字段视为 local。
+    summary = str(item.get("summary") or "").strip()
+    if (item.get("summarySource") or "local") not in ("manual", "model"):
+        summary = ""
     return {
         "itemId": str(item_id),
         "title": _clip(item.get("title"), TITLE_MAX_CHARS),
@@ -117,6 +128,7 @@ def _item_row(item_id: str, item: dict) -> dict:
         "formulaCount": len(formulas),
         "category": str(item.get("category") or ""),
         "createdAt": item.get("createdAt") or 0,
+        "summary": _clip(summary, SUMMARY_MAX_CHARS),
     }
 
 
