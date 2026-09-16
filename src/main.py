@@ -8,6 +8,7 @@ PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线�
 import argparse
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -95,11 +96,40 @@ async def _refresh_harness_context(request: Request, call_next):
     return await call_next(request)
 
 # ====== 页面路由 ======
+# 显式缓存口径（根治「改了没生效必须 Ctrl+Shift+R」）：应用产物文件名无内容指纹
+# （app.js 靠构建时写入 index.html 的 ?v=<内容哈希> 区分版本，HTML 本身必须每次
+# 协商才能拿到新哈希），统一发 no-cache——每次协商、ETag 命中回 304、永不 stale。
+# 别换成 max-age（哪怕很短）：/vendor/ 第三方本地副本没有版本指纹，长了就是更新不掉。
+# /api/*、/v1/*、/health 走各自路由，不经静态通道，结构上不受影响。
+_CACHE_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+def _static_file_response(request: Request, file_path: Path) -> Response:
+    """静态文件响应：no-cache 协商口径 + If-None-Match 命中回 304。
+
+    本环境 starlette(1.6) 的 FileResponse 只发 ETag、不再做条件判定（老版本
+    会在响应类内部比对其返回 304）——no-cache 若没有 304，浏览器每次都全量
+    重拉。这里按 starlette 同一算法（md5(mtime-size)）自行比对，命中即 304
+    并保留缓存头；不命中走 FileResponse（它自带的 ETag 与这里一致）。
+    """
+    stat = file_path.stat()
+    etag = '"%s"' % hashlib.md5(
+        f"{stat.st_mtime}-{stat.st_size}".encode(), usedforsecurity=False
+    ).hexdigest()
+    inm = request.headers.get("if-none-match", "")
+    candidates = [t.strip() for t in inm.split(",") if t.strip()]
+    if etag in candidates or "*" in candidates:
+        return Response(status_code=304, headers={**_CACHE_NO_CACHE, "ETag": etag})
+    return FileResponse(str(file_path), headers=_CACHE_NO_CACHE)
+
+
 @app.get("/")
-async def root():
+async def root(request: Request):
     index_html = STATIC_DIR / "index.html"
     if index_html.exists():
-        return HTMLResponse(content=index_html.read_text(encoding="utf-8"), status_code=200)
+        # FileResponse（而非 HTMLResponse）：自带 ETag/Last-Modified，配合
+        # no-cache 让普通刷新就能命中 304，构建新产物后普通刷新即拿到新 JS
+        return _static_file_response(request, index_html)
     raise HTTPException(status_code=404, detail="Index page not found")
 
 
@@ -1198,15 +1228,15 @@ async def api_backup_import(request: Request):
 
 # ====== 静态文件 catch-all（必须放在所有 API 路由之后）======
 @app.get("/{filename:path}")
-async def serve_static_file(filename: str):
+async def serve_static_file(filename: str, request: Request):
     if not filename:
-        return await root()
+        return await root(request)
     path = Path(filename)
     if path.suffix.lower() in STATIC_EXTENSIONS:
         file_path = (STATIC_DIR / filename).resolve()
         # 防目录穿越：仅允许解析后仍位于 STATIC_DIR 内的文件
         if file_path.is_relative_to(STATIC_DIR.resolve()) and file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
+            return _static_file_response(request, file_path)
     raise HTTPException(status_code=404, detail="Not found")
 
 # 启动前清理历史重复知识点
