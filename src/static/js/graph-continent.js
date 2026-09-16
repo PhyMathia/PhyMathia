@@ -711,6 +711,8 @@ function _continentRender(data) {
     guide.hidden = !_continentGuideText;
     guide.textContent = _continentGuideText;
   }
+  // v5.6：备注标签挂在世界层里，会随地图缩放一起变形——渲染完成后按当前倍率抵消一次
+  _continentSyncEdgeLabels();
   return layout;
 }
 
@@ -1319,11 +1321,31 @@ async function _continentLinkPick(itemId, sessionId) {
 }
 
 // ---------- 视口：平移缩放（缩放锚点保持光标下的世界点不动） ----------
+// v5.6 备注标签「固定字号」：标签在世界层里，会随地图缩放一起放大缩小（2.5 倍时 10px
+// 变 25px）。乘 1/zoom 抵消即可当路牌用——缩放只该改变地图，不该改变文字大小。
+// 纯函数：夹在 [0.4, 4] 防极端倍率把字缩没或撑爆。
+function _continentEdgeLabelScale(zoom) {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return Math.min(4, Math.max(0.4, 1 / z));
+}
+
+function _continentSyncEdgeLabels() {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelectorAll) return 0;
+  const k = _continentEdgeLabelScale(_continentZoom);
+  const labels = world.querySelectorAll('.continent-user-link-label');
+  labels.forEach(el => {
+    if (el && el.style) el.style.transform = 'translate(-50%,-50%) scale(' + k + ')';
+  });
+  return labels.length;
+}
+
 function _continentApplyTransform() {
   const world = document.getElementById('continentWorld');
   if (world && world.style) {
     world.style.transform = 'translate(' + _continentPan.x + 'px,' + _continentPan.y + 'px) scale(' + _continentZoom + ')';
   }
+  _continentSyncEdgeLabels();
 }
 
 function _continentZoomAt(factor, cx, cy) {
@@ -1574,6 +1596,8 @@ window._continentCityBox = _continentCityBox;
 window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
 window._continentEdgeLabelPos = _continentEdgeLabelPos;
+window._continentEdgeLabelScale = _continentEdgeLabelScale;
+window._continentSyncEdgeLabels = _continentSyncEdgeLabels;
 // v5.2 群岛布局 / v5.3 问 Φ / v5.4 岛牌：纯函数（无 DOM），smoke 直接断言
 window._continentKinship = _continentKinship;
 window._continentClusterOrder = _continentClusterOrder;

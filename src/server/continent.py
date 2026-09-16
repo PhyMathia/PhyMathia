@@ -52,6 +52,7 @@ v5.5 汇聚口径修正（两条都是实测出来的）：
 
 import itertools
 import math
+import re
 import time
 
 from .concept import (
@@ -77,6 +78,24 @@ _GENERIC_FORMULA_TOKENS = {
     "dx", "dy", "dz", "dt", "ds", "dv", "du", "dw", "df", "dg", "dh",
     "oint", "partial", "nabla", "infty", "cdot", "times", "frac", "sqrt",
     "vec", "hat", "bar", "dot", "left", "right", "text", "mathrm", "mathbf",
+}
+# v5.6 结构证据卫生（两条都不靠不断加长的词表）：
+# ① `\text{…}` 装的是**散文**（`\text{const}`、`\text{总}`、`\text{常量}`），剥掉内容再
+#    切 token——真机实测它漏出英文填充词 `const`，把「梯度」岛与「能量守恒」岛连成一条
+#    虚假的 ∑ 结构共享（用户地图上那条 ∑ const 城市）；顺带解决「同一个意思中英两写法
+#    （const vs 常量）永远对不上」的不对称。
+_TEXT_GROUP_RE = re.compile(r"\\text\s*\{[^{}]*\}")
+_TEX_COMMAND_RE = re.compile(r"\\([A-Za-z]+)")
+# ② 公式里出现过的 `\命令名` 一律不作 token：它们绝大多数是**语法**（关系符 `\iff`/
+#    `\equiv`/`\implies`、定界符 `\langle`/`\rangle`、逻辑 `\forall`/`\in`、排版
+#    `\dfrac`/`\binom`）——concept._TEX_COMMANDS 只列了一部分，实测这批全漏了出来，
+#    而任意两条含 `\iff` 的公式都会变成「同源概念」。
+#    默认丢弃（fail-safe：新命令默认是噪声），**只放行有区分度的算子命令**——两条都用
+#    外积 `\wedge`、都用升指算子 `\sharp` 的公式确实相关，这类是真结构证据，
+#    宁可保留少数，也别把语法词当证据。
+_KEEP_TEX_OPERATORS = {
+    "sharp", "flat", "wedge", "vee", "otimes", "oplus", "odot", "star", "ast",
+    "dagger", "pm", "mp", "div", "bigcup", "bigcap", "oint", "nabla", "partial",
 }
 # 泛后缀（单独立不住的词）：concept._GENERIC_TERMS 之外，本模块再补几个够长但同性质的
 # ——「表达式」「坐标系」够 3 字，按长度本该是强证据，其实和「表达」一样立不住
@@ -230,6 +249,30 @@ def _mark_covered_labels(entries: list) -> set:
             covered.add(label)
         covered_items |= set(owners)
     return covered
+
+
+def _structural_tokens(item: dict) -> set:
+    """条目的**结构 token**（大陆专用，比喂 prompt 的口径更严）：拿公式当结构证据前，
+    先剥散文、再剔语法命令名。两条见 `_TEXT_GROUP_RE` / `_KEEP_TEX_OPERATORS` 的注释。
+
+    只在本模块收紧——concept._formula_tokens 是喂 prompt 的检索器（宁可多召回），
+    本模块决定「够不够在地图上画一条结构共享」，标准只会更严不会更松。
+    """
+    formulas = [str(f or "") for f in (item.get("formulas") or [])]
+    if not formulas:
+        return set()
+    commands = set()
+    prose_free = []
+    for latex in formulas:
+        commands |= {c.lower() for c in _TEX_COMMAND_RE.findall(latex)}
+        prose_free.append(_TEXT_GROUP_RE.sub("", latex))
+    try:
+        tokens = _formula_tokens({"formulas": prose_free})
+    except Exception:
+        # 切 token 失败不该把整条投影打成 500：退回原公式（宁可有噪声，也不丢岛屿）
+        tokens = _formula_tokens(item)
+    return {t for t in tokens
+            if t not in commands or t in _KEEP_TEX_OPERATORS}
 
 
 def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
@@ -428,8 +471,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
     token_owners = {}
     for iid, item in all_items:
         # 公式是结构证据，不受标题闸门限制（标题不像概念名的条目，它的公式照样是
-        # 真公式）；但通用符号（dx/dt/∂…）要先剔掉，见 _GENERIC_FORMULA_TOKENS
-        for token in _formula_tokens(item) - _GENERIC_FORMULA_TOKENS:
+        # 真公式）；但先要过两道卫生（v5.6）——剥 `\text{…}` 散文、剔语法命令名，
+        # 再剔通用符号（dx/dt/∂…），见 _structural_tokens / _GENERIC_FORMULA_TOKENS
+        for token in _structural_tokens(item) - _GENERIC_FORMULA_TOKENS:
             token_owners.setdefault(token, set()).add(iid)
 
     shared = []

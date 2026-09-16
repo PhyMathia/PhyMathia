@@ -320,6 +320,64 @@ class BuildContinentEvidenceHygieneTest(unittest.TestCase):
             self.assertIn(s["covered"], (True, False))
 
 
+class BuildContinentStructuralTokenTest(unittest.TestCase):
+    """v5.6 结构证据卫生：`\\text{…}` 里的散文与语法命令名都不算结构证据。
+
+    真机实测：`\\text{const}` 漏出英文填充词 `const`，把「梯度」岛与「能量守恒」岛连成
+    一条虚假的 ∑ 结构共享（用户地图上那条 ∑ const 城市）；同一批还漏出 `iff`/`equiv`/
+    `langle`/`rangle`/`in`/`dfrac` 等关系符与定界符的命令名——任意两条含 `\\iff` 的公式
+    都会变成「同源概念」。两条判据都不靠不断加长的词表：剥 `\\text{…}` 内容 + 公式里
+    出现过的 `\\命令名` 不作 token（只放行有区分度的算子命令）。
+    """
+
+    def test_text_prose_is_not_structural_evidence(self):
+        # 真机现场：一张卡的 `f=\text{const}` 与另一张卡的 `E=\text{const}`
+        items = {
+            "k1": _item("k1", S1, "梯度：势场的陡峭程度与力的方向", ["$f=\\text{const}$"]),
+            "k2": _item("k2", S2, "能量守恒的物理内涵", ["$E=\\text{const}$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual([s["label"] for s in out["shared"]], [])
+
+    def test_grammar_commands_are_not_structural_evidence(self):
+        # 关系符 / 定界符命题的命令名：两条毫不相干的公式都含 \iff / \langle 不该连起来
+        items = {
+            "k1": _item("k1", S1, "命题等价", ["$a \\iff b$"]),
+            "k2": _item("k2", S2, "内积记号", ["$\\langle x,y\\rangle$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(out["shared"], [])
+
+    def test_operatorname_argument_still_counts(self):
+        # 反向保护：`\operatorname{grad}` 的 grad 不是命令名（命令名是 operatorname），
+        # 照旧是结构证据——既有链路不许被这次收紧误伤
+        items = {
+            "k1": _item("k1", S1, "静电场", ["$\\operatorname{grad} f$"]),
+            "k2": _item("k2", S2, "引力势", ["$\\operatorname{grad} V$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertIn(("formula", "grad"), {(s["kind"], s["label"]) for s in out["shared"]})
+
+    def test_distinctive_operators_survive(self):
+        # 有区分度的算子（两条都用外积确实相关）：放行，别一刀切成漏报
+        items = {
+            "k1": _item("k1", S1, "外微分", ["$\\alpha \\wedge \\beta$"]),
+            "k2": _item("k2", S2, "微分形式乘法", ["$\\omega \\wedge \\eta$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertIn(("formula", "wedge"), {(s["kind"], s["label"]) for s in out["shared"]})
+
+    def test_same_meaning_two_languages_never_fake_links(self):
+        # `\text{const}` 与 `\text{常量}` 是同一个意思的两种写法：都不当证据
+        # （中英不对称既不该制造联系，也不该吞掉联系）
+        items = {
+            "k1": _item("k1", S1, "梯度：势场的陡峭程度与力的方向", ["$f=\\text{const}$"]),
+            "k2": _item("k2", S2, "能量守恒的物理内涵", ["$E=\\text{常量}$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(out["shared"], [])
+
+
 class BuildContinentAggregationTest(unittest.TestCase):
     """v5.5 汇聚口径：广度优先排序 + 被覆盖标签不单独成城。
 
