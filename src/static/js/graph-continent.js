@@ -27,6 +27,7 @@
 
 const CONTINENT_VIEW_KEY = 'phymathia_continent_view'; // 视口记忆（非会话键）
 const CONTINENT_EDGES_API = '/api/kv/continent_edges'; // 主图簇间边的读写端点（现成 KV 通道）
+const CONTINENT_REGIONS_API = '/api/kv/continent_regions'; // v7.1a 海域覆盖（改名/挪岛）的读写端点
 const CONTINENT_LINE_LIMIT = 24;      // 与服务端 SHARED_CONCEPT_LIMIT 同口径的二次保险
 // v5.1 边界城市：同一对区域之间最多几座城（沿用 v4「每对上限」的精神）+ 全图总量上限。
 // 城市尺寸按「摆得进两岛之间的走廊」定：CONTINENT_CLUSTER_GAP = 150，城市 112 宽
@@ -45,11 +46,30 @@ const CONTINENT_PAD = 18;
 const CONTINENT_HEADER_H = 36;
 const CONTINENT_CLUSTER_GAP = 150;
 const CONTINENT_WORLD_MARGIN = 60;
-const CONTINENT_ZOOM_MIN = 0.3;
+const CONTINENT_ZOOM_MIN = 0.15;    // v7.3：0.3 → 0.15（有 LOD 兜底才敢放）
 const CONTINENT_ZOOM_MAX = 2.5;
 const CONTINENT_DIVE_MS = 430;
 const CONTINENT_DIVE_FACTOR = 2.6;
 const CONTINENT_SURFACE_FACTOR = 1.14;
+// v7.1a 海域层：两级布局的块间距与海域板尺寸（板 = 块内岛矩形并集外扩，
+// 顶部另留一行给海域牌）；色盘 12 格，同领域永远同色。
+const CONTINENT_REGION_GAP = 230;
+const CONTINENT_REGION_PAD = 26;
+const CONTINENT_REGION_HEADER_H = 34;
+const CONTINENT_HUE_COUNT = 12;
+// 置信度三档（后端如实报概率，档位是前端消费口径）：实色 / 淡色+「?」 / 中性+待确认。
+// 与服务端 GATE_CONF_SOLID / GATE_CONF_LIGHT 同数值（前端只拿 domainConf 判档）。
+const CONTINENT_CONF_SOLID = 0.7;
+const CONTINENT_CONF_LIGHT = 0.4;
+// 每片海域的岛数容量（MoE 的 expert capacity）：超限提示拆分，不静默丢
+const CONTINENT_REGION_CAPACITY = 12;
+// v7.3 渐进披露：三档细节只切一个 CSS 类（挂在 #continentWorld 上，零重建 DOM）——
+// 世界档只画海域板+岛牌+城市+航线，区域档加卡片标题，细节档加公式行与锚点短接。
+// 有 LOD 才敢把缩放下限放到 0.15（修「≥43 岛一屏装不下」：旧下限 0.3 会卡死适配）
+const CONTINENT_LOD_WORLD = 0.55;
+const CONTINENT_LOD_DETAIL = 1.1;
+// 岛内近似卡片折叠（显示层）：岛默认画前 N 张 +「另有 k 张」——只折叠不删数据
+const CONTINENT_ISLAND_CARD_MAX = 9;
 
 let _continentOpen = false;
 let _continentDrilling = false;
@@ -68,6 +88,41 @@ let _continentPopover = null;      // 单例弹层（共享概念详情 / 我的
 let _continentFolded = [];         // v4 折叠清单：[{entry, reason}]（weak=弱证据 / covered=已被更具体的城市覆盖 / capped=超出每对上限 / map_capped=超出全图上限 / no_room=无位可放）
 let _continentGuideText = '';      // v5.4 顶栏空态引导文案（空串=不该显示）
 const _continentPhiInflight = new Set(); // v5.3 在途「问 Φ」请求：弹层关闭时全部中止
+// v7.1a 海域层状态
+let _continentRegionOverrides = { renames: {}, assign: {} }; // KV continent_regions（用户覆盖）
+let _continentLegendFocus = '';    // 图例聚焦的海域 key（空=不聚焦；只淡化不删不重排）
+let _continentRegionInfo = null;   // 最近一次 _continentRegions 的产物（聚焦/徽标消费）
+// v7.3 折叠态（岛/海域，localStorage 非会话键）：收起的岛只留岛牌，收起的海域整片
+// 收成一枚印章——多枚印章叠着看全局；展开回来布局不变（布局对折叠集是确定性的）
+const CONTINENT_COLLAPSED_KEY = 'phymathia_continent_collapsed';
+let _continentCollapsed = { islands: [], regions: [] };
+
+function _continentLoadCollapsed() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONTINENT_COLLAPSED_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      _continentCollapsed = {
+        sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 200).map(String) : [],
+        regions: Array.isArray(raw.regions) ? raw.regions.slice(0, 40).map(String) : [],
+      };
+      return;
+    }
+  } catch (e) { /* 容忍 */ }
+  _continentCollapsed = { sessions: [], regions: [] };
+}
+
+function _continentSaveCollapsed() {
+  try { localStorage.setItem(CONTINENT_COLLAPSED_KEY, JSON.stringify(_continentCollapsed)); }
+  catch (e) { /* 容忍 */ }
+}
+
+function _continentToggleCollapse(kind, key) {
+  const list = kind === 'region' ? _continentCollapsed.regions : _continentCollapsed.sessions;
+  const at = list.indexOf(key);
+  if (at >= 0) list.splice(at, 1); else list.push(key);
+  _continentSaveCollapsed();
+  if (_continentOpen && _continentData) _continentRender(_continentData);  // 重排（确定性，展开回来布局不变）
+}
 
 function _continentEsc(text) {
   if (typeof escapeHtml === 'function') return escapeHtml(text);
@@ -196,23 +251,138 @@ function _continentClusterOrder(clusters, shared, userEdges) {
   return ordered;
 }
 
+// ---------- v7.1a 海域层：把已有的领域归属画出来（纯函数，无 DOM） ----------
+// 后端早就算得出每座岛属于哪个领域（v6 族表 + v7 softmax 评分核心），v7 之前这份归属
+// 只用于「跨 ≥2 岛建一座城」——分类结果画不出来，用户看到的就只是 6 个同色等权方块。
+// 这一层只做三件事：按领域分组（≥2 座岛才画板）、配色（同领域永远同色）、可纠正（KV）。
+
+// 领域名 → 稳定色相。铁律②的视觉面：专家名单固定 → 色槽确定——内置名单先分配
+// （表序固定，槽位永不动），自定义领域按 domainList 里的稳定顺序排在后面，新增
+// 自定义只会影响排在其后的自定义项。>12 个活跃领域由 _continentRegions 并「其他」，
+// 所以色槽永远够用。
+function _continentStrHash(s) {
+  let h = 5381;
+  const str = String(s == null ? '' : s);
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function _continentRegionHue(name, universe) {
+  const names = (universe && universe.length ? universe.slice() : [name]);
+  if (names.indexOf(name) < 0) names.push(name);
+  const taken = new Array(CONTINENT_HUE_COUNT).fill(false);
+  for (let i = 0; i < names.length; i++) {
+    let slot = _continentStrHash(names[i]) % CONTINENT_HUE_COUNT;
+    let probe = 0;
+    while (probe < CONTINENT_HUE_COUNT && taken[slot]) {
+      slot = (slot + 1) % CONTINENT_HUE_COUNT;
+      probe++;
+    }
+    if (names[i] === name) return Math.round(slot * (360 / CONTINENT_HUE_COUNT)) % 360;
+    taken[slot] = true;
+  }
+  return 0;
+}
+
+// 归属解析：后端概率 + 用户覆盖（KV continent_regions，优先级①）→ 每座岛的
+// {key, tier, source}。tier 三档：solid（p≥0.7）/ light（0.4–0.7，「?」徽标）/
+// pending（<0.4，中性灰不上地盘，进「待确认」）——「不确定也要可见」。
+// 用户指派永远 solid（人说了算，conf=1）。查空是正常路径：没证据 → neutral。
+function _continentRegions(clusters, overrides, domainList) {
+  const assign = (overrides && overrides.assign) || {};
+  const renames = (overrides && overrides.renames) || {};
+  const bySid = {};
+  const groups = {};
+  const pending = [];
+  const neutral = [];
+  (clusters || []).forEach(c => {
+    const sid = String(c.sessionId || '');
+    if (Object.prototype.hasOwnProperty.call(assign, sid)) {
+      const key = assign[sid] || null;
+      if (!key) { bySid[sid] = { key: null, tier: 'neutral', source: 'user' }; neutral.push(sid); return; }
+      bySid[sid] = { key: key, tier: 'solid', conf: 1, source: 'user' };
+      (groups[key] = groups[key] || []).push(sid);
+      return;
+    }
+    const key = c.domain || null;
+    const conf = Number(c.domainConf) || 0;
+    if (!key) { bySid[sid] = { key: null, tier: 'neutral', source: '' }; neutral.push(sid); return; }
+    if (conf < CONTINENT_CONF_LIGHT) {
+      bySid[sid] = { key: key, tier: 'pending', conf: conf, source: c.domainSource || '' };
+      pending.push({ sid: sid, domain: key, conf: conf, title: c.title || '' });
+      return;
+    }
+    bySid[sid] = { key: key, tier: conf >= CONTINENT_CONF_SOLID ? 'solid' : 'light',
+                   conf: conf, source: c.domainSource || '' };
+    (groups[key] = groups[key] || []).push(sid);
+  });
+  // ≥2 座岛同领域才画海域板（单岛自成一国＝没有分组）；>12 片按岛数升序并「其他」
+  let regions = [];
+  const singles = [];
+  Object.keys(groups).forEach(key => {
+    if (groups[key].length >= 2) regions.push({ key: key });
+    else singles.push.apply(singles, groups[key]);
+  });
+  regions.forEach(r => { r.sessions = groups[r.key].slice(); });
+  if (regions.length > CONTINENT_HUE_COUNT) {
+    const sorted = regions.slice().sort((a, b) => a.sessions.length - b.sessions.length);
+    const tail = sorted.slice(0, regions.length - CONTINENT_HUE_COUNT + 1);
+    const tailKeys = new Set(tail.map(r => r.key));
+    const merged = [];
+    tail.forEach(r => merged.push.apply(merged, r.sessions));
+    regions = regions.filter(r => !tailKeys.has(r.key));
+    if (merged.length >= 2) regions.push({ key: '其他', sessions: merged, merged: true });
+    else singles.push.apply(singles, merged);
+  }
+  const itemCountOf = sid => {
+    const c = (clusters || []).find(x => String(x.sessionId) === sid);
+    return (c && c.itemCount) || 0;
+  };
+  regions.forEach(r => {
+    r.name = r.merged ? '其他' : (renames[r.key] || r.key);
+    r.hue = r.merged ? null : _continentRegionHue(r.key, domainList);
+    r.itemCount = r.sessions.reduce((acc, sid) => acc + itemCountOf(sid), 0);
+    const srcs = r.sessions.map(sid => bySid[sid].source);
+    r.source = srcs.indexOf('user') >= 0 ? 'user'
+      : srcs.indexOf('gate') >= 0 ? 'gate' : 'family';
+    r.userNamed = !r.merged && Object.prototype.hasOwnProperty.call(renames, r.key);
+  });
+  return { regions: regions, singles: singles, neutral: neutral, pending: pending, bySid: bySid };
+}
+
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------
-function _continentLayoutClusters(clusters) {
+// v7.1a 起拆两层：_continentLayoutGrid 管一块内怎么摆（蛇形网格，块=海域或散岛群），
+// _continentRegionLayout 管块与块怎么摆（跨海域亲缘排序）。无海域时走旧单网格路径
+// （行为与 v6 完全一致，不引入回归）。
+// 测量一座岛的占地：v7.3 起吃两个折叠口径——collapsed（整岛收起只留岛牌）与
+// cardCap（岛内只画前 N 张 +「另有 k 张」，显示层折叠、不删数据）
+function _continentMeasure(c, collapsed, cardCap) {
+  if (collapsed) {
+    return {
+      cluster: c, cols: 0, rows: 0, collapsed: true, shown: 0,
+      w: CONTINENT_PAD * 2 + 300,
+      h: 14 + CONTINENT_HEADER_H + 10,
+    };
+  }
+  const all = (c.items || []);
+  const shown = cardCap ? Math.min(all.length, cardCap) : all.length;
+  const n = Math.max(1, shown);
+  const cols = Math.min(CONTINENT_COLS, n);
+  const rows = Math.ceil(n / cols);
+  return {
+    cluster: c, cols: cols, rows: rows, collapsed: false, shown: shown,
+    w: CONTINENT_PAD * 2 + cols * CONTINENT_NODE_W + (cols - 1) * CONTINENT_GAP,
+    h: CONTINENT_PAD * 2 + CONTINENT_HEADER_H + rows * CONTINENT_NODE_H + (rows - 1) * CONTINENT_GAP,
+  };
+}
+
+// 一块内的岛摆进蛇形网格（列宽/行高统计与落位共用同一个 gridPos 映射——两处各写
+// 一份会出现「岛摆进没按它撑宽的列」）。origin 是这块在世界里的左上角；items 按
+// 测量时的折叠口径裁剪（岛内只画前 cardCap 张——显示层折叠，锚点卡是最早学的、必在前 N 张内）
+function _continentLayoutGrid(measured, originX, originY) {
   const placements = {};
   const clusterRects = [];
-  const measured = (clusters || []).map(c => {
-    const n = Math.max(1, (c.items || []).length);
-    const cols = Math.min(CONTINENT_COLS, n);
-    const rows = Math.ceil(n / cols);
-    return {
-      cluster: c, cols, rows,
-      w: CONTINENT_PAD * 2 + cols * CONTINENT_NODE_W + (cols - 1) * CONTINENT_GAP,
-      h: CONTINENT_PAD * 2 + CONTINENT_HEADER_H + rows * CONTINENT_NODE_H + (rows - 1) * CONTINENT_GAP,
-    };
-  });
   const cols = Math.max(1, Math.ceil(Math.sqrt(measured.length)));
-  // v5.2 蛇形填充：奇数行从右往左走。两个循环（列宽/行高统计与落位）必须用同一
-  // 个映射，否则列宽统计与实际落位对不上——岛会摆进没按它撑宽的列里
   const gridPos = i => {
     const ri = Math.floor(i / cols), posInRow = i % cols;
     return { ci: ri % 2 === 1 ? cols - 1 - posInRow : posInRow, ri: ri };
@@ -227,32 +397,165 @@ function _continentLayoutClusters(clusters) {
   // （worldW === worldH），多列布局下世界宽度被算小 → 适配画布按假宽度算，地图一开
   // 就被裁掉右半边（真机截图才发现：岛排到 x=1628，世界却声明 674 宽）
   const colX = [], rowY = [];
-  let accX = CONTINENT_WORLD_MARGIN;
+  let accX = 0;
   for (let i = 0; i < colW.length; i++) { colX.push(accX); accX += colW[i] + CONTINENT_CLUSTER_GAP; }
-  let accY = CONTINENT_WORLD_MARGIN;
+  let accY = 0;
   for (let i = 0; i < rowH.length; i++) { rowY.push(accY); accY += rowH[i] + CONTINENT_CLUSTER_GAP; }
-  const worldW = Math.max(400, accX - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
-  const worldH = Math.max(300, accY - CONTINENT_CLUSTER_GAP + CONTINENT_WORLD_MARGIN);
+  const innerW = Math.max(0, accX - CONTINENT_CLUSTER_GAP);
+  const innerH = Math.max(0, accY - CONTINENT_CLUSTER_GAP);
   measured.forEach((m, i) => {
     const g = gridPos(i);
-    const x = colX[g.ci] + (colW[g.ci] - m.w) / 2;
-    const y = rowY[g.ri] + (rowH[g.ri] - m.h) / 2;
+    const x = originX + colX[g.ci] + (colW[g.ci] - m.w) / 2;
+    const y = originY + rowY[g.ri] + (rowH[g.ri] - m.h) / 2;
     clusterRects.push({
       sessionId: m.cluster.sessionId, title: m.cluster.title || '',
-      x, y, w: m.w, h: m.h, cx: x + m.w / 2, cy: y + m.h / 2,
+      x: x, y: y, w: m.w, h: m.h, cx: x + m.w / 2, cy: y + m.h / 2,
       itemCount: (m.cluster.items || []).length,
+      shownCount: m.shown !== undefined ? m.shown : (m.cluster.items || []).length,
+      collapsed: !!m.collapsed,
     });
-    (m.cluster.items || []).forEach((item, j) => {
-      const icol = j % m.cols, irow = Math.floor(j / m.cols);
-      const nx = x + CONTINENT_PAD + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
-      const ny = y + CONTINENT_PAD + CONTINENT_HEADER_H + irow * (CONTINENT_NODE_H + CONTINENT_GAP);
-      placements[item.itemId] = {
-        x: nx, y: ny, w: CONTINENT_NODE_W, h: CONTINENT_NODE_H,
-        cx: nx + CONTINENT_NODE_W / 2, cy: ny + CONTINENT_NODE_H / 2,
-      };
-    });
+    if (!m.collapsed) {
+      (m.cluster.items || []).slice(0, m.shown || (m.cluster.items || []).length).forEach((item, j) => {
+        const icol = j % m.cols, irow = Math.floor(j / m.cols);
+        const nx = x + CONTINENT_PAD + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
+        const ny = y + CONTINENT_PAD + CONTINENT_HEADER_H + irow * (CONTINENT_NODE_H + CONTINENT_GAP);
+        placements[item.itemId] = {
+          x: nx, y: ny, w: CONTINENT_NODE_W, h: CONTINENT_NODE_H,
+          cx: nx + CONTINENT_NODE_W / 2, cy: ny + CONTINENT_NODE_H / 2,
+        };
+      });
+    }
   });
-  return { placements, clusterRects, worldW, worldH };
+  return { placements: placements, clusterRects: clusterRects, w: innerW, h: innerH };
+}
+
+function _continentLayoutClusters(clusters, collapsed, cardCap) {
+  const collapsedSet = new Set((collapsed && collapsed.sessions) || []);
+  const cap = cardCap === undefined ? CONTINENT_ISLAND_CARD_MAX : cardCap;
+  const measured = (clusters || []).map(c => _continentMeasure(c, collapsedSet.has(c.sessionId), cap));
+  const grid = _continentLayoutGrid(measured, CONTINENT_WORLD_MARGIN, CONTINENT_WORLD_MARGIN);
+  const worldW = Math.max(400, grid.w + CONTINENT_WORLD_MARGIN * 2);
+  const worldH = Math.max(300, grid.h + CONTINENT_WORLD_MARGIN * 2);
+  return { placements: grid.placements, clusterRects: grid.clusterRects,
+           regionRects: [], worldW: worldW, worldH: worldH };
+}
+
+// 两级布局（v7.1a）：先按海域分块——块内岛走既有亲缘排序 + 蛇形填充；块间按
+// 「跨海域亲缘总和」降序（并列按海域名稳定序，散岛块永居末位）排进块级网格，
+// 间距用更大的 REGION_GAP。海域板 = 块内岛矩形并集外扩（顶部多留一行给海域牌）。
+// worldW/H 必须罩住**海域板**（板比岛并集大一圈）——否则边缘板上的城市会被
+// 判「出界」折叠。
+function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, collapsed) {
+  const collapsedSet = new Set((collapsed && collapsed.sessions) || []);
+  const collapsedRegions = new Set((collapsed && collapsed.regions) || []);
+  const cap = CONTINENT_ISLAND_CARD_MAX;
+  const byKey = {};
+  (clusters || []).forEach(c => {
+    const sid = String(c.sessionId || '');
+    const info = bySid[sid] || {};
+    const key = info.key || '';
+    (byKey[key] = byKey[key] || []).push(c);
+  });
+  // 块定义：每片海域一块（板），单岛领域 + 中性 + 待确认合成一块「散岛」（无板）；
+  // 收起的海域整块收成一枚印章（岛不占位不渲染），展开回来布局不变（确定性）
+  const blocks = [];
+  regions.forEach(r => blocks.push({ key: r.key, name: r.name, plate: true,
+    stamp: collapsedRegions.has(r.key), clusters: byKey[r.key] || [] }));
+  const loose = [];
+  Object.keys(byKey).forEach(key => {
+    if (!key) { loose.push.apply(loose, byKey[key]); return; }
+    const inRegion = regions.some(r => r.key === key);
+    if (!inRegion) loose.push.apply(loose, byKey[key]); // 单岛领域：不上板，进散岛块
+  });
+  if (loose.length) blocks.push({ key: '', name: '', plate: false, stamp: false, clusters: loose });
+
+  // 块内亲缘排序（复用 v5.2 的贪心链式）；块间按跨块亲缘总和排序。
+  // 收起的海域整块收成**一枚**印章（岛不占位不渲染）——多枚印章叠着看全局
+  const laid = blocks.map(b => {
+    const ordered = _continentClusterOrder(b.clusters, shared, userEdges);
+    const measured = b.stamp
+      ? [{ cluster: ordered[0] || { sessionId: '', items: [] }, stamp: true,
+          w: 190, h: 48, shown: 0, collapsed: true }]
+      : ordered.map(c => _continentMeasure(c, collapsedSet.has(c.sessionId), cap));
+    return { block: b, measured: measured, sids: ordered.map(c => String(c.sessionId || '')) };
+  });
+  const allSids = (clusters || []).map(c => String(c.sessionId || ''));
+  const kin = _continentKinship(allSids, shared, userEdges);
+  const crossKin = {};
+  laid.forEach(a => laid.forEach(b => {
+    if (a === b) return;
+    a.sids.forEach(sa => b.sids.forEach(sb => {
+      const w = kin[_continentKinshipKey(sa, sb)] || 0;
+      if (w) crossKin[a.block.key + '\u0000' + b.block.key] =
+        (crossKin[a.block.key + '\u0000' + b.block.key] || 0) + w;
+    }));
+  }));
+  const blockWeight = key => {
+    let sum = 0;
+    Object.keys(crossKin).forEach(pairKey => {
+      const parts = pairKey.split('\u0000');
+      if (parts[0] === key || parts[1] === key) sum += crossKin[pairKey];
+    });
+    return sum;
+  };
+  laid.sort((a, b) => {
+    const ka = a.block.plate ? blockWeight(a.block.key) : -1;
+    const kb = b.block.plate ? blockWeight(b.block.key) : -1;
+    if (ka !== kb) return kb - ka;
+    if (a.block.plate && b.block.plate) return String(a.block.name).localeCompare(String(b.block.name), 'zh');
+    return a.block.plate ? -1 : 1;  // 散岛块永居末位（无板无名，不参与海域排序）
+  });
+
+  // 块级网格：与岛级同一套 colW/rowH 逻辑，间距换 REGION_GAP；先按内容尺寸摆好块，
+  // 再在块内部按「板框 = 内容外扩」重排——板的 padding 计入块尺寸，岛内相对坐标不变
+  const cols = Math.max(1, Math.ceil(Math.sqrt(laid.length)));
+  const blockW = [], blockH = [];
+  laid.forEach(l => {
+    const grid = _continentLayoutGrid(l.measured, 0, 0);
+    l.grid = grid;
+    l.paddedW = grid.w + (l.block.plate ? CONTINENT_REGION_PAD * 2 : 0);
+    l.paddedH = grid.h + (l.block.plate ? CONTINENT_REGION_PAD * 2 + CONTINENT_REGION_HEADER_H : 0);
+  });
+  const gridPos = i => {
+    const ri = Math.floor(i / cols), posInRow = i % cols;
+    return { ci: ri % 2 === 1 ? cols - 1 - posInRow : posInRow, ri: ri };
+  };
+  laid.forEach((l, i) => {
+    const g = gridPos(i);
+    blockW[g.ci] = Math.max(blockW[g.ci] || 0, l.paddedW);
+    blockH[g.ri] = Math.max(blockH[g.ri] || 0, l.paddedH);
+  });
+  const colX = [], rowY = [];
+  let accX = CONTINENT_WORLD_MARGIN;
+  for (let i = 0; i < blockW.length; i++) { colX.push(accX); accX += blockW[i] + CONTINENT_REGION_GAP; }
+  let accY = CONTINENT_WORLD_MARGIN;
+  for (let i = 0; i < blockH.length; i++) { rowY.push(accY); accY += blockH[i] + CONTINENT_REGION_GAP; }
+
+  const placements = {};
+  const clusterRects = [];
+  const regionRects = [];
+  laid.forEach((l, i) => {
+    const g = gridPos(i);
+    const bx = colX[g.ci] + (blockW[g.ci] - l.paddedW) / 2;
+    const by = rowY[g.ri] + (blockH[g.ri] - l.paddedH) / 2;
+    const originX = bx + (l.block.plate ? CONTINENT_REGION_PAD : 0);
+    const originY = by + (l.block.plate ? CONTINENT_REGION_PAD + CONTINENT_REGION_HEADER_H : 0);
+    const grid = _continentLayoutGrid(l.measured, originX, originY);
+    Object.assign(placements, grid.placements);
+    // 收起成印章的海域：岛不渲染（clusterRects 不进），板自己就是那枚印章
+    if (!l.block.stamp) clusterRects.push.apply(clusterRects, grid.clusterRects);
+    if (l.block.plate) {
+      regionRects.push({
+        key: l.block.key, x: bx, y: by, w: l.paddedW, h: l.paddedH,
+        cx: bx + l.paddedW / 2, cy: by + l.paddedH / 2,
+        stamp: !!l.block.stamp,
+      });
+    }
+  });
+  const worldW = Math.max(400, accX - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN);
+  const worldH = Math.max(300, accY - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN);
+  return { placements: placements, clusterRects: clusterRects,
+           regionRects: regionRects, worldW: worldW, worldH: worldH };
 }
 
 // ---------- 数据 ----------
@@ -303,6 +606,8 @@ function _continentEnsureLayer() {
       '知识大陆<span class="continent-sub" id="continentStats"></span></div>' +
       '<div class="continent-tools">' +
         '<button class="continent-tool" id="continentLinkBtn" title="连接两个不同区域的概念（画一条大陆边）">连接</button>' +
+        '<button class="continent-tool is-quiet" id="continentGateBtn" hidden title="让 Φ 读卡片内容做领域归类（词面认不出的它来补；打开大陆本身不烧调用，点了才跑）">Φ 归类</button>' +
+        '<button class="continent-tool is-quiet" id="continentRouteBtn" hidden title="航线的全局显示（总开关 / 透明度）；单条样式点线本身调">航线</button>' +
         '<button class="continent-tool is-quiet" id="continentWeakBtn" title="没画到地图上的共享点（弱证据 / 超上限 / 无位可放）：照报，可逐条确认落笔" hidden>折叠 0 条</button>' +
         '<button class="continent-tool" id="continentUndoBtn" title="撤销上一条边操作 (Ctrl+Z)" hidden>↩ 撤销</button>' +
         '<button class="continent-tool is-warn" id="continentCleanBtn" title="移除一端已不在大陆上的连线" hidden>清理断线</button>' +
@@ -314,9 +619,15 @@ function _continentEnsureLayer() {
     '<div class="continent-viewport" id="continentViewport">' +
       '<div class="continent-world" id="continentWorld"></div>' +
       '<div class="continent-empty" id="continentEmpty" hidden>大陆还在形成中——先去画布上学点什么，概念会自己长出来。</div>' +
+      '<div class="continent-legend aurora-glass aurora-glass--compact" id="continentLegend" hidden></div>' +
     '</div>';
   ws.appendChild(layer);
   _continentBindViewport(document.getElementById('continentViewport'));
+  // v7.1a 图例是交互控件不是地图：pointerdown 不进画布拖拽（其内部按钮各自再处理点击）
+  const legend = document.getElementById('continentLegend');
+  if (legend && legend.addEventListener) {
+    legend.addEventListener('pointerdown', e => e.stopPropagation());
+  }
   const closeBtn = document.getElementById('continentCloseBtn');
   if (closeBtn && closeBtn.addEventListener) closeBtn.addEventListener('click', () => closeContinentView());
   const linkBtn = document.getElementById('continentLinkBtn');
@@ -327,6 +638,24 @@ function _continentEnsureLayer() {
   if (cleanBtn && cleanBtn.addEventListener) cleanBtn.addEventListener('click', () => { _continentCleanDangling(); });
   const weakBtn = document.getElementById('continentWeakBtn');
   if (weakBtn && weakBtn.addEventListener) weakBtn.addEventListener('click', e => { _continentFoldedPopover(e); });
+  // v7.1b：Φ 批量归类入口（触发不自动——打开大陆不烧调用，点了才跑）
+  const gateBtn = document.getElementById('continentGateBtn');
+  if (gateBtn && gateBtn.addEventListener) gateBtn.addEventListener('click', () => { _continentGateClassify(); });
+  // v7.2：航线全局显示入口
+  const routeBtn = document.getElementById('continentRouteBtn');
+  if (routeBtn && routeBtn.addEventListener) routeBtn.addEventListener('click', e => { _continentRoutePrefsPopover(e); });
+  // v7.2 悬停隔离（只看这座岛的航线）：事件委托挂世界层（节点是岛的兄弟元素，
+  // mouseenter 挂岛牌会在指针移上卡片时误判离开）；world 元素不随重渲更换，只绑一次
+  const worldEl = document.getElementById('continentWorld');
+  if (worldEl && worldEl.addEventListener && !worldEl.dataset.isoBound) {
+    worldEl.dataset.isoBound = '1';
+    worldEl.addEventListener('mouseover', e => {
+      const el = e.target && e.target.closest
+        ? e.target.closest('.continent-cluster, .continent-node') : null;
+      _continentSetRouteIso(el && el.dataset ? el.dataset.sessionId : null);
+    });
+    worldEl.addEventListener('mouseleave', () => _continentSetRouteIso(null));
+  }
   // 弹层单例的场外关闭：捕获阶段先于画布交互，点弹层内部不关
   document.addEventListener('pointerdown', e => {
     if (!_continentPopover) return;
@@ -351,20 +680,159 @@ function _continentLinkMid(a, b) {
   return { x: (a.cx + 2 * qx + b.cx) / 4, y: (a.cy + 2 * qy + b.cy) / 4, qx, qy };
 }
 
-// 大陆边「备注」的落点（纯函数，smoke 直测）：就是上面那条曲线在 t=0.5 的中点，
-// 与连线同一套世界坐标，标签才压在线上。
-// 曾经这里直接读 `arcPath(...)` 返回值的 `arc.qx`——而 arcPath 只返回了 `d`，于是
-// left/top 算成字符串 `"NaNpx"`：这是**无效 CSS 值**，会被浏览器整条丢弃，绝对定位的
-// 标签退回「静态位置」（世界层左上角，紧跟在 SVG 之后）——备注就飘到离连线十万八千里
-// 的地方，而且控制台一声不响（用户截图：「文字不在线上」）。
-// 教训：给 DOM 写 `xxx + 'px'` 的落点必须有 finite 兜底 + 断言，NaN 在浏览器里是静默失败。
-function _continentEdgeLabelPos(a, b) {
-  const mid = _continentLinkMid(a, b);
-  const ax = Number.isFinite(a.cx) ? a.cx : 0, bx = Number.isFinite(b.cx) ? b.cx : 0;
-  const ay = Number.isFinite(a.cy) ? a.cy : 0, by = Number.isFinite(b.cy) ? b.cy : 0;
+// ---------- v7.2 航线走线（纯函数，无 DOM）：端点从岛框出发，永不穿过岛内部 ----------
+// 旧版大陆边直接连两张卡的**中心**（二次贝塞尔），线必然穿过岛内部与中间的岛
+// （岛底色 7% 透明度，线全透出来）——几何上的必然，不是审美问题。v7.2 起端点升级
+// 为岛框边缘，走线三档：straight 直连 / detour 绕行（默认：撞岛就把控制点垂直推开，
+// 最多 3 次，取首个不撞）/ lane 沿世界边缘车道（逃生档）。
+
+// 从 rect 边缘朝目标方向出框的点（线从岛「边上」走，不从岛「心里」穿）
+function _continentBorderPoint(rect, towardX, towardY) {
+  const cx = Number(rect.cx), cy = Number(rect.cy);
+  const dx = Number(towardX) - cx, dy = Number(towardY) - cy;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) {
+    return { x: cx, y: cy };
+  }
+  const scaleX = dx !== 0 ? (rect.w / 2) / Math.abs(dx) : Infinity;
+  const scaleY = dy !== 0 ? (rect.h / 2) / Math.abs(dy) : Infinity;
+  const t = Math.min(scaleX, scaleY);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+// 二次贝塞尔采样撞岛检测（端点在岛框上、不算撞自己；采样点在矩形内即撞）
+function _continentBezierHits(p0, q, p2, rects, samples) {
+  return _continentBezierHitCount(p0, q, p2, rects, samples) > 0;
+}
+
+// 撞点计数（绕行两侧都撞时，取撞得最少的那条兜底）
+function _continentBezierHitCount(p0, q, p2, rects, samples) {
+  const n = samples || 14;
+  let hits = 0;
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const x = (1 - t) * (1 - t) * p0.x + 2 * (1 - t) * t * q.x + t * t * p2.x;
+    const y = (1 - t) * (1 - t) * p0.y + 2 * (1 - t) * t * q.y + t * t * p2.y;
+    for (let k = 0; k < (rects || []).length; k++) {
+      const r = rects[k];
+      if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { hits++; break; }
+    }
+  }
+  return hits;
+}
+
+// 车道走线（沿世界边缘）：四个方向的车道 × 两种入线（从端点直插车道 / 先出岛框再
+// 上车道），采样数撞点取最优——单条固定车道会被「入线段横穿同排岛」坑（真机验收
+// 抓过：恒定 y 的水平段连穿 4 座岛）
+function _continentLaneRoute(a, b, pA, pB, rects, world) {
+  const segHits = (from, to) => {
+    let hits = 0;
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
+      const x = from.x + (to.x - from.x) * t;
+      const y = from.y + (to.y - from.y) * t;
+      for (let k = 0; k < (rects || []).length; k++) {
+        const r = rects[k];
+        if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { hits++; break; }
+      }
+    }
+    return hits;
+  };
+  const aRect = { x: a.x, y: a.y, w: a.w, h: a.h, cx: a.cx, cy: a.cy };
+  const bRect = { x: b.x, y: b.y, w: b.w, h: b.h, cx: b.cx, cy: b.cy };
+  const margin = 26;
+  const lanes = [
+    { vertical: true, coord: world.x + margin },
+    { vertical: true, coord: world.x + world.w - margin },
+    { vertical: false, coord: world.y + margin },
+    { vertical: false, coord: world.y + world.h - margin },
+  ];
+  let best = null, bestHits = Infinity;
+  lanes.forEach(lane => {
+    const candidates = [];
+    const entryA = lane.vertical ? { x: lane.coord, y: pA.y } : { x: pA.x, y: lane.coord };
+    const entryB = lane.vertical ? { x: lane.coord, y: pB.y } : { x: pB.x, y: lane.coord };
+    candidates.push([pA, entryA, entryB, pB]);
+    // 先出岛框再上车道：入线沿车道法线方向，避开从岛间走廊斜插
+    const exitA = lane.vertical
+      ? _continentBorderPoint(aRect, lane.coord, aRect.cy)
+      : _continentBorderPoint(aRect, aRect.cx, lane.coord);
+    const exitB = lane.vertical
+      ? _continentBorderPoint(bRect, lane.coord, bRect.cy)
+      : _continentBorderPoint(bRect, bRect.cx, lane.coord);
+    const entryA2 = lane.vertical ? { x: lane.coord, y: exitA.y } : { x: exitA.x, y: lane.coord };
+    const entryB2 = lane.vertical ? { x: lane.coord, y: exitB.y } : { x: exitB.x, y: lane.coord };
+    candidates.push([exitA, entryA2, entryB2, exitB]);
+    candidates.forEach(pts => {
+      const hits = segHits(pts[0], pts[1]) + segHits(pts[1], pts[2]) + segHits(pts[2], pts[3]);
+      if (hits < bestHits) { bestHits = hits; best = pts; }
+    });
+  });
+  if (!best) return null;
   return {
-    x: Number.isFinite(mid.x) ? mid.x : (ax + bx) / 2,
-    y: Number.isFinite(mid.y) ? mid.y : (ay + by) / 2,
+    d: 'M ' + best[0].x + ' ' + best[0].y + ' L ' + best[1].x + ' ' + best[1].y +
+       ' L ' + best[2].x + ' ' + best[2].y + ' L ' + best[3].x + ' ' + best[3].y,
+    mid: { x: (best[1].x + best[2].x) / 2, y: (best[1].y + best[2].y) / 2 },
+    mode: 'lane', p0: best[0], p1: best[1], p2: best[2], p3: best[3],
+    hits: bestHits,
+  };
+}
+
+// 主走线函数：返回 {d, mid, mode, p0, p1, p2, q}。mid 是标签落点（贝塞尔 t=0.5 或
+// 车道中点），带 finite 兜底——给 DOM 写 'px' 的落点必须是有限数，NaN 是静默失败
+// （v2 的老账：arc.qx undefined → NaNpx → 标签飘到世界层左上角）。
+function _continentRoute(a, b, obstacles, mode, world) {
+  const rects = (obstacles || []).filter(r => r && r !== a && r !== b);
+  const ax = Number.isFinite(a.cx) ? a.cx : 0, ay = Number.isFinite(a.cy) ? a.cy : 0;
+  const bx = Number.isFinite(b.cx) ? b.cx : 0, by = Number.isFinite(b.cy) ? b.cy : 0;
+  const aRect = { x: a.x, y: a.y, w: a.w, h: a.h, cx: ax, cy: ay };
+  const bRect = { x: b.x, y: b.y, w: b.w, h: b.h, cx: bx, cy: by };
+  const pA = _continentBorderPoint(aRect, bx, by);
+  const pB = _continentBorderPoint(bRect, ax, ay);
+  const modeN = mode === 'straight' || mode === 'lane' ? mode : 'detour';
+  if (modeN === 'lane' && world && Number.isFinite(world.w)) {
+    const lane = _continentLaneRoute(aRect, bRect, pA, pB, rects, world);
+    if (lane) return lane;
+  }
+  const mx = (pA.x + pB.x) / 2, my = (pA.y + pB.y) / 2;
+  const dx = pB.x - pA.x, dy = pB.y - pA.y;
+  const len = Math.max(1, Math.hypot(dx, dy));
+  const ux = -dy / len, uy = dx / len;
+  let q = { x: mx, y: my };
+  if (modeN === 'detour') {
+    // 绕行：垂直推开控制点——**两侧都试**（只推一侧时，另一侧恰好挡着就永远绕不
+    // 出去；真机验收抓过：5 个采样点穿岛），每侧最多 3 档抬升，取首个不撞的；
+    // 两侧全撞（走廊真被堵死）→ 升级沿边车道（「直达路堵了走环线」，仍不穿岛）
+    const lift0 = Math.min(110, 46 + len * 0.18);
+    let best = null, bestHits = Infinity;
+    for (let side = 1; side >= -1; side -= 2) {
+      for (let k = 1; k <= 3; k++) {
+        const lift = lift0 * k * side;
+        const cand = { x: mx + ux * lift, y: my + uy * lift };
+        if (!_continentBezierHits(pA, cand, pB, rects)) { best = cand; bestHits = 0; break; }
+        const hits = _continentBezierHitCount(pA, cand, pB, rects);
+        if (hits < bestHits) { bestHits = hits; best = cand; }
+      }
+      if (bestHits === 0) break;
+    }
+    if (bestHits === 0) {
+      q = best;
+    } else if (world && Number.isFinite(world.w)) {
+      const lane = _continentLaneRoute(aRect, bRect, pA, pB, rects, world);
+      if (lane) return lane;
+      q = best || { x: mx, y: my };   // world 都没有就退而求其次：撞得最少的那条弧
+    } else {
+      q = best || { x: mx, y: my };
+    }
+  }
+  const fin = v => Number.isFinite(v) ? v : 0;
+  const qx = (pA.x + 2 * q.x + pB.x) / 4, qy = (pA.y + 2 * q.y + pB.y) / 4;
+  const mid = {
+    x: Number.isFinite(qx) ? qx : fin(mx),
+    y: Number.isFinite(qy) ? qy : fin(my),
+  };
+  return {
+    d: 'M ' + pA.x + ' ' + pA.y + ' Q ' + q.x + ' ' + q.y + ' ' + pB.x + ' ' + pB.y,
+    mid: mid, mode: modeN, p0: pA, q: q, p2: pB,
   };
 }
 
@@ -452,19 +920,21 @@ const CONTINENT_FOLD_REASON = {
   no_room: '无位可放',
 };
 
-function _continentDrawPlan(shared, placements, clusterRects, pairLimit, cityLimit) {
+function _continentDrawPlan(shared, placements, clusterRects, pairLimit, cityLimit, extraBounds) {
   const rects = clusterRects || [];
   const pairLimitN = pairLimit || CONTINENT_PAIR_CITY_LIMIT;
   const cityLimitN = cityLimit || CONTINENT_CITY_LIMIT;
   const cities = [], boundary = {}, folded = [];
   const obstacles = rects.slice();
-  const bounds = _continentWorldBounds(rects);
+  // v7.1a：世界边界罩住海域板（板比岛并集大一圈）——否则边缘板上的城市会被判
+  // 「出界」折叠。板只进边界、不进障碍（城市可以落在板上，那本来就是它的地盘）
+  const bounds = _continentWorldBounds((extraBounds && extraBounds.length ? extraBounds : []).concat(rects));
   const pairs = {};
   let spokes = 0;
   (shared || []).slice(0, CONTINENT_LINE_LIMIT).forEach(s => {
     if (s.strength === 'weak') { folded.push({ entry: s, reason: 'weak' }); return; }
     // v5.5：证据被更具体的标签完全覆盖（服务端 covered 字段）——比如 8 座岛的「能量
-    // 守恒定律」+ 2 座岛的「角动量守恒定律」旁边的那个 10 座岛「量守恒定律」（截断名）。
+    // 守恒定律」+ 2 座岛的「角动量守恒定律」旁边的那个 10 岛「量守恒定律」（截断名）。
     // 它不单独成城（名字读不懂、城与城几乎重合），但照进折叠清单，也要参与摆位亲缘
     if (s.covered) { folded.push({ entry: s, reason: 'covered' }); return; }
     if (cities.length >= cityLimitN) { folded.push({ entry: s, reason: 'map_capped' }); return; }
@@ -517,10 +987,21 @@ function _continentRender(data) {
   const world = document.getElementById('continentWorld');
   if (!world) return null;
   world.innerHTML = '';
-  // v5.2 群岛布局：亲缘排序（强共享概念 + 用户航线）→ 蛇形网格——讲同一主题的岛
-  // 自然挨成一片，位置本身就是联系；无亲缘时输出与原序一致，行为不变
-  const layout = _continentLayoutClusters(
-    _continentClusterOrder(data.clusters || [], data.shared || [], data.userEdges || []));
+  // v7.1a 海域层：后端概率 + 用户覆盖（KV）→ 归属解析；有 ≥2 座岛同领域才走两级
+  // 布局（海域分块），否则走 v6 旧单网格（行为不变，不引入回归）
+  const regionInfo = _continentRegions(data.clusters || [], _continentRegionOverrides,
+                                       data.domainList);
+  _continentRegionInfo = regionInfo;
+  let layout;
+  if (regionInfo.regions.length) {
+    layout = _continentRegionLayout(regionInfo.regions, regionInfo.bySid,
+                                    data.clusters || [], data.shared || [], data.userEdges || [],
+                                    _continentCollapsed);
+  } else {
+    layout = _continentLayoutClusters(
+      _continentClusterOrder(data.clusters || [], data.shared || [], data.userEdges || []),
+      _continentCollapsed);
+  }
   _continentPlacements = layout.placements;
   _continentClusterRects = layout.clusterRects;
   world.style.width = layout.worldW + 'px';
@@ -529,31 +1010,138 @@ function _continentRender(data) {
   const esc = _continentEsc;
   // 边界城市（v5.1）：共享概念的端点条目 → 概念名 → 共享词。只认**画到地图上**的那些
   // （强证据、没超上限、有位置）——弱证据不该把节点标成边界城市。
+  // v7.1a：世界边界罩住海域板（城市不许因板外扩被判「出界」）
   const plan = _continentDrawPlan(data.shared || [], layout.placements,
-    layout.clusterRects, CONTINENT_PAIR_CITY_LIMIT, CONTINENT_CITY_LIMIT);
+    layout.clusterRects, CONTINENT_PAIR_CITY_LIMIT, CONTINENT_CITY_LIMIT,
+    layout.regionRects || []);
   const boundary = plan.boundary;
   _continentFolded = plan.folded;
 
-  // 簇底板（区域图的地皮）。岛牌一句话（v5.4）：前 3 个概念名 + 最近更新时间——
-  // 纯拼接、不调模型；看懂岛是看懂联系的前提。
-  layout.clusterRects.forEach(rect => {
-    const cluster = (data.clusters || []).find(c => c.sessionId === rect.sessionId);
-    const tagline = _continentIslandTagline(cluster, _continentRelTime);
+  // 海域板（v7.1a 学科地盘 / v7.3 可折叠）：领域分块的地皮，先画＝垫在岛与卡之下。
+  // 板头 = 名字 + 岛数 + 来源标记 + 折叠钮；点板头聚焦这片（再点取消），板身不拦画布
+  // 拖拽。收起的海域整片收成一枚印章（岛不渲染），多枚印章叠着看全局
+  (layout.regionRects || []).forEach(rect => {
+    const region = regionInfo.regions.find(r => r.key === rect.key) || {};
     const el = document.createElement('div');
-    el.className = 'continent-cluster';
-    el.dataset.sessionId = rect.sessionId || '';
+    el.className = 'continent-region' +
+      (region.hue === null || region.hue === undefined ? ' is-gray' : '') +
+      (rect.stamp ? ' is-stamp' : '');
+    el.dataset.region = rect.key || '';
+    if (region.hue !== null && region.hue !== undefined) {
+      el.style.setProperty('--region-h', String(region.hue));
+    }
     el.style.left = rect.x + 'px';
     el.style.top = rect.y + 'px';
     el.style.width = rect.w + 'px';
     el.style.height = rect.h + 'px';
+    el.title = '海域：' + (region.name || rect.key) + '（' + (region.sessions || []).length +
+      ' 座岛 · 点名字聚焦这片，点 ' + (rect.stamp ? '▸ 展开整片' : '▾ 收成印章') + '）';
     el.innerHTML =
+      '<div class="continent-region-head">' +
+        '<span class="continent-region-fold" data-region-fold="' + esc(rect.key) + '">' +
+          (rect.stamp ? '▸' : '▾') + '</span>' +
+        '<span class="continent-region-name">' + esc(region.name || rect.key) + '</span>' +
+        '<span class="continent-region-count">' + (region.sessions || []).length + ' 座岛 · ' +
+          (region.itemCount || 0) + ' 张卡</span>' +
+        (rect.stamp ? '' :
+          '<span class="continent-region-src">' + esc(_continentRegionSourceLabel(region.source)) + '</span>') +
+      '</div>';
+    const head = el.firstChild;
+    if (head && head.addEventListener) {
+      head.addEventListener('pointerdown', e => {
+        e.stopPropagation();  // 板头是聚焦按钮，不是画布拖拽起点
+        _continentToggleLegendFocus(rect.key);
+      });
+    }
+    const fold = el.querySelector ? el.querySelector('[data-region-fold]') : null;
+    if (fold) {
+      fold.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        _continentToggleCollapse('region', rect.key);
+      });
+    }
+    world.appendChild(el);
+  });
+
+  // 簇底板（区域图的地皮）。岛牌一句话（v5.4）：前 3 个概念名 + 最近更新时间——
+  // 纯拼接、不调模型；看懂岛是看懂联系的前提。
+  // v7.1a：岛底板跟海域走——solid 实色岛底 + 领域徽标（点开可改归类）、light 淡色 +
+  // 「?」徽标、pending 中性灰 + 「?」（进图例「待确认」）、neutral 纯中性不划地盘。
+  // v7.3：岛可折叠（▾ 收起只留岛牌）+ 岛内近似卡片折叠（默认画前 N 张 +「另有 k 张」）
+  layout.clusterRects.forEach(rect => {
+    const cluster = (data.clusters || []).find(c => c.sessionId === rect.sessionId);
+    const tagline = _continentIslandTagline(cluster, _continentRelTime);
+    const info = regionInfo.bySid[rect.sessionId] || {};
+    const tier = info.tier || 'neutral';
+    const region = info.key && tier !== 'neutral'
+      ? regionInfo.regions.find(r => r.key === info.key) : null;
+    const el = document.createElement('div');
+    el.className = 'continent-cluster' +
+      (region && region.hue != null && region.hue !== undefined ? ' has-region' : '') +
+      (tier === 'solid' ? ' r-solid' : tier === 'light' ? ' r-light' : tier === 'pending' ? ' r-pending' : '') +
+      (rect.collapsed ? ' is-collapsed' : '');
+    el.dataset.sessionId = rect.sessionId || '';
+    if (region && region.hue != null && region.hue !== undefined) {
+      el.style.setProperty('--region-h', String(region.hue));
+    }
+    el.style.left = rect.x + 'px';
+    el.style.top = rect.y + 'px';
+    el.style.width = rect.w + 'px';
+    el.style.height = rect.h + 'px';
+    // v7.3 岛内折叠注脚：只画了前 N 张时明示「另有 k 张」——缺失要可见，不许静默吞卡
+    const hiddenCount = Math.max(0, rect.itemCount - (rect.shownCount !== undefined ? rect.shownCount : rect.itemCount));
+    const moreNote = (!rect.collapsed && hiddenCount > 0)
+      ? ' · 另有 ' + hiddenCount + ' 张（收进岛里）' : '';
+    let headHtml =
       '<div class="continent-cluster-head">' +
         '<span class="continent-cluster-headline">' +
+          '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
+            (rect.collapsed ? '▸' : '▾') + '</span>' +
           '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
           '<span class="continent-cluster-count">' + rect.itemCount + ' 个概念</span>' +
         '</span>' +
-        (tagline ? '<span class="continent-cluster-sub">' + esc(tagline) + '</span>' : '') +
+        (rect.collapsed || !tagline ? '' :
+          '<span class="continent-cluster-sub">' + esc(tagline) + esc(moreNote) + '</span>') +
       '</div>';
+    // 领域徽标（v7.1a 手动纠正入口）：点开「归到哪个领域」清单——一步落笔写 KV。
+    // 徽标不在（neutral 无归属）就不占位；淡色/待确认档带「?」（不确定也要可见）。
+    // 徽标旁的色点 = 次要领域（混合岛，后端 domains[1] 概率够高才显示）
+    const secondaryDot = _continentSecondaryDot(cluster, data.domainList);
+    if (info.key && tier !== 'neutral') {
+      const region2 = regionInfo.regions.find(r => r.key === info.key);
+      const badgeName = region2 ? region2.name : info.key;
+      headHtml =
+      '<div class="continent-cluster-head">' +
+        '<span class="continent-cluster-headline">' +
+          '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
+            (rect.collapsed ? '▸' : '▾') + '</span>' +
+          '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-count">' + rect.itemCount + ' 个概念</span>' +
+          '<button class="continent-domain-badge' + (tier === 'solid' ? '' : ' is-unsure') + '"' +
+            ' data-domain-sid="' + esc(rect.sessionId) + '"' +
+            ' title="这座岛归在「' + esc(badgeName) + '」——点开可改归类（写进大陆记忆，Ctrl+Z 可撤销）">' +
+            esc(badgeName) + (tier === 'light' || tier === 'pending' ? ' ?' : '') +
+          '</button>' + secondaryDot +
+        '</span>' +
+        (rect.collapsed || !tagline ? '' :
+          '<span class="continent-cluster-sub">' + esc(tagline) + esc(moreNote) + '</span>') +
+      '</div>';
+    }
+    el.innerHTML = headHtml;
+    const badge = el.querySelector ? el.querySelector('.continent-domain-badge') : null;
+    if (badge) {
+      badge.addEventListener('pointerdown', e => {
+        e.stopPropagation();  // 徽标是归类菜单入口，不进画布拖拽/下钻
+        _continentDomainMenu(e, rect.sessionId);
+      });
+    }
+    const foldBtn = el.querySelector ? el.querySelector('[data-island-fold]') : null;
+    if (foldBtn) {
+      foldBtn.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        _continentToggleCollapse('island', rect.sessionId);
+      });
+    }
     world.appendChild(el);
   });
 
@@ -591,6 +1179,7 @@ function _continentRender(data) {
     const el = document.createElement('div');
     el.className = 'continent-city' + _continentKindClass(s.kind);
     el.dataset.cityLabel = s.label || '';
+    el.dataset.citySids = city.reps.map(r => r.sessionId).join(',');  // v7.1a 图例聚焦判定用
     el.style.left = city.box.x + 'px';
     el.style.top = city.box.y + 'px';
     el.title = '边界城市：' + city.reps.length + ' 块画布都学过——点开看重逢清单';
@@ -606,17 +1195,12 @@ function _continentRender(data) {
     world.appendChild(el);
   });
 
-  // ---------- 连线层：辐条（城市→岛）+ 我的大陆边（实线弧）+ 断桥 ----------
+  // ---------- 连线层：辐条（城市→岛）+ 我的航线（岛框→岛框，v7.2）+ 断桥 ----------
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('class', 'continent-links');
   svg.setAttribute('width', String(layout.worldW));
   svg.setAttribute('height', String(layout.worldH));
-
-  const arcPath = (a, b) => {
-    const mid = _continentLinkMid(a, b);
-    return { d: 'M ' + a.cx + ' ' + a.cy + ' Q ' + mid.qx + ' ' + mid.qy + ' ' + b.cx + ' ' + b.cy };
-  };
 
   // 辐条：城市 → 该岛代表卡。两端都被节点盖住（SVG 是世界层首个子元素，节点画在它
   // 上面），所以露出来的正好是走廊那一段——「城市连着哪几座岛」一眼可见。
@@ -630,39 +1214,68 @@ function _continentRender(data) {
       spoke.setAttribute('y1', String(city.box.cy));
       spoke.setAttribute('x2', String(p.cx));
       spoke.setAttribute('y2', String(p.cy));
+      spoke.setAttribute('data-sids', city.reps.map(x => x.sessionId).join(','));
       svg.appendChild(spoke);
     });
   });
   const cityCount = plan.cityCount;
 
-  // 我的大陆边（v2 用户落笔）：实线、可点开操作弹层；有备注挂小标签
+  // 我的航线（v2 落笔 / v7.2 重做）：端点从**岛框边缘**出发、绕行不穿岛——旧版连
+  // 两张卡中心的弧线必然穿过岛内部与中间的岛。样式逐条可调（线型/颜色/粗细/走线/
+  // 显隐/锚点卡），全局可关（数据不动）；细节档（LOD detail）才画锚点卡的虚线短接。
+  const routePrefs = _continentRoutePrefs();
   (data.userEdges || []).forEach(e => {
-    const a = layout.placements[e.fromItem], b = layout.placements[e.toItem];
-    if (!a || !b) return;
-    const arc = arcPath(a, b);
+    const ra = layout.clusterRects.find(r => r.sessionId === e.fromSession);
+    const rb = layout.clusterRects.find(r => r.sessionId === e.toSession);
+    const pa = layout.placements[e.fromItem], pb = layout.placements[e.toItem];
+    if (!ra || !rb) return;  // 找不到岛框的走断桥通道（下方 danglingEdges）
+    if (!routePrefs.on || (e.style && e.style.hidden)) return;
+    const style = e.style || {};
+    const route = _continentRoute(ra, rb, layout.clusterRects, style.route || 'detour',
+      { x: 0, y: 0, w: layout.worldW, h: layout.worldH });
     const path = document.createElementNS(svgNS, 'path');
-    path.setAttribute('class', 'continent-user-link');
-    path.setAttribute('d', arc.d);
+    path.setAttribute('class', 'continent-route');
+    path.setAttribute('d', route.d);
+    path.setAttribute('data-edge-id', e.id);
+    path.setAttribute('data-sids', [e.fromSession, e.toSession].join(','));
+    const stroke = _continentRouteStroke(style, e, _continentRegionInfo);
+    path.setAttribute('stroke', stroke.color);
+    path.setAttribute('stroke-width', String(stroke.width));
+    if (stroke.dash) path.setAttribute('stroke-dasharray', stroke.dash);
+    path.setAttribute('opacity', String(routePrefs.opacity));
     path.addEventListener('pointerdown', ev => {
       ev.stopPropagation();
       _continentEdgePopover(e, ev);
     });
     svg.appendChild(path);
-    if (e.label) {
+    if (e.label && !style.noLabel) {
       const label = document.createElement('div');
       label.className = 'continent-user-link-label';
-      // 落点走纯函数（贝塞尔中点）：见 _continentEdgeLabelPos 的注释——曾经这里读
-      // arcPath 没返回的 arc.qx，算成 NaNpx 让标签飘到世界层左上角
-      const pos = _continentEdgeLabelPos(a, b);
-      label.style.left = pos.x + 'px';
-      label.style.top = pos.y + 'px';
+      // 落点走走线产物 route.mid（finite 兜底在纯函数里）——标签必须压在线上
+      label.style.left = route.mid.x + 'px';
+      label.style.top = route.mid.y + 'px';
       label.textContent = e.label;
-      label.title = '我的大陆边：' + e.label;
+      label.title = '我的航线：' + e.label;
       label.addEventListener('pointerdown', ev => {
         ev.stopPropagation();
         _continentEdgePopover(e, ev);
       });
       world.appendChild(label);
+    }
+    // 锚点短接（细节档才显，CSS 管显隐）：从锚点卡到出岛点的一小段虚线——
+    // 「这条线具体连哪张卡」降级为细节信息，不再穿岛去连卡片中心
+    if (pa && pb) {
+      const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
+      [[pa, route.p0], [pb, laneMode ? route.p3 : route.p2]].forEach(pair => {
+        const stub = document.createElementNS(svgNS, 'line');
+        stub.setAttribute('class', 'continent-route-stub');
+        stub.setAttribute('x1', String(pair[0].cx));
+        stub.setAttribute('y1', String(pair[0].cy));
+        stub.setAttribute('x2', String(pair[1].x));
+        stub.setAttribute('y2', String(pair[1].y));
+        stub.setAttribute('data-sids', [e.fromSession, e.toSession].join(','));
+        svg.appendChild(stub);
+      });
     }
   });
 
@@ -701,6 +1314,7 @@ function _continentRender(data) {
   const stats = document.getElementById('continentStats');
   if (stats) stats.textContent =
     data.clusterCount + ' 个区域 · ' + data.itemCount + ' 个概念' +
+    (regionInfo.regions.length ? ' · ' + regionInfo.regions.length + ' 片海域' : '') +
     (cityCount ? ' · ' + cityCount + ' 座边界城市' : '') +
     (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '') +
     (mineCount ? ' · 我的连线 ' + mineCount : '');
@@ -727,6 +1341,9 @@ function _continentRender(data) {
     guide.hidden = !_continentGuideText;
     guide.textContent = _continentGuideText;
   }
+  // v7.1a 图例（左下角，不与顶栏争位）+ 聚焦态恢复 + 归类入口
+  _continentRenderLegend(regionInfo, data);
+  _continentApplyFocus();
   // v5.6：备注标签挂在世界层里，会随地图缩放一起变形——渲染完成后按当前倍率抵消一次
   _continentSyncEdgeLabels();
   return layout;
@@ -863,6 +1480,565 @@ function _continentIslandTagline(cluster, rel) {
   const when = latest ? (rel || _continentRelTime)(latest) : '';
   if (when) names.push(when);
   return names.join(' · ');
+}
+
+// ---------- v7.1a 海域层：图例 / 聚焦 / 手动纠正（改海域名 / 挪岛） ----------
+// 图例回答「这块颜色是什么意思、谁说的」；聚焦只淡化不删不重排（地图的空间记忆是
+// 资产）；纠正写 KV continent_regions（与 continent_edges 同通道），撤销栈兼容。
+
+const CONTINENT_REGION_SOURCE_LABEL = {
+  family: '按概念族推断',
+  gate: 'Φ 归类',
+  user: '你指定',
+};
+
+function _continentRegionSourceLabel(source) {
+  return CONTINENT_REGION_SOURCE_LABEL[source] || CONTINENT_REGION_SOURCE_LABEL.family;
+}
+
+// 混合岛次要领域色点（岛牌主导领域徽标旁）：后端 domains[1] 概率 ≥ 0.25 才有——
+// 「多标签」的可见形态，悬停显示分布
+function _continentSecondaryDot(cluster, domainList) {
+  const second = cluster && cluster.domains && cluster.domains[1];
+  if (!second || !(Number(second.p) >= CONTINENT_CONF_LIGHT - 0.15)) return '';
+  const hue = _continentRegionHue(second.name, domainList);
+  return '<span class="continent-domain-dot" style="--region-h:' + hue + '"' +
+    ' title="次要领域：' + _continentEsc(second.name) + '（' + Math.round(Number(second.p) * 100) + '%）"></span>';
+}
+
+// 图例本体（#continentLegend，挂在视口左下角——不与顶栏 #continentGuide/连接模式提示
+// 争位，那是 v5.4 踩过的互斥坑）。自身可折叠（不许变成新的复杂度）。
+function _continentRenderLegend(regionInfo, data) {
+  const legend = document.getElementById('continentLegend');
+  if (!legend) return;
+  const regions = (regionInfo && regionInfo.regions) || [];
+  const pending = (regionInfo && regionInfo.pending) || [];
+  if (!regions.length && !pending.length) { legend.hidden = true; legend.innerHTML = ''; return; }
+  legend.hidden = false;
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('phymathia_continent_legend') === '1'; } catch (e) { /* 容忍 */ }
+  const esc = _continentEsc;
+  const items = regions.map(r => {
+    const hueAttr = (r.hue !== null && r.hue !== undefined) ? ' style="--region-h:' + r.hue + '"' : '';
+    const over = r.sessions.length > CONTINENT_REGION_CAPACITY
+      ? '<span class="continent-region-over" title="这片海域超过 ' + CONTINENT_REGION_CAPACITY +
+        ' 座岛，地图还能画，但可以考虑拆成子海域">超容量</span>' : '';
+    return '<li class="continent-legend-item' + (_continentLegendFocus === r.key ? ' is-active' : '') + '"' +
+      hueAttr + ' data-region="' + esc(r.key) + '" title="点一下聚焦这片海域（其他海域淡出，再点恢复）">' +
+      '<span class="continent-legend-chip"></span>' +
+      '<span class="continent-legend-name">' + esc(r.name) + '</span>' +
+      '<span class="continent-legend-count">' + r.sessions.length + ' 岛 · ' + r.itemCount + ' 卡</span>' +
+      over +
+      '<span class="continent-legend-src">' + esc(_continentRegionSourceLabel(r.source)) + '</span>' +
+      (r.merged ? '' : '<button class="continent-legend-rename" data-rename="' + esc(r.key) +
+        '" title="给这片海域改个名（只改显示名，颜色与归类不变）">改名</button>') +
+      '</li>';
+  }).join('');
+  const totalIslands = ((data && data.clusters) || []).length;
+  const pendingRatio = totalIslands ? Math.round(pending.length * 100 / totalIslands) : 0;
+  // 负载均衡提示（MoE 的 aux loss 位：只提示不硬拆——均衡不是目标，可读才是）：
+  // 某领域吃掉 >35% 的卡且库 ≥30 卡时提一句「可拆子海域」，拆不拆用户说了算
+  let shareHint = '';
+  const totalCards = (data && data.itemCount) || 0;
+  if (totalCards >= 30) {
+    const biggest = regions.reduce((a, b) => (!a || b.itemCount > a.itemCount) ? b : a, null);
+    if (biggest && biggest.itemCount / totalCards > CONTINENT_GATE_DOMINANT_SHARE) {
+      shareHint = '「' + biggest.name + '」占了 ' +
+        Math.round(biggest.itemCount * 100 / totalCards) + '% 的卡片——海域过大可拆子海域';
+    }
+  }
+  const footBits = [];
+  if (pending.length) {
+    footBits.push('低置信 ' + pending.length + '/' + totalIslands + '（' + pendingRatio +
+      '%）——占比高说明领域名单或词表该补了');
+  }
+  if (shareHint) footBits.push(shareHint);
+  legend.innerHTML =
+    '<div class="continent-legend-head">' +
+      '<span class="continent-legend-title">图例' + (collapsed ? ' ▸' : ' ▾') + '</span>' +
+      (pending.length
+        ? '<button class="continent-legend-pending" data-pending>待确认 ' + pending.length + ' 座岛</button>'
+        : '') +
+    '</div>' +
+    (collapsed ? '' :
+      '<ul class="continent-legend-list">' + items + '</ul>' +
+      (footBits.length ? '<div class="continent-legend-foot">' + esc(footBits.join('；')) + '</div>' : ''));
+  const toggle = legend.querySelector ? legend.querySelector('.continent-legend-head') : null;
+  if (toggle) toggle.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    try {
+      localStorage.setItem('phymathia_continent_legend',
+        localStorage.getItem('phymathia_continent_legend') === '1' ? '0' : '1');
+    } catch (err) { /* 容忍 */ }
+    _continentRenderLegend(_continentRegionInfo, data);
+  });
+  (legend.querySelectorAll ? legend.querySelectorAll('[data-region]') : []).forEach(li =>
+    li.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentToggleLegendFocus(li.getAttribute('data-region'));
+    }));
+  (legend.querySelectorAll ? legend.querySelectorAll('[data-rename]') : []).forEach(btn =>
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentRenameRegionMenu(e, btn.getAttribute('data-rename'));
+    }));
+  const pendingBtn = legend.querySelector ? legend.querySelector('[data-pending]') : null;
+  if (pendingBtn) pendingBtn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    _continentPendingPopover(e);
+  });
+}
+
+// 聚焦：只淡化不删不重排——地图的空间记忆（哪片在哪）是用户的资产
+function _continentToggleLegendFocus(key) {
+  _continentLegendFocus = (_continentLegendFocus === key) ? '' : String(key || '');
+  _continentApplyFocus();
+  if (_continentRegionInfo && _continentData) {
+    _continentRenderLegend(_continentRegionInfo, _continentData);
+  }
+}
+
+function _continentApplyFocus() {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelectorAll) return;
+  const key = _continentLegendFocus;
+  const info = _continentRegionInfo || { bySid: {} };
+  world.classList.toggle('is-focused', !!key);
+  const regionOf = sid => (info.bySid[sid] || {}).key;
+  world.querySelectorAll('.continent-region').forEach(el =>
+    el.classList.toggle('is-dim', !!key && el.dataset.region !== key));
+  world.querySelectorAll('.continent-cluster').forEach(el =>
+    el.classList.toggle('is-dim', !!key && regionOf(el.dataset.sessionId) !== key));
+  world.querySelectorAll('.continent-node').forEach(el =>
+    el.classList.toggle('is-dim', !!key && regionOf(el.dataset.sessionId) !== key));
+  const dimBySids = el => {
+    const sids = String(el.getAttribute('data-sids') || '').split(',').filter(Boolean);
+    el.classList.toggle('is-dim', !!key && !sids.some(sid => regionOf(sid) === key));
+  };
+  world.querySelectorAll('.continent-city').forEach(dimBySids);
+  world.querySelectorAll('.continent-spoke').forEach(dimBySids);
+}
+
+// 归到哪个领域：25 个领域 + 不归类，一步落笔（不做拖拽——画布平移已占用 pointerdown，
+// v2 踩过 setPointerCapture 把 pointerup 重定向的坑）
+function _continentDomainMenu(ev, sid) {
+  const data = _continentData || {};
+  const list = (data.domainList || []).slice();
+  const override = (_continentRegionOverrides && _continentRegionOverrides.assign) || {};
+  const hadOverride = Object.prototype.hasOwnProperty.call(override, sid);
+  const current = hadOverride ? override[sid]
+    : ((((data.clusters || []).find(c => c.sessionId === sid) || {}).domain) || null);
+  const esc = _continentEsc;
+  const rows = list.map(d =>
+    '<button class="continent-pop-btn' + (d === current ? ' is-current' : '') +
+    '" data-assign="' + esc(d) + '">' + esc(d) +
+    (d === current ? '（当前）' : '') + '</button>').join('');
+  const html =
+    '<div class="continent-pop-title">这座岛归到哪个领域？</div>' +
+    '<div class="continent-pop-desc">你的指派优先于机器判断（Φ 归类 / 概念族推断），写进大陆记忆；Ctrl+Z 可撤销。</div>' +
+    '<div class="continent-pop-actions is-wrap">' + rows +
+    '<button class="continent-pop-btn is-danger" data-assign="">不归类</button></div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-assign]').forEach(btn => btn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    const domain = btn.getAttribute('data-assign') || null;
+    _continentClosePopover();
+    _continentAssignRegion(sid, domain, hadOverride ? current : undefined);
+  }));
+}
+
+async function _continentAssignRegion(sid, domain, before) {
+  const next = _continentCopyRegionOverrides();
+  if (domain) next.assign[sid] = domain;
+  else next.assign[sid] = null;   // 「不归类」也是一条用户决定（盖过机器）
+  try {
+    await _continentCommitRegionOverrides(next,
+      { type: 'region', kind: 'assign', sid: sid, before: before });
+    _continentToast(domain ? '已归到「' + domain + '」（Ctrl+Z 可撤销）' : '已改为不归类（Ctrl+Z 可撤销）');
+  } catch (err) {
+    _continentToast('保存失败：' + (err && err.message || err));
+  }
+}
+
+// 海域名修改：只改显示名，色槽与归类键不变（颜色跟规范名走，改名不换色）
+function _continentRenameRegionMenu(ev, key) {
+  const renames = (_continentRegionOverrides && _continentRegionOverrides.renames) || {};
+  const before = Object.prototype.hasOwnProperty.call(renames, key) ? renames[key] : undefined;
+  const esc = _continentEsc;
+  const html =
+    '<div class="continent-pop-title">海域改名</div>' +
+    '<div class="continent-pop-row"><input class="continent-pop-input" data-rename-input' +
+    ' value="' + esc(renames[key] || key) + '" maxlength="16" placeholder="' + esc(key) + '"></div>' +
+    '<div class="continent-pop-actions">' +
+      '<button class="continent-pop-btn" data-rename-save>保存</button>' +
+      (before !== undefined ? '<button class="continent-pop-btn is-quiet" data-rename-reset>还原默认名</button>' : '') +
+    '</div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  const input = el.querySelector('[data-rename-input]');
+  if (input && input.focus) { try { input.focus(); } catch (e) { /* 容忍 */ } }
+  const save = async name => {
+    _continentClosePopover();
+    const next = _continentCopyRegionOverrides();
+    if (name) next.renames[key] = name;
+    else delete next.renames[key];
+    try {
+      await _continentCommitRegionOverrides(next,
+        { type: 'region', kind: 'rename', key: key, before: before });
+      _continentToast('海域已改名（Ctrl+Z 可撤销）');
+    } catch (err) {
+      _continentToast('保存失败：' + (err && err.message || err));
+    }
+  };
+  const saveBtn = el.querySelector('[data-rename-save]');
+  if (saveBtn) saveBtn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    save(input ? String(input.value || '').trim().slice(0, 16) : '');
+  });
+  const resetBtn = el.querySelector('[data-rename-reset]');
+  if (resetBtn) resetBtn.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    save('');
+  });
+  if (input) input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') save(String(input.value || '').trim().slice(0, 16));
+  });
+}
+
+// 待确认清单（低置信岛）：每行「岛名 → 最优猜测（置信度）」+ 快捷指派——「不确定也
+// 要可见」的落点，机器不确定的事交给人一锤定音。v7.1b 起，Φ 归类跑出的建议（新领域
+// 提名 / 归并组）也落在这里等确认——模型只建议，落笔权永远在用户
+function _continentPendingPopover(ev) {
+  const info = _continentRegionInfo || {};
+  const pending = info.pending || [];
+  const esc = _continentEsc;
+  const rows = pending.map(p =>
+    '<div class="continent-pop-row">' +
+    '<span class="continent-pop-row-text">' + esc(p.title || p.sid) +
+    ' <span class="continent-pop-reason">' + esc(p.domain) + '（' +
+    Math.round((Number(p.conf) || 0) * 100) + '%）</span></span>' +
+    '<button class="continent-pop-btn is-quiet" data-pending-sid="' + esc(p.sid) + '">指派领域</button>' +
+    '</div>').join('');
+  const sug = _continentGateSuggestions;
+  let sugHtml = '';
+  if (sug) {
+    const mergeRows = (sug.merges || []).map((m, i) =>
+      '<div class="continent-pop-row">' +
+      '<span class="continent-pop-row-text">Φ 说这几张是一回事：<b>' + esc(m.name) + '</b>' +
+      ' <span class="continent-pop-reason">' + (m.titles || []).map(esc).join(' / ') + '</span></span>' +
+      '<button class="continent-pop-btn" data-adopt="' + i + '">采纳进族表</button>' +
+      '</div>').join('');
+    const newRows = (sug.newDomains || []).length
+      ? '<div class="continent-pop-desc">名单缺领域：' + sug.newDomains.map(esc).join('、') +
+        '——领域名单是固定的，可在数据面板的概念族表里补（补完旧打标自动作废重打）。</div>'
+      : '';
+    sugHtml = '<div class="continent-pop-title" style="margin-top:6px">Φ 的建议（待你确认）</div>' + mergeRows + newRows;
+  }
+  const html =
+    '<div class="continent-pop-title">待确认 ' + pending.length + ' 座岛</div>' +
+    '<div class="continent-pop-desc">这些岛的领域归属置信度低于 40%——机器拿不准的，你一锤定音（指派后进对应海域、Ctrl+Z 可撤销）。</div>' +
+    (rows || '<div class="continent-pop-desc">暂时没有待确认的岛。</div>') +
+    sugHtml;
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-pending-sid]').forEach(btn =>
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentDomainMenu(e, btn.getAttribute('data-pending-sid'));
+    }));
+  el.querySelectorAll('[data-adopt]').forEach(btn =>
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      const m = (_continentGateSuggestions && _continentGateSuggestions.merges || [])
+        [Number(btn.getAttribute('data-adopt'))];
+      if (m) _continentAdoptGateMerge(m);
+    }));
+}
+
+function _continentCopyRegionOverrides() {
+  const src = _continentRegionOverrides || {};
+  const renames = {}, assign = {};
+  Object.keys(src.renames || {}).forEach(k => { renames[k] = src.renames[k]; });
+  Object.keys(src.assign || {}).forEach(k => { assign[k] = src.assign[k]; });
+  return { renames: renames, assign: assign };
+}
+
+async function _continentLoadRegionOverrides() {
+  try {
+    const resp = await fetch(CONTINENT_REGIONS_API, { cache: 'no-cache' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const v = (data && data.value) || {};
+    _continentRegionOverrides = {
+      renames: (v && typeof v.renames === 'object' && !Array.isArray(v.renames)) ? v.renames : {},
+      assign: (v && typeof v.assign === 'object' && !Array.isArray(v.assign)) ? v.assign : {},
+    };
+  } catch (e) { /* 查空是正常路径：没写过就是空覆盖 */ }
+}
+
+async function _continentCommitRegionOverrides(next, undoEntry) {
+  const resp = await fetch(CONTINENT_REGIONS_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: next }),
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  if (undoEntry) _continentEdgeUndo.push(undoEntry);
+  _continentRegionOverrides = next;
+  _continentLegendFocus = '';  // 分组可能变了，聚焦态不作数
+  if (_continentOpen && _continentData) _continentRender(_continentData);  // 归属变了 → 重排重渲
+  _continentUpdateTools();
+}
+
+// 撤销「海域操作」：assign 的 before=undefined 表示原本没有覆盖（撤销=删键）；
+// rename 的 before=undefined 表示原本用默认名（撤销=删改名）
+async function _continentUndoRegionOp(op) {
+  const next = _continentCopyRegionOverrides();
+  if (op.kind === 'assign') {
+    if (op.before === undefined || op.before === null) delete next.assign[op.sid];
+    else next.assign[op.sid] = op.before;
+  } else if (op.kind === 'rename') {
+    if (op.before === undefined || op.before === null) delete next.renames[op.key];
+    else next.renames[op.key] = op.before;
+  }
+  await _continentCommitRegionOverrides(next);
+}
+
+// ---------- v7.1b MoE 门控：Φ 批量归类（读内容，补「查词典」做不到的两类） ----------
+// 本地词面门控（评分核心）零成本永远可用，但救不了两类：词表没列的新术语（康普顿
+// 散射）、泛名/上位词（质能关系）——Φ 读「标题+摘要+公式」补这层。铁律：
+// 触发不自动（打开大陆不烧调用，点了才跑）；名单固定（模型只能从给定名单选，想加
+// 领域只能进「建议」待用户确认）；产物落盘带版本与内容 hash（增量重打）；判读失败
+// 不写脏数据。通道复用 /api/models/chat 的 stream:false（与「问 Φ」同口径）。
+const CONTINENT_GATE_API = '/api/kv/continent_gate';
+const CONTINENT_GATE_BATCH = 40;
+const CONTINENT_GATE_DOMINANT_SHARE = 0.35;  // 负载均衡提示线（不是硬拆）
+let _continentGateCtrl = null;               // 在途批量归类的中止器（关大陆即中止）
+let _continentGateSuggestions = null;        // 上次跑完的建议 {newDomains:[], merges:[{name,ids,titles}]}
+
+// 卡片内容指纹：标题+摘要+公式变了才重打（缓存三层的 hash 一环）
+function _continentGateHash(card) {
+  const key = [card && card.title || '', card && card.summary || '', card && card.formula || '']
+    .join('\u0001');
+  return _continentStrHash(key).toString(36);
+}
+
+// 批量归类的提示词（system+user 两条都写契约——模型对最后一条更敏感，v5.3 的教训）
+function _continentGateMessages(cards, domainList) {
+  const list = (domainList || []).join('、');
+  const lines = (cards || []).map(c =>
+    '- ' + c.id + '｜' + c.title + (c.summary ? '｜' + c.summary : '') +
+    (c.formula ? '｜' + c.formula : ''));
+  const user = [
+    '给下面每张知识卡片选 1–2 个领域（只能从给定名单里选），并给 0 到 1 的置信度。',
+    '领域名单：' + list,
+    '卡片：',
+  ].concat(lines).concat([
+    '',
+    '输出严格的 JSON 数组，每项形如：{"id":"卡片id","domains":[{"name":"名单里的领域","conf":0.9}],"new":[]}',
+    '某张卡在名单里找不到合适领域时：它的 domains 留空，把建议的新领域名（不超过 6 个字）放进 new 数组。',
+    '如果发现几张卡讲的是同一个概念（同义或译名变体），另加一项：{"merge":{"name":"规范名","ids":["id1","id2"]}}。',
+    '宁缺毋滥：拿不准就给低置信度或留空。只输出 JSON，不要任何其他文字。',
+  ]).join('\n');
+  return [
+    { role: 'system',
+      content: '你是知识大陆的门控路由器：只从给定的领域名单里选择，输出严格 JSON 数组，不要任何其他文字。' },
+    { role: 'user', content: user },
+  ];
+}
+
+// 判读（纯函数）：剥思考块与代码围栏 → 取首个 [ 到末个 ] 的片段 → JSON.parse →
+// 名单外领域丢弃、conf 夹取、每卡至多 2 个领域、merge 组的 ids 必须都在本批内。
+// 任何一步失败都返回空产物（该批保持本地归属，不写脏数据）
+function _continentGateParse(raw, cardIds, domainList) {
+  const out = { labels: {}, newDomains: [], merges: [] };
+  const ids = new Set(cardIds || []);
+  const allowed = new Set(domainList || []);
+  let text = typeof _stripThinkText === 'function'
+    ? _stripThinkText(String(raw || '')) : String(raw || '');
+  text = text.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start < 0 || end <= start) return out;
+  let arr;
+  try { arr = JSON.parse(text.slice(start, end + 1)); } catch (e) { return out; }
+  if (!Array.isArray(arr)) return out;
+  arr.forEach(row => {
+    if (row && typeof row === 'object' && row.merge && row.merge.name
+        && Array.isArray(row.merge.ids)) {
+      const mIds = row.merge.ids.map(String).filter(id => ids.has(id));
+      if (mIds.length >= 2) {
+        out.merges.push({ name: String(row.merge.name).trim().slice(0, 16), ids: mIds });
+      }
+      return;
+    }
+    if (!row || typeof row !== 'object' || !ids.has(String(row.id))) return;
+    const doms = Array.isArray(row.domains) ? row.domains : [];
+    const good = [];
+    doms.slice(0, 2).forEach(d => {
+      if (!d || typeof d !== 'object') return;
+      const name = String(d.name || '').trim();
+      if (!allowed.has(name)) return;
+      let conf = Number(d.conf);
+      if (!Number.isFinite(conf)) conf = 0;
+      conf = Math.min(1, Math.max(0, conf));
+      if (conf > 0 && !good.some(g => g.name === name)) good.push({ name: name, conf: conf });
+    });
+    if (good.length) out.labels[String(row.id)] = good;
+    (Array.isArray(row.new) ? row.new : []).forEach(n => {
+      const s = String(n || '').trim().slice(0, 16);
+      if (s && !allowed.has(s) && out.newDomains.indexOf(s) < 0) out.newDomains.push(s);
+    });
+  });
+  return out;
+}
+
+// 待打标卡片：归属缺失（domain=null）或低置信（<0.4）的岛上的卡；内容 hash 没变的
+// 跳过（增量）。已有可靠归属的岛不烧调用——Φ 只补本地门控做不到的那部分
+function _continentGatePendingCards(clusters, entries) {
+  const out = [];
+  (clusters || []).forEach(c => {
+    const conf = Number(c.domainConf) || 0;
+    if (c.domain && conf >= CONTINENT_CONF_LIGHT) return;
+    (c.items || []).forEach(it => {
+      if (!it || !it.itemId) return;
+      const e = entries && entries[it.itemId];
+      if (e && e.hash === _continentGateHash(it)) return;
+      out.push({ id: it.itemId, title: it.title || '', summary: it.summary || '',
+                 formula: String(it.formula || '').slice(0, 80) });
+    });
+  });
+  return out;
+}
+
+// 批量归类主流程：分批（40/批）→ 每批判读 → **每批落盘**（中断不丢已完成的）→
+// 全部结束刷新投影（后端把 gate KV 合进同一层分区，来源标记变「Φ 归类」）
+async function _continentGateClassify() {
+  const data = _continentData;
+  if (!data) return;
+  const model = (typeof getActiveModelForRole === 'function')
+    ? (getActiveModelForRole('graph') || getActiveModelForRole('agent')) : null;
+  if (!model) { _continentToast('先在「模型设置」里配置主模型，Φ 才能归类'); return; }
+  if (typeof proxyChatWithModel !== 'function') { _continentToast('模型代理通道不可用'); return; }
+  const btn = document.getElementById('continentGateBtn');
+  const setBtn = txt => { if (btn) { btn.disabled = true; btn.textContent = txt; } };
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  _continentGateCtrl = ctrl;
+  try {
+    // 读现有 gate KV：版本一致才沿用条目（名单/权重变了整批作废重打）
+    let entries = {};
+    try {
+      const r = await fetch(CONTINENT_GATE_API, { cache: 'no-cache' });
+      if (r.ok) {
+        const j = await r.json();
+        const v = j && j.value;
+        if (v && typeof v === 'object' && v.version === data.gateVersion
+            && v.entries && typeof v.entries === 'object') entries = v.entries;
+      }
+    } catch (e) { /* 读不到就当全新跑 */ }
+    const pending = _continentGatePendingCards(data.clusters, entries);
+    if (!pending.length) { _continentToast('没有需要 Φ 归类的卡片'); return; }
+    const domainList = data.domainList || [];
+    const kv = { version: data.gateVersion, entries: entries };
+    const newDomains = [], merges = [];
+    let done = 0, failed = 0;
+    for (let i = 0; i < pending.length; i += CONTINENT_GATE_BATCH) {
+      if (ctrl && ctrl.signal.aborted) break;
+      const batch = pending.slice(i, i + CONTINENT_GATE_BATCH);
+      setBtn('Φ 归类中 ' + Math.min(i + batch.length, pending.length) + '/' + pending.length);
+      try {
+        const resp = await proxyChatWithModel(model, {
+          messages: _continentGateMessages(batch, domainList), stream: false,
+        }, ctrl ? ctrl.signal : undefined);
+        const j = await resp.json();
+        const raw = j && j.choices && j.choices[0] && j.choices[0].message
+          ? j.choices[0].message.content : '';
+        const parsed = _continentGateParse(raw, batch.map(c => c.id), domainList);
+        Object.keys(parsed.labels).forEach(id => {
+          const card = batch.find(c => c.id === id) || {};
+          kv.entries[id] = { hash: _continentGateHash(card),
+                             domains: parsed.labels[id], at: Date.now() };
+          done++;
+        });
+        parsed.newDomains.forEach(n => { if (newDomains.indexOf(n) < 0) newDomains.push(n); });
+        parsed.merges.forEach(m => {
+          m.titles = m.ids.map(id => {
+            const card = (data.clusters || []).flatMap(c => c.items || [])
+              .find(it => it.itemId === id);
+            return card ? String(card.title || '') : '';
+          }).filter(Boolean);
+          merges.push(m);
+        });
+        // 每批落盘：中断后已完成的批照常保留（部分成果不丢，下次接着跑）
+        await fetch(CONTINENT_GATE_API, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: kv }),
+        });
+      } catch (err) {
+        if (err && err.name === 'AbortError') break;
+        failed += batch.length;
+      }
+    }
+    // 刷新投影：后端把 gate KV 合进分区，图例来源标记变「Φ 归类」
+    try {
+      const fresh = await _continentFetchData();
+      _continentData = fresh;
+      if (_continentOpen) { _continentRender(fresh); _continentUpdateTools(); }
+    } catch (e) { /* 刷新失败不丢已落盘的产物，下次打开自然生效 */ }
+    _continentGateSuggestions = (newDomains.length || merges.length)
+      ? { newDomains: newDomains, merges: merges } : null;
+    let msg = 'Φ 已归类 ' + done + ' 张';
+    if (failed) msg += '，' + failed + ' 张失败（可再点一次重试）';
+    if (_continentGateSuggestions) msg += '；有建议待你确认（图例 · 待确认）';
+    _continentToast(msg);
+  } finally {
+    _continentGateCtrl = null;
+    if (btn) { btn.disabled = false; }
+    _continentUpdateTools();
+  }
+}
+
+// 采纳归并建议：写进 continent_families（与内置族同一条汇聚通道——从此会积累）。
+// terms 用这几张卡的标题：族匹配跑标题，同款/子串变体今后自动归族
+async function _continentAdoptGateMerge(m) {
+  const terms = [];
+  (m.titles || []).forEach(t => {
+    const s = String(t || '').trim().slice(0, 24);
+    if (s.length >= 2 && terms.indexOf(s) < 0) terms.push(s);
+  });
+  if (!terms.length) { _continentToast('这条建议没有可用的术语'); return; }
+  let families = [];
+  try {
+    const r = await fetch('/api/kv/continent_families', { cache: 'no-cache' });
+    if (r.ok) {
+      const j = await r.json();
+      const v = j && j.value;
+      families = (v && Array.isArray(v.families)) ? v.families : (Array.isArray(v) ? v : []);
+    }
+  } catch (e) { /* 读不到就当空表 */ }
+  const next = families.filter(f => !f || f.canonical !== m.name);
+  next.push({ canonical: m.name, terms: terms, source: 'user' });
+  try {
+    await fetch('/api/kv/continent_families', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { families: next } }),
+    });
+    // 建议从清单里划掉（其余保留）
+    if (_continentGateSuggestions && _continentGateSuggestions.merges) {
+      _continentGateSuggestions.merges =
+        _continentGateSuggestions.merges.filter(x => x !== m);
+      if (!_continentGateSuggestions.merges.length && !_continentGateSuggestions.newDomains.length) {
+        _continentGateSuggestions = null;
+      }
+    }
+    const fresh = await _continentFetchData();
+    _continentData = fresh;
+    if (_continentOpen) { _continentRender(fresh); _continentUpdateTools(); }
+    _continentToast('已采纳归并「' + m.name + '」——写进概念族表，从此会积累');
+  } catch (err) {
+    _continentToast('保存失败：' + (err && err.message || err));
+  }
 }
 
 // 该岛命中这条共享概念的全部卡（服务端未给 owners 时退回代表卡一张）
@@ -1147,36 +2323,198 @@ function _continentFoldedPopover(ev) {
   }));
 }
 
+// ---------- v7.2 航线操作：单条可调（线型/颜色/粗细/走线/锚点/显隐/备注） ----------
+// 用户反馈「大陆边鸡肋：影响视觉、又不能手动调整」——调整面板就是主答。备注改成
+// 内联输入（顺手收编方向候选 U1：大陆边的两处 window.prompt 清场）。
+
+const CONTINENT_ROUTE_PREFS_KEY = 'phymathia_continent_routes'; // 非会话键（全局显示偏好）
+const CONTINENT_ROUTE_DASH = { solid: '', dashed: '7 5', dotted: '2 4' };
+const CONTINENT_ROUTE_WIDTH = { thin: 1.2, normal: 2, thick: 3.2 };
+
+function _continentRoutePrefs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONTINENT_ROUTE_PREFS_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      return { on: raw.on !== false,
+               opacity: Number.isFinite(Number(raw.opacity)) ? Math.min(1, Math.max(0.15, Number(raw.opacity))) : 1 };
+    }
+  } catch (e) { /* 容忍 */ }
+  return { on: true, opacity: 1 };
+}
+
+function _continentSaveRoutePrefs(prefs) {
+  try { localStorage.setItem(CONTINENT_ROUTE_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 容忍 */ }
+}
+
+// 样式解析（纯函数）：颜色三档——region 跟出海域色相、gold 暖金（用户认定的重色）、
+// neutral 中性。旧边无 style 字段走默认（实线/normal/region）
+function _continentRouteStroke(style, edge, regionInfo) {
+  const s = style || {};
+  const colorKey = s.color || 'region';
+  let color = 'rgba(74, 158, 255, 0.85)';
+  if (colorKey === 'gold') color = 'rgba(217, 164, 65, 0.9)';
+  else if (colorKey === 'neutral') color = 'rgba(150, 156, 170, 0.8)';
+  else if (regionInfo && edge && regionInfo.bySid) {
+    const info = regionInfo.bySid[edge.fromSession];
+    const hue = info && info.key !== null && info.key !== undefined
+      ? _continentRegionHue(info.key, null) : null;
+    if (hue !== null && hue !== undefined) color = 'hsla(' + hue + ', 62%, 64%, 0.85)';
+  }
+  return {
+    color: color,
+    width: CONTINENT_ROUTE_WIDTH[s.width] || CONTINENT_ROUTE_WIDTH.normal,
+    dash: CONTINENT_ROUTE_DASH[s.dash] || '',
+  };
+}
+
+// 通用编辑（样式/锚点/备注/隐藏共用）：改前留全量快照进撤销栈（type:'edit'）
+async function _continentEditEdge(edgeId, patch) {
+  const edges = _continentEdgeList();
+  const target = edges.find(e => e.id === edgeId);
+  if (!target) return;
+  const before = JSON.parse(JSON.stringify(target));
+  const next = edges.map(e => e.id === edgeId ? Object.assign({}, e, patch) : e);
+  await _continentCommit(next, { type: 'edit', id: edgeId, before: before });
+}
+
 function _continentEdgePopover(e, ev) {
   const idx = _continentItemIndex();
+  const s = e.style || {};
+  const esc = _continentEsc;
+  const option = (list, val) => list.map(o =>
+    '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>' + o[1] + '</option>').join('');
+  const dashOpts = option([['solid', '实线'], ['dashed', '虚线'], ['dotted', '点线']], s.dash || 'solid');
+  const colorOpts = option([['region', '跟海域色'], ['gold', '暖金'], ['neutral', '中性']], s.color || 'region');
+  const widthOpts = option([['thin', '细'], ['normal', '中'], ['thick', '粗']], s.width || 'normal');
+  const routeOpts = option([['detour', '绕行（默认）'], ['straight', '直连'], ['lane', '沿边缘车道']], s.route || 'detour');
+  // 换锚点卡：两端各列自己岛上的卡（学习顺序），代表卡口径不变
+  const itemsOf = sid => (( _continentData && _continentData.clusters) || [])
+    .filter(c => c.sessionId === sid)
+    .flatMap(c => c.items || []);
+  const anchorOpts = (sid, cur) => option(
+    itemsOf(sid).map(it => [it.itemId, it.title || it.itemId]), cur);
   const html =
-    '<div class="continent-pop-title">我的大陆边' + (e.label ? ' · ' + _continentEsc(e.label) : '') + '</div>' +
-    '<div class="continent-pop-line">' + _continentEsc(idx.items[e.fromItem] || '？') +
-    ' ↔ ' + _continentEsc(idx.items[e.toItem] || '？') + '</div>' +
-    '<div class="continent-pop-actions">' +
-      '<button class="continent-pop-btn" data-act="rename">改备注</button>' +
-      '<button class="continent-pop-btn is-danger" data-act="remove">删除连线</button>' +
+    '<div class="continent-pop-title">我的航线' + (e.label ? ' · ' + esc(e.label) : '') + '</div>' +
+    '<div class="continent-pop-line">' + esc(idx.items[e.fromItem] || '？') +
+    ' ↔ ' + esc(idx.items[e.toItem] || '？') + '</div>' +
+    '<div class="continent-route-form">' +
+      '<div class="continent-pop-row"><input class="continent-pop-input" data-label-input' +
+        ' value="' + esc(e.label || '') + '" maxlength="40" placeholder="备注（如：同为波动现象）"></div>' +
+      '<div class="continent-route-grid">' +
+        '<label>线型<select data-style="dash">' + dashOpts + '</select></label>' +
+        '<label>颜色<select data-style="color">' + colorOpts + '</select></label>' +
+        '<label>粗细<select data-style="width">' + widthOpts + '</select></label>' +
+        '<label>走线<select data-style="route">' + routeOpts + '</select></label>' +
+      '</div>' +
+      '<div class="continent-route-grid">' +
+        '<label>这端卡<select data-anchor="from">' + anchorOpts(e.fromSession, e.fromItem) + '</select></label>' +
+        '<label>那端卡<select data-anchor="to">' + anchorOpts(e.toSession, e.toItem) + '</select></label>' +
+      '</div>' +
+    '</div>' +
+    '<div class="continent-pop-actions is-wrap">' +
+      '<button class="continent-pop-btn" data-act="save-label">存备注</button>' +
+      '<button class="continent-pop-btn is-quiet" data-act="toggle-label">' + (s.noLabel ? '显示备注标签' : '隐藏备注标签') + '</button>' +
+      '<button class="continent-pop-btn is-quiet" data-act="hide">' + (s.hidden ? '取消隐藏' : '隐藏（留数据）') + '</button>' +
+      '<button class="continent-pop-btn is-danger" data-act="remove">删除航线</button>' +
     '</div>';
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
-  if (!el) return;
-  el.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', async () => {
-    const act = btn.getAttribute('data-act');
-    if (act === 'remove') {
-      _continentClosePopover();
-      try {
-        await _continentRemoveUserEdges([e.id]);
-        _continentToast('已删除（Ctrl+Z 可撤销）');
-      } catch (err) { _continentToast('删除失败：' + (err && err.message || err)); }
-    } else if (act === 'rename') {
-      const next = (typeof window.prompt === 'function')
-        ? (window.prompt('这条大陆边的备注（可留空）：', e.label || '') || '') : e.label;
-      if (next === e.label) return;
-      try {
-        await _continentRenameUserEdge(e.id, String(next).slice(0, 40));
-        _continentClosePopover();
-      } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+  if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-style]').forEach(sel => sel.addEventListener('change', async () => {
+    const patch = { style: Object.assign({}, s) };
+    patch.style[sel.getAttribute('data-style')] = sel.value;
+    try { await _continentEditEdge(e.id, patch); } catch (err) {
+      _continentToast('保存失败：' + (err && err.message || err));
     }
   }));
+  el.querySelectorAll('[data-anchor]').forEach(sel => sel.addEventListener('change', async () => {
+    const patch = sel.getAttribute('data-anchor') === 'from'
+      ? { fromItem: sel.value } : { toItem: sel.value };
+    try { await _continentEditEdge(e.id, patch); } catch (err) {
+      _continentToast('保存失败：' + (err && err.message || err));
+    }
+  }));
+  const labelInput = el.querySelector('[data-label-input]');
+  const saveLabel = async () => {
+    const v = labelInput ? String(labelInput.value || '').slice(0, 40) : '';
+    try {
+      await _continentEditEdge(e.id, { label: v });
+      _continentClosePopover();
+    } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+  };
+  const saveBtn = el.querySelector('[data-act="save-label"]');
+  if (saveBtn) saveBtn.addEventListener('pointerdown', e2 => { e2.stopPropagation(); saveLabel(); });
+  if (labelInput) labelInput.addEventListener('keydown', ev2 => {
+    if (ev2.key === 'Enter') saveLabel();
+  });
+  el.querySelectorAll('[data-act]').forEach(btn => {
+    const act = btn.getAttribute('data-act');
+    if (act === 'save-label') return;
+    btn.addEventListener('pointerdown', async e2 => {
+      e2.stopPropagation();
+      if (act === 'remove') {
+        _continentClosePopover();
+        try {
+          await _continentRemoveUserEdges([e.id]);
+          _continentToast('已删除（Ctrl+Z 可撤销）');
+        } catch (err) { _continentToast('删除失败：' + (err && err.message || err)); }
+      } else if (act === 'hide') {
+        try {
+          await _continentEditEdge(e.id, { style: Object.assign({}, s, { hidden: !s.hidden }) });
+          _continentClosePopover();
+        } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+      } else if (act === 'toggle-label') {
+        try {
+          await _continentEditEdge(e.id, { style: Object.assign({}, s, { noLabel: !s.noLabel }) });
+        } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+      }
+    });
+  });
+}
+
+// 全局航线面板（顶栏「航线」按钮）：总开关 + 透明度——关了数据还在，再开就回来
+function _continentRoutePrefsPopover(ev) {
+  const prefs = _continentRoutePrefs();
+  const html =
+    '<div class="continent-pop-title">航线显示</div>' +
+    '<div class="continent-pop-row"><label class="continent-route-check">' +
+      '<input type="checkbox" data-route-on' + (prefs.on ? ' checked' : '') + '> 显示我的航线</label></div>' +
+    '<div class="continent-pop-row"><label class="continent-route-check">透明度' +
+      '<input type="range" min="0.15" max="1" step="0.05" value="' + prefs.opacity + '" data-route-opacity></label></div>' +
+    '<div class="continent-pop-desc">悬停一座岛可单独看它的航线（其余淡出）。单条的样式点线本身调。</div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  const apply = next => {
+    _continentSaveRoutePrefs(next);
+    if (_continentOpen && _continentData) _continentRender(_continentData);
+  };
+  const onBox = el.querySelector('[data-route-on]');
+  if (onBox) onBox.addEventListener('change', () => {
+    apply({ on: onBox.checked, opacity: _continentRoutePrefs().opacity });
+  });
+  const range = el.querySelector('[data-route-opacity]');
+  if (range) range.addEventListener('input', () => {
+    apply({ on: _continentRoutePrefs().on, opacity: Number(range.value) });
+  });
+}
+
+// 悬停隔离（「只看选中岛的航线」，零点击零模式）：悬停岛 → 不相关的航线淡出。
+// 岛牌点击仍是下钻，两者不冲突
+function _continentSetRouteIso(sid) {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelectorAll) return;
+  if (!sid) {
+    world.classList.remove('route-iso');
+    world.querySelectorAll('.continent-route, .continent-route-stub').forEach(el =>
+      el.classList.remove('is-dim', 'is-lit'));
+    return;
+  }
+  world.classList.add('route-iso');
+  world.querySelectorAll('.continent-route, .continent-route-stub').forEach(el => {
+    const sids = String(el.getAttribute('data-sids') || '').split(',');
+    const mine = sids.indexOf(sid) >= 0;
+    el.classList.toggle('is-lit', mine);
+    el.classList.toggle('is-dim', !mine);
+  });
 }
 
 // ---------- v2 簇间边：KV 读写 + 撤销栈（只记边操作） ----------
@@ -1223,13 +2561,6 @@ async function _continentRemoveUserEdges(removeIds) {
     removeIds.length === 1 ? { type: 'remove', edge: removed[0] } : { type: 'bulk', edges: removed });
 }
 
-async function _continentRenameUserEdge(edgeId, label) {
-  const edges = _continentEdgeList().map(e =>
-    e.id === edgeId ? Object.assign({}, e, { label: label }) : e);
-  const before = _continentEdgeList().find(e => e.id === edgeId);
-  await _continentCommit(edges, before ? { type: 'rename', id: edgeId, before: before.label || '' } : null);
-}
-
 async function _continentUndoEdgeOp() {
   if (!_continentEdgeUndo.length) { _continentToast('没有可撤销的边操作'); return; }
   const op = _continentEdgeUndo.pop();
@@ -1237,10 +2568,13 @@ async function _continentUndoEdgeOp() {
   try {
     if (op.type === 'add') {
       await _continentCommit(_continentEdgeList().filter(e => e.id !== op.edge.id));
-    } else if (op.type === 'rename') {
-      const edges = _continentEdgeList().map(e =>
-        e.id === op.id ? Object.assign({}, e, { label: op.before }) : e);
+    } else if (op.type === 'edit') {
+      // v7.2 单条编辑（样式/锚点/备注/隐藏）：恢复改前快照
+      const edges = _continentEdgeList().map(e => e.id === op.id ? op.before : e);
       await _continentCommit(edges);
+    } else if (op.type === 'region') {
+      // v7.1a 海域操作（挪岛/改名）与边操作共用同一条 Ctrl+Z 栈（大陆打开时截获的约定不变）
+      await _continentUndoRegionOp(op);
     } else {
       const restore = op.type === 'bulk' ? op.edges : [op.edge];
       const have = new Set(_continentEdgeList().map(e => e.id));
@@ -1281,12 +2615,30 @@ function _continentUpdateTools() {
     weakBtn.hidden = n === 0;
     weakBtn.textContent = '折叠 ' + n + ' 条';
   }
+  // v7.1b Φ 归类入口：有「归属缺失」的卡才出现（有可靠归属的不烧调用）
+  const gateBtn = document.getElementById('continentGateBtn');
+  if (gateBtn && !gateBtn.disabled) {
+    const unclassified = (( _continentData && _continentData.clusters) || [])
+      .filter(c => !c.domain)
+      .reduce((acc, c) => acc + (c.itemCount || 0), 0);
+    gateBtn.hidden = unclassified === 0;
+    gateBtn.textContent = 'Φ 归类 ' + unclassified + ' 张';
+  }
+  // v7.2 航线入口：有航线才有全局显示开关
+  const routeBtn = document.getElementById('continentRouteBtn');
+  if (routeBtn) {
+    const n = (((_continentData && _continentData.userEdges) || []).length)
+      + (((_continentData && _continentData.danglingEdges) || []).length);
+    routeBtn.hidden = n === 0;
+  }
 }
 
 // ---------- 连接模式（v2 画边入口） ----------
 function _continentSetLinkMode(on) {
   _continentLinkMode = !!on;
   _continentLinkSource = null;
+  _continentIslandLinkSource = null;
+  _continentMarkIslandLinkSource(null);
   const layer = document.getElementById('continentLayer');
   if (layer && layer.classList) layer.classList.toggle('is-linking', _continentLinkMode);
   const btn = document.getElementById('continentLinkBtn');
@@ -1294,7 +2646,7 @@ function _continentSetLinkMode(on) {
   const hint = document.getElementById('continentHint');
   if (hint) {
     hint.hidden = !_continentLinkMode;
-    hint.textContent = '连接模式：先点一个概念，再点另一个区域的概念完成连线（Esc 退出）';
+    hint.textContent = '连接模式：点两个概念，或点两座岛的岛牌连成岛级航线（Esc 退出）';
   }
   // v5.4 空态引导与连接模式提示互斥（同一条顶栏位置）
   const guide = document.getElementById('continentGuide');
@@ -1330,11 +2682,61 @@ async function _continentLinkPick(itemId, sessionId) {
     _continentToast('大陆连线要连接两个不同区域的概念');
     return;
   }
-  const label = (typeof window.prompt === 'function')
-    ? (window.prompt('给这条大陆边写个备注？（可留空，如「同为波动现象」）', '') || '') : '';
+  // v7.2：落笔不再弹 window.prompt 拦路（方向候选 U1）——备注与样式连线后点线可调
   try {
-    const ok = await _continentAddUserEdge(_continentLinkSource.itemId, itemId, label);
-    if (ok) { _continentSetLinkMode(false); _continentToast('已连线（Ctrl+Z 可撤销）'); }
+    const ok = await _continentAddUserEdge(_continentLinkSource.itemId, itemId, '');
+    if (ok) {
+      _continentSetLinkMode(false);
+      _continentToast('已连成航线（点线可加备注、调样式，Ctrl+Z 可撤销）');
+    }
+  } catch (err) {
+    _continentToast('连线保存失败：' + (err && err.message || err));
+  }
+}
+
+// v7.2 岛级落笔：连接模式点两座**岛牌**也能落笔——两端取各岛最早学的卡当锚点
+// （与代表卡同口径），渲染仍是岛框到岛框的航线
+let _continentIslandLinkSource = null;
+
+function _continentMarkIslandLinkSource(sid) {
+  const world = document.getElementById('continentWorld');
+  if (!world || !world.querySelectorAll) return;
+  world.querySelectorAll('.continent-cluster.is-link-source').forEach(el =>
+    el.classList.remove('is-link-source'));
+  if (sid) {
+    const el = world.querySelector('.continent-cluster[data-session-id="' +
+      String(sid).replace(/"/g, '\\"') + '"]');
+    if (el && el.classList) el.classList.add('is-link-source');
+  }
+}
+
+async function _continentLinkPickIsland(sessionId) {
+  if (!_continentIslandLinkSource) {
+    _continentIslandLinkSource = sessionId;
+    _continentMarkIslandLinkSource(sessionId);
+    const hint = document.getElementById('continentHint');
+    if (hint) hint.textContent = '再点另一座岛的岛牌完成岛级航线（再点自己取消，Esc 退出）';
+    return;
+  }
+  if (_continentIslandLinkSource === sessionId) {
+    _continentMarkIslandLinkSource(null);
+    _continentIslandLinkSource = null;
+    return;
+  }
+  const clusters = (_continentData && _continentData.clusters) || [];
+  const from = clusters.find(c => c.sessionId === _continentIslandLinkSource);
+  const to = clusters.find(c => c.sessionId === sessionId);
+  const fromItem = from && from.items && from.items[0] && from.items[0].itemId;
+  const toItem = to && to.items && to.items[0] && to.items[0].itemId;
+  if (!fromItem || !toItem) { _continentToast('两座岛都要有概念才能连航线'); return; }
+  try {
+    const ok = await _continentAddUserEdge(fromItem, toItem, '');
+    if (ok) {
+      _continentIslandLinkSource = null;
+      _continentMarkIslandLinkSource(null);
+      _continentSetLinkMode(false);
+      _continentToast('已连成岛级航线（点线可加备注、调样式，Ctrl+Z 可撤销）');
+    }
   } catch (err) {
     _continentToast('连线保存失败：' + (err && err.message || err));
   }
@@ -1364,6 +2766,16 @@ function _continentApplyTransform() {
   const world = document.getElementById('continentWorld');
   if (world && world.style) {
     world.style.transform = 'translate(' + _continentPan.x + 'px,' + _continentPan.y + 'px) scale(' + _continentZoom + ')';
+  }
+  // v7.3 渐进披露：三档细节只切一个 CSS 类（零重建 DOM）——世界档只画海域板+岛牌+
+  // 城市+航线，区域档加卡片标题，细节档加公式行与锚点短接。一次性全量渲染 + CSS
+  // 显隐，不动既有 DOM 契约
+  if (world && world.classList) {
+    const tier = _continentZoom < CONTINENT_LOD_WORLD ? 'lod-world'
+      : _continentZoom < CONTINENT_LOD_DETAIL ? 'lod-region' : 'lod-detail';
+    world.classList.toggle('lod-world', tier === 'lod-world');
+    world.classList.toggle('lod-region', tier === 'lod-region');
+    world.classList.toggle('lod-detail', tier === 'lod-detail');
   }
   _continentSyncEdgeLabels();
 }
@@ -1457,7 +2869,8 @@ function _continentBindViewport(viewport) {
       if (_continentLinkMode) { _continentLinkPick(el.dataset.itemId, el.dataset.sessionId); return; }
       enterContinentSession(el.dataset.sessionId, el.dataset.itemId);
     } else {
-      if (_continentLinkMode) { _continentToast('连接模式要点概念节点（簇内小卡），点空白或标题可先退出'); return; }
+      // v7.2：连接模式点岛牌 = 岛级航线端点（点两座岛牌也能落笔）；平时点岛牌仍下钻
+      if (_continentLinkMode) { _continentLinkPickIsland(el.dataset.sessionId); return; }
       enterContinentSession(el.dataset.sessionId, '');
     }
   });
@@ -1524,6 +2937,10 @@ async function openContinentView() {
 
   let data;
   try {
+    // v7.1a：海域覆盖（改名/挪岛）先于首次渲染就位——第一次画就是用户纠正过的样子；
+    // v7.3：折叠态（收起的岛/海域）同样先就位
+    await _continentLoadRegionOverrides();
+    _continentLoadCollapsed();
     data = await _continentFetchData();
   } catch (err) {
     closeContinentView();
@@ -1550,6 +2967,11 @@ async function openContinentView() {
 function closeContinentView() {
   if (!_continentOpen) return; // 未开先关必须幂等
   _continentOpen = false;
+  // v7.1b：在途的 Φ 批量归类随大陆关闭中止（已完成的批已落盘，不丢）
+  if (_continentGateCtrl) {
+    try { _continentGateCtrl.abort(); } catch (e) { /* 容忍 */ }
+    _continentGateCtrl = null;
+  }
   if (!_continentSkipViewPersist) _continentPersistView();
   _continentSkipViewPersist = false;
   _continentSetLinkMode(false);
@@ -1616,7 +3038,6 @@ window._continentCityBox = _continentCityBox;
 window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
 window._continentKindPrefix = _continentKindPrefix;
-window._continentEdgeLabelPos = _continentEdgeLabelPos;
 window._continentEdgeLabelScale = _continentEdgeLabelScale;
 window._continentSyncEdgeLabels = _continentSyncEdgeLabels;
 // v5.2 群岛布局 / v5.3 问 Φ / v5.4 岛牌：纯函数（无 DOM），smoke 直接断言
@@ -1627,6 +3048,23 @@ window._continentPhiVerdict = _continentPhiVerdict;
 window._continentPhiBlockHtml = _continentPhiBlockHtml;
 window._continentIslandTagline = _continentIslandTagline;
 window._continentEmptyCanvasCount = _continentEmptyCanvasCount;
+// v7.1a 海域层：纯函数（无 DOM），smoke 直接断言（分组/配色确定性/两级布局罩住海域板）
+window._continentRegionHue = _continentRegionHue;
+window._continentRegions = _continentRegions;
+window._continentRegionLayout = _continentRegionLayout;
+window._continentLayoutGrid = _continentLayoutGrid;
+window._continentRegionSourceLabel = _continentRegionSourceLabel;
+window._continentSecondaryDot = _continentSecondaryDot;
+window._continentRegionInfoOf = () => _continentRegionInfo;  // 验收/调试用（只读当前归属解析）
+// v7.1b 门控：纯函数（无 DOM），smoke 直接断言（提示词契约/判读防御/哈希增量）
+window._continentGateMessages = _continentGateMessages;
+window._continentGateParse = _continentGateParse;
+window._continentGateHash = _continentGateHash;
+window._continentGatePendingCards = _continentGatePendingCards;
+// v7.2 航线：纯函数（无 DOM），smoke 直接断言（出岛框/绕行不穿岛/标签落点 finite）
+window._continentRoute = _continentRoute;
+window._continentBorderPoint = _continentBorderPoint;
+window._continentRouteStroke = _continentRouteStroke;
 
 // 预热面包屑：启动后拉一次投影，有内容才亮「‹ 大陆」入口（失败静默——
 // 查空是正常路径，不弹错）。?continent=1 直开大陆视图（演示/验收捷径）。

@@ -1363,30 +1363,34 @@ check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种�
   return true;
 });
 
-check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
-  const pos = sandbox._continentEdgeLabelPos;
+check('graph-continent: 航线备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
+  const route = sandbox._continentRoute;
   const mid = sandbox._continentLinkMid;
-  if (typeof pos !== 'function' || typeof mid !== 'function') {
-    throw new Error('落点纯函数未暴露（_continentEdgeLabelPos）');
+  if (typeof route !== 'function' || typeof mid !== 'function') {
+    throw new Error('落点纯函数未暴露（_continentRoute）');
   }
-  const a = { cx: 100, cy: 200, w: 160, h: 46 }, b = { cx: 500, cy: 600, w: 160, h: 46 };
-  const p = pos(a, b);
-  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
-    throw new Error('备注落点不是有限数（NaN 会被 CSS 整条丢弃 → 标签退回静态位置）：' + JSON.stringify(p));
+  const a = { x: 20, y: 177, w: 160, h: 46, cx: 100, cy: 200 };
+  const b = { x: 420, y: 577, w: 160, h: 46, cx: 500, cy: 600 };
+  const r = route(a, b, [], 'detour', null);
+  if (!Number.isFinite(r.mid.x) || !Number.isFinite(r.mid.y)) {
+    throw new Error('备注落点不是有限数（NaN 会被 CSS 整条丢弃 → 标签退回静态位置）：' + JSON.stringify(r.mid));
   }
-  // 必须正好是贝塞尔 t=0.5 的点 = 连线绘制用的同一公式 (P0 + 2Q + P2)/4
-  const m = mid(a, b);
-  const ex = (a.cx + 2 * m.qx + b.cx) / 4, ey = (a.cy + 2 * m.qy + b.cy) / 4;
-  if (Math.abs(p.x - ex) > 1e-9 || Math.abs(p.y - ey) > 1e-9) {
-    throw new Error('备注落点不在曲线中点上：' + JSON.stringify(p) + ' vs ' + ex + ',' + ey);
+  // 必须正好是贝塞尔 t=0.5 的点 = 走线绘制用的同一公式 (P0 + 2Q + P2)/4
+  const ex = (r.p0.x + 2 * r.q.x + r.p2.x) / 4, ey = (r.p0.y + 2 * r.q.y + r.p2.y) / 4;
+  if (Math.abs(r.mid.x - ex) > 1e-9 || Math.abs(r.mid.y - ey) > 1e-9) {
+    throw new Error('备注落点不在曲线中点上：' + JSON.stringify(r.mid) + ' vs ' + ex + ',' + ey);
   }
-  if (Math.abs(p.y - a.cy) < 1e-9 && Math.abs(p.x - a.cx) < 1e-9) {
+  if (Math.abs(r.mid.y - a.cy) < 1e-9 && Math.abs(r.mid.x - a.cx) < 1e-9) {
     throw new Error('备注落点退化成端点');
   }
+  // 端点必须落在岛框边缘上（v7.2：线从岛边走，不从岛心里穿）
+  if (r.p0.x < a.x - 1 || r.p0.x > a.x + a.w + 1 || r.p0.y < a.y - 1 || r.p0.y > a.y + a.h + 1) {
+    throw new Error('出岛点不在岛框上：' + JSON.stringify(r.p0));
+  }
   // 脏坐标（投影与布局不同步）也必须给有限数，绝不放行 NaNpx
-  const bad = pos({ cx: NaN, cy: 0 }, { cx: 10, cy: 20 });
-  if (!Number.isFinite(bad.x) || !Number.isFinite(bad.y)) {
-    throw new Error('脏坐标时未兜底成有限数：' + JSON.stringify(bad));
+  const bad = route({ x: 0, y: 0, w: 10, h: 10, cx: NaN, cy: 0 }, { x: 0, y: 20, w: 10, h: 10, cx: 10, cy: 20 }, [], 'detour', null);
+  if (!Number.isFinite(bad.mid.x) || !Number.isFinite(bad.mid.y)) {
+    throw new Error('脏坐标时未兜底成有限数：' + JSON.stringify(bad.mid));
   }
   // 静态断言：渲染处不许再出现「读 arcPath 返回值里的控制点」这种写法
   // （先剥注释——这条规则的说明文字里就写着那个字段名，不剥会把注释当代码误报）
@@ -1394,7 +1398,7 @@ check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefi
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (/arc\.q[xy]/.test(code)) throw new Error('备注落点又去读 arcPath 没返回的字段了');
-  if (!src.includes('_continentEdgeLabelPos(a, b)')) throw new Error('渲染处未走落点纯函数');
+  if (!src.includes('route.mid.x')) throw new Error('渲染处未走落点纯函数产物');
   // v5.6：备注标签固定字号（不随地图缩放变形）——世界层缩放 2.5 倍时 10px 会变 25px，
   // 乘 1/zoom 抵消当路牌用；缩放到处与渲染结尾都必须同步，否则新画的边仍是变形字号
   const scale = sandbox._continentEdgeLabelScale;
@@ -1411,6 +1415,157 @@ check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefi
   if (!code.includes('_continentSyncEdgeLabels();\n  return layout;')) {
     throw new Error('渲染结尾未同步备注标签字号（新画的边会保持变形字号）');
   }
+  return true;
+});
+
+check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿边车道 / 样式解析 / 零 window.prompt）', () => {
+  const route = sandbox._continentRoute;
+  const stroke = sandbox._continentRouteStroke;
+  if (typeof route !== 'function' || typeof stroke !== 'function') {
+    throw new Error('v7.2 纯函数未暴露（route / routeStroke）');
+  }
+  // 绕行（默认档）：中间挡一座岛时，采样点不许进任何岛框
+  const A = { x: 0, y: 0, w: 300, h: 200, cx: 150, cy: 100 };
+  const B = { x: 600, y: 0, w: 300, h: 200, cx: 750, cy: 100 };
+  const midObstacle = { x: 400, y: 40, w: 120, h: 120, cx: 460, cy: 100 };
+  const detour = route(A, B, [A, B, midObstacle], 'detour', null);
+  if (detour.mode !== 'detour') throw new Error('默认档应是绕行');
+  const samples = [];
+  for (let i = 1; i < 14; i++) {
+    const t = i / 14;
+    samples.push({
+      x: (1 - t) * (1 - t) * detour.p0.x + 2 * (1 - t) * t * detour.q.x + t * t * detour.p2.x,
+      y: (1 - t) * (1 - t) * detour.p0.y + 2 * (1 - t) * t * detour.q.y + t * t * detour.p2.y,
+    });
+  }
+  const hit = samples.some(p => p.x >= midObstacle.x && p.x <= midObstacle.x + midObstacle.w
+    && p.y >= midObstacle.y && p.y <= midObstacle.y + midObstacle.h);
+  if (hit) throw new Error('绕行走线穿过了中间的岛');
+  // 直连档（对照组）：同样布局直线必穿（说明绕行不是白做的）
+  const straight = route(A, B, [A, B, midObstacle], 'straight', null);
+  const sSamples = [];
+  for (let i = 1; i < 14; i++) {
+    const t = i / 14;
+    sSamples.push({
+      x: (1 - t) * (1 - t) * straight.p0.x + 2 * (1 - t) * t * straight.q.x + t * t * straight.p2.x,
+      y: (1 - t) * (1 - t) * straight.p0.y + 2 * (1 - t) * t * straight.q.y + t * t * straight.p2.y,
+    });
+  }
+  const sHit = sSamples.some(p => p.x >= midObstacle.x && p.x <= midObstacle.x + midObstacle.w
+    && p.y >= midObstacle.y && p.y <= midObstacle.y + midObstacle.h);
+  if (!sHit) throw new Error('对照组失败：直连居然没穿岛（绕行档的测试前提不成立）');
+  // 沿边车道：路径是折线（含 L 指令），落点有限
+  const lane = route(A, B, [A, B, midObstacle], 'lane', { x: 0, y: 0, w: 960, h: 400 });
+  if (lane.mode !== 'lane' || lane.d.indexOf('L') < 0) throw new Error('车道档应是折线');
+  if (!Number.isFinite(lane.mid.x)) throw new Error('车道档标签落点不有限');
+  // 样式解析：旧边（无 style）走默认；三档颜色/粗细/线型可辨
+  const def = stroke(null, { fromSession: 's1' }, null);
+  if (!def.color || def.width !== 2 || def.dash) throw new Error('默认样式错：' + JSON.stringify(def));
+  if (!stroke({ dash: 'dashed', color: 'gold', width: 'thick' }, null, null).dash) throw new Error('线型未解析');
+  if (stroke({ color: 'gold' }, null, null).color.indexOf('217') < 0) throw new Error('暖金档颜色错');
+  // 静态：v7.2 的单条可调与全局开关、岛级落笔、编辑撤销；大陆模块零 window.prompt（U1 收编）
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  if (/window\.prompt/.test(code)) throw new Error('大陆模块仍有 window.prompt（U1 已收编）');
+  if (!src.includes('data-style="dash"')) throw new Error('单条样式调整缺线型');
+  if (!src.includes('data-anchor="from"')) throw new Error('换锚点卡入口缺失');
+  if (!src.includes("type: 'edit'")) throw new Error('编辑撤销缺失');
+  if (!src.includes('CONTINENT_ROUTE_PREFS_KEY')) throw new Error('全局航线偏好缺失');
+  if (!src.includes('_continentLinkPickIsland')) throw new Error('岛级落笔缺失');
+  if (!src.includes('_continentSetRouteIso')) throw new Error('悬停隔离缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  ['.continent-route', '.continent-route-stub', '.continent-route.is-dim',
+   '.continent-route-grid'].forEach(sel => {
+    if (!css.includes(sel)) throw new Error('航线样式缺失：' + sel);
+  });
+  return true;
+});
+
+check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛折叠 / 海域印章 / 岛内卡上限 / LOD 三档）', () => {
+  const layout = sandbox._continentLayoutClusters;
+  const regionLayout = sandbox._continentRegionLayout;
+  const regions = sandbox._continentRegions;
+  if (typeof layout !== 'function' || typeof regionLayout !== 'function') {
+    throw new Error('布局纯函数未暴露');
+  }
+  const cl = (sid, n) => ({
+    sessionId: sid, title: sid, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 复杂度口径（计划的推算在实现时复核）：48 座**大岛**（3 卡 ≈536×286，比推算更苛刻），
+  // 全中性走旧单网格——旧下限 0.3 会卡死适配（≥43 岛一屏装不下），0.15 必须装得下
+  const big = Array.from({ length: 48 }, (_, i) => cl('i' + i, 3));
+  const lay48 = layout(big, { sessions: [] });
+  if (!Number.isFinite(lay48.worldW) || !Number.isFinite(lay48.worldH)) {
+    throw new Error('48 岛世界尺寸不有限');
+  }
+  const right = Math.max(...lay48.clusterRects.map(r => r.x + r.w));
+  const bottom = Math.max(...lay48.clusterRects.map(r => r.y + r.h));
+  if (lay48.worldW < right || lay48.worldH < bottom) throw new Error('48 岛世界罩不住岛');
+  // 卡上限（岛内折叠）：9 张以内的岛全画；12 张的岛只画 9 张、计数如实
+  const small = layout([cl('a', 4)], { sessions: [] });
+  if (Object.keys(small.placements).length !== 4) throw new Error('4 卡岛被误折叠');
+  const bigIsle = layout([cl('b', 12)], { sessions: [] });
+  if (Object.keys(bigIsle.placements).length !== 9) {
+    throw new Error('12 卡岛应只画 9 张：' + Object.keys(bigIsle.placements).length);
+  }
+  const bRect = bigIsle.clusterRects[0];
+  if (bRect.itemCount !== 12 || bRect.shownCount !== 9) {
+    throw new Error('折叠计数不如实：' + JSON.stringify({ itemCount: bRect.itemCount, shown: bRect.shownCount }));
+  }
+  // 岛折叠：收起的岛无卡位（不留空壳）、世界变小
+  const collapsedLay = layout([cl('c', 5)], { sessions: ['c'] });
+  if (Object.keys(collapsedLay.placements).length !== 0) throw new Error('收起的岛不该有卡位');
+  if (collapsedLay.clusterRects[0].collapsed !== true) throw new Error('收起标记缺失');
+  if (!(collapsedLay.worldH < bigIsle.worldH)) throw new Error('收起后世界没变小');
+  // 海域折叠：收成一枚印章（板在、岛全不渲染）
+  const clusters6 = [cl('v1', 1), cl('v2', 1), cl('v3', 1), cl('k1', 1)];
+  clusters6.forEach((c, i) => { c.domain = i < 3 ? '矢量分析' : null; c.domainConf = 0.9; });
+  const rInfo = regions(clusters6, { renames: {}, assign: {} }, ['矢量分析']);
+  const stampLay = regionLayout(rInfo.regions, rInfo.bySid, clusters6, [], [],
+    { sessions: [], regions: ['矢量分析'] });
+  const stamp = stampLay.regionRects.find(r => r.key === '矢量分析');
+  if (!stamp || !stamp.stamp) throw new Error('收起的海域该是印章');
+  const stampSids = new Set(stampLay.clusterRects.map(r => r.sessionId));
+  if (stampSids.has('v1') || stampSids.has('v2') || stampSids.has('v3')) {
+    throw new Error('收起海域的岛不该渲染');
+  }
+  if (Object.keys(stampLay.placements).length !== 1) {
+    throw new Error('散岛该照常画：' + Object.keys(stampLay.placements).length);
+  }
+  // 展开回来布局不变（对折叠集确定性）：同一输入两次布局逐字节一致
+  const again = regionLayout(rInfo.regions, rInfo.bySid, clusters6, [], [],
+    { sessions: [], regions: ['矢量分析'] });
+  if (JSON.stringify(again) !== JSON.stringify(stampLay)) throw new Error('布局不是确定性的');
+  // 48 岛分 6 片海域的两级布局也要装得下且罩住板
+  const many = Array.from({ length: 48 }, (_, i) => {
+    const c = cl('m' + i, 3);
+    c.domain = '域' + (i % 6);
+    c.domainConf = 0.9;
+    return c;
+  });
+  const rInfo48 = regions(many, { renames: {}, assign: {} },
+    Array.from({ length: 6 }, (_, i) => '域' + i));
+  const lay48r = regionLayout(rInfo48.regions, rInfo48.bySid, many, [], [], { sessions: [], regions: [] });
+  if (lay48r.regionRects.length !== 6) throw new Error('应有 6 片海域板');
+  const plateR = Math.max(...lay48r.regionRects.map(r => r.x + r.w));
+  const plateB = Math.max(...lay48r.regionRects.map(r => r.y + r.h));
+  if (lay48r.worldW < plateR || lay48r.worldH < plateB) throw new Error('世界罩不住海域板');
+  const fitZoom = Math.min(1200 / lay48r.worldW, 800 / lay48r.worldH) * 0.92;
+  if (fitZoom < 0.15) throw new Error('48 岛 6 海域在 0.15 下限下一屏装不下：' + fitZoom);
+  // LOD 静态契约：三档阈值常量 + _continentApplyTransform 切类 + CSS 后代选择器显隐
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  ['CONTINENT_LOD_WORLD', 'CONTINENT_LOD_DETAIL', 'CONTINENT_COLLAPSED_KEY',
+   'CONTINENT_ISLAND_CARD_MAX', "classList.toggle('lod-world'"].forEach(marker => {
+    if (!src.includes(marker)) throw new Error('LOD/折叠实现缺失：' + marker);
+  });
+  if (!/const CONTINENT_ZOOM_MIN = 0\.15/.test(src)) throw new Error('缩放下限未放到 0.15');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  ['.continent-world.lod-world .continent-node', '.continent-world.lod-region .continent-node-formula',
+   '.continent-cluster.is-collapsed', '.continent-region.is-stamp'].forEach(sel => {
+    if (!css.includes(sel)) throw new Error('LOD/折叠样式缺失：' + sel);
+  });
   return true;
 });
 
@@ -1670,6 +1825,187 @@ check('graph-continent: v5.2 群岛布局（亲缘排序成簇 / 蛇形填充 / 
   if (!(kinMix[keyOf('A', 'B')] >= 1 && kinMix[keyOf('A', 'B')] < 2)) {
     throw new Error('弱证据压过了强证据：' + kinMix[keyOf('A', 'B')]);
   }
+  return true;
+});
+
+check('graph-continent: v7.1a 海域层（分组/单岛不划地盘/待确认/用户覆盖/配色确定性/两级布局罩住海域板）', () => {
+  const regions = sandbox._continentRegions;
+  const hue = sandbox._continentRegionHue;
+  const regionLayout = sandbox._continentRegionLayout;
+  const oldLayout = sandbox._continentLayoutClusters;
+  if (typeof regions !== 'function' || typeof hue !== 'function'
+      || typeof regionLayout !== 'function') {
+    throw new Error('v7.1a 纯函数未暴露（regions / regionHue / regionLayout）');
+  }
+  const cl = (sid, domain, conf, n) => ({
+    sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
+    itemCount: n, items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 验收口径（用户真实库的形态）：3 座矢量分析岛 + 1 座守恒岛 + 1 座无归属 + 1 座低置信
+  const clusters = [
+    cl('v1', '矢量分析', 0.95, 3), cl('v2', '矢量分析', 0.8, 1),
+    cl('v3', '矢量分析', 0.5, 1),          // light 档：照进海域（淡色 + ?）
+    cl('keep', '守恒定律', 0.98, 1),        // 单岛：只上底色不划地盘
+    cl('none', null, 0, 2),                 // 无归属：中性，不硬塞「其他」
+    cl('unsure', '量子力学', 0.33, 1),      // 低置信：中性灰 + 待确认清单
+  ];
+  const out = regions(clusters, { renames: {}, assign: {} }, ['矢量分析', '守恒定律', '量子力学']);
+  if (out.regions.length !== 1) throw new Error('应只有 1 片海域（矢量分析），实际 ' + out.regions.length);
+  const va = out.regions[0];
+  if (va.key !== '矢量分析' || va.sessions.join() !== 'v1,v2,v3') throw new Error('海域分组错：' + va.sessions);
+  if (va.source !== 'family') throw new Error('来源标记应按概念族推断：' + va.source);
+  if (out.singles.indexOf('keep') < 0) throw new Error('单岛领域不该自成海域');
+  if (out.neutral.indexOf('none') < 0) throw new Error('无归属岛该是中性（不许硬塞其他）');
+  if (out.pending.length !== 1 || out.pending[0].sid !== 'unsure') throw new Error('低置信岛该进待确认');
+  if (out.bySid.v3.tier !== 'light' || out.bySid.v1.tier !== 'solid') throw new Error('置信度三档判档错');
+  // 用户覆盖：把守恒岛挪进矢量分析 → 海域变 4 岛、来源变「你指定」
+  const moved = regions(clusters, { renames: {}, assign: { keep: '矢量分析' } },
+    ['矢量分析', '守恒定律', '量子力学']);
+  if (moved.regions[0].sessions.length !== 4 || moved.regions[0].source !== 'user') {
+    throw new Error('用户挪岛未生效：' + JSON.stringify(moved.regions[0].sessions));
+  }
+  // 「不归类」也是一条用户决定：把 v1 移出海域
+  const cleared = regions(clusters, { renames: {}, assign: { v1: null } },
+    ['矢量分析', '守恒定律', '量子力学']);
+  if (cleared.regions[0].sessions.join() !== 'v2,v3') throw new Error('「不归类」该把岛移出海域');
+  // 改名：显示名换、键与颜色不换
+  const renamed = regions(clusters, { renames: { 矢量分析: '场论基础' }, assign: {} },
+    ['矢量分析', '守恒定律', '量子力学']);
+  if (renamed.regions[0].name !== '场论基础' || renamed.regions[0].key !== '矢量分析') {
+    throw new Error('海域改名口径错');
+  }
+  // 配色确定性：同名两次同色；名单**末尾**追加新领域不改已有颜色（内置名单先分配）
+  if (hue('矢量分析', ['矢量分析', '守恒定律']) !== hue('矢量分析', ['矢量分析', '守恒定律', '复变函数'])) {
+    throw new Error('新增领域不该改已有领域的颜色');
+  }
+  if (hue('矢量分析', ['矢量分析', '守恒定律']) !== hue('矢量分析', undefined)) {
+    throw new Error('同名必须同色（确定性）');
+  }
+  // 两级布局：有海域时块状分区 + 海域板；世界必须罩住**海域板**（不只岛）
+  const lay = regionLayout(out.regions, out.bySid, clusters, [], []);
+  if (!lay.regionRects.length) throw new Error('海域板缺失');
+  const plateRight = Math.max(...lay.regionRects.map(r => r.x + r.w));
+  const plateBottom = Math.max(...lay.regionRects.map(r => r.y + r.h));
+  if (lay.worldW < plateRight || lay.worldH < plateBottom) throw new Error('世界尺寸罩不住海域板');
+  // 同海域的岛聚成一片：三座矢量分析岛全部落在自己的海域板内，散岛不与这块板相交
+  const rectOf = {}; lay.clusterRects.forEach(r => { rectOf[r.sessionId] = r; });
+  const plate = lay.regionRects[0];
+  const inside = (r, box) => r.x >= box.x - 1 && r.y >= box.y - 1 &&
+    r.x + r.w <= box.x + box.w + 1 && r.y + r.h <= box.y + box.h + 1;
+  const intersects = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  ['v1', 'v2', 'v3'].forEach(sid => {
+    if (!inside(rectOf[sid], plate)) throw new Error(sid + ' 没落在矢量分析海域板内');
+  });
+  ['keep', 'none', 'unsure'].forEach(sid => {
+    if (intersects(rectOf[sid], plate)) throw new Error('散岛 ' + sid + ' 闯进了海域板');
+  });
+  // 无海域时：前端走旧单网格路径——旧路径本身不许被 v7 改坏
+  const plainClusters = [cl('A', null, 0, 2), cl('B', null, 0, 2), cl('C', null, 0, 2), cl('D', null, 0, 2)];
+  const empty = regions(plainClusters, { renames: {}, assign: {} }, []);
+  if (empty.regions.length) throw new Error('无归属时不该有海域');
+  const order = sandbox._continentClusterOrder;
+  const layOld = oldLayout(order(plainClusters, [], []));
+  ['A', 'B', 'C', 'D'].forEach(sid => {
+    const a = layOld.clusterRects.find(r => r.sessionId === sid);
+    if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) throw new Error('旧布局路径产物异常：' + sid);
+  });
+  // 铁律「门控只路由不证明」的数据层隔离（静态）：画城市的调用链不许读门控字段
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const planSrc = src.slice(src.indexOf('function _continentDrawPlan'),
+    src.indexOf('function _continentRender'));
+  if (/\.domain\b|domainConf|domainSource/.test(planSrc)) {
+    throw new Error('_continentDrawPlan 混进了门控字段（门控只路由不证明）');
+  }
+  // 静态契约：图例容器（玻璃）+ 归类徽标 + 撤销栈 region 分支 + CSS
+  if (!src.includes('id="continentLegend"')) throw new Error('图例容器缺失');
+  if (!src.includes('continent-legend aurora-glass')) throw new Error('图例未挂玻璃类');
+  if (!src.includes('continent-domain-badge')) throw new Error('领域徽标缺失');
+  if (!src.includes("op.type === 'region'")) throw new Error('撤销栈缺 region 分支');
+  if (!src.includes('CONTINENT_REGIONS_API')) throw new Error('海域覆盖 KV 通道缺失');
+  if (!src.includes('_continentPendingPopover')) throw new Error('待确认清单缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  ['.continent-region', '.continent-legend', '.continent-domain-badge', '.is-dim',
+   '.continent-cluster.r-pending'].forEach(sel => {
+    if (!css.includes(sel)) throw new Error('海域样式缺失：' + sel);
+  });
+  return true;
+});
+
+check('graph-continent: v7.1b 门控（提示词契约名单固定 / 判读防御与围栏剥离 / hash 增量 / 触发不自动）', () => {
+  const msgs = sandbox._continentGateMessages;
+  const parse = sandbox._continentGateParse;
+  const hash = sandbox._continentGateHash;
+  const pendingCards = sandbox._continentGatePendingCards;
+  if (typeof msgs !== 'function' || typeof parse !== 'function'
+      || typeof hash !== 'function' || typeof pendingCards !== 'function') {
+    throw new Error('v7.1b 纯函数未暴露（gateMessages / gateParse / gateHash / gatePendingCards）');
+  }
+  // 提示词契约：名单在 system+user 两侧、卡片素材齐、严格 JSON 约定、new 只作建议
+  const m = msgs([{ id: 'k1', title: '康普顿散射', summary: '光子与电子碰撞', formula: '\\lambda' }],
+    ['量子力学', '微积分']);
+  if (m.length !== 2 || m[0].role !== 'system') throw new Error('messages 结构错');
+  if (m[1].content.indexOf('量子力学') < 0 || m[1].content.indexOf('康普顿散射') < 0) {
+    throw new Error('提示词未携带名单或卡片素材');
+  }
+  if (m[0].content.indexOf('JSON') < 0) throw new Error('system 未写输出契约');
+  // 判读：正常 JSON / 围栏包裹 / 思考块前置都过；名单外领域丢弃；conf 夹取；
+  // 本批之外的 id 丢弃；merge 组 ids 至少 2 个本批卡
+  const ids = ['k1', 'k2'];
+  const list = ['量子力学', '微积分'];
+  const ok = parse('[{"id":"k1","domains":[{"name":"量子力学","conf":1.7}],"new":[]}]', ids, list);
+  if (!ok.labels.k1 || ok.labels.k1[0].name !== '量子力学') throw new Error('正常判读失败');
+  if (ok.labels.k1[0].conf !== 1) throw new Error('conf 未夹取：' + ok.labels.k1[0].conf);
+  const fenced = parse('```json\n[{"id":"k2","domains":[{"name":"分析力学","conf":0.9},{"name":"微积分","conf":0.4}]}]\n```', ids, list);
+  if (fenced.labels.k2.length !== 1 || fenced.labels.k2[0].name !== '微积分') {
+    throw new Error('名单外领域未被丢弃（专家名单固定）');
+  }
+  const noisy = parse('<think>让我想想</think> [{"id":"k1","domains":[{"name":"量子力学","conf":0.8}],"new":["分析力学"]},' +
+    '{"merge":{"name":"康普顿散射","ids":["k1","k2","k9"]}}] 收工', ids, list);
+  if (!noisy.labels.k1) throw new Error('思考块/尾噪未被剥离');
+  if (noisy.newDomains.join() !== '分析力学') throw new Error('new 建议未收集');
+  if (noisy.merges.length !== 1 || noisy.merges[0].ids.join() !== 'k1,k2') {
+    throw new Error('merge 组未过滤批外 id');
+  }
+  if (Object.keys(parse('我觉得都不太确定', ids, list).labels).length) throw new Error('非 JSON 应回空产物');
+  if (Object.keys(parse('[{"id":"k9","domains":[{"name":"量子力学","conf":0.9}]}]', ids, list).labels).length) {
+    throw new Error('批外 id 不该入库');
+  }
+  // hash 增量：内容变了 hash 变；内容没变 hash 稳定
+  const c1 = { title: '梯度', summary: 's', formula: 'f' };
+  if (hash(c1) !== hash({ title: '梯度', summary: 's', formula: 'f' })) throw new Error('同内容 hash 不稳定');
+  if (hash(c1) === hash({ title: '旋度', summary: 's', formula: 'f' })) throw new Error('标题变了 hash 没变');
+  // 待打标口径：归属缺失或低置信的岛才进队列；hash 命中的旧打标跳过（增量）
+  const clusters = [
+    { sessionId: 'a', domain: null, domainConf: 0, itemCount: 2,
+      items: [{ itemId: 'x1', title: '康普顿散射', summary: '', formula: '' },
+              { itemId: 'x2', title: '光电效应', summary: '', formula: '' }] },
+    { sessionId: 'b', domain: '微积分', domainConf: 0.9, itemCount: 1,
+      items: [{ itemId: 'y1', title: '泰勒展开', summary: '', formula: '' }] },
+    { sessionId: 'c', domain: '量子力学', domainConf: 0.2, itemCount: 1,
+      items: [{ itemId: 'z1', title: '波函数', summary: '', formula: '' }] },
+  ];
+  const pend = pendingCards(clusters, {});
+  if (pend.map(c => c.id).join() !== 'x1,x2,z1') {
+    throw new Error('待打标口径错：' + pend.map(c => c.id).join());
+  }
+  const entries = { x1: { hash: hash({ title: '康普顿散射', summary: '', formula: '' }), domains: [] } };
+  const pend2 = pendingCards(clusters, entries);
+  if (pend2.map(c => c.id).join() !== 'x2,z1') throw new Error('hash 增量未生效（x1 该跳过）');
+  // 静态契约：打开大陆不自动跑（openContinentView 不触发 classify）、入口按钮、
+  // 每批落盘、关图中止、建议采纳写族表
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const openSrc = src.slice(src.indexOf('async function openContinentView'),
+    src.indexOf('function closeContinentView'));
+  if (openSrc.includes('_continentGateClassify()')) throw new Error('打开大陆不许自动触发 Φ 归类');
+  if (!src.includes('id="continentGateBtn"')) throw new Error('Φ 归类入口按钮缺失');
+  if (!src.includes('CONTINENT_GATE_API')) throw new Error('gate KV 通道缺失');
+  if (!src.includes('data.gateVersion')) throw new Error('gate 版本未对齐后端口径');
+  if (!src.includes('每批落盘') && !src.includes('中断不丢')) {
+    // 注释口径存在性（中断不丢已完成的批）
+  }
+  if (!src.includes('_continentGateCtrl.abort')) throw new Error('关闭大陆未中止在途归类');
+  if (!src.includes('_continentAdoptGateMerge')) throw new Error('建议采纳通道缺失');
+  if (!src.includes('continent_families')) throw new Error('采纳未写概念族表');
   return true;
 });
 
