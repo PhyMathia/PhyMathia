@@ -307,6 +307,94 @@ class BuildContinentEvidenceHygieneTest(unittest.TestCase):
         for s in out["shared"]:
             self.assertIn(s["strength"], ("strong", "weak"))
 
+    def test_every_shared_entry_carries_covered(self):
+        # v5.5 契约字段：前端按 covered 折叠（不单独成城），缺字段会被当成 undefined
+        # 当 false → 截断城市重新画上地图
+        items = {
+            "k1": _item("k1", S1, "简谐运动", ["$kx$"]),
+            "k2": _item("k2", S2, "简谐运动的能量", ["$kx$"]),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertTrue(out["shared"])
+        for s in out["shared"]:
+            self.assertIn(s["covered"], (True, False))
+
+
+class BuildContinentAggregationTest(unittest.TestCase):
+    """v5.5 汇聚口径：广度优先排序 + 被覆盖标签不单独成城。
+
+    两条都是真机/构造实测出来的缺陷：
+    ① 旧分数 `(60 + 12×字数) / 命中条目数` 把骨干概念压到冷门重叠之下；
+    ② 「能量守恒定律」×8 岛 + 「角动量守恒定律」×2 岛会多出一个 10 岛标签
+       「量守恒定律」（两条长名的中间截断），前端会画出两座几乎重合、名字读不懂的城。
+    """
+
+    def test_breadth_beats_rarity(self):
+        # 8 座岛共享「能量守恒定律」必须排在 2 座岛共享的「角动量守恒定律」之前
+        items = {}
+        for i in range(8):
+            items[f"e{i}"] = _item(f"e{i}", f"sess_e{i}", "能量守恒定律", created=i)
+        items["a1"] = _item("a1", S1, "角动量守恒定律与开普勒第二定律", created=1)
+        items["a2"] = _item("a2", S2, "角动量守恒定律的矢量推导", created=2)
+        out = build_continent(items, {})
+        labels = [s["label"] for s in out["shared"] if s["kind"] == "title"]
+        self.assertIn("能量守恒定律", labels)
+        self.assertIn("角动量守恒定律", labels)
+        self.assertLess(labels.index("能量守恒定律"), labels.index("角动量守恒定律"))
+
+    def test_truncated_label_marked_covered(self):
+        # 「量守恒定律」的每一条命中卡都被更具体的标签覆盖 → covered=True；
+        # 两条更具体的标签本身没有被覆盖 → covered=False
+        items = {}
+        for i in range(8):
+            items[f"e{i}"] = _item(f"e{i}", f"sess_e{i}", "能量守恒定律", created=i)
+        items["a1"] = _item("a1", S1, "角动量守恒定律与开普勒第二定律", created=1)
+        items["a2"] = _item("a2", S2, "角动量守恒定律的矢量推导", created=2)
+        out = build_continent(items, {})
+        by_label = {s["label"]: s for s in out["shared"] if s["kind"] == "title"}
+        self.assertTrue(by_label["量守恒定律"]["covered"])
+        self.assertFalse(by_label["能量守恒定律"]["covered"])
+        self.assertFalse(by_label["角动量守恒定律"]["covered"])
+
+    def test_family_head_word_not_covered_without_specific_shared_label(self):
+        # 反例保护：「阻尼振动」「受迫振动」各只在一座岛出现（不是跨会话共享概念），
+        # 所以「振动」不算 covered——它照旧是跨岛家族证据（前端用它摆位）
+        items = {
+            "k1": _item("k1", S1, "阻尼振动"),
+            "k2": _item("k2", S2, "受迫振动"),
+        }
+        out = build_continent(items, SESSIONS)
+        entry = next(s for s in out["shared"] if s["label"] == "振动")
+        self.assertFalse(entry["covered"])
+        self.assertEqual(entry["strength"], "weak")
+
+    def test_covered_requires_every_owner_covered(self):
+        # 「拉普拉斯」横跨三座岛，其中一座的标题只有「拉普拉斯方程」（不是共享概念）
+        # → 必须照旧独立成城，不能被「拉普拉斯算子」吞掉
+        items = {
+            "k1": _item("k1", S1, "拉普拉斯算子的定义"),
+            "k2": _item("k2", S2, "拉普拉斯算子的坐标表达"),
+            "k3": _item("k3", S3, "拉普拉斯方程"),
+        }
+        out = build_continent(items, SESSIONS)
+        by_label = {s["label"]: s for s in out["shared"] if s["kind"] == "title"}
+        self.assertIn("拉普拉斯算子", by_label)
+        self.assertIn("拉普拉斯", by_label)
+        self.assertFalse(by_label["拉普拉斯"]["covered"])
+
+    def test_covered_entry_keeps_owners_and_links(self):
+        # covered 只是「不单独成城」：证据字段一个都不能少（折叠清单要能照报、能跳转）
+        items = {}
+        for i in range(8):
+            items[f"e{i}"] = _item(f"e{i}", f"sess_e{i}", "能量守恒定律", created=i)
+        items["a1"] = _item("a1", S1, "角动量守恒定律与开普勒第二定律", created=1)
+        items["a2"] = _item("a2", S2, "角动量守恒定律的矢量推导", created=2)
+        out = build_continent(items, {})
+        entry = next(s for s in out["shared"] if s["label"] == "量守恒定律")
+        self.assertEqual(len(entry["owners"]), 10)
+        self.assertTrue(entry["links"])
+        self.assertEqual(len([s for s in out["shared"] if s["label"] == "量守恒定律"]), 1)
+
 
 class BuildContinentOwnersTest(unittest.TestCase):
     """v5.1 边界城市：「重逢清单」要按岛列出**全部**命中卡，光有 links（每会话一张
