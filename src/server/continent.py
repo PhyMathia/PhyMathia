@@ -67,9 +67,9 @@ from .concept import (
 from .family import (
     BUILTIN_FAMILIES,
     families_from_payload,
-    family_term_index,
     match_families,
     merge_families,
+    prepare_families,
 )
 from .knowledge import _is_concept_like_title
 
@@ -426,8 +426,30 @@ def _mark_families_covered(family_entries: list, specific_entries: list) -> None
         entry["covered"] = bool(pairs) and pairs <= covered_pairs
 
 
-def _family_entries(items: dict, clusters: list, session_rank: dict, item_session: dict,
-                    families: list, family_terms: set) -> list:
+def _item_families(items: dict, prepared: list) -> dict:
+    """每张卡片 → 它属于哪些族（**每张卡只匹配一次**）。
+
+    这里是性能红线：投影每次打开大陆都会跑一遍全库，把 `match_families` 放进「族 × 卡」
+    双层循环里就是 25 倍冗余，实测 600 条从几十毫秒涨到 1.7 秒（cProfile 抓到 420 万次
+    `str.lower`）。所以「哪张卡属于哪些族」在这里一次性算好，后面按族分组只是查集合。
+
+    卡片标题先过概念名闸门（与共享概念同一把尺子）：章节号标题、指令句回显、叙述句不当
+    族证据——推理泄漏卡曾靠长句把整座岛拖进族里（v4 的老账）。
+    """
+    mapping = {}
+    for iid, item in items.items():
+        if not isinstance(item, dict):
+            continue
+        if not _is_concept_like_title(item.get("title")):
+            continue
+        hit = match_families(_normalize_title(item.get("title")), prepared)
+        if hit:
+            mapping[iid] = set(hit)
+    return mapping
+
+
+def _family_entries(items: dict, clusters: list, item_session: dict, session_rank: dict,
+                    families: list, prepared: list, item_families: dict) -> list:
     """概念族 → 跨岛汇聚条目（kind=family，v6）。
 
     与「字面撞车」的本质区别：族是**领域知识**（内置表 / 用户确认 / Φ 归并），所以
@@ -437,24 +459,14 @@ def _family_entries(items: dict, clusters: list, session_rank: dict, item_sessio
     证据两个来源，都只看**标题**（卡片名 + 岛名）：卡片标题命中 → 该卡入族；岛名命中
     （如岛叫「散度」而卡名是章节号）→ 整座岛以**岛内最早学的卡**为代表入族。两处都
     要求跨 ≥2 座岛才成条目——单岛命中只是这座岛的主题，不是跨画布联系。
+    **岛名不受概念名闸门**：那是用户/AI 起的短名（「散度」），不是自动生成的卡片标题。
     """
     if not families:
         return []
-    titles = {}
-    for iid, item in items.items():
-        if not isinstance(item, dict):
-            continue
-        # 卡片标题先过概念名闸门（与共享概念同一把尺子）：章节号标题、指令句回显、
-        # 叙述句不当族证据——推理泄漏卡曾靠长句把整座岛拖进族里（v4 的老账）。
-        # **岛名不受闸门**：那是用户/AI 起的短名（「散度」），不是自动生成的卡片标题。
-        if not _is_concept_like_title(item.get("title")):
-            continue
-        titles[iid] = _normalize_title(item.get("title"))
     session_fams = {}
     for cluster in clusters:
         sid = cluster["sessionId"]
-        sess_title = _normalize_title(cluster.get("title"))
-        session_fams[sid] = match_families(sess_title, families)
+        session_fams[sid] = set(match_families(_normalize_title(cluster.get("title")), prepared))
 
     entries = []
     for fam in families:
@@ -464,11 +476,11 @@ def _family_entries(items: dict, clusters: list, session_rank: dict, item_sessio
         for cluster in clusters:
             sid = cluster["sessionId"]
             iids = [row["itemId"] for row in cluster["items"]]
-            hit = [iid for iid in iids if canonical in match_families(titles.get(iid, ""), families)]
+            hit = [iid for iid in iids if canonical in item_families.get(iid, ())]
             if hit:
                 owners.extend(hit)
                 reps.append((sid, hit[0]))          # 岛内最早学的命中卡
-            elif canonical in session_fams.get(sid, []):
+            elif canonical in session_fams.get(sid, ()):
                 if iids:
                     reps.append((sid, iids[0]))     # 岛名命中：以岛内最早学的卡为代表
                     owners.append(iids[0])
@@ -578,7 +590,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
 
     # ===== v6 概念族：领域知识层（内置表 + KV 扩展）=====
     accepted_families = merge_families(BUILTIN_FAMILIES, families_from_payload(families))
-    family_terms = family_term_index(accepted_families)
+    prepared_families = prepare_families(accepted_families)
+    item_families = _item_families(items, prepared_families)
 
     shared = []
     title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session))
@@ -604,8 +617,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                        "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
 
-    family_entries = _family_entries(items, clusters, session_rank, item_session,
-                                     accepted_families, family_terms)
+    family_entries = _family_entries(items, clusters, item_session, session_rank,
+                                     accepted_families, prepared_families, item_families)
     # 精确优先、族补缺口：族连接的每一对岛都已被更精确的强共享概念连上时，这座族城
     # 只是同一件事的第二座城（「简谐运动」两座岛 + 「振动与波动」族 = 重叠的两座城），
     # 折进折叠清单（原因 covered）而不是画上去。族只要多连上一座岛就照画（真机：
