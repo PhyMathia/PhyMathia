@@ -423,7 +423,7 @@ let harnessLastAppliedBeforeSnapshot = null;
         seen.add(s.label);
         out.push({
           label: String(s.label || '').slice(0, 40),
-          kind: s.kind === 'formula' ? 'formula' : 'title',
+          kind: s.kind === 'formula' ? 'formula' : (s.kind === 'family' ? 'family' : 'title'),
           my_title: myTitle.slice(0, 40),
           peer_title: peerTitle.slice(0, 40),
           peer_session: String(clusterTitle[peerSid] || '').slice(0, 40),

@@ -128,13 +128,18 @@ class BuildContinentSharedTest(unittest.TestCase):
         self.assertEqual(title_labels, ["简谐运动"])
 
     def test_stopchar_runs_dropped(self):
-        # 「度的」「的定义」这类含功能字的碎片不是领域词：梯度/散度只共享功能碎片
+        # 「度的」「的定义」这类含功能字的碎片不是领域词：梯度/散度只共享功能碎片，
+        # **字面**证据必须归零。v6 起这层关系改由概念族承载（梯度/散度同属矢量分析），
+        # 所以 shared 里只应有族条目、没有任何 title 子串条目——这正是「换来源而不是
+        # 放宽阈值」：字面尺子照样严，关系由领域知识层给。
         items = {
             "k1": _item("k1", S1, "梯度的定义"),
             "k2": _item("k2", S2, "散度的定义"),
         }
         out = build_continent(items, SESSIONS)
-        self.assertEqual(out["shared"], [])
+        self.assertEqual([s for s in out["shared"] if s["kind"] != "family"], [])
+        self.assertEqual([s["label"] for s in out["shared"] if s["kind"] == "family"],
+                         ["矢量分析"])
 
     def test_shared_formula_token_across_sessions(self):
         # grad 是有区分度的标识符 token（\omega 这类希腊命令名按既定口径不参与，
@@ -318,6 +323,126 @@ class BuildContinentEvidenceHygieneTest(unittest.TestCase):
         self.assertTrue(out["shared"])
         for s in out["shared"]:
             self.assertIn(s["covered"], (True, False))
+
+
+class BuildContinentFamilyTest(unittest.TestCase):
+    """v6 概念族（A 档）：把「只共享 2 字领域词」的真关系从折叠清单里救出来。
+
+    病根（真机）：`梯度`/`散度`/`旋度` 三座岛同属矢量分析，两两之间共享的只有 2 字词，
+    判 weak 后既不建城也不够格摆位——地图上是一片孤岛。修法不是放宽阈值，而是**换来源**：
+    加一层领域知识（概念族表），字面尺子照样严。
+    """
+
+    def _family_labels(self, out):
+        return [s["label"] for s in out["shared"] if s["kind"] == "family"]
+
+    def test_family_links_two_islands_sharing_one_two_char_term(self):
+        items = {
+            "k1": _item("k1", S1, "阻尼振动"),
+            "k2": _item("k2", S2, "受迫振动"),
+        }
+        out = build_continent(items, SESSIONS)
+        fam = next(s for s in out["shared"] if s["kind"] == "family")
+        self.assertEqual(fam["label"], "振动与波动")
+        self.assertEqual(fam["strength"], "strong")   # 领域知识=可上图（字面 weak 标签照旧只摆位）
+        self.assertEqual(sorted(fam["sessions"]), sorted([S1, S2]))
+        self.assertEqual(sorted(fam["owners"]), ["k1", "k2"])
+        self.assertTrue(fam["links"])
+        # 字面弱证据仍然在（两条证据并存，分工不同：一条画族城、一条只摆位）
+        self.assertTrue(any(s["kind"] == "title" and s["label"] == "振动" for s in out["shared"]))
+
+    def test_island_name_counts_as_family_evidence(self):
+        # 真机现场：岛名叫「散度」，而岛内唯一那张卡的标题是章节号（闸门不当证据）——
+        # 只靠卡片标题，这座岛永远进不了族。岛名是用户/AI 起的短名，可以当证据。
+        items = {
+            "k1": _item("k1", S1, "梯度的定义与坐标表达"),
+            "k2": _item("k2", S2, "二、从微元立方体导出直角坐标表达式"),
+        }
+        sessions = dict(SESSIONS)
+        sessions[S2] = {"id": S2, "title": "散度", "sessionId": "phymathia_2", "updatedAt": 300}
+        out = build_continent(items, sessions)
+        fam = next(s for s in out["shared"] if s["kind"] == "family")
+        self.assertEqual(fam["label"], "矢量分析")
+        self.assertEqual(sorted(fam["sessions"]), sorted([S1, S2]))
+        # k1 靠**卡名**（梯度）入族；k2 的卡名是章节号（闸门拒收），靠**岛名**「散度」入族
+        self.assertEqual(sorted(fam["owners"]), ["k1", "k2"])
+        reps = {l["from"] for l in fam["links"]} | {l["to"] for l in fam["links"]}
+        self.assertIn("k2", reps)  # 岛名来源：代表卡＝岛内最早学的那张
+
+    def test_specific_concept_wins_over_family(self):
+        # 两座岛都学过「简谐运动」：精确标签已经连上这两座岛，族城只是同一件事的第二座
+        # 城 → 折进清单（covered），精确城市照画
+        items = {
+            "k1": _item("k1", S1, "简谐运动"),
+            "k2": _item("k2", S2, "简谐运动方程"),
+        }
+        out = build_continent(items, SESSIONS)
+        precise = next(s for s in out["shared"] if s["label"] == "简谐运动")
+        self.assertFalse(precise["covered"])
+        fam = next(s for s in out["shared"] if s["kind"] == "family")
+        self.assertTrue(fam["covered"])
+        # 只标记不删除：族照旧返回（前端折进清单、照旧算摆位亲缘）
+        self.assertTrue(fam["owners"] and fam["links"])
+
+    def test_family_drawn_when_it_bridges_a_new_island(self):
+        # 族连的岛里只要有一座没被精确标签覆盖，族就必须画（真机：矢量分析连 4 座岛，
+        # 其中「散度」岛无任何精确标签）
+        items = {
+            "k1": _item("k1", S1, "梯度"),
+            "k2": _item("k2", S2, "梯度"),          # 精确标签：S1↔S2
+            "k3": _item("k3", S3, "散度的定义"),
+        }
+        out = build_continent(items, SESSIONS)
+        fam = next(s for s in out["shared"] if s["kind"] == "family")
+        self.assertEqual(fam["label"], "矢量分析")
+        self.assertEqual(len(fam["sessions"]), 3)
+        self.assertFalse(fam["covered"])
+
+    def test_junk_title_does_not_pull_island_into_family(self):
+        # 推理泄漏卡（指令句回显）标题里也写着「梯度」——v4 闸门不许它当证据，
+        # 否则它会把自己那座岛拖进族里，凭空多出一座族城
+        junk = "用户要求：从方向导数最大值推导梯度在直角坐标与正交曲线坐标下的分量表达式。这是一"
+        items = {
+            "k1": _item("k1", S1, junk),
+            "k2": _item("k2", S2, "梯度的定义与坐标表达"),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(self._family_labels(out), [])
+
+    def test_user_families_extend_and_override(self):
+        items = {
+            "k1": _item("k1", S1, "涡旋电场"),
+            "k2": _item("k2", S2, "涡旋电场的环流"),
+        }
+        custom = [{"canonical": "我的专题", "terms": ["涡旋电场"], "source": "user"}]
+        out = build_continent(items, SESSIONS, None, custom)
+        self.assertIn("我的专题", self._family_labels(out))
+        # 覆盖同名内置族：把「矢量分析」的术语换掉后，梯度不再入族
+        override = [{"canonical": "矢量分析", "terms": ["梯度场"], "source": "user"}]
+        items2 = {"k1": _item("k1", S1, "梯度"), "k2": _item("k2", S2, "散度的定义")}
+        out2 = build_continent(items2, SESSIONS, None, override)
+        self.assertEqual(self._family_labels(out2), [])
+
+    def test_dirty_family_payload_never_breaks_projection(self):
+        items = {"k1": _item("k1", S1, "梯度"), "k2": _item("k2", S2, "散度的定义")}
+        out = build_continent(items, SESSIONS, None, [None, "x", {"terms": ["a"]},
+                                                      {"canonical": "甲", "terms": ["单"]}])
+        self.assertEqual(self._family_labels(out), ["矢量分析"])  # 内置表照常工作
+
+    def test_single_island_family_is_not_a_connection(self):
+        # 族只命中一座岛＝那是这座岛的主题，不是跨画布联系
+        items = {"k1": _item("k1", S1, "梯度"), "k2": _item("k2", S1, "散度的定义")}
+        out = build_continent(items, SESSIONS)
+        self.assertEqual(self._family_labels(out), [])
+
+    def test_family_entry_carries_contract_fields(self):
+        items = {"k1": _item("k1", S1, "梯度"), "k2": _item("k2", S2, "散度的定义")}
+        out = build_continent(items, SESSIONS)
+        fam = next(s for s in out["shared"] if s["kind"] == "family")
+        for key in ("kind", "label", "score", "strength", "covered", "sessions", "owners",
+                    "links", "source"):
+            self.assertIn(key, fam, key)
+        self.assertIn(fam["source"], ("builtin", "custom", "user"))
 
 
 class BuildContinentStructuralTokenTest(unittest.TestCase):

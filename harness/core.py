@@ -226,7 +226,9 @@ def normalize_continent_shared(raw: Any) -> List[Dict[str, Any]]:
         result.append(
             {
                 "label": label[:40],
-                "kind": kind if kind in ("title", "formula") else "title",
+                # v6：family（概念族）也是共享点的一种来源——族表给的领域关系，
+                # Φ 可以说「这两座岛同属某族」，但照旧只许口头建议、不许输出图操作
+                "kind": kind if kind in ("title", "formula", "family") else "title",
                 "my_title": str(item.get("my_title") or "").strip()[:40],
                 "peer_title": str(item.get("peer_title") or "").strip()[:40],
                 "peer_session": str(item.get("peer_session") or "").strip()[:40],

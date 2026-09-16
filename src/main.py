@@ -811,8 +811,11 @@ async def api_get_continent():
     """
     items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     sessions = _read_json(SESSIONS_PATH, {})
-    user_edges = _read_json(KV_PATH, {}).get("continent_edges")
-    return continent.build_continent(items, sessions, user_edges)
+    kv = _read_json(KV_PATH, {})
+    user_edges = kv.get("continent_edges")
+    # v6 概念族：内置表 + KV 自有扩展（用户/Φ 确认过的汇聚结果，与簇间边同级的主图数据）
+    user_families = kv.get("continent_families")
+    return continent.build_continent(items, sessions, user_edges, user_families)
 
 
 @app.post("/api/knowledge")

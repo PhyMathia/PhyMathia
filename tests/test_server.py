@@ -987,6 +987,21 @@ class ConceptGroundingTest(unittest.TestCase):
         item = {"only": {"id": "only", "title": "无关条目", "formulas": ["$x = t$"]}}
         self.assertEqual(concept_mod.match_concepts("请解释 x 与 t 的关系", item), [])
 
+    def test_alias_variant_matches_same_concept(self):
+        """v6 译名归一：问「傅立叶变换」也能命中库里那条「傅里叶变换」。
+
+        之前这是概念地基的一个静默查空点——没有词面或公式桥梁就不触发（用户换个
+        写法问，就等于没学过）。v6 起 `_normalize_title` 收口了译名归一，检索、
+        大陆子串切分、概念族匹配三处共用同一把尺子。
+        """
+        items = {"sch": {"id": "sch", "title": "薛定谔方程", "formulas": []}}
+        # 归一本身：两种写法收敛到同一个键
+        self.assertEqual(concept_mod._normalize_title("薛丁格方程"), "薛定谔方程")
+        self.assertEqual(concept_mod.match_concepts("薛丁格方程怎么解？", items), ["sch"])
+        # 区分度证明：表**外**的变体（薛定锷）照旧查空——命中确实来自归一，
+        # 而不是 2 字弱证据被放水（「方程」这种弱串没有旁证不放行）
+        self.assertEqual(concept_mod.match_concepts("薛定锷方程怎么解？", items), [])
+
     def test_title_run_matches_concept_name(self):
         refs = concept_mod.match_concepts("简谐运动的周期由什么决定？", self._fixture())
         self.assertEqual(refs[:1], ["shm"])
