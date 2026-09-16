@@ -734,6 +734,50 @@ class ContinentRouteTest(RouteTestBase):
         self.assertEqual(data["danglingEdges"], [])
 
 
+class StaticCacheHeaderTest(RouteTestBase):
+    """静态资源显式缓存头（根治「改了没生效必须 Ctrl+Shift+R」）。
+
+    应用产物文件名无内容指纹：必须发 Cache-Control: no-cache（每次协商、ETag
+    命中回 304），否则浏览器启发式缓存会在普通刷新时拿旧 JS；/api/* 不发缓存头，
+    各走各的路由。"""
+
+    def test_static_js_carries_no_cache(self):
+        resp = self.client.get("/js/app.js")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+
+    def test_conditional_request_returns_304(self):
+        first = self.client.get("/js/app.js")
+        self.assertEqual(first.status_code, 200)
+        etag = first.headers.get("etag")
+        self.assertTrue(etag, "FileResponse 应自带 ETag")
+        second = self.client.get("/js/app.js", headers={"If-None-Match": etag})
+        self.assertEqual(second.status_code, 304)
+        # 304 也必须带着缓存口径，否则浏览器拿不到协商指令
+        self.assertEqual(second.headers.get("cache-control"), "no-cache")
+
+    def test_index_html_carries_no_cache(self):
+        # HTML 是缓存链条的关键一环：app.js?v=<内容哈希> 写在 HTML 里，
+        # HTML 不协商就拿不到新哈希
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+
+    def test_api_routes_untouched(self):
+        resp = self.client.get("/api/knowledge")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.headers.get("cache-control"))
+
+    def test_vendor_files_same_policy(self):
+        # /vendor/ 第三方本地副本无版本指纹，同样只能 no-cache，不许长 max-age
+        katex = Path(ROOT) / "src/static/vendor/katex/katex.min.css"
+        if not katex.exists():
+            self.skipTest("vendor katex.css not present")
+        resp = self.client.get("/vendor/katex/katex.min.css")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+
+
 
 
 if __name__ == "__main__":
