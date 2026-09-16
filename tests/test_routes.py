@@ -780,5 +780,97 @@ class StaticCacheHeaderTest(RouteTestBase):
 
 
 
+class HarnessStreamReviewTest(RouteTestBase):
+    """Φ 流式评审端点（stream:true 走 SSE）：事件框架完整、最终结果与非流式
+    完全一致；默认不带 stream 参数时必须仍走旧 JSON 协议（battery 零影响）。
+    模型调用打桩，不走网络；usage 日志重定向到临时目录。"""
+
+    def _patch_harness(self):
+        from harness import api as harness_api
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False, on_delta=None):
+            return {
+                "content": '{"summary": "已完成梳理", "operations": [{"op": "update_node", "node_id": "A", "patch": {"content": "新内容"}, "reason": "r"}]}',
+                "tool_calls": [],
+            }
+
+        return (
+            mock.patch.object(harness_api, "_LOG_DIR", Path(self._td.name)),
+            mock.patch.object(harness_api, "_USAGE_LOG", Path(self._td.name) / "usage.jsonl"),
+            mock.patch.object(review_mod, "_call_model", new=fake_call),
+        )
+
+    @staticmethod
+    def _base_body(**extra):
+        body = {
+            "instruction": "把导数内容改掉",
+            "model": {"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
+            "mode": "json",
+            "self_check": "off",
+            "snapshot": {"version": 1, "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+        }
+        body.update(extra)
+        return body
+
+    @staticmethod
+    def _parse_sse(text):
+        events = []
+        for block in text.split("\n\n"):
+            for line in block.split("\n"):
+                if line.startswith("data:"):
+                    events.append(json.loads(line[5:].strip()))
+        return events
+
+    def test_stream_emits_status_then_result(self):
+        patches = self._patch_harness()
+        usage_log = Path(self._td.name) / "usage.jsonl"
+        with patches[0], patches[1], patches[2]:
+            resp = self.client.post(
+                "/api/harness/graph/review", json=self._base_body(stream=True)
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/event-stream", resp.headers.get("content-type", ""))
+        events = self._parse_sse(resp.text)
+        types = [e.get("type") for e in events]
+        self.assertIn("status", types)
+        self.assertEqual(types[-1], "result")
+        start = next(e for e in events if e.get("type") == "status" and e.get("stage") == "start")
+        self.assertIn("已理解指令", start["message"])
+        result = events[-1]["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["operations"][0]["op"], "update_node")
+        self.assertEqual(result["operations"][0]["id"], "A")
+        self.assertEqual(result["summary"], "已完成梳理")
+        self.assertTrue(usage_log.exists())
+
+    def test_stream_result_matches_nonstream(self):
+        patches = self._patch_harness()
+        with patches[0], patches[1], patches[2]:
+            streamed = self.client.post(
+                "/api/harness/graph/review", json=self._base_body(stream=True)
+            )
+            nonstream = self.client.post(
+                "/api/harness/graph/review", json=self._base_body(stream=False)
+            )
+        s = self._parse_sse(streamed.text)[-1]["data"]
+        self.assertIn("application/json", nonstream.headers.get("content-type", ""))
+        n = nonstream.json()
+        for key in ("summary", "operations", "status", "phase"):
+            self.assertEqual(s.get(key), n.get(key), f"流式与非流式的 {key} 不一致")
+
+    def test_default_without_stream_stays_json(self):
+        # 旧协议必须原样保留：不带 stream 参数 → 直接回 JSON（battery/旧客户端零影响）
+        patches = self._patch_harness()
+        with patches[0], patches[1], patches[2]:
+            resp = self.client.post(
+                "/api/harness/graph/review", json=self._base_body()
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/json", resp.headers.get("content-type", ""))
+        self.assertEqual(resp.json()["status"], "ok")
+
+
+
 if __name__ == "__main__":
     unittest.main()

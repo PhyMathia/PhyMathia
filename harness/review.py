@@ -72,6 +72,15 @@ TOOLS_AUTO_HINT = (
     "如果用户要求修改图，请使用工具提交 operations，文本只写一句话 summary。）"
 )
 
+# 流式进度事件里的阶段中文名（发给前端状态条）
+_PHASE_LABELS = {
+    "normal": "审阅整理",
+    "evaluate": "生成评价",
+    "apply": "应用建议",
+    "expand": "拓展进阶",
+    "undo": "撤销回滚",
+}
+
 
 
 UNDO_HINTS = (
@@ -202,6 +211,20 @@ def _supports_required_tool_choice(provider: str) -> bool:
     return str(provider or "").strip().lower() in ("deepseek", "openai")
 
 
+def _opencode_headers(base_url: str) -> dict:
+    """OpenCode 网关（opencode.ai）的会话标识头，与 src/main.py 的
+    _opencode_session_headers 同口径：免费档缺失 x-opencode-session 会被网关
+    直接拒收（MissingSessionID / "can only be used in OpenCode"）。harness 包
+    无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶。
+    非 opencode.ai 域名不附加任何头。"""
+    if "opencode.ai" not in str(base_url or ""):
+        return {}
+    return {
+        "x-opencode-session": "phymathia-harness-" + str(os.getpid()),
+        "User-Agent": "PhyMathia/1.4.1",
+    }
+
+
 def _supports_json_mode(provider: str) -> bool:
     """Providers that accept response_format={"type":"json_object"}."""
     return str(provider or "").strip().lower() in ("deepseek", "openai")
@@ -287,6 +310,83 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+async def _stream_chat_completions(client, url: str, headers: dict, body: dict, on_delta) -> Dict[str, Any]:
+    """流式拉取 chat/completions：正文增量实时回调 on_delta，最终重组出与
+    非流式同构的 message dict（content / tool_calls / reasoning_content）。
+
+    兼容三类上游行为：
+    - 标准 SSE（data: {...} / data: [DONE]）；
+    - 忽略 stream 参数直接回整段 JSON（按非流式一次性解析，不视为错误）；
+    - tool_calls 分片到达（按 index 重组 arguments）。
+    """
+    content_parts: list = []
+    reasoning_parts: list = []
+    tool_acc: Dict[int, Dict[str, Any]] = {}
+    async with client.stream("POST", url, json=body, headers=headers, timeout=90.0) as resp:
+        if resp.status_code != 200:
+            detail = (await resp.aread()).decode("utf-8", "ignore")[:500]
+            raise HarnessError(f"模型返回 {resp.status_code}: {detail}")
+        if "text/event-stream" not in str(resp.headers.get("content-type") or ""):
+            try:
+                data = json.loads((await resp.aread()).decode("utf-8", "ignore"))
+                message = data["choices"][0].get("message") or {}
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                raise HarnessError("模型响应缺少有效内容") from exc
+            return message
+        async for line in resp.aiter_lines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
+            if payload_text == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            text = delta.get("content")
+            if text:
+                content_parts.append(str(text))
+                if on_delta is not None:
+                    try:
+                        on_delta(str(text))
+                    except Exception:
+                        pass
+            reasoning = delta.get("reasoning_content")
+            if reasoning:
+                # 推理模型的思维链只单独攒（回退用），绝不混进正文增量
+                reasoning_parts.append(str(reasoning))
+            for frag in delta.get("tool_calls") or []:
+                try:
+                    idx = int(frag.get("index") or 0)
+                except (TypeError, ValueError):
+                    idx = 0
+                slot = tool_acc.setdefault(
+                    idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                )
+                if frag.get("id"):
+                    slot["id"] = str(frag["id"])
+                fn = frag.get("function") or {}
+                if fn.get("name") and not slot["function"]["name"]:
+                    slot["function"]["name"] = str(fn["name"])
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] += str(fn["arguments"])
+    message: Dict[str, Any] = {}
+    content = "".join(content_parts)
+    reasoning = "".join(reasoning_parts)
+    if content:
+        message["content"] = content
+    if reasoning:
+        message["reasoning_content"] = reasoning
+    if tool_acc:
+        message["tool_calls"] = [tool_acc[key] for key in sorted(tool_acc)]
+    return message
+
+
 async def _call_model(
     messages: list,
     model: Dict[str, Any],
@@ -294,16 +394,21 @@ async def _call_model(
     tools: Optional[list] = None,
     tool_choice: Optional[str] = None,
     json_mode: bool = False,
+    on_delta=None,
 ) -> Dict[str, Any]:
-    """Call the chat completions endpoint and return content + tool_calls."""
+    """Call the chat completions endpoint and return content + tool_calls.
+
+    on_delta 提供时走流式（SSE），正文增量实时回调（前端打字机预览）；
+    返回值与非流式完全一致。"""
     url = f"{model['base_url'].rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if model["api_key"] and model["provider"] != "opencode":
         headers["Authorization"] = f"Bearer {model['api_key']}"
+    headers.update(_opencode_headers(model["base_url"]))
     body = {
         "model": model["model"],
         "messages": messages,
-        "stream": False,
+        "stream": on_delta is not None,
         "temperature": 0.2,
         "max_tokens": max_tokens,
     }
@@ -315,17 +420,20 @@ async def _call_model(
         body["response_format"] = {"type": "json_object"}
     try:
         client = get_http_client()
-        resp = await client.post(url, json=body, headers=headers, timeout=90.0)
+        if on_delta is not None:
+            message = await _stream_chat_completions(client, url, headers, body, on_delta)
+        else:
+            resp = await client.post(url, json=body, headers=headers, timeout=90.0)
+            if resp.status_code != 200:
+                detail = resp.text[:500]
+                raise HarnessError(f"模型返回 {resp.status_code}: {detail}")
+            try:
+                data = resp.json()
+                message = data["choices"][0].get("message") or {}
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                raise HarnessError("模型响应缺少有效内容") from exc
     except httpx.HTTPError as exc:
         raise HarnessError(f"模型请求失败: {exc}") from exc
-    if resp.status_code != 200:
-        detail = resp.text[:500]
-        raise HarnessError(f"模型返回 {resp.status_code}: {detail}")
-    try:
-        data = resp.json()
-        message = data["choices"][0].get("message") or {}
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise HarnessError("模型响应缺少有效内容") from exc
     logger.info(
         "harness model call: %s/%s tools=%s tool_choice=%s json_mode=%s",
         model["provider"], model["model"], bool(tools), tool_choice or "-", json_mode,
@@ -758,12 +866,25 @@ async def review_graph(
     previous_snapshot=None,
     all_previous_ops=None,
     initial_snapshot=None,
+    progress=None,
 ) -> Dict[str, Any]:
     """Review the snapshot and return validated graph operations.
 
     mode: "tools" (force function calling), "json" (force free-form JSON),
     or "auto" (try tools, fall back to JSON when the provider rejects them).
+
+    progress: 可选回调（dict 事件），流式请求时由 api 层传入；事件两类——
+    {"type":"status","stage":...,"message":...} 阶段进度、
+    {"type":"delta","text":...} 模型正文增量。不传则零开销。
     """
+    def _emit(event: Dict[str, Any]) -> None:
+        if progress is None:
+            return
+        try:
+            progress(event)
+        except Exception:
+            logger.debug("harness progress emit failed", exc_info=True)
+
     # ---- 模型调用计数：随结果返回，供延迟归因（次数 vs 单次耗时）与优化验证 ----
     call_counter = {"n": 0}
     context_metrics: Optional[Dict[str, Any]] = None
@@ -782,6 +903,11 @@ async def review_graph(
     current = _compact_snapshot(current, focus_node_ids)
     instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
     phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
+    _emit({
+        "type": "status",
+        "stage": "start",
+        "message": "已理解指令（" + _PHASE_LABELS.get(phase, phase) + "），正在准备画布上下文",
+    })
     # ---- 评价阶段确定性短路：图里没有可评价节点时无需调模型 ----
     if phase == "evaluate":
         editable_nodes = [
@@ -811,6 +937,7 @@ async def review_graph(
         inverse_ops = build_inverse_ops(prev_before or current, prev_ops, current)
         inverse_ops = _filter_inverse_by_targets(inverse_ops, focus_node_ids, current)
         if inverse_ops:
+            _emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
             undo_result = build_next_snapshot(current, inverse_ops)
             undo_result["summary"] = "已撤销上一步修改" + (
                 "（仅撤销指定节点相关改动）" if focus_node_ids else ""
@@ -861,6 +988,17 @@ async def review_graph(
         if attempt == 0:
             context_metrics = _log_context_metrics(messages, current, phase) or context_metrics
 
+        _emit({
+            "type": "status",
+            "stage": "model",
+            "message": "正在思考方案…" if attempt == 0
+            else f"正在根据校验反馈修正方案（第 {attempt + 1} 轮）…",
+        })
+        # on_delta 只在流式请求（progress 存在）时附带：测试桩/battery 的
+        # _call_model 桩是固定签名，多余的 kwargs 会让它们直接抛 TypeError
+        model_kwargs: Dict[str, Any] = {}
+        if progress is not None:
+            model_kwargs["on_delta"] = lambda chunk: _emit({"type": "delta", "text": chunk})
         try:
             raw = await _counted_call(
                 messages,
@@ -869,6 +1007,7 @@ async def review_graph(
                 tools=current_tools,
                 tool_choice=current_choice,
                 json_mode=current_json,
+                **model_kwargs,
             )
         except HarnessError as exc:
             if current_tools and mode == "auto":
@@ -898,6 +1037,7 @@ async def review_graph(
                 raise
 
         # 消费端再剥一次（幂等）：即使 _call_model 未经过（测试桩/旧路径）也能兜住
+        _emit({"type": "status", "stage": "validate", "message": "方案已生成，正在校验操作…"})
         last_raw = strip_reasoning(raw["content"] or "")
         if not last_raw.strip() and raw.get("reasoning_content"):
             # 正文为空时回退 reasoning_content（推理模型全文落在思考字段）
@@ -1100,6 +1240,7 @@ async def review_graph(
 
         # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
         if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
+            _emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
             critic = await _selfcheck_ops(current, instruction, raw_ops, resolved_model, counter=call_counter)
             result["self_check"]["critic"] = critic
             if not critic.get("ok", True) and attempt < retries:

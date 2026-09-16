@@ -105,6 +105,40 @@
     return raw;
   }
 
+  // 流式响应读取：SSE（data: {...}\n\n）逐事件回调 onEvent，最终返回 result 事件的 data。
+  // 非流式响应（旧协议/空快照防御等直接回 JSON 的情况）原样 json() 返回，调用方无感。
+  async function _readHarnessStreamResponse(resp, onEvent) {
+    const ctype = String(resp.headers.get('content-type') || '');
+    if (ctype.indexOf('text/event-stream') < 0) return resp.json();
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let result = null;
+    const handleLine = (raw) => {
+      const line = raw.split('\n').find(item => item.startsWith('data:'));
+      if (!line) return;
+      let evt;
+      try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { return; }
+      if (!evt || typeof evt !== 'object') return;
+      if (evt.type === 'result') result = evt.data;
+      else if (typeof onEvent === 'function') onEvent(evt);
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        handleLine(raw);
+      }
+    }
+    if (buf.trim()) handleLine(buf);
+    if (result === null) throw new Error('流式连接中断，未收到最终结果');
+    return result;
+  }
+
   function runGraphHarnessWithText(text) {
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = String(text || '');
@@ -244,6 +278,29 @@
     _setHarnessBusy(true);
 
     harnessAbortController = new AbortController();
+    // 流式预览：收到的正文增量先在结果区打字机式显示（<think> 思考块实时剥除；
+    // JSON 结构化输出不直接展示原文，换成占位文案）。最终结果到达后整块替换。
+    let streamText = '';
+    let streamTimer = null;
+    const renderStreamPreview = () => {
+      streamTimer = null;
+      const box = document.getElementById('graphHarnessResult');
+      if (!box || !streamText) return;
+      let text = typeof _stripThinkText === 'function' ? _stripThinkText(streamText) : streamText;
+      if (/^\s*(\{|```)/.test(text)) text = '正在生成结构化操作方案…';
+      if (!text) return;
+      box.innerHTML = '<div class="graph-harness-summary">' + _escapeHtml(text) + ' ▍</div>';
+    };
+    const onStreamEvent = (evt) => {
+      if (evt.type === 'status' && evt.message) {
+        _setHarnessStatus(String(evt.message), 'running');
+        return;
+      }
+      if (evt.type === 'delta' && evt.text) {
+        streamText += String(evt.text);
+        if (!streamTimer) streamTimer = setTimeout(renderStreamPreview, 120);
+      }
+    };
     try {
       const resp = await fetch(HARNESS_API, {
         method: 'POST',
@@ -261,10 +318,11 @@
           previous_ops: Array.isArray(harnessLastAppliedOps) ? harnessLastAppliedOps : [],
           previous_snapshot: harnessLastAppliedBeforeSnapshot || null,
           retries: 2,
+          stream: true,
         }),
           signal: harnessAbortController.signal,
       });
-      const data = await resp.json();
+      const data = await _readHarnessStreamResponse(resp, onStreamEvent);
       if (!resp.ok) {
         throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
       }
@@ -316,6 +374,7 @@
         if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
       }
     } finally {
+      if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
       harnessAbortController = null;
