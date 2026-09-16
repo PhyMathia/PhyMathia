@@ -1270,6 +1270,35 @@ check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）
   return true;
 });
 
+check('harness：澄清重跑委托主路径 / 零勾选不回退应用全部 / 差评备注不用 window.prompt', () => {
+  const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  const psrc = fs.readFileSync('src/static/js/harness-preview.js', 'utf8');
+  const asrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
+  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // 澄清重跑必须委托 runGraphHarness：旧手抄版引用未定义 pureQuestion（点选即崩），
+  // 且缺 token 预检/停止按钮/Φ 模型槽位/流式预览——不许再长出独立 fetch 旁路
+  if (rsrc.indexOf('function runGraphHarnessWithFocus(phase, focusIds, instruction)') < 0) {
+    throw new Error('WithFocus 签名变了，检查委托逻辑是否还在');
+  }
+  const wfStart = rsrc.indexOf('function runGraphHarnessWithFocus');
+  const wfBody = rsrc.slice(wfStart, rsrc.indexOf('\n  }', wfStart));
+  if (!wfBody.includes("runGraphHarness(phase || 'normal', { focusIds")) {
+    throw new Error('澄清重跑未委托主路径 runGraphHarness');
+  }
+  if (wfBody.includes('fetch(')) throw new Error('WithFocus 残留独立 fetch，会漂移出无停止按钮的旁路');
+  if (!rsrc.includes('presetFocusIds')) throw new Error('主路径缺预设焦点入口（澄清点选传不进焦点）');
+  // 失败回填：主路径错误出口必须回填输入框
+  const restoreCount = (rsrc.match(/restoreInstruction\(\)/g) || []).length;
+  if (restoreCount < 5) throw new Error('失败回填覆盖不足（应有 ≥5 处错误出口），实际 ' + restoreCount);
+  // 零勾选＝什么都不选，不得回退成应用全部
+  if (psrc.includes('return selected.length ? selected : ops')) throw new Error('_selectedOps 仍回退全量应用');
+  if (!asrc.includes('没有勾选任何操作')) throw new Error('零勾选时缺用户提示');
+  // 差评备注：内联表单，禁止 window.prompt
+  if (hsrc.includes("window.prompt('Φ")) throw new Error('差评备注仍在用 window.prompt');
+  if (!hsrc.includes('_showHarnessFeedbackForm')) throw new Error('差评备注内联表单缺失');
+  return true;
+});
+
 // ===== 知识大陆（graph-continent.js，大陆计划 v1）静态/沙箱回归 =====
 // 分层不变量：主图是投影层，前端零写路径——绝不写 phymathia_graph_ 会话键；
 // 下钻复用 switchToSession + goToKnowledgeNode，不自建切会话协议。
@@ -1308,6 +1337,41 @@ check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 边界�
   if (!layerRule || !/background:\s*transparent/.test(layerRule[0])) {
     throw new Error('大陆层底必须透明（保留全局壁纸与粒子）');
   }
+  return true;
+});
+
+check('graph-continent: 大陆边备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
+  const pos = sandbox._continentEdgeLabelPos;
+  const mid = sandbox._continentLinkMid;
+  if (typeof pos !== 'function' || typeof mid !== 'function') {
+    throw new Error('落点纯函数未暴露（_continentEdgeLabelPos）');
+  }
+  const a = { cx: 100, cy: 200, w: 160, h: 46 }, b = { cx: 500, cy: 600, w: 160, h: 46 };
+  const p = pos(a, b);
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+    throw new Error('备注落点不是有限数（NaN 会被 CSS 整条丢弃 → 标签退回静态位置）：' + JSON.stringify(p));
+  }
+  // 必须正好是贝塞尔 t=0.5 的点 = 连线绘制用的同一公式 (P0 + 2Q + P2)/4
+  const m = mid(a, b);
+  const ex = (a.cx + 2 * m.qx + b.cx) / 4, ey = (a.cy + 2 * m.qy + b.cy) / 4;
+  if (Math.abs(p.x - ex) > 1e-9 || Math.abs(p.y - ey) > 1e-9) {
+    throw new Error('备注落点不在曲线中点上：' + JSON.stringify(p) + ' vs ' + ex + ',' + ey);
+  }
+  if (Math.abs(p.y - a.cy) < 1e-9 && Math.abs(p.x - a.cx) < 1e-9) {
+    throw new Error('备注落点退化成端点');
+  }
+  // 脏坐标（投影与布局不同步）也必须给有限数，绝不放行 NaNpx
+  const bad = pos({ cx: NaN, cy: 0 }, { cx: 10, cy: 20 });
+  if (!Number.isFinite(bad.x) || !Number.isFinite(bad.y)) {
+    throw new Error('脏坐标时未兜底成有限数：' + JSON.stringify(bad));
+  }
+  // 静态断言：渲染处不许再出现「读 arcPath 返回值里的控制点」这种写法
+  // （先剥注释——这条规则的说明文字里就写着那个字段名，不剥会把注释当代码误报）
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  if (/arc\.q[xy]/.test(code)) throw new Error('备注落点又去读 arcPath 没返回的字段了');
+  if (!src.includes('_continentEdgeLabelPos(a, b)')) throw new Error('渲染处未走落点纯函数');
   return true;
 });
 

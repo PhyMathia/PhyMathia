@@ -335,6 +335,23 @@ function _continentLinkMid(a, b) {
   return { x: (a.cx + 2 * qx + b.cx) / 4, y: (a.cy + 2 * qy + b.cy) / 4, qx, qy };
 }
 
+// 大陆边「备注」的落点（纯函数，smoke 直测）：就是上面那条曲线在 t=0.5 的中点，
+// 与连线同一套世界坐标，标签才压在线上。
+// 曾经这里直接读 `arcPath(...)` 返回值的 `arc.qx`——而 arcPath 只返回了 `d`，于是
+// left/top 算成字符串 `"NaNpx"`：这是**无效 CSS 值**，会被浏览器整条丢弃，绝对定位的
+// 标签退回「静态位置」（世界层左上角，紧跟在 SVG 之后）——备注就飘到离连线十万八千里
+// 的地方，而且控制台一声不响（用户截图：「文字不在线上」）。
+// 教训：给 DOM 写 `xxx + 'px'` 的落点必须有 finite 兜底 + 断言，NaN 在浏览器里是静默失败。
+function _continentEdgeLabelPos(a, b) {
+  const mid = _continentLinkMid(a, b);
+  const ax = Number.isFinite(a.cx) ? a.cx : 0, bx = Number.isFinite(b.cx) ? b.cx : 0;
+  const ay = Number.isFinite(a.cy) ? a.cy : 0, by = Number.isFinite(b.cy) ? b.cy : 0;
+  return {
+    x: Number.isFinite(mid.x) ? mid.x : (ax + bx) / 2,
+    y: Number.isFinite(mid.y) ? mid.y : (ay + by) / 2,
+  };
+}
+
 function _continentCityBox(cx, cy) {
   return {
     x: cx - CONTINENT_CITY_W / 2, y: cy - CONTINENT_CITY_H / 2,
@@ -580,7 +597,7 @@ function _continentRender(data) {
   svg.setAttribute('width', String(layout.worldW));
   svg.setAttribute('height', String(layout.worldH));
 
-  const arcPath = (a, b, liftRatio) => {
+  const arcPath = (a, b) => {
     const mid = _continentLinkMid(a, b);
     return { d: 'M ' + a.cx + ' ' + a.cy + ' Q ' + mid.qx + ' ' + mid.qy + ' ' + b.cx + ' ' + b.cy };
   };
@@ -606,7 +623,7 @@ function _continentRender(data) {
   (data.userEdges || []).forEach(e => {
     const a = layout.placements[e.fromItem], b = layout.placements[e.toItem];
     if (!a || !b) return;
-    const arc = arcPath(a, b, 0.1);
+    const arc = arcPath(a, b);
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('class', 'continent-user-link');
     path.setAttribute('d', arc.d);
@@ -618,8 +635,11 @@ function _continentRender(data) {
     if (e.label) {
       const label = document.createElement('div');
       label.className = 'continent-user-link-label';
-      label.style.left = ((a.cx + 2 * arc.qx + b.cx) / 4) + 'px';
-      label.style.top = ((a.cy + 2 * arc.qy + b.cy) / 4) + 'px';
+      // 落点走纯函数（贝塞尔中点）：见 _continentEdgeLabelPos 的注释——曾经这里读
+      // arcPath 没返回的 arc.qx，算成 NaNpx 让标签飘到世界层左上角
+      const pos = _continentEdgeLabelPos(a, b);
+      label.style.left = pos.x + 'px';
+      label.style.top = pos.y + 'px';
       label.textContent = e.label;
       label.title = '我的大陆边：' + e.label;
       label.addEventListener('pointerdown', ev => {
@@ -1553,6 +1573,7 @@ window._continentPlaceCity = _continentPlaceCity;
 window._continentCityBox = _continentCityBox;
 window._continentFits = _continentFits;
 window._continentLinkMid = _continentLinkMid;
+window._continentEdgeLabelPos = _continentEdgeLabelPos;
 // v5.2 群岛布局 / v5.3 问 Φ / v5.4 岛牌：纯函数（无 DOM），smoke 直接断言
 window._continentKinship = _continentKinship;
 window._continentClusterOrder = _continentClusterOrder;
