@@ -466,7 +466,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     harnessPet.title = 'Φ 网络助手';
     harnessPet.innerHTML = PHI_PET_HTML;
     harnessPanel = document.createElement('div');
-    harnessPanel.className = 'graph-harness-window';
+    // 第 5 轮磨砂化：Φ 面板统一极光磨砂玻璃（--dialog：composer 有输入框，可读性优先）。
+    // graph-override.css 里本载体的 background 声明已全部拔掉——那边后加载，写了就会盖掉极光层
+    harnessPanel.className = 'graph-harness-window aurora-glass aurora-glass--dialog';
     harnessPanel.hidden = true;
     harnessPanel.innerHTML = ''
       + '<div class="graph-harness-head" id="graphHarnessWindowHead">'

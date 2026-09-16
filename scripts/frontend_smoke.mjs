@@ -1492,6 +1492,159 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
   return true;
 });
 
+check('graph-continent: v5.2 群岛布局（亲缘排序成簇 / 蛇形填充 / 无亲缘保持原序）', () => {
+  const order = sandbox._continentClusterOrder;
+  const kinship = sandbox._continentKinship;
+  const layout = sandbox._continentLayoutClusters;
+  if (typeof order !== 'function' || typeof kinship !== 'function' || typeof layout !== 'function') {
+    throw new Error('v5.2 纯函数未暴露（clusterOrder / kinship）');
+  }
+  const cl = (sid, n) => ({ sessionId: sid, title: sid,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })) });
+  const strong = (label, sids) => ({ kind: 'title', label, strength: 'strong', sessions: sids, links: [], owners: [] });
+  // 验收口径：A、B 都学「简谐运动」，C、D 都学「梯度」→ 组内相邻（贪心链），
+  // 蛇形网格下两组分居两行（位置本身就是联系，一根线不画）
+  const clusters = [cl('A', 2), cl('B', 2), cl('C', 2), cl('D', 2)];
+  const shared = [strong('简谐运动', ['A', 'B']), strong('梯度', ['C', 'D'])];
+  const ordered = order(clusters, shared, []);
+  const pos = {}; ordered.forEach((c, i) => { pos[c.sessionId] = i; });
+  if (Math.abs(pos.A - pos.B) !== 1) throw new Error('A、B 不相邻：' + JSON.stringify(pos));
+  if (Math.abs(pos.C - pos.D) !== 1) throw new Error('C、D 不相邻：' + JSON.stringify(pos));
+  // 蛇形：4 岛 2 列时第 3 座岛（i=2）必须落右列（第二行反向）——否则链在换行处对角断开
+  const lay = layout(ordered);
+  const rectOf = {}; lay.clusterRects.forEach(r => { rectOf[r.sessionId] = r; });
+  if (!(rectOf[ordered[2].sessionId].x > rectOf[ordered[0].sessionId].x)) {
+    throw new Error('蛇形填充未生效：第二行第一座应从右列起');
+  }
+  // 世界尺寸照旧要罩住所有岛（布局改造不得破坏 v1 契约）
+  const right = Math.max(...lay.clusterRects.map(r => r.x + r.w));
+  const bottom = Math.max(...lay.clusterRects.map(r => r.y + r.h));
+  if (lay.worldW < right || lay.worldH < bottom) throw new Error('世界尺寸罩不住岛');
+  // 用户航线也是亲缘（权重更高）：A—C 有边时 C 要被拉到 A 旁边
+  const withEdge = order(clusters, [], [{ id: 'e1', fromSession: 'A', toSession: 'C', toItem: 'x', fromItem: 'y' }]);
+  const pos2 = {}; withEdge.forEach((c, i) => { pos2[c.sessionId] = i; });
+  if (Math.abs(pos2.A - pos2.C) !== 1) throw new Error('用户航线未参与亲缘：' + JSON.stringify(pos2));
+  // 无亲缘：输出与输入同序（不引入回归——服务端最近更新序原样进布局）
+  const plain = order(clusters, [], []);
+  if (plain.map(c => c.sessionId).join() !== 'A,B,C,D') throw new Error('无亲缘时应保持原序');
+  // weak 共享不算亲缘（v4 立场：词面撞车不上图，也不该参与摆位）
+  const weakOnly = order(clusters, [{ kind: 'title', label: '振动', strength: 'weak', sessions: ['A', 'B'] }], []);
+  if (weakOnly.map(c => c.sessionId).join() !== 'A,B,C,D') throw new Error('weak 证据不该参与亲缘排序');
+  // 亲缘矩阵本身：strong 各记 1、用户边记 2、weak 与缺席会话不计
+  const kin = kinship(['A', 'B', 'C'], [strong('振动', ['A', 'B'])], [{ fromSession: 'B', toSession: 'C' }]);
+  const keyOf = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+  if (kin[keyOf('A', 'B')] !== 1) throw new Error('strong 共享亲缘权重错');
+  if (kin[keyOf('B', 'C')] !== 2) throw new Error('用户边亲缘权重错');
+  if (kin[keyOf('A', 'C')] !== undefined) throw new Error('无关岛不该有亲缘');
+  return true;
+});
+
+check('graph-continent: v5.3 问 Φ（提示词契约 / 判读解析 / 判断块带落笔芯片）', () => {
+  const msgs = sandbox._continentPhiMessages;
+  const verdict = sandbox._continentPhiVerdict;
+  const blockHtml = sandbox._continentPhiBlockHtml;
+  if (typeof msgs !== 'function' || typeof verdict !== 'function' || typeof blockHtml !== 'function') {
+    throw new Error('v5.3 纯函数未暴露（phiMessages / phiVerdict / phiBlockHtml）');
+  }
+  // 提示词必须带两边标题+摘要与共享词，并约束输出格式（值得连：/不建议连：）
+  const m = msgs({ title: '阻尼振动', summary: '振幅随时间衰减' }, { title: '非线性振动', summary: '' }, '振动');
+  if (m.length !== 2 || m[0].role !== 'system') throw new Error('messages 结构错');
+  const u = m[1].content;
+  if (u.indexOf('阻尼振动') < 0 || u.indexOf('振幅随时间衰减') < 0 || u.indexOf('非线性振动') < 0) {
+    throw new Error('提示词未携带两边条目');
+  }
+  if (u.indexOf('值得连') < 0 || u.indexOf('不建议连') < 0) throw new Error('提示词未约定输出格式');
+  // 判读：三档 + 剥离思考块/加粗/前缀
+  if (verdict('值得连：两条都在讲振动现象').verdict !== 'worth') throw new Error('worth 判读错');
+  if (verdict('不建议连：只是字面撞了').verdict !== 'not') throw new Error('not 判读错');
+  if (verdict('**值得连**：都是振动家族').verdict !== 'worth') throw new Error('加粗判读错');
+  if (verdict('<think>推理过程</think>值得连：同源').verdict !== 'worth') throw new Error('思考块未剥离');
+  if (verdict('好的，我来分析一下这个问题。').verdict !== 'unknown') throw new Error('未知档判读错');
+  if (verdict('值得连：两条都在讲振动').text.indexOf('两条都在讲振动') < 0) throw new Error('理由文本未剥离前缀');
+  // 判断块：徽标 + 理由 + 每条链路一枚落笔芯片（落笔权在用户）。
+  // 沙箱的 document 是宽松代理，utils.escapeHtml 的产物会退化：断言文案前换成恒等
+  // 转义（与重逢清单用例同口径，转义实现由 utils 自己的用例守）
+  const entry = { kind: 'title', label: '振动',
+    links: [{ from: 'a1', to: 'b1', fromSession: 's1', toSession: 's2' }] };
+  const idx = { items: { a1: '阻尼振动', b1: '非线性振动' } };
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  let html, unknownHtml, html2;
+  try {
+    html = blockHtml(entry, { verdict: 'worth', text: '两条都在讲振动现象' }, idx, []);
+    if (html.indexOf('值得连') < 0 || html.indexOf('两条都在讲振动现象') < 0) throw new Error('判断块缺徽标或理由');
+    if ((html.match(/data-phi-link=/g) || []).length !== 1) throw new Error('落笔芯片缺失');
+    if (html.indexOf('is-worth') < 0) throw new Error('worth 徽标样式缺失');
+    unknownHtml = blockHtml(entry, { verdict: 'unknown', text: '说不准' }, idx, []);
+    if (unknownHtml.indexOf('is-worth') >= 0 || unknownHtml.indexOf('Φ 的判断') < 0) throw new Error('unknown 档徽标错');
+    // 已连线的链路只标「已连线」，不再出芯片（同端点对去重的地图侧口径）
+    html2 = blockHtml(entry, { verdict: 'not', text: '字面撞车' }, idx,
+      [{ fromItem: 'a1', toItem: 'b1' }]);
+    if (html2.indexOf('已连线') < 0 || html2.indexOf('data-phi-link') >= 0) throw new Error('已连线口径错');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+  }
+  // 静态契约：折叠行带「问 Φ」按钮；走 proxyChatWithModel（stream:false）既有通道
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('data-phi=')) throw new Error('折叠清单缺「问 Φ」按钮');
+  if (!src.includes('_continentAskPhi')) throw new Error('问 Φ 处理函数缺失');
+  if (!src.includes('proxyChatWithModel')) throw new Error('未复用模型代理通道（/api/models/chat）');
+  if (!src.includes("_continentPhiInflight")) throw new Error('在途请求未登记（弹层关闭需中止）');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-pop-phi')) throw new Error('Φ 判断块样式缺失');
+  if (!css.includes('.continent-pop-phi-badge')) throw new Error('Φ 判断徽标样式缺失');
+  return true;
+});
+
+check('graph-continent: v5.4 岛牌一句话 + 空态引导（纯拼接 / 机制文案）', () => {
+  const tagline = sandbox._continentIslandTagline;
+  if (typeof tagline !== 'function') throw new Error('_continentIslandTagline 未暴露');
+  // 前 3 个概念名 + 最近更新时间，超出 3 个的概念不进岛牌
+  const t = tagline({
+    items: [
+      { title: '简谐运动', createdAt: 3000 },
+      { title: '阻尼', createdAt: 2000 },
+      { title: '共振', createdAt: 1000 },
+      { title: '第四个不该出现', createdAt: 500 },
+    ],
+  }, () => '3 天前');
+  if (t !== '简谐运动 · 阻尼 · 共振 · 3 天前') throw new Error('岛牌拼装错：' + t);
+  // 空岛 / 缺簇 / 无时间：空串（渲染侧就不出副行）
+  if (tagline({ items: [] }, () => '') !== '') throw new Error('空岛牌应空串');
+  if (tagline(null, () => 'x') !== '') throw new Error('缺簇应空串');
+  if (tagline({ items: [{ title: 'A', createdAt: 0 }] }, () => '') !== 'A') throw new Error('无时间时只拼概念名');
+  // 静态契约：副行元素 + 顶栏引导文案 + 引导元素与连接提示互斥
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('continent-cluster-sub')) throw new Error('岛牌副行缺失');
+  if (!src.includes('continentGuide')) throw new Error('顶栏空态引导元素缺失');
+  if (src.indexOf('暂无共享连线') < 0) throw new Error('空态引导文案缺失');
+  if (src.indexOf('_continentGuideText') < 0) throw new Error('引导文案状态缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-cluster-sub')) throw new Error('岛牌副行样式缺失');
+  return true;
+});
+
+check('graph-continent: 空画布说明（N 个画布还没有知识点——顶栏机制文案）', () => {
+  const count = sandbox._continentEmptyCanvasCount;
+  if (typeof count !== 'function') throw new Error('_continentEmptyCanvasCount 未暴露');
+  // 会话记录按 id / sessionId 任一标识命中投影簇都不算空；两种都命中不了才算
+  const recs = [
+    { id: 'sess_a', sessionId: 'phymathia_1' },
+    { id: 'sess_b', sessionId: 'phymathia_2' },
+    { id: 'sess_c', sessionId: 'phymathia_3' },
+  ];
+  if (count(recs, ['sess_a', 'phymathia_2']) !== 1) throw new Error('计数错（应只 sess_c 空）');
+  if (count(recs, []) !== 3) throw new Error('全空库应计全部画布');
+  if (count(recs, ['sess_a', 'sess_b', 'sess_c']) !== 0) throw new Error('全部上图应为 0');
+  if (count(null, []) !== 0 || count([], ['sess_a']) !== 0) throw new Error('缺清单应安全返回 0');
+  // 静态契约：新文案进顶栏引导、与 v5.4 原句共存拼接、画布清单取自前端已加载会话
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (src.indexOf('个画布还没有知识点') < 0) throw new Error('空画布说明文案缺失');
+  if (src.indexOf('window.getAllSessions') < 0) throw new Error('画布清单未取自前端已加载会话');
+  if (src.indexOf("parts.join('；')") < 0) throw new Error('两句引导未拼接共用一条顶栏');
+  return true;
+});
+
 check('graph-continent: 纯布局（空数据合法 / 坐标契约 / 世界尺寸）', () => {
   const layout = sandbox._continentLayoutClusters;
   if (typeof layout !== 'function') throw new Error('_continentLayoutClusters 未暴露');
@@ -1875,6 +2028,7 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
     ['引导浮卡', 'class="onboarding-card aurora-glass aurora-glass--dialog" id="onboardingCard"'],
     ['示例图讲解', 'class="example-guide-dialog aurora-glass aurora-glass--panel"'],
     ['可视化全屏栏', 'class="viz-fullscreen-bar aurora-glass aurora-glass--panel"'],
+    ['模型提示条', 'class="model-toast aurora-glass aurora-glass--compact" id="modelToast"'],
   ];
   for (const [name, sel] of carriers) {
     if (!html.includes(sel)) throw new Error(name + ' 未挂玻璃载体类（第 4 轮要求全部面板统一极光磨砂）');
@@ -1890,6 +2044,10 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
     // 引导浮卡内容每次重渲都会整串重写 className——漏一处就会退回实底（本处踩过）
     ['src/static/js/ui.js', "card.className = 'onboarding-card aurora-glass aurora-glass--dialog'", '引导浮卡(步骤)'],
     ['src/static/js/ui.js', "card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog'", '引导浮卡(欢迎页)'],
+    // 第 5 轮磨砂化补漏：Φ 面板 / 全局 toast / 完成通知卡
+    ['src/static/js/harness.js', "harnessPanel.className = 'graph-harness-window aurora-glass aurora-glass--dialog'", 'Φ 网络助手面板'],
+    ['src/static/js/ui.js', "toast.className = 'aurora-glass aurora-glass--compact'", '全局 toast'],
+    ['src/static/js/ui.js', "card.className = 'completion-card aurora-glass'", '完成通知卡'],
   ]) {
     const src = fs.readFileSync(file, 'utf8');
     if (!src.includes(key)) throw new Error(name + ' 未挂玻璃载体类 @ ' + file);
@@ -1933,6 +2091,8 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
     '.bookmark-modal', '.memory-dialog', '.knowledge-panel', '.onboarding-card',
     '.example-guide-dialog', '.viz-fullscreen-bar', '.graph-search-panel', '.graph-export-menu',
     '.graph-history-panel', '.graph-consistency-panel', '.continent-popover', '.icon-picker-panel',
+    // 第 5 轮磨砂化补漏的载体：谁再写实底就是回归（transparent/none 合法）
+    '.graph-harness-window', '.model-toast', '.completion-card',
   ];
   for (const [file, css] of Object.entries(cssAll)) {
     for (const { selector, body } of scanRules(css)) {
@@ -1940,6 +2100,9 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
       // 只看「最右一个复合选择器就是载体本身」的规则（如 '.model-panel' / '[data-theme=x] .model-dialog'）：
       // 后代规则（'.socratic-modal textarea'）本来就是内部控件，不属于载体自身的底色
       const lastCompound = selector.split(',').pop().trim().split(/[\s>+~]+/).filter(Boolean).pop() || '';
+      // 伪元素盒子（::before/::after 装饰条、光斑）画在载体背景之上，不是载体自己的底色——
+      // 不妨碍极光层，跳过（Φ 面板顶部的 2px 装饰条就是这么被误报的）
+      if (/::?(before|after)$/i.test(lastCompound)) continue;
       const hit = roots.find((root) => new RegExp('(^|[^\\w-])' + root.replace(/\./g, '\\.') + '(?![-\\w])').test(lastCompound));
       if (!hit) continue;
       const decl = body.match(/(?:^|;)\s*background(?:-color|-image)?\s*:\s*([^;]+)/);

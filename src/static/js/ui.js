@@ -605,7 +605,10 @@ function showToast(msg, duration = 2500) {
   if (!toast) {
     toast = document.createElement('div');
     toast.id = 'phymathia_toast';
-    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--card-bg);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.15);white-space:nowrap;';
+    // 第 5 轮磨砂化：全局 toast 统一极光磨砂（--compact 胶囊档）——
+    // 底色/阴影归玻璃类，内联样式里不能再写 background（会整块盖掉极光层）
+    toast.className = 'aurora-glass aurora-glass--compact';
+    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:nowrap;';
     document.body.appendChild(toast);
   }
   toast.textContent = msg;
@@ -625,7 +628,9 @@ function showCompletionCard(title, subtitle, duration = 4000) {
   if (!card) {
     card = document.createElement('div');
     card.id = 'phymathia_completion_card';
-    card.className = 'completion-card';
+    // 第 5 轮磨砂化：完成通知卡统一极光磨砂（基础档小浮层）；styles.css 里本载体的
+    // background/box-shadow 已拔掉
+    card.className = 'completion-card aurora-glass';
     card.innerHTML =
       '<div class="completion-card-icon">' +
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
