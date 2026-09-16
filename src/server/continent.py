@@ -34,9 +34,24 @@ v5.1 边界城市：`links` 与 `owners` 两个字段分工不同、都要有—
 v5.3 问 Φ：折叠清单行可把两边条目的「标题+摘要」打包给模型出一句人话判断——
 条目行因此携带 `summary`，但只认 model/manual 的真摘要（local 是模板文案，
 喂给模型反而误导判断；旧数据无 summarySource 视为 local）。
+
+v5.5 汇聚口径修正（两条都是实测出来的）：
+- **广度是加分不是减分**：旧分数 `(60 + 12×字数) / 命中条目数` 里的稀有度惩罚把
+  「8 座岛共享的骨干概念」压到「2 座岛的冷门重叠」之下（构造实测：能量守恒定律
+  16.5 分 < 角动量守恒定律 72 分），配合 24 条上限，被截掉的往往正是覆盖面最大的
+  那条联系。改为**广度乘子** `1 + log2(岛数)`；冷门重叠靠前端既有的「每对区域 3
+  座城」配额收敛，不需要全局降权。
+- **被更具体标签完全覆盖的标签不单独成城**（`covered` 字段）：8 座岛共享「能量
+  守恒定律」+ 2 座岛共享「角动量守恒定律」时，还会长出一个 10 座岛的「量守恒定律」
+  ——它是两条长名中间的截断（能|量守恒定律、角动量|守恒定律），不是任何一张卡的
+  名字，画成城市没人读得懂。判据只用已有证据、不做语义猜测：某标签的**每一条**命中
+  条目，标题里都含有另一个更长的已保留标签 → 这条短标签没带来任何新证据。
+  **只标记不删除**：它照旧进折叠清单（原因「已被更具体的城市覆盖」）、照旧算摆位
+  亲缘，证据不静默消失。
 """
 
 import itertools
+import math
 import time
 
 from .concept import (
@@ -81,9 +96,29 @@ USER_EDGE_LIMIT = 120
 
 _WEAK_RUN_SCORE = 8.0     # 2 字弱证据（「振动」级）：能当边界证据，排位靠后
 _STRONG_RUN_SCORE = 60.0  # ≥3 字实质重叠
+_TITLE_LEN_BONUS = 12.0   # 同强度下，字更长 = 更具体
 _FORMULA_SCORE = 30.0     # 结构证据：跨会话共享公式 token
 _FALLBACK_TITLE = "未命名画布"
 _DELETED_TITLE = "已删除的画布"
+
+
+def _breadth(island_count: int) -> float:
+    """广度乘子：跨岛越多，这条联系越重要（v5.5）。
+
+    v5.5 之前 title 路线用 `/ 命中条目数` 做稀有度惩罚，结果是**骨干概念被冷门重叠
+    压下去**（实测：8 座岛共享的「能量守恒定律」16.5 分 < 2 座岛共享的「角动量守恒
+    定律」72 分）。稀有度惩罚的初衷是「别让『运动』这种人人共用的泛词靠长度取胜」，
+    但泛词已经由 `_GENERIC_TITLE_TERMS` 与 weak 分级挡掉了，不需要再叠一层降权。
+    冷门重叠由前端「每对区域最多 3 座城」的局部配额收敛——这是配额该干的事。
+    """
+    return 1.0 + math.log2(max(1, int(island_count or 1)))
+
+
+def _title_score(label: str, strength: str, island_count: int) -> float:
+    """title 路线的证据分：强度与字数定基分，广度定倍数（两条路线都以广度为先）。"""
+    base = (_STRONG_RUN_SCORE + _TITLE_LEN_BONUS * len(label)) if strength == "strong" \
+        else _WEAK_RUN_SCORE
+    return round(base * _breadth(island_count), 2)
 
 
 def _session_title_index(sessions: dict) -> dict:
@@ -163,6 +198,38 @@ def _collapse_fragments(entries: list) -> list:
             continue
         kept.append((label, owners, sids))
     return kept
+
+
+def _mark_covered_labels(entries: list) -> set:
+    """哪些标签的证据已被「更具体的标签」完全覆盖（v5.5，重复城市修复）。
+
+    现场：8 座岛共享「能量守恒定律」、2 座岛共享「角动量守恒定律」时，还会多出一个
+    10 座岛的标签「量守恒定律」——它是两条长名中间的截断（能|量守恒定律、角动量|
+    守恒定律），不是任何一张卡的名字，画成城市没人读得懂；而它命中的 10 张卡**每一张**
+    都已被更具体的标签覆盖，等于没带来任何新证据。
+
+    判据只用已有证据、不做语义猜测：某标签的每一条命中条目，其标题里都含有另一个更长
+    的已保留标签 → 标记为 covered。**标记不是删除**：条目照旧返回（前端把它折叠进清单、
+    照旧算摆位亲缘），只是不单独占一座城市——证据不静默消失。
+
+    反例保护（为什么不能只看「被包含」）：只有「阻尼振动」与「受迫振动」跨会话共享时，
+    「振动」也是它们的子串，但「阻尼振动」「受迫振动」本身**不是**跨会话共享概念
+    （各只在一座岛出现），进不了 kept → 「振动」不算 covered，照旧作为跨岛家族证据
+    参与摆位。同理，「拉普拉斯」被「拉普拉斯算子」覆盖时，只要还有一条命中条目的标题
+    不含更具体标签（如「拉普拉斯方程」），它就必须照旧独立成城。
+
+    实现：条目 M 的 `owners` 定义就是「标题里含 M 的条目」——所以「某条目的标题含某个
+    更长的已保留标签」等价于「该条目 ∈ 某个更长标签的 owners」。按长度降序扫一遍、
+    把已处理标签的 owners 并进 `covered_items` 集合，判定退化成集合包含（O(命中数)，
+    不是标签×命中×已保留的三重循环——大库上那会慢得没法用）。
+    """
+    covered = set()
+    covered_items = set()
+    for label, owners, _sids in sorted(entries, key=lambda e: -len(e[0])):
+        if owners and set(owners) <= covered_items:
+            covered.add(label)
+        covered_items |= set(owners)
+    return covered
 
 
 def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
@@ -293,8 +360,10 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
     - clusters: 每个有知识条目的会话一个簇，按会话最近更新排序；簇内条目按
       createdAt 升序（学习顺序）；
     - shared: 跨会话共享概念（kind=title 公共子串 / kind=formula 公式 token），
-      按强度排序取前 SHARED_CONCEPT_LIMIT 条，每条带 links（每会话一张代表卡的
-      端点，画图用）与 owners（全部命中条目 id，v5.1 重逢清单列同岛多卡用）；
+      分数以**广度**为先（跨岛越多越靠前，v5.5），取前 SHARED_CONCEPT_LIMIT 条；
+      每条带 links（每会话一张代表卡的端点，画图用）、owners（全部命中条目 id，
+      v5.1 重逢清单列同岛多卡用）与 covered（v5.5：证据被更具体的标签完全覆盖，
+      前端折叠它、不单独成城——条目仍照报，不静默消失）；
     - userEdges / danglingEdges（v2）：用户在主图上画的簇间边，经当前投影校验；
       悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口。
     """
@@ -365,12 +434,14 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
 
     shared = []
     title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session))
+    covered = _mark_covered_labels(title_entries)
     for label, owners, sids in title_entries:
-        df = max(1, len(owners))
-        score = (_STRONG_RUN_SCORE + 12.0 * len(label)) / df if len(label) >= 3 \
-            else _WEAK_RUN_SCORE + len(sids)
-        shared.append({"kind": "title", "label": label, "score": round(score, 2),
-                       "strength": _shared_strength("title", label),
+        strength = _shared_strength("title", label)
+        shared.append({"kind": "title", "label": label,
+                       "score": _title_score(label, strength, len(sids)),
+                       "strength": strength,
+                       # v5.5：证据被更具体的标签完全覆盖 → 前端折叠（不单独成城）
+                       "covered": label in covered,
                        "sessions": sorted(sids),
                        "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
@@ -379,10 +450,14 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None) -> dict
         score = _FORMULA_SCORE * len(sids) + min(len(owners), 6)
         shared.append({"kind": "formula", "label": token, "score": round(score, 2),
                        "strength": _shared_strength("formula", token),
+                       # 公式 token 是结构证据：不存在「被更长的 token 覆盖」这回事
+                       "covered": False,
                        "sessions": sorted(sids),
                        "owners": _owner_ids(owners, items),
                        "links": _links_for(owners, item_session, session_rank)})
 
+    # 广度优先（分数里已含广度乘子）；同分按标签稳定排序。covered 条目不删——
+    # 前端在分配城市名额之前就把它折进清单，所以它不会挤掉任何一座能画的城。
     shared.sort(key=lambda s: (-s["score"], s["label"]))
     shared = shared[:SHARED_CONCEPT_LIMIT]
 

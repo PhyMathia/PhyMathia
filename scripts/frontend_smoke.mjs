@@ -1355,7 +1355,7 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
   return true;
 });
 
-check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 不叠岛 / 四种折叠原因 / 重逢清单）', () => {
+check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 不叠岛 / 五种折叠原因 / 覆盖标签不占城 / 重逢清单）', () => {
   const plan = sandbox._continentDrawPlan;
   const layout = sandbox._continentLayoutClusters;
   const rows = sandbox._continentReunionRows;
@@ -1407,6 +1407,22 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
   // 弱证据不上图（照报，原因可分辨）
   if (out.folded.map(f => f.reason).join(',') !== 'weak') {
     throw new Error('弱证据折叠口径错：' + JSON.stringify(out.folded.map(f => f.reason)));
+  }
+  // v5.5：被更具体标签覆盖的标签（服务端 covered）不单独成城——否则地图上会出现
+  // 两座几乎重合、名字还读不懂的城（真机形态：「能量守恒定律」旁边的截断名「量守恒定律」）
+  const coveredEntry = {
+    kind: 'title', label: '量守恒定律', strength: 'strong', covered: true,
+    owners: ['a1', 'b1'], links: [{ from: 'a1', to: 'b1', fromSession: 's1', toSession: 's2' }],
+  };
+  const covOut = plan([coveredEntry, entry], lay.placements, lay.clusterRects, 3, 12);
+  if (covOut.folded.map(f => f.reason).join(',') !== 'covered') {
+    throw new Error('覆盖标签折叠口径错：' + JSON.stringify(covOut.folded.map(f => f.reason)));
+  }
+  if (covOut.cityCount !== 1 || covOut.cities[0].entry.label !== '简谐运动') {
+    throw new Error('覆盖标签挤掉了本该画的那座城');
+  }
+  if (covOut.boundary.a1 && covOut.cities[0].entry.label === '量守恒定律') {
+    throw new Error('覆盖标签不该挂 ◈ 徽标');
   }
   // 每对区域上限：上限 1 时，同一对岛的第二座城进清单（原因 capped）
   const second = Object.assign({}, entry, { label: '简谐运动方程', score: 1 });
@@ -1479,20 +1495,21 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
   const foldedHtml = foldedRows(out.folded, idx);
   if (foldedHtml.indexOf('弱证据') < 0) throw new Error('折叠原因未标注');
   if (foldedHtml.indexOf('data-fold="0"') < 0) throw new Error('折叠清单缺逐条入口');
-  // 四种折叠原因都要能翻译成人话（用户才知道该不该管它）
+  // 五种折叠原因都要能翻译成人话（用户才知道该不该管它）
   const allReasons = foldedRows([
     { entry: entry, reason: 'weak' },
+    { entry: entry, reason: 'covered' },
     { entry: entry, reason: 'capped' },
     { entry: entry, reason: 'map_capped' },
     { entry: entry, reason: 'no_room' },
   ], idx);
-  ['弱证据', '超出每对上限', '超出全图上限', '无位可放'].forEach(label => {
+  ['弱证据', '已被更具体的城市覆盖', '超出每对上限', '超出全图上限', '无位可放'].forEach(label => {
     if (allReasons.indexOf(label) < 0) throw new Error('折叠原因缺人话标注：' + label);
   });
   return true;
 });
 
-check('graph-continent: v5.2 群岛布局（亲缘排序成簇 / 蛇形填充 / 无亲缘保持原序）', () => {
+check('graph-continent: v5.2 群岛布局（亲缘排序成簇 / 蛇形填充 / 无亲缘保持原序）+ v5.5 弱证据只摆位不断言', () => {
   const order = sandbox._continentClusterOrder;
   const kinship = sandbox._continentKinship;
   const layout = sandbox._continentLayoutClusters;
@@ -1527,15 +1544,29 @@ check('graph-continent: v5.2 群岛布局（亲缘排序成簇 / 蛇形填充 / 
   // 无亲缘：输出与输入同序（不引入回归——服务端最近更新序原样进布局）
   const plain = order(clusters, [], []);
   if (plain.map(c => c.sessionId).join() !== 'A,B,C,D') throw new Error('无亲缘时应保持原序');
-  // weak 共享不算亲缘（v4 立场：词面撞车不上图，也不该参与摆位）
-  const weakOnly = order(clusters, [{ kind: 'title', label: '振动', strength: 'weak', sessions: ['A', 'B'] }], []);
-  if (weakOnly.map(c => c.sessionId).join() !== 'A,B,C,D') throw new Error('weak 证据不该参与亲缘排序');
-  // 亲缘矩阵本身：strong 各记 1、用户边记 2、weak 与缺席会话不计
+  // v5.5：weak 共享**参与摆位**（只摆位、不断言）——梯度/散度这类 2 字真关系以前
+  // 既不画线也不影响摆位，地图看上去一片孤岛；现在 A、C 之间有一条 weak 就要相邻
+  const weak = (label, sids) => ({ kind: 'title', label, strength: 'weak', sessions: sids, links: [], owners: [] });
+  const weakOnly = order(clusters, [weak('梯度', ['A', 'C'])], []);
+  const posW = {}; weakOnly.forEach((c, i) => { posW[c.sessionId] = i; });
+  if (Math.abs(posW.A - posW.C) !== 1) throw new Error('weak 证据未参与摆位：' + JSON.stringify(posW));
+  // 亲缘矩阵本身：strong 各记 1、用户边记 2、weak 每个跨会话对 0.3 且每对封顶 0.9
+  // （封顶保证任意多条弱证据都压不过一条强证据——弱证据只配决定「挨不挨着」）
   const kin = kinship(['A', 'B', 'C'], [strong('振动', ['A', 'B'])], [{ fromSession: 'B', toSession: 'C' }]);
   const keyOf = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
   if (kin[keyOf('A', 'B')] !== 1) throw new Error('strong 共享亲缘权重错');
   if (kin[keyOf('B', 'C')] !== 2) throw new Error('用户边亲缘权重错');
   if (kin[keyOf('A', 'C')] !== undefined) throw new Error('无关岛不该有亲缘');
+  const kinW = kinship(['A', 'B'], [weak('梯度', ['A', 'B'])], []);
+  if (Math.abs(kinW[keyOf('A', 'B')] - 0.3) > 1e-9) throw new Error('weak 亲缘权重错：' + kinW[keyOf('A', 'B')]);
+  const kinCap = kinship(['A', 'B'], [weak('梯度', ['A', 'B']), weak('散度', ['A', 'B']),
+    weak('旋度', ['A', 'B']), weak('场', ['A', 'B'])], []);
+  if (kinCap[keyOf('A', 'B')] > 0.9 + 1e-9) throw new Error('weak 亲缘未封顶：' + kinCap[keyOf('A', 'B')]);
+  const kinMix = kinship(['A', 'B'], [weak('梯度', ['A', 'B']), weak('散度', ['A', 'B']),
+    weak('旋度', ['A', 'B']), weak('场', ['A', 'B']), strong('简谐运动', ['A', 'B'])], []);
+  if (!(kinMix[keyOf('A', 'B')] >= 1 && kinMix[keyOf('A', 'B')] < 2)) {
+    throw new Error('弱证据压过了强证据：' + kinMix[keyOf('A', 'B')]);
+  }
   return true;
 });
 

@@ -15,6 +15,10 @@
 // 「画成大陆边」芯片，落笔权永远在用户（走 /api/models/chat 的 stream:false 通道）。
 // v5.4 岛牌一句话 + 空态引导：岛头副行「前 3 个概念名 + 最近更新」（纯拼接）；
 // 没有共享连线时顶栏明示点亮机制——空态是引导，不是缺陷。
+// v5.5 汇聚口径修正：① 弱证据（2 字共享串）参与**摆位**但不参与断言——梯度/散度这类
+// 真关系以前既不画线也不影响摆位，地图看起来「一片孤岛」；② 证据被更具体标签完全覆盖
+// 的标签（截断名，如「量守恒定律」）不再单独成城，折进清单（原因「已被更具体的城市
+// 覆盖」）——地图上不再出现两座几乎重合、名字还读不懂的城。
 // 交互三层口径（游戏地图模型：层级离散、整层切换，不是连续语义缩放）：
 // - 下钻：点簇 / 概念节点 → 镜头向点击处推进（转场动画）→ switchToSession，
 //   概念节点再经 goToKnowledgeNode 直达定位（等于点 POI 而非进城门口）；
@@ -61,7 +65,7 @@ let _continentLinkMode = false;    // v2 连接模式
 let _continentLinkSource = null;   // {itemId, sessionId}
 let _continentEdgeUndo = [];       // 撤销栈：只记边操作，视口变化不入栈
 let _continentPopover = null;      // 单例弹层（共享概念详情 / 我的边操作）
-let _continentFolded = [];         // v4 折叠清单：[{entry, reason}]（weak=弱证据 / capped=超出每对上限）
+let _continentFolded = [];         // v4 折叠清单：[{entry, reason}]（weak=弱证据 / covered=已被更具体的城市覆盖 / capped=超出每对上限 / map_capped=超出全图上限 / no_room=无位可放）
 let _continentGuideText = '';      // v5.4 顶栏空态引导文案（空串=不该显示）
 const _continentPhiInflight = new Set(); // v5.3 在途「问 Φ」请求：弹层关闭时全部中止
 
@@ -94,30 +98,48 @@ function _continentRenderFormula(el, latex) {
 }
 
 // ---------- v5.2 群岛布局：亲缘排序（位置本身就是联系，纯函数无 DOM） ----------
-// 亲缘只有两个来源：① 强共享概念（≥3 字实词或公式共享——weak 的词面撞车不算，
-// v4 的教训：调阈值救不了弱证据，换来源才救得了）；② 用户亲手画的大陆边（人的
-// 认定是最强证据，权重更高）。主题层面的亲近用布局表达，一根线都不用画。
+// 亲缘三个来源：① 强共享概念（≥3 字实词或公式共享）每个跨会话对记 1 分；② 弱共享
+// 概念（「振动」「梯度」这类 2 字证据）每个跨会话对记 0.3 分、每对累计封顶 0.9——v5.5
+// 起弱证据参与摆位：摆位**不宣称任何概念同一性**（不画线、不建城），是风险最低的表达，
+// 正该承接最弱的证据；封顶保证任意多条弱证据都压不过一条强证据。③ 用户亲手画的大陆边
+// 记 2 分（人的认定是最强证据）。主题层面的亲近用布局表达，一根线都不用画。
+const CONTINENT_KIN_STRONG = 1;
+const CONTINENT_KIN_WEAK = 0.3;
+const CONTINENT_KIN_WEAK_CAP = 0.9;
+const CONTINENT_KIN_EDGE = 2;
+
 function _continentKinshipKey(a, b) {
   return String(a) < String(b) ? a + '|' + b : b + '|' + a;
 }
 
 // 亲缘矩阵：只统计画布上真实存在的会话对；返回 { 'a|b': 权重 }。
 function _continentKinship(sessionIds, shared, userEdges) {
-  const kin = {};
+  const kin = {}, weak = {};
   const known = new Set(sessionIds || []);
   const add = (a, b, w) => {
     if (!a || !b || a === b || !known.has(a) || !known.has(b)) return;
     const key = _continentKinshipKey(a, b);
     kin[key] = (kin[key] || 0) + w;
   };
+  const addWeak = (a, b) => {
+    if (!a || !b || a === b || !known.has(a) || !known.has(b)) return;
+    const key = _continentKinshipKey(a, b);
+    weak[key] = Math.min(CONTINENT_KIN_WEAK_CAP, (weak[key] || 0) + CONTINENT_KIN_WEAK);
+  };
   (shared || []).forEach(s => {
-    if (!s || s.strength !== 'strong') return;
+    if (!s) return;
     const sids = (s.sessions || []).filter(sid => known.has(sid));
+    const strong = s.strength === 'strong';
     for (let i = 0; i < sids.length; i++) {
-      for (let j = i + 1; j < sids.length; j++) add(sids[i], sids[j], 1);
+      for (let j = i + 1; j < sids.length; j++) {
+        if (strong) add(sids[i], sids[j], CONTINENT_KIN_STRONG);
+        else addWeak(sids[i], sids[j]);
+      }
     }
   });
-  (userEdges || []).forEach(e => add(e.fromSession, e.toSession, 2));
+  // 弱证据封顶后合入（封顶按「对」算，与强证据/用户边的量纲分开）
+  Object.keys(weak).forEach(key => { kin[key] = (kin[key] || 0) + weak[key]; });
+  (userEdges || []).forEach(e => add(e.fromSession, e.toSession, CONTINENT_KIN_EDGE));
   return kin;
 }
 
@@ -391,6 +413,7 @@ function _continentPlaceCity(targets, obstacles, bounds) {
 // 折叠原因：四种都要能分辨，用户才知道该不该管它（弱证据要修标题 / 无位可放是地图太挤）
 const CONTINENT_FOLD_REASON = {
   weak: '弱证据',
+  covered: '已被更具体的城市覆盖',
   capped: '超出每对上限',
   map_capped: '超出全图上限',
   no_room: '无位可放',
@@ -407,6 +430,10 @@ function _continentDrawPlan(shared, placements, clusterRects, pairLimit, cityLim
   let spokes = 0;
   (shared || []).slice(0, CONTINENT_LINE_LIMIT).forEach(s => {
     if (s.strength === 'weak') { folded.push({ entry: s, reason: 'weak' }); return; }
+    // v5.5：证据被更具体的标签完全覆盖（服务端 covered 字段）——比如 8 座岛的「能量
+    // 守恒定律」+ 2 座岛的「角动量守恒定律」旁边的那个 10 座岛「量守恒定律」（截断名）。
+    // 它不单独成城（名字读不懂、城与城几乎重合），但照进折叠清单，也要参与摆位亲缘
+    if (s.covered) { folded.push({ entry: s, reason: 'covered' }); return; }
     if (cities.length >= cityLimitN) { folded.push({ entry: s, reason: 'map_capped' }); return; }
     // 每会话一张代表卡：服务端 _links_for 已按「岛内最早学的」取端点，这里按会话去重。
     // placements 里找不到的条目跳过——投影与布局不同步时宁可不画，也不画到错地方。
@@ -888,8 +915,9 @@ function _continentCityPopover(city, ev) {
 }
 
 // v4 折叠清单：没画到地图上的那些在这里照报，逐条可确认并亲手落笔。
-// 原因口径见 CONTINENT_FOLD_REASON（v5.1 起四种：弱证据 / 超每对上限 / 超全图上限 /
-// 无位可放）。地图负责概览，清单负责穷尽——谁也不伪装成对方，更不许静默消失。
+// 原因口径见 CONTINENT_FOLD_REASON（v5.1 起四种，v5.5 加第五种「已被更具体的城市
+// 覆盖」：弱证据 / 覆盖 / 超每对上限 / 超全图上限 / 无位可放）。地图负责概览，
+// 清单负责穷尽——谁也不伪装成对方，更不许静默消失。
 
 // ---------- v5.3 问 Φ：机器没把握的，交给 Φ 说一句人话，落笔权永远在用户 ----------
 // 通道取舍：走 /api/models/chat 的 stream:false（与知识摘要优化同一口径），模型选
@@ -1055,7 +1083,9 @@ function _continentFoldedPopover(ev) {
   const html =
     '<div class="continent-pop-title">折叠 ' + folded.length + ' 条</div>' +
     '<div class="continent-pop-desc">「弱证据」是 2 字共享串（「表达」「坐标」级）与泛后缀，' +
-    '单独立不住；「超出每对上限」「超出全图上限」是地图已经画满；「无位可放」是岛之间挤不出' +
+    '单独立不住——但它照旧参与岛屿摆位；「已被更具体的城市覆盖」是这条共享串只出现在' +
+    '更具体的那几个概念名中间（如两条「…守恒定律」之间的「量守恒定律」），地图交给更' +
+    '具体的那几座城；「超出每对上限」「超出全图上限」是地图已经画满；「无位可放」是岛之间挤不出' +
     '放得下一座城市的位置（城市绝不叠在岛上）。都不上地图，但照报——' +
     '拿不准就「问 Φ」，它给一句人话判断，要不要连仍由你点「画成大陆边」；' +
     '想让弱证据彻底消失，得修那两条标题本身。</div>' +
