@@ -289,9 +289,6 @@
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-    if (typeof window.autoArrangeGraph === 'function') {
-      setTimeout(() => window.autoArrangeGraph(true), 0);
-    }
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     _setHarnessStatus(
