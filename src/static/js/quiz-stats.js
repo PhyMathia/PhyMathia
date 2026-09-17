@@ -434,8 +434,7 @@ function _memorySignalWriteSynced(map) {
   try { localStorage.setItem(MEMORY_SIGNAL_SYNC_KEY, JSON.stringify(map)); } catch (e) {}
 }
 
-// 收集候选但不落防重账：返回 { candidates, marks }。
-// 账（marks）由调用方在发送成功后合并进 synced——发送失败不消耗 7 天防重窗口
+// marks 按本次请求下标映射 syncKey；只在服务端接受后记账。
 function _collectProfileSignalCandidates() {
   const stats = _readQuizStats();
   const now = Date.now();
@@ -462,7 +461,7 @@ function _collectProfileSignalCandidates() {
     const syncKey = 'weak:' + title;
     if (synced[syncKey] && now - synced[syncKey] < week) continue;
     candidates.push({ fact: '检测多次答错：' + title, category: 'weakness', source: 'quiz' });
-    marks[syncKey] = now;
+    marks[candidates.length - 1] = syncKey;
   }
 
   // 兴趣：同一主题（标题归一后）出现在 >=3 个不同会话的知识条目
@@ -482,13 +481,17 @@ function _collectProfileSignalCandidates() {
         const syncKey = 'interest:' + title;
         if (synced[syncKey] && now - synced[syncKey] < week) continue;
         candidates.push({ fact: '经常提问：' + title, category: 'interest', source: 'usage' });
-        marks[syncKey] = now;
+        marks[candidates.length - 1] = syncKey;
         interestCount++;
       }
     }
   } catch (e) { /* 知识缓存不可用时只出薄弱信号 */ }
 
-  return { candidates: candidates.slice(0, 6), marks: marks };
+  // 单批上限 6 条；marks 下标随截断后批次重排，保持与请求体位置一致
+  const cappedCandidates = candidates.slice(0, 6);
+  const cappedMarks = {};
+  cappedCandidates.forEach((_, i) => { cappedMarks[i] = marks[i]; });
+  return { candidates: cappedCandidates, marks: cappedMarks };
 }
 
 async function _syncProfileSignals() {
@@ -498,13 +501,15 @@ async function _syncProfileSignals() {
   const { candidates, marks } = _collectProfileSignalCandidates();
   if (!candidates.length) return;
   const res = await memoryPostCandidates(candidates, 'signal');
-  if (res && res.ok) {
-    const synced = _memorySignalReadSynced();
-    Object.assign(synced, marks);
-    _memorySignalWriteSynced(synced);
+  if (!res || res.ok !== true || res.accepted !== true) return; // rejected/disabled/invalid 不消耗窗口
+  // 防重账只记服务端确认落库的条目：acceptedIndices 按请求下标对应 marks 里的 syncKey
+  const synced = _memorySignalReadSynced();
+  for (const i of (Array.isArray(res.acceptedIndices) ? res.acceptedIndices : [])) {
+    const syncKey = marks[i];
+    if (syncKey) synced[syncKey] = Date.now();
   }
+  _memorySignalWriteSynced(synced);
 }
-
 function _scheduleProfileSignalSync() {
   if (_memorySignalTimer) clearTimeout(_memorySignalTimer);
   _memorySignalTimer = setTimeout(() => { _memorySignalTimer = null; _syncProfileSignals(); }, 2000);

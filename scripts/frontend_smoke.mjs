@@ -2886,9 +2886,9 @@ check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会�
     if (again.candidates.length !== first.candidates.length) {
       throw new Error('未发送成功不应记账：' + again.candidates.map(c => c.fact).join('|'));
     }
-    // 模拟发送成功（_syncProfileSignals 在 res.ok 时合并 marks）后再采集 → 窗口内不再出候选
+    // 模拟整批被服务端确认接收后的防重账；部分接收由阶段2隔离回归覆盖。
     const synced = JSON.parse(sandbox.localStorage.getItem('phymathia_memory_signal_sync') || '{}');
-    Object.assign(synced, first.marks);
+    for (const syncKey of Object.values(first.marks)) synced[syncKey] = now;
     sandbox.localStorage.setItem('phymathia_memory_signal_sync', JSON.stringify(synced));
     const third = sandbox._collectProfileSignalCandidates();
     if (third.candidates.length !== 0) throw new Error('7 天防重账未生效：' + third.candidates.map(c => c.fact).join('|'));

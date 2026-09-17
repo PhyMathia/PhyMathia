@@ -176,6 +176,14 @@ def _opencode_session_headers(base_url: str, session_id: str) -> dict:
     }
 
 
+def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id: str) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key and provider != "opencode":
+        headers["Authorization"] = f"Bearer {api_key}"
+    headers.update(_opencode_session_headers(base_url, session_id))
+    return headers
+
+
 def _thinking_request_params(provider: str, level: str) -> dict:
     """「思考程度」→ 上游请求参数（纯函数，tests 直测）。
 
@@ -360,12 +368,7 @@ async def api_models_chat(request: Request):
         raise HTTPException(status_code=403, detail=str(e))
 
     url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-    }
-    if api_key and provider != "opencode":
-        headers["Authorization"] = f"Bearer {api_key}"
-    headers.update(_opencode_session_headers(base_url, session_id))
+    headers = _chat_request_headers(provider, api_key, base_url, session_id)
     target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
     module_key = target.get("module") or source_module
     is_strict_module = module_key in ("socratic", "learn") and (
@@ -581,14 +584,12 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             generation = context._rolling_memory_generation(session_id)
         elif generation != context._rolling_memory_generation(session_id):
             return
-        input_text = context._rolling_memory_input(session_id)
+        snapshot = context._rolling_memory_snapshot(session_id)
+        input_text = snapshot["text"]
         if not input_text:
             return
         url = f"{base_url.rstrip('/')}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if api_key and provider not in ("opencode", "opencode-go"):
-            headers["Authorization"] = f"Bearer {api_key}"
-        headers.update(_opencode_session_headers(base_url, session_id))
+        headers = _chat_request_headers(provider, api_key, base_url, session_id)
         body = {
             "model": model_name,
             "messages": [
@@ -604,7 +605,8 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             return
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        if context._write_rolling_memory(session_id, content, count, expected_generation=generation):
+        if context._write_rolling_memory(session_id, content, snapshot["messageCount"],
+                                         expected_generation=generation, snapshot=snapshot):
             logger.info("rolling memory updated: session=%s count=%d", session_id, count)
     except Exception as e:
         logger.warning("rolling memory update failed: %s", e)
@@ -904,7 +906,7 @@ async def api_save_formulas(request: Request):
         data = _dedupe_formula_map(data)
         for it in items:
             latex = _normalize_formula(it.get("latex") or "")
-            if not latex:
+            if not latex or not _looks_like_formula(latex):
                 continue
             # 去重：同会话同公式不重复入库
             existing = next((v for v in data.values()
@@ -1137,10 +1139,10 @@ async def api_profile_candidates(request: Request):
         candidates = candidates[:50]
     source = str(payload.get("source") or "signal")[:32]
     try:
-        return profile.apply_profile_ops(device_id, candidates, source=source)
+        return profile.apply_profile_ops(device_id, candidates, source=source, report_acceptance=True)
     except Exception as e:
         logger.warning(f"Profile candidates ingest failed: {e}")
-        return {"changed": 0, "promoted": []}
+        raise HTTPException(status_code=500, detail="记忆候选保存失败，请稍后重试") from e
 
 
 @app.post("/api/profile/manage")

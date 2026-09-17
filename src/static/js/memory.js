@@ -40,24 +40,31 @@ function memoryWithDevice(payload) {
 
 // ---------- 候选提交与固化提醒 ----------
 // 确定性信号（检测错题/苏格拉底答错/高频提问）走这个入口，与对话采集同一套合并语义。
-// 返回值带 ok：发送成功为 true——调用方（检测信号同步）据此决定是否消耗防重窗口
+// ok 仅代表 HTTP/JSON 成功；防重必须使用 accepted + 原请求位置 acceptedIndices。
 async function memoryPostCandidates(candidates, source) {
-  if (!Array.isArray(candidates) || !candidates.length) return { changed: 0, promoted: [] };
+  const rejected = (status, ok = false) => ({ changed: 0, promoted: [], ok, accepted: false, acceptedIndices: [], status });
+  if (!Array.isArray(candidates) || !candidates.length) return rejected('invalid');
   try {
     const res = await fetch('/api/profile/candidates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id: getDeviceId(), candidates: candidates, source: source || 'signal' })
     });
-    if (!res.ok) return { changed: 0, promoted: [], ok: false };
+    if (!res.ok) return rejected('http-failure');
     const data = await res.json();
-    if (data && Array.isArray(data.promoted) && data.promoted.length) {
+    const indices = data && data.acceptedIndices;
+    if (!data || typeof data.accepted !== 'boolean' || !Array.isArray(indices)
+      || indices.some(i => !Number.isInteger(i) || i < 0 || i >= candidates.length)
+      || new Set(indices).size !== indices.length
+      || data.accepted !== (indices.length > 0)) return rejected('invalid-response', true);
+    const status = data.accepted ? 'accepted' : data.ignored === 'disabled' ? 'disabled' : 'rejected';
+    if (data.accepted && Array.isArray(data.promoted) && data.promoted.length) {
       memoryNotifyPromoted(data.promoted);
     }
     memoryRefreshCache();
-    return Object.assign({ changed: 0, promoted: [] }, data || {}, { ok: true });
+    return Object.assign({ changed: 0, promoted: [] }, data, { ok: true, status, acceptedIndices: indices.slice() });
   } catch (e) {
-    return { changed: 0, promoted: [], ok: false };
+    return rejected('network');
   }
 }
 
@@ -84,6 +91,13 @@ function memoryImpactAreas() {
 // ---------- 同步画像缓存（供非 async 调用点使用，如 _modulePrompt）----------
 let _cachedProfile = null;
 
+// 模块与角标共用激活过滤；旧数据缺省 status 视为 active。
+function _memoryActiveFacts() {
+  const facts = _cachedProfile && _cachedProfile.facts;
+  return (Array.isArray(facts) ? facts : [])
+    .filter(f => f && (f.status === undefined || f.status === 'active') && String(f.fact || '').trim());
+}
+
 async function memoryRefreshCache() {
   try {
     _cachedProfile = await memoryGetProfile();
@@ -103,7 +117,7 @@ function memoryUpdateSidebarDot() {
 
 // ---------- 画像角标（回答卡上的「已结合你的画像」） ----------
 // 与后端 profile._profile_section_texts 同构的分节口径：学段/目标/薄弱/兴趣/偏好/其他。
-// 事实排序与 12 条上限、规范化去重都跟后端一致，角标展示的才是真正被注入的内容
+// 匹配默认选择规则；当前缓存不是逐回答服务端注入快照（快照留待后续阶段）。
 function _memoryNormFact(t) {
   return String(t || '').trim().toLowerCase()
     .replace(/^(用户|我)+(是|的)?/, '')
@@ -114,8 +128,7 @@ function _memoryNormFact(t) {
 function memoryBadgeSections() {
   if (!_cachedProfile || !_cachedProfile.enabled) return [];
   const exp = _cachedProfile.explicit || {};
-  const facts = (_cachedProfile.facts || [])
-    .filter(f => f && f.status !== 'idle' && String(f.fact || '').trim())
+  const facts = _memoryActiveFacts()
     .sort((a, b) => ((b.occurrences || 1) - (a.occurrences || 1)) || ((b.updatedAt || 0) - (a.updatedAt || 0)))
     .slice(0, 12);
   const byCategory = (cat) => {
@@ -124,13 +137,13 @@ function memoryBadgeSections() {
     const add = (t) => {
       t = String(t || '').trim();
       const k = _memoryNormFact(t);
-      if (t && k && !seen.has(k)) { seen.add(k); texts.push(t); }
+      if (t && k && !seen.has(k)) { seen.add(k); texts.push(Array.from(t).slice(0, 60).join('')); }
     };
     if (cat === 'stage') add(exp.stage);
     if (cat === 'goal') add(exp.goal);
     if (cat === 'weakness') add(exp.weakAreas);
     if (cat === 'interest') add(exp.interests);
-    facts.filter(f => f.category === cat).forEach(f => add(String(f.fact).slice(0, 60)));
+    facts.filter(f => f.category === cat).forEach(f => add(f.fact));
     return texts;
   };
   const sections = [];
@@ -152,7 +165,9 @@ function memoryBadgeSections() {
     if (t && k && !styleSeen.has(k)) { styleSeen.add(k); styleParts.push(t); }
   });
   if (styleParts.length) sections.push({ label: '偏好', text: styleParts.join('；') });
-  const others = facts.filter(f => f.category === 'other').map(f => String(f.fact).slice(0, 60));
+  const otherSeen = new Set();
+  const others = facts.filter(f => f.category === 'other').map(f => Array.from(String(f.fact)).slice(0, 60).join(''))
+    .filter(t => { const key = _memoryNormFact(t); if (!key || otherSeen.has(key)) return false; otherSeen.add(key); return true; });
   if (others.length) sections.push({ label: '其他', text: others.slice(0, 5).join('；') });
   return sections;
 }
@@ -190,8 +205,8 @@ function memoryCachedContext() {
   if (String(exp.goal || '').trim()) parts.push('学习目标：' + exp.goal.trim());
   if (String(exp.interests || '').trim()) parts.push('兴趣方向：' + exp.interests.trim());
   if (String(exp.weakAreas || '').trim()) parts.push('薄弱章节：' + exp.weakAreas.trim());
-  const facts = (_cachedProfile.facts || [])
-    .filter(f => ['goal', 'interest', 'weakness'].includes(f.category) && String(f.fact || '').trim())
+  const facts = _memoryActiveFacts()
+    .filter(f => ['goal', 'interest', 'weakness'].includes(f.category))
     .map(f => f.fact);
   if (facts.length) parts.push('已了解：' + facts.slice(0, 3).join('；'));
   return parts.join('；');
