@@ -2391,8 +2391,9 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏 + 画布工具栏�
   }
   const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   const bar = gcss.slice(gcss.indexOf('.graph-canvas-toolbar {'), gcss.indexOf('}', gcss.indexOf('.graph-canvas-toolbar {')));
-  if (!/border-radius:\s*\d+px !important;/.test(bar)) throw new Error('工具栏容器缺圆角（会呈现直角方板）');
-  if (!/padding:\s*\d+px !important;/.test(bar)) throw new Error('工具栏容器缺内边距（胶囊会贴边）');
+  // 圆角自 2026-09-17 起走设计令牌（--r-xl），断言同时接受裸值与 var()
+  if (!/border-radius:\s*(\d+px|var\(--r-[a-z]+\))\s*!important;/.test(bar)) throw new Error('工具栏容器缺圆角（会呈现直角方板）');
+  if (!/padding:\s*\d+px\s*!important;/.test(bar)) throw new Error('工具栏容器缺内边距（胶囊会贴边）');
   const btn = gcss.slice(gcss.indexOf('.graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn {')));
   if (!/background: transparent !important;/.test(btn)) throw new Error('工具按钮应自身透明（磨砂归整条工具栏）');
   if (!/border: 1px solid transparent !important;/.test(btn)) throw new Error('工具按钮默认不该有描边（胶囊内会碎成一格格）');
@@ -2917,6 +2918,100 @@ check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会�
     sandbox.localStorage.removeItem('phymathia_knowledge');
     sandbox.localStorage.removeItem('phymathia_memory_signal_sync');
     if (typeof sandbox.invalidateKnowledgeCache === 'function') sandbox.invalidateKnowledgeCache();
+  }
+  return true;
+});
+
+// ===== 设计尺子（2026-09-17）：新控件必须走令牌，同类载体必须同圆角 =====
+// 这三条是「防漂」闸门：改样式时若把裸值/新色值写回来，或让同类弹窗圆角跑偏，会在这里红。
+
+check('设计尺子：圆角一律走 --r-* 令牌（只允许 50%/0/inherit 这类结构性取值）', () => {
+  const files = ['src/static/css/styles.css', 'src/static/css/styles-panels.css', 'src/static/css/graph-override.css'];
+  const allowed = new Set(['50%', '0', 'inherit']);
+  const bad = [];
+  for (const f of files) {
+    const css = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of css.matchAll(/border-radius\s*:\s*([^;{}]+);/g)) {
+      const parts = m[1].replace(/\s*!important\s*/, '').trim().split(/\s+/);
+      for (const v of parts) {
+        if (v.startsWith('var(--r-') || allowed.has(v)) continue;
+        bad.push(f.split('/').pop() + ' → ' + m[1].trim());
+      }
+    }
+  }
+  if (bad.length) throw new Error('还有 ' + bad.length + ' 处圆角写了裸值，应改用 --r-*：\n    ' + bad.slice(0, 6).join('\n    '));
+  return true;
+});
+
+check('设计尺子：字号走 --fs-* 令牌（≥15px 的图标/标题档暂不强制）', () => {
+  const files = ['src/static/css/styles.css', 'src/static/css/styles-panels.css'];
+  const bad = [];
+  for (const f of files) {
+    const css = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of css.matchAll(/font-size\s*:\s*([^;{}]+);/g)) {
+      const v = m[1].replace(/\s*!important\s*/, '').trim();
+      if (v.startsWith('var(--fs-')) continue;
+      const px = parseFloat(v);
+      // 15px 以上是图标/标题/装饰档，允许保留；em/% 是相对尺寸，另有语义
+      if (/^(\d+(?:\.\d+)?)px$/.test(v) && px < 15) bad.push(v);
+    }
+  }
+  if (bad.length) throw new Error('还有 ' + bad.length + ' 处小字号写了裸值，应改用 --fs-*：' + [...new Set(bad)].join(', '));
+  return true;
+});
+
+check('设计尺子：状态色只认 --danger/--success/--warn（域色不受限）', () => {
+  const files = ['src/static/css/styles.css', 'src/static/css/styles-panels.css', 'src/static/css/graph-override.css'];
+  const gate = /(danger|delete|remove|clear|error|fail|wrong|bad\b|correct|pass\b|saved|success|warn|waiting|done|accept|ignore|good|\bok\b|is-danger)/;
+  const deny = /(graph-module|graph-node-module|kp-card-dot|graph-diff-|graph-history-badge|graph-ai-eval|graph-harness-op-|graph-node-attribute|continent-user-link)/;
+  const lit = /(#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+[^)]*\))/g;
+  const bad = [];
+  for (const f of files) {
+    const css = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1].replace(/\s+/g, ' ').trim();
+      if (!sel || sel.startsWith('@') || !gate.test(sel) || deny.test(sel)) continue;
+      for (const d of m[2].matchAll(/(color|background|background-color|border-color)\s*:\s*([^;{}]+);/g)) {
+        const hits = (d[2].match(lit) || []).filter((v) => {
+          const rgb = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+          let r, g, b;
+          if (rgb) { r = +rgb[1]; g = +rgb[2]; b = +rgb[3]; }
+          else { r = parseInt(v.slice(1, 3), 16); g = parseInt(v.slice(3, 5), 16); b = parseInt(v.slice(5, 7), 16); }
+          return (r > 185 && 110 < g && g < 220 && b < 100) || (r > 190 && g < 130 && b < 150) || (g > 130 && r < 100 && b < 170);
+        });
+        if (hits.length) bad.push(sel.slice(0, 44) + ' → ' + d[1] + ': ' + hits.join(' '));
+      }
+    }
+  }
+  if (bad.length) throw new Error('状态色还有 ' + bad.length + ' 处硬编码，应改用 --danger/--success/--warn 族：\n    ' + bad.slice(0, 6).join('\n    '));
+  return true;
+});
+
+check('设计尺子：面板关闭键必须有 aria-label（无障碍 + 统一关闭语义）', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  const bad = [];
+  for (const m of html.matchAll(/<button[^>]*class="[^"]*\bclose\b[^"]*"[^>]*>/g)) {
+    if (!/aria-label=/.test(m[0])) bad.push(m[0].slice(0, 70));
+  }
+  if (bad.length) throw new Error('关闭按钮缺 aria-label：\n    ' + bad.join('\n    '));
+  return true;
+});
+
+check('设计尺子：同类载体的圆角同档（弹窗 --r-lg / 大浮层 --r-xl / 胶囊 --r-pill）', () => {
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8') + fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  const want = [
+    ['.socratic-modal', '--r-lg', '表单弹窗'],
+    ['.memory-dialog', '--r-lg', '确认弹窗'],
+    ['.graph-canvas-toolbar', '--r-xl', '画布工具栏'],
+    ['.example-guide-dialog', '--r-xl', '示例讲解'],
+    ['.kp-search', '--r-pill', '搜索胶囊'],
+  ];
+  for (const [sel, tok, label] of want) {
+    // 同名选择器可能有多条规则（响应式覆写等），只要求「至少有一条」把圆角定到该档
+    const re = new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}', 'g');
+    const rules = [...css.matchAll(re)].map((m) => m[1]);
+    if (!rules.length) continue;    // 选择器不在本文件管辖范围时跳过（graph-override 另算）
+    if (!rules.some((r) => r.includes('var(' + tok + ')'))) throw new Error(label + '（' + sel + '）圆角应为 ' + tok);
   }
   return true;
 });

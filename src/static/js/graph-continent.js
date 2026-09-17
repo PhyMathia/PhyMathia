@@ -623,7 +623,7 @@ function _continentEnsureLayer() {
       '</div>' +
       '<span class="continent-hint" id="continentHint" hidden></span>' +
       '<span class="continent-hint" id="continentGuide" hidden></span>' +
-      '<button class="continent-close" id="continentCloseBtn" title="收起大陆 (Esc)">&times;</button>' +
+      '<button class="continent-close" id="continentCloseBtn" title="收起大陆 (Esc)">✕</button>' +
     '</div>' +
     '<div class="continent-viewport" id="continentViewport">' +
       '<div class="continent-world" id="continentWorld"></div>' +

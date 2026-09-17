@@ -123,7 +123,7 @@ function buildVizCard(htmlContent, vizId) {
   // 使用占位 iframe，通过 JS 动态设置 srcdoc 避免属性转义问题
   return '<div class="viz-card" id="' + vizId + '">'
     + '<div class="viz-toolbar">'
-    + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
+    + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
     + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz()" title="没看懂，请求解释">' + UI_ICON_SVG.question + ' 没看懂</button>'
     + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + ' 全屏</button>'

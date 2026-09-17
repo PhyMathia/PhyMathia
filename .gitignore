@@ -124,3 +124,6 @@ _split3.cjs
 .zcode/
 .venv-linux/*
 .venv-windows/*
+
+# 视觉基线临时产物（当前态截图，不入库）
+.cache/

@@ -183,7 +183,7 @@ function showQuizReturnPill() {
     + '<span class="quiz-return-pill-dot"></span>'
     + '<span class="quiz-return-pill-kicker">' + (relearn ? '重学引导' : '返回现场') + '</span>'
     + '<span class="quiz-return-pill-count"></span>'
-    + '<button type="button" class="quiz-return-pill-close" onclick="closeQuizReturnPill()" aria-label="收起" title="收起">&times;</button>'
+    + '<button type="button" class="quiz-return-pill-close" onclick="closeQuizReturnPill()" aria-label="收起" title="收起">✕</button>'
     + '</div>'
     + '<div class="quiz-return-pill-actions">'
     + '<button type="button" class="quiz-return-pill-btn primary" onclick="resumeQuizFromJump()">'
