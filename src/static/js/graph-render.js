@@ -496,7 +496,8 @@ function _renderBlankNodeHtml(node, state) {
     : '';
   const generateLabel = content ? '重新生成' : '生成';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
-  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
+  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
@@ -601,6 +602,15 @@ function _canMinimizeGraphNode(node) {
 function _graphMinimizeToggleHtml(node) {
   if (!_canMinimizeGraphNode(node)) return '';
   return '<button class="graph-node-minimize-toggle" onclick="graphModuleAction(\'minimize\',\'' + node.id + '\')" title="' + (node.minimized ? '展开' : '最小化') + '">' + (node.minimized ? '+' : '−') + '</button>';
+}
+
+// 还没出内容的大卡（空白/模块/总结/汇聚）先按内容收缩，出内容后再撑回原尺寸。
+// 与 graph-override.css「第 7 轮 7.2」配套；用户手动拖过尺寸的节点走内联样式，不受影响。
+function _graphNodePending(node) {
+  if (!node || node.messageIndex >= 0) return false;
+  if (node.busy || node.status === 'running') return false;
+  if (!['blank', 'module', 'summary', 'note', 'hub'].includes(node.kind)) return false;
+  return !(String(node.content || '').trim() || String(node.analysis || '').trim() || String(node.summary || '').trim());
 }
 
 function _customNodeHeaderHtml(node, attr, extraButtons) {
@@ -721,9 +731,12 @@ function _renderHumanNoteNodeHtml(node, state) {
     + '<div class="graph-node-header">'
     + '<span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">我的理解</span>'
     + '<span class="graph-node-badge">人工</span>'
+    // 三个按钮包一层：窄卡（260–340）里头部必然折行，整组一起折才不至于剩一个删除键孤零零挂在第二行
+    + '<span class="graph-node-head-actions">'
     + _graphMinimizeToggleHtml(node)
     + '<button class="graph-node-edit-toggle" onclick="editHumanNoteNode(\'' + node.id + '\')" title="编辑我的理解"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
     + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>'
+    + '</span>'
     + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(node.label || '我的理解') + '</div>'
     + '<div class="graph-node-sub">' + escapeHtml(statusText) + '</div>'
@@ -849,13 +862,14 @@ function _renderNodeHtml(node, messages, state) {
     ? '<button class="graph-hub-connect-btn" onclick="event.stopPropagation();quickConnectToHub(\'' + node.id + '\')" title="一键接入选中节点输出"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg></button>'
     : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
+  const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
   const graphState = state || _graphState();
   const inputHtml = _renderInputPorts(node, graphState);
   const outputHtml = _renderOutputPorts(node, messages, graphState);
   const labelHtml = (node.kind === 'user' && node.messageIndex < 0)
     ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(label) + '</textarea>'
     : '<div class="graph-node-label">' + escapeHtml(label) + '</div>';
-  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'

@@ -80,6 +80,17 @@ const MANUAL_NODE_OPTIONS = [
 
 const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'human_note', 'ai_eval'];
 
+// 族别形状：面板色点用这一套，画布上的属性标签用同一套（graph-override.css 第 7 轮，
+// 按 graph-node-* / graph-attr-* 类名上形状）。圆＝AI 产出、方＝人工书写、菱＝结构、环＝原始素材。
+// 之所以有形状而不是只靠颜色：知识图谱↔输入、数学视角↔问题这些配对色相只差 3°–5°，1px 描边上看不出来。
+function _nodeFamilyShape(option) {
+  const group = (option && option.group) || 'ai';
+  if (group === 'human') return 'is-square';
+  if (group === 'structure') return 'is-diamond';
+  if (group === 'data') return 'is-ring';
+  return 'is-round';
+}
+
 let graphCanvas = null;
 let graphInner = null;
 let graphEdgeLayer = null;

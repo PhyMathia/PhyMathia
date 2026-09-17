@@ -169,10 +169,11 @@
   box-shadow: 0 20px 56px rgba(0, 0, 0, 0.45), 0 0 24px rgba(74, 158, 255, 0.16) !important;
 }
 
-.graph-node-module {
+.graph-node-module:not(.graph-node-pending) {
   min-width: 640px !important;
   max-width: min(1280px, 92vw) !important;
-  /* 六大模块默认高度 = 默认宽 640 × 0.8 = 512；只抬最小值，内容长时仍自动撑开 */
+  /* 六大模块默认高度 = 默认宽 640 × 0.8 = 512；只抬最小值，内容长时仍自动撑开。
+     :not(.graph-node-pending)——还没出内容的大卡不占这个尺寸（见文末「第 7 轮 7.2」）。 */
   min-height: 512px !important;
 }
 
@@ -372,6 +373,9 @@
   border-color: #f472b6 !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
+}
+
+.graph-node-module.graph-module-viz:not(.graph-node-pending) {
   min-height: 560px !important;
 }
 
@@ -2525,33 +2529,72 @@
   border-color: var(--accent) !important;
 }
 
-/* 我的理解（human_note）：原来是「灰虚线框 + 0.9 透明度」的纯色小板子，发灰发闷。
-   改成手写笔记的玻璃卡——左侧属性色书脊 + 极淡横格纹 + 顶部暖光斑，读起来像学生的笔记本。 */
-.graph-node-human-note {
-  min-width: 260px;
-  max-width: 340px;
-  opacity: 1;
-  padding-left: 22px !important;
-  border: 1px solid color-mix(in srgb, var(--node-attr, #64748b) 38%, transparent) !important;
-  border-left: 3px solid var(--node-attr, #64748b) !important;
+/* 人工家族（我的回答 / 我的理解 / 我的总结）：同一张「纸」。
+   改前是三套皮——我的回答借 AI 回答的绿玻璃（等于把学生写的东西说成 AI 产出）、
+   我的总结是橙色渐变大盒、我的理解是笔记本卡，「人写的」这条线在画布上没有统一语言。
+   现在三者共用：属性色书脊 + 极淡横格纹 + 顶部光斑 + 无外发光（外发光是 AI 那一侧的语言）。
+   我的理解仍是窄卡（见下方 260–340 规），其余两种按内容宽。 */
+.graph-node.graph-attr-manual,
+.graph-node.graph-node-human-note,
+.graph-node.graph-node-note {
+  border: 1px solid color-mix(in srgb, var(--node-attr, #64748b) 36%, transparent) !important;
+  border-left: 5px solid var(--node-attr, #64748b) !important;
   border-radius: var(--r-xl) !important;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 12%, transparent), transparent 64%),
-    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 11%, transparent) 26px 27px),
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 13%, transparent), transparent 64%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 15%, transparent) 26px 27px),
     var(--node-glass-base) !important;
   box-shadow:
     0 14px 40px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
 }
 
-[data-theme="light"] .graph-node-human-note {
+/* 我的理解的窄卡比例。通用 .graph-node 的 min/max-width 带 !important，
+   这里必须同样 !important 且多压一层选择器才生效——旧版 max-width: 340 就是这么被吃掉的
+   （实测渲染 720 宽，横格纹与书脊都糊成了一条线）。 */
+.graph-node.graph-node-human-note {
+  min-width: 260px !important;
+  max-width: 340px !important;
+  opacity: 1;
+  padding-left: 22px !important;
+}
+
+/* 窄卡的头排要让得下「属性 + 人工 + 最小化 + 编辑 + 删除」，否则会折成两行、标题被挤下去。
+   端口列在 260–340 的卡里最占地方（默认可到 116 宽），窄卡里收到 64。
+   按钮保持 26px 见方（与其它节点同档），只收端口与间距。 */
+.graph-node.graph-node-human-note .graph-node-header {
+  gap: 6px !important;
+}
+
+.graph-node.graph-node-human-note .graph-port-col {
+  max-width: 64px !important;
+}
+
+/* 头部动作键包成一组，右对齐；折行时整组一起下去 */
+.graph-node-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+[data-theme="light"] .graph-node.graph-attr-manual,
+[data-theme="light"] .graph-node.graph-node-human-note,
+[data-theme="light"] .graph-node.graph-node-note {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #8b6914) 14%, transparent), transparent 66%),
-    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #8b6914) 10%, transparent) 26px 27px),
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 12%, transparent), transparent 66%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 13%, transparent) 26px 27px),
     var(--node-glass-base) !important;
   box-shadow:
     0 14px 36px rgba(120, 100, 70, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+}
+
+/* 人工家族的角标走属性色（旧版是 accent 蓝/棕，把「人工」标成了系统色） */
+.graph-node.graph-attr-manual .graph-node-badge,
+.graph-node.graph-node-human-note .graph-node-badge,
+.graph-node.graph-node-note .graph-node-badge {
+  background: color-mix(in srgb, var(--node-attr) 82%, transparent) !important;
 }
 
 .graph-node-human-note .graph-node-attribute {
@@ -5183,4 +5226,77 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-canvas .graph-blank-input,
 .graph-canvas .graph-source-text-input {
   resize: none !important;
+}
+
+
+/* ============ 第 7 轮（2026-09-17）：族别形状标 + 待生成收缩 ============
+   起因：16 个节点入口里 10 种共用 640×512 打底的大卡，6 组配色在 1px 描边尺度上互相认不出
+   （知识图谱↔输入只差 2.9° 色相，数学视角↔问题 5.1°）。颜色本轮不动——改用「形状」当第二线索。
+   面板侧的同一套形状在 graph-custom.js「_nodeFamilyShape」里取，两边改要一起改。 */
+
+/* ---------- 7.1 族别形状标：属性标签前的一枚 7px 族标 ----------
+   圆 = AI 产出（默认，含 6 个视角模块）｜方 = 人工书写｜菱 = 结构（汇聚）｜环 = 原始素材
+   颜色仍取属性色（currentColor 跟着 chip 的内联 color 走），所以只加形状、不碰配色。 */
+.graph-node-attribute::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.graph-attr-manual .graph-node-attribute::before,
+.graph-node-human-note .graph-node-attribute::before,
+.graph-node-note .graph-node-attribute::before {
+  border-radius: 0;
+}
+
+.graph-node-hub .graph-node-attribute::before {
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+.graph-node-user .graph-node-attribute::before,
+.graph-node-source .graph-node-attribute::before,
+.graph-node-knowledge .graph-node-attribute::before {
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+
+/* ---------- 7.2 待生成的大卡按内容收缩 ----------
+   blank / 模块 / 总结 / 汇聚在「还没出内容」时不再占 640×512：
+   一屏摆不下两块空盒子的观感问题出在这里，而不是出在材质上。生成完（pending 类移除）即恢复原尺寸。
+   用户手动拖过尺寸的节点走内联 !important，不受这条影响。 */
+/* 底座那两条已带 :not(.graph-node-pending)，这里只补一个舒适下限（宽度交给内容与 .graph-node 的 320 下限）。
+   min-height 必须 !important：要和 .graph-node 的 min-height: auto 抢。 */
+.graph-node-module.graph-node-pending:not(.minimized) {
+  min-height: 200px !important;
+}
+
+/* ---------- 7.3 添加节点面板：色点带形状 + 单个条目不孤零零占半行 ---------- */
+.graph-add-node-dot.is-round {
+  border-radius: 50%;
+}
+
+.graph-add-node-dot.is-square {
+  border-radius: 0;
+}
+
+.graph-add-node-dot.is-diamond {
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+.graph-add-node-dot.is-ring {
+  background: transparent;
+  border: 1.5px solid var(--node-color, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--node-color, var(--accent)) 35%, transparent);
+}
+
+/* 「结构」组只有汇聚一项，旧版它独占一行、右边空掉三分之二 */
+.graph-add-node-group:last-child .graph-add-node-grid > .graph-add-node-item:only-child {
+  grid-column: 1 / -1;
 }

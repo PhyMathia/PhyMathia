@@ -536,16 +536,27 @@ check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面
   // 玻璃节点底座深浅两套
   const baseCount = (css.match(/--node-glass-base:/g) || []).length;
   if (baseCount < 2) throw new Error('--node-glass-base 需深浅各一套，实际 ' + baseCount);
-  for (const [name, sel] of [['blank（AI 生成）', '.graph-node-blank {'], ['human_note（我的理解）', '.graph-node-human-note {']]) {
-    const i = css.indexOf(sel);
-    if (i < 0) throw new Error('缺 ' + name + ' 规则');
-    const block = css.slice(i, css.indexOf('}', i));
-    if (!block.includes('--node-glass-base')) throw new Error(name + ' 未用玻璃底座（仍是纯色）');
-    if (!/gradient\(/.test(block)) throw new Error(name + ' 缺渐变分层');
+  const blankStart = css.indexOf('.graph-node-blank {');
+  if (blankStart < 0) throw new Error('缺 blank（AI 生成）规则');
+  const blankBlock = css.slice(blankStart, css.indexOf('}', blankStart));
+  if (!blankBlock.includes('--node-glass-base')) throw new Error('blank（AI 生成）未用玻璃底座（仍是纯色）');
+  if (!/gradient\(/.test(blankBlock)) throw new Error('blank（AI 生成）缺渐变分层');
+  // 人工家族（我的回答/我的理解/我的总结）第 7 轮合并成一段共用皮肤：三者同纸，
+  // 且必须仍走玻璃底座 + 渐变分层（旧版 human_note 单条规则已并入这一段）
+  const famStart = css.indexOf('.graph-node.graph-attr-manual,');
+  if (famStart < 0) throw new Error('缺人工家族共用皮肤（我的回答/我的理解/我的总结）');
+  const fam = css.slice(famStart, css.indexOf('}', famStart));
+  for (const member of ['.graph-node.graph-node-human-note,', '.graph-node.graph-node-note {']) {
+    if (!fam.includes(member)) throw new Error('人工家族未覆盖 ' + member);
   }
-  // 我的理解：不能再靠 opacity 压暗（旧版发灰的根因）
-  const hn = css.slice(css.indexOf('.graph-node-human-note {'), css.indexOf('}', css.indexOf('.graph-node-human-note {')));
+  if (!fam.includes('--node-glass-base')) throw new Error('人工家族未用玻璃底座（仍是纯色）');
+  if (!/gradient\(/.test(fam)) throw new Error('人工家族缺渐变分层');
+  // 我的理解：不能再靠 opacity 压暗（旧版发灰的根因）；窄卡比例必须带 !important（否则被通用 min/max-width 吃掉）
+  const hnStart = css.indexOf('.graph-node.graph-node-human-note {');
+  if (hnStart < 0) throw new Error('缺我的理解窄卡规则');
+  const hn = css.slice(hnStart, css.indexOf('}', hnStart));
   if (/opacity:\s*0\.9/.test(hn)) throw new Error('我的理解仍用 opacity 压暗');
+  if (!/max-width:\s*340px\s*!important/.test(hn)) throw new Error('我的理解窄卡比例会被通用 min/max-width 吃掉（需 !important）');
   // 双击节点/连线面板：四个创建点都挂 aurora-glass，且弹窗规则不得再写 background 简写（会盖掉极光）
   const gc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
   if ((gc.match(/graph-network-modal aurora-glass/g) || []).length < 4) {
@@ -554,6 +565,39 @@ check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面
   const modalRule = css.slice(css.indexOf('.graph-network-modal {'), css.indexOf('}', css.indexOf('.graph-network-modal {')));
   if (/background:\s*var\(--bg-panel\)/.test(modalRule)) throw new Error('节点弹窗规则仍在写 background 简写（会盖掉极光层）');
   if (!/backdrop-filter/.test(modalRule)) throw new Error('节点弹窗缺磨砂');
+  return true;
+});
+
+check('节点族别：形状当第二线索（圆/方/菱/环）+ 待生成大卡按内容收缩', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  // 族标挂在属性标签上、取 currentColor（否则与内联属性色脱钩）
+  const markStart = css.indexOf('.graph-node-attribute::before {');
+  if (markStart < 0) throw new Error('缺属性标签族标（.graph-node-attribute::before）');
+  const mark = css.slice(markStart, css.indexOf('}', markStart));
+  if (!/background:\s*currentColor/.test(mark)) throw new Error('族标未取 currentColor（会与属性色脱钩）');
+  for (const [name, sel] of [
+    ['方＝人工', '.graph-attr-manual .graph-node-attribute::before'],
+    ['菱＝结构', '.graph-node-hub .graph-node-attribute::before'],
+    ['环＝素材', '.graph-node-source .graph-node-attribute::before'],
+  ]) {
+    if (css.indexOf(sel) < 0) throw new Error('缺族标形状：' + name);
+  }
+  // 待生成的大卡不再占 640×512
+  const pendStart = css.indexOf('.graph-node-module.graph-node-pending:not(.minimized) {');
+  if (pendStart < 0) throw new Error('缺待生成收缩规则（.graph-node-module.graph-node-pending:not(.minimized)）');
+  // 底座 640×512 必须让开待生成态，否则收缩规则要跟 !important 对打、白增一条
+  if (css.indexOf('.graph-node-module:not(.graph-node-pending) {') < 0) throw new Error('模块底座未让开待生成态（缺 :not(.graph-node-pending)）');
+  const pend = css.slice(pendStart, css.indexOf('}', pendStart));
+  if (!/min-height:\s*200px\s*!important/.test(pend)) throw new Error('待生成大卡未收缩（仍是 640×512 空盒子）');
+  const gr = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!/function _graphNodePending/.test(gr)) throw new Error('渲染层缺 _graphNodePending 判定');
+  if (!/pendingClass/.test(gr)) throw new Error('渲染层未把 graph-node-pending 挂到节点根');
+  // 面板：色点带形状 + 单条目组不空半行
+  const gc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  if (!/graph-add-node-dot ' \+ _nodeFamilyShape\(option\)/.test(gc)) throw new Error('添加节点面板色点未带族别形状');
+  const gj = fs.readFileSync('src/static/js/graph.js', 'utf8');
+  if (!/function _nodeFamilyShape/.test(gj)) throw new Error('缺 _nodeFamilyShape 映射（面板色点形状）');
+  if (!/graph-add-node-item:only-child/.test(css)) throw new Error('单条目分组仍会在右侧留空（缺 :only-child 占满行）');
   return true;
 });
 
