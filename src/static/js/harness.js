@@ -79,17 +79,71 @@ let harnessLastAppliedBeforeSnapshot = null;
   let harnessSessionEpoch = 0;
   let harnessHistoryLoad = 0;
 
+  // 画布版本指纹：只覆盖建议操作真正读写的图内容（节点、覆盖、删除标记、连线、端口）。
+  // 平移/缩放/聚焦/坐标/折叠/时间戳是纯视图字段——用户在等待生成时挪一下画布，
+  // 不该让建议作废。指纹用短串而非整份状态：历史条目不再随每条建议涨一份画布副本。
+  const HARNESS_VERSION_FIELDS = ['customNodes', 'harnessNodeOverrides', 'harnessDeleted',
+    'connections', 'removedEdges', 'portCounts', 'inputPortCounts'];
+
+  function _harnessVersionSource(state) {
+    const source = state || {};
+    return JSON.stringify(HARNESS_VERSION_FIELDS.map(key =>
+      Object.prototype.hasOwnProperty.call(source, key) ? source[key] : null));
+  }
+
+  function _harnessFingerprint(source) {
+    let hash = 2166136261;
+    for (let i = 0; i < source.length; i++) {
+      hash ^= source.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return 'v2:' + (hash >>> 0).toString(16) + ':' + source.length;
+  }
+
   function _harnessGraphVersion() {
-    const state = _graphState() || {};
-    return JSON.stringify(state);
+    return _harnessFingerprint(_harnessVersionSource(_graphState()));
   }
 
   function _harnessBinding() {
     return { sessionId: _sessionId(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
   }
 
+  // 旧条目迁移：阶段1 把整份画布状态当版本号存进历史，既占地方又永远比对失败。
+  // 能解析的换算成内容指纹；解析不了的降级为「只校验会话」。
+  function _harnessMigrateBinding(binding, sid) {
+    const source = binding && typeof binding === 'object' ? binding : {};
+    const version = typeof source.graphVersion === 'string' ? source.graphVersion : '';
+    if (version.startsWith('v2:')) {
+      return source.sessionId ? source : { ...source, sessionId: sid };
+    }
+    let migrated = null;
+    if (version) {
+      try { migrated = _harnessFingerprint(_harnessVersionSource(JSON.parse(version))); } catch (e) {}
+    }
+    return { ...source, sessionId: source.sessionId || sid, graphVersion: migrated };
+  }
+
+  // 历史条目按会话存储，来源可证：迁移时补上会话归属，缺指纹的旧建议才不会变成
+  // 永远点不动的死按钮。会话对不上或内容已变，仍然拒绝。
+  function _migrateHarnessHistory(entries, sid) {
+    let changed = false;
+    const migrated = entries.map(entry => {
+      if (!entry || typeof entry !== 'object') return entry;
+      const before = entry._binding;
+      const binding = _harnessMigrateBinding(before, sid);
+      if (before && typeof before === 'object' && before.sessionId === binding.sessionId
+          && before.graphVersion === binding.graphVersion) return entry;
+      changed = true;
+      return { ...entry, _binding: binding };
+    });
+    return { entries: migrated, changed };
+  }
+
   function _harnessCanApply(binding) {
-    if (binding && binding.sessionId === _sessionId() && binding.graphVersion === _harnessGraphVersion()) return true;
+    // 会话必须一致；有指纹还必须与当前画布内容一致。指纹缺失只说明建议来自
+    // 迁移前的旧条目（或状态无法解析），此时按会话校验放行这条已展示过的建议。
+    if (binding && binding.sessionId === _sessionId()
+        && (!binding.graphVersion || binding.graphVersion === _harnessGraphVersion())) return true;
     _setHarnessStatus('画布或会话已变化，请重新生成建议后再应用', 'error');
     return false;
   }
@@ -658,7 +712,14 @@ let harnessLastAppliedBeforeSnapshot = null;
     const localKey = 'phymathia_harness_history_' + sid;
     try {
       const local = JSON.parse(localStorage.getItem(localKey) || '[]');
-      if (Array.isArray(local)) harnessHistory = local;
+      if (Array.isArray(local)) {
+        const migrated = _migrateHarnessHistory(local, sid);
+        harnessHistory = migrated.entries;
+        // 只回写本地缓存：服务端副本还没读到，此刻推送可能用旧列表盖掉更新的服务端历史
+        if (migrated.changed) {
+          try { localStorage.setItem(localKey, JSON.stringify(harnessHistory)); } catch (e) {}
+        }
+      }
     } catch (e) {}
     try {
       const resp = await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)));
@@ -666,8 +727,10 @@ let harnessLastAppliedBeforeSnapshot = null;
         const data = await resp.json();
         // 加载期间用户可能已切走会话：旧会话的历史不得覆盖新会话视图
         if (loadId === harnessHistoryLoad && sid === _sessionId() && Array.isArray(data.value)) {
-          harnessHistory = data.value;
-          localStorage.setItem(localKey, JSON.stringify(harnessHistory));
+          const migrated = _migrateHarnessHistory(data.value, sid);
+          harnessHistory = migrated.entries;
+          try { localStorage.setItem(localKey, JSON.stringify(harnessHistory)); } catch (e) {}
+          if (migrated.changed) _saveHarnessHistory();
         }
       }
     } catch (e) {}
@@ -677,7 +740,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     const sid = _sessionId();
     if (!sid) return;
     const localKey = 'phymathia_harness_history_' + sid;
-    localStorage.setItem(localKey, JSON.stringify(harnessHistory));
+    // 本地配额满不应连累面板渲染与服务端同步：历史仍可写服务端
+    try { localStorage.setItem(localKey, JSON.stringify(harnessHistory)); }
+    catch (e) { console.warn('[Harness] 历史本地缓存写入失败（可能超出配额）：', e); }
     try {
       await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)), {
         method: 'POST',

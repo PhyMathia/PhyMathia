@@ -371,17 +371,69 @@ def _session_aliases(session_id: str) -> list:
     return ids
 
 
+def _memory_owner(session_id: str) -> str:
+    """记忆归属：能唯一证明时返回该会话的 local id，证明不了返回空串。
+
+    写入时把归属记进记录里，删除会话时即使 sessions.json 的别名映射已经丢失
+    （备份恢复、数据漂移），也能按归属找回按别名落盘的那条记忆，不留孤儿键。
+    多会话共用同一 server sessionId 时归属不唯一，宁可留键也不猜。
+    """
+    if not session_id:
+        return ""
+    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    if not isinstance(sessions, dict):
+        return ""
+    if session_id in sessions:
+        return session_id
+    owners = [sid for sid, data in sessions.items()
+              if isinstance(data, dict) and data.get("sessionId") == session_id]
+    return owners[0] if len(owners) == 1 else ""
+
+
+def _orphan_memory_keys(data: dict, ids: list, owner: str) -> list:
+    """按记录里的 owner 找回「别名已从 sessions.json 消失」的记忆键。
+
+    只清理能证明不再属于别人的键：本身是活跃会话键、自己有消息文件、或仍有会话
+    声明该别名（含多会话共用同一别名）的，一律保留——与 _session_aliases 的冲突
+    保护同口径，宁可留一个孤儿键也不误删别人的记忆。
+    """
+    if not owner:
+        return []
+    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    live = set(sessions) if isinstance(sessions, dict) else set()
+    claimed = {e.get("sessionId") for e in sessions.values() if isinstance(e, dict)}
+    known = {_rolling_memory_key(sid) for sid in ids}
+    found = []
+    for key, record in data.items():
+        if not key.startswith(ROLLING_MEMORY_KEY_PREFIX) or key in known:
+            continue
+        if not isinstance(record, dict) or record.get("owner") != owner:
+            continue
+        alias = key[len(ROLLING_MEMORY_KEY_PREFIX):]
+        if alias in live or alias in claimed:
+            continue
+        try:
+            if storage._get_messages_path(alias).exists():
+                continue
+        except ValueError:
+            continue
+        found.append(key)
+    return found
+
+
 def _read_rolling_memory(session_id: str):
     if not session_id:
         return None
-    data = _read_json(KV_PATH, {})
+    data = _read_json(_config_mod.KV_PATH, {})
     if not isinstance(data, dict):
         return None
-    mem = data.get(_rolling_memory_key(session_id))
-    if isinstance(mem, dict) and mem.get("summary"):
-        return mem
+    # 摘要会以 local id 或 server sessionId 两种键出现（见 _session_aliases）：
+    # 读侧按同一归属列表回退，避免上下文加载与写入用了不同键时读不到。
+    for key in _session_aliases(session_id):
+        mem = data.get(_rolling_memory_key(key))
+        if isinstance(mem, dict) and mem.get("summary"):
+            return mem
     return None
-
 
 # 内存代次不放 KV：清空全部会把 KV 写成 {}，不能随之重置防回写凭据。
 # 单进程服务重启会终止所有旧任务，因此无需跨进程持久化。
@@ -400,6 +452,7 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
     """删除代次校验与写入共用 JSON 锁；返回是否实际写入。"""
     if not session_id or not summary:
         return False
+    owner = _memory_owner(session_id)
 
     def updater(data):
         data[_rolling_memory_key(session_id)] = {
@@ -408,6 +461,7 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
             "coveredMessageCount": snapshot["coveredMessageCount"],
             "coveredPrefix": snapshot["coveredPrefix"],
             "backlog": snapshot["backlog"],
+            "owner": owner,
             "updatedAt": int(time.time() * 1000),
         }
         return data
@@ -423,22 +477,31 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
                     data[_rolling_memory_key(session_id)] = {
                         "summary": str(summary).strip()[:ROLLING_MEMORY_MAX_CHARS],
                         "messageCount": int(message_count or 0),
+                        "owner": owner,
                         "updatedAt": int(time.time() * 1000),
                     }
                     return data
-                _mutate_json(KV_PATH, write_legacy)
+                _mutate_json(_config_mod.KV_PATH, write_legacy)
                 return True
         messages = _load_messages(session_id)
+        # 拒绝条件按「哪些变化会让这次摘要失效」定：整段历史被截断（位置信息作废，
+        # 下次重算）或覆盖区被改写（会把过期内容写进记忆）才拒绝；尾部新增或编辑
+        # 不影响已覆盖内容，不该丢掉这次（已经付费换来的）摘要。
+        covered = int(snapshot.get("coveredMessageCount") or 0)
         if (len(messages) < snapshot["messageCount"]
-                or _rolling_prefix(messages[:snapshot["messageCount"]]) != snapshot["sourcePrefix"]
+                or _rolling_prefix(messages[:covered]) != snapshot["coveredPrefix"]
                 or _read_rolling_memory(session_id) != snapshot["baseMemory"]):
             return False
-        _mutate_json(KV_PATH, updater)
+        _mutate_json(_config_mod.KV_PATH, updater)
         return True
 
 
 def _delete_rolling_memory(session_id: str) -> None:
-    """在删除会话映射/消息前调用，仅清理精确 local id 和归属该会话的别名。"""
+    """在删除会话映射/消息前调用，清理该会话的精确键与归属它的记忆。
+
+    除了 sessions.json 仍能证明的别名，还按记录里的 owner 找回映射已丢失的别名键，
+    避免留下永远注入不出去的孤儿记忆。
+    """
     if not session_id:
         return
     with storage._JSON_LOCK:
@@ -447,8 +510,15 @@ def _delete_rolling_memory(session_id: str) -> None:
             _rolling_memory_generations[sid] = _rolling_memory_generations.get(sid, 0) + 1
 
         def updater(data):
-            for sid in ids:
-                data.pop(_rolling_memory_key(sid), None)
+            present = [key for key in (_rolling_memory_key(sid) for sid in ids) if key in data]
+            orphans = [key for key in _orphan_memory_keys(data, ids, session_id) if key not in present]
+            if not present and not orphans:
+                return None  # 该会话没有记忆：不重写文件
+            for key in present + orphans:
+                data.pop(key, None)
+                # 别名的在途任务同样作废，否则它会按新代次把记忆写回来
+                alias = key[len(ROLLING_MEMORY_KEY_PREFIX):]
+                _rolling_memory_generations[alias] = _rolling_memory_generations.get(alias, 0) + 1
             return data
 
         _mutate_json(_config_mod.KV_PATH, updater)
@@ -1013,16 +1083,22 @@ def _resolve_socratic_branch(session_id: str) -> str:
     data = _read_json(KV_PATH, {})
     prefixes = _socratic_branch_prefixes(session_id)
     best_ref = ""
-    best_ts = -1
+    # 秒/毫秒混存时按归一化秒比较（占位值与非法值归一化为 0，用原始值打平手，
+    # 保持旧数据在同一量级内的原有先后顺序）
+    best_key = (-1, -1)
     expired_keys = []
     for key, state in data.items():
         if any(key.startswith(p) for p in prefixes) and isinstance(state, dict) and state.get("active"):
             if _socratic_state_expired(state):
                 expired_keys.append(key)
                 continue
-            ts = int(state.get("updatedAt") or 0)
-            if ts > best_ts:
-                best_ts = ts
+            try:
+                raw_ts = int(state.get("updatedAt") or 0)
+            except (TypeError, ValueError):
+                raw_ts = 0
+            rank = (_socratic_state_updated_seconds(state), raw_ts)
+            if rank > best_key:
+                best_key = rank
                 best_ref = key[len(SOCRATIC_STATE_PREFIX):]
     if expired_keys:
         def updater(d):
