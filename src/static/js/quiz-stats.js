@@ -209,6 +209,7 @@ function _recordQuizAnswer(question, correct) {
     }
   }
   _saveQuizStats(stats);
+  _scheduleProfileSignalSync();
 }
 
 function recordSocraticAnswer({ title, question, correct, sessionId, level, at } = {}) {
@@ -252,6 +253,7 @@ function recordSocraticAnswer({ title, question, correct, sessionId, level, at }
     updatedAt: now
   };
   _saveQuizStats(stats);
+  _scheduleProfileSignalSync();
   return current;
 }
 
@@ -415,4 +417,85 @@ function _generateOpenQuestions(pool) {
     }
   }
   return result.slice(0, 3);
+}
+
+// ====== 画像信号回传（确定性，零模型调用） ======
+// 检测错题 / 苏格拉底答错汇总为「薄弱」候选；知识条目跨会话高频主题汇总为「兴趣」候选。
+// 走 /api/profile/candidates，与对话采集同一套合并语义（规范化查重 + 两次固化）。
+// 同步缓存 7 天防重复打扰；debounce 2s 合并连续答题。
+const MEMORY_SIGNAL_SYNC_KEY = 'phymathia_memory_signal_sync';
+let _memorySignalTimer = null;
+
+function _memorySignalReadSynced() {
+  try { return JSON.parse(localStorage.getItem(MEMORY_SIGNAL_SYNC_KEY) || '{}'); } catch (e) { return {}; }
+}
+
+function _memorySignalWriteSynced(map) {
+  try { localStorage.setItem(MEMORY_SIGNAL_SYNC_KEY, JSON.stringify(map)); } catch (e) {}
+}
+
+function _collectProfileSignalCandidates() {
+  const stats = _readQuizStats();
+  const now = Date.now();
+  const week = 7 * 24 * 3600 * 1000;
+  const synced = _memorySignalReadSynced();
+  const candidates = [];
+
+  // 薄弱：按主题聚合答错次数与掌握度（检测 + 苏格拉底共用同一份统计）
+  const topics = {};
+  for (const [key, item] of Object.entries(stats)) {
+    if (key === '_meta' || !item || typeof item !== 'object') continue;
+    const title = String(item.title || '').trim();
+    if (!title) continue;
+    const t = topics[title] || { wrong: 0, mastery: 100 };
+    t.wrong += (item.wrong || 0);
+    const m = typeof item.mastery === 'number' ? item.mastery : _quizMastery(item);
+    t.mastery = Math.min(t.mastery, m);
+    topics[title] = t;
+  }
+  for (const [title, t] of Object.entries(topics)) {
+    const weak = t.wrong >= 2 || (t.wrong >= 1 && t.mastery < 70);
+    if (!weak) continue;
+    const syncKey = 'weak:' + title;
+    if (synced[syncKey] && now - synced[syncKey] < week) continue;
+    candidates.push({ fact: '检测多次答错：' + title, category: 'weakness', source: 'quiz' });
+    synced[syncKey] = now;
+  }
+
+  // 兴趣：同一主题（标题归一后）出现在 >=3 个不同会话的知识条目
+  try {
+    if (typeof getKnowledgeItems === 'function') {
+      const sessionsByTitle = {};
+      for (const item of Object.values(getKnowledgeItems())) {
+        const title = String(item && item.title || '').trim();
+        if (!title) continue;
+        if (typeof _isJunkKnowledgeTitle === 'function' && _isJunkKnowledgeTitle(title)) continue;
+        const norm = title.toLowerCase().replace(/\s+/g, '');
+        (sessionsByTitle[norm] = sessionsByTitle[norm] || { title: title, sessions: new Set() }).sessions.add(String(item.sessionId || ''));
+      }
+      let interestCount = 0;
+      for (const { title, sessions } of Object.values(sessionsByTitle)) {
+        if (sessions.size < 3 || interestCount >= 3) continue;
+        const syncKey = 'interest:' + title;
+        if (synced[syncKey] && now - synced[syncKey] < week) continue;
+        candidates.push({ fact: '经常提问：' + title, category: 'interest', source: 'usage' });
+        synced[syncKey] = now;
+        interestCount++;
+      }
+    }
+  } catch (e) { /* 知识缓存不可用时只出薄弱信号 */ }
+
+  _memorySignalWriteSynced(synced);
+  return candidates.slice(0, 6);
+}
+
+function _syncProfileSignals() {
+  if (typeof memoryPostCandidates !== 'function') return;
+  const candidates = _collectProfileSignalCandidates();
+  if (candidates.length) memoryPostCandidates(candidates, 'signal');
+}
+
+function _scheduleProfileSignalSync() {
+  if (_memorySignalTimer) clearTimeout(_memorySignalTimer);
+  _memorySignalTimer = setTimeout(() => { _memorySignalTimer = null; _syncProfileSignals(); }, 2000);
 }
