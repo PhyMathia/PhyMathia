@@ -851,6 +851,10 @@
      旧值 #64748b 是冷灰蓝（色相 215°）——与数学视角 #3b82f6（217.2°）同色相、与「AI 生成空白」
      #94a3b8（215°，这个灰在本应用里表示「还没生成」）几乎同族，纸上读起来就是脏灰。 */
   --ink-human: #b5793f;
+  /* 人工家族第二色：我的理解（批注/笔记）专用。同一个「墨」的语言里换色相不换调子
+     ——同为低彩度，与我的回答/我的总结（赭墨）并排能一眼分开，又不会被误读成 AI 那一侧的高饱和色。
+     色相 136° 落在调色板最空的一带（最近的知识点 83.7°、AI 回答 160.1°，两侧各留 24° 以上）。 */
+  --ink-note: #66a376;
   /* 画布工具栏图标墨色：深色=冷白，浅色=暖棕墨（用户反馈浅色下纯黑图标与暖米色环境违和） */
   --graph-tool-ink: #f0f4f8;
 }
@@ -858,6 +862,7 @@
 [data-theme="light"] {
   --node-glass-base: rgba(255, 252, 246, 0.94);
   --ink-human: #8a5a2c;
+  --ink-note: #407751;
   --graph-tool-ink: #54452a;
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
@@ -1593,7 +1598,7 @@
 .graph-attr-socratic { --node-attr: #f43f5e; }
 .graph-attr-learn { --node-attr: #a855f7; }
 .graph-attr-manual { --node-attr: var(--ink-human); }
-.graph-attr-human_note { --node-attr: var(--ink-human); }
+.graph-attr-human_note { --node-attr: var(--ink-note); }
 .graph-attr-ai_eval { --node-attr: #f59e0b; }
 .graph-attr-hub { --node-attr: #eab308; }
 .graph-attr-summary { --node-attr: #0d9488; }
@@ -2543,6 +2548,12 @@
 .graph-node.graph-attr-manual,
 .graph-node.graph-node-human-note,
 .graph-node.graph-node-note {
+  /* 家族自己的悬停色。全局悬停规则（`.graph-override.css` 9 段里
+     `[data-theme] .graph-node:hover`）读的是下面这两个变量，而「我的回答」的 kind 是 answer，
+     不补这一组就会继承 `.graph-node-answer` 的翠绿——静止态被本段压住看不出来，一悬停就变绿。
+     「我的理解」同理吃到 :root 的白色描边 + 蓝色光晕。形状与其它家族（.graph-node-user 等）一致。 */
+  --graph-bubble-border: var(--node-attr, var(--ink-human));
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr, var(--ink-human)) 32%, transparent);
   border: 1px solid color-mix(in srgb, var(--node-attr, var(--ink-human)) 36%, transparent) !important;
   border-left: 5px solid var(--node-attr, var(--ink-human)) !important;
   border-radius: var(--r-xl) !important;
@@ -2604,8 +2615,8 @@
 }
 
 .graph-node-human-note .graph-node-attribute {
-  color: var(--ink-human) !important;
-  border-color: var(--ink-human) !important;
+  color: var(--ink-note) !important;
+  border-color: var(--ink-note) !important;
 }
 
 .graph-human-note-formula {
