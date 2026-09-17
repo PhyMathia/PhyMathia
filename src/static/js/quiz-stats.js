@@ -434,12 +434,15 @@ function _memorySignalWriteSynced(map) {
   try { localStorage.setItem(MEMORY_SIGNAL_SYNC_KEY, JSON.stringify(map)); } catch (e) {}
 }
 
+// 收集候选但不落防重账：返回 { candidates, marks }。
+// 账（marks）由调用方在发送成功后合并进 synced——发送失败不消耗 7 天防重窗口
 function _collectProfileSignalCandidates() {
   const stats = _readQuizStats();
   const now = Date.now();
   const week = 7 * 24 * 3600 * 1000;
   const synced = _memorySignalReadSynced();
   const candidates = [];
+  const marks = {};
 
   // 薄弱：按主题聚合答错次数与掌握度（检测 + 苏格拉底共用同一份统计）
   const topics = {};
@@ -459,7 +462,7 @@ function _collectProfileSignalCandidates() {
     const syncKey = 'weak:' + title;
     if (synced[syncKey] && now - synced[syncKey] < week) continue;
     candidates.push({ fact: '检测多次答错：' + title, category: 'weakness', source: 'quiz' });
-    synced[syncKey] = now;
+    marks[syncKey] = now;
   }
 
   // 兴趣：同一主题（标题归一后）出现在 >=3 个不同会话的知识条目
@@ -479,20 +482,27 @@ function _collectProfileSignalCandidates() {
         const syncKey = 'interest:' + title;
         if (synced[syncKey] && now - synced[syncKey] < week) continue;
         candidates.push({ fact: '经常提问：' + title, category: 'interest', source: 'usage' });
-        synced[syncKey] = now;
+        marks[syncKey] = now;
         interestCount++;
       }
     }
   } catch (e) { /* 知识缓存不可用时只出薄弱信号 */ }
 
-  _memorySignalWriteSynced(synced);
-  return candidates.slice(0, 6);
+  return { candidates: candidates.slice(0, 6), marks: marks };
 }
 
-function _syncProfileSignals() {
+async function _syncProfileSignals() {
   if (typeof memoryPostCandidates !== 'function') return;
-  const candidates = _collectProfileSignalCandidates();
-  if (candidates.length) memoryPostCandidates(candidates, 'signal');
+  // 记忆开关关闭时不消耗防重窗口（后端反正会忽略），重新开启后下次答题照常采集
+  if (typeof _cachedProfile !== 'undefined' && _cachedProfile && _cachedProfile.enabled === false) return;
+  const { candidates, marks } = _collectProfileSignalCandidates();
+  if (!candidates.length) return;
+  const res = await memoryPostCandidates(candidates, 'signal');
+  if (res && res.ok) {
+    const synced = _memorySignalReadSynced();
+    Object.assign(synced, marks);
+    _memorySignalWriteSynced(synced);
+  }
 }
 
 function _scheduleProfileSignalSync() {

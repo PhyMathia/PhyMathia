@@ -1043,10 +1043,17 @@ async def api_extract_knowledge(request: Request):
 
     profile_result = None
     if device_id:
-        # 旧格式 profile_facts 兼容：按 new 语义并入 ops（合并式采集内部按规范化文本去重）
+        # 旧格式 profile_facts 兼容：按 new 语义并入 ops（合并式采集内部按规范化文本去重）。
+        # 模型同时输出新旧两种格式时，同一句陈述会在这里被数两次（第二条撞重直接固化，
+        # 绕过两击门槛），故并入前按规范化文本与 ops 的 new/update 去重
         all_ops = list(profile_ops or [])
+        op_norms = {profile._norm_fact(str(o.get("fact") or ""))
+                    for o in all_ops
+                    if isinstance(o, dict) and str(o.get("op") or "").lower() in ("new", "update")}
         for pf in profile_facts or []:
             if isinstance(pf, dict) and str(pf.get("fact") or "").strip():
+                if profile._norm_fact(str(pf.get("fact") or "")) in op_norms:
+                    continue
                 pf.setdefault("sourceSession", session_id)
                 all_ops.append({"op": "new", **pf})
         for op in all_ops:
@@ -1114,6 +1121,9 @@ async def api_profile_candidates(request: Request):
     if not device_id:
         raise HTTPException(status_code=400, detail="缺少 device_id")
     candidates = payload.get("candidates")
+    # 单批上限：正常信号源（检测/提取）一次最多几条，超量只可能是异常或恶意输入
+    if isinstance(candidates, list):
+        candidates = candidates[:50]
     source = str(payload.get("source") or "signal")[:32]
     try:
         return profile.apply_profile_ops(device_id, candidates, source=source)

@@ -373,11 +373,12 @@ def mark_profile_used(device_id: str, fact_ids: list) -> None:
     只在注入路径调用（每轮主回答一次）；休眠事实不参与后续注入，
     面板「休眠」区可一键恢复。写失败静默——回写失败不该影响回答。
     """
-    if not fact_ids:
-        fact_ids = []
+    fact_ids = fact_ids or []
 
     def updater(raw):
         profile = _normalize_profile(raw)
+        if not profile.get("enabled", True):
+            return None
         now = time.time()
         changed = False
         hit_ids = set(str(i) for i in fact_ids)
@@ -442,6 +443,17 @@ def _profile_section_texts(profile: dict) -> tuple:
         style_parts.append(f"术语={style['jargon']}")
     if style.get("visuals") and style["visuals"] != "否":
         style_parts.append(f"可视化={style['visuals']}")
+    # style 类别的自动事实与显式偏好同段注入：否则该类事实永不进段落，
+    # 却仍计入 factIds 被 lastUsedAt 刷新，成为不休眠也永不出场的死数据
+    style_seen = set()
+    for f in facts:
+        if f["category"] != "style":
+            continue
+        t = str(f["fact"])[:60]
+        k = _norm_fact(t)
+        if k and k not in style_seen:
+            style_seen.add(k)
+            style_parts.append(t)
     if style_parts:
         sections.append("【偏好】" + "；".join(style_parts))
     other = [str(f["fact"]) for f in facts if f["category"] == "other"]

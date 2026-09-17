@@ -2844,17 +2844,22 @@ check('memory-v2：角标分节与后端注入同构（学段/目标/薄弱/兴�
   return true;
 });
 
-check('memory-v2：相对时间口径（刚刚/分钟/小时/天/日期）', () => {
+check('memory-v2：相对时间口径（刚刚/分钟/小时/天/日期；服务端秒级时间戳自动换算）', () => {
   const now = Date.now();
   if (sandbox.memoryRelTime(now - 5000) !== '刚刚') throw new Error('5 秒前应为 刚刚');
   if (sandbox.memoryRelTime(now - 5 * 60000) !== '5 分钟前') throw new Error('分钟口径错');
   if (sandbox.memoryRelTime(now - 3 * 3600000) !== '3 小时前') throw new Error('小时口径错');
   if (sandbox.memoryRelTime(now - 2 * 86400000) !== '2 天前') throw new Error('天口径错');
   if (sandbox.memoryRelTime(0) !== '—') throw new Error('无时间戳应为 —');
+  // 服务端 time.time() 是秒：不换算会算出天文数字差值，落到 1970 年的日期
+  const secNow = Math.floor(now / 1000);
+  if (sandbox.memoryRelTime(secNow - 3 * 3600) !== '3 小时前') {
+    throw new Error('秒级时间戳未换算：' + sandbox.memoryRelTime(secNow - 3 * 3600));
+  }
   return true;
 });
 
-check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会话)成候选，7 天同步缓存防重复', () => {
+check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会话)成候选，发送成功才记 7 天防重账', () => {
   const now = Date.now();
   sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify({
     t1: { title: '简谐运动', wrong: 2, correct: 0, mastery: 30, last: now },
@@ -2870,14 +2875,23 @@ check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会�
   if (typeof sandbox.invalidateKnowledgeCache === 'function') sandbox.invalidateKnowledgeCache();
   sandbox.localStorage.removeItem('phymathia_memory_signal_sync');
   try {
-    const cands = sandbox._collectProfileSignalCandidates();
-    const facts = cands.map(c => c.fact).join('|');
+    const first = sandbox._collectProfileSignalCandidates();
+    const facts = first.candidates.map(c => c.fact).join('|');
     if (!facts.includes('检测多次答错：简谐运动')) throw new Error('薄弱候选缺失：' + facts);
     if (!facts.includes('经常提问：梯度')) throw new Error('兴趣候选缺失：' + facts);
     if (facts.includes('牛顿第二定律')) throw new Error('1 错且高掌握不应判薄弱：' + facts);
     if (facts.includes('散度')) throw new Error('单会话主题不应判兴趣：' + facts);
+    // 未发送成功不落账：重复采集仍能拿到同样候选（POST 失败不消耗 7 天窗口）
     const again = sandbox._collectProfileSignalCandidates();
-    if (again.length !== 0) throw new Error('7 天同步缓存未生效：' + again.map(c => c.fact).join('|'));
+    if (again.candidates.length !== first.candidates.length) {
+      throw new Error('未发送成功不应记账：' + again.candidates.map(c => c.fact).join('|'));
+    }
+    // 模拟发送成功（_syncProfileSignals 在 res.ok 时合并 marks）后再采集 → 窗口内不再出候选
+    const synced = JSON.parse(sandbox.localStorage.getItem('phymathia_memory_signal_sync') || '{}');
+    Object.assign(synced, first.marks);
+    sandbox.localStorage.setItem('phymathia_memory_signal_sync', JSON.stringify(synced));
+    const third = sandbox._collectProfileSignalCandidates();
+    if (third.candidates.length !== 0) throw new Error('7 天防重账未生效：' + third.candidates.map(c => c.fact).join('|'));
   } finally {
     sandbox.localStorage.removeItem('phymathia_quiz_stats');
     sandbox.localStorage.removeItem('phymathia_knowledge');

@@ -607,8 +607,11 @@
             const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
             const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
             metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
-            // 画像注入角标：只标注入过画像的主路径完整回答（quick 与分支回答不注入画像）
-            if (typeof memoryAppendProfileBadge === 'function' && !isCasual && !(branchMeta && branchMeta.branchType)) {
+            // 画像注入角标：与后端注入条件同口径——非 quick 且非画布模块生成才注入，
+            // 而后端 is_quick 要求无 branch_id/graph_path，所以分支回答（含分支上的寒暄）
+            // 会照常注入画像，角标不能把分支排除掉
+            if (typeof memoryAppendProfileBadge === 'function'
+              && (!isCasual || !!(branchMeta && (branchMeta.branchType || branchMeta.branchId)))) {
               memoryAppendProfileBadge(metaEl);
             }
           }
