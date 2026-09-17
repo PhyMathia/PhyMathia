@@ -338,7 +338,7 @@
 }
 
 .graph-node-note {
-  border-left: 6px solid #f97316 !important;
+  border-left: 6px solid var(--ink-human) !important;
 }
 
 .graph-node-root {
@@ -846,12 +846,18 @@
   --graph-edge-glow: rgba(34, 211, 238, 0.42);
   /* 玻璃节点底座（blank / human_note 等皮肤分层的最底一层；深浅各一套） */
   --node-glass-base: rgba(12, 18, 36, 0.90);
+  /* 人工家族墨色（我的回答 / 我的理解 / 我的总结 共用一色）。深浅两档是必须的：这个色同时
+     当属性标签文字与书脊用，深色底要够亮、暖米底要够暗，两边才都有对比。
+     旧值 #64748b 是冷灰蓝（色相 215°）——与数学视角 #3b82f6（217.2°）同色相、与「AI 生成空白」
+     #94a3b8（215°，这个灰在本应用里表示「还没生成」）几乎同族，纸上读起来就是脏灰。 */
+  --ink-human: #b5793f;
   /* 画布工具栏图标墨色：深色=冷白，浅色=暖棕墨（用户反馈浅色下纯黑图标与暖米色环境违和） */
   --graph-tool-ink: #f0f4f8;
 }
 
 [data-theme="light"] {
   --node-glass-base: rgba(255, 252, 246, 0.94);
+  --ink-human: #8a5a2c;
   --graph-tool-ink: #54452a;
   --graph-bubble-start: rgba(120, 100, 70, 0.10);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
@@ -891,10 +897,10 @@
 }
 
 .graph-node-note {
-  --graph-bubble-start: rgba(249, 115, 22, 0.14);
+  --graph-bubble-start: color-mix(in srgb, var(--ink-human) 14%, transparent);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #f97316;
-  --graph-bubble-glow: rgba(249, 115, 22, 0.32);
+  --graph-bubble-border: var(--ink-human);
+  --graph-bubble-glow: color-mix(in srgb, var(--ink-human) 32%, transparent);
 }
 
 .graph-node-root {
@@ -980,10 +986,10 @@
 }
 
 [data-theme="light"] .graph-node-note {
-  --graph-bubble-start: rgba(249, 115, 22, 0.18);
+  --graph-bubble-start: color-mix(in srgb, var(--ink-human) 18%, transparent);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #f97316;
-  --graph-bubble-glow: rgba(249, 115, 22, 0.26);
+  --graph-bubble-border: var(--ink-human);
+  --graph-bubble-glow: color-mix(in srgb, var(--ink-human) 26%, transparent);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
@@ -1586,12 +1592,12 @@
 .graph-attr-viz { --node-attr: #f472b6; }
 .graph-attr-socratic { --node-attr: #f43f5e; }
 .graph-attr-learn { --node-attr: #a855f7; }
-.graph-attr-manual { --node-attr: #64748b; }
-.graph-attr-human_note { --node-attr: #64748b; }
+.graph-attr-manual { --node-attr: var(--ink-human); }
+.graph-attr-human_note { --node-attr: var(--ink-human); }
 .graph-attr-ai_eval { --node-attr: #f59e0b; }
 .graph-attr-hub { --node-attr: #eab308; }
 .graph-attr-summary { --node-attr: #0d9488; }
-.graph-attr-note { --node-attr: #f97316; }
+.graph-attr-note { --node-attr: var(--ink-human); }
 .graph-attr-source { --node-attr: #06b6d4; }
 .graph-attr-knowledge { --node-attr: #84cc16; }
 .graph-attr-relation { --node-attr: #f43f5e; }
@@ -2537,12 +2543,12 @@
 .graph-node.graph-attr-manual,
 .graph-node.graph-node-human-note,
 .graph-node.graph-node-note {
-  border: 1px solid color-mix(in srgb, var(--node-attr, #64748b) 36%, transparent) !important;
-  border-left: 5px solid var(--node-attr, #64748b) !important;
+  border: 1px solid color-mix(in srgb, var(--node-attr, var(--ink-human)) 36%, transparent) !important;
+  border-left: 5px solid var(--node-attr, var(--ink-human)) !important;
   border-radius: var(--r-xl) !important;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 13%, transparent), transparent 64%),
-    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 15%, transparent) 26px 27px),
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, var(--ink-human)) 13%, transparent), transparent 64%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, var(--ink-human)) 15%, transparent) 26px 27px),
     var(--node-glass-base) !important;
   box-shadow:
     0 14px 40px rgba(0, 0, 0, 0.34),
@@ -2582,8 +2588,8 @@
 [data-theme="light"] .graph-node.graph-node-human-note,
 [data-theme="light"] .graph-node.graph-node-note {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, #64748b) 12%, transparent), transparent 66%),
-    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, #64748b) 13%, transparent) 26px 27px),
+    linear-gradient(180deg, color-mix(in srgb, var(--node-attr, var(--ink-human)) 12%, transparent), transparent 66%),
+    repeating-linear-gradient(180deg, transparent 0 26px, color-mix(in srgb, var(--node-attr, var(--ink-human)) 13%, transparent) 26px 27px),
     var(--node-glass-base) !important;
   box-shadow:
     0 14px 36px rgba(120, 100, 70, 0.18),
@@ -2598,8 +2604,8 @@
 }
 
 .graph-node-human-note .graph-node-attribute {
-  color: #64748b !important;
-  border-color: #64748b !important;
+  color: var(--ink-human) !important;
+  border-color: var(--ink-human) !important;
 }
 
 .graph-human-note-formula {
