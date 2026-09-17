@@ -20,9 +20,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.css?v=45">
-  <link rel="stylesheet" href="/css/styles-panels.css?v=14">
-  <link rel="stylesheet" href="/css/graph-override.css?v=114">
+  <link rel="stylesheet" href="/css/styles.css?v=46">
+  <link rel="stylesheet" href="/css/styles-panels.css?v=15">
+  <link rel="stylesheet" href="/css/graph-override.css?v=115">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=23">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -41,10 +41,10 @@
   <div class="sidebar aurora-glass aurora-glass--panel" id="sidebar">
     <div class="sidebar-header">
       <h3>画布列表</h3>
-      <button class="sidebar-close" onclick="closeSidebar()">&times;</button>
+      <button aria-label="关闭" class="sidebar-close" onclick="closeSidebar()">✕</button>
     </div>
     <button class="new-chat-btn" onclick="createNewSession()">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> 新建画布
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> 新建画布
     </button>
     <button class="clear-all-btn" onclick="clearAllSessions()">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> 清空所有画布
@@ -81,7 +81,7 @@
   <div class="app-container">
     <div class="chat-header aurora-glass aurora-glass--panel">
       <button class="menu-btn" onclick="toggleSidebar()" title="画布列表">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
       </button>
       <div class="logo"><img id="logo-img" src="/logo.png" alt="PhyMathia"></div>
       <div class="brand">
@@ -99,7 +99,7 @@
         <button class="header-btn model-btn" onclick="toggleModelPanel(event)" id="modelBtn" title="模型设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
         <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
         <button class="header-btn continent-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></button>
-        <button class="header-btn knowledge-btn-icon" onclick="toggleKnowledgePanel()" title="知识总览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+        <button class="header-btn knowledge-btn-icon" onclick="toggleKnowledgePanel()" title="知识总览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
         <button class="header-btn quiz-btn" onclick="openQuiz()" title="知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></button>
         <button class="header-btn" onclick="toggleDataPanel(event)" title="数据管理"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></button>
         <button class="header-btn" onclick="clearChat()" title="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
@@ -122,7 +122,7 @@
       <div class="graph-search-panel aurora-glass aurora-glass--compact" id="graphSearchPanel" hidden>
         <div class="graph-search-header">
           <input id="graphSearchInput" type="search" placeholder="搜索节点..." autocomplete="off" oninput="graphSearchInputChanged(this.value)" onkeydown="graphSearchKeydown(event)">
-          <button class="graph-search-close" onclick="closeGraphSearchPanel()" title="关闭搜索" aria-label="关闭搜索">&times;</button>
+          <button class="graph-search-close" onclick="closeGraphSearchPanel()" title="关闭搜索" aria-label="关闭搜索">✕</button>
         </div>
         <div class="graph-search-scope" id="graphSearchScope">
           <button class="graph-search-scope-btn active" data-scope="current" onclick="setGraphSearchScope('current', this)">当前图</button>
@@ -145,7 +145,7 @@
       <div class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="socraticModalTitle">
         <div class="socratic-modal-header">
           <span id="socraticModalTitle">苏格拉底追问</span>
-          <button class="socratic-modal-close" type="button" onclick="closeSocraticModal()" aria-label="关闭">&times;</button>
+          <button class="socratic-modal-close" type="button" onclick="closeSocraticModal()" aria-label="关闭">✕</button>
         </div>
         <div class="socratic-modal-question" id="socraticModalQuestion"></div>
         <textarea id="socraticModalAnswer" rows="4" placeholder="输入你的回答..."></textarea>
@@ -166,7 +166,7 @@
       <div class="socratic-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true">
         <div class="socratic-modal-header">
           <span id="branchModalTitle">追问</span>
-          <button class="socratic-modal-close" type="button" onclick="closeBranchModal()" aria-label="关闭">&times;</button>
+          <button class="socratic-modal-close" type="button" onclick="closeBranchModal()" aria-label="关闭">✕</button>
         </div>
         <textarea id="branchModalText" rows="6"></textarea>
         <div class="socratic-modal-actions">
@@ -179,14 +179,14 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=8fe26342"></script>
+  <script src="/js/app.js?v=2af3dc84"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
   <div class="knowledge-panel memory-panel aurora-glass aurora-glass--panel" id="memoryPanel">
     <div class="kp-header">
       <h2>记忆</h2>
-      <button class="kp-close" onclick="closeMemoryPanel()">&times;</button>
+      <button aria-label="关闭" class="kp-close" onclick="closeMemoryPanel()">✕</button>
     </div>
     <div class="memory-body">
       <div class="memory-section">
@@ -241,7 +241,7 @@
         <input type="checkbox" id="memoryClearIncludeLearning"> 同时清除学习数据（知识库 / 公式 / 错题统计）
       </label>
       <div class="memory-dialog-actions">
-        <button class="memory-dialog-cancel" onclick="closeMemoryClearDialog()">取消</button>
+        <button aria-label="关闭" class="memory-dialog-cancel" onclick="closeMemoryClearDialog()">取消</button>
         <button class="memory-dialog-danger" onclick="memoryConfirmClear()">确认清除</button>
       </div>
     </div>
@@ -252,7 +252,7 @@
       <h2>知识总览</h2>
       <div class="kp-header-actions">
         <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
-        <button class="kp-close" onclick="closeKnowledgePanel()">&times;</button>
+        <button aria-label="关闭" class="kp-close" onclick="closeKnowledgePanel()">✕</button>
       </div>
     </div>
     <div class="kp-tabs">
@@ -334,7 +334,7 @@
     <div class="quiz-modal aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-labelledby="quizModalTitle">
       <div class="quiz-header">
         <button class="quiz-back-icon" type="button" onclick="handleQuizBack()" aria-label="返回" title="返回">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
         </button>
         <div class="quiz-heading">
           <span id="quizModalTitle">知识检测</span>
@@ -397,7 +397,7 @@
     <div class="model-section model-section-mgmt">
       <div class="model-section-title">管理自定义模型</div>
       <div class="model-list" id="modelList"></div>
-      <button class="model-add-btn" onclick="showAddModelDialog()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> 添加模型</button>
+      <button class="model-add-btn" onclick="showAddModelDialog()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> 添加模型</button>
     </div>
   </div>
 
@@ -522,7 +522,7 @@
     <div class="viz-fullscreen-bar aurora-glass aurora-glass--panel">
       <span class="viz-fullscreen-title" id="vizFullscreenTitle">交互式可视化</span>
       <span class="viz-check-badge" id="vizFullscreenCheckBadge" style="display:none"></span>
-      <button class="viz-fullscreen-close" onclick="closeVizFullscreen()">✕ 退出全屏</button>
+      <button class="viz-fullscreen-close" aria-label="退出全屏" onclick="closeVizFullscreen()">✕ 退出全屏</button>
     </div>
     <iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe"></iframe>
   </div>
@@ -542,7 +542,7 @@
           <div class="example-guide-title">内置示例图讲解</div>
           <div class="example-guide-subtitle">已载入示例图，可边点边学；关闭后恢复你的原图</div>
         </div>
-        <button class="example-guide-close" onclick="closeExampleGuide()" title="关闭">&times;</button>
+        <button aria-label="关闭" class="example-guide-close" onclick="closeExampleGuide()" title="关闭">✕</button>
       </div>
       <div class="example-guide-body">
         <div class="example-guide-panel">

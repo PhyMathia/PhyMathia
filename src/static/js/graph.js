@@ -588,7 +588,7 @@ function openGraphHistoryPanel() {
     graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog";
     graphHistoryPanel.innerHTML = ''
       + '<div class="graph-history-head-row"><span class="graph-history-title">修改历史</span>'
-      + '<button type="button" class="graph-history-close" onclick="closeGraphHistoryPanel()" aria-label="关闭">&times;</button></div>'
+      + '<button type="button" class="graph-history-close" onclick="closeGraphHistoryPanel()" aria-label="关闭">✕</button></div>'
       + '<div class="graph-history-tools">'
       + '<button type="button" onclick="undoGraphAction()" title="Ctrl+Z">↩ 撤销</button>'
       + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y">↪ 重做</button>'
@@ -1456,7 +1456,7 @@ function openGraphConsistencyPanel() {
     graphConsistencyPanel.className = "graph-consistency-panel aurora-glass aurora-glass--dialog";
     graphConsistencyPanel.innerHTML = ''
       + '<div class="graph-consistency-head"><span class="graph-consistency-title">图体检</span>'
-      + '<button type="button" class="graph-consistency-close" onclick="closeGraphConsistencyPanel()" aria-label="关闭">&times;</button></div>'
+      + '<button type="button" class="graph-consistency-close" onclick="closeGraphConsistencyPanel()" aria-label="关闭">✕</button></div>'
       + '<div class="graph-consistency-tools">'
       + '<button type="button" onclick="refreshGraphConsistency()">重新体检</button>'
       + '</div>'

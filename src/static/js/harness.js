@@ -583,7 +583,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<span class="graph-harness-title">网络助手</span>'
       + '<span class="graph-harness-head-actions">'
       + '<button type="button" onclick="restoreHarnessDeletedNodesConfirm()" title="恢复被撤销/拒绝标记删除的节点">↺</button><button type="button" onclick="toggleHarnessGuide()" title="使用引导">?</button>'
-      + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">&times;</button>'
+      + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">✕</button>'
       + '</span>'
       + '</div>'
       + '<div class="graph-harness-chat" id="graphHarnessChat"></div>'
