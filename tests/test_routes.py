@@ -1040,3 +1040,59 @@ class ProfileMemoryTest(RouteTestBase):
         self.assertEqual(resp.json()["profile"]["promoted"], ["我是高二学生"])
         self.assertTrue(any(f["fact"] == "我是高二学生"
                             for f in profile_mod.get_profile(self._dev())["facts"]))
+
+    def test_style_fact_injected_into_style_section(self):
+        """style 类别事实须并入【偏好】段：否则记了永不注入，却一直被 lastUsedAt 刷新成死数据。"""
+        profile_mod.apply_profile_ops(self._dev(), [
+            {"op": "new", "fact": "偏好简洁的回答", "category": "style"}])
+        pid = profile_mod.get_profile(self._dev())["pending"][0]["id"]
+        profile_mod.apply_profile_ops(self._dev(), [{"op": "confirm", "id": pid}])
+        ctx = profile_mod.profile_context(self._dev())
+        self.assertIn("【偏好】", ctx["text"])
+        self.assertIn("偏好简洁的回答", ctx["text"])
+        self.assertIn(pid, ctx["factIds"])  # 被注入的事实须回写 lastUsedAt
+
+    def test_legacy_and_ops_same_fact_not_double_counted(self):
+        """模型同时输出新旧两种格式时，同一句陈述不能被计两次（否则一击即固化）。"""
+        async def _fake_extract(messages, provider, api_key, model, base_url, level,
+                                profile_digest=""):
+            return ([], [
+                {"fact": "我是高二学生", "category": "stage"},   # 旧格式 profile_facts
+            ], [
+                {"op": "new", "fact": "我是高二学生", "category": "stage"},  # 新格式同文本
+            ])
+        orig = main_mod._ai_extract_knowledge
+        main_mod._ai_extract_knowledge = _fake_extract
+        try:
+            resp = self.client.post("/api/extract_knowledge", json={
+                "sessionId": "sess_dup", "device_id": self._dev(),
+                "provider": "deepseek", "api_key": "k", "model": "m",
+                "messages": [{"role": "user", "content": "问"},
+                             {"role": "assistant", "content": "答"}],
+            })
+        finally:
+            main_mod._ai_extract_knowledge = orig
+        self.assertEqual(resp.status_code, 200)
+        p = profile_mod.get_profile(self._dev())
+        stage_facts = [f for f in p["facts"] if f["fact"] == "我是高二学生"]
+        self.assertEqual(len(stage_facts), 1)
+        self.assertEqual(stage_facts[0]["occurrences"], 1)
+
+    def test_candidates_endpoint_caps_batch(self):
+        resp = self.client.post("/api/profile/candidates", json={
+            "device_id": self._dev(),
+            "candidates": [{"fact": f"薄弱主题{i}", "category": "weakness"} for i in range(60)],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["changed"], 50)  # 超出单批上限的部分丢弃
+
+    def test_mark_used_skips_disabled_profile(self):
+        """停用画像不因回写路径产生任何写盘（休眠转移也停）。"""
+        profile_mod.apply_profile_ops(self._dev(), [
+            {"op": "new", "fact": "我是高二学生", "category": "stage"}])
+        fid = profile_mod.get_profile(self._dev())["facts"][0]["id"]
+        profile_mod.update_profile(self._dev(), {"enabled": False})
+        profile_mod.mark_profile_used(self._dev(), [fid])
+        raw = profile_mod.get_profile(self._dev())
+        self.assertTrue(raw["enabled"] is False)
+        self.assertEqual(raw["facts"][0]["lastUsedAt"], 0)  # 未被回写

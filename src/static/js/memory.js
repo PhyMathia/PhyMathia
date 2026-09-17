@@ -39,7 +39,8 @@ function memoryWithDevice(payload) {
 }
 
 // ---------- 候选提交与固化提醒 ----------
-// 确定性信号（检测错题/苏格拉底答错/高频提问）走这个入口，与对话采集同一套合并语义
+// 确定性信号（检测错题/苏格拉底答错/高频提问）走这个入口，与对话采集同一套合并语义。
+// 返回值带 ok：发送成功为 true——调用方（检测信号同步）据此决定是否消耗防重窗口
 async function memoryPostCandidates(candidates, source) {
   if (!Array.isArray(candidates) || !candidates.length) return { changed: 0, promoted: [] };
   try {
@@ -48,15 +49,15 @@ async function memoryPostCandidates(candidates, source) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id: getDeviceId(), candidates: candidates, source: source || 'signal' })
     });
-    if (!res.ok) return { changed: 0, promoted: [] };
+    if (!res.ok) return { changed: 0, promoted: [], ok: false };
     const data = await res.json();
     if (data && Array.isArray(data.promoted) && data.promoted.length) {
       memoryNotifyPromoted(data.promoted);
     }
     memoryRefreshCache();
-    return data || { changed: 0, promoted: [] };
+    return Object.assign({ changed: 0, promoted: [] }, data || {}, { ok: true });
   } catch (e) {
-    return { changed: 0, promoted: [] };
+    return { changed: 0, promoted: [], ok: false };
   }
 }
 
@@ -101,14 +102,30 @@ function memoryUpdateSidebarDot() {
 }
 
 // ---------- 画像角标（回答卡上的「已结合你的画像」） ----------
-// 与后端 profile._profile_section_texts 同构的分节口径：学段/目标/薄弱/兴趣/偏好/其他
+// 与后端 profile._profile_section_texts 同构的分节口径：学段/目标/薄弱/兴趣/偏好/其他。
+// 事实排序与 12 条上限、规范化去重都跟后端一致，角标展示的才是真正被注入的内容
+function _memoryNormFact(t) {
+  return String(t || '').trim().toLowerCase()
+    .replace(/^(用户|我)+(是|的)?/, '')
+    .replace(/(的|了)$/, '')
+    .replace(/[\s，。；、：:()（）[\]【】"'‘’“”，.!?！？]+/g, '');
+}
+
 function memoryBadgeSections() {
   if (!_cachedProfile || !_cachedProfile.enabled) return [];
   const exp = _cachedProfile.explicit || {};
-  const facts = (_cachedProfile.facts || []).filter(f => f && f.status !== 'idle' && String(f.fact || '').trim());
+  const facts = (_cachedProfile.facts || [])
+    .filter(f => f && f.status !== 'idle' && String(f.fact || '').trim())
+    .sort((a, b) => ((b.occurrences || 1) - (a.occurrences || 1)) || ((b.updatedAt || 0) - (a.updatedAt || 0)))
+    .slice(0, 12);
   const byCategory = (cat) => {
     const texts = [];
-    const add = (t) => { t = String(t || '').trim(); if (t && !texts.includes(t)) texts.push(t); };
+    const seen = new Set();
+    const add = (t) => {
+      t = String(t || '').trim();
+      const k = _memoryNormFact(t);
+      if (t && k && !seen.has(k)) { seen.add(k); texts.push(t); }
+    };
     if (cat === 'stage') add(exp.stage);
     if (cat === 'goal') add(exp.goal);
     if (cat === 'weakness') add(exp.weakAreas);
@@ -127,6 +144,13 @@ function memoryBadgeSections() {
   if (style.detail && style.detail !== '标准') styleParts.push('详略=' + style.detail);
   if (style.jargon && style.jargon !== '标准') styleParts.push('术语=' + style.jargon);
   if (style.visuals && style.visuals !== '否') styleParts.push('可视化=' + style.visuals);
+  // style 类别的自动事实与显式偏好同段（后端口径一致，否则该类事实被记录却永不展示）
+  const styleSeen = new Set();
+  facts.filter(f => f.category === 'style').forEach(f => {
+    const t = String(f.fact || '').slice(0, 60);
+    const k = _memoryNormFact(t);
+    if (t && k && !styleSeen.has(k)) { styleSeen.add(k); styleParts.push(t); }
+  });
   if (styleParts.length) sections.push({ label: '偏好', text: styleParts.join('；') });
   const others = facts.filter(f => f.category === 'other').map(f => String(f.fact).slice(0, 60));
   if (others.length) sections.push({ label: '其他', text: others.slice(0, 5).join('；') });
@@ -275,7 +299,7 @@ async function memoryRenderPanel() {
       ? idleFacts.map(f =>
           '<div class="memory-item memory-item-idle"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
-          '<span class="memory-item-time">休眠 · ' + memoryRelTime(f.lastUsedAt || f.updatedAt) + '后</span>' +
+          '<span class="memory-item-time">休眠 · 上次使用 ' + memoryRelTime(f.lastUsedAt || f.updatedAt) + '</span>' +
           '<button class="memory-item-btn" onclick="memoryRestoreFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">恢复</button>' +
           '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
         ).join('')
@@ -359,9 +383,11 @@ async function memoryDeleteFact(id) {
 }
 
 // 相对时间（面板时间线用）：刚刚 / n 分钟前 / n 小时前 / n 天前 / 具体日期
+// 服务端时间戳是秒（time.time()），低于毫秒纪元阈值按秒换算；兼容历史混入的毫秒脏数据
 function memoryRelTime(ts) {
-  const t = Number(ts || 0);
+  let t = Number(ts || 0);
   if (!t) return '—';
+  if (t < 1e12) t *= 1000;
   const diff = Date.now() - t;
   if (diff < 0) return '刚刚';
   if (diff < 60000) return '刚刚';
@@ -372,17 +398,19 @@ function memoryRelTime(ts) {
   return (d.getMonth() + 1) + '月' + d.getDate() + '日';
 }
 
-// 休眠事实恢复：回 active 并刷新 lastUsedAt（否则会被再次判休眠）
+// 休眠事实恢复：回 active 并刷新 lastUsedAt（否则会被再次判休眠）。
+// 时间戳单位与服务端一致用秒（time.time()），毫秒值会污染休眠判定与排序
 async function memoryRestoreFact(id) {
   await _memoryMutateFacts(p => {
     const f = (p.facts || []).find(x => x.id === id);
-    if (f) { f.status = 'active'; f.lastUsedAt = Date.now(); }
+    if (f) { f.status = 'active'; f.lastUsedAt = Math.floor(Date.now() / 1000); }
     return p;
   });
 }
 
 // 归档恢复：不直接回正式记忆（它被更正/移除过），回到建议区重新走确认
 async function memoryRestoreArchive(id) {
+  const nowSec = Math.floor(Date.now() / 1000);
   await _memoryMutateFacts(p => {
     const a = (p.archive || []).find(x => x.id === id);
     if (a) {
@@ -393,7 +421,7 @@ async function memoryRestoreArchive(id) {
           id: 'pf_' + Math.random().toString(16).slice(2, 14),
           fact: a.fact, category: a.category || 'other',
           source: 'restored', occurrences: 1,
-          createdAt: Date.now(), updatedAt: Date.now(),
+          createdAt: nowSec, updatedAt: nowSec,
         });
       }
     }
