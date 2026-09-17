@@ -127,6 +127,9 @@ const CLOSE_ALL = `(function(){
   if (ov) { ov.classList.remove('active'); ov.style.display = 'none'; }
   var oc = document.getElementById('onboardingCard');
   if (oc) oc.classList.remove('visible');
+  // 大陆面包屑的显隐取决于异步渲染时机，不钉住会让基线偶发多一条 census 键（踩过）
+  var bc = document.getElementById('continentBreadcrumb');
+  if (bc) bc.hidden = true;
   var eg = document.getElementById('exampleGuideOverlay');
   if (eg) { eg.classList.remove('active'); eg.style.display = 'none'; }
   return 'ok';
