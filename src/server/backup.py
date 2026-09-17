@@ -102,14 +102,17 @@ def _restore_target_paths() -> list:
     return paths
 
 
+_SNAPSHOT_MISSING = object()
+
+
 def _snapshot_restore_targets() -> dict:
-    """恢复前对将触碰的数据文件做内容级快照（None 表示原本不存在）。"""
+    """读取完整快照；仅文件不存在可回滚删除，其他读取异常在写入前抛出。"""
     snap = {}
     for p in _restore_target_paths():
         try:
-            snap[str(p)] = p.read_bytes() if p.exists() else None
-        except OSError:
-            snap[str(p)] = None
+            snap[str(p)] = p.read_bytes()
+        except FileNotFoundError:
+            snap[str(p)] = _SNAPSHOT_MISSING
     return snap
 
 
@@ -119,7 +122,7 @@ def _rollback_restore_targets(snap: dict) -> list:
     for path_str, content in snap.items():
         p = Path(path_str)
         try:
-            if content is None:
+            if content is _SNAPSHOT_MISSING:
                 p.unlink(missing_ok=True)
             else:
                 tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")

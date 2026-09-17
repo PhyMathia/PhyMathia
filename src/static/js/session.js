@@ -366,6 +366,7 @@
             groups: Array.isArray(parsed.groups) ? parsed.groups : [],
             customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
             harnessDeleted: parsed.harnessDeleted || {},
+            harnessNodeOverrides: parsed.harnessNodeOverrides || {},
             harnessCheckpoint: parsed.harnessCheckpoint || null,
             updatedAt: parsed.updatedAt || 0,
           };
@@ -388,6 +389,7 @@
         groups: [],
         customNodes: [],
         harnessDeleted: {},
+        harnessNodeOverrides: {},
         harnessCheckpoint: null,
         updatedAt: 0,
       };
@@ -487,6 +489,7 @@
     function setCurrentSessionId(id) {
       localStorage.setItem(STORAGE_KEY_CURRENT, id);
       currentSessionId = id;
+      if (typeof window.resetHarnessSession === 'function') window.resetHarnessSession();
       _saveCurrentSessionToServer(id);
     }
 
@@ -519,6 +522,8 @@
         saveSessions();
       }
 
+      // 保存期间可能已开始发送，不能再切换到另一份聊天历史。
+      if (isStreaming) return;
       // 切换
       setCurrentSessionId(id);
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();

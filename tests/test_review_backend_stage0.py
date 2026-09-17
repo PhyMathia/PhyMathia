@@ -24,7 +24,9 @@ def isolated():
     # RouteTestBase patches main/storage/backup/config/profile, but not this
     # from-import alias: both real state readers and writers must use tmp KV.
     with mock.patch.object(context, "KV_PATH", Path(base._td.name) / "kv_store.json"), \
-         mock.patch.object(main_mod, "_summary_tasks", {}):
+         mock.patch.object(main_mod, "_summary_tasks", {}), \
+         mock.patch.object(context, "_rolling_memory_epoch", 0), \
+         mock.patch.object(context, "_rolling_memory_generations", {}):
         try:
             yield base
         finally:
@@ -44,8 +46,6 @@ def save_messages(sid, count=8):
     storage._write_json(storage._get_messages_path(sid), rounds(count))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="B1: failed snapshot read is treated as absent; restore proceeds and rollback deletes original")
 def test_b1_snapshot_read_failure_aborts_before_restore(isolated):
     target = backup.SESSIONS_PATH
     original = b'{"A":{"id":"A","title":"original"}}'
@@ -59,7 +59,7 @@ def test_b1_snapshot_read_failure_aborts_before_restore(isolated):
             raise OSError("injected snapshot read failure")
         return read_bytes(path)
 
-    # A later apply failure forces the real rollback down the unsafe None path.
+    # Apply must never start when the complete snapshot cannot be read.
     with mock.patch.object(Path, "read_bytes", failing_read), \
          mock.patch.object(backup, "_apply_restore", side_effect=OSError("injected apply fault")) as apply:
         error = None
@@ -181,8 +181,6 @@ def seed_sessions(alias=False):
 
 @pytest.mark.parametrize("suffix", ["", "/messages"])
 @pytest.mark.parametrize("alias", [False, True], ids=["direct", "alias"])
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P1-S1: single-session deletion/clear leaves rolling memory (including mapped alias)")
 def test_s1_single_clear_removes_exact_session_memory(isolated, suffix, alias):
     seed_sessions(alias)
     response = isolated.client.delete("/api/sessions/A" + suffix)
@@ -211,8 +209,6 @@ def test_s1_all_clear_removes_existing_memory_control(isolated):
 
 
 @pytest.mark.parametrize("path", ["/api/sessions/A", "/api/sessions/A/messages", "/api/sessions"])
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="P1-S1: delayed real rolling-summary task writes memory after deletion/clear")
 def test_s1_inflight_summary_cannot_resurrect_cleared_memory(isolated, path):
     seed_sessions()
     # Remove preexisting A memory to distinguish resurrection from the static

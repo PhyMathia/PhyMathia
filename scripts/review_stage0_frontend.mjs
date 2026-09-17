@@ -43,29 +43,25 @@ async function memorySandbox() {
   return { s, profile, storage };
 }
 
-test('M1 interleaved deletion retains concurrent fact/settings', 'memoryDeleteFact PUTs the stale complete GET snapshot', async () => {
+test('M1 interleaved deletion retains concurrent fact/settings', null, async () => {
   const { s, profile } = await memorySandbox();
-  let interleaved = false;
-  let puts = 0;
+  let posts = 0;
+  profile.facts.push({ id: 'concurrent', fact: 'new fact' });
+  profile.enabled = false;
+  profile.explicit.goal = 'new goal';
   s.fetch = async (url, options = {}) => {
-    if (options.method === 'PUT') {
-      puts++;
-      Object.assign(profile, clone(JSON.parse(options.body).updates));
-      return { ok: true, json: async () => clone(profile) };
+    assert.notEqual(options.method, 'PUT', 'management must not PUT a stale profile');
+    if (options.method === 'POST') {
+      posts++;
+      assert.equal(url, '/api/profile/manage');
+      assert.deepEqual(JSON.parse(options.body), { device_id: 'stage0-only', action: 'delete_fact', fact_id: 'old' });
+      profile.facts = profile.facts.filter(f => f.id !== 'old');
+      return { ok: true, json: async () => ({ accepted: true, changed: 1, promoted: [] }) };
     }
-    const snapshot = clone(profile);
-    if (!interleaved) {
-      interleaved = true;
-      profile.facts.push({ id: 'concurrent', fact: 'new fact' });
-      profile.enabled = false;
-      profile.explicit.goal = 'new goal';
-    }
-    return { ok: true, json: async () => snapshot };
+    return { ok: true, json: async () => clone(profile) };
   };
   await s.memoryDeleteFact('old');
-  await Promise.resolve();
-  // Preconditions are ordinary assertions too, but never confused with the expected defect.
-  if (puts !== 1 || profile.facts.some(f => f.id === 'old')) throw new Error('M1 setup/delete control failed');
+  assert.equal(posts, 1);
   assert.deepEqual({ ids: profile.facts.map(f => f.id), enabled: profile.enabled, goal: profile.explicit.goal },
     { ids: ['concurrent'], enabled: false, goal: 'new goal' }, 'unrelated concurrent data must survive deleting old');
 });
@@ -125,8 +121,8 @@ test('M6 locally disabled control', null, async () => {
   await s.memoryRefreshCache(); await s._syncProfileSignals(); assert.equal(submitted.length, 0);
 });
 
-for (const outcome of ['backup-failure', 'profile-failure', 'learning-failure', 'success']) {
-  test('M8 clear ' + outcome, outcome === 'success' ? null : 'clear continues or claims success after failed ' + outcome, async () => {
+for (const outcome of ['backup-failure', 'profile-failure', 'learning-failure', 'success', 'partial-profile-only']) {
+  test('M8 clear ' + outcome, null, async () => {
     const { s, storage } = await memorySandbox(); const calls = [];
     s.document.getElementById('memoryClearIncludeLearning').checked = true;
     storage.set('phymathia_knowledge', 'keep me');
@@ -136,6 +132,7 @@ for (const outcome of ['backup-failure', 'profile-failure', 'learning-failure', 
       const failed = opts.method === 'DELETE' && ((url.startsWith('/api/profile') && outcome === 'profile-failure') || (url === '/api/sessions' && outcome === 'learning-failure'));
       return { ok: !failed, status: failed ? 503 : 200, json: async () => ({ enabled: true, facts: [], pending: [], archive: [] }) };
     };
+    if (outcome === 'partial-profile-only') s.document.getElementById('memoryClearIncludeLearning').checked = false;
     await s.memoryConfirmClear(); await settle();
     requireSetup(calls[0] === 'backup', 'backup must precede deletion');
     const toast = s.document.getElementById('modelToast').textContent;
@@ -143,6 +140,12 @@ for (const outcome of ['backup-failure', 'profile-failure', 'learning-failure', 
       assert.equal(calls.length, 3); assert.equal(storage.has('phymathia_knowledge'), false); assert.match(toast, /学习数据已一并清除/);
     } else if (outcome === 'backup-failure') {
       assert.deepEqual(calls, ['backup'], 'backup failure must abort destructive operations');
+      assert.match(toast, /中止清除/);
+    } else if (outcome === 'partial-profile-only') {
+      // 控制组：不勾选学习数据时清除画像成功，不得声称清了学习数据
+      assert.equal(calls.length, 2); assert.equal(storage.has('phymathia_knowledge'), true);
+      assert.equal(toast.includes('学习数据已一并清除'), false);
+      assert.match(toast, /记忆已清除/);
     } else {
       assert.equal(toast.includes('记忆已清除') && toast.includes('学习数据已一并清除'), false, 'must not claim complete success');
     }
@@ -189,7 +192,7 @@ function harnessFixture() {
   return f;
 }
 
-test('F1 override save/load round trip', 'getGraphState omits harnessNodeOverrides', async () => {
+test('F1 override save/load round trip', null, async () => {
   const { s } = harnessFixture();
   const state = s.getGraphState(); state.customNodes = [{ id: 'custom', kind: 'human_note', content: 'old' }];
   s.getGraphViewNodes = () => [{ id: 'derived', kind: 'module', content: 'old derived' }];
@@ -212,7 +215,7 @@ function chatFixture() {
   s.document.getElementById('userInput').value = '你好';
   return f;
 }
-test('F2 delayed first save duplicate send', 'send lock is not held across first await, including local replies', async () => {
+test('F2 delayed first save duplicate send', null, async () => {
   const { s } = chatFixture(); const gate = deferred(); let saves = 0;
   s.saveCurrentSession = async () => { if (++saves === 1) await gate.promise; };
   const first = s.sendMessage(); const second = s.sendMessage();
@@ -228,7 +231,7 @@ test('F2 local reply success control', null, async () => {
 });
 
 for (const mode of ['result', 'history']) {
-  test('F3 stale ' + mode + ' applied after session switch', 'unbound A suggestion is applied to current B graph', async () => {
+  test('F3 stale ' + mode + ' applied after session switch', null, async () => {
     const { s, storage } = harnessFixture();
     for (const sid of ['A', 'B']) { const state = s.getGraphState(sid); state.customNodes = [{ id: 'shared-id', kind: 'human_note', content: sid }]; s.saveGraphState(sid, state); }
     const aBefore = storage.get('phymathia_graph_A');
@@ -240,6 +243,40 @@ for (const mode of ['result', 'history']) {
     assert.equal(s.getGraphState('B').customNodes[0].content, 'B', 'B must reject suggestion produced in A');
   });
 }
+
+test('F3 in-flight result after session switch', null, async () => {
+  const { s, storage } = harnessFixture();
+  for (const sid of ['A', 'B']) { const state = s.getGraphState(sid); state.customNodes = [{ id: 'shared-id', kind: 'human_note', content: sid }]; s.saveGraphState(sid, state); }
+  let posted = 0;
+  s.getActiveModelForRole = () => ({ provider: 'test', model: 'isolated', baseUrl: 'http://unused' });
+  s._harnessFetchContinent = async () => null;
+  s._isHarnessPureQuestion = () => true;
+  s._readHarnessStreamResponse = async resp => JSON.parse(await resp.text());
+  let release = () => {};
+  const gatePromise = new Promise(r => { release = r; });
+  s.fetch = async (url, opts = {}) => {
+    if (url === '/api/harness/graph/review') {
+      posted++;
+      await gatePromise;
+      return { ok: true, json: async () => ({}), text: async () => JSON.stringify({
+        status: 'ok', summary: 'A edit', operations: [{ op: 'update_node', id: 'shared-id', patch: { content: 'A-only edit' } }],
+        next_snapshot: { nodes: [], edges: [] } }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+  evaluate(s, "currentSessionId='A'; document.getElementById('graphHarnessInstruction').value='edit it';");
+  const running = s.runGraphHarness();
+  await settle();
+  assert.equal(posted, 1, 'must reach the real review POST before switching');
+  evaluate(s, "currentSessionId='B';");
+  release();
+  await settle();
+  await running;
+  const bState = s.getGraphState('B');
+  assert.equal(bState.customNodes[0].content, 'B', 'A response after switch must not apply to B');
+  assert.equal(storage.get('phymathia_graph_B').includes('A-only edit'), false, 'B graph storage must not receive A edits');
+  assert.equal(evaluate(s, 'harnessHistory.some(e=>e.summary==="A edit")'), false, 'A result must not enter B harness history');
+});
 
 for (const branchType of ['main', 'socratic', 'learn']) {
   for (const anchorMode of ['empty', 'other']) {
@@ -270,7 +307,7 @@ for (const branchType of ['main', 'socratic', 'learn']) {
 }
 
 for (const focused of [false, true]) {
-  test('F5 conversational undo capture ' + (focused ? 'focused' : 'unfocused'), 'lossy review snapshot is stored as conversational undo before-state', async () => {
+  test('F5 conversational undo capture ' + (focused ? 'focused' : 'unfocused'), null, async () => {
     const { s } = harnessFixture();
     const original = { id: 'long', kind: 'human_note', label: '长正文', content: 'x'.repeat(900) + 'END', formula: 'E=mc^2', x: 123, y: 456 };
     const state = s.getGraphState(); state.customNodes = [original]; s.saveGraphState('A', state);

@@ -35,8 +35,7 @@ class ReviewStage0ProfileTest(RouteTestBase):
 
     # ---------- M1：整份回写覆盖并发变化 ----------
 
-    @pytest.mark.xfail(strict=True, reason="M1: 面板整份 PUT 会覆盖并发写入的新事实并回滚开关", raises=AssertionError)
-    def test_m1_stale_full_write_keeps_concurrent_fact_and_switch(self):
+    def test_m1_manage_keeps_concurrent_fact_and_switch(self):
         dev = self._dev("m1")
         # 客户端 1（面板）：拿到快照，快照里只有学段事实
         profile_mod.apply_profile_ops(dev, [
@@ -49,16 +48,12 @@ class ReviewStage0ProfileTest(RouteTestBase):
             {"op": "new", "fact": "目标：高考物理90分", "category": "goal"}])
         profile_mod.update_profile(dev, {"enabled": False})
 
-        # 面板基于旧快照执行「删除学段事实」：按现前端 _memoryMutateFacts 的行为整份回写
-        stale = dict(snapshot)
-        stale["facts"] = [f for f in snapshot["facts"] if f["id"] != fid]
-        profile_mod.update_profile(dev, {
-            "enabled": stale["enabled"],
-            "explicit": stale["explicit"],
-            "facts": stale["facts"],
-            "pending": stale["pending"],
-            "archive": stale["archive"],
-        })
+        # 面板执行「删除学段事实」：走冻结契约的原子管理入口（POST /api/profile/manage
+        # 的服务端实现），只发送 action+ID，不再整份回写旧快照
+        r = profile_mod.manage_profile_fact(dev, "delete_fact", fid)
+        self.assertTrue(r["accepted"], "关闭状态下用户主动管理仍应执行")
+        self.assertEqual(r["changed"], 1)
+        self.assertEqual(r["promoted"], [])
 
         final = profile_mod.get_profile(dev)
         # 并发固化的事实必须还在
@@ -69,7 +64,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
 
     # ---------- M2：已固化事实被 new 命中时计数可能不落盘 ----------
 
-    @pytest.mark.xfail(strict=True, reason="M2: 单独重复 new 命中已固化事实时 changed=0 且计数不落盘", raises=AssertionError)
     def test_m2_repeat_new_on_solid_fact_counts_and_persists(self):
         dev = self._dev("m2")
         profile_mod.apply_profile_ops(dev, [
@@ -112,7 +106,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
 
     # ---------- M3：归档 removedAt 读取即丢 ----------
 
-    @pytest.mark.xfail(strict=True, reason="M3: 归档读取走 _normalize_fact_item，removedAt 首次 GET 即丢失", raises=AssertionError)
     def test_m3_archive_removedat_survives_read_and_unrelated_update(self):
         dev = self._dev("m3")
         profile_mod.apply_profile_ops(dev, [
@@ -174,7 +167,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
 
     # ---------- M7：数值脏字段使读取崩溃 ----------
 
-    @pytest.mark.xfail(strict=True, reason="M7: 非法数字字符串/集合类型在归一化时抛异常，读取不降级", raises=AssertionError)
     def test_m7_dirty_numeric_fields_degrade_not_crash(self):
         dev = self._dev("m7")
         path = profile_mod._profile_path(dev)

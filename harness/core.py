@@ -6,6 +6,7 @@ with a small semantic graph contract so the harness can be reused elsewhere.
 
 from __future__ import annotations
 
+import copy
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -66,6 +67,13 @@ ALLOWED_OPERATIONS = {
 
 UPDATEABLE_NODE_FIELDS = {"label", "title", "content", "summary", "formula", "status"}
 UPDATEABLE_EDGE_FIELDS = {"relation", "label"}
+
+class _InverseOperations(list):
+    """In-process capability for deterministic undo; JSON/model ops cannot set it."""
+
+
+class UndoRestoreError(ValueError):
+    """A recorded change cannot be restored without guessing missing data."""
 
 MAX_NODE_CONTENT_LENGTH = 1200
 # 新建节点只允许占位内容（正文由内容生成流程填充）
@@ -351,6 +359,22 @@ def build_next_snapshot(
         reason = _text(op.get("reason"))
         label = f"operation[{index}]"
 
+        if op_name == "restore_node" and isinstance(operations, _InverseOperations):
+            # F5 确定性恢复：只由 build_inverse_ops 产生的内部操作，逐字段还原
+            # 节点被改/删前的无损原始数据（不截断、不丢 ai_eval 等类型）。
+            node_id = _text(op.get("id") or op.get("force_id"))
+            raw = op.get("node")
+            if not node_id or not isinstance(raw, dict):
+                errors.append({"index": index, "op": op_name, "reason": "restore_node 缺少 id 或 node 数据"})
+                continue
+            if raw.get("kind") not in ALLOWED_NODE_KINDS:
+                raise UndoRestoreError("不支持恢复的节点类型，请使用画布撤销本次")
+            restored = {**normalize_node(raw), **copy.deepcopy(raw)}
+            restored["id"] = node_id
+            nodes[node_id] = restored
+            valid_ops.append({**op, "id": node_id})
+            continue
+
         if op_name not in ALLOWED_OPERATIONS:
             errors.append({"index": index, "op": op_name, "reason": "不支持的操作类型"})
             continue
@@ -628,11 +652,14 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
     their original ids via ``force_id`` so undo is byte-for-byte reproducible.
     """
     before = normalize_snapshot(before_snapshot)
-    before_nodes = {node["id"]: node for node in before["nodes"]}
+    # 审阅归一化会截断正文/公式并丢弃本地字段，不能用作撤销来源。
+    raw_nodes = before_snapshot.get("nodes", []) if isinstance(before_snapshot, dict) else []
+    before_nodes = {str(node["id"]): copy.deepcopy(node) for node in raw_nodes
+                    if isinstance(node, dict) and node.get("id")}
     before_edges = {edge["key"]: edge for edge in before["edges"]}
     after = normalize_snapshot(after_snapshot) if after_snapshot is not None else None
     after_nodes = {node["id"]: node for node in after["nodes"]} if after else {}
-    inverse: List[Dict[str, Any]] = []
+    inverse: _InverseOperations = _InverseOperations()
     for op in reversed(list(normalize_operations(operations))):
         name = _text(op.get("op"))
         reason = "撤销上一步修改"
@@ -662,27 +689,20 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
             node_id = _text(op.get("id"))
             old = before_nodes.get(node_id)
             if old:
-                patch = {}
-                for field in UPDATEABLE_NODE_FIELDS:
-                    if field in (op.get("patch") or {}):
-                        patch[field] = old.get(field, "")
-                if patch:
-                    inverse.append({"op": "update_node", "id": node_id, "patch": patch, "reason": reason})
+                inverse.append({"op": "restore_node", "id": node_id, "node": copy.deepcopy(old), "reason": reason})
+            else:
+                raise UndoRestoreError(f"缺少节点 {node_id} 的撤销前态，请使用画布撤销本次")
         elif name == "delete_node":
             node_id = _text(op.get("id"))
             old = before_nodes.get(node_id)
             if old:
+                # F5：无损恢复。restore_node 携带被删节点的完整原始数据（含 ai_eval
+                # 专属字段与坐标等），由 build_next_snapshot 逐字段还原，不走会截断
+                # 的 create_node 通道。
                 inverse.append({
-                    "op": "create_node",
-                    "temp_id": "restore_" + node_id,
-                    "force_id": node_id,
-                    "kind": old.get("kind") or "knowledge",
-                    "label": old.get("label") or node_id,
-                    "content": old.get("content") or "",
-                    "formula": old.get("formula") or "",
-                    "module_key": old.get("module_key") or "",
-                    "status": old.get("status") or "",
-                    "manual": old.get("manual") or False,
+                    "op": "restore_node",
+                    "id": node_id,
+                    "node": copy.deepcopy(old),
                     "reason": reason,
                 })
                 for edge in before_edges.values():
@@ -698,6 +718,8 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
                             "custom": edge.get("custom", True),
                             "reason": reason,
                         })
+            else:
+                raise UndoRestoreError(f"缺少节点 {node_id} 的撤销前态，请使用画布撤销本次")
         elif name == "add_edge":
             key = _text(op.get("edge_key") or op.get("key"))
             if key:

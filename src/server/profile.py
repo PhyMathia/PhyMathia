@@ -20,6 +20,7 @@
 import copy
 import hashlib
 import logging
+import math
 import re
 import time
 import uuid
@@ -64,6 +65,11 @@ FACT_CATEGORIES = ("stage", "goal", "interest", "weakness", "style", "other")
 # 用户明确陈述一次即可确信的类别（「我是高二学生」不存在误读，要求说两遍是过度谨慎）
 DIRECT_SOLID_CATEGORIES = ("stage", "goal")
 PROFILE_OPS = ("new", "confirm", "update", "remove")
+# 用户管理动作（manage_profile_fact）：按 ID 的原子操作，替代面板整份 PUT 回写
+MANAGE_ACTIONS = (
+    "delete_fact", "restore_fact", "confirm_pending",
+    "delete_pending", "restore_archive", "delete_archive",
+)
 
 
 def _default_profile() -> dict:
@@ -91,21 +97,59 @@ def _profile_path(device_id: str) -> Path:
     return PROFILES_DIR / f"{safe}.json"
 
 
+def _finite_number(value):
+    """只接受有限的数字/数字字符串；bool 不是画像数值。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _positive_int(value, default=1):
+    number = _finite_number(value)
+    if number is None or number < 1:
+        return default
+    return int(min(number, 2**31 - 1))
+
+
+def _timestamp(value, default=0):
+    """秒为标准，兼容旧毫秒；未知时间不伪造为当前时间。"""
+    number = _finite_number(value)
+    if number is None or number < 0:
+        return default
+    if number >= 1e12:
+        number /= 1000
+    # 限于公元 9999 年以内，避免极大有限数污染排序/生命周期。
+    return number if number <= 253402300799 else default
+
+
 def _normalize_fact_item(item: dict) -> dict:
-    """补齐单条事实的字段（旧数据无 status/history/lastUsedAt 等也能读）。"""
+    """补齐旧字段；逐字段降级，保留扩展字段及未知历史时间。"""
+    history = item.get("history")
     return {
+        **item,
         "id": str(item.get("id") or ("pf_" + uuid.uuid4().hex[:12])),
         "fact": str(item.get("fact") or "").strip(),
         "category": item.get("category") if item.get("category") in FACT_CATEGORIES else "other",
         "sourceSession": str(item.get("sourceSession") or "")[:64],
         "source": str(item.get("source") or "")[:32],
-        "occurrences": int(item.get("occurrences", 1) or 1),
+        "occurrences": _positive_int(item.get("occurrences")),
         "status": "idle" if item.get("status") == "idle" else "active",
-        "history": [h for h in (item.get("history") or []) if isinstance(h, dict)][:MAX_FACT_HISTORY],
-        "createdAt": float(item.get("createdAt") or time.time()),
-        "updatedAt": float(item.get("updatedAt") or time.time()),
-        "lastUsedAt": float(item.get("lastUsedAt") or 0),
+        "history": [{**h, "at": _timestamp(h.get("at"))}
+                    for h in (history if isinstance(history, list) else [])
+                    if isinstance(h, dict)][:MAX_FACT_HISTORY],
+        "createdAt": _timestamp(item.get("createdAt")),
+        "updatedAt": _timestamp(item.get("updatedAt")),
+        "lastUsedAt": _timestamp(item.get("lastUsedAt")),
     }
+
+
+def _normalize_archive_item(item: dict) -> dict:
+    return {**_normalize_fact_item(item),
+            "removedAt": _timestamp(item.get("removedAt"), default=None)}
 
 
 def _normalize_profile(data) -> dict:
@@ -113,9 +157,9 @@ def _normalize_profile(data) -> dict:
     if not isinstance(data, dict):
         return _default_profile()
     base = _default_profile()
-    for key in ("version", "createdAt", "updatedAt"):
-        if key in data:
-            base[key] = data[key]
+    base["version"] = _positive_int(data.get("version"), PROFILE_VERSION)
+    for key in ("createdAt", "updatedAt"):
+        base[key] = _timestamp(data.get(key))
     base["enabled"] = bool(data.get("enabled", True))
     if isinstance(data.get("explicit"), dict):
         exp = data["explicit"]
@@ -126,9 +170,11 @@ def _normalize_profile(data) -> dict:
             for key, allowed in STYLE_VALUES.items():
                 if exp["style"].get(key) in allowed:
                     base["explicit"]["style"][key] = exp["style"][key]
-    for key, limit in (("facts", MAX_FACTS), ("pending", MAX_PENDING), ("archive", MAX_ARCHIVE)):
+    for key, limit, normalizer in (("facts", MAX_FACTS, _normalize_fact_item),
+                                   ("pending", MAX_PENDING, _normalize_fact_item),
+                                   ("archive", MAX_ARCHIVE, _normalize_archive_item)):
         if isinstance(data.get(key), list):
-            base[key] = [_normalize_fact_item(it) for it in data[key] if isinstance(it, dict)][-limit:]
+            base[key] = [normalizer(it) for it in data[key] if isinstance(it, dict)][-limit:]
     return base
 
 
@@ -166,7 +212,8 @@ def update_profile(device_id: str, updates: dict) -> dict:
                         profile["explicit"]["style"][key] = exp["style"][key]
         for key, limit in (("facts", MAX_FACTS), ("pending", MAX_PENDING), ("archive", MAX_ARCHIVE)):
             if isinstance(updates.get(key), list):
-                profile[key] = [_normalize_fact_item(it) for it in updates[key] if isinstance(it, dict)][-limit:]
+                normalize = _normalize_archive_item if key == "archive" else _normalize_fact_item
+                profile[key] = [normalize(it) for it in updates[key] if isinstance(it, dict)][-limit:]
         profile["updatedAt"] = time.time()
         return profile
 
@@ -227,6 +274,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
     - update：原地更替文本，旧文留 history；更替后文本撞上其他事实则合并为一次 confirm
     - remove：从 facts/pending 删除，落 archive（面板可查看/恢复）
     开关关闭时直接忽略（不写入）。
+    changed 统计实际修改的操作次数（含计数），promoted 只报告真实固化。
     """
     result = {"changed": 0, "promoted": []}
     if not isinstance(ops, list) or not ops:
@@ -272,10 +320,12 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                 return False
             hit = next((f for f in facts if _norm_fact(f["fact"]) == norm), None)
             if hit:
-                return _confirm_item(hit, op)
+                _confirm_item(hit, op)
+                return True
             pend_hit = next((p for p in pending if _norm_fact(p["fact"]) == norm), None)
             if pend_hit:
-                return _confirm_item(pend_hit, op)
+                _confirm_item(pend_hit, op)
+                return True
             item = _normalize_fact_item({
                 "id": "pf_" + uuid.uuid4().hex[:12],
                 "fact": op["fact"],
@@ -365,6 +415,101 @@ def add_fact_candidates(device_id: str, candidates: list) -> int:
     if not isinstance(candidates, list):
         return 0
     return apply_profile_ops(device_id, candidates, source="legacy")["changed"]
+
+
+def manage_profile_fact(device_id: str, action, fact_id) -> dict:
+    """用户管理单条记忆的原子操作（面板专用，替代整份 PUT 回写）。
+
+    语义对齐原 memory.js 面板行为，避免业务漂移：
+    - delete_fact：从 facts 彻底移除（不进 archive）
+    - restore_fact：事实回 active，每次请求都刷新 lastUsedAt
+    - confirm_pending：用户主动确认，直接固化进 facts（occurrences 至少 2、status active）
+    - delete_pending：从 pending 移除，不归档
+    - restore_archive：归档回 pending 重新确认——新 ID、occurrences=1、source="restored"；
+      pending 已有同文本候选时仅移除归档（不合并计数、不固化）
+    - delete_archive：从 archive 彻底删除
+    只读写目标 ID 所在列表，不触碰 enabled/explicit/其他事实；与采集开关
+    （apply_profile_ops 忽略 enabled=False）不同，用户主动管理在关闭时仍可用。
+    返回 {"changed", "promoted", "accepted"}：accepted=true 表示请求有效执行
+    （含幂等 no-op）；ID 不存在或容量不足 accepted=false 且不写盘；promoted
+    只在真实固化时非空。
+    """
+    if not isinstance(action, str) or action not in MANAGE_ACTIONS:
+        raise ValueError(f"unknown action: {action!r}")
+    if not isinstance(fact_id, str) or not fact_id.strip():
+        raise ValueError("fact_id must be a non-empty string")
+
+    result = {"changed": 0, "promoted": [], "accepted": False}
+
+    def updater(raw):
+        if not isinstance(raw, dict):
+            return None
+        # 不整份归一化：管理只写目标及 updatedAt，保留扩展字段、其他条目
+        # 和历史超容量列表；否则一次删除也可能截断不相关的数据。
+        profile = copy.deepcopy(raw)
+        lists = {key: profile.get(key, []) for key in ("facts", "pending", "archive")}
+        source_key = {"delete_fact": "facts", "restore_fact": "facts",
+                      "confirm_pending": "pending", "delete_pending": "pending",
+                      "restore_archive": "archive", "delete_archive": "archive"}[action]
+        source = lists[source_key]
+        if not isinstance(source, list):
+            return None
+        hit = next((item for item in source
+                    if isinstance(item, dict) and item.get("id") == fact_id), None)
+        if hit is None:
+            return None
+        now = time.time()
+        facts = lists["facts"]
+        pending = lists["pending"]
+        archive = lists["archive"]
+
+        if action in ("delete_fact", "delete_pending", "delete_archive"):
+            source.remove(hit)
+        elif action == "restore_fact":
+            hit["status"] = "active"
+            hit["lastUsedAt"] = now
+        elif action == "confirm_pending":
+            if not isinstance(facts, list):
+                return None
+            same_text = any(isinstance(f, dict) and str(f.get("fact") or "") ==
+                            str(hit.get("fact") or "") for f in facts)
+            if not same_text and len(facts) >= MAX_FACTS:
+                return None
+            pending.remove(hit)
+            if not same_text:
+                solid = _normalize_fact_item({**hit, "status": "active",
+                    "occurrences": max(_positive_int(hit.get("occurrences")), 2),
+                    "updatedAt": now, "lastUsedAt": now})
+                facts.append(solid)
+                profile["facts"] = facts
+                result["promoted"].append(solid["fact"])
+        elif action == "restore_archive":
+            if not isinstance(pending, list):
+                return None
+            same_text = any(isinstance(p, dict) and str(p.get("fact") or "") ==
+                            str(hit.get("fact") or "") for p in pending)
+            if not same_text and len(pending) >= MAX_PENDING:
+                return None
+            archive.remove(hit)
+            if not same_text:
+                pending.append(_normalize_fact_item({
+                    "id": "pf_" + uuid.uuid4().hex[:12],
+                    "fact": hit.get("fact"), "category": hit.get("category"),
+                    "source": "restored", "occurrences": 1,
+                    "createdAt": now, "updatedAt": now,
+                }))
+                profile["pending"] = pending
+
+        result["accepted"] = True
+        result["changed"] = int(profile != raw)
+
+        if not result["changed"]:
+            return None  # 幂等 no-op：接受但不重写文件
+        profile["updatedAt"] = now
+        return profile
+
+    _mutate_json(_profile_path(device_id), updater)
+    return result
 
 
 def mark_profile_used(device_id: str, fact_ids: list) -> None:
@@ -519,7 +664,7 @@ def profile_ops_digest(device_id: str, max_lines: int = 20) -> str:
 
 __all__ = [
     "PROFILES_DIR", "get_profile", "save_profile", "update_profile",
-    "delete_profile", "add_fact_candidates", "apply_profile_ops",
+    "delete_profile", "add_fact_candidates", "apply_profile_ops", "manage_profile_fact",
     "mark_profile_used", "profile_context", "profile_context_text",
     "profile_ops_digest", "_norm_fact",
 ]

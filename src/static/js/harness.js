@@ -76,6 +76,58 @@ let harnessLastAppliedBeforeSnapshot = null;
     return typeof window.getGraphState === 'function' ? window.getGraphState(_sessionId()) : null;
   }
 
+  let harnessSessionEpoch = 0;
+  let harnessHistoryLoad = 0;
+
+  function _harnessGraphVersion() {
+    const state = _graphState() || {};
+    return JSON.stringify(state);
+  }
+
+  function _harnessBinding() {
+    return { sessionId: _sessionId(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
+  }
+
+  function _harnessCanApply(binding) {
+    if (binding && binding.sessionId === _sessionId() && binding.graphVersion === _harnessGraphVersion()) return true;
+    _setHarnessStatus('画布或会话已变化，请重新生成建议后再应用', 'error');
+    return false;
+  }
+
+  function resetHarnessSession() {
+    harnessSessionEpoch++;
+    harnessHistoryLoad++;
+    if (harnessAbortController) harnessAbortController.abort();
+    harnessAbortController = null;
+    harnessResult = null;
+    harnessSnapshot = null;
+    harnessPendingClarify = null;
+    harnessSingleEvalId = null;
+    harnessHistory = [];
+    harnessLastAppliedOps = [];
+    harnessLastAppliedBeforeSnapshot = null;
+    _setHarnessBusy(false);
+    if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+    const box = document.getElementById('graphHarnessResult');
+    if (box) box.innerHTML = '';
+    _loadHarnessHistory().then(_renderHarnessChat);
+  }
+  window.resetHarnessSession = resetHarnessSession;
+
+  function _harnessUndoSnapshot(state) {
+    const nodes = _graphNodes().map(node => {
+      const custom = (state.customNodes || []).find(item => item.id === node.id);
+      const copy = JSON.parse(JSON.stringify(custom || node));
+      copy._undoLocal = { custom: !!custom, fields: {} };
+      for (const key of ['harnessNodeOverrides', 'harnessDeleted', 'positions', 'sizes', 'pinned', 'inputPortCounts']) {
+        copy._undoLocal.fields[key] = Object.prototype.hasOwnProperty.call(state[key] || {}, node.id)
+          ? { value: state[key][node.id] } : {};
+      }
+      return copy;
+    });
+    return JSON.parse(JSON.stringify({ nodes, edges: _graphEdges().map(edge => ({ ...edge, key: _edgeKey(edge) })) }));
+  }
+
   function _graphNodes() {
     return typeof window.getGraphViewNodes === 'function' ? window.getGraphViewNodes() : [];
   }
@@ -600,6 +652,7 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   async function _loadHarnessHistory() {
     const sid = _sessionId();
+    const loadId = ++harnessHistoryLoad;
     harnessHistory = [];
     if (!sid) return;
     const localKey = 'phymathia_harness_history_' + sid;
@@ -611,7 +664,8 @@ let harnessLastAppliedBeforeSnapshot = null;
       const resp = await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)));
       if (resp.ok) {
         const data = await resp.json();
-        if (Array.isArray(data.value)) {
+        // 加载期间用户可能已切走会话：旧会话的历史不得覆盖新会话视图
+        if (loadId === harnessHistoryLoad && sid === _sessionId() && Array.isArray(data.value)) {
           harnessHistory = data.value;
           localStorage.setItem(localKey, JSON.stringify(harnessHistory));
         }
