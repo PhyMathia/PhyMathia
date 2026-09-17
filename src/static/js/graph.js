@@ -45,7 +45,7 @@ const GRAPH_NODE_ATTRIBUTES = {
   socratic: { key: 'socratic', label: '苏格拉底追问', color: '#f43f5e' },
   learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
   manual: { key: 'manual', label: '我的回答', color: 'var(--ink-human)' },
-  human_note: { key: 'human_note', label: '我的理解', color: 'var(--ink-human)' },
+  human_note: { key: 'human_note', label: '我的理解', color: 'var(--ink-note)' },
   ai_eval: { key: 'ai_eval', label: 'AI 评价', color: '#f59e0b' },
   hub: { key: 'hub', label: '汇聚', color: '#eab308' },
   summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
@@ -73,7 +73,7 @@ const MANUAL_NODE_OPTIONS = [
   { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16', group: 'data', desc: '手动记录一个知识点' },
   { key: 'question', kind: 'user', label: '问题', color: '#4a9eff', group: 'data', desc: '提问节点，可接 AI 回答' },
   { key: 'manual', kind: 'answer', label: '我的回答', color: 'var(--ink-human)', group: 'human', desc: '手写回答，可继续发散（无摘要）' },
-  { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-human)', group: 'human', desc: '批注/笔记，可附公式' },
+  { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-note)', group: 'human', desc: '批注/笔记，可附公式' },
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
   { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308', group: 'structure', desc: '汇总多路输入，可总结或追问' },
 ];
