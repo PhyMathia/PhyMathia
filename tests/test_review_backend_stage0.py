@@ -74,8 +74,6 @@ def test_b1_snapshot_read_failure_aborts_before_restore(isolated):
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="B2: real writer uses milliseconds but expiry subtracts seconds")
 def test_b2_real_written_state_expires_after_25_hours(isolated):
     epoch = 1_800_000_000
     with mock.patch.object(context.time, "time", return_value=epoch):
@@ -100,8 +98,6 @@ def test_b2_legacy_seconds_and_placeholder_controls(isolated, timestamp, visible
     assert context.KV_PATH.read_bytes() == before, "state read must remain side-effect-free"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="B3: refresh repeatedly takes earliest six pairs and omits newly old messages")
 def test_b3_refresh_input_covers_messages_leaving_short_term_window(isolated):
     inputs = []
     # 8 messages of growth per cycle satisfies the real refresh gate. The
@@ -125,8 +121,7 @@ def test_b3_refresh_input_covers_messages_leaving_short_term_window(isolated):
 
 
 @pytest.mark.parametrize("provider,base_url", [
-    pytest.param("opencode-go", "https://opencode.ai/zen/go/v1", marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError, reason="B4: Go summary omits Bearer used by main chat")),
+    ("opencode-go", "https://opencode.ai/zen/go/v1"),
     ("opencode", "https://opencode.ai/zen/v1"),
 ])
 def test_b4_main_and_summary_transport_headers(isolated, provider, base_url):

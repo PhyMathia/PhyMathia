@@ -67,7 +67,7 @@ test('M1 interleaved deletion retains concurrent fact/settings', null, async () 
 });
 
 for (const category of ['goal', 'interest', 'weakness']) {
-  test('M5 idle ' + category, 'module context includes idle facts', async () => {
+  test('M5 idle ' + category, null, async () => {
     const { s, profile } = await memorySandbox();
     profile.facts = [{ category, fact: 'ACTIVE', status: 'active' }, { category, fact: 'IDLE', status: 'idle' }];
     await s.memoryRefreshCache();
@@ -89,27 +89,30 @@ async function signals(count, outcome) {
   s.fetch = async (url, opts = {}) => {
     if (url === '/api/profile/candidates') {
       submitted.push(JSON.parse(opts.body).candidates);
-      // Current API returns the same {changed:0,promoted:[]} for disabled and storage failure.
+      // Stage2 contract: {accepted, acceptedIndices} decides the seven-day window.
       if (outcome === 'ignored') fixture.profile.enabled = false; // stale enabled cache at POST time
-      return { ok: outcome !== 'http-failure', json: async () => ({ changed: outcome === 'accepted' ? Math.min(count, 6) : 0, promoted: [] }) };
+      if (outcome === 'accepted') return { ok: true, json: async () => ({ accepted: true, acceptedIndices: Array.from({ length: Math.min(count, 6) }, (_, i) => i), changed: Math.min(count, 6), promoted: [] }) };
+      if (outcome === 'rejected') return { ok: true, json: async () => ({ accepted: false, acceptedIndices: [], changed: 0, promoted: [] }) };
+      return { ok: outcome !== 'http-failure', status: 503, json: async () => ({ accepted: false, acceptedIndices: [], changed: 0, promoted: [] }) };
     }
     return { ok: true, json: async () => clone(fixture.profile) };
   };
   return { ...fixture, submitted };
 }
-test('M6 candidate/mark pairing >6', 'eight marks accompany six submitted candidates', async () => {
+test('M6 candidate/mark pairing >6', null, async () => {
   const { s } = await signals(8, 'accepted'); const batch = s._collectProfileSignalCandidates();
   requireSetup(batch.candidates.length === 6, 'six candidate cap changed');
-  assert.deepEqual(Object.keys(batch.marks), clone(batch.candidates.map(c => 'weak:' + c.fact.replace('检测多次答错：', ''))), 'only paired submitted marks are eligible');
+  requireSetup(Object.keys(batch.marks).length === 6, 'index-keyed marks must pair every candidate');
+  assert.deepEqual(Object.values(batch.marks), clone(batch.candidates.map(c => 'weak:' + c.fact.replace('检测多次答错：', ''))), 'only paired submitted marks are eligible');
 });
-test('M6 accepted first batch leaves two for next batch', 'unsent seventh/eighth candidates consume seven-day window', async () => {
+test('M6 accepted first batch leaves two for next batch', null, async () => {
   const { s, submitted } = await signals(8, 'accepted');
   await s._syncProfileSignals(); await settle();
   requireSetup(submitted.length === 1 && submitted[0].length === 6, 'first submission not six');
   assert.equal(s._collectProfileSignalCandidates().candidates.length, 2, 'remaining two must still be eligible');
 });
 for (const outcome of ['accepted', 'ignored', 'http-failure']) {
-  test('M6 sync ' + outcome, outcome === 'ignored' ? 'HTTP 200 ignored still marked successful' : null, async () => {
+  test('M6 sync ' + outcome, null, async () => {
     const { s, storage, submitted } = await signals(2, outcome);
     await s._syncProfileSignals(); await settle();
     requireSetup(submitted.length === 1, 'POST must execute');
@@ -280,7 +283,7 @@ test('F3 in-flight result after session switch', null, async () => {
 
 for (const branchType of ['main', 'socratic', 'learn']) {
   for (const anchorMode of ['empty', 'other']) {
-    test('F4 regenerate ' + branchType + '/' + anchorMode, branchType === 'main' && anchorMode === 'empty' ? null : 'regenerate resends text with current anchor instead of original metadata', async () => {
+    test('F4 regenerate ' + branchType + '/' + anchorMode, null, async () => {
       const { s } = chatFixture();
       const originalMeta = branchType === 'main' ? {} : { branchType, branchId: 'branch-A', parentId: 'parent-A', sourceModule: 'extend', fromPort: 'out-2', position: { x: 123, y: 456 } };
       s.anchor = anchorMode === 'other' ? { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' } : null;
@@ -294,7 +297,7 @@ for (const branchType of ['main', 'socratic', 'learn']) {
       s.saveCurrentSession = async () => { sent = clone(evaluate(s, 'chatHistory')); await gate.promise; };
       // sendQuick is fire-and-forget in production: track rather than replace its send behavior.
       const actualSend = s.sendMessage; let completion;
-      s.sendMessage = () => (completion = actualSend());
+      s.sendMessage = (...args) => (completion = actualSend(...args));
       s.regenerateResponse({ closest: () => ({ closest: () => nodes[1] }) });
       requireSetup(completion && sent.length === 1 && sent[0].content === '你好', 'original user and later turns must be truncated before resend');
       gate.resolve(); await completion;

@@ -266,7 +266,8 @@ def _sanitize_op(op) -> dict:
     }
 
 
-def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
+def apply_profile_ops(device_id: str, ops: list, source: str = "",
+                      *, report_acceptance: bool = False) -> dict:
     """合并式采集入口：按 op 类型合并进画像，返回 {"changed", "promoted"}。
 
     - new：规范化查重后撞上已有事实按 confirm 处理；stage/goal 直接入 facts，其余进 pending
@@ -277,12 +278,17 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
     changed 统计实际修改的操作次数（含计数），promoted 只报告真实固化。
     """
     result = {"changed": 0, "promoted": []}
+    accepted_indices = []
+    if report_acceptance:
+        result.update(accepted=False, acceptedIndices=[])
     if not isinstance(ops, list) or not ops:
         return result
 
     def updater(raw):
         profile = _normalize_profile(raw)
         if not profile.get("enabled", True):
+            if report_acceptance:
+                result["ignored"] = "disabled"
             return None
         changed = 0
         now = time.time()
@@ -343,7 +349,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                 pending.append(item)
             return True
 
-        for raw_op in ops:
+        for index, raw_op in enumerate(ops):
             op = _sanitize_op(raw_op)
             if not op:
                 continue
@@ -355,6 +361,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                 if hit:
                     _archive_item(hit, op["source"] or "user")
                     changed += 1
+                    accepted_indices.append(index)
                 continue
 
             if kind == "confirm":
@@ -363,6 +370,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                 if hit:
                     _confirm_item(hit, op)
                     changed += 1
+                    accepted_indices.append(index)
                 continue
 
             if kind == "update":
@@ -372,6 +380,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                     # 目标不存在：更正信息按新事实落地（内部查重兜底）
                     if _new_fact(op):
                         changed += 1
+                        accepted_indices.append(index)
                     continue
                 norm = _norm_fact(op["fact"])
                 if norm and norm != _norm_fact(target["fact"]):
@@ -382,6 +391,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                         _archive_item(target, "superseded")
                         _confirm_item(twin, op)
                         changed += 1
+                        accepted_indices.append(index)
                         continue
                 old_text = target["fact"]
                 target["fact"] = op["fact"]
@@ -392,11 +402,13 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
                 target.setdefault("history", []).append({"fact": old_text, "at": now})
                 target["history"] = target["history"][-MAX_FACT_HISTORY:]
                 changed += 1
+                accepted_indices.append(index)
                 continue
 
             # new
             if _new_fact(op):
                 changed += 1
+                accepted_indices.append(index)
 
         result["changed"] = changed
         if not changed:
@@ -404,6 +416,12 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "") -> dict:
         profile["pending"] = profile["pending"][-MAX_PENDING:]
         profile["facts"] = profile["facts"][-MAX_FACTS:]
         profile["updatedAt"] = time.time()
+        if report_acceptance:
+            retained = {_norm_fact(f["fact"]) for f in profile["facts"] + profile["pending"]}
+            result["acceptedIndices"] = [i for i in accepted_indices
+                if _sanitize_op(ops[i])["op"] not in ("new", "update")
+                or _norm_fact(_sanitize_op(ops[i])["fact"]) in retained]
+            result["accepted"] = bool(result["acceptedIndices"])
         return profile
 
     _mutate_json(_profile_path(device_id), updater)
@@ -550,10 +568,13 @@ def mark_profile_used(device_id: str, fact_ids: list) -> None:
 
 
 def _profile_section_texts(profile: dict) -> tuple:
-    """把画像组装为「【类别】内容」段落列表（契约化注入的正文）。
+    """把画像组装为结构化段落（契约化注入的正文）。
 
-    返回 (sections, fact_ids)：fact_ids 是实际被组进段落的活跃事实 id，
-    供注入后回写 lastUsedAt。休眠（idle）事实不参与。
+    返回 (sections, fact_ids)：sections 每项为 (label, items, ids)——items 是
+    实际进入正文的条目文本，ids 与 items 一一对应（显式表单条目无事实 id，
+    以 None 占位）。fact_ids 只含真正进入正文的事实，供注入后回写 lastUsedAt；
+    休眠（idle）事实与被显式信息去重合并的事实都不返回。预算裁剪时按同结构
+    丢弃条目，ID 与正文永不脱节。
     """
     exp = profile["explicit"]
     facts = [f for f in profile["facts"] if f.get("status", "active") == "active" and str(f.get("fact") or "").strip()]
@@ -567,27 +588,30 @@ def _profile_section_texts(profile: dict) -> tuple:
         ("weakAreas", "【薄弱】", "weakness"),
         ("interests", "【兴趣】", "interest"),
     ):
-        texts = []
+        candidates = []
         if exp.get(key):
-            texts.append(exp[key])
-        texts.extend(str(f["fact"]) for f in facts if f["category"] == category)
+            candidates.append((exp[key], None))
+        candidates.extend((str(f["fact"]), f["id"]) for f in facts if f["category"] == category)
         seen = set()
-        uniq = []
-        for t in texts:
+        items, ids = [], []
+        for t, fid in candidates:
             k = _norm_fact(t)
             if k and k not in seen:
                 seen.add(k)
-                uniq.append(t[:60])
-        if uniq:
-            sections.append(label + "；".join(uniq[:5]))
+                items.append(t[:60])
+                ids.append(fid)
+                if len(items) >= 5:
+                    break
+        if items:
+            sections.append((label, items, ids))
     style = exp.get("style") or {}
     style_parts = []
     if style.get("detail") and style["detail"] != "标准":
-        style_parts.append(f"详略={style['detail']}")
+        style_parts.append((f"详略={style['detail']}", None))
     if style.get("jargon") and style["jargon"] != "标准":
-        style_parts.append(f"术语={style['jargon']}")
+        style_parts.append((f"术语={style['jargon']}", None))
     if style.get("visuals") and style["visuals"] != "否":
-        style_parts.append(f"可视化={style['visuals']}")
+        style_parts.append((f"可视化={style['visuals']}", None))
     # style 类别的自动事实与显式偏好同段注入：否则该类事实永不进段落，
     # 却仍计入 factIds 被 lastUsedAt 刷新，成为不休眠也永不出场的死数据
     style_seen = set()
@@ -598,13 +622,25 @@ def _profile_section_texts(profile: dict) -> tuple:
         k = _norm_fact(t)
         if k and k not in style_seen:
             style_seen.add(k)
-            style_parts.append(t)
+            style_parts.append((t, f["id"]))
     if style_parts:
-        sections.append("【偏好】" + "；".join(style_parts))
-    other = [str(f["fact"]) for f in facts if f["category"] == "other"]
-    if other:
-        sections.append("【其他】" + "；".join(t[:60] for t in other[:5]))
-    return sections, [f["id"] for f in facts]
+        sections.append(("【偏好】", [t for t, _ in style_parts], [fid for _, fid in style_parts]))
+    other_seen = set()
+    other_items, other_ids = [], []
+    for f in facts:
+        if f["category"] != "other":
+            continue
+        t = str(f["fact"])[:60]
+        k = _norm_fact(t)
+        if k and k not in other_seen:
+            other_seen.add(k)
+            other_items.append(t)
+            other_ids.append(f["id"])
+            if len(other_items) >= 5:
+                break
+    if other_items:
+        sections.append(("【其他】", other_items, other_ids))
+    return sections, [fid for _, _, ids in sections for fid in ids if fid]
 
 
 def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dict:
@@ -612,11 +648,13 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
 
     契约：不再丢一团事实让模型自由发挥，而是按类别给段落 + 明确的行为规则
     （学段定素材与术语、薄弱点加铺垫、冲突以对话为准），弱模型也能遵守。
+    factIds 恒等于实际进入 text 的事实（预算裁剪时逐条回退），保证
+    lastUsedAt 只刷新真正展示过的内容。
     """
     profile = get_profile(device_id)
     if not profile.get("enabled", True):
         return {"text": "", "factIds": []}
-    sections, fact_ids = _profile_section_texts(profile)
+    sections, _ = _profile_section_texts(profile)
     if not sections:
         return {"text": "", "factIds": []}
     rules = [
@@ -627,21 +665,33 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
         "4. 与本对话中最新陈述冲突时，以对话为准；术语偏好与难度等级冲突时，以难度等级为准；"
         "不得编造画像之外的用户信息。",
     ]
-    text = (
-        "<user_profile>\n"
-        "以下是从用户长期使用中积累的学习画像，用于个性化本次回答：\n"
-        + "\n".join(sections)
-        + "\n使用规则：\n" + "\n".join(rules)
-        + "\n</user_profile>"
-    )
-    if len(text) > max_chars:
-        # 截断不能吃掉闭合标签：按行回退避免半行残留，再补回 </user_profile>
-        body = text[:max_chars]
-        nl = body.rfind("\n")
-        if nl > 0:
-            body = body[:nl]
-        text = body + "\n</user_profile>"
-    return {"text": text, "factIds": fact_ids}
+
+    def render(sel):
+        parts = []
+        ids = []
+        for label, items, sec_ids in sel:
+            parts.append(label + "；".join(items))
+            ids.extend(fid for fid in sec_ids if fid)
+        text = (
+            "<user_profile>\n"
+            "以下是从用户长期使用中积累的学习画像，用于个性化本次回答：\n"
+            + "\n".join(parts)
+            + "\n使用规则：\n" + "\n".join(rules)
+            + "\n</user_profile>"
+        )
+        return text, ids
+
+    # 规则和闭合标签必须完整；预算不足时只移除完整条目。
+    while sections:
+        text, fact_ids = render(sections)
+        if len(text) <= max_chars:
+            return {"text": text, "factIds": fact_ids}
+        _, items, ids = sections[-1]
+        items.pop()
+        ids.pop()
+        if not items:
+            sections.pop()
+    return {"text": "", "factIds": []}
 
 
 def profile_context_text(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> str:

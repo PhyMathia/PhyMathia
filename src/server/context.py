@@ -1,7 +1,10 @@
 """会话上下文构建与苏格拉底追问状态管理。"""
 
+import hashlib
+import json
 import re
 import time
+from copy import deepcopy
 
 from . import storage
 from .config import KV_PATH
@@ -393,7 +396,7 @@ def _rolling_memory_generation(session_id: str) -> tuple:
 
 
 def _write_rolling_memory(session_id: str, summary: str, message_count: int,
-                          *, expected_generation=None) -> bool:
+                          *, expected_generation=None, snapshot=None) -> bool:
     """删除代次校验与写入共用 JSON 锁；返回是否实际写入。"""
     if not session_id or not summary:
         return False
@@ -401,7 +404,10 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
     def updater(data):
         data[_rolling_memory_key(session_id)] = {
             "summary": str(summary).strip()[:ROLLING_MEMORY_MAX_CHARS],
-            "messageCount": int(message_count or 0),
+            "messageCount": snapshot["messageCount"],
+            "coveredMessageCount": snapshot["coveredMessageCount"],
+            "coveredPrefix": snapshot["coveredPrefix"],
+            "backlog": snapshot["backlog"],
             "updatedAt": int(time.time() * 1000),
         }
         return data
@@ -409,6 +415,23 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
     with storage._JSON_LOCK:
         if (expected_generation is not None
                 and expected_generation != _rolling_memory_generation(session_id)):
+            return False
+        if snapshot is None:
+            snapshot = _rolling_memory_snapshot(session_id, message_count=message_count)
+            if not snapshot["messageCount"]:
+                def write_legacy(data):
+                    data[_rolling_memory_key(session_id)] = {
+                        "summary": str(summary).strip()[:ROLLING_MEMORY_MAX_CHARS],
+                        "messageCount": int(message_count or 0),
+                        "updatedAt": int(time.time() * 1000),
+                    }
+                    return data
+                _mutate_json(KV_PATH, write_legacy)
+                return True
+        messages = _load_messages(session_id)
+        if (len(messages) < snapshot["messageCount"]
+                or _rolling_prefix(messages[:snapshot["messageCount"]]) != snapshot["sourcePrefix"]
+                or _read_rolling_memory(session_id) != snapshot["baseMemory"]):
             return False
         _mutate_json(KV_PATH, updater)
         return True
@@ -456,28 +479,59 @@ def _rolling_summary_due(session_id: str) -> int:
     mem = _read_rolling_memory(session_id)
     if not mem:
         return count
+    cursor = mem.get("coveredMessageCount")
+    if cursor is not None and (not isinstance(cursor, int) or not 0 <= cursor <= count
+            or mem.get("coveredPrefix") != _rolling_prefix(messages[:cursor])
+            or mem.get("backlog")):
+        return count
     if count - int(mem.get("messageCount") or 0) >= ROLLING_MEMORY_REFRESH_GAP:
         return count
     return 0
 
 
+def _rolling_prefix(messages: list) -> str:
+    return hashlib.sha256(json.dumps(messages, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _rolling_memory_snapshot(session_id: str, max_old_pairs: int = 6, message_count=None) -> dict:
+    with storage._JSON_LOCK:
+        messages = deepcopy(_load_messages(session_id))
+        if message_count is not None:
+            messages = messages[:max(0, int(message_count))]
+        mem = deepcopy(_read_rolling_memory(session_id))
+    count = len(messages)
+    starts = [i for i, m in enumerate(messages)
+              if m.get("role") == "user" and not _is_socratic_message(m)]
+    # 最近三轮保留原文；提前压缩七轮摘要窗口内的内容，避免刷新间隔造成遗漏。
+    end = starts[-3] if len(starts) > 3 else 0
+    cursor = (mem or {}).get("coveredMessageCount", 0)
+    valid = (isinstance(cursor, int) and 0 <= cursor <= count
+             and (mem or {}).get("coveredPrefix") == _rolling_prefix(messages[:cursor]))
+    if not valid:
+        cursor = 0
+    prefix = "旧记忆：" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS] if mem and (valid or "coveredMessageCount" not in mem) else ""
+    parts = [prefix] if prefix else []
+    used = cursor
+    boundaries = [i for i in starts if cursor <= i < end] + [end]
+    for start, stop in list(zip(boundaries, boundaries[1:]))[:max_old_pairs]:
+        digest = _recent_context_messages(messages[start:stop], max_rounds=0, summary_rounds=1)
+        block = "\n".join(("用户：" if m.get("role") == "user" else "AI：")
+                          + str(m.get("content") or "")[:300] for m in digest)
+        if not block:
+            used = stop
+            continue
+        if len("\n\n".join(parts + [block])) > ROLLING_MEMORY_INPUT_MAX_CHARS:
+            break
+        parts.append(block)
+        used = stop
+    return {"text": "\n\n".join(parts), "messageCount": count,
+            "coveredMessageCount": used, "coveredPrefix": _rolling_prefix(messages[:used]),
+            "sourcePrefix": _rolling_prefix(messages), "baseMemory": mem,
+            "backlog": used < end}
+
+
 def _rolling_memory_input(session_id: str, max_old_pairs: int = 6) -> str:
-    """构造滚动记忆输入：旧记忆 + 最早的若干轮对话摘要。"""
-    messages = _load_messages(session_id)
-    mem = _read_rolling_memory(session_id)
-    parts = []
-    if mem:
-        parts.append("旧记忆：" + str(mem.get("summary") or ""))
-    digest = _recent_context_messages(messages, max_rounds=0, summary_rounds=999)
-    if digest:
-        # 取最旧的前 max_old_pairs 轮（即将被完整上下文遗忘的内容）
-        lines = []
-        for m in digest[:max_old_pairs * 2]:
-            role = "用户" if m.get("role") == "user" else "AI"
-            lines.append(role + "：" + str(m.get("content") or "")[:300])
-        parts.append("最早对话：\n" + "\n".join(lines))
-    text = "\n\n".join(parts)
-    return text[:ROLLING_MEMORY_INPUT_MAX_CHARS]
+    return _rolling_memory_snapshot(session_id, max_old_pairs)["text"]
 
 
 def _inject_rolling_memory(session_id: str, result: list, budget_tokens: int = 0) -> list:
@@ -854,12 +908,24 @@ SOCRATIC_STATE_TTL_SECONDS = 24 * 60 * 60
 SOCRATIC_STATE_TS_SANITY = 100_000_000
 
 
+def _socratic_state_updated_seconds(state) -> int:
+    """updatedAt 折算为秒：历史写侧是毫秒（time.time()*1000），秒级旧数据与
+    占位值直接共存于同一字段，按量级识别（>=1e12 视为毫秒）；缺失/占位返回 0。"""
+    if not isinstance(state, dict):
+        return 0
+    try:
+        updated = int(state.get("updatedAt") or 0)
+    except (TypeError, ValueError):
+        return 0
+    if updated < SOCRATIC_STATE_TS_SANITY:
+        return 0
+    return updated // 1000 if updated >= 1_000_000_000_000 else updated
+
+
 def _socratic_state_expired(state, now: int = None) -> bool:
     """苏格拉底状态超过 TTL 未更新视为过期；无 updatedAt 或旧版占位时间戳不主动清理。"""
-    if not isinstance(state, dict):
-        return False
-    updated = int(state.get("updatedAt") or 0)
-    if not updated or updated < SOCRATIC_STATE_TS_SANITY:
+    updated = _socratic_state_updated_seconds(state)
+    if not updated:
         return False
     now = now if now is not None else int(time.time())
     return now - updated > SOCRATIC_STATE_TTL_SECONDS

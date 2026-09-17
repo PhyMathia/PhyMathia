@@ -40,6 +40,8 @@
         return;
       }
 
+      const resendMeta = _messageBranchMeta(chatHistory[userMsgIndex]);
+
       // 截断到该用户消息之前（连同用户消息一并移除）：
       // sendQuick/sendMessage 会无条件重新 push 用户消息，保留原条目会导致历史重复
       chatHistory = chatHistory.slice(0, userMsgIndex);
@@ -59,9 +61,7 @@
         el = next;
       }
 
-      // Re-send the user message
-      if (typeof sendQuick === 'function') sendQuick(userMsg);
-      else sendMessage();
+      return sendQuick(userMsg, resendMeta);
     }
 
     // ===== Auto Extract after AI response =====

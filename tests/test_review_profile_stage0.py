@@ -126,7 +126,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
 
     # ---------- M4：注入 factIds ≠ 实际展示事实 ----------
 
-    @pytest.mark.xfail(strict=True, reason="M4: 同类超 5 条时 factIds 仍返回全部 6 条（正文只含 5 条）", raises=AssertionError)
     def test_m4_factids_match_sections_per_category_cap(self):
         dev = self._dev("m4")
         # 6 条同类（stage 一次直入）事实，正文按类别截前 5 条
@@ -140,7 +139,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
                          f"factIds({len(ctx['factIds'])}) 与实际进入正文的事实({len(in_body)})不一致")
         self.assertEqual(len(ctx["factIds"]), 5, "同类正文截 5 条后，factIds 不应再含第 6 条")
 
-    @pytest.mark.xfail(strict=True, reason="M4: 与显式信息规范化重复的事实未进正文却返回其 ID", raises=AssertionError)
     def test_m4_factids_exclude_explicit_duplicates(self):
         dev = self._dev("m4b")
         profile_mod.update_profile(dev, {"explicit": {"stage": "我是高二学生"}})
@@ -152,7 +150,6 @@ class ReviewStage0ProfileTest(RouteTestBase):
         self.assertNotIn(p["facts"][0]["id"], ctx["factIds"],
                          "与显式学段去重合并的事实不进正文，不应回写 lastUsedAt")
 
-    @pytest.mark.xfail(strict=True, reason="M4: 小预算截断后补闭合标签可超 max_chars，且不保证返回合法最小结构", raises=AssertionError)
     def test_m4_tiny_budget_respects_max_chars(self):
         dev = self._dev("m4c")
         profile_mod.apply_profile_ops(dev, [

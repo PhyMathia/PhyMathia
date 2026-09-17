@@ -248,14 +248,14 @@
 
 
     let pendingQuickText = '';
-    function sendQuick(text) {
+    function sendQuick(text, resendMeta) {
       pendingQuickText = String(text || '');
       const input = document.getElementById('userInput');
       if (input) {
         input.value = pendingQuickText;
         autoResize(input);
       }
-      sendMessage();
+      return sendMessage(resendMeta === undefined ? undefined : { resendMeta });
     }
 
     function _isCasualPrompt(text) {
@@ -285,7 +285,17 @@
       if (typeof window.stopWorkflowRun === 'function') window.stopWorkflowRun();
     }
 
-    async function sendMessage() {
+    function _messageBranchMeta(message) {
+      const meta = {};
+      for (const key of ['branch', 'parentId', 'sourceModule', 'branchType', 'branchId', 'branchLabel', 'fromPort', 'position']) {
+        if (message && Object.prototype.hasOwnProperty.call(message, key)) {
+          meta[key] = key === 'position' && message[key] ? { ...message[key] } : message[key];
+        }
+      }
+      return meta;
+    }
+
+    async function sendMessage(options) {
       const input = document.getElementById('userInput');
       const btn = document.getElementById('sendBtn');
       const stopBtn = document.getElementById('stopBtn');
@@ -302,7 +312,10 @@
       document.getElementById('welcomeTip')?.remove();
 
       const now = Date.now();
-      const branchMeta = _consumePendingBranch() || {};
+      // 显式重发（含主线的空元数据）不消费当前待用锚点；点击事件仍走普通发送。
+      const branchMeta = options && Object.prototype.hasOwnProperty.call(options, 'resendMeta')
+        ? _messageBranchMeta(options.resendMeta)
+        : (_consumePendingBranch() || {});
       lastFailedBranchMeta = branchMeta;
       const isSocraticBranchSend = text.startsWith('[苏格拉底回答]') || branchMeta.branchType === 'socratic';
       currentBranch = isSocraticBranchSend ? 'socratic' : null;
@@ -557,19 +570,20 @@
 
           // 交互可视化缺失时改为后台补齐：先保存/显示主回答，模型生成完成后原地回填。
           if (typeof scheduleVisualizationInBackground === 'function') {
+            const originatingAssistant = chatHistory[chatHistory.length - 1];
             scheduleVisualizationInBackground(assistantContent, (updatedContent) => {
               try {
-                const idx = chatHistory.findIndex(
-                  (m) => m.role === 'assistant' && String(m.timestamp) === String(ts)
-                );
-                if (idx >= 0) chatHistory[idx].content = updatedContent;
+                // 切会话或原回答已被删除/重生成时丢弃；时间戳相同不代表同一条回答。
+                if (currentSessionId !== sourceSessionId || !chatHistory.includes(originatingAssistant)) return;
+                originatingAssistant.content = updatedContent;
                 try {
-                  localStorage.setItem('phymathia_msgs_' + currentSessionId, JSON.stringify(chatHistory));
+                  localStorage.setItem('phymathia_msgs_' + sourceSessionId, JSON.stringify(chatHistory));
                 } catch (e) {}
                 if (assistantDiv && assistantDiv.isConnected) {
                   renderAssistantContent(assistantDiv, updatedContent).then(() => {
+                    if (currentSessionId !== sourceSessionId || !chatHistory.includes(originatingAssistant)) return;
                     // 新消息流式生成期间不主动写服务端，交给下一次保存/定时同步。
-                    if (!isStreaming) saveSessionMessages(currentSessionId, chatHistory);
+                    if (!isStreaming) saveSessionMessages(sourceSessionId, chatHistory);
                     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
                   }).catch(() => {});
                 }
@@ -755,22 +769,7 @@
         // 重发前移除原用户消息（历史+DOM），sendMessage 会重新 push
         _popTrailingUserMessage();
         lastFailedMessage = userMsg;
-        if (userMeta && (userMeta.branchId || userMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
-          // 重试时保留画布定位信息（position/fromPort），否则重试后分支会连错端口/漂移
-          const retryPos = userMeta.position;
-          window.setActiveBranchAnchor({
-            parentId: userMeta.parentId || '',
-            sourceModule: userMeta.sourceModule || 'extend',
-            branchType: userMeta.branchType || '',
-            branchId: userMeta.branchId || '',
-            branchLabel: userMeta.branchLabel || '',
-            ...(retryPos && Number.isFinite(retryPos.x) && Number.isFinite(retryPos.y) ? { position: retryPos } : {}),
-            ...(userMeta.fromPort ? { fromPort: userMeta.fromPort } : {}),
-          });
-        }
-        const userInputEl = document.getElementById('userInput');
-        if (userInputEl) userInputEl.value = userMsg;
-        sendMessage();
+        return sendQuick(userMsg, _messageBranchMeta(userMeta));
       }
     }
 
