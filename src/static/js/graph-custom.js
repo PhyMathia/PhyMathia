@@ -22,7 +22,7 @@ function openAddBlankNodeModal(x, y) {
       + '<div class="graph-add-node-grid">'
       + opts.map(option => {
           return '<button class="graph-add-node-item" style="--node-color:' + option.color + '" title="' + escapeHtml(option.desc || option.label) + '" onclick="createManualNode(\'' + option.key + '\')">'
-            + '<span class="graph-add-node-dot"></span>'
+            + '<span class="graph-add-node-dot ' + _nodeFamilyShape(option) + '"></span>'
             + escapeHtml(option.label)
             + '</button>';
         }).join('')
