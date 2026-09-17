@@ -607,6 +607,10 @@
             const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
             const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
             metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
+            // 画像注入角标：只标注入过画像的主路径完整回答（quick 与分支回答不注入画像）
+            if (typeof memoryAppendProfileBadge === 'function' && !isCasual && !(branchMeta && branchMeta.branchType)) {
+              memoryAppendProfileBadge(metaEl);
+            }
           }
           if (typeof notifyTaskCompleted === 'function' && duration) {
             notifyTaskCompleted(duration, '回复完成');

@@ -302,12 +302,15 @@ async def api_models_chat(request: Request):
             concept_text = concept.concept_context_text(prompt, session_id=session_id)
             if concept_text:
                 system_content += "\n\n" + concept_text
-        # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）
+        # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）。
+        # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。
         if not is_quick and not workflow_context:
             _device_id = payload.get("device_id") or payload.get("deviceId") or ""
-            _profile_text = profile.profile_context_text(_device_id)
-            if _profile_text:
-                system_content += "\n\n" + _profile_text
+            if _device_id:
+                _profile_ctx = profile.profile_context(_device_id)
+                if _profile_ctx["text"]:
+                    system_content += "\n\n" + _profile_ctx["text"]
+                    profile.mark_profile_used(_device_id, _profile_ctx["factIds"])
         messages = [{"role": "system", "content": system_content}]
 
         if session_id:
@@ -1014,10 +1017,18 @@ async def api_extract_knowledge(request: Request):
 
     items = []
     profile_facts = []
+    profile_ops = []
+    # 搭车画像采集：把既有画像摘要带给提取模型，模型输出 new/confirm/update/remove 合并操作
+    # （记忆开关关闭时后端自动忽略；device_id 需在读摘要前解析）
+    device_id = payload.get("device_id") or payload.get("deviceId") or ""
+    profile_digest = profile.profile_ops_digest(device_id) if device_id else ""
     if (api_key or provider in ("opencode", "opencode-go")) and model:
         try:
-            extracted = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level)
-            if isinstance(extracted, tuple):
+            extracted = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level,
+                                                    profile_digest=profile_digest)
+            if isinstance(extracted, tuple) and len(extracted) == 3:
+                items, profile_facts, profile_ops = extracted
+            elif isinstance(extracted, tuple):
                 items, profile_facts = extracted
             else:
                 items = extracted
@@ -1030,17 +1041,26 @@ async def api_extract_knowledge(request: Request):
         if items:
             logger.info(f"Local extract: {len(items)} items for session {session_id}")
 
-    # 搭车画像候选：记忆开关关闭时后端自动忽略（enabled=False 不写入）
-    device_id = payload.get("device_id") or payload.get("deviceId") or ""
-    if device_id and profile_facts:
-        try:
-            for pf in profile_facts:
+    profile_result = None
+    if device_id:
+        # 旧格式 profile_facts 兼容：按 new 语义并入 ops（合并式采集内部按规范化文本去重）
+        all_ops = list(profile_ops or [])
+        for pf in profile_facts or []:
+            if isinstance(pf, dict) and str(pf.get("fact") or "").strip():
                 pf.setdefault("sourceSession", session_id)
-            accepted = profile.add_fact_candidates(device_id, profile_facts)
-            if accepted:
-                logger.info(f"Profile facts accepted for device {device_id[:8]}: {accepted}")
-        except Exception as e:
-            logger.warning(f"Profile fact ingest failed: {e}")
+                all_ops.append({"op": "new", **pf})
+        for op in all_ops:
+            if isinstance(op, dict):
+                op.setdefault("sourceSession", session_id)
+                op.setdefault("source", "chat")
+        if all_ops:
+            try:
+                accepted = profile.apply_profile_ops(device_id, all_ops, source="chat")
+                profile_result = {"changed": accepted.get("changed", 0), "promoted": accepted.get("promoted", [])}
+                if accepted.get("changed"):
+                    logger.info(f"Profile ops applied for device {device_id[:8]}: {accepted}")
+            except Exception as e:
+                logger.warning(f"Profile fact ingest failed: {e}")
 
     # 整卡摘要双重用途（P2 起）：主模型 <summary> 只落 anchorSummary（画布定位锚点），
     # 不再覆盖各条目的展示 summary——AI 逐条摘要保优合并靠 summarySource 等级；
@@ -1078,7 +1098,28 @@ async def api_extract_knowledge(request: Request):
     if added:
         logger.info(f"Auto added {added} formulas to library")
 
-    return {"items": items, "descriptions": descriptions, "summaries": knowledge_summaries}
+    return {"items": items, "descriptions": descriptions, "summaries": knowledge_summaries,
+            "profile": profile_result or {"changed": 0, "promoted": []}}
+
+
+@app.post("/api/profile/candidates")
+async def api_profile_candidates(request: Request):
+    """画像候选通用入口：确定性信号（检测错题/苏格拉底答错等）直接落候选。
+
+    body: {"device_id": str, "candidates": [{"fact", "category", "sourceSession"?}], "source"?}
+    合并语义与对话采集一致（new/规范化查重/两击固化），返回 {"changed", "promoted"}。
+    """
+    payload = await _parse_json_object(request)
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 device_id")
+    candidates = payload.get("candidates")
+    source = str(payload.get("source") or "signal")[:32]
+    try:
+        return profile.apply_profile_ops(device_id, candidates, source=source)
+    except Exception as e:
+        logger.warning(f"Profile candidates ingest failed: {e}")
+        return {"changed": 0, "promoted": []}
 
 
 

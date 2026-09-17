@@ -329,6 +329,11 @@
       });
       if (!resp.ok) return { items: [], descriptions: {}, summaries: {} };
       const data = await resp.json();
+      // 画像固化反馈：候选转正时提示一句 + 刷新侧边栏红点（记忆「看得见」）
+      if (data && data.profile && Array.isArray(data.profile.promoted) && data.profile.promoted.length) {
+        if (typeof memoryNotifyPromoted === 'function') memoryNotifyPromoted(data.profile.promoted);
+        if (typeof memoryRefreshCache === 'function') memoryRefreshCache();
+      }
       return { items: data.items || [], descriptions: data.descriptions || {}, summaries: data.summaries || {} };
     }
 

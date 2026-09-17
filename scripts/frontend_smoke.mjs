@@ -2783,6 +2783,110 @@ check('quiz-relearn：quizLocateTopic 全链路（主题解析 → 定位内核 
   return true;
 });
 
+
+// ===== 记忆功能 v2：可感知性 + 确定性信号采集（2026-09-17） =====
+// 同步用例（不 await、即时清理共享键），追加在串行边界之后安全。
+
+check('memory-v2：红点/休眠/归档容器与角标、信号回传的前后端接线都在', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const [name, token] of [
+    ['侧边栏记忆红点', 'memory-dot" id="memoryDot"'],
+    ['休眠记忆区', 'id="memoryIdleList"'],
+    ['归档区', 'id="memoryArchiveList"'],
+  ]) {
+    if (!html.includes(token)) throw new Error(name + ' 缺失');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const token of ['.memory-dot {', '.memory-badge-btn {', '.memory-badge-detail {']) {
+    if (!css.includes(token)) throw new Error('记忆样式缺失：' + token);
+  }
+  const memoryJs = fs.readFileSync('src/static/js/memory.js', 'utf8');
+  for (const token of [
+    'memoryPostCandidates', 'memoryNotifyPromoted', 'memoryBadgeSections',
+    'memoryAppendProfileBadge', 'memoryRestoreFact', 'memoryRestoreArchive',
+  ]) {
+    if (!memoryJs.includes(token)) throw new Error('memory.js 缺少 ' + token);
+  }
+  const quizStatsJs = fs.readFileSync('src/static/js/quiz-stats.js', 'utf8');
+  if (!quizStatsJs.includes('_collectProfileSignalCandidates')) throw new Error('quiz-stats 缺少信号采集');
+  if (!quizStatsJs.includes('_scheduleProfileSignalSync();')) throw new Error('quiz-stats 答题后未挂信号同步');
+  const chatJs = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  if (!chatJs.includes('memoryAppendProfileBadge(metaEl)')) throw new Error('chat.js 未插画像角标');
+  const chatFeaturesJs = fs.readFileSync('src/static/js/chat-features.js', 'utf8');
+  if (!chatFeaturesJs.includes('data.profile.promoted')) throw new Error('chat-features 未处理提取响应的 promoted');
+  return true;
+});
+
+check('memory-v2：角标分节与后端注入同构（学段/目标/薄弱/兴趣/偏好/其他，停用与空闲返回空）', () => {
+  vm.runInContext(`
+    _cachedProfile = {
+      enabled: true,
+      explicit: { stage: '高二', goal: '', interests: '天体物理', weakAreas: '', style: { detail: '标准', jargon: '通俗', visuals: '否' } },
+      facts: [
+        { id: 'pf_1', fact: '检测多次答错：电磁感应', category: 'weakness', status: 'active' },
+        { id: 'pf_2', fact: '休眠事实', category: 'other', status: 'idle' },
+      ],
+      pending: [],
+    };
+  `, sandbox);
+  try {
+    const sections = sandbox.memoryBadgeSections();
+    const labels = sections.map(s => s.label).join(',');
+    if (!labels.includes('学段') || !labels.includes('薄弱') || !labels.includes('兴趣') || !labels.includes('偏好')) {
+      throw new Error('角标分节不全：' + labels);
+    }
+    if (labels.includes('其他')) throw new Error('idle 事实不应出现在角标');
+    vm.runInContext(`_cachedProfile.enabled = false;`, sandbox);
+    if (sandbox.memoryBadgeSections().length !== 0) throw new Error('停用时应返回空分节');
+  } finally {
+    vm.runInContext(`_cachedProfile = null;`, sandbox);
+  }
+  return true;
+});
+
+check('memory-v2：相对时间口径（刚刚/分钟/小时/天/日期）', () => {
+  const now = Date.now();
+  if (sandbox.memoryRelTime(now - 5000) !== '刚刚') throw new Error('5 秒前应为 刚刚');
+  if (sandbox.memoryRelTime(now - 5 * 60000) !== '5 分钟前') throw new Error('分钟口径错');
+  if (sandbox.memoryRelTime(now - 3 * 3600000) !== '3 小时前') throw new Error('小时口径错');
+  if (sandbox.memoryRelTime(now - 2 * 86400000) !== '2 天前') throw new Error('天口径错');
+  if (sandbox.memoryRelTime(0) !== '—') throw new Error('无时间戳应为 —');
+  return true;
+});
+
+check('memory-v2：确定性信号采集——薄弱(≥2错)与兴趣(≥3会话)成候选，7 天同步缓存防重复', () => {
+  const now = Date.now();
+  sandbox.localStorage.setItem('phymathia_quiz_stats', JSON.stringify({
+    t1: { title: '简谐运动', wrong: 2, correct: 0, mastery: 30, last: now },
+    t2: { title: '牛顿第二定律', wrong: 1, correct: 5, mastery: 90, last: now },
+  }));
+  // getKnowledgeItems 是 bundle 里的真函数（词法绑定，stub window 盖不掉），直接播种其数据源
+  sandbox.localStorage.setItem('phymathia_knowledge', JSON.stringify({
+    k1: { title: '梯度', sessionId: 's1' },
+    k2: { title: '梯度', sessionId: 's2' },
+    k3: { title: '梯度', sessionId: 's3' },
+    k4: { title: '散度', sessionId: 's1' },
+  }));
+  if (typeof sandbox.invalidateKnowledgeCache === 'function') sandbox.invalidateKnowledgeCache();
+  sandbox.localStorage.removeItem('phymathia_memory_signal_sync');
+  try {
+    const cands = sandbox._collectProfileSignalCandidates();
+    const facts = cands.map(c => c.fact).join('|');
+    if (!facts.includes('检测多次答错：简谐运动')) throw new Error('薄弱候选缺失：' + facts);
+    if (!facts.includes('经常提问：梯度')) throw new Error('兴趣候选缺失：' + facts);
+    if (facts.includes('牛顿第二定律')) throw new Error('1 错且高掌握不应判薄弱：' + facts);
+    if (facts.includes('散度')) throw new Error('单会话主题不应判兴趣：' + facts);
+    const again = sandbox._collectProfileSignalCandidates();
+    if (again.length !== 0) throw new Error('7 天同步缓存未生效：' + again.map(c => c.fact).join('|'));
+  } finally {
+    sandbox.localStorage.removeItem('phymathia_quiz_stats');
+    sandbox.localStorage.removeItem('phymathia_knowledge');
+    sandbox.localStorage.removeItem('phymathia_memory_signal_sync');
+    if (typeof sandbox.invalidateKnowledgeCache === 'function') sandbox.invalidateKnowledgeCache();
+  }
+  return true;
+});
+
 // 串行段里的异步用例同样进 pendingChecks——必须再收一次，否则断言结果赶不上退出判定
 await Promise.all(pendingChecks).catch(() => {});
 

@@ -21,7 +21,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.css?v=45">
-  <link rel="stylesheet" href="/css/styles-panels.css?v=13">
+  <link rel="stylesheet" href="/css/styles-panels.css?v=14">
   <link rel="stylesheet" href="/css/graph-override.css?v=114">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=23">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -67,7 +67,7 @@
     <div class="sidebar-sessions" id="sessionList"></div>
     <div class="sidebar-help">
       <button class="sidebar-help-btn" onclick="closeSidebar();openMemoryPanel();">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a2 2 0 0 1 2 2v8.3a4.5 4.5 0 1 1-4 0V5a2 2 0 0 1 2-2z"></path><path d="M12 8v6"></path></svg> 记忆
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a2 2 0 0 1 2 2v8.3a4.5 4.5 0 1 1-4 0V5a2 2 0 0 1 2-2z"></path><path d="M12 8v6"></path></svg> 记忆<span class="memory-dot" id="memoryDot" hidden></span>
       </button>
       <button class="sidebar-help-btn" onclick="closeSidebar();openExampleGuide();">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6 4.6 1.9-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path></svg> 示例图讲解
@@ -179,7 +179,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=728cd4f7"></script>
+  <script src="/js/app.js?v=9c371fb7"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=4" defer></script>
 
@@ -217,6 +217,14 @@
       <div class="memory-section">
         <div class="memory-section-title">建议区 <span class="memory-count" id="memoryPendingCount"></span></div>
         <div class="memory-list" id="memoryPendingList"></div>
+      </div>
+      <div class="memory-section">
+        <div class="memory-section-title">休眠记忆 <span class="memory-count" id="memoryIdleCount"></span></div>
+        <div class="memory-list" id="memoryIdleList"></div>
+      </div>
+      <div class="memory-section">
+        <div class="memory-section-title">已更正或移除 <span class="memory-count" id="memoryArchiveCount"></span></div>
+        <div class="memory-list" id="memoryArchiveList"></div>
       </div>
       <div class="memory-section memory-danger-zone">
         <button class="memory-clear-btn" onclick="memoryOpenClearDialog()">清除记忆</button>

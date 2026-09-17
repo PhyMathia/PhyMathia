@@ -580,10 +580,12 @@ def _local_extract_knowledge(messages: list) -> list:
 
 
 _PROFILE_FACTS_RE = re.compile(r'"profile_facts"\s*:\s*(\[[\s\S]*?\])')
+_PROFILE_OPS_RE = re.compile(r'"profile_ops"\s*:\s*(\[[\s\S]*?\])')
+_PROFILE_OP_KINDS = ("new", "confirm", "update", "remove")
 
 
 def _parse_profile_facts(text: str) -> list:
-    """从提取模型输出中容错解析 profile_facts 候选（失败返回空列表）。"""
+    """从提取模型输出中容错解析 profile_facts 候选（旧格式，失败返回空列表）。"""
     if not text:
         return []
     m = _PROFILE_FACTS_RE.search(text)
@@ -603,12 +605,40 @@ def _parse_profile_facts(text: str) -> list:
     return result
 
 
-async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> tuple:
-    """调用 AI 模型提取知识点（非流式），返回 (items, profile_facts) 二元组。"""
+def _parse_profile_ops(text: str) -> list:
+    """从提取模型输出中容错解析 profile_ops 合并操作（失败返回空列表）。"""
+    if not text:
+        return []
+    m = _PROFILE_OPS_RE.search(text)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return []
+    result = []
+    for it in data if isinstance(data, list) else []:
+        if not isinstance(it, dict):
+            continue
+        kind = str(it.get("op") or "").strip().lower()
+        if kind not in _PROFILE_OP_KINDS:
+            continue
+        result.append({
+            "op": kind,
+            "id": str(it.get("id") or "").strip()[:32],
+            "fact": str(it.get("fact") or "").strip()[:120],
+            "category": str(it.get("category") or "other").strip()[:20],
+        })
+    return result
+
+
+async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str,
+                                level: str = "university", profile_digest: str = "") -> tuple:
+    """调用 AI 模型提取知识点（非流式），返回 (items, profile_facts, profile_ops) 三元组。"""
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
-        return [], []
+        return [], [], []
     env_key_used = False
     if not api_key and provider == "opencode-go":
         api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
@@ -619,11 +649,12 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         base_url = validate_model_target(provider, base_url, env_key_used)
     except ValueError:
         # 目标非法（SSRF 防护）：放弃 AI 提取，回退本地规则提取
-        return [], []
+        return [], [], []
 
     # 取最近一轮对话（最后一条 user 消息及之后）
     level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-    msgs = [{"role": "system", "content": EXTRACT_PROMPT + "\n\n难度要求：" + level_suffix}]
+    system_prompt = EXTRACT_PROMPT.replace("{profile_digest}", profile_digest.strip() or "（暂无，首次记录可全部用 new）")
+    msgs = [{"role": "system", "content": system_prompt + "\n\n难度要求：" + level_suffix}]
     last_user_idx = -1
     for i, m in enumerate(messages):
         if m.get("role") == "user":
@@ -646,7 +677,8 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     content = data["choices"][0]["message"]["content"]
     items = _parse_extract_json(content)
     profile_facts = _parse_profile_facts(content)
-    return items, profile_facts
+    profile_ops = _parse_profile_ops(content)
+    return items, profile_facts, profile_ops
 
 
 
@@ -859,7 +891,7 @@ def _normalize_formula_map(data) -> dict:
 __all__ = [
     "_normalize_knowledge", "_normalize_formula", "_formula_key",
     "_looks_like_formula", "_dedupe_formula_map", "_normalize_formula_map",
-    "_parse_extract_json", "_parse_profile_facts", "_clean_knowledge_title", "_normalize_knowledge_key",
+    "_parse_extract_json", "_parse_profile_facts", "_parse_profile_ops", "_clean_knowledge_title", "_normalize_knowledge_key",
     "_strip_knowledge_section", "_is_junk_knowledge_title", "_is_concept_like_title",
     "_looks_like_reasoning_leak", "_is_acceptable_knowledge_item",
     "_summary_source_rank", "_dedupe_knowledge", "_dedupe_knowledge_file", "_pick_knowledge_title",

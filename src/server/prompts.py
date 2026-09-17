@@ -83,9 +83,16 @@ EXTRACT_PROMPT = """你是知识提取助手。请从下面这段对话中提取
   反例（禁止）：把整段对话的摘要原样抄给每个知识点，如"本节讲解了简谐运动的物理与数学本质"。
 - formulas 中公式用 $...$ 或 $$...$$ 包裹，没有公式则为空数组
 - 不要编造对话中不存在的知识点
-可选输出：若用户明确陈述了个人信息（学段/年级、学习目标、兴趣方向、薄弱点、回答偏好），
-再输出 "profile_facts": [{"fact": "用户陈述的事实原文，如"我是高二学生"", "category": "stage|goal|interest|weakness|style"}]；
-没有明确陈述则省略该字段。"""
+用户画像提取（可选，仅在用户明确陈述时）：对照下方「用户当前画像」，把本对话中出现的
+个人信息（学段/年级、学习目标、兴趣方向、薄弱点、回答偏好）归入一种操作，输出
+"profile_ops": [{"op": "new|confirm|update|remove", "id": "id", "fact": "事实原文", "category": "stage|goal|interest|weakness|style|other"}]
+- new：画像中没有的新信息，fact 填事实原文（如"我是高二学生"）
+- confirm：对话再次印证了画像中已有的某条，id 填该条 id
+- update：用户更正了某条（如"我已经毕业了"），id 填该条 id，fact 填更正后原文
+- remove：用户明确否认了某条，id 填该条 id
+- 没有明确陈述则省略 profile_ops；不要臆测、不要把对话内容当个人信息
+用户当前画像：
+{profile_digest}"""
 
 
 

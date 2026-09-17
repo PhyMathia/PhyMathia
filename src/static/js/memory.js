@@ -38,6 +38,39 @@ function memoryWithDevice(payload) {
   return Object.assign({}, payload || {}, { device_id: getDeviceId() });
 }
 
+// ---------- 候选提交与固化提醒 ----------
+// 确定性信号（检测错题/苏格拉底答错/高频提问）走这个入口，与对话采集同一套合并语义
+async function memoryPostCandidates(candidates, source) {
+  if (!Array.isArray(candidates) || !candidates.length) return { changed: 0, promoted: [] };
+  try {
+    const res = await fetch('/api/profile/candidates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: getDeviceId(), candidates: candidates, source: source || 'signal' })
+    });
+    if (!res.ok) return { changed: 0, promoted: [] };
+    const data = await res.json();
+    if (data && Array.isArray(data.promoted) && data.promoted.length) {
+      memoryNotifyPromoted(data.promoted);
+    }
+    memoryRefreshCache();
+    return data || { changed: 0, promoted: [] };
+  } catch (e) {
+    return { changed: 0, promoted: [] };
+  }
+}
+
+// 事实固化（候选转正）时给一句可感知的反馈——记忆功能「看得见」的一半靠它
+function memoryNotifyPromoted(promoted) {
+  if (!Array.isArray(promoted) || !promoted.length) return;
+  const toast = document.getElementById('modelToast');
+  if (!toast) return;
+  const label = promoted.slice(0, 2).join('；') + (promoted.length > 2 ? ' 等 ' + promoted.length + ' 条' : '');
+  toast.textContent = '已记住：' + label + '（记忆面板可查看或删除）';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
 // ---------- 影响面说明（透明性）----------
 function memoryImpactAreas() {
   return [
@@ -56,6 +89,74 @@ async function memoryRefreshCache() {
   } catch (e) {
     _cachedProfile = null;
   }
+  memoryUpdateSidebarDot();
+}
+
+// pending 有新候选时侧边栏「记忆」入口亮红点
+function memoryUpdateSidebarDot() {
+  const dot = document.getElementById('memoryDot');
+  if (!dot) return;
+  const pendingCount = (_cachedProfile && Array.isArray(_cachedProfile.pending)) ? _cachedProfile.pending.length : 0;
+  dot.hidden = !(pendingCount > 0);
+}
+
+// ---------- 画像角标（回答卡上的「已结合你的画像」） ----------
+// 与后端 profile._profile_section_texts 同构的分节口径：学段/目标/薄弱/兴趣/偏好/其他
+function memoryBadgeSections() {
+  if (!_cachedProfile || !_cachedProfile.enabled) return [];
+  const exp = _cachedProfile.explicit || {};
+  const facts = (_cachedProfile.facts || []).filter(f => f && f.status !== 'idle' && String(f.fact || '').trim());
+  const byCategory = (cat) => {
+    const texts = [];
+    const add = (t) => { t = String(t || '').trim(); if (t && !texts.includes(t)) texts.push(t); };
+    if (cat === 'stage') add(exp.stage);
+    if (cat === 'goal') add(exp.goal);
+    if (cat === 'weakness') add(exp.weakAreas);
+    if (cat === 'interest') add(exp.interests);
+    facts.filter(f => f.category === cat).forEach(f => add(String(f.fact).slice(0, 60)));
+    return texts;
+  };
+  const sections = [];
+  const rows = [['学段', 'stage'], ['目标', 'goal'], ['薄弱', 'weakness'], ['兴趣', 'interest']];
+  for (const [label, cat] of rows) {
+    const texts = byCategory(cat);
+    if (texts.length) sections.push({ label: label, text: texts.slice(0, 5).join('；') });
+  }
+  const style = exp.style || {};
+  const styleParts = [];
+  if (style.detail && style.detail !== '标准') styleParts.push('详略=' + style.detail);
+  if (style.jargon && style.jargon !== '标准') styleParts.push('术语=' + style.jargon);
+  if (style.visuals && style.visuals !== '否') styleParts.push('可视化=' + style.visuals);
+  if (styleParts.length) sections.push({ label: '偏好', text: styleParts.join('；') });
+  const others = facts.filter(f => f.category === 'other').map(f => String(f.fact).slice(0, 60));
+  if (others.length) sections.push({ label: '其他', text: others.slice(0, 5).join('；') });
+  return sections;
+}
+
+// 往 message-meta 里插一枚可展开的画像角标；画像为空/停用时不插
+function memoryAppendProfileBadge(metaEl) {
+  if (!metaEl || !metaEl.isConnected) return;
+  if (metaEl.querySelector('.memory-badge')) return;
+  const sections = memoryBadgeSections();
+  if (!sections.length) return;
+  const wrap = document.createElement('span');
+  wrap.className = 'memory-badge';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'memory-badge-btn';
+  btn.textContent = '🧠 已结合你的画像（' + sections.map(s => s.label).join('·') + '）';
+  btn.title = '点击查看本次回答参考了哪些记忆';
+  const detail = document.createElement('span');
+  detail.className = 'memory-badge-detail';
+  detail.hidden = true;
+  detail.innerHTML = sections.map(s =>
+    '<div class="memory-badge-row"><span class="memory-badge-label">【' + s.label + '】</span>' + escapeHtml(s.text) + '</div>'
+  ).join('') +
+    '<div class="memory-badge-row memory-badge-manage"><button type="button" class="memory-badge-manage-btn" onclick="openMemoryPanel()">管理记忆</button></div>';
+  btn.addEventListener('click', () => { detail.hidden = !detail.hidden; });
+  wrap.appendChild(btn);
+  wrap.appendChild(detail);
+  metaEl.insertBefore(wrap, metaEl.firstChild);
 }
 
 function memoryCachedContext() {
@@ -80,9 +181,13 @@ window.memorySaveProfile = memorySaveProfile;
 window.memoryClearProfile = memoryClearProfile;
 window.memorySetEnabled = memorySetEnabled;
 window.memoryWithDevice = memoryWithDevice;
+window.memoryPostCandidates = memoryPostCandidates;
+window.memoryNotifyPromoted = memoryNotifyPromoted;
 window.memoryImpactAreas = memoryImpactAreas;
 window.memoryRefreshCache = memoryRefreshCache;
 window.memoryCachedContext = memoryCachedContext;
+window.memoryBadgeSections = memoryBadgeSections;
+window.memoryAppendProfileBadge = memoryAppendProfileBadge;
 
 // ---------- 记忆面板 UI ----------
 const MEMORY_CATEGORY_LABELS = { stage: '学段', goal: '目标', interest: '兴趣', weakness: '薄弱', style: '偏好', other: '其他' };
@@ -145,8 +250,8 @@ async function memoryRenderPanel() {
       '</div>';
   }
 
-  // 自动记忆
-  const facts = (profile && profile.facts) || [];
+  // 自动记忆（时间线：类别 + 原文 + 次数 + 相对时间）
+  const facts = (profile && profile.facts || []).filter(f => f && f.status !== 'idle');
   document.getElementById('memoryFactCount').textContent = facts.length ? '(' + facts.length + ')' : '';
   const factEl = document.getElementById('memoryFactList');
   if (factEl) {
@@ -154,9 +259,44 @@ async function memoryRenderPanel() {
       ? facts.map(f =>
           '<div class="memory-item"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
           '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
+          '<span class="memory-item-time" title="确认 ' + (f.occurrences || 1) + ' 次">' + memoryRelTime(f.updatedAt) + ' · ×' + (f.occurrences || 1) + '</span>' +
           '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
         ).join('')
-      : '<div class="memory-empty">暂无自动记忆。对话中重复提到的个人信息（学段、目标、薄弱点等）会出现在这里。</div>';
+      : '<div class="memory-empty">暂无自动记忆。对话中提到的个人信息（学段、目标、薄弱点等）与检测错题、常问主题会出现在这里。</div>';
+  }
+
+  // 休眠记忆：长期没被用到的自动事实，不参与回答，可一键恢复
+  const idleFacts = (profile && profile.facts || []).filter(f => f && f.status === 'idle');
+  const idleCount = document.getElementById('memoryIdleCount');
+  const idleEl = document.getElementById('memoryIdleList');
+  if (idleCount) idleCount.textContent = idleFacts.length ? '(' + idleFacts.length + ')' : '';
+  if (idleEl) {
+    idleEl.innerHTML = idleFacts.length
+      ? idleFacts.map(f =>
+          '<div class="memory-item memory-item-idle"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
+          '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
+          '<span class="memory-item-time">休眠 · ' + memoryRelTime(f.lastUsedAt || f.updatedAt) + '后</span>' +
+          '<button class="memory-item-btn" onclick="memoryRestoreFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">恢复</button>' +
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteFact(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
+        ).join('')
+      : '<div class="memory-empty">超过 30 天没被回答用到的记忆会休眠（不再注入），可随时恢复。</div>';
+  }
+
+  // 已更正或移除：AI 更正/否认事实时旧值进归档，可恢复（回到建议区再确认）或彻底删除
+  const archive = (profile && profile.archive) || [];
+  const archiveCount = document.getElementById('memoryArchiveCount');
+  const archiveEl = document.getElementById('memoryArchiveList');
+  if (archiveCount) archiveCount.textContent = archive.length ? '(' + archive.length + ')' : '';
+  if (archiveEl) {
+    archiveEl.innerHTML = archive.length
+      ? archive.map(f =>
+          '<div class="memory-item memory-item-archived"><span class="memory-item-tag">' + (MEMORY_CATEGORY_LABELS[f.category] || f.category || '其他') + '</span>' +
+          '<span class="memory-item-fact">' + escapeHtml(String(f.fact || '')) + '</span>' +
+          '<span class="memory-item-time">' + (f.source === 'superseded' ? '已更正' : '已移除') + ' · ' + memoryRelTime(f.removedAt) + '</span>' +
+          '<button class="memory-item-btn" onclick="memoryRestoreArchive(\'' + String(f.id || '').replace(/'/g, '') + '\')">恢复</button>' +
+          '<button class="memory-item-btn memory-item-btn-danger" onclick="memoryDeleteArchive(\'' + String(f.id || '').replace(/'/g, '') + '\')">删除</button></div>'
+        ).join('')
+      : '<div class="memory-empty">AI 更正或你否认旧记忆时，原内容会留档在这里，可恢复或删除。</div>';
   }
 
   // 建议区
@@ -216,6 +356,53 @@ async function _memoryMutateFacts(fn) {
 
 async function memoryDeleteFact(id) {
   await _memoryMutateFacts(p => { p.facts = (p.facts || []).filter(f => f.id !== id); return p; });
+}
+
+// 相对时间（面板时间线用）：刚刚 / n 分钟前 / n 小时前 / n 天前 / 具体日期
+function memoryRelTime(ts) {
+  const t = Number(ts || 0);
+  if (!t) return '—';
+  const diff = Date.now() - t;
+  if (diff < 0) return '刚刚';
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return Math.round(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.round(diff / 3600000) + ' 小时前';
+  if (diff < 30 * 86400000) return Math.round(diff / 86400000) + ' 天前';
+  const d = new Date(t);
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+
+// 休眠事实恢复：回 active 并刷新 lastUsedAt（否则会被再次判休眠）
+async function memoryRestoreFact(id) {
+  await _memoryMutateFacts(p => {
+    const f = (p.facts || []).find(x => x.id === id);
+    if (f) { f.status = 'active'; f.lastUsedAt = Date.now(); }
+    return p;
+  });
+}
+
+// 归档恢复：不直接回正式记忆（它被更正/移除过），回到建议区重新走确认
+async function memoryRestoreArchive(id) {
+  await _memoryMutateFacts(p => {
+    const a = (p.archive || []).find(x => x.id === id);
+    if (a) {
+      p.archive = (p.archive || []).filter(x => x.id !== id);
+      p.pending = p.pending || [];
+      if (!p.pending.some(x => String(x.fact || '') === String(a.fact || ''))) {
+        p.pending.push({
+          id: 'pf_' + Math.random().toString(16).slice(2, 14),
+          fact: a.fact, category: a.category || 'other',
+          source: 'restored', occurrences: 1,
+          createdAt: Date.now(), updatedAt: Date.now(),
+        });
+      }
+    }
+    return p;
+  });
+}
+
+async function memoryDeleteArchive(id) {
+  await _memoryMutateFacts(p => { p.archive = (p.archive || []).filter(x => x.id !== id); return p; });
 }
 
 async function memoryConfirmPending(id) {
@@ -282,6 +469,10 @@ window.memorySaveExplicitField = memorySaveExplicitField;
 window.memoryDeleteFact = memoryDeleteFact;
 window.memoryConfirmPending = memoryConfirmPending;
 window.memoryDeletePending = memoryDeletePending;
+window.memoryRestoreFact = memoryRestoreFact;
+window.memoryRestoreArchive = memoryRestoreArchive;
+window.memoryDeleteArchive = memoryDeleteArchive;
+window.memoryRelTime = memoryRelTime;
 window.memoryOpenClearDialog = memoryOpenClearDialog;
 window.closeMemoryClearDialog = closeMemoryClearDialog;
 window.memoryConfirmClear = memoryConfirmClear;
