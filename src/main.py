@@ -172,7 +172,7 @@ def _opencode_session_headers(base_url: str, session_id: str) -> dict:
         return {}
     return {
         "x-opencode-session": session_id or "phymathia-anonymous",
-        "User-Agent": "PhyMathia/1.5.0",
+        "User-Agent": "PhyMathia/1.5.1",
     }
 
 

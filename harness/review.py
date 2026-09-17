@@ -221,7 +221,7 @@ def _opencode_headers(base_url: str) -> dict:
         return {}
     return {
         "x-opencode-session": "phymathia-harness-" + str(os.getpid()),
-        "User-Agent": "PhyMathia/1.5.0",
+        "User-Agent": "PhyMathia/1.5.1",
     }
 
 
