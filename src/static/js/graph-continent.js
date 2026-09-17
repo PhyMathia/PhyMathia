@@ -44,6 +44,10 @@ const CONTINENT_COLS = 3;             // 簇内概念排几列
 const CONTINENT_GAP = 10;
 const CONTINENT_PAD = 18;
 const CONTINENT_HEADER_H = 36;
+// 岛块宽度下限：岛牌头部一行固定件（▾16 + 计数 ~45 + 徽标 ~60 + 间隙）在小岛上会
+// 把岛名挤到只剩十几像素，被 head 的 overflow:hidden 拦腰裁成残字（真机截图：
+// 「梯度」「散度」只见半个字）。1 卡岛按卡网格只有 196px，装不下这一行
+const CONTINENT_ISLAND_MIN_W = 240;
 const CONTINENT_CLUSTER_GAP = 150;
 const CONTINENT_WORLD_MARGIN = 60;
 const CONTINENT_ZOOM_MIN = 0.15;    // v7.3：0.3 → 0.15（有 LOD 兜底才敢放）
@@ -371,7 +375,9 @@ function _continentMeasure(c, collapsed, cardCap) {
   const rows = Math.ceil(n / cols);
   return {
     cluster: c, cols: cols, rows: rows, collapsed: false, shown: shown,
-    w: CONTINENT_PAD * 2 + cols * CONTINENT_NODE_W + (cols - 1) * CONTINENT_GAP,
+    w: Math.max(
+      CONTINENT_PAD * 2 + cols * CONTINENT_NODE_W + (cols - 1) * CONTINENT_GAP,
+      CONTINENT_ISLAND_MIN_W),
     h: CONTINENT_PAD * 2 + CONTINENT_HEADER_H + rows * CONTINENT_NODE_H + (rows - 1) * CONTINENT_GAP,
   };
 }
@@ -415,9 +421,12 @@ function _continentLayoutGrid(measured, originX, originY) {
       collapsed: !!m.collapsed,
     });
     if (!m.collapsed) {
+      // 卡网格在块内水平居中：块宽被岛牌下限撑宽时卡不歪在一边；
+      // 块宽=网格宽+2×PAD 时（≥2 卡岛）值与旧的 x+PAD 逐字节一致
+      const gridW = m.cols * CONTINENT_NODE_W + (m.cols - 1) * CONTINENT_GAP;
       (m.cluster.items || []).slice(0, m.shown || (m.cluster.items || []).length).forEach((item, j) => {
         const icol = j % m.cols, irow = Math.floor(j / m.cols);
-        const nx = x + CONTINENT_PAD + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
+        const nx = x + (m.w - gridW) / 2 + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
         const ny = y + CONTINENT_PAD + CONTINENT_HEADER_H + irow * (CONTINENT_NODE_H + CONTINENT_GAP);
         placements[item.itemId] = {
           x: nx, y: ny, w: CONTINENT_NODE_W, h: CONTINENT_NODE_H,

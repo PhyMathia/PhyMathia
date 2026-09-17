@@ -3400,9 +3400,9 @@
  * 看懂岛是看懂联系的前提 */
 .continent-cluster-head {
   position: absolute;
-  left: 18px;
+  left: 10px;
   top: 9px;
-  right: 18px;
+  right: 10px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -3414,10 +3414,12 @@
 .continent-cluster-headline {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 .continent-cluster-title {
+  flex: 0 1 auto;   /* 岛名是行里唯一可收缩件：再窄也是省略号，不许拦腰裁字 */
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);

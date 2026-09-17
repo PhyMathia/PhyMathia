@@ -1569,6 +1569,38 @@ check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛
   return true;
 });
 
+check('graph-continent: 岛牌一行放得下（1 卡岛块宽下限 + 卡居中 + 岛名可收缩省略号，不裁残字）', () => {
+  const layout = sandbox._continentLayoutClusters;
+  if (typeof layout !== 'function') throw new Error('_continentLayoutClusters 未暴露');
+  const cl = (sid, n) => ({
+    sessionId: sid, title: sid, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 真机截图：1 卡岛块宽 196，岛牌一行（▾+岛名+计数+领域徽标）把「梯度」「散度」
+  // 挤成拦腰残字——块宽必须抬到岛牌可读下限
+  const one = layout([cl('a', 1)], { sessions: [] });
+  if (one.clusterRects[0].w < 240) throw new Error('1 卡岛窄于岛牌可读下限：' + one.clusterRects[0].w);
+  // 卡网格在块内居中：块被下限撑宽时卡不许歪在一边
+  const p = one.placements['a_0'];
+  const rect = one.clusterRects[0];
+  if (Math.abs((p.x - rect.x) - (rect.x + rect.w - (p.x + p.w))) > 0.01) {
+    throw new Error('1 卡岛的卡没在块内居中');
+  }
+  // ≥2 卡岛照内容走，不受下限影响（36 + 3×160 + 2×10）
+  const three = layout([cl('b', 3)], { sessions: [] });
+  if (three.clusterRects[0].w !== 18 * 2 + 3 * 160 + 2 * 10) {
+    throw new Error('3 卡岛块宽不该被下限改动：' + three.clusterRects[0].w);
+  }
+  // CSS：岛名是行里唯一可收缩件且 min-width:0——再窄也是「xx…」，不会裁成残字
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  const at = css.indexOf('.continent-cluster-title {');
+  const block = css.slice(at, css.indexOf('}', at));
+  if (!/min-width:\s*0/.test(block) || !/flex:\s*0\s+1\s+auto/.test(block)) {
+    throw new Error('.continent-cluster-title 缺 min-width:0 / flex 收缩（省略号不生效会裁残字）');
+  }
+  return true;
+});
+
 check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当前会话的共享点）', () => {
   if (typeof sandbox._harnessContinentShared !== 'function' && typeof sandbox.window._harnessContinentShared !== 'function') {
     throw new Error('_harnessContinentShared 未暴露');
