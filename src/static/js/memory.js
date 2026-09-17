@@ -116,8 +116,20 @@ function memoryUpdateSidebarDot() {
 }
 
 // ---------- 画像角标（回答卡上的「已结合你的画像」） ----------
-// 与后端 profile._profile_section_texts 同构的分节口径：学段/目标/薄弱/兴趣/偏好/其他。
-// 匹配默认选择规则；当前缓存不是逐回答服务端注入快照（快照留待后续阶段）。
+// 分节优先用后端随回答下发的注入快照（usage），它与真正进 prompt 的内容同源；
+// 只有拿不到快照时（本地寒暄回答、旧服务端）才退回按缓存计算。
+// 退回路径与后端 profile._profile_section_texts 同构的分节口径，是「逐步退场」的兼容层：
+// 主路径有了快照后，两侧规则不再需要同步维护。
+function memoryBadgeSections(usage) {
+  if (usage && Array.isArray(usage.sections)) {
+    // 服务端明确说了本次注入内容（可能为空 = 本次没注入）：以它为准
+    return usage.sections
+      .filter(s => s && s.label && String(s.text || '').trim())
+      .map(s => ({ label: String(s.label), text: String(s.text) }));
+  }
+  return memoryBadgeSectionsFromCache();
+}
+
 function _memoryNormFact(t) {
   return String(t || '').trim().toLowerCase()
     .replace(/^(用户|我)+(是|的)?/, '')
@@ -125,7 +137,8 @@ function _memoryNormFact(t) {
     .replace(/[\s，。；、：:()（）[\]【】"'‘’“”，.!?！？]+/g, '');
 }
 
-function memoryBadgeSections() {
+// 退回路径：按当前缓存里的活跃事实重算分节（与后端同构，仅在无快照时使用）
+function memoryBadgeSectionsFromCache() {
   if (!_cachedProfile || !_cachedProfile.enabled) return [];
   const exp = _cachedProfile.explicit || {};
   const facts = _memoryActiveFacts()
@@ -173,10 +186,10 @@ function memoryBadgeSections() {
 }
 
 // 往 message-meta 里插一枚可展开的画像角标；画像为空/停用时不插
-function memoryAppendProfileBadge(metaEl) {
+function memoryAppendProfileBadge(metaEl, usage) {
   if (!metaEl || !metaEl.isConnected) return;
   if (metaEl.querySelector('.memory-badge')) return;
-  const sections = memoryBadgeSections();
+  const sections = memoryBadgeSections(usage);
   if (!sections.length) return;
   const wrap = document.createElement('span');
   wrap.className = 'memory-badge';

@@ -255,6 +255,9 @@ async def api_models_chat(request: Request):
     is_quick = False
     socratic_mode = "answer"  # 显式初始化：此前靠三个前缀分支隐式保证，漏一个分支就 NameError
     socratic_ref = branch_id or session_id
+    # 画像注入快照（角标用）：在函数作用域先声明——messages 旧格式不进入
+    # prompt 分支，若只在分支内赋值，两个响应出口引用它会报 free variable 未绑定
+    profile_usage = None
     if prompt:
         # 新格式：后端构建消息
         is_socratic_prompt = _is_socratic_prompt_text(prompt)
@@ -296,6 +299,7 @@ async def api_models_chat(request: Request):
         state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             system_content += "\n\n" + state_instruction
+
         if branch_id:
             system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id)
         if graph_path:
@@ -312,10 +316,13 @@ async def api_models_chat(request: Request):
                 system_content += "\n\n" + concept_text
         # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）。
         # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。
+        # 同时把「本次实际注入了什么」随响应回传（角标不再按前端缓存重算）。
         if not is_quick and not workflow_context:
             _device_id = payload.get("device_id") or payload.get("deviceId") or ""
             if _device_id:
                 _profile_ctx = profile.profile_context(_device_id)
+                profile_usage = {"sections": _profile_ctx["sections"],
+                                 "factCount": len(_profile_ctx["factIds"])}
                 if _profile_ctx["text"]:
                     system_content += "\n\n" + _profile_ctx["text"]
                     profile.mark_profile_used(_device_id, _profile_ctx["factIds"])
@@ -449,6 +456,11 @@ async def api_models_chat(request: Request):
             if data.get("usage"):
                 logger.info(f"AI proxy usage: {data['usage']}")
             _update_socratic_state_from_content(content, socratic_ref)
+            if profile_usage is not None and isinstance(data, dict):
+                # 非流式出口同样回传注入快照；序列化失败退回原字节
+                data["profile_usage"] = profile_usage
+                return Response(content=json.dumps(data, ensure_ascii=False),
+                                media_type="application/json")
         except Exception:
             pass
         return Response(content=raw, media_type="application/json")
@@ -458,6 +470,10 @@ async def api_models_chat(request: Request):
             streamed_content = []
             streamed_len = 0
             last_usage = None
+            # 注入快照先于正文下发：角标在正文渲染前就能拿到「本次实际注入」，
+            # 且协议向后兼容——不认识该字段的客户端只会当作无 delta 的帧跳过
+            if profile_usage is not None:
+                yield f"data: {json.dumps({'profile_usage': profile_usage}, ensure_ascii=False)}\n\n"
             async for line in resp.aiter_lines():
                 if line.startswith("data: "):
                     data_str = line[6:].strip()

@@ -152,6 +152,57 @@ def _normalize_archive_item(item: dict) -> dict:
             "removedAt": _timestamp(item.get("removedAt"), default=None)}
 
 
+# 画像的三个事实列表共用同一套「逐条归一化 + 保尾截断」规则：
+# 磁盘读取（_normalize_profile）与局部更新（update_profile）必须同口径，
+# 否则一次面板更新就能把不相关列表里的扩展字段截掉。
+FACT_LISTS = (("facts", MAX_FACTS, _normalize_fact_item),
+              ("pending", MAX_PENDING, _normalize_fact_item),
+              ("archive", MAX_ARCHIVE, _normalize_archive_item))
+
+
+def _normalize_fact_lists(target: dict, source: dict) -> dict:
+    """把 source 里出现的 facts/pending/archive 列表归一化进 target。"""
+    for key, limit, normalizer in FACT_LISTS:
+        if isinstance(source.get(key), list):
+            target[key] = [normalizer(it) for it in source[key] if isinstance(it, dict)][-limit:]
+    return target
+
+
+def _merge_explicit(dest: dict, source, text_limit=None) -> dict:
+    """把 explicit 的表单字段与 style 偏好并入 dest（只收合法值）。"""
+    if not isinstance(source, dict):
+        return dest
+    for key in ("stage", "goal", "interests", "weakAreas"):
+        value = source.get(key)
+        if isinstance(value, str):
+            dest[key] = value[:text_limit] if text_limit else value
+    if isinstance(source.get("style"), dict):
+        for key, allowed in STYLE_VALUES.items():
+            if source["style"].get(key) in allowed:
+                dest["style"][key] = source["style"][key]
+    return dest
+
+
+def _find_by_id(items, item_id):
+    """按 id 找条目；列表里可能混有旧格式的非 dict 项。"""
+    return next((it for it in (items or [])
+                 if isinstance(it, dict) and it.get("id") == item_id), None)
+
+
+def _find_by_norm(items, norm: str, exclude=None):
+    """按规范化文本找条目（查重口径与 _norm_fact 一致；exclude 用于排除自身）。"""
+    if not norm:
+        return None
+    return next((it for it in (items or [])
+                 if it is not exclude and isinstance(it, dict)
+                 and _norm_fact(it.get("fact", "")) == norm), None)
+
+
+def _has_exact_text(items, text: str) -> bool:
+    """列表里是否已有原文完全相同的条目（面板确认/恢复时的合并判定）。"""
+    return any(isinstance(it, dict) and str(it.get("fact") or "") == text for it in (items or []))
+
+
 def _normalize_profile(data) -> dict:
     """把任意磁盘数据归一化为完整画像结构（缺失/损坏字段回退默认值）。"""
     if not isinstance(data, dict):
@@ -161,20 +212,8 @@ def _normalize_profile(data) -> dict:
     for key in ("createdAt", "updatedAt"):
         base[key] = _timestamp(data.get(key))
     base["enabled"] = bool(data.get("enabled", True))
-    if isinstance(data.get("explicit"), dict):
-        exp = data["explicit"]
-        for key in ("stage", "goal", "interests", "weakAreas"):
-            if isinstance(exp.get(key), str):
-                base["explicit"][key] = exp[key]
-        if isinstance(exp.get("style"), dict):
-            for key, allowed in STYLE_VALUES.items():
-                if exp["style"].get(key) in allowed:
-                    base["explicit"]["style"][key] = exp["style"][key]
-    for key, limit, normalizer in (("facts", MAX_FACTS, _normalize_fact_item),
-                                   ("pending", MAX_PENDING, _normalize_fact_item),
-                                   ("archive", MAX_ARCHIVE, _normalize_archive_item)):
-        if isinstance(data.get(key), list):
-            base[key] = [normalizer(it) for it in data[key] if isinstance(it, dict)][-limit:]
+    _merge_explicit(base["explicit"], data.get("explicit"))
+    _normalize_fact_lists(base, data)
     return base
 
 
@@ -201,19 +240,8 @@ def update_profile(device_id: str, updates: dict) -> dict:
         profile = _normalize_profile(raw)
         if "enabled" in updates:
             profile["enabled"] = bool(updates["enabled"])
-        if isinstance(updates.get("explicit"), dict):
-            exp = updates["explicit"]
-            for key in ("stage", "goal", "interests", "weakAreas"):
-                if isinstance(exp.get(key), str):
-                    profile["explicit"][key] = exp[key][:200]
-            if isinstance(exp.get("style"), dict):
-                for key, allowed in STYLE_VALUES.items():
-                    if exp["style"].get(key) in allowed:
-                        profile["explicit"]["style"][key] = exp["style"][key]
-        for key, limit in (("facts", MAX_FACTS), ("pending", MAX_PENDING), ("archive", MAX_ARCHIVE)):
-            if isinstance(updates.get(key), list):
-                normalize = _normalize_archive_item if key == "archive" else _normalize_fact_item
-                profile[key] = [normalize(it) for it in updates[key] if isinstance(it, dict)][-limit:]
+        _merge_explicit(profile["explicit"], updates.get("explicit"), text_limit=200)
+        _normalize_fact_lists(profile, updates)
         profile["updatedAt"] = time.time()
         return profile
 
@@ -324,11 +352,11 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
             norm = _norm_fact(op["fact"])
             if not norm:
                 return False
-            hit = next((f for f in facts if _norm_fact(f["fact"]) == norm), None)
+            hit = _find_by_norm(facts, norm)
             if hit:
                 _confirm_item(hit, op)
                 return True
-            pend_hit = next((p for p in pending if _norm_fact(p["fact"]) == norm), None)
+            pend_hit = _find_by_norm(pending, norm)
             if pend_hit:
                 _confirm_item(pend_hit, op)
                 return True
@@ -356,8 +384,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
             kind = op["op"]
 
             if kind == "remove":
-                hit = next((f for f in facts if f["id"] == op["id"]), None) \
-                    or next((p for p in pending if p["id"] == op["id"]), None)
+                hit = _find_by_id(facts, op["id"]) or _find_by_id(pending, op["id"])
                 if hit:
                     _archive_item(hit, op["source"] or "user")
                     changed += 1
@@ -365,8 +392,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
                 continue
 
             if kind == "confirm":
-                hit = next((f for f in facts if f["id"] == op["id"]), None) \
-                    or next((p for p in pending if p["id"] == op["id"]), None)
+                hit = _find_by_id(facts, op["id"]) or _find_by_id(pending, op["id"])
                 if hit:
                     _confirm_item(hit, op)
                     changed += 1
@@ -374,8 +400,7 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
                 continue
 
             if kind == "update":
-                target = next((f for f in facts if f["id"] == op["id"]), None) \
-                    or next((p for p in pending if p["id"] == op["id"]), None)
+                target = _find_by_id(facts, op["id"]) or _find_by_id(pending, op["id"])
                 if not target:
                     # 目标不存在：更正信息按新事实落地（内部查重兜底）
                     if _new_fact(op):
@@ -384,8 +409,8 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
                     continue
                 norm = _norm_fact(op["fact"])
                 if norm and norm != _norm_fact(target["fact"]):
-                    twin = next((f for f in facts if f is not target and _norm_fact(f["fact"]) == norm), None) \
-                        or next((p for p in pending if p is not target and _norm_fact(p["fact"]) == norm), None)
+                    twin = _find_by_norm(facts, norm, exclude=target) \
+                        or _find_by_norm(pending, norm, exclude=target)
                     if twin:
                         # 更正成了已知事实：旧条目退役，既有条目计数+1（矛盾更替）
                         _archive_item(target, "superseded")
@@ -472,8 +497,7 @@ def manage_profile_fact(device_id: str, action, fact_id) -> dict:
         source = lists[source_key]
         if not isinstance(source, list):
             return None
-        hit = next((item for item in source
-                    if isinstance(item, dict) and item.get("id") == fact_id), None)
+        hit = _find_by_id(source, fact_id)
         if hit is None:
             return None
         now = time.time()
@@ -489,8 +513,7 @@ def manage_profile_fact(device_id: str, action, fact_id) -> dict:
         elif action == "confirm_pending":
             if not isinstance(facts, list):
                 return None
-            same_text = any(isinstance(f, dict) and str(f.get("fact") or "") ==
-                            str(hit.get("fact") or "") for f in facts)
+            same_text = _has_exact_text(facts, str(hit.get("fact") or ""))
             if not same_text and len(facts) >= MAX_FACTS:
                 return None
             pending.remove(hit)
@@ -504,8 +527,7 @@ def manage_profile_fact(device_id: str, action, fact_id) -> dict:
         elif action == "restore_archive":
             if not isinstance(pending, list):
                 return None
-            same_text = any(isinstance(p, dict) and str(p.get("fact") or "") ==
-                            str(hit.get("fact") or "") for p in pending)
+            same_text = _has_exact_text(pending, str(hit.get("fact") or ""))
             if not same_text and len(pending) >= MAX_PENDING:
                 return None
             archive.remove(hit)
@@ -644,19 +666,21 @@ def _profile_section_texts(profile: dict) -> tuple:
 
 
 def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dict:
-    """生成契约化注入段；返回 {"text", "factIds"}。关闭或无内容时 text 为空串。
+    """生成契约化注入段；返回 {"text", "factIds", "sections"}。
 
     契约：不再丢一团事实让模型自由发挥，而是按类别给段落 + 明确的行为规则
     （学段定素材与术语、薄弱点加铺垫、冲突以对话为准），弱模型也能遵守。
     factIds 恒等于实际进入 text 的事实（预算裁剪时逐条回退），保证
-    lastUsedAt 只刷新真正展示过的内容。
+    lastUsedAt 只刷新真正展示过的内容；sections 是同一份选中的
+    `[{"label", "text"}]`，供回答角标展示「本次实际注入了什么」——前端不再
+    自己按缓存重算一遍，两套同构算法不会随改动漂移。
     """
     profile = get_profile(device_id)
     if not profile.get("enabled", True):
-        return {"text": "", "factIds": []}
+        return {"text": "", "factIds": [], "sections": []}
     sections, _ = _profile_section_texts(profile)
     if not sections:
-        return {"text": "", "factIds": []}
+        return {"text": "", "factIds": [], "sections": []}
     rules = [
         "1. 学段/目标决定深度与素材：基础学段用对应考试的素材与语言，回避超纲术语；"
         "提升类目标（考研/竞赛）可用教材级表述。",
@@ -669,8 +693,11 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
     def render(sel):
         parts = []
         ids = []
+        usage = []
         for label, items, sec_ids in sel:
-            parts.append(label + "；".join(items))
+            joined = "；".join(items)
+            parts.append(label + joined)
+            usage.append({"label": label.strip("【】"), "text": joined})
             ids.extend(fid for fid in sec_ids if fid)
         text = (
             "<user_profile>\n"
@@ -679,19 +706,19 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
             + "\n使用规则：\n" + "\n".join(rules)
             + "\n</user_profile>"
         )
-        return text, ids
+        return text, ids, usage
 
     # 规则和闭合标签必须完整；预算不足时只移除完整条目。
     while sections:
-        text, fact_ids = render(sections)
+        text, fact_ids, usage = render(sections)
         if len(text) <= max_chars:
-            return {"text": text, "factIds": fact_ids}
+            return {"text": text, "factIds": fact_ids, "sections": usage}
         _, items, ids = sections[-1]
         items.pop()
         ids.pop()
         if not items:
             sections.pop()
-    return {"text": "", "factIds": []}
+    return {"text": "", "factIds": [], "sections": []}
 
 
 def profile_context_text(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> str:
