@@ -3,8 +3,11 @@
 import re
 import time
 
+from . import storage
 from .config import KV_PATH
 from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messages_path
+from . import config as _config_mod  # 模块属性读取，测试补丁 _config_mod.KV_PATH 才能生效
+
 # ====== 普通聊天上下文瘦身 ======
 _CONTEXT_MAX_USER_CHARS = 4000
 _CONTEXT_RECENT_FULL_MAX = 8000
@@ -344,6 +347,27 @@ def _rolling_memory_key(session_id: str) -> str:
     return f"{ROLLING_MEMORY_KEY_PREFIX}{session_id}"
 
 
+def _session_aliases(session_id: str) -> list:
+    """返回会话的精确标识列表：local id 在前，server sessionId 别名在后。
+
+    消息文件只有一份（按 local id 落盘），摘要会以两种键出现——上下文加载用
+    local id（_load_session_context），而旧的 schedule 触发也可能带远端别名
+    id。别名关系存在 sessions.json 里，所以删除必须赶在会话条目被删之前读。
+    """
+    ids = [session_id]
+    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    entry = sessions.get(session_id) if isinstance(sessions, dict) else None
+    alias = entry.get("sessionId") if isinstance(entry, dict) else None
+    if isinstance(alias, str) and alias and alias not in ids:
+        # 直接消息文件优先，其次按 sessions 顺序解析别名；冲突时不误删别人的摘要。
+        try:
+            if storage._resolve_messages_path(alias) == storage._get_messages_path(session_id):
+                ids.append(alias)
+        except ValueError:
+            pass
+    return ids
+
+
 def _read_rolling_memory(session_id: str):
     if not session_id:
         return None
@@ -356,9 +380,23 @@ def _read_rolling_memory(session_id: str):
     return None
 
 
-def _write_rolling_memory(session_id: str, summary: str, message_count: int) -> None:
+# 内存代次不放 KV：清空全部会把 KV 写成 {}，不能随之重置防回写凭据。
+# 单进程服务重启会终止所有旧任务，因此无需跨进程持久化。
+_rolling_memory_epoch = 0
+_rolling_memory_generations = {}
+
+
+def _rolling_memory_generation(session_id: str) -> tuple:
+    """调度前捕获；全局代次也覆盖尚无摘要/未登记的会话。"""
+    with storage._JSON_LOCK:
+        return (_rolling_memory_epoch, _rolling_memory_generations.get(session_id, 0))
+
+
+def _write_rolling_memory(session_id: str, summary: str, message_count: int,
+                          *, expected_generation=None) -> bool:
+    """删除代次校验与写入共用 JSON 锁；返回是否实际写入。"""
     if not session_id or not summary:
-        return
+        return False
 
     def updater(data):
         data[_rolling_memory_key(session_id)] = {
@@ -368,7 +406,43 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int) -> 
         }
         return data
 
-    _mutate_json(KV_PATH, updater)
+    with storage._JSON_LOCK:
+        if (expected_generation is not None
+                and expected_generation != _rolling_memory_generation(session_id)):
+            return False
+        _mutate_json(KV_PATH, updater)
+        return True
+
+
+def _delete_rolling_memory(session_id: str) -> None:
+    """在删除会话映射/消息前调用，仅清理精确 local id 和归属该会话的别名。"""
+    if not session_id:
+        return
+    with storage._JSON_LOCK:
+        ids = _session_aliases(session_id)
+        for sid in ids:
+            _rolling_memory_generations[sid] = _rolling_memory_generations.get(sid, 0) + 1
+
+        def updater(data):
+            for sid in ids:
+                data.pop(_rolling_memory_key(sid), None)
+            return data
+
+        _mutate_json(_config_mod.KV_PATH, updater)
+
+
+def _clear_all_rolling_memory() -> None:
+    """全局代次推进，使所有旧任务失效；后续清空整个 KV 也不会重置代次。"""
+    global _rolling_memory_epoch
+    with storage._JSON_LOCK:
+        _rolling_memory_epoch += 1
+        _rolling_memory_generations.clear()
+
+        def updater(data):
+            return {key: value for key, value in data.items()
+                    if not key.startswith(ROLLING_MEMORY_KEY_PREFIX)}
+
+        _mutate_json(_config_mod.KV_PATH, updater)
 
 
 def _rolling_summary_due(session_id: str) -> int:

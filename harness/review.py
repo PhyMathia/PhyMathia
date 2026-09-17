@@ -933,21 +933,59 @@ async def review_graph(
     prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
     prev_before = initial_snapshot if use_full else previous_snapshot
     if undo_intent and prev_ops:
+        # F5：撤销前态用后端原样快照（未截断），归一化会丢长正文与本地字段。
         current = normalize_snapshot(snapshot)
-        inverse_ops = build_inverse_ops(prev_before or current, prev_ops, current)
-        inverse_ops = _filter_inverse_by_targets(inverse_ops, focus_node_ids, current)
-        if inverse_ops:
-            _emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
-            undo_result = build_next_snapshot(current, inverse_ops)
-            undo_result["summary"] = "已撤销上一步修改" + (
-                "（仅撤销指定节点相关改动）" if focus_node_ids else ""
+        if not isinstance(prev_before, dict):
+            # 没有无损前态就没有恢复依据：明确拒绝，绝不静默降级成有损猜测恢复。
+            reason_text = "缺少本次修改的撤销前态（无损快照），无法安全恢复；请使用画布的「撤销本次」按钮回退"
+            _emit({"type": "status", "stage": "undo", "message": reason_text})
+            return {
+                "status": "error",
+                "summary": reason_text,
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [{"reason": reason_text}],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
+        try:
+            from .core import _InverseOperations, UndoRestoreError
+
+            inverse_ops = build_inverse_ops(
+                prev_before if isinstance(prev_before, dict) else current,
+                _InverseOperations(prev_ops),
+                current,
             )
-            undo_result["status"] = "undo"
-            undo_result["phase"] = "undo"
-            undo_result["raw_has_ops"] = bool(inverse_ops)
-            undo_result["undo_ops"] = inverse_ops
-            undo_result["model_calls"] = call_counter["n"]
-            return undo_result
+            inverse_ops = _InverseOperations(_filter_inverse_by_targets(inverse_ops, focus_node_ids, current))
+            if inverse_ops:
+                _emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
+                undo_result = build_next_snapshot(current, inverse_ops)
+                undo_result["summary"] = "已撤销上一步修改" + (
+                    "（仅撤销指定节点相关改动）" if focus_node_ids else ""
+                )
+                undo_result["status"] = "undo"
+                undo_result["phase"] = "undo"
+                undo_result["raw_has_ops"] = bool(inverse_ops)
+                undo_result["undo_ops"] = inverse_ops
+                undo_result["model_calls"] = call_counter["n"]
+                return undo_result
+        except UndoRestoreError as exc:
+            # 恢复契约不闭合（如缺少无损前态）时明确拒绝，绝不静默降级成
+            # 有损猜测恢复。给用户可操作的替代出口。
+            _emit({"type": "status", "stage": "undo", "message": str(exc)})
+            return {
+                "status": "error",
+                "summary": str(exc),
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [{"reason": str(exc)}],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
     tools = build_tools(phase) if mode in ("auto", "tools") else None
     can_require = _supports_required_tool_choice(provider)
     if not tools:

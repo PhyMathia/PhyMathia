@@ -154,6 +154,9 @@
   }
 
   async function runGraphHarness(phase = 'normal', opts) {
+    if (harnessBusy) return;
+    const requestBinding = _harnessBinding();
+    const stillCurrent = () => requestBinding.sessionId === _sessionId() && requestBinding.epoch === harnessSessionEpoch;
     const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
@@ -232,6 +235,7 @@
         let resolved = null;
         try {
           resolved = await _resolveHarnessFocus(candidateFocusIds, instruction);
+          if (!stillCurrent()) return;
         } catch (err) {
           resolved = null;
           focusIds = [];
@@ -263,7 +267,10 @@
     // （真实事故：用户拒绝建议后所有请求 nodes=0，模型回答"没有任何节点"）。
     // 大陆 v3（Φ 摆渡）：审阅快照顺带当前画布的跨画布共享点（60s 缓存、失败
     // 静默——大陆查空是正常路径）；evaluate/apply 提示词不消费它，不注入。
+    _setHarnessBusy(true);
     const continentData = await _harnessFetchContinent();
+    if (!stillCurrent()) return;
+    _setHarnessBusy(false);
     const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
       harnessPhase === 'normal' ? continentData : null);
     harnessSnapshot = snapshot;
@@ -303,6 +310,7 @@
     let streamTimer = null;
     const renderStreamPreview = () => {
       streamTimer = null;
+      if (!stillCurrent()) return;
       const box = document.getElementById('graphHarnessResult');
       if (!box || !streamText) return;
       let text = typeof _stripThinkText === 'function' ? _stripThinkText(streamText) : streamText;
@@ -311,6 +319,7 @@
       box.innerHTML = '<div class="graph-harness-summary">' + _escapeHtml(text) + ' ▍</div>';
     };
     const onStreamEvent = (evt) => {
+      if (!stillCurrent()) return;
       if (evt.type === 'status' && evt.message) {
         _setHarnessStatus(String(evt.message), 'running');
         return;
@@ -342,6 +351,8 @@
           signal: harnessAbortController.signal,
       });
       const data = await _readHarnessStreamResponse(resp, onStreamEvent);
+      if (!stillCurrent()) return;
+      data._binding = requestBinding;
       if (!resp.ok) {
         throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
       }
@@ -353,7 +364,7 @@
       harnessResult = data;
       renderHarnessResult(data);
       if (data.status === 'undo' && (data.operations || []).length) {
-        if (typeof _applyOps === 'function') {
+        if (typeof _applyOps === 'function' && _harnessCanApply(requestBinding)) {
           _applyOps(data.operations, false);
           harnessLastAppliedOps = [];
           harnessLastAppliedBeforeSnapshot = null;
@@ -367,6 +378,7 @@
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
+        _binding: requestBinding,
         phase: harnessPhase,
         decision: 'pending',
         timestamp: Date.now(),
@@ -383,6 +395,7 @@
         }
       }
     } catch (err) {
+      if (!stillCurrent()) return;
       restoreInstruction();
       if (err && err.name === 'AbortError') {
         _setHarnessStatus('已取消', 'ok');
@@ -395,6 +408,7 @@
       }
     } finally {
       if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+      if (!stillCurrent()) return;
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
       harnessAbortController = null;

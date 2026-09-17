@@ -366,20 +366,31 @@ async function memorySaveExplicitField(key, value, styleKey) {
   }
 }
 
-async function _memoryMutateFacts(fn) {
+async function _memoryMutateFacts(action, id) {
   try {
-    const profile = await memoryGetProfile();
-    const next = fn(profile);
-    await memorySaveProfile(next);
+    const res = await fetch('/api/profile/manage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: getDeviceId(), action, fact_id: id })
+    });
+    if (!res.ok) throw new Error('profile manage failed: ' + res.status);
+    const result = await res.json();
+    if (result.accepted !== true) throw new Error('条目已变化或记忆容量已满，请刷新后重试');
     await memoryRefreshCache();
-    memoryRenderPanel();
+    await memoryRenderPanel();
   } catch (e) {
     console.warn('Memory mutate failed:', e);
+    const toast = document.getElementById('modelToast');
+    if (toast) {
+      toast.textContent = '记忆操作未完成：' + e.message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 5000);
+    }
   }
 }
 
 async function memoryDeleteFact(id) {
-  await _memoryMutateFacts(p => { p.facts = (p.facts || []).filter(f => f.id !== id); return p; });
+  await _memoryMutateFacts('delete_fact', id);
 }
 
 // 相对时间（面板时间线用）：刚刚 / n 分钟前 / n 小时前 / n 天前 / 具体日期
@@ -401,55 +412,24 @@ function memoryRelTime(ts) {
 // 休眠事实恢复：回 active 并刷新 lastUsedAt（否则会被再次判休眠）。
 // 时间戳单位与服务端一致用秒（time.time()），毫秒值会污染休眠判定与排序
 async function memoryRestoreFact(id) {
-  await _memoryMutateFacts(p => {
-    const f = (p.facts || []).find(x => x.id === id);
-    if (f) { f.status = 'active'; f.lastUsedAt = Math.floor(Date.now() / 1000); }
-    return p;
-  });
+  await _memoryMutateFacts('restore_fact', id);
 }
 
-// 归档恢复：不直接回正式记忆（它被更正/移除过），回到建议区重新走确认
+// 归档恢复回建议区，必须再次确认才生效。
 async function memoryRestoreArchive(id) {
-  const nowSec = Math.floor(Date.now() / 1000);
-  await _memoryMutateFacts(p => {
-    const a = (p.archive || []).find(x => x.id === id);
-    if (a) {
-      p.archive = (p.archive || []).filter(x => x.id !== id);
-      p.pending = p.pending || [];
-      if (!p.pending.some(x => String(x.fact || '') === String(a.fact || ''))) {
-        p.pending.push({
-          id: 'pf_' + Math.random().toString(16).slice(2, 14),
-          fact: a.fact, category: a.category || 'other',
-          source: 'restored', occurrences: 1,
-          createdAt: nowSec, updatedAt: nowSec,
-        });
-      }
-    }
-    return p;
-  });
+  await _memoryMutateFacts('restore_archive', id);
 }
 
 async function memoryDeleteArchive(id) {
-  await _memoryMutateFacts(p => { p.archive = (p.archive || []).filter(x => x.id !== id); return p; });
+  await _memoryMutateFacts('delete_archive', id);
 }
 
 async function memoryConfirmPending(id) {
-  await _memoryMutateFacts(p => {
-    const item = (p.pending || []).find(x => x.id === id);
-    if (item) {
-      p.pending = p.pending.filter(x => x.id !== id);
-      p.facts = p.facts || [];
-      if (!p.facts.some(f => String(f.fact || '') === String(item.fact || ''))) {
-        item.occurrences = 2;
-        p.facts.push(item);
-      }
-    }
-    return p;
-  });
+  await _memoryMutateFacts('confirm_pending', id);
 }
 
 async function memoryDeletePending(id) {
-  await _memoryMutateFacts(p => { p.pending = (p.pending || []).filter(x => x.id !== id); return p; });
+  await _memoryMutateFacts('delete_pending', id);
 }
 
 // ---------- 清除记忆 ----------
@@ -465,28 +445,56 @@ function closeMemoryClearDialog() {
 async function memoryConfirmClear() {
   const includeLearning = document.getElementById('memoryClearIncludeLearning').checked;
   closeMemoryClearDialog();
+  const results = { backup: false, profile: false, learning: includeLearning ? false : null };
   // 1. 自动备份（复用现有导出链路，产出与导入对称）。
   // 必须 await：否则下载尚未完成就执行后面的 DELETE，备份与服务端清空竞态；
-  // 且 async rejection 不会被同步调用处的 try/catch 捕获
+  // 且 async rejection 不会被同步调用处的 try/catch 捕获。
+  // requireServer：清除前必须拿到含服务端数据（含画像）的完整备份，
+  // 服务端备份失败时退回「纯本地快照」会漏掉服务端会话/画像，删了就找不回——中止
   try {
-    if (typeof exportData === 'function') await exportData();
+    if (typeof exportData === 'function') { await exportData({ requireServer: true }); results.backup = true; }
+    else throw new Error('exportData unavailable');
   } catch (e) { console.warn('Backup before clear failed:', e); }
+  if (!results.backup) {
+    memoryShowClearResult('备份失败，已中止清除：未删除任何数据。请重试或手动导出后再清除。', results);
+    return;
+  }
   // 2. 清除画像
-  try { await memoryClearProfile(); } catch (e) { console.warn('Profile clear failed:', e); }
-  // 3. 可选：清除学习数据（知识/公式/错题统计）
-  if (includeLearning) {
+  try { await memoryClearProfile(); results.profile = true; }
+  catch (e) { console.warn('Profile clear failed:', e); }
+  // 画像删除失败时不继续删学习数据：部分删除比全保留更难向用户解释
+  if (results.profile && includeLearning) {
     try {
-      await fetch('/api/sessions', { method: 'DELETE' });
-      const keys = ['phymathia_knowledge', 'phymathia_formulas', 'phymathia_quiz_stats', 'phymathia_quiz_bank', 'phymathia_quiz_source'];
-      keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
-      if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+      const res = await fetch('/api/sessions', { method: 'DELETE' });
+      if (res.ok) {
+        const keys = ['phymathia_knowledge', 'phymathia_formulas', 'phymathia_quiz_stats', 'phymathia_quiz_bank', 'phymathia_quiz_source'];
+        keys.forEach(k => localStorage.removeItem(k));
+        if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+        results.learning = true;
+      }
     } catch (e) { console.warn('Learning data clear failed:', e); }
   }
   await memoryRefreshCache();
   memoryRenderPanel();
-  const tip = '记忆已清除' + (includeLearning ? '，学习数据已一并清除' : '') + '。备份文件已生成，可从「数据管理-导入数据」恢复。';
+  memoryShowClearResult('', results);
+}
+
+// 按步骤真实结果提示：不把失败说成成功；部分失败时说明完成了什么、什么没动
+function memoryShowClearResult(prefix, results) {
+  const parts = [];
+  if (prefix) parts.push(prefix);
+  else if (results.profile && results.learning !== false) {
+    parts.push('记忆已清除' + (results.learning ? '，学习数据已一并清除' : '') + '。');
+  } else if (results.profile && results.learning === false) {
+    parts.push('记忆已清除，但学习数据清除失败，可稍后重试。');
+  } else if (results.profile) {
+    parts.push('记忆已清除。');
+  } else {
+    parts.push('画像清除失败，记忆数据保留未删。');
+  }
+  if (results.backup) parts.push('备份文件已生成，可从「数据管理-导入数据」恢复。');
   const toast = document.getElementById('modelToast');
-  if (toast) { toast.textContent = tip; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 4000); }
+  if (toast) { toast.textContent = parts.join(''); toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 5000); }
 }
 
 window.openMemoryPanel = openMemoryPanel;

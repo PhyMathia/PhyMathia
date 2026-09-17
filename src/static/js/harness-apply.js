@@ -2,6 +2,26 @@
 
   function _applyOneHarnessOp(op, state, nodeKindById) {
     const name = op.op || op.type || '';
+    if (name === 'restore_node') {
+      const node = JSON.parse(JSON.stringify(op.node || {}));
+      const id = op.id || node.id;
+      const local = node._undoLocal;
+      delete node._undoLocal;
+      node.id = id;
+      state.customNodes = (state.customNodes || []).filter(item => item.id !== id);
+      if (!local || local.custom) state.customNodes.push(node);
+      if (local) {
+        for (const key of ['harnessNodeOverrides', 'harnessDeleted', 'positions', 'sizes', 'pinned', 'inputPortCounts']) {
+          state[key] = state[key] || {};
+          const saved = local.fields[key] || {};
+          if (Object.prototype.hasOwnProperty.call(saved, 'value')) state[key][id] = saved.value;
+          else delete state[key][id];
+        }
+      } else {
+        delete state.harnessDeleted[id];
+      }
+      return;
+    }
     if (name === 'create_eval_node') {
       const id = op.assigned_id || op.id || op.temp_id;
       if (!_prepareHarnessNodeReuse(id, state)) return;
@@ -253,7 +273,7 @@
     const before = JSON.parse(JSON.stringify(state));
     const preIssues = (typeof window.scanGraphConsistency === 'function') ? window.scanGraphConsistency() : [];
     harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
-    harnessLastAppliedBeforeSnapshot = harnessSnapshot ? JSON.parse(JSON.stringify(harnessSnapshot)) : null;
+    harnessLastAppliedBeforeSnapshot = _harnessUndoSnapshot(state);
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'harness', summary: (harnessResult && harnessResult.summary) || 'AI 修改' });
     const nodeKindById = new Map(_graphNodes().map(node => [node.id, node.kind]));
     state.customNodes = Array.isArray(state.customNodes) ? state.customNodes : [];
@@ -305,7 +325,10 @@
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
     setTimeout(() => {
-      Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => _syncHarnessNodesToKnowledge(ops));
+      if (sessionId !== _sessionId()) return;
+      Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => {
+        if (sessionId === _sessionId()) _syncHarnessNodesToKnowledge(ops);
+      });
     }, 100);
     if (typeof window.scanGraphConsistency === 'function') {
       const postIssues = window.scanGraphConsistency();
@@ -319,11 +342,13 @@
   }
 
   function applyGraphHarness() {
+    if (!_harnessCanApply(harnessResult?._binding)) return;
     const ops = Array.isArray(harnessResult?.operations) ? harnessResult.operations : [];
     _applyOps(ops, true);
   }
 
   function applySelectedGraphHarness() {
+    if (!_harnessCanApply(harnessResult?._binding)) return;
     const selected = _selectedOps();
     if (!selected.length) {
       _setHarnessStatus('没有勾选任何操作：勾选想保留的条目再点「应用所选」，或改用「应用全部」', 'error');
@@ -387,6 +412,7 @@
   function keepHarnessSuggestion(entryId) {
     const entry = harnessHistory.find(item => item.id === entryId);
     if (!entry || entry.decision !== 'pending') return;
+    if (!_harnessCanApply(entry._binding)) return;
     _applyOps(entry.operations || [], entry.phase === 'apply');
     entry.decision = 'keep';
     entry.appliedAt = Date.now();

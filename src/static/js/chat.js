@@ -293,6 +293,9 @@
       pendingQuickText = '';
       const isCasual = _isCasualPrompt(text);
       if (!text || isStreaming) return;
+      isStreaming = true;
+      const sourceSessionId = currentSessionId;
+      try {
 
       userScrolledUp = false; // 用户发送消息时重置滚动状态
 
@@ -312,6 +315,7 @@
       }
       chatHistory.push(userMessage);
       await saveCurrentSession();
+      if (sourceSessionId !== currentSessionId) return;
       if (input) {
         input.value = '';
         input.style.height = 'auto';
@@ -692,6 +696,12 @@
           pendingDeleteTimestamp = null;
           await _performDeleteMessages(ts);
         }
+      }
+      } catch (err) {
+        console.error('Send preparation failed:', err);
+        if (typeof showToast === 'function') showToast('发送未完成，请重试');
+      } finally {
+        isStreaming = false;
       }
     }
 

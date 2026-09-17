@@ -191,13 +191,17 @@ function _pickNewerQuizBank(a, b) {
   return (Number(a.updatedAt || 0) >= Number(b.updatedAt || 0)) ? a : b;
 }
 
-async function exportData() {
+async function exportData(options = {}) {
   const local = _collectLocalBackup();
   let data = { ...local, version: 2, exportTime: new Date().toISOString() };
   try {
     const resp = await fetch('/api/backup/export', { cache: 'no-cache' });
+    if (!resp.ok && options.requireServer) throw new Error('备份请求失败：' + resp.status);
     if (resp.ok) {
       const server = await resp.json();
+      if (options.requireServer && (!server || !server.profiles || typeof server.profiles !== 'object' || Array.isArray(server.profiles))) {
+        throw new Error('服务端备份缺少画像数据');
+      }
       const serverGraphs = {};
       const kv = server.kv || {};
       for (const [key, value] of Object.entries(kv)) {
@@ -210,6 +214,7 @@ async function exportData() {
         messages: { ...(server.messages || {}), ...local.messages },
         knowledge: _mergeMaps(server.knowledge, local.knowledge),
         formulas: _mergeMaps(server.formulas, local.formulas),
+        profiles: server.profiles || {},
         kv,
         graphs: _mergeMaps(serverGraphs, local.graphs),
         quizStats: _mergeMaps(kv['phymathia_quiz_stats'] || {}, local.quizStats),
@@ -223,6 +228,7 @@ async function exportData() {
       };
     }
   } catch (e) {
+    if (options.requireServer) throw e;
     console.warn('[Export] Server backup unavailable, use local snapshot:', e);
   }
   _downloadBackup(data);

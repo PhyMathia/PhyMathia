@@ -559,6 +559,7 @@ def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, b
     if not session_id:
         return
     try:
+        generation = context._rolling_memory_generation(session_id)
         due = context._rolling_summary_due(session_id)
     except Exception:
         return
@@ -568,14 +569,18 @@ def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, b
     if key in _summary_tasks:
         return
     task = asyncio.create_task(
-        _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due)
+        _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due, generation=generation)
     )
     _summary_tasks[key] = task
     task.add_done_callback(lambda _t, _key=key: _summary_tasks.pop(_key, None))
 
 
-async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count):
+async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count, generation=None):
     try:
+        if generation is None:
+            generation = context._rolling_memory_generation(session_id)
+        elif generation != context._rolling_memory_generation(session_id):
+            return
         input_text = context._rolling_memory_input(session_id)
         if not input_text:
             return
@@ -599,8 +604,8 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             return
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        context._write_rolling_memory(session_id, content, count)
-        logger.info("rolling memory updated: session=%s count=%d", session_id, count)
+        if context._write_rolling_memory(session_id, content, count, expected_generation=generation):
+            logger.info("rolling memory updated: session=%s count=%d", session_id, count)
     except Exception as e:
         logger.warning("rolling memory update failed: %s", e)
 
@@ -687,15 +692,18 @@ async def api_update_session(session_id: str, request: Request):
 
 @app.delete("/api/sessions/{session_id}")
 async def api_delete_session(session_id: str):
+    try:
+        msgs_path = _get_messages_path(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    # 删除别名映射前清理摘要并推进删除代次；失败中止，不能留下旧上下文却报清除成功
+    context._delete_rolling_memory(session_id)
+
     def updater(data):
         data.pop(session_id, None)
         return data
 
     _mutate_json(SESSIONS_PATH, updater)
-    try:
-        msgs_path = _get_messages_path(session_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session id")
     if msgs_path.exists():
         msgs_path.unlink()
     _delete_by_session(KNOWLEDGE_PATH, session_id)
@@ -706,6 +714,7 @@ async def api_delete_session(session_id: str):
 
 @app.delete("/api/sessions")
 async def api_clear_all_sessions():
+    context._clear_all_rolling_memory()
     _write_json(SESSIONS_PATH, {})
     for f in MESSAGES_DIR.glob("*.json"):
         f.unlink()
@@ -789,6 +798,8 @@ async def api_clear_messages(session_id: str):
         msgs_path = _get_messages_path(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
+    # 清消息同样清滚动摘要并推进删除代次（阶段1 S1：复用会话 ID 不得吃旧记忆）
+    context._delete_rolling_memory(session_id)
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
@@ -1130,6 +1141,29 @@ async def api_profile_candidates(request: Request):
     except Exception as e:
         logger.warning(f"Profile candidates ingest failed: {e}")
         return {"changed": 0, "promoted": []}
+
+
+@app.post("/api/profile/manage")
+async def api_profile_manage(request: Request):
+    """画像条目原子管理操作：只动目标 ID，不整份覆盖其他数据（并发安全）。
+
+    body: {"device_id": str, "action": delete_fact|restore_fact|confirm_pending|
+           delete_pending|restore_archive|delete_archive, "fact_id": str}
+    返回 {"changed", "promoted", "accepted"}；accepted=false 表示 ID 不存在或
+    容量不足（200，与 400 参数错误区分）。记忆开关关闭时管理操作仍可用。
+    """
+    payload = await _parse_json_object(request)
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 device_id")
+    action = str(payload.get("action") or "")
+    fact_id = str(payload.get("fact_id") or payload.get("factId") or "")
+    if action not in ("delete_fact", "restore_fact", "confirm_pending", "delete_pending", "restore_archive", "delete_archive") or not fact_id:
+        raise HTTPException(status_code=400, detail="无效 action 或缺少 fact_id")
+    try:
+        return profile.manage_profile_fact(device_id, action, fact_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 
