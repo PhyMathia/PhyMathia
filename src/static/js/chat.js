@@ -743,10 +743,9 @@
       _popTrailingUserMessage();
       const userInputEl = document.getElementById('userInput');
       if (userInputEl) userInputEl.value = lastFailedMessage;
-      if (lastFailedBranchMeta && (lastFailedBranchMeta.branchId || lastFailedBranchMeta.branchType) && typeof window.setActiveBranchAnchor === 'function') {
-        window.setActiveBranchAnchor({ ...lastFailedBranchMeta });
-      }
-      sendMessage();
+      // 重发显式携带失败时的分支元数据（主线是空元数据）：不再经由待用锚点传递，
+      // 否则用户另外选过锚点时，重试会挂到那个分支上。用户自己的锚点保持不动。
+      sendMessage({ resendMeta: lastFailedBranchMeta || {} });
     }
 
     function regenerateLast() {
