@@ -2811,9 +2811,29 @@ check('memory-v2：红点/休眠/归档容器与角标、信号回传的前后�
   if (!quizStatsJs.includes('_collectProfileSignalCandidates')) throw new Error('quiz-stats 缺少信号采集');
   if (!quizStatsJs.includes('_scheduleProfileSignalSync();')) throw new Error('quiz-stats 答题后未挂信号同步');
   const chatJs = fs.readFileSync('src/static/js/chat.js', 'utf8');
-  if (!chatJs.includes('memoryAppendProfileBadge(metaEl)')) throw new Error('chat.js 未插画像角标');
+  if (!chatJs.includes('memoryAppendProfileBadge(metaEl, profileUsageFromServer)')) {
+    throw new Error('chat.js 未把后端注入快照传给画像角标');
+  }
+  if (!chatJs.includes('data.profile_usage')) throw new Error('chat.js 未解析后端注入快照帧');
   const chatFeaturesJs = fs.readFileSync('src/static/js/chat-features.js', 'utf8');
   if (!chatFeaturesJs.includes('data.profile.promoted')) throw new Error('chat-features 未处理提取响应的 promoted');
+  return true;
+});
+
+check('memory-v2：角标优先用后端注入快照，缓存只在无快照时兜底', () => {
+  vm.runInContext(`
+    memoryBadgeSectionsFromCache = memoryBadgeSectionsFromCache || function () { return [{ label: '学段', text: '缓存里的学段' }]; };
+  `, sandbox);
+  try {
+    const withSnapshot = sandbox.memoryBadgeSections({ sections: [{ label: '学段', text: '大一' }] });
+    if (withSnapshot.length !== 1 || withSnapshot[0].text !== '大一') {
+      throw new Error('有快照时应以快照为准：' + JSON.stringify(withSnapshot));
+    }
+    const emptySnapshot = sandbox.memoryBadgeSections({ sections: [] });
+    if (emptySnapshot.length !== 0) throw new Error('服务端说本次没注入时不得显示角标');
+  } finally {
+    vm.runInContext(`_cachedProfile = null;`, sandbox);
+  }
   return true;
 });
 

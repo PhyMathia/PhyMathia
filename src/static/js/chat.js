@@ -413,6 +413,7 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let streamChunkCount = 0;
+        let profileUsageFromServer = null;   // 后端下发的本次注入快照（角标以此为准）
 
         function scheduleStreamRender() {
           if (streamRenderPending) return;
@@ -470,6 +471,13 @@
                     ? '正在生成回答'
                     : (progressLabel || '正在生成回答');
                   _setProgress(pct, label);
+                }
+                if (data.profile_usage) {
+                  // 本次实际注入了哪些记忆（与后端进 prompt 的内容同源）：
+                  // 角标直接用它，不再按前端缓存重算一遍
+                  profileUsageFromServer = data.profile_usage;
+                  lastChunkTime = Date.now();
+                  continue;
                 }
                 const choice = data.choices?.[0];
                 const delta = choice?.delta;
@@ -625,12 +633,12 @@
             const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
             const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
             metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
-            // 画像注入角标：与后端注入条件同口径——非 quick 且非画布模块生成才注入，
-            // 而后端 is_quick 要求无 branch_id/graph_path，所以分支回答（含分支上的寒暄）
-            // 会照常注入画像，角标不能把分支排除掉
+            // 画像注入角标：优先按后端下发的本次注入快照展示；没有快照时（本地寒暄
+            // 回答、旧服务端）退回按缓存计算。后端 is_quick 要求无 branch_id/graph_path，
+            // 所以分支回答（含分支上的寒暄）会照常注入画像，角标不能把分支排除掉
             if (typeof memoryAppendProfileBadge === 'function'
               && (!isCasual || !!(branchMeta && (branchMeta.branchType || branchMeta.branchId)))) {
-              memoryAppendProfileBadge(metaEl);
+              memoryAppendProfileBadge(metaEl, profileUsageFromServer);
             }
           }
           if (typeof notifyTaskCompleted === 'function' && duration) {
