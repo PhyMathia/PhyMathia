@@ -98,8 +98,8 @@ scripts/battery-*.json
 out-*.json
 out_*.json
 
-# 参赛演示文稿已拆分为独立 git 仓库（见 html/PhyMathia-参赛介绍/.git）
-html/PhyMathia-参赛介绍/
+# html/ 整体拆出为独立 git 仓库（2026-09-18，见 html/.git 与 html/AGENTS.md）
+html/
 
 # 导出产物与视频工具临时构建目录
 导出图片/
@@ -110,9 +110,6 @@ html/PhyMathia-参赛介绍/
 /finetune/
 /.tmp/
 /windows_deploy/
-
-# 参赛介绍 PPT 构建目录（媒体体积大，与演示文稿同样不入主仓）
-html/PhyMathia-参赛介绍-ppt/
 
 # 本地工具与缓存（2026-08-24）
 .npm-cache/
