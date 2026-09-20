@@ -818,16 +818,19 @@ async def api_save_messages(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid session id")
 
     def msgs_updater(existing):
-        # 双标签页并发保存时按「消息更多的一方」取胜（与前端 _syncFromServer
-        # 的合并语义一致），避免旧的短列表整体覆盖新的长列表丢消息。
+        # 逐条合并（按 timestamp 身份，与前端 _mergeMessageLists 同口径）：
+        # 两边各自独有的消息都保留、字段互补——取代旧「消息更多的一方取胜」
+        # （旧规则在两边各有一些消息时会把少的一边独有的整份丢掉）。
         # 空列表同样不许写：它是本地读档失败/竞态的表现（合法清空走 DELETE
-        # 路由），原 `not messages or` 让空列表击败任意更长的服务端历史——
-        # localStorage 丢档后一切会话即触发服务端唯一副本被清空（09-20 修复）
+        # 路由），空列表清空服务端唯一副本（09-20 修复，不许回退）。
         if not isinstance(existing, list):
             return messages
-        if messages and len(existing) <= len(messages):
-            return messages
-        return None  # 已存历史更长（或来的是空列表）：保留，不写
+        if not messages:
+            return None
+        merged = merge_message_lists(existing, messages)
+        if merged == existing:
+            return None  # 没有任何新东西：不写盘
+        return merged
 
     _mutate_json(msgs_path, msgs_updater, default=[])
     return {"ok": True, "count": len(messages)}

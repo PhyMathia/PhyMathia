@@ -1232,6 +1232,49 @@ def _is_socratic_followup(content: str) -> bool:
 
 
 
+
+# ====== 消息逐条合并（前端 session.js _mergeMessageLists 同口径；唯一定义在后端） ======
+
+def _message_identity(msg: dict) -> str:
+    ts = msg.get("timestamp")
+    if isinstance(ts, (int, float)) and ts:
+        return "ts:" + str(ts)
+    # 无时间戳的极少数消息：role|content 当身份。不能用整条 JSON——服务端
+    # 保存时会回填 summary，JSON 一变身份就变，去重直接失效
+    return "raw:" + str(msg.get("role") or "") + "|" + str(msg.get("content") or "")
+
+
+def _merge_message_fields(base: dict, extra: dict) -> dict:
+    merged = dict(base)
+    for key, value in extra.items():
+        current = merged.get(key)
+        is_empty = current is None or current == "" or current == [] or current == {}
+        if is_empty and value not in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def merge_message_lists(primary, secondary) -> list:
+    """两份消息列表按时间戳逐条合并：两边各自独有的都保留，同键字段互补
+    （服务端补写的 summary 不被空值覆盖；内容冲突以 primary 为准）。全部
+    消息都有时间戳时按时间升序，否则保持插入序（primary 在前）。"""
+    by_key = {}
+    order = []
+    for msg in list(primary or []) + list(secondary or []):
+        if not isinstance(msg, dict):
+            continue
+        key = _message_identity(msg)
+        if key not in by_key:
+            by_key[key] = dict(msg)
+            order.append(key)
+        else:
+            by_key[key] = _merge_message_fields(by_key[key], msg)
+    merged = [by_key[k] for k in order]
+    if merged and all(isinstance(m.get("timestamp"), (int, float)) and m.get("timestamp") for m in merged):
+        merged.sort(key=lambda m: m["timestamp"])
+    return merged
+
+
 __all__ = [
     "_is_socratic_message", "_is_socratic_prompt_text", "_recent_context_messages", "_extract_section",
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
@@ -1241,4 +1284,5 @@ __all__ = [
     "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "_inject_rolling_memory", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
+    "merge_message_lists",
 ]
