@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .core import build_next_snapshot, normalize_snapshot
 from .review import HarnessError, resolve_focus, review_graph
@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
+
+# 错误协议（2026-09-20 起）：业务结果（ok/undo/clarify/no_ops/parse_error/
+# invalid）一律 HTTP 200 + 结构化 body，battery 与前端按 body.status 打分/分流；
+# 传输层故障才用真实状态码——坏 JSON 400、请求前提缺失/撤销与解析失败 400、
+# 模型侧失败(HarnessError) 502、本地内部异常 500。body 形状一字不变，只看
+# body 的旧客户端零影响。SSE 流一旦开始，错误只能作为 result 事件带内下发。
 
 
 # ===== 阶段 0：真实使用日志与反馈收集 =====
@@ -143,7 +149,7 @@ async def graph_review(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
 
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
@@ -180,12 +186,12 @@ async def graph_review(request: Request):
     except HarnessError as exc:
         err = {"status": "error", "errors": [{"reason": str(exc)}]}
         _log_usage(_usage_entry(payload, err, t0, "review"))
-        return err
+        return JSONResponse(status_code=502, content=err)
     except Exception as exc:
         logger.exception("harness internal error (review)")
         err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
         _log_usage(_usage_entry(payload, err, t0, "review"))
-        return err
+        return JSONResponse(status_code=500, content=err)
 
 
 @router.post("/graph/apply")
@@ -193,7 +199,7 @@ async def graph_apply(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     return build_next_snapshot(payload.get("snapshot"), payload.get("operations") or [])
 
 
@@ -206,7 +212,7 @@ async def graph_undo(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     try:
         from .core import build_inverse_ops, build_next_snapshot, normalize_snapshot
 
@@ -215,10 +221,10 @@ async def graph_undo(request: Request):
         if not isinstance(before, dict):
             # 缺无损前态时不能用当前态兜底冒充前态——恢复出的就是现状，图零变化
             # 却报「已撤销成功」（与 review_graph 内部口径一致：明确拒绝）
-            return {
+            return JSONResponse(status_code=400, content={
                 "status": "error",
                 "errors": [{"reason": "缺少撤销前态（before_snapshot），无法安全恢复；请使用画布的「撤销本次」按钮回退"}],
-            }
+            })
         inverse_ops = build_inverse_ops(before, payload.get("operations") or [], current)
         result = build_next_snapshot(current, inverse_ops)
         result["status"] = "undo"
@@ -228,7 +234,7 @@ async def graph_undo(request: Request):
         return result
     except Exception as exc:
         logger.exception("harness /graph/undo failed")
-        return {"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]})
 
 
 @router.post("/graph/health")
@@ -239,7 +245,7 @@ async def graph_health(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     try:
         from .selfcheck import check_snapshot_consistency
 
@@ -247,7 +253,7 @@ async def graph_health(request: Request):
         result["status"] = "ok"
         return result
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"体检失败: {exc}"}]}
+        return JSONResponse(status_code=500, content={"status": "error", "errors": [{"reason": f"体检失败: {exc}"}]})
 
 
 @router.post("/graph/resolve")
@@ -257,7 +263,7 @@ async def graph_resolve(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
@@ -276,12 +282,12 @@ async def graph_resolve(request: Request):
     except HarnessError as exc:
         err = {"status": "error", "errors": [{"reason": str(exc)}]}
         _log_usage(_usage_entry(payload, err, t0, "resolve"))
-        return err
+        return JSONResponse(status_code=502, content=err)
     except Exception as exc:
         logger.exception("harness internal error (resolve)")
         err = {"status": "error", "errors": [{"reason": f"目标解析失败: {exc}"}]}
         _log_usage(_usage_entry(payload, err, t0, "resolve"))
-        return err
+        return JSONResponse(status_code=400, content=err)
 
 @router.post("/graph/feedback")
 async def graph_feedback(request: Request):
@@ -289,7 +295,7 @@ async def graph_feedback(request: Request):
     try:
         payload = await request.json()
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]}
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     try:
         from src.server.config import DATA_DIR
         entry = {
@@ -317,4 +323,4 @@ async def graph_feedback(request: Request):
         path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "ok", "count": len(items)}
     except Exception as exc:
-        return {"status": "error", "errors": [{"reason": str(exc)}]}
+        return JSONResponse(status_code=500, content={"status": "error", "errors": [{"reason": str(exc)}]})
