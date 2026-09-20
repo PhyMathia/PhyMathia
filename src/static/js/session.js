@@ -304,7 +304,7 @@
       } catch(e) { sessions = {}; }
     }
     function saveSessions() {
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+      safeLocalStorageSet(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
       // 逐个 upsert 到服务端（不阻塞）
       for (const [sid, sdata] of Object.entries(sessions)) {
         _saveSessionToServer(sid, sdata); // fire-and-forget 但用了单个 upsert
@@ -315,7 +315,7 @@
       const s = sessions[sid];
       if (!s) return;
       s.updatedAt = Date.now();
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+      safeLocalStorageSet(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
       _saveSessionToServer(sid, s);
     }
 
@@ -338,7 +338,8 @@
       return [];
     }
     async function saveSessionMessages(sessionId, msgs) {
-      localStorage.setItem('phymathia_msgs_' + sessionId, JSON.stringify(msgs));
+      // 本地快速缓存写失败（配额满）不阻断：下一行的服务端同步照常执行，数据不丢
+      safeLocalStorageSet('phymathia_msgs_' + sessionId, JSON.stringify(msgs));
       return _saveMessagesToServer(sessionId, msgs); // 传入消息数据而非从 localStorage 重读
     }
 
@@ -422,7 +423,7 @@
         const local = getGraphState(sid);
         const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
         if (useServer) {
-          localStorage.setItem('phymathia_graph_' + sid, JSON.stringify({ ...local, ...serverState }));
+          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify({ ...local, ...serverState }));
         }
       } catch (err) {
         console.warn('[GraphState] Failed to load server state:', err);
@@ -451,7 +452,7 @@
       const sid = sessionId || currentSessionId || '';
       if (!sid) return;
       const snap = { ...state, updatedAt: Date.now() };
-      localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(snap));
+      safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(snap));
       _scheduleGraphStateServerSave(sid, snap);
     }
 

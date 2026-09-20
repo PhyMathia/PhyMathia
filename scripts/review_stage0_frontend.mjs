@@ -177,7 +177,8 @@ function frontendSandbox(modules) {
   return { s, storage, errors };
 }
 function sessionsFixture(extra = []) {
-  const f = frontendSandbox(['config.js', 'session.js', ...extra]);
+  // utils.js 与真实页面同序：session.js 的存储安全写（safeLocalStorageSet）依赖它
+  const f = frontendSandbox(['config.js', 'utils.js', 'session.js', ...extra]);
   evaluate(f.s, "currentSessionId='A'; SESSION_ID='remoteA'; sessions={A:{sessionId:'remoteA'},B:{sessionId:'remoteB'}};");
   f.s.localStorage.setItem('phymathia_current_session', 'A');
   return f;

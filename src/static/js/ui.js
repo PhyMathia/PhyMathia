@@ -149,8 +149,13 @@ function _collectLocalBackup() {
     messages[sid] = _safeParseJSON(localStorage.getItem('phymathia_msgs_' + sid), []);
   });
   const graphs = {};
+  const graphHistories = {};
   Object.keys(localStorage).forEach(key => {
-    if (key.startsWith('phymathia_graph_')) {
+    // 历史快照单独成桶：此前混进 graphs（键 history_<sid>）会被导入错写成
+    // graph:history_<sid> 的服务端键
+    if (key.startsWith('phymathia_graph_history_')) {
+      graphHistories[key.slice('phymathia_graph_history_'.length)] = _safeParseJSON(localStorage.getItem(key), []);
+    } else if (key.startsWith('phymathia_graph_')) {
       graphs[key.slice('phymathia_graph_'.length)] = _safeParseJSON(localStorage.getItem(key), {});
     }
   });
@@ -164,6 +169,7 @@ function _collectLocalBackup() {
     knowledge: _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {}),
     formulas,
     graphs,
+    graphHistories,
     quizStats: _safeParseJSON(localStorage.getItem('phymathia_quiz_stats'), {}),
     quizBank: _safeParseJSON(localStorage.getItem('phymathia_quiz_bank'), null),
     userModels,
@@ -306,7 +312,7 @@ function _applyLocalBackup(data, replace) {
   }
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
   Object.assign(sessions, data.sessions || {});
-  localStorage.setItem('phymathia_sessions', JSON.stringify(sessions));
+  safeLocalStorageSet('phymathia_sessions', JSON.stringify(sessions));
 
   for (const [sid, msgs] of Object.entries(data.messages || {})) {
     if (!Array.isArray(msgs)) continue;
@@ -321,19 +327,28 @@ function _applyLocalBackup(data, replace) {
         merged.push(msg);
       }
     }
-    localStorage.setItem(key, JSON.stringify(merged));
+    safeLocalStorageSet(key, JSON.stringify(merged));
   }
 
   const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
   Object.assign(knowledge, data.knowledge || {});
-  localStorage.setItem('phymathia_knowledge', JSON.stringify(knowledge));
+  safeLocalStorageSet('phymathia_knowledge', JSON.stringify(knowledge));
 
   const formulas = _safeParseJSON(localStorage.getItem('phymathia_formulas'), {});
   Object.assign(formulas, data.formulas || {});
-  if (typeof setFormulaCache === 'function') setFormulaCache(formulas); else localStorage.setItem('phymathia_formulas', JSON.stringify(formulas));
+  if (typeof setFormulaCache === 'function') setFormulaCache(formulas); else safeLocalStorageSet('phymathia_formulas', JSON.stringify(formulas));
 
   for (const [sid, state] of Object.entries(data.graphs || {})) {
-    if (state && typeof state === 'object') localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(state));
+    if (!(state && typeof state === 'object')) continue;
+    if (sid.startsWith('history_')) {
+      // 旧版备份把历史快照错并进 graphs（键 history_<sid>）——归位到历史键
+      if (Array.isArray(state)) safeLocalStorageSet('phymathia_graph_history_' + sid.slice('history_'.length), JSON.stringify(state));
+      continue;
+    }
+    safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(state));
+  }
+  for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
+    if (Array.isArray(arr)) safeLocalStorageSet('phymathia_graph_history_' + sid, JSON.stringify(arr));
   }
   _applyLocalSettings(data);
 }
@@ -360,10 +375,19 @@ async function _pushBackupToExistingApis(data) {
     });
     const graphEntries = Object.entries(data.graphs || {});
     for (const [sid, state] of graphEntries) {
+      if (sid.startsWith('history_')) continue; // 旧备份混入的历史快照走 graphHistories 通道
       await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: state })
+      });
+    }
+    for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
+      if (!Array.isArray(arr)) continue;
+      await fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: arr })
       });
     }
     if (data.quizStats) await fetch('/api/kv/phymathia_quiz_stats', {

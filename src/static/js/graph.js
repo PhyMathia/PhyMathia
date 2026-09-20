@@ -187,6 +187,7 @@ function _currentSessionId() {
 function _ensureGraphHistory() {
   const sid = _currentSessionId();
   if (graphHistorySession === sid && graphUndoStack.length) return;
+  if (graphHistorySession !== sid) _flushGraphHistoryMirror();
   graphHistorySession = sid;
   graphUndoStack = [];
   graphRedoStack = [];
@@ -197,23 +198,70 @@ function _ensureGraphHistory() {
       if (Array.isArray(arr)) graphUndoStack = arr.filter(function (x) { return x && x.state; });
     }
   } catch (e) { graphUndoStack = []; }
+  _upgradeGraphHistoryFromServer(sid);
 }
 
 function _persistGraphHistory() {
+  const sid = graphHistorySession;
+  const arr = graphUndoStack.map(function (x) {
+    return { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
+  });
+  let s = JSON.stringify(arr);
+  if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
+    const per = Math.max(1, Math.floor(s.length / (arr.length || 1)));
+    const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
+    // 本地格子有限可截断；全量数组交给下面的服务端镜像，历史一条不丢
+    s = JSON.stringify(arr.slice(-keep));
+  }
+  safeLocalStorageSet(_graphHistoryKey(sid), s);
+  // 硬盘保险：全量（不截断）镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。
+  // 本地配额满或被截断时服务端是完整副本，换设备/清浏览器数据也能从存档读回。
+  _scheduleGraphHistoryMirror(sid, arr);
+}
+
+// ===== 探索网历史的服务端镜像（图历史上限 30 步撤销是既有设计，这里只保存储安全） =====
+let _graphHistoryMirrorTimer = null;
+let _graphHistoryMirrorPending = null;
+
+function _scheduleGraphHistoryMirror(sid, arr) {
+  if (!sid || !arr.length) return;
+  _graphHistoryMirrorPending = { sid: sid, value: arr };
+  if (_graphHistoryMirrorTimer) clearTimeout(_graphHistoryMirrorTimer);
+  _graphHistoryMirrorTimer = setTimeout(_flushGraphHistoryMirror, 800);
+}
+
+function _flushGraphHistoryMirror() {
+  if (_graphHistoryMirrorTimer) {
+    clearTimeout(_graphHistoryMirrorTimer);
+    _graphHistoryMirrorTimer = null;
+  }
+  const pending = _graphHistoryMirrorPending;
+  _graphHistoryMirrorPending = null;
+  if (!pending) return;
   try {
-    const sid = graphHistorySession;
-    let arr = graphUndoStack.map(function (x) {
-      return { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
-    });
-    let s = JSON.stringify(arr);
-    if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
-      const per = Math.max(1, Math.floor(s.length / (arr.length || 1)));
-      const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
-      arr = arr.slice(-keep);
-      s = JSON.stringify(arr);
-    }
-    localStorage.setItem(_graphHistoryKey(sid), s);
-  } catch (e) { /* 容量满/不可用则忽略 */ }
+    fetch('/api/kv/graph_history:' + pending.sid, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: pending.value }),
+    }).catch(function () { /* 镜像失败静默：下次保存会再镜像 */ });
+  } catch (e) { /* 同上 */ }
+}
+
+// 切回会话时用存档补齐本地被截断/丢失的历史（只在存档更长时采纳——它按时间
+// 是更早开始积累的全量副本；本地更新则不动，避免回退撤销栈）
+function _upgradeGraphHistoryFromServer(sid) {
+  if (!sid) return;
+  fetch('/api/kv/graph_history:' + sid)
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      const arr = data && data.value;
+      if (!Array.isArray(arr) || !arr.length) return;
+      if (graphHistorySession !== sid) return;
+      if (arr.length <= graphUndoStack.length) return;
+      graphUndoStack = arr.filter(function (x) { return x && x.state; });
+      if (typeof _refreshGraphHistoryPanel === 'function') _refreshGraphHistoryPanel();
+    })
+    .catch(function () { /* 无存档/离线：本地为准 */ });
 }
 
 function _graphVersionNodeIndex(state) {
