@@ -2389,16 +2389,17 @@ function _continentSaveRoutePrefs(prefs) {
   try { localStorage.setItem(CONTINENT_ROUTE_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 容忍 */ }
 }
 
-// 样式解析（纯函数）：颜色三档——gold 暖金（**默认**：「我画的路」专用色，与机器画
-// 的辐条/断线、海域板色系拉开；浅色主题自动换更深的金，纸上不发飘）、region 跟出
-// 海域色相、neutral 中性。theme 只影响暖金深浅。旧边无 style 字段走默认（实线/
-// normal/暖金）；region 算不出色相时仍回落旧默认蓝（查空是正常路径）
+// 样式解析（纯函数）：颜色三档——gold 暖色（**默认**：「我画的路」专用色，与机器画
+// 的辐条/断线、海域板色系拉开；**按主题选色相**：暗色机器线是蓝→航线用暖金，浅色
+// 机器线 accent 本身是暗金（#8b6914）→ 航线换**赭橙**（同属暖色语义、色相 45°→24°
+// 彻底分开，且不是报错红）。theme 只影响这一档。旧边无 style 字段走默认（实线/
+// normal/暖色）；region 算不出色相时仍回落旧默认蓝（查空是正常路径）
 function _continentRouteStroke(style, edge, regionInfo, theme) {
   const s = style || {};
   const colorKey = s.color || 'gold';
   let color = null;
   if (colorKey === 'gold') {
-    color = theme === 'light' ? 'rgba(163, 114, 47, 0.92)' : 'rgba(217, 164, 65, 0.9)';
+    color = theme === 'light' ? 'rgba(191, 91, 27, 0.92)' : 'rgba(217, 164, 65, 0.9)';
   } else if (colorKey === 'neutral') {
     color = 'rgba(150, 156, 170, 0.8)';
   } else if (regionInfo && edge && regionInfo.bySid) {

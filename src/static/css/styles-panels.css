@@ -3570,7 +3570,7 @@
   cursor: pointer;
 }
 [data-theme="light"] .continent-user-link,
-[data-theme="light"] .continent-route { stroke: #a3722f; }
+[data-theme="light"] .continent-route { stroke: #bf5b1b; }
 .continent-user-link:hover,
 .continent-route:hover { stroke-opacity: 1; filter: drop-shadow(0 0 3px rgba(224, 168, 62, 0.6)); }
 /* 「我画的路」观感（09-20）：航线三件套与机器线（辐条/断桥）拉开——核心线圆线帽、

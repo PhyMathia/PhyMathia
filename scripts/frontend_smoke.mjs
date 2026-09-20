@@ -1606,9 +1606,13 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
   if (!def.color || def.width !== 2 || def.dash) throw new Error('默认样式错：' + JSON.stringify(def));
   if (!stroke({ dash: 'dashed', color: 'gold', width: 'thick' }, null, null).dash) throw new Error('线型未解析');
   if (stroke({ color: 'gold' }, null, null).color.indexOf('217') < 0) throw new Error('暖金档颜色错');
-  // 「我画的路」默认观感（09-20）：默认色=暖金且浅色主题加深；region 算不出色相回落旧蓝
+  // 「我画的路」默认观感（09-20）：默认色=暖色且按主题选色相——暗色暖金（217,164,65），
+  // 浅色赭橙（191,91,27；浅色机器辐条 accent 本身是暗金，航线必须换色相而不是加深）；
+  // region 算不出色相回落旧默认蓝
   const lightGold = stroke(null, { fromSession: 's1' }, null, 'light');
-  if (lightGold.color.indexOf('163') < 0) throw new Error('浅色主题暖金未加深：' + lightGold.color);
+  if (lightGold.color.indexOf('191') < 0 || lightGold.color.indexOf('163, 114, 47') >= 0) {
+    throw new Error('浅色主题航线未换赭橙色相：' + lightGold.color);
+  }
   if (stroke({ color: 'region' }, { fromSession: 's1' }, null).color.indexOf('74') < 0) {
     throw new Error('region 算不出色相时应回落旧默认蓝');
   }
