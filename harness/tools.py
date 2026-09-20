@@ -330,15 +330,21 @@ def parse_tool_calls(tool_calls: Any) -> Tuple[List[Dict[str, Any]], List[Dict[s
             errors.append({"index": index, "op": name or "unknown", "reason": f"不支持的工具: {name or '空'}"})
             continue
         raw_args = fn.get("arguments") or ""
-        try:
-            args = json.loads(raw_args) if _text(raw_args) else {}
-        except (json.JSONDecodeError, ValueError):
-            repaired = repair_json(raw_args)
-            if isinstance(repaired, dict):
-                args = repaired
-            else:
-                errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数不是合法 JSON（可能被截断）"})
-                continue
+        if isinstance(raw_args, dict):
+            # 部分 OpenAI 兼容网关/本地服务会把 arguments 直接给成对象——
+            # json.loads 对 dict 抛 TypeError（except 只捕 JSON 解析错），
+            # 整次编辑兜成「harness 内部错误」（09-20 修复）
+            args = raw_args
+        else:
+            try:
+                args = json.loads(raw_args) if _text(raw_args) else {}
+            except (json.JSONDecodeError, ValueError, TypeError):
+                repaired = repair_json(raw_args)
+                if isinstance(repaired, dict):
+                    args = repaired
+                else:
+                    errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数不是合法 JSON（可能被截断）"})
+                    continue
         if not isinstance(args, dict):
             errors.append({"index": index, "op": name, "reason": f"工具 {name} 的参数必须是对象"})
             continue

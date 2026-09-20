@@ -119,6 +119,21 @@ def _filter_inverse_by_targets(inverse_ops: list, targets, snapshot=None) -> lis
         ends = edge_ends.get(ek)
         if ends and ends & targets:
             kept.append(op)
+    if kept:
+        # 恢复对成对判定：保住 add_edge(T->D) 时，它端点 D 的 restore_node 也
+        # 必须一起保——只留边不留节点，build_next_snapshot 会报「终点不存在」，
+        # 这条边从此撤不回来（09-20 修复）
+        kept_ends = set()
+        for op in kept:
+            if str(op.get("op") or "") == "add_edge":
+                for end in (op.get("from"), op.get("to")):
+                    if end:
+                        kept_ends.add(str(end))
+        if kept_ends:
+            for op in inverse_ops:
+                if str(op.get("op") or "") == "restore_node" \
+                        and str(op.get("id") or "") in kept_ends and op not in kept:
+                    kept.append(op)
     return kept
 
 
@@ -193,7 +208,40 @@ def _extract_summary_from_json_shell(text):
     if not m:
         return None
     start = m.end()
-    end = prefix.rfind('"')
+    # 闭引号定位：正文含未转义引号是常态，靠「第一个引号」会截半句；summary
+    # 与 operations 之间夹其他键（如 clarify/options）时，嵌套值的闭引号后面
+    # 同样是「, "下一个键":」——光看尾巴形状分不出来。两轮择优（都从最后
+    # 一个候选往回）：① 剩余是纯标点且提取值不含 JSON 结构痕迹（引号键、{、[）；
+    # ② 剩余紧跟下一个键且提取值干净。两种形态都取到完整 summary（09-20 修复）
+    candidates = []
+    esc = False
+    for i in range(start, len(prefix)):
+        ch = prefix[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            candidates.append(i)
+    if not candidates:
+        return None
+
+    def _clean_value(pos):
+        value = prefix[start:pos]
+        return not re.search(r'[\[{]|"\s*:', value)
+
+    end = candidates[-1]
+    for pos in reversed(candidates):
+        if re.match(r'^[\s,}\]]*$', prefix[pos + 1:]) and _clean_value(pos):
+            end = pos
+            break
+    if end == candidates[-1] or not _clean_value(end):
+        for pos in reversed(candidates):
+            if re.match(r'^\s*,\s*"[^"\n]*"\s*:', prefix[pos + 1:]) and _clean_value(pos):
+                end = pos
+                break
     if end <= start:
         return None
     value = prefix[start:end].strip()
@@ -374,7 +422,13 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
                 if fn.get("name") and not slot["function"]["name"]:
                     slot["function"]["name"] = str(fn["name"])
                 if fn.get("arguments"):
-                    slot["function"]["arguments"] += str(fn["arguments"])
+                    # 流式增量通常是 JSON 片段字符串，个别网关直接给对象——
+                    # str(dict) 拼出单引号 repr，后续 repair_json 也救不回，
+                    # 整批 ops 会被丢弃重试（09-20 修复）
+                    chunk = fn["arguments"]
+                    if isinstance(chunk, dict):
+                        chunk = json.dumps(chunk, ensure_ascii=False)
+                    slot["function"]["arguments"] += chunk
     message: Dict[str, Any] = {}
     content = "".join(content_parts)
     reasoning = "".join(reasoning_parts)
@@ -464,6 +518,27 @@ async def _call_model(
 
 
 
+
+
+def _merge_post_ops(current: Dict[str, Any], result: Dict[str, Any], extra_ops: list,
+                    diff_base: Any = None) -> Dict[str, Any]:
+    """把事后补的操作（自动连边/补链/评价清理）合并进既有结果并重算 diff。
+
+    三处「build_next_snapshot → operations 相加 → diff 重算 → errors append」
+    的公共形态（09-20 抽取）。追加的 errors 必须能把 ok 翻成 error——
+    此前 status 在 build_next_snapshot 里已定死，事后报错改不了它，
+    孤立节点依旧孤立、结果却显示成功。"""
+    ops = list(result.get("operations") or [])
+    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
+    result["operations"] = ops + list(merged.get("operations") or [])
+    result["next_snapshot"] = merged["next_snapshot"]
+    result["diff"] = diff_snapshots(diff_base if diff_base is not None else current,
+                                    merged["next_snapshot"])
+    for err in merged.get("errors") or []:
+        result.setdefault("errors", []).append(err)
+    if result.get("errors") and result.get("status") == "ok":
+        result["status"] = "error"
+    return result
 
 
 def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
@@ -575,12 +650,7 @@ def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], foc
 
     if not extra_ops:
         return result
-    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
-    result["operations"] = ops + list(merged.get("operations") or [])
-    result["next_snapshot"] = merged["next_snapshot"]
-    result["diff"] = diff_snapshots(current, merged["next_snapshot"])
-    for err in merged.get("errors") or []:
-        result.setdefault("errors", []).append(err)
+    _merge_post_ops(current, result, extra_ops)
     reasons = []
     if auto_learn_count:
         reasons.append("为 " + str(auto_learn_count) + " 个 AI 回答节点自动补全进阶学习模块")
@@ -618,7 +688,12 @@ def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focu
     ]
     if not isolated:
         return result
-    existing_ids = [str(node.get("id")) for node in current.get("nodes", [])]
+    # 锚点从合并后快照的存活节点里选：current 是操作应用前的图，同批
+    # 「删第一个节点 + 建孤立节点」会把锚连到已删节点上报「起点不存在」，
+    # 孤立节点依旧孤立（09-20 修复）
+    live_ids = [str(node.get("id"))
+                for node in (result.get("next_snapshot") or {}).get("nodes", [])]
+    existing_ids = live_ids or [str(node.get("id")) for node in current.get("nodes", [])]
     anchors = [str(item) for item in (focus_node_ids or []) if str(item) in existing_ids]
     anchor = anchors[0] if anchors else (existing_ids[0] if existing_ids else None)
     if not anchor:
@@ -634,12 +709,7 @@ def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focu
         }
         for op in isolated
     ]
-    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
-    result["operations"] = ops + list(merged.get("operations") or [])
-    result["next_snapshot"] = merged["next_snapshot"]
-    result["diff"] = diff_snapshots(current, merged["next_snapshot"])
-    for err in merged.get("errors") or []:
-        result.setdefault("errors", []).append(err)
+    _merge_post_ops(current, result, extra_ops)
     result.setdefault("warnings", []).append({
         "index": "auto-connect",
         "op": "add_edge",
@@ -802,9 +872,14 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
             counter["n"] += 1
 
     messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops)
+    # 主循环对 required 有 provider 门控（opencode 免费模型不支持，见
+    # _supports_required_tool_choice），自检不带门控会在这些链路上每次
+    # 白烧一整轮注定 400 的调用 + 一轮 JSON 重试（09-20 修复）
+    can_require = _supports_required_tool_choice(model["provider"])
     try:
         _tick()
-        raw = await _call_model(messages, model, 600, tools=[SELFCHECK_TOOL], tool_choice="required")
+        raw = await _call_model(messages, model, 600, tools=[SELFCHECK_TOOL],
+                                tool_choice="required" if can_require else "auto")
         parsed = parse_selfcheck_tool(raw["tool_calls"])
         if parsed is not None:
             return parsed
@@ -964,6 +1039,11 @@ async def review_graph(
                 undo_result = build_next_snapshot(current, inverse_ops)
                 undo_result["summary"] = "已撤销上一步修改" + (
                     "（仅撤销指定节点相关改动）" if focus_node_ids else ""
+                ) + (
+                    # scope=full 但调用方没带完整操作历史（前端主路径只带上一步）：
+                    # 如实说明只回滚了最后一步，别让「全部撤销」静默缩水
+                    "（未收到完整操作历史，仅回滚了最后一步）"
+                    if scope == "full" and not use_full else ""
                 )
                 undo_result["status"] = "undo"
                 undo_result["phase"] = "undo"
@@ -982,6 +1062,25 @@ async def review_graph(
                 "next_snapshot": current,
                 "diff": [],
                 "errors": [{"reason": str(exc)}],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
+        if undo_intent and prev_ops and not inverse_ops:
+            # 焦点过滤后逆操作为空（或本就无可逆操作）：明确 no-op 返回。
+            # 此前会跌回模型路径——带着「撤销」指令和全套编辑工具自由发挥，
+            # 违反「确定性撤销不调模型」的拍板，还会跳过大图守卫把未压缩
+            # 快照原样发给模型（09-20 修复）
+            reason_text = ("上一步修改与你选中的节点无关，没有可撤销的内容。"
+                           if focus_node_ids else "上一步没有生成可撤销的修改。")
+            _emit({"type": "status", "stage": "undo", "message": reason_text})
+            return {
+                "status": "undo",
+                "summary": reason_text,
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [],
                 "warnings": [],
                 "raw_has_ops": False,
                 "model_calls": call_counter["n"],
@@ -1059,6 +1158,7 @@ async def review_graph(
                         max_tokens,
                         tools=current_tools,
                         tool_choice="auto",
+                        **model_kwargs,
                     )
                 else:
                     logger.warning("工具调用失败，降级为自由 JSON: %s", exc)
@@ -1070,6 +1170,7 @@ async def review_graph(
                         resolved_model,
                         max_tokens,
                         json_mode=_supports_json_mode(provider),
+                        **model_kwargs,
                     )
             else:
                 raise
@@ -1359,7 +1460,6 @@ async def resolve_focus(
     retries: int = 1,
     context: str = "",
     level: str = "",
-    mode: str = "auto",
 ) -> Dict[str, Any]:
     current = normalize_snapshot(snapshot)
 
@@ -1440,13 +1540,6 @@ def _cleanup_remaining_eval_nodes(result: Dict[str, Any], original_snapshot: Dic
         {"op": "delete_node", "id": node["id"], "reason": "应用建议后自动清理 AI 评价节点"}
         for node in remaining
     ]
-    cleanup = build_next_snapshot(result.get("next_snapshot"), cleanup_ops)
-    result["operations"] = list(result.get("operations") or []) + list(cleanup.get("operations") or [])
-    result["next_snapshot"] = cleanup["next_snapshot"]
-    result["diff"] = diff_snapshots(
-        original_snapshot,
-        cleanup["next_snapshot"],
-    )
-    if cleanup.get("errors"):
-        result["errors"] = list(result.get("errors") or []) + cleanup["errors"]
+    _merge_post_ops(result.get("next_snapshot"), result, cleanup_ops,
+                    diff_base=original_snapshot)
     return result

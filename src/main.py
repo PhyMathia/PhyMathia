@@ -134,8 +134,8 @@ async def root(request: Request):
 
 
 @app.get("/chat")
-async def chat_ui():
-    return await root()
+async def chat_ui(request: Request):
+    return await root(request)
 
 
 @app.get("/health")
@@ -222,13 +222,7 @@ async def api_models_chat(request: Request):
 
     provider = payload.get("provider", "")
     api_key = payload.get("api_key", "")
-    env_key_used = False
-    if not api_key and provider == "deepseek":
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        env_key_used = bool(api_key)
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        env_key_used = bool(api_key)
+    api_key, env_key_used = resolve_api_key(provider, api_key)
     model_name = payload.get("model", "")
     if not model_name and provider == "deepseek":
         model_name = "deepseek-chat"
@@ -250,6 +244,9 @@ async def api_models_chat(request: Request):
     source_module = payload.get("source_module") or payload.get("sourceModule") or ""
     parent_id = payload.get("parent_id") or payload.get("parentId") or ""
     graph_path = payload.get("graph_path") or payload.get("graphPath") or []
+    if not isinstance(graph_path, list):
+        # _graph_path_instruction 会逐项 item.get，字符串/数字进来就是 500
+        raise HTTPException(status_code=400, detail="graph_path must be a list")
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
     quick = bool(payload.get("quick"))
     is_quick = False
@@ -314,10 +311,12 @@ async def api_models_chat(request: Request):
             concept_text = concept.concept_context_text(prompt, session_id=session_id)
             if concept_text:
                 system_content += "\n\n" + concept_text
-        # 用户画像（记忆）注入：仅默认完整回答路径（quick 与画布模块生成不注入）。
+        # 用户画像（记忆）注入：仅默认完整回答路径（quick / 画布模块生成 / 支线
+        # 不注入——与上方概念地基同一范围，09-20 补齐 branch_id：此前支线也会
+        # 注入画像并刷新 lastUsedAt，与注释宣称的口径不一致）。
         # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。
         # 同时把「本次实际注入了什么」随响应回传（角标不再按前端缓存重算）。
-        if not is_quick and not workflow_context:
+        if not is_quick and not workflow_context and not branch_id:
             _device_id = payload.get("device_id") or payload.get("deviceId") or ""
             if _device_id:
                 _profile_ctx = profile.profile_context(_device_id)
@@ -358,6 +357,9 @@ async def api_models_chat(request: Request):
     else:
         # 旧格式：直接使用传入的 messages（兼容向后）
         messages = payload.get("messages", [])
+        if not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages):
+            # 逐项 m.get 前先挡掉契约外形状（字符串/数字元素），别变成 500
+            raise HTTPException(status_code=400, detail="'messages' must be a list of message objects")
         raw_text = "".join(str(m.get("content") or "") for m in messages)
         logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}, ctx_chars={len(raw_text)}, est_tokens={estimate_tokens(raw_text)}")
 
@@ -452,17 +454,27 @@ async def api_models_chat(request: Request):
         text = raw.decode(errors="replace")
         try:
             data = json.loads(text)
+        except json.JSONDecodeError:
+            # 上游 200 却回非 JSON 正文（网关错误页等）：原样透传，但别让
+            # 下面的状态更新/快照回填跟着裸 except 一起静默蒸发
+            logger.warning("AI proxy non-stream: upstream 200 with non-JSON body")
+            return Response(content=raw, media_type="application/json")
+        try:
             content = data["choices"][0]["message"]["content"]
-            if data.get("usage"):
-                logger.info(f"AI proxy usage: {data['usage']}")
-            _update_socratic_state_from_content(content, socratic_ref)
-            if profile_usage is not None and isinstance(data, dict):
-                # 非流式出口同样回传注入快照；序列化失败退回原字节
+        except (KeyError, IndexError, TypeError):
+            logger.warning("AI proxy non-stream: upstream JSON missing choices[0].message.content")
+            return Response(content=raw, media_type="application/json")
+        if data.get("usage"):
+            logger.info(f"AI proxy usage: {data['usage']}")
+        _update_socratic_state_from_content(content, socratic_ref)
+        if profile_usage is not None:
+            # 非流式出口同样回传注入快照；序列化失败退回原字节
+            try:
                 data["profile_usage"] = profile_usage
                 return Response(content=json.dumps(data, ensure_ascii=False),
                                 media_type="application/json")
-        except Exception:
-            pass
+            except (TypeError, ValueError):
+                pass
         return Response(content=raw, media_type="application/json")
 
     async def proxy_stream():
@@ -642,47 +654,61 @@ async def api_save_sessions(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     def updater(data):
+        nonlocal written
+        now = int(time.time() * 1000)
+
+        def _entry(sid, sdata):
+            # 消息文件路径按 sid 直接拼路径（_get_messages_path 白名单）——
+            # 写进 sessions.json 的 id 必须同口径校验，否则一条脏键会让
+            # 备份导出（对每个 sid 取路径）永久 500，且 DELETE 拒收删不掉
+            if not isinstance(sid, str) or not storage._SESSION_ID_RE.match(sid):
+                return None
+            return {
+                "id": sid,
+                "title": sdata.get("title", "新对话"),
+                "icon": sdata.get("icon", ""),
+                "sessionId": sdata.get("sessionId", ""),
+                "createdAt": sdata.get("createdAt", now),
+                "updatedAt": sdata.get("updatedAt", now),
+            }
+
         if isinstance(payload, list):
             for sdata in payload:
                 if not isinstance(sdata, dict) or not sdata.get("id"):
                     continue
-                sid = sdata["id"]
-                data[sid] = {
-                    "id": sid,
-                    "title": sdata.get("title", "新对话"),
-                    "icon": sdata.get("icon", ""),
-                    "sessionId": sdata.get("sessionId", ""),
-                    "createdAt": sdata.get("createdAt", int(time.time() * 1000)),
-                    "updatedAt": sdata.get("updatedAt", int(time.time() * 1000)),
-                }
+                entry = _entry(sdata["id"], sdata)
+                if entry:
+                    data[entry["id"]] = entry
+                    written += 1
         elif isinstance(payload, dict) and "id" in payload:
-            data[payload["id"]] = {
-                "id": payload["id"],
-                "title": payload.get("title", "新对话"),
-                "icon": payload.get("icon", ""),
-                "sessionId": payload.get("sessionId", ""),
-                "createdAt": payload.get("createdAt", int(time.time() * 1000)),
-                "updatedAt": payload.get("updatedAt", int(time.time() * 1000)),
-            }
+            entry = _entry(payload["id"], payload)
+            if entry:
+                data[entry["id"]] = entry
+                written += 1
         elif isinstance(payload, dict):
             for sid, sdata in payload.items():
-                data[sid] = {
-                    "id": sdata.get("id", sid),
-                    "title": sdata.get("title", "新对话"),
-                    "icon": sdata.get("icon", ""),
-                    "sessionId": sdata.get("sessionId", ""),
-                    "createdAt": sdata.get("createdAt", int(time.time() * 1000)),
-                    "updatedAt": sdata.get("updatedAt", int(time.time() * 1000)),
-                }
+                if not isinstance(sdata, dict):
+                    continue
+                entry = _entry(sdata.get("id") or sid, sdata)
+                if entry:
+                    data[entry["id"]] = entry
+                    written += 1
         return data
 
+    written = 0
     _mutate_json(SESSIONS_PATH, updater)
-    return {"ok": True, "count": len(payload) if isinstance(payload, (dict, list)) else 1}
+    # count 返回实际写入条数（非法 id 被跳过的不算），与 knowledge 路由口径一致
+    return {"ok": True, "count": written}
 
 
 @app.put("/api/sessions/{session_id}")
 async def api_update_session(session_id: str, request: Request):
     payload = await _parse_json_object(request)
+    try:
+        _get_messages_path(session_id)
+    except ValueError:
+        # 与 DELETE 同口径：路径 id 先过白名单，PUT 不能为任意字符串建条目
+        raise HTTPException(status_code=400, detail="Invalid session id")
 
     def updater(data):
         now = int(time.time() * 1000)
@@ -799,12 +825,15 @@ async def api_save_messages(session_id: str, request: Request):
 
     def msgs_updater(existing):
         # 双标签页并发保存时按「消息更多的一方」取胜（与前端 _syncFromServer
-        # 的合并语义一致），避免旧的短列表整体覆盖新的长列表丢消息
+        # 的合并语义一致），避免旧的短列表整体覆盖新的长列表丢消息。
+        # 空列表同样不许写：它是本地读档失败/竞态的表现（合法清空走 DELETE
+        # 路由），原 `not messages or` 让空列表击败任意更长的服务端历史——
+        # localStorage 丢档后一切会话即触发服务端唯一副本被清空（09-20 修复）
         if not isinstance(existing, list):
             return messages
-        if not messages or len(existing) <= len(messages):
+        if messages and len(existing) <= len(messages):
             return messages
-        return None  # 已存历史更长：保留，不写
+        return None  # 已存历史更长（或来的是空列表）：保留，不写
 
     _mutate_json(msgs_path, msgs_updater, default=[])
     return {"ok": True, "count": len(messages)}
@@ -914,6 +943,9 @@ async def api_save_formulas(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     items = payload if isinstance(payload, list) else payload.get("items", [])
+    if not isinstance(items, list) or any(not isinstance(it, dict) for it in items):
+        # 逐项 it.get 前先挡掉契约外形状（dict/字符串进来就是 500）
+        raise HTTPException(status_code=400, detail="'items' must be a list of objects")
     count = 0
 
     def updater(data):
@@ -1007,18 +1039,16 @@ async def api_extract_knowledge(request: Request):
     payload = await _parse_json_object(request)
 
     messages = payload.get("messages", [])
+    if not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages):
+        # 下方按角色/内容逐条取字段，契约外形状直接 400
+        raise HTTPException(status_code=400, detail="'messages' must be a list of message objects")
     session_id = payload.get("sessionId", "")
     provider = payload.get("provider", "")
     api_key = payload.get("api_key", "")
+    api_key, env_key_used = resolve_api_key(provider, api_key)
     model = payload.get("model", "")
     base_url = payload.get("base_url", "")
     level = payload.get("level", "university")
-    if not api_key and provider == "deepseek":
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
 
     latest_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
     if latest_assistant and (
@@ -1037,12 +1067,7 @@ async def api_extract_knowledge(request: Request):
     desc_api_key = payload.get("descriptor_api_key", "")
     desc_model = payload.get("descriptor_model", "")
     desc_base_url = payload.get("descriptor_base_url", "")
-    if not desc_api_key and desc_provider == "deepseek":
-        desc_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not desc_api_key and desc_provider == "opencode-go":
-        desc_api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-    if not desc_api_key and desc_provider == "opencode":
-        desc_api_key = OPENCODE_DEFAULT_API_KEY
+    desc_api_key, desc_env_used = resolve_api_key(desc_provider, desc_api_key)
 
     items = []
     profile_facts = []
@@ -1054,7 +1079,8 @@ async def api_extract_knowledge(request: Request):
     if (api_key or provider in ("opencode", "opencode-go")) and model:
         try:
             extracted = await _ai_extract_knowledge(messages, provider, api_key, model, base_url, level,
-                                                    profile_digest=profile_digest)
+                                                    profile_digest=profile_digest,
+                                                    env_key_used=env_key_used)
             if isinstance(extracted, tuple) and len(extracted) == 3:
                 items, profile_facts, profile_ops = extracted
             elif isinstance(extracted, tuple):
@@ -1125,7 +1151,8 @@ async def api_extract_knowledge(request: Request):
     has_knowledge_items = any(str(it.get("title") or "").strip() for it in items)
     if (all_formulas or has_knowledge_items) and desc_model and (desc_api_key or desc_provider in ("opencode", "opencode-go")):
         descriptions, knowledge_summaries = await _describe_formulas(
-            summary_text, all_formulas, items, desc_provider, desc_api_key, desc_model, desc_base_url, level)
+            summary_text, all_formulas, items, desc_provider, desc_api_key, desc_model, desc_base_url, level,
+            env_key_used=desc_env_used)
         if descriptions or knowledge_summaries:
             logger.info(f"Generated {len(descriptions)} formula descriptions / {len(knowledge_summaries)} knowledge summaries for session {session_id}")
 
@@ -1221,21 +1248,17 @@ async def api_parse_document(request: Request):
 
     provider = str(payload.get("provider") or "")
     api_key = str(payload.get("api_key") or "")
+    api_key, env_key_used = resolve_api_key(provider, api_key)
     model = str(payload.get("model") or "")
     base_url = str(payload.get("base_url") or "")
     level = str(payload.get("level") or "university")
-    if not api_key and provider == "deepseek":
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
 
     nodes, edges, relations = [], [], []
     if model and (api_key or provider in ("opencode", "opencode-go")):
         try:
             nodes, edges, relations = await _ai_extract_document_knowledge(
-                text, filename, is_image, image_b64, provider, api_key, model, base_url, level, max_items
+                text, filename, is_image, image_b64, provider, api_key, model, base_url, level, max_items,
+                env_key_used=env_key_used
             )
         except Exception as e:
             logger.warning(f"AI document extraction failed: {e}")

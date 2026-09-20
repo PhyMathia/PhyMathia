@@ -439,7 +439,20 @@ def apply_profile_ops(device_id: str, ops: list, source: str = "",
         if not changed:
             return None
         profile["pending"] = profile["pending"][-MAX_PENDING:]
-        profile["facts"] = profile["facts"][-MAX_FACTS:]
+        if len(profile["facts"]) > MAX_FACTS:
+            # 容量满时不无声丢数据：被挤出的已固化事实落 archive（与 remove 同
+            # 语义，面板可查可恢复），而不是静默蒸发。用户管理路径
+            # confirm_pending 在容量满时本来就拒绝写入，自动采集路径不能更
+            # 宽松地丢别人的数据（09-20 修复）
+            overflow = profile["facts"][:-MAX_FACTS]
+            profile["facts"] = profile["facts"][-MAX_FACTS:]
+            for item in overflow:
+                profile["archive"].append({
+                    "id": item.get("id"), "fact": item.get("fact"),
+                    "category": item.get("category"), "removedAt": now,
+                    "source": "capacity",
+                })
+            profile["archive"] = profile["archive"][-MAX_ARCHIVE:]
         profile["updatedAt"] = time.time()
         if report_acceptance:
             retained = {_norm_fact(f["fact"]) for f in profile["facts"] + profile["pending"]}

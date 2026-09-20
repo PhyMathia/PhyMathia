@@ -353,24 +353,28 @@ def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
         by_session.setdefault(item_session[iid], []).append(iid)
     for sid in by_session:
         by_session[sid].sort(key=lambda iid: session_rank.get(iid, 0))
-    sids = sorted(by_session, key=lambda s: session_rank.get(min(by_session[s]), 0))
+    # 会话间按「各自最早一张卡」排：上两行刚把每会话的卡按学习序排好，取 [0]
+    # 即代表卡（此前误用 min() 取字典序最小 id，与学习序脱节——09-20 修复）
+    sids = sorted(by_session, key=lambda s: session_rank.get(by_session[s][0], 0))
     pairs = (itertools.combinations(sids, 2) if len(sids) <= 4
              else zip(sids, sids[1:]))
     return [{"from": by_session[a][0], "to": by_session[b][0],
              "fromSession": a, "toSession": b} for a, b in pairs]
 
 
-def _created_rank(item) -> float:
-    """createdAt 的数值兜底：真机存量数据里有字符串时间戳（实测 3 条）与坏值。
+def _num_or_zero(raw) -> float:
+    """任意时间戳/数值字段的数值兜底：真机存量数据里混有字符串时间戳与坏值。
 
     排序键一旦混用 int/str 就抛 TypeError，会把整条 /api/continent 打成 500——
-    投影层对脏数据的立场是「照常返回，别报错」。
-    """
-    raw = (item or {}).get("createdAt") or 0
+    投影层对脏数据的立场是「照常返回，别报错」（createdAt/updatedAt 都用它）。"""
     try:
-        return float(raw)
+        return float(raw or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _created_rank(item) -> float:
+    return _num_or_zero((item or {}).get("createdAt"))
 
 
 def _owner_ids(owners: set, items: dict) -> list:
@@ -453,7 +457,7 @@ def _split_user_edges(raw_edges: list, item_session: dict):
         }
 
     seen_pair = {}
-    for edge in sorted(raw_edges, key=lambda e: -(e.get("createdAt") or 0)):
+    for edge in sorted(raw_edges, key=lambda e: -_created_rank(e)):
         e = _norm(edge)
         if not e["id"] or not e["fromItem"] or not e["toItem"]:
             continue
@@ -756,7 +760,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
       悬空边（端点条目已不在）单列，前端渲染断桥并提供清理入口；
     - families（v6）：概念族条目（kind=family）与标题/公式共享**同一条 shared 通道**——
       族是领域知识（内置表 + KV 扩展），所以「只共享 2 字领域词」的真关系（梯度/散度/
-      旋度）也能成城；族术语对应的原始标题标签会被去重（同一件事不画两座城）；
+      旋度）也能成城；已被更精确标签连上的岛对会把族城折进清单（_mark_families_covered，
+      同一件事不画两座城）；
     - domainList（v7）：全部领域名（族表 canonical，含 KV 扩展）——前端「归到哪个
       领域」菜单的名单来源；gate 是 KV `continent_gate` 的原始值（v7.1b Φ 打标产物，
       版本不符整批忽略）。
@@ -782,7 +787,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     # 簇排序：会话最近更新在前；条目排序：学习顺序（createdAt 升序）
     def _cluster_sort_key(sid):
         sess = title_index.get(sid) or {}
-        return -(sess.get("updatedAt") or 0)
+        # updatedAt 同样要数值兜底：POST /api/sessions / 备份导入会把客户端
+        # 传的值原样落盘，字符串时间戳一行就让整条 /api/continent 500（09-20）
+        return -_num_or_zero(sess.get("updatedAt"))
 
     clusters = []
     session_rank = {}  # itemId → 簇内序（共享连线端点取「每会话最前」用）
@@ -834,6 +841,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     # ===== v6 概念族：领域知识层（内置表 + KV 扩展）=====
     accepted_families = merge_families(BUILTIN_FAMILIES, families_from_payload(families))
     prepared_families = prepare_families(accepted_families)
+    # 版本指纹在这算一次，两处消费（gate 校验 / 响应回传）共用——此前
+    # current_gate_version 各算一遍，families_from_payload+merge+md5 白跑 3 次
+    gate_ver = gate_version(accepted_families, _gate_weights())
     item_families, term_df, n_scored = _item_families(items, prepared_families)
     # 岛名 → 族（v7 海域层与 v6 族条目共用一份，只匹配一次）
     session_fams = {c["sessionId"]:
@@ -881,8 +891,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
 
     # ===== v7 海域层：softmax 评分核心（本地证据 + gate KV 模型证据，纯现算）=====
     accepted_names = {f["canonical"] for f in accepted_families}
-    gate_entries = _normalize_gate_payload(
-        gate, accepted_names, current_gate_version(families))
+    gate_entries = _normalize_gate_payload(gate, accepted_names, gate_ver)
     term_k = _term_family_counts(prepared_families)
     # 每张卡的领域概率只算一次；**不只扫有标题命中的卡**——章节号标题的卡没有词面
     # 证据，但可能有 gate 打标/公式指纹（v7.1b 的主救场正是这类卡）。有打标的卡
@@ -921,5 +930,5 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         "domainList": [f["canonical"] for f in accepted_families][:DOMAIN_LIST_MAX],
         # v7.1b：当前评分口径的版本指纹——前端写 gate KV 时带上它，名单/权重变了
         # 整批作废重打（版本单一来源在此，不许前端自己算）
-        "gateVersion": current_gate_version(families),
+        "gateVersion": gate_ver,
     }
