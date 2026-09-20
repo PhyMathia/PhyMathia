@@ -1288,22 +1288,39 @@ function _clearGraphTextSelection() {
 
 function _handlePointerMove(event) {
   if (graphView.pointerId !== event.pointerId) return;
-  const dx = event.clientX - graphView.startX;
-  const dy = event.clientY - graphView.startY;
+  // 高回报率鼠标一次显示帧内会触发多次 pointermove——这里只记录最新坐标，
+  // 用 requestAnimationFrame 合成每帧最多一次绘制（否则一次 move 就是
+  // 「全节点 transform 写 + 每边多次强制回流 + SVG 整层重建」×N 次）。
+  graphView.lastPointerX = event.clientX;
+  graphView.lastPointerY = event.clientY;
+  if (graphView.paintPending) return;
+  graphView.paintPending = true;
+  graphView.paintRaf = requestAnimationFrame(() => {
+    graphView.paintPending = false;
+    graphView.paintRaf = 0;
+    if (graphView.pointerId == null) return;
+    _applyPointerDrag(graphView.lastPointerX, graphView.lastPointerY);
+  });
+}
+
+function _applyPointerDrag(clientX, clientY) {
+  const dx = clientX - graphView.startX;
+  const dy = clientY - graphView.startY;
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
     graphView.moved = true;
     _clearGraphTextSelection();
   }
   const state = _graphState();
   if (graphView.linkDrag) {
-    const point = _clientToGraphLocal(event.clientX, event.clientY);
+    const point = _clientToGraphLocal(clientX, clientY);
     graphView.linkDrag.currentX = point.x;
     graphView.linkDrag.currentY = point.y;
-    _redrawEdges();
+    // 只更新拖拽线本身的 d；结构不在（缓存被清）时退回全量重建
+    if (!_refreshLinkDragPath()) _redrawEdges();
     return;
   }
   if (graphView.boxSelect) {
-    const point = _clientToGraphLocal(event.clientX, event.clientY);
+    const point = _clientToGraphLocal(clientX, clientY);
     graphView.boxSelect.currentX = point.x;
     graphView.boxSelect.currentY = point.y;
     _renderSelectionBox();
@@ -1313,8 +1330,8 @@ function _handlePointerMove(event) {
     const node = _findGraphNode(graphView.resizeNodeId);
     const el = graphInner?.querySelector('[data-node-id="' + graphView.resizeNodeId + '"]');
     if (node && el) {
-      const resizeDx = (event.clientX - graphView.resizeStartX) / (graphView.zoom || 1);
-      const resizeDy = (event.clientY - graphView.resizeStartY) / (graphView.zoom || 1);
+      const resizeDx = (clientX - graphView.resizeStartX) / (graphView.zoom || 1);
+      const resizeDy = (clientY - graphView.resizeStartY) / (graphView.zoom || 1);
       const nextW = Math.max(260, graphView.resizeStartW + resizeDx);
       const nextH = Math.max(90, graphView.resizeStartH + resizeDy);
       node.customWidth = Math.round(nextW);
@@ -1335,8 +1352,8 @@ function _handlePointerMove(event) {
   if (graphView.resizeGroupId) {
     const group = _graphGroupById(graphView.resizeGroupId);
     if (group) {
-      const resizeDx = (event.clientX - graphView.resizeGroupStartClientX) / (graphView.zoom || 1);
-      const resizeDy = (event.clientY - graphView.resizeGroupStartClientY) / (graphView.zoom || 1);
+      const resizeDx = (clientX - graphView.resizeGroupStartClientX) / (graphView.zoom || 1);
+      const resizeDy = (clientY - graphView.resizeGroupStartClientY) / (graphView.zoom || 1);
       group.width = Math.max(220, graphView.resizeGroupStartW + resizeDx);
       group.height = Math.max(140, graphView.resizeGroupStartH + resizeDy);
       _updateGroupElement(group);
@@ -1352,22 +1369,25 @@ function _handlePointerMove(event) {
       group.x = graphView.dragGroupStartX + offsetX;
       group.y = graphView.dragGroupStartY + offsetY;
       _updateGroupElement(group);
-      for (const [id, start] of Object.entries(graphView.dragGroupNodeStartPositions || {})) {
+      const ids = Object.keys(graphView.dragGroupNodeStartPositions || {});
+      for (const id of ids) {
         const node = _findGraphNode(id);
-        if (node) {
+        const start = graphView.dragGroupNodeStartPositions[id];
+        if (node && start) {
           node.x = start.x + offsetX;
           node.y = start.y + offsetY;
         }
       }
-      _updateNodeTransforms();
-      _redrawEdges();
+      _updateNodeTransforms(ids);
+      if (!_refreshEdgeGeometry(_edgesTouchingNodeIds(ids))) _redrawEdges();
     }
     return;
   }
   if (graphView.dragNodeId) {
+    const ids = Object.keys(graphView.dragStartPositions || {});
     const offsetX = dx / (graphView.zoom || 1);
     const offsetY = dy / (graphView.zoom || 1);
-    for (const id of Object.keys(graphView.dragStartPositions || {})) {
+    for (const id of ids) {
       const n = _findGraphNode(id);
       const start = graphView.dragStartPositions[id];
       if (n && start) {
@@ -1375,18 +1395,28 @@ function _handlePointerMove(event) {
         n.y = start.y + offsetY;
       }
     }
-    _updateNodeTransforms();
-    _redrawEdges();
+    _updateNodeTransforms(ids);
+    if (!_refreshEdgeGeometry(_edgesTouchingNodeIds(ids))) _redrawEdges();
   } else if (graphView.panning) {
+    // 平移不再每帧把整个图状态序列化写 localStorage——pointerup 统一保存
     state.pan.x = graphView.panStartX + dx;
     state.pan.y = graphView.panStartY + dy;
-    _saveGraphState(state);
     _applyGraphTransform();
   }
 }
 
 function _endPointerDrag(event) {
   if (graphView.pointerId !== event.pointerId) return;
+  // 冲刷还没画出去的那一帧：松手前最后一次 move 必须先落到节点坐标上，
+  // 否则落点判定（拖入分组/连线放置）用的是滞后一帧的位置
+  if (graphView.paintRaf) {
+    cancelAnimationFrame(graphView.paintRaf);
+    graphView.paintRaf = 0;
+  }
+  if (graphView.paintPending) {
+    graphView.paintPending = false;
+    _applyPointerDrag(graphView.lastPointerX, graphView.lastPointerY);
+  }
   if (graphView.moved) graphView.suppressClick = true;
   setTimeout(() => { graphView.suppressClick = false; }, 0);
   if (graphView.linkDrag) {
@@ -1546,6 +1576,11 @@ function _endPointerDrag(event) {
     graphCanvas?.classList.remove('panning');
     if (droppedIntoGroup) renderGraphCanvas();
     return;
+  }
+  // 纯平移的收尾（其余拖拽分支各自保存）：move 期间不再逐帧写存储，
+  // 在这里补一次统一保存
+  if (graphView.panning && graphView.moved) {
+    _saveGraphState(_graphState());
   }
   graphView.panning = false;
   graphView.pointerId = null;

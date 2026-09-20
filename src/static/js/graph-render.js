@@ -1273,12 +1273,53 @@ function _updateAiEvalZigzag(node) {
   shape.setAttribute('points', _aiEvalZigzagPoints(node.w || 260, node.h || 140));
 }
 
-function _updateNodeTransforms() {
+// ===== 拖拽流畅度：元素缓存与快速几何更新 =====
+// 缓存按 graphInner 实例失效：全量重建（graphCanvas.innerHTML=''）会换掉
+// graphInner，WeakMap 自动换新表；层内局部重建（_redrawEdges）只清 edges 表。
+const _graphElCacheByInner = new WeakMap();
+
+function _graphElCache() {
+  if (!graphInner) return null;
+  let cache = _graphElCacheByInner.get(graphInner);
+  if (!cache) {
+    cache = { nodes: new Map(), ports: new Map(), edges: new Map() };
+    _graphElCacheByInner.set(graphInner, cache);
+  }
+  return cache;
+}
+
+function _graphNodeEl(id) {
+  if (!graphInner) return null;
+  const cache = _graphElCache();
+  let el = cache.nodes.get(id);
+  if (el && el.isConnected) return el;
+  el = graphInner.querySelector('[data-node-id="' + id + '"]');
+  if (el) cache.nodes.set(id, el); else cache.nodes.delete(id);
+  return el || null;
+}
+
+function _graphPortEl(nodeId, portId) {
+  if (!graphInner) return null;
+  const cache = _graphElCache();
+  const key = nodeId + ':' + portId;
+  let el = cache.ports.get(key);
+  if (el && el.isConnected) return el;
+  el = graphInner.querySelector('[data-node-id="' + nodeId + '"][data-port-id="' + portId + '"]');
+  if (el) cache.ports.set(key, el); else cache.ports.delete(key);
+  return el || null;
+}
+
+function _updateNodeTransforms(onlyIds) {
   if (!graphInner) return;
-  graphView.nodes.forEach(node => {
-    const el = graphInner.querySelector('[data-node-id="' + node.id + '"]');
-    if (el) el.style.transform = 'translate(' + (node.x - (node.w || 0) / 2) + 'px, ' + (node.y - (node.h || 0) / 2) + 'px)';
-  });
+  // onlyIds：拖拽时只写被拖节点的 transform（省掉全量 querySelector+写）；
+  // 不传保持旧行为全量刷新（renderGraphCanvas、撤销等路径用）。
+  const ids = (onlyIds && onlyIds.length) ? onlyIds : null;
+  const list = ids || graphView.nodes.map(node => node.id);
+  for (const id of list) {
+    const node = graphView.nodeById[id];
+    const el = _graphNodeEl(id);
+    if (node && el) el.style.transform = 'translate(' + (node.x - (node.w || 0) / 2) + 'px, ' + (node.y - (node.h || 0) / 2) + 'px)';
+  }
 }
 
 function _clientToGraphLocal(clientX, clientY) {
@@ -1291,14 +1332,15 @@ function _clientToGraphLocal(clientX, clientY) {
   };
 }
 
-function _portAnchor(node, portEl, isOutput) {
+function _portAnchor(node, portEl, isOutput, innerRect) {
   if (portEl && graphInner) {
     const rect = portEl.getBoundingClientRect();
-    const innerRect = graphInner.getBoundingClientRect();
+    // innerRect 由调用方一次读取传入（一帧一次布局读），不再每条边重复读
+    const box = innerRect || graphInner.getBoundingClientRect();
     const zoom = graphView.zoom || 1;
     return {
-      x: (rect.left + rect.width / 2 - innerRect.left) / zoom,
-      y: (rect.top + rect.height / 2 - innerRect.top) / zoom,
+      x: (rect.left + rect.width / 2 - box.left) / zoom,
+      y: (rect.top + rect.height / 2 - box.top) / zoom,
     };
   }
   const halfW = (node.w || 120) / 2;
@@ -1308,13 +1350,21 @@ function _portAnchor(node, portEl, isOutput) {
   };
 }
 
-function _linkDragPathHtml() {
+// 边路径 d 属性的唯一拼装（全量重建与拖拽快速路径共用，保证形状一致）
+function _edgePathD(p1, p2, cp) {
+  return 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1)
+    + ' C' + cp.c1x.toFixed(1) + ' ' + cp.c1y.toFixed(1)
+    + ', ' + cp.c2x.toFixed(1) + ' ' + cp.c2y.toFixed(1)
+    + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+}
+
+function _linkDragPathHtml(innerRect) {
   const drag = graphView.linkDrag;
   if (!drag || drag.currentX == null) return '';
   const sourceNode = graphView.nodeById[drag.nodeId];
   if (!sourceNode) return '';
-  const sourceEl = graphInner?.querySelector('[data-node-id="' + drag.nodeId + '"][data-port-id="' + drag.portId + '"]');
-  const p1 = _portAnchor(sourceNode, sourceEl, drag.mode !== 'input');
+  const sourceEl = _graphPortEl(drag.nodeId, drag.portId);
+  const p1 = _portAnchor(sourceNode, sourceEl, drag.mode !== 'input', innerRect);
   const p2 = { x: drag.currentX, y: drag.currentY };
   const offset = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
   const d = 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1)
@@ -1355,21 +1405,19 @@ function _linkDefaultCurveOffsets(p1, p2) {
 
 function _redrawEdges() {
   if (!graphEdgeLayer) return;
+  // 布局读一次（graphInner 的 rect），整批边共用——不再每条边读两次
+  const innerRect = graphInner ? graphInner.getBoundingClientRect() : null;
   const defs = '<defs><marker id="graph-link-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="graph-edge-link-arrow"></path></marker></defs>';
   const html = graphView.edges.map(edge => {
     const a = graphView.nodeById[edge.from];
     const b = graphView.nodeById[edge.to];
     if (!a || !b) return '';
-    const sourceEl = graphInner?.querySelector('[data-node-id="' + edge.from + '"][data-port-id="' + edge.fromPort + '"]');
-    const targetEl = graphInner?.querySelector('[data-node-id="' + edge.to + '"][data-port-id="' + edge.toPort + '"]');
-    const p1 = _portAnchor(a, sourceEl, true);
-    const p2 = _portAnchor(b, targetEl, false);
+    const sourceEl = _graphPortEl(edge.from, edge.fromPort);
+    const targetEl = _graphPortEl(edge.to, edge.toPort);
+    const p1 = _portAnchor(a, sourceEl, true, innerRect);
+    const p2 = _portAnchor(b, targetEl, false, innerRect);
     const cp = _linkEdgeControlPoints(p1, p2, edge);
-    const offset = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
-    const d = 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1)
-      + ' C' + cp.c1x.toFixed(1) + ' ' + cp.c1y.toFixed(1)
-      + ', ' + cp.c2x.toFixed(1) + ' ' + cp.c2y.toFixed(1)
-      + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+    const d = _edgePathD(p1, p2, cp);
     const isLink = !!edge.link;
     const cls = 'graph-edge' + (edge.custom ? ' graph-edge-custom' : '') + (isLink ? ' graph-edge-link' : '')
       + (isLink && graphView.edgeCurveEditKey === _edgeKey(edge) ? ' graph-edge-editing' : '');
@@ -1418,7 +1466,90 @@ function _redrawEdges() {
       + hintHtml
       + '</g>';
   }).join('');
-  graphEdgeLayer.innerHTML = defs + html + _linkDragPathHtml();
+  graphEdgeLayer.innerHTML = defs + html + _linkDragPathHtml(innerRect);
+  // 全量重建后旧边元素全部失效：清边缓存与联系线拖拽路径缓存
+  const cache = _graphElCache();
+  if (cache) cache.edges.clear();
+  _linkDragPathEl = null;
+}
+
+// ===== 拖拽快速路径：只改被涉及边的 d/标签位置，不重建 SVG 子树 =====
+// 返回 false 表示结构不在缓存里（新边/未渲染/曲线编辑中），调用方退回 _redrawEdges 全量。
+
+let _linkDragPathEl = null;
+
+function _refreshLinkDragPath() {
+  const drag = graphView.linkDrag;
+  if (!drag || drag.currentX == null || !graphEdgeLayer) return false;
+  if (!_linkDragPathEl || !_linkDragPathEl.isConnected) {
+    _linkDragPathEl = graphEdgeLayer.querySelector('.graph-link-drag');
+    if (!_linkDragPathEl) return false;
+  }
+  const sourceNode = graphView.nodeById[drag.nodeId];
+  if (!sourceNode) return false;
+  const innerRect = graphInner ? graphInner.getBoundingClientRect() : null;
+  const p1 = _portAnchor(sourceNode, _graphPortEl(drag.nodeId, drag.portId), drag.mode !== 'input', innerRect);
+  const p2 = { x: drag.currentX, y: drag.currentY };
+  const offset = Math.max(50, Math.min(180, Math.abs(p2.x - p1.x) * 0.45));
+  _linkDragPathEl.setAttribute('d', 'M' + p1.x.toFixed(1) + ' ' + p1.y.toFixed(1)
+    + ' C' + (p1.x + offset).toFixed(1) + ' ' + p1.y.toFixed(1)
+    + ', ' + (p2.x - offset).toFixed(1) + ' ' + p2.y.toFixed(1)
+    + ', ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1));
+  return true;
+}
+
+function _edgesTouchingNodeIds(ids) {
+  const set = ids instanceof Set ? ids : new Set(ids);
+  return graphView.edges
+    .filter(edge => set.has(edge.from) || set.has(edge.to))
+    .map(edge => _edgeKey(edge));
+}
+
+function _refreshEdgeGeometry(edgeKeys) {
+  if (!graphEdgeLayer || !graphInner) return false;
+  const cache = _graphElCache();
+  if (!cache) return false;
+  const keySet = new Set(edgeKeys);
+  // 曲线编辑手柄也依赖端点坐标，走全量保证 guides/knobs 一起更新
+  if (graphView.edgeCurveEditKey && keySet.has(graphView.edgeCurveEditKey)) return false;
+  const innerRect = graphInner.getBoundingClientRect();
+  for (const edge of graphView.edges) {
+    const key = _edgeKey(edge);
+    if (!keySet.has(key)) continue;
+    const a = graphView.nodeById[edge.from];
+    const b = graphView.nodeById[edge.to];
+    if (!a || !b) continue;
+    let entry = cache.edges.get(key);
+    if (!entry || !entry.g || !entry.g.isConnected) {
+      const g = graphEdgeLayer.querySelector('[data-edge-key="' + key + '"]');
+      if (!g) return false;
+      entry = {
+        g,
+        path: g.querySelector('path:not(.graph-edge-hit)'),
+        hit: g.querySelector('.graph-edge-hit'),
+        labelBg: g.querySelector('.graph-edge-link-label-group > .graph-edge-link-bg'),
+        labelText: g.querySelector('.graph-edge-link-label-group > text'),
+      };
+      cache.edges.set(key, entry);
+    }
+    const p1 = _portAnchor(a, _graphPortEl(edge.from, edge.fromPort), true, innerRect);
+    const p2 = _portAnchor(b, _graphPortEl(edge.to, edge.toPort), false, innerRect);
+    const cp = _linkEdgeControlPoints(p1, p2, edge);
+    const d = _edgePathD(p1, p2, cp);
+    if (entry.path) entry.path.setAttribute('d', d);
+    if (entry.hit) entry.hit.setAttribute('d', d);
+    if (entry.labelBg && entry.labelText) {
+      const label = (edge.relation || edge.label || '').toString().trim();
+      const mx = (p1.x + 3 * cp.c1x + 3 * cp.c2x + p2.x) / 8;
+      const my = (p1.y + 3 * cp.c1y + 3 * cp.c2y + p2.y) / 8;
+      const textW = Array.from(label).length * 12 + 16;
+      entry.labelBg.setAttribute('x', (mx - textW / 2).toFixed(1));
+      entry.labelBg.setAttribute('y', (my - 15.5).toFixed(1));
+      entry.labelText.setAttribute('x', mx.toFixed(1));
+      entry.labelText.setAttribute('y', (my - 2.5).toFixed(1));
+    }
+  }
+  return true;
 }
 
 function _savePositions() {
