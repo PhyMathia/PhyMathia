@@ -38,6 +38,11 @@ MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_PATH = DATA_DIR / "sessions.json"
 KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
 KV_PATH = DATA_DIR / "kv_store.json"
+# 会话级 KV 拆分层：graph:<sid>/harness_history:<sid>/graph_history:<sid> 这类
+# 每会话大对象按 data/kv/<sid>.json 一会话一文件存放（storage.kv_* 路由读写），
+# 避免保存任一会话都全量重写主文件；全局键仍留在 kv_store.json
+KV_DIR = DATA_DIR / "kv"
+KV_DIR.mkdir(parents=True, exist_ok=True)
 FORMULAS_PATH = DATA_DIR / "formulas.json"
 UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOADS_META_PATH = DATA_DIR / "uploads.json"
@@ -133,7 +138,7 @@ def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> s
 
 __all__ = [
     "BASE_DIR", "ROOT_DIR", "DATA_DIR", "MESSAGES_DIR",
-    "SESSIONS_PATH", "KNOWLEDGE_PATH", "KV_PATH", "FORMULAS_PATH",
+    "SESSIONS_PATH", "KNOWLEDGE_PATH", "KV_PATH", "KV_DIR", "FORMULAS_PATH",
     "UPLOAD_DIR", "UPLOADS_META_PATH", "UPLOAD_MAX_BYTES",
     "STATIC_DIR", "STATIC_EXTENSIONS",
     "LEVEL_PROMPTS", "STRICT_MODULE_MAX_TOKENS",

@@ -5,7 +5,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .config import FORMULAS_PATH, KNOWLEDGE_PATH, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
+from .config import FORMULAS_PATH, KNOWLEDGE_PATH, KV_DIR, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
 from .knowledge import (
     _dedupe_formula_map,
     _dedupe_knowledge,
@@ -13,7 +13,15 @@ from .knowledge import (
     _normalize_knowledge,
 )
 from .profile import PROFILES_DIR, save_profile
-from .storage import _SESSION_ID_RE, _get_messages_path, _invalidate_json_cache, _read_json, _write_json
+from .storage import (
+    _SESSION_ID_RE,
+    _get_messages_path,
+    _invalidate_json_cache,
+    _read_json,
+    _write_json,
+    kv_all_data,
+    kv_restore_bulk,
+)
 
 def _build_backup_payload() -> dict:
     sessions = _read_json(SESSIONS_PATH, {})
@@ -47,7 +55,8 @@ def _build_backup_payload() -> dict:
         "messages": messages,
         "knowledge": _read_json(KNOWLEDGE_PATH, {}),
         "formulas": _read_json(FORMULAS_PATH, {}),
-        "kv": _read_json(KV_PATH, {}),
+        # 合并视图：主文件 + data/kv/ 会话文件（graph:<sid> 等会话键已拆分存放）
+        "kv": kv_all_data(),
         "profiles": profiles,
     }
 
@@ -110,6 +119,9 @@ def _restore_target_paths() -> list:
     paths = [SESSIONS_PATH, KNOWLEDGE_PATH, FORMULAS_PATH, KV_PATH]
     paths.extend(sorted(MESSAGES_DIR.glob("*.json")))
     paths.extend(sorted(PROFILES_DIR.glob("*.json")))
+    # 会话级 KV 拆分文件也是恢复目标：回滚与「新建文件清理」都必须覆盖
+    if KV_DIR.exists():
+        paths.extend(sorted(KV_DIR.glob("*.json")))
     return paths
 
 
@@ -193,8 +205,8 @@ def _apply_restore(backup: dict, replace: bool) -> dict:
 
     kv_data = backup.get("kv") or {}
     if isinstance(kv_data, dict):
-        existing_kv = {} if replace else _read_json(KV_PATH, {})
-        _write_json(KV_PATH, {**existing_kv, **kv_data})
+        # 拆分路由落盘：全局键合并主文件、会话键按 sid 进 data/kv/；replace 先清两边
+        kv_restore_bulk(kv_data, replace)
 
     profiles = backup.get("profiles") or {}
     profile_count = 0

@@ -7,7 +7,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from .config import MESSAGES_DIR, SESSIONS_PATH
+from .config import KV_DIR, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
 
 # ====== JSON 文件持久化工具 ======
 _JSON_LOCK = threading.RLock()
@@ -132,10 +132,177 @@ def _resolve_messages_path(session_id: str) -> Path:
     raise ValueError(f"invalid session id: {session_id!r}")
 
 
+# ====== KV 键值存储：会话级大键拆分路由 ======
+# graph:<sid> / harness_history:<sid> / graph_history:<sid> 这类每会话大对象
+# 拆到 data/kv/<sid>.json（{键: 值}），保存单个会话不再整写主文件（此前是
+# 全量重写 700KB+ 的 kv_store.json，且独占全局 JSON 锁）；其余全局键（测验
+# 题库/统计、continent_*、socratic、滚动记忆、当前会话）留在 kv_store.json。
+# 注意：本层用模块级绑定 KV_PATH/KV_DIR（测试按模块命名空间 setattr 补丁）；
+# context.py 的 socratic/滚动记忆小键不走本层——既有测试按主文件字节钉死。
+_KV_SESSION_PREFIXES = ("graph:", "harness_history:", "graph_history:")
+
+
+def _kv_split_session(key: str):
+    """会话级键返回 (sid, key)；全局键返回 None。sid 必须过白名单防路径穿越。"""
+    key = str(key or "")
+    for prefix in _KV_SESSION_PREFIXES:
+        if key.startswith(prefix):
+            sid = key[len(prefix):]
+            if sid and _SESSION_ID_RE.match(sid):
+                return sid, key
+    return None
+
+
+def _kv_session_path(sid: str) -> Path:
+    if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
+        raise ValueError(f"invalid session id: {sid!r}")
+    return KV_DIR / f"{sid}.json"
+
+
+def kv_read(key: str, default=None):
+    """按键读 KV：会话级键走 data/kv/<sid>.json，其余走主文件。"""
+    split = _kv_split_session(key)
+    if split is not None:
+        data = _read_json(_kv_session_path(split[0]), {})
+        if isinstance(data, dict) and key in data:
+            return data[key]
+        return default
+    main = _read_json(KV_PATH, {})
+    if isinstance(main, dict) and key in main:
+        return main[key]
+    return default
+
+
+def kv_write(key: str, value) -> None:
+    """按键写 KV（upsert），自动路由到会话文件或主文件。"""
+    split = _kv_split_session(key)
+    path = _kv_session_path(split[0]) if split is not None else KV_PATH
+
+    def updater(data):
+        data = dict(data) if isinstance(data, dict) else {}
+        data[key] = value
+        return data
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _mutate_json(path, updater, default={})
+
+
+def kv_delete(key: str) -> None:
+    """按键删 KV；会话文件删空后移除文件本身（空 JSON 不是用户数据）。"""
+    split = _kv_split_session(key)
+    path = _kv_session_path(split[0]) if split is not None else KV_PATH
+
+    def updater(data):
+        if not isinstance(data, dict) or key not in data:
+            return None
+        data = dict(data)
+        data.pop(key, None)
+        return data
+
+    result = _mutate_json(path, updater, default={})
+    if split is not None and isinstance(result, dict) and not result:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def kv_all_data() -> dict:
+    """全量合并视图（主文件 + 所有会话文件，会话文件覆盖同名键）。
+
+    备份导出与大陆投影等「要看到全部 KV」的场合用；会话文件优先——它与
+    迁移中断时残留在主文件里的旧副本相比总是较新的一份。
+    """
+    merged = {}
+    main = _read_json(KV_PATH, {})
+    if isinstance(main, dict):
+        merged.update(main)
+    if KV_DIR.exists():
+        for path in sorted(KV_DIR.glob("*.json")):
+            if not _SESSION_ID_RE.match(path.stem):
+                continue
+            data = _read_json(path, {})
+            if isinstance(data, dict):
+                merged.update(data)
+    return merged
+
+
+def kv_migrate_session_keys() -> int:
+    """启动迁移：把主文件里的会话级键搬进 data/kv/<sid>.json，返回搬运键数。
+
+    先写会话文件、全部成功后才从主文件移除——中途失败下次启动幂等重跑。
+    """
+    main = _read_json(KV_PATH, {})
+    if not isinstance(main, dict):
+        return 0
+    to_move = {}
+    for key, value in main.items():
+        split = _kv_split_session(key)
+        if split is not None:
+            to_move.setdefault(split[0], {})[key] = value
+    if not to_move:
+        return 0
+    KV_DIR.mkdir(parents=True, exist_ok=True)
+    for sid, entries in to_move.items():
+        def updater(data, _entries=entries):
+            data = dict(data) if isinstance(data, dict) else {}
+            data.update(_entries)
+            return data
+
+        _mutate_json(_kv_session_path(sid), updater, default={})
+    moved_keys = {key for entries in to_move.values() for key in entries}
+
+    def remove_moved(data):
+        if not isinstance(data, dict):
+            return None
+        remaining = {k: v for k, v in data.items() if k not in moved_keys}
+        return remaining if len(remaining) != len(data) else None
+
+    _mutate_json(KV_PATH, remove_moved)
+    return len(moved_keys)
+
+
+def kv_restore_bulk(data, replace: bool) -> int:
+    """备份导入：把一份 {键: 值} 按拆分路由落盘，返回导入键数。
+
+    全局键合并进主文件（replace 时先清空）；会话键按 sid 分组合并进各自
+    会话文件（replace 时先清空 data/kv/）。比逐键 kv_write 少 O(n) 次全量写。
+    """
+    if not isinstance(data, dict):
+        return 0
+    global_part = {}
+    session_parts = {}
+    for key, value in data.items():
+        split = _kv_split_session(key)
+        if split is None:
+            global_part[key] = value
+        else:
+            session_parts.setdefault(split[0], {})[key] = value
+    if replace:
+        _write_json(KV_PATH, {})
+        if KV_DIR.exists():
+            for p in KV_DIR.glob("*.json"):
+                p.unlink(missing_ok=True)
+    else:
+        existing = _read_json(KV_PATH, {})
+        global_part = {**(existing if isinstance(existing, dict) else {}), **global_part}
+    _write_json(KV_PATH, global_part)
+    if session_parts:
+        KV_DIR.mkdir(parents=True, exist_ok=True)
+    for sid, entries in session_parts.items():
+        def updater(d, _entries=entries):
+            d = dict(d) if isinstance(d, dict) else {}
+            d.update(_entries)
+            return d
+
+        _mutate_json(_kv_session_path(sid), updater, default={})
+    return len(data)
 
 
 __all__ = [
     "_read_json", "_write_json", "_mutate_json", "_delete_by_session",
     "_read_json_cached", "_invalidate_json_cache",
     "_get_messages_path", "_resolve_messages_path",
+    "kv_read", "kv_write", "kv_delete", "kv_all_data",
+    "kv_migrate_session_keys", "kv_restore_bulk",
 ]
