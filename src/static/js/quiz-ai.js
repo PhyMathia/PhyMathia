@@ -120,7 +120,7 @@ function _sanitizeAIQuestions(raw, pool) {
     const humanPrompt = _humanizeQuizText(prompt, matched);
     const questionText = [humanPrompt, title, formulaText, ...options.map(option => option.text)].join('\n');
     if (_quizIsMetaPrompt(questionText)) continue;
-    result.push({
+    const question = {
       id: 'ai_' + now + '_' + i,
       type: ['concept', 'formula_meaning', 'formula_concept', 'knowledge_formula', 'category'].includes(item.type) ? item.type : 'ai',
       title: title || matched.title || matched.concept || '检测题',
@@ -136,7 +136,10 @@ function _sanitizeAIQuestions(raw, pool) {
       topicKey: matched.topicKey || _quizTopicKey(matched),
       difficulty: _quizDifficultyKey(item.difficulty),
       sessionId: matched.sessionId
-    });
+    };
+    // 模型照抄提示词示例的 correctIndex:0，正确答案几乎恒在 A 位——入库/送审前打乱分散
+    _quizShuffleQuestionOptions(question);
+    result.push(question);
   }
   return result;
 }
@@ -428,9 +431,21 @@ async function _loadQuizBankFromServer() {
     try {
       localStorage.setItem(QUIZ_BANK_KEY, JSON.stringify(quizBank));
     } catch (e) {}
+    _migrateQuizBankAnswerPositions();
   } catch (e) {
     console.warn('Load quiz bank failed:', e);
   }
+}
+
+// 一次性迁移：修复（2026-09）前生成的 AI 题正确答案恒在 A 位，打乱存量题库并打标记；
+// 此后新题在 _sanitizeAIQuestions 解析时已就地打乱，不会再进入本函数的有效分支。
+function _migrateQuizBankAnswerPositions() {
+  const bank = quizBank || _readQuizBank();
+  if (!bank || !Array.isArray(bank.questions) || !bank.questions.length) return;
+  if (bank.answersShuffled === true) return;
+  bank.questions.forEach(_quizShuffleQuestionOptions);
+  bank.answersShuffled = true;
+  _persistQuizBank(bank);
 }
 
 function _bankForPool(pool) {
