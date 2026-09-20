@@ -429,7 +429,8 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
                          "edges": []},
             "operations": [{"op": "update_node", "id": "A", "patch": {"label": "b"}}],
         })
-        self.assertEqual(resp.status_code, 200)
+        # 09-20 错误协议：缺请求前提属传输层故障，返回真实 400（body 形状不变）
+        self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body["status"], "error")
         self.assertIn("before_snapshot", str(body))

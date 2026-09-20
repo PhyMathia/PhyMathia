@@ -17,6 +17,32 @@ let harnessLastAppliedBeforeSnapshot = null;
   let harnessPhiError = false;
   let harnessPhiCelebrate = false;
   let harnessAbortController = null;
+
+  // 统一的 harness JSON POST。后端约定：业务结果（ok/undo/clarify/no_ops/
+  // parse_error/invalid）永远是 HTTP 200；传输层故障（坏 JSON/模型侧失败/
+  // 内部异常）带真实 4xx/5xx，但 body 仍是 {status:'error',errors:[...]}。
+  // 这里把两层判定合成一个 throw，调用方只管 catch（SSE 流式路径不适用，
+  // 流内错误永远以 200 result 事件下发，仍需带内检查）。
+  async function harnessFetchJson(path, payload) {
+    const resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    let data = null;
+    try {
+      data = await resp.json();
+    } catch (err) {
+      throw new Error('服务端返回非 JSON（HTTP ' + resp.status + '）');
+    }
+    if (!resp.ok || data.status === 'error' || (Array.isArray(data.errors) && data.errors.length)) {
+      const reason = (data && Array.isArray(data.errors) && data.errors[0] && (data.errors[0].reason || data.errors[0].message))
+        || ('请求失败（HTTP ' + resp.status + '）');
+      throw new Error(reason);
+    }
+    return data;
+  }
+
   const PHI_PET_HTML = ''
     + '<div class="phi-pet" data-phi-pet data-phi-mode="idle">'
     + '<div class="phi-code-symbols" aria-hidden="true">'
@@ -901,20 +927,15 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (note) entry.feedbackNote = note;
     _saveHarnessHistory().then(_renderHarnessChat);
     try {
-      const resp = await fetch('/api/harness/graph/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kind,
-          instruction: entry.instruction || entry.content || '',
-          summary: entry.summary || entry.content || '',
-          ops_count: Array.isArray(entry.operations) ? entry.operations.length : 0,
-          phase: entry.phase || '',
-          note,
-          session_id: _sessionId(),
-        }),
+      await harnessFetchJson('/api/harness/graph/feedback', {
+        kind,
+        instruction: entry.instruction || entry.content || '',
+        summary: entry.summary || entry.content || '',
+        ops_count: Array.isArray(entry.operations) ? entry.operations.length : 0,
+        phase: entry.phase || '',
+        note,
+        session_id: _sessionId(),
       });
-      if (!resp.ok) throw new Error('反馈保存失败');
       _setHarnessStatus('已记录反馈', 'ok');
     } catch (err) {
       _setHarnessStatus('反馈保存失败：' + err.message, 'error');
@@ -929,23 +950,17 @@ let harnessLastAppliedBeforeSnapshot = null;
       return { status: 'error', focus_node_ids: [], ambiguous: false, question: '请先配置主模型', candidates: [] };
     }
     const snapshot = buildHarnessSnapshot(false, candidates, null);
-    const resp = await fetch('/api/harness/graph/resolve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      return await harnessFetchJson('/api/harness/graph/resolve', {
         snapshot,
         instruction,
         model: _harnessModelForRequest(model),
         level: localStorage.getItem('phymathia_level') || 'university',
         retries: 2,
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || '目标解析失败');
-    if (data.status === 'error' || (data.errors && data.errors.length)) {
-      throw new Error(_harnessErrorToHuman((data.errors || []).map(item => (item && (item.reason || item.message)) || '').filter(Boolean).join('；') || '目标解析失败'));
+      });
+    } catch (err) {
+      throw new Error(_harnessErrorToHuman(String((err && err.message) || err || '目标解析失败')));
     }
-    return data;
   }
 
   function _initHarnessDrag() {
