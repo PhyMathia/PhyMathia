@@ -1212,14 +1212,16 @@ async def api_parse_document(request: Request):
     content = None
     file_id = str(payload.get("fileId") or "")
     if file_id:
-        loaded = _read_upload(file_id)
+        # 20MB 级文件的读盘与 base64 解码都是秒级同步 CPU/IO 重活：
+        # 全部卸到工作线程，期间事件循环继续服务 AI 回复流等其他请求
+        loaded = await asyncio.to_thread(_read_upload, file_id)
         if not loaded:
             raise HTTPException(status_code=404, detail="文件不存在，请重新上传")
         entry, content = loaded
         filename = _sanitize_filename(entry.get("filename") or filename)
     else:
         try:
-            content = base64.b64decode(str(payload.get("contentBase64") or ""))
+            content = await asyncio.to_thread(base64.b64decode, str(payload.get("contentBase64") or ""))
         except Exception:
             raise HTTPException(status_code=400, detail="文件内容格式错误")
         if not content:
@@ -1227,12 +1229,13 @@ async def api_parse_document(request: Request):
         if len(content) > UPLOAD_MAX_BYTES:
             raise HTTPException(status_code=413, detail="文件超过 20MB 限制")
         file_id = "doc_" + uuid.uuid4().hex[:12]
-        _save_upload(file_id, filename, content)
+        await asyncio.to_thread(_save_upload, file_id, filename, content)
 
-    text = _extract_document_text(filename, content)
+    # PDF/DOCX/PPTX 解析与图片 OCR：最重的同步 CPU 段，必须离事件循环
+    text = await asyncio.to_thread(_extract_document_text, filename, content)
     ext = Path(filename).suffix.lower()
     is_image = ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
-    image_b64 = base64.b64encode(content).decode("ascii") if is_image else ""
+    image_b64 = await asyncio.to_thread(lambda: base64.b64encode(content).decode("ascii")) if is_image else ""
 
     provider = str(payload.get("provider") or "")
     api_key = str(payload.get("api_key") or "")
@@ -1251,7 +1254,7 @@ async def api_parse_document(request: Request):
         except Exception as e:
             logger.warning(f"AI document extraction failed: {e}")
     if not nodes:
-        nodes, edges, relations = _local_extract_document_knowledge(text, filename, max_items)
+        nodes, edges, relations = await asyncio.to_thread(_local_extract_document_knowledge, text, filename, max_items)
     if not nodes:
         raise HTTPException(status_code=422, detail="无法从文件中提取知识点。请使用文本/PDF/DOCX，或为图片配置视觉模型/OCR。")
 
