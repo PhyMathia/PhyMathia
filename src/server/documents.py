@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -44,16 +45,32 @@ def _save_upload(file_id: str, filename: str, content: bytes) -> None:
     (UPLOAD_DIR / f"{file_id}.bin").write_bytes(content)
 
 
+# OCR 引擎进程级单例：RapidOCR() 构造要加载 ONNX 模型，是图片识别最贵的一步
+# （此前每次识别都重建实例）。推理期并发极少了；引擎初始化用锁防双建。
+_OCR_ENGINE = None
+_OCR_LOCK = threading.Lock()
+
+
+def _get_ocr_engine():
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        with _OCR_LOCK:
+            if _OCR_ENGINE is None:
+                from rapidocr_onnxruntime import RapidOCR
+                _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
+
 def _extract_image_text(content: bytes) -> str:
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        _get_ocr_engine()
     except ImportError:
         return ""
     # 唯一临时文件名：并发图片解析共用固定名会互相覆盖；用完即删不留残留
     tmp_path = UPLOAD_DIR / f"ocr_tmp_{uuid.uuid4().hex[:8]}.png"
     try:
         tmp_path.write_bytes(content)
-        result, _ = RapidOCR()(str(tmp_path))
+        result, _ = _get_ocr_engine()(str(tmp_path))
         if result:
             return "\n".join(str(item[1]) for item in result if len(item) > 1)
     except Exception as e:
