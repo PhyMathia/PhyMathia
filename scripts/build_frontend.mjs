@@ -82,3 +82,29 @@ try {
 } catch (e) {
   console.warn('[build_frontend] index.html version bump skipped:', e.message);
 }
+
+// 静态资源同机制：按源文件内容哈希刷新 index.html 的 ?v=（CSS/phi 资源没有
+// 构建产物，直接对源文件取哈希）。改了下面任一文件后跑一次 npm run build:js，
+// 版本号自动刷新——不再需要手 bump（以前忘了就是「改了 CSS 却没反应」）。
+const versionedAssets = [
+  ['css/styles.css', /(styles\.css\?v=)[0-9A-Za-z]+/],
+  ['css/styles-panels.css', /(styles-panels\.css\?v=)[0-9A-Za-z]+/],
+  ['css/graph-override.css', /(graph-override\.css\?v=)[0-9A-Za-z]+/],
+  ['phi/phi-pet.css', /(phi-pet\.css\?v=)[0-9A-Za-z]+/],
+  ['phi/phi-pet.js', /(phi-pet\.js\?v=)[0-9A-Za-z]+/],
+];
+try {
+  const html = await readFile(indexFile, 'utf8');
+  let updated = html;
+  for (const [relPath, pattern] of versionedAssets) {
+    const source = await readFile(resolve(root, 'src', 'static', relPath), 'utf8');
+    const version = createHash('sha256').update(source).digest('hex').slice(0, 8);
+    updated = updated.replace(pattern, `$1${version}`);
+  }
+  if (updated !== html) {
+    await writeFile(indexFile, updated, 'utf8');
+    console.log('[build_frontend] static asset versions updated');
+  }
+} catch (e) {
+  console.warn('[build_frontend] static asset version bump skipped:', e.message);
+}
