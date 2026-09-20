@@ -3564,6 +3564,8 @@
   stroke: #e0a83e;
   stroke-opacity: 0.85;
   stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   pointer-events: stroke;
   cursor: pointer;
 }
@@ -3571,6 +3573,21 @@
 [data-theme="light"] .continent-route { stroke: #a3722f; }
 .continent-user-link:hover,
 .continent-route:hover { stroke-opacity: 1; filter: drop-shadow(0 0 3px rgba(224, 168, 62, 0.6)); }
+/* 「我画的路」观感（09-20）：航线三件套与机器线（辐条/断桥）拉开——核心线圆线帽、
+ * 底下垫一条宽而淡的同色光晕（路基）、两端岛框外各一颗圆珠（站点，JS 外推 3px 防
+ * 被岛牌盖掉半截）。光晕/圆珠不接鼠标事件（命中区域与旧版一致）；悬停岛时随核心线
+ * 一起淡出/提亮，收尾不残留亮着的路基 */
+.continent-route-casing {
+  fill: none;
+  stroke-opacity: 0.26;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.continent-route-casing.is-dim { stroke-opacity: 0; }
+.continent-route-casing.is-lit { stroke-opacity: 0.45; }
+.continent-route-end { pointer-events: none; }
+.continent-route-end.is-dim { opacity: 0.06; }
 /* v7.2 锚点短接：锚点卡到出岛点的虚线小段——只在细节档（lod-detail）显示 */
 .continent-route-stub {
   stroke: var(--text-secondary);
