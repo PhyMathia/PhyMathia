@@ -117,6 +117,9 @@ html/
 _e2e5.mjs
 _split3.cjs
 
+# 录演示视频时的 data/ 备份（2026-09-19；首选备份到家目录，家目录不可写时退到这里）
+.data-backups/
+
 # opencode 内部状态（计划/会话缓存，禁止入库）
 .zcode/
 .venv-linux/*

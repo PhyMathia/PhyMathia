@@ -671,9 +671,25 @@ let harnessLastAppliedBeforeSnapshot = null;
     }
   }
 
+  // 面板开合后把桌宠显示状态同步成内联值。
+  // 为什么需要：桌宠创建后没设过内联 display，于是 harnessPet.style.display === ''，
+  // 而 toggleGraphPet 用 style.display !== 'none' 判断可见性 —— 空字符串意味着「可见」。
+  // 结果是：页面刚打开时桌宠其实是隐藏的（.phi-pet-root 初始 display:none），
+  // 但按钮第一下会走「隐藏」分支，只把本来就没显示的面板关一遍，看起来就是
+  // 「Φ 按钮点了没反应」。把内联值同步成真实可见性后，这个分支才与画面一致。
+  function _syncPetDisplayState() {
+    if (!harnessPet) return;
+    const actuallyVisible = getComputedStyle(harnessPet).display !== 'none';
+    const inlineVisible = harnessPet.style.display !== 'none';
+    if (actuallyVisible !== inlineVisible) {
+      harnessPet.style.display = actuallyVisible ? '' : 'none';
+    }
+  }
+
   function toggleGraphPet() {
     ensureHarnessPanel();
     if (!harnessPet) return;
+    _syncPetDisplayState();
     const visible = harnessPet.style.display !== 'none';
     if (visible) {
       harnessPet.style.display = 'none';
@@ -681,6 +697,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     } else {
       harnessPet.style.display = '';
     }
+    openGraphHarness();
     _syncGraphPetToggleButton();
   }
 
