@@ -18,7 +18,7 @@ from llm_common import estimate_tokens
 from .config import KNOWLEDGE_PATH, KV_PATH
 from .family import apply_aliases
 from .knowledge import _formula_key
-from .storage import _read_json_cached
+from .storage import _read_json_cached, kv_read
 
 # ====== 预算 ======
 CONCEPT_BLOCK_MAX_TOKENS = 800
@@ -322,6 +322,14 @@ def explicit_pairs(session_id: str, kv_path=None) -> list:
         if isinstance(candidate, dict):
             state = candidate
             break
+    if state is None and kv_path is None:
+        # 会话级 KV 已拆到 data/kv/<sid>.json（storage.kv_* 路由层）：
+        # 主文件里没有的 graph:<sid> 从拆分层取（显式 kv_path 是测试注入，不越层）
+        for key in _graph_state_keys(session_id):
+            candidate = kv_read(key)
+            if isinstance(candidate, dict):
+                state = candidate
+                break
     if not state:
         return []
     node_to_knowledge = {}

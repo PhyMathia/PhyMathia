@@ -55,6 +55,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _app.state.http_client = get_http_client()
+    # KV 会话级键拆分的一次性迁移（幂等）：把主文件里的 graph:/harness_history:
+    # 等会话键搬进 data/kv/<sid>.json，成功前不动主文件
+    storage.kv_migrate_session_keys()
     try:
         yield
     finally:
@@ -753,6 +756,9 @@ async def api_clear_all_sessions():
     _write_json(KNOWLEDGE_PATH, {})
     _write_json(FORMULAS_PATH, {})
     _write_json(KV_PATH, {})
+    if KV_DIR.exists():
+        for f in KV_DIR.glob("*.json"):
+            f.unlink()
     return {"ok": True}
 
 
@@ -860,7 +866,8 @@ async def api_get_continent():
     """
     items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     sessions = _read_json(SESSIONS_PATH, {})
-    kv = _read_json(KV_PATH, {})
+    # 合并视图：主文件 + data/kv/ 会话文件（用户连线/概念族等 KV 自有数据可能已拆分）
+    kv = storage.kv_all_data()
     user_edges = kv.get("continent_edges")
     # v6 概念族：内置表 + KV 自有扩展（用户/Φ 确认过的汇聚结果，与簇间边同级的主图数据）
     user_families = kv.get("continent_families")
@@ -1273,31 +1280,23 @@ async def api_parse_document(request: Request):
 
 
 # ====== 键值存储 API ======
+# 读写经 storage.kv_* 拆分路由：graph:<sid>/harness_history:<sid> 等会话级键
+# 落到 data/kv/<sid>.json（保存单会话不再全量重写主文件），全局键走主文件。
 @app.get("/api/kv/{key}")
 async def api_get_kv(key: str):
-    data = _read_json(KV_PATH, {})
-    return {"key": key, "value": data.get(key)}
+    return {"key": key, "value": storage.kv_read(key)}
 
 
 @app.post("/api/kv/{key}")
 async def api_set_kv(key: str, request: Request):
     payload = await _parse_json_object(request)
-
-    def updater(data):
-        data[key] = payload.get("value", "")
-        return data
-
-    _mutate_json(KV_PATH, updater)
+    storage.kv_write(key, payload.get("value", ""))
     return {"ok": True}
 
 
 @app.delete("/api/kv/{key}")
 async def api_delete_kv(key: str):
-    def updater(data):
-        data.pop(key, None)
-        return data
-
-    _mutate_json(KV_PATH, updater)
+    storage.kv_delete(key)
     return {"ok": True}
 
 

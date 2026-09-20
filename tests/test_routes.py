@@ -48,6 +48,7 @@ def _patched_paths(td):
         "KNOWLEDGE_PATH": Path(td) / "knowledge.json",
         "FORMULAS_PATH": Path(td) / "formulas.json",
         "KV_PATH": Path(td) / "kv_store.json",
+        "KV_DIR": Path(td) / "kv",
         "PROFILES_DIR": Path(td) / "profiles",
     }
 
