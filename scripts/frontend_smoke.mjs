@@ -1282,6 +1282,105 @@ check('quiz-relearn：重学引导（浮卡两动作 + 我的理解节点 + 落�
   return true;
 });
 
+check('quiz-ai：AI 题入库前打乱选项（修复正确答案恒在 A 位），correctIndex 始终跟随原正确项', () => {
+  const pool = { knowledge: [
+    { id: 'k_s1', title: '知识点甲', summary: '概述甲的内容', formulas: [], sessionId: 's1' },
+    { id: 'k_s2', title: '知识点乙', summary: '概述乙的内容', formulas: [], sessionId: 's1' },
+  ], formulas: [] };
+  const seen = new Set();
+  // 模型行为：每题正确答案都写在第 1 个选项、correctIndex 恒为 0
+  for (let round = 0; round < 30; round++) {
+    const raw = JSON.stringify({ questions: [0, 1, 2, 3, 4].map(j => ({
+      type: 'concept',
+      title: j % 2 ? '知识点甲' : '知识点乙',
+      sourceRef: j % 2 ? 'k_s1' : 'k_s2',
+      difficulty: 'medium',
+      prompt: '第' + round + '轮检测题' + j + '，考查知识点内容',
+      options: ['正确表述' + j, '干扰一' + j, '干扰二' + j, '干扰三' + j],
+      correctIndex: 0,
+      explanation: '解析' + j,
+    })) });
+    const qs = sandbox._sanitizeAIQuestions(raw, pool);
+    if (qs.length !== 5) throw new Error('应解析出 5 题，实际 ' + qs.length);
+    for (const q of qs) {
+      if (q.correctIndex < 0 || q.correctIndex >= q.options.length) throw new Error('correctIndex 越界');
+      if (!q.options[q.correctIndex].text.startsWith('正确表述')) throw new Error('correctIndex 未指向原正确项');
+      if (q.options.map(o => o.key).join('') !== 'ABCD') throw new Error('选项键未按 A-D 重排');
+      seen.add(q.correctIndex);
+    }
+  }
+  if (seen.size < 2) throw new Error('30 轮×5 题的正确答案位置仍全在同一处，打乱未生效');
+  return true;
+});
+
+check('quiz：快照迁移 _quizShuffleQuestionOptions（correctIndex 与用户所选下标同步重映射）', () => {
+  for (let i = 0; i < 20; i++) {
+    const q = {
+      prompt: '快照题',
+      options: [
+        { key: 'A', text: '正确答案' }, { key: 'B', text: '干扰一' },
+        { key: 'C', text: '干扰二' }, { key: 'D', text: '干扰三' },
+      ],
+      correctIndex: 0,
+      selectedIndex: 2,
+    };
+    const pickedBefore = q.options[q.selectedIndex].text;
+    const correctBefore = q.options[q.correctIndex].text;
+    const setBefore = q.options.map(o => o.text).sort().join('|');
+    sandbox._quizShuffleQuestionOptions(q);
+    if (q.options.map(o => o.text).sort().join('|') !== setBefore) throw new Error('选项集合被改变');
+    if (q.options[q.correctIndex].text !== correctBefore) throw new Error('correctIndex 未跟随正确项');
+    if (q.options[q.selectedIndex].text !== pickedBefore) throw new Error('selectedIndex 未跟随原所选');
+    if (q.options.map(o => o.key).join('') !== 'ABCD') throw new Error('选项键未重排');
+  }
+  // 坏数据原样返回，不抛错
+  if (sandbox._quizShuffleQuestionOptions(null) !== null) throw new Error('null 应原样返回');
+  const single = { options: [{ key: 'A', text: 'x' }], correctIndex: 0 };
+  sandbox._quizShuffleQuestionOptions(single);
+  if (single.correctIndex !== 0) throw new Error('单选项应原样保留');
+  return true;
+});
+
+check('quiz：题库存量迁移（老题全 A 打乱 + answersShuffled 标记后不再重复打乱）', () => {
+  const mkBank = () => ({ poolKey: 'x', updatedAt: 1, questions: [] });
+  const bank = mkBank();
+  for (let i = 0; i < 10; i++) {
+    bank.questions.push({
+      id: 'ai_old_' + i,
+      options: [
+        { key: 'A', text: '对' + i }, { key: 'B', text: '错甲' + i },
+        { key: 'C', text: '错乙' + i }, { key: 'D', text: '错丙' + i },
+      ],
+      correctIndex: 0,
+    });
+  }
+  sandbox.localStorage.setItem('phymathia_quiz_bank', JSON.stringify(bank));
+  sandbox.quizBank = null;
+  try {
+    sandbox._migrateQuizBankAnswerPositions();
+    const migrated = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_bank'));
+    if (migrated.answersShuffled !== true) throw new Error('缺 answersShuffled 标记');
+    // 10 题全部原地不动的概率 4^-10 ≈ 10^-6，视作打乱未生效
+    if (!migrated.questions.some(q => q.correctIndex !== 0)) throw new Error('存量题正确答案未被分散');
+    for (const q of migrated.questions) {
+      if (!q.options[q.correctIndex].text.startsWith('对')) throw new Error('correctIndex 未跟随原正确项');
+    }
+    // 标记已打：再调用不得再打乱（选项顺序保持原样）
+    const before = JSON.stringify(migrated.questions.map(q => q.options.map(o => o.text)));
+    sandbox.quizBank = migrated;
+    sandbox._migrateQuizBankAnswerPositions();
+    const after = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_bank'));
+    if (JSON.stringify(after.questions.map(q => q.options.map(o => o.text))) !== before) {
+      throw new Error('answersShuffled 后再次调用不应再打乱');
+    }
+  } finally {
+    // 清理污染（共享键）
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    sandbox.quizBank = null;
+  }
+  return true;
+});
+
 check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）', () => {
   sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
   sandbox.window.getCurrentSessionId = () => M2_SESSION;

@@ -549,6 +549,23 @@ function _makeQuizOptions(correct, distractors, count = 4) {
   return { options: shuffled, correctIndex };
 }
 
+// 打乱一道题的选项并按文本重定位 correctIndex——模型出的题正确答案几乎恒在首位
+// （照抄提示词示例的 correctIndex:0），入库/展示前必须分散；
+// selectedIndex（错题快照里用户当时所选的下标）同步重映射。就地修改并返回。
+function _quizShuffleQuestionOptions(question) {
+  if (!question || !Array.isArray(question.options) || question.options.length < 2) return question;
+  const correct = question.options[question.correctIndex];
+  if (!correct || !_quizOptionKey(correct.text)) return question;
+  const picked = Number.isInteger(question.selectedIndex) && question.options[question.selectedIndex]
+    ? _quizOptionKey(question.options[question.selectedIndex].text) : '';
+  const shuffled = _quizShuffle(question.options);
+  question.options = shuffled;
+  question.correctIndex = Math.max(0, shuffled.findIndex(o => _quizOptionKey(o.text) === _quizOptionKey(correct.text)));
+  if (picked) question.selectedIndex = Math.max(0, shuffled.findIndex(o => _quizOptionKey(o.text) === picked));
+  shuffled.forEach((o, i) => { o.key = String.fromCharCode(65 + i); });
+  return question;
+}
+
 function _quizSignature(q) {
   const correct = q.options && q.options[q.correctIndex] ? q.options[q.correctIndex].text : '';
   // 题干/HTML/正确项全部过 _quizOptionKey：排版等价的题生成相同签名

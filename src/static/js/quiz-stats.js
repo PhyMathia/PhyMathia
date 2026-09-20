@@ -46,6 +46,14 @@ async function _loadQuizStatsFromServer() {
     if (!server || typeof server !== 'object') return;
     const local = _readQuizStats();
     const merged = _mergeQuizStats(local, server);
+    // 与题库同批的一次性迁移：修复前错题快照的正确答案也恒在 A 位；
+    // _quizShuffleQuestionOptions 会同步重映射 selectedIndex（用户当时的所选下标）
+    const meta = (merged._meta && typeof merged._meta === 'object') ? merged._meta : {};
+    if (meta.answersShuffled !== true) {
+      (Array.isArray(meta.wrongQuestions) ? meta.wrongQuestions : []).forEach(_quizShuffleQuestionOptions);
+      meta.answersShuffled = true;
+      merged._meta = meta;
+    }
     localStorage.setItem(QUIZ_STATS_KEY, JSON.stringify(merged));
   } catch (e) {
     console.warn('Load quiz stats failed:', e);
