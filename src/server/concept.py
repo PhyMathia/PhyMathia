@@ -14,6 +14,7 @@
 
 import re
 
+from llm_common import estimate_tokens
 from .config import KNOWLEDGE_PATH, KV_PATH
 from .family import apply_aliases
 from .knowledge import _formula_key
@@ -507,7 +508,7 @@ def render_concept_grounding(data: dict) -> str:
 
 
 def _trim_to_budget(text: str) -> str:
-    if _estimate_tokens(text) <= CONCEPT_BLOCK_MAX_TOKENS:
+    if estimate_tokens(text) <= CONCEPT_BLOCK_MAX_TOKENS:
         return text
     # 预算兜底：先砍掉「同源概念」整段（两跳是最弱信号），再逐行回退
     lines = text.split("\n")
@@ -516,15 +517,10 @@ def _trim_to_budget(text: str) -> str:
             lines = lines[:index]
             break
     text = "\n".join(lines)
-    while _estimate_tokens(text) > CONCEPT_BLOCK_MAX_TOKENS and len(lines) > 3:
+    while estimate_tokens(text) > CONCEPT_BLOCK_MAX_TOKENS and len(lines) > 3:
         lines = lines[:-1]
         text = "\n".join(lines)
     return text
-
-
-def _estimate_tokens(text: str) -> int:
-    from .context import estimate_tokens
-    return estimate_tokens(text)
 
 
 def concept_context_text(prompt: str, session_id: str = "", items: dict = None,

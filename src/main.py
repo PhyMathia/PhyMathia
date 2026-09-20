@@ -33,6 +33,7 @@ for _path in (_SRC_DIR, _ROOT_DIR):
         sys.path.insert(0, _path)
 
 from http_client import close_http_client, get_http_client  # noqa: E402
+import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
 
 from server import backup, concept, continent, context, documents, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
@@ -163,17 +164,11 @@ async def openai_chat_completions(request: Request):
 
 
 def _opencode_session_headers(base_url: str, session_id: str) -> dict:
-    """OpenCode 网关（opencode.ai）的会话标识头：
-    x-opencode-session 取当前聊天会话 id——同会话保持稳定，网关按它路由并优化
-    prompt 缓存（官方文档：缺失会被列入 problematic clients，缓存降级并受滥用监控）；
-    User-Agent 按其文档要求标明客户端身份而非通用 http 库名（与 config.js APP_VERSION 同步）。
-    非 opencode.ai 域名不附加任何头。"""
-    if "opencode.ai" not in base_url:
-        return {}
-    return {
-        "x-opencode-session": session_id or "phymathia-anonymous",
-        "User-Agent": "PhyMathia/1.5.1",
-    }
+    """OpenCode 网关（opencode.ai）的会话标识头，唯一实现在
+    llm_common.opencode_gateway_headers（harness 侧同源）；这里保留本名作
+    转发，x-opencode-session 取当前聊天会话 id——同会话保持稳定，网关按它
+    路由并优化 prompt 缓存。非 opencode.ai 域名不附加任何头。"""
+    return llm_common.opencode_gateway_headers(base_url, session_id)
 
 
 def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id: str) -> dict:
@@ -529,14 +524,7 @@ async def api_models_list(request: Request):
     """
     payload = await _parse_json_object(request)
     provider = payload.get("provider", "")
-    api_key = payload.get("api_key", "")
-    env_key_used = False
-    if not api_key and provider == "deepseek":
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        env_key_used = bool(api_key)
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        env_key_used = bool(api_key)
+    api_key, env_key_used = resolve_api_key(provider, payload.get("api_key", ""))
 
     base_url = payload.get("base_url", "")
     if not base_url:
