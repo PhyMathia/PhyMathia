@@ -156,7 +156,8 @@ function getKnowledgeItems() {
 async function saveKnowledgeItems(items) {
   items = dedupeKnowledgeItems(items);
   kpKnowledgeCache = items;
-  localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(items));
+  // 本地写失败（配额满）不阻断：队列里的服务端同步照常，数据不丢
+  safeLocalStorageSet(STORAGE_KEY_KNOWLEDGE, JSON.stringify(items));
   const snapshot = JSON.parse(JSON.stringify(items));
   kpKnowledgeSaveQueue = kpKnowledgeSaveQueue
     .catch(() => false)

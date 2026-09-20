@@ -69,3 +69,26 @@ function _stripThinkText(text) {
   return s.trim();
 }
 window._stripThinkText = _stripThinkText;
+
+// localStorage 安全写：配额满/不可用时返回 false，不抛异常、不清理任何已存
+// 数据（「都存着」原则——本地格子只影响快不快，不决定丢不丢，数据安全由各
+// 写点的服务端同步兜底）。写失败给用户一次明确提示，内存节流一天最多一次。
+let _storageWarnedAt = 0;
+
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    if (Date.now() - _storageWarnedAt > 24 * 3600 * 1000) {
+      _storageWarnedAt = Date.now();
+      if (typeof showToast === 'function') {
+        showToast('浏览器本地空间已满：记录已完整保存在电脑存档中，仅本机快速加载暂不可用', 'error');
+      } else {
+        console.warn('[storage] localStorage 写入失败（配额满？）：', key);
+      }
+    }
+    return false;
+  }
+}
+window.safeLocalStorageSet = safeLocalStorageSet;
