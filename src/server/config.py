@@ -78,6 +78,28 @@ def _official_host(provider: str) -> str:
     return ""
 
 
+def resolve_api_key(provider: str, api_key: str) -> tuple:
+    """解析 API key 的 .env 兜底，返回 (key, env_key_used)。
+
+    env_key_used=True 表示 key 来自 .env 兜底而非用户在模型面板里填写——
+    调用方必须把它传给 validate_model_target：env 密钥只允许发往该 provider
+    的官方域名，防「请求体指定 provider + 任意 base_url」把 .env 真实密钥
+    外发到第三方服务器。此前这段兜底在 7 处各自复制，只有部分分支跟踪
+    env_key_used，deepseek 的 env 密钥因此绕过过域名锁定（09-20 修复）。
+    """
+    if api_key:
+        return api_key, False
+    if provider == "deepseek":
+        env = os.getenv("DEEPSEEK_API_KEY", "")
+        return env, bool(env)
+    if provider == "opencode-go":
+        env = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
+        return env, bool(env)
+    if provider == "opencode":
+        return OPENCODE_DEFAULT_API_KEY, False
+    return api_key, False
+
+
 def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> str:
     """校验 AI 代理目标，返回最终 base_url；非法目标抛 ValueError。
 
@@ -121,5 +143,5 @@ __all__ = [
     "STATIC_DIR", "STATIC_EXTENSIONS",
     "LEVEL_PROMPTS", "STRICT_MODULE_MAX_TOKENS",
     "AI_PROVIDERS", "OPENCODE_DEFAULT_API_KEY",
-    "validate_model_target",
+    "resolve_api_key", "validate_model_target",
 ]

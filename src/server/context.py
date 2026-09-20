@@ -227,9 +227,9 @@ def _is_socratic_message(msg) -> bool:
         # 否则该轮对话会被上下文过滤静默丢弃
         if msg.get("branch") or msg.get("branchType") or msg.get("branchId"):
             return True
-    if re.search(r"<socratic_meta\b", content, re.I) and not re.search(
-        r"<physics>|<math>|<graph>|<extend>|PhyMathia\s*学习卡片", content, re.I
-    ):
+    if _is_socratic_followup(content):
+        # 与提取闸门同口径（复用同一函数）：此前这里是逐字相同的内联正则，
+        # 改一处漏一处会让上下文过滤与提取闸门口径分叉
         return True
     return False
 
@@ -604,15 +604,22 @@ def _rolling_memory_input(session_id: str, max_old_pairs: int = 6) -> str:
     return _rolling_memory_snapshot(session_id, max_old_pairs)["text"]
 
 
-def _inject_rolling_memory(session_id: str, result: list, budget_tokens: int = 0) -> list:
-    """在上下文最前面注入滚动会话记忆（如有），并保护其不被预算收缩丢弃。"""
+def _inject_rolling_memory(session_id: str, result: list, budget_tokens: int = 0, protected: set = None) -> list:
+    """在上下文最前面注入滚动会话记忆（如有），并保护其不被预算收缩丢弃。
+
+    protected 是调用方在上游收缩阶段已建立的保护集合（graph_path 路径的
+    active 正文 / 各路径「保留最后一条完整消息」的尾部）。注入后的第二次
+    收缩必须把它们与记忆一起保护——此前只保护记忆本身，上游特意保下的
+    active 全文会在这一步被压成 160 字摘要，而 skip_upstream 场景它正是
+    模块再生成唯一的全文输入，丢失全程无日志（09-20 修复）。"""
     mem = _read_rolling_memory(session_id)
     if not mem:
         return result
     mem_text = "（会话记忆）" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS]
     result.insert(0, {"role": "user", "content": mem_text})
     if budget_tokens and budget_tokens > 0:
-        result = _shrink_history_to_budget(result, budget_tokens, {mem_text})
+        keep = {mem_text} | (protected or set())
+        result = _shrink_history_to_budget(result, budget_tokens, keep)
     return result
 
 
@@ -654,7 +661,12 @@ def _load_session_context(
             all_messages, max_rounds, include_socratic, current_prompt,
             budget_tokens=budget_tokens,
         )
-        return _inject_rolling_memory(session_id, result, budget_tokens)
+        # 记忆注入后的第二次收缩沿用「保留最后一条完整消息」的不变式：
+        # 不传保护集，_recent_context_messages 特意留下的最近一条 assistant
+        # 全文会被第二刀压成 160 字摘要
+        tail = str(result[-1].get("content") or "") if result else ""
+        return _inject_rolling_memory(session_id, result, budget_tokens,
+                                      protected={tail} if tail else None)
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
@@ -687,8 +699,10 @@ def _load_session_context(
     if budget_tokens and budget_tokens > 0:
         result = _shrink_history_to_budget(result, budget_tokens)
     # 分支追问同样是长会话的一部分：滚动记忆注入与主线/graph_path 路径保持一致，
-    # 否则分支上下文会比主线「失忆」
-    return _inject_rolling_memory(session_id, result, budget_tokens)
+    # 否则分支上下文会比主线「失忆」；第二次收缩同样保住最后一条完整消息
+    tail = str(result[-1].get("content") or "") if result else ""
+    return _inject_rolling_memory(session_id, result, budget_tokens,
+                                  protected={tail} if tail else None)
 
 def _branch_context_instruction(
     branch_type: str = "",
@@ -965,10 +979,12 @@ def _load_session_context_from_path(
                 result.append(item)
                 seen[key] = True
 
+    protected = {active_content} if active_content else set()
     if budget_tokens and budget_tokens > 0:
-        protected = {active_content} if active_content else set()
         result = _shrink_history_to_budget(result, budget_tokens, protected)
-    return _inject_rolling_memory(session_id, result, budget_tokens)
+    # 第二次收缩（记忆注入后）必须沿用上面的 active 保护集：skip_upstream 时
+    # active 正文是模块再生成唯一的全文输入，第二刀丢掉 = 再生成失去自身上文
+    return _inject_rolling_memory(session_id, result, budget_tokens, protected=protected)
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"

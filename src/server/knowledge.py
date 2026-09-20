@@ -15,6 +15,7 @@ from .config import (
     KNOWLEDGE_PATH,
     LEVEL_PROMPTS,
     OPENCODE_DEFAULT_API_KEY,
+    resolve_api_key,
     validate_model_target,
 )
 from .context import _is_socratic_followup
@@ -579,20 +580,52 @@ def _local_extract_knowledge(messages: list) -> list:
 
 
 
-_PROFILE_FACTS_RE = re.compile(r'"profile_facts"\s*:\s*(\[[\s\S]*?\])')
-_PROFILE_OPS_RE = re.compile(r'"profile_ops"\s*:\s*(\[[\s\S]*?\])')
 _PROFILE_OP_KINDS = ("new", "confirm", "update", "remove")
+
+
+def _extract_json_array(text: str, key: str):
+    """从容错文本中提取 "key": [...] 的数组片段（含方括号），失败返回 None。
+
+    用括号深度扫描而非懒惰正则：fact 文本本身含 `]`（如「物理[选修]」）时，
+    `(\[[\s\S]*?\])` 停在第一个 `]` 上，截出的片段 JSON 非法 → 整轮画像
+    ops 被静默丢弃（09-20 修复）。扫描跳过字符串字面量内部的括号。"""
+    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*\[', text)
+    if not m:
+        return None
+    start = m.end() - 1
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
 
 
 def _parse_profile_facts(text: str) -> list:
     """从提取模型输出中容错解析 profile_facts 候选（旧格式，失败返回空列表）。"""
     if not text:
         return []
-    m = _PROFILE_FACTS_RE.search(text)
-    if not m:
+    fragment = _extract_json_array(text, "profile_facts")
+    if not fragment:
         return []
     try:
-        data = json.loads(m.group(1))
+        data = json.loads(fragment)
     except (json.JSONDecodeError, ValueError):
         return []
     result = []
@@ -609,11 +642,11 @@ def _parse_profile_ops(text: str) -> list:
     """从提取模型输出中容错解析 profile_ops 合并操作（失败返回空列表）。"""
     if not text:
         return []
-    m = _PROFILE_OPS_RE.search(text)
-    if not m:
+    fragment = _extract_json_array(text, "profile_ops")
+    if not fragment:
         return []
     try:
-        data = json.loads(m.group(1))
+        data = json.loads(fragment)
     except (json.JSONDecodeError, ValueError):
         return []
     result = []
@@ -633,18 +666,19 @@ def _parse_profile_ops(text: str) -> list:
 
 
 async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, model: str, base_url: str,
-                                level: str = "university", profile_digest: str = "") -> tuple:
+                                level: str = "university", profile_digest: str = "",
+                                env_key_used: bool = False) -> tuple:
     """调用 AI 模型提取知识点（非流式），返回 (items, profile_facts, profile_ops) 三元组。"""
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], [], []
-    env_key_used = False
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        env_key_used = bool(api_key)
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
+    # env_key_used 由路由层（resolve_api_key）传入：key 已解析时这里原样返回、
+    # 标志沿用入参；直接以空 key 调用（测试/旧调用方）时在本地兜底并计算标志。
+    # deepseek 的 env 密钥若不带头衔标志，validate_model_target 会放行任意
+    # https 域名，密钥即外发（09-20 SSRF 修复）
+    api_key, env_fallback = resolve_api_key(provider, api_key)
+    env_key_used = env_key_used or env_fallback
     try:
         base_url = validate_model_target(provider, base_url, env_key_used)
     except ValueError:
@@ -789,7 +823,7 @@ def _extract_summary(messages: list) -> str:
 
 
 
-async def _describe_formulas(summary: str, formulas: list, knowledge_items: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university") -> tuple:
+async def _describe_formulas(summary: str, formulas: list, knowledge_items: list, provider: str, api_key: str, model: str, base_url: str, level: str = "university", env_key_used: bool = False) -> tuple:
     """调用描述模型，一次返回公式描述与知识点摘要两块（不增加请求数）。
 
     返回 (descriptions, summaries) 二元组：
@@ -797,12 +831,10 @@ async def _describe_formulas(summary: str, formulas: list, knowledge_items: list
     - summaries: {知识点名: 该知识点本身的摘要（≤60字，含公式含义）}
     失败返回 ({}, {})。
     """
-    env_key_used = False
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        env_key_used = bool(api_key)
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
+    # env_key_used 语义同 _ai_extract_knowledge：路由层已解析则沿用标志，
+    # 空 key 直接调用时本地兜底（09-20 SSRF 修复）
+    api_key, env_fallback = resolve_api_key(provider, api_key)
+    env_key_used = env_key_used or env_fallback
     knowledge_lines = []
     for it in (knowledge_items or []):
         if not isinstance(it, dict):

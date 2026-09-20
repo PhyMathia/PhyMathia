@@ -13,7 +13,7 @@ from .knowledge import (
     _normalize_knowledge,
 )
 from .profile import PROFILES_DIR, save_profile
-from .storage import _get_messages_path, _invalidate_json_cache, _read_json, _write_json
+from .storage import _SESSION_ID_RE, _get_messages_path, _invalidate_json_cache, _read_json, _write_json
 
 def _build_backup_payload() -> dict:
     sessions = _read_json(SESSIONS_PATH, {})
@@ -21,7 +21,12 @@ def _build_backup_payload() -> dict:
     for sid in sessions:
         if not isinstance(sessions[sid], dict):
             continue
-        path = _get_messages_path(sid)
+        try:
+            path = _get_messages_path(sid)
+        except ValueError:
+            # 历史脏键（非法 id 曾经能写进 sessions.json）：跳过而不是让
+            # 整个导出 500——写入口已加同口径校验，这里只做纵深防御
+            continue
         value = _read_json(path, [])
         messages[sid] = value if isinstance(value, list) else []
     for path in sorted(MESSAGES_DIR.glob("*.json")):
@@ -59,7 +64,9 @@ def _restore_sessions(data: dict, replace: bool) -> int:
         if not isinstance(sdata, dict):
             continue
         sid = str(sdata.get("id") or raw_key or "")
-        if not sid:
+        # 导入侧同口径校验：非法 id 不落盘（否则一条脏键毒化 sessions.json，
+        # 备份导出永久 500 且 DELETE 拒收删不掉）
+        if not sid or not _SESSION_ID_RE.match(sid):
             continue
         now = int(time.time() * 1000)
         sessions[sid] = {
@@ -90,7 +97,11 @@ def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
         sid = alias_to_sid.get(raw_sid, raw_sid)
         if not isinstance(msgs, list):
             continue
-        _write_json(_get_messages_path(sid), msgs)
+        try:
+            msgs_path = _get_messages_path(sid)
+        except ValueError:
+            continue
+        _write_json(msgs_path, msgs)
         count += len(msgs)
     return count
 

@@ -22,7 +22,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 from server.family import (  # noqa: E402
     ALIASES, BUILTIN_FAMILIES, apply_aliases, families_from_payload,
-    family_term_index, match_families, merge_families,
+    match_families, merge_families, prepare_families,
 )
 
 
@@ -59,10 +59,12 @@ class MatchTest(unittest.TestCase):
         self.assertIn("振动与波动", match_families("非线性振动", self.families))
 
     def test_generic_grammar_fragments_never_match(self):
-        # 语法碎片与泛后缀永远不进族表（v4 教训）
-        index = family_term_index(self.families)
+        # 语法碎片与泛后缀永远不进族表（v4 教训）。原断言用的
+        # family_term_index 已删（从未接线的死代码），改为直接扫全部族术语
+        prepared = prepare_families(self.families)
+        all_terms = {t for fam in prepared for t in list(fam["cjk"]) + list(fam["ascii"])}
         for junk in ("表达", "坐标", "定义", "关系", "正交", "意义"):
-            self.assertNotIn(junk, index, junk)
+            self.assertNotIn(junk, all_terms, junk)
 
     def test_ascii_terms_match_on_word_boundary(self):
         self.assertIn("电路", match_families("rlc 串联电路", self.families))

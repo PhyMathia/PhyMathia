@@ -11,7 +11,7 @@ from pathlib import Path
 
 from http_client import get_http_client
 
-from .config import AI_PROVIDERS, LEVEL_PROMPTS, OPENCODE_DEFAULT_API_KEY, UPLOAD_DIR, UPLOADS_META_PATH, validate_model_target
+from .config import AI_PROVIDERS, LEVEL_PROMPTS, UPLOAD_DIR, UPLOADS_META_PATH, resolve_api_key, validate_model_target
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula
 from .storage import _mutate_json, _read_json, _write_json
 
@@ -261,6 +261,11 @@ def _local_extract_document_knowledge(text: str, filename: str, max_items: int):
         stack = []
         for idx, match in enumerate(headings):
             title = _clean_knowledge_title(match.group(1))
+            if not title:
+                # 模块名标题（## 知识图谱 / ## 延伸思考 等）清洗后为空：与 AI 路径
+                # 同判跳过（此前会产出空标题节点 + 连带「包含」边，09-20 修复）；
+                # 不入栈——子标题直接挂到它的上级
+                continue
             level = len(match.group(0)) - len(match.group(0).lstrip("#"))
             start = match.end()
             end = headings[idx + 1].start() if idx + 1 < len(headings) else len(text)
@@ -285,15 +290,20 @@ def _local_extract_document_knowledge(text: str, filename: str, max_items: int):
             while stack and stack[-1]["level"] >= level:
                 stack.pop()
             if stack:
-                edge_label = "包含"
-                if not any(e["from"] == stack[-1]["id"] and e["to"] == node["id"] for e in nodes[-1].get("_edges", [])):
-                    node.setdefault("_edges", []).append({"from": stack[-1]["id"], "to": node["id"], "type": "包含", "label": edge_label})
+                node.setdefault("_edges", []).append({"from": stack[-1]["id"], "to": node["id"], "type": "包含", "label": "包含"})
             stack.append({"id": node["id"], "level": level})
-        edges = []
-        for node in nodes:
-            edges.extend(node.get("_edges", []))
-            node.pop("_edges", None)
-        return nodes[:max_items], edges[:max_items * 4], []
+        if nodes:
+            edges = []
+            for node in nodes:
+                edges.extend(node.get("_edges", []))
+                node.pop("_edges", None)
+            kept = {n["id"] for n in nodes[:max_items]}
+            # 边按全部标题构建，截断后按保留节点过滤——否则返回指向已丢弃
+            # 节点的悬空边（与 AI 路径 _parse_document_extract_json 的 by_key
+            # 过滤同口径，09-20 修复）
+            edges = [e for e in edges if e.get("from") in kept and e.get("to") in kept]
+            return nodes[:max_items], edges[:max_items * 4], []
+        # 标题全部清洗为空（整份文档只有模块名小节）：走段落兜底，别空手而归
 
     paragraphs = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\n\s*\n", text) if len(p.strip()) >= 10]
     if not paragraphs:
@@ -328,17 +338,16 @@ async def _ai_extract_document_knowledge(
     base_url: str,
     level: str,
     max_items: int,
+    env_key_used: bool = False,
 ):
     if not base_url:
         base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
     if not base_url:
         return [], [], []
-    env_key_used = False
-    if not api_key and provider == "opencode-go":
-        api_key = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        env_key_used = bool(api_key)
-    if not api_key and provider == "opencode":
-        api_key = OPENCODE_DEFAULT_API_KEY
+    # env_key_used 由路由层传入（resolve_api_key 统一解析），语义同
+    # knowledge._ai_extract_knowledge（09-20 SSRF 修复）
+    api_key, env_fallback = resolve_api_key(provider, api_key)
+    env_key_used = env_key_used or env_fallback
     if not api_key and provider not in ("opencode", "opencode-go"):
         return [], [], []
     try:

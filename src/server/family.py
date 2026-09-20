@@ -31,8 +31,8 @@ import re
 
 __all__ = [
     "BUILTIN_FAMILIES", "ALIASES", "apply_aliases", "families_from_payload",
-    "merge_families", "family_term_index", "prepare_families", "match_families",
-    "match_family_terms", "gate_version",
+    "merge_families", "prepare_families", "match_families",
+    "match_family_terms",
     "FAMILY_LIMIT", "FAMILY_TERM_MAX_CHARS", "FAMILY_CANONICAL_MAX_CHARS",
 ]
 
@@ -209,7 +209,11 @@ def families_from_payload(raw) -> list:
 
 
 def merge_families(builtin: list, custom: list) -> list:
-    """内置表 + KV 表：同名族以 KV 为准（用户/模型可以覆盖我写的术语）。"""
+    """内置表 + KV 表：同名族以 KV 为准（用户/模型可以覆盖我写的术语）。
+
+    合并后按 FAMILY_LIMIT 截断（custom 在前、builtin 靠后）——families_from_payload
+    只截 KV 侧，这里不截的话 40 个自定义族 + 全部内置族都会参与匹配/建城，
+    是宣称上限的 1.6 倍，domainList 还会被顶得只见自定义（09-20 修复）。"""
     merged = []
     seen = set()
     for fam in list(custom or []) + list(builtin or []):
@@ -223,14 +227,9 @@ def merge_families(builtin: list, custom: list) -> list:
         seen.add(canonical)
         merged.append({"canonical": canonical, "terms": terms,
                        "source": str(fam.get("source") or "builtin")})
+        if len(merged) >= FAMILY_LIMIT:
+            break
     return merged
-
-
-def family_term_index(families: list) -> set:
-    """全部族术语（小写化）：用来把「已被族覆盖的原始标签」从 shared 里去掉，避免同一件事
-    既画一座城、又留一条弱证据标签。"""
-    return {str(t).strip().lower() for fam in (families or [])
-            for t in (fam.get("terms") or []) if str(t).strip()}
 
 
 _ASCII_WORD_RE = re.compile(r"[a-z0-9]+")

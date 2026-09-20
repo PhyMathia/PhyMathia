@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from fastapi.responses import StreamingResponse
 
 from .core import build_next_snapshot, normalize_snapshot
 from .review import HarnessError, resolve_focus, review_graph
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -109,6 +112,7 @@ async def _review_event_stream(payload: dict, kwargs: dict):
             _log_usage(_usage_entry(payload, err, t0, "review"))
             queue.put_nowait({"type": "result", "data": err})
         except Exception as exc:
+            logger.exception("harness internal error (review stream)")
             err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
             _log_usage(_usage_entry(payload, err, t0, "review"))
             queue.put_nowait({"type": "result", "data": err})
@@ -178,6 +182,7 @@ async def graph_review(request: Request):
         _log_usage(_usage_entry(payload, err, t0, "review"))
         return err
     except Exception as exc:
+        logger.exception("harness internal error (review)")
         err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
         _log_usage(_usage_entry(payload, err, t0, "review"))
         return err
@@ -206,7 +211,15 @@ async def graph_undo(request: Request):
         from .core import build_inverse_ops, build_next_snapshot, normalize_snapshot
 
         current = normalize_snapshot(payload.get("snapshot") or payload.get("after_snapshot"))
-        inverse_ops = build_inverse_ops(payload.get("before_snapshot") or current, payload.get("operations") or [], current)
+        before = payload.get("before_snapshot")
+        if not isinstance(before, dict):
+            # 缺无损前态时不能用当前态兜底冒充前态——恢复出的就是现状，图零变化
+            # 却报「已撤销成功」（与 review_graph 内部口径一致：明确拒绝）
+            return {
+                "status": "error",
+                "errors": [{"reason": "缺少撤销前态（before_snapshot），无法安全恢复；请使用画布的「撤销本次」按钮回退"}],
+            }
+        inverse_ops = build_inverse_ops(before, payload.get("operations") or [], current)
         result = build_next_snapshot(current, inverse_ops)
         result["status"] = "undo"
         result["phase"] = "undo"
@@ -214,6 +227,7 @@ async def graph_undo(request: Request):
         result["undo_ops"] = inverse_ops
         return result
     except Exception as exc:
+        logger.exception("harness /graph/undo failed")
         return {"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]}
 
 
@@ -248,7 +262,6 @@ async def graph_resolve(request: Request):
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
         retries = int(payload.get("retries") or 2)
-        mode = str(payload.get("mode") or "auto")
         result = await resolve_focus(
             snapshot=payload.get("snapshot"),
             instruction=payload.get("instruction", ""),
@@ -257,7 +270,6 @@ async def graph_resolve(request: Request):
             context=context,
             level=level,
             retries=retries,
-            mode=mode,
         )
         _log_usage(_usage_entry(payload, result, t0, "resolve"))
         return result
@@ -266,6 +278,7 @@ async def graph_resolve(request: Request):
         _log_usage(_usage_entry(payload, err, t0, "resolve"))
         return err
     except Exception as exc:
+        logger.exception("harness internal error (resolve)")
         err = {"status": "error", "errors": [{"reason": f"目标解析失败: {exc}"}]}
         _log_usage(_usage_entry(payload, err, t0, "resolve"))
         return err

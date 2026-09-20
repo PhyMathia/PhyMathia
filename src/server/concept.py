@@ -113,7 +113,9 @@ def _shared_runs(text: str, title: str, min_cjk: int, min_latin: int) -> list:
         best = text[i:j - 1]
         if best and (len(best) >= min_latin if best.isascii() else len(best) >= min_cjk):
             out.append(best)
-    return out
+    # 保序去重：同一串在问题文本里重复提及不该被重复计分（weak/generic 串同样
+    # 会被放大，是疏漏不是加权——09-20 修复）
+    return list(dict.fromkeys(out))
 
 
 def _formula_tokens(item: dict) -> set:

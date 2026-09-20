@@ -136,12 +136,6 @@ def rule_selfcheck(
             value = str(op.get(key) or "")
             if value:
                 touched.add(value)
-        patch = op.get("patch")
-        if isinstance(patch, dict):
-            for key in ("id", "from", "to"):
-                value = str(patch.get(key) or "")
-                if value:
-                    touched.add(value)
 
     focus = [str(item) for item in (focus_node_ids or []) if str(item)]
     if focus:

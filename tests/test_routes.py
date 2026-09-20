@@ -532,7 +532,7 @@ class ExtractKnowledgeEndpointTest(RouteTestBase):
         # 为模型摘要的唯一通道）；mock 掉真实调用，断言调用参数与响应透传
         calls = {}
 
-        async def fake_describe(summary, formulas, items, provider, api_key, model, base_url, level="university"):
+        async def fake_describe(summary, formulas, items, provider, api_key, model, base_url, level="university", env_key_used=False):
             calls["formulas"] = list(formulas)
             calls["titles"] = [it.get("title") for it in items]
             return {}, {"简谐运动": "回复力与位移成正比的周期性振动"}

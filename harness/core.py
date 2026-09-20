@@ -65,7 +65,7 @@ ALLOWED_OPERATIONS = {
     "create_eval_node",
 }
 
-UPDATEABLE_NODE_FIELDS = {"label", "title", "content", "summary", "formula", "status"}
+UPDATEABLE_NODE_FIELDS = {"label", "content", "formula", "status"}
 UPDATEABLE_EDGE_FIELDS = {"relation", "label"}
 
 class _InverseOperations(list):
@@ -299,10 +299,7 @@ def _operation_edge_key(op: Dict[str, Any], edges: Dict[str, Any]) -> Optional[s
     if from_id and to_id:
         from_port = _text(op.get("fromPort") or op.get("from_port"), "out-0")
         to_port = _text(op.get("toPort") or op.get("to_port"), "in-0")
-        candidate = _edge_key(from_id, to_id, from_port, to_port)
-        if candidate in edges:
-            return candidate
-        return candidate
+        return _edge_key(from_id, to_id, from_port, to_port)
     return None
 
 
@@ -503,6 +500,15 @@ def build_next_snapshot(
                 errors.append({"index": index, "op": op_name, "reason": f"只读节点不能修改: {node_id}"})
                 continue
             patch = op.get("patch") if isinstance(op.get("patch"), dict) else {}
+            # 别名归一：title/summary 是 create/展示侧的名字，节点归一化只产出
+            # label/content——原样写入会落成永不被读取的孤儿字段，diff 也看不见
+            # （09-20 修复；与 normalize_node 的读取别名同一口径）
+            patch = dict(patch)
+            for alias, real in (("title", "label"), ("summary", "content")):
+                if alias in patch:
+                    value = patch.pop(alias)
+                    if real not in patch:
+                        patch[real] = value
             changed = False
             for field in UPDATEABLE_NODE_FIELDS:
                 if field not in patch:
@@ -722,6 +728,10 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
                 raise UndoRestoreError(f"缺少节点 {node_id} 的撤销前态，请使用画布撤销本次")
         elif name == "add_edge":
             key = _text(op.get("edge_key") or op.get("key"))
+            if not key:
+                # 未经校验的原始 add_edge 可能只有 from/to（无 edge_key）——按
+                # 同款规则推导候选 key，否则撤销后这条边静默漏撤（09-20 修复）
+                key = _operation_edge_key(op, before_edges)
             if key:
                 inverse.append({"op": "remove_edge", "edge_key": key, "reason": reason})
         elif name == "remove_edge":
@@ -758,6 +768,9 @@ def _node_signature(node: Dict[str, Any]) -> tuple:
         node.get("formula", ""),
         node.get("module_key", ""),
         node.get("manual", ""),
+        # status 参与 diff：patch 改状态（如标 done）是真实变更，漏掉会让
+        # 对拍与前端高亮报「没有变化」（09-20 修复）
+        node.get("status", ""),
     )
 
 

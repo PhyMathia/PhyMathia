@@ -144,7 +144,7 @@ class ProfileMemoryTest(RouteTestBase):
     def test_extract_returns_profile_promoted(self):
         """提取链路：模型输出的 profile_ops 合并进画像，响应带 promoted 供前端提示。"""
         async def _fake_extract(messages, provider, api_key, model, base_url, level,
-                                profile_digest=""):
+                                profile_digest="", env_key_used=False):
             self.assertIn("pf_", profile_digest)  # 既有画像摘要必须随提取请求下发
             return ([
                 {"title": "简谐运动", "category": "physics", "tags": [],
@@ -188,7 +188,7 @@ class ProfileMemoryTest(RouteTestBase):
     def test_legacy_and_ops_same_fact_not_double_counted(self):
         """模型同时输出新旧两种格式时，同一句陈述不能被计两次（否则一击即固化）。"""
         async def _fake_extract(messages, provider, api_key, model, base_url, level,
-                                profile_digest=""):
+                                profile_digest="", env_key_used=False):
             return ([], [
                 {"fact": "我是高二学生", "category": "stage"},   # 旧格式 profile_facts
             ], [

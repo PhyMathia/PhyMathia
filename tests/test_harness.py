@@ -923,6 +923,8 @@ class HarnessSelfCheckTest(unittest.TestCase):
 
         async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
             self.assertTrue(tools)
+            # provider=deepseek 支持 required（opencode 免费档不支持；_selfcheck_ops
+            # 09-20 起按 _supports_required_tool_choice 门控，opencode 走 auto）
             self.assertEqual(tool_choice, "required")
             return {
                 "content": "",
@@ -936,7 +938,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []},
                 "删除 H",
                 [{"op": "delete_node", "id": "H", "reason": "x"}],
-                {"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                {"provider": "deepseek", "model": "deepseek-chat", "base_url": "https://api.deepseek.com", "api_key": "k"},
             ))
         self.assertTrue(result["ok"])
 
