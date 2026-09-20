@@ -10,6 +10,7 @@ from . import storage
 from .config import KV_PATH
 from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messages_path
 from . import config as _config_mod  # 模块属性读取，测试补丁 _config_mod.KV_PATH 才能生效
+from llm_common import estimate_tokens  # 唯一实现在项目根 llm_common.py，此处转出口（import * 与测试直引都走这里）
 
 # ====== 普通聊天上下文瘦身 ======
 _CONTEXT_MAX_USER_CHARS = 4000
@@ -17,12 +18,6 @@ _CONTEXT_RECENT_FULL_MAX = 8000
 _VIZ_DIGEST_MAX = 1200
 VIZ_PLACEHOLDER = "[交互可视化内容已省略]"
 _VIZ_WANT_RE = re.compile(r"可视化|交互|动画|没看懂|看不懂|HTML|html|演示|3D|这个图|那张图|图里|图上的|画面", re.I)
-
-def estimate_tokens(text: str) -> int:
-    """Cheap token estimate mirroring the frontend: CJK chars count 1, ASCII ~4/1."""
-    s = str(text or "")
-    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef")
-    return (4 * cjk + (len(s) - cjk) + 3) // 4
 
 # ====== 上下文 token 预算 ======
 MODEL_CONTEXT_WINDOWS = {

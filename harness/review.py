@@ -18,6 +18,12 @@ from typing import Any, Dict, Optional
 import httpx
 
 from http_client import get_http_client
+from llm_common import (
+    PROVIDER_BASE_URLS,
+    estimate_tokens,
+    opencode_gateway_headers,
+    resolve_api_key,
+)
 
 from .core import (
     MAX_SNAPSHOT_CHARS,
@@ -46,11 +52,6 @@ from .prompts import (
 from .tools import build_tools, parse_tool_calls
 
 logger = logging.getLogger("harness.review")
-
-DEFAULT_PROVIDER_URLS = {
-    "deepseek": "https://api.deepseek.com",
-    "openai": "https://api.openai.com/v1",
-}
 
 EVALUATE_HINTS = (
     "评价", "建议", "反馈", "点评", "指出", "哪里需要改进",
@@ -259,20 +260,6 @@ def _supports_required_tool_choice(provider: str) -> bool:
     return str(provider or "").strip().lower() in ("deepseek", "openai")
 
 
-def _opencode_headers(base_url: str) -> dict:
-    """OpenCode 网关（opencode.ai）的会话标识头，与 src/main.py 的
-    _opencode_session_headers 同口径：免费档缺失 x-opencode-session 会被网关
-    直接拒收（MissingSessionID / "can only be used in OpenCode"）。harness 包
-    无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶。
-    非 opencode.ai 域名不附加任何头。"""
-    if "opencode.ai" not in str(base_url or ""):
-        return {}
-    return {
-        "x-opencode-session": "phymathia-harness-" + str(os.getpid()),
-        "User-Agent": "PhyMathia/1.5.1",
-    }
-
-
 def _supports_json_mode(provider: str) -> bool:
     """Providers that accept response_format={"type":"json_object"}."""
     return str(provider or "").strip().lower() in ("deepseek", "openai")
@@ -332,20 +319,13 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     model_name = str(model.get("model") or model.get("model_name") or "deepseek-chat").strip()
     base_url = str(model.get("base_url") or model.get("baseUrl") or "").strip()
     api_key = str(model.get("api_key") or model.get("apiKey") or "").strip()
-    # 服务端密钥回退：与 src/main.py 的 /api/models/chat 保持一致。
-    # opencode-go（hy3/hy3-preview）必须带 Bearer，否则上游返回 401 "Invalid API key"；
-    # 免费 opencode（zen/v1）不需要 key。前端可留空密钥，靠这里的环境变量兜底。
-    if not api_key:
-        is_opencode_go = (
-            provider.lower() in ("opencode-go", "opencode_go", "opencodego", "go")
-            or "zen/go" in base_url.lower()
-        )
-        if is_opencode_go:
-            api_key = os.getenv("OPENCODE_GO_API_KEY") or os.getenv("OPENCODE_API_KEY") or ""
-        if not api_key:
-            api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    # 服务端密钥回退（唯一实现在 llm_common.resolve_api_key）：宽口径识别
+    # opencode-go（hy3/hy3-preview 必须带 Bearer，否则上游返回 401 "Invalid
+    # API key"），别家 env 都没配时末位回退 DEEPSEEK_API_KEY；免费 opencode
+    # （zen/v1）不需要 key。前端可留空密钥，靠这里的环境变量兜底。
+    api_key, _ = resolve_api_key(provider, api_key, base_url, wide_go=True, deepseek_last_resort=True)
     if not base_url:
-        base_url = DEFAULT_PROVIDER_URLS.get(provider, "")
+        base_url = PROVIDER_BASE_URLS.get(provider, "")
     if not model_name:
         raise HarnessError("模型名称不能为空")
     if not base_url:
@@ -458,7 +438,8 @@ async def _call_model(
     headers = {"Content-Type": "application/json"}
     if model["api_key"] and model["provider"] != "opencode":
         headers["Authorization"] = f"Bearer {model['api_key']}"
-    headers.update(_opencode_headers(model["base_url"]))
+    # harness 无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶
+    headers.update(opencode_gateway_headers(model["base_url"], "phymathia-harness-" + str(os.getpid())))
     body = {
         "model": model["model"],
         "messages": messages,
@@ -893,13 +874,6 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
             return {"ok": True, "issues": [], "missing": [], "error": "自检调用失败，已跳过"}
 
 
-def _estimate_tokens(text: str) -> int:
-    """Cheap token estimate mirroring the frontend: CJK chars count 1, ASCII ~4/1."""
-    s = str(text or "")
-    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef")
-    return (4 * cjk + (len(s) - cjk) + 3) // 4
-
-
 def _log_context_metrics(messages: list, snapshot: dict, phase: str) -> None:
     """Log per-request context sizes for the harness review/resolve endpoints."""
     try:
@@ -913,7 +887,7 @@ def _log_context_metrics(messages: list, snapshot: dict, phase: str) -> None:
             "snapshot_chars": len(json.dumps(snapshot, ensure_ascii=False)),
             "system_chars": sys_chars,
             "user_chars": user_chars,
-            "est_tokens": _estimate_tokens(all_text),
+            "est_tokens": estimate_tokens(all_text),
         }
         logger.info(
             "harness context: phase=%(phase)s nodes=%(nodes)d edges=%(edges)d snapshot_chars=%(snapshot_chars)d system_chars=%(system_chars)d user_chars=%(user_chars)d est_tokens=%(est_tokens)d",

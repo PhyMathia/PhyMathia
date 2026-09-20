@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
+import llm_common  # 项目根共享层：供应商表 / 密钥兜底 / token 估算的唯一事实源
+
 # ====== .env 加载（无第三方依赖）======
 def _load_env_file(path: Path) -> None:
     if not path.exists():
@@ -59,13 +61,13 @@ LEVEL_PROMPTS = {
 
 STRICT_MODULE_MAX_TOKENS = 1000
 
+# 地址唯一事实源在 llm_common.PROVIDER_BASE_URLS；这里保持
+# {"provider": {"base_url": url}} 的下游访问形状（harness 侧共享同一张表）
 AI_PROVIDERS = {
-    "deepseek": {"base_url": "https://api.deepseek.com"},
-    "openai": {"base_url": "https://api.openai.com/v1"},
-    "opencode": {"base_url": "https://opencode.ai/zen/v1"},
+    name: {"base_url": url} for name, url in llm_common.PROVIDER_BASE_URLS.items()
 }
 
-OPENCODE_DEFAULT_API_KEY = ""
+OPENCODE_DEFAULT_API_KEY = llm_common.OPENCODE_DEFAULT_API_KEY
 
 
 def _official_host(provider: str) -> str:
@@ -86,18 +88,11 @@ def resolve_api_key(provider: str, api_key: str) -> tuple:
     的官方域名，防「请求体指定 provider + 任意 base_url」把 .env 真实密钥
     外发到第三方服务器。此前这段兜底在 7 处各自复制，只有部分分支跟踪
     env_key_used，deepseek 的 env 密钥因此绕过过域名锁定（09-20 修复）。
+
+    实现在 llm_common.resolve_api_key（窄口径：只认精确 "opencode-go"）；
+    harness 侧用同函数的宽口径 + deepseek 末位回退。
     """
-    if api_key:
-        return api_key, False
-    if provider == "deepseek":
-        env = os.getenv("DEEPSEEK_API_KEY", "")
-        return env, bool(env)
-    if provider == "opencode-go":
-        env = os.getenv("OPENCODE_GO_API_KEY", "") or os.getenv("OPENCODE_API_KEY", "")
-        return env, bool(env)
-    if provider == "opencode":
-        return OPENCODE_DEFAULT_API_KEY, False
-    return api_key, False
+    return llm_common.resolve_api_key(provider, api_key)
 
 
 def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> str:
