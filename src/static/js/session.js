@@ -59,6 +59,39 @@
     }
 
     // 页面加载时从服务端同步数据到 localStorage（合并策略：取消息更多的一方）
+    // ===== 消息逐条合并（与服务端 msgs_updater 同口径；唯一定义在 server/context.py） =====
+    function _messageKey(msg) {
+      const ts = msg && msg.timestamp;
+      if (typeof ts === 'number' && ts) return 'ts:' + ts;
+      // 整条 JSON 不能当身份：服务端保存时会回填 summary，JSON 一变身份就变
+      return 'raw:' + ((msg && msg.role) || '') + '|' + ((msg && msg.content) || '');
+    }
+    function _mergeMessageFields(base, extra) {
+      const merged = { ...base };
+      for (const [key, value] of Object.entries(extra || {})) {
+        const cur = merged[key];
+        const empty = cur === undefined || cur === null || cur === '' ||
+          (Array.isArray(cur) && cur.length === 0);
+        if (empty && value !== null && value !== '') merged[key] = value;
+      }
+      return merged;
+    }
+    function _mergeMessageLists(primary, secondary) {
+      const byKey = new Map();
+      const order = [];
+      for (const msg of [...(primary || []), ...(secondary || [])]) {
+        if (!msg || typeof msg !== 'object') continue;
+        const key = _messageKey(msg);
+        if (!byKey.has(key)) { byKey.set(key, { ...msg }); order.push(key); }
+        else byKey.set(key, _mergeMessageFields(byKey.get(key), msg));
+      }
+      const merged = order.map(k => byKey.get(k));
+      if (merged.length && merged.every(m => typeof m.timestamp === 'number' && m.timestamp)) {
+        merged.sort((a, b) => a.timestamp - b.timestamp);
+      }
+      return merged;
+    }
+
     async function _syncFromServer() {
       if (!(await _checkServer())) return false;
       if (typeof window.waitForKnowledgeSave === 'function') {
@@ -103,14 +136,16 @@
 
               if (serverSessionIds.includes(sid)) {
                 const serverMsgs = Array.isArray(serverMessages[sid]) ? serverMessages[sid] : [];
-                // 取消息更多的那一方
-                if (serverMsgs.length >= localMsgs.length) {
-                  localStorage.setItem('phymathia_msgs_' + sid, JSON.stringify(serverMsgs));
+                // 逐条合并（按 timestamp 身份）：两边各自独有的消息都保留、
+                // 字段互补——不再「条数多者胜」整份丢掉少的一边独有的消息
+                const mergedMsgs = _mergeMessageLists(localMsgs, serverMsgs);
+                const mergedJson = JSON.stringify(mergedMsgs);
+                if (mergedJson !== JSON.stringify(localMsgs)) {
+                  safeLocalStorageSet('phymathia_msgs_' + sid, mergedJson);
                 }
-                // 否则保留本地更多的消息，但把多出的消息补录到服务端
-                if (localMsgs.length > serverMsgs.length) {
-                  console.log(`[Storage] Local has more messages for ${sid}: ${localMsgs.length} vs server ${serverMsgs.length}, uploading`);
-                  try { await _saveMessagesToServer(sid, localMsgs); } catch(e) { console.warn('[Storage] Upload failed:', e); }
+                // 并集推回服务端，两边收敛一致
+                if (mergedJson !== JSON.stringify(serverMsgs)) {
+                  try { await _saveMessagesToServer(sid, mergedMsgs); } catch(e) { console.warn('[Storage] Upload failed:', e); }
                 }
               }
               // 服务端不存在的 session（本地独有），保留本地数据，同时上传到服务端
