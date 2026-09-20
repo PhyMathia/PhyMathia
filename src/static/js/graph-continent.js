@@ -1232,7 +1232,12 @@ function _continentRender(data) {
   // 我的航线（v2 落笔 / v7.2 重做）：端点从**岛框边缘**出发、绕行不穿岛——旧版连
   // 两张卡中心的弧线必然穿过岛内部与中间的岛。样式逐条可调（线型/颜色/粗细/走线/
   // 显隐/锚点卡），全局可关（数据不动）；细节档（LOD detail）才画锚点卡的虚线短接。
+  // 「我画的路」观感（09-20）：与机器画的细线（辐条/断桥）拉开——核心线圆线帽 +
+  // 底下垫一条宽而淡的同色光晕（路基）+ 两端在岛框外各一颗圆珠（站点）。光晕与
+  // 圆珠都不接鼠标事件（命中区域与旧版一致，不会挡住附近的画布拖拽）。
   const routePrefs = _continentRoutePrefs();
+  const routeThemeLight = document.documentElement &&
+    document.documentElement.getAttribute('data-theme') === 'light';
   (data.userEdges || []).forEach(e => {
     const ra = layout.clusterRects.find(r => r.sessionId === e.fromSession);
     const rb = layout.clusterRects.find(r => r.sessionId === e.toSession);
@@ -1242,12 +1247,23 @@ function _continentRender(data) {
     const style = e.style || {};
     const route = _continentRoute(ra, rb, layout.clusterRects, style.route || 'detour',
       { x: 0, y: 0, w: layout.worldW, h: layout.worldH });
+    const stroke = _continentRouteStroke(style, e, _continentRegionInfo,
+      routeThemeLight ? 'light' : 'dark');
+    const sidsAttr = [e.fromSession, e.toSession].join(',');
+    // 路基（光晕层）：同色、约 3 倍宽、低透明度——先画，核心线压在它上面
+    const halo = document.createElementNS(svgNS, 'path');
+    halo.setAttribute('class', 'continent-route-casing');
+    halo.setAttribute('d', route.d);
+    halo.setAttribute('stroke', stroke.color);
+    halo.setAttribute('stroke-width', String(Math.max(5, stroke.width * 3)));
+    halo.setAttribute('opacity', String(routePrefs.opacity));
+    halo.setAttribute('data-sids', sidsAttr);
+    svg.appendChild(halo);
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('class', 'continent-route');
     path.setAttribute('d', route.d);
     path.setAttribute('data-edge-id', e.id);
-    path.setAttribute('data-sids', [e.fromSession, e.toSession].join(','));
-    const stroke = _continentRouteStroke(style, e, _continentRegionInfo);
+    path.setAttribute('data-sids', sidsAttr);
     path.setAttribute('stroke', stroke.color);
     path.setAttribute('stroke-width', String(stroke.width));
     if (stroke.dash) path.setAttribute('stroke-dasharray', stroke.dash);
@@ -1257,6 +1273,25 @@ function _continentRender(data) {
       _continentEdgePopover(e, ev);
     });
     svg.appendChild(path);
+    // 端点圆珠（站点）：摆在岛框**外侧**一点——SVG 连线层在世界层最底下，正好压在
+    // 岛框边上的圆会被岛牌盖掉半截，沿「岛心→出岛点」方向外推才完整可见
+    const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
+    const beadR = Math.min(4.2, Math.max(2.4, stroke.width * 1.4));
+    [[ra, route.p0], [rb, laneMode ? route.p3 : route.p2]].forEach(pair => {
+      const rect = pair[0], pt = pair[1];
+      if (!rect || !pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+      const dx = pt.x - rect.cx, dy = pt.y - rect.cy;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const dot = document.createElementNS(svgNS, 'circle');
+      dot.setAttribute('class', 'continent-route-end');
+      dot.setAttribute('cx', String(pt.x + dx / len * 3));
+      dot.setAttribute('cy', String(pt.y + dy / len * 3));
+      dot.setAttribute('r', String(beadR));
+      dot.setAttribute('fill', stroke.color);
+      dot.setAttribute('opacity', String(routePrefs.opacity));
+      dot.setAttribute('data-sids', sidsAttr);
+      svg.appendChild(dot);
+    });
     if (e.label && !style.noLabel) {
       const label = document.createElement('div');
       label.className = 'continent-user-link-label';
@@ -1274,7 +1309,6 @@ function _continentRender(data) {
     // 锚点短接（细节档才显，CSS 管显隐）：从锚点卡到出岛点的一小段虚线——
     // 「这条线具体连哪张卡」降级为细节信息，不再穿岛去连卡片中心
     if (pa && pb) {
-      const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
       [[pa, route.p0], [pb, laneMode ? route.p3 : route.p2]].forEach(pair => {
         const stub = document.createElementNS(svgNS, 'line');
         stub.setAttribute('class', 'continent-route-stub');
@@ -2355,20 +2389,25 @@ function _continentSaveRoutePrefs(prefs) {
   try { localStorage.setItem(CONTINENT_ROUTE_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 容忍 */ }
 }
 
-// 样式解析（纯函数）：颜色三档——region 跟出海域色相、gold 暖金（用户认定的重色）、
-// neutral 中性。旧边无 style 字段走默认（实线/normal/region）
-function _continentRouteStroke(style, edge, regionInfo) {
+// 样式解析（纯函数）：颜色三档——gold 暖金（**默认**：「我画的路」专用色，与机器画
+// 的辐条/断线、海域板色系拉开；浅色主题自动换更深的金，纸上不发飘）、region 跟出
+// 海域色相、neutral 中性。theme 只影响暖金深浅。旧边无 style 字段走默认（实线/
+// normal/暖金）；region 算不出色相时仍回落旧默认蓝（查空是正常路径）
+function _continentRouteStroke(style, edge, regionInfo, theme) {
   const s = style || {};
-  const colorKey = s.color || 'region';
-  let color = 'rgba(74, 158, 255, 0.85)';
-  if (colorKey === 'gold') color = 'rgba(217, 164, 65, 0.9)';
-  else if (colorKey === 'neutral') color = 'rgba(150, 156, 170, 0.8)';
-  else if (regionInfo && edge && regionInfo.bySid) {
+  const colorKey = s.color || 'gold';
+  let color = null;
+  if (colorKey === 'gold') {
+    color = theme === 'light' ? 'rgba(163, 114, 47, 0.92)' : 'rgba(217, 164, 65, 0.9)';
+  } else if (colorKey === 'neutral') {
+    color = 'rgba(150, 156, 170, 0.8)';
+  } else if (regionInfo && edge && regionInfo.bySid) {
     const info = regionInfo.bySid[edge.fromSession];
     const hue = info && info.key !== null && info.key !== undefined
       ? _continentRegionHue(info.key, null) : null;
     if (hue !== null && hue !== undefined) color = 'hsla(' + hue + ', 62%, 64%, 0.85)';
   }
+  if (!color) color = 'rgba(74, 158, 255, 0.85)';
   return {
     color: color,
     width: CONTINENT_ROUTE_WIDTH[s.width] || CONTINENT_ROUTE_WIDTH.normal,
@@ -2393,7 +2432,7 @@ function _continentEdgePopover(e, ev) {
   const option = (list, val) => list.map(o =>
     '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>' + o[1] + '</option>').join('');
   const dashOpts = option([['solid', '实线'], ['dashed', '虚线'], ['dotted', '点线']], s.dash || 'solid');
-  const colorOpts = option([['region', '跟海域色'], ['gold', '暖金'], ['neutral', '中性']], s.color || 'region');
+  const colorOpts = option([['gold', '暖金（默认）'], ['region', '跟海域色'], ['neutral', '中性']], s.color || 'gold');
   const widthOpts = option([['thin', '细'], ['normal', '中'], ['thick', '粗']], s.width || 'normal');
   const routeOpts = option([['detour', '绕行（默认）'], ['straight', '直连'], ['lane', '沿边缘车道']], s.route || 'detour');
   // 换锚点卡：两端各列自己岛上的卡（学习顺序），代表卡口径不变
@@ -2513,12 +2552,14 @@ function _continentSetRouteIso(sid) {
   if (!world || !world.querySelectorAll) return;
   if (!sid) {
     world.classList.remove('route-iso');
-    world.querySelectorAll('.continent-route, .continent-route-stub').forEach(el =>
+    world.querySelectorAll('.continent-route, .continent-route-stub, ' +
+      '.continent-route-casing, .continent-route-end').forEach(el =>
       el.classList.remove('is-dim', 'is-lit'));
     return;
   }
   world.classList.add('route-iso');
-  world.querySelectorAll('.continent-route, .continent-route-stub').forEach(el => {
+  world.querySelectorAll('.continent-route, .continent-route-stub, ' +
+    '.continent-route-casing, .continent-route-end').forEach(el => {
     const sids = String(el.getAttribute('data-sids') || '').split(',');
     const mine = sids.indexOf(sid) >= 0;
     el.classList.toggle('is-lit', mine);

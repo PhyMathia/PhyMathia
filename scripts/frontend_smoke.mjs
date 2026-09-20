@@ -1606,6 +1606,12 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
   if (!def.color || def.width !== 2 || def.dash) throw new Error('默认样式错：' + JSON.stringify(def));
   if (!stroke({ dash: 'dashed', color: 'gold', width: 'thick' }, null, null).dash) throw new Error('线型未解析');
   if (stroke({ color: 'gold' }, null, null).color.indexOf('217') < 0) throw new Error('暖金档颜色错');
+  // 「我画的路」默认观感（09-20）：默认色=暖金且浅色主题加深；region 算不出色相回落旧蓝
+  const lightGold = stroke(null, { fromSession: 's1' }, null, 'light');
+  if (lightGold.color.indexOf('163') < 0) throw new Error('浅色主题暖金未加深：' + lightGold.color);
+  if (stroke({ color: 'region' }, { fromSession: 's1' }, null).color.indexOf('74') < 0) {
+    throw new Error('region 算不出色相时应回落旧默认蓝');
+  }
   // 静态：v7.2 的单条可调与全局开关、岛级落笔、编辑撤销；大陆模块零 window.prompt（U1 收编）
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -1617,9 +1623,15 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
   if (!src.includes('CONTINENT_ROUTE_PREFS_KEY')) throw new Error('全局航线偏好缺失');
   if (!src.includes('_continentLinkPickIsland')) throw new Error('岛级落笔缺失');
   if (!src.includes('_continentSetRouteIso')) throw new Error('悬停隔离缺失');
+  if (!src.includes('continent-route-casing') || !src.includes('continent-route-end')) {
+    throw new Error('航线三件套（路基光晕/端点圆珠）渲染缺失');
+  }
+  if (!src.includes(".continent-route-casing, .continent-route-end")) {
+    throw new Error('悬停隔离未覆盖路基光晕/端点圆珠');
+  }
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   ['.continent-route', '.continent-route-stub', '.continent-route.is-dim',
-   '.continent-route-grid'].forEach(sel => {
+   '.continent-route-grid', '.continent-route-casing', '.continent-route-end'].forEach(sel => {
     if (!css.includes(sel)) throw new Error('航线样式缺失：' + sel);
   });
   return true;
