@@ -884,14 +884,23 @@ function _renderNodeHtml(node, messages, state) {
 
 function _measureNodes() {
   if (!graphInner) return;
+  // 一次 querySelectorAll 建 id->元素映射：旧实现对每个节点各做一次全子树
+  // querySelector（O(n²) 次子树扫描）。同时读写分离——矩形读取（触发布局）全部
+// 先做完，zigzag 等写操作挪到后面，不再每节点交替「写样式→读矩形」强制重排。
+  const elById = new Map();
+  graphInner.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
+    elById.set(el.dataset.nodeId, el);
+  });
+  const zigzagNodes = [];
   graphView.nodes.forEach(node => {
-    const el = graphInner.querySelector('[data-node-id="' + node.id + '"]');
+    const el = elById.get(String(node.id));
     if (!el) return;
     const r = el.getBoundingClientRect();
     node.w = r.width / (graphView.zoom || 1);
     node.h = r.height / (graphView.zoom || 1);
-    if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
+    if (node.kind === 'ai_eval') zigzagNodes.push(node);
   });
+  for (const node of zigzagNodes) _updateAiEvalZigzag(node);
   _syncGroupMembersByContainment();
 }
 
@@ -1573,7 +1582,8 @@ function _savePositions() {
 function _tick() {
   const nodes = graphView.nodes;
   const edges = graphView.edges;
-  if (!nodes.length) return;
+  if (!nodes.length) return 0;
+  let totalMove = 0;
 
   const kRepulse = 9000;
   const kAttract = 0.05;
@@ -1649,13 +1659,26 @@ function _tick() {
     if (speed > 14) { n.vx = (n.vx / speed) * 14; n.vy = (n.vy / speed) * 14; }
     n.x += n.vx;
     n.y += n.vy;
+    totalMove += Math.abs(n.vx) + Math.abs(n.vy);
   }
+  return totalMove;
 }
 
 function _runLayout(needsFit) {
   if (!graphView.nodes.length) return;
-  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-    _tick();
+  // 120 轮 × O(n²) 两两斥力在单帧内跑完，是打开大画布时首帧冻结的根源。
+  // 按节点数压缩迭代上限（总工作量近似守恒），并在整体位移收敛后提前退出——
+  // 中小图通常 40~60 轮就已静止；大图宁可布局粗一点，也不能把主线程卡住数秒。
+  const n = graphView.nodes.length;
+  const maxIter = n > 400 ? 30 : n > 150 ? 60 : MAX_ITERATIONS;
+  let stagnant = 0;
+  for (let iter = 0; iter < maxIter; iter++) {
+    const movement = _tick();
+    if (movement < n * 0.05) {
+      if (++stagnant >= 3) break;
+    } else {
+      stagnant = 0;
+    }
   }
   _updateNodeTransforms();
   _fitAllGroupsToMembers();
@@ -1957,6 +1980,31 @@ function _applyGraphTransform() {
   if (graphView.previewNodes.length || graphView.previewEdges.length) _renderGraphHarnessPreview();
 }
 
+// ===== 流式补丁的节点签名：内容没变的节点整体跳过 =====
+// 旧行为每个补丁帧对每个节点都跑一次 _renderNodeHtml（内含完整 renderMarkdown）再逐段
+// 字符串比对；流式期间通常只有一个节点在变，其余全是白算。签名覆盖渲染 HTML 会用到的
+// 全部输入（节点字段 + 该节点引用的消息正文/分支标签 + 该节点的端口计数）。
+// x/y/w/h 故意不进签名：位置由 _updateNodeTransforms 负责、尺寸由 _measureNodes 负责，
+// 与旧补丁路径「保留旧几何」的语义一致。签名存在节点对象上，全量重建换新对象自动失效。
+function _graphNodeHtmlSig(node, messages, state) {
+  const message = node.messageIndex >= 0 ? (messages || [])[node.messageIndex] : null;
+  const parts = [
+    node.id, node.kind, node.moduleKey, node.messageIndex, node.isRoot, node.isBranch,
+    node.minimized, node.hidden, node.manual, node.busy, node.status,
+    node.customWidth, node.customHeight, node.content, node.analysis, node.label, node.items,
+    message ? message.content : null,
+    message ? message.branchLabel : null,
+    state.portCounts ? state.portCounts[node.id] : null,
+    state.inputPortCounts ? state.inputPortCounts[node.id] : null,
+  ];
+  let sigSrc = '';
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    sigSrc += '\u0001' + (p == null ? '' : (typeof p === 'object' ? JSON.stringify(p) : String(p)));
+  }
+  return _vizHash(sigSrc);
+}
+
 function _patchGraphStreaming(messages, state) {
   if (!graphInner) return;
   const data = _buildGraphData(messages, state);
@@ -1973,6 +2021,11 @@ function _patchGraphStreaming(messages, state) {
     const old = oldById[next.id];
     const existingEl = graphInner.querySelector('[data-node-id="' + next.id + '"]');
     if (old && existingEl) {
+      const nextSig = _graphNodeHtmlSig(next, messages, state);
+      if (old._patchSig === nextSig) {
+        nextNodes.push(old);
+        continue;
+      }
       const oldX = old.x;
       const oldY = old.y;
       const oldW = old.w;
@@ -2053,9 +2106,11 @@ function _patchGraphStreaming(messages, state) {
       if (existingEl.className !== nextEl.className) {
         existingEl.className = nextEl.className;
       }
+      old._patchSig = nextSig;
       nextNodes.push(old);
     } else {
       graphInner.insertAdjacentHTML('beforeend', _renderNodeHtml(next, messages, state));
+      next._patchSig = _graphNodeHtmlSig(next, messages, state);
       nextNodes.push(next);
     }
   }

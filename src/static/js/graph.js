@@ -379,9 +379,9 @@ function _graphState() {
   };
 }
 
-function _saveGraphState(state) {
+function _saveGraphState(state, opts) {
   if (typeof window.saveGraphState === "function") {
-    window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "", state);
+    window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "", state, opts);
   }
 }
 

@@ -295,6 +295,105 @@
       return meta;
     }
 
+    // ====== 流式增量渲染：冻结已闭合块，只重渲染生成中的尾块 ======
+    // 旧行为每个流帧对整篇内容重跑 renderMarkdown + 全量 KaTeX，回答越长每帧越贵
+    // （O(n²)，长公式回答时风扇起飞）。这里把内容切成「已闭合块（渲染一次冻结不动）+
+    // 生成中尾块（每帧重渲染）」。切块边界只在安全位置产生：不在未闭合代码围栏内、
+    // 不在未闭合标签内、不在列表中间（否则有序列表被拆成两段重新编号）。
+    const STREAM_RENDER_MIN_INTERVAL = 120;  // 渲染节流：流式内容每帧都在变，肉眼不需要 60fps
+    let _lastStreamRenderAt = 0;
+    const _streamRenderStates = new WeakMap(); // 消息内容容器 -> 渲染状态
+
+    // 空元素/自闭合写法不进未闭合标签栈
+    const _STREAM_VOID_TAGS = new Set(['br', 'hr', 'img', 'meta', 'link', 'input', 'source', 'wbr', 'col', 'area', 'base', 'param', 'embed', 'track']);
+    const _STREAM_LIST_RE = /^[ \t]*(?:[-*+][ \t]|\d{1,9}[.)][ \t])/;
+    const _STREAM_SCAN_RE = /(```|~~~)|\n[ \t]*\n|<(\/?)([a-zA-Z][a-zA-Z0-9_-]*)\b[^>]*?(\/?)>/g;
+
+    function _streamLineLooksListish(line) {
+      return _STREAM_LIST_RE.test(line) || /^[ \t]+\S/.test(line);
+    }
+
+    // 推进边界扫描。content 只追加，scan.pos 停在上一个匹配的末尾——尾部未匹配区
+    // （可能含未长全的 token，如只到了半个 ``` 或半个标签）每轮重扫，长全后自然命中。
+    // scan.blockStart = 最后一个安全边界；其后内容属于尾块。
+    function _streamAdvanceScan(scan, text) {
+      const re = _STREAM_SCAN_RE;
+      re.lastIndex = scan.pos;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        scan.pos = re.lastIndex;
+        if (m[1]) {
+          if (!scan.inFence) scan.inFence = m[1];
+          else if (m[1] === scan.inFence) scan.inFence = false;
+        } else if (m[3]) {
+          // 围栏内是字面代码，标签不参与结构；围栏本身未闭合时块边界本来就不产生
+          if (!scan.inFence) {
+            const tag = m[3].toLowerCase();
+            if (!_STREAM_VOID_TAGS.has(tag) && m[4] !== '/') {
+              if (m[2]) {
+                const at = scan.openTags.lastIndexOf(tag);
+                if (at >= 0) scan.openTags.length = at;
+              } else if (scan.openTags.indexOf(tag) < 0) {
+                scan.openTags.push(tag);
+              }
+            }
+          }
+        } else if (!scan.inFence && scan.openTags.length === 0) {
+          const prevStart = text.lastIndexOf('\n', m.index - 1) + 1;
+          const prevLine = text.slice(prevStart, m.index);
+          const rest = text.slice(m.index + m[0].length);
+          const nl = rest.indexOf('\n');
+          const nextLine = nl >= 0 ? rest.slice(0, nl) : rest;
+          if (!_streamLineLooksListish(prevLine) || !_streamLineLooksListish(nextLine)) {
+            scan.blockStart = m.index + m[0].length;
+          }
+        }
+      }
+    }
+
+    function _streamRenderTick(assistantDiv, assistantContent, messageId) {
+      if (!assistantDiv || !assistantContent) return;
+      const renderCtxBase = { parentId: messageId, socraticFallback: true };
+      let st = _streamRenderStates.get(assistantDiv);
+      // 错误帧/tool_done 路径会整写 textContent 或 innerHTML，我们的结构被换掉；
+      // 检测标记丢失就按当前 scan 重建（scan 从零起，一次性重渲染全部已闭合块）
+      if (!st || !st.root || st.root.parentNode !== assistantDiv) {
+        assistantDiv.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'stream-incremental';
+        const stable = document.createElement('div');
+        stable.className = 'stream-stable';
+        const tail = document.createElement('div');
+        tail.className = 'stream-tail';
+        root.appendChild(stable);
+        root.appendChild(tail);
+        assistantDiv.appendChild(root);
+        st = { root, stable, tail, frozenLen: 0, chunkSeq: 0, lastTailText: null, scan: { pos: 0, blockStart: 0, inFence: false, openTags: [] } };
+        _streamRenderStates.set(assistantDiv, st);
+      }
+      const text = assistantContent;
+      _streamAdvanceScan(st.scan, text);
+      const stableText = text.slice(0, st.scan.blockStart);
+      const tailText = text.slice(st.scan.blockStart);
+      if (stableText.length > st.frozenLen) {
+        // 新冻结的完整块（一次可能冻结多段）：渲染一次追加，之后不再重渲染
+        const chunk = stableText.slice(st.frozenLen);
+        const block = document.createElement('div');
+        block.className = 'stream-block';
+        block.innerHTML = renderMarkdown(chunk, { ...renderCtxBase, slotPrefix: 's' + (st.chunkSeq++) + ':' });
+        st.stable.appendChild(block);
+        if (typeof _initVizIframes === 'function') _initVizIframes(block);
+        if (typeof renderMath === 'function') renderMath(block);
+        st.frozenLen = stableText.length;
+      }
+      if (tailText !== st.lastTailText) {
+        st.tail.innerHTML = renderMarkdown(tailText, { ...renderCtxBase, slotPrefix: 'tail:' });
+        if (typeof _initVizIframes === 'function') _initVizIframes(st.tail);
+        if (typeof renderMath === 'function') renderMath(st.tail);
+        st.lastTailText = tailText;
+      }
+    }
+
     async function sendMessage(options) {
       const input = document.getElementById('userInput');
       const btn = document.getElementById('sendBtn');
@@ -365,6 +464,8 @@
       _syncProgressMiniButtons(true);
 
       abortController = new AbortController();
+      // 流式生成是重活（增量渲染 + 画布补丁都在吃帧预算），装饰粒子先让路
+      if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(true);
       progressFinalLabel = '';
       showProgress('thinking');
       let assistantContent = '';
@@ -376,6 +477,7 @@
       let assistantDiv = null;
       let streamRenderPending = false;
       let streamRenderFrame = null;
+      let streamRenderTimer = null;
       let graphRenderPending = false;
       let graphRenderFrame = null;
 
@@ -384,12 +486,17 @@
           cancelAnimationFrame(streamRenderFrame);
           streamRenderFrame = null;
         }
+        if (streamRenderTimer !== null) {
+          clearTimeout(streamRenderTimer);
+          streamRenderTimer = null;
+        }
         if (graphRenderFrame !== null) {
           clearTimeout(graphRenderFrame);
           graphRenderFrame = null;
         }
         streamRenderPending = false;
         graphRenderPending = false;
+        if (assistantDiv) _streamRenderStates.delete(assistantDiv);
       }
 
       try {
@@ -418,15 +525,25 @@
         function scheduleStreamRender() {
           if (streamRenderPending) return;
           streamRenderPending = true;
-          streamRenderFrame = requestAnimationFrame(() => {
+          // 节流到 STREAM_RENDER_MIN_INTERVAL：增量渲染后每帧成本已大降，
+          // 但长回答时尾块重渲染仍随尾块变大，120ms 对肉眼足够平滑
+          const wait = Math.max(0, _lastStreamRenderAt + STREAM_RENDER_MIN_INTERVAL - Date.now());
+          const run = () => {
             streamRenderFrame = null;
+            streamRenderTimer = null;
+            _lastStreamRenderAt = Date.now();
             if (assistantDiv && assistantContent) {
-              assistantDiv.innerHTML = renderMarkdown(assistantContent, { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '', socraticFallback: true });
-              _initVizIframes(assistantDiv);
-              renderMath(assistantDiv);
+              const messageId = assistantDiv.closest('.message-body')?.dataset.messageId || '';
+              _streamRenderTick(assistantDiv, assistantContent, messageId);
+              scrollToBottom();
             }
             streamRenderPending = false;
-          });
+          };
+          if (wait === 0) {
+            streamRenderFrame = requestAnimationFrame(run);
+          } else {
+            streamRenderTimer = setTimeout(run, wait);
+          }
         }
 
         function scheduleGraphStreamRender() {
@@ -530,10 +647,9 @@
                   if (streamChunkCount % 4 === 0) {
                     await new Promise(resolve => setTimeout(resolve, 0));
                   }
-                  // 实时渲染 Markdown 和 LaTeX（节流）
+                  // 实时渲染（增量+节流）；滚动跟随并入渲染帧，不再每个 chunk 读一次 scrollHeight
                   scheduleStreamRender();
                   scheduleGraphStreamRender();
-                  scrollToBottom();
                 }
               } catch (e) {}
             }
@@ -698,6 +814,7 @@
         }
       } finally {
         cancelPendingStreamRender();
+        if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(false);
         hideProgress();
         isStreaming = false;
         abortController = null;
