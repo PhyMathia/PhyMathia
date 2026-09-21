@@ -551,17 +551,26 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(result[2]["content"], "u2")
         self.assertEqual(result[3]["content"], "短回复")
 
-    def test_recent_context_keeps_viz_on_viz_prompt(self):
+    def test_recent_context_keeps_viz_by_trigger_prompt(self):
+        """前缀缓存拍板（2026-09-21）：viz 折叠判定锚定「触发这条回答的提问」，
+        不再随当前提问翻转——同一份历史跨轮字节稳定。"""
         big = "<viz>```html\n" + ("<div>html内容" * 1500) + "```</viz>"
+        # 触发提问要可视化：无论当前问什么都保留摘要形态
         msgs = [
+            {"role": "user", "content": "做一个弹簧振动可视化"},
+            {"role": "assistant", "content": big},
+        ]
+        viz = context_mod._recent_context_messages(msgs, max_rounds=1, current_prompt="这个可视化没看懂")
+        self.assertIn("[交互可视化摘要]", viz[1]["content"])
+        viz2 = context_mod._recent_context_messages(msgs, max_rounds=1, current_prompt="接下来讲讲阻尼")
+        self.assertEqual(viz, viz2)
+        # 触发提问不要可视化：占位符，当前提问再想看也不翻转
+        plain = [
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": big},
         ]
-        default = context_mod._recent_context_messages(msgs, max_rounds=1)
-        self.assertNotIn("<div>html内容", default[1]["content"])
-        viz = context_mod._recent_context_messages(msgs, max_rounds=1, current_prompt="这个可视化没看懂")
-        self.assertNotIn("<div>html内容", viz[1]["content"])
-        self.assertIn("[交互可视化摘要]", viz[1]["content"])
+        default = context_mod._recent_context_messages(plain, max_rounds=1, current_prompt="做个可视化看看")
+        self.assertIn("[交互可视化内容已省略]", default[1]["content"])
 
     def test_graph_message_summary_uses_cached(self):
         msg = {"content": "<physics>超长正文</physics>" + ("很长" * 5000), "summary": "缓存的摘要"}
@@ -926,7 +935,10 @@ class RollingMemoryTest(unittest.TestCase):
         self.assertIn("旧记忆内容", text)
         self.assertIn("问题0", text)
 
-    def test_load_session_context_injects_memory(self):
+    def test_load_session_context_keeps_memory_out_of_history(self):
+        """前缀缓存拍板（2026-09-21）：记忆不再插进历史，改由 rolling_memory_block
+        交给 main.py 并入历史后的上下文块——记忆每 8 条消息刷新一次，插在历史
+        第 0 位会把整个历史区的前缀缓存打灭。"""
         msgs = [
             {"role": "user", "content": "问题1", "timestamp": 1},
             {"role": "assistant", "content": "回答1", "timestamp": 2},
@@ -939,11 +951,14 @@ class RollingMemoryTest(unittest.TestCase):
         context_mod._read_rolling_memory = lambda sid: {"summary": "之前聊过简谐运动", "messageCount": 2}
         try:
             result = context_mod._load_session_context("sess_abc", max_rounds=2)
+            block = context_mod.rolling_memory_block("sess_abc")
         finally:
             context_mod._read_json = orig_read
             context_mod._resolve_messages_path = orig_resolve
             context_mod._read_rolling_memory = orig_rm
-        self.assertEqual(result[0]["content"], "（会话记忆）之前聊过简谐运动")
+        contents = [str(m.get("content") or "") for m in result]
+        self.assertNotIn("（会话记忆）之前聊过简谐运动", contents)
+        self.assertEqual(block, "（会话记忆）之前聊过简谐运动")
 
 
 class ConceptGroundingTest(unittest.TestCase):

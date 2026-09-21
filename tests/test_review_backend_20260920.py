@@ -225,7 +225,9 @@ class RouteShapeAndSessionIdTest(RouteTestBase):
 # ====== B. context / knowledge / documents ======
 
 class RollingMemoryProtectsActiveTest(unittest.TestCase):
-    def test_active_content_survives_second_shrink(self):
+    def test_active_content_survives_budget_shrink(self):
+        """09-20 不变量在新形态下依旧成立：预算收缩保住 active 全文；
+        会话记忆不再进历史（前缀缓存拍板），由 rolling_memory_block 单独取。"""
         active = "物" * 3600  # CJK：约 3600 token，远超预算
         messages = [
             {"role": "user", "content": "请解释", "timestamp": "t1"},
@@ -238,10 +240,13 @@ class RollingMemoryProtectsActiveTest(unittest.TestCase):
                  return_value={"summary": "之前聊过阻尼振动的基本模型。"}):
             result = context_mod._load_session_context_from_path(
                 "sess_mem", graph_path, budget_tokens=3000)
+            block = context_mod.rolling_memory_block("sess_mem")
         joined = [str(m.get("content") or "") for m in result]
         self.assertTrue(any(c == active for c in joined),
-                        "active 全文被第二次收缩截掉：" + str([len(c) for c in joined]))
-        self.assertTrue(any(c.startswith("（会话记忆）") for c in joined))
+                        "active 全文被预算收缩截掉：" + str([len(c) for c in joined]))
+        self.assertFalse(any(c.startswith("（会话记忆）") for c in joined),
+                        "记忆不应再出现在历史里")
+        self.assertEqual(block, "（会话记忆）之前聊过阻尼振动的基本模型。")
 
 
 class LocalDocumentExtractTest(unittest.TestCase):

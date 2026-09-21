@@ -2058,6 +2058,7 @@ async function _continentGateClassify() {
       try {
         const resp = await proxyChatWithModel(model, {
           messages: _continentGateMessages(batch, domainList), stream: false,
+          session_bucket: 'phymathia-continent',
         }, ctrl ? ctrl.signal : undefined);
         const j = await resp.json();
         const raw = j && j.choices && j.choices[0] && j.choices[0].message
@@ -2362,6 +2363,7 @@ async function _continentAskPhi(f, rowIndex, btn) {
     const resp = await proxyChatWithModel(model, {
       messages: _continentPhiMessages(left, right, entry.label || ''),
       stream: false,
+      session_bucket: 'phymathia-continent',
     }, ctrl ? ctrl.signal : undefined);
     const data = await resp.json();
     const raw = data && data.choices && data.choices[0] && data.choices[0].message

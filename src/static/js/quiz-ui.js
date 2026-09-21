@@ -576,6 +576,7 @@ ${getLevelPrompt()}
         model: model.model,
         base_url: model.baseUrl,
         thinking: model.thinking || '',
+        session_bucket: 'phymathia-quiz',
         stream: true
       })
     });
@@ -769,6 +770,7 @@ async function askQuizExplain() {
         model: model.model,
         base_url: model.baseUrl,
         thinking: model.thinking || '',
+        session_bucket: 'phymathia-quiz',
         stream: true
       })
     });

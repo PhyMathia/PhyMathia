@@ -242,22 +242,36 @@ def _recent_context_messages(
     上下文瘦身策略（普通聊天/无 graph_path 路径）：
     - 最近 max_rounds 轮：用户消息完整保留（超长时截断到上限）；最近一条
       assistant 消息完整保留（<viz>/```html``` 大段 HTML 默认替换为占位符，
-      仅当当前提问涉及可视化时才保留）；更早的 assistant 只保留摘要。
+      仅当触发它的那条用户提问涉及可视化时才保留）；更早的 assistant 只保留
+      摘要。
     - 更早的 summary_rounds 轮：每轮拆成「用户一行 + AI 一行」的摘要对，
       帮助长会话里理解"之前说过/继续"类指代，成本极低。
-    - budget_tokens > 0 时，最后按 token 预算收缩，避免上下文溢出。
+    - budget_tokens > 0 时，最后按 token 预算收缩（恒保护最后一条完整消息）。
+    - current_prompt 保留在签名里只为兼容旧调用；viz 判定已改锚在每条
+      assistant 自己的触发提问上（前缀缓存拍板，2026-09-21）。
     """
     messages = all_messages
     if not include_socratic:
         messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
-    keep_viz = _prompt_wants_viz(current_prompt)
+    # 每条 assistant 的触发提问 = 时间顺序上它前面最近的 user 消息。
+    # viz 折叠判定锚定触发提问而非当前提问：当前提问每轮都变，由它决定
+    # 历史消息的 viz 形态会让同一份历史在「占位符↔摘要」间来回翻转，
+    # 每翻一次打灭一次前缀缓存。
+    trigger_by_index = {}
+    last_user_content = ""
+    for idx, msg in enumerate(messages):
+        if str(msg.get("role") or "user") == "user":
+            last_user_content = str(msg.get("content") or "")
+        else:
+            trigger_by_index[idx] = last_user_content
     full = []
     digest = []
     rounds = 0
     assistant_count = 0
     summary_rounds_seen = 0
     pending_ai = ""
-    for msg in reversed(messages):
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
         role = msg.get("role", "user")
         content = str(msg.get("content") or "")
         if role == "user":
@@ -277,7 +291,8 @@ def _recent_context_messages(
         else:
             if rounds < max_rounds:
                 if assistant_count == 0:
-                    content = _trim_context_content(content, keep_viz=keep_viz)
+                    content = _trim_context_content(
+                        content, keep_viz=_prompt_wants_viz(trigger_by_index.get(idx, "")))
                 else:
                     content = _graph_message_summary(msg)
                 full.insert(0, {"role": "assistant", "content": content})
@@ -290,7 +305,10 @@ def _recent_context_messages(
         digest.insert(0, {"role": "assistant", "content": "（更早对话）AI：" + pending_ai})
     result = digest + full
     if budget_tokens and budget_tokens > 0:
-        result = _shrink_history_to_budget(result, budget_tokens)
+        # 恒保护最后一条完整消息（09-20 不变量的制度化）：模块再生成等场景
+        # 它是唯一全文输入；没有记忆第二刀之后，这一刀就是唯一收缩点
+        keep = {str(result[-1].get("content") or "")} if result else set()
+        result = _shrink_history_to_budget(result, budget_tokens, keep)
     return result
 
 def _extract_section(content: str, tag: str) -> str:
@@ -599,23 +617,19 @@ def _rolling_memory_input(session_id: str, max_old_pairs: int = 6) -> str:
     return _rolling_memory_snapshot(session_id, max_old_pairs)["text"]
 
 
-def _inject_rolling_memory(session_id: str, result: list, budget_tokens: int = 0, protected: set = None) -> list:
-    """在上下文最前面注入滚动会话记忆（如有），并保护其不被预算收缩丢弃。
+def rolling_memory_block(session_id: str) -> str:
+    """滚动会话记忆的注入文本（无记忆时返回空串）。
 
-    protected 是调用方在上游收缩阶段已建立的保护集合（graph_path 路径的
-    active 正文 / 各路径「保留最后一条完整消息」的尾部）。注入后的第二次
-    收缩必须把它们与记忆一起保护——此前只保护记忆本身，上游特意保下的
-    active 全文会在这一步被压成 160 字摘要，而 skip_upstream 场景它正是
-    模块再生成唯一的全文输入，丢失全程无日志（09-20 修复）。"""
+    前缀缓存拍板（2026-09-21）：记忆不再 insert 进历史第 0 位——它站在整个
+    历史区之前，而摘要每 8 条消息刷新一次，等于把「system+全部历史」的
+    provider 前缀缓存整个打灭。改为返回文本，由调用方（main.py 组装）并入
+    历史之后的上下文块、拼进最后一条 user 消息头部；「注入后第二刀收缩」
+    也随之取消，预算收缩只剩一刀。
+    """
     mem = _read_rolling_memory(session_id)
     if not mem:
-        return result
-    mem_text = "（会话记忆）" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS]
-    result.insert(0, {"role": "user", "content": mem_text})
-    if budget_tokens and budget_tokens > 0:
-        keep = {mem_text} | (protected or set())
-        result = _shrink_history_to_budget(result, budget_tokens, keep)
-    return result
+        return ""
+    return "（会话记忆）" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS]
 
 
 def _load_session_context(
@@ -656,12 +670,9 @@ def _load_session_context(
             all_messages, max_rounds, include_socratic, current_prompt,
             budget_tokens=budget_tokens,
         )
-        # 记忆注入后的第二次收缩沿用「保留最后一条完整消息」的不变式：
-        # 不传保护集，_recent_context_messages 特意留下的最近一条 assistant
-        # 全文会被第二刀压成 160 字摘要
-        tail = str(result[-1].get("content") or "") if result else ""
-        return _inject_rolling_memory(session_id, result, budget_tokens,
-                                      protected={tail} if tail else None)
+        # 会话记忆不再注入历史（改由 main.py 并入历史后的上下文块，
+        # 见 rolling_memory_block）；预算收缩含在 _recent_context_messages 内
+        return result
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
@@ -693,11 +704,8 @@ def _load_session_context(
 
     if budget_tokens and budget_tokens > 0:
         result = _shrink_history_to_budget(result, budget_tokens)
-    # 分支追问同样是长会话的一部分：滚动记忆注入与主线/graph_path 路径保持一致，
-    # 否则分支上下文会比主线「失忆」；第二次收缩同样保住最后一条完整消息
-    tail = str(result[-1].get("content") or "") if result else ""
-    return _inject_rolling_memory(session_id, result, budget_tokens,
-                                  protected={tail} if tail else None)
+    # 分支路径同样不再注入会话记忆（见 rolling_memory_block 的拍板说明）
+    return result
 
 def _branch_context_instruction(
     branch_type: str = "",
@@ -977,9 +985,9 @@ def _load_session_context_from_path(
     protected = {active_content} if active_content else set()
     if budget_tokens and budget_tokens > 0:
         result = _shrink_history_to_budget(result, budget_tokens, protected)
-    # 第二次收缩（记忆注入后）必须沿用上面的 active 保护集：skip_upstream 时
-    # active 正文是模块再生成唯一的全文输入，第二刀丢掉 = 再生成失去自身上文
-    return _inject_rolling_memory(session_id, result, budget_tokens, protected=protected)
+    # skip_upstream 时 active 正文是模块再生成唯一的全文输入，保护集不可省；
+    # 会话记忆改由 main.py 并入上下文块，此处不再二次注入/收缩
+    return result
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"
@@ -1281,7 +1289,7 @@ __all__ = [
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "_inject_rolling_memory", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
     "merge_message_lists",

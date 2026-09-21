@@ -137,11 +137,11 @@ async function worldTransform(page) {
 
 async function run() {
   // ===== 隔离环境：临时目录拷贝 src + 根层共享模块（data/ 在 temp 下全新生成）=====
-  // main.py 把 src 与项目根都塞进 sys.path（http_client/llm_common 在根层），两处都要有
+  // main.py 把 src 与项目根都塞进 sys.path（http_client/llm_common/usage_stats 在根层），两处都要有
   const workDir = mkdtempSync(join(tmpdir(), 'phymathia-reg-'));
   cpSync(join(ROOT, 'src'), join(workDir, 'src'), { recursive: true });
   cpSync(join(ROOT, 'harness'), join(workDir, 'harness'), { recursive: true });
-  for (const f of ['http_client.py', 'llm_common.py']) {
+  for (const f of ['http_client.py', 'llm_common.py', 'usage_stats.py']) {
     cpSync(join(ROOT, f), join(workDir, f));
   }
   const server = spawn('python3', ['src/main.py', '-p', String(PORT)], {

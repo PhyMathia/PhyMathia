@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -34,6 +35,7 @@ for _path in (_SRC_DIR, _ROOT_DIR):
 
 from http_client import close_http_client, get_http_client  # noqa: E402
 import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
+import usage_stats  # noqa: E402  项目根共享层：token 用量与缓存命中计量落盘
 
 from server import backup, concept, continent, context, documents, family, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
@@ -176,6 +178,15 @@ def _opencode_session_headers(base_url: str, session_id: str) -> dict:
     return llm_common.opencode_gateway_headers(base_url, session_id)
 
 
+_BUCKET_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _normalize_session_bucket(value) -> str:
+    """辅助调用的会话桶名白名单消毒：不合法一律退回空（落匿名桶）。"""
+    text = str(value or "").strip()
+    return text if _BUCKET_RE.match(text) else ""
+
+
 def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id: str) -> dict:
     headers = {"Content-Type": "application/json"}
     if api_key and provider != "opencode":
@@ -239,6 +250,12 @@ async def api_models_chat(request: Request):
     # 构建消息列表
     prompt = payload.get("prompt", "")
     session_id = payload.get("session_id", "")
+    # 辅助调用会话桶（2026-09-21 分桶拍板）：旧格式直传的调用（测验/大陆/摘要
+    # 优化/可视化）没有聊天会话 id，此前全部落进同一个「匿名桶」，网关侧互相
+    # 挤占缓存路由。前端按功能传稳定桶名，消毒后与 session_id 二选一用作
+    # x-opencode-session；新格式聊天永远以 session_id 优先。
+    session_bucket = _normalize_session_bucket(
+        payload.get("session_bucket") or payload.get("sessionBucket") or "")
     branch_id = payload.get("branch_id") or payload.get("branchId") or ""
     branch_type = payload.get("branch_type") or payload.get("branchType") or ""
     source_module = payload.get("source_module") or payload.get("sourceModule") or ""
@@ -293,16 +310,22 @@ async def api_models_chat(request: Request):
             system_content = MODULE_SYSTEM_PROMPT
         else:
             system_content = get_system_prompt()
+        # 前缀缓存拍板（2026-09-21）：system 只保留场景底座。逐轮易变的注入
+        # （支线状态/分支/路径/工作流/会话记忆/概念地基/画像）原来追加在 system
+        # 尾部——位于历史之前，任何一处变化都会把「system+全部历史」的 provider
+        # 前缀缓存整个打灭。现在统一收进「上下文块」，拼在历史之后的最后一条
+        # user 消息头部：易变字节集中到请求末尾，system+历史成为稳定前缀。
+        context_parts = []
         state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
-            system_content += "\n\n" + state_instruction
+            context_parts.append(state_instruction)
 
         if branch_id:
-            system_content += _branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id)
+            context_parts.append(_branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id))
         if graph_path:
-            system_content += _graph_path_instruction(graph_path, source_module)
+            context_parts.append(_graph_path_instruction(graph_path, source_module))
         if workflow_context:
-            system_content += _workflow_context_instruction(workflow_context)
+            context_parts.append(_workflow_context_instruction(workflow_context))
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
         # 消息层管「我们聊到哪」，这一段管「这个话题的地基是什么」。
         # 与画像注入同一范围（默认完整回答路径，不含 quick / 画布模块生成 / 支线）：
@@ -315,7 +338,7 @@ async def api_models_chat(request: Request):
                 weak_terms=(profile.profile_weak_terms(_device_id) if _device_id else None),
             )
             if concept_text:
-                system_content += "\n\n" + concept_text
+                context_parts.append(concept_text)
         # 用户画像（记忆）注入：仅默认完整回答路径（quick / 画布模块生成 / 支线
         # 不注入——与上方概念地基同一范围，09-20 补齐 branch_id：此前支线也会
         # 注入画像并刷新 lastUsedAt，与注释宣称的口径不一致）。
@@ -327,7 +350,7 @@ async def api_models_chat(request: Request):
                 profile_usage = {"sections": _profile_ctx["sections"],
                                  "factCount": len(_profile_ctx["factIds"])}
                 if _profile_ctx["text"]:
-                    system_content += "\n\n" + _profile_ctx["text"]
+                    context_parts.append(_profile_ctx["text"])
                     profile.mark_profile_used(_device_id, _profile_ctx["factIds"])
         messages = [{"role": "system", "content": system_content}]
 
@@ -348,13 +371,22 @@ async def api_models_chat(request: Request):
                 budget_tokens=context_budget,
             )
             messages.extend(history)
+            # 会话记忆并入上下文块首位（不再插在历史第 0 位，见
+            # context.rolling_memory_block 的拍板说明）
+            memory_block = context.rolling_memory_block(session_id)
+            if memory_block:
+                context_parts.insert(0, memory_block)
+
+        current_text = prompt
+        if context_parts:
+            current_text = "<上下文>\n" + "\n\n".join(context_parts) + "\n</上下文>\n\n" + prompt
 
         level = payload.get("level", "university")
         if not is_quick:
             level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-            messages.append({"role": "user", "content": prompt + level_suffix})
+            messages.append({"role": "user", "content": current_text + level_suffix})
         else:
-            messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "user", "content": current_text})
 
         ctx_text = "".join(str(m.get("content") or "") for m in messages)
         logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}, budget={context_budget}")
@@ -381,7 +413,7 @@ async def api_models_chat(request: Request):
         raise HTTPException(status_code=403, detail=str(e))
 
     url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = _chat_request_headers(provider, api_key, base_url, session_id)
+    headers = _chat_request_headers(provider, api_key, base_url, session_id or session_bucket)
     target = workflow_context.get("target") or {} if isinstance(workflow_context, dict) else {}
     module_key = target.get("module") or source_module
     is_strict_module = module_key in ("socratic", "learn") and (
@@ -397,6 +429,10 @@ async def api_models_chat(request: Request):
         "messages": messages,
         "stream": stream,
     }
+    if stream:
+        # 流式也要计量：include_usage 让上游在 [DONE] 前补一帧带 usage 的 chunk；
+        # 不认识的兼容端点会整请求 400，由下方降级链剥掉重发
+        body["stream_options"] = {"include_usage": True}
     if max_tokens:
         try:
             body["max_tokens"] = int(max_tokens)
@@ -427,6 +463,17 @@ async def api_models_chat(request: Request):
     except httpx.HTTPError as e:
         logger.error(f"AI proxy connect error: {e}")
         raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+    if resp.status_code == 400 and "stream_options" in body:
+        # 降级第一级：该供应商不认识 stream_options（整请求 400）时剥掉重发。
+        # 与思考参数的降级分开两级剥——为保计量帧不该丢思考档，反之亦然
+        await resp.aclose()
+        body.pop("stream_options", None)
+        logger.warning("AI proxy: upstream rejected stream_options, retried without it")
+        try:
+            resp = await _send_upstream()
+        except httpx.HTTPError as e:
+            logger.error(f"AI proxy connect error: {e}")
+            raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     if resp.status_code == 400 and thinking_params:
         # 降级安全网：该供应商不认识思考参数（整请求 400）时剥掉重发一次——
         # 配错了供应商只会「设置不生效」，绝不能把聊天本身弄坏
@@ -470,6 +517,9 @@ async def api_models_chat(request: Request):
             return Response(content=raw, media_type="application/json")
         if data.get("usage"):
             logger.info(f"AI proxy usage: {data['usage']}")
+            usage_stats.record_usage(provider, model_name,
+                                     "chat" if prompt else "legacy",
+                                     session_id or session_bucket, data["usage"])
         _update_socratic_state_from_content(content, socratic_ref)
         if profile_usage is not None:
             # 非流式出口同样回传注入快照；序列化失败退回原字节
@@ -511,6 +561,9 @@ async def api_models_chat(request: Request):
                     yield line + "\n\n"
             if last_usage:
                 logger.info(f"AI proxy usage: {last_usage}")
+                usage_stats.record_usage(provider, model_name,
+                                         "chat" if prompt else "legacy",
+                                         session_id or session_bucket, last_usage)
             _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
@@ -575,6 +628,16 @@ async def api_models_list(request: Request):
     return {"models": sorted(set(ids))}
 
 
+@app.get("/api/usage/stats")
+async def api_usage_stats(days: int = 7):
+    """token 用量与缓存命中率汇总（前缀缓存改造的观测口）。
+
+    数据来自 data/usage/YYYY-MM-DD.jsonl；hitRate 只在「上游确实回报了
+    命中字段」的请求上累计（hitKnownRequests 可分辨供应商是否回报）。
+    """
+    return usage_stats.summarize(days=days)
+
+
 
 # ====== 滚动会话记忆（长会话后台摘要，不阻塞当前请求） ======
 # key -> asyncio.Task：必须存任务对象的强引用——只存 key 时 create_task 返回的
@@ -629,6 +692,8 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
         if resp.status_code != 200:
             return
         data = resp.json()
+        if data.get("usage"):
+            usage_stats.record_usage(provider, model_name, "summary", session_id, data["usage"])
         content = data["choices"][0]["message"]["content"]
         if context._write_rolling_memory(session_id, content, snapshot["messageCount"],
                                          expected_generation=generation, snapshot=snapshot):

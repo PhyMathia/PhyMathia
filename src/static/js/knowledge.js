@@ -495,7 +495,7 @@ async function _requestRestatedSummary(item, model, signal) {
     { role: 'system', content: '你是物理数学知识库的摘要助手。只输出一句知识点摘要正文，不要解释、前缀、引号或列表。' },
     { role: 'user', content: _buildSummaryRestatePrompt(item, _knowledgeFormulaMeanings(item)) },
   ];
-  const resp = await proxyChatWithModel(model, { messages, stream: false }, signal);
+  const resp = await proxyChatWithModel(model, { messages, stream: false, session_bucket: 'phymathia-knowledge' }, signal);
   const data = await resp.json();
   const raw = data && data.choices && data.choices[0] && data.choices[0].message
     ? data.choices[0].message.content

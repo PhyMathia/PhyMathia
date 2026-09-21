@@ -876,6 +876,10 @@ async function proxyChatWithModel(model, body, signal) {
       base_url: model.baseUrl,
       thinking: model.thinking || '',
       device_id: (typeof getDeviceId === 'function' ? getDeviceId() : ''),
+      // 网关会话分桶：没有聊天会话 id 的旧格式调用按功能落稳定桶
+      // （后端按 session_bucket 白名单消毒后用作 x-opencode-session）；
+      // 主聊天 proxyChat 传的是 session_id，优先级更高
+      session_bucket: body.session_bucket || 'phymathia-web',
       ...body,
     }),
   });
