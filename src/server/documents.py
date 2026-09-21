@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 
 from http_client import get_http_client
+from llm_common import opencode_gateway_headers
+import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
 
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, UPLOAD_DIR, UPLOADS_META_PATH, resolve_api_key, validate_model_target
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula
@@ -406,11 +408,15 @@ async def _ai_extract_document_knowledge(
     headers = {"Content-Type": "application/json"}
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
+    # 网关会话头（opencode 官方要求）：文档解析固定桶
+    headers.update(opencode_gateway_headers(base_url, "phymathia-docs"))
     body = {"model": model, "messages": messages, "stream": False, "temperature": 0.2}
     client = get_http_client()
     resp = await client.post(url, json=body, headers=headers, timeout=120.0)
     resp.raise_for_status()
     data = resp.json()
+    if data.get("usage"):
+        usage_stats.record_usage(provider, model, "docs", "", data["usage"])
     content = data["choices"][0]["message"]["content"]
     return _parse_document_extract_json(content, max_items)
 

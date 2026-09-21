@@ -748,6 +748,7 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
           { role: 'user', content: prompt }
         ],
         stream: true,
+        session_bucket: 'phymathia-module',
       });
       reply = await collectStreamText(resp);
       if (reply.trim()) return _replaceModuleContent(message?.content || '', moduleKey, reply);

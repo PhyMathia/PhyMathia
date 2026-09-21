@@ -8,6 +8,8 @@ import time
 import uuid
 
 from http_client import get_http_client
+from llm_common import opencode_gateway_headers
+import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
 
 from .config import (
     AI_PROVIDERS,
@@ -703,11 +705,16 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     headers = {"Content-Type": "application/json"}
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
+    # 网关会话头（opencode 官方要求，缺失会被列 problematic clients）：提取
+    # 固定桶，同功能调用落在同一缓存桶，不与主聊天互相挤占
+    headers.update(opencode_gateway_headers(base_url, "phymathia-extract"))
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
     client = get_http_client()
     resp = await client.post(url, json=body, headers=headers)
     resp.raise_for_status()
     data = resp.json()
+    if data.get("usage"):
+        usage_stats.record_usage(provider, model, "extract", "", data["usage"])
     content = data["choices"][0]["message"]["content"]
     items = _parse_extract_json(content)
     profile_facts = _parse_profile_facts(content)
@@ -871,12 +878,15 @@ async def _describe_formulas(summary: str, formulas: list, knowledge_items: list
     headers = {"Content-Type": "application/json"}
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
+    headers.update(opencode_gateway_headers(base_url, "phymathia-describe"))
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
     try:
         client = get_http_client()
         resp = await client.post(url, json=body, headers=headers)
         resp.raise_for_status()
         data = resp.json()
+        if data.get("usage"):
+            usage_stats.record_usage(provider, model, "describe", "", data["usage"])
         content = data["choices"][0]["message"]["content"]
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:

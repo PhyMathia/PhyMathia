@@ -682,6 +682,7 @@
           const resp = await proxyChatWithModel(model, {
             messages: [{ role: 'user', content: prompt + '\n\n' + String(sourceContent || '').slice(0, 12000) }],
             stream: true,
+            session_bucket: 'phymathia-viz',
           }, signal);
           const reply = await collectStreamText(resp, (progress, length) => {
             const pct = progress !== null && progress !== undefined

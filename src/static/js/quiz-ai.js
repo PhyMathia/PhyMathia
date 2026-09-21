@@ -192,6 +192,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
         model: model.model,
         base_url: model.baseUrl,
         thinking: model.thinking || '',
+        session_bucket: 'phymathia-quiz',
         stream: true
       })
     });
@@ -510,6 +511,7 @@ async function _aiVerifyQuizQuestions(pool, questions) {
         model: model.model,
         base_url: model.baseUrl,
         thinking: model.thinking || '',
+        session_bucket: 'phymathia-quiz',
         stream: true
       })
     });

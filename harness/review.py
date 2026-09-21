@@ -24,6 +24,11 @@ from llm_common import (
     opencode_gateway_headers,
     resolve_api_key,
 )
+import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
+
+# harness 无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶，
+# 也是计量记录里 harness 调用的会话桶标识
+_HARNESS_SESSION_ID = "phymathia-harness-" + str(os.getpid())
 
 from .core import (
     MAX_SNAPSHOT_CHARS,
@@ -338,9 +343,9 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-async def _stream_chat_completions(client, url: str, headers: dict, body: dict, on_delta) -> Dict[str, Any]:
-    """流式拉取 chat/completions：正文增量实时回调 on_delta，最终重组出与
-    非流式同构的 message dict（content / tool_calls / reasoning_content）。
+async def _stream_chat_completions(client, url: str, headers: dict, body: dict, on_delta):
+    """流式拉取 chat/completions：正文增量实时回调 on_delta，返回
+    (与非流式同构的 message dict, 上游 usage 或 None)。
 
     兼容三类上游行为：
     - 标准 SSE（data: {...} / data: [DONE]）；
@@ -350,6 +355,7 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
     content_parts: list = []
     reasoning_parts: list = []
     tool_acc: Dict[int, Dict[str, Any]] = {}
+    last_usage = None
     async with client.stream("POST", url, json=body, headers=headers, timeout=90.0) as resp:
         if resp.status_code != 200:
             detail = (await resp.aread()).decode("utf-8", "ignore")[:500]
@@ -360,7 +366,7 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
                 message = data["choices"][0].get("message") or {}
             except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
                 raise HarnessError("模型响应缺少有效内容") from exc
-            return message
+            return message, (data.get("usage") if isinstance(data, dict) else None)
         async for line in resp.aiter_lines():
             line = line.strip()
             if not line.startswith("data:"):
@@ -372,6 +378,9 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
                 chunk = json.loads(payload_text)
             except json.JSONDecodeError:
                 continue
+            if isinstance(chunk, dict) and chunk.get("usage"):
+                # include_usage 的计量帧 choices 为空，会在下方被跳过，先接住
+                last_usage = chunk["usage"]
             choices = chunk.get("choices") or []
             if not choices:
                 continue
@@ -418,7 +427,7 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
         message["reasoning_content"] = reasoning
     if tool_acc:
         message["tool_calls"] = [tool_acc[key] for key in sorted(tool_acc)]
-    return message
+    return message, last_usage
 
 
 async def _call_model(
@@ -438,8 +447,7 @@ async def _call_model(
     headers = {"Content-Type": "application/json"}
     if model["api_key"] and model["provider"] != "opencode":
         headers["Authorization"] = f"Bearer {model['api_key']}"
-    # harness 无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶
-    headers.update(opencode_gateway_headers(model["base_url"], "phymathia-harness-" + str(os.getpid())))
+    headers.update(opencode_gateway_headers(model["base_url"], _HARNESS_SESSION_ID))
     body = {
         "model": model["model"],
         "messages": messages,
@@ -453,10 +461,11 @@ async def _call_model(
             body["tool_choice"] = tool_choice
     elif json_mode:
         body["response_format"] = {"type": "json_object"}
+    usage = None
     try:
         client = get_http_client()
         if on_delta is not None:
-            message = await _stream_chat_completions(client, url, headers, body, on_delta)
+            message, usage = await _stream_chat_completions(client, url, headers, body, on_delta)
         else:
             resp = await client.post(url, json=body, headers=headers, timeout=90.0)
             if resp.status_code != 200:
@@ -464,6 +473,7 @@ async def _call_model(
                 raise HarnessError(f"模型返回 {resp.status_code}: {detail}")
             try:
                 data = resp.json()
+                usage = data.get("usage") if isinstance(data, dict) else None
                 message = data["choices"][0].get("message") or {}
             except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
                 raise HarnessError("模型响应缺少有效内容") from exc
@@ -473,6 +483,9 @@ async def _call_model(
         "harness model call: %s/%s tools=%s tool_choice=%s json_mode=%s",
         model["provider"], model["model"], bool(tools), tool_choice or "-", json_mode,
     )
+    if usage:
+        usage_stats.record_usage(model["provider"], model["model"], "harness",
+                                 _HARNESS_SESSION_ID, usage)
     # 推理模型（deepseek-v4-flash / hy3 等）两种形态都要防：
     # ① 正文带 <think>…</think> 思考块（思考里还可能草拟残缺 JSON 干扰解析）；
     # ② 正文为空、全文落在 reasoning_content。
