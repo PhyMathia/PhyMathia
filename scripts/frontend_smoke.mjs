@@ -2285,6 +2285,133 @@ check('graph-continent: v5.4 岛牌一句话 + 空态引导（纯拼接 / 机制
   return true;
 });
 
+check('graph-continent: v8 岛牌真摘要（model/manual 优先，无摘要回退旧拼接）', () => {
+  const tagline = sandbox._continentIslandTagline;
+  if (typeof tagline !== 'function') throw new Error('_continentIslandTagline 未暴露');
+  // 最早学的一条真摘要当岛牌一句话（descriptor 槽位接上），时间照拼
+  const t = tagline({
+    items: [
+      { title: '简谐运动', summary: '回复力与位移成正比且方向相反的振动', createdAt: 3000 },
+      { title: '阻尼', summary: '振幅随时间衰减的振动', createdAt: 2000 },
+    ],
+  }, () => '3 天前');
+  if (t !== '回复力与位移成正比且方向相反的振动 · 3 天前') throw new Error('真摘要口径错：' + t);
+  // local 模板摘要（服务端给空串）不得上岛牌——回退旧拼接
+  const fallback = tagline({
+    items: [
+      { title: '简谐运动', summary: '', createdAt: 3000 },
+      { title: '阻尼', createdAt: 2000 },
+      { title: '共振', createdAt: 1000 },
+      { title: '第四个不该出现', createdAt: 500 },
+    ],
+  }, () => '3 天前');
+  if (fallback !== '简谐运动 · 阻尼 · 共振 · 3 天前') throw new Error('无摘要回退拼接错：' + fallback);
+  // 超长摘要截断到 48 字（CSS 省略是兜底，纯函数先裁一层）
+  const long = tagline({ items: [{ title: 'A', summary: '长'.repeat(60), createdAt: 1 }] }, () => '');
+  if (long.length !== 48) throw new Error('摘要截断口径错：长度 ' + long.length);
+  // 静态契约：摘要分支在（旧拼接路径的既有断言在上面用例里继续生效）
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (src.indexOf('_continentClipText(summary, 48)') < 0) throw new Error('岛牌摘要截断缺失');
+  return true;
+});
+
+check('graph-continent: v8 顶栏搜索（归一匹配 / 标题优先 / 上限 / 唯一直达口径）', () => {
+  const matches = sandbox._continentSearchMatches;
+  if (typeof matches !== 'function') throw new Error('_continentSearchMatches 未暴露');
+  const data = {
+    clusters: [
+      { sessionId: 's1', title: '梯度专题', itemCount: 2, items: [
+        { itemId: 'i1', title: '梯度的几何意义', summary: '方向导数的最大值' },
+        { itemId: 'i2', title: '旋度', summary: '环量的面密度，与能量有关' },
+      ] },
+      { sessionId: 's2', title: '能量守恒', itemCount: 2, items: [
+        { itemId: 'i3', title: '动能定理', summary: '合外力做功等于动能变化' },
+        { itemId: 'i4', title: 'Fourier Transform', summary: '时域到频域的变换' },
+      ] },
+    ],
+  };
+  // 空查/缺数据：空数组（查空是正常路径）
+  if (matches(data, '').length !== 0 || matches(data, '   ').length !== 0) throw new Error('空查询应空');
+  if (matches(null, 'x').length !== 0) throw new Error('缺数据应安全');
+  // 岛名命中 → island 行；卡片标题命中 → item 行
+  const island = matches(data, '梯度专题');
+  if (island.length !== 1 || island[0].type !== 'island' || island[0].sid !== 's1') {
+    throw new Error('岛名命中错');
+  }
+  const item = matches(data, '动能定理');
+  if (item.length !== 1 || item[0].type !== 'item' || item[0].itemId !== 'i3') {
+    throw new Error('卡片命中错');
+  }
+  // 归一化：大小写与空格不影响命中（fouriertransform 命中 Fourier Transform）
+  const latin = matches(data, 'FOURIER  transform');
+  if (latin.length !== 1 || latin[0].itemId !== 'i4') throw new Error('归一化失效');
+  // 摘要兜底：标题里没有「能量」的卡靠摘要命中；标题命中（岛名行）排最前
+  const bySummary = matches(data, '能量');
+  if (bySummary[0].type !== 'island') throw new Error('标题命中应排前');
+  const last = bySummary[bySummary.length - 1];
+  if (last.itemId !== 'i2' || last.viaSummary !== true) throw new Error('摘要兜底/标记错');
+  // 上限
+  if (matches({ clusters: [{ sessionId: 's', title: '甲', items: [] }] }, '甲', 3).length > 3) {
+    throw new Error('上限失效');
+  }
+  // 静态契约：搜索框与结果下拉在顶栏、命中高亮类、关闭大陆清搜索态、渲染收尾重放
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('continentSearch')) throw new Error('顶栏搜索输入缺失');
+  if (!src.includes('is-search-hit')) throw new Error('搜索命中高亮缺失');
+  if (!src.includes('_continentSearchClear()')) throw new Error('关闭/收起时未清搜索态');
+  if (src.indexOf('if (_continentSearchResults.length) _continentApplySearchHit') < 0) {
+    throw new Error('重渲后搜索高亮未重放');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-search-pop[hidden]')) throw new Error('下拉 hidden 兜底缺失（display 压 hidden 坑）');
+  if (!css.includes('.continent-node.is-search-hit')) throw new Error('命中高亮样式缺失');
+  return true;
+});
+
+check('graph-continent: v8 族表编辑 + 纠正信号（规范化 / 术语解析 / 来源标记 / 落盘口径）', () => {
+  const normalize = sandbox._continentFamilyNormalizeList;
+  const parseTerms = sandbox._continentFamilyParseTerms;
+  const srcLabel = sandbox._continentFamilySourceLabel;
+  if (typeof normalize !== 'function' || typeof parseTerms !== 'function' || typeof srcLabel !== 'function') {
+    throw new Error('族表纯函数未暴露');
+  }
+  // 术语解析：顿号/逗号/分号/空白都是分隔；单字丢弃；ASCII 单词照收
+  const terms = parseTerms('拉格朗日方程、哈密顿, 最小作用量；variational');
+  if (terms.length !== 4 || terms.indexOf('拉格朗日方程') < 0 || terms.indexOf('最小作用量') < 0) {
+    throw new Error('术语解析错：' + terms.join('|'));
+  }
+  if (parseTerms('力 波').length !== 0) throw new Error('单字术语应丢弃');
+  // KV 规范化：无效项丢弃、限长、去重、非 user 一律 custom（与服务端同口径）
+  const norm = normalize([
+    { canonical: '', terms: ['甲'] },
+    { canonical: '我的专题', terms: ['涡旋电场', '涡旋电场', '单'] },
+    { canonical: '超'.repeat(20), terms: ['超'.repeat(30)] },
+    'junk',
+    { canonical: '来源', terms: ['规范', '守恒'], source: 'user' },
+  ]);
+  if (norm.length !== 3) throw new Error('规范化数量错：' + norm.length);
+  if (norm[0].terms.length !== 1) throw new Error('去重/单字丢弃错');
+  if (norm[1].canonical.length !== 16 || norm[1].terms[0].length !== 24) throw new Error('限长错');
+  if (norm[2].source !== 'user' || norm[0].source !== 'custom') throw new Error('来源标记错');
+  if (normalize(null).length !== 0) throw new Error('缺入参应安全');
+  // 来源标记三档
+  if (srcLabel('builtin') !== '内置' || srcLabel('user') !== '你指定' || srcLabel('custom') !== '自定义') {
+    throw new Error('来源标记错');
+  }
+  // 静态契约：顶栏「族表」入口、KV 通道、纠正记录读写与图例可见
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('continentFamilyBtn')) throw new Error('族表按钮缺失');
+  if (!src.includes('/api/families')) throw new Error('族表合并视图端点未接');
+  if (!src.includes('/api/kv/continent_families')) throw new Error('族表 KV 写通道缺失');
+  if (!src.includes('/api/kv/continent_gate_weights')) throw new Error('纠正记录 KV 缺失');
+  if (!src.includes('_continentRecordCorrection')) throw new Error('纠正落盘函数缺失');
+  if (src.indexOf('归类纠正已记录') < 0) throw new Error('纠正次数图例可见缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-family-row')) throw new Error('族表行样式缺失');
+  if (!css.includes('.continent-family-chip')) throw new Error('词条芯片样式缺失');
+  return true;
+});
+
 check('graph-continent: 空画布说明（N 个画布还没有知识点——顶栏机制文案）', () => {
   const count = sandbox._continentEmptyCanvasCount;
   if (typeof count !== 'function') throw new Error('_continentEmptyCanvasCount 未暴露');

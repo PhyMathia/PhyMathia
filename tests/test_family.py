@@ -21,7 +21,7 @@ for p in (ROOT, SRC):
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 from server.family import (  # noqa: E402
-    ALIASES, BUILTIN_FAMILIES, apply_aliases, families_from_payload,
+    ALIASES, BUILTIN_FAMILIES, FAMILY_LIMIT, apply_aliases, families_from_payload,
     match_families, merge_families, prepare_families,
 )
 
@@ -100,6 +100,39 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(target[0]["source"], "user")
         # 内置的其它族照旧在
         self.assertTrue(any(f["canonical"] == "振动与波动" for f in merged))
+
+
+class FamiliesViewTest(unittest.TestCase):
+    """族表编辑视图（/api/families 的底层）：前端「改/删/新增」靠它渲染。"""
+
+    def test_view_contains_builtin_families_with_source_and_limit(self):
+        from server.family import families_view
+        view = families_view(None)
+        self.assertEqual(view["limit"], FAMILY_LIMIT)
+        self.assertEqual(view["customCount"], 0)
+        canon = {f["canonical"] for f in view["families"]}
+        self.assertIn("矢量分析", canon)
+        self.assertIn("振动与波动", canon)
+        for fam in view["families"]:
+            self.assertEqual(fam["source"], "builtin")
+
+    def test_view_reflects_kv_override_and_custom(self):
+        from server.family import families_view
+        view = families_view({"families": [
+            {"canonical": "矢量分析", "terms": ["梯度场"], "source": "user"},
+            {"canonical": "我的专题", "terms": ["涡旋电场"], "source": "user"},
+        ]})
+        by_name = {f["canonical"]: f for f in view["families"]}
+        self.assertEqual(by_name["矢量分析"]["source"], "user")
+        self.assertEqual(by_name["矢量分析"]["terms"], ["梯度场"])
+        self.assertEqual(by_name["我的专题"]["source"], "user")
+        self.assertEqual(view["customCount"], 2)
+
+    def test_view_dirty_payload_safe(self):
+        from server.family import families_view
+        view = families_view({"families": ["junk", {"canonical": ""}, None]})
+        self.assertEqual(view["customCount"], 0)
+        self.assertTrue(len(view["families"]) >= len(BUILTIN_FAMILIES))
 
 
 if __name__ == "__main__":
