@@ -1033,7 +1033,9 @@ function zoomGraph(factor, centerX, centerY) {
   state.pan.x = cx - wx * newZoom;
   state.pan.y = cy - wy * newZoom;
   state.zoom = newZoom;
-  _saveGraphState(state);
+  // 滚轮一格一次 save：本地落盘走防抖（缓存即时更新，localStorage 150ms 后合并落盘），
+  // 其余 save 调用方保持同步写不变
+  _saveGraphState(state, { deferLocalWrite: true });
   _applyGraphTransform();
 }
 
@@ -1304,6 +1306,12 @@ function _handlePointerMove(event) {
 }
 
 function _applyPointerDrag(clientX, clientY) {
+  // 拖拽期间暂停装饰粒子（纯装饰却在每帧写 33 次 transform/opacity，
+  // 压缩交互帧的 16ms 预算）；_endPointerDrag 统一恢复
+  if (!graphView.symbolsPausedForDrag) {
+    graphView.symbolsPausedForDrag = true;
+    if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(true);
+  }
   const dx = clientX - graphView.startX;
   const dy = clientY - graphView.startY;
   if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
@@ -1345,7 +1353,8 @@ function _applyPointerDrag(clientX, clientY) {
       node.w = node.customWidth;
       node.h = el.getBoundingClientRect().height / (graphView.zoom || 1);
       if (node.kind === 'ai_eval') _updateAiEvalZigzag(node);
-      _redrawEdges();
+      // resize 帧走边的增量快速路径（只改涉及边的 d/标签），整层重建退居后备
+      if (!_refreshEdgeGeometry(_edgesTouchingNodeIds([node.id]))) _redrawEdges();
     }
     return;
   }
@@ -1416,6 +1425,10 @@ function _endPointerDrag(event) {
   if (graphView.paintPending) {
     graphView.paintPending = false;
     _applyPointerDrag(graphView.lastPointerX, graphView.lastPointerY);
+  }
+  if (graphView.symbolsPausedForDrag) {
+    graphView.symbolsPausedForDrag = false;
+    if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(false);
   }
   if (graphView.moved) graphView.suppressClick = true;
   setTimeout(() => { graphView.suppressClick = false; }, 0);

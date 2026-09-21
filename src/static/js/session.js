@@ -306,6 +306,8 @@
     // 注意：同步 XHR 在 Chrome 88+ 的卸载阶段会被丢弃，改用 sendBeacon
     // （fire-and-forget、不受卸载打断影响）；不可用时退回 fetch keepalive
     window.addEventListener('beforeunload', () => {
+      // 画布状态本地写是防抖的（150ms），卸载前同步冲刷——localStorage 同步写在卸载阶段仍有效
+      _flushGraphStateLocalSave();
       const beacon = (url, payload) => {
         try {
           const body = JSON.stringify(payload);
@@ -379,56 +381,57 @@
     }
 
     // ====== 探索网 UI 状态 ======
+    // 内存缓存层：拖拽/缩放每帧都会 getGraphState（旧实现每次全量 JSON.parse），
+    // saveGraphState 每次交互都 stringify + 同步写 localStorage（滚轮一格一次）。
+    // 现在读走缓存（浅拷贝返回，语义与旧实现一致），写只更新缓存并防抖落盘。
+    // 直接绕过缓存写这个键的地方（服务端合并、备份导入）必须同步/失效缓存。
+    const _graphStateMemCache = new Map(); // sid -> 标准化 state 对象
+    let _graphLocalSaveTimer = null;
+    let _graphLocalSavePending = null;     // { sid, snap }
+
+    function _normalizeGraphState(parsed) {
+      const p = parsed || {};
+      return {
+        collapsed: p.collapsed || {},
+        hidden: p.hidden || {},
+        positions: p.positions || {},
+        pinned: p.pinned || {},
+        sizes: p.sizes || {},
+        pan: p.pan || { x: 80, y: 80 },
+        zoom: typeof p.zoom === 'number' ? p.zoom : 0.9,
+        focus: p.focus || null,
+        layoutVersion: p.layoutVersion || 1,
+        connections: Object.prototype.hasOwnProperty.call(p, 'connections') ? p.connections : null,
+        removedEdges: p.removedEdges || [],
+        portCounts: p.portCounts || {},
+        inputPortCounts: p.inputPortCounts || {},
+        groups: Array.isArray(p.groups) ? p.groups : [],
+        customNodes: Array.isArray(p.customNodes) ? p.customNodes : [],
+        harnessDeleted: p.harnessDeleted || {},
+        harnessNodeOverrides: p.harnessNodeOverrides || {},
+        harnessCheckpoint: p.harnessCheckpoint || null,
+        updatedAt: p.updatedAt || 0,
+      };
+    }
+
+    function _invalidateGraphStateCache(sid) {
+      if (sid) _graphStateMemCache.delete(sid);
+      else _graphStateMemCache.clear();
+    }
+
     function getGraphState(sessionId) {
       const sid = sessionId || currentSessionId || '';
-      try {
-        const raw = localStorage.getItem('phymathia_graph_' + sid);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          return {
-            collapsed: parsed.collapsed || {},
-            hidden: parsed.hidden || {},
-            positions: parsed.positions || {},
-            pinned: parsed.pinned || {},
-            sizes: parsed.sizes || {},
-            pan: parsed.pan || { x: 80, y: 80 },
-            zoom: typeof parsed.zoom === 'number' ? parsed.zoom : 0.9,
-            focus: parsed.focus || null,
-            layoutVersion: parsed.layoutVersion || 1,
-            connections: Object.prototype.hasOwnProperty.call(parsed, 'connections') ? parsed.connections : null,
-            removedEdges: parsed.removedEdges || [],
-            portCounts: parsed.portCounts || {},
-            inputPortCounts: parsed.inputPortCounts || {},
-            groups: Array.isArray(parsed.groups) ? parsed.groups : [],
-            customNodes: Array.isArray(parsed.customNodes) ? parsed.customNodes : [],
-            harnessDeleted: parsed.harnessDeleted || {},
-            harnessNodeOverrides: parsed.harnessNodeOverrides || {},
-            harnessCheckpoint: parsed.harnessCheckpoint || null,
-            updatedAt: parsed.updatedAt || 0,
-          };
-        }
-      } catch (e) {}
-      return {
-        collapsed: {},
-        hidden: {},
-        positions: {},
-        pinned: {},
-        sizes: {},
-        pan: { x: 80, y: 80 },
-        zoom: 0.9,
-        focus: null,
-        layoutVersion: 1,
-        connections: null,
-        removedEdges: [],
-        portCounts: {},
-        inputPortCounts: {},
-        groups: [],
-        customNodes: [],
-        harnessDeleted: {},
-        harnessNodeOverrides: {},
-        harnessCheckpoint: null,
-        updatedAt: 0,
-      };
+      let state = _graphStateMemCache.get(sid);
+      if (!state) {
+        let parsed = null;
+        try {
+          const raw = localStorage.getItem('phymathia_graph_' + sid);
+          if (raw) parsed = JSON.parse(raw);
+        } catch (e) {}
+        state = _normalizeGraphState(parsed);
+        _graphStateMemCache.set(sid, state);
+      }
+      return { ...state };
     }
 
     let _graphStateSyncTimer = null;
@@ -458,7 +461,9 @@
         const local = getGraphState(sid);
         const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
         if (useServer) {
-          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify({ ...local, ...serverState }));
+          const merged = _normalizeGraphState({ ...local, ...serverState });
+          _graphStateMemCache.set(sid, merged);
+          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(merged));
         }
       } catch (err) {
         console.warn('[GraphState] Failed to load server state:', err);
@@ -483,18 +488,52 @@
       if (pending) await _postGraphState(pending.sid, pending.state);
     }
 
-    function saveGraphState(sessionId, state) {
+    // 本地落盘：默认同步写——回归脚本与备份导出会在 save 后立即直接读 localStorage，
+    // 这是既有可观察契约。只有高频调用方（滚轮缩放）显式传 deferLocalWrite 走防抖，
+    // 防抖中的写可用 flushGraphStateLocalSave 冲刷。
+    function _flushGraphStateLocalSave() {
+      clearTimeout(_graphLocalSaveTimer);
+      _graphLocalSaveTimer = null;
+      const pending = _graphLocalSavePending;
+      _graphLocalSavePending = null;
+      if (!pending) return;
+      try {
+        localStorage.setItem('phymathia_graph_' + pending.sid, JSON.stringify(pending.snap));
+      } catch (e) { /* 配额满等写失败：缓存仍在，下次 save 重试 */ }
+    }
+
+    function saveGraphState(sessionId, state, opts) {
       const sid = sessionId || currentSessionId || '';
       if (!sid) return;
       const snap = { ...state, updatedAt: Date.now() };
-      safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(snap));
+      _graphStateMemCache.set(sid, snap);
       _scheduleGraphStateServerSave(sid, snap);
+      if (opts && opts.deferLocalWrite) {
+        _graphLocalSavePending = { sid, snap };
+        if (!_graphLocalSaveTimer) {
+          _graphLocalSaveTimer = setTimeout(_flushGraphStateLocalSave, 150);
+        }
+        return;
+      }
+      if (_graphLocalSavePending && _graphLocalSavePending.sid === sid) {
+        clearTimeout(_graphLocalSaveTimer);
+        _graphLocalSaveTimer = null;
+        _graphLocalSavePending = null;
+      }
+      try {
+        localStorage.setItem('phymathia_graph_' + sid, JSON.stringify(snap));
+      } catch (e) { /* 本地写失败不阻断：服务端同步照常 */ }
     }
 
     async function _deleteGraphStateOnServer(sid) {
       if (!sid) return;
       if (sid === currentSessionId) clearTimeout(_graphStateSyncTimer);
       _graphStatePendingSave = null;
+      // 会话删除/清空：撤销待落盘的本地写，防止防抖定时器把已删除的键写回去
+      if (_graphLocalSavePending && _graphLocalSavePending.sid === sid) _graphLocalSavePending = null;
+      clearTimeout(_graphLocalSaveTimer);
+      _graphLocalSaveTimer = null;
+      _graphStateMemCache.delete(sid);
       try {
         await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), { method: 'DELETE' });
       } catch (err) {
@@ -515,6 +554,7 @@
     window.getGraphState = getGraphState;
     window.saveGraphState = saveGraphState;
     window.flushGraphStateServerSave = _flushGraphStateServerSave;
+    window.flushGraphStateLocalSave = _flushGraphStateLocalSave;
     window.setModuleVisibility = setModuleVisibility;
     window.getCurrentSessionId = () => currentSessionId;
 
@@ -1093,6 +1133,11 @@
         k === 'phymathia_quiz_source'
       );
       keys.forEach(k => localStorage.removeItem(k));
+      // 图状态缓存与待落盘写一并清掉，防止防抖定时器把已删除的键写回去
+      _graphLocalSavePending = null;
+      clearTimeout(_graphLocalSaveTimer);
+      _graphLocalSaveTimer = null;
+      _invalidateGraphStateCache();
       if (typeof setFormulaCache === 'function') setFormulaCache({});
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof window.clearAllQuizStats === 'function') window.clearAllQuizStats();

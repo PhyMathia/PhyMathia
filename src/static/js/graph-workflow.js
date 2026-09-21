@@ -1800,6 +1800,13 @@ function _initGraphCanvasEvents() {
   });
   graphCanvas.addEventListener('pointermove', _handlePointerMove);
   window.addEventListener('pointerup', _endPointerDrag);
+  // 拖拽被系统手势/浏览器接管时 pointerup 不来：至少把装饰粒子的暂停标志恢复掉
+  window.addEventListener('pointercancel', () => {
+    if (graphView.symbolsPausedForDrag) {
+      graphView.symbolsPausedForDrag = false;
+      if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(false);
+    }
+  });
   graphCanvas.addEventListener('selectstart', e => {
     if (graphView.selectMode) return;
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('input, textarea')) return;

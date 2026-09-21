@@ -143,6 +143,8 @@ function _mergeMaps(base, extra) {
 }
 
 function _collectLocalBackup() {
+  // 画布状态本地落盘是防抖的：导出快照前先冲刷，否则最近 150ms 的画布改动不进备份
+  if (typeof window.flushGraphStateLocalSave === 'function') window.flushGraphStateLocalSave();
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
   const messages = {};
   Object.keys(sessions).forEach(sid => {
@@ -614,13 +616,27 @@ document.addEventListener('click', (e) => {
   const symbols = [];
   for (let i = 0; i < SYMBOL_COUNT; i++) symbols.push(new FloatingSymbol(i));
 
-  function animate() {
+  // 粒子是纯装饰，但每帧 33 次 transform/opacity 写会压缩交互帧的 16ms 预算。
+  // 重活期间（AI 流式生成、画布拖拽）整段暂停，恢复后从当前状态继续——
+  // 各暂停方通过计数器叠加，全部恢复才重新启动循环。
+  let _symbolAnimRaf = 0;
+  let _symbolPauseCount = 0;
+  function _symbolLoop() {
+    _symbolAnimRaf = 0;
     smoothMouseX += (mouseX - smoothMouseX) * 0.1;
     smoothMouseY += (mouseY - smoothMouseY) * 0.1;
     for (const sym of symbols) sym.update();
-    requestAnimationFrame(animate);
+    if (_symbolPauseCount === 0) _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
   }
-  animate();
+  window.setFloatingSymbolsPaused = function (paused) {
+    _symbolPauseCount = Math.max(0, _symbolPauseCount + (paused ? 1 : -1));
+    if (_symbolPauseCount > 0) {
+      if (_symbolAnimRaf) { cancelAnimationFrame(_symbolAnimRaf); _symbolAnimRaf = 0; }
+    } else if (!_symbolAnimRaf) {
+      _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
+    }
+  };
+  _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
 
   const origToggle = window.toggleTheme;
   window.toggleTheme = function() {

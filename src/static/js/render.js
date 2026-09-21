@@ -595,8 +595,10 @@ function renderMarkdown(text, renderCtx = {}) {
     // 流式期间同一消息每帧重渲染都会走到这里：按「渲染上下文+代码块序号」复用
     // 同一 vizId 覆盖式更新，避免每次都新建条目把几十~几百 KB 的完整 HTML
     // （含桥接脚本）反复塞进 _vizStore 只增不减；内容 hash 再做一层跨消息去重
+    // slotPrefix：流式增量渲染按块拆开调 renderMarkdown，每块的序号都从 0 起，
+    // 不加前缀会互相覆盖同一槽位（冻结块与尾块各有一张 viz 时必撞）
     const contentHash = _vizHash(decodedHtml);
-    const slotKey = (renderCtx.parentId || 'anon') + ':' + vizSlot++;
+    const slotKey = (renderCtx.parentId || 'anon') + ':' + (renderCtx.slotPrefix || '') + vizSlot++;
     let vizId = _vizSlotKeys[slotKey];
     if (!vizId || !_vizStore[vizId]) {
       const byHash = _vizContentIndex[contentHash];
@@ -996,6 +998,36 @@ function sanitizeMermaidCode(code) {
   return lines.join('\n');
 }
 
+// ===== Mermaid SVG 缓存 =====
+// 同一段 mermaid 源码会被反复解析（画布全量重建、切会话、消息重渲染都会生成新的
+// .mermaid 空节点），render() 解析一次几十毫秒起。按「主题+源码 hash」缓存 SVG 字符串，
+// 命中时把旧渲染 id 整体替换为新 id——SVG 内部的 marker/clipPath 引用都以后缀形式
+// 派生自渲染 id，整串替换后引用关系保持成立。
+const _mermaidSvgCache = new Map(); // cacheKey -> { svg, baseId }
+const MERMAID_SVG_CACHE_MAX = 40;
+
+function _mermaidSvgReid(svg, oldId, newId) {
+  if (oldId === newId || svg.indexOf(oldId) === -1) return svg;
+  return svg.split(oldId).join(newId);
+}
+
+function _mermaidSvgCacheGet(key) {
+  const hit = _mermaidSvgCache.get(key);
+  if (hit) { // Map 按插入序淘汰：命中后重插保持 LRU 语义
+    _mermaidSvgCache.delete(key);
+    _mermaidSvgCache.set(key, hit);
+  }
+  return hit;
+}
+
+function _mermaidSvgCachePut(key, svg, baseId) {
+  if (_mermaidSvgCache.size >= MERMAID_SVG_CACHE_MAX) {
+    const oldest = _mermaidSvgCache.keys().next().value;
+    if (oldest !== undefined) _mermaidSvgCache.delete(oldest);
+  }
+  _mermaidSvgCache.set(key, { svg, baseId });
+}
+
 async function renderMermaidInElement(element) {
   const mermaidDivs = element.querySelectorAll('.mermaid:not([data-processed="true"])');
   for (const div of mermaidDivs) {
@@ -1011,11 +1043,22 @@ async function renderMermaidInElement(element) {
       // 预处理 mermaid 代码，修正常见语法问题
       code = sanitizeMermaidCode(code);
       const id = div.id || ('m_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 5));
+      const renderId = id + '_svg';
       const mermaidInstance = (typeof ensureMermaid === 'function')
         ? await ensureMermaid()
         : (window.mermaid || null);
       if (!mermaidInstance) throw new Error('Mermaid 未加载');
-      const { svg } = await mermaidInstance.render(id + '_svg', code);
+      // 主题进 key：SVG 若是 CSS 变量驱动，两主题产物相同（缓存照常命中）；
+      // 若不是，则各主题各留一份，切主题后新图不会用错配色
+      const cacheKey = (document.documentElement.getAttribute('data-theme') || 'dark') + '|' + _vizHash(code);
+      const cached = _mermaidSvgCacheGet(cacheKey);
+      let svg;
+      if (cached) {
+        svg = _mermaidSvgReid(cached.svg, cached.baseId, renderId);
+      } else {
+        svg = (await mermaidInstance.render(renderId, code)).svg;
+        _mermaidSvgCachePut(cacheKey, svg, renderId);
+      }
       div.innerHTML = svg;
       div.setAttribute('data-processed', 'true');
       // 移动端：给知识图谱容器添加捏合缩放
