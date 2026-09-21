@@ -149,10 +149,12 @@ async def health_check():
 
 async def _parse_json_object(request: Request) -> dict:
     """统一解析 JSON 对象 body：非法 JSON / 非对象（list/str/number）一律 400，
-    避免后续 payload.get(...) 抛 AttributeError 变成 500。"""
+    避免后续 payload.get(...) 抛 AttributeError 变成 500。大 body（文档上传
+    可达 100MB 级 JSON 串）的 json.loads 卸到工作线程，不阻塞事件循环。"""
+    raw = await request.body()
     try:
-        payload = await request.json()
-    except json.JSONDecodeError:
+        payload = await asyncio.to_thread(json.loads, raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid JSON")
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="JSON object expected")
