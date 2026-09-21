@@ -32,7 +32,7 @@ import re
 __all__ = [
     "BUILTIN_FAMILIES", "ALIASES", "apply_aliases", "families_from_payload",
     "merge_families", "prepare_families", "match_families",
-    "match_family_terms",
+    "match_family_terms", "families_view",
     "FAMILY_LIMIT", "FAMILY_TERM_MAX_CHARS", "FAMILY_CANONICAL_MAX_CHARS",
 ]
 
@@ -230,6 +230,21 @@ def merge_families(builtin: list, custom: list) -> list:
         if len(merged) >= FAMILY_LIMIT:
             break
     return merged
+
+
+def families_view(user_families) -> dict:
+    """族表编辑视图（/api/families 与测试共用）：合并后的族列表 + 自定义数 + 上限。
+
+    族表编辑界面（大陆顶栏「族表」）要同时知道**生效中的表**（内置 + KV 覆盖，含
+    source 标记：builtin=内置 / custom=KV 自定义 / user=用户或 Φ 确认）与**上限**，
+    前端据此渲染「改/删/新增」——增删改落回 KV `continent_families`，同名覆盖内置。
+    """
+    custom = families_from_payload(user_families)
+    return {
+        "families": merge_families(BUILTIN_FAMILIES, custom),
+        "customCount": len(custom),
+        "limit": FAMILY_LIMIT,
+    }
 
 
 _ASCII_WORD_RE = re.compile(r"[a-z0-9]+")

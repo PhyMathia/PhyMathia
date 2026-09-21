@@ -35,7 +35,7 @@ for _path in (_SRC_DIR, _ROOT_DIR):
 from http_client import close_http_client, get_http_client  # noqa: E402
 import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
 
-from server import backup, concept, continent, context, documents, knowledge, profile, prompts, storage  # noqa: F401
+from server import backup, concept, continent, context, documents, family, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -883,6 +883,15 @@ async def api_get_continent():
     # v7.1b 门控产物：Φ 批量打标（只读离线产物，版本不符整批忽略——打开大陆仍是纯本地现算）
     gate = kv.get("continent_gate")
     return continent.build_continent(items, sessions, user_edges, user_families, gate)
+
+
+@app.get("/api/families")
+async def api_get_families():
+    """概念族表合并视图（v8 族表编辑界面用）：内置表 + KV `continent_families` 覆盖。
+
+    只读；增删改走既有 KV 通道（POST /api/kv/continent_families，同名覆盖内置）。
+    """
+    return family.families_view(storage.kv_all_data().get("continent_families"))
 
 
 @app.post("/api/knowledge")
