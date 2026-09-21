@@ -32,9 +32,10 @@ def no_network(*a, **k):
 socket.socket.connect = no_network
 import main
 from server import knowledge, storage, concept, continent
-class Request:
-    def __init__(self, body): self.body = body
-    async def json(self): return self.body
+    class Request:
+        def __init__(self, body): self.body = body
+        async def json(self): return self.body
+        async def body(self): return json.dumps(self.body).encode('utf-8')  # _parse_json_object 读原始 body（线程化解析）
 async def run():
     sid = 'sess_review_e'
     msgs = [{'role':'user','content':'胡克定律'},
