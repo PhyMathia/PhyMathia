@@ -70,6 +70,11 @@ _W_FORMULA_HIT = 100
 _W_TITLE_RUN = 60
 _W_GENERIC_RUN = 8
 _W_FORMULA_SHARED = 30
+# 记忆第二步「用起来」：用户画像薄弱项与条目标题实质重叠时的小额加权。
+# 定位是「同分裁决/近分重排」：小于一次公式命中（100），大于泛后缀（8）；
+# 只加在**已过检索闸门**的条目上（铁律：只重排、不放水），并同样走 _run_weight
+# 的稀有度惩罚——薄弱词写成泛词（「运动」）时惩罚会把它压回几乎无影响。
+_W_WEAK_PROFILE = 20
 # 功能字：含这些字的共享串不是领域术语（「动的」「和线」「是有」…），一律丢弃。
 # 不能用整串相等判定——「动的」这样的碎片必须先认出里面的「的」。
 _STOP_CHARS = set("的地得和与跟及或在是有为对把被让使则即也都还很更最又再就才只不没了着过")
@@ -150,7 +155,7 @@ def _formula_tokens(item: dict) -> set:
 
 
 def match_concepts(prompt: str, items: dict, limit: int = 2, session_id: str = "",
-                   allow_cross_session: bool = True) -> list:
+                   allow_cross_session: bool = True, weak_terms=None) -> list:
     """问题 → 概念识别（本地，无模型调用），返回命中的条目 id（按证据分降序）。
 
     无命中返回 []，调用方静默跳过（查空是正常路径）；需要命中理由用 match_concept_details。
@@ -158,13 +163,13 @@ def match_concepts(prompt: str, items: dict, limit: int = 2, session_id: str = "
     return [
         row["id"] for row in match_concept_details(
             prompt, items, limit=limit, session_id=session_id,
-            allow_cross_session=allow_cross_session,
+            allow_cross_session=allow_cross_session, weak_terms=weak_terms,
         )
     ]
 
 
 def match_concept_details(prompt: str, items: dict, limit: int = 2, session_id: str = "",
-                          allow_cross_session: bool = True) -> list:
+                          allow_cross_session: bool = True, weak_terms=None) -> list:
     """问题 → 概念识别详情（`{"id", "hits", "runs", "score"}`），便于排查与单测。
 
     四类证据（权重见 _W_*）：
@@ -176,6 +181,10 @@ def match_concept_details(prompt: str, items: dict, limit: int = 2, session_id: 
     4. **条目与其他概念共享公式**（结构分）：同分时把「有地基的概念」排前面——否则
        「非线性振动」会选中同一答簇里的兄弟条目「简谐运动的能量」，而不是真正的
        「简谐运动」/「胡克定律」。
+
+    `weak_terms`（可选，画像薄弱词）是第五路信号：与条目标题实质重叠的已入围
+    候选获得小额加分（_W_WEAK_PROFILE）——**只影响排序，绝不影响闸门**：零交集
+    的条目不会因为薄弱词而入选，weak_terms 为空时行为与不传逐字节一致。
     """
     text = _normalize_title(prompt)
     if not text or not isinstance(items, dict):
@@ -184,6 +193,12 @@ def match_concept_details(prompt: str, items: dict, limit: int = 2, session_id: 
     symbol_text = text.replace("\\", "")
     index = _entry_formula_index(items, allow_cross_session, session_id)
     title_index = _title_run_index(items, allow_cross_session, session_id)
+    # 画像薄弱词归一（记忆第二步「用起来」）：走与概念名同一把归一尺子
+    weak_norms = []
+    for term in weak_terms or []:
+        tn = _normalize_title(str(term or ""))
+        if tn:
+            weak_norms.append(tn)
     scored = []
     for item_id, item in items.items():
         if not isinstance(item, dict):
@@ -232,6 +247,29 @@ def match_concept_details(prompt: str, items: dict, limit: int = 2, session_id: 
             # 结构分只在已入选的候选中起排序作用：把「有地基的概念」排在兄弟条目之前
             + _W_FORMULA_SHARED * shared
         )
+        # 画像薄弱加权：执行到这里说明条目已过闸门——薄弱词与标题的实质重叠
+        # （同一套 _shared_runs 阈值 + 功能字过滤 + _run_weight 稀有度惩罚）给
+        # 小额加分；零交集条目根本到不了这一行，薄弱词永不改变「谁能入围」。
+        if weak_norms:
+            weak_hits = []
+            for tn in weak_norms:
+                runs_t = [
+                    r for r in _shared_runs(tn, title, _TITLE_RUN_MIN_CJK, _TITLE_RUN_MIN_LATIN)
+                    if not (_STOP_CHARS & set(r))
+                ]
+                if runs_t:
+                    # 一个薄弱词只按最长命中串计一次：整词命中「简谐运动」时
+                    # _shared_runs 还会带回嵌套的「谐运动」「运动」，逐串计分
+                    # 等于一次匹配数三遍
+                    weak_hits.append(max(runs_t, key=len))
+            weak_hits = list(dict.fromkeys(weak_hits))
+            if weak_hits:
+                score += _W_WEAK_PROFILE * sum(_run_weight(r, title_index) for r in weak_hits)
+                scored.append((-score, -len(hits), str(item_id), {
+                    "id": str(item_id), "hits": sorted(hits), "runs": runs,
+                    "score": round(score, 2), "weak_hits": sorted(weak_hits),
+                }))
+                continue
         if score <= 0:
             continue
         scored.append((-score, -len(hits), str(item_id), {
@@ -532,11 +570,14 @@ def _trim_to_budget(text: str) -> str:
 
 
 def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
-                         kv_path=None, allow_cross_session: bool = True) -> str:
+                         kv_path=None, allow_cross_session: bool = True,
+                         weak_terms=None) -> str:
     """主入口：问题 → 概念地基段。无命中返回空串（调用方追加空串即零回归）。
 
     `.env` 的 PHYMATHIA_CONCEPT_SCOPE=same_session 可把检索范围收窄到当前会话
     （默认跨会话：先导概念的真实形态就是「上个会话学过的那个」）。
+    `weak_terms`（画像薄弱词，来自 profile.profile_weak_terms）只参与已入围
+    候选的排序加权——检索闸门与条目边界不因此改变。
     """
     if not str(prompt or "").strip():
         return ""
@@ -547,6 +588,7 @@ def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
         return ""
     refs = match_concepts(
         prompt, store, session_id=session_id, allow_cross_session=allow_cross_session,
+        weak_terms=weak_terms,
     )
     if not refs:
         return ""

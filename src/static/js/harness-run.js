@@ -342,6 +342,9 @@
           phase: harnessPhase,
           level: localStorage.getItem('phymathia_level') || 'university',
           focus_node_ids: focusIds,
+          // 记忆第二步「用起来」：带设备标识，服务端据此注入画像一行摘要
+          // （user_profile，服务端算，前端不缓存不重算）；缺失时后端静默跳过。
+          device_id: (typeof getDeviceId === 'function' ? getDeviceId() : ''),
           harness_history: _buildStructuredHarnessHistory(),
           previous_ops: Array.isArray(harnessLastAppliedOps) ? harnessLastAppliedOps : [],
           previous_snapshot: harnessLastAppliedBeforeSnapshot || null,

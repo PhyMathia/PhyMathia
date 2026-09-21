@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from . import concept as concept_mod
 from . import context as context_mod
+from . import profile as profile_mod
 from .config import LEVEL_PROMPTS
 from .prompts import MODULE_SYSTEM_PROMPT, QUICK_SYSTEM_PROMPT, get_system_prompt
 
@@ -26,6 +27,7 @@ async def preview_context(
     graph_path: str = "",
     workflow: int = 0,
     model_name: str = "",
+    device_id: str = "",
 ):
     """返回该请求实际会发给模型的消息列表与 token 估算，不发起真实调用。"""
     try:
@@ -40,9 +42,13 @@ async def preview_context(
     else:
         system_content = get_system_prompt()
     budget = context_mod.resolve_context_budget(model_name)
-    # 概念地基（M4）：体检工具必须与真实 chat 路径同构，否则「预览里没有」会被当成没生效
+    # 概念地基（M4）：体检工具必须与真实 chat 路径同构，否则「预览里没有」会被当成没生效。
+    # 记忆第二步：画像薄弱词加权也与 chat 同构——带 device_id 才有权重（不传 = 无画像）。
     if not is_quick and not workflow and not branch_id:
-        concept_text = concept_mod.concept_context_text(prompt, session_id=session_id)
+        concept_text = concept_mod.concept_context_text(
+            prompt, session_id=session_id,
+            weak_terms=(profile_mod.profile_weak_terms(device_id) if device_id else None),
+        )
         if concept_text:
             system_content += "\n\n" + concept_text
     messages = [{"role": "system", "content": system_content}]

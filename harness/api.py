@@ -76,10 +76,35 @@ async def health():
     return {"status": "ok", "service": "graph-harness"}
 
 
+def _profile_digest_for(payload: dict) -> str:
+    """Φ 的画像一行摘要（记忆第二步「用起来」）：与主聊天同一份画像数据。
+
+    digest 由服务端计算（与回答角标同一教训：前端缓存会漂移，服务端是唯一
+    事实源）。server 包不可用（battery 测试桩/独立部署）或画像关闭/为空时
+    静默降级为空串——Φ 无画像可提，行为与从前逐字节一致。
+    """
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if not device_id:
+        return ""
+    try:
+        from server import profile as server_profile
+        return str(server_profile.profile_review_digest(device_id) or "")
+    except Exception:
+        logger.exception("harness profile digest failed")
+        return ""
+
+
 def _review_kwargs(payload: dict, context: str) -> dict:
     """review_graph 的入参装配：流式与非流式两条路径共用，避免漂移。"""
+    snapshot = payload.get("snapshot")
+    # 画像摘要随快照注入（quiz_weak 同款通道）：服务端注入后端自己的拷贝，
+    # 不改 payload 原对象——usage 日志与 undo 前态快照保持请求原样。
+    digest = _profile_digest_for(payload)
+    if digest and isinstance(snapshot, dict):
+        snapshot = dict(snapshot)
+        snapshot["user_profile"] = digest
     return {
-        "snapshot": payload.get("snapshot"),
+        "snapshot": snapshot,
         "instruction": payload.get("instruction", ""),
         "model": payload.get("model"),
         "max_tokens": int(payload.get("max_tokens") or 4000),
