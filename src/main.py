@@ -307,8 +307,13 @@ async def api_models_chat(request: Request):
         # 消息层管「我们聊到哪」，这一段管「这个话题的地基是什么」。
         # 与画像注入同一范围（默认完整回答路径，不含 quick / 画布模块生成 / 支线）：
         # 支线与模块重生成是局部动作，多这一层只会挤 token。查空返回空串 = 零回归。
+        # 记忆第二步「用起来」：画像薄弱词传给检索作排序加权（只重排、不放水）。
+        _device_id = payload.get("device_id") or payload.get("deviceId") or ""
         if not is_quick and not workflow_context and not branch_id:
-            concept_text = concept.concept_context_text(prompt, session_id=session_id)
+            concept_text = concept.concept_context_text(
+                prompt, session_id=session_id,
+                weak_terms=(profile.profile_weak_terms(_device_id) if _device_id else None),
+            )
             if concept_text:
                 system_content += "\n\n" + concept_text
         # 用户画像（记忆）注入：仅默认完整回答路径（quick / 画布模块生成 / 支线
@@ -317,7 +322,6 @@ async def api_models_chat(request: Request):
         # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。
         # 同时把「本次实际注入了什么」随响应回传（角标不再按前端缓存重算）。
         if not is_quick and not workflow_context and not branch_id:
-            _device_id = payload.get("device_id") or payload.get("deviceId") or ""
             if _device_id:
                 _profile_ctx = profile.profile_context(_device_id)
                 profile_usage = {"sections": _profile_ctx["sections"],

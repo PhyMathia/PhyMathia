@@ -188,6 +188,12 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     continent_shared = normalize_continent_shared(snapshot.get("continent_shared"))
     if continent_shared:
         normalized["continent_shared"] = continent_shared
+    # 记忆第二步「用起来」：user_profile 是服务端注入的画像一行摘要（api 层
+    # _profile_digest_for 生成，不是客户端数据），与 quiz_weak 同为提示词参考
+    # 字段——非空字符串原样穿过归一化，缺失/非法即不带。
+    user_profile = snapshot.get("user_profile")
+    if isinstance(user_profile, str) and user_profile.strip():
+        normalized["user_profile"] = user_profile.strip()
     return normalized
 
 

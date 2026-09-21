@@ -739,6 +739,56 @@ def profile_context_text(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -
     return profile_context(device_id, max_chars=max_chars)["text"]
 
 
+def profile_review_digest(device_id: str, max_chars: int = 220) -> str:
+    """给 Φ（harness）的一句话画像摘要：与 profile_context 同一份分节口径压成一行。
+
+    形态：`学段：高中；目标：考研；薄弱：等时性、三角函数；偏好：详略=详细`。
+    只读不记账：Φ 消费画像不刷新 lastUsedAt——休眠判定只挂在主聊天的真实
+    文本注入上，Φ 只是「看了一眼」。超预算从尾部整节丢弃（学段/目标/薄弱在前）。
+    """
+    profile = get_profile(device_id)
+    if not profile.get("enabled", True):
+        return ""
+    sections, _ = _profile_section_texts(profile)
+    if not sections:
+        return ""
+    parts = [
+        label.strip("【").rstrip("】") + "：" + "、".join(items)
+        for label, items, _ids in sections
+    ]
+    while len(parts) > 1 and len("；".join(parts)) > max_chars:
+        parts.pop()
+    return "；".join(parts)[:max_chars]
+
+
+def profile_weak_terms(device_id: str, limit: int = 4) -> list:
+    """薄弱关键词（概念检索加权用）：显式薄弱章节 + weakness 类事实拆成短词。
+
+    只提供「排序倾向」，不做检索放水——调用方（concept）必须保证候选已过
+    检索闸门，本函数的输出只参与已入围条目的排序加分。
+    """
+    profile = get_profile(device_id)
+    if not profile.get("enabled", True):
+        return []
+    raw = []
+    exp = str(profile["explicit"].get("weakAreas") or "").strip()
+    if exp:
+        raw.append(exp)
+    for f in profile["facts"]:
+        if f.get("category") == "weakness" and f.get("status", "active") == "active":
+            # 确定性信号的入库形态带前缀（「检测多次答错：X」），剥掉再拆词
+            raw.append(re.sub(r"^(?:检测多次答错|苏格拉底答错|经常提问)[:：]", "", str(f.get("fact") or "")))
+    terms = []
+    for text in raw:
+        for piece in re.split(r"[、，,;；。：:\s/]+", text):
+            piece = piece.strip()
+            if len(piece) >= 2 and piece not in terms:
+                terms.append(piece)
+                if len(terms) >= limit:
+                    return terms
+    return terms
+
+
 def profile_ops_digest(device_id: str, max_lines: int = 20) -> str:
     """给提取模型的既有画像摘要：facts 与 pending 各带 id，供 confirm/update/remove 引用。"""
     profile = get_profile(device_id)
@@ -756,5 +806,6 @@ __all__ = [
     "PROFILES_DIR", "get_profile", "save_profile", "update_profile",
     "delete_profile", "add_fact_candidates", "apply_profile_ops", "manage_profile_fact",
     "mark_profile_used", "profile_context", "profile_context_text",
+    "profile_review_digest", "profile_weak_terms",
     "profile_ops_digest", "_norm_fact",
 ]
