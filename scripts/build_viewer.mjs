@@ -25,6 +25,7 @@ const entries = [
   'graph-interact.js',
   'graph-custom.js',
   'graph-workflow.js',
+  'graph-poster.js',
   'graph-export.js',
   'graph-contextmenu.js',
   'utopia.js',

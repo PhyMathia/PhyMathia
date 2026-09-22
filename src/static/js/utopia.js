@@ -1,14 +1,15 @@
 // ===== PhyMathia Utopia 快照（.pmu）：单张探索网的可分享产物 =====
 // 命名：Physics + Mathematics + Utopia = PhyMath Utopia，扩展名取三元素首字母 .pmu。
 // 定位：PNG 是「一页概览图」，装不下长回答；.pmu 是「可交互快照」——节点内可滚动（翻页语义），
-//       由 viewer.html + js/viewer.js 只读打开，离线、不需要后端。
+//       由 viewer.html + js/viewer.js 只读打开，离线、不需要后端；携带完整会话消息（查看器
+//       「会话记录」面板渲染、拖回主应用恢复整场对话都靠它），meta.messagesComplete 标记口径。
 // 格式：纯 JSON（可被人读、可被别的程序解析）
 //   { format:"phymath-utopia/graph", version:1, exportedAt, app, title,
-//     meta:{ sessionId, level, theme, counts }, viewport:{ pan, zoom },
+//     meta:{ sessionId, level, theme, messagesComplete, counts }, viewport:{ pan, zoom },
 //     graph:{ 布局状态（端口数/折叠/位置等渲染要用到的） },
 //     nodes:[ 已构建好的画布节点（含 messageIndex 指向本文件 messages） ],
 //     edges:[], groups:[],
-//     messages:[ 节点引用到的会话消息（模块正文按消息内容复算，故必须随文件携带） ] }
+//     messages:[ 完整会话消息（模块正文按消息内容复算，故必须随文件携带） ] }
 // 只读：本文件只做「导出 + 解析校验」；渲染由查看器承担，主应用的编辑/AI 能力一律不进查看器。
 
 const UTOPIA_FORMAT = 'phymath-utopia/graph';
@@ -118,16 +119,15 @@ function buildUtopiaSnapshot() {
   const rawEdges = (typeof graphView !== 'undefined' && graphView && graphView.edges) || [];
   const history = (typeof _getChatHistory === 'function' ? _getChatHistory() : []) || [];
 
-  // 消息按需携带：只有被节点引用的消息才进文件，messageIndex 重映射到新下标
+  // 完整会话随文件携带（2026-09-22 起）：查看器的「会话记录」面板按全量 messages 渲染，
+  // .pmu 拖回主应用也靠它恢复整场对话。老快照只带被节点引用的消息——查看器对两种都兼容
+  // （meta.messagesComplete 缺省视为按需子集），messageIndex 重映射逻辑保持不变：
+  // 全量时映射是恒等，将来若再裁剪（比如超大会话），映射自动回到「重排到新下标」。
   const messages = [];
   const indexMap = {};
-  rawNodes.forEach(function (n) {
-    const mi = Number(n && n.messageIndex);
-    if (!(mi >= 0) || Object.prototype.hasOwnProperty.call(indexMap, mi)) return;
-    const msg = history[mi];
-    if (!msg || typeof msg !== 'object') return;
-    indexMap[mi] = messages.length;
-    const copy = _utopiaClone(msg);
+  history.forEach(function (msg, idx) {
+    const copy = (msg && typeof msg === 'object') ? _utopiaClone(msg) : null;
+    indexMap[idx] = messages.length;
     if (copy) messages.push(copy);
   });
 
@@ -150,6 +150,7 @@ function buildUtopiaSnapshot() {
       sessionId: (typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '') || '',
       level: (typeof currentLevel !== 'undefined' ? currentLevel : '') || '',
       theme: _utopiaTheme(),
+      messagesComplete: true,
       counts: { nodes: nodes.length, edges: rawEdges.length, groups: ((graphView && graphView.groups) || []).length, messages: messages.length },
     },
     viewport: {
@@ -164,6 +165,61 @@ function buildUtopiaSnapshot() {
   };
 }
 
+// 导出成功浮卡：给一条明确的「下一步」——一键在查看器里打开刚导出的快照。
+// 只在主应用弹（查看器里再导出没有主应用的会话上下文，也没有交接通道）。
+var _utopiaCardTimer = null;
+
+function _utopiaIsViewer() {
+  return typeof window.__UTOPIA__ !== 'undefined';
+}
+
+function showUtopiaExportCard(summary) {
+  if (_utopiaIsViewer()) return;
+  var old = document.getElementById('utopiaExportCard');
+  if (old) old.remove();
+  clearTimeout(_utopiaCardTimer);
+  var card = document.createElement('div');
+  card.id = 'utopiaExportCard';
+  card.className = 'aurora-glass aurora-glass--dialog';
+  card.innerHTML = '<div class="utopia-export-card-title">Utopia 快照已导出</div>'
+    + '<div class="utopia-export-card-sub">' + summary.nodes + ' 节点 · ' + summary.edges + ' 连线 · '
+    + summary.messages + ' 条会话消息（' + Math.max(1, Math.round(summary.bytes / 1024)) + ' KB）</div>'
+    + '<div class="utopia-export-card-actions">'
+    + '<button type="button" class="utopia-export-card-btn primary" id="utopiaOpenViewerBtn">在查看器中打开</button>'
+    + '<button type="button" class="utopia-export-card-btn" id="utopiaDismissCardBtn">知道了</button>'
+    + '</div>';
+  document.body.appendChild(card);
+  card.querySelector('#utopiaDismissCardBtn').addEventListener('click', function () {
+    card.remove();
+    clearTimeout(_utopiaCardTimer);
+  });
+  card.querySelector('#utopiaOpenViewerBtn').addEventListener('click', function () {
+    card.remove();
+    clearTimeout(_utopiaCardTimer);
+    _utopiaOpenHandoffViewer();
+  });
+  _utopiaCardTimer = setTimeout(function () {
+    if (card.isConnected) card.remove();
+  }, 20000);
+}
+
+function _utopiaOpenHandoffViewer() {
+  // opener 直传：window.open 的新标签页与主应用同源，查看器 boot 时经 window.opener
+  // 取走数据（一次性，取走即清）。不走 sessionStorage——查看器把 storage 换成了内存
+  // 门面读不到真实的，且新标签页 sessionStorage 复制行为各浏览器不一致（实测踩过）。
+  window.__utopiaTakeUtopiaHandoff = function () {
+    var snap = window.__utopiaLastSnapshot || null;
+    window.__utopiaLastSnapshot = null;
+    delete window.__utopiaTakeUtopiaHandoff;
+    return snap;
+  };
+  var win = window.open('/viewer.html?from=handoff', '_blank');
+  if (!win) {
+    delete window.__utopiaTakeUtopiaHandoff;
+    if (typeof showToast === 'function') showToast('新窗口被浏览器拦截——请允许弹窗后再点一次，或手动打开 /viewer.html 拖入文件');
+  }
+}
+
 function exportUtopiaSnapshot() {
   if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
     if (typeof showToast === 'function') showToast('画布还没有内容，先提问生成一张探索网吧');
@@ -174,6 +230,7 @@ function exportUtopiaSnapshot() {
     if (typeof showToast === 'function') showToast('快照生成失败：' + (e && e.message ? e.message : e));
     return false;
   }
+  window.__utopiaLastSnapshot = snapshot; // handoff 交接用（仅本次会话内存）
   const json = JSON.stringify(snapshot, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -185,10 +242,12 @@ function exportUtopiaSnapshot() {
   a.remove();
   setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   const sum = utopiaSnapshotSummary(snapshot);
+  sum.bytes = json.length;
   if (typeof showToast === 'function') {
-    showToast('已导出 Utopia 快照 ' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线（'
-      + Math.round(json.length / 1024) + ' KB）——用查看器打开可滚动看长内容');
+    showToast('已导出 Utopia 快照 ' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / '
+      + sum.messages + ' 条会话消息——用查看器打开可滚动看长内容');
   }
+  showUtopiaExportCard(sum);
   return true;
 }
 

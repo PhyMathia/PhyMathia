@@ -541,30 +541,63 @@
     var bounds = _exportBounds();
     if (!bounds) { _toast('无法计算画布范围'); return; }
 
+    // 海报预览尺寸：跑一次纯布局（不碰 canvas，开销可忽略）
+    var posterLayout = null;
+    try {
+      posterLayout = (window.graphPosterDebug && window.graphPosterDebug.layout)
+        ? window.graphPosterDebug.layout({
+            nodes: graphView.nodes, edges: graphView.edges || [], groups: graphView.groups || [],
+          })
+        : null;
+    } catch (e) {}
+
     var menu = document.createElement('div');
     menu.className = 'graph-export-menu aurora-glass aurora-glass--dialog';
-    var html = '<div class="graph-export-menu-title">导出超高清图片</div>'
-      + '<div class="graph-export-menu-sub">整张探索网按倍数重新渲染成 PNG，文字按输出分辨率重排，放大也清晰。当前内容约 '
-      + Math.round(bounds.w) + ' × ' + Math.round(bounds.h) + '。</div>';
+    var html = '<div class="graph-export-menu-title">导出图片与快照</div>'
+      + '<div class="graph-export-section-title">缩略知识海报 <span class="graph-export-sec-tag">推荐</span></div>'
+      + '<div class="graph-export-menu-sub">每张节点压成小卡片（类型色 + 标题 + 摘要开头），连线分组照画——一眼看清整张网，不再有看一半的长文。</div>'
+      + '<div class="graph-export-grid">';
+    SCALES.forEach(function (item) {
+      var pw = posterLayout ? Math.round(posterLayout.width * item.s) : 0;
+      var ph = posterLayout ? Math.round(posterLayout.height * item.s) : 0;
+      html += '<button type="button" class="graph-export-scale-row" data-poster-scale="' + item.s + '">'
+        + '<b>' + item.label.replace('（推荐）', '') + '</b>'
+        + (posterLayout ? '<span class="graph-export-res">' + _fmtPx(pw) + ' × ' + _fmtPx(ph) + '</span>' : '')
+        + '</button>';
+    });
+    html += '</div>'
+      + '<div class="graph-export-section-title">屏幕所见整图（原样克隆画布）</div>'
+      + '<div class="graph-export-menu-sub">按屏幕所见逐像素重排渲染，文字按输出分辨率重排。当前内容约 '
+      + Math.round(bounds.w) + ' × ' + Math.round(bounds.h) + '；节点内滚动的内容不入图。</div>'
+      + '<div class="graph-export-grid">';
     SCALES.forEach(function (item) {
       var r = _resolveOutput(bounds, item.s);
       var expectedW = Math.round((bounds.w + EXPORT_PADDING * 2) * item.s);
       var expectedH = Math.round((bounds.h + EXPORT_PADDING * 2) * item.s);
       var capped = r.outW < expectedW * 0.99 || r.outH < expectedH * 0.99;
       html += '<button type="button" class="graph-export-scale-row" data-scale="' + item.s + '"'+ (capped ? ' title="已按浏览器上限自动收敛倍数"' : '') + '>'
-        + '<b>' + item.label + '</b>'
+        + '<b>' + item.label.replace('（推荐）', '') + '</b>'
         + '<span class="graph-export-res">' + (capped ? '≈' : '') + _fmtPx(r.outW) + ' × ' + _fmtPx(r.outH) + '</span>'
         + '</button>';
     });
-    html += '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
-      + (_transparentBg ? ' checked' : '') + '>透明背景（不填充面板底色）</label>'
+    html += '</div>'
+      + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
+      + (_transparentBg ? ' checked' : '') + '>透明背景（仅屏幕所见模式，不填充面板底色）</label>'
+      + '<div class="graph-export-section-title">可交互产物</div>'
       + '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
       + '<b>Utopia 快照 ' + UTOPIA_EXT + '</b>'
-      + '<span class="graph-export-res">可滚动</span>'
-      + '</button>'
-      + '<div class="graph-export-menu-foot">含 KaTeX 公式、Mermaid 图谱与分组框；可视化 iframe 以占位卡出现。'
-      + 'PNG 是<b>按屏幕所见的一页概览图</b>（节点内滚动的内容不入图）；要看长回答全文请用 <b>Utopia 快照 .pmu</b>'
-      + '——节点内可继续滚动，用 viewer.html 只读打开。首次导出需抓取字体，之后走缓存。</div>';
+      + '<span class="graph-export-res">完整会话 · 可滚动 · 可导回</span>'
+      + '</button>';
+    if (typeof window.exportUtopiaStandaloneHtml === 'function') {
+      html += '<button type="button" class="graph-export-scale-row" id="graphExportHtml">'
+        + '<b>单文件网页 .html</b>'
+        + '<span class="graph-export-res">内嵌查看器 · 双击即看 · 可外发</span>'
+        + '</button>';
+    }
+    html += '<div class="graph-export-menu-foot">海报是<b>卡片式概览</b>（标题+摘要开头，长文有「全文 N 字」角标）；'
+      + '屏幕所见含 KaTeX 公式、Mermaid 图谱与分组框，可视化 iframe 以占位卡出现。'
+      + '要看长回答全文请用 <b>Utopia 快照 .pmu</b>（导出后可一键在查看器打开，也能拖回 PhyMathia 恢复成新画布）。'
+      + '单文件网页把查看器与数据打进一个 .html，发给没装 PhyMathia 的人也能双击打开。</div>';
     menu.innerHTML = html;
 
     menu.addEventListener('click', function (event) {
@@ -575,8 +608,20 @@
         else _toast('快照模块未加载（请硬刷新页面）');
         return;
       }
+      var htmlBtn = event.target.closest ? event.target.closest('#graphExportHtml') : null;
+      if (htmlBtn) {
+        _closeGraphExportMenu();
+        window.exportUtopiaStandaloneHtml();
+        return;
+      }
       var row = event.target.closest ? event.target.closest('.graph-export-scale-row') : null;
       if (row) {
+        var ps = parseFloat(row.getAttribute('data-poster-scale'));
+        if (ps > 0) {
+          if (typeof window.exportGraphPoster === 'function') exportGraphPoster(ps);
+          else _toast('海报模块未加载（请硬刷新页面）');
+          return;
+        }
         var s = parseFloat(row.getAttribute('data-scale'));
         if (s > 0) exportGraphImage(s);
       }

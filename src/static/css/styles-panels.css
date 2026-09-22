@@ -3029,6 +3029,98 @@
   line-height: 1.5;
 }
 
+/* 两段式菜单（缩略海报 / 屏幕所见）＋可交互产物段 */
+.graph-export-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  opacity: 0.9;
+  letter-spacing: .3px;
+}
+.graph-export-sec-tag {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--bg-panel);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #a78bfa));
+}
+.graph-export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.graph-export-grid .graph-export-scale-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 10px;
+}
+.graph-export-grid .graph-export-scale-row b {
+  font-size: var(--fs-sm);
+}
+/* 菜单变长后可滚动（右下角弹出，防止顶出视口） */
+.graph-export-menu {
+  max-height: min(72vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Utopia 快照导出成功浮卡（主应用底部居中，带「在查看器中打开」） */
+.utopia-export-card-title {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.utopia-export-card-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+.utopia-export-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+}
+.utopia-export-card-btn {
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  transition: border-color .18s ease, transform .18s ease;
+}
+.utopia-export-card-btn:hover { border-color: var(--accent); transform: translateY(-1px); }
+.utopia-export-card-btn.primary {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #a78bfa));
+  color: #06101f;
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+#utopiaExportCard {
+  position: fixed;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  z-index: 60;
+  min-width: 300px;
+  max-width: min(440px, calc(100vw - 40px));
+  padding: 14px 18px;
+  border-radius: var(--r-lg);
+  animation: utopiaCardIn .22s ease;
+}
+@keyframes utopiaCardIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* 导出快照内部净化：随页面样式一起内联进 SVG 生效 */
 .graph-export-root *,
 .graph-export-root *::before,

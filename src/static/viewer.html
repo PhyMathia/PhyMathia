@@ -74,6 +74,55 @@
     transition: opacity .22s ease, transform .22s ease; z-index: 40; max-width: 86vw;
   }
   .utopia-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  /* 会话记录面板：右侧滑入的只读对话列表（快照携带完整会话时可用） */
+  .utopia-msgs {
+    position: absolute; top: 74px; right: 12px; bottom: 12px; z-index: 22;
+    width: min(430px, calc(100vw - 24px));
+    display: flex; flex-direction: column;
+    border-radius: 18px;
+    opacity: 0; pointer-events: none; transform: translateX(14px);
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .utopia-msgs.open { opacity: 1; pointer-events: auto; transform: translateX(0); }
+  .utopia-msgs-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px 10px; border-bottom: 1px solid var(--border, rgba(255,255,255,.12));
+  }
+  .utopia-msgs-head b { font-size: 14px; }
+  .utopia-msgs-head .utopia-msgs-count { font-size: 12px; color: var(--text-secondary, #93a1bd); margin-right: auto; }
+  .utopia-msgs-close {
+    font: inherit; font-size: 16px; line-height: 1; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--border, rgba(255,255,255,.16)); background: transparent; color: inherit;
+  }
+  .utopia-msgs-list { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .utopia-msg {
+    border: 1px solid var(--border, rgba(255,255,255,.12));
+    border-radius: 14px; padding: 10px 12px; background: color-mix(in srgb, var(--surface-container, rgba(255,255,255,.06)) 70%, transparent);
+  }
+  .utopia-msg-user { border-left: 3px solid var(--accent, #4a9eff); }
+  .utopia-msg-ai { border-left: 3px solid #10b981; }
+  .utopia-msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .utopia-msg-role { font-size: 12px; font-weight: 700; }
+  .utopia-msg-user .utopia-msg-role { color: var(--accent, #4a9eff); }
+  .utopia-msg-ai .utopia-msg-role { color: #10b981; }
+  .utopia-msg-branch {
+    font-size: 10px; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 40%, transparent);
+    color: var(--text-secondary, #93a1bd);
+  }
+  .utopia-msg-time { margin-left: auto; font-size: 11px; color: var(--text-secondary, #93a1bd); opacity: .8; }
+  .utopia-msg-body { font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+  .utopia-msg-body :is(h1,h2,h3,h4) { font-size: 15px; margin: .5em 0 .3em; }
+  .utopia-msg-body p { margin: .35em 0; }
+  .utopia-msg-body pre { max-width: 100%; overflow-x: auto; font-size: 12px; }
+  .utopia-msg-foot { margin-top: 6px; min-height: 22px; }
+  .utopia-msg-locate {
+    font: inherit; font-size: 12px; padding: 3px 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 45%, transparent);
+    background: color-mix(in srgb, var(--accent, #4a9eff) 12%, transparent);
+    color: var(--text-primary, #e6ebf5);
+  }
+  .utopia-msg-locate:hover { border-color: var(--accent, #4a9eff); }
 </style>
 </head>
 <body>
@@ -85,6 +134,7 @@
     </div>
     <span class="utopia-tag">只读</span>
     <button class="utopia-btn primary" id="utopiaOpenBtn">打开快照</button>
+    <button class="utopia-btn" id="utopiaMsgsBtn" title="会话记录（完整对话，可定位到节点）">会话</button>
     <button class="utopia-btn" id="utopiaFitBtn" title="适配画布（F）">适配</button>
     <button class="utopia-btn" id="utopiaZoomInBtn" title="放大">＋</button>
     <button class="utopia-btn" id="utopiaZoomOutBtn" title="缩小">－</button>
@@ -96,6 +146,14 @@
   </div>
   <div class="utopia-error" id="utopiaError" hidden></div>
   <div class="utopia-stage">
+    <div class="utopia-msgs aurora-glass" id="utopiaMsgsPanel">
+      <div class="utopia-msgs-head">
+        <b>会话记录</b>
+        <span class="utopia-msgs-count" id="utopiaMsgsCount"></span>
+        <button class="utopia-msgs-close" id="utopiaMsgsClose" title="关闭（Esc）">&times;</button>
+      </div>
+      <div class="utopia-msgs-list" id="utopiaMsgsList"></div>
+    </div>
     <div class="graph-workspace" id="graphWorkspace">
       <div class="graph-canvas" id="graphCanvas"></div>
       <div class="graph-search-panel" id="graphSearchPanel" hidden>
@@ -119,6 +177,6 @@
   </div>
 </div>
 <div class="utopia-toast aurora-glass aurora-glass--compact" id="utopiaToast"></div>
-<script src="/js/viewer.js?v=332ae4ce"></script>
+<script src="/js/viewer.js?v=767543c2"></script>
 </body>
 </html>
