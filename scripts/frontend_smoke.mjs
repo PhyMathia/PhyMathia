@@ -534,12 +534,12 @@ check('graph-export: 一页概览图（完整内容模式已按用户要求移�
 check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行/锚点/布局过滤）', () => {
   const dbg = sandbox.window.graphPosterDebug;
   if (!dbg || typeof dbg.layout !== 'function') throw new Error('graphPosterDebug 未暴露');
-  // 纯文本：代码块换占位、模块标签/井号/星号剥除、$ 定界符剥壳
+  // 纯文本：代码块按语言给占位说明、模块标签/井号/星号剥除、$ 定界符剥壳
   const plain = dbg.plainText('<physics>## 动量守恒\n$mv=MV$ 与 **碰撞**</physics>\n```html\n<div/>\n```');
   if (plain.includes('$') || plain.includes('#') || plain.includes('```') || plain.includes('*')) {
     throw new Error('纯文本仍带标记：' + plain);
   }
-  if (!plain.includes('动量守恒') || !plain.includes('mv=MV') || !plain.includes('交互内容')) {
+  if (!plain.includes('动量守恒') || !plain.includes('mv=MV') || !plain.includes('交互可视化')) {
     throw new Error('纯文本丢内容：' + plain);
   }
   // 标题摘要：首行为题、截断余量并入摘要（整段无换行文本不许被标题吃光）、more 记原始长度
@@ -558,6 +558,15 @@ check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行
     throw new Error('LaTeX 源码未转换：' + lt);
   }
   if (!lt.includes('π') || !lt.includes('θ') || !lt.includes('√')) throw new Error('希腊字母/根号缺失：' + lt);
+  // 嵌套 \frac（\lambda 在参数里还有 {}）也必须转——定点迭代
+  const lt2 = dbg.plainText('$P(X=k)=\\frac{\\lambda^k e^{-\\lambda}}{k!}$');
+  if (lt2.includes('\\frac') || lt2.includes('\\lambda')) throw new Error('嵌套 frac 未转换：' + lt2);
+  if (!lt2.includes('λ') || !lt2.includes('/(k!)')) throw new Error('嵌套 frac 应转 (…)/(k!)：' + lt2);
+  // mermaid 代码块：提取节点文本当摘要（知识图谱卡显示概念词，不是占位词）
+  const mm = dbg.plainText('```mermaid\ngraph TD\nA[泊松分布] --> B[稀疏事件]\nB --> C[计数分布]\n```');
+  if (!mm.includes('泊松分布') || !mm.includes('稀疏事件') || mm.includes('graph TD')) {
+    throw new Error('mermaid 节点文本未提取：' + mm);
+  }
   // 断行：等宽假 measure（每字符 10px），50px 预算 → 每行 5 字符，两行封顶加省略
   const lines = dbg.wrapLines((t) => t.length * 10, 'aaa bbb ccc', 50, 2);
   if (lines.length !== 2 || !lines[1].endsWith('…')) throw new Error('断行错误：' + JSON.stringify(lines));
@@ -566,48 +575,59 @@ check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行
   if (Math.abs(p.x - 50) > 0.01 || Math.abs(p.y) > 0.01) throw new Error('右边界锚点错误：' + JSON.stringify(p));
   p = dbg.rectAnchor(0, 0, 100, 50, 0, -100);
   if (Math.abs(p.x) > 0.01 || Math.abs(p.y + 25) > 0.01) throw new Error('上边界锚点错误：' + JSON.stringify(p));
-  // 布局：分层紧凑网格——draft/hidden 节点滤除、其边一并滤除；模块节点属性标签来自画布同源表；
-  // 下游节点（a→b）必须落在更深的层（cy 更大），单卡行水平居中；无成员分组被丢弃
+  // 布局：分层紧凑网格——draft/hidden 节点滤除、其边一并滤除；下游节点落在更深层；
+  // 卡高按内容自适应（有摘要的卡更高）；标题剥「物理视角：」重复前缀；
+  // 手工 answer 节点内容在 analysis 字段也要取到（_nodeContent 不看它，实测踩过）
   const layout = dbg.layout({
     nodes: [
-      { id: 'a', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, label: '问题A', messageIndex: 0 },
-      { id: 'b', kind: 'module', moduleKey: 'physics', x: 500, y: 0, w: 260, h: 140, label: '物理讲解' },
+      { id: 'a', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: 0 },
+      { id: 'b', kind: 'module', moduleKey: 'physics', x: 500, y: 0, w: 260, h: 140,
+        content: '物理视角：单摆的回复力与摆幅正弦近似成正比，小角度下为线性回复力，因此做简谐运动，周期与摆幅无关这就是等时性。' },
       { id: 'd', kind: 'draft', x: 250, y: 0, w: 260, h: 140, label: '草稿' },
       { id: 'h', kind: 'user', hidden: true, x: -500, y: -500, w: 260, h: 140, label: '隐藏' },
+      { id: 'an', kind: 'answer', x: 250, y: 300, w: 260, h: 140, messageIndex: -1,
+        analysis: 'AI 回答正文在 analysis 字段（非 manual 生成节点的实际存储位置），海报必须取到。' },
     ],
-    edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'd' }, { from: 'a', to: 'h' }],
+    edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'an' }, { from: 'a', to: 'd' }, { from: 'a', to: 'h' }],
     groups: [
       { x: -50, y: -50, width: 700, height: 300, name: '组', color: '#38bdf8', nodeIds: ['a', 'b'] },
       { x: 0, y: 0, width: 100, height: 100, name: '空组', nodeIds: ['d'] },
     ],
   });
   if (!layout) throw new Error('布局返回空');
-  if (layout.cards.length !== 2) throw new Error('draft/hidden 节点应被滤除：' + layout.cards.length);
-  if (layout.edges.length !== 1) throw new Error('指向已滤除节点的边应被滤除：' + layout.edges.length);
+  if (layout.cards.length !== 3) throw new Error('draft/hidden 节点应被滤除：' + layout.cards.length);
+  if (layout.edges.length !== 2) throw new Error('指向已滤除节点的边应被滤除：' + layout.edges.length);
   if (layout.groups.length !== 1) throw new Error('无成员分组应被丢弃：' + layout.groups.length);
   const cardA = layout.cards.find((c) => c.id === 'a');
   const cardB = layout.cards.find((c) => c.id === 'b');
+  const cardAn = layout.cards.find((c) => c.id === 'an');
   if (cardB.attrLabel !== '物理视角') throw new Error('模块节点属性标签错误：' + cardB.attrLabel);
-  if (cardB.title !== '物理讲解') throw new Error('节点标题应取内容/label：' + cardB.title);
+  if (!cardB.title.startsWith('单摆的回复力')) throw new Error('标题应剥「物理视角：」前缀取正文首句：' + cardB.title);
+  if (!cardB.summary) throw new Error('模块卡摘要不应为空');
   if (!(cardB.w >= 240 && cardB.w <= 300)) throw new Error('分层网格卡宽应统一：' + cardB.w);
-  if (!(cardA.cy < cardB.cy)) throw new Error('下游节点应在更深层（cy 递增）：' + cardA.cy + ' vs ' + cardB.cy);
-  if (Math.abs(cardA.cx - layout.width / 2) > 1 || Math.abs(cardB.cx - layout.width / 2) > 1) {
-    throw new Error('单卡行应水平居中：' + cardA.cx + ' / ' + cardB.cx + '，宽 ' + layout.width);
+  if (!(cardA.cy < cardB.cy && cardA.cy < cardAn.cy)) throw new Error('下游节点应在更深层（cy 递增）');
+  if (!(cardB.h > cardA.h)) throw new Error('有摘要的卡应更高（自适应）：' + cardB.h + ' vs ' + cardA.h);
+  if (!cardAn.summary) {
+    throw new Error('analysis 字段取文回退失败（摘要为空）：' + cardAn.title);
   }
-  // 同层同行：给 b 一个同层兄弟，两者必须共享同一行 y 且等间距
+  // a 行只有一张卡应居中
+  if (Math.abs(cardA.cx - layout.width / 2) > 1) throw new Error('单卡行应水平居中：' + cardA.cx);
+  // 同层同行：两者共享同一行 y（顶对齐）、按原画布 x 排序、内容多者更高
   const layout2 = dbg.layout({
     nodes: [
       { id: 'a', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: 0 },
-      { id: 'm1', kind: 'module', moduleKey: 'physics', x: 300, y: 100, w: 260, h: 140 },
-      { id: 'm2', kind: 'module', moduleKey: 'math', x: 900, y: -60, w: 260, h: 140 },
+      { id: 'm1', kind: 'module', moduleKey: 'physics', x: 300, y: 100, w: 260, h: 140,
+        content: '物理视角：内容一的内容一的内容一的内容一的内容一的内容一的内容一的内容一的内容一。' },
+      { id: 'm2', kind: 'module', moduleKey: 'math', x: 900, y: -60, w: 260, h: 140, content: '数学视角：短内容' },
     ],
     edges: [{ from: 'a', to: 'm1' }, { from: 'a', to: 'm2' }],
     groups: [],
   });
   const M1 = layout2.cards.find((c) => c.id === 'm1');
   const M2 = layout2.cards.find((c) => c.id === 'm2');
-  if (M1.y !== M2.y) throw new Error('同层节点应对齐同一行：' + M1.y + ' vs ' + M2.y);
+  if (M1.y !== M2.y) throw new Error('同层节点应对齐同一行（顶对齐）：' + M1.y + ' vs ' + M2.y);
   if (!(M1.cx < M2.cx)) throw new Error('同层内应按原画布 x 排序');
+  if (!(M1.h > M2.h)) throw new Error('同行内内容多的卡应更高：' + M1.h + ' vs ' + M2.h);
   // 边端点必须落在卡片矩形边界上（锚点裁剪生效）
   const e = layout.edges[0];
   if (Math.abs(Math.abs(e.x1 - cardA.cx) - cardA.w / 2) > 0.01 && Math.abs(Math.abs(e.y1 - cardA.cy) - cardA.h / 2) > 0.01) {

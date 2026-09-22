@@ -29,23 +29,48 @@
   };
 
   function _latexLite(s) {
-    return String(s)
-      .replace(/\\sqrt\s*\{([^{}]*)\}/g, '√($1)')
-      .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1)/($2)')
-      .replace(/\\(ddot|dot|hat|tilde|bar|vec)\s*\{([^{}]*)\}/g, '$2')
-      .replace(/\\([A-Za-z]+)/g, function (_, cmd) { return _LATEX_GREEK[cmd] || ' '; })
-      .replace(/\\left|\\right/g, '')
-      .replace(/\\[,;!]/g, ' ')
-      .replace(/\\/g, ' ')
-      .replace(/[{}]/g, '')
-      .replace(/\s{2,}/g, ' ');
+    var out = String(s);
+    // 定点迭代（上限 4 遍）：先消最内层（上/下标花括号、点修饰符），再转 sqrt/frac，
+    // 最后希腊字母兜底——兜底必须排除已知命令（否则 \sqrt 会被当未知命令删掉，√ 丢失）
+    var KNOWN = '\\\\(?!sqrt\\b|frac\\b|left\\b|right\\b|ddot\\b|dot\\b|hat\\b|tilde\\b|bar\\b|vec\\b)([A-Za-z]+)';
+    for (var pass = 0; pass < 4; pass++) {
+      var next = out
+        .replace(/([\^_])\{([^{}]*)\}/g, '$1($2)')
+        .replace(/\\(ddot|dot|hat|tilde|bar|vec)\s*\{([^{}]*)\}/g, '$2')
+        .replace(/\\sqrt\s*\{([^{}]*)\}/g, '√($1)')
+        .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1)/($2)')
+        .replace(new RegExp(KNOWN, 'g'), function (_, cmd) { return _LATEX_GREEK[cmd] || ' '; });
+      if (next === out) break;
+      out = next;
+    }
+    return out.replace(/\\left|\\right/g, '').replace(/\\[,;!]/g, ' ').replace(/\\/g, ' ')
+      .replace(/[{}]/g, '').replace(/\s{2,}/g, ' ');
+  }
+
+  // 代码块按语言给可读占位：mermaid 提取节点文本（知识图谱卡显示概念词而非源码），
+  // html 是交互可视化（图片里本来就不交互），其余当代码。
+  function _codeBlockPlaceholder(lang, body) {
+    var l = String(lang || '').toLowerCase();
+    if (l === 'mermaid' || /(?:^|\n)\s*(?:graph|flowchart|mindmap|sequenceDiagram|classDiagram|erDiagram|gantt|pie)\b/i.test(body)) {
+      var labels = [];
+      String(body).replace(/\[(?:["']?)([^[\]"'\n]{1,24})(?:["']?)\]|\((?:["']?)([^()"'\n]{1,24})(?:["']?)\)/g, function (_, sq, pq) {
+        var t = String(sq || pq || '').trim();
+        if (t && labels.indexOf(t) < 0 && labels.length < 8) labels.push(t);
+        return '';
+      });
+      if (labels.length) return '知识图谱：' + labels.join(' · ');
+      return '（知识图谱图示）';
+    }
+    if (l === 'html' || l === 'htm') return '（交互可视化，完整效果见 .pmu 快照）';
+    return '（代码内容）';
   }
 
   // 原始内容（markdown + XML 模块标签 + 公式定界符）→ 海报纯文本。
-  // 代码块整块换成占位词；$/$$ 公式经 LaTeX 轻转换保留可读符号。
   function posterPlainText(content) {
     var s = String(content || '');
-    s = s.replace(/```[\s\S]*?```/g, '「交互内容」');
+    s = s.replace(/```(\w*)[ \t]*([\s\S]*?)```/g, function (_, lang, body) {
+      return '\n' + _codeBlockPlaceholder(lang, body) + '\n';
+    });
     if (typeof stripXmlTags === 'function') s = stripXmlTags(s);
     s = s.replace(/\$\$([\s\S]*?)\$\$/g, function (_, m) { return _latexLite(m); });
     s = s.replace(/\\?\$([^$\n]+?)\\?\$/g, function (_, m) { return _latexLite(m); });
@@ -54,7 +79,34 @@
     s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
     s = s.replace(/[*_`~>|]{1,3}/g, '');
     s = s.replace(/^-{3,}$/gm, ' ');
-    return s.replace(/[ \t\u3000]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+    s = s.replace(/[ \t\u3000]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+    // 裸 LaTeX 兜底：AI 经常不包 $ 定界符直接写 \frac{...}{...}（泊松分布画布实测），
+    // 对清洗后的全文再过一遍轻转换——正常中文文本无反斜杠命令，原样通过
+    if (s.indexOf('\\') >= 0) s = _latexLite(s);
+    return s;
+  }
+
+  // 节点文本多级回退（画布渲染读什么这里就读什么）：
+  // ① _nodeContent（消息节点主路径，模块切片/AI 摘要）
+  // ② content / analysis（手工与 Φ 生成节点的正文——AI 回答节点内容在 analysis，
+  //    _nodeContent 不看它，漏了就整卡空白：用户泊松分布画布实测踩过）
+  // ③ summary / label ④ 原始消息
+  function posterNodeText(n, msg) {
+    var raw = '';
+    try { raw = (typeof _nodeContent === 'function' ? _nodeContent(msg, n) : '') || ''; } catch (e) { raw = ''; }
+    if (!raw) raw = String(n.content || '');
+    if (!raw) raw = String(n.analysis || '');
+    if (!raw) raw = String(n.summary || '');
+    if (!raw && msg && typeof msg.content === 'string') {
+      raw = msg.content;
+      if (n.kind === 'answer') {
+        if (typeof _graphSummary === 'function') {
+          try { raw = _graphSummary(raw) || raw; } catch (e2) {}
+        }
+      }
+    }
+    if (!raw) raw = String(n.label || '');
+    return raw;
   }
 
   // 标题与摘要：标题取首行前 maxTitleChars 字；**截断余量与后续行都进摘要**——
@@ -164,9 +216,10 @@
   // maxPerRow 张、整行居中；联系线（edge.link）不参与分层、孤立节点归末层。
   // 分组框按成员卡片包围盒重算（原矩形在新布局下已无意义）。
 
-  var CARD_W = 272, CARD_H = 164, GAP_X = 40, GAP_Y = 78;
-  var SUMMARY_CHARS = 100;   // 摘要预算（4 行 × ~24 字）
+  var CARD_W = 272, GAP_X = 40, GAP_Y = 64;
+  var SUMMARY_CHARS = 100;   // 摘要预算（最多 4 行 × ~24 字）
   var TITLE_CHARS = 26;
+  var CARD_PAD_TOP = 14, CARD_ATTR_H = 18, CARD_TITLE_H = 22, CARD_LINE_H = 17, CARD_PAD_BOTTOM = 24;
 
   function posterLayout(opts) {
     var nodes = (opts && opts.nodes) || [];
@@ -232,36 +285,55 @@
     }
     if (!rows.length) return null;
 
+    // 先算内容（标题/摘要/实际行数），卡高按内容自适应——问题这类短卡不空撑；
+    // 行高 = 行内最高卡，行内顶对齐（类型标签连成一条线，观感整齐）
+    function buildCard(n) {
+      var msg = null;
+      var mi = Number(n.messageIndex);
+      if (mi >= 0) msg = history[mi];
+      var raw = posterNodeText(n, msg);
+      var attr = _attrOf(n);
+      var meta = posterTitleSummary(raw, TITLE_CHARS, n.minimized ? 46 : SUMMARY_CHARS);
+      if (!meta.title || meta.title === '（无标题）') meta.title = attr.label || '节点';
+      // 标题与类型标签重复时剥前缀（section 正文常以「数学视角：…」开头，标签处已有）
+      var prefix = (attr.label || '') + '：';
+      if (meta.title.indexOf(prefix) === 0) meta.title = meta.title.slice(prefix.length) || meta.title;
+      return {
+        id: n.id, w: CARD_W,
+        attrLabel: attr.label || '节点',
+        attrColor: attr.color || '#4a9eff',
+        attrKey: attr.key || 'question',
+        kind: n.kind, moduleKey: n.moduleKey || '',
+        isRoot: !!n.isRoot, minimized: !!n.minimized,
+        title: meta.title, summary: meta.summary,
+        chars: posterPlainText(raw).length,
+      };
+    }
+
     var y = top;
     rows.forEach(function (rowNodes) {
+      var rowCards = rowNodes.map(buildCard);
+      // 摘要行数按真实断行估（估算宽 ≈ 卡内宽 / 字宽 12.5px；中文为主场景够准）
+      var estW = CARD_W - 34;
+      rowCards.forEach(function (c) {
+        var maxLines = c.minimized ? 1 : 4;
+        var perLine = Math.max(8, Math.floor(estW / 12.5));
+        var sumLen = c.summary.length;
+        var lines = sumLen ? Math.min(maxLines, Math.ceil(sumLen / perLine)) : 0;
+        c.summaryLines = lines;
+        c.h = CARD_PAD_TOP + CARD_ATTR_H + CARD_TITLE_H + lines * CARD_LINE_H + CARD_PAD_BOTTOM;
+      });
+      var rowH = Math.max.apply(null, rowCards.map(function (c) { return c.h; }));
       var rowW = rowNodes.length * CARD_W + (rowNodes.length - 1) * GAP_X;
       var x0 = (width - rowW) / 2;
-      rowNodes.forEach(function (n, j) {
-        var cx = x0 + j * (CARD_W + GAP_X) + CARD_W / 2;
-        var cy = y + CARD_H / 2;
-        var msg = null;
-        var mi = Number(n.messageIndex);
-        if (mi >= 0) msg = history[mi];
-        var raw = '';
-        try { raw = (typeof _nodeContent === 'function' ? _nodeContent(msg, n) : '') || ''; } catch (e) { raw = ''; }
-        if (!raw) raw = String(n.label || '');
-        if (!raw) raw = String((msg && msg.content) || '');
-        var attr = _attrOf(n);
-        var meta = posterTitleSummary(raw, TITLE_CHARS, n.minimized ? 46 : SUMMARY_CHARS);
-        if (!meta.title || meta.title === '（无标题）') meta.title = attr.label || '节点';
-        cards.push({
-          id: n.id,
-          x: cx - CARD_W / 2, y: y, w: CARD_W, h: CARD_H, cx: cx, cy: cy,
-          attrLabel: attr.label || '节点',
-          attrColor: attr.color || '#4a9eff',
-          attrKey: attr.key || 'question',
-          kind: n.kind, moduleKey: n.moduleKey || '',
-          isRoot: !!n.isRoot, minimized: !!n.minimized,
-          title: meta.title, summary: meta.summary,
-          chars: posterPlainText(raw).length,
-        });
+      rowCards.forEach(function (c, j) {
+        c.x = x0 + j * (CARD_W + GAP_X);
+        c.y = y;
+        c.cx = c.x + CARD_W / 2;
+        c.cy = y + c.h / 2;
+        cards.push(c);
       });
-      y += CARD_H + GAP_Y;
+      y += rowH + GAP_Y;
     });
 
     var byCardId = {};
@@ -273,7 +345,9 @@
       if (!a || !b) return;
       var p1 = posterRectAnchor(a.cx, a.cy, a.w, a.h, b.cx, b.cy);
       var p2 = posterRectAnchor(b.cx, b.cy, b.w, b.h, a.cx, a.cy);
-      edges.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, custom: !!(e.custom || e.link) });
+      // 只有联系线画虚线——主结构边在真实画布里多经 connections 存储也会带 custom 标记，
+      // 按 custom 区分虚实会把整张图画成虚线（用户泊松分布海报实测踩过）
+      edges.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, custom: !!e.link });
     });
 
     // 分组框：按成员卡片新位置重算包围盒
@@ -301,7 +375,7 @@
     laidGroups.forEach(function (g) { contentBottom = Math.max(contentBottom, g.y + g.h); });
     var height = Math.round(Math.max(
       contentBottom + margin + POSTER_FOOTER_H,
-      POSTER_HEADER_H + margin * 2 + POSTER_FOOTER_H + CARD_H
+      POSTER_HEADER_H + margin * 2 + POSTER_FOOTER_H + 120
     ));
     return { width: width, height: height, cards: cards, edges: edges, groups: laidGroups, rows: rows.length };
   }
@@ -385,7 +459,7 @@
       ctx.restore();
     });
 
-    // 卡片（统一尺寸分层网格：摘要 4 行给足内容）
+    // 卡片（高度按内容自适应、行内顶对齐；摘要行数由布局预算好存 summaryLines）
     layout.cards.forEach(function (c) {
       var col = _resolveColor(c.attrColor, theme);
       ctx.save();
@@ -405,31 +479,30 @@
 
       var padX = 16;
       var innerW = c.w - padX * 2 - 6;
-      var fAttr = 11, fTitle = c.isRoot ? 17 : 15, fSub = 12.5, lineH = 19;
-      var y = c.y + 14;
+      var fAttr = 11, fTitle = c.isRoot ? 17 : 15, fSub = 12.5;
+      var y = c.y + CARD_PAD_TOP;
 
       // 类型标签 + 折叠标记
       _font(ctx, fAttr, '600');
       ctx.fillStyle = col;
       ctx.fillText(c.attrLabel + (c.minimized ? ' · 已折叠' : ''), c.x + padX + 2, y + fAttr - 2);
-      y += fAttr + 7;
+      y += CARD_ATTR_H + 4;
 
       // 标题 1 行（问题/正文首句）
       ctx.fillStyle = theme.text;
       _font(ctx, fTitle, '600');
-      y += fTitle;
+      y += fTitle - 2;
       ctx.fillText(c.title, c.x + padX + 2, y);
-      y += 8;
+      y += 10;
 
-      // 摘要正文（最多 4 行；折叠卡 1 行）
-      if (c.summary) {
+      // 摘要正文（行数=布局预算；宽度收窄再断一次，行数只少不多）
+      if (c.summary && c.summaryLines > 0) {
         var meaS = function (t) { _font(ctx, fSub, '400'); return ctx.measureText(t).width; };
-        var maxLines = c.minimized ? 1 : Math.floor((c.h - (y - c.y) - 24) / lineH);
-        var sumLines = posterWrapLines(meaS, c.summary, innerW, Math.max(1, maxLines));
+        var sumLines = posterWrapLines(meaS, c.summary, innerW, c.summaryLines);
         ctx.fillStyle = theme.sub;
         sumLines.forEach(function (line) {
           _font(ctx, fSub, '400');
-          y += lineH - 2;
+          y += CARD_LINE_H;
           ctx.fillText(line, c.x + padX + 2, y);
         });
       }
