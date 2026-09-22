@@ -531,6 +531,151 @@ check('graph-export: 一页概览图（完整内容模式已按用户要求移�
   return true;
 });
 
+check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行/锚点/布局过滤）', () => {
+  const dbg = sandbox.window.graphPosterDebug;
+  if (!dbg || typeof dbg.layout !== 'function') throw new Error('graphPosterDebug 未暴露');
+  // 纯文本：代码块换占位、模块标签/井号/星号剥除、$ 定界符剥壳
+  const plain = dbg.plainText('<physics>## 动量守恒\n$mv=MV$ 与 **碰撞**</physics>\n```html\n<div/>\n```');
+  if (plain.includes('$') || plain.includes('#') || plain.includes('```') || plain.includes('*')) {
+    throw new Error('纯文本仍带标记：' + plain);
+  }
+  if (!plain.includes('动量守恒') || !plain.includes('mv=MV') || !plain.includes('交互内容')) {
+    throw new Error('纯文本丢内容：' + plain);
+  }
+  // 标题摘要：首行为题、截断加省略号、more 记原始长度
+  const ts = dbg.titleSummary('第一行标题很长\n第二行内容继续\n第三行', 6, 10);
+  if (ts.title !== '第一行标题…') throw new Error('标题截断错误：' + ts.title);
+  if (!ts.summary.endsWith('…') || ts.summary.length !== 10) throw new Error('摘要截断错误：' + ts.summary);
+  if (ts.more !== 11) throw new Error('more 应记原始长度 11：' + ts.more);
+  // 断行：等宽假 measure（每字符 10px），50px 预算 → 每行 5 字符，两行封顶加省略
+  const lines = dbg.wrapLines((t) => t.length * 10, 'aaa bbb ccc', 50, 2);
+  if (lines.length !== 2 || !lines[1].endsWith('…')) throw new Error('断行错误：' + JSON.stringify(lines));
+  // 矩形锚点：右向射线交右边界、上向射线交上边界
+  let p = dbg.rectAnchor(0, 0, 100, 50, 200, 0);
+  if (Math.abs(p.x - 50) > 0.01 || Math.abs(p.y) > 0.01) throw new Error('右边界锚点错误：' + JSON.stringify(p));
+  p = dbg.rectAnchor(0, 0, 100, 50, 0, -100);
+  if (Math.abs(p.x) > 0.01 || Math.abs(p.y + 25) > 0.01) throw new Error('上边界锚点错误：' + JSON.stringify(p));
+  // 布局：draft/hidden 节点滤除、其边一并滤除、模块节点属性标签来自画布同源表
+  const layout = dbg.layout({
+    nodes: [
+      { id: 'a', kind: 'user', x: 0, y: 0, w: 260, h: 140, label: '问题A', messageIndex: 0 },
+      { id: 'b', kind: 'module', moduleKey: 'physics', x: 500, y: 0, w: 260, h: 140, label: '物理讲解' },
+      { id: 'd', kind: 'draft', x: 250, y: 0, w: 260, h: 140, label: '草稿' },
+      { id: 'h', kind: 'user', hidden: true, x: -500, y: -500, w: 260, h: 140, label: '隐藏' },
+    ],
+    edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'd' }, { from: 'a', to: 'h' }],
+    groups: [{ x: -50, y: -50, width: 700, height: 300, name: '组', color: '#38bdf8' }],
+  });
+  if (!layout) throw new Error('布局返回空');
+  if (layout.cards.length !== 2) throw new Error('draft/hidden 节点应被滤除：' + layout.cards.length);
+  if (layout.edges.length !== 1) throw new Error('指向已滤除节点的边应被滤除：' + layout.edges.length);
+  if (layout.groups.length !== 1) throw new Error('分组应保留');
+  const cardB = layout.cards.find((c) => c.id === 'b');
+  if (cardB.attrLabel !== '物理视角') throw new Error('模块节点属性标签错误：' + cardB.attrLabel);
+  if (cardB.title !== '物理讲解') throw new Error('节点标题应取 label：' + cardB.title);
+  if (!(cardB.w >= 112 && cardB.w <= 340)) throw new Error('卡片宽应夹在 [112,340]：' + cardB.w);
+  // 边端点必须落在卡片矩形边界上（锚点裁剪生效）
+  const e = layout.edges[0];
+  const a = layout.cards.find((c) => c.id === 'a');
+  if (Math.abs(Math.abs(e.x1 - a.cx) - a.w / 2) > 0.01 && Math.abs(Math.abs(e.y1 - a.cy) - a.h / 2) > 0.01) {
+    throw new Error('边起点未锚到卡片边界');
+  }
+  return true;
+});
+
+check('graph-poster: 导出接线（菜单海报段 + 主包/查看器双注册）', () => {
+  const ge = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  if (!ge.includes('data-poster-scale')) throw new Error('导出菜单缺海报倍数行');
+  if (!ge.includes('exportGraphPoster')) throw new Error('菜单未接海报导出');
+  if (!ge.includes('graphExportHtml')) throw new Error('导出菜单缺单文件网页入口');
+  if (!ge.includes("typeof window.exportUtopiaStandaloneHtml === 'function'")) {
+    throw new Error('单文件网页入口必须按模块可用性守卫（查看器包不显示该行）');
+  }
+  if (typeof sandbox.window.exportGraphPoster !== 'function') throw new Error('主包未暴露 exportGraphPoster');
+  const bf = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+  const bv = fs.readFileSync('scripts/build_viewer.mjs', 'utf8');
+  if (!bf.includes("'graph-poster.js'")) throw new Error('主包缺 graph-poster.js');
+  if (!bv.includes("'graph-poster.js'")) throw new Error('查看器包缺 graph-poster.js（查看器再导出同样可选海报）');
+  if (bv.includes("'utopia-import.js'") || bv.includes("'utopia-html.js'")) {
+    throw new Error('导入/单文件导出是主应用能力，不该进只读查看器包');
+  }
+  return true;
+});
+
+check('utopia: 快照携带完整会话（messages 全量 + messagesComplete + 下标恒等映射）', () => {
+  const history = [
+    { role: 'user', content: '什么是动量守恒', timestamp: 1 },
+    { role: 'assistant', content: '<physics>守恒定律</physics>', timestamp: 2 },
+    { role: 'user', content: '再讲讲能量', timestamp: 3 }, // 未被任何节点引用——也必须随文件带走
+  ];
+  const prevChat = sandbox._getChatHistory;
+  const prevState = sandbox._graphState;
+  sandbox._getChatHistory = () => history;
+  sandbox._graphState = () => ({ pan: { x: 0, y: 0 }, zoom: 1 });
+  vm.runInContext("graphView.nodes = [{ id: 'a', kind: 'user', messageIndex: 0, label: 'q', x: 0, y: 0, w: 260, h: 140 },"
+    + "{ id: 'm', kind: 'module', moduleKey: 'physics', messageIndex: 1, label: '物理', x: 400, y: 0, w: 260, h: 140 }];"
+    + "graphView.edges = []; graphView.groups = []; graphView.pan = { x: 1, y: 2 }; graphView.zoom = 1;", sandbox);
+  let snap;
+  try {
+    snap = sandbox.buildUtopiaSnapshot();
+  } finally {
+    sandbox._getChatHistory = prevChat;
+    sandbox._graphState = prevState;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.groups = [];', sandbox);
+  }
+  if (!Array.isArray(snap.messages) || snap.messages.length !== 3) throw new Error('messages 应全量携带：' + (snap.messages || []).length);
+  if (snap.messages[2].content !== '再讲讲能量') throw new Error('未被节点引用的消息也必须在场');
+  if (snap.meta.messagesComplete !== true) throw new Error('meta.messagesComplete 应为 true');
+  if (snap.meta.counts.messages !== 3) throw new Error('counts.messages 口径错误');
+  const nodeA = snap.nodes.find((n) => n.id === 'a');
+  if (nodeA.messageIndex !== 0) throw new Error('全量携带时 messageIndex 应恒等映射');
+  // 导出成功浮卡：主应用弹、查看器（window.__UTOPIA__ 存在）不弹（其 sessionStorage 是内存门面，交接不出去）
+  const u = fs.readFileSync('src/static/js/utopia.js', 'utf8');
+  if (!u.includes('_utopiaIsViewer')) throw new Error('缺查看器环境判定');
+  if (!u.includes('__utopiaTakeUtopiaHandoff')) throw new Error('缺 handoff 交接函数');
+  if (!u.includes('showUtopiaExportCard')) throw new Error('缺导出成功浮卡');
+  return true;
+});
+
+check('utopia: 查看器会话面板 + 三级装载顺序（embedded → handoff → src → 拖拽）', () => {
+  const vhtml = fs.readFileSync('src/static/viewer.html', 'utf8');
+  for (const need of ['utopiaMsgsBtn', 'utopiaMsgsPanel', 'utopia-msgs-list', 'utopia-msgs-close']) {
+    if (!vhtml.includes(need)) throw new Error('viewer.html 缺会话面板结构：' + need);
+  }
+  const vmSrc = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  for (const need of [
+    'window.__UTOPIA_EMBEDDED__',            // 单文件网页内嵌快照优先
+    "qs.get('from') === 'handoff'",          // 主应用导出交接次之
+    '__utopiaTakeUtopiaHandoff',             // 与主应用约定的交接函数（opener 直传，不经 storage 门面）
+    'toggleMessagesPanel', 'renderMessagesPanel',
+    'focusGraphNodeById',                    // 气泡「定位到画布」复用既有聚焦
+    'messagesComplete',                      // 老快照（子集消息）口径提示
+  ]) {
+    if (!vmSrc.includes(need)) throw new Error('viewer-main.js 缺：' + need);
+  }
+  // 只读边界：面板渲染不得引入任何写路径
+  for (const banned of ['saveGraphState', 'createNewSession', 'sendQuick']) {
+    if (new RegExp('renderMessagesPanel[\\s\\S]{0,2000}' + banned).test(vmSrc)) {
+      throw new Error('会话面板渲染混入写路径：' + banned);
+    }
+  }
+  return true;
+});
+
+check('utopia: 单文件网页导出（防截断转义 + 大图限流 + 双通道交付）', () => {
+  const uh = fs.readFileSync('src/static/js/utopia-html.js', 'utf8');
+  if (!uh.includes('exportUtopiaStandaloneHtml')) throw new Error('缺导出主函数');
+  if (!uh.includes('window.__UTOPIA_EMBEDDED__')) throw new Error('缺内嵌快照注入');
+  if (!uh.replace(/<\/script/gi, '').includes('<\\/script')) throw new Error('缺 </script 防截断转义');
+  if (!uh.includes('u2028') || !uh.includes('u2029')) throw new Error('缺 U+2028/2029 转义（JSON 合法但 JS 字符串字面量非法）');
+  if (!uh.includes('<!--')) throw new Error('缺 <!-- 脚本数据转义状态防护');
+  if (!uh.includes('IMAGE_INLINE_LIMIT')) throw new Error('缺大图内联上限（背景照片不进包）');
+  if (!uh.includes("fetch('/viewer.html'")) throw new Error('应以 viewer.html 为模板');
+  const bf = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+  if (!bf.includes("'utopia-html.js'")) throw new Error('主包缺 utopia-html.js');
+  return true;
+});
+
 check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面板走 aurora-glass', () => {
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   // 玻璃节点底座深浅两套
@@ -3303,6 +3448,65 @@ check('设计尺子：同类载体的圆角同档（弹窗 --r-lg / 大浮层 --
 });
 
 // 串行段里的异步用例同样进 pendingChecks——必须再收一次，否则断言结果赶不上退出判定
+await Promise.all(pendingChecks).catch(() => {});
+
+// ===== 串行边界追加：utopia 快照导入（写共享 phymathia_sessions 键 + await fetch）=====
+check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现有会话）', async () => {
+  // 识别纯函数：.pmu 收、其它后缀放行
+  const accept = sandbox.window.utopiaImportAccept;
+  if (typeof accept !== 'function') throw new Error('utopiaImportAccept 未暴露');
+  if (!accept({ name: 'a.PMU' })) throw new Error('.pmu 应被接受（大小写不敏感）');
+  if (accept({ name: 'a.json' })) throw new Error('.json 不应走快照导入（避免抢数据导入通道）');
+  if (accept(null)) throw new Error('空文件应被拒绝');
+  // 行为级：真实 parse + 三写 + 切换
+  const before = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+  const snapshot = {
+    format: 'phymath-utopia/graph', version: 1,
+    title: '导入测试网', graph: { pan: { x: 5, y: 6 }, zoom: 1 },
+    nodes: [], edges: [], groups: [],
+    messages: [{ role: 'user', content: 'q1', timestamp: 1 }, { role: 'assistant', content: 'a1', timestamp: 2 }],
+  };
+  
+  const prevSwitch = sandbox.window.switchToSession;   // import 走 window.switchToSession（session.js 挂载）
+  const prevSync = sandbox.window.syncFromServer;
+  const prevFetch = sandbox.fetch;
+  const calls = [];
+  sandbox.window.switchToSession = async () => { calls.push('switch'); };
+  sandbox.window.syncFromServer = async () => { calls.push('sync'); };
+  sandbox.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ value: [] }), text: async () => '' };
+  };
+  let ok = false;
+  try {
+    ok = await sandbox.window.importUtopiaSnapshotText(JSON.stringify(snapshot), 'demo.pmu');
+  } finally {
+    sandbox.window.switchToSession = prevSwitch;
+    sandbox.window.syncFromServer = prevSync;
+    sandbox.fetch = prevFetch;
+  }
+  if (ok !== true) throw new Error('导入应返回 true');
+  const after = (() => { try { return JSON.parse(sandbox.localStorage.getItem('phymathia_sessions') || '{}'); } catch (e) { return {}; } })();
+  const newIds = Object.keys(after).filter((k) => !(k in before));
+  if (newIds.length !== 1) throw new Error('应恰好新建一个会话：' + newIds.length);
+  const sid = newIds[0];
+  if (after[sid].title !== '导入测试网') throw new Error('会话标题应取快照标题');
+  const msgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_' + sid) || '[]');
+  if (msgs.length !== 2) throw new Error('消息应完整落位');
+  const gst = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + sid) || 'null');
+  if (!gst || gst.pan.x !== 5) throw new Error('图状态应完整落位');
+  // 服务端三写 + 切换都发生
+  if (!calls.some((c) => c.includes('/api/sessions')) || !calls.some((c) => c.includes('/messages'))
+    || !calls.some((c) => c.includes('graph%3A') || c.includes('graph:'))) throw new Error('服务端三写缺失：' + JSON.stringify(calls));
+  if (!calls.includes('switch')) throw new Error('导入后应切换到新画布');
+  // 收尾：清掉测试会话，不污染后续用例
+  delete after[sid];
+  sandbox.localStorage.setItem('phymathia_sessions', JSON.stringify(after));
+  sandbox.localStorage.removeItem('phymathia_msgs_' + sid);
+  sandbox.localStorage.removeItem('phymathia_graph_' + sid);
+  return true;
+});
+
 await Promise.all(pendingChecks).catch(() => {});
 
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');

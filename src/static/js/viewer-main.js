@@ -47,6 +47,11 @@
     readOnlyGuard();
     installReadOnlyPanels();
     installReadOnlyContextMenu();
+    // 换装新快照：会话面板标记为待重渲（下次打开按新 messages 重建）
+    var panel = el('utopiaMsgsPanel');
+    if (panel) { delete panel.dataset.rendered; panel.classList.remove('open'); }
+    var msgsBtn = el('utopiaMsgsBtn');
+    if (msgsBtn) msgsBtn.classList.remove('primary');
     toast('已载入 ' + summaryText(snapshot));
   }
 
@@ -150,6 +155,105 @@
     window.openGraphContextMenu = wrapped;
   }
 
+  // ---------- 会话记录面板（只读） ----------
+  // 快照 2026-09-22 起携带完整会话消息：面板按时间序渲染对话气泡（Markdown+公式照渲），
+  // 气泡可「定位到画布」——按 messageIndex 反查节点并聚焦。老快照只带被节点引用的
+  // 子集消息：有多少显示多少，meta.messagesComplete 标记口径，面板不猜不补。
+
+  function messagesOfSnapshot() {
+    var snap = (window.__UTOPIA__ && window.__UTOPIA__.snapshot) || {};
+    return Array.isArray(snap.messages) ? snap.messages : [];
+  }
+
+  function _msgNodeForIndex(idx) {
+    try {
+      var nodes = (typeof graphView !== 'undefined' && graphView && graphView.nodes) || [];
+      for (var i = 0; i < nodes.length; i++) {
+        if (Number(nodes[i] && nodes[i].messageIndex) === idx) return nodes[i];
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function _msgTimeHtml(msg) {
+    var ts = Number(msg && msg.timestamp);
+    if (!isFinite(ts) || !ts) return '';
+    var d = new Date(ts);
+    var p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function _msgBranchLabel(msg) {
+    var m = msg || {};
+    if (m.branchType === 'socratic') return '苏格拉底支线';
+    if (m.branchLabel) return String(m.branchLabel).slice(0, 16);
+    return '';
+  }
+
+  function renderMessagesPanel() {
+    var list = el('utopiaMsgsList');
+    if (!list) return;
+    var msgs = messagesOfSnapshot();
+    var snap = (window.__UTOPIA__ && window.__UTOPIA__.snapshot) || {};
+    var complete = !!(snap.meta && snap.meta.messagesComplete);
+    var count = el('utopiaMsgsCount');
+    if (count) {
+      count.textContent = msgs.length ? (msgs.length + ' 条' + (complete ? '' : '（老快照：仅画布引用的消息）')) : '快照未携带会话消息';
+    }
+    list.textContent = '';
+    msgs.forEach(function (msg, idx) {
+      if (!msg || typeof msg !== 'object') return;
+      var isUser = msg.role === 'user';
+      var item = document.createElement('div');
+      item.className = 'utopia-msg ' + (isUser ? 'utopia-msg-user' : 'utopia-msg-ai');
+      var branch = _msgBranchLabel(msg);
+      var head = '<div class="utopia-msg-head"><span class="utopia-msg-role">' + (isUser ? '提问' : 'AI 回答') + '</span>'
+        + (branch ? '<span class="utopia-msg-branch">' + branch + '</span>' : '')
+        + '<span class="utopia-msg-time">' + _msgTimeHtml(msg) + '</span></div>';
+      var bodyText = isUser ? String(msg.content || '') : String(msg.content || '');
+      if (!isUser && typeof stripXmlTags === 'function') bodyText = stripXmlTags(bodyText);
+      var body = '';
+      if (typeof renderMarkdown === 'function') {
+        body = renderMarkdown(bodyText, { parentId: 'utopiaMsg' + idx });
+      } else {
+        body = '<div class="utopia-msg-plain"></div>';
+      }
+      var node = _msgNodeForIndex(idx);
+      var locate = node
+        ? '<button type="button" class="utopia-msg-locate" data-node-id="' + node.id + '">定位到画布</button>'
+        : '';
+      item.innerHTML = head + '<div class="utopia-msg-body">' + body + '</div>'
+        + '<div class="utopia-msg-foot">' + locate + '</div>';
+      var plain = item.querySelector('.utopia-msg-plain');
+      if (plain) plain.textContent = bodyText;
+      list.appendChild(item);
+    });
+    // 公式是「事后扫描」机制（renderMarkdown 只产出 $..$ 原文）：面板挂载后对整个列表跑一遍
+    if (typeof renderMath === 'function') {
+      try { renderMath(list); } catch (e) {}
+    }
+    list.addEventListener('click', function (event) {
+      var btn = event.target.closest ? event.target.closest('.utopia-msg-locate') : null;
+      if (!btn) return;
+      if (typeof window.focusGraphNodeById === 'function') {
+        if (!window.focusGraphNodeById(btn.getAttribute('data-node-id'))) toast('没找到对应节点');
+      }
+    });
+  }
+
+  function toggleMessagesPanel(force) {
+    var panel = el('utopiaMsgsPanel');
+    if (!panel) return;
+    var open = (typeof force === 'boolean') ? force : !panel.classList.contains('open');
+    if (open && !panel.dataset.rendered) {
+      renderMessagesPanel();
+      panel.dataset.rendered = '1';
+    }
+    panel.classList.toggle('open', open);
+    var btn = el('utopiaMsgsBtn');
+    if (btn) btn.classList.toggle('primary', open);
+  }
+
   // ---------- 打开文件 ----------
 
   function loadText(text, fileName) {
@@ -223,6 +327,18 @@
       } catch (e) {}
       toast(n ? ('已展开 ' + n + ' 个折叠节点（仅本次查看）') : '没有折叠的节点');
     });
+    el('utopiaMsgsBtn') && el('utopiaMsgsBtn').addEventListener('click', function () {
+      toggleMessagesPanel();
+    });
+    el('utopiaMsgsClose') && el('utopiaMsgsClose').addEventListener('click', function () {
+      toggleMessagesPanel(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        var p = el('utopiaMsgsPanel');
+        if (p && p.classList.contains('open')) toggleMessagesPanel(false);
+      }
+    });
   }
 
   // ---------- 拖放与快捷键 ----------
@@ -259,9 +375,30 @@
     installReadOnlyContextMenu();
     initToolbar();
     initDropZone();
-    var src = new URLSearchParams(location.search).get('src');
-    if (src) loadFromUrl(src);
-    else toast('拖入 .pmu 快照，或点「打开快照」');
+    // 装载优先级：① 单文件网页内嵌快照（window.__UTOPIA_EMBEDDED__，无网络依赖）
+    // ② 主应用导出后的 sessionStorage 交接（?from=handoff） ③ ?src=<url> ④ 拖入文件
+    var embedded = window.__UTOPIA_EMBEDDED__;
+    if (embedded && embedded.format) {
+      loadText(JSON.stringify(embedded), '内嵌快照');
+      return;
+    }
+    var qs = new URLSearchParams(location.search);
+    if (qs.get('from') === 'handoff') {
+      // opener 直传：主应用导出浮卡 → window.open 前挂 __utopiaTakeUtopiaHandoff，
+      // 这里取走（一次性）。不经 storage——本页 storage 已是内存门面。
+      var payload = null;
+      try {
+        if (window.opener && typeof window.opener.__utopiaTakeUtopiaHandoff === 'function') {
+          payload = window.opener.__utopiaTakeUtopiaHandoff();
+        }
+      } catch (e) {}
+      if (payload && payload.format && loadText(JSON.stringify(payload), '刚导出的快照')) return;
+      showError('没接到导出的快照（新标签页可能没继承数据）——请直接把刚下载的 .pmu 拖进来');
+      return;
+    }
+    var src = qs.get('src');
+    if (src) { loadFromUrl(src); return; }
+    toast('拖入 .pmu 快照，或点「打开快照」');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
@@ -271,6 +408,8 @@
     loadText: loadText,
     loadFile: loadFile,
     applySnapshot: applySnapshot,
+    toggleMessagesPanel: toggleMessagesPanel,
+    renderMessagesPanel: renderMessagesPanel,
     state: U,
   };
 })();
