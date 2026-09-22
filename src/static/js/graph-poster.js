@@ -21,14 +21,34 @@
 
   // ---------- 纯函数（smoke 断言 / 布局复用） ----------
 
+  // LaTeX 轻转换：canvas 画不了公式，把常见命令换成可读符号（读得懂的近似，不求排版）
+  var _LATEX_GREEK = {
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', epsilon: 'ε',
+    theta: 'θ', Theta: 'Θ', lambda: 'λ', mu: 'μ', omega: 'ω', Omega: 'Ω',
+    pi: 'π', rho: 'ρ', sigma: 'σ', phi: 'φ', varphi: 'φ', tau: 'τ', eta: 'η',
+  };
+
+  function _latexLite(s) {
+    return String(s)
+      .replace(/\\sqrt\s*\{([^{}]*)\}/g, '√($1)')
+      .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1)/($2)')
+      .replace(/\\(ddot|dot|hat|tilde|bar|vec)\s*\{([^{}]*)\}/g, '$2')
+      .replace(/\\([A-Za-z]+)/g, function (_, cmd) { return _LATEX_GREEK[cmd] || ' '; })
+      .replace(/\\left|\\right/g, '')
+      .replace(/\\[,;!]/g, ' ')
+      .replace(/\\/g, ' ')
+      .replace(/[{}]/g, '')
+      .replace(/\s{2,}/g, ' ');
+  }
+
   // 原始内容（markdown + XML 模块标签 + 公式定界符）→ 海报纯文本。
-  // 代码块整块换成占位词；$/$$ 公式保留 LaTeX 源（学生读得懂），只剥定界符。
+  // 代码块整块换成占位词；$/$$ 公式经 LaTeX 轻转换保留可读符号。
   function posterPlainText(content) {
     var s = String(content || '');
     s = s.replace(/```[\s\S]*?```/g, '「交互内容」');
     if (typeof stripXmlTags === 'function') s = stripXmlTags(s);
-    s = s.replace(/\$\$([\s\S]*?)\$\$/g, function (_, m) { return m; });
-    s = s.replace(/\\?\$([^$\n]+?)\\?\$/g, function (_, m) { return m; });
+    s = s.replace(/\$\$([\s\S]*?)\$\$/g, function (_, m) { return _latexLite(m); });
+    s = s.replace(/\\?\$([^$\n]+?)\\?\$/g, function (_, m) { return _latexLite(m); });
     s = s.replace(/<\/?[a-zA-Z][^>]*>/g, ' ');
     s = s.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');
     s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
@@ -37,20 +57,31 @@
     return s.replace(/[ \t\u3000]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
   }
 
-  // 标题与摘要：标题取首行（跳过空行），摘要取剩余文本压成一串。
+  // 标题与摘要：标题取首行前 maxTitleChars 字；**截断余量与后续行都进摘要**——
+  // AI 摘要是无换行的整段文本，若摘要只取"剩余行"，整段会被标题吃光、卡片只剩结构。
   function posterTitleSummary(raw, maxTitleChars, maxSummaryChars) {
     var plain = posterPlainText(raw);
     if (!plain) return { title: '', summary: '', more: 0 };
     var parts = plain.split('\n');
     var title = '';
+    var restLines = [];
     for (var i = 0; i < parts.length; i++) {
-      if (parts[i].trim()) { title = parts[i].trim(); parts = parts.slice(i + 1); break; }
+      if (!parts[i].trim()) continue;
+      var first = parts[i].trim();
+      if (first.length > maxTitleChars) {
+        title = first.slice(0, maxTitleChars - 1) + '…';
+        restLines = [first.slice(maxTitleChars - 1)].concat(parts.slice(i + 1));
+      } else {
+        title = first;
+        restLines = parts.slice(i + 1);
+      }
+      break;
     }
-    if (title.length > maxTitleChars) title = title.slice(0, maxTitleChars - 1) + '…';
-    var summary = parts.join(' ').replace(/\s+/g, ' ').trim();
+    if (!title) return { title: '（无标题）', summary: '', more: 0 };
+    var summary = restLines.join(' ').replace(/\s+/g, ' ').trim();
     var more = summary.length;
     if (summary.length > maxSummaryChars) summary = summary.slice(0, maxSummaryChars - 1) + '…';
-    return { title: title || '（无标题）', summary: summary, more: more };
+    return { title: title, summary: summary, more: more };
   }
 
   // measure(text) -> 宽度；把 text 断成不超过 maxW 的行，最多 maxLines 行（末行超宽截断加 …）
@@ -127,7 +158,15 @@
     return { key: 'question', label: '节点', color: '#4a9eff' };
   }
 
-  // ---------- 布局（纯数据，不碰 canvas） ----------
+  // ---------- 布局：拓扑分层紧凑网格 ----------
+  // 不照搬画布坐标（画布本来就稀疏，缩放后依旧散）。海报按连线拓扑重新分层：
+  // 入度 0 / 根问题在顶层，沿结构边向下逐层展开；同层按原画布 x 排序、每行最多
+  // maxPerRow 张、整行居中；联系线（edge.link）不参与分层、孤立节点归末层。
+  // 分组框按成员卡片包围盒重算（原矩形在新布局下已无意义）。
+
+  var CARD_W = 272, CARD_H = 164, GAP_X = 40, GAP_Y = 78;
+  var SUMMARY_CHARS = 100;   // 摘要预算（4 行 × ~24 字）
+  var TITLE_CHARS = 26;
 
   function posterLayout(opts) {
     var nodes = (opts && opts.nodes) || [];
@@ -140,90 +179,131 @@
     });
     if (!vis.length) return null;
 
-    // 包围盒（节点 + 分组），与 graph-export 的口径一致
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    vis.forEach(function (n) {
-      var w = n.w || n.customWidth || 260, h = n.h || n.customHeight || 140;
-      minX = Math.min(minX, n.x - w / 2); maxX = Math.max(maxX, n.x + w / 2);
-      minY = Math.min(minY, n.y - h / 2); maxY = Math.max(maxY, n.y + h / 2);
-    });
-    groups.forEach(function (g) {
-      if (!g) return;
-      minX = Math.min(minX, g.x); minY = Math.min(minY, g.y);
-      maxX = Math.max(maxX, g.x + (g.width || 0)); maxY = Math.max(maxY, g.y + (g.height || 0));
-    });
-    var bw = Math.max(240, maxX - minX), bh = Math.max(180, maxY - minY);
-
-    var k = Math.min(1.6, (baseW - margin * 2) / bw);
-    var kf = Math.min(1.25, Math.max(0.55, k)); // 字号缩放（夹住，防超大图字小如蚁）
-    var width = Math.round(bw * k + margin * 2);
-    var top = POSTER_HEADER_H + margin;
-
-    var cards = vis.map(function (n) {
-      var minimized = !!n.minimized;
-      var root = !!n.isRoot;
-      var w = Math.min(340, Math.max(112, (n.w || 260) * k));
-      var h = minimized ? 46 : (root ? 96 : 84);
-      var cx = margin + (n.x - minX) * k;
-      var cy = top + (n.y - minY) * k;
-      var raw = String(n.label || '') || '';
-      if (!raw) {
-        var msg = null;
-        try { msg = (typeof _getChatHistory === 'function' ? _getChatHistory() : [])[n.messageIndex]; } catch (e) {}
-        if (typeof _nodeContent === 'function') { try { raw = _nodeContent(msg, n) || ''; } catch (e2) { raw = ''; } }
-        else raw = (msg && msg.content) || n.content || '';
-      }
-      var attr = _attrOf(n);
-      var meta = minimized
-        ? posterTitleSummary(raw, 16, 0)
-        : posterTitleSummary(raw, root ? 26 : 22, 96);
-      return {
-        id: n.id,
-        x: cx - w / 2, y: cy - h / 2, w: w, h: h, cx: cx, cy: cy,
-        attrLabel: attr.label || '节点',
-        attrColor: attr.color || '#4a9eff',
-        attrKey: attr.key || 'question',
-        kind: n.kind, moduleKey: n.moduleKey || '',
-        isRoot: root, minimized: minimized,
-        title: meta.title, summary: meta.summary,
-        chars: posterPlainText(raw).length,
-        fontSize: kf,
-      };
-    });
-
     var byId = {};
-    cards.forEach(function (c) { byId[c.id] = c; });
+    vis.forEach(function (n) { byId[n.id] = n; });
+    var allEdges = ((opts && opts.edges) || []).filter(function (e) {
+      return e && byId[e.from] && byId[e.to];
+    });
+    // 结构边（联系线不参与分层，但仍绘制）
+    var structEdges = allEdges.filter(function (e) { return !e.link; });
+
+    // 入度 + BFS 分层（取最长路径层；已访问节点若更深则更新并重放）
+    var indeg = {};
+    vis.forEach(function (n) { indeg[n.id] = 0; });
+    structEdges.forEach(function (e) { indeg[e.to]++; });
+    var layerOf = {};
+    var frontier = [];
+    vis.forEach(function (n) {
+      if (n.isRoot || indeg[n.id] === 0) { layerOf[n.id] = 0; frontier.push(n); }
+    });
+    var maxLayer = 0;
+    var head = 0;
+    while (head < frontier.length) {
+      var cur = frontier[head++];
+      var curLayer = layerOf[cur.id];
+      for (var ei = 0; ei < structEdges.length; ei++) {
+        var e = structEdges[ei];
+        if (e.from !== cur.id) continue;
+        var down = byId[e.to];
+        var next = curLayer + 1;
+        if (layerOf[down.id] === undefined || next > layerOf[down.id]) {
+          layerOf[down.id] = next;
+          if (next > maxLayer) maxLayer = next;
+          frontier.push(down);
+        }
+      }
+    }
+    var orphanLayer = maxLayer + 1; // 无结构边可达的环成员/孤点统一归末层
+
+    // 折行：每层按原画布 x 排序 → 切成行
+    var maxPerRow = Math.max(1, Math.floor((baseW - margin * 2 + GAP_X) / (CARD_W + GAP_X)));
+    var width = Math.round(Math.max(baseW, CARD_W + margin * 2));
+    var top = POSTER_HEADER_H + margin;
+    var history = (typeof _getChatHistory === 'function' ? _getChatHistory() : []) || [];
+
+    var cards = [];
+    var rows = [];
+    for (var L = 0; L <= orphanLayer; L++) {
+      var layerNodes = vis.filter(function (n) { return layerOf[n.id] === L; })
+        .sort(function (a, b) { return (a.x || 0) - (b.x || 0); });
+      for (var i = 0; i < layerNodes.length; i += maxPerRow) {
+        rows.push(layerNodes.slice(i, i + maxPerRow));
+      }
+    }
+    if (!rows.length) return null;
+
+    var y = top;
+    rows.forEach(function (rowNodes) {
+      var rowW = rowNodes.length * CARD_W + (rowNodes.length - 1) * GAP_X;
+      var x0 = (width - rowW) / 2;
+      rowNodes.forEach(function (n, j) {
+        var cx = x0 + j * (CARD_W + GAP_X) + CARD_W / 2;
+        var cy = y + CARD_H / 2;
+        var msg = null;
+        var mi = Number(n.messageIndex);
+        if (mi >= 0) msg = history[mi];
+        var raw = '';
+        try { raw = (typeof _nodeContent === 'function' ? _nodeContent(msg, n) : '') || ''; } catch (e) { raw = ''; }
+        if (!raw) raw = String(n.label || '');
+        if (!raw) raw = String((msg && msg.content) || '');
+        var attr = _attrOf(n);
+        var meta = posterTitleSummary(raw, TITLE_CHARS, n.minimized ? 46 : SUMMARY_CHARS);
+        if (!meta.title || meta.title === '（无标题）') meta.title = attr.label || '节点';
+        cards.push({
+          id: n.id,
+          x: cx - CARD_W / 2, y: y, w: CARD_W, h: CARD_H, cx: cx, cy: cy,
+          attrLabel: attr.label || '节点',
+          attrColor: attr.color || '#4a9eff',
+          attrKey: attr.key || 'question',
+          kind: n.kind, moduleKey: n.moduleKey || '',
+          isRoot: !!n.isRoot, minimized: !!n.minimized,
+          title: meta.title, summary: meta.summary,
+          chars: posterPlainText(raw).length,
+        });
+      });
+      y += CARD_H + GAP_Y;
+    });
+
+    var byCardId = {};
+    cards.forEach(function (c) { byCardId[c.id] = c; });
 
     var edges = [];
-    ((opts && opts.edges) || []).forEach(function (e) {
-      if (!e) return;
-      var a = byId[e.from], b = byId[e.to];
+    allEdges.forEach(function (e) {
+      var a = byCardId[e.from], b = byCardId[e.to];
       if (!a || !b) return;
       var p1 = posterRectAnchor(a.cx, a.cy, a.w, a.h, b.cx, b.cy);
       var p2 = posterRectAnchor(b.cx, b.cy, b.w, b.h, a.cx, a.cy);
-      edges.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, custom: !!e.custom });
+      edges.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, custom: !!(e.custom || e.link) });
     });
 
-    var laidGroups = groups.map(function (g) {
-      if (!g) return null;
-      return {
-        x: margin + ((g.x || 0) - minX) * k,
-        y: top + ((g.y || 0) - minY) * k,
-        w: (g.width || 0) * k, h: (g.height || 0) * k,
+    // 分组框：按成员卡片新位置重算包围盒
+    var laidGroups = [];
+    groups.forEach(function (g) {
+      if (!g) return;
+      var ids = g.nodeIds || [];
+      var members = cards.filter(function (c) { return ids.indexOf(c.id) >= 0; });
+      if (!members.length) return;
+      var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      members.forEach(function (c) {
+        minX = Math.min(minX, c.x); minY = Math.min(minY, c.y);
+        maxX = Math.max(maxX, c.x + c.w); maxY = Math.max(maxY, c.y + c.h);
+      });
+      var pad = 16;
+      laidGroups.push({
+        x: minX - pad, y: minY - pad,
+        w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2,
         name: g.name || '分组', color: g.color || '#38bdf8',
-      };
-    }).filter(Boolean);
+      });
+    });
 
-    // 高度按「卡片/分组实际占位」收口：缩略卡比原节点矮得多，按原包围盒算高度
-    // 会让海报下半页大片空白（bounds 的角色只是估 k 与水平排布）
     var contentBottom = 0;
     cards.forEach(function (c) { contentBottom = Math.max(contentBottom, c.y + c.h); });
     laidGroups.forEach(function (g) { contentBottom = Math.max(contentBottom, g.y + g.h); });
     var height = Math.round(Math.max(
-      POSTER_HEADER_H + margin + contentBottom + margin + POSTER_FOOTER_H,
-      POSTER_HEADER_H + margin * 2 + POSTER_FOOTER_H + 240
+      contentBottom + margin + POSTER_FOOTER_H,
+      POSTER_HEADER_H + margin * 2 + POSTER_FOOTER_H + CARD_H
     ));
-    return { k: k, kFont: kf, width: width, height: height, cards: cards, edges: edges, groups: laidGroups };
+    return { width: width, height: height, cards: cards, edges: edges, groups: laidGroups, rows: rows.length };
   }
 
   // ---------- 绘制 ----------
@@ -305,14 +385,14 @@
       ctx.restore();
     });
 
-    // 卡片
+    // 卡片（统一尺寸分层网格：摘要 4 行给足内容）
     layout.cards.forEach(function (c) {
       var col = _resolveColor(c.attrColor, theme);
       ctx.save();
-      _roundRect(ctx, c.x, c.y, c.w, c.h, 10);
+      _roundRect(ctx, c.x, c.y, c.w, c.h, 12);
       ctx.fillStyle = theme.card;
       ctx.fill();
-      ctx.lineWidth = c.isRoot ? 1.8 : 1.1;
+      ctx.lineWidth = c.isRoot ? 2 : 1.1;
       ctx.strokeStyle = c.isRoot ? theme.accent : theme.cardBorder;
       ctx.stroke();
       // 左侧类型色条
@@ -323,51 +403,45 @@
       ctx.fillRect(c.x, c.y, 5, c.h);
       ctx.restore();
 
-      var padX = 16, padY = 11;
-      var innerW = c.w - padX * 2 - 4;
-      var y = c.y + padY;
-      var fAttr = Math.max(10, Math.round(11 * c.fontSize));
-      var fTitle = Math.max(11.5, Math.round((c.isRoot ? 17 : 15) * c.fontSize));
-      var fSub = Math.max(10, Math.round(12.5 * c.fontSize));
+      var padX = 16;
+      var innerW = c.w - padX * 2 - 6;
+      var fAttr = 11, fTitle = c.isRoot ? 17 : 15, fSub = 12.5, lineH = 19;
+      var y = c.y + 14;
 
-      // 类型标签
+      // 类型标签 + 折叠标记
       _font(ctx, fAttr, '600');
       ctx.fillStyle = col;
-      ctx.fillText(c.attrLabel, c.x + padX + 2, y + fAttr - 2);
-      y += fAttr + 6;
+      ctx.fillText(c.attrLabel + (c.minimized ? ' · 已折叠' : ''), c.x + padX + 2, y + fAttr - 2);
+      y += fAttr + 7;
 
-      // 标题（最多 2 行）
-      var meaT = function (t) { _font(ctx, fTitle, '600'); return ctx.measureText(t).width; };
-      var titleLines = posterWrapLines(meaT, c.title, innerW, 2);
+      // 标题 1 行（问题/正文首句）
       ctx.fillStyle = theme.text;
-      titleLines.forEach(function (line) {
-        _font(ctx, fTitle, '600');
-        y += fTitle;
-        ctx.fillText(line, c.x + padX + 2, y);
-        y += 3;
-      });
+      _font(ctx, fTitle, '600');
+      y += fTitle;
+      ctx.fillText(c.title, c.x + padX + 2, y);
+      y += 8;
 
-      // 摘要（最小化卡不放摘要）
-      if (!c.minimized && c.summary) {
+      // 摘要正文（最多 4 行；折叠卡 1 行）
+      if (c.summary) {
         var meaS = function (t) { _font(ctx, fSub, '400'); return ctx.measureText(t).width; };
-        var sumLines = posterWrapLines(meaS, c.summary, innerW, 2);
+        var maxLines = c.minimized ? 1 : Math.floor((c.h - (y - c.y) - 24) / lineH);
+        var sumLines = posterWrapLines(meaS, c.summary, innerW, Math.max(1, maxLines));
         ctx.fillStyle = theme.sub;
         sumLines.forEach(function (line) {
           _font(ctx, fSub, '400');
-          y += fSub;
+          y += lineH - 2;
           ctx.fillText(line, c.x + padX + 2, y);
-          y += 2;
         });
       }
 
       // 「全文 N 字」角标（右下）
-      if (!c.minimized && c.chars > 120) {
+      if (c.chars > 120) {
         var tag = '全文 ' + c.chars + ' 字';
-        _font(ctx, Math.max(9, Math.round(10 * c.fontSize)), '400');
+        _font(ctx, 10.5, '400');
         var tw = ctx.measureText(tag).width;
         ctx.fillStyle = theme.sub;
-        ctx.globalAlpha = 0.85;
-        ctx.fillText(tag, c.x + c.w - tw - 10, c.y + c.h - 8);
+        ctx.globalAlpha = 0.8;
+        ctx.fillText(tag, c.x + c.w - tw - 10, c.y + c.h - 9);
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -401,7 +475,7 @@
     // 纸脚
     ctx.fillStyle = theme.sub;
     _font(ctx, 13.5, '400');
-    var foot = '缩略概览：每张卡片只显示标题与开头——完整回答、公式与交互可视化请用 Utopia 快照（.pmu / 单文件网页）打开';
+    var foot = '缩略知识地图：按回答结构分层排布，卡片显示标题与摘要开头——完整回答、公式与交互可视化请用 Utopia 快照（.pmu / 单文件网页）打开';
     var fw = ctx.measureText(foot).width;
     ctx.fillText(foot, (W - fw) / 2, H - POSTER_FOOTER_H / 2 + 14);
 
