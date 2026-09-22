@@ -542,11 +542,22 @@ check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行
   if (!plain.includes('动量守恒') || !plain.includes('mv=MV') || !plain.includes('交互内容')) {
     throw new Error('纯文本丢内容：' + plain);
   }
-  // 标题摘要：首行为题、截断加省略号、more 记原始长度
+  // 标题摘要：首行为题、截断余量并入摘要（整段无换行文本不许被标题吃光）、more 记原始长度
   const ts = dbg.titleSummary('第一行标题很长\n第二行内容继续\n第三行', 6, 10);
   if (ts.title !== '第一行标题…') throw new Error('标题截断错误：' + ts.title);
   if (!ts.summary.endsWith('…') || ts.summary.length !== 10) throw new Error('摘要截断错误：' + ts.summary);
-  if (ts.more !== 11) throw new Error('more 应记原始长度 11：' + ts.more);
+  if (!ts.summary.startsWith('很长')) throw new Error('标题截断余量应并入摘要：' + ts.summary);
+  if (ts.more !== 14) throw new Error('more 应记原始长度 14：' + ts.more);
+  // 单行整段（AI 摘要的真实形态）：标题吃前 26 字，摘要是余下内容而非空
+  const ts2 = dbg.titleSummary('单摆在小角度时回复力是线性的因此做简谐运动而且周期与摆幅无关这就是等时性', 26, 40);
+  if (!ts2.title.endsWith('…')) throw new Error('长单行应有省略号：' + ts2.title);
+  if (!ts2.summary) throw new Error('单行整段文本的摘要不能为空（被标题吃光）');
+  // LaTeX 轻转换：常见命令转可读符号，不是源码
+  const lt = dbg.plainText('周期 $T = 2\\pi\\sqrt{L/g}$ 与 $\\ddot{\\theta} + \\omega\\theta$');
+  if (lt.includes('\\pi') || lt.includes('\\theta') || lt.includes('\\sqrt') || lt.includes('\\ddot')) {
+    throw new Error('LaTeX 源码未转换：' + lt);
+  }
+  if (!lt.includes('π') || !lt.includes('θ') || !lt.includes('√')) throw new Error('希腊字母/根号缺失：' + lt);
   // 断行：等宽假 measure（每字符 10px），50px 预算 → 每行 5 字符，两行封顶加省略
   const lines = dbg.wrapLines((t) => t.length * 10, 'aaa bbb ccc', 50, 2);
   if (lines.length !== 2 || !lines[1].endsWith('…')) throw new Error('断行错误：' + JSON.stringify(lines));
@@ -555,29 +566,51 @@ check('graph-poster: 缩略知识海报纯函数（纯文本/标题摘要/断行
   if (Math.abs(p.x - 50) > 0.01 || Math.abs(p.y) > 0.01) throw new Error('右边界锚点错误：' + JSON.stringify(p));
   p = dbg.rectAnchor(0, 0, 100, 50, 0, -100);
   if (Math.abs(p.x) > 0.01 || Math.abs(p.y + 25) > 0.01) throw new Error('上边界锚点错误：' + JSON.stringify(p));
-  // 布局：draft/hidden 节点滤除、其边一并滤除、模块节点属性标签来自画布同源表
+  // 布局：分层紧凑网格——draft/hidden 节点滤除、其边一并滤除；模块节点属性标签来自画布同源表；
+  // 下游节点（a→b）必须落在更深的层（cy 更大），单卡行水平居中；无成员分组被丢弃
   const layout = dbg.layout({
     nodes: [
-      { id: 'a', kind: 'user', x: 0, y: 0, w: 260, h: 140, label: '问题A', messageIndex: 0 },
+      { id: 'a', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, label: '问题A', messageIndex: 0 },
       { id: 'b', kind: 'module', moduleKey: 'physics', x: 500, y: 0, w: 260, h: 140, label: '物理讲解' },
       { id: 'd', kind: 'draft', x: 250, y: 0, w: 260, h: 140, label: '草稿' },
       { id: 'h', kind: 'user', hidden: true, x: -500, y: -500, w: 260, h: 140, label: '隐藏' },
     ],
     edges: [{ from: 'a', to: 'b' }, { from: 'a', to: 'd' }, { from: 'a', to: 'h' }],
-    groups: [{ x: -50, y: -50, width: 700, height: 300, name: '组', color: '#38bdf8' }],
+    groups: [
+      { x: -50, y: -50, width: 700, height: 300, name: '组', color: '#38bdf8', nodeIds: ['a', 'b'] },
+      { x: 0, y: 0, width: 100, height: 100, name: '空组', nodeIds: ['d'] },
+    ],
   });
   if (!layout) throw new Error('布局返回空');
   if (layout.cards.length !== 2) throw new Error('draft/hidden 节点应被滤除：' + layout.cards.length);
   if (layout.edges.length !== 1) throw new Error('指向已滤除节点的边应被滤除：' + layout.edges.length);
-  if (layout.groups.length !== 1) throw new Error('分组应保留');
+  if (layout.groups.length !== 1) throw new Error('无成员分组应被丢弃：' + layout.groups.length);
+  const cardA = layout.cards.find((c) => c.id === 'a');
   const cardB = layout.cards.find((c) => c.id === 'b');
   if (cardB.attrLabel !== '物理视角') throw new Error('模块节点属性标签错误：' + cardB.attrLabel);
-  if (cardB.title !== '物理讲解') throw new Error('节点标题应取 label：' + cardB.title);
-  if (!(cardB.w >= 112 && cardB.w <= 340)) throw new Error('卡片宽应夹在 [112,340]：' + cardB.w);
+  if (cardB.title !== '物理讲解') throw new Error('节点标题应取内容/label：' + cardB.title);
+  if (!(cardB.w >= 240 && cardB.w <= 300)) throw new Error('分层网格卡宽应统一：' + cardB.w);
+  if (!(cardA.cy < cardB.cy)) throw new Error('下游节点应在更深层（cy 递增）：' + cardA.cy + ' vs ' + cardB.cy);
+  if (Math.abs(cardA.cx - layout.width / 2) > 1 || Math.abs(cardB.cx - layout.width / 2) > 1) {
+    throw new Error('单卡行应水平居中：' + cardA.cx + ' / ' + cardB.cx + '，宽 ' + layout.width);
+  }
+  // 同层同行：给 b 一个同层兄弟，两者必须共享同一行 y 且等间距
+  const layout2 = dbg.layout({
+    nodes: [
+      { id: 'a', kind: 'user', isRoot: true, x: 0, y: 0, w: 260, h: 140, messageIndex: 0 },
+      { id: 'm1', kind: 'module', moduleKey: 'physics', x: 300, y: 100, w: 260, h: 140 },
+      { id: 'm2', kind: 'module', moduleKey: 'math', x: 900, y: -60, w: 260, h: 140 },
+    ],
+    edges: [{ from: 'a', to: 'm1' }, { from: 'a', to: 'm2' }],
+    groups: [],
+  });
+  const M1 = layout2.cards.find((c) => c.id === 'm1');
+  const M2 = layout2.cards.find((c) => c.id === 'm2');
+  if (M1.y !== M2.y) throw new Error('同层节点应对齐同一行：' + M1.y + ' vs ' + M2.y);
+  if (!(M1.cx < M2.cx)) throw new Error('同层内应按原画布 x 排序');
   // 边端点必须落在卡片矩形边界上（锚点裁剪生效）
   const e = layout.edges[0];
-  const a = layout.cards.find((c) => c.id === 'a');
-  if (Math.abs(Math.abs(e.x1 - a.cx) - a.w / 2) > 0.01 && Math.abs(Math.abs(e.y1 - a.cy) - a.h / 2) > 0.01) {
+  if (Math.abs(Math.abs(e.x1 - cardA.cx) - cardA.w / 2) > 0.01 && Math.abs(Math.abs(e.y1 - cardA.cy) - cardA.h / 2) > 0.01) {
     throw new Error('边起点未锚到卡片边界');
   }
   return true;
