@@ -48,6 +48,10 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOADS_META_PATH = DATA_DIR / "uploads.json"
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# Utopia 快照收件箱：桌面「双击 .pmu」启动器把文件复制到这里（唯一的写路径，
+# 本机文件操作），查看器经 GET /api/utopia/inbox/{name} 只读取回。
+UTOPIA_INBOX_DIR = DATA_DIR / "utopia_inbox"
+UTOPIA_INBOX_DIR.mkdir(parents=True, exist_ok=True)
 
 _load_env_file(ROOT_DIR / ".env")
 
@@ -139,7 +143,7 @@ def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> s
 __all__ = [
     "BASE_DIR", "ROOT_DIR", "DATA_DIR", "MESSAGES_DIR",
     "SESSIONS_PATH", "KNOWLEDGE_PATH", "KV_PATH", "KV_DIR", "FORMULAS_PATH",
-    "UPLOAD_DIR", "UPLOADS_META_PATH", "UPLOAD_MAX_BYTES",
+    "UPLOAD_DIR", "UPLOADS_META_PATH", "UPLOAD_MAX_BYTES", "UTOPIA_INBOX_DIR",
     "STATIC_DIR", "STATIC_EXTENSIONS",
     "LEVEL_PROMPTS", "STRICT_MODULE_MAX_TOKENS",
     "AI_PROVIDERS", "OPENCODE_DEFAULT_API_KEY",

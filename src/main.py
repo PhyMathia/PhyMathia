@@ -959,6 +959,22 @@ async def api_get_families():
     return family.families_view(storage.kv_all_data().get("continent_families"))
 
 
+# 双击 .pmu 的桌面启动器（scripts/utopia_opener/）把文件复制进 data/utopia_inbox/，
+# 查看器（viewer.html?from=inbox&id=<名>）经此只读取回。写入不在 HTTP 面：唯一的
+# 投递方式是本机启动器的文件复制，杜绝任意写。
+_UtopiaInboxNameRe = re.compile(r'^[A-Za-z0-9_.-]{1,80}$')
+
+
+@app.get("/api/utopia/inbox/{name}")
+async def api_utopia_inbox_get(name: str):
+    if not _UtopiaInboxNameRe.match(name) or not name.lower().endswith((".pmu", ".json")):
+        raise HTTPException(status_code=422, detail="非法的快照文件名")
+    path = UTOPIA_INBOX_DIR / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="收件箱里没有这个快照")
+    return Response(content=path.read_text(encoding="utf-8"), media_type="application/json")
+
+
 @app.post("/api/knowledge")
 async def api_save_knowledge(request: Request):
     payload = await _parse_json_object(request)
