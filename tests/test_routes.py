@@ -442,6 +442,9 @@ class KnowledgeIngestGateTest(RouteTestBase):
     """
 
     def test_ingest_rejects_instruction_echo_item(self):
+        # 条目必须挂在活会话下：孤儿闸门（见 KnowledgeOrphanGateTest）会拒收死会话条目
+        storage_mod._write_json(main_mod.SESSIONS_PATH,
+                                {"sess_gate": {"id": "sess_gate", "title": "闸门"}})
         junk = {"id": "ki_junk", "sessionId": "sess_gate", "source": "ai_extract",
                 "title": "用户要求：从方向导数最大值推导梯度在直角坐标下的分量表达式。这是一"}
         ok = {"id": "ki_ok", "sessionId": "sess_gate", "source": "ai_extract", "title": "梯度的定义与坐标表达"}
@@ -452,6 +455,8 @@ class KnowledgeIngestGateTest(RouteTestBase):
         self.assertNotIn("ki_junk", data)
 
     def test_ingest_keeps_manual_item_even_with_odd_title(self):
+        storage_mod._write_json(main_mod.SESSIONS_PATH,
+                                {"sess_gate": {"id": "sess_gate", "title": "闸门"}})
         manual = {"id": "ki_manual", "sessionId": "sess_gate", "source": "manual",
                   "title": "用户要求：我自己写的笔记标题。保留它"}
         resp = self.client.post("/api/knowledge", json={"items": {"ki_manual": manual}})
@@ -873,6 +878,70 @@ class HarnessStreamReviewTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("application/json", resp.headers.get("content-type", ""))
         self.assertEqual(resp.json()["status"], "ok")
+
+
+class SessionDeleteCleanupTest(RouteTestBase):
+    """删除会话的完整清理 + 知识入库孤儿闸门（09-23「已删除的画布」孤岛修复）。
+
+    真机取证：旧顺序「先 pop 名单、后清资料」中途被打断 → 名单没了、资料原地
+    残留，大陆投影出「已删除的画布」孤岛；探索网快照（data/kv/<sid>.json）此前
+    从不清，会被回填脚本当提取料把死会话知识点重新入库。
+    """
+
+    SID = "sess_delclean0000000000000000000"
+
+    def _seed(self):
+        sid = self.SID
+        storage_mod._write_json(main_mod.SESSIONS_PATH, {sid: {"id": sid, "title": "测试"}})
+        main_mod._write_json(main_mod.MESSAGES_DIR / f"{sid}.json",
+                             [{"role": "user", "content": "hi", "timestamp": "1"}])
+        storage_mod._write_json(main_mod.KNOWLEDGE_PATH,
+                                {"ki_1": {"id": "ki_1", "sessionId": sid, "title": "机械能守恒"}})
+        storage_mod._write_json(main_mod.FORMULAS_PATH,
+                                {"f_1": {"id": "f_1", "sessionId": sid, "latex": "E=mc^2"}})
+        # kv_write 自动 mkdir 并路由到 KV_DIR/<sid>.json（探索网快照的真实落点）
+        storage_mod.kv_write(f"graph:{sid}", {"customNodes": []})
+        return sid
+
+    def test_delete_removes_all_resources_then_unlists(self):
+        sid = self._seed()
+        resp = self.client.delete(f"/api/sessions/{sid}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn(sid, storage_mod._read_json(main_mod.SESSIONS_PATH, {}))          # 名单
+        self.assertFalse((main_mod.MESSAGES_DIR / f"{sid}.json").exists())                 # 消息
+        self.assertEqual(storage_mod._read_json(main_mod.KNOWLEDGE_PATH, {}), {})          # 知识点
+        self.assertEqual(storage_mod._read_json(main_mod.FORMULAS_PATH, {}), {})           # 公式
+        self.assertFalse((main_mod.KV_DIR / f"{sid}.json").exists())                       # KV 快照
+
+    def test_delete_twice_is_idempotent(self):
+        sid = self._seed()
+        self.assertEqual(self.client.delete(f"/api/sessions/{sid}").status_code, 200)
+        # 再删一次不报错（前端重试 / 并发删除的安全网）
+        self.assertEqual(self.client.delete(f"/api/sessions/{sid}").status_code, 200)
+
+
+class KnowledgeOrphanGateTest(RouteTestBase):
+    """POST /api/knowledge 拒收指向不存在会话的条目（空 sessionId 旧数据放行）。
+
+    删除会话后 localStorage 残留条目会被前端定时同步推回（端点是纯合并，推回即
+    复活），没有这道闸门「已删除的画布」岛删了又复活。
+    """
+
+    def test_orphan_session_items_rejected_live_and_blank_accepted(self):
+        live = "sess_live00000000000000000000000"
+        dead = "sess_dead00000000000000000000000"
+        storage_mod._write_json(main_mod.SESSIONS_PATH, {live: {"id": live, "title": "活会话"}})
+        items = {
+            "ki_dead": {"id": "ki_dead", "sessionId": dead, "title": "机械能守恒", "source": "ai_extract"},
+            "ki_live": {"id": "ki_live", "sessionId": live, "title": "动能定理", "source": "ai_extract"},
+            "ki_blank": {"id": "ki_blank", "title": "动量守恒", "source": "ai_extract"},
+        }
+        resp = self.client.post("/api/knowledge", json={"items": items})
+        self.assertEqual(resp.status_code, 200)
+        stored = storage_mod._read_json(main_mod.KNOWLEDGE_PATH, {})
+        self.assertNotIn("ki_dead", stored)   # 死会话条目被拒收
+        self.assertIn("ki_live", stored)      # 活会话条目正常入库
+        self.assertIn("ki_blank", stored)     # 空 sessionId 旧数据放行
 
 
 

@@ -124,17 +124,24 @@ def collect_units():
     for sid, s in sessions.items():
         if isinstance(s, dict):
             titles[sid] = str(s.get("title") or "")
+    # 只提活会话：已删会话的消息/KV 残留文件若被提取入库，知识点带着死 sid
+    # 进库，大陆会投影出「已删除的画布」孤岛（09-23 真机取证）
+    live_sids = set(sessions.keys())
     knowledge = read_json(os.path.join(DATA, "knowledge.json"), {})
     extracted = {(v.get("sessionId") or "", str(v.get("messageId") or ""))
                  for v in knowledge.values() if isinstance(v, dict)}
 
     units = []
+    skipped_dead = 0
     # ① 消息来源
     if os.path.isdir(MSGS):
         for name in sorted(os.listdir(MSGS)):
             if not name.endswith(".json"):
                 continue
             sid = name[:-5]
+            if sid not in live_sids:
+                skipped_dead += 1
+                continue
             msgs = read_json(os.path.join(MSGS, name), [])
             if not isinstance(msgs, list):
                 continue
@@ -158,6 +165,9 @@ def collect_units():
             if not name.endswith(".json"):
                 continue
             sid = name[:-5]
+            if sid not in live_sids:
+                skipped_dead += 1
+                continue
             kvd = read_json(os.path.join(KV, name), {})
             graph = kvd.get("graph:" + sid) or {}
             nodes = graph.get("customNodes") or []
@@ -187,6 +197,8 @@ def collect_units():
                               "sessionId": sid, "question": root_q[:2000],
                               "answer": content[:4000], "source": "graph-node",
                               "messageId": str(n.get("timestamp") or "")})
+    if skipped_dead:
+        print(f"跳过 {skipped_dead} 个已删除会话的残留文件（不提取，防「已删除的画布」孤岛复活）")
     return units
 
 

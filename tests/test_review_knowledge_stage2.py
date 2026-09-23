@@ -40,6 +40,7 @@ class Request:
     async def body(self): return json.dumps(self._body).encode('utf-8')
 async def run():
     sid = 'sess_review_e'
+    storage._write_json(main.SESSIONS_PATH, {sid: {'id': sid, 'title': 'E 复审'}})
     msgs = [{'role':'user','content':'胡克定律'},
             {'role':'assistant','timestamp':1,'content':'# 胡克定律\n<physics><formula>F=-kx</formula></physics><summary>弹簧回复力</summary>'}]
     result = await main.api_extract_knowledge(Request({'messages':msgs,'sessionId':sid}))

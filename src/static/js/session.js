@@ -620,6 +620,17 @@
       if (isStreaming) return;
       if (!confirm('确定删除此画布？')) return;
 
+      // 先删服务端、成功后再动本地（09-23 教训：旧顺序先删本地名单再调服务端，
+      // 服务端失败时画布已从列表消失、无法重试，15 秒同步还会把会话并集推回服务端）
+      const serverOk = await _deleteOnServer('/api/sessions/' + id);
+      if (!serverOk && (await _checkServer())) {
+        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', 3600);
+        return;
+      }
+      if (!serverOk && typeof showToast === 'function') {
+        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', 3600);
+      }
+
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
       localStorage.removeItem('phymathia_graph_' + id);
@@ -630,7 +641,6 @@
       if (typeof window.deleteQuizBankBySession === 'function') window.deleteQuizBankBySession(id);
       delete sessions[id];
       saveSessions();
-      await _deleteOnServer('/api/sessions/' + id);
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
       if (typeof loadFormulas === 'function') loadFormulas();
