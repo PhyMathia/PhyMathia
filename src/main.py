@@ -805,16 +805,26 @@ async def api_delete_session(session_id: str):
     # 删除别名映射前清理摘要并推进删除代次；失败中止，不能留下旧上下文却报清除成功
     context._delete_rolling_memory(session_id)
 
+    # 先清资料、最后删名单（09-23 真机取证：3 座「已删除的画布」孤岛全是旧顺序
+    # 「先 pop 名单、后清资料」中途被打断留下的——名单没了，知识点/公式/消息/
+    # KV 快照原地保留。反过来中断最多留下一座还看得见的空岛，重删一次即可）。
+    # 探索网快照（data/kv/<sid>.json 整文件）此前从不清，残留会被回填脚本当作
+    # 提取料把已删会话的知识点重新入库——孤岛的「复活」通道。
+    _delete_by_session(KNOWLEDGE_PATH, session_id)
+    _delete_by_session(FORMULAS_PATH, session_id)
+    _delete_socratic_state(session_id)
+    for stale in (msgs_path, KV_DIR / f"{session_id}.json"):
+        try:
+            if stale.exists():
+                stale.unlink()
+        except OSError as e:
+            logger.warning(f"delete session: unlink {stale.name} failed: {e}")
+
     def updater(data):
         data.pop(session_id, None)
         return data
 
     _mutate_json(SESSIONS_PATH, updater)
-    if msgs_path.exists():
-        msgs_path.unlink()
-    _delete_by_session(KNOWLEDGE_PATH, session_id)
-    _delete_by_session(FORMULAS_PATH, session_id)
-    _delete_socratic_state(session_id)
     return {"ok": True}
 
 
@@ -988,6 +998,19 @@ async def api_save_knowledge(request: Request):
         incoming.pop(key, None)
     if rejected:
         logger.info(f"Ingest gate rejected {len(rejected)} non-knowledge items")
+
+    # 孤儿拒收：指向不存在会话的条目一律拒收（空 sessionId 的旧数据放行）。
+    # 删除会话后 localStorage 里的残留条目会被前端定时同步推回（本端点是纯合并，
+    # 推回即复活），没有这道闸门「已删除的画布」岛删了又复活——与上面的入库
+    # 闸门同一条「删得掉」保证。正常链路都是先建会话后写知识，不受影响。
+    known_sessions = set(_read_json(SESSIONS_PATH, {}).keys())
+    orphaned = [k for k, v in incoming.items()
+                if isinstance(v, dict) and v.get("sessionId")
+                and str(v["sessionId"]) not in known_sessions]
+    for key in orphaned:
+        incoming.pop(key, None)
+    if orphaned:
+        logger.info(f"Ingest gate rejected {len(orphaned)} orphan-session items")
 
     def updater(data):
         data = _normalize_knowledge(data)
