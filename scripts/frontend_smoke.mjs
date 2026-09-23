@@ -644,6 +644,16 @@ check('graph-poster: 导出接线（菜单海报段 + 主包/查看器双注册�
   if (!ge.includes("typeof window.exportUtopiaStandaloneHtml === 'function'")) {
     throw new Error('单文件网页入口必须按模块可用性守卫（查看器包不显示该行）');
   }
+  // 一键预览行：主应用显示、查看器（window.__UTOPIA__ 存在）不渲染；接 previewUtopiaInViewer
+  if (!ge.includes('graphExportPreview')) throw new Error('导出菜单缺「在查看器中预览」行');
+  if (!ge.includes('previewUtopiaInViewer')) throw new Error('预览行未接 previewUtopiaInViewer');
+  const previewGuard = ge.slice(ge.indexOf('graphExportPreview') - 200, ge.indexOf('graphExportPreview'));
+  if (!previewGuard.includes('__UTOPIA__')) throw new Error('预览行必须按查看器环境守卫（查看器里不该再显示预览入口）');
+  if (typeof sandbox.window.previewUtopiaInViewer !== 'function') throw new Error('主包未暴露 previewUtopiaInViewer');
+  const u = fs.readFileSync('src/static/js/utopia.js', 'utf8');
+  if (!/previewUtopiaInViewer[\s\S]{0,900}buildUtopiaSnapshot/.test(u) && !u.includes('_utopiaOpenHandoffViewer(snapshot)')) {
+    throw new Error('预览应现建快照（不依赖「刚导出过」的缓存）');
+  }
   if (typeof sandbox.window.exportGraphPoster !== 'function') throw new Error('主包未暴露 exportGraphPoster');
   const bf = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
   const bv = fs.readFileSync('scripts/build_viewer.mjs', 'utf8');

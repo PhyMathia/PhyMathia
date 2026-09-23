@@ -583,24 +583,37 @@
     html += '</div>'
       + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
       + (_transparentBg ? ' checked' : '') + '>透明背景（仅屏幕所见模式，不填充面板底色）</label>'
-      + '<div class="graph-export-section-title">可交互产物</div>'
-      + '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
-      + '<b>Utopia 快照 ' + UTOPIA_EXT + '</b>'
-      + '<span class="graph-export-res">完整会话 · 可滚动 · 可导回</span>'
+      + '<div class="graph-export-section-title">查看与分享</div>';
+    // 预览：主应用里才有意义（查看器自己已经在看了）
+    if (typeof window.__UTOPIA__ === 'undefined') {
+      html += '<button type="button" class="graph-export-scale-row graph-export-preview-row" id="graphExportPreview">'
+        + '<b>在查看器中预览</b>'
+        + '<span class="graph-export-res">不用下载文件 · 看长回答和完整会话</span>'
+        + '</button>';
+    }
+    html += '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
+      + '<b>保存 Utopia 快照 ' + UTOPIA_EXT + '</b>'
+      + '<span class="graph-export-res">完整会话 · 可拖回恢复编辑</span>'
       + '</button>';
     if (typeof window.exportUtopiaStandaloneHtml === 'function') {
       html += '<button type="button" class="graph-export-scale-row" id="graphExportHtml">'
         + '<b>单文件网页 .html</b>'
-        + '<span class="graph-export-res">内嵌查看器 · 双击即看 · 可外发</span>'
+        + '<span class="graph-export-res">发给别人 · 对方双击就能看</span>'
         + '</button>';
     }
-    html += '<div class="graph-export-menu-foot">海报是<b>卡片式概览</b>（标题+摘要开头，长文有「全文 N 字」角标）；'
-      + '屏幕所见含 KaTeX 公式、Mermaid 图谱与分组框，可视化 iframe 以占位卡出现。'
-      + '要看长回答全文请用 <b>Utopia 快照 .pmu</b>（导出后可一键在查看器打开，也能拖回 PhyMathia 恢复成新画布）。'
-      + '单文件网页把查看器与数据打进一个 .html，发给没装 PhyMathia 的人也能双击打开。</div>';
+    html += '<div class="graph-export-menu-foot">想先看效果？点「在查看器中预览」，不产生任何文件。'
+      + '海报是<b>卡片式概览</b>；屏幕所见含 KaTeX 公式、Mermaid 图谱与分组框，可视化 iframe 以占位卡出现。'
+      + '要把图带走：存 <b>.pmu</b>（可拖回 PhyMathia 恢复成可编辑画布）或 <b>单文件网页</b>（发给没装 PhyMathia 的人，双击即看）。</div>';
     menu.innerHTML = html;
 
     menu.addEventListener('click', function (event) {
+      var previewBtn = event.target.closest ? event.target.closest('#graphExportPreview') : null;
+      if (previewBtn) {
+        _closeGraphExportMenu();
+        if (typeof window.previewUtopiaInViewer === 'function') window.previewUtopiaInViewer();
+        else _toast('预览模块未加载（请硬刷新页面）');
+        return;
+      }
       var utopiaBtn = event.target.closest ? event.target.closest('#graphExportUtopia') : null;
       if (utopiaBtn) {
         _closeGraphExportMenu();
