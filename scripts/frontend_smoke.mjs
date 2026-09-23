@@ -710,6 +710,8 @@ check('utopia: 查看器会话面板 + 三级装载顺序（embedded → handoff
     'window.__UTOPIA_EMBEDDED__',            // 单文件网页内嵌快照优先
     "qs.get('from') === 'handoff'",          // 主应用导出交接次之
     '__utopiaTakeUtopiaHandoff',             // 与主应用约定的交接函数（opener 直传，不经 storage 门面）
+    "qs.get('from') === 'inbox'",            // 桌面「双击 .pmu」启动器通道（open_pmu.py 投递收件箱）
+    'loadFromInbox',                         // 收件箱取回（GET /api/utopia/inbox/<名>）
     'toggleMessagesPanel', 'renderMessagesPanel',
     'focusGraphNodeById',                    // 气泡「定位到画布」复用既有聚焦
     'messagesComplete',                      // 老快照（子集消息）口径提示

@@ -281,13 +281,19 @@
     reader.readAsText(file);
   }
 
-  function loadFromUrl(url) {
+  function loadFromUrl(url, name) {
     fetch(url, { cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.text();
     }).then(function (text) {
-      loadText(text, url.split('/').pop());
+      loadText(text, name || url.split('/').pop());
     }).catch(function (e) { showError('载入 ' + url + ' 失败：' + (e && e.message ? e.message : e)); });
+  }
+
+  // 桌面启动器通道：双击 .pmu → open_pmu.py 把文件复制进服务端 data/utopia_inbox/
+  // 并打开本页 ?from=inbox&id=<文件名> → 从收件箱取回（收件箱由启动器负责清理）。
+  function loadFromInbox(id) {
+    loadFromUrl('/api/utopia/inbox/' + encodeURIComponent(id), id);
   }
 
   // ---------- 工具栏 ----------
@@ -394,6 +400,12 @@
       } catch (e) {}
       if (payload && payload.format && loadText(JSON.stringify(payload), '刚导出的快照')) return;
       showError('没接到导出的快照（新标签页可能没继承数据）——请直接把刚下载的 .pmu 拖进来');
+      return;
+    }
+    if (qs.get('from') === 'inbox') {
+      var inboxId = qs.get('id');
+      if (inboxId) { loadFromInbox(inboxId); return; }
+      showError('缺少快照文件名（?from=inbox&id=<文件名>）');
       return;
     }
     var src = qs.get('src');
