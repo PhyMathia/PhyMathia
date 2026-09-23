@@ -3062,6 +3062,11 @@
 .graph-export-grid .graph-export-scale-row b {
   font-size: var(--fs-sm);
 }
+/* 「在查看器中预览」主推行：accent 描边提示这是查看与分享段的首选动作 */
+.graph-export-preview-row {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 /* 菜单变长后可滚动（右下角弹出，防止顶出视口） */
 .graph-export-menu {
   max-height: min(72vh, 640px);

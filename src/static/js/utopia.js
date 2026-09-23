@@ -203,21 +203,42 @@ function showUtopiaExportCard(summary) {
   }, 20000);
 }
 
-function _utopiaOpenHandoffViewer() {
+function _utopiaOpenHandoffViewer(snapshot) {
   // opener 直传：window.open 的新标签页与主应用同源，查看器 boot 时经 window.opener
   // 取走数据（一次性，取走即清）。不走 sessionStorage——查看器把 storage 换成了内存
   // 门面读不到真实的，且新标签页 sessionStorage 复制行为各浏览器不一致（实测踩过）。
+  // snapshot 缺省时依次取「刚导出的缓存」→ 现建（预览入口不经过导出也能看）。
+  var snap = snapshot || window.__utopiaLastSnapshot || null;
+  if (!snap && typeof buildUtopiaSnapshot === 'function') {
+    try { snap = buildUtopiaSnapshot(); } catch (e) { snap = null; }
+  }
+  if (!snap) {
+    if (typeof showToast === 'function') showToast('画布还没有内容，先提问生成一张探索网吧');
+    return false;
+  }
+  window.__utopiaLastSnapshot = snap;
   window.__utopiaTakeUtopiaHandoff = function () {
-    var snap = window.__utopiaLastSnapshot || null;
+    var s = window.__utopiaLastSnapshot || null;
     window.__utopiaLastSnapshot = null;
     delete window.__utopiaTakeUtopiaHandoff;
-    return snap;
+    return s;
   };
   var win = window.open('/viewer.html?from=handoff', '_blank');
   if (!win) {
     delete window.__utopiaTakeUtopiaHandoff;
     if (typeof showToast === 'function') showToast('新窗口被浏览器拦截——请允许弹窗后再点一次，或手动打开 /viewer.html 拖入文件');
   }
+  return !!win;
+}
+
+// 一键预览：不下载任何文件，当前画布+完整会话直接在查看器新标签打开。
+// 「看效果」与「存文件」解耦——预览是高频零成本动作，导出才是低频动作。
+function previewUtopiaInViewer() {
+  if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
+    if (typeof showToast === 'function') showToast('画布还没有内容，先提问生成一张探索网吧');
+    return false;
+  }
+  return _utopiaOpenHandoffViewer(null);
 }
 
 function exportUtopiaSnapshot() {
@@ -260,4 +281,5 @@ if (typeof window !== 'undefined') {
   window.utopiaSnapshotSummary = utopiaSnapshotSummary;
   window.utopiaSnapshotFilename = utopiaSnapshotFilename;
   window.exportUtopiaSnapshot = exportUtopiaSnapshot;
+  window.previewUtopiaInViewer = previewUtopiaInViewer;
 }
