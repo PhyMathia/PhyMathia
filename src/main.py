@@ -324,6 +324,13 @@ async def api_models_chat(request: Request):
             context_parts.append(_branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id))
         if graph_path:
             context_parts.append(_graph_path_instruction(graph_path, source_module))
+            # 前缀缓存拍板（2026-09-24）：路径历史区 assistant 一律摘要（只增不
+            # 改），当前聚焦节点全文改由尾部上下文块提供——工作流模块再生成的
+            # 唯一全文输入也随之落在这里。
+            _active_block = context.tree_active_content_block(
+                session_id, graph_path, source_module=source_module, branch_id=branch_id)
+            if _active_block:
+                context_parts.append(_active_block)
         if workflow_context:
             context_parts.append(_workflow_context_instruction(workflow_context))
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
