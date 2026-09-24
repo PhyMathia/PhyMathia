@@ -583,6 +583,12 @@
   z-index: 30 !important;
 }
 
+/* 左簇（改图与审查：图体检/历史/选择文字/联系模式/分组），与右簇分居两角 */
+.graph-canvas-toolbar--left {
+  right: auto !important;
+  left: 16px !important;
+}
+
 .graph-tool-btn {
   width: 38px !important;
   height: 38px !important;
@@ -3634,7 +3640,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-panel[hidden] { display: none; }
 .graph-history-panel {
   position: fixed;
-  right: 16px;
+  /* 锚定随触发钮在左下（工具栏 2026-09-24 拆两簇，历史钮在左簇） */
+  left: 16px;
   top: auto;
   bottom: 72px;
   width: 340px;
@@ -3788,7 +3795,8 @@ html[data-theme="dark"] .message-content strong {
 /* ===== 图体检面板（v1.1.18） ===== */
 .graph-consistency-panel {
   position: fixed;
-  right: 16px;
+  /* 锚定随触发钮在左下（工具栏 2026-09-24 拆两簇，图体检钮在左簇） */
+  left: 16px;
   top: auto;
   bottom: 72px;
   width: 340px;

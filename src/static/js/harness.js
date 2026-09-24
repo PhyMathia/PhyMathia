@@ -723,7 +723,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     } else {
       harnessPet.style.display = '';
     }
-    openGraphHarness();
+    // 只开关桌宠本体；对话面板由点桌宠触发（harnessPet click → toggleGraphHarnessWindow）。
+    // 2026-09-20 的「首点无反应」修复提交混入过一句无条件 openGraphHarness()，
+    // 把按钮变成了「每次点都开面板」（用户 2026-09-24 点名纠正），已还原为纯开关。
     _syncGraphPetToggleButton();
   }
 

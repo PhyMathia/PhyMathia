@@ -2881,10 +2881,17 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自�
     if (/background(-color)?\s*:/.test(block)) throw new Error(name + ' 仍自带 background，会盖掉极光层');
   }
   // 画布工具栏（2026-09-24 拍板）：裸图标浮层，不再套玻璃胶囊（与右上角胶囊同质化）——
-  // 容器只留布局不带底色磨砂；按钮静息透明无框，hover/激活态才描边着色出小片
+  // 容器只留布局不带底色磨砂；按钮静息透明无框，hover/激活态才描边着色出小片。
+  // 同日二拍：拆两簇——右下看图+助手+产出，左下改图与审查（--left 变体）
   const gi = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   if (!gi.includes("toolbar.className = 'graph-canvas-toolbar'")) {
     throw new Error('画布工具栏应改为裸图标浮层（不应再挂 aurora-glass 胶囊）');
+  }
+  if (!gi.includes("'graph-canvas-toolbar graph-canvas-toolbar--left'")) {
+    throw new Error('画布工具栏应拆两簇（左下改图簇挂 --left 变体）');
+  }
+  if (gi.includes('graph-canvas-toolbar aurora')) {
+    throw new Error('画布工具栏不得回挂玻璃胶囊');
   }
   const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   const bar = gcss.slice(gcss.indexOf('.graph-canvas-toolbar {'), gcss.indexOf('}', gcss.indexOf('.graph-canvas-toolbar {')));
