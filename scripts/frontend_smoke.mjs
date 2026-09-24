@@ -2847,7 +2847,7 @@ check('graph-contextmenu：菜单视觉层（图标列 + 快捷键提示 + 静�
   return true;
 });
 
-check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏 + 画布工具栏单胶囊（载体不得自带实底）', () => {
+check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自带实底；画布工具栏已摘胶囊改裸浮层）', () => {
   const html = fs.readFileSync('src/static/index.html', 'utf8');
   for (const [name, sel] of [
     ['侧边栏', 'class="sidebar aurora-glass aurora-glass--panel"'],
@@ -2880,19 +2880,18 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏 + 画布工具栏�
     if (block === null) throw new Error('找不到规则：' + name + ' @ ' + file);
     if (/background(-color)?\s*:/.test(block)) throw new Error(name + ' 仍自带 background，会盖掉极光层');
   }
-  // 画布工具栏：整条一个玻璃胶囊；按钮自身透明且无框（描边在 hover/激活态才出现）
+  // 画布工具栏（2026-09-24 拍板）：裸图标浮层，不再套玻璃胶囊（与右上角胶囊同质化）——
+  // 容器只留布局不带底色磨砂；按钮静息透明无框，hover/激活态才描边着色出小片
   const gi = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
-  if (!gi.includes("'graph-canvas-toolbar aurora-glass aurora-glass--compact'")) {
-    throw new Error('画布工具栏未做成单个玻璃胶囊');
+  if (!gi.includes("toolbar.className = 'graph-canvas-toolbar'")) {
+    throw new Error('画布工具栏应改为裸图标浮层（不应再挂 aurora-glass 胶囊）');
   }
   const gcss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   const bar = gcss.slice(gcss.indexOf('.graph-canvas-toolbar {'), gcss.indexOf('}', gcss.indexOf('.graph-canvas-toolbar {')));
-  // 圆角自 2026-09-17 起走设计令牌（--r-xl），断言同时接受裸值与 var()
-  if (!/border-radius:\s*(\d+px|var\(--r-[a-z]+\))\s*!important;/.test(bar)) throw new Error('工具栏容器缺圆角（会呈现直角方板）');
-  if (!/padding:\s*\d+px\s*!important;/.test(bar)) throw new Error('工具栏容器缺内边距（胶囊会贴边）');
+  if (/background|backdrop-filter/.test(bar)) throw new Error('工具栏容器应只留布局（胶囊已摘，不得带底色/磨砂）');
   const btn = gcss.slice(gcss.indexOf('.graph-tool-btn {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn {')));
-  if (!/background: transparent !important;/.test(btn)) throw new Error('工具按钮应自身透明（磨砂归整条工具栏）');
-  if (!/border: 1px solid transparent !important;/.test(btn)) throw new Error('工具按钮默认不该有描边（胶囊内会碎成一格格）');
+  if (!/background: transparent !important;/.test(btn)) throw new Error('工具按钮静息应自身透明（浮在壁纸上，hover 才出底板）');
+  if (!/border: 1px solid transparent !important;/.test(btn)) throw new Error('工具按钮静息不该有描边（hover/激活才描边着色）');
   // 查看器：双击打开的面板一律封住（含编辑面板），且必须给提示而不是静默无反应
   const vm = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
   for (const fn of ['openAddBlankNodeModal', 'editHumanNoteNode', 'editCustomNodeContent', 'editModuleNode']) {
@@ -3163,7 +3162,8 @@ check('画布工具栏图标：浅色走暖棕墨（不再是近黑，且不低�
   // hover 底板走主题变量（原来是写死的深墨蓝，浅色下悬停会突兀发黑）
   const hover = gcss.slice(gcss.indexOf('.graph-tool-btn:hover {'), gcss.indexOf('}', gcss.indexOf('.graph-tool-btn:hover {')));
   if (!/background:\s*var\(--btn-active-bg\)/.test(hover)) throw new Error('工具按钮 hover 底板未接主题变量（浅色会发黑）');
-  // 对比度：暖棕墨须压在暖米色玻璃上可读（WCAG 相对亮度）
+  // 对比度：暖棕墨须压在浅色画布的暖米底上可读（WCAG 相对亮度；#f7f2e6 与浅色壁纸同族，
+  // 摘胶囊后图标直接浮在壁纸上，对比口径不变）
   const lum = (hex) => {
     const v = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
       .map(c => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
@@ -3173,7 +3173,7 @@ check('画布工具栏图标：浅色走暖棕墨（不再是近黑，且不低�
     const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
     return (hi + 0.05) / (lo + 0.05);
   };
-  const onGlass = ratio(lightInk, '#f7f2e6'); // 工具栏玻璃胶囊的暖米底色
+  const onGlass = ratio(lightInk, '#f7f2e6'); // 浅色画布的暖米底（与壁纸同族的代表色）
   if (onGlass < 4.5) throw new Error('浅色图标墨色对比度不足：' + onGlass.toFixed(2) + ':1');
   if (onGlass > 12) throw new Error('浅色图标仍是近黑（对比度 ' + onGlass.toFixed(2) + ':1），与暖米色环境违和');
   const [lr, lg, lb] = [1, 3, 5].map(i => parseInt(lightInk.slice(i, i + 2), 16));

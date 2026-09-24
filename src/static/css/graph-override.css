@@ -569,6 +569,9 @@
 }
 
 /* ---------- 4. 工具栏 ---------- */
+/* 2026-09-24 拍板：摘掉玻璃胶囊（与右上角胶囊同质化），改裸图标浮层——
+   容器只留布局（定位/间距/层级），不带底色与磨砂；按钮直接浮在壁纸上，hover/激活才出小片。
+   别给逐个按钮套 backdrop-filter：十来个 blur 层白烧性能（胶囊时代的实测教训）。 */
 .graph-canvas-toolbar {
   position: absolute !important;
   right: 16px !important;
@@ -577,29 +580,14 @@
   left: auto !important;
   display: flex !important;
   gap: 4px !important;
-  /* 整条是一个玻璃胶囊 → 圆角矩形 + 内边距（圆角只加在按钮上时，容器本身还是直角的方板） */
-  padding: 6px !important;
-  border-radius: var(--r-xl) !important;
   z-index: 30 !important;
-}
-
-/* 胶囊里最外侧按钮的活动热区不要顶到圆角上 */
-.graph-canvas-toolbar .graph-tool-btn:first-child {
-  border-top-left-radius: 11px !important;
-  border-bottom-left-radius: 11px !important;
-}
-
-.graph-canvas-toolbar .graph-tool-btn:last-child {
-  border-top-right-radius: 11px !important;
-  border-bottom-right-radius: 11px !important;
 }
 
 .graph-tool-btn {
   width: 38px !important;
   height: 38px !important;
   border-radius: var(--r-md) !important;
-  /* 按钮自身透明无框：整条 .graph-canvas-toolbar 才是玻璃载体（一个胶囊，一次磨砂）；
-     hover / 激活态才描边着色，否则胶囊内部会"碎成一格格小方块" */
+  /* 按钮静息透明无框：浮在壁纸上只是一枚枚图标，hover / 激活态才描边着色出底板 */
   border: 1px solid transparent !important;
   background: transparent !important;
   /* 图标墨色走主题变量：浅色是暖棕墨（--graph-tool-ink #54452a），不再是近黑的 #2a2418——
