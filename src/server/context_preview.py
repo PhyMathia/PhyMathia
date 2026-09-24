@@ -65,11 +65,22 @@ async def preview_context(
                 budget_tokens=budget,
             )
         )
+    tail_parts = []
+    if session_id and graph_path_list:
+        # 与 chat 路径同构（2026-09-24 树路径拍板）：当前聚焦节点全文在末条
+        # user 消息的上下文块里，不再出现在历史区。
+        active_block = context_mod.tree_active_content_block(
+            session_id, graph_path_list, source_module=source_module, branch_id=branch_id)
+        if active_block:
+            tail_parts.append(active_block)
+    user_content = prompt
+    if tail_parts:
+        user_content = "<上下文>\n" + "\n\n".join(tail_parts) + "\n</上下文>\n\n" + prompt
     if not is_quick:
         suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-        messages.append({"role": "user", "content": prompt + suffix})
+        messages.append({"role": "user", "content": user_content + suffix})
     else:
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": user_content})
     total_chars = sum(len(str(m.get("content") or "")) for m in messages)
     total_tokens = context_mod.estimate_tokens("".join(str(m.get("content") or "") for m in messages))
     return {

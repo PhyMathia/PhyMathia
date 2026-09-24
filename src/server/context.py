@@ -849,7 +849,7 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
         lines.append(f"{index + 1}. {label}（消息 ID：{item.get('timestamp') or ''}）")
     if source_module:
         lines.append(f"- 当前聚焦气泡：{module_labels.get(source_module, source_module)}")
-    lines.append("- 上下文只围绕当前探索路径展开；上游节点以摘要形式提供，当前节点可提供该模块正文。")
+    lines.append("- 上下文只围绕当前探索路径展开；路径各节点在历史区均为摘要，当前聚焦节点的完整正文见下方「当前节点正文（参考资料）」段。")
     if source_module in ("socratic", "learn"):
         lines.append("- 当前节点为 socratic/learn 局部节点，必须只输出三行列表，不要展开为完整讲解。")
     lines.append("- 不要重新展开无关分支，也不要重复其他模块的完整内容。")
@@ -920,8 +920,6 @@ def _load_session_context_from_path(
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
     result = []
     seen = {}
-    active_parent_missing = False
-    active_content = ""
     active_index = len(graph_path) - 1
     skip_upstream = bool(workflow_context and workflow_context.get("upstream"))
 
@@ -934,18 +932,16 @@ def _load_session_context_from_path(
         module_key = item.get("module") or item.get("moduleKey") or ""
         ts = str(item.get("timestamp") or "")
         if role == "user":
+            # user 节点恒全文：内容写入后永不变（不是翻转源），且摘要化伤指代理解
             content = str(msg.get("content") or "")
-        elif is_active:
-            content = str(msg.get("content") or "")
-            if module_key:
-                content = _branch_source_content(content, module_key)
-                if not content:
-                    active_parent_missing = True
-            active_content = content
-        elif skip_upstream:
-            continue
+        elif is_active or not skip_upstream:
+            # 前缀缓存拍板（2026-09-24）：assistant 节点历史区一律摘要（含当前聚
+            # 焦节点）。此前「当前节点全文、上游摘要」让每次下钻把上一层从全文翻
+            # 成摘要，该位置之后的 provider 前缀缓存全部打灭；一律摘要后历史区严
+            # 格只增不改，当前节点全文改由 tree_active_content_block 进尾部上下文块。
+            content = _graph_message_summary(msg, module_key)
         else:
-            content = _graph_message_summary(msg, module_key if not is_active else "")
+            continue
         if not content:
             continue
         key = (ts, content)
@@ -953,22 +949,6 @@ def _load_session_context_from_path(
             continue
         result.append({"role": role, "content": content})
         seen[key] = True
-
-    if active_parent_missing and branch_id:
-        branch_messages = [
-            msg for msg in all_messages
-            if str(msg.get("branchId") or "") == str(branch_id)
-        ]
-        fallback_parent = branch_messages[0].get("parentId") if branch_messages else ""
-        if fallback_parent:
-            source = _extract_parent_source(all_messages, fallback_parent, source_module)
-            if source:
-                key = (str(fallback_parent), source)
-                if key not in seen:
-                    result.append({"role": "assistant", "content": source})
-                    seen[key] = True
-                    if not active_content:
-                        active_content = source
 
     if branch_id:
         branch_messages = [
@@ -982,12 +962,55 @@ def _load_session_context_from_path(
                 result.append(item)
                 seen[key] = True
 
-    protected = {active_content} if active_content else set()
     if budget_tokens and budget_tokens > 0:
-        result = _shrink_history_to_budget(result, budget_tokens, protected)
-    # skip_upstream 时 active 正文是模块再生成唯一的全文输入，保护集不可省；
+        # 前缀缓存拍板（2026-09-24）：protected 保护集随全文出历史区一并取消——
+        # 历史区全为摘要/短问题，预算收缩几乎不再触发；当前节点全文活在尾部
+        # 上下文块（tree_active_content_block），本就不经过收缩。
+        result = _shrink_history_to_budget(result, budget_tokens)
     # 会话记忆改由 main.py 并入上下文块，此处不再二次注入/收缩
     return result
+
+
+def tree_active_content_block(
+    session_id: str,
+    graph_path: list,
+    source_module: str = "",
+    branch_id: str = "",
+) -> str:
+    """当前聚焦节点的模块全文，作为尾部上下文块的参考资料段（无内容返回空串）。
+
+    前缀缓存拍板（2026-09-24）：路径历史区的 assistant 节点一律摘要（见
+    _load_session_context_from_path），当前节点的全文改由本函数提供、由 main.py
+    并入末条 user 消息的上下文块——历史区从此只增不改，下钻零打灭；工作流模块
+    再生成所需的唯一全文输入也随之落在尾部块。原「active_parent_missing 时全文
+    回退分支父回答」的逻辑随全文一起迁入本块。与旧历史区行为平价：不设长度上限。
+    """
+    if not graph_path:
+        return ""
+    all_messages = _load_messages(session_id)
+    if not all_messages:
+        return ""
+    by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
+    active = graph_path[-1] if graph_path else {}
+    content = ""
+    msg = by_ts.get(str((active or {}).get("timestamp") or ""))
+    if msg and (msg.get("role") or "assistant") != "user":
+        module_key = (active or {}).get("module") or (active or {}).get("moduleKey") or ""
+        if module_key:
+            content = _branch_source_content(str(msg.get("content") or ""), module_key)
+        else:
+            content = str(msg.get("content") or "")
+    if not content and branch_id:
+        branch_messages = [
+            m for m in all_messages
+            if str(m.get("branchId") or "") == str(branch_id)
+        ]
+        fallback_parent = branch_messages[0].get("parentId") if branch_messages else ""
+        if fallback_parent:
+            content = _extract_parent_source(all_messages, fallback_parent, source_module)
+    if not content:
+        return ""
+    return "# 当前节点正文（参考资料）\n" + content
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"
@@ -1288,6 +1311,7 @@ __all__ = [
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
+    "tree_active_content_block",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
     "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
