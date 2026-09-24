@@ -618,7 +618,7 @@
                     try {
                       const fileInfo = JSON.parse(fileMatch[1]);
                       if (fileInfo.file_url) {
-                        assistantContent += `\n\n📊 [交互式可视化](${fileInfo.file_url})\n`;
+                        assistantContent += `\n\n[交互式可视化](${fileInfo.file_url})\n`;
                         streamingAssistant.content = assistantContent;
                         if (!assistantDiv) assistantDiv = addMessage('assistant', '', Date.now());
               assistantDiv.innerHTML = renderMarkdown(stripXmlTags(assistantContent), { parentId: assistantDiv.closest('.message-body')?.dataset.messageId || '', socraticFallback: true });
@@ -747,8 +747,8 @@
           const metaEl = assistantDiv.closest('.message-body')?.querySelector('.message-meta');
           if (metaEl) {
             const elapsed = progressStartTime ? Date.now() - progressStartTime : 0;
-            const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">⏱ ${formatDuration(elapsed)}</span>` : '';
-            metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成">🔄</button>`;
+            const durationStr = elapsed > 0 ? `<span class="msg-duration" title="回答耗时">${formatDuration(elapsed)}</span>` : '';
+            metaEl.innerHTML = `<span>${formatTime(ts)}</span>${durationStr}<button class="regenerate-btn" onclick="regenerateLast()" title="重新生成"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>`;
             // 画像注入角标：优先按后端下发的本次注入快照展示；没有快照时（本地寒暄
             // 回答、旧服务端）退回按缓存计算。后端 is_quick 要求无 branch_id/graph_path，
             // 所以分支回答（含分支上的寒暄）会照常注入画像，角标不能把分支排除掉
@@ -791,7 +791,7 @@
                 const durTag = document.createElement('span');
                 durTag.className = 'msg-duration';
                 durTag.title = '回答耗时';
-                durTag.textContent = '⏱ ' + formatDuration(abortDuration);
+                durTag.textContent = formatDuration(abortDuration);
                 metaEl.appendChild(durTag);
               }
               const stopTag = document.createElement('span');
@@ -806,9 +806,9 @@
         } else {
           const errDiv = addMessage('assistant', '', Date.now());
           errDiv.innerHTML = `
-            <div style="color:#ff6b6b">⚠️ 请求失败: ${escapeHtml(err.message)}</div>
+            <div style="color:#ff6b6b">请求失败: ${escapeHtml(err.message)}</div>
             <div class="error-actions">
-              <button class="error-retry-btn" onclick="retryLast()">🔄 重新发送</button>
+              <button class="error-retry-btn" onclick="retryLast()">重新发送</button>
             </div>`;
           console.error('Chat error:', err);
         }
@@ -904,7 +904,7 @@
 
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
-      if (role === 'user') { avatar.textContent = '👤'; } else if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
+      if (role === 'user') { avatar.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'; } else if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
       const body = document.createElement('div');
       body.className = 'message-body';
       body.dataset.messageId = String(timestamp || Date.now());
