@@ -52,21 +52,33 @@ function renderGraphCanvas(streaming) {
   }
   appContainer?.classList.remove('graph-empty-active');
 
-  const toolbar = document.createElement('div');
   // 裸图标浮层（2026-09-24 拍板：玻璃胶囊与右上角同质化）——容器只留布局不带磨砂，
   // 按钮静息透明、hover/激活才出小片；别给逐个按钮套 backdrop-filter，十来个 blur 层白烧性能。
+  // 同日二拍：12 键一长条拆两簇——右下「看图 + 助手 + 产出」，左下「改图与审查」
+  // （--left 变体，graph-override.css 第 4 段）；图体检/历史面板的锚定也随触发钮挪到左下。
+  const toolbar = document.createElement('div');
   toolbar.className = 'graph-canvas-toolbar';
   toolbar.innerHTML = '<button class="graph-tool-btn graph-search-btn" onclick="toggleGraphSearchPanel()" title="搜索节点" aria-label="搜索节点" aria-pressed="false">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>'
     + '</svg></button>'
-    + '<button class="graph-tool-btn" onclick="toggleGraphConsistencyPanel()" title="图体检（孤儿/断链/重复标签）">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"></path><polyline points="9 12 11 14 15 10"></polyline>'
-    + '</svg></button>'
     + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(1.2)" title="放大">+</button>'
     + '<button class="graph-tool-btn graph-tool-glyph-lg" onclick="zoomGraph(0.85)" title="缩小">−</button>'
     + '<button class="graph-tool-btn graph-tool-glyph-lg graph-tool-fit-btn" onclick="fitGraph()" title="适配画布">⌂</button>'
+    + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
+    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
+    + '<span class="graph-harness-btn-phi">Φ</span></button>'
+    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" title="导出超高清图片（PNG）" aria-label="导出超高清图片">'
+    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
+    + '</svg></button>';
+  graphCanvas.appendChild(toolbar);
+  const toolbarEdit = document.createElement('div');
+  toolbarEdit.className = 'graph-canvas-toolbar graph-canvas-toolbar--left';
+  toolbarEdit.innerHTML = '<button class="graph-tool-btn" onclick="toggleGraphConsistencyPanel()" title="图体检（孤儿/断链/重复标签）">'
+    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"></path><polyline points="9 12 11 14 15 10"></polyline>'
+    + '</svg></button>'
     + '<button class="graph-tool-btn" onclick="toggleGraphHistoryPanel()" title="修改历史（撤销/重做/回到任意版本）">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline>'
@@ -83,15 +95,8 @@ function renderGraphCanvas(streaming) {
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'
     + '<line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line>'
-    + '</svg></button>'
-    + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
-    + '<span class="graph-harness-btn-phi">Φ</span></button>'
-    + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
-    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" title="导出超高清图片（PNG）" aria-label="导出超高清图片">'
-    + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
     + '</svg></button>';
-  graphCanvas.appendChild(toolbar);
+  graphCanvas.appendChild(toolbarEdit);
   _applyGraphTextSelectionMode();
   _applyGraphLinkMode();
   if (typeof window.syncGraphPetToggleButton === 'function') window.syncGraphPetToggleButton();

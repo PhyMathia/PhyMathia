@@ -94,7 +94,7 @@ function makeUiCtx(domState, store) {
 {
   const ctx = makeUiCtx({
     '.graph-node-answer': 1, '.graph-node-user': 1, '.graph-harness-btn': 1,
-    '.graph-canvas-toolbar': 1, '.phi-pet-root': 1,
+    '.graph-canvas-toolbar': 2, '.phi-pet-root': 1,
   }, {});
   vm.runInNewContext(cfgTxt, ctx);
   vm.runInNewContext(obSection, ctx);
