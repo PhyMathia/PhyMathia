@@ -106,7 +106,7 @@ test('badge DOM renders the snapshot labels and text', () => {
   s.memoryAppendProfileBadge(meta, usage);
   assert.ok(inserted, 'badge element must be inserted');
   const [btn, detail] = inserted.children;
-  assert.equal(btn.textContent, '🧠 已结合你的画像（目标·偏好）');
+  assert.equal(btn.textContent, '已结合你的画像（目标·偏好）');
   assert.ok(detail.innerHTML.includes('【目标】') && detail.innerHTML.includes('高考物理90分'), detail.innerHTML);
   assert.ok(detail.innerHTML.includes('【偏好】') && detail.innerHTML.includes('详略=精简'), detail.innerHTML);
   assert.ok(!detail.innerHTML.includes('电磁感应'), 'cache-only facts must not appear');

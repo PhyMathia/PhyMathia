@@ -196,7 +196,7 @@ function memoryAppendProfileBadge(metaEl, usage) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'memory-badge-btn';
-  btn.textContent = '🧠 已结合你的画像（' + sections.map(s => s.label).join('·') + '）';
+  btn.textContent = '已结合你的画像（' + sections.map(s => s.label).join('·') + '）';
   btn.title = '点击查看本次回答参考了哪些记忆';
   const detail = document.createElement('span');
   detail.className = 'memory-badge-detail';

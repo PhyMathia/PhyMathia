@@ -1030,7 +1030,7 @@
 
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
-      avatar.textContent = role === 'user' ? '👤' : ''; if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
+      avatar.innerHTML = role === 'user' ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' : ''; if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
 
       const body = document.createElement('div');
       body.className = 'message-body';
