@@ -354,6 +354,63 @@ class ThinkingEffortProxyTest(RouteTestBase):
         self.assertEqual(captured[1]["messages"], captured[0]["messages"])  # 其余请求体不变
 
 
+class LinearRetirementGateTest(RouteTestBase):
+    """线性主聊天退役硬门禁（2026-09-25）：prompt 新格式只受理画布锚定请求。
+
+    无锚普通 prompt 与 quick 寒暄一律 410；messages 直传旧格式（测验 / 知识 /
+    大陆 / 可视化等辅助功能的通道）不受影响。带锚放行用例走 MockTransport
+    截获上游，不触网。
+    """
+
+    def _post(self, payload):
+        return self.client.post("/api/models/chat", json={
+            "provider": "deepseek", "api_key": "sk-test",
+            "model": "test-model", "stream": False, **payload})
+
+    def _post_with_mock_upstream(self, payload):
+        def handler(request):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+            return self._post(payload)
+
+    def test_anchorless_prompt_rejected(self):
+        # 旧线性主聊天的直调通道：无 branch_id / graph_path / workflow_context
+        resp = self._post({"prompt": "什么是电磁感应", "level": "university"})
+        self.assertEqual(resp.status_code, 410)
+
+    def test_quick_rejected_even_with_anchor(self):
+        # 寒暄通道前端已无入口，带锚直调也拒绝，只防外部绕过
+        resp = self._post({"prompt": "你好", "quick": True, "branch_id": "br-gate"})
+        self.assertEqual(resp.status_code, 410)
+
+    def test_branch_anchored_prompt_allowed(self):
+        resp = self._post_with_mock_upstream(
+            {"prompt": "再讲细一点", "branch_id": "br-gate", "session_id": "s-gate"})
+        self.assertEqual(resp.status_code, 200)
+
+    def test_graph_path_anchored_prompt_allowed(self):
+        resp = self._post_with_mock_upstream({
+            "prompt": "物理视角里磁通量怎么理解",
+            "graph_path": [{"kind": "user", "timestamp": 1}],
+            "session_id": "s-gate-tree",
+        })
+        self.assertEqual(resp.status_code, 200)
+
+    def test_workflow_context_anchored_prompt_allowed(self):
+        resp = self._post_with_mock_upstream({
+            "prompt": "生成物理直觉模块",
+            "workflow_context": {"mode": "analysis", "target": {"kind": "answer", "label": "AI 回答"}},
+        })
+        self.assertEqual(resp.status_code, 200)
+
+    def test_messages_passthrough_unaffected(self):
+        resp = self._post_with_mock_upstream(
+            {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(resp.status_code, 200)
+
+
 class ValidateModelTargetUnitTest(unittest.TestCase):
     """config.validate_model_target 的纯函数用例（不触网）。"""
 

@@ -220,6 +220,34 @@ test('F4 anchorless send is rejected and leaves history untouched (linear retire
   assert.equal(evaluate(s, 'isStreaming'), false, 'lock must be released');
 });
 
+test('F5 anchored branch send reaches proxyChat without quick flag (isCasual regression guard)', async () => {
+  // 2026-09-25 isCasual 回归：chat.js 曾在 proxyChat 调用里引用未声明的
+  // isCasual，配模型后分支/苏格拉底请求发出前即崩。沙箱此前未配模型走不到
+  // 这一行，故补一条真实走到 proxyChat 参数构造的用例。
+  const { s } = chatSandbox();
+  evaluate(s, "var currentLevel = 'university'; var pendingDeleteTimestamp = null;"); // models.js/session 侧全局，沙箱未加载，补声明走通发送段
+  s.showProgress = () => {};
+  s.hideProgress = () => {};
+  s._syncProgressMiniButtons = () => {};
+  s.getActiveModelForRole = () => ({ provider: 'deepseek', model: 'm', apiKey: 'k' });
+  s.window.setFloatingSymbolsPaused = () => {};
+  s.window.renderGraphCanvas = () => {};
+  s.anchor = { branchType: 'learn', branchId: 'b9', parentId: 'p9' };
+  const captured = [];
+  s.proxyChat = async (...args) => {
+    captured.push(args);
+    return { ok: false, text: async () => 'gate-test' }; // 参数构造后即走失败收尾，断言只看参数
+  };
+  evaluate(s, "sendQuick('帮我再讲细一点')");
+  await s.sendMessage();
+  assert.equal(captured.length, 1, 'anchored send with a configured model must reach proxyChat exactly once');
+  assert.equal(captured[0].length, 6, 'options bag must stay removed with the retired quick channel');
+  assert.equal(captured[0][5].branchId, 'b9', 'branch anchor must be passed through as branchMeta');
+  assert.ok(!('quick' in (captured[0][6] ?? {})), 'no quick flag may reach the proxy');
+  await settle(); await settle();
+  assert.equal(evaluate(s, 'isStreaming'), false, 'lock must be released after the failed upstream');
+});
+
 // ---- F 有界只读审计：取消/会话/画布/导出/Φ 证据点（只读检查，不扩大范围）----
 test('F audit stopGeneration aborts controller without touching lock state', async () => {
   const { s } = chatSandbox();

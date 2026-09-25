@@ -278,7 +278,13 @@ class AssemblyShapeTest(RouteTestBase):
 
         with mock.patch.object(context_mod, "_read_rolling_memory",
                                return_value={"summary": "之前聊过法拉第", "messageCount": 2}):
-            resp = self._post_chat({"device_id": "dev-tail", "session_id": "s_tail"}, handler)
+            resp = self._post_chat({
+                "device_id": "dev-tail",
+                "session_id": "s_tail",
+                # 2026-09-25 线性退役门禁：prompt 必须带画布锚；单元素路径
+                # 不产生树路径尾部块，不影响本用例的注入位置断言
+                "graph_path": [{"kind": "user", "timestamp": 1}],
+            }, handler)
         self.assertEqual(resp.status_code, 200)
         messages = seen["body"]["messages"]
         self.assertEqual(messages[0]["role"], "system")

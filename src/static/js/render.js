@@ -125,7 +125,7 @@ function buildVizCard(htmlContent, vizId) {
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
-    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz()" title="没看懂，请求解释">' + UI_ICON_SVG.question + ' 没看懂</button>'
+    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz(this)" title="没看懂，请求解释">' + UI_ICON_SVG.question + ' 没看懂</button>'
     + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + ' 全屏</button>'
     + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + ' 复制</button>'
     + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + ' 新窗口</button>'
@@ -846,10 +846,20 @@ function dontUnderstandModule(moduleKey, messageId, event) {
 
 window.followUpModule = followUpModule;
 window.dontUnderstandModule = dontUnderstandModule;
-function dontUnderstandViz() {
-  const lastAssistant = [...document.querySelectorAll('.message.assistant')].pop();
-  const messageId = lastAssistant?.querySelector('.message-body')?.dataset.messageId || '';
-  dontUnderstandModule('viz', messageId);
+// 「没看懂」：宿主定位走画布节点（2026-09-25 线性主聊天退役，聊天气泡
+// .message.assistant 已删除，旧查询必然落空产生孤立分支）。与
+// _vizCheckRegenerate 同套路：viz-card → 最近画布节点 → 消息派生宿主开 viz
+// 追问分支；工作流 viz 节点/全屏视图找不到宿主 → 提示改走节点右键菜单。
+function dontUnderstandViz(btn) {
+  const card = btn && btn.closest ? btn.closest('.viz-card') : null;
+  const nodeEl = card ? card.closest('.graph-node[data-node-id]') : null;
+  const nodeId = nodeEl ? nodeEl.dataset.nodeId : '';
+  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
+  if (node && node.messageIndex >= 0) {
+    dontUnderstandModule('viz', String(node.timestamp || ''));
+    return;
+  }
+  if (typeof showToast === 'function') showToast('请在画布上该回答节点的分支菜单里选择「没看懂」');
 }
 
 function convertLearnDirections(html, renderCtx = {}) {
