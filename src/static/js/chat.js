@@ -314,7 +314,9 @@
         let resp;
         if (agentModel) {
           showProgress('tool', 26, '正在连接 AI 服务');
-          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta, { quick: isCasual, max_tokens: isCasual ? 300 : undefined });
+          // 寒暄快捷通道已随线性主聊天退役：分支/苏格拉底请求一律走完整回答路径，
+          // 不再带 quick/max_tokens（此前这里引用了未定义的 isCasual，请求发出前即抛 ReferenceError）
+          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
