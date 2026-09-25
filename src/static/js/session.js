@@ -3,7 +3,6 @@
     let currentSessionId = null;
     let isStreaming = false;
     let chatHistory = [];
-    let lastFailedMessage = '';
     let abortController = null;
 
     // ====== 服务端持久化存储层 ======
@@ -660,35 +659,9 @@
       renderSessionList();
     }
 
-    // 渲染当前聊天
+    // 渲染当前画布（2026-09-25 线性主聊天退役：chatMessages 气泡容器已随聊天 UI
+    // 移除，线性消息恢复分支 restoreMessage 及其渲染缓存一并删除，本函数只剩画布刷新）
     async function renderCurrentChat() {
-      const container = document.getElementById('chatMessages');
-      if (!container) {
-        if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-        return;
-      }
-      container.innerHTML = '';
-
-      if (chatHistory.length === 0) {
-        // 空分支已退役（2026-09-25 化石清扫）：chatMessages 容器随聊天 UI 移除，
-        // 上方 container 判空即 return，此分支在真机不可达。原「欢迎来到
-        // PhyMathia + 快捷提问按钮」整块随之删除——提问入口只剩画布。
-      } else {
-        for (const msg of chatHistory) {
-          restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration, msg.aborted, msg);
-        }
-        // 渲染 Mermaid（串行执行避免并发冲突）。只扫真正含未渲染块的元素——
-        // 其余几十条内容直接跳过，长会话切回来省一整轮串行空转
-        setTimeout(async () => {
-          const contents = document.querySelectorAll('.message.assistant .message-content');
-          for (const el of contents) {
-            if (el.querySelector('.mermaid:not([data-processed="true"])')) {
-              await renderMermaidInElement(el);
-            }
-          }
-        }, 200);
-      }
-      scrollToBottom();
       if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     }
 
@@ -1015,109 +988,10 @@
       }
     }
 
-    // ====== 会话切换渲染缓存 ======
-    // 切会话/切画布时 restoreMessage 对每条 AI 消息全量跑 marked+sanitize+KaTeX，
-    // 长会话切回来肉眼可见地卡。按「时间戳|内容哈希」缓存渲染定形的 HTML（KaTeX 已铺）：
-    // 内容一变键就变，天然失效，无需主动清；主题无关（KaTeX 颜色走 CSS）；
-    // mermaid 占位符故意保持未处理态——SVG 带主题色，交给管线末端的 mermaid LRU 按主题快速重铺。
-    // 三条硬边界，破一条就会出脏数据：
-    //   ① 含 ```html 可视化的消息绝不缓存：renderMarkdown 的 viz 槽位注册是副作用，
-    //      且 _vizStore 会 prune 掉不在 DOM 的条目，命中时跳过注册会拿到空 iframe；
-    //   ② KaTeX 未就绪（window.renderMathInElement 缺失，app.js 先于 defer 厂商库执行的首帧
-    //      就是这种窗口）不缓存——否则「公式未渲染」的中间态会被永久钉进缓存；
-    //   ③ 单条 >256KB 不缓存（KaTeX 展开后体积膨胀十倍不止，LRU 上限 150 条防内存失控）。
-    const _MSG_HTML_CACHE_MAX = 150;
-    const _msgHtmlCache = new Map();
-    function _msgHtmlCacheGet(key) {
-      if (!_msgHtmlCache.has(key)) return null;
-      const v = _msgHtmlCache.get(key);
-      _msgHtmlCache.delete(key);
-      _msgHtmlCache.set(key, v); // Map 插入序即 LRU 序：命中挪到最新端
-      return v;
-    }
-    function _msgHtmlCachePut(key, contentDiv, rawContent) {
-      if (!window.renderMathInElement) return;
-      if (/```html/i.test(rawContent || '')) return;
-      const html = contentDiv.innerHTML;
-      if (html.length > 262144) return;
-      if (_msgHtmlCache.has(key)) _msgHtmlCache.delete(key);
-      _msgHtmlCache.set(key, html);
-      while (_msgHtmlCache.size > _MSG_HTML_CACHE_MAX) {
-        _msgHtmlCache.delete(_msgHtmlCache.keys().next().value);
-      }
-    }
-
-    function restoreMessage(role, content, timestamp, duration, aborted, branchMeta) {
-      const messages = document.getElementById('chatMessages');
-      if (!messages) return;
-      const msg = document.createElement('div');
-      msg.className = 'message ' + role;
-
-      const avatar = document.createElement('div');
-      avatar.className = 'message-avatar';
-      avatar.innerHTML = role === 'user' ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' : ''; if (role === 'assistant') { avatar.innerHTML = '<img src="/logo.png" alt="PhyMathia">'; }
-
-      const body = document.createElement('div');
-      body.className = 'message-body';
-      if (timestamp) body.dataset.messageId = String(timestamp);
-
-      const contentDiv = document.createElement('div');
-      contentDiv.className = 'message-content';
-      if (role === 'user') {
-        contentDiv.textContent = content;
-      } else if (content) {
-        const cacheKey = String(timestamp || '') + '|' + _vizHash(content);
-        const cachedHtml = _msgHtmlCacheGet(cacheKey);
-        if (cachedHtml != null) {
-          contentDiv.innerHTML = cachedHtml;
-        } else {
-          contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || ''), socraticFallback: true });
-          _initVizIframes(contentDiv);
-          renderMath(contentDiv);
-          _msgHtmlCachePut(cacheKey, contentDiv, content);
-        }
-      }
-      const branchMetaObj = branchMeta || {};
-      if (branchMetaObj.branchLabel) {
-        const branchTag = document.createElement('div');
-        branchTag.className = 'branch-tag ' + (branchMetaObj.branchType || 'branch');
-        branchTag.textContent = branchMetaObj.branchLabel;
-        contentDiv.prepend(branchTag);
-      }
-
-      body.appendChild(contentDiv);
-
-      const meta = document.createElement('div');
-      meta.className = 'message-meta';
-      meta.style.color = '#909090';
-      meta.innerHTML = `<span>${formatTime(timestamp || Date.now())}</span>${duration ? '<span class="msg-duration">⏱ ' + formatDuration(duration) + '</span>' : ''}${aborted ? '<span class="msg-aborted">已中止</span>' : ''}`;
-      body.appendChild(meta);
-
-      // Add bookmark button for assistant messages
-      if (role === 'assistant') {
-        const msgId = String(timestamp || Date.now());
-        body.dataset.messageId = msgId;
-        const bookmarkBtn = document.createElement('button');
-        bookmarkBtn.className = 'bookmark-btn';
-        bookmarkBtn.title = '收藏到知识总览';
-        bookmarkBtn.dataset.bookmarkMsg = msgId;
-        bookmarkBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>';
-        bookmarkBtn.onclick = function() { openBookmarkModal(this); };
-        body.appendChild(bookmarkBtn);
-
-        // 重新生成按钮
-        const regenBtn = document.createElement('button');
-        regenBtn.className = 'regenerate-btn';
-        regenBtn.title = '重新生成';
-        regenBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg> 重新生成';
-        regenBtn.onclick = function() { regenerateResponse(this); };
-        body.appendChild(regenBtn);
-      }
-
-      msg.appendChild(avatar);
-      msg.appendChild(body);
-      messages.appendChild(msg);
-    }
+    // ====== 会话切换渲染缓存与线性消息恢复 restoreMessage 已随线性主聊天退役
+    // （2026-09-25）：chatMessages 容器不存在后 restoreMessage 真机不可达，
+    // 其 LRU 缓存（_msgHtmlCache*）仅服务该死分支，一并删除。恢复方式见
+    // docs/dev/linear-chat-retired.md。
 
     async function clearChat() {
       if (isStreaming) return;

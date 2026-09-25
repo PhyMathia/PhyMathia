@@ -416,17 +416,42 @@ function _vizCheckSetBadge(badge, verdict) {
   badge.title = verdict.detail || '';
   const clickable = verdict.status === 'fail' || verdict.status === 'warn';
   if (clickable) badge.classList.add('clickable');
-  badge.onclick = clickable ? function () { _vizCheckRegenerate(verdict); } : null;
+  badge.onclick = clickable ? function () { _vizCheckRegenerate(verdict, badge); } : null;
 }
 
-// 红/黄角标点击：收起全屏（若在）→ 预填重做意图 → 走既有发送通道（不新增重生成协议）
-function _vizCheckRegenerate(verdict) {
+// 红/黄角标点击：收起全屏 → 按宿主路由重做（2026-09-25 线性主聊天退役，不再发
+// 无锚线性请求）。工作流 viz 节点 → 记录重做要求后 runWorkflowNode 原地重生成；
+// 消息派生节点 → 以该回答为父开 viz 追问分支；全屏角标/找不到宿主 → 提示到卡片上点。
+function _vizCheckRegenerate(verdict, badge) {
   const overlay = document.getElementById('vizFullscreenOverlay');
   if (overlay && overlay.classList.contains('active')) closeVizFullscreen();
   const what = verdict.kind === 'period' ? '与解析解偏差过大'
     : verdict.kind === 'diverge' ? '出现数值发散' : '能量不守恒';
   const text = '重新生成可视化：上次数值实验' + what + '，请检查模型参数与积分步长后重做';
-  if (typeof sendQuick === 'function') sendQuick(text);
+  const card = badge && badge.closest ? badge.closest('.viz-card') : null;
+  const nodeEl = card ? card.closest('.graph-node[data-node-id]') : null;
+  const nodeId = nodeEl ? nodeEl.dataset.nodeId : '';
+  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
+  if (!node) {
+    if (typeof showToast === 'function') showToast('已退出全屏：请在画布可视化卡片的角标上点击重做');
+    return;
+  }
+  if (node.messageIndex >= 0) {
+    // 消息派生节点：内容在聊天历史里，以它为父节点开一条 viz 追问分支
+    const anchor = {
+      parentId: String(node.timestamp || ''),
+      sourceModule: 'viz',
+      branchType: 'followup',
+      branchId: _genBranchId(),
+      branchLabel: '重做可视化',
+    };
+    if (typeof window.sendBranchQuick === 'function') { window.sendBranchQuick(text, anchor); return; }
+  }
+  // 工作流 viz 节点：把重做要求写进 requirements（会进入 workflow_context），
+  // 强制重跑该节点——工作流失败重试/重生成的既有通道
+  node.requirements = text;
+  if (typeof runWorkflowNode === 'function') runWorkflowNode(nodeId, true);
+  else if (typeof showToast === 'function') showToast('工作流未就绪，请稍后重试');
 }
 
 // 接收校验桥回报：sampling → 灰角标「校验中」；result → 三态角标；
@@ -939,8 +964,9 @@ document.addEventListener('click', function(e) {
     } : null;
     if (anchor && typeof window.sendBranchQuick === 'function') {
       window.sendBranchQuick(question, anchor);
-    } else if (typeof window.sendQuick === 'function') {
-      window.sendQuick(question);
+    } else if (typeof showToast === 'function') {
+      // 2026-09-25 线性主聊天退役：无锚快捷发送已删（在站按钮全部带 branch-type）
+      showToast('快捷提问丢失锚点，请在画布节点上重试');
     }
   }
 });

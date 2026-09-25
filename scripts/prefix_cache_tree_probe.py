@@ -81,18 +81,7 @@ def _card(physics_chars, math_chars, tag):
     )
 
 
-LINEAR_TURNS = [
-    "波粒二象性是什么",
-    "双缝实验怎么说明它",
-    "测不准原理和它什么关系",
-    "薛定谔的猫是啥",
-    "量子纠缠超光速吗",
-    "退相干又是啥",
-]
-_ASSISTANT_REPLY = _card(600, 400, "第N轮")
-
-
-def _post_chat(client, session_id, prompt, graph_path):
+def _post_chat(client, session_id, prompt, graph_path, workflow_context=None):
     payload = {
         "prompt": prompt,
         "level": "university",
@@ -104,6 +93,8 @@ def _post_chat(client, session_id, prompt, graph_path):
     }
     if graph_path is not None:
         payload["graph_path"] = graph_path
+    if workflow_context is not None:
+        payload["workflow_context"] = workflow_context
     resp = client.post("/api/models/chat", json=payload)
     if resp.status_code != 200:
         raise RuntimeError(f"{session_id} 轮 {prompt!r} -> HTTP {resp.status_code}: {resp.text[:200]}")
@@ -111,10 +102,12 @@ def _post_chat(client, session_id, prompt, graph_path):
 
 def _stream_of(captured):
     """取最近一次「聊天」请求的消息流。历史攒到 15 条会触发滚动记忆压缩任务，
-    它走同一个 http client（system 开头是「你是会话记忆压缩助手」），必须排除。"""
+    它走同一个 http client（system 开头是「你是会话记忆压缩助手」），必须排除。
+    工作流请求（2026-09-25 新增场景 F/G）的 system 是 MODULE_SYSTEM_PROMPT，同样认。"""
+    prefixes = ("# 角色定义", "你是 PhyMathia 的知识网络节点内容生成器")
     for body in reversed(captured):
         msgs = body.get("messages") or []
-        if msgs and str((msgs[0] or {}).get("content") or "").startswith("# 角色定义"):
+        if msgs and str((msgs[0] or {}).get("content") or "").startswith(prefixes):
             return "".join(f"{m.get('role')}\n{m.get('content')}\n" for m in msgs)
     raise RuntimeError("captured 里没有聊天请求")
 
@@ -128,24 +121,6 @@ def _report(label, streams):
         cut = len(common)
         print(f"    断点@{cut} 上一请求: …{streams[i - 1][cut:cut + 48]!r}")
         print(f"    断点@{cut} 本请求  : …{streams[i][cut:cut + 48]!r}")
-
-
-def _run_linear(client, captured):
-    """主线连问：每轮后按前端口径把该轮问答追加进历史。"""
-    saved = []
-    orig_load = context_mod._load_messages
-    context_mod._load_messages = lambda sid: list(saved)
-    streams = []
-    try:
-        for i, prompt in enumerate(LINEAR_TURNS):
-            _post_chat(client, "probe_linear", prompt, None)
-            streams.append(_stream_of(captured))
-            ts = i * 2 + 1
-            saved.append({"role": "user", "content": prompt, "timestamp": ts})
-            saved.append({"role": "assistant", "content": _ASSISTANT_REPLY, "timestamp": ts + 1})
-    finally:
-        context_mod._load_messages = orig_load
-    _report("轮", streams)
 
 
 def _run_tree(client, captured):
@@ -233,37 +208,6 @@ def _run_answer_level(client, captured):
     _report("轮", streams)
 
 
-LONG_LINEAR_TURNS = LINEAR_TURNS + [
-    "贝尔不等式说的是什么",
-    "CHSH 不等式怎么违背",
-    "隐变量理论为什么被排除",
-    "多世界诠释怎么解释测量",
-    "哥本哈根诠释的坍缩是物理过程吗",
-    "量子隧穿和势垒穿透是一回事吗",
-    "扫描隧道显微镜用的就是隧穿吗",
-    "量子退相干和测量坍缩什么关系",
-]
-
-
-def _run_long_linear(client, captured):
-    """14 轮长线性：旧滑动窗口在第 4 轮后逐轮改写边界、第 12 轮起头部摘要
-    开始丢弃——断点会钉死在系统提示结尾；追加式历史区下断点应随轮次增长。"""
-    saved = []
-    orig_load = context_mod._load_messages
-    context_mod._load_messages = lambda sid: list(saved)
-    streams = []
-    try:
-        for i, prompt in enumerate(LONG_LINEAR_TURNS):
-            _post_chat(client, "probe_linear_long", prompt, None)
-            streams.append(_stream_of(captured))
-            ts = i * 2 + 1
-            saved.append({"role": "user", "content": prompt, "timestamp": ts})
-            saved.append({"role": "assistant", "content": _ASSISTANT_REPLY, "timestamp": ts + 1})
-    finally:
-        context_mod._load_messages = orig_load
-    _report("轮", streams)
-
-
 def _run_fork(client, captured):
     """树兄弟分叉：同一父节点（ts 1/2，physics 模块）下连开多个新方向。
 
@@ -298,6 +242,89 @@ def _run_fork(client, captured):
     _report("叉", streams)
 
 
+
+
+WORKFLOW_QUESTION = "什么是电磁感应"
+WORKFLOW_ANALYSIS = ("核心物理概念：法拉第电磁感应定律与楞次定律；"
+                     "核心数学结构：磁通量时间变化率的线性映射 ε=-dΦ/dt；"
+                     "物理与数学的关系：实验定律的微分表述；"
+                     "相关知识点：磁通量、感应电动势、涡流、自感。")
+MODULE_SPECS = [
+    ("physics", "物理视角", "请从物理视角深入讲解磁通量变化产生感应电动势的机理"),
+    ("math", "数学视角", "请从数学视角推导法拉第定律的微分形式并说明各符号含义"),
+    ("graph", "知识图谱", "请生成电磁感应的知识图谱节点文字与关系说明"),
+    ("extend", "延伸思考", "请围绕电磁感应写延伸思考方向"),
+]
+
+
+def _run_workflow(client, captured):
+    """场景 F：一次新问题工作流 = 1 个分析请求 + N 个模块请求（真机并行，此处顺序发）。
+
+    与真机装配一致：模块请求带 graph_path 但时间戳不落在会话消息里（工作流节点
+    不写聊天历史），历史区为空；兄弟模块共享 question/analysis/upstream 头，
+    target 行与 prompt 各异。观察兄弟模块的公共前缀停在哪一段。"""
+    orig_load = context_mod._load_messages
+    context_mod._load_messages = lambda sid: []
+    streams = []
+    try:
+        _post_chat(client, "probe_wf", "请分析用户问题，只输出简洁的问题概要。", None,
+                   workflow_context={"mode": "analysis",
+                                     "target": {"kind": "answer", "label": "AI 回答"},
+                                     "question": WORKFLOW_QUESTION, "requirements": ""})
+        streams.append(_stream_of(captured))
+        for module, label, prompt in MODULE_SPECS:
+            ctx = {"mode": "module",
+                   "target": {"kind": "module", "module": module, "label": label},
+                   "question": WORKFLOW_QUESTION, "analysis": WORKFLOW_ANALYSIS,
+                   "requirements": "",
+                   "upstream": [
+                       {"label": "问题", "content": WORKFLOW_QUESTION},
+                       {"label": "问题分析", "content": WORKFLOW_ANALYSIS},
+                       {"label": label, "content": ""},
+                   ]}
+            path = [
+                {"kind": "user", "timestamp": 1},
+                {"kind": "answer", "timestamp": 2, "module": "answer"},
+                {"kind": "module", "timestamp": 3, "module": module},
+            ]
+            _post_chat(client, "probe_wf", prompt, path, workflow_context=ctx)
+            streams.append(_stream_of(captured))
+    finally:
+        context_mod._load_messages = orig_load
+    _report("请求", streams)
+
+
+def _run_workflow_regen(client, captured):
+    """场景 G：同一模块节点重生成。首生成时自身 upstream 条目内容为空（装配跳过），
+    重生成时前端把自身旧文 800 字切片塞回 upstream——量化自引用对前缀缓存的打断。"""
+    orig_load = context_mod._load_messages
+    context_mod._load_messages = lambda sid: []
+    own_old = ("第一版物理视角正文：磁通量变化在闭合回路中产生感应电动势，" * 40)[:800]
+    streams = []
+    try:
+        for own_content in ("", own_old):
+            ctx = {"mode": "module",
+                   "target": {"kind": "module", "module": "physics", "label": "物理视角"},
+                   "question": WORKFLOW_QUESTION, "analysis": WORKFLOW_ANALYSIS,
+                   "requirements": "重新生成可视化：上次数值实验与解析解偏差过大",
+                   "upstream": [
+                       {"label": "问题", "content": WORKFLOW_QUESTION},
+                       {"label": "问题分析", "content": WORKFLOW_ANALYSIS},
+                       {"label": "物理视角", "content": own_content},
+                   ]}
+            path = [
+                {"kind": "user", "timestamp": 1},
+                {"kind": "answer", "timestamp": 2, "module": "answer"},
+                {"kind": "module", "timestamp": 3, "module": "physics"},
+            ]
+            _post_chat(client, "probe_wf_regen", "请从物理视角深入讲解磁通量变化产生感应电动势的机理",
+                       path, workflow_context=ctx)
+            streams.append(_stream_of(captured))
+    finally:
+        context_mod._load_messages = orig_load
+    _report("重生成", streams)
+
+
 def main():
     td = tempfile.TemporaryDirectory()
     orig, orig_usage = _patch_paths(td.name)
@@ -313,10 +340,6 @@ def main():
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with unittest.mock.patch.object(main_mod, "get_http_client", return_value=http):
             print("=" * 64)
-            print("场景 A：主线线性连问（哨兵，2026-09-21 真机口径同型）")
-            _run_linear(client, captured)
-            captured.clear()
-            print("-" * 64)
             print("场景 B：树探索连钻 8 层（每层追加 追问+子回答 两个节点，同模块键持续下钻）")
             _run_tree(client, captured)
             captured.clear()
@@ -325,12 +348,16 @@ def main():
             _run_answer_level(client, captured)
             captured.clear()
             print("-" * 64)
-            print("场景 D：主线长线性 14 轮（旧滑窗 3-10 轮失稳、12 轮起头部丢弃）")
-            _run_long_linear(client, captured)
-            captured.clear()
-            print("-" * 64)
             print("场景 E：树兄弟分叉（同一父节点连开新方向，分叉点前缀应全命中）")
             _run_fork(client, captured)
+            captured.clear()
+            print("-" * 64)
+            print("场景 F：一次新问题工作流（分析 + 兄弟模块请求，历史区为空的现役主流程）")
+            _run_workflow(client, captured)
+            captured.clear()
+            print("-" * 64)
+            print("场景 G：同模块节点重生成（自引用上游 800 字切片对前缀的打断）")
+            _run_workflow_regen(client, captured)
             print("=" * 64)
     finally:
         _restore(orig, orig_usage)
