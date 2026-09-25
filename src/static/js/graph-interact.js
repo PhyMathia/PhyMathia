@@ -125,6 +125,7 @@ function renderGraphCanvas(streaming) {
   graphView.groups = Array.isArray(state.groups) ? state.groups.map(group => ({ ...group })) : [];
   _syncGroupMembers();
 
+  _katexPendingCaptures = []; // 只收本轮全量重建的节点（流式补丁期间的残留作废，重建会重新登记）
   const html = graphView.groups.map(group => _renderGroupHtml(group)).join('')
     + graphView.nodes.map(n => _renderNodeHtml(n, messages, state)).join('');
   graphInner.insertAdjacentHTML('beforeend', html);
@@ -133,6 +134,21 @@ function renderGraphCanvas(streaming) {
 
   requestAnimationFrame(() => {
     if (typeof renderMath === 'function') renderMath(graphInner);
+    // 回填节点公式渲染缓存：同 id 留最后一次（流式补丁可能中途改写），且只在签名
+    // 与构建时仍一致时才收（内容已变的条目作废，下次按新签名重新铺、重新收）
+    if (_katexPendingCaptures.length) {
+      const caps = _katexPendingCaptures;
+      _katexPendingCaptures = [];
+      const byIdLast = new Map();
+      for (const c of caps) byIdLast.set(c.id, c);
+      for (const c of byIdLast.values()) {
+        const el = graphInner.querySelector('[data-node-id="' + c.id + '"] .graph-node-full-content');
+        const n = graphView.nodeById[c.id];
+        if (!el || !n) continue;
+        if (_graphNodeHtmlSig(n, messages, state) !== c.sig) continue;
+        _nodeBodyKatexPut(c.sig, el.innerHTML);
+      }
+    }
     if (typeof _initVizIframes === 'function') _initVizIframes(graphInner);
     _measureNodes();
     if (needsFit) _runLayout(true);
