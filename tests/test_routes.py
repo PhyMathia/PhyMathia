@@ -226,6 +226,54 @@ class ModelsListEndpointTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"models": ["a", "z"]})
 
+    def test_opencode_gateway_list_sends_no_bearer(self):
+        # opencode 网关（zen 免费与 zen/go）的 /models 清单公开可读，反而带无效
+        # Bearer 会 401 Invalid credential——2026-09-25 真机定位后清单请求一律不附带密钥
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers
+
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"data": [{"id": "glm-5.3"}]}
+
+            return R()
+
+        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+            resp = self.client.post(
+                "/api/models/list",
+                json={"provider": "opencode-go", "api_key": "sk-stale", "base_url": "https://opencode.ai/zen/go/v1"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("Authorization", captured["headers"])
+
+    def test_other_providers_list_carries_bearer(self):
+        # 非 opencode 网关（如 DeepSeek）清单需要认证：密钥必须随请求发出
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["headers"] = headers
+
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"data": [{"id": "deepseek-chat"}]}
+
+            return R()
+
+        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+            resp = self.client.post(
+                "/api/models/list",
+                json={"provider": "deepseek", "api_key": "sk-ds-live", "base_url": "https://api.deepseek.com"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(captured["headers"].get("Authorization"), "Bearer sk-ds-live")
+
 
 class ThinkingRequestParamsUnitTest(unittest.TestCase):
     """思考程度 → 请求参数映射的纯函数用例（不触网）。"""

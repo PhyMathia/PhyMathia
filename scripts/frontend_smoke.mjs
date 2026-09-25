@@ -1236,7 +1236,7 @@ check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup
 
 check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单 + 在线拉取）静态断言', () => {
   // 打包产物经 esbuild 压缩（键名引号/空白会被改写），只能断言裸标识符存在
-  for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput']) {
+  for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput', '_dialogApiKeyWithFallback']) {
     if (!code.includes(t)) throw new Error('打包产物缺：' + t);
   }
   // 自动预置必须已移除：列表里只允许出现用户主动加过的模型（用户反馈的根因）
@@ -1303,6 +1303,61 @@ check('model-add：组密钥写入同步到组内全部条目（组外不触碰�
   if (JSON.parse(sandbox.localStorage.getItem('phymathia_model_group_keys') || '{}')['opencode-go'] !== undefined) throw new Error('组密钥未一并删除');
   sandbox.localStorage.removeItem('phymathia_user_models');
   sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  return true;
+});
+
+// ===== 组级「更新模型列表」（组头 ↻ → 上游 diff → 勾选应用） =====
+check('model-update：组级更新接线（组头 ↻ 按钮 + 更新弹窗 + diff/应用函数）静态断言', () => {
+  for (const t of ['openModelListUpdate', 'refetchModelListUpdate', 'closeModelListUpdate', 'applyModelListUpdate', 'diffUpstreamModels', '_applyModelListDiff', '_fetchModelListForUpdate', 'toggleUmSectionAll', 'model-group-refresh', 'updateModelsDialog']) {
+    if (!code.includes(t)) throw new Error('打包产物缺：' + t);
+  }
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const id of ['updateModelsDialog', 'umGroupTitle', 'umFetchStatus', 'umFetchBtn', 'umNewSection', 'umNewCount', 'umNewAll', 'umNewList', 'umStaleSection', 'umStaleCount', 'umStaleAll', 'umStaleList', 'umSameNote', 'umApplyBtn']) {
+    if (!html.includes(`id="${id}"`)) throw new Error('index.html 缺更新弹窗元素：' + id);
+  }
+  return true;
+});
+
+check('model-update：diffUpstreamModels 纯逻辑（新增/已下线/去空白去重/空输入）', () => {
+  const d = sandbox.diffUpstreamModels(['a', 'b', 'c'], ['b', 'c', 'd', ' e ']);
+  if (d.added.join(',') !== 'd,e') throw new Error('added 不符: ' + JSON.stringify(d.added));
+  if (d.removed.join(',') !== 'a') throw new Error('removed 不符: ' + JSON.stringify(d.removed));
+  const dup = sandbox.diffUpstreamModels(['x', 'x', 'y'], ['y', 'y', 'z']);
+  if (dup.added.join(',') !== 'z' || dup.removed.join(',') !== 'x') throw new Error('去重不符: ' + JSON.stringify(dup));
+  const kept = sandbox.diffUpstreamModels(['m1', 'm2'], ['m2', 'm1']);
+  if (kept.added.length || kept.removed.length) throw new Error('一致列表应为空 diff: ' + JSON.stringify(kept));
+  for (const empty of [sandbox.diffUpstreamModels([], []), sandbox.diffUpstreamModels(null, undefined)]) {
+    if (empty.added.length || empty.removed.length) throw new Error('空输入应为空 diff: ' + JSON.stringify(empty));
+  }
+  return true;
+});
+
+check('model-update：_applyModelListDiff（新增入库 + 移除条目 + 悬空槽位清理 + 幂等）', () => {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
+  sandbox.loadUserModels();
+  const goPreset = sandbox.window.MODEL_PRESETS['opencode-go'];
+  const seeded = sandbox.addModelsForProvider('opencode-go', 'sk-upd', goPreset.baseUrl, [
+    { model: 'm-keep', label: '保留模型' }, { model: 'm-stale', label: '已下线模型' },
+  ]);
+  if (seeded !== 2) throw new Error('播种 2 条应全部入库，实际 ' + seeded);
+  const stale = sandbox.getAllModels().find(m => m.provider === 'opencode-go' && m.name.includes('已下线模型'));
+  if (!stale) throw new Error('播种条目未找到');
+  // 主模型槽位指向将被移除的条目，应用后必须被清空（deleteUserModel 的悬空引用清理）
+  sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: stale.id, html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' }));
+  sandbox.fetchModels(); // 异步签名但函数体全同步：直接调用即完成槽位装载
+  const res = sandbox._applyModelListDiff('opencode-go', goPreset.baseUrl, [{ model: 'm-new', label: '上游新增' }], ['m-stale']);
+  if (res.added !== 1 || res.removed !== 1) throw new Error('应用结果不符: ' + JSON.stringify(res));
+  const names = sandbox.getAllModels().filter(m => m.provider === 'opencode-go').map(m => m.name);
+  if (names.length !== 2) throw new Error('应用后应剩 2 条: ' + names.join(','));
+  if (!names.some(s => s.includes('保留模型')) || !names.some(s => s.includes('上游新增'))) throw new Error('保留/新增条目缺失: ' + names.join(','));
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_model !== '') throw new Error('指向已移除条目的槽位未清空');
+  const again = sandbox._applyModelListDiff('opencode-go', goPreset.baseUrl, [{ model: 'm-new', label: '上游新增' }], ['m-stale']);
+  if (again.added !== 0 || again.removed !== 0) throw new Error('重复应用应零变更: ' + JSON.stringify(again));
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
   return true;
 });
 

@@ -1472,6 +1472,9 @@
     .model-group-del { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs); flex-shrink: 0; display: flex; align-items: center; }
     .model-group-del:hover { color: #ef4444; background: var(--btn-active-bg); }
     .model-group-del svg { width: 13px; height: 13px; }
+    .model-group-refresh { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs); flex-shrink: 0; display: flex; align-items: center; }
+    .model-group-refresh:hover { color: var(--accent); background: var(--btn-active-bg); }
+    .model-group-refresh svg { width: 13px; height: 13px; }
     .model-add-btn { width: 100%; padding: var(--sp-3); border: 1px dashed var(--border); border-radius: var(--r-md); background: transparent; color: var(--accent); font-size: var(--fs-md); cursor: pointer; }
     .model-add-btn:hover { background: var(--btn-active-bg); border-color: var(--accent); }
     /* 添加模型弹窗：预设/手动双选项卡 + 模型勾选清单 */
@@ -1516,6 +1519,17 @@
     .am-mini-btn:disabled { opacity: 0.5; cursor: default; }
     .am-fetch-status { font-size: var(--fs-xs); color: var(--text-secondary); min-width: 0; word-break: break-all; }
     .am-fetch-status.am-fetch-error { color: var(--danger-fg); }
+    /* 组级「更新模型列表」弹窗（复用 am-model-check 行样式） */
+    .um-status-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .um-section { margin-bottom: 10px; }
+    .um-section-head { display: flex; align-items: center; gap: 6px; padding: 4px 2px; font-size: var(--fs-xs); color: var(--text-secondary); cursor: pointer; user-select: none; }
+    .um-section-head input[type="checkbox"] { appearance: none; width: 15px; height: 15px; border: 1.5px solid var(--border); border-radius: var(--r-sm); background: var(--input-bg); cursor: pointer; flex-shrink: 0; }
+    .um-section-head input[type="checkbox"]:hover { border-color: var(--accent); }
+    .um-section-head input[type="checkbox"]:checked { background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.6 8.4l3 3 5.8-6.4'/%3E%3C/svg%3E") center / 12px 12px no-repeat; border-color: var(--accent); }
+    .um-section-head input[type="checkbox"]:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--btn-active-border); }
+    .um-section-title { font-size: var(--fs-xs); color: var(--text-primary); }
+    .um-hint { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 4px 2px 0; line-height: 1.5; }
+    .um-same-note { font-size: var(--fs-sm); color: var(--text-secondary); padding: 6px 0 2px; }
     .md-field textarea { width: 100%; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--border); background-color: var(--field-bg); color: var(--text-primary); font-size: var(--fs-md); font-family: inherit; line-height: 1.6; outline: none; box-sizing: border-box; resize: vertical; }
     .md-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--btn-active-border); }
     /* 浅色：同一批控件的半透明底换成暖白，别用深色墨（浅色主题下会发脏） */

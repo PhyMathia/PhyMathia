@@ -20,7 +20,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.css?v=5a255d99">
+  <link rel="stylesheet" href="/css/styles.css?v=ef537418">
   <link rel="stylesheet" href="/css/styles-panels.css?v=04cbe716">
   <link rel="stylesheet" href="/css/graph-override.css?v=bb0c7a7e">
   <link rel="stylesheet" href="/phi/phi-pet.css?v=c1760c4a">
@@ -179,7 +179,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=3dd1087e"></script>
+  <script src="/js/app.js?v=1b32af15"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -453,6 +453,36 @@
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeAddModelDialog()">取消</button>
         <button class="md-btn md-btn-save" onclick="saveNewModel()">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="model-dialog-overlay" id="updateModelsDialog">
+    <div class="model-dialog model-dialog-add aurora-glass aurora-glass--dialog">
+      <h3>更新模型列表 — <span id="umGroupTitle"></span></h3>
+      <div class="um-status-line">
+        <span class="am-fetch-status" id="umFetchStatus"></span>
+        <button type="button" class="am-mini-btn" id="umFetchBtn" onclick="refetchModelListUpdate()">↻ 重新获取</button>
+      </div>
+      <div class="um-section" id="umNewSection" hidden>
+        <label class="um-section-head">
+          <input type="checkbox" id="umNewAll" onchange="toggleUmSectionAll('umNewList', this.checked)">
+          <span class="um-section-title">上游新增（<span id="umNewCount">0</span> 个）— 勾选后加入本组</span>
+        </label>
+        <div class="am-model-list" id="umNewList"></div>
+      </div>
+      <div class="um-section" id="umStaleSection" hidden>
+        <label class="um-section-head">
+          <input type="checkbox" id="umStaleAll" onchange="toggleUmSectionAll('umStaleList', this.checked)">
+          <span class="um-section-title">上游已下线（<span id="umStaleCount">0</span> 个）— 勾选后移除本地条目</span>
+        </label>
+        <div class="am-model-list" id="umStaleList"></div>
+        <div class="um-hint">没出现在上游列表里，也可能只是上游没完全开放——确认不要了再勾选移除。</div>
+      </div>
+      <div class="um-same-note" id="umSameNote" hidden>本地列表与上游一致，无需更新。</div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeModelListUpdate()">取消</button>
+        <button class="md-btn md-btn-save" id="umApplyBtn" onclick="applyModelListUpdate()" disabled>应用更新</button>
       </div>
     </div>
   </div>

@@ -589,6 +589,7 @@ function renderModelList() {
         <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
         <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
         <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
+        <button class="model-group-refresh" onclick="openModelListUpdate('${jsProvider}')" title="从上游更新模型列表（对比新增 / 已下线）">${UI_ICON_SVG.reset}</button>
         <button class="model-group-del" onclick="confirmDeleteModelGroup('${jsProvider}')" title="删除该分组的全部模型">${UI_ICON_SVG.trash}</button>
       </div>
       ${collapsed ? '' : `<div class="model-group-body">${items}</div>`}
@@ -734,12 +735,22 @@ function _setFetchStatus(elId, text, isError) {
   el.classList.toggle('am-fetch-error', !!isError);
 }
 
+// 添加弹窗密钥取值：优先弹窗输入；留空时回落到该供应商已保存的分组密钥——
+// 组里已有密钥时不填也能在线拉清单（与「添加」时空密钥继承组密钥同口径）。
+// 返回 fromSaved 让状态行说明密钥来源，用户不至于疑惑密钥从哪来的。
+function _dialogApiKeyWithFallback(provider) {
+  const typed = document.getElementById('newApiKey').value.trim();
+  if (typed) return { key: typed, fromSaved: false };
+  const saved = getGroupKey(provider);
+  return { key: saved, fromSaved: !!saved };
+}
+
 async function fetchProviderModelList() {
   const provider = document.getElementById('newProvider').value;
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
-  const apiKey = document.getElementById('newApiKey').value.trim();
+  const { key: apiKey, fromSaved } = _dialogApiKeyWithFallback(provider);
   const btn = document.getElementById('presetFetchBtn');
-  _setFetchStatus('presetFetchStatus', '正在获取…', false);
+  _setFetchStatus('presetFetchStatus', fromSaved ? '正在获取…（密钥留空，使用已保存的分组密钥）' : '正在获取…', false);
   if (btn) btn.disabled = true;
   try {
     const resp = await fetch('/api/models/list', {
@@ -774,10 +785,10 @@ async function fetchProviderModelList() {
 async function fetchManualModelList() {
   const provider = document.getElementById('newCustomProvider').value.trim();
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
-  const apiKey = document.getElementById('newApiKey').value.trim();
+  const { key: apiKey, fromSaved } = _dialogApiKeyWithFallback(provider);
   if (!baseUrl) { _setFetchStatus('manualFetchStatus', '请先填写 API 地址', true); return; }
   const btn = document.getElementById('manualFetchBtn');
-  _setFetchStatus('manualFetchStatus', '正在获取…', false);
+  _setFetchStatus('manualFetchStatus', fromSaved ? '正在获取…（密钥留空，使用已保存的分组密钥）' : '正在获取…', false);
   if (btn) btn.disabled = true;
   try {
     const resp = await fetch('/api/models/list', {
@@ -861,6 +872,170 @@ function saveNewModel() {
   renderModelSelects();
   if (typeof showToast === 'function') {
     showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）', 2600);
+  }
+}
+
+// ====== 组级「更新模型列表」：已添加分组的在线刷新 ======
+// 预设清单只是初值，已添加的分组也不会自己跟上上游——组头 ↻ 按钮经
+// /api/models/list 在线拉取，与本地条目做差集：新增的可勾选加入，上游已
+// 不列出的（下线或未开放）可勾选移除。两段都默认不勾：延续「没主动添加的
+// 不进列表」的拍板，也防聚合商一拉几百个被一键灌爆；移除是破坏性操作同理。
+
+// 纯 diff（无 DOM，冒烟直测）：入参去空白去重后对比。added 按上游顺序，
+// removed 保持本地出现顺序。
+function diffUpstreamModels(existingIds, upstreamIds) {
+  const norm = arr => (Array.isArray(arr) ? arr : []).map(s => String(s == null ? '' : s).trim()).filter(Boolean);
+  const upstream = [];
+  const upSet = new Set();
+  for (const id of norm(upstreamIds)) {
+    if (!upSet.has(id)) { upSet.add(id); upstream.push(id); }
+  }
+  const local = [];
+  const localSet = new Set();
+  for (const id of norm(existingIds)) {
+    if (!localSet.has(id)) { localSet.add(id); local.push(id); }
+  }
+  return {
+    added: upstream.filter(id => !localSet.has(id)),
+    removed: local.filter(id => !upSet.has(id)),
+  };
+}
+
+// 纯应用核心（无 DOM，冒烟直测）：新增走 addModelsForProvider（重复跳过、
+// 密钥继承组密钥通道），移除逐条 deleteUserModel（悬空槽位引用一并清）。
+// 返回实际新增/移除条数。
+function _applyModelListDiff(provider, baseUrl, addedEntries, removedModelIds) {
+  let addedCount = 0;
+  if (Array.isArray(addedEntries) && addedEntries.length) {
+    addedCount = addModelsForProvider(provider, getGroupKey(provider), baseUrl, addedEntries);
+  }
+  const removeSet = new Set(Array.isArray(removedModelIds) ? removedModelIds : []);
+  let removedCount = 0;
+  if (removeSet.size) {
+    const doomed = userModelConfigs.filter(c => c.provider === provider && removeSet.has(c.model));
+    for (const m of doomed) deleteUserModel(m.id);
+    removedCount = doomed.length;
+  }
+  return { added: addedCount, removed: removedCount };
+}
+
+// 当前更新会话的上下文：{ provider, baseUrl, diff }；异步回包时靠引用比对弃用过期结果
+let _modelUpdateCtx = null;
+
+function openModelListUpdate(provider) {
+  const entry = userModelConfigs.find(m => m.provider === provider);
+  if (!entry) return;
+  const baseUrl = entry.baseUrl || MODEL_PRESETS[provider]?.baseUrl || '';
+  if (!baseUrl) { alert('该分组没有可用的 API 地址，请先在单个模型配置里补上'); return; }
+  _modelUpdateCtx = { provider, baseUrl, diff: null };
+  document.getElementById('umGroupTitle').textContent = MODEL_PRESETS[provider]?.name || provider;
+  document.getElementById('umNewSection').hidden = true;
+  document.getElementById('umStaleSection').hidden = true;
+  document.getElementById('umSameNote').hidden = true;
+  document.getElementById('umNewList').innerHTML = '';
+  document.getElementById('umStaleList').innerHTML = '';
+  document.getElementById('updateModelsDialog').classList.add('show');
+  _fetchModelListForUpdate();
+}
+
+function refetchModelListUpdate() {
+  if (_modelUpdateCtx) _fetchModelListForUpdate();
+}
+
+function closeModelListUpdate() {
+  document.getElementById('updateModelsDialog').classList.remove('show');
+  _modelUpdateCtx = null;
+}
+
+async function _fetchModelListForUpdate() {
+  const ctx = _modelUpdateCtx;
+  if (!ctx) return;
+  const provider = ctx.provider;
+  const fetchBtn = document.getElementById('umFetchBtn');
+  const applyBtn = document.getElementById('umApplyBtn');
+  const statusEl = document.getElementById('umFetchStatus');
+  statusEl.textContent = '正在从上游获取模型列表…';
+  statusEl.classList.remove('um-fetch-error');
+  if (fetchBtn) fetchBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = true;
+  try {
+    const apiKey = getGroupKey(provider) || (userModelConfigs.find(m => m.provider === provider)?.apiKey) || '';
+    const resp = await fetch('/api/models/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, api_key: apiKey, base_url: ctx.baseUrl }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `API ${resp.status}`);
+    // 回包时弹窗已关或已换分组 → 弃用（与添加弹窗「异步期间切换则弃用」同守卫）
+    if (_modelUpdateCtx !== ctx || !document.getElementById('updateModelsDialog').classList.contains('show')) return;
+    const existing = userModelConfigs.filter(m => m.provider === provider).map(m => m.model);
+    const diff = diffUpstreamModels(existing, data.models || []);
+    ctx.diff = diff;
+    _renderUpdateDialog(provider, diff, (data.models || []).length);
+  } catch (e) {
+    if (_modelUpdateCtx !== ctx) return;
+    statusEl.textContent = `获取失败：${e.message}（可点「重新获取」重试）`;
+    statusEl.classList.add('um-fetch-error');
+  } finally {
+    if (fetchBtn) fetchBtn.disabled = false;
+  }
+}
+
+function _renderUpdateDialog(provider, diff, upstreamTotal) {
+  const preset = MODEL_PRESETS[provider];
+  const localEntries = userModelConfigs.filter(m => m.provider === provider);
+  const presetLabelOf = id => (preset?.models || []).find(m => m.id === id)?.label || '';
+  const localLabelOf = id => {
+    const hit = localEntries.find(m => m.model === id);
+    return hit ? (hit.label || hit.model) : id;
+  };
+  const statusEl = document.getElementById('umFetchStatus');
+  statusEl.classList.remove('um-fetch-error');
+  statusEl.textContent = `上游共 ${upstreamTotal} 个模型：新增 ${diff.added.length}，已下线 ${diff.removed.length}，已有 ${localEntries.length - diff.removed.length} 个不受影响`;
+  document.getElementById('umNewList').innerHTML = '';
+  document.getElementById('umStaleList').innerHTML = '';
+  document.getElementById('umNewAll').checked = false;
+  document.getElementById('umStaleAll').checked = false;
+  // 计数一并重置：上一次打开留下的数字不能漏进这次的小节头
+  document.getElementById('umNewCount').textContent = '0';
+  document.getElementById('umStaleCount').textContent = '0';
+  document.getElementById('umNewSection').hidden = !diff.added.length;
+  document.getElementById('umStaleSection').hidden = !diff.removed.length;
+  document.getElementById('umSameNote').hidden = !!(diff.added.length || diff.removed.length);
+  if (diff.added.length) {
+    document.getElementById('umNewCount').textContent = String(diff.added.length);
+    document.getElementById('umNewList').innerHTML = diff.added.map(id => _presetModelRowHtml(id, presetLabelOf(id) || id, false)).join('');
+  }
+  if (diff.removed.length) {
+    document.getElementById('umStaleCount').textContent = String(diff.removed.length);
+    document.getElementById('umStaleList').innerHTML = diff.removed.map(id => _presetModelRowHtml(id, localLabelOf(id), false)).join('');
+  }
+  const applyBtn = document.getElementById('umApplyBtn');
+  if (applyBtn) applyBtn.disabled = !(diff.added.length || diff.removed.length);
+}
+
+// 小节头「全选」复选框：只管自己小节里的行
+function toggleUmSectionAll(listId, checked) {
+  document.querySelectorAll('#' + listId + ' input[type="checkbox"]').forEach(cb => { cb.checked = !!checked; });
+}
+
+function applyModelListUpdate() {
+  const ctx = _modelUpdateCtx;
+  if (!ctx || !ctx.diff) return;
+  const provider = ctx.provider;
+  const addedEntries = Array.from(document.querySelectorAll('#umNewList input[type="checkbox"]:checked')).map(cb => {
+    const id = cb.value;
+    return { model: id, label: (MODEL_PRESETS[provider]?.models || []).find(m => m.id === id)?.label || '' };
+  });
+  const removedIds = Array.from(document.querySelectorAll('#umStaleList input[type="checkbox"]:checked')).map(cb => cb.value);
+  if (!addedEntries.length && !removedIds.length) { closeModelListUpdate(); return; }
+  const res = _applyModelListDiff(provider, ctx.baseUrl, addedEntries, removedIds);
+  closeModelListUpdate();
+  renderModelList();
+  renderModelSelects();
+  if (typeof showToast === 'function') {
+    showToast(`已更新「${MODEL_PRESETS[provider]?.name || provider}」：新增 ${res.added} 个，移除 ${res.removed} 个`, 2600);
   }
 }
 
