@@ -779,7 +779,38 @@ function _renderAiEvalNodeHtml(node, state) {
     + '</div>';
 }
 
-function _renderNodeHtml(node, messages, state) {
+    // ====== 节点公式渲染记忆 ======
+    // 全量重建（切会话/切回旧画布/撤销）会把每个节点 HTML 原样重建，然后 rAF 里对整图
+    // 无条件跑 renderMath——切回看过的画布时，所有没变的节点都要重新铺一遍公式。
+    // 按「节点 HTML 签名」缓存 KaTeX 铺完的 body 片段（_graphNodeHtmlSig 覆盖全部
+    // HTML 相关输入：内容/标签/端口/尺寸/消息正文……内容一变键就变，天然失效，无需主动清）：
+    // 命中直接铺定形 HTML（里面已无 $..$ 文本，后续整图 renderMath 对它是空扫描）；
+    // 未命中走原路径并登记待回填，rAF 铺完公式后按签名回填缓存。
+    // 三条硬边界：① body 含 <textarea / data-viz-id / <iframe 不缓存——用户可编辑态与
+    // viz 槽位是有状态 DOM（viz 内容还在 _vizStore 里，会被 prune）；② KaTeX 未就绪
+    // （window.renderMathInElement 缺失，app.js 先于 defer 厂商库执行的首帧）不缓存——
+    // 防把未渲染中间态钉进缓存；③ 单条 >256KB 不缓存，LRU 上限 200 条防内存失控。
+    const _NODE_BODY_CACHE_MAX = 200;
+    const _nodeBodyKatexCache = new Map();
+    let _katexPendingCaptures = []; // [{id, sig}] 本轮全量重建中「待回填」的节点
+    function _nodeBodyKatexGet(sig) {
+      if (!_nodeBodyKatexCache.has(sig)) return null;
+      const v = _nodeBodyKatexCache.get(sig);
+      _nodeBodyKatexCache.delete(sig);
+      _nodeBodyKatexCache.set(sig, v); // Map 插入序即 LRU 序：命中挪到最新端
+      return v;
+    }
+    function _nodeBodyKatexPut(sig, html) {
+      if (!window.renderMathInElement || !html || html.length > 262144) return;
+      if (/<textarea|data-viz-id|<iframe/i.test(html)) return;
+      if (_nodeBodyKatexCache.has(sig)) _nodeBodyKatexCache.delete(sig);
+      _nodeBodyKatexCache.set(sig, html);
+      while (_nodeBodyKatexCache.size > _NODE_BODY_CACHE_MAX) {
+        _nodeBodyKatexCache.delete(_nodeBodyKatexCache.keys().next().value);
+      }
+    }
+
+    function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
   if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
@@ -839,9 +870,16 @@ function _renderNodeHtml(node, messages, state) {
                   : '')
               : ''))))
     : '';
-  const body = node.kind === 'module'
+  let body = node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
     : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : '');
+  // 渲染记忆：命中直接铺上次定形的 body；未命中登记待回填（textarea/viz 有状态不登记）
+  if (body) {
+    const _bodySig = _graphNodeHtmlSig(node, messages, state);
+    const _cachedBody = _nodeBodyKatexGet(_bodySig);
+    if (_cachedBody != null) body = _cachedBody;
+    else if (!/<textarea|data-viz-id|<iframe/i.test(body)) _katexPendingCaptures.push({ id: node.id, sig: _bodySig });
+  }
   const sub = _nodeSub(node);
   const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
   const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
