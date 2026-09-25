@@ -628,8 +628,15 @@ document.addEventListener('click', (e) => {
     for (const sym of symbols) sym.update();
     if (_symbolPauseCount === 0) _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
   }
+  // 极光漂移与漂浮符号同一套让路口径：计数>0（AI 流式/画布拖拽）或标签页隐藏时，
+  // 给 <html> 挂 aurora-paused，由 styles.css 暂停各玻璃载体的 background-position 漂移
+  // （瞬态浮层豁免清单见 styles.css aurora-paused 注释）
+  function _updateAuroraPause() {
+    document.documentElement.classList.toggle('aurora-paused', _symbolPauseCount > 0 || document.hidden);
+  }
   window.setFloatingSymbolsPaused = function (paused) {
     _symbolPauseCount = Math.max(0, _symbolPauseCount + (paused ? 1 : -1));
+    _updateAuroraPause();
     if (_symbolPauseCount > 0) {
       if (_symbolAnimRaf) { cancelAnimationFrame(_symbolAnimRaf); _symbolAnimRaf = 0; }
     } else if (!_symbolAnimRaf) {
@@ -637,6 +644,7 @@ document.addEventListener('click', (e) => {
     }
   };
   _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
+  document.addEventListener('visibilitychange', _updateAuroraPause);
 
   const origToggle = window.toggleTheme;
   window.toggleTheme = function() {
@@ -1831,6 +1839,9 @@ window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300
     }
   }
 
+  // 粒子循环按需启停：每帧一次全屏 clearRect，粒子为空时这一帧不产出任何可见物，
+  // 却照烧 CPU/电量——数组清空即不再排下一帧，下次 burst 再重启（溅射是唯一生成点）。
+  let _particleRaf = 0;
   function animateParticles() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -1838,13 +1849,20 @@ window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300
       particles[i].draw(ctx);
       if (particles[i].life <= 0) particles.splice(i, 1);
     }
-    requestAnimationFrame(animateParticles);
+    if (particles.length > 0) {
+      _particleRaf = requestAnimationFrame(animateParticles);
+    } else {
+      _particleRaf = 0;
+    }
   }
-  animateParticles();
+  function ensureParticleLoop() {
+    if (!_particleRaf) _particleRaf = requestAnimationFrame(animateParticles);
+  }
 
   // 点击/触摸爆发溅射
   const burstCount = isMobile ? 8 : 14;
   function burstAt(x, y) {
+    ensureParticleLoop();
     for (let i = 0; i < burstCount; i++) {
       if (particles.length >= MAX_PARTICLES) {
         const oldest = particles.findIndex(p => p.life <= 0);

@@ -1730,11 +1730,26 @@ function _handleGraphKeydown(event) {
 
 function _initGraphCanvasEvents() {
   if (!graphCanvas) return;
+  // 滚轮缩放按帧合并：触控板/高分辨率滚轮一次手势会连发多个 wheel 事件，逐事件同步缩放
+  // 每发都做一次 getBoundingClientRect + transform 写入 + save 记账。改为「最新优先」——
+  // 事件里只累乘系数、记最新光标锚点，rAF 每帧最多执行一次 zoomGraph（与拖拽
+  // _handlePointerMove 的每帧一次口径一致）。preventDefault 必须同步，不能挪进 rAF。
+  let _graphWheelRaf = 0, _graphWheelFactor = 1, _graphWheelX = 0, _graphWheelY = 0;
   graphCanvas.addEventListener('wheel', e => {
     const scroller = e.target.closest('.graph-node-full-content, .graph-node .mermaid-container');
     if (scroller) return;
     e.preventDefault();
-    zoomGraph(e.deltaY < 0 ? 1.08 : 0.92, e.clientX, e.clientY);
+    _graphWheelFactor *= e.deltaY < 0 ? 1.08 : 0.92;
+    _graphWheelX = e.clientX;
+    _graphWheelY = e.clientY;
+    if (!_graphWheelRaf) {
+      _graphWheelRaf = requestAnimationFrame(() => {
+        _graphWheelRaf = 0;
+        const factor = _graphWheelFactor;
+        _graphWheelFactor = 1;
+        zoomGraph(factor, _graphWheelX, _graphWheelY);
+      });
+    }
   }, { passive: false });
   graphCanvas.addEventListener('pointerdown', e => {
     // 右键/中键不进入拖拽与点选链路（右键菜单由 contextmenu 监听单独处理）：

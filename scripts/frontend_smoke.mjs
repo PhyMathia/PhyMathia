@@ -880,7 +880,9 @@ check('graph-contextmenu: 打包注册与产物符号（静态断言）', () => 
   }
   if (!code.includes('function openGraphContextMenu')) return false;
   if (!code.includes('graph-context-menu')) return false;
-  if (!code.includes('if(e.button!==0)return;')) return false; // 产物含 pointerdown 右键过滤
+  // 产物含 pointerdown 右键过滤。参数名不能钉死：esbuild 会按新增局部变量重排单字母命名
+  // （2026-09-25 滚轮合帧加 4 个局部量后 e→r），断言意图是「过滤存在」，用 \w 通配
+  if (!/if\(\w+\.button!==0\)return;/.test(code)) return false;
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   return css.includes('.graph-context-menu');
 });

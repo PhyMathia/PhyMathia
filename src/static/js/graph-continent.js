@@ -3366,11 +3366,23 @@ function _continentBindViewport(viewport) {
     }
   });
   viewport.addEventListener('pointercancel', () => { _continentDragState = null; });
+  // 滚轮缩放合帧（与探索网画布同一口径）：连发 wheel 只累乘系数、记最新锚点，
+  // rAF 内重取一次 rect 再缩放——rect 不能在事件里缓存到帧执行时（布局可能已变）
+  let _contWheelRaf = 0, _contWheelFactor = 1, _contWheelX = 0, _contWheelY = 0;
   viewport.addEventListener('wheel', e => {
     e.preventDefault();
-    const rect = viewport.getBoundingClientRect();
-    _continentZoomAt(e.deltaY < 0 ? 1.12 : 0.9,
-      e.clientX - rect.left, e.clientY - rect.top);
+    _contWheelFactor *= e.deltaY < 0 ? 1.12 : 0.9;
+    _contWheelX = e.clientX;
+    _contWheelY = e.clientY;
+    if (!_contWheelRaf) {
+      _contWheelRaf = requestAnimationFrame(() => {
+        _contWheelRaf = 0;
+        const factor = _contWheelFactor;
+        _contWheelFactor = 1;
+        const rect = viewport.getBoundingClientRect();
+        _continentZoomAt(factor, _contWheelX - rect.left, _contWheelY - rect.top);
+      });
+    }
   }, { passive: false });
 }
 
