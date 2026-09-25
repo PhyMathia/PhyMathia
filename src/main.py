@@ -336,6 +336,13 @@ async def api_models_chat(request: Request):
             context_parts.append(_branch_context_instruction(branch_type, source_module, payload.get("branch_label") or payload.get("branchLabel") or "", parent_id))
         if graph_path:
             context_parts.append(_graph_path_instruction(graph_path, source_module))
+            # 前缀缓存拍板（2026-09-25 三代窗）：父与祖父的 ~800 字详摘要进尾
+            # 部块，与当前节点全文一起构成「当前全文 + 上两代详情」——下钻时尾
+            # 部本就在缓存断点之后，细节零缓存代价；兄弟分叉时该段逐字节相同。
+            _upstream_block = context.tree_upstream_detail_block(
+                session_id, graph_path, source_module=source_module, branch_id=branch_id)
+            if _upstream_block:
+                context_parts.append(_upstream_block)
             # 前缀缓存拍板（2026-09-24）：路径历史区 assistant 一律摘要（只增不
             # 改），当前聚焦节点全文改由尾部上下文块提供——工作流模块再生成的
             # 唯一全文输入也随之落在这里。
@@ -917,6 +924,13 @@ async def api_save_messages(session_id: str, request: Request):
             if isinstance(msg, dict) and msg.get("role") == "assistant" and not str(msg.get("summary") or "").strip():
                 try:
                     msg["summary"] = _graph_message_summary(msg)
+                except Exception:
+                    pass
+            # 前缀缓存拍板（2026-09-25 三代窗）：详摘要在落盘时出生定形，读取侧
+            # 只用不改（旧数据缺字段由 context.summary_detail 现算兜底）。
+            if isinstance(msg, dict) and msg.get("role") == "assistant" and not str(msg.get("summary_detail") or "").strip():
+                try:
+                    msg["summary_detail"] = context.summary_detail(msg)
                 except Exception:
                     pass
     try:

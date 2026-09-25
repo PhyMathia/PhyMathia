@@ -1022,6 +1022,75 @@ def tree_active_content_block(
     return "# 当前节点正文（参考资料）\n" + content
 
 
+# 前缀缓存拍板（2026-09-25 三代窗）：上游节点详摘要的目标长度。落盘时按此
+# 算好存进消息 summary_detail 字段，读取侧永不改写。
+DETAIL_SUMMARY_CHARS = 800
+
+
+def summary_detail(message: dict, module_key: str = "") -> str:
+    """上游节点的「详摘要」（三代窗用）：与 200 字摘要同一套清洗与句界截断，
+    只是更长（DETAIL_SUMMARY_CHARS）。出生定形——落盘时算好存
+    summary_detail 字段；旧数据缺字段时按存量内容现算，截断是内容的确定性
+    函数，同一消息永远得到同一串字节，不引入翻转源。"""
+    cached = str(message.get("summary_detail") or "").strip()
+    if cached:
+        return cached[:DETAIL_SUMMARY_CHARS]
+    content = str(message.get("content") or "")
+    if module_key:
+        content = _branch_source_content(content, module_key)
+    text = re.sub(r"<[^>]+>", " ", content)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= DETAIL_SUMMARY_CHARS - 20:
+        return text
+    head = text[:DETAIL_SUMMARY_CHARS - 20]
+    for sep in ("。", "！", "？", ". ", "! ", "? "):
+        idx = head.rfind(sep)
+        if idx > 40:
+            return head[:idx + len(sep)].strip() + "…"
+    return head + "…"
+
+
+def tree_upstream_detail_block(
+    session_id: str,
+    graph_path: list,
+    source_module: str = "",
+    branch_id: str = "",
+) -> str:
+    """三代窗的上游两代详摘要段（尾部上下文块用，无 assistant 上游返回空串）。
+
+    前缀缓存拍板（2026-09-25）：父与祖父各 ~800 字详情（summary_detail），
+    与当前节点全文（tree_active_content_block）一起构成「当前全文 + 上两代
+    详情」的尾部易变区。历史区只增不改不受影响——下钻时尾部本就在公共前缀
+    断点之后，加细节零缓存代价；同一父节点的兄弟请求该段逐字节相同（内容取
+    自共享链路上的出生定形字节，祖父→父顺序由路径深度决定，天然确定），公共
+    前缀反而变长。user 祖先不进本段（历史区已是全文）。"""
+    if not graph_path or len(graph_path) < 2:
+        return ""
+    all_messages = _load_messages(session_id)
+    if not all_messages:
+        return ""
+    by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
+    active_index = len(graph_path) - 1
+    labels = {1: "父节点", 2: "祖父节点"}
+    sections = []  # 祖父在前、父在后，与链路顺序一致
+    for offset in (2, 1):
+        idx = active_index - offset
+        if idx < 0:
+            continue
+        item = graph_path[idx] or {}
+        msg = by_ts.get(str(item.get("timestamp") or ""))
+        if not msg or (msg.get("role") or "assistant") == "user":
+            continue
+        module_key = item.get("module") or item.get("moduleKey") or ""
+        detail = summary_detail(msg, module_key)
+        if not detail:
+            continue
+        sections.append(f"【{labels[offset]}】\n{detail}")
+    if not sections:
+        return ""
+    return "# 上游节点详情（参考资料）\n" + "\n\n".join(sections)
+
+
 SOCRATIC_STATE_PREFIX = "socratic:"
 
 SOCRATIC_STATE_TTL_SECONDS = 24 * 60 * 60
@@ -1320,7 +1389,8 @@ __all__ = [
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_load_session_context_from_path",
-    "tree_active_content_block",
+    "tree_active_content_block", "summary_detail", "tree_upstream_detail_block",
+    "DETAIL_SUMMARY_CHARS",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
     "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
