@@ -285,7 +285,16 @@ function setKpFilter(btn) {
   renderKnowledgePanel();
 }
 
-function filterKnowledge() { renderKnowledgePanel(); }
+// 搜索框 oninput 每键触发一次 renderKnowledgePanel：整面 innerHTML 重画，
+// 时间线上每条公式还要跑 katex.renderToString——大知识库打字会一顿一顿。
+// 200ms 防抖合并；清空搜索词立即出结果（回退场景不该等）。
+let _kpFilterTimer = 0;
+function filterKnowledge() {
+  const input = document.getElementById('kpSearch');
+  if (_kpFilterTimer) { clearTimeout(_kpFilterTimer); _kpFilterTimer = 0; }
+  if (!input || !input.value.trim()) { renderKnowledgePanel(); return; }
+  _kpFilterTimer = setTimeout(() => { _kpFilterTimer = 0; renderKnowledgePanel(); }, 200);
+}
 
 // Render
 function renderKnowledgePanel() {
