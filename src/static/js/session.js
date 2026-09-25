@@ -608,10 +608,11 @@
       SESSION_ID = sessions[id].sessionId;
       await _loadGraphStateFromServer(id);
 
-      // 重新渲染
+      // 重新渲染。renderCurrentChat 内部已触发一次 renderGraphCanvas（聊天容器退役后
+      // 它的唯一职责就是这一次画布渲染），这里不再重复调——曾经每次切会话全图
+      // insertAdjacentHTML + 整图 KaTeX 跑两遍，实测 18 节点画布白烧 ~30-60ms
       renderCurrentChat();
       renderSessionList();
-      if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     }
 
     // 删除会话
