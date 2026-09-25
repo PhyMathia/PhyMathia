@@ -8,4 +8,4 @@ v9 向量证据（server/embedding.py）在本机存在模型文件时会真加�
 
 import os
 
-os.environ.setdefault("PYMATHIA_EMBEDDING", "0")
+os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")  # 键名须与 embedding.py 的开关一致（曾少写 H 形同虚设）

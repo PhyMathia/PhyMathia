@@ -4292,6 +4292,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* v10 语义找亲（补词建议）：建议行是「待确认」气质——虚线分隔、词条带 ＋ 号，
+   与上面确定态的族行一眼分开；证据行小字弱化，被拒再提的提示用暖色提醒 */
+.continent-family-suggest { border-top: 1px dashed var(--border); }
+.continent-family-suggest .continent-family-name { color: var(--accent); }
+.continent-suggest-evidence { margin-top: 2px; }
+.continent-suggest-note { flex: none; font-size: var(--fs-2xs); color: var(--warning, #d9a13c); margin-right: 8px; }
 .continent-family-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 .continent-family-chip {
   display: inline-flex;

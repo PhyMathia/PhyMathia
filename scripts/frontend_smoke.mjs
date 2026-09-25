@@ -1785,6 +1785,51 @@ check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种�
   return true;
 });
 
+check('graph-continent: v10 补词建议（建议行转义完整 / 两个落笔按钮都由用户点 / 拒绝有记性）', () => {
+  const row = sandbox._continentSuggestRowHtml;
+  if (typeof row !== 'function') throw new Error('补词建议行纯函数未暴露（_continentSuggestRowHtml）');
+  // 沙箱的 document 是宽松代理，utils.escapeHtml 的产物会退化：断言文案前换成恒等
+  // （与 2226/2543 行同款手法）
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const html = row({ family: '概率统计', term: '泊松分布', sim: 0.72,
+                       cards: [{ id: 'k1', title: '泊松分布：稀疏事件' }] });
+    if (!html.includes('泊松分布') || !html.includes('概率统计')) throw new Error('词条/目标族没渲染');
+    if (!html.includes('data-suggest-accept') || !html.includes('data-suggest-reject')) {
+      throw new Error('收下/不要两个按钮缺一不可（机器不自动落笔）');
+    }
+    if (html.includes('上次你拒过')) throw new Error('未被拒过的建议不该带再提提示');
+    const regrown = row({ family: '概率统计', term: '泊松分布',
+                          cards: [{ id: 'k1', title: 'x' }], regrown: true });
+    if (!regrown.includes('上次你拒过')) throw new Error('regrown 标记没渲染');
+    // 转义断言要走 _continentEsc 自己的回退链（内置正则转义），把 escapeHtml 摘掉
+    const evil = (() => {
+      sandbox.escapeHtml = undefined;
+      try {
+        return row({ family: '<img src=x onerror=1>', term: '<script>', cards: [] });
+      } finally { sandbox.escapeHtml = t => (t == null ? '' : String(t)); }
+    })();
+    if (evil.includes('<script>') || evil.includes('<img src=x')) {
+      throw new Error('建议行没转义族名/词条（XSS）');
+    }
+  } finally { sandbox.escapeHtml = realEsc; }
+  if (row(null) !== '' || row({}) !== '') throw new Error('缺字段的建议应渲染为空行');
+  // 静态契约：建议 API 只在族表弹层里拉一次；拒绝记录落独立 KV；收下复用族表 KV 通道
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  if (!code.includes("'/api/families/suggestions'")) throw new Error('建议端点常量缺失');
+  if ((code.match(/CONTINENT_FAMILY_SUGGEST_API/g) || []).length !== 2) {
+    throw new Error('建议端点只应在常量声明 + 弹层内各出现一次（别在别处偷调）');
+  }
+  if ((code.match(/CONTINENT_FAMILY_SUGGEST_KV_API/g) || []).length < 2) {
+    throw new Error('拒绝记录 KV 端点没有读写两处');
+  }
+  if (!code.includes('data-suggest-section')) throw new Error('族表弹层缺建议区容器');
+  return true;
+});
+
 check('graph-continent: 航线备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
   const route = sandbox._continentRoute;
   const mid = sandbox._continentLinkMid;

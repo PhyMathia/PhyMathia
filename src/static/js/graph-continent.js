@@ -31,6 +31,10 @@ const CONTINENT_REGIONS_API = '/api/kv/continent_regions'; // v7.1a 海域覆盖
 // v8 族表编辑：合并视图走专用只读端点（内置+KV 一次拿全），增删改走既有 KV 通道
 const CONTINENT_FAMILIES_API = '/api/families';
 const CONTINENT_FAMILIES_KV_API = '/api/kv/continent_families';
+// v10 语义找亲（补词）：建议是只读端点现算的（向量查漏），收下走族表 KV 通道，
+// 拒绝记录落独立 KV——机器不自动落笔，拒绝过的不反复提（防骚扰）
+const CONTINENT_FAMILY_SUGGEST_API = '/api/families/suggestions';
+const CONTINENT_FAMILY_SUGGEST_KV_API = '/api/kv/continent_family_suggestions';
 // v8 纠正信号（「从纠正中学习」第一期）：只采集方向计数，二期攒够数据才接自动微调
 const CONTINENT_WEIGHTS_API = '/api/kv/continent_gate_weights';
 // 与服务端 FAMILY_LIMIT / FAMILY_TERMS_PER_FAMILY 同口径（前端先把脏数据挡住）
@@ -2835,6 +2839,31 @@ function _continentFamilyRowHtml(f) {
   '</div>';
 }
 
+// v10 补词建议行（纯函数）：词条 → 目标族 + 证据卡。机器只建议，落笔是两个按钮——
+// 「收下」把词条并进族表 KV，「不要」记进拒绝 KV（证据没长出来不再提）
+function _continentSuggestRowHtml(s) {
+  if (!s || !s.family || !s.term) return '';
+  const cards = Array.isArray(s.cards) ? s.cards : [];
+  const preview = cards.slice(0, 3).map(c => _continentEsc((c && c.title) || '')).join('、') +
+    (cards.length > 3 ? ' …' : '');
+  return '<div class="continent-family-row continent-family-suggest"' +
+      ' data-suggest-family="' + _continentEsc(s.family) + '"' +
+      ' data-suggest-term="' + _continentEsc(s.term) + '">' +
+    '<div class="continent-family-line">' +
+      '<span class="continent-family-name">＋' + _continentEsc(s.term) + '</span>' +
+      '<span class="continent-family-src">→ ' + _continentEsc(s.family) + '</span>' +
+      '<button class="continent-pop-btn" data-suggest-accept>收下</button>' +
+      '<button class="continent-pop-btn is-quiet" data-suggest-reject>不要</button>' +
+    '</div>' +
+    '<div class="continent-family-line continent-suggest-evidence">' +
+      (s.regrown ? '<span class="continent-suggest-note">上次你拒过，这次证据更多</span>' : '') +
+      '<span class="continent-family-terms" title="' +
+        _continentEsc(cards.map(c => (c && c.title) || '').join('、')) + '">来自 ' +
+        cards.length + ' 张卡：' + preview + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
 async function _continentFamilyPopover(ev) {
   let merged = [];
   let limit = CONTINENT_FAMILY_LIMIT;
@@ -2866,6 +2895,7 @@ async function _continentFamilyPopover(ev) {
     '<div class="continent-family-list" data-family-list>' +
       merged.map(f => _continentFamilyRowHtml(f)).join('') +
     '</div>' +
+    '<div data-suggest-section></div>' +
     '<div class="continent-pop-title" style="margin-top:8px">新增族</div>' +
     '<div class="continent-family-editor">' +
       '<div class="continent-pop-row"><input class="continent-pop-input" data-family-new-name maxlength="16" placeholder="族名（如：分析力学）"></div>' +
@@ -2890,6 +2920,48 @@ async function _continentFamilyPopover(ev) {
     await _continentRefreshAfterFamilies();
     _continentToast('族表已保存，地图已重算');
     _continentFamilyPopover(ev);  // 重开弹层：重拉合并视图，行内编辑态归零
+  };
+
+  // v10 补词建议（语义找亲）：收下 = 词条并进该族走 persist（与手动加词同一条 KV
+  // 通道）；不要 = 记进拒绝 KV——服务端证据没长出来就不再算这条建议（防骚扰）。
+  // 记录失败不阻断「收下」本身（词条已落族表），只影响「不再提」的记性。
+  const acceptSuggestion = async s => {
+    const fam = merged.find(f => f.canonical === s.family);
+    const kvIdx = kvList.findIndex(f => f.canonical === s.family);
+    let terms;
+    if (kvIdx >= 0) terms = kvList[kvIdx].terms.slice();
+    else if (fam) terms = (fam.terms || []).slice();
+    else { _continentToast('找不到目标族了——地图刷新后重试'); return; }
+    if (terms.indexOf(s.term) < 0) terms.push(s.term);
+    const entry = { canonical: s.family,
+                    terms: terms.slice(0, CONTINENT_FAMILY_TERMS_MAX), source: 'user' };
+    let next = kvList.slice();
+    if (kvIdx >= 0) next[kvIdx] = entry; else next = next.concat([entry]);
+    if (next.length > CONTINENT_FAMILY_LIMIT) { _continentToast('族表上限 ' + CONTINENT_FAMILY_LIMIT + ' 个'); return; }
+    try { await persist(next); } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+  };
+  const rejectSuggestion = async s => {
+    try {
+      let rejected = {};
+      try {
+        const r = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, { cache: 'no-cache' });
+        if (r.ok) {
+          const j = await r.json();
+          const v = j && j.value;
+          if (v && v.rejected && typeof v.rejected === 'object') rejected = v.rejected;
+        }
+      } catch (e) { /* 读不到就当空记录 */ }
+      const famRej = (rejected[s.family] && typeof rejected[s.family] === 'object')
+        ? rejected[s.family] : (rejected[s.family] = {});
+      famRej[s.term] = { cards: ((s.cards || []).length), at: Date.now() };
+      const resp = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: { version: 1, rejected: rejected } }),
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      _continentToast('已记住：这条建议不再提（证据明显变多时会再问一次）');
+      _continentFamilyPopover(ev);  // 重开弹层：建议区按最新拒绝记录重算
+    } catch (err) { _continentToast('记录失败：' + (err && err.message || err)); }
   };
 
   // 行内编辑：点「改」→ 该行换成词条编辑器（芯片可删 + 输入可加 + 保存/取消/删除）。
@@ -2970,6 +3042,42 @@ async function _continentFamilyPopover(ev) {
     });
   };
   el.querySelectorAll('.continent-family-row').forEach(bindRow);
+
+  // v10 补词建议区：弹层先开，建议异步补进来（首算可能含模型加载，别让弹层干等）。
+  // embedEnabled=False（缺模型/缺依赖）或没有候选 → 区块保持空白（查空是正常路径）。
+  const suggBox = el.querySelector('[data-suggest-section]');
+  if (suggBox) {
+    try {
+      const r = await fetch(CONTINENT_FAMILY_SUGGEST_API, { cache: 'no-cache' });
+      if (r.ok) {
+        const j = await r.json();
+        const sugs = (j && j.embedEnabled && Array.isArray(j.suggestions)) ? j.suggestions : [];
+        if (sugs.length) {
+          suggBox.innerHTML =
+            '<div class="continent-pop-title" style="margin-top:8px">补词建议</div>' +
+            '<div class="continent-pop-desc">这些卡闻起来像某个领域，标题里却没有它的词条——' +
+            '多半是族表漏了词。收下后词条进族表，同类卡从此自动归对；不收就一直躺着。</div>' +
+            sugs.map(_continentSuggestRowHtml).join('');
+          suggBox.querySelectorAll('.continent-family-suggest').forEach(row => {
+            const fam = row.getAttribute('data-suggest-family');
+            const term = row.getAttribute('data-suggest-term');
+            const s = sugs.find(x => x && x.family === fam && x.term === term);
+            if (!s) return;
+            const acceptBtn = row.querySelector('[data-suggest-accept]');
+            const rejectBtn = row.querySelector('[data-suggest-reject]');
+            if (acceptBtn) acceptBtn.addEventListener('click', async e => {
+              e.stopPropagation();
+              await acceptSuggestion(s);
+            });
+            if (rejectBtn) rejectBtn.addEventListener('click', async e => {
+              e.stopPropagation();
+              await rejectSuggestion(s);
+            });
+          });
+        }
+      }
+    } catch (e) { /* 建议拉不到就当没有（查空是正常路径） */ }
+  }
 
   // 新增族
   const newName = el.querySelector('[data-family-new-name]');

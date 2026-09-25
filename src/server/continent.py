@@ -72,7 +72,7 @@ from .family import (
     merge_families,
     prepare_families,
 )
-from .knowledge import _is_concept_like_title
+from .knowledge import _is_concept_like_title, _clean_knowledge_title
 from .embedding import cosine as _vec_cosine
 
 __all__ = ["build_continent", "normalize_user_edge_payload"]
@@ -568,6 +568,111 @@ def _term_family_counts(prepared: list) -> dict:
         for t in list(fam["cjk"]) + list(fam["ascii"]):
             counts[t] = counts.get(t, 0) + 1
     return counts
+
+
+# ===== v10 语义找亲（第一期·补词）：向量给族表查漏，用户确认落笔 =====
+# 泊松岛那类事故的病根不是「卡没归对」，是**族表漏词**：卡对「概率统计」的余弦很高、
+# 标题里却没有一个族术语 → 词面永远接不上。这里把这类卡找出来，建议用户把标题词条
+# 收进族表 KV（continent_families）——机器只建议不落笔（铁律），收下后词条命中是
+# 本地证据，下次投影自动把同类卡拉进正确海域，汇聚从此积累。
+
+FAMILY_SUGGEST_MARGIN = 0.05   # 与次高族的余弦差至少这么大：双族暧昧的卡不配当证据
+FAMILY_SUGGEST_MAX = 12        # 一轮最多给用户看几条（再多就是刷屏，先修证据多的）
+FAMILY_SUGGEST_REGROW = 2      # 被拒过的建议，证据再长出这么多张卡才重新开口
+
+
+def _suggest_term_from_title(title, prepared, existing_terms, canon_names, target_domain):
+    """从卡片标题提炼「值得进族表的词条」；提炼不出返回 None（宁可漏报不可误报）。
+
+    口径与 `_item_families` 同一把尺子：清洗（剥模块尾巴）→ 取「主题：副题」的
+    主题段 → 归一（含译名）→ 必须像概念名 → 不与任何现有术语/族名撞车 →
+    词面上不许误伤其他族（「概率积分变换」含「积分」会把未来的卡拉向微积分，
+    正是均匀分布岛那次误伤的配方——这种词永远不进表）。
+    """
+    s = _clean_knowledge_title(str(title or ""))
+    # 分隔符在归一化之前切（_normalize_title 会剥全部标点，切不出主题段了）
+    head = re.split(r"[：:|｜—－]+", s, maxsplit=1)[0].strip()
+    if len(head) < 2:
+        head = s.strip()
+    term = _normalize_title(head)
+    if len(term) < 2:
+        return None
+    if not _is_concept_like_title(term):
+        return None
+    # 建议词条比内置表更严一道：内置表是人工写好、pytest 逐条扫过的；机器提议的
+    # 词条没有人把关，功能字碎片（「动的」「与线」）与裸泛词（「变换」）必须挡住——
+    # 真术语（泊松分布/测量误差）里不会有这些字
+    if any(ch in _STOP_CHARS for ch in term) or term in _GENERIC_TERMS:
+        return None
+    if term in existing_terms or term in canon_names:
+        return None
+    hit_domains = set(match_families(term, prepared))
+    if hit_domains - {target_domain}:
+        return None
+    return term[:24]
+
+
+def family_term_suggestions(items, families, card_sims, rejected=None) -> list:
+    """补词建议（v10 第一期，纯函数）：词面零命中、气味却明确指向某族的卡 →
+    建议把它的标题词条收进该族。
+
+    判据三条（都是几何/词面，不调模型）：① 词面零命中（`_item_families` 认不出它）；
+    ② 对某族的余弦过 GATE_EMBED_FLOOR 且与次高族差 ≥ FAMILY_SUGGEST_MARGIN；
+    ③ 标题能提炼出过卫生闸门的词条（`_suggest_term_from_title`）。
+    `rejected` 是 KV 里的拒绝记录 {族: {词条: {cards, at}}}：证据没长出来就闭嘴
+    （防骚扰），长出 FAMILY_SUGGEST_REGROW 张新卡才重新开口（regrown=True）。
+    调用方喂参（items/families/card_sims 与投影同一份），本函数无 IO、无模型调用。
+    """
+    prepared = prepare_families(families or [])
+    if not prepared:
+        return []
+    existing_terms, canon_names = set(), set()
+    for f in prepared:
+        canon_names.add(f["canonical"])
+        existing_terms.update(f["cjk"])
+        existing_terms.update(f["ascii"])
+    # 每张卡只跑一次词面匹配（v6 性能红线同款纪律，O(卡) 不是 O(卡×族)）
+    lex_map, _, _ = _item_families(items, prepared)
+    groups = {}
+    for item_id, item in (items or {}).items():
+        if not isinstance(item, dict) or lex_map.get(str(item_id)):
+            continue
+        ranked = sorted(
+            ((d, s) for d, s in ((card_sims or {}).get(str(item_id)) or {}).items()
+             if s > 0 and d in canon_names),
+            key=lambda kv: (-kv[1], kv[0]))
+        if not ranked:
+            continue
+        top_domain, top_sim = ranked[0]
+        if top_sim < GATE_EMBED_FLOOR:
+            continue
+        if len(ranked) > 1 and top_sim - ranked[1][1] < FAMILY_SUGGEST_MARGIN:
+            continue
+        term = _suggest_term_from_title(item.get("title"), prepared,
+                                        existing_terms, canon_names, top_domain)
+        if not term:
+            continue
+        key = (top_domain, term)
+        entry = groups.setdefault(
+            key, {"family": top_domain, "term": term, "sim": 0.0, "cards": []})
+        entry["cards"].append({"id": str(item_id), "title": str(item.get("title") or "")[:48]})
+        entry["sim"] = max(entry["sim"], round(float(top_sim), 3))
+    results = []
+    rej = rejected if isinstance(rejected, dict) else {}
+    # 排序：证据多的在前（收下一词救一片卡），再按相似度、词条稳定排序；
+    # 压制判断在截断**之前**——被拒的建议不占名额，长出来的新证据才顶得上来
+    for g in sorted(groups.values(),
+                    key=lambda g: (-len(g["cards"]), -g["sim"], g["term"])):
+        if len(results) >= FAMILY_SUGGEST_MAX:
+            break
+        old = rej.get(g["family"])
+        old = old.get(g["term"]) if isinstance(old, dict) else None
+        if old and len(g["cards"]) <= int(old.get("cards") or 0) + FAMILY_SUGGEST_REGROW:
+            continue
+        out = dict(g)
+        out["regrown"] = bool(old)
+        results.append(out)
+    return results
 
 
 def _term_specificity(term: str) -> float:

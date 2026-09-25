@@ -1083,6 +1083,30 @@ async def api_get_families():
     return family.families_view(storage.kv_all_data().get("continent_families"))
 
 
+@app.get("/api/families/suggestions")
+async def api_get_family_suggestions():
+    """v10 语义找亲·补词建议（只读）：向量给族表查漏，族表弹层渲染。
+
+    词面零命中、气味却明确指向某族的卡（泊松岛配方）→ 建议把它的标题词条收进
+    该族。**机器不自动落笔**：建议只是读侧产物，收下走既有 KV 通道
+    （POST /api/kv/continent_families），拒绝记录落 KV `continent_family_suggestions`
+    （防骚扰：证据没长出来不再提）。向量通道缺席（缺模型/缺依赖/开关关）→
+    建议整体为空——查空是正常路径，与投影降级同一立场。
+    """
+    items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+    kv = storage.kv_all_data()
+    accepted = family.merge_families(family.BUILTIN_FAMILIES,
+                                     family.families_from_payload(kv.get("continent_families")))
+    card_sims, _ = await asyncio.to_thread(_continent_card_sims, items, accepted)
+    if not card_sims:
+        return {"suggestions": [], "embedEnabled": False}
+    state = kv.get("continent_family_suggestions")
+    rejected = state.get("rejected") if isinstance(state, dict) else None
+    suggestions = await asyncio.to_thread(
+        continent.family_term_suggestions, items, accepted, card_sims, rejected)
+    return {"suggestions": suggestions, "embedEnabled": True}
+
+
 # 双击 .pmu 的桌面启动器（scripts/utopia_opener/）把文件复制进 data/utopia_inbox/，
 # 查看器（viewer.html?from=inbox&id=<名>）经此只读取回。写入不在 HTTP 面：唯一的
 # 投递方式是本机启动器的文件复制，杜绝任意写。
