@@ -943,15 +943,8 @@
     let activeBranchAnchor = null;
 
     function setActiveBranchAnchor(anchor) {
+      // 只维护内存态锚点（消费方是 _consumePendingBranch）：原 branchAnchorBar
+      // 提示条与输入框 placeholder 更新随聊天 UI 退役（2026-09-25 化石清扫），
+      // 页面上从无 id=branchAnchorBar 的元素
       activeBranchAnchor = anchor ? { ...anchor } : null;
-      const bar = document.getElementById('branchAnchorBar');
-      const textEl = document.getElementById('branchAnchorText');
-      if (bar) bar.hidden = !activeBranchAnchor;
-      if (textEl) textEl.textContent = activeBranchAnchor ? '当前锚点：' + (activeBranchAnchor.branchLabel || '当前气泡') : '';
-      const input = document.getElementById('userInput');
-      if (input) {
-        input.placeholder = activeBranchAnchor
-          ? '围绕「' + (activeBranchAnchor.branchLabel || '当前气泡') + '」提问...'
-          : '问一个物理或数学问题...';
-      }
     }

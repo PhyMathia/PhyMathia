@@ -223,16 +223,6 @@
     }
     window.getCurrentProgress = () => progressPercent;
 
-    function handleKeydown(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    }
-    function autoResize(textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-    }
-    const userInputEl = document.getElementById('userInput');
-    if (userInputEl) userInputEl.addEventListener('input', function() { autoResize(this); });
-
     function formatTime(ts) {
       const d = new Date(ts);
       return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
@@ -250,11 +240,6 @@
     let pendingQuickText = '';
     function sendQuick(text, resendMeta) {
       pendingQuickText = String(text || '');
-      const input = document.getElementById('userInput');
-      if (input) {
-        input.value = pendingQuickText;
-        autoResize(input);
-      }
       return sendMessage(resendMeta === undefined ? undefined : { resendMeta });
     }
 
@@ -395,6 +380,9 @@
     }
 
     async function sendMessage(options) {
+      // 页面已移除打字输入框（画布是唯一提问入口），此读取在真机恒为 null；
+      // 保留是因为 review_stage0 冻结契约的 DOM 桩仍以「先填 userInput 再
+      // sendMessage()」驱动发送路径——拆它必须连契约一起改（见 2026-09-25 化石清扫）
       const input = document.getElementById('userInput');
       const btn = document.getElementById('sendBtn');
       const stopBtn = document.getElementById('stopBtn');
@@ -407,8 +395,6 @@
       try {
 
       userScrolledUp = false; // 用户发送消息时重置滚动状态
-
-      document.getElementById('welcomeTip')?.remove();
 
       const now = Date.now();
       // 显式重发（含主线的空元数据）不消费当前待用锚点；点击事件仍走普通发送。
@@ -866,8 +852,11 @@
       if (lastMsg && lastMsg.querySelector('.error-actions')) lastMsg.remove();
       // 发送失败时用户消息已入 chatHistory：重发前移除，避免重复
       _popTrailingUserMessage();
-      const userInputEl = document.getElementById('userInput');
-      if (userInputEl) userInputEl.value = lastFailedMessage;
+      // 重发文本直接取 lastFailedMessage（2026-09-25 化石清扫时修正）：旧实现
+      // 回填已删除的输入框再由 sendMessage 读回，输入框下线后真机上重试一直
+      // 是静默空转；sendQuick 同款经 pendingQuickText 传递，review_followup
+      // 的两条重试契约语义不变
+      pendingQuickText = lastFailedMessage;
       // 重发显式携带失败时的分支元数据（主线是空元数据）：不再经由待用锚点传递，
       // 否则用户另外选过锚点时，重试会挂到那个分支上。用户自己的锚点保持不动。
       sendMessage({ resendMeta: lastFailedBranchMeta || {} });

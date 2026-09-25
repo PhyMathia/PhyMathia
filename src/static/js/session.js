@@ -669,29 +669,21 @@
       container.innerHTML = '';
 
       if (chatHistory.length === 0) {
-        container.innerHTML += `
-          <div class="welcome-tip" id="welcomeTip">
-            <h2>欢迎来到 PhyMathia</h2>
-            <p>我是你的物理数学双域解释与可视化助手。<br>我会同时用物理直觉和数学本质来解释，并生成交互式可视化让你亲手探索。</p>
-            <div class="quick-actions">
-              <button class="quick-btn" onclick="sendQuick('请解释简谐运动的物理和数学本质，并生成交互式可视化')">简谐运动</button>
-              <button class="quick-btn" onclick="sendQuick('请解释抛体运动的物理和数学本质，并生成交互式可视化')">抛体运动</button>
-              <button class="quick-btn" onclick="sendQuick('请用物理直觉和数学推导解释傅里叶变换的本质')">傅里叶变换</button>
-              <button class="quick-btn" onclick="sendQuick('请解释热力学第二定律的物理意义和数学表述')">热力学第二定律</button>
-            </div>
-            <div style="margin-top:20px;font-size:11px;color:var(--tip-color);display:flex;align-items:center;justify-content:center;gap:20px;">
-              ${UI_ICON_SVG.monitor} 推荐使用电脑端访问，获得最佳交互体验
-            </div>
-          </div>`;
+        // 空分支已退役（2026-09-25 化石清扫）：chatMessages 容器随聊天 UI 移除，
+        // 上方 container 判空即 return，此分支在真机不可达。原「欢迎来到
+        // PhyMathia + 快捷提问按钮」整块随之删除——提问入口只剩画布。
       } else {
         for (const msg of chatHistory) {
           restoreMessage(msg.role, msg.content, msg.timestamp, msg.duration, msg.aborted, msg);
         }
-        // 渲染 Mermaid（串行执行避免并发冲突）
+        // 渲染 Mermaid（串行执行避免并发冲突）。只扫真正含未渲染块的元素——
+        // 其余几十条内容直接跳过，长会话切回来省一整轮串行空转
         setTimeout(async () => {
           const contents = document.querySelectorAll('.message.assistant .message-content');
           for (const el of contents) {
-            await renderMermaidInElement(el);
+            if (el.querySelector('.mermaid:not([data-processed="true"])')) {
+              await renderMermaidInElement(el);
+            }
           }
         }, 200);
       }
@@ -1022,6 +1014,38 @@
       }
     }
 
+    // ====== 会话切换渲染缓存 ======
+    // 切会话/切画布时 restoreMessage 对每条 AI 消息全量跑 marked+sanitize+KaTeX，
+    // 长会话切回来肉眼可见地卡。按「时间戳|内容哈希」缓存渲染定形的 HTML（KaTeX 已铺）：
+    // 内容一变键就变，天然失效，无需主动清；主题无关（KaTeX 颜色走 CSS）；
+    // mermaid 占位符故意保持未处理态——SVG 带主题色，交给管线末端的 mermaid LRU 按主题快速重铺。
+    // 三条硬边界，破一条就会出脏数据：
+    //   ① 含 ```html 可视化的消息绝不缓存：renderMarkdown 的 viz 槽位注册是副作用，
+    //      且 _vizStore 会 prune 掉不在 DOM 的条目，命中时跳过注册会拿到空 iframe；
+    //   ② KaTeX 未就绪（window.renderMathInElement 缺失，app.js 先于 defer 厂商库执行的首帧
+    //      就是这种窗口）不缓存——否则「公式未渲染」的中间态会被永久钉进缓存；
+    //   ③ 单条 >256KB 不缓存（KaTeX 展开后体积膨胀十倍不止，LRU 上限 150 条防内存失控）。
+    const _MSG_HTML_CACHE_MAX = 150;
+    const _msgHtmlCache = new Map();
+    function _msgHtmlCacheGet(key) {
+      if (!_msgHtmlCache.has(key)) return null;
+      const v = _msgHtmlCache.get(key);
+      _msgHtmlCache.delete(key);
+      _msgHtmlCache.set(key, v); // Map 插入序即 LRU 序：命中挪到最新端
+      return v;
+    }
+    function _msgHtmlCachePut(key, contentDiv, rawContent) {
+      if (!window.renderMathInElement) return;
+      if (/```html/i.test(rawContent || '')) return;
+      const html = contentDiv.innerHTML;
+      if (html.length > 262144) return;
+      if (_msgHtmlCache.has(key)) _msgHtmlCache.delete(key);
+      _msgHtmlCache.set(key, html);
+      while (_msgHtmlCache.size > _MSG_HTML_CACHE_MAX) {
+        _msgHtmlCache.delete(_msgHtmlCache.keys().next().value);
+      }
+    }
+
     function restoreMessage(role, content, timestamp, duration, aborted, branchMeta) {
       const messages = document.getElementById('chatMessages');
       if (!messages) return;
@@ -1041,9 +1065,16 @@
       if (role === 'user') {
         contentDiv.textContent = content;
       } else if (content) {
-        contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || ''), socraticFallback: true });
-        _initVizIframes(contentDiv);
-        renderMath(contentDiv);
+        const cacheKey = String(timestamp || '') + '|' + _vizHash(content);
+        const cachedHtml = _msgHtmlCacheGet(cacheKey);
+        if (cachedHtml != null) {
+          contentDiv.innerHTML = cachedHtml;
+        } else {
+          contentDiv.innerHTML = renderMarkdown(content, { parentId: String(timestamp || ''), socraticFallback: true });
+          _initVizIframes(contentDiv);
+          renderMath(contentDiv);
+          _msgHtmlCachePut(cacheKey, contentDiv, content);
+        }
       }
       const branchMetaObj = branchMeta || {};
       if (branchMetaObj.branchLabel) {
