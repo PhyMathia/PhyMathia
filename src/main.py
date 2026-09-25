@@ -608,7 +608,9 @@ async def api_models_list(request: Request):
 
     url = f"{base_url.rstrip('/')}/models"
     headers = {}
-    if api_key and provider != "opencode":
+    # opencode 网关的 /models 清单公开可读（zen 免费与 zen/go 2026-09-25 实测均 200），
+    # 反而带无效 Bearer 会 401 Invalid credential——列清单不附带密钥，与 chat 路径分开
+    if api_key and provider != "opencode" and "opencode.ai" not in base_url:
         headers["Authorization"] = f"Bearer {api_key}"
     headers.update(_opencode_session_headers(base_url, ""))
 
@@ -616,8 +618,9 @@ async def api_models_list(request: Request):
     try:
         resp = await client.get(url, headers=headers, timeout=httpx.Timeout(20.0, connect=8.0))
     except httpx.HTTPError as e:
-        logger.error(f"models list connect error: {provider} {url}: {e}")
-        raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
+        # 空消息的传输异常不带上类型名就只剩「上游连接失败: 」，用户无从排查
+        logger.error(f"models list connect error: {provider} {url}: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=502, detail=f"上游连接失败: {type(e).__name__}: {e}")
     if resp.status_code != 200:
         logger.error(f"models list upstream error: status={resp.status_code} body={resp.text[:300]} url={url}")
         raise HTTPException(status_code=502, detail=f"上游返回 {resp.status_code}: {resp.text[:300]}")
