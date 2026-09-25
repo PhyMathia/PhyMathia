@@ -219,6 +219,18 @@ def _thinking_request_params(provider: str, level: str) -> dict:
     return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
 
 
+def _log_cache_hit_rate(usage) -> None:
+    """前缀缓存命中率观测（2026-09-25）：供应商 usage 带命中字段时打一行，
+    缺失（端点不报/没开缓存）静默。仅日志旁路，不影响主请求。"""
+    parsed = usage_stats.parse_usage(usage)
+    if not parsed or parsed["cache_hit_tokens"] is None:
+        return
+    prompt_tokens = parsed["prompt_tokens"] or 0
+    hit = parsed["cache_hit_tokens"]
+    pct = round(hit * 100 / prompt_tokens) if prompt_tokens > 0 else 0
+    logger.info(f"AI proxy cache: hit {hit}/{prompt_tokens} tok ({pct}%)")
+
+
 @app.post("/api/models/chat")
 async def api_models_chat(request: Request):
     """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
@@ -331,6 +343,15 @@ async def api_models_chat(request: Request):
                 session_id, graph_path, source_module=source_module, branch_id=branch_id)
             if _active_block:
                 context_parts.append(_active_block)
+        # 前缀缓存拍板（2026-09-25）：线性主聊天的最近一条回答全文也落尾部块
+        # （linear_active_content_block，与树路径同构）——历史区出生即摘要后，
+        # 这是全文进请求的唯一入口。quick/分支/工作流/苏格拉底状态组合不接线：
+        # 它们的历史区仍走旧窗口口径（见 _load_session_context 的路由注释）。
+        if (session_id and not graph_path and not branch_id
+                and not workflow_context and not is_quick and not include_socratic):
+            _linear_block = context.linear_active_content_block(session_id)
+            if _linear_block:
+                context_parts.append(_linear_block)
         if workflow_context:
             context_parts.append(_workflow_context_instruction(workflow_context))
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
@@ -527,6 +548,7 @@ async def api_models_chat(request: Request):
             usage_stats.record_usage(provider, model_name,
                                      "chat" if prompt else "legacy",
                                      session_id or session_bucket, data["usage"])
+            _log_cache_hit_rate(data["usage"])
         _update_socratic_state_from_content(content, socratic_ref)
         if profile_usage is not None:
             # 非流式出口同样回传注入快照；序列化失败退回原字节
@@ -571,6 +593,7 @@ async def api_models_chat(request: Request):
                 usage_stats.record_usage(provider, model_name,
                                          "chat" if prompt else "legacy",
                                          session_id or session_bucket, last_usage)
+                _log_cache_hit_rate(last_usage)
             _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")

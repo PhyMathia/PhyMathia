@@ -233,6 +233,71 @@ def _run_answer_level(client, captured):
     _report("轮", streams)
 
 
+LONG_LINEAR_TURNS = LINEAR_TURNS + [
+    "贝尔不等式说的是什么",
+    "CHSH 不等式怎么违背",
+    "隐变量理论为什么被排除",
+    "多世界诠释怎么解释测量",
+    "哥本哈根诠释的坍缩是物理过程吗",
+    "量子隧穿和势垒穿透是一回事吗",
+    "扫描隧道显微镜用的就是隧穿吗",
+    "量子退相干和测量坍缩什么关系",
+]
+
+
+def _run_long_linear(client, captured):
+    """14 轮长线性：旧滑动窗口在第 4 轮后逐轮改写边界、第 12 轮起头部摘要
+    开始丢弃——断点会钉死在系统提示结尾；追加式历史区下断点应随轮次增长。"""
+    saved = []
+    orig_load = context_mod._load_messages
+    context_mod._load_messages = lambda sid: list(saved)
+    streams = []
+    try:
+        for i, prompt in enumerate(LONG_LINEAR_TURNS):
+            _post_chat(client, "probe_linear_long", prompt, None)
+            streams.append(_stream_of(captured))
+            ts = i * 2 + 1
+            saved.append({"role": "user", "content": prompt, "timestamp": ts})
+            saved.append({"role": "assistant", "content": _ASSISTANT_REPLY, "timestamp": ts + 1})
+    finally:
+        context_mod._load_messages = orig_load
+    _report("轮", streams)
+
+
+def _run_fork(client, captured):
+    """树兄弟分叉：同一父节点（ts 1/2，physics 模块）下连开多个新方向。
+
+    分叉请求的历史区（root→父）与尾部块（父全文）逐字节相同，结构上除新
+    提问外应全命中——本场景把「分叉是缓存最友好场景」的结构结论钉进探针。"""
+    saved = [
+        {"role": "user", "content": "什么是电磁感应", "timestamp": 1},
+        {"role": "assistant", "content": _card(3000, 2400, "根"), "timestamp": 2},
+    ]
+    path = [
+        {"kind": "user", "timestamp": 1},
+        {"kind": "answer", "timestamp": 2, "module": "physics"},
+    ]
+    prompts = [
+        "从物理视角再展开讲讲磁通量",
+        "那数学上怎么定量描述",
+        "感应电动势方向怎么判断",
+        "涡流制动是什么原理",
+    ]
+    orig_load = context_mod._load_messages
+    context_mod._load_messages = lambda sid: list(saved)
+    streams = []
+    try:
+        for i, prompt in enumerate(prompts):
+            _post_chat(client, "probe_fork", prompt, [dict(item) for item in path])
+            streams.append(_stream_of(captured))
+            ts = 100 + i * 10
+            saved.append({"role": "user", "content": prompt, "timestamp": ts})
+            saved.append({"role": "assistant", "content": _card(2600, 1600, f"F{i + 1}"), "timestamp": ts + 1})
+    finally:
+        context_mod._load_messages = orig_load
+    _report("叉", streams)
+
+
 def main():
     td = tempfile.TemporaryDirectory()
     orig, orig_usage = _patch_paths(td.name)
@@ -258,6 +323,14 @@ def main():
             print("-" * 64)
             print("场景 C：answer 层级追问后转入模块层级（历史区翻转的真实损耗点）")
             _run_answer_level(client, captured)
+            captured.clear()
+            print("-" * 64)
+            print("场景 D：主线长线性 14 轮（旧滑窗 3-10 轮失稳、12 轮起头部丢弃）")
+            _run_long_linear(client, captured)
+            captured.clear()
+            print("-" * 64)
+            print("场景 E：树兄弟分叉（同一父节点连开新方向，分叉点前缀应全命中）")
+            _run_fork(client, captured)
             print("=" * 64)
     finally:
         _restore(orig, orig_usage)

@@ -344,6 +344,21 @@ def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 async def _stream_chat_completions(client, url: str, headers: dict, body: dict, on_delta):
+    """流式拉取入口：stream_options 被上游 400 拒收时剥掉重发一次（只牺牲
+    计量帧，不牺牲对话本身，与 main.py 代理侧的降级同型），实际拉取见
+    _stream_chat_completions_once。"""
+    for attempt in (0, 1):
+        try:
+            return await _stream_chat_completions_once(client, url, headers, body, on_delta)
+        except HarnessError as exc:
+            if attempt or "stream_options" not in body \
+                    or getattr(exc, "status_code", None) != 400:
+                raise
+            body.pop("stream_options", None)
+            logger.warning("harness: upstream rejected stream_options, retried without it")
+
+
+async def _stream_chat_completions_once(client, url: str, headers: dict, body: dict, on_delta):
     """流式拉取 chat/completions：正文增量实时回调 on_delta，返回
     (与非流式同构的 message dict, 上游 usage 或 None)。
 
@@ -359,7 +374,9 @@ async def _stream_chat_completions(client, url: str, headers: dict, body: dict, 
     async with client.stream("POST", url, json=body, headers=headers, timeout=90.0) as resp:
         if resp.status_code != 200:
             detail = (await resp.aread()).decode("utf-8", "ignore")[:500]
-            raise HarnessError(f"模型返回 {resp.status_code}: {detail}")
+            err = HarnessError(f"模型返回 {resp.status_code}: {detail}")
+            err.status_code = resp.status_code
+            raise err
         if "text/event-stream" not in str(resp.headers.get("content-type") or ""):
             try:
                 data = json.loads((await resp.aread()).decode("utf-8", "ignore"))
@@ -455,6 +472,11 @@ async def _call_model(
         "temperature": 0.2,
         "max_tokens": max_tokens,
     }
+    if on_delta is not None:
+        # 流式也要计量（2026-09-25）：include_usage 让上游在 [DONE] 前补一帧
+        # 带 usage 的 chunk；不认识的兼容端点整请求 400，由 _stream_chat_completions
+        # 剥掉重发（只牺牲计量帧）。此前流式 Φ 调用拿不到计量帧，命中率统计缺 Φ 一角。
+        body["stream_options"] = {"include_usage": True}
     if tools:
         body["tools"] = tools
         if tool_choice:
