@@ -2260,6 +2260,15 @@
       .aurora-glass { animation: none; }
     }
 
+    /* 重活让路（html.aurora-paused 由 ui.js 的 setFloatingSymbolsPaused 计数器 + visibilitychange 挂摘）：
+       AI 流式生成 / 画布拖拽期间与标签页隐藏时，漂移停拍——20+ 个玻璃载体每帧都在重采样 backdrop-filter，
+       background-position 漂移在同一帧预算里纯烧钱；play-state 只是暂停不重置，恢复后从原相位继续。
+       豁免两个「入场+漂移」并列声明的瞬态浮层（全项目仅此两家，grep auroraDrift 可复核）：
+       整元素 play-state 会把入场一起冻住，恰在生成中打开会卡在半透明帧——它们面积小，漂移照跑无害。 */
+    html.aurora-paused .aurora-glass { animation-play-state: paused; }
+    html.aurora-paused .graph-context-menu,
+    html.aurora-paused .quiz-return-pill { animation-play-state: running; }
+
     /* 不支持 backdrop-filter 时：加深底色，保证文字对比度 */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .aurora-glass { --glass-tint: rgba(9, 13, 30, 0.86); }
