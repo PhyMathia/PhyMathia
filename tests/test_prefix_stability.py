@@ -196,6 +196,62 @@ class TreePathPrefixStabilityTest(unittest.TestCase):
         self.assertTrue(any("楞次定律" in c for c in joined), "active 节点摘要应在历史区")
 
 
+class TreeUpstreamDetailBlockTest(unittest.TestCase):
+    """2026-09-25 三代窗拍板：父与祖父的 ~800 字详摘要（summary_detail）进尾
+    部上下文块。核心契约：出生定形（落盘存字段，读取侧只用不改）、缺字段时
+    确定性现算、user 祖先不进段、祖父→父顺序由路径深度决定。"""
+
+    def setUp(self):
+        self._orig_load = context_mod._load_messages
+        self.msgs = _tree_msgs()
+        context_mod._load_messages = lambda sid: self.msgs
+
+    def tearDown(self):
+        context_mod._load_messages = self._orig_load
+
+    def _path(self):
+        # 三层路径：user(1) → answer(2) → user(3) → answer(4)，active=4，
+        # 父=user(3) 不进段，祖父=answer(2) 进段。
+        return [
+            {"kind": "user", "timestamp": 1},
+            {"kind": "answer", "timestamp": 2, "module": "physics"},
+            {"kind": "user", "timestamp": 3},
+            {"kind": "answer", "timestamp": 4, "module": "physics"},
+        ]
+
+    def test_grandparent_detail_in_block_parent_user_excluded(self):
+        block = context_mod.tree_upstream_detail_block("s", self._path())
+        self.assertTrue(block.startswith("# 上游节点详情（参考资料）"))
+        self.assertIn("【祖父节点】", block)
+        self.assertNotIn("【父节点】", block, "路径父节点是 user（历史区已全文），不进段")
+        self.assertIn("磁通量变化在闭合回路中产生感应电动势", block, "祖父正文应被截进详情")
+
+    def test_detail_is_born_fixed_prefers_stored_field(self):
+        """存了 summary_detail 就逐字节用存量；同一消息两次调用结果全同。"""
+        self.msgs[1]["summary_detail"] = "出生定形的详情字节。"
+        self.assertEqual(
+            context_mod.tree_upstream_detail_block("s", self._path()),
+            context_mod.tree_upstream_detail_block("s", self._path()))
+        block = context_mod.tree_upstream_detail_block("s", self._path())
+        self.assertIn("出生定形的详情字节。", block)
+        self.assertNotIn("磁通量变化在闭合回路中", block, "有存量字段就不再现算正文")
+
+    def test_fallback_compute_is_deterministic_and_capped(self):
+        """旧数据无 summary_detail：现算结果确定性、封顶 800 字。"""
+        self.msgs[1].pop("summary_detail", None)
+        d1 = context_mod.summary_detail(self.msgs[1])
+        d2 = context_mod.summary_detail(self.msgs[1])
+        self.assertEqual(d1, d2)
+        self.assertLessEqual(len(d1), context_mod.DETAIL_SUMMARY_CHARS)
+        self.assertGreater(len(d1), 400, "precondition: 长正文应截出接近上限的详情")
+        self.assertTrue(d1.endswith("…"), "句界截断应以省略号收尾")
+
+    def test_short_path_returns_empty(self):
+        self.assertEqual(context_mod.tree_upstream_detail_block("s", []), "")
+        self.assertEqual(
+            context_mod.tree_upstream_detail_block("s", [{"kind": "user", "timestamp": 1}]), "")
+
+
 class AssemblyShapeTest(RouteTestBase):
     """端到端：system 干净、易变注入集中末条 user 消息、记忆不进历史区。"""
 

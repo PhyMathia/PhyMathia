@@ -133,7 +133,8 @@ class _HTTPChecks(unittest.TestCase):
             messages[sid] = [
                 {"id": f"u{index}", "role": "user", "content": "解释回复力", "timestamp": 1700000000100},
                 {"id": f"a{index}", "role": "assistant", "content": "回复力与位移方向相反。",
-                 "summary": "简谐运动的回复力", "timestamp": 1700000000200},
+                 "summary": "简谐运动的回复力", "summary_detail": "回复力与位移方向相反。",
+                 "timestamp": 1700000000200},
             ]
             kid, fid = f"ki_stage1_{index}", f"f_stage1_{index}"
             knowledge[kid] = {

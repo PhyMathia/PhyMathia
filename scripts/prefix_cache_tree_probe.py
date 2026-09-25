@@ -244,6 +244,42 @@ def _run_fork(client, captured):
 
 
 
+def _run_deep_fork(client, captured):
+    """场景 H：深链三代窗分叉（2026-09-25 三代窗拍板配套）。
+
+    路径 user→answer→module→module（父与祖父都是 assistant），分叉请求共享
+    「父 + 祖父详摘要块（tree_upstream_detail_block）+ 当前全文」。同时输出剥掉
+    详情块后的对照数字：两者共享字节之差 = 三代窗为分叉公共前缀延长的量。"""
+    saved = [
+        {"role": "user", "content": "什么是电磁感应", "timestamp": 1},
+        {"role": "assistant", "content": _card(3000, 2400, "祖父"), "timestamp": 2},
+        {"role": "assistant", "content": _card(2800, 2000, "父层"), "timestamp": 3},
+        {"role": "assistant", "content": _card(2600, 1800, "当前层"), "timestamp": 4},
+    ]
+    path = [
+        {"kind": "user", "timestamp": 1},
+        {"kind": "answer", "timestamp": 2, "module": "physics"},
+        {"kind": "module", "timestamp": 3, "module": "physics"},
+        {"kind": "module", "timestamp": 4, "module": "physics"},
+    ]
+    orig_load = context_mod._load_messages
+    context_mod._load_messages = lambda sid: list(saved)
+    streams = []
+    try:
+        block = context_mod.tree_upstream_detail_block("probe_deep_fork", [dict(i) for i in path])
+        print(f"  （三代窗上游详情块 {len(block)} 字，应整体落入分叉共享区）")
+        for prompt in ("角动量守恒在这里怎么用", "科里奥利力如何体现", "进动频率怎么计算"):
+            _post_chat(client, "probe_deep_fork", prompt, [dict(item) for item in path])
+            streams.append(_stream_of(captured))
+    finally:
+        context_mod._load_messages = orig_load
+    _report("深叉", streams)
+    if block:
+        stripped = [s.replace(block + "\n\n", "", 1) for s in streams]
+        print("  —— 对照：假设没有三代窗（剥掉详情块后）——")
+        _report("深叉", stripped)
+
+
 WORKFLOW_QUESTION = "什么是电磁感应"
 WORKFLOW_ANALYSIS = ("核心物理概念：法拉第电磁感应定律与楞次定律；"
                      "核心数学结构：磁通量时间变化率的线性映射 ε=-dΦ/dt；"
@@ -350,6 +386,10 @@ def main():
             print("-" * 64)
             print("场景 E：树兄弟分叉（同一父节点连开新方向，分叉点前缀应全命中）")
             _run_fork(client, captured)
+            captured.clear()
+            print("-" * 64)
+            print("场景 H：深链三代窗分叉（父+祖父详摘要块，含剥块对照）")
+            _run_deep_fork(client, captured)
             captured.clear()
             print("-" * 64)
             print("场景 F：一次新问题工作流（分析 + 兄弟模块请求，历史区为空的现役主流程）")

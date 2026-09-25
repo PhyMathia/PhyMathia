@@ -70,8 +70,13 @@ async def preview_context(
         )
     tail_parts = []
     if session_id and graph_path_list:
-        # 与 chat 路径同构（2026-09-24 树路径拍板）：当前聚焦节点全文在末条
-        # user 消息的上下文块里，不再出现在历史区。
+        # 与 chat 路径同构（2026-09-24 树路径拍板 + 2026-09-25 三代窗拍板）：
+        # 上游两代详摘要 + 当前聚焦节点全文都在末条 user 消息的上下文块里，
+        # 历史区只增不改。
+        upstream_block = context_mod.tree_upstream_detail_block(
+            session_id, graph_path_list, source_module=source_module, branch_id=branch_id)
+        if upstream_block:
+            tail_parts.append(upstream_block)
         active_block = context_mod.tree_active_content_block(
             session_id, graph_path_list, source_module=source_module, branch_id=branch_id)
         if active_block:
