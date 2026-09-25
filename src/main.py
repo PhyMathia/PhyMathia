@@ -37,7 +37,7 @@ from http_client import close_http_client, get_http_client  # noqa: E402
 import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
 import usage_stats  # noqa: E402  项目根共享层：token 用量与缓存命中计量落盘
 
-from server import backup, concept, continent, context, documents, family, knowledge, profile, prompts, storage  # noqa: F401
+from server import backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -996,13 +996,66 @@ async def api_get_knowledge():
     return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
 
 
+def _card_vector_text(item: dict) -> str:
+    """向量证据的卡片文本：标题 + 真摘要（summarySource=local 的模板文案是空串——
+    v5.3 口径，「xxx相关公式：xxx」式模板只会污染语义）。"""
+    title = str((item or {}).get("title") or "").strip()
+    src = str(item.get("summarySource") or "local")
+    summary = str(item.get("summary") or "").strip() if src in ("model", "manual") else ""
+    text = f"{title}\n{summary[:embedding._CACHE_SUMMARY_CLIP]}" if summary else title
+    return text.strip()
+
+
+def _continent_card_sims(items: dict, accepted_families: list):
+    """卡片 × 概念族中心的向量相似度（v9 海域层第五路证据的数据来源）。
+
+    同步函数，路由里 asyncio.to_thread 包一层跑（模型加载 1-3 秒 + 批推理，
+    不能阻塞事件循环）。向量全部来自 embedding.gather_vectors 的本地缓存，
+    缺模型/缺依赖/推理失败返回 ({}, False)，投影自动退回纯词面口径。
+    """
+    texts = {}
+    for iid, item in (items or {}).items():
+        if isinstance(item, dict):
+            t = _card_vector_text(item)
+            if t:
+                texts[str(iid)] = t
+    # 族文本直接以「规范名/术语原文」为键（family_centroid_vectors 按原文查找；
+    # 与卡片标题撞键无害——同文本同向量）
+    fam_texts = {}
+    for fam in (accepted_families or []):
+        canonical = str(fam.get("canonical") or "").strip()
+        if not canonical:
+            continue
+        fam_texts[canonical] = canonical
+        for term in (fam.get("terms") or []):
+            t = str(term).strip()
+            if t:
+                fam_texts[t] = t
+    vecs, _ = embedding.gather_vectors({**texts, **fam_texts})
+    if not vecs:
+        return {}, False
+    fam_vecs = embedding.family_centroid_vectors(accepted_families, vecs)
+    if not fam_vecs:
+        return {}, False
+    sims = {}
+    for iid, vec in vecs.items():
+        if iid in texts:
+            row = {d: embedding.cosine(vec, fv) for d, fv in fam_vecs.items()}
+            if row:
+                sims[iid] = row
+    return sims, True
+
+
 @app.get("/api/continent")
 async def api_get_continent():
     """大陆投影（v1 只读 + v2 簇间边）：跨会话概念聚簇 + 共享概念 + 用户连线。
 
-    聚簇与共享概念纯本地推导（无模型调用）；用户簇间边是主图自有数据
+    聚簇与共享概念纯本地推导（无 AI 网关调用）；用户簇间边是主图自有数据
     （KV `continent_edges`，经 /api/kv 读写），在此合入并按当前投影校验出
     悬空边。子图（knowledge + sessions）仍是聚簇的唯一事实源，随时可重算。
+    v9 向量证据：本地 embedding 模型给「卡片 × 族中心」算余弦（data/embedding_cache.json
+    缓存，只算新文本），词面认不出的卡也能被路由进正确海域；缺模型自动降级，
+    投影退回纯词面口径。向量只进 domain* 字段（门控只路由不证明）。
     """
     items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     sessions = _read_json(SESSIONS_PATH, {})
@@ -1013,7 +1066,12 @@ async def api_get_continent():
     user_families = kv.get("continent_families")
     # v7.1b 门控产物：Φ 批量打标（只读离线产物，版本不符整批忽略——打开大陆仍是纯本地现算）
     gate = kv.get("continent_gate")
-    return continent.build_continent(items, sessions, user_edges, user_families, gate)
+    # v9 向量证据：族中心锚点与 build_continent 内部同一份合并口径（同名族 KV 覆盖内置）
+    accepted = family.merge_families(family.BUILTIN_FAMILIES,
+                                     family.families_from_payload(user_families))
+    card_sims, _ = await asyncio.to_thread(_continent_card_sims, items, accepted)
+    return continent.build_continent(items, sessions, user_edges, user_families, gate,
+                                     card_sims=card_sims)
 
 
 @app.get("/api/families")

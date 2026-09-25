@@ -73,6 +73,7 @@ from .family import (
     prepare_families,
 )
 from .knowledge import _is_concept_like_title
+from .embedding import cosine as _vec_cosine
 
 __all__ = ["build_continent", "normalize_user_edge_payload"]
 
@@ -139,6 +140,15 @@ GATE_W_ISLAND = 2.0   # 岛名命中：用户/AI 起的短名最能代表主题�
 GATE_W_TITLE = 1.0    # 标题术语命中（×特异度×IDF×独占度）
 GATE_W_FORMULA = 0.5  # 公式指纹：弱证据，只在打平时起作用
 GATE_W_MODEL = 2.5    # 模型打标（gate KV，×conf）
+# v9 向量证据：卡片向量与族中心的余弦超过下限的剩余部分**平方**×倍数换算 logit。
+# 下限挡掉「谁都沾点边」的底噪（短中文标题与族中心的余弦普遍 0.4-0.8，全量参与
+# 会把 softmax 摊平——实测泊松岛 conf 掉到 0.20 的教训）；平方强调领先者，语义上
+# 「明显更亲近」才有票。倍数量级：明显语义拉动 ≈ 一条强标题术语命中——它是补
+# 词面盲区的，不许盖过词面/模型/用户证据。
+GATE_W_EMBED = 12.0
+GATE_EMBED_FLOOR = 0.45
+GATE_EMBED_TOPK = 3    # 一张卡的向量证据最多支持几个族：第 4 近之后的族不是证据，
+                       # 留着只会给 softmax 灌长尾水（实测 25 族全投，卡方岛 conf 0.06）
 GATE_TOP_K = 2        # 一张卡/一座岛最多带几个领域标签
 GATE_MIN_P = 0.25     # 概率低于此的次要领域不带（避免「人人都有第二标签」）
 GATE_PRIOR_WIDE = 0.8  # 宽领域先验：logit 加 log(0.8)——「宁可选窄的」从 prompt 叮嘱变算法
@@ -182,6 +192,8 @@ def _gate_weights() -> dict:
     """评分核心的权重快照（进 gateVersion；调权重必须让缓存失效，见 gate_version）。"""
     return {"island": GATE_W_ISLAND, "title": GATE_W_TITLE, "formula": GATE_W_FORMULA,
             "model": GATE_W_MODEL, "prior_wide": GATE_PRIOR_WIDE,
+            "embed": GATE_W_EMBED, "embed_floor": GATE_EMBED_FLOOR,
+            "embed_topk": GATE_EMBED_TOPK,
             "wide": sorted(GATE_WIDE_DOMAINS)}
 
 
@@ -607,12 +619,32 @@ def _normalize_gate_payload(raw, accepted_names: set, version: str) -> dict:
     return out
 
 
-def _gate_card_scores(hits, struct_tokens, gate_labels, term_df, n_scored, term_k):
-    """一张卡的领域 logits（五路证据里的三路本地 + 一路模型；用户覆盖在前端短路）。
+def _embed_pull(sims):
+    """{领域: 余弦} → {领域: logit 拉动}（v9 向量证据的换算尺子）。
+
+    线性换算：下限挡掉「谁都沾点边」的底噪，超过下限的剩余部分 ×倍数；再取
+    top-K——一张卡只可能「明显亲近」两三个族，第 4 名开外的余弦不是证据，
+    全量参与只会给 softmax 灌长尾水。倍数取「明显语义拉动 ≈ 一条强标题术语
+    命中」的量级——它是补词面盲区的，不许盖过词面/模型/用户证据。试过的弃案：
+    平方强调领先者（拉动小到被宽领域先验 -0.22 压成负数、被公式指纹 0.5 翻盘，
+    卡方岛实测翻成矢量分析）。
+    """
+    above = sorted(((s, d) for d, s in (sims or {}).items() if s > GATE_EMBED_FLOOR),
+                   reverse=True)
+    return {d: GATE_W_EMBED * (s - GATE_EMBED_FLOOR)
+            for s, d in above[:GATE_EMBED_TOPK]}
+
+
+def _gate_card_scores(hits, struct_tokens, gate_labels, term_df, n_scored, term_k,
+                      embed_sims=None):
+    """一张卡的领域 logits（六路证据：五路里三路本地 + 模型 + v9 向量；用户覆盖在前端短路）。
 
     标题术语：Σ 特异度×IDF×独占度（IDF＝log(1 + 卡数/含该术语的卡数)——「振动」
     出现在 30% 的卡上时就该贬值；独占度＝1/k，术语同属 k 个族即衰减）。公式指纹：
-    特征算子命中即 +0.5（打平器）。模型打标：+2.5×conf。宽领域先验：+log(0.8)。
+    特征算子命中即 +0.5（打平器）。模型打标：+2.5×conf。向量（v9）：卡片向量与族
+    中心的余弦超过下限的剩余部分 ×倍数——词面认不出的卡（「泊松分布」不在族术语
+    表、标题是「测量误差：平方和的统计本性」的卡方岛）也能被路由进正确海域；低于
+    下限一律不投（宁可无证据也不投噪声票）。宽领域先验：+log(0.8)。
     """
     scores = {}
     for domain, terms in (hits or {}).items():
@@ -624,14 +656,24 @@ def _gate_card_scores(hits, struct_tokens, gate_labels, term_df, n_scored, term_
             scores[domain] = scores.get(domain, 0.0) + GATE_W_TITLE * s
     for name, conf in (gate_labels or {}).items():
         scores[name] = scores.get(name, 0.0) + GATE_W_MODEL * conf
+    # 宽领域先验只压**词面/模型**证据：那是「枚举式命中天然偏爱宽族」的校正；
+    # 向量证据的特异性已经由「与全部族中心的对比」编码，再罚一次宽族会把
+    # 微弱但正确的语义证据压成负数（实测卡方岛唯一证据 0.116 被 -0.22 压死，
+    # 翻成公式指纹都碰不到的矢量分析——比不归类更糟）
+    lexical_model = dict(scores)
+    # 向量证据与标题/模型同是"主动证据"：可以单独撑起一张卡的 logits（这正是
+    # 它存在的意义——词面零命中的卡）
+    for domain, pull in _embed_pull(embed_sims).items():
+        scores[domain] = scores.get(domain, 0.0) + pull
     # 公式指纹是**打平器**：只有这张卡已有词面/模型证据时才参与（0.5 的弱证据
-    # 单独定归属，会让一座岛凭一个 ∇ 就上实色——比「不归类」更糟）
-    if scores and struct_tokens:
+    # 单独定归属，会让一座岛凭一个 ∇ 就上实色——比「不归类」更糟；向量剩一小截
+    # +一个 ∇ 定归属是同一个错误，基底同样不含向量证据）
+    if lexical_model and struct_tokens:
         for domain, ops in _DOMAIN_OPERATOR_HINTS.items():
             if ops & struct_tokens:
                 scores[domain] = scores.get(domain, 0.0) + GATE_W_FORMULA
     for domain in GATE_WIDE_DOMAINS:
-        if domain in scores:
+        if domain in lexical_model:
             scores[domain] += math.log(GATE_PRIOR_WIDE)
     return scores
 
@@ -743,8 +785,12 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
 
 
 def build_continent(items: dict, sessions: dict = None, user_edges=None,
-                    families=None, gate=None) -> dict:
+                    families=None, gate=None, card_sims=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
+
+    card_sims（v9 向量证据，调用方喂参）：{itemId: {领域名: 余弦相似度}}——
+    卡片向量与概念族向量中心的余弦，由路由层用本地模型算好（有缓存）传入；
+    本函数不加载模型、不读缓存文件。缺省/空表 = 向量证据关闭，投影与 v8 逐字一致。
 
     返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared,
     userEdges, danglingEdges, domainList}：
@@ -897,12 +943,19 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     # 证据，但可能有 gate 打标/公式指纹（v7.1b 的主救场正是这类卡）。有打标的卡
     # 另算一份「只含本地证据」的概率（domainSource 归属基线，见 _cluster_domain_row）
     card_probs, card_probs_local = {}, {}
+    embed_used = False
     for iid in item_session:
         hits = item_families.get(iid) or {}
         gate_labels = gate_entries.get(iid)
         struct = struct_tokens.get(iid) or set()
-        local = _softmax(_gate_card_scores(hits, struct, None, term_df, n_scored, term_k))
-        full = (_softmax(_gate_card_scores(hits, struct, gate_labels, term_df, n_scored, term_k))
+        # v9 向量证据：只留正拉动且领域在专家名单内（与 gate KV 打标同口径——
+        # 名单外的领域名一律丢弃）；向量关闭时是空表，行为与 v8 一致
+        sims = {d: s for d, s in ((card_sims or {}).get(iid) or {}).items()
+                if s > 0 and d in accepted_names} or None
+        if sims:
+            embed_used = True
+        local = _softmax(_gate_card_scores(hits, struct, None, term_df, n_scored, term_k, sims))
+        full = (_softmax(_gate_card_scores(hits, struct, gate_labels, term_df, n_scored, term_k, sims))
                 if gate_labels else local)
         if local:
             card_probs_local[iid] = local
@@ -931,4 +984,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         # v7.1b：当前评分口径的版本指纹——前端写 gate KV 时带上它，名单/权重变了
         # 整批作废重打（版本单一来源在此，不许前端自己算）
         "gateVersion": gate_ver,
+        # v9：本次投影是否真用上了向量证据（缺模型/相似度全被滤空时 False，
+        # 海域层自动退回词面口径）
+        "embedEnabled": embed_used,
     }
