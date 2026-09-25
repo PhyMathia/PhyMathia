@@ -2170,10 +2170,13 @@
          用户反馈"有蓝色调不好看" → 去掉天蓝与冷紫；
          第三轮反馈"还有蓝绿色调" → 连极低青玉也删掉，三团色斑全走暖调
          （琥珀 = --domain-physics / 蜜桃 / 暖陶土），底色米白偏暖。
-         **浅色极光里不许再出现任何青/绿/蓝**（smoke 逐色排查，青玉 45,212,191 已进黑名单）。 */
-      --aurora-1: rgba(251, 191, 36, 0.30);
-      --aurora-2: rgba(249, 168, 132, 0.22);
-      --aurora-3: rgba(214, 148, 96, 0.14);
+         **浅色极光里不许再出现任何青/绿/蓝**（smoke 逐色排查，青玉 45,212,191 已进黑名单）。
+         第 8 轮（2026-09-25，用户："浅色下右键菜单/添加节点弹窗背后的渐变太明显，深橘变浅"）：
+         四档浅色色斑 alpha 统一减半——色相一概不动（smoke 钉死琥珀/暖陶土），只降 alpha；
+         手册口径：降色斑强度就是降 --aurora-* alpha，别动 blur 也别动 tint。 */
+      --aurora-1: rgba(251, 191, 36, 0.15);
+      --aurora-2: rgba(249, 168, 132, 0.11);
+      --aurora-3: rgba(214, 148, 96, 0.07);
       --glass-tint: rgba(252, 249, 243, 0.76);
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.46), rgba(255, 252, 246, 0.14) 70%);
       --glass-inner-line: rgba(255, 253, 248, 0.92);
@@ -2197,9 +2200,9 @@
 
     html[data-theme="light"] .aurora-glass--compact,
     [data-theme="light"] .aurora-glass--compact {
-      --aurora-1: rgba(251, 191, 36, 0.24);
-      --aurora-2: rgba(249, 168, 132, 0.16);
-      --aurora-3: rgba(214, 148, 96, 0.11);
+      --aurora-1: rgba(251, 191, 36, 0.12);
+      --aurora-2: rgba(249, 168, 132, 0.08);
+      --aurora-3: rgba(214, 148, 96, 0.06);
     }
 
     /* 弹窗变体：表单类模态（模型配置 / 清除记忆 / 收藏 / 苏格拉底 / 检测面板 / 引导浮卡）。
@@ -2218,9 +2221,9 @@
 
     html[data-theme="light"] .aurora-glass--dialog,
     [data-theme="light"] .aurora-glass--dialog {
-      --aurora-1: rgba(251, 191, 36, 0.18);
-      --aurora-2: rgba(249, 168, 132, 0.13);
-      --aurora-3: rgba(214, 148, 96, 0.10);
+      --aurora-1: rgba(251, 191, 36, 0.09);
+      --aurora-2: rgba(249, 168, 132, 0.07);
+      --aurora-3: rgba(214, 148, 96, 0.05);
       --glass-tint: rgba(253, 250, 244, 0.94);
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 252, 246, 0.16) 72%);
     }
@@ -2240,9 +2243,9 @@
 
     html[data-theme="light"] .aurora-glass--panel,
     [data-theme="light"] .aurora-glass--panel {
-      --aurora-1: rgba(251, 191, 36, 0.16);
-      --aurora-2: rgba(249, 168, 132, 0.12);
-      --aurora-3: rgba(214, 148, 96, 0.09);
+      --aurora-1: rgba(251, 191, 36, 0.08);
+      --aurora-2: rgba(249, 168, 132, 0.06);
+      --aurora-3: rgba(214, 148, 96, 0.05);
       --glass-tint: rgba(253, 250, 244, 0.82);
     }
 
