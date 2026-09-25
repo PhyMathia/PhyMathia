@@ -426,9 +426,7 @@ function _vizCheckRegenerate(verdict) {
   const what = verdict.kind === 'period' ? '与解析解偏差过大'
     : verdict.kind === 'diverge' ? '出现数值发散' : '能量不守恒';
   const text = '重新生成可视化：上次数值实验' + what + '，请检查模型参数与积分步长后重做';
-  if (typeof sendQuick === 'function') { sendQuick(text); return; }
-  const input = document.getElementById('userInput');
-  if (input) { input.value = text; input.focus(); }
+  if (typeof sendQuick === 'function') sendQuick(text);
 }
 
 // 接收校验桥回报：sampling → 灰角标「校验中」；result → 三态角标；
@@ -801,13 +799,9 @@ function followUpModule(moduleKey, messageId, event) {
     branchLabel: '追问：' + meta.label,
   };
   const question = _modulePrompt(moduleKey, 'followup', originalQuestion);
-  if (typeof window.openBranchModal === 'function') {
-    window.openBranchModal('追问：' + meta.label, question, anchor);
-  } else {
-    const userInputEl = document.getElementById('userInput');
-    if (userInputEl) userInputEl.value = question;
-    sendQuick(question);
-  }
+  // 旧「无弹窗时退回输入框」回退已随输入框一起退役（2026-09-25 化石清扫）：
+  // openBranchModal 是唯一通道，锚点在弹窗确认时才挂上
+  window.openBranchModal('追问：' + meta.label, question, anchor);
 }
 
 function dontUnderstandModule(moduleKey, messageId, event) {
@@ -822,12 +816,7 @@ function dontUnderstandModule(moduleKey, messageId, event) {
     branchLabel: '没看懂：' + meta.label,
   };
   const question = _modulePrompt(moduleKey, 'confused', originalQuestion);
-  if (typeof window.openBranchModal === 'function') {
-    window.openBranchModal('没看懂：' + meta.label, question, anchor);
-  } else {
-    const userInputEl = document.getElementById('userInput');
-    if (userInputEl) { userInputEl.value = question; userInputEl.focus(); }
-  }
+  window.openBranchModal('没看懂：' + meta.label, question, anchor);
 }
 
 window.followUpModule = followUpModule;
@@ -911,13 +900,9 @@ document.addEventListener('click', function(e) {
     e.preventDefault();
     const question = decodeURIComponent(answerBtn.getAttribute('data-socratic-answer'));
     const level = answerBtn.getAttribute('data-socratic-level') || 'basic';
-    if (typeof window.startSocraticAnswer === 'function') {
-      window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '', answerBtn.getAttribute('data-socratic-source') || 'extend');
-    } else {
-      const userInputEl = document.getElementById('userInput');
-      if (userInputEl) userInputEl.value = question;
-      sendQuick(question);
-    }
+    // 旧「无闭环函数时退回输入框」回退已退役（2026-09-25 化石清扫）：
+    // startSocraticAnswer 是唯一通道（聊天分支闭环的状态机入口）
+    window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '', answerBtn.getAttribute('data-socratic-source') || 'extend');
     return;
   }
   const hintBtn = e.target.closest('[data-socratic-hint]');
