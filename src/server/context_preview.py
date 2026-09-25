@@ -76,12 +76,8 @@ async def preview_context(
             session_id, graph_path_list, source_module=source_module, branch_id=branch_id)
         if active_block:
             tail_parts.append(active_block)
-    elif session_id and not branch_id and not is_quick and not workflow:
-        # 与 chat 路径同构（2026-09-25 线性拍板）：最近一条回答全文也在尾部块，
-        # 历史区出生即摘要后不再出现全文。
-        linear_block = context_mod.linear_active_content_block(session_id)
-        if linear_block:
-            tail_parts.append(linear_block)
+    # 2026-09-25 线性主聊天退役：线性尾部块（linear_active_content_block）随
+    # 现役 UI 的线性通道一起删除（恢复见 docs/dev/linear-chat-retired.md）。
     if concept_tail:
         tail_parts.append(concept_tail)
     # 与 chat 路径同构（main.py 会话记忆并入上下文块首位，rolling_memory_block 拍板）

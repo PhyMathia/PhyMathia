@@ -343,15 +343,8 @@ async def api_models_chat(request: Request):
                 session_id, graph_path, source_module=source_module, branch_id=branch_id)
             if _active_block:
                 context_parts.append(_active_block)
-        # 前缀缓存拍板（2026-09-25）：线性主聊天的最近一条回答全文也落尾部块
-        # （linear_active_content_block，与树路径同构）——历史区出生即摘要后，
-        # 这是全文进请求的唯一入口。quick/分支/工作流/苏格拉底状态组合不接线：
-        # 它们的历史区仍走旧窗口口径（见 _load_session_context 的路由注释）。
-        if (session_id and not graph_path and not branch_id
-                and not workflow_context and not is_quick and not include_socratic):
-            _linear_block = context.linear_active_content_block(session_id)
-            if _linear_block:
-                context_parts.append(_linear_block)
+        # 2026-09-25 线性主聊天退役：linear_active_content_block 尾部块随现役 UI
+        # 的线性通道一起删除（恢复见 docs/dev/linear-chat-retired.md）。
         if workflow_context:
             context_parts.append(_workflow_context_instruction(workflow_context))
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——

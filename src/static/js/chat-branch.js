@@ -199,8 +199,9 @@
       closeBranchModal();
       if (anchor && typeof window.sendBranchQuick === 'function') {
         window.sendBranchQuick(text, anchor);
-      } else if (typeof window.sendQuick === 'function') {
-        window.sendQuick(text);
+      } else if (typeof showToast === 'function') {
+        // 2026-09-25 线性主聊天退役：无锚兜底发送已删——所有分支请求必须带锚
+        showToast('追问丢失锚点，请在画布节点上重试');
       }
     }
 
@@ -306,12 +307,17 @@
     window.submitSocraticAnswer = submitSocraticAnswer;
     window.resetSocraticBranch = resetSocraticBranch;
 
-    // URL 参数自动提问
+    // URL 参数自动提问（2026-09-25 起走工作流：原线性 sendQuick 通道已随
+    // 线性主聊天退役，产出从单条聊天回答变为画布工作流分析+模块卡片）
     (function() {
       const params = new URLSearchParams(window.location.search);
       const question = params.get('question');
       if (question) {
         window.history.replaceState({}, '', window.location.pathname);
-        setTimeout(() => sendQuick(decodeURIComponent(question)), 500);
+        setTimeout(() => {
+          if (typeof window.startQuestionWorkflow === 'function') {
+            window.startQuestionWorkflow(decodeURIComponent(question));
+          }
+        }, 500);
       }
     })();

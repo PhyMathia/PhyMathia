@@ -3383,11 +3383,9 @@ check('memory-v2：红点/休眠/归档容器与角标、信号回传的前后�
   const quizStatsJs = fs.readFileSync('src/static/js/quiz-stats.js', 'utf8');
   if (!quizStatsJs.includes('_collectProfileSignalCandidates')) throw new Error('quiz-stats 缺少信号采集');
   if (!quizStatsJs.includes('_scheduleProfileSignalSync();')) throw new Error('quiz-stats 答题后未挂信号同步');
-  const chatJs = fs.readFileSync('src/static/js/chat.js', 'utf8');
-  if (!chatJs.includes('memoryAppendProfileBadge(metaEl, profileUsageFromServer)')) {
-    throw new Error('chat.js 未把后端注入快照传给画像角标');
-  }
-  if (!chatJs.includes('data.profile_usage')) throw new Error('chat.js 未解析后端注入快照帧');
+  // 2026-09-25 线性主聊天退役：聊天消息 meta 的画像角标接线（chat.js 解析
+  // profile_usage 帧 + memoryAppendProfileBadge）随管线删除——角标唯一挂点是
+  // 已不存在的气泡 meta；memory.js 的角标函数本体保留（画布/Φ 侧仍可用）。
   const chatFeaturesJs = fs.readFileSync('src/static/js/chat-features.js', 'utf8');
   if (!chatFeaturesJs.includes('data.profile.promoted')) throw new Error('chat-features 未处理提取响应的 promoted');
   return true;

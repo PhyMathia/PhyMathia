@@ -234,9 +234,7 @@ def _viz_trigger_map(messages: list) -> dict:
 
     viz 折叠判定锚定触发提问而非当前提问：当前提问每轮都变，由它决定历史
     消息的 viz 形态会让同一份历史在「占位符↔摘要」间来回翻转，每翻一次
-    打灭一次前缀缓存（2026-09-21 拍板）。_recent_context_messages 与
-    linear_active_content_block 共用本映射，同一份消息两种装配下 viz
-    形态必然一致。
+    打灭一次前缀缓存（2026-09-21 拍板）。
     """
     trigger_by_index = {}
     last_user_content = ""
@@ -318,56 +316,6 @@ def _recent_context_messages(
         # 它是唯一全文输入；没有记忆第二刀之后，这一刀就是唯一收缩点
         keep = {str(result[-1].get("content") or "")} if result else set()
         result = _shrink_history_to_budget(result, budget_tokens, keep)
-    return result
-
-
-# 线性历史区省钱档：True（默认）用户提问出生即原文（超长截断一次）；
-# False 一键切成「提问也压一行摘要」——请求最小，代价是老问题细节丢失
-LINEAR_HISTORY_USER_FULL = True
-
-
-def _recent_context_append_only(all_messages: list, budget_tokens: int = 0) -> list:
-    """线性主聊天历史区：出生定形、只增不改（前缀缓存拍板 2026-09-25）。
-
-    与树路径 _load_session_context_from_path 同构：每条消息进入历史区时就
-    固定形态，此后字节永不改写——user 保留原文（超 _CONTEXT_MAX_USER_CHARS
-    出生时截断一次），assistant 一律 _graph_message_summary（优先读落盘
-    summary 字段，写时算好，确定性头部截断）。最近一条 assistant 的全文不在
-    本区，由 linear_active_content_block 进尾部上下文块。
-
-    取代旧「3 轮全文 + 7 轮摘要」滑动窗口的动机（14 轮探针实测）：旧窗口每
-    滑一格就要改写边界（全文↔摘要翻转、头部摘要整行丢弃），第 4 轮起相邻
-    请求的公共前缀钉死在系统提示结尾，历史区整体打灭，且 10 轮前的对话从
-    请求里彻底消失（AI 失忆）。新结构下历史区随轮次只增，相邻请求命中随
-    会话增长；预算超限从头部逐条丢弃（低频一次性代价），永不截断改写中部。
-    """
-    messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
-    result = []
-    for msg in messages:
-        role = msg.get("role") or "user"
-        content = str(msg.get("content") or "")
-        if not content:
-            continue
-        if role == "user":
-            if LINEAR_HISTORY_USER_FULL:
-                if len(content) > _CONTEXT_MAX_USER_CHARS:
-                    content = content[:_CONTEXT_MAX_USER_CHARS] + "\n…（已截断）"
-            else:
-                content = "（更早提问）用户：" + content[:80]
-        else:
-            content = _graph_message_summary(msg)
-        result.append({"role": "user" if role == "user" else "assistant",
-                       "content": content})
-    if budget_tokens and budget_tokens > 0:
-        # 从头部逐条丢弃直到预算内（恒保留最后一条）：丢头部同样打断前缀缓存，
-        # 但只在预算超限时发生（低频一次性），不产生逐轮边界改写
-        total = sum(estimate_tokens(str(m.get("content") or "")) for m in result)
-        keep_from = 0
-        while total > budget_tokens and len(result) - keep_from > 1:
-            total -= estimate_tokens(str(result[keep_from].get("content") or ""))
-            keep_from += 1
-        if keep_from:
-            result = result[keep_from:]
     return result
 
 
@@ -726,19 +674,14 @@ def _load_session_context(
             budget_tokens=budget_tokens,
         )
     if not branch_id:
-        # 前缀缓存拍板（2026-09-25）：主聊天线性路径改走追加式历史区（出生定形
-        # 只增不改）。寒暄（quick→max_rounds=1）、工作流装配与带苏格拉底状态
-        # 的边缘组合保持旧窗口口径——请求形态各异或本就只有一轮，不值得动；
-        # 分支（branch_id）与树路径（graph_path）各有专属装配，同样不受影响。
-        if workflow_context or max_rounds <= 1 or include_socratic:
-            result = _recent_context_messages(
-                all_messages, max_rounds, include_socratic, current_prompt,
-                budget_tokens=budget_tokens,
-            )
-            # 会话记忆不再注入历史（改由 main.py 并入历史后的上下文块，
-            # 见 rolling_memory_block）；预算收缩含在 _recent_context_messages 内
-            return result
-        return _recent_context_append_only(all_messages, budget_tokens=budget_tokens)
+        # 2026-09-25 线性主聊天退役（前缀缓存拍板的追加式历史区随现役 UI 的
+        # 线性通道一起删除，恢复见 docs/dev/linear-chat-retired.md）：无 branch
+        # 的组合（quick 寒暄 / 工作流 / 苏格拉底状态 / 边缘组合）统一走旧窗口
+        # 口径；现役 UI 的新话题提问全走工作流（workflow_context 命中此处）。
+        return _recent_context_messages(
+            all_messages, max_rounds, include_socratic, current_prompt,
+            budget_tokens=budget_tokens,
+        )
 
     branch_messages = [msg for msg in all_messages if msg.get("branchId") == branch_id]
     main_messages = [msg for msg in all_messages if not msg.get("branchId") and not _is_socratic_message(msg)]
@@ -1077,34 +1020,6 @@ def tree_active_content_block(
     if not content:
         return ""
     return "# 当前节点正文（参考资料）\n" + content
-
-
-def linear_active_content_block(session_id: str) -> str:
-    """主聊天（线性）最近一条 assistant 的全文，作为尾部上下文块参考资料段。
-
-    前缀缓存拍板（2026-09-25）：历史区出生即摘要（_recent_context_append_only）
-    后，最近一条回答的全文改由本函数取出、main.py 并入末条 user 消息的上下文
-    块——与树路径 tree_active_content_block 同构。viz 折叠沿用「锚定触发提问」
-    口径（_viz_trigger_map），不随当前提问翻转。无 assistant 消息返回空串；
-    过滤口径（剔除苏格拉底消息）与历史区一致。
-    """
-    all_messages = _load_messages(session_id)
-    if not all_messages:
-        return ""
-    messages = [msg for msg in all_messages if not _is_socratic_message(msg)]
-    last_assistant_idx = None
-    for idx in range(len(messages) - 1, -1, -1):
-        if (messages[idx].get("role") or "user") != "user":
-            last_assistant_idx = idx
-            break
-    if last_assistant_idx is None:
-        return ""
-    content = str(messages[last_assistant_idx].get("content") or "")
-    if not content:
-        return ""
-    trigger = _viz_trigger_map(messages).get(last_assistant_idx, "")
-    content = _trim_context_content(content, keep_viz=_prompt_wants_viz(trigger))
-    return "# 上一轮回答正文（参考资料）\n" + content
 
 
 SOCRATIC_STATE_PREFIX = "socratic:"

@@ -77,7 +77,7 @@ window.hideProgress = function () {};
     // 会话/消息写路径
     'saveSessionMessages', 'loadSessionMessages', 'saveSessions', 'loadSessions', 'renderSessionList',
     'switchToSession', 'createNewSession', 'deleteSession', 'sendQuick', 'sendMessage', 'clearChat',
-    'regenerateLast', 'startSocraticAnswer', 'updateDataStats', '_flushToServer',
+    'startSocraticAnswer', 'updateDataStats', '_flushToServer',
     // 模型 / AI
     'getActiveModelForRole', 'getAllModels', 'getModelById', 'proxyChatWithModel', 'retryHarnessLastRequest',
     'runAllWorkflowNodes', 'stopGeneration',

@@ -5,11 +5,14 @@
 // XFAIL catches only assertion failures; XPASS and setup/runtime errors fail the suite.
 // Bounded evidence, NOT browser/E2E certification:
 // F1 tests apply/save/load, not full render, drag, or server reload.
-// F2 tests delayed save/reentrant local reply, not model streaming, save rejection, or switch races.
+// F2 tests delayed save/reentrant send on the anchored branch path only — the
+//    linear (anchorless) send pipeline was retired on 2026-09-25, so the old
+//    local-casual-reply control has no production counterpart anymore.
 // F3 seeds an A result/history then changes active sid; actual apply and persistence execute.
 //    In-flight review/history fetch and switchToSession UI lifecycle remain pending.
-// F4 real regenerateResponse/sendQuick/sendMessage; DOM and anchor consumption are boundaries.
-//    Truncation of the old user turn AND subsequent turns is deliberately preserved.
+// F4 regenerateResponse/regenerateLast cases were retired together with the
+//    linear pipeline (2026-09-25, see docs/dev/linear-chat-retired.md); the
+//    anchor-consumption contract they shared is now guarded in stage2's F4 case.
 // F5 actual review snapshot -> _applyOps -> conversational before-state, checkpoint control.
 //    Python inverse replay, ai_eval restoration and exact full-graph undo remain pending.
 // Backend same-batch two-confirm/stage-goal promotion contracts are untouched, not retested here.
@@ -211,27 +214,25 @@ test('F1 override save/load round trip', null, async () => {
 
 function chatFixture() {
   const f = sessionsFixture(['chat.js', 'chat-features.js']); const { s } = f;
-  // Render and branch-anchor boundary; actual send/regenerate paths are not replaced.
-  s.addMessage = () => null; s.renderSessionList = () => {}; s.scrollToBottom = () => {};
+  // 2026-09-25 线性退役后 sendMessage 是「强制带锚」的分支/苏格拉底通道：
+  // 锚点消费与发送锁用真实源码；模型配置在沙箱缺失，发送会在 save 门之后
+  // 自然失败（caught internally），不触碰网络。
+  s.renderSessionList = () => {};
   s._consumePendingBranch = () => { const value = s.anchor; s.anchor = null; return value; };
-  s.currentBranch = null; s.currentBranchId = null; s.userScrolledUp = false;
+  s.currentBranch = null; s.currentBranchId = null;
   s.saveCurrentSession = async () => {};
-  s.document.getElementById('userInput').value = '你好';
   return f;
 }
 test('F2 delayed first save duplicate send', null, async () => {
   const { s } = chatFixture(); const gate = deferred(); let saves = 0;
+  s.anchor = { branchType: 'followup', branchId: 'branch-A', parentId: 'parent-A' };
   s.saveCurrentSession = async () => { if (++saves === 1) await gate.promise; };
+  evaluate(s, "sendQuick('围绕这个分支追问')");
   const first = s.sendMessage(); const second = s.sendMessage();
   const usersDuringWait = evaluate(s, "chatHistory.filter(m=>m.role==='user').length");
-  gate.resolve(); await Promise.all([first, second]);
-  requireSetup(saves >= 2, 'send must complete local reply path');
+  gate.resolve(); await Promise.all([first, second]).catch(() => {});
+  requireSetup(saves >= 1, 'send must reach the save gate');
   assert.equal(usersDuringWait, 1, 'reentrant send must not append a second user while save is pending');
-});
-test('F2 local reply success control', null, async () => {
-  const { s } = chatFixture(); await s.sendMessage();
-  assert.deepEqual(clone(evaluate(s, 'chatHistory.map(m=>m.role)')), ['user', 'assistant']);
-  assert.equal(evaluate(s, 'isStreaming'), false);
 });
 
 for (const mode of ['result', 'history']) {
@@ -281,34 +282,6 @@ test('F3 in-flight result after session switch', null, async () => {
   assert.equal(storage.get('phymathia_graph_B').includes('A-only edit'), false, 'B graph storage must not receive A edits');
   assert.equal(evaluate(s, 'harnessHistory.some(e=>e.summary==="A edit")'), false, 'A result must not enter B harness history');
 });
-
-for (const branchType of ['main', 'socratic', 'learn']) {
-  for (const anchorMode of ['empty', 'other']) {
-    test('F4 regenerate ' + branchType + '/' + anchorMode, null, async () => {
-      const { s } = chatFixture();
-      const originalMeta = branchType === 'main' ? {} : { branchType, branchId: 'branch-A', parentId: 'parent-A', sourceModule: 'extend', fromPort: 'out-2', position: { x: 123, y: 456 } };
-      s.anchor = anchorMode === 'other' ? { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' } : null;
-      s.seed = [{role:'user',content:'你好',...originalMeta},{role:'assistant',content:'old reply'}, {role:'user',content:'later must truncate'}, {role:'assistant',content:'later reply'}];
-      evaluate(s, 'chatHistory=seed;');
-      const nodes = s.seed.map(m => ({ classList: { contains: x => x === m.role }, remove() {} }));
-      nodes.forEach((n,i) => { n.previousElementSibling = nodes[i-1] || null; n.nextElementSibling = nodes[i+1] || null; });
-      s.document.querySelectorAll = () => nodes;
-      s.saveSessionMessages = async () => {};
-      const gate = deferred(); let sent;
-      s.saveCurrentSession = async () => { sent = clone(evaluate(s, 'chatHistory')); await gate.promise; };
-      // sendQuick is fire-and-forget in production: track rather than replace its send behavior.
-      const actualSend = s.sendMessage; let completion;
-      s.sendMessage = (...args) => (completion = actualSend(...args));
-      s.regenerateResponse({ closest: () => ({ closest: () => nodes[1] }) });
-      requireSetup(completion && sent.length === 1 && sent[0].content === '你好', 'original user and later turns must be truncated before resend');
-      gate.resolve(); await completion;
-      const resent = clone(evaluate(s, 'chatHistory[0]'));
-      const actualMeta = Object.fromEntries(Object.keys(originalMeta).map(k => [k, resent[k]]));
-      if (branchType === 'main') assert.equal(resent.parentId, undefined, 'main regeneration must not consume unrelated anchor');
-      else assert.deepEqual(actualMeta, originalMeta, 'original branch/parent/port/position must be retained');
-    });
-  }
-}
 
 for (const focused of [false, true]) {
   test('F5 conversational undo capture ' + (focused ? 'focused' : 'unfocused'), null, async () => {

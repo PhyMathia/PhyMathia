@@ -1,68 +1,6 @@
 // ===== PhyMathia 对话扩展：知识提取、可视化与书签 =====
-
-    function regenerateResponse(btnEl) {
-      if (isStreaming) { alert('正在生成回复，请稍候'); return; }
-      const bodyEl = btnEl.closest('.message-body');
-      const messageEl = bodyEl?.closest('.message');
-      if (!messageEl) return;
-
-      // Find the index of this assistant message in the DOM
-      const allMsgEls = Array.from(document.querySelectorAll('#chatMessages .message'));
-      const domIndex = allMsgEls.indexOf(messageEl);
-      if (domIndex === -1) return;
-
-      // Map DOM index to chatHistory index (they should be 1:1)
-      // chatHistory and DOM messages should have the same order
-      if (domIndex >= chatHistory.length) {
-        alert('消息索引不匹配，请刷新页面');
-        return;
-      }
-
-      const targetEntry = chatHistory[domIndex];
-      if (targetEntry.role !== 'assistant') {
-        alert('无法重新生成该消息');
-        return;
-      }
-
-      // Find the user message immediately before this assistant message
-      let userMsg = '';
-      let userMsgIndex = -1;
-      for (let i = domIndex - 1; i >= 0; i--) {
-        if (chatHistory[i].role === 'user') {
-          userMsg = chatHistory[i].content;
-          userMsgIndex = i;
-          break;
-        }
-      }
-
-      if (!userMsg) {
-        alert('未找到对应的问题，请手动输入后重新发送');
-        return;
-      }
-
-      const resendMeta = _messageBranchMeta(chatHistory[userMsgIndex]);
-
-      // 截断到该用户消息之前（连同用户消息一并移除）：
-      // sendQuick/sendMessage 会无条件重新 push 用户消息，保留原条目会导致历史重复
-      chatHistory = chatHistory.slice(0, userMsgIndex);
-      saveSessionMessages(currentSessionId, chatHistory);
-
-      // DOM：从被点击的助手消息向前找最近的用户消息节点，从它起整段移除
-      let startEl = messageEl;
-      let prev = messageEl.previousElementSibling;
-      while (prev) {
-        if (prev.classList && prev.classList.contains('user')) { startEl = prev; break; }
-        prev = prev.previousElementSibling;
-      }
-      let el = startEl;
-      while (el) {
-        const next = el.nextElementSibling;
-        el.remove();
-        el = next;
-      }
-
-      return sendQuick(userMsg, resendMeta);
-    }
+// 2026-09-25 线性主聊天退役：regenerateResponse（线性气泡重生成）与
+// renderAssistantContent（线性气泡渲染）随管线删除，恢复见 docs/dev/linear-chat-retired.md
 
     // ===== Auto Extract after AI response =====
 
@@ -742,19 +680,6 @@
         }
       }
       return content;
-    }
-
-    async function renderAssistantContent(contentDiv, content) {
-      contentDiv.innerHTML = renderMarkdown(content, { parentId: contentDiv.closest('.message-body')?.dataset.messageId || '', socraticFallback: true });
-      _initVizIframes(contentDiv);
-      renderMath(contentDiv);
-      await renderMermaidInElement(contentDiv);
-      if (contentDiv.dataset.branchLabel) {
-        const tag = document.createElement('div');
-        tag.className = 'branch-tag ' + (contentDiv.dataset.branchType || 'branch');
-        tag.textContent = contentDiv.dataset.branchLabel;
-        contentDiv.prepend(tag);
-      }
     }
 
     async function scheduleVisualizationInBackground(content, onReady) {

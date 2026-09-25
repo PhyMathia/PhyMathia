@@ -171,7 +171,9 @@ test('M5 disabled profile yields empty sections and context', async () => {
   assert.equal(s.memoryCachedContext(), '');
 });
 
-// ---- F4：两条重生成路由都保留原父/分支/端口/位置，且不消费无关待用锚点 ----
+// ---- F4：锚定发送消费待用锚点并盖章分支元数据 ----
+// （2026-09-25 线性主聊天退役：regenerateResponse/regenerateLast 及其 resendMeta
+// 契约随管线删除，见 docs/dev/linear-chat-retired.md；锚点消费契约保留如下）
 function chatSandbox() {
   const elements = new Map(), storage = new Map();
   const element = () => ({ value: '', textContent: '', innerHTML: '', style: {}, dataset: {},
@@ -193,82 +195,29 @@ function chatSandbox() {
   evaluate(s, "currentSessionId='A'; SESSION_ID='remoteA'; sessions={A:{sessionId:'remoteA'}};");
   s.anchor = null;
   s._consumePendingBranch = () => { const v = s.anchor; s.anchor = null; return v; };
-  s.addMessage = () => null; s.renderSessionList = () => {}; s.scrollToBottom = () => {};
+  s.renderSessionList = () => {};
   s.saveCurrentSession = async () => {};
-  s.currentBranch = null; s.currentBranchId = null; s.userScrolledUp = false;
+  s.currentBranch = null; s.currentBranchId = null;
   return { s, storage };
 }
 
-const ORIGINAL_META = { branchType: 'socratic', branchId: 'branch-A', parentId: 'parent-A', sourceModule: 'extend', fromPort: 'out-2', position: { x: 123, y: 456 } };
-
-async function regenerateFixture({ anchor }) {
+test('F4 anchored send consumes pending anchor and stamps branch metadata', async () => {
   const { s } = chatSandbox();
-  s.anchor = anchor || null;
-  const seed = [
-    { role: 'user', content: '你好', ...ORIGINAL_META },
-    { role: 'assistant', content: 'old reply' },
-    { role: 'user', content: 'later turn', branchType: 'followup', branchId: 'branch-B', parentId: 'parent-B' },
-    { role: 'assistant', content: 'later reply' },
-  ];
-  evaluate(s, `chatHistory=${JSON.stringify(seed)};`);
-  const nodes = seed.map(m => ({ classList: { contains: x => x === m.role }, remove() {} }));
-  nodes.forEach((n, i) => { n.previousElementSibling = nodes[i - 1] || null; n.nextElementSibling = nodes[i + 1] || null; });
-  s.document.querySelectorAll = () => nodes;
-  s.saveSessionMessages = async () => {};
-  let sent = null, completion = null;
-  const actualSend = s.sendMessage;
-  s.sendMessage = (...args) => { sent = clone(args[0]); return (completion = actualSend(...args)); };
-  return { s, nodes, get sent() { return sent; }, wait: async () => { await completion; } };
-}
-
-test('F4 regenerateResponse (socratic bubble) preserves full original metadata and ignores pending anchor', async () => {
-  const f = await regenerateFixture({ anchor: { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' } });
-  f.s.regenerateResponse({ closest: () => ({ closest: () => f.nodes[1] }) });
-  assert.ok(f.sent && Object.prototype.hasOwnProperty.call(f.sent, 'resendMeta'), 'regenerate must pass explicit resendMeta');
-  assert.deepEqual(f.s.anchor, { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' }, 'pending anchor must not be consumed by regenerate');
-  assert.deepEqual(f.sent.resendMeta, ORIGINAL_META, 'parent/branch/fromPort/position must survive');
-  await f.wait();
-  const resent = clone(evaluate(f.s, 'chatHistory[0]'));
-  for (const [k, v] of Object.entries(ORIGINAL_META)) assert.deepEqual(resent[k], v, 'resent user message must carry ' + k);
-  assert.equal(resent.content, '你好');
-  assert.equal(evaluate(f.s, 'chatHistory.some(m=>m.content==="later turn")'), false, 'later turns stay truncated');
+  s.anchor = { branchType: 'learn', branchId: 'b2', parentId: 'p2' };
+  evaluate(s, "sendQuick('围绕进阶学习方向继续展开')");
+  await s.sendMessage();
+  assert.equal(s.anchor, null, 'anchored send must consume the pending anchor');
+  const users = evaluate(s, 'chatHistory.filter(m=>m.role==="user")');
+  assert.equal(users.length, 1, 'anchored send appends exactly one user message');
+  assert.equal(users[0].branchId, 'b2', 'pending anchor applies to the send');
 });
 
-test('F4 regenerateResponse (mainline bubble) must not consume unrelated pending anchor', async () => {
-  const f = await regenerateFixture({ anchor: { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' } });
-  // 主线气泡：种子换成无分支元数据的历史
-  evaluate(f.s, 'chatHistory=[{role:"user",content:"你好"},{role:"assistant",content:"old"},{role:"user",content:"later"},{role:"assistant",content:"rep"}];');
-  const mainNodes = evaluate(f.s, 'chatHistory').map(m => ({ classList: { contains: x => x === m.role }, remove() {} }));
-  mainNodes.forEach((n, i) => { n.previousElementSibling = mainNodes[i - 1] || null; n.nextElementSibling = mainNodes[i + 1] || null; });
-  f.s.document.querySelectorAll = () => mainNodes;
-  f.s.regenerateResponse({ closest: () => ({ closest: () => mainNodes[1] }) });
-  assert.deepEqual(f.sent.resendMeta, {}, 'mainline resend carries empty metadata');
-  assert.deepEqual(f.s.anchor, { branchType: 'followup', branchId: 'wrong', parentId: 'wrong-parent' }, 'unrelated pending anchor must survive regenerate');
-  await f.wait();
-  assert.equal(evaluate(f.s, 'chatHistory[0].branchType'), undefined, 'mainline resent message must stay branch-free');
-});
-
-test('F4 regenerateLast (socratic last turn) preserves original metadata without consuming anchor', async () => {
-  const f = await regenerateFixture({ anchor: null });
-  evaluate(f.s, `chatHistory=[{role:"user",content:"later",...${JSON.stringify(ORIGINAL_META)}},{role:"assistant",content:"last"}];`);
-  const nodes = evaluate(f.s, 'chatHistory').map(m => ({ classList: { contains: x => x === m.role }, remove() {} }));
-  nodes.forEach((n, i) => { n.previousElementSibling = nodes[i - 1] || null; n.nextElementSibling = nodes[i + 1] || null; });
-  f.s.document.querySelectorAll = () => nodes;
-  f.s.regenerateLast();
-  assert.ok(f.sent && f.sent.resendMeta, 'regenerateLast must pass explicit resendMeta');
-  assert.deepEqual(f.sent.resendMeta, ORIGINAL_META, 'parent/branch/fromPort/position must be retained');
-  await f.wait();
-  const resent = clone(evaluate(f.s, 'chatHistory[0]'));
-  assert.deepEqual({ p: resent.parentId, f: resent.fromPort, pos: resent.position }, { p: 'parent-A', f: 'out-2', pos: { x: 123, y: 456 } });
-});
-
-test('F4 ordinary click send still consumes pending anchor', async () => {
-  const f = await regenerateFixture({ anchor: { branchType: 'learn', branchId: 'b2', parentId: 'p2' } });
-  f.s.document.getElementById('userInput').value = '谢谢';
-  await f.s.sendMessage();
-  assert.equal(f.s.anchor, null, 'click send must consume pending anchor as before');
-  const users = evaluate(f.s, 'chatHistory.filter(m=>m.role==="user")');
-  assert.equal(users[users.length - 1].branchId, 'b2', 'clicked anchor still applies to ordinary sends');
+test('F4 anchorless send is rejected and leaves history untouched (linear retired)', async () => {
+  const { s } = chatSandbox();
+  evaluate(s, "sendQuick('没有锚点的裸提问')");
+  await s.sendMessage();
+  assert.equal(evaluate(s, 'chatHistory.length'), 0, 'anchorless send must not append anything');
+  assert.equal(evaluate(s, 'isStreaming'), false, 'lock must be released');
 });
 
 // ---- F 有界只读审计：取消/会话/画布/导出/Φ 证据点（只读检查，不扩大范围）----
