@@ -116,8 +116,6 @@ DESCRIBE_PROMPT = """你是公式与知识点解说助手。完成两件事：
 - 不要编造摘要中不存在的概念"""
 
 
-QUICK_SYSTEM_PROMPT = """你是 PhyMathia，一个友好的物理数学助手。用户现在只是在轻松聊天/寒暄，并不是要深入学习。请用简短、自然、亲切的中文回复（一般 2~4 句，不超过 100 字）。不要输出学习卡片 XML，不要输出公式，不要生成可视化，不要列清单。如果用户其实问了学习问题，就正常回答即可。"""
-
 MODULE_SYSTEM_PROMPT = """你是 PhyMathia 的知识网络节点内容生成器：为思维导图中的单个节点生成正文，而不是输出完整学习卡片。
 
 工作方式：
@@ -146,4 +144,4 @@ ROLLING_SUMMARY_PROMPT = """你是会话记忆压缩助手。把下面的对话�
 - 不要：流水账、客套话、重复内容
 - 如果前面已有一段旧记忆，只在其基础上补充新变化，不要复述旧内容
 只输出压缩后的记忆文本本身，不要输出任何其他内容。"""
-__all__ = ["SYSTEM_PROMPT", "QUICK_SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT", "ROLLING_SUMMARY_PROMPT", "get_system_prompt"]
+__all__ = ["SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT", "ROLLING_SUMMARY_PROMPT", "get_system_prompt"]

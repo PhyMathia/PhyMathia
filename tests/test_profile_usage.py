@@ -63,7 +63,12 @@ def test_sections_only_contain_budget_survivors(tmp_path):
 
 class ProfileUsageRouteTest(RouteTestBase):
     def _post_chat(self, payload, upstream_body=None, stream=False):
-        """默认走前端实际使用的 prompt 格式（messages 旧格式不注入画像）。"""
+        """默认走前端实际使用的 prompt 格式（messages 旧格式不注入画像）。
+
+        2026-09-25 线性退役门禁后 prompt 必须带画布锚：这里用最短的
+        graph_path（单元素路径，不产生树路径尾部块）保住「无 workflow_context
+        且无 branch_id 的画像注入路径」这一被测语义。
+        """
         seen = {}
 
         def handler(request):
@@ -81,6 +86,7 @@ class ProfileUsageRouteTest(RouteTestBase):
                 "api_key": "sk-test",
                 "model": "test-model",
                 "stream": stream,
+                "graph_path": [{"kind": "user", "timestamp": 1}],
             }
             base.update(payload)
             resp = self.client.post("/api/models/chat", json=base)
@@ -131,7 +137,9 @@ class ProfileUsageRouteTest(RouteTestBase):
         self.assertEqual(frames[0]["profile_usage"], {"sections": [], "factCount": 0},
                          "停用时也要明确说「本次没注入」，角标据此不显示")
 
-    def test_quick_path_carries_no_usage(self):
+    def test_quick_path_rejected_by_retirement_gate(self):
+        # 2026-09-25 线性退役门禁：quick 寒暄一律 410（带锚也不放行），
+        # 「quick 不注入画像」的旧语义随通道一起消失
         self._seed()
         resp, seen = self._post_chat(
             {"device_id": "dev-usage", "quick": True},
@@ -139,10 +147,8 @@ class ProfileUsageRouteTest(RouteTestBase):
                 200, content=b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'),
             stream=True,
         )
-        frames = self._stream_frames(resp)
-        self.assertFalse(any("profile_usage" in f for f in frames),
-                         "quick 路径不注入画像，也不该发快照")
-        self.assertNotIn("user_profile", json.dumps(seen["body"], ensure_ascii=False))
+        self.assertEqual(resp.status_code, 410)
+        self.assertNotIn("body", seen, "门禁应在上游调用前拦截，请求体不外发")
 
     def test_legacy_messages_format_carries_no_usage(self):
         # messages 旧格式本就不注入画像（注入在 prompt 分支内），因此也没有快照

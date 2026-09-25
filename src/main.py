@@ -237,10 +237,34 @@ async def api_models_chat(request: Request):
     支持两种调用格式：
     1. 新格式：{prompt, level, session_id, provider, api_key, model, base_url}
        → 后端构建消息（系统提示词 + 难度后缀 + 会话上下文）
+       仅受理画布锚定请求（branch_id / graph_path / workflow_context 至少其一）：
+       无锚普通提问是已退役线性主聊天的直调通道，2026-09-25 起硬门禁 410。
     2. 旧格式：{messages, provider, api_key, model, base_url}
-       → 直接使用传入的 messages
+       → 直接使用传入的 messages（测验 / 知识 / 大陆 / 可视化等辅助功能仍走它）
     """
     payload = await _parse_json_object(request)
+
+    # 线性主聊天退役硬门禁（2026-09-25，见 docs/dev/linear-chat-retired.md）：
+    # prompt 新格式必须带画布锚——分支/苏格拉底（branch_id / graph_path）或
+    # 工作流（workflow_context）；quick 寒暄同属线性语义，即便带锚也拒绝
+    # （前端寒暄通道已随线性退役，此处只防外部直调）。messages 直传不受影响。
+    if payload.get("prompt"):
+        has_anchor = bool(
+            payload.get("branch_id") or payload.get("branchId")
+            or payload.get("graph_path") or payload.get("graphPath")
+            or payload.get("workflow_context") or payload.get("workflowContext")
+        )
+        if payload.get("quick"):
+            raise HTTPException(
+                status_code=410,
+                detail="quick 寒暄通道已随线性主聊天退役（2026-09-25），不再受理",
+            )
+        if not has_anchor:
+            raise HTTPException(
+                status_code=410,
+                detail="无锚普通 prompt 已随线性主聊天退役（2026-09-25）："
+                       "分支/苏格拉底请带 branch_id 或 graph_path，工作流请带 workflow_context",
+            )
 
 
     provider = payload.get("provider", "")
@@ -277,8 +301,6 @@ async def api_models_chat(request: Request):
         # _graph_path_instruction 会逐项 item.get，字符串/数字进来就是 500
         raise HTTPException(status_code=400, detail="graph_path must be a list")
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
-    quick = bool(payload.get("quick"))
-    is_quick = False
     socratic_mode = "answer"  # 显式初始化：此前靠三个前缀分支隐式保证，漏一个分支就 NameError
     socratic_ref = branch_id or session_id
     # 画像注入快照（角标用）：在函数作用域先声明——messages 旧格式不进入
@@ -315,10 +337,9 @@ async def api_models_chat(request: Request):
             _sync_socratic_state_from_prompt(socratic_state, prompt)
             _write_socratic_state(socratic_ref, socratic_state)
 
-        is_quick = quick and not branch_id and not graph_path and not workflow_context
-        if is_quick:
-            system_content = QUICK_SYSTEM_PROMPT
-        elif workflow_context:
+        # quick 寒暄提示词分支已随退役门禁删除（QUICK_SYSTEM_PROMPT 同步移除）：
+        # 能走到这里的 prompt 请求必带锚，只剩工作流与分支两条路径
+        if workflow_context:
             system_content = MODULE_SYSTEM_PROMPT
         else:
             system_content = get_system_prompt()
@@ -360,19 +381,19 @@ async def api_models_chat(request: Request):
         # 支线与模块重生成是局部动作，多这一层只会挤 token。查空返回空串 = 零回归。
         # 记忆第二步「用起来」：画像薄弱词传给检索作排序加权（只重排、不放水）。
         _device_id = payload.get("device_id") or payload.get("deviceId") or ""
-        if not is_quick and not workflow_context and not branch_id:
+        if not workflow_context and not branch_id:
             concept_text = concept.concept_context_text(
                 prompt, session_id=session_id,
                 weak_terms=(profile.profile_weak_terms(_device_id) if _device_id else None),
             )
             if concept_text:
                 context_parts.append(concept_text)
-        # 用户画像（记忆）注入：仅默认完整回答路径（quick / 画布模块生成 / 支线
+        # 用户画像（记忆）注入：仅默认完整回答路径（画布模块生成 / 支线
         # 不注入——与上方概念地基同一范围，09-20 补齐 branch_id：此前支线也会
         # 注入画像并刷新 lastUsedAt，与注释宣称的口径不一致）。
         # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。
         # 同时把「本次实际注入了什么」随响应回传（角标不再按前端缓存重算）。
-        if not is_quick and not workflow_context and not branch_id:
+        if not workflow_context and not branch_id:
             if _device_id:
                 _profile_ctx = profile.profile_context(_device_id)
                 profile_usage = {"sections": _profile_ctx["sections"],
@@ -393,7 +414,7 @@ async def api_models_chat(request: Request):
                 source_module=source_module,
                 parent_id=parent_id,
                 graph_path=graph_path,
-                max_rounds=(1 if is_quick else 3),
+                max_rounds=3,
                 current_prompt=prompt,
                 workflow_context=workflow_context,
                 budget_tokens=context_budget,
@@ -410,11 +431,8 @@ async def api_models_chat(request: Request):
             current_text = "<上下文>\n" + "\n\n".join(context_parts) + "\n</上下文>\n\n" + prompt
 
         level = payload.get("level", "university")
-        if not is_quick:
-            level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-            messages.append({"role": "user", "content": current_text + level_suffix})
-        else:
-            messages.append({"role": "user", "content": current_text})
+        level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
+        messages.append({"role": "user", "content": current_text + level_suffix})
 
         ctx_text = "".join(str(m.get("content") or "") for m in messages)
         logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}, budget={context_budget}")
@@ -450,8 +468,6 @@ async def api_models_chat(request: Request):
     max_tokens = payload.get("max_tokens")
     if is_strict_module and not max_tokens:
         max_tokens = STRICT_MODULE_MAX_TOKENS
-    if is_quick and not max_tokens:
-        max_tokens = 400
     body = {
         "model": model_name,
         "messages": messages,
@@ -471,7 +487,7 @@ async def api_models_chat(request: Request):
     if thinking_params:
         body.update(thinking_params)
 
-    if session_id and prompt and not is_quick:
+    if session_id and prompt:
         _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url)
 
     logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")

@@ -4,13 +4,13 @@
 """
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from . import concept as concept_mod
 from . import context as context_mod
 from . import profile as profile_mod
 from .config import LEVEL_PROMPTS
-from .prompts import MODULE_SYSTEM_PROMPT, QUICK_SYSTEM_PROMPT, get_system_prompt
+from .prompts import MODULE_SYSTEM_PROMPT, get_system_prompt
 
 router = APIRouter(prefix="/api/context", tags=["context-preview"])
 
@@ -34,10 +34,18 @@ async def preview_context(
         graph_path_list = json.loads(graph_path) if graph_path else []
     except Exception:
         graph_path_list = []
-    is_quick = bool(quick)
-    if is_quick:
-        system_content = QUICK_SYSTEM_PROMPT
-    elif workflow:
+    # 与 /api/models/chat 退役门禁同构（2026-09-25）：quick 一律 410；
+    # prompt 无锚（branch_id / graph_path / workflow 均空）同样 410，
+    # 保证「预览里能看到」与「真实请求能发出」是同一套边界。
+    if quick:
+        raise HTTPException(status_code=410, detail="quick 寒暄通道已随线性主聊天退役（2026-09-25），不再受理")
+    if prompt and not (branch_id or graph_path_list or workflow):
+        raise HTTPException(
+            status_code=410,
+            detail="无锚普通 prompt 已随线性主聊天退役（2026-09-25）："
+                   "分支/苏格拉底请带 branch_id 或 graph_path，工作流请带 workflow",
+        )
+    if workflow:
         system_content = MODULE_SYSTEM_PROMPT
     else:
         system_content = get_system_prompt()
@@ -47,7 +55,7 @@ async def preview_context(
     # 还挂在 system 尾部，是 2026-09-21 拍板把易变注入挪出 system 时漏掉的旁路）。
     # 记忆第二步：画像薄弱词加权也与 chat 同构——带 device_id 才有权重（不传 = 无画像）。
     concept_tail = ""
-    if not is_quick and not workflow and not branch_id:
+    if not workflow and not branch_id:
         concept_text = concept_mod.concept_context_text(
             prompt, session_id=session_id,
             weak_terms=(profile_mod.profile_weak_terms(device_id) if device_id else None),
@@ -92,11 +100,8 @@ async def preview_context(
     user_content = prompt
     if tail_parts:
         user_content = "<上下文>\n" + "\n\n".join(tail_parts) + "\n</上下文>\n\n" + prompt
-    if not is_quick:
-        suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-        messages.append({"role": "user", "content": user_content + suffix})
-    else:
-        messages.append({"role": "user", "content": user_content})
+    suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
+    messages.append({"role": "user", "content": user_content + suffix})
     total_chars = sum(len(str(m.get("content") or "")) for m in messages)
     total_tokens = context_mod.estimate_tokens("".join(str(m.get("content") or "") for m in messages))
     return {
