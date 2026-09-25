@@ -1236,7 +1236,7 @@ check('model-group：分组接线（组头渲染/组密钥输入/折叠/optgroup
 
 check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单 + 在线拉取）静态断言', () => {
   // 打包产物经 esbuild 压缩（键名引号/空白会被改写），只能断言裸标识符存在
-  for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput', '_dialogApiKeyWithFallback']) {
+  for (const t of ['switchAddModelTab', 'am-model-check', 'addModelsForProvider', 'api/models/list', 'fetchProviderModelList', 'fetchManualModelList', 'confirmDeleteModelGroup', '_parseExtraModelInput', '_dialogApiKeyWithFallback', '_freshIdsNotListed']) {
     if (!code.includes(t)) throw new Error('打包产物缺：' + t);
   }
   // 自动预置必须已移除：列表里只允许出现用户主动加过的模型（用户反馈的根因）
@@ -1315,6 +1315,18 @@ check('model-update：组级更新接线（组头 ↻ 按钮 + 更新弹窗 + di
   for (const id of ['updateModelsDialog', 'umGroupTitle', 'umFetchStatus', 'umFetchBtn', 'umNewSection', 'umNewCount', 'umNewAll', 'umNewList', 'umStaleSection', 'umStaleCount', 'umStaleAll', 'umStaleList', 'umSameNote', 'umApplyBtn']) {
     if (!html.includes(`id="${id}"`)) throw new Error('index.html 缺更新弹窗元素：' + id);
   }
+  return true;
+});
+
+check('model-add：在线补充段去重（重复点获取不堆「在线获取的补充模型」）', () => {
+  const f = sandbox._freshIdsNotListed;
+  const listed = ['preset-a', 'preset-b', 'supp-x'];
+  // 二次获取同一上游清单：已列出的（预设行 + 上次补充行）全部不再追加
+  if (f(listed, ['supp-x', 'new-1', 'preset-a']).join(',') !== 'new-1') {
+    throw new Error('应只追加未列出的 new-1: ' + JSON.stringify(f(listed, ['supp-x', 'new-1', 'preset-a'])));
+  }
+  if (f(listed, ['preset-a', 'supp-x']).length !== 0) throw new Error('全部已列出应为空追加');
+  if (f(null, undefined).length !== 0) throw new Error('空输入不应抛错');
   return true;
 });
 
