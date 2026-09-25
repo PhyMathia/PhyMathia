@@ -745,6 +745,13 @@ function _dialogApiKeyWithFallback(provider) {
   return { key: saved, fromSaved: !!saved };
 }
 
+// 在线补充行去重（纯逻辑，冒烟直测）：已列出的 id 不再追加，保持上游顺序。
+// 上游清单本身由后端去重排序，这里只管「清单 vs 弹窗已列出」的差集。
+function _freshIdsNotListed(listedIds, freshIds) {
+  const seen = new Set(Array.isArray(listedIds) ? listedIds : []);
+  return (Array.isArray(freshIds) ? freshIds : []).filter(id => !seen.has(id));
+}
+
 async function fetchProviderModelList() {
   const provider = document.getElementById('newProvider').value;
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
@@ -761,16 +768,19 @@ async function fetchProviderModelList() {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detail || `API ${resp.status}`);
     if (provider !== document.getElementById('newProvider').value) return; // 异步期间换了供应商，弃用
-    const known = new Set((MODEL_PRESETS[provider]?.models || []).map(m => m.id));
     const listEl = document.getElementById('presetModelList');
-    const fresh = (data.models || []).filter(id => !known.has(id));
+    // 已列出的全部行（内置预设 + 之前的在线补充）都是去重口径——重复点获取只刷新统计，
+    // 不再堆出多个「在线获取的补充模型」段（2026-09-25 用户反馈）
+    const listed = listEl ? Array.from(listEl.querySelectorAll('.am-model-check input')).map(cb => cb.value) : [];
+    const fresh = _freshIdsNotListed(listed, data.models || []);
     if (listEl && fresh.length) {
       const empty = listEl.querySelector('.am-model-empty');
       if (empty) empty.remove();
-      // 追加段独立标记：全选/统计能区分「内置」与「在线补充」
-      listEl.insertAdjacentHTML('beforeend',
-        `<div class="am-model-group-label">在线获取的补充模型</div>` +
-        fresh.map(id => _presetModelRowHtml(id, id, false)).join(''));
+      // 追加段独立标记：全选/统计能区分「内置」与「在线补充」；标签只保留一份
+      if (!listEl.querySelector('.am-model-group-label')) {
+        listEl.insertAdjacentHTML('beforeend', '<div class="am-model-group-label">在线获取的补充模型</div>');
+      }
+      listEl.insertAdjacentHTML('beforeend', fresh.map(id => _presetModelRowHtml(id, id, false)).join(''));
     }
     _setFetchStatus('presetFetchStatus', fresh.length
       ? `新增 ${fresh.length} 个可选项（共 ${data.models.length} 个）`
