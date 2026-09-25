@@ -43,14 +43,17 @@ async def preview_context(
         system_content = get_system_prompt()
     budget = context_mod.resolve_context_budget(model_name)
     # 概念地基（M4）：体检工具必须与真实 chat 路径同构，否则「预览里没有」会被当成没生效。
+    # 2026-09-25 起与 chat 完全同位：概念地基进末条 user 消息的上下文块（此前
+    # 还挂在 system 尾部，是 2026-09-21 拍板把易变注入挪出 system 时漏掉的旁路）。
     # 记忆第二步：画像薄弱词加权也与 chat 同构——带 device_id 才有权重（不传 = 无画像）。
+    concept_tail = ""
     if not is_quick and not workflow and not branch_id:
         concept_text = concept_mod.concept_context_text(
             prompt, session_id=session_id,
             weak_terms=(profile_mod.profile_weak_terms(device_id) if device_id else None),
         )
         if concept_text:
-            system_content += "\n\n" + concept_text
+            concept_tail = concept_text
     messages = [{"role": "system", "content": system_content}]
     if session_id:
         messages.extend(
@@ -73,6 +76,18 @@ async def preview_context(
             session_id, graph_path_list, source_module=source_module, branch_id=branch_id)
         if active_block:
             tail_parts.append(active_block)
+    elif session_id and not branch_id and not is_quick and not workflow:
+        # 与 chat 路径同构（2026-09-25 线性拍板）：最近一条回答全文也在尾部块，
+        # 历史区出生即摘要后不再出现全文。
+        linear_block = context_mod.linear_active_content_block(session_id)
+        if linear_block:
+            tail_parts.append(linear_block)
+    if concept_tail:
+        tail_parts.append(concept_tail)
+    # 与 chat 路径同构（main.py 会话记忆并入上下文块首位，rolling_memory_block 拍板）
+    memory_block = context_mod.rolling_memory_block(session_id) if session_id else ""
+    if memory_block:
+        tail_parts.insert(0, memory_block)
     user_content = prompt
     if tail_parts:
         user_content = "<上下文>\n" + "\n\n".join(tail_parts) + "\n</上下文>\n\n" + prompt

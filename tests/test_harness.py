@@ -2610,3 +2610,47 @@ class ContinentSharedSnapshotPromptTest(unittest.TestCase):
         joined = "\n".join(str(m.get("content") or "") for m in captured["messages"])
         self.assertIn("非线性振动", joined)
         self.assertIn("大陆", joined)
+
+
+class HarnessStreamMeteringTest(unittest.TestCase):
+    """2026-09-25 流式计量拍板：Φ 流式请求发 stream_options include_usage 拿
+    计量帧；不认识的端点整请求 400 时剥掉重发一次（只牺牲计量帧，不牺牲对话）。
+    此前流式 Φ 调用拿不到 usage，命中率统计缺 Φ 一角。"""
+
+    def test_stream_options_downgrade_on_400(self):
+        import asyncio
+        import json as _json
+        import httpx
+        from harness import review as review_mod
+
+        bodies = []
+
+        def handler(request):
+            body = _json.loads(request.content.decode())
+            bodies.append(body)
+            if "stream_options" in body:
+                return httpx.Response(400, json={"error": "unknown field: stream_options"})
+            sse = (
+                'data: {"choices": [{"delta": {"content": "好"}}]}\n\n'
+                'data: {"choices": [], "usage": {"prompt_tokens": 100, '
+                '"prompt_cache_hit_tokens": 80, "completion_tokens": 5}}\n\n'
+                "data: [DONE]\n\n"
+            )
+            return httpx.Response(200, content=sse,
+                                  headers={"content-type": "text/event-stream"})
+
+        async def run():
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            try:
+                return await review_mod._stream_chat_completions(
+                    client, "https://x/v1/chat/completions", {},
+                    {"stream_options": {"include_usage": True}}, None)
+            finally:
+                await client.aclose()
+
+        message, usage = asyncio.run(run())
+        self.assertEqual(len(bodies), 2, "400 后应剥掉 stream_options 重发一次")
+        self.assertNotIn("stream_options", bodies[1])
+        self.assertEqual(message.get("content"), "好")
+        self.assertEqual((usage or {}).get("prompt_cache_hit_tokens"), 80,
+                         "计量帧应被接住并随返回值带出")

@@ -1,9 +1,11 @@
 """前缀稳定性回归（prompt cache 改造的核心契约）。
 
 ZCode 的 prompt-trajectory 思路：把「相邻两次请求的消息数组只做尾部变化」
-固化为测试。本项目是全量重建形态，做不到严格 append-only，但改造后的契约是：
+固化为测试。2026-09-25 线性拍板后，主聊天与树路径的历史区都做到了严格
+append-only（出生定形），契约统一为：
 - system 只含场景底座，逐轮易变注入集中在末条 user 消息的 <上下文> 块；
-- 相邻两轮的历史区，除「最老全文轮降级为摘要对」这一次性形变外，前缀字节一致；
+- 相邻两轮的历史区字节级严格前缀（h2.startswith(h1)），零改写；
+- 最近一条回答/当前聚焦节点的全文只在尾部上下文块，绝不在历史区；
 - 同一状态重复组装字节全同；viz 折叠判定锚定触发提问，不随当前提问翻转；
 - 会话记忆出现在末条 user 消息里，绝不落在 system 或历史区。
 """
@@ -44,12 +46,20 @@ def _rounds(n, prefix="round"):
 
 
 def _digest_end(messages):
-    """历史列表里摘要区（（更早对话）标记）的结束位置（不含）。"""
+    """历史列表里摘要区（（更早对话）标记）的结束位置（不含）。
+
+    2026-09-25 线性拍板后历史区不再有「（更早对话）」摘要区（quick/分支路径
+    的旧窗口装配仍可能有），找不到时返回 0。"""
     end = 0
     for i, m in enumerate(messages):
         if str(m.get("content") or "").startswith("（更早对话）"):
             end = i + 1
     return end
+
+
+def _serialize(messages):
+    """与探针/真机同口径的消息流序列化（前缀比对用）。"""
+    return "".join(f"{m.get('role')}\n{m.get('content')}\n" for m in messages)
 
 
 class PrefixStabilityContextTest(unittest.TestCase):
@@ -65,7 +75,10 @@ class PrefixStabilityContextTest(unittest.TestCase):
         context_mod._read_rolling_memory = self._orig_read_mem
 
     def test_stable_prefix_across_consecutive_turns(self):
-        """第 N+1 轮的历史数组必须保留第 N 轮的摘要区前缀字节不变。"""
+        """相邻两轮历史区字节级严格前缀（2026-09-25 线性拍板核心契约）。
+
+        旧滑窗在 3 轮后逐轮改写边界（全文↔摘要翻转、头部摘要整行丢弃），
+        14 轮探针实测断点钉死在系统提示结尾——本契约就是那次实测的解药。"""
         messages = _rounds(6)
         context_mod._load_messages = lambda sid: messages
         turn_t = context_mod._load_session_context("s", max_rounds=3, current_prompt="第7轮提问")
@@ -73,10 +86,13 @@ class PrefixStabilityContextTest(unittest.TestCase):
         messages.extend(_rounds(1, prefix="round"))
         turn_t1 = context_mod._load_session_context("s", max_rounds=3, current_prompt="第8轮提问")
 
-        stable = _digest_end(turn_t)
-        self.assertTrue(stable > 0, "precondition: 6 轮会话应已有摘要区")
-        self.assertEqual(turn_t1[:stable], turn_t[:stable],
-                         "摘要区前缀字节在相邻两轮之间发生了改写")
+        s1 = _serialize(turn_t)
+        s2 = _serialize(turn_t1)
+        self.assertTrue(len(s1) > 200, "precondition: 6 轮会话应有实质历史区")
+        self.assertTrue(s2.startswith(s1),
+                        f"历史区前缀字节在相邻两轮之间发生了改写：\n s1={s1[:200]!r}\n s2={s2[:200]!r}")
+        # 历史区不再有「（更早对话）」滑窗摘要区（该形态只属于 quick/分支装配）
+        self.assertEqual(_digest_end(turn_t), 0)
 
     def test_same_state_renders_identical_bytes(self):
         messages = _rounds(8)
@@ -85,17 +101,50 @@ class PrefixStabilityContextTest(unittest.TestCase):
         b = context_mod._load_session_context("s", max_rounds=3, current_prompt="同一提问")
         self.assertEqual(a, b)
 
-    def test_full_zone_demotion_is_the_only_in_zone_change(self):
-        """逐轮对比：轮到轮之间除摘要区增长/最老全文轮降级外，全文区消息字节不变。"""
-        messages = _rounds(5)
+    def test_last_assistant_full_text_lives_in_tail_block(self):
+        """最近一条 assistant 全文不在历史区、在 linear_active_content_block
+        尾部块（与树路径 tree_active_content_block 同构）；user 提问保持原文。"""
+        big = "磁通量变化产生感应电动势。" * 200
+        messages = [
+            {"role": "user", "content": "什么是电磁感应", "timestamp": 1},
+            {"role": "assistant", "content": big, "timestamp": 2},
+            {"role": "user", "content": "再讲讲楞次定律", "timestamp": 3},
+        ]
         context_mod._load_messages = lambda sid: messages
-        prev = context_mod._load_session_context("s", max_rounds=3, current_prompt="p")
-        for _ in range(3):
-            messages.extend(_rounds(1, prefix="round"))
-            nxt = context_mod._load_session_context("s", max_rounds=3, current_prompt="p")
-            stable = _digest_end(prev)
-            self.assertEqual(nxt[:stable], prev[:stable])
-            prev = nxt
+        h = context_mod._load_session_context("s", max_rounds=3, current_prompt="p")
+        joined = [str(m.get("content") or "") for m in h]
+        self.assertFalse(any(big in c for c in joined),
+                         "最近一条回答全文不应出现在历史区")
+        self.assertIn("什么是电磁感应", joined, "user 提问应保留原文")
+        self.assertIn("再讲讲楞次定律", joined, "当前轮 user 提问应保留原文")
+        block = context_mod.linear_active_content_block("s")
+        self.assertTrue(block.startswith("# 上一轮回答正文（参考资料）"))
+        self.assertIn(big, block, "最近一条回答全文应完整进入尾部块")
+
+    def test_user_birth_form_never_rewrites(self):
+        """user 出生定形：老提问原文进入历史区后字节永不改写；超限提问出生
+        即截断一次且形态稳定（旧滑窗会把老提问压成一行摘要=逐轮改写）。"""
+        long_q = "为什么" * 1000  # 3000 字 < 4000，不触发截断
+        messages = _rounds(2) + [
+            {"role": "user", "content": long_q, "timestamp": 10},
+            {"role": "assistant", "content": "回答", "timestamp": 11},
+        ]
+        context_mod._load_messages = lambda sid: messages
+        h1 = context_mod._load_session_context("s", max_rounds=3, current_prompt="p1")
+        self.assertIn(long_q, [str(m.get("content") or "") for m in h1])
+        messages.extend(_rounds(1, prefix="new"))
+        h2 = context_mod._load_session_context("s", max_rounds=3, current_prompt="p2")
+        self.assertIn(long_q, [str(m.get("content") or "") for m in h2],
+                      "老提问在后续轮次被改写")
+
+        huge_q = "问" * 5000
+        messages2 = [
+            {"role": "user", "content": huge_q, "timestamp": 1},
+            {"role": "assistant", "content": "答", "timestamp": 2},
+        ]
+        context_mod._load_messages = lambda sid: messages2
+        h3 = context_mod._load_session_context("s", max_rounds=3, current_prompt="p")
+        self.assertEqual(str(h3[0].get("content")), huge_q[:context_mod._CONTEXT_MAX_USER_CHARS] + "\n…（已截断）")
 
     def test_viz_rendering_pinned_to_trigger_prompt(self):
         big_viz = ("<viz><html>" + "<div>x</div>" * 3000 + "</html></viz>")
@@ -104,7 +153,7 @@ class PrefixStabilityContextTest(unittest.TestCase):
             {"role": "assistant", "content": "讲解" + big_viz, "timestamp": 2},
             {"role": "user", "content": "接下来讲讲阻尼", "timestamp": 3},
         ]
-        # 触发提问要可视化，当前提问不要 → 保留摘要形态
+        # 触发提问要可视化，当前提问不要 → 保留摘要形态（旧窗口装配，quick/分支/滚动记忆仍走此函数）
         keep = context_mod._recent_context_messages(messages, 3, False, current_prompt="接下来讲讲阻尼")
         # 触发提问要可视化，当前提问也要 → 同一字节（旧实现会随当前提问翻转）
         keep2 = context_mod._recent_context_messages(messages, 3, False, current_prompt="这个图里动画怎么看")
@@ -119,15 +168,42 @@ class PrefixStabilityContextTest(unittest.TestCase):
         out = context_mod._recent_context_messages(plain, 3, False, current_prompt="做个可视化看看")
         self.assertTrue(any(context_mod.VIZ_PLACEHOLDER in str(m.get("content")) for m in out))
 
-    def test_budget_shrink_never_sacrifices_last_full_message(self):
-        big = "物" * 4000
-        messages = [
-            {"role": "user", "content": "请解释", "timestamp": 1},
-            {"role": "assistant", "content": big, "timestamp": 2},
+    def test_linear_tail_block_viz_anchored_to_trigger(self):
+        """线性尾部块的 viz 折叠同样锚定触发提问：函数根本不接收当前提问，
+        结构上杜绝了「占位符↔摘要」随当前提问翻转。"""
+        big_viz = "<viz><html>" + "<div>x</div>" * 3000 + "</html></viz>"
+        context_mod._load_messages = lambda sid: [
+            {"role": "user", "content": "给我做一个弹簧振动可视化", "timestamp": 1},
+            {"role": "assistant", "content": "讲解" + big_viz, "timestamp": 2},
         ]
-        out = context_mod._recent_context_messages(messages, 3, False, current_prompt="p", budget_tokens=100)
-        self.assertTrue(out and str(out[-1].get("content")) == big,
-                        "最后一条完整消息被预算收缩牺牲：" + str([len(str(m.get('content'))) for m in out]))
+        b_want = context_mod.linear_active_content_block("s")
+        self.assertIn("[交互可视化摘要]", b_want)
+        self.assertNotIn(context_mod.VIZ_PLACEHOLDER, b_want)
+        context_mod._load_messages = lambda sid: [
+            {"role": "user", "content": "讲讲弹簧", "timestamp": 1},
+            {"role": "assistant", "content": "讲解" + big_viz, "timestamp": 2},
+        ]
+        b_plain = context_mod.linear_active_content_block("s")
+        self.assertIn(context_mod.VIZ_PLACEHOLDER, b_plain)
+
+    def test_budget_drops_head_never_rewrites(self):
+        """预算收缩只从头部逐条丢弃（低频一次性），不截断改写任何消息、
+        最后一条永不牺牲（旧滑窗会把消息截成 content[:200]+标记 的改写形态）。"""
+        big = "物" * 3000
+        messages = [
+            {"role": "user", "content": "第一问", "timestamp": 1},
+            {"role": "assistant", "content": big, "timestamp": 2},
+            {"role": "user", "content": "第二问", "timestamp": 3},
+            {"role": "assistant", "content": big, "timestamp": 4},
+        ]
+        out = context_mod._recent_context_append_only(messages, budget_tokens=100)
+        self.assertTrue(out, "预算收缩后至少保留最后一条")
+        self.assertEqual(out[-1]["role"], "assistant")
+        for m in out:
+            self.assertNotIn("（已截断）", str(m.get("content") or ""),
+                             "预算收缩不得产生截断改写")
+        # 收缩必然发生（出生形态合计远超 100 token）：头部消息已被褪去
+        self.assertLess(len(out), 4)
 
 
 def _tree_msgs():
@@ -317,6 +393,40 @@ class AssemblyShapeTest(RouteTestBase):
         self.assertIn(physics_full, tail_text)
         self.assertEqual(str(messages[1].get("content")), "什么是电磁感应",
                          "user 路径节点应保持全文")
+
+    def test_linear_request_full_text_in_tail_user_message(self):
+        """线性拍板端到端（2026-09-25）：最近一条回答全文只在尾部 <上下文> 块，
+        历史区只有摘要；user 提问保持原文。"""
+        big = "磁通量变化产生感应电动势。" * 300
+        msgs = [
+            {"role": "user", "content": "什么是电磁感应", "timestamp": 1},
+            {"role": "assistant", "content": big, "timestamp": 2},
+            {"role": "user", "content": "再讲讲楞次定律", "timestamp": 3},
+        ]
+        seen = {}
+
+        def handler(request):
+            seen["body"] = json.loads(request.content.decode())
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        with mock.patch.object(context_mod, "_load_messages", return_value=msgs):
+            resp = self._post_chat({"session_id": "s_linear_http", "prompt": "那自感呢"}, handler)
+        self.assertEqual(resp.status_code, 200)
+        messages = seen["body"]["messages"]
+        self.assertEqual(messages[0]["role"], "system")
+        for m in messages[1:-1]:
+            self.assertNotIn(big, str(m.get("content") or ""),
+                             "历史区不应出现最近一条回答全文")
+        tail_text = str(messages[-1].get("content") or "")
+        self.assertTrue(tail_text.startswith("<上下文>"), "线性易变注入应集中末条 user 消息")
+        self.assertIn("# 上一轮回答正文（参考资料）", tail_text)
+        self.assertIn(big, tail_text)
+        self.assertEqual(str(messages[1].get("content")), "什么是电磁感应",
+                         "user 提问应保持原文")
+        second = str(messages[2].get("content"))
+        self.assertLess(len(second), 300, "历史区 assistant 应为摘要形态")
+        self.assertTrue(big.startswith(second.rstrip("…")),
+                        "摘要应是全文的确定性头部截断")
 
 
 class BucketHeaderTest(RouteTestBase):
