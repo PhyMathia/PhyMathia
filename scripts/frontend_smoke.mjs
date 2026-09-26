@@ -1830,6 +1830,70 @@ check('graph-continent: v10 补词建议（建议行转义完整 / 两个落笔�
   return true;
 });
 
+check('graph-continent: v10 新族候选（Φ 起名契约判读 / 名单外领域降级 / 缓存命中省 API / 行转义）', () => {
+  const msgs = sandbox._continentNameMessages;
+  const parse = sandbox._continentParseNameVerdict;
+  const hit = sandbox._continentClusterCacheHit;
+  const row = sandbox._continentClusterRowHtml;
+  for (const [name, fn] of [['消息构造', msgs], ['判读', parse], ['缓存命中', hit], ['候选行', row]]) {
+    if (typeof fn !== 'function') throw new Error(`新族候选纯函数未暴露（${name}）`);
+  }
+  const cluster = { key: 'k1', size: 3, cards: [
+    { id: 'a', title: '纳什均衡', summary: '' },
+    { id: 'b', title: '囚徒困境', summary: '' },
+    { id: 'c', title: '占优策略', summary: '' }] };
+  const known = ['概率统计', '微积分'];
+  // 消息契约：JSON 输出格式在 system 与 user 两条都写；名单在 user 里
+  const m = msgs(cluster, known);
+  if (m.length !== 2 || m[0].role !== 'system' || m[1].role !== 'user') throw new Error('消息必须是 system+user 两条');
+  for (const msg of m) {
+    if (!msg.content.includes('verdict') || !msg.content.includes('terms')) throw new Error('输出契约没在两条消息里都约定');
+  }
+  if (!m[1].content.includes('概率统计') || !m[1].content.includes('纳什均衡')) throw new Error('名单/证据卡没进 user 消息');
+  // 判读：围栏 + 思考块都能剥；merge 名单外 → 降级 none；new 撞名 → 降级 merge
+  const fenced = '让我想想\n```json\n{"verdict":"new","name":"博弈论","terms":["纳什均衡","纳什均衡","水"],"reason":"三卡同源"}\n```';
+  const v = parse(fenced, known);
+  if (!v || v.verdict !== 'new' || v.name !== '博弈论') throw new Error('围栏 JSON 没判出来');
+  if (v.terms.join(',') !== '纳什均衡') throw new Error('词条没去重/没滤短');
+  const badMerge = parse('{"verdict":"merge","name":"不存在的领域","terms":["x"],"reason":""}', known);
+  if (!badMerge || badMerge.verdict !== 'none') throw new Error('名单外的 merge 没降级 none（专家名单固定的铁律）');
+  const collide = parse('{"verdict":"new","name":"概率统计","terms":["期望"],"reason":""}', known);
+  if (!collide || collide.verdict !== 'merge' || collide.name !== '概率统计') throw new Error('new 撞已知名没降级 merge');
+  if (parse('不是 JSON', known) !== null) throw new Error('非 JSON 应返回 null');
+  // 缓存命中：精确 key + 重叠 ≥ 六成复用（省 API 钱）+ 不重叠不认
+  const named = { k1: { verdict: 'new', name: '博弈论', terms: ['纳什均衡'], cards: ['a', 'b', 'c'] } };
+  if (!hit(cluster, named)) throw new Error('精确 key 没命中');
+  const grown = { key: 'k9', size: 4, cards: cluster.cards.concat([{ id: 'd', title: '重复博弈' }]) };
+  if (!hit(grown, named)) throw new Error('长大的同簇没按重叠命中（会重复烧 API）');
+  const other = { key: 'k2', size: 3, cards: [{ id: 'x', title: 'a' }, { id: 'y', title: 'b' }, { id: 'z', title: 'c' }] };
+  if (hit(other, named)) throw new Error('不相干簇不该命中缓存');
+  // 行渲染：未起名有「让 Φ 起名」；new 态有「建族」；全部插值转义
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    if (!row(cluster, null, null).includes('让 Φ 起名')) throw new Error('未起名态缺「让 Φ 起名」按钮');
+    const newRow = row(cluster, named.k1, null);
+    if (!newRow.includes('建族') || !newRow.includes('博弈论')) throw new Error('new 态缺建族按钮/名字');
+    if (row(cluster, { verdict: 'none', reason: '太散' }, null).includes('建族')) throw new Error('none 态不该出现建族');
+    if (row(cluster, null, { cards: 0, at: 1 }).includes('上次你拒过') === false) throw new Error('拒后再提的标记没渲染');
+  } finally { sandbox.escapeHtml = realEsc; }
+  const evil = (() => {
+    sandbox.escapeHtml = undefined;
+    try { return row({ key: 'k', size: 3, cards: [{ id: 'a', title: '<script>' }] }, null, null); }
+    finally { sandbox.escapeHtml = t => (t == null ? '' : String(t)); }
+  })();
+  if (evil.includes('<script>')) throw new Error('候选行没转义标题（XSS）');
+  // 静态契约：起名走 proxyChatWithModel（与问 Φ 同通道）、按钮触发（不自动）、
+  // 建族写族表 KV 通道
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  if (!code.includes('data-cluster-section')) throw new Error('族表弹层缺新领域候选区容器');
+  if (!code.includes('_continentNameMessages(cluster, knownNames)')) throw new Error('起名调用没走消息构造纯函数');
+  if (!code.includes('data-cluster-create')) throw new Error('建族落笔口缺失');
+  return true;
+});
+
 check('graph-continent: 航线备注标签落在线上（曾因 arc.qx undefined 算成 NaNpx 飘到世界层左上角）', () => {
   const route = sandbox._continentRoute;
   const mid = sandbox._continentLinkMid;

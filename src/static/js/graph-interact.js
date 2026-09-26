@@ -68,7 +68,7 @@ function renderGraphCanvas(streaming) {
     + '<button class="graph-tool-btn" onclick="autoArrangeGraph()" title="自动整理">⌗</button>'
     + '<button class="graph-tool-btn graph-harness-btn" onclick="toggleGraphPet()" title="Φ 网络助手" aria-label="Φ 网络助手" aria-pressed="true">'
     + '<span class="graph-harness-btn-phi">Φ</span></button>'
-    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" title="导出超高清图片（PNG）" aria-label="导出超高清图片">'
+    + '<button class="graph-tool-btn graph-export-btn" onclick="toggleGraphExportMenu()" title="导出" aria-label="导出超高清图片">'
     + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>'
     + '</svg></button>';
