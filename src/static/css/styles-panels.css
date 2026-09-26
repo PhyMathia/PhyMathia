@@ -3201,14 +3201,24 @@
  * 三件事叠起来才立得住：① 竖向渐变（上亮下暗，中间最透）给出体积；
  * ② 顶边 1px 内高光把「描边」读成「崖沿」；③ 落地投影把岛从底图上托起来。
  * 渐变形状只写这一遍，档位（solid / light / pending / 无归属）只改 --fill-* 四件套
- * ——以前每档各写一遍 background，加质感时四份渐变要同步改，必漏。 */
+ * ——以前每档各写一遍 background，加质感时四份渐变要同步改，必漏。
+ *
+ * v8.6 填色（backlog T26）：**这三条质感全都只作用在那条 1px 描边上**，所以陆块的
+ * 形状仍然 100% 靠「描了个边」传达 —— 5a 的圆角和 5b 的真海岸线两次尝试都栽在这里
+ * （换形状不解决「没有实体」）。真正的病根是填充只有 5%~15% 不透明度。
+ * 这一版补三件事：① --fill-* 整体抬到约 1.45 倍，让陆块不透底图；
+ * ② **岸带** `inset 0 0 0 5px`——沿内侧一圈的实色带（零模糊 = 硬边，跟着 border-radius
+ *    走）。这一手是让形状脱离「描边读法」最有效的：描边是**线**，岸带是**面**，
+ *    线画出来永远是框，面才读成地。③ 向内衰减 `inset 0 0 26px`——边缘亮、中心沉，
+ *    给出「近岸浅、内陆深」的纵深。两条 inset 阴影都必须写在顶边高光**之后**
+ *    （box-shadow 是「先写的盖在后面」，顺序反了顶边高光会被埋掉）。 */
 .continent-cluster {
   --fill-h: var(--region-h, 225);
   --fill-s: 50%;
   --fill-l: 62%;
-  --fill-1: 0.15;
-  --fill-2: 0.055;
-  --fill-3: 0.085;
+  --fill-1: 0.22;
+  --fill-2: 0.085;
+  --fill-3: 0.13;
   position: absolute;
   /* v8.4 海岸线：--r-coast 由 JS 按 sessionId 哈希出 8 值椭圆角，没设时回落到今天的定值。
    * 只动圆角，位置与尺寸一个像素没改——所以下面的投影/描边/hover 全部原样工作。 */
@@ -3221,7 +3231,9 @@
   box-shadow:
     0 12px 32px rgba(0, 0, 0, 0.34),
     0 2px 6px rgba(0, 0, 0, 0.20),
-    inset 0 1px 0 hsla(var(--region-h, 225), 60%, 82%, 0.14);
+    inset 0 1px 0 hsla(var(--region-h, 225), 60%, 82%, 0.14),
+    inset 0 0 0 5px hsla(var(--fill-h), 46%, 76%, 0.13),
+    inset 0 0 26px hsla(var(--fill-h), 50%, 70%, 0.12);
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -3229,14 +3241,18 @@
   --fill-h: var(--region-h, 30);
   --fill-s: 52%;
   --fill-l: 55%;
-  --fill-1: 0.16;
-  --fill-2: 0.06;
-  --fill-3: 0.10;
-  /* 浅底上深色投影会显脏：压到几乎不可见，改用「描边加重 + 极浅的落影」立形 */
+  --fill-1: 0.24;
+  --fill-2: 0.09;
+  --fill-3: 0.15;
+  /* 浅底上深色投影会显脏：压到几乎不可见，改用「描边加重 + 极浅的落影」立形。
+   * 岸带在浅底上要**反过来用暗色**——深底上岸是「亮的一圈」，浅底上就该是「暗的一圈」，
+   * 同样是「近岸浅内陆深」，只是明度极性反过来。 */
   box-shadow:
     0 6px 18px rgba(90, 70, 30, 0.13),
     0 1px 3px rgba(90, 70, 30, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 0 5px hsla(var(--fill-h), 45%, 38%, 0.10),
+    inset 0 0 24px hsla(var(--fill-h), 45%, 44%, 0.11);
 }
 .continent-cluster:hover { border-color: var(--accent); }
 /* v5.4 岛牌两行：标题行（画布名 + 概念数）+ 副行（前 3 个概念名 + 最近更新）——
@@ -3713,7 +3729,7 @@
   /* v8.4 海岸线：--r-coast 由 JS 按 regionKey 哈希出 8 值椭圆角，没设时回落到今天的定值 */
   border-radius: var(--r-coast, var(--r-xl));
   border: 1.5px solid hsla(var(--region-h, 220), 46%, 60%, 0.28);
-  background: hsla(var(--region-h, 220), 52%, 58%, 0.055);
+  background: hsla(var(--region-h, 220), 52%, 58%, 0.08);
   box-shadow:
     0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10),
     inset 0 0 46px hsla(var(--region-h, 220), 55%, 60%, 0.09);
@@ -3721,7 +3737,7 @@
 }
 [data-theme="light"] .continent-region {
   border-color: hsla(var(--region-h, 30), 48%, 45%, 0.34);
-  background: hsla(var(--region-h, 30), 55%, 55%, 0.09);
+  background: hsla(var(--region-h, 30), 55%, 55%, 0.12);
   /* 浅底上大面积外辉光会糊成一片黄雾：改成向内的柔边，把「海岸」读成纸边 */
   box-shadow:
     0 0 34px hsla(var(--region-h, 30), 60%, 55%, 0.10),
@@ -3771,45 +3787,45 @@
 /* 岛底板跟海域走：solid 实色、light 更淡、pending 中性灰不划地盘（「不确定也要可见」）
  * v8.1：档位只改 --fill-* 与描边，渐变与投影由基类统一给（见 .continent-cluster） */
 .continent-cluster.has-region {
-  --fill-1: 0.18;
-  --fill-2: 0.07;
-  --fill-3: 0.11;
+  --fill-1: 0.26;
+  --fill-2: 0.10;
+  --fill-3: 0.16;
   border-color: hsla(var(--region-h, 220), 46%, 62%, 0.42);
 }
 .continent-cluster.has-region.r-light {
-  --fill-1: 0.10;
-  --fill-2: 0.04;
-  --fill-3: 0.065;
+  --fill-1: 0.15;
+  --fill-2: 0.058;
+  --fill-3: 0.095;
   border-color: hsla(var(--region-h, 220), 40%, 62%, 0.3);
 }
 .continent-cluster.r-pending {
   --fill-h: 220;
   --fill-s: 12%;
   --fill-l: 58%;
-  --fill-1: 0.10;
-  --fill-2: 0.04;
-  --fill-3: 0.06;
+  --fill-1: 0.15;
+  --fill-2: 0.058;
+  --fill-3: 0.088;
   border-style: dashed;
 }
 [data-theme="light"] .continent-cluster.has-region {
-  --fill-1: 0.20;
-  --fill-2: 0.08;
-  --fill-3: 0.12;
+  --fill-1: 0.29;
+  --fill-2: 0.115;
+  --fill-3: 0.175;
   border-color: hsla(var(--region-h, 30), 46%, 45%, 0.45);
 }
 [data-theme="light"] .continent-cluster.has-region.r-light {
-  --fill-1: 0.12;
-  --fill-2: 0.05;
-  --fill-3: 0.08;
+  --fill-1: 0.175;
+  --fill-2: 0.072;
+  --fill-3: 0.115;
   border-color: hsla(var(--region-h, 30), 40%, 45%, 0.34);
 }
 [data-theme="light"] .continent-cluster.r-pending {
   --fill-h: 34;
   --fill-s: 14%;
   --fill-l: 52%;
-  --fill-1: 0.12;
-  --fill-2: 0.05;
-  --fill-3: 0.08;
+  --fill-1: 0.175;
+  --fill-2: 0.072;
+  --fill-3: 0.115;
 }
 
 /* 领域徽标（岛牌上的归类入口）与次领域色点 */
