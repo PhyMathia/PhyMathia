@@ -3755,6 +3755,485 @@ check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现�
   return true;
 });
 
+// ===== v8.1 有机抖动层：几何断言同步跑，不 await、不碰共享会话键 =====
+// 抖动是这一轮唯一会动坐标的东西，所以它的正确性全靠这里钉住。核心不变量四条：
+// ① 确定性（同输入逐字节一致，否则刷新页面位置乱跳）；② 岛不重叠（否则点错岛）；
+// ③ 岛在板内、卡在岛内（否则岛牌与卡脱节、点岛屿进的是空处）；④ 世界罩住一切。
+check('graph-continent: v8.1 有机抖动层（确定性 / 不重叠 / 岛在板内 / 卡在岛内 / 世界罩住 / 网格态归零）', () => {
+  const jitter = sandbox._continentJitter;
+  const j1 = sandbox._continentJitter1;
+  const regionLayout = sandbox._continentRegionLayout;
+  const regions = sandbox._continentRegions;
+  if (typeof jitter !== 'function' || typeof j1 !== 'function'
+      || typeof regionLayout !== 'function' || typeof regions !== 'function') {
+    throw new Error('v8.1 纯函数未暴露（jitter / jitter1 / regionLayout / regions）');
+  }
+  const store = sandbox.localStorage;
+  const STYLE_KEY = 'phymathia_continent_style';
+  const prevMode = store.getItem(STYLE_KEY);
+  const setMode = v => store.setItem(STYLE_KEY, v);
+
+  // 伪随机源：确定性 + 值域 [-1,1] + 两轴互不相关（走出对角线的斜排就没了）
+  for (const k of ['a', 'sess_1', 'ki_9f3', '矢量分析', '']) {
+    if (j1(k, 'x') !== j1(k, 'x')) throw new Error('伪随机源不确定：' + k);
+    for (const s of ['x', 'y', 'r']) {
+      const v = j1(k, s);
+      if (!Number.isFinite(v) || v < -1 || v > 1) throw new Error('伪随机值越界：' + k + '/' + s + '=' + v);
+    }
+    if (j1(k, 'x') === j1(k, 'y')) throw new Error('两轴同值（会走对角线）：' + k);
+  }
+
+  const cl = (sid, domain, conf, n) => ({
+    sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
+    itemCount: n, items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 验收口径：3 座矢量分析岛（其中一座 9 张卡 = 满格 3x3）+ 3 座散岛，覆盖两条路径
+  const clusters = [
+    cl('v1', '矢量分析', 0.95, 9), cl('v2', '矢量分析', 0.8, 4), cl('v3', '矢量分析', 0.5, 2),
+    cl('keep', '守恒定律', 0.98, 1), cl('none', null, 0, 3), cl('unsure', '量子力学', 0.33, 1),
+  ];
+  const info = regions(clusters, { renames: {}, assign: {} }, ['矢量分析', '守恒定律', '量子力学']);
+  const raw = regionLayout(info.regions, info.bySid, clusters, [], []);
+  const itemSession = {};
+  const regionOfSession = {};
+  clusters.forEach(c => {
+    (c.items || []).forEach(it => { itemSession[it.itemId] = c.sessionId; });
+    regionOfSession[c.sessionId] = (info.bySid[c.sessionId] || {}).key || '';
+  });
+
+  const EPS = 1e-6;
+  const overlaps = (a, b) => a.x < b.x + b.w - EPS && a.x + a.w > b.x + EPS
+    && a.y < b.y + b.h - EPS && a.y + a.h > b.y + EPS;
+  const insideOf = (r, box) => r.x >= box.x - EPS && r.y >= box.y - EPS
+    && r.x + r.w <= box.x + box.w + EPS && r.y + r.h <= box.y + box.h + EPS;
+
+  try {
+    setMode('organic');
+    // ① 确定性：同输入两次抖动逐字节一致（位置带信息，刷新跳一下就是 bug）
+    const a = jitter(raw, itemSession, regionOfSession);
+    const b = jitter(raw, itemSession, regionOfSession);
+    if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error('抖动不确定（同输入两次输出不同）');
+    if (!a.organic) throw new Error('有机态没标 organic');
+    // 真的动了：每个矩形都应与未抖动值不同，否则这层等于没接上
+    const moved = a.clusterRects.filter((r, i) =>
+      r.x !== raw.clusterRects[i].x || r.y !== raw.clusterRects[i].y).length;
+    if (moved !== a.clusterRects.length) throw new Error('有岛没被抖动（' + moved + '/' + a.clusterRects.length + '）');
+
+    // ② 世界尺寸一个像素都不许长（v8.1 踩坑点）：世界一大，适配 zoom 就被压小，
+    // 跌过 CONTINENT_LOD_WORLD=0.55 会把概念卡整档隐藏，「开图点得到卡」当场断。
+    // 抖动必须完全装进布局原有的 60px 白边里。
+    if (a.worldW !== raw.worldW || a.worldH !== raw.worldH) {
+      throw new Error('抖动把世界撑大了（zoom/LOD 会跟着变）：'
+        + raw.worldW + 'x' + raw.worldH + ' → ' + a.worldW + 'x' + a.worldH);
+    }
+    // ③ 一切仍在世界界内（外伸必须装得下 60px 白边）
+    for (const r of a.clusterRects) {
+      if (r.x < 0 || r.y < 0 || r.x + r.w > a.worldW || r.y + r.h > a.worldH) {
+        throw new Error('岛出世界边界：' + r.sessionId);
+      }
+    }
+    for (const r of a.regionRects) {
+      if (r.x < 0 || r.y < 0 || r.x + r.w > a.worldW || r.y + r.h > a.worldH) {
+        throw new Error('海域板出世界边界：' + r.key);
+      }
+    }
+
+    // ③ 岛两两不重叠（重叠 = 点到 A 命中 B）
+    for (let i = 0; i < a.clusterRects.length; i++) {
+      for (let j = i + 1; j < a.clusterRects.length; j++) {
+        if (overlaps(a.clusterRects[i], a.clusterRects[j])) {
+          throw new Error('抖动后两岛重叠：' + a.clusterRects[i].sessionId + ' × ' + a.clusterRects[j].sessionId);
+        }
+      }
+    }
+    // ④ 岛完整落在自己海域板内（板按 CONTINENT_JITTER_ISLAND 外扩就是为了这条）
+    const plateOf = {};
+    a.regionRects.forEach(p => { plateOf[p.key] = p; });
+    a.clusterRects.forEach(r => {
+      const key = regionOfSession[r.sessionId];
+      const p = key && plateOf[key];
+      if (p && !insideOf(r, p)) throw new Error('岛捅出海域板：' + r.sessionId);
+    });
+    // ⑤ 卡完整落在自己岛内，且同一岛的卡两两不重叠
+    const islandOf = {};
+    a.clusterRects.forEach(r => { islandOf[r.sessionId] = r; });
+    const cardsByIsland = {};
+    Object.keys(a.placements).forEach(iid => {
+      const p = a.placements[iid];
+      const sid = itemSession[iid];
+      const isl = islandOf[sid];
+      if (!isl) throw new Error('卡找不到岛：' + iid);
+      if (!insideOf(p, isl)) throw new Error('卡越出岛：' + iid);
+      (cardsByIsland[sid] = cardsByIsland[sid] || []).push(p);
+    });
+    Object.keys(cardsByIsland).forEach(sid => {
+      const list = cardsByIsland[sid];
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          if (overlaps(list[i], list[j])) throw new Error('同岛两卡重叠：' + sid);
+        }
+      }
+    });
+    // 卡片尺寸不许被抖动改掉（命中框与 DOM 的 160x46 是一份契约）
+    Object.keys(a.placements).forEach(iid => {
+      if (a.placements[iid].w !== raw.placements[iid].w || a.placements[iid].h !== raw.placements[iid].h) {
+        throw new Error('抖动改了卡片尺寸：' + iid);
+      }
+    });
+    // 旋转角有界（1.4°，别把卡转成斜的排版事故）
+    Object.keys(a.cardRot).forEach(iid => {
+      if (Math.abs(a.cardRot[iid]) > 1.5) throw new Error('卡转角越界：' + iid + '=' + a.cardRot[iid]);
+    });
+
+    // ⑥ 网格态原样归零：逐字节回到未抖动布局（「关掉 = 今天的字节」）
+    setMode('grid');
+    const g = jitter(raw, itemSession, regionOfSession);
+    if (g.organic) throw new Error('网格态仍标 organic');
+    if (JSON.stringify(g.placements) !== JSON.stringify(raw.placements)) throw new Error('网格态没原样穿透 placements');
+    if (JSON.stringify(g.clusterRects) !== JSON.stringify(raw.clusterRects)) throw new Error('网格态没原样穿透 clusterRects');
+    if (JSON.stringify(g.regionRects) !== JSON.stringify(raw.regionRects)) throw new Error('网格态没原样穿透 regionRects');
+    if (g.worldW !== raw.worldW || g.worldH !== raw.worldH) throw new Error('网格态世界尺寸被改了');
+    if (Object.keys(g.cardRot).length !== 0) throw new Error('网格态不该有转角');
+    // 未登记的键按默认有机（不许因为没存过就退化成网格）
+    store.removeItem(STYLE_KEY);
+    if (jitter(raw, itemSession, regionOfSession).organic !== true) throw new Error('未设过画风时没落到默认有机');
+  } finally {
+    if (prevMode === null || prevMode === undefined) store.removeItem(STYLE_KEY);
+    else store.setItem(STYLE_KEY, prevMode);
+  }
+
+  // 静态契约：抖动层**只**从 _continentRender 进，布局纯函数里一根毛都不许有——
+  // 挪进去会让「3 卡岛宽===536 / 1 卡岛宽>=240 / 卡块内居中 / 世界罩住 / 两次
+  // 逐字节一致」五条冻结断言当场红（docs/dev/concept-continent.md v8.1）
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const jitStart = src.indexOf('// ---------- v8.1 有机抖动层');
+  const body = src.slice(src.indexOf('function _continentLayoutGrid'), jitStart);
+  if (/JITTER|_continentJitter/.test(body)) throw new Error('抖动混进了布局纯函数（会毁掉冻结布局契约）');
+  const callSites = (src.replace(/function _continentJitter\(/, '')
+    .match(/(?<![A-Za-z0-9_])_continentJitter\(/g) || []).length;
+  if (callSites !== 1) throw new Error('抖动层调用点应恰好 1 处（_continentRender），实际 ' + callSites);
+  // 剥掉行注释再查——抖动层自己的注释里就写着「绝不用 Math.random()」，不剥会自我举报
+  const jitCode = src.slice(jitStart, src.indexOf('// ---------- 数据 ----------'))
+    .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  if (/Math\.random/.test(jitCode)) {
+    throw new Error('抖动层用了 Math.random（位置会每次刷新乱跳）');
+  }
+  // 渲染层接线：下游吃抖动后的数据（城市/辐条/航线不脱节的唯一保证）
+  const renderSrc = src.slice(src.indexOf('function _continentRender'));
+  ['layout = _continentJitter(layout, itemSession, regionOfSession)',
+   '_continentDrawPlan(data.shared || [], layout.placements'].forEach(frag => {
+    if (!renderSrc.includes(frag)) throw new Error('渲染层未接抖动：' + frag);
+  });
+  // 质感层：噪点 + 渐变 + 投影 + 转角变量，深浅两套都要有
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  ['.continent-grain', 'linear-gradient(180deg', 'rotate(var(--jr',
+   '[data-theme="light"] .continent-cluster', '[data-theme="light"] .continent-node',
+   '[data-theme="light"] .continent-region', '.continent-tool.is-on'].forEach(sel => {
+    if (!css.includes(sel)) throw new Error('质感层缺失：' + sel);
+  });
+  if (!/pointer-events:\s*none/.test(css.slice(css.indexOf('.continent-grain')))) {
+    throw new Error('噪点层没关指针事件（会挡住画布拖拽）');
+  }
+  return true;
+});
+
+// ===== v8.2 岛内末行居中：几何断言同步跑，不 await、不碰共享会话键 =====
+check('graph-continent: v8.2 岛内末行按行居中（残行左右对称 / 满行逐字节不变 / 岛宽世界宽不动）', () => {
+  const layout = sandbox._continentLayoutClusters;
+  if (typeof layout !== 'function') throw new Error('_continentLayoutClusters 未暴露');
+  const cl = (sid, n) => ({
+    sessionId: sid, title: sid, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  const PW = 160, GAP = 10, PAD = 18, MINW = 240, MARGIN = 60;
+  const wantW = n => Math.max(PAD * 2 + Math.min(3, Math.max(1, n)) * PW + (Math.min(3, Math.max(1, n)) - 1) * GAP, MINW);
+  const run = n => {
+    const lay = layout([cl('A', n)]);
+    return { lay, rect: lay.clusterRects[0] };
+  };
+
+  // 岛宽仍按**满列**算：末行居中只动卡的位置，块宽一个像素都不许变
+  // （块宽一变 → 世界尺寸变 → zoom 变 → 跌过 0.55 会把卡整档隐藏，见 v8.1 教训）
+  for (const n of [1, 2, 3, 4, 5, 7, 9]) {
+    const { rect } = run(n);
+    if (rect.w !== wantW(n)) throw new Error(n + ' 卡岛宽被改了：' + rect.w + ' ≠ ' + wantW(n));
+  }
+  // 满行岛（1/2/3/6/9 张）逐字节不变：首卡仍按满列网格居中
+  for (const n of [1, 2, 3, 6, 9]) {
+    const { lay, rect } = run(n);
+    const cols = Math.min(3, n);
+    const expect = rect.x + (rect.w - (cols * PW + (cols - 1) * GAP)) / 2;
+    if (Math.abs(lay.placements['A_0'].x - expect) > 1e-9) throw new Error(n + ' 卡满行岛首卡位移了');
+  }
+  // 3 卡岛另钉一条：块宽=网格宽+2×PAD 时首卡恰在 x+PAD（v5.2 老口径，满行仍成立）
+  {
+    const { lay, rect } = run(3);
+    if (rect.w !== PAD * 2 + 3 * PW + 2 * GAP) throw new Error('3 卡岛宽不再是 536');
+    if (Math.abs(lay.placements['A_0'].x - (rect.x + PAD)) > 1e-9) {
+      throw new Error('3 卡岛首卡不再落在 x+PAD');
+    }
+  }
+  // 残行左右对称：5 卡岛第 2 行只有 2 张，旧公式左对齐会右侧空 206px
+  {
+    const { lay, rect } = run(5);
+    const a = lay.placements['A_3'], b = lay.placements['A_4'];
+    const left = a.x - rect.x;
+    const right = rect.x + rect.w - (b.x + b.w);
+    if (Math.abs(left - right) > 1e-9) throw new Error('5 卡岛末行没居中：左 ' + left + ' 右 ' + right);
+    if (Math.abs(left - 103) > 1e-9) throw new Error('5 卡岛末行位移应为 103，实际 ' + left);
+  }
+  // 4 卡 / 7 卡岛：末行 1 张，应正居中
+  for (const n of [4, 7]) {
+    const { lay, rect } = run(n);
+    const last = lay.placements['A_' + (n - 1)];
+    const left = last.x - rect.x;
+    const right = rect.x + rect.w - (last.x + last.w);
+    if (Math.abs(left - right) > 1e-9) throw new Error(n + ' 卡岛末行没居中');
+    if (Math.abs(left - 188) > 1e-9) throw new Error(n + ' 卡岛末行位移应为 188，实际 ' + left);
+  }
+  // 每行内部仍是等距的 3 列（居中不许把行内卡距也改了）
+  {
+    const { lay } = run(9);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 2; c++) {
+        const d = lay.placements['A_' + (r * 3 + c + 1)].x - lay.placements['A_' + (r * 3 + c)].x;
+        if (d !== PW + GAP) throw new Error('行内卡距被改了：' + d);
+      }
+    }
+  }
+  // 卡仍完整在岛内、且互不重叠（末行右移后不能顶出岛右沿）
+  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+    const { lay, rect } = run(n);
+    for (let j = 0; j < n; j++) {
+      const p = lay.placements['A_' + j];
+      if (p.x < rect.x - 1e-9 || p.x + p.w > rect.x + rect.w + 1e-9
+          || p.y < rect.y - 1e-9 || p.y + p.h > rect.y + rect.h + 1e-9) {
+        throw new Error(n + ' 卡岛的第 ' + j + ' 张卡越出岛');
+      }
+      if (j > 0) {
+        const q = lay.placements['A_' + (j - 1)];
+        const ov = p.x < q.x + q.w - 1e-9 && p.x + p.w > q.x + 1e-9
+          && p.y < q.y + q.h - 1e-9 && p.y + p.h > q.y + 1e-9;
+        if (ov) throw new Error(n + ' 卡岛第 ' + (j - 1) + '/' + j + ' 张卡重叠');
+      }
+    }
+  }
+  // 世界尺寸不受影响
+  {
+    const { lay } = run(5);
+    if (lay.worldW !== Math.max(400, wantW(5) + MARGIN * 2)) {
+      throw new Error('世界宽被末行居中影响了：' + lay.worldW);
+    }
+  }
+  return true;
+});
+
+// ===== v8.3 岛间距按亲缘强度分级：几何断言同步跑，不 await、不碰共享会话键 =====
+// 这条改的是布局核心，红线有两条：
+//   ① **总宽守恒** —— 有亲缘时 worldW/worldH 必须与定值 150 布局**逐字节相等**。
+//      世界一大 → 适配 zoom 变小 → 跌过 0.55 → 世界档把卡整档 display:none
+//      → 真机旅程当场断（v8.1 踩过，10/10 → 8/10）。
+//   ② **无亲缘时逐字节旧行为** —— 现有所有 fixture 都传空 shared/userEdges，
+//      它们必须一条都不受影响，否则「0 条现有断言会红」这个前提是假的。
+check('graph-continent: v8.3 岛间距按亲缘分级（强亲缘更近 / 总宽守恒 / 无亲缘逐字节旧行为）', () => {
+  const layout = sandbox._continentLayoutClusters;
+  const order = sandbox._continentClusterOrder;
+  const kinOf = sandbox._continentKinship;
+  const kinGaps = sandbox._continentKinGaps;
+  if (typeof layout !== 'function' || typeof kinGaps !== 'function'
+      || typeof kinOf !== 'function' || typeof order !== 'function') {
+    throw new Error('v8.3 纯函数未暴露（layout / kinGaps / kinship / order）');
+  }
+  const cl = (sid, n) => ({
+    sessionId: sid, title: sid, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 9 座同宽 2 卡岛 → 3 列 3 行，有**两条**列边界才比得出「哪条更近」
+  // （4 座岛只有 1 条列边界，拿 gapAB/gapBD 那种比法是自找麻烦，蛇形下 D 在第 0 列）
+  const nine = 'ABCDEFGHI'.split('').map(s => cl(s, 2));
+  const noShared = [];
+  const noEdges = [];
+  // 「A↔B 强亲缘（3 条强共享 = 3 分，超过 KIN_FULL=2 直接贴到最紧），其余两两无关」
+  // shared 条目的形状照既有亲缘用例：靠 sessions 记跨会话，links 留空
+  const strong = (label, ss) => ({ kind: 'title', label, strength: 'strong', sessions: ss, links: [], owners: [] });
+  const strongAB = [strong('梯度', ['A', 'B']), strong('散度', ['A', 'B']), strong('旋度', ['A', 'B'])];
+  const sids = 'ABCDEFGHI'.split('');
+  const kinNo = kinOf(sids, noShared, noEdges);
+  const kinYes = kinOf(sids, strongAB, noEdges);
+
+  // ② 无亲缘 / 不传 kin → 逐字节旧行为（现有 fixture 全走这条路，必须一条都不受影响）
+  const base = layout(order(nine, noShared, noEdges), null, 9, kinNo);
+  if (JSON.stringify(layout(order(nine, noShared, noEdges), null, 9, kinYes ? kinOf(sids, noShared, noEdges) : kinNo)) !== JSON.stringify(base)) {
+    throw new Error('无亲缘时不是逐字节旧行为');
+  }
+  if (JSON.stringify(layout(order(nine, noShared, noEdges), null, 9)) !== JSON.stringify(base)) {
+    throw new Error('不传 kin 时不是逐字节旧行为');
+  }
+
+  // ① 有亲缘 → 世界尺寸必须一字不变
+  const graded = layout(order(nine, strongAB, noEdges), null, 9, kinYes);
+  if (graded.worldW !== base.worldW || graded.worldH !== base.worldH) {
+    throw new Error('分级间距把世界撑大了：' + base.worldW + 'x' + base.worldH
+      + ' → ' + graded.worldW + 'x' + graded.worldH);
+  }
+
+  // 间距分级本身：同宽岛排进等宽列，列间距 = 相邻两列 x 之差减一个岛宽
+  const w = graded.clusterRects[0].w;
+  if (!graded.clusterRects.every(r => r.w === w)) throw new Error('fixture 应当同宽');
+  const colX = [...new Set(graded.clusterRects.map(r => r.x))].sort((a, b) => a - b);
+  if (colX.length !== 3) throw new Error('应当是 3 列，实得 ' + colX.length);
+  const gap0 = colX[1] - (colX[0] + w);   // A|B 强亲缘那条边界
+  const gap1 = colX[2] - (colX[1] + w);   // B|C 无关那条边界
+  if (!(gap0 < gap1)) throw new Error('强亲缘的列间距没有更近：' + gap0 + ' vs ' + gap1);
+  if (gap0 < 100 - 1e-9 || gap1 > 200 + 1e-9) throw new Error('间距越界：' + gap0 + ' / ' + gap1);
+  if (Math.abs((gap0 + gap1) / 2 - 150) > 1e-9) throw new Error('两段列间距均值没守恒');
+
+  // 岛不重叠（间距下限 110 > 2×抖动 56）
+  for (let i = 0; i < graded.clusterRects.length; i++) {
+    for (let j = i + 1; j < graded.clusterRects.length; j++) {
+      const a = graded.clusterRects[i], b = graded.clusterRects[j];
+      const ov = a.x < b.x + b.w - 1e-9 && a.x + a.w > b.x + 1e-9
+        && a.y < b.y + b.h - 1e-9 && a.y + a.h > b.y + 1e-9;
+      if (ov) throw new Error('分级间距后两岛重叠：' + a.sessionId + ' × ' + b.sessionId);
+    }
+  }
+  // 世界罩得住所有岛
+  for (const r of graded.clusterRects) {
+    if (r.x < 0 || r.y < 0 || r.x + r.w > graded.worldW || r.y + r.h > graded.worldH) {
+      throw new Error('分级间距后有岛出界：' + r.sessionId);
+    }
+  }
+  // 确定性：同输入两次逐字节一致
+  if (JSON.stringify(layout(order(nine, strongAB, noEdges), null, 9, kinYes)) !== JSON.stringify(graded)) {
+    throw new Error('分级间距不确定');
+  }
+
+  // 纯函数单测：均值守恒 / 单列返回 null / 钳位
+  if (kinGaps([['A']], kinYes, 150) !== null) throw new Error('单列应返回 null');
+  if (kinGaps([['A'], ['B']], null, 150) !== null) throw new Error('无 kin 应返回 null');
+  {
+    // 三组边界，亲缘只有中间那条强 → 间距均值必须恰回 150
+    const g = kinGaps([['A'], ['B'], ['C'], ['D']], kinYes, 150);
+    if (g.length !== 3) throw new Error('间距数组长度错：' + g.length);
+    const mean = g.reduce((s, x) => s + x, 0) / g.length;
+    if (Math.abs(mean - 150) > 1e-9) throw new Error('间距均值没守恒：' + mean);
+    if (!(g[0] < 150 && g[0] >= 100)) throw new Error('强亲缘那条没更近：' + g[0]);
+  }
+  // 静态：每处 _continentLayoutGrid 调用都必须喂同一份 kin——探针与落位喂不同 kin，
+  // 板就按一套尺寸算、岛按另一套摆，岛会捅出板
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const gridCalls = (src.match(/_continentLayoutGrid\([^)]*?\)/g) || [])
+    .filter(c => c !== '_continentLayoutGrid(measured, originX, originY, kin)' || true);
+  if (gridCalls.length < 3) throw new Error('没找到 _continentLayoutGrid 的调用点');
+  const missing = gridCalls.filter(c => !/,\s*kin\s*\)$/.test(c));
+  if (missing.length) throw new Error('_continentLayoutGrid 有调用点没传 kin：' + JSON.stringify(missing));
+  if (/\.innerW\s*=\s*Math\.max\(0,\s*accX\s*-\s*CONTINENT_CLUSTER_GAP\)/.test(src)) {
+    throw new Error('innerW 还在用「accX 减定值 GAP」的旧算法');
+  }
+  return true;
+});
+
+// ===== v8.4 海岸线：每块地自己的 8 值椭圆圆角。同步跑，不 await、不碰共享会话键 =====
+// 这层只动 border-radius，布局是原封的——所以这里断言的核心不是几何，是
+// 「① 确定性 ② 网格态归零 ③ 令牌化（不许写死 px）④ 真的接进了两块地」。
+check('graph-continent: v8.4 海岸线（确定性 / 网格态归零 / 令牌化 / 岛与海域各接一处）', () => {
+  const coast = sandbox._continentCoast;
+  if (typeof coast !== 'function') throw new Error('_continentCoast 未暴露');
+  const store = sandbox.localStorage;
+  const STYLE_KEY = 'phymathia_continent_style';
+  const prevMode = store.getItem(STYLE_KEY);
+  const setMode = v => store.setItem(STYLE_KEY, v);
+  const bad = [];
+  try {
+    setMode('organic');
+    const sids = ['ki_9f3', 'ki_2a71', 'ki_44c0', '矢量分析', 'x', '', 'a|b'];
+    // ① 确定性：同一 key 永远同一条海岸线（Math.random 会当场被抓出来）
+    for (const sid of sids) {
+      for (const kind of ['island', 'region']) {
+        const a = coast(sid, kind);
+        if (a !== coast(sid, kind)) bad.push('不确定：' + sid + '/' + kind);
+      }
+    }
+    // ③ 令牌化：整串只能由 8 个 calc(var(--r-xl) * n) 加一个 ' / ' 组成，裸 px 一律
+    // 不许（否则 --r-xl 变了海岸线会漂）。注意**不能按空格切**——calc() 内部有空格。
+    const TOK = /calc\(var\(--r-xl\) \* (\d+\.\d{2})\)/g;
+    const coefs = s => {
+      const out = [];
+      let m;
+      TOK.lastIndex = 0;
+      while ((m = TOK.exec(s)) !== null) out.push(parseFloat(m[1]));
+      return out;
+    };
+    const capOf = kind => (kind === 'region' ? 1.7 : 1.35);
+    for (const sid of sids) {
+      for (const kind of ['island', 'region']) {
+        const v = coast(sid, kind);
+        if ((v.match(/ \/ /g) || []).length !== 1) { bad.push('缺 8 值椭圆的斜杠：' + sid); continue; }
+        const c = coefs(v);
+        if (c.length !== 8) { bad.push('不是 4+4 个角：' + sid + ' → ' + v); continue; }
+        if (v.replace(TOK, '').replace(/[\s/]/g, '') !== '') bad.push('串里有不走令牌的东西：' + v);
+        const hs = c.slice(0, 4), vs = c.slice(4);
+        // 顶角不许超过封顶值：板头文字在 top:8/9、left:22/10，角太大会啃掉第一个字
+        for (const t of hs.slice(0, 2)) {
+          if (t > capOf(kind) + 1e-9) bad.push('顶角超封顶（会啃板头文字）：' + sid + '/' + kind + ' → ' + t);
+        }
+        // 竖半径必须真的更小（斜角），否则退回成四个正圆，还是「同一个模子」
+        hs.forEach((t, i) => {
+          if (vs[i] > t + 1e-9) bad.push('竖半径不小于横半径：' + sid + '/' + kind);
+        });
+      }
+    }
+    // ② 参差：13 座岛不该长成一个形状（唯一的审美诉求，必须真的发生）
+    const shapes = new Set(sids.map(s => coast(s, 'island')));
+    if (shapes.size < sids.length) bad.push('有岛撞了形状（哈希盐失效）：' + shapes.size + '/' + sids.length);
+    // ②b 四角必须**互不相关**。这条是踩过的坑：盐写成 'ch0'/'ch1' 这种只差末字符的
+    // 编号时，FNV-1a 逐字节左推、末字节差 1 只再乘一轮素数，四角系数实测均差只有
+    // 0.01（形状左右对称，等于没抖）；换词盐后是 0.32。顶角区间宽 0.85，两个独立
+    // 均匀变量的理论均差 ≈ 0.85/3 = 0.28，所以 0.15 是分开「退化」与「健康」的线。
+    let adjGap = 0;
+    for (let n = 0; n < 40; n++) {
+      const cs = coefs(coast('ki_' + n.toString(16).padStart(4, '0'), 'island'));
+      adjGap += Math.abs(cs[0] - cs[1]);
+    }
+    if (adjGap / 40 < 0.15) {
+      bad.push('相邻两角系数几乎相同（哈希盐退化成编号了）：均差 ' + (adjGap / 40).toFixed(3) + ' < 0.15');
+    }
+    // ④ 网格态归零：返回空串 → setProperty 移除变量 → CSS 回落到 var(--r-xl)，逐像素等于今天
+    setMode('grid');
+    for (const sid of sids) {
+      for (const kind of ['island', 'region']) {
+        if (coast(sid, kind) !== '') bad.push('网格态没有归零：' + sid + '/' + kind);
+      }
+    }
+  } finally {
+    if (prevMode === null || prevMode === undefined) store.removeItem(STYLE_KEY);
+    else store.setItem(STYLE_KEY, prevMode);
+  }
+  if (bad.length) throw new Error(bad.slice(0, 6).join('\n    ') + '（共 ' + bad.length + ' 处）');
+
+  // 静态契约：CSS 两条规则必须走 --r-coast 回落；渲染层岛与海域各接一处
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const coastCalls = (src.match(/(?<![A-Za-z0-9_])_continentCoast\((?!\s*key)/g) || []).length;
+  if (coastCalls !== 2) throw new Error('_continentCoast 应恰好被调用 2 处（海域板 + 岛牌），实际 ' + coastCalls);
+  if (/_continentCoast\(rect\.key, 'region'\)/.test(src) !== true
+      || /_continentCoast\(rect\.sessionId, 'island'\)/.test(src) !== true) {
+    throw new Error('海岸线没按 regionKey / sessionId 分别接进海域板与岛牌');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  const need = ['var(--r-coast, var(--r-xl))', 'var(--r-coast, var(--r-lg))'];
+  for (const sel of ['.continent-cluster {', '.continent-region {']) {
+    const i = css.indexOf(sel);
+    if (i < 0) throw new Error('找不到规则：' + sel);
+    if (!css.slice(i, css.indexOf('}', i)).includes(need[0])) {
+      throw new Error(sel + ' 没走 --r-coast（5a 会白做）');
+    }
+  }
+  if (!css.includes(need[1])) throw new Error('收成印章的海域没走 --r-coast');
+  return true;
+});
+
+await Promise.all(pendingChecks).catch(() => {});
+
 await Promise.all(pendingChecks).catch(() => {});
 
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');

@@ -86,6 +86,41 @@ const CONTINENT_LOD_WORLD = 0.55;
 const CONTINENT_LOD_DETAIL = 1.1;
 // 岛内近似卡片折叠（显示层）：岛默认画前 N 张 +「另有 k 张」——只折叠不删数据
 const CONTINENT_ISLAND_CARD_MAX = 9;
+// ---------- v8.1 有机抖动层（渲染层，**不进布局纯函数**）----------
+// 病根：海域块 / 岛 / 岛内卡三层全是正交等距网格，视觉上是一张方格纸。
+// 治法不是换力导向（那会毁掉「位置本身就是联系」与确定性两条拍板，见
+// docs/dev/concept-continent.md），而是在**网格之上**叠一层有界的确定性微偏移：
+// 网格拓扑与间距约束一字不动（不重叠、世界罩得住、相邻=有亲缘），只把「正交」
+// 换成「有界的随机」。偏移由 ID 哈希派生，刷新页面位置不跳、两次渲染逐字节一致。
+//
+// **幅度是被两条硬约束夹出来的，不是随手取的审美值**，改任何一个都要重跑
+// smoke 的抖动段 + 真机 continent_regression：
+//   ① 必须装进布局四周已有的 CONTINENT_WORLD_MARGIN = 60 白边里：
+//      REGION + ISLAND + CARD = 16+28+3 = 47 < 60。**世界尺寸因此一个像素不变**，
+//      适配 zoom 与 LOD 档位跟着逐字节不变（第一版四周各留 80px 把世界撑大，
+//      zoom 跌过 0.55 → 世界档把卡整档隐藏 → 真机回归 10/10 掉到 8/10，教训）。
+//   ② 岛不能撞岛：岛间距 CONTINENT_CLUSTER_GAP = 150，两岛各偏 28 仍隔 94；
+//      卡间距 CONTINENT_GAP = 10，各偏 3 仍隔 4，转 1.4° 后仍隔 ~2。
+const CONTINENT_JITTER_REGION = 16;
+const CONTINENT_JITTER_ISLAND = 28;
+const CONTINENT_JITTER_CARD = 3;
+const CONTINENT_JITTER_ROT = 1.4;   // 卡的微转角（度）——旋转只能是 CSS，数值表达不了
+const CONTINENT_STYLE_KEY = 'phymathia_continent_style';  // 'organic'（默认）| 'grid'
+const CONTINENT_STYLE_ORGANIC = 'organic';
+const CONTINENT_STYLE_GRID = 'grid';
+// ---------- v8.3 网格间距按亲缘分级 ----------
+// 病根（v8.1 只治了表面）：产品的核心主张是「相邻即有关联」，但岛间距是**定值** 150
+// ——强亲缘的两座岛和毫无关系的两座岛间距一模一样。地图说了真话，但说的都是同一句。
+// 改成亲缘越强挨得越近，双份收益：间距参差天然比等距好看；一堆挨得紧的岛直接读成
+// 「这是一伙的」。
+//   KIN_FULL —— 组间**最大**亲缘到这个值就贴到最紧（权重形态：强共享 1/条、用户边 2/条）
+//   MIN/MAX  —— MIN 必须 > 2×JITTER_ISLAND(=56)，否则抖动后两岛可能压到一起
+// **再中心化是这条的生死线**（见 _continentKinGaps 的注释）：所有间距的均值必须
+// 恰好回到 base，总宽与定值布局逐字节相等。上一轮给世界加 80px 安全边距就把真机
+// 回归从 10/10 打到 8/10（zoom 跌过 0.55 → 世界档把卡整档隐藏），绝不能再犯。
+const CONTINENT_GAP_KIN_FULL = 2;
+const CONTINENT_GAP_MIN = 100;   // 100 - 2×28(抖动) = 44px 余量，抖完也不压岛
+const CONTINENT_GAP_MAX = 200;
 
 let _continentOpen = false;
 let _continentDrilling = false;
@@ -242,6 +277,8 @@ function _continentClusterOrder(clusters, shared, userEdges) {
   const list = (clusters || []).slice();
   if (list.length < 3) return list;  // 0–2 座岛怎么排都相邻，不必排
   const sids = list.map(c => String(c.sessionId || ''));
+  // 刻意不接受外部传入的 kin：贪心链的并列裁决看 total[sid]，换一份作用域不同的表
+  // 会改掉既有岛序，而 v5.2 的排序是冻结契约。v8.3 的间距分级另有自己的一份。
   const kin = _continentKinship(sids, shared, userEdges);
   const total = {};
   Object.keys(kin).forEach(key => {
@@ -398,10 +435,53 @@ function _continentMeasure(c, collapsed, cardCap) {
   };
 }
 
+// v8.3：相邻两组（列与列、行与行）之间的间距，按跨组岛对的亲缘强度分级。
+// 返回长度 = 组数-1 的间距数组；组数 <2（单列/单行）或没有亲缘数据 → null，
+// 调用方回落定值 CONTINENT_CLUSTER_GAP，**逐字节旧行为**。
+//
+// **取最大值而不是平均值**（试过平均，被数据教育了）：一条 3 列的边界上跨列岛对是
+// 3×3 = 9 对，而贪心链式排序只保证**链上相邻**的两座岛亲缘——落到这条边界上的往往
+// 只有 1 对。取平均等于把这个信号摊薄 9 倍，raw 只差 2px，肉眼根本看不出来（实测：
+// 强亲缘 3 分的边界算出来 150 vs 150，等于没分级）。取最大值读作「这条边界上存在
+// 跨组联系 → 两组是一个邻域 → 拉近」，语义也更贴产品主张。代价是列里混进一座无关岛
+// 也会被带着靠拢——但列本来就是布局产物，链式排序已经把它们归堆了，可以接受。
+//
+// **再中心化是这条的生死线**：raw 的均值不一定是 base，直接用会让总宽时大时小——
+// 世界一变大，适配 zoom 就被压小，跌过 CONTINENT_LOD_WORLD=0.55 会把所有概念卡
+// 整档 display:none，真机旅程当场断（v8.1 踩过一次，10/10 → 8/10）。
+// 这里把每段间距减去「相对均值的偏移」，均值恰回 base：
+// Σ间距 = (组数-1) × base，与定值布局**逐字节相等**，zoom/LOD/适配全部不受影响。
+// 钳位只是防御：raw ∈ [100,150]、base=150，|偏移| ≤ 50 → final ∈ [100,200]，
+// 实际永不触发（全体同值时偏移恒为 0），所以钳了也不破坏均值守恒。
+function _continentKinGaps(groups, kin, base, min, max) {
+  const n = (groups || []).length;
+  if (n < 2 || !kin) return null;
+  const lo = min === undefined ? CONTINENT_GAP_MIN : min;
+  const hi = max === undefined ? CONTINENT_GAP_MAX : max;
+  const raw = [];
+  for (let b = 0; b < n - 1; b++) {
+    let peak = 0;
+    for (const sa of groups[b] || []) {
+      for (const sb of groups[b + 1] || []) {
+        const w = kin[_continentKinshipKey(sa, sb)] || 0;
+        if (w > peak) peak = w;
+      }
+    }
+    raw.push(base - (base - lo) * Math.min(1, peak / CONTINENT_GAP_KIN_FULL));
+  }
+  const mean = raw.reduce((s, g) => s + g, 0) / raw.length;
+  return raw.map(g => Math.max(lo, Math.min(hi, base + (g - mean))));
+}
+
 // 一块内的岛摆进蛇形网格（列宽/行高统计与落位共用同一个 gridPos 映射——两处各写
 // 一份会出现「岛摆进没按它撑宽的列」）。origin 是这块在世界里的左上角；items 按
 // 测量时的折叠口径裁剪（岛内只画前 cardCap 张——显示层折叠，锚点卡是最早学的、必在前 N 张内）
-function _continentLayoutGrid(measured, originX, originY) {
+// kin（v8.3，可选）：亲缘矩阵。给了就按亲缘强度给列间距/行间距分级（见
+// _continentKinGaps）；不给、或亲缘表为空 → **定值 CONTINENT_CLUSTER_GAP，逐字节旧行为**。
+// v5.2 那条拍板在这里**升级**了：共享的不再只是 gridPos 映射，还有 colGap/rowGap
+// 两个数组——统计（colX/rowY/innerW）与落位（x/y）都只准读它们，否则会复现 v5.2 那个
+// 「岛摆进没按它撑宽的列」的老 bug 变体。
+function _continentLayoutGrid(measured, originX, originY, kin) {
   const placements = {};
   const clusterRects = [];
   const cols = Math.max(1, Math.ceil(Math.sqrt(measured.length)));
@@ -410,21 +490,31 @@ function _continentLayoutGrid(measured, originX, originY) {
     return { ci: ri % 2 === 1 ? cols - 1 - posInRow : posInRow, ri: ri };
   };
   const colW = [], rowH = [];
+  const colSids = [], rowSids = [];
   measured.forEach((m, i) => {
     const g = gridPos(i);
     colW[g.ci] = Math.max(colW[g.ci] || 0, m.w);
     rowH[g.ri] = Math.max(rowH[g.ri] || 0, m.h);
+    const sid = String((m.cluster && m.cluster.sessionId) || '');
+    (colSids[g.ci] = colSids[g.ci] || []).push(sid);
+    (rowSids[g.ri] = rowSids[g.ri] || []).push(sid);
   });
+  // 列间距/行间距（v8.3）：长度 = 列数-1 / 行数-1。拿不到分级时**显式填回定值数组**
+  // （不能只填空数组——innerW 靠 sum(间距) 算，漏掉定值会让世界算小、罩不住岛）
+  const fixedGaps = n => { const a = []; for (let i = 0; i < n - 1; i++) a.push(CONTINENT_CLUSTER_GAP); return a; };
+  const colGap = _continentKinGaps(colSids, kin, CONTINENT_CLUSTER_GAP) || fixedGaps(colW.length);
+  const rowGap = _continentKinGaps(rowSids, kin, CONTINENT_CLUSTER_GAP) || fixedGaps(rowH.length);
   // 两个累加器必须分开：以前列、行共用同一个 acc，worldW 实际拿到的是**行**的累加值
   // （worldW === worldH），多列布局下世界宽度被算小 → 适配画布按假宽度算，地图一开
   // 就被裁掉右半边（真机截图才发现：岛排到 x=1628，世界却声明 674 宽）
+  // 间距改数组后不能再用「accX 减一个定值 GAP」——直接按内容宽求和，最不容易错
   const colX = [], rowY = [];
   let accX = 0;
-  for (let i = 0; i < colW.length; i++) { colX.push(accX); accX += colW[i] + CONTINENT_CLUSTER_GAP; }
+  for (let i = 0; i < colW.length; i++) { colX.push(accX); accX += colW[i] + colGap[i]; }
   let accY = 0;
-  for (let i = 0; i < rowH.length; i++) { rowY.push(accY); accY += rowH[i] + CONTINENT_CLUSTER_GAP; }
-  const innerW = Math.max(0, accX - CONTINENT_CLUSTER_GAP);
-  const innerH = Math.max(0, accY - CONTINENT_CLUSTER_GAP);
+  for (let i = 0; i < rowH.length; i++) { rowY.push(accY); accY += rowH[i] + rowGap[i]; }
+  const innerW = Math.max(0, colW.reduce((s, w) => s + w, 0) + colGap.reduce((s, g) => s + g, 0));
+  const innerH = Math.max(0, rowH.reduce((s, h) => s + h, 0) + rowGap.reduce((s, g) => s + g, 0));
   measured.forEach((m, i) => {
     const g = gridPos(i);
     const x = originX + colX[g.ci] + (colW[g.ci] - m.w) / 2;
@@ -437,12 +527,17 @@ function _continentLayoutGrid(measured, originX, originY) {
       collapsed: !!m.collapsed,
     });
     if (!m.collapsed) {
-      // 卡网格在块内水平居中：块宽被岛牌下限撑宽时卡不歪在一边；
-      // 块宽=网格宽+2×PAD 时（≥2 卡岛）值与旧的 x+PAD 逐字节一致
-      const gridW = m.cols * CONTINENT_NODE_W + (m.cols - 1) * CONTINENT_GAP;
-      (m.cluster.items || []).slice(0, m.shown || (m.cluster.items || []).length).forEach((item, j) => {
+      // 卡网格在块内水平居中：块宽被岛牌下限撑宽时卡不歪在一边。
+      // **按行各自居中**（v8.2）：末行不满时按整列宽左对齐会在岛牌右侧空出一大块
+      // 缺角（5 卡岛空 206px），岛是矩形、内容却缺角，一眼就是「摆出来的」。
+      // 块宽仍按满列算，**岛宽/世界尺寸/海域板/zoom 一律不动**。
+      // 满行时 rowCols === cols，rowW === gridW，与旧公式逐字节一致。
+      const shown = m.shown !== undefined ? m.shown : (m.cluster.items || []).length;
+      const rowW = rowCols => rowCols * CONTINENT_NODE_W + (rowCols - 1) * CONTINENT_GAP;
+      (m.cluster.items || []).slice(0, shown).forEach((item, j) => {
         const icol = j % m.cols, irow = Math.floor(j / m.cols);
-        const nx = x + (m.w - gridW) / 2 + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
+        const inRow = Math.min(m.cols, shown - irow * m.cols);
+        const nx = x + (m.w - rowW(inRow)) / 2 + icol * (CONTINENT_NODE_W + CONTINENT_GAP);
         const ny = y + CONTINENT_PAD + CONTINENT_HEADER_H + irow * (CONTINENT_NODE_H + CONTINENT_GAP);
         placements[item.itemId] = {
           x: nx, y: ny, w: CONTINENT_NODE_W, h: CONTINENT_NODE_H,
@@ -454,11 +549,11 @@ function _continentLayoutGrid(measured, originX, originY) {
   return { placements: placements, clusterRects: clusterRects, w: innerW, h: innerH };
 }
 
-function _continentLayoutClusters(clusters, collapsed, cardCap) {
+function _continentLayoutClusters(clusters, collapsed, cardCap, kin) {
   const collapsedSet = new Set((collapsed && collapsed.sessions) || []);
   const cap = cardCap === undefined ? CONTINENT_ISLAND_CARD_MAX : cardCap;
   const measured = (clusters || []).map(c => _continentMeasure(c, collapsedSet.has(c.sessionId), cap));
-  const grid = _continentLayoutGrid(measured, CONTINENT_WORLD_MARGIN, CONTINENT_WORLD_MARGIN);
+  const grid = _continentLayoutGrid(measured, CONTINENT_WORLD_MARGIN, CONTINENT_WORLD_MARGIN, kin);
   const worldW = Math.max(400, grid.w + CONTINENT_WORLD_MARGIN * 2);
   const worldH = Math.max(300, grid.h + CONTINENT_WORLD_MARGIN * 2);
   return { placements: grid.placements, clusterRects: grid.clusterRects,
@@ -497,6 +592,9 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
   // 块内亲缘排序（复用 v5.2 的贪心链式）；块间按跨块亲缘总和排序。
   // 收起的海域整块收成**一枚**印章（岛不占位不渲染）——多枚印章叠着看全局
   const laid = blocks.map(b => {
+    // 排序**刻意不共用**下面的全局 kin：贪心链的并列裁决看 total[sid]，块内表只含
+    // 同块权重、全局表还含跨海域权重，换成全局会改掉既有的岛序（v5.2 冻结契约）。
+    // 间距分级用全局表没问题——它对同块内的取值与块内表逐字节相同。
     const ordered = _continentClusterOrder(b.clusters, shared, userEdges);
     const measured = b.stamp
       ? [{ cluster: ordered[0] || { sessionId: '', items: [] }, stamp: true,
@@ -536,7 +634,9 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
   const cols = Math.max(1, Math.ceil(Math.sqrt(laid.length)));
   const blockW = [], blockH = [];
   laid.forEach(l => {
-    const grid = _continentLayoutGrid(l.measured, 0, 0);
+    // 探针与落位（下面 :590 那次）**必须喂同一份 kin**，否则板尺寸按一套间距算、
+    // 岛坐标按另一套摆，岛会捅出板。v8.3 的间距分级让这条从「无所谓」变成硬约束。
+    const grid = _continentLayoutGrid(l.measured, 0, 0, kin);
     l.grid = grid;
     l.paddedW = grid.w + (l.block.plate ? CONTINENT_REGION_PAD * 2 : 0);
     l.paddedH = grid.h + (l.block.plate ? CONTINENT_REGION_PAD * 2 + CONTINENT_REGION_HEADER_H : 0);
@@ -565,7 +665,7 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
     const by = rowY[g.ri] + (blockH[g.ri] - l.paddedH) / 2;
     const originX = bx + (l.block.plate ? CONTINENT_REGION_PAD : 0);
     const originY = by + (l.block.plate ? CONTINENT_REGION_PAD + CONTINENT_REGION_HEADER_H : 0);
-    const grid = _continentLayoutGrid(l.measured, originX, originY);
+    const grid = _continentLayoutGrid(l.measured, originX, originY, kin);
     Object.assign(placements, grid.placements);
     // 收起成印章的海域：岛不渲染（clusterRects 不进），板自己就是那枚印章
     if (!l.block.stamp) clusterRects.push.apply(clusterRects, grid.clusterRects);
@@ -581,6 +681,183 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
   const worldH = Math.max(300, accY - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN);
   return { placements: placements, clusterRects: clusterRects,
            regionRects: regionRects, worldW: worldW, worldH: worldH };
+}
+
+// ---------- v8.1 有机抖动层 ----------
+// 铁律：**只从 _continentRender 调用，绝不塞进 _continentLayoutClusters /
+// _continentRegionLayout**。那两个纯函数是 smoke 直接调、逐字节断言返回值的冻结
+// 契约（3 卡岛宽 === 536、1 卡岛宽 >= 240、卡在块内居中、世界罩住岛、两次输出
+// 逐字节一致）。抖动一旦混进去，上述断言当场红——这条不许回退。
+//
+// 偏移按层级**复合**：卡的世界坐标 = 原坐标 + 海域偏移 + 岛偏移 + 卡偏移。
+// 所以板跟着岛一起平移、岛带着卡一起平移，板内岛、岛内卡永远不会错位。
+// 海域板另外按 CONTINENT_JITTER_ISLAND 四周外扩——板比它的岛大一圈，岛不会
+// 捅出海岸线（smoke「岛完整落在板内」这条就是钉这个的）。
+//
+// **世界尺寸一个像素都不许长**（v8.1 的第二版口径，踩过坑）：布局四周本来就留了
+// CONTINENT_WORLD_MARGIN = 60 的白边，抖动的最大外伸必须**装进这 60px 里**
+// （16 + 28 + 3 = 47 < 60），所以 worldW/worldH 原样透传。
+// 为什么这么较真：世界一大，适配画布的 zoom 就被压小，一压小就跌过
+// CONTINENT_LOD_WORLD = 0.55，世界档会把所有概念卡整档 display:none——
+// 「开图点得到卡」的真机旅程当场断（第一版给四周各留 80px，continent_regression
+// 从 10/10 掉到 8/10 就是这么掉的）。世界尺寸不变 = zoom、LOD、适配全部逐字节不变。
+
+// 确定性伪随机源：FNV-1a 32 位哈希 → [-1,1]。绝不用 Math.random()——那会让位置
+// 每次刷新都跳，也直接违反布局确定性契约。同一 ID 永远得到同一偏移。
+function _continentJitter1(key, salt) {
+  const s = String(key == null ? '' : key) + '' + salt;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return (h / 4294967296) * 2 - 1;
+}
+
+// 取某个 key 的两轴偏移：盐不同 → 同一个 key 的 x/y 互不相关，不会走出对角线
+function _continentJitterOffset(key, amp) {
+  if (!amp) return { x: 0, y: 0 };
+  return { x: _continentJitter1(key, 'x') * amp, y: _continentJitter1(key, 'y') * amp };
+}
+
+// ---------- v8.4 海岸线：每块地自己的圆角 ----------
+// 动的是 **border-radius 一个属性**，位置/尺寸/worldW/worldH 一个像素都不碰——所以
+// 下面所有冻结布局断言（3 卡岛宽===536、世界罩住、两次逐字节一致）全都不受影响。
+// 写法：8 值椭圆角（4 个横半径 / 4 个竖半径，序 左上·右上·右下·左下），
+// 每个都是 calc(var(--r-xl) * 系数) 而不是裸 px——基准圆角仍走令牌，将来改
+// --r-xl 时海岸线跟着一起变，不会漂成一个写死的数字。CSS 变量名带 --r- 前缀是因为
+// smoke 的设计尺子只放行 var(--r-*) 开头的圆角值。
+// 为什么顶角小于底角：板头文字在 top:8（海域）/top:9（岛）、left:22/10，顶角太大
+// 曲线会啃到第一个字；底角没有文字，让它放开才像岸、不像被啃过的方块。
+const CONTINENT_COAST_TOP_LO = 0.5;
+const CONTINENT_COAST_TOP_HI_ISLAND = 1.35;   // 顶角封顶：护住岛牌那行字
+const CONTINENT_COAST_TOP_HI_REGION = 1.7;    // 海域板头 left:22，可以宽松些
+const CONTINENT_COAST_BOT_LO = 0.8;
+const CONTINENT_COAST_BOT_HI_ISLAND = 2.2;
+const CONTINENT_COAST_BOT_HI_REGION = 2.6;
+const CONTINENT_COAST_ASPECT = 0.42;          // 竖半径 = 横半径 × [0.58, 1]：斜角才不像同一个模子
+
+// 盐必须是**词**、不能是 'ch0'/'ch1' 这种只差末字符的编号：FNV-1a 是逐字节左到右
+// 推进的，末字节差 1 之后只再乘一轮素数，输出几乎不动。实测 400 个真实 sessionId：
+// 编号盐下相邻两角系数平均只差 0.013（满量程 2.0，四角等于没抖、还是左右对称），
+// 换成 coast-tl/tr/br/bl + h/v 词盐后是 0.66。这条不许回退成编号盐。
+const CONTINENT_COAST_CORNER = ['coast-tl', 'coast-tr', 'coast-br', 'coast-bl'];
+
+// 短边装不下的角**不用自己夹**：CSS 规范规定同一盒子上所有圆角在超出边长时按同一
+// 系数等比缩小，所以「收成印章的小方块」和 3×3 大岛都自动收敛，不会切出方块。
+function _continentCoast(key, kind) {
+  if (_continentStyleMode() === CONTINENT_STYLE_GRID) return '';   // 网格态回落到 --r-xl，逐像素等于今天
+  const isRegion = kind === 'region';
+  const k = String(key == null ? '' : key) + '|' + kind;  // key 也进哈希：两座岛不会长成一个形状
+  const hs = [], vs = [];
+  for (let i = 0; i < 4; i++) {
+    const top = i < 2;
+    const lo = top ? CONTINENT_COAST_TOP_LO : CONTINENT_COAST_BOT_LO;
+    const hi = top
+      ? (isRegion ? CONTINENT_COAST_TOP_HI_REGION : CONTINENT_COAST_TOP_HI_ISLAND)
+      : (isRegion ? CONTINENT_COAST_BOT_HI_REGION : CONTINENT_COAST_BOT_HI_ISLAND);
+    const m = lo + (hi - lo) * (_continentJitter1(k, CONTINENT_COAST_CORNER[i] + '-h') * 0.5 + 0.5);
+    const v = m * (1 - CONTINENT_COAST_ASPECT * (_continentJitter1(k, CONTINENT_COAST_CORNER[i] + '-v') * 0.5 + 0.5));
+    hs.push('calc(var(--r-xl) * ' + m.toFixed(2) + ')');
+    vs.push('calc(var(--r-xl) * ' + v.toFixed(2) + ')');
+  }
+  return hs.join(' ') + ' / ' + vs.join(' ');
+}
+
+// 有机/网格开关（渲染层偏好，非会话键：换会话不该换画风）
+function _continentStyleMode() {
+  try {
+    const v = localStorage.getItem(CONTINENT_STYLE_KEY);
+    return v === CONTINENT_STYLE_GRID ? CONTINENT_STYLE_GRID : CONTINENT_STYLE_ORGANIC;
+  } catch (e) { return CONTINENT_STYLE_ORGANIC; }
+}
+
+function _continentToggleStyleMode() {
+  const next = _continentStyleMode() === CONTINENT_STYLE_ORGANIC
+    ? CONTINENT_STYLE_GRID : CONTINENT_STYLE_ORGANIC;
+  try { localStorage.setItem(CONTINENT_STYLE_KEY, next); } catch (e) { /* 容忍 */ }
+  return next;
+}
+
+// 按钮文案显示**切过去会变成什么**，不是当前是什么——和「主题」钮一个口径
+function _continentSyncStyleBtn() {
+  const btn = document.getElementById('continentStyleBtn');
+  if (!btn) return;
+  const organic = _continentStyleMode() === CONTINENT_STYLE_ORGANIC;
+  btn.textContent = organic ? '网格' : '有机';
+  btn.classList.toggle('is-on', !organic);
+  btn.title = (organic
+    ? '当前：有机——岛与卡在网格里各偏一点、带厚度。点此切回整齐网格'
+    : '当前：网格——整齐正交。点此切到有机画风');
+}
+
+// 有机化的纯函数：吃一份布局结果，吐一份视觉坐标全部就位的布局结果。
+// grid 态原样返回输入（零偏移、零旋转、worldW/H 不变）——「关掉 = 今天的字节」。
+//   layout            —— _continentLayoutClusters / _continentRegionLayout 的返回值
+//   itemSession       —— {itemId: sessionId}，卡归属哪座岛（placements 里没有这字段）
+//   regionOfSession   —— {sessionId: regionKey}，岛归属哪片海域
+function _continentJitter(layout, itemSession, regionOfSession) {
+  if (_continentStyleMode() === CONTINENT_STYLE_GRID) {
+    return {
+      placements: layout.placements, clusterRects: layout.clusterRects,
+      regionRects: layout.regionRects || [], worldW: layout.worldW, worldH: layout.worldH,
+      cardRot: {}, organic: false,
+    };
+  }
+  // 板偏移按 key 缓存：同一片海域的所有岛必须挂在同一个 (jx,jy) 上
+  const regionOff = {};
+  const regionOf = regionOfSession || {};
+  const offOfRegion = key => {
+    if (!regionOff[key]) regionOff[key] = _continentJitterOffset('r:' + key, CONTINENT_JITTER_REGION);
+    return regionOff[key];
+  };
+  // 岛偏移按 sessionId 缓存：同一座岛的所有卡必须挂在同一个 (ix,iy) 上
+  const islandOff = {};
+  const offOfIsland = sid => {
+    if (!islandOff[sid]) {
+      const ro = offOfRegion(regionOf[sid] || '');
+      const io = _continentJitterOffset('i:' + sid, CONTINENT_JITTER_ISLAND);
+      islandOff[sid] = { x: ro.x + io.x, y: ro.y + io.y };
+    }
+    return islandOff[sid];
+  };
+
+  const clusterRects = (layout.clusterRects || []).map(r => {
+    const o = offOfIsland(r.sessionId);
+    return Object.assign({}, r, {
+      x: r.x + o.x, y: r.y + o.y, cx: r.cx + o.x, cy: r.cy + o.y,
+    });
+  });
+  // 板：平移自己的偏移，再按岛幅度四周外扩（印章态是单枚徽标，同样外扩不亏）
+  const regionRects = (layout.regionRects || []).map(r => {
+    const o = offOfRegion(r.key);
+    const pad = CONTINENT_JITTER_ISLAND;
+    return Object.assign({}, r, {
+      x: r.x + o.x - pad, y: r.y + o.y - pad,
+      w: r.w + pad * 2, h: r.h + pad * 2,
+      cx: r.cx + o.x, cy: r.cy + o.y,
+    });
+  });
+  // 卡：板 + 岛 + 自己的微偏移；旋转角另外走 CSS（--jr），数值里表达不了
+  const placements = {};
+  const cardRot = {};
+  const owner = itemSession || {};
+  Object.keys(layout.placements || {}).forEach(itemId => {
+    const p = layout.placements[itemId];
+    const io = offOfIsland(owner[itemId] || '');
+    const co = _continentJitterOffset('c:' + itemId, CONTINENT_JITTER_CARD);
+    placements[itemId] = {
+      x: p.x + io.x + co.x, y: p.y + io.y + co.y,
+      w: p.w, h: p.h,
+      cx: p.cx + io.x + co.x, cy: p.cy + io.y + co.y,
+    };
+    cardRot[itemId] = _continentJitter1('c:' + itemId, 'r') * CONTINENT_JITTER_ROT;
+  });
+  return {
+    placements: placements, clusterRects: clusterRects, regionRects: regionRects,
+    worldW: layout.worldW, worldH: layout.worldH,   // 见上：世界不许长大
+    cardRot: cardRot, organic: true,
+  };
 }
 
 // ---------- 数据 ----------
@@ -636,6 +913,9 @@ function _continentEnsureLayer() {
           '<div class="continent-search-pop" id="continentSearchPop" hidden></div>' +
         '</span>' +
         '<button class="continent-tool" id="continentLinkBtn" title="连接两个不同区域的概念（画一条大陆边）">连接</button>' +
+        // v8.1 画风开关：有机（岛在网格里各偏一点、有厚度）↔ 网格（回到整齐的正交布局）。
+        // 位置本身带信息（相邻=有亲缘），两种画风改的只是视觉密度，不改谁挨着谁。
+        '<button class="continent-tool is-quiet" id="continentStyleBtn" title="画风：有机（岛与卡在网格里各偏一点，有厚度）↔ 网格（整齐正交）。两种画风的亲缘排序完全相同，只改视觉">有机</button>' +
         '<button class="continent-tool is-quiet" id="continentGateBtn" hidden title="让 Φ 读卡片内容做领域归类（词面认不出的它来补；打开大陆本身不烧调用，点了才跑）">Φ 归类</button>' +
         '<button class="continent-tool is-quiet" id="continentRouteBtn" hidden title="航线的全局显示（总开关 / 透明度）；单条样式点线本身调">航线</button>' +
         '<button class="continent-tool is-quiet" id="continentFamilyBtn" title="概念族表（❖ 城市与海域的证据来源）：可加族、改词条、删自定义族；也管归类纠正记录">族表</button>' +
@@ -678,6 +958,17 @@ function _continentEnsureLayer() {
   // v8：族表编辑入口（❖ 城市与海域证据的来源 + 纠正记录清空）
   const familyBtn = document.getElementById('continentFamilyBtn');
   if (familyBtn && familyBtn.addEventListener) familyBtn.addEventListener('click', e => { _continentFamilyPopover(e); });
+  // v8.1 画风切换：只重排不改数据，切完立刻能看出「整齐 ↔ 有机」的差别
+  const styleBtn = document.getElementById('continentStyleBtn');
+  if (styleBtn && styleBtn.addEventListener) {
+    styleBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      _continentToggleStyleMode();
+      _continentSyncStyleBtn();
+      if (_continentOpen && _continentData) _continentRender(_continentData);
+    });
+    _continentSyncStyleBtn();
+  }
   // v8：顶栏搜索（输入防抖；唯一命中回车直达——铁律「跳转不猜」的搜索版）
   const searchInput = document.getElementById('continentSearch');
   if (searchInput && searchInput.addEventListener) {
@@ -1043,14 +1334,33 @@ function _continentRender(data) {
   _continentRegionInfo = regionInfo;
   let layout;
   if (regionInfo.regions.length) {
+    // 海域路径：亲缘矩阵由它内部算（块间排序 + 块内排序 + 间距分级三处共用那一份）
     layout = _continentRegionLayout(regionInfo.regions, regionInfo.bySid,
                                     data.clusters || [], data.shared || [], data.userEdges || [],
                                     _continentCollapsed);
   } else {
+    // v8.3 无海域路径：kin 只喂给「间距按亲缘分级」。排序仍按 v5.2 原样自己算一份
+    // 块内表——贪心链的并列裁决看 total[sid]，换成全局表会改掉既有岛序（冻结契约），
+    // 而多算一次 O(n²)（48 岛 ≈ 2300 次）不值得拿契约去换。
+    const kin = _continentKinship(
+      (data.clusters || []).map(c => String(c.sessionId || '')),
+      data.shared || [], data.userEdges || []);
     layout = _continentLayoutClusters(
       _continentClusterOrder(data.clusters || [], data.shared || [], data.userEdges || []),
-      _continentCollapsed);
+      _continentCollapsed, undefined, kin);
   }
+  // v8.1：布局算完，接一层确定性抖动再渲染。这一行是「岛在板内、卡在岛内、城市与
+  // 辐条不脱节、航线仍绕开中间的岛」的唯一保证——**下游一律吃抖动后的数据**，
+  // 不在这里逐个元素补偏移（补漏一处就是一处错位）。grid 态原样穿透，零开销。
+  const itemSession = {};
+  (data.clusters || []).forEach(c => (c.items || []).forEach(item => {
+    itemSession[item.itemId] = c.sessionId || '';
+  }));
+  const regionOfSession = {};
+  Object.keys(regionInfo.bySid || {}).forEach(sid => {
+    regionOfSession[sid] = (regionInfo.bySid[sid] || {}).key || '';
+  });
+  layout = _continentJitter(layout, itemSession, regionOfSession);
   _continentPlacements = layout.placements;
   _continentClusterRects = layout.clusterRects;
   world.style.width = layout.worldW + 'px';
@@ -1079,6 +1389,7 @@ function _continentRender(data) {
     if (region.hue !== null && region.hue !== undefined) {
       el.style.setProperty('--region-h', String(region.hue));
     }
+    el.style.setProperty('--r-coast', _continentCoast(rect.key, 'region'));
     el.style.left = rect.x + 'px';
     el.style.top = rect.y + 'px';
     el.style.width = rect.w + 'px';
@@ -1133,6 +1444,7 @@ function _continentRender(data) {
     if (region && region.hue != null && region.hue !== undefined) {
       el.style.setProperty('--region-h', String(region.hue));
     }
+    el.style.setProperty('--r-coast', _continentCoast(rect.sessionId, 'island'));
     el.style.left = rect.x + 'px';
     el.style.top = rect.y + 'px';
     el.style.width = rect.w + 'px';
@@ -1204,6 +1516,10 @@ function _continentRender(data) {
     el.dataset.itemId = item.itemId;
     el.style.left = p.x + 'px';
     el.style.top = p.y + 'px';
+    // v8.1 微转角走 CSS 变量而不是内联 transform：hover 抬升要在 CSS 里与它叠加
+    // （transform: rotate(var(--jr)) translateY(-2px)），写死内联 transform 会把
+    // hover 的那层覆盖掉。grid 态不写 --jr，rotate(0deg) 与不转等价。
+    el.style.setProperty('--jr', (layout.cardRot[item.itemId] || 0) + 'deg');
     if (boundary[item.itemId]) {
       el.title = '边界城市：其他画布也学过（共享「' + boundary[item.itemId] + '」）';
     }
@@ -1427,6 +1743,18 @@ function _continentRender(data) {
   // v7.1a 图例（左下角，不与顶栏争位）+ 聚焦态恢复 + 归类入口
   _continentRenderLegend(regionInfo, data);
   _continentApplyFocus();
+  // v8.1 噪点层：整块大陆覆一层极淡的颗粒，给渐变/阴影一个「纸面」的质地，
+  // 消掉大面积半透明色块那种塑料感。**一个元素顶一片**——不给每张卡挂滤镜，
+  // 几十张卡的混合模式会把重绘成本翻几倍。挂 **viewport 不挂 world**：挂 world
+  // 会随缩放一起缩放，缩到 0.15 时 180px 的颗粒在屏上只剩 27px，近看一片大噪点。
+  // 插在 world 之后、图例之前，图例与空态提示仍盖在它上面。
+  const viewport = document.getElementById('continentViewport');
+  if (viewport && !viewport.querySelector('.continent-grain')) {
+    const grain = document.createElement('div');
+    grain.className = 'continent-grain';
+    grain.setAttribute('aria-hidden', 'true');
+    viewport.insertBefore(grain, viewport.children[1] || null);
+  }
   // v8：重渲会换掉世界层全部 DOM——搜索命中高亮按既有结果重放（搜索态跨重渲存活）
   if (_continentSearchResults.length) _continentApplySearchHit(_continentSearchResults);
   // v5.6：备注标签挂在世界层里，会随地图缩放一起变形——渲染完成后按当前倍率抵消一次
