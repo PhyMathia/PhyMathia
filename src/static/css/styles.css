@@ -2081,8 +2081,11 @@
     .progress-status .status-progress {
       /* 不可缩（flex-shrink:0）：胶囊是 fixed 收缩适应宽度，Chrome 算 flex 容器固有宽度时
          对可缩子项只按其 min-width 计入——进度条一旦可缩，胶囊固有宽度恒被压成
-         250px，「待命」只剩一个字（2026-09-26）。让文字（.status-text）当唯一收缩位。 */
+         250px，「待命」只剩一个字（2026-09-26）。让文字（.status-text）当唯一收缩位。
+         min-width 再兜 Firefox 的底：Firefox 算固有宽度时对空内容子项按内容(0)计入、
+         无视 flex-basis——没有这条，Firefox 下胶囊塌到 160px、文字 0 宽直接消失。 */
       flex: 0 0 180px;
+      min-width: 180px;
       height: 10px;
       border-radius: var(--r-pill);
       background: var(--progress-bar-bg);
@@ -2198,7 +2201,7 @@
       /* ── 进度状态 ── */
       .progress-status { margin-left: 0; padding: 10px 14px; font-size: var(--fs-md); }
       /* 小屏进度条用 clamp 收窄给文字让位；仍不可缩，理由见上方桌面规则（Chrome 固有宽度坑） */
-      .progress-status .status-progress { flex: 0 0 clamp(90px, 26vw, 180px); height: 12px; }
+      .progress-status .status-progress { flex: 0 0 clamp(90px, 26vw, 180px); min-width: clamp(90px, 26vw, 180px); height: 12px; }
       /* ── 漂浮符号 ── */
       .floating-symbol { font-size: 16px !important; }
 
