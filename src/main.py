@@ -1006,12 +1006,13 @@ def _card_vector_text(item: dict) -> str:
     return text.strip()
 
 
-def _continent_card_sims(items: dict, accepted_families: list):
-    """卡片 × 概念族中心的向量相似度（v9 海域层第五路证据的数据来源）。
+def _continent_vectors(items: dict, accepted_families: list):
+    """向量证据的一次性准备（v10 从 _continent_card_sims 抽出共用）：
+    → (卡片×族中心的余弦表, 卡片向量表)。
 
-    同步函数，路由里 asyncio.to_thread 包一层跑（模型加载 1-3 秒 + 批推理，
-    不能阻塞事件循环）。向量全部来自 embedding.gather_vectors 的本地缓存，
-    缺模型/缺依赖/推理失败返回 ({}, False)，投影自动退回纯词面口径。
+    同步函数，路由里 asyncio.to_thread 包住跑（模型加载 1-3 秒 + 批推理，不能阻塞
+    事件循环）。向量全部来自 embedding.gather_vectors 的本地缓存，缺模型/缺依赖/
+    推理失败返回 ({}, {})——投影与建议都自动退回纯词面口径。
     """
     texts = {}
     for iid, item in (items or {}).items():
@@ -1033,17 +1034,28 @@ def _continent_card_sims(items: dict, accepted_families: list):
                 fam_texts[t] = t
     vecs, _ = embedding.gather_vectors({**texts, **fam_texts})
     if not vecs:
-        return {}, False
+        return {}, {}
     fam_vecs = embedding.family_centroid_vectors(accepted_families, vecs)
     if not fam_vecs:
-        return {}, False
+        return {}, {}
     sims = {}
     for iid, vec in vecs.items():
         if iid in texts:
             row = {d: embedding.cosine(vec, fv) for d, fv in fam_vecs.items()}
             if row:
                 sims[iid] = row
-    return sims, True
+    card_vecs = {iid: vecs[iid] for iid in sims}  # 只回有相似度行的卡（聚类用）
+    return sims, card_vecs
+
+
+def _continent_card_sims(items: dict, accepted_families: list):
+    """卡片 × 概念族中心的向量相似度（v9 海域层第五路证据的数据来源）。
+
+    v10 起是 `_continent_vectors` 的投影专用薄壳：族中心缺席时返回 ({}, False)，
+    与旧版两个失败分支的行为逐字一致。
+    """
+    sims, _ = _continent_vectors(items, accepted_families)
+    return sims, bool(sims)
 
 
 @app.get("/api/continent")
@@ -1085,26 +1097,30 @@ async def api_get_families():
 
 @app.get("/api/families/suggestions")
 async def api_get_family_suggestions():
-    """v10 语义找亲·补词建议（只读）：向量给族表查漏，族表弹层渲染。
+    """v10 语义找亲（只读）：向量给族表查漏 + 新族候选，族表弹层渲染。
 
-    词面零命中、气味却明确指向某族的卡（泊松岛配方）→ 建议把它的标题词条收进
-    该族。**机器不自动落笔**：建议只是读侧产物，收下走既有 KV 通道
-    （POST /api/kv/continent_families），拒绝记录落 KV `continent_family_suggestions`
-    （防骚扰：证据没长出来不再提）。向量通道缺席（缺模型/缺依赖/开关关）→
-    建议整体为空——查空是正常路径，与投影降级同一立场。
+    两类候选按构造不相交（补词管「气味指向已有族」的卡，新族候选管「哪个族都
+    不像但彼此抱团」的卡）：suggestions=补词条建议（泊松岛配方），clusters=无主
+    抱团簇（四步方案第 1 步，起名在前端点「让 Φ 起名」才调模型——触发不自动）。
+    **机器不自动落笔**：建议只是读侧产物，收下/建族走既有 KV 通道
+    （POST /api/kv/continent_families），拒绝/命名缓存落 KV
+    `continent_family_suggestions`。向量通道缺席（缺模型/缺依赖/开关关）→
+    两类候选整体为空——查空是正常路径，与投影降级同一立场。
     """
     items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
     kv = storage.kv_all_data()
     accepted = family.merge_families(family.BUILTIN_FAMILIES,
                                      family.families_from_payload(kv.get("continent_families")))
-    card_sims, _ = await asyncio.to_thread(_continent_card_sims, items, accepted)
+    card_sims, card_vecs = await asyncio.to_thread(_continent_vectors, items, accepted)
     if not card_sims:
-        return {"suggestions": [], "embedEnabled": False}
+        return {"suggestions": [], "clusters": [], "embedEnabled": False}
     state = kv.get("continent_family_suggestions")
     rejected = state.get("rejected") if isinstance(state, dict) else None
     suggestions = await asyncio.to_thread(
         continent.family_term_suggestions, items, accepted, card_sims, rejected)
-    return {"suggestions": suggestions, "embedEnabled": True}
+    clusters = await asyncio.to_thread(
+        continent.family_cluster_suggestions, items, accepted, card_sims, card_vecs)
+    return {"suggestions": suggestions, "clusters": clusters, "embedEnabled": True}
 
 
 # 双击 .pmu 的桌面启动器（scripts/utopia_opener/）把文件复制进 data/utopia_inbox/，

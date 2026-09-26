@@ -2864,6 +2864,155 @@ function _continentSuggestRowHtml(s) {
   '</div>';
 }
 
+// ---------- v10 第二期 新族候选（无主抱团簇 → Φ 起名 → 用户裁决） ----------
+// 与补词建议互斥互补：补词管「像某个已有族」的卡，这里管「哪个族都不像但彼此抱团」
+// 的卡。起名是花钱的调用：点「让 Φ 起名」才调（触发不自动），结果缓存 KV，
+// 一个簇（含近重复簇）只问一次。
+
+// Φ 起名的输出契约：一行 JSON。格式约定在 system 与 user 两条消息里都写
+//（与 v5.3 问 Φ 同一条纪律），判读才不是猜谜。
+function _continentNameMessages(cluster, knownNames) {
+  const cards = ((cluster && cluster.cards) || []).slice(0, 10);
+  const known = Array.isArray(knownNames) ? knownNames : [];
+  const list = cards.map((c, i) =>
+    (i + 1) + '. ' + ((c && c.title) || '（无标题）') +
+    ((c && c.summary) ? '——' + c.summary : '')).join('\n');
+  const lines = [
+    '用户的知识库里有一批知识卡：它们不属于下面任何已知领域（语义向量都离得很远），' +
+    '但彼此语义相近，可能是一个花名册上还没有的新领域。',
+    '',
+    '已知领域名单：' + (known.length ? known.join('、') : '（空）'),
+    '候选卡（共 ' + cards.length + ' 张）：',
+    list,
+    '',
+    '请判断这批卡：',
+    '- verdict=new：它们够格成一个新领域——给出规范名 name（2~8 字，像教科书章节名）' +
+    '与 terms（3~6 个代表词条，出现在卡片标题里就有意义）。',
+    '- verdict=merge：它们其实属于名单中某个已有领域——name 填该领域名（必须从名单里原样选），' +
+    'terms 给出应补进该领域的词条。',
+    '- verdict=none：证据不足，不建议建。',
+    'reason 用不超过 40 字说明依据。',
+  ].join('\n');
+  return [
+    { role: 'system', content: '你是知识大陆的助手 Φ。只输出一行 JSON，不要 markdown 代码围栏，不要解释：' +
+      '{"verdict":"new|merge|none","name":"领域名","terms":["词条"],"reason":"一句话理由"}。' },
+    { role: 'user', content: lines },
+  ];
+}
+
+// 判读（纯函数）：剥思考块 → 抠出第一段 JSON → 校验。verdict=merge 时 name 必须
+// 在已知名单里（模型编造名单外的领域一律降级为 none——专家名单固定，铁律）；
+// verdict=new 但 name 与已有族撞名 → 同语义降级为 merge（词条收进已有族）。
+// 判不出返回 null，调用方给「Φ 没判出来」的提示，绝不猜。
+function _continentParseNameVerdict(raw, knownNames) {
+  let text = typeof _stripThinkText === 'function'
+    ? _stripThinkText(String(raw || '')) : String(raw || '');
+  text = text.replace(/```(?:json)?/gi, '');
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj;
+  try { obj = JSON.parse(m[0]); } catch (e) { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  let verdict = String(obj.verdict || '').trim();
+  if (['new', 'merge', 'none'].indexOf(verdict) < 0) return null;
+  const reason = String(obj.reason || '').trim().slice(0, 60);
+  const known = Array.isArray(knownNames) ? knownNames : [];
+  let name = _continentClipText(obj.name, 16);
+  let terms = (Array.isArray(obj.terms) ? obj.terms : [])
+    .map(t => _continentClipText(t, 24)).filter(t => t.length >= 2);
+  terms = terms.filter((t, i) => terms.indexOf(t) === i).slice(0, 6);
+  if (verdict === 'merge') {
+    if (!name || known.indexOf(name) < 0) {
+      // 编造的领域名不可信（专家名单固定）：不整条作废，降级为「证据不足」
+      return { verdict: 'none', name: '', terms: [], reason: 'Φ 给的领域不在名单里' };
+    }
+  } else if (verdict === 'new') {
+    if (!name) return null;
+    if (known.indexOf(name) >= 0) {  // 撞名：它说的其实是已有族的漏
+      verdict = 'merge';
+    } else if (!terms.length) {
+      verdict = 'none';  // 建新族却不给词条 = 没法落表
+    }
+  }
+  return { verdict: verdict, name: name, terms: terms, reason: reason };
+}
+
+// 命名缓存命中（纯函数）：先精确 key；没有再按卡片重叠扫——同一簇长了几张新卡后
+// key 会变，但只要与某条已命名簇的重叠 ≥ 六成，就复用旧判读（一个簇一辈子只烧
+// 一次 API 钱）。命中返回缓存的判读，未命中 null。
+function _continentClusterCacheHit(cluster, named) {
+  if (!cluster || !named || typeof named !== 'object') return null;
+  const exact = named[cluster.key];
+  if (exact && exact.verdict) return exact;
+  const ids = ((cluster.cards) || []).map(c => (c && c.id) || '');
+  if (!ids.length) return null;
+  const idSet = new Set(ids);
+  for (const k in named) {
+    const entry = named[k];
+    const cachedIds = (entry && Array.isArray(entry.cards)) ? entry.cards : null;
+    if (!cachedIds || !entry.verdict) continue;
+    const shared = cachedIds.filter(cid => idSet.has(cid)).length;
+    if (shared * 10 >= Math.min(cachedIds.length, ids.length) * 6) return entry;
+  }
+  return null;
+}
+
+// 新族候选行（纯函数）：三种态——未起名（让 Φ 起名按钮）/ 已判 new（建族/不要）/
+// 已判 merge 或 none（处置提示）。全部插值过 _continentEsc。
+function _continentClusterRowHtml(cluster, namedEntry, dismissed) {
+  if (!cluster || !Array.isArray(cluster.cards) || !cluster.cards.length) return '';
+  const preview = cluster.cards.slice(0, 3)
+    .map(c => _continentEsc((c && c.title) || '')).join('、') +
+    (cluster.size > 3 ? ' …' : '');
+  const regrown = dismissed && dismissed.cards != null &&
+    cluster.size > Number(dismissed.cards) + 2;
+  const head = '<div class="continent-family-line">' +
+      '<span class="continent-family-name">疑似新领域 · ' + cluster.size + ' 张卡</span>' +
+      (regrown ? '<span class="continent-suggest-note">上次你拒过，这次证据更多</span>' : '') +
+      '<button class="continent-pop-btn is-quiet" data-cluster-dismiss>不要</button>' +
+    '</div>' +
+    '<div class="continent-family-line continent-suggest-evidence">' +
+      '<span class="continent-family-terms" title="' +
+        _continentEsc(cluster.cards.map(c => (c && c.title) || '').join('、')) + '">来自：' +
+        preview + '</span>' +
+    '</div>';
+  const body = namedEntry && namedEntry.verdict
+    ? (namedEntry.verdict === 'new'
+        ? '<div class="continent-family-line">' +
+            '<span class="continent-family-name">Φ 提议：' + _continentEsc(namedEntry.name) + '</span>' +
+            '<span class="continent-family-terms">' +
+              _continentEsc((namedEntry.terms || []).join('、')) + '</span>' +
+            '<button class="continent-pop-btn" data-cluster-create>建族</button>' +
+          '</div>' +
+          '<div class="continent-family-line continent-suggest-evidence">' +
+            '<span class="continent-pop-phi-badge is-worth">Φ</span>' +
+            '<span class="continent-family-terms">' + _continentEsc(namedEntry.reason || '') + '</span>' +
+          '</div>'
+        : namedEntry.verdict === 'merge'
+          ? '<div class="continent-family-line">' +
+              '<span class="continent-family-name">＋' + _continentEsc((namedEntry.terms || []).join('、')) + '</span>' +
+              '<span class="continent-family-src">→ ' + _continentEsc(namedEntry.name) + '</span>' +
+              '<button class="continent-pop-btn" data-cluster-merge>收下</button>' +
+            '</div>' +
+            '<div class="continent-family-line continent-suggest-evidence">' +
+              '<span class="continent-pop-phi-badge">Φ</span>' +
+              '<span class="continent-family-terms">' +
+                _continentEsc('Φ 认为这是「' + namedEntry.name + '」的漏：' + (namedEntry.reason || '')) +
+              '</span>' +
+            '</div>'
+          : '<div class="continent-family-line continent-suggest-evidence">' +
+              '<span class="continent-pop-phi-badge">Φ</span>' +
+              '<span class="continent-family-terms">Φ：证据不足' +
+                (namedEntry.reason ? '——' + _continentEsc(namedEntry.reason) : '') + '</span>' +
+            '</div>')
+    : '<div class="continent-family-line">' +
+        '<button class="continent-pop-btn" data-cluster-name>让 Φ 起名</button>' +
+        '<span class="continent-family-terms">起名是 AI 调用（一次一条，结果会记住）</span>' +
+      '</div>';
+  return '<div class="continent-family-row continent-family-suggest"' +
+      ' data-cluster-key="' + _continentEsc(cluster.key) + '">' + head + body + '</div>';
+}
+
 async function _continentFamilyPopover(ev) {
   let merged = [];
   let limit = CONTINENT_FAMILY_LIMIT;
@@ -2896,6 +3045,7 @@ async function _continentFamilyPopover(ev) {
       merged.map(f => _continentFamilyRowHtml(f)).join('') +
     '</div>' +
     '<div data-suggest-section></div>' +
+    '<div data-cluster-section></div>' +
     '<div class="continent-pop-title" style="margin-top:8px">新增族</div>' +
     '<div class="continent-family-editor">' +
       '<div class="continent-pop-row"><input class="continent-pop-input" data-family-new-name maxlength="16" placeholder="族名（如：分析力学）"></div>' +
@@ -2942,26 +3092,179 @@ async function _continentFamilyPopover(ev) {
   };
   const rejectSuggestion = async s => {
     try {
-      let rejected = {};
+      let state = {};
       try {
         const r = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, { cache: 'no-cache' });
         if (r.ok) {
           const j = await r.json();
           const v = j && j.value;
-          if (v && v.rejected && typeof v.rejected === 'object') rejected = v.rejected;
+          if (v && typeof v === 'object') state = v;
         }
       } catch (e) { /* 读不到就当空记录 */ }
+      const rejected = (state.rejected && typeof state.rejected === 'object')
+        ? state.rejected : (state.rejected = {});
       const famRej = (rejected[s.family] && typeof rejected[s.family] === 'object')
         ? rejected[s.family] : (rejected[s.family] = {});
       famRej[s.term] = { cards: ((s.cards || []).length), at: Date.now() };
       const resp = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: { version: 1, rejected: rejected } }),
+        body: JSON.stringify({ value: Object.assign({ version: 1 }, state) }),
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       _continentToast('已记住：这条建议不再提（证据明显变多时会再问一次）');
       _continentFamilyPopover(ev);  // 重开弹层：建议区按最新拒绝记录重算
     } catch (err) { _continentToast('记录失败：' + (err && err.message || err)); }
+  };
+
+  // ---------- v10 第二期：新族候选（无主抱团簇） ----------
+  // 状态三件套都落 KV continent_family_suggestions：named=Φ 判读缓存（一个簇只烧
+  // 一次 API），dismissed=用户拒过的簇（证据没长出来不再端上来）。命名/建族都是
+  // 用户点出来的：触发不自动，落笔不自动。
+  const loadSuggestState = async () => {
+    try {
+      const r = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, { cache: 'no-cache' });
+      if (!r.ok) return {};
+      const j = await r.json();
+      const v = j && j.value;
+      return (v && typeof v === 'object') ? v : {};
+    } catch (e) { return {}; }
+  };
+  const saveSuggestState = async state => {
+    const resp = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: Object.assign({ version: 1 }, state) }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  };
+  // 族表 KV 的当下快照（写前重读用）：闭包里的 kvList 是弹层打开时的，直接拼会
+  // 覆盖期间别处落笔的族。规范化走同一把 _continentFamilyNormalizeList 尺子。
+  const _continentFetchKvFamilies = async () => {
+    try {
+      const r = await fetch(CONTINENT_FAMILIES_KV_API, { cache: 'no-cache' });
+      if (!r.ok) return kvList;
+      const j = await r.json();
+      const v = j && j.value;
+      return _continentFamilyNormalizeList(
+        (v && Array.isArray(v.families)) ? v.families : (Array.isArray(v) ? v : []));
+    } catch (e) { return kvList; }
+  };
+  const knownNames = merged.map(f => f.canonical);
+  const bindClusterRows = box => {
+    box.querySelectorAll('.continent-family-suggest[data-cluster-key]').forEach(row => {
+      const key = row.getAttribute('data-cluster-key');
+      const cluster = clusterList.find(c => c && c.key === key);
+      if (!cluster) return;
+      const nameBtn = row.querySelector('[data-cluster-name]');
+      const createBtn = row.querySelector('[data-cluster-create]');
+      const mergeBtn = row.querySelector('[data-cluster-merge]');
+      const dismissBtn = row.querySelector('[data-cluster-dismiss]');
+      if (nameBtn) nameBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const model = (typeof getActiveModelForRole === 'function')
+          ? (getActiveModelForRole('graph') || getActiveModelForRole('agent')) : null;
+        if (!model) { _continentToast('先在「模型设置」里配置主模型，才能让 Φ 起名'); return; }
+        nameBtn.disabled = true; nameBtn.textContent = 'Φ 看着…';
+        try {
+          if (typeof proxyChatWithModel !== 'function') throw new Error('模型代理通道不可用');
+          const resp = await proxyChatWithModel(model, {
+            messages: _continentNameMessages(cluster, knownNames),
+            stream: false,
+            session_bucket: 'phymathia-continent',
+          });
+          const data = await resp.json();
+          const raw = data && data.choices && data.choices[0] && data.choices[0].message
+            ? data.choices[0].message.content : '';
+          const verdict = _continentParseNameVerdict(raw, knownNames);
+          if (!verdict) throw new Error('Φ 的回答没认出来，可再试一次');
+          const state = await loadSuggestState();
+          const named = (state.named && typeof state.named === 'object')
+            ? state.named : (state.named = {});
+          named[cluster.key] = Object.assign({}, verdict, {
+            at: Date.now(), cards: cluster.cards.map(c => c.id),
+          });
+          await saveSuggestState(state);
+          renderClusterSection(box, state);  // 就地重渲：不重开弹层、不重拉建议
+          bindClusterRows(box);  // 重渲换掉了 DOM，落笔按钮必须重新挂 handler
+        } catch (err) {
+          _continentToast('Φ 起名失败：' + (err && err.message || err));
+          nameBtn.disabled = false; nameBtn.textContent = '让 Φ 起名';
+        }
+      });
+      if (createBtn) createBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const state = await loadSuggestState();
+        const entry = _continentClusterCacheHit(cluster, state.named);
+        if (!entry || entry.verdict !== 'new') return;
+        // 写前重读 KV：闭包里的 kvList 是弹层打开时的快照，直接拼会覆盖期间
+        // 别处落笔的族（先后两次保存，后者必须以前者为基础）
+        const freshKvList = await _continentFetchKvFamilies();
+        if (freshKvList.some(f => f.canonical === entry.name)) {
+          _continentToast('已有同名族——收下词条走「收下」按钮'); return;
+        }
+        if (freshKvList.length >= CONTINENT_FAMILY_LIMIT) {
+          _continentToast('族表上限 ' + CONTINENT_FAMILY_LIMIT + ' 个'); return;
+        }
+        try {
+          await persist(freshKvList.concat([{
+            canonical: entry.name,
+            terms: (entry.terms || []).slice(0, CONTINENT_FAMILY_TERMS_MAX),
+            source: 'user',
+          }]));
+        } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+      });
+      if (mergeBtn) mergeBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const state = await loadSuggestState();
+        const entry = _continentClusterCacheHit(cluster, state.named);
+        if (!entry || entry.verdict !== 'merge') return;
+        const freshKvList = await _continentFetchKvFamilies();
+        const kvIdx = freshKvList.findIndex(f => f.canonical === entry.name);
+        const fam = merged.find(f => f.canonical === entry.name);
+        let terms;
+        if (kvIdx >= 0) terms = freshKvList[kvIdx].terms.slice();
+        else if (fam) terms = (fam.terms || []).slice();
+        else { _continentToast('找不到目标族了——地图刷新后重试'); return; }
+        (entry.terms || []).forEach(t => { if (terms.indexOf(t) < 0) terms.push(t); });
+        const nextEntry = { canonical: entry.name,
+                            terms: terms.slice(0, CONTINENT_FAMILY_TERMS_MAX), source: 'user' };
+        let next = freshKvList.slice();
+        if (kvIdx >= 0) next[kvIdx] = nextEntry; else next = next.concat([nextEntry]);
+        if (next.length > CONTINENT_FAMILY_LIMIT) {
+          _continentToast('族表上限 ' + CONTINENT_FAMILY_LIMIT + ' 个'); return;
+        }
+        try { await persist(next); } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
+      });
+      if (dismissBtn) dismissBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        try {
+          const state = await loadSuggestState();
+          const dismissed = (state.dismissed && typeof state.dismissed === 'object')
+            ? state.dismissed : (state.dismissed = {});
+          dismissed[cluster.key] = { cards: cluster.size, at: Date.now() };
+          await saveSuggestState(state);
+          _continentToast('已记住：这个候选不再提（证据明显变多时会再问一次）');
+          renderClusterSection(box, state);
+          bindClusterRows(box);  // 重渲换掉了 DOM，按钮必须重新挂 handler
+        } catch (err) { _continentToast('记录失败：' + (err && err.message || err)); }
+      });
+    });
+  };
+  const renderClusterSection = (box, state) => {
+    const named = (state && state.named && typeof state.named === 'object') ? state.named : {};
+    const dismissed = (state && state.dismissed && typeof state.dismissed === 'object') ? state.dismissed : {};
+    const rows = clusterList.filter(c => {
+      if (!c || !c.key) return false;
+      const d = dismissed[c.key];
+      // 拒过的簇闭嘴（防骚扰），证据长出 2+ 张才重新开口（与补词同一记性口径）
+      if (d && c.size <= Number(d.cards || 0) + 2) return false;
+      return true;
+    }).map(c => _continentClusterRowHtml(c, _continentClusterCacheHit(c, named),
+                                         dismissed[c.key])).join('');
+    box.innerHTML = rows
+      ? '<div class="continent-pop-title" style="margin-top:8px">新领域候选</div>' +
+        '<div class="continent-pop-desc">这些卡不属于任何已知领域，但彼此抱团——可能是一个' +
+        '花名册上还没有的新领域。让 Φ 提个名，你裁决；机器不会自己落笔。</div>' + rows
+      : '';
   };
 
   // 行内编辑：点「改」→ 该行换成词条编辑器（芯片可删 + 输入可加 + 保存/取消/删除）。
@@ -3043,15 +3346,19 @@ async function _continentFamilyPopover(ev) {
   };
   el.querySelectorAll('.continent-family-row').forEach(bindRow);
 
-  // v10 补词建议区：弹层先开，建议异步补进来（首算可能含模型加载，别让弹层干等）。
-  // embedEnabled=False（缺模型/缺依赖）或没有候选 → 区块保持空白（查空是正常路径）。
+  // v10 补词建议区 + 新领域候选区：弹层先开，两者异步补进来（首算可能含模型加载，
+  // 别让弹层干等）。embedEnabled=False（缺模型/缺依赖）或没有候选 → 区块保持空白
+  // （查空是正常路径）。补词建议拉一次；新领域候选另需 KV 里的命名/拒绝状态。
   const suggBox = el.querySelector('[data-suggest-section]');
+  const clusterBox = el.querySelector('[data-cluster-section]');
+  let clusterList = [];
   if (suggBox) {
     try {
       const r = await fetch(CONTINENT_FAMILY_SUGGEST_API, { cache: 'no-cache' });
       if (r.ok) {
         const j = await r.json();
         const sugs = (j && j.embedEnabled && Array.isArray(j.suggestions)) ? j.suggestions : [];
+        clusterList = (j && j.embedEnabled && Array.isArray(j.clusters)) ? j.clusters : [];
         if (sugs.length) {
           suggBox.innerHTML =
             '<div class="continent-pop-title" style="margin-top:8px">补词建议</div>' +
@@ -3077,6 +3384,11 @@ async function _continentFamilyPopover(ev) {
         }
       }
     } catch (e) { /* 建议拉不到就当没有（查空是正常路径） */ }
+  }
+  if (clusterBox && clusterList.length) {
+    const state = await loadSuggestState();
+    renderClusterSection(clusterBox, state);
+    bindClusterRows(clusterBox);
   }
 
   // 新增族

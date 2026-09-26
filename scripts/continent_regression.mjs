@@ -13,6 +13,7 @@
 //   6. v8 归类纠正（指派 → KV 落盘 → 撤销回退）
 //   7. v8 族表编辑（新增族 → /api/families 生效 → 地图重算）
 //   8. LOD 三档双向切换（滚轮缩放）
+//  10. v10 新族候选：Φ 起名 → 建族（浏览器侧拦截 mock 模型与建议端点）
 //
 // 用法：node scripts/continent_regression.mjs
 // 隔离口径：临时目录里拷贝 src/（DATA_DIR 在导入期从 config.py 解析，symlink 会被
@@ -302,7 +303,7 @@ async function run() {
         return (j.families || []).some(f => f.canonical === '分析力学' && f.source === 'user');
       }, null, { timeout: 6000 });
       const domainOk = await page.evaluate(async () => {
-        const r = await fetch('/api/continent');
+        const r = await fetch('/api/continent', { cache: 'no-store' });
         const j = await r.json();
         return (j.domainList || []).indexOf('分析力学') >= 0;
       });
@@ -313,6 +314,12 @@ async function run() {
     // ===== 9. LOD 三档双向切换 =====
     try {
       await closePopoverIfAny();
+      // 第 8 段保存后弹层会异步重开（persist → 重拉 → 重开）：等它真开出来（或确认
+      // 不开了）再关掉并等它消失，否则迟到的弹层会挡住 viewport 的 hover/滚轮
+      await page.waitForSelector('.continent-popover', { timeout: 5000 }).catch(() => {});
+      await closePopoverIfAny();
+      await page.waitForFunction(() => !document.querySelector('.continent-popover'),
+        null, { timeout: 4000 }).catch(() => {});
       // 大陆若已在上面某步被关掉，先回到大陆再缩放
       await page.evaluate(() => {
         const layer = document.getElementById('continentLayer');
@@ -330,6 +337,80 @@ async function run() {
         document.getElementById('continentWorld').classList.contains('lod-detail'), null, { timeout: 4000 });
       ok('LOD 三档双向切换（滚轮）');
     } catch (e) { fail('LOD 三档双向切换（滚轮）', e); }
+
+    // ===== 10. v10 新族候选：Φ 起名 → 建族 → 族表生效 =====
+    // 两个端点都在浏览器侧拦截（隔离库的向量/模型状态不影响本段）：
+    //   /api/families/suggestions → 固定回一个三卡无主抱团簇；
+    //   /api/models/chat → 固定回 Φ 的 new 判读 JSON。
+    // 拦截只管「建议与模型」，建族落 KV / KV 状态读写都打真服务端，闭环可验。
+    try {
+      await closePopoverIfAny();
+      // 大陆若在第 9 段被关掉，先回大陆再开族表弹层
+      await page.evaluate(() => {
+        const layer = document.getElementById('continentLayer');
+        if (layer && layer.hidden && typeof window.openContinentView === 'function') {
+          window.openContinentView();
+        }
+      });
+      await continentOpen(page);
+      await page.route('**/api/families/suggestions', r => r.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          embedEnabled: true,
+          suggestions: [],
+          clusters: [{
+            key: 'regcluster1', size: 3,
+            cards: [
+              { id: 'rc1', title: '纳什均衡与策略选择', summary: '' },
+              { id: 'rc2', title: '囚徒困境：合作与背叛的推演', summary: '' },
+              { id: 'rc3', title: '占优策略与重复博弈', summary: '' },
+            ],
+          }],
+        }),
+      }));
+      await page.route('**/api/models/chat', r => r.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ choices: [{ message: { content:
+          '{"verdict":"new","name":"博弈论","terms":["纳什均衡","囚徒困境","占优策略"],"reason":"三卡共同指向策略互动分析"}' } }] }),
+      }));
+      await page.click('#continentFamilyBtn');
+      await page.waitForSelector('[data-cluster-key="regcluster1"]', { timeout: 6000 });
+      // 隔离库没配模型槽位——起名按钮的守卫（getActiveModelForRole 为空就拒）是对的；
+      // 测试里临时喂一个 mock 槽位，真实请求仍走 proxyChatWithModel → 被上面的路由拦截
+      await page.evaluate(() => {
+        window.getActiveModelForRole = () => ({
+          id: 'mockgraph', provider: 'opencode', model: 'mock-model',
+          label: 'Mock Φ', apiKey: 'mock-key',
+        });
+      });
+      await page.click('[data-cluster-key="regcluster1"] [data-cluster-name]');
+      await page.waitForSelector('[data-cluster-key="regcluster1"] [data-cluster-create]', { timeout: 8000 });
+      const rowText = await page.locator('[data-cluster-key="regcluster1"]').textContent();
+      if (!rowText || rowText.indexOf('博弈论') < 0 || rowText.indexOf('建族') < 0) {
+        throw new Error('Φ 提议名/建族按钮没渲染：' + (rowText || '').slice(0, 120));
+      }
+      await page.click('[data-cluster-key="regcluster1"] [data-cluster-create]');
+      await page.waitForFunction(async () => {
+        const r = await fetch('/api/kv/continent_families', { cache: 'no-store' });
+        const j = await r.json();
+        const fams = (j.value && j.value.families) || [];
+        const f = fams.find(x => x.canonical === '博弈论');
+        return !!(f && f.source === 'user' && (f.terms || []).indexOf('纳什均衡') >= 0);
+      }, null, { timeout: 8000 });
+      // 投影收敛是「最终一致」（KV 落盘与并发请求的读写有毫秒级窗口）：
+      // 轮询等 domainList 收录新族，单次 fetch 会偶发读到写前快照
+      await page.waitForFunction(async () => {
+        const r = await fetch('/api/continent', { cache: 'no-store' });
+        const j = await r.json();
+        return (j.domainList || []).indexOf('博弈论') >= 0;
+      }, null, { timeout: 8000 });
+      await page.unroute('**/api/families/suggestions');
+      await page.unroute('**/api/models/chat');
+      ok('v10 新族候选：Φ 起名 → 建族 → 族表与投影同步生效');
+    } catch (e) {
+      try { await page.unroute('**/api/families/suggestions'); await page.unroute('**/api/models/chat'); } catch (e2) { /* 容忍 */ }
+      fail('v10 新族候选：Φ 起名 → 建族 → 族表与投影同步生效', e);
+    }
   } catch (err) {
     results.push(false);
     console.log('❌ 环境级失败 -> ' + (err && err.message || err));
@@ -344,7 +425,7 @@ async function run() {
   const passed = results.filter(Boolean).length;
   console.log('\n大陆真机回归：' + passed + ' / ' + results.length + ' 通过');
   if (passed !== results.length) {
-    console.log('（服务端日志尾部）\n' + serverLog.split('\n').slice(-15).join('\n'));
+    console.log('（服务端日志尾部）\n' + serverLog.split('\n').slice(-60).join('\n'));
     process.exit(1);
   }
 }

@@ -50,6 +50,7 @@ v5.5 汇聚口径修正（两条都是实测出来的）：
   亲缘，证据不静默消失。
 """
 
+import hashlib
 import itertools
 import math
 import re
@@ -579,6 +580,90 @@ def _term_family_counts(prepared: list) -> dict:
 FAMILY_SUGGEST_MARGIN = 0.05   # 与次高族的余弦差至少这么大：双族暧昧的卡不配当证据
 FAMILY_SUGGEST_MAX = 12        # 一轮最多给用户看几条（再多就是刷屏，先修证据多的）
 FAMILY_SUGGEST_REGROW = 2      # 被拒过的建议，证据再长出这么多张卡才重新开口
+
+# —— v10 第二期「新族发现」（四步方案的 1、2 步）：无主卡抱团 → Φ 起名 → 用户裁决 ——
+# 与补词建议互斥互补：补词管「气味指向已有族」的卡，这里管「哪个族都不像」的卡。
+# 两类候选按构造不相交（补词要求 top1 过 GATE_EMBED_FLOOR，无主卡要求 max 不过）。
+FAMILY_CLUSTER_SIM = 0.60       # 无主卡两两连边的相似度阈值
+FAMILY_CLUSTER_COHESION = 0.55  # 簇内平均两两相似度下限：链式松簇（A-B 近、B-C 近、A-C 远）不算一伙
+FAMILY_CLUSTER_MIN_CARDS = 3    # 少于 3 张卡不配建大陆：孤卡/对卡的新领域证据太薄
+FAMILY_CLUSTER_MAX = 6          # 一轮最多给用户看几个候选
+FAMILY_CLUSTER_POOL_CAP = 200   # 无主卡池上限：超过（向量降级误判全库无主时）整体不聚类，有界退化
+FAMILY_CLUSTER_CARD_CLIP = 10   # 单簇证据里最多列几张卡（size 记全量，列代表）
+
+
+def family_cluster_suggestions(items, families, card_sims, card_vecs) -> list:
+    """新族候选（v10 第二期，纯函数）：词面零命中 + 离所有族中心都远 + 彼此抱团的卡群。
+
+    三道闸（与补词建议同一条纪律：机器只发现，落笔永远在用户）：
+    ① 无主——对每个族的余弦都不过 GATE_EMBED_FLOOR（补词管「像某个族」，这里管
+       「哪个族都不像」，两类候选按构造不相交）；
+    ② 抱团——无主卡之间两两余弦 ≥ FAMILY_CLUSTER_SIM 连边，连通分量成簇；
+    ③ 成色——簇 ≥ FAMILY_CLUSTER_MIN_CARDS 张、簇内平均两两相似度 ≥
+       FAMILY_CLUSTER_COHESION（A-B 近、B-C 近但 A-C 远的链式松簇不算一伙）。
+    `card_vecs` 是 {itemId: 向量}（调用方从向量缓存取，本函数只读）；
+    族表为空或向量缺席 → 空清单（查空正常路径）。无主池超过 FAMILY_CLUSTER_POOL_CAP
+    视为向量通道异常（全库都被判无主），整体放弃本次聚类——宁可漏报不可误报。
+    """
+    prepared = prepare_families(families or [])
+    if not prepared or not card_vecs:
+        return []
+    lex_map, _, _ = _item_families(items, prepared)
+    floor = GATE_EMBED_FLOOR
+    candidates = []
+    for item_id, item in (items or {}).items():
+        if not isinstance(item, dict) or lex_map.get(str(item_id)):
+            continue
+        iid = str(item_id)
+        vec = card_vecs.get(iid)
+        if not vec:
+            continue
+        row = (card_sims or {}).get(iid) or {}
+        if row and max(row.values()) >= floor:
+            continue  # 有族可依（补词建议的地盘），不算无主
+        if not _is_concept_like_title(item.get("title")):
+            continue
+        candidates.append(iid)
+    if len(candidates) < FAMILY_CLUSTER_MIN_CARDS or len(candidates) > FAMILY_CLUSTER_POOL_CAP:
+        return []
+    # 无主池很小（正常几卡到几十卡），O(n²) 两两算距离有界；并查集收连通分量
+    parent = {iid: iid for iid in candidates}
+
+    def _find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in itertools.combinations(candidates, 2):
+        if _vec_cosine(card_vecs[a], card_vecs[b]) >= FAMILY_CLUSTER_SIM:
+            parent[_find(a)] = _find(b)
+    groups = {}
+    for iid in candidates:
+        groups.setdefault(_find(iid), []).append(iid)
+    out = []
+    for members in groups.values():
+        n = len(members)
+        if n < FAMILY_CLUSTER_MIN_CARDS:
+            continue
+        pair_sum, pair_cnt = 0.0, 0
+        for a, b in itertools.combinations(members, 2):
+            pair_sum += _vec_cosine(card_vecs[a], card_vecs[b])
+            pair_cnt += 1
+        if pair_sum / pair_cnt < FAMILY_CLUSTER_COHESION:
+            continue
+        members = sorted(members)
+        cards = []
+        for iid in members[:FAMILY_CLUSTER_CARD_CLIP]:
+            item = items.get(iid) or {}
+            src = str(item.get("summarySource") or "local")
+            summary = str(item.get("summary") or "").strip() if src in ("model", "manual") else ""
+            cards.append({"id": iid, "title": str(item.get("title") or "")[:48],
+                          "summary": summary[:60]})
+        out.append({"key": hashlib.sha1(",".join(members).encode("utf-8")).hexdigest()[:12],
+                    "size": n, "cards": cards})
+    out.sort(key=lambda c: (-c["size"], c["key"]))
+    return out[:FAMILY_CLUSTER_MAX]
 
 
 def _suggest_term_from_title(title, prepared, existing_terms, canon_names, target_domain):
