@@ -108,9 +108,9 @@
 .graph-node-module:not(.graph-node-pending) {
   min-width: 640px !important;
   max-width: min(1280px, 92vw) !important;
-  /* 六大模块默认高度 = 默认宽 640 × 0.8 = 512；只抬最小值，内容长时仍自动撑开。
-     :not(.graph-node-pending)——还没出内容的大卡不占这个尺寸（见文末「第 7 轮 7.2」）。 */
-  min-height: 512px !important;
+  /* 旧设计：六大模块固定最小高 512（默认宽 640 × 0.8）撑出网格感。
+     2026-09-26 按用户拍板「生成完刚好包住内容、不空余」移除——高度交给内容自适应；
+     viz 卡（iframe 需要稳定工作高度）仍由下方 560 规则单独保底。 */
 }
 
 .graph-node.selected {
@@ -388,7 +388,7 @@
   font-size: var(--fs-md) !important;
   line-height: 1.75 !important;
   overflow-wrap: anywhere !important;
-  max-height: 520px !important;
+  /* max-height 由下方 .graph-node .graph-node-full-content 的动态上限统一决定 */
   overflow-y: auto !important;
   scrollbar-width: thin !important;
   scrollbar-color: var(--border) transparent !important;
@@ -399,6 +399,13 @@
 }
 
 
+/* 内容区高度随内容自适应（2026-09-26 用户拍板：生成完打开即完整可读，不拖不滚）。
+   旧的固定 520px 上限改为约一屏的动态上限（max 兜底防极矮窗口）：
+   内容不足一屏 → 节点刚好包住内容；超过保险线 → 仍走节点内滚动，防巨节点出视野。
+   对全部节点生效（含知识图谱/进阶学习/苏格拉底追问等模块大卡与支线回答）。 */
+.graph-node .graph-node-full-content {
+  max-height: max(320px, calc(100vh - 200px)) !important;
+}
 .graph-node-full-content::-webkit-scrollbar {
   width: 6px !important;
 }
@@ -714,7 +721,8 @@
   }
 
   .graph-node-full-content {
-    max-height: 420px !important;
+    /* 移动端同口径：约一屏动态上限（与桌面统一，2026-09-26） */
+    max-height: max(320px, calc(100vh - 200px)) !important;
     overflow-y: auto !important;
   }
 
