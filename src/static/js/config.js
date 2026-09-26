@@ -142,18 +142,11 @@ const DARK_PORT_URL = '/bg_dark_portrait.jpg';
 const LIGHT_LAND_URL = '/bg_light_landscape.jpg';
 const LIGHT_PORT_URL = '/bg_light_portrait.jpg';
 
-// ====== 智能滚动与语音阈值 ======
-const SCROLL_THRESHOLD = 80;
-const VOICE_CANCEL_THRESHOLD = 80;
-
 // ====== 粒子特效参数 ======
 const SYMBOL_COUNT = (window.innerWidth <= 768) ? 18 : 33;
 const REPEL_RADIUS = 120;
 const REPEL_STRENGTH = 0.6;
 const MAX_PARTICLES = (window.innerWidth <= 768) ? 80 : 150;
-
-// ====== 上下文轮次 ======
-const MAX_CONTEXT_ROUNDS = 3;
 
 // ====== 主题初始化 ======
 const initIsDark = localStorage.getItem(STORAGE_KEY_THEME) !== 'light';

@@ -750,51 +750,9 @@
     }
 
     // ===== Bookmark (manual collection) =====
-
-    function openBookmarkModal(messageEl) {
-      const msgBody = messageEl.closest('.message-body');
-      if (!msgBody) return;
-      const msgContent = msgBody.querySelector('.message-content');
-      const text = msgContent ? msgContent.textContent.trim() : '';
-      const msgId = msgBody.dataset.messageId || '';
-      const sessionId = currentSessionId;
-
-      // 查找该会话中 AI 自动提取的知识条目，用于预填
-      const allItems = getKnowledgeItems();
-      const aiItems = Object.values(allItems).filter(
-        it => it.source === 'ai_extract' && it.sessionId === sessionId
-      );
-
-      // 如果有 AI 提取条目，用第一条预填表单
-      let prefill = null;
-      let aiItemIds = [];
-      if (aiItems.length > 0) {
-        prefill = aiItems[0];
-        aiItemIds = aiItems.map(it => it.id);
-      }
-
-      document.getElementById('bmContent').value = text;
-      document.getElementById('bmSessionId').value = sessionId;
-      document.getElementById('bmMessageId').value = msgId;
-
-      // 预填：有 AI 提取则用 AI 内容，否则留空
-      document.getElementById('bmTitle').value = prefill ? prefill.title : '';
-      document.getElementById('bmSummary').value = prefill ? prefill.summary : text.substring(0, 100);
-      document.getElementById('bmTags').value = prefill ? prefill.tags.join('，') : '';
-      document.getElementById('bmFormulas').value = prefill ? (prefill.formulas || []).join('\n') : '';
-      document.getElementById('bmCategory').value = prefill ? prefill.category : 'physics';
-
-      // 记录要替换的 AI 条目 ID 列表
-      document.getElementById('bmReplaceIds').value = aiItemIds.join(',');
-
-      // 显示/隐藏"保存并替换"按钮
-      const replaceBtn = document.getElementById('bmBtnReplace');
-      if (replaceBtn) {
-        replaceBtn.style.display = aiItemIds.length > 0 ? '' : 'none';
-      }
-
-      document.getElementById('bookmarkModal').classList.add('active');
-    }
+    // 2026-09-26：openBookmarkModal 已删——它靠聊天气泡的 .message-body 定位内容，
+    // 而气泡 DOM 随线性主聊天退役（105c1c6）一并消失，函数全项目零调用。收藏入口现在
+    // 唯一走画布：graph-contextmenu 的 _graphCtxBookmarkNode 直接调 saveBookmark。
 
     function closeBookmarkModal() {
       document.getElementById('bookmarkModal').classList.remove('active');

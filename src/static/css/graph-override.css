@@ -56,38 +56,6 @@
   background: transparent !important;
 }
 
-.app-container .input-area {
-  display: block !important;
-}
-
-.app-container.graph-empty-active .input-area {
-  display: none !important;
-}
-
-.input-area {
-  border-top: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
-.app-container .input-area {
-  left: auto !important;
-  right: 20px !important;
-  bottom: 18px !important;
-  transform: none !important;
-  width: auto !important;
-}
-
-.input-container {
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  padding: 0 !important;
-  width: auto !important;
-}
-
 #sendBtn {
   width: 44px;
   height: 44px;
@@ -99,17 +67,6 @@
 }
 
 #sendBtn[hidden] {
-  display: none !important;
-}
-
-.app-container .input-container {
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-}
-
-.app-container .chat-messages {
   display: none !important;
 }
 
@@ -3781,14 +3738,12 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 
 /* ===== 节点/消息加粗强调（主题色） ===== */
-.graph-node strong,
-.message-content strong {
+.graph-node strong{
   color: var(--accent);
   font-weight: 700;
 }
 /* 深色模式：强调色偏白、略带蓝调，避免纯蓝过重 */
-html[data-theme="dark"] .graph-node strong,
-html[data-theme="dark"] .message-content strong {
+html[data-theme="dark"] .graph-node strong{
   color: #bfdbfe;
 }
 
