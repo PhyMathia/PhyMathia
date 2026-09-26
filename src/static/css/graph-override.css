@@ -56,20 +56,6 @@
   background: transparent !important;
 }
 
-#sendBtn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  position: fixed;
-  right: 20px;
-  bottom: 18px;
-  z-index: 80;
-}
-
-#sendBtn[hidden] {
-  display: none !important;
-}
-
 .graph-inspector,
 .graph-view-overlay,
 .graph-focus-panel {
