@@ -286,7 +286,7 @@
       if (canvasCount > 0 && wiped > 0) {
         _setHarnessStatus('画布上有 ' + canvasCount + ' 个节点，但其中 ' + wiped + ' 个被此前的撤销/拒绝标记为已删除。在控制台执行 restoreHarnessDeletedNodes() 可一键恢复', 'error');
       } else {
-        _setHarnessStatus('当前画布上没有节点：可直接向我提问，或先在主聊天生成内容后再让我整理', 'error');
+        _setHarnessStatus('当前画布上没有节点：可直接向我提问，或先在画布上生成内容后再让我整理', 'error');
       }
       restoreInstruction();
       return;

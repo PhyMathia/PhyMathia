@@ -805,11 +805,11 @@ async function generateVizNode(nodeId) {
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof renderCurrentChat === 'function') await renderCurrentChat();
     else if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-    if (typeof hideProgress === 'function') hideProgress('交互可视化已生成');
+    if (typeof hideProgress === 'function') hideProgress();
     if (typeof showToast === 'function') showToast('交互可视化已生成');
   } catch (err) {
     console.warn('Generate visualization node failed:', err);
-    if (typeof hideProgress === 'function') hideProgress('生成可视化失败');
+    if (typeof hideProgress === 'function') hideProgress();
     if (typeof showToast === 'function') showToast('生成可视化失败：' + (err.message || err));
   } finally {
     _generatingVizNodes.delete(nodeId);

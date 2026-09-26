@@ -85,7 +85,7 @@ test('empty snapshot suppresses the badge even with a full cache', () => {
   assert.equal(inserted, null, 'no badge element may be inserted');
 });
 
-// ---- 3. 没有快照（本地寒暄回答/旧服务端）：退回按缓存计算 ----
+// ---- 3. 没有快照（旧服务端 / messages 旧格式）：退回按缓存计算 ----
 test('missing snapshot falls back to the cached sections', () => {
   const s = fixture();
   setCache(s, CACHE_WITH_STALE_FACTS);

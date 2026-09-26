@@ -805,7 +805,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       ? harnessHistory.map(entry => _historyMessageHtml(entry)).join('')
       : '<div class="graph-harness-empty">还没有助手操作记录</div>';
     // 消息正文里的 <formula>/$$..$$ 由 renderMarkdown 转成 KaTeX 定界符，
-    // 这里再跑一遍 renderMath 真正渲染公式（与主聊天一致）。
+    // 这里再跑一遍 renderMath 真正渲染公式（与画布正文同口径）。
     if (typeof renderMath === 'function') {
       try { renderMath(chat); } catch (e) {}
     }

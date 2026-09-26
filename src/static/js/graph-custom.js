@@ -511,13 +511,13 @@ async function _parseSourceNodeFile(node, fileName, contentBase64, maxItems) {
     if (!data.nodes || !data.nodes.length) throw new Error('未提取到知识点，请调整文件内容或数量限制');
     if (typeof showProgress === 'function') showProgress('tool', 85, '正在生成知识网络...');
     _applyParsedDocumentToNode(node, data);
-    if (typeof hideProgress === 'function') hideProgress('文件解析完成');
+    if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
     node.busy = false;
     node.status = 'error';
     _saveCustomNodes();
     renderGraphCanvas();
-    if (typeof hideProgress === 'function') hideProgress('文件解析失败');
+    if (typeof hideProgress === 'function') hideProgress();
     if (typeof showToast === 'function') showToast('解析失败：' + (err.message || err));
   }
 }

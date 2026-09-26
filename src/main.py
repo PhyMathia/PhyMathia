@@ -328,7 +328,7 @@ async def api_models_chat(request: Request):
                     source_module = "extend"
         socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
         if socratic_state and not is_socratic_prompt:
-            # 用户开始新的普通问答时，结束当前苏格拉底支线
+            # 非苏格拉底的新提问开始时，结束当前苏格拉底支线
             _delete_socratic_state(socratic_ref)
             socratic_state = None
         include_socratic = bool(socratic_state) or is_socratic_prompt
@@ -377,7 +377,8 @@ async def api_models_chat(request: Request):
             context_parts.append(_workflow_context_instruction(workflow_context))
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
         # 消息层管「我们聊到哪」，这一段管「这个话题的地基是什么」。
-        # 与画像注入同一范围（默认完整回答路径，不含 quick / 画布模块生成 / 支线）：
+        # 与画像注入同一范围（graph_path-only 锚定请求；画布模块生成 workflow_context
+        # 与支线 branch_id 不注入）：
         # 支线与模块重生成是局部动作，多这一层只会挤 token。查空返回空串 = 零回归。
         # 记忆第二步「用起来」：画像薄弱词传给检索作排序加权（只重排、不放水）。
         _device_id = payload.get("device_id") or payload.get("deviceId") or ""
@@ -388,7 +389,7 @@ async def api_models_chat(request: Request):
             )
             if concept_text:
                 context_parts.append(concept_text)
-        # 用户画像（记忆）注入：仅默认完整回答路径（画布模块生成 / 支线
+        # 用户画像（记忆）注入：仅 graph_path-only 锚定请求（画布模块生成 / 支线
         # 不注入——与上方概念地基同一范围，09-20 补齐 branch_id：此前支线也会
         # 注入画像并刷新 lastUsedAt，与注释宣称的口径不一致）。
         # 契约化段落 + 注入回写：命中的事实记 lastUsedAt，长期未命中的自动休眠。

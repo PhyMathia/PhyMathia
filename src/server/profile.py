@@ -743,8 +743,8 @@ def profile_review_digest(device_id: str, max_chars: int = 220) -> str:
     """给 Φ（harness）的一句话画像摘要：与 profile_context 同一份分节口径压成一行。
 
     形态：`学段：高中；目标：考研；薄弱：等时性、三角函数；偏好：详略=详细`。
-    只读不记账：Φ 消费画像不刷新 lastUsedAt——休眠判定只挂在主聊天的真实
-    文本注入上，Φ 只是「看了一眼」。超预算从尾部整节丢弃（学段/目标/薄弱在前）。
+    只读不记账：Φ 消费画像不刷新 lastUsedAt——休眠判定只挂在真实文本注入
+    （graph_path-only 锚定 / 旧格式 messages）上，Φ 只是「看了一眼」。超预算从尾部整节丢弃（学段/目标/薄弱在前）。
     """
     profile = get_profile(device_id)
     if not profile.get("enabled", True):

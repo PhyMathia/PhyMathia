@@ -77,7 +77,7 @@ async def health():
 
 
 def _profile_digest_for(payload: dict) -> str:
-    """Φ 的画像一行摘要（记忆第二步「用起来」）：与主聊天同一份画像数据。
+    """Φ 的画像一行摘要（记忆第二步「用起来」）：与 profile_context 同一份画像数据。
 
     digest 由服务端计算（与回答角标同一教训：前端缓存会漂移，服务端是唯一
     事实源）。server 包不可用（battery 测试桩/独立部署）或画像关闭/为空时
