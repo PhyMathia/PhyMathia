@@ -3,10 +3,11 @@
 // CSS/JS/字体，快照 JSON 以 window.__UTOPIA_EMBEDDED__ 内嵌——双击即看（file:// 离线
 // 可开）、可发给没装 PhyMathia 的人。查看器 boot 优先读内嵌快照（见 viewer-main.js）。
 // 管线复刻 graph-export 的 CSS url() 内联策略：字体必内联（KaTeX 只留 woff2 源减重）。
-// file:// 三件套（用户实测）：① 壁纸照片按快照主题内联进包；② 可视化节点的 KaTeX
-// 资产以 window.__PM_VIZ_ASSETS__ 预内联（桥接走 postMessage 来取，绝对路径在
+// file:// 三件套（用户实测）：① 壁纸照片深浅两张内联进包，随主题按钮一起切换；② 可视化
+// 节点的 KaTeX 资产以 window.__PM_VIZ_ASSETS__ 预内联（桥接走 postMessage 来取，绝对路径在
 // file:// 下全被拦）；③ pmu 通道残留界面（打开快照/拖拽卡/.pmu 文案）打包时剔除，
 // viewer.html 模板本身不动——恢复 pmu 时无需回滚本文件。
+// 交付一律落下载文件（用户拍板 2026-09-26：要的是文件不是弹窗），window.open 通道已拆除。
 
 (function () {
   var IMAGE_INLINE_LIMIT = 96 * 1024; // 图片内联上限（背景照片等大图不进包）
@@ -95,11 +96,16 @@
     return String(code).replace(/<\/script/gi, '<\\/script');
   }
 
-  // 兜底样式：壁纸照片（按快照主题内联）铺底 + 主题遮罩 + 渐变兜底底色（照片没抓到时接管）
-  function _buildOverrideCss(bgDataUrl) {
-    return (bgDataUrl
-      ? 'body::before{content:"";position:fixed;inset:0;z-index:-2;background:url(' + bgDataUrl + ') center/cover no-repeat;}'
+  // 兜底样式：壁纸照片深浅两张都内联、随 data-theme 一起切换（用户实测：只内嵌单张
+  // 的话切主题壁纸不动，像「主题没生效」）+ 主题遮罩 + 渐变兜底底色（照片没抓到时接管）
+  function _buildOverrideCss(bgs) {
+    var dark = bgs && bgs.dark, light = bgs && bgs.light;
+    return (dark
+      ? 'body::before{content:"";position:fixed;inset:0;z-index:-2;background:url(' + dark + ') center/cover no-repeat;}'
       : '')
+      + (light
+        ? '[data-theme="light"] body::before{background:url(' + light + ') center/cover no-repeat;}'
+        : '')
       + 'body::after{content:"";position:fixed;inset:0;z-index:-1;background:var(--overlay-bg, rgba(5,8,25,.55));pointer-events:none;}'
       + 'body{background:linear-gradient(165deg, var(--bg-dark, #0a0e1e) 0%, #0d1426 55%, #0a1020 100%) !important;}'
       + '[data-theme="light"] body{background:linear-gradient(165deg, #eef3fb 0%, #e6edf8 55%, #eef2fa 100%) !important;}';
@@ -170,9 +176,6 @@
       return false;
     }
 
-    var win = window.open('', '_blank'); // 预占新窗口句柄（异步收集资源后再写入）
-    if (win) { try { win.document.write('<p style="font-family:sans-serif;padding:24px">正在打包单文件网页…</p>'); } catch (e) { win = null; } }
-
     try {
       _toast('正在收集查看器资源（首次约几秒）…');
       var tplText = await fetch('/viewer.html', { cache: 'no-store' }).then(function (r) {
@@ -207,10 +210,10 @@
       });
       await Promise.all(cssJobs);
 
-      // 可视化 KaTeX 资产与壁纸照片并行收集（都在模板 CSS/JS 内联之后，与打包正文无关）
+      // 可视化 KaTeX 资产与深浅两张壁纸并行收集（都在模板 CSS/JS 内联之后，与打包正文无关）
       var vizAssets = await _collectVizAssets(snapshot);
-      var bgTheme = (snapshot.meta && snapshot.meta.theme) === 'light' ? 'light' : 'dark';
-      var bgDataUrl = await _fetchDataUrl(location.origin + (bgTheme === 'light' ? '/bg_light_landscape.jpg' : '/bg_dark_landscape.jpg'), true);
+      var bgDark = await _fetchDataUrl(location.origin + '/bg_dark_landscape.jpg', true);
+      var bgLight = await _fetchDataUrl(location.origin + '/bg_light_landscape.jpg', true);
 
       // JS：<script src> → 内联；viewer.js 前注入内嵌快照
       var scripts = Array.prototype.slice.call(doc.querySelectorAll('script[src]'));
@@ -244,21 +247,13 @@
 
       // 兜底样式收尾（放在 body 末尾的 style：壁纸 + 遮罩 + 渐变兜底底色）
       var ov = doc.createElement('style');
-      ov.textContent = _buildOverrideCss(bgDataUrl);
+      ov.textContent = _buildOverrideCss({ dark: bgDark, light: bgLight });
       doc.body.appendChild(ov);
 
       var html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
 
-      // 交付：预开的窗口直接写入（保留用户手势链），否则走下载
-      if (win) {
-        try {
-          win.document.open();
-          win.document.write(html);
-          win.document.close();
-          _toast('单文件网页已在新窗口打开——另存为（Ctrl+S）即可分享');
-          return true;
-        } catch (e) { /* 写不进去（about:blank 被拦等）→ 落回下载 */ }
-      }
+      // 交付只落下载文件（用户拍板 2026-09-26：要的是能分享的 .html 文件，不是弹出的页面；
+      // 弹窗通道已整体拆除）。a[download] 点击在导出菜单的用户手势链内，不会被拦
       var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -272,7 +267,6 @@
       _toast('单文件网页已导出（' + Math.round(html.length / 1024) + ' KB）——双击即可离线打开');
       return true;
     } catch (err) {
-      if (win) { try { win.close(); } catch (e2) {} }
       console.error('[utopia-html]', err);
       _toast('单文件网页导出失败：' + (err && err.message ? err.message : err));
       return false;
