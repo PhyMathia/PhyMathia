@@ -120,28 +120,42 @@
     if (bar) bar.remove();
     var drop = doc.getElementById('utopiaDrop');
     if (drop) drop.remove();
-    // 悬浮玻璃圆钮统一样式：搜索（🔍）在主题（🌙）上方
+    // 悬浮玻璃圆钮统一样式：🔍 搜索在 🌙 主题上方；图标用与主应用头部一致的
+    // 描边 SVG（currentColor 随主题变色，emoji 用户嫌不好看——2026-09-26 复评）
     var floating =
       'position:fixed;right:18px;z-index:9999;width:44px;height:44px;'
-      + 'border-radius:50%;border:1px solid var(--stroke, rgba(255,255,255,.14));'
-      + 'background:var(--bg-panel, rgba(16,24,46,.72));color:var(--text-main, #e8eefc);'
-      + 'font-size:18px;line-height:1;cursor:pointer;backdrop-filter:blur(12px);'
-      + 'box-shadow:0 4px 18px rgba(0,0,0,.28);';
+      + 'border-radius:50%;border:1px solid var(--border, rgba(100,130,200,.25));'
+      + 'background:var(--bg-panel, rgba(16,24,46,.72));color:var(--text-primary, #f0f4f8);'
+      + 'cursor:pointer;backdrop-filter:blur(12px);'
+      + 'box-shadow:0 4px 18px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;';
+    var svg = function (inner) {
+      return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"'
+        + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
+    };
+    var ICON_MOON = svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>');
+    var ICON_SUN = svg('<circle cx="12" cy="12" r="4.4"></circle>'
+      + '<line x1="12" y1="2.5" x2="12" y2="4.5"></line><line x1="12" y1="19.5" x2="12" y2="21.5"></line>'
+      + '<line x1="2.5" y1="12" x2="4.5" y2="12"></line><line x1="19.5" y1="12" x2="21.5" y2="12"></line>'
+      + '<line x1="5.3" y1="5.3" x2="6.7" y2="6.7"></line><line x1="17.3" y1="17.3" x2="18.7" y2="18.7"></line>'
+      + '<line x1="5.3" y1="18.7" x2="6.7" y2="17.3"></line><line x1="17.3" y1="6.7" x2="18.7" y2="5.3"></line>');
+    var ICON_SEARCH = svg('<circle cx="11" cy="11" r="7"></circle><line x1="20" y1="20" x2="16" y2="16"></line>');
     var searchBtn = doc.createElement('button');
     searchBtn.id = 'utopiaSearchBtn';
     searchBtn.title = '搜索节点（快捷键 /）';
     searchBtn.setAttribute('style', floating + 'bottom:74px;');
-    searchBtn.textContent = '🔍';
+    searchBtn.innerHTML = ICON_SEARCH;
     doc.body.appendChild(searchBtn);
     // 主题按钮自建：固定右下角，保留原 id 让 viewer-main 的点击绑定照常生效
     var themeBtn = doc.createElement('button');
     themeBtn.id = 'utopiaThemeBtn';
     themeBtn.title = '切换深色/浅色（仅本次查看，不改快照）';
-    themeBtn.setAttribute('style', floating + 'bottom:18px;font-size:20px;');
+    themeBtn.setAttribute('style', floating + 'bottom:18px;');
+    themeBtn.innerHTML = ICON_MOON;
     doc.body.appendChild(themeBtn);
     var sync = doc.createElement('script');
     sync.textContent = '(function(){var b=document.getElementById("utopiaThemeBtn");if(!b)return;'
-      + 'function s(){b.textContent=document.documentElement.getAttribute("data-theme")==="light"?"☀️":"🌙";}'
+      + 'var MOON=' + JSON.stringify(ICON_MOON) + ',SUN=' + JSON.stringify(ICON_SUN) + ';'
+      + 'function s(){b.innerHTML=document.documentElement.getAttribute("data-theme")==="light"?SUN:MOON;}'
       + 's();'
       + 'try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});}catch(e){}'
       + 'window.addEventListener("load",s);})();';
