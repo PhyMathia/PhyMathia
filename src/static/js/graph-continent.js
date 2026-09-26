@@ -73,16 +73,15 @@ const CONTINENT_ZOOM_MAX = 2.5;
 // DIVE_FACTOR 2.6 推镜 430ms、关闭的硬切）。两方向共用同一组参数是**刻意的**：
 // 往返手感必须完全对称，用户才能建立稳定直觉，各自不同会变成「同一件事两次不一样」。
 //
-// 为什么 0.35 配 0.5：两者互为反比，交接点落在屏幕正中——转场中点时两张图各占一半，
-// 都还认得出轮廓，读者才能读出「这是同一张图的两个尺度」而不是「两张图换屏」。
+// **开图只有一段动画**（v9.1）：「拉远」的动势全部由会话图那一侧承担（1→0.5），
+// 大陆内容在最终视口直接落位、不补间。早先一版让大陆再从 0.35 倍长到目标视口，
+// 结果是两段动画背靠背（数据 ~450ms 才到、第一段 420ms 就结束了），用户真机反馈
+// 「两段动画，后面一段似乎是多余的」——对，那一整段就是多余的第二段。教训：
+// 「缩放配对」（0.35 配 0.5 互为反比）在纸面上漂亮，但落不了地——大陆内容第一段
+// 时还没到，0.35 的长出来只能排到数据之后，于是必然成为第二段。
 const CONTINENT_WARP_MS = 420;
 const CONTINENT_WARP_EASE = 'cubic-bezier(.22,.75,.3,1)';
-const CONTINENT_WARP_CAMERA_IN = 0.35;  // 大陆起始缩放（相对倍率，非绝对值）
 const CONTINENT_WARP_CANVAS_OUT = 0.5;  // 会话图退场缩放
-// 起始缩放的下限保护：0.35 是**相对**倍率，落在小视口的大库适配 zoom 可能只有 0.3，
-// 0.3×0.35=0.105 会被 CONTINENT_ZOOM_MIN(0.15) 夹住——夹住不报错，但动画幅度会
-// 随数据量悄悄变短。这里兜一个地板，保证任何库都至少有「2 倍长出来」的可见位移。
-const CONTINENT_WARP_ZOOM_FLOOR = 0.2;
 // v7.1a 海域层：两级布局的块间距与海域板尺寸（板 = 块内岛矩形并集外扩，
 // 顶部另留一行给海域牌）；色盘 12 格，同领域永远同色。
 const CONTINENT_REGION_GAP = 230;
@@ -4602,12 +4601,13 @@ async function openContinentView(opts) {
   const ws = _continentWorkspace();
   if (ws) ws.classList.add('continent-open');
 
-  // 整段开图持有一个令牌，从按钮按下一直持到镜头落定收尾
+  // 开图持有一个令牌，第一段（交叉淡化）收尾就释放——v9.1 起没有第二段镜头补间，
+  // 「转场在途」就是这 420ms 本身
   const openHold = _continentWarpHold();
   _continentOpenHold = openHold;
   // 交叉淡化立即起播，**不等数据**（smoke 的沙箱里 rAF/setTimeout 是空桩，open 的
   // promise 不能 await 任何靠它们收尾的东西，否则 frontend_smoke 会永不落地）
-  _continentRunWarp('enter');
+  _continentRunWarp('enter', () => _continentWarpRelease(openHold));
 
   _continentKeyHandler = e => {
     if (e.key === 'Escape') {
@@ -4649,23 +4649,19 @@ async function openContinentView(opts) {
   _continentRender(data);
   _continentUpdateBreadcrumb(data);
   _continentUpdateTools();
-  _continentSettleWorld(entrySession, fromBreadcrumb, openHold);
+  _continentSettleWorld(entrySession, fromBreadcrumb);
 }
 
-// 数据到了之后的大陆镜头落定段：从「目标视口的 0.35 倍」长到目标视口，锚点是
-// 当前会话对应的那座岛（从面包屑返回时是视口中心——老口径的恢复浏览位置优先）。
-function _continentSettleWorld(entrySession, fromBreadcrumb, openHold) {
+// 数据到了之后把大陆落到最终视口——**只落位，不补间**（v9.1，见 CONTINENT_WARP_MS
+// 上方的注释）。锚点仍是「当前会话对应的那座岛」；从面包屑返回时走老口径恢复视口。
+// 内容在这里直接出现：暖缓存下第一段刚好收尾、读起来是一段；冷启动下内容后到、
+// 直接出现（那是加载，不是动画）。 continent-warp 已由第一段的 finish 释放，
+// 这里不再持有令牌。
+function _continentSettleWorld(entrySession, fromBreadcrumb) {
   _continentRestoreOrFitView();
-  const c = _continentCenter();
-  let anchored = false;
   if (!fromBreadcrumb && entrySession) {
-    anchored = _continentFocusSessionIsland(entrySession);
+    _continentFocusSessionIsland(entrySession);
   }
-  void anchored; // 锚点已由 _continentFocusSessionIsland 写进 pan，这里只用视口中心补间
-  const start = Math.max(CONTINENT_WARP_ZOOM_FLOOR, _continentZoom * CONTINENT_WARP_CAMERA_IN);
-  _continentAnimateWorld(start, _continentZoom, c.x, c.y);
-  // 落定是开图的最后一段：它收尾才摘 continent-warp（藏画布的规则在此之前不生效）
-  setTimeout(() => _continentWarpRelease(openHold), _continentWarpMs() + 80);
 }
 
 function closeContinentView() {
