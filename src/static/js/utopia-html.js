@@ -111,24 +111,33 @@
       + '[data-theme="light"] body{background:linear-gradient(165deg, #eef3fb 0%, #e6edf8 55%, #eef2fa 100%) !important;}';
   }
 
-  // 顶栏整体剔除（用户拍板 2026-09-26：整栏难看，会话/适配/±/搜索/展开全部/导出 PNG
-  // 都不要；滚轮缩放、拖拽平移、F 适配、/ 搜索等键盘与手势能力全保留）+ 主题按钮落
-  // 右下角悬浮（🌙/☀️）。只动单文件产物，viewer.html 模板保持 pmu 兼容。
+  // 顶栏整体剔除（用户拍板 2026-09-26：整栏难看，会话/适配/±/展开全部/导出 PNG
+  // 都不要；滚轮缩放、拖拽平移、F 适配、/ 搜索等键盘与手势能力全保留）。搜索按钮
+  // 用户复评后要求保留——右下角悬浮 🔍 钮（保留原 id 让 viewer-main 绑定照常生效），
+  // 与主题钮同款玻璃圆钮。只动单文件产物，viewer.html 模板保持 pmu 兼容。
   function _stripPmuUi(doc) {
     var bar = doc.querySelector('.utopia-bar');
     if (bar) bar.remove();
     var drop = doc.getElementById('utopiaDrop');
     if (drop) drop.remove();
-    // 主题按钮自建：固定右下角、玻璃质感圆形，保留原 id 让 viewer-main 的点击绑定照常生效
+    // 悬浮玻璃圆钮统一样式：搜索（🔍）在主题（🌙）上方
+    var floating =
+      'position:fixed;right:18px;z-index:9999;width:44px;height:44px;'
+      + 'border-radius:50%;border:1px solid var(--stroke, rgba(255,255,255,.14));'
+      + 'background:var(--bg-panel, rgba(16,24,46,.72));color:var(--text-main, #e8eefc);'
+      + 'font-size:18px;line-height:1;cursor:pointer;backdrop-filter:blur(12px);'
+      + 'box-shadow:0 4px 18px rgba(0,0,0,.28);';
+    var searchBtn = doc.createElement('button');
+    searchBtn.id = 'utopiaSearchBtn';
+    searchBtn.title = '搜索节点（快捷键 /）';
+    searchBtn.setAttribute('style', floating + 'bottom:74px;');
+    searchBtn.textContent = '🔍';
+    doc.body.appendChild(searchBtn);
+    // 主题按钮自建：固定右下角，保留原 id 让 viewer-main 的点击绑定照常生效
     var themeBtn = doc.createElement('button');
     themeBtn.id = 'utopiaThemeBtn';
     themeBtn.title = '切换深色/浅色（仅本次查看，不改快照）';
-    themeBtn.setAttribute('style',
-      'position:fixed;right:18px;bottom:18px;z-index:9999;width:44px;height:44px;'
-      + 'border-radius:50%;border:1px solid var(--stroke, rgba(255,255,255,.14));'
-      + 'background:var(--bg-panel, rgba(16,24,46,.72));color:var(--text-main, #e8eefc);'
-      + 'font-size:20px;line-height:1;cursor:pointer;backdrop-filter:blur(12px);'
-      + 'box-shadow:0 4px 18px rgba(0,0,0,.28);');
+    themeBtn.setAttribute('style', floating + 'bottom:18px;font-size:20px;');
     doc.body.appendChild(themeBtn);
     var sync = doc.createElement('script');
     sync.textContent = '(function(){var b=document.getElementById("utopiaThemeBtn");if(!b)return;'
