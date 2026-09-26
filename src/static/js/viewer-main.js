@@ -46,6 +46,7 @@
     try { if (typeof window.fitGraph === 'function') window.fitGraph(); } catch (e) {}
     readOnlyGuard();
     installReadOnlyPanels();
+    installReadOnlyCanvasGestures();
     installReadOnlyContextMenu();
     // 换装新快照：会话面板标记为待重渲（下次打开按新 messages 重建）
     var panel = el('utopiaMsgsPanel');
@@ -98,9 +99,12 @@
     document.head.appendChild(css);
   }
 
-  // 只读护栏：双击打开的面板一律禁掉
-  // 双击画布空白 → openAddBlankNodeModal（添加节点面板）；双击「我的理解」节点 → editHumanNoteNode；
+  // 只读护栏：双击打开的面板 + 拖拽/连线写路径一律禁掉
+  // 面板类：双击画布空白 → openAddBlankNodeModal（添加节点面板）；双击「我的理解」节点 → editHumanNoteNode；
   // 另外把编辑类入口一并封住（它们经由已隐藏的编辑按钮，但双击/快捷键路径仍可能摸到）。
+  // 拖拽类（2026-09-26 用户实测「拖动节点还是可以增加节点」）：从输出端口拖出落在空白处
+  // 会走 _createBranchNodeFromOutput 新建分支节点——手势路径此前完全没设防，桩完面板也不管用；
+  // 连同端口连线/断开/增删端口、双击连线删除、联系线编辑、复制粘贴建节点一起封。
   // 不做静默无反应：给一句 toast，否则用户会以为双击坏了（本仓库有过"无声消失被当成 bug"的教训）。
   var READONLY_BLOCKED = {
     openAddBlankNodeModal: '只读快照：不能添加节点',
@@ -108,6 +112,16 @@
     editCustomNodeContent: '只读快照：节点内容不可编辑',
     editModuleNode: '只读快照：模块内容不可编辑',
     createManualNode: '只读快照：不能新建节点',
+    _createBranchNodeFromOutput: '只读快照：不能通过拖拽新增节点',
+    _connectPorts: '只读快照：不能新增连线',
+    _disconnectInputPort: '只读快照：不能断开连线',
+    _removeGraphEdge: '只读快照：不能删除连线',
+    openLinkEdgeModal: '只读快照：联系线不可编辑',
+    graphAddOutputPort: '只读快照：不能增删端口',
+    graphAddInputPort: '只读快照：不能增删端口',
+    _graphCtxDuplicateNode: '只读快照：不能复制出新节点',
+    _graphCtxPasteNode: '只读快照：不能粘贴成新节点',
+    _graphCtxCreateBlankNodeWithText: '只读快照：不能新建节点',
   };
 
   function installReadOnlyPanels() {
@@ -121,10 +135,26 @@
     });
   }
 
+  // 只读画布手势：捕获期拦下画布上的双击（双击连线=删连线、双击空白=加节点面板、
+  // 双击「我的理解」= 编辑）。函数桩已挡住实际写入，但调用方那句「已删除连线（Ctrl+Z
+  // 可撤销）」是无条件弹的——桩生效时它照样弹，用户会以为真删了（实测踩过）。
+  // 拦在捕获期让整个处理器不执行，提示也一并消失。
+  function installReadOnlyCanvasGestures() {
+    var canvas = document.getElementById('graphCanvas');
+    if (!canvas || canvas.__utopiaReadonlyGestures) return;
+    canvas.__utopiaReadonlyGestures = true;
+    canvas.addEventListener('dblclick', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toast('只读快照：不能删除连线，也不能添加节点');
+    }, true);
+  }
+
   // 只读右键菜单：open 之后按白名单剪枝——查看器不提供新建/删除/端口增删/收藏知识点等写操作。
-  // 用标签白名单而不是改 graph-contextmenu.js：菜单项定义跟着主应用走，查看器只做减法。
+  // 用标签白名单而不是改 graph-contextmenu.js：菜单定义跟着主应用走，查看器只做减法。
+  // 白名单里刻意没有「复制节点」：它的落地是 _graphCtxDuplicateNode → 真的多一个节点（用户要求只读）。
   var READONLY_MENU_LABELS = [
-    '复制全文', '复制节点', '居中此节点', '折叠此节点', '展开此节点',
+    '复制全文', '居中此节点', '折叠此节点', '展开此节点',
     '适配画布', '缩放复位 100%', '导出超高清 PNG…',
   ];
 
@@ -378,6 +408,7 @@
 
   function boot() {
     installReadOnlyPanels();
+    installReadOnlyCanvasGestures();
     installReadOnlyContextMenu();
     initToolbar();
     initDropZone();
