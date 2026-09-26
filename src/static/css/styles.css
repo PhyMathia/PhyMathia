@@ -988,7 +988,6 @@
       gap: 6px;
     }
     .kp-tab svg { width: 15px; height: 15px; display: block; }
-    .section-icon svg { width: 15px; height: 15px; display: block; }
     .model-tag {
       display: inline-flex;
       align-items: center;
@@ -1727,13 +1726,6 @@
     }
 
     /* 苏格拉底追问按钮 */
-    .socratic-section {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 8px;
-      width: 100%;
-    }
     .socratic-item {
       display: flex;
       flex-direction: column;

@@ -1400,68 +1400,6 @@
       }
     }
 
-    .branch-tag {
-      display: inline-block;
-      max-width: 100%;
-      margin: 0 0 7px;
-      padding: 3px 8px;
-      border-radius: var(--r-sm);
-      font-size: var(--fs-xs);
-      font-weight: 600;
-      color: var(--text-primary);
-      background: rgba(74, 158, 255, 0.14);
-      border: 1px solid rgba(74, 158, 255, 0.28);
-      overflow-wrap: anywhere;
-    }
-    .branch-tag.followup {
-      background: rgba(59, 130, 246, 0.16);
-      border-color: rgba(59, 130, 246, 0.32);
-    }
-    .branch-tag.confused {
-      background: rgba(245, 158, 11, 0.14);
-      border-color: rgba(245, 158, 11, 0.3);
-    }
-    .branch-tag.socratic {
-      background: rgba(168, 85, 247, 0.16);
-      border-color: rgba(168, 85, 247, 0.32);
-    }
-    .branch-tag.learn {
-      background: rgba(16, 185, 129, 0.14);
-      border-color: rgba(16, 185, 129, 0.3);
-    }
-    .branch-anchor-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      max-width: 720px;
-      margin: 0 auto 6px;
-      padding: 7px 10px;
-      border-radius: var(--r-md);
-      background: var(--btn-active-bg);
-      border: 1px solid var(--btn-active-border);
-      color: var(--text-primary);
-      font-size: var(--fs-sm);
-      line-height: 1.4;
-    }
-    .branch-anchor-bar[hidden] {
-      display: none;
-    }
-    .branch-anchor-clear {
-      flex-shrink: 0;
-      border: 1px solid var(--border);
-      background: transparent;
-      color: var(--text-secondary);
-      border-radius: var(--r-sm);
-      padding: 3px 8px;
-      font-size: var(--fs-xs);
-      cursor: pointer;
-    }
-    .branch-anchor-clear:hover {
-      color: var(--accent);
-      border-color: var(--accent);
-    }
-
     /* ====== 探索网全屏视图 ====== */
     .graph-view-overlay {
       display: none;
