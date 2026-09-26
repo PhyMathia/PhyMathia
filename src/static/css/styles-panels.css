@@ -3060,8 +3060,15 @@
   z-index: 30;
   overflow: hidden;
   background: transparent;
-  transition: opacity 0.38s ease;
+  /* 与 JS 的 CONTINENT_WARP_MS / CONTINENT_WARP_EASE 同源（420ms 同一条曲线）。
+   * JS 在转场窗口内也会写内联值，两侧同值，所以谁先落地都一样。 */
+  transition: opacity 420ms cubic-bezier(.22,.75,.3,1);
 }
+/* v9：交叉淡化的「隐藏」端。continent-diving / continent-surfacing 是 v8 的两个语义
+ * （下钻推进 / 打开落定），v9 合并成一个 continent-warp-fade——两个方向的淡化已经
+ * 由同一条 _continentRunWarp 驱动，不再需要区分是往哪边走。三个类名都留着，
+ * 因为 enterContinentSession 仍用 continent-diving 标记「正在下钻」这个状态。 */
+.continent-layer.continent-warp-fade,
 .continent-layer.continent-diving,
 .continent-layer.continent-surfacing {
   opacity: 0;
@@ -3718,9 +3725,26 @@
   display: none;
 }
 /* 大陆层底透明（透出全局壁纸与星轨粒子），但下层**会话图**不能跟着透出来——
- * 大陆打开时藏掉画布内容，只留壁纸做底，否则两张图叠在一起读不了 */
-.graph-workspace.continent-open .graph-canvas {
+ * 大陆打开时藏掉画布内容，只留壁纸做底，否则两张图叠在一起读不了
+ *
+ * v9 跨层转场：转场窗口内两张图**就是要叠着**的（会话图缩到 0.5 淡出、大陆从 0.35
+ * 倍长上来），所以 .continent-warp 让这条规则让位。转场结束/被打断时 _continentRunWarp
+ * 的收尾必定摘掉 continent-warp —— 漏摘的后果就是「大陆开着却看得见底下的会话图」，
+ * 也就是这条规则当初要防的那件事，smoke 里有静态断言钉住收尾会摘。
+ */
+.graph-workspace.continent-open:not(.continent-warp) .graph-canvas {
   visibility: hidden;
+}
+/* 会话图的退场态：缩到 0.5 倍的同时淡出。缩放挂在 .graph-canvas 自身（内层
+ * .graph-canvas-inner 已经有自己的 translate+scale，两者复合互不覆盖；graph-canvas
+ * 平时不写任何 inline style，所以这里加类不会和会话图自己的缩放打架）。
+ * 不加圆角/阴影：透明度一路降到 0，四缘露出来的背景根本来不及被看见。 */
+.graph-canvas {
+  transform-origin: 50% 50%;
+}
+.graph-canvas.is-continent-retreat {
+  transform: scale(0.5);
+  opacity: 0;
 }
 /* ===== v7.1a 海域层：学科地盘（领域配色 / 海域板 / 图例 / 聚焦淡化） ===== */
 /* 颜色只上两层（海域板 + 岛底板），卡片保持原样——三层都上色会与 ◈ 边界卡/城市的
@@ -4200,8 +4224,13 @@
 @media (prefers-reduced-motion: reduce) {
   .continent-layer,
   .continent-world,
-  .continent-node {
+  .continent-node,
+  .graph-canvas {
     transition: none !important;
+  }
+  /* 会话图的退场缩放同理：状态照翻（缩小 + 透明），但不补间 */
+  .graph-canvas.is-continent-retreat {
+    transform: none;
   }
 }
 
