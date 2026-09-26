@@ -168,12 +168,13 @@ const _VIZ_THEME_BRIDGE = '<script>(function(){'
   + '})();<\/script>';
 
 // ====== 可视化 iframe 公式桥接 ======
-// 注入到 AI 生成的 HTML 中：从宿主加载本地 KaTeX（/vendor/katex/），auto-render 渲染
-// 页面内的 $...$、$$...$$、\(...\)、\[...\]。路径说明：
-// - srcdoc iframe 相对 URL 继承父页面 base 即可命中宿主 /vendor/katex 本地副本
-// - 「新标签页打开」是 blob URL 文档——blob 属于 cannot-be-a-base URL，任何相对路径
-//   （含 / 开头的根相对路径）都无法解析！必须写死宿主绝对地址（运行时取 location.origin）
-// 让位规则：页面已自带 MathJax 则完全不干预；已自带 KaTeX（renderMathInElement）则直接用。
+// 注入到 AI 生成的 HTML 中：从宿主拿本地 KaTeX（/vendor/katex/），auto-render 渲染
+// 页面内的 $...$、$$...$$、\(...\)、\[...\]。资产来源分三档：
+// ① 宿主应答 postMessage（file:// 单文件网页：utopia-html 打包时预内联 data URI，
+//    绝对路径在 file:// 下全被拦，用户实测公式全裸奔）；
+// ② 兜底绝对路径（http 宿主：srcdoc 相对 URL 继承父页面 base 命中 /vendor/katex；
+//    blob URL 文档是 cannot-be-a-base，必须写死 location.origin 的绝对地址）。
+// 让位规则：页面已自带 MathJax 则不完全干预；已自带 KaTeX（renderMathInElement）则直接用。
 // 加载失败静默降级（公式保持原文，不影响页面其余功能）。
 const _VIZ_ASSET_BASE = (function () {
   try {
@@ -181,9 +182,9 @@ const _VIZ_ASSET_BASE = (function () {
     return (o && o.indexOf('http') === 0) ? o : '';
   } catch (e) { return ''; }
 })();
-const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.css">'
-  + '<script>(function(){'
+const _VIZ_MATH_BRIDGE = '<script>(function(){'
   + 'if(window.__pmVizMathBooted)return;window.__pmVizMathBooted=true;'
+  + 'var BASE=' + JSON.stringify(_VIZ_ASSET_BASE) + ';'
   + 'var OPTS={delimiters:['
   + '{left:"$$",right:"$$",display:true},'
   + '{left:"\\\\[",right:"\\\\]",display:true},'
@@ -193,6 +194,15 @@ const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/v
   + 'function run(){try{if(window.renderMathInElement){renderMathInElement(document.body||document.documentElement,OPTS);}}catch(e){}}'
   + 'function done(){run();watch();try{if(document.fonts&&document.fonts.ready){document.fonts.ready.then(function(){run();},function(){});}}catch(e){}}'
   + 'function load(src,next){var s=document.createElement("script");s.src=src;s.onload=next;s.onerror=function(){};(document.head||document.documentElement).appendChild(s);}'
+  + 'function addCss(href){try{var l=document.createElement("link");l.rel="stylesheet";l.href=href;(document.head||document.documentElement).appendChild(l);}catch(e){}}'
+  // 向宿主要 KaTeX 资产（data URI 或空）；800ms 无应答判为宿主没有供给通道，回 null 走绝对路径
+  + 'function reqAssets(next){'
+  + 'var got=false;'
+  + 'function fin(a){if(got)return;got=true;next(a||null);}'
+  + 'try{window.addEventListener("message",function h(ev){var d=ev&&ev.data||{};if(d.__pmVizAssets!==true)return;window.removeEventListener("message",h);fin(d);});'
+  + 'window["parent"].postMessage({__pmVizAssetsRequest:true},"*");'
+  + 'setTimeout(function(){fin(null);},800);}catch(e){fin(null);}}'
+  + 'var ASSETS=null;'
   + 'var _t=null,_obs=null;'
   // 异步补渲：页面脚本在 boot 之后才注入/更新的公式文本（动画、分步揭示等），
   // 由 MutationObserver 防抖 200ms 后补跑一次 auto-render。
@@ -202,8 +212,9 @@ const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/v
   // <formula> 标签兜底转换：模型偶尔把主对话的 <formula> 约定带进可视化页，
   // 且这类页面的转换钩子常挂在自家数学库启动流程上——库一死转换就没人做了
   + 'function cvtFormulaTags(){try{var fs=document.querySelectorAll("formula");for(var i=0;i<fs.length;i++){var f=fs[i],el=document.createElement("span"),d=f.hasAttribute("display");el.textContent=(d?"\\\\[":"\\\\(")+f.textContent.trim()+(d?"\\\\]":"\\\\)");f.parentNode.replaceChild(el,f);}}catch(e){}}'
-  + 'function goKatex(){cvtFormulaTags();load("' + _VIZ_ASSET_BASE + '/vendor/katex/katex.min.js",function(){load("' + _VIZ_ASSET_BASE + '/vendor/katex/contrib/auto-render.min.js",done);});}'
-  + 'function boot(){'
+  + 'function goKatex(){cvtFormulaTags();var k=(ASSETS&&ASSETS.katex)||BASE+"/vendor/katex/katex.min.js";var au=(ASSETS&&ASSETS.auto)||BASE+"/vendor/katex/contrib/auto-render.min.js";load(k,function(){load(au,done);});}'
+  + 'function boot(){reqAssets(function(a){ASSETS=a;addCss((a&&a.css)||BASE+"/vendor/katex/katex.min.css");startMath();});}'
+  + 'function startMath(){'
   + 'if(window.renderMathInElement){done();return;}'
   // 让位规则升级：页面声明 MathJax ≠ MathJax 可用。CDN 数学库可能被墙/失败，
   // 死等只会让公式永远裸奔。给 3s 宽限轮询它是否真正就绪（typesetPromise/startup.document），
@@ -221,6 +232,24 @@ const _VIZ_MATH_BRIDGE = '<link rel="stylesheet" href="' + _VIZ_ASSET_BASE + '/v
   + '}'
   + 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",boot);}else{boot();}'
   + '})();<\/script>';
+
+// ====== 可视化资产供给（宿主侧） ======
+// iframe 公式桥向宿主要 KaTeX 资产。两档：
+// ① window.__PM_VIZ_ASSETS__（单文件网页打包时预内联的 data URI）——离线可用；
+// ② 其余宿主一律回 null，桥走绝对路径命中 /vendor/katex（http 下照旧，字体相对路径也能解析）。
+window.addEventListener('message', function (ev) {
+  const d = (ev && ev.data) || {};
+  if (d.__pmVizAssetsRequest !== true) return;
+  const assets = window.__PM_VIZ_ASSETS__ || null;
+  try {
+    ev.source.postMessage({
+      __pmVizAssets: true,
+      css: (assets && assets.css) || '',
+      katex: (assets && assets.katex) || '',
+      auto: (assets && assets.auto) || '',
+    }, '*');
+  } catch (e) {}
+});
 
 // ====== 可视化 iframe 校验桥（M1：数值实验自动判卷） ======
 // 约定（system prompt 输出模块3b）：模拟物理系统的页面挂
@@ -498,10 +527,29 @@ function _initVizIframes(container) {
   });
 }
 
+// 全屏浮层懒创建：主应用 index.html 自带该 DOM，查看器/单文件网页没有——
+// 缺了就按同样结构现建（样式来自 styles-panels.css，查看器包里同样进包），
+// 否则全屏按钮在查看器里点了直接 null.srcdoc 报错（用户单文件实测踩过）
+function _ensureVizFullscreenOverlay() {
+  let overlay = document.getElementById('vizFullscreenOverlay');
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.className = 'viz-fullscreen-overlay';
+  overlay.id = 'vizFullscreenOverlay';
+  overlay.innerHTML = '<div class="viz-fullscreen-bar aurora-glass aurora-glass--panel">'
+    + '<span class="viz-fullscreen-title" id="vizFullscreenTitle">交互式可视化</span>'
+    + '<span class="viz-check-badge" id="vizFullscreenCheckBadge" style="display:none"></span>'
+    + '<button class="viz-fullscreen-close" aria-label="退出全屏" onclick="closeVizFullscreen()">✕ 退出全屏</button>'
+    + '</div>'
+    + '<iframe class="viz-fullscreen-iframe" id="vizFullscreenIframe"></iframe>';
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
 function toggleVizFullscreen(vizId) {
   const html = _vizStore[vizId];
   if (!html) return;
-  const overlay = document.getElementById('vizFullscreenOverlay');
+  const overlay = _ensureVizFullscreenOverlay();
   const iframe = document.getElementById('vizFullscreenIframe');
   iframe.srcdoc = html;
   overlay.classList.add('active');
@@ -509,6 +557,7 @@ function toggleVizFullscreen(vizId) {
 
 function closeVizFullscreen() {
   const overlay = document.getElementById('vizFullscreenOverlay');
+  if (!overlay) return;
   const iframe = document.getElementById('vizFullscreenIframe');
   overlay.classList.remove('active');
   iframe.srcdoc = '';
@@ -517,20 +566,56 @@ function closeVizFullscreen() {
 function copyVizCode(vizId) {
   const html = _vizStore[vizId];
   if (!html) return;
-  navigator.clipboard.writeText(html).then(() => {
-    // 简易提示
-    const btn = document.querySelector('#' + vizId + ' .viz-btn[title="复制源码"]');
-    if (btn) {
-      const orig = btn.textContent;
-      btn.textContent = '✓ 已复制';
-      setTimeout(() => { btn.textContent = orig; }, 1500);
+  const ok = () => { if (typeof showToast === 'function') showToast('已复制可视化源码到剪贴板'); };
+  const fallback = () => {
+    // file:// 下 navigator.clipboard 不可用（用户单文件实测静默失败）——退回 execCommand
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = html;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      const done = document.execCommand('copy');
+      ta.remove();
+      if (typeof showToast === 'function') showToast(done ? '已复制可视化源码到剪贴板' : '复制失败：请用「新窗口」打开后手动复制');
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('复制失败：请用「新窗口」打开后手动复制');
     }
-  });
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(html).then(() => {
+      ok();
+      // 简易提示
+      const btn = document.querySelector('#' + vizId + ' .viz-btn[title="复制源码"]');
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = '✓ 已复制';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }
+    }, fallback);
+  } else {
+    fallback();
+  }
 }
 
 function openVizNewTab(vizId) {
   const html = _vizStore[vizId];
   if (!html) return;
+  // file:// 单文件场景：没有 /viz-preview.html 可跳，也没有可提权的站点 origin
+  // （blob 继承 null origin），直接 Blob URL 打开是安全的
+  if (location.protocol === 'file:') {
+    try {
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      const win = window.open(url, '_blank');
+      if (!win) {
+        if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('新窗口打开失败');
+    }
+    return;
+  }
   // 内容经 sessionStorage 交给同源预览页，在 sandbox iframe 内渲染。
   // 不要退回 Blob URL 直接打开：Blob 文档继承主站 origin，AI 生成的脚本
   // 将能读取 localStorage 明文密钥并调用全部 /api/*（XSS 提权链）。
@@ -542,7 +627,7 @@ function openVizNewTab(vizId) {
   }
   const win = window.open('/viz-preview.html', '_blank');
   if (!win) {
-    try { sessionStorage.removeItem('phymathia_viz_preview'); } catch (e) {}
+    try { sessionStorage.removeItem('phymathia_viz_preview'); } catch (e2) {}
     if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
   }
 }
