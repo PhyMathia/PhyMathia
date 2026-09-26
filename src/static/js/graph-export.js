@@ -591,19 +591,19 @@
         + '<span class="graph-export-res">不用下载文件 · 看长回答和完整会话</span>'
         + '</button>';
     }
+    if (typeof window.exportUtopiaStandaloneHtml === 'function') {
+      html += '<button type="button" class="graph-export-scale-row" id="graphExportHtml">'
+        + '<b>单文件网页 .html（推荐）</b>'
+        + '<span class="graph-export-res">外发首选 · 对方双击就能看，无需安装</span>'
+        + '</button>';
+    }
     html += '<button type="button" class="graph-export-scale-row" id="graphExportUtopia">'
       + '<b>保存 Utopia 快照 ' + UTOPIA_EXT + '</b>'
       + '<span class="graph-export-res">完整会话 · 可拖回恢复编辑</span>'
       + '</button>';
-    if (typeof window.exportUtopiaStandaloneHtml === 'function') {
-      html += '<button type="button" class="graph-export-scale-row" id="graphExportHtml">'
-        + '<b>单文件网页 .html</b>'
-        + '<span class="graph-export-res">发给别人 · 对方双击就能看</span>'
-        + '</button>';
-    }
     html += '<div class="graph-export-menu-foot">想先看效果？点「在查看器中预览」，不产生任何文件。'
       + '海报是<b>卡片式概览</b>；屏幕所见含 KaTeX 公式、Mermaid 图谱与分组框，可视化 iframe 以占位卡出现。'
-      + '要把图带走：存 <b>.pmu</b>（可拖回 PhyMathia 恢复成可编辑画布）或 <b>单文件网页</b>（发给没装 PhyMathia 的人，双击即看）。</div>';
+      + '发给没装 PhyMathia 的人选 <b>单文件网页</b>（双击即看，零依赖）；要拖回 PhyMathia 继续编辑就存 <b>.pmu</b>。</div>';
     menu.innerHTML = html;
 
     menu.addEventListener('click', function (event) {
