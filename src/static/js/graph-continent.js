@@ -95,16 +95,54 @@ const CONTINENT_ISLAND_CARD_MAX = 9;
 //
 // **幅度是被两条硬约束夹出来的，不是随手取的审美值**，改任何一个都要重跑
 // smoke 的抖动段 + 真机 continent_regression：
-//   ① 必须装进布局四周已有的 CONTINENT_WORLD_MARGIN = 60 白边里：
-//      REGION + ISLAND + CARD = 16+28+3 = 47 < 60。**世界尺寸因此一个像素不变**，
-//      适配 zoom 与 LOD 档位跟着逐字节不变（第一版四周各留 80px 把世界撑大，
-//      zoom 跌过 0.55 → 世界档把卡整档隐藏 → 真机回归 10/10 掉到 8/10，教训）。
-//   ② 岛不能撞岛：岛间距 CONTINENT_CLUSTER_GAP = 150，两岛各偏 28 仍隔 94；
+//   ① 必须装进布局四周已有的 CONTINENT_WORLD_MARGIN = 60 白边里。海域板自己
+//      还要按 CONTINENT_JITTER_ISLAND 四周外扩（护住岛不捅出海岸线），所以真正的
+//      预算是 **REGION + ISLAND ≤ 60**（卡不外扩板，不进这条）：
+//      6 + 36 = 42，留 18px。**世界尺寸因此一个像素不变**，适配 zoom 与 LOD 档位
+//      跟着逐字节不变（第一版四周各留 80px 把世界撑大，zoom 跌过 0.55 → 世界档把卡
+//      整档隐藏 → 真机回归 10/10 掉到 8/10，教训）。
+//   ② 岛不能撞岛：岛间距下限 CONTINENT_GAP_MIN = 100。位移是纯平移，任意两岛最坏
+//      相向各偏满 → 100 - 2×(海域 + 岛 + 白噪声保底) = 100 - 2×44 = 12px 仍不重叠。
+//      **这条和 v8.1 的预算同额**（那时是 16+28=44），只是分配变了，所以安全余量
+//      一字未减。注意白保底那 2px 也算在里面——它是位移，就该占预算。
 //      卡间距 CONTINENT_GAP = 10，各偏 3 仍隔 4，转 1.4° 后仍隔 ~2。
-const CONTINENT_JITTER_REGION = 16;
-const CONTINENT_JITTER_ISLAND = 28;
+// **卡层的 3 是被 10px 卡死的**（余量 = 间距 - 2×幅度，想给 5 就得把 GAP 提上去，
+// 那是另一刀）。卡的有机感改走「非均匀卡宽」，别指望在这里加大位移。
+const CONTINENT_JITTER_REGION = 6;
+const CONTINENT_JITTER_ISLAND = 36;
 const CONTINENT_JITTER_CARD = 3;
 const CONTINENT_JITTER_ROT = 1.4;   // 卡的微转角（度）——旋转只能是 CSS，数值表达不了
+// 岛位移里掺的一撮白噪声：只有 2px（场的 5%），肉眼读不出来，买的是一条保证——
+// 「没有哪个元素恰好停在格点上」（smoke 钉每个岛都被抖动过）。
+const CONTINENT_JITTER_ISLAND_WHITE = 2;
+// ---------- v8.5 低频位移场 ----------
+// 病根（v8.1~v8.4 只治了表面）：**均匀间距 + 白噪声 = 歪掉的表格**，不是自然。
+// 白噪声把一条直线变成一条点状虚线，眼睛检测的恰恰是「线」而不是噪声，所以前注意
+// 系统把点状虚线读作**错位**——整齐的秩序感丢了，自然感没来，观感反而更差。
+// 治法是**换成低频场**：位移 = 幅度 × n(世界坐标)，n 是平滑标量场，于是**相邻元素
+// 一起动**，栅格的直线被弯成曲线。白噪声按 key 查哈希（每元素独立），低频场按坐标
+// 采样（全局连续）——这是 v8.5 与 v8.1 唯一的本质区别。
+//
+// **双八度是必需的**：单八度读成规整波纹（像壁纸），粗细两层叠加才读成地貌。
+// 权重和恰为 1，保证**逐轴** |分量| ≤ 幅度；二维模长靠 WARP_NORM 归一（见
+// _continentWarpOffset 的注释，那里的 √2 是个真漏洞）——两条硬约束的推导靠它。
+// 幅度预算与 v8.1 同额（44 = 海域 + 岛 + 白噪声保底），但**从海域挪给岛**：
+// 海域板大、场在板内近似恒定，整块一起漂本来就看不太出来；岛是眼睛真正盯着读
+// 整齐与否的那一层，所以 16+28 → 6+36。
+//
+// **粗八度波长 900 是量出来的，不是拍的**（第一版写 560，把第 5 座边界城市挤没了）：
+// 威胁「边界城市」的不是位移的**绝对值**而是**相邻岛的位移差**，而差值由波长控制、
+// 绝对值由幅度控制——**两者是分开的两颗旋钮**。所以正确解法是拉长波长、保住幅度：
+// 岛照样离格点 36px（岛级栅格照样被弯掉），但相邻岛几乎同步移动，走廊不受扰动。
+// 真实库 13 岛实测（逐档重建 + 真机数城市数）：波长 560 → 4 座城市（多一条 `no_room`
+// 折叠）；800 / 1100 / 1500 / 2200 → 全部 5 座。取 **900**：约 1.3 个岛距（岛距 ≈ 686），
+// 既够长到同区岛协同移动，又够短到整图（≈3584px）仍横跨 4 个格子把栅格弯掉。
+// ⚠️ 改这个数之前先跑那条真机计数，别只看位移量——位移大不等于好看，走廊被挤掉的是功能。
+const CONTINENT_WARP_CELL_COARSE = 900;
+const CONTINENT_WARP_CELL_FINE = 190;
+const CONTINENT_WARP_W_COARSE = 0.7;
+const CONTINENT_WARP_W_FINE = 0.3;
+const CONTINENT_WARP_NORM = Math.SQRT1_2;   // 1/√2：把逐轴上界换算成模长上界
 const CONTINENT_STYLE_KEY = 'phymathia_continent_style';  // 'organic'（默认）| 'grid'
 const CONTINENT_STYLE_ORGANIC = 'organic';
 const CONTINENT_STYLE_GRID = 'grid';
@@ -114,12 +152,17 @@ const CONTINENT_STYLE_GRID = 'grid';
 // 改成亲缘越强挨得越近，双份收益：间距参差天然比等距好看；一堆挨得紧的岛直接读成
 // 「这是一伙的」。
 //   KIN_FULL —— 组间**最大**亲缘到这个值就贴到最紧（权重形态：强共享 1/条、用户边 2/条）
-//   MIN/MAX  —— MIN 必须 > 2×JITTER_ISLAND(=56)，否则抖动后两岛可能压到一起
+//   MIN/MAX  —— MIN 必须 > 2×(JITTER_REGION + JITTER_ISLAND + JITTER_ISLAND_WHITE)，
+//               否则位移后两座岛可能压到一起。这三项都要算：岛是**骑在自己海域上**的，
+//               实际位移是三者之和（v8.5 实测幅度 6+36+2 = 44 → 2×44 = 88）。
+//               所以 MIN=100 留 12px 保守余量，与 v8.1（16+28 = 44）同额。
+//               位移是纯平移，这 12px 是「两岛恰好相向各偏满」的保守下界；实测低频场下
+//               近邻是协同位移的，4500 对实测最坏净距 138px（smoke 逐对断言不重叠）。
 // **再中心化是这条的生死线**（见 _continentKinGaps 的注释）：所有间距的均值必须
 // 恰好回到 base，总宽与定值布局逐字节相等。上一轮给世界加 80px 安全边距就把真机
 // 回归从 10/10 打到 8/10（zoom 跌过 0.55 → 世界档把卡整档隐藏），绝不能再犯。
 const CONTINENT_GAP_KIN_FULL = 2;
-const CONTINENT_GAP_MIN = 100;   // 100 - 2×28(抖动) = 44px 余量，抖完也不压岛
+const CONTINENT_GAP_MIN = 100;   // > 2×(6+36+2)=88，位移后也不压岛
 const CONTINENT_GAP_MAX = 200;
 
 let _continentOpen = false;
@@ -695,8 +738,10 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
 // 捅出海岸线（smoke「岛完整落在板内」这条就是钉这个的）。
 //
 // **世界尺寸一个像素都不许长**（v8.1 的第二版口径，踩过坑）：布局四周本来就留了
-// CONTINENT_WORLD_MARGIN = 60 的白边，抖动的最大外伸必须**装进这 60px 里**
-// （16 + 28 + 3 = 47 < 60），所以 worldW/worldH 原样透传。
+// CONTINENT_WORLD_MARGIN = 60 的白边，抖动的最大外伸必须**装进这 60px 里**，所以
+// worldW/worldH 原样透传。注意海域板自己还要按 CONTINENT_JITTER_ISLAND 外扩，
+// 所以预算是 **JITTER_REGION + JITTER_ISLAND ≤ 60**（v8.5：12 + 40 = 52），
+// 不是三段相加——卡不外扩板，不进这条。
 // 为什么这么较真：世界一大，适配画布的 zoom 就被压小，一压小就跌过
 // CONTINENT_LOD_WORLD = 0.55，世界档会把所有概念卡整档 display:none——
 // 「开图点得到卡」的真机旅程当场断（第一版给四周各留 80px，continent_regression
@@ -715,9 +760,62 @@ function _continentJitter1(key, salt) {
 }
 
 // 取某个 key 的两轴偏移：盐不同 → 同一个 key 的 x/y 互不相关，不会走出对角线
+// **盐必须把差异放在靠前的位置、后面还跟几个字符**（v8.5 踩过的坑，v8.4 已记过一次）：
+// 盐是拼在 key **末尾**的，而 FNV-1a 是逐字节左到右推进的 —— 两个盐若只差末字符
+// （'x' vs 'y'、'wx' vs 'wy'），差异之后只再乘一轮素数，输出几乎不动。
+// 实测现役盐 'x'/'y' 的 x、y 分量**相关系数 0.97**：位移几乎全部沿 45° 对角线走，
+// 整张图读成「整体往右下斜滑了一截」，而不是各向散开。smoke 原来那条
+// 「两轴同值（会走对角线）」只查了 x !== y 这种精确不等，**根本没测出这件事**。
+// 换成差异在第 0 位、后面跟 3 个字符的 'x-off'/'y-off' 后降到 0.07。
 function _continentJitterOffset(key, amp) {
   if (!amp) return { x: 0, y: 0 };
-  return { x: _continentJitter1(key, 'x') * amp, y: _continentJitter1(key, 'y') * amp };
+  return { x: _continentJitter1(key, 'x-off') * amp, y: _continentJitter1(key, 'y-off') * amp };
+}
+
+// ---------- v8.5 低频位移场：世界坐标 → 平滑标量场 ----------
+// 确定性 value noise：把世界切成 cell 大小的格，格点值用**同一个** FNV-1a 哈希派生
+// （确定性白拿，格点值域 [-1,1]），格内双线性插值并对插值系数过 smoothstep。
+//
+// **为什么是 smoothstep 而不是线性插值**：线性插值在格边处一阶导数跳变，位移场会
+// 在每条格线上留下一道折痕（放大看是规则斜纹，正是要消灭的「整齐」）。smoothstep
+// 3t²-2t³ 的导数在两端归零，场处处 C¹，弯出来的曲线才真的没有折角。
+//
+// **梯度上界（可证的，不是调出来的）**：∂f/∂x 只经由 smoothstep 的导数 6t(1-t)
+// （t=0.5 处取 1.5）进入，而格点值域是 [-1,1]、**差值可到 2**，所以
+// 单八度 |∇n| ≤ 2×1.5/cell = **3/cell**。
+// （第一版这里写成 1.5/cell，是把「值域半幅 1」当成了「差值上界」——实测最坏
+// 0.00486 vs 该式的 0.00268，正好差 2 倍。数字是量出来的，别再手推。）
+function _continentWarp1(x, y, cell, salt) {
+  const gx = x / cell, gy = y / cell;
+  const ix = Math.floor(gx), iy = Math.floor(gy);
+  const fx = gx - ix, fy = gy - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const v00 = _continentJitter1(ix + ',' + iy, salt);
+  const v10 = _continentJitter1((ix + 1) + ',' + iy, salt);
+  const v01 = _continentJitter1(ix + ',' + (iy + 1), salt);
+  const v11 = _continentJitter1((ix + 1) + ',' + (iy + 1), salt);
+  return (v00 + (v10 - v00) * sx) * (1 - sy) + (v01 + (v11 - v01) * sx) * sy;
+}
+
+// 两轴位移。x/y 用互不相干的盐（'x-warp'/'y-warp'、'x-warp2'/'y-warp2'），**盐的差异
+// 必须在靠前位置**——见 _continentJitterOffset 上方那段：第一版用 'wx'/'wy'（只差末字符），
+// 实测两轴相关系数 0.98，场整体沿对角线推，等于白费。改成 0.036。
+//
+// **WARP_NORM 这个 1/√2 不是凑的，是补一个真实的漏洞**：两个八度权重和为 1，所以
+// **逐轴** |分量| ≤ amp，但 x 与 y 是两个独立场，二维模长的上界是逐轴的 √2 倍。
+// 不归一化就会实测到 max|offset| = 1.26×amp——而上面「间距 100 - 2×44 仍隔 12px」
+// 与「外伸装进 60px 白边」两条硬约束全是按 2×amp 推的，不归一化等于**按错的数
+// 算预算**。除掉 √2 之后 |offset| ≤ amp 严格成立（无 clamp、不引入折角），
+// 两条约束的推导才站得住。实测复核：max|offset|/amp ≤ 1。
+function _continentWarpOffset(x, y, amp) {
+  if (!amp) return { x: 0, y: 0 };
+  const n = CONTINENT_WARP_NORM;
+  return {
+    x: amp * n * (CONTINENT_WARP_W_COARSE * _continentWarp1(x, y, CONTINENT_WARP_CELL_COARSE, 'x-warp')
+                + CONTINENT_WARP_W_FINE * _continentWarp1(x, y, CONTINENT_WARP_CELL_FINE, 'x-warp2')),
+    y: amp * n * (CONTINENT_WARP_W_COARSE * _continentWarp1(x, y, CONTINENT_WARP_CELL_COARSE, 'y-warp')
+                + CONTINENT_WARP_W_FINE * _continentWarp1(x, y, CONTINENT_WARP_CELL_FINE, 'y-warp2')),
+  };
 }
 
 // ---------- v8.4 海岸线：每块地自己的圆角 ----------
@@ -805,19 +903,44 @@ function _continentJitter(layout, itemSession, regionOfSession) {
     };
   }
   // 板偏移按 key 缓存：同一片海域的所有岛必须挂在同一个 (jx,jy) 上
+  // v8.5：板按**自己的板心**采样位移场。板比场粗（560）小得多，板内场近似恒定，
+  // 整块一起漂——读起来像一整块地层，而不是板内每座岛各漂各的。
   const regionOff = {};
   const regionOf = regionOfSession || {};
+  const regionByKey = {};
+  (layout.regionRects || []).forEach(r => { regionByKey[r.key] = r; });
   const offOfRegion = key => {
-    if (!regionOff[key]) regionOff[key] = _continentJitterOffset('r:' + key, CONTINENT_JITTER_REGION);
+    if (!regionOff[key]) {
+      const r = regionByKey[key];
+      // 无板的散岛块（key ''）没有板心可采，沿用白噪声：整块给一个固定偏移，
+      // 反而把它和别片海域拉开距离，是想要的效果
+      regionOff[key] = r
+        ? _continentWarpOffset(r.cx, r.cy, CONTINENT_JITTER_REGION)
+        : _continentJitterOffset('r:' + key, CONTINENT_JITTER_REGION);
+    }
     return regionOff[key];
   };
   // 岛偏移按 sessionId 缓存：同一座岛的所有卡必须挂在同一个 (ix,iy) 上
+  // **v8.5 的核心改动就在这一行**：偏移来自「按岛心世界坐标采样位移场」，不再是
+  // 「按 sessionId 查哈希」。因为场是坐标的连续函数，相邻两座岛采样到几乎相同的
+  // 值 → 它们**一起动** → 岛的栅格直线被弯成曲线（白噪声做不到这点，它让每座岛
+  // 各偏各的，只把直线变成点状虚线，仍然是线）。
+  // 副作用是好的：近邻位移差 ≈ 幅度×梯度×距离 很小，所以「近亲的两岛挨得近」被
+  // 破坏得更少，而每座岛离自己的格点可以走得更远（40 > 旧的 28）——幅度更大的
+  // 位移反而比旧的更安全。
   const islandOff = {};
+  const rectBySid = {};
+  (layout.clusterRects || []).forEach(r => { rectBySid[r.sessionId] = r; });
   const offOfIsland = sid => {
     if (!islandOff[sid]) {
       const ro = offOfRegion(regionOf[sid] || '');
-      const io = _continentJitterOffset('i:' + sid, CONTINENT_JITTER_ISLAND);
-      islandOff[sid] = { x: ro.x + io.x, y: ro.y + io.y };
+      const r = rectBySid[sid];
+      const w = r
+        ? _continentWarpOffset(r.cx, r.cy, CONTINENT_JITTER_ISLAND)
+        : _continentJitterOffset('i:' + sid, CONTINENT_JITTER_ISLAND);
+      // 掺 2px 白噪声：保证没有哪座岛恰好停在格点上（smoke 钉「每个岛都被抖动」）
+      const io = _continentJitterOffset('i:' + sid, CONTINENT_JITTER_ISLAND_WHITE);
+      islandOff[sid] = { x: ro.x + w.x + io.x, y: ro.y + w.y + io.y };
     }
     return islandOff[sid];
   };
@@ -851,7 +974,7 @@ function _continentJitter(layout, itemSession, regionOfSession) {
       w: p.w, h: p.h,
       cx: p.cx + io.x + co.x, cy: p.cy + io.y + co.y,
     };
-    cardRot[itemId] = _continentJitter1('c:' + itemId, 'r') * CONTINENT_JITTER_ROT;
+    cardRot[itemId] = _continentJitter1('c:' + itemId, 'rot-2') * CONTINENT_JITTER_ROT;
   });
   return {
     placements: placements, clusterRects: clusterRects, regionRects: regionRects,
