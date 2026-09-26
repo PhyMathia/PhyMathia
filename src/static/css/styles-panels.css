@@ -257,29 +257,6 @@
     .kp-empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
     .kp-empty-text { font-size: var(--fs-lg); color: var(--kp-empty-color); }
 
-    /* Bookmark button on AI messages */
-    .bookmark-btn {
-      position: absolute; top: 4px; right: 4px; background: none; border: none;
-      cursor: pointer; font-size: var(--fs-xl); padding: var(--sp-1); border-radius: var(--r-md);
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); opacity: 0; z-index: 10;
-    }
-    .bookmark-btn:hover { opacity: 1 !important; background: rgba(128,128,128,0.15); }
-    .bookmark-btn.bookmarked { opacity: 1 !important; }
-    .bookmark-btn { color: var(--bookmark-btn-color); }
-    .bookmark-btn:hover, .bookmark-btn.bookmarked { color: var(--bookmark-btn-hover-color); }
-
-    /* Regenerate button */
-    .regenerate-btn {
-      display: inline-flex; align-items: center; gap: 4px;
-      background: none; border: none; cursor: pointer;
-      font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-md);
-      color: var(--text-secondary); opacity: 0;
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); margin-top: 4px;
-    }
-    .regenerate-btn:hover { opacity: 1 !important; background: rgba(128,128,128,0.1); color: var(--accent); }
-    .regenerate-btn { color: var(--regenerate-btn-color); }
-    .regenerate-btn:hover { color: var(--regenerate-btn-hover-color); }
-
     /* Bookmark modal */
     .bookmark-modal-overlay {
       position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.5);

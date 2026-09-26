@@ -449,7 +449,7 @@ async function _streamAnalysisResponse(resp, node, question) {
   }
   _saveCustomNodes();
   _refreshWorkflowNodeStatusUi(live);
-  if (typeof hideProgress === 'function') hideProgress('问题分析完成');
+  if (typeof hideProgress === 'function') hideProgress();
 }
 
 function _refreshWorkflowNodeStatusUi(node) {

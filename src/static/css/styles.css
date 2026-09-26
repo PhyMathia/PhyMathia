@@ -73,10 +73,6 @@
     @property --kp-empty-color { syntax: '<color>'; inherits: true; initial-value: #4a5568; }
     @property --kp-extracting-bg { syntax: '<color>'; inherits: true; initial-value: rgba(74,158,255,0.12); }
     @property --kp-extracting-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
-    @property --bookmark-btn-color { syntax: '<color>'; inherits: true; initial-value: #7a8ba8; }
-    @property --bookmark-btn-hover-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
-    @property --regenerate-btn-color { syntax: '<color>'; inherits: true; initial-value: #7a8ba8; }
-    @property --regenerate-btn-hover-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
     @property --modal-bg { syntax: '<color>'; inherits: true; initial-value: rgba(15,18,30,0.95); }
     @property --modal-border { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.08); }
     @property --modal-title-color { syntax: '<color>'; inherits: true; initial-value: #e2e8f0; }
@@ -225,10 +221,6 @@
       --kp-empty-color: #4a5568;
       --kp-extracting-bg: rgba(74,158,255,0.12);
       --kp-extracting-color: #4a9eff;
-      --bookmark-btn-color: #7a8ba8;
-      --bookmark-btn-hover-color: #4a9eff;
-      --regenerate-btn-color: #7a8ba8;
-      --regenerate-btn-hover-color: #4a9eff;
       --modal-bg: rgba(15,18,30,0.95);
       --modal-border: rgba(255,255,255,0.08);
       --modal-title-color: #e2e8f0;
@@ -420,8 +412,6 @@
         --kp-btn-danger-hover-color 0.35s ease, --kp-btn-danger-hover-border 0.35s ease,
         --kp-empty-color 0.35s ease,
         --kp-extracting-bg 0.35s ease, --kp-extracting-color 0.35s ease,
-        --bookmark-btn-color 0.35s ease, --bookmark-btn-hover-color 0.35s ease,
-        --regenerate-btn-color 0.35s ease, --regenerate-btn-hover-color 0.35s ease,
         --modal-bg 0.35s ease, --modal-border 0.35s ease,
         --modal-title-color 0.35s ease, --modal-label-color 0.35s ease,
         --modal-field-bg 0.35s ease, --modal-field-color 0.35s ease,
@@ -545,10 +535,6 @@
       --kp-empty-color: #94a3b8;
       --kp-extracting-bg: rgba(160,120,40,0.08);
       --kp-extracting-color: #8b6914;
-      --bookmark-btn-color: #94a3b8;
-      --bookmark-btn-hover-color: #f59e0b;
-      --regenerate-btn-color: #94a3b8;
-      --regenerate-btn-hover-color: var(--accent);
       --modal-bg: rgba(255,255,255,0.95);
       --modal-border: rgba(0,0,0,0.08);
       --modal-title-color: #1e293b;
@@ -2129,24 +2115,6 @@
     @keyframes statusFadeIn {
       from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* 错误消息 + 重试 */
-    .error-content { color: var(--danger-fg); font-style: italic; }
-    .error-actions { display: flex; gap: 8px; margin-top: 8px; }
-    .error-retry-btn {
-      background: var(--btn-hover-bg);
-      border: 1px solid var(--btn-hover-border);
-      color: var(--accent);
-      padding: 6px 14px;
-      border-radius: var(--r-md);
-      cursor: pointer;
-      font-size: var(--fs-sm);
-      transition: all 0.2s;
-    }
-    .error-retry-btn:hover {
-      background: var(--btn-active-hover-bg);
-      border-color: var(--accent);
     }
 
     /* ====== 移动端适配 ====== */

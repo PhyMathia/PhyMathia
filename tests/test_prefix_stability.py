@@ -52,7 +52,7 @@ def _serialize(messages):
 
 
 class PrefixStabilityContextTest(unittest.TestCase):
-    """context 层：重复组装确定性、viz 粘性（旧窗口装配，quick/工作流/分支/树路径共用）。"""
+    """context 层：重复组装确定性、viz 粘性（旧窗口装配，工作流/分支/滚动记忆/树路径共用）。"""
 
     def setUp(self):
         self._orig_load = context_mod._load_messages
@@ -77,7 +77,7 @@ class PrefixStabilityContextTest(unittest.TestCase):
             {"role": "assistant", "content": "讲解" + big_viz, "timestamp": 2},
             {"role": "user", "content": "接下来讲讲阻尼", "timestamp": 3},
         ]
-        # 触发提问要可视化，当前提问不要 → 保留摘要形态（旧窗口装配，quick/分支/滚动记忆仍走此函数）
+        # 触发提问要可视化，当前提问不要 → 保留摘要形态（旧窗口装配，工作流/分支/滚动记忆仍走此函数）
         keep = context_mod._recent_context_messages(messages, 3, False, current_prompt="接下来讲讲阻尼")
         # 触发提问要可视化，当前提问也要 → 同一字节（旧实现会随当前提问翻转）
         keep2 = context_mod._recent_context_messages(messages, 3, False, current_prompt="这个图里动画怎么看")

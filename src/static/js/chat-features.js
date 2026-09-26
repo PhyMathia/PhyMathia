@@ -806,13 +806,6 @@
       }
 
       closeBookmarkModal();
-
-      // Update bookmark button state
-      const msgId = item.messageId;
-      if (msgId) {
-        const btn = document.querySelector(`[data-bookmark-msg="${msgId}"]`);
-        if (btn) btn.classList.add('bookmarked');
-      }
     }
 
     let pendingSocraticQuestion = '';

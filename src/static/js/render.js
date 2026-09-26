@@ -1129,7 +1129,7 @@ async function retryMermaid(btn) {
   const div = btn.closest('.mermaid') || btn.parentElement.parentElement;
   if (!div) return;
   div.removeAttribute('data-processed');
-  const container = div.closest('.message-content') || div.parentElement;
+  const container = div.parentElement;
   if (container) await renderMermaidInElement(container);
 }
 
@@ -1186,8 +1186,6 @@ function _ensureKaTeX(callback) {
     queue.forEach(function (fn) { fn && fn(); });
     // 补渲：加载完成前已渲染的内容重新走一遍公式渲染
     if (typeof graphInner !== 'undefined' && graphInner) { try { _runKaTeX(graphInner); } catch (e) {} }
-    const chatEl = document.getElementById('chatMessages');
-    if (chatEl) { try { _runKaTeX(chatEl); } catch (e) {} }
     ['graphHarnessChat', 'graphHarnessResult'].forEach(function (id) {
       const el = document.getElementById(id);
       if (el) { try { _runKaTeX(el); } catch (e) {} }
@@ -1203,9 +1201,8 @@ function renderMath(element) {
   _ensureKaTeX(function () { _runKaTeX(element); });
 }
 
-// ====== 智能滚动（2026-09-26 随线性主聊天退役删除）======
+// ====== 智能滚动（已于 2026-09-25/26 随线性主聊天退役删除）======
 // 原 initSmartScroll / scrollToBottom / userScrolledUp 三件套只服务聊天消息列表的
-// 「用户上滑后不打断」逻辑，而 #chatMessages 容器已随聊天 UI 下线（v1.2.3 69676c9），
-// 三个函数每次调用都立刻早退——initSmartScroll 仍被 initApp 调、scrollToBottom 仍被
-// ui.js 的 load 与 visualViewport 监听调，纯空转。滚动到画布内容用节点聚焦
+// 「用户上滑后不打断」逻辑；#chatMessages 容器随聊天 UI 下线（v1.2.3 69676c9）后
+// 三函数恒早退（调用点也已一并删除），故整体移除。滚动到画布内容用节点聚焦
 // focusGraphNode / focusGraphNodeById 里的 _centerGraphOnNode。

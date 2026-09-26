@@ -706,7 +706,7 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     if provider != "opencode":
         headers["Authorization"] = f"Bearer {api_key}"
     # 网关会话头（opencode 官方要求，缺失会被列 problematic clients）：提取
-    # 固定桶，同功能调用落在同一缓存桶，不与主聊天互相挤占
+    # 固定桶，同功能调用落在同一缓存桶，不与对话链路（分支/工作流）互相挤占
     headers.update(opencode_gateway_headers(base_url, "phymathia-extract"))
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
     client = get_http_client()

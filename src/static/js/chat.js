@@ -11,9 +11,7 @@
     let streamingAssistant = null;
     let progressPercent = 0;
     let progressLabel = '';
-    let progressFinalLabel = '';
     let progressHidden = false;
-    let progressBarHideTimer = null;
     let progressStatusHideTimer = null;
 
     const PROGRESS_PHASE = {
@@ -42,14 +40,6 @@
     function _setProgress(percent, label) {
       progressPercent = _clampProgress(percent);
       if (label) progressLabel = label;
-      const bar = document.getElementById('progressBar');
-      const fill = bar ? bar.querySelector('.progress-fill') : null;
-      if (fill) {
-        fill.style.width = progressPercent + '%';
-        fill.style.animation = 'none';
-        fill.style.transform = 'none';
-      }
-      if (bar) bar.setAttribute('aria-valuenow', String(progressPercent));
       const statusFill = document.getElementById('statusProgressFill');
       if (statusFill) statusFill.style.width = progressPercent + '%';
       const textEl = document.querySelector('#progressStatus .status-text');
@@ -89,11 +79,8 @@
     function showProgress(stage, percent, label) {
       currentStage = stage;
       progressHidden = false;
-      if (progressBarHideTimer) { clearTimeout(progressBarHideTimer); progressBarHideTimer = null; }
       if (progressStatusHideTimer) { clearTimeout(progressStatusHideTimer); progressStatusHideTimer = null; }
-      const bar = document.getElementById('progressBar');
       const statusEl = document.getElementById('progressStatus');
-      if (bar) bar.classList.add('active');
       if (statusEl) { statusEl.classList.add('active'); updateProgressText(stage, percent, label); }
       if (!progressTimer) {
         progressStartTime = Date.now();
@@ -124,25 +111,15 @@
       const sec = elapsed % 60;
       timeEl.textContent = min > 0 ? `${min}m${sec.toString().padStart(2,'0')}s` : `${sec}s`;
     }
-    function hideProgress(finalLabel) {
+    function hideProgress() {
       if (progressHidden) return;
       progressHidden = true;
-      const finalText = finalLabel || progressFinalLabel || '回复完成';
-      progressFinalLabel = '';
-      const bar = document.getElementById('progressBar');
       const statusEl = document.getElementById('progressStatus');
-      if (bar) {
-        _setProgress(100, finalText);
-        progressBarHideTimer = setTimeout(() => {
-          bar.classList.remove('active');
-          progressBarHideTimer = null;
-        }, 300);
-      }
       if (statusEl && statusEl.classList.contains('active')) {
         progressStatusHideTimer = setTimeout(() => {
           statusEl.classList.remove('active');
           // 2026-09-25 用户拍板：胶囊常驻不当 bug 修，但闲时文案不得读成进行时/卡死
-          _setProgress(0, '待命 · 提问后这里显示生成进度');
+          _setProgress(0, '待命');
           const timeEl = document.querySelector('#progressStatus .elapsed-time');
           if (timeEl) timeEl.textContent = '';
           progressStatusHideTimer = null;
@@ -291,7 +268,6 @@
       abortController = new AbortController();
       // 流式生成是重活（增量渲染 + 画布补丁都在吃帧预算），装饰粒子先让路
       if (typeof window.setFloatingSymbolsPaused === 'function') window.setFloatingSymbolsPaused(true);
-      progressFinalLabel = '';
       showProgress('thinking');
       let assistantContent = '';
       // 推理通道单独攒：思维链**不是**回答正文。混进正文的后果不只是难看——知识提取的
@@ -506,7 +482,6 @@
         }
 
       } catch (err) {
-        progressFinalLabel = err.name === 'AbortError' ? '已停止' : '请求失败';
         hideProgress();
         if (err.name === 'AbortError') {
           if (assistantContent.trim()) {

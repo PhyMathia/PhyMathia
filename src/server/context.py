@@ -12,7 +12,7 @@ from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messa
 from . import config as _config_mod  # 模块属性读取，测试补丁 _config_mod.KV_PATH 才能生效
 from llm_common import estimate_tokens  # 唯一实现在项目根 llm_common.py，此处转出口（import * 与测试直引都走这里）
 
-# ====== 普通聊天上下文瘦身 ======
+# ====== 上下文窗口瘦身（旧窗口装配：工作流 / 分支 / 滚动记忆共用） ======
 _CONTEXT_MAX_USER_CHARS = 4000
 _CONTEXT_RECENT_FULL_MAX = 8000
 _VIZ_DIGEST_MAX = 1200
@@ -256,7 +256,8 @@ def _recent_context_messages(
 ) -> list:
     """按最近用户轮次截取上下文，保留消息内容但剥离分支元数据。
 
-    上下文瘦身策略（普通聊天/无 graph_path 路径）：
+    上下文瘦身策略（旧窗口装配：无 branch_id / workflow_context 的请求，工作流、分支、
+    滚动记忆共用）：
     - 最近 max_rounds 轮：用户消息完整保留（超长时截断到上限）；最近一条
       assistant 消息完整保留（<viz>/```html``` 大段 HTML 默认替换为占位符，
       仅当触发它的那条用户提问涉及可视化时才保留）；更早的 assistant 只保留
@@ -655,7 +656,7 @@ def _load_session_context(
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
-    普通问答默认过滤苏格拉底支线；当传入 branch_id 时，保留主线最近内容、
+    无 branch_id 的默认装配过滤苏格拉底支线；当传入 branch_id 时，保留主线最近内容、
     父回答中聚焦模块的内容，以及该分支自己的消息链。
     budget_tokens > 0 时按 token 预算收缩（保留最后一条消息）。
     """
