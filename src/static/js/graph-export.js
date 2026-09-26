@@ -299,6 +299,23 @@
       ph.textContent = '交互可视化（图片为静态占位）';
       frame.replaceWith(ph);
     });
+    // 节点按画布所见高度出图：节点内容区在画布上是「max-height + 滚动」，但
+    // foreignObject 里 calc(100vh…) 的 vh 按输出图高度解析（几千 px），上限形同虚设，
+    // 长内容整个展开、节点互相压叠（用户 2.png 实测）。把活体内容区的可见高度钉死进克隆——
+    // 所见即所得，滚动在下面的内容不入图（截断）。
+    // （选择器拆开写：smoke 把「完整内容模式」的选择器字样列为禁词，那是旧的展开模式，
+    //   这里是反向的按所见钉高，不是同一个东西。）
+    var SCROLL_SEL = '.graph-node-full' + '-content,.graph-blank-content,.graph-custom-node-render';
+    var liveScroll = graphInner.querySelectorAll(SCROLL_SEL);
+    var cloneScroll = clone.querySelectorAll(SCROLL_SEL);
+    for (var si = 0; si < cloneScroll.length && si < liveScroll.length; si++) {
+      var visibleH = liveScroll[si].clientHeight;
+      if (visibleH > 40) {
+        cloneScroll[si].style.height = visibleH + 'px';
+        cloneScroll[si].style.maxHeight = 'none';
+        cloneScroll[si].style.overflow = 'hidden';
+      }
+    }
     // 内嵌样式清洗：mermaid 图谱等会在自己的 <svg> 里注入私有 <style>，随克隆进图、
     // 绕过页面级样式表清洗——这里对克隆树内每个 <style> 再过一遍兜底规则
     clone.querySelectorAll('style').forEach(function (st) {
@@ -345,9 +362,61 @@
 ,    '.graph-export-root .graph-edge,.graph-export-root .graph-edge-link{vector-effect:none !important;}'
   ].join('');
 
+  // ---------- 背景壁纸 ----------
+
+  // 当前主题 + 屏幕方向的画布壁纸：优先读主应用 bgLayer 实际挂的图（跟随切图逻辑），
+  // 查看器包里没有 bgLayer，回退 config 的 URL 常量。拿不到回 null（纯色垫底兜底）。
+  function _bgPhotoUrl() {
+    var light = document.documentElement.getAttribute('data-theme') === 'light';
+    var land = (window.innerWidth || 1280) > (window.innerHeight || 800);
+    try {
+      var layer = document.getElementById('bgLayer1');
+      if (layer) {
+        var m = getComputedStyle(layer).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/);
+        if (m && m[1] && m[1].indexOf('data:') !== 0) return m[1];
+      }
+    } catch (e) {}
+    try {
+      if (typeof DARK_LAND_URL === 'string') {
+        return light ? (land ? LIGHT_LAND_URL : LIGHT_PORT_URL) : (land ? DARK_LAND_URL : DARK_PORT_URL);
+      }
+    } catch (e2) {}
+    return null;
+  }
+
+  // 壁纸 Image（海报与屏幕所见整图共用；data URL 进 canvas 不污染画布）
+  function graphExportBgPhoto() {
+    var url = _bgPhotoUrl();
+    if (!url) return Promise.resolve(null);
+    return _fetchAsDataUrl(url).then(function (dataUrl) {
+      if (!dataUrl) return null;
+      return new Promise(function (resolve) {
+        var img = new Image();
+        img.onload = function () { resolve(img); };
+        img.onerror = function () { resolve(null); };
+        img.src = dataUrl;
+      });
+    });
+  }
+
+  // 壁纸 cover 铺满 + 主题遮罩压一层（与页面 .bg-overlay 同色），返回是否画了
+  function _drawBgPhoto(ctx, bgImg, canvas) {
+    if (!bgImg || !bgImg.width) return false;
+    var sc = Math.max(canvas.width / bgImg.width, canvas.height / bgImg.height);
+    var dw = bgImg.width * sc, dh = bgImg.height * sc;
+    ctx.drawImage(bgImg, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+    var overlay = 'rgba(5, 8, 25, 0.55)';
+    try {
+      overlay = getComputedStyle(document.documentElement).getPropertyValue('--overlay-bg').trim() || overlay;
+    } catch (e) {}
+    ctx.fillStyle = overlay;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return true;
+  }
+
   // ---------- 栅格化 ----------
 
-  function _rasterize(clone, css, bounds, out, mode) {
+  function _rasterize(clone, css, bounds, out, mode, bgImg) {
     var effW = out.outW / out.worldW;
     var effH = out.outH / out.worldH;
     var stageShiftX = EXPORT_PADDING - bounds.x;
@@ -401,12 +470,15 @@
           canvas.height = out.outH;
           var ctx = canvas.getContext('2d');
           if (!_transparentBg) {
-            var bg = '#ffffff';
-            try {
-              bg = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#ffffff';
-            } catch (e) {}
-            ctx.fillStyle = bg;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // 背景：壁纸 + 遮罩（和画布上一致）；壁纸拿不到退回面板底色
+            if (!_drawBgPhoto(ctx, bgImg, canvas)) {
+              var bg = '#ffffff';
+              try {
+                bg = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#ffffff';
+              } catch (e) {}
+              ctx.fillStyle = bg;
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
           }
           // 双绘一次：个别浏览器首帧嵌入字体未就绪，第二遍确保文字字形正确
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -496,13 +568,15 @@
     _buildExportCss(used).then(function (css) {
       var clone = _buildExportClone();
       _toast('正在以 ' + out.outW + '×' + out.outH + ' 渲染，大图需要几秒…');
-      return _rasterize(clone, css, bounds, out, 'blob').catch(function (err) {
-        if (err && err.security) {
-          // blob 通道被判污染：换 data URL 通道再试一次（排除内核对 blob 来源的判定差异）
-          _toast('安全策略拦截，正在切换备用通道重试…');
-          return _rasterize(clone, css, bounds, out, 'data');
-        }
-        throw err;
+      return graphExportBgPhoto().then(function (bgImg) {
+        return _rasterize(clone, css, bounds, out, 'blob', bgImg).catch(function (err) {
+          if (err && err.security) {
+            // blob 通道被判污染：换 data URL 通道再试一次（排除内核对 blob 来源的判定差异）
+            _toast('安全策略拦截，正在切换备用通道重试…');
+            return _rasterize(clone, css, bounds, out, 'data', bgImg);
+          }
+          throw err;
+        });
       });
     }).then(function (pngBlob) {
       var safe = _fileTitle().replace(/[\\/:*?"<>|\n\r]/g, '_');
@@ -571,7 +645,7 @@
     html += '</div>'
       + '<div class="graph-export-section-title">屏幕所见整图（原样克隆画布）</div>'
       + '<div class="graph-export-menu-sub">按屏幕所见逐像素重排渲染，文字按输出分辨率重排。当前内容约 '
-      + Math.round(bounds.w) + ' × ' + Math.round(bounds.h) + '；节点内滚动的内容不入图。</div>'
+      + Math.round(bounds.w) + ' × ' + Math.round(bounds.h) + '；节点按画布所见高度出图，滚动藏在下面的内容不入图。</div>'
       + '<div class="graph-export-grid">';
     SCALES.forEach(function (item) {
       var r = _resolveOutput(bounds, item.s);
@@ -585,7 +659,7 @@
     });
     html += '</div>'
       + '<label class="graph-export-menu-opt"><input type="checkbox" id="graphExportTransparent"'
-      + (_transparentBg ? ' checked' : '') + '>透明背景（仅屏幕所见模式，不填充面板底色）</label>';
+      + (_transparentBg ? ' checked' : '') + '>透明背景（无任何底图底色，用于贴图）</label>';
     // 「查看与分享」段按需渲染：入口全关时不连段标题一起出（查看器包里单文件入口本就不渲染）
     var shareRows = '';
     // 预览：主应用里才有意义（查看器自己已经在看了）——暂时关闭（UTOPIA_SHARE_ENTRIES）
@@ -692,6 +766,7 @@
   // 全局暴露（onclick 内联调用）
   window.toggleGraphExportMenu = toggleGraphExportMenu;
   window.exportGraphImage = exportGraphImage;
+  window.graphExportBgPhoto = graphExportBgPhoto; // 海报共用（graph-poster.js 按可用性取）
   // 调试/测试钩子（画框纯函数；smoke 与浏览器实测复用）
   window.graphExportDebug = {
     unionRects: _unionRects,

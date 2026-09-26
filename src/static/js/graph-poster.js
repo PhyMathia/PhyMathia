@@ -4,7 +4,7 @@
 // （类型色条 + 标题 + 两行摘要 +「全文 N 字」角标），连线重画、分组照描，
 // 配纸头（标题/统计/日期）与纸脚，成一张可分享的「知识地图」。
 // 背景：屏幕所见 PNG 里长回答只能看到顶部一截（节点内滚动不入图）；海报干脆
-// 明确放弃装全文（全文走 .pmu 快照），每张卡只承诺「这是什么 + 讲什么」。
+// 明确放弃装全文（全文走单文件网页），每张卡只承诺「这是什么 + 讲什么」。
 // 两包共用：主应用与 Utopia 查看器都进（查看器里再导出同样可选海报）。
 
 (function () {
@@ -61,7 +61,7 @@
       if (labels.length) return '知识图谱：' + labels.join(' · ');
       return '（知识图谱图示）';
     }
-    if (l === 'html' || l === 'htm') return '（交互可视化，完整效果见 .pmu 快照）';
+    if (l === 'html' || l === 'htm') return '（交互可视化）';
     return '（代码内容）';
   }
 
@@ -218,7 +218,8 @@
 
   var CARD_W = 272, GAP_X = 40, GAP_Y = 64;
   var SUMMARY_CHARS = 100;   // 摘要预算（最多 4 行 × ~24 字）
-  var TITLE_CHARS = 26;
+  var TITLE_CHARS = 26;      // 标题预算（画的时候按真实宽度折行最多 2 行、超宽截断加 …——
+                             // 26 字 × 15px 远超卡内宽，单行画出卡外是用户海报实测的溢出根因）
   var CARD_PAD_TOP = 14, CARD_ATTR_H = 18, CARD_TITLE_H = 22, CARD_LINE_H = 17, CARD_PAD_BOTTOM = 24;
 
   function posterLayout(opts) {
@@ -314,6 +315,8 @@
     rows.forEach(function (rowNodes) {
       var rowCards = rowNodes.map(buildCard);
       // 摘要行数按真实断行估（估算宽 ≈ 卡内宽 / 字宽 12.5px；中文为主场景够准）
+      // 标题同样按宽折行（最多 2 行）——旧版 26 字预算 × 15px 字宽远超卡内宽，
+      // fillText 不裁剪直接画出卡外（用户海报实测：标题横穿邻卡）
       var estW = CARD_W - 34;
       rowCards.forEach(function (c) {
         var maxLines = c.minimized ? 1 : 4;
@@ -321,7 +324,9 @@
         var sumLen = c.summary.length;
         var lines = sumLen ? Math.min(maxLines, Math.ceil(sumLen / perLine)) : 0;
         c.summaryLines = lines;
-        c.h = CARD_PAD_TOP + CARD_ATTR_H + CARD_TITLE_H + lines * CARD_LINE_H + CARD_PAD_BOTTOM;
+        var titlePerLine = Math.max(6, Math.floor(estW / (c.isRoot ? 17 : 15)));
+        c.titleLines = Math.min(2, Math.max(1, Math.ceil(c.title.length / titlePerLine)));
+        c.h = CARD_PAD_TOP + CARD_ATTR_H + c.titleLines * CARD_TITLE_H + lines * CARD_LINE_H + CARD_PAD_BOTTOM;
       });
       var rowH = Math.max.apply(null, rowCards.map(function (c) { return c.h; }));
       var rowW = rowNodes.length * CARD_W + (rowNodes.length - 1) * GAP_X;
@@ -397,14 +402,35 @@
     ctx.font = (weight || '400') + ' ' + px + 'px ' + POSTER_FONT;
   }
 
-  function _drawPoster(ctx, layout, meta, theme, scale) {
+  // 背景图片：与画布同一张壁纸（graph-export 供给，按当前主题/屏幕方向）。
+  // 拿不到（加载失败/老包）回 null，调用方退回纯色底。
+  function _loadBgPhoto() {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof window.graphExportBgPhoto !== 'function') return resolve(null);
+        window.graphExportBgPhoto().then(function (img) { resolve(img || null); }, function () { resolve(null); });
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  function _drawPoster(ctx, layout, meta, theme, scale, bgImg) {
     var W = layout.width, H = layout.height;
     ctx.save();
     ctx.scale(scale, scale);
 
-    // 背景 + 点阵
-    ctx.fillStyle = theme.bg;
-    ctx.fillRect(0, 0, W, H);
+    // 背景：壁纸铺满 + 主题底色半透明压住（卡片文字要可读），拿不到壁纸走纯色
+    if (bgImg && bgImg.width && bgImg.height) {
+      var sc = Math.max(W / bgImg.width, H / bgImg.height);
+      var dw = bgImg.width * sc, dh = bgImg.height * sc;
+      ctx.drawImage(bgImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      ctx.fillStyle = theme.bg;
+      ctx.globalAlpha = theme.light ? 0.9 : 0.86;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = theme.bg;
+      ctx.fillRect(0, 0, W, H);
+    }
     ctx.fillStyle = theme.dot;
     var gap = 30;
     for (var gx = gap; gx < W; gx += gap) {
@@ -488,12 +514,16 @@
       ctx.fillText(c.attrLabel + (c.minimized ? ' · 已折叠' : ''), c.x + padX + 2, y + fAttr - 2);
       y += CARD_ATTR_H + 4;
 
-      // 标题 1 行（问题/正文首句）
+      // 标题（按宽折行，最多 2 行；行数由布局预算好存 titleLines，超宽截断加 …）
       ctx.fillStyle = theme.text;
       _font(ctx, fTitle, '600');
       y += fTitle - 2;
-      ctx.fillText(c.title, c.x + padX + 2, y);
-      y += 10;
+      var meaT = function (t) { _font(ctx, fTitle, '400'); return ctx.measureText(t).width; };
+      var titleLines = posterWrapLines(meaT, c.title, innerW, c.titleLines || 1);
+      titleLines.forEach(function (line, li) {
+        ctx.fillText(line, c.x + padX + 2, y + li * CARD_TITLE_H);
+      });
+      y += (titleLines.length - 1) * CARD_TITLE_H + 10;
 
       // 摘要正文（行数=布局预算；宽度收窄再断一次，行数只少不多）
       if (c.summary && c.summaryLines > 0) {
@@ -548,7 +578,7 @@
     // 纸脚
     ctx.fillStyle = theme.sub;
     _font(ctx, 13.5, '400');
-    var foot = '缩略知识地图：按回答结构分层排布，卡片显示标题与摘要开头——完整回答、公式与交互可视化请用 Utopia 快照（.pmu / 单文件网页）打开';
+    var foot = '缩略知识地图：按回答结构分层排布，卡片显示标题与摘要开头';
     var fw = ctx.measureText(foot).width;
     ctx.fillText(foot, (W - fw) / 2, H - POSTER_FOOTER_H / 2 + 14);
 
@@ -605,29 +635,30 @@
     meta.subtitle = nodesN + ' 个节点 · ' + edgesN + ' 条连线' + (groupsN ? (' · ' + groupsN + ' 个分组') : '')
       + ' · ' + meta.subtitle;
 
-    try {
-      _drawPoster(ctx, layout, meta, theme, s);
-    } catch (err) {
-      console.error('[graph-poster]', err);
-      _toast('海报绘制失败：' + (err && err.message ? err.message : err));
-      return false;
-    }
-
     var done = false;
     try {
-      canvas.toBlob(function (blob) {
-        if (!blob) { _toast('PNG 编码失败'); return; }
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        var safe = String(meta.title).replace(/[\\/:*?"<>|\n\r]/g, '_');
-        a.href = url;
-        a.download = 'PhyMathia知识海报_' + safe + '_' + outW + 'x' + outH + '.png';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-        _toast('已导出缩略知识海报 ' + outW + '×' + outH + '（' + Math.round(blob.size / 1024) + ' KB）——卡片式概览，全文走 .pmu');
-      }, 'image/png');
+      _loadBgPhoto().then(function (bgImg) {
+        try {
+          _drawPoster(ctx, layout, meta, theme, s, bgImg);
+        } catch (err) {
+          console.error('[graph-poster]', err);
+          _toast('海报绘制失败：' + (err && err.message ? err.message : err));
+          return;
+        }
+        canvas.toBlob(function (blob) {
+          if (!blob) { _toast('PNG 编码失败'); return; }
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          var safe = String(meta.title).replace(/[\\/:*?"<>|\n\r]/g, '_');
+          a.href = url;
+          a.download = 'PhyMathia知识海报_' + safe + '_' + outW + 'x' + outH + '.png';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+          _toast('已导出缩略知识海报 ' + outW + '×' + outH + '（' + Math.round(blob.size / 1024) + ' KB）——卡片式概览');
+        }, 'image/png');
+      });
       done = true;
     } catch (err) {
       _toast('导出失败：' + (err && err.message ? err.message : err));
