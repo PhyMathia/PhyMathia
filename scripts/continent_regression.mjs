@@ -326,7 +326,7 @@ async function run() {
       ok('v8 族表编辑：新增族 → /api/families 与投影同步生效');
     } catch (e) { fail('v8 族表编辑：新增族 → /api/families 与投影同步生效', e); }
 
-    // ===== 9. LOD 三档双向切换 =====
+    // ===== 9. LOD 四档双向切换 + 词流（v8.8） =====
     try {
       await closePopoverIfAny();
       // 第 8 段保存后弹层会异步重开（persist → 重拉 → 重开）：等它真开出来（或确认
@@ -344,14 +344,52 @@ async function run() {
       });
       await continentOpen(page);
       const vp = page.locator('#continentViewport');
-      for (let i = 0; i < 8; i++) await vp.hover().then(() => page.mouse.wheel(0, 600));
+      // 读到某档下「词流是否在显示 / 有几个词 / 卡片是否被整档藏起」的一组事实。
+      // 用 getComputedStyle 判 display 而不是查类名：类名对了但 CSS 没跟上，页面照样空，
+      // 而这正是这一段要守的东西。
+      const cloudState = () => page.evaluate(() => {
+        const world = document.getElementById('continentWorld');
+        const clouds = Array.from(document.querySelectorAll('.continent-cloud'));
+        const shown = clouds.filter(c => getComputedStyle(c).display !== 'none');
+        const node = document.querySelector('.continent-node');
+        return {
+          cls: world ? world.className : '',
+          clouds: clouds.length,
+          shownClouds: shown.length,
+          words: shown.reduce((n, c) => n + c.querySelectorAll('.continent-cloud-word').length, 0),
+          nodeShown: node ? getComputedStyle(node).display !== 'none' : false,
+        };
+      });
+      // 缩到远景档：词流必须收起，卡片仍然整档藏着
+      for (let i = 0; i < 12; i++) await vp.hover().then(() => page.mouse.wheel(0, 600));
+      await page.waitForFunction(() =>
+        document.getElementById('continentWorld').classList.contains('lod-horizon'), null, { timeout: 4000 });
+      const far = await cloudState();
+      if (far.shownClouds !== 0) throw new Error('远景档不该显示词流：' + JSON.stringify(far));
+      if (far.nodeShown) throw new Error('远景档不该显示概念卡：' + JSON.stringify(far));
+      // 退回世界档：词流必须亮起来且真有词（空盒子回来了就等于没改）
+      for (let i = 0; i < 4; i++) await vp.hover().then(() => page.mouse.wheel(0, -600));
       await page.waitForFunction(() =>
         document.getElementById('continentWorld').classList.contains('lod-world'), null, { timeout: 4000 });
-      for (let i = 0; i < 14; i++) await vp.hover().then(() => page.mouse.wheel(0, -600));
+      const world1 = await cloudState();
+      if (world1.shownClouds < 1) throw new Error('世界档词流没显示（空盒子回来了）：' + JSON.stringify(world1));
+      if (world1.words < 1) throw new Error('世界档词流是空的：' + JSON.stringify(world1));
+      if (world1.nodeShown) throw new Error('世界档不该显示概念卡：' + JSON.stringify(world1));
+      // 词流字号必须被 --cloud-k 撑起来（不撑就是 4.5px 的糊影，等于没填）
+      const cloudFont = await page.evaluate(() => {
+        const c = document.querySelector('.continent-cloud');
+        if (!c) return 0;
+        return parseFloat(getComputedStyle(c).fontSize) || 0;
+      });
+      if (!(cloudFont >= 24)) throw new Error('词流字号没做反缩放（世界单位 < 24px，屏幕上会糊）：' + cloudFont);
+      for (let i = 0; i < 16; i++) await vp.hover().then(() => page.mouse.wheel(0, -600));
       await page.waitForFunction(() =>
         document.getElementById('continentWorld').classList.contains('lod-detail'), null, { timeout: 4000 });
-      ok('LOD 三档双向切换（滚轮）');
-    } catch (e) { fail('LOD 三档双向切换（滚轮）', e); }
+      const detail = await cloudState();
+      if (detail.shownClouds !== 0) throw new Error('细节档不该显示词流：' + JSON.stringify(detail));
+      if (!detail.nodeShown) throw new Error('细节档概念卡不见了：' + JSON.stringify(detail));
+      ok('LOD 四档双向切换 + 词流（远景收 / 世界档亮且有词 / 细节档收起）');
+    } catch (e) { fail('LOD 四档双向切换 + 词流', e); }
 
     // ===== 10. v10 新族候选：Φ 起名 → 建族 → 族表生效 =====
     // 两个端点都在浏览器侧拦截（隔离库的向量/模型状态不影响本段）：

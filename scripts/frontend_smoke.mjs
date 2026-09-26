@@ -2029,7 +2029,7 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
   return true;
 });
 
-check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛折叠 / 海域印章 / 岛内卡上限 / LOD 三档）', () => {
+check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛折叠 / 海域印章 / 岛内卡上限 / LOD 四档含词流）', () => {
   const layout = sandbox._continentLayoutClusters;
   const regionLayout = sandbox._continentRegionLayout;
   const regions = sandbox._continentRegions;
@@ -2101,15 +2101,25 @@ check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛
   if (lay48r.worldW < plateR || lay48r.worldH < plateB) throw new Error('世界罩不住海域板');
   const fitZoom = Math.min(1200 / lay48r.worldW, 800 / lay48r.worldH) * 0.92;
   if (fitZoom < 0.15) throw new Error('48 岛 6 海域在 0.15 下限下一屏装不下：' + fitZoom);
-  // LOD 静态契约：三档阈值常量 + _continentApplyTransform 切类 + CSS 后代选择器显隐
+  // LOD 静态契约：四档阈值常量 + _continentApplyTransform 切类 + CSS 后代选择器显隐
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
-  ['CONTINENT_LOD_WORLD', 'CONTINENT_LOD_DETAIL', 'CONTINENT_COLLAPSED_KEY',
-   'CONTINENT_ISLAND_CARD_MAX', "classList.toggle('lod-world'"].forEach(marker => {
+  ['CONTINENT_LOD_WORLD', 'CONTINENT_LOD_DETAIL', 'CONTINENT_LOD_HORIZON',
+   'CONTINENT_CLOUD_SCALE_MAX', 'CONTINENT_COLLAPSED_KEY',
+   'CONTINENT_ISLAND_CARD_MAX', "classList.toggle('lod-world'",
+   "classList.toggle('lod-horizon'"].forEach(marker => {
     if (!src.includes(marker)) throw new Error('LOD/折叠实现缺失：' + marker);
   });
   if (!/const CONTINENT_ZOOM_MIN = 0\.15/.test(src)) throw new Error('缩放下限未放到 0.15');
+  // v8.8 词流：反缩放变量必须由 _continentApplyTransform 写进世界层，且**带死区**——
+  // 少了死区就是「滚轮每帧重算整棵子树的字号」，缩放时词流逐帧抖（真机才看得出来）
+  const applySrc = src.split('function _continentApplyTransform')[1] || '';
+  if (!/setProperty\('--cloud-k'/.test(applySrc)) throw new Error('词流反缩放变量没写在 _continentApplyTransform 里');
+  if (!/_continentCloudK/.test(applySrc)) throw new Error('词流反缩放缺死区比对（每帧重排）');
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   ['.continent-world.lod-world .continent-node', '.continent-world.lod-region .continent-node-formula',
+   '.continent-world.lod-horizon .continent-node', '.continent-world.lod-world .continent-cloud',
+   '.continent-world.lod-horizon .continent-cloud', '.continent-cluster.is-collapsed .continent-cloud',
+   'var(--cloud-k, 1)',
    '.continent-cluster.is-collapsed', '.continent-region.is-stamp'].forEach(sel => {
     if (!css.includes(sel)) throw new Error('LOD/折叠样式缺失：' + sel);
   });
