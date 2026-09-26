@@ -6,10 +6,6 @@
     @property --text-secondary { syntax: '<color>'; inherits: true; initial-value: #a0b0d0; }
     @property --accent { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
     @property --accent-hover { syntax: '<color>'; inherits: true; initial-value: #6cb3ff; }
-    @property --quick-btn-bg { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.12); }
-    @property --quick-btn-border { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.3); }
-    @property --quick-btn-color { syntax: '<color>'; inherits: true; initial-value: #4a9eff; }
-    @property --quick-btn-hover-bg { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.25); }
     @property --user-msg { syntax: '<color>'; inherits: true; initial-value: rgba(30, 80, 160, 0.75); }
     @property --user-msg-border { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.2); }
     @property --user-avatar-bg { syntax: '<color>'; inherits: true; initial-value: rgba(74, 158, 255, 0.2); }
@@ -165,10 +161,6 @@
       --domain-physics: #f59e0b;
       --domain-math: #3b82f6;
       --domain-graph: #0891b2;
-      --quick-btn-bg: rgba(74, 158, 255, 0.12);
-      --quick-btn-border: rgba(74, 158, 255, 0.3);
-      --quick-btn-color: #4a9eff;
-      --quick-btn-hover-bg: rgba(74, 158, 255, 0.25);
       --user-msg: rgba(30, 80, 160, 0.75);
       --user-msg-border: rgba(74, 158, 255, 0.2);
       --user-avatar-bg: rgba(74, 158, 255, 0.2);
@@ -399,7 +391,6 @@
         --bg-dark 0.35s ease, --bg-panel 0.35s ease, --border 0.35s ease,
         --text-primary 0.35s ease, --text-secondary 0.35s ease,
         --accent 0.35s ease, --accent-hover 0.35s ease,
-        --quick-btn-bg 0.35s ease, --quick-btn-border 0.35s ease, --quick-btn-color 0.35s ease, --quick-btn-hover-bg 0.35s ease,
         --user-msg 0.35s ease, --user-msg-border 0.35s ease, --user-avatar-bg 0.35s ease,
         --typing-dot 0.35s ease, --progress-bar-bg 0.35s ease,
         --btn-hover-bg 0.35s ease, --btn-hover-border 0.35s ease,
@@ -496,10 +487,6 @@
       --domain-physics: #fbbf24;
       --domain-math: #60a5fa;
       --domain-graph: #22d3ee;
-      --quick-btn-bg: rgba(160, 110, 40, 0.12);
-      --quick-btn-border: rgba(160, 110, 40, 0.3);
-      --quick-btn-color: #8b6914;
-      --quick-btn-hover-bg: rgba(160, 110, 40, 0.25);
       --user-msg: rgba(196, 155, 60, 0.18);
       --user-msg-border: rgba(160, 120, 40, 0.2);
       --user-avatar-bg: rgba(160, 120, 40, 0.15);
@@ -1704,54 +1691,6 @@
     .chat-messages::-webkit-scrollbar-track { background: transparent; }
     .chat-messages::-webkit-scrollbar-thumb { background: rgba(100, 130, 200, 0.3); border-radius: var(--r-xs); }
 
-    /* 欢迎提示 */
-    .welcome-tip {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--text-secondary);
-      font-size: 15px;
-      line-height: 1.9;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 60vh;
-    }
-    .welcome-tip h2 {
-      color: var(--text-primary);
-      font-size: 26px;
-      margin-bottom: 14px;
-      font-weight: 700;
-      letter-spacing: 1px;
-    }
-    .welcome-tip p { max-width: 500px; margin: 0 auto 28px; font-size: 15px; }
-    [data-theme="light"] .welcome-tip svg { opacity: 0.5; }
-
-    .quick-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: center;
-      max-width: 520px;
-      margin: 0 auto;
-    }
-    .quick-btn {
-      background: var(--quick-btn-bg);
-      border: 1px solid var(--quick-btn-border);
-      color: var(--quick-btn-color);
-      padding: 9px 20px;
-      border-radius: var(--r-pill);
-      font-size: var(--fs-lg);
-      cursor: pointer;
-      transition: all 0.2s;
-      backdrop-filter: blur(4px);
-    }
-    .quick-btn:hover {
-      background: var(--quick-btn-hover-bg);
-      border-color: var(--quick-btn-color);
-      transform: translateY(-1px);
-    }
-
     /* 消息气泡 */
     .message {
       display: flex;
@@ -2536,13 +2475,6 @@
       .mermaid-container svg { min-width: 280px; }
       .mermaid-scroll-hint { display: block; }
 
-      /* ── 欢迎页 ── */
-      .welcome-tip { padding: 20px 10px; min-height: 45vh; }
-      .welcome-tip h2 { font-size: 20px; margin-bottom: 10px; letter-spacing: 0.5px; }
-      .welcome-tip p { font-size: var(--fs-md); margin-bottom: 20px; line-height: 1.7; }
-      .quick-actions { gap: 8px; flex-wrap: wrap; }
-      .quick-btn { padding: 8px 14px; font-size: var(--fs-md); border-radius: var(--r-pill); }
-
       /* ── 进度状态 ── */
       .progress-status { margin-left: 0; padding: 10px 14px; font-size: var(--fs-md); }
       .progress-status .status-progress { flex: 0 1 180px; min-width: 100px; height: 12px; }
@@ -2599,9 +2531,6 @@
       .header-btn { font-size: var(--fs-2xs); padding: var(--sp-1) var(--sp-2); }
       .message-content { font-size: var(--fs-md); padding: 9px 11px; }
       .message-content th, .message-content td { padding: 4px 6px; font-size: var(--fs-xs); }
-      .welcome-tip h2 { font-size: 18px; }
-      .welcome-tip p { font-size: var(--fs-md); }
-      .quick-btn { padding: 7px 12px; font-size: var(--fs-sm); }
       .input-area { margin: 0 -6px; padding: 8px 6px 12px; }
       .input-container textarea { font-size: 16px; }
       .floating-symbol { font-size: var(--fs-lg) !important; }
@@ -2612,9 +2541,6 @@
 
     /* 横屏模式 */
     @media (max-width: 768px) and (orientation: landscape) {
-      .welcome-tip { min-height: 30vh; padding: 12px 8px; }
-      .welcome-tip h2 { font-size: 17px; margin-bottom: 6px; }
-      .welcome-tip p { font-size: var(--fs-sm); margin-bottom: 12px; }
       .chat-messages { gap: 8px; padding: 8px 12px; }
       .message-content { padding: 8px 11px; font-size: var(--fs-md); }
       .input-area { padding: 6px 8px 10px; }
