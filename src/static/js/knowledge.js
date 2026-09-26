@@ -814,24 +814,6 @@ async function _tryFocusGraphNodeById(nodeId) {
   }
 }
 
-function goToOriginalMessage(sessionId, messageId, moduleKey) {
-  const item = Object.values(getKnowledgeItems()).find(it =>
-    it.sessionId === sessionId && String(it.messageId || '') === String(messageId || '')
-  );
-  if (item) {
-    goToKnowledgeNode(item.id);
-    return;
-  }
-  const currentId = typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
-  if (sessionId && sessionId !== currentId && typeof window.switchToSession === 'function') {
-    window.switchToSession(sessionId).then(() => {
-      if (typeof window.focusGraphNode === 'function') window.focusGraphNode(sessionId, messageId, moduleKey);
-    });
-  } else if (typeof window.focusGraphNode === 'function') {
-    window.focusGraphNode(sessionId, messageId, moduleKey);
-  }
-}
-
 // ====== 公式速查库 ======
 const FORMULAS_STORAGE_KEY = 'phymathia_formulas';
 let kpFormulaCache = null;
@@ -1227,17 +1209,6 @@ async function locateFormulaNode(formulaId) {
   if (matched) return true;
   _showJumpError('找不到公式对应的节点');
   return false;
-}
-
-// 旧接口兼容：只切换会话并关闭知识面板
-function locateFormulaSession(sessionId) {
-  const session = typeof window.getSessionById === 'function' ? window.getSessionById(sessionId) : null;
-  if (!session) {
-    alert('来源画布已删除，无法定位');
-    return;
-  }
-  if (typeof window.switchToSession === 'function') window.switchToSession(sessionId);
-  closeKnowledgePanel();
 }
 
 async function confirmDeleteFormula(id) {

@@ -212,10 +212,6 @@ function createManualNode(nodeKind) {
   renderGraphCanvas();
 }
 
-function createBlankNode(moduleKey) {
-  return createManualNode(moduleKey);
-}
-
 function deleteBlankNode(nodeId, pushUndo = true) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'blank') return;

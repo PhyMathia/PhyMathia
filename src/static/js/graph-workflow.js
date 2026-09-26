@@ -13,12 +13,6 @@ function _scheduleGraphSync() {
     if (typeof _redrawEdges === 'function') _redrawEdges();
   }, 150);
 }
-function _flushGraphSync() {
-  if (_graphSyncTimer) { clearTimeout(_graphSyncTimer); _graphSyncTimer = null; }
-  if (typeof _measureNodes === 'function') _measureNodes();
-  if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
-  if (typeof _redrawEdges === 'function') _redrawEdges();
-}
 
 function _simpleHash(value) {
   let hash = 5381;
@@ -152,22 +146,6 @@ function _buildWorkflowContextForNode(node) {
       content: (item.content || '').slice(0, 800),
     })),
   };
-}
-
-function _collectDependencyChain(nodeId) {
-  const chain = [];
-  const visited = new Set();
-  function visit(id) {
-    if (visited.has(id)) return;
-    visited.add(id);
-    const node = _findGraphNode(id);
-    if (!node) return;
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === id && !edge.draft && !edge.link);
-    for (const edge of incoming) visit(edge.from);
-    chain.push(node);
-  }
-  visit(nodeId);
-  return chain;
 }
 
 function _nodeInputHash(node) {
@@ -338,43 +316,6 @@ async function _streamCustomNodeResponse(resp, node) {
   _saveCustomNodes();
   if (node.kind === 'blank') _renderBlankNodeLive(node, cleaned);
   _refreshWorkflowNodeStatusUi(live);
-}
-
-async function _readStreamText(resp) {
-  if (!resp || !resp.body) return '';
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let content = '';
-  let streamChunkCount = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();
-    for (const part of parts) {
-      for (const line of part.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        let data = null;
-        try { data = JSON.parse(dataStr); } catch (e) {}
-        if (data && data.error) {
-          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
-          throw new Error('AI 流式返回错误：' + message);
-        }
-        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
-        if (delta && delta.content) {
-          content += delta.content;
-          _scheduleWorkflowStreamProgress(content.length);
-          streamChunkCount++;
-          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      }
-    }
-  }
-  return content;
 }
 
 async function _streamAnalysisResponse(resp, node, question) {
@@ -2113,8 +2054,6 @@ window.graphDeleteGroup = graphDeleteGroup;
 window.openAddBlankNodeModal = openAddBlankNodeModal;
 
 window.closeAddBlankNodeModal = closeAddBlankNodeModal;
-
-window.createBlankNode = createBlankNode;
 
 window.createManualNode = createManualNode;
 

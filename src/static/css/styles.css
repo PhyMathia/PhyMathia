@@ -303,7 +303,6 @@
       --harness-preview-eval-bg: rgba(251, 191, 36, 0.07);
       --harness-preview-eval-border: rgba(251, 191, 36, 0.72);
       --harness-preview-edge: rgba(56, 189, 248, 0.75);
-      --harness-window-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
       --harness-pet-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
       --harness-preview-edge-shadow: rgba(56, 189, 248, 0.35);
 
@@ -616,7 +615,6 @@
       --harness-preview-eval-bg: rgba(255, 247, 237, 0.75);
       --harness-preview-eval-border: rgba(217, 119, 6, 0.75);
       --harness-preview-edge: rgba(2, 132, 199, 0.75);
-      --harness-window-shadow: 0 18px 60px rgba(15, 23, 42, 0.18);
       --harness-pet-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
       --harness-preview-edge-shadow: rgba(2, 132, 199, 0.25);
 
@@ -2080,19 +2078,6 @@
       background: var(--progress-bar-fill);
       transition: width 0.2s ease;
     }
-    .progress-status .status-icon { display: inline-flex; gap: 3px; }
-    .progress-status .status-icon span {
-      width: 5px; height: 5px;
-      background: var(--accent);
-      border-radius: 50%;
-      animation: statusPulse 1.2s ease-in-out infinite;
-    }
-    .progress-status .status-icon span:nth-child(2) { animation-delay: 0.2s; }
-    .progress-status .status-icon span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes statusPulse {
-      0%, 100% { opacity: 0.3; transform: scale(0.8); }
-      50% { opacity: 1; transform: scale(1.2); }
-    }
     .progress-status .status-text { flex: 0 1 auto; min-width: 0; max-width: 260px; animation: none; }
     @keyframes statusTextPulse {
       0%, 100% { opacity: 0.7; }
@@ -2162,8 +2147,6 @@
       .progress-status { margin-left: 0; padding: 10px 14px; font-size: var(--fs-md); }
       /* 小屏进度条用 clamp 收窄给文字让位；仍不可缩，理由见上方桌面规则（Chrome 固有宽度坑） */
       .progress-status .status-progress { flex: 0 0 clamp(90px, 26vw, 180px); min-width: clamp(90px, 26vw, 180px); height: 12px; }
-      /* ── 漂浮符号 ── */
-      .floating-symbol { font-size: 16px !important; }
 
       }
 
@@ -2175,7 +2158,6 @@
       .chat-header .brand-title { font-size: var(--fs-lg); }
       .header-actions { max-width: 55%; }
       .header-btn { font-size: var(--fs-2xs); padding: var(--sp-1) var(--sp-2); }
-      .floating-symbol { font-size: var(--fs-lg) !important; }
       .socratic-btn { font-size: 0.8em; padding: 8px 10px; }
       .learn-dir-btn { font-size: var(--fs-xs); padding: 5px 10px; }
 

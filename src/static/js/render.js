@@ -1133,12 +1133,6 @@ async function retryMermaid(btn) {
   if (container) await renderMermaidInElement(container);
 }
 
-// 主题切换时 Mermaid 颜色由 CSS 变量自动过渡，无需重绘
-// 此函数仅在新图表需要渲染时使用，现有图表的视觉变化完全由 CSS 变量过渡驱动
-async function rerenderAllMermaid() {
-  // 不再重新渲染现有图表，CSS 变量过渡已处理颜色变化
-}
-
 const _KATEX_OPTIONS = {
   delimiters: [
     { left: '$$', right: '$$', display: true },

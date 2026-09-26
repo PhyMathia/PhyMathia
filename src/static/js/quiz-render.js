@@ -672,7 +672,6 @@ window.useLocalQuiz = useLocalQuiz;
 window.openWrongReview = openWrongReview;
 window.startWrongQuiz = startWrongQuiz;
 window.startReviewQuiz = startReviewQuiz;
-window.changeQuizScope = changeQuizScope;
 window.changeQuizSourcePreference = changeQuizSourcePreference;
 window.openQuizBank = openQuizBank;
 window.startBankQuiz = startBankQuiz;

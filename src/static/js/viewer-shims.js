@@ -67,7 +67,6 @@ window.showToast = function (msg) {
   clearTimeout(window.__utopiaToastTimer);
   window.__utopiaToastTimer = setTimeout(function () { box.classList.remove('show'); }, 3200);
 };
-window.showModelToast = window.showToast;
 window.showProgress = function () {};
 window.hideProgress = function () {};
 
@@ -77,7 +76,7 @@ window.hideProgress = function () {};
     // 会话/消息写路径
     'saveSessionMessages', 'loadSessionMessages', 'saveSessions', 'loadSessions', 'renderSessionList',
     'switchToSession', 'createNewSession', 'deleteSession', 'sendQuick', 'sendMessage', 'clearChat',
-    'startSocraticAnswer', 'updateDataStats', '_flushToServer',
+    'startSocraticAnswer', 'updateDataStats',
     // 模型 / AI
     'getActiveModelForRole', 'getAllModels', 'getModelById', 'proxyChatWithModel', 'retryHarnessLastRequest',
     'runAllWorkflowNodes', 'stopGeneration',

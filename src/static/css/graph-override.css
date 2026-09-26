@@ -55,13 +55,6 @@
   border-radius: 0 !important;
   background: transparent !important;
 }
-
-.graph-inspector,
-.graph-view-overlay,
-.graph-focus-panel {
-  display: none !important;
-}
-
 /* ---------- 2. 连线：更粗、更醒目、有主次之分 ---------- */
 /* 性能修复：发光 drop-shadow 从"每条边 <g>+<path> 各一层"收敛为整个边层 SVG 一层。
    拖拽时 _redrawEdges 全量重建 SVG，逐边滤镜会导致每帧重复光栅化几十上百个模糊——
@@ -322,7 +315,6 @@
   min-height: 560px !important;
 }
 
-
 .graph-node-module.graph-module-socratic {
   border-color: #f43f5e !important;
   border-width: 4px !important;
@@ -405,6 +397,7 @@
 .graph-node.resized .graph-node-full-content {
   max-height: none !important;
 }
+
 
 .graph-node-full-content::-webkit-scrollbar {
   width: 6px !important;
@@ -582,15 +575,6 @@
   font-weight: 800 !important;
   transform: translateY(-1px);
 }
-
-.graph-tool-btn.graph-run-all-btn {
-  width: auto;
-  min-width: 44px;
-  padding: 0 10px;
-  font-size: var(--fs-md);
-  color: #22d3ee;
-}
-
 .chat-header .header-actions .header-btn.run-gen-btn,
 .chat-header .header-actions #runAllBtn {
   background: var(--accent) !important;
@@ -648,15 +632,6 @@
   .app-container .progress-status .status-text { min-width: 3.5em; }
   .app-container .progress-status .elapsed-time { display: none; }
 }
-
-/* ---------- 5. 空状态 ---------- */
-.graph-empty {
-  font-size: var(--fs-lg) !important;
-  color: var(--text-secondary) !important;
-  text-align: center !important;
-  padding: 24px !important;
-}
-
 .graph-new-session-wrap {
   position: absolute;
   left: 50%;
@@ -756,7 +731,6 @@
   }
 }
 
-
 /* ---------- 7. 浅色模式优化 ----------
    节点/连线的浅色值统一由第 9 节变量驱动，
    避免这里的高优先级 box-shadow/filter 绕过变量过渡，
@@ -768,7 +742,6 @@
      浅色下悬停就只剩描边变化（用户看不出按钮"活"了没有）。图标墨色同理走基础规则的 --graph-tool-ink。 */
   border-color: rgba(120, 100, 70, 0.2) !important;
 }
-
 
 /* ---------- 8. 模式切换与主题过渡 ---------- */
 .graph-node {
@@ -891,7 +864,6 @@
   --graph-bubble-glow: rgba(244, 114, 182, 0.30);
 }
 
-
 .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
@@ -985,7 +957,6 @@
   --graph-bubble-glow: rgba(244, 114, 182, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
-
 
 [data-theme="light"] .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.18);
@@ -1555,8 +1526,6 @@
 .graph-attr-knowledge { --node-attr: #84cc16; }
 .graph-attr-relation { --node-attr: #f43f5e; }
 .graph-attr-any { --node-attr: #94a3b8; }
-
-
 
 .graph-node.dragging {
   z-index: 40 !important;
@@ -2338,7 +2307,6 @@
   animation: kp-spin 0.8s linear infinite;
 }
 
-
 .graph-source-file-btn {
   display: inline-flex;
   align-items: center;
@@ -2379,8 +2347,7 @@
   word-break: break-all;
 }
 
-.graph-source-count,
-.graph-relation-connected {
+.graph-source-count {
   color: var(--text-secondary, #94a3b8);
   font-size: var(--fs-sm);
 }
@@ -2677,23 +2644,6 @@
   border-color: #10b981;
   color: #042f2e;
 }
-
-/* ---------- Graph harness ---------- */
-.graph-harness-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 13000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--harness-overlay-bg);
-  backdrop-filter: blur(3px);
-}
-
-.graph-harness-overlay[hidden] {
-  display: none !important;
-}
-
 /* ---------- Desktop pet + chat window ---------- */
 /* ---------- Φ 桌宠（harness 化身）+ chat window ---------- */
 .phi-pet-root {
@@ -2994,18 +2944,6 @@
 @keyframes graphHarnessSpin {
   to { transform: rotate(360deg); }
 }
-
-.graph-harness-panel {
-  width: min(680px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
-  overflow: auto;
-  border-radius: var(--r-md);
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  color: var(--text-primary);
-  box-shadow: var(--harness-window-shadow);
-}
-
 .graph-harness-head {
   display: flex;
   align-items: center;
@@ -3025,32 +2963,6 @@
   line-height: 1;
   cursor: pointer;
 }
-
-.graph-harness-body {
-  padding: 16px;
-}
-
-.graph-harness-body label {
-  display: block;
-  margin: 0 0 6px;
-  color: var(--text-secondary, #94a3b8);
-  font-size: var(--fs-sm);
-}
-
-.graph-harness-body textarea {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 88px;
-  resize: vertical;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
-  background: var(--input-bg, #0f172a);
-  color: var(--text-primary, #e2e8f0);
-  font-size: var(--fs-md);
-  outline: none;
-}
-
 .graph-harness-actions,
 .graph-harness-apply-actions {
   display: flex;
@@ -3234,8 +3146,6 @@
 .graph-harness-clarify-input input {
   flex: 1;
 }
-
-
 
 /* ---------- AI evaluation node ---------- */
 .graph-node-ai-eval {
@@ -3446,8 +3356,6 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   color: #1e293b;
 }
 
-
-
 /* ---------- Harness preview ---------- */
 .graph-harness-preview-layer {
   position: absolute;
@@ -3532,7 +3440,6 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   pointer-events: none;
   filter: drop-shadow(0 0 5px var(--harness-preview-edge-shadow));
 }
-
 
 /* ===== harness 语义自检 / 警告 ===== */
 .graph-harness-warnings {
@@ -4108,7 +4015,6 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 6px !important;
 }
 
-
 /* ============ Φ 网络助手界面美化（兼容深浅主题） ============ */
 /* 第 5 轮磨砂化：底色/阴影归 .aurora-glass（三坑①：散落多层的 background 必须
    全部拔掉，只改最先看到那处极光会被这里的后手声明整块盖掉） */
@@ -4403,22 +4309,6 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-weight: 600;
   min-width: 0;
 }
-.graph-harness-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-md);
-  flex: 0 0 auto;
-  font-style: normal;
-  font-size: var(--fs-md);
-  font-weight: 800;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #231503;
-  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
-}
-
 .graph-harness-head-actions {
   display: flex;
   align-items: center;
@@ -4781,17 +4671,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 .graph-harness-result:empty {
   margin-top: 0;
-}
-
-/* ============================================================
-   主题变量修正层（替换上一版里的硬编码颜色，跟随深浅色渐变切换）
-   ============================================================ */
-
-/* 标题里的 Φ 金块图标：按用户要求移除 */
-.graph-harness-logo {
-  display: none !important;
-}
-.graph-harness-title {
+}.graph-harness-title {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5073,20 +4953,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   background: transparent;
 }
 
-/* ---------- Harness 面板滚动条“隐形”（仅隐藏条身，保留滚轮/触摸/键盘滚动能力） ---------- */
 .graph-harness-window,
-.graph-harness-window *,
-.graph-harness-panel,
-.graph-harness-panel * {
+.graph-harness-window * {
   scrollbar-width: none;        /* Firefox */
   -ms-overflow-style: none;     /* IE / 旧版 Edge */
 }
 .graph-harness-window ::-webkit-scrollbar,
 .graph-harness-window ::-webkit-scrollbar-track,
-.graph-harness-window ::-webkit-scrollbar-thumb,
-.graph-harness-panel ::-webkit-scrollbar,
-.graph-harness-panel ::-webkit-scrollbar-track,
-.graph-harness-panel ::-webkit-scrollbar-thumb {
+.graph-harness-window ::-webkit-scrollbar-thumb {
   display: none;
   width: 0;
   height: 0;
@@ -5192,7 +5066,6 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-canvas .graph-source-text-input {
   resize: none !important;
 }
-
 
 /* ============ 第 7 轮（2026-09-17）：族别形状标 + 待生成收缩 ============
    起因：16 个节点入口里 10 种共用 640×512 打底的大卡，6 组配色在 1px 描边尺度上互相认不出
