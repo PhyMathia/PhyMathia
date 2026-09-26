@@ -1366,6 +1366,7 @@ function _applyPointerDrag(clientX, clientY) {
       const nextH = Math.max(90, graphView.resizeStartH + resizeDy);
       node.customWidth = Math.round(nextW);
       node.customHeight = Math.round(nextH);
+      node.userResized = true;
       el.style.setProperty('width', node.customWidth + 'px', 'important');
       el.style.setProperty('min-width', node.customWidth + 'px', 'important');
       el.style.setProperty('max-width', node.customWidth + 'px', 'important');

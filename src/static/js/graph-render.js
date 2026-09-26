@@ -1607,12 +1607,26 @@ function _savePositions() {
   state.sizes = state.sizes || {};
   graphView.nodes.forEach(n => {
     state.positions[n.id] = n.pinned && n.fixedX != null ? { x: n.fixedX, y: n.fixedY } : { x: n.x, y: n.y };
-    state.sizes[n.id] = { w: n.customWidth || n.w || 120, h: n.customHeight || n.h || 60 };
+    // u=1 只认「用户手动拖过尺寸」这一个信号（_applyPointerDrag 里设置），
+    // 绝不由 customHeight 反推——否则历史污染值会被当成用户意图永久冻结。
+    // 旧数据无 u 字段 → 全部回到自适应，这是有意的自愈。
+    state.sizes[n.id] = {
+      w: n.customWidth || n.w || 120,
+      h: n.customHeight || n.h || 60,
+      u: n.userResized ? 1 : 0,
+    };
   });
   state.groups = graphView.groups.map(group => ({ ...group }));
+  // custom 节点高度不持久化（除非用户手动拖过）：创建期高度一律为 null，
+  // 任何非零值都是「测量值被兜底成 custom」的历史污染——留着就会冻死节点。
+  // userResized 标记随 spread 一起持久化，重载后仍能认出手动尺寸。
   state.customNodes = graphView.nodes
     .filter(node => node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind))
-    .map(node => ({ ...node }));
+    .map(node => {
+      const copy = { ...node };
+      if (!copy.userResized) copy.customHeight = null;
+      return copy;
+    });
   _saveGraphState(state);
   if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
 }

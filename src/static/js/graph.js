@@ -1121,8 +1121,9 @@ function _buildGraphData(messages, state) {
         pinned: !!(saved && pinnedMap[id]),
         fixedX: saved ? saved.x : null,
         fixedY: saved ? saved.y : null,
-        customWidth: savedSizes[id] ? savedSizes[id].w : null,
-        customHeight: savedSizes[id] ? savedSizes[id].h : null,
+        customWidth: savedSizes[id] && savedSizes[id].u ? savedSizes[id].w : null,
+        customHeight: savedSizes[id] && savedSizes[id].u ? savedSizes[id].h : null,
+        userResized: !!(savedSizes[id] && savedSizes[id].u),
         w: 0, h: 0, vx: 0, vy: 0,
       };
       node = _applyHarnessOverrides(node, state);
@@ -1189,8 +1190,9 @@ function _buildGraphData(messages, state) {
         pinned: !!(saved && pinnedMap[id]),
         fixedX: saved ? saved.x : null,
         fixedY: saved ? saved.y : null,
-        customWidth: savedSizes[id] ? savedSizes[id].w : null,
-        customHeight: savedSizes[id] ? savedSizes[id].h : null,
+        customWidth: savedSizes[id] && savedSizes[id].u ? savedSizes[id].w : null,
+        customHeight: savedSizes[id] && savedSizes[id].u ? savedSizes[id].h : null,
+        userResized: !!(savedSizes[id] && savedSizes[id].u),
         w: 0, h: 0, vx: 0, vy: 0,
       };
       node = _applyHarnessOverrides(node, state);
@@ -1238,8 +1240,9 @@ function _buildGraphData(messages, state) {
           pinned: !!(savedM && pinnedMap[moduleId]),
           fixedX: savedM ? savedM.x : null,
           fixedY: savedM ? savedM.y : null,
-          customWidth: savedSizes[moduleId] ? savedSizes[moduleId].w : null,
-          customHeight: savedSizes[moduleId] ? savedSizes[moduleId].h : null,
+          customWidth: savedSizes[moduleId] && savedSizes[moduleId].u ? savedSizes[moduleId].w : null,
+          customHeight: savedSizes[moduleId] && savedSizes[moduleId].u ? savedSizes[moduleId].h : null,
+          userResized: !!(savedSizes[moduleId] && savedSizes[moduleId].u),
           w: 0, h: 0, vx: 0, vy: 0,
         };
         mNode = _applyHarnessOverrides(mNode, state);
@@ -1277,8 +1280,11 @@ function _buildGraphData(messages, state) {
       pinned: !!(saved && pinnedMap[cn.id]),
       fixedX: saved && pinnedMap[cn.id] ? saved.x : (cn.fixedX || null),
       fixedY: saved && pinnedMap[cn.id] ? saved.y : (cn.fixedY || null),
-      customWidth: cn.customWidth || size.w || null,
-      customHeight: cn.customHeight || size.h || null,
+      // u=1 才允许把保存的测量尺寸兜底成 custom 尺寸（同消息节点口径）：
+      // 否则首次保存的即时测量值会在下次重建时冻结住，内容一变就空余/内滚
+      customWidth: cn.customWidth || (size.u ? size.w : null) || null,
+      customHeight: cn.customHeight || (size.u ? size.h : null) || null,
+      userResized: !!(cn.userResized || size.u),
       minimized: !!cn.minimized,
       hidden: !!cn.hidden,
     };
