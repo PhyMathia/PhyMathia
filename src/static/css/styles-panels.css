@@ -3123,6 +3123,11 @@
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 .continent-tool:hover { border-color: var(--accent); color: var(--text-primary); }
+/* v8.1 画风钮的非默认态：网格画风亮着，提醒「现在不是默认那张脸」 */
+.continent-tool.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .continent-tool.active {
   border-color: var(--accent);
   color: var(--accent);
@@ -3141,14 +3146,18 @@
   text-overflow: ellipsis;
 }
 .continent-hint[hidden] { display: none; }
-/* 连接模式：十字光标 + 首选端点高亮 */
+/* 连接模式：十字光标 + 首选端点高亮
+ * v8.1：这几条都整条重写 box-shadow，基类那层「浮起投影」会被冲掉——发光挂在
+ * 落影之上，缺了落影卡片反而比常态更平。逐条把落影补回来。 */
 .continent-layer.is-linking .continent-viewport { cursor: crosshair; }
 .continent-node.is-link-source {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(74, 158, 255, 0.35);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(74, 158, 255, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.30);
 }
 [data-theme="light"] .continent-node.is-link-source {
-  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(139, 105, 20, 0.3);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(139, 105, 20, 0.3),
+    0 3px 9px rgba(90, 70, 30, 0.14);
 }
 .continent-close {
   width: 26px;
@@ -3169,14 +3178,66 @@
   transform-origin: 0 0;
   will-change: transform;
 }
-.continent-cluster {
+/* v8.1 噪点层：一整片极淡的颗粒盖在大陆上，给渐变与阴影一个「纸面」质地，
+ * 消掉大面积半透明色块的塑料感。三个刻意的取舍：
+ *   ① **一个元素顶一片**，不给每张卡挂滤镜——几十张卡的混合模式会把重绘翻几倍；
+ *   ② 挂 viewport 不挂 world——挂 world 会随缩放一起缩放，缩到 0.15 时 180px 的
+ *      颗粒在屏上只剩 27px，近看是一片大噪点；挂视口则永远是屏幕尺度的细颗粒；
+ *   ③ **不用 mix-blend-mode**——它在未知 GPU 上的合成开销与降级行为不可控，
+ *      4.5% 不透明度的中性灰已经够用。要更脏一点再评估开 overlay。
+ * pointer-events:none：命中与拖拽一个不少。 */
+.continent-grain {
   position: absolute;
-  border-radius: var(--r-xl);
-  border: 1px solid var(--border);
-  background: rgba(127, 150, 220, 0.07);
-  cursor: pointer;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23g)'/></svg>");
+  background-repeat: repeat;
 }
-[data-theme="light"] .continent-cluster { background: rgba(190, 160, 110, 0.10); }
+[data-theme="light"] .continent-grain { opacity: 0.03; }
+
+/* v8.1 有机质感：岛底板从「一块平色」变成「有厚度的一块地」。
+ * 病根是纯平色 + 只描边不投影——十几座岛并排时整张图就是一张方格纸。
+ * 三件事叠起来才立得住：① 竖向渐变（上亮下暗，中间最透）给出体积；
+ * ② 顶边 1px 内高光把「描边」读成「崖沿」；③ 落地投影把岛从底图上托起来。
+ * 渐变形状只写这一遍，档位（solid / light / pending / 无归属）只改 --fill-* 四件套
+ * ——以前每档各写一遍 background，加质感时四份渐变要同步改，必漏。 */
+.continent-cluster {
+  --fill-h: var(--region-h, 225);
+  --fill-s: 50%;
+  --fill-l: 62%;
+  --fill-1: 0.15;
+  --fill-2: 0.055;
+  --fill-3: 0.085;
+  position: absolute;
+  /* v8.4 海岸线：--r-coast 由 JS 按 sessionId 哈希出 8 值椭圆角，没设时回落到今天的定值。
+   * 只动圆角，位置与尺寸一个像素没改——所以下面的投影/描边/hover 全部原样工作。 */
+  border-radius: var(--r-coast, var(--r-xl));
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-1)) 0%,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-2)) 62%,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-3)) 100%);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.34),
+    0 2px 6px rgba(0, 0, 0, 0.20),
+    inset 0 1px 0 hsla(var(--region-h, 225), 60%, 82%, 0.14);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+[data-theme="light"] .continent-cluster {
+  --fill-h: var(--region-h, 30);
+  --fill-s: 52%;
+  --fill-l: 55%;
+  --fill-1: 0.16;
+  --fill-2: 0.06;
+  --fill-3: 0.10;
+  /* 浅底上深色投影会显脏：压到几乎不可见，改用「描边加重 + 极浅的落影」立形 */
+  box-shadow:
+    0 6px 18px rgba(90, 70, 30, 0.13),
+    0 1px 3px rgba(90, 70, 30, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
 .continent-cluster:hover { border-color: var(--accent); }
 /* v5.4 岛牌两行：标题行（画布名 + 概念数）+ 副行（前 3 个概念名 + 最近更新）——
  * 看懂岛是看懂联系的前提 */
@@ -3227,15 +3288,35 @@
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg-dark);
+  /* v8.1 浮起：卡从「印在底图上」变成「放在底图上」——投影 + 顶边内高光。
+   * --jr 是 JS 抖动层写进来的微转角（默认 0deg，grid 画风下压根不写）。
+   * 写 transform 而不是让 JS 写内联 transform：hover 抬升要在这行之上叠加，
+   * 内联 transform 会把 :hover 那一层整个盖掉。 */
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.30),
+    0 1px 2px rgba(0, 0, 0, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transform: rotate(var(--jr, 0deg));
+  transform-origin: 50% 50%;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+[data-theme="light"] .continent-node {
+  box-shadow:
+    0 3px 9px rgba(90, 70, 30, 0.14),
+    0 1px 2px rgba(90, 70, 30, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 .continent-node:hover {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 8px 20px rgba(0, 0, 0, 0.38);
+  transform: rotate(var(--jr, 0deg)) translateY(-2px);
+}
+[data-theme="light"] .continent-node:hover {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 6px 16px rgba(90, 70, 30, 0.18);
 }
 /* v3 边界城市：共享概念的端点——学科相通的视觉具象（徽标 + 描边微光），
  * 与自动检出的共享连线同色系（accent），一眼能看出「线连到哪两座城」 */
@@ -3247,10 +3328,12 @@
   background: linear-gradient(180deg, rgba(160, 120, 42, 0.10), var(--bg-dark) 55%);
 }
 .continent-node--boundary:hover {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(74, 158, 255, 0.28);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(74, 158, 255, 0.28),
+    0 8px 20px rgba(0, 0, 0, 0.38);
 }
 [data-theme="light"] .continent-node--boundary:hover {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(139, 105, 20, 0.25);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(139, 105, 20, 0.25),
+    0 6px 16px rgba(90, 70, 30, 0.18);
 }
 .continent-node-badge {
   position: absolute;
@@ -3265,10 +3348,12 @@
 /* 悬停共享标签时点亮两端节点（连线找得到头） */
 .continent-node.is-hot {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(74, 158, 255, 0.3);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(74, 158, 255, 0.3),
+    0 4px 12px rgba(0, 0, 0, 0.30);
 }
 [data-theme="light"] .continent-node.is-hot {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(139, 105, 20, 0.25);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(139, 105, 20, 0.25),
+    0 3px 9px rgba(90, 70, 30, 0.14);
 }
 .continent-node-title {
   padding: 0 10px;
@@ -3619,22 +3704,32 @@
 /* ===== v7.1a 海域层：学科地盘（领域配色 / 海域板 / 图例 / 聚焦淡化） ===== */
 /* 颜色只上两层（海域板 + 岛底板），卡片保持原样——三层都上色会与 ◈ 边界卡/城市的
  * accent 打架。色相由领域名确定性分配（_continentRegionHue），同领域永远同色。 */
+/* v8.1 海域板读成「海岸线」而不是「一个描了边的方框」：外扩辉光让这片海域
+ * 像是自己在发光（它是更大的一级地貌），内侧的柔光把板心压暗一点，岛浮在
+ * 中间就不会和板糊成一片。描边 alpha 从 .34 降到 .28 —— 有了辉光，边不再
+ * 需要那么重，否则远看是一圈铁丝网。 */
 .continent-region {
   position: absolute;
-  border-radius: var(--r-xl);
-  border: 1.5px solid hsla(var(--region-h, 220), 46%, 60%, 0.34);
+  /* v8.4 海岸线：--r-coast 由 JS 按 regionKey 哈希出 8 值椭圆角，没设时回落到今天的定值 */
+  border-radius: var(--r-coast, var(--r-xl));
+  border: 1.5px solid hsla(var(--region-h, 220), 46%, 60%, 0.28);
   background: hsla(var(--region-h, 220), 52%, 58%, 0.055);
-  box-shadow: inset 0 0 24px hsla(var(--region-h, 220), 55%, 60%, 0.05);
+  box-shadow:
+    0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10),
+    inset 0 0 46px hsla(var(--region-h, 220), 55%, 60%, 0.09);
   transition: opacity 0.25s ease;
 }
 [data-theme="light"] .continent-region {
-  border-color: hsla(var(--region-h, 30), 48%, 45%, 0.4);
+  border-color: hsla(var(--region-h, 30), 48%, 45%, 0.34);
   background: hsla(var(--region-h, 30), 55%, 55%, 0.09);
-  box-shadow: inset 0 0 24px hsla(var(--region-h, 30), 60%, 50%, 0.06);
+  /* 浅底上大面积外辉光会糊成一片黄雾：改成向内的柔边，把「海岸」读成纸边 */
+  box-shadow:
+    0 0 34px hsla(var(--region-h, 30), 60%, 55%, 0.10),
+    inset 0 0 40px hsla(var(--region-h, 30), 60%, 50%, 0.07);
 }
 /* 并「其他」的尾片：中性灰（色盘不硬造第 13 色） */
 .continent-region.is-gray {
-  border-color: rgba(128, 132, 148, 0.32);
+  border-color: rgba(128, 132, 148, 0.28);
   background: rgba(128, 132, 148, 0.05);
   box-shadow: none;
 }
@@ -3673,28 +3768,49 @@
 }
 .continent-region-head:hover .continent-region-name { text-decoration: underline dotted; }
 
-/* 岛底板跟海域走：solid 实色、light 更淡、pending 中性灰不划地盘（「不确定也要可见」） */
+/* 岛底板跟海域走：solid 实色、light 更淡、pending 中性灰不划地盘（「不确定也要可见」）
+ * v8.1：档位只改 --fill-* 与描边，渐变与投影由基类统一给（见 .continent-cluster） */
 .continent-cluster.has-region {
+  --fill-1: 0.18;
+  --fill-2: 0.07;
+  --fill-3: 0.11;
   border-color: hsla(var(--region-h, 220), 46%, 62%, 0.42);
-  background: hsla(var(--region-h, 220), 50%, 60%, 0.10);
 }
 .continent-cluster.has-region.r-light {
+  --fill-1: 0.10;
+  --fill-2: 0.04;
+  --fill-3: 0.065;
   border-color: hsla(var(--region-h, 220), 40%, 62%, 0.3);
-  background: hsla(var(--region-h, 220), 45%, 60%, 0.06);
 }
 .continent-cluster.r-pending {
+  --fill-h: 220;
+  --fill-s: 12%;
+  --fill-l: 58%;
+  --fill-1: 0.10;
+  --fill-2: 0.04;
+  --fill-3: 0.06;
   border-style: dashed;
-  background: rgba(128, 132, 148, 0.06);
 }
 [data-theme="light"] .continent-cluster.has-region {
+  --fill-1: 0.20;
+  --fill-2: 0.08;
+  --fill-3: 0.12;
   border-color: hsla(var(--region-h, 30), 46%, 45%, 0.45);
-  background: hsla(var(--region-h, 30), 52%, 55%, 0.13);
 }
 [data-theme="light"] .continent-cluster.has-region.r-light {
+  --fill-1: 0.12;
+  --fill-2: 0.05;
+  --fill-3: 0.08;
   border-color: hsla(var(--region-h, 30), 40%, 45%, 0.34);
-  background: hsla(var(--region-h, 30), 45%, 55%, 0.08);
 }
-[data-theme="light"] .continent-cluster.r-pending { background: rgba(120, 110, 95, 0.08); }
+[data-theme="light"] .continent-cluster.r-pending {
+  --fill-h: 34;
+  --fill-s: 14%;
+  --fill-l: 52%;
+  --fill-1: 0.12;
+  --fill-2: 0.05;
+  --fill-3: 0.08;
+}
 
 /* 领域徽标（岛牌上的归类入口）与次领域色点 */
 .continent-domain-badge {
@@ -3862,7 +3978,9 @@
 /* 收起的岛：只剩岛牌一行（尺寸由布局量好），虚线边表示「还有货」 */
 .continent-cluster.is-collapsed { border-style: dashed; }
 /* 收起的海域＝一枚印章：板自己缩成小胶囊（尺寸由布局量好），名字+岛数 */
-.continent-region.is-stamp { border-radius: var(--r-lg); }
+/* 收成印章的海域也要自己的海岸线：靠 --r-coast 回落 --r-lg，短边装不下时浏览器
+ * 会把 8 个角等比缩小，形状不会失真 */
+.continent-region.is-stamp { border-radius: var(--r-coast, var(--r-lg)); }
 .continent-region.is-stamp .continent-region-head { top: 50%; transform: translateY(-50%); }
 .continent-region.is-stamp .continent-region-src { display: none; }
 
