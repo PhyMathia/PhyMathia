@@ -1762,6 +1762,73 @@ check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 边界�
   return true;
 });
 
+check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 + 减少动态效果降级）', () => {
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+
+  // ---- 常量：两方向共用同一组参数，是「严格镜像」的落点 ----
+  if (!/const CONTINENT_WARP_MS = 420;/.test(src)) throw new Error('跨层转场时长常数缺失或被改');
+  if (!/const CONTINENT_WARP_EASE = 'cubic-bezier\(\.22,\.75,\.3,1\)';/.test(src)) {
+    throw new Error('转场缓动必须沿用既有曲线（与旧下钻转场同一条）');
+  }
+  if (!/const CONTINENT_WARP_CAMERA_IN = 0\.35;/.test(src)) throw new Error('大陆起始缩放常数缺失');
+  if (!/const CONTINENT_WARP_CANVAS_OUT = 0\.5;/.test(src)) throw new Error('会话图退场缩放常数缺失');
+  if (!/const CONTINENT_WARP_ZOOM_FLOOR = 0\.2;/.test(src)) throw new Error('起始缩放地板保护缺失');
+  // 旧的三段互不相同的常数必须退役，否则说明有人把它加回来了
+  for (const dead of ['CONTINENT_DIVE_MS', 'CONTINENT_DIVE_FACTOR', 'CONTINENT_SURFACE_FACTOR']) {
+    if (src.includes(dead)) throw new Error('旧转场常数未退役：' + dead);
+  }
+
+  // ---- 减少动态效果：T21 收口的核心。JS 侧时长压 0，CSS 侧 transition:none ----
+  if (!/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/.test(src)) {
+    throw new Error('转场未认 prefers-reduced-motion（T21 未销）');
+  }
+  const rmBlock = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/);
+  if (!rmBlock || !/\.graph-canvas/.test(rmBlock[0])) {
+    throw new Error('减少动态效果降级未覆盖会话画布');
+  }
+
+  // ---- 交叉淡化：会话图退场态 + 藏画布规则让位 ----
+  if (!/\.graph-canvas\.is-continent-retreat\s*\{/.test(css)) throw new Error('会话图退场态样式缺失');
+  if (!/transform:\s*scale\(0\.5\)/.test(css)) throw new Error('会话图退场缩放必须是 0.5');
+  if (!css.includes('.continent-layer.continent-warp-fade')) throw new Error('大陆层淡化态样式缺失');
+  // 藏画布那条规则必须给转场让位（:not(.continent-warp)），否则转场窗口内两张图
+  // 根本同框，交叉缩放就只剩大陆自己动
+  const hideRule = css.match(/\.graph-workspace\.continent-open[^{]*\.graph-canvas\s*\{[^}]*\}/);
+  if (!hideRule || !/:not\(\.continent-warp\)/.test(hideRule[0])) {
+    throw new Error('藏画布规则未给转场让位（两张图无法同框）');
+  }
+
+  // ---- 收尾不变量：转场结束/被打断都必须摘掉 continent-warp 与画布退场类 ----
+  if (!/ws\.classList\.remove\('continent-warp'\)/.test(src)) {
+    throw new Error('转场收尾未摘 workspace 的 continent-warp（会把画布永久漏出来）');
+  }
+  if (!/classList\.remove\('is-continent-retreat'\)/.test(src)) {
+    throw new Error('转场收尾未摘画布退场类（会话图会永久缩在半屏）');
+  }
+
+  // ---- closeContinentView 的顺序不变量 ----
+  // layer.hidden 从「同步立刻置位」推迟到转场结束，这是这批改动里唯一打破外部契约的
+  // 地方（continent_regression.mjs 靠 continent-warp 判断转场是否收尾）。因此
+  // _continentOpen=false 必须排在 layer.hidden 之前：openContinentView 的幂等守卫读它，
+  // 若它在动画期间才翻转，动画播完把层藏掉的同时大陆会被判成「已开」而点不回来。
+  const closeStart = src.indexOf('function closeContinentView');
+  if (closeStart < 0) throw new Error('closeContinentView 丢失（smoke 靠它做源码切片）');
+  const closeSrc = src.slice(closeStart, closeStart + 2600);
+  const flagAt = closeSrc.indexOf('_continentOpen = false');
+  const hideAt = closeSrc.indexOf('layer.hidden = true');
+  if (flagAt < 0) throw new Error('closeContinentView 未同步置 _continentOpen=false');
+  if (hideAt < 0) throw new Error('closeContinentView 未藏 layer');
+  if (flagAt > hideAt) {
+    throw new Error('closeContinentView 顺序反了：_continentOpen=false 必须早于 layer.hidden=true');
+  }
+  // 幂等守卫本身不能丢（未开先关要直接返回）
+  if (!/function closeContinentView\(\)\s*\{\s*if \(!_continentOpen\) return;/.test(src)) {
+    throw new Error('closeContinentView 丢了「未开先关」的幂等守卫');
+  }
+  return true;
+});
+
 check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种来源分得清）', () => {
   const prefix = sandbox._continentKindPrefix;
   if (typeof prefix !== 'function') throw new Error('族前缀纯函数未暴露（_continentKindPrefix）');

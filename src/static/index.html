@@ -21,7 +21,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=5649f6ac">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=63080d16">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=9f438ff1">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=c0f0f307">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -118,7 +118,7 @@
 
     <div class="graph-workspace" id="graphWorkspace">
       <div class="graph-canvas" id="graphCanvas"></div>
-      <button class="continent-breadcrumb" id="continentBreadcrumb" hidden onclick="openContinentView()" title="回到知识大陆">‹ 大陆</button>
+      <button class="continent-breadcrumb" id="continentBreadcrumb" hidden onclick="openContinentView({fromBreadcrumb:true})" title="回到知识大陆">‹ 大陆</button>
       <div class="graph-search-panel aurora-glass aurora-glass--compact" id="graphSearchPanel" hidden>
         <div class="graph-search-header">
           <input id="graphSearchInput" type="search" placeholder="搜索节点..." autocomplete="off" oninput="graphSearchInputChanged(this.value)" onkeydown="graphSearchKeydown(event)">
@@ -179,7 +179,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=81b87025"></script>
+  <script src="/js/app.js?v=f53bcc8d"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 

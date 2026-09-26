@@ -109,10 +109,15 @@ async function seedViaApi() {
 }
 
 // ---------- 浏览器侧小工具 ----------
+// v9 跨层转场：打开/关闭都不再是「一帧内切完」，大陆层与会话画布要交叉缩放 420ms。
+// 于是 layer.hidden 从「当前不在大陆」的可靠判据退化成「转场已收尾」的一部分——
+// 关闭动画在途时它仍是 false。只看它会误判成「大陆还开着」，脚本跳过后续步骤。
+// 所以两个等待器都追加 continent-warp 缺席这一条：转场结束 workspace 必不再带这个类。
 async function continentOpen(page) {
   await page.waitForFunction(() => {
     const layer = document.getElementById('continentLayer');
-    return layer && !layer.hidden;
+    const ws = document.getElementById('graphWorkspace');
+    return layer && !layer.hidden && !(ws && ws.classList.contains('continent-warp'));
   }, null, { timeout: 8000 });
   await page.waitForFunction(() => {
     const world = document.getElementById('continentWorld');
@@ -124,8 +129,27 @@ async function inSession(page) {
   await page.waitForFunction(() => {
     const layer = document.getElementById('continentLayer');
     const bc = document.getElementById('continentBreadcrumb');
-    return layer && layer.hidden && bc && !bc.hidden;
+    const ws = document.getElementById('graphWorkspace');
+    return layer && layer.hidden && bc && !bc.hidden
+      && !(ws && ws.classList.contains('continent-warp'));
   }, null, { timeout: 8000 });
+}
+
+// v9：开图入口分两种了——从会话打开会把「当前会话对应的岛」滚到中央（地标连续），
+// 从面包屑返回才恢复上次浏览视口。于是「某个节点一定在屏幕内」不再是入口路径的副作用，
+// 依赖它的用例会随入口变化而飘（画航线那条就是这么挂的：恢复出来的视口把简谐运动
+// 的边界卡放到了 x=-141）。凡是要点具体节点的，先显式把视口摆到那座岛上——
+// 用的是应用自己的 _continentFocusSessionIsland，与真机看到的是同一套算子。
+async function focusSessionIsland(page, sid) {
+  await page.evaluate(s => {
+    const ws = document.getElementById('graphWorkspace');
+    if (ws && ws.classList.contains('continent-warp')) return; // 转场在途，等它收尾
+    if (typeof window._continentFocusSessionIslandForTest === 'function') {
+      window._continentFocusSessionIslandForTest(s);
+    }
+  }, sid);
+  // 摆完等一帧，确保 transform 已落到 DOM 上再让 Playwright 量元素位置
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
 
 async function worldClass(page) {
@@ -254,6 +278,7 @@ async function run() {
       await continentOpen(page);
       await page.click('#continentLinkBtn');
       // 两座不同岛的节点：按 data-session-id 取第一座岛与第二座岛各一张卡
+      await focusSessionIsland(page, 'sess_shm1');
       const first = page.locator('.continent-node[data-session-id="sess_shm1"]').first();
       const second = page.locator('.continent-node[data-session-id="sess_grad1"]').first();
       await first.click();
@@ -338,7 +363,9 @@ async function run() {
       // 大陆若已在上面某步被关掉，先回到大陆再缩放
       await page.evaluate(() => {
         const layer = document.getElementById('continentLayer');
-        if (layer && layer.hidden && typeof window.openContinentView === 'function') {
+        const ws = document.getElementById('graphWorkspace');
+        const warping = ws && ws.classList.contains('continent-warp');
+        if (layer && layer.hidden && !warping && typeof window.openContinentView === 'function') {
           window.openContinentView();
         }
       });
@@ -401,7 +428,9 @@ async function run() {
       // 大陆若在第 9 段被关掉，先回大陆再开族表弹层
       await page.evaluate(() => {
         const layer = document.getElementById('continentLayer');
-        if (layer && layer.hidden && typeof window.openContinentView === 'function') {
+        const ws = document.getElementById('graphWorkspace');
+        const warping = ws && ws.classList.contains('continent-warp');
+        if (layer && layer.hidden && !warping && typeof window.openContinentView === 'function') {
           window.openContinentView();
         }
       });

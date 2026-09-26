@@ -64,9 +64,25 @@ const CONTINENT_CLUSTER_GAP = 150;
 const CONTINENT_WORLD_MARGIN = 60;
 const CONTINENT_ZOOM_MIN = 0.15;    // v7.3：0.3 → 0.15（有 LOD 兜底才敢放）
 const CONTINENT_ZOOM_MAX = 2.5;
-const CONTINENT_DIVE_MS = 430;
-const CONTINENT_DIVE_FACTOR = 2.6;
-const CONTINENT_SURFACE_FACTOR = 1.14;
+// ---------- v9 跨层转场（warp）----------
+// 大陆与会话画布是 #graphWorkspace 下同一层叠上下文的兄弟（大陆层 z-index:30 恒在上），
+// 转场让两张图**同时在场**交叉缩放：会话→大陆是「拉远」（会话图缩到 0.5 淡出，
+// 大陆从 0.35 倍长到 1 倍淡入），大陆→会话是严格镜像的「推近」。
+//
+// 取代了三段互不相同的旧常数（进入的 SURFACE_FACTOR 1.14 落定 430ms、下钻的
+// DIVE_FACTOR 2.6 推镜 430ms、关闭的硬切）。两方向共用同一组参数是**刻意的**：
+// 往返手感必须完全对称，用户才能建立稳定直觉，各自不同会变成「同一件事两次不一样」。
+//
+// 为什么 0.35 配 0.5：两者互为反比，交接点落在屏幕正中——转场中点时两张图各占一半，
+// 都还认得出轮廓，读者才能读出「这是同一张图的两个尺度」而不是「两张图换屏」。
+const CONTINENT_WARP_MS = 420;
+const CONTINENT_WARP_EASE = 'cubic-bezier(.22,.75,.3,1)';
+const CONTINENT_WARP_CAMERA_IN = 0.35;  // 大陆起始缩放（相对倍率，非绝对值）
+const CONTINENT_WARP_CANVAS_OUT = 0.5;  // 会话图退场缩放
+// 起始缩放的下限保护：0.35 是**相对**倍率，落在小视口的大库适配 zoom 可能只有 0.3，
+// 0.3×0.35=0.105 会被 CONTINENT_ZOOM_MIN(0.15) 夹住——夹住不报错，但动画幅度会
+// 随数据量悄悄变短。这里兜一个地板，保证任何库都至少有「2 倍长出来」的可见位移。
+const CONTINENT_WARP_ZOOM_FLOOR = 0.2;
 // v7.1a 海域层：两级布局的块间距与海域板尺寸（板 = 块内岛矩形并集外扩，
 // 顶部另留一行给海域牌）；色盘 12 格，同领域永远同色。
 const CONTINENT_REGION_GAP = 230;
@@ -223,6 +239,20 @@ let _continentClusterRects = [];
 let _continentKeyHandler = null;
 let _continentDragState = null;
 let _continentSkipViewPersist = false;
+let _continentSkipWarp = false;   // 下钻已自播退场转场时，close 只收尾不重播
+// v9 跨层转场状态：{id, dir, canvasEl, finish()}。id 每次转场自增，旧 id 的收尾回调
+// 在新转场开始时被直接作废——这是「转场中再按 Esc/点别处，立即跳到目标状态」的收敛保证：
+// 任何时刻最多只有一段转场在跑，且一定收敛到「大陆开」或「大陆关」二选一，不会卡在半路
+let _continentWarp = null;
+let _continentWarpSeq = 0;
+// 转场「在途」由**整段开合操作**持有一个令牌，不是每段动画各自持有。
+// 一次开图由两段组成——层与画布的交叉淡化（点按钮即播）+ 大陆镜头落定（必须等数据）。
+// 曾经让两段各自持有一个计数：冷启动时两段之间计数会**瞬时归零**、continent-warp
+// 被摘掉，等待器正好在这个窗口采样通过，随后镜头才开始落定，于是脚本在 0.2 倍缩放下
+// 去点节点（continent_regression 连挂）。计数归零的缝本身就是 bug——「转场进行中」
+// 必须是整段操作一个真值，中间不许有洞。
+let _continentWarpHoldTok = null;   // 在途的持有令牌（同一时刻至多一个）
+let _continentOpenHold = null;     // 开图操作持有的令牌（关图时要接手释放）
 let _continentData = null;         // 最近一次投影数据（边操作后就地刷新）
 let _continentLinkMode = false;    // v2 连接模式
 let _continentLinkSource = null;   // {itemId, sessionId}
@@ -4341,26 +4371,210 @@ function _continentBindViewport(viewport) {
 }
 
 // ---------- 开合与转场 ----------
-// 转场统一走「锚点保持不动 + 内联 transition」：不做 CSS 类驱动（类移除时机和
-// transition 生效窗口互相打架），层透明度交给 CSS，世界位移缩放全由内联样式驱动。
-function _continentAnimateWorld(settle) {
-  const world = document.getElementById('continentWorld');
-  if (!world || !world.style) { settle(); return; }
-  world.style.transition = 'none';
-  _continentApplyTransform();
-  const kick = () => {
-    world.style.transition = 'transform ' + CONTINENT_DIVE_MS + 'ms cubic-bezier(.22,.75,.3,1)';
-    settle();
-    setTimeout(() => { if (world && world.style) world.style.transition = ''; }, CONTINENT_DIVE_MS + 60);
-  };
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => requestAnimationFrame(kick));
-  } else {
-    kick();
-  }
+// 跨层转场拆成**两件独立的事**，因为它们的起止时机不一样：
+//   1) 交叉淡化（大陆层 ↔ 会话画布）：点下按钮那一刻就能播，两侧都只需要层级的
+//      opacity 与画布的 scale，不依赖任何数据。
+//   2) 大陆镜头补间（世界层 translate/scale）：**必须等数据**——起点缩放是「目标视口的
+//      0.35 倍」，而目标视口要等 _continentRestoreOrFitView() 跑完才知道。
+// 暖缓存（实测 0.32s）时两段自然重叠成一段连贯的 420ms；冷启动时是「先拉远、后长出地图」。
+//
+// 手势沿用本文件原有的「内联 transition + 双 rAF 起跳」，**不走纯 CSS 类驱动**：
+// 类增删的时机和 transition 生效窗口互相打架。起点用 transition:none 写死 → 强制重排
+// → 再开 transition 写终点，两帧 rAF 只为确保浏览器认得出「起点已经发生过」。
+function _continentWarpMs() {
+  // T21 收口：以前转场时长是内联写死的 430ms，CSS 里 prefers-reduced-motion 的
+  // transition:none !important 压不住内联值，开了「减少动态效果」的用户看到的仍是完整
+  // 时长（且下钻会硬等 430ms 才切会话）。时长改从一个函数出，命中就压成 0——状态照翻，
+  // 只是不补间。JS 与 CSS 两侧于是都认这个开关。
+  try {
+    if (typeof matchMedia === 'function'
+        && matchMedia('(prefers-reduced-motion: reduce)').matches) return 0;
+  } catch (e) { /* 老浏览器没有 matchMedia：按有动效处理 */ }
+  return CONTINENT_WARP_MS;
 }
 
 function _continentWorkspace() { return document.getElementById('graphWorkspace'); }
+function _continentLayerEl() { return document.getElementById('continentLayer'); }
+function _continentCanvasEl() { return document.getElementById('graphCanvas'); }
+
+function _continentForcedReflow(el) {
+  if (!el) return;
+  try { void el.offsetWidth; } catch (e) { /* 沙箱里可能没有布局引擎 */ }
+}
+
+// 令牌只能释放一次（setTimeout 兜底与 transitionend 可能都触发，也可能打断路径先来）
+function _continentWarpHold() {
+  const ws = _continentWorkspace();
+  if (ws && ws.classList) ws.classList.add('continent-warp');
+  const token = { released: false };
+  _continentWarpHoldTok = token;
+  return token;
+}
+function _continentWarpRelease(token) {
+  if (!token || token.released) return;
+  token.released = true;
+  if (_continentWarpHoldTok === token) _continentWarpHoldTok = null;
+  const ws = _continentWorkspace();
+  if (ws && ws.classList) ws.classList.remove('continent-warp');
+}
+
+// 绝对 zoom + 锚点落点。_continentZoomAt 只有相对倍率，跨转场需要直接落到某个绝对值：
+// 「从目标视口的 0.35 倍长回去」= 先压到 0.35 倍、绕同一锚点再放回目标。
+function _continentSetZoomAt(zoom, cx, cy) {
+  const next = Math.min(CONTINENT_ZOOM_MAX, Math.max(CONTINENT_ZOOM_MIN, zoom));
+  const ratio = _continentZoom > 0 ? next / _continentZoom : 1;
+  _continentPan.x = cx - (cx - _continentPan.x) * ratio;
+  _continentPan.y = cy - (cy - _continentPan.y) * ratio;
+  _continentZoom = next;
+  _continentApplyTransform();
+}
+
+// ---- 1) 交叉淡化：大陆层 ↔ 会话画布 ----
+// dir='enter' 会话→大陆：会话图缩到 0.5 淡出 + 大陆层淡入（拉远）
+// dir='exit'  大陆→会话：大陆层淡出 + 会话图从 0.5 放大到 1 淡入（推近）
+// 两方向是严格镜像：同一个类在两个方向扮演相反的起止角色（见下面两个 Apply）。
+//
+// 画布那一侧走 CSS 类（.is-continent-retreat）而不是内联：.graph-canvas 自身从不写
+// inline style（只有内层 .graph-canvas-inner 的 transform 由 _applyGraphTransform 写），
+// 所以这里加类不会和会话图自己的缩放互相覆盖。
+//
+// ⚠️ 三段式（禁过渡→写过渡→写终点）是**规范要求**，不是风格选择：css-transitions-1
+// 规定过渡的启动条件是「**变化前**样式里已有该属性的 transition」。先写
+// `transition:none` + 起点、下一帧再同时写 `transition:transform 420ms` + 终点，
+// 浏览器看到的变化前样式是 none，于是**根本不启动过渡**——表现为一帧硬跳。
+// 改这一段之前，进入大陆的「1.14 落定」和下钻的「2.6 推镜」就是这么一直硬跳的
+// （用户报的现象正是「立刻切屏，然后放大再缩小」）。中间那次强制重排的作用是让
+// 「起点已提交、过渡属性已提交、值还没变」这三个状态分别落地一帧。
+function _continentWarpStartState(dir) {
+  const layer = _continentLayerEl();
+  const canvas = _continentCanvasEl();
+  // enter 的起点：大陆层还是透明的，会话图还在自然态
+  // exit  的起点：大陆层可见，会话图已经退到 0.5（等下要放大回来）
+  if (layer && layer.classList) layer.classList.toggle('continent-warp-fade', dir === 'enter');
+  if (canvas && canvas.classList) canvas.classList.toggle('is-continent-retreat', dir === 'exit');
+}
+function _continentWarpEndState(dir) {
+  const layer = _continentLayerEl();
+  const canvas = _continentCanvasEl();
+  if (layer && layer.classList) layer.classList.toggle('continent-warp-fade', dir === 'exit');
+  if (canvas && canvas.classList) canvas.classList.toggle('is-continent-retreat', dir === 'enter');
+}
+
+function _continentRunWarp(dir, done) {
+  const finish = typeof done === 'function' ? done : () => {};
+  const ms = _continentWarpMs();
+  const layer = _continentLayerEl();
+  const canvas = _continentCanvasEl();
+  const ws = _continentWorkspace();
+
+  // 打断在途的那段：直接把它收尾，绝不留半个状态在半路。这是「转场中再按 Esc、
+  // 立即跳到目标状态」的收敛保证——任何时刻最多一段转场在跑，且一定收敛到
+  // 「大陆开」或「大陆关」二选一。
+  if (_continentWarp) {
+    const stale = _continentWarp;
+    _continentWarp = null;
+    _continentClearWarpDom(stale.canvasEl);
+    try { stale.finish(); } catch (e) { /* 收尾失败不阻断新转场 */ }
+  }
+  // 退场时先把藏画布的规则摘掉，否则会话图在整段退场里都是 visibility:hidden，
+  // 「放大迎上来」根本看不见。由本函数统一负责，closeContinentView 不再另做。
+  if (dir === 'exit' && ws && ws.classList) ws.classList.remove('continent-open');
+
+  const state = { id: ++_continentWarpSeq, dir, canvasEl: canvas, finish };
+  _continentWarp = state;
+
+  if (ms <= 0) {
+    // 减少动态效果：只翻状态不补间
+    _continentWarpEndState(dir);
+    _continentWarp = null;
+    _continentClearWarpDom(canvas);
+    finish();
+    return;
+  }
+
+  // ① 起点（禁过渡，强制结算）
+  _continentWarpStartState(dir);
+  _continentForcedReflow(canvas || layer);
+  // ② 只写过渡属性，值不动 —— 提交一个「有 transition、值没变」的样式，不会触发过渡
+  const trans = 'transform ' + ms + 'ms ' + CONTINENT_WARP_EASE
+    + ', opacity ' + ms + 'ms ' + CONTINENT_WARP_EASE;
+  if (canvas && canvas.style) canvas.style.transition = trans;
+  if (layer && layer.style) layer.style.transition = trans;
+  _continentForcedReflow(canvas);
+  // ③ 写终点 —— 变化前样式里已有 transition，过渡在这里才真正启动
+  _continentWarpEndState(dir);
+
+  // 收尾：transitionend + 定时器双保险。元素被 hidden 时 transitionend 可能不触发，
+  // 只挂 transitionend 会把状态永久卡在半路（层藏了但 workspace 还挂着 continent-warp）。
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    if (_continentWarp !== state) return;
+    _continentWarp = null;
+    _continentClearWarpDom(canvas);
+    finish();
+  };
+  if (canvas && canvas.addEventListener) {
+    canvas.addEventListener('transitionend', settle, { once: true });
+    if (layer && layer.addEventListener) layer.addEventListener('transitionend', settle, { once: true });
+  }
+  setTimeout(settle, ms + 60);
+}
+
+// 收干净转场态。三处都要清：画布的类与内联、大陆层的类与内联、workspace 的 continent-warp。
+// 漏掉任何一处的后果分别是「会话图永久缩在半屏」「大陆层永远透明」「回归脚本永远等不到
+// 转场结束」——所以收尾只走这一个函数，不允许散落。
+function _continentClearWarpDom(canvas) {
+  if (canvas) {
+    if (canvas.style) canvas.style.transition = '';
+    if (canvas.classList) canvas.classList.remove('is-continent-retreat');
+  }
+  const layer = _continentLayerEl();
+  if (layer) {
+    if (layer.style) layer.style.transition = '';
+    if (layer.classList) layer.classList.remove('continent-warp-fade');
+  }
+  const ws = _continentWorkspace();
+  if (ws && ws.classList) ws.classList.remove('continent-warp');
+}
+
+// ---- 2) 大陆镜头补间：世界层从 fromZoom 走到 toZoom，锚点 (cx,cy) 原地不动 ----
+// 只有一个方向语义：from → to。打开大陆是 from=0.35×目标、to=目标视口（长出来）；
+// 下钻是 from=当前、to=更大（推进）。调用方自己算好两端，这里不做倍率推导——
+// 早先一版带了个 zoomIn 布尔来分派方向，结果起点终点写反了，世界停在 0.35 倍的远景档，
+// 概念卡与边界城市整档 display:none，continent_regression 连挂三条。方向只有一种。
+// 同样用三段式启动（见 _continentRunWarp 上面的规范说明）。
+function _continentAnimateWorld(fromZoom, toZoom, cx, cy) {
+  const world = document.getElementById('continentWorld');
+  const ms = _continentWarpMs();
+  if (!world || !world.style) { _continentSetZoomAt(toZoom, cx, cy); return; }
+  if (ms <= 0) { _continentSetZoomAt(toZoom, cx, cy); return; }
+  world.style.transition = 'none';
+  _continentSetZoomAt(fromZoom, cx, cy);
+  _continentForcedReflow(world);
+  world.style.transition = 'transform ' + ms + 'ms ' + CONTINENT_WARP_EASE;
+  _continentForcedReflow(world);
+  _continentSetZoomAt(toZoom, cx, cy);
+  setTimeout(() => { if (world && world.style) world.style.transition = ''; }, ms + 60);
+}
+
+// 打开大陆时把「你当前会话对应的那座岛」滚到视口中央；返回 false 让调用方回退到
+// 视口中心缩放（没建大陆 / 空数据 / 地图未落笔）。
+// 复用 _continentClusterRects —— enterContinentSession 下钻时已经在用同一份数据按
+// sessionId 找岛，这里是同一件事的反方向，不需要引入新的 ID 映射。
+function _continentFocusSessionIsland(sid) {
+  if (!sid) return false;
+  const rect = _continentClusterRects.find(r => r && r.sessionId === sid);
+  if (!rect || !isFinite(rect.cx) || !isFinite(rect.cy)) return false;
+  const c = _continentCenter();
+  // 岛在目标缩放下的屏幕位置：pan + worldPos·zoom。解 pan 使它落在视口中心。
+  _continentPan.x = c.x - rect.cx * _continentZoom;
+  _continentPan.y = c.y - rect.cy * _continentZoom;
+  _continentApplyTransform();
+  return true;
+}
+
 
 function _continentUpdateBreadcrumb(data) {
   const bc = document.getElementById('continentBreadcrumb');
@@ -4370,14 +4584,31 @@ function _continentUpdateBreadcrumb(data) {
   bc.hidden = !has;
 }
 
-async function openContinentView() {
+async function openContinentView(opts) {
   const layer = _continentEnsureLayer();
   if (!layer || _continentOpen) return;
   _continentOpen = true;
-  layer.classList.remove('continent-diving');
+  // 开图路径分两种（v9），靠这个标记区分「从会话打开」与「从面包屑返回」：
+  //   返回 → 恢复上次浏览视口（老口径，保住用户离开时的位置）
+  //   打开 → 数据到了之后把「你当前会话对应的那座岛」滚到中央（地标连续）
+  // 两者在 _continentSettleWorld 里汇合，都走同一段镜头补间。
+  // opts.fromBreadcrumb=true 是「‹ 大陆」返回：老口径优先，恢复上次浏览视口。
+  // 从会话打开则把当前会话对应的那座岛滚到中央（地标连续）。
+  const fromBreadcrumb = !!(opts && opts.fromBreadcrumb);
+  const entrySession = typeof window.getCurrentSessionId === 'function'
+    ? (window.getCurrentSessionId() || '') : '';
+  layer.classList.remove('continent-diving', 'continent-surfacing');
   layer.hidden = false;
   const ws = _continentWorkspace();
   if (ws) ws.classList.add('continent-open');
+
+  // 整段开图持有一个令牌，从按钮按下一直持到镜头落定收尾
+  const openHold = _continentWarpHold();
+  _continentOpenHold = openHold;
+  // 交叉淡化立即起播，**不等数据**（smoke 的沙箱里 rAF/setTimeout 是空桩，open 的
+  // promise 不能 await 任何靠它们收尾的东西，否则 frontend_smoke 会永不落地）
+  _continentRunWarp('enter');
+
   _continentKeyHandler = e => {
     if (e.key === 'Escape') {
       // v8 顶栏搜索最先收（有命中=清单开着）：清搜索，不动弹层/连接模式/大陆本身
@@ -4403,25 +4634,38 @@ async function openContinentView() {
     _continentCorrectionCount = await _continentLoadCorrectionCount();
     data = await _continentFetchData();
   } catch (err) {
-    closeContinentView();
+    // 加载失败：把已经起播的拉远动画反向收回去（大陆缩回没打开的样子），再报错。
+    // 不能只 closeContinentView —— 那样会把用户留在「会话已缩没、大陆也没了」的空白里。
+    _continentRunWarp('exit');
     if (typeof showToast === 'function') showToast('大陆数据加载失败：' + (err && err.message || err));
+    setTimeout(() => {
+      if (_continentOpen) closeContinentView();
+      else _continentWarpRelease(openHold); // 已被关：close 接手释放，这里只兜底
+    }, _continentWarpMs() + 80);
     return;
   }
-  if (!_continentOpen) return; // 加载途中被关
+  if (!_continentOpen) { _continentWarpRelease(openHold); return; } // 加载途中被关
   _continentData = data;
   _continentRender(data);
   _continentUpdateBreadcrumb(data);
   _continentUpdateTools();
-  _continentRestoreOrFitView();
+  _continentSettleWorld(entrySession, fromBreadcrumb, openHold);
+}
 
-  // 表层转场：世界从 1.14 倍沉到恢复的视口（游戏地图「回来」的落定感）
-  layer.classList.add('continent-surfacing');
+// 数据到了之后的大陆镜头落定段：从「目标视口的 0.35 倍」长到目标视口，锚点是
+// 当前会话对应的那座岛（从面包屑返回时是视口中心——老口径的恢复浏览位置优先）。
+function _continentSettleWorld(entrySession, fromBreadcrumb, openHold) {
+  _continentRestoreOrFitView();
   const c = _continentCenter();
-  _continentZoomAt(CONTINENT_SURFACE_FACTOR, c.x, c.y);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    layer.classList.remove('continent-surfacing');
-    _continentAnimateWorld(() => _continentZoomAt(1 / CONTINENT_SURFACE_FACTOR, c.x, c.y));
-  }));
+  let anchored = false;
+  if (!fromBreadcrumb && entrySession) {
+    anchored = _continentFocusSessionIsland(entrySession);
+  }
+  void anchored; // 锚点已由 _continentFocusSessionIsland 写进 pan，这里只用视口中心补间
+  const start = Math.max(CONTINENT_WARP_ZOOM_FLOOR, _continentZoom * CONTINENT_WARP_CAMERA_IN);
+  _continentAnimateWorld(start, _continentZoom, c.x, c.y);
+  // 落定是开图的最后一段：它收尾才摘 continent-warp（藏画布的规则在此之前不生效）
+  setTimeout(() => _continentWarpRelease(openHold), _continentWarpMs() + 80);
 }
 
 function closeContinentView() {
@@ -4437,54 +4681,107 @@ function closeContinentView() {
   _continentSetLinkMode(false);
   _continentSearchClear();   // v8：搜索态（输入/清单/高亮）不跨开合存活
   _continentClosePopover();
-  const layer = document.getElementById('continentLayer');
-  if (layer) {
-    layer.classList.remove('continent-diving', 'continent-surfacing');
-    layer.hidden = true;
+  // v9：layer.hidden 从「同步立刻置位」改成「转场结束后才置」——退场要先看见大陆
+  // 淡出、画布放大迎上来，硬切就没有退场动画了。_continentOpen 与上面的清理全部
+  // 仍是同步的：smoke 的「未开先关两次幂等」用例同步连调两次 close，不等动画。
+  // 藏画布规则的解除交给 _continentRunWarp('exit')（它要在摆起点之前做，
+  // 否则会话图整段退场都是 visibility:hidden）
+  // 关图接手开图可能还挂着的令牌（数据没到就被关）：否则 continent-warp 永远不摘
+  if (_continentOpenHold) { _continentWarpRelease(_continentOpenHold); _continentOpenHold = null; }
+  // _continentSkipWarp=true 说明调用方（enterContinentSession）刚播完退场转场，
+  // 这里只做收尾不要再播一遍
+  if (_continentSkipWarp) {
+    _continentClearWarpDom(_continentCanvasEl());
+    const l0 = _continentLayerEl();
+    if (l0) {
+      l0.classList.remove('continent-diving', 'continent-surfacing', 'continent-warp-fade');
+      l0.hidden = true;
+    }
+    const w0 = document.getElementById('continentWorld');
+    if (w0 && w0.style) w0.style.transition = '';
+    if (_continentKeyHandler) {
+      document.removeEventListener('keydown', _continentKeyHandler);
+      _continentKeyHandler = null;
+    }
+    return;
   }
-  const world = document.getElementById('continentWorld');
-  if (world && world.style) world.style.transition = '';
-  const ws = _continentWorkspace();
-  if (ws) ws.classList.remove('continent-open');
+  const closeHold = _continentWarpHold();
+  _continentRunWarp('exit', () => {
+    const layer = _continentLayerEl();
+    if (layer) {
+      layer.classList.remove('continent-diving', 'continent-surfacing', 'continent-warp-fade');
+      layer.hidden = true;
+    }
+    const world = document.getElementById('continentWorld');
+    if (world && world.style) world.style.transition = '';
+    _continentWarpRelease(closeHold);
+  });
   if (_continentKeyHandler) {
     document.removeEventListener('keydown', _continentKeyHandler);
     _continentKeyHandler = null;
   }
 }
 
-// 下钻：镜头向点击处推进（点击的世界点在屏上不动，其余世界向外涌出）→
-// 整层切换 → 进会话；概念节点再经 goToKnowledgeNode 直达定位（它自带
-// 「切会话 + 定位 + 失败 toast」全流程，这里不复述其职责）。
+// 下钻：先切到目标会话（会话画布在背后就位），再播「大陆朝点击处推进 + 会话迎面放大」
+// 的转场，收尾后经 goToKnowledgeNode 直达定位（它自带「定位 + 失败 toast」全流程，
+// 这里不复述其职责）。v9 换了顺序：会话图必须在转场开始前就渲染好，否则放大进来的
+// 是上一个会话的图。切换失败要退回大陆——人已经离开了，不能把他留在空白里。
 async function enterContinentSession(sessionId, itemId) {
   if (!sessionId || _continentDrilling) return;
   if (typeof switchToSession !== 'function') { closeContinentView(); return; }
   _continentDrilling = true;
-  // 留给回程的「离开时视口」是用户此刻的浏览态——下钻动画会把镜头推到 2.6 倍，
+  // 留给回程的「离开时视口」是用户此刻的浏览态——下钻动画会把镜头推远，
   // 那是跳转动作不是浏览位置，close 时的持久化要跳过，别让它覆盖
   _continentPersistView();
   _continentSkipViewPersist = true;
-  const layer = document.getElementById('continentLayer');
+  const layer = _continentLayerEl();
   const key = String(itemId || '');
   const focus = key && _continentPlacements[key];
   const rect = !focus
     ? _continentClusterRects.find(r => r.sessionId === sessionId) || null : null;
   const origin = focus || rect;
-  if (layer && origin) {
+  let sx = 0, sy = 0, hasAnchor = false;
+  if (origin && isFinite(origin.cx) && isFinite(origin.cy)) {
     // 点击处的屏幕坐标：pan + worldPos·zoom——缩放锚点放这里，节点原地不动
-    const sx = _continentPan.x + origin.cx * _continentZoom;
-    const sy = _continentPan.y + origin.cy * _continentZoom;
-    if (layer.classList) layer.classList.add('continent-diving');
-    _continentAnimateWorld(() => _continentZoomAt(CONTINENT_DIVE_FACTOR, sx, sy));
-    await new Promise(r => setTimeout(r, CONTINENT_DIVE_MS));
+    sx = _continentPan.x + origin.cx * _continentZoom;
+    sy = _continentPan.y + origin.cy * _continentZoom;
+    hasAnchor = true;
   }
+  if (!hasAnchor) { const c = _continentCenter(); sx = c.x; sy = c.y; }
+
+  // 先切会话。渲染在背后完成，失败则原地退回大陆（不播转场，用户不感知这次失败）
+  try {
+    await switchToSession(sessionId);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('切换会话失败：' + (e && e.message || e));
+    _continentDrilling = false;
+    _continentSkipViewPersist = false;
+    return; // 大陆仍开着，无需退回
+  }
+
+  if (layer && layer.classList) layer.classList.add('continent-diving');
+  // 大陆朝锚点推进（被点的岛原地不动、其余向外涌出）——同时会话画布从 0.5 倍迎面放大。
+  // 播完再 closeContinentView，但那时转场已经跑完，别让它重播一遍（会看到大陆淡出两次）
+  const targetZoom = Math.min(CONTINENT_ZOOM_MAX, _continentZoom * 1.8);
+  const drillHold = _continentWarpHold();
+  _continentAnimateWorld(_continentZoom, targetZoom, sx, sy);
+  _continentRunWarp('exit');
+  await new Promise(r => setTimeout(r, _continentWarpMs() + 80));
+  _continentSkipWarp = true;
   closeContinentView();
+  _continentSkipWarp = false;
+  _continentWarpRelease(drillHold);
   _continentDrilling = false;
-  try { await switchToSession(sessionId); } catch (e) { /* 会话切换失败不阻断定位 */ }
   if (key && typeof goToKnowledgeNode === 'function') {
     try { await goToKnowledgeNode(itemId); } catch (e) { /* 定位失败自带 toast */ }
   }
 }
 
+
+// 供 continent_regression.mjs 把视口摆到指定会话的岛上：那条用例要点具体节点，
+// 不能再依赖「开图入口碰巧落在哪」的副作用（v9 起入口分两种，见 openContinentView）。
+// 暴露的是应用自己的同一个算子，不另造一套测试专用逻辑。
+window._continentFocusSessionIslandForTest = _continentFocusSessionIsland;
 window.openContinentView = openContinentView;
 window.closeContinentView = closeContinentView;
 window.enterContinentSession = enterContinentSession;
