@@ -3773,15 +3773,44 @@ check('graph-continent: v8.1 有机抖动层（确定性 / 不重叠 / 岛在板
   const prevMode = store.getItem(STYLE_KEY);
   const setMode = v => store.setItem(STYLE_KEY, v);
 
-  // 伪随机源：确定性 + 值域 [-1,1] + 两轴互不相关（走出对角线的斜排就没了）
+  // 伪随机源：确定性 + 值域 [-1,1]
   for (const k of ['a', 'sess_1', 'ki_9f3', '矢量分析', '']) {
-    if (j1(k, 'x') !== j1(k, 'x')) throw new Error('伪随机源不确定：' + k);
-    for (const s of ['x', 'y', 'r']) {
+    if (j1(k, 'x-off') !== j1(k, 'x-off')) throw new Error('伪随机源不确定：' + k);
+    for (const s of ['x-off', 'y-off', 'rot-2']) {
       const v = j1(k, s);
       if (!Number.isFinite(v) || v < -1 || v > 1) throw new Error('伪随机值越界：' + k + '/' + s + '=' + v);
     }
-    if (j1(k, 'x') === j1(k, 'y')) throw new Error('两轴同值（会走对角线）：' + k);
   }
+  // 两轴**相关性**（不是「x !== y」那种精确不等）—— 盐是拼在 key 末尾的，FNV-1a
+  // 逐字节左到右推进，两个盐若只差末字符，两轴输出几乎不动，位移全体沿 45° 对角线走。
+  // 这条以前写成 `j1(k,'x') === j1(k,'y')`（恒为假的精确比较），实测漏掉了 0.97 的
+  // 相关系数 —— 整张图在真机上一直是「整体斜滑」。见 graph-continent.js 同处注释。
+  const corrOf = (a, b, keys) => {
+    const xs = keys.map(k => j1(k, a)), ys = keys.map(k => j1(k, b));
+    const n = xs.length;
+    const mx = xs.reduce((p, q) => p + q) / n, my = ys.reduce((p, q) => p + q) / n;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let i = 0; i < n; i++) {
+      const u = xs[i] - mx, v = ys[i] - my;
+      sxy += u * v; sxx += u * u; syy += v * v;
+    }
+    return Math.abs(sxy / Math.sqrt(sxx * syy));
+  };
+  // 两类 key 都测：真实 sessionId 风格 + 短编号风格（后者是 FNV-1a 最容易退化的输入）
+  const corrKeys = [], corrShort = [];
+  for (let i = 0; i < 200; i++) {
+    const h = ((i * 2654435761) >>> 0).toString(16).padStart(8, '0');
+    corrKeys.push('sess_' + h + 'k');
+    corrShort.push('v' + i);
+  }
+  [['x-off', 'y-off'], ['x-off', 'rot-2']].forEach(([sa, sb]) => {
+    [corrKeys, corrShort].forEach(keys => {
+      const c = corrOf(sa, sb, keys);
+      if (c > 0.3) {
+        throw new Error('两轴/转角高度相关（位移会沿对角线走）：' + sa + '/' + sb + ' = ' + c.toFixed(3));
+      }
+    });
+  });
 
   const cl = (sid, domain, conf, n) => ({
     sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
@@ -3934,6 +3963,164 @@ check('graph-continent: v8.1 有机抖动层（确定性 / 不重叠 / 岛在板
   if (!/pointer-events:\s*none/.test(css.slice(css.indexOf('.continent-grain')))) {
     throw new Error('噪点层没关指针事件（会挡住画布拖拽）');
   }
+  return true;
+});
+
+// ===== v8.5 低频位移场：把「场」的三条性质钉死，别退回白噪声 =====
+// 同步跑，不 await、不碰共享会话键（只读写画风键，且用 try/finally 复原）。
+check('graph-continent: v8.5 低频位移场（幅度上界 / 梯度上界 / 坐标纯函数 / 格点散列 / 协同位移）', () => {
+  const warp1 = sandbox._continentWarp1;
+  const warpOffset = sandbox._continentWarpOffset;
+  const jitter = sandbox._continentJitter;
+  const regions = sandbox._continentRegions;
+  const regionLayout = sandbox._continentRegionLayout;
+  if (typeof warp1 !== 'function' || typeof warpOffset !== 'function') {
+    throw new Error('v8.5 位移场纯函数未暴露（warp1 / warpOffset）');
+  }
+  const COARSE = 900, FINE = 190;   // 与 graph-continent.js 的常量一致（下方静态钉防漂移）
+
+  // ① 幅度上界 |offset| ≤ amp —— **这条是生死线**：白边预算与「岛不撞岛」两条硬约束
+  //    全是按 2×amp 推的。第一版忘了两个八度逐轴独立、二维模长多一个 √2
+  //    （实测 max|offset| = 1.26×amp），等于按错的数算预算。
+  let worst = 0;
+  for (let x = 0; x < 6000; x += 37) {
+    for (let y = 0; y < 2400; y += 131) {
+      const o = warpOffset(x, y, 40);
+      worst = Math.max(worst, Math.hypot(o.x, o.y) / 40);
+    }
+  }
+  if (worst > 1) throw new Error('位移超出幅度上界（硬约束的推导前提被打破）：' + worst.toFixed(4) + '×amp');
+  // 顺带确认不是「归一化过头、位移恒为 0」
+  if (worst < 0.3) throw new Error('位移几乎恒零，位移场等于没接上：' + worst.toFixed(4));
+
+  // ② 梯度上界 |∇n| ≤ 3/cell —— 差值可到 2（值域 [-1,1]），不是半幅 1
+  [[COARSE, 'coarse'], [FINE, 'fine']].forEach(([cell, tag]) => {
+    const h = 0.5;
+    let g = 0;
+    for (let x = 0; x < 4000; x += 17) {
+      for (let y = 0; y < 2000; y += 149) {
+        const gx = (warp1(x + h, y, cell, 'x-warp') - warp1(x - h, y, cell, 'x-warp')) / (2 * h);
+        const gy = (warp1(x, y + h, cell, 'x-warp') - warp1(x, y - h, cell, 'x-warp')) / (2 * h);
+        g = Math.max(g, Math.hypot(gx, gy));
+      }
+    }
+    if (g > 3 / cell + 1e-9) {
+      throw new Error(tag + ' 八度梯度越界：' + g.toFixed(5) + ' > ' + (3 / cell).toFixed(5));
+    }
+    // 场不能是常数（常数场=整块平移，白费）
+    if (g < 3 / cell * 0.2) throw new Error(tag + ' 八度几乎恒定：' + g.toFixed(5));
+  });
+
+  // ③ 坐标纯函数：同坐标恒等，且与调用顺序无关（不能有隐藏状态）
+  const a1 = warpOffset(1234.5, 678.25, 36);
+  warpOffset(9999, 8888, 36);          // 插一次别的调用
+  const a2 = warpOffset(1234.5, 678.25, 36);
+  if (JSON.stringify(a1) !== JSON.stringify(a2)) throw new Error('位移场不是坐标的纯函数');
+
+  // ④ 格点散列不许退化 —— 这是手册 v8.4 记过的坑（FNV-1a 遇「只差末字符」的编号
+  //    几乎不散列，400 个真实 id 上相邻角均差只有 0.013，等于没抖）。这里用格点
+  //    坐标当 key，必须实测健康：用「相邻格点值的平均绝对差」，理想均匀 [-1,1] ≈ 0.667。
+  //    **必须按格点间距采样**（world = 格号 × cell）：warp1 收的是世界坐标、内部才除
+  //    以 cell，在 0~120px 里采样全都落在同一格，量到的是「格内场恒定」而非散列。
+  const lat = (i, j) => warp1(i * COARSE, j * COARSE, COARSE, 'x-warp');
+  let dOff = 0, latN = 0, latMin = 9, latMax = -9;
+  for (let i = 0; i < 120; i++) {
+    for (let j = 0; j < 120; j++) {
+      dOff += Math.abs(lat(i, j) - lat(i, j + 1));
+      latMin = Math.min(latMin, lat(i, j));
+      latMax = Math.max(latMax, lat(i, j));
+      latN++;
+    }
+  }
+  dOff /= latN;
+  if (dOff < 0.4) {
+    throw new Error('格点散列退化（相邻格点值太像，场会退化成整块平移）：|Δ|=' + dOff.toFixed(3));
+  }
+  // ④b 场的两轴不许相关 —— 第一版用 'wx'/'wy'（只差末字符）时实测相关系数 0.98，
+  //     位移全体沿 45° 对角线推，场等于白费。盐的差异必须在靠前位置。
+  const warpCorr = (sa, sb) => {
+    const gx = [], gy = [];
+    for (let i = 0; i < 40; i++) {
+      for (let j = 0; j < 40; j++) {
+        gx.push(warp1(i * COARSE, j * COARSE, COARSE, sa));
+        gy.push(warp1(i * COARSE, j * COARSE, COARSE, sb));
+      }
+    }
+    const n = gx.length;
+    const mx = gx.reduce((p, q) => p + q) / n, my = gy.reduce((p, q) => p + q) / n;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let i = 0; i < n; i++) {
+      const u = gx[i] - mx, v = gy[i] - my;
+      sxy += u * v; sxx += u * u; syy += v * v;
+    }
+    return Math.abs(sxy / Math.sqrt(sxx * syy));
+  };
+  [['x-warp', 'y-warp'], ['x-warp2', 'y-warp2']].forEach(([sa, sb]) => {
+    const c = warpCorr(sa, sb);
+    if (c > 0.3) throw new Error('位移场两轴高度相关（会沿对角线推）：' + sa + '/' + sb + ' = ' + c.toFixed(3));
+  });
+  // 值域要铺满 [-1,1]（散列均匀性）；只在很小范围内取值说明又被末字符主导了
+  if (latMax - latMin < 1.0) {
+    throw new Error('格点值域过窄（' + latMin.toFixed(2) + '~' + latMax.toFixed(2) + '）');
+  }
+
+  // ⑤ 协同位移：世界坐标上挨得近的两座岛，位移也该挨得近 —— 这条是 v8.5 与 v8.1
+  //    白噪声的**本质区别**，也是唯一能防「有人把这一刀悄悄退回白噪声」的断言。
+  //    白噪声给每座岛独立偏移，近邻位移差与位移幅度同量级（比值 ~1.4）；
+  //    低频场下近邻协同，比值应当明显更小。
+  const cl = (sid, n) => ({
+    sessionId: sid, title: sid, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // sessionId 必须像真的：短编号会踩 ④ 那个 FNV-1a 坑，测出来的基线是假的
+  const rid = (i) => 'sess_' + ((i * 2654435761) >>> 0).toString(16).padStart(8, '0') + 'k';
+  const clusters = Array.from({ length: 9 }, (_, i) => cl(rid(i), 3));
+  const info = regions(clusters, { renames: {}, assign: {} }, []);
+  const raw = regionLayout(info.regions, info.bySid, clusters, [], []);
+  const itemSession = {}, regionOfSession = {};
+  clusters.forEach(c => {
+    (c.items || []).forEach(it => { itemSession[it.itemId] = c.sessionId; });
+    regionOfSession[c.sessionId] = (info.bySid[c.sessionId] || {}).key || '';
+  });
+  const store = sandbox.localStorage;
+  const STYLE_KEY = 'phymathia_continent_style';
+  const prev = store.getItem(STYLE_KEY);
+  let out;
+  try {
+    store.setItem(STYLE_KEY, 'organic');
+    out = jitter(raw, itemSession, regionOfSession);
+  } finally {
+    if (prev === null || prev === undefined) store.removeItem(STYLE_KEY);
+    else store.setItem(STYLE_KEY, prev);
+  }
+  const disp = raw.clusterRects.map((r, i) => ({
+    x: out.clusterRects[i].cx - r.cx, y: out.clusterRects[i].cy - r.cy,
+  }));
+  const mag = Math.sqrt(disp.reduce((s, o) => s + o.x * o.x + o.y * o.y, 0) / disp.length);
+  let nearDiff = 0, nearN = 0;
+  for (let i = 0; i < disp.length; i++) {
+    for (let j = i + 1; j < disp.length; j++) {
+      const d = Math.hypot(out.clusterRects[i].cx - out.clusterRects[j].cx,
+                           out.clusterRects[i].cy - out.clusterRects[j].cy);
+      if (d < 700) { nearDiff += Math.hypot(disp[i].x - disp[j].x, disp[i].y - disp[j].y); nearN++; }
+    }
+  }
+  if (!nearN) throw new Error('没凑出近邻岛对，⑤ 测不了');
+  const ratio = nearDiff / nearN / mag;
+  if (ratio > 1.15) {
+    throw new Error('近邻没有协同位移（比值 ' + ratio.toFixed(3)
+      + '，白噪声约 1.4）——位移层可能已退回逐元素白噪声');
+  }
+  if (mag < 1) throw new Error('岛几乎没动：' + mag.toFixed(3));
+
+  // 静态钉：本 check 硬编码了波长（沙箱里读不到 bundle 顶层 const 的值），源里改了
+  // 常量必须同步改这里，否则会拿着旧波长量新场、静默放过回归。
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  [['CONTINENT_WARP_CELL_COARSE', COARSE], ['CONTINENT_WARP_CELL_FINE', FINE]].forEach(([k, v]) => {
+    if (!new RegExp('const ' + k + ' = ' + v + ';').test(src)) {
+      throw new Error(k + ' 与 smoke 硬编码的 ' + v + ' 不一致（改常量要同步改本 check）');
+    }
+  });
   return true;
 });
 
