@@ -652,6 +652,17 @@
   text-overflow: ellipsis;
 }
 
+/* 小屏（≤480px）釜底抽薪：胶囊直接定宽，绕开 Chrome 对 shrink-to-fit flex 容器
+   固有宽度的坑（可缩子项只按 min-width 计入，见 canvas-modules.md 2026-09-26 拍板）；
+   进度条改为弹性填充，文字设 3.5em 底线——任何宽度下至少渲染一个字 + 省略号，
+   耗时位让位隐藏。宽度都显式了，不再依赖固有宽度计算。 */
+@media (max-width: 480px) {
+  .app-container .progress-status { width: calc(100vw - 24px); }
+  .app-container .progress-status .status-progress { flex: 1 1 90px; min-width: 0; }
+  .app-container .progress-status .status-text { min-width: 3.5em; }
+  .app-container .progress-status .elapsed-time { display: none; }
+}
+
 /* ---------- 5. 空状态 ---------- */
 .graph-empty {
   font-size: var(--fs-lg) !important;
