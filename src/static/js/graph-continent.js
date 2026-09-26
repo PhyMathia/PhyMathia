@@ -2304,8 +2304,11 @@ function _continentRenameRegionMenu(ev, key) {
     '<div class="continent-pop-row"><input class="continent-pop-input" data-rename-input' +
     ' value="' + esc(renames[key] || key) + '" maxlength="16" placeholder="' + esc(key) + '"></div>' +
     '<div class="continent-pop-actions">' +
-      '<button class="continent-pop-btn" data-rename-save>保存</button>' +
+      // 次操作（还原默认名）在左、主操作（保存）在右，且「保存」由 CSS 顶到行尾——
+      // 于是只有「保存」一个按钮时（没改过名就没有还原按钮）它也停在同一个位置，
+      // 不会一会儿左一会儿右。两个按钮都吃 pointerdown，DOM 顺序不影响可点性。
       (before !== undefined ? '<button class="continent-pop-btn is-quiet" data-rename-reset>还原默认名</button>' : '') +
+      '<button class="continent-pop-btn" data-rename-save>保存</button>' +
     '</div>';
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;

@@ -3672,6 +3672,11 @@
   display: flex;
   gap: 8px;
 }
+/* 海域改名弹层：次操作（还原默认名）在左、主操作（保存）顶到行尾。auto 外边距而不是
+ * 写死 order/row-reverse——外边距在只剩「保存」一个按钮时也生效，于是主操作的位置
+ * 不随「有没有改过名」而漂移。作用域用 [data-rename-save]：这个属性只存在于改名弹层，
+ * 不会波及其它弹层的按钮行（它们另有自己的排布） */
+.continent-pop-actions [data-rename-save] { margin-left: auto; }
 .continent-pop-btn {
   padding: var(--sp-1) var(--sp-5);
   border: 1px solid var(--accent);
