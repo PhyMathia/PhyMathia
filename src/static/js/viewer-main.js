@@ -122,6 +122,13 @@
     _graphCtxDuplicateNode: '只读快照：不能复制出新节点',
     _graphCtxPasteNode: '只读快照：不能粘贴成新节点',
     _graphCtxCreateBlankNodeWithText: '只读快照：不能新建节点',
+    // Delete/Backspace 删节点：监听在 window 上的 _handleGraphKeydown（graph-workflow.js），
+    // 选中即删、不经右键菜单——用户 2026-09-26 实测「Delete 还是可以删除节点」。
+    // 键盘事件不经画布，捕获期 dblclick 那道拦不住，只能靠函数桩。
+    _deleteSelectedGraphNodes: '只读快照：不能删除节点',
+    _deleteSelectedGraphGroups: '只读快照：不能删除分组',
+    deleteBlankNode: '只读快照：不能删除节点',
+    deleteCustomNode: '只读快照：不能删除节点',
   };
 
   function installReadOnlyPanels() {
