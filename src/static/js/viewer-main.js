@@ -90,7 +90,7 @@
       '.graph-ai-eval-accept,.graph-ai-eval-ignore,.graph-link-btn,.graph-tool-btn[title*="新建"],',
       '.graph-tool-btn[title*="整理"],.graph-tool-btn[title*="分组"],.graph-tool-btn[title*="联系"],',
       // 右下角画布工具栏整个不要（查看器只保留顶栏那几个动作）
-      '.graph-canvas-toolbar,.graph-empty-active .input-area',
+      '.graph-canvas-toolbar',
       '{display:none !important;}',
       // 只读：节点内滚动 + 文本可选择
       '.graph-node{cursor:default !important;}',

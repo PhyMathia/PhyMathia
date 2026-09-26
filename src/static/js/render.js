@@ -1203,22 +1203,9 @@ function renderMath(element) {
   _ensureKaTeX(function () { _runKaTeX(element); });
 }
 
-// ====== 智能滚动 ======
-let userScrolledUp = false;
-
-
-function initSmartScroll() {
-  const messages = document.getElementById('chatMessages');
-  if (!messages) return;
-  messages.addEventListener('scroll', () => {
-    const distFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
-    userScrolledUp = distFromBottom > SCROLL_THRESHOLD;
-  }, { passive: true });
-}
-
-function scrollToBottom(force = false) {
-  if (!force && userScrolledUp) return;
-  const messages = document.getElementById('chatMessages');
-  if (!messages) return;
-  messages.scrollTop = messages.scrollHeight;
-}
+// ====== 智能滚动（2026-09-26 随线性主聊天退役删除）======
+// 原 initSmartScroll / scrollToBottom / userScrolledUp 三件套只服务聊天消息列表的
+// 「用户上滑后不打断」逻辑，而 #chatMessages 容器已随聊天 UI 下线（v1.2.3 69676c9），
+// 三个函数每次调用都立刻早退——initSmartScroll 仍被 initApp 调、scrollToBottom 仍被
+// ui.js 的 load 与 visualViewport 监听调，纯空转。滚动到画布内容用节点聚焦
+// focusGraphNode / focusGraphNodeById 里的 _centerGraphOnNode。

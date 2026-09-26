@@ -878,7 +878,6 @@
 
     // 初始化入口 —— 由 ui.js 的 load 事件调用（确保所有模块已加载）
     async function initApp() {
-      initSmartScroll();
       setInterval(() => {
         if (document.querySelector('.session-item')) renderSessionList();
       }, 60000);

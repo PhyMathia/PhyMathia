@@ -774,43 +774,6 @@ document.addEventListener('pointerdown', () => {
   }
 }, { passive: true });
 
-// ====== 移动端键盘适配 ======
-function handleVisualViewport() {
-  if (!window.visualViewport) return;
-  const viewport = window.visualViewport;
-  const inputArea = document.querySelector('.input-area');
-  const chatMessages = document.getElementById('chatMessages');
-  if (inputArea) {
-    const offset = window.innerHeight - viewport.height;
-    if (offset > 50) {
-      // 键盘弹起：将输入区固定到可视区域底部
-      inputArea.style.position = 'fixed';
-      inputArea.style.bottom = '0';
-      inputArea.style.left = '0';
-      inputArea.style.right = '0';
-      inputArea.style.zIndex = '100';
-      inputArea.style.transform = '';
-      inputArea.style.marginBottom = '';
-      // 给聊天区域留出输入框的空间
-      if (chatMessages) chatMessages.style.paddingBottom = '70px';
-    } else {
-      inputArea.style.position = '';
-      inputArea.style.bottom = '';
-      inputArea.style.left = '';
-      inputArea.style.right = '';
-      inputArea.style.zIndex = '';
-      inputArea.style.transform = '';
-      inputArea.style.marginBottom = '';
-      if (chatMessages) chatMessages.style.paddingBottom = '';
-    }
-  }
-  scrollToBottom();
-}
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', handleVisualViewport);
-  window.visualViewport.addEventListener('scroll', handleVisualViewport);
-}
-
 // ====== 首次使用引导 ======
 let _obStep = -1;
 const _isMobile = () => window.innerWidth <= 768;
@@ -1657,28 +1620,9 @@ window.addEventListener('load', async () => {
   await fetchModels();
   // 必须先初始化应用（加载 session、恢复聊天状态）
   await initApp();
-  scrollToBottom();
-  // 移动端提示
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-  const mobileHint = document.getElementById('mobileHint');
-  if (isMobile && mobileHint) mobileHint.style.display = 'block';
 
   // 首次使用引导
   setTimeout(() => startOnboarding(), 600);
-
-  // 消息内容中的链接委托处理（移动端友好）
-  document.getElementById('chatMessages')?.addEventListener('click', function(e) {
-    const link = e.target.closest('a[href]');
-    if (!link) return;
-    const href = link.getAttribute('href');
-    if (!href) return;
-    // .html 可视化链接：在新标签页打开
-    if (href.endsWith('.html') || href.includes('.html?')) {
-      e.preventDefault();
-      e.stopPropagation();
-      window.open(href, '_blank', 'noopener,noreferrer');
-    }
-  });
 });
 
 // ====== 深色/浅色模式 ======
