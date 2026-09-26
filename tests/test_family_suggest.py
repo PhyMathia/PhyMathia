@@ -26,9 +26,12 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")
 
 from server.continent import (  # noqa: E402
+    FAMILY_CLUSTER_MIN_CARDS,
+    FAMILY_CLUSTER_POOL_CAP,
     FAMILY_SUGGEST_MARGIN,
     FAMILY_SUGGEST_MAX,
     GATE_EMBED_FLOOR,
+    family_cluster_suggestions,
     family_term_suggestions,
 )
 from server.family import BUILTIN_FAMILIES  # noqa: E402
@@ -154,9 +157,109 @@ class SuggestRejectMemoryTest(unittest.TestCase):
         self.assertNotIn("泊松分布", {s["term"] for s in trimmed})
 
 
+class FamilyClusterTest(unittest.TestCase):
+    """新族候选（v10 第二期）：无主（离所有族都远）+ 抱团（两两相似）+ 成色（均聚）。"""
+
+    def setUp(self):
+        # 四张词面零命中的卡：三张是博弈论（彼此向量近），一张离群的（向量朝另一方向）
+        self.items = {
+            "g1": _item("g1", "纳什均衡与策略选择"),
+            "g2": _item("g2", "囚徒困境：合作与背叛的推演", sid="sess_b"),
+            "g3": _item("g3", "占优策略与重复博弈"),
+            "x1": _item("x1", "音乐声学：频率与音色"),
+        }
+        e = [1.0, 0.0]
+        self.vecs = {
+            "g1": [0.98, 0.2], "g2": [1.0, 0.1], "g3": [0.95, 0.25],
+            "x1": [0.05, 1.0],
+        }
+        # 无主：对每个族的余弦都低于地板（用低于 GATE_EMBED_FLOOR 的假表表达）
+        self.no_sims = {iid: {PROB: 0.30} for iid in self.items}
+
+    def test_tight_cluster_detected(self):
+        out = family_cluster_suggestions(self.items, BUILTIN_FAMILIES,
+                                         self.no_sims, self.vecs)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["size"], 3)
+        self.assertEqual({c["id"] for c in out[0]["cards"]}, {"g1", "g2", "g3"})
+        self.assertTrue(out[0]["key"])  # 稳定指纹存在
+
+    def test_cluster_key_is_stable(self):
+        a = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        b = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        self.assertEqual(a[0]["key"], b[0]["key"])
+
+    def test_lexically_owned_card_not_candidate(self):
+        # g1 标题里出现族术语（随机变量 ∈ 概率统计）：词面已认领，不进无主池——
+        # 剩下 g2/g3 两张不成簇 → 空清单
+        items = dict(self.items)
+        items["g1"] = _item("g1", "随机变量与纳什均衡")
+        out = family_cluster_suggestions(items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        self.assertEqual(out, [])
+
+    def test_pair_too_small(self):
+        items = {"g1": self.items["g1"], "g2": self.items["g2"]}
+        out = family_cluster_suggestions(items, BUILTIN_FAMILIES,
+                                         {iid: {PROB: 0.30} for iid in items},
+                                         {k: self.vecs[k] for k in items})
+        self.assertEqual(out, [], f"少于 {FAMILY_CLUSTER_MIN_CARDS} 张卡不成簇")
+
+    def test_loose_chain_rejected(self):
+        # 链式松簇：a-b 近（0.71）、b-c 近（0.71）、a-c 远（0）——能连成连通分量，
+        # 但簇内平均相似度低于成色线，不算一伙
+        vecs = {"a": [1.0, 0.0, 0.0], "b": [0.7071, 0.7071, 0.0], "c": [0.0, 1.0, 0.0]}
+        items = {k: _item(k, f"未知主题{k}") for k in vecs}
+        sims = {k: {PROB: 0.30} for k in vecs}
+        self.assertEqual(family_cluster_suggestions(items, BUILTIN_FAMILIES, sims, vecs), [])
+
+    def test_family_similar_card_excluded(self):
+        # x1 虽然词面零命中，但气味过地板（属于概率统计）——补词建议的地盘
+        sims = dict(self.no_sims)
+        sims["x1"] = {PROB: round(GATE_EMBED_FLOOR + 0.05, 3)}
+        out = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, sims, self.vecs)
+        self.assertEqual(len(out), 1)
+        self.assertNotIn("x1", [c["id"] for c in out[0]["cards"]])
+
+    def test_junk_title_excluded(self):
+        # g2 换成章节号标题：不当证据来源——剩下 g1/g3 两张不成簇 → 空清单
+        items = dict(self.items)
+        items["g2"] = _item("g2", "1. 纳什均衡的定义", sid="sess_b")
+        out = family_cluster_suggestions(items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        self.assertEqual(out, [])
+
+    def test_no_vecs_returns_empty(self):
+        self.assertEqual(family_cluster_suggestions(self.items, BUILTIN_FAMILIES,
+                                                    self.no_sims, {}), [])
+
+    def test_no_families_returns_empty(self):
+        self.assertEqual(family_cluster_suggestions(self.items, [],
+                                                    self.no_sims, self.vecs), [])
+
+    def test_pool_cap_bounded(self):
+        # 无主池超过上限（向量通道异常把全库判成无主）→ 整体放弃，有界退化
+        n = FAMILY_CLUSTER_POOL_CAP + 1
+        items = {f"k{i}": _item(f"k{i}", f"未知主题{i}") for i in range(n)}
+        vecs = {f"k{i}": [float(i % 5), float(i % 3), 1.0] for i in range(n)}
+        sims = {f"k{i}": {PROB: 0.30} for i in range(n)}
+        self.assertEqual(family_cluster_suggestions(items, BUILTIN_FAMILIES, sims, vecs), [])
+
+    def test_summary_only_real_source(self):
+        items = dict(self.items)
+        items["g1"] = dict(self.items["g1"], summary="模板文案",
+                           summarySource="local")
+        out = family_cluster_suggestions(items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        g1 = next(c for c in out[0]["cards"] if c["id"] == "g1")
+        self.assertEqual(g1["summary"], "")
+        items["g1"] = dict(self.items["g1"], summary="真摘要",
+                           summarySource="model")
+        out = family_cluster_suggestions(items, BUILTIN_FAMILIES, self.no_sims, self.vecs)
+        g1 = next(c for c in out[0]["cards"] if c["id"] == "g1")
+        self.assertEqual(g1["summary"], "真摘要")
+
+
 class SuggestRouteTest(unittest.TestCase):
-    """GET /api/families/suggestions：向量缺席 → 空清单（降级是正常路径）；
-    向量在场（假相似度表）→ 建议随响应下发；拒绝记录 KV 被路由消费。"""
+    """GET /api/families/suggestions：向量缺席 → 双空清单（降级是正常路径）；
+    向量在场（假相似度/假向量表）→ 补词与新族候选随响应下发；拒绝记录 KV 被消费。"""
 
     def setUp(self):
         from fastapi.testclient import TestClient
@@ -183,34 +286,52 @@ class SuggestRouteTest(unittest.TestCase):
 
     def test_embed_absent_returns_empty_and_disabled(self):
         self._seed({"k1": _item("k1", "泊松分布：稀疏事件的计数")})
-        with mock.patch.object(self._main, "_continent_card_sims",
-                               return_value=({}, False)):
+        with mock.patch.object(self._main, "_continent_vectors",
+                               return_value=({}, {})):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {"suggestions": [], "embedEnabled": False})
+        self.assertEqual(resp.json(),
+                         {"suggestions": [], "clusters": [], "embedEnabled": False})
 
     def test_fake_sims_flow_through_route(self):
         self._seed({"k1": _item("k1", "泊松分布：稀疏事件的计数")})
         sims = {"k1": {PROB: 0.72, "微积分": 0.30}}
-        with mock.patch.object(self._main, "_continent_card_sims",
-                               return_value=(sims, True)):
+        vecs = {"k1": [1.0, 0.0]}
+        with mock.patch.object(self._main, "_continent_vectors",
+                               return_value=(sims, vecs)):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertTrue(data["embedEnabled"])
         self.assertEqual(data["suggestions"][0]["term"], "泊松分布")
         self.assertEqual(data["suggestions"][0]["family"], PROB)
+        self.assertEqual(data["clusters"], [])  # 单卡不成簇
 
     def test_rejected_kv_read_by_route(self):
         self._seed({"k1": _item("k1", "泊松分布：稀疏事件的计数")})
         self._kv["continent_family_suggestions"] = {
             "version": 1, "rejected": {PROB: {"泊松分布": {"cards": 1, "at": 1}}}}
         sims = {"k1": {PROB: 0.72}}
-        with mock.patch.object(self._main, "_continent_card_sims",
-                               return_value=(sims, True)):
+        with mock.patch.object(self._main, "_continent_vectors",
+                               return_value=(sims, {"k1": [1.0, 0.0]})):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["suggestions"], [])
+
+    def test_clusters_flow_through_route(self):
+        titles = ["纳什均衡与策略选择", "囚徒困境：合作与背叛的推演", "占优策略与重复博弈"]
+        items = {f"g{i}": _item(f"g{i}", t) for i, t in enumerate(titles)}
+        self._seed(items)
+        sims = {f"g{i}": {PROB: 0.30} for i in range(3)}
+        vecs = {"g0": [1.0, 0.0], "g1": [0.98, 0.17], "g2": [0.95, 0.31]}
+        with mock.patch.object(self._main, "_continent_vectors",
+                               return_value=(sims, vecs)):
+            resp = self.client.get("/api/families/suggestions")
+        self.assertEqual(resp.status_code, 200)
+        clusters = resp.json()["clusters"]
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["size"], 3)
+        self.assertEqual([c["id"] for c in clusters[0]["cards"]], ["g0", "g1", "g2"])
 
 
 if __name__ == "__main__":
