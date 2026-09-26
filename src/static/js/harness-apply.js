@@ -380,15 +380,6 @@
     }, 2600);
   }
 
-  function _removeAllEvalNodes() {
-    const state = _graphState();
-    if (!state) return;
-    const evalIds = (state.customNodes || [])
-      .filter(node => node.kind === 'ai_eval')
-      .map(node => node.id);
-    _removeEvalNodesByIds(evalIds);
-  }
-
   // 按 id 精确移除节点（只动传入的 id，不做全局清扫）
   function _removeEvalNodesByIds(evalIds) {
     const state = _graphState();

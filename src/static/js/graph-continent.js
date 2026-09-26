@@ -1442,10 +1442,6 @@ function _continentHighlightNodes(ids, on) {
   });
 }
 
-function _continentHighlightPair(a, b, on) {
-  _continentHighlightNodes([a, b], on);
-}
-
 // ---------- 弹层（单例）：共享概念详情 / 我的边操作 ----------
 function _continentClosePopover() {
   // v5.3：在途的「问 Φ」判断没处落了，随弹层关闭一并中止

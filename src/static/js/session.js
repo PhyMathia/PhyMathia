@@ -251,26 +251,6 @@
       return _postToServer('/api/kv/phymathia_current_session', { value: id });
     }
 
-    // 页面关闭前刷新所有数据到服务端
-    async function _flushToServer() {
-      try {
-        // 保存当前会话消息
-        if (currentSessionId && chatHistory.length > 0) {
-          await _saveMessagesToServer(currentSessionId, chatHistory);
-        }
-        // 保存会话元数据（逐个 upsert）
-        for (const [sid, sdata] of Object.entries(sessions)) {
-          await _saveSessionToServer(sid, sdata);
-        }
-        // 保存当前会话 ID
-        if (currentSessionId) {
-          await _saveCurrentSessionToServer(currentSessionId);
-        }
-      } catch (e) {
-        console.error('[Storage] Flush error:', e);
-      }
-    }
-
     // 定期自动同步（每 15 秒）：推送当前消息 + 全量拉取 + 刷新界面
     // （根治跨标签页/服务端变化时"要刷新才出现"的问题）
     setInterval(async () => {

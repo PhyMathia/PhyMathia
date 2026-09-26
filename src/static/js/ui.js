@@ -35,14 +35,6 @@ updateLevelUI();
 
 // ====== 模型设置管理（由 models.js 模块接管）=====
 
-function showModelToast(msg, isError) {
-  const toast = document.getElementById('modelToast');
-  toast.textContent = msg;
-  toast.style.borderColor = isError ? '#ef4444' : 'var(--accent)';
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2200);
-}
-
 function _positionPanel(panelId, triggerEl) {
   const panel = document.getElementById(panelId);
   if (!panel || !triggerEl) return;
@@ -863,10 +855,6 @@ function startOnboarding(force) {
   const overlay = document.getElementById('onboardingOverlay');
   overlay.classList.add('active');
   _renderObStep();
-}
-
-function startOnboardingExample() {
-  openExampleGuide();
 }
 
 // ====== 内置示例图讲解：载入演示图，在真实画布上边点边讲 ======

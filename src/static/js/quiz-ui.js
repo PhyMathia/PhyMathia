@@ -803,18 +803,6 @@ function changeQuizQuestionCount() {
   if (quizState && quizState.pool && quizState.phase === 'intro') reshuffleQuiz(false);
 }
 
-function changeQuizScope(value) {
-  if (value === 'all') {
-    quizMode = 'global';
-    quizScope = 'all';
-    openQuiz('global');
-  } else {
-    quizMode = 'session';
-    quizScope = 'current';
-    openQuiz('session');
-  }
-}
-
 function changeQuizSourcePreference(value) {
   const next = value === 'ai' || value === 'local' ? value : 'mixed';
   if (quizSourcePreference === next) return;
