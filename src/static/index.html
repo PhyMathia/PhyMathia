@@ -136,9 +136,9 @@
       <div class="status-drag-handle" title="拖动调整位置"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="9" cy="8" r="1.2"/><circle cx="3" cy="14" r="1.2"/><circle cx="9" cy="14" r="1.2"/></svg></div>
       <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
       <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-      <span class="status-text" aria-live="polite">生成进度 · 0%</span>
+      <span class="status-text" aria-live="polite">待命 · 提问后这里显示生成进度</span>
       <div class="status-progress"><div class="status-progress-fill" id="statusProgressFill"></div></div>
-      <span class="elapsed-time">0s</span>
+      <span class="elapsed-time"></span>
     </div>
 
     <div class="socratic-modal-overlay" id="socraticModal" hidden>
@@ -179,7 +179,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=8c4c7033"></script>
+  <script src="/js/app.js?v=d73e2eb2"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
