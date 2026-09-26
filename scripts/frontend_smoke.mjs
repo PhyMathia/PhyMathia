@@ -1771,12 +1771,23 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
   if (!/const CONTINENT_WARP_EASE = 'cubic-bezier\(\.22,\.75,\.3,1\)';/.test(src)) {
     throw new Error('转场缓动必须沿用既有曲线（与旧下钻转场同一条）');
   }
-  if (!/const CONTINENT_WARP_CAMERA_IN = 0\.35;/.test(src)) throw new Error('大陆起始缩放常数缺失');
   if (!/const CONTINENT_WARP_CANVAS_OUT = 0\.5;/.test(src)) throw new Error('会话图退场缩放常数缺失');
-  if (!/const CONTINENT_WARP_ZOOM_FLOOR = 0\.2;/.test(src)) throw new Error('起始缩放地板保护缺失');
   // 旧的三段互不相同的常数必须退役，否则说明有人把它加回来了
-  for (const dead of ['CONTINENT_DIVE_MS', 'CONTINENT_DIVE_FACTOR', 'CONTINENT_SURFACE_FACTOR']) {
+  for (const dead of ['CONTINENT_DIVE_MS', 'CONTINENT_DIVE_FACTOR', 'CONTINENT_SURFACE_FACTOR',
+                      'CONTINENT_WARP_CAMERA_IN', 'CONTINENT_WARP_ZOOM_FLOOR']) {
     if (src.includes(dead)) throw new Error('旧转场常数未退役：' + dead);
+  }
+  // ---- v9.1 开图只有一段动画 ----
+  // 「拉远」的动势全部由会话图那一侧承担；大陆内容在最终视口直接落位。
+  // 曾有过第二段（数据到了再从 0.35 倍长上来），用户真机反馈「两段动画，后面一段
+  // 多余」。钉住开图路径不得再调 _continentAnimateWorld——那只会把两段动画带回来。
+  const openSlice = src.slice(src.indexOf('async function openContinentView'),
+                              src.indexOf('function closeContinentView'));
+  if (openSlice.includes('_continentAnimateWorld(')) {
+    throw new Error('开图路径又出现镜头补间（会变回两段动画，v9.1 已删）');
+  }
+  if (!openSlice.includes('_continentRunWarp(\'enter\', () => _continentWarpRelease(openHold))')) {
+    throw new Error('开图令牌必须在第一段收尾就释放（ continent-warp 只该覆盖 420ms 交叉淡化）');
   }
 
   // ---- 减少动态效果：T21 收口的核心。JS 侧时长压 0，CSS 侧 transition:none ----
