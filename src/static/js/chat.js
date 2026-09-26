@@ -54,7 +54,8 @@
       if (statusFill) statusFill.style.width = progressPercent + '%';
       const textEl = document.querySelector('#progressStatus .status-text');
       if (textEl) {
-        const suffix = progressPercent < 100 ? ' · ' + progressPercent + '%' : '';
+        // 0% 后缀只在实际跑起来后出现（thinking 起步 8%）：闲时 0% 会读成卡死
+        const suffix = progressPercent > 0 && progressPercent < 100 ? ' · ' + progressPercent + '%' : '';
         textEl.textContent = progressLabel + suffix;
       }
     }
@@ -141,9 +142,10 @@
       if (statusEl && statusEl.classList.contains('active')) {
         progressStatusHideTimer = setTimeout(() => {
           statusEl.classList.remove('active');
-          _setProgress(0, '生成进度');
+          // 2026-09-25 用户拍板：胶囊常驻不当 bug 修，但闲时文案不得读成进行时/卡死
+          _setProgress(0, '待命 · 提问后这里显示生成进度');
           const timeEl = document.querySelector('#progressStatus .elapsed-time');
-          if (timeEl) timeEl.textContent = '0s';
+          if (timeEl) timeEl.textContent = '';
           progressStatusHideTimer = null;
         }, 1500);
       }
