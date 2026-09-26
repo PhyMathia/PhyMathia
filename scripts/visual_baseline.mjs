@@ -59,7 +59,7 @@ const SELECTORS = [
   '.am-model-list', '.memory-form-field input',
   // 其它
   '.kp-close', '.kp-stat-card', '.kp-card', '.memory-empty', '.memory-dialog-actions button',
-  '.quick-btn', '.learn-dir-btn', '.socratic-btn',
+  '.learn-dir-btn', '.socratic-btn',
 ];
 
 const PROPS = ['border-radius', 'background-color', 'background-image', 'color', 'font-size',

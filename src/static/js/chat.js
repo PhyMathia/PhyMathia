@@ -116,7 +116,6 @@
         _setProgress(pct, label || base.label || msgs[stage] || msgs['thinking']);
       }
     }
-    var waitingTipIndex = -1;
     function updateElapsedTime() {
       const timeEl = document.querySelector('#progressStatus .elapsed-time');
       if (!timeEl) return;
