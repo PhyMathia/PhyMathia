@@ -3967,12 +3967,83 @@
 }
 [data-theme="light"] .continent-pop-input { background: var(--field-bg); }
 
-/* ===== v7.3 渐进披露：三档细节只切 CSS 类（零重建 DOM） =====
- * 世界档（zoom<0.55）：只画海域板+岛牌+城市+航线——缩小是「变简略」不是「变糊」；
- * 区域档：加卡片标题；细节档：加公式行与锚点短接。后代选择器显隐，DOM 契约不动 */
+/* ===== v7.3 渐进披露：四档细节只切 CSS 类（零重建 DOM） =====
+ * 远景档（zoom<0.22）：只画海域板+岛牌+城市+航线，地名放大居中；
+ * 世界档（0.22~0.35）：概念卡仍整档隐藏，改在陆地内部铺词流；
+ * 区域档（0.35~1.1）：加卡片标题；细节档（≥1.1）：加公式行与锚点短接。
+ * 缩小是「变简略」不是「变糊」；后代选择器显隐，DOM 契约不动 */
+
+/* 词流（v8.8）：岛内铺这座岛的概念名，把世界档的空盒子填成一片有内容的地。
+ * 字号走 calc(var(--fs-md) * var(--cloud-k))：--cloud-k 由 JS 按 1/zoom 写入世界层
+ * （_continentApplyTransform），于是**屏幕字号恒定在 13px 可读档**——直接写死世界单位
+ * 字号的话，0.35 倍下只剩 4.5px，铺进去的是一片糊影，等于没填。推导见 graph-continent.js
+ * 的 CONTINENT_CLOUD_SCALE_MAX。越远看得见的字越少：放不下就裁，这是地图标注的正确行为。 */
+.continent-cloud {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;   /* 词是岛的说明文字，不许挡岛的点击下钻 */
+  font-size: calc(var(--fs-md) * var(--cloud-k, 1));
+  line-height: 1.32;
+  color: var(--text-primary);
+  opacity: 0.78;
+  /* 底部渐隐：裁切边界不能是一刀切的硬边（读成「这里没内容了」），要和岛牌
+   * 「另有 k 张」对得上——确实还有词被裁掉了，不是词说完了 */
+  -webkit-mask-image: linear-gradient(180deg, #000 62%, rgba(0, 0, 0, 0.25) 100%);
+  mask-image: linear-gradient(180deg, #000 62%, rgba(0, 0, 0, 0.25) 100%);
+}
+[data-theme="light"] .continent-cloud { color: var(--text-primary); opacity: 0.72; }
+.continent-cloud-word {
+  display: inline-block;
+  margin: 0 0.5em 0.18em 0;
+  white-space: nowrap;
+}
 .continent-world.lod-world .continent-node { display: none; }
 .continent-world.lod-region .continent-node-formula { display: none; }
 /* 有 LOD 兜底，缩放下限才敢放到 0.15（修「≥43 岛一屏装不下」） */
+
+/* 远景档（lod-horizon）：它比世界档更远，概念卡同样整档隐藏。⚠️ 这两条与上面那条
+ * 同为 0,2,0 权重，靠**书写顺序**压过——顺序反了卡片就会在远景档冒出来 */
+.continent-world.lod-horizon .continent-node { display: none; }
+/* 词流只在世界档亮。收起态的岛不铺词：那块地只剩一枚岛牌，铺字是铺到空气上。
+ * 同样靠顺序压住上面那条 lod-world 的开启规则 */
+.continent-world.lod-world .continent-cloud { display: block; }
+.continent-cluster.is-collapsed .continent-cloud,
+.continent-world.lod-horizon .continent-cloud { display: none; }
+
+/* 远景档的头部：词流收起来之后，岛牌就是这块地唯一的说明，于是升格成「大地名」——
+ * 副行/计数/徽标这些在这个尺寸下既看不清也点不中，一律收掉。head 是绝对定位的子元素
+ * （不是 .continent-cluster 本身），给它加 transform 不会碰节点的微转角 --jr。
+ *
+ * ⚠️ **大地名也必须乘 var(--cloud-k)**：这里最容易犯的错是把「放大 2.2 倍」当成放大字号——
+ * 放大的量是世界单位，而整张图自己正缩在 0.22 倍上，28.6px × 0.22 到屏幕上还是 6px，
+ * 等于什么都没做（真机截图才发现的）。乘上同一个反缩放系数，屏幕字号才真的提上来
+ * （实测 0.218 倍下岛名 11.3px、海域名 10.7px）。overflow 保持默认 hidden：放大后的
+ * 长岛名宁可省略号截断，也不许淌到隔壁岛上。 */
+.continent-world.lod-horizon .continent-cluster-head {
+  top: 50%;
+  transform: translateY(-50%);
+  align-items: center;
+}
+/* ⚠️ 这条 max-width 是「居中 + 省略号」能同时成立的前提：列向 flex 居中时子元素按内容宽度
+ * 撑开（fit-content），长岛名会**两端同时**溢出、被 head 的 overflow:hidden 各切一半，
+ * 于是读成「梯度与旋」「大值推导梯度在」这种无头无尾的半截词（真机截图才发现）。把宽度
+ * 夹回容器内，title 的 flex 收缩才生效，省略号才重新从词尾出现。 */
+.continent-world.lod-horizon .continent-cluster-headline { max-width: 100%; }
+.continent-world.lod-horizon .continent-cluster-title { font-size: calc(var(--fs-md) * var(--cloud-k, 1) * 1.6); }
+.continent-world.lod-horizon .continent-cluster-sub,
+.continent-world.lod-horizon .continent-cluster-count,
+.continent-world.lod-horizon .continent-domain-badge { display: none; }
+/* 折叠钮在远景档是 16px 世界单位 × 0.22 ≈ 3.5px 屏幕——既看不清也点不中，纯噪点 */
+.continent-world.lod-horizon .continent-cluster-fold,
+.continent-world.lod-horizon .continent-region-fold { display: none; }
+.continent-world.lod-horizon .continent-region-head { align-items: center; justify-content: center; }
+.continent-world.lod-horizon .continent-region-name { font-size: calc(var(--fs-lg) * var(--cloud-k, 1) * 1.4); }
+.continent-world.lod-horizon .continent-region-count,
+.continent-world.lod-horizon .continent-region-src { display: none; }
 
 /* 岛/海域折叠钮（▾/▸）：小而不抢，悬停才亮 */
 .continent-cluster-fold,

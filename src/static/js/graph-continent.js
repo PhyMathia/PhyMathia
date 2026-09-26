@@ -97,6 +97,39 @@ const CONTINENT_REGION_CAPACITY = 12;
 // 双向切换」是按旧阈值写的），改完必须重跑那条。
 const CONTINENT_LOD_WORLD = 0.35;
 const CONTINENT_LOD_DETAIL = 1.1;
+// ---------- v8.8 词流档 + 远景档：把「空盒子」填上文字 ----------
+// v8.7 把世界档阈值降到 0.35 之后，缩到 0.35 以下**仍然是满屏空盒子**——T23 收口的只是
+// 「开图第一眼看不见卡」，没管「主动缩远之后看见的是空地」。病根是卡片整档 `display:none`，
+// 而 v8.6 刚把岛/海域板的填色加厚（读成「一片地」），于是每块地都是一片没有内容的色块。
+//
+// 治法不是把卡片放回来（缩远了 160px 的卡只剩 56px 宽，几十张挤成一锅粥），也不是给陆地
+// 挂大字（那还是空地），而是**在岛底板内部铺词流**：把属于这座岛的概念名排成自动换行的
+// 文字填满空地。选词流而不是「脱壳标注」的理由是它天然按岛分组——相邻标注互相压叠这件
+// 事在词流里根本不存在，代价只是每座岛只能显示自己那几十个字。
+//
+// **词流必须做反向缩放补偿，否则等于没做**：缩放是给 #continentWorld 加 scale()，13px 的
+// 标题在 0.35 倍下屏幕上只剩 4.5px，铺进去的是一片糊影。做法沿用本文件已有的先例
+// `_continentEdgeLabelScale`（航线备注标签的反缩放）：世界层挂 --cloud-k = clamp(1/zoom)，
+// 词流字号取 `calc(var(--fs-md) * var(--cloud-k))`，屏幕字号于是恒定在 ~13px 可读档。
+// 反过来「岛放不下就裁掉一部分」正是地图标注的正确行为——越远看得见的字越少。
+//
+// **远景档阈值 0.22 是从反缩放上限反推的，不是拍的**：--cloud-k 夹在 2.5（放大补不动的
+// 硬上限，再大一个字都塞不进岛），屏幕字号 = 13 × zoom × 2.5，掉到 6.5px 以下（zoom≈0.2）
+// 就不再是「文字」而是「噪点」。所以 0.22 以下不再硬撑词流，收起它、只留放大的海域名/
+// 岛名——一张远景地图本来就只需要大地名。
+// ⚠️ 改 CONTINENT_CLOUD_SCALE_MAX 必须同步复核这条阈值：两者是同一条式子的两端
+// （屏幕字号 = 13 × zoom × SCALE_MAX，掉到 6.5px 时 zoom = 6.5/(13×SCALE_MAX) ≈ 0.2），
+// 各自拍脑袋就会出现「远景档里还在铺糊字」或「词流在还看得清时就提前收了」两种坏结果。
+const CONTINENT_LOD_HORIZON = 0.22;
+const CONTINENT_CLOUD_SCALE_MAX = 2.5;
+// 词流一次最多铺多少个词：岛内空地再大也铺不满（会被裁），限个数是为了让每座岛的词流块
+// 高度大致齐平、不会有一座岛拖出一长条把岛牌顶下去
+const CONTINENT_CLOUD_WORD_MAX = 24;
+// 岛牌头部实际占多高（px，世界单位）：词流盒的 top 由它算出来，不用 CSS 猜。
+// 标题行 --fs-md(13px)×1.5 ≈ 20，副行 --fs-2xs(10px)×1.5 ≈ 15，行间 gap 2，头顶留白 9
+const CONTINENT_HEAD_H_LINE = 20;
+const CONTINENT_HEAD_H_SUB = 15;
+const CONTINENT_HEAD_TOP = 9;
 // 岛内近似卡片折叠（显示层）：岛默认画前 N 张 +「另有 k 张」——只折叠不删数据
 const CONTINENT_ISLAND_CARD_MAX = 9;
 // ---------- v8.1 有机抖动层（渲染层，**不进布局纯函数**）----------
@@ -182,6 +215,9 @@ let _continentOpen = false;
 let _continentDrilling = false;
 let _continentPan = { x: 0, y: 0 };
 let _continentZoom = 1;
+// v8.8：上一次写进世界层的词流反缩放系数。只为 _continentApplyTransform 的死区比对用，
+// 存一份是为了不在每帧 getComputedStyle 读回自己刚写的值
+let _continentCloudK = 1;
 let _continentPlacements = {};  // itemId → {x,y,w,h,cx,cy}（世界坐标，布局解析算出）
 let _continentClusterRects = [];
 let _continentKeyHandler = null;
@@ -503,8 +539,8 @@ function _continentMeasure(c, collapsed, cardCap) {
 // 也会被带着靠拢——但列本来就是布局产物，链式排序已经把它们归堆了，可以接受。
 //
 // **再中心化是这条的生死线**：raw 的均值不一定是 base，直接用会让总宽时大时小——
-// 世界一变大，适配 zoom 就被压小，跌过 CONTINENT_LOD_WORLD=0.55 会把所有概念卡
-// 整档 display:none，真机旅程当场断（v8.1 踩过一次，10/10 → 8/10）。
+// 世界一变大，适配 zoom 就被压小，跌过世界档阈值（v8.1 时是 0.55，v8.7 已降到 0.35）
+// 会把所有概念卡整档 display:none，真机旅程当场断（v8.1 踩过一次，10/10 → 8/10）。
 // 这里把每段间距减去「相对均值的偏移」，均值恰回 base：
 // Σ间距 = (组数-1) × base，与定值布局**逐字节相等**，zoom/LOD/适配全部不受影响。
 // 钳位只是防御：raw ∈ [100,150]、base=150，|偏移| ≤ 50 → final ∈ [100,200]，
@@ -755,8 +791,8 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
 // worldW/worldH 原样透传。注意海域板自己还要按 CONTINENT_JITTER_ISLAND 外扩，
 // 所以预算是 **JITTER_REGION + JITTER_ISLAND ≤ 60**（v8.5：12 + 40 = 52），
 // 不是三段相加——卡不外扩板，不进这条。
-// 为什么这么较真：世界一大，适配画布的 zoom 就被压小，一压小就跌过
-// CONTINENT_LOD_WORLD = 0.55，世界档会把所有概念卡整档 display:none——
+// 为什么这么较真：世界一大，适配画布的 zoom 就被压小，一压小就跌过世界档阈值
+// （v8.5 时是 0.55，v8.7 已降到 0.35），世界档会把所有概念卡整档 display:none——
 // 「开图点得到卡」的真机旅程当场断（第一版给四周各留 80px，continent_regression
 // 从 10/10 掉到 8/10 就是这么掉的）。世界尺寸不变 = zoom、LOD、适配全部逐字节不变。
 
@@ -1069,6 +1105,10 @@ function _continentEnsureLayer() {
       '<div class="continent-legend aurora-glass aurora-glass--compact" id="continentLegend" hidden></div>' +
     '</div>';
   ws.appendChild(layer);
+  // v8.8：--cloud-k 是写在这个新元素上的内联变量，而 _continentCloudK 是模块级的。
+  // 不在这里归零的话，关闭大陆再打开时死区会比对出「没变」而跳过首次写入，词流字号
+  // 悄悄退回默认值 1（真机症状：关一次大陆，缩远时词流就糊了）
+  _continentCloudK = 1;
   _continentBindViewport(document.getElementById('continentViewport'));
   // v7.1a 图例是交互控件不是地图：pointerdown 不进画布拖拽（其内部按钮各自再处理点击）
   const legend = document.getElementById('continentLegend');
@@ -1624,7 +1664,7 @@ function _continentRender(data) {
           '<span class="continent-cluster-sub">' + esc(tagline) + esc(moreNote) + '</span>') +
       '</div>';
     }
-    el.innerHTML = headHtml;
+    el.innerHTML = headHtml + _continentCloudHtml(cluster, rect, tagline, esc);
     const badge = el.querySelector ? el.querySelector('.continent-domain-badge') : null;
     if (badge) {
       badge.addEventListener('pointerdown', e => {
@@ -2041,6 +2081,27 @@ function _continentIslandTagline(cluster, rel) {
   });
   if (when) names.push(when);
   return names.join(' · ');
+}
+
+// ---------- v8.8 岛内词流：世界档把空地填上这座岛的概念名 ----------
+// **一次渲染写死，缩放全程不碰**：和 v7.3 的 LOD 一样，档位切换只切 CSS 类，词流既不在
+// 缩放回调里重算也不重建 DOM。词流盒的 top 是算出来的而不是 CSS 猜的——岛牌有没有副行
+// 会差一整行高度（15px），猜错就压到词，或者词离岛牌老远悬在半空。
+// 收起的岛不生成词流：那块地只剩一枚岛牌，铺字是铺到空气上。
+// 词取**全部** items 的标题而不是只取画出来的前 N 张：卡在岛内被折了（>9 张），但岛没折，
+// 词流是「这座岛里有什么」的说明，少给几个字反而是隐瞒。多的部分由岛牌「另有 k 张」申明。
+function _continentCloudHtml(cluster, rect, tagline, esc) {
+  if (rect && rect.collapsed) return '';
+  const words = ((cluster && cluster.items) || [])
+    .map(it => String((it && it.title) || '').trim())
+    .filter(Boolean)
+    .slice(0, CONTINENT_CLOUD_WORD_MAX);
+  if (!words.length) return '';
+  const hasSub = !!(tagline && !(rect && rect.collapsed));
+  const top = CONTINENT_HEAD_TOP + CONTINENT_HEAD_H_LINE + (hasSub ? 2 + CONTINENT_HEAD_H_SUB : 0) + 6;
+  return '<div class="continent-cloud" style="top:' + top + 'px">' +
+    words.map(w => '<span class="continent-cloud-word">' + esc(w) + '</span>').join('') +
+    '</div>';
 }
 
 // ---------- v7.1a 海域层：图例 / 聚焦 / 手动纠正（改海域名 / 挪岛） ----------
@@ -4138,15 +4199,25 @@ function _continentApplyTransform() {
   if (world && world.style) {
     world.style.transform = 'translate(' + _continentPan.x + 'px,' + _continentPan.y + 'px) scale(' + _continentZoom + ')';
   }
-  // v7.3 渐进披露：三档细节只切一个 CSS 类（零重建 DOM）——世界档只画海域板+岛牌+
-  // 城市+航线，区域档加卡片标题，细节档加公式行与锚点短接。一次性全量渲染 + CSS
-  // 显隐，不动既有 DOM 契约
+  // v7.3 渐进披露：细节只切一个 CSS 类（零重建 DOM）——远景档只画海域板+岛牌+城市+航线；
+  // 世界档在陆地内部铺词流；区域档加卡片标题；细节档加公式行与锚点短接。一次性全量渲染
+  // + CSS 显隐，不动既有 DOM 契约。v8.8 由三档扩到四档，多出来的远景档收掉词流、只留大地名。
   if (world && world.classList) {
-    const tier = _continentZoom < CONTINENT_LOD_WORLD ? 'lod-world'
+    const tier = _continentZoom < CONTINENT_LOD_HORIZON ? 'lod-horizon'
+      : _continentZoom < CONTINENT_LOD_WORLD ? 'lod-world'
       : _continentZoom < CONTINENT_LOD_DETAIL ? 'lod-region' : 'lod-detail';
+    world.classList.toggle('lod-horizon', tier === 'lod-horizon');
     world.classList.toggle('lod-world', tier === 'lod-world');
     world.classList.toggle('lod-region', tier === 'lod-region');
     world.classList.toggle('lod-detail', tier === 'lod-detail');
+    // 词流的反向缩放补偿（推导见 CONTINENT_CLOUD_SCALE_MAX 处）：屏幕字号 = 13px×zoom×k，
+    // k 取 1/zoom 于是恒定在 13px 可读档。**带死区**：--cloud-k 写在世界层上，改一次就要
+    // 整棵子树重算字号，而滚轮每帧都调这里——0.04 死区把重算从「每帧」压到「每 ~4% 缩放」。
+    const k = Math.min(CONTINENT_CLOUD_SCALE_MAX, Math.max(1, 1 / _continentZoom));
+    if (Math.abs(k - _continentCloudK) > 0.04) {
+      _continentCloudK = k;
+      world.style.setProperty('--cloud-k', k.toFixed(2));
+    }
   }
   _continentSyncEdgeLabels();
 }
