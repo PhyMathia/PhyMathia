@@ -108,6 +108,9 @@ function fixture(opts = {}) {
   s.innerWidth = 1280;
   s.innerHeight = 900;
   vm.createContext(s);
+  // 面板的图标按钮取 config.js 的 UI_ICON_SVG，沙箱要按真实顺序先加载它
+  // （浏览器里两者是同一份全局词法环境，vm.runInContext 之间同样共享）
+  vm.runInContext(readSrc('src/static/js/config.js'), s, { filename: 'config.js' });
   vm.runInContext(readSrc('src/static/js/tasks.js'), s, { filename: 'tasks.js' });
   const run = code => vm.runInContext(code, s);
   return { s, run, els, panelBody };
@@ -159,6 +162,28 @@ test('暂停是软暂停：面板上的开关就是调度口那道闸门读的�
   assert.match(panelHtml(s), /继续/, '暂停后按钮要变成「继续」');
   run(`_taskPauseToggle(_taskActive[0].id);`);
   assert.equal(run('_taskCtxPaused()'), false);
+});
+
+// 播放控制改成图标按钮（用户 2026-09-27）：文字不能少——title/aria-label 保住可读名，
+// 但按钮正文里只剩图标；时长一律 m/s/h 字母单位，不再出现「分/秒」。
+test('面板按钮：暂停/停止/节点停是图标，名字在 title 里；时长用 m/s 字母', () => {
+  const { s, run } = fixture();
+  run(`_tasksBeginWorkflow({ title: '戊', workNodes: [{ id: 'n1', label: '数学视角' }], allIds: ['n1'] });`);
+  run(`_taskNodeStart(_taskActive[0].id, 'n1', '数学视角', null);`);
+  run('_taskExpanded[_taskActive[0].id] = true;');
+  const html = panelHtml(s);
+  assert.match(html, /class="task-btn task-btn--icon"[^>]*data-task-action="pause"[^>]*title="暂停"/, '暂停键是图标 + title');
+  assert.match(html, /task-btn--warn[^>]*data-task-action="cancel"[^>]*title="停止"/, '停止键是图标 + title');
+  assert.match(html, /data-task-action="cancel-node"[^>]*title="停掉「数学视角」"/, '节点停键带节点名的 title');
+  assert.doesNotMatch(html, />暂停<|>停止<|>停</, '按钮正文里不该再有这三个文字');
+  // 起点拨到 3 分 4 秒前：行上应出现 3m04s
+  run(`_taskActive[0].startedAt = Date.now() - 184000; _taskActive[0].nodes[0].startedAt = Date.now() - 184000;`);
+  const timed = panelHtml(s);
+  assert.match(timed, /3m04s/);
+  assert.doesNotMatch(timed, /分|秒/, '时长不再用中文单位');
+  // 暂停后按钮翻成「继续」：图标也跟着换，读屏名不能丢
+  run('_taskPauseToggle(_taskActive[0].id);');
+  assert.match(panelHtml(s), /data-task-action="pause"[^>]*title="继续"/);
 });
 
 test('停单个节点：正在跑的那颗掐自己的 controller；还没轮到的进「用户停掉」名单', () => {
@@ -287,6 +312,21 @@ test('面板入口在顶栏（不挂会淡出的胶囊上），且没有任务�
 });
 
 
+test('任务面板提供对话框与页签语义，动态重绘前后保留焦点锚点', () => {
+  const html = readSrc('src/static/index.html');
+  const src = readSrc('src/static/js/tasks.js');
+  assert.match(html, /id="taskPanel"[^>]*role="dialog"[^>]*aria-labelledby="taskPanelTitle"/);
+  assert.match(html, /id="taskPanelTitle"/);
+  assert.match(html, /id="taskPanelBtn"[^>]*aria-controls="taskPanel"[^>]*aria-expanded="false"/);
+  assert.match(html, /id="progressTaskBtn"[^>]*aria-controls="taskPanel"[^>]*aria-expanded="false"/);
+  assert.match(src, /role="tab"/);
+  assert.match(src, /role="tablist" aria-label="任务状态"/);
+  assert.match(src, /function _taskFocusSnapshot\(panel\)/);
+  assert.match(src, /function _taskRestoreFocus\(panel, snapshot\)/);
+  assert.match(src, /const focus = _taskFocusSnapshot\(panel\)/);
+  assert.match(src, /_taskRestoreFocus\(panel, focus\)/);
+});
+
 test('两个页签分开：没干成的在「未完成」，干成的才进「已完成」（用户 2026-09-27 要求）', () => {
   const { s, run } = fixture();
   run(`_tasksBeginWorkflow({ title: '干成的活儿', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });
@@ -396,6 +436,24 @@ test('关面板要把停靠态撤干净，否则胶囊底角永远回不来', ()
   assert.equal(els.taskPanel.style.width, '', '内联宽度要清，别把停靠几何漏给下一次通用打开');
 });
 
+test('面板关着时拖胶囊不许动它的停靠态（真机踩过：胶囊底角被拉直像被切掉一块）', () => {
+  // 胶囊拖动每帧回调 _taskPanelDockFollow（= _dockTaskPanel），而拖胶囊与面板
+  // 开合无关。少了开合闸，收起状态下拖一下也会给面板套上 dock-host，
+  // 胶囊底角被 CSS 拉直成方的，而面板根本看不见。
+  const { run, els } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150 } });
+  run('toggleTaskPanel(); toggleTaskPanel();');   // 开一次再关，回到收起态
+  assert.ok(!els.taskPanel.classList.contains('show'), '先确认面板确实是收起的');
+  run('window._taskPanelDockFollow();');          // 模拟拖动一帧
+  assert.ok(!els.taskPanel.classList.contains('task-panel--docked'), '收着时不该进停靠态');
+  assert.ok(!els.taskPanel.classList.contains('aurora-glass--attached'), '玻璃降档不该生效');
+  assert.ok(!els.progressStatus.classList.contains('aurora-glass--dock-host'), '胶囊底角要留着');
+  assert.equal(els.taskPanel.style.width, '', '不该写内联几何');
+  // 开着的时候跟随仍然要生效（这条闸不能把正常路径也堵掉）
+  run('toggleTaskPanel(); window._taskPanelDockFollow();');
+  assert.ok(els.taskPanel.classList.contains('task-panel--docked'), '开着时拖动要跟过去');
+  assert.ok(els.progressStatus.classList.contains('aurora-glass--dock-host'), '开着时胶囊才让底角');
+});
+
 test('页面里没有胶囊时退回通用路径，不能整个面板开不出来', () => {
   const { s, run, els } = fixture();
   run('toggleTaskPanel();');
@@ -424,6 +482,50 @@ test('CSS：接缝两边圆角同时拉直 + 胶囊让底角（否则读起来�
   const override = readSrc('src/static/css/graph-override.css');
   assert.match(override, /\.progress-status\.aurora-glass--dock-host \{[\s\S]{0,200}border-bottom-left-radius: 0/,
     '胶囊底角要拉直');
+});
+
+test('纯玻璃档：面板取消渐变但保留颜色（底色与胶囊同色系，不能退回中性黑）', () => {
+  // 用户 2026-09-27 两句连读：「取消渐变，但是要有颜色啊」+「和胶囊用同一个色」。
+  // 第一版只把色斑归零、底色不动 → 留下 rgba(4,7,18) 中性近黑，胶囊有蓝紫极光、
+  // 面板是死黑，用户报「颜色对不上了啊」。**去渐变 ≠ 去色**。
+  const css = readSrc('src/static/css/styles.css');
+  const html = readSrc('src/static/index.html');
+  assert.match(html, /class="task-panel aurora-glass aurora-glass--dialog aurora-glass--plain"/,
+    '任务面板要挂 aurora-glass--plain');
+  const i = css.indexOf('.aurora-glass--plain {');
+  assert.ok(i > 0, '缺少 .aurora-glass--plain 变体');
+  const block = css.slice(i, css.indexOf('}', i));
+  // 渐变确实去掉了
+  for (const n of ['--aurora-1', '--aurora-2', '--aurora-3']) {
+    assert.match(block, new RegExp(n + ':\\s*transparent'), n + ' 要归零（去掉彩色渐变）');
+  }
+  assert.match(block, /animation:\s*none/, '无色斑可漂，auroraDrift 要停');
+  // **颜色必须由底色接管**：--glass-tint 要被这一档改写成带色相的值，而不是沿用中性
+  // rgba(4,7,18)。判据是「蓝分量明显大于红分量」——胶囊极光是蓝紫family，
+  // 等效实色也该是蓝紫family；写成灰调（r≈g≈b）就是退回第一版那个死黑。
+  const tint = block.match(/--glass-tint:\s*rgba\((\d+),\s*(\d+),\s*(\d+)/);
+  assert.ok(tint, '纯玻璃档必须自己给 --glass-tint（颜色由底色接管）');
+  const [r, g, b] = [ +tint[1], +tint[2], +tint[3] ];
+  assert.ok(b > r + 20, `深色底色要偏蓝（b 明显大于 r），当前 rgb(${r},${g},${b}) 是灰调——` +
+    '用户要的是「取消渐变但要有颜色」，不是取消颜色');
+  // 玻璃本体其余部分不许动：用户说过磨砂模糊、薄纱、描边投影先不动
+  for (const keep of ['--glass-veil', 'backdrop-filter', 'box-shadow']) {
+    assert.doesNotMatch(block, new RegExp(keep.replace(/-/g, '\\-')),
+      '用户说过玻璃观感先不动，纯玻璃档不该改 ' + keep);
+  }
+  // **浅色分支必须存在**：浅色的 `html[data-theme="light"] .aurora-glass--attached` 是
+  // (0,2,0)，压得住 (0,1,0) 的深色规则——少了这条，深色下已归零、浅色下暖色斑又回来。
+  // 浅色同样要给带色相的底色（暖米，不能是中性白）。
+  const li = css.indexOf('html[data-theme="light"] .aurora-glass--plain,');
+  assert.ok(li > 0, '缺少浅色分支的 .aurora-glass--plain（浅色 --attached 会压过深色规则）');
+  const lblock = css.slice(li, css.indexOf('}', li));
+  for (const n of ['--aurora-1', '--aurora-2', '--aurora-3']) {
+    assert.match(lblock, new RegExp(n + ':\\s*transparent'), '浅色下 ' + n + ' 也要归零');
+  }
+  const ltint = lblock.match(/--glass-tint:\s*rgba\((\d+),\s*(\d+),\s*(\d+)/);
+  assert.ok(ltint, '浅色分支也要给 --glass-tint');
+  const [lr, lg, lb] = [ +ltint[1], +ltint[2], +ltint[3] ];
+  assert.ok(lr > lb + 10, `浅色底色要偏暖（r 明显大于 b），当前 rgb(${lr},${lg},${lb}) 是中性白`);
 });
 
 test('高度下限 CSS 与 JS 两处数值必须一致（用户「高度变成两倍」）', () => {

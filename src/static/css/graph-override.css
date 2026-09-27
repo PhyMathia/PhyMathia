@@ -2969,6 +2969,15 @@
 @keyframes graphHarnessSpin {
   to { transform: rotate(360deg); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node-status.status-running::before,
+  .graph-source-spinner,
+  .graph-harness-window.busy .graph-harness-status::before {
+    animation: none;
+  }
+}
+
 .graph-harness-head {
   display: flex;
   align-items: center;

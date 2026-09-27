@@ -1398,6 +1398,21 @@
     .task-btn:disabled { opacity: 0.5; cursor: default; }
     .task-btn--warn:hover { color: var(--danger); border-color: var(--danger); }
     .task-btn--mini { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+    /* 图标按钮（用户 2026-09-27：暂停/停止/停不要文字）：方块化、居中，
+       SVG 尺寸跟着按钮走；hover/危险色的墨色由 currentColor 继承。 */
+    .task-btn--icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 19px;
+      padding: 0;
+    }
+    .task-btn--icon svg { display: block; width: 12px; height: 12px; }
+    .task-btn--icon.task-btn--mini { width: 18px; height: 16px; }
+    .task-btn--icon.task-btn--mini svg { width: 10px; height: 10px; }
+    .task-btn--icon .task-spin { margin: 0; }
+    .task-btn-glyph { font-size: var(--fs-xs); line-height: 1; }
     .task-state-text { flex: 0 0 auto; }
     .task-item.state-running .task-glyph { color: var(--accent); }
     .task-item.state-paused .task-glyph { color: var(--warn); }
@@ -2236,6 +2251,44 @@
         inset 0 0 0 1px rgba(150, 120, 74, 0.22);
     }
 
+    /* 纯玻璃档（用户 2026-09-27「取消渐变，但是要有颜色」+「和胶囊用同一个色」）：
+       任务面板不要那三团彩色渐变，但要保留玻璃的**颜色**。
+       第一版只把色斑归零、底色不动，留下的 rgba(4,7,18) 是**中性近黑**——胶囊有蓝紫
+       极光、面板是死黑，接缝处颜色对不上（用户原话「颜色对不上了啊」）。
+       修法：把胶囊那三团极光**烘进底色**算一个等效实色，而不是让面板退回中性。
+         · 深色：胶囊极光是蓝(14,116,233)/紫(109,40,217)/青(15,118,110) 三团 .22/.18/.20
+           叠在 rgba(4,7,18,.58) 上，等效实色约 rgba(13,28,62)——同一色相家族、更实。
+         · 浅色：胶囊是暖琥珀(251,191,36)/蜜桃/暖陶土，等效实色约 rgba(250,241,222)。
+       模糊、veil、描边、投影一概不动（用户说过玻璃观感先不动）。
+       色斑仍归零 + animation 停：渐变与漂移是真的不要了，颜色由底色接管。
+       ——「去渐变」不等于「去色」，这是两件事。 */
+    .aurora-glass--plain {
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
+      --glass-tint: rgba(13, 28, 62, 0.58);
+      animation: none;
+    }
+
+    /* **浅色分支必须写，且特指性要对齐**（2026-09-27 真机踩到，第一版就是漏了这条）：
+       浅色下的 `html[data-theme="light"] .aurora-glass--attached` 是 (0,2,0)，压得住
+       上面那条 (0,1,0) 的 `.aurora-glass--plain`——深色下已归零，切到浅色却又
+       能看见暖色斑（实测 --aurora-1 算回 rgba(251,191,36,.12)）。这里补一条同特指性的
+       浅色规则，靠「位置在后」赢。
+       「不重写 --aurora-* 因为已是 transparent」这个念头是错的：变量是**继承**下来的，
+       浅色那条 --attached 重新赋值了，深色的 transparent 早被盖掉。
+       这一档仍不进 smoke 的浅色极光枚举（枚举要求每档三团暖色斑），位置留在
+       auroraDrift 之前：smoke 的浅色紧凑块切片终点就是 @keyframes，插进去只会被多扫
+       一遍（这里没有冷色，不影响判定）。 */
+    html[data-theme="light"] .aurora-glass--plain,
+    [data-theme="light"] .aurora-glass--plain {
+      --aurora-1: transparent;
+      --aurora-2: transparent;
+      --aurora-3: transparent;
+      --glass-tint: rgba(250, 241, 222, 0.76);
+      animation: none;
+    }
+
     @keyframes auroraDrift {
       0%   { background-position: 0% 0%, 100% 0%, 62% 100%, 0 0; }
       50%  { background-position: 34% 26%, 66% 30%, 40% 72%, 0 0; }
@@ -2279,9 +2332,13 @@
       z-index: 80;
       font-size: var(--fs-md);
       color: var(--text-secondary);
-      /* 底色/描边交给 .aurora-glass —— 这里若写 background 简写会重置 background-image，
-         把极光层直接盖掉（同特指性且本规则在 .aurora-glass 之后） */
-      background: transparent;
+      /* 底色/描边/极光层统统交给 .aurora-glass——**这里一个 background 声明都不能写**。
+         2026-09-14 那笔（5e5af4a）为了修「胶囊没有极光」，把旧的
+         `background: var(--panel-bg)` 改成了 `background: transparent`，以为透明就等于
+         「不干扰」——可 background 是简写，`transparent` 把 background-image 一并重置成
+         none，极光层等于被清空（2026-09-27 用户从「这俩透明度不一样」问出来的：
+         面板 11 层渐变、胶囊 0 层）。要盖底色就写 background-color（不动 image），
+         要彻底让位就什么都不写。同特指性且本规则在 .aurora-glass 之后，两条路都会赢。 */
       border-top: none;
       animation: statusFadeIn 0.3s ease;
       touch-action: none;
@@ -2434,8 +2491,10 @@
       /* 竖屏：顶栏只保留主题和难度，其余移到二级工具栏 */
       .header-actions .header-btn.model-btn,
       .header-actions .header-btn.knowledge-btn-icon,
-      .header-actions .header-btn:nth-child(5),
-      .header-actions .header-btn:nth-child(6) { display: none; }
+      .header-actions .header-btn.continent-btn,
+      .header-actions .header-btn.quiz-btn,
+      .header-actions .header-btn.data-btn,
+      .header-actions .header-btn.clear-chat-btn { display: none; }
       /* 竖屏显示二级工具栏 */
       .header-secondary-bar { display: flex; }
       .level-panel { right: auto; min-width: 120px; }
