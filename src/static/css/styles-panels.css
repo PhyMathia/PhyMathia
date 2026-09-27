@@ -34,20 +34,24 @@
     .kp-tool-btn {
       padding: var(--sp-2) var(--sp-5); border-radius: var(--r-pill); border: 1px solid var(--kp-card-border);
       font-size: var(--fs-sm); font-weight: 600; cursor: pointer; white-space: nowrap;
-      background: var(--kp-filter-bg); color: var(--kp-filter-color);
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+      /* **必须写 background-color，不能写 background 简写**（2026-09-27）：简写会把
+         background-image 一并重置成 none，而 .aurora-glass 的极光层正是靠它画的。
+         本表在 styles.css 之后加载、同特指性，赢的正是这条简写——于是「优化摘要」胶囊
+         实测 0 层渐变（面板 11 层），和进度胶囊 2026-09-14 那次是同一个病。
+         写 background-color 则只碰颜色这一个长写属性，image 原样留给 .aurora-glass。 */
+      background-color: var(--kp-filter-bg); color: var(--kp-filter-color);
+      transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
     }
     .kp-tool-btn:hover,
     .kp-tool-btn.running {
-      background: var(--kp-filter-active-bg); color: var(--kp-filter-active-color);
+      background-color: var(--kp-filter-active-bg); color: var(--kp-filter-active-color);
     }
     /* 知识面板的「优化摘要 / 停止优化」小胶囊：与引导浮卡、生成进度胶囊同一套极光玻璃。
        它自带浅色背景，会盖住极光层，故这里让位（透明度交给 aurora-glass 的 tint）。 */
     .kp-tool-btn.aurora-glass {
-      /* 只让位给 aurora-glass 的底色/极光层：background-color 必须置空，
-         否则 .kp-tool-btn 的 --kp-filter-bg 会盖住极光；
-         注意不要写 background-image: inherit —— 那会把父级的 none 继承下来，
-         特指性还高于 .aurora-glass，极光层直接被抹掉。 */
+      /* 让位给 aurora-glass 的底色/极光层：background-color 置空（基础规则已改长写，
+         不会误伤 image，这里只需颜色让位）。仍然不要写 background-image: inherit ——
+         那会把父级的 none 继承下来，特指性还高于 .aurora-glass，极光层直接被抹掉。 */
       border-radius: var(--r-pill);
       border: none;
       background-color: transparent;

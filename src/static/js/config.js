@@ -87,7 +87,13 @@ const UI_ICON_SVG = {
   frame: makeLineIcon('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path><circle cx="12" cy="12" r="2.4"></circle>'),
   collapse: makeLineIcon('<path d="M9 4v6H3"></path><path d="M21 9h-6V3"></path><path d="M3 15h6v6"></path><path d="M15 21v-6h6"></path>'),
   note: makeLineIcon('<path d="M5 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h4"></path>'),
-  home: makeLineIcon('<path d="M4 20V10l8-6 8 6v10"></path><path d="M9.5 20v-6h5v6"></path>')
+  home: makeLineIcon('<path d="M4 20V10l8-6 8 6v10"></path><path d="M9.5 20v-6h5v6"></path>'),
+  // 任务面板的播放控制（用户 2026-09-27：「暂停/停止/停别用文字，用图标」）。
+  // pause/play 走线条；stop 例外用实心方块——空心方块缩到 12px 几乎看不出是"停"，
+  // 靠 fill="currentColor" 吃按钮的墨色（hover/危险色照样跟）。
+  pause: makeLineIcon('<path d="M9 5v14"></path><path d="M15 5v14"></path>'),
+  play: makeLineIcon('<path d="M7 4.8v14.4L19 12z"></path>'),
+  stop: makeLineIcon('<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"></rect>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,
