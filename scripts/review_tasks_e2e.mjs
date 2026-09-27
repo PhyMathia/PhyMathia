@@ -86,8 +86,8 @@ try {
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.startQuestionWorkflow === 'function', null, { timeout: 20000 });
   await page.waitForTimeout(1000);
-
   const alive = async (tag) => { if (page.isClosed()) { console.log('!!! 页面已关闭，发生在：' + tag); return false; } return true; };
+  const pageText = (sel) => page.$eval(sel, el => el.innerText.replace(/\s+/g, ' ').trim());
   const panelText = () => page.$eval('#taskPanelBody', el => el.innerText.replace(/\s+/g, ' ').trim());
   const panelOpen = () => page.$eval('#taskPanel', el => el.classList.contains('show'));
 
@@ -99,7 +99,7 @@ try {
     await wait(300);
     if (!(await panelOpen())) throw new Error('点了三角面板没打开');
     const t = await panelText();
-    if (!/还没有任务/.test(t)) throw new Error('空面板文案不对：' + t);
+    if (!/手上没有活儿/.test(t)) throw new Error('空面板文案不对：' + t);
     ok('面板：顶栏三角常驻，点开显示空态');
   } catch (e) { bad('面板开关', e); }
 
@@ -127,6 +127,33 @@ try {
     if (!/已完成|等待|生成中/.test(label)) throw new Error('节点条目没有状态：' + label);
     ok('两级结构：展开后看到 4 个节点条目与各自状态');
   } catch (e) { bad('工作流任务与节点条目', e); }
+
+
+  // ②b 胶囊上的入口（用户 2026-09-27 要求）：干活时胶囊常驻，列表随手可开
+  try {
+    const spun = await page.evaluate(() => {
+      const el = document.querySelector('#taskPanelBody .task-spin');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { w: cs.width, h: cs.height, anim: cs.animationName, radius: cs.borderRadius };
+    });
+    if (!spun) throw new Error('进行中的行上没有圆环元素');
+    if (spun.w !== spun.h) throw new Error('圆环不是正圆：' + spun.w + 'x' + spun.h);
+    if (!/taskSpin/.test(spun.anim)) throw new Error('圆环没有转动动画：' + spun.anim);
+    ok('进行中画的是 CSS 圆环（' + spun.w + 'x' + spun.h + '，靠 ' + spun.anim + ' 匀速转），不是 ⟳ 字符');
+  } catch (e) { bad('进行中的圆环', e); }
+
+  try {
+    await page.click('#taskPanelBtn');           // 先收起（面板此刻是开的）
+    await wait(300);
+    if (await panelOpen()) throw new Error('再点一次没收起');
+    const visible = await page.isVisible('#progressTaskBtn');
+    if (!visible) throw new Error('干活时胶囊上找不到入口按钮');
+    await page.click('#progressTaskBtn');
+    await wait(400);
+    if (!(await panelOpen())) throw new Error('点胶囊上的入口没打开面板');
+    ok('胶囊上的入口：干活时点它就能展开任务列表');
+  } catch (e) { bad('胶囊入口', e); }
 
   // ③ 停单个节点（面板上那一颗的「停」）
   try {
@@ -181,8 +208,9 @@ try {
     await wait(900);
     const nowSid = await page.evaluate(() => window.getCurrentSessionId());
     if (nowSid === firstSid) throw new Error('没有切到新会话');
-    await page.click('#taskPanelBtn').catch(() => {});
-    await wait(200);
+    // 面板此刻是开着的：**别盲点**——那个按钮是开关，再点一下正好把它关了，
+    // 后面读到的是上一次渲染的旧内容（第一版就这么误报了一次）
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); await wait(300); }
     const t = await panelText();
     if (!/用一句话说明简谐运动/.test(t)) throw new Error('切走之后列表里看不到那条任务了：' + t);
     const running = await page.evaluate(() => _taskActive.some(x => x.state === 'running' || x.state === 'partial'));
@@ -203,10 +231,11 @@ try {
     let t = '';
     while (Date.now() < dl) {
       t = await panelText();
-      if (/部分完成|已完成|已停止/.test(t) && /历史/.test(t)) break;
+      const idle = await page.evaluate(() => _taskUnfinished().every(x => x.state !== 'running' && x.state !== 'waiting'));
+      if (idle && /部分完成|已完成|已停止/.test(t)) break;
       await wait(1000);
     }
-    if (!/历史/.test(t)) throw new Error('跑完了但没进历史：' + t);
+    if (!/部分完成|已完成|已停止/.test(t)) throw new Error('跑完了但状态没收口：' + t);
     ok('收尾：任务结束后进历史区（' + (t.match(/部分完成|已完成|已停止/) || ['?'])[0] + '）');
     const persisted = await page.evaluate(async () => {
       const r = await fetch('/api/kv/' + encodeURIComponent('tasks:global'));
@@ -216,6 +245,66 @@ try {
     if (!persisted || !persisted.n) throw new Error('服务端没有 tasks:global 记录');
     ok('落盘：服务端 tasks:global 有 ' + persisted.n + ' 条（含会话号 ' + persisted.first.sessionId + '）');
   } catch (e) { bad('任务收尾与落盘', e); }
+
+
+  // ⑥b 两个页签 + 一键清除记录（用户 2026-09-27 要求）
+  try {
+    await page.evaluate(() => { window.startQuestionWorkflow('第三条（要跑完的）'); });
+    const dl = Date.now() + 90000;
+    let done = false;
+    while (Date.now() < dl) {
+      done = await page.evaluate(() => window._taskDoneRecords().length > 0);
+      if (done) break;
+      await wait(1000);
+    }
+    if (!done) {
+      const diag = await page.evaluate(() => ({
+        active: _taskActive.map(x => x.title + ':' + x.state),
+        history: _taskHistory.map(x => x.title + ':' + x.state),
+      }));
+      throw new Error('等不到一条干完的任务；账本=' + JSON.stringify(diag));
+    }
+    const tabs = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('#taskPanelBody .task-tab')];
+      const labels = btns.map(b => b.textContent.trim());
+      btns.find(b => /已完成/.test(b.textContent)).click();
+      return labels;
+    });
+    await wait(400);
+    const doneView = await pageText('#taskPanelBody');
+    if (!(await panelOpen())) throw new Error('点了页签面板被关掉了');
+    if (!/第三条/.test(doneView)) throw new Error('已完成页签里没有那条跑完的：' + doneView);
+    // 按行状态判，别按文本判：会话名会自动取自第一个问题，文本里出现「用一句话说明简谐运动」
+    // 是**会话标题**，不是任务行（第一版就这么误报过）
+    const statesInDoneTab = await page.evaluate(() => [...document.querySelectorAll('#taskPanelBody .task-item')]
+      .map(el => (el.className.match(/state-([a-z]+)/) || [])[1]));
+    if (statesInDoneTab.some(st => st !== 'done')) {
+      throw new Error('已完成页签里混进了没干成的行：' + statesInDoneTab.join(','));
+    }
+    ok('两个页签分开：' + tabs.join(' / ') + '，跑完的只在「已完成」');
+
+    const before = await page.evaluate(async () => {
+      const r = await fetch('/api/kv/' + encodeURIComponent('tasks:global'));
+      const j = await r.json();
+      return (j.value.tasks || []).length;
+    });
+    await page.click('#taskPanelClearDone');
+    await wait(1200);
+    const after = await page.evaluate(async () => {
+      const r = await fetch('/api/kv/' + encodeURIComponent('tasks:global'));
+      const j = await r.json();
+      const tasks = j.value.tasks || [];
+      return { total: tasks.length, done: tasks.filter(t => t.state === 'done').length };
+    });
+    if (after.done !== 0) throw new Error('清除后服务端还有干完的记录：' + after.done);
+    if (after.total >= before) throw new Error('清除没生效：' + before + ' -> ' + after.total);
+    const activeView = await page.evaluate(() => {
+      document.querySelector('#taskPanelBody .task-tab').click();
+      return document.querySelector('#taskPanelBody').innerText.replace(/\s+/g, ' ').trim();
+    });
+    if (/第三条/.test(activeView)) throw new Error('清除后未完成页签还留着已清的那条');
+    ok('一键清除记录：只清干成的（服务端 ' + before + ' -> ' + after.total + ' 条），未完成的不动');
+  } catch (e) { bad('两个页签与一键清除', e); }
 
   // ⑦ 页面无异常
   try {
