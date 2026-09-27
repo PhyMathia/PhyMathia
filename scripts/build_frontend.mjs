@@ -15,6 +15,7 @@ const entries = [
   'memory.js',
   'utils.js',
   'session.js',
+  'send-queue.js',
   'render.js',
   'chat.js',
   'chat-features.js',

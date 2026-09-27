@@ -579,6 +579,10 @@
 
       // 保存期间可能已开始发送，不能再切换到另一份聊天历史。
       if (isStreaming) return;
+      // 队列里的请求带着旧会话的分支锚点（send-queue.js）。正常情况下队列在空闲时
+      // 会自己放行掉，走不到这里；留着只是兜底——万一某条卡住没发出去，让它跟着
+      // 旧会话一起留在原地，别隔一会儿冒出来发到新会话的画布上。
+      if (typeof _clearSendQueue === 'function') _clearSendQueue('已切换会话');
       // 切换
       setCurrentSessionId(id);
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();

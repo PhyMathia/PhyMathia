@@ -72,32 +72,41 @@
       });
     }
 
-    async function submitSocraticAnswer() {
-      if (isStreaming || socraticSubmitting || !pendingSocraticQuestion) return;
+    // 弹窗里的一切先拍成快照。排队要求闭包自带全部输入——因为 closeSocraticModal()
+    // 会把 pendingSocratic* 全清掉，而排队期间弹窗必须立刻关闭（字当场有去处）。
+    function _snapshotSocraticAnswer() {
       const answerEl = document.getElementById('socraticModalAnswer');
-      const answer = answerEl ? answerEl.value.trim() : '';
-      if (!answer) {
-        answerEl?.focus();
-        return;
-      }
-      const levelLabel = pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础';
-      const confidenceLabel = pendingSocraticConfidence === 'confident' ? '很有把握' : pendingSocraticConfidence === 'guess' ? '猜的' : '一般';
-      const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n把握程度：' + confidenceLabel + '\n追问问题：' + pendingSocraticQuestion + '\n我的回答：' + answer;
-      const branchId = pendingSocraticBranchId || _genBranchId();
-      const socraticPosition = pendingSocraticPosition ? { ...pendingSocraticPosition } : null;
+      return {
+        question: pendingSocraticQuestion,
+        level: pendingSocraticLevel,
+        parentMsg: pendingSocraticParentMsg,
+        sourceModule: pendingSocraticSourceModule,
+        confidence: pendingSocraticConfidence,
+        newLoop: pendingSocraticNewLoop,
+        fromPort: pendingSocraticFromPort,
+        branchId: pendingSocraticBranchId || _genBranchId(),
+        position: pendingSocraticPosition ? { ...pendingSocraticPosition } : null,
+        answer: answerEl ? answerEl.value.trim() : '',
+      };
+    }
+
+    async function _runSocraticAnswer(snap) {
+      const levelLabel = snap.level === 'advanced' ? '进阶' : snap.level === 'expand' ? '拓展' : '基础';
+      const confidenceLabel = snap.confidence === 'confident' ? '很有把握' : snap.confidence === 'guess' ? '猜的' : '一般';
+      const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n把握程度：' + confidenceLabel + '\n追问问题：' + snap.question + '\n我的回答：' + snap.answer;
       socraticSubmitting = true;
       try {
-        if (branchId && pendingSocraticNewLoop) {
+        if (snap.branchId && snap.newLoop) {
           const state = {
             active: true,
-            level: pendingSocraticLevel,
-            question: pendingSocraticQuestion,
+            level: snap.level,
+            question: snap.question,
             correctStreak: 0,
             answeredCount: 0,
             updatedAt: Date.now(),
           };
           try {
-            await fetch('/api/kv/' + encodeURIComponent('socratic:' + branchId), {
+            await fetch('/api/kv/' + encodeURIComponent('socratic:' + snap.branchId), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ value: state }),
@@ -106,23 +115,44 @@
             console.warn('Failed to start Socratic state:', err);
           }
         }
-        closeSocraticModal();
-        pendingSocraticNewLoop = false;
         currentBranch = 'socratic';
-        currentBranchId = branchId;
+        currentBranchId = snap.branchId;
         setActiveBranchAnchor({
-          parentId: pendingSocraticParentMsg,
-          sourceModule: pendingSocraticSourceModule,
+          parentId: snap.parentMsg,
+          sourceModule: snap.sourceModule,
           branchType: 'socratic',
-          branchId,
-          ...(pendingSocraticFromPort ? { fromPort: pendingSocraticFromPort } : {}),
-          branchLabel: '苏格拉底：' + (pendingSocraticLevel === 'advanced' ? '进阶' : pendingSocraticLevel === 'expand' ? '拓展' : '基础'),
-          ...(socraticPosition ? { position: socraticPosition } : {}),
+          branchId: snap.branchId,
+          ...(snap.fromPort ? { fromPort: snap.fromPort } : {}),
+          branchLabel: '苏格拉底：' + levelLabel,
+          ...(snap.position ? { position: snap.position } : {}),
         });
-        sendQuick(message);
+        // 返回 sendQuick 的 promise：flush 靠 await 它确认这一条真发出去了，才轮到下一条
+        return sendQuick(message);
       } finally {
         socraticSubmitting = false;
       }
+    }
+
+    async function submitSocraticAnswer() {
+      if (socraticSubmitting || !pendingSocraticQuestion) return;
+      const answerEl = document.getElementById('socraticModalAnswer');
+      const answer = answerEl ? answerEl.value.trim() : '';
+      if (!answer) {
+        answerEl?.focus();
+        return;
+      }
+      const snap = _snapshotSocraticAnswer();
+      // T42：AI 正忙着时不再静默吞掉。收下、关窗、排队——等这轮跑完自动发出去。
+      // 弹窗此刻就关：字当场有了去处，用户不会再以为是按钮坏了。
+      if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+        closeSocraticModal();
+        pendingSocraticNewLoop = false;
+        _enqueueSend('苏格拉底回答', function() { return _runSocraticAnswer(snap); });
+        return;
+      }
+      closeSocraticModal();
+      pendingSocraticNewLoop = false;
+      return _runSocraticAnswer(snap);
     }
 
     function _socraticExitMessage(prefix, level, question) {
@@ -130,32 +160,35 @@
       return prefix + '\n追问等级：' + levelLabel + '\n追问问题：' + question;
     }
 
+    // T42：给点提示 / 看讲解过去是裸 `if (isStreaming) return;`，点了毫无回音。
+    // 改成忙时排队。分支复用的判定（reuse）刻意留在闭包里**发的时候**再算——
+    // 那才是真正要接着走的那一轮的状态，比在点击瞬间算更准。
+    function _queueOrRunSocraticExit(label, prefix, question, level, parentMsg, sourceModule) {
+      const run = function() {
+        const message = _socraticExitMessage(prefix, level, question);
+        const reuse = currentBranch === 'socratic' && currentBranchId;
+        setActiveBranchAnchor({
+          parentId: parentMsg || '',
+          sourceModule: sourceModule || 'extend',
+          branchType: 'socratic',
+          branchId: reuse ? currentBranchId : _genBranchId(),
+          branchLabel: label,
+        });
+        return sendQuick(message);
+      };
+      if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+        _enqueueSend(label, run);
+        return;
+      }
+      return run();
+    }
+
     function startSocraticHint(question, level, parentMsg, sourceModule) {
-      if (isStreaming) return;
-      const message = _socraticExitMessage('[苏格拉底提示]', level, question);
-      const reuse = currentBranch === 'socratic' && currentBranchId;
-      setActiveBranchAnchor({
-        parentId: parentMsg || '',
-        sourceModule: sourceModule || 'extend',
-        branchType: 'socratic',
-        branchId: reuse ? currentBranchId : _genBranchId(),
-        branchLabel: '苏格拉底提示',
-      });
-      sendQuick(message);
+      return _queueOrRunSocraticExit('苏格拉底提示', '[苏格拉底提示]', question, level, parentMsg, sourceModule);
     }
 
     function startSocraticExplain(question, level, parentMsg, sourceModule) {
-      if (isStreaming) return;
-      const message = _socraticExitMessage('[苏格拉底讲解]', level, question);
-      const reuse = currentBranch === 'socratic' && currentBranchId;
-      setActiveBranchAnchor({
-        parentId: parentMsg || '',
-        sourceModule: sourceModule || 'extend',
-        branchType: 'socratic',
-        branchId: reuse ? currentBranchId : _genBranchId(),
-        branchLabel: '苏格拉底讲解',
-      });
-      sendQuick(message);
+      return _queueOrRunSocraticExit('苏格拉底讲解', '[苏格拉底讲解]', question, level, parentMsg, sourceModule);
     }
 
     function resetSocraticBranch() {
@@ -196,10 +229,23 @@
         return;
       }
       const anchor = pendingBranchModal;
-      closeBranchModal();
       if (anchor && typeof window.sendBranchQuick === 'function') {
+        // T42：必须先判忙、再关窗。原来的顺序是「关窗 → 发送 → 被守卫静默吞掉」，
+        // 结果弹窗关了、用户打的字凭空消失、什么都没发生——比「点了没反应」更糟，
+        // 那是实打实的丢东西。排队这条路让字有去处，也不再假装发出去了。
+        if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+          const capturedText = text;
+          const capturedAnchor = anchor;
+          closeBranchModal();
+          _enqueueSend('追问', function() { return window.sendBranchQuick(capturedText, capturedAnchor); });
+          return;
+        }
+        closeBranchModal();
         window.sendBranchQuick(text, anchor);
-      } else if (typeof showToast === 'function') {
+        return;
+      }
+      closeBranchModal();
+      if (typeof showToast === 'function') {
         // 2026-09-25 线性主聊天退役：无锚兜底发送已删——所有分支请求必须带锚
         showToast('追问丢失锚点，请在画布节点上重试');
       }

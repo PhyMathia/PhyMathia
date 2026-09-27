@@ -821,7 +821,17 @@ async function _extractKnowledgeFromWorkflow(question, moduleIds) {
 async function startQuestionWorkflow(text, opts) {
   const question = String((text || '').trim());
   if (!question) return;
-  if (typeof isStreaming !== 'undefined' && isStreaming) return;
+  // T42：这条守卫过去只查 isStreaming，而工作流全程不碰 isStreaming（它走
+  // _generateAnalysis → proxyChat，不经过 sendMessage），于是对它自己的通道形同虚设——
+  // 工作流正跑着还能再点一次「提问」，并发开出第二个工作流、两棵节点树打架。
+  // 忙碌判定统一收敛到 _isSendBusy()（send-queue.js），分支/苏格拉底与工作流两条路都覆盖。
+  // 整个函数原样重入即可，所以排队闭包不需要拆解它的收尾动作。
+  if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+    const capturedQuestion = question;
+    const capturedOpts = opts;
+    _enqueueSend('提问', function() { return startQuestionWorkflow(capturedQuestion, capturedOpts); });
+    return;
+  }
   const options = opts || {};
   let draftPlacement = null;
   if (options.draftNodeId && typeof _findDraftNode === 'function') {
@@ -1254,7 +1264,10 @@ async function _executeParallelWorkflow(targetIds, force) {
     _hideWorkflowProgress();
     _saveCustomNodes();
     renderGraphCanvas();
-    if (!wasAborted && completed && typeof notifyTaskCompleted === 'function') {
+    // 队列里还有东西时不报「工作流完成」：这轮完了但活儿没完，而且下一条马上
+    // 自动开跑，完成卡片会跟新进度撞在一起（chat.js 的「回复完成」同此口径）。
+    if (!wasAborted && completed && typeof notifyTaskCompleted === 'function'
+        && !(typeof _hasPendingSend === 'function' && _hasPendingSend())) {
       let parallelInfo = '';
       const wfLogs = window.__wfLogs || [];
       const moduleStarts = wfLogs
@@ -1266,6 +1279,9 @@ async function _executeParallelWorkflow(targetIds, force) {
       }
       notifyTaskCompleted(Date.now() - workflowStartedAt, '工作流完成' + parallelInfo);
     }
+    // 排队请求在这条最长的通道上等得最久（免费模型一次工作流 2-8 分钟），
+    // 放行点必须挂在工作流的 finally 上，不能只靠 sendMessage 那侧。
+    if (typeof _flushSendQueue === 'function') await _flushSendQueue();
   }
 }
 

@@ -20,7 +20,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=5649f6ac">
+  <link rel="stylesheet" href="/css/styles.min.css?v=62ffa6eb">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=9f438ff1">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=c0f0f307">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
@@ -137,6 +137,7 @@
       <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
       <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
       <span class="status-text" aria-live="polite">待命</span>
+      <button class="send-queue-chip" id="sendQueueChip" hidden aria-live="polite"></button>
       <div class="status-progress"><div class="status-progress-fill" id="statusProgressFill"></div></div>
       <span class="elapsed-time"></span>
     </div>
@@ -179,7 +180,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=b53d5b3f"></script>
+  <script src="/js/app.js?v=7825cc21"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 

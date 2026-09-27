@@ -229,8 +229,9 @@
 
     // ====== 画布直驱流式：内容写入 streamingAssistant，graph.js 定时取走渲染 ======
 
-    async function sendMessage() {
-      if (isStreaming) return;
+    // force 仅供排队重放使用：flush 时把之前抓下来的正文与锚点还原成全局态再走一遍
+    // 正常路径，而不是另开一条发送实现——这样各入口原有的收尾动作一处不漏。
+    async function sendMessage(force) {
       const text = (pendingQuickText || '').trim();
       pendingQuickText = '';
       if (!text) return;
@@ -239,6 +240,20 @@
       const branchMeta = _consumePendingBranch();
       if (!branchMeta) {
         if (typeof showToast === 'function') showToast('请先在画布节点上选择追问位置');
+        return;
+      }
+      // 忙碌兜底（T42）：正常入口——苏格拉底回答/追问/直接问AI/给点提示/看讲解——
+      // 都在自己那一层先收队，走不到这里；到这儿的是端口动作之类的直调。
+      // 这里也排队而不是丢弃：静默丢弃是 T42 报告的原始症状，用户只会以为按钮坏了。
+      // 收队必须排在发送锁之前、且整个过程同步，「发送锁覆盖首个异步等待」才仍成立。
+      if (!force && typeof _isSendBusy === 'function' && _isSendBusy()) {
+        const queuedText = text;
+        const queuedMeta = branchMeta;
+        _enqueueSend('追问', function() {
+          setActiveBranchAnchor(queuedMeta);
+          pendingQuickText = queuedText;
+          return sendMessage(true);
+        });
         return;
       }
       isStreaming = true;
@@ -476,7 +491,10 @@
           await saveCurrentSession();
           if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
           renderSessionList(); // 更新侧边栏时间显示
-          if (typeof notifyTaskCompleted === 'function' && duration) {
+          // 队列里还有东西时不弹「完成」：这一轮只是**这一轮**完了，活儿没干完，
+          // 弹完成卡片是骗人，而且下一条马上自动发出去，卡片会跟新进度撞在一起。
+          if (typeof notifyTaskCompleted === 'function' && duration
+              && !(typeof _hasPendingSend === 'function' && _hasPendingSend())) {
             notifyTaskCompleted(duration, '回复完成');
           }
         }
@@ -522,12 +540,15 @@
           pendingDeleteTimestamp = null;
           await _performDeleteMessages(ts);
         }
+        // 队列放最后：删除确认是这条 finally 里的收尾动作，抢在它前面发下一条会串台
+        if (typeof _flushSendQueue === 'function') await _flushSendQueue();
       }
       } catch (err) {
         console.error('Send preparation failed:', err);
         if (typeof showToast === 'function') showToast('发送未完成，请重试');
       } finally {
         isStreaming = false;
+        if (typeof _flushSendQueue === 'function') _flushSendQueue();
       }
     }
 
