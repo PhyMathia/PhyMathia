@@ -1264,6 +1264,34 @@
       color: var(--text-secondary);
       letter-spacing: 0.5px;
     }
+    .task-panel-head-btns { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    /* 两个页签：未完成（在跑/排队/失败，可重试）与已完成（可一键清除记录）。
+       用户 2026-09-27 明确要求分开——"要盯的"和"账本"不该混在一张单子里。 */
+    .task-tabs {
+      display: flex;
+      gap: var(--sp-1);
+      padding: var(--sp-2) 0 var(--sp-1);
+    }
+    .task-tab {
+      flex: 0 0 auto;
+      padding: 2px var(--sp-3);
+      border: 1px solid transparent;
+      border-radius: var(--r-md);
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+    }
+    .task-tab:hover { color: var(--text-primary); }
+    .task-tab.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--accent); }
+    .task-tab-count {
+      margin-left: 5px;
+      padding: 0 5px;
+      border-radius: var(--r-sm);
+      background: var(--btn-bg);
+      font-size: var(--fs-xs);
+    }
     .task-panel-body {
       max-height: min(58vh, 520px);
       overflow-y: auto;
@@ -1334,13 +1362,28 @@
     .task-btn--warn:hover { color: var(--danger); border-color: var(--danger); }
     .task-btn--mini { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
     .task-state-text { flex: 0 0 auto; }
-    .task-item.state-running .task-glyph { color: var(--accent); animation: taskSpin 1.6s linear infinite; }
+    .task-item.state-running .task-glyph { color: var(--accent); }
     .task-item.state-paused .task-glyph { color: var(--warn); }
     .task-item.state-done .task-glyph { color: var(--success); }
     .task-item.state-partial .task-glyph { color: var(--warn); }
     .task-item.state-error .task-glyph { color: var(--danger); }
     .task-item.state-stopped .task-glyph { color: var(--text-secondary); }
     .task-item.state-interrupted .task-glyph { color: var(--warn); }
+    /* 进行中的圈：CSS 画的圆环，同圆心匀速转。**不要退回 ⟳ 字符 + rotate**——
+       字符墨迹中心与字形盒中心不重合，转起来偏心还会一跳一跳（用户 2026-09-27
+       反馈「不是循环动画、不同圆心、有突变」就是它）。 */
+    .task-spin {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      box-sizing: border-box;
+      border: 2px solid rgba(74, 158, 255, 0.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: taskSpin 0.7s linear infinite;
+    }
+    .task-spin--sm { width: 9px; height: 9px; border-width: 1.5px; }
+    .task-glyph, .task-node-glyph { display: inline-flex; align-items: center; justify-content: center; }
     .task-node-list { margin: 4px 0 0 34px; }
     .task-node-row {
       display: flex;
@@ -1358,7 +1401,7 @@
       white-space: nowrap;
     }
     .task-node-row.state-running { color: var(--text-primary); }
-    .task-node-row.state-running .task-node-glyph { color: var(--accent); animation: taskSpin 1.6s linear infinite; }
+    .task-node-row.state-running .task-node-glyph { color: var(--accent); }
     .task-node-row.state-done .task-node-glyph { color: var(--success); }
     .task-node-row.state-error .task-node-glyph { color: var(--danger); }
     .task-node-row.state-blocked .task-node-glyph { color: var(--danger); }
@@ -1366,6 +1409,7 @@
     .task-node-note { color: var(--text-secondary); font-size: var(--fs-xs); }
     .header-btn.task-panel-btn { position: relative; }
     .header-btn.task-panel-btn.is-running { color: var(--accent); }
+    .progress-status .status-task-btn { position: relative; }
     .task-panel-badge {
       position: absolute;
       top: -5px;
@@ -1383,8 +1427,7 @@
     }
     @keyframes taskSpin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
-      .task-item.state-running .task-glyph,
-      .task-node-row.state-running .task-node-glyph { animation: none; }
+      .task-spin { animation: none; }
     }
     #dataPanel {
       color: var(--text-primary);

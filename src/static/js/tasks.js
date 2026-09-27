@@ -73,6 +73,8 @@ let _taskRenderTimer = null;
 let _taskPersistTimer = null;
 let _taskTickTimer = null;
 let _taskExpanded = {};    // taskId -> 是否展开节点明细（纯 UI 态，不落盘）
+let _taskTab = 'active';   // 面板页签：'active' = 未完成（在跑/排队/失败），'done' = 已完成
+                           // 用户 2026-09-27 要求两个分开：一边是"要盯的"，一边是"账本"。
 
 // 运行中的工作流任务上下文。**一次只跑一个任务**（用户拍板），所以一个模块级指针就够，
 // 不需要每任务各持一份。它的职责就两件：
@@ -103,6 +105,16 @@ function _taskClip(text, limit) {
 
 function _taskFind(id) {
   return _taskActive.find(t => t.id === id) || _taskHistory.find(t => t.id === id) || null;
+}
+
+// 「未完成」= 还在手上 + 没干成的（失败/部分完成/被停/被中断）。
+// 干成的（done）才进「已完成」页签——用户要的就是这一刀切干净。
+function _taskUnfinished() {
+  return _taskActive.concat(_taskHistory.filter(t => t.state !== 'done'));
+}
+
+function _taskDoneRecords() {
+  return _taskHistory.filter(t => t.state === 'done');
 }
 
 function _taskNodeFind(task, nodeId) {
@@ -385,6 +397,27 @@ function _tasksStopAll() {
   if (typeof showToast === 'function') showToast('已停止 ' + active.length + ' 条任务');
 }
 
+// 一键清除「已完成」记录（用户 2026-09-27 要求）。只动干成的那些：
+// 失败/中断的留在「未完成」页签上，等用户重试或自己删掉——清记录不该把待办也清了。
+function _tasksClearDone() {
+  const before = _taskHistory.length;
+  _taskHistory = _taskHistory.filter(t => t.state !== 'done');
+  const removed = before - _taskHistory.length;
+  if (!removed) {
+    if (typeof showToast === 'function') showToast('没有可清除的完成记录');
+    return;
+  }
+  _taskChanged();
+  if (typeof showToast === 'function') showToast('已清除 ' + removed + ' 条完成记录');
+}
+
+// 删单条记录（历史里的那些）。在跑的活儿删不掉——要删先停。
+function _taskForget(id) {
+  const before = _taskHistory.length;
+  _taskHistory = _taskHistory.filter(t => t.id !== id);
+  if (_taskHistory.length !== before) _taskChanged();
+}
+
 // ===== 重新生成（关页面后重开那条路） =====
 
 async function _taskRegenerate(id) {
@@ -601,6 +634,19 @@ function _taskStateLine(task) {
   return parts.filter(Boolean).join(' · ');
 }
 
+// 状态字形。**进行中不用 ⟳ 字符**：字符的墨迹中心与字形盒中心不重合，
+// rotate 起来看着偏心、还会一跳一跳（用户 2026-09-27 反馈）。改成 CSS 画的圆环，
+// 同圆心、匀速，和画布上「生成中」徽章那个圈是同一套视觉。
+function _taskGlyphHtml(state) {
+  if (state === 'running') return '<span class="task-spin"></span>';
+  return TASK_STATE_GLYPH[state] || '⋯';
+}
+
+function _taskNodeGlyphHtml(state) {
+  if (state === 'running') return '<span class="task-spin task-spin--sm"></span>';
+  return TASK_NODE_GLYPH[state] || '⋯';
+}
+
 function _taskActionsHtml(task) {
   const buttons = [];
   if (task.state === 'waiting') {
@@ -618,7 +664,6 @@ function _taskActionsHtml(task) {
 }
 
 function _taskNodeRowHtml(task, entry) {
-  const glyph = TASK_NODE_GLYPH[entry.state] || '⋯';
   const text = TASK_NODE_TEXT[entry.state] || entry.state;
   const timing = entry.state === 'running'
     ? ' ' + _taskElapsed(entry.startedAt, 0)
@@ -626,7 +671,7 @@ function _taskNodeRowHtml(task, entry) {
   const cancelable = (task.state === 'running' || task.state === 'paused') && entry.state !== 'done';
   const note = entry.note ? '<span class="task-node-note">' + _taskEsc(entry.note) + '</span>' : '';
   return '<div class="task-node-row state-' + _taskEsc(entry.state) + '">'
-    + '<span class="task-node-glyph">' + glyph + '</span>'
+    + '<span class="task-node-glyph">' + _taskNodeGlyphHtml(entry.state) + '</span>'
     + '<span class="task-node-label">' + _taskEsc(entry.label) + '</span>'
     + '<span class="task-node-state">' + _taskEsc(text + timing) + '</span>'
     + note
@@ -637,7 +682,6 @@ function _taskNodeRowHtml(task, entry) {
 
 function _taskRowHtml(task, options) {
   const opts = options || {};
-  const glyph = TASK_STATE_GLYPH[task.state] || '⋯';
   const expanded = !!_taskExpanded[task.id];
   const hasNodes = task.kind === 'workflow' && (task.nodes || []).length > 0;
   const doneCount = (task.nodes || []).filter(n => n.state === 'done').length;
@@ -650,9 +694,17 @@ function _taskRowHtml(task, options) {
   if (hasNodes) meta.push(doneCount + '/' + task.nodes.length + ' 已完成');
   const stateLine = _taskEsc(_taskStateLine(task));
   const time = opts.history ? _taskAgo(task.endedAt || task.createdAt) : '';
-  const regenerate = opts.history && task.replay
-    && (task.state === 'interrupted' || task.state === 'stopped' || task.state === 'error' || task.state === 'partial')
-    ? '<button type="button" class="task-btn" data-task-action="regenerate">重新生成</button>' : '';
+  const buttons = [];
+  // 没干成的（失败/部分完成/被停/被中断）：一键重试。工作流类能真重跑它那几颗节点。
+  // 一律给按钮、不按「有没有可重放内容」藏起来——失败行上没有重试入口，用户只会
+  // 以为功能没做；真重放不了时 `_taskRegenerate` 会当面说清楚为什么。
+  if (opts.history && task.state !== 'done') {
+    buttons.push('<button type="button" class="task-btn" data-task-action="retry">重试</button>');
+  }
+  // 历史记录可以单条删掉（在跑的删不掉——要删先停）
+  if (opts.history) {
+    buttons.push('<button type="button" class="task-btn task-btn--mini" data-task-action="forget" title="删除这条记录">✕</button>');
+  }
   const nodes = (hasNodes && expanded)
     ? '<div class="task-node-list">' + task.nodes.map(entry => _taskNodeRowHtml(task, entry)).join('') + '</div>'
     : '';
@@ -660,9 +712,9 @@ function _taskRowHtml(task, options) {
     + '" data-task-id="' + _taskEsc(task.id) + '">'
     + '<div class="task-row-main">'
     + caret
-    + '<span class="task-glyph">' + glyph + '</span>'
+    + '<span class="task-glyph">' + _taskGlyphHtml(task.state) + '</span>'
     + '<span class="task-title" title="' + _taskEsc(task.title) + '">' + _taskEsc(task.title) + '</span>'
-    + '<span class="task-btns">' + (regenerate + _taskActionsHtml(task)) + '</span>'
+    + '<span class="task-btns">' + (buttons.join('') + _taskActionsHtml(task)) + '</span>'
     + '</div>'
     + '<div class="task-row-sub">' + (meta.length ? '<span>' + meta.join(' · ') + '</span>' : '')
     + '<span class="task-state-text">' + stateLine + (time ? ' · ' + time : '') + '</span></div>'
@@ -670,17 +722,31 @@ function _taskRowHtml(task, options) {
     + '</div>';
 }
 
+function _taskTabsHtml() {
+  const unfinished = _taskUnfinished().length;
+  const done = _taskDoneRecords().length;
+  const tab = (key, label, count) => '<button type="button" class="task-tab'
+    + (_taskTab === key ? ' active' : '') + '" data-task-tab="' + key + '">' + label
+    + (count ? '<span class="task-tab-count">' + count + '</span>' : '') + '</button>';
+  return '<div class="task-tabs">'
+    + tab('active', '未完成', unfinished)
+    + tab('done', '已完成', done)
+    + '</div>';
+}
+
 function _taskPanelHtml() {
-  const activeHtml = _taskActive.map(t => _taskRowHtml(t, {})).join('');
-  const historyHtml = _taskHistory.slice(0, TASK_HISTORY_LIMIT).map(t => _taskRowHtml(t, { history: true })).join('');
-  const body = [];
-  if (!activeHtml && !historyHtml) {
-    body.push('<div class="task-empty">还没有任务。提问、追问、排队发送都会记在这儿。</div>');
+  const body = [_taskTabsHtml()];
+  if (_taskTab === 'active') {
+    const rows = _taskActive.map(t => _taskRowHtml(t, {}))
+      .concat(_taskHistory.filter(t => t.state !== 'done').map(t => _taskRowHtml(t, { history: true })));
+    body.push(rows.length
+      ? rows.join('')
+      : '<div class="task-empty">手上没有活儿。提问、追问、排队发送都会记在这儿。</div>');
   } else {
-    if (activeHtml) body.push(activeHtml);
-    if (historyHtml) {
-      body.push('<div class="task-history-head">历史</div>' + historyHtml);
-    }
+    const rows = _taskDoneRecords().map(t => _taskRowHtml(t, { history: true }));
+    body.push(rows.length
+      ? rows.join('')
+      : '<div class="task-empty">还没有干完的活儿。跑完的任务会落到这儿。</div>');
   }
   return body.join('');
 }
@@ -692,11 +758,15 @@ function _renderTaskPanel() {
   if (!panel) return;
   const body = panel.querySelector('.task-panel-body') || document.getElementById('taskPanelBody');
   if (body) body.innerHTML = _taskPanelHtml();
-  const btn = document.getElementById('taskPanelBtn');
-  if (btn) {
-    const count = _taskActive.length;
+  // 两个入口（顶栏三角 / 胶囊上的列表按钮）同步徽标：数的是「未完成」，
+  // 失败/中断的那些留在计数里，直到用户重试或删掉——账不能自己消失。
+  const count = _taskUnfinished().length;
+  const hasRunning = _taskActive.some(t => t.state === 'running');
+  for (const id of ['taskPanelBtn', 'progressTaskBtn']) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
     btn.classList.toggle('has-active', count > 0);
-    btn.classList.toggle('is-running', _taskActive.some(t => t.state === 'running'));
+    btn.classList.toggle('is-running', hasRunning);
     const badge = btn.querySelector('.task-panel-badge');
     if (badge) {
       badge.textContent = count ? String(count) : '';
@@ -704,7 +774,15 @@ function _renderTaskPanel() {
     }
   }
   const stopAll = document.getElementById('taskPanelStopAll');
-  if (stopAll) stopAll.disabled = _taskActive.length === 0;
+  if (stopAll) {
+    stopAll.hidden = _taskTab !== 'active';
+    stopAll.disabled = _taskActive.length === 0;
+  }
+  const clearDone = document.getElementById('taskPanelClearDone');
+  if (clearDone) {
+    clearDone.hidden = _taskTab !== 'done';
+    clearDone.disabled = _taskDoneRecords().length === 0;
+  }
 }
 
 function _taskRenderSoon() {
@@ -738,6 +816,12 @@ function toggleTaskPanel(e) {
     if (typeof _positionPanel === 'function') {
       void panel.offsetHeight;
       _positionPanel('taskPanel', (e && e.currentTarget) || document.getElementById('taskPanelBtn'));
+      // 胶囊停在屏幕下方时，面板挂在它下面会有一截探出视口——头部那排按钮就点不到了
+      // （真机自测逮到的：playwright 点「清除记录」一直等不到元素可点）。整块往上挪回来：
+      // 宁可盖住胶囊，也不能让面板的头掉出屏幕。
+      const rect = panel.getBoundingClientRect();
+      const overflow = rect.bottom - ((window.innerHeight || 0) - 8);
+      if (overflow > 0) panel.style.top = Math.max(8, rect.top - overflow) + 'px';
     }
     _taskLoadFromServer();
     _renderTaskPanel();
@@ -750,6 +834,14 @@ function toggleTaskPanel(e) {
 function _taskPanelClick(e) {
   const target = e.target;
   if (!target || typeof target.closest !== 'function') return;
+  const tabEl = target.closest('[data-task-tab]');
+  if (tabEl) {
+    e.preventDefault();
+    e.stopPropagation();
+    _taskTab = tabEl.getAttribute('data-task-tab') === 'done' ? 'done' : 'active';
+    _renderTaskPanel();
+    return;
+  }
   const actionEl = target.closest('[data-task-action]');
   if (!actionEl) return;
   const action = actionEl.getAttribute('data-task-action');
@@ -766,7 +858,8 @@ function _taskPanelClick(e) {
   if (action === 'pause') { _taskPauseToggle(taskId); return; }
   if (action === 'cancel') { _taskCancel(taskId); return; }
   if (action === 'cancel-node') { _taskCancelNode(taskId, actionEl.getAttribute('data-node-id')); return; }
-  if (action === 'regenerate') { _taskRegenerate(taskId); return; }
+  if (action === 'retry') { _taskRegenerate(taskId); return; }
+  if (action === 'forget') { _taskForget(taskId); return; }
 }
 
 function _initTaskPanel() {
@@ -779,6 +872,10 @@ function _initTaskPanel() {
   if (typeof document.addEventListener === 'function') {
     document.addEventListener('click', (e) => {
       if (!_taskPanelOpen) return;
+      // 事件处理器里重建过 DOM（面板每次刷新都重写 innerHTML）时，e.target 可能已脱离
+      // 文档——此时 contains 恒为 false，会把「面板内点击」误判成「点外部」而把面板
+      // 自己关掉（真机自测逮到的：点页签后面板消失）。ui.js:457 早记过同一个坑。
+      if (!e.target || !e.target.isConnected) return;
       const btn = document.getElementById('taskPanelBtn');
       if (panel.contains(e.target) || (btn && btn.contains(e.target))) return;
       panel.classList.remove('show');
@@ -803,6 +900,7 @@ if (typeof document !== 'undefined') {
   }
 }
 
-// 行内 onclick 只用到这两个；面板内部的按钮走事件委托，不往全局撒函数。
+// 行内 onclick 只用到这三个；面板内部的按钮走事件委托，不往全局撒函数。
 window.toggleTaskPanel = toggleTaskPanel;
 window.stopAllTasks = _tasksStopAll;
+window.clearDoneTasks = _tasksClearDone;

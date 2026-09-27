@@ -175,7 +175,7 @@ test('下游「上游缺失」的文案与状态词：blocked 不再混用 waiti
   assert.match(renderSrc, /上游缺失，无法生成/);
 });
 
-test('结账：结束的任务从「进行中」挪进历史，重开页面看到的「已中断」保留可重放内容', () => {
+test('结账：没干成的进「未完成」并给一键重试；重开页面看到的「已中断」保留可重放内容', () => {
   const { s, run } = fixture();
   run(`_tasksBeginWorkflow({ title: '丁', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });`);
   const taskId = run('_taskActive[0].id');
@@ -183,8 +183,8 @@ test('结账：结束的任务从「进行中」挪进历史，重开页面看�
   assert.equal(run('_taskActive.length'), 0);
   assert.equal(run('_taskHistory.length'), 1);
   const html = panelHtml(s);
-  assert.match(html, /历史/);
-  assert.match(html, /重新生成/, '被停掉的任务应该给一条重新生成的路');
+  assert.match(html, /重试/, '没干成的任务应该给一条一键重试的路');
+  assert.match(html, /data-task-action="forget"/, '历史记录该能单条删掉');
   // 重开页面：跑着/等着的标已中断，节点跟着收口
   const restored = run(`_taskSplitLoaded(${JSON.stringify([
     { id: 'task_h1', kind: 'workflow', title: '用一句话说明傅里叶变换', state: 'running', sessionId: 'sess_B', sessionTitle: '信号处理 2', createdAt: 1, nodes: [{ id: 'n9', label: '物理视角', state: 'running' }], replay: { nodeIds: ['n9'] } },
@@ -263,7 +263,63 @@ test('面板入口在顶栏（不挂会淡出的胶囊上），且没有任务�
   const runIdx = html.indexOf('id="runAllBtn"');
   assert.ok(btnIdx > runIdx && btnIdx - runIdx < 1200, '三角要在「▶ 全部开始」右边（用户草图的位置）');
   const { s, run } = fixture();
-  assert.match(panelHtml(s), /还没有任务/);
+  assert.match(panelHtml(s), /手上没有活儿/);
+  assert.match(panelHtml(s), /data-task-tab="active"/);
+  assert.match(panelHtml(s), /data-task-tab="done"/);
+});
+
+
+test('两个页签分开：没干成的在「未完成」，干成的才进「已完成」（用户 2026-09-27 要求）', () => {
+  const { s, run } = fixture();
+  run(`_tasksBeginWorkflow({ title: '干成的活儿', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });
+       _tasksEndWorkflow(_taskActive[0].id, 'done', '');`);
+  run(`_taskCreate({ kind: 'send', title: '失败的那条', state: 'running' });
+       _taskFinish(_taskActive[0].id, 'error', '模型返回了空内容');`);
+  run(`_taskCreate({ kind: 'send', title: '还在跑的那条', state: 'running' });`);
+  const unfinished = panelHtml(s);
+  assert.match(unfinished, /还在跑的那条/);
+  assert.match(unfinished, /失败的那条/);
+  assert.match(unfinished, /重试/, '失败的要能一键重试');
+  assert.doesNotMatch(unfinished, /干成的活儿/, '干成的不能混在未完成里');
+  run(`_taskTab = 'done';`);
+  const doneTab = panelHtml(s);
+  assert.match(doneTab, /干成的活儿/);
+  assert.doesNotMatch(doneTab, /失败的那条/, '失败的不该进已完成页签');
+  assert.doesNotMatch(doneTab, /还在跑的那条/);
+});
+
+test('一键清除记录：只清干成的，失败与在跑的必须留着（清记录不是清待办）', () => {
+  const { s, run } = fixture();
+  run(`_tasksBeginWorkflow({ title: '干成的甲', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });
+       _tasksEndWorkflow(_taskActive[0].id, 'done', '');
+       _tasksBeginWorkflow({ title: '失败的乙', workNodes: [{ id: 'n2', label: '数学视角' }], allIds: ['n2'] });
+       _tasksEndWorkflow(_taskActive[0].id, 'error', '模型返回了空内容');
+       _taskCreate({ kind: 'send', title: '在跑的丙', state: 'running' });
+       _tasksClearDone();`);
+  assert.equal(run('_taskDoneRecords().length'), 0, '干成的该被清掉');
+  assert.equal(run('_taskHistory.length'), 1, '失败的留在历史里等重试');
+  assert.equal(run('_taskActive.length'), 1, '在跑的不许被清');
+  run(`_taskForget(_taskHistory[0].id);`);
+  assert.equal(run('_taskHistory.length'), 0, '单条删除要生效');
+});
+
+test('进行中的转圈是 CSS 圆环，不是 ⟳ 字符（字符旋转偏心、会跳，用户反馈过）', () => {
+  const { s, run } = fixture();
+  run(`_taskCreate({ kind: 'send', title: '跑着的', state: 'running' });`);
+  const html = panelHtml(s);
+  assert.match(html, /class="task-spin"/, '进行中要画圆环');
+  assert.doesNotMatch(html, /⟳/, '不许再用 ⟳ 字符');
+  const css = readSrc('src/static/css/styles.css');
+  assert.match(css, /\.task-spin \{[\s\S]{0,400}border-radius: 50%/, '圆环必须是正圆');
+  assert.match(css, /\.task-spin \{[\s\S]{0,400}animation: taskSpin/, '圆环要匀速转');
+  assert.doesNotMatch(css, /state-running \.task-glyph \{[^}]*animation/, '字形不许再带旋转动画');
+});
+
+test('胶囊上也有一个入口（用户 2026-09-27 要求）：干活时胶囊常驻，列表随手可开', () => {
+  const html = readSrc('src/static/index.html');
+  assert.match(html, /id="progressTaskBtn"/, '胶囊上要有一个打开任务列表的按钮');
+  assert.match(html, /id="progressTaskBtn"[\s\S]{0,600}toggleTaskPanel\(event\)/, '它要能开面板');
+  assert.match(readSrc('src/static/js/tasks.js'), /\['taskPanelBtn', 'progressTaskBtn'\]/, '两个入口的徽标要一起更新');
 });
 
 let failed = 0;
