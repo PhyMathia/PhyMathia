@@ -1235,7 +1235,14 @@
        挂在顶栏「▶ 全部开始」右边的折叠三角上。外层回答"我在干什么活"，里层回答
        "这活卡在哪"，底部回答"之前干了什么"（用户给的三层结构）。入口挂顶栏而不是
        底部胶囊：胶囊跑完会自己淡出，挂它身上会经常"想看列表但三角不见了"。
-       底色/磨砂交给 .aurora-glass（本规则再写 background 简写会把极光层盖掉）。 */
+       底色/磨砂交给 .aurora-glass（本规则再写 background 简写会把极光层盖掉）。
+
+       停靠态（.task-panel--docked，tasks.js 开面板时加）：用户 2026-09-27 要求
+       「面板要是这个栏扩展出来的」——几何由 _dockTaskPanel() 按胶囊 rect 现算
+       （零缝隙、等宽/居中），本规则只管接缝处的形状：切上圆角、去上边框。
+       宽度在停靠态交给 JS（胶囊最长 550 > 这里的 480 上限），故 min/max 归零。
+       圆角衔接：胶囊底角与面板顶角**都设 0**——胶囊顶仍是胶囊、面板底仍 r-lg，
+       轮廓读作「胶囊头 → 直筒身 → 圆脚」的一整块。 */
     .task-panel {
       display: none;
       position: fixed;
@@ -1250,6 +1257,13 @@
       color: var(--text-primary);
     }
     .task-panel.show { display: block; }
+    .task-panel--docked {
+      border-top: none;
+      border-radius: 0 0 var(--r-lg) var(--r-lg);
+      min-width: 0;
+      max-width: none;
+      padding-top: 8px;
+    }
     .task-panel-head {
       display: flex;
       align-items: center;
@@ -2147,6 +2161,56 @@
       --aurora-2: rgba(249, 168, 132, 0.06);
       --aurora-3: rgba(214, 148, 96, 0.05);
       --glass-tint: rgba(253, 250, 244, 0.82);
+    }
+
+    /* ===== 下面两档是「 situational」挂接档，不是一般载体档 =====
+       **摆放位置有讲究**：必须整块待在 --panel 之后、@keyframes 之前，且各自的
+       深色规则紧跟在自己的浅色规则前面。frontend_smoke 的「浅色极光纯暖调」用例
+       是按字符串切片取浅色块的（切块末端落在**下一个变体的深色规则**之前），
+       新档插在 --dialog 与 --panel 中间会把深色的 rgba(14,116,233) 吃进浅色块，
+       误判成「浅色里有蓝」而红。新增档位时同步改那条枚举，别只顾着插。 */
+
+    /* 挂接变体：任务面板停靠在进度胶囊下沿时用（tasks.js 按开合增删）。
+       要消的是胶囊(--compact，继承基础档 tint .58)与面板(--dialog，tint .88)之间那道
+       深浅台阶——两块挨在一起时 .58/.88 的落差会让面板看着像"贴上去的另一块东西"，
+       而不像从胶囊长出来的。口径：tint 拉回基础档 .58、色斑收到 compact 档，模糊不动
+       （ui-glass.md 通则：色斑强度只动 --aurora-* alpha，别拿 blur 当调色旋钮）。
+       --dialog 的可读性顾虑（密集列表压半透明底）在这里不成立：面板宽 360~560、
+       行高充足，且它背后就是胶囊本身。 */
+    .aurora-glass--attached {
+      --aurora-1: rgba(14, 116, 233, 0.22);
+      --aurora-2: rgba(109, 40, 217, 0.18);
+      --aurora-3: rgba(15, 118, 110, 0.20);
+      --glass-tint: rgba(4, 7, 18, 0.58);
+      background-size: 360% 340%, 340% 320%, 380% 360%, 100% 100%;
+    }
+
+    html[data-theme="light"] .aurora-glass--attached,
+    [data-theme="light"] .aurora-glass--attached {
+      --aurora-1: rgba(251, 191, 36, 0.12);
+      --aurora-2: rgba(249, 168, 132, 0.08);
+      --aurora-3: rgba(214, 148, 96, 0.06);
+      --glass-tint: rgba(252, 249, 243, 0.76);
+    }
+
+    /* 挂接宿主的对侧：面板挂上来的那一刻，胶囊要收投影、让底角。
+       基础档那套 0 18px 44px 的投影是给独立浮层准备的，胶囊正下方紧贴着面板时，
+       这道投影会糊在面板顶上一条。
+       这一档只动投影、不动色斑，所以不在 smoke 的浅色极光枚举里（枚举要求每档
+       三团色斑）；切片边界靠「下一档的深色规则」天然隔开。 */
+    .aurora-glass--dock-host {
+      box-shadow:
+        0 6px 16px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 1px rgba(148, 178, 255, 0.16);
+    }
+
+    html[data-theme="light"] .aurora-glass--dock-host,
+    [data-theme="light"] .aurora-glass--dock-host {
+      box-shadow:
+        0 6px 14px var(--glass-shadow),
+        inset 0 1px 0 var(--glass-inner-line),
+        inset 0 0 0 1px rgba(150, 120, 74, 0.22);
     }
 
     @keyframes auroraDrift {

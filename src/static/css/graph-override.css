@@ -629,6 +629,14 @@
   text-overflow: ellipsis;
 }
 
+/* 任务面板挂上来时（tasks.js 的 _dockTaskPanel），胶囊要让出底角、收投影，
+   好让「胶囊头 + 面板身」读作一整块。面板侧的顶角在 styles.css 的 .task-panel--docked。
+   挂在 .progress-status 之下而非裸类：胶囊有 .dragged（拖过）态，规则得跟着一起生效。 */
+.app-container .progress-status.aurora-glass--dock-host {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
 /* 小屏（≤480px）釜底抽薪：胶囊直接定宽，绕开 Chrome 对 shrink-to-fit flex 容器
    固有宽度的坑（可缩子项只按 min-width 计入，见 canvas-modules.md 2026-09-26 拍板）；
    进度条改为弹性填充，文字设 3.5em 底线——任何宽度下至少渲染一个字 + 省略号，

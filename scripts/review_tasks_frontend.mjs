@@ -22,6 +22,7 @@ function makeEl(tag) {
   const node = {
     tagName: tag, className: '', textContent: '', innerHTML: '', title: '', hidden: false,
     disabled: false, children: [], style: {}, dataset: {}, offsetHeight: 0, isConnected: true,
+    offsetWidth: 0, _rect: null,
     _classes: new Set(),
     addEventListener() {},
     appendChild(child) { node.children.push(child); return child; },
@@ -29,6 +30,7 @@ function makeEl(tag) {
     closest() { return null; },
     getAttribute() { return null; },
     querySelector() { return null; },
+    getBoundingClientRect() { return node._rect || { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; },
   };
   node.classList = {
     add: c => node._classes.add(c),
@@ -44,13 +46,26 @@ function makeEl(tag) {
   return node;
 }
 
-function fixture() {
+// anchor: 可选。传 { width, left, top, bottom } 就在页面里放一个进度胶囊，
+// 用来跑停靠路径；不传就没有胶囊，_dockTaskPanel 必须退回 _positionPanel。
+function fixture(opts = {}) {
   const panelBody = makeEl('div');
   const panel = makeEl('div');
   panel.querySelector = sel => (sel === '.task-panel-body' ? panelBody : null);
   const btn = makeEl('button');
   const stopAll = makeEl('button');
   const els = { taskPanel: panel, taskPanelBody: panelBody, taskPanelBtn: btn, taskPanelStopAll: stopAll };
+  if (opts.anchor) {
+    const anchor = makeEl('div');
+    anchor._rect = {
+      left: opts.anchor.left, top: opts.anchor.top,
+      right: opts.anchor.left + opts.anchor.width,
+      bottom: opts.anchor.bottom, width: opts.anchor.width, height: 40,
+    };
+    anchor.offsetWidth = opts.anchor.width;
+    anchor.offsetHeight = 40;
+    els.progressStatus = anchor;
+  }
 
   const s = {
     console: { log() {}, warn() {}, error() {} },
@@ -76,8 +91,9 @@ function fixture() {
     _saved: [],
     _graphStates: {},
     _fetchCalls: [],
+    _positionCalls: [],
     showToast() {},
-    _positionPanel() {},
+    _positionPanel(...args) { s._positionCalls.push(args); },
     fetch: async (url, init) => {
       s._fetchCalls.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
       return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
@@ -89,6 +105,8 @@ function fixture() {
     saveGraphState: (sid, state) => { s._graphStates[sid] = state; s._saved.push(sid); },
   };
   s.window = s;
+  s.innerWidth = 1280;
+  s.innerHeight = 900;
   vm.createContext(s);
   vm.runInContext(readSrc('src/static/js/tasks.js'), s, { filename: 'tasks.js' });
   const run = code => vm.runInContext(code, s);
@@ -263,7 +281,7 @@ test('面板入口在顶栏（不挂会淡出的胶囊上），且没有任务�
   const runIdx = html.indexOf('id="runAllBtn"');
   assert.ok(btnIdx > runIdx && btnIdx - runIdx < 1200, '三角要在「▶ 全部开始」右边（用户草图的位置）');
   const { s, run } = fixture();
-  assert.match(panelHtml(s), /手上没有活儿/);
+  assert.match(panelHtml(s), /暂无/);
   assert.match(panelHtml(s), /data-task-tab="active"/);
   assert.match(panelHtml(s), /data-task-tab="done"/);
 });
@@ -320,6 +338,92 @@ test('胶囊上也有一个入口（用户 2026-09-27 要求）：干活时胶�
   assert.match(html, /id="progressTaskBtn"/, '胶囊上要有一个打开任务列表的按钮');
   assert.match(html, /id="progressTaskBtn"[\s\S]{0,600}toggleTaskPanel\(event\)/, '它要能开面板');
   assert.match(readSrc('src/static/js/tasks.js'), /\['taskPanelBtn', 'progressTaskBtn'\]/, '两个入口的徽标要一起更新');
+});
+
+// ===== 挂接胶囊（用户 2026-09-27：「我希望这个任务列表就像是这个栏扩展出来的」）=====
+
+test('源码契约：面板挂在胶囊下沿，接缝零缝隙，且不借用共用的 _positionPanel', () => {
+  const src = readSrc('src/static/js/tasks.js');
+  const toggle = src.slice(src.indexOf('function toggleTaskPanel'), src.indexOf('function _taskPanelClick'));
+  assert.match(toggle, /_dockTaskPanel\(\)/, '开面板要先试着停靠到胶囊');
+  assert.match(toggle, /!_dockTaskPanel\(\)[\s\S]{0,120}_positionPanel/, '停靠不上才退回通用路径');
+  assert.match(toggle, /_undockTaskPanel\(\)/, '关面板要撤停靠');
+  // 通用路径必须留着手：难度/模型/数据三个面板还靠它，删了就是连带事故
+  const ui = readSrc('src/static/js/ui.js');
+  assert.match(ui, /function _positionPanel\(panelId, triggerEl\)/, '共用的通用定位函数不许被改掉');
+  assert.doesNotMatch(src, /function _positionPanel\(/, 'tasks.js 不许自己重定义通用定位');
+  // 缝隙是 0：top 直接取胶囊 rect.bottom，不带任何 +N 偏移
+  const dock = src.slice(src.indexOf('function _dockTaskPanel'), src.indexOf('function _undockTaskPanel'));
+  assert.match(dock, /const top = Math\.max\(8, rect\.bottom\);/, '面板顶部就是胶囊下沿，不留缝');
+  assert.doesNotMatch(dock, /rect\.bottom\)\s*\+\s*\d/, '接缝不许留偏移（旧路径的 +6 会露馅）');
+  // 拖胶囊时面板要跟过去
+  assert.match(src, /window\._taskPanelDockFollow = _dockTaskPanel/, '要暴露跟随钩子给 chat.js');
+  const chat = readSrc('src/static/js/chat.js');
+  assert.match(chat, /_taskPanelDockFollow/, '胶囊拖动要回调面板重新贴位');
+});
+
+test('停靠几何：等宽时左右边缘对齐胶囊、零缝隙地吊在下沿', () => {
+  // 胶囊 550 宽、居中于 1280 视口 → left 365，底沿 y=150
+  const { s, run, els } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150 } });
+  run('toggleTaskPanel();');
+  assert.ok(els.taskPanel.classList.contains('show'), '面板要打开');
+  assert.ok(els.taskPanel.classList.contains('task-panel--docked'), '要进停靠态');
+  assert.ok(els.taskPanel.classList.contains('aurora-glass--attached'), '玻璃要降档，否则和胶囊差一道深浅台阶');
+  assert.ok(els.progressStatus.classList.contains('aurora-glass--dock-host'), '胶囊也要让底角收投影');
+  assert.equal(els.taskPanel.style.width, '550px', '胶囊 550 时面板同宽');
+  assert.equal(els.taskPanel.style.left, '365px', '等宽时左边缘与胶囊对齐');
+  assert.equal(els.taskPanel.style.top, '150px', '顶部就是胶囊下沿，零缝隙');
+  assert.equal(s._positionCalls.length, 0, '停靠成功就不该再走通用路径');
+});
+
+test('胶囊闲时只有 250px：面板撑到 360 底线并按胶囊中线居中（不照抄压扁列表）', () => {
+  // 闲时恒 250px 是 Chrome 对可缩 flex 子项固有宽度的坑，拍板见 canvas-modules.md 2026-09-26
+  const { run, els } = fixture({ anchor: { width: 250, left: 515, top: 110, bottom: 150 } });
+  run('toggleTaskPanel();');
+  assert.equal(els.taskPanel.style.width, '360px', '不能被压到 250，列表装不下');
+  // 胶囊中线 = 515 + 125 = 640 → 面板 360 宽 → left = 460
+  assert.equal(els.taskPanel.style.left, '460px', '比胶囊宽时按中线居中，吊在它下面');
+  assert.equal(els.taskPanel.style.top, '150px');
+});
+
+test('关面板要把停靠态撤干净，否则胶囊底角永远回不来', () => {
+  const { run, els } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150 } });
+  run('toggleTaskPanel(); toggleTaskPanel();');
+  assert.ok(!els.taskPanel.classList.contains('show'));
+  assert.ok(!els.taskPanel.classList.contains('task-panel--docked'), '停靠类要摘');
+  assert.ok(!els.taskPanel.classList.contains('aurora-glass--attached'), '玻璃降档要撤');
+  assert.ok(!els.progressStatus.classList.contains('aurora-glass--dock-host'), '胶囊要让回底角');
+  assert.equal(els.taskPanel.style.width, '', '内联宽度要清，别把停靠几何漏给下一次通用打开');
+});
+
+test('页面里没有胶囊时退回通用路径，不能整个面板开不出来', () => {
+  const { s, run, els } = fixture();
+  run('toggleTaskPanel();');
+  assert.ok(els.taskPanel.classList.contains('show'), '没有锚点也必须能打开');
+  assert.equal(s._positionCalls.length, 1, '要退回 _positionPanel 挂到触发器下方');
+  assert.ok(!els.taskPanel.classList.contains('task-panel--docked'));
+});
+
+test('胶囊被拖到屏幕下沿：头部按钮必须还在屏内（真机踩过：清除记录点不到）', () => {
+  // 胶囊底沿 y=820，视口 900 → 缝隙以下只剩 72px，放不下 120 的最小高度
+  const { run, els } = fixture({ anchor: { width: 550, left: 365, top: 780, bottom: 820 } });
+  run('toggleTaskPanel();');
+  assert.ok(els.taskPanel.classList.contains('show'));
+  assert.ok(els.taskPanel.style.maxHeight, '要限高并内部滚动，不能让面板翻出视口');
+  const top = parseInt(els.taskPanel.style.top, 10);
+  assert.ok(top + parseInt(els.taskPanel.style.maxHeight, 10) <= 900, '面板底不能超出视口');
+});
+
+test('CSS：接缝两边圆角同时拉直 + 胶囊让底角（否则读起来还是两块）', () => {
+  const css = readSrc('src/static/css/styles.css');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}border-radius: 0 0 var\(--r-lg\) var\(--r-lg\)/,
+    '面板上圆角要切掉');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}border-top: none/, '缝里不留框线');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}max-width: none/, '停靠时宽度交给 JS 算（胶囊最长 550 > 默认上限 480）');
+  assert.match(css, /\.aurora-glass--attached \{[\s\S]{0,400}--glass-tint/, '玻璃降档只能改变量，不许写 background 简写');
+  const override = readSrc('src/static/css/graph-override.css');
+  assert.match(override, /\.progress-status\.aurora-glass--dock-host \{[\s\S]{0,200}border-bottom-left-radius: 0/,
+    '胶囊底角要拉直');
 });
 
 let failed = 0;
