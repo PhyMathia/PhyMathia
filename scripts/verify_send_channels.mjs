@@ -9,6 +9,11 @@
 // 抽出共用读取口最容易出的错是「某一类节点不更新了」——静态断言看不出来，只有
 // 真发才知道。
 //
+// **2026-09-27 晚重写了 ②③④ 三条通道**（详见 docs/backlog.md T40 与文件内注释）：
+// 旧版从 `node.outputPorts` 取端口，而那个字段**全仓只存在于本脚本里**，产品端口是
+// 渲染时推导、写在 DOM data-* 上的——所以旧版必然报「源节点没有可用输出端口：[]」，
+// 且换任何 key 都验不了，而且那条报错长得像产品回归。三条通道现已各走产品里的真实入口。
+//
 // 用法：node scripts/verify_send_channels.mjs
 // 前置：服务在 5050 起着，且 opencode 网关可达（脚本会先探，不通就直接退出而不是
 // 假装通过）。真实 data/ 只读不碰——全程在临时数据目录里跑。
@@ -69,7 +74,15 @@ async function waitNodeSettled(page, nodeId, timeoutMs) {
     lastLen = st ? st.len : -1;
     await wait(700);
   }
-  throw new Error('节点 ' + nodeId + ' 超时未完成（最后长度 ' + lastLen + '）');
+  // 「长度 0」值得单独说：2026-09-27 实测 space-bunny-free **偶发**返回 HTTP 200 +
+  // finish_reason="length" + content 为空（这个模型把 max_tokens 大半花在 reasoning 上，
+  // 小 max_tokens 时正文根本没轮到生成——直连探测 3 次里 2 次空）。
+  // 那是上游/模型特性，**不是产品回归**，报错必须说清楚，否则下一个人会误判成产品在坏。
+  const emptyHint = lastLen === 0
+    ? '；注意：长度 0 常见于上游返回 200 但 content 为空（finish_reason=length，'
+      + '模型把 token 全用在 reasoning 上）——先重跑一次确认，别直接记成产品回归'
+    : '';
+  throw new Error('节点 ' + nodeId + ' 超时未完成（最后长度 ' + lastLen + '）' + emptyHint);
 }
 
 async function main() {
@@ -174,44 +187,242 @@ async function main() {
     } catch (e) { bad('通道① 工作流首问', e); }
 
     // ===== 2. 节点追问 / 3. 没看懂 / 4. 苏格拉底回答 =====
+    //
+    // 2026-09-27 重写（见 docs/backlog.md T40）。**旧版三条通道全走「拖输出端口」一条路，
+    // 且从 `node.outputPorts` 取端口——那个字段全仓只存在于本脚本里，产品从来没有过。**
+    // 端口是渲染时从 `_nodeOutputLabels()` 推导、写在 DOM 的 data-* 上的，所以旧版必然
+    // 报「源节点没有可用输出端口：[]」——**换任何 key 都验不了**，而且那条报错长得像产品回归。
+    //
+    // 更根本的是：三条通道在产品里根本不是同一条路，各走各的真实入口——
+    //   ② 节点追问   → 拖标签含「追问」的输出端口（物理/数学/知识图谱/可视化模块都有）
+    //   ③ 没看懂     → 模块节点上的按钮，走 `dontUnderstandModule()` 开分支弹窗，
+    //                  **没有名叫「没看懂」的输出端口**（`GRAPH_MODULE_DEFAULT_OUTPUTS`
+    //                  里 physics/math/graph/viz 只有「追问」）
+    //   ④ 苏格拉底回答 → 苏格拉底模块的端口是「问题1/2/3」、type=socratic；
+    //                  「回答练习」只存在于 `GRAPH_MODULE_DEFAULT_OUTPUTS.socratic`，
+    //                  而 `_moduleOutputPorts` 对 socratic 提前 return，那条配置走不到
+    // 下面 `__verifyPorts()` 按产品同构的方式从 DOM 组 portMeta，取不到就把**实际存在的
+    // 端口列出来**——宁可说清「没有这种端口」，也不要再伪装成产品坏了。
     if (rootId) {
-      for (const [label, portLabel] of [['② 节点追问', '追问'], ['③ 没看懂', '没看懂'], ['④ 苏格拉底回答', '回答练习']]) {
-        try {
-          const created = await page.evaluate(async ([srcId, plabel]) => {
-            const src = graphView.nodeById[srcId];
-            if (!src) return { err: '源节点不在了' };
-            const port = (src.outputPorts || []).find(p => String(p.label || '').includes(plabel))
-              || (src.outputPorts || [])[0];
-            if (!port) return { err: '源节点没有可用输出端口：' + JSON.stringify((src.outputPorts || []).map(p => p.label)) };
-            const before = graphView.nodes.length;
-            await window._createBranchNodeFromOutput(srcId, port.id || 'out-0', port,
-              (src.x || 0) + 460, (src.y || 0) + 240);
-            await new Promise(r => setTimeout(r, 800));
-            const fresh = graphView.nodes.slice(before);
-            return { n: fresh.length, id: fresh.length ? fresh[0].id : null };
-          }, [rootId, portLabel]);
-          if (created.err) throw new Error(created.err);
-          if (!created.id) throw new Error('没有新建出节点（' + created.n + ' 个）');
-          const st = await waitNodeSettled(page, created.id, 180000);
-          if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
-          ok(label + '：已发通，流式收到 ' + st.len + ' 字');
-        } catch (e) { bad(label, e); }
-      }
+      await page.evaluate(() => {
+        // 与 graph-interact.js 建 portMeta 的那段同构（decodeURIComponent 兜底、
+        // data-port-item 的 JSON.parse 兜底都照抄），别让脚本自己发明一套形状。
+        window.__verifyPorts = () => {
+          const dec = v => { try { return v ? decodeURIComponent(v) : ''; } catch (e) { return v || ''; } };
+          const out = [];
+          document.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
+            const nid = el.dataset.nodeId;
+            const n = graphView.nodeById[nid];
+            el.querySelectorAll(':scope > .graph-output-col > .graph-output-port').forEach(p => {
+              let item = null;
+              if (p.dataset.portItem) { try { item = JSON.parse(dec(p.dataset.portItem)); } catch (e) { item = null; } }
+              out.push({
+                nodeId: nid, portId: p.dataset.portId || 'out-0',
+                nx: (n && n.x) || 0, ny: (n && n.y) || 0,
+                meta: {
+                  type: p.dataset.portType || 'branch',
+                  branchType: p.dataset.portBranch || 'followup',
+                  attribute: p.dataset.attribute || '',
+                  question: dec(p.dataset.portQuestion),
+                  level: p.dataset.portLevel || '',
+                  label: dec(p.dataset.portLabel),
+                  item,
+                },
+              });
+            });
+          });
+          return out;
+        };
+        window.__verifyBranchFromPort = async (p, text) => {
+          const before = graphView.nodes.length;
+          await window._createBranchNodeFromOutput(p.nodeId, p.portId, p.meta, p.nx + 460, p.ny + 240);
+          await new Promise(r => setTimeout(r, 800));
+          const draft = graphView.nodes.slice(before).find(n => n.kind === 'draft');
+          // 拖端口建出来的是**待填写的草稿节点**，不发就永远没有内容（第一版就死在这：
+          // 报「超时未完成（最后长度 0）」）。真人接下来要么在草稿框里改字点「发送提问」，
+          // 要么（苏格拉底那种没有输入框的草稿）点「直接问AI」，脚本两条都照做。
+          if (!draft) return { n: graphView.nodes.length - before, id: null, why: '没建出草稿节点' };
+          const el = document.querySelector('[data-node-id="' + draft.id + '"]');
+          const ta = el && el.querySelector('.graph-draft-input');
+          const send = el && el.querySelector('.graph-draft-send');
+          const askAi = el && el.querySelector('.graph-socratic-ai');
+          if (askAi) askAi.click();
+          else if (ta && send) {
+            ta.value = text;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            send.click();
+          } else return { n: graphView.nodes.length - before, id: null, why: '草稿节点里既没有输入框/发送按钮也没有「直接问AI」' };
+          return { n: graphView.nodes.length - before, draftId: draft.id, id: null, sent: true, beforeCount: before };
+        };
+
+        // 草稿发送走的是 startQuestionWorkflow（一次完整工作流，要跑好几分钟），
+        // 回答节点不是立刻出现——第一版等 1.2 秒就断言「没有回答节点」，全是误判。
+        // 注意这里只按**节点是否出现**来找，**不要求 content 非空**：流式期间
+        // `node.content` 本来就是空的（实测生成中 clen=0 / status='running'），
+        // 等它有内容会一直等到超时。「内容是否到位」交给 waitNodeSettled 判。
+        // ⑤ 与 ③ 都必须**显式挑模块节点**，不能沿用 rootId：
+        // rootId 是「第一个 module 或 answer 节点」，很可能是**回答节点**，而
+        // `runWorkflowNode` 的守卫第一句就是 `node.messageIndex >= 0 → return`，
+        // 回答节点命中它就静默什么都不做（本轮 ⑤ 就这么失败过好几轮）。
+        window.__verifyPickModule = () => {
+          const m = graphView.nodes.find(n => n.kind === 'module' && n.moduleKey
+            && String(n.content || '').length && !n.busy);
+          return m ? { id: m.id, moduleKey: m.moduleKey, len: String(m.content || '').length } : null;
+        };
+
+        window.__verifyWaitAnswer = async (beforeCount, timeoutMs) => {
+          const t0 = Date.now();
+          while (Date.now() - t0 < (timeoutMs || 60000)) {
+            const hit = graphView.nodes.slice(beforeCount).find(n => n.kind === 'answer');
+            if (hit) return { id: hit.id, waited: Date.now() - t0 };
+            await new Promise(r => setTimeout(r, 500));
+          }
+          return { id: null, waited: Date.now() - t0 };
+        };
+      });
+
+      /** 在真实端口里按条件挑一个，挑不到就把实际有哪些端口报出来（诊断信息，不是产品判决） */
+      const pickPort = async (match) => {
+        const r = await page.evaluate((m) => {
+          const all = window.__verifyPorts();
+          const ok = p => (m.exactLabel ? p.meta.label === m.exactLabel : true)
+            && (m.type ? p.meta.type === m.type : true)
+            && (m.branchType ? p.meta.branchType === m.branchType : true)
+            && (m.preferKind ? (graphView.nodeById[p.nodeId] || {}).kind === m.preferKind : true);
+          // 先在 preferKind 里找，再放宽——否则 DOM 顺序会让答案节点的「苏格拉底追问」
+          // 抢在模块节点的「追问」前面（第一版就踩了：`includes('追问')` 命中了它）。
+          const scoped = all.filter(p => ok(p) && m.preferKind);
+          const hit = scoped[0] || all.find(ok) || null;
+          return { hit, available: all.map(p => (graphView.nodeById[p.nodeId] || {}).kind + ':' + p.meta.label) };
+        }, match);
+        if (!r.hit) {
+          throw new Error('画布上没有符合条件的输出端口（要 ' + JSON.stringify(match) + '）；'
+            + '实际存在：' + (r.available.length ? r.available.join(', ') : '（一个都没有）')
+            + '——这是脚本与产品 UI 不同步，不是产品回归');
+        }
+        return r.hit;
+      };
+
+      /**
+       * 等工作流空闲。**每条通道开跑前都要调**——②③④ 各自会启动一次完整工作流，
+       * 而发送入口（`sendMessage` / `submitSocraticAnswer` / `sendBranchQuick`…）都有
+       * 裸 `if (isStreaming) return;` 的忙碌守卫，正在生成时发出去会被**静默丢弃**。
+       * 这不是脚本的问题，是产品行为（见 docs/backlog.md T42），
+       * 但脚本必须自己避开，否则会间歇性失败（本轮 ③ 就这么飘过一次：上轮过、这轮不过）。
+       */
+      const waitIdle = async (label) => {
+        const ok = await page.evaluate(async () => {
+          const t0 = Date.now();
+          while (Date.now() - t0 < 300000) {
+            const busyNode = graphView.nodes.some(n => n.busy);
+            const runBtn = document.getElementById('statusRunBtn');
+            if (!busyNode && !(runBtn && runBtn.disabled)) return true;
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          return false;
+        });
+        if (!ok) throw new Error('等工作流空闲超时（300 秒）——' + label + ' 之前有工作流一直没跑完');
+      };
+
+      // ② 节点追问：模块节点上标签**恰好**是「追问」的端口 → 草稿 → 发送提问
+      try {
+        await waitIdle('② 节点追问');
+        const port = await pickPort({ exactLabel: '追问', preferKind: 'module' });
+        const created = await page.evaluate(p => window.__verifyBranchFromPort(p,
+          '请从数学视角进一步深入讲解：为什么散射强度与波长的四次方成反比？请给出推导。'), port);
+        if (!created.id && !created.sent) throw new Error(created.why || '没有可用节点');
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
+        if (!ans.id) throw new Error('草稿发出后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        ok('通道② 节点追问：已发通（模块「追问」端口 → 草稿 → 发送提问），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('通道② 节点追问', e); }
+
+      // ③ 没看懂：走 confused 分支。模块节点**没有 messageIndex**（内容存在 node.content 上），
+      //    所以锚点要用节点自己的 timestamp —— 这也是产品自己的做法
+      //    （graph-render.js 的 _vizCheckRegenerate 就是 `parentId: String(node.timestamp||'')`）。
+      //    与⑤「重新生成」不是同一条路：⑤是 runWorkflowNode 重跑模块，
+      //    ③是 sendBranchQuick 带锚点发一条新问题。
+      try {
+        await waitIdle('③ 没看懂');
+        const created = await page.evaluate(async () => {
+          const picked = window.__verifyPickModule();
+          if (!picked) return { err: '画布上没有已生成内容的模块节点' };
+          const node = graphView.nodeById[picked.id];
+          if (!node) return { err: '源节点不在了' };
+          const parentId = String(node.timestamp || '');
+          if (!parentId) return { err: '源节点没有 timestamp 可作锚点' };
+          const before = graphView.nodes.length;
+          window.dontUnderstandModule(node.moduleKey || 'extend', parentId);
+          await new Promise(r => setTimeout(r, 600));
+          const modal = document.getElementById('branchModal');
+          if (!modal || modal.hidden) return { err: '调 dontUnderstandModule 后分支弹窗没打开' };
+          window.submitBranchModal();
+          await new Promise(r => setTimeout(r, 1200));
+          return { beforeCount: before, moduleKey: node.moduleKey || 'extend' };
+        });
+        if (created.err) throw new Error(created.err);
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
+        if (!ans.id) throw new Error('提交分支弹窗后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        ok('通道③ 没看懂：已发通（confused 分支，源模块 ' + created.moduleKey + '），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('通道③ 没看懂', e); }
+
+      // ④ 苏格拉底回答：苏格拉底模块的「问题N」端口（type=socratic）→ 草稿点「直接问AI」
+      try {
+        await waitIdle('④ 苏格拉底回答');
+        const port = await pickPort({ type: 'socratic' });
+        const created = await page.evaluate(p => window.__verifyBranchFromPort(p,
+          '请围绕苏格拉底追问继续展开讲解：为什么瑞利散射公式里的四次方与分子尺度的关系要这样取？'), port);
+        if (!created.id && !created.sent) throw new Error(created.why || '没有可用节点');
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
+        if (!ans.id) throw new Error('草稿发出后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        ok('通道④ 苏格拉底回答：已发通（源端口「' + port.meta.label + '」），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('通道④ 苏格拉底回答', e); }
 
       // ===== 5. 重试（重新生成）=====
+      //
+      // ⚠️ 这一条**曾是假通过**，一并修掉。原来调的是 `submitRegenerateNode()`：
+      // 它第一件事是 `const s = _getChatHistory()[t.messageIndex]; if (!s) return;`，
+      // 而模块节点的 `messageIndex` 一律是 -1（内容存在 node.content 上，不在 chatHistory 里），
+      // 所以它**静默 return、什么都没做**；脚本随后量到的是节点原有的内容，
+      // 就报了「重生成后 162 字」——把一次没发生的发送记成了通过。
+      //
+      // 模块节点上「重新生成」按钮的真实入口是 `runWorkflowNode(id, true)`
+      // （**第二个参数 force 必须传 true**：不传时 `_workflowItemNeedsProgress` 对已生成的
+      // 节点返回 false，会被防重跑逻辑直接跳过——本轮实测不传 force 内容逐字节不变）。
+      // 并且这里**必须断言内容真的变了**，否则同样的假通过会再来一次。
+      //
+      // 还要**等工作流空闲**：`runWorkflowNode` 的守卫里有 `|| workflowRunActive`，
+      // 而 ②③④ 每条都启动了一次完整工作流，不等它跑完就调 → 静默 return（本轮踩过）。
       try {
-        const regen = await page.evaluate(async (id) => {
+        await waitIdle('⑤ 重试');
+        const regen = await page.evaluate(async () => {
+          const picked = window.__verifyPickModule();
+          if (!picked) return { err: '画布上没有已生成内容的模块节点' };
+          const id = picked.id;
           const n = graphView.nodeById[id];
           if (!n) return { err: '节点不在了' };
           const before = String(n.content || '');
-          const p = window.submitRegenerateNode(id);
-          if (p && p.then) await p;
-          return { beforeLen: before.length, node: id };
-        }, rootId);
+          const p = window.runWorkflowNode(id, true);
+          if (p && p.then) { try { await p; } catch (e) { return { err: 'runWorkflowNode 抛错：' + e.message }; } }
+          const t0 = Date.now();
+          while (Date.now() - t0 < 180000) {
+            const cur = graphView.nodeById[id];
+            const now = String((cur && cur.content) || '');
+            if (now && now !== before) return { beforeLen: before.length, afterLen: now.length, node: id, waited: Date.now() - t0 };
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          return { err: '调 runWorkflowNode(id, true) 后 180 秒内容仍未变化（moduleKey=' + picked.moduleKey + '）', beforeLen: before.length, node: id };
+        });
         if (regen.err) throw new Error(regen.err);
         const st = await waitNodeSettled(page, regen.node, 180000);
         if (st.len < 20) throw new Error('重生成后内容为空（' + st.len + ' 字）');
-        ok('⑤ 重试：已发通，重生成后 ' + st.len + ' 字（原 ' + regen.beforeLen + ' 字）');
+        ok('⑤ 重试：已发通，重生成后 ' + st.len + ' 字（原 ' + regen.beforeLen + ' 字，'
+          + Math.round(regen.waited / 1000) + ' 秒后确实变了）');
       } catch (e) { bad('⑤ 重试', e); }
     } else {
       ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试'].forEach(n =>

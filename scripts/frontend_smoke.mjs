@@ -1250,6 +1250,17 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   for (const p of ['zhipu', 'moonshot', 'dashscope', 'bigmodel', 'minimaxi', 'siliconflow', 'generativelanguage', 'anthropic', 'openrouter', 'groq', '11434', '1234']) {
     if (!code.includes(p)) throw new Error('预设注册表缺供应商特征串：' + p);
   }
+  // 每个预设的 hot（推荐星）id 必须真实存在于该预设的 models 里——hot 指向不存在的
+  // id 不会报错，只是那颗星永远点不出来，属于静默失效。2026-09-27 真实踩过：
+  // opencode 免费组的 hot 写的是 deepseek-v4-flash-free / mimo-v2.5-free，
+  // 而当时的清单里已经没有这两个。
+  for (const [key, preset] of Object.entries(sandbox.window.MODEL_PRESETS)) {
+    if (!preset || !Array.isArray(preset.models)) continue;
+    const ids = new Set(preset.models.map(m => m.id));
+    for (const hot of preset.hot || []) {
+      if (!ids.has(hot)) throw new Error('预设 ' + key + ' 的 hot 指向不存在的模型：' + hot);
+    }
+  }
   return true;
 });
 

@@ -43,15 +43,25 @@ const OPENCODE_GO_MODEL_LABELS = {
 };
 // DeepSeek 官方预置（模型 id 见 https://api-docs.deepseek.com/），
 // 密钥在模型面板 DeepSeek 组头统一填一次（platform.deepseek.com 申请）
+// OpenCode（免费）预置：**只收「本机真发通过」的模型，不是上游 `-free` 后缀的全集。**
+//
+// 2026-09-27 实测（无密钥直连 https://opencode.ai/zen/v1，逐个真发验证）：
+// 上游带 `-free` 的共 11 个，**其中只有 `space-bunny-free` 能被第三方 API 调用**，
+// 其余 10 个全废，且失败原因分三类、都不是重试能解决的：
+//   - 6 个 `FreeTierError`：free tier can only be used from within OpenCode
+//     （只在 OpenCode 客户端内可用，PhyMathia 作为第三方调用方永远调不通）
+//   - 2 个 `RegionError`：not available in your country（muse-spark-1.2/1.3-contributor-free）
+//   - `deepseek-v4-flash-free` → server_error「Model is unavailable」
+//   - `jev-1.13-free` → Internal server error
+// **所以「照上游 -free 列表机械同步」是错的**：那等于把 10 个必然报错的条目发给用户，
+// 正是 T41 那 5 个坏条目的翻版。`-free` 后缀只代表「对 OpenCode 客户端免费」，
+// 不代表「对第三方 API 可调用」。
+//
+// 维护办法：添加模型时用「手动添加 → ↻ 获取模型列表」拿全量清单（该接口公开可读，
+// 不带 Bearer 才读得到，见 docs/dev/models-api.md），**逐个真发验证**，只把通过的写进来。
+// 上游免费层变动频繁（2026-09 一次就废掉过 5 个旧条目），验证日期记在这里，过期就重验。
 const OPENCODE_FREE_MODEL_LABELS = {
-  'big-pickle': 'Big Pickle',
-  'mimo-v2.5-free': 'MiMo V2.5 Free',
-  'laguna-s-2.1-free': 'Laguna S 2.1 Free',
-  'ling-3.0-flash-free': 'Ling-3.0-flash Free',
-  'longcat-2.0-free': 'LongCat-2.0 Free',
-  'north-mini-code-free': 'North Mini Code Free',
-  'nemotron-3-ultra-free': 'Nemotron 3 Ultra Free',
-  'deepseek-v4-flash-free': 'DeepSeek V4 Flash Free',
+  'space-bunny-free': 'Space Bunny Free',
 };
 
 // ====== 模型预设注册表 ======
@@ -80,7 +90,7 @@ const MODEL_PRESETS = {
     baseUrl: OPENCODE_BASE_URL,
     apiKeyHint: '可填任意内容',
     keyOptional: true,
-    models: _presetModels(OPENCODE_FREE_MODEL_LABELS, ['deepseek-v4-flash-free', 'mimo-v2.5-free']),
+    models: _presetModels(OPENCODE_FREE_MODEL_LABELS, ['space-bunny-free']),
   },
   deepseek: {
     name: 'DeepSeek（深度求索）',
