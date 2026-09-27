@@ -17,8 +17,6 @@
 
   var POSTER_FONT = 'system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 
-  function _toast(msg) { if (typeof showToast === 'function') showToast(msg, 3200); }
-
   // ---------- 纯函数（smoke 断言 / 布局复用） ----------
 
   // LaTeX 轻转换：canvas 画不了公式，把常见命令换成可读符号（读得懂的近似，不求排版）
@@ -604,7 +602,7 @@
 
   function exportGraphPoster(scale) {
     if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
-      _toast('画布还没有内容，先提问生成一张探索网吧');
+      toastMsg('画布还没有内容，先提问生成一张探索网吧');
       return false;
     }
     var layout = posterLayout({
@@ -612,7 +610,7 @@
       edges: graphView.edges || [],
       groups: (graphView.groups || []),
     });
-    if (!layout) { _toast('画布还没有内容'); return false; }
+    if (!layout) { toastMsg('画布还没有内容'); return false; }
 
     var s = Math.max(1, Number(scale) || 1);
     // 浏览器上限收敛
@@ -642,11 +640,11 @@
           _drawPoster(ctx, layout, meta, theme, s, bgImg);
         } catch (err) {
           console.error('[graph-poster]', err);
-          _toast('海报绘制失败：' + (err && err.message ? err.message : err));
+          toastMsg('海报绘制失败：' + (err && err.message ? err.message : err));
           return;
         }
         canvas.toBlob(function (blob) {
-          if (!blob) { _toast('PNG 编码失败'); return; }
+          if (!blob) { toastMsg('PNG 编码失败'); return; }
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           var safe = String(meta.title).replace(/[\\/:*?"<>|\n\r]/g, '_');
@@ -656,12 +654,12 @@
           a.click();
           a.remove();
           setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-          _toast('已导出缩略知识海报 ' + outW + '×' + outH + '（' + Math.round(blob.size / 1024) + ' KB）——卡片式概览');
+          toastMsg('已导出缩略知识海报 ' + outW + '×' + outH + '（' + Math.round(blob.size / 1024) + ' KB）——卡片式概览', TOAST_MS_LONG);
         }, 'image/png');
       });
       done = true;
     } catch (err) {
-      _toast('导出失败：' + (err && err.message ? err.message : err));
+      toastMsg('导出失败：' + (err && err.message ? err.message : err));
     }
     return done;
   }

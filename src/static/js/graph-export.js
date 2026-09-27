@@ -29,10 +29,6 @@
 
   // ---------- 工具 ----------
 
-  function _toast(msg) {
-    if (typeof showToast === 'function') showToast(msg, 3200);
-  }
-
   function _normFamily(name) {
     return String(name || '').replace(/["']/g, '').trim().toLowerCase();
   }
@@ -551,28 +547,28 @@
   // ---------- 主流程 ----------
 
   function exportGraphImage(scale) {
-    if (_exporting) { _toast('正在导出上一张，请稍候…'); return; }
+    if (_exporting) { toastMsg('正在导出上一张，请稍候…'); return; }
     if (!graphInner || !(graphView.nodes || []).length) {
-      _toast('画布还没有内容，先提问生成一张探索网吧');
+      toastMsg('画布还没有内容，先提问生成一张探索网吧');
       return;
     }
     _exporting = true;
     _closeGraphExportMenu();
-    _toast('正在收集样式与字体…');
+    toastMsg('正在收集样式与字体…');
     try { if (typeof _measureNodes === 'function') _measureNodes(); } catch (e) {}
     var bounds = _exportBounds();
-    if (!bounds) { _exporting = false; _toast('无法计算画布范围'); return; }
+    if (!bounds) { _exporting = false; toastMsg('无法计算画布范围'); return; }
     var out = _resolveOutput(bounds, scale);
     var used = _collectUsedFamilies();
 
     _buildExportCss(used).then(function (css) {
       var clone = _buildExportClone();
-      _toast('正在以 ' + out.outW + '×' + out.outH + ' 渲染，大图需要几秒…');
+      toastMsg('正在以 ' + out.outW + '×' + out.outH + ' 渲染，大图需要几秒…');
       return graphExportBgPhoto().then(function (bgImg) {
         return _rasterize(clone, css, bounds, out, 'blob', bgImg).catch(function (err) {
           if (err && err.security) {
             // blob 通道被判污染：换 data URL 通道再试一次（排除内核对 blob 来源的判定差异）
-            _toast('安全策略拦截，正在切换备用通道重试…');
+            toastMsg('安全策略拦截，正在切换备用通道重试…');
             return _rasterize(clone, css, bounds, out, 'data', bgImg);
           }
           throw err;
@@ -581,12 +577,12 @@
     }).then(function (pngBlob) {
       var safe = _fileTitle().replace(/[\\/:*?"<>|\n\r]/g, '_');
       _download(pngBlob, 'PhyMathia探索网_' + safe + '_' + out.outW + 'x' + out.outH + '.png');
-      _toast('已导出超高清图片 ' + out.outW + '×' + out.outH + '（' + Math.round(pngBlob.size / 1024) + ' KB）');
+      toastMsg('已导出超高清图片 ' + out.outW + '×' + out.outH + '（' + Math.round(pngBlob.size / 1024) + ' KB）', TOAST_MS_LONG);
       _exporting = false;
     }).catch(function (err) {
       _exporting = false;
       console.error('[graph-export]', err);
-      _toast('导出失败：' + (err && err.message ? err.message : err));
+      toastMsg('导出失败：' + (err && err.message ? err.message : err));
     });
   }
 
@@ -613,10 +609,10 @@
     if (_menuEl) { if (_menuEl.isConnected) { _closeGraphExportMenu(); return; } _menuEl = null; }
     if (!graphCanvas) graphCanvas = document.getElementById('graphCanvas');
     if (!graphCanvas) return;
-    if (!(graphView.nodes || []).length) { _toast('画布还没有内容，先提问生成一张探索网吧'); return; }
+    if (!(graphView.nodes || []).length) { toastMsg('画布还没有内容，先提问生成一张探索网吧'); return; }
     try { if (typeof _measureNodes === 'function') _measureNodes(); } catch (e) {}
     var bounds = _exportBounds();
-    if (!bounds) { _toast('无法计算画布范围'); return; }
+    if (!bounds) { toastMsg('无法计算画布范围'); return; }
 
     // 海报预览尺寸：跑一次纯布局（不碰 canvas，开销可忽略）
     var posterLayout = null;
@@ -697,14 +693,14 @@
       if (previewBtn) {
         _closeGraphExportMenu();
         if (typeof window.previewUtopiaInViewer === 'function') window.previewUtopiaInViewer();
-        else _toast('预览模块未加载（请硬刷新页面）');
+        else toastMsg('预览模块未加载（请硬刷新页面）');
         return;
       }
       var utopiaBtn = event.target.closest ? event.target.closest('#graphExportUtopia') : null;
       if (utopiaBtn) {
         _closeGraphExportMenu();
         if (typeof window.exportUtopiaSnapshot === 'function') window.exportUtopiaSnapshot();
-        else _toast('快照模块未加载（请硬刷新页面）');
+        else toastMsg('快照模块未加载（请硬刷新页面）');
         return;
       }
       var htmlBtn = event.target.closest ? event.target.closest('#graphExportHtml') : null;
@@ -718,7 +714,7 @@
         var ps = parseFloat(row.getAttribute('data-poster-scale'));
         if (ps > 0) {
           if (typeof window.exportGraphPoster === 'function') exportGraphPoster(ps);
-          else _toast('海报模块未加载（请硬刷新页面）');
+          else toastMsg('海报模块未加载（请硬刷新页面）');
           return;
         }
         var s = parseFloat(row.getAttribute('data-scale'));

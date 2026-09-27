@@ -594,7 +594,7 @@ async function optimizeKnowledgeSummaries() {
       // 任务期间数据可能变化（15 秒同步/手动编辑）：发送前现判，非目标条目直接跳过
       if (!current || !isLegacyCardSummaryItem(current)) { skipped++; continue; }
       done++;
-      showToast('优化摘要 ' + done + '/' + total + '：' + String(current.title || '').slice(0, 16) + '...', 4000);
+      showToast('优化摘要 ' + done + '/' + total + '：' + String(current.title || '').slice(0, 16) + '...', TOAST_MS_LONG);
       try {
         const text = await _requestRestatedSummary(current, model, controller.signal);
         if (!text) { failed++; continue; }
@@ -614,9 +614,9 @@ async function optimizeKnowledgeSummaries() {
     const panel = document.getElementById('knowledgePanel');
     if (panel && panel.classList && panel.classList.contains('active')) renderKnowledgePanel();
     const skipText = skipped ? '，跳过 ' + skipped + ' 条（期间已变更）' : '';
-    if (wasAborted) showToast('已停止：优化 ' + ok + ' 条，失败 ' + failed + ' 条' + skipText, 4000);
-    else if (failed) showToast('优化完成：' + ok + '/' + total + ' 成功，失败 ' + failed + ' 条' + skipText, 4000);
-    else showToast('优化完成：已重述 ' + ok + ' 条旧摘要' + skipText, 4000);
+    if (wasAborted) showToast('已停止：优化 ' + ok + ' 条，失败 ' + failed + ' 条' + skipText, TOAST_MS_LONG);
+    else if (failed) showToast('优化完成：' + ok + '/' + total + ' 成功，失败 ' + failed + ' 条' + skipText, TOAST_MS_LONG);
+    else showToast('优化完成：已重述 ' + ok + ' 条旧摘要' + skipText, TOAST_MS_LONG);
   }
 }
 
@@ -638,7 +638,7 @@ async function restatKnowledgeItemSummary(itemId) {
     showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
     return;
   }
-  showToast('正在重述摘要：' + String(item.title || '').slice(0, 16) + '...', 4000);
+  showToast('正在重述摘要：' + String(item.title || '').slice(0, 16) + '...', TOAST_MS_LONG);
   try {
     const text = await _requestRestatedSummary(item, model, new AbortController().signal);
     if (!text) { showToast('模型未返回有效摘要，请稍后重试'); return; }

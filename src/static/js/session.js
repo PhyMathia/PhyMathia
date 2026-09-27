@@ -604,11 +604,11 @@
       // 服务端失败时画布已从列表消失、无法重试，15 秒同步还会把会话并集推回服务端）
       const serverOk = await _deleteOnServer('/api/sessions/' + id);
       if (!serverOk && (await _checkServer())) {
-        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', 3600);
+        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', TOAST_MS_LONG);
         return;
       }
       if (!serverOk && typeof showToast === 'function') {
-        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', 3600);
+        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
       }
 
       // 删除消息

@@ -881,7 +881,7 @@ function saveNewModel() {
   renderModelList();
   renderModelSelects();
   if (typeof showToast === 'function') {
-    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）', 2600);
+    showToast(added > 0 ? `已添加 ${added} 个模型` : '没有新增模型（可能都已添加过）');
   }
 }
 
@@ -1045,7 +1045,7 @@ function applyModelListUpdate() {
   renderModelList();
   renderModelSelects();
   if (typeof showToast === 'function') {
-    showToast(`已更新「${MODEL_PRESETS[provider]?.name || provider}」：新增 ${res.added} 个，移除 ${res.removed} 个`, 2600);
+    showToast(`已更新「${MODEL_PRESETS[provider]?.name || provider}」：新增 ${res.added} 个，移除 ${res.removed} 个`);
   }
 }
 

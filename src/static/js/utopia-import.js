@@ -10,8 +10,6 @@
 (function () {
   var SESSIONS_KEY = 'phymathia_sessions';
 
-  function _toast(msg) { if (typeof showToast === 'function') showToast(msg, 3600); }
-
   // 纯函数：是否接受该文件为快照候选（.pmu 一律收；.json 需解析成功才算，见导入内部）
   function utopiaImportAccept(file) {
     if (!file) return false;
@@ -23,7 +21,7 @@
     reader.onload = function () {
       importUtopiaSnapshotText(String(reader.result || ''), file && file.name);
     };
-    reader.onerror = function () { _toast('读取快照文件失败'); };
+    reader.onerror = function () { toastMsg('读取快照文件失败'); };
     reader.readAsText(file);
   }
 
@@ -31,13 +29,13 @@
     var parse = (typeof window.parseUtopiaSnapshot === 'function')
       ? window.parseUtopiaSnapshot(text)
       : { ok: false, error: '解析器未加载（请硬刷新页面）' };
-    if (!parse.ok) { _toast('导入失败：' + parse.error); return false; }
+    if (!parse.ok) { toastMsg('导入失败：' + parse.error); return false; }
     var snap = parse.snapshot;
     // isStreaming 是主包顶层的 let（拼接产物同作用域可见）；不要经 window 读——
     // 部分环境 window 是代理对象，任何属性都"存在"且 truthy，会永远误判在生成中
     var streaming = (typeof isStreaming !== 'undefined') ? isStreaming : false;
     if (streaming) {
-      _toast('AI 正在生成回答，请等这轮结束后再导入快照');
+      toastMsg('AI 正在生成回答，请等这轮结束后再导入快照');
       return false;
     }
 
@@ -81,10 +79,10 @@
 
     // 刷新会话内存（loadSessions 重读 localStorage）再切换
     try { if (typeof window.syncFromServer === 'function') await window.syncFromServer(); } catch (e) {}
-    if (typeof window.switchToSession !== 'function') { _toast('导入完成，但切换模块未加载——请刷新页面查看新画布'); return true; }
+    if (typeof window.switchToSession !== 'function') { toastMsg('导入完成，但切换模块未加载——请刷新页面查看新画布'); return true; }
     await window.switchToSession(id);
     var sum = (typeof window.utopiaSnapshotSummary === 'function') ? window.utopiaSnapshotSummary(snap) : { nodes: '?', edges: '?' };
-    _toast('快照已恢复为新画布「' + meta.title + '」：' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / ' + msgs.length + ' 条消息');
+    toastMsg('快照已恢复为新画布「' + meta.title + '」：' + sum.nodes + ' 节点 / ' + sum.edges + ' 连线 / ' + msgs.length + ' 条消息', TOAST_MS_LONG);
     return true;
   }
 
