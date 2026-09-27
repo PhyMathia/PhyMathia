@@ -1,4 +1,3 @@
-const OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
 const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
 // OpenCode Go 预设（2026-09-14 自 https://opencode.ai/zen/go/v1/models 实时拉取；
 // 官方列表会滚动更新——预设清单只是初值，弹窗「获取模型列表」可随时在线刷新）。
@@ -43,26 +42,24 @@ const OPENCODE_GO_MODEL_LABELS = {
 };
 // DeepSeek 官方预置（模型 id 见 https://api-docs.deepseek.com/），
 // 密钥在模型面板 DeepSeek 组头统一填一次（platform.deepseek.com 申请）
-// OpenCode（免费）预置：**只收「本机真发通过」的模型，不是上游 `-free` 后缀的全集。**
-//
-// 2026-09-27 实测（无密钥直连 https://opencode.ai/zen/v1，逐个真发验证）：
-// 上游带 `-free` 的共 11 个，**其中只有 `space-bunny-free` 能被第三方 API 调用**，
-// 其余 10 个全废，且失败原因分三类、都不是重试能解决的：
+// ⚠️ 2026-09-27：**「OpenCode（免费）」预置已整块删除**（用户决定：不需要给它专门标识）。
+// 删除理由不是「清单过期」那么简单，是**这批免费模型第三方根本调不通**：
+// 逐个真发验证上游 11 个 `-free` 模型，只有 `space-bunny-free` 能被第三方 API 调用，
+// 其余 10 个分三类失败，且**都不是重试或过期能解决的**：
 //   - 6 个 `FreeTierError`：free tier can only be used from within OpenCode
-//     （只在 OpenCode 客户端内可用，PhyMathia 作为第三方调用方永远调不通）
+//     （网关侧写死的策略——免费额度只给 OpenCode 客户端本身，PhyMathia 作为
+//      第三方调用方永远调不通）
 //   - 2 个 `RegionError`：not available in your country（muse-spark-1.2/1.3-contributor-free）
-//   - `deepseek-v4-flash-free` → server_error「Model is unavailable」
-//   - `jev-1.13-free` → Internal server error
-// **所以「照上游 -free 列表机械同步」是错的**：那等于把 10 个必然报错的条目发给用户，
-// 正是 T41 那 5 个坏条目的翻版。`-free` 后缀只代表「对 OpenCode 客户端免费」，
-// 不代表「对第三方 API 可调用」。
+//   - `deepseek-v4-flash-free`「Model is unavailable」；`jev-1.13-free`「Internal server error」
+// 关键认知：**`-free` 后缀只代表「对 OpenCode 客户端免费」，不代表「对第三方 API 可调用」**。
+// 留着一个只含 1 个模型的「免费」预置，会让人以为「填个网址就能白嫖一堆模型」。
 //
-// 维护办法：添加模型时用「手动添加 → ↻ 获取模型列表」拿全量清单（该接口公开可读，
-// 不带 Bearer 才读得到，见 docs/dev/models-api.md），**逐个真发验证**，只把通过的写进来。
-// 上游免费层变动频繁（2026-09 一次就废掉过 5 个旧条目），验证日期记在这里，过期就重验。
-const OPENCODE_FREE_MODEL_LABELS = {
-  'space-bunny-free': 'Space Bunny Free',
-};
+// 仍然想用免费模型的用户走「手动添加」自己配（就是下面这个入口，2026-09-27 实测可用）：
+//   供应商填 `opencode`（或任意自定义名）、baseUrl 填 https://opencode.ai/zen/v1、
+//   密钥留空、模型名填 space-bunny-free。
+// 加模型时可用「手动添加 → ↻ 获取模型列表」拉全量清单（该接口公开可读，不带 Bearer
+// 才读得到，见 docs/dev/models-api.md），但**清单只说明「上游列得出」，不说明
+// 「调得动」**——要自己发一发验证；上面那三类失败都不会在清单里体现。
 
 // ====== 模型预设注册表 ======
 // 添加模型弹窗「预设供应商」页的事实源：name/tagline 展示、baseUrl 预填、
@@ -83,14 +80,6 @@ const MODEL_PRESETS = {
     baseUrl: OPENCODE_GO_BASE_URL,
     apiKeyHint: '需要订阅密钥（opencode.ai）',
     models: _presetModels(OPENCODE_GO_MODEL_LABELS, ['glm-5.3', 'kimi-k3', 'deepseek-v4-pro', 'hy3']),
-  },
-  opencode: {
-    name: 'OpenCode（免费）',
-    tagline: 'zen 免费网关，无需密钥即可使用',
-    baseUrl: OPENCODE_BASE_URL,
-    apiKeyHint: '可填任意内容',
-    keyOptional: true,
-    models: _presetModels(OPENCODE_FREE_MODEL_LABELS, ['space-bunny-free']),
   },
   deepseek: {
     name: 'DeepSeek（深度求索）',
