@@ -1295,9 +1295,7 @@ function _buildGraphData(messages, state) {
   return { nodes, edges: _mapAnswerDefaultPorts(_assignDefaultPorts(edges), nodeById), nodeById };
 }
 
-function _edgeKey(edge) {
-  return (edge.from || '') + ':' + (edge.fromPort || 'out-0') + '->' + (edge.to || '') + ':' + (edge.toPort || 'in-0');
-}
+// _edgeKey 已上移到 utils.js（与 harness.js 共用一份，见那里的说明）
 
 function _normalizeGraphEdge(edge) {
   return {

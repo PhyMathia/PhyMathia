@@ -98,6 +98,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     return typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
   }
 
+  // 与 graph.js 的同名函数**故意不合并**：那边在 getGraphState 缺失时返回一份默认
+  // 状态，这边返回 null（表示「还没有状态」）。合成一份会静默改掉 Φ 的空态语义。
+  // 下次看到两处同名想合并，先读这一行。
   function _graphState() {
     return typeof window.getGraphState === 'function' ? window.getGraphState(_sessionId()) : null;
   }
@@ -216,9 +219,9 @@ let harnessLastAppliedBeforeSnapshot = null;
     return typeof window.getGraphViewEdges === 'function' ? window.getGraphViewEdges() : [];
   }
 
-  function _edgeKey(edge) {
-    return (edge.from || '') + ':' + (edge.fromPort || 'out-0') + '->' + (edge.to || '') + ':' + (edge.toPort || 'in-0');
-  }
+  // _edgeKey 已上移到 utils.js（与 graph.js 共用一份）。这里直接用全局的，
+  // 不再各算一遍——Φ 预览态与主画布态的连线键必须逐字一致，否则「预览里看得到、
+  // 应用后没了」这类症状查不出根因。
 
   function _edgeParts(key) {
     const match = String(key || '').match(/^(.+?):(out-\d+)->(.+?):(in-\d+)$/);

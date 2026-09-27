@@ -19,6 +19,18 @@ function toastMsg(msg, ms) {
   else showToast(msg, ms);
 }
 
+// ---------- 连线键 ----------
+// 曾经 graph.js 与 harness.js 各写一份逐字节相同的 _edgeKey。Φ 的预览态与主画布
+// 态各算一遍连线键，两份实现只要有一份漂了，「预览里看得到、应用后没了」这类
+// 症状就查不出根因。收到这里，两个包都加载、都早于它们，调用点一个字不用改。
+//
+// **只合并了 _edgeKey，没合并 _graphState**：那两份不是重复实现——graph.js 在
+// getGraphState 缺失时返回一份默认状态，harness.js 返回 null（表示「还没有状态」）。
+// 合成一份会静默改掉 Φ 的空态语义，那是行为变更不是清理，要改单独立一轮。
+function _edgeKey(edge) {
+  return (edge.from || '') + ':' + (edge.fromPort || 'out-0') + '->' + (edge.to || '') + ':' + (edge.toPort || 'in-0');
+}
+
 // HTML 转义（DOM 方式 + 引号补齐）
 // 引号必须转义：结果会被拼进 value="..." 属性与 onclick 单引号字符串，
 // 不转义会造成属性逃逸注入
