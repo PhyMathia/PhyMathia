@@ -416,14 +416,53 @@ test('胶囊被拖到屏幕下沿：头部按钮必须还在屏内（真机踩�
 
 test('CSS：接缝两边圆角同时拉直 + 胶囊让底角（否则读起来还是两块）', () => {
   const css = readSrc('src/static/css/styles.css');
-  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}border-radius: 0 0 var\(--r-lg\) var\(--r-lg\)/,
-    '面板上圆角要切掉');
-  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}border-top: none/, '缝里不留框线');
-  assert.match(css, /\.task-panel--docked \{[\s\S]{0,300}max-width: none/, '停靠时宽度交给 JS 算（胶囊最长 550 > 默认上限 480）');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,400}border-radius: 0 0 var\(--r-2xl\) var\(--r-2xl\)/,
+    '面板上圆角切掉、底弧度用 --r-2xl 加大（用户反馈 12px 不好看；走令牌不写裸值）');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,400}border-top: none/, '缝里不留框线');
+  assert.match(css, /\.task-panel--docked \{[\s\S]{0,400}max-width: none/, '停靠时宽度交给 JS 算（胶囊最长 550 > 默认上限 480）');
   assert.match(css, /\.aurora-glass--attached \{[\s\S]{0,400}--glass-tint/, '玻璃降档只能改变量，不许写 background 简写');
   const override = readSrc('src/static/css/graph-override.css');
   assert.match(override, /\.progress-status\.aurora-glass--dock-host \{[\s\S]{0,200}border-bottom-left-radius: 0/,
     '胶囊底角要拉直');
+});
+
+test('高度下限 CSS 与 JS 两处数值必须一致（用户「高度变成两倍」）', () => {
+  const css = readSrc('src/static/css/styles.css');
+  const src = readSrc('src/static/js/tasks.js');
+  // 规则块里夹着长注释，按花括号切出整条规则再取值，别拿 [\s\S]{0,N} 猜窗口长度。
+  // 用行首缩进定位那条**独立**规则——`.task-panel.show.task-panel--docked` 是另一条
+  // （只管 display:flex），indexOf 会先撞上它。
+  const at = css.search(/\n\s{4}\.task-panel--docked \{/);
+  const rule = at < 0 ? '' : css.slice(at, css.indexOf('}', at) + 1);
+  const cssVal = rule.match(/min-height: (\d+)px/);
+  const jsVal = src.match(/_TASK_DOCK_PANEL_MIN_H = (\d+)/);
+  assert.ok(cssVal, '停靠态要声明高度下限（空面板原本只有 135px，吊在胶囊下像矮墩子）');
+  assert.ok(jsVal, 'JS 要有同一个常量的副本');
+  assert.equal(Number(jsVal[1]), Number(cssVal[1]),
+    '两处数值必须相等：JS 那份只在可用高度不够时压低，CSS 那份管体量，岔开了就有一边形同虚设');
+  assert.ok(Number(cssVal[1]) >= 240, '下限要真的把面板撑到约两倍（135 → 268）');
+});
+
+test('空间不够时把高度下限压低（CSS 的 min-height 会盖过 max-height）', () => {
+  // 胶囊底沿 820 / 视口 900 → 可用不足 268，必须压低，否则面板直接顶出视口
+  const { run, els } = fixture({ anchor: { width: 550, left: 365, top: 780, bottom: 820 } });
+  run('toggleTaskPanel();');
+  const minH = parseInt(els.taskPanel.style.minHeight, 10);
+  const top = parseInt(els.taskPanel.style.top, 10);
+  assert.ok(minH <= 900 - 16, '下限不许超过视口高度');
+  assert.ok(top + minH <= 900, '面板底不能超出视口（头部按钮点不到是真机踩过的）');
+  // 正常位置不该被压
+  const { run: run2, els: els2 } = fixture({ anchor: { width: 550, left: 365, top: 110, bottom: 150 } });
+  run2('toggleTaskPanel();');
+  assert.equal(els2.taskPanel.style.minHeight, '268px', '空间够时下限照常生效');
+});
+
+test('撑高的空白要还给内容：body 吃剩余高度、空状态居中', () => {
+  const css = readSrc('src/static/css/styles.css');
+  assert.match(css, /\.task-panel--docked \.task-panel-body \{[\s\S]{0,200}flex: 1 1 auto/, 'body 要吃掉剩余高度');
+  assert.match(css, /\.task-panel--docked \.task-empty \{ margin: auto 0/, '空面板时「暂无」要居中，不能吊在顶上');
+  assert.match(css, /\.task-panel\.show\.task-panel--docked \{[\s\S]{0,120}display: flex/,
+    '变 flex 必须带 .show，否则类先到会闪一个空面板');
 });
 
 let failed = 0;

@@ -314,6 +314,7 @@
       --r-md: 8px;      /* 常规控件（高 28–40px）：按钮、输入框、下拉、选项 */
       --r-lg: 12px;     /* 容器：卡片、面板、弹窗、浮层、菜单 */
       --r-xl: 16px;     /* 大浮层：画布工具栏、引导卡、示例讲解 */
+      --r-2xl: 24px;    /* 通体大圆角：接缝拉直后独占收口的底角（任务面板停靠态） */
       --r-pill: 999px;  /* 胶囊：进度条、筛选项、状态徽章 */
 
       --fs-2xs: 10px;   /* 角标、极小注脚 */
@@ -1257,13 +1258,35 @@
       color: var(--text-primary);
     }
     .task-panel.show { display: block; }
+    /* 停靠态的几何以 .show 为前提（_dockTaskPanel 只在打开时加这个类），所以变 flex
+       也得带上 .show，否则类先到、display 先漏出去会闪一个空面板。 */
+    .task-panel.show.task-panel--docked {
+      display: flex;
+      flex-direction: column;
+    }
     .task-panel--docked {
       border-top: none;
-      border-radius: 0 0 var(--r-lg) var(--r-lg);
+      /* 底弧度用 --r-2xl(24px) 而不是 --r-lg(12px)：接缝拉直之后，底角成了这一整块
+         **唯一**的收口，12px 挨着胶囊的 999px 圆角反差太大、看着像"下面被削平了"。
+         用户 2026-09-27 反馈「弧度不好看，再大一点」后定的值。
+         上两角仍是 0 —— 那是接缝，不能圆，一圆就露缝。 */
+      border-radius: 0 0 var(--r-2xl) var(--r-2xl);
       min-width: 0;
       max-width: none;
+      /* 高度下限：面板原本是内容驱动，任务少或空面板时只有 135px 上下，吊在胶囊下面
+         像一只矮墩子（用户反馈「高度变成两倍」）。给一条下限撑住体量，行多了照旧
+         撑到 JS 算出的 maxHeight 再内部滚动。数值与 tasks.js 的
+         _TASK_DOCK_PANEL_MIN_H 对齐，窄屏/矮窗由 JS 就地压低（CSS 的 min-height
+         会盖过 max-height，不压的话面板会顶出视口）。 */
+      min-height: 268px;
       padding-top: 8px;
     }
+    /* 撑出来的空白要还给内容：body 吃掉剩余高度，空状态居中，行多了在 body 里滚。 */
+    .task-panel--docked .task-panel-body {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .task-panel--docked .task-empty { margin: auto 0; }
     .task-panel-head {
       display: flex;
       align-items: center;

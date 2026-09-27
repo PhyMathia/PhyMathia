@@ -812,6 +812,11 @@ function _taskTickStop() {
 const _TASK_DOCK_MIN_W = 360;   // 面板宽度底线
 const _TASK_DOCK_MAX_W = 560;   // 胶囊最长 min(550px, 100vw-24px)，留 10px 余量
 const _TASK_DOCK_MIN_H = 120;   // 缝隙以下至少要留这么高，否则头部的按钮点不到
+// 停靠面板的高度下限（用户 2026-09-27「高度变成两倍」：原本内容驱动、空面板只有
+// 135px，吊在胶囊下面像矮墩子）。**必须与 styles.css 的
+// .task-panel--docked { min-height: 268px } 对齐**——那边管体量，这边只在空间不够
+// 时压低，因为 CSS 的 min-height 会盖过 max-height，不压面板就顶出视口了。
+const _TASK_DOCK_PANEL_MIN_H = 268;
 
 // 贴着胶囊下沿摆好面板。返回 false 表示没法停靠（页面上没有胶囊等），调用方退回
 // _positionPanel 的通用路径。**不碰 _positionPanel 本身**——难度/模型/数据三个面板共用它。
@@ -855,6 +860,10 @@ function _dockTaskPanel() {
   panel.style.right = 'auto';
   panel.style.top = Math.round(dockedTop) + 'px';
   panel.style.maxHeight = Math.round(maxHeight) + 'px';
+  // 高度下限按**可用高度**就地压低：CSS 的 min-height 优先级高于 max-height，窗口矮
+  // 或胶囊被拖低时若照抄 268，面板会直接顶出视口、头部那排按钮又点不到了。拿 maxHeight
+  // 当上限而不是视口高——胶囊贴着下沿时真正能用的只有 maxHeight 那么多。
+  panel.style.minHeight = Math.round(Math.min(_TASK_DOCK_PANEL_MIN_H, Math.max(0, maxHeight))) + 'px';
   panel.style.overflowY = 'auto';
   return true;
 }
@@ -868,6 +877,7 @@ function _undockTaskPanel() {
     panel.classList.remove('aurora-glass--attached');
     panel.style.width = '';
     panel.style.maxHeight = '';
+    panel.style.minHeight = '';
     panel.style.overflowY = '';
   }
   if (anchor) anchor.classList.remove('aurora-glass--dock-host');
