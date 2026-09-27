@@ -255,6 +255,7 @@ async function main() {
   const evaluateSoft = (expr) => evaluate('(function(){try{' + expr + '}catch(e){return "ERR:"+e.message}return "ok"})()');
 
   const result = {};
+  let stateTag = '(未采集)';
   for (const theme of ['dark', 'light']) {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       // 键名以 config/app 里的常量为准：引导卡是 phymathia_onboarding_done，
@@ -265,6 +266,23 @@ async function main() {
     }, S);
     await send('Page.navigate', { url: BASE }, S);
     await sleep(3500);
+    // ---- 应用状态必须钉死，否则基线不可比（2026-09-27 修）----
+    // 原先脚本导航完就直接开探，从不选会话——采到的是「应用恰好停在哪个状态」。
+    // 录基线那台机器上恰好停在一个有内容的会话，本机恰好停在空画布，于是
+    // .graph-canvas-toolbar 等四个选择器报「元素有无变化」，一次 96 处。而空画布
+    // 不出工具栏是**刻意设计**（docs/backlog.md D1），所以那 96 处既不是产品回归、
+    // 也不是基线过期，是环境态依赖。基线里记下会话指纹，--check 时先比这一项，
+    // 对不上就直说，别让人去逐条读「元素有无变化」。
+    // 走 evaluateSoft：它自带页面侧 try/catch，getChatHistory 在会话尚未就绪时会抛，
+    // 直接 evaluate 会把整个脚本带崩（这正是上面那次失败）。
+    const sessionId = String(await evaluateSoft('return (typeof getCurrentSessionId==="function"?getCurrentSessionId():"")||"";') || '');
+    const msgRaw = await evaluateSoft('return (typeof getChatHistory==="function"?getChatHistory():[]).length;');
+    const msgCount = Number(msgRaw);
+    const count = Number.isFinite(msgCount) ? msgCount : -1;
+    stateTag = (sessionId && sessionId.indexOf('ERR:') !== 0 ? sessionId : '(无会话)')
+      + ' · 消息 ' + count + ' 条'
+      + (count === 0 ? '（空画布：工具栏按设计不出，.graph-canvas-toolbar 一族在探针里必然缺席）' : '');
+    if (theme === 'dark') console.log('  · 本次探针会话：' + stateTag);
     for (const step of SURFACES) {
       if (step.closeAll) { await evaluate(CLOSE_ALL); await sleep(350); }
       if (step.js) {
@@ -296,8 +314,10 @@ async function main() {
 
   if (MODE === 'record') {
     fs.mkdirSync(OUT_DIR, { recursive: true });
-    fs.writeFileSync(path.join(OUT_DIR, 'computed.json'), JSON.stringify(result));
+    fs.writeFileSync(path.join(OUT_DIR, 'computed.json'),
+                     JSON.stringify({ __state: stateTag, __recordedAt: new Date().toISOString(), surfaces: result }));
     console.log('基线已写入 ' + path.relative(ROOT, OUT_DIR) + '/（computed.json + shots/）');
+    console.log('录制时的应用状态：' + stateTag);
     console.log('界面数：' + Object.keys(result).length);
     const kb = (fs.statSync(path.join(OUT_DIR, 'computed.json')).size / 1024).toFixed(0);
     console.log('computed.json：' + kb + ' KB');
@@ -324,7 +344,18 @@ async function main() {
     console.error('没有基线，先跑 --record');
     process.exit(2);
   }
-  const base = JSON.parse(fs.readFileSync(basePath, 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(basePath, 'utf8'));
+  // 2026-09-27：基线文件升级成 {__state, __recordedAt, surfaces}，把「录的时候应用
+  // 停在哪个会话」一起记下来。旧格式（直接是 surfaces 映射）仍兼容，只是没有指纹。
+  const baseState = raw.__state || null;
+  const base = raw.surfaces || raw;
+  if (baseState && baseState !== stateTag) {
+    console.log('\n✗ 基线与应用状态对不上，先别看下面的差异清单：');
+    console.log('  · 基线录制时：' + baseState);
+    console.log('  · 本次实际跑：' + stateTag);
+    console.log('  → 差异多半是环境态造成的（画布空/有内容、停在哪个会话），不是外观回归。');
+    console.log('  → 让两边停在同一状态再比，或用 --record 重录（会丢掉与上次基线的对比）。');
+  }
   const diffs = { probe: [], census: [] };
   for (const name of Object.keys(base)) {
     const b = base[name], n = result[name];
@@ -353,11 +384,20 @@ async function main() {
     }
   }
 
-  const total = diffs.probe.length + diffs.census.length;
-  if (!total) {
+  // 退出码只认**逐项探针**——那才是本脚本头注释里写明的「主判据：计算样式，确定性，
+  // 不受渲染时机影响」。普查（同类元素在本轮渲染出几种变体）是调研项，它天生顺序相关：
+  // 例如 button.continent-breadcrumb 只在第 09 步开过大陆之后才存在，于是下一个主题的
+  // 第 02 步有没有它取决于**上一轮跑过什么**。把普查计进退出码，等于让「上一次是怎么跑
+  // 的」决定这次红不红——那不是护栏，是随机数。
+  if (!diffs.probe.length) {
     console.log('✓ 视觉基线一致（' + Object.keys(base).length + ' 个界面，计算样式逐项相同）');
+    if (diffs.census.length) {
+      console.log('  （另有 ' + diffs.census.length + ' 处普查差异——调研项，不参与判定：'
+        + '普查天生顺序相关，见下方清单或 --explain <关键字>）');
+    }
     process.exit(0);
   }
+  const total = diffs.probe.length + diffs.census.length;
   // 默认只印前若干条，改动量大时会淹没终端；--full 全印，--grep <关键字> 只印匹配的
   const full = process.argv.includes('--full');
   const gi = process.argv.indexOf('--grep');
