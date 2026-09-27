@@ -1924,24 +1924,15 @@ function _continentRender(data) {
     (mineCount ? ' · 我的连线 ' + mineCount : '');
   const empty = document.getElementById('continentEmpty');
   if (empty) empty.hidden = (data.itemCount || 0) > 0;
-  // 空态引导（v5.4 + 空画布说明）：两句话各自独立成立，用「；」拼进同一条引导——
-  // 「暂无共享连线」管「有岛但 0 城市」；「N 个画布还没有知识点」管「画布为什么
-  // 不在大陆上」（不以上图内容为前提：只有一个空画布时大字提示之外顶栏也要教机制）。
+  // 空态引导（v5.4）：「暂无共享连线」管「有岛但 0 城市」，教的是共享概念怎么长成城市。
   // 与连接模式提示互斥的约定不变（见 _continentSetLinkMode）。
+  // 「空画布计数」那句引导已按用户要求删除（2026-09-27）：它统计的是本地会话清单里
+  // 有几个画布没上图，用户看到的是一句关于自己数据的统计而不是可操作的引导。
   const guide = document.getElementById('continentGuide');
   if (guide) {
-    const parts = [];
-    if (cityCount === 0 && (data.itemCount || 0) > 0) {
-      parts.push('暂无共享连线——同一个概念在第二座岛出现时，这里会自动亮起边界城市');
-    }
-    const emptyCount = _continentEmptyCanvasCount(
-      (typeof window !== 'undefined' && typeof window.getAllSessions === 'function')
-        ? window.getAllSessions() : [],
-      (data.clusters || []).map(c => c.sessionId));
-    if (emptyCount > 0) {
-      parts.push('有 ' + emptyCount + ' 个画布还没有知识点，暂时不会出现在大陆上，学出知识点后这里会长出岛');
-    }
-    _continentGuideText = parts.join('；');
+    _continentGuideText = (cityCount === 0 && (data.itemCount || 0) > 0)
+      ? '暂无共享连线——同一个概念在第二座岛出现时，这里会自动亮起边界城市'
+      : '';
     guide.hidden = !_continentGuideText;
     guide.textContent = _continentGuideText;
   }
@@ -2060,23 +2051,6 @@ function _continentRelTime(ts) {
     try { return formatRelativeTime(t); } catch (e) { /* 兜底空串 */ }
   }
   return '';
-}
-
-// ---------- 空画布说明：大陆只画有知识点的会话，没知识点的画布完全不上图 ----------
-// 用户两次被「我的画布为什么不在大陆里」困扰（docs/日志/2026-09-15.md 排查段）——
-// 顶栏把机制说清。灰色空岛明确不做（轻量版口径，见任务拆解）。
-// 纯函数（无 DOM）：会话记录同时按 id / sessionId 两种标识比对（知识条目存的是
-// sess_xxx 形，会话记录两个字段都有），两种标识都命中不了投影簇才算「还没知识点」。
-function _continentEmptyCanvasCount(sessionRecords, clusterSessionIds) {
-  const onMap = new Set((clusterSessionIds || []).map(s => String(s)));
-  let n = 0;
-  (sessionRecords || []).forEach(s => {
-    if (!s) return;
-    const id = String(s.id || '');
-    const sid = String(s.sessionId || '');
-    if ((!id || !onMap.has(id)) && (!sid || !onMap.has(sid))) n++;
-  });
-  return n;
 }
 
 // ---------- 岛牌一句话：真摘要优先，没有才回退「前 3 个概念名 + 最近更新时间」 ----------
@@ -4801,7 +4775,6 @@ window._continentPhiMessages = _continentPhiMessages;
 window._continentPhiVerdict = _continentPhiVerdict;
 window._continentPhiBlockHtml = _continentPhiBlockHtml;
 window._continentIslandTagline = _continentIslandTagline;
-window._continentEmptyCanvasCount = _continentEmptyCanvasCount;
 // v7.1a 海域层：纯函数（无 DOM），smoke 直接断言（分组/配色确定性/两级布局罩住海域板）
 window._continentRegionHue = _continentRegionHue;
 window._continentRegions = _continentRegions;
