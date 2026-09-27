@@ -142,6 +142,149 @@
     });
   }
 
+  // ---------- 只读兜网：拓扑冻结（默认拒绝） ----------
+  // 上面的 READONLY_BLOCKED 是函数名黑名单，靠「有人发现漏网 → 补一条」维护，
+  // 已经漏过两次：拖拽建节点（_createBranchNodeFromOutput）、Delete 键删节点
+  // （_handleGraphKeydown 挂在 window 上，捕获期 dblclick 那道拦不住）。
+  // 这里补第二层，方向相反：不问「哪些写入口要堵」，只立一条不变量——
+  // 两次渲染之间，节点集合 / 连线集合 / 分组集合 / 节点索引一律不许变。
+  // 位置、尺寸、折叠、选中、平移缩放全部放行：那些是查看器本来就要给的能力。
+  // 于是任何写路径都被兜住，包括将来新增的、还没人来得及补进黑名单的那些。
+  //
+  // 为什么要守 graphView 而不是 __UTOPIA__.state：写路径落的不是快照。
+  // _createBranchNodeFromOutput 写的是 graphView.nodes / .edges / .nodeById
+  // （graph-interact.js:448 起）。graphView 是 graph.js:98 的 const 绑定，
+  // 换不了对象本身，所以在它身上装访问器属性拦截读写。
+
+  var TOPOLOGY_ARMED = false;
+  var TOPOLOGY_BASE = null;
+
+  function _fpNodes(arr) {
+    return (arr || []).map(function (n) { return n && n.id; }).filter(Boolean).sort().join('|');
+  }
+  function _fpEdges(arr) {
+    return (arr || []).map(function (e) {
+      return e ? [e.from, e.fromPort || '', e.to, e.toPort || ''].join('>') : '';
+    }).sort().join('|');
+  }
+  function _fpGroups(arr) {
+    return (arr || []).map(function (g) { return g && g.id; }).filter(Boolean).sort().join('|');
+  }
+  function _fpIndex(obj) {
+    return obj ? Object.keys(obj).sort().join('|') : '';
+  }
+
+  var TOPOLOGY_FP = {
+    nodes: _fpNodes,
+    edges: _fpEdges,
+    groups: _fpGroups,
+    nodeById: _fpIndex,
+  };
+
+  function _noteBlocked(what) {
+    U.blockedWrites = U.blockedWrites || [];
+    U.blockedWrites.push(what);
+    if (window.console && console.warn) console.warn('[viewer] 只读快照：已拒绝写入 ' + what);
+    toast('只读快照：不能改动画布内容');
+  }
+
+  // 数组只装 set / deleteProperty 两个陷阱，不装 get：
+  // 读走的是默认内部方法，零 JS 层开销（拖拽与连线刷新每帧都在读这两个数组）。
+  // push/unshift/sort/fill 靠「写下标」被拦，splice 靠 delete 被拦。
+  //
+  // 陷阱一律「返回 true 但不写」，不返回 false：产物是严格模式（esbuild 打包后
+  // 带 use strict），返回 false 会让 push/splice 直接抛 TypeError——用户看到的是
+  // 一条红字报错，而不是我们那句「只读快照：不能改动画布内容」。这里宁可让调用方
+  // 误以为写成功了（写入的操作本来就是禁路，调用方是 READONLY_BLOCKED 那一层，
+  // 由它负责把调用方整个拦下来，兜网只保证数据没变）。
+  function _sealArray(arr, label) {
+    if (!arr || typeof arr !== 'object') return arr;
+    try {
+      return new Proxy(arr, {
+        set: function (t, k) {
+          _noteBlocked(label + '.' + String(k));
+          return true;
+        },
+        deleteProperty: function (t, k) {
+          _noteBlocked(label + '.delete(' + String(k) + ')');
+          return true;
+        },
+      });
+    } catch (e) {
+      return arr;
+    }
+  }
+
+  // 节点索引是普通对象：只允许改已有键的值（拖拽/测量写不进这里，写的是节点对象本身），
+  // 不许新增键（那是「凭空多一个节点」）、不许删键（那是「删掉一个节点」）。
+  function _sealIndex(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    try {
+      return new Proxy(obj, {
+        set: function (t, k, v) {
+          if (!Object.prototype.hasOwnProperty.call(t, k)) { _noteBlocked('nodeById[' + String(k) + '] 新增'); return true; }
+          t[k] = v;
+          return true;
+        },
+        deleteProperty: function (t, k) {
+          _noteBlocked('nodeById 删除 ' + String(k));
+          return true;
+        },
+      });
+    } catch (e) {
+      return obj;
+    }
+  }
+
+  function armTopologyGuard() {
+    if (typeof graphView === 'undefined' || !graphView) return;
+    TOPOLOGY_ARMED = false;
+    TOPOLOGY_BASE = {
+      nodes: _fpNodes(graphView.nodes),
+      edges: _fpEdges(graphView.edges),
+      groups: _fpGroups(graphView.groups),
+      nodeById: _fpIndex(graphView.nodeById),
+    };
+    ['nodes', 'edges', 'groups', 'nodeById'].forEach(function (prop) {
+      var backing = graphView[prop];
+      var seal = prop === 'nodeById' ? _sealIndex : _sealArray;
+      var label = 'graphView.' + prop;
+      backing = seal(backing, label);
+      Object.defineProperty(graphView, prop, {
+        configurable: true,
+        enumerable: true,
+        get: function () { return backing; },
+        set: function (next) {
+          // 拓扑变了就整个拒绝：这次赋值多半就是「加节点 / 删节点 / 改连线」
+          if (TOPOLOGY_ARMED && TOPOLOGY_BASE && TOPOLOGY_FP[prop](next) !== TOPOLOGY_BASE[prop]) {
+            _noteBlocked(label + ' 整体替换（拓扑变化）');
+            return;
+          }
+          backing = seal(next, label);
+        },
+      });
+    });
+    TOPOLOGY_ARMED = true;
+  }
+
+  // 渲染是唯一被允许重新定义拓扑的时刻：进渲染前解除，装完按新拓扑重新立基线。
+  function installTopologyGuard() {
+    if (typeof graphView === 'undefined' || !graphView) return;
+    var origRender = window.renderGraphCanvas;
+    if (typeof origRender !== 'function' || origRender.__utopiaTopologyWrapped) return;
+    var wrapped = function () {
+      TOPOLOGY_ARMED = false;
+      try {
+        return origRender.apply(this, arguments);
+      } finally {
+        armTopologyGuard();
+      }
+    };
+    wrapped.__utopiaTopologyWrapped = true;
+    window.renderGraphCanvas = wrapped;
+    armTopologyGuard();
+  }
+
   // 只读画布手势：捕获期拦下画布上的双击（双击连线=删连线、双击空白=加节点面板、
   // 双击「我的理解」= 编辑）。函数桩已挡住实际写入，但调用方那句「已删除连线（Ctrl+Z
   // 可撤销）」是无条件弹的——桩生效时它照样弹，用户会以为真删了（实测踩过）。
@@ -414,6 +557,8 @@
   }
 
   function boot() {
+    // 兜网要装在第一次渲染之前：applySnapshot 会调 renderGraphCanvas
+    installTopologyGuard();
     installReadOnlyPanels();
     installReadOnlyCanvasGestures();
     installReadOnlyContextMenu();
