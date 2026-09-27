@@ -2536,6 +2536,52 @@
     @media (max-width: 768px) and (orientation: landscape) {
       }
 
+    /* ===== 横屏视觉打磨（2026-09-27）=====
+       只在横屏生效，竖屏一像素不动；只改排版与间距，不碰调色板与全局令牌。
+       取证数据与取舍见 docs/日志/2026-09-27.md。
+
+       作用域两种写法，别混用：容器内的（顶栏）用 `.app-container X`；
+       `.task-panel` / `.model-panel` / `.level-panel` / `#dataPanel` 是 .app-container
+       的**兄弟**节点（index.html 里容器在 341 行就闭合了），必须用
+       `body:has(> .app-container) X`——写成后代选择器**静默不命中**。 */
+
+    @media (orientation: landscape) {
+
+      /* 顶栏 `margin: 0 -16px` 的出血被 graph-override 的 `inset: 0 0 auto 0` 放大成
+         比视口还宽 32px，正好抵掉菜单键 left:16px 与动作簇 right:16px，两簇齐着窗口边。
+         左右两端本就钉在 0，归零外边距即可与画布/工具栏同一条 16px 沟。 */
+      .app-container .chat-header {
+        margin-left: 0;
+        margin-right: 0;
+      }
+
+      /* 任务面板只动排版：材质（.aurora-glass--plain/--attached）与停靠形状
+         `0 0 var(--r-2xl) var(--r-2xl)` 都不许碰，那是用户拍板的口径。 */
+      body:has(> .app-container) .task-panel { line-height: 1.45; }
+      body:has(> .app-container) .task-panel-title {
+        font-size: var(--fs-md);
+        line-height: 1.4;
+      }
+      body:has(> .app-container) .task-panel-head {
+        padding: var(--sp-2) var(--sp-3) var(--sp-3);
+      }
+      body:has(> .app-container) .task-item { padding: var(--sp-2) var(--sp-3); }
+
+      /* 表单弹窗只给行高。#dataPanel 是 ID 不是类，写 .data-panel 会静默不命中。 */
+      body:has(> .app-container) .model-panel,
+      body:has(> .app-container) .level-panel,
+      body:has(> .app-container) #dataPanel { line-height: 1.5; }
+    }
+
+    /* 品牌块居中、动作簇绝对定位恒宽 472px：宽视口不撞，≤1240 时实测重叠
+       （1024 −66.5px / 844 −156.5px）。这段不能并进上面那个媒体块，
+       否则整块会被缩到 1240 以下。 */
+    @media (orientation: landscape) and (max-width: 1240px) {
+      .app-container .chat-header { justify-content: flex-start; }
+      .app-container .chat-header .brand { min-width: 0; }
+      .app-container .chat-header .brand-subtitle { display: none; }
+    }
+
     @supports (padding: env(safe-area-inset-bottom)) {
       }
 
