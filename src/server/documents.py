@@ -145,7 +145,12 @@ def _extract_document_text(filename: str, content: bytes) -> str:
 
 
 def _parse_document_extract_json(text: str, max_items: int):
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text or "")
+    # 调用方直接把 data["choices"][0]["message"]["content"] 传进来（documents.py:419），
+    # 而 content 是可以合法为 null 的——模型偶尔返回空消息。原先只在上一个正则里做了
+    # `text or ""`，下一个分支的 text.find 就炸了 AttributeError，一路 500 到上传接口。
+    # 解析失败一律回落到空三元组，是这个函数本来的契约。
+    text = str(text or "")
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if m:
         text = m.group(1)
     else:

@@ -103,6 +103,7 @@ def seed_knowledge(knowledge, storage, count):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeat", type=int, default=5, help="每档重复次数（取中位数）")
+    parser.add_argument("--out", default="", help="把本次结果写成 JSON 快照（做优化前后对比用）")
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="phymathia-perf-") as td:
@@ -188,6 +189,31 @@ def main():
 
     print("\n（本脚本只产出数字：是否优化、优化目标多少，按计划文档要求以这些分档结果为准，")
     print("  并需先明确用户可感知的目标——例如单次回答的额外服务端耗时上限。）")
+
+    if args.out:
+        # 快照只是**同一次改动的前后对照**，不是可以照抄的历史基线——机器、负载、
+        # Python 版本一变数字就飘。所以文件头把这句话写进数据里，谁拿到都看得见。
+        import datetime
+        payload = {
+            "_warning": "仅供参考、必须现测。这是某一次运行的快照，"
+                        "不是可跨机器/跨时间照抄的基线；对比只在同机同负载前后做有意义。",
+            "_capturedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+            "_environment": {
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+                "cpuCount": os.cpu_count(),
+                "repeat": args.repeat,
+            },
+            "rows": [
+                {"group": g, "size": size, "volume": volume,
+                 "metric1": m1, "metric2": m2, "metric3": m3}
+                for (g, size, volume, m1, m2, m3) in rows
+            ],
+        }
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n快照已写入 {out}（{len(rows)} 行；仅供本次改动前后对照，勿当基线照抄）")
 
 
 if __name__ == "__main__":
