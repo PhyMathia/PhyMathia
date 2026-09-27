@@ -1,14 +1,43 @@
-// 新手引导 v2 + 演示会话 冒烟测试（迭代 2：click 型步骤/布局整理/提问对位）
+// 新手引导 v2 冒烟测试（click 型步骤 / 提问目标 / afterLeave）
+//
+// 路径按脚本位置解析，不再写死 D:/PhyMathia——那台机器之外一律 ENOENT，整个脚本
+// 连第一行都跑不到，等于早就废了（backlog T9）。
+//
+// 原先的 A 段（演示会话 ensureDemoSession）已随 src/static/js/demo.js 一起删除：
+// 那个函数全仓只有本脚本在调，产品里没人用，是真正的死代码（backlog T1）。
+// 这里现在只测 ui.js 里活着的引导代码。
 import vm from 'node:vm';
 import fs from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const R = 'D:/PhyMathia/src/static';
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const R = resolve(ROOT, 'src', 'static');
 const uiTxt = fs.readFileSync(R + '/js/ui.js', 'utf8');
 const cfgTxt = fs.readFileSync(R + '/js/config.js', 'utf8');
-const demoJs = fs.readFileSync(R + '/js/demo.js', 'utf8');
 
 const startM = uiTxt.indexOf('// ====== 首次使用引导 (v2) ======');
 const endM = uiTxt.indexOf('// Handle resize during onboarding');
+
+// ---- 体检：这份脚本测的引导代码已经不是现在这一代了（2026-09-27 查实）----
+// 它切片的标记 `// ====== 首次使用引导 (v2) ======` 在 ui.js 里**根本不存在**，
+// indexOf 返回 -1，于是整段都在对着一份错位的切片跑；它调的
+// `_buildFullObSteps` / `_renderObStep` 也都不在了（现在是 `_obSteps` 数据驱动
+// 数组 + `startOnboarding` + `_obStep`，ui.js:770 起）。叠加此前写死的 D:/ 路径，
+// 这脚本从路径修好那一刻起就一次都没绿过。
+//
+// 恢复它是**重写不是修活**：要照现在这代引导重新写场景。本轮不做，登记在
+// docs/backlog.md。这里改成体检不过就立刻退出并说清病因——别再抛一句看不懂的
+// ReferenceError，那会让人误以为是产品回归。
+if (startM < 0 || endM < 0) {
+  console.error(
+    'ob_smoke: 测的不是当前这一代引导代码，已停止。\n' +
+    '  · ui.js 里找不到切片标记：// ====== 首次使用引导 (v2) ======\n' +
+    '  · 本脚本调的 _buildFullObSteps / _renderObStep 在 ui.js 里已不存在\n' +
+    '  · 现在的引导是 _obSteps 数组 + startOnboarding + _obStep（ui.js:770 起）\n' +
+    '  → 需要重写，见 docs/backlog.md。在重写完成前，请不要把本脚本的退出当成产品回归。');
+  process.exit(2);
+}
 const obSection = uiTxt.slice(startM, endM);
 
 function makeBaseCtx(extra) {
@@ -26,48 +55,6 @@ function makeBaseCtx(extra) {
   ctx.window = ctx;
   ctx.globalThis = ctx;
   return ctx;
-}
-
-// ====== A. 演示数据 + ensureDemoSession（含布局整理调用） ======
-{
-  const calls = { create: null, arrange: 0, fit: 0, switchTo: [] };
-  const sessions = {};
-  const ctx = makeBaseCtx({
-    fetch: async () => ({ ok: true }),
-    autoArrangeGraph: () => { calls.arrange++; },
-    fitGraph: () => { calls.fit++; },
-    saveKnowledgeItems: async () => {},
-    setFormulaCache: () => {},
-  });
-  const w = {
-    getCurrentSessionId: () => 'sess_current',
-    getSessionMessages: (id) => (id === 'sess_current' ? [] : (id === 'sess_demo_moon' ? [{ role: 'user' }] : [])),
-    getSessionById: (id) => sessions[id] || null,
-    createSessionWithMessages: async (meta, msgs, id) => { calls.create = { meta, msgs, id }; sessions[id] = { id, title: meta.title, sessionId: 'phymathia_demo_test' }; return id; },
-    switchToSession: async (id) => { calls.switchTo.push(id); },
-    renderSessionList: () => {},
-  };
-  ctx.window = w;
-  vm.runInNewContext(demoJs, ctx);
-
-  const r1 = await vm.runInNewContext('ensureDemoSession()', ctx);
-  if (r1 !== true || !calls.create || calls.create.id !== 'sess_demo_moon') throw new Error('create demo failed');
-  if (calls.arrange < 1 || calls.fit < 1) throw new Error('layout settle not called: ' + calls.arrange + '/' + calls.fit);
-  console.log('SCENARIO A1 (create + settle): OK, arrange=' + calls.arrange + ' fit=' + calls.fit);
-
-  const r2 = await vm.runInNewContext('ensureDemoSession()', ctx);
-  if (r2 !== true) throw new Error('reuse failed');
-  if (!calls.switchTo.includes('sess_demo_moon')) throw new Error('reuse should switch');
-  if (calls.arrange < 2) throw new Error('reuse should settle too');
-  console.log('SCENARIO A2 (reuse + settle): OK');
-
-  // 当前画布有内容 → 跳过且不整理
-  const ctx2 = makeBaseCtx({ autoArrangeGraph: () => {}, fitGraph: () => {} });
-  ctx2.window = { getCurrentSessionId: () => 'sess_x', getSessionMessages: () => [{ role: 'user' }] };
-  vm.runInNewContext(demoJs, ctx2);
-  const r3 = await vm.runInNewContext('ensureDemoSession()', ctx2);
-  if (r3 !== false) throw new Error('should skip when has content');
-  console.log('SCENARIO A3 (skip when content): OK');
 }
 
 // ====== B. 引导步骤：click 型 / 提问目标 / afterLeave ======
