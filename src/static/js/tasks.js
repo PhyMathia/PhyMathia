@@ -741,12 +741,12 @@ function _taskPanelHtml() {
       .concat(_taskHistory.filter(t => t.state !== 'done').map(t => _taskRowHtml(t, { history: true })));
     body.push(rows.length
       ? rows.join('')
-      : '<div class="task-empty">手上没有活儿。提问、追问、排队发送都会记在这儿。</div>');
+      : '<div class="task-empty">暂无</div>');
   } else {
     const rows = _taskDoneRecords().map(t => _taskRowHtml(t, { history: true }));
     body.push(rows.length
       ? rows.join('')
-      : '<div class="task-empty">还没有干完的活儿。跑完的任务会落到这儿。</div>');
+      : '<div class="task-empty">暂时没有已完成的任务记录</div>');
   }
   return body.join('');
 }
