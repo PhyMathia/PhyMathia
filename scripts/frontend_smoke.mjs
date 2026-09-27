@@ -3787,6 +3787,40 @@ check('设计尺子：同类载体的圆角同档（弹窗 --r-lg / 大浮层 --
 await Promise.all(pendingChecks).catch(() => {});
 
 // ===== 串行边界追加：utopia 快照导入（写共享 phymathia_sessions 键 + await fetch）=====
+// 2026-09-27：B2 把三个流式函数里逐字重复的 SSE 帧读取抽成唯一一份
+// `_sseContentFrames`。这里钉住那个不变量——**别再往回抄**。抄回去的症状是
+// 「某类节点偶发不更新」，静态断言看不出来，只有真发才知道（而真发需要可用模型，
+// 见 docs/backlog.md T37）。所以退化成重复时必须在这里就红。
+check('graph-workflow: SSE 帧读取全仓只有一份，三个流式通道都走它', () => {
+  const gw = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const readers = (gw.match(/getReader\(\)/g) || []).length;
+  if (readers !== 1) {
+    throw new Error('getReader() 出现 ' + readers + ' 次（应为 1）——有人把 SSE 读取又抄了一份');
+  }
+  if (!/async function\* _sseContentFrames\(resp\)/.test(gw)) {
+    throw new Error('共享读取口 _sseContentFrames 不见了');
+  }
+  const users = (gw.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
+  if (users !== 3) {
+    throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 3：模块节点 / 问题分析 / 空白节点）');
+  }
+  // 只吐正文增量：思维链绝不能混进正文（2026-09-15「旋度岛静默消失」的根因）
+  const gen = gw.slice(gw.indexOf('async function* _sseContentFrames'));
+  const genEnd = gen.indexOf('\nasync function ', 1);
+  const body = genEnd > 0 ? gen.slice(0, genEnd) : gen;
+  if (/reasoning_content/.test(body)) {
+    throw new Error('共享读取口里出现了 reasoning_content——思维链不许混进正文');
+  }
+  for (const fn of ['_streamCustomNodeResponse', '_streamAnalysisResponse', '_streamBlankNodeResponse']) {
+    const i = gw.indexOf('async function ' + fn + '(');
+    if (i < 0) throw new Error('找不到 ' + fn);
+    const seg = gw.slice(i, i + 4000);
+    if (!seg.includes('_sseContentFrames(resp)')) {
+      throw new Error(fn + ' 没走共享读取口');
+    }
+  }
+});
+
 check('utopia-import: .pmu 恢复成新画布（三写落位 + 永不覆盖现有会话）', async () => {
   // 识别纯函数：.pmu 收、其它后缀放行
   const accept = sandbox.window.utopiaImportAccept;
