@@ -20,9 +20,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=d8a84486">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=9f438ff1">
-  <link rel="stylesheet" href="/css/graph-override.min.css?v=f2a637a8">
+  <link rel="stylesheet" href="/css/styles.min.css?v=c97159d2">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=85a132b1">
+  <link rel="stylesheet" href="/css/graph-override.min.css?v=32322f19">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -89,35 +89,36 @@
         <div class="brand-subtitle">物理绘万象之形，数学穷天地之理</div>
       </div>
       <div class="header-actions">
-        <button class="header-btn run-gen-btn" id="runAllBtn" title="全部开始" onclick="runAllWorkflowNodes()">
+        <button class="header-btn run-gen-btn" id="runAllBtn" title="全部开始" aria-label="全部开始" onclick="runAllWorkflowNodes()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
         </button>
-        <button class="header-btn task-panel-btn" id="taskPanelBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活" onclick="toggleTaskPanel(event)">
+        <button class="header-btn task-panel-btn" id="taskPanelBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
           <span class="task-panel-badge" hidden></span>
         </button>
-        <button class="header-btn stop-gen-btn" id="stopBtn" title="停止生成" disabled onclick="stopGeneration()">
+        <button class="header-btn stop-gen-btn" id="stopBtn" title="停止生成" aria-label="停止生成" disabled onclick="stopGeneration()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
         </button>
-        <button class="header-btn theme-btn" onclick="toggleTheme()" id="themeBtn" title="切换深色/浅色模式"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></button>
-        <button class="header-btn model-btn" onclick="toggleModelPanel(event)" id="modelBtn" title="模型设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
-        <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
-        <button class="header-btn continent-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></button>
-        <button class="header-btn knowledge-btn-icon" onclick="toggleKnowledgePanel()" title="知识总览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
-        <button class="header-btn quiz-btn" onclick="openQuiz()" title="知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></button>
-        <button class="header-btn" onclick="toggleDataPanel(event)" title="数据管理"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></button>
-        <button class="header-btn" onclick="clearChat()" title="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+        <button class="header-btn theme-btn" onclick="toggleTheme()" id="themeBtn" title="切换深色/浅色模式" aria-label="切换深色/浅色模式"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></button>
+        <button class="header-btn model-btn" onclick="toggleModelPanel(event)" id="modelBtn" title="模型设置" aria-label="打开模型设置" aria-controls="modelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
+        <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度" aria-label="选择难度" aria-controls="levelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
+        <button class="header-btn continent-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）" aria-label="打开知识大陆"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></button>
+        <button class="header-btn knowledge-btn-icon" id="knowledgeBtn" onclick="toggleKnowledgePanel()" title="知识总览" aria-label="打开知识总览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+        <button class="header-btn quiz-btn" onclick="openQuiz()" title="知识检测" aria-label="打开知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></button>
+        <button class="header-btn data-btn" onclick="toggleDataPanel(event)" title="数据管理" aria-label="打开数据管理" aria-controls="dataPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></button>
+        <button class="header-btn clear-chat-btn" onclick="clearChat()" title="清空当前画布" aria-label="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
       </div>
     </div>
 
     <div class="header-secondary-bar aurora-glass aurora-glass--panel">
-      <button class="header-btn" onclick="toggleModelPanel(event)" title="模型设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg> 模型</button>
-      <button class="header-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg> 大陆</button>
-      <button class="header-btn" onclick="toggleKnowledgePanel()" title="知识总览"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="9" y1="7" x2="16" y2="7"></line><line x1="9" y1="11" x2="14" y2="11"></line></svg> 知识</button>
-      <button class="header-btn" onclick="openQuiz()" title="画布知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg> 画布检测</button>
-      <button class="header-btn" onclick="openQuizGlobalDashboard()" title="全局知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg> 全局检测</button>
-      <button class="header-btn" onclick="toggleDataPanel(event)" title="数据管理"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg> 数据</button>
-      <button class="header-btn" onclick="clearChat()" title="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> 清空</button>
+      <button class="header-btn" onclick="toggleModelPanel(event)" title="模型设置" aria-label="打开模型设置" aria-controls="modelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg> 模型</button>
+      <button class="header-btn" onclick="toggleLevelPanel(event)" title="选择难度" aria-label="选择难度" aria-controls="levelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 难度</button>
+      <button class="header-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）" aria-label="打开知识大陆"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg> 大陆</button>
+      <button class="header-btn" onclick="toggleKnowledgePanel()" title="知识总览" aria-label="打开知识总览"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="9" y1="7" x2="16" y2="7"></line><line x1="9" y1="11" x2="14" y2="11"></line></svg> 知识</button>
+      <button class="header-btn" onclick="openQuiz()" title="画布知识检测" aria-label="打开画布知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg> 画布检测</button>
+      <button class="header-btn" onclick="openQuizGlobalDashboard()" title="全局知识检测" aria-label="打开全局知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg> 全局检测</button>
+      <button class="header-btn data-btn" onclick="toggleDataPanel(event)" title="数据管理" aria-label="打开数据管理" aria-controls="dataPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg> 数据</button>
+      <button class="header-btn clear-chat-btn" onclick="clearChat()" title="清空当前画布" aria-label="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg> 清空</button>
     </div>
 
     <div class="graph-workspace" id="graphWorkspace">
@@ -138,9 +139,9 @@
 
     <div class="progress-status aurora-glass aurora-glass--compact" id="progressStatus">
       <div class="status-drag-handle" title="拖动调整位置"><svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor"><circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/><circle cx="3" cy="8" r="1.2"/><circle cx="9" cy="8" r="1.2"/><circle cx="3" cy="14" r="1.2"/><circle cx="9" cy="14" r="1.2"/></svg></div>
-      <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
-      <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-      <button class="status-control-btn status-task-btn" id="progressTaskBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活（可暂停 / 停止 / 重试）" onclick="toggleTaskPanel(event)">
+      <button class="status-control-btn status-run-btn" id="statusRunBtn" title="全部开始" aria-label="全部开始" onclick="runAllWorkflowNodes()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="status-control-btn status-stop-btn" id="statusStopBtn" title="停止生成" aria-label="停止生成" disabled onclick="stopGeneration()"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      <button class="status-control-btn status-task-btn" id="progressTaskBtn" title="任务列表：正在跑的活儿、排队的活儿、之前干过的活（可暂停 / 停止 / 重试）" aria-label="打开任务列表" aria-controls="taskPanel" aria-expanded="false" onclick="toggleTaskPanel(event)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="9" y1="6" x2="21" y2="6"></line><line x1="9" y1="12" x2="21" y2="12"></line><line x1="9" y1="18" x2="21" y2="18"></line><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"></circle><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"></circle></svg>
         <span class="task-panel-badge" hidden></span>
       </button>
@@ -188,7 +189,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=9ed3f94b"></script>
+  <script src="/js/app.js?v=8204696f"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -534,9 +535,9 @@
     <div class="level-option active" data-level="university" onclick="setLevel('university')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg></span> 大学</div>
     <div class="level-option" data-level="research" onclick="setLevel('research')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h12"></path><path d="M8 18a4 4 0 0 1 8 0"></path><path d="M12 18V8"></path><path d="M9 5h6l1 3H8z"></path></svg></span> 科研</div>
   </div>
-  <div class="task-panel aurora-glass aurora-glass--dialog" id="taskPanel">
+  <div class="task-panel aurora-glass aurora-glass--dialog aurora-glass--plain" id="taskPanel" role="dialog" aria-modal="false" aria-labelledby="taskPanelTitle">
     <div class="task-panel-head">
-      <span class="task-panel-title">任务列表</span>
+      <span class="task-panel-title" id="taskPanelTitle">任务列表</span>
       <span class="task-panel-head-btns">
         <button type="button" class="task-btn task-btn--warn" id="taskPanelStopAll" onclick="stopAllTasks()" disabled>全部停止</button>
         <button type="button" class="task-btn task-btn--warn" id="taskPanelClearDone" onclick="clearDoneTasks()" hidden disabled>清除记录</button>

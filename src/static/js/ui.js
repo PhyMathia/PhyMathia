@@ -1,4 +1,10 @@
 // ====== 难度等级管理 ======
+function _setPanelTriggerState(panelId, expanded) {
+  document.querySelectorAll('[aria-controls="' + panelId + '"]').forEach(btn => {
+    if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-expanded', String(expanded));
+  });
+}
+
 let currentLevel = localStorage.getItem(STORAGE_KEY_LEVEL) || 'university';
 
 function updateLevelUI() {
@@ -18,18 +24,26 @@ function toggleLevelPanel(e) {
   const panel = document.getElementById('levelPanel');
   const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
+  const trigger = e?.currentTarget || document.getElementById('levelBtn');
+  _setPanelTriggerState('levelPanel', willShow);
   if (willShow) {
     document.getElementById('modelPanel').classList.remove('show');
     document.getElementById('dataPanel').classList.remove('show');
+    const modelBtn = document.getElementById('modelBtn');
+    if (modelBtn && typeof modelBtn.setAttribute === 'function') modelBtn.setAttribute('aria-expanded', 'false');
+    const dataBtn = document.querySelector('.data-btn');
+    if (dataBtn && typeof dataBtn.setAttribute === 'function') dataBtn.setAttribute('aria-expanded', 'false');
     void panel.offsetHeight;
-    const trigger = e?.currentTarget || document.getElementById('levelBtn');
     _positionPanel('levelPanel', trigger);
   }
 }
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('levelPanel');
   const btn = document.getElementById('levelBtn');
-  if (panel && !panel.contains(e.target) && !btn.contains(e.target)) panel.classList.remove('show');
+  if (panel && !panel.contains(e.target) && !btn.contains(e.target)) {
+    panel.classList.remove('show');
+    _setPanelTriggerState('levelPanel', false);
+  }
 });
 updateLevelUI();
 
@@ -65,13 +79,16 @@ function toggleModelPanel(e) {
   const panel = document.getElementById('modelPanel');
   const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
+  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('modelBtn');
+  _setPanelTriggerState('modelPanel', willShow);
   // Close other panels
   document.getElementById('levelPanel').classList.remove('show');
   document.getElementById('dataPanel').classList.remove('show');
+  _setPanelTriggerState('levelPanel', false);
+  _setPanelTriggerState('dataPanel', false);
   if (willShow) {
     renderModelList();
     renderModelSelects();
-    const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('modelBtn');
     void panel.offsetHeight;
     _positionPanel('modelPanel', trigger);
   }
@@ -81,14 +98,17 @@ function toggleDataPanel(e) {
   const panel = document.getElementById('dataPanel');
   const willShow = !panel.classList.contains('show');
   panel.classList.toggle('show');
-  if (willShow && typeof window._positionPanelBelowBtn === 'function') window._positionPanelBelowBtn(panel, e?.currentTarget);
+  const trigger = e && e.currentTarget ? e.currentTarget : document.querySelector('[aria-controls="dataPanel"]');
+  _setPanelTriggerState('dataPanel', willShow);
+  if (willShow && typeof window._positionPanelBelowBtn === 'function') window._positionPanelBelowBtn(panel, trigger);
   // Close other panels
   document.getElementById('levelPanel').classList.remove('show');
   document.getElementById('modelPanel').classList.remove('show');
+  _setPanelTriggerState('levelPanel', false);
+  _setPanelTriggerState('modelPanel', false);
   // Show data stats
   updateDataStats();
   if (willShow) {
-    const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('modelBtn');
     // Force reflow so offsetWidth/offsetHeight are available
     void panel.offsetHeight;
     _positionPanel('dataPanel', trigger);

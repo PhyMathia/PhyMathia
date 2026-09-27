@@ -1809,6 +1809,14 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
   if (!rmBlock || !/\.graph-canvas/.test(rmBlock[0])) {
     throw new Error('减少动态效果降级未覆盖会话画布');
   }
+  const graphCss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const graphMotion = graphCss.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/);
+  if (!graphMotion || !/\.graph-node-status\.status-running::before/.test(graphMotion[0])
+      || !/\.graph-source-spinner/.test(graphMotion[0])
+      || !/\.graph-harness-window\.busy \.graph-harness-status::before/.test(graphMotion[0])
+      || !/animation:\s*none/.test(graphMotion[0])) {
+    throw new Error('画布 loading 指示器未完整支持 prefers-reduced-motion');
+  }
 
   // ---- 交叉淡化：会话图退场态 + 藏画布规则让位 ----
   if (!/\.graph-canvas\.is-continent-retreat\s*\{/.test(css)) throw new Error('会话图退场态样式缺失');
@@ -2899,24 +2907,18 @@ check('graph-continent: v8 族表编辑 + 纠正信号（规范化 / 术语解�
   return true;
 });
 
-check('graph-continent: 空画布说明（N 个画布还没有知识点——顶栏机制文案）', () => {
-  const count = sandbox._continentEmptyCanvasCount;
-  if (typeof count !== 'function') throw new Error('_continentEmptyCanvasCount 未暴露');
-  // 会话记录按 id / sessionId 任一标识命中投影簇都不算空；两种都命中不了才算
-  const recs = [
-    { id: 'sess_a', sessionId: 'phymathia_1' },
-    { id: 'sess_b', sessionId: 'phymathia_2' },
-    { id: 'sess_c', sessionId: 'phymathia_3' },
-  ];
-  if (count(recs, ['sess_a', 'phymathia_2']) !== 1) throw new Error('计数错（应只 sess_c 空）');
-  if (count(recs, []) !== 3) throw new Error('全空库应计全部画布');
-  if (count(recs, ['sess_a', 'sess_b', 'sess_c']) !== 0) throw new Error('全部上图应为 0');
-  if (count(null, []) !== 0 || count([], ['sess_a']) !== 0) throw new Error('缺清单应安全返回 0');
-  // 静态契约：新文案进顶栏引导、与 v5.4 原句共存拼接、画布清单取自前端已加载会话
+check('graph-continent: 顶栏空态引导只留共享连线那一句（空画布说明已删）', () => {
+  // 2026-09-27 用户要求删掉「有 N 个画布还没有知识点…」——那是对用户自己数据的
+  // 统计，不是可操作的引导。_continentEmptyCanvasCount 随之整体退役。
+  // 留共享连线那一句：它教的是机制（同一个概念跨岛会亮起城市），用户能做点什么。
+  if (sandbox._continentEmptyCanvasCount !== undefined) {
+    throw new Error('_continentEmptyCanvasCount 应已删除');
+  }
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
-  if (src.indexOf('个画布还没有知识点') < 0) throw new Error('空画布说明文案缺失');
-  if (src.indexOf('window.getAllSessions') < 0) throw new Error('画布清单未取自前端已加载会话');
-  if (src.indexOf("parts.join('；')") < 0) throw new Error('两句引导未拼接共用一条顶栏');
+  if (src.indexOf('个画布还没有知识点') >= 0) throw new Error('空画布说明文案仍在');
+  if (src.indexOf('window.getAllSessions') >= 0) throw new Error('不该再读前端会话清单');
+  if (src.indexOf('暂无共享连线') < 0) throw new Error('共享连线引导被误删');
+  if (src.indexOf('_continentGuideText') < 0) throw new Error('引导文案状态缺失');
   return true;
 });
 
@@ -3185,6 +3187,22 @@ check('aurora-glass 载体扩编：侧边栏/顶栏/二级栏（载体不得自�
   return true;
 });
 
+check('移动端工具栏：难度入口不随顶栏按钮位置漂移，图标入口可读', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!/class="header-btn" onclick="toggleLevelPanel\(event\)"[^>]*aria-controls="levelPanel"/.test(html)) {
+    throw new Error('移动端二级工具栏缺少难度入口');
+  }
+  if (/header-actions[^\n]*nth-child\(5\)|header-actions[^\n]*nth-child\(6\)/.test(css)) {
+    throw new Error('移动端顶栏仍靠 nth-child 隐藏按钮');
+  }
+  for (const id of ['runAllBtn', 'stopBtn', 'themeBtn', 'modelBtn', 'levelBtn', 'knowledgeBtn']) {
+    const button = html.match(new RegExp('<button[^>]*id="' + id + '"[^>]*>'));
+    if (!button || !/aria-label=/.test(button[0])) throw new Error(id + ' 缺少 aria-label');
+  }
+  return true;
+});
+
 check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + 降级）', () => {
   const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
   for (const frag of [
@@ -3215,10 +3233,13 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
     }
   }
   // 载体自带的 background 简写会重置 background-image 并盖住极光层——
-  // .progress-status 就栽在这（用户截图里胶囊没极光），基础规则必须让位
+  // .progress-status 就栽在这（用户截图里胶囊没极光），基础规则必须让位。
+  // **任何** background 简写都不行，不只是 var(--panel-bg)：`background: transparent`
+  // 同样把 background-image 重置成 none（2026-09-27 用户问「这俩透明度不一样」——
+  // 面板 11 层渐变、胶囊 0 层，根因就是这条 transparent）。要盖底色写 background-color。
   const baseCapsule = css.slice(css.indexOf('.progress-status {'), css.indexOf('.progress-status.active'));
-  if (/background:\s*var\(--panel-bg\)/.test(baseCapsule)) {
-    throw new Error('基础 .progress-status 自带 background，会盖住极光层');
+  if (/(^|[;{\s])background\s*:/.test(baseCapsule)) {
+    throw new Error('基础 .progress-status 自带 background 简写，会重置 background-image 盖掉极光层（要盖底色请写 background-color）');
   }
   // 三处载体：引导浮卡 / 右键菜单（JS 加类）+ 生成进度胶囊 / 知识面板胶囊（静态 HTML 加类）
   const quizUi = fs.readFileSync('src/static/js/quiz-ui.js', 'utf8');
@@ -3234,6 +3255,15 @@ check('aurora-glass：极光磨砂玻璃语言（三处共用 + 深浅两套 + �
   const kpRule = kpRuleRaw.replace(/\/\*[\s\S]*?\*\//g, ''); // 注释里会提到这个坑，断言只看声明
   if (/background-image:\s*inherit/.test(kpRule)) throw new Error('kp 胶囊的 background-image: inherit 会抹掉极光层');
   if (!/background-color:\s*transparent/.test(kpRule)) throw new Error('kp 胶囊需置空自身底色让极光透出');
+  // 同一条病在 kp 胶囊上也犯过（2026-09-27）：基础 .kp-tool-btn 用 background 简写设
+  // --kp-filter-bg，简写把 background-image 重置成 none → 极光层 0 层。本表在 styles.css
+  // 之后加载、同特指性，赢的正是这条简写。凡是要挂 aurora-glass 的载体，基础规则一律
+  // 只准写 background-color 长写属性。
+  const kpBaseRaw = panels.slice(panels.indexOf('.kp-tool-btn {'), panels.indexOf('.kp-tool-btn:hover'));
+  const kpBase = kpBaseRaw.replace(/\/\*[\s\S]*?\*\//g, '');
+  if (/(^|[;{\s])background\s*:/.test(kpBase)) {
+    throw new Error('基础 .kp-tool-btn 用了 background 简写，会重置 background-image 抹掉极光层（请写 background-color）');
+  }
   // animation 是简写：载体的入场动画必须与 auroraDrift 并列为两项，否则漂移被覆盖掉
   for (const [name, file, key] of [
     ['引导浮卡', 'src/static/css/styles-panels.css', 'quizReturnPillIn'],

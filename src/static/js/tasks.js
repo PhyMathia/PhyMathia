@@ -615,15 +615,18 @@ function _taskAgo(ts) {
   return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hh;
 }
 
+// 时长一律用字母单位（用户 2026-09-27：「别用分和秒，用字母 m 和 s」）：
+// 面板里每行都带这个数字，中文「分/秒/小时」三个词在 11px 下又宽又挤，纯占地方。
+// 补零对齐（3m05s）是为了数字在每秒刷新时不左右跳。
 function _taskElapsed(from, to) {
   const start = from || 0;
   if (!start) return '';
   const end = to || Date.now();
   const sec = Math.max(0, Math.round((end - start) / 1000));
-  if (sec < 60) return sec + ' 秒';
+  if (sec < 60) return sec + 's';
   const min = Math.floor(sec / 60);
-  if (min < 60) return min + ' 分 ' + (sec % 60) + ' 秒';
-  return Math.floor(min / 60) + ' 小时 ' + (min % 60) + ' 分';
+  if (min < 60) return min + 'm' + String(sec % 60).padStart(2, '0') + 's';
+  return Math.floor(min / 60) + 'h' + String(min % 60).padStart(2, '0') + 'm';
 }
 
 function _taskStateLine(task) {
@@ -647,18 +650,34 @@ function _taskNodeGlyphHtml(state) {
   return TASK_NODE_GLYPH[state] || '⋯';
 }
 
+// 播放控制按钮：图标 + title/aria-label，不放文字（用户 2026-09-27 要求）。
+// 图标取 config.js 的 UI_ICON_SVG（stroke-width 1.8 统一口径）；注册表没加载时
+// 退回本模块早就在用的字形（⏸/■），不至于渲染出一个空按钮。
+function _taskIcon(name, glyph) {
+  if (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG[name]) return UI_ICON_SVG[name];
+  return '<span class="task-btn-glyph">' + glyph + '</span>';
+}
+
+function _taskIconBtn(action, label, icon, extraClass, attrs) {
+  return '<button type="button" class="task-btn task-btn--icon' + (extraClass ? ' ' + extraClass : '')
+    + '" data-task-action="' + action + '"' + (attrs || '')
+    + ' title="' + label + '" aria-label="' + label + '">' + icon + '</button>';
+}
+
 function _taskActionsHtml(task) {
   const buttons = [];
   if (task.state === 'waiting') {
     buttons.push('<button type="button" class="task-btn" data-task-action="cancel">取消</button>');
   } else if (task.state === 'running' || task.state === 'paused') {
     if (task.kind === 'workflow') {
-      buttons.push('<button type="button" class="task-btn" data-task-action="pause">'
-        + (task.paused ? '继续' : '暂停') + '</button>');
+      buttons.push(_taskIconBtn('pause', task.paused ? '继续' : '暂停',
+        _taskIcon(task.paused ? 'play' : 'pause', task.paused ? '▶' : '⏸')));
     }
-    buttons.push('<button type="button" class="task-btn task-btn--warn" data-task-action="cancel"'
-      + (task.cancelRequested ? ' disabled' : '') + '>'
-      + (task.cancelRequested ? '停止中' : '停止') + '</button>');
+    // 点了停止但上游还没松手：图标换成面板自己的圆环（同一个 .task-spin），别再堆文字。
+    buttons.push(task.cancelRequested
+      ? _taskIconBtn('cancel', '停止中', '<span class="task-spin task-spin--sm"></span>',
+          'task-btn--warn', ' disabled')
+      : _taskIconBtn('cancel', '停止', _taskIcon('stop', '■'), 'task-btn--warn'));
   }
   return buttons.join('');
 }
@@ -675,8 +694,9 @@ function _taskNodeRowHtml(task, entry) {
     + '<span class="task-node-label">' + _taskEsc(entry.label) + '</span>'
     + '<span class="task-node-state">' + _taskEsc(text + timing) + '</span>'
     + note
-    + (cancelable ? '<button type="button" class="task-btn task-btn--mini" data-task-action="cancel-node" data-node-id="'
-        + _taskEsc(entry.id) + '">停</button>' : '')
+    + (cancelable ? _taskIconBtn('cancel-node', '停掉「' + (entry.label || '这个节点') + '」',
+        _taskIcon('stop', '■'), 'task-btn--mini', ' data-node-id="' + _taskEsc(entry.id) + '"')
+      : '')
     + '</div>';
 }
 
@@ -725,10 +745,11 @@ function _taskRowHtml(task, options) {
 function _taskTabsHtml() {
   const unfinished = _taskUnfinished().length;
   const done = _taskDoneRecords().length;
-  const tab = (key, label, count) => '<button type="button" class="task-tab'
-    + (_taskTab === key ? ' active' : '') + '" data-task-tab="' + key + '">' + label
+  const tab = (key, label, count) => '<button type="button" role="tab" class="task-tab'
+    + (_taskTab === key ? ' active' : '') + '" data-task-tab="' + key + '" aria-selected="'
+    + (_taskTab === key ? 'true' : 'false') + '">' + label
     + (count ? '<span class="task-tab-count">' + count + '</span>' : '') + '</button>';
-  return '<div class="task-tabs">'
+  return '<div class="task-tabs" role="tablist" aria-label="任务状态">'
     + tab('active', '未完成', unfinished)
     + tab('done', '已完成', done)
     + '</div>';
@@ -746,9 +767,43 @@ function _taskPanelHtml() {
     const rows = _taskDoneRecords().map(t => _taskRowHtml(t, { history: true }));
     body.push(rows.length
       ? rows.join('')
-      : '<div class="task-empty">暂时没有已完成的任务记录</div>');
+      : '<div class="task-empty">暂无</div>');
   }
   return body.join('');
+}
+
+function _taskFocusSnapshot(panel) {
+  const active = document && document.activeElement;
+  if (!active || !panel || !panel.contains(active) || typeof active.closest !== 'function') return null;
+  const tab = active.closest('[data-task-tab]');
+  if (tab) return { kind: 'tab', tab: tab.getAttribute('data-task-tab') || '' };
+  const action = active.closest('[data-task-action]');
+  if (!action) return null;
+  const item = action.closest('.task-item');
+  return {
+    kind: 'action',
+    action: action.getAttribute('data-task-action') || '',
+    taskId: item ? (item.getAttribute('data-task-id') || '') : '',
+    nodeId: action.getAttribute('data-node-id') || '',
+  };
+}
+
+function _taskRestoreFocus(panel, snapshot) {
+  if (!panel || !snapshot || typeof panel.querySelectorAll !== 'function') return;
+  const selector = snapshot.kind === 'tab' ? '[data-task-tab]' : '[data-task-action]';
+  const candidates = panel.querySelectorAll(selector);
+  for (const candidate of candidates) {
+    if (snapshot.kind === 'tab') {
+      if (candidate.getAttribute('data-task-tab') !== snapshot.tab) continue;
+    } else {
+      const item = candidate.closest('.task-item');
+      if (candidate.getAttribute('data-task-action') !== snapshot.action
+        || !item || item.getAttribute('data-task-id') !== snapshot.taskId
+        || (candidate.getAttribute('data-node-id') || '') !== snapshot.nodeId) continue;
+    }
+    if (typeof candidate.focus === 'function') candidate.focus();
+    return;
+  }
 }
 
 function _renderTaskPanel() {
@@ -756,6 +811,7 @@ function _renderTaskPanel() {
   if (!_taskPanelOpen) return;
   const panel = document.getElementById('taskPanel');
   if (!panel) return;
+  const focus = _taskFocusSnapshot(panel);
   const body = panel.querySelector('.task-panel-body') || document.getElementById('taskPanelBody');
   if (body) body.innerHTML = _taskPanelHtml();
   // 两个入口（顶栏三角 / 胶囊上的列表按钮）同步徽标：数的是「未完成」，
@@ -772,7 +828,9 @@ function _renderTaskPanel() {
       badge.textContent = count ? String(count) : '';
       badge.hidden = count === 0;
     }
+    if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-expanded', String(_taskPanelOpen));
   }
+  _taskRestoreFocus(panel, focus);
   const stopAll = document.getElementById('taskPanelStopAll');
   if (stopAll) {
     stopAll.hidden = _taskTab !== 'active';
@@ -824,6 +882,11 @@ function _dockTaskPanel() {
   const panel = document.getElementById('taskPanel');
   const anchor = document.getElementById('progressStatus');
   if (!panel || !anchor || typeof anchor.getBoundingClientRect !== 'function') return false;
+  // 面板没打开就一票否决（2026-09-27 真机踩到）：这个函数同时被胶囊拖动当成
+  // 「跟着重贴」的回调（window._taskPanelDockFollow，chat.js 每帧调），而拖胶囊
+  // 与面板开合无关。少了这道闸，拖一下胶囊就给收起的面板套上 task-panel--docked
+  // 与 aurora-glass--dock-host——面板看不见，胶囊底角却被拉直，像被切掉一块。
+  if (!_taskPanelOpen || !panel.classList.contains('show')) return false;
   const rect = anchor.getBoundingClientRect();
   if (!rect || !(rect.width > 0)) return false;
 
@@ -905,6 +968,10 @@ function toggleTaskPanel(e) {
   } else {
     _undockTaskPanel();
     _taskTickStop();
+    for (const id of ['taskPanelBtn', 'progressTaskBtn']) {
+      const btn = document.getElementById(id);
+      if (btn && typeof btn.setAttribute === 'function') btn.setAttribute('aria-expanded', 'false');
+    }
   }
 }
 
@@ -957,6 +1024,10 @@ function _initTaskPanel() {
       if (panel.contains(e.target) || (btn && btn.contains(e.target))) return;
       panel.classList.remove('show');
       _taskPanelOpen = false;
+      for (const id of ['taskPanelBtn', 'progressTaskBtn']) {
+        const trigger = document.getElementById(id);
+        if (trigger && typeof trigger.setAttribute === 'function') trigger.setAttribute('aria-expanded', 'false');
+      }
       _undockTaskPanel();
       _taskTickStop();
     });
