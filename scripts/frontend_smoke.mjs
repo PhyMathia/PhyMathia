@@ -3256,7 +3256,10 @@ check('aurora-glass：浅色极光纯暖调（第三轮：连青玉也删掉，�
     ['基础', css.slice(css.indexOf('/* 浅色模式：白玻璃'), css.indexOf('    .aurora-glass--compact {'))],
     ['紧凑', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--compact,'), css.indexOf('    .aurora-glass--dialog {'))],
     ['弹窗', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--dialog,'), css.indexOf('    .aurora-glass--panel {'))],
-    ['大面积', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--panel,'), css.indexOf('@keyframes auroraDrift'))],
+    ['大面积', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--panel,'), css.indexOf('    .aurora-glass--attached {'))],
+    // 挂接档（2026-07-27 任务面板停靠胶囊新增）：带三团色斑，要走同一套暖调排查。
+    // 末尾落在下一档的**深色**规则前；--dock-host 只动投影不带色斑，故不进枚举。
+    ['挂接', css.slice(css.indexOf('    html[data-theme="light"] .aurora-glass--attached,'), css.indexOf('    .aurora-glass--dock-host {'))],
   ];
   // 用户否掉的青玉/冷色（45,212,191 青玉、34,211,238 天蓝、96,165,250 冷蓝、168,85,247 冷紫、120,150,220 蓝灰描边）
   const cold = ['45, 212, 191', '34, 211, 238', '96, 165, 250', '168, 85, 247', '120, 150, 220', '13, 148, 136', '8, 145, 178'];

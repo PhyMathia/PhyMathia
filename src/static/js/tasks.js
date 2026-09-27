@@ -805,6 +805,74 @@ function _taskTickStop() {
   }
 }
 
+// ====== 面板停靠：长在进度胶囊下面，而不是自己飘在左上角 ======
+// 用户 2026-09-27 原话「我希望这个任务列表就像是这个栏扩展出来的」：面板要看起来是
+// 胶囊那一栏长出来的抽屉——零缝隙、左右边缘对齐、接缝处两边圆角同时拉直。
+// 锚点取 `#progressStatus` 而不是触发按钮，两个入口（顶栏 ▾ / 胶囊 📋）打开的是同一处。
+const _TASK_DOCK_MIN_W = 360;   // 面板宽度底线
+const _TASK_DOCK_MAX_W = 560;   // 胶囊最长 min(550px, 100vw-24px)，留 10px 余量
+const _TASK_DOCK_MIN_H = 120;   // 缝隙以下至少要留这么高，否则头部的按钮点不到
+
+// 贴着胶囊下沿摆好面板。返回 false 表示没法停靠（页面上没有胶囊等），调用方退回
+// _positionPanel 的通用路径。**不碰 _positionPanel 本身**——难度/模型/数据三个面板共用它。
+function _dockTaskPanel() {
+  const panel = document.getElementById('taskPanel');
+  const anchor = document.getElementById('progressStatus');
+  if (!panel || !anchor || typeof anchor.getBoundingClientRect !== 'function') return false;
+  const rect = anchor.getBoundingClientRect();
+  if (!rect || !(rect.width > 0)) return false;
+
+  const viewW = window.innerWidth || 0;
+  const viewH = window.innerHeight || 0;
+  // 胶囊闲时恒 250px 宽（Chrome 对可缩 flex 子项固有宽度的坑，见 canvas-modules.md
+  // 2026-09-26 拍板），照抄会把列表压到装不下字，所以给一条 360 的底线。
+  const maxW = Math.min(_TASK_DOCK_MAX_W, Math.max(0, viewW - 16));
+  if (maxW < 1) return false;
+  const width = Math.min(Math.max(rect.width, Math.min(_TASK_DOCK_MIN_W, maxW)), maxW);
+
+  // 等宽时居中与左对齐重合；面板比胶囊宽时按胶囊中线居中，吊在它下面更像"长出来的"。
+  let left = rect.left + (rect.width - width) / 2;
+  left = Math.max(8, Math.min(left, viewW - width - 8));
+
+  const top = Math.max(8, rect.bottom);   // 0 缝隙：接缝要看不见
+  const room = viewH - top - 8;
+  let dockedTop = top;
+  let maxHeight = room;
+  if (room < _TASK_DOCK_MIN_H) {
+    // 胶囊被拖到屏幕很靠下的地方，缝隙以下放不下最小高度。此时才退回"整块上移"，
+    // 宁可盖住胶囊也不能让面板的头掉出屏幕（头部那排按钮点不到是真机踩过的）。
+    // 抬多少用 top+maxHeight 解析地算，不去量面板的 rect——那样算出来的偏移依赖
+    // 浏览器已经排完版，而这里的 maxHeight 正是要约束它，量了会绕回自己。
+    maxHeight = Math.min(_TASK_DOCK_MIN_H, Math.max(0, viewH - 16));
+    dockedTop = Math.max(8, Math.min(dockedTop, viewH - 8 - maxHeight));
+  }
+
+  panel.classList.add('task-panel--docked');
+  panel.classList.add('aurora-glass--attached');
+  anchor.classList.add('aurora-glass--dock-host');
+  panel.style.width = width + 'px';
+  panel.style.left = Math.round(left) + 'px';
+  panel.style.right = 'auto';
+  panel.style.top = Math.round(dockedTop) + 'px';
+  panel.style.maxHeight = Math.round(maxHeight) + 'px';
+  panel.style.overflowY = 'auto';
+  return true;
+}
+
+// 撤掉停靠：清内联几何 + 摘停靠类，让面板回到 CSS 默认形态（下次开走通用路径或重新停靠）。
+function _undockTaskPanel() {
+  const panel = document.getElementById('taskPanel');
+  const anchor = document.getElementById('progressStatus');
+  if (panel) {
+    panel.classList.remove('task-panel--docked');
+    panel.classList.remove('aurora-glass--attached');
+    panel.style.width = '';
+    panel.style.maxHeight = '';
+    panel.style.overflowY = '';
+  }
+  if (anchor) anchor.classList.remove('aurora-glass--dock-host');
+}
+
 function toggleTaskPanel(e) {
   if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
   const panel = document.getElementById('taskPanel');
@@ -813,12 +881,10 @@ function toggleTaskPanel(e) {
   panel.classList.toggle('show', willShow);
   _taskPanelOpen = willShow;
   if (willShow) {
-    if (typeof _positionPanel === 'function') {
-      void panel.offsetHeight;
+    void panel.offsetHeight;   // 强制 reflow 再量宽
+    if (!_dockTaskPanel() && typeof _positionPanel === 'function') {
+      // 停靠不上（页面里没有胶囊）才走通用路径：挂触发器下方 + 掉出视口就上移。
       _positionPanel('taskPanel', (e && e.currentTarget) || document.getElementById('taskPanelBtn'));
-      // 胶囊停在屏幕下方时，面板挂在它下面会有一截探出视口——头部那排按钮就点不到了
-      // （真机自测逮到的：playwright 点「清除记录」一直等不到元素可点）。整块往上挪回来：
-      // 宁可盖住胶囊，也不能让面板的头掉出屏幕。
       const rect = panel.getBoundingClientRect();
       const overflow = rect.bottom - ((window.innerHeight || 0) - 8);
       if (overflow > 0) panel.style.top = Math.max(8, rect.top - overflow) + 'px';
@@ -827,6 +893,7 @@ function toggleTaskPanel(e) {
     _renderTaskPanel();
     _taskTickStart();
   } else {
+    _undockTaskPanel();
     _taskTickStop();
   }
 }
@@ -880,8 +947,15 @@ function _initTaskPanel() {
       if (panel.contains(e.target) || (btn && btn.contains(e.target))) return;
       panel.classList.remove('show');
       _taskPanelOpen = false;
+      _undockTaskPanel();
       _taskTickStop();
     });
+    // 胶囊是 left:50% 居中的，窗口一变宽它的 x 就变，面板得跟着重新贴一次。
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('resize', () => {
+        if (_taskPanelOpen && panel.classList.contains('task-panel--docked')) _dockTaskPanel();
+      });
+    }
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') _taskPersistBeacon();
     });
@@ -904,3 +978,5 @@ if (typeof document !== 'undefined') {
 window.toggleTaskPanel = toggleTaskPanel;
 window.stopAllTasks = _tasksStopAll;
 window.clearDoneTasks = _tasksClearDone;
+// 胶囊被拖动时由 chat.js 回调，让停靠着的面板跟过去（不跟就脱钩了）。
+window._taskPanelDockFollow = _dockTaskPanel;

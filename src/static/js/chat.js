@@ -166,6 +166,17 @@
         status.setPointerCapture(e.pointerId);
         e.preventDefault();
       };
+      // 面板停靠在胶囊下沿，胶囊一动就得重新贴一次，否则一拖就脱钩（tasks.js 提供）。
+      let followQueued = false;
+      const followDock = () => {
+        if (followQueued) return;
+        followQueued = true;
+        const raf = (window.requestAnimationFrame || (fn => setTimeout(fn, 16)));
+        raf(() => {
+          followQueued = false;
+          if (typeof window._taskPanelDockFollow === 'function') window._taskPanelDockFollow();
+        });
+      };
       const onMove = (e) => {
         if (!dragging) return;
         const nextX = Math.max(4, Math.min(window.innerWidth - status.offsetWidth - 4, originX + e.clientX - startX));
@@ -174,11 +185,13 @@
         status.style.left = nextX + 'px';
         status.style.top = nextY + 'px';
         status.style.transform = 'none';
+        followDock();
       };
       const onUp = () => {
         if (!dragging) return;
         dragging = false;
         status.classList.remove('dragging');
+        followDock();   // 最后一帧对齐，别停在半格上
         try {
           const rect = status.getBoundingClientRect();
           localStorage.setItem(PROGRESS_POS_KEY, JSON.stringify({
