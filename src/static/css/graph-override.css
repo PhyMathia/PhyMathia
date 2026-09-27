@@ -5172,3 +5172,24 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-add-node-group:last-child .graph-add-node-grid > .graph-add-node-item:only-child {
   grid-column: 1 / -1;
 }
+
+/* ---------- 8. 横屏视觉打磨（2026-09-27）----------
+   只在横屏生效。取证数据见 docs/日志/2026-09-27.md。 */
+
+@media (orientation: landscape) {
+
+  /* 裸图标浮层两枚相邻图标只隔 4px，读成一道栅栏。簇的位置与按钮 38×38
+     是点选热区，不动。 */
+  .app-container .graph-canvas-toolbar {
+    gap: 6px !important;
+  }
+
+  /* Φ 面板的「发送」键被桌宠完整盖住（T51）。窗口开着时把桌宠挪到左侧；
+     right 公式照抄上面 .graph-harness-window 的宽度，改那边要跟着改。
+     桌宠被拖过后 JS 写内联 left/top 并把 right/bottom 置 auto，内联优先、
+     让位随之失效——那一档由 z-index 兜底。 */
+  body:has(> .graph-harness-window:not([hidden])) .phi-pet-root {
+    right: calc(18px + min(400px, 100vw - 36px) + var(--sp-6));
+    z-index: var(--z-modal);
+  }
+}
