@@ -586,10 +586,23 @@ function _customNodeStatusText(node) {
     return '分发';
   }
   if (node.busy || node.status === 'running') return '生成中';
+  if (node.status === 'blocked') return '上游缺失';
   if (node.status === 'waiting') return '等待输入';
   if (node.status === 'error') return '失败';
   if (node.status === 'done' || ((node.content || '').trim() && !node.status)) return '完成';
   return '待生成';
+}
+
+// 状态徽章。blocked 是任务列表带来的新状态（用户 2026-09-27 拍板 #10）：它上游的节点
+// 被停掉或失败了，内容永远凑不齐——徽章只放得下四个字，完整说法挂在 title 上。
+function _customNodeStatusHtml(node, force) {
+  if (!node) return '';
+  if (!force && node.messageIndex >= 0) return '';
+  const statusText = _customNodeStatusText(node);
+  if (!statusText) return '';
+  const stateKey = node.busy ? 'running' : (node.status || 'empty');
+  const title = stateKey === 'blocked' ? ' title="上游缺失，无法生成"' : '';
+  return '<span class="graph-node-status status-' + stateKey + '"' + title + '>' + escapeHtml(statusText) + '</span>';
 }
 
 function _canMinimizeGraphNode(node) {
@@ -615,10 +628,7 @@ function _graphNodePending(node) {
 
 function _customNodeHeaderHtml(node, attr, extraButtons) {
   const sub = _nodeSub(node);
-  const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
-  const statusHtml = statusText
-    ? '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>'
-    : '';
+  const statusHtml = _customNodeStatusHtml(node);
   return '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>'
     + (sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '')
     + statusHtml
@@ -692,8 +702,7 @@ function _renderRelationNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const sizeStyle = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
-  const statusText = _customNodeStatusText(node);
-  const statusHtml = '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>';
+  const statusHtml = _customNodeStatusHtml(node, true);
   const body = '<div class="graph-relation-body">'
     + '<textarea class="graph-custom-node-content" rows="2" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)" placeholder="联系说明">' + escapeHtml(node.content || '') + '</textarea>'
     + '<div class="graph-relation-actions">'
@@ -882,10 +891,7 @@ function _renderAiEvalNodeHtml(node, state) {
   }
   const sub = _nodeSub(node);
   const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
-  const statusText = node.messageIndex < 0 ? _customNodeStatusText(node) : '';
-  const statusHtml = statusText
-    ? '<span class="graph-node-status status-' + (node.busy ? 'running' : node.status || 'empty') + '">' + escapeHtml(statusText) + '</span>'
-    : '';
+  const statusHtml = _customNodeStatusHtml(node);
   const minimizeToggle = _graphMinimizeToggleHtml(node);
   const editBtn = node.kind === 'module'
     ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'

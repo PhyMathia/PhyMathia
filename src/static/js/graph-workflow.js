@@ -399,7 +399,42 @@ function _refreshWorkflowNodeStatusUi(node) {
   }
 }
 
-async function _generateAnalysis(node) {
+// ===== 节点级中断信号（任务列表「停单个节点」的底座） =====
+// 全局停止仍旧是 workflowAbortController 那条总闸；per-node 取消走每个节点自己的
+// controller。没传信号的老调用点自动退回总闸，行为一字不变。
+function _workflowAbortSignal() {
+  return workflowAbortController ? workflowAbortController.signal : null;
+}
+
+function _workflowGlobalAborted() {
+  const signal = _workflowAbortSignal();
+  return !!(signal && signal.aborted);
+}
+
+function _workflowNodeSignal(nodeSignal) {
+  if (nodeSignal) return nodeSignal;
+  return _workflowAbortSignal() || new AbortController().signal;
+}
+
+function _workflowNodeAborted(nodeSignal) {
+  if (nodeSignal && nodeSignal.aborted) return true;
+  return _workflowGlobalAborted();
+}
+
+// 面板里节点条目的排列顺序：干活模块按画布位置从左到右，总结/汇聚这类收口的排最后
+// （与用户给的面板草图一致：物理视角 → 数学视角 → 交互可视化 → 总结）。
+function _taskWorkNodeOrder(a, b) {
+  const rank = node => (node.kind === 'summary' || node.kind === 'hub') ? 1 : 0;
+  if (rank(a) !== rank(b)) return rank(a) - rank(b);
+  const ax = Number.isFinite(a.x) ? a.x : 0;
+  const bx = Number.isFinite(b.x) ? b.x : 0;
+  if (ax !== bx) return ax - bx;
+  const ay = Number.isFinite(a.y) ? a.y : 0;
+  const by = Number.isFinite(b.y) ? b.y : 0;
+  return ay - by;
+}
+
+async function _generateAnalysis(node, nodeSignal) {
   if (!node || node.busy) return;
   const question = _findQuestionContentUpstream(node);
   if (!question.trim()) {
@@ -434,7 +469,7 @@ async function _generateAnalysis(node) {
     graphPath: [],
     workflowContext,
   };
-  const signal = workflowAbortController ? workflowAbortController.signal : new AbortController().signal;
+  const signal = _workflowNodeSignal(nodeSignal);
   const blankStartedAt = Date.now();
 
   try {
@@ -496,7 +531,7 @@ function _normalizeWorkflowVizContent(content) {
   return '';
 }
 
-async function _generateCustomNode(node) {
+async function _generateCustomNode(node, nodeSignal) {
   if (!node || node.busy) return;
   if (node.kind === 'answer' && !node.manual) return;
   if (node.kind === 'hub') return;
@@ -519,7 +554,7 @@ async function _generateCustomNode(node) {
     graphPath,
     workflowContext,
   };
-  const signal = workflowAbortController ? workflowAbortController.signal : new AbortController().signal;
+  const signal = _workflowNodeSignal(nodeSignal);
 
   try {
     let resp = null;
@@ -583,7 +618,7 @@ async function _generateCustomNode(node) {
         }
       }
       if (!normalized) {
-        const wasAborted = !!(workflowAbortController && workflowAbortController.signal.aborted);
+        const wasAborted = _workflowNodeAborted(nodeSignal);
         live.content = '';
         live.summary = '';
         live.status = wasAborted ? 'waiting' : 'error';
@@ -818,7 +853,7 @@ async function _extractKnowledgeFromWorkflow(question, moduleIds) {
   }
 }
 
-async function startQuestionWorkflow(text, opts) {
+async function startQuestionWorkflow(text, opts, handoffTaskId) {
   const question = String((text || '').trim());
   if (!question) return;
   // T42：这条守卫过去只查 isStreaming，而工作流全程不碰 isStreaming（它走
@@ -829,7 +864,11 @@ async function startQuestionWorkflow(text, opts) {
   if (typeof _isSendBusy === 'function' && _isSendBusy()) {
     const capturedQuestion = question;
     const capturedOpts = opts;
-    _enqueueSend('提问', function() { return startQuestionWorkflow(capturedQuestion, capturedOpts); });
+    // handoffTaskId：排队那条「提问」任务的 id。轮到它跑起来时，工作流任务接手，
+    // 面板上就地把它结掉——不然同一个动作会留两行（等待中的提问 + 进行中的工作流）。
+    // text 给面板当标题：只写「提问」两个字，用户认不出等的是哪句问题。
+    _enqueueSend('提问', function(taskId) { return startQuestionWorkflow(capturedQuestion, capturedOpts, taskId); },
+      { text: capturedQuestion });
     return;
   }
   const options = opts || {};
@@ -873,7 +912,7 @@ async function startQuestionWorkflow(text, opts) {
     if (!moduleKeys.includes('socratic')) moduleKeys.push('socratic');
   }
   const moduleIds = _createWorkflowModuleNodes(moduleKeys, liveAnswer2.id);
-  await _executeParallelWorkflow(moduleIds, true);
+  await _executeParallelWorkflow(moduleIds, true, { title: question, handoffTaskId: handoffTaskId || '' });
   await _extractKnowledgeFromWorkflow(question, moduleIds);
 }
 
@@ -1015,10 +1054,10 @@ function _hideWorkflowProgress() {
   if (typeof hideProgress === 'function') hideProgress();
 }
 
-async function _processWorkflowChainItem(current, force) {
+async function _processWorkflowChainItem(current, force, nodeSignal) {
   if (!current) return false;
   if (current.messageIndex >= 0) return true;
-  if (workflowAbortController?.signal.aborted) return false;
+  if (_workflowNodeAborted(nodeSignal)) return false;
 
   if (current.kind === 'hub') {
     const hasInput = (graphView.edges || []).some(edge => String(edge.to) === current.id && !edge.draft);
@@ -1047,11 +1086,11 @@ async function _processWorkflowChainItem(current, force) {
     }
     const analysisHash = _simpleHash(question + '|' + (current.requirements || ''));
     if (!current.analysis || current.analysisHash !== analysisHash) {
-      await _generateAnalysis(current);
+      await _generateAnalysis(current, nodeSignal);
     } else {
       current.status = 'done';
     }
-    return !workflowAbortController?.signal.aborted;
+    return !_workflowNodeAborted(nodeSignal);
   }
 
   if (current.kind === 'user' || current.manual) {
@@ -1068,8 +1107,8 @@ async function _processWorkflowChainItem(current, force) {
 
   const inputHash = _nodeInputHash(current);
   if (!force && (current.content || '').trim() && current.inputHash === inputHash && current.status === 'done') return true;
-  await _generateCustomNode(current);
-  return !workflowAbortController?.signal.aborted;
+  await _generateCustomNode(current, nodeSignal);
+  return !_workflowNodeAborted(nodeSignal);
 }
 
 function _workflowDependencyEdges() {
@@ -1120,30 +1159,45 @@ function _workflowPendingNodeIds(subgraph, processed, failed, blocked) {
   return [...subgraph.ids].filter(id => !processed.has(id) && !failed.has(id) && !blocked.has(id));
 }
 
-function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked) {
+// 上游没了（失败，或被用户从面板上停掉）的下游：标成「上游缺失」（用户拍板 #10）。
+// 只写 blocked、不写 waiting——waiting 是「等输入」，这两种「等」在画布上必须分得开。
+function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked, runtime) {
   const stack = [failedId];
+  const taskId = runtime && runtime.taskId;
   while (stack.length) {
     const id = stack.pop();
     for (const edge of subgraph.edges) {
       if (edge.from !== id || processed.has(edge.to) || blocked.has(edge.to)) continue;
       blocked.add(edge.to);
       const node = _findGraphNode(edge.to);
-      if (node && node.status !== 'done') node.status = 'waiting';
+      if (node && node.status !== 'done') node.status = 'blocked';
       _refreshWorkflowNodeStatusUi(node);
+      if (typeof _taskNodeFinish === 'function') _taskNodeFinish(taskId, edge.to, 'blocked', '上游缺失', true);
       stack.push(edge.to);
     }
   }
+  // 立刻落盘：不然「上游缺失」只在屏幕上活着，切走再回来就又变回待生成了
+  _saveCustomNodes();
 }
 
-async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked) {
+async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime) {
   const shouldForce = force && (node.kind === 'module' || node.kind === 'summary');
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
+  const taskId = runtime ? runtime.taskId : null;
   if (shouldCount) _markWorkflowCurrentNode(node);
-  (window.__wfLogs = window.__wfLogs || []).push({ type: 'start', label: _workflowProgressLabel(node), t: Date.now() });
-  console.log('[Workflow] start', _workflowProgressLabel(node), Date.now());
+  // 每颗节点一个 controller：面板上的「停」只掐这一颗，不惊动同轮的其他节点
+  const nodeController = new AbortController();
+  if (runtime) {
+    runtime.nodeControllers.set(node.id, nodeController);
+    if (_workflowGlobalAborted()) nodeController.abort();
+  }
+  const label = _workflowProgressLabel(node);
+  if (shouldCount && typeof _taskNodeStart === 'function') _taskNodeStart(taskId, node.id, label, nodeController);
+  (window.__wfLogs = window.__wfLogs || []).push({ type: 'start', label, t: Date.now() });
+  console.log('[Workflow] start', label, Date.now());
   let ok = false;
   try {
-    ok = await _processWorkflowChainItem(node, shouldForce);
+    ok = await _processWorkflowChainItem(node, shouldForce, nodeController.signal);
   } catch (err) {
     console.error('Workflow node failed:', err);
     const live = _findGraphNode(node.id);
@@ -1154,32 +1208,58 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
     _saveCustomNodes();
     _refreshWorkflowNodeStatusUi(live);
   }
-  (window.__wfLogs = window.__wfLogs || []).push({ type: 'done', label: _workflowProgressLabel(node), t: Date.now() });
-  console.log('[Workflow] done ', _workflowProgressLabel(node), Date.now());
+  (window.__wfLogs = window.__wfLogs || []).push({ type: 'done', label, t: Date.now() });
+  console.log('[Workflow] done ', label, Date.now());
   const live = _findGraphNode(node.id);
   const errored = !!(live && live.status === 'error');
-  const aborted = !!workflowAbortController?.signal.aborted;
-  if (errored || (!ok && !aborted)) {
+  const globalAborted = _workflowGlobalAborted();
+  const nodeStopped = nodeController.signal.aborted && !globalAborted;
+  const aborted = globalAborted || nodeStopped;
+  if (runtime) runtime.nodeControllers.delete(node.id);
+  if (nodeStopped) {
+    // 用户停掉了这一颗：它自己算失败（不再重试），下游按「上游缺失」传播
+    if (runtime) runtime.userStopped = (runtime.userStopped || 0) + 1;
+    if (typeof _taskNodeFinish === 'function') _taskNodeFinish(taskId, node.id, 'stopped', '已取消', true);
     failed.add(node.id);
-    _markWorkflowDependentsBlocked(node.id, subgraph, processed, blocked);
+    _markWorkflowDependentsBlocked(node.id, subgraph, processed, blocked, runtime);
+  } else if (errored || (!ok && !aborted)) {
+    if (typeof _taskNodeFinish === 'function') _taskNodeFinish(taskId, node.id, 'error', '失败', true);
+    failed.add(node.id);
+    _markWorkflowDependentsBlocked(node.id, subgraph, processed, blocked, runtime);
   } else {
+    if (shouldCount && typeof _taskNodeFinish === 'function') {
+      _taskNodeFinish(taskId, node.id, globalAborted ? 'stopped' : (ok ? 'done' : 'error'),
+        globalAborted ? '已停止' : (ok ? '' : '未生成'));
+    }
     processed.add(node.id);
   }
-  if (shouldCount && !aborted) _advanceWorkflowProgress(_workflowProgressLabel(node));
+  if (shouldCount && !aborted) _advanceWorkflowProgress(label);
 }
 
-async function _runWorkflowGraph(subgraph, force) {
+async function _runWorkflowGraph(subgraph, force, runtime) {
   const processed = new Set();
   const failed = new Set();
   const blocked = new Set();
   const pendingQueue = [];
   const inFlight = new Set();
+  const userCancelled = (runtime && runtime.userCancelled) ? runtime.userCancelled : new Set();
+  const taskId = runtime ? runtime.taskId : null;
   let runningWorkers = 0;
   let completed = true;
+
+  // 用户在面板上停掉了还没轮到的节点：跳过它，并把「上游缺失」传下去
+  function skipCancelled(node) {
+    if (!node || !userCancelled.has(node.id) || processed.has(node.id) || failed.has(node.id)) return false;
+    failed.add(node.id);
+    if (typeof _taskNodeFinish === 'function') _taskNodeFinish(taskId, node.id, 'stopped', '已取消', true);
+    _markWorkflowDependentsBlocked(node.id, subgraph, processed, blocked, runtime);
+    return true;
+  }
 
   function enqueueReadyNodes() {
     const ready = _workflowReadyNodes(subgraph, processed, failed, blocked);
     for (const node of ready) {
+      if (skipCancelled(node)) continue;
       if (!inFlight.has(node.id) && !pendingQueue.some(item => item.id === node.id)) {
         pendingQueue.push(node);
       }
@@ -1190,9 +1270,19 @@ async function _runWorkflowGraph(subgraph, force) {
     runningWorkers++;
     try {
       while (true) {
-        if (workflowAbortController?.signal.aborted) {
+        if (_workflowGlobalAborted()) {
           completed = false;
           break;
+        }
+        // 软暂停（用户拍板 #3）：不再派新节点，已经在跑的跑完。没有剩余活儿时照常
+        // 收尾——不然工作流会卡在这道闸门前，永远等不到「继续」的那一天。
+        if (typeof _taskCtxPaused === 'function' && _taskCtxPaused()) {
+          if (inFlight.size === 0) {
+            enqueueReadyNodes();
+            if (!pendingQueue.length) break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 120));
+          continue;
         }
         const node = pendingQueue.shift();
         if (!node) {
@@ -1218,9 +1308,13 @@ async function _runWorkflowGraph(subgraph, force) {
           }
           break;
         }
+        if (skipCancelled(node)) {
+          enqueueReadyNodes();
+          continue;
+        }
         inFlight.add(node.id);
         try {
-          await _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked);
+          await _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime);
         } finally {
           inFlight.delete(node.id);
           enqueueReadyNodes();
@@ -1237,7 +1331,7 @@ async function _runWorkflowGraph(subgraph, force) {
   return completed && failed.size === 0 && blocked.size === 0;
 }
 
-async function _executeParallelWorkflow(targetIds, force) {
+async function _executeParallelWorkflow(targetIds, force, meta) {
   const subgraph = _buildWorkflowSubgraph(targetIds);
   if (!subgraph.ids.size) {
     if (typeof showToast === 'function') showToast('没有可运行的节点');
@@ -1248,22 +1342,55 @@ async function _executeParallelWorkflow(targetIds, force) {
   workflowRunActive = true;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
-  const totalWork = [...subgraph.ids].filter(id => {
-    const node = _findGraphNode(id);
-    return _workflowItemNeedsProgress(node) || (force && node && (node.kind === 'module' || node.kind === 'summary'));
-  }).length;
+  const countedNodes = [...subgraph.ids]
+    .map(id => _findGraphNode(id))
+    .filter(node => node && (_workflowItemNeedsProgress(node)
+      || (force && (node.kind === 'module' || node.kind === 'summary'))));
+  const totalWork = countedNodes.length;
+  // 任务列表：这一轮工作流 = 一条任务，节点明细 = 组里的条目（用户拍板的两级结构）。
+  // 开跑前就把「要干哪几颗」记全，面板因此一眼能看到「3/6 已完成」这样的总数。
+  const workNodes = countedNodes
+    .slice()
+    .sort(_taskWorkNodeOrder)
+    .map(node => ({ id: node.id, label: _workflowProgressLabel(node) }));
+  const taskId = (typeof _tasksBeginWorkflow === 'function')
+    ? _tasksBeginWorkflow({
+        title: (meta && meta.title) || '生成工作流',
+        force: !!force,
+        workNodes,
+        allIds: [...subgraph.ids],
+      })
+    : null;
+  const runtime = (taskId && typeof _taskActiveCtx !== 'undefined' && _taskActiveCtx
+      && _taskActiveCtx.taskId === taskId)
+    ? Object.assign({ taskId }, _taskActiveCtx.runtime)
+    : null;
   _showWorkflowProgress(totalWork);
   let completed = false;
   try {
-    completed = await _runWorkflowGraph(subgraph, force);
+    completed = await _runWorkflowGraph(subgraph, force, runtime);
   } finally {
-    const wasAborted = !!(workflowAbortController && workflowAbortController.signal.aborted);
+    const wasAborted = _workflowGlobalAborted();
+    const userCancelled = runtime ? runtime.userCancelled.size : 0;
+    const userStopped = runtime ? (runtime.userStopped || 0) : 0;
     workflowRunActive = false;
     workflowAbortController = null;
     _setWorkflowStopButton(false);
     _hideWorkflowProgress();
     _saveCustomNodes();
     renderGraphCanvas();
+    // 任务列表结账。**必须排在 _flushSendQueue 之前**：放行排队请求可能切会话
+    // （队列项自带来处），而结账用的还是这一轮任务的账本与上下文。
+    if (taskId && typeof _tasksEndWorkflow === 'function') {
+      const taskState = wasAborted ? 'stopped' : (completed ? 'done' : 'partial');
+      const taskNote = wasAborted ? '手动停止'
+        : ((userCancelled || userStopped) ? '有节点被停掉' : (completed ? '' : '有节点没跑完'));
+      _tasksEndWorkflow(taskId, taskState, taskNote);
+    }
+    // 排队中的「提问」被这一轮接手了：把那条等待任务就地结掉，别在面板上留两行
+    if (meta && meta.handoffTaskId && typeof _taskFinish === 'function') {
+      _taskFinish(meta.handoffTaskId, 'done', '已交给工作流');
+    }
     // 队列里还有东西时不报「工作流完成」：这轮完了但活儿没完，而且下一条马上
     // 自动开跑，完成卡片会跟新进度撞在一起（chat.js 的「回复完成」同此口径）。
     if (!wasAborted && completed && typeof notifyTaskCompleted === 'function'
@@ -1288,7 +1415,7 @@ async function _executeParallelWorkflow(targetIds, force) {
 async function runWorkflowNode(nodeId, force = false) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || node.busy || workflowRunActive) return;
-  await _executeParallelWorkflow([nodeId], force);
+  await _executeParallelWorkflow([nodeId], force, { title: '生成' + _workflowProgressLabel(node) });
 }
 
 async function runWorkflowNodes(nodeIds, force = false) {
@@ -1299,7 +1426,7 @@ async function runWorkflowNodes(nodeIds, force = false) {
       && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer');
   });
   if (!targets.length) return false;
-  await _executeParallelWorkflow(targets, !!force);
+  await _executeParallelWorkflow(targets, !!force, { title: '生成 ' + targets.length + ' 个节点' });
   return true;
 }
 
@@ -1311,7 +1438,7 @@ async function runAllWorkflowNodes() {
     if (typeof showToast === 'function') showToast('没有需要生成的模块/总结节点');
     return;
   }
-  await _executeParallelWorkflow(targets.map(node => node.id), false);
+  await _executeParallelWorkflow(targets.map(node => node.id), false, { title: '全部生成' });
 }
 
 function stopWorkflowRun() {

@@ -1,6 +1,9 @@
 // ===== PhyMathia 知识网络画布：自定义/输入/文档节点 =====
 
 function _saveCustomNodes() {
+  // 任务列表：有工作流任务在跑时，保存出口改写到**任务所属会话**的 state（T59）。
+  // 否则切了会话之后，产出会跟着当前画布写进别人家（graphView 与 SESSION_ID 都是现场读的）。
+  if (typeof _taskSaveNodesOverride === 'function' && _taskSaveNodesOverride()) return;
   const state = _graphState();
   state.customNodes = graphView.nodes
     .filter(node => node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind))

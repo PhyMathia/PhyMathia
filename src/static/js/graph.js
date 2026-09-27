@@ -909,6 +909,12 @@ function _splitGraphSections(sections) {
 }
 
 function _findGraphNode(nodeId) {
+  // 任务列表：工作流任务跑动期间优先看任务自己那批节点（任务自带来处，见 tasks.js）。
+  // 用户切到别的画布之后，任务不再改画布上这批人，而是改自己那份工作副本。
+  if (typeof _taskNodeOverride === 'function') {
+    const owned = _taskNodeOverride(nodeId);
+    if (owned) return owned;
+  }
   return graphView.nodeById[nodeId] || null;
 }
 

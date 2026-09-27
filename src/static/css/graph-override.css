@@ -1900,6 +1900,15 @@
   color: var(--danger-fg);
 }
 
+/* 任务列表带来的新状态（用户 2026-09-27 拍板 #10）：上游被停掉或失败了，这颗节点的
+   内容永远凑不齐。与 status-error 区分开——那是"它自己失败了"，这是"轮不到它了"。 */
+.graph-node-status.status-blocked {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px rgba(244, 63, 94, 0.35);
+  cursor: help;
+}
+
 @keyframes graphSpin {
   to {
     transform: rotate(360deg);
