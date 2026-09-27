@@ -3791,6 +3791,33 @@ await Promise.all(pendingChecks).catch(() => {});
 // `_sseContentFrames`。这里钉住那个不变量——**别再往回抄**。抄回去的症状是
 // 「某类节点偶发不更新」，静态断言看不出来，只有真发才知道（而真发需要可用模型，
 // 见 docs/backlog.md T37）。所以退化成重复时必须在这里就红。
+// 2026-09-27：只读外发页的右键菜单是**按标签文本**做白名单剪枝的
+// （viewer-main.js 的 READONLY_MENU_LABELS）。也就是说主应用那边一改菜单文案，
+// 这里不同步的话，查看器里那个菜单项会被**静默剪掉**——整张菜单空了还会顺手 close，
+// 症状是「只读页右键少了一项」，全程无任何报错。
+// 「导出超高清 PNG…」改成「导出…」时踩过一次，靠肉眼看出来的。这条断言把它变成会红的。
+check('viewer: 只读菜单白名单的每一条都还能在主应用菜单里找到', () => {
+  const vm = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+  const cm = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
+  const m = vm.match(/var READONLY_MENU_LABELS = \[([\s\S]*?)\];/);
+  if (!m) throw new Error('viewer-main.js 里找不到 READONLY_MENU_LABELS');
+  const labels = (m[1].match(/'([^']+)'/g) || []).map(x => x.slice(1, -1));
+  if (!labels.length) throw new Error('白名单解析出 0 条，断言本身坏了');
+  // 判据是「该文案有没有作为引号字面量出现在菜单文件里」，不去解析 `label:` 那一行——
+  // 那边不都是字面量：折叠/展开是三元表达式（`node.minimized ? '展开节点' : '折叠节点'`），
+  // 「删除 」还带尾随空格。顺带记一笔：别用 `/'[^']+'/g` 一次抽全部字符串——源码里到处是
+  // `|| ''` 这种空串，`[^']+` 匹配不上会一路错位把后面的内容吞进来（第一版就这么把
+  // 「复制全文」判成了不存在）。这正是要挡的失败模式：文案被改掉或删掉。
+  // 白名单是**前缀**匹配（label.indexOf(kw) === 0），所以菜单里写「导出…」而白名单写
+  // 「导出」是合法的——判据跟着前缀语义走：文本出现在一个单引号之后即可。
+  for (const lb of labels) {
+    if (cm.indexOf("'" + lb) < 0) {
+      throw new Error('白名单里的「' + lb + '」在 graph-contextmenu.js 里已不存在'
+        + '——主应用改了菜单文案，这里必须同步，否则只读页那个菜单项会被静默剪掉');
+    }
+  }
+});
+
 check('graph-workflow: SSE 帧读取全仓只有一份，三个流式通道都走它', () => {
   const gw = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
   const readers = (gw.match(/getReader\(\)/g) || []).length;

@@ -255,7 +255,9 @@ function _graphContextItemsForCanvas(point, client) {
   items.push({ key: 'sep' });
   items.push({
     key: 'export',
-    label: '导出超高清 PNG…',
+    // 只写「导出」，不写死格式：点开是导出菜单（缩略知识海报 / 屏幕所见整图 /
+    // 单文件网页 / 快照），不止 PNG 一种（2026-09-27 用户指出）。
+    label: '导出…',
     // 有光标坐标时把导出菜单锚到光标附近（M2）；无参调用 = 工具栏入口现状不变
     run: () => {
       if (typeof window.toggleGraphExportMenu !== 'function') return;
