@@ -242,13 +242,55 @@ function _strictModuleOutputInstruction(moduleKey) {
   return '';
 }
 
-async function _streamCustomNodeResponse(resp, node) {
+// ====== SSE 帧读取：全仓唯一的一份 ======
+// 三个流式函数（模块节点 / 问题分析 / 空白节点）原本各抄一份：getReader →
+// TextDecoder → 拆 \n\n → 逐行取 data: → 跳 [DONE] → JSON.parse → 错误帧抛错 →
+// 吐 delta.content。同样的逻辑改一次要改三处，漏一处就只在那一条通道上出问题，
+// 而症状是「某类节点偶发不更新」——极难查。这里抽成唯一的读取口，三处共用。
+//
+// **只吐正文增量，绝不碰 reasoning_content。** 思维链与正文必须分两条通道攒；
+// `delta.content || delta.reasoning_content` 那种写法会把思维链灌进正文，
+// 那是 2026-09-15「旋度那座岛全程静默消失」的根因（docs/dev/knowledge-pipeline.md）。
+// 将来真要思维链，在这里显式加第二个 yield，不许改回或的那个。
+//
+// 每 4 帧让出一次事件循环：流式期间合成 DOM 渲染有帧预算，别让读流饿死它。
+// （让出的时机从「渲染前」挪到了「渲染后」——两者都是每 4 帧喘一次，语义等价。）
+async function* _sseContentFrames(resp) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let frameCount = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop();   // 最后一段可能不完整，留到下一轮再拼
+    for (const part of parts) {
+      for (const line of part.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const dataStr = line.slice(6).trim();
+        if (dataStr === '[DONE]') continue;
+        let data = null;
+        try { data = JSON.parse(dataStr); } catch (e) {}
+        if (data && data.error) {
+          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
+          throw new Error('AI 流式返回错误：' + message);
+        }
+        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
+        if (delta && delta.content) {
+          yield delta.content;
+          frameCount++;
+          if (frameCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+    }
+  }
+}
+
+async function _streamCustomNodeResponse(resp, node) {
   let content = '';
   let renderPending = false;
-  let streamChunkCount = 0;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -273,33 +315,10 @@ async function _streamCustomNodeResponse(resp, node) {
     });
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();
-    for (const part of parts) {
-      for (const line of part.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        let data = null;
-        try { data = JSON.parse(dataStr); } catch (e) {}
-        if (data && data.error) {
-          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
-          throw new Error('AI 流式返回错误：' + message);
-        }
-        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
-        if (delta && delta.content) {
-          content += delta.content;
-          _scheduleWorkflowStreamProgress(content.length);
-          streamChunkCount++;
-          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-          scheduleRender();
-        }
-      }
-    }
+  for await (const piece of _sseContentFrames(resp)) {
+    content += piece;
+    _scheduleWorkflowStreamProgress(content.length);
+    scheduleRender();
   }
 
   let cleaned = node.kind === 'module' ? _cleanBlankNodeContent(node, content) : content;
@@ -319,12 +338,8 @@ async function _streamCustomNodeResponse(resp, node) {
 }
 
 async function _streamAnalysisResponse(resp, node, question) {
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   let analysis = '';
   let renderPending = false;
-  let streamChunkCount = 0;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -343,33 +358,10 @@ async function _streamAnalysisResponse(resp, node, question) {
     });
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();
-    for (const part of parts) {
-      for (const line of part.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        let data = null;
-        try { data = JSON.parse(dataStr); } catch (e) {}
-        if (data && data.error) {
-          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
-          throw new Error('AI 流式返回错误：' + message);
-        }
-        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
-        if (delta && delta.content) {
-          analysis += delta.content;
-          _scheduleWorkflowStreamProgress(analysis.length);
-          streamChunkCount++;
-          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-          scheduleRender();
-        }
-      }
-    }
+  for await (const piece of _sseContentFrames(resp)) {
+    analysis += piece;
+    _scheduleWorkflowStreamProgress(analysis.length);
+    scheduleRender();
   }
 
   let cleaned = analysis.trim();
@@ -1338,13 +1330,9 @@ function _syncBlankNodeControls(node) {
 }
 
 async function _streamBlankNodeResponse(resp, node) {
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   let content = '';
   let renderPending = false;
   let saveTimer = null;
-  let streamChunkCount = 0;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -1366,34 +1354,11 @@ async function _streamBlankNodeResponse(resp, node) {
     }, 400);
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop();
-    for (const part of parts) {
-      for (const line of part.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        let data = null;
-        try { data = JSON.parse(dataStr); } catch (e) {}
-        if (data && data.error) {
-          const message = data.detail || data.error.detail || data.error.message || JSON.stringify(data.error);
-          throw new Error('AI 流式返回错误：' + message);
-        }
-        const delta = data && data.choices && data.choices[0] && data.choices[0].delta;
-        if (delta && delta.content) {
-          content += delta.content;
-          _scheduleWorkflowStreamProgress(content.length);
-          streamChunkCount++;
-          if (streamChunkCount % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
-          scheduleRender();
-          scheduleSave();
-        }
-      }
-    }
+  for await (const piece of _sseContentFrames(resp)) {
+    content += piece;
+    _scheduleWorkflowStreamProgress(content.length);
+    scheduleRender();
+    scheduleSave();
   }
 
   if (saveTimer) {
