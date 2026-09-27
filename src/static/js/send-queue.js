@@ -50,12 +50,70 @@ function _hasPendingSend() {
 
 // 收下一次发送请求。label 只用于提示文案（「苏格拉底回答」「追问」…），
 // run 必须返回 promise：flush 靠 await 它来保证下一条等上一条真的发出去了。
-function _enqueueSend(label, run) {
+// meta（可选）：{ text, sessionId, sessionTitle } —— text 给任务列表当标题与重放内容；
+// 不传时按当前会话记账（任务列表那条「自带来处」的约定，见 tasks.js）。
+function _enqueueSend(label, run, meta) {
   if (typeof run !== 'function') return false;
   const name = label || '请求';
-  _sendQueue.push({ label: name, run });
+  const opts = meta || {};
+  const info = (typeof _taskSessionInfo === 'function')
+    ? _taskSessionInfo()
+    : { sessionId: '', sessionTitle: '' };
+  // 排队中的每一条也是一条任务（用户拍板 #6），并且**自带来处**：排队期间切到别的画布，
+  // 轮到它时能自己找回去（会话寻址），不再像过去那样「一换画布整队被丢弃」。
+  const task = (typeof _taskCreate === 'function')
+    ? _taskCreate({
+        kind: 'send',
+        title: opts.text ? String(opts.text) : name,
+        state: 'waiting',
+        sessionId: opts.sessionId || info.sessionId,
+        sessionTitle: opts.sessionTitle || info.sessionTitle,
+        replay: opts.text ? { text: String(opts.text).slice(0, 500) } : null,
+      })
+    : null;
+  _sendQueue.push({
+    label: name,
+    run,
+    taskId: task ? task.id : null,
+    sessionId: task ? task.sessionId : info.sessionId,
+  });
   _renderQueueChip();
   toastMsg('已收到「' + name + '」，当前回答完成后自动发送');
+  return true;
+}
+
+// 单条取消（任务列表面板上的「取消」）。返回 true 表示确实从队里摘掉了一条。
+function _removeQueuedSend(taskId) {
+  const index = _sendQueue.findIndex(item => item.taskId && item.taskId === taskId);
+  if (index < 0) return false;
+  const item = _sendQueue.splice(index, 1)[0];
+  _renderQueueChip();
+  if (typeof _taskFinish === 'function') _taskFinish(item.taskId, 'stopped', '已取消');
+  return true;
+}
+
+// 轮到自己时先把视图带回它所属的画布。任务自带来处，而发送这条通道（分支/苏格拉底）
+// 的产物只能落在"当前画布"上，所以只能这样兑现；工作流那条长通道不切视图，它自带上下文。
+async function _sendQueueReady(item) {
+  const sid = item.sessionId;
+  const current = (typeof getCurrentSessionId === 'function') ? getCurrentSessionId() : '';
+  if (!sid || sid === current) {
+    if (typeof _taskMarkRunning === 'function') _taskMarkRunning(item.taskId);
+    return true;
+  }
+  const exists = (typeof getSessionById === 'function') && getSessionById(sid);
+  if (!exists || typeof switchToSession !== 'function') {
+    if (typeof _taskFinish === 'function') _taskFinish(item.taskId, 'error', '它所属的画布已被删除');
+    toastMsg('已跳过一条待发送：它所属的画布已被删除');
+    return false;
+  }
+  await switchToSession(sid);
+  if (typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== sid) {
+    if (typeof _taskFinish === 'function') _taskFinish(item.taskId, 'error', '切回画布失败');
+    return false;
+  }
+  toastMsg('轮到「' + item.label + '」了，已切回它所在的画布');
+  if (typeof _taskMarkRunning === 'function') _taskMarkRunning(item.taskId);
   return true;
 }
 
@@ -70,10 +128,15 @@ async function _flushSendQueue() {
     while (_sendQueue.length && !_isActuallyBusy()) {
       const item = _sendQueue.shift();
       _renderQueueChip();
+      if (!(await _sendQueueReady(item))) continue;
       try {
-        await item.run();
+        await item.run(item.taskId);
+        if (typeof _taskFinish === 'function') _taskFinish(item.taskId, 'done');
       } catch (err) {
         console.warn('Queued send failed:', item.label, err);
+        if (typeof _taskFinish === 'function') {
+          _taskFinish(item.taskId, 'error', (err && err.message) || '发送失败');
+        }
       }
     }
   } finally {
@@ -85,8 +148,13 @@ async function _flushSendQueue() {
 function _clearSendQueue(reason) {
   if (!_sendQueue.length) return;
   const n = _sendQueue.length;
+  const items = _sendQueue;
   _sendQueue = [];
   _renderQueueChip();
+  // 队伍被整队丢掉 = 那些等待中的任务也结束了，在面板上留个痕，别凭空消失
+  if (typeof _taskFinish === 'function') {
+    for (const item of items) _taskFinish(item.taskId, 'stopped', reason || '已丢弃');
+  }
   if (reason) toastMsg(reason + '（已丢弃 ' + n + ' 条待发送）');
 }
 

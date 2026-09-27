@@ -253,12 +253,29 @@
           setActiveBranchAnchor(queuedMeta);
           pendingQuickText = queuedText;
           return sendMessage(true);
-        });
+        }, { text: queuedText });
         return;
       }
       isStreaming = true;
       const sourceSessionId = currentSessionId;
       const stopBtn = document.getElementById('stopBtn');
+      // 任务列表：这条发送也是一件活儿（普通发送 / 追问 / 苏格拉底回答都从这儿过），
+      // 面板上看得见、停得掉。只有"直接发"记账——排队重放那条已经由队列记过了，
+      // 不记账就会出现两条一模一样的行。
+      const sendTask = (!force && typeof _taskCreate === 'function')
+        ? _taskCreate({
+            kind: 'send',
+            title: text.replace(/^\[[^\]]*\]\s*/, '') || '发送',
+            state: 'running',
+            replay: { text: text.slice(0, 500) },
+          })
+        : null;
+      let sendTaskState = 'done';
+      let sendTaskNote = '';
+      if (sendTask && typeof _taskBindCancel === 'function') {
+        // 面板上的「停止」= 掐断这条流，与顶部停止按钮同一条路
+        _taskBindCancel(sendTask.id, function() { if (abortController) abortController.abort(); });
+      }
       try {
 
       const now = Date.now();
@@ -501,6 +518,8 @@
 
       } catch (err) {
         hideProgress();
+        sendTaskState = err.name === 'AbortError' ? 'stopped' : 'error';
+        sendTaskNote = err.name === 'AbortError' ? '手动停止' : (err.message || '发送失败');
         if (err.name === 'AbortError') {
           if (assistantContent.trim()) {
             streamingAssistant = null;
@@ -545,9 +564,12 @@
       }
       } catch (err) {
         console.error('Send preparation failed:', err);
+        sendTaskState = 'error';
+        sendTaskNote = (err && err.message) || '发送未完成';
         if (typeof showToast === 'function') showToast('发送未完成，请重试');
       } finally {
         isStreaming = false;
+        if (sendTask && typeof _taskFinish === 'function') _taskFinish(sendTask.id, sendTaskState, sendTaskNote);
         if (typeof _flushSendQueue === 'function') _flushSendQueue();
       }
     }

@@ -1230,6 +1230,162 @@
       color: var(--text-primary);
     }
     .model-panel.show { display: block; }
+
+    /* ====== 任务列表面板（2026-09-27）======
+       挂在顶栏「▶ 全部开始」右边的折叠三角上。外层回答"我在干什么活"，里层回答
+       "这活卡在哪"，底部回答"之前干了什么"（用户给的三层结构）。入口挂顶栏而不是
+       底部胶囊：胶囊跑完会自己淡出，挂它身上会经常"想看列表但三角不见了"。
+       底色/磨砂交给 .aurora-glass（本规则再写 background 简写会把极光层盖掉）。 */
+    .task-panel {
+      display: none;
+      position: fixed;
+      top: 52px;
+      left: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-lg);
+      padding: 10px 10px 6px;
+      z-index: 9998;
+      min-width: 360px;
+      max-width: 480px;
+      color: var(--text-primary);
+    }
+    .task-panel.show { display: block; }
+    .task-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--sp-3);
+      padding: 2px var(--sp-1) var(--sp-3);
+      border-bottom: 1px solid var(--border);
+    }
+    .task-panel-title {
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+    }
+    .task-panel-body {
+      max-height: min(58vh, 520px);
+      overflow-y: auto;
+      padding-top: var(--sp-1);
+    }
+    .task-empty {
+      padding: 18px var(--sp-2);
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      text-align: center;
+    }
+    .task-history-head {
+      margin: var(--sp-3) var(--sp-1) var(--sp-1);
+      padding-top: var(--sp-3);
+      border-top: 1px solid var(--border);
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+    }
+    .task-item { padding: var(--sp-2) var(--sp-2); border-radius: var(--r-md); }
+    .task-item:hover { background: var(--hover-bg); }
+    .task-item--history { opacity: 0.82; }
+    .task-row-main { display: flex; align-items: center; gap: var(--sp-2); }
+    .task-row-sub {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--sp-3);
+      margin: 3px 0 0 34px;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+    }
+    .task-caret {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+      line-height: 16px;
+      cursor: pointer;
+    }
+    .task-caret--empty { cursor: default; }
+    .task-glyph { flex: 0 0 14px; text-align: center; font-size: var(--fs-md); }
+    .task-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--fs-md);
+    }
+    .task-btns { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-1); }
+    .task-btn {
+      padding: 1px var(--sp-3);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+      transition: color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+    }
+    .task-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+    .task-btn:disabled { opacity: 0.5; cursor: default; }
+    .task-btn--warn:hover { color: var(--danger); border-color: var(--danger); }
+    .task-btn--mini { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+    .task-state-text { flex: 0 0 auto; }
+    .task-item.state-running .task-glyph { color: var(--accent); animation: taskSpin 1.6s linear infinite; }
+    .task-item.state-paused .task-glyph { color: var(--warn); }
+    .task-item.state-done .task-glyph { color: var(--success); }
+    .task-item.state-partial .task-glyph { color: var(--warn); }
+    .task-item.state-error .task-glyph { color: var(--danger); }
+    .task-item.state-stopped .task-glyph { color: var(--text-secondary); }
+    .task-item.state-interrupted .task-glyph { color: var(--warn); }
+    .task-node-list { margin: 4px 0 0 34px; }
+    .task-node-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+      padding: 2px 0;
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+    }
+    .task-node-label {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-node-row.state-running { color: var(--text-primary); }
+    .task-node-row.state-running .task-node-glyph { color: var(--accent); animation: taskSpin 1.6s linear infinite; }
+    .task-node-row.state-done .task-node-glyph { color: var(--success); }
+    .task-node-row.state-error .task-node-glyph { color: var(--danger); }
+    .task-node-row.state-blocked .task-node-glyph { color: var(--danger); }
+    .task-node-glyph { flex: 0 0 14px; text-align: center; }
+    .task-node-note { color: var(--text-secondary); font-size: var(--fs-xs); }
+    .header-btn.task-panel-btn { position: relative; }
+    .header-btn.task-panel-btn.is-running { color: var(--accent); }
+    .task-panel-badge {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      border-radius: var(--r-md);
+      background: var(--accent);
+      color: #fff;
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      line-height: 15px;
+      text-align: center;
+    }
+    @keyframes taskSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .task-item.state-running .task-glyph,
+      .task-node-row.state-running .task-node-glyph { animation: none; }
+    }
     #dataPanel {
       color: var(--text-primary);
     }

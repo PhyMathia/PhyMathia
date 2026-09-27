@@ -147,7 +147,8 @@
       if (typeof _isSendBusy === 'function' && _isSendBusy()) {
         closeSocraticModal();
         pendingSocraticNewLoop = false;
-        _enqueueSend('苏格拉底回答', function() { return _runSocraticAnswer(snap); });
+        _enqueueSend('苏格拉底回答', function() { return _runSocraticAnswer(snap); },
+          { text: (snap && (snap.question || snap.answer)) || '' });
         return;
       }
       closeSocraticModal();
@@ -177,7 +178,7 @@
         return sendQuick(message);
       };
       if (typeof _isSendBusy === 'function' && _isSendBusy()) {
-        _enqueueSend(label, run);
+        _enqueueSend(label, run, { text: question });
         return;
       }
       return run();
@@ -237,7 +238,8 @@
           const capturedText = text;
           const capturedAnchor = anchor;
           closeBranchModal();
-          _enqueueSend('追问', function() { return window.sendBranchQuick(capturedText, capturedAnchor); });
+          _enqueueSend('追问', function() { return window.sendBranchQuick(capturedText, capturedAnchor); },
+            { text: capturedText });
           return;
         }
         closeBranchModal();
