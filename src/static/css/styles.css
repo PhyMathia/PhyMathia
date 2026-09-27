@@ -2089,6 +2089,30 @@
       font-variant-numeric: tabular-nums;
       opacity: 0.5;
     }
+    /* 「待发送 N」：AI 忙时排队中的请求数（send-queue.js）。挂进胶囊是因为用户
+       盯着等的时候本来就在看这儿，不用去学一个全新位置。点它 = 全部丢弃，
+       是这条链路上唯一的反悔出口。宽度短到不参与收缩——胶囊的唯一收缩位仍是
+       .status-text（2026-09-26 的结论），这里不与之竞争。 */
+    .progress-status .send-queue-chip {
+      flex: 0 0 auto;
+      margin: 0 2px 0 8px;
+      padding: 2px 10px;
+      border: 1px solid var(--accent);
+      border-radius: var(--r-pill);
+      background: transparent;
+      color: var(--accent);
+      font-family: inherit;
+      font-size: var(--fs-sm);
+      line-height: 1.6;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .progress-status .send-queue-chip:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+    .progress-status .send-queue-chip[hidden] { display: none; }
     @keyframes statusFadeIn {
       from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }

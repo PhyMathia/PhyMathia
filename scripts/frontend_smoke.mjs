@@ -4630,6 +4630,176 @@ check('graph-continent: v8.4 海岸线（确定性 / 网格态归零 / 令牌化
   return true;
 });
 
+// ===== 串行边界追加：发送排队（T42）=====
+// 2026-09-27：AI 忙时点发送，过去一律是裸 `if (正在生成) return;`——不提示、不置灰、
+// 不留痕。免费模型一次工作流 2-8 分钟，这个忙窗口长得离谱，用户只会以为按钮坏了。
+// 现在改成排队：当场收下、跑完自动发。下面分行为与静态契约两半：
+// 行为半守住「不丢、不并发」，静态半守住「反馈层不许被悄悄改回去」。
+
+// 行为半。队列模块只依赖 toastMsg / _renderQueueChip 和两个忙碌标志位，隔离得干净，
+// 可以在本沙箱里真跑。忙碌位是 app.js 里的顶层 let 词法绑定，外部摸不到，
+// 只能经 vm.runInContext 读写（与本文件既有做法一致）。
+//
+// 这三条共享 isStreaming / _sendQueue 两个词法绑定，而 check() 的异步用例是靠
+// Promise.all 一起等跑的——并发会互相踩状态（一条把 isStreaming 置 false 会让另一条
+// 提前放行）。所以走自己的串行链，不能用 check()。
+const sqEval = (code) => vm.runInContext(code, sandbox);
+const sqReset = () => {
+  sqEval('_sendQueue = []; _sendQueueFlushing = false;');
+  sqEval('isStreaming = false;');
+  sqEval('workflowRunActive = false;');
+};
+const sqChecks = [];
+let sqTail = Promise.resolve();
+const checkSq = (name, fn) => {
+  // 内层 try/catch 保证链条永不 reject，前一条挂掉不会连累后面几条
+  sqTail = sqTail.then(async () => {
+    try {
+      const r = await fn();
+      if (r === false) throw new Error('断言未通过');
+      console.log('✓', name);
+    } catch (e) {
+      failed++;
+      console.error('❌', name, '->', e.message);
+    }
+  });
+  sqChecks.push(sqTail);
+};
+
+checkSq('发送排队：AI 忙时收下但不发出，空闲后自动发出', async () => {
+  sqReset();
+  sqEval('isStreaming = true;');
+  sqEval("__fired = 0;");
+  sqEval("_enqueueSend('苏格拉底回答', function(){ __fired++; return Promise.resolve(); })");
+  if (!sqEval('_hasPendingSend()')) throw new Error('忙碌时点发送没有收进队列——请求被丢弃了（T42 的原始症状）');
+  if (sqEval('__fired') !== 0) throw new Error('收队时就把请求发了出去，会与在途的回答并发');
+  // 还在忙：显式 flush 必须什么都不做
+  await sqEval('_flushSendQueue()');
+  if (sqEval('__fired') !== 0) throw new Error('AI 还在生成，flush 却把队列放了出去');
+  sqEval('isStreaming = false;');
+  await sqEval('_flushSendQueue()');
+  if (sqEval('__fired') !== 1) throw new Error('空闲后没有自动发出，收到 ' + sqEval('__fired'));
+  if (sqEval('_hasPendingSend()')) throw new Error('已发出但队列没清空');
+});
+
+checkSq('发送排队：两条请求必须依次发出，不能并发挤进同一个发送锁', async () => {
+  sqReset();
+  // 本沙箱 setTimeout 是 () => 0 的桩，不会真的延后，所以用一道手动闸门来证明
+  // 「B 在 A 结束前没跑」——这正是要挡的失败模式：并发发会挤进同一个发送锁。
+  sqEval(`
+    __log = [];
+    _enqueueSend('追问', function(){
+      __log.push('A:start');
+      return new Promise(function(res){
+        __releaseA = function(){ __log.push('A:end'); res(); };
+      });
+    });
+    _enqueueSend('提问', function(){ __log.push('B'); return Promise.resolve(); });
+  `);
+  sqEval('isStreaming = false;');
+  const flushing = sqEval('_flushSendQueue()');
+  await new Promise((r) => setImmediate(r));
+  const midLog = sqEval("__log.join(',')");
+  if (midLog !== 'A:start') throw new Error('第一条没有先发起来，实际：' + midLog);
+  if (sqEval("__log.indexOf('B') >= 0")) {
+    throw new Error('B 在 A 还没结束时就发了——两条会撞进同一个发送锁（' + midLog + '）');
+  }
+  sqEval('__releaseA()');
+  await flushing;
+  if (sqEval("__log.join(',')") !== 'A:start,A:end,B') {
+    throw new Error('A 结束后 B 没有接上去，实际：' + sqEval("__log.join(',')"));
+  }
+});
+
+checkSq('发送排队：workflowRunActive 也算忙（startQuestionWorkflow 过去查错了标志位）', async () => {
+  // 旧守卫只查 isStreaming，而工作流全程不碰 isStreaming（它走 _generateAnalysis →
+  // proxyChat，不经过 sendMessage），于是「提问」按钮在工作流跑着时形同虚设，
+  // 能并发开出第二个工作流、两棵节点树打架。这条把「工作流也算忙」钉死。
+  sqReset();
+  sqEval('workflowRunActive = true;');
+  sqEval('__wf = 0;');
+  sqEval("_enqueueSend('提问', function(){ __wf++; return Promise.resolve(); })");
+  if (sqEval('_isSendBusy()') !== true) throw new Error('工作流运行时没有被判为忙');
+  await sqEval('_flushSendQueue()');
+  if (sqEval('__wf') !== 0) throw new Error('工作流还在跑，flush 却放行了');
+  sqEval('workflowRunActive = false;');
+  await sqEval('_flushSendQueue()');
+  if (sqEval('__wf') !== 1) throw new Error('工作流结束后没有自动发出');
+});
+
+// 静态半。这些护栏全删掉也不会让上面任何一条行为断言变红——只能靠读源码钉住。
+// 变异验证：把任一发送入口改回裸 `if (isStreaming…) return;`，或把 startQuestionWorkflow
+// 的判定改回只查 isStreaming，下面立刻红。
+check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42 反馈层不许被改回去）', () => {
+  // 按函数名抽函数体（花括号配平），**不**整文件扫：chat-branch.js 里
+  // deleteGraphMessageByTimestamp 那两处 `if (isStreaming)` 不是发送入口——生成中
+  // 删消息的语义是「中止当前生成、事后补删」，本来就有动作也不是静默 return，
+  // 整文件扫会误伤。marker 用来自检「确实抽到了完整函数体」，防止配平抽残后漏判。
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const entries = [
+    ['chat.js', 'sendMessage', '_flushSendQueue'],
+    ['chat-branch.js', 'submitSocraticAnswer', '_enqueueSend'],
+    ['chat-branch.js', 'submitBranchModal', '_enqueueSend'],
+    ['chat-branch.js', 'startSocraticHint', '_queueOrRunSocraticExit'],
+    ['chat-branch.js', 'startSocraticExplain', '_queueOrRunSocraticExit'],
+  ];
+  for (const [file, fn, marker] of entries) {
+    const src = fs.readFileSync('src/static/js/' + file, 'utf8');
+    const body = extract(src, fn);
+    if (body === null) throw new Error('找不到函数 ' + fn + '（' + file + '）——断言本身该更新了');
+    if (!body.includes(marker)) {
+      throw new Error('抽到的 ' + fn + ' 函数体不完整（缺 ' + marker + '），判定会漏——断言本身坏了');
+    }
+    if (/if \(isStreaming[^)]*\) return;/.test(body)) {
+      throw new Error(file + ' 的 ' + fn + ' 又是裸 isStreaming 守卫：忙时会静默吞掉请求，'
+        + '用户只会以为按钮坏了（docs/backlog.md T42）');
+    }
+  }
+  // startQuestionWorkflow 必须走统一忙碌判定
+  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wfBody = extract(wf, 'startQuestionWorkflow');
+  if (wfBody === null) throw new Error('找不到 startQuestionWorkflow');
+  if (!wfBody.includes('removeDraftNode')) {
+    throw new Error('抽到的 startQuestionWorkflow 函数体不完整，判定会漏——断言本身坏了');
+  }
+  if (!/_isSendBusy\(\)/.test(wfBody)) {
+    throw new Error('startQuestionWorkflow 没用统一的 _isSendBusy()——工作流通道又变回形同虚设');
+  }
+  if (/if \(typeof isStreaming !== 'undefined' && isStreaming\) return;/.test(wfBody)) {
+    throw new Error('startQuestionWorkflow 又只查 isStreaming 了：工作流不碰这个标志位，守卫会失效');
+  }
+});
+
+check('发送排队：模块已注册进构建顺序，且「待发送 N」标记挂在进度胶囊上', () => {
+  const build = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+  if (!/'send-queue\.js'/.test(build)) {
+    throw new Error("build_frontend.mjs 的顺序表里没有 'send-queue.js'——页面加载的 app.js 根本不含排队逻辑");
+  }
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  const m = html.match(/<button[^>]*id="sendQueueChip"[^>]*>/);
+  if (!m) throw new Error('index.html 里没有 id="sendQueueChip" 的元素——用户看不到待发送几条');
+  const capsule = html.slice(html.indexOf('id="progressStatus"'), html.indexOf('id="progressStatus"') + 2000);
+  if (!capsule.includes('sendQueueChip')) {
+    throw new Error('sendQueueChip 没挂在 #progressStatus 胶囊里——用户盯着等的时候看不到它');
+  }
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  if (!css.includes('.progress-status .send-queue-chip')) {
+    throw new Error('styles.css 里没有 .send-queue-chip 规则——标记会是个没样式的裸按钮');
+  }
+});
+
+// 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
+await Promise.all(sqChecks).catch(() => {});
+
 await Promise.all(pendingChecks).catch(() => {});
 
 await Promise.all(pendingChecks).catch(() => {});
