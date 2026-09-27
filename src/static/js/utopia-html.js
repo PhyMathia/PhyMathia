@@ -12,8 +12,6 @@
 (function () {
   var IMAGE_INLINE_LIMIT = 96 * 1024; // 图片内联上限（背景照片等大图不进包）
 
-  function _toast(msg) { if (typeof showToast === 'function') showToast(msg, 3600); }
-
   var _resCache = {}; // url -> dataURL | ''（失败）
 
   function _fetchDataUrl(url, mustInline) {
@@ -195,19 +193,19 @@
 
   async function exportUtopiaStandaloneHtml() {
     if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
-      _toast('画布还没有内容，先提问生成一张探索网吧');
+      toastMsg('画布还没有内容，先提问生成一张探索网吧');
       return false;
     }
-    if (typeof window.buildUtopiaSnapshot !== 'function') { _toast('快照模块未加载（请硬刷新页面）'); return false; }
+    if (typeof window.buildUtopiaSnapshot !== 'function') { toastMsg('快照模块未加载（请硬刷新页面）'); return false; }
 
     var snapshot;
     try { snapshot = window.buildUtopiaSnapshot(); } catch (e) {
-      _toast('快照生成失败：' + (e && e.message ? e.message : e));
+      toastMsg('快照生成失败：' + (e && e.message ? e.message : e));
       return false;
     }
 
     try {
-      _toast('正在收集查看器资源（首次约几秒）…');
+      toastMsg('正在收集查看器资源（首次约几秒）…');
       var tplText = await fetch('/viewer.html', { cache: 'no-store' }).then(function (r) {
         if (!r.ok) throw new Error('viewer.html HTTP ' + r.status);
         return r.text();
@@ -294,11 +292,11 @@
       a.click();
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
-      _toast('单文件网页已导出（' + Math.round(html.length / 1024) + ' KB）——双击即可离线打开');
+      toastMsg('单文件网页已导出（' + Math.round(html.length / 1024) + ' KB）——双击即可离线打开', TOAST_MS_LONG);
       return true;
     } catch (err) {
       console.error('[utopia-html]', err);
-      _toast('单文件网页导出失败：' + (err && err.message ? err.message : err));
+      toastMsg('单文件网页导出失败：' + (err && err.message ? err.message : err));
       return false;
     }
   }

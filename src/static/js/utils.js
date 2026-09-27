@@ -1,5 +1,24 @@
 // ===== PhyMathia 共享工具函数（避免多文件重复定义）=====
 
+// ---------- Toast：全仓唯一口径 ----------
+// 曾经的 zoo：全局默认 2500，散在别处的 2600 / 3200 / 3600 / 4000 / 4e3，
+// 外加 graph-export、graph-poster、utopia-html、utopia-import 四个文件各写一份
+// 私有 `_toast` 包装（差别只在传 3200 还是 3600）。结果是同一次操作里提示停留
+// 时间会随机不同，且每加一个导出入口就要再抄一份。
+//
+// 现在只有两个值，且都带理由。别再加第三个——要更长的文案就把文案缩短。
+const TOAST_MS = 2500;       // 短提示：一句话，说完就走
+const TOAST_MS_LONG = 3600;  // 长文案：带尺寸/体积/条数的完成通知，得留时间读完
+
+// 转发到全局 showToast。加载顺序上它比 ui.js 的 showToast 早（ui.js 在主包
+// 倒数第三位），所以查找必须发生在**调用时**而不是定义时——这正是那几个模块
+// 当初各写一份包装的原因。守卫保留：查看器包与某些子集构建里 showToast 可能不存在。
+function toastMsg(msg, ms) {
+  if (typeof showToast !== 'function') return;
+  if (ms == null) showToast(msg, TOAST_MS);
+  else showToast(msg, ms);
+}
+
 // HTML 转义（DOM 方式 + 引号补齐）
 // 引号必须转义：结果会被拼进 value="..." 属性与 onclick 单引号字符串，
 // 不转义会造成属性逃逸注入
@@ -83,7 +102,7 @@ function safeLocalStorageSet(key, value) {
     if (Date.now() - _storageWarnedAt > 24 * 3600 * 1000) {
       _storageWarnedAt = Date.now();
       if (typeof showToast === 'function') {
-        showToast('浏览器本地空间已满：记录已完整保存在电脑存档中，仅本机快速加载暂不可用', 'error');
+        toastMsg('浏览器本地空间已满：记录已完整保存在电脑存档中，仅本机快速加载暂不可用', TOAST_MS_LONG);
       } else {
         console.warn('[storage] localStorage 写入失败（配额满？）：', key);
       }
