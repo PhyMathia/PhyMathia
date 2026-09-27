@@ -242,11 +242,16 @@ function _strictModuleOutputInstruction(moduleKey) {
   return '';
 }
 
-// ====== SSE 帧读取：全仓唯一的一份 ======
+// ====== SSE 帧读取：本文件三个流式通道共用的一份 ======
 // 三个流式函数（模块节点 / 问题分析 / 空白节点）原本各抄一份：getReader →
 // TextDecoder → 拆 \n\n → 逐行取 data: → 跳 [DONE] → JSON.parse → 错误帧抛错 →
 // 吐 delta.content。同样的逻辑改一次要改三处，漏一处就只在那一条通道上出问题，
 // 而症状是「某类节点偶发不更新」——极难查。这里抽成唯一的读取口，三处共用。
+//
+// **别把「唯一」读成「全仓唯一」**：全仓另有 4 处各自一份 getReader() 副本
+// （chat.js / chat-features.js / quiz-ui.js / harness-run.js，后者是变体），
+// 本轮只合并了本文件这 3 份。那 4 处的合并见 docs/backlog.md，同样卡在硬规则 6
+// 的真发验证上（要动发送链路，没有可用凭证时不能合）。
 //
 // **只吐正文增量，绝不碰 reasoning_content。** 思维链与正文必须分两条通道攒；
 // `delta.content || delta.reasoning_content` 那种写法会把思维链灌进正文，

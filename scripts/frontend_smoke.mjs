@@ -3787,10 +3787,6 @@ check('设计尺子：同类载体的圆角同档（弹窗 --r-lg / 大浮层 --
 await Promise.all(pendingChecks).catch(() => {});
 
 // ===== 串行边界追加：utopia 快照导入（写共享 phymathia_sessions 键 + await fetch）=====
-// 2026-09-27：B2 把三个流式函数里逐字重复的 SSE 帧读取抽成唯一一份
-// `_sseContentFrames`。这里钉住那个不变量——**别再往回抄**。抄回去的症状是
-// 「某类节点偶发不更新」，静态断言看不出来，只有真发才知道（而真发需要可用模型，
-// 见 docs/backlog.md T37）。所以退化成重复时必须在这里就红。
 // 2026-09-27：只读外发页的右键菜单是**按标签文本**做白名单剪枝的
 // （viewer-main.js 的 READONLY_MENU_LABELS）。也就是说主应用那边一改菜单文案，
 // 这里不同步的话，查看器里那个菜单项会被**静默剪掉**——整张菜单空了还会顺手 close，
@@ -3818,30 +3814,85 @@ check('viewer: 只读菜单白名单的每一条都还能在主应用菜单里�
   }
 });
 
-check('graph-workflow: SSE 帧读取全仓只有一份，三个流式通道都走它', () => {
-  const gw = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
-  const readers = (gw.match(/getReader\(\)/g) || []).length;
-  if (readers !== 1) {
-    throw new Error('getReader() 出现 ' + readers + ' 次（应为 1）——有人把 SSE 读取又抄了一份');
+check('viewer: 拓扑兜网的封装与访问器都是幂等的（防 Proxy 逐次套娃）', () => {
+  // 2026-09-27 晚：原实现每渲染一次就把上一个 Proxy 当底子再封一层，嵌套层数随渲染
+  // 次数线性增长（评审时用最小复现验实）。**这是个性能泄漏不是正确性破坏，所以下面
+  // 这些护栏全删掉也不会有任何一条断言变红**——只能靠静态契约钉住。
+  // 变异验证：删掉 `_SEALED.has(...)` 两处之一、或把 `TOPOLOGY_INSTALLED` 的守门去掉，
+  // 本条立刻变红。
+  const vm = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+
+  if (!/var _SEALED = new WeakSet\(\)/.test(vm)) {
+    throw new Error('viewer-main.js 里找不到 _SEALED = new WeakSet()——封装不再幂等，'
+      + '每渲染一次多套一层 Proxy');
   }
-  if (!/async function\* _sseContentFrames\(resp\)/.test(gw)) {
+  // 两个封装函数各要有一道 has() 短路：_sealArray 与 _sealIndex，缺一个就漏一个属性
+  const hasChecks = (vm.match(/_SEALED\.has\(/g) || []).length;
+  if (hasChecks !== 2) {
+    throw new Error('_SEALED.has() 出现 ' + hasChecks + ' 次（应为 2：_sealArray 与 _sealIndex 各一）');
+  }
+  const adds = (vm.match(/_SEALED\.add\(/g) || []).length;
+  if (adds !== 2) {
+    throw new Error('_SEALED.add() 出现 ' + adds + ' 次（应为 2）——新装的代理没登记，下次会被当裸对象再封一层');
+  }
+  if (!/if \(!TOPOLOGY_INSTALLED\) _installTopologyAccessors\(\)/.test(vm)) {
+    throw new Error('armTopologyGuard 里的 TOPOLOGY_INSTALLED 守门不见了——'
+      + '每渲染一次重复 defineProperty 四个属性');
+  }
+  // 顺序不许反：先装访问器（内部经访问器读已封装的代理）再重算基线，反了会拿到裸数组算指纹
+  const arm = vm.slice(vm.indexOf('function armTopologyGuard'));
+  const armEnd = arm.indexOf('\n  }');
+  const body = arm.slice(0, armEnd);
+  if (body.indexOf('_installTopologyAccessors') > body.indexOf('TOPOLOGY_BASE =')) {
+    throw new Error('armTopologyGuard 里先算基线后装访问器——指纹会从裸数组算，兜网从第一帧就失效');
+  }
+});
+
+check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限本文件）', () => {
+  // 2026-09-27：B2 把三个流式函数里逐字重复的 SSE 帧读取抽成唯一一份
+  // `_sseContentFrames`。这里钉住那个不变量——**别再往回抄**。抄回去的症状是
+  // 「某类节点偶发不更新」，静态断言看不出来，只有真发才知道（而真发需要可用模型，
+  // 见 docs/backlog.md T37）。所以退化成重复时必须在这里就红。
+  //
+  // **注意这条断言的作用域：它只读 graph-workflow.js 一个文件。**
+  // 2026-09-27 之前它叫「SSE 帧读取全仓只有一份」，那句是错的：全仓另有 4 处各自一份
+  // getReader() 副本（chat.js:308 / chat-features.js:647 / quiz-ui.js:675 /
+  // harness-run.js:113，后者是 buf+handleLine 的变体），B2 只合并了 graph-workflow 里的
+  // 3 份。名字写成「全仓」会让人以为另外四处已被覆盖、进而不再去合并。
+  // 那 4 处的合并已登记 backlog（连同真发验证要求），不在本轮范围：动发送链路按硬规则 6
+  // 必须配可用模型真发验证，而现在没有可用凭证。所以这里改成如实描述作用域。
+  const gw = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  // 数代码，不数散文：先把注释剥掉再数。上面那段说明里就写了 getReader() 字面量，
+  // 原先直接对原文匹配，注释一改就假红——这正是本项目吃过亏的那类「护栏自己变摆设」。
+  // 剥法：块注释全去，行注释只去「行首（可含缩进）//」那种。行尾注释与字符串里的 //
+  // （如 'http://'）不去，避免误删真代码导致计数偏低。代价是行尾注释里写
+  // getReader() 仍会被算进去——写注释时避开这个字面量即可。
+  const gwCode = gw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const readers = (gwCode.match(/getReader\(\)/g) || []).length;
+  if (readers !== 1) {
+    throw new Error('graph-workflow.js 里 getReader() 出现 ' + readers
+      + ' 次（应为 1）——有人在这三个通道之外又把 SSE 读取抄了一份');
+  }
+  if (!/async function\* _sseContentFrames\(resp\)/.test(gwCode)) {
     throw new Error('共享读取口 _sseContentFrames 不见了');
   }
-  const users = (gw.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
+  const users = (gwCode.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
   if (users !== 3) {
     throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 3：模块节点 / 问题分析 / 空白节点）');
   }
   // 只吐正文增量：思维链绝不能混进正文（2026-09-15「旋度岛静默消失」的根因）
-  const gen = gw.slice(gw.indexOf('async function* _sseContentFrames'));
+  // 在 gwCode 上切片：共享口自己那句「绝不碰 reasoning_content」的说明注释
+  // 一旦挪进函数体内部，用原文匹配就会自己把自己判红。
+  const gen = gwCode.slice(gwCode.indexOf('async function* _sseContentFrames'));
   const genEnd = gen.indexOf('\nasync function ', 1);
   const body = genEnd > 0 ? gen.slice(0, genEnd) : gen;
   if (/reasoning_content/.test(body)) {
     throw new Error('共享读取口里出现了 reasoning_content——思维链不许混进正文');
   }
   for (const fn of ['_streamCustomNodeResponse', '_streamAnalysisResponse', '_streamBlankNodeResponse']) {
-    const i = gw.indexOf('async function ' + fn + '(');
+    const i = gwCode.indexOf('async function ' + fn + '(');
     if (i < 0) throw new Error('找不到 ' + fn);
-    const seg = gw.slice(i, i + 4000);
+    const seg = gwCode.slice(i, i + 4000);
     if (!seg.includes('_sseContentFrames(resp)')) {
       throw new Error(fn + ' 没走共享读取口');
     }

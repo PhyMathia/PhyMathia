@@ -197,10 +197,18 @@
   // 一条红字报错，而不是我们那句「只读快照：不能改动画布内容」。这里宁可让调用方
   // 误以为写成功了（写入的操作本来就是禁路，调用方是 READONLY_BLOCKED 那一层，
   // 由它负责把调用方整个拦下来，兜网只保证数据没变）。
+  //
+  // 幂等：已经封装过的对象直接原样返回。少了这一步，armTopologyGuard 每跑一次
+  // （= 每渲染一次）就把上一个 Proxy 当底子再封一层，嵌套层数随渲染次数线性增长，
+  // 每次读都要多穿一层。实测复现过，所以这里用 WeakSet 记住已封装的那些。
+  // WeakSet 而不是给对象打标记位：打标记会写进被代理的对象，污染节点数据本身。
+  var _SEALED = new WeakSet();
+
   function _sealArray(arr, label) {
     if (!arr || typeof arr !== 'object') return arr;
+    if (_SEALED.has(arr)) return arr;
     try {
-      return new Proxy(arr, {
+      var sealed = new Proxy(arr, {
         set: function (t, k) {
           _noteBlocked(label + '.' + String(k));
           return true;
@@ -210,6 +218,8 @@
           return true;
         },
       });
+      _SEALED.add(sealed);
+      return sealed;
     } catch (e) {
       return arr;
     }
@@ -219,8 +229,9 @@
   // 不许新增键（那是「凭空多一个节点」）、不许删键（那是「删掉一个节点」）。
   function _sealIndex(obj) {
     if (!obj || typeof obj !== 'object') return obj;
+    if (_SEALED.has(obj)) return obj;
     try {
-      return new Proxy(obj, {
+      var sealed = new Proxy(obj, {
         set: function (t, k, v) {
           if (!Object.prototype.hasOwnProperty.call(t, k)) { _noteBlocked('nodeById[' + String(k) + '] 新增'); return true; }
           t[k] = v;
@@ -231,25 +242,23 @@
           return true;
         },
       });
+      _SEALED.add(sealed);
+      return sealed;
     } catch (e) {
       return obj;
     }
   }
 
-  function armTopologyGuard() {
-    if (typeof graphView === 'undefined' || !graphView) return;
-    TOPOLOGY_ARMED = false;
-    TOPOLOGY_BASE = {
-      nodes: _fpNodes(graphView.nodes),
-      edges: _fpEdges(graphView.edges),
-      groups: _fpGroups(graphView.groups),
-      nodeById: _fpIndex(graphView.nodeById),
-    };
+  // 访问器与封装只装一次（装在 graphView 上，跨渲染不变），每次 arm 只重算基线。
+  // 早先把这两件事混在一起，于是每渲染一次就重复 defineProperty + 重复封装一遍，
+  // 后者还是拿上一个 Proxy 当底子——嵌套层数线性增长。
+  var TOPOLOGY_INSTALLED = false;
+
+  function _installTopologyAccessors() {
     ['nodes', 'edges', 'groups', 'nodeById'].forEach(function (prop) {
-      var backing = graphView[prop];
       var seal = prop === 'nodeById' ? _sealIndex : _sealArray;
       var label = 'graphView.' + prop;
-      backing = seal(backing, label);
+      var backing = seal(graphView[prop], label);
       Object.defineProperty(graphView, prop, {
         configurable: true,
         enumerable: true,
@@ -264,6 +273,20 @@
         },
       });
     });
+    TOPOLOGY_INSTALLED = true;
+  }
+
+  function armTopologyGuard() {
+    if (typeof graphView === 'undefined' || !graphView) return;
+    if (!TOPOLOGY_INSTALLED) _installTopologyAccessors();
+    TOPOLOGY_ARMED = false;
+    // 走访问器读，拿到的已经是封装过的代理，直接算指纹即可
+    TOPOLOGY_BASE = {
+      nodes: _fpNodes(graphView.nodes),
+      edges: _fpEdges(graphView.edges),
+      groups: _fpGroups(graphView.groups),
+      nodeById: _fpIndex(graphView.nodeById),
+    };
     TOPOLOGY_ARMED = true;
   }
 
