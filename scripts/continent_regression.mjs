@@ -37,10 +37,14 @@ function fail(name, err) { results.push(false); console.log('❌ ' + name + ' ->
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 async function waitHealth(timeoutMs = 30000) {
+  return waitHealthAt(BASE, timeoutMs);
+}
+
+async function waitHealthAt(base, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(BASE + '/health');
+      const r = await fetch(base + '/health');
       if (r.ok) return true;
     } catch (e) { /* 服务还没起 */ }
     await wait(300);
@@ -104,6 +108,102 @@ async function seedViaApi() {
   const shm = (data.shared || []).find(x => x.label === '简谐运动');
   if (!shm || shm.strength !== 'strong') {
     throw new Error('种子库没有「简谐运动」强共享（城市无从建）');
+  }
+  return data;
+}
+
+// ---------- 真实规模种子（T30：给「与数据量有关」的断言装上牙齿）----------
+//
+// 上面那套 6 会话 9 卡是**小库**：世界小、适配缩放远高于任何 LOD 阈值，于是
+// 「首屏不该落世界档」这类断言无论阈值怎么改都成立——2026-09-26 把
+// CONTINENT_LOD_WORLD 从 0.55 调回 0.55 重测，隔离回归照样 10/10 通过。
+// 换句话说那 10 条里，数据量相关的那几条是**没有牙齿的断言**。
+//
+// 这套种子按真实库的口径造（data/ 实测：25 会话 / 48 知识点，其中 13 个会话
+// 有真主题、其余是「新画布」空壳）：18 会话 / 54 知识点 → 聚出 14 岛 54 概念。
+// 关键是这个规模下适配缩放落到 0.4094——**正好卡在现行阈值 0.35 与旧阈值 0.55
+// 之间**：阈值一旦被改回 0.55，开图就会掉进世界档，断言当场变红。这就是要的牙齿。
+//
+// 主题清单照真实库的形状挑（几座重岛 + 一批单点岛），子标题必须唯一——重复标题
+// 会被去重，itemCount 涨不上去，种子里看着够大、实际断言的还是小库。
+
+const SCALE_TOPICS = [
+  ['梯度', '梯度的几何意义：方向导数与等值面正交', 13],
+  ['散度', '散度的物理意义：单位体积的通量', 1],
+  ['旋度', '环流面密度的极限，行列式记忆法', 1],
+  ['能量守恒', '孤立系统总能量保持不变', 1],
+  ['机械能守恒', '动能与势能互相转化、总量守恒', 1],
+  ['泊松分布', '泊松过程与散粒噪声、指数等待时间', 8],
+  ['正态分布', '中心极限定理与 68-95-99.7 经验法则', 8],
+  ['卡方分布', '自由度与平方和的统计本性', 1],
+  ['均匀分布', '有界区间上的最大熵分布', 1],
+  ['折射', '斯涅尔定律与光在介质界面的偏折', 1],
+  ['玻色子', '玻色—爱因斯坦分布与光子', 1],
+  ['费米子', '泡利不相容与费米—狄拉克分布、简并压', 8],
+  ['加速度', '牛顿第二定律、切向与法向加速度', 8],
+  ['理想气体状态方程', '微观粒子数与压强温度体积的关系', 1],
+];
+
+function seedScaleSessions() {
+  const now = Date.now();
+  const out = SCALE_TOPICS.map(([title], i) => ({
+    id: 'sess_scale_' + (i + 1), title, sessionId: 'sess_scale_' + (i + 1), icon: '',
+    createdAt: now - (60 - i) * 60000, updatedAt: now - (60 - i) * 60000,
+  }));
+  // 真实库里近半会话是「新画布」空壳：它们不该各自成岛，也不该被悄悄丢掉
+  for (let i = 0; i < 4; i++) {
+    out.push({ id: 'sess_scale_blank' + (i + 1), title: '新画布', sessionId: 'sess_scale_blank' + (i + 1),
+               icon: '', createdAt: now - (20 - i) * 60000, updatedAt: now - (20 - i) * 60000 });
+  }
+  return out;
+}
+
+function seedScaleKnowledge() {
+  const SUB = ['的定义与坐标表达', '的数学本质与推导', '的物理动机', '的边界条件与反例', '的常见误区',
+               '的数值验证', '与相邻概念的区别', '在典型题目里的用法', '的极限情形', '的实验测量',
+               '的常见应用场景', '的推广形式', '的历史来源', '的直观图像'];
+  let n = 0;
+  const list = [];
+  const it = (title, sid, summary) => list.push({
+    id: 'ki_scale' + (++n), title, sessionId: sid, createdAt: Date.now() - n * 1000,
+    category: '概念', source: 'manual', summarySource: 'model', summary, formulas: [],
+  });
+  SCALE_TOPICS.forEach(([topic, head, weight], idx) => {
+    const sid = 'sess_scale_' + (idx + 1);
+    it(head, sid, topic + '的核心要点');
+    for (let i = 0; i < weight - 1; i++) {
+      // 超过 SUB 长度就加后缀，保证标题唯一（重复标题会被去重，itemCount 涨不上去）
+      it(topic + SUB[i % SUB.length] + (i >= SUB.length ? '（续' + i + '）' : ''), sid, topic + '的第 ' + (i + 2) + ' 个要点');
+    }
+  });
+  return Object.fromEntries(list.map(x => [x.id, x]));
+}
+
+// 真实库的规模是硬门槛：掉回小库，下面关于 LOD 的断言就重新变成没牙齿的断言
+const SCALE_MIN_CLUSTERS = 13;
+const SCALE_MIN_ITEMS = 48;
+// 旧阈值 0.55 是「断言曾经失效」的那个值：适配缩放必须落在它与现行 0.35 之间，
+// 断言才咬得住。改了阈值又跑一次，若这里红了说明种子规模退化了，先修种子。
+const SCALE_STALE_LOD = 0.55;
+
+async function seedScaleViaApi(base) {
+  let r = await fetch(base + '/api/sessions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(seedScaleSessions()),
+  });
+  if (!r.ok) throw new Error('种大会话失败 HTTP ' + r.status);
+  r = await fetch(base + '/api/knowledge', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(seedScaleKnowledge()),
+  });
+  if (!r.ok) throw new Error('种大知识点失败 HTTP ' + r.status);
+  r = await fetch(base + '/api/continent');
+  const data = await r.json();
+  if (!data.clusters || data.clusters.length < SCALE_MIN_CLUSTERS) {
+    throw new Error('真实规模种子聚簇不足：' + data.clusterCount + '（门槛 ' + SCALE_MIN_CLUSTERS + '）');
+  }
+  if ((data.itemCount || 0) < SCALE_MIN_ITEMS) {
+    throw new Error('真实规模种子概念数不足：' + data.itemCount + '（门槛 ' + SCALE_MIN_ITEMS + '）');
   }
   return data;
 }
@@ -216,10 +316,12 @@ async function run() {
       // 读不到，硬编码阈值又会在改阈值时变成过期期望（与 smoke v8.5 那条「硬编码波长要
       // 配静态钉」同一个坑，这里直接换成不依赖常量的等价判据）。
       //
-      // ⚠️⚠️ **这条断言挡不住它要挡的那个 bug —— 已实测确认**。把阈值调回 0.55 本脚本
-      // 依然 10/10 通过：隔离种子库只有 6 会话 9 卡，世界小、适配缩放远高于 0.55，开图
-      // 永远落在区域档。**要让它有牙，必须先把隔离种子库放大到真实库量级**（见 backlog
-      // T30），在那之前它只是一条「种子库首屏不是世界档」的弱检查。别把它当成护栏。
+      // ⚠️ **这条断言在本套件里挡不住它要挡的那个 bug —— 已实测确认**。把阈值调回 0.55
+      // 本套件依然 10/10 通过：隔离种子库只有 6 会话 9 卡，世界小、适配缩放远高于 0.55，
+      // 开图永远落在区域档。**要让它有牙，必须先把隔离种子库放大到真实库量级**——
+      // 已做，见下方 runScaleSuite（2026-09-27，backlog T30 销账）：那边 14 岛 54 概念，
+      // 适配缩放 0.4094 落在 (0.35, 0.55) 敏感带里，阈值改回 0.55 时那边当场变红。
+      // 这条只当「小库首屏不是世界档」的弱检查，别把它当护栏。
       if (/lod-world/.test(cls)) {
         throw new Error('开图落进世界档（概念卡整档隐藏，首屏是空盒子）：' + cls
           + ' zoom=' + fit.zoom);
@@ -512,4 +614,135 @@ async function run() {
   }
 }
 
-run().catch(err => { console.error(err); process.exit(1); });
+// ---------- 真实规模套件（T30）----------
+// 独立服务、独立浏览器、独立断言数组：上面那套 10 条断言的种子与流程一个字不动
+// （它是冻结契约）。这里只回答一个问题——**这套种子大到足以让与数据量有关的
+// 断言真的咬得住吗**。全部在一个隔离目录里跑，真实 data/ 只读不碰。
+
+async function runScaleSuite() {
+  const PORT_S = 5076;
+  const BASE_S = `http://127.0.0.1:${PORT_S}`;
+  const scaleResults = [];
+  const okS = name => { scaleResults.push(true); console.log('✓ [真实规模] ' + name); };
+  const failS = (name, err) => { scaleResults.push(false); console.log('❌ [真实规模] ' + name + ' -> ' + (err && err.message || err)); };
+
+  const workDir = mkdtempSync(join(tmpdir(), 'phymathia-scale-'));
+  cpSync(join(ROOT, 'src'), join(workDir, 'src'), { recursive: true });
+  cpSync(join(ROOT, 'harness'), join(workDir, 'harness'), { recursive: true });
+  for (const f of ['http_client.py', 'llm_common.py', 'usage_stats.py']) {
+    cpSync(join(ROOT, f), join(workDir, f));
+  }
+  const server = spawn('python3', ['src/main.py', '-p', String(PORT_S)], {
+    cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let serverLog = '';
+  server.stderr.on('data', d => { serverLog += String(d); });
+  server.stdout.on('data', d => { serverLog += String(d); });
+
+  let browser = null;
+  try {
+    await waitHealthAt(BASE_S);
+    const data = await seedScaleViaApi(BASE_S);
+    okS('种子达到真实规模：' + data.clusterCount + ' 岛 / ' + data.itemCount + ' 概念'
+        + '（门槛 ' + SCALE_MIN_CLUSTERS + ' 岛 / ' + SCALE_MIN_ITEMS + ' 概念）');
+
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on('pageerror', err => console.log('  [pageerror] ' + err.message));
+    await page.addInitScript(() => {
+      try { localStorage.setItem('phymathia_onboarding_done', '1'); } catch (e) { /* 容忍 */ }
+    });
+    await page.goto(BASE_S + '/', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof window.openContinentView === 'function', null, { timeout: 15000 });
+
+    // --- 1. 开图适配缩放必须落在「阈值敏感带」里（本套件存在的全部理由）---
+    try {
+      await page.click('.continent-btn');
+      await continentOpen(page);
+      const m = await page.evaluate(() => {
+        const world = document.getElementById('continentWorld');
+        const t = new DOMMatrixReadOnly(getComputedStyle(world).transform);
+        return {
+          scale: t.a,
+          tier: world.className,
+          lodWorld: (typeof CONTINENT_LOD_WORLD === 'number') ? CONTINENT_LOD_WORLD : null,
+          lodDetail: (typeof CONTINENT_LOD_DETAIL === 'number') ? CONTINENT_LOD_DETAIL : null,
+          stats: document.getElementById('continentStats')?.textContent || '',
+          weak: document.getElementById('continentWeakBtn')?.textContent || '',
+          cities: document.querySelectorAll('.continent-city').length,
+          cardCount: document.querySelectorAll('.continent-node').length,
+        };
+      });
+      const lod = m.lodWorld == null ? 0.35 : m.lodWorld;
+      if (m.scale <= lod) {
+        throw new Error('适配缩放 ' + m.scale.toFixed(4) + ' 已落进世界档（阈值 ' + lod
+          + '）——阈值被调高了，或种子规模退化了；这条断言要求缩放落在阈值之上');
+      }
+      if (m.scale >= SCALE_STALE_LOD) {
+        throw new Error('适配缩放 ' + m.scale.toFixed(4) + ' ≥ 旧阈值 ' + SCALE_STALE_LOD
+          + '，把阈值改回 0.55 这条断言照样绿——它没有牙齿，先把种子做大');
+      }
+      okS('适配缩放 ' + m.scale.toFixed(4) + ' 落在敏感带 (' + lod + ', ' + SCALE_STALE_LOD + ')：改阈值必被测出');
+      if (m.tier.indexOf('lod-world') >= 0) throw new Error('开图首屏落进世界档：' + m.tier);
+      if (m.tier.indexOf('lod-region') < 0) throw new Error('开图首屏不是岛内档：' + m.tier);
+      if (!m.cardCount) throw new Error('首屏一张概念卡都没出（正是 v8.7 修的那一档，真实规模下又空了）');
+      okS('开图首屏是岛内档且概念卡真的画出来了（' + m.cardCount + ' 张，档位 ' + m.tier.trim() + '）');
+
+      // --- 2. 适配后的世界既不许溢出、也不许缩成一小块（同样与数据量有关）---
+      // 注意口径：fit 本来就留边距，不是「必须填满视口」。真正的失败模式有两个——
+      // 溢出（世界超出屏幕，看不全）与缩得太小（岛变成看不见的点）。小库时世界本来就
+      // 小、缩放比恒高，这条断言同样没有牙齿；真实规模下才咬得住。
+      const vp = await page.evaluate(() => {
+        const w = document.getElementById('continentWorld').getBoundingClientRect();
+        const vpEl = document.getElementById('continentViewport');
+        return { left: w.left, top: w.top, right: w.right, bottom: w.bottom,
+                 vw: vpEl.clientWidth, vh: vpEl.clientHeight };
+      });
+      const TOL = 40;
+      if (vp.left < -TOL || vp.top < -TOL || vp.right > vp.vw + TOL || vp.bottom > vp.vh + TOL) {
+        throw new Error('适配后世界溢出视口：世界 ' + Math.round(vp.right - vp.left) + '×'
+          + Math.round(vp.bottom - vp.top) + ' vs 视口 ' + vp.vw + '×' + vp.vh);
+      }
+      const fill = (vp.right - vp.left) / vp.vw;
+      if (fill < 0.7) {
+        throw new Error('适配后世界只占视口宽度 ' + (fill * 100).toFixed(0)
+          + '%，岛会小成看不见的点（门槛 70%）');
+      }
+      okS('适配后世界不溢出且占视口宽度 ' + Math.round(fill * 100)
+          + '%（' + Math.round(vp.right - vp.left) + '×' + Math.round(vp.bottom - vp.top)
+          + ' vs 视口 ' + vp.vw + '×' + vp.vh + '）');
+      // --- 3. 边界城市在真实规模下确实要经历折叠（T28 一直缺的那道断言）---
+      const folded = Number((m.weak.match(/折叠\s*(\d+)/) || [])[1] || 0);
+      if (m.cities < 5) throw new Error('边界城市只有 ' + m.cities + ' 座，真实规模下不该这么少');
+      if (folded < 1) throw new Error('折叠清单为空——真实规模下位移/波长改动没有可观测后果（T28）');
+      okS('边界城市 ' + m.cities + ' 座、折叠 ' + folded + ' 条：位移场与波长的改动有可观测后果');
+
+      // --- 4. 顶栏统计口径（顺带钉住「折叠 N 条」是给用户看的，不只是内部变量）---
+      if (m.stats.indexOf('个区域') < 0) throw new Error('顶栏统计未渲染：' + m.stats);
+      if (m.stats.indexOf(String(data.clusterCount) + ' 个区域') < 0) {
+        throw new Error('顶栏区域数与后端不一致：' + m.stats + ' vs ' + data.clusterCount);
+      }
+      okS('顶栏统计与后端口径一致（' + m.stats + '）');
+    } catch (e) {
+      failS('开图适配 / LOD / 边界城市折叠', e);
+    }
+  } catch (err) {
+    scaleResults.push(false);
+    console.log('❌ [真实规模] 环境级失败 -> ' + (err && err.message || err));
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    try { server.kill('SIGTERM'); } catch (e) { /* 容忍 */ }
+    await wait(800);
+    try { server.kill('SIGKILL'); } catch (e) { /* 容忍 */ }
+    try { rmSync(workDir, { recursive: true, force: true }); } catch (e) { /* 容忍 */ }
+  }
+
+  const passed = scaleResults.filter(Boolean).length;
+  console.log('\n真实规模套件：' + passed + ' / ' + scaleResults.length + ' 通过');
+  if (passed !== scaleResults.length) {
+    console.log('（服务端日志尾部）\n' + serverLog.split('\n').slice(-40).join('\n'));
+    process.exit(1);
+  }
+}
+
+run().then(runScaleSuite).catch(err => { console.error(err); process.exit(1); });
