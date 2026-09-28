@@ -140,3 +140,15 @@ _split3.cjs
 baseline/embedding/
 models/
 data/embedding_cache.json
+
+# 提交范围对齐开源版（2026-09-28）：工作日志/手册/图片素材等本地文件不入库，只留本机。
+# 文件保留在磁盘照常读写（AGENTS.md 硬规则 5），只是不再进 git 提交；
+# 已提交过的历史不受影响。与开源发布副本（/home/sample/开源/PhyMathia）的跟踪范围对齐。
+/docs/
+/assets/
+/AGENTS.md
+/.coze
+/style_debt.json
+/skills-lock.json
+/PhyMathia.desktop
+/build_exe.ps1
