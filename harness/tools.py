@@ -28,6 +28,10 @@ TOOL_TO_OP: Dict[str, str] = {
     "remove_edge": "remove_edge",
     "update_edge": "update_edge",
     "create_eval_node": "create_eval_node",
+    # 节点配方 P3（创造模式）
+    "create_recipe": "create_recipe",
+    "update_recipe": "update_recipe",
+    "delete_recipe": "delete_recipe",
 }
 
 
@@ -64,7 +68,8 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
             "label": _str_prop("节点标题（必填）"),
             "content": _str_prop("正文/摘要（可空，最多 1200 字）"),
             "formula": _str_prop("公式（可空，纯 LaTeX，不带 $ 定界符）"),
-            "module_key": _str_prop("kind=module 时必须填写模块类型", list(ALLOWED_MODULE_KEYS)),
+            "module_key": _str_prop("kind=module 时必须填写模块类型（带 recipe_id 时可空）", list(ALLOWED_MODULE_KEYS)),
+            "recipe_id": _str_prop("创造模式专用：配方 ID（来自本批 create_recipe 的结果或 user_recipes 清单）——放一个该配方的节点到画布"),
             "reason": _str_prop(REASON_DESC),
         },
         ["temp_id", "kind", "label", "reason"],
@@ -165,6 +170,61 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["temp_id", "target_node_id", "suggestion", "reason"],
     )
 
+    # ---- 节点配方 P3（创造模式）：配方是纯 JSON（D-R2），schema 枚举在后端校验器把关 ----
+    recipe_obj_prop = {
+        "type": "object",
+        "description": "配方完整 JSON：name(必填≤24字) / desc(≤80) / base:{kind:module|summary|knowledge|relation|note|human_note|manual|question} / "
+        "appearance:{palette:amber|blue|rose|teal|violet|human|note, shape:is-round|is-square|is-diamond|is-ring} / "
+        "generate:{prompt(必填≤800字), strict_output, followup_prompt, confused_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
+        "model_role:agent|html|branch|graph|quiz|descriptor, on_incomplete:{max_retries:0|1|2}} / "
+        "ports:{static:[{label≤12字, drag_form:draft|user|connected:<官方key>}], dynamic:{parser:{pattern:numbered_list, level_tags, max≤12, "
+        "label_from:index_question|question_trunc12}, fallback:{mode:static|label_questions_from_text|none, labels}, each:{type:socratic|learn|branch, "
+        "drag_form:draft|user}}}（dynamic 仅 module 底座）/ content_kind:markdown|plain|mermaid|html_iframe（后两者须 AI 底座）",
+        "properties": {
+            "name": _str_prop("配方名（必填，≤24 字，不得与现有配方重名）"),
+            "desc": _str_prop("一句话描述（≤80 字）"),
+            "base": {"type": "object", "properties": {"kind": _str_prop("底座类型")}},
+            "appearance": {"type": "object", "properties": {
+                "palette": _str_prop("色板令牌", ["amber", "blue", "rose", "teal", "violet", "human", "note"]),
+                "shape": _str_prop("形状族", ["is-round", "is-square", "is-diamond", "is-ring"]),
+            }},
+            "generate": {"type": "object", "description": "生成四槽＋通道＋模型槽＋重试"},
+            "ports": {"type": "object", "description": "静态出口表＋动态出口声明"},
+            "content_kind": _str_prop("内容载体", ["markdown", "plain", "mermaid", "html_iframe"]),
+        },
+        "required": ["name"],
+    }
+
+    create_recipe = _tool(
+        "create_recipe",
+        "创造模式：新建一个节点配方（用户可复用的自定义节点类型，纯 JSON）。需求不明时先用 clarify 问清"
+        "（用途/出口/载体），明确后一次性产出完整配方；保存前想过校验器（名称查重/枚举白名单/预算）。",
+        {"recipe": recipe_obj_prop, "reason": _str_prop(REASON_DESC)},
+        ["recipe", "reason"],
+    )
+
+    update_recipe = _tool(
+        "update_recipe",
+        "创造模式：修改现有配方（只能改 user_recipes 清单里列出的 id；payload 与 create 同构，整份提交）。",
+        {
+            "recipe_id": _str_prop("要修改的配方 ID（必须来自 user_recipes 清单）"),
+            "recipe": recipe_obj_prop,
+            "reason": _str_prop(REASON_DESC),
+        },
+        ["recipe_id", "recipe", "reason"],
+    )
+
+    delete_recipe = _tool(
+        "delete_recipe",
+        "创造模式：删除现有配方（只能删 user_recipes 清单里列出的 id；删除需用户已在对话中明确要求）。"
+        "画布上由该配方创建的旧节点不受影响。",
+        {
+            "recipe_id": _str_prop("要删除的配方 ID（必须来自 user_recipes 清单）"),
+            "reason": _str_prop(REASON_DESC),
+        },
+        ["recipe_id", "reason"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -173,6 +233,9 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "remove_edge": remove_edge,
         "update_edge": update_edge,
         "create_eval_node": create_eval_node,
+        "create_recipe": create_recipe,
+        "update_recipe": update_recipe,
+        "delete_recipe": delete_recipe,
     }
 
 
@@ -184,6 +247,8 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
     "evaluate": ["create_eval_node"],
     "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
+    # 创造模式（P3）：配方三件套＋create_node（带 recipe_id＝「在画布上放一个试试」）
+    "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"],
 }
 
 
@@ -221,7 +286,30 @@ def _args_to_op(name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             op["formula"] = _text(args.get("formula"))
         if _text(args.get("module_key")):
             op["module_key"] = _text(args.get("module_key"))
+        # 创造模式：配方实例节点（module 底座＋recipe_id，module_key 可空）
+        if _text(args.get("recipe_id")):
+            op["recipe_id"] = _text(args.get("recipe_id"))
         return op
+
+    if name in ("create_recipe", "update_recipe"):
+        reason = _text(args.get("reason"))
+        recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else None
+        if not reason or not isinstance(recipe, dict) or not _text(recipe.get("name")):
+            return None
+        op: Dict[str, Any] = {"op": name, "recipe": recipe, "reason": reason}
+        if name == "update_recipe":
+            recipe_id = _text(args.get("recipe_id"))
+            if not recipe_id:
+                return None
+            op["recipe_id"] = recipe_id
+        return op
+
+    if name == "delete_recipe":
+        reason = _text(args.get("reason"))
+        recipe_id = _text(args.get("recipe_id"))
+        if not reason or not recipe_id:
+            return None
+        return {"op": "delete_recipe", "recipe_id": recipe_id, "reason": reason}
 
     if name == "update_node":
         node_id = _text(args.get("node_id") or args.get("id"))

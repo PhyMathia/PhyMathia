@@ -144,13 +144,18 @@ function _parsePortQuestions(content, withLevel) {
 }
 
 function _moduleOutputPorts(node, message) {
-  // 节点配方（P1）：配方静态出口表优先；底座为 module 时不再走内置默认表
+  const content = _nodeContent(message, node) || '';
+  // 节点配方（P1 静态＋P2 动态）：配方出口表优先；底座为 module 时不再走内置默认表。
+  // 动态出口（ports.dynamic）按声明从正文解析编号行，解析失败按 fallback 兜底
+  // （label_questions_from_text 模式下兜底端口带从正文截的问题文本，治 T56）。
   if (node.recipeId) {
     const recipePorts = typeof _recipeStaticPorts === 'function' ? _recipeStaticPorts(node) : [];
-    if (recipePorts.length) return recipePorts;
+    const dynPorts = (typeof _recipeDynamicPorts === 'function' && node.recipe && node.recipe.ports && node.recipe.ports.dynamic)
+      ? _recipeDynamicPorts(node, content)
+      : [];
+    if (recipePorts.length || dynPorts.length) return recipePorts.concat(dynPorts);
     if ((node.recipe && node.recipe.base && node.recipe.base.kind) === 'module') return [];
   }
-  const content = _nodeContent(message, node) || '';
   if (node.moduleKey === 'socratic') {
     const questions = _parsePortQuestions(content, true);
     if (!questions.length) {
@@ -544,7 +549,10 @@ function _renderCustomNodeContentHtml(node) {
   let text = String(node.kind === 'answer' && !node.manual ? (node.analysis || node.content || '') : (node.content || ''));
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
-  // 配方声明 plain 载体（P1）：不解析 Markdown，纯转义渲染（human_note 同口径）
+  // 配方载体分派（P1 plain / P2 mermaid·html_iframe）：plain 不解析 Markdown、
+  // 纯转义渲染（human_note 同口径）；mermaid / html_iframe 不在此分叉——生成侧
+  // 已把内容归一成 ```mermaid / ```html 代码块，renderMarkdown 会分派到现成渲染器
+  // （viz 卡走 _initVizIframes，mermaid 走 renderMermaidInElement）
   if (node.recipeId && node.recipe && node.recipe.content_kind === 'plain') {
     return '<div class="graph-custom-node-render">' + escapeHtml(text) + '</div>';
   }
@@ -568,7 +576,11 @@ function _refreshWorkflowNodeUi(node) {
     currentEl.replaceWith(nextEl);
     if (typeof _initVizIframes === 'function') _initVizIframes(nextEl);
     if (typeof renderMath === 'function') renderMath(nextEl);
-    if (node && node.kind === 'module' && node.moduleKey === 'graph' && typeof renderMermaidInElement === 'function') {
+    // mermaid 渲染（官方知识图谱模块＋P2 配方 mermaid 载体）：正文代码块要先经
+    // renderMarkdown 变成 .mermaid 占位，再异步解析成 SVG
+    const isMermaidNode = node && node.kind === 'module'
+      && (node.moduleKey === 'graph' || (node.recipeId && node.recipe && node.recipe.content_kind === 'mermaid'));
+    if (isMermaidNode && typeof renderMermaidInElement === 'function') {
       setTimeout(() => { renderMermaidInElement(nextEl).catch(() => {}); }, 60);
     }
     _measureNodes();

@@ -126,9 +126,19 @@
     const content = String(op.content || '');
     const formula = String(op.formula || '');
     const isManual = ['knowledge', 'relation', 'human_note', 'note', 'source', 'blank'].includes(kind);
+    // 配方实例节点（P3 创造模式「在画布上放一个试试」）：内嵌创建时刻的配方快照
+    // （与 createRecipeNode 同款覆盖层口径——删配方不毁旧节点）
+    const recipeRef = String(op.recipe_id || op.recipeId || '');
+    let recipeEmbed = null;
+    if (recipeRef && typeof getUserRecipes === 'function' && typeof recipeEmbedSnapshot === 'function') {
+      const found = getUserRecipes().find(item => item.id === recipeRef);
+      recipeEmbed = found ? recipeEmbedSnapshot(found) : null;
+    }
     return {
       id,
       kind,
+      recipeId: recipeEmbed ? recipeRef : '',
+      recipe: recipeEmbed,
       moduleKey: kind === 'module'
         ? String(op.module_key || op.moduleKey || '')
         : (kind === 'hub' || kind === 'summary' || kind === 'note' ? (op.module_key || op.moduleKey || '') : ''),

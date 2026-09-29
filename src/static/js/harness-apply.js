@@ -1,6 +1,25 @@
 // ===== PhyMathia 图编辑 harness：应用操作与建议（含 window 导出）=====
 
   function _applyOneHarnessOp(op, state, nodeKindById) {
+    const opName = op.op || op.type || '';
+    // ---- 配方库操作（P3 创造模式）：落前端配方库（localStorage＋服务端镜像），不动图 ----
+    if (opName === 'create_recipe' || opName === 'update_recipe' || opName === 'delete_recipe') {
+      if (typeof getUserRecipes !== 'function' || typeof setUserRecipes !== 'function') return;
+      const list = getUserRecipes();
+      if (opName === 'create_recipe' && op.recipe) {
+        const created = { ...op.recipe, createdAt: Date.now(), updatedAt: Date.now() };
+        setUserRecipes([...list.filter(item => item.id !== created.id), created]);
+      } else if (opName === 'update_recipe' && op.recipe && op.recipe_id) {
+        const prev = list.find(item => item.id === op.recipe_id);
+        const updated = { ...op.recipe, id: op.recipe_id,
+          createdAt: (prev && prev.createdAt) || Date.now(), updatedAt: Date.now() };
+        setUserRecipes(list.map(item => item.id === op.recipe_id ? updated : item));
+      } else if (opName === 'delete_recipe' && op.recipe_id) {
+        setUserRecipes(list.filter(item => item.id !== op.recipe_id));
+      }
+      if (typeof _recipeRefreshAddPanel === 'function') _recipeRefreshAddPanel();
+      return;
+    }
     const name = op.op || op.type || '';
     if (name === 'restore_node') {
       const node = JSON.parse(JSON.stringify(op.node || {}));
@@ -285,6 +304,8 @@
     state.sizes = state.sizes || {};
     state.pinned = state.pinned || {};
     state.inputPortCounts = state.inputPortCounts || {};
+    const hasRecipeOps = ops.some(op => ['create_recipe', 'update_recipe', 'delete_recipe'].includes(op.op || op.type || ''));
+    const recipesBefore = hasRecipeOps && typeof getUserRecipes === 'function' ? getUserRecipes().slice() : null;
     ops.forEach(op => _applyOneHarnessOp(op, state, nodeKindById));
     if (harnessPhase === 'apply' && cleanupEval) {
       const evalIds = state.customNodes.filter(node => node.kind === 'ai_eval').map(node => node.id);
@@ -303,6 +324,9 @@
       operations: ops,
       summary: harnessResult?.summary || '',
       appliedAt: Date.now(),
+      // 配方库操作的前态副本（P3）：图状态 checkpoint 不含配方库，单独存这里，
+      // 「撤销本次」时一并还原（对话式逆操作只覆盖 create_recipe，这里兜住全部三类）
+      ...(recipesBefore ? { recipesBefore } : {}),
     };
     if (typeof window.saveGraphState === 'function') window.saveGraphState(sessionId, state);
     if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
@@ -368,11 +392,15 @@
       return;
     }
     if (typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), checkpoint.before);
+    if (checkpoint.recipesBefore && typeof setUserRecipes === 'function') {
+      setUserRecipes(checkpoint.recipesBefore);
+      if (typeof _recipeRefreshAddPanel === 'function') _recipeRefreshAddPanel();
+    }
     if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
-    _setHarnessStatus('已撤销本次修改', 'ok');
+    _setHarnessStatus('已撤销本次修改' + (checkpoint.recipesBefore ? '（配方库已一并还原）' : ''), 'ok');
     harnessPhiCelebrate = true;
     _setPhiMode('celebrate');
     window.setTimeout(() => {
@@ -528,5 +556,7 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.applySelectedGraphHarness = applySelectedGraphHarness;
   window.undoGraphHarness = undoGraphHarness;
   window.syncHarnessNodesToKnowledge = _syncHarnessNodesToKnowledge;
+  // smoke 专用出口（P3）：配方三件套 op 的应用路径——配方分支不碰图状态，传空即可
+  window._applyHarnessOpsForTest = ops => (ops || []).forEach(op => _applyOneHarnessOp(op, null, new Map()));
   window.buildHarnessSnapshot = buildHarnessSnapshot;
   window._harnessContinentShared = _harnessContinentShared; // 大陆 v3：跨画布共享点口径（smoke 断言用）

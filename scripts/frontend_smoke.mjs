@@ -285,6 +285,261 @@ check('配方 P1 边界（P1）：knowledge/relation 配方节点走 AI 生成�
 });
 // ===== 节点配方 P1 用例结束 =====
 
+// ===== 节点配方 P2：动态出口 / 载体与生成维度 / on_generated 编排 =====
+// 与 P1 用例同口径：全程同步（无 await），不占串行边界段。
+
+function _smokeDynRecipe(overrides) {
+  const dyn = {
+    parser: { pattern: 'numbered_list', level_tags: ['基础', '进阶', '拓展'], max: 12, label_from: 'index_question' },
+    fallback: { mode: 'label_questions_from_text', labels: ['问题1', '问题2', '问题3'] },
+    each: { type: 'socratic', branch_type: 'socratic', drag_form: 'draft' },
+    ...(overrides || {}),
+  };
+  return sandbox.window.normalizeRecipeInput({
+    ..._smokeValidRecipe(),
+    id: 'recipe-smoke-dyn',
+    name: '我的追问器',
+    aggregation: 'first_inbound',
+    ports: { static: [{ label: '追问', drag_form: 'draft' }], dynamic: dyn },
+  });
+}
+
+function _smokeDynNode(recipe, content) {
+  return {
+    id: 'dyn-node-1', kind: 'module', moduleKey: '', recipeId: recipe.id, recipe,
+    content: content || '', messageIndex: -1, timestamp: 42,
+  };
+}
+
+check('配方动态出口（P2）：numbered_list 解析（级别白名单/上限/两种标签）＋fallback 三模式', () => {
+  const parse = sandbox.window._recipeParseNumberedList;
+  if (typeof parse !== 'function') throw new Error('_recipeParseNumberedList 未挂 window');
+  // 级别白名单：只收带 [基础/进阶/拓展] 标记的行；learn 式空表＝全收
+  const tagged = '前言不该出现\n1. [基础] 什么是弹簧振子\n2) 无标记行应被过滤\n3. [进阶] 为何满足微分方程\n- [拓展] 阻尼如何改变结论';
+  const withLevel = parse(tagged, { level_tags: ['基础', '进阶', '拓展'], max: 12 });
+  if (withLevel.length !== 3 || withLevel[0].question !== '什么是弹簧振子' || withLevel[0].level !== 'basic' || withLevel[2].level !== 'expand') {
+    throw new Error('级别解析不符：' + JSON.stringify(withLevel));
+  }
+  const noLevel = parse(tagged, { level_tags: [], max: 12 });
+  if (noLevel.length !== 4) throw new Error('learn 式（不校验级别）应收 4 行，实际 ' + noLevel.length);
+  // 上限
+  const capped = parse('1. a问题\n2. b问题\n3. c问题', { level_tags: [], max: 2 });
+  if (capped.length !== 2) throw new Error('max=2 应截到 2 个，实际 ' + capped.length);
+  // 端口 meta：label_from 两种方式 + 静态/动态合并 + socratic 端口形状
+  const recipe = _smokeDynRecipe();
+  const node = _smokeDynNode(recipe, '### 追问\n1. [基础] 什么是弹簧振子\n2. [进阶] 为何满足微分方程');
+  const ports = sandbox._moduleOutputPorts(node, null);
+  if (ports.length !== 3 || ports[0].label !== '追问') throw new Error('静态+动态出口应合并 3 个，实际 ' + JSON.stringify(ports.map(p => p.label)));
+  if (ports[1].type !== 'socratic' || ports[1].branchType !== 'socratic' || ports[1].attribute !== 'recipe') throw new Error('socratic 端口 meta 形状不对：' + JSON.stringify(ports[1]));
+  if (ports[1].label !== '问题1' || ports[1].question !== '什么是弹簧振子') throw new Error('index_question 标签/问题文本未按解析填充');
+  const truncRecipe = _smokeDynRecipe({ parser: { pattern: 'numbered_list', level_tags: [], max: 12, label_from: 'question_trunc12' } });
+  const truncPorts = sandbox._moduleOutputPorts(_smokeDynNode(truncRecipe, '1. 这是一个很长很长的问题文本要被截断'), null);
+  if (truncPorts[1].label !== '这是一个很长很长的问题文…') throw new Error('question_trunc12 标签未截 12 字：' + truncPorts[1].label);
+  // fallback：label_questions_from_text 从正文行截问题文本（治 T56：兜底不空白静默）
+  const fbText = sandbox._moduleOutputPorts(_smokeDynNode(recipe, '这是一段说明文字。\n第二行补充说明。'), null);
+  if (fbText.length !== 3 || fbText[1].question !== '这是一段说明文字。' || fbText[2].question !== '第二行补充说明。') {
+    throw new Error('label_questions_from_text 兜底应带正文截取的问题：' + JSON.stringify(fbText));
+  }
+  const fbStatic = sandbox._moduleOutputPorts(_smokeDynNode(_smokeDynRecipe({ fallback: { mode: 'static', labels: ['问题1'] } }), '无编号行'), null);
+  if (fbStatic.length !== 2 || fbStatic[1].question !== '' || fbStatic[1].label !== '问题1') throw new Error('static 兜底应只有固定名、question 留空：' + JSON.stringify(fbStatic));
+  const fbNone = sandbox._moduleOutputPorts(_smokeDynNode(_smokeDynRecipe({ fallback: { mode: 'none', labels: [] } }), '无编号行'), null);
+  if (fbNone.length !== 1) throw new Error('none 兜底应只剩静态出口 1 个，实际 ' + fbNone.length);
+  return true;
+});
+
+check('配方生成维度（P2）：模型槽位优先＋回落、载体归一/重试/双阶段/单链接线', () => {
+  // getActiveModelForRole 是 models.js 顶层函数声明：挂 vm 全局（sandbox.*），
+  // 不是 window 代理（宽松代理只写自己的 store，不影响裸标识符解析）
+  const prevRole = sandbox.getActiveModelForRole;
+  sandbox.getActiveModelForRole = role => (role === 'html' ? { id: 'html-model' } : role === 'agent' ? { id: 'agent-model' } : null);
+  try {
+    const pick = sandbox._modelForWorkflowNode;
+    const recipeNode = { kind: 'module', recipeId: 'r', recipe: { generate: { model_role: 'html' } } };
+    if (pick(recipeNode).id !== 'html-model') throw new Error('配方 model_role=html 应选 html 槽');
+    const unconfigured = { kind: 'module', recipeId: 'r', recipe: { generate: { model_role: 'graph' } } };
+    if (pick(unconfigured).id !== 'agent-model') throw new Error('槽位未配置应回落主模型');
+    const builtinSocratic = { kind: 'module', moduleKey: 'socratic' };
+    if (pick(builtinSocratic).id !== 'agent-model') throw new Error('内置 socratic 在 branch 槽未配置时应回落 agent（行为零变化）');
+  } finally { sandbox.getActiveModelForRole = prevRole; }
+  // 静态断言：viz 收口扩到配方 html_iframe（重试预算/重试提示词）、mermaid 包围栏、
+  // 双阶段概要与 on_generated 钩子的接线（这些分支要真模型才走到，行为留真机验收）
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  if (!wfSrc.includes("recipe.content_kind === 'html_iframe'")) throw new Error('viz 收口未覆盖配方 html_iframe');
+  if (!wfSrc.includes('on_incomplete.max_retries')) throw new Error('重试预算未接 on_incomplete');
+  if (!wfSrc.includes('retry_prompt')) throw new Error('重试提示词未接 retry_prompt');
+  if (!wfSrc.includes("recipe.content_kind === 'mermaid'")) throw new Error('mermaid 载体归一缺失');
+  if (!wfSrc.includes('recipe.analysis_phase')) throw new Error('双阶段概要接线缺失');
+  if (!wfSrc.includes("recipeAgg === 'first_inbound' ? _collectInboundChain")) throw new Error('单链取材分派缺失');
+  if (!wfSrc.includes('_recipeAfterGenerated(live)')) throw new Error('on_generated 钩子未挂生成完成点');
+  // 单链取材行为：两条入边时 _collectInboundChain 只走第一条（空白节点式）。
+  // graphView 是 graph.js 的 const 词法绑定，沙箱外不可达——经 vm.runInContext 原地改
+  sandbox.__smokeDynRecipeRaw = JSON.stringify(_smokeDynRecipe());
+  const questions = JSON.parse(vm.runInContext(`
+    globalThis.__gvBackup = { edges: graphView.edges, nodes: graphView.nodes, byId: graphView.nodeById };
+    graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};
+    [
+      { id: 'fq', kind: 'user', content: '问题A', messageIndex: -1, timestamp: 1 },
+      { id: 'fq2', kind: 'user', content: '问题B', messageIndex: -1, timestamp: 2 },
+    ].forEach(n => { graphView.nodes.push(n); graphView.nodeById[n.id] = n; });
+    const fnNode = { id: 'fn', kind: 'module', moduleKey: '', recipeId: 'r', messageIndex: -1, timestamp: 3 };
+    fnNode.recipe = normalizeRecipeInput(JSON.parse(globalThis.__smokeDynRecipeRaw));
+    graphView.nodes.push(fnNode); graphView.nodeById[fnNode.id] = fnNode;
+    graphView.edges.push(
+      { from: 'fq', fromPort: 'out-0', to: 'fn', toPort: 'in-0' },
+      { from: 'fq2', fromPort: 'out-0', to: 'fn', toPort: 'in-0' },
+    );
+    const ctx = _buildWorkflowContextForNode(fnNode);
+    const qs = (ctx.upstream || []).filter(item => item.kind === 'user').map(item => item.content);
+    graphView.edges = globalThis.__gvBackup.edges;
+    graphView.nodes = globalThis.__gvBackup.nodes;
+    graphView.nodeById = globalThis.__gvBackup.byId;
+    JSON.stringify(qs);
+  `, sandbox));
+  if (questions.includes('问题B')) throw new Error('first_inbound 只应收第一条入边链，实际收到：' + JSON.stringify(questions));
+  if (!questions.includes('问题A')) throw new Error('第一条入边链缺失');
+  return true;
+});
+
+check('配方 on_generated 编排（P2）：建链＋补链＋只跑一次＋链深 1 防递归', () => {
+  // graphView（const 词法绑定）与 runWorkflowNodes（顶层函数声明）都在 vm 里：
+  // 整个场景在一个 runInContext 里跑，结果经 globalThis 带出
+  const recipeRaw = {
+    ..._smokeValidRecipe(),
+    id: 'recipe-smoke-og',
+    name: '我的进阶器',
+    ports: { static: [], dynamic: {
+      parser: { pattern: 'numbered_list', level_tags: [], max: 12, label_from: 'question_trunc12' },
+      fallback: { mode: 'none', labels: [] },
+      each: { type: 'learn', branch_type: 'learn', drag_form: 'draft' },
+    } },
+    on_generated: {
+      create: [
+        { as: '$0', base: { kind: 'answer' }, label_template: '{self.label}的进阶学习', content_from: 'self_directions' },
+        { as: '$1', base: { kind: 'module', recipe: 'learn' }, label: '进阶学习' },
+      ],
+      connect: [{ from: 'self', to: '$0', relation: '进阶' }],
+      chain_check: true,
+    },
+  };
+  sandbox.__smokeOgRecipeRaw = JSON.stringify(recipeRaw);
+  sandbox.__smokeDynRecipeRaw = sandbox.__smokeDynRecipeRaw || JSON.stringify(_smokeDynRecipe());
+  const result = JSON.parse(vm.runInContext(`
+    const recipe = normalizeRecipeInput(JSON.parse(globalThis.__smokeOgRecipeRaw));
+    const node = { id: 'og-node', kind: 'module', moduleKey: '', recipeId: recipe.id, recipe, label: '我的进阶器',
+      content: '1. [基础] 方向一\\n2. [进阶] 方向二', messageIndex: -1, timestamp: 42 };
+    globalThis.__gvBackup2 = { edges: graphView.edges, nodes: graphView.nodes, byId: graphView.nodeById };
+    graphView.nodes = [node]; graphView.nodeById = { [node.id]: node }; graphView.edges = [];
+    const prevRun = globalThis.runWorkflowNodes;
+    const prevRender = globalThis.renderGraphCanvas;
+    let generated = null;
+    globalThis.runWorkflowNodes = ids => { generated = ids; };
+    globalThis.renderGraphCanvas = () => {};
+    const out = {};
+    try {
+      _recipeAfterGenerated(node);
+      const created = graphView.nodes.filter(n => n.fromRecipeChain === true);
+      const answer = created.find(n => n.kind === 'answer');
+      const learn = created.find(n => n.kind === 'module');
+      out.createdCount = created.length;
+      out.answerLabel = answer && answer.label;
+      out.answerContent = answer && answer.content;
+      out.learnModuleKey = learn && learn.moduleKey;
+      out.e1 = graphView.edges.find(e => e.from === node.id && e.to === answer.id) || null;
+      out.e2 = graphView.edges.find(e => e.from === answer.id && e.to === learn.id) || null;
+      out.marked = !!node.onGeneratedAt;
+      out.generated = generated;
+      const countBefore = graphView.nodes.length;
+      _recipeAfterGenerated(node);
+      out.retriggerCreated = graphView.nodes.length - countBefore;
+      learn.recipeId = recipe.id;
+      learn.recipe = recipe;
+      _recipeAfterGenerated(learn);
+      out.chainDepthBlocked = graphView.nodes.length - countBefore;
+    } finally {
+      globalThis.runWorkflowNodes = prevRun;
+      globalThis.renderGraphCanvas = prevRender;
+      graphView.edges = globalThis.__gvBackup2.edges;
+      graphView.nodes = globalThis.__gvBackup2.nodes;
+      graphView.nodeById = globalThis.__gvBackup2.byId;
+    }
+    JSON.stringify(out);
+  `, sandbox));
+  if (result.createdCount !== 2) throw new Error('应建 2 个节点，实际 ' + result.createdCount);
+  if (result.answerLabel !== '我的进阶器的进阶学习') throw new Error('label_template 未替换 {self.label}：' + result.answerLabel);
+  if (!String(result.answerContent).includes('1. 方向一') || !String(result.answerContent).includes('2. 方向二')) throw new Error('self_directions 未按解析行回填：' + result.answerContent);
+  if (result.learnModuleKey !== 'learn') throw new Error('base.recipe=learn 应落 moduleKey=learn，实际 ' + result.learnModuleKey);
+  if (!result.e1 || result.e1.relation !== '进阶') throw new Error('self→$0 边缺失或关系不对');
+  if (!result.e2 || result.e2.relation !== '模块') throw new Error('chain_check 未补 $0→$1 边');
+  if (!result.marked) throw new Error('onGeneratedAt 标记未写');
+  if (!result.generated || result.generated.length !== 2) throw new Error('AI 节点未送回工作流：' + JSON.stringify(result.generated));
+  if (result.retriggerCreated !== 0) throw new Error('重触发不应重复建链');
+  if (result.chainDepthBlocked !== 0) throw new Error('fromRecipeChain 节点不应再触发 on_generated');
+  return true;
+});
+
+check('draftAskAi 空问题提示（T56②）：兜底端口点「直接问AI」不再静默', () => {
+  const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!/function draftAskAi[\s\S]{0,400}toastMsg\(/.test(interactSrc)) throw new Error('draftAskAi 空问题分支未接 toastMsg');
+  return true;
+});
+// ===== 节点配方 P2 用例结束 =====
+// ===== 节点配方 P3：创造模式（Φ 面板 / 配方 op 应用 / 相位直通）=====
+
+check('创造模式（P3）：面板按钮＋相位锁定＋preset 旁路', () => {
+  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!harnessSrc.includes('graphHarnessPresetBtn')) throw new Error('✦ 创造模式按钮未进面板');
+  if (!harnessSrc.includes('window._harnessPresetActive')) throw new Error('preset 状态未暴露给发送链');
+  if (!harnessSrc.includes('snapshot.user_recipes')) throw new Error('配方清单未随快照注入（结构化通道）');
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  if (!runSrc.includes("phase = 'preset'")) throw new Error('发送链未按 preset 锁定相位');
+  if (!runSrc.includes('harnessPhase !== \'preset\' && !harnessSingleEvalId')) throw new Error('preset 未旁路目标解析');
+  if (!runSrc.includes("harnessPhase !== 'preset'")) throw new Error('preset 未旁路空画布拦截');
+  if (!runSrc.includes('create_recipe')) throw new Error('op 人话描述未覆盖配方三件套');
+  // 沙箱行为断言：_harnessPresetActive 默认关、toggle 后开
+  if (sandbox.window._harnessPresetActive() !== false) throw new Error('preset 默认应为关闭');
+  sandbox.window.toggleHarnessPresetMode();
+  if (sandbox.window._harnessPresetActive() !== true) throw new Error('toggle 后应开启');
+  sandbox.window.toggleHarnessPresetMode();
+  if (sandbox.window._harnessPresetActive() !== false) throw new Error('再 toggle 应回关闭');
+  return true;
+});
+
+check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例建节点', () => {
+  const prevRecipes = sandbox.window.setUserRecipes([]);
+  try {
+    // create_recipe：后端 normalize 过的 payload（带 recipe_id）
+    sandbox.setUserRecipes([]);
+    const createdRecipe = {
+      id: 'recipe-hn-1', name: '考前速记', desc: '', builtin: false,
+      base: { kind: 'module' }, appearance: { palette: 'teal', shape: 'is-round' },
+      generate: { prompt: 'x', strict_output: '', followup_prompt: '', confused_prompt: '', retry_prompt: '', context_channel: 'workflow_context', model_role: 'agent', on_incomplete: { max_retries: 1 } },
+      ports: { static: [{ label: '再测一道', drag_form: 'user' }] },
+      content_kind: 'markdown', aggregation: 'ancestors', analysis_phase: false,
+      createdAt: 1, updatedAt: 1,
+    };
+    sandbox.window._applyHarnessOpsForTest
+      ? sandbox.window._applyHarnessOpsForTest([{ op: 'create_recipe', recipe: createdRecipe, reason: 'r' }])
+      : (() => { throw new Error('测试出口缺失：_applyHarnessOpsForTest'); })();
+    let list = sandbox.window.getUserRecipes();
+    if (list.length !== 1 || list[0].name !== '考前速记') throw new Error('create_recipe 未落库');
+    // update_recipe：同 id 整份替换
+    sandbox.window._applyHarnessOpsForTest([{ op: 'update_recipe', recipe_id: 'recipe-hn-1', recipe: { ...createdRecipe, name: '考前速记·改' }, reason: 'r' }]);
+    list = sandbox.window.getUserRecipes();
+    if (list.length !== 1 || list[0].name !== '考前速记·改') throw new Error('update_recipe 未替换');
+    // 配方实例 create_node（预览→应用同款 _newHarnessNode）
+    const node = sandbox._newHarnessNode('hn-1', { kind: 'module', label: '考前速记·改', recipe_id: 'recipe-hn-1' }, { x: 0, y: 0 });
+    if (!node.recipeId || !node.recipe || node.recipe.name !== '考前速记·改') throw new Error('配方实例节点缺内嵌快照：' + JSON.stringify({ rid: node.recipeId, has: !!node.recipe }));
+    // delete_recipe
+    sandbox.window._applyHarnessOpsForTest([{ op: 'delete_recipe', recipe_id: 'recipe-hn-1', reason: 'r' }]);
+    if (sandbox.window.getUserRecipes().length !== 0) throw new Error('delete_recipe 未删净');
+    return true;
+  } finally {
+    sandbox.window.setUserRecipes(prevRecipes || []);
+  }
+});
+// ===== 节点配方 P3 用例结束 =====
+
+
 check('_isHarnessPureQuestion 分类边界', () => {
   if (sandbox._isHarnessPureQuestion('评价一下我的理解') !== false) return false; // 改图意图
   // 注：「…怎么样」会被标为纯问答——无害，因 R4 后快照一律发真实画布内容，
@@ -4185,8 +4440,8 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
     throw new Error('共享读取口 _sseContentFrames 不见了');
   }
   const users = (gwCode.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
-  if (users !== 3) {
-    throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 3：模块节点 / 问题分析 / 空白节点）');
+  if (users !== 4) {
+    throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 4：模块节点 / 问题分析 / 空白节点 / 配方双阶段概要 P2）');
   }
   // 只吐正文增量：思维链绝不能混进正文（2026-09-15「旋度岛静默消失」的根因）
   // 在 gwCode 上切片：共享口自己那句「绝不碰 reasoning_content」的说明注释

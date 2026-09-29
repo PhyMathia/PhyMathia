@@ -681,7 +681,12 @@ function draftAskAi(nodeId) {
   if (!node) return;
   const meta = node.portMeta || {};
   const question = meta.question || '';
-  if (!question) return;
+  // 空问题不再静默退出（T56②）：兜底端口没解析出问题文本时给出去向，而不是点了
+  // 没反应；配方侧的根治是 fallback.mode: label_questions_from_text（P2 落地）
+  if (!question) {
+    toastMsg('这个出口没有解析出可用的问题文本，请直接在草稿里输入后发送');
+    return;
+  }
   const sourceNodeId = _findDraftSourceNodeId(nodeId);
   if (typeof window.startQuestionWorkflow === 'function') {
     window.startQuestionWorkflow(question, { sourceNodeId: sourceNodeId || '', sourcePort: meta.fromPort || '', draftNodeId: nodeId });

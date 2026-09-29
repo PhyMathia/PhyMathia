@@ -2654,3 +2654,122 @@ class HarnessStreamMeteringTest(unittest.TestCase):
         self.assertEqual(message.get("content"), "好")
         self.assertEqual((usage or {}).get("prompt_cache_hit_tokens"), 80,
                          "计量帧应被接住并随返回值带出")
+
+
+class HarnessPresetPhaseTest(unittest.TestCase):
+    """节点配方 P3：创造模式相位与配方库 op。"""
+
+    def setUp(self):
+        self.snapshot = {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+            "edges": [],
+            "user_recipes": [
+                {"id": "recipe-1", "name": "错题复盘", "base_kind": "module",
+                 "content_kind": "markdown", "ports": "静态 2"},
+            ],
+        }
+
+    def _recipe(self, **over):
+        payload = {
+            "name": "考前速记",
+            "desc": "分考点与口诀两段",
+            "base": {"kind": "module"},
+            "appearance": {"palette": "teal", "shape": "is-round"},
+            "generate": {"prompt": "输出考点与口诀两段。", "context_channel": "workflow_context"},
+            "ports": {"static": [{"label": "再测一道", "drag_form": "user"}]},
+            "content_kind": "markdown",
+        }
+        payload.update(over)
+        return payload
+
+    def test_detect_phase_explicit_preset_passthrough(self):
+        self.assertEqual(_detect_phase("preset", "随便说点什么", {}), "preset")
+        # 意图词永不猜 preset（D-R6：显式按钮入口，不做自动识别）
+        self.assertNotEqual(_detect_phase("auto", "帮我做一个考前速记配方", {}), "preset")
+
+    def test_phase_tools_preset_set(self):
+        from harness.tools import PHASE_TOOLS, TOOL_TO_OP, build_tools, _args_to_op
+        self.assertEqual(
+            set(PHASE_TOOLS["preset"]),
+            {"create_recipe", "update_recipe", "delete_recipe", "create_node"},
+        )
+        tools = build_tools("preset")
+        names = {t["function"]["name"] for t in tools}
+        self.assertEqual(names, set(PHASE_TOOLS["preset"]))
+        # _args_to_op 三件套转换
+        op = _args_to_op("create_recipe", {"recipe": self._recipe(), "reason": "用户要求"})
+        self.assertEqual(op["op"], "create_recipe")
+        self.assertEqual(op["recipe"]["name"], "考前速记")
+        op = _args_to_op("update_recipe", {"recipe_id": "recipe-1", "recipe": self._recipe(), "reason": "改口诀"})
+        self.assertEqual(op["op"], "update_recipe")
+        self.assertEqual(op["recipe_id"], "recipe-1")
+        op = _args_to_op("delete_recipe", {"recipe_id": "recipe-1", "reason": "用户要求删除"})
+        self.assertEqual(op, {"op": "delete_recipe", "recipe_id": "recipe-1", "reason": "用户要求删除"})
+        self.assertIsNone(_args_to_op("delete_recipe", {"reason": "缺 id"}))
+
+    def test_create_recipe_valid_and_dup(self):
+        result = build_next_snapshot(self.snapshot, [
+            {"op": "create_recipe", "recipe": self._recipe(), "reason": "用户要求"},
+        ])
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["operations"][0]["recipe_id"].startswith("recipe-hn-"))
+        self.assertEqual(result["operations"][0]["recipe"]["name"], "考前速记")
+        self.assertEqual(result["diff"], [], "配方库操作不改图元素")
+        # 重名被校验器拦
+        dup = build_next_snapshot(self.snapshot, [
+            {"op": "create_recipe", "recipe": self._recipe(name="错题复盘"), "reason": "重名"},
+        ])
+        self.assertEqual(dup["status"], "invalid")
+        self.assertIn("同名配方", dup["errors"][0]["reason"])
+
+    def test_update_and_delete_recipe_target_must_exist(self):
+        upd = build_next_snapshot(self.snapshot, [
+            {"op": "update_recipe", "recipe_id": "recipe-1", "recipe": self._recipe(name="错题复盘·改"), "reason": "改"},
+        ])
+        self.assertEqual(upd["status"], "ok")
+        self.assertEqual(upd["operations"][0]["recipe"]["name"], "错题复盘·改")
+        missing = build_next_snapshot(self.snapshot, [
+            {"op": "delete_recipe", "recipe_id": "recipe-x", "reason": "删"},
+        ])
+        self.assertEqual(missing["status"], "invalid")
+        self.assertIn("配方不存在", missing["errors"][0]["reason"])
+
+    def test_create_node_with_recipe_id(self):
+        result = build_next_snapshot(self.snapshot, [
+            {"op": "create_node", "temp_id": "t1", "kind": "module", "label": "考前速记",
+             "recipe_id": "recipe-1", "reason": "在画布上放一个试试"},
+        ])
+        self.assertEqual(result["status"], "ok")
+        node = result["next_snapshot"]["nodes"][1]
+        self.assertEqual(node["recipe_id"], "recipe-1")
+        self.assertEqual(node["module_key"], "", "配方实例节点 module_key 允许为空")
+        # 引用不存在的配方被拦
+        bad = build_next_snapshot(self.snapshot, [
+            {"op": "create_node", "temp_id": "t1", "kind": "module", "label": "X",
+             "recipe_id": "recipe-none", "reason": "不存在"},
+        ])
+        self.assertEqual(bad["status"], "invalid")
+        self.assertIn("配方不存在", bad["errors"][0]["reason"])
+
+    def test_inverse_of_create_recipe_is_delete(self):
+        from harness.core import build_inverse_ops
+        result = build_next_snapshot(self.snapshot, [
+            {"op": "create_recipe", "recipe": self._recipe(), "reason": "用户要求"},
+        ])
+        inverse = build_inverse_ops(self.snapshot, result["operations"])
+        self.assertEqual(len(inverse), 1)
+        self.assertEqual(inverse[0]["op"], "delete_recipe")
+        self.assertEqual(inverse[0]["recipe_id"], result["operations"][0]["recipe_id"])
+
+    def test_normalize_snapshot_passes_user_recipes(self):
+        normalized = normalize_snapshot(self.snapshot)
+        self.assertEqual(normalized["user_recipes"][0]["name"], "错题复盘")
+        stripped = normalize_snapshot({"nodes": [], "edges": [], "user_recipes": [{"id": "", "name": ""}]})
+        self.assertNotIn("user_recipes", stripped)
+
+    def test_preset_messages_reference_recipe_list(self):
+        from harness.prompts import build_preset_messages
+        msgs = build_preset_messages(normalize_snapshot(self.snapshot), "帮我做一个考前速记节点")
+        self.assertIn("节点配方创造助手", msgs[0]["content"])
+        self.assertIn("外观只能通过配方的结构化字段表达", msgs[0]["content"])
+        self.assertIn("错题复盘", msgs[1]["content"], "配方清单应随快照进提示词")
