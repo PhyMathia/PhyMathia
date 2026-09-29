@@ -1,5 +1,7 @@
 import re
 
+from .registry import prompt_node_type_lines
+
 """System prompt for the independent graph harness."""
 
 HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把用户的修改意图转成受控图操作，你的职责是图结构（节点/连线/类型/模块/标题），不负责填充大段学习正文——正文由内容生成流程负责；如果用户只是提问/讨论，也可以直接给出文字回答，不需要调用工具。当用户只是问候/寒暄（如“你好”“谢谢”“在吗”）或讨论时：不要输出任何图操作（operations 为空数组），summary 直接写一句自然、友好的中文回应本身（2~3 句），不要用“用户发送…无需图操作…”这类元描述口吻，也不要复述任务要求。
@@ -20,22 +22,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 快照可能带 user_profile 字段（可选）：用户学习画像的一行摘要（学段/目标/薄弱/兴趣/偏好），由系统从用户的长期记忆生成，非空才带。
 
 可用节点类型，必须严格使用 kind 和 module_key：
-- kind=module, module_key=physics：物理视角
-- kind=module, module_key=math：数学视角
-- kind=module, module_key=graph：知识图谱
-- kind=module, module_key=viz：交互可视化
-- kind=module, module_key=socratic：苏格拉底追问
-- kind=module, module_key=learn：进阶学习
-- kind=knowledge：知识点
-- kind=human_note：我的理解
-- kind=ai_eval：AI 评价节点，用于评价/建议/反馈
-- kind=note：我的总结
-- kind=hub：汇聚
-- kind=summary：AI 总结
-- kind=source：输入（原材料节点；快照里带 items 字段，是该材料解析出的知识点列表，建立/检查关系时以 items 内容为准）
-- kind=blank：空白节点
-- kind=user：问题
-- kind=answer：AI 回答
+__NODE_TYPE_LINES__
 
 关系规则：
 - 建立知识点之间的关系时，一律用 add_edge/remove_edge/update_edge 直接操作连线；系统已移除独立的“联系”节点类型，不要尝试创建 kind=relation 节点；
@@ -123,6 +110,12 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 - 快照若带 continent_shared（当前画布概念与其他画布的共享点），可以在 summary 里【口头】提及，例如“「阻尼振动」和你在「傅里叶分析」画布学的「非线性振动」共享「振动」，打开知识大陆可以把它连成一条大陆边”。跨画布连线不归本画布的图操作管：严禁为此输出任何 operations，不要在当前画布新建节点或连线来表达跨画布关系——落笔由用户在大陆地图上亲手确认。
 - 快照若带 user_profile（用户学习画像摘要），让 summary 与建议贴合画像：薄弱项优先建议「回到该知识点重学」或补一条它与先导概念的连线，学段/目标决定用语深浅与举例素材。与 quiz_weak 同一红线：严禁据此创建任何状态类图元素——不要新增“薄弱/待复习/掌握度/进度”节点，不要给节点染色、加徽标或评级，也不要改写标题去表达状态；只允许【内容性】动作与口头提示。
 """
+
+# 节点类型表占位符替换：行文本的唯一来源是 harness/registry.py（PROMPT_TYPE_LINES），
+# 与前端 src/static/js/graph-recipes.js 由 tests/test_registry_consistency.py 对拍。
+HARNESS_SYSTEM_PROMPT = HARNESS_SYSTEM_PROMPT.replace(
+    "__NODE_TYPE_LINES__", "\n".join(prompt_node_type_lines())
+)
 
 PHYMATHIA_EVALUATION_STANDARDS = """PhyMathia 评价标准：
 - 从物理直觉和数学结构两个维度评价，不能只评价表面文字。
@@ -448,6 +441,10 @@ def slim_snapshot(value):
         out = {}
         for k, v in value.items():
             if v is None or v is False or (isinstance(v, str) and not v.strip()):
+                continue
+            # 节点配方 P0（T76）：类型清单穿过 normalize（数据不再断头）但不进提示词——
+            # P3 注入用户配方时才决定它的呈现方式，届时改为受控注入而非整表直出。
+            if k == "available_node_types":
                 continue
             out[k] = slim_snapshot(v)
         return out

@@ -125,6 +125,24 @@ check('buildHarnessSnapshot 可调用且回结构（回归：rawCount 未定义�
   return true;
 });
 
+check('节点配方注册表（P0）：18 条官方配方派生 16 入口与 kind 白名单（含 relation）', () => {
+  const recipes = sandbox.window.BUILTIN_RECIPES;
+  if (!Array.isArray(recipes) || recipes.length !== 18) throw new Error('官方配方应为 18 条（16 入口 + relation/ai_eval），实际 ' + (recipes && recipes.length));
+  const options = sandbox.window.deriveManualNodeOptions();
+  if (options.length !== 16) throw new Error('添加面板入口应 16 个，实际 ' + options.length);
+  if (options.some(o => !o.label || !o.color || !o.group)) throw new Error('入口字段不完整');
+  // T75：relation 进 kind 白名单（旧会话 relation 节点保存不再被静默抹掉），但仍无手动入口
+  const kinds = sandbox.window.deriveGraphCustomNodeKinds();
+  if (!Array.isArray(kinds) || !kinds.includes('relation')) throw new Error('kind 白名单缺 relation（T75 回归）');
+  if (options.some(o => o.key === 'relation' || o.key === 'ai_eval')) throw new Error('hidden 类型不得进添加面板');
+  // Φ 快照类型清单与官方配方同源（16 项，module 项带 module_key）
+  const types = sandbox.window.deriveHarnessAvailableNodeTypes();
+  if (types.length !== 16) throw new Error('available_node_types 应 16 项，实际 ' + types.length);
+  const physics = types.find(t => t.kind === 'module' && t.module_key === 'physics');
+  if (!physics || physics.label !== '物理视角') throw new Error('module 类型项缺 module_key/label');
+  return true;
+});
+
 check('_isHarnessPureQuestion 分类边界', () => {
   if (sandbox._isHarnessPureQuestion('评价一下我的理解') !== false) return false; // 改图意图
   // 注：「…怎么样」会被标为纯问答——无害，因 R4 后快照一律发真实画布内容，

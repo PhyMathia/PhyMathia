@@ -450,24 +450,9 @@ let harnessLastAppliedBeforeSnapshot = null;
         label: String(edge.label || ''),
         custom: !!edge.custom,
       })),
-      available_node_types: [
-        { kind: 'module', module_key: 'physics', label: '物理视角' },
-        { kind: 'module', module_key: 'math', label: '数学视角' },
-        { kind: 'module', module_key: 'graph', label: '知识图谱' },
-        { kind: 'module', module_key: 'viz', label: '交互可视化' },
-        { kind: 'module', module_key: 'socratic', label: '苏格拉底追问' },
-        { kind: 'module', module_key: 'learn', label: '进阶学习' },
-        { kind: 'knowledge', label: '知识点' },
-        { kind: 'human_note', label: '我的理解' },
-        { kind: 'note', label: '我的总结' },
-        { kind: 'hub', label: '汇聚' },
-        { kind: 'summary', label: 'AI 总结' },
-        { kind: 'source', label: '输入' },
-        { kind: 'blank', label: 'AI 生成空白' },
-        { kind: 'user', label: '问题' },
-        { kind: 'answer', label: 'AI 回答' },
-        { kind: 'ai_eval', label: 'AI 评价' },
-      ],
+      // 节点类型清单由注册表派生（graph-recipes.js，P0 起单一事实源）；
+      // 后端 normalize_snapshot 会放行该字段（T76 接通），P3 注入用户配方时才扩这份清单
+      available_node_types: deriveHarnessAvailableNodeTypes(),
       scope_node_ids: Array.from(selected),
     };
     // M2（P0-A 检测闭环）：检测侧薄弱点随快照注入（当前会话 Top3，每条一行）。

@@ -21,6 +21,7 @@ const entries = [
   'chat.js',
   'chat-features.js',
   'chat-branch.js',
+  'graph-recipes.js',
   'graph.js',
   'graph-search.js',
   'graph-render.js',
