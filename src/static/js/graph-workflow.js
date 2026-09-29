@@ -100,7 +100,9 @@ function _collectUpstreamPath(node) {
 }
 
 function _buildWorkflowContextForNode(node) {
-  const meta = node.kind === 'module'
+  const meta = node.recipeId && node.recipe && node.recipe.name
+    ? { label: node.recipe.name }
+    : node.kind === 'module'
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
       ? { label: node.manual ? '我的回答' : 'AI 回答' }
@@ -153,11 +155,48 @@ function _nodeInputHash(node) {
   const parts = incoming
     .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from)))
     .sort();
-  return _simpleHash((node.moduleKey || '') + '|' + (node.requirements || '') + '|' + parts.join('|'));
+  return _simpleHash((node.moduleKey || '') + '|' + (node.recipeId || '') + '|' + (node.requirements || '') + '|' + parts.join('|'));
+}
+
+// 配方节点的生成提示词（P1）：按底座路由。四槽来自节点内嵌快照（node.recipe），
+// 与官方分支同构：module 走结构化 workflow_context（或声明 prompt_inline 时上游全文内联），
+// summary/relation 上游全文内联，knowledge 用自身字段；人工底座不会走到这里。
+function _recipeWorkflowPrompt(node, recipe, workflowContext, targetLabel) {
+  const g = (recipe.generate || {});
+  const baseKind = (recipe.base && recipe.base.kind) || 'module';
+  const name = recipe.name || targetLabel || '配方';
+  let inline = '';
+  if (baseKind === 'summary' || baseKind === 'relation' || (baseKind === 'module' && g.context_channel === 'prompt_inline')) {
+    inline = (workflowContext.upstream || [])
+      .map(item => (item.content ? item.label + '：\n' + item.content : ''))
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 8000);
+  } else if (baseKind === 'knowledge') {
+    inline = [
+      node.title || name,
+      node.summary || '',
+      (node.formulas || []).join('\n'),
+    ].filter(Boolean).join('\n\n');
+  }
+  const parts = [];
+  parts.push('请生成「' + name + '」节点内容。');
+  if (baseKind === 'module' || baseKind === 'summary') {
+    parts.push('只输出该节点正文，不要输出完整学习卡片的 XML 标签，不要重复其他模块内容。');
+  }
+  if (g.prompt) parts.push(g.prompt);
+  if (g.strict_output) parts.push(g.strict_output);
+  if (inline) {
+    parts.push('如出现公式仍按 <formula> 规范标注。\n\n' + (inline || '（暂无已连接的上游内容）'));
+  }
+  return parts.join('\n\n');
 }
 
 function _workflowPromptForNode(node, workflowContext) {
   const targetLabel = workflowContext.target.label || '节点';
+  if (node.recipeId && node.recipe) {
+    return _recipeWorkflowPrompt(node, node.recipe, workflowContext, targetLabel);
+  }
   if (node.kind === 'hub') {
     return '这是汇聚节点，由上游连线收集内容，不需要 AI 生成。';
   }
@@ -918,6 +957,7 @@ async function startQuestionWorkflow(text, opts, handoffTaskId) {
 
 function _workflowProgressLabel(node) {
   if (!node) return '';
+  if (node.recipeId && node.recipe && node.recipe.name) return node.recipe.name;
   if (node.kind === 'source') return '输入';
   if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '知识联系';
@@ -1069,7 +1109,7 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
     current.status = current.items && current.items.length ? 'done' : 'waiting';
     return true;
   }
-  if (current.kind === 'knowledge' || current.kind === 'relation') {
+  if ((current.kind === 'knowledge' || current.kind === 'relation') && !current.recipeId) {
     current.status = (current.content || '').trim() ? 'done' : 'waiting';
     return true;
   }

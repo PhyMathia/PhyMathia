@@ -103,6 +103,18 @@ function _graphContextItemsForNode(node) {
       run: () => _graphCtxDuplicateNode(node, content),
     });
   }
+  // 存为配方（P1）：从现有节点提炼可复用类型。只读查看页（viewer）没有配方库与
+  // 编辑入口，该项在 viewer 的 READONLY_MENU_LABELS 白名单外会被静默剪掉——刻意为之
+  // （与「复制节点」同口径），改文案时注意别把它加进白名单。
+  const recipeBaseOk = ['module', 'summary', 'knowledge', 'relation', 'note', 'human_note', 'user']
+    .includes(node.kind) || (node.kind === 'answer' && node.manual);
+  if (recipeBaseOk && typeof recipeFromNode === 'function') {
+    items.push({
+      key: 'save-recipe',
+      label: '存为配方',
+      run: () => recipeFromNode(node.id),
+    });
+  }
   if (typeof _canMinimizeGraphNode === 'function' && _canMinimizeGraphNode(node)) {
     items.push({
       key: 'minimize',

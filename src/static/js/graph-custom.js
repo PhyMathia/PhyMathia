@@ -31,12 +31,32 @@ function openAddBlankNodeModal(x, y) {
         }).join('')
       + '</div></div>';
   }).join('');
+  // 「我的配方」组（P1，D-R7）：默认空、绝不预置——空态只有「新建配方」引导入口
+  const recipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+  const recipeItems = recipes.map(recipe => {
+    const palette = RECIPE_PALETTE.find(entry => entry.key === (recipe.appearance && recipe.appearance.palette));
+    const shape = (recipe.appearance && recipe.appearance.shape) || 'is-round';
+    return '<button class="graph-add-node-item" style="--node-color:' + (palette ? palette.color : 'var(--accent)') + '"'
+      + ' title="' + escapeHtml(recipe.desc || recipe.name) + '" onclick="createRecipeNode(\'' + recipe.id + '\')">'
+      + '<span class="graph-add-node-dot ' + shape + '"></span>'
+      + escapeHtml(recipe.name)
+      + '</button>';
+  }).join('');
+  const recipeGroup = '<div class="graph-add-node-group"><div class="graph-add-node-group-title recipe-group-title">我的配方'
+    + '<button type="button" class="graph-recipe-manage-btn" onclick="openRecipeManage()" title="管理配方">管理</button></div>'
+    + '<div class="graph-add-node-grid">'
+    + recipeItems
+    + '<button class="graph-add-node-item graph-recipe-guide" onclick="openRecipeForm(null)" title="创建自己的节点类型：起名、写提示词、配出口">'
+    + '<span class="graph-add-node-dot is-round"></span>＋ 新建配方'
+    + '</button>'
+    + '</div></div>';
   overlay.innerHTML = '<div class="graph-add-node-dialog aurora-glass">'
     + '<div class="graph-add-node-head">'
     + '<div class="graph-add-node-title">添加节点</div>'
     + '<button class="graph-add-node-close" onclick="closeAddBlankNodeModal()" title="关闭">×</button>'
     + '</div>'
     + items
+    + recipeGroup
     + '</div>';
   overlay.addEventListener('pointerdown', event => {
     if (event.target === overlay) closeAddBlankNodeModal();
@@ -196,6 +216,75 @@ function createManualNode(nodeKind) {
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
+    targetAngle: 0,
+    isRoot: false,
+    messageIndex: -1,
+    timestamp: Date.now(),
+    pinned: false,
+    fixedX: null,
+    fixedY: null,
+    customWidth: null,
+    customHeight: null,
+    w: 0,
+    h: 0,
+    vx: 0,
+    vy: 0,
+  });
+  _saveGraphState(state);
+  closeAddBlankNodeModal();
+  renderGraphCanvas();
+}
+
+// 配方节点（P1，D-R3 覆盖层）：现有 kind 底座 + recipeId + 内嵌快照。
+// 快照随节点落库（customNodes 整条透传：_normalizeGraphState / .pmu 导出导入 /
+// Φ 指纹（customNodes 已含 recipeId）都不需要另开字段）——删配方不毁旧节点。
+function createRecipeNode(recipeId) {
+  const recipe = (typeof getUserRecipes === 'function' ? getUserRecipes() : []).find(item => item.id === recipeId);
+  if (!recipe) {
+    toastMsg('配方不存在或已删除');
+    closeAddBlankNodeModal();
+    return;
+  }
+  const embed = typeof recipeEmbedSnapshot === 'function' ? recipeEmbedSnapshot(recipe) : null;
+  if (!embed) {
+    toastMsg('配方数据不完整，无法创建');
+    return;
+  }
+  const kindMap = { manual: 'answer', question: 'user' };
+  const kind = kindMap[embed.base.kind] || embed.base.kind;
+  _pushGraphUndo();
+  const state = _graphState();
+  state.customNodes = state.customNodes || [];
+  state.customNodes.push({
+    id: 'recipe-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    kind,
+    moduleKey: '',
+    manual: embed.base.kind === 'manual',
+    recipeId: recipe.id,
+    recipe: embed,
+    label: kind === 'human_note' ? embed.name : '',
+    content: '',
+    status: 'empty',
+    summary: '',
+    analysis: '',
+    analysisHash: '',
+    inputHash: '',
+    generatedAt: 0,
+    requirements: '',
+    busy: false,
+    generated: false,
+    maxItems: 0,
+    items: [],
+    edges: [],
+    fileId: '',
+    fileName: '',
+    generatedNodeIds: [],
+    category: '',
+    formulas: [],
+    knowledgeKey: '',
+    x: addBlankNodePoint.x,
+    y: addBlankNodePoint.y,
+    depth: kind === 'user' ? 1 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
     messageIndex: -1,

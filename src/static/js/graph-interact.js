@@ -273,6 +273,7 @@ function _startLinkDrag(event, portEl) {
       level: portEl.dataset.portLevel || '',
       label: decodeAttr(portEl.dataset.portLabel),
       item: itemMeta,
+      dragCreates: portEl.dataset.portDrag ? decodeAttr(portEl.dataset.portDrag) : '',
     },
     pointerId: event.pointerId,
     currentX: null,
@@ -452,6 +453,18 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   const label = String(portMeta.label || '');
   const type = String(portMeta.type || '');
   const branchType = String(portMeta.branchType || '');
+  // 节点配方（P1）：出口声明的拖出目标（drag_creates）优先于内置启发式。
+  // draft 不拦（落回下面的默认草稿路径）；user 建预填问题节点；connected:<key>
+  // 建已连线的官方入口节点。未声明或非配方端口走原逻辑，内置节点行为零变化。
+  const dragForm = String(portMeta.dragCreates || '');
+  if (dragForm === 'user') {
+    _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
+    return;
+  }
+  if (/^connected:[a-z_]+$/.test(dragForm)) {
+    _createConnectedManualNode(dragForm.slice('connected:'.length), x, y, sourceNodeId, sourcePortId);
+    return;
+  }
   const option = _findManualOptionByPort(portMeta);
   if (type === 'knowledge') {
     _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);

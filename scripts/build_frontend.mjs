@@ -27,6 +27,7 @@ const entries = [
   'graph-render.js',
   'graph-interact.js',
   'graph-custom.js',
+  'graph-recipe-edit.js',
   'graph-workflow.js',
   'graph-export.js',
   'graph-poster.js',

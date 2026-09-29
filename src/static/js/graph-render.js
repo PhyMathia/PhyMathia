@@ -1,6 +1,9 @@
 // ===== PhyMathia 知识网络画布：节点渲染、端口、高亮与布局 =====
 
 function _nodeAttribute(node) {
+  // 节点配方（P1）：配方节点的外观（名称标签＋色板令牌）优先于底座默认值
+  const recipeAttr = typeof _recipeNodeAttribute === 'function' ? _recipeNodeAttribute(node) : null;
+  if (recipeAttr) return recipeAttr;
   if (node.kind === 'draft') {
     return GRAPH_NODE_ATTRIBUTES[node.portMeta && node.portMeta.attribute] || GRAPH_NODE_ATTRIBUTES.followup;
   }
@@ -56,7 +59,7 @@ function _canConnect(fromNode, fromPort, toNode) {
   if (toNode.kind === 'blank') {
     return fromNode.kind !== 'draft' && fromNode.kind !== 'blank';
   }
-  if (fromNode.kind === 'answer' && toNode.kind === 'module') return fromAttr === toAttr;
+  if (fromNode.kind === 'answer' && toNode.kind === 'module') return toNode.recipeId ? true : fromAttr === toAttr;
   if ((fromNode.kind === 'user' || fromNode.kind === 'knowledge') && toNode.kind === 'answer') {
     const isAiOutput = fromNode.kind === 'user'
       ? isUserAiOutput
@@ -141,6 +144,12 @@ function _parsePortQuestions(content, withLevel) {
 }
 
 function _moduleOutputPorts(node, message) {
+  // 节点配方（P1）：配方静态出口表优先；底座为 module 时不再走内置默认表
+  if (node.recipeId) {
+    const recipePorts = typeof _recipeStaticPorts === 'function' ? _recipeStaticPorts(node) : [];
+    if (recipePorts.length) return recipePorts;
+    if ((node.recipe && node.recipe.base && node.recipe.base.kind) === 'module') return [];
+  }
   const content = _nodeContent(message, node) || '';
   if (node.moduleKey === 'socratic') {
     const questions = _parsePortQuestions(content, true);
@@ -236,6 +245,7 @@ function _renderDraftNodeHtml(node) {
 }
 
 function _nodeInputLabel(node) {
+  if (node.recipeId && node.recipe && node.recipe.name) return node.recipe.name;
   if (node.kind === 'human_note') return '任意输入';
   if (node.kind === 'answer') return node.manual ? '我的回答' : 'AI 回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
@@ -386,7 +396,9 @@ function _renderOutputPorts(node, messages, state) {
       question: '',
     }];
   } else if (node.kind === 'answer') {
-    ports = _answerOutputPorts(node, messages);
+    // 配方节点（manual 底座）：声明了静态出口就替代默认 6 出口
+    const recipePorts = node.recipeId && typeof _recipeStaticPorts === 'function' ? _recipeStaticPorts(node) : [];
+    ports = recipePorts.length ? recipePorts : _answerOutputPorts(node, messages);
   } else if (node.kind === 'module') {
     ports = _moduleOutputPorts(node, messages[node.messageIndex]);
   } else if (node.kind === 'source') {
@@ -461,6 +473,7 @@ function _renderOutputPorts(node, messages, state) {
       + ' data-port-level="' + (meta.level || '') + '"'
       + ' data-port-label="' + encodeURIComponent(label) + '"'
       + ' data-port-group="' + (meta.group || '') + '"'
+      + (meta.dragCreates ? ' data-port-drag="' + encodeURIComponent(meta.dragCreates) + '"' : '')
       + (meta.item ? ' data-port-item="' + encodeURIComponent(JSON.stringify(meta.item)) + '"' : '')
       + ' style="--port-color:' + attr.color + ';"'
       + ' title="输出端口：拖到空处创建提问节点，或拖到输入端口重连">'
@@ -531,6 +544,10 @@ function _renderCustomNodeContentHtml(node) {
   let text = String(node.kind === 'answer' && !node.manual ? (node.analysis || node.content || '') : (node.content || ''));
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
+  // 配方声明 plain 载体（P1）：不解析 Markdown，纯转义渲染（human_note 同口径）
+  if (node.recipeId && node.recipe && node.recipe.content_kind === 'plain') {
+    return '<div class="graph-custom-node-render">' + escapeHtml(text) + '</div>';
+  }
   if (typeof renderMarkdown === 'function') {
     // 传 parentId：自定义节点内容里的苏格拉底“我来回答”按钮需要能解析回父节点，
     // 否则回答生成的新节点会成为无连线的孤儿（_findCustomBranchParent 按 timestamp 匹配）。
@@ -844,7 +861,9 @@ function _renderAiEvalNodeHtml(node, state) {
     : '';
   const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : 'AI 回答簇') : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
-  const label = node.kind === 'module'
+  const label = node.recipeId && node.recipe && node.recipe.name
+    ? node.recipe.name
+    : node.kind === 'module'
     ? ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey)
     : node.kind === 'hub'
       ? '汇聚'

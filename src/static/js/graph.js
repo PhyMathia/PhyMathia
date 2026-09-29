@@ -54,6 +54,9 @@ const GRAPH_NODE_ATTRIBUTES = {
   knowledge: { key: 'knowledge', label: '知识点', color: '#84cc16' },
   relation: { key: 'relation', label: '联系', color: '#f43f5e' },
   any: { key: 'any', label: '任意输入', color: '#94a3b8' },
+  // 配方节点的属性键（P1）：颜色按节点内嵌快照的色板令牌注入 --node-attr，
+  // 这里只是 draft/端口兜底用的中性条目——具体颜色永远以 _recipeNodeAttribute 为准
+  recipe: { key: 'recipe', label: '配方', color: 'var(--accent)' },
 };
 
 const ANSWER_OUTPUT_SCHEMA = ['physics', 'math', 'graph', 'viz', 'learn', 'socratic'];
