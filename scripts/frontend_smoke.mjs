@@ -143,6 +143,148 @@ check('节点配方注册表（P0）：18 条官方配方派生 16 入口与 kin
   return true;
 });
 
+// ===== 节点配方 P1：校验器 / 全链（创建→渲染槽→提示词槽→持久化）=====
+// 共享 phymathia_node_recipes 键但全程同步（无 await），不与在途异步用例互踩，
+// 不需要进文件末尾的串行边界段（该段是给改共享键且会 await 的用例的）。
+
+function _smokeValidRecipe() {
+  return {
+    id: 'recipe-smoke-1',
+    name: '错题复盘',
+    desc: '考后复盘：考点 / 易错点 / 口诀',
+    base: { kind: 'module' },
+    appearance: { palette: 'amber', shape: 'is-round' },
+    generate: {
+      prompt: '针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。',
+      strict_output: '只输出三段，每段以「### 」标题开头。',
+      followup_prompt: '',
+      confused_prompt: '',
+      context_channel: 'workflow_context',
+    },
+    ports: { static: [
+      { label: '追问', drag_form: 'draft' },
+      { label: '再测一道', drag_form: 'user' },
+    ] },
+    content_kind: 'markdown',
+  };
+}
+
+check('配方校验器（P1）：色板令牌 / 提示词预算 / 出口上限 / 名称查重 / 字段白名单', () => {
+  const validate = sandbox.window.validateRecipe;
+  const normalize = sandbox.window.normalizeRecipeInput;
+  if (typeof validate !== 'function' || typeof normalize !== 'function') throw new Error('校验器未挂 window');
+  // 色板全部是 var(--ink-*) 令牌引用，JS 侧零 hex（T8 红线）
+  const palette = sandbox.window.RECIPE_PALETTE;
+  if (!Array.isArray(palette) || palette.length < 5) throw new Error('色板至少 5 项');
+  if (palette.some(entry => !/^var\(--ink-[a-z-]+\)$/.test(entry.color))) throw new Error('色板颜色必须是 var(--ink-*) 令牌引用');
+  // 合法样本过
+  const ok = validate(_smokeValidRecipe(), []);
+  if (!ok.ok) throw new Error('合法样本被拒：' + ok.errors.join('；'));
+  // 四类拒绝
+  const bad = validate({ ..._smokeValidRecipe(), appearance: { palette: 'hotpink' } }, []);
+  if (bad.ok || !bad.errors.some(e => e.includes('色板'))) throw new Error('非法色板未拦截');
+  const noPrompt = validate({ ..._smokeValidRecipe(), generate: { prompt: '' } }, []);
+  if (noPrompt.ok || !noPrompt.errors.some(e => e.includes('主提示词'))) throw new Error('AI 底座缺主提示词未拦截');
+  const tooMany = validate({ ..._smokeValidRecipe(), ports: { static: Array.from({ length: 9 }, (_, i) => ({ label: '口' + i, drag_form: 'draft' })) } }, []);
+  if (tooMany.ok || !tooMany.errors.some(e => e.includes('出口最多'))) throw new Error('出口超上限未拦截');
+  const dup = validate(_smokeValidRecipe(), [{ ..._smokeValidRecipe(), id: 'recipe-other' }]);
+  if (dup.ok || !dup.errors.some(e => e.includes('同名配方'))) throw new Error('重名未拦截');
+  // 字段白名单：未知字段剥除 + aggregation 按底座推导
+  const normalized = normalize({ ..._smokeValidRecipe(), evil: 'drop me' });
+  if (!normalized || normalized.evil !== undefined) throw new Error('未知字段未被剥除');
+  if (normalized.aggregation !== 'ancestors') throw new Error('module 底座应推导 ancestors');
+  if (normalize({ ..._smokeValidRecipe(), base: { kind: 'knowledge' } }).aggregation !== 'self_fields') throw new Error('knowledge 底座应推导 self_fields');
+  if (normalize({ ..._smokeValidRecipe(), base: { kind: 'note' } }).aggregation !== 'none') throw new Error('note 底座应推导 none');
+  return true;
+});
+
+check('配方全链（P1）：保存→创建节点→渲染槽（外观/出口/拖出目标）→提示词槽→快照内嵌', () => {
+  // 沙箱口径：函数声明挂在 vm 全局（sandbox.*）而非宽松代理 window 上；图状态
+  // 存取在前面用例里可能被桩成固定对象，这里换成自带的状态桩并在 finally 还原。
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  let mem = null;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, focus: null, layoutVersion: 1, connections: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessNodeOverrides: {}, harnessCheckpoint: null, updatedAt: 0 });
+  sandbox.window.getGraphState = () => mem || emptyState();
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_recipe_smoke';
+  try {
+    // 1. 保存进库（写共享 localStorage 键，同步完成）
+    sandbox.window.setUserRecipes([_smokeValidRecipe()]);
+    const stored = sandbox.window.getUserRecipes();
+    if (stored.length !== 1 || stored[0].name !== '错题复盘') throw new Error('配方保存后读回失败');
+    // 2. 创建配方节点（落在桩状态里）
+    sandbox.createRecipeNode('recipe-smoke-1');
+    const state = sandbox.window.getGraphState();
+    const node = (state.customNodes || []).find(n => n.recipeId === 'recipe-smoke-1');
+    if (!node) throw new Error('createRecipeNode 未落 customNodes（customNodes ' + (state.customNodes || []).length + ' 条）');
+    if (node.kind !== 'module') throw new Error('module 底座应落 kind=module，实际 ' + node.kind);
+    if (!node.recipe || node.recipe.name !== '错题复盘') throw new Error('节点缺内嵌配方快照');
+    // 3. 渲染槽：外观（attr 标签=配方名、色板令牌）与静态出口（含拖出目标）
+    const attr = sandbox._nodeAttribute(node);
+    if (!attr || attr.key !== 'recipe' || attr.label !== '错题复盘') throw new Error('配方节点外观未挂载：' + JSON.stringify(attr));
+    if (attr.color !== 'var(--ink-amber)') throw new Error('色板令牌未生效：' + attr.color);
+    const ports = sandbox._moduleOutputPorts(node, null);
+    if (ports.length !== 2 || ports[0].label !== '追问' || ports[1].label !== '再测一道') throw new Error('静态出口未挂载');
+    if (ports[1].dragCreates !== 'user') throw new Error('出口拖出目标未随端口下发');
+    const portHtml = String(sandbox._renderOutputPorts(node, [], state));
+    if (!portHtml.includes('data-port-drag') || !portHtml.includes(encodeURIComponent('user'))) throw new Error('拖出目标未渲染进端口 data 属性');
+    // 4. 提示词槽：工作流提示词按配方四槽组装
+    const ctx = sandbox._buildWorkflowContextForNode(node);
+    if (ctx.target.label !== '错题复盘') throw new Error('上下文标签未用配方名：' + ctx.target.label);
+    const prompt = sandbox._workflowPromptForNode(node, ctx);
+    if (!prompt.includes('考点回顾 / 易错点 / 记忆口诀')) throw new Error('主提示词未进工作流提示词');
+    if (!prompt.includes('### ') || !prompt.includes('「错题复盘」')) throw new Error('严格输出/配方名未进工作流提示词');
+    // 5. 持久化口径：保存后的 state 快照字段完整（_normalizeGraphState 整条透传 customNodes）
+    const savedNode = (mem.customNodes || []).find(n => n.id === node.id);
+    if (!savedNode || savedNode.recipeId !== 'recipe-smoke-1' || !savedNode.recipe) throw new Error('保存后快照字段丢失');
+    // 6. 删配方不毁旧节点（快照内嵌的意义）
+    sandbox.window.setUserRecipes([]);
+    if (sandbox.window.getUserRecipes().length !== 0) throw new Error('删配方失败');
+    const after = sandbox.window.getGraphState().customNodes.find(n => n.id === node.id);
+    if (!after || !after.recipe) throw new Error('删配方后旧节点快照丢失');
+    return true;
+  } finally {
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+  }
+});
+
+check('配方拖出路由（P1）：drag_creates 表驱动（user 预填 / connected 连线创建 / draft 默认）', () => {
+  // 静态断言 + 行为断言各一半：行为上 user 路由走 _createQuestionNodeFromPort，
+  // connected 走 _createConnectedManualNode——沙箱里真调会牵动图状态，这里验路由分支
+  // 的判据函数与端口 meta 的下发链（渲染层 data-port-drag → linkDrag.portMeta.dragCreates）。
+  const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!interactSrc.includes("dragForm === 'user'")) throw new Error('user 路由分支缺失');
+  if (!interactSrc.includes('_createConnectedManualNode(dragForm.slice') || !interactSrc.includes('/^connected:[a-z_]+$/')) throw new Error('connected 路由分支缺失');
+  if (!interactSrc.includes('dragCreates: portEl.dataset.portDrag')) throw new Error('linkDrag 未携带 dragCreates');
+  // 内置节点零变化：官方出口不带 data-port-drag
+  const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, recipeId: '', timestamp: 1 };
+  const html = String(sandbox._renderOutputPorts(moduleNode, [], { portCounts: {}, inputPortCounts: {} }));
+  if (html.includes('data-port-drag')) throw new Error('内置模块出口不应带拖出目标声明');
+  return true;
+});
+
+check('配方 P1 边界（P1）：knowledge/relation 配方节点走 AI 生成、内置仍手填；plain 载体渲染', () => {
+  // knowledge/relation 底座：有配方时不再提前返回「已填写/待填写」，走 _generateCustomNode
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  if (!wfSrc.includes('(current.kind === \'knowledge\' || current.kind === \'relation\') && !current.recipeId')) throw new Error('knowledge/relation 配方贯通分支缺失');
+  // plain 载体：纯转义，不走 markdown（沙箱的 document 是宽松代理，escapeHtml 产物
+  // 会退化为 0——沿用大陆用例的恒等替换口径，断言 plain 分支原样输出、不经 markdown 管线）
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const plainNode = { id: 'p1', kind: 'module', moduleKey: '', recipeId: 'r', recipe: { ..._smokeValidRecipe(), content_kind: 'plain' }, content: '<b>加粗不该解析</b>', messageIndex: -1, timestamp: 2 };
+    const html = String(sandbox._renderCustomNodeContentHtml(plainNode));
+    if (html !== '<div class="graph-custom-node-render"><b>加粗不该解析</b></div>') throw new Error('plain 载体应原样输出，实际：' + html);
+  } finally { sandbox.escapeHtml = realEsc; }
+  // answer→module 连线口径：配方模块接受任意 answer 出口（fromAttr === toAttr 的旁路）
+  const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!renderSrc.includes('toNode.recipeId ? true : fromAttr === toAttr')) throw new Error('配方模块连线旁路缺失');
+  return true;
+});
+// ===== 节点配方 P1 用例结束 =====
+
 check('_isHarnessPureQuestion 分类边界', () => {
   if (sandbox._isHarnessPureQuestion('评价一下我的理解') !== false) return false; // 改图意图
   // 注：「…怎么样」会被标为纯问答——无害，因 R4 后快照一律发真实画布内容，

@@ -9,6 +9,8 @@ const STORAGE_KEY_CURRENT = 'phymathia_current_session';
 const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
+// 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写
+const STORAGE_KEY_NODE_RECIPES = 'phymathia_node_recipes';
 
 // ====== 匿名设备 ID（用户画像隔离）======
 function getDeviceId() {

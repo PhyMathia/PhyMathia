@@ -19,6 +19,7 @@ const entries = [
   'config.js',
   'utils.js',
   'render.js',
+  'graph-recipes.js',
   'graph.js',
   'graph-search.js',
   'graph-render.js',
