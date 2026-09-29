@@ -5,7 +5,12 @@ import { GRAPHS, graphById, resolveLabels } from './harness_graphs.mjs';
 const BASE = process.argv[2] || 'http://localhost:5052';
 const MODEL = process.argv[3] || 'deepseek-v4-flash-free';
 
-const MODEL_CFG = { provider: 'opencode', api_key: '', model: MODEL, base_url: 'https://opencode.ai/zen/v1' };
+// mock 上游支持（T57）：MOCK_UPSTREAM=http://127.0.0.1:5061/v1 时把模型指向本地 mock
+// （scripts/mock_upstream.mjs）——不花钱跑 battery；不设则走真实上游。
+const MOCK_BASE = process.env.MOCK_UPSTREAM || '';
+const MODEL_CFG = MOCK_BASE
+  ? { provider: 'opencode-go', api_key: 'mock', model: MODEL, base_url: MOCK_BASE }
+  : { provider: 'opencode', api_key: '', model: MODEL, base_url: 'https://opencode.ai/zen/v1' };
 
 function makeSnapshot() {
   return {
@@ -63,6 +68,23 @@ const scenarios = [
   { id: 'chat-thanks', label: '寒暄（不应改图）', instruction: '谢谢，明白了', phase: 'normal', focus: [], expect: { phase: 'normal', noOps: true, noCrash: true } },
   { id: 'eval-evalnode', label: '评价评价节点（应拒绝）', instruction: '评价一下 E1 这个评价节点', phase: 'normal', focus: [], snapshotExtra: 'evals', expect: { noEvalOnEval: true, noCrash: true } },
   { id: 'big-graph', label: '大图整体评价', instruction: '整体评价这个网络', phase: 'normal', focus: [], snapshotExtra: 'big', expect: { noCrash: true, noDestructive: true } },
+  // ---- 创造模式（P3）：配方三件套。preset-create 即「藏起官方苏格拉底、从零配出等价物」
+  // 的硬验收场景——指令不提「苏格拉底」，快照也不含官方类型清单，模型只能靠需求描述配出
+  // 带级别校验＋socratic 出口＋正文截取兜底的等价配方
+  { id: 'preset-create-socratic', label: '创造模式：从零配出追问器（藏官方苏格拉底）', phase: 'preset',
+    instruction: '帮我造一个「三级追问」节点：生成内容只输出一个标题加三条编号行，级别标记分别是 [基础]、[进阶]、[拓展]，每行一个问题不给答案；出口从这三行现场解析（只收带级别标记的行），拖出去是提问卡（我来回答/直接问AI）；万一模型没按格式输出，兜底出口要把正文里的句子截出来当问题文本。',
+    focus: [], expect: { phase: 'preset', recipeCreate: { levelTags: true, eachType: 'socratic', fallback: 'label_questions_from_text' } } },
+  { id: 'preset-create-followup', label: '创造模式：配一个双出口复盘配方', phase: 'preset',
+    instruction: '造一个「考点复盘」配方：分「考点回顾」「记忆口诀」两段输出，出口有两个：「再测一道」拖出去建预填问题节点，「追问」拖出去建提问草稿。',
+    focus: [], expect: { phase: 'preset', recipeCreate: { staticPorts: 2 } } },
+  { id: 'preset-update-recipe', label: '创造模式：改已有配方', phase: 'preset',
+    snapshotExtra: 'recipes',
+    instruction: '把「错题复盘」的主提示词改成：分考点、易错点、口诀三段输出。',
+    focus: [], expect: { phase: 'preset', recipeUpdate: 'recipe-b1' } },
+  { id: 'preset-delete-recipe', label: '创造模式：删已有配方', phase: 'preset',
+    snapshotExtra: 'recipes',
+    instruction: '请删除配方「错题复盘」，我不再需要它。',
+    focus: [], expect: { phase: 'preset', recipeDelete: 'recipe-b1' } },
   {
     id: 'feedback-iterate', label: '反馈迭代：加物理视角后再要求深入',
     turns: [
@@ -527,6 +549,38 @@ function scoreScenario(sc, data) {
   if (ex.opType && ops.length && !ops.every(o => opName(o) === ex.opType)) {
     issues.push('操作类型不符: 期望全部为 ' + ex.opType + '，实际 ' + [...new Set(ops.map(opName))].join(','));
   }
+  // 创造模式（P3）：配方三件套的判定（op 层结构由后端校验器保证，这里钉行为要点）
+  if (ex.recipeCreate) {
+    const create = ops.find(o => opName(o) === 'create_recipe');
+    if (!create) { issues.push('未产出 create_recipe'); }
+    else {
+      const r = create.recipe || {};
+      const dyn = (r.ports && r.ports.dynamic) || null;
+      if (ex.recipeCreate.levelTags && !(dyn && dyn.parser && Array.isArray(dyn.parser.level_tags) && dyn.parser.level_tags.length >= 3)) {
+        issues.push('动态出口缺级别白名单 level_tags: ' + JSON.stringify(dyn && dyn.parser && dyn.parser.level_tags));
+      }
+      if (ex.recipeCreate.eachType && !(dyn && dyn.each && dyn.each.type === ex.recipeCreate.eachType)) {
+        issues.push('动态出口 each.type 不符: ' + JSON.stringify(dyn && dyn.each));
+      }
+      if (ex.recipeCreate.fallback && !(dyn && dyn.fallback && dyn.fallback.mode === ex.recipeCreate.fallback)) {
+        issues.push('动态出口兜底方式不符: ' + JSON.stringify(dyn && dyn.fallback));
+      }
+      if (ex.recipeCreate.staticPorts) {
+        const count = (r.ports && Array.isArray(r.ports.static)) ? r.ports.static.length : 0;
+        if (count < ex.recipeCreate.staticPorts) issues.push('静态出口不足: 期望 ≥' + ex.recipeCreate.staticPorts + '，实际 ' + count);
+      }
+    }
+  }
+  if (ex.recipeUpdate) {
+    const upd = ops.find(o => opName(o) === 'update_recipe');
+    if (!upd) issues.push('未产出 update_recipe');
+    else if (String(upd.recipe_id || '') !== ex.recipeUpdate) issues.push('update_recipe 目标不符: ' + upd.recipe_id);
+  }
+  if (ex.recipeDelete) {
+    const del = ops.find(o => opName(o) === 'delete_recipe');
+    if (!del) issues.push('未产出 delete_recipe');
+    else if (String(del.recipe_id || '') !== ex.recipeDelete) issues.push('delete_recipe 目标不符: ' + del.recipe_id);
+  }
   if (ex.createModule && !ops.some(o => opName(o) === 'create_node' && o.kind === 'module' && (o.module_key || o.moduleKey) === ex.createModule)) {
     issues.push('未创建 ' + ex.createModule + ' 模块');
   }
@@ -709,7 +763,17 @@ function makeInitialSnapshot(sc, graph) {
   if (sc.snapshotExtra === 'evals') return makeEvalSnapshot();
   if (sc.snapshotExtra === 'evals-conflict') return makeConflictSnapshot();
   if (sc.snapshotExtra === 'big') return makeBigSnapshot();
+  if (sc.snapshotExtra === 'recipes') return makeRecipesSnapshot();
   return makeSnapshot();
+}
+
+// 创造模式（P3）：带已有配方清单的快照（模拟用户配方库非空——Φ 需据此查重/删除）
+function makeRecipesSnapshot() {
+  const snap = makeSnapshot();
+  snap.user_recipes = [
+    { id: 'recipe-b1', name: '错题复盘', desc: '考后复盘', base_kind: 'module', content_kind: 'markdown', ports: '静态 2' },
+  ];
+  return snap;
 }
 
 function turnScore(turn, data) {

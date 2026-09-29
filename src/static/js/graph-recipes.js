@@ -119,14 +119,31 @@ const RECIPE_PALETTE = [
   { key: 'note', label: '青墨', color: 'var(--ink-note)' },
 ];
 const RECIPE_SHAPES = ['is-round', 'is-square', 'is-diamond', 'is-ring'];
-const RECIPE_CONTENT_KINDS = ['markdown', 'plain'];
+// P2 载体扩展：mermaid/html_iframe 复用官方「知识图谱/交互可视化」的现成渲染器，
+// 只允许 AI 底座声明（渲染分派见 _renderCustomNodeContentHtml / 生成侧归一见
+// _generateCustomNode）；formulas_list 留给 P4 生态再议
+const RECIPE_CONTENT_KINDS = ['markdown', 'plain', 'mermaid', 'html_iframe'];
 const RECIPE_CONTEXT_CHANNELS = ['workflow_context', 'prompt_inline'];
+// 模型槽位（models.js 六槽的子集引用；agent 是缺省跟随主模型）
+const RECIPE_MODEL_ROLES = ['agent', 'html', 'branch', 'graph', 'quiz', 'descriptor'];
 const RECIPE_PROMPT_BUDGET = 800;   // 每个提示词槽的建议上限（字符）
 const RECIPE_MAX_PORTS = 8;
+// ── P2 动态出口（S2 维度，苏格拉底/进阶学习式）──
+const RECIPE_PARSER_PATTERNS = ['numbered_list'];      // 内置解析器枚举（不开放自由正则）
+const RECIPE_LABEL_FROM = ['index_question', 'question_trunc12'];
+const RECIPE_FALLBACK_MODES = ['static', 'label_questions_from_text', 'none'];
+const RECIPE_DYNAMIC_PORT_TYPES = ['socratic', 'learn', 'branch'];
+const RECIPE_MAX_DYNAMIC = 12;                          // 与官方 _parsePortQuestions 上限一致
+// ── P2 取材与编排（S3 维度）──
+const RECIPE_AGGREGATIONS = ['ancestors', 'self_fields', 'first_inbound', 'none'];
+const RECIPE_ON_GENERATED_KINDS = ['answer', 'module', 'blank', 'user', 'note', 'human_note'];
+const RECIPE_ON_GENERATED_CONTENT_FROM = ['', 'self_content', 'self_directions'];
+const RECIPE_MAX_ON_GENERATED = 4;
 
-// aggregation 由底座推导（P1 不在表单暴露；P2/P3 需要时再放开）：
-// ancestors=全祖先、self_fields=自身字段、none=人工节点
-function _recipeAggregationForBase(baseKind) {
+// aggregation 由底座推导（P1 口径），P2 起允许 module 底座显式声明 first_inbound
+// （空白节点式单父链取材）；其余底座保持推导值
+function _recipeAggregationForBase(baseKind, override) {
+  if (baseKind === 'module' && override === 'first_inbound') return 'first_inbound';
   if (baseKind === 'knowledge') return 'self_fields';
   if (RECIPE_AI_BASE_KINDS.includes(baseKind)) return 'ancestors';
   return 'none';
@@ -134,6 +151,74 @@ function _recipeAggregationForBase(baseKind) {
 
 function _recipeDefaultShape(baseKind) {
   return (RECIPE_BASE_META[baseKind] || {}).shape || 'is-round';
+}
+
+// 动态出口声明（P2）的剥除与收敛：parser/fallback/each 全走白名单
+function _normalizeRecipeDynamic(rawDynamic) {
+  const d = (rawDynamic && typeof rawDynamic === 'object') ? rawDynamic : {};
+  const p = (d.parser && typeof d.parser === 'object') ? d.parser : null;
+  if (!p) return null;
+  const pattern = RECIPE_PARSER_PATTERNS.includes(p.pattern) ? p.pattern : 'numbered_list';
+  const levelTags = Array.isArray(p.level_tags)
+    ? p.level_tags.map(tag => String(tag || '').trim().slice(0, 6)).filter(Boolean).slice(0, 4)
+    : [];
+  const max = Math.max(1, Math.min(RECIPE_MAX_DYNAMIC, Number(p.max) || RECIPE_MAX_DYNAMIC));
+  const labelFrom = RECIPE_LABEL_FROM.includes(p.label_from) ? p.label_from : 'index_question';
+  const f = (d.fallback && typeof d.fallback === 'object') ? d.fallback : {};
+  const fallbackMode = RECIPE_FALLBACK_MODES.includes(f.mode) ? f.mode : 'label_questions_from_text';
+  const fallbackLabels = Array.isArray(f.labels)
+    ? f.labels.map(label => String(label || '').trim().slice(0, 12)).filter(Boolean).slice(0, RECIPE_MAX_PORTS)
+    : [];
+  const e = (d.each && typeof d.each === 'object') ? d.each : {};
+  const eachType = RECIPE_DYNAMIC_PORT_TYPES.includes(e.type) ? e.type : 'socratic';
+  return {
+    parser: { pattern, level_tags: levelTags, max, label_from: labelFrom },
+    fallback: { mode: fallbackMode, labels: fallbackLabels },
+    each: {
+      type: eachType,
+      branch_type: e.branch_type || eachType,
+      drag_form: e.drag_form === 'user' ? 'user' : 'draft',
+    },
+  };
+}
+
+// on_generated 编排声明（P2）的剥除与收敛：create/connect 白名单化
+function _normalizeRecipeOnGenerated(rawSpec) {
+  const s = (rawSpec && typeof rawSpec === 'object') ? rawSpec : null;
+  if (!s) return null;
+  const create = Array.isArray(s.create)
+    ? s.create.map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const base = (item.base && typeof item.base === 'object') ? item.base : {};
+        const kind = RECIPE_ON_GENERATED_KINDS.includes(base.kind) ? base.kind : '';
+        if (!kind) return null;
+        const out = { as: String(item.as || '').trim().slice(0, 8), base: { kind } };
+        const recipeRef = String(base.recipe || '').trim().slice(0, 64);
+        if (recipeRef) out.base.recipe = recipeRef;
+        if (item.label_template) out.label_template = String(item.label_template).slice(0, 40);
+        else if (item.label) out.label = String(item.label).slice(0, 24);
+        const contentFrom = RECIPE_ON_GENERATED_CONTENT_FROM.includes(item.content_from) ? item.content_from : '';
+        if (contentFrom) out.content_from = contentFrom;
+        return out;
+      }).filter(Boolean).slice(0, RECIPE_MAX_ON_GENERATED)
+    : [];
+  if (!create.length) return null;
+  const refs = new Set(create.map(item => item.as));
+  const connect = Array.isArray(s.connect)
+    ? s.connect.map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const from = String(item.from || '').trim();
+        const to = String(item.to || '').trim();
+        if (from !== 'self' && !refs.has(from)) return null;
+        if (!refs.has(to)) return null;
+        return { from, to, relation: String(item.relation || '').trim().slice(0, 12) };
+      }).filter(Boolean)
+    : [];
+  return {
+    create,
+    connect,
+    chain_check: s.chain_check === true,
+  };
 }
 
 // 未知字段剥除＋类型收敛（P1 字段白名单）。任何一步失败返回 null。
@@ -147,7 +232,21 @@ function normalizeRecipeInput(raw) {
   const shape = String((raw.appearance && raw.appearance.shape) || _recipeDefaultShape(baseKind));
   const g = (raw.generate && typeof raw.generate === 'object') ? raw.generate : {};
   const ports = Array.isArray(raw.ports && raw.ports.static) ? raw.ports.static : [];
-  return {
+  const dynamic = _normalizeRecipeDynamic(raw.ports && raw.ports.dynamic);
+  const onGenerated = _normalizeRecipeOnGenerated(raw.on_generated);
+  const modelRole = RECIPE_MODEL_ROLES.includes(g.model_role) ? g.model_role : 'agent';
+  const incomplete = (g.on_incomplete && typeof g.on_incomplete === 'object')
+    ? Math.max(0, Math.min(2, Number(g.on_incomplete.max_retries) || 0))
+    : 1;
+  const contentKind = RECIPE_CONTENT_KINDS.includes(raw.content_kind) ? raw.content_kind : 'markdown';
+  const portsOut = {
+    static: ports.slice(0, RECIPE_MAX_PORTS + 4).map(port => ({
+      label: String((port && port.label) || '').trim().slice(0, 12),
+      drag_form: String((port && port.drag_form) || 'draft'),
+    })).filter(port => port.label),
+  };
+  if (dynamic) portsOut.dynamic = dynamic;   // 无声明不设键（与后端 normalize 同形，对拍友好）
+  const out = {
     id: String(raw.id || ('recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8))),
     name: name.slice(0, 24),
     desc: String(raw.desc || '').trim().slice(0, 80),
@@ -159,19 +258,20 @@ function normalizeRecipeInput(raw) {
       strict_output: String(g.strict_output || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       followup_prompt: String(g.followup_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       confused_prompt: String(g.confused_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
+      retry_prompt: String(g.retry_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       context_channel: RECIPE_CONTEXT_CHANNELS.includes(g.context_channel) ? g.context_channel : 'workflow_context',
+      model_role: modelRole,
+      on_incomplete: { max_retries: incomplete },
     },
-    ports: {
-      static: ports.slice(0, RECIPE_MAX_PORTS + 4).map(port => ({
-        label: String((port && port.label) || '').trim().slice(0, 12),
-        drag_form: String((port && port.drag_form) || 'draft'),
-      })).filter(port => port.label),
-    },
-    content_kind: RECIPE_CONTENT_KINDS.includes(raw.content_kind) ? raw.content_kind : 'markdown',
-    aggregation: _recipeAggregationForBase(baseKind),
+    ports: portsOut,
+    content_kind: contentKind,
+    aggregation: _recipeAggregationForBase(baseKind, raw.aggregation),
+    analysis_phase: baseKind === 'module' ? raw.analysis_phase === true : false,
     createdAt: Number(raw.createdAt) || Date.now(),
     updatedAt: Number(raw.updatedAt) || Date.now(),
   };
+  if (onGenerated) out.on_generated = onGenerated;
+  return out;
 }
 
 // 校验器（前后端同构）：返回 { ok, errors }。existing 用于名称查重（同 id 除外）。
@@ -191,12 +291,13 @@ function validateRecipe(recipe, existing) {
   const desc = String(recipe.desc || '');
   if (desc.length > 80) fail('描述最长 80 字');
   const g = (recipe.generate && typeof recipe.generate === 'object') ? recipe.generate : {};
-  ['prompt', 'strict_output', 'followup_prompt', 'confused_prompt'].forEach(slot => {
+  ['prompt', 'strict_output', 'followup_prompt', 'confused_prompt', 'retry_prompt'].forEach(slot => {
     const text = String(g[slot] || '');
     if (text.length > RECIPE_PROMPT_BUDGET) fail('提示词槽「' + slot + '」超预算（建议单项 ≤' + RECIPE_PROMPT_BUDGET + ' 字，当前 ' + text.length + '）');
   });
   if (RECIPE_AI_BASE_KINDS.includes(baseKind) && !String(g.prompt || '').trim()) fail('AI 底座必须填写主提示词');
   if (g.context_channel && !RECIPE_CONTEXT_CHANNELS.includes(g.context_channel)) fail('上下文通道不合法');
+  if (g.model_role && !RECIPE_MODEL_ROLES.includes(g.model_role)) fail('模型槽位不合法（agent/html/branch/graph/quiz/descriptor）');
   const ports = (recipe.ports && Array.isArray(recipe.ports.static)) ? recipe.ports.static : [];
   if (ports.length > RECIPE_MAX_PORTS) fail('出口最多 ' + RECIPE_MAX_PORTS + ' 个');
   const seenLabels = new Set();
@@ -209,7 +310,39 @@ function validateRecipe(recipe, existing) {
     const form = String((port && port.drag_form) || 'draft');
     if (form !== 'draft' && form !== 'user' && !/^connected:[a-z_]+$/.test(form)) fail('出口「' + label + '」的拖出目标不合法');
   });
-  if (recipe.content_kind && !RECIPE_CONTENT_KINDS.includes(recipe.content_kind)) fail('内容载体不合法（P1 只支持 markdown / plain）');
+  // 动态出口（P2）：仅 module 底座可声明；解析器/兜底/端口行为全走枚举
+  const dyn = (recipe.ports && recipe.ports.dynamic) || null;
+  if (dyn) {
+    if (baseKind !== 'module') fail('动态出口只支持视角模块底座');
+    const parser = dyn.parser || {};
+    if (!RECIPE_PARSER_PATTERNS.includes(parser.pattern)) fail('动态出口解析器不合法（P2 只支持 numbered_list）');
+    if (parser.label_from && !RECIPE_LABEL_FROM.includes(parser.label_from)) fail('动态出口标签方式不合法');
+    if (parser.max && (Number(parser.max) < 1 || Number(parser.max) > RECIPE_MAX_DYNAMIC)) fail('动态出口上限须在 1～' + RECIPE_MAX_DYNAMIC + ' 之间');
+    const fb = dyn.fallback || {};
+    if (fb.mode && !RECIPE_FALLBACK_MODES.includes(fb.mode)) fail('动态出口兜底方式不合法');
+    if (Array.isArray(fb.labels) && fb.labels.length > RECIPE_MAX_PORTS) fail('兜底出口名最多 ' + RECIPE_MAX_PORTS + ' 个');
+    const each = dyn.each || {};
+    if (each.type && !RECIPE_DYNAMIC_PORT_TYPES.includes(each.type)) fail('动态出口的端口行为不合法（socratic/learn/branch）');
+  }
+  const aiBase = RECIPE_AI_BASE_KINDS.includes(baseKind);
+  if (recipe.content_kind && !RECIPE_CONTENT_KINDS.includes(recipe.content_kind)) fail('内容载体不合法（markdown / plain / mermaid / html_iframe）');
+  if ((recipe.content_kind === 'mermaid' || recipe.content_kind === 'html_iframe') && !aiBase) fail('mermaid / html_iframe 载体需要 AI 底座');
+  if (recipe.aggregation === 'first_inbound' && baseKind !== 'module') fail('单链取材（first_inbound）只支持视角模块底座');
+  if (recipe.analysis_phase && baseKind !== 'module') fail('双阶段概要（analysis_phase）只支持视角模块底座');
+  // on_generated（P2）：create 引用与 connect 目标必须闭环
+  const og = recipe.on_generated || null;
+  if (og) {
+    const refs = new Set((og.create || []).map(item => item && item.as));
+    (og.create || []).forEach((item, index) => {
+      if (!item || !item.as) { fail('生成后动作第 ' + (index + 1) + ' 项缺少 as 引用'); return; }
+      if (!item.base || !RECIPE_ON_GENERATED_KINDS.includes(item.base.kind)) fail('生成后动作「' + (item.as || index) + '」的底座不合法');
+    });
+    (og.connect || []).forEach(item => {
+      if (!item) return;
+      if (item.from !== 'self' && !refs.has(item.from)) fail('生成后连线 from 引用未声明：「' + item.from + '」');
+      if (!refs.has(item.to)) fail('生成后连线 to 引用未声明：「' + item.to + '」');
+    });
+  }
   const dup = (existing || []).some(item => item && item.name === name && item.id !== recipe.id);
   if (dup) fail('已有同名配方：「' + name + '」');
   return { ok: errors.length === 0, errors };
@@ -283,7 +416,7 @@ async function syncUserRecipesFromServer() {
 function recipeEmbedSnapshot(recipe) {
   const r = normalizeRecipeInput(recipe);
   if (!r) return null;
-  return {
+  const snapshot = {
     id: r.id,
     name: r.name,
     desc: r.desc,
@@ -294,6 +427,9 @@ function recipeEmbedSnapshot(recipe) {
     content_kind: r.content_kind,
     aggregation: r.aggregation,
   };
+  if (r.analysis_phase) snapshot.analysis_phase = true;
+  if (r.on_generated) snapshot.on_generated = r.on_generated;
+  return snapshot;
 }
 
 function _nodeRecipeSnapshot(node) {
@@ -331,6 +467,98 @@ function _recipeStaticPorts(node) {
   }));
 }
 
+// ---- 动态出口（P2）：numbered_list 内置解析器 ----
+// 正则与官方 _parsePortQuestions（graph-render.js）同一条——苏格拉底/进阶学习的
+// 编号行契约，但按配方参数化（级别白名单 level_tags、上限 max、标签方式 label_from）。
+// 级别标记映射：命中 level_tags 第 N 项 → basic/advanced/expand（前三个），超出留空。
+const RECIPE_NUMBERED_LIST_SOURCE = '(?:^|\\n)\\s*(?:[-*+]|\\d+[.)])\\s*(?:\\[([^\\]]+)\\])?\\s*([^\\n]+)';
+
+function _recipeParseNumberedList(content, parser) {
+  const items = [];
+  const max = Math.max(1, Math.min(Number(parser && parser.max) || RECIPE_MAX_DYNAMIC, RECIPE_MAX_DYNAMIC));
+  const levelTags = (parser && Array.isArray(parser.level_tags)) ? parser.level_tags : [];
+  const re = new RegExp(RECIPE_NUMBERED_LIST_SOURCE, 'g');
+  let match;
+  while ((match = re.exec(String(content || ''))) && items.length < max) {
+    const rawLevel = (match[1] || '').trim();
+    const question = (match[2] || '').trim();
+    if (!question) continue;
+    const tagIndex = levelTags.findIndex(tag => rawLevel.indexOf(tag) === 0);
+    if (levelTags.length && tagIndex < 0) continue;   // 声明了级别白名单就只收带标记的行（learn 式空表＝不校验）
+    items.push({
+      question,
+      level: tagIndex === 0 ? 'basic' : tagIndex === 1 ? 'advanced' : tagIndex === 2 ? 'expand' : '',
+    });
+  }
+  return items;
+}
+
+function _recipeTruncLabel(text, max) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  return value.length > max ? value.slice(0, max) + '…' : value;
+}
+
+// label_questions_from_text 兜底（治 T56）：解析不出编号行时，从正文非空行
+// 截取问题文本填进兜底端口——出口不再「看起来正常、点上去静默」
+function _recipeQuestionTextsFromContent(content, want) {
+  const out = [];
+  const limit = Math.max(1, Number(want) || 3);
+  String(content || '').split('\n').forEach(line => {
+    if (out.length >= limit) return;
+    const text = line
+      .replace(/^#{1,6}\s*/, '')
+      .replace(/^(?:[-*+]|\d+[.)])?\s*(?:\[[^\]]*\])?\s*/, '')
+      .replace(/\*\*/g, '')
+      .trim();
+    if (text.length >= 4 && text !== '' && !/^[#>|_`~-]+$/.test(text)) {
+      out.push({ question: text.slice(0, 120), level: '' });
+    }
+  });
+  return out;
+}
+
+// 配方节点的动态出口（_moduleOutputPorts 配方分支调用）：解析成功→按 each 声明
+// 产出端口 meta；解析失败→按 fallback.mode 兜底。attribute 统一 'recipe'
+// （外观走配方色板），socratic/learn 端口类型让草稿自动长出对应交互形态。
+function _recipeDynamicPorts(node, content) {
+  const recipe = _nodeRecipeSnapshot(node);
+  const dyn = recipe && recipe.ports && recipe.ports.dynamic;
+  if (!dyn || !dyn.parser) return [];
+  const each = dyn.each || {};
+  const type = each.type || 'socratic';
+  const branchType = each.branch_type || type;
+  const dragForm = each.drag_form === 'user' ? 'user' : 'draft';
+  const mk = (question, label, level) => ({
+    label,
+    type,
+    branchType,
+    attribute: 'recipe',
+    question: question || '',
+    level: level || '',
+    dragCreates: dragForm,
+  });
+  const parsed = _recipeParseNumberedList(content, dyn.parser);
+  const labelFrom = dyn.parser.label_from || 'index_question';
+  if (parsed.length) {
+    return parsed.map((item, index) => mk(
+      item.question,
+      labelFrom === 'question_trunc12' ? _recipeTruncLabel(item.question, 12) : '问题' + (index + 1),
+      item.level
+    ));
+  }
+  const fb = dyn.fallback || {};
+  if (fb.mode === 'none') return [];
+  if (!fb.mode || fb.mode === 'label_questions_from_text') {
+    const texts = _recipeQuestionTextsFromContent(content, (fb.labels || []).length || 3);
+    if (texts.length) {
+      return texts.map((item, index) => mk(item.question, (fb.labels && fb.labels[index]) || '问题' + (index + 1), ''));
+    }
+    // 正文也没的可截：退到固定名兜底（question 仍为空，但 draftAskAi 会提示而不是静默）
+  }
+  const labels = (fb.labels && fb.labels.length) ? fb.labels : ['问题1', '问题2', '问题3'];
+  return labels.map(label => mk('', label, ''));
+}
+
 window.RECIPE_BASE_KINDS = RECIPE_BASE_KINDS;
 window.RECIPE_AI_BASE_KINDS = RECIPE_AI_BASE_KINDS;
 window.RECIPE_BASE_META = RECIPE_BASE_META;
@@ -338,6 +566,14 @@ window.RECIPE_PALETTE = RECIPE_PALETTE;
 window.RECIPE_SHAPES = RECIPE_SHAPES;
 window.RECIPE_CONTENT_KINDS = RECIPE_CONTENT_KINDS;
 window.RECIPE_CONTEXT_CHANNELS = RECIPE_CONTEXT_CHANNELS;
+window.RECIPE_MODEL_ROLES = RECIPE_MODEL_ROLES;
+window.RECIPE_PARSER_PATTERNS = RECIPE_PARSER_PATTERNS;
+window.RECIPE_LABEL_FROM = RECIPE_LABEL_FROM;
+window.RECIPE_FALLBACK_MODES = RECIPE_FALLBACK_MODES;
+window.RECIPE_DYNAMIC_PORT_TYPES = RECIPE_DYNAMIC_PORT_TYPES;
+window.RECIPE_AGGREGATIONS = RECIPE_AGGREGATIONS;
+window.RECIPE_ON_GENERATED_KINDS = RECIPE_ON_GENERATED_KINDS;
+window.RECIPE_MAX_DYNAMIC = RECIPE_MAX_DYNAMIC;
 window.RECIPE_PROMPT_BUDGET = RECIPE_PROMPT_BUDGET;
 window.RECIPE_MAX_PORTS = RECIPE_MAX_PORTS;
 window.normalizeRecipeInput = normalizeRecipeInput;
@@ -349,3 +585,6 @@ window.recipeEmbedSnapshot = recipeEmbedSnapshot;
 window._nodeRecipeSnapshot = _nodeRecipeSnapshot;
 window._recipeNodeAttribute = _recipeNodeAttribute;
 window._recipeStaticPorts = _recipeStaticPorts;
+window._recipeDynamicPorts = _recipeDynamicPorts;
+window._recipeParseNumberedList = _recipeParseNumberedList;
+window._recipeQuestionTextsFromContent = _recipeQuestionTextsFromContent;

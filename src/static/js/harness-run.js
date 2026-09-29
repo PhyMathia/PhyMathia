@@ -166,7 +166,11 @@
     };
     // 澄清重跑路径（runGraphHarnessWithFocus 委托进来）：目标节点已由用户点选解析好，不再走焦点解析
     const presetFocusIds = opts && Array.isArray(opts.focusIds) ? opts.focusIds : null;
-    if (_isHarnessCasualInstruction(instruction)) {
+    // 创造模式（P3）：显式按钮锁定 phase=preset——寒暄拦截与意图检测都让位，
+    // 指令一律交 preset 提示词（需求不明它自己 clarify）
+    const presetMode = !!(window._harnessPresetActive && window._harnessPresetActive());
+    if (presetMode && (phase === 'normal' || phase === 'auto' || !phase)) phase = 'preset';
+    if (!presetMode && _isHarnessCasualInstruction(instruction)) {
       _appendHarnessHistory({
         id: _historyId(), role: 'user', content: instruction, phase: 'normal', timestamp: Date.now(),
       });
@@ -222,7 +226,7 @@
     const pureQuestion = _isHarnessPureQuestion(instruction);
     if (presetFocusIds) {
       focusIds = presetFocusIds;
-    } else if (!harnessSingleEvalId && !pureQuestion) {
+    } else if (harnessPhase !== 'preset' && !harnessSingleEvalId && !pureQuestion) {
       const candidateFocusIds = _detectFocusNodeIds(instruction, _graphNodes().filter(node => !deleted.has(node.id)));
       if (candidateFocusIds.length === 1) {
         focusIds = candidateFocusIds;
@@ -280,7 +284,7 @@
       restoreInstruction();
       return;
     }
-    if (!snapshot.nodes.length && !pureQuestion) {
+    if (!snapshot.nodes.length && !pureQuestion && harnessPhase !== 'preset') {
       const canvasCount = typeof _graphNodes === 'function' ? _graphNodes().length : 0;
       const wiped = (_snapshotMeta && _snapshotMeta.deleted_filtered) || 0;
       if (canvasCount > 0 && wiped > 0) {
@@ -515,12 +519,49 @@
     return m ? { from: m[1], to: m[2] } : null;
   }
 
+  // 配方字段级人话摘要（P3 创造模式预览行）：给不懂编程的用户读
+  function _recipeDigest(recipe) {
+    const parts = [];
+    const baseKind = (recipe.base && recipe.base.kind) || '';
+    const kindLabels = { module: 'AI 模块', summary: 'AI 总结', knowledge: '知识点', relation: '联系', note: '手填总结', human_note: '手填笔记', manual: '手填回答', question: '问题' };
+    if (baseKind) parts.push(kindLabels[baseKind] || baseKind);
+    const ck = String(recipe.content_kind || '');
+    if (ck === 'html_iframe') parts.push('交互页面');
+    else if (ck === 'mermaid') parts.push('知识图谱');
+    else if (ck === 'plain') parts.push('纯文本');
+    const g = recipe.generate || {};
+    if (g.model_role && g.model_role !== 'agent') parts.push(g.model_role.toUpperCase() + ' 槽');
+    const staticCount = (recipe.ports && Array.isArray(recipe.ports.static)) ? recipe.ports.static.length : 0;
+    const hasDynamic = !!(recipe.ports && recipe.ports.dynamic);
+    const portBits = [];
+    if (staticCount) portBits.push('静态 ' + staticCount);
+    if (hasDynamic) portBits.push('动态解析出口');
+    if (portBits.length) parts.push(portBits.join('＋'));
+    return parts.length ? '（' + parts.join(' · ') + '）' : '';
+  }
+
   function _opDescription(op, allOps) {
     const name = op.op || op.type || '';
     if (name === 'create_node') {
       const moduleKey = op.module_key || op.moduleKey || '';
       const nodeName = op.label || op.title || (moduleKey ? _moduleLabel(moduleKey) : '') || op.temp_id || '';
+      const recipeId = op.recipe_id || op.recipeId || '';
+      if (recipeId) {
+        return '在画布上放一个配方节点「' + (nodeName || recipeId) + '」';
+      }
       return '新增' + (moduleKey ? _moduleLabel(moduleKey) : _kindLabel(op.kind)) + '「' + nodeName + '」';
+    }
+    if (name === 'create_recipe') {
+      const recipe = op.recipe || {};
+      return '新建配方「' + (recipe.name || op.recipe_id || '') + '」'
+        + _recipeDigest(recipe);
+    }
+    if (name === 'update_recipe') {
+      const recipe = op.recipe || {};
+      return '修改配方「' + (recipe.name || op.recipe_id || '') + '」';
+    }
+    if (name === 'delete_recipe') {
+      return '删除配方「' + (op.recipe_name || op.recipe_id || '') + '」';
     }
     if (name === 'create_eval_node') {
       const target = op.target_label || op.target_node_id || op.target || '目标节点';
@@ -564,6 +605,9 @@
       { key: 'delete_node', title: '删除节点' },
       { key: 'remove_edge', title: '删除连线' },
       { key: 'create_eval_node', title: 'AI 评价' },
+      { key: 'create_recipe', title: '新建配方' },
+      { key: 'update_recipe', title: '修改配方' },
+      { key: 'delete_recipe', title: '删除配方' },
     ];
     const counts = {};
     list.forEach(op => { const k = op.op || op.type || ''; counts[k] = (counts[k] || 0) + 1; });
@@ -575,6 +619,9 @@
     if (counts.delete_node) countParts.push('删除 ' + counts.delete_node + ' 个节点');
     if (counts.remove_edge) countParts.push('移除 ' + counts.remove_edge + ' 条连线');
     if (counts.create_eval_node) countParts.push(counts.create_eval_node + ' 条评价建议');
+    if (counts.create_recipe) countParts.push('新建 ' + counts.create_recipe + ' 个配方');
+    if (counts.update_recipe) countParts.push('修改 ' + counts.update_recipe + ' 个配方');
+    if (counts.delete_recipe) countParts.push('删除 ' + counts.delete_recipe + ' 个配方');
     const sections = [];
     for (const group of groups) {
       const items = list.filter(op => (op.op || op.type) === group.key);

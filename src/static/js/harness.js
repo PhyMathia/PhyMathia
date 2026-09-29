@@ -14,6 +14,9 @@ let harnessLastAppliedBeforeSnapshot = null;
   let harnessBusy = false;
   let harnessLastInstruction = '';
   let harnessLastPhase = 'normal';
+  // 创造模式（P3，D-R6）：显式按钮进入/退出，锁定该面板会话走 phase=preset；
+  // 不做意图自动识别——误触少、边界清楚
+  let harnessPresetActive = false;
   let harnessPhiError = false;
   let harnessPhiCelebrate = false;
   let harnessAbortController = null;
@@ -455,6 +458,24 @@ let harnessLastAppliedBeforeSnapshot = null;
       available_node_types: deriveHarnessAvailableNodeTypes(),
       scope_node_ids: Array.from(selected),
     };
+    // 创造模式（P3）：用户配方清单摘要随快照注入（仿 quiz_weak 范式——结构化通道，
+    // 绝不拼进 instruction 文本）。Φ 据此查重/更新/删除；preset 提示词有行为规则。
+    const userRecipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+    if (userRecipes.length) {
+      snapshot.user_recipes = userRecipes.map(recipe => {
+        const entry = {
+          id: String(recipe.id || ''),
+          name: String(recipe.name || ''),
+          base_kind: (recipe.base && recipe.base.kind) || '',
+          content_kind: String(recipe.content_kind || ''),
+        };
+        if (recipe.desc) entry.desc = String(recipe.desc);
+        const staticCount = (recipe.ports && Array.isArray(recipe.ports.static)) ? recipe.ports.static.length : 0;
+        const hasDynamic = !!(recipe.ports && recipe.ports.dynamic);
+        entry.ports = '静态 ' + staticCount + (hasDynamic ? ' ＋ 动态解析' : '');
+        return entry;
+      });
+    }
     // M2（P0-A 检测闭环）：检测侧薄弱点随快照注入（当前会话 Top3，每条一行）。
     // 只作口头提示依据——提示词明文禁止据此创建任何状态类图元素；无薄弱点时不带该字段。
     const weakPoints = _harnessQuizWeak();
@@ -610,6 +631,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
       + '<div class="graph-harness-actions">'
+      + '<button type="button" id="graphHarnessPresetBtn" class="graph-harness-preset-btn" onclick="toggleHarnessPresetMode()" title="创造模式：对话式创建/修改节点配方">✦ 创造模式</button>'
       + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'
@@ -1076,6 +1098,26 @@ let harnessLastAppliedBeforeSnapshot = null;
     chat.scrollTop = 0;
   }
 
+  // 创造模式开关（P3）：进入锁定 preset 相位（面板内嵌提示），退出回改图。
+  // 面板关闭重开保持状态；换指令不影响——退出只能再点这个按钮（边界清楚）
+  function toggleHarnessPresetMode() {
+    harnessPresetActive = !harnessPresetActive;
+    const btn = document.getElementById('graphHarnessPresetBtn');
+    if (btn) {
+      btn.classList.toggle('on', harnessPresetActive);
+      btn.title = harnessPresetActive
+        ? '创造模式已开启：Φ 只创作/修改节点配方（点此退回改图模式）'
+        : '创造模式：对话式创建/修改节点配方';
+    }
+    const inputEl = document.getElementById('graphHarnessInstruction');
+    if (inputEl) {
+      inputEl.placeholder = harnessPresetActive
+        ? '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…'
+        : '对网络助手说话…可改图，可提问';
+    }
+    _setHarnessStatus(harnessPresetActive ? '✦ 创造模式已开启：只创作配方，退回请再点一次' : '已退回改图模式', 'ok');
+  }
+
   function closeGraphHarness() {
     if (harnessPanel) harnessPanel.hidden = true;
     if (harnessPet) harnessPet.classList.remove('active');
@@ -1092,4 +1134,6 @@ let harnessLastAppliedBeforeSnapshot = null;
   window.stopGraphHarness = stopGraphHarness;
   window.syncGraphPetToggleButton = _syncGraphPetToggleButton;
   window.toggleHarnessGuide = toggleHarnessGuide;
+  window.toggleHarnessPresetMode = toggleHarnessPresetMode;
+  window._harnessPresetActive = () => harnessPresetActive;
   window.getGraphPetVisible = () => !!(harnessPet && harnessPet.style.display !== 'none');

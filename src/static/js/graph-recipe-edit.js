@@ -8,6 +8,15 @@ let recipeModalOverlay = null;
 let recipeManageOverlay = null;
 let recipeEditingId = null;     // 编辑中的配方 id；null = 新建
 let recipePortRows = [];        // 出口编辑器当前行：[{ label, drag_form }]
+// 动态出口编辑器状态（P2，module 底座）
+let recipeDynEnabled = false;
+let recipeDynCheckLevel = true;
+let recipeDynMax = 12;
+let recipeDynLabelFrom = 'index_question';
+let recipeDynFallbackMode = 'label_questions_from_text';
+let recipeDynFallbackLabels = '问题1,问题2,问题3';
+let recipeDynEachType = 'socratic';
+let recipeDynEachDrag = 'draft';
 
 // ---- 拖出目标选项（出口编辑器的「拖出去建什么」下拉）----
 function _recipeDragFormOptions() {
@@ -37,6 +46,18 @@ function openRecipeForm(prefill) {
   recipePortRows = (init.ports && Array.isArray(init.ports.static))
     ? init.ports.static.map(port => ({ label: port.label || '', drag_form: port.drag_form || 'draft' })).slice(0, RECIPE_MAX_PORTS)
     : (baseKind === 'module' ? [{ label: '追问', drag_form: 'draft' }] : []);
+  // 动态出口编辑器初值（P2）
+  const dyn = (init.ports && init.ports.dynamic) || null;
+  recipeDynEnabled = !!dyn;
+  recipeDynCheckLevel = !!(dyn && dyn.parser && Array.isArray(dyn.parser.level_tags) && dyn.parser.level_tags.length);
+  recipeDynMax = (dyn && dyn.parser && Number(dyn.parser.max)) || 12;
+  recipeDynLabelFrom = (dyn && dyn.parser && dyn.parser.label_from) || 'index_question';
+  recipeDynFallbackMode = (dyn && dyn.fallback && dyn.fallback.mode) || 'label_questions_from_text';
+  recipeDynFallbackLabels = (dyn && dyn.fallback && Array.isArray(dyn.fallback.labels) && dyn.fallback.labels.length)
+    ? dyn.fallback.labels.join(',') : '问题1,问题2,问题3';
+  recipeDynEachType = (dyn && dyn.each && dyn.each.type) || 'socratic';
+  recipeDynEachDrag = (dyn && dyn.each && dyn.each.drag_form) || 'draft';
+  const gen = init.generate || {};
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
   overlay.innerHTML = '<div class="graph-network-modal graph-recipe-modal">'
@@ -66,24 +87,86 @@ function openRecipeForm(prefill) {
     + '</div>'
     + '<div class="recipe-ai-fields" id="recipeAiFields">'
     + '<label>主提示词（AI 按它生成内容，建议 ≤' + RECIPE_PROMPT_BUDGET + ' 字）</label>'
-    + '<textarea id="recipePrompt" rows="5" placeholder="例如：针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。">' + escapeHtml((init.generate && init.generate.prompt) || '') + '</textarea>'
+    + '<textarea id="recipePrompt" rows="5" placeholder="例如：针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。">' + escapeHtml(gen.prompt || '') + '</textarea>'
     + '<label>严格输出要求（可选，约束格式）</label>'
-    + '<textarea id="recipeStrict" rows="3" placeholder="例如：只输出三段，每段以「### 」标题开头；不要前言和结语。">' + escapeHtml((init.generate && init.generate.strict_output) || '') + '</textarea>'
+    + '<textarea id="recipeStrict" rows="3" placeholder="例如：只输出三段，每段以「### 」标题开头；不要前言和结语。">' + escapeHtml(gen.strict_output || '') + '</textarea>'
     + '<label>「追问」预填模板（可选）</label>'
-    + '<input id="recipeFollowup" maxlength="800" placeholder="从该节点出口拖出提问草稿时的预填文本" value="' + escapeHtml((init.generate && init.generate.followup_prompt) || '') + '">'
+    + '<input id="recipeFollowup" maxlength="800" placeholder="从该节点出口拖出提问草稿时的预填文本" value="' + escapeHtml(gen.followup_prompt || '') + '">'
     + '<label>「没看懂」重讲提示词（可选）</label>'
-    + '<input id="recipeConfused" maxlength="800" placeholder="用户点「没看懂」时的重讲指令" value="' + escapeHtml((init.generate && init.generate.confused_prompt) || '') + '">'
+    + '<input id="recipeConfused" maxlength="800" placeholder="用户点「没看懂」时的重讲指令" value="' + escapeHtml(gen.confused_prompt || '') + '">'
     + '<label>上游内容怎么给 AI（视角模块底座）</label>'
     + '<select id="recipeChannel">'
-    + '<option value="workflow_context"' + (!init.generate || !init.generate.context_channel || init.generate.context_channel === 'workflow_context' ? ' selected' : '') + '>结构化上下文（官方模块方式，省 token）</option>'
-    + '<option value="prompt_inline"' + (init.generate && init.generate.context_channel === 'prompt_inline' ? ' selected' : '') + '>上游全文拼进提示词（总结方式）</option>'
+    + '<option value="workflow_context"' + (!gen.context_channel || gen.context_channel === 'workflow_context' ? ' selected' : '') + '>结构化上下文（官方模块方式，省 token）</option>'
+    + '<option value="prompt_inline"' + (gen.context_channel === 'prompt_inline' ? ' selected' : '') + '>上游全文拼进提示词（总结方式）</option>'
+    + '</select>'
+    + '<label>生成用哪个模型槽（未配置的槽自动回落主模型）</label>'
+    + '<select id="recipeModelRole">'
+    + '<option value="agent"' + (!gen.model_role || gen.model_role === 'agent' ? ' selected' : '') + '>跟随主模型</option>'
+    + '<option value="html"' + (gen.model_role === 'html' ? ' selected' : '') + '>HTML 生成槽（交互可视化同款）</option>'
+    + '<option value="branch"' + (gen.model_role === 'branch' ? ' selected' : '') + '>分支追问槽（苏格拉底同款）</option>'
+    + '<option value="graph"' + (gen.model_role === 'graph' ? ' selected' : '') + '>图谱槽</option>'
+    + '<option value="quiz"' + (gen.model_role === 'quiz' ? ' selected' : '') + '>出题槽</option>'
+    + '<option value="descriptor"' + (gen.model_role === 'descriptor' ? ' selected' : '') + '>描述槽</option>'
     + '</select>'
     + '</div>'
-    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipePlain"' + (init.content_kind === 'plain' ? ' checked' : '') + '> 内容按纯文本渲染（不解析 Markdown / 公式）</label>'
+    + '<label>内容载体（决定生成结果的渲染方式）</label>'
+    + '<select id="recipeContentKind" onchange="recipeContentKindChanged()">'
+    + '<option value="markdown"' + (!init.content_kind || init.content_kind === 'markdown' ? ' selected' : '') + '>Markdown＋公式（默认）</option>'
+    + '<option value="plain"' + (init.content_kind === 'plain' ? ' selected' : '') + '>纯文本（不解析）</option>'
+    + '<option value="mermaid"' + (init.content_kind === 'mermaid' ? ' selected' : '') + '>知识图谱（Mermaid 图）</option>'
+    + '<option value="html_iframe"' + (init.content_kind === 'html_iframe' ? ' selected' : '') + '>交互页面（HTML 演示器）</option>'
+    + '</select>'
+    + '<div class="recipe-retry-fields" id="recipeRetryFields">'
+    + '<label>内容不完整时自动重试几次（官方交互可视化＝1）</label>'
+    + '<select id="recipeMaxRetries">'
+    + '<option value="0"' + (gen.on_incomplete && Number(gen.on_incomplete.max_retries) === 0 ? ' selected' : '') + '>不重试</option>'
+    + '<option value="1"' + (!gen.on_incomplete || Number(gen.on_incomplete.max_retries) === 1 ? ' selected' : '') + '>重试 1 次（默认）</option>'
+    + '<option value="2"' + (gen.on_incomplete && Number(gen.on_incomplete.max_retries) === 2 ? ' selected' : '') + '>重试 2 次</option>'
+    + '</select>'
+    + '<label>重试时追加的提示词（可选）</label>'
+    + '<input id="recipeRetryPrompt" maxlength="800" placeholder="例如：请务必只输出完整 HTML，不要任何解释。" value="' + escapeHtml(gen.retry_prompt || '') + '">'
+    + '</div>'
+    + '<div id="recipeModuleExtras">'
+    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeAnalysisPhase"' + (init.analysis_phase ? ' checked' : '') + '> 生成前先产出问题概要（AI 回答式双阶段）</label>'
+    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeFirstInbound"' + (init.aggregation === 'first_inbound' ? ' checked' : '') + '> 只沿第一条连线的单链取材（空白节点式，多路汇聚时只讲直接上游）</label>'
+    + '</div>'
     + '<div id="recipePortEditorWrap">'
-    + '<label>出口（从节点拖出可建新节点，最多 ' + RECIPE_MAX_PORTS + ' 个）</label>'
+    + '<label>静态出口（从节点拖出可建新节点，最多 ' + RECIPE_MAX_PORTS + ' 个）</label>'
     + '<div id="recipePortRows"></div>'
     + '<button type="button" class="recipe-port-add" onclick="recipeAddPortRow()">＋ 添加出口</button>'
+    + '</div>'
+    + '<div id="recipeDynamicWrap">'
+    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeDynEnabled" onchange="recipeDynToggle()"'
+    + (recipeDynEnabled ? ' checked' : '') + '> 动态出口：从生成内容的编号行现场解析出口（苏格拉底式）</label>'
+    + '<div id="recipeDynFields" style="display:' + (recipeDynEnabled ? '' : 'none') + '">'
+    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeDynCheckLevel" onchange="recipeDynParamChanged()"'
+    + (recipeDynCheckLevel ? ' checked' : '') + '> 只收带级别标记的行（[基础] [进阶] [拓展]，苏格拉底式；不勾＝收全部编号行，进阶学习式）</label>'
+    + '<label>最多解析几个出口</label>'
+    + '<input id="recipeDynMax" type="number" min="1" max="' + RECIPE_MAX_DYNAMIC + '" value="' + recipeDynMax + '" onchange="recipeDynParamChanged()">'
+    + '<label>出口标签怎么起</label>'
+    + '<select id="recipeDynLabelFrom" onchange="recipeDynParamChanged()">'
+    + '<option value="index_question"' + (recipeDynLabelFrom === 'index_question' ? ' selected' : '') + '>按序号（问题1、问题2…）</option>'
+    + '<option value="question_trunc12"' + (recipeDynLabelFrom === 'question_trunc12' ? ' selected' : '') + '>截取问题文本前 12 字</option>'
+    + '</select>'
+    + '<label>解析不出编号行时怎么办（兜底）</label>'
+    + '<select id="recipeDynFallback" onchange="recipeDynParamChanged()">'
+    + '<option value="label_questions_from_text"' + (recipeDynFallbackMode === 'label_questions_from_text' ? ' selected' : '') + '>从正文截取问题文本填进兜底出口（推荐）</option>'
+    + '<option value="static"' + (recipeDynFallbackMode === 'static' ? ' selected' : '') + '>固定兜底出口名（question 留空）</option>'
+    + '<option value="none"' + (recipeDynFallbackMode === 'none' ? ' selected' : '') + '>不出兜底出口</option>'
+    + '</select>'
+    + '<label>兜底出口名（逗号分隔，按顺序用）</label>'
+    + '<input id="recipeDynFallbackLabels" maxlength="80" placeholder="问题1,问题2,问题3" value="' + escapeHtml(recipeDynFallbackLabels) + '" onchange="recipeDynParamChanged()">'
+    + '<label>每个动态出口拖出去建什么</label>'
+    + '<select id="recipeDynEachType" onchange="recipeDynParamChanged()">'
+    + '<option value="socratic"' + (recipeDynEachType === 'socratic' ? ' selected' : '') + '>苏格拉底问题卡（我来回答 / 直接问AI）</option>'
+    + '<option value="learn"' + (recipeDynEachType === 'learn' ? ' selected' : '') + '>学习方向（预填「请详细讲解：…」）</option>'
+    + '<option value="branch"' + (recipeDynEachType === 'branch' ? ' selected' : '') + '>普通追问草稿</option>'
+    + '</select>'
+    + '<select id="recipeDynEachDrag" onchange="recipeDynParamChanged()">'
+    + '<option value="draft"' + (recipeDynEachDrag !== 'user' ? ' selected' : '') + '>拖出＝提问草稿</option>'
+    + '<option value="user"' + (recipeDynEachDrag === 'user' ? ' selected' : '') + '>拖出＝预填问题节点</option>'
+    + '</select>'
+    + '</div>'
     + '</div>'
     + '<div class="recipe-form-errors" id="recipeErrors" hidden></div>'
     + '</div>'
@@ -121,6 +204,44 @@ function recipeBaseChanged() {
   if (aiFields) aiFields.style.display = RECIPE_AI_BASE_KINDS.includes(kind) ? '' : 'none';
   const portWrap = document.getElementById('recipePortEditorWrap');
   if (portWrap) portWrap.style.display = (kind === 'module' || kind === 'manual') ? '' : 'none';
+  // P2 分区：动态出口/双阶段/单链只在 module 底座；mermaid/html_iframe 载体只在 AI 底座
+  const dynWrap = document.getElementById('recipeDynamicWrap');
+  if (dynWrap) dynWrap.style.display = kind === 'module' ? '' : 'none';
+  const extras = document.getElementById('recipeModuleExtras');
+  if (extras) extras.style.display = kind === 'module' ? '' : 'none';
+  _recipeSyncContentKindOptions(kind);
+}
+
+// 载体下拉按底座收窄：非 AI 底座不给 mermaid/html_iframe（没有生成环节，无从产出）
+function _recipeSyncContentKindOptions(kind) {
+  const ckSelect = document.getElementById('recipeContentKind');
+  if (!ckSelect) return;
+  const ai = RECIPE_AI_BASE_KINDS.includes(kind);
+  const current = ckSelect.value;
+  [...ckSelect.options].forEach(option => {
+    const needsAi = option.value === 'mermaid' || option.value === 'html_iframe';
+    option.hidden = needsAi && !ai;
+  });
+  if (!ai && (current === 'mermaid' || current === 'html_iframe')) ckSelect.value = 'markdown';
+  recipeContentKindChanged();
+}
+
+function recipeContentKindChanged() {
+  const ckSelect = document.getElementById('recipeContentKind');
+  const retryFields = document.getElementById('recipeRetryFields');
+  if (!ckSelect || !retryFields) return;
+  retryFields.style.display = ckSelect.value === 'html_iframe' ? '' : 'none';
+}
+
+function recipeDynToggle() {
+  const box = document.getElementById('recipeDynEnabled');
+  const fields = document.getElementById('recipeDynFields');
+  if (box && fields) fields.style.display = box.checked ? '' : 'none';
+}
+
+// 动态出口参数就地同步进编辑器状态（表单值在 collect 时统一读取，这里只处理联动）
+function recipeDynParamChanged() {
+  // 占位：参数变化无需联动其它控件；保留入口以便后续加联动
 }
 
 function recipePalettePick(key) {
@@ -173,7 +294,7 @@ function _recipeCollectForm() {
   const checked = id => !!(document.getElementById(id) || {}).checked;
   const baseKind = val('recipeBase') || 'module';
   const selectedPalette = document.querySelector('#recipePalette .recipe-palette-swatch.selected');
-  return {
+  const raw = {
     id: recipeEditingId || ('recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)),
     name: val('recipeName'),
     desc: val('recipeDesc'),
@@ -187,15 +308,40 @@ function _recipeCollectForm() {
       strict_output: val('recipeStrict'),
       followup_prompt: val('recipeFollowup'),
       confused_prompt: val('recipeConfused'),
+      retry_prompt: val('recipeRetryPrompt'),
       context_channel: val('recipeChannel') || 'workflow_context',
+      model_role: val('recipeModelRole') || 'agent',
+      on_incomplete: { max_retries: Number(val('recipeMaxRetries') || 1) },
     },
     ports: {
       static: recipePortRows
         .filter(row => row.label)
         .map(row => ({ label: row.label, drag_form: row.drag_form || 'draft' })),
     },
-    content_kind: checked('recipePlain') ? 'plain' : 'markdown',
+    content_kind: val('recipeContentKind') || 'markdown',
+    analysis_phase: baseKind === 'module' ? checked('recipeAnalysisPhase') : false,
   };
+  if (baseKind === 'module' && checked('recipeFirstInbound')) raw.aggregation = 'first_inbound';
+  if (baseKind === 'module' && checked('recipeDynEnabled')) {
+    const maxDyn = Math.max(1, Math.min(RECIPE_MAX_DYNAMIC, Number(val('recipeDynMax')) || 12));
+    raw.ports.dynamic = {
+      parser: {
+        pattern: 'numbered_list',
+        level_tags: checked('recipeDynCheckLevel') ? ['基础', '进阶', '拓展'] : [],
+        max: maxDyn,
+        label_from: val('recipeDynLabelFrom') || 'index_question',
+      },
+      fallback: {
+        mode: val('recipeDynFallback') || 'label_questions_from_text',
+        labels: val('recipeDynFallbackLabels').split(/[,，]/).map(s => s.trim()).filter(Boolean),
+      },
+      each: {
+        type: val('recipeDynEachType') || 'socratic',
+        drag_form: val('recipeDynEachDrag') === 'user' ? 'user' : 'draft',
+      },
+    };
+  }
+  return raw;
 }
 
 function saveRecipeForm() {
@@ -353,6 +499,9 @@ function recipeFromNode(nodeId) {
 window.openRecipeForm = openRecipeForm;
 window.closeRecipeForm = closeRecipeForm;
 window.recipeBaseChanged = recipeBaseChanged;
+window.recipeContentKindChanged = recipeContentKindChanged;
+window.recipeDynToggle = recipeDynToggle;
+window.recipeDynParamChanged = recipeDynParamChanged;
 window.recipePalettePick = recipePalettePick;
 window.recipeAddPortRow = recipeAddPortRow;
 window.recipeRemovePortRow = recipeRemovePortRow;

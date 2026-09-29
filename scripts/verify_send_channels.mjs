@@ -17,6 +17,14 @@
 // 用法：node scripts/verify_send_channels.mjs
 // 前置：服务在 5050 起着，且 opencode 网关可达（脚本会先探，不通就直接退出而不是
 // 假装通过）。真实 data/ 只读不碰——全程在临时数据目录里跑。
+//
+// **不烧钱的跑法（backlog T57，2026-09-29 落地）**：先起本地 mock 上游
+//   node scripts/mock_upstream.mjs        # 127.0.0.1:5061，OpenAI 兼容 SSE/JSON 双格式
+// 再用环境变量把验证模型指过去（七条通道全走真实 UI 路径，只是上游换成 mock）：
+//   VERIFY_PROVIDER=opencode-go VERIFY_MODEL=mock-1 \
+//   VERIFY_BASE_URL=http://127.0.0.1:5061/v1 VERIFY_API_KEY=mock node scripts/verify_send_channels.mjs
+// mock 回包覆盖：问题概要 / 建议模块行 / 学习卡片 XML（含 <extend> 的苏格拉底＋进阶
+// 方向段——缺了产品会走兜底空端口，见 T57 坑②）/ 创造模式 create_recipe tool_calls。
 
 import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -424,8 +432,60 @@ async function main() {
         ok('⑤ 重试：已发通，重生成后 ' + st.len + ' 字（原 ' + regen.beforeLen + ' 字，'
           + Math.round(regen.waited / 1000) + ' 秒后确实变了）');
       } catch (e) { bad('⑤ 重试', e); }
+
+      // ===== 6. 进阶支线（learn 端口 → 「请详细讲解」预填草稿 → 发送提问）=====
+      // 与 ②④ 同一条 __verifyBranchFromPort 真实入口，但端口类型不同：learn 端口的
+      // 草稿预填是「请详细讲解：{问题}」，验证的是 type=learn 的拖出路由与预填模板。
+      try {
+        await waitIdle('⑥ 进阶支线');
+        const port = await pickPort({ type: 'learn' });
+        const created = await page.evaluate(p => window.__verifyBranchFromPort(p,
+          '请详细讲解：瑞利散射的四次方依赖是怎么来的？'), port);
+        if (!created.id && !created.sent) throw new Error(created.why || '没有可用节点');
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
+        if (!ans.id) throw new Error('草稿发出后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        ok('⑥ 进阶支线：已发通（learn 端口「' + port.meta.label + '」→ 预填草稿 → 发送提问），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('⑥ 进阶支线', e); }
+
+      // ===== 7. Φ 创造模式（P3 新通道：preset 相位 → create_recipe）=====
+      // 真实入口：打开 Φ 面板 → 点「✦ 创造模式」→ 填指令 → 发送。后端 preset 相位
+      // 返回 operations（mock 上游回 create_recipe tool_calls），预览面板出现配方行即发通。
+      try {
+        await waitIdle('⑦ 创造模式');
+        const preset = await page.evaluate(async () => {
+          if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          const panel = document.querySelector('.graph-harness-window');
+          const panelOpen = panel && !panel.hidden;
+          if (!panelOpen && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          const btn = document.getElementById('graphHarnessPresetBtn');
+          if (!btn) return { err: '创造模式按钮不在面板里' };
+          if (!btn.classList.contains('on')) btn.click();
+          const input = document.getElementById('graphHarnessInstruction');
+          input.value = '帮我造一个「三级追问」节点：三条编号行，级别标记 [基础][进阶][拓展]，出口从这三行解析，兜底从正文截问题文本。';
+          document.getElementById('graphHarnessSendBtn').click();
+          const t0 = Date.now();
+          while (Date.now() - t0 < 90000) {
+            const resultBox = document.getElementById('graphHarnessResult');
+            const opRows = resultBox ? resultBox.querySelectorAll('.graph-harness-op') : [];
+            if (opRows.length) {
+              const text = [...opRows].map(el => el.textContent).join(' ');
+              // 收尾：退出创造模式，别把开关状态留给下一轮
+              if (btn.classList.contains('on')) btn.click();
+              return { ok: true, ops: opRows.length, hasRecipe: /配方/.test(text), text: text.slice(0, 80) };
+            }
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          if (btn.classList.contains('on')) btn.click();
+          return { err: '90 秒内没有收到创造模式操作清单' };
+        });
+        if (preset.err) throw new Error(preset.err);
+        if (!preset.hasRecipe) throw new Error('返回了操作但不像配方操作：' + preset.text);
+        ok('⑦ 创造模式：已发通（preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
+      } catch (e) { bad('⑦ 创造模式', e); }
     } else {
-      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试'].forEach(n =>
+      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑦ 创造模式'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));
     }
 

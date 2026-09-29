@@ -51,6 +51,7 @@ from .prompts import (
     build_apply_messages,
     build_evaluate_messages,
     build_expand_messages,
+    build_preset_messages,
     build_resolve_messages,
     build_review_messages,
 )
@@ -84,6 +85,7 @@ _PHASE_LABELS = {
     "evaluate": "生成评价",
     "apply": "应用建议",
     "expand": "拓展进阶",
+    "preset": "创造模式",
     "undo": "撤销回滚",
 }
 
@@ -306,6 +308,10 @@ def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=N
     has_apply = any(hint in text for hint in APPLY_HINTS)
     focus_ids = [str(item) for item in (focus_node_ids or []) if str(item)]
     has_eval_nodes = any(node.get("kind") == "ai_eval" for node in snapshot.get("nodes", []))
+    # 创造模式（P3，D-R6）：只有前端「✦ 创造模式」按钮显式锁定 phase=preset 才进入，
+    # 意图词检测永不猜它——误触少、边界清楚
+    if phase == "preset":
+        return "preset"
     auto_phases = ("", "auto", "normal", "expand")
     if phase == "apply" or (phase in auto_phases and has_apply and has_eval_nodes):
         return "apply"
@@ -1098,7 +1104,7 @@ async def review_graph(
     can_require = _supports_required_tool_choice(provider)
     if not tools:
         tool_choice = None
-    elif phase in ("expand", "evaluate", "apply"):
+    elif phase in ("expand", "evaluate", "apply", "preset"):
         tool_choice = "required" if can_require else "auto"
     else:
         tool_choice = "required" if (_has_edit_intent(instruction) and can_require) else "auto"
@@ -1119,6 +1125,8 @@ async def review_graph(
             return build_apply_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
         if phase == "expand":
             return build_expand_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
+        if phase == "preset":
+            return build_preset_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
     for attempt in range(retries + 1):
@@ -1254,6 +1262,25 @@ async def review_graph(
             normalized_ops.append(op)
         raw_ops = normalized_ops
 
+        if phase == "preset":
+            # 创造模式（P3）：只放行配方三件套＋「放一个试试」的配方实例 create_node；
+            # 模型若跑偏去改普通图节点，带反馈重试而不是静默丢弃
+            preset_ops = [
+                op for op in raw_ops
+                if isinstance(op, dict) and (
+                    op.get("op") in ("create_recipe", "update_recipe", "delete_recipe")
+                    or (op.get("op") == "create_node" and str(op.get("recipe_id") or op.get("recipeId") or ""))
+                )
+            ]
+            dropped = len(raw_ops) - len(preset_ops)
+            if dropped:
+                last_errors = [{
+                    "index": "phase",
+                    "op": "preset",
+                    "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），本次丢弃了 {dropped} 个越权图操作",
+                }]
+                continue
+            raw_ops = preset_ops
         if phase == "evaluate":
             raw_ops = [
                 op for op in raw_ops

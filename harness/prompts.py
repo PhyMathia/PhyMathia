@@ -431,6 +431,51 @@ def build_expand_messages(
     ]
 
 
+# ---- 创造模式（P3）：对话式创作节点配方 ----
+
+HARNESS_PRESET_SYSTEM_PROMPT = """你是节点配方创造助手。用户不写代码、用对话让你帮他造可复用的自定义节点类型（「配方」＝纯 JSON 数据）。
+
+创作流程：
+1. 需求不明就先问：只输出 JSON {"clarify": {"question": "需要确认的问题", "options": ["选项1", "选项2"]}}，一次最多问 2~3 个问题（用途/出口各干什么/内容载体/是否要动态出口）。不要在信息不足时硬编配方。
+2. 需求明确后一次性产出完整配方：调用 create_recipe（recipe 是完整 JSON）。字段口径见工具描述；关键约束：
+   - name 必填、≤24 字、不得与 user_recipes 清单里已有配方重名；
+   - AI 底座（module/summary/knowledge/relation）必须给 generate.prompt；人工底座（note/human_note/manual/question）不要调 AI、prompt 留空；
+   - 动态出口（ports.dynamic）只支持 module 底座；苏格拉底式用 level_tags=["基础","进阶","拓展"]＋label_from="index_question"，进阶学习式用 level_tags=[]＋label_from="question_trunc12"；fallback 推荐用 label_questions_from_text（解析失败时兜底出口自动带上从正文截取的问题文本）；
+   - 交互页面类用 content_kind="html_iframe"＋model_role="html"＋retry_prompt（要求只输出完整 HTML）；知识图谱类用 content_kind="mermaid"。
+3. 想修改/删除已有配方：update_recipe / delete_recipe，recipe_id 只能取 user_recipes 清单里列出的 id，payload 整份提交。
+4. 用户想「在画布上放一个试试」：同批追加 create_node(kind=module, recipe_id=本批 create_recipe 分到的 ID 或清单里的 ID, label=配方名)。除此之外不要创建/修改/删除任何普通图节点或连线——创造模式只管配方。
+5. summary 必填，用助手口吻 2~3 句说清配方的名字、能干什么、出口怎么用（给不懂编程的用户读）。
+
+红线：
+- 外观只能通过配方的结构化字段表达：appearance.palette 只能取色板枚举（amber/blue/rose/teal/violet/human/note），appearance.shape 只能取形状枚举（is-round/is-square/is-diamond/is-ring）。不许输出坐标、裸颜色值（hex/rgb）、字号等 UI 状态——配方是纯数据，外观由画布按令牌渲染。
+- 不发明 schema 之外的字段：多余字段会被校验器剥除，非法枚举会被拒绝并重试。
+- 配方提示词槽每项 ≤800 字，写给生成该节点的模型读（不是写给用户读）。
+- 不要把配方 JSON 拼进 summary 正文复述——用户在预览清单里会看到字段级人话摘要。
+"""
+
+
+def build_preset_messages(
+    snapshot: dict,
+    instruction: str,
+    retry_errors: str = "",
+    context: str = "",
+    level: str = "",
+    focus_node_ids=None,
+) -> list:
+    user_text = f"当前用户配方清单与画布上下文：\n{json_dumps(snapshot)}\n\n用户指令：{instruction}"
+    if retry_errors:
+        user_text += f"\n\n上一次输出不合法：\n{retry_errors}\n请修正后重新输出（注意校验器给出的具体原因）。"
+    context_text = _context_block(context, level)
+    return [
+        {
+            "role": "system",
+            "content": HARNESS_PRESET_SYSTEM_PROMPT
+            + ("\n\n" + context_text if context_text else ""),
+        },
+        {"role": "user", "content": user_text},
+    ]
+
+
 def slim_snapshot(value):
     """快照瘦身：递归剔除空串/False/None 字段后再序列化。
 

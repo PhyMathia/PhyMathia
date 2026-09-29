@@ -15,6 +15,7 @@ from .registry import (
     ALLOWED_MODULE_KEYS,
     ALLOWED_NODE_KINDS,
 )
+from .recipes import RECIPE_DESC_MAX, RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
 
 # 节点类型白名单的单一数据源见 harness/registry.py（前端投影 src/static/js/graph-recipes.js），
 # 两侧由 tests/test_registry_consistency.py 对拍守护，改任何一侧先同步另一侧。
@@ -32,6 +33,11 @@ ALLOWED_OPERATIONS = {
     "remove_edge",
     "update_edge",
     "create_eval_node",
+    # 节点配方 P3（创造模式）：配方库操作，不改图元素——校验器挡非法 payload，
+    # 实际落库在前端配方层（localStorage＋服务端镜像），build_next_snapshot 只做校验与透传
+    "create_recipe",
+    "update_recipe",
+    "delete_recipe",
 }
 
 UPDATEABLE_NODE_FIELDS = {"label", "content", "formula", "status"}
@@ -170,7 +176,48 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     available_node_types = normalize_available_node_types(snapshot.get("available_node_types"))
     if available_node_types:
         normalized["available_node_types"] = available_node_types
+    # 节点配方 P3（创造模式）：user_recipes 是用户配方清单摘要（提示词参考字段，
+    # 仿 quiz_weak 范式——normalize 白名单放行＋preset 提示词行为规则）。Φ 在创造
+    # 模式里据此查重/更新/删除；空清单不带该字段。
+    user_recipes = normalize_user_recipes(snapshot.get("user_recipes"))
+    if user_recipes:
+        normalized["user_recipes"] = user_recipes
     return normalized
+
+
+def normalize_user_recipes(raw: Any) -> List[Dict[str, str]]:
+    """用户配方清单摘要（P3）：每项 {id, name, desc, base_kind, content_kind, ports}。
+
+    只保留 Φ 感知所需的身份字段（完整 payload 不进快照——preset 相位产出完整配方，
+    这里只让 Φ 看见「已有什么」）；id/name 缺失的条目跳过，上限 32 条。
+    """
+    if not isinstance(raw, list):
+        return []
+    result: List[Dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or "").strip()[:64]
+        name = str(item.get("name") or "").strip()[:RECIPE_NAME_MAX]
+        if not rid or not name:
+            continue
+        entry: Dict[str, str] = {"id": rid, "name": name}
+        desc = str(item.get("desc") or "").strip()[:RECIPE_DESC_MAX]
+        if desc:
+            entry["desc"] = desc
+        base_kind = str(item.get("base_kind") or "").strip()[:24]
+        if base_kind:
+            entry["base_kind"] = base_kind
+        content_kind = str(item.get("content_kind") or "").strip()[:24]
+        if content_kind:
+            entry["content_kind"] = content_kind
+        ports = str(item.get("ports") or "").strip()[:40]
+        if ports:
+            entry["ports"] = ports
+        result.append(entry)
+        if len(result) >= 32:
+            break
+    return result
 
 
 def normalize_available_node_types(raw: Any) -> List[Dict[str, str]]:
@@ -412,8 +459,18 @@ def build_next_snapshot(
             if not node_label:
                 errors.append({"index": index, "op": op_name, "reason": "缺少节点标题"})
                 continue
+            # 配方节点（P3 创造模式「在画布上放一个试试」）：带 recipe_id 的 create_node
+            # 是配方实例——module 底座允许空 module_key（外观/出口/提示词都由配方快照决定）
+            recipe_id = _text(op.get("recipe_id") or op.get("recipeId"))
             module_key = _text(op.get("module_key") or op.get("moduleKey"))
-            if kind == "module" and module_key not in ALLOWED_MODULE_KEYS:
+            if recipe_id:
+                if kind != "module":
+                    errors.append({"index": index, "op": op_name, "reason": "配方节点只支持 module 底座"})
+                    continue
+                if not any(r.get("id") == recipe_id for r in current.get("user_recipes") or []):
+                    errors.append({"index": index, "op": op_name, "reason": f"配方不存在: {recipe_id}（只可引用 user_recipes 里列出的）"})
+                    continue
+            elif kind == "module" and module_key not in ALLOWED_MODULE_KEYS:
                 errors.append({"index": index, "op": op_name, "reason": f"无效模块类型: {module_key or '空'}"})
                 continue
             assigned_id = force_id if force_id else _next_temp_id(nodes, index)
@@ -424,12 +481,54 @@ def build_next_snapshot(
                 "content": _text(op.get("content") or op.get("summary"))[:MAX_CREATED_NODE_CONTENT],
                 "formula": _text(op.get("formula"))[:500],
                 "module_key": module_key,
+                "recipe_id": recipe_id,
                 "manual": _bool(op.get("manual")),
                 "status": _text(op.get("status"), "done"),
                 "read_only": False,
             }
             temp_to_assigned[temp_id] = assigned_id
             valid_ops.append({**op, "assigned_id": assigned_id})
+            continue
+
+        # ---- 配方库操作（P3 创造模式）：不改图元素，只校验 payload 并透传给前端配方层 ----
+        if op_name in ("create_recipe", "update_recipe", "delete_recipe"):
+            existing_names = current.get("user_recipes") or []
+            if op_name == "create_recipe":
+                normalized_recipe = normalize_recipe_input(op.get("recipe"))
+                if normalized_recipe is None:
+                    errors.append({"index": index, "op": op_name, "reason": "配方 payload 不合法（normalize 失败：缺名称或底座不合法）"})
+                    continue
+                verdict = validate_recipe(normalized_recipe, existing_names)
+                if not verdict["ok"]:
+                    errors.append({"index": index, "op": op_name, "reason": "配方未通过校验：" + "；".join(verdict["errors"])})
+                    continue
+                recipe_id = f"recipe-hn-{time.time_ns()}_{index + 1}"
+                normalized_recipe["id"] = recipe_id
+                valid_ops.append({**op, "recipe": normalized_recipe, "recipe_id": recipe_id})
+                continue
+            raw_recipe = op.get("recipe") if isinstance(op.get("recipe"), dict) else {}
+            recipe_id = _text(op.get("recipe_id") or op.get("recipeId") or raw_recipe.get("id"))
+            if not recipe_id:
+                errors.append({"index": index, "op": op_name, "reason": "缺少 recipe_id（只能操作 user_recipes 里列出的配方）"})
+                continue
+            if not any(r.get("id") == recipe_id for r in existing_names):
+                errors.append({"index": index, "op": op_name, "reason": f"配方不存在: {recipe_id}"})
+                continue
+            if op_name == "update_recipe":
+                normalized_recipe = normalize_recipe_input(op.get("recipe"))
+                if normalized_recipe is None:
+                    errors.append({"index": index, "op": op_name, "reason": "配方 payload 不合法（normalize 失败：缺名称或底座不合法）"})
+                    continue
+                # 先归位 id 再校验：查重按「同名且不同 id」判，id 晚归位会把
+                # 「保持原名更新」误判成重名（battery preset-update-recipe 抓到）
+                normalized_recipe["id"] = recipe_id
+                verdict = validate_recipe(normalized_recipe, existing_names)
+                if not verdict["ok"]:
+                    errors.append({"index": index, "op": op_name, "reason": "配方未通过校验：" + "；".join(verdict["errors"])})
+                    continue
+                valid_ops.append({**op, "recipe": normalized_recipe, "recipe_id": recipe_id})
+            else:
+                valid_ops.append({**op, "recipe_id": recipe_id})
             continue
 
         if op_name == "create_eval_node":
@@ -694,6 +793,14 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
                         break
             if node_id:
                 inverse.append({"op": "delete_node", "id": node_id, "reason": reason})
+        elif name == "create_recipe":
+            # 配方库操作的逆（P3）：create 的逆是 delete（id 由后端分配、闭环可得）。
+            # update/delete 的旧 payload 不在图快照里、后端无从恢复——对话式逆操作不
+            # 生成，兜底在前端 apply checkpoint（整份回滚时配方库一并还原）
+            raw_recipe = op.get("recipe") if isinstance(op.get("recipe"), dict) else {}
+            recipe_id = _text(op.get("recipe_id") or raw_recipe.get("id"))
+            if recipe_id:
+                inverse.append({"op": "delete_recipe", "recipe_id": recipe_id, "reason": reason})
         elif name == "create_eval_node":
             node_id = _text(op.get("assigned_id") or op.get("id") or op.get("temp_id"))
             if node_id:
