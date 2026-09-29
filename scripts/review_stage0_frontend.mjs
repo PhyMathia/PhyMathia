@@ -186,7 +186,9 @@ function sessionsFixture(extra = []) {
   f.s.localStorage.setItem('phymathia_current_session', 'A');
   return f;
 }
-const harnessModules = ['harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
+// graph-recipes.js（节点配方注册表，P0）必须先于 harness.js 加载：
+// buildHarnessSnapshot 的 available_node_types 由它派生（deriveHarnessAvailableNodeTypes）
+const harnessModules = ['graph-recipes.js', 'harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
 function harnessFixture() {
   const f = sessionsFixture(harnessModules); const { s } = f;
   // View/render boundaries only; snapshot/apply/save/load/history remain actual source.

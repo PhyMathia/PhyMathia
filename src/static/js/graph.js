@@ -59,26 +59,14 @@ const GRAPH_NODE_ATTRIBUTES = {
 const ANSWER_OUTPUT_SCHEMA = ['physics', 'math', 'graph', 'viz', 'learn', 'socratic'];
 const ANSWER_OUTPUT_INDEX = { physics: 0, math: 1, graph: 2, viz: 3, learn: 4, socratic: 5 };
 
-const MANUAL_NODE_OPTIONS = [
-  { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: '#94a3b8', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
-  { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981', group: 'ai', desc: 'AI 回答节点（含摘要）' },
-  { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488', group: 'ai', desc: 'AI 生成总结' },
-  { key: 'physics', kind: 'module', label: '物理视角', color: '#f59e0b', group: 'modules' },
-  { key: 'math', kind: 'module', label: '数学视角', color: '#3b82f6', group: 'modules' },
-  { key: 'graph', kind: 'module', label: '知识图谱', color: '#0891b2', group: 'modules' },
-  { key: 'viz', kind: 'module', label: '交互可视化', color: '#f472b6', group: 'modules' },
-  { key: 'learn', kind: 'module', label: '进阶学习', color: '#a855f7', group: 'modules' },
-  { key: 'socratic', kind: 'module', label: '苏格拉底追问', color: '#f43f5e', group: 'modules' },
-  { key: 'source', kind: 'source', label: '输入', color: '#06b6d4', group: 'data', desc: '导入文件/文本，解析出知识点' },
-  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16', group: 'data', desc: '手动记录一个知识点' },
-  { key: 'question', kind: 'user', label: '问题', color: '#4a9eff', group: 'data', desc: '提问节点，可接 AI 回答' },
-  { key: 'manual', kind: 'answer', label: '我的回答', color: 'var(--ink-human)', group: 'human', desc: '手写回答，可继续发散（无摘要）' },
-  { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-note)', group: 'human', desc: '批注/笔记，可附公式' },
-  { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
-  { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308', group: 'structure', desc: '汇总多路输入，可总结或追问' },
-];
+// 16 入口由节点配方注册表派生（graph-recipes.js，P0 起单一事实源），字段与形状
+// 与原字面量逐项一致；GRAPH_MODULE_META / GRAPH_NODE_ATTRIBUTES / GRAPH_MODULE_DEFAULT_OUTPUTS
+// 是渲染细节表，P1 随配方行为挂载一起并入注册表。
+const MANUAL_NODE_OPTIONS = deriveManualNodeOptions();
 
-const GRAPH_CUSTOM_NODE_KINDS = ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'human_note', 'ai_eval'];
+// 自定义节点 kind 白名单（含 relation：创建口径已移除，但旧会话数据里的 relation 节点
+// 不能在保存/恢复时被静默抹掉——backlog T75，2026-09-29 修复）
+const GRAPH_CUSTOM_NODE_KINDS = deriveGraphCustomNodeKinds();
 
 // 族别形状：面板色点用这一套，画布上的属性标签用同一套（graph-override.css 第 7 轮，
 // 按 graph-node-* / graph-attr-* 类名上形状）。圆＝AI 产出、方＝人工书写、菱＝结构、环＝原始素材。

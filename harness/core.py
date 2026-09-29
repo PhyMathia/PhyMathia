@@ -10,50 +10,19 @@ import copy
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
+from .registry import (
+    ALLOWED_CREATE_KINDS,
+    ALLOWED_MODULE_KEYS,
+    ALLOWED_NODE_KINDS,
+)
 
-ALLOWED_NODE_KINDS = {
-    "blank",
-    "user",
-    "answer",
-    "module",
-    "hub",
-    "summary",
-    "note",
-    "source",
-    "knowledge",
-    "relation",
-    "human_note",
-    "ai_eval",
-}
+# 节点类型白名单的单一数据源见 harness/registry.py（前端投影 src/static/js/graph-recipes.js），
+# 两侧由 tests/test_registry_consistency.py 对拍守护，改任何一侧先同步另一侧。
 
 # M2（P0-A 检测闭环）：随快照进提示词的检测侧薄弱点条数上限（当前会话 Top3）
 QUIZ_WEAK_LIMIT = 3
 # 大陆计划 v3（Φ 摆渡）：随快照进提示词的跨画布共享点条数上限
 CONTINENT_SHARED_LIMIT = 4
-
-ALLOWED_CREATE_KINDS = {
-    "blank",
-    "module",
-    "user",
-    "answer",
-    "hub",
-    "summary",
-    "note",
-    "source",
-    "knowledge",
-    "human_note",
-    "ai_eval",
-}
-
-ALLOWED_MODULE_KEYS = {
-    "physics",
-    "math",
-    "graph",
-    "viz",
-    "socratic",
-    "learn",
-    "manual",
-}
 
 ALLOWED_OPERATIONS = {
     "create_node",
@@ -194,7 +163,39 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     user_profile = snapshot.get("user_profile")
     if isinstance(user_profile, str) and user_profile.strip():
         normalized["user_profile"] = user_profile.strip()
+    # 节点配方 P0（T76 接通）：available_node_types 是前端注册表派生的可用类型清单
+    # （提示词参考字段，不是图元素）。此前归一化直接丢弃——前端发了后端永远看不到的
+    # 断头通道；P0 起白名单清洗后放行，P3 注入用户配方清单时不再需要动 normalize。
+    # 注意它不进提示词：json_dumps/slim_snapshot 侧显式剔除（见 prompts.py）。
+    available_node_types = normalize_available_node_types(snapshot.get("available_node_types"))
+    if available_node_types:
+        normalized["available_node_types"] = available_node_types
     return normalized
+
+
+def normalize_available_node_types(raw: Any) -> List[Dict[str, str]]:
+    """可用节点类型清单（P0）：每项 {kind, label, module_key?}，白名单清洗＋限条数。
+
+    kind 不在本注册表白名单内的条目直接丢弃（防注入未受控类型）；
+    缺 kind/非对象条目跳过；上限 32 条对齐前端清单量级（官方 16 + 用户配方余量）。
+    """
+    if not isinstance(raw, list):
+        return []
+    result: List[Dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not kind or kind not in ALLOWED_NODE_KINDS:
+            continue
+        entry = {"kind": kind, "label": str(item.get("label") or "").strip()[:40]}
+        module_key = str(item.get("module_key") or "").strip()
+        if module_key:
+            entry["module_key"] = module_key[:40]
+        result.append(entry)
+        if len(result) >= 32:
+            break
+    return result
 
 
 def normalize_quiz_weak(raw: Any) -> List[Dict[str, Any]]:
