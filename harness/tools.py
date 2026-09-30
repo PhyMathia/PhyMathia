@@ -34,6 +34,22 @@ TOOL_TO_OP: Dict[str, str] = {
     "delete_recipe": "delete_recipe",
 }
 
+# T93（评审路线 #8）只读查询工具：模型可以先看图中内容再决定改哪。
+# 它们不产出任何图操作，也绝不进 TOOL_TO_OP——若混进最终编辑批次，
+# parse_tool_calls 会按既有「不支持的工具」错误软重试兜底。
+READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes")
+
+# 查询结果上限：邻接 40 条、搜索 10 条、摘录 80 字（回灌上下文预算）
+_READONLY_NEIGHBOR_LIMIT = 40
+_READONLY_SEARCH_LIMIT = 10
+_READONLY_EXCERPT_CHARS = 80
+
+# read_node 返回的节点全字段（与 core.normalize_node 的输出字段一致）
+_NODE_QUERY_FIELDS = (
+    "id", "kind", "label", "content", "formula", "module_key", "manual",
+    "target_node_id", "target_label", "suggestion", "priority", "status", "read_only",
+)
+
 
 def _tool(name: str, description: str, properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
     return {
@@ -225,6 +241,28 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["recipe_id", "reason"],
     )
 
+    # ---- T93 只读查询工具（不产出图操作） ----
+    read_node = _tool(
+        "read_node",
+        "读取一个节点的完整内容（正文全文、公式、类型、状态）。修改节点前先用它看全文，避免只凭目录行猜测。",
+        {"node_id": _str_prop("要读取的节点 ID（也可以用节点标题精确匹配）")},
+        ["node_id"],
+    )
+
+    list_neighbors = _tool(
+        "list_neighbors",
+        "列出某节点的所有邻接节点与连线（方向、关系类型、连线标签）。",
+        {"node_id": _str_prop("要查看邻接的节点 ID（也可以用节点标题精确匹配）")},
+        ["node_id"],
+    )
+
+    search_nodes = _tool(
+        "search_nodes",
+        "按关键词在节点标签与正文中搜索节点，返回 id、标签、类型与正文摘录。",
+        {"keyword": _str_prop("搜索关键词（不区分大小写）")},
+        ["keyword"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -236,21 +274,30 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "create_recipe": create_recipe,
         "update_recipe": update_recipe,
         "delete_recipe": delete_recipe,
+        "read_node": read_node,
+        "list_neighbors": list_neighbors,
+        "search_nodes": search_nodes,
     }
 
 
 _TOOL_DEFS = _tool_definitions()
 
 # 每个阶段可用的工具（与 prompts 中的阶段语义一致）
+# T93：normal/expand/apply/preset 追加三只读查询工具（模型先查图再改）；
+# chat/evaluate 保持单轮（拍板）——不加只读名，解析路径与工具表同构不变。
 PHASE_TOOLS: Dict[str, List[str]] = {
-    "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
-    "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
+    "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    + list(READONLY_TOOL_NAMES),
+    "expand": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    + list(READONLY_TOOL_NAMES),
     "evaluate": ["create_eval_node"],
-    "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
+    "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    + list(READONLY_TOOL_NAMES),
     # 创造模式（P3）：配方三件套＋create_node（带 recipe_id＝「在画布上放一个试试」）
-    "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"],
-    # 答疑模式（三模式切换器）：与 normal 同一张工具表——「只说不改」由
-    # 红线 prompt + 服务端 ops 保险丝双层保证，解析路径保持同构
+    "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"]
+    + list(READONLY_TOOL_NAMES),
+    # 答疑模式（三模式切换器）：编辑工具表与 normal 相同，但不含只读查询
+    #（chat 保持单轮）——「只说不改」由红线 prompt + 服务端 ops 保险丝双层保证
     "chat": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
 }
 
@@ -445,3 +492,116 @@ def parse_tool_calls(tool_calls: Any) -> Tuple[List[Dict[str, Any]], List[Dict[s
             continue
         ops.append(op)
     return ops, errors
+
+
+# ---- T93 只读查询执行器（纯函数，便于直测） ----
+
+
+def _find_query_node(nodes: List[Dict[str, Any]], query: str) -> Optional[Dict[str, Any]]:
+    """节点定位：先按 id 精确匹配，再按 label 全等匹配（找不到返回 None）。"""
+    for node in nodes:
+        if _text(node.get("id")) == query:
+            return node
+    for node in nodes:
+        if _text(node.get("label")) == query:
+            return node
+    return None
+
+
+def _neighbor_entry(node_by_id: Dict[str, Dict[str, Any]], edge: Dict[str, Any],
+                    neighbor_id: str, direction: str) -> Dict[str, Any]:
+    neighbor = node_by_id.get(neighbor_id) or {}
+    return {
+        "neighbor_id": neighbor_id,
+        "neighbor_label": _text(neighbor.get("label")),
+        "neighbor_kind": _text(neighbor.get("kind")),
+        "direction": direction,
+        "relation": _text(edge.get("relation")),
+        "edge_label": _text(edge.get("label")),
+        "edge_key": _text(edge.get("key") or edge.get("edge_key")),
+    }
+
+
+def execute_readonly_tool(name: str, arguments: Any, snapshot: Any) -> Dict[str, Any]:
+    """Execute one read-only graph query against the snapshot.
+
+    snapshot 必须是归一化后的完整快照（未做焦点收缩/正文压缩的那一份）——
+    read_node 的价值就在于把目录行降级掉的正文全文取回来，调用方负责传对。
+
+    参数非法/缺必填时返回 {"error": ...} 而不是抛异常：这是回给模型的工具
+    结果，让模型看到错误后自行纠正，不打断查询循环。
+    """
+    if name not in READONLY_TOOL_NAMES:
+        return {"error": f"未知的只读工具：{name or '空'}"}
+    if not isinstance(arguments, dict):
+        return {"error": f"参数无效：{name} 的参数必须是 JSON 对象"}
+    data = snapshot if isinstance(snapshot, dict) else {}
+    nodes = [node for node in (data.get("nodes") or []) if isinstance(node, dict)]
+    edges = [edge for edge in (data.get("edges") or []) if isinstance(edge, dict)]
+
+    if name == "read_node":
+        query = _text(arguments.get("node_id") or arguments.get("id") or arguments.get("label"))
+        if not query:
+            return {"error": "参数无效：read_node 需要 node_id"}
+        node = _find_query_node(nodes, query)
+        if node is None:
+            return {"found": False, "error": f"未找到节点：{query}"}
+        return {"found": True, "node": {key: node.get(key) for key in _NODE_QUERY_FIELDS}}
+
+    if name == "list_neighbors":
+        query = _text(arguments.get("node_id") or arguments.get("id") or arguments.get("label"))
+        if not query:
+            return {"error": "参数无效：list_neighbors 需要 node_id"}
+        node = _find_query_node(nodes, query)
+        if node is None:
+            return {"found": False, "error": f"未找到节点：{query}"}
+        node_id = _text(node.get("id"))
+        node_by_id = {_text(item.get("id")): item for item in nodes}
+        neighbors: List[Dict[str, Any]] = []
+        for edge in edges:
+            from_id = _text(edge.get("from"))
+            to_id = _text(edge.get("to"))
+            if from_id == node_id:
+                neighbors.append(_neighbor_entry(node_by_id, edge, to_id, "out"))
+            elif to_id == node_id:
+                neighbors.append(_neighbor_entry(node_by_id, edge, from_id, "in"))
+        truncated = len(neighbors) > _READONLY_NEIGHBOR_LIMIT
+        return {
+            "found": True,
+            "node_id": node_id,
+            "node_label": _text(node.get("label")),
+            "neighbors": neighbors[:_READONLY_NEIGHBOR_LIMIT],
+            "count": min(len(neighbors), _READONLY_NEIGHBOR_LIMIT),
+            "total": len(neighbors),
+            "truncated": truncated,
+        }
+
+    # search_nodes：label 命中优先，其次 content 命中；保持节点原顺序
+    keyword = _text(arguments.get("keyword") or arguments.get("query") or arguments.get("text"))
+    if not keyword:
+        return {"error": "参数无效：search_nodes 需要 keyword"}
+    needle = keyword.lower()
+    label_hits: List[Dict[str, Any]] = []
+    content_hits: List[Dict[str, Any]] = []
+    for node in nodes:
+        if needle in _text(node.get("label")).lower():
+            label_hits.append(node)
+        elif needle in _text(node.get("content")).lower():
+            content_hits.append(node)
+    ranked = label_hits + content_hits
+    truncated = len(ranked) > _READONLY_SEARCH_LIMIT
+    matches = [
+        {
+            "id": _text(node.get("id")),
+            "label": _text(node.get("label")),
+            "kind": _text(node.get("kind")),
+            "excerpt": _text(node.get("content"))[:_READONLY_EXCERPT_CHARS],
+        }
+        for node in ranked[:_READONLY_SEARCH_LIMIT]
+    ]
+    return {
+        "matches": matches,
+        "count": len(matches),
+        "total": len(ranked),
+        "truncated": truncated,
+    }

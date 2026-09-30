@@ -124,8 +124,13 @@ class ParseToolCallsConversionsTest(unittest.TestCase):
         self.assertEqual(ops[0]["edge_key"], "A:out-0->B:in-0")
 
     def test_tool_to_op_covers_all_phase_tools(self):
+        # 只读查询工具（T93）不产出图操作，不进 TOOL_TO_OP——混进编辑批次时由
+        # parse_tool_calls 的「不支持的工具」错误软重试兜底
+        from harness.tools import READONLY_TOOL_NAMES
         for names in PHASE_TOOLS.values():
             for name in names:
+                if name in READONLY_TOOL_NAMES:
+                    continue
                 self.assertIn(name, TOOL_TO_OP)
 
 

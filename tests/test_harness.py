@@ -273,16 +273,15 @@ class HarnessCoreTest(unittest.TestCase):
 
 class HarnessToolsTest(unittest.TestCase):
     def test_build_tools_per_phase(self):
-        from harness.tools import PHASE_TOOLS, build_tools
-        self.assertEqual(
-            set(PHASE_TOOLS["normal"]),
-            {"create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"},
-        )
+        from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, build_tools
+        edit_tools = {"create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"}
+        # T93：normal/expand/apply/preset 追加三只读查询工具（先查图再改）
+        self.assertEqual(set(PHASE_TOOLS["normal"]), edit_tools | set(READONLY_TOOL_NAMES))
         self.assertEqual(PHASE_TOOLS["evaluate"], ["create_eval_node"])
         self.assertNotIn("create_node", PHASE_TOOLS["apply"])
-        self.assertEqual(len(build_tools("normal")), 6)
+        self.assertEqual(len(build_tools("normal")), 9)
         self.assertEqual(len(build_tools("evaluate")), 1)
-        self.assertEqual(len(build_tools("apply")), 5)
+        self.assertEqual(len(build_tools("apply")), 8)
         self.assertEqual(build_tools("resolve"), [])
 
     def test_parse_tool_calls_basic(self):
@@ -2718,10 +2717,10 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         self.assertNotEqual(_detect_phase("auto", "帮我做一个考前速记配方", {}), "preset")
 
     def test_phase_tools_preset_set(self):
-        from harness.tools import PHASE_TOOLS, TOOL_TO_OP, build_tools, _args_to_op
+        from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, TOOL_TO_OP, build_tools, _args_to_op
         self.assertEqual(
             set(PHASE_TOOLS["preset"]),
-            {"create_recipe", "update_recipe", "delete_recipe", "create_node"},
+            {"create_recipe", "update_recipe", "delete_recipe", "create_node"} | set(READONLY_TOOL_NAMES),
         )
         tools = build_tools("preset")
         names = {t["function"]["name"] for t in tools}
@@ -2818,8 +2817,12 @@ class HarnessChatPhaseTest(unittest.TestCase):
         self.assertEqual(_detect_phase("expand", "顺便评价一下这个图", {"nodes": []}), "expand")
 
     def test_phase_tools_chat_same_as_normal(self):
-        from harness.tools import PHASE_TOOLS, build_tools
-        self.assertEqual(PHASE_TOOLS["chat"], PHASE_TOOLS["normal"])
+        from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, build_tools
+        # T93：chat 保持单轮——编辑工具表与 normal 相同，但不含只读查询工具
+        self.assertEqual(
+            PHASE_TOOLS["chat"],
+            [name for name in PHASE_TOOLS["normal"] if name not in READONLY_TOOL_NAMES],
+        )
         self.assertEqual({t["function"]["name"] for t in build_tools("chat")}, set(PHASE_TOOLS["chat"]))
 
     def test_review_graph_chat_readonly_redline_and_fuse(self):

@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .core import build_next_snapshot, normalize_snapshot
 from .events import append_event, new_event_id, read_events, valid_session_id
-from .review import HarnessError, resolve_focus, review_graph
+from .review import HarnessError, _sanitize_fallback_models, resolve_focus, review_graph
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,8 @@ def _log_review_event(payload: dict, result: dict, t0: float, endpoint: str, jou
         "warnings_count": len(result.get("warnings") or []),
         "model_calls": int(result.get("model_calls") or 0),
         "latency_ms": round((time.time() - t0) * 1000),
+        # T95：本次成功是否走了备用模型（事件体不整体序列化 result，显式带上）
+        "fallback_used": result.get("fallback_used") or None,
         "roundtrips": journal or [],
     })
     return evt_id
@@ -186,6 +188,13 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
         "all_previous_ops": payload.get("all_previous_ops"),
         "initial_snapshot": payload.get("initial_snapshot"),
         "journal": journal if journal is not None else [],
+        # T97 推理档位：前端可显式覆盖相位默认（evaluate/preset/apply=high、
+        # chat=low），不传/空串＝按相位默认（review_graph 内解析）
+        "thinking": str(payload.get("thinking") or ""),
+        # T95 上游容错：用户开关开启时前端才随 payload 带上 fallback_models
+        # （≤2 个 {provider, api_key, model, base_url}）；服务端不信形状，
+        # 统一经 _sanitize_fallback_models 清洗，None＝不启用备用链
+        "fallback_models": _sanitize_fallback_models(payload.get("fallback_models")),
     }
 
 

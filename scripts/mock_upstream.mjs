@@ -15,11 +15,21 @@
 //     否则产品走兜底端口、question 为空（连带 T56）；
 //   ③ 建议模块要靠分析文本里的「建议模块：物理视角、数学视角、苏格拉底追问」一行，
 //     缺了默认只长 physics/math。
+// 真机通道剧本（2026-09-30 追加，供 verify_phi_sessions 通道⑩⑪）：
+//   ④ T93 只读工具回灌：tools 含 read_node 且指令含「细读」时，第一次（messages 里
+//      还没有 role:"tool"）只回 read_node 的 tool_calls；回灌后的第二次回 update_node
+//      编辑调用——这样一轮对话里必然出现「查询 → 回灌 → 编辑」多步循环；
+//   ⑤ T95 429 退避重试：「限流演练」关键词第一次必 429（Retry-After: 0），第二次放行；
+//      GET /__stats 返回全局计数（真机脚本核对「同一对话真的发了 ≥2 次请求」）。
 import http from 'node:http';
 
 const PORT = Number(process.env.PORT || 5061);
 let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
+
+// 剧本计数器（长驻进程按全局；verify 脚本按增量读 /__stats）
+const stats = { chatRequests: 0, retryScripts: {} };
+const rateLimitSeen = {};
 
 // 从请求 messages 里抽取"要看什么"的判据文本
 function judgeOf(body) {
@@ -46,6 +56,23 @@ function replyOf(body) {
   const j = judgeOf(body);
   const t = j.userText + '\n' + j.systemText;
   const sfx = '（第 ' + (seq + 1) + ' 次）';
+  const text = (s) => ({ content: s });
+  // —— T95 429 退避重试剧本（真机通道⑪）：同关键词第一次必 429、第二次放行 ——
+  // 必须排在只读回灌分支之前：429 剧本的指令若与画布快照里出现的关键词（如节点
+  // label 带「细读」）撞车，优先走重试剧本，否则会被 read_node 分支截胡。
+  // _status 由请求处理端识别并直接以此状态码回包（响应头带 Retry-After: 0，
+  // 后端 _call_model 读到后免等待立即重试）；第二次走正常回包，重试对用户无感。
+  if (t.includes('限流演练')) {
+    const seen = (rateLimitSeen['限流演练'] = (rateLimitSeen['限流演练'] || 0) + 1);
+    if (seen === 1) {
+      return {
+        _status: 429,
+        _headers: { 'content-type': 'application/json', 'retry-after': '0' },
+        _body: { error: { message: 'mock 限流演练：第一次必 429（Retry-After: 0），第二次放行', type: 'rate_limit_exceeded' } },
+      };
+    }
+    return text('限流演练第二次已放行：mock 正常回包 ' + sfx + '，用于验证 429 自动重试无感。');
+  }
   // —— 创造模式（P3 battery）：按指令关键词回配方 tool_calls ——
   // 结构体形式：由请求处理端按 stream 与否输出 SSE 分帧或整包 JSON（harness 的
   // 模型调用是非流式的——只回 SSE 会让后端 JSON 解析失败，2026-09-29 踩过）
@@ -53,6 +80,35 @@ function replyOf(body) {
     content: '好的，这是按你的要求准备的配方操作 ' + '（第 ' + (seq + 1) + ' 次）',
     tool_calls: [{ id: 'call_' + nextId(), type: 'function', function: { name, arguments: JSON.stringify(args) } }],
   });
+  // —— T93 只读查询回灌（Φ 多步循环真机通道⑩）：先查图，回灌后再出编辑 ops ——
+  // 第一次（messages 里还没有 role:"tool"）回 read_node 查询；后端执行查询并以
+  // role:"tool" 回灌后的第二次回 update_node 编辑调用（reason 必填，照工具 schema）。
+  if (j.tools.includes('read_node') && t.includes('细读')) {
+    const fedBack = (Array.isArray(body.messages) ? body.messages : []).some(m => m && m.role === 'tool');
+    if (!fedBack) {
+      return {
+        content: '',
+        tool_calls: [{
+          id: 'call_read_1', type: 'function',
+          function: { name: 'read_node', arguments: JSON.stringify({ node_id: 'phi_node_1' }) },
+        }],
+      };
+    }
+    return {
+      content: '已细读 phi_node_1 的原文 ' + sfx,
+      tool_calls: [{
+        id: 'call_upd_' + nextId(), type: 'function',
+        function: {
+          name: 'update_node',
+          arguments: JSON.stringify({
+            node_id: 'phi_node_1',
+            patch: { content: '细读后的准确表述：' + sfx },
+            reason: '依据 read_node 读到的原文修正表述（mock 多步循环）',
+          }),
+        },
+      }],
+    };
+  }
   if (j.tools.includes('create_recipe') && t.includes('三级追问')) {
     return toolCall('create_recipe', {
       reason: '用户要一个三级追问节点',
@@ -105,7 +161,6 @@ function replyOf(body) {
     return toolCall('delete_recipe', { recipe_id: 'recipe-b1', reason: '用户明确要求删除' });
   }
   // —— 主链路（verify_send_channels）：问题概要 / 模块 XML / 苏格拉底编号行 ——
-  const text = (s) => ({ content: s });
   if (t.includes('只输出简洁的问题概要')) {
     return text('### 问题概要 ' + sfx + '\n核心概念：简谐运动；数学结构：二阶常系数线性微分方程；关系：回复力线性化导出振动方程。');
   }
@@ -137,13 +192,33 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-1', object: 'model' }] }));
     return;
   }
+  if (req.method === 'GET' && req.url === '/__stats') {
+    // 真机脚本核对观测点（通道⑪）：chat_requests 总次数 + 各剧本关键词的
+    // attempts（本关键词收到的 /chat/completions 次数）/ rejected_429（真的 429 了几次）
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts }));
+    return;
+  }
   if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {
     let raw = '';
     req.on('data', chunk => { raw += chunk; });
     req.on('end', () => {
       let body = {};
       try { body = JSON.parse(raw); } catch (e) {}
+      stats.chatRequests += 1;
+      const j = judgeOf(body);
+      const rlEntry = (j.userText.includes('限流演练'))
+        ? (stats.retryScripts['限流演练'] = stats.retryScripts['限流演练'] || { attempts: 0, rejected_429: 0 })
+        : null;
+      if (rlEntry) rlEntry.attempts += 1;
       const msg = replyOf(body);
+      if (msg._status) {
+        // 剧本要求的非 200 响应（429 等）：按指定状态码与响应头整包回
+        if (rlEntry && msg._status === 429) rlEntry.rejected_429 += 1;
+        res.writeHead(msg._status, msg._headers || { 'content-type': 'application/json' });
+        res.end(JSON.stringify(msg._body || { error: 'mock scripted status' }));
+        return;
+      }
       if (body.stream) {
         // SSE：content 走 delta 增量；tool_calls 按 index 两帧（name / arguments）
         let frames = [];
