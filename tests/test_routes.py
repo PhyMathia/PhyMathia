@@ -1011,6 +1011,29 @@ class HarnessStreamReviewTest(RouteTestBase):
         self.assertEqual(result["clarify"]["question"], "做什么用？")
         self.assertGreaterEqual(result.get("model_calls", 0), 1)
 
+    def test_empty_snapshot_chat_passes_defense(self):
+        # 空快照防御放行答疑模式（2026-09-30 三模式切换器）：问问题不需要图上有内容
+        from harness import api as harness_api
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False, **kwargs):
+            return {"content": "这是一条答疑模式的纯文字回答。", "tool_calls": []}
+
+        body = self._base_body(
+            stream=False,
+            mode="tools",
+            phase="chat",
+            snapshot={"version": 1, "nodes": [], "edges": []},
+        )
+        with mock.patch.object(harness_api, "_LOG_DIR", Path(self._td.name)), \
+             mock.patch.object(harness_api, "_USAGE_LOG", Path(self._td.name) / "usage.jsonl"), \
+             mock.patch.object(review_mod, "_call_model", new=fake_call):
+            resp = self.client.post("/api/harness/graph/review", json=body)
+        self.assertEqual(resp.status_code, 200)
+        result = resp.json()
+        self.assertIn("纯文字回答", result["summary"])
+        self.assertEqual(result["operations"], [])
+
     def test_empty_snapshot_without_preset_still_blocked(self):
         # 非 preset 相位空快照仍走防御：省一次注定无效的模型调用（存量行为护栏）
         from harness import api as harness_api

@@ -449,9 +449,10 @@ async function main() {
         ok('⑥ 进阶支线：已发通（learn 端口「' + port.meta.label + '」→ 预填草稿 → 发送提问），流式收到 ' + st.len + ' 字');
       } catch (e) { bad('⑥ 进阶支线', e); }
 
-      // ===== 7. Φ 创造模式（P3 新通道：preset 相位 → create_recipe）=====
-      // 真实入口：打开 Φ 面板 → 点「✦ 创造模式」→ 填指令 → 发送。后端 preset 相位
-      // 返回 operations（mock 上游回 create_recipe tool_calls），预览面板出现配方行即发通。
+      // ===== 7. Φ 创造模式（preset 相位 → create_recipe）=====
+      // 真实入口：打开 Φ 面板 → 模式按钮开菜单 → 点「✦ 创造」→ 填指令 → 发送。
+      // 后端 preset 相位返回 operations（mock 上游回 create_recipe tool_calls），
+      // 预览面板出现配方行即发通。
       try {
         await waitIdle('⑦ 创造模式');
         const preset = await page.evaluate(async () => {
@@ -459,9 +460,14 @@ async function main() {
           const panel = document.querySelector('.graph-harness-window');
           const panelOpen = panel && !panel.hidden;
           if (!panelOpen && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
-          const btn = document.getElementById('graphHarnessPresetBtn');
-          if (!btn) return { err: '创造模式按钮不在面板里' };
-          if (!btn.classList.contains('on')) btn.click();
+          const modeBtn = document.getElementById('graphHarnessModeBtn');
+          if (!modeBtn) return { err: '模式按钮不在面板里' };
+          modeBtn.click();
+          const item = [...document.querySelectorAll('#graphHarnessModeMenu .graph-harness-mode-item')]
+            .find(el => /创造/.test(el.textContent));
+          if (!item) return { err: '模式菜单里没有创造项' };
+          item.click();
+          if (window._harnessMode && window._harnessMode() !== 'preset') return { err: '点菜单项后未进入创造模式' };
           const input = document.getElementById('graphHarnessInstruction');
           input.value = '帮我造一个「三级追问」节点：三条编号行，级别标记 [基础][进阶][拓展]，出口从这三行解析，兜底从正文截问题文本。';
           document.getElementById('graphHarnessSendBtn').click();
@@ -471,21 +477,66 @@ async function main() {
             const opRows = resultBox ? resultBox.querySelectorAll('.graph-harness-op') : [];
             if (opRows.length) {
               const text = [...opRows].map(el => el.textContent).join(' ');
-              // 收尾：退出创造模式，别把开关状态留给下一轮
-              if (btn.classList.contains('on')) btn.click();
+              // 收尾：切回编辑模式，别把锁定状态留给下一轮
+              if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
               return { ok: true, ops: opRows.length, hasRecipe: /配方/.test(text), text: text.slice(0, 80) };
             }
             await new Promise(r => setTimeout(r, 1500));
           }
-          if (btn.classList.contains('on')) btn.click();
+          if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
           return { err: '90 秒内没有收到创造模式操作清单' };
         });
         if (preset.err) throw new Error(preset.err);
         if (!preset.hasRecipe) throw new Error('返回了操作但不像配方操作：' + preset.text);
-        ok('⑦ 创造模式：已发通（preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
+        ok('⑦ 创造模式：已发通（模式菜单进入 preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
       } catch (e) { bad('⑦ 创造模式', e); }
+
+      // ===== 8. Φ 答疑模式（chat 相位：只读不改图）=====
+      // 真实入口：模式菜单点「答疑」→ 填问题 → 发送。答疑走纯文字回答路径
+      // （mock 上游兜底中文一句），回答气泡出现且画布节点数不变＝发通且确实没动图。
+      try {
+        await waitIdle('⑧ 答疑模式');
+        const chat = await page.evaluate(async () => {
+          const countNodes = () => {
+            try { return Object.keys(graphView.nodeById).length; } catch (e) { return -1; }
+          };
+          const nodeCountBefore = countNodes();
+          if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          const panel = document.querySelector('.graph-harness-window');
+          if (!panel || panel.hidden) { if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet(); }
+          const modeBtn = document.getElementById('graphHarnessModeBtn');
+          if (!modeBtn) return { err: '模式按钮不在面板里' };
+          modeBtn.click();
+          const item = [...document.querySelectorAll('#graphHarnessModeMenu .graph-harness-mode-item')]
+            .find(el => /答疑/.test(el.textContent));
+          if (!item) return { err: '模式菜单里没有答疑项' };
+          item.click();
+          if (window._harnessMode && window._harnessMode() !== 'chat') return { err: '点菜单项后未进入答疑模式' };
+          const input = document.getElementById('graphHarnessInstruction');
+          input.value = '用一句话解释一下什么是阻尼振动？';
+          document.getElementById('graphHarnessSendBtn').click();
+          const t0 = Date.now();
+          while (Date.now() - t0 < 90000) {
+            const bubbles = document.querySelectorAll('#graphHarnessChat .graph-harness-message-assistant');
+            const last = bubbles.length ? bubbles[bubbles.length - 1] : null;
+            if (last && /mock 上游回复|阻尼/.test(last.textContent || '')) {
+              const nodeCountAfter = countNodes();
+              if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
+              return { ok: true, text: (last.textContent || '').slice(0, 60), nodeCountBefore, nodeCountAfter };
+            }
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
+          return { err: '90 秒内没有收到答疑回答气泡' };
+        });
+        if (chat.err) throw new Error(chat.err);
+        if (chat.nodeCountAfter !== chat.nodeCountBefore) {
+          throw new Error('答疑模式动了图（节点数 ' + chat.nodeCountBefore + '→' + chat.nodeCountAfter + '）');
+        }
+        ok('⑧ 答疑模式：已发通（chat 相位纯文字回答「' + chat.text + '…」，画布未被改动）');
+      } catch (e) { bad('⑧ 答疑模式', e); }
     } else {
-      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑦ 创造模式'].forEach(n =>
+      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑦ 创造模式', '⑧ 答疑模式'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));
     }
 

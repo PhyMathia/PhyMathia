@@ -485,22 +485,35 @@ check('draftAskAi 空问题提示（T56②）：兜底端口点「直接问AI」
 // ===== 节点配方 P2 用例结束 =====
 // ===== 节点配方 P3：创造模式（Φ 面板 / 配方 op 应用 / 相位直通）=====
 
-check('创造模式（P3）：面板按钮＋相位锁定＋preset 旁路', () => {
+check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随', () => {
   const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
-  if (!harnessSrc.includes('graphHarnessPresetBtn')) throw new Error('✦ 创造模式按钮未进面板');
-  if (!harnessSrc.includes('window._harnessPresetActive')) throw new Error('preset 状态未暴露给发送链');
+  if (!harnessSrc.includes('graphHarnessModeBtn')) throw new Error('模式按钮未进面板');
+  if (!harnessSrc.includes('window._harnessMode')) throw new Error('模式状态未暴露给发送链');
   if (!harnessSrc.includes('snapshot.user_recipes')) throw new Error('配方清单未随快照注入（结构化通道）');
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes("phase = 'preset'")) throw new Error('发送链未按 preset 锁定相位');
+  if (!runSrc.includes('phase = lockedMode')) throw new Error('发送链未按锁定模式改写相位');
   if (!runSrc.includes('harnessPhase !== \'preset\' && !harnessSingleEvalId')) throw new Error('preset 未旁路目标解析');
   if (!runSrc.includes("harnessPhase !== 'preset'")) throw new Error('preset 未旁路空画布拦截');
   if (!runSrc.includes('create_recipe')) throw new Error('op 人话描述未覆盖配方三件套');
-  // 沙箱行为断言：_harnessPresetActive 默认关、toggle 后开
-  if (sandbox.window._harnessPresetActive() !== false) throw new Error('preset 默认应为关闭');
-  sandbox.window.toggleHarnessPresetMode();
-  if (sandbox.window._harnessPresetActive() !== true) throw new Error('toggle 后应开启');
-  sandbox.window.toggleHarnessPresetMode();
-  if (sandbox.window._harnessPresetActive() !== false) throw new Error('再 toggle 应回关闭');
+  // 沙箱行为断言：默认编辑；切答疑/创造后状态跟随；切回编辑恢复
+  if (sandbox.window._harnessMode() !== 'edit') throw new Error('默认模式应为编辑');
+  sandbox.window.chooseHarnessMode('chat');
+  if (sandbox.window._harnessMode() !== 'chat') throw new Error('切答疑后应为 chat');
+  sandbox.window.chooseHarnessMode('preset');
+  if (sandbox.window._harnessMode() !== 'preset') throw new Error('切创造后应为 preset');
+  sandbox.window.chooseHarnessMode('edit');
+  if (sandbox.window._harnessMode() !== 'edit') throw new Error('切回后应为 edit');
+  return true;
+});
+
+check('寒暄拦截退役＋答疑纯问答语义合成', () => {
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  if (runSrc.includes('_isHarnessCasualInstruction') || runSrc.includes('_harnessCasualReply')) {
+    throw new Error('寒暄拦截未删净（isCasual 事故根源，2026-09-30 拍板删除）');
+  }
+  if (!runSrc.includes("harnessPhase === 'chat' || _isHarnessPureQuestion(instruction)")) {
+    throw new Error('答疑模式未合成纯问答语义（跳过焦点解析/空画布放行/pure_chat）');
+  }
   return true;
 });
 
@@ -541,10 +554,10 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
 
 // ===== Φ 基础修复（2026-09-30）：相位转换放宽 / 面板内会话切换器 / T51 让位正解 =====
 
-check('Φ 相位转换放宽：创造模式锁定时旧相位不得绕过（apply 例外）', () => {
+check('Φ 相位转换放宽：三模式锁定时旧相位不得绕过（apply 例外）', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes("if (presetMode && phase !== 'apply') phase = 'preset';")) {
-    throw new Error('preset 转换未放宽——重试/重发路径仍可携带 expand/evaluate 绕过创造模式');
+  if (!runSrc.includes("if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;")) {
+    throw new Error('锁定模式未泛化到 chat——重试/重发路径仍可携带 expand/evaluate 绕过');
   }
   return true;
 });

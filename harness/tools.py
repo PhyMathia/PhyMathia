@@ -249,6 +249,9 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
     # 创造模式（P3）：配方三件套＋create_node（带 recipe_id＝「在画布上放一个试试」）
     "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"],
+    # 答疑模式（三模式切换器）：与 normal 同一张工具表——「只说不改」由
+    # 红线 prompt + 服务端 ops 保险丝双层保证，解析路径保持同构
+    "chat": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
 }
 
 
