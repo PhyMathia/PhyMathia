@@ -3,9 +3,9 @@
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import llm_common  # 项目根共享层：供应商表 / 密钥兜底 / token 估算的唯一事实源
+from llm_common import validate_model_target  # noqa: F401  下沉到 llm_common，harness 也要用同口径
 
 # ====== .env 加载（无第三方依赖）======
 def _load_env_file(path: Path) -> None:
@@ -79,16 +79,6 @@ AI_PROVIDERS = {
 OPENCODE_DEFAULT_API_KEY = llm_common.OPENCODE_DEFAULT_API_KEY
 
 
-def _official_host(provider: str) -> str:
-    info = AI_PROVIDERS.get(provider)
-    if info:
-        return urlparse(info["base_url"]).netloc
-    # opencode-go 的 env 兜底 key 对应 opencode 官方域名
-    if provider == "opencode-go":
-        return urlparse(AI_PROVIDERS["opencode"]["base_url"]).netloc
-    return ""
-
-
 def resolve_api_key(provider: str, api_key: str) -> tuple:
     """解析 API key 的 .env 兜底，返回 (key, env_key_used)。
 
@@ -104,41 +94,9 @@ def resolve_api_key(provider: str, api_key: str) -> tuple:
     return llm_common.resolve_api_key(provider, api_key)
 
 
-def validate_model_target(provider: str, base_url: str, env_key_used: bool) -> str:
-    """校验 AI 代理目标，返回最终 base_url；非法目标抛 ValueError。
-
-    - base_url 必须是合法 http(s) URL（本机模型允许 http://127.0.0.1|localhost）；
-    - 使用 .env 兜底密钥时，目标域名必须是该 provider 的官方域名，
-      防止「请求体指定 provider=deepseek + 任意 base_url」把 .env 真实密钥外发。
-    """
-    if not base_url:
-        info = AI_PROVIDERS.get(provider)
-        if not info:
-            raise ValueError(f"Unknown provider '{provider}' and no base_url provided")
-        base_url = info["base_url"]
-        return base_url
-    try:
-        parsed = urlparse(base_url)
-    except Exception:
-        raise ValueError("Invalid base_url")
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("Invalid base_url: must be a valid http(s) URL")
-    host = parsed.netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
-    is_local = parsed.scheme == "http" and (
-        host in ("127.0.0.1", "localhost", "::1", "localhost.localdomain")
-        or host.startswith("192.168.")
-        or host.startswith("10.")
-        or host.startswith("169.254.")
-        # 172.16.0.0 – 172.31.255.255 私网段
-        or (host.startswith("172.") and host.split(".")[1].isdigit() and 16 <= int(host.split(".")[1]) <= 31)
-    )
-    if parsed.scheme != "https" and not is_local:
-        raise ValueError("Invalid base_url: remote endpoints must use https")
-    if env_key_used:
-        official = _official_host(provider)
-        if official and host != official:
-            raise ValueError("Env fallback API key can only be sent to the provider's official endpoint")
-    return base_url
+# validate_model_target / _official_host 已下沉到 llm_common（唯一实现），
+# 此处 import 保持原名可导出，main/documents/knowledge 调用零改动；
+# 下沉原因：harness 导不进 src.server.*（src 不是包），但必须同口径校验（T98）。
 
 __all__ = [
     "BASE_DIR", "ROOT_DIR", "DATA_DIR", "MESSAGES_DIR",

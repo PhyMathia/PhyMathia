@@ -815,7 +815,7 @@ let harnessLastAppliedReport = null;
     return labels[kind] || kind || '节点';
   }
 
-  function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId, continentData) {
+  function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId, continentData, opts) {
     const state = _harnessGraphState() || {};
     const rawCanvasCount = _graphNodes().length;
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
@@ -844,9 +844,13 @@ let harnessLastAppliedReport = null;
 
     // P2：大图且有焦点时，非 1-2 跳邻域节点降级为目录行（仅身份字段），
     // 模型仍可引用其 id/label，但不携带正文/公式以控制快照 token。
-    const largeGraph = nodes.length > HARNESS_NEIGHBORHOOD_THRESHOLD;
+    // T94（2026-09-30）：调用方可用 opts.degrade 强制走这条收缩（即使不到 40 节点，
+    // 用于 est_tokens 超预算时的自动降级重算）——降级版邻域半径收到 1 跳，比平时更紧；
+    // focusSet 为空时不收缩（没有焦点就无从收缩，保持原样返回）。
+    const degrade = !!(opts && opts.degrade);
+    const largeGraph = nodes.length > HARNESS_NEIGHBORHOOD_THRESHOLD || degrade;
     const neighborSet = largeGraph && focusSet.size
-      ? new Set(_neighborhoodNodeIds(nodes, _graphEdges(), Array.from(focusSet), 2))
+      ? new Set(_neighborhoodNodeIds(nodes, _graphEdges(), Array.from(focusSet), degrade ? 1 : 2))
       : null;
 
     const snapshot = {
@@ -1639,8 +1643,67 @@ let harnessLastAppliedReport = null;
       + (item.id === harnessMode ? '✓ ' : '') + _escapeHtml(item.label)
       + '<span class="graph-harness-mode-hint">' + _escapeHtml(item.hint) + '</span>'
       + '</button>'
-    ).join('');
+    ).join('')
+      // T97/T95 前端半边：模式项之下的两个用户级开关。行内 onclick 必带 event——
+      // 两个 handler 都 stopPropagation，点击只换文案不收菜单（与模式项「选中即收起」相反）。
+      + '<div class="graph-harness-mode-sep"></div>'
+      + '<button type="button" id="graphHarnessThinkingBtn" class="graph-harness-mode-item graph-harness-mode-toggle" onclick="cycleHarnessThinking(event)">'
+      + HARNESS_THINKING_TEXT() + '</button>'
+      + '<button type="button" id="graphHarnessFallbackBtn" class="graph-harness-mode-item graph-harness-mode-toggle" onclick="toggleHarnessFallback(event)">'
+      + HARNESS_FALLBACK_TEXT() + '</button>';
     menu.hidden = false;
+  }
+
+  // ===== T97 深度思考档位 / T95 失败换备用模型开关（2026-09-30）=====
+  // 两行都活在模式菜单底部：点击只更新自身文案＋toast（不收菜单），状态落 localStorage。
+  // 档位是 ''/low/high/max 四档循环（显示：自动/浅/深/最深），参数映射同模型条目上的
+  // thinking 字段，由后端按供应商族做；备用模型开关默认关（兜底是用户开关不是默认）。
+  const HARNESS_THINKING_LEVELS = ['', 'low', 'high', 'max'];
+  const HARNESS_THINKING_LABELS = { '': '自动', low: '浅', high: '深', max: '最深' };
+
+  function _harnessThinkingLevel() {
+    try {
+      const value = String(localStorage.getItem(STORAGE_KEY_HARNESS_THINKING) || '');
+      return HARNESS_THINKING_LEVELS.includes(value) ? value : '';
+    } catch (e) { return ''; }
+  }
+
+  function HARNESS_THINKING_TEXT() {
+    return '🧠 深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '自动');
+  }
+
+  // 自动 → 浅 → 深 → 最深 → 自动；返回新档位（纯逻辑，smoke 直接调）
+  function _cycleHarnessThinking() {
+    const current = _harnessThinkingLevel();
+    const next = HARNESS_THINKING_LEVELS[(HARNESS_THINKING_LEVELS.indexOf(current) + 1) % HARNESS_THINKING_LEVELS.length];
+    if (typeof safeLocalStorageSet === 'function') safeLocalStorageSet(STORAGE_KEY_HARNESS_THINKING, next);
+    const btn = document.getElementById('graphHarnessThinkingBtn');
+    if (btn) btn.textContent = HARNESS_THINKING_TEXT();
+    if (typeof toastMsg === 'function') toastMsg('深度思考：' + HARNESS_THINKING_LABELS[next]);
+    return next;
+  }
+
+  function cycleHarnessThinking(event) {
+    if (event) event.stopPropagation();
+    return _cycleHarnessThinking();
+  }
+
+  function _harnessFallbackEnabled() {
+    try { return localStorage.getItem(STORAGE_KEY_HARNESS_FALLBACK) === '1'; } catch (e) { return false; }
+  }
+
+  function HARNESS_FALLBACK_TEXT() {
+    return '🔁 失败自动换备用模型：' + (_harnessFallbackEnabled() ? '开' : '关');
+  }
+
+  function toggleHarnessFallback(event) {
+    if (event) event.stopPropagation();
+    const next = !_harnessFallbackEnabled();
+    if (typeof safeLocalStorageSet === 'function') safeLocalStorageSet(STORAGE_KEY_HARNESS_FALLBACK, next ? '1' : '0');
+    const btn = document.getElementById('graphHarnessFallbackBtn');
+    if (btn) btn.textContent = HARNESS_FALLBACK_TEXT();
+    if (typeof toastMsg === 'function') toastMsg('失败自动换备用模型：' + (next ? '开' : '关'));
+    return next;
   }
 
   function chooseHarnessMode(id) {
@@ -1764,5 +1827,11 @@ let harnessLastAppliedReport = null;
   window.toggleHarnessGuide = toggleHarnessGuide;
   window.toggleHarnessModeMenu = toggleHarnessModeMenu;
   window.chooseHarnessMode = chooseHarnessMode;
+  // T97/T95 前端半边：模式菜单底部两个开关的 handler 与纯函数（行内 onclick 与 smoke 用）
+  window.cycleHarnessThinking = cycleHarnessThinking;
+  window.toggleHarnessFallback = toggleHarnessFallback;
+  window._harnessThinkingLevel = _harnessThinkingLevel;
+  window._cycleHarnessThinking = _cycleHarnessThinking;
+  window._harnessFallbackEnabled = _harnessFallbackEnabled;
   window._harnessMode = () => harnessMode;
   window.getGraphPetVisible = () => !!(harnessPet && harnessPet.style.display !== 'none');

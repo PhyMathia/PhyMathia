@@ -12,7 +12,8 @@
   }
 
   function _buildStructuredHarnessHistory() {
-    return (Array.isArray(harnessHistory) ? harnessHistory : []).slice(-20).map(entry => {
+    // T94：条数从 20 放宽到 60（后端做统一预算与摘要压缩，前端多发条数）；单条截断不动。
+    return (Array.isArray(harnessHistory) ? harnessHistory : []).slice(-60).map(entry => {
       if (entry.role === 'user') {
         return { role: 'user', instruction: String(entry.instruction || entry.content || '').slice(0, 400) };
       }
@@ -66,6 +67,43 @@
     return out;
   }
 
+  // T95 前端半边：失败自动换备用模型（用户开关，默认关）。从已配置模型列表里取
+  // 当前模型之外的前 2 个有模型名的条目；归一化直接复用 _harnessModelForRequest
+  // （hy3 端点纠正等口径与主模型完全一致），只挑出后端认的四个字段。
+  function _harnessFallbackModels(currentModel) {
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem('phymathia_user_models') || '[]'); } catch (e) { list = []; }
+    if (!Array.isArray(list)) return [];
+    const currentId = currentModel && currentModel.id ? String(currentModel.id) : '';
+    const currentName = String((currentModel && currentModel.model) || '');
+    const out = [];
+    for (const item of list) {
+      if (!item || !item.model) continue;
+      // 排除当前模型：优先按 id（模型槽位取的就是条目 id）；无 id 的旧条目按模型名兜
+      if (currentId && String(item.id || '') === currentId) continue;
+      if (!currentId && currentName && String(item.model) === currentName) continue;
+      const normalized = _harnessModelForRequest(item);
+      if (!normalized || !normalized.model) continue;
+      out.push({
+        provider: normalized.provider || '',
+        api_key: normalized.api_key || '',
+        model: normalized.model || '',
+        base_url: normalized.base_url || '',
+      });
+      if (out.length >= 2) break;
+    }
+    return out;
+  }
+
+  // T82 收敛（前端半边）：相位识别权归后端 _detect_phase。payload.phase 只直通
+  // 「模式锁」（chat/preset，三模式切换器显式选定）与「显式入口」（apply/expand，
+  // 应用评价节点与进阶支线按钮）——前端本地猜出的 normal/evaluate 一律降级为
+  // normal（即后端 auto 口径），由后端按指令与快照重判，避免两份关键词表互相漂。
+  function _harnessPayloadPhase(harnessPhase) {
+    const phase = String(harnessPhase || '');
+    return ['chat', 'preset', 'apply', 'expand'].includes(phase) ? phase : 'normal';
+  }
+
   // 把上游/后端报错翻译成用户可读的提示
   function _harnessErrorToHuman(text) {
     const raw = String(text || '');
@@ -76,12 +114,20 @@
       return 'hy3 被发往了错误的端点（现已自动改用 OpenCode Go 端点），请重试；若仍失败，请在“模型设置”里选用 OpenCode Go · hy3';
     }
     if (/Invalid API key|AuthError|Unauthorized|401/i.test(raw)) {
-      return '模型密钥无效或缺失（401）。hy3 的密钥由服务端 .env 的 OPENCODE_GO_API_KEY 提供，请检查服务端配置';
+      return '模型密钥无效或已失效（401）。请到「模型配置」检查该模型的 API Key；hy3 系模型的密钥由服务端 .env 提供';
     }
     if (/timeout|Timed out|timed out|timedout/i.test(raw)) {
       return '请求超时：hy3 是推理模型、响应较慢，请重试或稍等片刻';
     }
     return raw;
+  }
+
+  // T95 前端半边：401 一类「配置问题」重试救不回来——除对话流的重试气泡外，
+  // 结果区再留一张醒目卡片（.graph-harness-error 已有样式），操作路径不随流滚动丢失。
+  function _showHarnessErrorCard(text) {
+    const box = document.getElementById('graphHarnessResult');
+    if (!box) return;
+    box.innerHTML = '<div class="graph-harness-error">⛔ ' + _escapeHtml(text) + '</div>';
   }
 
   // 流式响应读取：SSE（data: {...}\n\n）逐事件回调 onEvent，最终返回 result 事件的 data。
@@ -319,16 +365,36 @@
     const continentData = canvasReady ? await _harnessFetchContinent() : null;
     if (!stillCurrent()) return;
     _setHarnessBusy(false);
-    const snapshot = canvasReady
+    let snapshot = canvasReady
       ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
           harnessPhase === 'normal' ? continentData : null)
       : _emptyHarnessSnapshot();
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
-      _setHarnessStatus('图太大（约 ' + Math.round(_snapshotMeta.est_tokens / 1000) + 'k tokens），请先选中局部节点或缩小范围后再让 AI 修改', 'error');
-      restoreInstruction();
-      return;
+      // T94 前端半边（2026-09-30）：超预算不再硬拦，先把同一份图按 opts.degrade 重算
+      // （邻域半径收到 1 跳）。① 有焦点可缩且降级后回到预算内 → 采用降级快照并继续；
+      // ② 降级后仍超预算 → 原报错文案＋「聚焦后仍过大」；③ 无焦点可缩 → 原报错文案不动。
+      const canvasSelectedIds = typeof window.getSelectedGraphNodeIds === 'function'
+        ? Array.from(window.getSelectedGraphNodeIds())
+        : [];
+      const hasFocus = canvasReady && (focusIds.length > 0 || canvasSelectedIds.length > 0);
+      const degraded = hasFocus
+        ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
+            harnessPhase === 'normal' ? continentData : null, { degrade: true })
+        : null;
+      const degradedMeta = degraded ? (degraded.snapshot_meta || {}) : null;
+      if (degraded && degradedMeta.est_tokens <= 30000) {
+        snapshot = degraded;
+        harnessSnapshot = degraded;
+        _setHarnessStatus('图较大，已自动聚焦到目标附近区域（可在画布选中节点缩小范围）', 'running');
+      } else {
+        const shownMeta = degradedMeta || _snapshotMeta;
+        const tail = degradedMeta ? '（聚焦后仍过大）' : '';
+        _setHarnessStatus('图太大（约 ' + Math.round(shownMeta.est_tokens / 1000) + 'k tokens），请先选中局部节点或缩小范围后再让 AI 修改' + tail, 'error');
+        restoreInstruction();
+        return;
+      }
     }
     if (!snapshot.nodes.length && !pureQuestion && harnessPhase !== 'preset') {
       const canvasCount = typeof _graphNodes === 'function' ? _graphNodes().length : 0;
@@ -381,10 +447,11 @@
     const onStreamEvent = (evt) => {
       if (!stillCurrent()) return;
       if (evt.type === 'status' && evt.message) {
-        // 重试轮次（T87）：后端每轮都重新挂 on_delta，而 streamText 只追加从不重置，
-        // 第 2/3 轮的残文会接在第 1 轮后面。attempt>0 表示新的一轮开始，当场丢弃上一
-        // 轮已收到的正文与已渲染的预览——与「从头再来」的视觉一致。
-        if (evt.stage === 'model' && Number(evt.attempt) > 0) {
+        // 重试轮次（T87）＋多步循环每步（T93）：后端每轮/每步都重新挂 on_delta，而
+        // streamText 只追加从不重置，残文会接在前一轮/前一步后面。attempt>0 或 step>0
+        // 都表示新的一段开始，当场丢弃已收到的正文与已渲染的预览——与「从头再来」的
+        // 视觉一致（step 由多步循环的每步查询携带重发 stage='model'）。
+        if (evt.stage === 'model' && (Number(evt.attempt) > 0 || Number(evt.step) > 0)) {
           streamText = '';
           if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
           // 只摘掉打字机预览那一个节点：本轮开跑时结果区已被清空（见上方 resultBox），
@@ -402,6 +469,9 @@
         if (!streamTimer) streamTimer = setTimeout(renderStreamPreview, 120);
       }
     };
+    // T95 前端半边：失败自动换备用模型（用户开关，默认关）。开关关、或列表里没有
+    // 别的模型时整个字段不上送（后端走无兜底行为）。
+    const fallbackModels = _harnessFallbackEnabled() ? _harnessFallbackModels(model) : [];
     try {
       const resp = await fetch(HARNESS_API, {
         method: 'POST',
@@ -412,7 +482,13 @@
           instruction,
           model: _harnessModelForRequest(model),
           max_tokens: 6000,
-          phase: harnessPhase,
+          // T82 收敛（前端半边）：payload 只直通模式锁（chat/preset）与显式入口
+          // （apply/expand）；normal/evaluate 的本地猜测交后端 _detect_phase 重判。
+          phase: _harnessPayloadPhase(harnessPhase),
+          // T97：深度思考档位（''/low/high/max）；参数映射归后端按供应商族做。
+          thinking: _harnessThinkingLevel(),
+          // T95：备用模型兜底列表（开关开且非空才带，字段形状 {provider,api_key,model,base_url}）
+          ...(fallbackModels.length ? { fallback_models: fallbackModels } : {}),
           // T96 会话事件日志：带上 Φ 会话 id，后端把整次往返（含最终 result）写进
           // logs/harness_events/<phiId>.jsonl，并在响应里回一个 event_id；前端把
           // 它存进历史条目，反馈与应用批次据此归因（缺 id 时后端静默跳过不落盘）。
@@ -502,6 +578,9 @@
         const human = _harnessErrorToHuman(err && err.message ? err.message : String(err));
         _setHarnessStatus('审阅失败：' + human, 'error');
         _showHarnessRetry('审阅失败：' + human);
+        // T95 前端半边：401/密钥这类配置问题在结果区额外留一张醒目卡片——重试气泡
+        // 会随对话流滚走，而「去模型配置检查 Key」的路径不该丢失。
+        if (/401|密钥/.test(human)) _showHarnessErrorCard(human);
         if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
         if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
       }

@@ -196,27 +196,12 @@ def _chat_request_headers(provider: str, api_key: str, base_url: str, session_id
 
 
 def _thinking_request_params(provider: str, level: str) -> dict:
-    """「思考程度」→ 上游请求参数（纯函数，tests 直测）。
+    """「思考程度」→ 上游请求参数（薄包装）。
 
-    用户档位 default('')/low/high/max：default 不发送任何思考参数——现状行为
-    零变化。各家 OpenAI 兼容端点的思考字段不统一：OpenAI 系（含 Gemini/
-    OpenRouter/Groq/自定义网关）用 reasoning_effort，千问百炼用 enable_thinking，
-    智谱用 thinking.type，Ollama 用 think。reasoning_effort 只有 low/medium/high
-    三档，low/high/max 按序拉伸映射（low→low、high→medium、max→high），
-    三档在每个 reasoning_effort 供应商上都有区分度；布尔开关族（qwen/zhipu/
-    ollama）三档同为「开启」。上游不认识注入字段而拒绝整个请求时，由调用方
-    剥掉参数降级重试一次。
+    唯一实现已下沉 llm_common.thinking_request_params（2026-09-30，Φ 智能体
+    按相位接同一张表）；此处保留同名函数，调用方与直测它的用例零改动。
     """
-    p = (provider or "").strip().lower()
-    if level not in ("low", "high", "max"):
-        return {}
-    if p == "qwen":
-        return {"enable_thinking": True}
-    if p == "zhipu":
-        return {"thinking": {"type": "enabled"}}
-    if p == "ollama":
-        return {"think": True}
-    return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
+    return llm_common.thinking_request_params(provider, level)
 
 
 def _log_cache_hit_rate(usage) -> None:

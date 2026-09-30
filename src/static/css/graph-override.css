@@ -5684,6 +5684,24 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--text-secondary, #94a3b8);
 }
 
+/* T97 深度思考档位 ＋ T95 失败自动换备用模型开关（2026-09-30）：模式菜单底部的
+   两行用户级开关。与模式项同排同字号，但语义是 toggle 不是选中——点击只换自身
+   文案、不收菜单（handler 里 stopPropagation），故用 .graph-harness-mode-toggle
+   给一个比模式项更轻的次要色，避免读成「当前模式」。分隔线走 token，零新色值。 */
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border, #334155);
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-toggle {
+  color: var(--text-secondary, #94a3b8);
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-toggle:hover {
+  color: var(--text-primary, #e2e8f0);
+}
+
 .graph-harness-chat .graph-harness-session-notice {
   width: fit-content;
   margin: 6px auto;

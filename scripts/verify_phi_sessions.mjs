@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 // Φ 会话解耦真机验证（AGENTS.md 硬规则 6，2026-09-30 落地于 Φ 会话与画布解耦）
-// mock 上游 + 临时数据目录 + 真浏览器（Playwright），九条通道逐条真发并记录：
+// mock 上游 + 临时数据目录 + 真浏览器（Playwright），十一条通道逐条真发并记录：
 //   ①旧数据迁移（本地+服务端兜底，旧键本地/服务端均清理）②Φ纯问答真发
 //   ③未绑定只放行问答 ④绑当前画布的改图真发＋「应用全部」真实落图
 //   ⑤新建 Φ 会话 ⑥切画布不换茬＋绑非当前画布的改图拦截
 //   ⑦删单个 Φ 会话 ⑧清空所有 Φ 对话（全程画布零触碰断言）
 //   ⑨T96 事件日志与两步撤销（两轮应用上报 → 撤销时间线 → 撤回到最早批次之前）
+//   ⑩T93 多步只读查询回灌真发（read_node 先查 → role:"tool" 回灌 → 编辑 ops，
+//     并读服务端 review 事件的 roundtrips 证明「查询轮真的发生」）
+//   ⑪T95 429 自动重试无感（mock 首次 429+Retry-After:0 → 重试放行；/__stats 观测
+//     同一对话确实发了 ≥2 次 /chat/completions，前端零错误）
 // 跑法：node scripts/verify_phi_sessions.mjs（零真实依赖，不花钱；PORT 5065 见下）
 import { spawn } from 'node:child_process';
 import { cpSync, mkdtempSync } from 'node:fs';
@@ -15,6 +19,7 @@ import { chromium } from 'playwright';
 
 const PORT = 5079;
 const BASE = `http://127.0.0.1:${PORT}`;
+const MOCK_BASE = 'http://127.0.0.1:5065';
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 const MODEL = {
@@ -36,16 +41,32 @@ async function waitHealth(base, ms = 30000) {
   throw new Error('health 超时：' + base);
 }
 
+// mock 侧观测点（通道⑪）：/__stats 返回全局计数，按增量断言
+async function mockStats() {
+  try {
+    const resp = await fetch(MOCK_BASE + '/__stats');
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) { return null; }
+}
+
 async function main() {
-  // mock 上游（外部已起则复用）。端口 5065：**不能用默认 5061**——Node undici 的
-// fetch 坏端口表含 5060/5061（SIP），直连会报 'bad port'；verify_send_channels
-// 当年没踩到是因为它只经 Python 端转发上游，不从 Node 直连 mock
+  // mock 上游（外部已起且带 /__stats 才复用——通道⑪靠它核对重试请求数）。
+  // 端口 5065：**不能用默认 5061**——Node undici 的 fetch 坏端口表含 5060/5061
+  // （SIP），直连会报 'bad port'；verify_send_channels 当年没踩到是因为它只经
+  // Python 端转发上游，不从 Node 直连 mock
   let mock = null;
-  try { await waitHealth('http://127.0.0.1:5065', 1500); } catch (e) {
+  let mockReused = false;
+  try {
+    await waitHealth(MOCK_BASE, 1500);
+    if (!(await mockStats())) throw new Error('已存在的 5065 mock 没有 /__stats（旧版 mock），换新进程');
+    mockReused = true;
+  } catch (e) {
     mock = spawn('node', ['scripts/mock_upstream.mjs'], { stdio: 'ignore', env: { ...process.env, PORT: '5065' } });
     mock.on('error', err => console.error('[mock] spawn 失败：', err.message));
-    try { await waitHealth('http://127.0.0.1:5065', 5000); } catch (e2) { mock.kill(); throw e2; }
+    try { await waitHealth(MOCK_BASE, 5000); } catch (e2) { mock.kill(); throw e2; }
   }
+  if (mockReused) console.log('（复用已在跑的 5065 mock；通道⑪按 /__stats 增量断言）');
 
   // 服务（临时数据目录）
   const workDir = mkdtempSync(join(tmpdir(), 'phymathia-verify-phi-'));
@@ -309,22 +330,44 @@ async function main() {
           const t = document.getElementById('graphHarnessStatus').innerText;
           return t.startsWith('已回复') || t.startsWith('审阅完成');
         }, null, { timeout: 20000 });
-        // mock 回包不含 ops：注入后端格式结果，仍走真实「应用全部」链（同通道④）
-        await page.evaluate((cfg) => {
-          harnessResult = {
-            summary: '通道⑨批次：' + cfg.label + '（T96）',
-            status: 'ok',
-            event_id: 'evt_verify_' + cfg.nodeId,
-            operations: [
-              { op: 'create_node', temp_id: 'tmp_' + cfg.nodeId, assigned_id: cfg.nodeId, kind: 'knowledge', label: cfg.label, content: cfg.label + '（T96 验证）' },
-            ],
-          };
-          harnessResult._binding = _harnessBinding();
-        }, r);
-        await page.evaluate(() => document.getElementById('graphHarnessApplyActions').removeAttribute('hidden'));
-        await page.click('#graphHarnessApplyActions button:nth-child(2)'); // 应用全部
-        await page.waitForFunction(id => getGraphState('sess_leg1').customNodes.some(n => n.id === id),
-          r.nodeId, { timeout: 8000 });
+        // mock 回包不含 ops：注入后端格式结果，仍走真实「应用全部」链（同通道④）。
+        // 注入→点击最多重试 4 次：上一轮 _applyOps 尾部 setTimeout(100) 的自动内容生成
+        // （harness-apply.js 对新建 knowledge 节点调模型写回正文）会让 graphVersion 在
+        // 本轮取指纹之后、点应用之前发生变化，此时 _harnessCanApply（harness.js:197）
+        // 按「画布或会话已变化」拒绝——守卫本身是产品设计；被拒那次未动图，重试时
+        // 重新取一次指纹即可，不会重复应用（2026-09-30 偶发 8s 超时真机定位）。
+        let appliedOk = false;
+        for (let attempt = 0; attempt < 4 && !appliedOk; attempt++) {
+          await page.evaluate((cfg) => {
+            harnessResult = {
+              summary: '通道⑨批次：' + cfg.label + '（T96）',
+              status: 'ok',
+              event_id: 'evt_verify_' + cfg.nodeId,
+              operations: [
+                { op: 'create_node', temp_id: 'tmp_' + cfg.nodeId, assigned_id: cfg.nodeId, kind: 'knowledge', label: cfg.label, content: cfg.label + '（T96 验证）' },
+              ],
+            };
+            harnessResult._binding = _harnessBinding();
+          }, r);
+          await page.evaluate(() => document.getElementById('graphHarnessApplyActions').removeAttribute('hidden'));
+          await page.click('#graphHarnessApplyActions button:nth-child(2)'); // 应用全部
+          appliedOk = await page.waitForFunction(id => getGraphState('sess_leg1').customNodes.some(n => n.id === id),
+            r.nodeId, { timeout: 3000 }).then(() => true).catch(() => false);
+          if (!appliedOk) await page.waitForTimeout(300);
+        }
+        if (!appliedOk) {
+          const diag = await page.evaluate((nodeId) => ({
+            status: document.getElementById('graphHarnessStatus').innerText,
+            node: nodeId,
+            resultOps: (harnessResult && harnessResult.operations || []).length,
+            applied: harnessResultApplied,
+            busy: harnessBusy,
+            binding: harnessResult && harnessResult._binding ? JSON.stringify(harnessResult._binding) : null,
+            curVersion: typeof _harnessGraphVersion === 'function' ? _harnessGraphVersion() : null,
+            nodes: getGraphState('sess_leg1').customNodes.map(n => n.id).join(','),
+          }), r.nodeId);
+          throw new Error('应用等待超时（4 次重试后）：' + JSON.stringify(diag));
+        }
       }
 
       // ① applied 事件 ≥2（上报是 fire-and-forget，轮询等服务端落盘）
@@ -365,6 +408,107 @@ async function main() {
       ok('通道⑨ 事件日志与两步撤销：2 条 applied 上报 → 时间线 ≥2 行 → 撤回到最早批次前（节点 ' + (ctx.baseline + 2) + '→' + ctx.baseline + '），undo 事件 undone_from_seq=' + firstAppliedSeq);
     } catch (e) { bad('通道⑨ 事件日志与两步撤销', e); }
 
+    // ---- 通道⑩：T93 多步只读查询回灌真发（read_node 先查 → tool 回灌 → 编辑 ops）----
+    // mock 剧本（细读 → read_node → 回灌后 update_node）＋服务端 review 事件 roundtrips
+    // 双重取证：前者证明「回包是两轮」，后者证明「查询真的在后端执行并回灌了」。
+    try {
+      const errBase = pageErrors.length;
+      if (await page.evaluate(() => getCurrentSessionId()) !== 'sess_leg1') {
+        await page.evaluate(() => switchToSession('sess_leg1'));
+        await page.waitForTimeout(500);
+      }
+      if (await page.evaluate(() => _harnessBoundSid()) !== 'sess_leg1') {
+        await page.evaluate(() => toggleHarnessSessionBinding(currentPhiId)); // 未绑定则绑当前画布
+      }
+      const bound = await page.evaluate(() => _harnessBoundSid());
+      if (bound !== 'sess_leg1') throw new Error('通道⑩换绑失败：' + bound);
+      // 种 read_node 的目标节点：label 必须出现在指令里——前端焦点解析按 label 命中，
+      // 唯一命中即直接聚焦，跳过额外的「理解目标」模型调用，本轮只留查询回灌两次
+      await page.evaluate(() => {
+        const st = getGraphState('sess_leg1');
+        st.customNodes = Array.isArray(st.customNodes) ? st.customNodes : [];
+        const found = st.customNodes.find(n => n.id === 'phi_node_1');
+        if (found) { found.label = '细读目标'; found.content = found.content || '真机验证节点正文'; }
+        else st.customNodes.push({ id: 'phi_node_1', kind: 'knowledge', label: '细读目标', content: '真机验证节点正文' });
+        saveGraphState('sess_leg1', st);
+        renderGraphCanvas();
+      });
+      await page.waitForTimeout(300);
+      const phiId = await page.evaluate(() => currentPhiId);
+      const histBefore10 = await page.evaluate(() => harnessHistory.length);
+      await page.fill('#graphHarnessInstruction', '细读「细读目标」节点的内容，然后把它更新为更准确的表述');
+      await page.click('#graphHarnessSendBtn');
+      await page.waitForFunction((n) => {
+        const t = document.getElementById('graphHarnessStatus').innerText;
+        return harnessHistory.length >= n + 2 && (t.startsWith('已回复') || t.startsWith('审阅完成'));
+      }, histBefore10, { timeout: 30000, polling: 200 }).catch(async () => {
+        const st = await page.evaluate(() => JSON.stringify({
+          status: document.getElementById('graphHarnessStatus').innerText,
+          ops: (harnessResult && harnessResult.operations || []).length,
+          summary: (harnessResult && harnessResult.summary) || '',
+        }));
+        throw new Error('通道⑩超时，页面状态：' + st);
+      });
+      const res = await page.evaluate(() => ({
+        ops: (harnessResult && harnessResult.operations || []).length,
+        status: (harnessResult && harnessResult.status) || '',
+        summary: (harnessResult && harnessResult.summary) || '',
+      }));
+      if (!res.ops) throw new Error('结果无 ops（多步回灌后应回 update_node）：' + JSON.stringify(res));
+      // ② 服务端 review 事件：roundtrips 里应有查询轮回灌条目（step>0 / 带 tool_results）
+      let hit = null;
+      for (let i = 0; i < 20 && !hit; i++) {
+        const resp = await fetch(BASE + '/api/harness/graph/events?session_id=' + encodeURIComponent(phiId) + '&types=review&limit=5');
+        const data = await resp.json();
+        const events = (data && data.status === 'ok' && data.events) || [];
+        const evt = events.find(e => String(e.instruction || '').includes('细读'));
+        if (evt) {
+          const rts = Array.isArray(evt.roundtrips) ? evt.roundtrips : [];
+          hit = rts.find(rt => Number(rt.step) > 0 || Array.isArray(rt.tool_results)) || null;
+        }
+        if (!hit) await page.waitForTimeout(300);
+      }
+      if (!hit) throw new Error('review 事件 roundtrips 里没有查询回灌轮（step>0 / tool_results）——像是一轮直出');
+      // ③ 本通道零未捕获页面错误
+      if (pageErrors.length !== errBase) throw new Error('通道⑩期间出现页面错误：' + pageErrors.slice(errBase).join(' | '));
+      ok('通道⑩ T93 多步只读查询回灌真发：read_node 查询 → role:"tool" 回灌 → 编辑 ops ' + res.ops + ' 条入结果；review 事件含 step=' + Number(hit.step || 0) + (Array.isArray(hit.tool_results) ? '/tool_results' : '') + ' 的回灌轮，页面零错误');
+    } catch (e) { bad('通道⑩ T93 多步只读查询回灌', e); }
+
+    // ---- 通道⑪：T95 429 自动重试无感（mock 首次 429+Retry-After:0 → 重试放行）----
+    try {
+      const errBase = pageErrors.length;
+      const before = await mockStats();
+      if (!before) throw new Error('mock /__stats 不可用（需 2026-09-30 版 scripts/mock_upstream.mjs）');
+      const before429 = (before.retry_scripts && before.retry_scripts['限流演练']) || { attempts: 0, rejected_429: 0 };
+      const histBefore11 = await page.evaluate(() => harnessHistory.length);
+      await page.fill('#graphHarnessInstruction', '限流演练：什么是简谐振动的回复力？');
+      await page.click('#graphHarnessSendBtn');
+      await page.waitForFunction((n) => {
+        const t = document.getElementById('graphHarnessStatus').innerText;
+        return harnessHistory.length >= n + 2 && (t.startsWith('已回复') || t.startsWith('审阅完成'));
+      }, histBefore11, { timeout: 30000, polling: 200 });
+      const pageState = await page.evaluate(() => ({
+        status: document.getElementById('graphHarnessStatus').innerText,
+        errorCard: !!document.querySelector('#graphHarnessResult .graph-harness-error'),
+      }));
+      if (pageState.errorCard || /失败|429|限流/.test(pageState.status)) {
+        throw new Error('重试剧本后前端仍有错误：' + JSON.stringify(pageState));
+      }
+      let after = null;
+      let delta = null;
+      for (let i = 0; i < 20; i++) {
+        after = await mockStats();
+        const cur = (after && after.retry_scripts && after.retry_scripts['限流演练']) || { attempts: 0, rejected_429: 0 };
+        delta = { attempts: Number(cur.attempts || 0) - Number(before429.attempts || 0), rejected: Number(cur.rejected_429 || 0) - Number(before429.rejected_429 || 0) };
+        if (delta.attempts >= 2) break;
+        await page.waitForTimeout(250);
+      }
+      if (delta.attempts < 2) throw new Error('同一对话请求数不足 2（429 后没重试）：' + JSON.stringify({ delta, after }));
+      if (delta.rejected < 1) throw new Error('mock 没真的发出 429（剧本未命中）');
+      if (pageErrors.length !== errBase) throw new Error('通道⑪期间出现页面错误：' + pageErrors.slice(errBase).join(' | '));
+      ok('通道⑪ T95 429 自动重试无感：同一对话 ' + delta.attempts + ' 次 /chat/completions（首次 429+Retry-After:0 触发后退避重试），前端零错误、状态「' + pageState.status + '」');
+    } catch (e) { bad('通道⑪ T95 429 自动重试', e); }
+
     if (pageErrors.length) {
       console.log('⚠ 页面错误：', pageErrors.slice(0, 5).join(' | '));
     } else {
@@ -373,7 +517,7 @@ async function main() {
   } finally {
     browser && await browser.close().catch(() => {});
     server.kill();
-    mock.kill();
+    mock && mock.kill();
   }
   const fails = results.filter(r => !r[0]).length;
   console.log(`\nΦ 解耦真机验证：${results.length - fails} PASS, ${fails} FAIL`);
