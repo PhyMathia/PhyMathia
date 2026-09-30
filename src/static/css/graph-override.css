@@ -5226,25 +5226,43 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   min-width: 0;
 }
 
-.graph-harness-head .graph-harness-session-btn {
+/* 标题栏 28px 图标钮规则（.graph-harness-window .graph-harness-head button，(0,2,1)，
+   为 ↺/?/✕ 三个图标钮而写）会命中本按钮与菜单里每个 <button>——本节选择器一律挂
+   .graph-harness-window 前缀抬到 (0,3,0)+，并显式回声 width/height/margin-left/display，
+   否则被压成 28px 方块居中裁字（真机表现：《画布名》缩成「i画i」、菜单项一字宽竖条）。 */
+.graph-harness-window .graph-harness-head .graph-harness-session-btn {
+  margin-left: 0;
+  width: auto;
+  height: auto;
+  display: inline-block;
   font-size: var(--fs-md);
   font-weight: 600;
   line-height: 1.4;
   padding: 3px 10px;
   border: 1px solid var(--border, #334155);
   border-radius: var(--r-md);
-  max-width: 220px;
+  max-width: min(220px, 100%); /* 会话名过长时随头部可用宽收缩，别把「网络助手」标题挤折行 */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.graph-harness-head .graph-harness-session-btn:hover {
+.graph-harness-window .graph-harness-head .graph-harness-session-btn:hover {
   color: var(--accent, #38bdf8);
   border-color: var(--accent, #38bdf8);
 }
 
+/* 长会话名进头部后，标题与右侧图标组不得参与挤压 */
+.graph-harness-title {
+  white-space: nowrap;
+}
+.graph-harness-head-actions {
+  flex-shrink: 0;
+}
+
+/* 材质全归 .aurora-glass（harness.js 创建标记已挂类，blur/tint/描边/阴影/极光色斑都由它出）：
+   本载体只留结构与定位，不写 background/border——写了会盖掉极光层（同面板本体磨砂化分工） */
 .graph-harness-session-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -5258,13 +5276,27 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   max-height: 240px;
   overflow-y: auto;
   padding: 6px;
-  border: 1px solid var(--border, #334155);
-  border-radius: var(--r-md);
-  background: var(--harness-op-bg);
+  border-radius: var(--r-lg);
+  color: var(--text-primary, #e2e8f0);
 }
 
-.graph-harness-session-menu .graph-harness-session-item {
+/* display:flex 会顶掉 UA 的 [hidden]{display:none}——不补这条守卫，两个菜单没点开
+   也常驻渲染（透明底压在聊天记录上），选完模式同样收不回去（✓ 停在旧模式）。
+   必须 (0,3,0)：模式菜单自身规则 .graph-harness-composer .graph-harness-mode-menu
+   也是 (0,2,0)，同优先级下源序在后会赢，守卫抬一档才压得住两个菜单。 */
+.graph-harness-window .graph-harness-session-menu[hidden],
+.graph-harness-window .graph-harness-mode-menu[hidden] {
+  display: none;
+}
+
+.graph-harness-window .graph-harness-head .graph-harness-session-item {
+  margin: 0; /* 4108 的 margin-left:auto 同样命中菜单项——不归零整行会被推到菜单右缘 */
+  flex-shrink: 0; /* 列表容器 max-height:240 + 列方向 flex：不冻结收缩的话 31 项会被压扁塞进视口，overflow-y 滚动失效 */
+  width: auto;
+  height: auto;
+  display: block;
   font-size: var(--fs-md);
+  line-height: 1.4;
   text-align: left;
   padding: 7px 10px;
   border: none;
@@ -5277,11 +5309,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   white-space: nowrap;
 }
 
-.graph-harness-session-menu .graph-harness-session-item:hover {
+.graph-harness-window .graph-harness-head .graph-harness-session-item:hover {
   background: var(--surface-2);
 }
 
-.graph-harness-session-menu .graph-harness-session-item.current {
+.graph-harness-window .graph-harness-head .graph-harness-session-item.current {
   color: var(--accent, #38bdf8);
   font-weight: 600;
 }
@@ -5294,7 +5326,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 
 /* ---------- 10. Φ 面板三模式切换器（2026-09-30）----------
    编辑（默认）/答疑（只读）/创造（配方），显式切换、意图自动识别让位。
-   菜单样式与令牌完全对齐上方会话切换器（第 9 节），零新色值。 */
+   菜单结构对齐上方会话切换器（第 9 节）；玻璃材质同归 .aurora-glass，
+   [hidden] 守卫见第 9 节，零新色值。 */
 .graph-harness-mode {
   position: relative;
 }
@@ -5309,9 +5342,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 2px;
   min-width: 230px;
   padding: 6px;
-  border: 1px solid var(--border, #334155);
-  border-radius: var(--r-md);
-  background: var(--harness-op-bg);
+  border-radius: var(--r-lg);
+  color: var(--text-primary, #e2e8f0);
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item {

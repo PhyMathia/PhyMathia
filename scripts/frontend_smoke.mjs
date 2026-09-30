@@ -593,6 +593,27 @@ check('Φ 会话切换：chooseHarnessSession 委托主路径并透传 id', () =
   return true;
 });
 
+check('Φ 下拉菜单（会话/模式）：磨砂材质归 aurora-glass＋hidden 守卫＋specificity 手术', () => {
+  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!src.includes('class="graph-harness-session-menu aurora-glass"')) throw new Error('会话菜单未挂 aurora-glass（透明底压聊天记录）');
+  if (!src.includes('class="graph-harness-mode-menu aurora-glass"')) throw new Error('模式菜单未挂 aurora-glass（透明底压输入区提示）');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!/\.graph-harness-window \.graph-harness-session-menu\[hidden\],\s*\n\s*\.graph-harness-window \.graph-harness-mode-menu\[hidden\]\s*\{\s*\n\s*display:\s*none;/.test(css)) {
+    throw new Error('下拉菜单缺 [hidden]{display:none} 守卫（须带 .graph-harness-window 前缀抬到 (0,3,0)——模式菜单自身规则也是 (0,2,0)，同优先级源序在后会赢）');
+  }
+  // 标题栏 28px 图标钮规则 (0,2,1) 的特异性手术：选择器带 .graph-harness-window 前缀并回声 width
+  const sessionBtnRule = css.match(/\.graph-harness-window \.graph-harness-head \.graph-harness-session-btn \{[\s\S]{0,600}?\}/);
+  if (!sessionBtnRule || !sessionBtnRule[0].includes('width: auto')) throw new Error('会话按钮 specificity 手术缺失（被 28px 图标钮规则压成「i画i」）');
+  const sessionItemRule = css.match(/\.graph-harness-window \.graph-harness-head \.graph-harness-session-item \{[\s\S]{0,600}?\}/);
+  if (!sessionItemRule || !sessionItemRule[0].includes('width: auto')) throw new Error('会话菜单项 specificity 手术缺失（被压成一字宽竖条）');
+  // 材质归 aurora-glass：菜单本体写 background 会盖掉极光层（同面板本体磨砂化分工）
+  const sessionMenuCss = css.slice(css.indexOf('.graph-harness-session-menu {'), css.indexOf('.graph-harness-session-menu[hidden]'));
+  if (sessionMenuCss.includes('background')) throw new Error('会话菜单本体写了 background——材质必须归 aurora-glass');
+  const modeMenuCss = css.slice(css.indexOf('.graph-harness-composer .graph-harness-mode-menu {'), css.indexOf('.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item'));
+  if (modeMenuCss.includes('background')) throw new Error('模式菜单本体写了 background——材质必须归 aurora-glass');
+  return true;
+});
+
 check('T51 桌宠让位正解：body.harness-open + 内联定位暂存归还', () => {
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!src.includes("classList.add('harness-open')")) throw new Error('开面板未挂 harness-open');
