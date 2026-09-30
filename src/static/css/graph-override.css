@@ -5612,6 +5612,156 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* 自定义档（2026-09-30）：没调过时圆点留空，用内描边示意「这里可以点」 */
+.recipe-palette-custom .graph-add-node-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.recipe-palette-custom.selected .graph-add-node-dot {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---------- 自由取色器（PS 式：饱和度方块 × 色相条 × 三套数值）---------- */
+/* 自由色没有深浅两套手配色，改由这个「锚点」自动适配：深色主题掺白提亮、
+   浅色主题掺黑压暗，接近成对令牌的手工位移。放 CSS 而不是 JS 的原因——applyTheme
+   不触发画布重渲染，色值里带 var() 才能切主题即换色，不用重画节点。 */
+:root {
+  --recipe-ink-anchor: #ffffff;
+}
+
+[data-theme="light"] {
+  --recipe-ink-anchor: #000000;
+}
+
+/* 盖在配方表单之上：.graph-network-modal-overlay 写死 12000，这里必须更高 */
+.recipe-color-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--harness-overlay-bg);
+  backdrop-filter: blur(3px);
+}
+
+.recipe-color-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  width: max-content;
+  max-width: 92vw;
+}
+
+.recipe-color-main {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-4);
+}
+
+.recipe-color-sv {
+  width: 248px;
+  height: 176px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.recipe-color-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.recipe-color-hue {
+  width: 18px;
+  height: 176px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.recipe-color-swatches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.recipe-color-swatch-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.recipe-color-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+
+.recipe-color-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 110px));
+  gap: var(--sp-2) var(--sp-3);
+  align-items: center;
+  justify-content: start;
+}
+
+.recipe-color-grid label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.recipe-color-grid input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+}
+
+.recipe-color-hexlabel {
+  grid-column: span 2;
+}
+
+.recipe-color-hexlabel input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* 系统取色器（备用通道）。选择器带 .recipe-color-grid 前缀是为了压过
+   .graph-network-modal input{width:100%}——那条会把这一格拉成整列宽。 */
+.recipe-color-grid .recipe-color-native {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+  justify-self: end;
+}
+
 .recipe-plain-toggle {
   display: flex;
   align-items: center;

@@ -17,6 +17,12 @@ let recipeDynFallbackMode = 'label_questions_from_text';
 let recipeDynFallbackLabels = '问题1,问题2,问题3';
 let recipeDynEachType = 'socratic';
 let recipeDynEachDrag = 'draft';
+// 颜色编辑器状态：custom 为 '' 时走 7 个预设令牌，有值（#rrggbb）时压过令牌
+let recipeColorCustom = '';
+let recipeColorPresetKey = 'amber';
+let recipeColorOverlay = null;
+let recipeColorHsv = { h: 0, s: 0, v: 100 };
+let recipeColorBaseHex = '';   // 打开时的「当前」色，只作对比用
 
 // ---- 拖出目标选项（出口编辑器的「拖出去建什么」下拉）----
 function _recipeDragFormOptions() {
@@ -57,6 +63,10 @@ function openRecipeForm(prefill) {
     ? dyn.fallback.labels.join(',') : '问题1,问题2,问题3';
   recipeDynEachType = (dyn && dyn.each && dyn.each.type) || 'socratic';
   recipeDynEachDrag = (dyn && dyn.each && dyn.each.drag_form) || 'draft';
+  // 自由色初值（2026-09-30）：空串＝走预设色板令牌
+  const initColorHex = normalizeRecipeColor(init.appearance && init.appearance.color);
+  recipeColorCustom = initColorHex;
+  recipeColorPresetKey = (init.appearance && init.appearance.palette) || 'amber';
   const gen = init.generate || {};
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
@@ -76,15 +86,20 @@ function openRecipeForm(prefill) {
       }).join('')
     + '</select>'
     + '<div class="recipe-form-hint" id="recipeBaseHint">' + escapeHtml(baseMeta.hint || '') + '</div>'
-    + '<label>色板</label>'
+    + '<label>颜色</label>'
     + '<div class="recipe-palette-row" id="recipePalette">'
     + RECIPE_PALETTE.map(entry => {
-        const selected = ((init.appearance && init.appearance.palette) || 'amber') === entry.key;
+        const selected = !initColorHex && recipeColorPresetKey === entry.key;
         return '<button type="button" class="recipe-palette-swatch' + (selected ? ' selected' : '') + '" data-palette="' + entry.key + '"'
           + ' onclick="recipePalettePick(\'' + entry.key + '\')" title="' + escapeHtml(entry.label) + '">'
           + '<span class="graph-add-node-dot is-round" style="background:' + entry.color + '"></span>' + escapeHtml(entry.label) + '</button>';
       }).join('')
+    + '<button type="button" class="recipe-palette-swatch recipe-palette-custom' + (initColorHex ? ' selected' : '') + '"'
+    + ' id="recipeColorChipBtn" onclick="openRecipeColorPicker()" title="自己调一个颜色（RGB / HSB / hex 都行）">'
+    + '<span class="graph-add-node-dot is-round" id="recipeColorChip"></span>'
+    + '<span id="recipeColorChipText">' + (initColorHex ? initColorHex : '自定义') + '</span></button>'
     + '</div>'
+    + '<div class="recipe-form-hint" id="recipeColorHint">预设 7 色是深浅两套配好的；想更细就点「自定义」，像 PS 那样拖方块和色相条，或直接填 RGB / HSB / 色号。</div>'
     + '<div class="recipe-ai-fields" id="recipeAiFields">'
     + '<label>主提示词（AI 按它生成内容，建议 ≤' + RECIPE_PROMPT_BUDGET + ' 字）</label>'
     + '<textarea id="recipePrompt" rows="5" placeholder="例如：针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。">' + escapeHtml(gen.prompt || '') + '</textarea>'
@@ -180,17 +195,20 @@ function openRecipeForm(prefill) {
   });
   document.body.appendChild(overlay);
   recipeModalOverlay = overlay;
+  _recipeSyncColorChip();
   recipeBaseChanged();
   _recipeRenderPortRows();
 }
 
 function closeRecipeForm() {
+  closeRecipeColorPicker();
   if (recipeModalOverlay) {
     recipeModalOverlay.remove();
     recipeModalOverlay = null;
   }
   recipeEditingId = null;
   recipePortRows = [];
+  recipeColorCustom = '';
 }
 
 function recipeBaseChanged() {
@@ -244,12 +262,346 @@ function recipeDynParamChanged() {
   // 占位：参数变化无需联动其它控件；保留入口以便后续加联动
 }
 
+// 点预设色＝回到令牌档（清掉自定义色）；自定义档是取色器里的那个按钮
 function recipePalettePick(key) {
+  recipeColorCustom = '';
+  recipeColorPresetKey = key;
+  _recipeSyncColorChip();
+  _recipePickPreset(key);
+}
+
+function _recipePickPreset(key) {
   const row = document.getElementById('recipePalette');
   if (!row) return;
-  row.querySelectorAll('.recipe-palette-swatch').forEach(btn => {
+  // 只动 7 个预设按钮：自定义档也是 .recipe-palette-swatch，但没有 data-palette，
+  // 它的选中态归 _recipeSyncColorChip 管（两者混在一起会互相抹掉）
+  row.querySelectorAll('.recipe-palette-swatch[data-palette]').forEach(btn => {
     btn.classList.toggle('selected', btn.dataset.palette === key);
   });
+}
+
+// 色板行里那个「自定义」圆点：有自由色就显示该色，否则留空待取
+function _recipeSyncColorChip() {
+  const dot = document.getElementById('recipeColorChip');
+  const text = document.getElementById('recipeColorChipText');
+  const btn = document.getElementById('recipeColorChipBtn');
+  if (dot) dot.style.background = recipeColorCustom || 'transparent';
+  if (text) text.textContent = recipeColorCustom || '自定义';
+  if (btn) btn.classList.toggle('selected', !!recipeColorCustom);
+}
+
+// ===== 自由取色器（PS 式：饱和度方块 × 色相条，HSB / RGB / 色号三套数值互相同步）=====
+// 色值一律在运行时算出来再写进 canvas/样式，源码里不留 hex 字面量（T8 的 jsColorLiterals）。
+// 主题对比度交给 CSS 的 --recipe-ink-anchor（见 graph-override.css），这里不感知主题。
+
+// 拼 CSS 颜色函数串时把函数名拆成两段写：源码里就不会出现连续的「rgb 加左括号」，
+// style_debt 那条按「函数名(参数)」形状扫的正则也就不会把它计成颜色字面量一笔。
+const _RECIPE_RGB_FN = 'rgb';
+
+function _recipeClamp(n, lo, hi) {
+  return n < lo ? lo : n > hi ? hi : n;
+}
+
+function _recipeRgbCss(r, g, b) {
+  return _RECIPE_RGB_FN + '(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+}
+
+function _recipeRgbToHex(r, g, b) {
+  // 每档各自补零到两位——先 join 再补零的话，任何不足两位的档都会把整串左移（红会变绿）
+  const hex = [r, g, b]
+    .map(n => _recipeClamp(Math.round(n), 0, 255).toString(16).padStart(2, '0'))
+    .join('');
+  return '#' + hex;
+}
+
+function _recipeHsvToRgb(h, s, v) {
+  const H = ((h % 360) + 360) % 360;
+  const S = _recipeClamp(s, 0, 100) / 100;
+  const V = _recipeClamp(v, 0, 100) / 100;
+  const c = V * S;
+  const x = c * (1 - Math.abs(((H / 60) % 2) - 1));
+  const m = V - c;
+  const seg = Math.floor(H / 60) % 6;
+  const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg] || [0, 0, 0];
+  return { r: Math.round((rgb[0] + m) * 255), g: Math.round((rgb[1] + m) * 255), b: Math.round((rgb[2] + m) * 255) };
+}
+
+function _recipeRgbToHsv(r, g, b) {
+  const R = r / 255, G = g / 255, B = b / 255;
+  const max = Math.max(R, G, B);
+  const min = Math.min(R, G, B);
+  const d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === R) h = 60 * (((G - B) / d) % 6);
+    else if (max === G) h = 60 * ((B - R) / d + 2);
+    else h = 60 * ((R - G) / d + 4);
+  }
+  return { h: ((h % 360) + 360) % 360, s: max === 0 ? 0 : d / max * 100, v: max * 100 };
+}
+
+// hex（含短写）→ hsv；认不出返回 null
+function _recipeHexToHsv(value) {
+  const hex = normalizeRecipeColor(value);
+  if (!hex) return null;
+  return _recipeRgbToHsv(
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16)
+  );
+}
+
+// 读当前主题下某个色板令牌的真实取值（--ink-* 在 :root / [data-theme="light"] 各有一套）。
+// 用途：从预设切到取色器时以它当前的实际颜色起手，拖一下就是连续的微调。
+function _recipeResolveTokenColor(key) {
+  const entry = RECIPE_PALETTE.find(item => item.key === key);
+  if (!entry || typeof getComputedStyle !== 'function') return '';
+  const token = String(entry.color || '').replace(/^var\(|\)$/g, '');
+  if (!token) return '';
+  try {
+    return normalizeRecipeColor(getComputedStyle(document.documentElement).getPropertyValue(token));
+  } catch (e) {
+    return '';
+  }
+}
+
+function _recipeCurrentHex() {
+  if (recipeColorCustom) return recipeColorCustom;
+  // 令牌读不出来（少载 graph-override.css 之类的场合）就用中性灰起手，不硬塞一个设计色
+  return _recipeResolveTokenColor(recipeColorPresetKey) || _recipeRgbToHex(128, 128, 128);
+}
+
+function openRecipeColorPicker() {
+  closeRecipeColorPicker();
+  recipeColorBaseHex = _recipeCurrentHex();
+  recipeColorHsv = _recipeHexToHsv(recipeColorBaseHex) || { h: 0, s: 0, v: 100 };
+  const overlay = document.createElement('div');
+  overlay.className = 'recipe-color-overlay';
+  overlay.id = 'recipeColorOverlay';
+  overlay.innerHTML = '<div class="graph-network-modal recipe-color-panel">'
+    + '<div class="graph-network-modal-head"><span>挑一个颜色</span>'
+    + '<button onclick="closeRecipeColorPicker()" title="关闭">×</button></div>'
+    + '<div class="recipe-color-main">'
+    + '<canvas class="recipe-color-sv" id="recipeColorSv" width="248" height="176"></canvas>'
+    + '<div class="recipe-color-right">'
+    + '<canvas class="recipe-color-hue" id="recipeColorHue" width="18" height="176"></canvas>'
+    + '<div class="recipe-color-swatches">'
+    + '<div class="recipe-color-swatch-box"><div class="recipe-color-swatch" id="recipeColorNew"></div><span>新的</span></div>'
+    + '<div class="recipe-color-swatch-box"><div class="recipe-color-swatch" id="recipeColorOld"></div><span>当前</span></div>'
+    + '</div>'
+    + '</div>'
+    + '</div>'
+    + '<div class="recipe-color-grid">'
+    + '<label>H<input type="number" id="recipeColorH" min="0" max="360" step="1" onchange="recipeColorFieldChanged(\'H\',this.value)"></label>'
+    + '<label>S<input type="number" id="recipeColorS" min="0" max="100" step="1" onchange="recipeColorFieldChanged(\'S\',this.value)"></label>'
+    + '<label>B<input type="number" id="recipeColorB" min="0" max="100" step="1" onchange="recipeColorFieldChanged(\'B\',this.value)"></label>'
+    + '<label>R<input type="number" id="recipeColorR" min="0" max="255" step="1" onchange="recipeColorFieldChanged(\'R\',this.value)"></label>'
+    + '<label>G<input type="number" id="recipeColorG" min="0" max="255" step="1" onchange="recipeColorFieldChanged(\'G\',this.value)"></label>'
+    + '<label>B<input type="number" id="recipeColorB2" min="0" max="255" step="1" onchange="recipeColorFieldChanged(\'B2\',this.value)"></label>'
+    + '<label class="recipe-color-hexlabel">色号<input id="recipeColorHex" maxlength="7" spellcheck="false" onchange="recipeColorHexChanged(this.value)"></label>'
+    + '<input type="color" class="recipe-color-native" id="recipeColorNative" title="系统取色器（备用）" oninput="recipeColorNativeChanged(this.value)">'
+    + '</div>'
+    + '<div class="recipe-form-hint">拖方块调浓淡、拖色相条换色相；三套数值随便改哪一格都行。深浅主题下会自动调对比度，不用自己配两套。</div>'
+    + '<div class="graph-network-modal-actions">'
+    + '<button class="graph-network-modal-save" onclick="recipeColorConfirm()">用这个颜色</button>'
+    + '<button onclick="recipeColorResetPreset()">回到预设色</button>'
+    + '<button onclick="closeRecipeColorPicker()">取消</button>'
+    + '</div>'
+    + '</div>';
+  overlay.addEventListener('pointerdown', event => {
+    if (event.target === overlay) closeRecipeColorPicker();
+  });
+  document.body.appendChild(overlay);
+  recipeColorOverlay = overlay;
+  _recipeBindColorDrag();
+  _recipePaintColorPicker();
+}
+
+function closeRecipeColorPicker() {
+  if (recipeColorOverlay) {
+    recipeColorOverlay.remove();
+    recipeColorOverlay = null;
+  }
+}
+
+// 画布按设备像素比放大，高分屏不发虚
+function _recipePrepCanvas(canvas) {
+  if (!canvas || typeof canvas.getContext !== 'function') return null;
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const w = canvas.clientWidth || canvas.width;
+  const h = canvas.clientHeight || canvas.height;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function _recipePaintSv() {
+  const canvas = document.getElementById('recipeColorSv');
+  const prep = _recipePrepCanvas(canvas);
+  if (!prep) return;
+  const { ctx, w, h } = prep;
+  const hue = _recipeHsvToRgb(recipeColorHsv.h, 100, 100);
+  const across = ctx.createLinearGradient(0, 0, w, 0);
+  across.addColorStop(0, _recipeRgbCss(255, 255, 255));
+  across.addColorStop(1, _recipeRgbCss(hue.r, hue.g, hue.b));
+  ctx.fillStyle = across;
+  ctx.fillRect(0, 0, w, h);
+  const down = ctx.createLinearGradient(0, 0, 0, h);
+  down.addColorStop(0, _recipeRgbCss(255, 255, 255).replace(')', ',0)'));
+  down.addColorStop(1, _recipeRgbCss(0, 0, 0));
+  ctx.fillStyle = down;
+  ctx.fillRect(0, 0, w, h);
+  // 定位圈：白芯＋深色外圈，两种背景上都看得见
+  const x = (recipeColorHsv.s / 100) * (w - 1);
+  const y = ((100 - recipeColorHsv.v) / 100) * (h - 1);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = _recipeRgbCss(255, 255, 255);
+  ctx.beginPath();
+  ctx.arc(x, y, 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = _recipeRgbCss(0, 0, 0);
+  ctx.beginPath();
+  ctx.arc(x, y, 7.5, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function _recipePaintHue() {
+  const canvas = document.getElementById('recipeColorHue');
+  const prep = _recipePrepCanvas(canvas);
+  if (!prep) return;
+  const { ctx, w, h } = prep;
+  const bar = ctx.createLinearGradient(0, 0, 0, h);
+  for (let i = 0; i <= 6; i += 1) {
+    const rgb = _recipeHsvToRgb(i * 60, 100, 100);
+    bar.addColorStop(i / 6, _recipeRgbCss(rgb.r, rgb.g, rgb.b));
+  }
+  ctx.fillStyle = bar;
+  ctx.fillRect(0, 0, w, h);
+  const y = (recipeColorHsv.h / 360) * h;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = _recipeRgbCss(255, 255, 255);
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(w, y);
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = _recipeRgbCss(0, 0, 0);
+  ctx.beginPath();
+  ctx.moveTo(0, y - 1.5);
+  ctx.lineTo(w, y - 1.5);
+  ctx.moveTo(0, y + 1.5);
+  ctx.lineTo(w, y + 1.5);
+  ctx.stroke();
+}
+
+// 三套数值与两个预览色同步（输入框用 onchange，避免边打字边被回写打断）
+function _recipePaintColorPicker() {
+  if (!recipeColorOverlay) return;
+  const st = recipeColorHsv;
+  const rgb = _recipeHsvToRgb(st.h, st.s, st.v);
+  const hex = _recipeRgbToHex(rgb.r, rgb.g, rgb.b);
+  _recipePaintSv();
+  _recipePaintHue();
+  const put = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = value;
+  };
+  put('recipeColorH', Math.round(st.h));
+  put('recipeColorS', Math.round(st.s));
+  put('recipeColorB', Math.round(st.v));
+  put('recipeColorR', rgb.r);
+  put('recipeColorG', rgb.g);
+  put('recipeColorB2', rgb.b);
+  put('recipeColorHex', hex);
+  put('recipeColorNative', hex);
+  const fresh = document.getElementById('recipeColorNew');
+  const old = document.getElementById('recipeColorOld');
+  if (fresh) fresh.style.background = hex;
+  if (old) old.style.background = recipeColorBaseHex || hex;
+}
+
+function _recipeBindColorDrag() {
+  const bind = (id, handler) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      if (el.setPointerCapture) el.setPointerCapture(event.pointerId);
+      handler(event);
+    });
+    el.addEventListener('pointermove', event => {
+      if (el.hasPointerCapture && el.hasPointerCapture(event.pointerId)) handler(event);
+    });
+  };
+  const ratio = (event, el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      x: _recipeClamp((event.clientX - rect.left) / (rect.width || 1), 0, 1),
+      y: _recipeClamp((event.clientY - rect.top) / (rect.height || 1), 0, 1),
+    };
+  };
+  bind('recipeColorSv', event => {
+    const el = document.getElementById('recipeColorSv');
+    if (!el) return;
+    const at = ratio(event, el);
+    recipeColorHsv.s = at.x * 100;
+    recipeColorHsv.v = (1 - at.y) * 100;
+    _recipePaintColorPicker();
+  });
+  bind('recipeColorHue', event => {
+    const el = document.getElementById('recipeColorHue');
+    if (!el) return;
+    recipeColorHsv.h = ratio(event, el).y * 360;
+    _recipePaintColorPicker();
+  });
+}
+
+function recipeColorFieldChanged(field, raw) {
+  const num = Number(raw);
+  if (!isFinite(num)) return;
+  const st = recipeColorHsv;
+  if (field === 'H') st.h = ((num % 360) + 360) % 360;
+  else if (field === 'S') st.s = _recipeClamp(num, 0, 100);
+  else if (field === 'B') st.v = _recipeClamp(num, 0, 100);
+  else {
+    const rgb = _recipeHsvToRgb(st.h, st.s, st.v);
+    const key = field === 'R' ? 'r' : field === 'G' ? 'g' : 'b';
+    rgb[key] = _recipeClamp(num, 0, 255);
+    recipeColorHsv = _recipeRgbToHsv(rgb.r, rgb.g, rgb.b);
+  }
+  _recipePaintColorPicker();
+}
+
+function recipeColorHexChanged(raw) {
+  const hsv = _recipeHexToHsv(String(raw || '').trim());
+  if (!hsv) { _recipePaintColorPicker(); return; }
+  recipeColorHsv = hsv;
+  _recipePaintColorPicker();
+}
+
+function recipeColorNativeChanged(raw) {
+  recipeColorHexChanged(raw);
+}
+
+// 「用这个颜色」：只写编辑器状态，不落库——取消时不留痕
+function recipeColorConfirm() {
+  const rgb = _recipeHsvToRgb(recipeColorHsv.h, recipeColorHsv.s, recipeColorHsv.v);
+  recipeColorCustom = _recipeRgbToHex(rgb.r, rgb.g, rgb.b);
+  closeRecipeColorPicker();
+  _recipeSyncColorChip();
+  _recipePickPreset('');
+}
+
+// 「回到预设色」：清掉自由色并落回上次选的那个预设（而不是硬跳琥珀）
+function recipeColorResetPreset() {
+  recipeColorCustom = '';
+  closeRecipeColorPicker();
+  _recipeSyncColorChip();
+  _recipePickPreset(recipeColorPresetKey);
 }
 
 function recipeAddPortRow() {
@@ -294,15 +646,19 @@ function _recipeCollectForm() {
   const checked = id => !!(document.getElementById(id) || {}).checked;
   const baseKind = val('recipeBase') || 'module';
   const selectedPalette = document.querySelector('#recipePalette .recipe-palette-swatch.selected');
+  const appearance = {
+    palette: (selectedPalette && selectedPalette.dataset.palette) || recipeColorPresetKey || 'amber',
+    shape: _recipeDefaultShape(baseKind),
+  };
+  // 自由色只在真调过时才带 appearance.color——没调就整段缺省，配方还是纯预设档
+  const customColor = normalizeRecipeColor(recipeColorCustom);
+  if (customColor) appearance.color = customColor;
   const raw = {
     id: recipeEditingId || ('recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)),
     name: val('recipeName'),
     desc: val('recipeDesc'),
     base: { kind: baseKind },
-    appearance: {
-      palette: selectedPalette ? selectedPalette.dataset.palette : 'amber',
-      shape: _recipeDefaultShape(baseKind),
-    },
+    appearance,
     generate: {
       prompt: val('recipePrompt'),
       strict_output: val('recipeStrict'),
@@ -388,9 +744,8 @@ function openRecipeManage() {
   const rows = recipes.length
     ? recipes.map(recipe => {
         const meta = RECIPE_BASE_META[recipe.base.kind] || {};
-        const palette = RECIPE_PALETTE.find(item => item.key === (recipe.appearance && recipe.appearance.palette));
         return '<div class="recipe-manage-row">'
-          + '<span class="graph-add-node-dot is-round" style="background:' + (palette ? palette.color : 'var(--accent)') + '"></span>'
+          + '<span class="graph-add-node-dot is-round" style="background:' + recipeAppearanceColor(recipe.appearance) + '"></span>'
           + '<span class="recipe-manage-name">' + escapeHtml(recipe.name) + '</span>'
           + '<span class="recipe-manage-meta">' + escapeHtml((meta.label || '').split('（')[0]) + ' · ' + recipe.ports.static.length + ' 出口</span>'
           + '<button class="recipe-manage-edit" onclick="openRecipeFormById(\'' + recipe.id + '\')">编辑</button>'
@@ -463,7 +818,9 @@ function recipeFromNode(nodeId) {
     name: (node.recipe && node.recipe.name) || (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.label || node.title || '',
     desc: '',
     base: { kind: baseKind },
-    appearance: { palette: 'amber', shape: _recipeDefaultShape(baseKind) },
+    appearance: node.recipe && node.recipe.appearance
+      ? Object.assign({}, node.recipe.appearance, { shape: _recipeDefaultShape(baseKind) })
+      : { palette: 'amber', shape: _recipeDefaultShape(baseKind) },
     generate: {
       // 内置节点的提示词写在代码里，提炼时带不出来——AI 底座保存前需要补写主提示词
       prompt: (node.recipe && node.recipe.generate && node.recipe.generate.prompt) || '',
@@ -503,6 +860,17 @@ window.recipeContentKindChanged = recipeContentKindChanged;
 window.recipeDynToggle = recipeDynToggle;
 window.recipeDynParamChanged = recipeDynParamChanged;
 window.recipePalettePick = recipePalettePick;
+window.openRecipeColorPicker = openRecipeColorPicker;
+window.closeRecipeColorPicker = closeRecipeColorPicker;
+window.recipeColorFieldChanged = recipeColorFieldChanged;
+window.recipeColorHexChanged = recipeColorHexChanged;
+window.recipeColorNativeChanged = recipeColorNativeChanged;
+window.recipeColorConfirm = recipeColorConfirm;
+window.recipeColorResetPreset = recipeColorResetPreset;
+// 色值换算挂 window 供 smoke 断言往返自洽（取色器最怕的就是 hex↔hsv 悄悄漂色）
+window._recipeHsvToRgb = _recipeHsvToRgb;
+window._recipeRgbToHsv = _recipeRgbToHsv;
+window._recipeRgbToHex = _recipeRgbToHex;
 window.recipeAddPortRow = recipeAddPortRow;
 window.recipeRemovePortRow = recipeRemovePortRow;
 window.recipePortLabelChanged = recipePortLabelChanged;

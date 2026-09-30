@@ -11,7 +11,8 @@ P3 起 Φ 产出配方时后端把关（preset 相位的 create_recipe/update_re
 规则口径（与 JS 逐条对应）：
 - 名称必填、≤24 字、与现有清单查重（同 id 除外）
 - 底座 kind 只允许白名单（module/summary/knowledge/relation/note/human_note/manual/question）
-- 色板只允许成对令牌 key（不开放自由 hex，D-R8）
+- 色板只允许成对令牌 key（D-R8 的预设档）；另允许可选的 ``appearance.color``
+  自由色（#rrggbb / #rgb；2026-09-30 用户拍板放宽），给了就压过 palette 令牌
 - AI 底座必须有主提示词；每个提示词槽（含 retry_prompt）≤800 字
 - 出口 ≤8 个，名字 ≤12 字、不重复；drag_form 只允许 draft / user / connected:<key>
 - P2：动态出口（parser.numbered_list / label_from / fallback.mode / each.type）全枚举；
@@ -48,6 +49,17 @@ RECIPE_DESC_MAX = 80
 RECIPE_PORT_LABEL_MAX = 12
 
 _DRAG_FORM_RE = re.compile(r"^connected:[a-z_]+$")
+_RECIPE_COLOR_RE = re.compile(r"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$")
+
+
+def _normalize_color(value: Any) -> str:
+    """自由色归一化（与前端 normalizeRecipeColor 同口径）：短写补齐、非法返回空串。"""
+    raw = _text(value).lower()
+    if not _RECIPE_COLOR_RE.match(raw):
+        return ""
+    if len(raw) == 4:
+        return "#" + raw[1] * 2 + raw[2] * 2 + raw[3] * 2
+    return raw
 
 
 def _aggregation_for_base(base_kind: str, override: Any = None) -> str:
@@ -166,6 +178,7 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
         return None
     appearance = raw.get("appearance") if isinstance(raw.get("appearance"), dict) else {}
     palette = _text(appearance.get("palette")) or "amber"
+    custom_color = _normalize_color(appearance.get("color"))
     shape = _text(appearance.get("shape")) or _default_shape(base_kind)
     g = raw.get("generate") if isinstance(raw.get("generate"), dict) else {}
     ports = raw.get("ports") if isinstance(raw.get("ports"), dict) else {}
@@ -202,7 +215,11 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
         "desc": _text(raw.get("desc"))[:RECIPE_DESC_MAX],
         "builtin": False,
         "base": {"kind": base_kind},
-        "appearance": {"palette": palette, "shape": shape},
+        # 自由色是可选段：不声明就不设键（与前端 normalize 同形，对拍/快照友好）
+        "appearance": (
+            {"palette": palette, "color": custom_color, "shape": shape}
+            if custom_color else {"palette": palette, "shape": shape}
+        ),
         "generate": {
             "prompt": _text(g.get("prompt"))[: RECIPE_PROMPT_BUDGET * 2],
             "strict_output": _text(g.get("strict_output"))[: RECIPE_PROMPT_BUDGET * 2],
@@ -244,6 +261,9 @@ def validate_recipe(recipe: Any, existing: Optional[List[Any]] = None) -> Dict[s
     appearance = recipe.get("appearance") if isinstance(recipe.get("appearance"), dict) else {}
     if _text(appearance.get("palette")) not in RECIPE_PALETTE_KEYS:
         errors.append("色板不合法（只能从成对色板令牌选）")
+    # 自由色是可选段：给了就必须是真的 hex（表单只吐合法值，这里挡手改/导入的脏数据）
+    if _text(appearance.get("color")) and not _normalize_color(appearance.get("color")):
+        errors.append("自定义颜色不合法（要 #rrggbb 或 #rgb）")
     shape = _text(appearance.get("shape"))
     if shape and shape not in RECIPE_SHAPES:
         errors.append("形状不合法")
