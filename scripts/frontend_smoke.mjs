@@ -5504,7 +5504,197 @@ check('发送排队：模块已注册进构建顺序，且「待发送 N」标�
   }
 });
 
+// ===== 串行边界追加：画布多选与批量删除（2026-09-30）=====
+// 多选改的是模块级 sessions / currentSessionId 词法绑定，还会 await 一串 fetch、
+// 写共享的 phymathia_sessions 与 phymathia_msgs_*/graph_* 键——与在途异步用例互踩，
+// 走自己的串行链（同发送排队那套）。
+const msEval = (code) => vm.runInContext(code, sandbox);
+let msTail = Promise.resolve();
+const checkMs = (name, fn) => {
+  msTail = msTail.then(async () => {
+    try {
+      const r = await fn();
+      if (r === false) throw new Error('断言未通过');
+      console.log('✓', name);
+    } catch (e) {
+      failed++;
+      console.error('❌', name, '->', e.message);
+    }
+  });
+};
+
+// 下游全是函数声明（是 globalThis 的属性，可以整体替换还原），
+// 知识/公式面板在宽松 DOM 代理下会走进未覆盖的渲染路径，这里换成记账桩。
+const msCalls = [];
+function msIsolate() {
+  const saved = {};
+  const stub = (name, fn) => { saved[name] = sandbox[name]; sandbox[name] = fn; };
+  stub('invalidateKnowledgeCache', () => msCalls.push('invalidate'));
+  stub('renderKnowledgePanel', () => msCalls.push('renderKp'));
+  stub('loadFormulas', () => msCalls.push('loadFormulas'));
+  stub('deleteKnowledgeBySession', async (sid) => { msCalls.push('know:' + sid); });
+  stub('deleteFormulasBySession', async (sid) => { msCalls.push('formula:' + sid); });
+  stub('switchToSession', async (sid) => { msCalls.push('switch:' + sid); });
+  stub('createNewSession', () => { msCalls.push('create'); });
+  stub('showToast', (msg) => { msCalls.push('toast:' + msg); });
+  stub('_deleteOnServer', async () => { msCalls.push('srvDel'); return true; });
+  stub('_saveSessionToServer', async (sid) => { msCalls.push('upsert:' + sid); });
+  const prevPhi = sandbox.window.phiCanvasDeleted;
+  sandbox.window.phiCanvasDeleted = (sid) => { msCalls.push('phi:' + sid); };
+  // 元素注册表：宽松代理每次 getElementById 都返回新对象，量不到属性。
+  // 只接管多选相关的 5 个 id，其余一律转交原实现——发送排队那条链与本节并发跑，
+  // 它要靠真 getElementById 拿到 loose 元素。
+  const els = {};
+  const prevGet = sandbox.document.getElementById;
+  const OWNED = new Set(['sessionList', 'sessionBulkBar', 'sessionBulkCount', 'sessionBulkDeleteBtn', 'sessionMultiSelectBtn']);
+  const myGet = (id) => {
+    if (!OWNED.has(id)) return prevGet(id);
+    if (!els[id]) {
+      els[id] = {
+        innerHTML: '', hidden: true, textContent: '', disabled: false, className: '',
+        classList: { toggle() {}, add() {}, remove() {}, contains() { return false; } },
+      };
+    }
+    return els[id];
+  };
+  sandbox.document.getElementById = myGet;
+  return {
+    els,
+    restore() {
+      for (const k of Object.keys(saved)) sandbox[k] = saved[k];
+      sandbox.window.phiCanvasDeleted = prevPhi;
+      // 只在还是自己的时候还原：并发用例可能已经换上了它们的实现
+      if (sandbox.document.getElementById === myGet) sandbox.document.getElementById = prevGet;
+      // 交还词法状态：在途的并发用例还在用同一个 sessions 名单
+      msEval('sessions = __msPrevSessions; currentSessionId = __msPrevCurrent; _sessionMultiSelect = false; _sessionSelected.clear();');
+    },
+  };
+}
+
+checkMs('画布多选：进入多选 → 勾选 → 批量删除（逐条走单删主路径，名单只写一次）', async () => {
+  const iso = msIsolate();
+  try {
+    // isStreaming 是词法绑定，在途的并发用例会把它置位；会话管理用例与它无关，显式归零
+    msEval('__msPrevSessions = sessions; __msPrevCurrent = currentSessionId; isStreaming = false;');
+    msEval('sessions = { s1:{id:"s1",title:"甲",updatedAt:9}, s2:{id:"s2",title:"乙",updatedAt:8}, s3:{id:"s3",title:"丙",updatedAt:7}, s4:{id:"s4",title:"丁",updatedAt:6} }; currentSessionId = "s2"; _sessionMultiSelect = false; _sessionSelected.clear();');
+    sandbox.toggleSessionMultiSelect();
+    if (msEval('_sessionMultiSelect') !== true) throw new Error('没进多选态');
+    if (iso.els.sessionBulkBar.hidden !== false) throw new Error('批量操作条没露出来——用户进多选却无处操作');
+    if (iso.els.sessionBulkCount.textContent !== '已选 0 / 4') throw new Error('计数不对：' + iso.els.sessionBulkCount.textContent);
+    if (!iso.els.sessionList.innerHTML.includes('multi-select-item')) throw new Error('列表没渲染成多选形态（缺复选框行）');
+
+    sandbox.toggleSessionSelect('s1');
+    sandbox.toggleSessionSelect('s3');
+    if (iso.els.sessionBulkCount.textContent !== '已选 2 / 4') throw new Error('勾选计数没跟上：' + iso.els.sessionBulkCount.textContent);
+    if (!iso.els.sessionList.innerHTML.includes('picked')) throw new Error('选中态没画出来');
+    // 再次点击同一行＝取消勾选
+    sandbox.toggleSessionSelect('s1');
+    if (iso.els.sessionBulkCount.textContent !== '已选 1 / 4') throw new Error('取消勾选没生效');
+    sandbox.toggleSessionSelect('s1');
+
+    sandbox.selectAllSessions();
+    if (iso.els.sessionBulkCount.textContent !== '已选 4 / 4') throw new Error('全选没生效');
+    sandbox.clearSessionSelection();
+    if (iso.els.sessionBulkCount.textContent !== '已选 0 / 4') throw new Error('清除没生效');
+    if (iso.els.sessionBulkDeleteBtn.disabled !== true) throw new Error('没勾选时删除钮应置灰');
+
+    // 逐条清理的证据：被删画布的本地消息/画布键必须真的消失
+    for (const id of ['s1', 's3']) {
+      sandbox.localStorage.setItem('phymathia_msgs_' + id, '[{"role":"user"}]');
+      sandbox.localStorage.setItem('phymathia_graph_' + id, '{"positions":{}}');
+    }
+    msCalls.length = 0;
+    sandbox.toggleSessionSelect('s1');
+    sandbox.toggleSessionSelect('s3');
+    await sandbox.deleteSelectedSessions();
+
+    if (msEval('Object.keys(sessions).sort().join(",")') !== 's2,s4') {
+      throw new Error('批量删完后名单应为 s2,s4，实际 ' + msEval('Object.keys(sessions).join(",")'));
+    }
+    for (const id of ['s1', 's3']) {
+      if (sandbox.localStorage.getItem('phymathia_msgs_' + id) !== null) throw new Error(id + ' 的本地消息没清掉');
+      if (sandbox.localStorage.getItem('phymathia_graph_' + id) !== null) throw new Error(id + ' 的本地画布状态没清掉');
+    }
+    if (!msCalls.includes('know:s1') || !msCalls.includes('formula:s3')) throw new Error('知识/公式清理没逐条走主路径');
+    if (msCalls.filter(c => c === 'invalidate').length !== 1) throw new Error('面板刷新应只做一次，实际 ' + msCalls.filter(c => c === 'invalidate').length);
+    // saveSessions 收成一次：剩下的两个画布各 upsert 一次（逐条调用会是 3 次）
+    if (msCalls.filter(c => c.startsWith('upsert:')).length !== 2) {
+      throw new Error('名单应只整体写一次，实际 upsert ' + msCalls.filter(c => c.startsWith('upsert:')).length + ' 次');
+    }
+    if (!msCalls.some(c => c.startsWith('toast:已删除 2 个画布'))) throw new Error('没有完成提示：' + msCalls.filter(c => c.startsWith('toast:')));
+    // 没选当前画布就不该切换
+    if (msCalls.some(c => c.startsWith('switch:'))) throw new Error('没删当前画布却切了会话');
+    if (msEval('_sessionMultiSelect') !== false) throw new Error('全删成功应自动退出多选态');
+  } finally {
+    iso.restore();
+  }
+});
+
+checkMs('画布多选：选中里含当前画布 → 删完自动落到最近的一个', async () => {
+  const iso = msIsolate();
+  try {
+    // isStreaming 是词法绑定，在途的并发用例会把它置位；会话管理用例与它无关，显式归零
+    msEval('__msPrevSessions = sessions; __msPrevCurrent = currentSessionId; isStreaming = false;');
+    msEval('sessions = { s1:{id:"s1",title:"甲",updatedAt:9}, s2:{id:"s2",title:"乙",updatedAt:8}, s3:{id:"s3",title:"丙",updatedAt:7} }; currentSessionId = "s2"; _sessionMultiSelect = true; _sessionSelected.clear();');
+    msCalls.length = 0;
+    sandbox.toggleSessionSelect('s2');
+    sandbox.toggleSessionSelect('s3');
+    await sandbox.deleteSelectedSessions();
+    if (msCalls.filter(c => c.startsWith('switch:')).length !== 1) throw new Error('删掉当前画布后应只切一次会话');
+    if (msCalls.includes('switch:s2')) throw new Error('切向了已被删掉的画布');
+    if (msCalls.filter(c => c.startsWith('srvDel')).length !== 2) throw new Error('服务端删除应逐条发一次，实际 ' + msCalls.filter(c => c.startsWith('srvDel')).length);
+  } finally {
+    iso.restore();
+  }
+});
+
+checkMs('画布多选：服务端删失败的画布保留勾选并可重试，不误报全清', async () => {
+  const iso = msIsolate();
+  try {
+    // isStreaming 是词法绑定，在途的并发用例会把它置位；会话管理用例与它无关，显式归零
+    msEval('__msPrevSessions = sessions; __msPrevCurrent = currentSessionId; isStreaming = false;');
+    msEval('sessions = { s1:{id:"s1",title:"甲",updatedAt:9}, s2:{id:"s2",title:"乙",updatedAt:8} }; currentSessionId = "s1"; _sessionMultiSelect = true; _sessionSelected.clear();');
+    // 服务端在线，但只有 s1 的 DELETE 失败（混合结局：一条成一条败）
+    sandbox._deleteOnServer = async (url) => !String(url).includes('s1');
+    msEval('_serverAvailable = true; _serverAvailableCheckedAt = Date.now();');
+    msCalls.length = 0;
+    sandbox.toggleSessionSelect('s1');
+    sandbox.toggleSessionSelect('s2');
+    await sandbox.deleteSelectedSessions();
+    if (msEval('Object.keys(sessions).join(",")') !== 's1') throw new Error('只有 s2 该被删，实际剩 ' + msEval('Object.keys(sessions).join(",")'));
+    if (msEval('Array.from(_sessionSelected).join(",")') !== 's1') throw new Error('失败的画布应保留勾选供重试');
+    if (msEval('_sessionMultiSelect') !== true) throw new Error('有失败项时不该退出多选态');
+    if (!msCalls.some(c => c.includes('已删除 1 个，1 个失败'))) throw new Error('没有提示部分失败：' + msCalls.filter(c => c.startsWith('toast:')));
+  } finally {
+    msEval('_serverAvailable = null; _serverAvailableCheckedAt = 0;');
+    iso.restore();
+  }
+});
+
+// 静态契约：入口、样式、单删/批删同源，防「多选另起一套删除口径」回退
+check('画布多选：入口与样式在位，且单删/批删共用同一条删除内核', () => {
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="sessionMultiSelectBtn"') || !html.includes('toggleSessionMultiSelect()')) {
+    throw new Error('侧栏没有多选开关——用户找不到入口');
+  }
+  for (const id of ['sessionBulkBar', 'sessionBulkCount', 'sessionBulkDeleteBtn']) {
+    if (!html.includes(`id="${id}"`)) throw new Error(`index.html 缺批量操作条元素 #${id}`);
+  }
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  for (const sel of ['.session-bulk-bar', '.session-item.multi-select-item .session-check', '.sidebar-multiselect-btn']) {
+    if (!css.includes(sel)) throw new Error(`styles.css 缺 ${sel} 规则——控件会没样式`);
+  }
+  if (!css.includes('.session-bulk-bar[hidden]')) {
+    throw new Error('批量条没写 [hidden] 兜底——display:flex 会盖掉 hidden 属性，退出多选后仍常驻');
+  }
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!src.includes('async function _purgeSessionData(id)')) throw new Error('删除内核不存在');
+  if (!src.includes('const r = await _purgeSessionData(id);')) throw new Error('单删/批删没有共用同一条删除内核（两条路径会分叉）');
+  return true;
+});
+
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
+await msTail;
 await Promise.all(sqChecks).catch(() => {});
 
 await Promise.all(pendingChecks).catch(() => {});
