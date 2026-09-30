@@ -1538,7 +1538,7 @@ let harnessLastAppliedBeforeSnapshot = null;
   const HARNESS_MODES = [
     { id: 'edit', label: '编辑', placeholder: '对网络助手说话…可改图，可提问', hint: '可改图，可问答' },
     { id: 'chat', label: '答疑', placeholder: '答疑模式：随便问，我不会动你的图', hint: '只读：只回答，不改图' },
-    { id: 'preset', label: '✦ 创造', placeholder: '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…', hint: '对话式创作/修改节点配方' },
+    { id: 'preset', label: '创造', placeholder: '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…', hint: '对话式创作/修改节点配方' },
   ];
 
   function _harnessModeDef(id) {
