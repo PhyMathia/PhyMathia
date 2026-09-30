@@ -2447,6 +2447,47 @@ check('harness：澄清重跑委托主路径 / 零勾选不回退应用全部 / 
   return true;
 });
 
+// ===== Φ 第一档七件套（T86–T92，2026-09-30 事故级修复）静态回归 =====
+// 七条都是用户直接撞上的信任事故，这里锁住「不许回退」的形态：澄清不得再抹聊天区、
+// 流式重试不得叠加、应用不得重入毁检查点、切换会话不得静默掐断、生成中发言不得
+// 静默丢弃、phase 不得裸英文、清空不得用原生 confirm。
+check('harness：第一档七件套 T86–T92（澄清不抹历史/流式重置/应用防重入/切换守卫/排队/phase 中文/清空内联确认）', () => {
+  const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const asrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
+  const psrc = fs.readFileSync('src/static/js/harness-preview.js', 'utf8');
+  const ssrc = fs.readFileSync('src/static/js/send-queue.js', 'utf8');
+  const pysrc = fs.readFileSync('harness/review.py', 'utf8');
+  // T86：澄清是追加气泡（带取消出口），不得再 innerHTML 整块覆盖聊天区
+  if (rsrc.includes("chat.innerHTML = '<div class=\"graph-harness-clarify\">")) {
+    throw new Error('澄清又变回整块覆盖聊天区（T86 回退）');
+  }
+  if (!rsrc.includes('graph-harness-message-clarify')) throw new Error('澄清追加气泡缺失');
+  if (!rsrc.includes('cancelHarnessClarify')) throw new Error('澄清缺「取消」出口');
+  // T87：重试轮次开始时流式预览必须重置（后端 status 带 attempt，前端 attempt>0 清空）
+  if (!pysrc.includes('"attempt": attempt')) throw new Error('review.py 轮次 status 缺 attempt 字段');
+  if (!rsrc.includes("evt.stage === 'model' && Number(evt.attempt) > 0")) throw new Error('前端未按 attempt 重置流式预览');
+  // T88：应用成功置位防重入标志，入口拦截重复应用；撤销/新结果/会话重置/新一轮生成复位
+  if (!hsrc.includes('let harnessResultApplied')) throw new Error('harness.js 缺 harnessResultApplied 标志');
+  if (!asrc.includes('这条建议已经应用过')) throw new Error('应用防重入缺用户提示');
+  if (!asrc.includes('graphHarnessApplyAllBtn')) throw new Error('应用后未禁用应用按钮');
+  if (!psrc.includes('graphHarnessApplyAllBtn')) throw new Error('新结果渲染未复位应用按钮');
+  // T89：生成中切换 Φ 会话必须被 busy 守卫拦下（新建/删除/清空/换绑同款）
+  if (!hsrc.includes('等任务完成后再切换 Φ 会话')) throw new Error('切换 Φ 会话缺 busy 守卫');
+  // T90：生成中发消息入队（复用 send-queue），队列也必须认识 harnessBusy
+  if (!rsrc.includes('_enqueueSend')) throw new Error('Φ 未接入 send-queue 排队');
+  if (!rsrc.includes('graph-harness-queued-tag')) throw new Error('排队气泡缺「排队中」标记');
+  if (!ssrc.includes('harnessBusy')) throw new Error('send-queue 忙判定不认 harnessBusy');
+  // T91：助手消息 meta 只出中文标签，不得裸英文 phase
+  if (!hsrc.includes('const HARNESS_PHASE_LABELS') || !hsrc.includes('审阅整理')) throw new Error('phase 中文映射表缺失');
+  if (!hsrc.includes('_escapeHtml(_harnessPhaseLabel(entry.phase))')) throw new Error('meta 未走中文标签映射');
+  if (hsrc.includes("'>' + (entry.phase || '') + '</div>'")) throw new Error('meta 仍直接渲染原始 phase（T91 回退）');
+  // T92：清空所有 Φ 对话用菜单内联二次确认，不用原生 confirm
+  if (hsrc.includes("window.confirm('确定清空所有")) throw new Error('清空 Φ 对话仍用原生 confirm（T92 回退）');
+  if (!hsrc.includes('confirmClearAllHarnessSessions')) throw new Error('清空缺内联二次确认');
+  return true;
+});
+
 // ===== 知识大陆（graph-continent.js，大陆计划 v1）静态/沙箱回归 =====
 // 分层不变量：主图是投影层，前端零写路径——绝不写 phymathia_graph_ 会话键；
 // 下钻复用 switchToSession + goToKnowledgeNode，不自建切会话协议。

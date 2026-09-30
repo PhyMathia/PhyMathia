@@ -260,10 +260,14 @@ async function main() {
       ok('通道⑦ 删单个 Φ 会话（confirm 接受）：只删对话，画布名单与图状态零触碰');
     } catch (e) { bad('通道⑦ 删单个 Φ 会话', e); }
 
-    // ---- 通道⑧：清空所有 Φ 对话——画布全部保留 ----
+    // ---- 通道⑧：清空所有 Φ 对话——画布全部保留（T92 起＝菜单内联二次确认，无原生弹窗） ----
     try {
-      page.once('dialog', d => d.accept());
+      await page.evaluate(() => _renderHarnessSessionMenu());
       await page.evaluate(() => clearAllHarnessSessions());
+      // 第一下只挂内联确认条（真实用户路径）；真清空在「确认清空」那一下
+      const armed = await page.evaluate(() => !!document.querySelector('#graphHarnessSessionMenu .graph-harness-clearall-confirm'));
+      if (!armed) throw new Error('第一下未出现内联二次确认条（T92 回退？）');
+      await page.evaluate(() => confirmClearAllHarnessSessions(true));
       await page.waitForTimeout(600);
       const after = await page.evaluate(() => JSON.stringify({
         phi: Object.keys(phiSessions).length,
@@ -273,7 +277,7 @@ async function main() {
       const m = JSON.parse(after);
       if (m.phi !== 1) throw new Error('清空后应只剩 1 个新建空白会话：' + m.phi);
       if (m.canvases !== 2 || !m.nodes) throw new Error('画布未完整保留：' + after);
-      ok('通道⑧ 清空所有 Φ 对话（confirm 接受）：画布名单、图状态、已应用节点全部保留');
+      ok('通道⑧ 清空所有 Φ 对话（内联二次确认）：画布名单、图状态、已应用节点全部保留');
     } catch (e) { bad('通道⑧ 清空所有 Φ 对话', e); }
 
     if (pageErrors.length) {

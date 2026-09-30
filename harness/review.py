@@ -1177,9 +1177,12 @@ async def review_graph(
         if attempt == 0:
             context_metrics = _log_context_metrics(messages, current, phase) or context_metrics
 
+        # attempt 供前端重置流式预览：每轮都重新挂 on_delta，若前端只追加不重置，
+        # 第 2/3 轮的残文会接在第 1 轮后面（T87）。只加字段，不动文案与结构。
         _emit({
             "type": "status",
             "stage": "model",
+            "attempt": attempt,
             "message": "正在思考方案…" if attempt == 0
             else f"正在根据校验反馈修正方案（第 {attempt + 1} 轮）…",
         })
