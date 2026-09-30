@@ -223,7 +223,9 @@
     async function _deleteOnServer(url) {
       if (!(await _checkServer())) return false;
       try {
-        const resp = await fetch(url, { method: 'DELETE' });
+        // 超时兜底（2026-09-30）：删除链无 signal 时一次挂住的 fetch 会让整条链静默停在半路
+        // （服务端已删、本地名单还在）；多选批量删除会把这个问题放大成「整批卡死」。
+        const resp = await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(10000) });
         return resp.ok;
       } catch (e) {
         console.error('[Storage] Server delete error:', url, e);
@@ -599,22 +601,14 @@
       renderSessionList();
     }
 
-    // 删除会话
-    async function deleteSession(id, e) {
-      if (e) e.stopPropagation();
-      if (isStreaming) return;
-      if (!confirm('确定删除此画布？')) return;
-
+    // 单个画布的删除内核（单删与多选批量共用同一条路径，清理口径不分叉）：
+    // 只清资料不动名单，返回 { ok, offline } —— 名单移除与 UI 刷新交给调用方，
+    // 批量删除才能把 saveSessions() 收成一次（逐条调用是 O(n²) 次 upsert 请求）。
+    async function _purgeSessionData(id) {
       // 先删服务端、成功后再动本地（09-23 教训：旧顺序先删本地名单再调服务端，
       // 服务端失败时画布已从列表消失、无法重试，15 秒同步还会把会话并集推回服务端）
       const serverOk = await _deleteOnServer('/api/sessions/' + id);
-      if (!serverOk && (await _checkServer())) {
-        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', TOAST_MS_LONG);
-        return;
-      }
-      if (!serverOk && typeof showToast === 'function') {
-        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
-      }
+      if (!serverOk && (await _checkServer())) return { ok: false, offline: false };
 
       // 删除消息
       localStorage.removeItem('phymathia_msgs_' + id);
@@ -624,27 +618,156 @@
       await deleteFormulasBySession(id);
       if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(id);
       if (typeof window.deleteQuizBankBySession === 'function') window.deleteQuizBankBySession(id);
-      delete sessions[id];
-      saveSessions();
+      return { ok: true, offline: !serverOk };
+    }
+
+    // 名单已移除之后的收尾：Φ 解绑 + 知识/公式面板刷新
+    function _afterSessionRemoval(ids) {
       // Φ 会话解耦（2026-09-30）：删画布不动 Φ 对话，只解绑（对话保留、可换绑）
-      if (typeof window.phiCanvasDeleted === 'function') window.phiCanvasDeleted(id);
+      for (const id of ids) {
+        if (typeof window.phiCanvasDeleted === 'function') window.phiCanvasDeleted(id);
+      }
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
       if (typeof loadFormulas === 'function') loadFormulas();
+    }
 
-      if (currentSessionId === id) {
-        // 删除的是当前会话，切换到最近的或新建
-        const keys = Object.keys(sessions);
-        if (keys.length > 0) {
-          // 按更新时间排序，切换到最近的
-          keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
-          switchToSession(keys[0]);
-        } else {
-          createNewSession();
-        }
+    // 当前画布被删掉后的落点：最近的画布，没有就新建一个
+    function _switchAfterCurrentDeleted() {
+      const keys = Object.keys(sessions);
+      if (keys.length > 0) {
+        // 按更新时间排序，切换到最近的
+        keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
+        switchToSession(keys[0]);
+      } else {
+        createNewSession();
       }
+    }
+
+    // 删除会话
+    async function deleteSession(id, e) {
+      if (e) e.stopPropagation();
+      if (isStreaming) return;
+      if (!confirm('确定删除此画布？')) return;
+
+      const r = await _purgeSessionData(id);
+      if (!r.ok) {
+        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', TOAST_MS_LONG);
+        return;
+      }
+      if (r.offline && typeof showToast === 'function') {
+        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
+      }
+
+      delete sessions[id];
+      saveSessions();
+      _afterSessionRemoval([id]);
+      if (currentSessionId === id) _switchAfterCurrentDeleted();
       renderSessionList();
     }
+
+    // ====== 画布多选（批量删除）======
+    // 状态存在模块级：15 秒定时同步会整份重画列表，选中态必须跨重绘存活（按 sid 存，不存 DOM）
+    let _sessionMultiSelect = false;
+    const _sessionSelected = new Set();
+    let _sessionBulkBusy = false;
+
+    function isSessionMultiSelect() { return _sessionMultiSelect; }
+    function getSelectedSessionIds() {
+      return Array.from(_sessionSelected).filter(id => !!sessions[id]);
+    }
+
+    function toggleSessionMultiSelect() {
+      _sessionMultiSelect = !_sessionMultiSelect;
+      _sessionSelected.clear();
+      if (typeof closeIconPicker === 'function') closeIconPicker();
+      renderSessionList();
+    }
+
+    function exitSessionMultiSelect() {
+      if (!_sessionMultiSelect) return;
+      _sessionMultiSelect = false;
+      _sessionSelected.clear();
+      renderSessionList();
+    }
+
+    function toggleSessionSelect(id) {
+      if (!_sessionMultiSelect) return;
+      if (_sessionSelected.has(id)) _sessionSelected.delete(id);
+      else _sessionSelected.add(id);
+      renderSessionList();
+    }
+
+    function selectAllSessions() {
+      if (!_sessionMultiSelect) return;
+      _sessionSelected.clear();
+      for (const id of Object.keys(sessions)) _sessionSelected.add(id);
+      renderSessionList();
+    }
+
+    function clearSessionSelection() {
+      _sessionSelected.clear();
+      renderSessionList();
+    }
+
+    // 批量删除选中的画布。逐条走 _purgeSessionData 主路径：
+    // 名单与面板刷新各只做一次；失败的画布留在选中态里，可直接重试。
+    async function deleteSelectedSessions() {
+      if (isStreaming || _sessionBulkBusy) return;
+      const ids = getSelectedSessionIds();
+      if (ids.length === 0) {
+        if (typeof showToast === 'function') showToast('请先勾选要删除的画布', TOAST_MS_LONG);
+        return;
+      }
+      if (!confirm(`确定删除选中的 ${ids.length} 个画布？\n它们的知识、公式与检测记录会一并清除，且不可撤销。`)) return;
+
+      _sessionBulkBusy = true;
+      // 当前画布排最后：删它会触发切换，先把其余删完，落点才不像是被删的那一个
+      const ordered = ids.filter(id => id !== currentSessionId).concat(ids.filter(id => id === currentSessionId));
+      const removed = [];
+      const failed = [];
+      let offlineAny = false;
+      try {
+        for (const id of ordered) {
+          const r = await _purgeSessionData(id);
+          if (!r.ok) { failed.push(id); continue; }
+          if (r.offline) offlineAny = true;
+          removed.push(id);
+          delete sessions[id];
+          _sessionSelected.delete(id);
+          renderSessionList(); // 逐条出列，大批量时能看到进度而不是干等
+        }
+      } finally {
+        _sessionBulkBusy = false;
+      }
+
+      if (removed.length > 0) {
+        saveSessions();
+        _afterSessionRemoval(removed);
+        if (removed.includes(currentSessionId)) _switchAfterCurrentDeleted();
+      }
+
+      if (typeof showToast === 'function') {
+        if (failed.length === 0) {
+          showToast(offlineAny
+            ? `已删除 ${removed.length} 个画布（离线：服务器可能残留）`
+            : `已删除 ${removed.length} 个画布`, TOAST_MS_LONG);
+        } else {
+          showToast(`已删除 ${removed.length} 个，${failed.length} 个失败（已保留勾选，可重试）`, TOAST_MS_LONG);
+        }
+      }
+      if (failed.length === 0) _sessionMultiSelect = false;
+      renderSessionList();
+    }
+
+    // 多选态下 Esc 退出（而不是关侧栏）：多选里点错了先按 Esc 补救最自然。
+    // 侧栏没开时不劫持这个键——Esc 在别处还有别的含义。
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !_sessionMultiSelect) return;
+      const sidebar = document.getElementById('sidebar');
+      if (!sidebar || !sidebar.classList.contains('open')) return;
+      exitSessionMultiSelect();
+    });
 
     // 渲染当前画布（2026-09-25 线性主聊天退役：chatMessages 气泡容器已随聊天 UI
     // 移除，线性消息恢复分支 restoreMessage 及其渲染缓存一并删除，本函数只剩画布刷新）
@@ -671,19 +794,55 @@
         if (!document.querySelector('.session-rename-input')) _sessionRenameActive = false;
         else return; // 改名进行中：推迟重绘，结束后由 doSave/取消 统一刷新
       }
+      // 已被别处删掉的画布（清空全部/服务端同步并集变化）不留悬空勾选
+      for (const id of Array.from(_sessionSelected)) {
+        if (!sessions[id]) _sessionSelected.delete(id);
+      }
       const keys = Object.keys(sessions);
       keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
+
+      const bulkBar = document.getElementById('sessionBulkBar');
+      if (bulkBar) {
+        bulkBar.hidden = !_sessionMultiSelect;
+        const countEl = document.getElementById('sessionBulkCount');
+        if (countEl) countEl.textContent = `已选 ${_sessionSelected.size} / ${keys.length}`;
+        const delBtn = document.getElementById('sessionBulkDeleteBtn');
+        if (delBtn) {
+          delBtn.disabled = _sessionSelected.size === 0 || _sessionBulkBusy;
+          delBtn.textContent = _sessionBulkBusy ? '正在删除…' : '删除选中';
+        }
+      }
+      const msBtn = document.getElementById('sessionMultiSelectBtn');
+      if (msBtn) {
+        msBtn.classList.toggle('on', _sessionMultiSelect);
+        msBtn.textContent = _sessionMultiSelect ? '完成' : '多选';
+      }
 
       if (keys.length === 0) {
         list.innerHTML = '<div style="font-size:11px;color:var(--text-secondary);opacity:0.5;text-align:center;padding:8px;">暂无画布</div>';
         return;
       }
 
+      const multi = _sessionMultiSelect;
       list.innerHTML = keys.map(id => {
         const s = sessions[id];
         const isActive = id === currentSessionId;
         const time = formatRelativeTime(s.updatedAt || s.createdAt);
         const icon = getSessionIconHtml(s.icon || 'wave');
+        if (multi) {
+          // 多选态：整行点击＝切换勾选，行内单画布按钮（改名/删除/换图标）全部收掉，
+          // 免得批量操作时误触单条路径
+          const picked = _sessionSelected.has(id);
+          return `
+          <div class="session-item multi-select-item ${picked ? 'picked' : ''} ${isActive ? 'current' : ''}" onclick="toggleSessionSelect('${id}')" title="${picked ? '取消选择' : '选择此画布'}">
+            <span class="session-check">${picked ? UI_ICON_SVG.check : ''}</span>
+            <span class="session-icon session-icon-static">${icon}</span>
+            <div class="session-info">
+              <div class="session-title">${escapeHtml(s.title)}</div>
+              <div class="session-time">${time}</div>
+            </div>
+          </div>`;
+        }
         return `
           <div class="session-item ${isActive ? 'active' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
             <span class="session-icon" onclick="toggleIconPicker(event, '${id}')" title="切换图标">${icon}</span>

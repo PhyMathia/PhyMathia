@@ -734,6 +734,30 @@
     }
     .sidebar-close:hover { color: var(--text-primary); }
 
+    .sidebar-header-actions {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+    }
+    .sidebar-multiselect-btn {
+      background: var(--btn-active-bg);
+      border: 1px solid var(--btn-active-border);
+      border-radius: var(--r-sm);
+      color: var(--accent);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      cursor: pointer;
+      padding: 2px 10px;
+      line-height: 1.5;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    }
+    .sidebar-multiselect-btn:hover { border-color: var(--accent); }
+    .sidebar-multiselect-btn.on {
+      background: var(--btn-active-hover-bg);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
     .new-chat-btn {
       margin: 12px 16px;
       padding: var(--sp-4);
@@ -876,6 +900,89 @@
     /* 对话图标交互 */
     .session-item .session-icon { cursor: pointer; transition: transform 0.15s, background 0.15s, border-color 0.15s, color 0.15s; }
     .session-item .session-icon:hover { transform: scale(1.2); }
+    /* 多选态下图标不再可点（换图标只在单选态提供） */
+    .session-item .session-icon.session-icon-static { cursor: default; }
+    .session-item .session-icon.session-icon-static:hover { transform: none; }
+
+    /* ====== 画布多选 ====== */
+    .session-item.multi-select-item .session-check {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--btn-active-border);
+      background: transparent;
+      color: var(--accent);
+      flex-shrink: 0;
+      box-sizing: border-box;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    }
+    .session-item.multi-select-item .session-check svg { width: 12px; height: 12px; }
+    .session-item.multi-select-item.picked { background: var(--btn-active-bg); }
+    .session-item.multi-select-item.picked .session-check {
+      background: var(--btn-active-hover-bg);
+      border-color: var(--accent);
+    }
+    /* 当前画布在多选态里仍要看得出来：靠左边一道竖线，不与勾选态的底色抢 */
+    .session-item.multi-select-item.current::before {
+      content: '';
+      position: absolute;
+      left: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 2px;
+      height: 60%;
+      border-radius: var(--r-xs);
+      background: var(--accent);
+    }
+
+    .session-bulk-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--sp-2);
+      margin: var(--sp-2) var(--sp-3) var(--sp-3);
+      padding: var(--sp-2) var(--sp-3);
+      border: 1px solid var(--btn-active-border);
+      border-radius: var(--r-md);
+      background: var(--btn-active-bg);
+      flex-shrink: 0;
+    }
+    .session-bulk-bar[hidden] { display: none; }
+    .session-bulk-count {
+      color: var(--text-primary);
+      font-size: var(--fs-sm);
+      white-space: nowrap;
+    }
+    .session-bulk-actions {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-1);
+    }
+    .session-bulk-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--text-primary);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      cursor: pointer;
+      padding: 3px 8px;
+      line-height: 1.4;
+      white-space: nowrap;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    }
+    .session-bulk-btn:hover { background: var(--btn-hover-bg); }
+    .session-bulk-btn:disabled { opacity: 0.45; cursor: default; }
+    .session-bulk-btn:disabled:hover { background: transparent; }
+    .session-bulk-btn-danger {
+      border-color: var(--danger-border);
+      color: var(--danger-fg);
+    }
+    .session-bulk-btn-danger:hover { background: var(--danger-bg); border-color: var(--danger-fg); }
+    .session-bulk-btn-danger:disabled:hover { background: transparent; border-color: var(--danger-border); }
 
     /* 重命名输入框 */
     .session-rename-input {
