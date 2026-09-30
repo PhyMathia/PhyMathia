@@ -252,8 +252,6 @@ let harnessLastAppliedReport = null;
     if (_rs2) _rs2.disabled = false;
     _setHarnessBusy(false);
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
-    const box = document.getElementById('graphHarnessResult');
-    if (box) box.innerHTML = '';
     _loadHarnessHistory().then(() => {
       _renderHarnessChat();
       if (opts && opts.showNotice) _showHarnessSessionSwitchNotice();
@@ -1215,14 +1213,12 @@ let harnessLastAppliedReport = null;
       + '</span>'
       + '</div>'
       + '<div class="graph-harness-chat" id="graphHarnessChat"></div>'
-      + '<div class="graph-harness-result" id="graphHarnessResult"></div>'
-      + '<div class="graph-harness-apply-actions" id="graphHarnessApplyActions" hidden>'
-      + '<button type="button" id="graphHarnessApplySelectedBtn" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
-      + '<button type="button" id="graphHarnessApplyAllBtn" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
-      + '<button type="button" id="graphHarnessUndoBtn" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
-      + '</div>'
-      // T96 撤销时间线：结果区之后、composer 之前。普通文档流区块＋max-height——
-      // Φ 面板窄窗有竖向预算（对话区保底、结果区先让位），绝不能做绝对定位浮层
+      // T122：操作清单（原 #graphHarnessResult）与它的应用按钮行不再作为对话区之下的
+      // 独立区块——那块一有内容就长到 228px 把对话区挤成 96px 窄条，真机读成「下面把
+      // 上面挡住了」。两者改由 _historyMessageHtml 渲染在各自的助手气泡里（见
+      // harness-preview.js 的 _harnessOpsCardHtml），面板因此只剩一条滚动区。
+      // T96 撤销时间线：composer 之前。普通文档流区块＋max-height——Φ 面板有竖向预算
+      // （对话区保底），绝不能做绝对定位浮层
       + '<div id="graphHarnessUndoTimeline" class="graph-harness-undo-timeline" hidden></div>'
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
@@ -1477,10 +1473,24 @@ let harnessLastAppliedReport = null;
     const chat = document.getElementById('graphHarnessChat');
     if (!chat) return;
     chat._guideOpen = false;
+    // T122：对话区现在是面板里唯一的滚动区，没有别的区块跟它抢高度了。但「用户是否
+    // 在底部」这件事变得更要命——旧结构有结果区做高度缓冲，这里是整段对话：重渲染
+    // 若无条件贴底，用户翻到一半看历史时，一次后台落盘（提交反馈、保留/删除建议）
+    // 就会把他硬拽回最底。判据与流式路径（harness-run.js 的 80px 口径）一致。
+    const stickBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    // 最新一条「待处理且带操作」的助手条目：只有它渲染可勾选清单与应用按钮
+    let currentOpsId = '';
+    for (let i = harnessHistory.length - 1; i >= 0; i--) {
+      const e = harnessHistory[i];
+      if (e && e.role === 'assistant' && (e.operations || []).length && (!e.decision || e.decision === 'pending')) {
+        currentOpsId = e.id || '';
+        break;
+      }
+    }
     // T105：空状态不止一行字——内置引导早就写好了（标题栏 ?），把四个示例问题
     // 直接摆到明面上，新会话第一句话有着落
     chat.innerHTML = harnessHistory.length
-      ? harnessHistory.map(entry => _historyMessageHtml(entry)).join('')
+      ? harnessHistory.map(entry => _historyMessageHtml(entry, currentOpsId)).join('')
       : '<div class="graph-harness-empty">还没有助手操作记录，试试：</div>'
         + '<div class="graph-harness-examples">'
         + HARNESS_EXAMPLE_QUESTIONS.map((q, i) => '<button type="button" onclick="sendHarnessExample(' + i + ')">' + _escapeHtml(q) + '</button>').join('')
@@ -1490,10 +1500,10 @@ let harnessLastAppliedReport = null;
     if (typeof renderMath === 'function') {
       try { renderMath(chat); } catch (e) {}
     }
-    chat.scrollTop = chat.scrollHeight;
+    if (stickBottom) chat.scrollTop = chat.scrollHeight;
   }
 
-  function _historyMessageHtml(entry) {
+  function _historyMessageHtml(entry, currentOpsId) {
     let actions = '';
     // T99：手动停止后留下的半截回答——给「从中断处继续」出口（不发请求的静态
     // 条目没有这套按钮，唯独这个）
@@ -1530,12 +1540,24 @@ let harnessLastAppliedReport = null;
     const timeHtml = entry.timestamp
       ? '<span class="graph-harness-time">' + (typeof formatRelativeTime === 'function' ? formatRelativeTime(entry.timestamp) : '') + '</span>'
       : '';
+    // T122：澄清选项与可勾选操作清单都渲染在气泡内（澄清过去写独立结果区）
+    const clarifyOptions = Array.isArray(entry.clarifyOptions) && entry.clarifyOptions.length
+      ? '<div class="graph-harness-clarify-options">'
+        + entry.clarifyOptions.map(opt => '<button type="button" class="graph-harness-clarify-opt" onclick="runGraphHarnessWithText(this.textContent)">'
+          + _escapeHtml(String(opt)) + '</button>').join('')
+        + '</div>'
+      : '';
+    const opCard = entry.role === 'assistant' && typeof _harnessOpsCardHtml === 'function'
+      ? _harnessOpsCardHtml(entry, !!entry.id && entry.id === currentOpsId)
+      : '';
     return '<div class="graph-harness-message graph-harness-message-' + role + '" data-hentry-id="' + _escapeHtml(entry.id || '') + '">'
       + avatar
       + '<div class="graph-harness-message-main">'
       + '<div class="graph-harness-message-content">' + (role === 'assistant' && typeof renderMarkdown === 'function'
         ? renderMarkdown(entry.content || '')
         : _escapeHtml(entry.content || '')) + '</div>'
+      + clarifyOptions
+      + opCard
       + timeHtml
       + meta
       + (actions ? '<div class="graph-harness-message-actions">' + actions + '</div>' : '')
@@ -1795,9 +1817,7 @@ let harnessLastAppliedReport = null;
     _setHarnessPetYield(true);
     _syncHarnessSessionBtn();
     _setHarnessStatus('');
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (resultBox) resultBox.innerHTML = '';
-    document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
+    // T122：面板不再有独立结果区与应用按钮行要清（两者都在对话流里，随历史渲染）
     await _loadHarnessHistory();
     _renderHarnessChat();
   }

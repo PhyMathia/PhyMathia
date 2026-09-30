@@ -123,11 +123,17 @@
   }
 
   // T95 前端半边：401 一类「配置问题」重试救不回来——除对话流的重试气泡外，
-  // 结果区再留一张醒目卡片（.graph-harness-error 已有样式），操作路径不随流滚动丢失。
+  // 再留一张醒目卡片（.graph-harness-error 已有样式），操作路径不随流滚动丢失。
+  // T122：过去写独立结果区（#graphHarnessResult），该容器已随本轮重构取消，改成
+  // 对话流里的一条系统气泡——与 _showHarnessRetry 同一生命周期。
   function _showHarnessErrorCard(text) {
-    const box = document.getElementById('graphHarnessResult');
-    if (!box) return;
-    box.innerHTML = '<div class="graph-harness-error">⛔ ' + _escapeHtml(text) + '</div>';
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'graph-harness-message graph-harness-message-system';
+    bubble.innerHTML = '<div class="graph-harness-error">⛔ ' + _escapeHtml(text) + '</div>';
+    chat.appendChild(bubble);
+    chat.scrollTop = chat.scrollHeight;
   }
 
   // 流式响应读取：SSE（data: {...}\n\n）逐事件回调 onEvent，最终返回 result 事件的 data。
@@ -474,10 +480,9 @@
         : '审阅中...',
       'running'
     );
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (resultBox) resultBox.innerHTML = '';
-    document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
-    // 结果区已重置：上一轮的结果不再代表当前视图，「结果已应用」标志同步归位
+    // T122：过去这里清空独立结果区、隐藏固定的应用按钮行。两者都已并入对话流
+    // （_harnessOpsCardHtml 随最新一批待处理条目渲染），本轮开跑不需要再动 DOM。
+    // T88：上一轮的结果不再代表当前视图，「结果已应用」标志同步归位
     // （顶层变量由 harness.js 声明，与 harnessBusy/harnessSnapshot 同一种跨文件引用）。
     harnessResultApplied = false;
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
@@ -500,15 +505,12 @@
       // 只认带 json 语言标记的围栏，避免误伤正文里合法的代码块。
       if (/^\s*(\{|```)/.test(text) || text.includes('```json')) text = '正在生成结构化操作方案…';
       if (!text) return;
-      // T102：流式期间也走 Markdown 渲染，与结束后的 renderHarnessResult 同口径
-      //（公式/加粗边生成边成形，不再结束时「突然变好看」）；renderMarkdown 缺席
-      // 的异常环境退回纯转义。聊天区同步一条实时气泡（见 _harnessLiveBubble）。
-      const bodyHtml = typeof renderMarkdown === 'function'
-        ? renderMarkdown(text)
-        : _escapeHtml(text);
-      const html = bodyHtml + '<span class="graph-harness-stream-cursor" aria-hidden="true">▍</span>';
-      const box = document.getElementById('graphHarnessResult');
-      if (box) box.innerHTML = '<div class="graph-harness-summary">' + html + '</div>';
+      // T102：流式期间也走 Markdown 渲染，与结束后的气泡同口径（公式/加粗边生成
+      // 边成形，不再结束时「突然变好看」）；renderMarkdown 缺席的异常环境退回纯转义。
+      // T122：正文只写进聊天区的实时气泡一处——过去同一段文字还在结果区再打一次
+      // 印（真机读成「出现了两个面板，两块里是同一段输出」）。
+      const html = (typeof renderMarkdown === 'function' ? renderMarkdown(text) : _escapeHtml(text))
+        + '<span class="graph-harness-stream-cursor" aria-hidden="true">▍</span>';
       const bubble = _harnessLiveBubble();
       if (bubble) {
         const content = bubble.querySelector('.graph-harness-message-content');
@@ -529,12 +531,11 @@
         if (evt.stage === 'model' && (Number(evt.attempt) > 0 || Number(evt.step) > 0)) {
           streamText = '';
           if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
-          // 只摘掉打字机预览那一个节点：本轮开跑时结果区已被清空（见上方 resultBox），
-          // 此刻它里面除了 streamText 的预览不会有别的东西。清空后 streamText 为空串，
-          // renderStreamPreview 的 `if (!box || !streamText) return;` 守卫兜得住。
-          const streamBox = document.getElementById('graphHarnessResult');
-          const streamed = streamBox ? streamBox.querySelector('.graph-harness-summary') : null;
-          if (streamed) streamed.remove();
+          // T122：清空实时气泡的正文即可（正文现在只显示在这一处）。清空后 streamText
+          // 为空串，renderStreamPreview 的 `if (!text) return;` 守卫兜得住。
+          const bubble = _harnessLiveBubble();
+          const content = bubble ? bubble.querySelector('.graph-harness-message-content') : null;
+          if (content) content.innerHTML = '';
         }
         // T103：换模型兜底的切换说明进历史（以前只是状态行一闪而过的 ⚠ 文案）
         if (evt.stage === 'fallback') {
@@ -599,19 +600,10 @@
         throw new Error((data.errors || []).map(item => (item && (item.reason || item.message)) || '未知错误').filter(Boolean).join('；') || '未知错误');
       }
       harnessResult = data;
-      // 结果区一有内容就长高，对话区随之变矮；浏览器把对话区的 scrollTop 留在原处，
-      // 窄条里显示的就成了消息中段（2026-09-30 真机被当成"下面那块压住了上面"）。
-      // 渲染前先记下用户是否本就在底部，下一帧（布局落定后）重新贴底；正在翻历史的不动。
-      const chatBox = document.getElementById('graphHarnessChat');
-      const chatAtBottom = chatBox
-        ? chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 24
-        : false;
+      // T122：这里原本还跟一段「结果区长高把对话区挤矮 → 下一帧补贴底」的 rAF 补偿，
+      // 随独立结果区一起取消——对话区现在是面板里唯一的滚动区，长的是自己的内容，
+      // 贴底由 _renderHarnessChat 的「用户本来在底部」守卫负责。
       renderHarnessResult(data);
-      if (chatBox && chatAtBottom) {
-        const stickBottom = () => { chatBox.scrollTop = chatBox.scrollHeight; };
-        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(stickBottom);
-        else stickBottom();
-      }
       if (data.status === 'undo' && (data.operations || []).length) {
         if (typeof _applyOps === 'function' && _harnessCanApply(requestBinding)) {
           // 第三参 null：这里应用的是对话式撤销的 inverse 操作，是回滚动作，
@@ -637,6 +629,20 @@
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
+        // T122：以下四项供 _harnessOpsCardHtml 渲染气泡内的可勾选清单（过去写在
+        // 独立结果区里，随结果区取消一并搬进条目）。随条目存盘 → 切 Φ 会话能回来、
+        // 不被整块重渲染吃掉、T96 事件日志也能归因。
+        errors: (data.errors || []).map(item => item.reason || '').filter(Boolean),
+        warnings: (data.warnings || []).map(item => item.reason || '').filter(Boolean),
+        selfCheckOk: (data.self_check && data.self_check.critic)
+          ? (data.self_check.critic.ok === true ? true : (data.self_check.critic.ok === false ? false : null))
+          : null,
+        selfCheckIssues: (() => {
+          const c = (data.self_check && data.self_check.critic) || {};
+          return (c.issues || []).concat((c.missing || []).map(item => '缺少：' + item));
+        })(),
+        // 澄清分支：选项按钮渲染在气泡里（旧版写结果区）
+        clarifyOptions: (data.clarify && Array.isArray(data.clarify.options)) ? data.clarify.options : [],
         // T96：本条回复对应的服务端 review 事件 id（反馈归因用；旧数据留空）
         eventId: data.event_id || '',
         _binding: requestBinding,
@@ -688,10 +694,7 @@
           restoreInstruction();
           _setHarnessStatus('已停止', 'ok');
         }
-        // 打字机预览与实时气泡撤掉：内容已由中断条目接管，结果区不再留半截
-        const stopBox = document.getElementById('graphHarnessResult');
-        const stopPreview = stopBox ? stopBox.querySelector('.graph-harness-summary') : null;
-        if (stopPreview) stopPreview.remove();
+        // T122：打字机预览已并入实时气泡、且随本条中断条目落进历史，撤气泡即可
         _harnessRemoveLiveBubble();
       } else {
         restoreInstruction();
@@ -958,11 +961,13 @@
     return out;
   }
 
-  function _buildHumanReadableReport(ops) {
+  // 「共 N 处调整：新增 6 个节点、6 条连线」——计数概览一行。
+  // T122：逐条清单从正文里拿掉了，改为渲染在正文下方那张可勾选卡里（带勾选框、
+  // 理由与「原文 → 建议文」对比）。两处都写的话，12 条改动会把正文撑成一屏墙，
+  // 卡片被顶到折线以下——正是 2026-09-30 真机「只看到一段文字、一张卡都没有」的成因。
+  function _buildHumanReadableReportHead(ops) {
     const list = Array.isArray(ops) ? ops : [];
     if (!list.length) return '';
-    const MAX_PER_GROUP = 6;
-    const groups = _harnessOpGroupDefs();
     const counts = {};
     list.forEach(op => { const k = op.op || op.type || ''; counts[k] = (counts[k] || 0) + 1; });
     const countParts = [];
@@ -976,17 +981,7 @@
     if (counts.create_recipe) countParts.push('新建 ' + counts.create_recipe + ' 个配方');
     if (counts.update_recipe) countParts.push('修改 ' + counts.update_recipe + ' 个配方');
     if (counts.delete_recipe) countParts.push('删除 ' + counts.delete_recipe + ' 个配方');
-    const sections = [];
-    for (const group of groups) {
-      const items = list.filter(op => (op.op || op.type) === group.key);
-      if (!items.length) continue;
-      const lines = items.slice(0, MAX_PER_GROUP).map(op => '• ' + _opDescription(op, list));
-      let block = '**' + group.title + '（' + items.length + '）**\n' + lines.join('\n');
-      if (items.length > MAX_PER_GROUP) block += '\n… 等 ' + items.length + ' 项';
-      sections.push(block);
-    }
-    const head = countParts.length ? '**共 ' + list.length + ' 处调整**：' + countParts.join('、') + '。' : '';
-    return (head ? head + '\n\n' : '') + sections.join('\n\n');
+    return countParts.length ? '**共 ' + list.length + ' 处调整**：' + countParts.join('、') + '。' : '';
   }
 
   function _harnessAssistantContent(data) {
@@ -996,10 +991,15 @@
     const summary = rawSummary
       || (ops.length ? '已生成 ' + ops.length + ' 条图修改建议' : '模型没有提出可执行修改');
     const parts = [summary];
-    const report = _buildHumanReadableReport(ops);
-    if (report) parts.push(report);
+    // T122：正文只留计数概览一行，逐条清单由气泡内的可勾选卡承担
+    const head = _buildHumanReadableReportHead(ops);
+    if (head) parts.push(head);
     if ((data.warnings || []).length) parts.push('⚠️ ' + data.warnings.map(w => w.reason || '').join('；'));
-    if (ops.length && data.status !== 'undo') parts.push('可点「查看预览」确认效果，满意后点击保留；不满意可随时撤销或重跑。');
+    if (data.status === 'undo' && ops.length) {
+      parts.push('已自动应用 ' + ops.length + ' 条撤销操作，可继续对助手说话。');
+    } else if (ops.length) {
+      parts.push('下方清单可逐条勾选后「应用所选」，或直接「应用全部」；不满意可「不保留修改」或撤销重跑。');
+    }
     return parts.join('\n\n');
   }
 

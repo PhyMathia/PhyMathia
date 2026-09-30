@@ -217,8 +217,22 @@ async function main() {
         };
         harnessResult._binding = _harnessBinding();
       });
-      // 上一条 mock 回包无 ops 时应用条是隐藏的，先显出来再点（按钮仍是真实入口）
-      await page.evaluate(() => document.getElementById('graphHarnessApplyActions').removeAttribute('hidden'));
+      // T122：应用按钮行不再常驻面板底部，而是随「最新一条待处理且带操作」的助手
+      // 条目渲染在气泡内（_harnessOpsCardHtml）。这里把注入的 ops 挂成一条待处理
+      // 条目并重渲染，真实点它渲染出来的按钮——比旧版「removeAttribute('hidden')」
+      // 更接近用户实际会看到的路径。
+      await page.evaluate(() => {
+        harnessHistory.push({
+          id: 'verify_pending_leg1',
+          role: 'assistant',
+          content: '真机应用验证：手动注入的待处理批次',
+          operations: harnessResult.operations,
+          decision: 'pending',
+          timestamp: Date.now(),
+        });
+        _renderHarnessChat();
+      });
+      await page.waitForSelector('#graphHarnessApplyActions button:nth-child(2)', { timeout: 5000 });
       await page.click('#graphHarnessApplyActions button:nth-child(2)'); // 应用全部
       await page.waitForTimeout(600);
       const applied = await page.evaluate(() => {
@@ -372,8 +386,20 @@ async function main() {
               ],
             };
             harnessResult._binding = _harnessBinding();
+            // T122：应用按钮行渲染在「最新一条待处理且带操作」的助手气泡里，不再常驻
+            // 面板底部。挂一条待处理条目再重渲染，拿到真按钮（id 与按钮顺序保持不变）。
+            harnessHistory.push({
+              id: 'verify_pending_' + cfg.nodeId,
+              role: 'assistant',
+              content: '通道⑨手动注入的待处理批次：' + cfg.label,
+              operations: harnessResult.operations,
+              eventId: harnessResult.event_id,
+              decision: 'pending',
+              timestamp: Date.now(),
+            });
+            _renderHarnessChat();
           }, r);
-          await page.evaluate(() => document.getElementById('graphHarnessApplyActions').removeAttribute('hidden'));
+          await page.waitForSelector('#graphHarnessApplyActions button:nth-child(2)', { timeout: 5000 });
           await page.click('#graphHarnessApplyActions button:nth-child(2)'); // 应用全部
           appliedOk = await page.waitForFunction(id => getGraphState('sess_leg1').customNodes.some(n => n.id === id),
             r.nodeId, { timeout: 3000 }).then(() => true).catch(() => false);
@@ -513,7 +539,8 @@ async function main() {
       }, histBefore11, { timeout: 30000, polling: 200 });
       const pageState = await page.evaluate(() => ({
         status: document.getElementById('graphHarnessStatus').innerText,
-        errorCard: !!document.querySelector('#graphHarnessResult .graph-harness-error'),
+        // T122：错误卡已从独立结果区搬进对话流（系统气泡）
+        errorCard: !!document.querySelector('#graphHarnessChat .graph-harness-error'),
       }));
       if (pageState.errorCard || /失败|429|限流/.test(pageState.status)) {
         throw new Error('重试剧本后前端仍有错误：' + JSON.stringify(pageState));

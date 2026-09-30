@@ -375,8 +375,8 @@
     window.setTimeout(() => {
       if (!harnessBusy) _setPhiMode(harnessPhiError ? 'error' : 'idle');
     }, 2600);
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
+    // T122：独立结果区已取消。「已应用修改」改由状态行承担（上面 _setHarnessStatus），
+    // 操作按钮行的禁用态与防重入标志在下面照旧处理。
     // T88：本批已应用——置位防重入标志并禁用两个应用按钮（「撤销本次」保持可用，
     // 用户撤销后可重新应用同批建议）。只用 getElementById＋属性赋值：回归脚本的
     // element() 桩没有 toggleAttribute/closest。
@@ -443,15 +443,13 @@
     window.setTimeout(() => {
       if (!harnessBusy) _setPhiMode(harnessPhiError ? 'error' : 'idle');
     }, 2600);
-    // T88 复位：撤销成功＝本批建议回到未应用态，重新放开两个应用按钮（同批可再应用）；
-    // 结果区同步改口，别再显示「已应用修改…」
+    // T88 复位：撤销成功＝本批建议回到未应用态，重新放开两个应用按钮（同批可再应用）。
+    // T122：过去还往独立结果区改口成「已撤销本次修改…」，该容器已取消，状态行承担。
     harnessResultApplied = false;
     const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
     if (applySelectedBtn) applySelectedBtn.disabled = false;
     const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
     if (applyAllBtn) applyAllBtn.disabled = false;
-    const undoResultBox = document.getElementById('graphHarnessResult');
-    if (undoResultBox) undoResultBox.innerHTML = '<div class="graph-harness-summary">已撤销本次修改，可重新应用同批建议。</div>';
     // T96：撤销的是「当前有效批次里最后一条」，从服务端事件列表折算它的 seq 后上报
     //（单槽 harnessCheckpoint 对应的就是最后应用的那批）。查不到就不报，不硬造 seq。
     _harnessEffectiveAppliedBatches().then(batches => {
@@ -677,8 +675,8 @@
     if (applySelectedBtn) applySelectedBtn.disabled = false;
     const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
     if (applyAllBtn) applyAllBtn.disabled = false;
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已回滚到所选批次之前</div>';
+    // T122：过去这里往独立结果区写一句「已回滚到所选批次之前」。结果区已取消，
+    // 这句话由上面的 _setHarnessStatus 承担（状态行不会被对话流冲走）。
     _setHarnessStatus('已回滚到所选批次之前', 'ok');
     _reportHarnessUndo(undoneFromSeq).then(() => { _refreshHarnessUndoTimeline(); });
   }

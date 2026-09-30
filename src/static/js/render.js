@@ -1265,7 +1265,8 @@ function _ensureKaTeX(callback) {
     queue.forEach(function (fn) { fn && fn(); });
     // 补渲：加载完成前已渲染的内容重新走一遍公式渲染
     if (typeof graphInner !== 'undefined' && graphInner) { try { _runKaTeX(graphInner); } catch (e) {} }
-    ['graphHarnessChat', 'graphHarnessResult'].forEach(function (id) {
+    // T122：Φ 面板只剩对话区一个容器（结果区已并入对话流），公式补渲只跑它
+    ['graphHarnessChat'].forEach(function (id) {
       const el = document.getElementById(id);
       if (el) { try { _runKaTeX(el); } catch (e) {} }
     });

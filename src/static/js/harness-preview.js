@@ -1,88 +1,37 @@
 // ===== PhyMathia 图编辑 harness：结果渲染与图预览 =====
 
+  // T122：Φ 面板取消独立「结果区」——模型说明、可勾选操作清单、批准按钮全部并进
+  // 对话流，面板只剩一条滚动区。
+  //
+  // 旧结构（.graph-harness-result）是 conversation 之下的固定区块：它一有内容就
+  // 长到 max-height 228px，把对话区挤到 min-height 96px 的窄条里，上一条消息只剩
+  // 操作行、正文被横切——真机读成「出现了两个面板，下面的把上面挡住了」（2026-09-30）。
+  // 更糟的是清单顺序是「摘要 → 自检 → 分组头 → 操作卡」，228px 折线以下一张卡都
+  // 看不到，而结果区渲染后不滚到底。加上流式期间同一段正文在对话气泡与结果区各打
+  // 印一次，这块独立区域只有坏处没有收益（主流 agent 界面都是单一对话流）。
+  //
+  // 现在本函数只做「状态行 + 开关类副作用」；可见内容由 harness.js 的
+  // _historyMessageHtml 从 harnessHistory 渲染（清单随条目存盘，切 Φ 会话能回来，
+  // 不会被整块重渲染吃掉，T96 事件日志也能归因）。
   function renderHarnessResult(data) {
-    const resultBox = document.getElementById('graphHarnessResult');
-    if (!resultBox) return;
+    const ops = Array.isArray(data.operations) ? data.operations : [];
     if (data.status === 'clarify' || data.clarify) {
-      const c = data.clarify || {};
-      const rawQuestion = String(c.question || data.summary || '需要向你确认一下');
-      const question = typeof _stripThinkText === 'function' ? _stripThinkText(rawQuestion) : rawQuestion;
-      const options = Array.isArray(c.options) ? c.options : [];
-      let html = '<div class="graph-harness-summary">' + _escapeHtml(question) + '</div>';
-      if (options.length) {
-        html += '<div class="graph-harness-clarify-options">'
-          + options.map(opt => '<button type="button" class="graph-harness-clarify-opt" onclick="runGraphHarnessWithText(this.textContent)">'
-            + _escapeHtml(String(opt)) + '</button>').join('')
-          + '</div>';
-      }
-      resultBox.innerHTML = html;
-      document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
+      // 澄清问题与选项进历史条目的正文与 clarifyOptions（由 harness.js 渲染）——
+      // 过去写结果区，现已随本轮重构取消该容器
       _setHarnessStatus('需要你确认后再继续', 'ok');
       return;
     }
     if (data.status === 'undo') {
-      const ops = Array.isArray(data.operations) ? data.operations : [];
-      const undoText = typeof _stripThinkText === 'function' ? _stripThinkText(String(data.summary || '')) : String(data.summary || '').trim();
-      resultBox.innerHTML = '<div class="graph-harness-summary">↩ ' + _escapeHtml(undoText || '已撤销上一条修改') + '</div>'
-        + (ops.length ? '<div class="graph-harness-empty">已自动应用 ' + ops.length + ' 条撤销操作，可继续对 harness 说话。</div>' : '');
-      document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
       _setHarnessStatus('已撤销上一条修改', 'ok');
       return;
     }
     if (data.status === 'error' || data.status === 'parse_error' || data.status === 'invalid') {
       const errors = (data.errors || []).map(item => item.reason || '未知错误').join('<br>');
-      resultBox.innerHTML = '<div class="graph-harness-error">' + _escapeHtml(errors || data.status) + '</div>';
       _setHarnessStatus('未执行任何图修改', 'error');
       _showHarnessRetry(errors || data.status);
       return;
     }
 
-    // 前端兜底：剥离推理模型可能残留的 <think> 思考块，避免面板刷屏
-    const summary = (typeof _stripThinkText === 'function' ? _stripThinkText(String(data.summary || '')) : String(data.summary || '').trim());
-    const ops = Array.isArray(data.operations) ? data.operations : [];
-    const errors = (data.errors || []).map(item => item.reason || '').filter(Boolean);
-    let html = '';
-    if (summary) html += '<div class="graph-harness-summary">' + (typeof renderMarkdown === 'function' ? renderMarkdown(summary) : _escapeHtml(summary)) + '</div>';
-    if (errors.length) {
-      html += '<div class="graph-harness-errors"><strong>跳过的操作</strong>'
-        + errors.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
-    }
-    const warnings = (data.warnings || []).map(item => item.reason || '').filter(Boolean);
-    if (warnings.length) {
-      html += '<div class="graph-harness-warnings"><strong>⚠️ 注意</strong>'
-        + warnings.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
-    }
-    const critic = (data.self_check && data.self_check.critic) || {};
-    if (critic.ok === true) {
-      html += '<div class="graph-harness-selfcheck graph-harness-selfcheck-ok"><strong>🔍 自检通过</strong></div>';
-    } else if (critic.ok === false) {
-      const scIssues = (critic.issues || []).concat((critic.missing || []).map(item => '缺少：' + item));
-      if (scIssues.length) {
-        html += '<div class="graph-harness-selfcheck"><strong>🔍 自检未通过</strong>'
-          + scIssues.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
-      }
-    }
-    if (!ops.length) {
-      html += summary
-        ? '<div class="graph-harness-empty graph-harness-chat-answer">本次为直接回答，未修改图</div>'
-        : '<div class="graph-harness-empty">模型没有提出可执行修改</div>';
-    } else {
-      // T100：可操作清单按类型分组（与聊天报告共用 _harnessGroupedOps），update/
-      // delete 条目附「原文 → 建议文」内容级 diff，不再让用户盲审
-      const groups = typeof _harnessGroupedOps === 'function'
-        ? _harnessGroupedOps(ops)
-        : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
-      html += groups.map(group => ''
-        + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
-        + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
-        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops)).join('')
-      ).join('');
-    }
-    resultBox.innerHTML = html;
-    // 渲染结果摘要中的公式（<formula>/$$..$$ → KaTeX）
-    if (typeof renderMath === 'function') {
-      try { renderMath(resultBox); } catch (e) {}
-    }
     if (!ops.length) {
       _setHarnessStatus('已回复（未改图）', 'ok');
     } else {
@@ -94,18 +43,65 @@
       _setHarnessStatus(statusLabel + '：' + ops.length + ' 条操作', 'ok');
     }
     // T88 复位：新结果渲染＝上一批的「已应用」状态作废，防重入标志清掉并放开
-    // 两个应用按钮（按钮组显隐仍由下面原有的 toggleAttribute 管理，不改动）
+    // 两个应用按钮（按钮组现在由 _harnessOpsCardHtml 随最新一批待处理条目渲染，
+    // 显隐不再需要单独 toggle）
     harnessResultApplied = false;
     const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
     if (applySelectedBtn) applySelectedBtn.disabled = false;
     const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
     if (applyAllBtn) applyAllBtn.disabled = false;
-    document.getElementById('graphHarnessApplyActions')?.toggleAttribute('hidden', !ops.length);
   }
 
-  // T100：单条操作行。主体结构与旧版一致（label>input+main+reason；data-op-index
-  // 是 _selectedOps 回查 harnessResult.operations 的唯一依据，绝不重排），第三行
-  // 起为内容级 diff：
+  // T122：可勾选操作清单（旧「结果区」搬进对话流，渲染在助手气泡内）。
+  // entry 是 harnessHistory 里的助手条目，operations 早已随条目存盘。
+  // isCurrent=true 仅限「最新一条待处理且有操作」——应用路径读全局 harnessResult，
+  // 给更早的批次挂勾选框/应用按钮会让「应用所选」作用到错的那一批。
+  function _harnessOpsCardHtml(entry, isCurrent) {
+    const ops = Array.isArray(entry.operations) ? entry.operations : [];
+    if (!ops.length) return '';
+    const errors = (entry.errors || []).filter(Boolean);
+    const warnings = (entry.warnings || []).filter(Boolean);
+    const issues = (entry.selfCheckIssues || []).filter(Boolean);
+    // selectedOps 为 null ＝「还没人动过勾选」，按全选渲染（旧数据没有这个字段）
+    const picked = Array.isArray(entry.selectedOps) ? entry.selectedOps : null;
+    let html = '';
+    if (warnings.length) {
+      html += '<div class="graph-harness-warnings"><strong>⚠️ 注意</strong>'
+        + warnings.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
+    }
+    if (entry.selfCheckOk === true) {
+      html += '<div class="graph-harness-selfcheck graph-harness-selfcheck-ok"><strong>🔍 自检通过</strong></div>';
+    } else if (entry.selfCheckOk === false && issues.length) {
+      html += '<div class="graph-harness-selfcheck"><strong>🔍 自检未通过</strong>'
+        + issues.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
+    }
+    if (errors.length) {
+      html += '<div class="graph-harness-errors"><strong>跳过的操作</strong>'
+        + errors.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
+    }
+    // T100：清单按类型分组（与聊天报告共用 _harnessGroupedOps）；勾选框 data-op-index
+    // 仍是原 ops 下标，分组绝不许重排后错位
+    const groups = typeof _harnessGroupedOps === 'function'
+      ? _harnessGroupedOps(ops)
+      : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
+    html += '<div class="graph-harness-oplist">'
+      + groups.map(group => ''
+        + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
+        + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
+        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops, isCurrent, picked)).join('')
+      ).join('')
+      + '</div>';
+    if (isCurrent && entry.decision === 'pending') {
+      html += '<div class="graph-harness-apply-actions" id="graphHarnessApplyActions">'
+        + '<button type="button" id="graphHarnessApplySelectedBtn" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
+        + '<button type="button" id="graphHarnessApplyAllBtn" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
+        + '<button type="button" id="graphHarnessUndoBtn" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
+        + '</div>';
+    }
+    return '<div class="graph-harness-opcard">' + html + '</div>';
+  }
+
+  // T100：单条操作的内容级 diff（T122 起收在 <details> 里，点开才渲染）：
   // - update_node：「原文 → 建议文」逐字段对照（原文取自当前画布 state——评审
   //   阶段应用还没发生，节点正文还是旧文；本批新建再修改的节点取不到原文，
   //   只显示「→ 建议文」）
@@ -148,23 +144,63 @@
     return '<span class="graph-harness-op-diff">' + lines.join('') + '</span>';
   }
 
-  function _harnessOpRowHtml(op, index, ops) {
-    return '<label class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
-      + '<input type="checkbox" checked data-op-index="' + index + '">'
+  // T122：单条操作行压成一条细横条（约 30px），理由与「原文 → 建议文」对比收进
+  // <details>，点「理由与对比」才展开——旧版是一块带边框的方块、一张约 50px，
+  // 6 张就 300px，在 228px 的结果区里一张都露不出来。结构上从 <label> 改成 <div>：
+  // label 会把 summary 的点击当成勾选，两处点击区互相打架。
+  // data-op-index 仍是 _selectedOps 回查 operations 的唯一依据，绝不重排。
+  function _harnessOpRowHtml(op, index, ops, editable, picked) {
+    const on = picked === null || picked.indexOf(index) >= 0;
+    const reason = String(op.reason || '');
+    const diff = _harnessOpDiffHtml(op);
+    return '<div class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
+      + (editable
+        ? '<input type="checkbox"' + (on ? ' checked' : '') + ' data-op-index="' + index
+          + '" onchange="toggleHarnessOpSelected(this)" title="勾选/取消这条改动">'
+        : '<span class="graph-harness-op-tick" aria-hidden="true">' + (on ? '☑' : '☐') + '</span>')
       + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops)) + '</span>'
-      + '<span class="graph-harness-op-reason">' + _escapeHtml(op.reason || '') + '</span>'
-      + _harnessOpDiffHtml(op)
-      + '</label>';
+      + ((reason || diff)
+        ? '<details class="graph-harness-op-detail"><summary>理由与对比</summary>'
+          + (reason ? '<span class="graph-harness-op-reason">' + _escapeHtml(reason) + '</span>' : '')
+          + diff
+          + '</details>'
+        : '')
+      + '</div>';
+  }
+
+  // 勾选写回历史条目（而不是留在 DOM 里）：_renderHarnessChat 是整块 innerHTML 重写，
+  // 勾选状态只存 DOM 的话，任何一次后台落盘（提交反馈、保留/删除建议）都会把用户
+  // 精心取消的条目重新勾回全选。同时也顺带修掉多批次共存时 data-op-index 跨卡串味。
+  function toggleHarnessOpSelected(box) {
+    const entry = _harnessCurrentOpsEntry();
+    if (!entry || !box) return;
+    const ops = Array.isArray(entry.operations) ? entry.operations : [];
+    const picked = [];
+    ops.forEach((op, index) => {
+      const node = document.querySelector('.graph-harness-oplist input[data-op-index="' + index + '"]');
+      if (node && node.checked) picked.push(index);
+    });
+    entry.selectedOps = picked;
+    if (typeof _saveHarnessHistory === 'function') _saveHarnessHistory();
+  }
+
+  // 最新一条「待处理且带操作」的助手条目——勾选与应用都锚在它身上
+  function _harnessCurrentOpsEntry() {
+    const list = Array.isArray(harnessHistory) ? harnessHistory : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const e = list[i];
+      if (e && e.role === 'assistant' && (e.operations || []).length && (!e.decision || e.decision === 'pending')) return e;
+    }
+    return null;
   }
 
   function _selectedOps() {
-    if (!harnessResult) return [];
-    const ops = Array.isArray(harnessResult.operations) ? harnessResult.operations : [];
-    const boxes = harnessPanel?.querySelectorAll('.graph-harness-op input[type="checkbox"]') || [];
-    const selected = Array.from(boxes)
-      .filter(box => box.checked)
-      .map(box => ops[Number(box.dataset.opIndex)])
-      .filter(Boolean);
+    const entry = _harnessCurrentOpsEntry();
+    const ops = entry && Array.isArray(entry.operations) ? entry.operations : [];
+    if (!ops.length) return [];
+    const picked = Array.isArray(entry.selectedOps) ? entry.selectedOps : null;
+    // selectedOps 为 null ＝还没人动过勾选，按全选
+    const selected = picked === null ? ops.slice() : picked.map(i => ops[i]).filter(Boolean);
     // 全部取消勾选＝什么都不选，不再回退成“应用全部”——旧回退会把用户特意
     // 排除的删除类操作整包应用。是否放行由调用方提示用户决定。
     return selected;

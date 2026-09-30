@@ -473,8 +473,8 @@ async function main() {
           document.getElementById('graphHarnessSendBtn').click();
           const t0 = Date.now();
           while (Date.now() - t0 < 90000) {
-            const resultBox = document.getElementById('graphHarnessResult');
-            const opRows = resultBox ? resultBox.querySelectorAll('.graph-harness-op') : [];
+            // T122：操作清单已并入对话流（渲染在助手气泡内），独立结果区已取消
+            const opRows = document.querySelectorAll('#graphHarnessChat .graph-harness-op');
             if (opRows.length) {
               const text = [...opRows].map(el => el.textContent).join(' ');
               // 收尾：切回编辑模式，别把锁定状态留给下一轮

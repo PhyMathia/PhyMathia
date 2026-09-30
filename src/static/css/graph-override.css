@@ -3087,13 +3087,6 @@
   color: var(--danger-fg);
 }
 
-.graph-harness-result {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .graph-harness-summary,
 .graph-harness-empty,
 .graph-harness-error {
@@ -3123,27 +3116,28 @@
 
 .graph-harness-op {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  align-items: start;
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
+  grid-template-columns: 18px 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--harness-op-bg);
-  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .graph-harness-op input {
-  grid-row: 1 / span 2;
-  margin-top: 3px;
+  grid-row: 1;
+  margin: 0;
 }
 
 .graph-harness-op-main {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   color: var(--text-primary, #e2e8f0);
 }
 
 .graph-harness-op-reason {
+  display: block;
   font-size: var(--fs-sm);
   color: var(--text-secondary, #94a3b8);
   line-height: 1.4;
@@ -4398,15 +4392,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--text-primary, #e2e8f0);
 }
 
-/* ---------- 对话流 ---------- */
+/* ---------- 对话流 ----------
+   T122：这是 Φ 面板里唯一的可滚区（结果区与它的应用按钮行已并入本区的气泡）。
+   flex:1 吃掉 composer 之上的全部剩余高度，min-height 只作病态窄窗的兜底。 */
 .graph-harness-chat {
   gap: 12px;
   padding: 14px 12px;
   scrollbar-width: thin;
-  /* 竖向预算保底：对话区是主内容，而结果区/应用行/composer 都是固定高度——
-     没有保底时它会被挤成窄条，消息裁在行中，看起来像被下面那块面板压住
-     （2026-09-30 真机反馈）。高度不够时由 .graph-harness-result 先让位。 */
-  min-height: 96px;
+  min-height: 120px;
 }
 
 .graph-harness-message {
@@ -4511,27 +4504,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-xs);
 }
 
-/* ---------- 结果区：可勾选操作卡片 + 应用按钮 ---------- */
-.graph-harness-result {
-  /* 可收缩（0 1 auto）：窗口高度不够时先让位给对话区——本区自带 overflow-y，
-     内容仍可达；固定 0 0 auto 时它和 composer 一起把对话区挤成窄条（2026-09-30） */
-  flex: 0 1 auto;
-  max-height: 228px;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 2px 12px 8px;
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
-  scrollbar-width: thin;
-}
-.graph-harness-result:empty {
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-top-width: 0;
-}
+/* ---------- T122：可勾选操作卡片 + 应用按钮（渲染在对话流的助手气泡内）----------
+   旧版这里是「结果区」——.graph-harness-result 作为对话区之下的固定区块，
+   一有内容就长到 max-height 228px，把对话区挤到 min-height 96px 的窄条里，
+   上一条消息只剩操作行、正文被横切，真机读成「两个面板，下面的把上面的挡住」
+   （2026-09-30）。该容器已从 DOM 与样式里整体删除，样式搬进气泡继承。 */
 .graph-harness-summary,
 .graph-harness-empty,
 .graph-harness-error {
@@ -4551,28 +4528,33 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: grid;
   grid-template-columns: 18px 1fr;
   gap: 4px 10px;
-  align-items: start;
-  padding: 9px 11px;
-  border-radius: var(--r-lg);
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: var(--r-md);
   border: 1px solid rgba(148, 163, 184, 0.15);
   background: rgba(30, 41, 59, 0.5);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  transition: border-color 0.15s, background 0.15s;
 }
 .graph-harness-op:hover {
   border-color: rgba(56, 189, 248, 0.45);
 }
 .graph-harness-op input {
-  grid-row: 1 / span 2;
-  margin-top: 3px;
+  grid-row: 1;
+  margin: 0;
   accent-color: #38bdf8;
   cursor: pointer;
 }
 
 .graph-harness-apply-actions {
+  /* T122：这一行现在渲染在助手气泡内（随最新一批待处理清单滚动），不再是面板的
+     固定底栏。基础块给的 justify-content:flex-end / margin-top / 0 12px 10px
+     内边距都是为「贴在面板底部」写的，在这里全错——改成左对齐、只留上边距。 */
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 8px;
-  padding: 0 12px 10px;
+  margin-top: 10px;
+  padding: 0;
 }
 .graph-harness-apply-actions[hidden] {
   display: none;
@@ -4748,12 +4730,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 /* 让空结果区完全收拢（去掉基础样式的上下留白） */
-.graph-harness-result {
-  margin-top: 0;
-}
-.graph-harness-result:empty {
-  margin-top: 0;
-}.graph-harness-title {
+.graph-harness-title {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5022,27 +4999,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   background: linear-gradient(135deg, #8b6914, #d4a030);
 }
 
-/* ---------- 结果区/操作卡/应用按钮：跟随主题 ---------- */
-.graph-harness-result {
-  margin-top: 0;
-  /* 与基础块同口径：可收缩，预算不够时让位给对话区 */
-  flex: 0 1 auto;
-  max-height: 228px;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 2px 12px 8px;
-  border-top: 1px solid var(--border);
-}
-.graph-harness-result:empty {
-  max-height: 0;
-  margin-top: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  border-top-width: 0;
-}
+/* ---------- 操作卡/应用按钮：跟随主题 ---------- */
 .graph-harness-summary,
 .graph-harness-empty,
 .graph-harness-error {
@@ -5057,20 +5014,19 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: grid;
   grid-template-columns: 18px 1fr;
   gap: 4px 10px;
-  align-items: start;
-  padding: 9px 11px;
-  border-radius: var(--r-lg);
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--harness-op-bg);
-  cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 .graph-harness-op:hover {
   border-color: var(--accent);
 }
 .graph-harness-op input {
-  grid-row: 1 / span 2;
-  margin-top: 3px;
+  grid-row: 1;
+  margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
 }
@@ -5078,9 +5034,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: none;
 }
 .graph-harness-apply-actions {
+  /* T122：这一行现在渲染在助手气泡内（随最新一批待处理清单滚动），不再是面板的
+     固定底栏。基础块给的 justify-content:flex-end / margin-top / 0 12px 10px
+     内边距都是为「贴在面板底部」写的，在这里全错——改成左对齐、只留上边距。 */
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 8px;
-  padding: 0 12px 10px;
+  margin-top: 10px;
+  padding: 0;
 }
 .graph-harness-apply-actions button {
   padding: 7px 12px;
@@ -5157,36 +5119,32 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   -webkit-appearance: none;
 }
 
-/* 例外：对话区与结果区恢复细滚动条。这两块的内容经常超出（长回复、多条操作卡），
+/* 例外：对话区恢复细滚动条。这块的内容经常超出（长回复、多批操作卡），
    全局隐藏后文字裁在行中却看不出"下面还有"，读起来像被别的面板压住
    （2026-09-30 真机：被当成"两个面板遮住"的观感来源之一）。
    特异性 (0,2,0) 压过上面的 `.graph-harness-window *` (0,1,0) 与
-   `.graph-harness-window ::-webkit-scrollbar*`（同伪元素、源序也在其后）。 */
-.graph-harness-window .graph-harness-chat,
-.graph-harness-window .graph-harness-result {
+   `.graph-harness-window ::-webkit-scrollbar*`（同伪元素、源序也在其后）。
+   T122：结果区已取消，它是面板里唯一需要常显滚动条的容器。 */
+.graph-harness-window .graph-harness-chat {
   scrollbar-width: thin;
   -ms-overflow-style: auto;
 }
-.graph-harness-window .graph-harness-chat::-webkit-scrollbar,
-.graph-harness-window .graph-harness-result::-webkit-scrollbar {
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar {
   display: block;
   width: 8px;
   height: 8px;
 }
 .graph-harness-window .graph-harness-chat::-webkit-scrollbar-track,
-.graph-harness-window .graph-harness-chat::-webkit-scrollbar-thumb,
-.graph-harness-window .graph-harness-result::-webkit-scrollbar-track,
-.graph-harness-window .graph-harness-result::-webkit-scrollbar-thumb {
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar-thumb {
   display: block;
 }
-.graph-harness-window .graph-harness-result::-webkit-scrollbar-thumb {
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar-thumb {
   background: var(--border, #334155);
   border-radius: var(--r-xs);
 }
-/* 脱离全局基线（styles.css）的「悬停才显形」：这两块要常显。--scroll-thumb 供
+/* 脱离全局基线（styles.css）的「悬停才显形」：这块要常显。--scroll-thumb 供
    下面那条 `*::-webkit-scrollbar-thumb` 兜底，scrollbar-color 给 Firefox 侧。 */
-.graph-harness-window .graph-harness-chat,
-.graph-harness-window .graph-harness-result {
+.graph-harness-window .graph-harness-chat {
   --scroll-thumb: var(--border, #334155);
   scrollbar-color: var(--border, #334155) transparent;
 }
@@ -6100,14 +6058,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 /* ---------- T96 撤销时间线（Φ 面板内联区块，2026-09-30） ----------
-   位置在结果区之后、composer 之前，普通文档流＋max-height：Φ 面板窄窗竖向预算
-   里对话区保底、结果区先让位，绝对定位浮层会盖住聊天记录，不做。本块不写
-   background——与结果区/应用条同口径，面板的极光磨砂层透上来；只给行与按钮
-   自带的描边、分隔线。 */
+   位置在 composer 之前、对话区之后，普通文档流＋max-height：绝对定位浮层会盖住
+   对话记录，不做。本块不写 background——面板的极光磨砂层透上来；只给行与按钮
+   自带的描边、分隔线。T122：结果区取消后，对话区已是唯一的滚动区，这里只保留
+   「可收缩 + 有上限」的定位，上限从 200px 收到 120px，别让时间线抢走太多对话空间。 */
 .graph-harness-undo-timeline {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: 200px;
+  max-height: 120px;
   overflow-y: auto;
   margin: 6px 12px 0;
   padding: 4px 8px;
@@ -6180,25 +6138,74 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
    中断条目续接按钮（T99）/ 空态示例问题（T105）/ 会话搜索与行内改名（T104）。
    全部用既有令牌，零新色值（style_debt 红线） */
 
-/* T100：结果区清单分组头 */
+/* T100：操作清单分组头（T122 起在对话流的气泡内，与正文之间已有 .graph-harness-oplist
+   的上边距，这里只需去掉每个分组自己的外边距） */
 .graph-harness-op-group-title {
   display: block;
-  margin: 10px 12px 4px;
+  margin: 6px 0 3px;
   font-size: var(--fs-sm);
   color: var(--text-secondary, #94a3b8);
   letter-spacing: 0.04em;
 }
-.graph-harness-result .graph-harness-op-group:first-child .graph-harness-op-group-title {
-  margin-top: 2px;
+
+/* T122：清单容器——气泡内正文与操作行之间的分隔，不写 border（本块已在气泡里，
+   多一道边就成了「面板里套面板」） */
+.graph-harness-oplist {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.graph-harness-opcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* T100：操作行的第三行——内容级 diff（原文红 / 建议绿 / 删除红）。
-   .graph-harness-op 是 18px 1fr 双列网格，diff 必须显式落在第 2 列 */
+/* T122：单条操作压成一条约 30px 的细横条，理由与「原文 → 建议文」对比收进
+   <details>。旧版是一块 9px/11px 内边距的方块、一张约 50px，6 张就 300px。
+   18px 1fr 双列网格：勾选框落第 1 列，标题落第 2 列，展开区跨两列。 */
+.graph-harness-op-detail {
+  grid-column: 1 / -1;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.graph-harness-op-detail > summary {
+  cursor: pointer;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--fs-xs);
+  list-style: none;
+  user-select: none;
+}
+.graph-harness-op-detail > summary::-webkit-details-marker {
+  display: none;
+}
+.graph-harness-op-detail > summary::before {
+  content: '▸ ';
+}
+.graph-harness-op-detail[open] > summary::before {
+  content: '▾ ';
+}
+.graph-harness-op-detail[open] > summary {
+  color: var(--accent, #38bdf8);
+}
+.graph-harness-op-tick {
+  /* 更早的待处理批次没有勾选框（应用路径锚在最新一批），用字形标出选中与否 */
+  line-height: 1.35;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary, #94a3b8);
+}
+
+/* T100：操作行展开后的内容级 diff（原文红 / 建议绿 / 删除红）。
+   T122 起收在 .graph-harness-op-detail 里，不再直接落在 .graph-harness-op 的
+   网格上，所以这里只需纵向排布，不必再声明 grid-column。 */
 .graph-harness-op-diff {
-  grid-column: 2;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  margin-top: 4px;
   font-size: var(--fs-sm);
   line-height: 1.45;
 }
