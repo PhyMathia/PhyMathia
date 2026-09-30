@@ -569,9 +569,11 @@
     .ob-feature-icon { font-size: 18px; flex-shrink: 0; color: var(--accent); }
     .ob-feature-text { font-size: var(--fs-md); color: var(--text-secondary); line-height: 1.5; }
     .ob-feature-text strong { color: var(--text-primary); font-weight: 600; }
-    /* 帮助按钮 (侧边栏底部) */
+    /* 帮助按钮 (侧边栏底部)
+       2026-09-30 侧栏改版：底部内容从 3 条满宽横条换成了 .sidebar-tiles 三列磁贴
+       ＋ .sidebar-clear-all 小字红字，容器只留上边框与窄内边距。 */
     .sidebar-help {
-      padding: 12px 16px;
+      padding: 10px 12px 12px;
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
@@ -4247,6 +4249,8 @@
 /* ====== 记忆可感知性（红点/画像角标/时间线，2026-09-17） ====== */
 /* 侧边栏「记忆」入口：pending 有候选时亮红点 */
 .sidebar-help-btn { position: relative; }
+/* 侧栏磁贴上的红点：磁贴比原按钮窄且高，偏移跟着收（原来 top:7px/right:12px 是给满宽按钮的） */
+.sidebar-tile .memory-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--panel-bg, var(--surface-container)); }
 .memory-dot { position: absolute; top: 7px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--panel-bg, var(--surface-container)); }
 /* 回答卡 meta 上的画像角标（inline 展开，不用浮层避免被裁剪） */
 .memory-badge { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-left: 8px; }

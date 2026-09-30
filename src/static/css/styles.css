@@ -779,80 +779,176 @@
       align-items: center;
       gap: var(--sp-2);
     }
+    /* 多选钮（2026-09-30 改版）：原先是「多选/完成」汉字小胶囊，现在只留线性描边图标。
+       选择器名被 frontend_smoke 的多选静态契约引用，改名会报「侧栏没有多选开关」。 */
     .sidebar-multiselect-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--r-sm);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+    }
+    .sidebar-multiselect-btn svg { width: 16px; height: 16px; display: block; }
+    .sidebar-multiselect-btn:hover {
+      background: var(--sidebar-hover);
+      color: var(--accent);
+    }
+    .sidebar-multiselect-btn.on {
+      background: var(--btn-active-bg);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* 搜索行（2026-09-30 改版）：放大镜 + 标题过滤 + 清除钮，右侧挂着新建画布的图标钮。
+       原来的「新建画布」满宽大字横条与「清空所有画布」横条都从这一段撤走了。 */
+    .sidebar-search {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+      margin: 10px 12px 8px;
+      padding: 0 6px 0 10px;
+      height: 34px;
+      box-sizing: border-box;
       background: var(--btn-active-bg);
       border: 1px solid var(--btn-active-border);
+      border-radius: var(--r-md);
+      flex-shrink: 0;
+      transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+    }
+    .sidebar-search:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--btn-active-hover-bg);
+    }
+    .sidebar-search-icon {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+      display: block;
+      color: var(--text-secondary);
+      opacity: 0.7;
+    }
+    #sessionSearch {
+      flex: 1;
+      min-width: 0;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: var(--text-primary);
+      font-size: var(--fs-md);
+      line-height: 1.4;
+    }
+    #sessionSearch::placeholder {
+      color: var(--text-secondary);
+      opacity: 0.55;
+    }
+    .session-search-clear {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 50%;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    /* display:flex 会盖掉 hidden 属性——跟 .session-bulk-bar[hidden] 同一个坑，必须写兜底 */
+    .session-search-clear[hidden] { display: none; }
+    .session-search-clear:hover {
+      background: var(--sidebar-hover);
+      color: var(--text-primary);
+    }
+    .session-search-clear svg { width: 13px; height: 13px; display: block; }
+
+    /* 新建画布：从满宽横条收成搜索行右端的一个图标钮 */
+    .sidebar-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      flex-shrink: 0;
+      padding: 0;
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: var(--r-sm);
       color: var(--accent);
-      font-size: var(--fs-sm);
-      font-weight: 600;
       cursor: pointer;
-      padding: 2px 10px;
-      line-height: 1.5;
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
     }
-    .sidebar-multiselect-btn:hover { border-color: var(--accent); }
-    .sidebar-multiselect-btn.on {
+    .sidebar-icon-btn:hover {
       background: var(--btn-active-hover-bg);
-      color: var(--accent);
       border-color: var(--accent);
     }
+    .sidebar-icon-btn svg { width: 16px; height: 16px; display: block; }
 
-    .new-chat-btn {
-      margin: 12px 16px;
-      padding: var(--sp-4);
+    /* 清空所有画布：危险且不可撤销，从横条降级成底部小字红字——要点得到，不该抢视觉重心 */
+    .sidebar-clear-all {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      width: 100%;
+      margin-top: 8px;
+      padding: 4px;
+      background: transparent;
+      border: none;
+      border-radius: var(--r-sm);
+      color: var(--danger-fg);
+      font-size: var(--fs-xs);
+      opacity: 0.62;
+      cursor: pointer;
+      transition: opacity var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+    }
+    .sidebar-clear-all:hover {
+      opacity: 1;
+      background: var(--danger-bg);
+    }
+    .sidebar-clear-all svg { width: 13px; height: 13px; flex-shrink: 0; display: block; }
+
+    /* 底部工具磁贴：3 列图标块，替代原先 6 条满宽横条（原先挤成一堵按钮墙） */
+    .sidebar-tiles {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .sidebar-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 9px 2px 8px;
       background: var(--btn-active-bg);
       border: 1px solid var(--btn-active-border);
       border-radius: var(--r-md);
       color: var(--accent);
-      font-size: var(--fs-lg);
-      font-weight: 800;
       cursor: pointer;
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      flex-shrink: 0;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
     }
-    .new-chat-btn:hover {
-      background: var(--btn-active-hover-bg);
+    .sidebar-tile:hover {
+      background: var(--btn-hover-bg);
       border-color: var(--accent);
     }
-    .clear-all-btn {
-      margin: 4px 16px 12px;
-      padding: var(--sp-3);
-      background: transparent;
-      border: 1px solid var(--danger-border);
-      border-radius: var(--r-md);
-      color: var(--danger-fg);
-      font-size: var(--fs-md);
-      font-weight: 600;
-      cursor: pointer;
-      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      flex-shrink: 0;
-    }
-    .clear-all-btn:hover {
-      background: var(--danger-bg);
-      border-color: var(--danger-fg);
-      color: var(--danger-fg);
-    }
-
-    .sidebar-quiz-section {
-      display: grid;
-      gap: 8px;
-      margin: 0 16px 12px;
-    }
-
-    .sidebar-quiz-label {
-      margin-bottom: 2px;
+    .sidebar-tile svg { width: 18px; height: 18px; flex-shrink: 0; display: block; }
+    .sidebar-tile-label {
+      font-size: var(--fs-2xs);
+      line-height: 1.2;
+      white-space: nowrap;
       color: var(--text-secondary);
-      font-size: var(--fs-xs);
     }
+    .sidebar-tile:hover .sidebar-tile-label { color: var(--text-primary); }
 
     .sidebar-sessions {
       flex: 1;
@@ -866,11 +962,68 @@
     .sidebar-sessions::-webkit-scrollbar { width: 4px; }
     .sidebar-sessions::-webkit-scrollbar-thumb { background: rgba(100,130,200,0.3); border-radius: var(--r-xs); }
 
+    /* 日期分组头（2026-09-30 改版）：今天/昨天/近 7 天/本月/更早 ＋ 该档数量 */
+    .session-group { margin-bottom: 6px; }
+    .session-group-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 12px 2px;
+    }
+    .session-group:first-child .session-group-head { padding-top: 6px; }
+    .session-group-title {
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--text-secondary);
+    }
+    .session-group-count {
+      font-size: var(--fs-2xs);
+      color: var(--text-secondary);
+      opacity: 0.55;
+    }
+
+    /* 搜索命中的高亮片段：不吃底色，只把字提亮加粗——底色块在极光玻璃上很脏 */
+    .session-hit {
+      background: transparent;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* 搜索框 ↑↓ 走位到的行（.session-item:hover 之外的键盘焦点态） */
+    .session-item.kb-cursor {
+      background: var(--sidebar-hover);
+      box-shadow: inset 0 0 0 1px var(--btn-active-border);
+    }
+
+    .session-empty {
+      padding: 18px 16px;
+      text-align: center;
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      opacity: 0.6;
+    }
+    .session-empty-clear {
+      display: block;
+      margin: 8px auto 0;
+      padding: 3px 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--accent);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+    }
+    .session-empty-clear:hover {
+      background: var(--btn-hover-bg);
+      border-color: var(--accent);
+    }
+
     .session-item {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 12px;
+      padding: 11px 12px;
       border-radius: var(--r-md);
       cursor: pointer;
       transition: all 0.15s;
@@ -900,7 +1053,7 @@
       min-width: 0;
     }
     .session-item .session-title {
-      font-size: var(--fs-md);
+      font-size: 15px;
       color: var(--text-primary);
       white-space: nowrap;
       overflow: hidden;
@@ -1116,8 +1269,6 @@
       display: block;
     }
     .header-btn svg,
-    .new-chat-btn svg,
-    .clear-all-btn svg,
     .sidebar-help-btn svg,
     .model-add-btn svg {
       width: 16px;

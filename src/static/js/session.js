@@ -781,6 +781,91 @@
       return option ? option.svg : escapeHtml(icon);
     }
 
+    // ====== 侧栏列表：日期分组 + 标题搜索（2026-09-30 改版）======
+    // 分档顺序＝渲染顺序，列表里从「今天」往「更早」排。
+    const SESSION_BUCKETS = ['今天', '昨天', '近 7 天', '本月', '更早'];
+
+    // 归档口径：按本地日历日切，不按滚动 24 小时（今天 0 点到此刻都算今天）。
+    // 无效时间戳（旧数据/服务端导入缺字段）一律落「更早」——绝不能因此抛错打断整份列表。
+    function sessionDateBucket(ts) {
+      const t = Number(ts);
+      if (!Number.isFinite(t) || t <= 0) return '更早';
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      if (t >= todayStart) return '今天';
+      if (t >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime()) return '昨天';
+      if (t >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()) return '近 7 天';
+      if (t >= new Date(now.getFullYear(), now.getMonth(), 1).getTime()) return '本月';
+      return '更早';
+    }
+
+    let _sessionQuery = '';
+
+    // 搜索命中高亮：先按原文定位命中区间，再**分段**转义——整体 escapeHtml 之后
+    // 再切片会因 &amp; 之类多出字符而下标错位。命中片段本身也要转义，防注入。
+    function _highlightSessionTitle(raw, q) {
+      if (!q) return escapeHtml(raw);
+      const i = String(raw).toLowerCase().indexOf(q);
+      if (i < 0) return escapeHtml(raw);
+      return escapeHtml(raw.slice(0, i))
+        + '<mark class="session-hit">' + escapeHtml(raw.slice(i, i + q.length)) + '</mark>'
+        + escapeHtml(raw.slice(i + q.length));
+    }
+
+    function onSessionSearchInput(value) {
+      _sessionQuery = String(value || '').trim().toLowerCase();
+      const clearBtn = document.getElementById('sessionSearchClear');
+      if (clearBtn) clearBtn.hidden = !_sessionQuery;
+      _clearSessionKbCursor();
+      renderSessionList();
+    }
+
+    function clearSessionSearch() {
+      const input = document.getElementById('sessionSearch');
+      if (input) input.value = '';
+      onSessionSearchInput('');
+      if (input) input.focus();
+    }
+
+    // 键盘补全：输入框 ↑↓ 走结果行，Enter 切换，Esc 先清搜索（Esc 退多选的老监听不动，
+    // 这里 stopPropagation 避免两件事一起触发）。
+    function onSessionSearchKey(e) {
+      if (e.key === 'Escape') {
+        if (!_sessionQuery) return;
+        e.stopPropagation();
+        clearSessionSearch();
+        return;
+      }
+      if (e.key === 'ArrowDown') { e.preventDefault(); _moveSessionKbCursor(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); _moveSessionKbCursor(-1); return; }
+      if (e.key === 'Enter') {
+        const cur = document.querySelector('#sessionList .session-item.kb-cursor');
+        if (cur) { e.preventDefault(); cur.click(); }
+      }
+    }
+
+    function _sessionKbItems() {
+      return Array.prototype.slice.call(document.querySelectorAll('#sessionList .session-item'));
+    }
+    function _clearSessionKbCursor() {
+      for (const el of _sessionKbItems()) el.classList.remove('kb-cursor');
+    }
+    function _moveSessionKbCursor(delta) {
+      const items = _sessionKbItems();
+      if (items.length === 0) return;
+      let idx = -1;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].classList.contains('kb-cursor')) { idx = i; break; }
+      }
+      const next = Math.max(0, Math.min(items.length - 1, idx < 0 ? (delta > 0 ? 0 : items.length - 1) : idx + delta));
+      for (let i = 0; i < items.length; i++) items[i].classList.toggle('kb-cursor', i === next);
+      if (items[next].scrollIntoView) items[next].scrollIntoView({ block: 'nearest' });
+    }
+
+    // 多选钮的两态图标（线性描边，与全站图标同一套画法，不写字）
+    const MS_ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M16 4h2a2 2 0 0 1 2 2v2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><path d="M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 12h6"></path></svg>';
+    const MS_ICON_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>';
+
     // 重命名进行中标志：置位期间推迟 renderSessionList，
     // 防止 15s 定时同步重建侧栏 DOM 把正在输入的重命名框销毁（输入被打断）
     let _sessionRenameActive = false;
@@ -801,11 +886,15 @@
       const keys = Object.keys(sessions);
       keys.sort((a, b) => (sessions[b].updatedAt || 0) - (sessions[a].updatedAt || 0));
 
+      // 搜索：只按标题过滤（内容在浏览器本地存储里，几十个画布全文扫会卡）
+      const q = _sessionQuery;
+      const shown = q ? keys.filter(id => String(sessions[id].title || '').toLowerCase().includes(q)) : keys;
+
       const bulkBar = document.getElementById('sessionBulkBar');
       if (bulkBar) {
         bulkBar.hidden = !_sessionMultiSelect;
         const countEl = document.getElementById('sessionBulkCount');
-        if (countEl) countEl.textContent = `已选 ${_sessionSelected.size} / ${keys.length}`;
+        if (countEl) countEl.textContent = `已选 ${_sessionSelected.size} / ${shown.length}`;
         const delBtn = document.getElementById('sessionBulkDeleteBtn');
         if (delBtn) {
           delBtn.disabled = _sessionSelected.size === 0 || _sessionBulkBusy;
@@ -815,20 +904,27 @@
       const msBtn = document.getElementById('sessionMultiSelectBtn');
       if (msBtn) {
         msBtn.classList.toggle('on', _sessionMultiSelect);
-        msBtn.textContent = _sessionMultiSelect ? '完成' : '多选';
+        msBtn.title = _sessionMultiSelect ? '完成选择' : '多选画布：勾选后可一次性删除';
+        msBtn.innerHTML = _sessionMultiSelect ? MS_ICON_ON : MS_ICON_OFF;
       }
 
       if (keys.length === 0) {
-        list.innerHTML = '<div style="font-size:11px;color:var(--text-secondary);opacity:0.5;text-align:center;padding:8px;">暂无画布</div>';
+        list.innerHTML = '<div class="session-empty">暂无画布</div>';
+        return;
+      }
+      if (shown.length === 0) {
+        list.innerHTML = `<div class="session-empty">没有匹配「${escapeHtml(q)}」的画布`
+          + '<button class="session-empty-clear" onclick="clearSessionSearch()">清空搜索</button></div>';
         return;
       }
 
       const multi = _sessionMultiSelect;
-      list.innerHTML = keys.map(id => {
+      const renderItem = (id) => {
         const s = sessions[id];
         const isActive = id === currentSessionId;
         const time = formatRelativeTime(s.updatedAt || s.createdAt);
         const icon = getSessionIconHtml(s.icon || 'wave');
+        const title = q ? _highlightSessionTitle(s.title, q) : escapeHtml(s.title);
         if (multi) {
           // 多选态：整行点击＝切换勾选，行内单画布按钮（改名/删除/换图标）全部收掉，
           // 免得批量操作时误触单条路径
@@ -838,7 +934,7 @@
             <span class="session-check">${picked ? UI_ICON_SVG.check : ''}</span>
             <span class="session-icon session-icon-static">${icon}</span>
             <div class="session-info">
-              <div class="session-title">${escapeHtml(s.title)}</div>
+              <div class="session-title">${title}</div>
               <div class="session-time">${time}</div>
             </div>
           </div>`;
@@ -847,13 +943,26 @@
           <div class="session-item ${isActive ? 'active' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
             <span class="session-icon" onclick="toggleIconPicker(event, '${id}')" title="切换图标">${icon}</span>
             <div class="session-info">
-              <div class="session-title">${escapeHtml(s.title)}</div>
+              <div class="session-title">${title}</div>
               <div class="session-time">${time}</div>
             </div>
             <button class="session-rename-btn" onclick="startRenameSession(event, '${id}')" title="重命名">${UI_ICON_SVG.pencil}</button>
             <button class="session-delete" onclick="deleteSession('${id}', event)" title="删除">${UI_ICON_SVG.trash}</button>
           </div>`;
-      }).join('');
+      };
+
+      // 按日期分档渲染：档内保持 updatedAt 降序（上面已排好），档间按 SESSION_BUCKETS 顺序
+      const groups = new Map();
+      for (const id of shown) {
+        const bucket = sessionDateBucket(sessions[id].updatedAt || sessions[id].createdAt);
+        if (!groups.has(bucket)) groups.set(bucket, []);
+        groups.get(bucket).push(id);
+      }
+      list.innerHTML = SESSION_BUCKETS.filter(b => groups.has(b)).map(bucket => `
+        <div class="session-group">
+          <div class="session-group-head"><span class="session-group-title">${bucket}</span><span class="session-group-count">${groups.get(bucket).length}</span></div>
+          ${groups.get(bucket).map(renderItem).join('')}
+        </div>`).join('');
     }
 
     // ====== 对话重命名 ======
@@ -1017,6 +1126,13 @@
     function closeSidebar() {
       document.getElementById('sidebar').classList.remove('open');
       document.getElementById('sidebarOverlay').classList.remove('show');
+      // 收起时清掉搜索词：下次开侧栏要看到全部画布，否则只剩上次的命中结果，
+      // 用户会以为别的画布丢了
+      if (_sessionQuery) {
+        const input = document.getElementById('sessionSearch');
+        if (input) input.value = '';
+        onSessionSearchInput('');
+      }
     }
 
     // ====== 初始化会话 ======
