@@ -11,6 +11,10 @@
   let harnessHistory = [];
 let harnessLastAppliedOps = [];
 let harnessLastAppliedBeforeSnapshot = null;
+// T96：最近一批应用的上报标记（apply_report 只回 {status,event_id}，seq 是落盘后
+// 的文件行号，前端要查 GET events 才知道）。这里只记「已上报」，去重提示用；
+// 撤销折算一律现查事件列表（harness-apply.js 的 _harnessEffectiveAppliedBatches）。
+let harnessLastAppliedReport = null;
   // T88：当前这批建议是否已应用过（防重复应用——重复「应用全部」会用同批 ops 空跑，
   // 并把单槽 harnessCheckpoint 覆盖成已应用态，撤销从此失效）。成功应用置 true，
   // 撤销/新结果渲染/Φ 会话重置/新一轮生成时复位。
@@ -217,6 +221,11 @@ let harnessLastAppliedBeforeSnapshot = null;
     harnessHistory = [];
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
+    harnessLastAppliedReport = null;
+    // T96：撤销时间线是会话级视图——切/清/删 Φ 会话时收起并清空，别残留上一个
+    // 会话的批次行（行里的快照只能在对应会话里取，留着只会点了报「找不到前态」）
+    const undoTimelineBox = document.getElementById('graphHarnessUndoTimeline');
+    if (undoTimelineBox) { undoTimelineBox.hidden = true; undoTimelineBox.innerHTML = ''; }
     // T88：会话切换/清空/删除当前后旧建议不再算已应用；两个应用按钮同步放开
     // （否则切走再切回会看到能点却点了报错的禁用态，直到下一条结果渲染才恢复）
     harnessResultApplied = false;
@@ -1081,6 +1090,9 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<button type="button" id="graphHarnessApplyAllBtn" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
       + '<button type="button" id="graphHarnessUndoBtn" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
       + '</div>'
+      // T96 撤销时间线：结果区之后、composer 之前。普通文档流区块＋max-height——
+      // Φ 面板窄窗有竖向预算（对话区保底、结果区先让位），绝不能做绝对定位浮层
+      + '<div id="graphHarnessUndoTimeline" class="graph-harness-undo-timeline" hidden></div>'
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
       + '<div class="graph-harness-actions">'
@@ -1089,6 +1101,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div id="graphHarnessModeMenu" class="graph-harness-mode-menu aurora-glass" hidden></div>'
       + '</span>'
       + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
+      + '<button type="button" class="graph-harness-btn-undo" onclick="toggleHarnessUndoTimeline()" title="查看本会话已应用的批次，可回滚到任意批次之前">🕘 撤销历史</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'
       + '</div>'
@@ -1422,7 +1435,11 @@ let harnessLastAppliedBeforeSnapshot = null;
         ops_count: Array.isArray(entry.operations) ? entry.operations.length : 0,
         phase: entry.phase || '',
         note,
+        // session_id 是画布 id（后端历史语义，不许改）；T96 另加两个字段：本条回复
+        // 对应的 review 事件 id（归因模型名/操作明细）与 Φ 会话 id（写进哪个事件文件）
         session_id: _sessionId(),
+        event_id: entry.eventId || '',
+        phi_session_id: (typeof _phiId === 'function' ? _phiId() : '') || '',
       });
       _setHarnessStatus('已记录反馈', 'ok');
     } catch (err) {
