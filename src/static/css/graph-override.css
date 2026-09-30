@@ -5206,12 +5206,101 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 
   /* Φ 面板的「发送」键被桌宠完整盖住（T51）。窗口开着时把桌宠挪到左侧；
      right 公式照抄上面 .graph-harness-window 的宽度，改那边要跟着改。
-     桌宠被拖过后 JS 写内联 left/top 并把 right/bottom 置 auto，内联优先、
-     让位随之失效——那一档由 z-index 兜底。 */
+     2026-09-30 正解：JS 开面板时挂 body.harness-open 并暂存/清掉被拖拽的
+     内联定位（关面板原样归还），拖过桌宠后让位不再失效；
+     :has() 兜网保留，双保险。 */
+  body.harness-open .phi-pet-root,
   body:has(> .graph-harness-window:not([hidden])) .phi-pet-root {
     right: calc(18px + min(400px, 100vw - 36px) + var(--sp-6));
     z-index: var(--z-modal);
   }
+}
+
+/* ---------- 9. Φ 面板内会话切换器（2026-09-30）----------
+   Φ 对话一直按画布会话隔离存储（harness_history_<sid>），此前整个机制静默：
+   标题不显示绑的哪个画布、面板内无法切换、切换瞬间对话换茬没有解释。
+   本块只让机制露面，切换走 session.js 主路径。全部取令牌，零新色字面量。 */
+.graph-harness-session {
+  position: relative;
+  min-width: 0;
+}
+
+.graph-harness-head .graph-harness-session-btn {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-md);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.graph-harness-head .graph-harness-session-btn:hover {
+  color: var(--accent, #38bdf8);
+  border-color: var(--accent, #38bdf8);
+}
+
+.graph-harness-session-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-md);
+  background: var(--harness-op-bg);
+}
+
+.graph-harness-session-menu .graph-harness-session-item {
+  font-size: var(--fs-md);
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary, #e2e8f0);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-harness-session-menu .graph-harness-session-item:hover {
+  background: var(--surface-2);
+}
+
+.graph-harness-session-menu .graph-harness-session-item.current {
+  color: var(--accent, #38bdf8);
+  font-weight: 600;
+}
+
+.graph-harness-session-menu .graph-harness-session-empty {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary, #94a3b8);
+  padding: 6px 8px;
+}
+
+.graph-harness-chat .graph-harness-session-notice {
+  width: fit-content;
+  margin: 6px auto;
+  padding: 5px 12px;
+  font-size: var(--fs-sm);
+  text-align: center;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-sm);
+  background: var(--harness-op-bg);
+  color: var(--text-secondary, #94a3b8);
 }
 
 /* ===== 节点配方 P1：表单 / 面板组 / 管理列表的增量样式（全部取令牌，零新色字面量） ===== */

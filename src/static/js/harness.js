@@ -196,9 +196,100 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     const box = document.getElementById('graphHarnessResult');
     if (box) box.innerHTML = '';
-    _loadHarnessHistory().then(_renderHarnessChat);
+    _loadHarnessHistory().then(() => {
+      _renderHarnessChat();
+      _showHarnessSessionSwitchNotice();
+      _syncHarnessSessionBtn();
+    });
   }
   window.resetHarnessSession = resetHarnessSession;
+
+  // ===== Φ 面板内会话切换器（2026-09-30）=====
+  // Φ 的对话一直按画布会话隔离存储（harness_history_<sid>），此前整个机制是静默的：
+  // 标题不显示绑的是哪个画布、切换瞬间对话换茬没有解释、面板内也无法切换。
+  // 这里只让机制露面并给一个入口，切换走 session.js 的主路径 switchToSession
+  // （存消息、换图状态、渲染画布全在其中），不在 Φ 侧另立一套会话数据。
+
+  function _harnessCurrentSessionInfo() {
+    const sid = _sessionId();
+    const info = typeof window.getSessionById === 'function' ? window.getSessionById(sid) : null;
+    return { id: sid, title: (info && info.title) || '未命名画布' };
+  }
+
+  function _syncHarnessSessionBtn() {
+    const btn = document.getElementById('graphHarnessSessionBtn');
+    if (!btn) return;
+    btn.textContent = '《' + _harnessCurrentSessionInfo().title + '》';
+  }
+
+  function _showHarnessSessionSwitchNotice() {
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat) return;
+    const notice = document.createElement('div');
+    notice.className = 'graph-harness-session-notice';
+    notice.textContent = '已切换到画布《' + _harnessCurrentSessionInfo().title + '》';
+    chat.prepend(notice);
+  }
+
+  function toggleHarnessSessionMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (!menu) return;
+    // 「=== false 才收起」而非「!hidden 就收起」：冒烟沙箱的宽松 DOM 代理读 hidden
+    // 得到真值对象，=== false 的写法让真实 DOM 语义不变、沙箱能走到建菜单分支
+    if (menu.hidden === false) { menu.hidden = true; return; }
+    const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+    const currentId = _sessionId();
+    sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    menu.innerHTML = sessions.length
+      ? sessions.map(item => '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>').join('')
+      : '<div class="graph-harness-session-empty">暂无画布会话</div>';
+    menu.hidden = false;
+  }
+
+  function chooseHarnessSession(id) {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (menu) menu.hidden = true;
+    if (!id || id === _sessionId()) return;
+    if (typeof window.switchToSession !== 'function') return;
+    window.switchToSession(id).then(() => {
+      // switchToSession 对生成中/未知 id 静默早退——用结果反推，失败给出解释
+      if (_sessionId() !== id) _setHarnessStatus('当前正在生成，等任务完成后再切换画布', 'error');
+    });
+  }
+  window.toggleHarnessSessionMenu = toggleHarnessSessionMenu;
+  window.chooseHarnessSession = chooseHarnessSession;
+
+  // ===== T51 桌宠让位正解：面板开着时 body.harness-open + 暂存被拖拽的内联定位 =====
+  // 旧兜网是纯 CSS :has()，桌宠被拖过（JS 写了内联 left/top、right/bottom 置 auto）后失效。
+  // 开面板时暂存内联定位并清掉，让让位规则生效；关面板时原样归还——
+  // 桌宠关面板后回到用户拖放的位置。
+  let harnessPetDragBackup = null;
+
+  function _setHarnessPetYield(on) {
+    const pet = harnessPet;
+    if (!pet) return;
+    if (on) {
+      if (!harnessPetDragBackup) {
+        harnessPetDragBackup = {
+          left: pet.style.left || '', top: pet.style.top || '',
+          right: pet.style.right || '', bottom: pet.style.bottom || '',
+        };
+        pet.style.left = ''; pet.style.top = '';
+        pet.style.right = ''; pet.style.bottom = '';
+      }
+      document.body.classList.add('harness-open');
+    } else {
+      document.body.classList.remove('harness-open');
+      if (harnessPetDragBackup) {
+        pet.style.left = harnessPetDragBackup.left;
+        pet.style.top = harnessPetDragBackup.top;
+        pet.style.right = harnessPetDragBackup.right;
+        pet.style.bottom = harnessPetDragBackup.bottom;
+        harnessPetDragBackup = null;
+      }
+    }
+  }
 
   function _harnessUndoSnapshot(state) {
     const nodes = _graphNodes().map(node => {
@@ -616,6 +707,10 @@ let harnessLastAppliedBeforeSnapshot = null;
     harnessPanel.innerHTML = ''
       + '<div class="graph-harness-head" id="graphHarnessWindowHead">'
       + '<span class="graph-harness-title">网络助手</span>'
+      + '<span class="graph-harness-session" id="graphHarnessSession">'
+      + '<button type="button" id="graphHarnessSessionBtn" class="graph-harness-session-btn" onclick="toggleHarnessSessionMenu(event)" title="当前对话绑定的画布会话，点击切换"></button>'
+      + '<div id="graphHarnessSessionMenu" class="graph-harness-session-menu" hidden></div>'
+      + '</span>'
       + '<span class="graph-harness-head-actions">'
       + '<button type="button" onclick="restoreHarnessDeletedNodesConfirm()" title="恢复被撤销/拒绝标记删除的节点">↺</button><button type="button" onclick="toggleHarnessGuide()" title="使用引导">?</button>'
       + '<button type="button" onclick="closeGraphHarness()" aria-label="关闭">✕</button>'
@@ -643,6 +738,12 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (phiEl && window.PhiPet && window.PhiPet.init) window.PhiPet.init(phiEl);
     document.body.appendChild(harnessPanel);
     _initHarnessDrag();
+    // 会话下拉菜单点外部收起（面板只建一次，监听器也只挂一次）
+    document.addEventListener('click', event => {
+      const menu = document.getElementById('graphHarnessSessionMenu');
+      const target = event && event.target;
+      if (menu && !menu.hidden && target && typeof target.closest === 'function' && !target.closest('#graphHarnessSession')) menu.hidden = true;
+    });
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) {
       inputEl.addEventListener('keydown', event => {
@@ -1039,6 +1140,8 @@ let harnessLastAppliedBeforeSnapshot = null;
     _syncGraphPetToggleButton();
     panel.hidden = false;
     if (harnessPet) harnessPet.classList.add('active');
+    _setHarnessPetYield(true);
+    _syncHarnessSessionBtn();
     _setHarnessStatus('');
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '';
@@ -1121,6 +1224,7 @@ let harnessLastAppliedBeforeSnapshot = null;
   function closeGraphHarness() {
     if (harnessPanel) harnessPanel.hidden = true;
     if (harnessPet) harnessPet.classList.remove('active');
+    _setHarnessPetYield(false);
     harnessSingleEvalId = null;
     harnessPendingClarify = null;
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();

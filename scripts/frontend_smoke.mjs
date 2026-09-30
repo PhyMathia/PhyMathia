@@ -539,6 +539,61 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
 });
 // ===== 节点配方 P3 用例结束 =====
 
+// ===== Φ 基础修复（2026-09-30）：相位转换放宽 / 面板内会话切换器 / T51 让位正解 =====
+
+check('Φ 相位转换放宽：创造模式锁定时旧相位不得绕过（apply 例外）', () => {
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  if (!runSrc.includes("if (presetMode && phase !== 'apply') phase = 'preset';")) {
+    throw new Error('preset 转换未放宽——重试/重发路径仍可携带 expand/evaluate 绕过创造模式');
+  }
+  return true;
+});
+
+check('Φ 面板内会话切换器：入口/主路径复用/切换提示', () => {
+  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!src.includes('graphHarnessSessionBtn')) throw new Error('标题旁会话按钮未进面板');
+  if (!src.includes('graphHarnessSessionMenu')) throw new Error('会话下拉菜单未进面板');
+  if (!src.includes('graph-harness-session-notice')) throw new Error('切换提示未实现');
+  // 切换必须复用 session.js 主路径与现成清单，不得在 Φ 侧另立会话数据
+  if (!src.includes('window.switchToSession(id)')) throw new Error('未复用主路径 switchToSession');
+  if (!src.includes('window.getAllSessions')) throw new Error('未复用会话清单 getAllSessions');
+  // 行为：建菜单走注入的会话清单、当前画布标 current、菜单可见
+  sandbox.window.getAllSessions = () => [
+    { id: 'sess_a', title: '画布A', updatedAt: 2 },
+    { id: 'sess_b', title: '画布B', updatedAt: 1 },
+  ];
+  sandbox.window.getCurrentSessionId = () => 'sess_a';
+  sandbox.window.toggleHarnessSessionMenu();
+  return true;
+});
+
+check('Φ 会话切换：chooseHarnessSession 委托主路径并透传 id', () => {
+  let switchedTo = null;
+  sandbox.window.switchToSession = async (id) => { switchedTo = id; };
+  sandbox.window.chooseHarnessSession('sess_b');
+  if (switchedTo !== 'sess_b') throw new Error('未委托 switchToSession 主路径：' + switchedTo);
+  // 同 id 不得重发切换（生成中失败反推提示依赖 switchToSession 后的 sid 比对）
+  switchedTo = null;
+  sandbox.window.getCurrentSessionId = () => 'sess_b';
+  sandbox.window.chooseHarnessSession('sess_b');
+  if (switchedTo !== null) throw new Error('同 id 触发了多余切换');
+  return true;
+});
+
+check('T51 桌宠让位正解：body.harness-open + 内联定位暂存归还', () => {
+  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!src.includes("classList.add('harness-open')")) throw new Error('开面板未挂 harness-open');
+  if (!src.includes("classList.remove('harness-open')")) throw new Error('关面板未摘 harness-open');
+  if (!src.includes('harnessPetDragBackup')) throw new Error('被拖拽内联定位未暂存归还');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!css.includes('body.harness-open .phi-pet-root')) throw new Error('CSS 未接 harness-open 选择器');
+  if (!css.includes('body:has(> .graph-harness-window:not([hidden])) .phi-pet-root')) {
+    throw new Error(':has() 兜网被移除——应保留双保险');
+  }
+  return true;
+});
+// ===== Φ 基础修复用例结束 =====
+
 
 check('_isHarnessPureQuestion 分类边界', () => {
   if (sandbox._isHarnessPureQuestion('评价一下我的理解') !== false) return false; // 改图意图
