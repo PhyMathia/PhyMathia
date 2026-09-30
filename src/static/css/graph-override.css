@@ -5318,6 +5318,45 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 6px 8px;
 }
 
+/* 会话菜单行（2026-09-30）：画布名 + 删除钮并排。行与删除钮都带 .graph-harness-window
+   前缀抬特异性，压过标题栏 28px 图标钮规则（(0,2,1)，见上方 specificity 手术），
+   并回声 width/height/margin/display/line-height——渗透属性漏一个就被老规则带偏 */
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0; /* 同菜单项：不冻结收缩会被 max-height 列表压扁，滚动失效 */
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-row .graph-harness-session-item {
+  flex: 1;
+  min-width: 0;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-del {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-del:hover {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-del svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ---------- 10. Φ 面板三模式切换器（2026-09-30）----------
    编辑（默认）/答疑（只读）/创造（配方），显式切换、意图自动识别让位。
    菜单结构对齐上方会话切换器（第 9 节）；玻璃材质同归 .aurora-glass，

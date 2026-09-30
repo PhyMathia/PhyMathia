@@ -232,6 +232,23 @@ let harnessLastAppliedBeforeSnapshot = null;
     chat.prepend(notice);
   }
 
+  function _renderHarnessSessionMenu() {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (!menu) return;
+    const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+    const currentId = _sessionId();
+    sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const trashSvg = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.trash) || '✕';
+    menu.innerHTML = sessions.length
+      ? sessions.map(item =>
+          '<div class="graph-harness-session-row">'
+          + '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>'
+          + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除此画布">' + trashSvg + '</button>'
+          + '</div>'
+        ).join('')
+      : '<div class="graph-harness-session-empty">暂无画布会话</div>';
+  }
+
   function toggleHarnessSessionMenu(event) {
     if (event) event.stopPropagation();
     const menu = document.getElementById('graphHarnessSessionMenu');
@@ -239,12 +256,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     // 「=== false 才收起」而非「!hidden 就收起」：冒烟沙箱的宽松 DOM 代理读 hidden
     // 得到真值对象，=== false 的写法让真实 DOM 语义不变、沙箱能走到建菜单分支
     if (menu.hidden === false) { menu.hidden = true; return; }
-    const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
-    const currentId = _sessionId();
-    sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    menu.innerHTML = sessions.length
-      ? sessions.map(item => '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>').join('')
-      : '<div class="graph-harness-session-empty">暂无画布会话</div>';
+    _renderHarnessSessionMenu();
     menu.hidden = false;
   }
 
@@ -258,8 +270,27 @@ let harnessLastAppliedBeforeSnapshot = null;
       if (_sessionId() !== id) _setHarnessStatus('当前正在生成，等任务完成后再切换画布', 'error');
     });
   }
+
+  // 删除画布：委托 session.js 的 deleteSession 主路径（自带 confirm、先服务端后本地、
+  // 删当前画布自动切最近/新建）。删完不关菜单——原地重画让被删项消失，方便连删。
+  function deleteHarnessSession(id) {
+    if (!id) return;
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除画布', 'error'); return; }
+    if (typeof window.deleteSession !== 'function') return;
+    const info = (typeof window.getAllSessions === 'function' ? window.getAllSessions() : []).find(s => s.id === id);
+    const title = (info && info.title) || '未命名画布';
+    window.deleteSession(id).then(() => {
+      // deleteSession 对「用户取消 confirm」与服务端删除失败都静默返回——
+      // 用会话是否还在反推，只有真删掉才报成功并重画菜单
+      if (typeof window.getSessionById === 'function' && window.getSessionById(id)) return;
+      const menu = document.getElementById('graphHarnessSessionMenu');
+      if (menu && menu.hidden === false) _renderHarnessSessionMenu();
+      _setHarnessStatus('已删除画布《' + title + '》', 'ok');
+    });
+  }
   window.toggleHarnessSessionMenu = toggleHarnessSessionMenu;
   window.chooseHarnessSession = chooseHarnessSession;
+  window.deleteHarnessSession = deleteHarnessSession;
 
   // ===== T51 桌宠让位正解：面板开着时 body.harness-open + 暂存被拖拽的内联定位 =====
   // 旧兜网是纯 CSS :has()，桌宠被拖过（JS 写了内联 left/top、right/bottom 置 auto）后失效。

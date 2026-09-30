@@ -593,6 +593,24 @@ check('Φ 会话切换：chooseHarnessSession 委托主路径并透传 id', () =
   return true;
 });
 
+check('Φ 会话删除：deleteHarnessSession 委托 deleteSession 主路径', async () => {
+  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // 删除必须走 session.js 主路径（confirm／先服务端后本地／删当前自动切最近/新建都在那边）
+  if (!src.includes('window.deleteSession(id)')) throw new Error('未委托 deleteSession 主路径');
+  const sessionSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!sessionSrc.includes('window.deleteSession = deleteSession')) throw new Error('session.js 未显式导出 deleteSession');
+  // 取消 confirm／服务端失败不报成功：deleteSession 后以 getSessionById 查无为准
+  if (!src.includes('window.getSessionById(id)')) throw new Error('缺「会话仍在则不报成功」守卫');
+  // 行为：透传 id 给主路径
+  let deletedId = null;
+  sandbox.window.deleteSession = async (id) => { deletedId = id; };
+  sandbox.window.getSessionById = () => null;
+  sandbox.window.deleteHarnessSession('sess_b');
+  await Promise.resolve(); // 让 .then 微任务跑完（成功路径收尾：重画菜单＋状态提示）
+  if (deletedId !== 'sess_b') throw new Error('未委托 deleteSession 主路径：' + deletedId);
+  return true;
+});
+
 check('Φ 下拉菜单（会话/模式）：磨砂材质归 aurora-glass＋hidden 守卫＋specificity 手术', () => {
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!src.includes('class="graph-harness-session-menu aurora-glass"')) throw new Error('会话菜单未挂 aurora-glass（透明底压聊天记录）');
