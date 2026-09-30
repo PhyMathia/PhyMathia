@@ -283,13 +283,37 @@ async function main() {
     } catch (e) { bad('通道⑦ 删单个 Φ 会话', e); }
 
     // ---- 通道⑧：清空所有 Φ 对话——画布全部保留（T92 起＝菜单内联二次确认，无原生弹窗） ----
+    // T118：这一通道必须走 page.click 的真实鼠标点击，不能用 page.evaluate 直接调
+    // clearAllHarnessSessions()——旧实现把确认条写进 footer.innerHTML，等于把点击
+    // 目标自己摘出文档，同一个点击冒泡到 document 时被「点菜单外收起」监听器判成
+    // 外部点击、当场关掉菜单：确认条进了 DOM，用户却什么都看不见。合成事件不
+    // 走完整冒泡路径，evaluate 版本对这类 bug 完全瞎。
+    // force:true 是因为菜单挂着 28s 循环的 auroraDrift 动画，Playwright 的稳定性
+    // 检查会一直等下去（与被测逻辑无关）。
     try {
-      await page.evaluate(() => _renderHarnessSessionMenu());
-      await page.evaluate(() => clearAllHarnessSessions());
-      // 第一下只挂内联确认条（真实用户路径）；真清空在「确认清空」那一下
-      const armed = await page.evaluate(() => !!document.querySelector('#graphHarnessSessionMenu .graph-harness-clearall-confirm'));
-      if (!armed) throw new Error('第一下未出现内联二次确认条（T92 回退？）');
-      await page.evaluate(() => confirmClearAllHarnessSessions(true));
+      await page.evaluate(() => {
+        openGraphHarness();
+        const m = document.getElementById('graphHarnessSessionMenu');
+        if (m.hidden) toggleHarnessSessionMenu();
+        _renderHarnessSessionMenu();
+      });
+      await page.click('#graphHarnessSessionMenu .graph-harness-session-clearall', { force: true });
+      await page.waitForTimeout(200);
+      // 关键断言：确认条在 DOM 里 **且菜单仍然可见**。只查前者正是旧用例漏掉这个
+      // bug 的原因（DOM 有、菜单关了，它照样绿）
+      const armed = await page.evaluate(() => JSON.stringify({
+        bar: !!document.querySelector('#graphHarnessSessionMenu .graph-harness-clearall-confirm'),
+        menuOpen: document.getElementById('graphHarnessSessionMenu').hidden === false,
+      }));
+      const a = JSON.parse(armed);
+      if (!a.bar) throw new Error('第一下未出现内联二次确认条（T92 回退？）');
+      if (!a.menuOpen) throw new Error('确认条出现后菜单被同一个点击收走了，用户看不见（T118 回归）');
+      // armed 态必须扛得住菜单重渲染：切一次画布，确认条应仍在（armed 住在变量里）
+      await page.evaluate(() => { notifyHarnessCanvasChanged(); });
+      await page.waitForTimeout(150);
+      const survived = await page.evaluate(() => !!document.querySelector('#graphHarnessSessionMenu .graph-harness-clearall-confirm'));
+      if (!survived) throw new Error('切画布触发菜单重渲染后确认条消失（armed 态没住在变量里，T118 回归）');
+      await page.click('#graphHarnessSessionMenu .graph-harness-clearall-confirm button:first-of-type', { force: true });
       await page.waitForTimeout(600);
       const after = await page.evaluate(() => JSON.stringify({
         phi: Object.keys(phiSessions).length,
@@ -299,7 +323,7 @@ async function main() {
       const m = JSON.parse(after);
       if (m.phi !== 1) throw new Error('清空后应只剩 1 个新建空白会话：' + m.phi);
       if (m.canvases !== 2 || !m.nodes) throw new Error('画布未完整保留：' + after);
-      ok('通道⑧ 清空所有 Φ 对话（内联二次确认）：画布名单、图状态、已应用节点全部保留');
+      ok('通道⑧ 清空所有 Φ 对话（真实点击＋内联二次确认＋armed 抗重渲染）：画布名单、图状态、已应用节点全部保留');
     } catch (e) { bad('通道⑧ 清空所有 Φ 对话', e); }
 
     // ---- 通道⑨：事件日志与两步撤销（T96）----
