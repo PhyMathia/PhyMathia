@@ -2745,6 +2745,24 @@
      这里一条 background 都不能有 */
 }
 
+/* 矮视口兜底（≤700px 高）：height: min(560px, 100vh - 210px) 在 588px 高的视口下
+   只剩 378px，小于 head＋对话区保底＋应用行＋composer 的最小和——窗口是 overflow:hidden，
+   多出来的部分会把 composer/状态行切掉（2026-09-30 真机窄窗复现）。低屏改成接近全高，
+   让整块内容放得下。 */
+@media (max-height: 700px) {
+  .graph-harness-window {
+    bottom: 12px;
+    height: calc(100vh - 24px);
+  }
+  /* 面板在矮屏接近全高后，桌宠默认位（right 18 / bottom 92，z 9800 高于窗口 9700）
+     会正好压住 composer——把它的层级降到 --z-modal（< 9700）＝退到磨砂玻璃之后
+     （玻璃 88% 不透明＋blur，视觉上退场）。位置、状态与动画一律不动，摘掉
+     body.harness-open 立刻回到 9800。横屏另有一套让位（挪到窗口右侧）不受影响。 */
+  body.harness-open .phi-pet-root {
+    z-index: var(--z-modal);
+  }
+}
+
 .graph-harness-window[hidden] {
   display: none !important;
 }
@@ -4383,6 +4401,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 12px;
   padding: 14px 12px;
   scrollbar-width: thin;
+  /* 竖向预算保底：对话区是主内容，而结果区/应用行/composer 都是固定高度——
+     没有保底时它会被挤成窄条，消息裁在行中，看起来像被下面那块面板压住
+     （2026-09-30 真机反馈）。高度不够时由 .graph-harness-result 先让位。 */
+  min-height: 96px;
 }
 
 .graph-harness-message {
@@ -4489,7 +4511,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 
 /* ---------- 结果区：可勾选操作卡片 + 应用按钮 ---------- */
 .graph-harness-result {
-  flex: 0 0 auto;
+  /* 可收缩（0 1 auto）：窗口高度不够时先让位给对话区——本区自带 overflow-y，
+     内容仍可达；固定 0 0 auto 时它和 composer 一起把对话区挤成窄条（2026-09-30） */
+  flex: 0 1 auto;
   max-height: 228px;
   min-height: 0;
   overflow-y: auto;
@@ -4886,7 +4910,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 /* ---------- 结果区/操作卡/应用按钮：跟随主题 ---------- */
 .graph-harness-result {
   margin-top: 0;
-  flex: 0 0 auto;
+  /* 与基础块同口径：可收缩，预算不够时让位给对话区 */
+  flex: 0 1 auto;
   max-height: 228px;
   min-height: 0;
   overflow-y: auto;
