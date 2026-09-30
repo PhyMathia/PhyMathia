@@ -1752,6 +1752,11 @@ window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300
  * ==================================================== */
 const GRAPH_NODE_SKINS = [
   { key: 'aurora', label: '极光磨砂', desc: '渐变半透明磨砂玻璃（默认）' },
+  { key: 'blueprint', label: '蓝图制图', desc: '工程蓝图：蓝图纸面＋虚线描边＋淡网格' },
+  { key: 'chalk', label: '粉笔黑板', desc: '墨绿石板底＋粉笔白虚线描边＋板面粉尘晕' },
+  { key: 'neon', label: '霓虹夜光', desc: '近黑卡面＋属性色霓虹描边与外发光' },
+  { key: 'parchment', label: '羊皮手稿', desc: '暖棕纸底＋铜金描边＋双线画框' },
+  { key: 'candy', label: '糖果磨砂', desc: '奶白磨砂玻璃＋马卡龙属性色柔光' },
 ];
 // 面板行图标：皮肤模板统一用「层」字形（模板叠放语义）；以后某模板要专属图标再进注册表
 const SKIN_OPTION_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';

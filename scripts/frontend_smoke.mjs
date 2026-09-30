@@ -6109,6 +6109,43 @@ check('节点皮肤模板（T128）：注册表、存储键、页头入口、CSS
   return true;
 });
 
+// 静态契约（T128 续）：注册表与 CSS 覆盖块必须一一对齐——面板能选出来的皮肤，CSS 里就得真有料
+check('节点皮肤模板：注册表每个非默认 key 在 CSS 都有对应 [data-node-skin] 覆盖块', () => {
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const start = ui.indexOf('const GRAPH_NODE_SKINS');
+  const registry = ui.slice(start, ui.indexOf('];', start));
+  const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]);
+  if (!keys.includes('aurora')) throw new Error('注册表解析异常：没找到默认模板 aurora');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const missing = keys.filter(k => k !== 'aurora' && !css.includes(`[data-node-skin="${k}"] .graph-node`));
+  if (missing.length) throw new Error('皮肤注册表与 CSS 覆盖块不同步，缺：' + missing.join(', '));
+  return true;
+});
+
+// 静态契约（T128 续）：模块粗边节点必须被每个皮肤整组覆盖——主题 [data-theme] .graph-node-module.graph-module-*
+// 是 (0,3,0)，module 覆盖块不重写 background/box-shadow 就整卡锁在默认皮（2026-10-01 用户真机实锤）
+check('节点皮肤模板：module 覆盖块重写背景与投影，并带 :hover/.selected 属性色变体', () => {
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const start = ui.indexOf('const GRAPH_NODE_SKINS');
+  const registry = ui.slice(start, ui.indexOf('];', start));
+  const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]).filter(k => k !== 'aurora');
+  if (!keys.length) throw new Error('注册表解析异常：非默认模板一个都没取到');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  for (const k of keys) {
+    const sel = `[data-node-skin="${k}"] .graph-node.graph-node-module {`;
+    const i = css.indexOf(sel);
+    if (i < 0) throw new Error(`${k}：缺 module 覆盖块`);
+    const body = css.slice(i, css.indexOf('}', i));
+    if (!body.includes('background:') || !body.includes('box-shadow:'))
+      throw new Error(`${k}：module 块没重写背景/投影，模块卡面会被主题 (0,3,0) 规则锁回默认皮`);
+    for (const variant of [':hover', '.selected']) {
+      if (!css.includes(`[data-node-skin="${k}"] .graph-node.graph-node-module${variant}`))
+        throw new Error(`${k}：缺 module${variant} 变体（模块悬停/选中会丢属性色环）`);
+    }
+  }
+  return true;
+});
+
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
 await msTail;
 await Promise.all(sqChecks).catch(() => {});
