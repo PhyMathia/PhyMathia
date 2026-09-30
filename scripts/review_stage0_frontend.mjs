@@ -255,20 +255,24 @@ for (const mode of ['result', 'history']) {
   });
 }
 
-test('F3 in-flight result after session switch', null, async () => {
-  const { s, storage } = harnessFixture();
+// 在途请求的迟到结果。两个 switchToSession 语义要分开测（2026-09-30 Φ 会话解耦后）：
+// 切画布 ≠ 切 Φ 会话。stillCurrent() 的口径是「phiId/epoch 变才作废」——纯问答在切
+// 画布时本就该继续落进同一个 Φ 对话（phi_fix 没变），历史归 Φ 会话而非画布会话；
+// 真正要挡住的是「Φ 会话被切走之后，迟到的结果还往当前对话里落」。
+function inFlightSwitchFixture() {
+  const f = harnessFixture();
+  const s = f.s;
   for (const sid of ['A', 'B']) { const state = s.getGraphState(sid); state.customNodes = [{ id: 'shared-id', kind: 'human_note', content: sid }]; s.saveGraphState(sid, state); }
-  let posted = 0;
+  const gate = deferred();
   s.getActiveModelForRole = () => ({ provider: 'test', model: 'isolated', baseUrl: 'http://unused' });
   s._harnessFetchContinent = async () => null;
   s._isHarnessPureQuestion = () => true;
   s._readHarnessStreamResponse = async resp => JSON.parse(await resp.text());
-  let release = () => {};
-  const gatePromise = new Promise(r => { release = r; });
-  s.fetch = async (url, opts = {}) => {
+  let posted = 0;
+  s.fetch = async (url) => {
     if (url === '/api/harness/graph/review') {
       posted++;
-      await gatePromise;
+      await gate.promise;
       return { ok: true, json: async () => ({}), text: async () => JSON.stringify({
         status: 'ok', summary: 'A edit', operations: [{ op: 'update_node', id: 'shared-id', patch: { content: 'A-only edit' } }],
         next_snapshot: { nodes: [], edges: [] } }) };
@@ -276,17 +280,34 @@ test('F3 in-flight result after session switch', null, async () => {
     return { ok: true, json: async () => ({}) };
   };
   evaluate(s, "currentSessionId='A'; document.getElementById('graphHarnessInstruction').value='edit it';");
+  return { f, s, gate, posted: () => posted };
+}
+
+test('F3 in-flight result after canvas switch', null, async () => {
+  const { f, s, gate, posted } = inFlightSwitchFixture();
   const running = s.runGraphHarness();
   await settle();
-  assert.equal(posted, 1, 'must reach the real review POST before switching');
+  assert.equal(posted(), 1, 'must reach the real review POST before switching');
   evaluate(s, "currentSessionId='B';");
-  release();
+  gate.resolve();
   await settle();
   await running;
   const bState = s.getGraphState('B');
   assert.equal(bState.customNodes[0].content, 'B', 'A response after switch must not apply to B');
-  assert.equal(storage.get('phymathia_graph_B').includes('A-only edit'), false, 'B graph storage must not receive A edits');
-  assert.equal(evaluate(s, 'harnessHistory.some(e=>e.summary==="A edit")'), false, 'A result must not enter B harness history');
+  assert.equal(f.storage.get('phymathia_graph_B').includes('A-only edit'), false, 'B graph storage must not receive A edits');
+});
+
+test('F3 in-flight result after Φ session switch', null, async () => {
+  const { s, gate, posted } = inFlightSwitchFixture();
+  const running = s.runGraphHarness();
+  await settle();
+  assert.equal(posted(), 1, 'must reach the real review POST before switching');
+  // 真正的护栏：Φ 会话被切走，迟到的结果不得落进当前对话
+  evaluate(s, "currentPhiId='phi_other';");
+  gate.resolve();
+  await settle();
+  await running;
+  assert.equal(evaluate(s, 'harnessHistory.some(e=>e.summary==="A edit")'), false, 'A result must not enter the switched-to Φ history');
 });
 
 for (const focused of [false, true]) {
