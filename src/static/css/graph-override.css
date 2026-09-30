@@ -6356,3 +6356,334 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * - 纯 CSS 切换即时生效、不重绘画布（applyNodeSkin 不触发 render，与切主题同口径）；
  * - viewer 只读页固定默认皮肤（切换器只在主页面）；导出 PNG/.pmu 取导出时刻的皮肤，天然所见即所得。
  * ============================================================ */
+
+/* ------------------------------------------------------------
+ * 覆盖块通用写法（五个候选模板共用同一骨架，改一处对照一处）：
+ * 1) 泛规则只用长手属性（border-color/border-style），绝不用 border 简写——
+ *    简写会把基础规则里模块节点的 4px/7px 粗边宽度一并冲掉（特异性 (0,2,0) 同级靠源序赢）；
+ * 2) 模块属性色统一走 var(--node-attr)（渲染层每节点内联注入），整组重映射也只动配比；
+ * 3) 块内顺序固定：泛规则 → :hover → .selected → 人工家族左条 → root → branch →
+ *    module → module:hover → module.selected，后写的赢（同级特异性靠源序）。
+ * 4) module 覆盖块必须整组重写 background + box-shadow——主题的
+ *    [data-theme] .graph-node-module.graph-module-* 是 (0,3,0) 且带 !important，比泛规则 (0,2,0) 高，
+ *    只写 border-color 的话模块卡面整卡锁在默认皮（2026-10-01 用户真机实锤）；
+ *    module 块写了静态投影，module:hover / module.selected（(0,4,0)）必须跟在后面补回属性色环。
+ * ---------------------------------------------------------- */
+
+/* ---------- 皮肤 1：blueprint 蓝图制图 ----------
+ * 工程蓝图：蓝图纸面＋淡网格＋虚线描边，悬停时虚线变实线（描图感）。 */
+[data-node-skin="blueprint"] .graph-node {
+  background:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--ink-blue) 12%, transparent) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink-blue) 12%, transparent) 0 1px, transparent 1px 26px),
+    color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%) !important;
+  border-color: color-mix(in srgb, var(--ink-blue) 58%, transparent) !important;
+  border-style: dashed !important;
+  border-left-style: solid !important;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node:hover {
+  border-color: var(--ink-blue) !important;
+  border-style: solid !important;
+  box-shadow:
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 65%, transparent),
+    0 0 18px color-mix(in srgb, var(--ink-blue) 24%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node.selected {
+  border-color: var(--node-attr) !important;
+  border-style: solid !important;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--node-attr) 42%, transparent),
+    0 0 0 12px color-mix(in srgb, var(--node-attr) 18%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 65%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node-user,
+[data-node-skin="blueprint"] .graph-node-answer,
+[data-node-skin="blueprint"] .graph-node-hub,
+[data-node-skin="blueprint"] .graph-node-summary,
+[data-node-skin="blueprint"] .graph-node-note {
+  border-left-color: var(--node-attr) !important;
+}
+[data-node-skin="blueprint"] .graph-node-root {
+  border-color: var(--text-primary) !important;
+  border-style: solid !important;
+}
+[data-node-skin="blueprint"] .graph-node-branch {
+  border-color: var(--text-primary) !important;
+  border-style: solid !important;
+}
+[data-node-skin="blueprint"] .graph-node.graph-node-module {
+  background:
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--ink-blue) 12%, transparent) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink-blue) 12%, transparent) 0 1px, transparent 1px 26px),
+    color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%) !important;
+  border-color: var(--node-attr) !important;
+  border-style: dashed !important;
+  border-left-style: solid !important;
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node.graph-node-module:hover {
+  border-color: var(--node-attr) !important;
+  border-style: solid !important;
+  box-shadow:
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 65%, transparent),
+    0 0 18px color-mix(in srgb, var(--ink-blue) 24%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node.graph-node-module.selected {
+  border-color: var(--node-attr) !important;
+  border-style: solid !important;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--node-attr) 42%, transparent),
+    0 0 0 12px color-mix(in srgb, var(--node-attr) 18%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 65%, transparent) !important;
+}
+
+/* ---------- 皮肤 2：chalk 粉笔黑板 ----------
+ * 墨绿石板底＋粉笔白虚线描边（手绘感）＋板面粉尘晕；属性色整体「粉笔化」（混入粉笔白降饱和，色相保留）。 */
+[data-node-skin="chalk"] .graph-node {
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--ink-note) 9%, transparent), transparent 55%),
+    color-mix(in srgb, var(--bg-panel) 82%, var(--ink-teal) 18%) !important;
+  border-color: color-mix(in srgb, var(--text-primary) 52%, transparent) !important;
+  border-style: dashed !important;
+  border-left-style: solid !important;
+  box-shadow:
+    inset 0 0 46px color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 12px 32px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+  box-shadow:
+    inset 0 0 46px color-mix(in srgb, var(--text-primary) 6%, transparent),
+    0 0 16px color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 12px 32px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node.selected {
+  border-color: color-mix(in srgb, var(--node-attr) 58%, var(--text-primary)) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 30%, transparent),
+    0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    0 12px 36px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node-user,
+[data-node-skin="chalk"] .graph-node-answer,
+[data-node-skin="chalk"] .graph-node-hub,
+[data-node-skin="chalk"] .graph-node-summary,
+[data-node-skin="chalk"] .graph-node-note {
+  border-left-color: color-mix(in srgb, var(--node-attr) 60%, var(--text-primary)) !important;
+}
+[data-node-skin="chalk"] .graph-node-root {
+  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node-branch {
+  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node.graph-node-module {
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--ink-note) 9%, transparent), transparent 55%),
+    color-mix(in srgb, var(--bg-panel) 82%, var(--ink-teal) 18%) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 60%, var(--text-primary)) !important;
+  border-style: dashed !important;
+  border-left-style: solid !important;
+  box-shadow:
+    inset 0 0 46px color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 12px 32px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node.graph-node-module:hover {
+  border-color: color-mix(in srgb, var(--node-attr) 72%, var(--text-primary)) !important;
+  box-shadow:
+    inset 0 0 46px color-mix(in srgb, var(--text-primary) 6%, transparent),
+    0 0 16px color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 12px 32px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node.graph-node-module.selected {
+  border-color: color-mix(in srgb, var(--node-attr) 58%, var(--text-primary)) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 30%, transparent),
+    0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    0 12px 36px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
+}
+
+/* ---------- 皮肤 3：neon 霓虹夜光 ----------
+ * 近黑卡面＋属性色霓虹描边与双层外发光；每节点按自己的 --node-attr 发光，属性即霓虹色。 */
+[data-node-skin="neon"] .graph-node {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 74%, transparent), color-mix(in srgb, var(--overlay-bg) 88%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 70%, transparent) !important;
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--node-attr) 26%, transparent),
+    0 0 44px color-mix(in srgb, var(--node-attr) 14%, transparent),
+    0 12px 34px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node:hover {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--node-attr) 38%, transparent),
+    0 0 60px color-mix(in srgb, var(--node-attr) 20%, transparent),
+    0 12px 34px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 30%, transparent),
+    0 0 26px color-mix(in srgb, var(--node-attr) 40%, transparent),
+    0 0 72px color-mix(in srgb, var(--node-attr) 22%, transparent),
+    0 12px 40px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node-user,
+[data-node-skin="neon"] .graph-node-answer,
+[data-node-skin="neon"] .graph-node-hub,
+[data-node-skin="neon"] .graph-node-summary,
+[data-node-skin="neon"] .graph-node-note {
+  border-left-color: var(--node-attr) !important;
+}
+[data-node-skin="neon"] .graph-node-root {
+  border-color: color-mix(in srgb, var(--text-primary) 88%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node-branch {
+  border-color: var(--accent) !important;
+}
+[data-node-skin="neon"] .graph-node.graph-node-module {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 74%, transparent), color-mix(in srgb, var(--overlay-bg) 88%, transparent)) !important;
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--node-attr) 26%, transparent),
+    0 0 44px color-mix(in srgb, var(--node-attr) 14%, transparent),
+    0 12px 34px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node.graph-node-module:hover {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--node-attr) 38%, transparent),
+    0 0 60px color-mix(in srgb, var(--node-attr) 20%, transparent),
+    0 12px 34px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node.graph-node-module.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 30%, transparent),
+    0 0 26px color-mix(in srgb, var(--node-attr) 40%, transparent),
+    0 0 72px color-mix(in srgb, var(--node-attr) 22%, transparent),
+    0 12px 40px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+
+/* ---------- 皮肤 4：parchment 羊皮手稿 ----------
+ * 暖棕纸底＋铜金描边＋内圈细线（双线画框）；属性色微微做旧（混入铜金 18%，色相保留）。 */
+[data-node-skin="parchment"] .graph-node {
+  background:
+    linear-gradient(165deg, color-mix(in srgb, var(--ink-amber) 10%, transparent), transparent 62%),
+    color-mix(in srgb, var(--bg-panel) 84%, var(--ink-human) 16%) !important;
+  border-color: color-mix(in srgb, var(--ink-amber) 50%, transparent) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 22%, transparent),
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node:hover {
+  border-color: color-mix(in srgb, var(--ink-amber) 80%, transparent) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 34%, transparent),
+    0 0 16px color-mix(in srgb, var(--ink-amber) 16%, transparent),
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 28%, transparent),
+    0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 30%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node-user,
+[data-node-skin="parchment"] .graph-node-answer,
+[data-node-skin="parchment"] .graph-node-hub,
+[data-node-skin="parchment"] .graph-node-summary,
+[data-node-skin="parchment"] .graph-node-note {
+  border-left-color: var(--node-attr) !important;
+}
+[data-node-skin="parchment"] .graph-node-root {
+  border-color: var(--ink-amber) !important;
+}
+[data-node-skin="parchment"] .graph-node-branch {
+  border-color: var(--ink-amber) !important;
+}
+[data-node-skin="parchment"] .graph-node.graph-node-module {
+  background:
+    linear-gradient(165deg, color-mix(in srgb, var(--ink-amber) 10%, transparent), transparent 62%),
+    color-mix(in srgb, var(--bg-panel) 84%, var(--ink-human) 16%) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 82%, var(--ink-amber) 18%) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 22%, transparent),
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node.graph-node-module:hover {
+  border-color: color-mix(in srgb, var(--node-attr) 62%, var(--ink-amber) 38%) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 34%, transparent),
+    0 0 16px color-mix(in srgb, var(--ink-amber) 16%, transparent),
+    0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node.graph-node-module.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-attr) 28%, transparent),
+    0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 30%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
+}
+
+/* ---------- 皮肤 5：candy 糖果磨砂 ----------
+ * 奶白磨砂玻璃（真 backdrop-filter）＋按属性色着色的马卡龙柔光；属性色全部粉彩化（色相保留）。 */
+[data-node-skin="candy"] .graph-node {
+  background: linear-gradient(170deg, color-mix(in srgb, var(--node-attr) 13%, transparent), color-mix(in srgb, var(--text-primary) 9%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--text-primary) 40%, transparent) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    0 14px 38px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 65%, transparent) !important;
+  box-shadow:
+    0 0 28px color-mix(in srgb, var(--node-attr) 18%, transparent),
+    0 14px 38px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--node-attr) 34%, transparent),
+    0 0 0 12px color-mix(in srgb, var(--node-attr) 14%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node-user,
+[data-node-skin="candy"] .graph-node-answer,
+[data-node-skin="candy"] .graph-node-hub,
+[data-node-skin="candy"] .graph-node-summary,
+[data-node-skin="candy"] .graph-node-note {
+  border-left-color: color-mix(in srgb, var(--node-attr) 72%, var(--text-primary)) !important;
+}
+[data-node-skin="candy"] .graph-node-root {
+  border-color: color-mix(in srgb, var(--text-primary) 70%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node-branch {
+  border-color: color-mix(in srgb, var(--text-primary) 70%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node.graph-node-module {
+  background: linear-gradient(170deg, color-mix(in srgb, var(--node-attr) 13%, transparent), color-mix(in srgb, var(--text-primary) 9%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 68%, var(--text-primary) 32%) !important;
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--node-attr) 12%, transparent),
+    0 14px 38px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node.graph-node-module:hover {
+  border-color: color-mix(in srgb, var(--node-attr) 45%, var(--text-primary) 55%) !important;
+  box-shadow:
+    0 0 28px color-mix(in srgb, var(--node-attr) 18%, transparent),
+    0 14px 38px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node.graph-node-module.selected {
+  border-color: var(--node-attr) !important;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--node-attr) 34%, transparent),
+    0 0 0 12px color-mix(in srgb, var(--node-attr) 14%, transparent),
+    0 14px 40px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
