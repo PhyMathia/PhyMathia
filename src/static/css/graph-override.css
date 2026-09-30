@@ -5042,6 +5042,40 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   -webkit-appearance: none;
 }
 
+/* 例外：对话区与结果区恢复细滚动条。这两块的内容经常超出（长回复、多条操作卡），
+   全局隐藏后文字裁在行中却看不出"下面还有"，读起来像被别的面板压住
+   （2026-09-30 真机：被当成"两个面板遮住"的观感来源之一）。
+   特异性 (0,2,0) 压过上面的 `.graph-harness-window *` (0,1,0) 与
+   `.graph-harness-window ::-webkit-scrollbar*`（同伪元素、源序也在其后）。 */
+.graph-harness-window .graph-harness-chat,
+.graph-harness-window .graph-harness-result {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar,
+.graph-harness-window .graph-harness-result::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar-track,
+.graph-harness-window .graph-harness-chat::-webkit-scrollbar-thumb,
+.graph-harness-window .graph-harness-result::-webkit-scrollbar-track,
+.graph-harness-window .graph-harness-result::-webkit-scrollbar-thumb {
+  display: block;
+}
+.graph-harness-window .graph-harness-result::-webkit-scrollbar-thumb {
+  background: var(--border, #334155);
+  border-radius: var(--r-xs);
+}
+/* 脱离全局基线（styles.css）的「悬停才显形」：这两块要常显。--scroll-thumb 供
+   下面那条 `*::-webkit-scrollbar-thumb` 兜底，scrollbar-color 给 Firefox 侧。 */
+.graph-harness-window .graph-harness-chat,
+.graph-harness-window .graph-harness-result {
+  --scroll-thumb: var(--border, #334155);
+  scrollbar-color: var(--border, #334155) transparent;
+}
+
 /* ---------- 性能修复：高倍缩放自动降级 ----------
    zoom > 2.2 时（JS 在 _applyGraphTransform 中挂 .graph-heavy-zoom），
    图层纹理面积随 zoom 平方膨胀，重型特效极易耗尽显存 → 灰白瓦片伪影 + 卡顿。
