@@ -41,6 +41,11 @@ let harnessLastAppliedReport = null;
   // T104：会话菜单的搜索词与正在行内改名的会话 id（重渲染即复位的临时态）
   let harnessSessionFilter = '';
   let renamingPhiId = '';
+  // T118：清空所有 Φ 对话的内联二次确认是否已就位。必须住在变量里而不是只写在
+  // footer 的 innerHTML 里——菜单任何重渲染（切画布/删画布/换绑，见
+  // notifyHarnessCanvasChanged）都会整块重建 footer，只活在 DOM 里的 armed 态
+  // 会被当场抹掉，用户表现为「点了清空所有，确认条自己没了」
+  let clearAllArmed = false;
 
   // T91：流式阶段的中文名，与后端 harness/review.py 的 _PHASE_LABELS 逐字镜像（含 undo 共 7 项）。
   // 只服务于历史消息下方 meta 的显示——entry.phase 的存储值（localStorage 历史/请求体）
@@ -450,11 +455,36 @@ let harnessLastAppliedReport = null;
     chat.prepend(notice);
   }
 
+  // 菜单底部的危险区（新建钮下方那条）。抽成独立函数是因为 armed 切换**只能**
+  // 重渲染 footer 自身，绝不能整块重建 menu.innerHTML——那会把用户刚点的那颗按钮
+  // 从文档里摘出去，同一个点击继续冒泡到 document 时，ensureHarnessPanel 的
+  // 「点菜单外收起」监听器看到 target.closest('#graphHarnessSession') 已是 null，
+  // 当场把菜单关掉：确认条进了 DOM，用户却什么都看不见（2026-09-30 真机复现）。
+  function _renderHarnessClearAllFooter() {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (!menu) return;
+    let footer = menu.querySelector('.graph-harness-session-menu-footer');
+    if (!footer) {
+      footer = document.createElement('div');
+      footer.className = 'graph-harness-session-menu-footer';
+      menu.appendChild(footer);
+    }
+    const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
+    const trashSvg = icons.trash || '✕';
+    // armed 态在变量里，所以菜单因为切画布/删画布/换绑而重渲染时确认条会被复原
+    footer.innerHTML = clearAllArmed
+      ? '<div class="graph-harness-clearall-confirm">'
+        + '<span>清空所有 Φ 对话？画布全部保留，不可撤销</span>'
+        + '<button type="button" onclick="confirmClearAllHarnessSessions(true, event)">确认清空</button>'
+        + '<button type="button" onclick="confirmClearAllHarnessSessions(false, event)">取消</button>'
+        + '</div>'
+      : '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions(event)" title="删除全部 Φ 对话记录，画布全部保留，不可撤销">' + trashSvg + ' 清空所有 Φ 对话</button>';
+  }
+
   function _renderHarnessSessionMenu() {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (!menu) return;
     const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
-    const trashSvg = icons.trash || '✕';
     const plusSvg = icons.plus || '＋';
     menu.innerHTML = ''
       + '<button type="button" class="graph-harness-session-new" onclick="newHarnessPhiSession()" title="新建一段 Φ 对话（默认绑定当前画布）">' + plusSvg + ' 新建 Φ 会话</button>'
@@ -464,10 +494,9 @@ let harnessLastAppliedReport = null;
       + '<input type="text" id="graphHarnessSessionSearch" placeholder="搜索 Φ 会话标题…" value="' + _escapeHtml(harnessSessionFilter) + '" oninput="filterHarnessSessions(this.value)">'
       + '</div>'
       + '<div class="graph-harness-session-list" id="graphHarnessSessionList"></div>'
-      + '<div class="graph-harness-session-menu-footer">'
-      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部 Φ 对话记录，画布全部保留，不可撤销">' + trashSvg + ' 清空所有 Φ 对话</button>'
-      + '</div>';
+      + '<div class="graph-harness-session-menu-footer"></div>';
     _renderHarnessSessionList();
+    _renderHarnessClearAllFooter();
   }
 
   // 会话列表体（搜索过滤＋行内改名都在这里重渲染；列表容器 id 稳定供上面引用）
@@ -563,6 +592,7 @@ let harnessLastAppliedReport = null;
     // T89：生成中切 Φ 会话会经 switchPhiSession → resetHarnessSession → abort 静默掐断
     // 在途请求，这里与新建/删除/清空/换绑同款守卫挡住
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再切换 Φ 会话', 'error'); return; }
+    clearAllArmed = false;
     switchPhiSession(id);
   }
 
@@ -570,6 +600,7 @@ let harnessLastAppliedReport = null;
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (menu) menu.hidden = true;
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再新建 Φ 会话', 'error'); return; }
+    clearAllArmed = false;
     createPhiSession(true);
   }
 
@@ -580,6 +611,7 @@ let harnessLastAppliedReport = null;
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除 Φ 会话', 'error'); return; }
     const info = phiSessions[id];
     if (typeof window.confirm === 'function' && !window.confirm('删除 Φ 会话「' + (info.title || 'Φ 会话') + '」？\n只删除这段对话记录，画布不受影响。')) return;
+    clearAllArmed = false;
     try { localStorage.removeItem(_phiLocalKey(id)); } catch (e) {}
     try { fetch('/api/kv/' + encodeURIComponent(_historyKey(id)), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
     delete phiSessions[id];
@@ -616,34 +648,44 @@ let harnessLastAppliedReport = null;
   // 一键清空：只删 Φ 对话（历史本地键＋服务端），画布一律不动——session.js
   // clearAllSessions 的清空键清单刻意不含 phi_* 键，两个「清空」互不越界。
   // 清空后自动新建一个绑当前画布的空白 Φ 会话，面板不落空态。
-  // T92：原生 confirm 换成菜单内联二次确认条——armed 态只活在菜单 DOM 里，
-  // 菜单任何重渲染都会把它抹掉，不需要 JS 层 armed 变量。
-  function clearAllHarnessSessions() {
+  // T92：原生 confirm 换成菜单内联二次确认条。T118：两处修正——
+  // ①armed 态改由 clearAllArmed 变量持有，扛得住切画布/删画布/换绑引起的菜单重渲染
+  // ②切换 armed 只重渲染 footer（_renderHarnessClearAllFooter），不碰菜单外壳：
+  //   整块重建 menu.innerHTML 会把用户刚点的按钮自己摘出文档，同一个点击冒泡到
+  //   document 时被「点菜单外收起」监听器判成外部点击、当场关掉菜单——确认条进了
+  //   DOM，用户却什么都看不见，表现为「点了完全没变化」（2026-09-30 真机复现）
+  function clearAllHarnessSessions(event) {
+    // 关键：armed 切换必然换掉这颗按钮自己（footer 内容变了），若放任事件继续冒泡
+    // 到 document，ensureHarnessPanel 的「点菜单外收起」监听器看到的 target 已是脱离
+    // 文档的旧按钮，closest('#graphHarnessSession') 返回 null，当场把菜单关掉——确认条
+    // 进了 DOM 而用户什么都看不见。事件止步于按钮，菜单不会被误收。
+    if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
     const menu = document.getElementById('graphHarnessSessionMenu');
     const footer = menu && typeof menu.querySelector === 'function'
       ? menu.querySelector('.graph-harness-session-menu-footer')
       : null;
-    // 只在真 DOM 的 footer 里挂确认条；nodeType 守卫让没有真实菜单载体的调用
+    // 只在真 DOM 的菜单里挂确认条；nodeType 守卫让没有真实菜单载体的调用
     // （冒烟沙箱的宽松 DOM 代理、程序化调用）直接走清空主体
     if (footer && footer.nodeType === 1) {
-      footer.innerHTML = ''
-        + '<div class="graph-harness-clearall-confirm">'
-        + '<span>清空所有 Φ 对话？画布全部保留，不可撤销</span>'
-        + '<button type="button" onclick="confirmClearAllHarnessSessions(true)">确认清空</button>'
-        + '<button type="button" onclick="confirmClearAllHarnessSessions(false)">取消</button>'
-        + '</div>';
+      clearAllArmed = true;
+      _renderHarnessClearAllFooter();
       return;
     }
     _doClearAllHarnessSessions();
   }
 
-  // 内联确认条的落点（全局给 onclick 用）：false＝取消，重渲染菜单即恢复原样；
-  // true＝先让菜单回到正常态再执行清空主体（确认条随重渲染消失，无残留 armed 态）
-  function confirmClearAllHarnessSessions(proceed) {
-    if (!proceed) { _renderHarnessSessionMenu(); return; }
+  // 内联确认条的落点（全局给 onclick 用）：false＝取消，解除 armed 并复原 footer；
+  // true＝先解除 armed、复原 footer 再执行清空主体（无残留 armed 态）
+  function confirmClearAllHarnessSessions(proceed, event) {
+    // 同 clearAllHarnessSessions：确认/取消两颗钮点完也会被重渲染换掉，事件不能
+    // 再冒到 document 去把菜单收走（cancel 尤其重要——用户点了「取消」却连菜单
+    // 一起消失，观感上等同按钮失灵）
+    if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+    if (!proceed) { clearAllArmed = false; _renderHarnessClearAllFooter(); return; }
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
-    _renderHarnessSessionMenu();
+    clearAllArmed = false;
+    _renderHarnessClearAllFooter();
     _doClearAllHarnessSessions();
   }
 
@@ -669,6 +711,7 @@ let harnessLastAppliedReport = null;
     const s = phiSessions[id];
     if (!s) return;
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再换绑', 'error'); return; }
+    clearAllArmed = false;
     const canvasSid = _sessionId();
     if (s.boundSid && _harnessBoundSid()) {
       s.boundSid = null;
