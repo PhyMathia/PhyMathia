@@ -96,6 +96,8 @@ const UI_ICON_SVG = {
   clipboard: makeLineIcon('<rect x="8" y="3" width="8" height="4" rx="1.4"></rect><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path>'),
   download: makeLineIcon('<path d="M12 3v12"></path><path d="M7 11l5 5 5-5"></path><path d="M4 20h16"></path>'),
   undo: makeLineIcon('<path d="M9 14 4 9l5-5"></path><path d="M4 9h9a7 7 0 0 1 0 14H8"></path>'),
+  // T121：Φ 面板「撤销历史」——时针＋回溯箭头，与 undo（纯回转箭头）区分
+  history: makeLineIcon('<path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3L3 8.5"></path><path d="M3 3.5v5h5"></path><path d="M12 7.8V12l2.8 1.7"></path>'),
   redo: makeLineIcon('<path d="M15 14l5-5-5-5"></path><path d="M20 9h-9a7 7 0 0 0 0 14h5"></path>'),
   link: makeLineIcon('<path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M13.5 10.5a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7l1-1"></path>'),
   curve: makeLineIcon('<path d="M3 19c0-9 4-14 9-14 4 0 6 3 6 6"></path><circle cx="3" cy="19" r="1.6"></circle><circle cx="18" cy="11" r="1.6"></circle>'),

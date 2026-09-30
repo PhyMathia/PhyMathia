@@ -4927,6 +4927,78 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--accent);
 }
 
+/* ===== T121 composer 按钮行统一（2026-09-30 用户：「emoji 不好看 + 三按钮不协调」）=====
+   改前实测（400px 面板）：模式钮 56px/13px、撤销钮 48px/12px、发送钮 55px/13px——三种
+   高度三种字号并排，视觉参差；且 ↩/🕘 走系统 emoji 字体渲染，与面板其余线性图标不在
+   一套风格里，还会撑宽按钮把整行挤到换行（用户看到的「两行」）。
+   改法：①图标改 UI_ICON_SVG 线性（config.js data-icon 注入）；②四个按钮统一 32px 高、
+   13px 字号、单行不折；③窄面板放不下时按序隐藏次要项而不是换行。
+   全部用既有令牌，零新色值。 */
+.graph-harness-composer .graph-harness-actions {
+  /* 关键：不换行。挤不下时由下面的降级规则隐藏次要按钮，宁可少一个入口也不排成两行 */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+/* 统一按钮盒模型：四个按钮同一高度（32px）、同一字号（13px）、文字永不折行。
+   选择器抬到 (0,3,0) 压过上面 .graph-harness-actions button（0,2,0）的通用规则 */
+.graph-harness-window .graph-harness-composer .graph-harness-actions button,
+.graph-harness-window .graph-harness-composer .graph-harness-actions .graph-harness-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+/* 图标：固定 14px 见方，与 13px 文字的视觉重量匹配；不吃文字基线 */
+.graph-harness-window .graph-harness-composer .graph-harness-btn-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.graph-harness-window .graph-harness-composer .graph-harness-btn-ico svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* 发送钮是渐变主按钮，宽度让位给文字即可，但高度同样锁 32px */
+.graph-harness-window .graph-harness-composer #graphHarnessSendBtn {
+  height: 32px;
+  padding: 0 16px;
+  font-size: var(--fs-md);
+}
+/* 「撤销上一条」带 margin-right:auto 把发送钮推到右端——T121 起三个次要按钮
+   统一靠左成组，发送钮右对齐靠 actions 自身的 justify-content 兜底 */
+.graph-harness-window .graph-harness-composer .graph-harness-actions #graphHarnessSendBtn {
+  margin-left: auto;
+}
+/* 模式钮与撤销钮都别再各自 auto（:has 旧规则保留兜底，这里显式压平成 0） */
+.graph-harness-window .graph-harness-composer .graph-harness-actions .graph-harness-btn-undo {
+  margin-right: 0;
+}
+/* 窄面板降级：宽度不够时按「次要优先」逐个隐藏，全程不换行。
+   断点用视口宽度——面板宽是 min(400px, 100vw - 36px)，视口窄于阈值时面板同步变窄。
+   撤销上一条 > 撤销历史 > 模式（模式可从面板内其他入口切换，撤销历史可由上一条进） */
+@media (max-width: 470px) {
+  .graph-harness-window .graph-harness-composer .graph-harness-btn-undo:nth-of-type(2) {
+    display: none;
+  }
+}
+@media (max-width: 400px) {
+  .graph-harness-window .graph-harness-composer .graph-harness-actions .graph-harness-mode {
+    display: none;
+  }
+}
+
 /* 发送按钮：深色天蓝 / 浅色琥珀，跟随主题 */
 #graphHarnessSendBtn {
   border: none;

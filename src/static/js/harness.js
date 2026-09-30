@@ -1231,8 +1231,12 @@ let harnessLastAppliedReport = null;
       + '<button type="button" id="graphHarnessModeBtn" class="graph-harness-mode-btn" onclick="toggleHarnessModeMenu(event)" title="切换工作模式：编辑可改图，答疑只读，创造做节点配方">模式：编辑</button>'
       + '<div id="graphHarnessModeMenu" class="graph-harness-mode-menu aurora-glass" hidden></div>'
       + '</span>'
-      + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
-      + '<button type="button" class="graph-harness-btn-undo" onclick="toggleHarnessUndoTimeline()" title="查看本会话已应用的批次，可回滚到任意批次之前">🕘 撤销历史</button>'
+      // T121：↩/🕘 换成 UI_ICON_SVG 的线性图标（undo / history）。emoji 走系统 emoji
+      // 字体渲染，与面板其余线性图标和 13px 正文都不在一套视觉里，且撑宽按钮——
+      // 400px 面板里三个按钮挤不下时会换行，成两行更不协调。图标在 ensureHarnessPanel
+      // 尾部按 icons 注入，与会话菜单同一套范式。
+      + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）" data-icon="undo">撤销上一条</button>'
+      + '<button type="button" class="graph-harness-btn-undo" onclick="toggleHarnessUndoTimeline()" title="查看本会话已应用的批次，可回滚到任意批次之前" data-icon="history">撤销历史</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'
       + '</div>'
@@ -1242,6 +1246,14 @@ let harnessLastAppliedReport = null;
     const phiEl = harnessPet.querySelector('[data-phi-pet]');
     if (phiEl && window.PhiPet && window.PhiPet.init) window.PhiPet.init(phiEl);
     document.body.appendChild(harnessPanel);
+    // T121：把 data-icon 标记的按钮换成 UI_ICON_SVG 线性图标（emoji ↩/🕘 视觉不统一，
+    // 且撑宽按钮导致 400px 面板里换行）。图标在前、文字在后，flex 排布。
+    const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
+    harnessPanel.querySelectorAll('button[data-icon]').forEach(btn => {
+      const svg = icons[btn.getAttribute('data-icon')];
+      if (!svg) return;
+      btn.innerHTML = '<span class="graph-harness-btn-ico" aria-hidden="true">' + svg + '</span>' + btn.textContent;
+    });
     _initHarnessDrag();
     // 下拉菜单（会话 + 模式）点外部收起（面板只建一次，监听器也只挂一次）
     document.addEventListener('click', event => {
