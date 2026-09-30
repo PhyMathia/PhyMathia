@@ -6336,3 +6336,23 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--danger-fg);
   background: var(--danger-bg);
 }
+
+/* ============================================================
+ * 节点皮肤模板（data-node-skin）—— T128，2026-09-30
+ * 机制与深浅主题同款：html 根挂 data-node-skin 属性，本节按属性写平行规则块；
+ * 切换入口在页头「节点皮肤」按钮（ui.js GRAPH_NODE_SKINS 注册表 + #skinPanel）。
+ * 默认模板 aurora（极光磨砂）＝本文件既有的全部节点外观规则，刻意不设专属块：
+ * 基础规则即默认皮肤，切回默认＝摘属性，不存在「默认块被覆盖块污染」的问题。
+ *
+ * ★ 加新模板只要两步（改完跑 npm run build:js，构建会顺带刷新 ?v= 缓存号）：
+ *   1) 在本节末尾追加一段 [data-node-skin="<key>"] 覆盖块——属性选择器特异性天然压过
+ *      同名基础规则；基础规则带 !important 的属性，覆盖块同样要带 !important；
+ *   2) 在 ui.js GRAPH_NODE_SKINS 注册表加一条 { key, label, desc }。
+ *
+ * 红线（每个模板都要守，详见 docs/dev/ui-glass.md 节点皮肤模板节）：
+ * - 只动皮不动布局：不得改节点 width/transform/尺寸链（尺寸冻结拍板，canvas-modules.md）；
+ * - --node-attr 语义色必须保留：颜色继续区分物理/数学等属性（可整组重映射色值，不可取消区分）；
+ * - 颜色只用既有令牌（--ink-* 等）＋ color-mix 派生，禁止新增裸 hex（style_debt 预算）；
+ * - 纯 CSS 切换即时生效、不重绘画布（applyNodeSkin 不触发 render，与切主题同口径）；
+ * - viewer 只读页固定默认皮肤（切换器只在主页面）；导出 PNG/.pmu 取导出时刻的皮肤，天然所见即所得。
+ * ============================================================ */
