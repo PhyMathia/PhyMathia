@@ -903,6 +903,8 @@
     window.getAllSessions = () => Object.keys(sessions).map(id => ({ ...sessions[id], id }));
     // Φ 面板删除画布也走这里（主路径自带 confirm 与「先服务端后本地」顺序）
     window.deleteSession = deleteSession;
+    // Φ 面板一键清空也走这里（主路径自带「不可撤销」confirm 与全量清理）
+    window.clearAllSessions = clearAllSessions;
     window.getSessionMessages = (sessionId) => loadSessionMessages(sessionId);
     window.getSessionIdVariants = (sessionId) => {
       const ids = new Set([sessionId]);
