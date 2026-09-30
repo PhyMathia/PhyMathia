@@ -1232,7 +1232,6 @@ let harnessLastAppliedBeforeSnapshot = null;
     const btn = document.getElementById('graphHarnessModeBtn');
     if (btn) {
       btn.textContent = '模式：' + def.label;
-      btn.classList.toggle('on', harnessMode !== 'edit');
       btn.title = def.hint + '（点击切换模式）';
     }
     const inputEl = document.getElementById('graphHarnessInstruction');
