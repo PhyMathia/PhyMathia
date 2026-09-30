@@ -225,7 +225,7 @@
       const nodes = (typeof window.getGraphViewNodes === 'function') ? window.getGraphViewNodes() : [];
       const byId = {};
       nodes.forEach(n => { byId[String(n.id)] = n; });
-      const state = _graphState() || {};
+      const state = _harnessGraphState() || {};
       const overrides = state.harnessNodeOverrides || {};
       const finalData = {};
       ids.forEach(id => {
@@ -287,7 +287,7 @@
   async function _applyOps(ops, cleanupEval) {
     if (!ops.length) return;
     const sessionId = _sessionId();
-    const state = _graphState();
+    const state = _harnessGraphState();
     if (!state) return;
     const before = JSON.parse(JSON.stringify(state));
     const preIssues = (typeof window.scanGraphConsistency === 'function') ? window.scanGraphConsistency() : [];
@@ -385,7 +385,7 @@
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销整张画布的修改' });
-    const state = _graphState();
+    const state = _harnessGraphState();
     const checkpoint = state?.harnessCheckpoint;
     if (!checkpoint?.before) {
       _setHarnessStatus('没有可撤销的 harness 修改', 'error');
@@ -410,7 +410,7 @@
 
   // 按 id 精确移除节点（只动传入的 id，不做全局清扫）
   function _removeEvalNodesByIds(evalIds) {
-    const state = _graphState();
+    const state = _harnessGraphState();
     if (!state || !evalIds || !evalIds.length) return;
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '移除全部 AI 评价节点' });
     state.customNodes = state.customNodes.filter(node => node.kind !== 'ai_eval');
@@ -447,7 +447,7 @@
       .map(op => op.assigned_id || op.id)
       .filter(Boolean);
     if (entry.phase === 'apply' && ownEvalIds.length) {
-      const alive = (_graphState()?.customNodes || [])
+      const alive = (_harnessGraphState()?.customNodes || [])
         .filter(node => node.kind === 'ai_eval' && ownEvalIds.includes(node.id))
         .map(node => node.id);
       _removeEvalNodesByIds(alive);
@@ -476,7 +476,7 @@
 
   // 把某条历史建议创建过的节点从 harnessDeleted 软删除集中解除（恢复出口）
   function _undeleteEntryNodes(entry) {
-    const state = _graphState();
+    const state = _harnessGraphState();
     if (!state || !entry) return;
     const ids = (entry.operations || [])
       .filter(op => op && String(op.op || '').indexOf('create') === 0)
@@ -514,7 +514,7 @@
   }
 
   async function acceptAiEvalNode(nodeId) {
-    const state = _graphState() || {};
+    const state = _harnessGraphState() || {};
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
     const evalNode = _graphNodes().find(node => node.kind === 'ai_eval' && node.id === nodeId && !deleted.has(node.id));
     if (!evalNode) {

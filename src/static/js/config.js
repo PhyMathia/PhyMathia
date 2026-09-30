@@ -12,6 +12,15 @@ const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写
 const STORAGE_KEY_NODE_RECIPES = 'phymathia_node_recipes';
 
+// ===== Φ 智能体独立会话（2026-09-30 与画布解耦）======
+// Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：
+// 名单与当前指针走下面两个键（名单镜像到服务端 KV 全局键 phi_sessions 防换浏览器丢失）；
+// 对话历史沿用 harness_history_ 前缀但挂 phi id（phymathia_harness_history_phi_<id>，
+// 服务端 KV harness_history:phi_<id> 由 storage.py 的会话级前缀路由自动拆到 data/kv/phi_<id>.json）。
+// 「清空画布」的键清单（session.js clearAllSessions）刻意不含这三个键——清画布不动 Φ 对话。
+const STORAGE_KEY_PHI_SESSIONS = 'phymathia_phi_sessions';
+const STORAGE_KEY_PHI_CURRENT = 'phymathia_current_phi_session';
+
 // ====== 匿名设备 ID（用户画像隔离）======
 function getDeviceId() {
   try {

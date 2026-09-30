@@ -105,8 +105,12 @@ let harnessLastAppliedBeforeSnapshot = null;
   // 与 graph.js 的同名函数**故意不合并**：那边在 getGraphState 缺失时返回一份默认
   // 状态，这边返回 null（表示「还没有状态」）。合成一份会静默改掉 Φ 的空态语义。
   // 下次看到两处同名想合并，先读这一行。
-  function _graphState() {
-    return typeof window.getGraphState === 'function' ? window.getGraphState(_sessionId()) : null;
+  // 解耦后（2026-09-30）：不带参读「当前 Φ 会话绑定的画布」——未绑定返回 null；
+  // 带参读指定画布（_harnessCanApply 的指纹校验用）。
+  function _harnessGraphState(sid) {
+    if (typeof window.getGraphState !== 'function') return null;
+    const target = sid !== undefined ? sid : _harnessBoundSid();
+    return target ? window.getGraphState(target) : null;
   }
 
   let harnessSessionEpoch = 0;
@@ -133,12 +137,13 @@ let harnessLastAppliedBeforeSnapshot = null;
     return 'v2:' + (hash >>> 0).toString(16) + ':' + source.length;
   }
 
-  function _harnessGraphVersion() {
-    return _harnessFingerprint(_harnessVersionSource(_graphState()));
+  function _harnessGraphVersion(sid) {
+    return _harnessFingerprint(_harnessVersionSource(_harnessGraphState(sid)));
   }
 
   function _harnessBinding() {
-    return { sessionId: _sessionId(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
+    // sessionId = 这条建议所属的画布（绑定 sid，即改图写回目标）；phiId/epoch 守 Φ 会话切换。
+    return { phiId: _phiId(), sessionId: _harnessBoundSid(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
   }
 
   // 旧条目迁移：阶段1 把整份画布状态当版本号存进历史，既占地方又永远比对失败。
@@ -173,15 +178,21 @@ let harnessLastAppliedBeforeSnapshot = null;
   }
 
   function _harnessCanApply(binding) {
-    // 会话必须一致；有指纹还必须与当前画布内容一致。指纹缺失只说明建议来自
-    // 迁移前的旧条目（或状态无法解析），此时按会话校验放行这条已展示过的建议。
-    if (binding && binding.sessionId === _sessionId()
-        && (!binding.graphVersion || binding.graphVersion === _harnessGraphVersion())) return true;
+    // 建议所属画布必须是当前打开的画布（应用走当前画布的实时视图与撤销栈）；
+    // 有指纹还必须与该画布当前内容一致。指纹缺失只说明建议来自迁移前的旧条目
+    // （或状态无法解析），此时按画布校验放行这条已展示过的建议。
+    if (binding && binding.sessionId && binding.sessionId === _sessionId()
+        && (!binding.graphVersion || binding.graphVersion === _harnessGraphVersion(binding.sessionId))) return true;
     _setHarnessStatus('画布或会话已变化，请重新生成建议后再应用', 'error');
     return false;
   }
 
-  function resetHarnessSession() {
+  function resetHarnessSession(opts) {
+    // Φ 会话切换/清空/删除当前时重置。epoch 只在这里递增——解耦后切画布
+    // 不再触发本函数（session.js setCurrentSessionId 改调 notifyHarnessCanvasChanged），
+    // 在途的纯问答请求不会被切画布打断。
+    // 切换提示只在用户真实切换 Φ 会话时显示（opts.showNotice）——页面加载/
+    // 新建/清空也走这里，不该每次都往聊天区插「已切换」横幅。
     harnessSessionEpoch++;
     harnessHistoryLoad++;
     if (harnessAbortController) harnessAbortController.abort();
@@ -199,59 +210,235 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (box) box.innerHTML = '';
     _loadHarnessHistory().then(() => {
       _renderHarnessChat();
-      _showHarnessSessionSwitchNotice();
+      if (opts && opts.showNotice) _showHarnessSessionSwitchNotice();
       _syncHarnessSessionBtn();
     });
   }
   window.resetHarnessSession = resetHarnessSession;
 
-  // ===== Φ 面板内会话切换器（2026-09-30）=====
-  // Φ 的对话一直按画布会话隔离存储（harness_history_<sid>），此前整个机制是静默的：
-  // 标题不显示绑的是哪个画布、切换瞬间对话换茬没有解释、面板内也无法切换。
-  // 这里只让机制露面并给一个入口，切换走 session.js 的主路径 switchToSession
-  // （存消息、换图状态、渲染画布全在其中），不在 Φ 侧另立一套会话数据。
+  // ===== Φ 独立会话（2026-09-30 与画布解耦）=====
+  // 旧设计「Φ 对话按画布会话隔离存储、Φ 侧零会话数据」自此废止：Φ 有自己的会话
+  // id 空间（phi_<uuid>），名单存 phymathia_phi_sessions（镜像服务端 KV 全局键
+  // phi_sessions），当前指针存 phymathia_current_phi_session，历史键挂 phi id。
+  // 会话可选绑定一张画布：绑定后可改图（写回绑定的画布），未绑定只能问答。
+  // 删 Φ 会话 / 清 Φ 对话只动对话，画布永远不动——删画布入口只在左侧栏。
+  let phiSessions = {};
+  let currentPhiId = '';
 
-  function _harnessCurrentSessionInfo() {
-    const sid = _sessionId();
-    const info = typeof window.getSessionById === 'function' ? window.getSessionById(sid) : null;
-    return { id: sid, title: (info && info.title) || '未命名画布' };
+  function _phiId() { return currentPhiId; }
+
+  function _phiList() {
+    return Object.values(phiSessions).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   }
+
+  function _currentPhiSession() {
+    return phiSessions[currentPhiId] || null;
+  }
+
+  function _phiLocalKey(id) { return 'phymathia_harness_history_' + id; }
+
+  function _newPhiId() {
+    return 'phi_' + (typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+  }
+
+  function _phiCanvasInfo(sid) {
+    let info = typeof window.getSessionById === 'function' ? window.getSessionById(sid) : null;
+    if (!info) {
+      // 会话名单可能尚未装载进内存（页面加载时序：迁移先于 session.js 的 loadSessions），
+      // 直接查名单存储兜底——迁移出的旧会话必须拿到画布标题与绑定
+      try {
+        const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_SESSIONS) || '{}');
+        info = (raw && typeof raw === 'object' && raw[sid]) || null;
+      } catch (e) {}
+    }
+    return info || null;
+  }
+
+  function _phiCanvasTitle(sid) {
+    return (_phiCanvasInfo(sid) && _phiCanvasInfo(sid).title) || '';
+  }
+
+  function _phiCanvasAlive(sid) {
+    if (!sid) return false;
+    // 会话模块未就绪（极端时序/沙箱）时先假定存在；真删画布由 phiCanvasDeleted 钩子解绑兜底
+    if (typeof window.getSessionById !== 'function') return true;
+    return !!_phiCanvasInfo(sid);
+  }
+
+  // 当前 Φ 会话绑定的画布（绑定的画布已删则视为未绑定——对话保留，可换绑）
+  function _harnessBoundSid() {
+    const s = _currentPhiSession();
+    if (!s || !s.boundSid || !_phiCanvasAlive(s.boundSid)) return '';
+    return s.boundSid;
+  }
+
+  function _loadPhiSessionsSync() {
+    phiSessions = {};
+    currentPhiId = '';
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_PHI_SESSIONS) || '{}');
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) phiSessions = raw;
+    } catch (e) {}
+    try { currentPhiId = localStorage.getItem(STORAGE_KEY_PHI_CURRENT) || ''; } catch (e) {}
+    if (currentPhiId && !phiSessions[currentPhiId]) currentPhiId = '';
+  }
+
+  async function _savePhiSessions() {
+    try { localStorage.setItem(STORAGE_KEY_PHI_SESSIONS, JSON.stringify(phiSessions)); } catch (e) {}
+    try { localStorage.setItem(STORAGE_KEY_PHI_CURRENT, currentPhiId); } catch (e) {}
+    // 名单镜像服务端 KV 全局键 phi_sessions：换浏览器/清缓存不丢名单（历史本就在服务端）
+    try {
+      await fetch('/api/kv/phi_sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: phiSessions }),
+      });
+    } catch (e) {}
+  }
+
+  async function _mergePhiSessionsFromServer() {
+    try {
+      const resp = await fetch('/api/kv/phi_sessions');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const remote = data && data.value;
+      if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return;
+      let changed = false;
+      Object.values(remote).forEach(item => {
+        if (!item || !item.id) return;
+        const local = phiSessions[item.id];
+        if (!local || (item.updatedAt || 0) > (local.updatedAt || 0)) {
+          phiSessions[item.id] = item;
+          changed = true;
+        }
+      });
+      if (changed) await _savePhiSessions();
+    } catch (e) {}
+  }
+
+  function createPhiSession(bindCurrent) {
+    const id = _newPhiId();
+    const canvasSid = _sessionId();
+    phiSessions[id] = {
+      id,
+      title: '新 Φ 会话',
+      // 默认绑当前画布（改图开箱即用）；bindCurrent === false 或无画布时不绑
+      boundSid: bindCurrent !== false && _phiCanvasAlive(canvasSid) ? canvasSid : null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    currentPhiId = id;
+    _savePhiSessions();
+    resetHarnessSession();
+    return id;
+  }
+
+  function switchPhiSession(id) {
+    if (!id || id === currentPhiId || !phiSessions[id]) return;
+    currentPhiId = id;
+    phiSessions[id].updatedAt = Date.now();
+    _savePhiSessions();
+    resetHarnessSession({ showNotice: true });
+  }
+
+  function _refreshHarnessSessionMenuIfOpen() {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (menu && menu.hidden === false) _renderHarnessSessionMenu();
+  }
+
+  function notifyHarnessCanvasChanged() {
+    // 画布切换不再重置 Φ 会话（解耦后对话独立）；只清上一张画布的预览与差异高亮
+    // （幽灵节点残留在新画布上是事故）、刷新绑定显示与打开着的菜单
+    if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+    if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
+    _refreshHarnessSessionMenuIfOpen();
+    _syncHarnessSessionBtn();
+  }
+  window.notifyHarnessCanvasChanged = notifyHarnessCanvasChanged;
+
+  // 画布被删/被清空（session.js deleteSession / clearAllSessions 回调）：解绑对应
+  // Φ 会话——对话保留、变成纯问答，可随时换绑到别的画布
+  function phiCanvasDeleted(sid) {
+    let changed = false;
+    Object.values(phiSessions).forEach(s => {
+      if (s.boundSid === sid) { s.boundSid = null; s.updatedAt = Date.now(); changed = true; }
+    });
+    if (changed) {
+      _savePhiSessions();
+      _refreshHarnessSessionMenuIfOpen();
+      _syncHarnessSessionBtn();
+    }
+  }
+  window.phiCanvasDeleted = phiCanvasDeleted;
+
+  function phiCanvasesCleared() {
+    let changed = false;
+    Object.values(phiSessions).forEach(s => {
+      if (s.boundSid) { s.boundSid = null; s.updatedAt = Date.now(); changed = true; }
+    });
+    if (changed) {
+      _savePhiSessions();
+      _refreshHarnessSessionMenuIfOpen();
+      _syncHarnessSessionBtn();
+    }
+  }
+  window.phiCanvasesCleared = phiCanvasesCleared;
 
   function _syncHarnessSessionBtn() {
     const btn = document.getElementById('graphHarnessSessionBtn');
     if (!btn) return;
-    btn.textContent = '《' + _harnessCurrentSessionInfo().title + '》';
+    const s = _currentPhiSession();
+    const title = (s && s.title) || 'Φ 会话';
+    btn.textContent = '《' + title + '》';
+    btn.title = s && s.boundSid
+      ? 'Φ 会话「' + title + '」· 绑定画布《' + (_phiCanvasTitle(s.boundSid) || '未知') + '》，点击管理 Φ 会话'
+      : 'Φ 会话「' + title + '」· 未绑定画布（只能问答），点击管理 Φ 会话';
   }
 
   function _showHarnessSessionSwitchNotice() {
+    const s = _currentPhiSession();
+    if (!s) return;
     const chat = document.getElementById('graphHarnessChat');
-    if (!chat) return;
+    // prepend 守卫：装饰性横幅不配让异常冒泡（异步链跑到桩 DOM/异常环境时静默放弃）
+    if (!chat || typeof chat.prepend !== 'function') return;
     const notice = document.createElement('div');
     notice.className = 'graph-harness-session-notice';
-    notice.textContent = '已切换到画布《' + _harnessCurrentSessionInfo().title + '》';
+    notice.textContent = '已切换到 Φ 会话「' + (s.title || 'Φ 会话') + '」';
     chat.prepend(notice);
   }
 
   function _renderHarnessSessionMenu() {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (!menu) return;
-    const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
-    const currentId = _sessionId();
-    sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const trashSvg = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.trash) || '✕';
-    const listHtml = '<div class="graph-harness-session-list">'
-      + (sessions.length
-        ? sessions.map(item =>
-            '<div class="graph-harness-session-row">'
-            + '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>'
-            + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除此画布">' + trashSvg + '</button>'
-            + '</div>'
-          ).join('')
-        : '<div class="graph-harness-session-empty">暂无画布会话</div>')
-      + '</div>';
-    menu.innerHTML = listHtml
+    const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
+    const trashSvg = icons.trash || '✕';
+    const plusSvg = icons.plus || '＋';
+    const linkSvg = icons.link || '⛓';
+    const list = _phiList();
+    const rows = list.map(item => {
+      const boundAlive = item.boundSid && _phiCanvasAlive(item.boundSid);
+      const bindLabel = item.boundSid
+        ? (boundAlive ? '绑定：' + (_phiCanvasTitle(item.boundSid) || '未知画布') : '绑定的画布已删除')
+        : '未绑定';
+      return '<div class="graph-harness-session-row">'
+        + '<button type="button" class="graph-harness-session-item' + (item.id === currentPhiId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')" title="切换到这段 Φ 对话">'
+        + '<span class="graph-harness-session-item-title">' + _escapeHtml(item.title || 'Φ 会话') + '</span>'
+        + '<span class="graph-harness-session-item-bind">' + _escapeHtml(bindLabel) + '</span>'
+        + '</button>'
+        + '<button type="button" class="graph-harness-session-bind" onclick="toggleHarnessSessionBinding(\'' + item.id + '\')" title="'
+        + (item.boundSid ? '解绑画布（解绑后这段对话只能问答）' : '绑定到当前打开的画布（绑定后可改图）') + '">' + linkSvg + '</button>'
+        + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除该 Φ 会话（画布不受影响）">' + trashSvg + '</button>'
+        + '</div>';
+    }).join('');
+    menu.innerHTML = ''
+      + '<button type="button" class="graph-harness-session-new" onclick="newHarnessPhiSession()" title="新建一段 Φ 对话（默认绑定当前画布）">' + plusSvg + ' 新建 Φ 会话</button>'
+      + '<div class="graph-harness-session-list">'
+      + (rows || '<div class="graph-harness-session-empty">暂无 Φ 会话</div>')
+      + '</div>'
       + '<div class="graph-harness-session-menu-footer">'
-      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部画布及其资料，不可撤销">' + trashSvg + ' 清空所有画布</button>'
+      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部 Φ 对话记录，画布全部保留，不可撤销">' + trashSvg + ' 清空所有 Φ 对话</button>'
       + '</div>';
   }
 
@@ -269,51 +456,90 @@ let harnessLastAppliedBeforeSnapshot = null;
   function chooseHarnessSession(id) {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (menu) menu.hidden = true;
-    if (!id || id === _sessionId()) return;
-    if (typeof window.switchToSession !== 'function') return;
-    window.switchToSession(id).then(() => {
-      // switchToSession 对生成中/未知 id 静默早退——用结果反推，失败给出解释
-      if (_sessionId() !== id) _setHarnessStatus('当前正在生成，等任务完成后再切换画布', 'error');
-    });
+    switchPhiSession(id);
   }
 
-  // 删除画布：委托 session.js 的 deleteSession 主路径（自带 confirm、先服务端后本地、
-  // 删当前画布自动切最近/新建）。删完不关菜单——原地重画让被删项消失，方便连删。
+  function newHarnessPhiSession() {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (menu) menu.hidden = true;
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再新建 Φ 会话', 'error'); return; }
+    createPhiSession(true);
+  }
+
+  // 删除 Φ 会话：只删这段对话（本地历史键＋服务端 harness_history:phi_*），
+  // 画布与图内容完全不碰。删当前会话自动切最近的，一个不剩就新建。
   function deleteHarnessSession(id) {
-    if (!id) return;
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除画布', 'error'); return; }
-    if (typeof window.deleteSession !== 'function') return;
-    const info = (typeof window.getAllSessions === 'function' ? window.getAllSessions() : []).find(s => s.id === id);
-    const title = (info && info.title) || '未命名画布';
-    window.deleteSession(id).then(() => {
-      // deleteSession 对「用户取消 confirm」与服务端删除失败都静默返回——
-      // 用会话是否还在反推，只有真删掉才报成功并重画菜单
-      if (typeof window.getSessionById === 'function' && window.getSessionById(id)) return;
-      const menu = document.getElementById('graphHarnessSessionMenu');
-      if (menu && menu.hidden === false) _renderHarnessSessionMenu();
-      _setHarnessStatus('已删除画布《' + title + '》', 'ok');
-    });
+    if (!id || !phiSessions[id]) return;
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除 Φ 会话', 'error'); return; }
+    const info = phiSessions[id];
+    if (typeof window.confirm === 'function' && !window.confirm('删除 Φ 会话「' + (info.title || 'Φ 会话') + '」？\n只删除这段对话记录，画布不受影响。')) return;
+    try { localStorage.removeItem(_phiLocalKey(id)); } catch (e) {}
+    try { fetch('/api/kv/' + encodeURIComponent(_historyKey(id)), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
+    delete phiSessions[id];
+    if (currentPhiId === id) {
+      const rest = _phiList();
+      if (rest.length) {
+        currentPhiId = rest[0].id;
+        _savePhiSessions();
+        resetHarnessSession();
+      } else {
+        createPhiSession(true);
+      }
+    } else {
+      _savePhiSessions();
+    }
+    _refreshHarnessSessionMenuIfOpen();
+    _syncHarnessSessionBtn();
+    _setHarnessStatus('已删除 Φ 会话「' + (info.title || 'Φ 会话') + '」（画布不受影响）', 'ok');
   }
   window.toggleHarnessSessionMenu = toggleHarnessSessionMenu;
   window.chooseHarnessSession = chooseHarnessSession;
+  window.newHarnessPhiSession = newHarnessPhiSession;
   window.deleteHarnessSession = deleteHarnessSession;
 
-  // 一键清空：委托 session.js 的 clearAllSessions 主路径（自带「此操作不可撤销」confirm、
-  // 服务端全删＋localStorage 全清＋自动新建空白画布）。菜单先收起——清空后整份清单作废。
+  // 一键清空：只删 Φ 对话（历史本地键＋服务端），画布一律不动——session.js
+  // clearAllSessions 的清空键清单刻意不含 phi_* 键，两个「清空」互不越界。
+  // 清空后自动新建一个绑当前画布的空白 Φ 会话，面板不落空态。
   function clearAllHarnessSessions() {
-    const menu = document.getElementById('graphHarnessSessionMenu');
-    if (menu) menu.hidden = true;
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空画布', 'error'); return; }
-    if (typeof window.clearAllSessions !== 'function') return;
-    const before = _sessionId();
-    window.clearAllSessions().then(() => {
-      // 主路径对「取消 confirm」静默返回；成功必经 createNewSession 切到全新画布——
-      // 以当前会话是否换新反推，只有真清空才报成功
-      if (_sessionId() === before) return;
-      _setHarnessStatus('已清空所有画布，已新建空白画布', 'ok');
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
+    if (typeof window.confirm === 'function' && !window.confirm('确定清空所有 Φ 对话吗？\n所有画布和图内容都会完整保留，此操作不可撤销！')) return;
+    const ids = Object.keys(phiSessions);
+    ids.forEach(id => { try { localStorage.removeItem(_phiLocalKey(id)); } catch (e) {} });
+    ids.forEach(id => {
+      try { fetch('/api/kv/' + encodeURIComponent(_historyKey(id)), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
     });
+    phiSessions = {};
+    currentPhiId = '';
+    createPhiSession(true);
+    _refreshHarnessSessionMenuIfOpen();
+    _syncHarnessSessionBtn();
+    _setHarnessStatus('已清空所有 Φ 对话（画布全部保留）', 'ok');
   }
   window.clearAllHarnessSessions = clearAllHarnessSessions;
+
+  // 行内换绑钮：已绑定 → 解绑（变纯问答）；未绑定/绑定的画布已删 → 绑当前画布
+  function toggleHarnessSessionBinding(id) {
+    const s = phiSessions[id];
+    if (!s) return;
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再换绑', 'error'); return; }
+    const canvasSid = _sessionId();
+    if (s.boundSid && _harnessBoundSid()) {
+      s.boundSid = null;
+      _setHarnessStatus('Φ 会话「' + (s.title || '') + '」已解绑画布，只能问答', 'ok');
+    } else {
+      if (!canvasSid || !_phiCanvasAlive(canvasSid)) {
+        _setHarnessStatus('当前没有画布可绑定', 'error');
+        return;
+      }
+      s.boundSid = canvasSid;
+      _setHarnessStatus('Φ 会话「' + (s.title || '') + '」已绑定当前画布《' + (_phiCanvasTitle(canvasSid) || '未命名画布') + '》', 'ok');
+    }
+    s.updatedAt = Date.now();
+    _savePhiSessions();
+    _refreshHarnessSessionMenuIfOpen();
+    _syncHarnessSessionBtn();
+  }
+  window.toggleHarnessSessionBinding = toggleHarnessSessionBinding;
 
   // ===== T51 桌宠让位正解：面板开着时 body.harness-open + 暂存被拖拽的内联定位 =====
   // 旧兜网是纯 CSS :has()，桌宠被拖过（JS 写了内联 left/top、right/bottom 置 auto）后失效。
@@ -527,7 +753,7 @@ let harnessLastAppliedBeforeSnapshot = null;
   }
 
   function buildHarnessSnapshot(excludeEval, focusIds, singleEvalId, continentData) {
-    const state = _graphState() || {};
+    const state = _harnessGraphState() || {};
     const rawCanvasCount = _graphNodes().length;
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
     const nodes = _graphNodes().filter(node => !deleted.has(node.id) && !(excludeEval && node.kind === 'ai_eval'));
@@ -642,6 +868,28 @@ let harnessLastAppliedBeforeSnapshot = null;
     return snapshot;
   }
 
+  // 未绑定/绑定了别的画布时的占位快照：纯问答不需要图内容（chat 相位与 pure_chat
+  // 在后端都放行空快照），构造与 buildHarnessSnapshot 同构的空体——绝不能把当前
+  // 打开的画布内容塞进一段与它无关的对话里。
+  function _emptyHarnessSnapshot() {
+    const snapshot = {
+      version: 1,
+      nodes: [],
+      edges: [],
+      available_node_types: deriveHarnessAvailableNodeTypes(),
+      scope_node_ids: [],
+    };
+    snapshot.snapshot_meta = {
+      total_nodes: 0,
+      directory_nodes: 0,
+      sent_nodes: 0,
+      truncated: false,
+      deleted_filtered: 0,
+      est_tokens: 0,
+    };
+    return snapshot;
+  }
+
   // 当前会话的薄弱知识点（复用检测侧同一口径 _quizStatSummary('session').weak，取 Top3）
   function _harnessQuizWeak() {
     if (typeof _quizStatSummary !== 'function') return [];
@@ -680,10 +928,10 @@ let harnessLastAppliedBeforeSnapshot = null;
     }
   }
 
-  // 从大陆投影里挑出**涉及当前会话**的共享概念：每条给「我这边的概念名、
+  // 从大陆投影里挑出**涉及绑定画布**的共享概念：每条给「我这边的概念名、
   // 对面的概念名、对面画布名、共享词」。Φ 拿到后只口头建议，不落任何图操作。
   function _harnessContinentShared(data) {
-    const mySid = String(_sessionId() || '');
+    const mySid = String(_harnessBoundSid() || '');
     if (!mySid || !data) return [];
     const itemTitle = {}, clusterTitle = {};
     (data.clusters || []).forEach(c => {
@@ -723,8 +971,9 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   // 安全阀：此前"拒绝建议全局清场"可能把大量节点标进 harnessDeleted 且无恢复出口。
   // 该函数一键解除全部软删除标记并重绘，供异常排查/恢复使用（控制台可调）。
+  // 注意：恢复工具作用于【当前打开的画布】，不走 Φ 绑定（_harnessGraphState() 是绑定语义）
   function restoreAllHarnessDeletedNodes() {
-    const state = _graphState();
+    const state = typeof window.getGraphState === 'function' ? window.getGraphState(_sessionId()) : null;
     if (!state || !state.harnessDeleted) return 0;
     const count = Object.keys(state.harnessDeleted).length;
     state.harnessDeleted = {};
@@ -737,7 +986,7 @@ let harnessLastAppliedBeforeSnapshot = null;
   if (typeof window !== 'undefined') window.restoreHarnessDeletedNodes = restoreAllHarnessDeletedNodes;
 
   function restoreHarnessDeletedNodesConfirm() {
-    const state = _graphState();
+    const state = typeof window.getGraphState === 'function' ? window.getGraphState(_sessionId()) : null;
     const count = state && state.harnessDeleted ? Object.keys(state.harnessDeleted).length : 0;
     if (!count) {
       if (typeof window._setHarnessStatus === 'function') window._setHarnessStatus('没有需要恢复的节点', 'ok');
@@ -763,7 +1012,7 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div class="graph-harness-head" id="graphHarnessWindowHead">'
       + '<span class="graph-harness-title">网络助手</span>'
       + '<span class="graph-harness-session" id="graphHarnessSession">'
-      + '<button type="button" id="graphHarnessSessionBtn" class="graph-harness-session-btn" onclick="toggleHarnessSessionMenu(event)" title="当前对话绑定的画布会话，点击切换"></button>'
+      + '<button type="button" id="graphHarnessSessionBtn" class="graph-harness-session-btn" onclick="toggleHarnessSessionMenu(event)" title="Φ 会话管理：新建/切换/清空对话（画布不受影响）"></button>'
       + '<div id="graphHarnessSessionMenu" class="graph-harness-session-menu aurora-glass" hidden></div>'
       + '</span>'
       + '<span class="graph-harness-head-actions">'
@@ -922,15 +1171,17 @@ let harnessLastAppliedBeforeSnapshot = null;
   }
 
   async function _loadHarnessHistory() {
-    const sid = _sessionId();
+    const phiId = _phiId();
     const loadId = ++harnessHistoryLoad;
     harnessHistory = [];
-    if (!sid) return;
-    const localKey = 'phymathia_harness_history_' + sid;
+    if (!phiId) return;
+    const localKey = _phiLocalKey(phiId);
+    // 旧条目绑定迁移的兜底会话：绑定的画布（这些条目大概率生成于其绑定画布上）
+    const bindingFallback = (_currentPhiSession() && _currentPhiSession().boundSid) || '';
     try {
       const local = JSON.parse(localStorage.getItem(localKey) || '[]');
       if (Array.isArray(local)) {
-        const migrated = _migrateHarnessHistory(local, sid);
+        const migrated = _migrateHarnessHistory(local, bindingFallback);
         harnessHistory = migrated.entries;
         // 只回写本地缓存：服务端副本还没读到，此刻推送可能用旧列表盖掉更新的服务端历史
         if (migrated.changed) {
@@ -939,12 +1190,12 @@ let harnessLastAppliedBeforeSnapshot = null;
       }
     } catch (e) {}
     try {
-      const resp = await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)));
+      const resp = await fetch('/api/kv/' + encodeURIComponent(_historyKey(phiId)));
       if (resp.ok) {
         const data = await resp.json();
-        // 加载期间用户可能已切走会话：旧会话的历史不得覆盖新会话视图
-        if (loadId === harnessHistoryLoad && sid === _sessionId() && Array.isArray(data.value)) {
-          const migrated = _migrateHarnessHistory(data.value, sid);
+        // 加载期间用户可能已切走 Φ 会话：旧会话的历史不得覆盖新会话视图
+        if (loadId === harnessHistoryLoad && phiId === _phiId() && Array.isArray(data.value)) {
+          const migrated = _migrateHarnessHistory(data.value, bindingFallback);
           harnessHistory = migrated.entries;
           try { localStorage.setItem(localKey, JSON.stringify(harnessHistory)); } catch (e) {}
           if (migrated.changed) _saveHarnessHistory();
@@ -954,14 +1205,14 @@ let harnessLastAppliedBeforeSnapshot = null;
   }
 
   async function _saveHarnessHistory() {
-    const sid = _sessionId();
-    if (!sid) return;
-    const localKey = 'phymathia_harness_history_' + sid;
+    const phiId = _phiId();
+    if (!phiId) return;
+    const localKey = _phiLocalKey(phiId);
     // 本地配额满不应连累面板渲染与服务端同步：历史仍可写服务端
     try { localStorage.setItem(localKey, JSON.stringify(harnessHistory)); }
     catch (e) { console.warn('[Harness] 历史本地缓存写入失败（可能超出配额）：', e); }
     try {
-      await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)), {
+      await fetch('/api/kv/' + encodeURIComponent(_historyKey(phiId)), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: harnessHistory }),
@@ -1031,6 +1282,14 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   function _appendHarnessHistory(entry) {
     harnessHistory.push(entry);
+    // 首条用户消息自动命名 Φ 会话（取前 12 字），省得满菜单「新 Φ 会话」
+    const s = _currentPhiSession();
+    if (s && entry && entry.role === 'user' && (!s.title || s.title === '新 Φ 会话') && entry.content) {
+      s.title = String(entry.content).trim().slice(0, 12) || s.title;
+      s.updatedAt = Date.now();
+      _savePhiSessions();
+      _syncHarnessSessionBtn();
+    }
     _saveHarnessHistory().then(_renderHarnessChat);
   }
 
@@ -1226,6 +1485,11 @@ let harnessLastAppliedBeforeSnapshot = null;
     '- **答疑**（只读）：只回答、点评你的图，绝不改动它，空画布也能问；',
     '- **✦ 创造**：对话式创作 / 修改「节点配方」，还能放到画布上试试。',
     '',
+    '## Φ 会话（与画布独立）',
+    '- 标题旁的按钮管理 **Φ 会话**：新建 / 切换 / 清空对话——**画布永远不受影响**；',
+    '- 会话可绑定一张画布，改的是绑定的画布；未绑定的会话只回答问题；',
+    '- 删画布请用左侧栏，这里没有任何删除画布的入口。',
+    '',
     '## 改图示例',
     '- 「帮我新增一个关于『导数』的知识点」',
     '- 「给『导数』补一个物理视角，连上去」',
@@ -1333,6 +1597,94 @@ let harnessLastAppliedBeforeSnapshot = null;
 
   // 页面加载即创建 Φ 桌宠（默认显示）；工具栏 Φ 按钮作为显隐开关，点击桌宠开关对话框
   ensureHarnessPanel();
+
+  // ===== Φ 会话初始化与旧数据迁移（2026-09-30 解耦）=====
+  const PHI_MIGRATION_FLAG = 'phymathia_phi_migration_done';
+
+  // 旧数据形态：Φ 对话按画布 sid 存（phymathia_harness_history_<sess_…>）。逐份搬进
+  // 独立 phi 会话（标题取画布名、绑该画布），搬完删旧本地键＋旧服务端键——顺带修掉
+  // 「删画布后 harness_history 孤儿」的旧漏洞（旧 deleteSession/clearAllSessions 都不清它）。
+  // 幂等：迁移一次即落标记；中途失败不落标记，下次页面加载自动重试。
+  async function _migrateLegacyPhiHistory() {
+    let done = false;
+    try { done = localStorage.getItem(PHI_MIGRATION_FLAG) === '1'; } catch (e) {}
+    if (done) return;
+    const legacySids = {};
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (!k.startsWith('phymathia_harness_history_')) return;
+        const sid = k.slice('phymathia_harness_history_'.length);
+        if (sid && !sid.startsWith('phi_')) legacySids[sid] = true;
+      });
+    } catch (e) {}
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_SESSIONS) || '{}');
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        Object.keys(raw).forEach(sid => { legacySids[sid] = true; });
+      }
+    } catch (e) {}
+    for (const sid of Object.keys(legacySids)) {
+      let entries = null;
+      try {
+        const local = JSON.parse(localStorage.getItem('phymathia_harness_history_' + sid) || 'null');
+        if (Array.isArray(local) && local.length) entries = local;
+      } catch (e) {}
+      if (!entries) {
+        // 本地没有不代表没数据（可能来自别的浏览器）：对每个旧画布补一次服务端兜底
+        try {
+          const resp = await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)));
+          if (resp.ok) {
+            const data = await resp.json();
+            if (Array.isArray(data.value) && data.value.length) entries = data.value;
+          }
+        } catch (e) {}
+      }
+      if (!entries) continue;
+      const phiId = _newPhiId();
+      phiSessions[phiId] = {
+        id: phiId,
+        title: _phiCanvasTitle(sid) || 'Φ 会话',
+        boundSid: _phiCanvasAlive(sid) ? sid : null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const migrated = _migrateHarnessHistory(entries, sid);
+      try { localStorage.setItem(_phiLocalKey(phiId), JSON.stringify(migrated.entries)); } catch (e) {}
+      try {
+        await fetch('/api/kv/' + encodeURIComponent(_historyKey(phiId)), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: migrated.entries }),
+        });
+      } catch (e) {}
+      try { localStorage.removeItem('phymathia_harness_history_' + sid); } catch (e) {}
+      try { await fetch('/api/kv/' + encodeURIComponent(_historyKey(sid)), { method: 'DELETE' }); } catch (e) {}
+    }
+    await _savePhiSessions();
+    try { localStorage.setItem(PHI_MIGRATION_FLAG, '1'); } catch (e) {}
+  }
+
+  async function _initPhiSessions() {
+    _loadPhiSessionsSync();
+    try { await _migrateLegacyPhiHistory(); } catch (e) {}
+    try { await _mergePhiSessionsFromServer(); } catch (e) {}
+    if (!currentPhiId || !phiSessions[currentPhiId]) {
+      const list = _phiList();
+      if (list.length) {
+        // 优先绑当前画布的会话（迁移后打开面板，看到的就是这张画布的那段对话）
+        const canvasSid = _sessionId();
+        const bound = list.find(s => s.boundSid && s.boundSid === canvasSid);
+        currentPhiId = (bound || list[0]).id;
+        _savePhiSessions();
+        resetHarnessSession();
+      } else {
+        createPhiSession(true);
+      }
+    }
+    _syncHarnessSessionBtn();
+  }
+  _initPhiSessions();
+
   window._sendHarnessFeedback = _sendHarnessFeedback;
   window.toggleGraphPet = toggleGraphPet;
   window.stopGraphHarness = stopGraphHarness;

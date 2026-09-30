@@ -5404,6 +5404,82 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   flex-shrink: 0;
 }
 
+/* Φ 独立会话菜单（2026-09-30 解耦）：顶部新建钮、会话行副行（绑定信息）、行内换绑钮。
+   全部沿用 .graph-harness-window 前缀的 specificity 手术（压标题栏 28px 图标钮规则），
+   零新色值——accent 描边 / danger 危险区 / surface-2 悬浮底都取既有令牌 */
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-new {
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  line-height: 1.4;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-new:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-new svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.graph-harness-window .graph-harness-head .graph-harness-session-item .graph-harness-session-item-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-harness-window .graph-harness-head .graph-harness-session-item .graph-harness-session-item-bind {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-harness-window .graph-harness-head .graph-harness-session-item.current .graph-harness-session-item-bind {
+  color: var(--accent);
+  opacity: 0.75;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-bind {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-bind:hover {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-bind svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ---------- 10. Φ 面板三模式切换器（2026-09-30）----------
    编辑（默认）/答疑（只读）/创造（配方），显式切换、意图自动识别让位。
    菜单结构对齐上方会话切换器（第 9 节）；玻璃材质同归 .aurora-glass，

@@ -111,6 +111,9 @@ check('buildHarnessSnapshot 可调用且回结构（回归：rawCount 未定义�
   // 注入两个画布节点，其中一个标记软删除
   sandbox.window.getGraphState = () => ({ harnessDeleted: { B: true } });
   sandbox.window.getCurrentSessionId = () => 'sess_test';
+  sandbox.window.getSessionById = (id) => ({ id, title: '画布' + id });
+  // 解耦后快照读「绑定画布」状态：注入一个绑到 sess_test 的当前 Φ 会话
+  vm.runInContext('phiSessions = { phi_t: { id: "phi_t", title: "t", boundSid: "sess_test", createdAt: 1, updatedAt: 1 } }; currentPhiId = "phi_t";', sandbox);
   sandbox.window.getGraphViewNodes = () => [
     { id: 'A', kind: 'knowledge', label: '导数', content: '瞬时变化率' },
     { id: 'B', kind: 'module', label: '物理视角', moduleKey: 'physics' },
@@ -511,7 +514,7 @@ check('寒暄拦截退役＋答疑纯问答语义合成', () => {
   if (runSrc.includes('_isHarnessCasualInstruction') || runSrc.includes('_harnessCasualReply')) {
     throw new Error('寒暄拦截未删净（isCasual 事故根源，2026-09-30 拍板删除）');
   }
-  if (!runSrc.includes("harnessPhase === 'chat' || _isHarnessPureQuestion(instruction)")) {
+  if (!runSrc.includes("harnessPhase === 'chat' || !canvasReady || _isHarnessPureQuestion(instruction)")) {
     throw new Error('答疑模式未合成纯问答语义（跳过焦点解析/空画布放行/pure_chat）');
   }
   return true;
@@ -554,6 +557,12 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
 
 // ===== Φ 基础修复（2026-09-30）：相位转换放宽 / 面板内会话切换器 / T51 让位正解 =====
 
+// Φ 会话内存读取辅助（同步）：走 vm 词法作用域读 phiSessions，避开异步保存与并行用例的交错
+function clonePhi(vm, sandbox, id) {
+  const raw = vm.runInContext('JSON.stringify(phiSessions[' + JSON.stringify(id) + '] || null)', sandbox);
+  return raw === null ? null : JSON.parse(raw);
+}
+
 check('Φ 相位转换放宽：三模式锁定时旧相位不得绕过（apply 例外）', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
   if (!runSrc.includes("if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;")) {
@@ -562,70 +571,89 @@ check('Φ 相位转换放宽：三模式锁定时旧相位不得绕过（apply �
   return true;
 });
 
-check('Φ 面板内会话切换器：入口/主路径复用/切换提示', () => {
+check('Φ 独立会话：菜单入口齐全＋解耦红线（Φ 菜单无任何删画布语义）', () => {
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!src.includes('graphHarnessSessionBtn')) throw new Error('标题旁会话按钮未进面板');
   if (!src.includes('graphHarnessSessionMenu')) throw new Error('会话下拉菜单未进面板');
+  if (!src.includes('新建 Φ 会话')) throw new Error('菜单缺「新建 Φ 会话」入口');
+  if (!src.includes('清空所有 Φ 对话')) throw new Error('菜单缺「清空所有 Φ 对话」入口');
   if (!src.includes('graph-harness-session-notice')) throw new Error('切换提示未实现');
-  // 切换必须复用 session.js 主路径与现成清单，不得在 Φ 侧另立会话数据
-  if (!src.includes('window.switchToSession(id)')) throw new Error('未复用主路径 switchToSession');
-  if (!src.includes('window.getAllSessions')) throw new Error('未复用会话清单 getAllSessions');
-  // 行为：建菜单走注入的会话清单、当前画布标 current、菜单可见
-  sandbox.window.getAllSessions = () => [
-    { id: 'sess_a', title: '画布A', updatedAt: 2 },
-    { id: 'sess_b', title: '画布B', updatedAt: 1 },
-  ];
+  // 解耦红线（2026-09-30）：删画布入口只在左侧栏，Φ 菜单不得再有任何删画布委托/文案
+  if (src.includes('window.deleteSession(') || src.includes('window.clearAllSessions()')) {
+    throw new Error('Φ 菜单残留删画布委托（deleteSession/clearAllSessions）');
+  }
+  if (src.includes('清空所有画布') || src.includes('删除此画布')) throw new Error('Φ 菜单文案仍是删画布语义');
+  // Φ 会话数据独立：phi_ id 空间 + 独立名单/当前指针键 + 绑定语义
+  if (!src.includes('STORAGE_KEY_PHI_SESSIONS') || !src.includes('STORAGE_KEY_PHI_CURRENT')) {
+    throw new Error('Φ 会话名单/当前指针未走 config.js 键');
+  }
+  if (!vm.runInContext('typeof _phiId === "function" && typeof _harnessBoundSid === "function"', sandbox)) {
+    throw new Error('Φ 会话核心函数缺失');
+  }
+  return true;
+});
+
+check('Φ 会话生命周期：新建默认绑当前画布＋首条消息自动命名＋切换换会话', () => {
+  sandbox.window.getSessionById = (id) => ({ id, title: '画布' + id });
   sandbox.window.getCurrentSessionId = () => 'sess_a';
-  sandbox.window.toggleHarnessSessionMenu();
+  const newId = vm.runInContext('createPhiSession(true)', sandbox);
+  if (!/^phi_/.test(String(newId))) throw new Error('Φ 会话 id 未用 phi_ 前缀：' + newId);
+  const created = clonePhi(vm, sandbox, newId);
+  if (!created || created.boundSid !== 'sess_a') throw new Error('新建 Φ 会话未默认绑定当前画布');
+  // 首条用户消息自动命名（取前 12 字）——标题保存是同步的，读内存即可
+  vm.runInContext('harnessHistory = []; _appendHarnessHistory({ id: "h1", role: "user", content: "什么是简谐运动？它的周期公式是什么", timestamp: 1 });', sandbox);
+  const titled = clonePhi(vm, sandbox, newId);
+  if (!titled || titled.title !== '什么是简谐运动？它的周期') throw new Error('首条消息未自动命名：' + (titled && titled.title));
+  // 切换：currentPhiId 换新（对话重置走 resetHarnessSession）
+  vm.runInContext('phiSessions["phi_x"] = { id: "phi_x", title: "Φ乙", boundSid: null, createdAt: 1, updatedAt: 1 };', sandbox);
+  vm.runInContext('switchPhiSession("phi_x")', sandbox);
+  if (vm.runInContext('currentPhiId', sandbox) !== 'phi_x') throw new Error('切换 Φ 会话未换 currentPhiId');
   return true;
 });
 
-check('Φ 会话切换：chooseHarnessSession 委托主路径并透传 id', () => {
-  let switchedTo = null;
-  sandbox.window.switchToSession = async (id) => { switchedTo = id; };
-  sandbox.window.chooseHarnessSession('sess_b');
-  if (switchedTo !== 'sess_b') throw new Error('未委托 switchToSession 主路径：' + switchedTo);
-  // 同 id 不得重发切换（生成中失败反推提示依赖 switchToSession 后的 sid 比对）
-  switchedTo = null;
-  sandbox.window.getCurrentSessionId = () => 'sess_b';
-  sandbox.window.chooseHarnessSession('sess_b');
-  if (switchedTo !== null) throw new Error('同 id 触发了多余切换');
+check('Φ 会话删除/清空：只删 Φ 对话，画布键与 deleteSession 主路径零接触', () => {
+  sandbox.window.confirm = () => true;
+  let canvasDeleted = false, canvasCleared = false;
+  sandbox.window.deleteSession = async () => { canvasDeleted = true; };
+  sandbox.window.clearAllSessions = async () => { canvasCleared = true; };
+  sandbox.window.getCurrentSessionId = () => 'sess_a';
+  sandbox.window.getSessionById = (id) => ({ id, title: '画布' + id });
+  // 造两个 Φ 会话（当前会话 phi_a 带历史键）
+  vm.runInContext(`
+    phiSessions = {
+      phi_a: { id: 'phi_a', title: 'Φ甲', boundSid: 'sess_a', createdAt: 1, updatedAt: 1 },
+      phi_b: { id: 'phi_b', title: 'Φ乙', boundSid: null, createdAt: 1, updatedAt: 2 },
+    };
+    currentPhiId = 'phi_a';
+    localStorage.setItem('phymathia_harness_history_phi_a', '[]');
+    localStorage.setItem('phymathia_harness_history_phi_b', '[]');
+  `, sandbox);
+  vm.runInContext('deleteHarnessSession("phi_b")', sandbox);
+  if (canvasDeleted) throw new Error('删除 Φ 会话触发了画布删除主路径');
+  // 清空全部 Φ 对话：画布完全保留（deleteSession/clearAllSessions 零调用），只剩新建的空白会话
+  vm.runInContext('clearAllHarnessSessions()', sandbox);
+  if (canvasDeleted || canvasCleared) throw new Error('清空 Φ 对话触发了画布删除/清空主路径');
+  const ids = Object.keys(JSON.parse(vm.runInContext('localStorage.getItem("phymathia_phi_sessions")', sandbox)));
+  if (ids.length !== 1) throw new Error('清空后应只剩自动新建的 1 个空白 Φ 会话：' + ids.length);
+  if (vm.runInContext('localStorage.getItem("phymathia_harness_history_phi_a")', sandbox) !== null) {
+    throw new Error('清空未删旧 Φ 会话的历史键');
+  }
+  if (vm.runInContext('currentPhiId', sandbox) !== ids[0]) throw new Error('清空后当前会话未切到新建会话');
   return true;
 });
 
-check('Φ 会话删除：deleteHarnessSession 委托 deleteSession 主路径', async () => {
-  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
-  // 删除必须走 session.js 主路径（confirm／先服务端后本地／删当前自动切最近/新建都在那边）
-  if (!src.includes('window.deleteSession(id)')) throw new Error('未委托 deleteSession 主路径');
+check('Φ 解耦接线：切画布不再重置 Φ 对话＋删画布只解绑＋改图绑定门槛', () => {
   const sessionSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
-  if (!sessionSrc.includes('window.deleteSession = deleteSession')) throw new Error('session.js 未显式导出 deleteSession');
-  // 取消 confirm／服务端失败不报成功：deleteSession 后以 getSessionById 查无为准
-  if (!src.includes('window.getSessionById(id)')) throw new Error('缺「会话仍在则不报成功」守卫');
-  // 行为：透传 id 给主路径
-  let deletedId = null;
-  sandbox.window.deleteSession = async (id) => { deletedId = id; };
-  sandbox.window.getSessionById = () => null;
-  sandbox.window.deleteHarnessSession('sess_b');
-  await Promise.resolve(); // 让 .then 微任务跑完（成功路径收尾：重画菜单＋状态提示）
-  if (deletedId !== 'sess_b') throw new Error('未委托 deleteSession 主路径：' + deletedId);
-  return true;
-});
-
-check('Φ 一键清空：clearAllHarnessSessions 委托 clearAllSessions 主路径＋取消不报成功', async () => {
+  if (sessionSrc.includes('window.resetHarnessSession()')) throw new Error('setCurrentSessionId 仍在重置 Φ 对话（解耦被回退）');
+  if (!sessionSrc.includes('window.notifyHarnessCanvasChanged()')) throw new Error('切画布缺轻量刷新钩子');
+  if (!sessionSrc.includes('window.phiCanvasDeleted(id)')) throw new Error('删画布未解绑 Φ 会话');
+  if (!sessionSrc.includes('window.phiCanvasesCleared()')) throw new Error('清空画布未解绑 Φ 会话');
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  if (!runSrc.includes('canvasReady')) throw new Error('改图缺「绑定画布=当前画布」门槛（canvasReady）');
+  if (!runSrc.includes('_emptyHarnessSnapshot()')) throw new Error('纯问答路径未改用空快照');
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
-  // 清空必须走 session.js 主路径（「不可撤销」confirm／服务端全删＋localStorage 全清／新建空白画布都在那边）
-  if (!src.includes('window.clearAllSessions()')) throw new Error('未委托 clearAllSessions 主路径');
-  const sessionSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
-  if (!sessionSrc.includes('window.clearAllSessions = clearAllSessions')) throw new Error('session.js 未显式导出 clearAllSessions');
-  // 菜单须带底部危险区入口，且清单装在内层滚动层里（清空钮固定在菜单底部不被滚走）
-  if (!src.includes('graph-harness-session-clearall')) throw new Error('菜单缺「清空所有画布」入口');
-  if (!src.includes('graph-harness-session-list')) throw new Error('会话清单缺内层滚动层——清空钮会被长名单滚出视口');
-  // 行为：委托主路径；成功必换新画布（current 变化）才报成功，取消（current 不变）不报
-  let cleared = false;
-  sandbox.window.clearAllSessions = async () => { cleared = true; };
-  sandbox.window.getCurrentSessionId = () => 'sess_old';
-  sandbox.window.clearAllHarnessSessions();
-  if (!cleared) throw new Error('未委托 clearAllSessions 主路径');
+  if (!src.includes('phymathia_phi_migration_done')) throw new Error('缺旧数据一次性迁移标记');
+  if (!src.includes('_migrateLegacyPhiHistory')) throw new Error('缺迁移函数');
   return true;
 });
 
@@ -2817,6 +2845,8 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
   };
   const realSid = sandbox.window.getCurrentSessionId;
   sandbox.window.getCurrentSessionId = () => 'sess_a';
+  // 解耦后共享点按「Φ 会话绑定的画布」筛选：注入绑到 sess_a 的当前 Φ 会话
+  vm.runInContext('phiSessions = { phi_c: { id: "phi_c", title: "c", boundSid: "sess_a", createdAt: 1, updatedAt: 1 } }; currentPhiId = "phi_c";', sandbox);
   try {
     const out = fn(data);
     if (out.length !== 1) throw new Error('只应留下涉及当前会话的 1 条（跨会话那条不算、同名去重），实际 ' + out.length);
@@ -2825,8 +2855,8 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
       throw new Error('共享点字段口径错: ' + JSON.stringify(row));
     }
     if (row.kind !== 'title') throw new Error('kind 应原样传递');
-    // 查空是正常路径：当前会话不在任何共享点里 → 空数组
-    sandbox.window.getCurrentSessionId = () => 'sess_zzz';
+    // 查空是正常路径：绑定画布不在任何共享点里 → 空数组
+    vm.runInContext('phiSessions.phi_c.boundSid = "sess_zzz"', sandbox);
     if (fn(data).length !== 0) throw new Error('无共享点时应返回空数组');
   } finally {
     sandbox.window.getCurrentSessionId = realSid;
