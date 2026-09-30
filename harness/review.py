@@ -460,6 +460,23 @@ async def _stream_chat_completions_once(client, url: str, headers: dict, body: d
     return message, last_usage
 
 
+def _promote_reasoning(content: str, reasoning: Any) -> tuple:
+    """正文为空时的思考字段兜底判定（_call_model 与消费端共用一条门槛）。
+
+    返回 (cleaned, promoted, prose_only)：
+    - 剥掉思考标签后能解析出 JSON → 提升为正文（有的推理模型把完整操作
+      方案全文写进思考字段，不提升会白白丢掉真实输出）；
+    - 裸散文式思维链（网关不带 <think> 标签直接下发）绝不提升——曾整段
+      英文推理被当 summary 渲染进面板（2026-09-30），返回 prose_only=True。
+    """
+    alt = strip_reasoning(str(reasoning or ""))
+    if not alt.strip():
+        return content, False, False
+    if extract_json(alt) is not None:
+        return alt, True, False
+    return content, False, True
+
+
 async def _call_model(
     messages: list,
     model: Dict[str, Any],
@@ -528,21 +545,22 @@ async def _call_model(
     raw_content = str(message.get("content") or "")
     cleaned = strip_reasoning(raw_content)
     fallback_reasoning = False
+    reasoning_only = False
     if not cleaned.strip():
-        alt = strip_reasoning(str(message.get("reasoning_content") or ""))
-        if alt.strip():
-            cleaned = alt
-            fallback_reasoning = True
-    if cleaned != raw_content or fallback_reasoning:
+        cleaned, fallback_reasoning, reasoning_only = _promote_reasoning(
+            cleaned, message.get("reasoning_content")
+        )
+    if cleaned != raw_content or fallback_reasoning or reasoning_only:
         logger.info(
-            "harness think-strip: %d -> %d chars (fallback_reasoning=%s)",
-            len(raw_content), len(cleaned), fallback_reasoning,
+            "harness think-strip: %d -> %d chars (fallback_reasoning=%s reasoning_only=%s)",
+            len(raw_content), len(cleaned), fallback_reasoning, reasoning_only,
         )
     return {
         "content": cleaned,
         "tool_calls": message.get("tool_calls") or [],
         "reasoning_stripped": bool(cleaned != raw_content) and not fallback_reasoning,
         "reasoning_fallback": fallback_reasoning,
+        "reasoning_only": reasoning_only,
     }
 
 
@@ -1212,13 +1230,16 @@ async def review_graph(
         # 消费端再剥一次（幂等）：即使 _call_model 未经过（测试桩/旧路径）也能兜住
         _emit({"type": "status", "stage": "validate", "message": "方案已生成，正在校验操作…"})
         last_raw = strip_reasoning(raw["content"] or "")
+        reasoning_only_seen = bool(raw.get("reasoning_only"))
         if not last_raw.strip() and raw.get("reasoning_content"):
-            # 正文为空时回退 reasoning_content（推理模型全文落在思考字段）
-            alt = strip_reasoning(str(raw["reasoning_content"]))
-            if alt.strip():
-                last_raw = alt
+            # 正文为空时回退 reasoning_content——与 _call_model 共用同一门槛
+            # （_promote_reasoning）：剥掉思考标签后能解析出 JSON 才算模型正式
+            # 输出；裸散文式思维链不回退（2026-09-30）
+            last_raw, promoted, prose_only = _promote_reasoning(last_raw, raw["reasoning_content"])
+            if promoted:
                 reasoning_seen["hit"] = True
-        if raw.get("reasoning_stripped") or raw.get("reasoning_fallback"):
+            reasoning_only_seen = reasoning_only_seen or prose_only
+        if raw.get("reasoning_stripped") or raw.get("reasoning_fallback") or reasoning_only_seen:
             reasoning_seen["hit"] = True
         if raw.get("tool_calls"):
             raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
@@ -1235,6 +1256,10 @@ async def review_graph(
                 summary = _clamp_display_summary(
                     _extract_summary_from_json_shell(last_raw) or last_raw
                 )
+                if not summary.strip() and reasoning_only_seen:
+                    # 正文为空且只产出裸思维链（不提升为正文，2026-09-30）：
+                    # 给明确提示，不把推理散文当回复，也不让面板沉默
+                    summary = "模型这一轮只输出了思考过程，没有给出正式回复，请重试或换个说法。"
                 raw_ops = []
             elif payload is None:
                 last_errors = [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]

@@ -323,7 +323,10 @@
       const box = document.getElementById('graphHarnessResult');
       if (!box || !streamText) return;
       let text = typeof _stripThinkText === 'function' ? _stripThinkText(streamText) : streamText;
-      if (/^\s*(\{|```)/.test(text)) text = '正在生成结构化操作方案…';
+      // JSON 开头直接占位；正文里任何位置出现 ```json 围栏也占位（思考在前、
+      // 结构化输出在后的模型，否则会先把思考散文打出来再出现 JSON）。
+      // 只认带 json 语言标记的围栏，避免误伤正文里合法的代码块。
+      if (/^\s*(\{|```)/.test(text) || text.includes('```json')) text = '正在生成结构化操作方案…';
       if (!text) return;
       box.innerHTML = '<div class="graph-harness-summary">' + _escapeHtml(text) + ' ▍</div>';
     };

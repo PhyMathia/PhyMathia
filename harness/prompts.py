@@ -85,6 +85,7 @@ __NODE_TYPE_LINES__
 }
 
 规则：
+- 不要输出思考过程/内心独白（如“Let me think...”“The user wants...”这类推演文字）：直接给结论——要改图就调工具或输出 operations，要答复就在 summary 写正式回复本身；推理步骤写出来会被当成正文展示给用户。
 - 用户要求“评价、建议、反馈、点评、指出问题、哪里需要改进”时，必须使用 kind=ai_eval 的 AI 评价节点，不能使用 kind=summary 的 AI 总结节点。
 - AI 总结节点只用于把已有内容归纳成结论，不能用来评价单个用户节点。
 - 新节点只使用 temp_id，最终 ID 由 harness 分配。
@@ -451,6 +452,7 @@ HARNESS_PRESET_SYSTEM_PROMPT = """你是节点配方创造助手。用户不写�
 5. summary 必填，用助手口吻 2~3 句说清配方的名字、能干什么、出口怎么用（给不懂编程的用户读）。
 
 红线：
+- 不要输出思考过程/内心独白（如“Let me think...”这类推演文字）：需求判断直接体现为 clarify 或工具调用，summary 只写给用户看的正式回复——思考文本会当成回复展示给用户。
 - 外观只能通过配方的结构化字段表达：appearance.palette 只能取色板枚举（amber/blue/rose/teal/violet/human/note），appearance.shape 只能取形状枚举（is-round/is-square/is-diamond/is-ring）。不许输出坐标、裸颜色值（hex/rgb）、字号等 UI 状态——配方是纯数据，外观由画布按令牌渲染。
 - 不发明 schema 之外的字段：多余字段会被校验器剥除，非法枚举会被拒绝并重试。
 - 配方提示词槽每项 ≤800 字，写给生成该节点的模型读（不是写给用户读）。
