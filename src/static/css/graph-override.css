@@ -1982,7 +1982,9 @@
 }
 
 /* 双击画布空白处打开的「添加节点」面板：走 aurora-glass。
-   注意：这里不能写 background 简写（会重置 background-image 把极光层盖掉），只调圆角/描边/阴影。 */
+   注意：这里不能写 background 简写（会重置 background-image 把极光层盖掉），只调圆角/描边/阴影。
+   磨砂也不自己写 backdrop-filter——同特异性下会盖掉 .aurora-glass--dialog 的那一档，
+   而 20px 本就比全站口径的 16/18px 更重（模糊越重背景越糊、反而显得更实，见 .aurora-glass 注释）。 */
 .graph-add-node-dialog {
   width: min(580px, 94vw);
   max-height: 82vh;
@@ -1993,8 +1995,6 @@
   box-shadow:
     0 26px 74px rgba(0, 0, 0, 0.46),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 [data-theme="light"] .graph-add-node-dialog {
@@ -2597,7 +2597,11 @@
 
 /* 双击节点/连线打开的节点面板：走 aurora-glass（玻璃语言），并保持内容可读——
    背景交给 .aurora-glass，这里绝不能再写 background 简写（会连 background-image 一起重置，
-   极光层被整块盖掉，这个坑在进度胶囊上踩过一次）。 */
+   极光层被整块盖掉，这个坑在进度胶囊上踩过一次）。
+   磨砂同样交给 .aurora-glass--dialog：这条规则早先自己写了 backdrop-filter: blur(20px)，
+   同特异性下会盖掉档位里的 16px，而且**配方那三个弹窗没挂 aurora-glass 时它是唯一的效果**——
+   底色为零 + 只有 backdrop-filter = 纯透明玻璃（2026-09-30 用户实机指认）。
+   backdrop-filter 本身不产生任何背景色，缺底色时它只会把背后的画布原样透过来。 */
 .graph-network-modal {
   width: min(540px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
@@ -2609,8 +2613,6 @@
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.46),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 [data-theme="light"] .graph-network-modal {

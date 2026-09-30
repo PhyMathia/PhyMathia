@@ -70,7 +70,7 @@ function openRecipeForm(prefill) {
   const gen = init.generate || {};
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal graph-recipe-modal">'
+  overlay.innerHTML = '<div class="graph-network-modal graph-recipe-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>' + (recipeEditingId ? '编辑配方' : '新建配方') + '</span>'
     + '<button onclick="closeRecipeForm()" title="关闭">×</button></div>'
     + '<div class="recipe-form-scroll">'
@@ -378,7 +378,7 @@ function openRecipeColorPicker() {
   const overlay = document.createElement('div');
   overlay.className = 'recipe-color-overlay';
   overlay.id = 'recipeColorOverlay';
-  overlay.innerHTML = '<div class="graph-network-modal recipe-color-panel">'
+  overlay.innerHTML = '<div class="graph-network-modal recipe-color-panel aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>挑一个颜色</span>'
     + '<button onclick="closeRecipeColorPicker()" title="关闭">×</button></div>'
     + '<div class="recipe-color-main">'
@@ -755,7 +755,7 @@ function openRecipeManage() {
     : '<div class="recipe-manage-empty">还没有配方——从画布双击空白处打开添加节点面板，点「＋ 新建配方」。</div>';
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal">'
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>管理配方</span><button onclick="closeRecipeManage()" title="关闭">×</button></div>'
     + rows
     + '<div class="graph-network-modal-actions">'
