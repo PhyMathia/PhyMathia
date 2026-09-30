@@ -3030,12 +3030,6 @@
   font-size: var(--fs-md);
 }
 
-.graph-harness-actions button {
-  background: #10b981;
-  border-color: #10b981;
-  color: #042f2e;
-}
-
 .graph-harness-actions button:hover,
 .graph-harness-apply-actions button:hover {
   border-color: var(--accent, #38bdf8);
@@ -4624,9 +4618,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 8px;
   margin-top: 4px;
 }
-/* 三模式切换器（2026-09-30）：按钮继承 .graph-harness-actions button 基础样式，
-   非编辑模式激活态走 accent 令牌描边＋文字，不引入新色值（同旧创造按钮口径） */
-.graph-harness-composer .graph-harness-actions .graph-harness-mode-btn.on {
+/* 三模式切换器（2026-09-30）：三模式统一 accent 令牌描边＋文字＋透明底（用户拍板：
+   不要随模式变装的绿色兜底态，绿规则已整体删除），不引入新色值（同旧创造按钮口径） */
+.graph-harness-composer .graph-harness-actions .graph-harness-mode-btn {
   border-color: var(--accent, #38bdf8);
   color: var(--accent, #38bdf8);
   background: transparent;
