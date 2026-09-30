@@ -86,6 +86,9 @@
     /* Formula library */
     .kp-formula-list {
       flex: 1; overflow-y: auto; padding: 0 24px 24px; position: relative; z-index: 2;
+      /* 常显细条：脱离全局基线的「悬停才显形」，说明见 styles.css 顶部全局滚动条段 */
+      --scroll-thumb: var(--kp-scrollbar-thumb);
+      scrollbar-color: var(--kp-scrollbar-thumb) transparent;
     }
     .kp-formula-list::-webkit-scrollbar { width: 4px; }
     .kp-formula-list::-webkit-scrollbar-thumb { background: var(--kp-scrollbar-thumb); border-radius: var(--r-xs); }
@@ -162,6 +165,9 @@
     /* Timeline */
     .kp-timeline {
       flex: 1; overflow-y: auto; padding: 0 24px 24px; position: relative; z-index: 2;
+      /* 常显细条：脱离全局基线的「悬停才显形」，说明见 styles.css 顶部全局滚动条段 */
+      --scroll-thumb: var(--kp-scrollbar-thumb);
+      scrollbar-color: var(--kp-scrollbar-thumb) transparent;
     }
     .kp-timeline::-webkit-scrollbar { width: 4px; }
     .kp-timeline::-webkit-scrollbar-thumb { background: var(--kp-scrollbar-thumb); border-radius: var(--r-xs); }
