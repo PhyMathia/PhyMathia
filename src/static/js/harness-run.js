@@ -377,7 +377,19 @@
         throw new Error((data.errors || []).map(item => (item && (item.reason || item.message)) || '未知错误').filter(Boolean).join('；') || '未知错误');
       }
       harnessResult = data;
+      // 结果区一有内容就长高，对话区随之变矮；浏览器把对话区的 scrollTop 留在原处，
+      // 窄条里显示的就成了消息中段（2026-09-30 真机被当成"下面那块压住了上面"）。
+      // 渲染前先记下用户是否本就在底部，下一帧（布局落定后）重新贴底；正在翻历史的不动。
+      const chatBox = document.getElementById('graphHarnessChat');
+      const chatAtBottom = chatBox
+        ? chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 24
+        : false;
       renderHarnessResult(data);
+      if (chatBox && chatAtBottom) {
+        const stickBottom = () => { chatBox.scrollTop = chatBox.scrollHeight; };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(stickBottom);
+        else stickBottom();
+      }
       if (data.status === 'undo' && (data.operations || []).length) {
         if (typeof _applyOps === 'function' && _harnessCanApply(requestBinding)) {
           _applyOps(data.operations, false);
