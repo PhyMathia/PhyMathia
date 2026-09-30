@@ -611,6 +611,24 @@ check('Φ 会话删除：deleteHarnessSession 委托 deleteSession 主路径', a
   return true;
 });
 
+check('Φ 一键清空：clearAllHarnessSessions 委托 clearAllSessions 主路径＋取消不报成功', async () => {
+  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // 清空必须走 session.js 主路径（「不可撤销」confirm／服务端全删＋localStorage 全清／新建空白画布都在那边）
+  if (!src.includes('window.clearAllSessions()')) throw new Error('未委托 clearAllSessions 主路径');
+  const sessionSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!sessionSrc.includes('window.clearAllSessions = clearAllSessions')) throw new Error('session.js 未显式导出 clearAllSessions');
+  // 菜单须带底部危险区入口，且清单装在内层滚动层里（清空钮固定在菜单底部不被滚走）
+  if (!src.includes('graph-harness-session-clearall')) throw new Error('菜单缺「清空所有画布」入口');
+  if (!src.includes('graph-harness-session-list')) throw new Error('会话清单缺内层滚动层——清空钮会被长名单滚出视口');
+  // 行为：委托主路径；成功必换新画布（current 变化）才报成功，取消（current 不变）不报
+  let cleared = false;
+  sandbox.window.clearAllSessions = async () => { cleared = true; };
+  sandbox.window.getCurrentSessionId = () => 'sess_old';
+  sandbox.window.clearAllHarnessSessions();
+  if (!cleared) throw new Error('未委托 clearAllSessions 主路径');
+  return true;
+});
+
 check('Φ 下拉菜单（会话/模式）：磨砂材质归 aurora-glass＋hidden 守卫＋specificity 手术', () => {
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!src.includes('class="graph-harness-session-menu aurora-glass"')) throw new Error('会话菜单未挂 aurora-glass（透明底压聊天记录）');

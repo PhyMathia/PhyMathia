@@ -239,14 +239,20 @@ let harnessLastAppliedBeforeSnapshot = null;
     const currentId = _sessionId();
     sessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     const trashSvg = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.trash) || '✕';
-    menu.innerHTML = sessions.length
-      ? sessions.map(item =>
-          '<div class="graph-harness-session-row">'
-          + '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>'
-          + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除此画布">' + trashSvg + '</button>'
-          + '</div>'
-        ).join('')
-      : '<div class="graph-harness-session-empty">暂无画布会话</div>';
+    const listHtml = '<div class="graph-harness-session-list">'
+      + (sessions.length
+        ? sessions.map(item =>
+            '<div class="graph-harness-session-row">'
+            + '<button type="button" class="graph-harness-session-item' + (item.id === currentId ? ' current' : '') + '" onclick="chooseHarnessSession(\'' + item.id + '\')">' + _escapeHtml(item.title || '未命名画布') + '</button>'
+            + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除此画布">' + trashSvg + '</button>'
+            + '</div>'
+          ).join('')
+        : '<div class="graph-harness-session-empty">暂无画布会话</div>')
+      + '</div>';
+    menu.innerHTML = listHtml
+      + '<div class="graph-harness-session-menu-footer">'
+      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部画布及其资料，不可撤销">' + trashSvg + ' 清空所有画布</button>'
+      + '</div>';
   }
 
   function toggleHarnessSessionMenu(event) {
@@ -291,6 +297,23 @@ let harnessLastAppliedBeforeSnapshot = null;
   window.toggleHarnessSessionMenu = toggleHarnessSessionMenu;
   window.chooseHarnessSession = chooseHarnessSession;
   window.deleteHarnessSession = deleteHarnessSession;
+
+  // 一键清空：委托 session.js 的 clearAllSessions 主路径（自带「此操作不可撤销」confirm、
+  // 服务端全删＋localStorage 全清＋自动新建空白画布）。菜单先收起——清空后整份清单作废。
+  function clearAllHarnessSessions() {
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    if (menu) menu.hidden = true;
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空画布', 'error'); return; }
+    if (typeof window.clearAllSessions !== 'function') return;
+    const before = _sessionId();
+    window.clearAllSessions().then(() => {
+      // 主路径对「取消 confirm」静默返回；成功必经 createNewSession 切到全新画布——
+      // 以当前会话是否换新反推，只有真清空才报成功
+      if (_sessionId() === before) return;
+      _setHarnessStatus('已清空所有画布，已新建空白画布', 'ok');
+    });
+  }
+  window.clearAllHarnessSessions = clearAllHarnessSessions;
 
   // ===== T51 桌宠让位正解：面板开着时 body.harness-open + 暂存被拖拽的内联定位 =====
   // 旧兜网是纯 CSS :has()，桌宠被拖过（JS 写了内联 left/top、right/bottom 置 auto）后失效。
