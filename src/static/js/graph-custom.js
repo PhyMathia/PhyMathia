@@ -49,7 +49,7 @@ function openAddBlankNodeModal(x, y) {
     + '<span class="graph-add-node-dot is-round"></span>＋ 新建配方'
     + '</button>'
     + '</div></div>';
-  overlay.innerHTML = '<div class="graph-add-node-dialog aurora-glass">'
+  overlay.innerHTML = '<div class="graph-add-node-dialog aurora-glass aurora-glass--dialog">'
     + '<div class="graph-add-node-head">'
     + '<div class="graph-add-node-title">添加节点</div>'
     + '<button class="graph-add-node-close" onclick="closeAddBlankNodeModal()" title="关闭">×</button>'
@@ -92,7 +92,7 @@ function editHumanNoteNode(nodeId) {
   closeHumanNoteNodeModal();
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal aurora-glass">'
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>编辑我的理解</span><button onclick="closeHumanNoteNodeModal()" title="关闭">×</button></div>'
     + '<label>标题</label>'
     + '<input id="humanNoteTitle" value="' + escapeHtml(node.label || '我的理解') + '">'
@@ -139,7 +139,7 @@ function editModuleNode(nodeId) {
   const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || '模块';
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal aurora-glass">'
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>人工编辑：' + escapeHtml(label) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
     + '<label>模块内容</label>'
     + '<textarea id="moduleNodeContent" rows="8">' + escapeHtml(current) + '</textarea>'
@@ -341,7 +341,7 @@ function editCustomNodeContent(nodeId) {
   const title = node.kind === 'summary' ? '人工编辑：AI 总结' : '人工编辑：我的总结';
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal aurora-glass">'
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>' + escapeHtml(title) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
     + '<label>总结内容</label>'
     + '<textarea id="customNodeContentBox" rows="8">' + escapeHtml(node.content || '') + '</textarea>'
@@ -788,7 +788,7 @@ function openLinkEdgeModal(edgeKey, fromId, toId) {
   }
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal aurora-glass">'
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>联系箭头</span><button onclick="closeLinkEdgeModal()" title="关闭">×</button></div>'
     + '<div class="graph-link-edge-info">' + escapeHtml(fromLabel) + ' <span class="graph-link-edge-arrow">↔</span> ' + escapeHtml(toLabel) + '</div>'
     + '<label>关系说明（一句话，为什么有关）</label>'

@@ -1423,7 +1423,73 @@ check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面
   }
   const modalRule = css.slice(css.indexOf('.graph-network-modal {'), css.indexOf('}', css.indexOf('.graph-network-modal {')));
   if (/background:\s*var\(--bg-panel\)/.test(modalRule)) throw new Error('节点弹窗规则仍在写 background 简写（会盖掉极光层）');
-  if (!/backdrop-filter/.test(modalRule)) throw new Error('节点弹窗缺磨砂');
+  // 磨砂改由 .aurora-glass--dialog 提供（2026-09-30）：规则里自己再写 backdrop-filter
+  // 属同特异性覆盖，会把档位的 16px 顶掉；且历史上正是「只有 backdrop-filter、没有底色」
+  // 导致了配方弹窗的纯透明玻璃。通用扫描见下一条用例。
+  if (/backdrop-filter/.test(modalRule)) throw new Error('节点弹窗规则自己写了 backdrop-filter（会盖掉 aurora-glass--dialog 那一档）');
+  return true;
+});
+
+check('玻璃载体：本体必须挂 aurora-glass（漏挂＝纯透明玻璃）＋ 磨砂档位不被 CSS 顶掉', () => {
+  // 2026-09-30 用户实机指认：「新建配方」「管理配方」「挑一个颜色」三个弹窗是透明玻璃。
+  // 根因：backdrop-filter 本身**不产生任何背景色**，这三个弹窗既没挂 aurora-glass（无底色），
+  // CSS 里又只有 backdrop-filter —— 于是背后的画布原样透过来。它们是最早做的一批浮层，
+  // 漏在「全部浮层与面板走 aurora-glass」那次（第 5 轮磨砂化）之前。
+  //
+  // 候选集**从 CSS 反推**而不是猜类名：单类选择器、写了 box-shadow（是浮层本体）、
+  // 自己没写 background（底色必须来自 aurora-glass）→ 再回 JS 查这些类挂没挂玻璃。
+  // 这样新增浮层不用改这条用例，漏挂当场红；反过来写 background 也会被这条抓住。
+  const cssFiles = ['src/static/css/styles.css', 'src/static/css/styles-panels.css', 'src/static/css/graph-override.css'];
+  // 判定口径：**类名本身就是浮层**（*-modal / *-dialog / *-panel / *-popover），
+  // 且它的规则给了描边或阴影、却没给底色 —— 按项目约定这底色只能来自 aurora-glass。
+  // 名字不锚到结尾是有意的：`-head`/`-actions`/`-card` 之类是内部件，锚到结尾才不会误伤。
+  const surfaceName = /(?:^|-)(modal|dialog|panel|popover)$/;
+  const surfaces = new Set();
+  for (const p of cssFiles) {
+    const css = fs.readFileSync(p, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    // 选择器可能是逗号列表（`.a, .b { }`），逐个单类拆出来
+    for (const m of css.matchAll(/(^|[};])\s*([^{}@]+?)\s*\{([^}]*)\}/g)) {
+      const body = m[3];
+      if (!/border\s*:/.test(body) && !/box-shadow\s*:/.test(body)) continue;
+      if (/(^|[;{\s])background(-color)?\s*:/.test(body)) continue;   // 自带底色，无需玻璃
+      for (const sel of m[2].split(',')) {
+        const one = sel.trim();
+        // 只认「单个类」（可带伪类/属性）——后代/组合选择器的底色由别的规则给，不算本体
+        if (!/^\.[a-z][\w-]*(\s*:[^{]+)?$/.test(one)) continue;
+        const cls = one.slice(1).split(/[\s:[]/)[0];
+        if (surfaceName.test(cls)) surfaces.add(cls);
+      }
+    }
+  }
+  if (surfaces.size < 6) throw new Error('反推出的浮层候选只有 ' + surfaces.size + ' 个，解析多半失效');
+
+  const jsDir = 'src/static/js';
+  const jsFiles = fs.readdirSync(jsDir).filter((f) => f.endsWith('.js') && f !== 'app.js' && f !== 'viewer.js');
+  const srcByFile = new Map(jsFiles.map((f) => [f, fs.readFileSync(jsDir + '/' + f, 'utf8')]));
+  const missing = [];
+  for (const cls of surfaces) {
+    // 抓 class="a b cls c" / className = 'a b cls c' 两种写法，只看含该类的那一段。
+    // 类边界用 (?<![\w-])/(?![\w-]) 而不是 \b：连字符是类名的一部分，
+    // 否则 `graph-network-modal` 会连 `…-overlay`/`…-head` 一起匹配上。
+    const re = new RegExp('class(?:Name)?\\s*=\\s*[\'"][^\'"\\n]*(?<![\\w-])' + cls + '(?![\\w-])[^\'"\\n]*[\'"]', 'g');
+    for (const [f, src] of srcByFile) {
+      for (const m of src.matchAll(re)) {
+        if (!m[0].includes('aurora-glass')) missing.push(cls + '  ← ' + f + ' :: ' + m[0].slice(0, 80));
+      }
+    }
+  }
+  if (missing.length) {
+    throw new Error('这些浮层本体没挂 aurora-glass（无底色，只有 backdrop-filter 就是透明玻璃）：\n  ' + missing.join('\n  '));
+  }
+  // 反向：本体规则自己写 backdrop-filter 会同特异性盖掉档位，模糊档位形同虚设
+  const cssAll = cssFiles.map((p) => fs.readFileSync(p, 'utf8')).join('\n');
+  for (const sel of ['.graph-network-modal', '.graph-add-node-dialog']) {
+    const at = cssAll.indexOf(sel + ' {');
+    if (at < 0) throw new Error('找不到规则 ' + sel);
+    if (/backdrop-filter/.test(cssAll.slice(at, cssAll.indexOf('}', at)))) {
+      throw new Error(sel + ' 自己写了 backdrop-filter，应交给 aurora-glass 档位');
+    }
+  }
   return true;
 });
 
