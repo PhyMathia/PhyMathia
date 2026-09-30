@@ -132,8 +132,53 @@
     runGraphHarnessWithText('撤销刚才的修改，恢复原样');
   }
 
+  // T90 排队中的消息先以一条临时气泡出现在对话流里：它不入 harnessHistory，本轮结束
+  // 重渲染时自然消失，随后真实发送会再出现一次——可接受的时序，不做特殊处理。
+  function _appendQueuedHarnessMessage(text) {
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'graph-harness-message graph-harness-message-user graph-harness-message-queued';
+    bubble.innerHTML = '<span class="graph-harness-avatar graph-harness-avatar-user" aria-hidden="true">我</span>'
+      + '<div class="graph-harness-message-main">'
+      + '<div class="graph-harness-message-content">' + _escapeHtml(text) + '</div>'
+      + '<span class="graph-harness-queued-tag">排队中</span>'
+      + '</div>';
+    chat.appendChild(bubble);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
   async function runGraphHarness(phase = 'normal', opts) {
-    if (harnessBusy) return;
+    // T90 生成中发消息排队：过去这里是裸 `if (harnessBusy) return;`——字留在输入框里、
+    // 点了毫无反应（免费模型一轮能跑 2-8 分钟，撞上的概率很高，用户以为按钮坏了）。
+    // 现在把指令收下：先清空输入框（消息已被接走），再交给主聊天的发送队列，
+    // 本轮结束（下方 finally 放行）后自动原样再发一次。
+    // 忙判定对齐 _isSendBusy（含 _sendQueueFlushing 空窗与主聊天的 isStreaming）：
+    // 队列放行窗口内手动再发会与排队条目并发，主聊天生成期间发 Φ 也一样排队——
+    // 双向互斥，语义与 send-queue 认识 harnessBusy 那侧对称。force 是队列回放的豁免。
+    if ((harnessBusy || (typeof _isSendBusy === 'function' && _isSendBusy())) && !(opts && opts.force)) {
+      const queuedInput = document.getElementById('graphHarnessInstruction');
+      const queuedText = String((queuedInput && queuedInput.value) || '').trim();
+      if (!queuedText) return; // 空文本维持原静默 return：没东西可排
+      if (queuedInput) queuedInput.value = '';
+      _appendQueuedHarnessMessage(queuedText);
+      if (typeof _enqueueSend === 'function') {
+        _enqueueSend('Φ 消息', function () {
+          // 轮到时回填输入框再走主路径（与 runGraphHarnessWithFocus 同一惯例：文本经
+          // 输入框回填而非旁路传参）。force 只用于越过忙守卫——队列放行前已确认空闲。
+          const back = document.getElementById('graphHarnessInstruction');
+          if (back) back.value = queuedText;
+          return runGraphHarness(phase, Object.assign({}, opts, { force: true }));
+        }, { text: queuedText });
+        _setHarnessStatus('已加入排队，本轮结束后自动发送', 'running');
+      } else {
+        // 队列模块缺失（理论到不了：send-queue.js 先于本文件打包）——退回旧行为，
+        // 至少把字还给用户，别静默吞掉。
+        if (queuedInput) queuedInput.value = queuedText;
+        _setHarnessStatus('正在生成中，请稍候再发', 'running');
+      }
+      return;
+    }
     const requestBinding = _harnessBinding();
     // 并发守卫（解耦后 2026-09-30）：phiId/epoch 只在 Φ 会话切换/清空时变，切画布
     // 不再打断纯问答；改图类请求仍要求「生成时绑定的画布」始终是当前打开的画布
@@ -308,6 +353,9 @@
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '';
     document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
+    // 结果区已重置：上一轮的结果不再代表当前视图，「结果已应用」标志同步归位
+    // （顶层变量由 harness.js 声明，与 harnessBusy/harnessSnapshot 同一种跨文件引用）。
+    harnessResultApplied = false;
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     _setHarnessBusy(true);
@@ -333,6 +381,19 @@
     const onStreamEvent = (evt) => {
       if (!stillCurrent()) return;
       if (evt.type === 'status' && evt.message) {
+        // 重试轮次（T87）：后端每轮都重新挂 on_delta，而 streamText 只追加从不重置，
+        // 第 2/3 轮的残文会接在第 1 轮后面。attempt>0 表示新的一轮开始，当场丢弃上一
+        // 轮已收到的正文与已渲染的预览——与「从头再来」的视觉一致。
+        if (evt.stage === 'model' && Number(evt.attempt) > 0) {
+          streamText = '';
+          if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+          // 只摘掉打字机预览那一个节点：本轮开跑时结果区已被清空（见上方 resultBox），
+          // 此刻它里面除了 streamText 的预览不会有别的东西。清空后 streamText 为空串，
+          // renderStreamPreview 的 `if (!box || !streamText) return;` 守卫兜得住。
+          const streamBox = document.getElementById('graphHarnessResult');
+          const streamed = streamBox ? streamBox.querySelector('.graph-harness-summary') : null;
+          if (streamed) streamed.remove();
+        }
         _setHarnessStatus(String(evt.message), 'running');
         return;
       }
@@ -439,6 +500,11 @@
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
       harnessAbortController = null;
+      // T90：本轮结束放行排队消息（排队时收下的 Φ 指令）。放在 busy 归位与状态清理
+      // 之后——不 await，与主聊天外层 finally 的用法一致；排队那条在本调用栈返回后的
+      // 微任务里才真正开跑，不会撞上上面这两行清理。会话已切换时上面的早退已经挡住：
+      // 那是刻意的，新会话的视图不该被旧指令继续刷。
+      if (typeof _flushSendQueue === 'function') { try { _flushSendQueue(); } catch (e) {} }
       // 兜底：任何“进行中”状态都必须落定，避免一直显示“审阅中...”
       const _statusEl = document.getElementById('graphHarnessStatus');
       if (_statusEl && _statusEl.classList && _statusEl.classList.contains('graph-harness-status-running')) {
@@ -459,16 +525,38 @@
     harnessPendingClarify = { candidates: list, instruction, phase };
     const chat = document.getElementById('graphHarnessChat');
     if (!chat) return;
-    chat.innerHTML = '<div class="graph-harness-clarify"><div>发现多个匹配节点，请选择：</div>'
+    // T86：过去这里是 chat.innerHTML = …，整块覆盖聊天区，历史凭空消失。改为在对话流
+    // 末尾追加一条助手气泡——历史永不丢失，澄清卡片只是多出来的一屏。重复触发/重跑前
+    // 先清掉此前遗留的澄清气泡（逐个 remove，容错），避免叠两张卡。
+    chat.querySelectorAll('.graph-harness-message-clarify').forEach(el => el.remove());
+    const bubble = document.createElement('div');
+    bubble.className = 'graph-harness-message graph-harness-message-assistant graph-harness-message-clarify';
+    // 头像/主体结构与 _historyMessageHtml（harness.js）一致，只是不写 harnessHistory、
+    // 不带时间与操作行——这条气泡是临时 UI，下一次重渲染自然消失。
+    bubble.innerHTML = '<span class="graph-harness-avatar" aria-hidden="true">Φ</span>'
+      + '<div class="graph-harness-message-main">'
+      + '<div class="graph-harness-message-content">发现多个匹配节点，请选择目标：</div>'
+      + '<div class="graph-harness-clarify">'
       + list.map(candidate => '<div class="graph-harness-clarify-item"><button type="button" onclick="chooseHarnessClarifyNode(\'' + candidate.id + '\')">'
         + _escapeHtml(candidate.label) + '</button>'
         + (candidate.hint ? '<span class="graph-harness-clarify-hint">' + _escapeHtml(candidate.hint) + '</span>' : '')
         + '</div>').join('')
       + '<div class="graph-harness-clarify-input"><input id="graphHarnessClarifyInput" placeholder="输入节点名称或ID">'
       + '<button type="button" onclick="confirmHarnessClarifyInput()">确认</button></div>'
+      + '<div class="graph-harness-clarify-cancel-row"><button type="button" class="graph-harness-clarify-cancel" onclick="cancelHarnessClarify()">取消</button></div>'
+      + '</div>'
       + '</div>';
+    chat.appendChild(bubble);
     chat.scrollTop = chat.scrollHeight;
     _setHarnessStatus('请选择目标节点', 'running');
+  }
+
+  // 取消澄清：不发任何请求，只把待决状态与气泡撤掉，对话可以继续。
+  function cancelHarnessClarify() {
+    harnessPendingClarify = null;
+    const chat = document.getElementById('graphHarnessChat');
+    if (chat) chat.querySelectorAll('.graph-harness-message-clarify').forEach(el => el.remove());
+    _setHarnessStatus('已取消选择，可继续对话', 'ok');
   }
 
   function chooseHarnessClarifyNode(nodeId) {

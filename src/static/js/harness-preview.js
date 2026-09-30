@@ -89,6 +89,13 @@
           : '审阅完成';
       _setHarnessStatus(statusLabel + '：' + ops.length + ' 条操作', 'ok');
     }
+    // T88 复位：新结果渲染＝上一批的「已应用」状态作废，防重入标志清掉并放开
+    // 两个应用按钮（按钮组显隐仍由下面原有的 toggleAttribute 管理，不改动）
+    harnessResultApplied = false;
+    const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
+    if (applySelectedBtn) applySelectedBtn.disabled = false;
+    const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
+    if (applyAllBtn) applyAllBtn.disabled = false;
     document.getElementById('graphHarnessApplyActions')?.toggleAttribute('hidden', !ops.length);
   }
 

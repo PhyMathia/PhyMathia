@@ -289,6 +289,13 @@
     const sessionId = _sessionId();
     const state = _harnessGraphState();
     if (!state) return;
+    // T88 防重入（校验之后、动图之前）：本批建议已应用过就挡住——同批 ops 再空跑一次
+    // 会把单槽 harnessCheckpoint 覆盖成已应用态，「撤销本次」从此失效。要重来先撤销
+    // 或重新生成建议。标志由应用成功/撤销/新结果渲染/Φ 会话重置/新一轮生成负责复位。
+    if (harnessResultApplied) {
+      _setHarnessStatus('这条建议已经应用过：需要重来请先点「撤销本次」，或重新生成建议', 'error');
+      return;
+    }
     const before = JSON.parse(JSON.stringify(state));
     const preIssues = (typeof window.scanGraphConsistency === 'function') ? window.scanGraphConsistency() : [];
     harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
@@ -348,6 +355,14 @@
     }, 2600);
     const resultBox = document.getElementById('graphHarnessResult');
     if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已应用修改，可点击“撤销本次”恢复。</div>';
+    // T88：本批已应用——置位防重入标志并禁用两个应用按钮（「撤销本次」保持可用，
+    // 用户撤销后可重新应用同批建议）。只用 getElementById＋属性赋值：回归脚本的
+    // element() 桩没有 toggleAttribute/closest。
+    harnessResultApplied = true;
+    const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
+    if (applySelectedBtn) applySelectedBtn.disabled = true;
+    const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
+    if (applyAllBtn) applyAllBtn.disabled = true;
     setTimeout(() => {
       if (sessionId !== _sessionId()) return;
       Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => {
@@ -406,6 +421,15 @@
     window.setTimeout(() => {
       if (!harnessBusy) _setPhiMode(harnessPhiError ? 'error' : 'idle');
     }, 2600);
+    // T88 复位：撤销成功＝本批建议回到未应用态，重新放开两个应用按钮（同批可再应用）；
+    // 结果区同步改口，别再显示「已应用修改…」
+    harnessResultApplied = false;
+    const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
+    if (applySelectedBtn) applySelectedBtn.disabled = false;
+    const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
+    if (applyAllBtn) applyAllBtn.disabled = false;
+    const undoResultBox = document.getElementById('graphHarnessResult');
+    if (undoResultBox) undoResultBox.innerHTML = '<div class="graph-harness-summary">已撤销本次修改，可重新应用同批建议。</div>';
   }
 
   // 按 id 精确移除节点（只动传入的 id，不做全局清扫）

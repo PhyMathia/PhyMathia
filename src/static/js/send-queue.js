@@ -27,10 +27,14 @@ var _sendQueue = [];
 // 空窗里再点一次「提问」就会并发开出第二个工作流。这个标志把空窗也堵上。
 var _sendQueueFlushing = false;
 
-// 真实的忙碌状态：只看两个业务标志位，不含本文件自己的放行标志
+// 真实的忙碌状态：只看业务标志位，不含本文件自己的放行标志。
+// Φ（harness）也在这个语义里：它同样在「生成本轮回答」，且它也支持排队（T90），
+// 漏掉它会让 Φ 跑着的时候队列被误判成空闲、并发开跑。typeof 守卫是因为沙箱
+// 可能只加载本文件（没加载 harness.js），那里它应当被当作「不忙」。
 function _isActuallyBusy() {
   if (typeof isStreaming !== 'undefined' && isStreaming) return true;
   if (typeof workflowRunActive !== 'undefined' && workflowRunActive) return true;
+  if (typeof harnessBusy !== 'undefined' && harnessBusy) return true;
   return false;
 }
 

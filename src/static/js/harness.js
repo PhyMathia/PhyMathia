@@ -11,6 +11,10 @@
   let harnessHistory = [];
 let harnessLastAppliedOps = [];
 let harnessLastAppliedBeforeSnapshot = null;
+  // T88：当前这批建议是否已应用过（防重复应用——重复「应用全部」会用同批 ops 空跑，
+  // 并把单槽 harnessCheckpoint 覆盖成已应用态，撤销从此失效）。成功应用置 true，
+  // 撤销/新结果渲染/Φ 会话重置/新一轮生成时复位。
+  let harnessResultApplied = false;
   let harnessBusy = false;
   let harnessLastInstruction = '';
   let harnessLastPhase = 'normal';
@@ -21,6 +25,15 @@ let harnessLastAppliedBeforeSnapshot = null;
   let harnessPhiError = false;
   let harnessPhiCelebrate = false;
   let harnessAbortController = null;
+
+  // T91：流式阶段的中文名，与后端 harness/review.py 的 _PHASE_LABELS 逐字镜像（含 undo 共 7 项）。
+  // 只服务于历史消息下方 meta 的显示——entry.phase 的存储值（localStorage 历史/请求体）
+  // 与 entry.phase === 'apply' 之类的程序判断一律保持英文原值，绝不在这里改写。
+  const HARNESS_PHASE_LABELS = { normal: '审阅整理', evaluate: '生成评价', apply: '应用建议', expand: '拓展进阶', preset: '创造模式', chat: '答疑模式', undo: '撤销回滚' };
+  function _harnessPhaseLabel(phase) {
+    // 未知相位输出空串，绝不回落到英文原文（裸 phase 名不给用户看）
+    return Object.prototype.hasOwnProperty.call(HARNESS_PHASE_LABELS, phase) ? HARNESS_PHASE_LABELS[phase] : '';
+  }
 
   // 统一的 harness JSON POST。后端约定：业务结果（ok/undo/clarify/no_ops/
   // parse_error/invalid）永远是 HTTP 200；传输层故障（坏 JSON/模型侧失败/
@@ -204,6 +217,13 @@ let harnessLastAppliedBeforeSnapshot = null;
     harnessHistory = [];
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
+    // T88：会话切换/清空/删除当前后旧建议不再算已应用；两个应用按钮同步放开
+    // （否则切走再切回会看到能点却点了报错的禁用态，直到下一条结果渲染才恢复）
+    harnessResultApplied = false;
+    const _rs1 = document.getElementById('graphHarnessApplySelectedBtn');
+    if (_rs1) _rs1.disabled = false;
+    const _rs2 = document.getElementById('graphHarnessApplyAllBtn');
+    if (_rs2) _rs2.disabled = false;
     _setHarnessBusy(false);
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     const box = document.getElementById('graphHarnessResult');
@@ -456,6 +476,9 @@ let harnessLastAppliedBeforeSnapshot = null;
   function chooseHarnessSession(id) {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (menu) menu.hidden = true;
+    // T89：生成中切 Φ 会话会经 switchPhiSession → resetHarnessSession → abort 静默掐断
+    // 在途请求，这里与新建/删除/清空/换绑同款守卫挡住
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再切换 Φ 会话', 'error'); return; }
     switchPhiSession(id);
   }
 
@@ -500,9 +523,39 @@ let harnessLastAppliedBeforeSnapshot = null;
   // 一键清空：只删 Φ 对话（历史本地键＋服务端），画布一律不动——session.js
   // clearAllSessions 的清空键清单刻意不含 phi_* 键，两个「清空」互不越界。
   // 清空后自动新建一个绑当前画布的空白 Φ 会话，面板不落空态。
+  // T92：原生 confirm 换成菜单内联二次确认条——armed 态只活在菜单 DOM 里，
+  // 菜单任何重渲染都会把它抹掉，不需要 JS 层 armed 变量。
   function clearAllHarnessSessions() {
     if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
-    if (typeof window.confirm === 'function' && !window.confirm('确定清空所有 Φ 对话吗？\n所有画布和图内容都会完整保留，此操作不可撤销！')) return;
+    const menu = document.getElementById('graphHarnessSessionMenu');
+    const footer = menu && typeof menu.querySelector === 'function'
+      ? menu.querySelector('.graph-harness-session-menu-footer')
+      : null;
+    // 只在真 DOM 的 footer 里挂确认条；nodeType 守卫让没有真实菜单载体的调用
+    // （冒烟沙箱的宽松 DOM 代理、程序化调用）直接走清空主体
+    if (footer && footer.nodeType === 1) {
+      footer.innerHTML = ''
+        + '<div class="graph-harness-clearall-confirm">'
+        + '<span>清空所有 Φ 对话？画布全部保留，不可撤销</span>'
+        + '<button type="button" onclick="confirmClearAllHarnessSessions(true)">确认清空</button>'
+        + '<button type="button" onclick="confirmClearAllHarnessSessions(false)">取消</button>'
+        + '</div>';
+      return;
+    }
+    _doClearAllHarnessSessions();
+  }
+
+  // 内联确认条的落点（全局给 onclick 用）：false＝取消，重渲染菜单即恢复原样；
+  // true＝先让菜单回到正常态再执行清空主体（确认条随重渲染消失，无残留 armed 态）
+  function confirmClearAllHarnessSessions(proceed) {
+    if (!proceed) { _renderHarnessSessionMenu(); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
+    _renderHarnessSessionMenu();
+    _doClearAllHarnessSessions();
+  }
+
+  // 清空主体（T92 从 clearAllHarnessSessions 拆出，供内联确认条复用）
+  function _doClearAllHarnessSessions() {
     const ids = Object.keys(phiSessions);
     ids.forEach(id => { try { localStorage.removeItem(_phiLocalKey(id)); } catch (e) {} });
     ids.forEach(id => {
@@ -516,6 +569,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     _setHarnessStatus('已清空所有 Φ 对话（画布全部保留）', 'ok');
   }
   window.clearAllHarnessSessions = clearAllHarnessSessions;
+  window.confirmClearAllHarnessSessions = confirmClearAllHarnessSessions;
 
   // 行内换绑钮：已绑定 → 解绑（变纯问答）；未绑定/绑定的画布已删 → 绑当前画布
   function toggleHarnessSessionBinding(id) {
@@ -1023,9 +1077,9 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div class="graph-harness-chat" id="graphHarnessChat"></div>'
       + '<div class="graph-harness-result" id="graphHarnessResult"></div>'
       + '<div class="graph-harness-apply-actions" id="graphHarnessApplyActions" hidden>'
-      + '<button type="button" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
-      + '<button type="button" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
-      + '<button type="button" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
+      + '<button type="button" id="graphHarnessApplySelectedBtn" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
+      + '<button type="button" id="graphHarnessApplyAllBtn" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
+      + '<button type="button" id="graphHarnessUndoBtn" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
       + '</div>'
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
@@ -1059,7 +1113,8 @@ let harnessLastAppliedBeforeSnapshot = null;
       inputEl.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
-          if (!harnessBusy) runGraphHarness();
+          // T90：生成中按 Enter 不再丢弃——runGraphHarness 内部排队，等任务完成接着跑
+          runGraphHarness();
         }
       });
     }
@@ -1082,8 +1137,8 @@ let harnessLastAppliedBeforeSnapshot = null;
   function _setHarnessBusy(busy) {
     harnessBusy = busy;
     if (harnessPanel) harnessPanel.classList.toggle('busy', busy);
-    const send = document.getElementById('graphHarnessSendBtn');
-    if (send) send.disabled = busy;
+    // T90：生成中发送钮保持可点（点了＝排队，runGraphHarness 内部接住），
+    // 不再 send.disabled = busy——busy 视觉由停止按钮显隐/面板 busy 类/桌宠承担
     const stopBtn = document.getElementById('graphHarnessStopBtn');
     if (stopBtn) stopBtn.hidden = !busy;
     if (busy) {
@@ -1258,7 +1313,7 @@ let harnessLastAppliedBeforeSnapshot = null;
     }
     actions += '<button type="button" onclick="deleteHarnessHistoryEntry(\'' + entry.id + '\')">删除记录</button>';
     const meta = entry.role === 'assistant'
-      ? '<div class="graph-harness-meta">' + (entry.phase || '') + '</div>'
+      ? '<div class="graph-harness-meta">' + _escapeHtml(_harnessPhaseLabel(entry.phase)) + '</div>'
       : '';
     const role = entry.role || 'system';
     const avatar = role === 'assistant'

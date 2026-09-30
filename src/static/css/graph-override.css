@@ -4600,6 +4600,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-color: var(--accent, #38bdf8);
   color: var(--accent, #38bdf8);
 }
+/* T88：应用成功后两个应用按钮置 disabled（「撤销本次」保持可用）——灰化并去掉手型，
+   否则禁用态与可点态外观一致，用户分不清为什么点了没反应 */
+.graph-harness-apply-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}
 
 /* ---------- 输入区 ---------- */
 .graph-harness-composer {
@@ -4844,6 +4851,40 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-message-actions button:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* 澄清卡片嵌进助手气泡（T86）：卡片自带底色/边框是它当年作为聊天区整块占位时的
+   样式，嵌进气泡后与气泡底色叠成双层发脏——这里去掉，只留内容。选择器带
+   .graph-harness-window 前缀，特异性稳定压过上面的 .graph-harness-clarify。 */
+.graph-harness-window .graph-harness-message-clarify .graph-harness-clarify {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* 澄清卡片底部的「取消」行：靠右收窄，与候选按钮区分开（只调几何，零新色值）。 */
+.graph-harness-window .graph-harness-message-clarify .graph-harness-clarify-cancel-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.graph-harness-window .graph-harness-message-clarify .graph-harness-clarify-cancel {
+  width: auto;
+  padding: 4px 12px;
+  font-size: var(--fs-sm);
+}
+
+/* 排队标记（T90）：消息已被收下、等本轮结束自动发送。形态对齐
+   .graph-harness-preview-badge 的药丸，颜色取主题变量（零新色值）。 */
+.graph-harness-window .graph-harness-queued-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 /* ---------- 输入区：跟随主题 ---------- */
@@ -5463,6 +5504,59 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+/* T92：清空所有 Φ 对话的内联二次确认条（替代原生 confirm）。armed 态只活在菜单 DOM 里，
+   菜单任何重渲染即解除，不需要 JS 层 armed 变量；零新色值、零 z-index。
+   选择器以 .graph-harness-window .graph-harness-session-menu 起步抬到 ≥(0,3,0)——
+   压过标题栏 28px 图标钮规则 (.graph-harness-window .graph-harness-head button，(0,2,1))，
+   该规则会命中菜单里每个 button；按钮显式回声 width/height/margin/display/font-size/
+   border/background，漏一个就被压成 28px 方块居中裁字（同上方会话行的手术）。 */
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 0;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm span {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm button {
+  flex: 1 1 0;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-sm);
+  background: var(--btn-bg, #1e293b);
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+/* markup 没给按钮类名（确认钮＝第 1 个 button，取消钮＝第 2 个），用结构选择器区分 */
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm button:first-of-type {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm button:first-of-type:hover {
+  background: var(--danger-bg);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm button:last-of-type:hover {
+  border-color: var(--accent, #38bdf8);
+  color: var(--accent, #38bdf8);
 }
 
 /* Φ 独立会话菜单（2026-09-30 解耦）：顶部新建钮、会话行副行（绑定信息）、行内换绑钮。
