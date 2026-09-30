@@ -4624,8 +4624,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 8px;
   margin-top: 4px;
 }
-/* 创造模式开关（P3）：激活态走 accent 令牌描边＋文字，不引入新色值 */
-.graph-harness-composer .graph-harness-actions .graph-harness-preset-btn.on {
+/* 三模式切换器（2026-09-30）：按钮继承 .graph-harness-actions button 基础样式，
+   非编辑模式激活态走 accent 令牌描边＋文字，不引入新色值（同旧创造按钮口径） */
+.graph-harness-composer .graph-harness-actions .graph-harness-mode-btn.on {
   border-color: var(--accent, #38bdf8);
   color: var(--accent, #38bdf8);
   background: transparent;
@@ -5289,6 +5290,55 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-sm);
   color: var(--text-secondary, #94a3b8);
   padding: 6px 8px;
+}
+
+/* ---------- 10. Φ 面板三模式切换器（2026-09-30）----------
+   编辑（默认）/答疑（只读）/创造（配方），显式切换、意图自动识别让位。
+   菜单样式与令牌完全对齐上方会话切换器（第 9 节），零新色值。 */
+.graph-harness-mode {
+  position: relative;
+}
+
+.graph-harness-composer .graph-harness-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 230px;
+  padding: 6px;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-md);
+  background: var(--harness-op-bg);
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item {
+  font-size: var(--fs-md);
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary, #e2e8f0);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item:hover {
+  background: var(--surface-2);
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item.current {
+  color: var(--accent, #38bdf8);
+  font-weight: 600;
+}
+
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-hint {
+  margin-left: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary, #94a3b8);
 }
 
 .graph-harness-chat .graph-harness-session-notice {

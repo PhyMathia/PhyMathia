@@ -14,9 +14,10 @@ let harnessLastAppliedBeforeSnapshot = null;
   let harnessBusy = false;
   let harnessLastInstruction = '';
   let harnessLastPhase = 'normal';
-  // 创造模式（P3，D-R6）：显式按钮进入/退出，锁定该面板会话走 phase=preset；
-  // 不做意图自动识别——误触少、边界清楚
-  let harnessPresetActive = false;
+  // 三模式切换器（2026-09-30，D-R6 哲学推广）：edit 编辑（默认，可改图）/
+  // chat 答疑（只读）/ preset 创造（节点配方）。显式切换、不做意图自动识别；
+  // 内存态不落盘——面板关闭重开保持状态，退出只能切回「编辑」
+  let harnessMode = 'edit';
   let harnessPhiError = false;
   let harnessPhiCelebrate = false;
   let harnessAbortController = null;
@@ -726,7 +727,10 @@ let harnessLastAppliedBeforeSnapshot = null;
       + '<div class="graph-harness-composer">'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
       + '<div class="graph-harness-actions">'
-      + '<button type="button" id="graphHarnessPresetBtn" class="graph-harness-preset-btn" onclick="toggleHarnessPresetMode()" title="创造模式：对话式创建/修改节点配方">✦ 创造模式</button>'
+      + '<span class="graph-harness-mode" id="graphHarnessMode">'
+      + '<button type="button" id="graphHarnessModeBtn" class="graph-harness-mode-btn" onclick="toggleHarnessModeMenu(event)" title="切换工作模式：编辑可改图，答疑只读，创造做节点配方">模式：编辑</button>'
+      + '<div id="graphHarnessModeMenu" class="graph-harness-mode-menu" hidden></div>'
+      + '</span>'
       + '<button type="button" class="graph-harness-btn-undo" onclick="undoLastHarnessEdit()" title="撤销上一条已应用的修改（AI 智能撤销）">↩ 撤销上一条</button>'
       + '<button id="graphHarnessStopBtn" type="button" onclick="stopGraphHarness()" hidden>停止</button>'
       + '<button id="graphHarnessSendBtn" type="button" onclick="runGraphHarness()">发送</button>'
@@ -738,11 +742,14 @@ let harnessLastAppliedBeforeSnapshot = null;
     if (phiEl && window.PhiPet && window.PhiPet.init) window.PhiPet.init(phiEl);
     document.body.appendChild(harnessPanel);
     _initHarnessDrag();
-    // 会话下拉菜单点外部收起（面板只建一次，监听器也只挂一次）
+    // 下拉菜单（会话 + 模式）点外部收起（面板只建一次，监听器也只挂一次）
     document.addEventListener('click', event => {
-      const menu = document.getElementById('graphHarnessSessionMenu');
       const target = event && event.target;
-      if (menu && !menu.hidden && target && typeof target.closest === 'function' && !target.closest('#graphHarnessSession')) menu.hidden = true;
+      if (!target || typeof target.closest !== 'function') return;
+      const sessionMenu = document.getElementById('graphHarnessSessionMenu');
+      if (sessionMenu && !sessionMenu.hidden && !target.closest('#graphHarnessSession')) sessionMenu.hidden = true;
+      const modeMenu = document.getElementById('graphHarnessModeMenu');
+      if (modeMenu && !modeMenu.hidden && !target.closest('#graphHarnessMode')) modeMenu.hidden = true;
     });
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) {
@@ -1160,6 +1167,11 @@ let harnessLastAppliedBeforeSnapshot = null;
     '',
     '我既是**改图助手**，也是**小问答助手**：既能增删、整理你的知识网络，也能直接回答物理 / 数学问题。',
     '',
+    '## 三种模式（输入框下方「模式」按钮切换）',
+    '- **编辑**（默认）：改图 + 问答，说「评价一下 / 进阶拓展」也会自动受理；',
+    '- **答疑**（只读）：只回答、点评你的图，绝不改动它，空画布也能问；',
+    '- **✦ 创造**：对话式创作 / 修改「节点配方」，还能放到画布上试试。',
+    '',
     '## 改图示例',
     '- 「帮我新增一个关于『导数』的知识点」',
     '- 「给『导数』补一个物理视角，连上去」',
@@ -1201,24 +1213,59 @@ let harnessLastAppliedBeforeSnapshot = null;
     chat.scrollTop = 0;
   }
 
-  // 创造模式开关（P3）：进入锁定 preset 相位（面板内嵌提示），退出回改图。
-  // 面板关闭重开保持状态；换指令不影响——退出只能再点这个按钮（边界清楚）
-  function toggleHarnessPresetMode() {
-    harnessPresetActive = !harnessPresetActive;
-    const btn = document.getElementById('graphHarnessPresetBtn');
+  // ===== 三模式切换器（2026-09-30，D-R6 哲学推广）=====
+  // edit 编辑（默认：可改图可问答，保留打字自动路由）/ chat 答疑（只读：
+  // 只回答不改图，空画布可用）/ preset 创造（节点配方）。显式切换、意图
+  // 自动识别让位；交互骨架复用会话切换器（含「hidden === false 才收起」拍板）
+  const HARNESS_MODES = [
+    { id: 'edit', label: '编辑', placeholder: '对网络助手说话…可改图，可提问', hint: '可改图，可问答' },
+    { id: 'chat', label: '答疑', placeholder: '答疑模式：随便问，我不会动你的图', hint: '只读：只回答，不改图' },
+    { id: 'preset', label: '✦ 创造', placeholder: '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…', hint: '对话式创作/修改节点配方' },
+  ];
+
+  function _harnessModeDef(id) {
+    return HARNESS_MODES.find(item => item.id === id) || HARNESS_MODES[0];
+  }
+
+  function _applyHarnessModeUi() {
+    const def = _harnessModeDef(harnessMode);
+    const btn = document.getElementById('graphHarnessModeBtn');
     if (btn) {
-      btn.classList.toggle('on', harnessPresetActive);
-      btn.title = harnessPresetActive
-        ? '创造模式已开启：Φ 只创作/修改节点配方（点此退回改图模式）'
-        : '创造模式：对话式创建/修改节点配方';
+      btn.textContent = '模式：' + def.label;
+      btn.classList.toggle('on', harnessMode !== 'edit');
+      btn.title = def.hint + '（点击切换模式）';
     }
     const inputEl = document.getElementById('graphHarnessInstruction');
-    if (inputEl) {
-      inputEl.placeholder = harnessPresetActive
-        ? '创造模式：告诉我你想要什么节点（用途/出口/长相），我来配…'
-        : '对网络助手说话…可改图，可提问';
-    }
-    _setHarnessStatus(harnessPresetActive ? '✦ 创造模式已开启：只创作配方，退回请再点一次' : '已退回改图模式', 'ok');
+    if (inputEl) inputEl.placeholder = def.placeholder;
+  }
+
+  function toggleHarnessModeMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('graphHarnessModeMenu');
+    if (!menu) return;
+    // 会话切换器同款：=== false 才收起（宽松 DOM 代理兼容，见手册 09-30 节拍板）
+    if (menu.hidden === false) { menu.hidden = true; return; }
+    menu.innerHTML = HARNESS_MODES.map(item =>
+      '<button type="button" class="graph-harness-mode-item' + (item.id === harnessMode ? ' current' : '') + '" onclick="chooseHarnessMode(\'' + item.id + '\')">'
+      + (item.id === harnessMode ? '✓ ' : '') + _escapeHtml(item.label)
+      + '<span class="graph-harness-mode-hint">' + _escapeHtml(item.hint) + '</span>'
+      + '</button>'
+    ).join('');
+    menu.hidden = false;
+  }
+
+  function chooseHarnessMode(id) {
+    const menu = document.getElementById('graphHarnessModeMenu');
+    if (menu) menu.hidden = true;
+    if (!id || id === harnessMode) return;
+    harnessMode = id;
+    _applyHarnessModeUi();
+    const notices = {
+      edit: '已切回编辑模式：可改图，可问答',
+      chat: '已切到答疑模式：只回答，不改图',
+      preset: '✦ 创造模式已开启：只创作节点配方',
+    };
+    _setHarnessStatus(notices[harnessMode] || '模式已切换', 'ok');
   }
 
   function closeGraphHarness() {
@@ -1238,6 +1285,7 @@ let harnessLastAppliedBeforeSnapshot = null;
   window.stopGraphHarness = stopGraphHarness;
   window.syncGraphPetToggleButton = _syncGraphPetToggleButton;
   window.toggleHarnessGuide = toggleHarnessGuide;
-  window.toggleHarnessPresetMode = toggleHarnessPresetMode;
-  window._harnessPresetActive = () => harnessPresetActive;
+  window.toggleHarnessModeMenu = toggleHarnessModeMenu;
+  window.chooseHarnessMode = chooseHarnessMode;
+  window._harnessMode = () => harnessMode;
   window.getGraphPetVisible = () => !!(harnessPet && harnessPet.style.display !== 'none');

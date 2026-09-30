@@ -2773,3 +2773,82 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         self.assertIn("节点配方创造助手", msgs[0]["content"])
         self.assertIn("外观只能通过配方的结构化字段表达", msgs[0]["content"])
         self.assertIn("错题复盘", msgs[1]["content"], "配方清单应随快照进提示词")
+
+
+class HarnessChatPhaseTest(unittest.TestCase):
+    """三模式切换器（2026-09-30）：答疑相位显式直通、只读红线与 ops 保险丝。"""
+
+    def test_detect_phase_explicit_chat_passthrough(self):
+        self.assertEqual(_detect_phase("chat", "帮我修改这个图", {}), "chat")
+        # 意图词永不猜 chat（显式模式入口，不做自动识别，D-R6 哲学推广）
+        self.assertNotEqual(_detect_phase("auto", "帮我修改这个图", {}), "chat")
+
+    def test_detect_phase_explicit_expand_passthrough(self):
+        # 09-30 补严：此前 explicit expand 混在 auto_phases 里，会被评价词覆盖成 evaluate
+        self.assertEqual(_detect_phase("expand", "顺便评价一下这个图", {"nodes": []}), "expand")
+
+    def test_phase_tools_chat_same_as_normal(self):
+        from harness.tools import PHASE_TOOLS, build_tools
+        self.assertEqual(PHASE_TOOLS["chat"], PHASE_TOOLS["normal"])
+        self.assertEqual({t["function"]["name"] for t in build_tools("chat")}, set(PHASE_TOOLS["chat"]))
+
+    def test_review_graph_chat_readonly_redline_and_fuse(self):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        seen = {"system": "", "tool_choice": None}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            seen["system"] = messages[0]["content"]
+            seen["tool_choice"] = tool_choice
+            # 红线失效假设：模型仍输出图操作 JSON——服务端保险丝必须清空
+            return {"content": '{"summary":"已添加节点","operations":[{"op":"create_node","temp_id":"t1","kind":"knowledge","label":"X"}]}', "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "帮我在图上加一个节点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                phase="chat",
+                mode="tools",
+                self_check="off",
+            ))
+        self.assertIn("答疑模式红线", seen["system"])
+        self.assertEqual(seen["tool_choice"], "auto", "答疑相位即使有改图意图词也不得强制工具调用")
+        self.assertEqual(result["operations"], [], "答疑保险丝必须清空图操作")
+        self.assertIn("答疑模式不改图", result["summary"])
+
+    def test_undo_still_deterministic_under_locked_phases(self):
+        # 确定性撤销在相位分派之前、不看相位——锁定 preset/chat 下「↩撤销上一条」照常工作
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        snapshot = {
+            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}],
+            "edges": [],
+        }
+        previous = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
+        for locked in ("preset", "chat"):
+            with self.subTest(phase=locked):
+                with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+                    result = asyncio.run(review_mod.review_graph(
+                        snapshot,
+                        "撤销刚才的修改，恢复原样",
+                        model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                        phase=locked,
+                        mode="tools",
+                        self_check="off",
+                        previous_snapshot=previous,
+                        previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}],
+                    ))
+                self.assertEqual(called["n"], 0, "锁定相位下撤销也必须走确定性路径、不调模型")
+                self.assertEqual(result["status"], "undo")
+                self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")

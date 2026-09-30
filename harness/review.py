@@ -48,6 +48,7 @@ from .selfcheck import (
 from .semantics import find_isolated_created_nodes, find_missing_expansion_chains, rule_selfcheck
 from .json_utils import extract_json, strip_reasoning
 from .prompts import (
+    HARNESS_CHAT_REDLINE,
     build_apply_messages,
     build_evaluate_messages,
     build_expand_messages,
@@ -86,6 +87,7 @@ _PHASE_LABELS = {
     "apply": "应用建议",
     "expand": "拓展进阶",
     "preset": "创造模式",
+    "chat": "答疑模式",
     "undo": "撤销回滚",
 }
 
@@ -312,10 +314,15 @@ def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=N
     # 意图词检测永不猜它——误触少、边界清楚
     if phase == "preset":
         return "preset"
-    auto_phases = ("", "auto", "normal", "expand")
+    # 答疑模式（三模式切换器，2026-09-30）：显式只读通道，与 preset 同款直通，
+    # 意图词检测永不改写它
+    if phase == "chat":
+        return "chat"
+    auto_phases = ("", "auto", "normal")
     if phase == "apply" or (phase in auto_phases and has_apply and has_eval_nodes):
         return "apply"
-    if phase in auto_phases and has_expand and focus_ids:
+    # 显式 expand 直通（此前 explicit expand 混在 auto_phases 里，会被评价词覆盖）
+    if phase == "expand" or (phase in auto_phases and has_expand and focus_ids):
         return "expand"
     if phase == "evaluate" or (phase in auto_phases and has_eval):
         return "evaluate"
@@ -1104,6 +1111,10 @@ async def review_graph(
     can_require = _supports_required_tool_choice(provider)
     if not tools:
         tool_choice = None
+    elif phase == "chat":
+        # 答疑模式：工具表照给（与 normal 同构）但永不强制调用——
+        # 强制只会逼模型硬产出操作，与「只说不改」的红线相悖
+        tool_choice = "auto"
     elif phase in ("expand", "evaluate", "apply", "preset"):
         tool_choice = "required" if can_require else "auto"
     else:
@@ -1127,6 +1138,12 @@ async def review_graph(
             return build_expand_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
         if phase == "preset":
             return build_preset_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
+        if phase == "chat":
+            # 答疑模式（三模式切换器）：normal 提示词 + 只读红线段；
+            # 工具表同 normal，解析路径完全同构
+            messages = build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
+            messages[0]["content"] += HARNESS_CHAT_REDLINE
+            return messages
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
     for attempt in range(retries + 1):
@@ -1281,6 +1298,12 @@ async def review_graph(
                 }]
                 continue
             raw_ops = preset_ops
+        if phase == "chat":
+            # 答疑模式保险丝：红线 prompt 失效时的服务端兜底——图操作一律清空，
+            # 不带反馈重试（答疑本就不该产出操作）；summary 里注明，避免「嘴上说改了」
+            if raw_ops:
+                summary = (str(summary or "") + "\n\n（答疑模式不改图：已忽略其中的图操作，需要修改请切回「编辑」模式）").strip()
+                raw_ops = []
         if phase == "evaluate":
             raw_ops = [
                 op for op in raw_ops

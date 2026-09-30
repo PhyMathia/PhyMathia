@@ -35,36 +35,15 @@
     });
   }
 
-  function _isHarnessCasualInstruction(text) {
-    const t = String(text || '').trim();
-    if (!t || t.length > 40) return false;
-    const casual = /^(你好|您好|嗨|哈喽|hello|hi|hey|谢谢|感谢|哈哈|嘿嘿|在吗|在不在|随便聊聊|聊聊|没事|好的|嗯|再见|拜拜|晚安|早安|辛苦了|厉害|不错|666|嗯嗯|ok|好的吧|可以|没问题|了解|明白|你是谁|你叫什么|你会什么|能干什么)[!！。.~～\s]*$/i;
-    if (casual.test(t)) return true;
-    const learning = /什么是|为什么|怎么|如何|解释|讲|公式|导数|积分|物理|数学|题目|作业|求|帮我|区别|证明|推导|求解|请问|写|做|整理|新增|删除|修改|连线|节点|扩展|评价|进阶|建议|审阅/;
-    if (learning.test(t)) return false;
-    return /(你好|您好|嗨|谢谢|感谢|哈哈|嘿嘿|在吗|随便聊聊|聊聊|辛苦|不错|再见|拜拜|晚安|早安|你是谁|你叫什么|你会什么|能干什么)/.test(t) && t.length <= 25;
-  }
-
   // 纯问答：用户只是在提问（物理/数学/讲解），没有改图意图。
   // 这类请求不依赖画布节点，空画布也能直接回答，且不走图的焦点解析/快照压缩。
+  // （答疑模式 phase=chat 是同一语义的显式版，见 runGraphHarness 内的 pureQuestion 合成）
   function _isHarnessPureQuestion(text) {
     const t = String(text || '').trim();
     if (!t) return false;
     const editIntent = /新增|创建|删除|删掉|去掉|连线|连接|加上|加一|补一|整理|梳理|扩展|评价|审阅|修改|改成|重写|更新|合并|拆分|视角|模块|建议|改进|完善|链接|撤销|回退/.test(t);
     if (editIntent) return false;
     return /什么是|是什么|为什么|怎么|如何|解释|讲讲|讲一下|介绍一下|说明|公式|区别|证明|推导|求解|请问|求导|积分|作业|题目|会不会|对吗|对不对|讲讲/.test(t);
-  }
-
-  function _harnessCasualReply(text) {
-    const t = String(text || '').trim();
-    if (/谢谢|感谢/.test(t)) return '不客气～需要我帮你整理知识点、连线或拓展进阶链，随时说一声！';
-    if (/你是谁|你叫什么/.test(t)) return '我是 Φ，PhyMathia 的网络助手，专门帮你打理知识网络：梳理知识点、建立连线、生成进阶学习链，也可以陪你聊聊天～';
-    if (/你会什么|能干什么/.test(t)) return '我可以帮你：① 提取和整理知识点 ② 建立/修正知识点之间的连线 ③ 生成物理/数学视角与进阶学习链 ④ 评价你的理解并给出改进建议。想先试哪个？';
-    if (/在吗|在不在/.test(t)) return '在的～想整理知识网络、补个视角，还是随便聊聊？';
-    if (/再见|拜拜|晚安/.test(t)) return '再见～有想梳理的概念随时来找我！';
-    if (/早安/.test(t)) return '早上好！今天想先整理哪个知识点？';
-    if (/哈哈|嘿嘿|666|厉害|不错/.test(t)) return '哈哈，过奖啦～需要我做点什么吗？';
-    return '你好呀！我是 Φ，PhyMathia 的网络助手，随时可以帮你整理知识点、连线或拓展学习链，也可以随便聊聊～';
   }
 
   // hy3 系模型统一修正到 OpenCode Go 端点（zen/go）。端点纠正后：条目自带密钥（分组密钥
@@ -166,25 +145,12 @@
     };
     // 澄清重跑路径（runGraphHarnessWithFocus 委托进来）：目标节点已由用户点选解析好，不再走焦点解析
     const presetFocusIds = opts && Array.isArray(opts.focusIds) ? opts.focusIds : null;
-    // 创造模式（P3）：显式按钮锁定 phase=preset——寒暄拦截与意图检测都让位，
-    // 指令一律交 preset 提示词（需求不明它自己 clarify）。
-    // 锁定时一律转 preset：重试按钮（harnessLastPhase）、重新执行历史建议（entry.phase）、
-    // 聚焦澄清重跑（pending.phase）携带的旧相位 expand/evaluate 也不得绕过。
-    // 唯一例外是内部 apply 流程（应用 AI 评价节点建议），它有自己的提示词语义。
-    const presetMode = !!(window._harnessPresetActive && window._harnessPresetActive());
-    if (presetMode && phase !== 'apply') phase = 'preset';
-    if (!presetMode && _isHarnessCasualInstruction(instruction)) {
-      _appendHarnessHistory({
-        id: _historyId(), role: 'user', content: instruction, phase: 'normal', timestamp: Date.now(),
-      });
-      const reply = _harnessCasualReply(instruction);
-      _appendHarnessHistory({
-        id: _historyId(), role: 'assistant', content: reply, instruction,
-        summary: reply, operations: [], phase: 'normal', timestamp: Date.now(),
-      });
-      _setHarnessStatus('已回复', 'ok');
-      return;
-    }
+    // 三模式切换器（2026-09-30）：显式锁定 chat/preset 时，重试按钮（harnessLastPhase）、
+    // 重新执行历史建议（entry.phase）、聚焦澄清重跑（pending.phase）携带的旧相位一律让位；
+    // 唯一例外是内部 apply 流程（应用 AI 评价节点建议）。编辑模式 = 不锁定，走原有自动路由。
+    // 撤销不需要例外：后端确定性撤销（_detect_undo_intent）在相位分派之前、不看相位。
+    const lockedMode = ((typeof window._harnessMode === 'function' && window._harnessMode()) || 'edit');
+    if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;
     const model = typeof window.getActiveModelForRole === 'function'
       ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
       : null;
@@ -226,7 +192,8 @@
       return;
     }
     let focusIds = [];
-    const pureQuestion = _isHarnessPureQuestion(instruction);
+    // 答疑模式是纯问答的显式版：跳过焦点解析、空画布放行、pure_chat 置位全部随 pureQuestion 走
+    const pureQuestion = harnessPhase === 'chat' || _isHarnessPureQuestion(instruction);
     if (presetFocusIds) {
       focusIds = presetFocusIds;
     } else if (harnessPhase !== 'preset' && !harnessSingleEvalId && !pureQuestion) {
@@ -300,7 +267,11 @@
     }
     harnessResult = null;
     _setHarnessStatus(
-      harnessPhase === 'evaluate' ? '生成评价节点中...' : harnessPhase === 'apply' ? '应用建议中...' : '审阅中...',
+      harnessPhase === 'evaluate' ? '生成评价节点中...'
+        : harnessPhase === 'apply' ? '应用建议中...'
+        : harnessPhase === 'preset' ? '创造模式创作中...'
+        : harnessPhase === 'chat' ? '答疑中...'
+        : '审阅中...',
       'running'
     );
     const resultBox = document.getElementById('graphHarnessResult');
