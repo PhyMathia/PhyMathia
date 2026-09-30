@@ -6086,6 +6086,29 @@ check('画布多选：入口与样式在位，且单删/批删共用同一条删
   return true;
 });
 
+// 静态契约（T128）：皮肤模板机制四件套——注册表/存储键/入口/属性挂钩，防「机制在、入口丢」回退
+check('节点皮肤模板（T128）：注册表、存储键、页头入口、CSS 皮肤节与启动预置全接线', () => {
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!ui.includes('const GRAPH_NODE_SKINS') || !ui.includes("{ key: 'aurora'")) {
+    throw new Error('ui.js 缺皮肤注册表 GRAPH_NODE_SKINS / aurora 默认模板');
+  }
+  for (const fn of ['function currentNodeSkin()', 'function applyNodeSkin(', 'function toggleSkinPanel(', 'function renderSkinPanel()']) {
+    if (!ui.includes(fn)) throw new Error(`ui.js 缺 ${fn}`);
+  }
+  if (!ui.includes("removeAttribute('data-node-skin')")) {
+    throw new Error('默认模板必须摘掉 data-node-skin 属性（基础规则即默认皮肤），否则切回默认不生效');
+  }
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin'")) throw new Error('config.js 缺皮肤存储键');
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="skinBtn"') || !html.includes('toggleSkinPanel(event)')) throw new Error('页头缺皮肤按钮入口');
+  if (!html.includes('id="skinPanel"')) throw new Error('index.html 缺 #skinPanel 面板容器');
+  if (!html.includes("localStorage.getItem('phymathia_node_skin')")) throw new Error('启动内联脚本没预置皮肤（首屏会闪默认模板）');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!css.includes('节点皮肤模板')) throw new Error('graph-override.css 缺「节点皮肤模板」节——新模板没有落点');
+  return true;
+});
+
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
 await msTail;
 await Promise.all(sqChecks).catch(() => {});

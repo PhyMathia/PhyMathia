@@ -1502,6 +1502,16 @@
       opacity: 1;
     }
     .level-panel.show { display: block; }
+    /* 节点皮肤模板面板（T128）：复用 .level-panel 的定位/显隐与 .aurora-glass 材质，只加宽度与提示行 */
+    .skin-panel { min-width: 190px; }
+    .skin-panel-hint {
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+      padding: 8px 6px 2px;
+      white-space: nowrap;
+    }
     .level-option {
       display: flex;
       align-items: center;

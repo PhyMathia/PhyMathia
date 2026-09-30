@@ -29,6 +29,9 @@ function toggleLevelPanel(e) {
   if (willShow) {
     document.getElementById('modelPanel').classList.remove('show');
     document.getElementById('dataPanel').classList.remove('show');
+    const skinPanelEl = document.getElementById('skinPanel');
+    if (skinPanelEl) skinPanelEl.classList.remove('show');
+    _setPanelTriggerState('skinPanel', false);
     const modelBtn = document.getElementById('modelBtn');
     if (modelBtn && typeof modelBtn.setAttribute === 'function') modelBtn.setAttribute('aria-expanded', 'false');
     const dataBtn = document.querySelector('.data-btn');
@@ -86,6 +89,8 @@ function toggleModelPanel(e) {
   document.getElementById('dataPanel').classList.remove('show');
   _setPanelTriggerState('levelPanel', false);
   _setPanelTriggerState('dataPanel', false);
+  document.getElementById('skinPanel').classList.remove('show');
+  _setPanelTriggerState('skinPanel', false);
   if (willShow) {
     renderModelList();
     renderModelSelects();
@@ -106,6 +111,8 @@ function toggleDataPanel(e) {
   document.getElementById('modelPanel').classList.remove('show');
   _setPanelTriggerState('levelPanel', false);
   _setPanelTriggerState('modelPanel', false);
+  document.getElementById('skinPanel').classList.remove('show');
+  _setPanelTriggerState('skinPanel', false);
   // Show data stats
   updateDataStats();
   if (willShow) {
@@ -1734,6 +1741,89 @@ function updateBgImageDebounced() {
 }
 window.addEventListener('resize', updateBgImageDebounced);
 window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300));
+
+/* ====================================================
+ * 节点皮肤模板（T128，2026-09-30）
+ * 与深浅主题同款机制：html 根元素挂 data-node-skin 属性，graph-override.css
+ * 「节点皮肤模板」节按属性写平行规则块；纯 CSS 切换即时生效，不重绘画布。
+ * ★ 加新模板只要两步（改完跑 npm run build:js）：
+ *   1) graph-override.css 皮肤节末尾追加一段 [data-node-skin="<key>"] 覆盖块；
+ *   2) 在下面 GRAPH_NODE_SKINS 注册表加一条 { key, label, desc }。
+ * ==================================================== */
+const GRAPH_NODE_SKINS = [
+  { key: 'aurora', label: '极光磨砂', desc: '渐变半透明磨砂玻璃（默认）' },
+];
+// 面板行图标：皮肤模板统一用「层」字形（模板叠放语义）；以后某模板要专属图标再进注册表
+const SKIN_OPTION_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
+
+function currentNodeSkin() {
+  const v = localStorage.getItem(STORAGE_KEY_NODE_SKIN);
+  return GRAPH_NODE_SKINS.some(s => s.key === v) ? v : GRAPH_NODE_SKINS[0].key;
+}
+
+function applyNodeSkin(key) {
+  const skin = GRAPH_NODE_SKINS.some(s => s.key === key) ? key : GRAPH_NODE_SKINS[0].key;
+  localStorage.setItem(STORAGE_KEY_NODE_SKIN, skin);
+  // 默认模板不挂属性：基础节点规则本身就是 aurora；localStorage 里的未知旧值也安全回落
+  if (skin === GRAPH_NODE_SKINS[0].key) {
+    document.documentElement.removeAttribute('data-node-skin');
+  } else {
+    document.documentElement.setAttribute('data-node-skin', skin);
+  }
+  updateSkinPanelUI();
+}
+
+function setNodeSkin(key) {
+  applyNodeSkin(key);
+  toggleSkinPanel();
+}
+
+function updateSkinPanelUI() {
+  const cur = currentNodeSkin();
+  document.querySelectorAll('#skinPanel .level-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.skin === cur);
+  });
+}
+
+function renderSkinPanel() {
+  const panel = document.getElementById('skinPanel');
+  if (!panel) return;
+  panel.innerHTML = GRAPH_NODE_SKINS.map(s =>
+    '<div class="level-option" data-skin="' + s.key + '" title="' + escapeHtml(s.desc || '') + '" onclick="setNodeSkin(\'' + s.key + '\')">'
+    + '<span class="level-emoji">' + SKIN_OPTION_ICON + '</span> ' + escapeHtml(s.label) + '</div>'
+  ).join('')
+  + (GRAPH_NODE_SKINS.length < 2 ? '<div class="skin-panel-hint">更多皮肤模板制作中</div>' : '');
+  updateSkinPanelUI();
+}
+
+function toggleSkinPanel(e) {
+  e?.stopPropagation();
+  const panel = document.getElementById('skinPanel');
+  if (!panel) return;
+  const willShow = !panel.classList.contains('show');
+  panel.classList.toggle('show');
+  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('skinBtn');
+  _setPanelTriggerState('skinPanel', willShow);
+  if (willShow) {
+    renderSkinPanel(); // 每次打开都重画：app.js 在 body 中段执行，脚本运行时面板还没解析，加载期调不到
+    // Close other panels（与难度/模型/数据面板互斥，同 toggleLevelPanel 口径）
+    ['levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
+      const p = document.getElementById(id);
+      if (p) p.classList.remove('show');
+      _setPanelTriggerState(id, false);
+    });
+    void panel.offsetHeight;
+    _positionPanel('skinPanel', trigger);
+  }
+}
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('skinPanel');
+  const btn = document.getElementById('skinBtn');
+  if (panel && !panel.contains(e.target) && !(btn && btn.contains(e.target))) {
+    panel.classList.remove('show');
+    _setPanelTriggerState('skinPanel', false);
+  }
+});
 
 /* ====================================================
  * 鼠标特效系统

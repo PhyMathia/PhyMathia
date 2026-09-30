@@ -3,6 +3,8 @@ const APP_VERSION = '1.5.1';
 
 // ====== 存储键名常量 ======
 const STORAGE_KEY_THEME = 'phymathia_theme';
+// 节点皮肤模板（T128）：全局键，存当前模板 key（aurora=默认极光磨砂），与深浅主题同款机制
+const STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
