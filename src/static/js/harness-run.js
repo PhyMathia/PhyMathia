@@ -413,6 +413,10 @@
           model: _harnessModelForRequest(model),
           max_tokens: 6000,
           phase: harnessPhase,
+          // T96 会话事件日志：带上 Φ 会话 id，后端把整次往返（含最终 result）写进
+          // logs/harness_events/<phiId>.jsonl，并在响应里回一个 event_id；前端把
+          // 它存进历史条目，反馈与应用批次据此归因（缺 id 时后端静默跳过不落盘）。
+          session_id: (typeof _phiId === 'function' ? _phiId() : '') || '',
           level: localStorage.getItem('phymathia_level') || 'university',
           focus_node_ids: focusIds,
           // 记忆第二步「用起来」：带设备标识，服务端据此注入画像一行摘要
@@ -453,10 +457,15 @@
       }
       if (data.status === 'undo' && (data.operations || []).length) {
         if (typeof _applyOps === 'function' && _harnessCanApply(requestBinding)) {
-          _applyOps(data.operations, false);
+          // 第三参 null：这里应用的是对话式撤销的 inverse 操作，是回滚动作，
+          // 不得上报成新的 applied 批次（否则时间线会多出一条「假应用」）
+          _applyOps(data.operations, false, null);
           harnessLastAppliedOps = [];
           harnessLastAppliedBeforeSnapshot = null;
           _setHarnessStatus('已撤销上一条修改', 'ok');
+          // T96：撤销上报接线（无 seq 时函数内部自行跳过——被回滚的是哪个服务端
+          // 批次由 GET events 折算，见 harness-apply.js 的 _reportHarnessUndo）
+          if (typeof _reportHarnessUndo === 'function') _reportHarnessUndo();
         }
       }
       _appendHarnessHistory({
@@ -466,6 +475,8 @@
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
+        // T96：本条回复对应的服务端 review 事件 id（反馈归因用；旧数据留空）
+        eventId: data.event_id || '',
         _binding: requestBinding,
         phase: harnessPhase,
         decision: 'pending',

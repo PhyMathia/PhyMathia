@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Φ 会话解耦真机验证（AGENTS.md 硬规则 6，2026-09-30 落地于 Φ 会话与画布解耦）
-// mock 上游 + 临时数据目录 + 真浏览器（Playwright），八条通道逐条真发并记录：
+// mock 上游 + 临时数据目录 + 真浏览器（Playwright），九条通道逐条真发并记录：
 //   ①旧数据迁移（本地+服务端兜底，旧键本地/服务端均清理）②Φ纯问答真发
 //   ③未绑定只放行问答 ④绑当前画布的改图真发＋「应用全部」真实落图
 //   ⑤新建 Φ 会话 ⑥切画布不换茬＋绑非当前画布的改图拦截
 //   ⑦删单个 Φ 会话 ⑧清空所有 Φ 对话（全程画布零触碰断言）
+//   ⑨T96 事件日志与两步撤销（两轮应用上报 → 撤销时间线 → 撤回到最早批次之前）
 // 跑法：node scripts/verify_phi_sessions.mjs（零真实依赖，不花钱；PORT 5065 见下）
 import { spawn } from 'node:child_process';
 import { cpSync, mkdtempSync } from 'node:fs';
@@ -279,6 +280,90 @@ async function main() {
       if (m.canvases !== 2 || !m.nodes) throw new Error('画布未完整保留：' + after);
       ok('通道⑧ 清空所有 Φ 对话（内联二次确认）：画布名单、图状态、已应用节点全部保留');
     } catch (e) { bad('通道⑧ 清空所有 Φ 对话', e); }
+
+    // ---- 通道⑨：事件日志与两步撤销（T96）----
+    // 两轮真实「发 edit 指令→等结果→点应用全部」（ops 按通道④惯例注入后走真实
+    // _applyOps 链，每批各上报一条 applied 事件），再从「🕘 撤销历史」时间线点
+    // 第一行（最早批次）「撤回到此」，验证画布回到第一轮应用前并落一条 undo 事件。
+    try {
+      const ctx = await page.evaluate(() => ({
+        phi: currentPhiId,
+        bound: _harnessBoundSid(),
+        canvas: getCurrentSessionId(),
+        baseline: getGraphState('sess_leg1').customNodes.length,
+      }));
+      if (!ctx.phi) throw new Error('通道⑨无当前 Φ 会话');
+      if (ctx.canvas !== 'sess_leg1') throw new Error('通道⑨需在 sess_leg1 上跑：' + ctx.canvas);
+      if (ctx.bound !== 'sess_leg1') {
+        if (ctx.bound) throw new Error('Φ 会话绑到了别的画布：' + ctx.bound);
+        await page.evaluate(() => toggleHarnessSessionBinding(currentPhiId)); // 未绑定则绑当前画布
+      }
+      const ROUNDS = [
+        { instruction: '帮我新增一个关于「导数」的知识点', nodeId: 'phi_node_t96_1', label: '导数' },
+        { instruction: '帮我新增一个关于「极限」的知识点', nodeId: 'phi_node_t96_2', label: '极限' },
+      ];
+      for (const r of ROUNDS) {
+        await page.fill('#graphHarnessInstruction', r.instruction);
+        await page.click('#graphHarnessSendBtn');
+        await page.waitForFunction(() => {
+          const t = document.getElementById('graphHarnessStatus').innerText;
+          return t.startsWith('已回复') || t.startsWith('审阅完成');
+        }, null, { timeout: 20000 });
+        // mock 回包不含 ops：注入后端格式结果，仍走真实「应用全部」链（同通道④）
+        await page.evaluate((cfg) => {
+          harnessResult = {
+            summary: '通道⑨批次：' + cfg.label + '（T96）',
+            status: 'ok',
+            event_id: 'evt_verify_' + cfg.nodeId,
+            operations: [
+              { op: 'create_node', temp_id: 'tmp_' + cfg.nodeId, assigned_id: cfg.nodeId, kind: 'knowledge', label: cfg.label, content: cfg.label + '（T96 验证）' },
+            ],
+          };
+          harnessResult._binding = _harnessBinding();
+        }, r);
+        await page.evaluate(() => document.getElementById('graphHarnessApplyActions').removeAttribute('hidden'));
+        await page.click('#graphHarnessApplyActions button:nth-child(2)'); // 应用全部
+        await page.waitForFunction(id => getGraphState('sess_leg1').customNodes.some(n => n.id === id),
+          r.nodeId, { timeout: 8000 });
+      }
+
+      // ① applied 事件 ≥2（上报是 fire-and-forget，轮询等服务端落盘）
+      const appliedHandle = await page.waitForFunction(async () => {
+        const resp = await fetch('/api/harness/graph/events?session_id=' + encodeURIComponent(currentPhiId) + '&types=applied&limit=200');
+        const data = await resp.json();
+        const list = (data && data.status === 'ok' && data.events) || [];
+        return list.length >= 2 ? list : null;
+      }, null, { timeout: 10000, polling: 250 });
+      const appliedList = await appliedHandle.jsonValue();
+      const firstAppliedSeq = Number(appliedList[0].seq);
+      if (!(firstAppliedSeq > 0)) throw new Error('首条 applied 事件缺 seq：' + JSON.stringify(appliedList[0]));
+
+      // ② 点「🕘 撤销历史」打开时间线，列表 ≥2 行
+      await page.click('button[onclick="toggleHarnessUndoTimeline()"]');
+      await page.waitForFunction(() => {
+        const box = document.getElementById('graphHarnessUndoTimeline');
+        return !!box && !box.hidden && box.querySelectorAll('.graph-harness-undo-row').length >= 2;
+      }, null, { timeout: 10000 });
+      const rows = await page.$$eval('#graphHarnessUndoTimeline .graph-harness-undo-row', els => els.map(el => el.innerText));
+      if (!rows.every(t => t.includes('撤回到此'))) throw new Error('时间线行缺「撤回到此」按钮：' + JSON.stringify(rows));
+
+      // ③ 点第一行（最早批次）「撤回到此」→ 画布回到第一轮应用前的节点数
+      await page.click('#graphHarnessUndoTimeline .graph-harness-undo-row:first-child button');
+      await page.waitForFunction((base) => {
+        const st = getGraphState('sess_leg1');
+        return st.customNodes.length === base
+          && !st.customNodes.some(n => n.id === 'phi_node_t96_1' || n.id === 'phi_node_t96_2');
+      }, ctx.baseline, { timeout: 10000 });
+
+      // ④ undo 事件出现且 undone_from_seq＝第一条 applied 的 seq
+      await page.waitForFunction(async (fromSeq) => {
+        const resp = await fetch('/api/harness/graph/events?session_id=' + encodeURIComponent(currentPhiId) + '&types=undo&limit=200');
+        const data = await resp.json();
+        const list = (data && data.status === 'ok' && data.events) || [];
+        return list.some(e => Number(e.undone_from_seq) === Number(fromSeq));
+      }, firstAppliedSeq, { timeout: 10000, polling: 250 });
+      ok('通道⑨ 事件日志与两步撤销：2 条 applied 上报 → 时间线 ≥2 行 → 撤回到最早批次前（节点 ' + (ctx.baseline + 2) + '→' + ctx.baseline + '），undo 事件 undone_from_seq=' + firstAppliedSeq);
+    } catch (e) { bad('通道⑨ 事件日志与两步撤销', e); }
 
     if (pageErrors.length) {
       console.log('⚠ 页面错误：', pageErrors.slice(0, 5).join(' | '));

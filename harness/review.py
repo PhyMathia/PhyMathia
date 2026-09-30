@@ -561,6 +561,10 @@ async def _call_model(
         "reasoning_stripped": bool(cleaned != raw_content) and not fallback_reasoning,
         "reasoning_fallback": fallback_reasoning,
         "reasoning_only": reasoning_only,
+        # T96 事件日志用：剥思考前的正文原样与思维链原文（journal 落盘时再截长，
+        # 业务路径不消费这两个字段；测试桩的固定返回形状不含它们也照常工作）
+        "raw_content": raw_content,
+        "reasoning_content": str(message.get("reasoning_content") or ""),
     }
 
 
@@ -902,6 +906,63 @@ def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any
     return snapshot
 
 
+# ---- T96 会话事件日志：模型往返捕获（journal 由 api 层传入，None 时零开销） ----
+# 每条 journal 记录一次真实模型调用的进与出。messages 只在首轮存全文——重试轮的
+# 消息体 = 首轮 + retry_feedback 追加，存反馈文本即可无损重建，避免每轮重复背
+# 一整份快照把日志撑大。长度上限按「够重放」取，超限截断并打标。
+_JOURNAL_MESSAGE_CAP = 32000
+_JOURNAL_RAW_CAP = 30000
+_JOURNAL_REASONING_CAP = 8000
+
+
+def _journal_raw_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """模型原话（剥思考前的正文 + 思维链 + 工具调用），截长落盘。
+
+    测试桩的 _call_model 返回不含 raw_content（固定形状），退回 content——
+    桩路径本来也没有思考原文可记。"""
+    content = raw.get("raw_content")
+    if content is None:
+        content = raw.get("content")
+    content = str(content or "")
+    reasoning = str(raw.get("reasoning_content") or "")
+    return {
+        "content": content[:_JOURNAL_RAW_CAP],
+        "content_truncated": len(content) > _JOURNAL_RAW_CAP or None,
+        "reasoning_content": reasoning[:_JOURNAL_REASONING_CAP],
+        "reasoning_truncated": len(reasoning) > _JOURNAL_REASONING_CAP or None,
+        "tool_calls": raw.get("tool_calls") or [],
+    }
+
+
+def _journal_roundtrip(
+    journal: Optional[list],
+    stage: str,
+    raw: Dict[str, Any],
+    attempt: int = 0,
+    retry_feedback: str = "",
+    fallback: str = "",
+    messages: Optional[list] = None,
+) -> None:
+    if journal is None:
+        return
+    entry: Dict[str, Any] = {"stage": stage, "attempt": attempt}
+    if fallback:
+        entry["fallback"] = fallback
+    if retry_feedback:
+        entry["retry_feedback"] = str(retry_feedback)[:2000]
+    if messages is not None:
+        shaped = []
+        for m in messages:
+            content = str(m.get("content") or "")
+            item = {"role": str(m.get("role") or ""), "content": content[:_JOURNAL_MESSAGE_CAP]}
+            if len(content) > _JOURNAL_MESSAGE_CAP:
+                item["content_truncated"] = True
+            shaped.append(item)
+        entry["messages"] = shaped
+    entry["raw"] = _journal_raw_dict(raw)
+    journal.append(entry)
+
+
 def _should_selfcheck_ops(ops: list) -> bool:
     """小改动（≤3 条且无创建/删除节点）跳过模型批判自检，省一次串行模型调用。"""
     if len(ops) > 3:
@@ -912,7 +973,7 @@ def _should_selfcheck_ops(ops: list) -> bool:
     )
 
 
-async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None, journal: Optional[list] = None) -> Dict[str, Any]:
     """One lightweight critic call checking instruction coverage. Never blocks on failure."""
     def _tick():
         if counter is not None:
@@ -927,6 +988,7 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
         _tick()
         raw = await _call_model(messages, model, 600, tools=[SELFCHECK_TOOL],
                                 tool_choice="required" if can_require else "auto")
+        _journal_roundtrip(journal, "selfcheck", raw)
         parsed = parse_selfcheck_tool(raw["tool_calls"])
         if parsed is not None:
             return parsed
@@ -935,6 +997,7 @@ async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, 
         try:
             _tick()
             raw = await _call_model(messages, model, 600, json_mode=_supports_json_mode(model["provider"]))
+            _journal_roundtrip(journal, "selfcheck", raw, fallback="json_mode")
             return parse_selfcheck(raw["content"])
         except HarnessError:
             return {"ok": True, "issues": [], "missing": [], "error": "自检调用失败，已跳过"}
@@ -982,6 +1045,7 @@ async def review_graph(
     all_previous_ops=None,
     initial_snapshot=None,
     progress=None,
+    journal: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Review the snapshot and return validated graph operations.
 
@@ -991,6 +1055,10 @@ async def review_graph(
     progress: 可选回调（dict 事件），流式请求时由 api 层传入；事件两类——
     {"type":"status","stage":...,"message":...} 阶段进度、
     {"type":"delta","text":...} 模型正文增量。不传则零开销。
+
+    journal: 可选 list（T96 事件日志），每次模型调用的往返（messages 原文、
+    模型原话、tool_calls）按序 append，由 api 层随事件落盘。不传则零开销，
+    测试桩/battery 直调路径行为不变。
     """
     def _emit(event: Dict[str, Any]) -> None:
         if progress is None:
@@ -1165,7 +1233,8 @@ async def review_graph(
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
     for attempt in range(retries + 1):
-        messages = messages_for_attempt(_summarize_errors(last_errors) if attempt > 0 else "")
+        attempt_feedback = _summarize_errors(last_errors) if attempt > 0 else ""
+        messages = messages_for_attempt(attempt_feedback)
         current_tools = list(tools) if tools else None
         current_choice = tool_choice if current_tools else None
         current_json = json_mode if not current_tools else False
@@ -1191,6 +1260,9 @@ async def review_graph(
         model_kwargs: Dict[str, Any] = {}
         if progress is not None:
             model_kwargs["on_delta"] = lambda chunk: _emit({"type": "delta", "text": chunk})
+        # T96 journal：记录本调用的降级形态（required→auto / tools→json），
+        # 成功返回后统一落一条往返
+        journal_fallback = ""
         try:
             raw = await _counted_call(
                 messages,
@@ -1207,6 +1279,7 @@ async def review_graph(
                     # 部分 provider（如 opencode 免费模型）不支持 required，先降级为 auto
                     logger.warning("tool_choice=required 失败，降级为 auto: %s", exc)
                     tool_choice = "auto"
+                    journal_fallback = "tool_choice_auto"
                     raw = await _counted_call(
                         messages,
                         resolved_model,
@@ -1220,6 +1293,7 @@ async def review_graph(
                     tools = None
                     tool_choice = None
                     messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "")
+                    journal_fallback = "json_mode"
                     raw = await _counted_call(
                         messages,
                         resolved_model,
@@ -1229,6 +1303,14 @@ async def review_graph(
                     )
             else:
                 raise
+        _journal_roundtrip(
+            journal, "generate", raw,
+            attempt=attempt,
+            retry_feedback=attempt_feedback,
+            fallback=journal_fallback,
+            # 首轮主路径存 messages 全文；降级/重试轮的消息体可由首轮+反馈重建
+            messages=messages if attempt == 0 and not journal_fallback else None,
+        )
 
         # 消费端再剥一次（幂等）：即使 _call_model 未经过（测试桩/旧路径）也能兜住
         _emit({"type": "status", "stage": "validate", "message": "方案已生成，正在校验操作…"})
@@ -1467,7 +1549,10 @@ async def review_graph(
         # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
         if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
             _emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
-            critic = await _selfcheck_ops(current, instruction, raw_ops, resolved_model, counter=call_counter)
+            critic = await _selfcheck_ops(
+                current, instruction, raw_ops, resolved_model, counter=call_counter,
+                **({"journal": journal} if journal is not None else {}),
+            )
             result["self_check"]["critic"] = critic
             if not critic.get("ok", True) and attempt < retries:
                 critic_errors = [

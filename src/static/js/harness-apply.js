@@ -284,7 +284,12 @@
       console.warn('Harness knowledge sync failed:', e);
     }
   }
-  async function _applyOps(ops, cleanupEval) {
+  // reportMode（T96 会话事件日志）：'all' 应用全部 / 'selected' 应用所选 /
+  // 'keep' 历史建议「保留修改」——要上报成 applied 批次；null＝调用方明确不上报
+  // （对话式撤销应用的 inverse 操作，是回滚不是应用）。默认 'all' 兜住所有旧调用点。
+  // eventIdOverride：从历史条目应用（keep）时传该条的 eventId——harnessResult 是
+  // 「当前」结果，套在旧条目上会把归因错挂到别次请求（T96 归因链不能静默断/错）。
+  async function _applyOps(ops, cleanupEval, reportMode = 'all', eventIdOverride = '') {
     if (!ops.length) return;
     const sessionId = _sessionId();
     const state = _harnessGraphState();
@@ -337,6 +342,20 @@
     };
     if (typeof window.saveGraphState === 'function') window.saveGraphState(sessionId, state);
     if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+    // T96：图已落盘且已推服务端，异步上报这条应用批次（before＝上面的应用前深拷贝，
+    // 是时间线「撤回到此」的恢复数据源）。fire-and-forget：事件日志是审计副产物，
+    // 失败只 console.warn，绝不打扰应用主流程。
+    if (reportMode) {
+      _reportHarnessApplied({
+        reportMode,
+        ops,
+        before,
+        summary: (harnessResult && harnessResult.summary) || '',
+        // review 响应里是 snake_case 的 event_id（harnessResult 直接存原始 result），
+        // 驼峰 eventId 留给注入/旧形态，两者都认，别让归因链静默断掉
+        eventId: eventIdOverride || (harnessResult && (harnessResult.eventId || harnessResult.event_id)) || '',
+      });
+    }
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
@@ -383,7 +402,7 @@
   function applyGraphHarness() {
     if (!_harnessCanApply(harnessResult?._binding)) return;
     const ops = Array.isArray(harnessResult?.operations) ? harnessResult.operations : [];
-    _applyOps(ops, true);
+    _applyOps(ops, true, 'all');
   }
 
   function applySelectedGraphHarness() {
@@ -393,7 +412,7 @@
       _setHarnessStatus('没有勾选任何操作：勾选想保留的条目再点「应用所选」，或改用「应用全部」', 'error');
       return;
     }
-    _applyOps(selected, false);
+    _applyOps(selected, false, 'selected');
   }
 
   function undoGraphHarness() {
@@ -430,6 +449,200 @@
     if (applyAllBtn) applyAllBtn.disabled = false;
     const undoResultBox = document.getElementById('graphHarnessResult');
     if (undoResultBox) undoResultBox.innerHTML = '<div class="graph-harness-summary">已撤销本次修改，可重新应用同批建议。</div>';
+    // T96：撤销的是「当前有效批次里最后一条」，从服务端事件列表折算它的 seq 后上报
+    //（单槽 harnessCheckpoint 对应的就是最后应用的那批）。查不到就不报，不硬造 seq。
+    _harnessEffectiveAppliedBatches().then(batches => {
+      const last = batches.length ? batches[batches.length - 1] : null;
+      if (last && Number(last.seq) > 0) return _reportHarnessUndo(Number(last.seq));
+      return null;
+    }).catch(() => {});
+  }
+
+  // ===== T96 会话事件日志：应用/撤销上报与撤销时间线（2026-09-30）=====
+  // 后端按 Φ 会话把事件逐行追加到 logs/harness_events/<phiId>.jsonl，seq＝行号（稳定）。
+  // 前端这里负责三件事：把应用批次（含无损前态）与撤销动作上报；从事件列表折叠出
+  // 「当前有效批次」；时间线面板支持撤回到任意批次之前。上报一律 fire-and-forget：
+  // 事件日志是审计副产物，失败只 console.warn，绝不打扰画布主流程。
+  async function _reportHarnessApplied(opts) {
+    const info = opts || {};
+    const mode = info.reportMode || '';
+    const phiId = (typeof _phiId === 'function' ? _phiId() : '') || '';
+    if (!mode || !phiId) return; // 无 Φ 会话（匿名/旧数据）或调用方明确不上报
+    try {
+      await harnessFetchJson('/api/harness/graph/apply_report', {
+        session_id: phiId,
+        event_id: info.eventId || '',
+        applied_ops: Array.isArray(info.ops) ? info.ops : [],
+        before_snapshot: info.before || null,
+        mode,
+        summary: info.summary || '',
+      });
+      // apply_report 不返回 seq（seq 是落盘后的行号），这里只留「已上报」标记；
+      // 撤销折算一律现查 _harnessEffectiveAppliedBatches()，不依赖这个全局。
+      harnessLastAppliedReport = { eventId: info.eventId || '' };
+    } catch (err) {
+      console.warn('[Harness] 应用批次上报失败（不影响画布）：', (err && err.message) || err);
+    }
+  }
+
+  // undoneFromSeq＝被回滚的第一条 applied 事件的 seq。缺省（对话式「↩ 撤销上一条」
+  // 的调用形态）时折算当前最后一条有效 applied——它回滚的就是那批；不折出来就不报，
+  // 绝不硬造 seq（时间线宁可多等一次刷新，也不要假 undo 事件）。
+  async function _reportHarnessUndo(undoneFromSeq) {
+    const phiId = (typeof _phiId === 'function' ? _phiId() : '') || '';
+    if (!phiId) return;
+    let seq = Number(undoneFromSeq) || 0;
+    if (seq <= 0) {
+      try {
+        const batches = await _harnessEffectiveAppliedBatches();
+        seq = batches.length ? Number(batches[batches.length - 1].seq) || 0 : 0;
+      } catch (err) {
+        seq = 0;
+      }
+    }
+    if (seq <= 0) return;
+    try {
+      await harnessFetchJson('/api/harness/graph/undo_report', { session_id: phiId, undone_from_seq: seq });
+    } catch (err) {
+      console.warn('[Harness] 撤销上报失败（不影响画布）：', (err && err.message) || err);
+    }
+  }
+
+  // GET applied+undo 事件，按 seq 升序折叠出「当前有效批次」：applied 压栈；undo 把
+  // seq >= undone_from_seq 的批次全弹出（后端口径：undo 之后新应用的批次 seq 更大，
+  // 自然重新入栈）。返回数组按 seq 升序＝时间线从上到下的渲染顺序。
+  async function _harnessEffectiveAppliedBatches() {
+    const phiId = (typeof _phiId === 'function' ? _phiId() : '') || '';
+    if (!phiId) return [];
+    const url = '/api/harness/graph/events?session_id=' + encodeURIComponent(phiId)
+      + '&types=applied,undo&limit=200';
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    if (!data || data.status === 'error' || !Array.isArray(data.events)) throw new Error('响应缺 events');
+    const stack = [];
+    data.events.forEach(evt => {
+      if (!evt || typeof evt !== 'object') return;
+      if (evt.type === 'applied') {
+        stack.push(evt);
+      } else if (evt.type === 'undo') {
+        const from = Number(evt.undone_from_seq) || 0;
+        for (let i = stack.length - 1; i >= 0; i--) {
+          if ((Number(stack[i].seq) || 0) >= from) stack.splice(i, 1);
+        }
+      }
+    });
+    return stack;
+  }
+
+  // 事件 ts：服务端落的是 epoch 秒（events.py 的 round(time.time(), 3)）；ISO 串
+  // 也照收（防手写/旧数据）。坏值返回空串，行里就不显示时间。
+  function _harnessUndoTimeText(ts) {
+    let d = null;
+    if (typeof ts === 'number' && isFinite(ts)) d = new Date(ts * 1000);
+    else if (typeof ts === 'string' && ts) d = new Date(ts);
+    if (!d || isNaN(d.getTime())) return '';
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function _harnessUndoTimelineRowHtml(evt) {
+    const seq = Number(evt.seq) || 0;
+    const count = Number(evt.ops_count) || 0;
+    const summary = String(evt.summary || '').trim();
+    const time = _harnessUndoTimeText(evt.ts);
+    const meta = '#' + seq
+      + (time ? ' · ' + time : '')
+      + ' · ' + count + ' 条修改 · ' + _escapeHtml(summary ? summary.slice(0, 30) : '（无摘要）');
+    return '<div class="graph-harness-undo-row">'
+      + '<span class="graph-harness-undo-row-meta">' + meta + '</span>'
+      + '<button type="button" class="graph-harness-undo-rollback" onclick="_harnessUndoTimelineRollback(\''
+      + _escapeHtml(String(evt.id || '')) + '\', ' + seq
+      + ')" title="回滚到这一批次应用之前的画布">撤回到此</button>'
+      + '</div>';
+  }
+
+  async function _refreshHarnessUndoTimeline() {
+    const box = document.getElementById('graphHarnessUndoTimeline');
+    if (!box || box.hidden) return;
+    box.innerHTML = '<div class="graph-harness-undo-empty">正在加载撤销历史…</div>';
+    let batches = [];
+    try {
+      batches = await _harnessEffectiveAppliedBatches();
+    } catch (err) {
+      box.innerHTML = '<div class="graph-harness-undo-empty">撤销历史加载失败，请重试</div>';
+      return;
+    }
+    box.innerHTML = batches.length
+      ? batches.map(_harnessUndoTimelineRowHtml).join('')
+      : '<div class="graph-harness-undo-empty">还没有已应用的批次</div>';
+  }
+
+  // 时间线显隐（getElementById＋hidden 属性赋值，T88 口径：回归脚本的 element 桩
+  // 没有 toggleAttribute/closest）。每次打开都重新拉一次事件，列表与服务端状态对齐。
+  async function toggleHarnessUndoTimeline() {
+    if (!((typeof _phiId === 'function' ? _phiId() : '') || '')) {
+      _setHarnessStatus('当前没有 Φ 会话', 'error');
+      return;
+    }
+    const box = document.getElementById('graphHarnessUndoTimeline');
+    if (!box) return;
+    if (!box.hidden) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    await _refreshHarnessUndoTimeline();
+  }
+
+  // 「撤回到此」：用该行事件 id 精确取回它自己的 before_snapshot（GET 单条事件隐含
+  // 带快照），拿不到就不动画布——没有无损前态的整图回滚等于毁图。
+  async function _harnessUndoTimelineRollback(eventId, seq) {
+    const phiId = (typeof _phiId === 'function' ? _phiId() : '') || '';
+    if (!phiId) {
+      _setHarnessStatus('当前没有 Φ 会话', 'error');
+      return;
+    }
+    let before = null;
+    try {
+      const url = '/api/harness/graph/events?session_id=' + encodeURIComponent(phiId)
+        + '&event_id=' + encodeURIComponent(String(eventId || ''));
+      const resp = await fetch(url);
+      const data = resp.ok ? await resp.json() : null;
+      const evt = data && Array.isArray(data.events) ? data.events[0] : null;
+      before = evt && evt.before_snapshot ? evt.before_snapshot : null;
+    } catch (err) {
+      before = null;
+    }
+    if (!before) {
+      _setHarnessStatus('找不到该批次的无损前态，无法回滚', 'error');
+      return;
+    }
+    _restoreHarnessBeforeSnapshot(before, Number(seq) || 0);
+  }
+
+  // 时间线整图回滚：恢复语义与 undoGraphHarness 同口径（快照整份写回当前画布，
+  // 与 undoGraphHarness 一样用 _sessionId()——改图只落在当前打开的画布上）。
+  // 回滚后面板回到「未应用」态，并上报 undo 事件（上报完再刷新时间线，别让列表
+  // 抢在读请求前拿到旧状态）。
+  function _restoreHarnessBeforeSnapshot(before, undoneFromSeq) {
+    if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销时间线回滚' });
+    if (typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), before);
+    if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
+    if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+    if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
+    if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+    harnessLastAppliedOps = [];
+    harnessLastAppliedBeforeSnapshot = null;
+    harnessLastAppliedReport = null;
+    harnessResultApplied = false;
+    const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
+    if (applySelectedBtn) applySelectedBtn.disabled = false;
+    const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
+    if (applyAllBtn) applyAllBtn.disabled = false;
+    const resultBox = document.getElementById('graphHarnessResult');
+    if (resultBox) resultBox.innerHTML = '<div class="graph-harness-summary">已回滚到所选批次之前</div>';
+    _setHarnessStatus('已回滚到所选批次之前', 'ok');
+    _reportHarnessUndo(undoneFromSeq).then(() => { _refreshHarnessUndoTimeline(); });
   }
 
   // 按 id 精确移除节点（只动传入的 id，不做全局清扫）
@@ -456,7 +669,7 @@
     const entry = harnessHistory.find(item => item.id === entryId);
     if (!entry || entry.decision !== 'pending') return;
     if (!_harnessCanApply(entry._binding)) return;
-    _applyOps(entry.operations || [], entry.phase === 'apply');
+    _applyOps(entry.operations || [], entry.phase === 'apply', 'keep', entry.eventId || '');
     entry.decision = 'keep';
     entry.appliedAt = Date.now();
     _saveHarnessHistory().then(_renderHarnessChat);
@@ -579,6 +792,12 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.applyGraphHarness = applyGraphHarness;
   window.applySelectedGraphHarness = applySelectedGraphHarness;
   window.undoGraphHarness = undoGraphHarness;
+  // T96：撤销时间线（composer 的「🕘 撤销历史」内联 onclick 走这里；折叠折算与
+  // 整图回滚一并导出，冒烟/真机脚本可直接取证）
+  window.toggleHarnessUndoTimeline = toggleHarnessUndoTimeline;
+  window._harnessEffectiveAppliedBatches = _harnessEffectiveAppliedBatches;
+  window._restoreHarnessBeforeSnapshot = _restoreHarnessBeforeSnapshot;
+  window._harnessUndoTimelineRollback = _harnessUndoTimelineRollback;
   window.syncHarnessNodesToKnowledge = _syncHarnessNodesToKnowledge;
   // smoke 专用出口（P3）：配方三件套 op 的应用路径——配方分支不碰图状态，传空即可
   window._applyHarnessOpsForTest = ops => (ops || []).forEach(op => _applyOneHarnessOp(op, null, new Map()));

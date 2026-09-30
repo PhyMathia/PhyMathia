@@ -6008,3 +6008,79 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   padding: 8px 0 14px;
 }
+
+/* ---------- T96 撤销时间线（Φ 面板内联区块，2026-09-30） ----------
+   位置在结果区之后、composer 之前，普通文档流＋max-height：Φ 面板窄窗竖向预算
+   里对话区保底、结果区先让位，绝对定位浮层会盖住聊天记录，不做。本块不写
+   background——与结果区/应用条同口径，面板的极光磨砂层透上来；只给行与按钮
+   自带的描边、分隔线。 */
+.graph-harness-undo-timeline {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 6px 12px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #334155);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+}
+
+/* hidden 属性自己的 UA 规则只到 (0,1,0)：本块任何 display 声明都会压掉它，
+   显式回声一道守卫（与会话/模式菜单的 [hidden] 守卫同口径） */
+.graph-harness-undo-timeline[hidden] {
+  display: none;
+}
+
+.graph-harness-undo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.graph-harness-undo-row:last-child {
+  border-bottom: none;
+}
+
+.graph-harness-undo-row-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-secondary, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-harness-undo-row button {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border, #334155);
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.graph-harness-undo-row button:hover {
+  border-color: var(--accent, #38bdf8);
+  color: var(--accent, #38bdf8);
+}
+
+.graph-harness-undo-empty {
+  padding: 8px 4px;
+  color: var(--text-secondary, #94a3b8);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* 「↩ 撤销上一条」与「🕘 撤销历史」并排复用 .graph-harness-btn-undo，而它带着
+   margin-right:auto（把后面的发送钮推到右边）。两个都带 auto 会把「撤销历史」
+   推到发送钮旁边——只让后一个承担 auto，两个撤销入口在左侧挨着（:has 在本
+   仓库已有先例，见 T51 的 body:has(...) 兜网） */
+.graph-harness-composer .graph-harness-actions .graph-harness-btn-undo:has(+ .graph-harness-btn-undo) {
+  margin-right: 0;
+}
