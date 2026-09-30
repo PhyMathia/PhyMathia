@@ -107,8 +107,8 @@ const RECIPE_BASE_META = {
   question: { label: '问题（手填）', family: 'data', shape: 'is-ring', hint: '提问节点，接 AI 回答或继续追问。' },
 };
 
-// 成对色板（D-R8：只从令牌选，不开放自由 hex）。令牌定义在 graph-override.css
-// 的 --ink-* 块（深浅两套）；这里只引用令牌名，JS 侧零 hex 字面量（T8 红线）。
+// 成对色板（D-R8 的预设档）。令牌定义在 graph-override.css 的 --ink-* 块（深浅两套）；
+// 这里只引用令牌名，JS 侧零 hex 字面量（T8 红线）。色相彼此隔开，与官方节点色不同族。
 const RECIPE_PALETTE = [
   { key: 'amber', label: '琥珀', color: 'var(--ink-amber)' },
   { key: 'blue', label: '靛蓝', color: 'var(--ink-blue)' },
@@ -118,6 +118,29 @@ const RECIPE_PALETTE = [
   { key: 'human', label: '赭墨', color: 'var(--ink-human)' },
   { key: 'note', label: '青墨', color: 'var(--ink-note)' },
 ];
+// 自由取色档（2026-09-30 用户拍板，D-R8 从「只许令牌」放宽为「令牌 + 任意 RGB」）。
+// 存 #rrggbb（短写 #rgb 落库时补齐成长写），有 appearance.color 就压过 palette 令牌。
+// 深浅主题的适配不在 JS 做，而在 CSS：返回的色值是 color-mix(...var(--recipe-ink-anchor))，
+// 锚点随 data-theme 变——切主题时画布不必重绘（applyTheme 不触发 graph 重渲染）。
+const RECIPE_COLOR_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+// 自定义墨色往锚点掺的比例：深色主题掺白、浅色主题掺黑，接近成对令牌的手工位移
+const RECIPE_COLOR_MIX = 'color-mix(in srgb, ';
+
+function normalizeRecipeColor(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  if (!RECIPE_COLOR_RE.test(raw)) return '';
+  if (raw.length === 4) return '#' + raw[1] + raw[1] + raw[2] + raw[2] + raw[3] + raw[3];
+  return raw;
+}
+
+// 配方外观的最终色值：自定义色优先（带主题适配），否则回色板令牌，再否则中性色。
+// 节点渲染、添加面板圆点、管理列表圆点三处共用，保证同一个配方处处同色。
+function recipeAppearanceColor(appearance) {
+  const custom = normalizeRecipeColor(appearance && appearance.color);
+  if (custom) return RECIPE_COLOR_MIX + custom + ' 75%, var(--recipe-ink-anchor))';
+  const entry = RECIPE_PALETTE.find(item => item.key === (appearance && appearance.palette));
+  return entry ? entry.color : 'var(--accent)';
+}
 const RECIPE_SHAPES = ['is-round', 'is-square', 'is-diamond', 'is-ring'];
 // P2 载体扩展：mermaid/html_iframe 复用官方「知识图谱/交互可视化」的现成渲染器，
 // 只允许 AI 底座声明（渲染分派见 _renderCustomNodeContentHtml / 生成侧归一见
@@ -229,6 +252,7 @@ function normalizeRecipeInput(raw) {
   const baseKind = String((raw.base && raw.base.kind) || 'module');
   if (!name || !RECIPE_BASE_KINDS.includes(baseKind)) return null;
   const paletteKey = String((raw.appearance && raw.appearance.palette) || 'amber');
+  const customColor = normalizeRecipeColor(raw.appearance && raw.appearance.color);
   const shape = String((raw.appearance && raw.appearance.shape) || _recipeDefaultShape(baseKind));
   const g = (raw.generate && typeof raw.generate === 'object') ? raw.generate : {};
   const ports = Array.isArray(raw.ports && raw.ports.static) ? raw.ports.static : [];
@@ -252,7 +276,10 @@ function normalizeRecipeInput(raw) {
     desc: String(raw.desc || '').trim().slice(0, 80),
     builtin: false,
     base: { kind: baseKind },
-    appearance: { palette: paletteKey, shape },
+    // 自由色是可选段：不声明就不设键（与后端 normalize 同形，对拍/快照友好）
+    appearance: customColor
+      ? { palette: paletteKey, color: customColor, shape }
+      : { palette: paletteKey, shape },
     generate: {
       prompt: String(g.prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       strict_output: String(g.strict_output || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
@@ -286,6 +313,9 @@ function validateRecipe(recipe, existing) {
   if (!RECIPE_BASE_KINDS.includes(baseKind)) fail('底座类型不在 P1 支持范围');
   const paletteKey = String((recipe.appearance && recipe.appearance.palette) || '');
   if (!RECIPE_PALETTE.some(entry => entry.key === paletteKey)) fail('色板不合法（只能从成对色板令牌选）');
+  // 自由色是可选段：给了就必须是真的 hex（表单只吐合法值，这里挡手改/导入的脏数据）
+  const rawColor = recipe.appearance && recipe.appearance.color;
+  if (rawColor && !normalizeRecipeColor(rawColor)) fail('自定义颜色不合法（要 #rrggbb 或 #rgb）');
   const shape = String((recipe.appearance && recipe.appearance.shape) || '');
   if (shape && !RECIPE_SHAPES.includes(shape)) fail('形状不合法');
   const desc = String(recipe.desc || '');
@@ -443,11 +473,10 @@ function _nodeRecipeSnapshot(node) {
 function _recipeNodeAttribute(node) {
   const recipe = _nodeRecipeSnapshot(node);
   if (!recipe) return null;
-  const entry = RECIPE_PALETTE.find(item => item.key === (recipe.appearance && recipe.appearance.palette));
   return {
     key: 'recipe',
     label: recipe.name || '配方',
-    color: entry ? entry.color : 'var(--accent)',
+    color: recipeAppearanceColor(recipe.appearance),
   };
 }
 
@@ -563,6 +592,9 @@ window.RECIPE_BASE_KINDS = RECIPE_BASE_KINDS;
 window.RECIPE_AI_BASE_KINDS = RECIPE_AI_BASE_KINDS;
 window.RECIPE_BASE_META = RECIPE_BASE_META;
 window.RECIPE_PALETTE = RECIPE_PALETTE;
+window.RECIPE_COLOR_MIX = RECIPE_COLOR_MIX;
+window.normalizeRecipeColor = normalizeRecipeColor;
+window.recipeAppearanceColor = recipeAppearanceColor;
 window.RECIPE_SHAPES = RECIPE_SHAPES;
 window.RECIPE_CONTENT_KINDS = RECIPE_CONTENT_KINDS;
 window.RECIPE_CONTEXT_CHANNELS = RECIPE_CONTEXT_CHANNELS;

@@ -34,9 +34,8 @@ function openAddBlankNodeModal(x, y) {
   // 「我的配方」组（P1，D-R7）：默认空、绝不预置——空态只有「新建配方」引导入口
   const recipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
   const recipeItems = recipes.map(recipe => {
-    const palette = RECIPE_PALETTE.find(entry => entry.key === (recipe.appearance && recipe.appearance.palette));
     const shape = (recipe.appearance && recipe.appearance.shape) || 'is-round';
-    return '<button class="graph-add-node-item" style="--node-color:' + (palette ? palette.color : 'var(--accent)') + '"'
+    return '<button class="graph-add-node-item" style="--node-color:' + recipeAppearanceColor(recipe.appearance) + '"'
       + ' title="' + escapeHtml(recipe.desc || recipe.name) + '" onclick="createRecipeNode(\'' + recipe.id + '\')">'
       + '<span class="graph-add-node-dot ' + shape + '"></span>'
       + escapeHtml(recipe.name)

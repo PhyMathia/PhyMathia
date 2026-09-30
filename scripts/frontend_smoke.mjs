@@ -201,6 +201,87 @@ check('配方校验器（P1）：色板令牌 / 提示词预算 / 出口上限 /
   return true;
 });
 
+check('配方自由色（2026-09-30 D-R8 放宽）：归一化 / 优先级 / 色值往返 / 非法色拦截', () => {
+  const normalizeColor = sandbox.window.normalizeRecipeColor;
+  const appearanceColor = sandbox.window.recipeAppearanceColor;
+  const hsvToRgb = sandbox.window._recipeHsvToRgb;
+  const rgbToHsv = sandbox.window._recipeRgbToHsv;
+  const rgbToHex = sandbox.window._recipeRgbToHex;
+  const validate = sandbox.window.validateRecipe;
+  const normalize = sandbox.window.normalizeRecipeInput;
+  for (const [name, fn] of Object.entries({ normalizeColor, appearanceColor, hsvToRgb, rgbToHsv, rgbToHex })) {
+    if (typeof fn !== 'function') throw new Error(name + ' 未挂 window');
+  }
+  // 1. 归一化：短写补齐、大小写压平；非 hex 一律空串（收窄成 hex 形状是注入防线）
+  if (normalizeColor('#3aF') !== '#33aaff') throw new Error('短写 hex 未补齐：' + normalizeColor('#3aF'));
+  if (normalizeColor('  #D9B45C ') !== '#d9b45c') throw new Error('hex 未 trim/压小写');
+  for (const junk of ['red', '#12345', 'url(x)', 'red; background: url(x)', '', null, undefined, 123]) {
+    if (normalizeColor(junk) !== '') throw new Error('非法色未被拒：' + JSON.stringify(junk));
+  }
+  // 2. 优先级：自由色压过色板令牌，且带主题锚点（切主题即换色，不靠重绘画布）
+  const custom = appearanceColor({ palette: 'teal', color: '#123456' });
+  if (!custom.includes('#123456') || !custom.includes('var(--recipe-ink-anchor)')) {
+    throw new Error('自由色未走主题自适应：' + custom);
+  }
+  if (appearanceColor({ palette: 'teal' }) !== 'var(--ink-teal)') throw new Error('无自由色时应回色板令牌');
+  if (appearanceColor({ palette: 'hotpink' }) !== 'var(--accent)') throw new Error('非法色板应回中性色');
+  // 3. 往返自洽：hex → hsv → hex 对预设色与边界值都不漂（取色器最怕悄悄偏色）
+  const roundTrip = hex => {
+    const parts = normalizeColor(hex).slice(1).match(/../g).map(part => parseInt(part, 16));
+    const hsv = rgbToHsv(parts[0], parts[1], parts[2]);
+    const rgb = hsvToRgb(hsv.h, hsv.s, hsv.v);
+    return rgbToHex(rgb.r, rgb.g, rgb.b);
+  };
+  for (const hex of ['#d9b45c', '#85a9e8', '#e08a9f', '#74bfa8', '#b599e0',
+                     '#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#010203']) {
+    if (roundTrip(hex) !== hex) throw new Error('色值往返漂移：' + hex + ' → ' + roundTrip(hex));
+  }
+  // 4. 校验器：合法自由色放行，注入串当场拦下
+  const okColor = validate({ ..._smokeValidRecipe(), appearance: { palette: 'teal', color: '#3aa', shape: 'is-round' } }, []);
+  if (!okColor.ok) throw new Error('合法自由色被拒：' + okColor.errors.join('；'));
+  for (const junk of ['chartreuse', '#12345', 'red; background: url(x)']) {
+    const badColor = validate({ ..._smokeValidRecipe(), appearance: { palette: 'teal', color: junk, shape: 'is-round' } }, []);
+    if (badColor.ok || !badColor.errors.some(e => e.includes('自定义颜色'))) throw new Error('非法自由色未拦截：' + junk);
+  }
+  // 5. 落库形态：调过才带 color，没调整段缺省（旧配方字节不变）
+  const tuned = normalize({ ..._smokeValidRecipe(), appearance: { palette: 'teal', color: '#3aF', shape: 'is-round' } });
+  if (tuned.appearance.color !== '#33aaff' || tuned.appearance.palette !== 'teal') throw new Error('自由色落库形态不对：' + JSON.stringify(tuned.appearance));
+  if ('color' in normalize(_smokeValidRecipe()).appearance) throw new Error('未调色时不该写 color 键');
+  return true;
+});
+
+check('取色器 UI 契约：表单有自定义档、取色器画布与三套数值都在、主题锚点有定义', () => {
+  const editSrc = fs.readFileSync('src/static/js/graph-recipe-edit.js', 'utf8');
+  // 表单：7 个预设之外多一个「自定义」档，点了开取色器
+  if (!/id="recipeColorChipBtn"/.test(editSrc)) throw new Error('色板行缺自定义档按钮');
+  if (!/onclick="openRecipeColorPicker\(\)"/.test(editSrc)) throw new Error('自定义档没接开取色器');
+  // 取色器本体：饱和度方块 + 色相条 + 新旧对比 + 三套数值
+  for (const [what, re] of [
+    ['饱和度方块', /id="recipeColorSv"/],
+    ['色相条', /id="recipeColorHue"/],
+    ['新的预览', /id="recipeColorNew"/],
+    ['当前预览', /id="recipeColorOld"/],
+    ['色号输入', /id="recipeColorHex"/],
+    ['H 档', /id="recipeColorH"/],
+    ['RGB 三档', /id="recipeColorR"[\s\S]*id="recipeColorG"[\s\S]*id="recipeColorB2"/],
+    ['回预设色入口', /recipeColorResetPreset/],
+  ]) {
+    if (!re.test(editSrc)) throw new Error('取色器缺' + what);
+  }
+  // 收尾动作：确定只写编辑器状态（不直接落库，取消不留痕）
+  if (!/function recipeColorConfirm\(\)[\s\S]{0,400}recipeColorCustom = _recipeRgbToHex/.test(editSrc)) {
+    throw new Error('「用这个颜色」没写编辑器状态');
+  }
+  // 预设选中态只许在 7 个 data-palette 按钮上切：自定义档也是 .recipe-palette-swatch，
+  // 混进去会被 recipeColorConfirm 的「清空预设选中」顺手抹掉自己的高亮
+  if (!/\.recipe-palette-swatch\[data-palette\]/.test(editSrc)) throw new Error('预设选中态没限定在 data-palette 按钮上');
+  // 主题锚点必须在 CSS 两个主题里都有值，否则 color-mix 整条作废
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!/:root\s*\{[^}]*--recipe-ink-anchor:\s*#ffffff/s.test(css)) throw new Error('缺深色主题锚点');
+  if (!/\[data-theme="light"\]\s*\{[^}]*--recipe-ink-anchor:\s*#000000/s.test(css)) throw new Error('缺浅色主题锚点');
+  return true;
+});
+
 check('配方全链（P1）：保存→创建节点→渲染槽（外观/出口/拖出目标）→提示词槽→快照内嵌', () => {
   // 沙箱口径：函数声明挂在 vm 全局（sandbox.*）而非宽松代理 window 上；图状态
   // 存取在前面用例里可能被桩成固定对象，这里换成自带的状态桩并在 finally 还原。

@@ -131,6 +131,18 @@ def _samples() -> list:
         ("bad_base", {**_valid_sample(), "base": {"kind": "hub"}}, ["底座类型不在 P1 支持范围"]),
         ("bad_palette", {**_valid_sample(), "appearance": {"palette": "hotpink", "shape": "is-round"}},
          ["色板不合法（只能从成对色板令牌选）"]),
+        # ---- 自由色（2026-09-30，D-R8 放宽）：可选段，给了就必须是真 hex ----
+        ("valid_custom_color", {**_valid_sample(), "appearance": {
+            "palette": "teal", "color": "#3aa", "shape": "is-round"}}, []),
+        ("bad_custom_color", {**_valid_sample(), "appearance": {
+            "palette": "teal", "color": "chartreuse", "shape": "is-round"}},
+         ["自定义颜色不合法（要 #rrggbb 或 #rgb）"]),
+        ("bad_custom_color_len", {**_valid_sample(), "appearance": {
+            "palette": "teal", "color": "#12345", "shape": "is-round"}},
+         ["自定义颜色不合法（要 #rrggbb 或 #rgb）"]),
+        ("bad_custom_color_injection", {**_valid_sample(), "appearance": {
+            "palette": "teal", "color": "red; background: url(x)", "shape": "is-round"}},
+         ["自定义颜色不合法（要 #rrggbb 或 #rgb）"]),
         ("ai_base_no_prompt", {**_valid_sample(), "generate": {"prompt": "", "context_channel": "workflow_context"}},
          ["AI 底座必须填写主提示词"]),
         ("dup_port", {**_valid_sample(), "ports": {"static": [
@@ -295,6 +307,23 @@ def test_normalize_strips_unknown_fields_and_derives_aggregation():
     assert "dynamic" not in normalized["ports"]
     assert "on_generated" not in normalized
     assert normalized["analysis_phase"] is False
+
+
+def test_normalize_custom_color_expands_short_hex_and_drops_junk():
+    """自由色归一化：短写补齐成 #rrggbb、大小写压平；非法值整段丢掉而不是带着进库。
+
+    注入串（``red; background: url(x)``）必须被丢——appearance.color 最终会被拼进
+    节点的 style 属性，收窄成 hex 形状是这条防线。
+    """
+    short = normalize_recipe_input({**_valid_sample(), "appearance": {
+        "palette": "rose", "color": "#3aF", "shape": "is-round"}})
+    assert short["appearance"] == {"palette": "rose", "color": "#33aaff", "shape": "is-round"}
+    plain = normalize_recipe_input(_valid_sample())
+    assert "color" not in plain["appearance"]
+    for junk in ("url(x)", "#12345", "red", "", "   "):
+        dropped = normalize_recipe_input({**_valid_sample(), "appearance": {
+            "palette": "rose", "color": junk, "shape": "is-round"}})
+        assert "color" not in dropped["appearance"], f"非法色 {junk!r} 不该落库"
 
 
 def test_normalize_dynamic_and_on_generated_defaults():
