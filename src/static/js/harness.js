@@ -29,6 +29,18 @@ let harnessLastAppliedReport = null;
   let harnessPhiError = false;
   let harnessPhiCelebrate = false;
   let harnessAbortController = null;
+  // T103（评审路线第五步）：换模型重试的一次性覆盖（runGraphHarness 取用即清，
+  // 不动用户槽位）＋最近一次错误详情（「复制错误详情」的原料）
+  let harnessModelOverride = null;
+  let harnessLastError = null;
+  // T106：状态行进度计时——生成中每秒叠「· Ns」，结束时追加耗时/模型调用数/
+  // token 摘要（数据来自 result 的 model_calls 与 context_metrics，此前前端零消费）
+  let harnessRunStartTs = 0;
+  let harnessStatusTickId = null;
+  let harnessStatusBaseText = '';
+  // T104：会话菜单的搜索词与正在行内改名的会话 id（重渲染即复位的临时态）
+  let harnessSessionFilter = '';
+  let renamingPhiId = '';
 
   // T91：流式阶段的中文名，与后端 harness/review.py 的 _PHASE_LABELS 逐字镜像（含 undo 共 7 项）。
   // 只服务于历史消息下方 meta 的显示——entry.phase 的存储值（localStorage 历史/请求体）
@@ -444,9 +456,40 @@ let harnessLastAppliedReport = null;
     const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
     const trashSvg = icons.trash || '✕';
     const plusSvg = icons.plus || '＋';
+    menu.innerHTML = ''
+      + '<button type="button" class="graph-harness-session-new" onclick="newHarnessPhiSession()" title="新建一段 Φ 对话（默认绑定当前画布）">' + plusSvg + ' 新建 Φ 会话</button>'
+      // T104：会话搜索——过滤只重渲染下方列表容器（_renderHarnessSessionList），
+      // 搜索框自身不重建，输入焦点不丢；过滤词存变量，菜单整体重渲染后回填
+      + '<div class="graph-harness-session-search">'
+      + '<input type="text" id="graphHarnessSessionSearch" placeholder="搜索 Φ 会话标题…" value="' + _escapeHtml(harnessSessionFilter) + '" oninput="filterHarnessSessions(this.value)">'
+      + '</div>'
+      + '<div class="graph-harness-session-list" id="graphHarnessSessionList"></div>'
+      + '<div class="graph-harness-session-menu-footer">'
+      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部 Φ 对话记录，画布全部保留，不可撤销">' + trashSvg + ' 清空所有 Φ 对话</button>'
+      + '</div>';
+    _renderHarnessSessionList();
+  }
+
+  // 会话列表体（搜索过滤＋行内改名都在这里重渲染；列表容器 id 稳定供上面引用）
+  function _renderHarnessSessionList() {
+    const box = document.getElementById('graphHarnessSessionList');
+    if (!box) return;
+    const icons = typeof UI_ICON_SVG !== 'undefined' ? UI_ICON_SVG : {};
+    const trashSvg = icons.trash || '✕';
     const linkSvg = icons.link || '⛓';
-    const list = _phiList();
+    const penSvg = icons.pen || '✎';
+    const filter = String(harnessSessionFilter || '').trim().toLowerCase();
+    const list = _phiList().filter(item => !filter
+      || String(item.title || '').toLowerCase().indexOf(filter) >= 0);
     const rows = list.map(item => {
+      // T104：行内改名态（与清空内联确认同款范式：临时态只在变量/DOM 里，重渲染即复位）
+      if (item.id === renamingPhiId) {
+        return '<div class="graph-harness-session-row graph-harness-session-row-rename">'
+          + '<input type="text" id="graphHarnessRenameInput" maxlength="30" value="' + _escapeHtml(item.title || '') + '" onkeydown="renameSessionKeydown(event)">'
+          + '<button type="button" class="graph-harness-session-rename-ok" onclick="confirmRenameHarnessSession(true)">确定</button>'
+          + '<button type="button" class="graph-harness-session-rename-cancel" onclick="confirmRenameHarnessSession(false)">取消</button>'
+          + '</div>';
+      }
       const boundAlive = item.boundSid && _phiCanvasAlive(item.boundSid);
       const bindLabel = item.boundSid
         ? (boundAlive ? '绑定：' + (_phiCanvasTitle(item.boundSid) || '未知画布') : '绑定的画布已删除')
@@ -456,19 +499,51 @@ let harnessLastAppliedReport = null;
         + '<span class="graph-harness-session-item-title">' + _escapeHtml(item.title || 'Φ 会话') + '</span>'
         + '<span class="graph-harness-session-item-bind">' + _escapeHtml(bindLabel) + '</span>'
         + '</button>'
+        + '<button type="button" class="graph-harness-session-rename" onclick="renameHarnessSession(\'' + item.id + '\')" title="重命名该 Φ 会话">' + penSvg + '</button>'
         + '<button type="button" class="graph-harness-session-bind" onclick="toggleHarnessSessionBinding(\'' + item.id + '\')" title="'
         + (item.boundSid ? '解绑画布（解绑后这段对话只能问答）' : '绑定到当前打开的画布（绑定后可改图）') + '">' + linkSvg + '</button>'
         + '<button type="button" class="graph-harness-session-del" onclick="deleteHarnessSession(\'' + item.id + '\')" title="删除该 Φ 会话（画布不受影响）">' + trashSvg + '</button>'
         + '</div>';
     }).join('');
-    menu.innerHTML = ''
-      + '<button type="button" class="graph-harness-session-new" onclick="newHarnessPhiSession()" title="新建一段 Φ 对话（默认绑定当前画布）">' + plusSvg + ' 新建 Φ 会话</button>'
-      + '<div class="graph-harness-session-list">'
-      + (rows || '<div class="graph-harness-session-empty">暂无 Φ 会话</div>')
-      + '</div>'
-      + '<div class="graph-harness-session-menu-footer">'
-      + '<button type="button" class="graph-harness-session-clearall" onclick="clearAllHarnessSessions()" title="删除全部 Φ 对话记录，画布全部保留，不可撤销">' + trashSvg + ' 清空所有 Φ 对话</button>'
-      + '</div>';
+    box.innerHTML = rows
+      || '<div class="graph-harness-session-empty">' + (filter ? '没有匹配的 Φ 会话' : '暂无 Φ 会话') + '</div>';
+    const renameInput = document.getElementById('graphHarnessRenameInput');
+    if (renameInput && typeof renameInput.focus === 'function') { renameInput.focus(); renameInput.select(); }
+  }
+
+  // T104：搜索/改名的三个入口（内联 onclick 用，均 window 导出）
+  function filterHarnessSessions(value) {
+    harnessSessionFilter = String(value || '');
+    _renderHarnessSessionList();
+  }
+
+  function renameHarnessSession(id) {
+    if (!id || !phiSessions[id]) return;
+    renamingPhiId = id;
+    _renderHarnessSessionList();
+  }
+
+  function renameSessionKeydown(event) {
+    if (!event) return;
+    if (event.key === 'Enter') { event.preventDefault(); confirmRenameHarnessSession(true); }
+    else if (event.key === 'Escape') { event.preventDefault(); confirmRenameHarnessSession(false); }
+  }
+
+  function confirmRenameHarnessSession(proceed) {
+    const id = renamingPhiId;
+    renamingPhiId = '';
+    const s = id ? phiSessions[id] : null;
+    if (proceed && s) {
+      const input = document.getElementById('graphHarnessRenameInput');
+      const title = String((input && input.value) || '').trim().slice(0, 30);
+      if (title && title !== s.title) {
+        s.title = title;
+        s.updatedAt = Date.now();
+        _savePhiSessions();
+        _syncHarnessSessionBtn();
+      }
+    }
+    _renderHarnessSessionList();
   }
 
   function toggleHarnessSessionMenu(event) {
@@ -528,6 +603,15 @@ let harnessLastAppliedReport = null;
   window.chooseHarnessSession = chooseHarnessSession;
   window.newHarnessPhiSession = newHarnessPhiSession;
   window.deleteHarnessSession = deleteHarnessSession;
+  // T104：搜索与行内改名的内联 onclick 入口
+  window.filterHarnessSessions = filterHarnessSessions;
+  window.renameHarnessSession = renameHarnessSession;
+  window.renameSessionKeydown = renameSessionKeydown;
+  window.confirmRenameHarnessSession = confirmRenameHarnessSession;
+  // T105：空态示例问题按钮
+  window.sendHarnessExample = sendHarnessExample;
+  // T103：重试气泡的「复制错误详情」
+  window._copyHarnessErrorDetails = _copyHarnessErrorDetails;
 
   // 一键清空：只删 Φ 对话（历史本地键＋服务端），画布一律不动——session.js
   // clearAllSessions 的清空键清单刻意不含 phi_* 键，两个「清空」互不越界。
@@ -1141,7 +1225,9 @@ let harnessLastAppliedReport = null;
   function _setHarnessStatus(text, kind) {
     const status = document.getElementById('graphHarnessStatus');
     if (!status) return;
-    status.textContent = text || '';
+    // T106：基础文案与「· Ns」计时后缀分开记——秒表只重写时间部分，不覆盖阶段文案
+    harnessStatusBaseText = String(text || '');
+    status.textContent = harnessStatusBaseText + _harnessElapsedSuffix();
     status.className = 'graph-harness-status' + (kind ? ' graph-harness-status-' + kind : '');
     if (kind === 'error') {
       harnessPhiError = true;
@@ -1149,6 +1235,46 @@ let harnessLastAppliedReport = null;
     } else if (kind === 'running') {
       _setPhiMode('working');
     }
+  }
+
+  // ===== T106 进度感（2026-09-30 评审路线第五步）=====
+  // p90=37.6s 的裸等待只有一行阶段文案可看。秒表后缀 3 秒起显示（短请求不打扰）；
+  // 结束时把耗时（＋多次调用/上下文 token）并进当时的终态文案后面。
+  function _harnessElapsedSuffix() {
+    if (!harnessStatusTickId || !harnessRunStartTs) return '';
+    const sec = Math.max(0, Math.round((Date.now() - harnessRunStartTs) / 1000));
+    return sec >= 3 ? ' · ' + sec + 's' : '';
+  }
+
+  function _harnessStartProgressTick() {
+    if (harnessStatusTickId) { clearInterval(harnessStatusTickId); harnessStatusTickId = null; }
+    harnessRunStartTs = Date.now();
+    harnessStatusTickId = window.setInterval(() => {
+      if (!harnessBusy) { _harnessStopProgressTick(null); return; }
+      const status = document.getElementById('graphHarnessStatus');
+      if (status) status.textContent = harnessStatusBaseText + _harnessElapsedSuffix();
+    }, 1000);
+  }
+
+  // 停表并把摘要并进状态行当前文案（data＝本轮 result，null＝只记耗时）。
+  // 终态文案可能是「审阅完成：N 条操作」「审阅失败：…」「已停止」——一律追加。
+  function _harnessStopProgressTick(data) {
+    if (harnessStatusTickId) { clearInterval(harnessStatusTickId); harnessStatusTickId = null; }
+    if (!harnessRunStartTs) return;
+    const sec = (Date.now() - harnessRunStartTs) / 1000;
+    harnessRunStartTs = 0;
+    const el = document.getElementById('graphHarnessStatus');
+    if (!el) return;
+    const parts = [sec >= 10 ? Math.round(sec) + 's' : sec.toFixed(1) + 's'];
+    if (data) {
+      const calls = Number(data.model_calls) || 0;
+      if (calls > 1) parts.push(calls + ' 次模型调用');
+      const tok = Number(data && data.context_metrics && data.context_metrics.est_tokens) || 0;
+      if (tok > 0) parts.push('≈' + (tok >= 1000 ? (tok / 1000).toFixed(1) + 'k' : String(tok)) + ' tok 上下文');
+    }
+    // 剥掉秒表可能已叠加的「· Ns」尾巴再追加，避免双份耗时
+    const base = String(el.textContent || '').replace(/\s*·\s*\d+s(\s*·.*)?$/, '');
+    el.textContent = base + '（' + parts.join(' · ') + '）';
   }
 
   function _setHarnessBusy(busy) {
@@ -1296,9 +1422,14 @@ let harnessLastAppliedReport = null;
     const chat = document.getElementById('graphHarnessChat');
     if (!chat) return;
     chat._guideOpen = false;
+    // T105：空状态不止一行字——内置引导早就写好了（标题栏 ?），把四个示例问题
+    // 直接摆到明面上，新会话第一句话有着落
     chat.innerHTML = harnessHistory.length
       ? harnessHistory.map(entry => _historyMessageHtml(entry)).join('')
-      : '<div class="graph-harness-empty">还没有助手操作记录</div>';
+      : '<div class="graph-harness-empty">还没有助手操作记录，试试：</div>'
+        + '<div class="graph-harness-examples">'
+        + HARNESS_EXAMPLE_QUESTIONS.map((q, i) => '<button type="button" onclick="sendHarnessExample(' + i + ')">' + _escapeHtml(q) + '</button>').join('')
+        + '</div>';
     // 消息正文里的 <formula>/$$..$$ 由 renderMarkdown 转成 KaTeX 定界符，
     // 这里再跑一遍 renderMath 真正渲染公式（与画布正文同口径）。
     if (typeof renderMath === 'function') {
@@ -1309,6 +1440,11 @@ let harnessLastAppliedReport = null;
 
   function _historyMessageHtml(entry) {
     let actions = '';
+    // T99：手动停止后留下的半截回答——给「从中断处继续」出口（不发请求的静态
+    // 条目没有这套按钮，唯独这个）
+    if (entry.role === 'assistant' && entry.interrupted) {
+      actions += '<button type="button" class="graph-harness-continue-btn" onclick="continueHarnessInterrupted()">▶ 从中断处继续</button>';
+    }
     if (entry.role === 'assistant' && entry.decision === 'pending' && (entry.operations || []).length) {
       actions += '<button type="button" onclick="previewHarnessSuggestion(\'' + entry.id + '\')">查看预览</button>'
         + '<button type="button" onclick="keepHarnessSuggestion(\'' + entry.id + '\')">保留修改</button>'
@@ -1370,16 +1506,81 @@ let harnessLastAppliedReport = null;
     if (!chat) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'graph-harness-message graph-harness-message-system';
+    // T103：重试不再只有「原话重发」一个出口——配置了别的模型时给「换模型重试」
+    //（一次性覆盖，不动用户槽位），外加「复制错误详情」便于排查/求助
+    const alt = _harnessNextModelCandidate();
+    const actions = '<button type="button" onclick="retryHarnessLastRequest()">重试</button>'
+      + (alt ? '<button type="button" title="换 ' + _escapeHtml(alt.model || '') + ' 重发这次请求" onclick="retryHarnessLastRequest(true)">换模型重试</button>' : '')
+      + '<button type="button" onclick="_copyHarnessErrorDetails()">复制错误详情</button>';
     wrapper.innerHTML = '<div class="graph-harness-message-content">' + _escapeHtml(text) + '</div>'
-      + '<div class="graph-harness-message-actions"><button type="button" onclick="retryHarnessLastRequest()">重试</button></div>';
+      + '<div class="graph-harness-message-actions">' + actions + '</div>';
     chat.appendChild(wrapper);
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function retryHarnessLastRequest() {
+  // 从用户已配置模型里取「当前主模型之外」的第一个候选（T103 换模型重试用）。
+  // 返回 null＝只配了一个模型/没配，按钮不出现。
+  function _harnessNextModelCandidate() {
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem('phymathia_user_models') || '[]'); } catch (e) { list = []; }
+    if (!Array.isArray(list)) return null;
+    const current = typeof window.getActiveModelForRole === 'function'
+      ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
+      : null;
+    const curId = current && current.id ? String(current.id) : '';
+    const curName = String((current && current.model) || '');
+    for (const item of list) {
+      if (!item || !item.model) continue;
+      if (curId && String(item.id || '') === curId) continue;
+      if (!curId && curName && String(item.model) === curName) continue;
+      return item;
+    }
+    return null;
+  }
+
+  function retryHarnessLastRequest(switchModel) {
+    if (switchModel) {
+      const alt = _harnessNextModelCandidate();
+      if (!alt) { _setHarnessStatus('没有可切换的其他模型：请在「模型配置」里再配一个', 'error'); return; }
+      harnessModelOverride = alt;
+    }
     const instructionEl = document.getElementById('graphHarnessInstruction');
     if (instructionEl && harnessLastInstruction) instructionEl.value = harnessLastInstruction;
     runGraphHarness(harnessLastPhase);
+  }
+
+  // T103：把最近一次失败的模型/相位/指令/原始报错拼成可复制的文本
+  function _copyHarnessErrorDetails() {
+    const info = harnessLastError || {};
+    const text = [
+      '时间: ' + (info.ts ? new Date(info.ts).toLocaleString() : ''),
+      '模型: ' + (info.model || ''),
+      '相位: ' + (info.phase || ''),
+      '指令: ' + (info.instruction || ''),
+      '错误: ' + (info.raw || info.message || ''),
+    ].join('\n');
+    const done = () => { if (typeof toastMsg === 'function') toastMsg('已复制错误详情'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => _copyHarnessErrorFallback(text, done));
+    } else {
+      _copyHarnessErrorFallback(text, done);
+    }
+  }
+
+  function _copyHarnessErrorFallback(text, done) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      done();
+    } catch (e) {
+      if (typeof toastMsg === 'function') toastMsg('复制失败，请截图状态行');
+    }
   }
 
   async function _sendHarnessFeedback(entryId, kind) {
@@ -1549,6 +1750,24 @@ let harnessLastAppliedReport = null;
   function toggleGraphHarnessWindow() {
     if (!harnessPanel || harnessPanel.hidden) openGraphHarness();
     else closeGraphHarness();
+  }
+
+  // T105：空状态示例问题（点按钮＝回填输入框并发送；问答/改图各半，未绑定画布
+  // 的会话点改图类会被现有门槛温和拦下并说明去向）
+  const HARNESS_EXAMPLE_QUESTIONS = [
+    '帮我梳理这张图的核心脉络，整理成一条主线',
+    '细读画布里的内容，指出哪里理解有偏差',
+    '用物理直觉和数学本质两个视角解释一下导数',
+    '这张图还缺什么？给我一些拓展建议',
+  ];
+
+  function sendHarnessExample(index) {
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等完成后再试', 'error'); return; }
+    const q = HARNESS_EXAMPLE_QUESTIONS[Number(index)];
+    if (!q) return;
+    const inputEl = document.getElementById('graphHarnessInstruction');
+    if (inputEl) inputEl.value = q;
+    runGraphHarness();
   }
 
   const HARNESS_GUIDE_TEXT = [

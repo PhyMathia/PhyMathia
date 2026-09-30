@@ -353,7 +353,9 @@ async def graph_apply_report(request: Request):
 
     记录本批实际应用的操作与无损前态（before_snapshot＝应用前的完整画布深拷
     贝），是撤销时间线「撤回到任意批次之前」的恢复数据源，也是事后重放「当时
-    图上是什么」的依据。best-effort：失败只影响日志，不影响前端应用结果。"""
+    图上是什么」的依据。T101 起另带 recipes_before（应用前的配方库浅拷贝），
+    跨批次回滚时随 before_snapshot 一并还原。best-effort：失败只影响日志，
+    不影响前端应用结果。"""
     try:
         payload = await request.json()
     except Exception as exc:
@@ -378,6 +380,12 @@ async def graph_apply_report(request: Request):
     before = payload.get("before_snapshot")
     if isinstance(before, dict):
         event["before_snapshot"] = before
+    # T101 统一撤销时间线：配方库前态随 applied 事件落盘，跨批次回滚时还原。
+    # 守卫与 before_snapshot 同款：非 list 直接不写、不报错；另加防呆上限——
+    # 空 list 不写（无内容），超过 200 条视为异常形状也不写（配方库实际是个位数）。
+    recipes_before = payload.get("recipes_before")
+    if isinstance(recipes_before, list) and 0 < len(recipes_before) <= 200:
+        event["recipes_before"] = recipes_before
     append_event(session_id, event)
     return {"status": "ok", "event_id": event["id"]}
 
@@ -418,8 +426,9 @@ async def graph_events(request: Request):
 
     查询参数：session_id 必填；types=applied,undo 按 type 过滤；event_id 精确取
     一条（隐含含 before_snapshot——回滚取快照走这条）；limit 取最近 N 条（默认
-    100）；include_snapshot=1 才在列表里带 before_snapshot（默认剥掉，列表只要
-    元信息）。seq＝文件行号，单调且稳定。"""
+    100）；include_snapshot=1 才在列表里带 before_snapshot 与 recipes_before
+    （T101 配方库前态，跟随同一开关；默认剥掉，列表只要元信息）。seq＝文件行
+    号，单调且稳定。"""
     session_id = str(request.query_params.get("session_id") or "").strip()
     if not valid_session_id(session_id):
         return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": "缺少有效的 Φ 会话 id（session_id）"}]})

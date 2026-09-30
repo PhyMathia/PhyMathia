@@ -6102,3 +6102,158 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-composer .graph-harness-actions .graph-harness-btn-undo:has(+ .graph-harness-btn-undo) {
   margin-right: 0;
 }
+
+/* ===== Φ 第三档体验级（T99–T106，2026-09-30 评审路线第五步）=====
+   清单分组与内容级 diff（T100）/ 流式 Markdown 光标与实时气泡（T102）/
+   中断条目续接按钮（T99）/ 空态示例问题（T105）/ 会话搜索与行内改名（T104）。
+   全部用既有令牌，零新色值（style_debt 红线） */
+
+/* T100：结果区清单分组头 */
+.graph-harness-op-group-title {
+  display: block;
+  margin: 10px 12px 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary, #94a3b8);
+  letter-spacing: 0.04em;
+}
+.graph-harness-result .graph-harness-op-group:first-child .graph-harness-op-group-title {
+  margin-top: 2px;
+}
+
+/* T100：操作行的第三行——内容级 diff（原文红 / 建议绿 / 删除红）。
+   .graph-harness-op 是 18px 1fr 双列网格，diff 必须显式落在第 2 列 */
+.graph-harness-op-diff {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.graph-harness-op-diff-old,
+.graph-harness-op-diff-del {
+  color: var(--danger-fg, #ff6b6b);
+  opacity: 0.92;
+}
+.graph-harness-op-diff-new {
+  color: var(--success-fg, #34d399);
+}
+
+/* T102：流式光标（与正文同行的闪烁竖线）与聊天区实时气泡 */
+.graph-harness-stream-cursor {
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--accent);
+  animation: graph-harness-cursor-blink 1s steps(1) infinite;
+}
+@keyframes graph-harness-cursor-blink {
+  50% { opacity: 0; }
+}
+.graph-harness-message-live .graph-harness-message-content {
+  opacity: 0.92;
+}
+
+/* T99：中断条目上的「▶ 从中断处继续」——绿色描边区别于普通重试 */
+.graph-harness-message-actions .graph-harness-continue-btn {
+  border-color: var(--success-border, rgba(16, 185, 129, 0.32));
+}
+
+/* T105：空状态示例问题（虚线占位感，悬停转实线描边） */
+.graph-harness-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 2px 14px;
+}
+.graph-harness-examples button {
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--border, #334155);
+  background: transparent;
+  color: var(--text-primary, #e2e8f0);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+.graph-harness-examples button:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* T104：会话搜索框（菜单顶部，列表容器独立重渲染保焦点） */
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-search {
+  padding: 2px 4px 6px;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border, #334155);
+  background: color-mix(in srgb, var(--text-secondary, #94a3b8) 6%, transparent);
+  color: var(--text-primary, #e2e8f0);
+  font-size: var(--fs-sm);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* T104：行内改名（与 del/bind 同款的行内小按钮口径） */
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-row-rename {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-row-rename input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--text-secondary, #94a3b8) 8%, transparent);
+  color: var(--text-primary, #e2e8f0);
+  font-size: var(--fs-sm);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-row-rename input:focus {
+  outline: none;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename,
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename-ok,
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename-cancel {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  transition: color 0.15s, background 0.15s;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename svg {
+  width: 14px;
+  height: 14px;
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename-ok:hover {
+  color: var(--success-fg);
+  background: var(--success-bg);
+}
+.graph-harness-window .graph-harness-session-menu .graph-harness-session-rename-cancel:hover {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+}
