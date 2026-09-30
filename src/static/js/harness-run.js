@@ -167,9 +167,12 @@
     // 澄清重跑路径（runGraphHarnessWithFocus 委托进来）：目标节点已由用户点选解析好，不再走焦点解析
     const presetFocusIds = opts && Array.isArray(opts.focusIds) ? opts.focusIds : null;
     // 创造模式（P3）：显式按钮锁定 phase=preset——寒暄拦截与意图检测都让位，
-    // 指令一律交 preset 提示词（需求不明它自己 clarify）
+    // 指令一律交 preset 提示词（需求不明它自己 clarify）。
+    // 锁定时一律转 preset：重试按钮（harnessLastPhase）、重新执行历史建议（entry.phase）、
+    // 聚焦澄清重跑（pending.phase）携带的旧相位 expand/evaluate 也不得绕过。
+    // 唯一例外是内部 apply 流程（应用 AI 评价节点建议），它有自己的提示词语义。
     const presetMode = !!(window._harnessPresetActive && window._harnessPresetActive());
-    if (presetMode && (phase === 'normal' || phase === 'auto' || !phase)) phase = 'preset';
+    if (presetMode && phase !== 'apply') phase = 'preset';
     if (!presetMode && _isHarnessCasualInstruction(instruction)) {
       _appendHarnessHistory({
         id: _historyId(), role: 'user', content: instruction, phase: 'normal', timestamp: Date.now(),

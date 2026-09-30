@@ -984,6 +984,55 @@ class HarnessStreamReviewTest(RouteTestBase):
         self.assertIn("application/json", resp.headers.get("content-type", ""))
         self.assertEqual(resp.json()["status"], "ok")
 
+    def test_empty_snapshot_preset_passes_defense(self):
+        # 空快照防御必须放行创造模式（2026-09-30）：从空画布从零创作是 preset 的本职，
+        # 用户真机取证「帮我做一个纠错节点」被 no_ops 拦掉、模型一次都没调。
+        from harness import api as harness_api
+        from harness import review as review_mod
+
+        async def fake_clarify(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False, on_delta=None):
+            return {
+                "content": '{"summary": "需要确认", "clarify": {"question": "做什么用？", "options": ["答题", "演示"]}}',
+                "tool_calls": [],
+            }
+
+        body = self._base_body(
+            stream=False,
+            phase="preset",
+            snapshot={"version": 1, "nodes": [], "edges": []},
+        )
+        with mock.patch.object(harness_api, "_LOG_DIR", Path(self._td.name)), \
+             mock.patch.object(harness_api, "_USAGE_LOG", Path(self._td.name) / "usage.jsonl"), \
+             mock.patch.object(review_mod, "_call_model", new=fake_clarify):
+            resp = self.client.post("/api/harness/graph/review", json=body)
+        self.assertEqual(resp.status_code, 200)
+        result = resp.json()
+        self.assertEqual(result["status"], "clarify")
+        self.assertEqual(result["clarify"]["question"], "做什么用？")
+        self.assertGreaterEqual(result.get("model_calls", 0), 1)
+
+    def test_empty_snapshot_without_preset_still_blocked(self):
+        # 非 preset 相位空快照仍走防御：省一次注定无效的模型调用（存量行为护栏）
+        from harness import api as harness_api
+        from harness import review as review_mod
+
+        async def must_not_call(messages, model, max_tokens, **kwargs):
+            raise AssertionError("空快照防御不应触发模型调用")
+
+        body = self._base_body(
+            stream=False,
+            snapshot={"version": 1, "nodes": [], "edges": []},
+        )
+        with mock.patch.object(harness_api, "_LOG_DIR", Path(self._td.name)), \
+             mock.patch.object(harness_api, "_USAGE_LOG", Path(self._td.name) / "usage.jsonl"), \
+             mock.patch.object(review_mod, "_call_model", new=must_not_call):
+            resp = self.client.post("/api/harness/graph/review", json=body)
+        self.assertEqual(resp.status_code, 200)
+        result = resp.json()
+        self.assertEqual(result["status"], "no_ops")
+        self.assertEqual(result.get("model_calls"), 0)
+        self.assertIn("empty snapshot", result["warnings"][0]["reason"])
+
 
 class SessionDeleteCleanupTest(RouteTestBase):
     """删除会话的完整清理 + 知识入库孤儿闸门（09-23「已删除的画布」孤岛修复）。
