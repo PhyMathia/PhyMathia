@@ -2322,7 +2322,7 @@ class HarnessAnchorAddWarningTest(unittest.TestCase):
 class ReasoningStripTest(unittest.TestCase):
     """推理模型（deepseek-v4-flash 等）思考块剥离：解析与展示两条防线。"""
 
-    def _review(self, fake_payload, instruction="评价一下"):
+    def _review(self, fake_payload, instruction="评价一下", mode="json"):
         import asyncio
         import unittest.mock
         from harness import review as review_mod
@@ -2335,7 +2335,7 @@ class ReasoningStripTest(unittest.TestCase):
                 {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
                 instruction,
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
-                mode="json", self_check="off",
+                mode=mode, self_check="off",
             ))
 
     def test_strip_reasoning_removes_closed_block(self):
@@ -2373,6 +2373,36 @@ class ReasoningStripTest(unittest.TestCase):
         result = self._review(payload)
         self.assertEqual(result["status"], "no_ops")
         self.assertEqual(result["summary"], "来自reasoning")
+
+    def test_promote_reasoning_gates_on_json(self):
+        # _promote_reasoning：思考字段只在剥掉标签后能解析出 JSON 时才提升
+        from harness.review import _promote_reasoning
+        cleaned, promoted, prose_only = _promote_reasoning("", '{"summary": "s", "operations": []}')
+        self.assertTrue(promoted)
+        self.assertFalse(prose_only)
+        self.assertIn('"summary"', cleaned)
+        prose = "Let me think. The user wants to optimize the recipe, so I should call update_recipe."
+        cleaned, promoted, prose_only = _promote_reasoning("", prose)
+        self.assertEqual(cleaned, "")
+        self.assertFalse(promoted)
+        self.assertTrue(prose_only)
+        # 带思考标签的纯思考（剥完为空）→ 什么都不提升
+        cleaned, promoted, prose_only = _promote_reasoning("", "<think>只想不想答</think>")
+        self.assertEqual(cleaned, "")
+        self.assertFalse(promoted)
+        self.assertFalse(prose_only)
+
+    def test_review_never_promotes_prose_reasoning(self):
+        # 裸散文式思维链（网关不带 <think> 标签的 reasoning_content）绝不提升为
+        # summary——曾整段英文推理被渲染进面板（2026-09-30）。工具模式下答疑类
+        # 指令不触发空操作重试，直接拿到友好提示而非推理原文。
+        prose = ("The user wants to optimize the recipe. Let me look at the existing "
+                 "details first. I should call update_recipe with a full payload.")
+        payload = {"content": "", "tool_calls": [], "reasoning_content": prose}
+        result = self._review(payload, instruction="这是什么？", mode="tools")
+        self.assertNotIn(prose, str(result.get("summary") or ""))
+        self.assertEqual(result["status"], "no_ops")
+        self.assertIn("思考过程", result["summary"])
 
     def test_text_summary_clamped_for_display(self):
         from harness.review import _clamp_display_summary

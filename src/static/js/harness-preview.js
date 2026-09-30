@@ -5,7 +5,8 @@
     if (!resultBox) return;
     if (data.status === 'clarify' || data.clarify) {
       const c = data.clarify || {};
-      const question = String(c.question || data.summary || '需要向你确认一下');
+      const rawQuestion = String(c.question || data.summary || '需要向你确认一下');
+      const question = typeof _stripThinkText === 'function' ? _stripThinkText(rawQuestion) : rawQuestion;
       const options = Array.isArray(c.options) ? c.options : [];
       let html = '<div class="graph-harness-summary">' + _escapeHtml(question) + '</div>';
       if (options.length) {
@@ -21,7 +22,8 @@
     }
     if (data.status === 'undo') {
       const ops = Array.isArray(data.operations) ? data.operations : [];
-      resultBox.innerHTML = '<div class="graph-harness-summary">↩ ' + _escapeHtml(data.summary || '已撤销上一条修改') + '</div>'
+      const undoText = typeof _stripThinkText === 'function' ? _stripThinkText(String(data.summary || '')) : String(data.summary || '').trim();
+      resultBox.innerHTML = '<div class="graph-harness-summary">↩ ' + _escapeHtml(undoText || '已撤销上一条修改') + '</div>'
         + (ops.length ? '<div class="graph-harness-empty">已自动应用 ' + ops.length + ' 条撤销操作，可继续对 harness 说话。</div>' : '');
       document.getElementById('graphHarnessApplyActions')?.setAttribute('hidden', '');
       _setHarnessStatus('已撤销上一条修改', 'ok');
