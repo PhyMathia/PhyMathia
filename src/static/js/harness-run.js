@@ -170,12 +170,59 @@
     runGraphHarness();
   }
 
+  // T101（第五步）：composer「↩ 撤销上一条」语义对齐。本页应用过 → 原有确定性
+  // 逆操作（后端 _detect_undo_intent 命中撤销词且带 previous_ops 时不调模型，只
+  // 一次轻往返）；本页没应用过但事件日志里有更早批次（如刷新页面后）→ 指去
+  // 「🕘 撤销历史」逐批回滚，绝不硬造 previous_*——拿整图前态冒充逆操作素材，
+  // 会把批次之后的手工编辑一并卷走。
   function undoLastHarnessEdit() {
-    if (!(Array.isArray(harnessLastAppliedOps) && harnessLastAppliedOps.length)) {
-      _setHarnessStatus('没有可撤销的已应用修改', 'error');
+    if (Array.isArray(harnessLastAppliedOps) && harnessLastAppliedOps.length) {
+      runGraphHarnessWithText('撤销刚才的修改，恢复原样');
       return;
     }
-    runGraphHarnessWithText('撤销刚才的修改，恢复原样');
+    if (typeof _harnessEffectiveAppliedBatches === 'function') {
+      _harnessEffectiveAppliedBatches().then(batches => {
+        if (batches && batches.length) {
+          _setHarnessStatus('本页没有刚应用的修改可智能撤销；更早的 ' + batches.length + ' 个批次请用「🕘 撤销历史」逐批回滚', 'ok');
+        } else {
+          _setHarnessStatus('没有可撤销的已应用修改', 'error');
+        }
+      }).catch(() => _setHarnessStatus('没有可撤销的已应用修改', 'error'));
+      return;
+    }
+    _setHarnessStatus('没有可撤销的已应用修改', 'error');
+  }
+
+  // T99：停止后续接。中断时的半截回答已存成带「已中断」标记的助手条目（见
+  // runGraphHarness 的 AbortError 分支），这里发一句续接指令——历史里有半截
+  // 内容，模型接得上。不重发原指令：那会跟半截回答在历史里重复一遍。
+  function continueHarnessInterrupted() {
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，请稍候', 'error'); return; }
+    runGraphHarnessWithText('继续刚才中断的回答，从中断处接着说');
+  }
+
+  // T102：生成期间聊天区不再静止。流式正文同步进一条「实时气泡」——直插 DOM、
+  // 不入 harnessHistory；结束时真实助手条目入历史触发整块重渲染，它随之消失，
+  // finally 与失败路径再兜底删一次防残留。
+  function _harnessLiveBubble() {
+    const chat = document.getElementById('graphHarnessChat');
+    if (!chat) return null;
+    let bubble = chat.querySelector('.graph-harness-message-live');
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.className = 'graph-harness-message graph-harness-message-assistant graph-harness-message-live';
+      bubble.innerHTML = '<span class="graph-harness-avatar" aria-hidden="true">Φ</span>'
+        + '<div class="graph-harness-message-main"><div class="graph-harness-message-content"></div></div>';
+      chat.appendChild(bubble);
+    }
+    return bubble;
+  }
+
+  function _harnessRemoveLiveBubble() {
+    const chat = document.getElementById('graphHarnessChat');
+    if (chat && typeof chat.querySelectorAll === 'function') {
+      chat.querySelectorAll('.graph-harness-message-live').forEach(el => el.remove());
+    }
   }
 
   // T90 排队中的消息先以一条临时气泡出现在对话流里：它不入 harnessHistory，本轮结束
@@ -248,9 +295,13 @@
     // 撤销不需要例外：后端确定性撤销（_detect_undo_intent）在相位分派之前、不看相位。
     const lockedMode = ((typeof window._harnessMode === 'function' && window._harnessMode()) || 'edit');
     if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;
-    const model = typeof window.getActiveModelForRole === 'function'
-      ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
-      : null;
+    // T103：换模型重试＝一次性覆盖（重试按钮设置 harnessModelOverride，取用即清，
+    // 不改用户的模型槽位；缺省回落原有 graph→agent 槽位链）
+    const model = harnessModelOverride
+      || (typeof window.getActiveModelForRole === 'function'
+        ? (window.getActiveModelForRole('graph') || window.getActiveModelForRole('agent'))
+        : null);
+    harnessModelOverride = null;
     if (!model) {
       _setHarnessStatus('请先配置主模型', 'error');
       restoreInstruction();
@@ -309,6 +360,9 @@
       return;
     }
     let focusIds = [];
+    // T103：降级/换模型说明入历史——以前只写状态行，下一条 status 就把它盖掉，
+    // 事后回看不知当时发生过什么。攒在这里，成功后以引用块并进助手条目正文。
+    const degradeNotes = [];
     // 答疑模式是纯问答的显式版：跳过焦点解析、空画布放行、pure_chat 置位全部随 pureQuestion 走。
     // 解耦后：未绑定/绑了别的画布的会话一律按纯问答走（空快照），不碰当前画布。
     const pureQuestion = harnessPhase === 'chat' || !canvasReady || _isHarnessPureQuestion(instruction);
@@ -332,14 +386,17 @@
         } catch (err) {
           resolved = null;
           focusIds = [];
+          degradeNotes.push('目标解析失败，已按当前图继续：' + err.message);
           _setHarnessStatus('目标解析失败，已按当前图继续：' + err.message, 'running');
         }
         if (resolved && resolved.status === 'error') {
           focusIds = [];
           const reason = resolved.errors?.[0]?.reason || resolved.question || '目标解析失败';
+          degradeNotes.push('目标解析失败，已按当前图继续：' + reason);
           _setHarnessStatus('目标解析失败，已按当前图继续：' + reason, 'running');
         } else if (resolved && resolved.question && !(resolved.candidates || []).length) {
           focusIds = [];
+          degradeNotes.push('模型未能确定目标，已按当前图继续：' + resolved.question);
           _setHarnessStatus('模型未能确定目标，已按当前图继续：' + resolved.question, 'running');
         } else if (resolved && resolved.ambiguous && (resolved.candidates || []).length) {
           _setHarnessBusy(false);
@@ -387,6 +444,7 @@
       if (degraded && degradedMeta.est_tokens <= 30000) {
         snapshot = degraded;
         harnessSnapshot = degraded;
+        degradeNotes.push('图较大，已自动聚焦到目标附近区域');
         _setHarnessStatus('图较大，已自动聚焦到目标附近区域（可在画布选中节点缩小范围）', 'running');
       } else {
         const shownMeta = degradedMeta || _snapshotMeta;
@@ -425,6 +483,8 @@
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     _setHarnessBusy(true);
+    // T106：进度感——本轮起跑记时，状态行每秒叠「· Ns」，结束追加耗时/调用数/token
+    if (typeof _harnessStartProgressTick === 'function') _harnessStartProgressTick();
 
     harnessAbortController = new AbortController();
     // 流式预览：收到的正文增量先在结果区打字机式显示（<think> 思考块实时剥除；
@@ -434,15 +494,30 @@
     const renderStreamPreview = () => {
       streamTimer = null;
       if (!stillCurrent()) return;
-      const box = document.getElementById('graphHarnessResult');
-      if (!box || !streamText) return;
       let text = typeof _stripThinkText === 'function' ? _stripThinkText(streamText) : streamText;
       // JSON 开头直接占位；正文里任何位置出现 ```json 围栏也占位（思考在前、
       // 结构化输出在后的模型，否则会先把思考散文打出来再出现 JSON）。
       // 只认带 json 语言标记的围栏，避免误伤正文里合法的代码块。
       if (/^\s*(\{|```)/.test(text) || text.includes('```json')) text = '正在生成结构化操作方案…';
       if (!text) return;
-      box.innerHTML = '<div class="graph-harness-summary">' + _escapeHtml(text) + ' ▍</div>';
+      // T102：流式期间也走 Markdown 渲染，与结束后的 renderHarnessResult 同口径
+      //（公式/加粗边生成边成形，不再结束时「突然变好看」）；renderMarkdown 缺席
+      // 的异常环境退回纯转义。聊天区同步一条实时气泡（见 _harnessLiveBubble）。
+      const bodyHtml = typeof renderMarkdown === 'function'
+        ? renderMarkdown(text)
+        : _escapeHtml(text);
+      const html = bodyHtml + '<span class="graph-harness-stream-cursor" aria-hidden="true">▍</span>';
+      const box = document.getElementById('graphHarnessResult');
+      if (box) box.innerHTML = '<div class="graph-harness-summary">' + html + '</div>';
+      const bubble = _harnessLiveBubble();
+      if (bubble) {
+        const content = bubble.querySelector('.graph-harness-message-content');
+        if (content) content.innerHTML = html;
+        const chatBox = document.getElementById('graphHarnessChat');
+        if (chatBox && chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 80) {
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }
+      }
     };
     const onStreamEvent = (evt) => {
       if (!stillCurrent()) return;
@@ -461,6 +536,10 @@
           const streamed = streamBox ? streamBox.querySelector('.graph-harness-summary') : null;
           if (streamed) streamed.remove();
         }
+        // T103：换模型兜底的切换说明进历史（以前只是状态行一闪而过的 ⚠ 文案）
+        if (evt.stage === 'fallback') {
+          degradeNotes.push(String(evt.message).replace(/^[⚠⚠️\s]+/, ''));
+        }
         _setHarnessStatus(String(evt.message), 'running');
         return;
       }
@@ -472,6 +551,7 @@
     // T95 前端半边：失败自动换备用模型（用户开关，默认关）。开关关、或列表里没有
     // 别的模型时整个字段不上送（后端走无兜底行为）。
     const fallbackModels = _harnessFallbackEnabled() ? _harnessFallbackModels(model) : [];
+    let resultData = null;
     try {
       const resp = await fetch(HARNESS_API, {
         method: 'POST',
@@ -508,6 +588,7 @@
       });
       const data = await _readHarnessStreamResponse(resp, onStreamEvent);
       if (!stillCurrent()) return;
+      resultData = data;
       data._binding = requestBinding;
       if (!resp.ok) {
         throw new Error((data.errors && data.errors[0] && data.errors[0].reason) || 'harness 请求失败');
@@ -544,10 +625,15 @@
           if (typeof _reportHarnessUndo === 'function') _reportHarnessUndo();
         }
       }
+      // T103：本轮攒下的降级/换模型说明以引用块并进助手条目正文——状态行会被
+      // 下一条消息盖掉，历史才是「事后回看」的唯一载体
+      const degradeNoteBlock = degradeNotes.length
+        ? degradeNotes.map(n => '> ⚠️ ' + n).join('\n') + '\n\n'
+        : '';
       _appendHarnessHistory({
         id: _historyId(),
         role: 'assistant',
-        content: _harnessAssistantContent(data),
+        content: degradeNoteBlock + _harnessAssistantContent(data),
         instruction,
         summary: data.summary || '',
         operations: data.operations || [],
@@ -571,11 +657,54 @@
       }
     } catch (err) {
       if (!stillCurrent()) return;
-      restoreInstruction();
       if (err && err.name === 'AbortError') {
-        _setHarnessStatus('已取消', 'ok');
+        // T99：用户主动停止——半截回答不白生成。有可读正文（非 JSON 方案占位）就
+        // 存成一条带「已中断」标记的助手条目（渲染时带「▶ 从中断处继续」出口），
+        // 指令不回填输入框（续接走按钮；正文与指令都在历史里）；没收到正文的
+        // 停止维持旧行为：指令回填，状态「已停止」。
+        const partial = typeof _stripThinkText === 'function' ? _stripThinkText(streamText) : streamText;
+        const readable = partial && !/^\s*(\{|```)/.test(partial) && !partial.includes('```json')
+          ? partial.trim() : '';
+        if (readable) {
+          const abortNoteBlock = degradeNotes.length
+            ? degradeNotes.map(n => '> ⚠️ ' + n).join('\n') + '\n\n'
+            : '';
+          _appendHarnessHistory({
+            id: _historyId(),
+            role: 'assistant',
+            content: abortNoteBlock + readable + '\n\n*（生成被手动停止——可点「▶ 从中断处继续」接续）*',
+            instruction,
+            summary: '',
+            operations: [],
+            eventId: '',
+            _binding: requestBinding,
+            phase: harnessPhase,
+            decision: 'pending',
+            interrupted: true,
+            timestamp: Date.now(),
+          });
+          _setHarnessStatus('已停止：半截回答已保留在对话里', 'ok');
+        } else {
+          restoreInstruction();
+          _setHarnessStatus('已停止', 'ok');
+        }
+        // 打字机预览与实时气泡撤掉：内容已由中断条目接管，结果区不再留半截
+        const stopBox = document.getElementById('graphHarnessResult');
+        const stopPreview = stopBox ? stopBox.querySelector('.graph-harness-summary') : null;
+        if (stopPreview) stopPreview.remove();
+        _harnessRemoveLiveBubble();
       } else {
+        restoreInstruction();
+        // T103：错误详情存档（「复制错误详情」按钮的原料）
         const human = _harnessErrorToHuman(err && err.message ? err.message : String(err));
+        harnessLastError = {
+          ts: Date.now(),
+          model: (model && model.model) || '',
+          phase: harnessPhase,
+          instruction,
+          raw: (err && err.message) || String(err),
+          message: human,
+        };
         _setHarnessStatus('审阅失败：' + human, 'error');
         _showHarnessRetry('审阅失败：' + human);
         // T95 前端半边：401/密钥这类配置问题在结果区额外留一张醒目卡片——重试气泡
@@ -583,9 +712,14 @@
         if (/401|密钥/.test(human)) _showHarnessErrorCard(human);
         if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
         if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+        _harnessRemoveLiveBubble();
       }
     } finally {
       if (streamTimer) { clearTimeout(streamTimer); streamTimer = null; }
+      _harnessRemoveLiveBubble();
+      // T106：先停表再复位 busy（间隔回调自查 harnessBusy，顺序反了会在同一秒
+      // 边界上先跑一次「无数据停表」，丢掉调用数/token 摘要）
+      if (typeof _harnessStopProgressTick === 'function') _harnessStopProgressTick(resultData);
       if (!stillCurrent()) return;
       _setHarnessBusy(false);
       harnessSingleEvalId = null;
@@ -791,11 +925,11 @@
     return name || '未知操作';
   }
 
-  function _buildHumanReadableReport(ops) {
-    const list = Array.isArray(ops) ? ops : [];
-    if (!list.length) return '';
-    const MAX_PER_GROUP = 6;
-    const groups = [
+  // T100：操作分组的唯一真源——聊天报告（_buildHumanReadableReport）与结果区
+  // 可操作清单（harness-preview.js 的 _harnessOpRowHtml）共用这张表，两边分组
+  // 口径永不漂移（此前结果区是裸平铺，同一份 ops 两种呈现）。
+  function _harnessOpGroupDefs() {
+    return [
       { key: 'create_node', title: '新增' },
       { key: 'add_edge', title: '新增连线' },
       { key: 'update_node', title: '修改节点' },
@@ -807,6 +941,28 @@
       { key: 'update_recipe', title: '修改配方' },
       { key: 'delete_recipe', title: '删除配方' },
     ];
+  }
+
+  // 按分组表把 ops 切成 [{key,title,items:[{op,index}]}]（index＝在原 ops 数组里
+  // 的下标，结果区勾选框的 data-op-index 依赖它，绝不许重排后错位）
+  function _harnessGroupedOps(ops) {
+    const list = Array.isArray(ops) ? ops : [];
+    const out = [];
+    for (const def of _harnessOpGroupDefs()) {
+      const items = [];
+      list.forEach((op, index) => {
+        if ((op.op || op.type) === def.key) items.push({ op, index });
+      });
+      if (items.length) out.push({ key: def.key, title: def.title, items });
+    }
+    return out;
+  }
+
+  function _buildHumanReadableReport(ops) {
+    const list = Array.isArray(ops) ? ops : [];
+    if (!list.length) return '';
+    const MAX_PER_GROUP = 6;
+    const groups = _harnessOpGroupDefs();
     const counts = {};
     list.forEach(op => { const k = op.op || op.type || ''; counts[k] = (counts[k] || 0) + 1; });
     const countParts = [];

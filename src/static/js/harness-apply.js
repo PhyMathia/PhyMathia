@@ -350,6 +350,9 @@
         reportMode,
         ops,
         before,
+        // T101：配方库前态随批次上报（该批动过配方才非 null）——跨批次时间线
+        // 回滚据此还原配方库，与单槽 checkpoint 的 recipesBefore 兜底同口径
+        recipesBefore,
         summary: (harnessResult && harnessResult.summary) || '',
         // review 响应里是 snake_case 的 event_id（harnessResult 直接存原始 result），
         // 驼峰 eventId 留给注入/旧形态，两者都认，别让归因链静默断掉
@@ -474,6 +477,8 @@
         event_id: info.eventId || '',
         applied_ops: Array.isArray(info.ops) ? info.ops : [],
         before_snapshot: info.before || null,
+        // T101：配方三件套批次的前态副本；空/非数组发 null（后端守卫同款，不落字段）
+        recipes_before: Array.isArray(info.recipesBefore) && info.recipesBefore.length ? info.recipesBefore : null,
         mode,
         summary: info.summary || '',
       });
@@ -603,6 +608,7 @@
       return;
     }
     let before = null;
+    let recipesBefore = null;
     try {
       const url = '/api/harness/graph/events?session_id=' + encodeURIComponent(phiId)
         + '&event_id=' + encodeURIComponent(String(eventId || ''));
@@ -610,6 +616,7 @@
       const data = resp.ok ? await resp.json() : null;
       const evt = data && Array.isArray(data.events) ? data.events[0] : null;
       before = evt && evt.before_snapshot ? evt.before_snapshot : null;
+      recipesBefore = evt && Array.isArray(evt.recipes_before) ? evt.recipes_before : null;
     } catch (err) {
       before = null;
     }
@@ -617,16 +624,47 @@
       _setHarnessStatus('找不到该批次的无损前态，无法回滚', 'error');
       return;
     }
-    _restoreHarnessBeforeSnapshot(before, Number(seq) || 0);
+    // T101：先把「将被回滚的批次」对应的历史条目 decision 翻成已忽略（必须在
+    // 上报 undo 之前取批次列表——undo 事件落盘后这批就不在有效栈里了）
+    try { await _harnessFlipHistoryDecisionsFromSeq(Number(seq) || 0); } catch (err) {}
+    _restoreHarnessBeforeSnapshot(before, Number(seq) || 0, recipesBefore);
+  }
+
+  // 时间线回滚的语义补全（T101）：被回滚批次（seq >= undone_from_seq 的有效批次，
+  // 对应关系＝applied 事件的 event_id 就是产生那批 ops 的 review 事件 id）如果
+  // 历史条目还挂着 decision='keep'，一律翻成 discard——画布已回到批次之前，历史
+  // 里再标「已保留」就是在说谎。fire-and-forget，失败只走 catch 静默。
+  async function _harnessFlipHistoryDecisionsFromSeq(seq) {
+    if (!(Number(seq) > 0)) return;
+    const batches = await _harnessEffectiveAppliedBatches();
+    const poppedIds = new Set(batches
+      .filter(b => (Number(b.seq) || 0) >= seq && b.event_id)
+      .map(b => String(b.event_id)));
+    if (!poppedIds.size) return;
+    let changed = false;
+    (harnessHistory || []).forEach(entry => {
+      if (entry && entry.role === 'assistant' && entry.decision === 'keep'
+        && poppedIds.has(String(entry.eventId || ''))) {
+        entry.decision = 'discard';
+        entry.discardedAt = Date.now();
+        changed = true;
+      }
+    });
+    if (changed) _saveHarnessHistory().then(_renderHarnessChat);
   }
 
   // 时间线整图回滚：恢复语义与 undoGraphHarness 同口径（快照整份写回当前画布，
   // 与 undoGraphHarness 一样用 _sessionId()——改图只落在当前打开的画布上）。
   // 回滚后面板回到「未应用」态，并上报 undo 事件（上报完再刷新时间线，别让列表
-  // 抢在读请求前拿到旧状态）。
-  function _restoreHarnessBeforeSnapshot(before, undoneFromSeq) {
+  // 抢在读请求前拿到旧状态）。recipesBefore（T101）：批次动过配方库时随前态
+  // 还原——不带就说明该批次没动配方，别碰当前配方库。
+  function _restoreHarnessBeforeSnapshot(before, undoneFromSeq, recipesBefore) {
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'undo', summary: '撤销时间线回滚' });
     if (typeof window.saveGraphState === 'function') window.saveGraphState(_sessionId(), before);
+    if (Array.isArray(recipesBefore) && typeof setUserRecipes === 'function') {
+      setUserRecipes(recipesBefore);
+      if (typeof _recipeRefreshAddPanel === 'function') _recipeRefreshAddPanel();
+    }
     if (typeof window.flushGraphStateServerSave === 'function') window.flushGraphStateServerSave();
     if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
@@ -777,6 +815,8 @@
   window.runGraphHarness = runGraphHarness;
 window.runGraphHarnessWithText = runGraphHarnessWithText;
 window.undoLastHarnessEdit = undoLastHarnessEdit;
+  // T99：中断条目上的「▶ 从中断处继续」内联 onclick 走这里
+  window.continueHarnessInterrupted = continueHarnessInterrupted;
   window.runGraphHarnessWithFocus = runGraphHarnessWithFocus;
   window.chooseHarnessClarifyNode = chooseHarnessClarifyNode;
   window.confirmHarnessClarifyInput = confirmHarnessClarifyInput;

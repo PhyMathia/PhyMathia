@@ -5,7 +5,9 @@
 - apply_report / undo_report / graph/events 的快照剥离、types 过滤、event_id 精确取；
 - feedback 双写（feedback json + 会话事件）与非法 phi_session_id 的降级；
 - 坏 JSONL 行的跳过与 seq 稳定性；journal 截长；usage 条目的 session_id/event_id；
-- resolve 端点的 endpoint='resolve' 事件。
+- resolve 端点的 endpoint='resolve' 事件；
+- apply_report 的 recipes_before（T101）：合法 list 落盘/列表剥离/event_id 带出，
+  形状不对与超上限不落字段。
 
 事件目录用 harness.events.set_events_dir 注入 tmp（api.py 按名导入 append/read，
 函数体动态读 events 模块全局，注入对路由路径同样生效）；feedback 的 DATA_DIR
@@ -506,3 +508,69 @@ def test_read_events_tail_limit_and_type_filter(events_dir):
     reviews = events_mod.read_events(SID, types=["review"])
     assert [e["id"] for e in reviews] == ["evt_1", "evt_3"]
     assert all(e["type"] == "review" for e in reviews)
+
+
+# ---- 13. T101 recipes_before：合法 list 落盘 / 列表剥离 / event_id 带出 ----
+
+
+def test_apply_report_recipes_before_stored_and_stripped(client, events_dir):
+    recipes = [{"id": "r1", "name": "泰勒展开", "formulas": ["f(a+h)=f(a)+f'(a)h"]}]
+    response = client.post("/api/harness/graph/apply_report", json={
+        "session_id": SID, "event_id": "evt_review_r1",
+        "applied_ops": [GEN_OPS[0]], "before_snapshot": SNAPSHOT,
+        "recipes_before": recipes, "mode": "all", "summary": "带配方库前态的批次",
+    })
+    assert response.status_code == 200, response.text
+    evt_id = response.json()["event_id"]
+    assert evt_id
+
+    # 事件文件里确实存了该字段（读原始 JSONL，不经 read_events 的剥字段逻辑）
+    raw = [json.loads(line) for line
+           in (events_dir / f"{SID}.jsonl").read_text(encoding="utf-8").splitlines()
+           if line.strip()]
+    assert len(raw) == 1
+    assert raw[0]["recipes_before"] == recipes
+
+    # 列表查询（types=applied）：recipes_before 与 before_snapshot 一并剥掉
+    listed = client.get("/api/harness/graph/events",
+                        params={"session_id": SID, "types": "applied"}).json()["events"]
+    assert len(listed) == 1
+    assert "recipes_before" not in listed[0]
+    assert "before_snapshot" not in listed[0]
+
+    # include_snapshot=1：recipes_before 跟随同一开关带出
+    with_snap = client.get("/api/harness/graph/events",
+                           params={"session_id": SID, "types": "applied",
+                                   "include_snapshot": "1"}).json()["events"]
+    assert with_snap[0]["recipes_before"] == recipes
+    assert with_snap[0]["before_snapshot"] == SNAPSHOT
+
+    # event_id 精确查询（隐含 include_snapshot）：带出
+    one = client.get("/api/harness/graph/events",
+                     params={"session_id": SID, "event_id": evt_id}).json()["events"]
+    assert len(one) == 1
+    assert one[0]["recipes_before"] == recipes
+    assert one[0]["before_snapshot"] == SNAPSHOT
+
+
+# ---- 14. T101 recipes_before：形状不对 / 空 list / 超上限一律不落字段 ----
+
+
+def test_apply_report_recipes_before_bad_shapes_dropped(client, events_dir):
+    for bad in ({"r1": {"name": "泰勒展开"}}, "泰勒展开", None):
+        response = client.post("/api/harness/graph/apply_report", json={
+            "session_id": SID, "applied_ops": [GEN_OPS[0]], "recipes_before": bad})
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "ok"
+        evt = events_mod.read_events(SID, event_id=response.json()["event_id"])[0]
+        assert "recipes_before" not in evt
+
+
+def test_apply_report_recipes_before_over_cap_dropped(client, events_dir):
+    for bad in ([], [{"id": f"r{i}"} for i in range(201)]):
+        response = client.post("/api/harness/graph/apply_report", json={
+            "session_id": SID, "applied_ops": [], "recipes_before": bad})
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "ok"
+        evt = events_mod.read_events(SID, event_id=response.json()["event_id"])[0]
+        assert "recipes_before" not in evt

@@ -76,7 +76,8 @@ def read_events(
     types：按 type 过滤（逗号分隔的集合）；event_id：精确取一条（隐含带
     before_snapshot，撤销回滚要取的就是它）；limit：从尾部截取最近 N 条；
     include_snapshot：applied 事件默认剥掉 before_snapshot（列表只要元信息，
-    整图快照只在真正回滚时取）。
+    整图快照只在真正回滚时取）；T101 起 recipes_before（配方库前态）跟随
+    同一开关剥离/带出。
     """
     if not valid_session_id(session_id):
         return []
@@ -105,7 +106,10 @@ def read_events(
         if type_set and str(evt.get("type") or "") not in type_set:
             continue
         if not include_snapshot and not event_id:
-            evt = {k: v for k, v in evt.items() if k != "before_snapshot"}
+            # 列表模式剥大字段：before_snapshot 整图快照 + recipes_before 配方库
+            # 前态（T101，跟随同一开关）——列表只要元信息，回滚时走 event_id 精确取
+            evt = {k: v for k, v in evt.items()
+                   if k not in ("before_snapshot", "recipes_before")}
         events.append(evt)
     if not event_id:
         events = events[-limit:]

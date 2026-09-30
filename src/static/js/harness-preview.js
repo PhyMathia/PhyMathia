@@ -67,12 +67,16 @@
         ? '<div class="graph-harness-empty graph-harness-chat-answer">本次为直接回答，未修改图</div>'
         : '<div class="graph-harness-empty">模型没有提出可执行修改</div>';
     } else {
-      html += ops.map((op, index) => ''
-        + '<label class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
-        + '<input type="checkbox" checked data-op-index="' + index + '">'
-        + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops)) + '</span>'
-        + '<span class="graph-harness-op-reason">' + _escapeHtml(op.reason || '') + '</span>'
-        + '</label>').join('');
+      // T100：可操作清单按类型分组（与聊天报告共用 _harnessGroupedOps），update/
+      // delete 条目附「原文 → 建议文」内容级 diff，不再让用户盲审
+      const groups = typeof _harnessGroupedOps === 'function'
+        ? _harnessGroupedOps(ops)
+        : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
+      html += groups.map(group => ''
+        + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
+        + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
+        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops)).join('')
+      ).join('');
     }
     resultBox.innerHTML = html;
     // 渲染结果摘要中的公式（<formula>/$$..$$ → KaTeX）
@@ -97,6 +101,60 @@
     const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
     if (applyAllBtn) applyAllBtn.disabled = false;
     document.getElementById('graphHarnessApplyActions')?.toggleAttribute('hidden', !ops.length);
+  }
+
+  // T100：单条操作行。主体结构与旧版一致（label>input+main+reason；data-op-index
+  // 是 _selectedOps 回查 harnessResult.operations 的唯一依据，绝不重排），第三行
+  // 起为内容级 diff：
+  // - update_node：「原文 → 建议文」逐字段对照（原文取自当前画布 state——评审
+  //   阶段应用还没发生，节点正文还是旧文；本批新建再修改的节点取不到原文，
+  //   只显示「→ 建议文」）
+  // - delete_node：被删正文的摘录，删什么让用户看着决定
+  function _harnessOpDiffHtml(op) {
+    const name = op.op || op.type || '';
+    if (name !== 'update_node' && name !== 'delete_node') return '';
+    const nodes = typeof _graphNodes === 'function' ? _graphNodes() : [];
+    const rawId = String(op.id || op.label || '');
+    const node = nodes.find(n => String(n.id) === rawId) || null;
+    const clip = (t, n) => {
+      const s = String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+      return s.length > n ? s.slice(0, n) + '…' : s;
+    };
+    if (name === 'delete_node') {
+      if (!node) return '';
+      const parts = [];
+      if (node.content) parts.push(clip(node.content, 60));
+      if (node.formula) parts.push('公式 ' + clip(node.formula, 40));
+      if (!parts.length) return '';
+      return '<span class="graph-harness-op-diff"><span class="graph-harness-op-diff-del">将删除：'
+        + _escapeHtml(parts.join(' · ')) + '</span></span>';
+    }
+    const patch = (op.patch && typeof op.patch === 'object') ? op.patch : {};
+    const lines = [];
+    const fields = [['label', '标题'], ['content', '正文'], ['formula', '公式']];
+    for (const pair of fields) {
+      const k = pair[0];
+      const label = pair[1];
+      const next = patch[k];
+      if (next === undefined || next === null || next === '') continue;
+      const prev = node
+        ? (k === 'label' ? (node.label || node.title || '') : (node[k] || ''))
+        : '';
+      if (String(prev) === String(next)) continue;
+      lines.push('<span class="graph-harness-op-diff-old">' + label + '：' + _escapeHtml(clip(prev, 50)) + '</span>'
+        + '<span class="graph-harness-op-diff-new">' + label + ' → ' + _escapeHtml(clip(next, 50)) + '</span>');
+    }
+    if (!lines.length) return '';
+    return '<span class="graph-harness-op-diff">' + lines.join('') + '</span>';
+  }
+
+  function _harnessOpRowHtml(op, index, ops) {
+    return '<label class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
+      + '<input type="checkbox" checked data-op-index="' + index + '">'
+      + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops)) + '</span>'
+      + '<span class="graph-harness-op-reason">' + _escapeHtml(op.reason || '') + '</span>'
+      + _harnessOpDiffHtml(op)
+      + '</label>';
   }
 
   function _selectedOps() {
