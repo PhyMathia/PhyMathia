@@ -25,9 +25,16 @@ function element() {
 const harnessModules = ['config.js', 'utils.js', 'session.js', 'harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
 
 // 只替换视图与网络边界；快照/应用/保存/加载仍是真实源码。
+// Φ 会话解耦（2026-09-30）：夹具预置一个绑定画布 A 的 phi 会话并落迁移标记，
+// 使 harness.js 顶层 _initPhiSessions 走「已迁移＋已有会话」的静默路径（不发任何请求）。
 function harnessFixture({ kv = {} } = {}) {
   const elements = new Map(), storage = new Map(), statuses = [], calls = [];
   let uuid = 0;
+  storage.set('phymathia_phi_migration_done', '1');
+  storage.set('phymathia_phi_sessions', JSON.stringify({
+    phi_fix: { id: 'phi_fix', title: 'Φ 会话', boundSid: 'A', createdAt: 0, updatedAt: 0 },
+  }));
+  storage.set('phymathia_current_phi_session', 'phi_fix');
   const s = {
     console: { log() {}, warn() {}, error() {} },
     setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {}, addEventListener() {},
@@ -156,7 +163,7 @@ test('legacy history entry with full-JSON version migrates and applies', async (
     operations: [{ op: 'update_node', id: 'custom', patch: { content: 'patched' } }],
     _binding: { sessionId: 'A', graphVersion: JSON.stringify(legacyGraph), epoch: 0 },
   };
-  storage.set('phymathia_harness_history_A', JSON.stringify([entry]));
+  storage.set('phymathia_harness_history_phi_fix', JSON.stringify([entry]));
   await s._loadHarnessHistory();
   await settle();
   const binding = clone(evaluate(s, 'harnessHistory[0]._binding'));
@@ -177,7 +184,7 @@ test('migrated legacy entry is still strict about content changes', async () => 
     operations: [{ op: 'update_node', id: 'custom', patch: { content: 'patched' } }],
     _binding: { sessionId: 'A', graphVersion: JSON.stringify(clone(s.getGraphState('A'))), epoch: 0 },
   };
-  storage.set('phymathia_harness_history_A', JSON.stringify([entry]));
+  storage.set('phymathia_harness_history_phi_fix', JSON.stringify([entry]));
   await s._loadHarnessHistory();
   await settle();
   const edited = s.getGraphState('A');
@@ -192,7 +199,7 @@ test('migrated legacy entry is still strict about content changes', async () => 
 test('untagged legacy entry keeps its session and applies', async () => {
   const { s, storage } = harnessFixture();
   seedGraph(s);
-  storage.set('phymathia_harness_history_A', JSON.stringify([{
+  storage.set('phymathia_harness_history_phi_fix', JSON.stringify([{
     id: 'legacy-3', role: 'assistant', decision: 'pending',
     operations: [{ op: 'update_node', id: 'custom', patch: { content: 'patched' } }],
   }]));
@@ -210,14 +217,14 @@ test('untagged legacy entry keeps its session and applies', async () => {
 test('migration must not push local history to the server before it is read', async () => {
   const { s, storage, calls } = harnessFixture();
   seedGraph(s);
-  storage.set('phymathia_harness_history_A', JSON.stringify([{
+  storage.set('phymathia_harness_history_phi_fix', JSON.stringify([{
     id: 'legacy-5', role: 'assistant', decision: 'pending',
     operations: [{ op: 'update_node', id: 'custom', patch: { content: 'patched' } }],
   }]));
   await s._loadHarnessHistory();
   await settle();
   assert.equal(calls.filter(c => c.method === 'POST').length, 0, 'local migration must not POST over a not-yet-read server copy');
-  assert.match(storage.get('phymathia_harness_history_A'), /"sessionId":"A"/, 'migrated entry must still be cached locally');
+  assert.match(storage.get('phymathia_harness_history_phi_fix'), /"sessionId":"A"/, 'migrated entry must still be cached locally');
 });
 
 // ---- 6. 指纹短小 + 迁移后存储不再背画布副本 ----
@@ -233,11 +240,11 @@ test('binding stores a short fingerprint instead of a canvas copy', async () => 
 
   const legacy = { id: 'legacy-4', role: 'assistant', decision: 'pending', operations: [],
     _binding: { sessionId: 'A', graphVersion: JSON.stringify(clone(s.getGraphState('A'))), epoch: 0 } };
-  storage.set('phymathia_harness_history_A', JSON.stringify([legacy]));
-  const before = storage.get('phymathia_harness_history_A').length;
+  storage.set('phymathia_harness_history_phi_fix', JSON.stringify([legacy]));
+  const before = storage.get('phymathia_harness_history_phi_fix').length;
   await s._loadHarnessHistory();
   await settle();
-  const after = storage.get('phymathia_harness_history_A').length;
+  const after = storage.get('phymathia_harness_history_phi_fix').length;
   assert.ok(after < before / 10, `stored history must shrink after migration (${before} -> ${after})`);
 });
 
@@ -253,7 +260,7 @@ test('history save survives a localStorage quota error', async () => {
   };
   await s._saveHarnessHistory();
   await settle();
-  assert.ok(calls.some(c => c.url.includes('harness_history%3AA') && c.method === 'POST'),
+  assert.ok(calls.some(c => c.url.includes('harness_history%3Aphi_fix') && c.method === 'POST'),
     'server sync must still happen when the local cache cannot be written');
 });
 

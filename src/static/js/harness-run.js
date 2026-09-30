@@ -135,7 +135,13 @@
   async function runGraphHarness(phase = 'normal', opts) {
     if (harnessBusy) return;
     const requestBinding = _harnessBinding();
-    const stillCurrent = () => requestBinding.sessionId === _sessionId() && requestBinding.epoch === harnessSessionEpoch;
+    // 并发守卫（解耦后 2026-09-30）：phiId/epoch 只在 Φ 会话切换/清空时变，切画布
+    // 不再打断纯问答；改图类请求仍要求「生成时绑定的画布」始终是当前打开的画布
+    // （预览与应用都落在实时视图与撤销栈上，跨画布落笔是事故）。
+    let requestIsPureChat = false;
+    const stillCurrent = () => requestBinding.phiId === _phiId()
+      && requestBinding.epoch === harnessSessionEpoch
+      && (!requestBinding.sessionId || requestIsPureChat || requestBinding.sessionId === _sessionId());
     const instruction = String(document.getElementById('graphHarnessInstruction')?.value || '').trim();
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = '';
@@ -159,15 +165,35 @@
       restoreInstruction();
       return;
     }
-    const state = _graphState() || {};
+    // 解耦后（2026-09-30）：改图只在「Φ 会话绑定的画布 = 当前打开画布」时可用。
+    // 未绑定/绑了别的画布时，快照、焦点解析、评价节点全部跳过，只放行纯问答，
+    // 改图类指令拦下并给出去向——绝不能把 A 画布的结果画到 B 画布上。
+    const boundSid = _harnessBoundSid();
+    const canvasReady = !!(boundSid && boundSid === _sessionId());
+    const state = canvasReady ? (_harnessGraphState() || {}) : {};
     const deleted = new Set(Object.keys(state.harnessDeleted || {}));
-    const evalNodes = _graphNodes().filter(node => node.kind === 'ai_eval' && !deleted.has(node.id));
+    const evalNodes = canvasReady
+      ? _graphNodes().filter(node => node.kind === 'ai_eval' && !deleted.has(node.id))
+      : [];
     const requestedPhase = phase || 'normal';
     harnessPhase = requestedPhase === 'normal'
       ? _detectHarnessPhase(instruction, evalNodes)
       : requestedPhase;
     harnessLastInstruction = instruction;
     harnessLastPhase = harnessPhase;
+    // 改图门槛（解耦后）：会话未绑定画布、或绑定的不是当前打开的画布时，
+    // 除答疑/纯提问外一律拦下。此时不改历史——消息没发出去，不该留孤气泡。
+    if (!canvasReady && harnessPhase !== 'chat' && !_isHarnessPureQuestion(instruction)) {
+      const boundInfo = _currentPhiSession();
+      const mismatchTitle = boundInfo && boundInfo.boundSid
+        ? ((typeof window.getSessionById === 'function' && window.getSessionById(boundInfo.boundSid) || {}).title || '已删除画布')
+        : '';
+      _setHarnessStatus(boundSid
+        ? '该 Φ 会话绑定的是画布《' + mismatchTitle + '》：请切换到该画布再改图（会话菜单可换绑/解绑）'
+        : '该 Φ 会话未绑定画布，只能问答。可在会话菜单把它绑定到当前画布', 'error');
+      restoreInstruction();
+      return;
+    }
     // 澄清重跑：首轮已记过这条 user 消息（随后被澄清面板打断、没有 assistant 回复跟随），
     // 再记一条会出现连续两条一模一样的用户气泡
     const lastEntry = harnessHistory.length ? harnessHistory[harnessHistory.length - 1] : null;
@@ -192,8 +218,10 @@
       return;
     }
     let focusIds = [];
-    // 答疑模式是纯问答的显式版：跳过焦点解析、空画布放行、pure_chat 置位全部随 pureQuestion 走
-    const pureQuestion = harnessPhase === 'chat' || _isHarnessPureQuestion(instruction);
+    // 答疑模式是纯问答的显式版：跳过焦点解析、空画布放行、pure_chat 置位全部随 pureQuestion 走。
+    // 解耦后：未绑定/绑了别的画布的会话一律按纯问答走（空快照），不碰当前画布。
+    const pureQuestion = harnessPhase === 'chat' || !canvasReady || _isHarnessPureQuestion(instruction);
+    requestIsPureChat = pureQuestion;
     if (presetFocusIds) {
       focusIds = presetFocusIds;
     } else if (harnessPhase !== 'preset' && !harnessSingleEvalId && !pureQuestion) {
@@ -242,11 +270,14 @@
     // 大陆 v3（Φ 摆渡）：审阅快照顺带当前画布的跨画布共享点（60s 缓存、失败
     // 静默——大陆查空是正常路径）；evaluate/apply 提示词不消费它，不注入。
     _setHarnessBusy(true);
-    const continentData = await _harnessFetchContinent();
+    // 大陆共享点只对「绑定且打开中」的画布有意义；纯问答不拉（60s 缓存、失败静默）
+    const continentData = canvasReady ? await _harnessFetchContinent() : null;
     if (!stillCurrent()) return;
     _setHarnessBusy(false);
-    const snapshot = buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
-      harnessPhase === 'normal' ? continentData : null);
+    const snapshot = canvasReady
+      ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
+          harnessPhase === 'normal' ? continentData : null)
+      : _emptyHarnessSnapshot();
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {

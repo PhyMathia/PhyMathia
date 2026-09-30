@@ -239,7 +239,7 @@
   }
 
   function _buildHarnessPreview(ops) {
-    const state = _graphState() || {};
+    const state = _harnessGraphState() || {};
     const existingNodes = _graphNodes();
     const existingById = new Map(existingNodes.map(node => [node.id, node]));
     const existingIds = new Set(existingById.keys());

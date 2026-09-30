@@ -544,7 +544,9 @@
     function setCurrentSessionId(id) {
       localStorage.setItem(STORAGE_KEY_CURRENT, id);
       currentSessionId = id;
-      if (typeof window.resetHarnessSession === 'function') window.resetHarnessSession();
+      // Φ 会话与画布解耦（2026-09-30）：切画布不再重置 Φ 对话，只轻量刷新 Φ 侧显示
+      // （清旧画布预览/差异高亮、刷新绑定信息与菜单）
+      if (typeof window.notifyHarnessCanvasChanged === 'function') window.notifyHarnessCanvasChanged();
       _saveCurrentSessionToServer(id);
     }
 
@@ -624,6 +626,8 @@
       if (typeof window.deleteQuizBankBySession === 'function') window.deleteQuizBankBySession(id);
       delete sessions[id];
       saveSessions();
+      // Φ 会话解耦（2026-09-30）：删画布不动 Φ 对话，只解绑（对话保留、可换绑）
+      if (typeof window.phiCanvasDeleted === 'function') window.phiCanvasDeleted(id);
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
       if (typeof loadFormulas === 'function') loadFormulas();
@@ -1022,6 +1026,8 @@
       // 3. 清空 localStorage 中所有 phymathia 相关数据
       // 键清单与 memory.js memoryConfirmClear 对齐：题库 phymathia_quiz_bank 与
       // 检测素材源偏好 phymathia_quiz_source 此前漏清，清空后仍残留在全局题库
+      // 注意：Φ 会话键（phi_sessions / current_phi_session / harness_history_phi_*）
+      // 刻意不在清单里——清画布不动 Φ 对话（2026-09-30 解耦），只解绑
       const keys = Object.keys(localStorage).filter(k =>
         k.startsWith('phymathia_session_') ||
         k.startsWith('phymathia_msgs_') ||
@@ -1046,6 +1052,7 @@
       try { fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE' }).catch(() => {}); } catch (e) {}
 
       // 4. 创建新会话并刷新 UI
+      if (typeof window.phiCanvasesCleared === 'function') window.phiCanvasesCleared();
       createNewSession();
       renderSessionList();
     }

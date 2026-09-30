@@ -191,6 +191,10 @@ function sessionsFixture(extra = []) {
 const harnessModules = ['graph-recipes.js', 'harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
 function harnessFixture() {
   const f = sessionsFixture(harnessModules); const { s } = f;
+  // Φ 会话解耦（2026-09-30）：真实页面 init 必然存在一个（默认绑当前画布的）当前 Φ
+  // 会话，夹具预置绑画布 A 的会话对齐该不变量；并落迁移标记防止加载期迁移写存储。
+  // 只补环境，不动任何 F1–F5 行为断言。
+  evaluate(f.s, "phiSessions={phi_fix:{id:'phi_fix',title:'Φ 会话',boundSid:'A',createdAt:0,updatedAt:0}}; currentPhiId='phi_fix'; localStorage.setItem('phymathia_phi_migration_done','1');");
   // View/render boundaries only; snapshot/apply/save/load/history remain actual source.
   s.getGraphViewNodes = () => s.getGraphState().customNodes;
   s.getGraphViewEdges = () => [];
