@@ -6791,6 +6791,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     inset 0 0 0 1px var(--pm-ring),
     0 14px 36px var(--pm-shadow) !important;
 }
+/* 端口点填充（2026-10-01 用户指「终点填充太黑」）：输入端口点基础配方是深藏青 #0b1020，
+   深色主题下的羊皮纸卡上就是个黑窟窿——填充改混 --ink-amber 的做旧暖白，纸色方向；
+   描边与连线锚仍走 --port-color 属性色，浅色主题的 #fffdf7 也一并归入暖调。 */
+[data-node-skin="parchment"] .graph-port-dot {
+  background: color-mix(in srgb, var(--ink-amber) 18%, #fffdf7) !important;
+}
 
 /* ---------- 皮肤 5：candy 糖果磨砂 ----------
  * 奶白磨砂玻璃（真 backdrop-filter）＋按属性色着色的马卡龙柔光；属性色全部粉彩化（色相保留）。
@@ -6896,4 +6902,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   box-shadow:
     0 0 24px color-mix(in srgb, var(--node-attr) 12%, transparent),
     0 14px 38px var(--cd-shadow) !important;
+}
+/* 端口点填充（2026-10-01 同羊皮手稿）：奶白磨砂卡上的深藏青点显黑脏——填充改奶白，
+   与「奶白磨砂」的材质名对齐；马卡龙描边仍走 --port-color。 */
+[data-node-skin="candy"] .graph-port-dot {
+  background: #fffdf7 !important;
 }
