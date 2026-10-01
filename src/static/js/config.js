@@ -3,6 +3,10 @@ const APP_VERSION = '1.5.1';
 
 // ====== 存储键名常量 ======
 const STORAGE_KEY_THEME = 'phymathia_theme';
+// 主题翻转慢光栅判定（2026-10-01）：首切 LoAF 探测判慢机后落值（存判定时间戳，ms），
+// 下次启动直接预挂 node-blur-lite——否则慢机每个会话的第一次切换都先吃一遍
+// 磨砂重算风暴、探测才生效（用户实报「还是卡」的主因之一）。30 天过期重探，机器升级自愈。
+const STORAGE_KEY_FLIP_SLOW = 'phymathia_flip_slow_raster';
 // 节点皮肤模板（T128）：全局键，存当前模板 key（aurora=默认极光磨砂），与深浅主题同款机制
 const STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
@@ -115,7 +119,9 @@ const UI_ICON_SVG = {
   // 靠 fill="currentColor" 吃按钮的墨色（hover/危险色照样跟）。
   pause: makeLineIcon('<path d="M9 5v14"></path><path d="M15 5v14"></path>'),
   play: makeLineIcon('<path d="M7 4.8v14.4L19 12z"></path>'),
-  stop: makeLineIcon('<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"></rect>')
+  stop: makeLineIcon('<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"></rect>'),
+  // 知识面板「手动收藏」来源标记——线稿五角星，与 sparkles（AI 提取）在轮廓上区分得开
+  star: makeLineIcon('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"></path>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,
