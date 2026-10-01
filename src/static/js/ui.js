@@ -1702,10 +1702,12 @@ function _getInitialTheme() {
 
 let currentTheme = _getInitialTheme();
 
-// 主题切换窗口（2026-10-01 渐变整体删除后保留）：变量过渡、背景交叉淡入已从源头
-// 删除（styles.css / 本文件 updateBgImage），窗口仍负责两件事——①掐掉组件自有的
-// hover 过渡（否则翻转时各补一段迷你淡变）；②窗口内摘节点卡磨砂（styles.css），
-// 翻转帧不重算全量 blur，650ms 后恢复、一次付清。
+// 主题切换窗口（2026-10-01 渐变整体删除后保留，当天再收窄为单职责）：只负责掐掉
+// 组件自有的 hover 过渡（否则翻转时各补一段迷你淡变），250ms 足够。原「窗口内摘
+// 节点卡磨砂」已删：它防的是交叉淡入期间背景逐帧变、磨砂跟着逐帧重算的风暴，
+// 渐变删除后背景每次切换只换一次、磨砂只重算一次，摘除已无收益，反而让 candy
+// 卡片窗口内失磨砂、结束再弹回（用户实报「切换后样式晚零点几秒」）。慢机兜底
+// 仍是 node-blur-lite 首切探测。
 let _themeSwitchTimer = null;
 let _themeSwitchAuroraTimer = null;
 
@@ -1734,20 +1736,26 @@ function _probeFlipCost() {
 function applyTheme(theme) {
   const root = document.documentElement;
   const prevTheme = root.getAttribute('data-theme');
-  root.classList.add('theme-switching');
-  // 切换窗口内让路（与画布拖拽/AI 流式同一 setFloatingSymbolsPaused 计数口径）：
-  // 翻转主题会让全部玻璃载体整帧重绘，漂移+符号在同一帧预算里叠加实测爆出
-  // 200-380ms 长帧；暂停 700ms 盖过 650ms 切换窗口全程，aurora-paused 由计数器自动挂上。
-  if (typeof window.setFloatingSymbolsPaused === 'function') {
-    window.setFloatingSymbolsPaused(true);
-    clearTimeout(_themeSwitchAuroraTimer);
-    _themeSwitchAuroraTimer = setTimeout(() => window.setFloatingSymbolsPaused(false), 700);
+  // 只在真实翻转时挂切换窗口：启动时 applyTheme 也走这里、prevTheme 为 null——
+  // 原先无差别挂窗口，candy 皮肤开机头几百 ms 节点卡也没磨砂（与切换后弹回同源）。
+  const flipped = prevTheme !== null && prevTheme !== theme;
+  if (flipped) {
+    root.classList.add('theme-switching');
+    // 切换窗口内让路（与画布拖拽/AI 流式同一 setFloatingSymbolsPaused 计数口径）：
+    // 翻转主题会让全部玻璃载体整帧重绘，漂移+符号在同一帧预算里叠加实测爆出
+    // 200-380ms 长帧；暂停 500ms 盖过 250ms 切换窗口全程，aurora-paused 由计数器自动挂上。
+    if (typeof window.setFloatingSymbolsPaused === 'function') {
+      window.setFloatingSymbolsPaused(true);
+      clearTimeout(_themeSwitchAuroraTimer);
+      _themeSwitchAuroraTimer = setTimeout(() => window.setFloatingSymbolsPaused(false), 500);
+    }
+    // 250ms ≈ 15 帧：类与 data-theme 同任务挂上，hover 过渡在唯一一次重算里就被掐死
+    if (_themeSwitchTimer) clearTimeout(_themeSwitchTimer);
+    _themeSwitchTimer = setTimeout(() => root.classList.remove('theme-switching'), 250);
   }
-  if (_themeSwitchTimer) clearTimeout(_themeSwitchTimer);
-  _themeSwitchTimer = setTimeout(() => root.classList.remove('theme-switching'), 650);
   currentTheme = theme;
   root.setAttribute('data-theme', theme);
-  if (!_flipProbeDone && prevTheme && prevTheme !== theme) {
+  if (flipped && !_flipProbeDone) {
     _flipProbeDone = true;
     _probeFlipCost();
   }
