@@ -1001,5 +1001,35 @@ class BuildContinentDomainGateTest(unittest.TestCase):
         self.assertLessEqual(len(out["domainList"]), 32)
 
 
+class BuildContinentCrossSessionItemsTest(unittest.TestCase):
+    """T146 知识按标题全局去重后条目带 sessionIds 多归属，大陆必须把这张卡算进
+    每一座相关岛、共享概念按全部归属判定——否则跨画布的「共享概念」信号被去重
+    一起压掉（城市/亲缘全靠跨会话条目活着）。"""
+
+    def test_merged_item_counts_for_both_islands_and_shares(self):
+        items = {
+            "k1": dict(_item("k1", S1, "简谐运动", created=1), sessionIds=[S1, S2]),
+            "k2": _item("k2", S2, "阻尼振动举例", created=2),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertEqual({c["sessionId"] for c in out["clusters"]}, {S1, S2})
+        by_sid = {c["sessionId"]: [r["itemId"] for r in c["items"]] for c in out["clusters"]}
+        self.assertIn("k1", by_sid[S1])
+        self.assertIn("k1", by_sid[S2])  # 同一张卡同时出现在两座岛
+        self.assertIn("k2", by_sid[S2])
+        self.assertNotIn("k2", by_sid[S1])
+        # 共享概念按全部归属会话判定：k1 一张卡横跨两岛即成城
+        self.assertIn("简谐运动", [s["label"] for s in out["shared"]])
+
+    def test_separate_duplicate_items_still_share(self):
+        # 对照回归（去重前的旧数据形态）：两条独立 id、同名、分属两会话，照旧成城
+        items = {
+            "k1": _item("k1", S1, "简谐运动", created=1),
+            "k2": _item("k2", S2, "简谐运动", created=2),
+        }
+        out = build_continent(items, SESSIONS)
+        self.assertIn("简谐运动", [s["label"] for s in out["shared"]])
+
+
 if __name__ == "__main__":
     unittest.main()

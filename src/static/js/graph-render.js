@@ -100,14 +100,19 @@ function _nodeActions(node) {
       const vizContent = _nodeContent(message, node);
       const hasVisualization = typeof _hasVisualizationHtml === 'function' && _hasVisualizationHtml(vizContent);
       if (!hasVisualization) {
+        // T58：可视化生成中置灰（_generatingVizNodes 在 graph-interact.js 顶层，
+        // 经全局词法环境可见；typeof 守卫兜沙箱/加载序）
+        const vizBusy = typeof _generatingVizNodes !== 'undefined' && _generatingVizNodes.has(node.id);
         return '<div class="graph-node-actions">'
-          + _iconRegenButton('generateVizNode(\'' + node.id + '\')', '生成可视化', false)
+          + _iconRegenButton('generateVizNode(\'' + node.id + '\')', vizBusy ? '生成中...' : '生成可视化', vizBusy)
           + '</div>';
       }
     }
     const label = node.moduleKey === 'graph' ? '重新生成' : '没看懂';
+    // T58：主回答生成中「没看懂/重新生成」置灰（发送走排队，但按钮先给出可见状态）
+    const regenBusy = typeof isStreaming !== 'undefined' && isStreaming;
     return '<div class="graph-node-actions">'
-      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, false)
+      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, regenBusy)
       + '</div>';
   }
   return '';

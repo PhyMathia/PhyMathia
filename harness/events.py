@@ -114,3 +114,33 @@ def read_events(
     if not event_id:
         events = events[-limit:]
     return events
+
+
+def delete_events(session_id: str) -> bool:
+    """删除单个 Φ 会话的事件文件（T127：删除 Φ 对话后磁盘不留完整往返）。
+
+    会话 id 非法 / 文件不存在 / 删除失败都返回 False（best-effort，同写侧口径：
+    事件日志是审计副产物，绝不因它失败打断业务）。"""
+    if not valid_session_id(session_id):
+        return False
+    try:
+        _session_path(session_id).unlink()
+        return True
+    except Exception:
+        return False
+
+
+def delete_all_events() -> int:
+    """清空全部事件文件（「清空所有 Φ 对话」时调用），返回删除数。best-effort：
+    单个文件删不掉不影响其余；目录不存在返回 0。"""
+    removed = 0
+    try:
+        for path in _EVENTS_DIR.glob("*.jsonl"):
+            try:
+                path.unlink()
+                removed += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return removed

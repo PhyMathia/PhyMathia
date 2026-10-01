@@ -279,11 +279,19 @@ def _cluster_title(sid: str, title_index: dict, has_sessions: bool) -> str:
     return _FALLBACK_TITLE
 
 
-def _cross_session_owners(owner_map: dict, item_session: dict) -> list:
-    """owner_map 的值（条目集合）里挑出跨 ≥2 个会话的，返回 [(key, owners)]。"""
+def _cross_session_owners(owner_map: dict, item_session: dict, item_sids: dict = None) -> list:
+    """owner_map 的值（条目集合）里挑出跨 ≥2 个会话的，返回 [(key, owners, sids)]。
+
+    T146：条目可跨会话归属（sessionIds）——每条按全部归属会话的并集判定，
+    item_sids 缺席时退回单值 item_session（旧行为）。"""
     out = []
     for key, owners in owner_map.items():
-        sids = {item_session[iid] for iid in owners if iid in item_session}
+        sids = set()
+        for iid in owners:
+            if item_sids and iid in item_sids:
+                sids |= item_sids[iid]
+            elif iid in item_session:
+                sids.add(item_session[iid])
         if len(sids) >= 2:
             out.append((key, owners, sids))
     return out
@@ -358,12 +366,23 @@ def _structural_tokens(item: dict) -> set:
             if t not in commands or t in _KEEP_TEX_OPERATORS}
 
 
-def _links_for(owners: set, item_session: dict, session_rank: dict) -> list:
+def _links_for(owners: set, item_session: dict, session_rank: dict, item_sids: dict = None) -> list:
     """共享概念在簇间怎么连线：每个会话取排序最前的条目作端点；会话对 ≤4 个时
-    全连接，否则连成链（防一处共享炸出毛线球）。"""
+    全连接，否则连成链（防一处共享炸出毛线球）。
+
+    T146 条目可跨会话归属（sessionIds）：连线端点按全部归属会话进桶——只按主会话
+    单值分桶，合并去重后的条目就只会计入主会话一座岛，城市辐条缺线；item_sids
+    缺席时退回单值 item_session（旧行为），两头都查不到的条目跳过。"""
     by_session = {}
     for iid in owners:
-        by_session.setdefault(item_session[iid], []).append(iid)
+        sids = item_sids.get(iid) if item_sids else None
+        if not sids:
+            primary = item_session.get(iid)
+            if not primary:
+                continue
+            sids = (primary,)
+        for sid in sids:
+            by_session.setdefault(sid, []).append(iid)
     for sid in by_session:
         by_session[sid].sort(key=lambda iid: session_rank.get(iid, 0))
     # 会话间按「各自最早一张卡」排：上两行刚把每会话的卡按学习序排好，取 [0]
@@ -926,7 +945,7 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
 
 def _family_entries(items: dict, clusters: list, item_session: dict, session_rank: dict,
                     families: list, prepared: list, item_families: dict,
-                    session_fams: dict) -> list:
+                    session_fams: dict, item_sids: dict = None) -> list:
     """概念族 → 跨岛汇聚条目（kind=family，v6）。
 
     与「字面撞车」的本质区别：族是**领域知识**（内置表 / 用户确认 / Φ 归并），所以
@@ -969,7 +988,7 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
             "source": fam.get("source") or "builtin",
             "sessions": sorted(sids),
             "owners": _owner_ids(owners or rep_ids, items),
-            "links": _links_for(rep_ids, item_session, session_rank),
+            "links": _links_for(rep_ids, item_session, session_rank, item_sids),
         })
     return entries
 
@@ -1004,21 +1023,34 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     """
     title_index = _session_title_index(sessions)
 
-    # ===== 聚簇：按条目 sessionId 分组（sessionId 为空的孤儿条目不入大陆） =====
+    # ===== 聚簇：按条目会话归属分组（T146 起条目可跨会话归属——知识按标题全局
+    # 去重后 sessionIds 记录全部归属，同一张概念卡仍要出现在每一座相关岛上，
+    # 否则「跨画布共享概念」的信号被去重一起压掉，城市/亲缘全灭） =====
     by_session = {}
-    item_session = {}
+    item_session = {}  # iid -> 主会话（保留条自身的 sessionId；连线端点/排序用）
+    item_sids = {}     # iid -> 全部归属会话集合（跨会话判定用）
     orphans = 0
     for item_id, item in (items or {}).items():
         if not isinstance(item, dict):
             continue
         title = str(item.get("title") or "").strip()
-        sid = str(item.get("sessionId") or "")
-        if not title or not sid:
+        primary = str(item.get("sessionId") or "")
+        sids, seen_sid = [], set()
+        for sid in [primary, *(item.get("sessionIds") or [])]:
+            s = str(sid or "")
+            if s and s not in seen_sid:
+                seen_sid.add(s)
+                sids.append(s)
+        if not title or not sids:
             orphans += 1
             continue
+        if not primary:
+            primary = sids[0]
         iid = str(item_id)
-        by_session.setdefault(sid, []).append(iid)
-        item_session[iid] = sid
+        for sid in sids:
+            by_session.setdefault(sid, []).append(iid)
+        item_session[iid] = primary
+        item_sids[iid] = set(sids)
 
     # 簇排序：会话最近更新在前；条目排序：学习顺序（createdAt 升序）
     def _cluster_sort_key(sid):
@@ -1032,7 +1064,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     for sid in sorted(by_session, key=_cluster_sort_key):
         iids = sorted(by_session[sid], key=lambda i: (_created_rank(items[i]), i))
         for rank, iid in enumerate(iids):
-            session_rank[iid] = rank
+            # T146：跨会话条目只在主会话里记 rank——别让后遍历到的岛覆盖主会话序
+            if item_session.get(iid) == sid:
+                session_rank[iid] = rank
         clusters.append({
             "sessionId": sid,
             "title": _cluster_title(sid, title_index, bool(sessions)),
@@ -1041,7 +1075,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         })
 
     # ===== 共享概念：倒排索引 → 只留跨 ≥2 会话的 =====
-    all_items = [(iid, items[iid]) for sid in by_session for iid in by_session[sid]]
+    all_items = [(iid, items[iid]) for iid in item_session]
 
     run_owners = {}
     for iid, item in all_items:
@@ -1087,7 +1121,7 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                     for c in clusters}
 
     shared = []
-    title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session))
+    title_entries = _collapse_fragments(_cross_session_owners(run_owners, item_session, item_sids))
     covered = _mark_covered_labels(title_entries)
     for label, owners, sids in title_entries:
         strength = _shared_strength("title", label)
@@ -1098,9 +1132,10 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                        "covered": label in covered,
                        "sessions": sorted(sids),
                        "owners": _owner_ids(owners, items),
-                       "links": _links_for(owners, item_session, session_rank)})
-    for token, owners, _sids in _cross_session_owners(token_owners, item_session):
-        sids = {item_session[iid] for iid in owners}
+                       "links": _links_for(owners, item_session, session_rank, item_sids)})
+    # T146：sids 直接用 _cross_session_owners 的并集结果（跨会话条目的全部归属），
+    # 不再按主会话单值重算——否则去重后的条目会把公式共享判成单会话
+    for token, owners, sids in _cross_session_owners(token_owners, item_session, item_sids):
         score = _FORMULA_SCORE * len(sids) + min(len(owners), 6)
         shared.append({"kind": "formula", "label": token, "score": round(score, 2),
                        "strength": _shared_strength("formula", token),
@@ -1108,11 +1143,11 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                        "covered": False,
                        "sessions": sorted(sids),
                        "owners": _owner_ids(owners, items),
-                       "links": _links_for(owners, item_session, session_rank)})
+                       "links": _links_for(owners, item_session, session_rank, item_sids)})
 
     family_entries = _family_entries(items, clusters, item_session, session_rank,
                                      accepted_families, prepared_families, item_families,
-                                     session_fams)
+                                     session_fams, item_sids)
     # 精确优先、族补缺口：族连接的每一对岛都已被更精确的强共享概念连上时，这座族城
     # 只是同一件事的第二座城（「简谐运动」两座岛 + 「振动与波动」族 = 重叠的两座城），
     # 折进折叠清单（原因 covered）而不是画上去。族只要多连上一座岛就照画（真机：

@@ -13,7 +13,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .core import build_next_snapshot, normalize_snapshot
-from .events import append_event, new_event_id, read_events, valid_session_id
+from .events import (
+    append_event,
+    delete_all_events,
+    delete_events,
+    new_event_id,
+    read_events,
+    valid_session_id,
+)
 from .review import HarnessError, _sanitize_fallback_models, resolve_focus, review_graph
 
 logger = logging.getLogger(__name__)
@@ -447,6 +454,24 @@ async def graph_events(request: Request):
         include_snapshot=include_snapshot or bool(event_id),
     )
     return {"status": "ok", "session_id": session_id, "events": events}
+
+
+@router.delete("/graph/events")
+async def graph_events_delete(request: Request):
+    """删除 Φ 会话事件（T127）：session_id 删单会话；all=1 清空全部事件文件。
+
+    事件日志含完整 prompt、模型原话与整图快照——「删除/清空 Φ 对话」后磁盘
+    还留全文，用户以为清了其实没清，是隐私面的洞。前端在删除/清空链路
+    fire-and-forget 调用（失败只 console.warn，不打扰主流程）。"""
+    all_flag = str(request.query_params.get("all") or "").lower() in ("1", "true", "yes")
+    if all_flag:
+        removed = delete_all_events()
+        return {"status": "ok", "removed": removed}
+    session_id = str(request.query_params.get("session_id") or "").strip()
+    if not valid_session_id(session_id):
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": "缺少有效的 Φ 会话 id（session_id）"}]})
+    removed = delete_events(session_id)
+    return {"status": "ok", "removed": 1 if removed else 0}
 
 
 @router.post("/graph/health")

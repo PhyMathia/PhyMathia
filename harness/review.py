@@ -26,6 +26,7 @@ from llm_common import (
     opencode_gateway_headers,
     resolve_api_key,
     thinking_request_params,
+    upstream_error_detail,
     validate_model_target,
 )
 import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
@@ -613,7 +614,8 @@ async def _stream_chat_completions_once(client, url: str, headers: dict, body: d
     async with client.stream("POST", url, json=body, headers=headers, timeout=90.0) as resp:
         if resp.status_code != 200:
             detail = (await resp.aread()).decode("utf-8", "ignore")[:500]
-            err = HarnessError(f"模型返回 {resp.status_code}: {detail}")
+            # T43：密钥失效附「换钥」引导（与主聊天同一份文案，llm_common 唯一事实源）
+            err = HarnessError(upstream_error_detail(resp.status_code, detail))
             err.status_code = resp.status_code
             # T95：流式失败退避重试也要尊重 Retry-After（_call_model 读取该属性）
             err.retry_after = _parse_retry_after(resp)
@@ -786,7 +788,8 @@ async def _call_model(
             resp = await client.post(url, json=body, headers=headers, timeout=90.0)
         if resp.status_code != 200:
             detail = str(getattr(resp, "text", "") or "")[:500]
-            err = HarnessError(f"模型返回 {resp.status_code}: {detail}")
+            # T43：密钥失效附「换钥」引导（与主聊天同一份文案，llm_common 唯一事实源）
+            err = HarnessError(upstream_error_detail(resp.status_code, detail))
             # 既有缺陷修复（T95）：非流式路径此前不带 status_code，429/503 无法
             # 被识别为可重试（流式路径一直带）。换模型判定同样依赖它。
             err.status_code = resp.status_code

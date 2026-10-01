@@ -574,3 +574,53 @@ def test_apply_report_recipes_before_over_cap_dropped(client, events_dir):
         assert response.json()["status"] == "ok"
         evt = events_mod.read_events(SID, event_id=response.json()["event_id"])[0]
         assert "recipes_before" not in evt
+
+
+# ---- 15. T127 事件删除：单会话 / 清空全部 / DELETE 路由 ----
+
+
+def test_delete_events_removes_file(events_dir):
+    events_mod.append_event(SID, {"type": "review", "id": "evt_1"})
+    assert (events_dir / f"{SID}.jsonl").exists()
+
+    assert events_mod.delete_events(SID) is True
+    assert not (events_dir / f"{SID}.jsonl").exists()
+    assert events_mod.read_events(SID) == []
+
+    # 再删同一会话：文件已不在，best-effort 返回 False
+    assert events_mod.delete_events(SID) is False
+    # 白名单拒绝路径穿越
+    assert events_mod.delete_events("../evil") is False
+
+
+def test_delete_all_events_sweeps_only_jsonl(events_dir):
+    events_mod.append_event("phi_a", {"type": "review", "id": "evt_a"})
+    events_mod.append_event("phi_b", {"type": "applied", "id": "evt_b"})
+    (events_dir / "notes.txt").write_text("不是事件文件，别动", encoding="utf-8")
+
+    assert events_mod.delete_all_events() == 2
+    assert list(events_dir.glob("*.jsonl")) == []
+    assert (events_dir / "notes.txt").exists()
+
+
+def test_graph_events_delete_route(client, events_dir):
+    events_mod.append_event(SID, {"type": "review", "id": "evt_del_1"})
+    events_mod.append_event("phi_route_other", {"type": "review", "id": "evt_del_2"})
+
+    # 单会话删除
+    single = client.delete("/api/harness/graph/events", params={"session_id": SID})
+    assert single.status_code == 200, single.text
+    assert single.json()["status"] == "ok"
+    assert single.json()["removed"] == 1
+    assert events_mod.read_events(SID) == []
+
+    # 非法会话 id → 400
+    bad = client.delete("/api/harness/graph/events", params={"session_id": "../bad"})
+    assert bad.status_code == 400
+
+    # all=1 清空剩余全部事件文件
+    cleared = client.delete("/api/harness/graph/events", params={"all": "1"})
+    assert cleared.status_code == 200, cleared.text
+    assert "removed" in cleared.json()
+    assert cleared.json()["removed"] == 1  # 单会话删除后只剩 phi_route_other
+    assert list(events_dir.glob("*.jsonl")) == []

@@ -584,12 +584,18 @@ let harnessLastAppliedReport = null;
     menu.hidden = false;
   }
 
+  // T119：生成中的守卫原本只往状态行写一句（提示在菜单外面，用户看不见），
+  // 观感等同按钮失灵——守卫命中时补一颗 toast，至少知道「为什么没反应」
+  function _harnessBusyToast(action) {
+    if (typeof toastMsg === 'function') toastMsg('正在生成中，稍候再' + action);
+  }
+
   function chooseHarnessSession(id) {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (menu) menu.hidden = true;
     // T89：生成中切 Φ 会话会经 switchPhiSession → resetHarnessSession → abort 静默掐断
     // 在途请求，这里与新建/删除/清空/换绑同款守卫挡住
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再切换 Φ 会话', 'error'); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再切换 Φ 会话', 'error'); _harnessBusyToast('切换 Φ 会话'); return; }
     clearAllArmed = false;
     switchPhiSession(id);
   }
@@ -597,21 +603,24 @@ let harnessLastAppliedReport = null;
   function newHarnessPhiSession() {
     const menu = document.getElementById('graphHarnessSessionMenu');
     if (menu) menu.hidden = true;
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再新建 Φ 会话', 'error'); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再新建 Φ 会话', 'error'); _harnessBusyToast('新建 Φ 会话'); return; }
     clearAllArmed = false;
     createPhiSession(true);
   }
 
-  // 删除 Φ 会话：只删这段对话（本地历史键＋服务端 harness_history:phi_*），
+  // 删除 Φ 会话：只删这段对话（本地历史键＋服务端 harness_history:phi_*＋事件日志），
   // 画布与图内容完全不碰。删当前会话自动切最近的，一个不剩就新建。
   function deleteHarnessSession(id) {
     if (!id || !phiSessions[id]) return;
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除 Φ 会话', 'error'); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再删除 Φ 会话', 'error'); _harnessBusyToast('删除 Φ 会话'); return; }
     const info = phiSessions[id];
     if (typeof window.confirm === 'function' && !window.confirm('删除 Φ 会话「' + (info.title || 'Φ 会话') + '」？\n只删除这段对话记录，画布不受影响。')) return;
     clearAllArmed = false;
     try { localStorage.removeItem(_phiLocalKey(id)); } catch (e) {}
     try { fetch('/api/kv/' + encodeURIComponent(_historyKey(id)), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
+    // T127：事件日志（logs/harness_events/phi_*.jsonl）存着完整 prompt 与模型原话，
+    // 删对话必须连磁盘一起清，否则「以为删了其实还在」
+    try { fetch('/api/harness/graph/events?session_id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
     delete phiSessions[id];
     if (currentPhiId === id) {
       const rest = _phiList();
@@ -658,7 +667,7 @@ let harnessLastAppliedReport = null;
     // 文档的旧按钮，closest('#graphHarnessSession') 返回 null，当场把菜单关掉——确认条
     // 进了 DOM 而用户什么都看不见。事件止步于按钮，菜单不会被误收。
     if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); _harnessBusyToast('清空 Φ 对话'); return; }
     const menu = document.getElementById('graphHarnessSessionMenu');
     const footer = menu && typeof menu.querySelector === 'function'
       ? menu.querySelector('.graph-harness-session-menu-footer')
@@ -681,7 +690,7 @@ let harnessLastAppliedReport = null;
     // 一起消失，观感上等同按钮失灵）
     if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
     if (!proceed) { clearAllArmed = false; _renderHarnessClearAllFooter(); return; }
-    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); return; }
+    if (harnessBusy) { _setHarnessStatus('当前正在生成，等任务完成后再清空 Φ 对话', 'error'); _harnessBusyToast('清空 Φ 对话'); return; }
     clearAllArmed = false;
     _renderHarnessClearAllFooter();
     _doClearAllHarnessSessions();
@@ -694,12 +703,15 @@ let harnessLastAppliedReport = null;
     ids.forEach(id => {
       try { fetch('/api/kv/' + encodeURIComponent(_historyKey(id)), { method: 'DELETE' }).catch(() => {}); } catch (e) {}
     });
+    // T127：事件日志含完整 prompt 与模型原话，清空必须连磁盘一起清；
+    // all=1 顺带扫掉 phiSessions 已丢失的孤儿事件文件（换浏览器/清缓存后的残留）
+    try { fetch('/api/harness/graph/events?all=1', { method: 'DELETE' }).catch(() => {}); } catch (e) {}
     phiSessions = {};
     currentPhiId = '';
     createPhiSession(true);
     _refreshHarnessSessionMenuIfOpen();
     _syncHarnessSessionBtn();
-    _setHarnessStatus('已清空所有 Φ 对话（画布全部保留）', 'ok');
+    _setHarnessStatus('已清空所有 Φ 对话（画布全部保留，磁盘日志一并清除）', 'ok');
   }
   window.clearAllHarnessSessions = clearAllHarnessSessions;
   window.confirmClearAllHarnessSessions = confirmClearAllHarnessSessions;

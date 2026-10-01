@@ -52,12 +52,12 @@ function dedupeKnowledgeItems(items) {
   for (const id in map) {
     const item = map[id];
     if (!item || typeof item !== 'object') continue;
-    const sessionId = item.sessionId || '';
+    // T146：按规范化标题全局合并（不再按会话硬分区）——同名概念跨会话只留一条，
+    // 全部归属写 sessionIds（大陆投影/按会话删除据此保住跨画布信号）
     const key = _normalizeKnowledgeKey(item.title);
-    if (!sessionId || !key) continue;
-    const groupKey = sessionId + '|' + key;
-    if (!groups[groupKey]) groups[groupKey] = [];
-    groups[groupKey].push(id);
+    if (!key) continue;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(id);
   }
 
   const removeIds = new Set();
@@ -100,6 +100,16 @@ function dedupeKnowledgeItems(items) {
         keep.tags = entry.item.tags.slice();
       }
     }
+    // T146：跨会话归属合并（保留条自身 sessionId 恒在首位）
+    const sids = [];
+    const seenSids = new Set();
+    for (const entry of ranked) {
+      for (const sid of [entry.item.sessionId, ...(entry.item.sessionIds || [])]) {
+        if (sid && !seenSids.has(sid)) { seenSids.add(sid); sids.push(sid); }
+      }
+    }
+    if (sids.length > 1) keep.sessionIds = sids;
+    if (!keep.sessionId && sids.length) keep.sessionId = sids[0];
     for (let i = 1; i < ranked.length; i++) removeIds.add(ranked[i].id);
   }
 
@@ -231,12 +241,24 @@ async function deleteKnowledgeItem(id) {
 async function deleteKnowledgeBySession(sessionId) {
   const items = getKnowledgeItems();
   const removedIds = [];
+  // T146：sessionIds 感知——同名概念跨会话合并后，删一个画布只摘除该归属，
+  // 还有别的归属就改主会话留下，全没了才删（与后端 _delete_items_by_session 同口径）
   for (const id in items) {
-    if (items[id].sessionId === sessionId) {
+    const it = items[id];
+    const sids = [...new Set([it.sessionId, ...(it.sessionIds || [])].filter(Boolean))];
+    if (!sids.includes(sessionId)) continue;
+    const rest = sids.filter(s => s !== sessionId);
+    if (rest.length) {
+      it.sessionIds = rest;
+      it.sessionId = rest[0];
+    } else {
       removedIds.push(id);
     }
   }
-  if (!removedIds.length) return;
+  if (!removedIds.length) {
+    await saveKnowledgeItems(items);
+    return;
+  }
   await _deleteKnowledgeOnServer(removedIds);
   for (const id of removedIds) {
     delete items[id];
@@ -744,10 +766,10 @@ function _knowledgeBatchRunning() {
   return !!_kpSummaryOptimizeAbort;
 }
 
-// 任一摘要任务（批量或单条）在跑：ui.js 的全局 Esc 处理器据此把 Esc 让给
-// knowledge.js 各自的 capture 中止监听，不做关面板动作
+// 任一摘要/公式含义任务（批量或单条）在跑：ui.js 的全局 Esc 处理器据此把 Esc
+// 让给 knowledge.js 各自的 capture 中止监听，不做关面板动作
 function _knowledgeSummaryTaskRunning() {
-  return _knowledgeBatchRunning() || _knowledgeRestateRunning();
+  return _knowledgeBatchRunning() || _knowledgeRestateRunning() || _formulaBatchRunning();
 }
 
 // 运行态判断（供 ui.js 的全局 Esc 处理器分流：摘要任务运行中 Esc 让给中止监听，不关面板）
@@ -789,7 +811,7 @@ let _kpOptimizeProgressState = null; // { done, total } | null
 function _syncKpOptimizeProgress() {
   const wrap = document.getElementById('kpOptimizeProgress');
   if (!wrap) return;
-  const running = _knowledgeBatchRunning() && _kpOptimizeProgressState;
+  const running = (_knowledgeBatchRunning() || _formulaBatchRunning()) && _kpOptimizeProgressState;
   wrap.hidden = !running;
   if (!running) return;
   const { done, total } = _kpOptimizeProgressState;
@@ -799,16 +821,18 @@ function _syncKpOptimizeProgress() {
   if (fillEl) fillEl.style.width = (total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0) + '%';
 }
 
-// 优化摘要按钮运行态 + 进度条 + tab 可见性统一同步：
-// 按钮运行态只认批量；进度条只在「批量在跑且停在知识点 tab」时显示
-function _syncKpOptimizeWidgets() {
-  const running = _knowledgeBatchRunning();
-  _setKpOptimizeButtonRunning(running);
+// 当前激活的 tab（'knowledge' | 'formulas'）——优化按钮的语义随 tab 切换
+function _kpActiveTab() {
   const tab = document.querySelector('.kp-tab.active');
-  const onKnowledgeTab = !tab || tab.dataset.tab === 'knowledge';
-  const btn = document.getElementById('kpOptimizeBtn');
-  if (btn) btn.style.display = onKnowledgeTab ? '' : 'none';
-  if (running && onKnowledgeTab) _syncKpOptimizeProgress();
+  return tab && tab.dataset.tab === 'formulas' ? 'formulas' : 'knowledge';
+}
+
+// 优化摘要/含义按钮运行态 + 进度条统一同步：
+// 按钮运行态认两个批量之一；进度条在任一批量运行时显示（T148 起公式页也有批量）
+function _syncKpOptimizeWidgets() {
+  const running = _knowledgeBatchRunning() || _formulaBatchRunning();
+  _setKpOptimizeButtonRunning(running);
+  if (running) _syncKpOptimizeProgress();
   else {
     const wrap = document.getElementById('kpOptimizeProgress');
     if (wrap) wrap.hidden = true;
@@ -819,7 +843,22 @@ function _setKpOptimizeButtonRunning(running) {
   const btn = document.getElementById('kpOptimizeBtn');
   if (!btn) return;
   btn.classList.toggle('running', running);
-  btn.textContent = running ? '■ 停止优化' : '✦ 优化摘要';
+  btn.textContent = running ? '■ 停止优化' : (_kpActiveTab() === 'formulas' ? '✦ 优化含义' : '✦ 优化摘要');
+}
+
+// 优化按钮统一入口（T148）：知识点页批量优化摘要、公式页批量优化含义；
+// 运行中点击交给各自的中止通道
+function kpOptimizeBtnClicked() {
+  if (_formulaBatchRunning()) {
+    abortFormulaMeaningOptimize();
+    return;
+  }
+  if (_knowledgeBatchRunning()) {
+    abortKnowledgeSummaryOptimize();
+    return;
+  }
+  if (_kpActiveTab() === 'formulas') optimizeFormulaMeanings();
+  else optimizeKnowledgeSummaries();
 }
 
 function _activeModelForSummaryRestate() {
@@ -908,6 +947,159 @@ async function optimizeKnowledgeSummaries() {
 // 真 AbortController 接线（原实现传一次性即弃的匿名控制器，signal 永不置位、永不生效）：
 // 控制器挂 _kpRestateAbort 注册表 + 独立 Esc capture 监听（与批量同款接线，各自独立），
 // Esc / 收尾统一走 abortKnowledgeRestatement() 注销；批量在跑时入口直接拒绝（互斥防踩）
+// ===== T148 公式含义批量优化（复用「优化摘要」批量通道的整套形态） =====
+// 实测 316/325 条公式含义是本地模板兜底（「X相关公式：用于描述X的定量关系」），
+// 向量通道把它当空串——质量差且无语义。目标=meaningSource 非 model 且文案为
+// 模板形态（或为空）；逐条现判现发，model 结果绝不触碰。
+
+let _kpFormulaOptimizeAbort = null;
+let _kpFormulaOptimizeEscCloser = null;
+
+function _formulaBatchRunning() {
+  return !!_kpFormulaOptimizeAbort;
+}
+
+function abortFormulaMeaningOptimize() {
+  const controller = _kpFormulaOptimizeAbort;
+  _kpFormulaOptimizeAbort = null;
+  if (controller) {
+    try { controller.abort(); } catch (e) {}
+  }
+  if (_kpFormulaOptimizeEscCloser) {
+    document.removeEventListener('keydown', _kpFormulaOptimizeEscCloser, true);
+    _kpFormulaOptimizeEscCloser = null;
+  }
+  _syncKpOptimizeWidgets();
+}
+
+// 模板兜底判定：与后端 _local_formula_meaning 的两条兜底文案逐字对齐
+// （「{concept}相关公式：用于描述{concept}的定量关系」与默认句），空含义也算
+function isLegacyFormulaMeaningItem(it) {
+  if (!it || typeof it !== 'object') return false;
+  if ((it.meaningSource || 'local') === 'model') return false;
+  const meaning = String(it.meaning || '').trim();
+  if (!meaning) return true;
+  if (meaning === '该公式用于描述物理量之间的定量关系') return true;
+  if (/相关公式：用于描述.+的定量关系$/.test(meaning)) return true;
+  return false;
+}
+
+function _buildFormulaMeaningPrompt(it) {
+  const lines = [];
+  lines.push('请为下面的公式写一句含义说明，替换掉旧的模板文案。');
+  lines.push('');
+  lines.push('公式（LaTeX）：' + String(it.latex || '').trim());
+  if (it.concept) lines.push('来源知识点：' + String(it.concept).trim());
+  if (it.topic) lines.push('主题：' + String(it.topic).trim());
+  if (Array.isArray(it.related) && it.related.length) {
+    lines.push('相关标签：' + it.related.join('、'));
+  }
+  lines.push('旧说明（模板文案，必须替换，不要复用其中的措辞）：' + String(it.meaning || '').trim());
+  lines.push('');
+  lines.push('要求：');
+  lines.push('1. 说明这条公式「说的是什么」：各符号/各项的物理或数学含义、它刻画什么关系；');
+  lines.push('2. 不超过 80 字，一句通顺的中文；');
+  lines.push('3. 只输出说明正文，不要任何解释或前缀。');
+  return lines.join('\n');
+}
+
+function _cleanFormulaMeaningText(raw) {
+  let out = _cleanRestatedSummaryText(raw);
+  out = out.replace(/^(含义|公式含义|说明)\s*[：:]\s*/, '').trim();
+  return out.slice(0, 120);
+}
+
+async function _requestFormulaMeaning(it, model, signal) {
+  const messages = [
+    { role: 'system', content: '你是物理数学知识库的公式含义助手。只输出一句公式含义说明正文，不要解释、前缀、引号或列表。' },
+    { role: 'user', content: _buildFormulaMeaningPrompt(it) },
+  ];
+  const resp = await proxyChatWithModel(model, { messages, stream: false, session_bucket: 'phymathia-knowledge' }, signal);
+  const data = await resp.json();
+  const raw = data && data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : '';
+  return _cleanFormulaMeaningText(raw);
+}
+
+async function optimizeFormulaMeanings() {
+  if (_knowledgeSummaryTaskRunning()) {
+    if (_formulaBatchRunning()) {
+      abortFormulaMeaningOptimize();
+      showToast('已停止优化公式含义，已完成条目保留');
+    } else {
+      showToast('另一项优化进行中，请等它完成');
+    }
+    return;
+  }
+  const targetIds = Object.values(getFormulaCache())
+    .filter(isLegacyFormulaMeaningItem)
+    .map(it => it.id);
+  if (!targetIds.length) {
+    showToast('没有需要优化的公式含义（均已由模型描述）');
+    return;
+  }
+  const model = _activeModelForSummaryRestate();
+  if (!model) {
+    showToast('未配置 AI 模型，请在模型设置中配置（公式描述模型或主模型均可）');
+    return;
+  }
+  const controller = new AbortController();
+  _kpFormulaOptimizeAbort = controller;
+  _kpFormulaOptimizeEscCloser = (event) => {
+    if (event.key === 'Escape') abortFormulaMeaningOptimize();
+  };
+  document.addEventListener('keydown', _kpFormulaOptimizeEscCloser, true);
+  _syncKpOptimizeWidgets();
+
+  const total = targetIds.length;
+  let done = 0, skipped = 0, ok = 0, failed = 0;
+  let aborted = false;
+  const _bumpProgress = () => {
+    _kpOptimizeProgressState = { done: done + skipped, total };
+    _syncKpOptimizeProgress();
+  };
+  try {
+    for (const id of targetIds) {
+      if (controller.signal.aborted) { aborted = true; break; }
+      const cache = getFormulaCache();
+      const current = cache[id] || null;
+      // 任务期间数据可能变化（同步/删除）：发送前现判，非目标条目直接跳过
+      if (!current || !isLegacyFormulaMeaningItem(current)) { skipped++; _bumpProgress(); continue; }
+      done++;
+      try {
+        const text = await _requestFormulaMeaning(current, model, controller.signal);
+        if (!text) { failed++; continue; }
+        current.meaning = text;
+        current.meaningSource = 'model';
+        setFormulaCache(cache);
+        await saveFormulasToServer([current]);
+        ok++;
+      } catch (err) {
+        if (controller.signal.aborted) { aborted = true; break; } // 用户中断不计为失败
+        failed++;
+        console.warn('Optimize formula meaning failed:', id, err);
+      }
+      _bumpProgress();
+    }
+  } finally {
+    const wasAborted = aborted || controller.signal.aborted;
+    abortFormulaMeaningOptimize();
+    _kpOptimizeProgressState = null;
+    _syncKpOptimizeProgress();
+    invalidateKnowledgeCache();
+    const panel = document.getElementById('knowledgePanel');
+    if (panel && panel.classList && panel.classList.contains('active')) renderKnowledgePanel();
+    const skipText = skipped ? '，跳过 ' + skipped + ' 条（期间已变更）' : '';
+    if (wasAborted) showToast('已停止：优化公式含义 ' + ok + ' 条，失败 ' + failed + ' 条' + skipText, TOAST_MS_LONG);
+    else if (failed) showToast('公式含义优化完成：' + ok + '/' + total + ' 成功，失败 ' + failed + ' 条' + skipText, TOAST_MS_LONG);
+    else showToast('公式含义优化完成：已重写 ' + ok + ' 条模板含义' + skipText, TOAST_MS_LONG);
+  }
+}
+window.optimizeFormulaMeanings = optimizeFormulaMeanings;
+window.kpOptimizeBtnClicked = kpOptimizeBtnClicked;
+window.isLegacyFormulaMeaningItem = isLegacyFormulaMeaningItem;
+
 async function restatKnowledgeItemSummary(itemId) {
   if (_knowledgeBatchRunning()) {
     showToast('批量优化进行中，请先点击「优化摘要」停止');
@@ -1143,7 +1335,9 @@ function dedupeFormulaItems(items) {
     if (!it || typeof it.latex !== 'string') continue;
     const latex = _normalizeFormulaLatex(it.latex);
     if (latex) it.latex = latex;
-    const key = _formulaKey(it.latex) + '|' + (it.sessionId || '');
+    // T146：按公式全局合并（不再按会话分区），归属写 sessionIds
+    const key = _formulaKey(it.latex);
+    if (!key) continue;
     if (!groups[key]) groups[key] = [];
     groups[key].push([id, it]);
   }
@@ -1162,6 +1356,16 @@ function dedupeFormulaItems(items) {
         if (!keep[field] && other[field]) keep[field] = other[field];
       }
     }
+    // T146：跨会话归属合并（保留条自身 sessionId 恒在首位）
+    const sids = [];
+    const seenSids = new Set();
+    for (const [, item] of entries) {
+      for (const sid of [item.sessionId, ...(item.sessionIds || [])]) {
+        if (sid && !seenSids.has(sid)) { seenSids.add(sid); sids.push(sid); }
+      }
+    }
+    if (sids.length > 1) keep.sessionIds = sids;
+    if (!keep.sessionId && sids.length) keep.sessionId = sids[0];
     normalized[keepId] = keep;
   }
   return normalized;
@@ -1190,10 +1394,18 @@ async function deleteFormulasBySession(sessionId) {
   const items = getFormulaCache();
   let changed = false;
   for (const id in items) {
-    if (items[id].sessionId === sessionId) {
+    const it = items[id];
+    // T146：sessionIds 感知——还有别的归属就摘除该会话并改主会话，全没了才删
+    const sids = [...new Set([it.sessionId, ...(it.sessionIds || [])].filter(Boolean))];
+    if (!sids.includes(sessionId)) continue;
+    const rest = sids.filter(s => s !== sessionId);
+    if (rest.length) {
+      it.sessionIds = rest;
+      it.sessionId = rest[0];
+    } else {
       delete items[id];
-      changed = true;
     }
+    changed = true;
   }
   if (changed) setFormulaCache(items);
   // 服务端按会话删除
@@ -1214,10 +1426,8 @@ async function saveFormulasToServer(formulas) {
     const normalized = _stripFormulaDelimiters(latex);
     if (!_looksLikeFormula(normalized)) continue;
     const key = _formulaKey(latex);
-    const existing = Object.values(cache).find(it =>
-      it.sessionId === (item.sessionId || '') &&
-      _formulaKey(it.latex) === key
-    );
+    // T146：全局找同公式（不再限同会话），跨会话归属并入 sessionIds
+    const existing = Object.values(cache).find(it => _formulaKey(it.latex) === key);
     if (existing) {
       let merged = false;
       const incomingSource = item.meaningSource || 'local';
@@ -1241,6 +1451,12 @@ async function saveFormulasToServer(formulas) {
       }
       if (item.moduleKey && !existing.moduleKey) {
         existing.moduleKey = item.moduleKey;
+        merged = true;
+      }
+      // T146：并入本次会话归属（若尚不是它的归属之一）
+      const inSid = item.sessionId || '';
+      if (inSid && inSid !== existing.sessionId && !(existing.sessionIds || []).includes(inSid)) {
+        existing.sessionIds = [...new Set([existing.sessionId, ...(existing.sessionIds || []), inSid].filter(Boolean))];
         merged = true;
       }
       if (merged) {
@@ -1294,8 +1510,8 @@ function switchKpTab(tab) {
   document.querySelectorAll('.kp-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('kpKnowledgeView').style.display = tab === 'knowledge' ? '' : 'none';
   document.getElementById('kpFormulasView').style.display = tab === 'formulas' ? '' : 'none';
-  // 「优化摘要」与进度条只作用于知识点，公式速查页隐藏入口（批量在跑时同理，
-  // 进度状态在模块级变量里，切回知识点 tab 即恢复显示）
+  // 优化按钮随 tab 换语义（T148：知识点页「优化摘要」/ 公式页「优化含义」），
+  // 进度状态在模块级变量里，切 tab 即恢复显示
   _syncKpOptimizeWidgets();
   // 标签页记忆（仅 knowledge/formulas 两个合法值入 localStorage，键在 config.js）
   if (tab === 'knowledge' || tab === 'formulas') {

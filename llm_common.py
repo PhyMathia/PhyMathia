@@ -20,7 +20,29 @@
 """
 
 import os
+import re
 from urllib.parse import urlparse
+
+
+# ====== 上游非 200 的用户可读文案（主聊天 /api/models/chat 与 /api/models/list、
+# Φ harness _call_model 三处共用；T43：密钥失效全程不提示、文案只说「上游连接失败」
+# 会让用户去查网络而不是换钥匙）======
+
+# 命中即判定为凭证问题（401/403 之外，网关常回 200 前的其他码 + 这类正文）
+_CREDENTIAL_ERROR_RE = re.compile(
+    r"invalid[ _-]?api[ _-]?key|incorrect[ _-]?api[ _-]?key|invalid[ _-]?credential"
+    r"|authentication|unauthorized|api[ _-]?key|access[ _-]?token",
+    re.IGNORECASE,
+)
+
+
+def upstream_error_detail(status_code: int, body: str) -> str:
+    """非 200 响应的 detail 文案：原样透传状态与正文；判定为密钥/凭证问题时
+    追加「到模型设置换钥」引导，不再让用户误判为网络故障。"""
+    text = f"上游返回 {status_code}: {body}"
+    if status_code in (401, 403) or _CREDENTIAL_ERROR_RE.search(str(body or "")):
+        text += "｜密钥可能已失效或无权限：请到「模型设置」检查或更换该模型的 API 密钥"
+    return text
 
 
 # ====== token 估算（与前端同一口径：CJK 1 字符≈1 token，ASCII 4 字符≈1 token）======
