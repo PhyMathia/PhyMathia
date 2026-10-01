@@ -581,8 +581,10 @@ document.addEventListener('click', (e) => {
       container.appendChild(this.el);
     }
 
-    applyTheme() {
-      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+    applyTheme(darkPref) {
+      const dark = darkPref !== undefined
+        ? darkPref
+        : document.documentElement.getAttribute('data-theme') !== 'light';
       const isFormula = this.text.length > 3;
       this.baseOpacity = dark
         ? (isFormula ? 0.12 + Math.random() * 0.12 : 0.15 + Math.random() * 0.2)
@@ -710,9 +712,17 @@ document.addEventListener('click', (e) => {
   window.addEventListener('load', () => setTimeout(_probeAuroraBudget, 1200));
 
   const origToggle = window.toggleTheme;
+  let _symThemeTimer = 0;
   window.toggleTheme = function() {
     if (origToggle) origToggle();
-    for (const sym of symbols) sym.applyTheme();
+    // 33 次 cssText 重写（每次整段内联样式失效）挪出翻转帧：翻转后 ~300ms 再换色。
+    // 此时还在 500ms 让路窗口内、符号动画本就冻结，旧色残留＝6-20% 透明度的背景
+    // 漂浮物，不可感知；换来翻转帧预算只留给真正的光栅重算。连切按定时器去重。
+    clearTimeout(_symThemeTimer);
+    _symThemeTimer = setTimeout(function () {
+      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+      for (const sym of symbols) sym.applyTheme(dark);
+    }, 300);
   };
 })();
 
@@ -1687,9 +1697,14 @@ window.addEventListener('load', async () => {
 // ====== 深色/浅色模式 ======
 
 // Preload all background images for instant theme switch
+// 预加载并保留句柄（2026-10-01 第四轮）：翻转时若句柄已 complete，updateBgImage
+// 可与 data-theme 同帧直换壁纸。原先句柄创建后即弃，new Image() 的 complete 在
+// 同步赋 src 的当帧必为 false（真机实测翻转后 80ms 壁纸仍旧图）。
+const _bgPreloaded = new Map();
 [DARK_LAND_URL, DARK_PORT_URL, LIGHT_LAND_URL, LIGHT_PORT_URL, '/logo.png'].forEach(src => {
   const img = new Image();
   img.src = src;
+  _bgPreloaded.set(src, img);
 });
 
 // 首次访问（localStorage 无值）跟随系统偏好，手动切换后以手动选择为准
@@ -1710,13 +1725,31 @@ let currentTheme = _getInitialTheme();
 // 仍是 node-blur-lite 首切探测。
 let _themeSwitchTimer = null;
 let _themeSwitchAuroraTimer = null;
+let _vizCardSyncTimer = null;
 
 // 慢机磨砂降级探测（2026-10-01）：candy 皮肤节点卡 backdrop-filter: blur(16px) 在翻转
 // 主题时要全量重算磨砂，软件光栅机器上实测 1.3s 的长帧风暴（LoAF 逐项排除其余元凶后，
 // 仅关此项归零）。首次真实切换后统计 2.2s 内长帧总量，>600ms 判为慢光栅机，给 <html>
 // 挂 node-blur-lite（styles.css：节点卡改用半透明底色直接透出背景，不再逐张实时磨砂）。
-// 只当次会话生效、不写 localStorage——换快机器自动恢复完整磨砂。
+// 判定跨会话记忆（2026-10-01 第四轮）：原「只当次会话」意味着慢机每个会话的第一次切换
+// 都先吃满风暴、探测才生效——用户实报「还是卡」的主因之一。判定即写 localStorage
+// （STORAGE_KEY_FLIP_SLOW，存时间戳），下次启动直接预挂；30 天过期重探（机器升级自愈），
+// 预挂后本会话不再探测（带着降级测必然便宜，测了也会误清）。快机误伤路径：翻转正逢
+// 后台重载导致偶发超阈 → _lite 观感 30 天，代价＝磨砂变半透明底，可清该键复原。
 let _flipProbeDone = false;
+const _FLIP_SLOW_TTL_MS = 30 * 24 * 3600 * 1000;
+
+(function _armFlipSlowFromStorage() {
+  let t = 0;
+  try { t = Number(localStorage.getItem(STORAGE_KEY_FLIP_SLOW)) || 0; } catch (e) {}
+  if (!t) return;
+  if (Date.now() - t < _FLIP_SLOW_TTL_MS) {
+    document.documentElement.classList.add('node-blur-lite');
+    _flipProbeDone = true;
+  } else {
+    try { localStorage.removeItem(STORAGE_KEY_FLIP_SLOW); } catch (e) {}
+  }
+})();
 
 function _probeFlipCost() {
   const heavy = [];
@@ -1729,7 +1762,10 @@ function _probeFlipCost() {
   } catch (e) { return; }
   setTimeout(() => {
     if (po) po.disconnect();
-    if (heavy.reduce((a, b) => a + b, 0) > 600) document.documentElement.classList.add('node-blur-lite');
+    if (heavy.reduce((a, b) => a + b, 0) > 600) {
+      document.documentElement.classList.add('node-blur-lite');
+      try { localStorage.setItem(STORAGE_KEY_FLIP_SLOW, String(Date.now())); } catch (e) {}
+    }
   }, 2200);
 }
 
@@ -1763,8 +1799,16 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
   updateBgImage();
-  // 同步所有可视化 iframe 的主题（含全屏）
-  if (typeof syncVizThemes === 'function') syncVizThemes(theme);
+  // 同步可视化 iframe 主题（2026-10-01 第四轮拆开）：全屏 viz 是主视野，跟主文档同帧翻转；
+  // 卡片 iframe 各自是独立文档（收到消息后各自样式重算+光栅），塞进翻转帧只会长上再加长，
+  // 延后 250ms 广播、让主文档先把翻转那一帧付完。连切时按触发时刻的当前主题去重（晚到的
+  // 旧主题广播不落地），syncVizCardThemes 见 render.js。
+  if (typeof syncVizFullscreenTheme === 'function') syncVizFullscreenTheme(theme);
+  clearTimeout(_vizCardSyncTimer);
+  _vizCardSyncTimer = setTimeout(function () {
+    if (typeof syncVizCardThemes !== 'function') return;
+    syncVizCardThemes(document.documentElement.getAttribute('data-theme') || currentTheme);
+  }, 250);
   // 渐变删除后颜色即切即稳，Mermaid 配置直接更新（只影响未来新图表的配色）
   if (typeof configureMermaid === 'function' && typeof getMermaidConfig === 'function') {
     configureMermaid(getMermaidConfig(theme === 'dark'));
@@ -1803,13 +1847,20 @@ function updateBgImage() {
     return;
   }
 
-  // 预加载完成后再换，换完即最终态（无淡入）；连切/转屏时晚到的旧图不落地
-  const img = new Image();
-  img.onload = function() {
+  // 预加载完成后再换，换完即最终态（无淡入）；连切/转屏时晚到的旧图不落地。
+  // 壁纸与 data-theme 同帧落地（2026-10-01 第四轮）：启动预加载句柄已 complete 就
+  // 同任务直换——否则 onload 至少晚一帧＝每次切换两次全窗光栅，中间还有一帧
+  // 「新配色压旧主题壁纸」的错配（慢机上第二次全窗光栅不便宜）。句柄未就绪或
+  // 冷缓存则退回异步等载，行为与旧版一致。
+  const apply = function() {
     if (_desiredBgUrl() !== newUrl) return;
     el.style.backgroundImage = `url('${newUrl}')`;
     _bgCurrentUrl = newUrl;
   };
+  const pre = _bgPreloaded.get(newUrl);
+  if (pre && pre.complete && pre.naturalWidth > 0) { apply(); return; }
+  const img = new Image();
+  img.onload = apply;
   img.src = newUrl;
 }
 
