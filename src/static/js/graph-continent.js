@@ -1541,6 +1541,251 @@ function _continentDrawPlan(shared, placements, clusterRects, pairLimit, cityLim
            spokeCount: spokes, folded: folded };
 }
 
+// ===== T144 边层局部重画：改边不再全库重投影＋整图重建 =====
+// 边表是独立 KV（/api/kv/continent_edges），聚簇/共享概念/海域投影全不因它变。
+// 原先 _continentCommit 提交后重 GET /api/continent（服务端全量重算）→ innerHTML=''
+// 重建全部岛卡并重跑每张公式卡的 katex.render——概念上千后每次保存都会明显卡。
+// 现在本地镜像服务端校验（_continentSplitEdges 与 continent.py _split_user_edges
+// 同口径）重算有效/悬空归类，只清边 <g> 与标签 wrap 重画边层。
+let _continentEdgeLayerEl = null;      // 边层 <g>（重画目标，渲染期换新）
+let _continentEdgeLabelWrap = null;    // 边标签/断桥标记容器（同上）
+let _continentLayoutCache = null;      // 当前布局（边层几何来源）
+let _continentStatsBase = '';          // 顶栏统计去掉「我的连线 N」的前缀
+
+function _continentSplitEdges(rawEdges, data) {
+  const itemSession = {};
+  ((data && data.clusters) || []).forEach(c => (c.items || []).forEach(item => {
+    itemSession[item.itemId] = c.sessionId || '';
+  }));
+  const norm = e => ({
+    id: String((e && e.id) || '').trim(),
+    fromItem: String((e && e.fromItem) || '').trim(),
+    toItem: String((e && e.toItem) || '').trim(),
+    fromSession: String((e && e.fromSession) || '').trim(),
+    toSession: String((e && e.toSession) || '').trim(),
+    label: String((e && e.label) || '').slice(0, 40),
+    style: (e && e.style) || {},
+    createdAt: (e && e.createdAt) || 0,
+  });
+  const seenPair = {};
+  const sorted = (rawEdges || []).slice().sort((a, b) => ((b.createdAt || 0) - (a.createdAt || 0)));
+  const userEdges = [], danglingEdges = [];
+  sorted.forEach(raw => {
+    const e = norm(raw);
+    if (!e.id || !e.fromItem || !e.toItem || e.fromItem === e.toItem) return;  // 自环不是簇间边
+    const pair = e.fromItem < e.toItem ? e.fromItem + '|' + e.toItem : e.toItem + '|' + e.fromItem;
+    if (pair in seenPair) return;  // 同端点对只留 createdAt 最新的一条
+    seenPair[pair] = true;
+    const fromOk = e.fromItem in itemSession;
+    const toOk = e.toItem in itemSession;
+    if (fromOk && toOk && itemSession[e.fromItem] !== itemSession[e.toItem]) {
+      // 有效边的会话以 itemSession 现算覆盖（条目搬家后旧值不作数）
+      e.fromSession = itemSession[e.fromItem];
+      e.toSession = itemSession[e.toItem];
+      userEdges.push(e);
+    } else {
+      e.missing = !fromOk && !toOk ? 'both' : !fromOk ? 'from' : !toOk ? 'to' : 'same_session';
+      danglingEdges.push(e);
+    }
+  });
+  return { userEdges: userEdges, danglingEdges: danglingEdges };
+}
+
+// 边层绘制（用户航线 + 断桥）：全量渲染与边层局部重画共用这一份——两条路径的
+// 产出逐字节一致，重画不重算布局、不重跑 KaTeX
+function _continentDrawEdgeLayer(data, layout, edgeLayer, labelWrap) {
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const routePrefs = _continentRoutePrefs();
+  const routeThemeLight = document.documentElement &&
+    document.documentElement.getAttribute('data-theme') === 'light';
+  _continentRouteEls = [];  // T133：本帧航线元素重新收集（重画后旧引用全部作废）
+  (data.userEdges || []).forEach(e => {
+    const ra = layout.clusterRects.find(r => r.sessionId === e.fromSession);
+    const rb = layout.clusterRects.find(r => r.sessionId === e.toSession);
+    const pa = layout.placements[e.fromItem], pb = layout.placements[e.toItem];
+    if (!ra || !rb) return;  // 找不到岛框的走断桥通道（下方 danglingEdges）
+    if (!routePrefs.on || (e.style && e.style.hidden)) return;
+    const style = e.style || {};
+    const route = _continentRoute(ra, rb, layout.clusterRects, style.route || 'detour',
+      { x: 0, y: 0, w: layout.worldW, h: layout.worldH });
+    const stroke = _continentRouteStroke(style, e, _continentRegionInfo,
+      routeThemeLight ? 'light' : 'dark');
+    const sidsAttr = [e.fromSession, e.toSession].join(',');
+    // 路基（光晕层）：同色、约 3 倍宽、低透明度——先画，核心线压在它上面
+    const halo = document.createElementNS(svgNS, 'path');
+    halo.setAttribute('class', 'continent-route-casing');
+    halo.setAttribute('d', route.d);
+    halo.setAttribute('stroke', stroke.color);
+    halo.setAttribute('stroke-width', String(Math.max(5, stroke.width * 3)));
+    halo.setAttribute('opacity', String(routePrefs.opacity));
+    halo.setAttribute('data-sids', sidsAttr);
+    edgeLayer.appendChild(halo);
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('class', 'continent-route');
+    path.setAttribute('d', route.d);
+    path.setAttribute('data-edge-id', e.id);
+    path.setAttribute('data-sids', sidsAttr);
+    path.setAttribute('stroke', stroke.color);
+    path.setAttribute('stroke-width', String(stroke.width));
+    if (stroke.dash) path.setAttribute('stroke-dasharray', stroke.dash);
+    path.setAttribute('opacity', String(routePrefs.opacity));
+    path.addEventListener('pointerdown', ev => {
+      ev.stopPropagation();
+      _continentEdgePopover(e, ev);
+    });
+    _kact(path);  // T143 键盘可达（SVG path 可挂 tabindex）
+    edgeLayer.appendChild(path);
+    // 端点圆珠（站点）：摆在岛框**外侧**一点——SVG 连线层在世界层最底下，正好压在
+    // 岛框边上的圆会被岛牌盖掉半截，沿「岛心→出岛点」方向外推才完整可见
+    const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
+    const beadR = Math.min(4.2, Math.max(2.4, stroke.width * 1.4));
+    const dots = [];  // T133：端珠一并记账，主题重涂要动它们的 fill
+    [[ra, route.p0], [rb, laneMode ? route.p3 : route.p2]].forEach(pair => {
+      const rect = pair[0], pt = pair[1];
+      if (!rect || !pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+      const dx = pt.x - rect.cx, dy = pt.y - rect.cy;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const dot = document.createElementNS(svgNS, 'circle');
+      dot.setAttribute('class', 'continent-route-end');
+      dot.setAttribute('cx', String(pt.x + dx / len * 3));
+      dot.setAttribute('cy', String(pt.y + dy / len * 3));
+      dot.setAttribute('r', String(beadR));
+      dot.setAttribute('fill', stroke.color);
+      dot.setAttribute('opacity', String(routePrefs.opacity));
+      dot.setAttribute('data-sids', sidsAttr);
+      dots.push(dot);
+      edgeLayer.appendChild(dot);
+    });
+    if (e.label && !style.noLabel) {
+      const label = document.createElement('div');
+      label.className = 'continent-user-link-label';
+      // 落点走走线产物 route.mid（finite 兜底在纯函数里）——标签必须压在线上
+      label.style.left = route.mid.x + 'px';
+      label.style.top = route.mid.y + 'px';
+      label.textContent = e.label;
+      label.title = '我的航线：' + e.label;
+      label.addEventListener('pointerdown', ev => {
+        ev.stopPropagation();
+        _continentEdgePopover(e, ev);
+      });
+      _kact(label);  // T143 键盘可达
+      labelWrap.appendChild(label);
+    }
+    // 锚点短接（细节档才显，CSS 管显隐）：从锚点卡到出岛点的一小段虚线——
+    // 「这条线具体连哪张卡」降级为细节信息，不再穿岛去连卡片中心
+    if (pa && pb) {
+      [[pa, route.p0], [pb, laneMode ? route.p3 : route.p2]].forEach(pair => {
+        const stub = document.createElementNS(svgNS, 'line');
+        stub.setAttribute('class', 'continent-route-stub');
+        stub.setAttribute('x1', String(pair[0].cx));
+        stub.setAttribute('y1', String(pair[0].cy));
+        stub.setAttribute('x2', String(pair[1].x));
+        stub.setAttribute('y2', String(pair[1].y));
+        stub.setAttribute('data-sids', [e.fromSession, e.toSession].join(','));
+        edgeLayer.appendChild(stub);
+      });
+    }
+    // T133：记下这条航线三件套，主题切换时 _continentRepaintRouteTheme 只重涂颜色
+    _continentRouteEls.push({ halo: halo, path: path, dots: dots, style: style, edge: e });
+  });
+
+  // 断桥（v2）：一端已不在大陆上的边——从幸存端朝目标簇方向画残线，中段断开。
+  // 两端都在但同会话的无效边无残线可画，只进清理清单。
+  (data.danglingEdges || []).forEach(e => {
+    if (e.missing === 'same_session') return;
+    const anchor = e.missing === 'from' ? layout.placements[e.toItem] : layout.placements[e.fromItem];
+    if (!anchor) return;
+    const targetSid = e.missing === 'from' ? e.fromSession : e.toSession;
+    const cluster = layout.clusterRects.find(r => r.sessionId === targetSid);
+    const tx = cluster ? cluster.cx : anchor.cx + 140, ty = cluster ? cluster.cy : anchor.cy + 90;
+    const dx = tx - anchor.cx, dy = ty - anchor.cy;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / len, uy = dy / len;
+    const seg = (t0, t1) => {
+      const p = document.createElementNS(svgNS, 'path');
+      p.setAttribute('class', 'continent-dangle-link');
+      p.setAttribute('d', 'M ' + (anchor.cx + ux * len * t0) + ' ' + (anchor.cy + uy * len * t0) +
+        ' L ' + (anchor.cx + ux * len * t1) + ' ' + (anchor.cy + uy * len * t1));
+      edgeLayer.appendChild(p);
+    };
+    seg(0, 0.55); seg(0.68, 0.8);  // 中段留空 = 桥断了
+    const mark = document.createElement('div');
+    mark.className = 'continent-dangle-mark';
+    mark.style.left = (anchor.cx + ux * len * 0.615) + 'px';
+    mark.style.top = (anchor.cy + uy * len * 0.615) + 'px';
+    mark.textContent = '✕';
+    mark.title = '这条大陆边的一端已不在大陆上（画布被清空或概念被删除），可用工具条「清理断线」移除';
+    labelWrap.appendChild(mark);
+  });
+}
+
+// 边层局部重画：清空边 <g> 与标签 wrap 后按当前布局重画。缓存缺席（图未开/
+// 渲染路径没走到边层）时退回全量渲染兜底，绝不静默丢边
+function _continentRedrawEdges() {
+  const data = _continentData;
+  if (!data) return;
+  if (!_continentEdgeLayerEl || !_continentEdgeLabelWrap || !_continentLayoutCache) {
+    _continentRender(data);
+    return;
+  }
+  while (_continentEdgeLayerEl.firstChild) _continentEdgeLayerEl.removeChild(_continentEdgeLayerEl.firstChild);
+  while (_continentEdgeLabelWrap.firstChild) _continentEdgeLabelWrap.removeChild(_continentEdgeLabelWrap.firstChild);
+  _continentDrawEdgeLayer(data, _continentLayoutCache, _continentEdgeLayerEl, _continentEdgeLabelWrap);
+  // v5.6 契约：新画的标签出生时不带缩放抵消，画完必须同步一次
+  _continentSyncEdgeLabels();
+  const mineCount = (data.userEdges || []).length;
+  const stats = document.getElementById('continentStats');
+  if (stats && _continentStatsBase) {
+    stats.textContent = _continentStatsBase + (mineCount ? ' · 我的连线 ' + mineCount : '');
+  }
+}
+
+// T143 键盘可达性：大陆的交互件原先只绑 pointerdown——Tab 进不去、Enter/Space
+// 无处理器，键盘完全够不着。统一补法：原生 <button> 天生可聚焦，键盘会派发
+// detail=0 的 click（真实鼠标 click 的 detail≥1 且动作已由 pointerdown 跑过，
+// 必须跳过防双触发）；div/span/svg 件补 tabindex+role 后按 Enter/Space 合成
+// pointerdown（坐标取元素屏位置——弹层定位吃 clientX/clientY）。合成事件
+// bubbles:false，但捕获阶段照常下传，弹层场外关闭对它语义与真实点击一致。
+function _kact(el) {
+  if (!el || !el.addEventListener) return el;
+  const fire = () => {
+    const r = (typeof el.getBoundingClientRect === 'function') ? el.getBoundingClientRect() : null;
+    const init = {
+      bubbles: false, cancelable: true,
+      clientX: r ? r.left + Math.min(r.width / 2, 24) : 0,
+      clientY: r ? r.bottom + 4 : 0,
+    };
+    let synthetic = null;
+    try {
+      synthetic = (typeof PointerEvent === 'function')
+        ? new PointerEvent('pointerdown', init)
+        : new MouseEvent('pointerdown', init);
+    } catch (err) { synthetic = null; }
+    if (synthetic) {
+      try { el.dispatchEvent(synthetic); } catch (err) { /* 沙箱兜底 */ }
+    }
+  };
+  if (String(el.tagName || '').toLowerCase() === 'button') {
+    el.addEventListener('click', e => {
+      if (e.detail !== 0) return;  // 鼠标路径动作已在 pointerdown 跑过
+      e.stopPropagation();
+      fire();
+    });
+    return el;
+  }
+  try {
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+  } catch (err) { /* 沙箱兜底 */ }
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    e.stopPropagation();
+    fire();
+  });
+  return el;
+}
+
 function _continentRender(data) {
   const world = document.getElementById('continentWorld');
   if (!world) return null;
@@ -1633,6 +1878,7 @@ function _continentRender(data) {
         e.stopPropagation();  // 板头是聚焦按钮，不是画布拖拽起点
         _continentToggleLegendFocus(rect.key);
       });
+      _kact(head);  // T143 键盘可达
     }
     const fold = el.querySelector ? el.querySelector('[data-region-fold]') : null;
     if (fold) {
@@ -1640,6 +1886,7 @@ function _continentRender(data) {
         e.stopPropagation();
         _continentToggleCollapse('region', rect.key);
       });
+      _kact(fold);  // T143 键盘可达
     }
     world.appendChild(el);
   });
@@ -1730,6 +1977,7 @@ function _continentRender(data) {
         e.stopPropagation();  // 徽标是归类菜单入口，不进画布拖拽/下钻
         _continentDomainMenu(e, rect.sessionId);
       });
+      _kact(badge);  // T143 键盘可达
     }
     const foldBtn = el.querySelector ? el.querySelector('[data-island-fold]') : null;
     if (foldBtn) {
@@ -1737,6 +1985,7 @@ function _continentRender(data) {
         e.stopPropagation();
         _continentToggleCollapse('island', rect.sessionId);
       });
+      _kact(foldBtn);  // T143 键盘可达
     }
     // T140：展开/收回钮——布局要重算（岛会长高），走本地重渲（_continentData 现成，无网络）
     const moreBtn = el.querySelector ? el.querySelector('[data-island-expand]') : null;
@@ -1748,6 +1997,7 @@ function _continentRender(data) {
         else _continentExpanded[sid] = true;
         if (_continentOpen && _continentData) _continentRender(_continentData);
       });
+      _kact(moreBtn);  // T143 键盘可达
     }
     world.appendChild(el);
   });
@@ -1800,6 +2050,7 @@ function _continentRender(data) {
       e.stopPropagation();  // 标签/用户边同规：不让城市点击进画布拖拽态
       _continentCityPopover(city, e);
     });
+    _kact(el);  // T143 键盘可达：城市是大陆的核心交互件之一
     const ends = city.reps.map(r => r.itemId);
     el.addEventListener('mouseenter', () => _continentHighlightNodes(ends, true));
     el.addEventListener('mouseleave', () => _continentHighlightNodes(ends, false));
@@ -1831,143 +2082,29 @@ function _continentRender(data) {
   });
   const cityCount = plan.cityCount;
 
-  // 我的航线（v2 落笔 / v7.2 重做）：端点从**岛框边缘**出发、绕行不穿岛——旧版连
-  // 两张卡中心的弧线必然穿过岛内部与中间的岛。样式逐条可调（线型/颜色/粗细/走线/
-  // 显隐/锚点卡），全局可关（数据不动）；细节档（LOD detail）才画锚点卡的虚线短接。
-  // 「我画的路」观感（09-20）：与机器画的细线（辐条/断桥）拉开——核心线圆线帽 +
-  // 底下垫一条宽而淡的同色光晕（路基）+ 两端在岛框外各一颗圆珠（站点）。光晕与
-  // 圆珠都不接鼠标事件（命中区域与旧版一致，不会挡住附近的画布拖拽）。
-  const routePrefs = _continentRoutePrefs();
-  const routeThemeLight = document.documentElement &&
-    document.documentElement.getAttribute('data-theme') === 'light';
-  _continentRouteEls = [];  // T133：本帧航线元素重新收集（重渲后旧引用全部作废）
-  (data.userEdges || []).forEach(e => {
-    const ra = layout.clusterRects.find(r => r.sessionId === e.fromSession);
-    const rb = layout.clusterRects.find(r => r.sessionId === e.toSession);
-    const pa = layout.placements[e.fromItem], pb = layout.placements[e.toItem];
-    if (!ra || !rb) return;  // 找不到岛框的走断桥通道（下方 danglingEdges）
-    if (!routePrefs.on || (e.style && e.style.hidden)) return;
-    const style = e.style || {};
-    const route = _continentRoute(ra, rb, layout.clusterRects, style.route || 'detour',
-      { x: 0, y: 0, w: layout.worldW, h: layout.worldH });
-    const stroke = _continentRouteStroke(style, e, _continentRegionInfo,
-      routeThemeLight ? 'light' : 'dark');
-    const sidsAttr = [e.fromSession, e.toSession].join(',');
-    // 路基（光晕层）：同色、约 3 倍宽、低透明度——先画，核心线压在它上面
-    const halo = document.createElementNS(svgNS, 'path');
-    halo.setAttribute('class', 'continent-route-casing');
-    halo.setAttribute('d', route.d);
-    halo.setAttribute('stroke', stroke.color);
-    halo.setAttribute('stroke-width', String(Math.max(5, stroke.width * 3)));
-    halo.setAttribute('opacity', String(routePrefs.opacity));
-    halo.setAttribute('data-sids', sidsAttr);
-    svg.appendChild(halo);
-    const path = document.createElementNS(svgNS, 'path');
-    path.setAttribute('class', 'continent-route');
-    path.setAttribute('d', route.d);
-    path.setAttribute('data-edge-id', e.id);
-    path.setAttribute('data-sids', sidsAttr);
-    path.setAttribute('stroke', stroke.color);
-    path.setAttribute('stroke-width', String(stroke.width));
-    if (stroke.dash) path.setAttribute('stroke-dasharray', stroke.dash);
-    path.setAttribute('opacity', String(routePrefs.opacity));
-    path.addEventListener('pointerdown', ev => {
-      ev.stopPropagation();
-      _continentEdgePopover(e, ev);
-    });
-    svg.appendChild(path);
-    // 端点圆珠（站点）：摆在岛框**外侧**一点——SVG 连线层在世界层最底下，正好压在
-    // 岛框边上的圆会被岛牌盖掉半截，沿「岛心→出岛点」方向外推才完整可见
-    const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
-    const beadR = Math.min(4.2, Math.max(2.4, stroke.width * 1.4));
-    const dots = [];  // T133：端珠一并记账，主题重涂要动它们的 fill
-    [[ra, route.p0], [rb, laneMode ? route.p3 : route.p2]].forEach(pair => {
-      const rect = pair[0], pt = pair[1];
-      if (!rect || !pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
-      const dx = pt.x - rect.cx, dy = pt.y - rect.cy;
-      const len = Math.max(1, Math.hypot(dx, dy));
-      const dot = document.createElementNS(svgNS, 'circle');
-      dot.setAttribute('class', 'continent-route-end');
-      dot.setAttribute('cx', String(pt.x + dx / len * 3));
-      dot.setAttribute('cy', String(pt.y + dy / len * 3));
-      dot.setAttribute('r', String(beadR));
-      dot.setAttribute('fill', stroke.color);
-      dot.setAttribute('opacity', String(routePrefs.opacity));
-      dot.setAttribute('data-sids', sidsAttr);
-      dots.push(dot);
-      svg.appendChild(dot);
-    });
-    if (e.label && !style.noLabel) {
-      const label = document.createElement('div');
-      label.className = 'continent-user-link-label';
-      // 落点走走线产物 route.mid（finite 兜底在纯函数里）——标签必须压在线上
-      label.style.left = route.mid.x + 'px';
-      label.style.top = route.mid.y + 'px';
-      label.textContent = e.label;
-      label.title = '我的航线：' + e.label;
-      label.addEventListener('pointerdown', ev => {
-        ev.stopPropagation();
-        _continentEdgePopover(e, ev);
-      });
-      world.appendChild(label);
-    }
-    // 锚点短接（细节档才显，CSS 管显隐）：从锚点卡到出岛点的一小段虚线——
-    // 「这条线具体连哪张卡」降级为细节信息，不再穿岛去连卡片中心
-    if (pa && pb) {
-      [[pa, route.p0], [pb, laneMode ? route.p3 : route.p2]].forEach(pair => {
-        const stub = document.createElementNS(svgNS, 'line');
-        stub.setAttribute('class', 'continent-route-stub');
-        stub.setAttribute('x1', String(pair[0].cx));
-        stub.setAttribute('y1', String(pair[0].cy));
-        stub.setAttribute('x2', String(pair[1].x));
-        stub.setAttribute('y2', String(pair[1].y));
-        stub.setAttribute('data-sids', [e.fromSession, e.toSession].join(','));
-        svg.appendChild(stub);
-      });
-    }
-    // T133：记下这条航线三件套，主题切换时 _continentRepaintRouteTheme 只重涂颜色
-    _continentRouteEls.push({ halo: halo, path: path, dots: dots, style: style, edge: e });
-  });
+  // T144：边层（用户航线 + 断桥 + 标签/断桥标记）收进独立 <g> 与标签 wrap——
+  // _continentRedrawEdges 只清这两处重建，辐条/岛卡/公式 KaTeX 全不动。
+  // 绘制逻辑在 _continentDrawEdgeLayer（与局部重画共用同一份，产出一致）
+  const edgeLayer = document.createElementNS(svgNS, 'g');
+  edgeLayer.setAttribute('class', 'continent-edge-layer');
+  svg.appendChild(edgeLayer);
+  const labelWrap = document.createElement('div');
+  labelWrap.className = 'continent-edge-labels';
+  _continentDrawEdgeLayer(data, layout, edgeLayer, labelWrap);
+  _continentEdgeLayerEl = edgeLayer;
+  _continentEdgeLabelWrap = labelWrap;
+  _continentLayoutCache = layout;
 
-  // 断桥（v2）：一端已不在大陆上的边——从幸存端朝目标簇方向画残线，中段断开。
-  // 两端都在但同会话的无效边无残线可画，只进清理清单。
-  (data.danglingEdges || []).forEach(e => {
-    if (e.missing === 'same_session') return;
-    const anchor = e.missing === 'from' ? layout.placements[e.toItem] : layout.placements[e.fromItem];
-    if (!anchor) return;
-    const targetSid = e.missing === 'from' ? e.fromSession : e.toSession;
-    const cluster = layout.clusterRects.find(r => r.sessionId === targetSid);
-    const tx = cluster ? cluster.cx : anchor.cx + 140, ty = cluster ? cluster.cy : anchor.cy + 90;
-    const dx = tx - anchor.cx, dy = ty - anchor.cy;
-    const len = Math.max(1, Math.hypot(dx, dy));
-    const ux = dx / len, uy = dy / len;
-    const seg = (t0, t1) => {
-      const p = document.createElementNS(svgNS, 'path');
-      p.setAttribute('class', 'continent-dangle-link');
-      p.setAttribute('d', 'M ' + (anchor.cx + ux * len * t0) + ' ' + (anchor.cy + uy * len * t0) +
-        ' L ' + (anchor.cx + ux * len * t1) + ' ' + (anchor.cy + uy * len * t1));
-      svg.appendChild(p);
-    };
-    seg(0, 0.55); seg(0.68, 0.8);  // 中段留空 = 桥断了
-    const mark = document.createElement('div');
-    mark.className = 'continent-dangle-mark';
-    mark.style.left = (anchor.cx + ux * len * 0.615) + 'px';
-    mark.style.top = (anchor.cy + uy * len * 0.615) + 'px';
-    mark.textContent = '✕';
-    mark.title = '这条大陆边的一端已不在大陆上（画布被清空或概念被删除），可用工具条「清理断线」移除';
-    world.appendChild(mark);
-  });
-
+  world.appendChild(labelWrap);
   world.insertBefore(svg, world.firstChild);
 
   const mineCount = (data.userEdges || []).length;
-  const stats = document.getElementById('continentStats');
-  if (stats) stats.textContent =
-    data.clusterCount + ' 个区域 · ' + data.itemCount + ' 个概念' +
+  _continentStatsBase = data.clusterCount + ' 个区域 · ' + data.itemCount + ' 个概念' +
     (regionInfo.regions.length ? ' · ' + regionInfo.regions.length + ' 片海域' : '') +
     (cityCount ? ' · ' + cityCount + ' 座边界城市' : '') +
-    (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '') +
-    (mineCount ? ' · 我的连线 ' + mineCount : '');
+    (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '');
+  const stats = document.getElementById('continentStats');
+  if (stats) stats.textContent = _continentStatsBase + (mineCount ? ' · 我的连线 ' + mineCount : '');
   const empty = document.getElementById('continentEmpty');
   if (empty) empty.hidden = (data.itemCount || 0) > 0;
   // 空态引导（v5.4）：「暂无共享连线」管「有岛但 0 城市」，教的是共享概念怎么长成城市。
@@ -2253,21 +2390,29 @@ function _continentRenderLegend(regionInfo, data) {
     } catch (err) { /* 容忍 */ }
     _continentRenderLegend(_continentRegionInfo, data);
   });
-  (legend.querySelectorAll ? legend.querySelectorAll('[data-region]') : []).forEach(li =>
+  if (toggle) _kact(toggle);  // T143 键盘可达
+  (legend.querySelectorAll ? legend.querySelectorAll('[data-region]') : []).forEach(li => {
     li.addEventListener('pointerdown', e => {
       e.stopPropagation();
       _continentToggleLegendFocus(li.getAttribute('data-region'));
-    }));
-  (legend.querySelectorAll ? legend.querySelectorAll('[data-rename]') : []).forEach(btn =>
+    });
+    _kact(li);  // T143 键盘可达
+  });
+  (legend.querySelectorAll ? legend.querySelectorAll('[data-rename]') : []).forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       _continentRenameRegionMenu(e, btn.getAttribute('data-rename'));
-    }));
-  const pendingBtn = legend.querySelector ? legend.querySelector('[data-pending]') : null;
-  if (pendingBtn) pendingBtn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    _continentPendingPopover(e);
+    });
+    _kact(btn);  // T143 键盘可达
   });
+  const pendingBtn = legend.querySelector ? legend.querySelector('[data-pending]') : null;
+  if (pendingBtn) {
+    pendingBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentPendingPopover(e);
+    });
+    _kact(pendingBtn);  // T143 键盘可达
+  }
 }
 
 // 聚焦：只淡化不删不重排——地图的空间记忆（哪片在哪）是用户的资产
@@ -2321,12 +2466,15 @@ function _continentDomainMenu(ev, sid) {
     '<button class="continent-pop-btn is-danger" data-assign="">不归类</button></div>';
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
-  el.querySelectorAll('[data-assign]').forEach(btn => btn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    const domain = btn.getAttribute('data-assign') || null;
-    _continentClosePopover();
-    _continentAssignRegion(sid, domain, hadOverride ? current : undefined);
-  }));
+  el.querySelectorAll('[data-assign]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      const domain = btn.getAttribute('data-assign') || null;
+      _continentClosePopover();
+      _continentAssignRegion(sid, domain, hadOverride ? current : undefined);
+    });
+    _kact(btn);  // T143 键盘可达
+  });
 }
 
 async function _continentAssignRegion(sid, domain, before) {
@@ -2383,15 +2531,21 @@ function _continentRenameRegionMenu(ev, key) {
     }
   };
   const saveBtn = el.querySelector('[data-rename-save]');
-  if (saveBtn) saveBtn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    save(input ? String(input.value || '').trim().slice(0, 16) : '');
-  });
+  if (saveBtn) {
+    saveBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      save(input ? String(input.value || '').trim().slice(0, 16) : '');
+    });
+    _kact(saveBtn);  // T143 键盘可达
+  }
   const resetBtn = el.querySelector('[data-rename-reset]');
-  if (resetBtn) resetBtn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    save('');
-  });
+  if (resetBtn) {
+    resetBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      save('');
+    });
+    _kact(resetBtn);  // T143 键盘可达
+  }
   if (input) input.addEventListener('keydown', e => {
     if (e.key === 'Enter') save(String(input.value || '').trim().slice(0, 16));
   });
@@ -2433,18 +2587,22 @@ function _continentPendingPopover(ev) {
     sugHtml;
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
-  el.querySelectorAll('[data-pending-sid]').forEach(btn =>
+  el.querySelectorAll('[data-pending-sid]').forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       _continentDomainMenu(e, btn.getAttribute('data-pending-sid'));
-    }));
-  el.querySelectorAll('[data-adopt]').forEach(btn =>
+    });
+    _kact(btn);  // T143 键盘可达
+  });
+  el.querySelectorAll('[data-adopt]').forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       const m = (_continentGateSuggestions && _continentGateSuggestions.merges || [])
         [Number(btn.getAttribute('data-adopt'))];
       if (m) _continentAdoptGateMerge(m);
-    }));
+    });
+    _kact(btn);  // T143 键盘可达
+  });
 }
 
 function _continentCopyRegionOverrides() {
@@ -3166,7 +3324,10 @@ function _continentEdgePopover(e, ev) {
     } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
   };
   const saveBtn = el.querySelector('[data-act="save-label"]');
-  if (saveBtn) saveBtn.addEventListener('pointerdown', e2 => { e2.stopPropagation(); saveLabel(); });
+  if (saveBtn) {
+    saveBtn.addEventListener('pointerdown', e2 => { e2.stopPropagation(); saveLabel(); });
+    _kact(saveBtn);  // T143 键盘可达
+  }
   if (labelInput) labelInput.addEventListener('keydown', ev2 => {
     if (ev2.key === 'Enter') saveLabel();
   });
@@ -3192,6 +3353,7 @@ function _continentEdgePopover(e, ev) {
         } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
       }
     });
+    _kact(btn);  // T143 键盘可达
   });
 }
 
@@ -3320,12 +3482,14 @@ function _continentApplySearchHit(results, hasMore) {
           : _continentSearchResults.length + ' 个结果 · 点行跳转' +
             (_continentSearchResults.length === 1 ? '，回车直达' : '')) + '</div>';
       pop.hidden = false;
-      pop.querySelectorAll('[data-search-idx]').forEach(btn =>
+      pop.querySelectorAll('[data-search-idx]').forEach(btn => {
         btn.addEventListener('pointerdown', e => {
           e.stopPropagation();
           const r = _continentSearchResults[Number(btn.getAttribute('data-search-idx'))];
           if (r) _continentSearchJump(r);
-        }));
+        });
+        _kact(btn);  // T143 键盘可达
+      });
     }
   }
   if (world && world.querySelectorAll) {
@@ -4138,9 +4302,15 @@ async function _continentCommit(edges, undoEntry) {
   });
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   if (undoEntry) _continentEdgeUndo.push(undoEntry);
-  const data = await _continentFetchData();
-  _continentData = data;
-  if (_continentOpen) _continentRender(data);  // 布局与边无关，重渲不动视口
+  // T144：边表是独立 KV，聚簇/共享概念/海域投影全不因它变——原先提交后重 GET
+  // /api/continent（服务端全量重算）→ 整图重建重跑全部 KaTeX。现在本地镜像
+  // 服务端校验（_continentSplitEdges）重算有效/悬空归类，只重画边层
+  const d = _continentData || {};
+  const capped = edges.slice(0, CONTINENT_USER_EDGE_LIMIT);
+  const split = _continentSplitEdges(capped, d);
+  d.userEdges = split.userEdges;
+  d.danglingEdges = split.danglingEdges;
+  if (_continentOpen) _continentRedrawEdges();  // 布局与边无关，不重投影不重建岛卡
   _continentUpdateTools();
 }
 

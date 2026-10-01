@@ -6,6 +6,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 
 from http_client import get_http_client
 from llm_common import opencode_gateway_headers
@@ -111,14 +112,23 @@ def _looks_like_formula(latex: str) -> bool:
 
 
 def _dedupe_formula_map(data: dict) -> dict:
-    """按会话+规范化公式去重，保留较新的记录。"""
+    """按规范化公式全局去重（T146 起不再按会话分区），保留较优记录。
+
+    同一公式在多个画布出现只留一条：meaningSource=model 优先、createdAt 新者
+    优先。跨会话合并把全部归属写进 sessionIds（含保留条自身的 sessionId）——
+    按会话删除与大陆公式亲缘据此不丢信号。无法归一 latex 的条目原样保留。
+    """
     groups = {}
+    passthrough = {}
     for fid, item in data.items():
         if not isinstance(item, dict):
             continue
-        key = (_formula_key(item.get("latex") or ""), item.get("sessionId"))
+        key = _formula_key(item.get("latex") or "")
+        if not key:
+            passthrough[fid] = item
+            continue
         groups.setdefault(key, []).append((fid, item))
-    result = {}
+    result = passthrough
     merge_fields = ("concept", "meaning", "meaningSource", "topic", "related", "messageId", "moduleKey")
     for entries in groups.values():
         entries.sort(key=lambda kv: (
@@ -130,8 +140,26 @@ def _dedupe_formula_map(data: dict) -> dict:
             for field in merge_fields:
                 if not keep.get(field) and other.get(field):
                     keep[field] = other[field]
+        sids = _merge_session_ids(entries)
+        if len(sids) > 1:
+            keep["sessionIds"] = sids
+        if not str(keep.get("sessionId") or "") and sids:
+            keep["sessionId"] = sids[0]
         result[keep_id] = keep
     return result
+
+
+def _merge_session_ids(entries) -> list:
+    """T146：一组待合并条目的全部归属会话（保序去重，保留条自身的 sessionId
+    恒在首位——调用方先排好保优序再进来）。"""
+    sids, seen = [], set()
+    for _, it in entries:
+        for sid in [it.get("sessionId"), *(it.get("sessionIds") or [])]:
+            s = str(sid or "")
+            if s and s not in seen:
+                seen.add(s)
+                sids.append(s)
+    return sids
 
 
 
@@ -322,22 +350,26 @@ def _summary_source_rank(item: dict) -> int:
 
 
 def _dedupe_knowledge(data) -> dict:
-    """按 sessionId + 规范化标题合并同一会话内的重复知识点。
+    """按规范化标题合并重复知识点（T146 起跨会话全局合并，不再按会话硬分区——
+    实测 86 条同名概念重复跨 15 会话，知识面板时间线越积越重复）。
 
     保优排序：summarySource 等级优先（manual > model > local），长度仅在
     同源时作为 tie-break——避免「手动摘要被更长的 AI 摘要覆盖」以及本地
     整卡摘要把模型逐条摘要又拉回去的来回覆盖。
+
+    跨会话合并保留多会话归属：保留条写 sessionIds（全部归属会话，含自身）。
+    大陆投影与按会话删除据此把这张卡算进每一个出现它的画布——去重不能把
+    「跨画布共享概念」的信号一起压掉（城市/亲缘全靠跨会话条目活着）。
     """
     data = _normalize_knowledge(data)
     groups = {}
     for item_id, item in data.items():
         if not isinstance(item, dict):
             continue
-        session_id = item.get("sessionId", "")
         title_key = _normalize_knowledge_key(item.get("title", ""))
-        if not session_id or not title_key:
+        if not title_key:
             continue
-        groups.setdefault((session_id, title_key), []).append((item_id, item))
+        groups.setdefault(title_key, []).append((item_id, item))
 
     remove_ids = []
     for group in groups.values():
@@ -370,6 +402,12 @@ def _dedupe_knowledge(data) -> dict:
                 if str(other.get("summary") or "").strip():
                     keep["summary"] = other["summary"]
                     break
+        # T146：跨会话归属合并——sessionIds 记录这张概念卡属于哪些画布
+        sids = _merge_session_ids(group)
+        if len(sids) > 1:
+            keep["sessionIds"] = sids
+        if not str(keep.get("sessionId") or "") and sids:
+            keep["sessionId"] = sids[0]
         for item_id, _ in group:
             if item_id != keep_id:
                 remove_ids.append(item_id)
@@ -763,16 +801,20 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
                 if not latex or not _looks_like_formula(latex):
                     continue
                 existing = next((v for v in data.values()
-                                 if _formula_key(v.get("latex")) == _formula_key(latex)
-                                 and v.get("sessionId") == session_id), None)
+                                 if _formula_key(v.get("latex")) == _formula_key(latex)), None)
                 if existing:
                     # 快速本地提取可能先写入摘要，后续描述模型返回时只更新说明。
+                    # T146：同公式跨会话不再各建一条——归属并入 sessionIds。
                     model_description = (descriptions.get(latex) or "").strip()
                     meaning_source = "model" if model_description else "local"
                     description = model_description or _local_formula_meaning(latex, summary, title)
                     old_meaning = (existing.get("meaning") or "").strip()
                     old_source = str(existing.get("meaningSource") or "local")
                     module_key = _formula_module_key(it, latex)
+                    if session_id and session_id not in (existing.get("sessionIds") or []) \
+                            and session_id != existing.get("sessionId"):
+                        existing["sessionIds"] = _merge_session_ids([("keep", existing), ("new", {"sessionId": session_id})])
+                        changed = True
                     if message_id and not existing.get("messageId"):
                         existing["messageId"] = message_id
                         changed = True
@@ -810,10 +852,50 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
                     "createdAt": now,
                 }
                 count += 1
-        return data if count or changed else None
+        # T146：写入路径顺手做一次全局去重（跨会话旧重复在第一次新写入时收敛）
+        return _dedupe_formula_map(data) if count or changed else None
 
     _mutate_json(FORMULAS_PATH, updater)
     return count
+
+
+def _delete_items_by_session(path: Path, session_id: str) -> int:
+    """sessionIds 感知的按会话删除（T146）：条目从该会话的归属里摘除，
+    还有别的归属就把主 sessionId 改到剩余归属（孤儿闸门要求 sessionId 指向
+    活会话），一个归属都不剩才整条删除。返回受影响条数。"""
+    affected = []
+
+    def updater(data):
+        nonlocal affected
+        if not isinstance(data, dict):
+            return None
+        changed = False
+        for key, item in list(data.items()):
+            if not isinstance(item, dict):
+                continue
+            sids, seen = [], set()
+            for sid in [item.get("sessionId"), *(item.get("sessionIds") or [])]:
+                s = str(sid or "")
+                if s and s not in seen:
+                    seen.add(s)
+                    sids.append(s)
+            if session_id not in sids:
+                continue
+            rest = [s for s in sids if s != session_id]
+            if rest:
+                item["sessionId"] = rest[0]
+                if len(rest) > 1:
+                    item["sessionIds"] = rest
+                else:
+                    item.pop("sessionIds", None)
+            else:
+                data.pop(key, None)
+            affected.append(key)
+            changed = True
+        return data if changed else None
+
+    _mutate_json(path, updater)
+    return len(affected)
 
 
 
@@ -940,5 +1022,5 @@ __all__ = [
     "_formula_tags_from_content", "_local_formula_meaning", "_local_knowledge_summary",
     "_local_extract_knowledge",
     "_ai_extract_knowledge", "_formula_module_key", "_add_formulas_from_items",
-    "_extract_summary", "_describe_formulas",
+    "_extract_summary", "_describe_formulas", "_delete_items_by_session",
 ]

@@ -1941,7 +1941,12 @@ check('knowledge: P3 中断注册表接线（再次点击/Esc 两路径 + 循环
     if (!code.includes(frag)) throw new Error('打包产物缺符号: ' + frag);
   }
   const html = fs.readFileSync('src/static/index.html', 'utf8');
-  if (!html.includes('kpOptimizeBtn') || !html.includes('optimizeKnowledgeSummaries()')) return false;
+  // T148：入口改派发器 kpOptimizeBtnClicked（知识点页优化摘要 / 公式页优化含义），
+  // 断言认派发器 + 两个批量入口仍在 knowledge.js
+  if (!html.includes('kpOptimizeBtn') || !html.includes('kpOptimizeBtnClicked()')) return false;
+  for (const frag of ['function optimizeKnowledgeSummaries', 'function optimizeFormulaMeanings', 'function kpOptimizeBtnClicked', 'window.kpOptimizeBtnClicked']) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺批量入口/派发器: ' + frag);
+  }
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   return css.includes('.kp-tool-btn');
 });
@@ -1966,6 +1971,88 @@ check('knowledge: 导出 Markdown 接线（按钮/整库口径/两个 tab 构建
   }
   // 公式导出与面板显示同一语义过滤口径（废条目不入导出）
   if (!/_kpFormulasMarkdown[\s\S]{0,400}_looksLikeFormula/.test(src)) throw new Error('公式导出未过 _looksLikeFormula 语义过滤');
+  return true;
+});
+
+check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静态接线', () => {
+  // T39：fitGraph 里画布滚动位置清零（缩放/适配后不残留滚动偏移）
+  const srcInteract = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  for (const frag of ['graphCanvas.scrollTop = 0', 'graphCanvas.scrollLeft = 0']) {
+    if (!srcInteract.includes(frag)) throw new Error('T39 graph-interact.js 缺滚动清零: ' + frag);
+  }
+  if (!/function fitGraph\(\) \{[\s\S]{0,400}graphCanvas\.scrollTop = 0/.test(srcInteract)) {
+    throw new Error('T39 fitGraph 函数体 400 字符内未清零 scrollTop');
+  }
+
+  // T54：导出/海报大画布面积上限 + 空白画布兜底（超限自动降采样，不再出白图）
+  const srcExport = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  for (const frag of ['EXPORT_MAX_AREA = 67108864', 'function _canvasLooksBlank', 'blankErr.blank = true', '自动降到']) {
+    if (!srcExport.includes(frag)) throw new Error('T54 graph-export.js 缺: ' + frag);
+  }
+  const srcPoster = fs.readFileSync('src/static/js/graph-poster.js', 'utf8');
+  for (const frag of ['POSTER_MAX_AREA = 67108864', 'function _canvasLooksBlank']) {
+    if (!srcPoster.includes(frag)) throw new Error('T54 graph-poster.js 缺: ' + frag);
+  }
+
+  // T119：破坏性操作前先确认画布存在（提示口径统一「稍候再…」）
+  const srcSession = fs.readFileSync('src/static/js/session.js', 'utf8');
+  for (const frag of ['稍候再删除画布', '稍候再批量删除画布', '稍候再清空当前画布', '稍候再清空所有画布']) {
+    if (!srcSession.includes(frag)) throw new Error('T119 session.js 缺: ' + frag);
+  }
+  const srcWorkflow = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  if (!srcWorkflow.includes('稍候再单独生成这个节点')) throw new Error('T119 graph-workflow.js 缺「稍候再单独生成这个节点」');
+  if (!srcInteract.includes('稍候再生成可视化')) throw new Error('T119 graph-interact.js 缺「稍候再生成可视化」');
+
+  // T58：可视化重生成忙态标志（防并发重入）
+  const srcRender = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  for (const frag of ['vizBusy', 'regenBusy']) {
+    if (!srcRender.includes(frag)) throw new Error('T58 graph-render.js 缺忙态标志: ' + frag);
+  }
+
+  // T127：Harness 事件轮询两态 URL（全库聚合 / 单会话）
+  const srcHarness = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  for (const frag of ['/api/harness/graph/events?all=1', '/api/harness/graph/events?session_id=']) {
+    if (!srcHarness.includes(frag)) throw new Error('T127 harness.js 缺事件轮询 URL: ' + frag);
+  }
+
+  // T143：知识大陆键盘操作收敛进 _kact（调用 ≥15 处）+ 焦点可见样式
+  const srcContinent = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!srcContinent.includes('function _kact')) throw new Error('T143 graph-continent.js 缺 function _kact');
+  const kactCount = (srcContinent.match(/\b_kact\(/g) || []).length;
+  if (kactCount < 15) throw new Error('T143 graph-continent.js _kact( 调用数不足 15: ' + kactCount);
+  const cssPanels = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!cssPanels.includes('.continent-open [tabindex="0"]:focus-visible')) {
+    throw new Error('T143 styles-panels.css 缺 .continent-open [tabindex="0"]:focus-visible');
+  }
+
+  // T144：大陆边层拆分（切分/画边/重绘三函数），commit 不再内联拉数据
+  for (const frag of ['function _continentSplitEdges', 'function _continentDrawEdgeLayer', 'function _continentRedrawEdges']) {
+    if (!srcContinent.includes(frag)) throw new Error('T144 graph-continent.js 缺: ' + frag);
+  }
+  const commitBody = (srcContinent.match(/async function _continentCommit\([\s\S]*?\n\}/) || [''])[0];
+  if (!commitBody) throw new Error('T144 graph-continent.js 未匹配到 async function _continentCommit 函数体');
+  if (commitBody.includes('_continentFetchData')) throw new Error('T144 _continentCommit 函数体内仍含 _continentFetchData（未拆干净）');
+
+  // T146：知识面板多会话聚合口径（sessionIds 数组聚合，弃用旧 sessionId|key 拼接）
+  const srcKnowledge = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  if (srcKnowledge.includes("sessionId + '|' + key")) throw new Error("T146 knowledge.js 仍含旧口径 sessionId + '|' + key");
+  const sidsCount = (srcKnowledge.match(/keep\.sessionIds = sids/g) || []).length;
+  if (sidsCount < 2) throw new Error('T146 knowledge.js keep.sessionIds = sids 出现次数不足 2: ' + sidsCount);
+  if (!srcKnowledge.includes('if (!keep.sessionId && sids.length) keep.sessionId = sids[0]')) {
+    throw new Error('T146 knowledge.js 缺 sessionId 回填兜底: if (!keep.sessionId && sids.length) keep.sessionId = sids[0]');
+  }
+  const srcQuiz = fs.readFileSync('src/static/js/quiz-stats.js', 'utf8');
+  if (!srcQuiz.includes('item.sessionId, ...((item && item.sessionIds) || [])')) {
+    throw new Error('T146 quiz-stats.js 缺 sessionIds 聚合: item.sessionId, ...((item && item.sessionIds) || [])');
+  }
+
+  // T148：公式含义旧数据过滤 + 批量优化含义入口（HTML 按钮走派发器 kpOptimizeBtnClicked）
+  for (const frag of ['function isLegacyFormulaMeaningItem', 'function optimizeFormulaMeanings', '请为下面的公式写一句含义说明', 'window.kpOptimizeBtnClicked']) {
+    if (!srcKnowledge.includes(frag)) throw new Error('T148 knowledge.js 缺: ' + frag);
+  }
+  const htmlIndex = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!htmlIndex.includes('kpOptimizeBtnClicked()')) throw new Error('T148 index.html 缺 kpOptimizeBtnClicked() 入口');
+
   return true;
 });
 

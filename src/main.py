@@ -525,7 +525,8 @@ async def api_models_chat(request: Request):
             await resp.aclose()
         error_text = error_body.decode(errors='replace')[:500]
         logger.error(f"AI proxy upstream error: status={resp.status_code} body={error_text} url={url}")
-        raise HTTPException(status_code=502, detail=f"上游返回 {resp.status_code}: {error_text}")
+        # T43：401/403 或正文命中凭证错误时，文案带上「换钥」引导而非只报状态码
+        raise HTTPException(status_code=502, detail=llm_common.upstream_error_detail(resp.status_code, error_text))
 
     if not stream:
         try:
@@ -648,7 +649,8 @@ async def api_models_list(request: Request):
         raise HTTPException(status_code=502, detail=f"上游连接失败: {type(e).__name__}: {e}")
     if resp.status_code != 200:
         logger.error(f"models list upstream error: status={resp.status_code} body={resp.text[:300]} url={url}")
-        raise HTTPException(status_code=502, detail=f"上游返回 {resp.status_code}: {resp.text[:300]}")
+        # T43：拉模型清单遇 401 时用户最需要的就是「去换钥」这句话
+        raise HTTPException(status_code=502, detail=llm_common.upstream_error_detail(resp.status_code, resp.text[:300]))
     try:
         data = resp.json()
     except Exception:
@@ -845,8 +847,8 @@ async def api_delete_session(session_id: str):
     # KV 快照原地保留。反过来中断最多留下一座还看得见的空岛，重删一次即可）。
     # 探索网快照（data/kv/<sid>.json 整文件）此前从不清，残留会被回填脚本当作
     # 提取料把已删会话的知识点重新入库——孤岛的「复活」通道。
-    _delete_by_session(KNOWLEDGE_PATH, session_id)
-    _delete_by_session(FORMULAS_PATH, session_id)
+    _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
+    _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
     _delete_socratic_state(session_id)
     for stale in (msgs_path, KV_DIR / f"{session_id}.json"):
         try:
@@ -970,8 +972,8 @@ async def api_clear_messages(session_id: str):
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
-    _delete_by_session(KNOWLEDGE_PATH, session_id)
-    _delete_by_session(FORMULAS_PATH, session_id)
+    _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
+    _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
     _delete_socratic_state(session_id)
     return {"ok": True}
 
@@ -1213,10 +1215,9 @@ async def api_save_formulas(request: Request):
             latex = _normalize_formula(it.get("latex") or "")
             if not latex or not _looks_like_formula(latex):
                 continue
-            # 去重：同会话同公式不重复入库
+            # 去重（T146 起全局）：同公式跨会话并进同一条，归属写 sessionIds
             existing = next((v for v in data.values()
-                             if _formula_key(v.get("latex")) == _formula_key(latex)
-                             and v.get("sessionId") == it.get("sessionId")), None)
+                             if _formula_key(v.get("latex")) == _formula_key(latex)), None)
             if existing:
                 # 本地快速提取先入库，后续 AI 结果可以补充更完整的说明。
                 changed = False
@@ -1234,6 +1235,19 @@ async def api_save_formulas(request: Request):
                     if value and not existing.get(key):
                         existing[key] = value
                         changed = True
+                # T146：并入本次会话归属（若尚不是它的归属之一）
+                it_sid = str(it.get("sessionId") or "")
+                if it_sid and it_sid != existing.get("sessionId") \
+                        and it_sid not in (existing.get("sessionIds") or []):
+                    merged_sids = [str(existing.get("sessionId") or "")] + \
+                        [str(s or "") for s in (existing.get("sessionIds") or [])] + [it_sid]
+                    sid_seen, ordered_sids = set(), []
+                    for sid in merged_sids:
+                        if sid and sid not in sid_seen:
+                            sid_seen.add(sid)
+                            ordered_sids.append(sid)
+                    existing["sessionIds"] = ordered_sids
+                    changed = True
                 if changed:
                     count += 1
                 continue

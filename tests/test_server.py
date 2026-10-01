@@ -105,6 +105,61 @@ class KnowledgeTest(unittest.TestCase):
         result = knowledge_mod._dedupe_formula_map(data)
         self.assertEqual(len(result), 1)
 
+    def test_dedupe_knowledge_merges_across_sessions_with_session_ids(self):
+        # T146：同名概念分属两个会话 → 全局合并为一条，sessionIds 记录双归属；
+        # 保优排序同源（都无 summarySource → local）时长 summary tie-break 胜出
+        data = {
+            "k1": {"title": "梯度", "sessionId": "s1", "summary": "短摘要", "createdAt": 1},
+            "k2": {"title": "梯度", "sessionId": "s2", "summary": "更长的梯度摘要，保优后应胜出", "createdAt": 2},
+            "k3": {"title": "散度", "sessionId": "s1", "summary": "不重复条目", "createdAt": 3},
+        }
+        result = knowledge_mod._dedupe_knowledge(data)
+        self.assertEqual(len(result), 2)
+        self.assertIn("k3", result)  # 不重复条目原样保留
+        merged = result["k2"]
+        self.assertEqual(merged["summary"], "更长的梯度摘要，保优后应胜出")
+        self.assertEqual(merged["sessionIds"], ["s1", "s2"])
+
+    def test_dedupe_formula_map_cross_session_merges_with_session_ids(self):
+        # T146：同一公式跨会话（空格变体同键）合并为一条；meaningSource=model
+        # 保优胜出，sessionIds 含两个会话且保留条（model）的会话在前
+        data = {
+            "f1": {"latex": "$F=-kx$", "sessionId": "s1", "meaning": "旧", "createdAt": 1},
+            "f2": {"latex": "$F = -kx$", "sessionId": "s2", "meaning": "新",
+                   "meaningSource": "model", "createdAt": 2},
+        }
+        result = knowledge_mod._dedupe_formula_map(data)
+        self.assertEqual(len(result), 1)
+        merged = result["f2"]
+        self.assertEqual(merged["meaning"], "新")
+        self.assertEqual(merged["meaningSource"], "model")
+        self.assertEqual(merged["sessionIds"], ["s2", "s1"])
+
+    def test_delete_items_by_session_strips_and_reprimary(self):
+        # T146：sessionIds 感知的按会话删除——条目从该会话归属里摘除，还有别的
+        # 归属就把主 sessionId 改到剩余归属（孤儿闸门要求 sessionId 指向活会话），
+        # 归属清零才整条删除
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "knowledge.json"
+            storage_mod._write_json(path, {
+                "k1": {"title": "梯度", "sessionId": "s2", "sessionIds": ["s2", "s1"]},
+                "k2": {"title": "散度", "sessionId": "s1"},
+            })
+
+            # 两条都受影响：「散度」归属清零整条删、「梯度」摘除 s1 归属（返回
+            # 受影响条数，两个分支都计数）
+            removed = knowledge_mod._delete_items_by_session(path, "s1")
+            self.assertEqual(removed, 2)
+            data = storage_mod._read_json(path)
+            self.assertEqual(set(data), {"k1"})  # 只剩「梯度」
+            self.assertEqual(data["k1"]["sessionId"], "s2")
+            # 只剩单一归属：sessionIds 收敛为 ["s2"]（实现直接移除该键，等价口径）
+            self.assertEqual(data["k1"].get("sessionIds", ["s2"]), ["s2"])
+
+            removed = knowledge_mod._delete_items_by_session(path, "s2")
+            self.assertEqual(removed, 1)
+            self.assertEqual(storage_mod._read_json(path), {})
+
     def test_normalize_formula_map(self):
         self.assertEqual(
             knowledge_mod._normalize_formula_map([{"id": "f1", "latex": "$a$"}]),

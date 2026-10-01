@@ -13,7 +13,8 @@
   var POSTER_HEADER_H = 168;  // 纸头（大标题 + 副题）
   var POSTER_FOOTER_H = 76;   // 纸脚
   var POSTER_MAX_SIDE = 16384;
-  var POSTER_MAX_AREA = 134217728;
+  // T54：与 graph-export.js 同口径降到 64M——134M 档位实测只铺底色还报成功
+  var POSTER_MAX_AREA = 67108864;
 
   var POSTER_FONT = 'system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 
@@ -600,6 +601,30 @@
     };
   }
 
+  // T54 采样判空白（与 graph-export.js 同款，海报是独立 IIFE 各持一份）：
+  // 缩到 64×64 探针画布一次读像素，颜色种类 <2 即整图空白；读不回来不判。
+  function _canvasLooksBlank(canvas) {
+    try {
+      var probe = document.createElement('canvas');
+      probe.width = 64; probe.height = 64;
+      var pctx = probe.getContext('2d');
+      if (!pctx) return false;
+      pctx.drawImage(canvas, 0, 0, 64, 64);
+      var d = pctx.getImageData(0, 0, 64, 64).data;
+      var seen = {};
+      var kinds = 0;
+      for (var i = 0; i < d.length; i += 16) {
+        if (d[i + 3] === 0) {
+          if (!seen.__transparent) { seen.__transparent = 1; kinds++; }
+          continue;
+        }
+        var key = d[i] + ',' + d[i + 1] + ',' + d[i + 2];
+        if (!seen[key]) { seen[key] = 1; kinds++; }
+      }
+      return kinds < 2;
+    } catch (e) { return false; }
+  }
+
   function exportGraphPoster(scale) {
     if (typeof graphView === 'undefined' || !graphView || !(graphView.nodes || []).length) {
       toastMsg('画布还没有内容，先提问生成一张探索网吧');
@@ -641,6 +666,12 @@
         } catch (err) {
           console.error('[graph-poster]', err);
           toastMsg('海报绘制失败：' + (err && err.message ? err.message : err));
+          return;
+        }
+        // T54：空白审计——画不出来时 canvas 只剩底色，toBlob 却照常成功。
+        // 宁可明说失败，不交一张空白图还报「已导出」。
+        if (_canvasLooksBlank(canvas)) {
+          toastMsg('海报渲染为空白（超出本浏览器大图上限），请降低倍率重试', TOAST_MS_LONG);
           return;
         }
         canvas.toBlob(function (blob) {

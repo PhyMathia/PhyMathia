@@ -802,7 +802,11 @@ const _generatingVizNodes = new Set();
 
 async function generateVizNode(nodeId) {
   if (_generatingVizNodes.has(nodeId)) return;
-  if (typeof isStreaming !== 'undefined' && isStreaming) return;
+  // T58：生成中静默 return 观感等同按钮失灵——补提示
+  if (typeof isStreaming !== 'undefined' && isStreaming) {
+    if (typeof showToast === 'function') showToast('正在生成回答，稍候再生成可视化');
+    return;
+  }
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'module' || node.moduleKey !== 'viz') return;
   const messages = _getChatHistory();
@@ -1081,6 +1085,11 @@ function zoomGraph(factor, centerX, centerY) {
 
 function fitGraph() {
   if (!graphView.nodes.length || !graphCanvas) return;
+  // T39：容器残留 scrollTop/scrollLeft 会把 fit 的世界坐标整体带偏、节点顶出屏外
+  // （实测 scrollTop=409 时 6 节点 2 个在屏外；来源疑工作流收尾焦点，另查）。
+  // fit 的语义就是「整图回到视口」，先归零再算。
+  graphCanvas.scrollTop = 0;
+  graphCanvas.scrollLeft = 0;
   const state = _graphState();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of graphView.nodes) {

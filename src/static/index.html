@@ -26,7 +26,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=2797f3b3">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=25650c67">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=00428583">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=40d4c2bd">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -224,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=5b52fdbf"></script>
+  <script src="/js/app.js?v=aee1d23e"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -302,7 +302,7 @@
           <span id="kpOptimizeProgressText">0/0</span>
           <span class="kp-optimize-progress-track"><span class="kp-optimize-progress-fill" id="kpOptimizeProgressFill"></span></span>
         </span>
-        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="kpOptimizeBtnClicked()" title="知识点页：用 AI 重述整卡复述的旧摘要；公式页：批量重写模板兜底的公式含义（手动/模型结果不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
         <button aria-label="关闭" class="kp-close" onclick="closeKnowledgePanel()">✕</button>
       </div>
     </div>

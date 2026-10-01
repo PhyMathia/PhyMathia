@@ -3580,6 +3580,12 @@
 [data-theme="light"] .continent-city:hover {
   box-shadow: 0 0 0 3px rgba(139, 105, 20, 0.2), 0 0 14px rgba(139, 105, 20, 0.25);
 }
+/* T143 键盘可达：大陆所有可聚焦控件统一焦点环（_kact 补 tabindex 的件 + 原生按钮） */
+.continent-open [tabindex="0"]:focus-visible,
+.continent-open button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .continent-city-name {
   font-size: var(--fs-xs);
   font-weight: 600;

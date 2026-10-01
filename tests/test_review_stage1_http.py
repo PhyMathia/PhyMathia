@@ -137,14 +137,19 @@ class _HTTPChecks(unittest.TestCase):
                  "timestamp": 1700000000200},
             ]
             kid, fid = f"ki_stage1_{index}", f"f_stage1_{index}"
+            # T146：知识/公式按标题与公式全局去重（跨会话合并）——本测试考的是备份
+            # 往返完整性，两会种子刻意各异，避免被全局去重合并、断言语义不变
             knowledge[kid] = {
-                "id": kid, "sessionId": sid, "title": "简谐运动", "source": "manual",
+                "id": kid, "sessionId": sid,
+                "title": "简谐运动" if index == 1 else "阻尼振动", "source": "manual",
                 "summary": "回复力与位移成正比", "summarySource": "manual",
                 "anchorSummary": "简谐运动的回复力", "formulas": ["$F=-kx$"],
                 "category": "physics", "createdAt": 1700000000300 + index,
             }
             formulas[fid] = {
-                "id": fid, "latex": "$F=-kx$", "concept": "胡克定律", "meaning": "回复力",
+                "id": fid,
+                "latex": "$F=-kx$" if index == 1 else "$F=-\\gamma v$",
+                "concept": "胡克定律", "meaning": "回复力",
                 "meaningSource": "local", "topic": "振动", "related": ["简谐运动"],
                 "sessionId": sid, "messageId": f"a{index}", "moduleKey": "physics",
                 "nodeId": f"node{index}", "createdAt": 1700000000400 + index,

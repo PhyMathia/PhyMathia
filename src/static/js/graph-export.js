@@ -5,9 +5,12 @@
 // 依赖：运行期用到 utils/render/graph-* 的全局函数与 showToast；全部同源资源可 fetch。
 
 (function () {
-  // 主流浏览器 canvas 单边 / 面积硬上限（保守值，超出会被浏览器静默拒绝）
+  // 主流浏览器 canvas 单边 / 面积硬上限（保守值，超出会被浏览器静默拒绝）。
+  // T54：面积上限从 128M 降到 64M——真机实测 75.9M 像素内正常、4×（134M）在
+  // 备用通道只铺底色还报成功；64M（8192²）是稳妥边界，超出由 _resolveOutput
+  // 自动降档到上限内，另有 _canvasLooksBlank 采样审计兜底。
   var EXPORT_MAX_SIDE = 16384;
-  var EXPORT_MAX_AREA = 134217728; // 128M 像素
+  var EXPORT_MAX_AREA = 67108864; // 64M 像素
   var EXPORT_PADDING = 64;         // 世界坐标四周留白
 
   var SCALES = [
@@ -479,6 +482,16 @@
           // 双绘一次：个别浏览器首帧嵌入字体未就绪，第二遍确保文字字形正确
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          // T54：空白审计——超大 canvas 在部分内核只铺底色（drawImage 静默失败），
+          // toBlob 却照常成功，产出纯色空白图还报「已导出」。判空白后带标记抛给
+          // 上层自动降倍重试，绝不把白图当成功交出去。
+          if (_canvasLooksBlank(canvas)) {
+            var blankErr = new Error('渲染结果为空白（输出 ' + out.outW + '×' + out.outH
+              + ' 超出本浏览器大图能力）');
+            blankErr.blank = true;
+            reject(blankErr);
+            return;
+          }
           try {
             canvas.toBlob(function (pngBlob) {
               if (pngBlob) resolve(pngBlob);
@@ -519,8 +532,32 @@
     });
   }
 
-  function _download(blob, filename) {
-    var url = URL.createObjectURL(blob);
+  // T54 采样判空白：成品先缩到 64×64 探针画布再一次读像素（大图直接 getImageData
+  // 代价高、污染画布还会抛错）。抽样的颜色种类 <2（全透明算一色）即整图空白。
+  // 读不回来不判空白——交由既有失败路径兜底，不制造假警报。
+  function _canvasLooksBlank(canvas) {
+    try {
+      var probe = document.createElement('canvas');
+      probe.width = 64; probe.height = 64;
+      var pctx = probe.getContext('2d');
+      if (!pctx) return false;
+      pctx.drawImage(canvas, 0, 0, 64, 64);
+      var d = pctx.getImageData(0, 0, 64, 64).data;
+      var seen = {};
+      var kinds = 0;
+      for (var i = 0; i < d.length; i += 16) { // 每第 4 个像素抽 1 点
+        if (d[i + 3] === 0) {
+          if (!seen.__transparent) { seen.__transparent = 1; kinds++; }
+          continue;
+        }
+        var key = d[i] + ',' + d[i + 1] + ',' + d[i + 2];
+        if (!seen[key]) { seen[key] = 1; kinds++; }
+      }
+      return kinds < 2;
+    } catch (e) { return false; }
+  }
+
+  function _download(blob, filename) {    var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -558,26 +595,45 @@
     try { if (typeof _measureNodes === 'function') _measureNodes(); } catch (e) {}
     var bounds = _exportBounds();
     if (!bounds) { _exporting = false; toastMsg('无法计算画布范围'); return; }
-    var out = _resolveOutput(bounds, scale);
     var used = _collectUsedFamilies();
 
     _buildExportCss(used).then(function (css) {
       var clone = _buildExportClone();
-      toastMsg('正在以 ' + out.outW + '×' + out.outH + ' 渲染，大图需要几秒…');
       return graphExportBgPhoto().then(function (bgImg) {
-        return _rasterize(clone, css, bounds, out, 'blob', bgImg).catch(function (err) {
-          if (err && err.security) {
-            // blob 通道被判污染：换 data URL 通道再试一次（排除内核对 blob 来源的判定差异）
-            toastMsg('安全策略拦截，正在切换备用通道重试…');
-            return _rasterize(clone, css, bounds, out, 'data', bgImg);
-          }
-          throw err;
-        });
+        // T54：一次成型 →（空白时）逐档降倍重试。空白是「浏览器画不出来」而非
+        // 可恢复的瞬时错误，唯一正解是缩小输出；降档过程对用户明说。
+        function attempt(effScale, downgraded) {
+          var attemptOut = _resolveOutput(bounds, effScale);
+          toastMsg('正在以 ' + attemptOut.outW + '×' + attemptOut.outH + ' 渲染，大图需要几秒…');
+          var p = _rasterize(clone, css, bounds, attemptOut, 'blob', bgImg).catch(function (err) {
+            if (err && err.security) {
+              // blob 通道被判污染：换 data URL 通道再试一次（排除内核对 blob 来源的判定差异）
+              toastMsg('安全策略拦截，正在切换备用通道重试…');
+              return _rasterize(clone, css, bounds, attemptOut, 'data', bgImg);
+            }
+            throw err;
+          });
+          return p.then(function (blob) { return { blob: blob, out: attemptOut, downgraded: downgraded }; });
+        }
+        var chain = attempt(scale, false);
+        for (var lower = scale - 1; lower >= 1; lower--) {
+          (function (nextScale) {
+            chain = chain.catch(function (err) {
+              if (!(err && err.blank)) throw err;
+              toastMsg((nextScale + 1) + '× 超出本浏览器渲染上限，自动降到 ' + nextScale + '× 重试…');
+              return attempt(nextScale, true);
+            });
+          })(lower);
+        }
+        return chain;
       });
-    }).then(function (pngBlob) {
+    }).then(function (result) {
+      var pngBlob = result.blob;
+      var out = result.out;
       var safe = _fileTitle().replace(/[\\/:*?"<>|\n\r]/g, '_');
       _download(pngBlob, 'PhyMathia探索网_' + safe + '_' + out.outW + 'x' + out.outH + '.png');
-      toastMsg('已导出超高清图片 ' + out.outW + '×' + out.outH + '（' + Math.round(pngBlob.size / 1024) + ' KB）', TOAST_MS_LONG);
+      toastMsg('已导出超高清图片 ' + out.outW + '×' + out.outH + '（' + Math.round(pngBlob.size / 1024) + ' KB）'
+        + (result.downgraded ? '——原倍率超出浏览器上限，已自动降档' : ''), TOAST_MS_LONG);
       _exporting = false;
     }).catch(function (err) {
       _exporting = false;

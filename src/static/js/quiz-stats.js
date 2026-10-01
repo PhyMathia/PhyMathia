@@ -481,7 +481,11 @@ function _collectProfileSignalCandidates() {
         if (!title) continue;
         if (typeof _isJunkKnowledgeTitle === 'function' && _isJunkKnowledgeTitle(title)) continue;
         const norm = title.toLowerCase().replace(/\s+/g, '');
-        (sessionsByTitle[norm] = sessionsByTitle[norm] || { title: title, sessions: new Set() }).sessions.add(String(item.sessionId || ''));
+        // T146：同名概念跨会话去重后合并为一条，归属在 sessionIds——兴趣计数
+        // 必须按全部归属算，否则「梯度×3 会话」被去重成一条、兴趣信号丢失
+        const sids = [item.sessionId, ...((item && item.sessionIds) || [])].filter(Boolean);
+        const bucket = (sessionsByTitle[norm] = sessionsByTitle[norm] || { title: title, sessions: new Set() });
+        sids.forEach(sid => bucket.sessions.add(String(sid)));
       }
       let interestCount = 0;
       for (const { title, sessions } of Object.values(sessionsByTitle)) {

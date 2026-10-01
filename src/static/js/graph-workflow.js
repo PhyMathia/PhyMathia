@@ -1729,7 +1729,13 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
 
 async function runWorkflowNode(nodeId, force = false) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.messageIndex >= 0 || node.busy || workflowRunActive) return;
+  if (!node || node.messageIndex >= 0 || node.busy) return;
+  // T58：工作流生成中再点单个节点的生成钮原先只是静默 return——补一句提示，
+  // 别让用户以为按钮失灵（排队语义只在发送链，这里语义是「不允许并行起跑」）
+  if (workflowRunActive) {
+    if (typeof showToast === 'function') showToast('工作流正在生成中，稍候再单独生成这个节点');
+    return;
+  }
   await _executeParallelWorkflow([nodeId], force, { title: '生成' + _workflowProgressLabel(node) });
 }
 

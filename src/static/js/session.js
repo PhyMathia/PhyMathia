@@ -647,7 +647,11 @@
     // 删除会话
     async function deleteSession(id, e) {
       if (e) e.stopPropagation();
-      if (isStreaming) return;
+      // T58：生成中静默 return 观感等同按钮失灵——补提示
+      if (isStreaming) {
+        if (typeof showToast === 'function') showToast('正在生成回答，稍候再删除画布');
+        return;
+      }
       if (!confirm('确定删除此画布？')) return;
 
       const r = await _purgeSessionData(id);
@@ -713,7 +717,12 @@
     // 批量删除选中的画布。逐条走 _purgeSessionData 主路径：
     // 名单与面板刷新各只做一次；失败的画布留在选中态里，可直接重试。
     async function deleteSelectedSessions() {
-      if (isStreaming || _sessionBulkBusy) return;
+      // T58：生成中要拦且要说（批量删除期间按钮本就隐藏，_sessionBulkBusy 保持静默）
+      if (isStreaming) {
+        if (typeof showToast === 'function') showToast('正在生成回答，稍候再批量删除画布');
+        return;
+      }
+      if (_sessionBulkBusy) return;
       const ids = getSelectedSessionIds();
       if (ids.length === 0) {
         if (typeof showToast === 'function') showToast('请先勾选要删除的画布', TOAST_MS_LONG);
@@ -1259,7 +1268,11 @@
     // docs/dev/linear-chat-retired.md。
 
     async function clearChat() {
-      if (isStreaming) return;
+      // T58：生成中清空会静默丢掉在途结果，拦下并告知
+      if (isStreaming) {
+        if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空当前画布');
+        return;
+      }
       if (!confirm('确定清空当前画布吗？')) return;
       chatHistory = [];
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
@@ -1287,7 +1300,11 @@
     }
 
     async function clearAllSessions() {
-      if (isStreaming) return;
+      // T58：同 clearChat——生成中清空全部必须可见地拦住
+      if (isStreaming) {
+        if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空所有画布');
+        return;
+      }
       if (!confirm('确定清空所有画布吗？此操作不可撤销！')) return;
 
       // 1. 批量删除服务端所有会话、消息和知识条目
