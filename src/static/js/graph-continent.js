@@ -237,6 +237,13 @@ let _continentPlacements = {};  // itemId → {x,y,w,h,cx,cy}（世界坐标，�
 let _continentClusterRects = [];
 let _continentKeyHandler = null;
 let _continentDragState = null;
+// T136 触屏：视口上按着的指针（pointerId → 屏幕坐标）与双指捏合锚
+// （{d0, k0, wx, wy}＝捏合开始时两指中点下的世界点）。Map 按落下顺序迭代，捏合取前两根
+let _continentPointers = new Map();
+let _continentPinch = null;
+// T133 主题重涂：本帧画出的航线三件套（halo/核心线/端珠）。航线颜色渲染时按 data-theme
+// 快照进 SVG 属性，开图状态切主题不会重渲——收集起来，主题一变只重涂颜色不重建 DOM
+let _continentRouteEls = [];
 let _continentSkipViewPersist = false;
 let _continentSkipWarp = false;   // 下钻已自播退场转场时，close 只收尾不重播
 // v9 跨层转场状态：{id, dir, canvasEl, finish()}。id 每次转场自增，旧 id 的收尾回调
@@ -1799,6 +1806,7 @@ function _continentRender(data) {
   const routePrefs = _continentRoutePrefs();
   const routeThemeLight = document.documentElement &&
     document.documentElement.getAttribute('data-theme') === 'light';
+  _continentRouteEls = [];  // T133：本帧航线元素重新收集（重渲后旧引用全部作废）
   (data.userEdges || []).forEach(e => {
     const ra = layout.clusterRects.find(r => r.sessionId === e.fromSession);
     const rb = layout.clusterRects.find(r => r.sessionId === e.toSession);
@@ -1838,6 +1846,7 @@ function _continentRender(data) {
     // 岛框边上的圆会被岛牌盖掉半截，沿「岛心→出岛点」方向外推才完整可见
     const laneMode = route.mode === 'lane' || route.mode === 'detour-lane';
     const beadR = Math.min(4.2, Math.max(2.4, stroke.width * 1.4));
+    const dots = [];  // T133：端珠一并记账，主题重涂要动它们的 fill
     [[ra, route.p0], [rb, laneMode ? route.p3 : route.p2]].forEach(pair => {
       const rect = pair[0], pt = pair[1];
       if (!rect || !pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
@@ -1851,6 +1860,7 @@ function _continentRender(data) {
       dot.setAttribute('fill', stroke.color);
       dot.setAttribute('opacity', String(routePrefs.opacity));
       dot.setAttribute('data-sids', sidsAttr);
+      dots.push(dot);
       svg.appendChild(dot);
     });
     if (e.label && !style.noLabel) {
@@ -1881,6 +1891,8 @@ function _continentRender(data) {
         svg.appendChild(stub);
       });
     }
+    // T133：记下这条航线三件套，主题切换时 _continentRepaintRouteTheme 只重涂颜色
+    _continentRouteEls.push({ halo: halo, path: path, dots: dots, style: style, edge: e });
   });
 
   // 断桥（v2）：一端已不在大陆上的边——从幸存端朝目标簇方向画残线，中段断开。
@@ -3012,6 +3024,31 @@ function _continentRouteStroke(style, edge, regionInfo, theme) {
     width: CONTINENT_ROUTE_WIDTH[s.width] || CONTINENT_ROUTE_WIDTH.normal,
     dash: CONTINENT_ROUTE_DASH[s.dash] || '',
   };
+}
+
+// T133：主题切换重涂航线。只动「颜色」三个属性（halo/核心线的 stroke + 端珠的 fill）
+// ——宽度/虚线/透明度/几何都与主题无关，不碰。颜色走同一份 _continentRouteStroke，
+// 产出与重渲逐字节一致；清空/没开图时是零开销空转
+function _continentRepaintRouteTheme() {
+  if (!_continentRouteEls.length) return;
+  const light = document.documentElement &&
+    document.documentElement.getAttribute('data-theme') === 'light';
+  const theme = light ? 'light' : 'dark';
+  _continentRouteEls.forEach(r => {
+    const stroke = _continentRouteStroke(r.style, r.edge, _continentRegionInfo, theme);
+    if (r.halo) r.halo.setAttribute('stroke', stroke.color);
+    if (r.path) r.path.setAttribute('stroke', stroke.color);
+    (r.dots || []).forEach(d => { if (d) d.setAttribute('fill', stroke.color); });
+  });
+}
+
+// applyTheme（ui.js）只写 <html> 的 data-theme、不派发任何事件——属性监听是唯一不侵入
+// ui.js 的挂点。大陆没开就短路：开图路径 _continentRender 本来就读当下主题；开着才重涂，
+// 且只涂航线不重建（整图重建要重跑每张公式卡的 KaTeX，主题切换这种高频操作不值得）
+if (typeof MutationObserver !== 'undefined' && document && document.documentElement) {
+  new MutationObserver(() => {
+    if (document.querySelector('.graph-workspace.continent-open')) _continentRepaintRouteTheme();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 
 // 通用编辑（样式/锚点/备注/隐藏共用）：改前留全量快照进撤销栈（type:'edit'）
@@ -4228,6 +4265,39 @@ function _continentApplyTransform() {
   _continentSyncEdgeLabels();
 }
 
+// 双指捏合一步（纯函数，T136）：锚点语义与 _continentZoomAt 相同——捏合开始时中点下的
+// 世界点 (wx, wy) 钉在当前中点 (mx, my)，间距比 d/d0 驱动缩放并夹在 [MIN, MAX]。
+// 两指重叠（d0/d ≤ 0）或任何输入非有限返回 null：调用方保持现状不动——NaN 坐标静默写进
+// transform 的老坑（v8.x 教训）不许再踩
+function _continentPinchStep(k0, d0, d, wx, wy, mx, my) {
+  const args = [k0, d0, d, wx, wy, mx, my];
+  if (!args.every(Number.isFinite) || k0 <= 0 || d0 <= 0 || d <= 0) return null;
+  let k = k0 * (d / d0);
+  if (k < CONTINENT_ZOOM_MIN) k = CONTINENT_ZOOM_MIN;
+  if (k > CONTINENT_ZOOM_MAX) k = CONTINENT_ZOOM_MAX;
+  return { k: k, x: mx - k * wx, y: my - k * wy };
+}
+
+// 捏合锚定（T136）：以两指当下中点/间距/当下变换为基准记锚。进捏合（第二指落下）与
+// 三指抬一换对时都调它——锚定「当下」所以零跳变；第一指落下后可能已拖出几像素的平移，
+// 也一并折进锚点，不追认也不回退
+function _continentPinchAnchor(viewport) {
+  const pts = Array.from(_continentPointers.values());
+  if (!viewport || !viewport.getBoundingClientRect || pts.length < 2) {
+    _continentPinch = null;
+    return;
+  }
+  const rect = viewport.getBoundingClientRect();
+  const mx = (pts[0].x + pts[1].x) / 2 - rect.left;
+  const my = (pts[0].y + pts[1].y) / 2 - rect.top;
+  _continentPinch = {
+    d0: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
+    k0: _continentZoom,
+    wx: (mx - _continentPan.x) / _continentZoom,
+    wy: (my - _continentPan.y) / _continentZoom,
+  };
+}
+
 function _continentZoomAt(factor, cx, cy) {
   const next = Math.min(CONTINENT_ZOOM_MAX, Math.max(CONTINENT_ZOOM_MIN, _continentZoom * factor));
   const ratio = next / _continentZoom;
@@ -4293,8 +4363,35 @@ function _continentBindViewport(viewport) {
       moved: false, target: e.target,
     };
     try { viewport.setPointerCapture(e.pointerId); } catch (err) { /* 容忍 */ }
+    // T136 触屏：登记本指针；第二根落下即进捏合（锚定「当下」，第一指此前可能的
+    // 微小平移一并折进锚点），并把拖拽态标成已移动——两指手势的抬指不派发点击
+    _continentPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (_continentPointers.size === 2) {
+      _continentPinchAnchor(viewport);
+      _continentDragState.moved = true;
+    }
   });
   viewport.addEventListener('pointermove', e => {
+    if (_continentPointers.has(e.pointerId)) {
+      _continentPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (_continentPinch && _continentPointers.size >= 2) {
+      // 双指捏合（T136）：间距驱动缩放，初始中点下的世界点钉在当前中点（与滚轮同一
+      // 锚点语义）。rect 每帧现取，与滚轮分支同一口径——布局可能已变，不能缓存
+      const pts = Array.from(_continentPointers.values());
+      const rect = viewport.getBoundingClientRect();
+      const step = _continentPinchStep(_continentPinch.k0, _continentPinch.d0,
+        Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
+        _continentPinch.wx, _continentPinch.wy,
+        (pts[0].x + pts[1].x) / 2 - rect.left, (pts[0].y + pts[1].y) / 2 - rect.top);
+      if (step) {
+        _continentZoom = step.k;
+        _continentPan.x = step.x;
+        _continentPan.y = step.y;
+        _continentApplyTransform();
+      }
+      return; // 捏合期间不走单指平移
+    }
     const st = _continentDragState;
     if (!st) return;
     const dx = e.clientX - st.x, dy = e.clientY - st.y;
@@ -4306,6 +4403,26 @@ function _continentBindViewport(viewport) {
     }
   });
   viewport.addEventListener('pointerup', e => {
+    _continentPointers.delete(e.pointerId);
+    if (_continentPinch) {
+      // 捏合中的抬指永不派发点击（两指点按≠点卡片，哪怕全程没动）。收指到一根：
+      // 无缝转平移——以剩指当下位置重开拖拽态（moved=true 直进平移不再吃死区）；
+      // 还剩两根以上（三指抬一）：换对重锚，同样以当下为基准；全部抬完：清态
+      if (_continentPointers.size === 1) {
+        _continentPinch = null;
+        const rest = _continentPointers.values().next().value;
+        _continentDragState = {
+          x: rest.x, y: rest.y, panX: _continentPan.x, panY: _continentPan.y,
+          moved: true, target: null,
+        };
+      } else if (_continentPointers.size >= 2) {
+        _continentPinchAnchor(viewport);
+      } else {
+        _continentPinch = null;
+        _continentDragState = null;
+      }
+      return;
+    }
     const st = _continentDragState;
     _continentDragState = null;
     if (!st || st.moved || _continentDrilling) return;
@@ -4322,7 +4439,12 @@ function _continentBindViewport(viewport) {
       enterContinentSession(el.dataset.sessionId, '');
     }
   });
-  viewport.addEventListener('pointercancel', () => { _continentDragState = null; });
+  viewport.addEventListener('pointercancel', e => {
+    // 系统接管手势（来电/通知中心等）：全部清态，不派发点击也不续捏合
+    _continentPointers.delete(e.pointerId);
+    _continentPinch = null;
+    _continentDragState = null;
+  });
   // 滚轮缩放合帧（与探索网画布同一口径）：连发 wheel 只累乘系数、记最新锚点，
   // rAF 内重取一次 rect 再缩放——rect 不能在事件里缓存到帧执行时（布局可能已变）
   let _contWheelRaf = 0, _contWheelFactor = 1, _contWheelX = 0, _contWheelY = 0;

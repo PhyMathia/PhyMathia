@@ -2930,6 +2930,66 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
   return true;
 });
 
+check('graph-continent: T133 主题重涂（重涂函数 / data-theme 属性监听 / 渲染期收集三件套）', () => {
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('function _continentRepaintRouteTheme(')) throw new Error('重涂函数缺失');
+  if (!/attributeFilter:\s*\['data-theme'\]/.test(src)) throw new Error('未监听 <html> data-theme 属性变化');
+  if (!src.includes('.graph-workspace.continent-open')) throw new Error('重涂缺「大陆开着」短路（关着重涂是白干）');
+  if (!/_continentRouteEls\.push\(\{ halo: halo, path: path, dots: dots/.test(src)) throw new Error('渲染期未收集航线三件套');
+  // 值断言：金档颜色确实随主题变（重涂走同一份 _continentRouteStroke，产出与重渲一致）
+  const darkGold = sandbox._continentRouteStroke({}, { fromSession: 's1' }, null, 'dark').color;
+  const lightGold = sandbox._continentRouteStroke({}, { fromSession: 's1' }, null, 'light').color;
+  if (!darkGold || darkGold === lightGold) throw new Error('金档颜色未按主题区分');
+  // 沙箱跑一遍重涂：stub 元素记账，确认 halo/path 涂 stroke、端珠涂 fill、颜色取 dark 档
+  // （沙箱 document 是宽松代理，getAttribute 返回代理 ≠ 'light'，所以重涂必走 dark 档）
+  const raw = vm.runInContext(`
+    (() => {
+      const rec = [];
+      _continentRouteEls = [{
+        style: {}, edge: { fromSession: 's1' },
+        halo: { setAttribute: (k, v) => rec.push(['halo', k, v]) },
+        path: { setAttribute: (k, v) => rec.push(['path', k, v]) },
+        dots: [{ setAttribute: (k, v) => rec.push(['dot', k, v]) }],
+      }];
+      _continentRepaintRouteTheme();
+      _continentRouteEls = [];
+      return JSON.stringify(rec);
+    })()
+  `, sandbox);
+  const paints = JSON.parse(raw);
+  if (paints.length !== 3) throw new Error('重涂应触达 3 个元素（halo/核心线/端珠），实际 ' + paints.length);
+  if (paints[0][1] !== 'stroke' || paints[2][1] !== 'fill') throw new Error('重涂写错属性：' + paints.map(p => p.join(':')).join(','));
+  if (paints.some(p => p[2] !== darkGold)) throw new Error('重涂颜色与 _continentRouteStroke dark 档不一致');
+  return true;
+});
+
+check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退化输入拒动 / 指针登记清理）', () => {
+  const step = sandbox._continentPinchStep(1, 100, 200, 10, 20, 150, 150);
+  // 距离翻倍 → 缩放翻倍；初始中点下的世界点 (10,20) 钉在新中点 (150,150)：x=150-2×10, y=150-2×20
+  if (!step || step.k !== 2 || step.x !== 130 || step.y !== 110) {
+    throw new Error('捏合数学错：' + JSON.stringify(step));
+  }
+  // 夹取：缩放被压到 [MIN, MAX] 后 pan 仍按同一锚点公式重算（世界点不动）
+  const zmin = vm.runInContext('CONTINENT_ZOOM_MIN', sandbox);
+  const clampedMin = sandbox._continentPinchStep(1, 100, 1, 0, 0, 50, 50);
+  if (!clampedMin || clampedMin.k !== zmin || clampedMin.x !== 50 || clampedMin.y !== 50) {
+    throw new Error('下限夹取错：' + JSON.stringify(clampedMin));
+  }
+  const zmax = vm.runInContext('CONTINENT_ZOOM_MAX', sandbox);
+  const clampedMax = sandbox._continentPinchStep(2, 100, 400, 5, 5, 100, 100);
+  if (!clampedMax || clampedMax.k !== zmax) throw new Error('上限夹取错：' + JSON.stringify(clampedMax));
+  // 退化：两指重叠（d0=0 / d=0）与任何非有限输入都必须拒动返回 null
+  if (sandbox._continentPinchStep(1, 0, 100, 0, 0, 50, 50) !== null) throw new Error('d0=0 必须拒动');
+  if (sandbox._continentPinchStep(1, 100, 0, 0, 0, 50, 50) !== null) throw new Error('d=0 必须拒动');
+  if (sandbox._continentPinchStep(NaN, 100, 100, 0, 0, 50, 50) !== null) throw new Error('非有限输入必须拒动');
+  // 挂点在场：锚定接进了指针事件、抬指/取消都清理指针登记
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!src.includes('function _continentPinchAnchor(')) throw new Error('捏合锚定函数缺失');
+  if (!/_continentPinchAnchor\(viewport\)/.test(src)) throw new Error('捏合未接进指针事件');
+  if (!/_continentPointers\.delete\(e\.pointerId\)/.test(src)) throw new Error('指针登记未在抬指/取消时清理');
+  return true;
+});
+
 check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种来源分得清）', () => {
   const prefix = sandbox._continentKindPrefix;
   if (typeof prefix !== 'function') throw new Error('族前缀纯函数未暴露（_continentKindPrefix）');
