@@ -1177,6 +1177,79 @@ check('graph-contextmenu: 多选感知（已选 N 语境：删除选择集 / 折
   }
 });
 
+check('graph-contextmenu: 节点右键「追问」复用拖拽链路（T47）', () => {
+  const realInner = vm.runInContext('graphInner', sandbox);
+  const realCreate = sandbox._createBranchNodeFromOutput;
+  vm.runInContext('graphInner = null', sandbox);
+  // graphInner 为 null（未初始化/无端口反查）→ 追问项不出现（能力门控不误显）
+  const plain = sandbox._graphContextItemsForNode({ id: 'x1', kind: 'module', moduleKey: 'physics' });
+  if (plain.some(i => i.key === 'followup')) return false;
+  let called = null;
+  const portEl = {
+    dataset: {
+      portId: 'out-2', portType: 'branch', portBranch: 'followup',
+      portLabel: encodeURIComponent('追问'), attribute: '',
+      portQuestion: '', portLevel: '', portDrag: '',
+    },
+  };
+  const nodeEl = { querySelectorAll: (sel) => (sel === '.graph-output-port' ? [portEl] : []) };
+  try {
+    sandbox.__smokeFollowupNodeEl = nodeEl;
+    vm.runInContext('graphInner = { querySelector: function (s) { return s.indexOf("[data-node-id=") === 0 ? __smokeFollowupNodeEl : null; } };', sandbox);
+    sandbox._createBranchNodeFromOutput = (id, portId, meta, x, y) => { called = { id, portId, meta, x, y }; };
+    const items = sandbox._graphContextItemsForNode({ id: 'm9', kind: 'module', moduleKey: 'physics' }, { x: 111, y: 222 });
+    const fu = items.find(i => i.key === 'followup');
+    if (!fu || fu.label !== '追问') return false;
+    fu.run();
+    if (!called || called.id !== 'm9' || called.portId !== 'out-2') return false;
+    if (called.meta.label !== '追问' || called.meta.branchType !== 'followup') return false;
+    if (called.x !== 111 || called.y !== 222) return false;
+    // 非追问族端口（label 不匹配）不显示该项
+    nodeEl.querySelectorAll = (sel) => (sel === '.graph-output-port'
+      ? [{ dataset: { portId: 'out-0', portType: 'branch', portLabel: encodeURIComponent('回答练习') } }] : []);
+    const items2 = sandbox._graphContextItemsForNode({ id: 'm10', kind: 'module', moduleKey: 'physics' });
+    if (items2.some(i => i.key === 'followup')) return false;
+    return true;
+  } finally {
+    sandbox._createBranchNodeFromOutput = realCreate;
+    delete sandbox.__smokeFollowupNodeEl;
+    vm.runInContext('graphInner = ' + JSON.stringify(realInner === undefined ? null : realInner), sandbox);
+  }
+});
+
+check('graph history: harnessCheckpoint 相邻去重 roundtrip（T53）', () => {
+  if (typeof sandbox._graphHistoryDedupe !== 'function' || typeof sandbox._graphHistoryHydrate !== 'function') {
+    throw new Error('_graphHistoryDedupe/_graphHistoryHydrate 未暴露');
+  }
+  const cp1 = { seq: 1, nodes: { a: { label: 'x' } } };
+  const cp2 = { seq: 2, nodes: { a: { label: 'y' } } };
+  const arr = [
+    { sessionId: 's', state: { customNodes: [], harnessCheckpoint: cp1 }, meta: null },
+    { sessionId: 's', state: { customNodes: [], harnessCheckpoint: JSON.parse(JSON.stringify(cp1)) }, meta: null },
+    { sessionId: 's', state: { customNodes: [], harnessCheckpoint: cp2 }, meta: null },
+    { sessionId: 's', state: { customNodes: [] }, meta: null }, // 无 checkpoint：不参与去重
+  ];
+  const slim = sandbox._graphHistoryDedupe(arr);
+  if (slim.length !== 4) return false;
+  if (!slim[0].state.harnessCheckpoint) return false; // 首条保持实体
+  if (slim[1].checkpointRef !== true || slim[1].state.harnessCheckpoint !== null) return false; // 相邻相同打引用
+  if (!slim[2].state.harnessCheckpoint) return false; // checkpoint 变更回实体
+  if (slim[3].checkpointRef) return false; // null 不参与去重
+  if (JSON.stringify(arr[1].state.harnessCheckpoint) !== JSON.stringify(cp1)) return false; // 入参不被污染
+  // 序列化 → 读回重建：内存态恢复完整
+  const back = sandbox._graphHistoryHydrate(JSON.parse(JSON.stringify(slim)));
+  const want = JSON.stringify([cp1, cp1, cp2, null]);
+  if (JSON.stringify(back.map(x => x.state.harnessCheckpoint)) !== want) return false;
+  if (back.some(x => 'checkpointRef' in x)) return false; // 标记不残留
+  // 旧格式（无标记）原样通过
+  const legacyBack = sandbox._graphHistoryHydrate([{ sessionId: 's', state: { harnessCheckpoint: cp1 }, meta: null }]);
+  if (JSON.stringify(legacyBack[0].state.harnessCheckpoint) !== JSON.stringify(cp1)) return false;
+  // 引用链实体源被截断（头部砍掉首条）：重建留空不抛错（既有降级）
+  const cut = sandbox._graphHistoryHydrate(JSON.parse(JSON.stringify(slim.slice(1))));
+  if (cut[0].state.harnessCheckpoint !== null) return false;
+  return true;
+});
+
 check('graph-contextmenu: 联系线菜单三动作齐备（M1：编辑联系/曲线精调/删除联系）', () => {
   if (typeof sandbox._graphContextItemsForLink !== 'function') throw new Error('_graphContextItemsForLink 未暴露');
   if (typeof sandbox._graphCtxLinkFromTarget !== 'function') throw new Error('_graphCtxLinkFromTarget 未暴露');
