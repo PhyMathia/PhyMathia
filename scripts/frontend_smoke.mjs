@@ -1914,13 +1914,12 @@ check('knowledge: P3 批量任务中止后不再发后续请求 + 目标写回 +
   }
 });
 
-check('knowledge: P3 中断注册表接线（关闭面板/再次点击/Esc 三路径 + 循环前查 signal）与入口静态断言', () => {
+check('knowledge: P3 中断注册表接线（再次点击/Esc 两路径 + 循环前查 signal；关面板不中止）与入口静态断言', () => {
   const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
   for (const frag of [
     'let _kpSummaryOptimizeAbort',                                    // 模块级注册表：中断路径的唯一持有者
     'function abortKnowledgeSummaryOptimize',                         // 统一中断入口
     "if (event.key === 'Escape') abortKnowledgeSummaryOptimize()",    // Esc 路径
-    'abortKnowledgeSummaryOptimize();\n  document.getElementById(\'knowledgePanel\').classList.remove', // 关闭面板路径
     'if (_knowledgeSummaryTaskRunning())',                            // 再次点击 = 中断（批量入口首行分流）
     'if (controller.signal.aborted) { aborted = true; break; } // 中止后不再发出后续请求',   // 循环每轮先查
     'if (controller.signal.aborted) { aborted = true; break; } // 用户中断不计为失败',       // 在途 fetch 拒绝后 break
@@ -1929,6 +1928,15 @@ check('knowledge: P3 中断注册表接线（关闭面板/再次点击/Esc 三�
   ]) {
     if (!src.includes(frag)) throw new Error('knowledge.js 缺中断/入口接线: ' + frag);
   }
+  // 设计变更 2026-10-01：关面板不再中止批量优化（任务后台继续、重开面板恢复按钮运行态）
+  // ——中止路径只剩 再点按钮/Esc。断言 closeKnowledgePanel 体内不含 abort 调用，
+  // 且运行态判断函数存在并挂 window（ui.js 的 Esc 分流依赖它）。
+  const closeBody = src.match(/function closeKnowledgePanel\(\) \{[\s\S]*?\n\}/);
+  if (!closeBody) throw new Error('knowledge.js 缺 closeKnowledgePanel');
+  if (closeBody[0].includes('abortKnowledgeSummaryOptimize')) throw new Error('关面板不应中止批量优化（2026-10-01 设计变更）');
+  for (const frag of ['function isKnowledgeSummaryOptimizeRunning', 'window.isKnowledgeSummaryOptimizeRunning']) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺运行态导出: ' + frag);
+  }
   for (const frag of ['optimizeKnowledgeSummaries', 'isLegacyCardSummaryItem', 'restatKnowledgeItemSummary', '_kpSummaryOptimizeAbort']) {
     if (!code.includes(frag)) throw new Error('打包产物缺符号: ' + frag);
   }
@@ -1936,6 +1944,108 @@ check('knowledge: P3 中断注册表接线（关闭面板/再次点击/Esc 三�
   if (!html.includes('kpOptimizeBtn') || !html.includes('optimizeKnowledgeSummaries()')) return false;
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   return css.includes('.kp-tool-btn');
+});
+
+check('knowledge: 导出 Markdown 接线（按钮/整库口径/两个 tab 构建器/Blob 下载/window 导出）', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const frag of [
+    'function exportKnowledgeMarkdown',
+    'function _kpDownloadTextFile',           // Blob 下载（graph-export 私有 helper 不可见，本地实现）
+    'function _kpKnowledgeMarkdown',          // 知识点 tab：按日期分组整库导出
+    'function _kpFormulasMarkdown',           // 公式 tab：公式清单导出
+    "'PhyMathia-知识总览-'",                   // 文件名口径
+    'window.exportKnowledgeMarkdown',
+    // 整库语义：数据源走缓存 getKnowledgeItems，不新拉接口
+    'Object.values(getKnowledgeItems())',
+  ]) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺导出接线: ' + frag);
+  }
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="kpExportBtn"') || !html.includes('onclick="exportKnowledgeMarkdown()"')) {
+    throw new Error('index.html 缺导出按钮');
+  }
+  // 公式导出与面板显示同一语义过滤口径（废条目不入导出）
+  if (!/_kpFormulasMarkdown[\s\S]{0,400}_looksLikeFormula/.test(src)) throw new Error('公式导出未过 _looksLikeFormula 语义过滤');
+  return true;
+});
+
+check('knowledge: 删除可撤销接线（删前快照/只保最新一条/8 秒超时/写回走保存队列/window 导出）', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const frag of [
+    'const KP_UNDO_MS = 8000',
+    'function _showKpUndoToast',
+    'function _undoKpDelete',
+    'window._undoKpDelete',
+    // 两个删除入口都要在确认后、删除前取快照
+    'const snapshot = getKnowledgeItems()[id] || null;',
+    'const snapshot = getFormulaCache()[id] || null;',
+    // 撤销写回走既有保存路径：公式 saveFormulasToServer（知识点 saveKnowledgeItems 另见写回函数）
+    'saveFormulasToServer([snap.item])',
+    // showToast 不动签名：专用提示条独立挂点
+    "document.getElementById('phymathia_kp_undo')",
+  ]) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺撤销接线: ' + frag);
+  }
+  // 只保最新一条：_showKpUndoToast 开头必须清掉旧快照/旧计时器（连续删除取舍）
+  const showBody = src.match(/function _showKpUndoToast\([^)]*\) \{[\s\S]*?\n\}/);
+  if (!showBody) throw new Error('knowledge.js 缺 _showKpUndoToast');
+  if (!showBody[0].includes('_hideKpUndoToast()')) throw new Error('新撤销提示必须先作废前一条快照（只保最新一条）');
+  // 服务端 DELETE 链路原样：撤销只是删后写回，删除函数本体不得去掉 DELETE
+  if (!src.includes("method: 'DELETE'") || !src.includes("'/api/knowledge/' + encodeURIComponent(id)")) {
+    throw new Error('删除服务端链路被改动');
+  }
+  return true;
+});
+
+check('knowledge: 批量优化内联进度条（n/N 恢复显示/逐条 toast 已去/结束隐藏）+ 单条重述真控制器接线', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  for (const frag of [
+    'let _kpOptimizeProgressState',                      // 进度状态模块级：关面板重开重填
+    'function _syncKpOptimizeProgress',
+    'function _syncKpOptimizeWidgets',
+    '_kpOptimizeProgressState = { done: done + skipped, total };',
+    // 单条重述：真控制器注册表（原 new AbortController().signal 死控制器已废）
+    'let _kpRestateAbort',
+    'function abortKnowledgeRestatement',
+    "if (event.key === 'Escape') abortKnowledgeRestatement()",
+  ]) {
+    if (!src.includes(frag)) throw new Error('knowledge.js 缺进度/单条中止接线: ' + frag);
+  }
+  if (src.includes('new AbortController().signal')) throw new Error('单条重述仍传死控制器（永不生效）');
+  // 逐条刷屏 toast 已去：批量循环内不再有「优化摘要 n/total：标题…」
+  if (src.includes("'优化摘要 ' + done + '/' + total")) throw new Error('批量循环内逐条 toast 未移除');
+  // 互斥防踩：批量在跑时单条拒绝、单条在跑时批量拒绝（各自入口）
+  if (!src.includes("if (_knowledgeBatchRunning()) {\n    showToast('批量优化进行中")) throw new Error('单条入口缺批量互斥');
+  if (!src.includes("'单条重述摘要进行中，请等它完成'")) throw new Error('批量入口缺单条互斥');
+  // index.html 进度挂点 + CSS 样式
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const frag of ['id="kpOptimizeProgress"', 'id="kpOptimizeProgressText"', 'id="kpOptimizeProgressFill"']) {
+    if (!html.includes(frag)) throw new Error('index.html 缺进度挂点: ' + frag);
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const frag of ['.kp-optimize-progress', '.kp-optimize-progress-track', '.kp-optimize-progress-fill']) {
+    if (!css.includes(frag)) throw new Error('styles-panels.css 缺进度样式: ' + frag);
+  }
+  // 恢复接线：重开面板/切 tab/批量中止收尾都要走 _syncKpOptimizeWidgets
+  const syncCalls = src.match(/_syncKpOptimizeWidgets\(\);/g) || [];
+  if (syncCalls.length < 3) throw new Error('进度/按钮恢复接线不足（重开面板+切 tab+收尾至少各一处）');
+  return true;
+});
+
+check('knowledge: 「去知识大陆」入口接线（先关面板再进大陆 + window 导出 + index.html 按钮）', () => {
+  const src = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const body = src.match(/function openKnowledgeContinentView\(\) \{[\s\S]*?\n\}/);
+  if (!body) throw new Error('knowledge.js 缺 openKnowledgeContinentView');
+  // 大陆是全屏画布层：先关知识面板（memory.js openMemoryPanel 先例），再进大陆
+  const closeAt = body[0].indexOf('closeKnowledgePanel()');
+  const openAt = body[0].indexOf('window.openContinentView()');
+  if (closeAt < 0 || openAt < 0 || closeAt > openAt) throw new Error('必须先 closeKnowledgePanel 再 openContinentView');
+  if (!src.includes('window.openKnowledgeContinentView')) throw new Error('缺 window 导出');
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="kpContinentBtn"') || !html.includes('onclick="openKnowledgeContinentView()"')) {
+    throw new Error('index.html 缺大陆入口按钮');
+  }
+  return true;
 });
 
 check('knowledge: P4 extractLocalKnowledge 模板化摘要（多公式回答逐条互异 + anchor 保整卡 + 前后端同文案）', () => {

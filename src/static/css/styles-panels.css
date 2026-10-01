@@ -64,6 +64,45 @@
     .kp-tool-btn.aurora-glass:hover {
       filter: brightness(1.08);
     }
+    /* 批量「优化摘要」内联进度（header 挂点 #kpOptimizeProgress）：n/N 文本 + 2px 细
+       进度条，行内贴在按钮左侧。设计口径：
+       - 常驻行内不弹层——批量是长任务，用户需要随时瞄一眼而不被打断（替代原逐条
+         刷屏 toast）；
+       - 轨道用 --kp-card-border（半透明描边色，磨砂底上不抢眼），填充用 --accent
+         （与面板强调色同一变量，主题切换自动联动）；
+       - 2px 高度是刻意的：进度是信息不是主角，比按钮矮一截才不破坏 header 行高。 */
+    .kp-optimize-progress {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .kp-optimize-progress[hidden] { display: none; }
+    .kp-optimize-progress-track {
+      display: block; width: 64px; height: 2px;
+      background: var(--kp-card-border); overflow: hidden;
+    }
+    .kp-optimize-progress-fill {
+      display: block; height: 100%; width: 0;
+      background: var(--accent);
+      transition: width 0.25s var(--ease-out);
+    }
+    /* 删除可撤销提示条（knowledge.js #phymathia_kp_undo）：showToast 不支持按钮/回调
+       （签名不能动，全仓调用点依赖纯文本），删除撤销走独立挂点。样式沿用全局 toast
+       的极光磨砂胶囊（aurora-glass--compact），位置在其上方（toast 120px / 这里 170px）
+       错开，两者同屏不遮挡。显示/隐藏的 opacity/transform 由 knowledge.js 切换。 */
+    .kp-undo-toast {
+      position: fixed; bottom: 170px; left: 50%; transform: translateX(-50%) translateY(10px);
+      display: flex; align-items: center; gap: 12px;
+      color: var(--text-primary); border: 1px solid var(--border-color);
+      border-radius: var(--r-md); padding: 8px 12px 8px 20px;
+      font-size: var(--fs-md); z-index: 9999; opacity: 0;
+      transition: opacity 0.3s, transform 0.3s; white-space: nowrap;
+    }
+    .kp-undo-toast-btn {
+      cursor: pointer; border: none; border-radius: var(--r-sm);
+      padding: 4px 14px; font-size: var(--fs-md); font-weight: 600;
+      background: var(--accent); color: #fff;
+    }
 
     /* Tabs */
     .kp-tabs {
@@ -151,15 +190,44 @@
     }
     .kp-search::placeholder { color: var(--kp-search-placeholder); }
     .kp-search:focus { background: var(--kp-search-focus-bg); box-shadow: var(--kp-search-focus-shadow); }
+    /* 搜索框包裹层：容纳右侧 × 一键清除（输入有值时才显形，纯 CSS :placeholder-shown 判定） */
+    .kp-search-wrap {
+      flex: 1; min-width: 120px; position: relative; display: flex; align-items: center;
+    }
+    .kp-search-wrap .kp-search { padding-right: 30px; }
+    .kp-search-clear {
+      position: absolute; right: 6px; display: none;
+      width: 18px; height: 18px; line-height: 16px; text-align: center; padding: 0;
+      border: none; border-radius: 50%; cursor: pointer; font-size: var(--fs-xs);
+      background: var(--kp-filter-bg); color: var(--kp-filter-color);
+      transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+    }
+    .kp-search-clear:hover { background: var(--kp-filter-active-bg); color: var(--kp-filter-active-color); }
+    .kp-search:not(:placeholder-shown) ~ .kp-search-clear { display: block; }
+    /* 结果计数条：知识点页仅筛选/搜索激活时由 JS 填充文案（全库条数统计条已有）；
+       公式页无统计条，常显。同一套小样式复用 */
+    .kp-result-count {
+      padding: 0 24px 8px; font-size: var(--fs-xs); color: var(--kp-filter-color); opacity: 0.8;
+    }
+    /* 空态「清除筛选」按钮（时间线无结果时） */
+    .kp-clear-btn {
+      margin-top: 10px; padding: 6px 16px; border: none; border-radius: var(--r-pill); cursor: pointer;
+      font-size: var(--fs-sm); background: var(--kp-filter-active-bg); color: var(--kp-filter-active-color);
+      transition: filter var(--dur-base) var(--ease-out);
+    }
+    .kp-clear-btn:hover { filter: brightness(1.1); }
     /* 公式速查的搜索栏：flex: 0 0 auto 修复列布局垂直拉伸根因（flex: 1 在 column 布局中是纵向拉伸），
-       宽度自然（占满行宽），高度紧凑 */
+       宽度自然（占满行宽），高度紧凑。包裹层出现后外距/宽度语义移到 wrap 上 */
+    #kpFormulasView .kp-search-wrap {
+      flex: 0 0 auto;
+      margin: 0 24px 8px;
+    }
     #kpFormulasView .kp-search {
       flex: 0 0 auto;
-      padding: 3px 10px;
+      padding: 3px 26px 3px 10px;
       font-size: var(--fs-xs);
       line-height: 1.4;
       min-height: 22px;
-      margin: 0 24px 8px;
     }
 
     /* Timeline */
@@ -228,12 +296,16 @@
       color: var(--domain-math);
     }
 
-    /* Card detail (expanded) */
+    /* Card detail (expanded)：grid-template-rows 0fr→1fr 过渡方案（2026-10-01），
+       替代旧 max-height 600px 硬裁切——长详情被截断且动画高度不真实；
+       内层 min-height:0 是 0fr 收拢生效的必要条件，动画时长与旧版一致保持顺滑 */
     .kp-card-detail {
-      max-height: 0; overflow: hidden; transition: max-height 0.35s ease;
+      display: grid; grid-template-rows: 0fr; overflow: hidden;
+      transition: grid-template-rows 0.35s ease;
     }
-    .kp-card.expanded .kp-card-detail { max-height: 600px; }
+    .kp-card.expanded .kp-card-detail { grid-template-rows: 1fr; }
     .kp-card-detail-inner {
+      min-height: 0; overflow: hidden;
       padding: 0 16px 14px; border-top: 1px solid var(--kp-detail-border);
       margin-top: 0; padding-top: 12px;
     }
@@ -257,6 +329,19 @@
     .kp-btn-danger {
       background: transparent; color: var(--danger-fg); border: 1px solid var(--kp-btn-danger-border); border-color: var(--danger-border);}
     .kp-btn-danger:hover { color: var(--danger-fg); border-color: var(--danger); background: var(--danger-bg);}
+
+    /* 加载更多（长列表分批渲染的列表尾部按钮）：次级观感，玻璃描边 + hover 提亮，
+       不复用 kp-btn-primary 的色块——它是详情区的主操作样式，分批按钮不该抢视觉 */
+    .kp-load-more {
+      display: block; width: calc(100% - 32px); margin: 12px auto 4px;
+      padding: var(--sp-3) var(--sp-6); border-radius: var(--r-md);
+      border: 1px solid var(--kp-detail-border); background: transparent;
+      color: var(--kp-empty-color); font-size: var(--fs-sm); cursor: pointer;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+    }
+    .kp-load-more:hover {
+      border-color: var(--accent); color: var(--accent);
+    }
 
     /* Empty state */
     .kp-empty { text-align: center; padding: 60px 20px; }
