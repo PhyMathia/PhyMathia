@@ -847,6 +847,56 @@ class WorkflowAnalysisInstructionTest(unittest.TestCase):
         self.assertIn("核心是回复力与位移成正比", inst)
 
 
+class WorkflowContextPartsSplitTest(unittest.TestCase):
+    """T4 拆分契约（2026-10-01）：shared 段兄弟模块逐字节相同，target 段逐模块各异。"""
+
+    def _ctx(self, module, label):
+        return {
+            "mode": "module",
+            "target": {"kind": "module", "module": module, "label": label},
+            "question": "简谐运动的物理图像与微分方程是什么",
+            "analysis": "核心是回复力与位移成正比",
+            "requirements": "",
+            "upstream": [
+                {"label": "问题", "content": "简谐运动的物理图像与微分方程是什么"},
+                {"label": "问题分析", "content": "核心是回复力与位移成正比"},
+            ],
+        }
+
+    def test_sibling_modules_share_shared_segment_byte_for_byte(self):
+        s_physics, t_physics = context_mod._workflow_context_parts(self._ctx("physics", "物理视角"))
+        s_math, t_math = context_mod._workflow_context_parts(self._ctx("math", "数学视角"))
+        self.assertTrue(s_physics and s_math)
+        self.assertEqual(s_physics, s_math, "兄弟模块的 shared 段必须逐字节相等（前缀缓存前提）")
+        self.assertNotEqual(t_physics, t_math)
+
+    def test_shared_holds_question_analysis_upstream_only(self):
+        s, t = context_mod._workflow_context_parts(self._ctx("physics", "物理视角"))
+        self.assertIn("# 工作流节点上下文", s)
+        self.assertIn("原始问题：简谐运动的物理图像与微分方程是什么", s)
+        self.assertIn("隐藏问题分析（用于保持一致）：核心是回复力与位移成正比", s)
+        self.assertIn("问题分析：核心是回复力与位移成正比", s)
+        self.assertNotIn("当前生成目标", s)
+        self.assertNotIn("当前为局部节点生成模式", s)
+        self.assertIn("# 工作流节点生成指令", t)
+        self.assertIn("当前生成目标：物理视角", t)
+        self.assertIn("当前为局部节点生成模式", t)
+        self.assertNotIn("原始问题", t)
+        self.assertNotIn("简谐运动的物理图像与微分方程是什么", t)
+
+    def test_empty_fields_yield_empty_shared_segment(self):
+        # question/analysis/upstream 全空 → shared 无内容行，返回空串（不留光杆标题）
+        s, t = context_mod._workflow_context_parts(
+            {"mode": "module", "target": {"kind": "answer", "label": "AI 回答"},
+             "question": "", "upstream": []})
+        self.assertEqual(s, "")
+        self.assertIn("当前生成目标：AI 回答", t)
+        self.assertIn("只生成当前目标节点内容", t)
+        # 非 dict 入参：两段全空，wrapper 行为与拆分前一致
+        self.assertEqual(context_mod._workflow_context_parts(None), ("", ""))
+        self.assertEqual(context_mod._workflow_context_instruction(None), "")
+
+
 
 class Wave2OptimizationTest(unittest.TestCase):
     def test_trim_context_keeps_viz_digest(self):

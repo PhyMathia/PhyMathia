@@ -334,6 +334,17 @@ async def api_models_chat(request: Request):
         # 前缀缓存整个打灭。现在统一收进「上下文块」，拼在历史之后的最后一条
         # user 消息头部：易变字节集中到请求末尾，system+历史成为稳定前缀。
         context_parts = []
+        # T4 前缀缓存拍板（2026-10-01）：工作流上下文拆 shared/target 两段，shared
+        # 段（question/analysis/upstream，兄弟模块逐字节相同）提到苏格拉底/分支/路径
+        # 指令之前——兄弟模块公共前缀从仅 system（~698 字）延长到 system＋共享段；
+        # 路径指令（含逐模块不同的自节点行与「当前聚焦气泡」行）与 target 段落到
+        # 公共前缀之后的缓存断点。后文滚动记忆 context_parts.insert(0, memory_block)
+        # 仍插在 shared 之前——记忆对兄弟模块也恒同字节，顺序无碍。
+        _wf_shared, _wf_target = ("", "")
+        if workflow_context:
+            _wf_shared, _wf_target = _workflow_context_parts(workflow_context)
+            if _wf_shared:
+                context_parts.append(_wf_shared)
         state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             context_parts.append(state_instruction)
@@ -358,8 +369,10 @@ async def api_models_chat(request: Request):
                 context_parts.append(_active_block)
         # 2026-09-25 线性主聊天退役：linear_active_content_block 尾部块随现役 UI
         # 的线性通道一起删除（恢复见 docs/dev/linear-chat-retired.md）。
-        if workflow_context:
-            context_parts.append(_workflow_context_instruction(workflow_context))
+        # T4（2026-10-01）：target 段（当前生成目标/严格格式指令，逐模块各异）仍在
+        # 路径与树尾部块之后——留在兄弟公共前缀之外，不回头挤缓存命中。
+        if _wf_target:
+            context_parts.append(_wf_target)
         # 概念地基（M4 / P1-A）：knowledge 条目首次作为检索基底参与 prompt——
         # 消息层管「我们聊到哪」，这一段管「这个话题的地基是什么」。
         # 与画像注入同一范围（graph_path-only 锚定请求；画布模块生成 workflow_context

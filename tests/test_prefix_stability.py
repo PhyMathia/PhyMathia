@@ -343,6 +343,59 @@ class AssemblyShapeTest(RouteTestBase):
         self.assertEqual(str(messages[1].get("content")), "什么是电磁感应",
                          "user 路径节点应保持全文")
 
+    def test_sibling_modules_share_prefix_through_workflow_shared_block(self):
+        # T4 契约（2026-10-01）：兄弟模块请求的逐字节公共前缀穿过工作流共享段
+        # （question/analysis/upstream），首个差异点出现在共享段之后（路径指令的
+        # 自节点行/target 段），而不是停在 system。构造仿探针场景 F：
+        # graph_path 的 module 项逐请求不同，question/analysis/upstream 相同且非空。
+        question = "法拉第电磁感应定律的物理图像与数学表达是什么"
+        analysis = "核心是通过磁通量变化率刻画感应电动势，物理图像是磁力线与导体回路的相对运动。"
+        upstream = [
+            {"label": "问题", "content": question},
+            {"label": "问题分析", "content": analysis},
+        ]
+        seen = {"bodies": []}
+
+        def handler(request):
+            seen["bodies"].append(json.loads(request.content.decode()))
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        def payload_for(module, label):
+            return {
+                "session_id": "s_wf_prefix",
+                "prompt": f"请生成{label}模块正文",
+                "graph_path": [
+                    {"kind": "user", "timestamp": 1},
+                    {"kind": "answer", "timestamp": 2, "module": "answer"},
+                    {"kind": "module", "timestamp": 3, "module": module},
+                ],
+                "source_module": module,
+                "workflow_context": {
+                    "mode": "module",
+                    "target": {"kind": "module", "module": module, "label": label},
+                    "question": question, "analysis": analysis,
+                    "requirements": "", "upstream": upstream,
+                },
+            }
+
+        with mock.patch.object(context_mod, "_load_messages", return_value=[]):
+            resp1 = self._post_chat(payload_for("physics", "物理视角"), handler)
+            resp2 = self._post_chat(payload_for("math", "数学视角"), handler)
+        self.assertEqual(resp1.status_code, 200)
+        self.assertEqual(resp2.status_code, 200)
+        self.assertEqual(len(seen["bodies"]), 2)
+        tail1 = str(seen["bodies"][0]["messages"][-1]["content"])
+        tail2 = str(seen["bodies"][1]["messages"][-1]["content"])
+        common = 0
+        while common < min(len(tail1), len(tail2)) and tail1[common] == tail2[common]:
+            common += 1
+        # 共享段全部落进公共前缀：upstream 最后一条的完整文本在公共前缀里，
+        # 且首个差异点出现在其结束位置之后（此处应落在路径指令的自节点行）。
+        self.assertIn(analysis, tail1)
+        last_upstream_end = tail1.rfind(analysis) + len(analysis)
+        self.assertGreater(common, last_upstream_end,
+                           "公共前缀应越过共享段（question/analysis/upstream），首个差异点落在其之后")
+
 
 class BucketHeaderTest(RouteTestBase):
     """辅助调用分桶：session_bucket 白名单消毒后用作 x-opencode-session。"""

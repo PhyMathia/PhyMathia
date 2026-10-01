@@ -168,17 +168,35 @@ def _trim_harness_context(context: str) -> str:
     return "\n\n".join(parts)[:6000]
 
 
-def _context_block(context: str = "", level: str = "") -> str:
-    parts = []
+def _context_block(context: str = "") -> str:
+    # harness 前缀缓存拍板（2026-10-01）：难度等级文本不再从这里进 system（原来
+    # 在段首前置 _level_requirement）——上游按请求前缀做字节级 prompt 缓存，难度
+    # 写进 system 意味着切一次难度就打灭整个 ~6000 字 system 前缀。与主聊天
+    # main.py「system 只留静态底座、LEVEL_PROMPTS 尾部追加」的做法同构：难度由
+    # _apply_level_suffix 后置到最后一条 user 消息尾部。
+    if not context:
+        return ""
+    return (
+        "PhyMathia 系统上下文（已精简，只含角色、意图识别、约束与输出格式等对图编辑有用的部分；忽略聊天 XML 卡片输出格式）：\n"
+        + _trim_harness_context(context)
+    )
+
+
+def _apply_level_suffix(messages: list, level: str) -> list:
+    """把难度档要求以 \\n\\n 前缀追加到 messages 里最后一条 role=="user" 的尾部。
+
+    harness 前缀缓存拍板（2026-10-01）：难度后置出 system，与主聊天 main.py 的
+    LEVEL_PROMPTS 尾部做法同构——system 只留静态底座，切难度不再打灭整个前缀。
+    level 为空或 messages 里没有 user 消息时是 no-op。原地修改并返回 messages。
+    """
     level_text = _level_requirement(level)
-    if level_text:
-        parts.append(level_text)
-    if context:
-        parts.append(
-            "PhyMathia 系统上下文（已精简，只含角色、意图识别、约束与输出格式等对图编辑有用的部分；忽略聊天 XML 卡片输出格式）：\n"
-            + _trim_harness_context(context)
-        )
-    return "\n\n".join(parts)
+    if not level_text:
+        return messages
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            message["content"] = str(message.get("content") or "") + "\n\n" + level_text
+            break
+    return messages
 
 
 def _focus_text(focus_node_ids, snapshot: dict) -> str:
@@ -226,14 +244,15 @@ def build_resolve_messages(
     user_text = f"当前知识网络快照：\n{json_dumps(snapshot)}\n\n用户指令：{instruction}\n\n只输出目标解析 JSON。"
     if retry_errors:
         user_text += f"\n\n上一次输出不合法：\n{retry_errors}\n请修正后重新只输出 JSON。"
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_RESOLVE_SYSTEM_PROMPT + ("\n\n" + context_text if context_text else ""),
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 def build_review_messages(
@@ -250,8 +269,8 @@ def build_review_messages(
     focus_text = _focus_text(focus_node_ids, snapshot)
     if focus_text:
         user_text += "\n\n" + focus_text
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_SYSTEM_PROMPT
@@ -261,6 +280,7 @@ def build_review_messages(
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 HARNESS_CHAT_REDLINE = """
@@ -310,8 +330,8 @@ def build_evaluate_messages(
     focus_text = _focus_text(focus_node_ids, snapshot)
     if focus_text:
         user_text += "\n\n" + focus_text + "\n\n只对上面标注的重点节点生成评价，不要评价其他节点。"
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_EVALUATE_SYSTEM_PROMPT
@@ -321,6 +341,7 @@ def build_evaluate_messages(
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 HARNESS_APPLY_SYSTEM_PROMPT = """你是知识网络修改 harness。当前图中包含 kind=ai_eval 的 AI 评价节点。
@@ -380,8 +401,8 @@ def build_apply_messages(
     focus_text = _focus_text(focus_node_ids, snapshot)
     if focus_text:
         user_text += "\n\n" + focus_text
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_APPLY_SYSTEM_PROMPT
@@ -391,6 +412,7 @@ def build_apply_messages(
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 HARNESS_EXPAND_SYSTEM_PROMPT = """你是知识网络进阶拓展 harness。用户指定了若干个目标知识点，要求为每个知识点生成一条「AI回答 → 进阶学习」链。
@@ -427,8 +449,8 @@ def build_expand_messages(
     focus_text = _focus_text(focus_node_ids, snapshot)
     if focus_text:
         user_text += "\n\n" + focus_text
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_EXPAND_SYSTEM_PROMPT
@@ -436,6 +458,7 @@ def build_expand_messages(
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 # ---- 创造模式（P3）：对话式创作节点配方 ----
@@ -473,8 +496,8 @@ def build_preset_messages(
     user_text = f"当前用户配方清单与画布上下文：\n{json_dumps(snapshot)}\n\n用户指令：{instruction}"
     if retry_errors:
         user_text += f"\n\n上一次输出不合法：\n{retry_errors}\n请修正后重新输出（注意校验器给出的具体原因）。"
-    context_text = _context_block(context, level)
-    return [
+    context_text = _context_block(context)
+    messages = [
         {
             "role": "system",
             "content": HARNESS_PRESET_SYSTEM_PROMPT
@@ -482,6 +505,7 @@ def build_preset_messages(
         },
         {"role": "user", "content": user_text},
     ]
+    return _apply_level_suffix(messages, level)
 
 
 def slim_snapshot(value):
