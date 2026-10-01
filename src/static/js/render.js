@@ -137,10 +137,9 @@ function buildVizCard(htmlContent, vizId) {
 // ====== 可视化 iframe 主题桥接 ======
 // 注入到 AI 生成的 HTML 中：应用父页面主题（data-theme 属性 + 按钮点击兜底 + setter 函数），
 // 并检测页面是否自带主题机制（有则通知父页面走原生切换，无则父页面用滤镜兜底深色化）。
+// 2026-10-01：原桥还向 iframe 注入 * 通配 0.4s 颜色过渡（主题切换渐变的一部分），
+// 随渐变整体删除——iframe 换主题即切即稳，不再逐帧插值。
 const _VIZ_THEME_BRIDGE = '<script>(function(){'
-  + 'try{var st=document.createElement("style");'
-  + 'st.textContent="html[data-theme] *,html[data-theme] *::before,html[data-theme] *::after{transition:background-color .4s ease,color .4s ease,border-color .4s ease,fill .4s ease,stroke .4s ease!important}";'
-  + 'document.head.appendChild(st);}catch(e){}'
   + 'function applyT(t){'
   + 'try{'
   + 'document.documentElement.setAttribute("data-theme",t);'
