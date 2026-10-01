@@ -245,6 +245,11 @@ function _toggleGraphNodeMinimize(node) {
     _updateNodeTransforms();
     _redrawEdges();
   }
+  // 轨道形态（T129）：模块最小化＝收回徽章。徽章类（graph-orbit-badge）由渲染分支计算，
+  // 上面的就地改类改不出徽章，轨道下的模块直接整卡重渲（收合是离散操作，渲染成本可接受）
+  if (currentNodeShape() === 'orbit' && node.kind === 'module' && typeof renderGraphCanvas === 'function') {
+    renderGraphCanvas();
+  }
 }
 
 function _startLinkDrag(event, portEl) {
@@ -1380,18 +1385,8 @@ function _applyPointerDrag(clientX, clientY) {
     if (node && el) {
       const resizeDx = (clientX - graphView.resizeStartX) / (graphView.zoom || 1);
       const resizeDy = (clientY - graphView.resizeStartY) / (graphView.zoom || 1);
-      // 圆形轨道（T129 重做）：orbit＝圆形卡片，拖拽沿对角线等比缩放、宽高同步保持正圆（最小 260）；
-      // card 形态维持宽(≥260)/高(≥90)独立缩放。userResized/内联样式/实测高度链路两者共用
-      let nextW;
-      let nextH;
-      if (currentNodeShape() === 'orbit') {
-        const next = Math.max(260, graphView.resizeStartW + (resizeDx + resizeDy) / 2);
-        nextW = next;
-        nextH = next;
-      } else {
-        nextW = Math.max(260, graphView.resizeStartW + resizeDx);
-        nextH = Math.max(90, graphView.resizeStartH + resizeDy);
-      }
+      const nextW = Math.max(260, graphView.resizeStartW + resizeDx);
+      const nextH = Math.max(90, graphView.resizeStartH + resizeDy);
       node.customWidth = Math.round(nextW);
       node.customHeight = Math.round(nextH);
       node.userResized = true;

@@ -507,9 +507,10 @@ function _renderBlankNodeHtml(node, state) {
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
   const minimizedClass = node.minimized ? ' minimized' : '';
-  // 轨道形态（T129 重做）：orbit＝圆形卡片，圆形外观交给「节点形态」CSS 节（border-radius:50% +
-  // aspect-ratio），customWidth/customHeight 内联样式照常输出——这是圆卡可调大小、尺寸跨刷新持久的前提
-  const sizeStyle = node.minimized ? '' : customWidth + customHeight;
+  // 轨道形态（T129）：orbit 下未展开（或已最小化）的模块节点渲染成圆形徽章——
+  // 不输出 customWidth 内联宽（内联 !important 会压过 CSS 徽章尺寸），宽度交给「节点形态」CSS 节
+  const orbitBadge = currentNodeShape() === 'orbit' && (!node._orbitOpen || node.minimized);
+  const sizeStyle = (node.minimized || orbitBadge) ? '' : customWidth + customHeight;
   const content = _cleanBlankNodeContent(node, node.content || '');
   const contentHtml = content
     ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
@@ -517,11 +518,11 @@ function _renderBlankNodeHtml(node, state) {
   const generateLabel = content ? '重新生成' : '生成';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
-  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+  return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + (orbitBadge ? ' graph-orbit-badge' : '') + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
-    + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
+    + '<div class="graph-node-label"' + (orbitBadge ? ' ondblclick="toggleOrbitBadge(\'' + node.id + '\')" title="双击展开内容"' : '') + '>' + escapeHtml(meta.label) + '</div>'
     + contentHtml
     + (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求 → 点生成</div>')
     + '<div class="graph-blank-requirement">'
@@ -938,17 +939,18 @@ function _renderAiEvalNodeHtml(node, state) {
   const quickConnectBtn = node.kind === 'hub'
     ? '<button class="graph-hub-connect-btn" onclick="event.stopPropagation();quickConnectToHub(\'' + node.id + '\')" title="一键接入选中节点输出"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"></path><path d="M9 8V2"></path><path d="M15 8V2"></path><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"></path></svg></button>'
     : '';
-  // 轨道形态（T129 重做）：工作流模块节点（本渲染器）在 orbit 下也是圆形卡片，与 _renderBlankNodeHtml
-  // 的 Φ 空白模块同口径；customWidth/customHeight 内联样式照常输出（圆卡可调大小的前提），外观全在 CSS
-  const sizeStyle = node.minimized ? '' : customWidth + customHeight;
+  // 轨道形态（T129）：工作流模块节点（本渲染器）在 orbit 下未展开/已最小化时也渲染成圆形徽章，
+  // 与 _renderBlankNodeHtml 的 Φ 空白模块同口径；不输出 customWidth 内联宽（会压过 CSS 徽章尺寸）
+  const orbitBadge = currentNodeShape() === 'orbit' && node.kind === 'module' && (!node._orbitOpen || node.minimized);
+  const sizeStyle = (node.minimized || orbitBadge) ? '' : customWidth + customHeight;
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
   const graphState = state || _graphState();
   const inputHtml = _renderInputPorts(node, graphState);
   const outputHtml = _renderOutputPorts(node, messages, graphState);
   const labelHtml = (node.kind === 'user' && node.messageIndex < 0)
     ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(label) + '</textarea>'
-    : '<div class="graph-node-label">' + escapeHtml(label) + '</div>';
-  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
+    : '<div class="graph-node-label"' + (orbitBadge ? ' ondblclick="toggleOrbitBadge(\'' + node.id + '\')" title="双击展开内容"' : '') + '>' + escapeHtml(label) + '</div>';
+  return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + (orbitBadge ? ' graph-orbit-badge' : '') + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'
