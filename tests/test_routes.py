@@ -206,7 +206,7 @@ class ModelsListEndpointTest(RouteTestBase):
                 json={"provider": "ollama", "api_key": "", "base_url": "http://localhost:11434/v1"},
             )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {"models": ["a-model", "b-model", "c"]})
+        self.assertEqual(resp.json(), {"models": ["a-model", "b-model", "c"], "meta": {}})
 
     def test_bare_array_response_parsed(self):
         def fake_get(url, headers=None, timeout=None):
@@ -224,7 +224,7 @@ class ModelsListEndpointTest(RouteTestBase):
                 json={"provider": "lmstudio", "api_key": "", "base_url": "http://localhost:1234/v1"},
             )
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {"models": ["a", "z"]})
+        self.assertEqual(resp.json(), {"models": ["a", "z"], "meta": {}})
 
     def test_opencode_gateway_list_sends_no_bearer(self):
         # opencode 网关（zen 免费与 zen/go）的 /models 清单公开可读，反而带无效
@@ -880,7 +880,12 @@ class StaticCacheHeaderTest(RouteTestBase):
     def test_api_routes_untouched(self):
         resp = self.client.get("/api/knowledge")
         self.assertEqual(resp.status_code, 200)
-        self.assertIsNone(resp.headers.get("cache-control"))
+        # T147：知识/公式两个 15 秒轮询 GET 刻意改为 no-cache+ETag 协商
+        # （存但每次回源验证）；「静态缓存策略不得外溢到 API 路由」的底线不变——
+        # 绝不许出现长 max-age
+        cc = resp.headers.get("cache-control")
+        self.assertIsNotNone(cc)
+        self.assertNotIn("max-age", cc)
 
     def test_vendor_files_same_policy(self):
         # /vendor/ 第三方本地副本无版本指纹，同样只能 no-cache，不许长 max-age

@@ -3176,6 +3176,9 @@
    应用头栏（0-55px，z60）浮在其上——大陆的浮层一律从 68px 起，别顶到头栏底下。
    层底透明：全局壁纸（.bg-layer）与星轨粒子从画布一直透到大陆（用户拍板保留），
    大陆自己的可读性交给簇底板/节点/浮层的小面积底色。 */
+/* T49 全屏：整层提进 top layer 后显式钉满视口（Safari 走 -webkit- 前缀） */
+.continent-layer:fullscreen { position: fixed; inset: 0; width: 100%; height: 100%; }
+.continent-layer:-webkit-full-screen { position: fixed; inset: 0; width: 100%; height: 100%; }
 .continent-layer {
   position: absolute;
   inset: 0;

@@ -6677,5 +6677,73 @@ await Promise.all(pendingChecks).catch(() => {});
   });
 }
 
+// ===== 演示前第一批：T45/T49/T52/T60/T70（2026-10-01）=====
+// 全部为静态源断言（同步、不碰共享键），追加在串行边界之后安全。
+{
+  const qcheck = (name, fn) => {
+    try {
+      const r = fn();
+      if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+      else console.log('✓', name);
+    } catch (e) {
+      failed++; console.error('❌', name, '->', (e && e.message) || e);
+    }
+  };
+  const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const sessSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const contSrc = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const modelsSrc = fs.readFileSync('src/static/js/models.js', 'utf8');
+  const idxHtml = fs.readFileSync('src/static/index.html', 'utf8');
+  const stylesCss = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  const panelsCss = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+
+  qcheck('T45：resize 不再静默关浮动面板，四个面板按触发按钮重定位', () => {
+    if (uiSrc.includes('Close floating panels on resize to avoid mispositioning')) throw new Error('旧的「resize 一律关面板」还在');
+    for (const pid of ['modelPanel', 'dataPanel', 'levelPanel', 'skinPanel']) {
+      if (!uiSrc.includes(`_repositionShownPanel('${pid}'`)) throw new Error('缺重定位：' + pid);
+    }
+    if (!uiSrc.includes("panel.classList.contains('show')")) throw new Error('重定位前未判面板打开态');
+    return true;
+  });
+
+  qcheck('T49：大陆顶栏补「⌂ 适配 / ⤢ 全屏」手动手柄＋全屏态样式', () => {
+    if (!contSrc.includes('id="continentFitBtn"')) throw new Error('缺适配按钮');
+    if (!contSrc.includes('id="continentFullBtn"')) throw new Error('缺全屏按钮');
+    if (!contSrc.includes('_continentToggleFullscreen') || !contSrc.includes('_continentSyncFullBtn')) throw new Error('缺全屏切换/文案同步函数');
+    if (!panelsCss.includes('.continent-layer:fullscreen')) throw new Error('缺全屏态样式');
+    return true;
+  });
+
+  qcheck('T52：graph 坏键守卫（对象 sessionId 拦下不落键）＋启动清扫 [object Object]', () => {
+    if (!sessSrc.includes('_isBadGraphSid')) throw new Error('缺坏参守卫');
+    for (const fn of ['function getGraphState', 'function saveGraphState', 'async function _postGraphState', 'async function _loadGraphStateFromServer', 'async function _deleteGraphStateOnServer']) {
+      const i = sessSrc.indexOf(fn);
+      if (i < 0) throw new Error('找不到 ' + fn);
+      if (!sessSrc.slice(i, i + 400).includes('_isBadGraphSid(sid)')) throw new Error(fn + ' 未挂守卫');
+    }
+    if (!sessSrc.includes('_sweepCorruptedKeys')) throw new Error('缺启动清扫');
+    return true;
+  });
+
+  qcheck('T70：_syncFromServer 首请求即探活，不再 _checkServer＋全量拉各一次', () => {
+    const i = sessSrc.indexOf('async function _syncFromServer');
+    if (i < 0) throw new Error('找不到 _syncFromServer');
+    const j = sessSrc.indexOf('const [sessResp', i);
+    if (j < 0) throw new Error('找不到 Promise.all 拉取');
+    if (sessSrc.slice(i, j).includes('await _checkServer()')) throw new Error('仍先 _checkServer() 探活（/api/sessions 每轮 ×2）');
+    return true;
+  });
+
+  qcheck('T60：模型探活端点接线＋行内测活按钮＋免费/付费标注样式', () => {
+    if (!modelsSrc.includes('/api/models/probe')) throw new Error('前端未接探活端点');
+    if (!modelsSrc.includes('probeCheckedPresetModels')) throw new Error('缺批量测活');
+    if (!modelsSrc.includes("_probePresetRow(this,'${opts.probe}')") || !modelsSrc.includes("probe: 'update'")) throw new Error('更新弹窗新增行缺测活按钮');
+    if (!idxHtml.includes('presetProbeBtn')) throw new Error('添加弹窗缺「测活勾选项」按钮');
+    if (!stylesCss.includes('.am-probe-state')) throw new Error('缺探活徽标样式');
+    if (!stylesCss.includes('.am-model-free')) throw new Error('缺免费/付费标注样式');
+    return true;
+  });
+}
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

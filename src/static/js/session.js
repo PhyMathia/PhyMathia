@@ -92,7 +92,10 @@
     }
 
     async function _syncFromServer() {
-      if (!(await _checkServer())) return false;
+      // T70：不再先 _checkServer() 单独探活（它自己也 GET /api/sessions）再全量拉
+      // 一遍——首个请求本身就是探活。启动与 15 秒轮询各少一次重复请求（此前
+      // /api/sessions 每轮 ×2）。服务端可用性沿用 _checkServer 的结果缓存字段，
+      // 其余调用方（_postToServer 等）行为不变。
       if (typeof window.waitForKnowledgeSave === 'function') {
         await window.waitForKnowledgeSave();
       }
@@ -101,10 +104,16 @@
       }
       try {
         const [sessResp, knowResp, currResp] = await Promise.all([
-          fetch('/api/sessions', { cache: 'no-cache' }),
+          fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
           fetch('/api/knowledge', { cache: 'no-cache' }),
           fetch('/api/kv/phymathia_current_session', { cache: 'no-cache' }),
         ]);
+        _serverAvailable = sessResp.ok;
+        _serverAvailableCheckedAt = Date.now();
+        if (!_serverAvailable) {
+          console.log('[Storage] Server available:', false);
+          return false;
+        }
         if (sessResp.ok) {
           const serverSessions = await sessResp.json();
           const localSessionsRaw = localStorage.getItem(STORAGE_KEY_SESSIONS);
@@ -400,8 +409,37 @@
       else _graphStateMemCache.clear();
     }
 
+    // T52：清扫历史坏键——曾有用调用点把对象当 sessionId 拼进键名，留下
+    // '…[object Object]' 垃圾键（本地 graph_ 前缀与 kv_store 服务端各有同源一条，
+    // 服务端那份已随手清）。启动时全库扫一次，见即删。
+    (function _sweepCorruptedKeys() {
+      try {
+        const bad = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf('[object Object]') !== -1) bad.push(k);
+        }
+        for (const k of bad) {
+          console.warn('[Storage] 移除坏键（对象误拼进键名）:', k);
+          localStorage.removeItem(k);
+        }
+      } catch (e) { /* 存储不可用：清扫只是兜底，不阻断 */ }
+    })();
+
+    // T52：sessionId 被传成对象的调用点守卫——对象拼进键名会产生
+    // 'phymathia_graph_[object Object]' 与服务端 'graph:[object Object]' 坏键。
+    // 守卫拦下并 warn（开发期控制台可查调用栈），不再写坏键。
+    function _isBadGraphSid(sid) {
+      if (sid && typeof sid === 'object') {
+        console.warn('[GraphState] sessionId 传成了对象（调用点参数错位？）：', sid);
+        return true;
+      }
+      return false;
+    }
+
     function getGraphState(sessionId) {
       const sid = sessionId || currentSessionId || '';
+      if (_isBadGraphSid(sid)) return { ..._normalizeGraphState(null) };
       let state = _graphStateMemCache.get(sid);
       if (!state) {
         let parsed = null;
@@ -419,6 +457,7 @@
     let _graphStatePendingSave = null;
 
     async function _postGraphState(sid, state) {
+      if (_isBadGraphSid(sid)) return;
       try {
         await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
           method: 'POST',
@@ -432,6 +471,7 @@
 
     async function _loadGraphStateFromServer(sessionId) {
       const sid = sessionId || currentSessionId || '';
+      if (_isBadGraphSid(sid)) return;
       if (!sid) return;
       try {
         const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid));
@@ -485,6 +525,7 @@
 
     function saveGraphState(sessionId, state, opts) {
       const sid = sessionId || currentSessionId || '';
+      if (_isBadGraphSid(sid)) return;
       if (!sid) return;
       const snap = { ...state, updatedAt: Date.now() };
       _graphStateMemCache.set(sid, snap);
@@ -507,6 +548,7 @@
     }
 
     async function _deleteGraphStateOnServer(sid) {
+      if (_isBadGraphSid(sid)) return;
       if (!sid) return;
       if (sid === currentSessionId) clearTimeout(_graphStateSyncTimer);
       _graphStatePendingSave = null;

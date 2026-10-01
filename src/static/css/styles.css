@@ -1955,6 +1955,16 @@
     .am-mini-btn:disabled { opacity: 0.5; cursor: default; }
     .am-fetch-status { font-size: var(--fs-xs); color: var(--text-secondary); min-width: 0; word-break: break-all; }
     .am-fetch-status.am-fetch-error { color: var(--danger-fg); }
+    /* T60 模型探活：免费/付费标注 pill + 行内「测活」按钮与结果徽标 */
+    .am-model-free { font-size: var(--fs-2xs); padding: 1px 6px; border-radius: var(--r-pill); border: 1px solid var(--accent); color: var(--accent); flex-shrink: 0; }
+    .am-model-free.is-paid { color: var(--text-secondary); border-color: var(--border); border-style: dashed; }
+    .am-probe-wrap { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: 6px; }
+    .am-probe-btn { font-size: var(--fs-2xs); padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--r-pill); background: transparent; color: var(--text-secondary); cursor: pointer; }
+    .am-probe-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .am-probe-btn:disabled { opacity: 0.5; cursor: default; }
+    .am-probe-state { font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+    .am-probe-state.am-probe-ok { color: var(--accent); }
+    .am-probe-state.am-probe-bad { color: var(--danger-fg); }
     /* 组级「更新模型列表」弹窗（复用 am-model-check 行样式） */
     .um-status-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
     .um-section { margin-bottom: 10px; }

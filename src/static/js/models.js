@@ -678,12 +678,23 @@ function closeAddModelDialog() {
   document.getElementById('addModelDialog').classList.remove('show');
 }
 
-function _presetModelRowHtml(id, label, checked) {
+// opts.free: true=免费（上游标价 0）/ false=付费 / undefined=上游没标价不标注；
+// opts.probe: 'preset'（添加弹窗）| 'update'（更新弹窗）时渲染行内测活按钮。
+// 测活按钮在 label 里，点击会连带勾选框——onclick 里 preventDefault 掉。
+function _presetModelRowHtml(id, label, checked, opts) {
+  const badge = (opts && opts.free === true)
+    ? '<span class="am-model-free" title="上游标价为 0（免费档可用）">免费</span>'
+    : (opts && opts.free === false)
+      ? '<span class="am-model-free is-paid" title="上游标价非 0（付费档）">付费</span>'
+      : '';
+  const probe = (opts && opts.probe)
+    ? `<span class="am-probe-wrap"><button type="button" class="am-probe-btn" onclick="event.preventDefault();event.stopPropagation();_probePresetRow(this,'${opts.probe}')">测活</button><span class="am-probe-state"></span></span>`
+    : '';
   // id 进 value 属性做 HTML 转义；label 是注册表文案（同样转义防未来被自由输入污染）
   return `<label class="am-model-check">
     <input type="checkbox" value="${escapeHtml(id)}"${checked ? ' checked' : ''}>
     <span class="am-model-check-name">${escapeHtml(label || id)}</span>
-    <span class="am-model-check-id">${escapeHtml(id)}</span>
+    <span class="am-model-check-id">${escapeHtml(id)}</span>${badge}${probe}
   </label>`;
 }
 
@@ -751,6 +762,102 @@ function _freshIdsNotListed(listedIds, freshIds) {
   return (Array.isArray(freshIds) ? freshIds : []).filter(id => !seen.has(id));
 }
 
+// ====== T60 模型探活：列表里有 ≠ 能用，真发一条最小消息验证 ======
+// 免费网关常把付费档模型也列进清单（82 个混着），现场换模型的踩坑重灾区。
+// 结果按 provider|baseUrl|model 缓存 5 分钟，避免反复点重复烧调用。
+const _modelProbeCache = new Map();   // key -> { ok, detail, at }
+const MODEL_PROBE_TTL_MS = 5 * 60 * 1000;
+
+function _modelProbeKey(provider, baseUrl, model) {
+  return [provider || '', baseUrl || '', model || ''].join('|');
+}
+
+async function _probeModelLive(provider, baseUrl, model, apiKey) {
+  const key = _modelProbeKey(provider, baseUrl, model);
+  const hit = _modelProbeCache.get(key);
+  if (hit && Date.now() - hit.at < MODEL_PROBE_TTL_MS) return hit;
+  const resp = await fetch('/api/models/probe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, api_key: apiKey || '', base_url: baseUrl || '', model }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const data = await resp.json().catch(() => ({}));
+  const result = { ok: !!data.ok, detail: String(data.detail || (data.ok ? '可用' : '探活失败')), at: Date.now() };
+  _modelProbeCache.set(key, result);
+  return result;
+}
+
+function _paintProbeState(row, result) {
+  const state = row && row.querySelector('.am-probe-state');
+  if (!state) return;
+  state.textContent = result.ok ? '✓ 可用' : '✗ 不可用';
+  state.title = result.detail || '';
+  state.classList.toggle('am-probe-ok', !!result.ok);
+  state.classList.toggle('am-probe-bad', !result.ok);
+}
+
+// 行内「测活」按钮（添加/更新两个弹窗共用）：凭据与地址取各自弹窗的当前值
+async function _probePresetRow(btn, ctxType) {
+  const row = btn.closest('.am-model-check');
+  const input = row && row.querySelector('input[type="checkbox"]');
+  const model = input ? input.value : '';
+  if (!model) return;
+  let provider = '', baseUrl = '', apiKey = '';
+  if (ctxType === 'update') {
+    const ctx = _modelUpdateCtx;
+    if (!ctx) return;
+    provider = ctx.provider;
+    baseUrl = ctx.baseUrl;
+    apiKey = getGroupKey(provider) || (userModelConfigs.find(m => m.provider === provider)?.apiKey) || '';
+  } else {
+    provider = document.getElementById('newProvider').value;
+    baseUrl = document.getElementById('newBaseUrl').value.trim();
+    apiKey = _dialogApiKeyWithFallback(provider).key;
+  }
+  btn.disabled = true;
+  const state = row.querySelector('.am-probe-state');
+  if (state) { state.textContent = '探活中…'; state.classList.remove('am-probe-ok', 'am-probe-bad'); }
+  let result;
+  try {
+    result = await _probeModelLive(provider, baseUrl, model, apiKey);
+  } catch (e) {
+    result = { ok: false, detail: String((e && e.message) || e), at: 0 };
+  }
+  btn.disabled = false;
+  _paintProbeState(row, result);
+}
+
+// 批量测活（添加弹窗）：只探勾选的，4 路并发，状态行报进度
+async function probeCheckedPresetModels() {
+  const boxes = Array.from(document.querySelectorAll('#presetModelList input[type="checkbox"]:checked'));
+  if (!boxes.length) { _setFetchStatus('presetFetchStatus', '先勾选要探活的模型', true); return; }
+  const provider = document.getElementById('newProvider').value;
+  const baseUrl = document.getElementById('newBaseUrl').value.trim();
+  const apiKey = _dialogApiKeyWithFallback(provider).key;
+  const btn = document.getElementById('presetProbeBtn');
+  if (btn) btn.disabled = true;
+  const total = boxes.length;
+  let done = 0, okCount = 0;
+  const queue = boxes.map(b => b.value);
+  const worker = async () => {
+    while (queue.length) {
+      const model = queue.shift();
+      const r = await _probeModelLive(provider, baseUrl, model, apiKey)
+        .catch(e => ({ ok: false, detail: String((e && e.message) || e), at: 0 }));
+      done++;
+      if (r.ok) okCount++;
+      const safe = (window.CSS && CSS.escape) ? CSS.escape(model) : model.replace(/"/g, '\\"');
+      const input = document.querySelector(`#presetModelList input[value="${safe}"]`);
+      _paintProbeState(input && input.closest('.am-model-check'), r);
+      _setFetchStatus('presetFetchStatus', `探活中… ${done}/${total}（可用 ${okCount}）`, false);
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (btn) btn.disabled = false;
+  _setFetchStatus('presetFetchStatus', `探活完成：${total} 个里可用 ${okCount} 个${okCount < total ? '（✗ 的别选，选了也会被上游拒）' : ''}`, false);
+}
+
 async function fetchProviderModelList() {
   const provider = document.getElementById('newProvider').value;
   const baseUrl = document.getElementById('newBaseUrl').value.trim();
@@ -772,17 +879,22 @@ async function fetchProviderModelList() {
     // 不再堆出多个「在线获取的补充模型」段（2026-09-25 用户反馈）
     const listed = listEl ? Array.from(listEl.querySelectorAll('.am-model-check input')).map(cb => cb.value) : [];
     const fresh = _freshIdsNotListed(listed, data.models || []);
+    // T60：上游带定价字段时标免费/付费并把免费的排前面；opencode 这类不带
+    // 定价的网关没有标注，真活假活交给「测活」（/api/models/probe）
+    const meta = (data.meta && typeof data.meta === 'object') ? data.meta : {};
     if (listEl && fresh.length) {
       const empty = listEl.querySelector('.am-model-empty');
       if (empty) empty.remove();
+      const ordered = fresh.slice().sort((a, b) => ((meta[b] && meta[b].free) ? 1 : 0) - ((meta[a] && meta[a].free) ? 1 : 0));
       // 追加段独立标记：全选/统计能区分「内置」与「在线补充」；标签只保留一份
       if (!listEl.querySelector('.am-model-group-label')) {
         listEl.insertAdjacentHTML('beforeend', '<div class="am-model-group-label">在线获取的补充模型</div>');
       }
-      listEl.insertAdjacentHTML('beforeend', fresh.map(id => _presetModelRowHtml(id, id, false)).join(''));
+      listEl.insertAdjacentHTML('beforeend', ordered.map(id => _presetModelRowHtml(id, id, false, { free: meta[id] ? meta[id].free : undefined, probe: 'preset' })).join(''));
     }
+    const freeCount = fresh.filter(id => meta[id] && meta[id].free === true).length;
     _setFetchStatus('presetFetchStatus', fresh.length
-      ? `新增 ${fresh.length} 个可选项（共 ${data.models.length} 个）`
+      ? `新增 ${fresh.length} 个可选项（共 ${data.models.length} 个${freeCount ? `，免费 ${freeCount}` : ''}）——拿不准就点「测活勾选项」`
       : `已列出全部 ${data.models.length} 个模型`, false);
   } catch (e) {
     _setFetchStatus('presetFetchStatus', `获取失败：${e.message}（可手填模型名）`, true);
@@ -981,7 +1093,8 @@ async function _fetchModelListForUpdate() {
     const existing = userModelConfigs.filter(m => m.provider === provider).map(m => m.model);
     const diff = diffUpstreamModels(existing, data.models || []);
     ctx.diff = diff;
-    _renderUpdateDialog(provider, diff, (data.models || []).length);
+    ctx.meta = (data.meta && typeof data.meta === 'object') ? data.meta : {};
+    _renderUpdateDialog(provider, diff, (data.models || []).length, ctx.meta);
   } catch (e) {
     if (_modelUpdateCtx !== ctx) return;
     statusEl.textContent = `获取失败：${e.message}（可点「重新获取」重试）`;
@@ -991,7 +1104,8 @@ async function _fetchModelListForUpdate() {
   }
 }
 
-function _renderUpdateDialog(provider, diff, upstreamTotal) {
+function _renderUpdateDialog(provider, diff, upstreamTotal, meta) {
+  meta = (meta && typeof meta === 'object') ? meta : {};
   const preset = MODEL_PRESETS[provider];
   const localEntries = userModelConfigs.filter(m => m.provider === provider);
   const presetLabelOf = id => (preset?.models || []).find(m => m.id === id)?.label || '';
@@ -1014,7 +1128,7 @@ function _renderUpdateDialog(provider, diff, upstreamTotal) {
   document.getElementById('umSameNote').hidden = !!(diff.added.length || diff.removed.length);
   if (diff.added.length) {
     document.getElementById('umNewCount').textContent = String(diff.added.length);
-    document.getElementById('umNewList').innerHTML = diff.added.map(id => _presetModelRowHtml(id, presetLabelOf(id) || id, false)).join('');
+    document.getElementById('umNewList').innerHTML = diff.added.map(id => _presetModelRowHtml(id, presetLabelOf(id) || id, false, { free: meta[id] ? meta[id].free : undefined, probe: 'update' })).join('');
   }
   if (diff.removed.length) {
     document.getElementById('umStaleCount').textContent = String(diff.removed.length);
