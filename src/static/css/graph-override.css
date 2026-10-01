@@ -6582,7 +6582,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 浅色改从 --node-glass-base 起混、提高赭墨配比出「深牛皮纸」，铜金边/画框全线加深，投影换深墨派生。 */
 [data-node-skin="parchment"] {
   --ink-aged: color-mix(in srgb, var(--ink-human) 60%, var(--text-primary));
-  --pm-paper: color-mix(in srgb, var(--ink-human) 32%, rgb(24, 18, 12));
+  --pm-paper: #241B12;
   --pm-line: color-mix(in srgb, var(--ink-amber) 55%, transparent);
   --pm-line-strong: color-mix(in srgb, var(--ink-amber) 85%, transparent);
   --pm-line-soft: color-mix(in srgb, var(--ink-amber) 38%, transparent);
@@ -6594,7 +6594,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 /* 2026-10-01 六调·深色翻修：原深色纸底「--bg-panel 84% × 赭墨 16%」藏蓝×赭棕互抵渲成紫灰
  * （#0f142d×#b5793f ≈ #2A2430，B 通道反超 R）＝blueprint 浅色翻车同款病，用户判「深色难看」。
  * 改从赭墨×暖黑起混（不沾 --bg-panel 的蓝）出深暖褐「烛光手稿」≈#4A331C，R>G>B 递减羊皮身份回归；
- * 画框线随暖底全线提亮（金感回来），投影 58%→85% 让卡从画布上浮起来。 */
+ * 画框线随暖底全线提亮（金感回来），投影 58%→85% 让卡从画布上浮起来。
+ * 2026-10-01 七调·黑金落定：暖褐版真机仍被用户判「这个色调就很难看」——中间调土褐在深蓝画布上
+ * 显浑。加临时试色条真机三选一（A 黑金 #241B12 / B 暗灰褐 #332B24 / C 红木 #3A2118），
+ * 用户选定 A：纸底压到近暖黑，铜金双线画框成主角（黑皮面烫金古籍），干净且最耐看。画框/投影
+ * 同六调不动（用户所见即所选）。 */
 /* 2026-10-01 六调·浅色微调：用户「还行，可再偏白亮一点」，真机判读 10% 墨仍偏黄（≈#F0E4C8 观感）
  * ——纸底墨 12%→10%→6%（四调教训：小步感知不到，一步到位 ≈#F8F2E9），画框/投影不动 */
 [data-theme="light"][data-node-skin="parchment"] {
