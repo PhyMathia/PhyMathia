@@ -6596,7 +6596,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 /* ---------- 皮肤 4：parchment 羊皮手稿 ----------
- * 暖棕纸底＋铜金描边＋内圈细线（双线画框）；属性色微微做旧（混入铜金 18%，色相保留）。 */
+ * 暖棕纸底＋铜金描边＋内圈细线（双线画框）；属性色大幅做旧——混入「做旧墨色」--ink-aged 降饱和，
+ * 色相保留：静止 45%、悬停 62%、选中 78%（状态越主动颜色越鲜活）。
+ * --ink-aged 是赭墨与奶白 6:4 调和出的暖中性色：单混赭墨降不下饱和度（赭墨本身也是饱和色），
+ * 必须掺一点低彩度的奶白才压得住，同时保持暖调与卡面同源。 */
+[data-node-skin="parchment"] {
+  --ink-aged: color-mix(in srgb, var(--ink-human) 60%, var(--text-primary));
+}
 [data-node-skin="parchment"] .graph-node {
   background:
     linear-gradient(165deg, color-mix(in srgb, var(--ink-amber) 10%, transparent), transparent 62%),
@@ -6614,7 +6620,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
 }
 [data-node-skin="parchment"] .graph-node.selected {
-  border-color: var(--node-attr) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 78%, var(--ink-aged)) !important;
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--node-attr) 28%, transparent),
     0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
@@ -6626,7 +6632,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 [data-node-skin="parchment"] .graph-node-hub,
 [data-node-skin="parchment"] .graph-node-summary,
 [data-node-skin="parchment"] .graph-node-note {
-  border-left-color: var(--node-attr) !important;
+  border-left-color: color-mix(in srgb, var(--node-attr) 45%, var(--ink-aged)) !important;
+}
+/* 属性徽章：JS 写的是内联纯属性色，靠 !important 的长手属性覆盖（内联样式输在 !important 之前） */
+[data-node-skin="parchment"] .graph-node .graph-node-attribute {
+  color: color-mix(in srgb, var(--node-attr) 58%, var(--ink-aged)) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 45%, var(--ink-aged)) !important;
 }
 [data-node-skin="parchment"] .graph-node-root {
   border-color: var(--ink-amber) !important;
@@ -6638,20 +6649,20 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   background:
     linear-gradient(165deg, color-mix(in srgb, var(--ink-amber) 10%, transparent), transparent 62%),
     color-mix(in srgb, var(--bg-panel) 84%, var(--ink-human) 16%) !important;
-  border-color: color-mix(in srgb, var(--node-attr) 82%, var(--ink-amber) 18%) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 45%, var(--ink-aged)) !important;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 22%, transparent),
     0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
 }
 [data-node-skin="parchment"] .graph-node.graph-node-module:hover {
-  border-color: color-mix(in srgb, var(--node-attr) 62%, var(--ink-amber) 38%) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 62%, var(--ink-aged)) !important;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 34%, transparent),
     0 0 16px color-mix(in srgb, var(--ink-amber) 16%, transparent),
     0 14px 36px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
 }
 [data-node-skin="parchment"] .graph-node.graph-node-module.selected {
-  border-color: var(--node-attr) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 78%, var(--ink-aged)) !important;
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--node-attr) 28%, transparent),
     0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
