@@ -2621,6 +2621,14 @@
     html.aurora-paused .graph-context-menu,
     html.aurora-paused .quiz-return-pill { animation-play-state: running; }
 
+    /* 慢机降级（html.aurora-still 由 ui.js 的帧预算探测挂，2026-10-01）：LoAF 实测漂移与
+       符号画布单独跑都够帧、叠加必爆 200-380ms 长帧——探测拖帧时冻结漂移只留符号画布，
+       玻璃外观不变只是不漂。play-state 只暂停不重置；「入场+漂移」并列两家的豁免口径
+       与 aurora-paused 完全一致（见上），新增并列载体时两处豁免要同步。 */
+    html.aurora-still .aurora-glass { animation-play-state: paused; }
+    html.aurora-still .graph-context-menu,
+    html.aurora-still .quiz-return-pill { animation-play-state: running; }
+
     /* 不支持 backdrop-filter 时：加深底色，保证文字对比度 */
     @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
       .aurora-glass { --glass-tint: rgba(9, 13, 30, 0.86); }
@@ -2900,7 +2908,7 @@
     /* ====== 性能修复：主题切换期间全局禁用过渡 ======
        :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，翻转 data-theme 时
        每个插值帧都要全文档重算样式，节点多的画布会持续卡顿数百毫秒。
-       JS 在切换瞬间给 <html> 挂 .theme-switching，450ms 后摘除；
+       JS 在切换瞬间给 <html> 挂 .theme-switching，650ms 后摘除（盖住交叉淡入全程）；
        背景图交叉淡入按更高优先级豁免，保留原有的淡入体验。
        2026-10-01：选择器必须含 html 自己——变量过渡恰恰挂在 :root 上，
        只写 * 等于只禁了子孙的自有过渡，最贵的根变量逐帧插值一直没禁掉。 */
@@ -2909,6 +2917,22 @@
     html.theme-switching *::before,
     html.theme-switching *::after {
       transition: none !important;
+    }
+    /* 节点卡磨砂是切换风暴的大头（2026-10-01 LoAF 实测：32 张 blur(16px) 卡在翻转时
+       全量重算磨砂＝软件光栅下 1.5s 的 250-400ms 长帧，其余全部元凶排除后仅关此项归零）。
+       窗口内摘掉、结束自动恢复；卡面有半透明底色兜着，450-650ms 的窗口内看不出差别。 */
+    html.theme-switching .graph-node {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    /* 慢机磨砂降级（html.node-blur-lite 由 ui.js 首次切换探测挂，仅当次会话，2026-10-01）：
+       candy 皮肤节点卡 blur(16px) 翻转主题时全量重算磨砂——软件光栅机器上 1.3s 长帧风暴
+       （LoAF 实测，其余元凶全部排除后仅关此项归零）。判为慢光栅后节点卡用半透明底色
+       直接透出背景，不再逐张实时磨砂；面板/弹窗玻璃（.aurora-glass）载体少，保留。
+       选择器带 html 前缀，(0,2,1) 压过皮肤里 [data-node-skin] .graph-node 的 (0,2,0)。 */
+    html.node-blur-lite .graph-node {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
     }
     html.theme-switching .bg-layer {
       transition: opacity 0.6s ease-in-out !important;
