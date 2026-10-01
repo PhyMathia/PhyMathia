@@ -62,6 +62,9 @@ STATIC_EXTENSIONS = {
     ".webp", ".css", ".js", ".woff", ".woff2", ".ttf",
 }
 
+# 难度档文案共三份手工同步（T132 防漂移）：改这里措辞必须同步
+# src/static/js/config.js 的 LEVEL_PROMPTS（前端客户端组 prompt 用）与
+# harness/prompts.py 的 _level_requirement（Φ 评审口径变体）。
 LEVEL_PROMPTS = {
     "middle": "（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）",
     "university": "（用户是大学生，请用标准大学物理/数学的教学深度讲解，可以使用专业术语但需要解释，推导步骤完整）",
