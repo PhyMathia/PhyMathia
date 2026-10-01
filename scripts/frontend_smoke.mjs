@@ -6193,6 +6193,21 @@ check('节点皮肤模板：根级皮肤变量块不得引用 --node-attr（须�
   return true;
 });
 
+// 静态契约（T128 续 9）：端口点（连线终点的圆点）基础填充是深藏青 #0b1020，浅色材质皮肤
+// （羊皮手稿/糖果磨砂）的卡面上就是个黑窟窿（2026-10-01 用户真机实锤「终点填充太黑」）——
+// 这两套皮肤必须覆盖 .graph-port-dot 的 background 提亮填充；深材质皮肤（blueprint/chalk/neon）不在此列。
+check('节点皮肤模板：浅色材质皮肤（parchment/candy）必须提亮端口点填充', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  for (const k of ['parchment', 'candy']) {
+    const sel = `[data-node-skin="${k}"] .graph-port-dot {`;
+    const i = css.indexOf(sel);
+    if (i < 0) throw new Error(`${k}：缺端口点填充覆盖（深藏青点在浅材质卡上是黑窟窿）`);
+    const body = css.slice(i, css.indexOf('}', i));
+    if (!body.includes('background:')) throw new Error(`${k}：端口点覆盖块没写 background`);
+  }
+  return true;
+});
+
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
 await msTail;
 await Promise.all(sqChecks).catch(() => {});
