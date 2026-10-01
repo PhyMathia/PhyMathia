@@ -8,12 +8,42 @@ function _pickQuizModel() {
   return getActiveModelForRole('quiz') || getActiveModelForRole('agent');
 }
 
+// 自适应出题：从检测统计里取该素材条目的掌握情况，拼出「｜用户掌握情况：…」标注。
+// 匹配键与写入侧同源：题目入库时 topicKey 直接取自素材条目（_sanitizeAIQuestions:
+// `matched.topicKey || _quizTopicKey(matched)`，本地题同理），而统计写入 _recordQuizAnswer
+// 用的正是这个 topicKey（_quizTopicStatsKey），所以按 `item.topicKey || _quizTopicKey(item)`
+// 查表即与写入一致。不按 title 归一兜底：统计键含 sessionId 哈希，标题跨键匹配有跨会话
+// 错标风险——宁漏勿错。无统计记录的条目不加任何标注。
+function _quizMasteryAnnotation(item, stats) {
+  if (!stats || !item) return '';
+  try {
+    const key = item.topicKey || _quizTopicKey(item);
+    const record = key ? stats[key] : null;
+    if (!record || typeof record !== 'object') return '';
+    const correct = Math.max(0, Number(record.correct) || 0);
+    const wrong = Math.max(0, Number(record.wrong) || 0);
+    const mastery = typeof record.mastery === 'number' ? record.mastery : _quizMastery(record);
+    if (!Number.isFinite(mastery)) return '';
+    let detail = '';
+    if (correct > 0) detail += `答对 ${correct} 次`;
+    if (wrong > 0) detail += (detail ? '，' : '') + `答错 ${wrong} 次`;
+    return `｜用户掌握情况：掌握度 ${mastery}%${detail ? '，' + detail : ''}`;
+  } catch (e) {
+    return ''; // 统计不可用时静默退化为无标注（与画像注入同风格）
+  }
+}
+
 function _buildQuizGenerationContext(pool) {
   const lines = ['# 出题素材'];
+  // 掌握度统计一次读入；读取失败静默退化为无标注
+  let stats = null;
+  try {
+    stats = _readQuizStats() || null;
+  } catch (e) { stats = null; }
   if (pool.knowledge.length) {
     lines.push('## 知识点');
     for (const item of pool.knowledge) {
-      lines.push(`- id: ${item.id} | 知识点：${item.title}`);
+      lines.push(`- id: ${item.id} | 知识点：${item.title}${_quizMasteryAnnotation(item, stats)}`);
       lines.push(`  概述：${item.summary || '无'}`);
       if (item.formulas.length) lines.push(`  公式：${item.formulas.join('；')}`);
     }
@@ -21,7 +51,7 @@ function _buildQuizGenerationContext(pool) {
   if (pool.formulas.length) {
     lines.push('## 公式库');
     for (const item of pool.formulas) {
-      lines.push(`- id: ${item.id} | ${item.latex}${item.concept ? `（概念：${item.concept}）` : ''}${item.meaning ? `；含义：${item.meaning}` : ''}`);
+      lines.push(`- id: ${item.id} | ${item.latex}${item.concept ? `（概念：${item.concept}）` : ''}${item.meaning ? `；含义：${item.meaning}` : ''}${_quizMasteryAnnotation(item, stats)}`);
     }
   }
   return lines.join('\n');
@@ -473,6 +503,61 @@ function _quizBankQuestions() {
   return questions;
 }
 
+// 从审题模型返回文本里容错提取结果 JSON：先试 ```json 围栏，再试首个平衡的
+// JSON 对象/数组（字符串内的引号与转义不参与配对，避免被选项里的 LaTeX 花括号截断），
+// 也兼容模型直接输出 [{...}] 数组。本地实现而不调用 quiz-ui.js 的 _firstJsonObject，
+// 避免对另一文件运行时可用性的隐式依赖。
+function _quizExtractReviewsJson(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const candidates = [];
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidates.push(fenced[1].trim());
+  candidates.push(text);
+  for (const candidate of candidates) {
+    const objStart = candidate.indexOf('{');
+    const arrStart = candidate.indexOf('[');
+    let start = -1;
+    if (objStart !== -1 && arrStart !== -1) start = Math.min(objStart, arrStart);
+    else start = objStart !== -1 ? objStart : arrStart;
+    if (start === -1) continue;
+    const open = candidate[start];
+    const close = open === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < candidate.length; i++) {
+      const ch = candidate[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === open) depth += 1;
+      else if (ch === close) {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            return JSON.parse(candidate.slice(start, i + 1));
+          } catch (e) {
+            break; // 该候选截取失败，换下一个候选再试
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function _parseQuizReviews(raw) {
+  const data = _quizExtractReviewsJson(raw);
+  if (!data) return null;
+  const list = Array.isArray(data) ? data : (Array.isArray(data.reviews) ? data.reviews : []);
+  return list.length ? list : null;
+}
+
 async function _aiVerifyQuizQuestions(pool, questions) {
   const model = _pickQuizModel();
   if (!model || !questions || questions.length < 2) return null;
@@ -484,6 +569,9 @@ async function _aiVerifyQuizQuestions(pool, questions) {
   const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
   const context = _buildQuizGenerationContext(pool);
+  // 盲答校验：payload 不带 correctIndex/explanation（解释会泄露答案），审题模型只能
+  // 依据素材独立作答；此时 options 已是打乱后的顺序、correctIndex 已重定位，
+  // 前端直接比对 review.answerIndex === q.correctIndex。
   const payload = questions.map(q => ({
     id: q.id || '',
     type: q.type || 'concept',
@@ -493,8 +581,6 @@ async function _aiVerifyQuizQuestions(pool, questions) {
     prompt: q.prompt || '',
     formulaText: q.formulaText || '',
     options: (q.options || []).map(option => option.text || ''),
-    correctIndex: q.correctIndex,
-    explanation: q.explanation || '',
   }));
   try {
     const resp = await fetch('/api/models/chat', {
@@ -504,7 +590,7 @@ async function _aiVerifyQuizQuestions(pool, questions) {
       body: JSON.stringify({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `出题素材：\n${context}\n\n待审核题目：\n${JSON.stringify(payload, null, 2)}\n\n请输出修正后的题目数组。` }
+          { role: 'user', content: `出题素材：\n${context}\n\n待审核题目（不含正确答案）：\n${JSON.stringify(payload, null, 2)}\n\n题目里没有给出正确答案。请对每道题独立作答并裁定题目质量，按约定输出 reviews JSON。` }
         ],
         provider: model.provider,
         api_key: model.apiKey,
@@ -520,9 +606,34 @@ async function _aiVerifyQuizQuestions(pool, questions) {
       if (guard) guard.bump();
       if (quizState) quizState.aiProgress = Math.min(98, 90 + Math.round(received / 800 * 8));
     });
-    const verified = _sanitizeAIQuestions(raw, pool);
+    const reviews = _parseQuizReviews(raw);
+    if (!reviews) {
+      quizAiLastError = raw.trim() ? '校验返回无法解析' : '校验返回了空内容';
+      return null;
+    }
+    const reviewById = new Map();
+    for (const review of reviews) {
+      if (review && typeof review === 'object' && review.id !== undefined && review.id !== null) {
+        reviewById.set(String(review.id), review);
+      }
+    }
+    // 盲答比对：只有审题模型独立作答与 correctIndex 完全一致才保留原题对象
+    //（不采信审题模型改写的任何题目内容）；漏答/drop/越界/不一致一律弃题
+    const verified = [];
+    for (const q of questions) {
+      const review = reviewById.get(String(q.id || ''));
+      const optionCount = (q.options || []).length;
+      const answerIndex = review ? Number(review.answerIndex) : NaN;
+      const keep = !!review
+        && review.verdict === 'pass'
+        && Number.isInteger(answerIndex)
+        && answerIndex >= 0
+        && answerIndex < optionCount
+        && answerIndex === q.correctIndex;
+      if (keep) verified.push(q);
+    }
     if (verified.length < 2) {
-      quizAiLastError = raw.trim() ? '校验返回无法解析为题目' : '校验返回了空内容';
+      quizAiLastError = quizAiLastError || '盲答校验通过题目不足（' + verified.length + ' 道通过）';
     }
     return verified.length >= 2 ? verified : null;
   } catch (e) {

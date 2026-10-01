@@ -44,14 +44,14 @@ const DEFAULT_QUIZ_GENERATION_PROMPT = `你是 PhyMathia 的出题老师。只�
 - 输出严格 JSON，不要输出其他内容：
 {"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
 
-const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。根据出题素材审核检测题：答案、选项和解析必须严格来自素材，有误直接修正，无法唯一确定答案的删除该题，不要新增素材之外的知识点。
+const DEFAULT_QUIZ_VERIFY_PROMPT = `你是 PhyMathia 的审题老师。你收到的检测题不含正确答案：请根据出题素材对每道题独立作答（自己判断哪个选项正确），并裁定题目质量，只保留能由素材唯一推出且没有物理或数学错误的题；不确定答案的题判为 drop。
 {{LEVEL_PROMPT}}
 要求：
-- 保留生动、现实的题干场景，但场景不能引入素材之外的新结论。
-- 保留 sourceRef、difficulty；修正题目时同步修正 explanation。
-- 所有公式用 <formula>纯LaTeX</formula> 包裹（内联公式可用单个 $ 包裹），禁止裸露 LaTeX 源码。
+- 正确答案必须由素材唯一推出；无法唯一确定答案、有物理或数学错误、多个选项都正确、或对“出题素材”“格式”等元信息出题的题，verdict 用 drop。
+- 每道送审题都必须给出一条 review，reason 用一句话说明理由。
+- 解析和选项中不得出现 id、sourceRef 等内部标识；所有公式用 <formula>纯LaTeX</formula> 包裹（内联公式可用单个 $ 包裹），禁止裸露 LaTeX 源码，违反判 drop。
 - 只输出严格 JSON，不要输出其他内容：
-{"questions":[{"type":"concept","title":"知识点标题","sourceRef":"素材中的id","difficulty":"medium","prompt":"题目","options":["选项A","选项B","选项C","选项D"],"correctIndex":0,"explanation":"解析"}]}`;
+{"reviews":[{"id":"题目的id","answerIndex":你判断的正确选项下标(0起),"verdict":"pass或drop","reason":"一句话理由"}]}`;
 
 function _parseQuizPromptFile(text) {
   const source = String(text || '');

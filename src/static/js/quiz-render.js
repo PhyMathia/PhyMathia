@@ -68,11 +68,11 @@ function _renderQuizIntro() {
         <option value="local" ${quizSourcePreference === 'local' ? 'selected' : ''}>仅本地</option>
       </select>
       <span>题量</span>
-      <select id="quizCountSelect" onchange="changeQuizQuestionCount()">${countOptions}</select>
+      <select id="quizCountSelect" onchange="changeQuizQuestionCount()" title="改变题量会重新生成一组题（AI 模式下会调用一次模型）">${countOptions}</select>
     </div>
     <div class="quiz-start">
       <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
-      <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="不会删除AI题库，仅重新生成当前这一组题">换一组题</button>
+      <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="重新生成一组 AI 题（会调用一次模型）；不会删除AI题库">换一组题</button>
       <button class="quiz-btn-primary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答${stats.openCount ? `(${stats.openCount})` : ''}</button>
       <button class="quiz-btn-primary" onclick="openWrongReview()" ${hasWrong ? '' : 'disabled'}>错题回顾${hasWrong ? `(${hasWrong})` : ''}</button>
       ${stats.reviewCount ? `<button class="quiz-btn-primary" onclick="startReviewQuiz()">开始复习(${stats.reviewCount})</button>` : ''}
@@ -266,7 +266,7 @@ function _renderQuizBank() {
   body.innerHTML = `
     <div class="quiz-back-bar">
       <button class="quiz-btn-secondary" onclick="backToQuizIntro()">← 返回</button>
-      <button class="quiz-btn-primary" onclick="addQuizBankQuestions()">补充AI题</button>
+      <button class="quiz-btn-primary" onclick="addQuizBankQuestions()" title="补充 AI 题（会调用一次模型）">补充AI题</button>
     </div>
     <div class="quiz-wrong-head"><span>${quizBankFilterSession ? '画布题库' : (quizMode === 'global' ? '全局题库' : '画布题库')}</span><span>${questions.length} 题</span></div>
     <div class="quiz-wrong-list">${itemsHtml}</div>
@@ -391,8 +391,8 @@ function _renderQuizGlobalDashboard() {
           <div class="quiz-global-session-title">${_quizEscape(title)}</div>
           <div class="quiz-global-session-stats">已测 ${total} · 错题 ${wrong} · 题库 ${bankCount}</div>
           <div class="quiz-global-actions">
-            <button class="quiz-btn-primary" onclick="openSessionQuizFromGlobal('${id}')">查看答题</button>
-            <button class="quiz-btn-secondary" onclick="openQuizBank('${id}')">查看题库</button>
+            <button class="quiz-btn-primary" onclick="openSessionQuizFromGlobal('${encodeURIComponent(id)}')">查看答题</button>
+            <button class="quiz-btn-secondary" onclick="openQuizBank('${encodeURIComponent(id)}')">查看题库</button>
           </div>
         </div>
       </div>`;
@@ -509,6 +509,7 @@ function _renderOpenQuestion() {
     </div>
   ` : '';
   const scoreHtml = openResult && openResult.scores ? `
+    ${openResult.local ? '<div class="quiz-local-score-badge">本地启发式评分（未调用 AI）</div>' : ''}
     <div class="quiz-open-scores">
       <div class="quiz-open-score"><span>物理直觉</span><strong>${openResult.scores.physics}</strong></div>
       <div class="quiz-open-score"><span>数学本质</span><strong>${openResult.scores.math}</strong></div>
@@ -550,6 +551,8 @@ function _renderOpenResult() {
     return;
   }
   const avg = key => Math.round(results.reduce((sum, item) => sum + (item.result.scores[key] || 0), 0) / results.length);
+  // 汇总视图：仅当本组（或存储记录里）所有评分都带 local 标记时才显示徽标——混合来源的均值不归属任何一方
+  const allLocal = results.length > 0 && results.every(item => item.result && item.result.local);
   const historyHtml = stored.slice(-3).reverse().map(item => `
     <div class="quiz-open-history-item">
       <span>${_quizEscape(item.title || '深度问答')}</span>
@@ -558,6 +561,7 @@ function _renderOpenResult() {
   `).join('');
   body.innerHTML = `
     <div class="quiz-open-result">
+      ${allLocal ? '<div class="quiz-local-score-badge">本地启发式评分（未调用 AI）</div>' : ''}
       <div class="quiz-open-scores">
         <div class="quiz-open-score"><span>物理直觉</span><strong>${avg('physics')}</strong></div>
         <div class="quiz-open-score"><span>数学本质</span><strong>${avg('math')}</strong></div>
