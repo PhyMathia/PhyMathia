@@ -6583,12 +6583,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 [data-node-skin="parchment"] {
   --ink-aged: color-mix(in srgb, var(--ink-human) 60%, var(--text-primary));
   --pm-paper: #241B12;
-  --pm-line: color-mix(in srgb, var(--ink-amber) 55%, transparent);
-  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 85%, transparent);
-  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 38%, transparent);
-  --pm-ring: color-mix(in srgb, var(--ink-amber) 30%, transparent);
-  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 44%, transparent);
-  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 36%, transparent);
+  --pm-gold: #F0D489;
+  --pm-line: color-mix(in srgb, var(--pm-gold) 72%, transparent);
+  --pm-line-strong: color-mix(in srgb, var(--pm-gold) 95%, transparent);
+  --pm-line-soft: color-mix(in srgb, var(--pm-gold) 45%, transparent);
+  --pm-ring: color-mix(in srgb, var(--pm-gold) 40%, transparent);
+  --pm-ring-strong: color-mix(in srgb, var(--pm-gold) 60%, transparent);
+  --pm-ring-sel: color-mix(in srgb, var(--pm-gold) 50%, transparent);
   --pm-shadow: color-mix(in srgb, var(--overlay-bg) 85%, transparent);
 }
 /* 2026-10-01 六调·深色翻修：原深色纸底「--bg-panel 84% × 赭墨 16%」藏蓝×赭棕互抵渲成紫灰
@@ -6598,7 +6599,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 2026-10-01 七调·黑金落定：暖褐版真机仍被用户判「这个色调就很难看」——中间调土褐在深蓝画布上
  * 显浑。加临时试色条真机三选一（A 黑金 #241B12 / B 暗灰褐 #332B24 / C 红木 #3A2118），
  * 用户选定 A：纸底压到近暖黑，铜金双线画框成主角（黑皮面烫金古籍），干净且最耐看。画框/投影
- * 同六调不动（用户所见即所选）。 */
+ * 同六调不动（用户所见即所选）。
+ * 2026-10-01 八调·亮金箔边：用户对黑金版追问「边框颜色不搭？」——对，原金线是半透明土黄铜
+ * （ink-amber #d9b45c），近黑底上发昏发旧、不是真金的样子。边框组真机四选一
+ * （①亮金箔 #F0D489 / ②米白线 / ③古铜 / ④暖褐纸金），用户选①：--pm-gold 金箔色派生六线。
+ * 只动这六个变量与深色金箔色本身，渐变层/悬停光晕/根支线仍走 --ink-amber（=用户试色所见）。 */
 /* 2026-10-01 六调·浅色微调：用户「还行，可再偏白亮一点」，真机判读 10% 墨仍偏黄（≈#F0E4C8 观感）
  * ——纸底墨 12%→10%→6%（四调教训：小步感知不到，一步到位 ≈#F8F2E9），画框/投影不动 */
 [data-theme="light"][data-node-skin="parchment"] {
