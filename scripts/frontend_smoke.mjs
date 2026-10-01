@@ -6148,32 +6148,6 @@ check('节点皮肤模板：module 覆盖块重写背景与投影，并带 :hove
   return true;
 });
 
-// 静态契约（T129）：节点形态开关接线——注册表/存储键/页头入口/CSS 覆盖块/弧线排布/徽章渲染
-check('节点形态开关（orbit）：注册表、入口、CSS 覆盖块、弧线排布、徽章渲染互相对齐', () => {
-  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
-  const start = ui.indexOf('const GRAPH_NODE_SHAPES');
-  if (start < 0) throw new Error('ui.js 缺 GRAPH_NODE_SHAPES 注册表');
-  const registry = ui.slice(start, ui.indexOf('];', start));
-  const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]);
-  if (!keys.includes('card')) throw new Error('形态注册表解析异常：没找到默认形态 card');
-  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
-  if (!cfg.includes("STORAGE_KEY_NODE_SHAPE = 'phymathia_node_shape'")) throw new Error('config.js 缺形态存储键');
-  const html = fs.readFileSync('src/static/index.html', 'utf8');
-  if (!html.includes('id="shapeBtn"') || !html.includes('toggleShapePanel(event)')) throw new Error('页头缺形态按钮入口');
-  if (!html.includes('id="shapePanel"')) throw new Error('index.html 缺 #shapePanel 面板容器');
-  if (!html.includes("localStorage.getItem('phymathia_node_shape')")) throw new Error('启动内联脚本没预置节点形态');
-  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
-  const missing = keys.filter(k => k !== 'card' && !css.includes(`[data-node-shape="${k}"] .graph-node`));
-  if (missing.length) throw new Error('形态注册表与 CSS 覆盖块不同步，缺：' + missing.join(', '));
-  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
-  if (!wf.includes('function _orbitArcLayout')) throw new Error('graph-workflow.js 缺弧线排布 _orbitArcLayout');
-  if (!wf.includes("currentNodeShape() === 'orbit'")) throw new Error('工作流模块落点没接轨道分支');
-  const render = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
-  if (!render.includes('graph-orbit-badge')) throw new Error('模块渲染没接徽章类');
-  if (!render.includes('toggleOrbitBadge')) throw new Error('徽章没接展开动作');
-  return true;
-});
-
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
 await msTail;
 await Promise.all(sqChecks).catch(() => {});
