@@ -19,7 +19,7 @@
         if (s && s !== 'aurora' && /^[a-z0-9-]{1,32}$/.test(s)) {
           document.documentElement.setAttribute('data-node-skin', s);
         }
-        // 预置节点形态（T129）：默认 card 不挂属性；orbit=圆形轨道徽章（CSS 属性覆盖块）
+        // 预置节点形态（T129）：默认 card 不挂属性；orbit=圆形卡片（CSS 属性覆盖块）
         var sh = localStorage.getItem('phymathia_node_shape');
         if (sh === 'orbit') document.documentElement.setAttribute('data-node-shape', 'orbit');
       } catch (e) {
@@ -30,7 +30,7 @@
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=307d355f">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=cad15480">
-  <link rel="stylesheet" href="/css/graph-override.min.css?v=49c7a6e3">
+  <link rel="stylesheet" href="/css/graph-override.min.css?v=343ff99d">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -228,7 +228,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=41a7726d"></script>
+  <script src="/js/app.js?v=925630c0"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
