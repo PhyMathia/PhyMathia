@@ -6148,6 +6148,51 @@ check('节点皮肤模板：module 覆盖块重写背景与投影，并带 :hove
   return true;
 });
 
+// 静态契约（T128 续 8）：人工家族（我的回答/我的理解/批注）在浅色被
+// [data-theme] .graph-node.graph-attr-manual… (0,3,0) 锁在玻璃白底——每个皮肤必须有
+// 同特异性的家族覆盖块重写 background/box-shadow（2026-10-01 用户真机实锤「手工节点没落实材质」）
+check('节点皮肤模板：人工家族覆盖块重写背景与投影（浅色家族锁皮盲区）', () => {
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const start = ui.indexOf('const GRAPH_NODE_SKINS');
+  const registry = ui.slice(start, ui.indexOf('];', start));
+  const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]).filter(k => k !== 'aurora');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  for (const k of keys) {
+    const sel = `[data-node-skin="${k}"] .graph-node.graph-attr-manual,`;
+    const i = css.indexOf(sel);
+    if (i < 0) throw new Error(`${k}：缺人工家族覆盖块（浅色下手工节点不换皮）`);
+    const body = css.slice(i, css.indexOf('}', i));
+    if (!body.includes('background:') || !body.includes('box-shadow:'))
+      throw new Error(`${k}：人工家族块没重写背景/投影`);
+    for (const extra of ['graph-node-human-note', 'graph-node-note']) {
+      if (!css.includes(`[data-node-skin="${k}"] .graph-node.${extra}`))
+        throw new Error(`${k}：人工家族覆盖块缺 .${extra}`);
+    }
+  }
+  return true;
+});
+
+// 静态契约（T128 续 8）：根级皮肤变量块禁止引用 --node-attr——自定义属性里的 var() 在定义处求值，
+// 根上没有 --node-attr（渲染层只写在节点身上），整条 color-mix 会变 guaranteed-invalid，
+// 引用它的 background 直接失效变透明（2026-10-01 真机踩中）。含属性色的变量必须下沉到 .graph-node。
+check('节点皮肤模板：根级皮肤变量块不得引用 --node-attr（须下沉到节点级定义）', () => {
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const start = ui.indexOf('const GRAPH_NODE_SKINS');
+  const registry = ui.slice(start, ui.indexOf('];', start));
+  const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]).filter(k => k !== 'aurora');
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  for (const k of keys) {
+    for (const sel of [`[data-node-skin="${k}"] {`, `[data-theme="light"][data-node-skin="${k}"] {`]) {
+      const i = css.indexOf(sel);
+      if (i < 0) continue;
+      const body = css.slice(i, css.indexOf('}', i));
+      if (body.includes('--node-attr'))
+        throw new Error(`${k}：根级变量块引用了 --node-attr（根上取不到节点属性色，整条失效变透明）`);
+    }
+  }
+  return true;
+});
+
 // 发送排队的行为用例走自己的串行链（共享词法绑定，并发会互踩），先跑完再等其余的
 await msTail;
 await Promise.all(sqChecks).catch(() => {});
