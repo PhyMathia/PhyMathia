@@ -2901,7 +2901,10 @@
        :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，翻转 data-theme 时
        每个插值帧都要全文档重算样式，节点多的画布会持续卡顿数百毫秒。
        JS 在切换瞬间给 <html> 挂 .theme-switching，450ms 后摘除；
-       背景图交叉淡入按更高优先级豁免，保留原有的淡入体验。 */
+       背景图交叉淡入按更高优先级豁免，保留原有的淡入体验。
+       2026-10-01：选择器必须含 html 自己——变量过渡恰恰挂在 :root 上，
+       只写 * 等于只禁了子孙的自有过渡，最贵的根变量逐帧插值一直没禁掉。 */
+    html.theme-switching,
     html.theme-switching *,
     html.theme-switching *::before,
     html.theme-switching *::after {
