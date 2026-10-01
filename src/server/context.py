@@ -866,52 +866,64 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
     return "\n".join(lines)
 
 
-def _workflow_context_instruction(workflow_context) -> str:
+# T4 前缀缓存拍板（2026-10-01）：工作流上下文拆 shared/target 两段。shared 段
+# （question/analysis/upstream）对同一次工作流的兄弟模块逐字节相同，前置供其命中
+# 请求前缀；per-module 的 target 块与严格格式指令后移到公共前缀之后的缓存断点。
+def _workflow_context_parts(workflow_context) -> tuple:
+    """拆分工作流上下文：(shared, target)，shared 为兄弟模块公共前缀段。"""
     if not isinstance(workflow_context, dict):
-        return ""
+        return ("", "")
     mode = workflow_context.get("mode") or ""
     target = workflow_context.get("target") or {}
     question = str(workflow_context.get("question") or "").strip()
     analysis = str(workflow_context.get("analysis") or "").strip()
     requirements = str(workflow_context.get("requirements") or "").strip()
     upstream = workflow_context.get("upstream") or []
-    lines = ["\n\n# 工作流节点上下文"]
-    if mode == "analysis":
-        lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")
-        lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
-    if target:
-        target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
-        lines.append(f"- 当前生成目标：{target_label}")
-        if target.get("module"):
-            lines.append(f"- 当前模块：{target['module']}")
-        if target.get("kind") == "module":
-            lines.append("- 当前为局部节点生成模式：只生成该模块正文，不要输出完整学习卡片，不要输出其他模块。")
-            strict_instruction = _module_output_instruction(target.get("module", ""))
-            if strict_instruction:
-                lines.append(strict_instruction)
-        elif target.get("kind") == "answer":
-            lines.append("- AI 回答节点是分发节点，不生成正文内容。")
-        elif target.get("kind") == "summary":
-            lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
-            lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
-            lines.append("- 总结中如出现公式，仍按全局 <formula> 规范标注，不标注单个符号或单位。")
-        elif target.get("kind") == "hub":
-            lines.append("- 汇聚节点只负责收集上游内容，不生成正文。")
-        elif target.get("kind") == "note":
-            lines.append("- 人工总结节点由用户手动填写，AI 不生成正文。")
+    shared_lines = ["\n\n# 工作流节点上下文"]
     if question:
-        lines.append(f"- 原始问题：{question[:1200]}")
+        shared_lines.append(f"- 原始问题：{question[:1200]}")
     if analysis:
-        lines.append(f"- 隐藏问题分析（用于保持一致）：{analysis[:1200]}")
+        shared_lines.append(f"- 隐藏问题分析（用于保持一致）：{analysis[:1200]}")
     for item in upstream[:8]:
         label = item.get("label") or item.get("kind") or "上游节点"
         content = str(item.get("summary") or item.get("content") or "").strip()
         if content:
-            lines.append(f"- {label}：{content[:800]}")
+            shared_lines.append(f"- {label}：{content[:800]}")
+    target_lines = ["\n\n# 工作流节点生成指令"]
+    if mode == "analysis":
+        target_lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")
+        target_lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
+    if target:
+        target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
+        target_lines.append(f"- 当前生成目标：{target_label}")
+        if target.get("module"):
+            target_lines.append(f"- 当前模块：{target['module']}")
+        if target.get("kind") == "module":
+            target_lines.append("- 当前为局部节点生成模式：只生成该模块正文，不要输出完整学习卡片，不要输出其他模块。")
+            strict_instruction = _module_output_instruction(target.get("module", ""))
+            if strict_instruction:
+                target_lines.append(strict_instruction)
+        elif target.get("kind") == "answer":
+            target_lines.append("- AI 回答节点是分发节点，不生成正文内容。")
+        elif target.get("kind") == "summary":
+            target_lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
+            target_lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
+            target_lines.append("- 总结中如出现公式，仍按全局 <formula> 规范标注，不标注单个符号或单位。")
+        elif target.get("kind") == "hub":
+            target_lines.append("- 汇聚节点只负责收集上游内容，不生成正文。")
+        elif target.get("kind") == "note":
+            target_lines.append("- 人工总结节点由用户手动填写，AI 不生成正文。")
     if requirements:
-        lines.append(f"- 用户额外要求：{requirements[:600]}")
-    lines.append("- 只生成当前目标节点内容，不重新生成完整回答；上游内容以摘要形式提供，不要重复无关模块。")
-    return "\n".join(lines)
+        target_lines.append(f"- 用户额外要求：{requirements[:600]}")
+    target_lines.append("- 只生成当前目标节点内容，不重新生成完整回答；上游内容以摘要形式提供，不要重复无关模块。")
+    shared = "\n".join(shared_lines) if len(shared_lines) > 1 else ""
+    target_text = "\n".join(target_lines) if len(target_lines) > 1 else ""
+    return (shared, target_text)
+
+
+def _workflow_context_instruction(workflow_context) -> str:
+    """薄封装：两段非空部分拼接，行为＝拆分前的整块重排版。"""
+    return "".join(p for p in _workflow_context_parts(workflow_context) if p)
 
 
 def _load_session_context_from_path(
@@ -1389,7 +1401,7 @@ __all__ = [
     "_is_socratic_message", "_is_socratic_prompt_text", "_recent_context_messages", "_extract_section",
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
-    "_workflow_context_instruction", "_load_session_context_from_path",
+    "_workflow_context_instruction", "_workflow_context_parts", "_load_session_context_from_path",
     "tree_active_content_block", "summary_detail", "tree_upstream_detail_block",
     "DETAIL_SUMMARY_CHARS",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",

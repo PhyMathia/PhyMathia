@@ -11,7 +11,15 @@ if ROOT not in sys.path:
 
 from harness.core import build_next_snapshot, diff_snapshots, normalize_snapshot
 from harness.json_utils import extract_json
-from harness.prompts import build_evaluate_messages
+from harness.prompts import (
+    _level_requirement,
+    build_apply_messages,
+    build_evaluate_messages,
+    build_expand_messages,
+    build_preset_messages,
+    build_resolve_messages,
+    build_review_messages,
+)
 from harness.review import _cleanup_remaining_eval_nodes, _detect_phase
 
 
@@ -232,10 +240,16 @@ class HarnessCoreTest(unittest.TestCase):
             focus_node_ids=["A"],
         )
         system_text = messages[0]["content"]
+        user_text = messages[-1]["content"]
         self.assertIn("PhyMathia 评价标准", system_text)
-        self.assertIn("当前难度：初高中", system_text)
+        # harness 前缀缓存拍板（2026-10-01）：难度后置出 system，落在末条 user 尾部
+        self.assertNotIn("当前难度", system_text)
         self.assertIn("PhyMathia 系统上下文", system_text)
-        self.assertIn("用户重点指定的节点", messages[1]["content"])
+        self.assertIn("用户重点指定的节点", user_text)
+        self.assertTrue(
+            user_text.endswith(_level_requirement("middle")),
+            "难度要求必须落在末条 user 消息尾部",
+        )
 
     def test_diff_reports_add_update_delete(self):
         after = {
@@ -269,6 +283,47 @@ class HarnessCoreTest(unittest.TestCase):
     def test_extract_json_tolerates_fence(self):
         payload = extract_json('```json\n{"summary":"x","operations":[]}\n```')
         self.assertEqual(payload["summary"], "x")
+
+
+class HarnessLevelSuffixPlacementTest(unittest.TestCase):
+    """harness 前缀缓存拍板（2026-10-01）：难度等级后置出 system。
+
+    上游按请求前缀做字节级 prompt 缓存：难度文本进 system，切一次难度就打灭
+    整个 system 前缀。六个 build 函数统一把难度要求追加到最后一条 user 消息
+    尾部，system 保持零难度文本（与主聊天 LEVEL_PROMPTS 尾部做法同构）。"""
+
+    BUILDERS = (
+        build_resolve_messages,
+        build_review_messages,
+        build_evaluate_messages,
+        build_apply_messages,
+        build_expand_messages,
+        build_preset_messages,
+    )
+
+    def _build(self, builder, level):
+        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+        return builder(snapshot, "评价一下", context="PhyMathia 系统上下文", level=level)
+
+    def test_all_builders_put_level_at_last_user_tail_and_out_of_system(self):
+        expected = _level_requirement("middle")
+        self.assertTrue(expected, "middle 档必须有难度文案（三份手工同步，勿清空）")
+        for builder in self.BUILDERS:
+            with self.subTest(builder=builder.__name__):
+                messages = self._build(builder, "middle")
+                system_text = messages[0]["content"]
+                user_text = messages[-1]["content"]
+                self.assertNotIn("当前难度", system_text, "system 不得含难度文本")
+                self.assertIn("PhyMathia 系统上下文", system_text)
+                self.assertTrue(user_text.endswith(expected), "难度要求必须落在末条 user 消息尾部")
+                self.assertIn("\n\n" + expected, user_text)
+
+    def test_empty_level_appends_nothing(self):
+        for builder in self.BUILDERS:
+            with self.subTest(builder=builder.__name__):
+                messages = self._build(builder, "")
+                self.assertNotIn("当前难度", messages[0]["content"])
+                self.assertNotIn("当前难度", messages[-1]["content"])
 
 
 class HarnessToolsTest(unittest.TestCase):
@@ -2683,6 +2738,134 @@ class HarnessStreamMeteringTest(unittest.TestCase):
         self.assertEqual(message.get("content"), "好")
         self.assertEqual((usage or {}).get("prompt_cache_hit_tokens"), 80,
                          "计量帧应被接住并随返回值带出")
+
+
+class HarnessSessionBucketTest(unittest.TestCase):
+    """Φ 分桶按会话（2026-10-01）：网关分桶（x-opencode-session 头）与计量
+    sessionId 从进程级改为按 Φ 会话——api 层把 payload 里的 session_id 经
+    harness_session_bucket 置入，_call_model 读取后消毒；非法/缺失回退进程级
+    _HARNESS_SESSION_ID。同 Φ 会话落同桶保网关侧缓存亲和，跨会话不再互相挤占。"""
+
+    MODEL = {"provider": "opencode", "model": "m",
+             "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
+
+    def _call_model_with_bucket(self, raw_session=None):
+        """raw_session 非 None 时经 harness_session_bucket 置桶（api 层同款），
+        真调 _call_model（MockTransport 接上游），抓网关请求头与计量 sessionId。"""
+        import asyncio
+        import httpx
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {"headers": None, "usage_session": None}
+
+        def handler(request):
+            captured["headers"] = request.headers
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "{\"summary\": \"好\", \"operations\": []}"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            })
+
+        def fake_record_usage(provider, model, kind, session_id, usage):
+            captured["usage_session"] = session_id
+            return None
+
+        async def run():
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            try:
+                with unittest.mock.patch.object(
+                    review_mod.usage_stats, "record_usage", fake_record_usage
+                ), unittest.mock.patch.object(
+                    review_mod, "get_http_client", lambda: client
+                ):
+                    if raw_session is None:
+                        return await review_mod._call_model(
+                            [{"role": "user", "content": "hi"}], self.MODEL, 100)
+                    with review_mod.harness_session_bucket(raw_session):
+                        return await review_mod._call_model(
+                            [{"role": "user", "content": "hi"}], self.MODEL, 100)
+            finally:
+                await client.aclose()
+
+        asyncio.run(run())
+        return captured
+
+    def test_valid_session_lands_in_gateway_header_and_metering(self):
+        captured = self._call_model_with_bucket("phi_123")
+        self.assertEqual(captured["headers"].get("x-opencode-session"), "phi_123")
+        self.assertEqual(captured["usage_session"], "phi_123")
+
+    def test_missing_session_falls_back_to_process_id(self):
+        from harness import review as review_mod
+
+        captured = self._call_model_with_bucket(None)
+        self.assertEqual(captured["headers"].get("x-opencode-session"),
+                         review_mod._HARNESS_SESSION_ID)
+        self.assertEqual(captured["usage_session"], review_mod._HARNESS_SESSION_ID)
+
+    def test_invalid_session_falls_back_to_process_id(self):
+        from harness import review as review_mod
+
+        captured = self._call_model_with_bucket("bad session!")
+        self.assertEqual(captured["headers"].get("x-opencode-session"),
+                         review_mod._HARNESS_SESSION_ID)
+        self.assertEqual(captured["usage_session"], review_mod._HARNESS_SESSION_ID)
+
+    def test_session_key_sanitizer(self):
+        from harness import review as review_mod
+
+        self.assertEqual(review_mod._harness_session_key("phi_123"), "phi_123")
+        self.assertEqual(review_mod._harness_session_key("A-b_9"), "A-b_9")
+        self.assertEqual(review_mod._harness_session_key("x" * 64), "x" * 64)
+        self.assertEqual(review_mod._harness_session_key(""), review_mod._HARNESS_SESSION_ID)
+        self.assertEqual(review_mod._harness_session_key(None), review_mod._HARNESS_SESSION_ID)
+        self.assertEqual(review_mod._harness_session_key("bad session!"),
+                         review_mod._HARNESS_SESSION_ID)
+        self.assertEqual(review_mod._harness_session_key("x" * 65),
+                         review_mod._HARNESS_SESSION_ID)
+
+    def test_api_routes_thread_session_id_into_bucket(self):
+        """graph_review / graph_resolve 都把 payload 的 session_id 置入分桶键；
+        缺失时回退进程级 id。在 _call_model 桩内读键（api 置桶 → review 层可读）。"""
+        import unittest.mock
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from harness import review as review_mod
+        from harness.api import router
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            captured["bucket"] = review_mod._harness_session_key(
+                review_mod._HARNESS_SESSION_KEY.get())
+            return {"content": "{\"summary\": \"好\", \"operations\": []}", "tool_calls": []}
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/harness")
+        client = TestClient(app)
+        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            resp = client.post("/api/harness/graph/review", json={
+                "snapshot": snapshot, "instruction": "评价一下", "session_id": "phi_api",
+                "model": self.MODEL, "mode": "json", "self_check": "off",
+            })
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(captured.get("bucket"), "phi_api")
+            captured.clear()
+            resp = client.post("/api/harness/graph/review", json={
+                "snapshot": snapshot, "instruction": "评价一下",
+                "model": self.MODEL, "mode": "json", "self_check": "off",
+            })
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(captured.get("bucket"), review_mod._HARNESS_SESSION_ID)
+            captured.clear()
+            resp = client.post("/api/harness/graph/resolve", json={
+                "snapshot": snapshot, "instruction": "改一下A", "session_id": "phi_api2",
+                "model": self.MODEL,
+            })
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(captured.get("bucket"), "phi_api2")
 
 
 class HarnessPresetPhaseTest(unittest.TestCase):

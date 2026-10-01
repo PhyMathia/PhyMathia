@@ -10,11 +10,13 @@ Supports two operation submission modes:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
 import os
 import re
+from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
 import httpx
@@ -31,9 +33,43 @@ from llm_common import (
 )
 import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
 
-# harness 无会话上下文，按进程派生稳定 id——同进程内的重试与自检落在同一缓存桶，
-# 也是计量记录里 harness 调用的会话桶标识
+# harness 无会话上下文，按进程派生稳定 id（2026-10-01 起降级为兜底桶）：
+# 请求带合法 Φ 会话 id 时分桶走会话键（见 _harness_session_key），进程级 id
+# 只在缺失/非法时兜底；也是计量记录里 harness 调用的兜底会话桶标识
 _HARNESS_SESSION_ID = "phymathia-harness-" + str(os.getpid())
+
+# Φ 分桶按会话（2026-10-01）：同一 Φ 会话的请求落同一网关缓存桶
+# （x-opencode-session 头与计量 sessionId 同源），保住网关侧缓存亲和，跨会话
+# 不再互相挤占。api 层在调用 review_graph/resolve_focus 前经
+# harness_session_bucket 置入按请求的会话 id，_call_model 读取后消毒；
+# 非法/缺失回退上面的进程级 _HARNESS_SESSION_ID。
+_HARNESS_SESSION_KEY: contextvars.ContextVar = contextvars.ContextVar(
+    "phymathia_harness_session_key", default=""
+)
+
+
+def _harness_session_key(raw: str) -> str:
+    """消毒 Φ 会话分桶键：1~64 位字母/数字/下划线/连字符原值直用，否则
+    （空、超长、含空格或特殊字符）回退进程级 _HARNESS_SESSION_ID——非法值
+    不进网关头与计量记录。"""
+    raw = str(raw or "").strip()
+    if raw and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", raw):
+        return raw
+    return _HARNESS_SESSION_ID
+
+
+@contextmanager
+def harness_session_bucket(raw: str):
+    """api 层专用：请求处理期间把 Φ 会话 id 置为网关分桶键，退出复位。
+
+    走 ContextVar 而非显式传参：review_graph 到 _call_model 的链路穿过
+    _counted_call/_summarize_history/_selfcheck_ops 多个内部函数，且模型调用
+    桩是固定签名（多余 kwargs 直接 TypeError，见 _counted_call 上方拍板）。"""
+    token = _HARNESS_SESSION_KEY.set(str(raw or ""))
+    try:
+        yield
+    finally:
+        _HARNESS_SESSION_KEY.reset(token)
 
 from .core import (
     MAX_SNAPSHOT_CHARS,
@@ -54,6 +90,7 @@ from .semantics import find_isolated_created_nodes, find_missing_expansion_chain
 from .json_utils import extract_json, repair_json, strip_reasoning
 from .prompts import (
     HARNESS_CHAT_REDLINE,
+    _level_requirement,
     build_apply_messages,
     build_evaluate_messages,
     build_expand_messages,
@@ -724,10 +761,13 @@ async def _call_model(
     T95 上游容错：429/503 与超时/断连静默退避重试（最多 _RETRY_DELAYS 次），
     流式已吐出增量则不重试；确定性失败（401/400 等）直接抛。"""
     url = f"{model['base_url'].rstrip('/')}/chat/completions"
+    # Φ 分桶按会话（2026-10-01）：网关头与计量标签同源——取 api 层置入的按请求
+    # Φ 会话 id，非法/缺失回退进程级 id
+    session_key = _harness_session_key(_HARNESS_SESSION_KEY.get())
     headers = {"Content-Type": "application/json"}
     if model["api_key"] and model["provider"] != "opencode":
         headers["Authorization"] = f"Bearer {model['api_key']}"
-    headers.update(opencode_gateway_headers(model["base_url"], _HARNESS_SESSION_ID))
+    headers.update(opencode_gateway_headers(model["base_url"], session_key))
     body = {
         "model": model["model"],
         "messages": messages,
@@ -847,7 +887,7 @@ async def _call_model(
     )
     if usage:
         usage_stats.record_usage(model["provider"], model["model"], "harness",
-                                 _HARNESS_SESSION_ID, usage)
+                                 session_key, usage)
     # 推理模型（deepseek-v4-flash / hy3 等）两种形态都要防：
     # ① 正文带 <think>…</think> 思考块（思考里还可能草拟残缺 JSON 干扰解析）；
     # ② 正文为空、全文落在 reasoning_content。
@@ -1859,13 +1899,23 @@ async def review_graph(
                     schema.get("function", {}).get("name") in READONLY_TOOL_NAMES
                     for schema in current_tools
                 )
+                # harness 前缀缓存拍板（2026-10-01）：难度文本后置出 system 后，
+                # build 期已把它追加到最后一条 user 尾部；工具提示与历史块要插回
+                # 它前面（原文＋工具提示＋history＋难度），保证发请求时难度仍居
+                # 消息尾部，不落进内容中部。
+                level_text = _level_requirement(level)
+                level_suffix = ("\n\n" + level_text) if level_text else ""
+                base_content = messages[-1]["content"]
+                if level_suffix and base_content.endswith(level_suffix):
+                    base_content = base_content[: -len(level_suffix)]
                 if current_tools:
-                    messages[-1]["content"] += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
+                    base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
                     if readonly_enabled:
-                        messages[-1]["content"] += READONLY_TOOLS_HINT
+                        base_content += READONLY_TOOLS_HINT
                 history_text = _history_block(history)
                 if history_text:
-                    messages[-1]["content"] += history_text
+                    base_content += history_text
+                messages[-1]["content"] = base_content + level_suffix
                 if attempt == 0:
                     context_metrics = _log_context_metrics(
                         messages, current, phase,

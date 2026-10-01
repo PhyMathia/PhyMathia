@@ -21,7 +21,13 @@ from .events import (
     read_events,
     valid_session_id,
 )
-from .review import HarnessError, _sanitize_fallback_models, resolve_focus, review_graph
+from .review import (
+    HarnessError,
+    _sanitize_fallback_models,
+    harness_session_bucket,
+    resolve_focus,
+    review_graph,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +222,10 @@ async def _review_event_stream(payload: dict, kwargs: dict, journal: list):
 
     async def _run():
         try:
-            result = await review_graph(progress=progress, **kwargs)
+            # Φ 分桶按会话（2026-10-01）：流式路径在任务内置桶（响应体在 handler
+            # 返回后才迭代，handler 里置位赶不上）；_call_model 读取后消毒
+            with harness_session_bucket(_payload_session(payload)):
+                result = await review_graph(progress=progress, **kwargs)
             result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
             _log_review_event(payload, result, t0, "review", journal)
             _log_usage(_usage_entry(payload, result, t0, "review"))
@@ -293,7 +302,9 @@ async def graph_review(request: Request):
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-        result = await review_graph(**kwargs)
+        # Φ 分桶按会话（2026-10-01）：非流式路径在调用前置桶，_call_model 读取
+        with harness_session_bucket(_payload_session(payload)):
+            result = await review_graph(**kwargs)
         result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
         _log_review_event(payload, result, t0, "review", journal)
         _log_usage(_usage_entry(payload, result, t0, "review"))
@@ -505,15 +516,17 @@ async def graph_resolve(request: Request):
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
         retries = int(payload.get("retries") or 2)
-        result = await resolve_focus(
-            snapshot=payload.get("snapshot"),
-            instruction=payload.get("instruction", ""),
-            model=payload.get("model"),
-            max_tokens=int(payload.get("max_tokens") or 900),
-            context=context,
-            level=level,
-            retries=retries,
-        )
+        # Φ 分桶按会话（2026-10-01）：resolve 也走 _call_model，同款置桶
+        with harness_session_bucket(_payload_session(payload)):
+            result = await resolve_focus(
+                snapshot=payload.get("snapshot"),
+                instruction=payload.get("instruction", ""),
+                model=payload.get("model"),
+                max_tokens=int(payload.get("max_tokens") or 900),
+                context=context,
+                level=level,
+                retries=retries,
+            )
         _log_review_event(payload, result, t0, "resolve", [])
         _log_usage(_usage_entry(payload, result, t0, "resolve"))
         return result
