@@ -1702,14 +1702,10 @@ function _getInitialTheme() {
 
 let currentTheme = _getInitialTheme();
 
-// 延迟更新 mermaid 配置的定时器
-let _mermaidThemeTimer = null;
-
-// 主题切换过渡抑制：styles.css 在 :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，
-// 翻转主题时每个插值帧都要全文档重算样式，节点多的画布会出现明显卡顿。
-// 切换瞬间给 <html> 挂 theme-switching 全局禁用过渡（CSS 端对 .bg-layer 豁免，
-// 背景图交叉淡入保留），650ms 后摘除（盖住 0.6s 交叉淡入全程），颜色即切即稳。
-// 窗口内节点卡磨砂同步摘除（styles.css）——翻转时全量重算 blur 是切换风暴的大头。
+// 主题切换窗口（2026-10-01 渐变整体删除后保留）：变量过渡、背景交叉淡入已从源头
+// 删除（styles.css / 本文件 updateBgImage），窗口仍负责两件事——①掐掉组件自有的
+// hover 过渡（否则翻转时各补一段迷你淡变）；②窗口内摘节点卡磨砂（styles.css），
+// 翻转帧不重算全量 blur，650ms 后恢复、一次付清。
 let _themeSwitchTimer = null;
 let _themeSwitchAuroraTimer = null;
 
@@ -1740,8 +1736,8 @@ function applyTheme(theme) {
   const prevTheme = root.getAttribute('data-theme');
   root.classList.add('theme-switching');
   // 切换窗口内让路（与画布拖拽/AI 流式同一 setFloatingSymbolsPaused 计数口径）：
-  // 翻转主题会让全部玻璃载体与背景层整帧重绘，漂移+符号在同一帧预算里叠加实测爆出
-  // 200-380ms 长帧；暂停 700ms 覆盖背景交叉淡入全程，aurora-paused 由计数器自动挂上。
+  // 翻转主题会让全部玻璃载体整帧重绘，漂移+符号在同一帧预算里叠加实测爆出
+  // 200-380ms 长帧；暂停 700ms 盖过 650ms 切换窗口全程，aurora-paused 由计数器自动挂上。
   if (typeof window.setFloatingSymbolsPaused === 'function') {
     window.setFloatingSymbolsPaused(true);
     clearTimeout(_themeSwitchAuroraTimer);
@@ -1761,13 +1757,9 @@ function applyTheme(theme) {
   updateBgImage();
   // 同步所有可视化 iframe 的主题（含全屏）
   if (typeof syncVizThemes === 'function') syncVizThemes(theme);
-  // CSS 变量过渡驱动现有 Mermaid 图表颜色平滑变化
-  // 等 CSS 过渡完成后再更新 Mermaid 配置，确保未来新图表使用正确主题
+  // 渐变删除后颜色即切即稳，Mermaid 配置直接更新（只影响未来新图表的配色）
   if (typeof configureMermaid === 'function' && typeof getMermaidConfig === 'function') {
-    if (_mermaidThemeTimer) clearTimeout(_mermaidThemeTimer);
-    _mermaidThemeTimer = setTimeout(() => {
-      configureMermaid(getMermaidConfig(theme === 'dark'));
-    }, 400);
+    configureMermaid(getMermaidConfig(theme === 'dark'));
   }
 }
 
@@ -1775,40 +1767,40 @@ function toggleTheme() {
   applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
-// 双层背景交叉淡入：activeLayer(1或2)表示当前显示的层
-let _activeBgLayer = 1;
+// 背景图即切（2026-10-01 渐变删除）：原双层 0.6s 交叉淡入随主题切换渐变整体删除，
+// 只用 bgLayer1 直接换图，预加载完成后再换、避免解码期露底。bgLayer2 元素与
+// #bgLayer2{opacity:0} 留在 DOM（空层零成本）。附带修正：graph-export.js 只读
+// bgLayer1 挂的图，旧交叉淡入会把当前层停在 bgLayer2，导出壁纸可能读到旧图。
 let _bgInitialized = false;
-function updateBgImage() {
+let _bgCurrentUrl = null;
+function _desiredBgUrl() {
   const isLandscape = window.innerWidth > window.innerHeight;
-  const newUrl = currentTheme === 'dark'
+  return currentTheme === 'dark'
     ? (isLandscape ? DARK_LAND_URL : DARK_PORT_URL)
     : (isLandscape ? LIGHT_LAND_URL : LIGHT_PORT_URL);
+}
+function updateBgImage() {
+  const newUrl = _desiredBgUrl();
+  if (_bgCurrentUrl === newUrl) return;
 
-  // 首次加载：直接设置到bgLayer1，无需淡入淡出
+  const el = document.getElementById('bgLayer1');
+  if (!el) return;
+
+  // 首次加载：图多半已在缓存外的首屏路径上，直接设置
   if (!_bgInitialized) {
-    const el1 = document.getElementById('bgLayer1');
-    if (el1) {
-      el1.style.backgroundImage = `url('${newUrl}')`;
-      el1.style.opacity = '1';
-    }
+    el.style.backgroundImage = `url('${newUrl}')`;
+    el.style.opacity = '1';
     _bgInitialized = true;
+    _bgCurrentUrl = newUrl;
     return;
   }
 
-  // 预加载新背景图
+  // 预加载完成后再换，换完即最终态（无淡入）；连切/转屏时晚到的旧图不落地
   const img = new Image();
   img.onload = function() {
-    const currentEl = document.getElementById('bgLayer' + _activeBgLayer);
-    const nextLayer = _activeBgLayer === 1 ? 2 : 1;
-    const nextEl = document.getElementById('bgLayer' + nextLayer);
-    if (!currentEl || !nextEl) return;
-
-    // 设置新背景到隐藏层
-    nextEl.style.backgroundImage = `url('${newUrl}')`;
-    // 淡入新层，淡出旧层
-    nextEl.style.opacity = '1';
-    currentEl.style.opacity = '0';
-    _activeBgLayer = nextLayer;
+    if (_desiredBgUrl() !== newUrl) return;
+    el.style.backgroundImage = `url('${newUrl}')`;
+    _bgCurrentUrl = newUrl;
   };
   img.src = newUrl;
 }

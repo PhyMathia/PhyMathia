@@ -372,94 +372,13 @@
       --surface-2: rgba(255, 255, 255, 0.08);
       --field-bg: rgba(10, 15, 35, 0.46);
       --field-bg-strong: rgba(10, 15, 35, 0.78);
-
-      /* ====== :root 变量级过渡（替代 * 通配符，性能提升两个数量级） ====== */
-      transition:
-        --bg-dark 0.35s ease, --bg-panel 0.35s ease, --border 0.35s ease,
-        --text-primary 0.35s ease, --text-secondary 0.35s ease,
-        --accent 0.35s ease, --accent-hover 0.35s ease,
-        --user-avatar-bg 0.35s ease,
-        --progress-bar-bg 0.35s ease,
-        --btn-hover-bg 0.35s ease, --btn-hover-border 0.35s ease,
-        --btn-active-bg 0.35s ease, --btn-active-border 0.35s ease, --btn-active-hover-bg 0.35s ease,
-        --theme-btn-hover-bg 0.35s ease, --theme-btn-hover-border 0.35s ease, --theme-btn-hover-color 0.35s ease,
-        --overlay-bg 0.35s ease,
-        --input-bg 0.35s ease,
-        --btn-bg 0.35s ease, --btn-border 0.35s ease,
-        --hover-bg 0.35s ease, --hover-bg2 0.35s ease,
-        --socratic-bg 0.35s ease, --socratic-border 0.35s ease,
-        --mermaid-bg 0.35s ease,
-        --mermaid-node-fill 0.35s ease,
-        --mermaid-node-stroke 0.35s ease,
-        --mermaid-node-text 0.35s ease,
-        --mermaid-line-color 0.35s ease,
-        --mermaid-edge-text 0.35s ease,
-        --sidebar-hover 0.35s ease, --tip-color 0.35s ease,
-        --kp-header-color 0.35s ease,
-        --kp-close-bg 0.35s ease, --kp-close-color 0.35s ease,
-        --kp-close-hover-bg 0.35s ease, --kp-close-hover-color 0.35s ease,
-        --kp-stat-card-bg 0.35s ease, --kp-stat-card-border 0.35s ease,
-        --kp-stat-num-color 0.35s ease, --kp-stat-label-color 0.35s ease,
-        --kp-filter-bg 0.35s ease, --kp-filter-color 0.35s ease,
-        --kp-filter-active-bg 0.35s ease, --kp-filter-active-color 0.35s ease,
-        --kp-search-bg 0.35s ease, --kp-search-color 0.35s ease,
-        --kp-search-placeholder 0.35s ease, --kp-search-focus-bg 0.35s ease,
-        --kp-scrollbar-thumb 0.35s ease,
-        --kp-date-label-color 0.35s ease,
-        --kp-date-label-gradient-from 0.35s ease, --kp-date-label-gradient-to 0.35s ease,
-        --kp-card-bg 0.35s ease, --kp-card-border 0.35s ease,
-        --kp-card-hover-bg 0.35s ease, --kp-card-hover-border 0.35s ease,
-        --kp-card-title-color 0.35s ease, --kp-card-meta-color 0.35s ease, --kp-card-summary-color 0.35s ease,
-        --kp-tag-bg 0.35s ease, --kp-tag-color 0.35s ease,
-        --kp-detail-border 0.35s ease,
-        --kp-formula-bg 0.35s ease, --kp-formula-color 0.35s ease,
-        --kp-btn-danger-color 0.35s ease, --kp-btn-danger-border 0.35s ease,
-        --kp-btn-danger-hover-color 0.35s ease, --kp-btn-danger-hover-border 0.35s ease,
-        --kp-empty-color 0.35s ease,
-        --kp-extracting-bg 0.35s ease, --kp-extracting-color 0.35s ease,
-        --modal-bg 0.35s ease, --modal-border 0.35s ease,
-        --modal-title-color 0.35s ease, --modal-label-color 0.35s ease,
-        --modal-field-bg 0.35s ease, --modal-field-color 0.35s ease,
-        --bm-btn-cancel-bg 0.35s ease, --bm-btn-cancel-color 0.35s ease,
-        --bm-btn-cancel-hover-color 0.35s ease, --bm-btn-cancel-hover-bg 0.35s ease,
-        --bm-btn-save-bg 0.35s ease, --bm-btn-save-color 0.35s ease, --bm-btn-save-hover-bg 0.35s ease,
-        --bm-btn-replace-bg 0.35s ease, --bm-btn-replace-color 0.35s ease, --bm-btn-replace-hover-bg 0.35s ease,
-        --kp-panel-bg 0.35s ease, --kp-panel-border 0.35s ease, --kp-panel-shadow 0.35s ease,
-        --onboarding-backdrop 0.35s ease, --onboarding-spotlight 0.35s ease,
-        --session-rename-bg 0.35s ease, --session-rename-color 0.35s ease,
-        --icon-picker-bg 0.35s ease, --icon-picker-border 0.35s ease, --icon-picker-shadow 0.35s ease,
-        --select-option-bg 0.35s ease, --select-option-color 0.35s ease,
-        --katex-color 0.35s ease,
-        --viz-card-bg 0.35s ease, --viz-card-border 0.35s ease, --viz-card-shadow 0.35s ease, --viz-card-hover-border 0.35s ease,
-        --viz-toolbar-bg 0.35s ease, --viz-toolbar-border 0.35s ease,
-        --viz-btn-bg 0.35s ease, --viz-btn-border 0.35s ease, --viz-btn-color 0.35s ease,
-        --viz-overlay-bg 0.35s ease,
-        --viz-bar-bg 0.35s ease, --viz-bar-border 0.35s ease, --viz-title-color 0.35s ease,
-        --viz-close-bg 0.35s ease, --viz-close-border 0.35s ease, --viz-close-color 0.35s ease,
-        --kp-btn-primary-bg 0.35s ease, --kp-btn-primary-color 0.35s ease, --kp-btn-primary-hover-bg 0.35s ease,
-        --kp-panel-decoration-from 0.35s ease, --kp-panel-decoration-to 0.35s ease,
-        --harness-msg-bg 0.35s ease, --harness-msg-user-bg 0.35s ease, --harness-msg-user-border 0.35s ease,
-        --harness-op-bg 0.35s ease, --harness-summary-bg 0.35s ease, --harness-overlay-bg 0.35s ease,
-        --harness-preview-node-bg 0.35s ease, --harness-preview-node-border 0.35s ease,
-        --harness-preview-eval-bg 0.35s ease, --harness-preview-eval-border 0.35s ease,
-        --harness-preview-edge 0.35s ease,
-        --surface-container 0.35s ease,
-        --kp-card-light-border 0.35s ease,
-        /* 设计尺子里的颜色令牌：切主题时跟随原有 0.35s 淡变，保持手感一致 */
-        --danger 0.35s ease, --danger-fg 0.35s ease, --danger-bg 0.35s ease,
-        --danger-bg-strong 0.35s ease, --danger-border 0.35s ease,
-        --success 0.35s ease, --success-fg 0.35s ease, --success-bg 0.35s ease, --success-border 0.35s ease,
-        --warn 0.35s ease, --warn-fg 0.35s ease, --warn-bg 0.35s ease, --warn-border 0.35s ease,
-        --field-bg 0.35s ease, --field-bg-strong 0.35s ease,
-        --surface-1 0.35s ease, --surface-2 0.35s ease;
     }
-    /* 主题切换：不再使用 * 通配符 transition，改为 :root 变量级过渡 */
-    /* 旧代码: *, *::before, *::after { transition-property: color, background-color, border-color, box-shadow; transition-duration: 0.35s; } */
-    /* 排除浮动符号和 canvas，避免不必要的过渡计算 */
-    #floating-symbols, #floating-symbols *, canvas, .particle-canvas {
-      transition: none !important;
-    }
-    /* Mermaid SVG 内部元素不做过渡，主题切换时通过重新渲染实现颜色变化 */
+    /* ====== 主题切换渐变已整体删除（2026-10-01 用户拍板：渐变＝卡顿源） ======
+       原本 :root 上为 139 个 @property 注册变量挂 0.35s 过渡、背景双层 0.6s 交叉淡入、
+       画布节点/连线另有变量过渡（graph-override.css）、viz iframe 桥注入 * 通配 0.4s 过渡
+       （render.js）——翻转主题时逐帧全文档插值重算是切换卡顿的根源，现已全部删除，
+       颜色即切即稳。文件顶部的 @property 注册保留（惰性注册，零运行时成本，兼作
+       var 兜底初值），别照着它把过渡加回来。 */
     [data-theme="light"] {
       --bg-dark: rgba(245, 240, 232, 0.90);
       --bg-panel: #faf6ee;
@@ -691,7 +610,6 @@
       background-position: center;
       background-repeat: no-repeat;
       z-index: -2;
-      transition: opacity 0.6s ease-in-out;
     }
     #bgLayer2 {
       opacity: 0;
@@ -2905,13 +2823,13 @@
     @supports (padding: env(safe-area-inset-bottom)) {
       }
 
-    /* ====== 性能修复：主题切换期间全局禁用过渡 ======
-       :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，翻转 data-theme 时
-       每个插值帧都要全文档重算样式，节点多的画布会持续卡顿数百毫秒。
-       JS 在切换瞬间给 <html> 挂 .theme-switching，650ms 后摘除（盖住交叉淡入全程）；
-       背景图交叉淡入按更高优先级豁免，保留原有的淡入体验。
-       2026-10-01：选择器必须含 html 自己——变量过渡恰恰挂在 :root 上，
-       只写 * 等于只禁了子孙的自有过渡，最贵的根变量逐帧插值一直没禁掉。 */
+    /* ====== 主题切换窗口（渐变删除后仍保留，2026-10-01） ======
+       变量过渡与背景交叉淡入已删（见上方 :root 处说明），窗口仍干两件事：
+       ① 掐掉全组件自有的 hover 过渡（--dur-base 级 background/border/color 过渡
+         在翻转时会各自补一段迷你淡变，毯子保证整页真正即切即稳）；
+       ② 窗口内摘节点卡磨砂（见下一条），翻转帧不重算全量 blur。
+       JS（ui.js applyTheme）切换瞬间挂 .theme-switching，650ms 后摘除；
+       选择器必须含 html 自己——:root 上若再出现变量过渡，只写 * 禁不到根插值。 */
     html.theme-switching,
     html.theme-switching *,
     html.theme-switching *::before,
@@ -2933,8 +2851,5 @@
     html.node-blur-lite .graph-node {
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;
-    }
-    html.theme-switching .bg-layer {
-      transition: opacity 0.6s ease-in-out !important;
     }
 
