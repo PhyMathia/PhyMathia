@@ -1130,6 +1130,8 @@ function _continentEnsureLayer() {
         // v8.1 画风开关：有机（岛在网格里各偏一点、有厚度）↔ 网格（回到整齐的正交布局）。
         // 位置本身带信息（相邻=有亲缘），两种画风改的只是视觉密度，不改谁挨着谁。
         '<button class="continent-tool is-quiet" id="continentStyleBtn" title="画风：有机（岛与卡在网格里各偏一点，有厚度）↔ 网格（整齐正交）。两种画风的亲缘排序完全相同，只改视觉">有机</button>' +
+        '<button class="continent-tool is-quiet" id="continentFitBtn" title="手动适配：把整张大陆缩放到当前窗口内并居中（打开时自动适配之外的常驻手柄）">⌂ 适配</button>' +
+        '<button class="continent-tool is-quiet" id="continentFullBtn" title="浏览器全屏显示大陆（再点一次或按 Esc 退出）">⤢ 全屏</button>' +
         '<button class="continent-tool is-quiet" id="continentGateBtn" hidden title="让 Φ 读卡片内容做领域归类（词面认不出的它来补；打开大陆本身不烧调用，点了才跑）">Φ 归类</button>' +
         '<button class="continent-tool is-quiet" id="continentRouteBtn" hidden title="航线的全局显示（总开关 / 透明度）；单条样式点线本身调">航线</button>' +
         '<button class="continent-tool is-quiet" id="continentFamilyBtn" title="概念族表（❖ 城市与海域的证据来源）：可加族、改词条、删自定义族；也管归类纠正记录">族表</button>' +
@@ -1186,6 +1188,27 @@ function _continentEnsureLayer() {
       if (_continentOpen && _continentData) _continentRender(_continentData);
     });
     _continentSyncStyleBtn();
+  }
+  // T49：手动「适配/全屏」手柄——自动适配只发生在打开/恢复时，这里给常驻入口；
+  // 适配后随手持久化，刷新恢复不弹回旧视角
+  const fitBtn = document.getElementById('continentFitBtn');
+  if (fitBtn && fitBtn.addEventListener) {
+    fitBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      _continentFitView();
+      _continentPersistView();
+    });
+  }
+  const fullBtn = document.getElementById('continentFullBtn');
+  if (fullBtn && fullBtn.addEventListener) {
+    fullBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      _continentToggleFullscreen();
+    });
+    // 全屏态跟随（含用户按 Esc 退出的情形）；ensureLayer 只建一次层，监听不会重复挂
+    document.addEventListener('fullscreenchange', _continentSyncFullBtn);
+    document.addEventListener('webkitfullscreenchange', _continentSyncFullBtn);
+    _continentSyncFullBtn();
   }
   // v8：顶栏搜索（输入防抖；唯一命中回车直达——铁律「跳转不猜」的搜索版）
   const searchInput = document.getElementById('continentSearch');
@@ -4652,6 +4675,32 @@ function _continentPersistView() {
     localStorage.setItem(CONTINENT_VIEW_KEY,
       JSON.stringify({ pan: { x: _continentPan.x, y: _continentPan.y }, zoom: _continentZoom }));
   } catch (e) { /* 存储不可用就只留在内存，不阻断 */ }
+}
+
+// T49：浏览器全屏切换（topbar「⤢ 全屏」）。continentLayer 整层提进 top layer，
+// 样式层有 .continent-layer:fullscreen 钉满视口；退出路径三条（按钮/Esc/F11）
+// 都走 fullscreenchange 统一同步按钮文案，不各自维护状态。
+function _continentToggleFullscreen() {
+  const layer = document.getElementById('continentLayer');
+  if (!layer) return;
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } else if (layer.requestFullscreen) {
+      layer.requestFullscreen().catch(() => {});
+    } else if (layer.webkitRequestFullscreen) {
+      layer.webkitRequestFullscreen();
+    }
+  } catch (e) { /* 全屏被策略拒绝：静默，按钮仍在 */ }
+}
+
+function _continentSyncFullBtn() {
+  const btn = document.getElementById('continentFullBtn');
+  if (!btn) return;
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  btn.textContent = on ? '⤢ 退出全屏' : '⤢ 全屏';
+  btn.title = on ? '退出浏览器全屏（Esc 也行）' : '浏览器全屏显示大陆（再点一次或按 Esc 退出）';
 }
 
 function _continentBindViewport(viewport) {

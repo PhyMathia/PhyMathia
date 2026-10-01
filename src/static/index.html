@@ -25,8 +25,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=2797f3b3">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=00428583">
+  <link rel="stylesheet" href="/css/styles.min.css?v=4c495e4c">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=37c0747c">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=40d4c2bd">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -224,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=aee1d23e"></script>
+  <script src="/js/app.js?v=51cdd4f3"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -482,6 +482,7 @@
           <div class="am-model-list-bar">
             <button type="button" class="am-mini-btn" onclick="toggleAllPresetModels()">全选 / 全不选</button>
             <button type="button" class="am-mini-btn" id="presetFetchBtn" onclick="fetchProviderModelList()">↻ 获取模型列表</button>
+            <button type="button" class="am-mini-btn" id="presetProbeBtn" onclick="probeCheckedPresetModels()" title="对勾选的模型各真发一条最小消息验证能不能用——免费网关清单里常混着付费档才能用的模型（T60）">⚡ 测活勾选项</button>
             <span class="am-fetch-status" id="presetFetchStatus"></span>
           </div>
         </div>

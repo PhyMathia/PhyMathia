@@ -1653,15 +1653,29 @@ function endOnboarding() {
   }, 400);
 }
 
+// T45：窗口缩放不再静默关浮动面板——面板开着就按触发按钮重新定位
+// （_positionPanel 可重入；此前无条件 remove('show')，日常拉伸窗口四个面板全没）
+function _repositionShownPanel(panelId, findTrigger) {
+  const panel = document.getElementById(panelId);
+  if (!panel || !panel.classList.contains('show')) return;
+  const trigger = findTrigger();
+  if (!trigger) return;
+  if (panelId === 'dataPanel' && typeof window._positionPanelBelowBtn === 'function') {
+    window._positionPanelBelowBtn(panel, trigger);
+  } else {
+    _positionPanel(panelId, trigger);
+  }
+}
+
 // Handle resize during onboarding
 window.addEventListener('resize', () => {
   if (_obStep >= 0) _renderObStep();
   const exampleOverlay = document.getElementById('exampleGuideOverlay');
   if (exampleOverlay && exampleOverlay.classList.contains('active')) _renderExampleGuideStep();
-  // Close floating panels on resize to avoid mispositioning
-  document.getElementById('modelPanel')?.classList.remove('show');
-  document.getElementById('dataPanel')?.classList.remove('show');
-  document.getElementById('levelPanel')?.classList.remove('show');
+  _repositionShownPanel('modelPanel', () => document.getElementById('modelBtn'));
+  _repositionShownPanel('dataPanel', () => document.querySelector('[aria-controls="dataPanel"]'));
+  _repositionShownPanel('levelPanel', () => document.getElementById('levelBtn'));
+  _repositionShownPanel('skinPanel', () => document.getElementById('skinBtn'));
 });
 
 // ESC 关闭可视化全屏

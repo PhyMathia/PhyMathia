@@ -609,6 +609,26 @@ async def api_models_chat(request: Request):
 
 
 
+def _model_pricing_free(item: dict):
+    """T60：从上游模型条目推断免费/付费——pricing 全 0 视为免费、任一非 0 视为
+    付费；没有 pricing 或字段读不了返回 None（不标注，别瞎猜）。金额各家形态
+    不一（OpenRouter 是字符串、有的是数值），统一 float 再比。"""
+    pricing = item.get("pricing") if isinstance(item, dict) else None
+    if not isinstance(pricing, dict) or not pricing:
+        return None
+    vals = []
+    for key in ("prompt", "completion"):
+        if key not in pricing or pricing[key] is None:
+            continue
+        try:
+            vals.append(float(pricing[key]))
+        except (TypeError, ValueError):
+            return None
+    if not vals:
+        return None
+    return all(v == 0 for v in vals)
+
+
 @app.post("/api/models/list")
 async def api_models_list(request: Request):
     """代理拉取供应商在线模型列表（OpenAI 兼容 GET {base_url}/models）。
@@ -657,12 +677,75 @@ async def api_models_list(request: Request):
         raise HTTPException(status_code=502, detail="上游返回的不是 JSON")
     raw = data.get("data") if isinstance(data, dict) else data
     ids = []
+    meta = {}
     if isinstance(raw, list):
         for item in raw:
             mid = item.get("id") if isinstance(item, dict) else None
             if isinstance(mid, str) and mid.strip():
-                ids.append(mid.strip())
-    return {"models": sorted(set(ids))}
+                mid = mid.strip()
+                ids.append(mid)
+                # T60：上游带定价字段时顺手标注免费/付费（OpenRouter 等有、
+                # opencode 没有——后者靠 /api/models/probe 真发探活）
+                free = _model_pricing_free(item)
+                if free is not None:
+                    meta[mid] = {"free": free}
+    return {"models": sorted(set(ids)), "meta": meta}
+
+
+@app.post("/api/models/probe")
+async def api_models_probe(request: Request):
+    """T60：单模型探活——真发一条最小对话验证「列表里有」≠「能用」。
+
+    免费网关清单常混付费档模型（免费模式下诱导踩坑）；200 但 content 为空的
+    「假活」也在这里拦下。密钥回退与 SSRF 校验与 /api/models/list 同口径。
+    故意不带 max_tokens（部分新系列拒收该参数会造成假阴性），ping 一句成本可忽略。
+    """
+    payload = await _parse_json_object(request)
+    provider = payload.get("provider", "")
+    api_key, env_key_used = resolve_api_key(provider, payload.get("api_key", ""))
+    model_name = str(payload.get("model", "") or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="缺少 model")
+
+    base_url = payload.get("base_url", "")
+    if not base_url:
+        provider_info = AI_PROVIDERS.get(provider)
+        if not provider_info:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}' and no base_url provided")
+        base_url = provider_info["base_url"]
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    headers.update(_opencode_session_headers(base_url, "models-probe"))
+    body = {"model": model_name, "messages": [{"role": "user", "content": "ping"}], "stream": False}
+
+    client = get_http_client()
+    try:
+        resp = await client.post(url, json=body, headers=headers,
+                                 timeout=httpx.Timeout(25.0, connect=8.0))
+    except httpx.HTTPError as e:
+        logger.error(f"models probe connect error: {provider} {model_name} {url}: {type(e).__name__}: {e}")
+        return {"ok": False, "detail": f"连接失败: {type(e).__name__}"}
+    if resp.status_code != 200:
+        return {"ok": False, "detail": llm_common.upstream_error_detail(resp.status_code, resp.text[:200])}
+    try:
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = str(message.get("content") or "")
+        reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
+    except Exception:
+        return {"ok": False, "detail": "返回 200 但不是标准补全 JSON"}
+    if not content.strip() and not reasoning.strip():
+        # T60：200 但内容为空的「假活」——列表在、实际不可用，标注出来别误导
+        return {"ok": False, "detail": "返回 200 但内容为空（疑似不可用）"}
+    return {"ok": True, "detail": "可用"}
 
 
 @app.get("/api/usage/stats")
@@ -979,9 +1062,52 @@ async def api_clear_messages(session_id: str):
 
 
 
+# T147：GET /api/knowledge、/api/formulas 的缓存协商——前端 15 秒轮询此前每轮
+# 全量重算去重＋全表传输，库越大越卡。按文件指纹（mtime_ns+size）缓存「去重后
+# 的响应体＋ETag」：文件没变免重算，If-None-Match 命中回 304 免传输。
+# 写路径（POST/DELETE）改文件即改指纹，缓存自然失效，无需主动清。
+_json_get_cache: dict = {}
+_JSON_GET_CACHE_MAX = 64  # 含 q 搜索变体（键带 q），超限整体清掉防膨胀
+
+
+def _json_get_payload(path, transform, cache_key=None):
+    """→ (body_str, etag)。指纹命中时免 transform 重算（去重/归一化是每轮大头）。"""
+    try:
+        st = os.stat(path)
+        fp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        fp = None
+    key = cache_key or str(path)
+    hit = _json_get_cache.get(key)
+    if fp is not None and hit and hit[0] == fp:
+        return hit[1], hit[2]
+    if len(_json_get_cache) >= _JSON_GET_CACHE_MAX:
+        _json_get_cache.clear()
+    payload = transform(_read_json(path, {}))
+    body = json.dumps(payload, ensure_ascii=False)
+    etag = '"' + hashlib.md5(body.encode("utf-8")).hexdigest() + '"'
+    if fp is not None:
+        _json_get_cache[key] = (fp, body, etag)
+    return body, etag
+
+
+def _json_get_response(request: Request, path, transform, cache_key=None):
+    body, etag = _json_get_payload(path, transform, cache_key)
+    inm = request.headers.get("if-none-match") or ""
+    if inm and etag in inm:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+    # Cache-Control: no-cache = 可存但每次必须带 ETag 回源验证——15 秒轮询从此
+    # 拿 304 空响应，浏览器沿用本地副本
+    return Response(content=body, media_type="application/json",
+                    headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
 @app.get("/api/knowledge")
-async def api_get_knowledge():
-    return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+async def api_get_knowledge(request: Request = None):
+    if request is None:
+        # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
+        return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
+    return _json_get_response(request, KNOWLEDGE_PATH, _dedupe_knowledge)
 
 
 def _card_vector_text(item: dict) -> str:
@@ -1177,21 +1303,30 @@ async def api_delete_knowledge(item_id: str):
 
 
 @app.get("/api/formulas")
-async def api_get_formulas(q: str = ""):
+async def api_get_formulas(request: Request = None, q: str = ""):
     # 只读视图：去重不回写。GET 内写文件与并发 POST 存在「读→去重→覆盖」竞态，
-    # 会把窗口期内新增的公式回滚丢失；物理去重改在 POST 写入路径执行
-    data = _dedupe_formula_map(_read_json(FORMULAS_PATH, {}))
-    items = list(data.values())
-    if q:
-        ql = q.lower()
-        items = [it for it in items if
-                 ql in (it.get("concept") or "").lower() or
-                 ql in (it.get("meaning") or "").lower() or
-                 ql in (it.get("topic") or "").lower() or
-                 ql in (it.get("latex") or "").lower() or
-                 any(ql in (t or "").lower() for t in (it.get("related") or []))]
-    items.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
-    return {"items": items, "count": len(items)}
+    # 会把窗口期内新增的公式回滚丢失；物理去重改在 POST 写入路径执行。
+    # T147：整表与搜索结果都走 ETag 缓存协商（缓存键带 q，互不串）。
+
+    def _formula_payload(raw: dict) -> dict:
+        data = _dedupe_formula_map(raw)
+        items = list(data.values())
+        if q:
+            ql = q.lower()
+            items = [it for it in items if
+                     ql in (it.get("concept") or "").lower() or
+                     ql in (it.get("meaning") or "").lower() or
+                     ql in (it.get("topic") or "").lower() or
+                     ql in (it.get("latex") or "").lower() or
+                     any(ql in (t or "").lower() for t in (it.get("related") or []))]
+        items.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
+        return {"items": items, "count": len(items)}
+
+    if request is None:
+        # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
+        return _formula_payload(_read_json(FORMULAS_PATH, {}))
+    return _json_get_response(request, FORMULAS_PATH, _formula_payload,
+                              cache_key=f"{FORMULAS_PATH}::q={q}")
 
 
 @app.post("/api/formulas")
