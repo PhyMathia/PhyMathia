@@ -49,6 +49,9 @@ function getDeviceId() {
 }
 
 // ====== 难度等级配置 ======
+// 档位文案共三份手工同步（T132 防漂移）：改这里措辞必须同步
+// src/server/config.py 的 LEVEL_PROMPTS（后端注入主聊天/文档/知识面板）与
+// harness/prompts.py 的 _level_requirement（Φ 评审口径变体）。
 const LEVEL_LABELS = { 'middle': '中学', 'university': '大学', 'research': '科研' };
 const LEVEL_PROMPTS = {
   'middle': '（用户是初高中学生，请用最通俗易懂的语言讲解，避免使用大学水平的术语，多用生活中的类比，公式尽量简化，数学推导步骤详细不跳步）',

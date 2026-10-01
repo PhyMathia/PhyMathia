@@ -129,6 +129,8 @@ PHYMATHIA_EVALUATION_STANDARDS = """PhyMathia 评价标准：
 
 
 def _level_requirement(level: str) -> str:
+    # 难度档文案共三份手工同步（T132 防漂移，此处为 Φ 评审口径变体）：
+    # 改这里措辞必须同步 src/server/config.py 与 src/static/js/config.js 的 LEVEL_PROMPTS。
     if level == "middle":
         return "当前难度：初高中。评价时按初高中学生可接受程度，要求通俗、少大学术语、多类比、公式简化、推导详细不跳步。"
     if level == "research":
