@@ -6866,7 +6866,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-color: var(--cd-accent) !important;
 }
 [data-node-skin="candy"] .graph-node.graph-node-module {
-  background: linear-gradient(170deg, color-mix(in srgb, var(--node-attr) 13%, transparent), color-mix(in srgb, var(--text-primary) 9%, transparent)) !important;
+  /* 2026-10-01 四调补：此处原写死深色配方（attr 13%＋text-primary 9% 半透明深膜），
+   * 浅色下渲成灰膜＝用户指「发灰、看不出变化」的根因（浅色覆盖块调的变量管不到写死的卡面）。
+   * 改引节点级变量：深色取值与原式逐字等值（深色零变化），浅色自动跟白玻璃粉彩配方。 */
+  background: linear-gradient(170deg, var(--cd-face-a), var(--cd-face-b)) !important;
   border-color: var(--cd-module-line) !important;
   box-shadow:
     0 0 24px color-mix(in srgb, var(--node-attr) 12%, transparent),
