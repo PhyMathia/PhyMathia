@@ -665,6 +665,50 @@ document.addEventListener('click', (e) => {
   _symbolAnimRaf = requestAnimationFrame(_symbolLoop);
   document.addEventListener('visibilitychange', _updateAuroraPause);
 
+  // 慢机降级探测（2026-10-01）：LoAF 实测漂移与符号画布单独跑都够帧、叠加必爆 200-380ms
+  // 长帧（切主题时全部玻璃整帧重绘再叠一层，感知就是「切一次卡好几秒」）。两阶段探测：
+  // 先测当前帧间隔中位数，再临时挂 aurora-still 冻结漂移复测——只有冻结确实换来明显改善
+  // （>1.4 倍且省 8ms 以上）才保留降级。与屏幕刷新率无关，快机器/低刷面板自动不降。
+  let _probeTries = 0;
+  function _sampleFrameGap(cb) {
+    const gaps = [];
+    let last = 0, n = 0;
+    const tick = (t) => {
+      if (last) {
+        const g = t - last;
+        if (g > 2 && g < 200) gaps.push(g); // 标签页隐藏/偶发长任务的不采样
+      }
+      last = t;
+      if (++n < 45) requestAnimationFrame(tick);
+      else cb(gaps);
+    };
+    requestAnimationFrame(tick);
+  }
+  function _medianOf(arr) {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)] || 999;
+  }
+  function _probeAuroraBudget() {
+    const root = document.documentElement;
+    _sampleFrameGap((withAnim) => {
+      if (withAnim.length < 30) {           // 有效样本不足（页隐藏/被打断）稍后重测
+        if (++_probeTries < 3) setTimeout(_probeAuroraBudget, 2000);
+        return;
+      }
+      const m1 = _medianOf(withAnim);
+      if (m1 <= 18) return;                 // 稳 60fps，不用降级
+      root.classList.add('aurora-still');
+      setTimeout(() => {
+        _sampleFrameGap((withoutAnim) => {
+          if (withoutAnim.length < 30) { root.classList.remove('aurora-still'); return; }
+          const m2 = _medianOf(withoutAnim);
+          if (!(m1 > m2 * 1.4 && m1 - m2 > 8)) root.classList.remove('aurora-still');
+        });
+      }, 400);
+    });
+  }
+  window.addEventListener('load', () => setTimeout(_probeAuroraBudget, 1200));
+
   const origToggle = window.toggleTheme;
   window.toggleTheme = function() {
     if (origToggle) origToggle();
@@ -1664,16 +1708,53 @@ let _mermaidThemeTimer = null;
 // 主题切换过渡抑制：styles.css 在 :root 上为 200+ 个 @property 注册变量挂了 0.35s 过渡，
 // 翻转主题时每个插值帧都要全文档重算样式，节点多的画布会出现明显卡顿。
 // 切换瞬间给 <html> 挂 theme-switching 全局禁用过渡（CSS 端对 .bg-layer 豁免，
-// 背景图交叉淡入保留），450ms 后摘除，颜色即切即稳。
+// 背景图交叉淡入保留），650ms 后摘除（盖住 0.6s 交叉淡入全程），颜色即切即稳。
+// 窗口内节点卡磨砂同步摘除（styles.css）——翻转时全量重算 blur 是切换风暴的大头。
 let _themeSwitchTimer = null;
+let _themeSwitchAuroraTimer = null;
+
+// 慢机磨砂降级探测（2026-10-01）：candy 皮肤节点卡 backdrop-filter: blur(16px) 在翻转
+// 主题时要全量重算磨砂，软件光栅机器上实测 1.3s 的长帧风暴（LoAF 逐项排除其余元凶后，
+// 仅关此项归零）。首次真实切换后统计 2.2s 内长帧总量，>600ms 判为慢光栅机，给 <html>
+// 挂 node-blur-lite（styles.css：节点卡改用半透明底色直接透出背景，不再逐张实时磨砂）。
+// 只当次会话生效、不写 localStorage——换快机器自动恢复完整磨砂。
+let _flipProbeDone = false;
+
+function _probeFlipCost() {
+  const heavy = [];
+  let po = null;
+  try {
+    po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) if (e.duration >= 100) heavy.push(e.duration);
+    });
+    po.observe({ type: 'long-animation-frame', buffered: false });
+  } catch (e) { return; }
+  setTimeout(() => {
+    if (po) po.disconnect();
+    if (heavy.reduce((a, b) => a + b, 0) > 600) document.documentElement.classList.add('node-blur-lite');
+  }, 2200);
+}
 
 function applyTheme(theme) {
   const root = document.documentElement;
+  const prevTheme = root.getAttribute('data-theme');
   root.classList.add('theme-switching');
+  // 切换窗口内让路（与画布拖拽/AI 流式同一 setFloatingSymbolsPaused 计数口径）：
+  // 翻转主题会让全部玻璃载体与背景层整帧重绘，漂移+符号在同一帧预算里叠加实测爆出
+  // 200-380ms 长帧；暂停 700ms 覆盖背景交叉淡入全程，aurora-paused 由计数器自动挂上。
+  if (typeof window.setFloatingSymbolsPaused === 'function') {
+    window.setFloatingSymbolsPaused(true);
+    clearTimeout(_themeSwitchAuroraTimer);
+    _themeSwitchAuroraTimer = setTimeout(() => window.setFloatingSymbolsPaused(false), 700);
+  }
   if (_themeSwitchTimer) clearTimeout(_themeSwitchTimer);
-  _themeSwitchTimer = setTimeout(() => root.classList.remove('theme-switching'), 450);
+  _themeSwitchTimer = setTimeout(() => root.classList.remove('theme-switching'), 650);
   currentTheme = theme;
   root.setAttribute('data-theme', theme);
+  if (!_flipProbeDone && prevTheme && prevTheme !== theme) {
+    _flipProbeDone = true;
+    _probeFlipCost();
+  }
   localStorage.setItem(STORAGE_KEY_THEME, theme);
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
