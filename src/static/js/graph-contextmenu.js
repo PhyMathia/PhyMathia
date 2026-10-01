@@ -73,11 +73,24 @@ function _graphContextTargetKind(target) {
 
 // A 类节点菜单：按节点能力白名单裁剪（门控复用渲染层与动作函数的同一判定）。
 // 右键目标已属于多选集（size > 1）时改走多选语境（M2）——见 _graphCtxMultiSelection。
-function _graphContextItemsForNode(node) {
+// point：右键光标的画布坐标（可选，「追问」草稿落点用；缺省回落节点右下）。
+function _graphContextItemsForNode(node, point) {
   const items = [];
   if (!node || !node.id) return items;
   const multi = _graphCtxMultiSelection(node);
   if (multi) return _graphContextItemsForMultiNodes(multi);
+  // 追问（T47）：复用端口拖拽的同一落地函数 _createBranchNodeFromOutput——从节点已渲染的
+  // 输出端口 DOM 反查「追问」族端口（label 口径与拖拽 questionLike 判定一致），portMeta 按
+  // 拖拽手势同一构造逐字段读 dataset，零新业务逻辑。没有追问族输出端口的节点（draft 草稿、
+  // 空白节点等）不显示该项；viewer 只读页按 label 白名单自动剪掉（与「存为配方」同口径）。
+  const followupPort = _graphCtxFollowupPortEl(node.id);
+  if (followupPort) {
+    items.push({
+      key: 'followup',
+      label: '追问',
+      run: () => _graphCtxFollowupNode(node, followupPort, point),
+    });
+  }
   const content = typeof _nodeStoredContent === 'function'
     ? _nodeStoredContent(node)
     : (node.content || node.summary || '');
@@ -380,6 +393,7 @@ function _graphCtxCleanSeparators(items) {
 // ---------- 视觉层（M2 细化）：按键名取线性图标 + 快捷键提示 ----------
 // 图标全部复用 config.js 的 UI_ICON_SVG；缺失即静默留白（不阻断菜单）。
 const GRAPH_CTX_ICONS = {
+  followup: 'question',
   bookmark: 'book',
   copy: 'copy',
   focus: 'target',
@@ -417,6 +431,50 @@ function _graphCtxIconSvg(key) {
 }
 
 // ---------- 动作适配（均只组合既有函数，零新业务逻辑） ----------
+
+// 节点的「追问」族输出端口元素：从画布 DOM 反查（菜单打开时节点元素在场，渲染重渲后
+// 端口 dataset 仍可读——追问 run 只取 dataset 值与节点 id，不依赖元素留在 DOM）。
+// label 口径对齐拖拽落点的 questionLike 判定（graph-interact.js）：'追问' 或以「追问」开头。
+function _graphCtxFollowupPortEl(nodeId) {
+  if (!graphInner || typeof graphInner.querySelector !== 'function') return null;
+  const el = graphInner.querySelector('[data-node-id="' + String(nodeId).replace(/"/g, '') + '"]');
+  if (!el || typeof el.querySelectorAll !== 'function') return null;
+  let ports = null;
+  try { ports = Array.prototype.slice.call(el.querySelectorAll('.graph-output-port')); } catch (e) { return null; }
+  for (const port of (ports || [])) {
+    let label = '';
+    try { label = decodeURIComponent(port.dataset.portLabel || ''); } catch (e) { label = port.dataset.portLabel || ''; }
+    if (label === '追问' || /^追问/.test(label)) return port;
+  }
+  return null;
+}
+
+// 右键追问：与拖拽手势（graph-interact.js 端口 pointerdown）逐字段同构的 portMeta 构造 +
+// 同一落地函数 _createBranchNodeFromOutput（内部自建 draft 卡、连线、测量重画；草稿按既有
+// 口径不入撤销栈）。落点用右键光标的画布坐标，缺省回落节点右下。
+function _graphCtxFollowupNode(node, portEl, point) {
+  const decodeAttr = v => { try { return v ? decodeURIComponent(v) : ''; } catch (e) { return v || ''; } };
+  let itemMeta = null;
+  if (portEl.dataset.portItem) {
+    try { itemMeta = JSON.parse(decodeAttr(portEl.dataset.portItem)); } catch (e) { itemMeta = null; }
+  }
+  const portMeta = {
+    type: portEl.dataset.portType || 'branch',
+    branchType: portEl.dataset.portBranch || 'followup',
+    attribute: portEl.dataset.attribute || '',
+    question: decodeAttr(portEl.dataset.portQuestion),
+    level: portEl.dataset.portLevel || '',
+    label: decodeAttr(portEl.dataset.portLabel),
+    item: itemMeta,
+    dragCreates: portEl.dataset.portDrag ? decodeAttr(portEl.dataset.portDrag) : '',
+  };
+  if (typeof _createBranchNodeFromOutput !== 'function') {
+    _graphCtxToast('追问组件未就绪');
+    return;
+  }
+  const at = (point && Number.isFinite(point.x)) ? point : { x: (Number(node.x) || 0) + 380, y: Number(node.y) || 0 };
+  _createBranchNodeFromOutput(node.id, portEl.dataset.portId || 'out-0', portMeta, at.x, at.y);
+}
 
 function _graphCtxNodeTitle(node) {
   const raw = String((node && (node.label || node.title)) || '').trim();
@@ -554,7 +612,7 @@ function openGraphContextMenu(event) {
     const node = _findGraphNode(nodeEl.dataset.nodeId);
     const multi = _graphCtxMultiSelection(node);
     title = multi ? '已选 ' + multi.length + ' 个节点' : _graphCtxNodeTitle(node);
-    items = _graphContextItemsForNode(node);
+    items = _graphContextItemsForNode(node, point);
     markIds = multi ? multi.map(n => n.id) : [node.id];
   } else if (kind === 'link') {
     const edge = _graphCtxLinkFromTarget(target);

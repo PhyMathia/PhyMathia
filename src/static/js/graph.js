@@ -186,10 +186,53 @@ function _ensureGraphHistory() {
     const raw = localStorage.getItem(_graphHistoryKey(sid));
     if (raw) {
       const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) graphUndoStack = arr.filter(function (x) { return x && x.state; });
+      if (Array.isArray(arr)) graphUndoStack = _graphHistoryHydrate(arr);
     }
   } catch (e) { graphUndoStack = []; }
   _upgradeGraphHistoryFromServer(sid);
+}
+
+// ===== 撤销历史的相邻去重（T53）：快照里整份拷贝的 harnessCheckpoint（Φ 改图回滚点，
+// 实测单条 ~9.5KB、相邻重复率 87.5%）常态在相邻快照间一字不差。内存栈（graphUndoStack）
+// 永远保持完整快照、撤销行为零变化；只在持久化/镜像序列化时把「与最近一份实体相同」的
+// checkpoint 置空并打 checkpointRef 标记，读回（本地 localStorage / 服务端镜像 / 备份导入）
+// 统一经 _graphHistoryHydrate 向前借用最近一份实体补回。
+// 本地超限截断（_persistGraphHistory 的 slice(-keep)）砍掉引用链实体源时，重建找不到就留空：
+// 该条撤销恢复后 checkpoint 为空，Φ「撤销本次」不再可用——属本地截断的既有降级，服务端
+// 全量镜像不受影响。旧数据（无标记）经 hydrate 原样通过；备份导出/导入（ui.js 原样搬运
+// JSON 字符串）零适配。customNodes（占快照 77%、相邻整体相同率仅 31%）本轮不做去重，
+// 节点级池化需换持久化格式，另行评估。
+function _graphHistoryDedupe(arr) {
+  const out = [];
+  let prevCp = '';
+  arr.forEach(function (x) {
+    if (!x || !x.state || x.state.harnessCheckpoint == null) { out.push(x); return; }
+    const cp = JSON.stringify(x.state.harnessCheckpoint);
+    if (out.length && cp === prevCp) {
+      const state = {};
+      Object.keys(x.state).forEach(function (k) { state[k] = x.state[k]; });
+      state.harnessCheckpoint = null;
+      out.push({ sessionId: x.sessionId, state: state, meta: x.meta || null, checkpointRef: true });
+      return;
+    }
+    prevCp = cp; // 首条实体也在此记录指纹，后续相邻比较以它为基准
+    out.push(x);
+  });
+  return out;
+}
+
+function _graphHistoryHydrate(arr) {
+  const out = (Array.isArray(arr) ? arr : []).filter(function (x) { return x && x.state; });
+  let lastCp = null;
+  out.forEach(function (x) {
+    if (x.checkpointRef && x.state.harnessCheckpoint == null && lastCp != null) {
+      x.state.harnessCheckpoint = JSON.parse(JSON.stringify(lastCp));
+    } else if (x.state.harnessCheckpoint != null) {
+      lastCp = x.state.harnessCheckpoint;
+    }
+    delete x.checkpointRef; // 读回即还原成无标记格式，内存态不携带序列化细节
+  });
+  return out;
 }
 
 function _persistGraphHistory() {
@@ -197,17 +240,18 @@ function _persistGraphHistory() {
   const arr = graphUndoStack.map(function (x) {
     return { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
   });
-  let s = JSON.stringify(arr);
+  const slim = _graphHistoryDedupe(arr);
+  let s = JSON.stringify(slim);
   if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
-    const per = Math.max(1, Math.floor(s.length / (arr.length || 1)));
+    const per = Math.max(1, Math.floor(s.length / (slim.length || 1)));
     const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
     // 本地格子有限可截断；全量数组交给下面的服务端镜像，历史一条不丢
-    s = JSON.stringify(arr.slice(-keep));
+    s = JSON.stringify(slim.slice(-keep));
   }
   safeLocalStorageSet(_graphHistoryKey(sid), s);
   // 硬盘保险：全量（不截断）镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。
   // 本地配额满或被截断时服务端是完整副本，换设备/清浏览器数据也能从存档读回。
-  _scheduleGraphHistoryMirror(sid, arr);
+  _scheduleGraphHistoryMirror(sid, slim);
 }
 
 // ===== 探索网历史的服务端镜像（图历史上限 30 步撤销是既有设计，这里只保存储安全） =====
@@ -249,7 +293,7 @@ function _upgradeGraphHistoryFromServer(sid) {
       if (!Array.isArray(arr) || !arr.length) return;
       if (graphHistorySession !== sid) return;
       if (arr.length <= graphUndoStack.length) return;
-      graphUndoStack = arr.filter(function (x) { return x && x.state; });
+      graphUndoStack = _graphHistoryHydrate(arr);
       if (typeof _refreshGraphHistoryPanel === 'function') _refreshGraphHistoryPanel();
     })
     .catch(function () { /* 无存档/离线：本地为准 */ });
