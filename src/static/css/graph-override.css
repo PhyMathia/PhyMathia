@@ -6386,15 +6386,19 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --bp-paper: color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%);
   --bp-grid: color-mix(in srgb, var(--ink-blue) 12%, transparent);
   --bp-line: color-mix(in srgb, var(--ink-blue) 58%, transparent);
+  --bp-line-hover: var(--ink-blue);
   --bp-line-soft: color-mix(in srgb, var(--ink-blue) 45%, transparent);
+  --bp-accent: var(--text-primary);
   --bp-shadow: color-mix(in srgb, var(--overlay-bg) 60%, transparent);
   --bp-shadow-deep: color-mix(in srgb, var(--overlay-bg) 65%, transparent);
 }
 [data-theme="light"][data-node-skin="blueprint"] {
   --bp-paper: color-mix(in srgb, var(--node-glass-base) 76%, var(--ink-blue) 24%);
   --bp-grid: color-mix(in srgb, var(--ink-blue) 14%, transparent);
-  --bp-line: color-mix(in srgb, var(--ink-blue) 70%, transparent);
-  --bp-line-soft: color-mix(in srgb, var(--ink-blue) 55%, transparent);
+  --bp-line: color-mix(in srgb, var(--ink-blue) 52%, transparent);
+  --bp-line-hover: color-mix(in srgb, var(--ink-blue) 80%, transparent);
+  --bp-line-soft: color-mix(in srgb, var(--ink-blue) 42%, transparent);
+  --bp-accent: color-mix(in srgb, var(--ink-blue) 75%, var(--text-primary));
   --bp-shadow: color-mix(in srgb, var(--text-primary) 14%, transparent);
   --bp-shadow-deep: color-mix(in srgb, var(--text-primary) 16%, transparent);
 }
@@ -6409,7 +6413,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   box-shadow: 0 10px 30px var(--bp-shadow) !important;
 }
 [data-node-skin="blueprint"] .graph-node:hover {
-  border-color: var(--ink-blue) !important;
+  border-color: var(--bp-line-hover) !important;
   border-style: solid !important;
   box-shadow:
     0 14px 36px var(--bp-shadow-deep),
@@ -6431,11 +6435,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-left-color: var(--node-attr) !important;
 }
 [data-node-skin="blueprint"] .graph-node-root {
-  border-color: var(--text-primary) !important;
+  border-color: var(--bp-accent) !important;
   border-style: solid !important;
 }
 [data-node-skin="blueprint"] .graph-node-branch {
-  border-color: var(--text-primary) !important;
+  border-color: var(--bp-accent) !important;
   border-style: solid !important;
 }
 [data-node-skin="blueprint"] .graph-node.graph-node-module {
@@ -6470,7 +6474,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 [data-node-skin="blueprint"] .graph-node textarea:focus,
 [data-node-skin="blueprint"] .graph-node input:focus {
-  border-color: var(--ink-blue) !important;
+  border-color: var(--bp-line-hover) !important;
 }
 
 /* ---------- 皮肤 2：chalk 粉笔黑板 ----------
@@ -6480,12 +6484,18 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 自动翻成深墨线，与悬停/根支线同语言）。 */
 [data-node-skin="chalk"] {
   --ck-board: color-mix(in srgb, var(--bg-panel) 82%, var(--ink-teal) 18%);
+  --ck-line: color-mix(in srgb, var(--text-primary) 52%, transparent);
+  --ck-line-strong: color-mix(in srgb, var(--text-primary) 85%, transparent);
+  --ck-line-soft: color-mix(in srgb, var(--text-primary) 30%, transparent);
   --ck-dust: color-mix(in srgb, var(--text-primary) 4%, transparent);
   --ck-dust-strong: color-mix(in srgb, var(--text-primary) 6%, transparent);
   --ck-shadow: color-mix(in srgb, var(--overlay-bg) 55%, transparent);
 }
 [data-theme="light"][data-node-skin="chalk"] {
   --ck-board: color-mix(in srgb, var(--node-glass-base) 76%, var(--ink-teal) 24%);
+  --ck-line: color-mix(in srgb, var(--ink-teal) 62%, transparent);
+  --ck-line-strong: color-mix(in srgb, var(--ink-teal) 88%, transparent);
+  --ck-line-soft: color-mix(in srgb, var(--ink-teal) 38%, transparent);
   --ck-dust: color-mix(in srgb, var(--ink-teal) 9%, transparent);
   --ck-dust-strong: color-mix(in srgb, var(--ink-teal) 13%, transparent);
   --ck-shadow: color-mix(in srgb, var(--text-primary) 14%, transparent);
@@ -6494,7 +6504,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   background:
     linear-gradient(160deg, color-mix(in srgb, var(--ink-note) 9%, transparent), transparent 55%),
     var(--ck-board) !important;
-  border-color: color-mix(in srgb, var(--text-primary) 52%, transparent) !important;
+  border-color: var(--ck-line) !important;
   border-style: dashed !important;
   border-left-style: solid !important;
   box-shadow:
@@ -6502,7 +6512,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 12px 32px var(--ck-shadow) !important;
 }
 [data-node-skin="chalk"] .graph-node:hover {
-  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+  border-color: var(--ck-line-strong) !important;
   box-shadow:
     inset 0 0 46px var(--ck-dust-strong),
     0 0 16px color-mix(in srgb, var(--text-primary) 10%, transparent),
@@ -6523,10 +6533,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-left-color: color-mix(in srgb, var(--node-attr) 60%, var(--text-primary)) !important;
 }
 [data-node-skin="chalk"] .graph-node-root {
-  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+  border-color: var(--ck-line-strong) !important;
 }
 [data-node-skin="chalk"] .graph-node-branch {
-  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+  border-color: var(--ck-line-strong) !important;
 }
 [data-node-skin="chalk"] .graph-node.graph-node-module {
   background:
@@ -6556,11 +6566,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 [data-node-skin="chalk"] .graph-node textarea,
 [data-node-skin="chalk"] .graph-node input {
   background: var(--ck-board) !important;
-  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent) !important;
+  border-color: var(--ck-line-soft) !important;
 }
 [data-node-skin="chalk"] .graph-node textarea:focus,
 [data-node-skin="chalk"] .graph-node input:focus {
-  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+  border-color: var(--ck-line-strong) !important;
 }
 
 /* ---------- 皮肤 3：neon 霓虹夜光 ----------
@@ -6654,12 +6664,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 [data-theme="light"][data-node-skin="parchment"] {
   --pm-paper: color-mix(in srgb, var(--node-glass-base) 74%, var(--ink-human) 26%);
-  --pm-line: color-mix(in srgb, var(--ink-amber) 75%, transparent);
-  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 88%, transparent);
-  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 55%, transparent);
-  --pm-ring: color-mix(in srgb, var(--ink-amber) 40%, transparent);
-  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 50%, transparent);
-  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 46%, transparent);
+  --pm-line: color-mix(in srgb, var(--ink-amber) 68%, transparent);
+  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 82%, transparent);
+  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 46%, transparent);
+  --pm-ring: color-mix(in srgb, var(--ink-amber) 34%, transparent);
+  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 44%, transparent);
+  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 40%, transparent);
   --pm-shadow: color-mix(in srgb, var(--text-primary) 16%, transparent);
 }
 [data-node-skin="parchment"] .graph-node {
