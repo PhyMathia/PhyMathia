@@ -268,6 +268,8 @@ let _continentFolded = [];         // v4 折叠清单：[{entry, reason}]（weak
 let _continentGuideText = '';      // v5.4 顶栏空态引导文案（空串=不该显示）
 // v8 顶栏搜索 / 族表 / 纠正信号
 let _continentSearchResults = [];  // 当前搜索命中（唯一命中回车直达，多命中清单逐行跳）
+let _continentSearchMore = false;  // T137：命中是否被 cap 截断（脚注措辞用，重渲重放时保真）
+const CONTINENT_SEARCH_LIMIT = 30; // T137：清单上限（UI 用 cap+1 探满；纯函数默认 30 不动）
 let _continentSearchTimer = 0;     // 输入防抖
 let _continentCorrectionCount = 0; // 归类纠正记录条数（图例脚注可见，族表弹层可清空）
 const _continentPhiInflight = new Set(); // v5.3 在途「问 Φ」请求：弹层关闭时全部中止
@@ -279,6 +281,7 @@ let _continentRegionInfo = null;   // 最近一次 _continentRegions 的产物�
 // 收成一枚印章——多枚印章叠着看全局；展开回来布局不变（布局对折叠集是确定性的）
 const CONTINENT_COLLAPSED_KEY = 'phymathia_continent_collapsed';
 let _continentCollapsed = { islands: [], regions: [] };
+let _continentExpanded = {};       // T140：展开的岛（sessionId → true，仅显示层，内存态）
 
 function _continentLoadCollapsed() {
   try {
@@ -550,7 +553,10 @@ function _continentMeasure(c, collapsed, cardCap) {
     };
   }
   const all = (c.items || []);
-  const shown = cardCap ? Math.min(all.length, cardCap) : all.length;
+  // T140「另有 k 张」可展开：cluster 带 expandAll 旗（点展开钮落进 _continentExpanded）
+  // 就不设上限。旗缺席时逐字节旧行为——冻结契约不受扰
+  const cap = (c && c.expandAll) ? 0 : cardCap;
+  const shown = cap ? Math.min(all.length, cap) : all.length;
   const n = Math.max(1, shown);
   const cols = Math.min(CONTINENT_COLS, n);
   const rows = Math.ceil(n / cols);
@@ -1544,21 +1550,24 @@ function _continentRender(data) {
   const regionInfo = _continentRegions(data.clusters || [], _continentRegionOverrides,
                                        data.domainList);
   _continentRegionInfo = regionInfo;
+  // T140：展开态以浅拷贝带旗进布局——原 data 不动（缓存与确定性都不受扰）
+  const clustersForLayout = (data.clusters || []).map(c =>
+    _continentExpanded[c.sessionId] ? Object.assign({}, c, { expandAll: true }) : c);
   let layout;
   if (regionInfo.regions.length) {
     // 海域路径：亲缘矩阵由它内部算（块间排序 + 块内排序 + 间距分级三处共用那一份）
     layout = _continentRegionLayout(regionInfo.regions, regionInfo.bySid,
-                                    data.clusters || [], data.shared || [], data.userEdges || [],
+                                    clustersForLayout, data.shared || [], data.userEdges || [],
                                     _continentCollapsed);
   } else {
     // v8.3 无海域路径：kin 只喂给「间距按亲缘分级」。排序仍按 v5.2 原样自己算一份
     // 块内表——贪心链的并列裁决看 total[sid]，换成全局表会改掉既有岛序（冻结契约），
     // 而多算一次 O(n²)（48 岛 ≈ 2300 次）不值得拿契约去换。
     const kin = _continentKinship(
-      (data.clusters || []).map(c => String(c.sessionId || '')),
+      clustersForLayout.map(c => String(c.sessionId || '')),
       data.shared || [], data.userEdges || []);
     layout = _continentLayoutClusters(
-      _continentClusterOrder(data.clusters || [], data.shared || [], data.userEdges || []),
+      _continentClusterOrder(clustersForLayout, data.shared || [], data.userEdges || []),
       _continentCollapsed, undefined, kin);
   }
   // v8.1：布局算完，接一层确定性抖动再渲染。这一行是「岛在板内、卡在岛内、城市与
@@ -1653,6 +1662,13 @@ function _continentRender(data) {
       (tier === 'solid' ? ' r-solid' : tier === 'light' ? ' r-light' : tier === 'pending' ? ' r-pending' : '') +
       (rect.collapsed ? ' is-collapsed' : '');
     el.dataset.sessionId = rect.sessionId || '';
+    // T138 岛屿悬停：海域板/边界卡/城市都有 title，唯独岛没有——补「为什么归这片海」
+    // （前三个领域分布；主要领域在徽标上本就可见）。cluster 缺档时静默跳过
+    if (cluster && (cluster.domains || []).length) {
+      el.title = '岛：' + (rect.title || '未命名画布') + ' · ' + rect.itemCount + ' 个概念 · 领域：' +
+        cluster.domains.slice(0, 3).map(d =>
+          ((d && d.name) || '?') + ' ' + Math.round((Number(d && d.p) * 100) || 0) + '%').join(' · ');
+    }
     if (region && region.hue != null && region.hue !== undefined) {
       el.style.setProperty('--region-h', String(region.hue));
     }
@@ -1663,8 +1679,15 @@ function _continentRender(data) {
     el.style.height = rect.h + 'px';
     // v7.3 岛内折叠注脚：只画了前 N 张时明示「另有 k 张」——缺失要可见，不许静默吞卡
     const hiddenCount = Math.max(0, rect.itemCount - (rect.shownCount !== undefined ? rect.shownCount : rect.itemCount));
+    // T140：注脚升级成按钮——展开/收回都在原地（只报数不许动＝没牙的信息）。
+    // 注脚不再过 esc：按钮是本文件拼的可信 HTML，动态片段（sid/数字）各自转义
     const moreNote = (!rect.collapsed && hiddenCount > 0)
-      ? ' · 另有 ' + hiddenCount + ' 张（收进岛里）' : '';
+      ? ' · <button class="continent-cluster-more" data-island-expand="' + esc(rect.sessionId) + '"' +
+        ' title="点开展开这 ' + hiddenCount + ' 张卡（再点收回）">另有 ' + hiddenCount + ' 张…</button>'
+      : (!rect.collapsed && _continentExpanded[rect.sessionId]
+        ? ' · <button class="continent-cluster-more" data-island-expand="' + esc(rect.sessionId) + '"' +
+          ' title="收回进岛，只留前面几张">收起</button>'
+        : '');
     let headHtml =
       '<div class="continent-cluster-head">' +
         '<span class="continent-cluster-headline">' +
@@ -1674,7 +1697,7 @@ function _continentRender(data) {
           '<span class="continent-cluster-count">' + rect.itemCount + ' 个概念</span>' +
         '</span>' +
         (rect.collapsed || !tagline ? '' :
-          '<span class="continent-cluster-sub">' + esc(tagline) + esc(moreNote) + '</span>') +
+          '<span class="continent-cluster-sub">' + esc(tagline) + moreNote + '</span>') +
       '</div>';
     // 领域徽标（v7.1a 手动纠正入口）：点开「归到哪个领域」清单——一步落笔写 KV。
     // 徽标不在（neutral 无归属）就不占位；淡色/待确认档带「?」（不确定也要可见）。
@@ -1697,7 +1720,7 @@ function _continentRender(data) {
           '</button>' + secondaryDot +
         '</span>' +
         (rect.collapsed || !tagline ? '' :
-          '<span class="continent-cluster-sub">' + esc(tagline) + esc(moreNote) + '</span>') +
+          '<span class="continent-cluster-sub">' + esc(tagline) + moreNote + '</span>') +
       '</div>';
     }
     el.innerHTML = headHtml + _continentCloudHtml(cluster, rect, tagline, esc);
@@ -1713,6 +1736,17 @@ function _continentRender(data) {
       foldBtn.addEventListener('pointerdown', e => {
         e.stopPropagation();
         _continentToggleCollapse('island', rect.sessionId);
+      });
+    }
+    // T140：展开/收回钮——布局要重算（岛会长高），走本地重渲（_continentData 现成，无网络）
+    const moreBtn = el.querySelector ? el.querySelector('[data-island-expand]') : null;
+    if (moreBtn) {
+      moreBtn.addEventListener('pointerdown', e => {
+        e.stopPropagation();  // 与折叠钮同规：不进画布拖拽/下钻
+        const sid = moreBtn.getAttribute('data-island-expand');
+        if (_continentExpanded[sid]) delete _continentExpanded[sid];
+        else _continentExpanded[sid] = true;
+        if (_continentOpen && _continentData) _continentRender(_continentData);
       });
     }
     world.appendChild(el);
@@ -2203,6 +2237,12 @@ function _continentRenderLegend(regionInfo, data) {
     '</div>' +
     (collapsed ? '' :
       '<ul class="continent-legend-list">' + items + '</ul>' +
+      // T139 符号说明：三种前缀/三种线/布局语义不解释＝没画（前缀语义此前只有代码注释知道）
+      '<div class="continent-legend-syms">' +
+        '<span>城市前缀：◈ 标题共享 · ∑ 公式共享 · ❖ 概念族</span>' +
+        '<span>细线＝城市连岛的取证辐条；粗线＝你画的航线；虚线断桥＝一端已失效（工具条可清理）</span>' +
+        '<span>相邻的岛＝学过共同概念——排布即亲缘</span>' +
+      '</div>' +
       (footBits.length ? '<div class="continent-legend-foot">' + esc(footBits.join('；')) + '</div>' : ''));
   const toggle = legend.querySelector ? legend.querySelector('.continent-legend-head') : null;
   if (toggle) toggle.addEventListener('pointerdown', e => {
@@ -3211,7 +3251,9 @@ function _continentSearchNorm(s) {
   return String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
 }
 
-function _continentSearchMatches(data, query, limit) {
+// T137：extras 可选第四参＝城市/海域候选（{cities:[{label,sessions}], regions:[{key,name,sessions,itemCount}]}）。
+// 不传时行为逐字节不变——冻结契约不受扰；传了则城市/海域命中垫在岛/卡之后
+function _continentSearchMatches(data, query, limit, extras) {
   const q = _continentSearchNorm(query);
   const out = [];
   if (!q) return out;
@@ -3232,13 +3274,29 @@ function _continentSearchMatches(data, query, limit) {
   });
   // 标题命中排前、摘要命中靠后；同档保持投影顺序（sort 稳定）——最重要的行在最上面
   out.sort((a, b) => (a.viaSummary ? 1 : 0) - (b.viaSummary ? 1 : 0));
+  // T137：城市/海域垫底（导航目标次优先），与岛/卡一起受 cap 截断
+  const x = extras || {};
+  (x.cities || []).forEach(c => {
+    if (_continentSearchNorm(c && c.label).indexOf(q) >= 0) {
+      out.push({ type: 'city', sid: '', itemId: '', title: (c && c.label) || '',
+                 sub: '边界城市 · ' + ((c && c.sessions) || 0) + ' 座岛共享' });
+    }
+  });
+  (x.regions || []).forEach(r => {
+    if (_continentSearchNorm(r && r.name).indexOf(q) >= 0) {
+      out.push({ type: 'region', sid: '', itemId: '', key: r.key,
+                 title: (r && r.name) || '',
+                 sub: '海域 · ' + ((r && r.sessions) || 0) + ' 岛 · ' + ((r && r.itemCount) || 0) + ' 卡' });
+    }
+  });
   return out.slice(0, cap);
 }
 
 // 命中高亮 + 结果清单（DOM）。渲染重画世界层后 is-search-hit 会丢，_continentRender
 // 结尾会用同一份 _continentSearchResults 重放（搜索态跨重渲存活，与视口记忆同精神）
-function _continentApplySearchHit(results) {
+function _continentApplySearchHit(results, hasMore) {
   _continentSearchResults = results || [];
+  _continentSearchMore = !!hasMore;
   const pop = document.getElementById('continentSearchPop');
   const world = document.getElementById('continentWorld');
   if (world && world.querySelectorAll) {
@@ -3255,8 +3313,12 @@ function _continentApplySearchHit(results) {
           '<span class="continent-search-row-sub">' +
             (r.type === 'item' ? _continentEsc(r.sub) : _continentEsc(r.sub)) + '</span>' +
         '</button>').join('') +
-        '<div class="continent-search-foot">' + _continentSearchResults.length +
-        ' 个结果 · 点行跳转' + (_continentSearchResults.length === 1 ? '，回车直达' : '') + '</div>';
+        '<div class="continent-search-foot">' +
+        (_continentSearchMore
+          ? _continentSearchResults.length + '+ 个结果 · 仅显示前 ' + _continentSearchResults.length +
+            ' 条，试试更精确的词'
+          : _continentSearchResults.length + ' 个结果 · 点行跳转' +
+            (_continentSearchResults.length === 1 ? '，回车直达' : '')) + '</div>';
       pop.hidden = false;
       pop.querySelectorAll('[data-search-idx]').forEach(btn =>
         btn.addEventListener('pointerdown', e => {
@@ -3271,11 +3333,17 @@ function _continentApplySearchHit(results) {
       if (r.type === 'item') {
         const el = _continentNodeEl(r.itemId);
         if (el && el.classList) el.classList.add('is-search-hit');
-      } else {
+      } else if (r.type === 'city') {
+        // T137：城市行点亮城市胶囊本体（元素早已带 data-city-label）
+        const el = world.querySelector('.continent-city[data-city-label="' +
+          String(r.title).replace(/"/g, '\\"') + '"]');
+        if (el && el.classList) el.classList.add('is-search-hit');
+      } else if (r.type === 'island') {
         const el = world.querySelector('.continent-cluster[data-session-id="' +
           String(r.sid).replace(/"/g, '\\"') + '"]');
         if (el && el.classList) el.classList.add('is-search-hit');
       }
+      // region 行不打高亮：跳转本身就是反馈（镜头飞到海域）
     });
   }
 }
@@ -3284,7 +3352,18 @@ function _continentSearchUpdate() {
   const input = document.getElementById('continentSearch');
   if (!input) return;
   const q = String(input.value || '');
-  _continentApplySearchHit(q ? _continentSearchMatches(_continentData, q) : []);
+  if (!q) { _continentApplySearchHit([]); return; }
+  // T137：cap+1 探满（多出 1 条＝被截断，脚注明说，不再静默吞结果）；
+  // 城市/海域候选从模块态现取（纯函数只吃参数，不吃模块态）
+  const extras = {
+    cities: ((_continentData && _continentData.shared) || []).map(s =>
+      ({ label: s.label, sessions: (s.sessions || []).length })),
+    regions: ((_continentRegionInfo && _continentRegionInfo.regions) || []).map(r =>
+      ({ key: r.key, name: r.name, sessions: (r.sessions || []).length, itemCount: r.itemCount })),
+  };
+  const hits = _continentSearchMatches(_continentData, q, CONTINENT_SEARCH_LIMIT + 1, extras);
+  const hasMore = hits.length > CONTINENT_SEARCH_LIMIT;
+  _continentApplySearchHit(hits.slice(0, CONTINENT_SEARCH_LIMIT), hasMore);
 }
 
 function _continentSearchGo() {
@@ -3293,7 +3372,60 @@ function _continentSearchGo() {
 
 function _continentSearchJump(r) {
   _continentSearchClear();
+  // T137：城市/海域行不进会话——镜头飞过去（城市点亮胶囊、海域按包围盒适配）
+  if (r && r.type === 'city') { _continentSearchFocusCity(r.title); return; }
+  if (r && r.type === 'region') { _continentSearchFocusRegion(r.key); return; }
   enterContinentSession(r.sid, r.itemId || '');
+}
+
+// 镜头助手（T137）：把世界点 (wx, wy) 摆到视口中心，可选换挡缩放。岛聚焦的既有数学
+// 抽出来共用——两处各写一份必然漏一处
+function _continentFocusWorldPoint(wx, wy, targetZoom) {
+  if (!isFinite(wx) || !isFinite(wy)) return false;
+  if (targetZoom !== undefined && targetZoom !== null) {
+    _continentZoom = Math.min(CONTINENT_ZOOM_MAX, Math.max(CONTINENT_ZOOM_MIN, targetZoom));
+  }
+  const c = _continentCenter();
+  _continentPan.x = c.x - wx * _continentZoom;
+  _continentPan.y = c.y - wy * _continentZoom;
+  _continentApplyTransform();
+  return true;
+}
+
+// 城市直达：坐标读 style.left/top（就是世界坐标，parseFloat 'Npx'）——offsetParent 会
+// 因 transform 失效、getBoundingClientRect 又吃缩放，都不如源头可靠；尺寸用常量
+function _continentSearchFocusCity(label) {
+  const world = document.getElementById('continentWorld');
+  const el = world && world.querySelector
+    ? world.querySelector('.continent-city[data-city-label="' +
+        String(label).replace(/"/g, '\\"') + '"]')
+    : null;
+  if (!el || !el.style) return false;
+  const x = parseFloat(el.style.left), y = parseFloat(el.style.top);
+  return _continentFocusWorldPoint(
+    x + CONTINENT_CITY_W / 2, y + CONTINENT_CITY_H / 2,
+    Math.max(_continentZoom, 0.9));
+}
+
+// 海域直达：取海域内全部岛框的包围盒适配视野（下限压在世界档之上，保证岛牌可见）
+function _continentSearchFocusRegion(key) {
+  const info = _continentRegionInfo;
+  const region = info && info.regions ? info.regions.find(r => r.key === key) : null;
+  if (!region) return false;
+  const rects = (_continentClusterRects || []).filter(rc =>
+    (region.sessions || []).indexOf(rc.sessionId) >= 0);
+  if (!rects.length) return false;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  rects.forEach(rc => {
+    minX = Math.min(minX, rc.x); minY = Math.min(minY, rc.y);
+    maxX = Math.max(maxX, rc.x + rc.w); maxY = Math.max(maxY, rc.y + rc.h);
+  });
+  const vp = document.getElementById('continentViewport');
+  const vw = (vp && typeof vp.clientWidth === 'number' && vp.clientWidth) || 900;
+  const vh = (vp && typeof vp.clientHeight === 'number' && vp.clientHeight) || 600;
+  const z = Math.min(1.1, Math.max(CONTINENT_LOD_WORLD,
+    Math.min(vw / (maxX - minX + 160), vh / (maxY - minY + 160))));
+  return _continentFocusWorldPoint((minX + maxX) / 2, (minY + maxY) / 2, z);
 }
 
 function _continentSearchClear() {
@@ -4662,12 +4794,7 @@ function _continentFocusSessionIsland(sid) {
   if (!sid) return false;
   const rect = _continentClusterRects.find(r => r && r.sessionId === sid);
   if (!rect || !isFinite(rect.cx) || !isFinite(rect.cy)) return false;
-  const c = _continentCenter();
-  // 岛在目标缩放下的屏幕位置：pan + worldPos·zoom。解 pan 使它落在视口中心。
-  _continentPan.x = c.x - rect.cx * _continentZoom;
-  _continentPan.y = c.y - rect.cy * _continentZoom;
-  _continentApplyTransform();
-  return true;
+  return _continentFocusWorldPoint(rect.cx, rect.cy);  // 数学同源（T137 抽出）
 }
 
 
@@ -4721,14 +4848,23 @@ async function openContinentView(opts) {
   };
   document.addEventListener('keydown', _continentKeyHandler);
 
+  // T135 加载态：投影没到之前顶栏先给转圈＋文案（_continentRender 到达后整段覆盖）
+  const statsEl = document.getElementById('continentStats');
+  if (statsEl) statsEl.innerHTML =
+    '<span class="continent-loading-spin" aria-hidden="true"></span>正在展开大陆…';
   let data;
   try {
     // v7.1a：海域覆盖（改名/挪岛）先于首次渲染就位——第一次画就是用户纠正过的样子；
     // v7.3：折叠态（收起的岛/海域）同样先就位；v8：纠正记录条数（图例脚注要照报）
-    await _continentLoadRegionOverrides();
+    // T135：三路请求互不依赖，并行拉（原串行＝三倍往返白等）；折叠态是本地同步读
     _continentLoadCollapsed();
-    _continentCorrectionCount = await _continentLoadCorrectionCount();
-    data = await _continentFetchData();
+    const loaded = await Promise.all([
+      _continentLoadRegionOverrides(),
+      _continentLoadCorrectionCount(),
+      _continentFetchData(),
+    ]);
+    _continentCorrectionCount = loaded[1];
+    data = loaded[2];
   } catch (err) {
     // 加载失败：把已经起播的拉远动画反向收回去（大陆缩回没打开的样子），再报错。
     // 不能只 closeContinentView —— 那样会把用户留在「会话已缩没、大陆也没了」的空白里。
