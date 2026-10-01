@@ -207,7 +207,10 @@
     .kp-card-info { flex: 1; min-width: 0; }
     .kp-card-title { font-size: var(--fs-lg); font-weight: 600; line-height: 1.3; color: var(--kp-card-title-color); }
     .kp-card-meta { font-size: var(--fs-xs); margin-top: 4px; display: flex; align-items: center; gap: 6px; color: var(--kp-card-meta-color); }
-    .kp-source-icon { font-size: var(--fs-sm); }
+    /* 来源标记改成内联 SVG 线稿，尺寸按 1.15em 跟原来的 emoji 字号对齐；
+       颜色吃父级 --kp-card-meta-color，五套皮肤都跟着走，不用逐个皮肤加规则。 */
+    .kp-source-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+    .kp-source-icon svg { width: 1.15em; height: 1.15em; display: block; }
 
     .kp-card-summary { padding: 0 16px 10px; font-size: var(--fs-sm); line-height: 1.5; color: var(--kp-card-summary-color); }
 
