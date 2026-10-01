@@ -12,11 +12,14 @@ async function openQuiz(mode = 'session') {
   document.body.style.overflow = 'hidden';
   quizState = { phase: 'loading' };
   renderQuiz();
-  await _loadQuizStatsFromServer();
-  await _loadQuizBankFromServer();
   _resetQuizPromptFile();
+  // 三个请求互不依赖，并行省首屏等待（前两个加载自带 try/catch 不抛错；pool 构建仍在全部完成之后）
   try {
-    const data = await _fetchQuizData();
+    const [data] = await Promise.all([
+      _loadQuizStatsFromServer(),
+      _loadQuizBankFromServer(),
+      _fetchQuizData()
+    ]);
     const pool = _buildQuizPool(data);
     quizBank = _readQuizBank();
     quizState = { phase: 'loading', pool };
@@ -93,8 +96,8 @@ async function openQuizGlobalDashboard() {
   document.body.style.overflow = 'hidden';
   quizState = { phase: 'loading' };
   renderQuiz();
-  await _loadQuizStatsFromServer();
-  await _loadQuizBankFromServer();
+  // 两个请求互不依赖，并行省首屏等待
+  await Promise.all([_loadQuizStatsFromServer(), _loadQuizBankFromServer()]);
   quizState = { phase: 'global' };
   renderQuiz();
 }
@@ -427,6 +430,7 @@ function _saveOpenResult(question, answer, result) {
     title: question.title || '',
     prompt: question.prompt || '',
     answer,
+    local: !!result.local,
     scores: result.scores || {},
     feedback: result.feedback || '',
     evidence: result.evidence || '',
@@ -504,6 +508,7 @@ function _localScoreOpenAnswer(question, answer) {
   if (!hasFormulaMention && formulas.length) missing.push('未引用相关公式');
   if (text.length < 60) missing.push('回答偏短，缺少展开');
   return {
+    local: true, // 本地启发式评分标记：渲染层据此显示「未调用 AI」徽标
     scores: {
       physics: Math.max(1, Math.min(10, Math.round(4 + coverage * 4 + (hasConnectionWords ? 1 : 0)))),
       math: Math.max(1, Math.min(10, Math.round(4 + coverage * 3 + (hasFormulaMention ? 2 : 0)))),
