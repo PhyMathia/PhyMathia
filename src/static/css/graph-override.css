@@ -6698,16 +6698,16 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 30%, transparent);
   --pm-shadow: color-mix(in srgb, var(--overlay-bg) 58%, transparent);
 }
-/* 2026-10-01 三调：用户要求浅色更亮——纸底墨配比 26%→18%，sepia 画框/内圈/投影整体调浅 */
+/* 2026-10-01 三/四调：用户两轮要求更亮——纸底墨 26%→12%，sepia 画框 68→44%、内圈环与投影同步调浅（投影破 12% 手册下限，用户亮度优先） */
 [data-theme="light"][data-node-skin="parchment"] {
-  --pm-paper: color-mix(in srgb, var(--node-glass-base) 82%, var(--ink-human) 18%);
-  --pm-line: color-mix(in srgb, var(--ink-amber) 55%, transparent);
-  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 70%, transparent);
-  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 36%, transparent);
-  --pm-ring: color-mix(in srgb, var(--ink-amber) 26%, transparent);
-  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 36%, transparent);
-  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 32%, transparent);
-  --pm-shadow: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --pm-paper: color-mix(in srgb, var(--node-glass-base) 88%, var(--ink-human) 12%);
+  --pm-line: color-mix(in srgb, var(--ink-amber) 44%, transparent);
+  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 58%, transparent);
+  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 28%, transparent);
+  --pm-ring: color-mix(in srgb, var(--ink-amber) 18%, transparent);
+  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 26%, transparent);
+  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 24%, transparent);
+  --pm-shadow: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 [data-node-skin="parchment"] .graph-node {
   background:
@@ -6801,7 +6801,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 浅色主题（2026-10-01 二修）：原配方把深色属性墨当半透明「膜」盖在卡上（attr 13%＋近黑墨 9%），
  * 浅色下渲成灰米色薄膜＝用户指的「太深太脏」；浅色改把属性墨调进白玻璃粉彩化
  * （attr 26% × --node-glass-base），渐变落到纯玻璃白，边线整体调浅。
- * 2026-10-01 三调：用户要求浅色更亮——粉彩配比 26%→16%，模块描边 72/85%→58/70%，边线再调浅。
+ * 2026-10-01 三/四调：用户两轮要求更亮——粉彩配比 26%→10%，模块描边 72/85%→45/56%，边线/投影再调浅。
  * ★ 含 var(--node-attr) 的变量不能定义在根上：自定义属性里的 var() 在「定义处」求值，
  *   而根上没有 --node-attr（渲染层只写在每个节点身上）→ 定义在根＝求值失败＝
  *   引用它的 background 整条失效变透明（2026-10-01 真机踩中）。含属性色的变量一律下沉到
@@ -6812,19 +6812,19 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --cd-accent: color-mix(in srgb, var(--text-primary) 70%, transparent);
   --cd-shadow: color-mix(in srgb, var(--overlay-bg) 42%, transparent);
 }
-/* 2026-10-01 三调：用户要求浅色更亮——边线整体再调浅（投影维持手册下限 12%） */
+/* 2026-10-01 三/四调：用户两轮要求更亮——边线 28/44/46%→14/24/28%，投影 12%→10% */
 [data-theme="light"][data-node-skin="candy"] {
-  --cd-line: color-mix(in srgb, var(--text-primary) 20%, transparent);
-  --cd-line-strong: color-mix(in srgb, var(--text-primary) 32%, transparent);
-  --cd-accent: color-mix(in srgb, var(--text-primary) 36%, transparent);
-  --cd-shadow: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --cd-line: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --cd-line-strong: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  --cd-accent: color-mix(in srgb, var(--text-primary) 28%, transparent);
+  --cd-shadow: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 /* 含属性色的变量下沉到节点级：浅色把深墨属性色调进白玻璃粉彩化（不再当半透明深膜） */
 [data-theme="light"][data-node-skin="candy"] .graph-node {
-  --cd-face-a: color-mix(in srgb, var(--node-attr) 16%, var(--node-glass-base));
+  --cd-face-a: color-mix(in srgb, var(--node-attr) 10%, var(--node-glass-base));
   --cd-face-b: var(--node-glass-base);
-  --cd-module-line: color-mix(in srgb, var(--node-attr) 58%, var(--node-glass-base));
-  --cd-module-line-hover: color-mix(in srgb, var(--node-attr) 70%, var(--node-glass-base));
+  --cd-module-line: color-mix(in srgb, var(--node-attr) 45%, var(--node-glass-base));
+  --cd-module-line-hover: color-mix(in srgb, var(--node-attr) 56%, var(--node-glass-base));
 }
 [data-node-skin="candy"] .graph-node {
   --cd-face-a: color-mix(in srgb, var(--node-attr) 13%, transparent);
