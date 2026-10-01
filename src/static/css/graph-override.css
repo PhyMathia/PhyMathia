@@ -6819,10 +6819,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --cd-accent: color-mix(in srgb, var(--text-primary) 28%, transparent);
   --cd-shadow: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
-/* 含属性色的变量下沉到节点级：浅色把深墨属性色调进白玻璃粉彩化（不再当半透明深膜） */
+/* 含属性色的变量下沉到节点级：浅色改半透明白纱（2026-10-01 五调）——
+ * 磨砂感＝半透明卡面＋backdrop blur 透出背景；此前 94% 不透明白底把磨砂糊死＝用户指「看不出磨砂」。
+ * 亮度不受影响：浅色画布底本就亮，白纱透出的仍是亮背景；属性色调改挂纯半透明（与深色同构造）。 */
 [data-theme="light"][data-node-skin="candy"] .graph-node {
-  --cd-face-a: color-mix(in srgb, var(--node-attr) 10%, var(--node-glass-base));
-  --cd-face-b: var(--node-glass-base);
+  --cd-face-a: color-mix(in srgb, var(--node-attr) 20%, transparent);
+  --cd-face-b: color-mix(in srgb, var(--node-glass-base) 62%, transparent);
   --cd-module-line: color-mix(in srgb, var(--node-attr) 45%, var(--node-glass-base));
   --cd-module-line-hover: color-mix(in srgb, var(--node-attr) 56%, var(--node-glass-base));
 }
