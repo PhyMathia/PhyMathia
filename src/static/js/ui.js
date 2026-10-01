@@ -1834,7 +1834,6 @@ window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300
 const GRAPH_NODE_SKINS = [
   { key: 'aurora', label: '极光磨砂', desc: '渐变半透明磨砂玻璃（默认）' },
   { key: 'blueprint', label: '蓝图制图', desc: '工程蓝图：蓝图纸面＋虚线描边＋淡网格' },
-  { key: 'chalk', label: '粉笔黑板', desc: '墨绿石板底＋粉笔白虚线描边＋板面粉尘晕' },
   { key: 'neon', label: '霓虹夜光', desc: '近黑卡面＋属性色霓虹描边与外发光' },
   { key: 'parchment', label: '羊皮手稿', desc: '暖棕纸底＋铜金描边＋双线画框' },
   { key: 'candy', label: '糖果磨砂', desc: '奶白磨砂玻璃＋马卡龙属性色柔光' },
