@@ -6582,18 +6582,23 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 浅色改从 --node-glass-base 起混、提高赭墨配比出「深牛皮纸」，铜金边/画框全线加深，投影换深墨派生。 */
 [data-node-skin="parchment"] {
   --ink-aged: color-mix(in srgb, var(--ink-human) 60%, var(--text-primary));
-  --pm-paper: color-mix(in srgb, var(--bg-panel) 84%, var(--ink-human) 16%);
-  --pm-line: color-mix(in srgb, var(--ink-amber) 50%, transparent);
-  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 80%, transparent);
-  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 35%, transparent);
-  --pm-ring: color-mix(in srgb, var(--ink-amber) 22%, transparent);
-  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 34%, transparent);
-  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 30%, transparent);
-  --pm-shadow: color-mix(in srgb, var(--overlay-bg) 58%, transparent);
+  --pm-paper: color-mix(in srgb, var(--ink-human) 32%, rgb(24, 18, 12));
+  --pm-line: color-mix(in srgb, var(--ink-amber) 55%, transparent);
+  --pm-line-strong: color-mix(in srgb, var(--ink-amber) 85%, transparent);
+  --pm-line-soft: color-mix(in srgb, var(--ink-amber) 38%, transparent);
+  --pm-ring: color-mix(in srgb, var(--ink-amber) 30%, transparent);
+  --pm-ring-strong: color-mix(in srgb, var(--ink-amber) 44%, transparent);
+  --pm-ring-sel: color-mix(in srgb, var(--ink-amber) 36%, transparent);
+  --pm-shadow: color-mix(in srgb, var(--overlay-bg) 85%, transparent);
 }
-/* 2026-10-01 三/四调：用户两轮要求更亮——纸底墨 26%→12%，sepia 画框 68→44%、内圈环与投影同步调浅（投影破 12% 手册下限，用户亮度优先） */
+/* 2026-10-01 六调·深色翻修：原深色纸底「--bg-panel 84% × 赭墨 16%」藏蓝×赭棕互抵渲成紫灰
+ * （#0f142d×#b5793f ≈ #2A2430，B 通道反超 R）＝blueprint 浅色翻车同款病，用户判「深色难看」。
+ * 改从赭墨×暖黑起混（不沾 --bg-panel 的蓝）出深暖褐「烛光手稿」≈#4A331C，R>G>B 递减羊皮身份回归；
+ * 画框线随暖底全线提亮（金感回来），投影 58%→85% 让卡从画布上浮起来。 */
+/* 2026-10-01 六调·浅色微调：用户「还行，可再偏白亮一点」，真机判读 10% 墨仍偏黄（≈#F0E4C8 观感）
+ * ——纸底墨 12%→10%→6%（四调教训：小步感知不到，一步到位 ≈#F8F2E9），画框/投影不动 */
 [data-theme="light"][data-node-skin="parchment"] {
-  --pm-paper: color-mix(in srgb, var(--node-glass-base) 88%, var(--ink-human) 12%);
+  --pm-paper: color-mix(in srgb, var(--node-glass-base) 94%, var(--ink-human) 6%);
   --pm-line: color-mix(in srgb, var(--ink-amber) 44%, transparent);
   --pm-line-strong: color-mix(in srgb, var(--ink-amber) 58%, transparent);
   --pm-line-soft: color-mix(in srgb, var(--ink-amber) 28%, transparent);
