@@ -6142,6 +6142,8 @@ check('节点皮肤模板：module 覆盖块重写背景与投影，并带 :hove
       if (!css.includes(`[data-node-skin="${k}"] .graph-node.graph-node-module${variant}`))
         throw new Error(`${k}：缺 module${variant} 变体（模块悬停/选中会丢属性色环）`);
     }
+    if (!css.includes(`[data-node-skin="${k}"] .graph-node textarea`))
+      throw new Error(`${k}：卡内编辑控件（textarea/input）没跟皮肤（固定深底盲区）`);
   }
   return true;
 });

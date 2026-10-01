@@ -6368,6 +6368,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  *    [data-theme] .graph-node-module.graph-module-* 是 (0,3,0) 且带 !important，比泛规则 (0,2,0) 高，
  *    只写 border-color 的话模块卡面整卡锁在默认皮（2026-10-01 用户真机实锤）；
  *    module 块写了静态投影，module:hover / module.selected（(0,4,0)）必须跟在后面补回属性色环。
+ * 5) 卡内编辑控件（textarea/input，manual 内容框、draft 草稿框等）基础样式固定 var(--input-bg) 深底，
+ *    皮肤泛规则管不到——每套皮肤末尾单独铺一条跟随卡面材质与描边（:focus 用模板高亮色保住聚焦反馈）。
  * ---------------------------------------------------------- */
 
 /* ---------- 皮肤 1：blueprint 蓝图制图 ----------
@@ -6437,6 +6439,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 0 0 12px color-mix(in srgb, var(--node-attr) 18%, transparent),
     0 14px 40px color-mix(in srgb, var(--overlay-bg) 65%, transparent) !important;
 }
+[data-node-skin="blueprint"] .graph-node textarea,
+[data-node-skin="blueprint"] .graph-node input {
+  background: color-mix(in srgb, var(--bg-panel) 86%, var(--ink-blue) 14%) !important;
+  border-color: color-mix(in srgb, var(--ink-blue) 45%, transparent) !important;
+}
+[data-node-skin="blueprint"] .graph-node textarea:focus,
+[data-node-skin="blueprint"] .graph-node input:focus {
+  border-color: var(--ink-blue) !important;
+}
 
 /* ---------- 皮肤 2：chalk 粉笔黑板 ----------
  * 墨绿石板底＋粉笔白虚线描边（手绘感）＋板面粉尘晕；属性色整体「粉笔化」（混入粉笔白降饱和，色相保留）。 */
@@ -6503,6 +6514,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 0 0 10px color-mix(in srgb, var(--node-attr) 12%, transparent),
     0 12px 36px color-mix(in srgb, var(--overlay-bg) 55%, transparent) !important;
 }
+[data-node-skin="chalk"] .graph-node textarea,
+[data-node-skin="chalk"] .graph-node input {
+  background: color-mix(in srgb, var(--bg-panel) 82%, var(--ink-teal) 18%) !important;
+  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent) !important;
+}
+[data-node-skin="chalk"] .graph-node textarea:focus,
+[data-node-skin="chalk"] .graph-node input:focus {
+  border-color: color-mix(in srgb, var(--text-primary) 85%, transparent) !important;
+}
 
 /* ---------- 皮肤 3：neon 霓虹夜光 ----------
  * 近黑卡面＋属性色霓虹描边与双层外发光；每节点按自己的 --node-attr 发光，属性即霓虹色。 */
@@ -6564,6 +6584,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 0 26px color-mix(in srgb, var(--node-attr) 40%, transparent),
     0 0 72px color-mix(in srgb, var(--node-attr) 22%, transparent),
     0 12px 40px color-mix(in srgb, var(--overlay-bg) 60%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node textarea,
+[data-node-skin="neon"] .graph-node input {
+  background: color-mix(in srgb, var(--overlay-bg) 70%, transparent) !important;
+  border-color: color-mix(in srgb, var(--node-attr) 40%, transparent) !important;
+}
+[data-node-skin="neon"] .graph-node textarea:focus,
+[data-node-skin="neon"] .graph-node input:focus {
+  border-color: var(--node-attr) !important;
 }
 
 /* ---------- 皮肤 4：parchment 羊皮手稿 ----------
@@ -6629,6 +6658,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     inset 0 0 0 1px color-mix(in srgb, var(--ink-amber) 30%, transparent),
     0 14px 40px color-mix(in srgb, var(--overlay-bg) 58%, transparent) !important;
 }
+[data-node-skin="parchment"] .graph-node textarea,
+[data-node-skin="parchment"] .graph-node input {
+  background: color-mix(in srgb, var(--bg-panel) 84%, var(--ink-human) 16%) !important;
+  border-color: color-mix(in srgb, var(--ink-amber) 35%, transparent) !important;
+}
+[data-node-skin="parchment"] .graph-node textarea:focus,
+[data-node-skin="parchment"] .graph-node input:focus {
+  border-color: color-mix(in srgb, var(--ink-amber) 80%, transparent) !important;
+}
 
 /* ---------- 皮肤 5：candy 糖果磨砂 ----------
  * 奶白磨砂玻璃（真 backdrop-filter）＋按属性色着色的马卡龙柔光；属性色全部粉彩化（色相保留）。 */
@@ -6686,4 +6724,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     0 0 0 5px color-mix(in srgb, var(--node-attr) 34%, transparent),
     0 0 0 12px color-mix(in srgb, var(--node-attr) 14%, transparent),
     0 14px 40px color-mix(in srgb, var(--overlay-bg) 42%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node textarea,
+[data-node-skin="candy"] .graph-node input {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
+  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent) !important;
+}
+[data-node-skin="candy"] .graph-node textarea:focus,
+[data-node-skin="candy"] .graph-node input:focus {
+  border-color: color-mix(in srgb, var(--text-primary) 65%, transparent) !important;
 }
