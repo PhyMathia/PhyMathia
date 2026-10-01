@@ -556,7 +556,15 @@ document.addEventListener('click', (e) => {
 
       const isFormula = this.text.length > 3;
       this.size = isFormula ? 14 + Math.random() * 8 : 18 + Math.random() * 16;
-      this.el.style.fontSize = this.size + 'px';
+      // 静态外观一次写定（2026-10-01 第四轮·撤回）：原先 applyTheme 每次都整段重写
+      // cssText，切主题时 33 个符号各重解析 8 条声明。拆开后 applyTheme 只写主题相关的
+      // color/text-shadow 两项，同步换色零滞后再无逐段重解析的开销。
+      this.el.style.cssText = `
+        position:absolute; left:0; top:0;
+        font-family: 'Cambria Math','Latin Modern Math','STIX Two Math','Times New Roman',serif;
+        font-size:${this.size}px;
+        user-select:none; will-change:transform,opacity; pointer-events:none;
+      `;
 
       this.x = Math.random() * window.innerWidth;
       this.y = Math.random() * window.innerHeight;
@@ -581,22 +589,14 @@ document.addEventListener('click', (e) => {
       container.appendChild(this.el);
     }
 
-    applyTheme(darkPref) {
-      const dark = darkPref !== undefined
-        ? darkPref
-        : document.documentElement.getAttribute('data-theme') !== 'light';
+    applyTheme() {
+      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
       const isFormula = this.text.length > 3;
       this.baseOpacity = dark
         ? (isFormula ? 0.12 + Math.random() * 0.12 : 0.15 + Math.random() * 0.2)
         : (isFormula ? 0.08 + Math.random() * 0.08 : 0.10 + Math.random() * 0.12);
-      this.el.style.cssText = `
-        position:absolute; left:0; top:0;
-        font-family: 'Cambria Math','Latin Modern Math','STIX Two Math','Times New Roman',serif;
-        font-size:${this.size}px;
-        color:${dark ? 'rgba(140,180,255,1)' : 'rgba(160,120,70,1)'};
-        text-shadow:${dark ? '0 0 8px rgba(100,150,255,0.3)' : '0 0 6px rgba(180,140,80,0.2)'};
-        user-select:none; will-change:transform,opacity; pointer-events:none;
-      `;
+      this.el.style.color = dark ? 'rgba(140,180,255,1)' : 'rgba(160,120,70,1)';
+      this.el.style.textShadow = dark ? '0 0 8px rgba(100,150,255,0.3)' : '0 0 6px rgba(180,140,80,0.2)';
     }
 
     update() {
@@ -712,17 +712,12 @@ document.addEventListener('click', (e) => {
   window.addEventListener('load', () => setTimeout(_probeAuroraBudget, 1200));
 
   const origToggle = window.toggleTheme;
-  let _symThemeTimer = 0;
   window.toggleTheme = function() {
     if (origToggle) origToggle();
-    // 33 次 cssText 重写（每次整段内联样式失效）挪出翻转帧：翻转后 ~300ms 再换色。
-    // 此时还在 500ms 让路窗口内、符号动画本就冻结，旧色残留＝6-20% 透明度的背景
-    // 漂浮物，不可感知；换来翻转帧预算只留给真正的光栅重算。连切按定时器去重。
-    clearTimeout(_symThemeTimer);
-    _symThemeTimer = setTimeout(function () {
-      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
-      for (const sym of symbols) sym.applyTheme(dark);
-    }, 300);
+    // 同步换色（第四轮曾延后 300ms「挪出翻转帧」，当天被用户实报符号慢一拍即撤回——
+    // 本项目第三次「性能延后→可见滞后→回收」）。同步零滞后，且 applyTheme 已收窄成
+    // 只写 color/text-shadow 两个属性，每次切换的样式工作量比延后前还小。
+    for (const sym of symbols) sym.applyTheme();
   };
 })();
 
@@ -1725,7 +1720,6 @@ let currentTheme = _getInitialTheme();
 // 仍是 node-blur-lite 首切探测。
 let _themeSwitchTimer = null;
 let _themeSwitchAuroraTimer = null;
-let _vizCardSyncTimer = null;
 
 // 慢机磨砂降级探测（2026-10-01）：candy 皮肤节点卡 backdrop-filter: blur(16px) 在翻转
 // 主题时要全量重算磨砂，软件光栅机器上实测 1.3s 的长帧风暴（LoAF 逐项排除其余元凶后，
@@ -1799,16 +1793,10 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
   updateBgImage();
-  // 同步可视化 iframe 主题（2026-10-01 第四轮拆开）：全屏 viz 是主视野，跟主文档同帧翻转；
-  // 卡片 iframe 各自是独立文档（收到消息后各自样式重算+光栅），塞进翻转帧只会长上再加长，
-  // 延后 250ms 广播、让主文档先把翻转那一帧付完。连切时按触发时刻的当前主题去重（晚到的
-  // 旧主题广播不落地），syncVizCardThemes 见 render.js。
-  if (typeof syncVizFullscreenTheme === 'function') syncVizFullscreenTheme(theme);
-  clearTimeout(_vizCardSyncTimer);
-  _vizCardSyncTimer = setTimeout(function () {
-    if (typeof syncVizCardThemes !== 'function') return;
-    syncVizCardThemes(document.documentElement.getAttribute('data-theme') || currentTheme);
-  }, 250);
+  // 同步所有可视化 iframe 的主题（含全屏）——广播保持同步：延后 250ms 曾是第四轮的
+  // 「翻转帧减负」，但 iframe 本就在消息任务里翻、叠不进主文档那一帧，收益纯属推测，
+  // 与符号延后同批撤回（用户实报符号慢一拍），不让任何载体留可见滞后
+  if (typeof syncVizThemes === 'function') syncVizThemes(theme);
   // 渐变删除后颜色即切即稳，Mermaid 配置直接更新（只影响未来新图表的配色）
   if (typeof configureMermaid === 'function' && typeof getMermaidConfig === 'function') {
     configureMermaid(getMermaidConfig(theme === 'dark'));
@@ -1886,7 +1874,6 @@ const GRAPH_NODE_SKINS = [
   { key: 'aurora', label: '极光磨砂', desc: '渐变半透明磨砂玻璃（默认）' },
   { key: 'blueprint', label: '蓝图制图', desc: '工程蓝图：蓝图纸面＋虚线描边＋淡网格' },
   { key: 'neon', label: '霓虹夜光', desc: '近黑卡面＋属性色霓虹描边与外发光' },
-  { key: 'parchment', label: '羊皮手稿', desc: '暖棕纸底＋铜金描边＋双线画框' },
   { key: 'candy', label: '糖果磨砂', desc: '奶白磨砂玻璃＋马卡龙属性色柔光' },
 ];
 // 面板行图标：皮肤模板统一用「层」字形（模板叠放语义）；以后某模板要专属图标再进注册表

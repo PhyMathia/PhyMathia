@@ -283,21 +283,12 @@ const _VIZ_CHECK_BRIDGE = '<script>(function(){'
   + '}'
   + '})();<\/script>';
 
-// 父页面主题切换时，向可视化 iframe 广播。2026-10-01 拆成全屏/卡片两路（原版一次广播
-// 全部）：全屏 viz 是主视野，ui.js 让它跟主文档同帧翻转；卡片 iframe 各自是独立文档、
-// 收到消息后各自样式重算+光栅，ui.js 延后 250ms 再广播卡片，避免叠进翻转长帧。
-// syncVizThemes 保留＝两路都立即发（外部语义不变）。
+// 父页面主题切换时，向所有可视化 iframe（含全屏 iframe）广播
+// （第四轮曾拆成全屏/卡片两路配合 ui.js 延后 250ms 广播卡片，同批撤回——iframe 本就在
+// 消息任务里翻、叠不进主文档那一帧，推测收益不实现，卡片若有时按需再拆）
 function syncVizThemes(theme) {
-  syncVizFullscreenTheme(theme);
-  syncVizCardThemes(theme);
-}
-function syncVizFullscreenTheme(theme) {
-  const f = document.getElementById('vizFullscreenIframe');
-  if (!f) return;
-  try { f.contentWindow.postMessage({ type: 'phymathia-theme', theme: theme }, '*'); } catch (e) {}
-}
-function syncVizCardThemes(theme) {
-  document.querySelectorAll('.viz-iframe').forEach(f => {
+  const frames = document.querySelectorAll('.viz-iframe, #vizFullscreenIframe');
+  frames.forEach(f => {
     try { f.contentWindow.postMessage({ type: 'phymathia-theme', theme: theme }, '*'); } catch (e) {}
   });
 }
