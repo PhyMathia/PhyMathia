@@ -234,6 +234,18 @@ function createManualNode(nodeKind) {
   renderGraphCanvas();
 }
 
+// 轨道形态（T129）：双击徽章展开完整内容卡；卡片上的最小化按钮收回徽章
+//（徽章判定在 graph-render.js _renderBlankNodeHtml：orbit 形态且未展开或已最小化）。
+// _orbitOpen 不入持久化 schema，刷新后徽章收拢属预期。
+function toggleOrbitBadge(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  node._orbitOpen = true;
+  node.minimized = false;
+  _saveCustomNodes();
+  renderGraphCanvas();
+}
+
 // 配方节点（P1，D-R3 覆盖层）：现有 kind 底座 + recipeId + 内嵌快照。
 // 快照随节点落库（customNodes 整条透传：_normalizeGraphState / .pmu 导出导入 /
 // Φ 指纹（customNodes 已含 recipeId）都不需要另开字段）——删配方不毁旧节点。

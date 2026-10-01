@@ -1066,23 +1066,22 @@ function _rectsOverlap(a, b, gap = 40) {
   );
 }
 
-// 轨道形态（T129 重做）：模块圆形卡片沿弧线绕父节点右侧铺开（-64°~+64°），返回左上角落点。
-// 圆径按 480 估（CSS 默认圆径 380–560 的中值）；半径随数量加大防 480 大圆互压，张角 128° 不变
-//（竖向展开 ≈ R·sin64°·2，量级仍与旧竖排同档）。
+// 轨道形态（T129）：模块徽章沿弧线绕父节点右侧铺开（-64°~+64°），返回左上角落点。
+// 徽章固定 132px（CSS 圆形外观见 graph-override.css「节点形态」节）；半径与张角对齐
+// 旧竖排的占位量级（竖向展开 ≈ R·sin64°·2 ≈ 773px，与 6 模块竖排 1100px 同档）。
 function _orbitArcLayout(parentNode, count) {
   const px = parentNode ? (parentNode.x || 0) : 120;
   const py = parentNode ? (parentNode.y || 0) : 200;
   const pw = parentNode ? (parentNode.w || parentNode.customWidth || 300) : 300;
   const ph = parentNode ? (parentNode.h || parentNode.customHeight || 120) : 120;
-  const s = 480;
   const cx = px + pw + 120;
   const cy = py + ph / 2;
-  const R = 430 + Math.max(0, count - 1) * 170;
+  const R = 430;
   const spread = 128 * Math.PI / 180;
   const positions = [];
   for (let i = 0; i < count; i++) {
     const a = count > 1 ? -spread / 2 + (spread * i) / (count - 1) : 0;
-    positions.push({ x: cx + R * Math.cos(a) - s / 2, y: cy + R * Math.sin(a) - s / 2, w: s, h: s });
+    positions.push({ x: cx + R * Math.cos(a) - 66, y: cy + R * Math.sin(a) - 66, w: 132, h: 132 });
   }
   return positions;
 }
@@ -1094,8 +1093,8 @@ function _workflowModulePositions(moduleKeys, answerNodeId) {
   const aw = answer ? (answer.w || answer.customWidth || 300) : 300;
   const ah = answer ? (answer.h || answer.customHeight || 120) : 120;
   const count = moduleKeys.length;
-  // 轨道形态（T129 重做）：圆形卡片沿弧线绕答案节点右侧铺开，落点走 _orbitArcLayout（下方重叠避让
-  // 循环照走，它只会整体平移 x、不破坏弧形）；卡片形态保持原竖排公式不动
+  // 轨道形态（T129）：徽章沿弧线绕答案节点右侧铺开，落点走 _orbitArcLayout（下方重叠避让循环照走，
+  // 它只会整体平移 x、不破坏弧形）；卡片形态保持原竖排公式不动
   const positions = currentNodeShape() === 'orbit'
     ? _orbitArcLayout({ x: ax, y: ay, w: aw, h: ah }, count)
     : (() => {
