@@ -3212,6 +3212,10 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* T142 窄屏不再撑破：按钮折行 + 整体限宽（右缘留 16px 呼吸） */
+  flex-wrap: wrap;
+  row-gap: 6px;
+  max-width: calc(100% - 32px);
   padding: 7px 8px 7px 14px;
   border-radius: var(--r-pill);
   border: 1px solid var(--border);
@@ -3234,11 +3238,25 @@
   color: var(--text-secondary);
   margin-left: 2px;
 }
+/* T135 开图加载态：投影没到之前顶栏给转圈＋文案（_continentRender 到达后整段被覆盖） */
+.continent-loading-spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: continent-spin 0.8s linear infinite;
+}
+@keyframes continent-spin { to { transform: rotate(360deg); } }
 /* v2 工具条：连接 / 撤销 / 清理断线（胶囊内小按钮，不做逐钮磨砂） */
 .continent-tools {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;  /* T142：工具比顶栏更挤，先折行的是它 */
 }
 .continent-tool {
   padding: 3px 10px;
@@ -3386,6 +3404,17 @@
 .continent-cluster:hover { border-color: var(--accent); }
 /* v5.4 岛牌两行：标题行（画布名 + 概念数）+ 副行（前 3 个概念名 + 最近更新）——
  * 看懂岛是看懂联系的前提 */
+/* T140「另有 k 张」展开钮：head 整体 pointer-events:none，按钮要自己接住点击 */
+.continent-cluster-more {
+  pointer-events: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.continent-cluster-more:hover { text-decoration: underline; }
 .continent-cluster-head {
   position: absolute;
   left: 10px;
@@ -4085,6 +4114,17 @@
   opacity: 0.7;
 }
 .continent-legend-rename:hover { color: var(--accent); opacity: 1; }
+/* T139 符号说明：教三种前缀/三种线/布局语义，跟脚注同一档字号 */
+.continent-legend-syms {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+}
 .continent-legend-foot {
   margin-top: 6px;
   padding-top: 5px;
@@ -4353,6 +4393,11 @@
   /* 会话图的退场缩放同理：状态照翻（缩小 + 透明），但不补间 */
   .graph-canvas.is-continent-retreat {
     transform: none;
+  }
+  /* T135 加载 spinner 的降级也并进这一块——v9 的 smoke 断言取**第一个**
+     reduced-motion 块并要求覆盖 .graph-canvas，别再另开 @media 抢在它前面 */
+  .continent-loading-spin {
+    animation: none;
   }
 }
 

@@ -2990,6 +2990,85 @@ check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退
   return true;
 });
 
+check('graph-continent: T135/T142 开图加载态与顶栏折行（三路并行拉取 / spinner / 窄屏 wrap）', () => {
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const openAt = src.indexOf('async function openContinentView');
+  const openSrc = src.slice(openAt, openAt + 2600);
+  if (!/Promise\.all\(\[\s*_continentLoadRegionOverrides\(\),\s*_continentLoadCorrectionCount\(\),\s*_continentFetchData\(\),?\s*\]\)/.test(openSrc)) {
+    throw new Error('开图三路请求未并行（串行＝三倍往返白等）');
+  }
+  if (!/_continentCorrectionCount = loaded\[1\]/.test(openSrc)) throw new Error('纠正计数未从并行结果取回（图例脚注会照报 0）');
+  if (!openSrc.includes('continent-loading-spin')) throw new Error('开图加载态缺失（冷启动白屏感）');
+  if (openSrc.includes('_continentLoadCollapsed();') &&
+      openSrc.indexOf('_continentLoadCollapsed();') > openSrc.indexOf('Promise.all')) {
+    throw new Error('折叠态应在并行等待之前同步读（本地 localStorage 不占等待）');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-loading-spin')) throw new Error('加载 spinner 样式缺失');
+  if (!/animation:\s*continent-spin/.test(css)) throw new Error('spinner 动画缺失');
+  if (!/\.continent-loading-spin\s*\{[^}]*animation:\s*none/.test(css)) {
+    throw new Error('spinner 未给减少动态效果让路');
+  }
+  const topbarRule = css.match(/\.continent-topbar\s*\{[^}]*\}/);
+  if (!topbarRule || !/flex-wrap:\s*wrap/.test(topbarRule[0])) throw new Error('顶栏未折行（窄屏溢出）');
+  if (!topbarRule[0].includes('max-width')) throw new Error('顶栏未限宽（窄屏撑破视口）');
+  return true;
+});
+
+check('graph-continent: T137 搜索扩界与截断明示（城市/海域行 / cap+1 探满 / 不带 extras 行为不变）', () => {
+  const matches = sandbox._continentSearchMatches;
+  const data = { clusters: [
+    { sessionId: 's1', title: '梯度专题', itemCount: 1, items: [{ itemId: 'i1', title: '梯度', summary: '' }] },
+  ] };
+  const extras = {
+    cities: [{ label: '梯度', sessions: 2 }, { label: '不相关', sessions: 3 }],
+    regions: [{ key: 'math', name: '数学', sessions: 4, itemCount: 12 }],
+  };
+  // 不带 extras：行为逐字节不变（冻结契约不受扰）
+  const base = matches(data, '梯度专题');
+  if (base.length !== 1 || base[0].type !== 'island') throw new Error('基线行为变了');
+  // 带 extras：岛名/卡/城市都可命中同一词（夹具里岛名「梯度专题」含「梯度」），
+  // 排序＝岛、卡、城市（城市垫底）；海域命中带 key
+  const both = matches(data, '梯度', 30, extras);
+  if (both.length !== 3 || both[0].type !== 'island' || both[1].type !== 'item' || both[2].type !== 'city') {
+    throw new Error('城市命中或排序错：' + JSON.stringify(both));
+  }
+  const region = matches(data, '数学', 30, extras);
+  if (region.length !== 1 || region[0].type !== 'region' || region[0].key !== 'math') throw new Error('海域命中错');
+  if (matches(data, '梯度', 1, extras).length !== 1) throw new Error('cap 截断失效');
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!/_continentSearchMatches\(_continentData, q, CONTINENT_SEARCH_LIMIT \+ 1, extras\)/.test(src)) {
+    throw new Error('搜索未用 cap+1 探满（截断不可见）');
+  }
+  if (!src.includes('仅显示前')) throw new Error('截断脚注缺失');
+  if (!src.includes('function _continentSearchFocusCity') || !src.includes('function _continentSearchFocusRegion')) {
+    throw new Error('城市/海域跳转缺失');
+  }
+  return true;
+});
+
+check('graph-continent: T138/T140/T139 岛悬停与卡展开与图例符号（expandAll 旗 / 收放钮 / 符号行）', () => {
+  const measure = sandbox._continentMeasure;
+  const big = { sessionId: 'x', items: Array.from({ length: 12 }, (_, i) => ({ itemId: 'i' + i, title: 't' + i })) };
+  const capped = measure(big, false, 9);
+  if (capped.shown !== 9) throw new Error('基线 cardCap 行为变了');
+  const expanded = measure(Object.assign({}, big, { expandAll: true }), false, 9);
+  if (expanded.shown !== 12) throw new Error('expandAll 未生效');
+  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  if (!/el\.title = '岛：'/.test(src)) throw new Error('岛悬停 title 缺失');
+  if (!src.includes('data-island-expand')) throw new Error('展开钮缺失');
+  if (!/_continentExpanded\[rect\.sessionId\]/.test(src)) throw new Error('展开态回显（收起钮）缺失');
+  if (!/_continentRender\(_continentData\)/.test(src)) throw new Error('展开未走本地重渲（不该回源拉数据）');
+  if (!src.includes('continent-legend-syms')) throw new Error('图例符号说明缺失');
+  if (!src.includes('相邻的岛')) throw new Error('布局语义说明缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!/\.continent-cluster-more\s*\{[^}]*pointer-events:\s*auto/.test(css)) {
+    throw new Error('展开钮接不到点击（head 整体是 pointer-events:none）');
+  }
+  if (!css.includes('.continent-legend-syms')) throw new Error('图例符号样式缺失');
+  return true;
+});
+
 check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种来源分得清）', () => {
   const prefix = sandbox._continentKindPrefix;
   if (typeof prefix !== 'function') throw new Error('族前缀纯函数未暴露（_continentKindPrefix）');
