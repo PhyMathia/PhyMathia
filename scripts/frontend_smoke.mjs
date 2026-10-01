@@ -6148,14 +6148,16 @@ check('节点皮肤模板：module 覆盖块重写背景与投影，并带 :hove
   return true;
 });
 
-// 静态契约（T129）：节点形态开关接线——注册表/存储键/页头入口/CSS 覆盖块/弧线排布/徽章渲染
-check('节点形态开关（orbit）：注册表、入口、CSS 覆盖块、弧线排布、徽章渲染互相对齐', () => {
+// 静态契约（T129 重做）：节点形态开关接线——注册表/存储键/页头入口/CSS 圆卡覆盖块/弧线排布/等比缩放
+check('节点形态开关（orbit）：注册表、入口、CSS 圆卡覆盖块、弧线排布、等比缩放互相对齐', () => {
   const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
   const start = ui.indexOf('const GRAPH_NODE_SHAPES');
   if (start < 0) throw new Error('ui.js 缺 GRAPH_NODE_SHAPES 注册表');
   const registry = ui.slice(start, ui.indexOf('];', start));
   const keys = [...registry.matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]);
   if (!keys.includes('card')) throw new Error('形态注册表解析异常：没找到默认形态 card');
+  if (ui.includes('_applyOrbitLayoutToExisting') || ui.includes('_orbitSavedPositions'))
+    throw new Error('ui.js 残留切形态重排逻辑（重做后切形态不重排既有节点）');
   const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
   if (!cfg.includes("STORAGE_KEY_NODE_SHAPE = 'phymathia_node_shape'")) throw new Error('config.js 缺形态存储键');
   const html = fs.readFileSync('src/static/index.html', 'utf8');
@@ -6165,12 +6167,17 @@ check('节点形态开关（orbit）：注册表、入口、CSS 覆盖块、弧�
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   const missing = keys.filter(k => k !== 'card' && !css.includes(`[data-node-shape="${k}"] .graph-node`));
   if (missing.length) throw new Error('形态注册表与 CSS 覆盖块不同步，缺：' + missing.join(', '));
+  const orbitBlock = css.slice(css.indexOf('[data-node-shape="orbit"]'));
+  if (!orbitBlock.includes('aspect-ratio') || !orbitBlock.includes('border-radius: 50%'))
+    throw new Error('orbit 覆盖块没写成圆形卡片（缺 aspect-ratio / border-radius: 50%）');
   const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
   if (!wf.includes('function _orbitArcLayout')) throw new Error('graph-workflow.js 缺弧线排布 _orbitArcLayout');
   if (!wf.includes("currentNodeShape() === 'orbit'")) throw new Error('工作流模块落点没接轨道分支');
   const render = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
-  if (!render.includes('graph-orbit-badge')) throw new Error('模块渲染没接徽章类');
-  if (!render.includes('toggleOrbitBadge')) throw new Error('徽章没接展开动作');
+  if (render.includes('toggleOrbitBadge') || render.includes('graph-orbit-badge') || render.includes('_orbitOpen'))
+    throw new Error('graph-render.js 残留徽章机制（重做后 orbit＝圆形卡片，无双击展开徽章）');
+  const interact = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (!interact.includes("currentNodeShape() === 'orbit'")) throw new Error('缩放分支没接 orbit 等比缩放（正圆保持）');
   return true;
 });
 

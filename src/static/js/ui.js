@@ -1831,15 +1831,16 @@ document.addEventListener('click', (e) => {
 });
 
 /* ====================================================
- * 节点形态开关（T129，2026-10-01）——机制照抄节点皮肤：
+ * 节点形态开关（T129，2026-10-01 重做）——机制照抄节点皮肤：
  * html 根挂 data-node-shape，graph-override.css 末节按属性写覆盖块；
- * card=方形卡片（默认形态，不挂属性）；orbit=模块缩圆形徽章＋弧线分布。
- * 徽章外观/落点/展开见：CSS「节点形态」节、graph-workflow.js _orbitArcLayout、
- * graph-render.js _renderBlankNodeHtml、graph-custom.js toggleOrbitBadge。
+ * card=方形卡片（默认形态，不挂属性）；orbit=模块节点变圆形卡片，
+ * 功能与方形完全一致（圆内滚动/拖拽/等比缩放/右键/卡内编辑/端口/折叠/连线），
+ * 新模块落位沿弧线（graph-workflow.js _orbitArcLayout）；切换形态只换外观、
+ * 不重排既有节点（重排逻辑已随徽章机制删除）。
  * ==================================================== */
 const GRAPH_NODE_SHAPES = [
   { key: 'card', label: '方形卡片', desc: '完整内容卡（默认）' },
-  { key: 'orbit', label: '圆形轨道', desc: '模块缩成圆形徽章沿弧线铺开，双击徽章展开内容卡' },
+  { key: 'orbit', label: '圆形轨道', desc: '模块节点显示为圆形卡片，内容、调整大小、拖拽等与方形完全一致，新模块沿弧线排布' },
 ];
 // 面板行图标：形态统一用「轨道」字形（圆＋卫星语义）
 const SHAPE_OPTION_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><circle cx="19" cy="5" r="2"></circle><circle cx="5" cy="19" r="2"></circle><path d="M10.4 21.9a10 10 0 0 0 9.941-15.416"></path><path d="M13.5 2.1a10 10 0 0 0-9.841 15.416"></path></svg>';
@@ -1849,22 +1850,18 @@ function currentNodeShape() {
   return GRAPH_NODE_SHAPES.some(s => s.key === v) ? v : GRAPH_NODE_SHAPES[0].key;
 }
 
-// 切到 orbit 前记住各模块原位置，切回 card 时原样还原（用户拖过的布局不被形态开关吃掉）。
-// 仅存内存不落盘：刷新后「切回还原」失效属预期（刷新本身已经固定了当时的位置）。
-let _orbitSavedPositions = null;
-
 function applyNodeShape(key) {
   const shape = GRAPH_NODE_SHAPES.some(s => s.key === key) ? key : GRAPH_NODE_SHAPES[0].key;
-  const prev = document.documentElement.getAttribute('data-node-shape') || '';
   localStorage.setItem(STORAGE_KEY_NODE_SHAPE, shape);
   // 默认形态不挂属性：基础节点规则本身就是 card；localStorage 里的未知旧值也安全回落
   if (shape === GRAPH_NODE_SHAPES[0].key) {
     document.documentElement.removeAttribute('data-node-shape');
-    if (prev === 'orbit') _restoreOrbitLayout();
   } else {
     document.documentElement.setAttribute('data-node-shape', shape);
-    if (prev !== shape && shape === 'orbit') _applyOrbitLayoutToExisting();
   }
+  // 全量重渲：节点高度与连线锚点按当前形态重测（圆形下高=宽）；
+  // 启动早期画布可能还没建，按现有代码风格做存在性 guard（形态属性本身已生效）
+  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
   updateShapePanelUI();
 }
 
@@ -1918,51 +1915,6 @@ document.addEventListener('click', (e) => {
     _setPanelTriggerState('shapePanel', false);
   }
 });
-
-// 轨道排布（切开关时对画布上已有模块生效）：按「同一上游父节点」分组，各组沿弧线重排；
-// 没有父节点的模块不动。父节点在全量渲染节点里找（graphView.nodes 含消息派生的 hub/answer，
-// 只在 state.customNodes 里找会漏掉挂在「分发」下的组）。原位置存 _orbitSavedPositions 供切回 card 还原。
-function _applyOrbitLayoutToExisting() {
-  const state = _graphState();
-  const customNodes = state.customNodes || [];
-  const modules = customNodes.filter(n => n.kind === 'module');
-  if (!modules.length) return;
-  _orbitSavedPositions = new Map(modules.map(n => [n.id, { x: n.x, y: n.y }]));
-  const lookup = (typeof graphView !== 'undefined' && Array.isArray(graphView.nodes) && graphView.nodes.length)
-    ? graphView.nodes
-    : customNodes;
-  const nodeById = new Map(lookup.map(n => [n.id, n]));
-  const parentOf = id => {
-    const conn = (state.connections || []).find(c => c.to === id);
-    return conn ? nodeById.get(conn.from) || null : null;
-  };
-  const groups = new Map();
-  modules.forEach(m => {
-    const parent = parentOf(m.id);
-    if (!parent) return;
-    if (!groups.has(parent.id)) groups.set(parent.id, { parent, list: [] });
-    groups.get(parent.id).list.push(m);
-  });
-  groups.forEach(({ parent, list }) => {
-    _orbitArcLayout(parent, list.length).forEach((pos, i) => {
-      if (list[i]) { list[i].x = pos.x; list[i].y = pos.y; }
-    });
-  });
-  if (typeof _saveGraphState === 'function') _saveGraphState(state);
-  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
-}
-
-function _restoreOrbitLayout() {
-  if (!_orbitSavedPositions) return;
-  const state = _graphState();
-  (state.customNodes || []).forEach(n => {
-    const saved = _orbitSavedPositions.get(n.id);
-    if (saved) { n.x = saved.x; n.y = saved.y; }
-  });
-  _orbitSavedPositions = null;
-  if (typeof _saveGraphState === 'function') _saveGraphState(state);
-  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
-}
 
 /* ====================================================
  * 鼠标特效系统
