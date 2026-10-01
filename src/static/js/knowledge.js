@@ -1620,9 +1620,12 @@ function _kpKnowledgeMarkdown() {
         const latex = _stripFormulaDelimiters(f);
         if (!latex) continue;
         lines.push('');
-        lines.push('```latex');
-        lines.push(latex);
-        lines.push('```');
+        // $$ 数学块而非 ```latex 代码围栏：代码块在任何查看器都只按字面显示，
+        // $$ 才能被 Typora/Obsidian/GitHub/VS Code 等数学渲染查看器画成公式
+        //（latex 已剥定界符，不会生成 $$$$；空行会截断数学块，压成单行）
+        lines.push('$$');
+        lines.push(latex.replace(/\n\s*\n+/g, '\n').trim());
+        lines.push('$$');
       }
     }
   }
@@ -1641,9 +1644,10 @@ function _kpFormulasMarkdown() {
     lines.push('');
     lines.push('## ' + (_cleanFormulaConcept(it) || '（未命名）'));
     lines.push('');
-    lines.push('```latex');
-    lines.push(_stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)));
-    lines.push('```');
+    // 同上：$$ 数学块而非代码围栏，数学渲染查看器才能画成公式
+    lines.push('$$');
+    lines.push(_stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)).replace(/\n\s*\n+/g, '\n').trim());
+    lines.push('$$');
     const meaning = _normalizePlainSummaryText(it.meaning);
     if (meaning) { lines.push('- 含义：' + meaning); }
     if (it.topic) { lines.push('- 主题：' + it.topic); }
