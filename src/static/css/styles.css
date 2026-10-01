@@ -2823,25 +2823,20 @@
     @supports (padding: env(safe-area-inset-bottom)) {
       }
 
-    /* ====== 主题切换窗口（渐变删除后仍保留，2026-10-01） ======
-       变量过渡与背景交叉淡入已删（见上方 :root 处说明），窗口仍干两件事：
-       ① 掐掉全组件自有的 hover 过渡（--dur-base 级 background/border/color 过渡
-         在翻转时会各自补一段迷你淡变，毯子保证整页真正即切即稳）；
-       ② 窗口内摘节点卡磨砂（见下一条），翻转帧不重算全量 blur。
-       JS（ui.js applyTheme）切换瞬间挂 .theme-switching，650ms 后摘除；
-       选择器必须含 html 自己——:root 上若再出现变量过渡，只写 * 禁不到根插值。 */
+    /* ====== 主题切换窗口（渐变删除后收窄为单职责，2026-10-01） ======
+       变量过渡与背景交叉淡入已删（见上方 :root 处说明），窗口只剩一件事：
+       掐掉全组件自有的 hover 过渡（--dur-base 级 background/border/color 过渡
+       在翻转时会各自补一段迷你淡变，毯子保证整页真正即切即稳）。
+       JS（ui.js applyTheme）仅在真实翻转时挂 .theme-switching，250ms 后摘除；
+       选择器必须含 html 自己——:root 上若再出现变量过渡，只写 * 禁不到根插值。
+       原「窗口内摘节点卡磨砂」规则已删：交叉淡入删除后背景每次只换一次，磨砂
+       只重算一次，摘除无收益，反而让 candy 卡片窗口内失磨砂、结束再弹回
+       （2026-10-01 用户实报「切换后样式晚零点几秒」）。慢机兜底＝node-blur-lite。 */
     html.theme-switching,
     html.theme-switching *,
     html.theme-switching *::before,
     html.theme-switching *::after {
       transition: none !important;
-    }
-    /* 节点卡磨砂是切换风暴的大头（2026-10-01 LoAF 实测：32 张 blur(16px) 卡在翻转时
-       全量重算磨砂＝软件光栅下 1.5s 的 250-400ms 长帧，其余全部元凶排除后仅关此项归零）。
-       窗口内摘掉、结束自动恢复；卡面有半透明底色兜着，450-650ms 的窗口内看不出差别。 */
-    html.theme-switching .graph-node {
-      backdrop-filter: none !important;
-      -webkit-backdrop-filter: none !important;
     }
     /* 慢机磨砂降级（html.node-blur-lite 由 ui.js 首次切换探测挂，仅当次会话，2026-10-01）：
        candy 皮肤节点卡 blur(16px) 翻转主题时全量重算磨砂——软件光栅机器上 1.3s 长帧风暴
