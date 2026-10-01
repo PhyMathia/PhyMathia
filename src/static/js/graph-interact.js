@@ -245,6 +245,11 @@ function _toggleGraphNodeMinimize(node) {
     _updateNodeTransforms();
     _redrawEdges();
   }
+  // 轨道形态（T129）：模块最小化＝收回徽章。徽章类（graph-orbit-badge）由渲染分支计算，
+  // 上面的就地改类改不出徽章，轨道下的模块直接整卡重渲（收合是离散操作，渲染成本可接受）
+  if (currentNodeShape() === 'orbit' && node.kind === 'module' && typeof renderGraphCanvas === 'function') {
+    renderGraphCanvas();
+  }
 }
 
 function _startLinkDrag(event, portEl) {

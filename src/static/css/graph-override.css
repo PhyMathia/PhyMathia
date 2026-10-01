@@ -6734,3 +6734,62 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 [data-node-skin="candy"] .graph-node input:focus {
   border-color: color-mix(in srgb, var(--text-primary) 65%, transparent) !important;
 }
+
+/* ============================================================
+ * 节点形态（data-node-shape）—— T129，2026-10-01
+ * 机制照抄皮肤节：html 根挂 data-node-shape，本节按属性写覆盖块；card=默认形态不挂属性。
+ * orbit 圆形轨道：渲染层给未展开的模块节点加 .graph-orbit-badge（graph-render.js
+ * _renderBlankNodeHtml），落点由 graph-workflow.js _orbitArcLayout 沿弧线计算；
+ * 双击徽章展开完整卡（toggleOrbitBadge 置 _orbitOpen），展开卡的最小化按钮收回徽章。
+ * 徽章只缩端口列、不删端口元素——连线锚在端口上（_portAnchor），删了边线会断。
+ * 形态是独立开关、不占皮肤红线：这里改尺寸/圆角是形态语义本身，与皮肤（只动皮）叠加生效。
+ * ============================================================ */
+[data-node-shape="orbit"] .graph-node.graph-orbit-badge {
+  width: 132px !important;
+  min-width: 132px !important;
+  max-width: 132px !important;
+  height: 132px !important;
+  min-height: 132px !important;
+  padding: 14px 10px !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-node-header,
+[data-node-shape="orbit"] .graph-orbit-badge .graph-node-full-content,
+[data-node-shape="orbit"] .graph-orbit-badge .graph-blank-requirement,
+[data-node-shape="orbit"] .graph-orbit-badge .graph-blank-hint,
+[data-node-shape="orbit"] .graph-orbit-badge .graph-add-port-btn,
+[data-node-shape="orbit"] .graph-orbit-badge .graph-resize-handle {
+  display: none !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-node-main {
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-node-label {
+  width: 100% !important;
+  overflow: hidden !important;
+  font-weight: 600 !important;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+/* 端口列缩成圆缘上的小点（连线锚点必须留在 DOM），标签藏掉 */
+[data-node-shape="orbit"] .graph-orbit-badge .graph-port-col {
+  position: absolute !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  padding: 0 !important;
+  gap: 4px !important;
+  max-width: none !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-port-label {
+  display: none !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-input-col {
+  left: -9px !important;
+}
+[data-node-shape="orbit"] .graph-orbit-badge .graph-output-col {
+  right: -9px !important;
+}
