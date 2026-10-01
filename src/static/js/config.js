@@ -13,6 +13,8 @@ const STORAGE_KEY_LEVEL = 'phymathia_level';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
 const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
+// 知识总览面板上次停留的标签页（knowledge/formulas，全局键；重开面板时恢复）
+const STORAGE_KEY_KP_TAB = 'phymathia_kp_tab';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写

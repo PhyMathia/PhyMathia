@@ -26,7 +26,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=2797f3b3">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=0ed9bbb5">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=b5023738">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=40d4c2bd">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -224,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=9b545882"></script>
+  <script src="/js/app.js?v=cc1ad53d"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -296,6 +296,12 @@
     <div class="kp-header">
       <h2>知识总览</h2>
       <div class="kp-header-actions">
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpExportBtn" onclick="exportKnowledgeMarkdown()" title="导出当前标签页全部内容为 Markdown 文件（整库导出，不受筛选/搜索影响）">⇩ 导出</button>
+        <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpContinentBtn" onclick="openKnowledgeContinentView()" title="打开知识大陆（跨会话概念投影总览）">🌐 大陆</button>
+        <span class="kp-optimize-progress" id="kpOptimizeProgress" hidden>
+          <span id="kpOptimizeProgressText">0/0</span>
+          <span class="kp-optimize-progress-track"><span class="kp-optimize-progress-fill" id="kpOptimizeProgressFill"></span></span>
+        </span>
         <button class="kp-tool-btn aurora-glass aurora-glass--compact" id="kpOptimizeBtn" onclick="optimizeKnowledgeSummaries()" title="用 AI 重述仍是整卡复述的旧摘要（手动/模型摘要不触碰）；运行中再次点击可停止">✦ 优化摘要</button>
         <button aria-label="关闭" class="kp-close" onclick="closeKnowledgePanel()">✕</button>
       </div>
@@ -325,13 +331,21 @@
           <button class="kp-filter-btn" data-filter="source" data-value="file" onclick="setKpFilter(this)">文件</button>
           <button class="kp-filter-btn" data-filter="source" data-value="manual" onclick="setKpFilter(this)">收藏</button>
         </div>
-        <input class="kp-search" type="text" placeholder="搜索知识..." oninput="filterKnowledge()" id="kpSearch">
+        <div class="kp-search-wrap">
+          <input class="kp-search" type="text" placeholder="搜索知识..." oninput="filterKnowledge()" id="kpSearch">
+          <button class="kp-search-clear" type="button" aria-label="清除搜索" onclick="clearKpSearch()">×</button>
+        </div>
       </div>
+      <div class="kp-result-count" id="kpResultCount"></div>
       <div class="kp-extracting" id="kpExtracting"><div class="kp-spinner"></div><span>AI 正在提取知识...</span></div>
       <div class="kp-timeline" id="kpTimeline"></div>
     </div>
     <div id="kpFormulasView" style="display:none">
-      <input class="kp-search" type="text" placeholder="搜索公式（概念/含义/主题/关联概念）..." oninput="filterFormulas()" id="kpFormulaSearch">
+      <div class="kp-search-wrap kp-search-wrap--formula">
+        <input class="kp-search" type="text" placeholder="搜索公式（概念/含义/主题/关联概念）..." oninput="filterFormulas()" id="kpFormulaSearch">
+        <button class="kp-search-clear" type="button" aria-label="清除搜索" onclick="clearKpFormulaSearch()">×</button>
+      </div>
+      <div class="kp-result-count" id="kpFormulaCount"></div>
       <div class="kp-formula-list" id="kpFormulaList"></div>
     </div>
   </div>

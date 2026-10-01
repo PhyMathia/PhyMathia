@@ -244,6 +244,40 @@ async function deleteKnowledgeBySession(sessionId) {
   await saveKnowledgeItems(items);
 }
 
+// KaTeX 渲染缓存：latex 原文 → renderToString 结果（displayMode 恒 true）。
+// 面板重渲染频繁（搜索防抖/筛选/加载更多都整面重画），同一公式反复编译是最大热点。
+// 上限 2000 条 FIFO：Map 保持插入序，超限删最早键。渲染抛异常的结果不入缓存
+// （坏 latex 每次重试而非永久缓存失败输出），调用方各自的兜底逻辑不变。
+const _KP_KATEX_CACHE_MAX = 2000;
+const _katexCache = new Map();
+function _katexHtml(latex) {
+  const key = String(latex == null ? '' : latex);
+  const hit = _katexCache.get(key);
+  if (hit !== undefined) return hit;
+  let html;
+  try {
+    html = katex.renderToString(key, { throwOnError: false, displayMode: true });
+  } catch (e) {
+    return '';
+  }
+  if (_katexCache.size >= _KP_KATEX_CACHE_MAX) {
+    _katexCache.delete(_katexCache.keys().next().value);
+  }
+  _katexCache.set(key, html);
+  return html;
+}
+
+// 长列表分批渲染上限：初次 60 条，「加载更多」每次 +60；筛选/搜索变化时重置。
+// 知识时间线与公式速查各持一份（两页互不干扰）。
+const KP_PAGE_SIZE = 60;
+let kpRenderLimit = KP_PAGE_SIZE;
+let kpFormulaRenderLimit = KP_PAGE_SIZE;
+
+// 展开卡记忆（仅内存级，不落 localStorage）：15 秒定时同步触发的整面重渲染
+// 不再把用户展开的卡收起。renderKnowledgePanel 重建 DOM 时对集合内的卡直接
+// 恢复 expanded 类并当场填好详情（置 dataset.rendered，toggleKpCard 不再重复填充）。
+const _kpExpandedIds = new Set();
+
 // Toggle panel
 function toggleKnowledgePanel() {
   const panel = document.getElementById('knowledgePanel');
@@ -254,6 +288,14 @@ function toggleKnowledgePanel() {
     panel.classList.add('active');
     // 清缓存强制重读 localStorage（内存缓存可能持有旧数据/空对象）
     invalidateKnowledgeCache();
+    // 恢复上次停留的标签页（键见 config.js STORAGE_KEY_KP_TAB；公式页懒加载
+    // 在 switchKpTab 内保持既有行为）
+    let lastTab = '';
+    try { lastTab = localStorage.getItem(STORAGE_KEY_KP_TAB) || ''; } catch (e) {}
+    if (lastTab === 'knowledge' || lastTab === 'formulas') switchKpTab(lastTab);
+    // 关面板不再中止批量优化（2026-10-01 设计变更）：重开时若批量仍在跑，
+    // 恢复「■ 停止优化」按钮运行态并重填 n/N 进度显示（进度状态存模块级变量）
+    _syncKpOptimizeWidgets();
     renderKnowledgePanel();
     // 打开面板时走快速刷新通道：直接拉取服务端最新知识+公式（不等 15 秒定时同步）
     _quickRefreshKnowledge().then(() => {
@@ -268,8 +310,8 @@ function toggleKnowledgePanel() {
 }
 
 function closeKnowledgePanel() {
-  // 中断进行中的批量摘要优化（可停止注册表：关闭面板即中止，不再发出后续请求）
-  abortKnowledgeSummaryOptimize();
+  // 关面板不再中止批量摘要优化（2026-10-01 设计变更）：任务后台继续、toast 继续提示，
+  // 重开面板恢复按钮运行态；中止路径＝再次点击「优化摘要」按钮 / Esc
   document.getElementById('knowledgePanel').classList.remove('active');
 }
 
@@ -282,6 +324,7 @@ function setKpFilter(btn) {
   btn.classList.add('active');
   if (filter === 'category') kpFilterCategory = value;
   else if (filter === 'source') kpFilterSource = value;
+  kpRenderLimit = KP_PAGE_SIZE; // 筛选变化重置分批上限
   renderKnowledgePanel();
 }
 
@@ -291,9 +334,43 @@ function setKpFilter(btn) {
 let _kpFilterTimer = 0;
 function filterKnowledge() {
   const input = document.getElementById('kpSearch');
+  kpRenderLimit = KP_PAGE_SIZE; // 搜索词变化重置分批上限
   if (_kpFilterTimer) { clearTimeout(_kpFilterTimer); _kpFilterTimer = 0; }
   if (!input || !input.value.trim()) { renderKnowledgePanel(); return; }
   _kpFilterTimer = setTimeout(() => { _kpFilterTimer = 0; renderKnowledgePanel(); }, 200);
+}
+
+// 时间线「加载更多」：提高分批上限后整面重渲染（KaTeX 缓存令已渲染部分近乎免费）
+function loadMoreKnowledge() {
+  kpRenderLimit += KP_PAGE_SIZE;
+  renderKnowledgePanel();
+}
+
+// 一键清除筛选/搜索（时间线空态按钮）：分类/来源重置为全部、清空搜索框、重渲染
+function clearKpFilters() {
+  kpFilterCategory = 'all';
+  kpFilterSource = 'all';
+  document.querySelectorAll('#kpKnowledgeView .kp-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.value === 'all'));
+  const input = document.getElementById('kpSearch');
+  if (input) input.value = '';
+  kpRenderLimit = KP_PAGE_SIZE;
+  renderKnowledgePanel();
+}
+
+// 搜索框 × 清除按钮：清空并立即重渲染（知识点页）
+function clearKpSearch() {
+  const input = document.getElementById('kpSearch');
+  if (input) input.value = '';
+  kpRenderLimit = KP_PAGE_SIZE;
+  renderKnowledgePanel();
+}
+
+// 搜索框 × 清除按钮：清空并立即重渲染（公式速查页）
+function clearKpFormulaSearch() {
+  const input = document.getElementById('kpFormulaSearch');
+  if (input) input.value = '';
+  kpFormulaRenderLimit = KP_PAGE_SIZE;
+  renderFormulaList();
 }
 
 // Render
@@ -302,13 +379,22 @@ function renderKnowledgePanel() {
   const arr = Object.values(items);
   const search = (document.getElementById('kpSearch')?.value || '').toLowerCase().trim();
 
-  // Stats
-  const now = Date.now();
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  // Stats（单趟遍历累加，替代原来 3 趟 filter——大库每次重渲染都要跑）
+  // 「本周新增」统一为自然周口径（2026-10-01）：与时间线「本周」分组共用同一个
+  // weekStart（原统计按滚动 7 天、分组按自然周，两边数字对不上）
+  const today = new Date();
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay());
+  const weekStartMs = weekStart.getTime();
+  let physicsCount = 0, mathCount = 0, weekCount = 0;
+  for (const it of arr) {
+    if (it.category === 'physics') physicsCount++;
+    else if (it.category === 'math') mathCount++;
+    if (it.createdAt >= weekStartMs) weekCount++;
+  }
   document.getElementById('kpTotal').textContent = arr.length;
-  document.getElementById('kpPhysics').textContent = arr.filter(i => i.category === 'physics').length;
-  document.getElementById('kpMath').textContent = arr.filter(i => i.category === 'math').length;
-  document.getElementById('kpThisWeek').textContent = arr.filter(i => i.createdAt >= weekAgo).length;
+  document.getElementById('kpPhysics').textContent = physicsCount;
+  document.getElementById('kpMath').textContent = mathCount;
+  document.getElementById('kpThisWeek').textContent = weekCount;
 
   // Filter
   let filtered = arr;
@@ -318,23 +404,34 @@ function renderKnowledgePanel() {
     filtered = filtered.filter(i =>
       i.title.toLowerCase().includes(search) ||
       (i.tags || []).some(t => t.toLowerCase().includes(search)) ||
-      (i.summary || '').toLowerCase().includes(search)
+      (i.summary || '').toLowerCase().includes(search) ||
+      // 公式内容也纳入搜索：剥掉 $ 定界符再匹配，用户不带 $ 也能搜中
+      (i.formulas || []).some(f => _stripFormulaDelimiters(f).toLowerCase().includes(search))
     );
   }
+
+  // 结果计数：仅筛选/搜索激活时显示（全库条数统计条已有，避免重复）
+  const filtersActive = !!search || kpFilterCategory !== 'all' || kpFilterSource !== 'all';
+  const countEl = document.getElementById('kpResultCount');
+  if (countEl) countEl.textContent = filtersActive ? '共 ' + filtered.length + ' 条' : '';
 
   // Sort by date desc
   filtered.sort((a, b) => b.createdAt - a.createdAt);
 
-  // Group by date
+  // 分批渲染：先切片再分组，组序逻辑不变；上限随「加载更多」增长（筛选/搜索时已重置）
+  const totalCount = filtered.length;
+  if (totalCount > kpRenderLimit) filtered = filtered.slice(0, kpRenderLimit);
+
+  // Group by date（today/weekStart 复用统计段的计算——自然周口径已统一）；
+  // yesterday 提到循环外同理
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
   const groups = {};
   for (const item of filtered) {
     const d = new Date(item.createdAt);
-    const today = new Date(); const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
     let label;
     if (d.toDateString() === today.toDateString()) label = '今天';
     else if (d.toDateString() === yesterday.toDateString()) label = '昨天';
     else {
-      const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay());
       if (d >= weekStart) label = '本周';
       else label = `${d.getMonth() + 1}月${d.getDate()}日`;
     }
@@ -345,15 +442,18 @@ function renderKnowledgePanel() {
   // Order: 今天 > 昨天 > 本周 > older
   const orderedLabels = ['今天', '昨天', '本周'];
   const otherLabels = Object.keys(groups).filter(l => !orderedLabels.includes(l)).sort((a, b) => {
-    // parse "X月Y日"
-    const parseDate = s => { const m = s.match(/(\d+)月(\d+)日/); return m ? parseInt(m[1]) * 100 + parseInt(m[2]) : 0; };
-    return parseDate(b) - parseDate(a);
+    // 按组内最新 createdAt 倒序（2026-10-01 修复跨年错序）：原先解析「M月D日」标签
+    // 按 月*100+日 比较，12月31日=1231 会排在 1月1日=101 前/后颠倒
+    const latestOf = l => Math.max(...groups[l].map(it => it.createdAt || 0));
+    return latestOf(b) - latestOf(a);
   });
   const allLabels = [...orderedLabels.filter(l => groups[l]), ...otherLabels];
 
   const timeline = document.getElementById('kpTimeline');
   if (filtered.length === 0) {
-      timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.book}</div><div class="kp-empty-text">${search ? '没有找到匹配的知识条目' : '还没有知识条目，开始提问或收藏回复吧'}</div></div>`;
+    // 筛选/搜索激活且无结果：显示「无结果」+ 一键清除（重置分类/来源/搜索并重渲染）
+    const clearBtn = filtersActive ? '<button class="kp-clear-btn" onclick="clearKpFilters()">清除筛选</button>' : '';
+    timeline.innerHTML = `<div class="kp-empty"><div class="kp-empty-icon">${UI_ICON_SVG.book}</div><div class="kp-empty-text">${filtersActive ? '无结果' : '还没有知识条目，开始提问或收藏回复吧'}</div>${clearBtn}</div>`;
     return;
   }
 
@@ -371,20 +471,13 @@ function renderKnowledgePanel() {
         : UI_ICON_SVG.star;
       const sourceText = item.source === 'ai_extract' ? 'AI提取' : item.source === 'file' ? '文件导入' : item.source === 'harness' ? 'AI 编辑' : '手动收藏';
       const tagsHtml = (item.tags || []).map(t => `<span class="kp-tag">${escapeHtml(t)}</span>`).join('');
-      const formulasHtml = (item.formulas || [])
-        .filter(f => _looksLikeFormula(_stripFormulaDelimiters(f)))
-        .map(f => {
-          try {
-            const rendered = katex.renderToString(_stripFormulaDelimiters(f), { throwOnError: false, displayMode: true });
-            if (/katex-error/.test(rendered)) return '';
-            return `<div class="kp-formula-item">${rendered}</div>`;
-          } catch(e) {
-            return '';
-          }
-        }).join('');
       const timeStr = new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      // 展开状态记忆：重渲染时对集合内的卡直接恢复 expanded 并当场填好详情
+      //（置 data-rendered，避免 toggleKpCard 再填一遍）
+      const isExpanded = _kpExpandedIds.has(item.id);
+      const detailHtml = isExpanded ? _kpCardDetailHtml(item) : '';
       html += `
-        <div class="kp-card" data-id="${item.id}" onclick="toggleKpCard(this)">
+        <div class="kp-card${isExpanded ? ' expanded' : ''}" data-id="${item.id}" onclick="toggleKpCard(this)">
           <div class="kp-card-header">
             <div class="kp-card-dot ${catClass}"></div>
             <div class="kp-card-info">
@@ -394,31 +487,133 @@ function renderKnowledgePanel() {
           </div>
           <div class="kp-card-summary">${escapeHtml(item.summary || '')}</div>
           <div class="kp-card-tags">${tagsHtml}</div>
-          <div class="kp-card-detail">
-            <div class="kp-card-detail-inner">
-              ${formulasHtml ? `<div class="kp-formulas">${formulasHtml}</div>` : ''}
-              <div class="kp-detail-actions">
-                <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToKnowledgeNode('${item.id}')">跳转到节点</button>
-                ${isLegacyCardSummaryItem(item) ? `<button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); restatKnowledgeItemSummary('${item.id}')">重述摘要</button>` : ''}
-                <button class="kp-action-btn kp-btn-danger" onclick="event.stopPropagation(); confirmDeleteKnowledge('${item.id}')">删除</button>
-              </div>
-            </div>
-          </div>
+          <div class="kp-card-detail"${isExpanded ? ' data-rendered="1"' : ''}>${detailHtml}</div>
         </div>`;
     }
     html += '</div>';
   }
+  const remaining = totalCount - filtered.length;
+  if (remaining > 0) {
+    html += `<button class="kp-load-more" onclick="loadMoreKnowledge()">加载更多（还有 ${remaining} 条）</button>`;
+  }
   timeline.innerHTML = html;
 }
 
+// 单张知识卡的详情 HTML（纯函数：传 item 返回字符串）。折叠卡懒渲染后主循环不再
+// 调它，由 toggleKpCard 首次展开时调用；后续恢复展开态的会话同样复用。
+// 行为与旧内联版逐字等价：公式过滤/清洗/KaTeX 路径、三个按钮及其 onclick、
+// isLegacyCardSummaryItem 判定全部保持原样，仅 KaTeX 走缓存 helper。
+function _kpCardDetailHtml(item) {
+  const formulasHtml = (item.formulas || [])
+    .filter(f => _looksLikeFormula(_stripFormulaDelimiters(f)))
+    .map(f => {
+      const rendered = _katexHtml(_stripFormulaDelimiters(f));
+      if (!rendered || /katex-error/.test(rendered)) return '';
+      return `<div class="kp-formula-item">${rendered}</div>`;
+    }).join('');
+  return `
+    <div class="kp-card-detail-inner">
+      ${formulasHtml ? `<div class="kp-formulas">${formulasHtml}</div>` : ''}
+      <div class="kp-detail-actions">
+        <button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); goToKnowledgeNode('${item.id}')">跳转到节点</button>
+        ${isLegacyCardSummaryItem(item) ? `<button class="kp-action-btn kp-btn-primary" onclick="event.stopPropagation(); restatKnowledgeItemSummary('${item.id}')">重述摘要</button>` : ''}
+        <button class="kp-action-btn kp-btn-danger" onclick="event.stopPropagation(); confirmDeleteKnowledge('${item.id}')">删除</button>
+      </div>
+    </div>`;
+}
+
 function toggleKpCard(card) {
+  // 折叠卡懒渲染：折叠态详情只是空壳 div，首次展开才填 HTML（KaTeX 编译推迟到此刻）；
+  // dataset.rendered 防重复填充（收起再展开直接复用已渲染内容）。
+  // 展开态同步进 _kpExpandedIds：15 秒同步触发的整面重渲染据此恢复展开卡。
+  if (!card.classList.contains('expanded')) {
+    const detail = card.querySelector('.kp-card-detail');
+    if (detail && !detail.dataset.rendered) {
+      const item = getKnowledgeItems()[card.dataset.id];
+      if (item) {
+        detail.innerHTML = _kpCardDetailHtml(item);
+        detail.dataset.rendered = '1';
+      }
+    }
+    _kpExpandedIds.add(card.dataset.id);
+  } else {
+    _kpExpandedIds.delete(card.dataset.id);
+  }
   card.classList.toggle('expanded');
+}
+
+// ===== 删除可撤销（删后 8 秒内一键写回） =====
+// 服务端 DELETE 链路原样保留：撤销＝「删后把快照原样重写回」——知识点走
+// saveKnowledgeItems（POST merge 天然推回服务端）、公式走 saveFormulasToServer 同款
+// 写入路径（入缓存 + 排队 POST），都不绕过各自的保存队列。
+// 快照只保最新一条：连续删第二条时前一条的撤销机会作废。取舍：撤销提示条只有
+// 一个挂点，多条快照栈会把「撤销」变成「逐个恢复」，交互语义复杂化不划算。
+const KP_UNDO_MS = 8000;
+let _kpUndoSnapshot = null; // { kind: 'knowledge' | 'formula', item }
+let _kpUndoTimer = 0;
+
+function _hideKpUndoToast() {
+  if (_kpUndoTimer) { clearTimeout(_kpUndoTimer); _kpUndoTimer = 0; }
+  _kpUndoSnapshot = null;
+  const el = document.getElementById('phymathia_kp_undo');
+  if (el) el.remove();
+}
+
+// 专用撤销提示条：showToast 不支持按钮/回调（签名不能动，全仓调用点依赖纯文本），
+// 这里做一个独立挂点；样式沿用全局 toast 的极光磨砂胶囊（aurora-glass--compact），
+// 位置在 toast 上方错开，不互相遮挡
+function _showKpUndoToast(label, snapshot) {
+  _hideKpUndoToast(); // 连续删除：前一条的撤销机会作废（只保最新快照）
+  _kpUndoSnapshot = snapshot;
+  let el = document.getElementById('phymathia_kp_undo');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'phymathia_kp_undo';
+    // 样式在 styles-panels.css（.kp-undo-toast）：与全局 toast 同套极光磨砂胶囊，
+    // 位置在其上方错开，不互相遮挡
+    el.className = 'kp-undo-toast aurora-glass aurora-glass--compact';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<span>已删除' + escapeHtml(label) + '</span><button class="kp-undo-toast-btn" onclick="_undoKpDelete()">撤销</button>';
+  requestAnimationFrame(() => {
+    el.style.opacity = '1';
+    el.style.transform = 'translateX(-50%) translateY(0)';
+  });
+  _kpUndoTimer = setTimeout(_hideKpUndoToast, KP_UNDO_MS); // 8 秒超时自动消失
+}
+
+function _undoKpDelete() {
+  const snap = _kpUndoSnapshot;
+  _hideKpUndoToast();
+  if (!snap || !snap.item) return;
+  if (snap.kind === 'knowledge') {
+    const items = getKnowledgeItems();
+    items[snap.item.id] = snap.item;
+    saveKnowledgeItems(items); // 走保存队列：本地写回 + POST merge 推回服务端
+    showToast('已撤销删除：' + String(snap.item.title || '').slice(0, 16));
+  } else {
+    // 公式走 saveFormulasToServer 同款写入路径（语义归一 + 入缓存 + 排队 POST）
+    saveFormulasToServer([snap.item]).then(() => {
+      // 被语义校验（_looksLikeFormula）拦下的废条目不会经它入缓存：仅本地写回兜底
+      if (!getFormulaCache()[snap.item.id]) {
+        const cache = getFormulaCache();
+        cache[snap.item.id] = snap.item;
+        setFormulaCache(cache);
+      }
+      showToast('已撤销删除');
+    });
+  }
+  renderKnowledgePanel();
+  renderFormulaList();
 }
 
 async function confirmDeleteKnowledge(id) {
   if (!confirm('确定删除此知识条目？')) return;
+  const snapshot = getKnowledgeItems()[id] || null; // 删除前快照（撤销＝原样写回）
+  _kpExpandedIds.delete(id); // 展开记忆同步清理，防幽灵展开态
   await deleteKnowledgeItem(id);
   renderKnowledgePanel();
+  if (snapshot) _showKpUndoToast('知识条目「' + String(snapshot.title || '').slice(0, 16) + '」', { kind: 'knowledge', item: snapshot });
 }
 
 // ===== 存量摘要优化（P3 方案 B：AI 重述入口） =====
@@ -526,14 +721,38 @@ function _applyRestatedSummary(item, text) {
 
 // === 批量任务可停止注册表 ===
 // 吸取交接文档 A2「AbortController 无人持有无法中止」教训：控制器挂模块级注册表
-// `_kpSummaryOptimizeAbort`，Esc 监听随任务注册/注销——关闭面板、再次点击、Esc
-// 任一路径都经 abortKnowledgeSummaryOptimize() 中止；中止后批量循环不再发后续请求
+// `_kpSummaryOptimizeAbort`，Esc 监听随任务注册/注销——再次点击、Esc 两路径都经
+// abortKnowledgeSummaryOptimize() 中止；关面板不中止（2026-10-01 设计变更，任务后台
+// 继续、重开面板恢复按钮运行态）；中止后批量循环不再发后续请求
 //（循环每轮先查 signal + 在途 fetch 被拒后 break，双保险）。
 let _kpSummaryOptimizeAbort = null;
 let _kpSummaryOptimizeEscCloser = null;
 
-function _knowledgeSummaryTaskRunning() {
+// 单条「重述摘要」的真控制器（同款注册表接线）：挂模块级变量 + 独立 Esc capture
+// 监听，结束/中止后注销。批量与单条不会同时跑（两侧入口互斥防踩），故各持一份。
+// （原实现传一次性即弃的匿名控制器，signal 永不置位，等于没有中止通道。）
+let _kpRestateAbort = null;
+let _kpRestateEscCloser = null;
+
+// 单条重述运行中（供入口互斥判断；与批量互不相踩）
+function _knowledgeRestateRunning() {
+  return !!_kpRestateAbort;
+}
+
+// 批量运行中（按钮运行态 / 进度条显示只认批量）
+function _knowledgeBatchRunning() {
   return !!_kpSummaryOptimizeAbort;
+}
+
+// 任一摘要任务（批量或单条）在跑：ui.js 的全局 Esc 处理器据此把 Esc 让给
+// knowledge.js 各自的 capture 中止监听，不做关面板动作
+function _knowledgeSummaryTaskRunning() {
+  return _knowledgeBatchRunning() || _knowledgeRestateRunning();
+}
+
+// 运行态判断（供 ui.js 的全局 Esc 处理器分流：摘要任务运行中 Esc 让给中止监听，不关面板）
+function isKnowledgeSummaryOptimizeRunning() {
+  return _knowledgeSummaryTaskRunning();
 }
 
 function abortKnowledgeSummaryOptimize() {
@@ -546,7 +765,54 @@ function abortKnowledgeSummaryOptimize() {
     document.removeEventListener('keydown', _kpSummaryOptimizeEscCloser, true);
     _kpSummaryOptimizeEscCloser = null;
   }
-  _setKpOptimizeButtonRunning(false);
+  _syncKpOptimizeWidgets();
+}
+
+// 单条重述的中止清理：清注册表 + 注销 Esc capture 监听（中止与正常收尾都走这里）
+function abortKnowledgeRestatement() {
+  const controller = _kpRestateAbort;
+  _kpRestateAbort = null;
+  if (controller) {
+    try { controller.abort(); } catch (e) {}
+  }
+  if (_kpRestateEscCloser) {
+    document.removeEventListener('keydown', _kpRestateEscCloser, true);
+    _kpRestateEscCloser = null;
+  }
+}
+
+// === 批量优化进度（面板 header 内联 n/N + 2px 细进度条） ===
+// 进度状态存模块级变量：关面板不中止批量（2026-10-01 设计变更），重开面板时
+// _syncKpOptimizeWidgets 据此重填显示；批量结束（完成/中止/出错）置 null 并隐藏。
+let _kpOptimizeProgressState = null; // { done, total } | null
+
+function _syncKpOptimizeProgress() {
+  const wrap = document.getElementById('kpOptimizeProgress');
+  if (!wrap) return;
+  const running = _knowledgeBatchRunning() && _kpOptimizeProgressState;
+  wrap.hidden = !running;
+  if (!running) return;
+  const { done, total } = _kpOptimizeProgressState;
+  const textEl = document.getElementById('kpOptimizeProgressText');
+  const fillEl = document.getElementById('kpOptimizeProgressFill');
+  if (textEl) textEl.textContent = done + '/' + total;
+  if (fillEl) fillEl.style.width = (total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0) + '%';
+}
+
+// 优化摘要按钮运行态 + 进度条 + tab 可见性统一同步：
+// 按钮运行态只认批量；进度条只在「批量在跑且停在知识点 tab」时显示
+function _syncKpOptimizeWidgets() {
+  const running = _knowledgeBatchRunning();
+  _setKpOptimizeButtonRunning(running);
+  const tab = document.querySelector('.kp-tab.active');
+  const onKnowledgeTab = !tab || tab.dataset.tab === 'knowledge';
+  const btn = document.getElementById('kpOptimizeBtn');
+  if (btn) btn.style.display = onKnowledgeTab ? '' : 'none';
+  if (running && onKnowledgeTab) _syncKpOptimizeProgress();
+  else {
+    const wrap = document.getElementById('kpOptimizeProgress');
+    if (wrap) wrap.hidden = true;
+  }
 }
 
 function _setKpOptimizeButtonRunning(running) {
@@ -564,8 +830,13 @@ function _activeModelForSummaryRestate() {
 // 批量入口（面板工具按钮）：再次点击即中断；目标逐条现判现发，manual/model 条目绝不触碰
 async function optimizeKnowledgeSummaries() {
   if (_knowledgeSummaryTaskRunning()) {
-    abortKnowledgeSummaryOptimize();
-    showToast('已停止优化摘要，已完成条目保留');
+    // 互斥防踩：批量在跑→按既有语义再次点击即停止；单条重述在跑→不接受批量
+    if (_knowledgeBatchRunning()) {
+      abortKnowledgeSummaryOptimize();
+      showToast('已停止优化摘要，已完成条目保留');
+    } else {
+      showToast('单条重述摘要进行中，请等它完成');
+    }
     return;
   }
   const targetIds = Object.values(getKnowledgeItems())
@@ -586,20 +857,25 @@ async function optimizeKnowledgeSummaries() {
     if (event.key === 'Escape') abortKnowledgeSummaryOptimize();
   };
   document.addEventListener('keydown', _kpSummaryOptimizeEscCloser, true);
-  _setKpOptimizeButtonRunning(true);
+  _syncKpOptimizeWidgets();
 
   const total = targetIds.length;
-  let done = 0, ok = 0, failed = 0, skipped = 0;
+  let done = 0, skipped = 0, ok = 0, failed = 0;
   let aborted = false;
+  // 进度口径：n = 已消费的目标条数（含跳过），N = 目标总数。逐条更新 header 内联
+  // 进度（替代原「优化摘要 n/total：标题…」逐条刷屏 toast——进度常驻可看、不抢视线）
+  const _bumpProgress = () => {
+    _kpOptimizeProgressState = { done: done + skipped, total };
+    _syncKpOptimizeProgress();
+  };
   try {
     for (const id of targetIds) {
       if (controller.signal.aborted) { aborted = true; break; } // 中止后不再发出后续请求
       const currentMap = getKnowledgeItems();
       const current = currentMap[id] || null;
       // 任务期间数据可能变化（15 秒同步/手动编辑）：发送前现判，非目标条目直接跳过
-      if (!current || !isLegacyCardSummaryItem(current)) { skipped++; continue; }
+      if (!current || !isLegacyCardSummaryItem(current)) { skipped++; _bumpProgress(); continue; }
       done++;
-      showToast('优化摘要 ' + done + '/' + total + '：' + String(current.title || '').slice(0, 16) + '...', TOAST_MS_LONG);
       try {
         const text = await _requestRestatedSummary(current, model, controller.signal);
         if (!text) { failed++; continue; }
@@ -611,10 +887,13 @@ async function optimizeKnowledgeSummaries() {
         failed++;
         console.warn('Optimize knowledge summary failed:', (current && current.title) || id, err);
       }
+      _bumpProgress();
     }
   } finally {
     const wasAborted = aborted || controller.signal.aborted;
-    abortKnowledgeSummaryOptimize(); // 清注册表 + 注销 Esc 监听 + 复位按钮
+    abortKnowledgeSummaryOptimize(); // 清注册表 + 注销 Esc 监听 + 复位按钮 + 隐藏进度
+    _kpOptimizeProgressState = null;
+    _syncKpOptimizeProgress();
     invalidateKnowledgeCache();
     const panel = document.getElementById('knowledgePanel');
     if (panel && panel.classList && panel.classList.contains('active')) renderKnowledgePanel();
@@ -625,10 +904,17 @@ async function optimizeKnowledgeSummaries() {
   }
 }
 
-// 单条入口（知识卡片按钮）：重验判定规则，manual/model 条目拒绝重述
+// 单条入口（知识卡片按钮）：重验判定规则，manual/model 条目拒绝重述。
+// 真 AbortController 接线（原实现传一次性即弃的匿名控制器，signal 永不置位、永不生效）：
+// 控制器挂 _kpRestateAbort 注册表 + 独立 Esc capture 监听（与批量同款接线，各自独立），
+// Esc / 收尾统一走 abortKnowledgeRestatement() 注销；批量在跑时入口直接拒绝（互斥防踩）
 async function restatKnowledgeItemSummary(itemId) {
-  if (_knowledgeSummaryTaskRunning()) {
+  if (_knowledgeBatchRunning()) {
     showToast('批量优化进行中，请先点击「优化摘要」停止');
+    return;
+  }
+  if (_knowledgeRestateRunning()) {
+    showToast('该条目正在重述，请稍候');
     return;
   }
   const items = getKnowledgeItems();
@@ -644,8 +930,15 @@ async function restatKnowledgeItemSummary(itemId) {
     return;
   }
   showToast('正在重述摘要：' + String(item.title || '').slice(0, 16) + '...', TOAST_MS_LONG);
+  const controller = new AbortController();
+  _kpRestateAbort = controller;
+  _kpRestateEscCloser = (event) => {
+    if (event.key === 'Escape') abortKnowledgeRestatement();
+  };
+  document.addEventListener('keydown', _kpRestateEscCloser, true);
   try {
-    const text = await _requestRestatedSummary(item, model, new AbortController().signal);
+    const text = await _requestRestatedSummary(item, model, controller.signal);
+    if (controller.signal.aborted) return; // 中止路径已另行提示，不再走失败/成功提示
     if (!text) { showToast('模型未返回有效摘要，请稍后重试'); return; }
     _applyRestatedSummary(item, text);
     await saveKnowledgeItems(items);
@@ -653,8 +946,14 @@ async function restatKnowledgeItemSummary(itemId) {
     renderKnowledgePanel();
     showToast('摘要已重述');
   } catch (err) {
+    if (controller.signal.aborted) { // 用户中断不计为失败（文案沿用批量中止措辞风格）
+      showToast('已停止重述摘要');
+      return;
+    }
     console.warn('Restate knowledge summary failed:', itemId, err);
     showToast('重述失败：' + ((err && err.message) || err));
+  } finally {
+    abortKnowledgeRestatement(); // 清注册表 + 注销 Esc 监听（正常完成与中止都要注销）
   }
 }
 
@@ -995,9 +1294,13 @@ function switchKpTab(tab) {
   document.querySelectorAll('.kp-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('kpKnowledgeView').style.display = tab === 'knowledge' ? '' : 'none';
   document.getElementById('kpFormulasView').style.display = tab === 'formulas' ? '' : 'none';
-  // 「优化摘要」只作用于知识点，公式速查页隐藏入口
-  const optimizeBtn = document.getElementById('kpOptimizeBtn');
-  if (optimizeBtn) optimizeBtn.style.display = tab === 'knowledge' ? '' : 'none';
+  // 「优化摘要」与进度条只作用于知识点，公式速查页隐藏入口（批量在跑时同理，
+  // 进度状态在模块级变量里，切回知识点 tab 即恢复显示）
+  _syncKpOptimizeWidgets();
+  // 标签页记忆（仅 knowledge/formulas 两个合法值入 localStorage，键在 config.js）
+  if (tab === 'knowledge' || tab === 'formulas') {
+    try { localStorage.setItem(STORAGE_KEY_KP_TAB, tab); } catch (e) {}
+  }
   if (tab === 'formulas') loadFormulas();
 }
 
@@ -1030,7 +1333,21 @@ async function loadFormulas() {
   renderFormulaList();
 }
 
-function filterFormulas() { renderFormulaList(); }
+// 公式搜索与知识点页 filterKnowledge 同款 200ms 防抖（空输入立即执行，回退场景不等）
+let _kpFormulaFilterTimer = 0;
+function filterFormulas() {
+  const input = document.getElementById('kpFormulaSearch');
+  kpFormulaRenderLimit = KP_PAGE_SIZE; // 搜索词变化重置分批上限
+  if (_kpFormulaFilterTimer) { clearTimeout(_kpFormulaFilterTimer); _kpFormulaFilterTimer = 0; }
+  if (!input || !input.value.trim()) { renderFormulaList(); return; }
+  _kpFormulaFilterTimer = setTimeout(() => { _kpFormulaFilterTimer = 0; renderFormulaList(); }, 200);
+}
+
+// 公式速查「加载更多」：与时间线同款分批（初始 60，每次 +60）
+function loadMoreFormulas() {
+  kpFormulaRenderLimit += KP_PAGE_SIZE;
+  renderFormulaList();
+}
 
 function _cleanFormulaConcept(item) {
   const raw = String(item.concept || '')
@@ -1065,6 +1382,9 @@ function renderFormulaList() {
       (it.related || []).some(t => String(t).toLowerCase().includes(search))
     );
   }
+  // 结果计数（公式页无统计条，常显）
+  const formulaCountEl = document.getElementById('kpFormulaCount');
+  if (formulaCountEl) formulaCountEl.textContent = '共 ' + filtered.length + ' 条';
   filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   if (filtered.length === 0) {
@@ -1072,20 +1392,24 @@ function renderFormulaList() {
     return;
   }
 
-  let html = '';
+  // 分批渲染：上限随「加载更多」增长（搜索变化时已重置）
+  const totalCount = filtered.length;
+  if (totalCount > kpFormulaRenderLimit) filtered = filtered.slice(0, kpFormulaRenderLimit);
+
+  // 先过滤后渲染：语义层不合格的条目（单字符/纯命令/纯单位等，旧库已存的不再显示）
+  // 在进 KaTeX 编译与 HTML 构建之前剔除，不再为废条目白跑 renderToString
+  const qualified = [];
   for (const it of filtered) {
     // 渲染前清洗兜底（服务端返回的条目也可能未标准化）
     const latex = _stripFormulaDelimiters(_normalizeFormulaLatex(it.latex));
-    // 语义层：单字符/纯命令/纯单位等非公式自动隐藏（旧库已存的不再显示）
-    if (!_looksLikeFormula(latex)) continue;
-    let latexHtml = '';
-    try {
-      // 工具层：KaTeX 语法校验（throwOnError:false 时非法命令输出 katex-error 标记 → 跳过）
-      latexHtml = katex.renderToString(latex, { throwOnError: false, displayMode: true });
-      if (/katex-error/.test(latexHtml)) continue;
-    } catch (e) {
-      continue;
-    }
+    if (_looksLikeFormula(latex)) qualified.push({ it, latex });
+  }
+
+  let html = '';
+  for (const { it, latex } of qualified) {
+    // 工具层：KaTeX 语法校验（throwOnError:false 时非法命令输出 katex-error 标记 → 跳过）
+    const latexHtml = _katexHtml(latex);
+    if (!latexHtml || /katex-error/.test(latexHtml)) continue;
     let relatedTags = (it.related || []).map(t => String(t).trim()).filter(Boolean);
     const rawConcept = String(it.concept || '');
     if (/物理视角|物理直觉/.test(rawConcept)) {
@@ -1127,6 +1451,10 @@ function renderFormulaList() {
           <button class="kp-action-btn kp-btn-danger" onclick="confirmDeleteFormula('${it.id}')">删除</button>
         </div>
       </div>`;
+  }
+  const remaining = totalCount - filtered.length;
+  if (remaining > 0) {
+    html += `<button class="kp-load-more" onclick="loadMoreFormulas()">加载更多（还有 ${remaining} 条）</button>`;
   }
   listEl.innerHTML = html;
 }
@@ -1218,6 +1546,7 @@ async function locateFormulaNode(formulaId) {
 
 async function confirmDeleteFormula(id) {
   if (!confirm('确定删除此公式？')) return;
+  const snapshot = getFormulaCache()[id] || null; // 删除前快照（撤销＝原样写回）
   const items = getFormulaCache();
   delete items[id];
   setFormulaCache(items);
@@ -1227,12 +1556,133 @@ async function confirmDeleteFormula(id) {
     console.warn('Delete formula on server failed:', err);
   }
   renderFormulaList();
+  if (snapshot) _showKpUndoToast('公式', { kind: 'formula', item: snapshot });
+}
+
+// ===== 导出 Markdown（header「⇩ 导出」按钮） =====
+// 导出语义是整库备份/分享：导出当前 tab 的**全部**条目，忽略筛选/搜索；
+// 数据源用既有缓存（getKnowledgeItems / getFormulaCache），不新拉接口，零后端改动。
+// graph-export 的 _download 是其函数内私有 helper、不跨模块可见，这里按同款写法
+// 本地实现一份（Blob → a[download] → click → revoke）。
+function _kpDownloadTextFile(text, filename) {
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// 导出时间线分组口径：今天/昨天/M月D日（与面板时间线一致的直观分组；导出是静态
+// 快照，不需要「本周」中间档）
+function _kpExportDateLabel(ts, today, yesterday) {
+  const d = new Date(ts || 0);
+  if (!ts || isNaN(d.getTime())) return '未标注日期';
+  if (d.toDateString() === today.toDateString()) return '今天';
+  if (d.toDateString() === yesterday.toDateString()) return '昨天';
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+
+function _kpKnowledgeMarkdown() {
+  const items = Object.values(getKnowledgeItems()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const today = new Date();
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const groups = {};
+  const order = [];
+  for (const item of items) {
+    const label = _kpExportDateLabel(item.createdAt, today, yesterday);
+    if (!groups[label]) { groups[label] = []; order.push(label); }
+    groups[label].push(item);
+  }
+  const lines = [];
+  lines.push('# PhyMathia 知识点总览');
+  lines.push('');
+  lines.push('> 导出时间：' + new Date().toLocaleString('zh-CN') + ' ｜ 共 ' + items.length + ' 条');
+  for (const label of order) {
+    lines.push('');
+    lines.push('## ' + label);
+    for (const item of groups[label]) {
+      lines.push('');
+      lines.push('### ' + String(item.title || '（无标题）').trim());
+      const catLabel = item.category === 'physics' ? '物理' : item.category === 'math' ? '数学' : '其他';
+      const tagList = (item.tags || []).filter(Boolean);
+      lines.push('');
+      lines.push('- 分类：' + catLabel + (tagList.length ? ' ｜ 标签：' + tagList.join('、') : ''));
+      const summary = _normalizePlainSummaryText(item.summary);
+      if (summary) {
+        lines.push('');
+        lines.push(summary);
+      }
+      for (const f of (item.formulas || [])) {
+        const latex = _stripFormulaDelimiters(f);
+        if (!latex) continue;
+        lines.push('');
+        lines.push('```latex');
+        lines.push(latex);
+        lines.push('```');
+      }
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+function _kpFormulasMarkdown() {
+  const items = Object.values(getFormulaCache())
+    .filter(it => _looksLikeFormula(_stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)))) // 与面板显示同一语义过滤口径
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const lines = [];
+  lines.push('# PhyMathia 公式速查清单');
+  lines.push('');
+  lines.push('> 导出时间：' + new Date().toLocaleString('zh-CN') + ' ｜ 共 ' + items.length + ' 条');
+  for (const it of items) {
+    lines.push('');
+    lines.push('## ' + (_cleanFormulaConcept(it) || '（未命名）'));
+    lines.push('');
+    lines.push('```latex');
+    lines.push(_stripFormulaDelimiters(_normalizeFormulaLatex(it.latex)));
+    lines.push('```');
+    const meaning = _normalizePlainSummaryText(it.meaning);
+    if (meaning) { lines.push('- 含义：' + meaning); }
+    if (it.topic) { lines.push('- 主题：' + it.topic); }
+    const related = (it.related || []).filter(Boolean);
+    if (related.length) { lines.push('- 相关：' + related.join('、')); }
+    if (it.createdAt) { lines.push('- 收录：' + new Date(it.createdAt).toLocaleDateString('zh-CN')); }
+  }
+  return lines.join('\n') + '\n';
+}
+
+function exportKnowledgeMarkdown() {
+  const tab = document.querySelector('.kp-tab.active');
+  const isFormulasTab = !!(tab && tab.dataset.tab === 'formulas');
+  const md = isFormulasTab ? _kpFormulasMarkdown() : _kpKnowledgeMarkdown();
+  const date = new Date().toISOString().slice(0, 10);
+  _kpDownloadTextFile(md, 'PhyMathia-知识总览-' + date + '.md');
+  showToast('已导出' + (isFormulasTab ? '公式清单' : '知识点') + ' Markdown（PhyMathia-知识总览-' + date + '.md）', TOAST_MS_LONG);
+}
+
+// 「去知识大陆」入口：大陆是全屏画布层（非面板），与知识面板叠开会互相挡操作——
+// 沿记忆面板 openMemoryPanel 关知识面板的先例，先关面板再进大陆；批量优化若在跑
+// 按既有设计后台继续，不受影响
+function openKnowledgeContinentView() {
+  closeKnowledgePanel();
+  if (typeof window.openContinentView === 'function') {
+    window.openContinentView();
+  } else {
+    showToast('知识大陆暂不可用');
+  }
 }
 
 // 暴露缓存失效接口给其他模块（session.js 定时同步、chat.js 提取刷新使用）
 window.invalidateKnowledgeCache = invalidateKnowledgeCache;
+window.isKnowledgeSummaryOptimizeRunning = isKnowledgeSummaryOptimizeRunning;
 window.goToKnowledgeNode = goToKnowledgeNode;
 window.locateFormulaNode = locateFormulaNode;
 window.getLastLocatedGraphNodeId = getLastLocatedGraphNodeId;
 window.waitForKnowledgeSave = () => kpKnowledgeSaveQueue.catch(() => false);
 window.waitForFormulaSave = () => kpFormulaSaveQueue.catch(() => false);
+window.exportKnowledgeMarkdown = exportKnowledgeMarkdown;
+window.openKnowledgeContinentView = openKnowledgeContinentView;
+window._undoKpDelete = _undoKpDelete;

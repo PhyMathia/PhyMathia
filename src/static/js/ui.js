@@ -1672,6 +1672,15 @@ document.addEventListener('keydown', (e) => {
       closeExampleGuide();
       return;
     }
+    // 知识总览面板：Esc 关面板；批量摘要优化运行中不关——Esc 让给 knowledge.js
+    // 的批量中止 capture 监听（先于本监听触发），面板保持打开供继续控制
+    const knowledgePanel = document.getElementById('knowledgePanel');
+    if (knowledgePanel && knowledgePanel.classList.contains('active')) {
+      if (typeof isKnowledgeSummaryOptimizeRunning !== 'function' || !isKnowledgeSummaryOptimizeRunning()) {
+        closeKnowledgePanel();
+      }
+      return;
+    }
     const overlay = document.getElementById('vizFullscreenOverlay');
     if (overlay && overlay.classList.contains('active')) {
       closeVizFullscreen();
