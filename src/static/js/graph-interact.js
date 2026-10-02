@@ -1,10 +1,31 @@
 // ===== PhyMathia 知识网络画布：画布渲染、交互动作、选择与拖拽 =====
 
+// T68：mermaid 节点级可见性门控——恢复画布此前对整图 .mermaid 全量即时解析
+// （首屏长任务大头之一）。改 IntersectionObserver：含 mermaid 块的节点进视口
+// （含 800px 余量，平移先解析后可见）才逐节点解析，长任务拆小；renderMermaidInElement
+// 按 data-processed 跳已解析块、SVG 结果另有缓存，二次进入近免费。观察器在每次
+// 全量重建后重挂（graphInner 会换实例）。
+let _mermaidIO = null;
 function _scheduleGraphMermaidRender() {
   clearTimeout(_graphMermaidTimer);
   _graphMermaidTimer = setTimeout(() => {
     _graphMermaidTimer = null;
-    if (typeof renderMermaidInElement === 'function') renderMermaidInElement(graphInner);
+    if (typeof renderMermaidInElement !== 'function' || !graphInner) return;
+    if (!('IntersectionObserver' in window)) { renderMermaidInElement(graphInner).catch(() => {}); return; }
+    const pendingNodes = Array.from(graphInner.querySelectorAll('.graph-node'))
+      .filter(n => n.querySelector('.mermaid:not([data-processed="true"])'));
+    if (!pendingNodes.length) return;
+    if (_mermaidIO) _mermaidIO.disconnect();
+    _mermaidIO = new IntersectionObserver(entries => {
+      const hits = entries.filter(e => e.isIntersecting).map(e => e.target);
+      if (!hits.length) return;
+      hits.forEach(el => _mermaidIO.unobserve(el));
+      // 节点可能在等待期被重建移除——已不在文档里的跳过
+      for (const el of hits) {
+        if (el.isConnected) renderMermaidInElement(el).catch(() => {});
+      }
+    }, { root: null, rootMargin: '800px 0px', threshold: 0 });
+    pendingNodes.forEach(n => _mermaidIO.observe(n));
   }, 500);
 }
 
@@ -133,22 +154,10 @@ function renderGraphCanvas(streaming) {
   _applyGraphTransform();
 
   requestAnimationFrame(() => {
-    if (typeof renderMath === 'function') renderMath(graphInner);
-    // 回填节点公式渲染缓存：同 id 留最后一次（流式补丁可能中途改写），且只在签名
-    // 与构建时仍一致时才收（内容已变的条目作废，下次按新签名重新铺、重新收）
-    if (_katexPendingCaptures.length) {
-      const caps = _katexPendingCaptures;
-      _katexPendingCaptures = [];
-      const byIdLast = new Map();
-      for (const c of caps) byIdLast.set(c.id, c);
-      for (const c of byIdLast.values()) {
-        const el = graphInner.querySelector('[data-node-id="' + c.id + '"] .graph-node-full-content');
-        const n = graphView.nodeById[c.id];
-        if (!el || !n) continue;
-        if (_graphNodeHtmlSig(n, messages, state) !== c.sig) continue;
-        _nodeBodyKatexPut(c.sig, el.innerHTML);
-      }
-    }
+    // T69：KaTeX 可视性分档——只铺视口内节点，屏外的进视口再分批补铺；
+    // 渲染记忆回填也只收实际铺过的节点（helper 内部处理）
+    if (typeof _graphKatexVisiblePass === 'function') _graphKatexVisiblePass();
+    else if (typeof renderMath === 'function') renderMath(graphInner);
     if (typeof _initVizIframes === 'function') _initVizIframes(graphInner);
     _measureNodes();
     if (needsFit) _runLayout(true);
@@ -217,6 +226,14 @@ function _toggleGraphNodeMinimize(node) {
     }
   }
   const el = graphInner && graphInner.querySelector ? graphInner.querySelector('[data-node-id="' + node.id + '"]') : null;
+  // T69：折叠卡当初没建内容子树（占位符），首次展开走整卡重建
+  // （_refreshWorkflowNodeUi 自带 KaTeX/mermaid/测量/重画），不只是切类
+  if (el && !nextMinimized && el.querySelector('[data-body-ph]')) {
+    if (typeof _refreshWorkflowNodeUi === 'function') {
+      _refreshWorkflowNodeUi(node);
+      return;
+    }
+  }
   if (el) {
     el.classList.toggle('minimized', nextMinimized);
     if (nextMinimized) {

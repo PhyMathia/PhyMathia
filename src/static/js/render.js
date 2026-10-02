@@ -1102,7 +1102,15 @@ function sanitizeMermaidCode(code) {
   });
   // 3. 移除空行（Mermaid 对空行敏感）
   lines = lines.filter((line, idx) => idx === 0 || line.trim() !== '');
-  return lines.join('\n');
+  let out = lines.join('\n');
+  // 4. 节点标签里的数学式：mermaid 渲染前会把标签内容 HTML 转义，数学比较符
+  // `>` `<` 变成 &gt; &lt;，其内置 KaTeX 解析就被 & 呛死（实测 \kappa>0 →
+  // ParseError「Expected 'EOF', got '&'」，2026-10-01 真机定位）。数学段（$…$ /
+  // $$…$$）内把比较符换成 KaTeX 等价命令 \gt / \lt——箭头 --> 在数学段外不受影响。
+  out = out.replace(/\$\$?[^$]*\$\$?/g, seg => seg
+    .replace(/>(?!=)/g, '\\gt ')
+    .replace(/<(?![!=])/g, '\\lt '));
+  return out;
 }
 
 // ===== Mermaid SVG 缓存 =====
@@ -1143,6 +1151,11 @@ async function renderMermaidInElement(element) {
       let code = '';
       if (sourceEl && sourceEl.dataset.mermaidSrc) {
         code = decodeURIComponent(sourceEl.dataset.mermaidSrc);
+        // data-mermaid-src 是 escapeHtml 后再 encode 的：数学比较符（> < &）以实体
+        // 形态进来，mermaid 内置 KaTeX 解析会被 & 呛死（实测 \kappa&gt;0 → ParseError，
+        // 2026-10-01 真机定位）。textarea roundtrip 做一次标准实体还原——代码里本来就
+        // 写着 &gt; 字面量的经过同样转义链也能正确还原，不会双重反转。
+        code = _unescapeHtmlEntities(code);
       } else {
         code = div.textContent.trim();
       }
@@ -1209,6 +1222,14 @@ async function renderMermaidInElement(element) {
       div.setAttribute('data-processed', 'error');
     }
   }
+}
+
+// HTML 实体还原（&gt; &lt; &amp; &quot; &#39; 等）：唯一可靠的反转是用浏览器自己的
+// 解析器走一遭，手写映射表追不全转义链
+function _unescapeHtmlEntities(s) {
+  const t = document.createElement('textarea');
+  t.innerHTML = String(s || '');
+  return t.value;
 }
 
 async function retryMermaid(btn) {

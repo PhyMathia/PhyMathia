@@ -514,9 +514,12 @@ function _renderBlankNodeHtml(node, state) {
   const minimizedClass = node.minimized ? ' minimized' : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const content = _cleanBlankNodeContent(node, node.content || '');
-  const contentHtml = content
-    ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
-    : '';
+  // T69：折叠卡不建内容子树（renderMarkdown/KaTeX 全免），展开时整卡重建
+  const contentHtml = node.minimized
+    ? _minimizedBodyHtml()
+    : (content
+      ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
+      : '');
   const generateLabel = content ? '重新生成' : '生成';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
@@ -526,11 +529,11 @@ function _renderBlankNodeHtml(node, state) {
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
     + contentHtml
-    + (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求 → 点生成</div>')
+    + (node.minimized ? '' : (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求 → 点生成</div>')
     + '<div class="graph-blank-requirement">'
     + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + '>' + escapeHtml(node.requirements || '') + '</textarea>'
     + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : generateLabel, node.busy)
-    + '</div>'
+    + '</div>')
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
     + _renderOutputPorts(node, [], state || _graphState())
@@ -679,7 +682,8 @@ function _renderSourceNodeHtml(node, state) {
   const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
   const fileName = node.fileName ? '<div class="graph-source-filename">' + escapeHtml(node.fileName) + '</div>' : '';
   const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
-  const body = node.busy
+  // T69：折叠卡不建表单/内容子树，展开时整卡重建
+  const body = node.minimized ? _minimizedBodyHtml() : (node.busy
     ? '<div class="graph-source-busy"><span class="graph-source-spinner"></span>正在解析文件...</div>'
     : '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
       + '<label class="graph-source-file-btn">选择/拖入文件<input type="file" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
@@ -689,7 +693,7 @@ function _renderSourceNodeHtml(node, state) {
       + (node.fileId ? _iconRegenButton('reparseSourceNode(\'' + node.id + '\')', '重新解析', false) : '')
       + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" onclick="openHarnessOrganizeRelations(\'' + node.id + '\')">🤖 AI 整理关系</button>' : '')
       + '</div>' + fileName + itemCount
-      + '</div>';
+      + '</div>');
   return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
@@ -707,19 +711,20 @@ function _renderKnowledgeNodeHtml(node, state) {
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const minimizedClass = node.minimized ? ' minimized' : '';
   const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
-  const formulas = (node.formulas || []).slice(0, 4).map(f => {
+  // T69：折叠卡跳公式 KaTeX 与表单（展开时整卡重建）
+  const formulas = node.minimized ? '' : ((node.formulas || []).slice(0, 4).map(f => {
     const latex = String(f || '').replace(/^\$+|\$+$/g, '').trim();
     let latexHtml = escapeHtml(latex);
     try {
       if (window.katex) latexHtml = katex.renderToString(latex, { throwOnError: false, displayMode: false });
     } catch (e) {}
     return '<div class="graph-knowledge-formula">' + latexHtml + '</div>';
-  }).join('');
-  const body = '<div class="graph-knowledge-body">'
+  }).join(''));
+  const body = node.minimized ? _minimizedBodyHtml() : ('<div class="graph-knowledge-body">'
     + (formulas ? '<div class="graph-knowledge-formulas">' + formulas + '</div>' : '')
     + '<textarea class="graph-custom-node-content" rows="3" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)">' + escapeHtml(node.content || node.summary || '') + '</textarea>'
     + '<div class="graph-knowledge-actions">' + _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy) + '</div>'
-    + '</div>';
+    + '</div>');
   return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
@@ -757,11 +762,12 @@ function _renderHumanNoteNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const statusText = (node.content || '').trim() ? '已填写' : '待填写';
-  const body = (node.content || node.formula)
+  // T69：折叠卡不建内容子树，展开时整卡重建
+  const body = node.minimized ? _minimizedBodyHtml() : ((node.content || node.formula)
     ? '<div class="graph-custom-node-render">' + escapeHtml(node.content || '')
       + (node.formula ? '<div class="graph-human-note-formula">' + escapeHtml(node.formula) + '</div>' : '')
       + '</div>'
-    : '<div class="graph-custom-node-empty">双击编辑</div>';
+    : '<div class="graph-custom-node-empty">双击编辑</div>');
   const customWidth = node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '';
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
@@ -853,6 +859,100 @@ function _renderAiEvalNodeHtml(node, state) {
       }
     }
 
+    // ===== T69：KaTeX 可视性分档 + 折叠跳内容子树 =====
+    // 实测（2026-10-01，32 节点简谐运动画布）：画布 36857 个 DOM 元素里 KaTeX
+    // 公式标记占 33746（92%），恢复视口内外节点各 16 个；整图一次性铺公式是
+    // 启动 1139ms 长任务的大头。两个动作：
+    // ① 折叠节点 body 换占位符（CSS 本就 display:none，展开时整卡重建补水）；
+    // ② 全量重建后只对视口内（±1200px 余量）节点铺公式，屏外节点留素文本，
+    //    进视口再分批补铺——长任务从整图 1.1s 拆成每批几十 ms。
+    function _minimizedBodyHtml() {
+      return '<div class="graph-node-body-ph" data-body-ph="1"></div>';
+    }
+
+    // 对一批节点元素各自铺公式（renderMath 忽略 textarea/pre/code，卡内编辑态安全）。
+    // 返回实际铺过的节点 id，供渲染记忆按签名回填缓存。
+    function _graphKatexRenderNodes(nodeEls) {
+      const rendered = [];
+      for (const el of nodeEls) {
+        if (typeof renderMath === 'function') renderMath(el);
+        const id = el.dataset ? el.dataset.nodeId : el.getAttribute('data-node-id');
+        if (id) rendered.push(id);
+      }
+      return rendered;
+    }
+
+    // 渲染记忆回填：只收本轮真正铺过公式的节点（屏外节点还是素文本，绝不能收——
+    // 会把未渲染中间态钉进缓存）。签名与构建时不一致（内容已变）的照旧作废。
+    function _graphKatexCaptureByIds(ids) {
+      if (!_katexPendingCaptures.length || !ids || !ids.length) return;
+      const want = new Set(ids);
+      const caps = _katexPendingCaptures.filter(c => want.has(c.id));
+      if (!caps.length) return;
+      for (const c of caps) _katexPendingCaptures.splice(_katexPendingCaptures.indexOf(c), 1);
+      const byIdLast = new Map();
+      for (const c of caps) byIdLast.set(c.id, c);
+      const messages = _getChatHistory();
+      const state = _graphState();
+      for (const c of byIdLast.values()) {
+        const el = graphInner.querySelector('[data-node-id="' + c.id + '"] .graph-node-full-content');
+        const n = graphView.nodeById[c.id];
+        if (!el || !n) continue;
+        if (_graphNodeHtmlSig(n, messages, state) !== c.sig) continue;
+        _nodeBodyKatexPut(c.sig, el.innerHTML);
+      }
+    }
+
+    let _katexIO = null;
+    const KATEX_GATE_MARGIN = 1200; // px：平移/缩放「先铺后见」的余量
+
+    function _graphKatexVisiblePass() {
+      if (!graphInner) return;
+      if (typeof renderMath !== 'function') return;
+      const vh = window.innerHeight || 800;
+      const vw = window.innerWidth || 1200;
+      const nodeEls = Array.from(graphInner.querySelectorAll('.graph-node'));
+      const deferred = [];
+      const renderedNow = [];
+      for (const el of nodeEls) {
+        const r = el.getBoundingClientRect();
+        const vis = r.bottom > -KATEX_GATE_MARGIN && r.top < vh + KATEX_GATE_MARGIN
+          && r.right > -KATEX_GATE_MARGIN && r.left < vw + KATEX_GATE_MARGIN;
+        if (vis) renderedNow.push(el);
+        else deferred.push(el);
+      }
+      _graphKatexCaptureByIds(_graphKatexRenderNodes(renderedNow));
+      if (!deferred.length) return;
+      if (!('IntersectionObserver' in window)) {
+        _graphKatexCaptureByIds(_graphKatexRenderNodes(deferred));
+        return;
+      }
+      if (_katexIO) _katexIO.disconnect();
+      let queue = [];
+      let flushTimer = 0;
+      // 一帧最多铺 3 个节点：IO 一次回调会把所有新入视口节点全塞进来，
+      // 不限流的话一次缩放又把长任务堆回几百 ms（实测 963ms）
+      const flush = () => {
+        flushTimer = 0;
+        if (!queue.length) return;
+        const batch = queue.splice(0, 3);
+        _graphKatexCaptureByIds(_graphKatexRenderNodes(batch));
+        _measureNodes();
+        _updateNodeTransforms();
+        _redrawEdges();
+        if (queue.length) flushTimer = requestAnimationFrame(flush);
+      };
+      _katexIO = new IntersectionObserver(entries => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          _katexIO.unobserve(e.target);
+          if (e.target.isConnected) queue.push(e.target);
+        }
+        if (queue.length && !flushTimer) flushTimer = requestAnimationFrame(flush);
+      }, { root: null, rootMargin: KATEX_GATE_MARGIN + 'px 0px', threshold: 0 });
+      deferred.forEach(el => _katexIO.observe(el));
+    }
+
     function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
@@ -892,10 +992,12 @@ function _renderAiEvalNodeHtml(node, state) {
             ? (node.manual ? '我的回答' : 'AI 回答')
             : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
-  const customFill = node.messageIndex < 0 && node.manual && !hasCustomContent
+  // T69：折叠卡不建内容子树（CSS 本就 display:none），展开时整卡重建补水
+  const skipBody = !!node.minimized;
+  const customFill = !skipBody && node.messageIndex < 0 && node.manual && !hasCustomContent
     ? '<textarea class="graph-custom-node-content" rows="5" onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(_nodeContent(message, node)) + '</textarea>'
     : '';
-  const customBody = node.messageIndex < 0
+  const customBody = skipBody ? '' : (node.messageIndex < 0
     ? (customFill
         || ((node.kind === 'module' || node.kind === 'summary')
           ? (hasCustomContent
@@ -914,10 +1016,10 @@ function _renderAiEvalNodeHtml(node, state) {
                   ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
                   : '')
               : ''))))
-    : '';
-  let body = node.kind === 'module'
+    : '');
+  let body = skipBody ? '' : (node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
-    : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : '');
+    : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : ''));
   // 渲染记忆：命中直接铺上次定形的 body；未命中登记待回填（textarea/viz 有状态不登记）
   if (body) {
     const _bodySig = _graphNodeHtmlSig(node, messages, state);
@@ -954,7 +1056,7 @@ function _renderAiEvalNodeHtml(node, state) {
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
-    + (body ? '<div class="graph-node-full-content">' + body + '</div>' : '')
+    + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
     + _nodeActions(node)
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'

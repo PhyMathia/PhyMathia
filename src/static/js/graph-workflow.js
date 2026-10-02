@@ -2358,6 +2358,13 @@ function _unhideGraphNodeForFocus(node) {
     }
   }
   if (changed) _saveGraphState(state);
+  // T69：折叠壳没有内容子树（占位符）——定位跳转展开它时先整卡重建，
+  // 否则跳过去是一张空壳卡
+  const phEl = graphInner && graphInner.querySelector
+    ? graphInner.querySelector('[data-node-id="' + node.id + '"] [data-body-ph]') : null;
+  if (phEl && !node.minimized && typeof _refreshWorkflowNodeUi === 'function') {
+    _refreshWorkflowNodeUi(node);
+  }
   const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
   if (el) {
     el.classList.remove('dimmed', 'minimized');
