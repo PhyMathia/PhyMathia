@@ -219,7 +219,14 @@ const WALLPAPER_SETS = [
     symbols: {
       dark: { color: 'rgba(162,196,200,1)', glow: 'rgba(96,142,152,0.25)', glowSize: 7, opacity: 0.9 },
       light: { color: 'rgba(78,98,95,1)', glow: 'rgba(102,128,120,0.18)', glowSize: 5, opacity: 0.85 },
-      count: 28 } }
+      count: 28 } },
+  { id: 'neon', name: '霓虹',
+    dark: { land: '/bg_neon_dark_landscape.jpg', port: '/bg_neon_dark_portrait.jpg' },
+    light: { land: '/bg_neon_light_landscape.jpg', port: '/bg_neon_light_portrait.jpg' },
+    symbols: {
+      dark: { color: 'rgba(125,211,252,1)', glow: 'rgba(34,211,238,0.30)', glowSize: 8, opacity: 0.95 },
+      light: { color: 'rgba(100,116,139,1)', glow: 'rgba(14,116,144,0.18)', glowSize: 5, opacity: 0.85 },
+      count: 36 } }
 ];
 
 // ====== 风格家族（2026-10-02 用户拍板：面板质感＋节点皮肤＋强调色焊成一个开关）======
@@ -238,7 +245,7 @@ const STYLE_FAMILIES = [
 // 主题（壁纸套 id）→ 默认风格家族：点主题卡＝换壁纸＋风格重置到这行（手动选风格
 // 只活到下次点主题卡，Q2 拍板「切主题＝全套重置」）。壁纸套与家族解耦：任何壁纸
 // 可配任何家族。新增壁纸套时在此补一行默认族，缺行安全回落 aurora。
-const THEME_DEFAULT_FAMILY = { night: 'aurora', paper: 'blueprint', mountain: 'inkstone' };
+const THEME_DEFAULT_FAMILY = { night: 'aurora', paper: 'blueprint', mountain: 'inkstone', neon: 'neon' };
 
 // ====== 粒子特效参数 ======
 const SYMBOL_COUNT = (window.innerWidth <= 768) ? 18 : 33;
