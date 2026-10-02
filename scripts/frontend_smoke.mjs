@@ -6818,5 +6818,45 @@ await Promise.all(pendingChecks).catch(() => {});
   });
 }
 
+// ===== 演示前第二批：T69/T68 画布渲染性能（2026-10-01）=====
+{
+  const qcheck = (name, fn) => {
+    try {
+      const r = fn();
+      if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+      else console.log('✓', name);
+    } catch (e) {
+      failed++; console.error('❌', name, '->', (e && e.message) || e);
+    }
+  };
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+
+  qcheck('T69：KaTeX 可视性分档（屏外不铺公式进视口补铺）＋折叠跳内容子树', () => {
+    if (!grSrc.includes('function _graphKatexVisiblePass') || !grSrc.includes('function _minimizedBodyHtml')) throw new Error('缺 T69 助手');
+    if (!grSrc.includes('function _graphKatexCaptureByIds')) throw new Error('缺按实铺节点回填渲染记忆');
+    if (!giSrc.includes('_graphKatexVisiblePass()')) throw new Error('重建 rAF 未接可视性分档');
+    const raf = giSrc.indexOf('requestAnimationFrame(() => {');
+    if (raf < 0) throw new Error('找不到重建 rAF');
+    if (!giSrc.slice(raf, raf + 400).includes('else if (typeof renderMath')) throw new Error('rAF 缺老路径兜底');
+    const phCount = (grSrc.match(/_minimizedBodyHtml\(\)/g) || []).length;
+    if (phCount < 6) throw new Error('折叠占位符接线不足（helper＋4 builder＋generic）：' + phCount);
+    if (!giSrc.includes("el.querySelector('[data-body-ph]')")) throw new Error('展开未接占位符补水');
+    if (!gwSrc.includes('[data-body-ph]')) throw new Error('定位跳转展开未接占位符补水');
+    return true;
+  });
+
+  qcheck('T68：mermaid 节点级可见性门控（IntersectionObserver＋800px 余量）', () => {
+    if (!giSrc.includes('_mermaidIO') || !giSrc.includes("rootMargin: '800px 0px'")) throw new Error('缺 mermaid 可视性观察器');
+    const i = giSrc.indexOf('function _scheduleGraphMermaidRender');
+    if (i < 0) throw new Error('找不到调度函数');
+    const seg = giSrc.slice(i, i + 1600);
+    if (!seg.includes('.mermaid:not([data-processed="true"])')) throw new Error('门控未按未解析块过滤');
+    if (!seg.includes('isConnected')) throw new Error('解析前未防节点被重建移除');
+    return true;
+  });
+}
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);
