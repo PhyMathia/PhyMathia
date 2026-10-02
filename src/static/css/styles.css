@@ -1468,14 +1468,6 @@
     }
     .bg-option-name { flex: 1; }
     .bg-option-check { color: var(--accent); flex: none; }
-    .bg-panel-hint {
-      font-size: var(--fs-sm);
-      color: var(--text-secondary);
-      border-top: 1px solid var(--border);
-      margin-top: 4px;
-      padding: 8px 6px 2px;
-      line-height: 1.6;
-    }
     /* 主题挑选面板（2026-10-02 第二轮）：上半区壁纸主题卡（复用 .bg-option）＋下半区
        风格家族五选一（.level-option 行，当前主题默认族带星标）。与 bg-panel 同宽。 */
     .theme-panel { min-width: 250px; }
