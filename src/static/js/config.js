@@ -12,6 +12,10 @@ const STORAGE_KEY_BG_LIGHT = 'phymathia_bg_light';
 const STORAGE_KEY_FLIP_SLOW = 'phymathia_flip_slow_raster';
 // 节点皮肤模板（T128）：全局键，存当前模板 key（aurora=默认极光磨砂），与深浅主题同款机制
 const STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin';
+// 风格家族（2026-10-02 用户拍板）：一个开关同时管面板质感＋节点皮肤＋强调色——
+// data-panel-skin / data-node-skin 双属性同 key 同挂（家族即皮肤超集，杜绝「面板一个样、
+// 节点另一个样」的零件级混搭）。缺键时从旧 phymathia_node_skin 折算（ui.js 迁移）。
+const STORAGE_KEY_STYLE_FAMILY = 'phymathia_style_family';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
@@ -185,11 +189,50 @@ const LIGHT_LAND_URL = '/bg_light_landscape.jpg';
 const LIGHT_PORT_URL = '/bg_light_portrait.jpg';
 // 成对主题壁纸：每套深浅各含横/竖两张。新增一套＝4 张资源进 src/static＋在此加一行，
 // 挑选器（ui.js renderBgPanel）自动出卡。id 存进 phymathia_bg_dark / _bg_light。
+// symbols（2026-10-02 用户拍板「符号只变色不换字符集＋数量随主题」）：飘浮符号的颜色/
+// 光晕/透明度系数按壁纸套配置（深浅各一档），count 为桌面数量（星夜显眼偏少、素纸底
+// 素净偏多、山影中等；移动端按 18/33 比例折算，ui.js __syncFloatingSymbols 换套重建）。
 const WALLPAPER_SETS = [
-  { id: 'night', name: '星夜', dark: { land: DARK_LAND_URL, port: DARK_PORT_URL }, light: { land: LIGHT_LAND_URL, port: LIGHT_PORT_URL } },
-  { id: 'paper', name: '素纸', dark: { land: '/bg_paper_dark_landscape.jpg', port: '/bg_paper_dark_portrait.jpg' }, light: { land: '/bg_paper_light_landscape.jpg', port: '/bg_paper_light_portrait.jpg' } },
-  { id: 'mountain', name: '山影', dark: { land: '/bg_mountain_dark_landscape.jpg', port: '/bg_mountain_dark_portrait.jpg' }, light: { land: '/bg_mountain_light_landscape.jpg', port: '/bg_mountain_light_portrait.jpg' } }
+  { id: 'night', name: '星夜',
+    dark: { land: DARK_LAND_URL, port: DARK_PORT_URL },
+    light: { land: LIGHT_LAND_URL, port: LIGHT_PORT_URL },
+    symbols: {
+      dark: { color: 'rgba(140,180,255,1)', glow: 'rgba(100,150,255,0.3)', glowSize: 8, opacity: 1 },
+      light: { color: 'rgba(160,120,70,1)', glow: 'rgba(180,140,80,0.2)', glowSize: 6, opacity: 1 },
+      count: 33 } },
+  { id: 'paper', name: '素纸',
+    dark: { land: '/bg_paper_dark_landscape.jpg', port: '/bg_paper_dark_portrait.jpg' },
+    light: { land: '/bg_paper_light_landscape.jpg', port: '/bg_paper_light_portrait.jpg' },
+    symbols: {
+      dark: { color: 'rgba(175,192,214,1)', glow: 'rgba(120,148,188,0.22)', glowSize: 7, opacity: 0.9 },
+      light: { color: 'rgba(96,86,66,1)', glow: 'rgba(122,106,76,0.16)', glowSize: 5, opacity: 0.8 },
+      count: 42 } },
+  { id: 'mountain', name: '山影',
+    dark: { land: '/bg_mountain_dark_landscape.jpg', port: '/bg_mountain_dark_portrait.jpg' },
+    light: { land: '/bg_mountain_light_landscape.jpg', port: '/bg_mountain_light_portrait.jpg' },
+    symbols: {
+      dark: { color: 'rgba(162,196,200,1)', glow: 'rgba(96,142,152,0.25)', glowSize: 7, opacity: 0.9 },
+      light: { color: 'rgba(78,98,95,1)', glow: 'rgba(102,128,120,0.18)', glowSize: 5, opacity: 0.85 },
+      count: 28 } }
 ];
+
+// ====== 风格家族（2026-10-02 用户拍板：面板质感＋节点皮肤＋强调色焊成一个开关）======
+// 每族一个 key，同时驱动 html 根的 data-panel-skin 与 data-node-skin 两属性＋一组
+// 强调色/输入框底色覆盖（styles.css「风格家族面板质感」节）。默认族 aurora＝现状极光
+// 玻璃，不挂属性、零 CSS 差异。★ key 三处必须同值：STYLE_FAMILIES ↔ GRAPH_NODE_SKINS
+// （ui.js）↔ styles.css [data-panel-skin="<key>"] / graph-override.css [data-node-skin]，
+// 加新家族＝四处同步（css 两块 + 两个注册表 + 启动预置自动跟随）。
+const STYLE_FAMILIES = [
+  { key: 'aurora', label: '极光磨砂', desc: '玻璃上的缓慢极光色斑（默认）' },
+  { key: 'blueprint', label: '蓝图制图', desc: '绘图纸面＋淡网格＋蓝图蓝（素纸主题默认）' },
+  { key: 'inkstone', label: '砚石·墨韵', desc: '青黑哑光石面＋石纹描边（山影主题默认）' },
+  { key: 'neon', label: '霓虹夜光', desc: '近黑玻璃＋霓虹描边与流动光斑' },
+  { key: 'candy', label: '糖果磨砂', desc: '暗面柔紫玻璃＋马卡龙柔光' },
+];
+// 主题（壁纸套 id）→ 默认风格家族：点主题卡＝换壁纸＋风格重置到这行（手动选风格
+// 只活到下次点主题卡，Q2 拍板「切主题＝全套重置」）。壁纸套与家族解耦：任何壁纸
+// 可配任何家族。新增壁纸套时在此补一行默认族，缺行安全回落 aurora。
+const THEME_DEFAULT_FAMILY = { night: 'aurora', paper: 'blueprint', mountain: 'inkstone' };
 
 // ====== 粒子特效参数 ======
 const SYMBOL_COUNT = (window.innerWidth <= 768) ? 18 : 33;

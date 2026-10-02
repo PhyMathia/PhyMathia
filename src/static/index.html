@@ -14,10 +14,13 @@
           t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
         }
         document.documentElement.setAttribute('data-theme', t);
-        // 预置节点皮肤（T128）：默认 aurora 不挂属性（基础规则即默认皮肤），未知值安全回落默认
-        var s = localStorage.getItem('phymathia_node_skin');
-        if (s && s !== 'aurora' && /^[a-z0-9-]{1,32}$/.test(s)) {
-          document.documentElement.setAttribute('data-node-skin', s);
+        // 预置风格家族（2026-10-02）：一个 key 同挂 data-node-skin 与 data-panel-skin（家族＝
+        // 面板质感＋节点皮肤＋强调色）。缺家族键时从旧 phymathia_node_skin 折算（迁移同 ui.js）；
+        // 默认 aurora 不挂属性（基础规则即默认），未知值安全回落默认。
+        var fam = localStorage.getItem('phymathia_style_family') || localStorage.getItem('phymathia_node_skin');
+        if (fam && fam !== 'aurora' && /^[a-z0-9-]{1,32}$/.test(fam)) {
+          document.documentElement.setAttribute('data-node-skin', fam);
+          document.documentElement.setAttribute('data-panel-skin', fam);
         }
       } catch (e) {
         document.documentElement.setAttribute('data-theme', 'dark');
@@ -25,9 +28,9 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=f94f507c">
+  <link rel="stylesheet" href="/css/styles.min.css?v=21ee476c">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=37c0747c">
-  <link rel="stylesheet" href="/css/graph-override.min.css?v=40d4c2bd">
+  <link rel="stylesheet" href="/css/graph-override.min.css?v=c591416c">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=8dfb10dc">
   <script defer src="/vendor/katex/katex.min.js"></script>
   <script defer src="/vendor/katex/contrib/auto-render.min.js"></script>
@@ -134,15 +137,11 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
         </button>
         <button class="header-btn theme-btn" onclick="toggleTheme()" id="themeBtn" title="切换深色/浅色模式" aria-label="切换深色/浅色模式"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></button>
-        <button class="header-btn bg-btn" onclick="toggleBgPicker(event)" id="bgBtn" title="挑选背景壁纸" aria-label="挑选背景壁纸" aria-controls="bgPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg></button>
-        <button class="header-btn skin-btn" onclick="toggleSkinPanel(event)" id="skinBtn" title="节点皮肤模板" aria-label="选择节点皮肤模板" aria-controls="skinPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg></button>
+        <button class="header-btn theme-pick-btn" onclick="toggleThemePicker(event)" id="themePickBtn" title="主题与风格（壁纸＋面板＋节点成套换）" aria-label="挑选主题与风格" aria-controls="themePanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7a9.3 9.3 0 0 0 0 18.6c1.5 0 2.3-.9 2.3-2 0-1.4-1.1-1.9-1.1-3 0-1 .8-1.7 2-1.7h1.6c2.6 0 4.5-1.9 4.5-4.4C21.3 5.5 17.1 2.7 12 2.7z"></path><circle cx="7.6" cy="11.2" r="1.1"></circle><circle cx="10.6" cy="7.4" r="1.1"></circle><circle cx="15.2" cy="7.4" r="1.1"></circle></svg></button>
         <button class="header-btn model-btn" onclick="toggleModelPanel(event)" id="modelBtn" title="模型设置" aria-label="打开模型设置" aria-controls="modelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
-        <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度" aria-label="选择难度" aria-controls="levelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
-        <button class="header-btn continent-btn" onclick="openContinentView()" title="知识大陆（跨画布总览）" aria-label="打开知识大陆"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></button>
-        <button class="header-btn knowledge-btn-icon" id="knowledgeBtn" onclick="toggleKnowledgePanel()" title="知识总览" aria-label="打开知识总览"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
-        <button class="header-btn quiz-btn" onclick="openQuiz()" title="知识检测" aria-label="打开知识检测"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></button>
-        <button class="header-btn data-btn" onclick="toggleDataPanel(event)" title="数据管理" aria-label="打开数据管理" aria-controls="dataPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></button>
-        <button class="header-btn clear-chat-btn" onclick="clearChat()" title="清空当前画布" aria-label="清空当前画布"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+        <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度" aria-label="选择难度" aria-controls="levelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
+        <button class="header-btn knowledge-btn-icon" id="knowledgeBtn" onclick="toggleKnowledgeMenu(event)" title="知识（大陆/总览/画布检测/全局检测）" aria-label="打开知识菜单" aria-controls="knowledgeMenu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="7" x2="16" y2="7"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg></button>
+        <button class="header-btn more-btn" onclick="toggleMoreMenu(event)" id="moreBtn" title="更多（数据管理/清空画布）" aria-label="更多操作" aria-controls="moreMenu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg></button>
       </div>
     </div>
 
@@ -225,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=3814dd15"></script>
+  <script src="/js/app.js?v=a2ad8f19"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -589,8 +588,17 @@
     <div class="level-option active" data-level="university" onclick="setLevel('university')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg></span> 大学</div>
     <div class="level-option" data-level="research" onclick="setLevel('research')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h12"></path><path d="M8 18a4 4 0 0 1 8 0"></path><path d="M12 18V8"></path><path d="M9 5h6l1 3H8z"></path></svg></span> 科研</div>
   </div>
-  <div class="level-panel skin-panel aurora-glass aurora-glass--compact" id="skinPanel"></div>
-  <div class="level-panel bg-panel aurora-glass aurora-glass--compact" id="bgPanel"></div>
+  <div class="level-panel bg-panel theme-panel aurora-glass aurora-glass--compact" id="themePanel"></div>
+  <div class="level-panel menu-panel aurora-glass aurora-glass--compact" id="knowledgeMenu">
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openContinentView()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></span> 知识大陆</div>
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); toggleKnowledgePanel()"><span class="level-emoji"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="7" x2="16" y2="7"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg></span> 知识总览</div>
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuiz()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 画布检测</div>
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuizGlobalDashboard()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 全局检测</div>
+  </div>
+  <div class="level-panel menu-panel aurora-glass aurora-glass--compact" id="moreMenu">
+    <div class="level-option" onclick="event.stopPropagation(); closeMoreMenu(); toggleDataPanel(event)"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></span> 数据管理</div>
+    <div class="level-option" onclick="event.stopPropagation(); closeMoreMenu(); clearChat()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></span> 清空当前画布</div>
+  </div>
   <div class="task-panel aurora-glass aurora-glass--dialog aurora-glass--plain" id="taskPanel" role="dialog" aria-modal="false" aria-labelledby="taskPanelTitle">
     <div class="task-panel-head">
       <span class="task-panel-title" id="taskPanelTitle">任务列表</span>
