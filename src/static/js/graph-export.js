@@ -376,6 +376,18 @@
       }
     } catch (e) {}
     try {
+      // 壁纸挑选器在时按「当前主题各自所选」取（2026-10-02 壁纸库）；
+      // viewer 子集包没有 ui.js，typeof 不成立则落回下方常量兜底
+      if (typeof getWallpaperId === 'function' && typeof WALLPAPER_SETS !== 'undefined') {
+        var _wid = getWallpaperId(light ? 'light' : 'dark');
+        for (var _wi = 0; _wi < WALLPAPER_SETS.length; _wi++) {
+          if (WALLPAPER_SETS[_wi].id !== _wid) continue;
+          var _wm = light ? WALLPAPER_SETS[_wi].light : WALLPAPER_SETS[_wi].dark;
+          return land ? _wm.land : _wm.port;
+        }
+      }
+    } catch (eW) {}
+    try {
       if (typeof DARK_LAND_URL === 'string') {
         return light ? (land ? LIGHT_LAND_URL : LIGHT_PORT_URL) : (land ? DARK_LAND_URL : DARK_PORT_URL);
       }

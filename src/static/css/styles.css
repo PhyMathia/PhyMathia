@@ -1430,6 +1430,52 @@
       padding: 8px 6px 2px;
       white-space: nowrap;
     }
+    /* 背景壁纸挑选面板（2026-10-02）：复用 .level-panel 定位/玻璃材质，缩略图随当前模式出横版预览 */
+    .bg-panel { min-width: 250px; }
+    .bg-panel-title {
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      padding: 2px 6px 0;
+      letter-spacing: 0.5px;
+    }
+    .bg-panel-list { display: flex; flex-direction: column; gap: 2px; padding: 6px 4px 0; }
+    .bg-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: var(--sp-3);
+      border: 1px solid transparent;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--text-primary);
+      font-size: var(--fs-md);
+      font-family: inherit;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+    }
+    .bg-option:hover { background: var(--hover-bg); }
+    .bg-option.active { border-color: var(--accent); background: var(--btn-active-bg); }
+    .bg-option-thumb {
+      width: 64px;
+      height: 36px;
+      flex: none;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border);
+      background-size: cover;
+      background-position: center;
+    }
+    .bg-option-name { flex: 1; }
+    .bg-option-check { color: var(--accent); flex: none; }
+    .bg-panel-hint {
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
+      padding: 8px 6px 2px;
+      line-height: 1.6;
+    }
     .level-option {
       display: flex;
       align-items: center;

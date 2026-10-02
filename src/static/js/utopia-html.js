@@ -240,8 +240,25 @@
 
       // 可视化 KaTeX 资产与深浅两张壁纸并行收集（都在模板 CSS/JS 内联之后，与打包正文无关）
       var vizAssets = await _collectVizAssets(snapshot);
-      var bgDark = await _fetchDataUrl(location.origin + '/bg_dark_landscape.jpg', true);
-      var bgLight = await _fetchDataUrl(location.origin + '/bg_light_landscape.jpg', true);
+      // 壁纸跟随「深浅各自所选」（2026-10-02 挑选器按模式记忆；拿不到挑选器回退内置星夜）
+      var bgDarkUrl = '/bg_dark_landscape.jpg';
+      var bgLightUrl = '/bg_light_landscape.jpg';
+      try {
+        if (typeof getWallpaperId === 'function' && typeof WALLPAPER_SETS !== 'undefined') {
+          var _bgPick = function (t) {
+            var wid = getWallpaperId(t);
+            for (var i = 0; i < WALLPAPER_SETS.length; i++) {
+              if (WALLPAPER_SETS[i].id !== wid) continue;
+              return (t === 'light' ? WALLPAPER_SETS[i].light : WALLPAPER_SETS[i].dark).land;
+            }
+            return null;
+          };
+          bgDarkUrl = _bgPick('dark') || bgDarkUrl;
+          bgLightUrl = _bgPick('light') || bgLightUrl;
+        }
+      } catch (eBg) {}
+      var bgDark = await _fetchDataUrl(location.origin + bgDarkUrl, true);
+      var bgLight = await _fetchDataUrl(location.origin + bgLightUrl, true);
 
       // JS：<script src> → 内联；viewer.js 前注入内嵌快照
       var scripts = Array.prototype.slice.call(doc.querySelectorAll('script[src]'));

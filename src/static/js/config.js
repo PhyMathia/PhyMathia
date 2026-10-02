@@ -3,6 +3,9 @@ const APP_VERSION = '1.5.1';
 
 // ====== 存储键名常量 ======
 const STORAGE_KEY_THEME = 'phymathia_theme';
+// 壁纸挑选按深浅模式各记各的选择（ui.js 读写，键值＝WALLPAPER_SETS 的 id）
+const STORAGE_KEY_BG_DARK = 'phymathia_bg_dark';
+const STORAGE_KEY_BG_LIGHT = 'phymathia_bg_light';
 // 主题翻转慢光栅判定（2026-10-01）：首切 LoAF 探测判慢机后落值（存判定时间戳，ms），
 // 下次启动直接预挂 node-blur-lite——否则慢机每个会话的第一次切换都先吃一遍
 // 磨砂重算风暴、探测才生效（用户实报「还是卡」的主因之一）。30 天过期重探，机器升级自愈。
@@ -180,6 +183,13 @@ const DARK_LAND_URL = '/bg_dark_landscape.jpg';
 const DARK_PORT_URL = '/bg_dark_portrait.jpg';
 const LIGHT_LAND_URL = '/bg_light_landscape.jpg';
 const LIGHT_PORT_URL = '/bg_light_portrait.jpg';
+// 成对主题壁纸：每套深浅各含横/竖两张。新增一套＝4 张资源进 src/static＋在此加一行，
+// 挑选器（ui.js renderBgPanel）自动出卡。id 存进 phymathia_bg_dark / _bg_light。
+const WALLPAPER_SETS = [
+  { id: 'night', name: '星夜', dark: { land: DARK_LAND_URL, port: DARK_PORT_URL }, light: { land: LIGHT_LAND_URL, port: LIGHT_PORT_URL } },
+  { id: 'paper', name: '素纸', dark: { land: '/bg_paper_dark_landscape.jpg', port: '/bg_paper_dark_portrait.jpg' }, light: { land: '/bg_paper_light_landscape.jpg', port: '/bg_paper_light_portrait.jpg' } },
+  { id: 'mountain', name: '山影', dark: { land: '/bg_mountain_dark_landscape.jpg', port: '/bg_mountain_dark_portrait.jpg' }, light: { land: '/bg_mountain_light_landscape.jpg', port: '/bg_mountain_light_portrait.jpg' } }
+];
 
 // ====== 粒子特效参数 ======
 const SYMBOL_COUNT = (window.innerWidth <= 768) ? 18 : 33;
