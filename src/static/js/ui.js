@@ -2057,11 +2057,6 @@ function setThemeSplit(on) {
   renderThemePanel();
 }
 
-function familyLabel(key) {
-  const f = STYLE_FAMILIES.find(x => x.key === key);
-  return f ? f.label : STYLE_FAMILIES[0].label;
-}
-
 function updateThemePanelUI() {
   const panel = document.getElementById('themePanel');
   if (!panel) return;
@@ -2135,15 +2130,13 @@ function renderThemePanel() {
   const isLight = currentTheme === 'light';
   const modeName = isLight ? '浅色' : '深色';
   const curId = getWallpaperId(currentTheme);
-  const otherId = getWallpaperId(isLight ? 'dark' : 'light');
-  const nameOf = (id) => (WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0]).name;
   const curFam = currentStyleFamily();
   const defFam = themeDefaultFamily();
   const split = themeSplitEnabled();
   let html = '<div class="bg-panel-title">主题 · ' + modeName + '模式' + (split ? '（独立）' : '') + '</div><div class="bg-panel-list">';
   for (const s of WALLPAPER_SETS) {
     const thumb = (isLight ? s.light : s.dark).land;
-    html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" onclick="pickTheme(\'' + s.id + '\')">'
+    html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" title="换壁纸＋把风格重置为该主题的默认搭配" onclick="pickTheme(\'' + s.id + '\')">'
       + '<span class="bg-option-thumb" style="background-image:url(\'' + thumb + '\')"></span>'
       + '<span class="bg-option-name">' + s.name + '</span>'
       + (s.id === curId ? '<svg class="bg-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : '')
@@ -2161,11 +2154,7 @@ function renderThemePanel() {
       + (f.key === defFam ? '<span class="theme-default-star" title="当前主题默认">★</span>' : '')
       + '</div>';
   }
-  const modeHint = split
-    ? '独立模式：正在为' + modeName + '模式挑选，另一侧保持「' + nameOf(otherId) + '」与它的风格不动。'
-    : '深浅共用同一主题：点卡两侧同步换、翻深浅主题不跟着换。';
-  html += '</div><div class="bg-panel-hint">点主题卡＝换壁纸＋风格重置为默认（「' + nameOf(curId) + '」默认是「' + familyLabel(defFam)
-    + '」）；点风格＝面板/节点/强调色换族、壁纸不动。' + modeHint + '</div>';
+  html += '</div>';
   panel.innerHTML = html;
 }
 function pickTheme(id) {
