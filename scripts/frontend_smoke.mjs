@@ -6882,15 +6882,15 @@ await Promise.all(pendingChecks).catch(() => {});
   const uhSrc = fs.readFileSync('src/static/js/utopia-html.js', 'utf8');
   const geSrc = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
 
-  qcheck('壁纸库：注册表成套、16 个 URL 与磁盘文件一一对应＋按模式存储键', () => {
+  qcheck('壁纸库：注册表成套、20 个 URL 与磁盘文件一一对应＋按模式存储键', () => {
     if (!cfgSrc.includes('const WALLPAPER_SETS = [')) throw new Error('config 缺 WALLPAPER_SETS');
     const ids = [...cfgSrc.matchAll(/id: '([a-z]+)', name/g)].map(m => m[1]);
-    ['night', 'paper', 'mountain', 'neon'].forEach(id => { if (!ids.includes(id)) throw new Error('缺套 ' + id); });
+    ['night', 'paper', 'mountain', 'neon', 'candy'].forEach(id => { if (!ids.includes(id)) throw new Error('缺套 ' + id); });
     const slots = (cfgSrc.match(/(?:land|port):/g) || []).length;
-    if (slots !== 16) throw new Error('注册表槽位应 16（4 套×深浅×横竖），实得 ' + slots);
-    // 字面量 URL 来自 paper/mountain/neon 三套（星夜走常量引用），这 12 条逐个验磁盘
+    if (slots !== 20) throw new Error('注册表槽位应 20（5 套×深浅×横竖），实得 ' + slots);
+    // 字面量 URL 来自 paper/mountain/neon/candy 四套（星夜走常量引用），这 16 条逐个验磁盘
     const urls = [...cfgSrc.matchAll(/(?:land|port): '([^']+)'/g)].map(m => m[1]);
-    if (urls.length !== 12) throw new Error('字面量 URL 应 12 条，实得 ' + urls.length);
+    if (urls.length !== 16) throw new Error('字面量 URL 应 16 条，实得 ' + urls.length);
     urls.forEach(u => { if (!fs.existsSync('src/static' + u)) throw new Error('缺资源文件：' + u); });
     ['DARK_LAND_URL', 'DARK_PORT_URL', 'LIGHT_LAND_URL', 'LIGHT_PORT_URL'].forEach(c => {
       if (!new RegExp('(land|port): ' + c).test(cfgSrc)) throw new Error('星夜套缺常量 ' + c);
@@ -7003,7 +7003,7 @@ await Promise.all(pendingChecks).catch(() => {});
     const orphan = skinKeys.filter(k => !famKeys.includes(k));
     if (orphan.length) throw new Error('皮肤注册表存在非家族 key：' + orphan.join(','));
     if (!cfgSrc.includes('const THEME_DEFAULT_FAMILY')) throw new Error('缺主题默认搭配表');
-    for (const [wp, fam] of [['night', 'aurora'], ['paper', 'blueprint'], ['mountain', 'inkstone'], ['neon', 'neon']]) {
+    for (const [wp, fam] of [['night', 'aurora'], ['paper', 'blueprint'], ['mountain', 'inkstone'], ['neon', 'neon'], ['candy', 'candy']]) {
       if (!cfgSrc.includes(wp + ": '" + fam + "'")) throw new Error('默认搭配缺 ' + wp + '→' + fam);
     }
     return true;
@@ -7047,8 +7047,8 @@ await Promise.all(pendingChecks).catch(() => {});
   qcheck('飘浮符号随主题：每套 symbols 配置齐备＋换套重建接线', () => {
     const cfg = cfgSrc.slice(cfgSrc.indexOf('const WALLPAPER_SETS'), cfgSrc.indexOf('const STYLE_FAMILIES'));
     const counts = (cfg.match(/count: \d+/g) || []).length;
-    if (counts !== 4) throw new Error('四套壁纸应各带 symbols.count，实得 ' + counts);
-    if ((cfg.match(/color: 'rgba/g) || []).length !== 8) throw new Error('深浅×四套应 8 条符号配色');
+    if (counts !== 5) throw new Error('五套壁纸应各带 symbols.count，实得 ' + counts);
+    if ((cfg.match(/color: 'rgba/g) || []).length !== 10) throw new Error('深浅×五套应 10 条符号配色');
     if (!uiSrc.includes('window.__syncFloatingSymbols')) throw new Error('缺符号重建入口 __syncFloatingSymbols');
     if (!uiSrc.includes('_desiredSymbolCount')) throw new Error('符号数量没按壁纸套取数');
     if (!/applyStyleFamily\(THEME_DEFAULT_FAMILY\[id\]/.test(uiSrc)) throw new Error('点主题卡没重置风格到默认（Q2 全套重置拍板）');
