@@ -1869,6 +1869,20 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
   updateBgImage();
+  // 深浅主题联动（2026-10-02 第三轮拍板：默认共用、开关才独立）。联动态下两模式壁纸键若
+  // 历史遗留不同值（旧版「各记各的」时代写的），按当前模式的所选收拢成同值——否则翻深浅
+  // 会看到「主题没跟随」。首次收拢后两键恒等，此后每次翻转只剩两次读、零写入。
+  if (!themeSplitEnabled()) {
+    const wpD = getWallpaperId('dark');
+    const wpL = getWallpaperId('light');
+    if (wpD !== wpL) {
+      const cur = getWallpaperId(currentTheme);
+      setWallpaper(cur, 'dark');
+      setWallpaper(cur, 'light');
+    }
+  }
+  // 独立模式两模式家族可能不同：翻转后按新模式重挂双属性（联动态同值幂等）。
+  applyStyleFamily(currentStyleFamily());
   // 深浅各自所选的壁纸套可以不同（phymathia_bg_dark/_light 分键）→ 模式翻转也可能换套：
   // 符号密度/配色跟着重算（2026-10-02 用户拍板：符号颜色与数量随壁纸主题走）
   if (typeof window.__syncFloatingSymbols === 'function') window.__syncFloatingSymbols();
@@ -1958,9 +1972,23 @@ const GRAPH_NODE_SKINS = [
 // 面板行图标：风格家族统一用「层」字形（模板叠放语义）；以后某家族要专属图标再进注册表
 const SKIN_OPTION_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
 
+// 深浅独立开关（2026-10-02 第三轮用户拍板：默认两模式共用同一主题，翻深浅主题跟手；
+// 勾选后才各挑各的）。读侧永远按模式取键，联动只是「写时双写」——所以对账/收拢都靠写侧。
+function _familyModeKey(theme) {
+  return theme === 'light' ? STORAGE_KEY_STYLE_FAMILY_LIGHT : STORAGE_KEY_STYLE_FAMILY_DARK;
+}
+function themeSplitEnabled() {
+  let v = null;
+  try { v = localStorage.getItem(STORAGE_KEY_THEME_SPLIT); } catch (e) {}
+  return v === '1';
+}
 function currentStyleFamily() {
   let v = null;
-  try { v = localStorage.getItem(STORAGE_KEY_STYLE_FAMILY); } catch (e) {}
+  try { v = localStorage.getItem(themeSplitEnabled() ? _familyModeKey(currentTheme) : STORAGE_KEY_STYLE_FAMILY); } catch (e) {}
+  if (!v && themeSplitEnabled()) {
+    // 分模式键缺位＝开独立后该侧还没挑过 → 回落共享键（开启瞬间已落种，此处只兜异常态）
+    try { v = localStorage.getItem(STORAGE_KEY_STYLE_FAMILY); } catch (e) {}
+  }
   if (!v) {
     // 迁移（2026-10-02）：家族键缺位＝老用户，从旧节点皮肤键折算（同 key 直接对应家族）
     try { v = localStorage.getItem(STORAGE_KEY_NODE_SKIN); } catch (e) {}
@@ -1971,7 +1999,13 @@ function currentStyleFamily() {
 function applyStyleFamily(key) {
   const fam = STYLE_FAMILIES.some(f => f.key === key) ? key : STYLE_FAMILIES[0].key;
   try {
-    localStorage.setItem(STORAGE_KEY_STYLE_FAMILY, fam);
+    if (themeSplitEnabled()) {
+      localStorage.setItem(_familyModeKey(currentTheme), fam);
+      // 共享键镜像最近一次挑选：viewer 内联预置等只读共享键的读者继续跟随导出时刻
+      localStorage.setItem(STORAGE_KEY_STYLE_FAMILY, fam);
+    } else {
+      localStorage.setItem(STORAGE_KEY_STYLE_FAMILY, fam);
+    }
     localStorage.setItem(STORAGE_KEY_NODE_SKIN, fam); // 旧键同步写：图导出快照等旧读者兼容
   } catch (e) {}
   // 默认族 aurora 不挂属性：基础节点规则与极光玻璃本身就是默认（与 data-node-skin 同契约），
@@ -1989,6 +2023,38 @@ function applyStyleFamily(key) {
 // 控制台兼容（node-skins.md 真机自验口径沿用）：setNodeSkin('key') 现在等价换整个家族
 function setNodeSkin(key) {
   applyStyleFamily(key);
+}
+
+// 深浅独立开关（2026-10-02 第三轮）：开＝两侧家族键从当前共享值落种（此前从未分过，两侧同源）；
+// 关＝收拢为当前模式的主题（壁纸两侧同写、家族共享键取当前侧分键值再摘分键）——否则关掉后
+// 另一侧会悄悄变回旧选择，违背「默认共用」的直觉。纯存储操作＋属性重挂，视觉即切。
+function setThemeSplit(on) {
+  if (on) {
+    let fam = null;
+    try { fam = localStorage.getItem(STORAGE_KEY_STYLE_FAMILY); } catch (e) {}
+    if (!STYLE_FAMILIES.some(f => f.key === fam)) fam = currentStyleFamily();
+    try {
+      localStorage.setItem(STORAGE_KEY_THEME_SPLIT, '1');
+      localStorage.setItem(STORAGE_KEY_STYLE_FAMILY_DARK, fam);
+      localStorage.setItem(STORAGE_KEY_STYLE_FAMILY_LIGHT, fam);
+    } catch (e) {}
+  } else {
+    try { localStorage.setItem(STORAGE_KEY_THEME_SPLIT, '0'); } catch (e) {}
+    const t = currentTheme === 'light' ? 'light' : 'dark';
+    const id = getWallpaperId(t);
+    setWallpaper(id, 'dark');
+    setWallpaper(id, 'light');
+    let fam = null;
+    try { fam = localStorage.getItem(_familyModeKey(t)); } catch (e) {}
+    if (!STYLE_FAMILIES.some(f => f.key === fam)) fam = currentStyleFamily();
+    try {
+      localStorage.setItem(STORAGE_KEY_STYLE_FAMILY, fam);
+      localStorage.removeItem(STORAGE_KEY_STYLE_FAMILY_DARK);
+      localStorage.removeItem(STORAGE_KEY_STYLE_FAMILY_LIGHT);
+    } catch (e) {}
+  }
+  applyStyleFamily(currentStyleFamily());
+  renderThemePanel();
 }
 
 function familyLabel(key) {
@@ -2073,7 +2139,8 @@ function renderThemePanel() {
   const nameOf = (id) => (WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0]).name;
   const curFam = currentStyleFamily();
   const defFam = themeDefaultFamily();
-  let html = '<div class="bg-panel-title">主题 · ' + modeName + '模式</div><div class="bg-panel-list">';
+  const split = themeSplitEnabled();
+  let html = '<div class="bg-panel-title">主题 · ' + modeName + '模式' + (split ? '（独立）' : '') + '</div><div class="bg-panel-list">';
   for (const s of WALLPAPER_SETS) {
     const thumb = (isLight ? s.light : s.dark).land;
     html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" onclick="pickTheme(\'' + s.id + '\')">'
@@ -2082,19 +2149,32 @@ function renderThemePanel() {
       + (s.id === curId ? '<svg class="bg-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : '')
       + '</button>';
   }
-  html += '</div><div class="bg-panel-title theme-style-title">风格 · 面板与节点同进退</div><div class="bg-panel-list theme-style-list">';
+  html += '</div>'
+    // 深浅独立开关行（2026-10-02 第三轮）：stopPropagation 压住 click 冒泡——onchange 里
+    // renderThemePanel 整板重画后，旧 e.target 已脱离面板，外点关闭监听会误判「点了外面」
+    + '<label class="theme-split-row"><input type="checkbox"' + (split ? ' checked' : '')
+    + ' onchange="event.stopPropagation(); setThemeSplit(this.checked)"><span>深浅模式各自挑主题</span></label>'
+    + '<div class="bg-panel-title theme-style-title">风格 · 面板与节点同进退</div><div class="bg-panel-list theme-style-list">';
   for (const f of STYLE_FAMILIES) {
     html += '<div class="level-option' + (f.key === curFam ? ' active' : '') + '" data-family="' + f.key + '" title="' + escapeHtml(f.desc || '') + '" onclick="pickStyleFamily(\'' + f.key + '\')">'
       + '<span class="level-emoji">' + SKIN_OPTION_ICON + '</span> ' + escapeHtml(f.label)
       + (f.key === defFam ? '<span class="theme-default-star" title="当前主题默认">★</span>' : '')
       + '</div>';
   }
+  const modeHint = split
+    ? '独立模式：正在为' + modeName + '模式挑选，另一侧保持「' + nameOf(otherId) + '」与它的风格不动。'
+    : '深浅共用同一主题：点卡两侧同步换、翻深浅主题不跟着换。';
   html += '</div><div class="bg-panel-hint">点主题卡＝换壁纸＋风格重置为默认（「' + nameOf(curId) + '」默认是「' + familyLabel(defFam)
-    + '」）；点风格＝面板/节点/强调色换族、壁纸不动。正在为' + modeName + '模式挑选（另侧现为「' + nameOf(otherId) + '」）。</div>';
+    + '」）；点风格＝面板/节点/强调色换族、壁纸不动。' + modeHint + '</div>';
   panel.innerHTML = html;
 }
 function pickTheme(id) {
   if (!setWallpaper(id)) return;
+  if (!themeSplitEnabled()) {
+    // 默认深浅共用同一主题（2026-10-02 第三轮拍板）：另一侧同步同值，翻深浅不换主题。
+    // 读侧按模式取键，联动全靠这里双写；独立模式下不写，另一侧保持自己的选择。
+    setWallpaper(id, currentTheme === 'light' ? 'dark' : 'light');
+  }
   applyStyleFamily(THEME_DEFAULT_FAMILY[id] || STYLE_FAMILIES[0].key); // 全套重置到默认搭配
   renderThemePanel();
 }

@@ -16,6 +16,12 @@ const STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin';
 // data-panel-skin / data-node-skin 双属性同 key 同挂（家族即皮肤超集，杜绝「面板一个样、
 // 节点另一个样」的零件级混搭）。缺键时从旧 phymathia_node_skin 折算（ui.js 迁移）。
 const STORAGE_KEY_STYLE_FAMILY = 'phymathia_style_family';
+// 深浅独立开关（2026-10-02 第三轮用户拍板）：默认两模式共用同一主题（点主题卡双写两侧、
+// 翻深浅不换主题），勾选「深浅模式各自挑主题」后才按模式各记各的——家族走下面两条分模式键，
+// 壁纸沿用上面两条 bg 键（联动只是「写时双写」，读侧永远按模式取键）。
+const STORAGE_KEY_THEME_SPLIT = 'phymathia_theme_split';
+const STORAGE_KEY_STYLE_FAMILY_DARK = 'phymathia_style_family_dark';
+const STORAGE_KEY_STYLE_FAMILY_LIGHT = 'phymathia_style_family_light';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
