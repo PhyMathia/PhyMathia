@@ -6858,5 +6858,78 @@ await Promise.all(pendingChecks).catch(() => {});
   });
 }
 
+// ====== 壁纸库（成对主题背景＋挑选器，2026-10-02） ======
+{
+  const qcheck = (name, fn) => {
+    try {
+      const r = fn();
+      if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+      else console.log('✓', name);
+    } catch (e) {
+      failed++; console.error('❌', name, '->', (e && e.message) || e);
+    }
+  };
+  const cfgSrc = fs.readFileSync('src/static/js/config.js', 'utf8');
+  const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const idxSrc = fs.readFileSync('src/static/index.html', 'utf8');
+  const uhSrc = fs.readFileSync('src/static/js/utopia-html.js', 'utf8');
+  const geSrc = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+
+  qcheck('壁纸库：注册表成套、12 个 URL 与磁盘文件一一对应＋按模式存储键', () => {
+    if (!cfgSrc.includes('const WALLPAPER_SETS = [')) throw new Error('config 缺 WALLPAPER_SETS');
+    const ids = [...cfgSrc.matchAll(/id: '([a-z]+)', name/g)].map(m => m[1]);
+    ['night', 'paper', 'mountain'].forEach(id => { if (!ids.includes(id)) throw new Error('缺套 ' + id); });
+    const slots = (cfgSrc.match(/(?:land|port):/g) || []).length;
+    if (slots !== 12) throw new Error('注册表槽位应 12（3 套×深浅×横竖），实得 ' + slots);
+    // 字面量 URL 只来自 paper/mountain 两套（星夜走常量引用），这 8 条逐个验磁盘
+    const urls = [...cfgSrc.matchAll(/(?:land|port): '([^']+)'/g)].map(m => m[1]);
+    if (urls.length !== 8) throw new Error('字面量 URL 应 8 条，实得 ' + urls.length);
+    urls.forEach(u => { if (!fs.existsSync('src/static' + u)) throw new Error('缺资源文件：' + u); });
+    ['DARK_LAND_URL', 'DARK_PORT_URL', 'LIGHT_LAND_URL', 'LIGHT_PORT_URL'].forEach(c => {
+      if (!new RegExp('(land|port): ' + c).test(cfgSrc)) throw new Error('星夜套缺常量 ' + c);
+    });
+    if (!cfgSrc.includes("STORAGE_KEY_BG_DARK = 'phymathia_bg_dark'") || !cfgSrc.includes("STORAGE_KEY_BG_LIGHT = 'phymathia_bg_light'")) throw new Error('缺按模式存储键');
+    return true;
+  });
+
+  qcheck('壁纸挑选器：按钮/面板/函数接线＋互斥双向＋重定位与预载入列', () => {
+    if (!idxSrc.includes('id="bgBtn"') || !idxSrc.includes('id="bgPanel"')) throw new Error('index 缺按钮或面板');
+    ['toggleBgPicker', 'renderBgPanel', 'pickWallpaper', 'getWallpaperId', 'setWallpaper', 'currentWallpaperSet'].forEach(f => {
+      if (!uiSrc.includes('function ' + f)) throw new Error('ui 缺 ' + f);
+    });
+    if (!/WALLPAPER_SETS\.flatMap\(s => \[s\.dark\.land, s\.dark\.port, s\.light\.land, s\.light\.port\]/.test(uiSrc)) throw new Error('预载未走注册表');
+    if (!uiSrc.includes("_repositionShownPanel('bgPanel'")) throw new Error('T45 重定位未入列');
+    // 互斥双向：挑选器关四个老面板，老面板也关挑选器
+    if (!uiSrc.includes("['skinPanel', 'levelPanel', 'modelPanel', 'dataPanel'].forEach")) throw new Error('挑选器缺互斥列表');
+    if (!uiSrc.includes("['levelPanel', 'modelPanel', 'dataPanel', 'bgPanel'].forEach")) throw new Error('皮肤面板未关挑选器');
+    if (!/const bgPanelEl = document\.getElementById\('bgPanel'\);\s*\n\s*if \(bgPanelEl\) bgPanelEl\.classList\.remove\('show'\);/.test(uiSrc)) throw new Error('难度/模型/数据面板未关挑选器');
+    return true;
+  });
+
+  qcheck('壁纸外发：单文件打包与画布导出跟随所选，viewer 包 typeof 常量兜底仍在', () => {
+    if (!uhSrc.includes('getWallpaperId')) throw new Error('utopia 单文件外发未跟随所选壁纸');
+    if (!geSrc.includes('typeof getWallpaperId') || !geSrc.includes('typeof WALLPAPER_SETS')) throw new Error('画布导出缺注册表尝试');
+    if (!geSrc.includes("typeof DARK_LAND_URL === 'string'")) throw new Error('画布导出丢了常量兜底');
+    return true;
+  });
+
+  qcheck('壁纸行为：默认星夜、按模式写键、非法 id 拒绝', () => {
+    const r = vm.runInContext('(function(){'
+      + 'if (typeof getWallpaperId !== "function") return "缺 getWallpaperId";'
+      + 'if (typeof setWallpaper !== "function") return "缺 setWallpaper";'
+      + 'if (getWallpaperId("dark") !== "night") return "缺省应回退星夜";'
+      + 'if (setWallpaper("paper", "dark") !== true) return "合法 id 应成功";'
+      + 'if (localStorage.getItem("phymathia_bg_dark") !== "paper") return "深色键未写";'
+      + 'if (setWallpaper("mountain", "light") !== true) return "浅色设置失败";'
+      + 'if (localStorage.getItem("phymathia_bg_light") !== "mountain") return "浅色键未写";'
+      + 'if (setWallpaper("bogus", "dark") !== false) return "非法 id 应拒绝";'
+      + 'if (getWallpaperId("dark") !== "paper") return "读取未反映所选";'
+      + 'return "ok";'
+      + '})()', sandbox);
+    if (r !== 'ok') throw new Error(r);
+    return true;
+  });
+}
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

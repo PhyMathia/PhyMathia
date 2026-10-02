@@ -32,6 +32,9 @@ function toggleLevelPanel(e) {
     const skinPanelEl = document.getElementById('skinPanel');
     if (skinPanelEl) skinPanelEl.classList.remove('show');
     _setPanelTriggerState('skinPanel', false);
+    const bgPanelEl = document.getElementById('bgPanel');
+    if (bgPanelEl) bgPanelEl.classList.remove('show');
+    _setPanelTriggerState('bgPanel', false);
     const modelBtn = document.getElementById('modelBtn');
     if (modelBtn && typeof modelBtn.setAttribute === 'function') modelBtn.setAttribute('aria-expanded', 'false');
     const dataBtn = document.querySelector('.data-btn');
@@ -91,6 +94,9 @@ function toggleModelPanel(e) {
   _setPanelTriggerState('dataPanel', false);
   document.getElementById('skinPanel').classList.remove('show');
   _setPanelTriggerState('skinPanel', false);
+  const bgPanelEl = document.getElementById('bgPanel');
+  if (bgPanelEl) bgPanelEl.classList.remove('show');
+  _setPanelTriggerState('bgPanel', false);
   if (willShow) {
     renderModelList();
     renderModelSelects();
@@ -113,6 +119,9 @@ function toggleDataPanel(e) {
   _setPanelTriggerState('modelPanel', false);
   document.getElementById('skinPanel').classList.remove('show');
   _setPanelTriggerState('skinPanel', false);
+  const bgPanelEl = document.getElementById('bgPanel');
+  if (bgPanelEl) bgPanelEl.classList.remove('show');
+  _setPanelTriggerState('bgPanel', false);
   // Show data stats
   updateDataStats();
   if (willShow) {
@@ -1676,6 +1685,7 @@ window.addEventListener('resize', () => {
   _repositionShownPanel('dataPanel', () => document.querySelector('[aria-controls="dataPanel"]'));
   _repositionShownPanel('levelPanel', () => document.getElementById('levelBtn'));
   _repositionShownPanel('skinPanel', () => document.getElementById('skinBtn'));
+  _repositionShownPanel('bgPanel', () => document.getElementById('bgBtn'));
 });
 
 // ESC 关闭可视化全屏
@@ -1719,7 +1729,11 @@ window.addEventListener('load', async () => {
 // 可与 data-theme 同帧直换壁纸。原先句柄创建后即弃，new Image() 的 complete 在
 // 同步赋 src 的当帧必为 false（真机实测翻转后 80ms 壁纸仍旧图）。
 const _bgPreloaded = new Map();
-[DARK_LAND_URL, DARK_PORT_URL, LIGHT_LAND_URL, LIGHT_PORT_URL, '/logo.png'].forEach(src => {
+// 预载清单走 WALLPAPER_SETS（2026-10-02 壁纸库）：每套深浅×横竖全量预载，挑选器即点即换
+[
+  ...WALLPAPER_SETS.flatMap(s => [s.dark.land, s.dark.port, s.light.land, s.light.port]),
+  '/logo.png'
+].forEach(src => {
   const img = new Image();
   img.src = src;
   _bgPreloaded.set(src, img);
@@ -1838,9 +1852,8 @@ let _bgInitialized = false;
 let _bgCurrentUrl = null;
 function _desiredBgUrl() {
   const isLandscape = window.innerWidth > window.innerHeight;
-  return currentTheme === 'dark'
-    ? (isLandscape ? DARK_LAND_URL : DARK_PORT_URL)
-    : (isLandscape ? LIGHT_LAND_URL : LIGHT_PORT_URL);
+  const m = currentTheme === 'dark' ? currentWallpaperSet().dark : currentWallpaperSet().light;
+  return isLandscape ? m.land : m.port;
 }
 function updateBgImage() {
   const newUrl = _desiredBgUrl();
@@ -1953,7 +1966,7 @@ function toggleSkinPanel(e) {
   if (willShow) {
     renderSkinPanel(); // 每次打开都重画：app.js 在 body 中段执行，脚本运行时面板还没解析，加载期调不到
     // Close other panels（与难度/模型/数据面板互斥，同 toggleLevelPanel 口径）
-    ['levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
+    ['levelPanel', 'modelPanel', 'dataPanel', 'bgPanel'].forEach(id => {
       const p = document.getElementById(id);
       if (p) p.classList.remove('show');
       _setPanelTriggerState(id, false);
@@ -1968,6 +1981,79 @@ document.addEventListener('click', (e) => {
   if (panel && !panel.contains(e.target) && !(btn && btn.contains(e.target))) {
     panel.classList.remove('show');
     _setPanelTriggerState('skinPanel', false);
+  }
+});
+
+// ====== 壁纸挑选（成对主题背景，2026-10-02）======
+// 深浅模式各记各的选择（phymathia_bg_dark / _bg_light），切主题时 _desiredBgUrl 按
+// currentTheme 取对应模式的所选；非法/缺失 id 一律回退首套（内置星夜）。
+function getWallpaperId(theme) {
+  let id = null;
+  try { id = localStorage.getItem(theme === 'light' ? STORAGE_KEY_BG_LIGHT : STORAGE_KEY_BG_DARK); } catch (e) {}
+  return WALLPAPER_SETS.some(s => s.id === id) ? id : WALLPAPER_SETS[0].id;
+}
+function setWallpaper(id, theme) {
+  const t = theme || currentTheme;
+  if (!WALLPAPER_SETS.some(s => s.id === id)) return false;
+  try { localStorage.setItem(t === 'light' ? STORAGE_KEY_BG_LIGHT : STORAGE_KEY_BG_DARK, id); } catch (e) {}
+  if (t === currentTheme) updateBgImage();
+  return true;
+}
+function currentWallpaperSet() {
+  const id = getWallpaperId(currentTheme);
+  return WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0];
+}
+// 挑选器面板（复用 .level-panel 定位/玻璃材质，同皮肤面板口径：互斥、外点关闭、按触发钮重定位）
+function toggleBgPicker(e) {
+  e?.stopPropagation();
+  const panel = document.getElementById('bgPanel');
+  if (!panel) return;
+  const willShow = !panel.classList.contains('show');
+  panel.classList.toggle('show');
+  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('bgBtn');
+  _setPanelTriggerState('bgPanel', willShow);
+  if (willShow) {
+    renderBgPanel(); // 每次打开都重画：缩略图与高亮跟随当前模式（同 toggleSkinPanel 口径）
+    ['skinPanel', 'levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
+      const p = document.getElementById(id);
+      if (p) p.classList.remove('show');
+      _setPanelTriggerState(id, false);
+    });
+    void panel.offsetHeight;
+    _positionPanel('bgPanel', trigger);
+  }
+}
+function renderBgPanel() {
+  const panel = document.getElementById('bgPanel');
+  if (!panel) return;
+  const isLight = currentTheme === 'light';
+  const modeName = isLight ? '浅色' : '深色';
+  const curId = getWallpaperId(currentTheme);
+  const otherId = getWallpaperId(isLight ? 'dark' : 'light');
+  const nameOf = (id) => (WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0]).name;
+  let html = '<div class="bg-panel-title">背景壁纸 · ' + modeName + '模式</div><div class="bg-panel-list">';
+  for (const s of WALLPAPER_SETS) {
+    const thumb = (isLight ? s.light : s.dark).land;
+    html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" onclick="pickWallpaper(\'' + s.id + '\')">'
+      + '<span class="bg-option-thumb" style="background-image:url(\'' + thumb + '\')"></span>'
+      + '<span class="bg-option-name">' + s.name + '</span>'
+      + (s.id === curId ? '<svg class="bg-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : '')
+      + '</button>';
+  }
+  html += '</div><div class="bg-panel-hint">正在为' + modeName + '模式挑选，当前「' + nameOf(curId)
+    + '」；切到' + (isLight ? '深' : '浅') + '色模式可给那边单独挑（现为「' + nameOf(otherId) + '」）。</div>';
+  panel.innerHTML = html;
+}
+function pickWallpaper(id) {
+  if (!setWallpaper(id)) return;
+  renderBgPanel();
+}
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('bgPanel');
+  const btn = document.getElementById('bgBtn');
+  if (panel && !panel.contains(e.target) && !(btn && btn.contains(e.target))) {
+    panel.classList.remove('show');
+    _setPanelTriggerState('bgPanel', false);
   }
 });
 
