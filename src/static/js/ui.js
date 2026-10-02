@@ -29,12 +29,10 @@ function toggleLevelPanel(e) {
   if (willShow) {
     document.getElementById('modelPanel').classList.remove('show');
     document.getElementById('dataPanel').classList.remove('show');
-    const skinPanelEl = document.getElementById('skinPanel');
-    if (skinPanelEl) skinPanelEl.classList.remove('show');
-    _setPanelTriggerState('skinPanel', false);
-    const bgPanelEl = document.getElementById('bgPanel');
-    if (bgPanelEl) bgPanelEl.classList.remove('show');
-    _setPanelTriggerState('bgPanel', false);
+    const themePanelEl = document.getElementById('themePanel');
+    if (themePanelEl) themePanelEl.classList.remove('show');
+    _setPanelTriggerState('themePanel', false);
+    if (typeof _closeHeaderMenus === 'function') _closeHeaderMenus();
     const modelBtn = document.getElementById('modelBtn');
     if (modelBtn && typeof modelBtn.setAttribute === 'function') modelBtn.setAttribute('aria-expanded', 'false');
     const dataBtn = document.querySelector('.data-btn');
@@ -92,11 +90,10 @@ function toggleModelPanel(e) {
   document.getElementById('dataPanel').classList.remove('show');
   _setPanelTriggerState('levelPanel', false);
   _setPanelTriggerState('dataPanel', false);
-  document.getElementById('skinPanel').classList.remove('show');
-  _setPanelTriggerState('skinPanel', false);
-  const bgPanelEl = document.getElementById('bgPanel');
-  if (bgPanelEl) bgPanelEl.classList.remove('show');
-  _setPanelTriggerState('bgPanel', false);
+  const themePanelEl = document.getElementById('themePanel');
+  if (themePanelEl) themePanelEl.classList.remove('show');
+  _setPanelTriggerState('themePanel', false);
+  if (typeof _closeHeaderMenus === 'function') _closeHeaderMenus();
   if (willShow) {
     renderModelList();
     renderModelSelects();
@@ -117,11 +114,10 @@ function toggleDataPanel(e) {
   document.getElementById('modelPanel').classList.remove('show');
   _setPanelTriggerState('levelPanel', false);
   _setPanelTriggerState('modelPanel', false);
-  document.getElementById('skinPanel').classList.remove('show');
-  _setPanelTriggerState('skinPanel', false);
-  const bgPanelEl = document.getElementById('bgPanel');
-  if (bgPanelEl) bgPanelEl.classList.remove('show');
-  _setPanelTriggerState('bgPanel', false);
+  const themePanelEl = document.getElementById('themePanel');
+  if (themePanelEl) themePanelEl.classList.remove('show');
+  _setPanelTriggerState('themePanel', false);
+  if (typeof _closeHeaderMenus === 'function') _closeHeaderMenus();
   // Show data stats
   updateDataStats();
   if (willShow) {
@@ -601,11 +597,27 @@ document.addEventListener('click', (e) => {
     applyTheme() {
       const dark = document.documentElement.getAttribute('data-theme') !== 'light';
       const isFormula = this.text.length > 3;
-      this.baseOpacity = dark
+      // 符号配色读壁纸套配置（config.js WALLPAPER_SETS[].symbols，2026-10-02）：颜色/光晕/
+      // 透明度系数按「当前模式的壁纸套」深浅两档取；配置缺字段时回落原有硬编码（星夜值）。
+      // 注意别引用 currentTheme 变量——本 IIFE 在脚本前段执行，那时它还没赋值，读 data-theme
+      // 属性才是启动期也成立的口径（同函数上方 dark 的取法）。
+      let sym = null;
+      try {
+        if (typeof WALLPAPER_SETS !== 'undefined' && typeof getWallpaperId === 'function') {
+          const theme0 = document.documentElement.getAttribute('data-theme');
+          const id = getWallpaperId(theme0 === 'light' ? 'light' : 'dark');
+          const set = WALLPAPER_SETS.find(s => s.id === id);
+          if (set && set.symbols) sym = dark ? set.symbols.dark : set.symbols.light;
+        }
+      } catch (e) {}
+      const opScale = sym && typeof sym.opacity === 'number' ? sym.opacity : 1;
+      this.baseOpacity = (dark
         ? (isFormula ? 0.12 + Math.random() * 0.12 : 0.15 + Math.random() * 0.2)
-        : (isFormula ? 0.08 + Math.random() * 0.08 : 0.10 + Math.random() * 0.12);
-      this.el.style.color = dark ? 'rgba(140,180,255,1)' : 'rgba(160,120,70,1)';
-      this.el.style.textShadow = dark ? '0 0 8px rgba(100,150,255,0.3)' : '0 0 6px rgba(180,140,80,0.2)';
+        : (isFormula ? 0.08 + Math.random() * 0.08 : 0.10 + Math.random() * 0.12)) * opScale;
+      this.el.style.color = (sym && sym.color) || (dark ? 'rgba(140,180,255,1)' : 'rgba(160,120,70,1)');
+      const glow = (sym && sym.glow) || (dark ? 'rgba(100,150,255,0.3)' : 'rgba(180,140,80,0.2)');
+      const glowSize = sym && typeof sym.glowSize === 'number' ? sym.glowSize : (dark ? 8 : 6);
+      this.el.style.textShadow = '0 0 ' + glowSize + 'px ' + glow;
     }
 
     update() {
@@ -644,7 +656,33 @@ document.addEventListener('click', (e) => {
   }
 
   const symbols = [];
-  for (let i = 0; i < SYMBOL_COUNT; i++) symbols.push(new FloatingSymbol(i));
+  // 符号密度随壁纸套（2026-10-02 用户拍板）：count 为桌面数量（星夜 33 / 素纸 42 / 山影 28），
+  // 移动端按 18/33 比例折算、下限 10。换套/切模式（深浅分键、两模式所选可不同）由
+  // __syncFloatingSymbols 重建——≤42 个 span 的廉价操作。读 data-theme 属性而非
+  // currentTheme 变量：本 IIFE 在脚本前段执行，那时它还没赋值。
+  function _desiredSymbolCount() {
+    let count = 33;
+    try {
+      if (typeof WALLPAPER_SETS !== 'undefined' && typeof getWallpaperId === 'function') {
+        const theme0 = document.documentElement.getAttribute('data-theme');
+        const id = getWallpaperId(theme0 === 'light' ? 'light' : 'dark');
+        const set = WALLPAPER_SETS.find(s => s.id === id);
+        if (set && set.symbols && set.symbols.count) count = set.symbols.count;
+      }
+    } catch (e) {}
+    return isMobile ? Math.max(10, Math.round(count * 18 / 33)) : count;
+  }
+  function _rebuildSymbols(count) {
+    for (const s of symbols) s.el.remove();
+    symbols.length = 0;
+    for (let i = 0; i < count; i++) symbols.push(new FloatingSymbol(i));
+  }
+  window.__syncFloatingSymbols = function () {
+    const want = _desiredSymbolCount();
+    if (want !== symbols.length) _rebuildSymbols(want);
+    for (const s of symbols) s.applyTheme();
+  };
+  for (let i = 0; i < _desiredSymbolCount(); i++) symbols.push(new FloatingSymbol(i));
 
   // 粒子是纯装饰，但每帧 33 次 transform/opacity 写会压缩交互帧的 16ms 预算。
   // 重活期间（AI 流式生成、画布拖拽）整段暂停，恢复后从当前状态继续——
@@ -1684,8 +1722,9 @@ window.addEventListener('resize', () => {
   _repositionShownPanel('modelPanel', () => document.getElementById('modelBtn'));
   _repositionShownPanel('dataPanel', () => document.querySelector('[aria-controls="dataPanel"]'));
   _repositionShownPanel('levelPanel', () => document.getElementById('levelBtn'));
-  _repositionShownPanel('skinPanel', () => document.getElementById('skinBtn'));
-  _repositionShownPanel('bgPanel', () => document.getElementById('bgBtn'));
+  _repositionShownPanel('themePanel', () => document.getElementById('themePickBtn'));
+  _repositionShownPanel('knowledgeMenu', () => document.getElementById('knowledgeBtn'));
+  _repositionShownPanel('moreMenu', () => document.getElementById('moreBtn'));
 });
 
 // ESC 关闭可视化全屏
@@ -1830,6 +1869,9 @@ function applyTheme(theme) {
   const btn = document.getElementById('themeBtn');
   if (btn) btn.innerHTML = theme === 'dark' ? UI_ICON_SVG.moon : UI_ICON_SVG.sun;
   updateBgImage();
+  // 深浅各自所选的壁纸套可以不同（phymathia_bg_dark/_light 分键）→ 模式翻转也可能换套：
+  // 符号密度/配色跟着重算（2026-10-02 用户拍板：符号颜色与数量随壁纸主题走）
+  if (typeof window.__syncFloatingSymbols === 'function') window.__syncFloatingSymbols();
   // 同步所有可视化 iframe 的主题（含全屏）——广播保持同步：延后 250ms 曾是第四轮的
   // 「翻转帧减负」，但 iframe 本就在消息任务里翻、叠不进主文档那一帧，收益纯属推测，
   // 与符号延后同批撤回（用户实报符号慢一拍），不让任何载体留可见滞后
@@ -1899,90 +1941,76 @@ window.addEventListener('resize', updateBgImageDebounced);
 window.addEventListener('orientationchange', () => setTimeout(updateBgImage, 300));
 
 /* ====================================================
- * 节点皮肤模板（T128，2026-09-30）
- * 与深浅主题同款机制：html 根元素挂 data-node-skin 属性，graph-override.css
- * 「节点皮肤模板」节按属性写平行规则块；纯 CSS 切换即时生效，不重绘画布。
- * ★ 加新模板只要两步（改完跑 npm run build:js）：
- *   1) graph-override.css 皮肤节末尾追加一段 [data-node-skin="<key>"] 覆盖块；
- *   2) 在下面 GRAPH_NODE_SKINS 注册表加一条 { key, label, desc }。
+ * 风格家族（2026-10-02 用户拍板：面板质感＋节点皮肤＋强调色焊成一个开关）
+ * 一个 key 同时挂 html 根的 data-node-skin 与 data-panel-skin 两属性（家族即皮肤
+ * 超集），CSS 两侧各有平行覆盖块；默认族 aurora 不挂属性＝基础规则即默认。
+ * 注册表在 config.js（STYLE_FAMILIES，含主题默认搭配 THEME_DEFAULT_FAMILY）；
+ * 入口在页头「主题」钮 → #themePanel（壁纸主题卡＋风格五选一，见下方挑选器段）。
+ * 老用户迁移：家族键缺位时从旧 phymathia_node_skin 折算（皮肤 key ⊆ 家族 key）。
  * ==================================================== */
 const GRAPH_NODE_SKINS = [
   { key: 'aurora', label: '极光磨砂', desc: '渐变半透明磨砂玻璃（默认）' },
   { key: 'blueprint', label: '蓝图制图', desc: '工程蓝图：蓝图纸面＋虚线描边＋淡网格' },
+  { key: 'inkstone', label: '砚石·墨韵', desc: '青黑哑光石面＋石纹描边＋收敛投影' },
   { key: 'neon', label: '霓虹夜光', desc: '近黑卡面＋属性色霓虹描边与外发光' },
   { key: 'candy', label: '糖果磨砂', desc: '奶白磨砂玻璃＋马卡龙属性色柔光' },
 ];
-// 面板行图标：皮肤模板统一用「层」字形（模板叠放语义）；以后某模板要专属图标再进注册表
+// 面板行图标：风格家族统一用「层」字形（模板叠放语义）；以后某家族要专属图标再进注册表
 const SKIN_OPTION_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
 
-function currentNodeSkin() {
-  const v = localStorage.getItem(STORAGE_KEY_NODE_SKIN);
-  return GRAPH_NODE_SKINS.some(s => s.key === v) ? v : GRAPH_NODE_SKINS[0].key;
-}
-
-function applyNodeSkin(key) {
-  const skin = GRAPH_NODE_SKINS.some(s => s.key === key) ? key : GRAPH_NODE_SKINS[0].key;
-  localStorage.setItem(STORAGE_KEY_NODE_SKIN, skin);
-  // 默认模板不挂属性：基础节点规则本身就是 aurora；localStorage 里的未知旧值也安全回落
-  if (skin === GRAPH_NODE_SKINS[0].key) {
-    document.documentElement.removeAttribute('data-node-skin');
-  } else {
-    document.documentElement.setAttribute('data-node-skin', skin);
+function currentStyleFamily() {
+  let v = null;
+  try { v = localStorage.getItem(STORAGE_KEY_STYLE_FAMILY); } catch (e) {}
+  if (!v) {
+    // 迁移（2026-10-02）：家族键缺位＝老用户，从旧节点皮肤键折算（同 key 直接对应家族）
+    try { v = localStorage.getItem(STORAGE_KEY_NODE_SKIN); } catch (e) {}
   }
-  updateSkinPanelUI();
+  return STYLE_FAMILIES.some(f => f.key === v) ? v : STYLE_FAMILIES[0].key;
 }
 
+function applyStyleFamily(key) {
+  const fam = STYLE_FAMILIES.some(f => f.key === key) ? key : STYLE_FAMILIES[0].key;
+  try {
+    localStorage.setItem(STORAGE_KEY_STYLE_FAMILY, fam);
+    localStorage.setItem(STORAGE_KEY_NODE_SKIN, fam); // 旧键同步写：图导出快照等旧读者兼容
+  } catch (e) {}
+  // 默认族 aurora 不挂属性：基础节点规则与极光玻璃本身就是默认（与 data-node-skin 同契约），
+  // localStorage 里的未知旧值也安全回落默认
+  if (fam === STYLE_FAMILIES[0].key) {
+    document.documentElement.removeAttribute('data-node-skin');
+    document.documentElement.removeAttribute('data-panel-skin');
+  } else {
+    document.documentElement.setAttribute('data-node-skin', fam);
+    document.documentElement.setAttribute('data-panel-skin', fam);
+  }
+  updateThemePanelUI();
+}
+
+// 控制台兼容（node-skins.md 真机自验口径沿用）：setNodeSkin('key') 现在等价换整个家族
 function setNodeSkin(key) {
-  applyNodeSkin(key);
-  toggleSkinPanel();
+  applyStyleFamily(key);
 }
 
-function updateSkinPanelUI() {
-  const cur = currentNodeSkin();
-  document.querySelectorAll('#skinPanel .level-option').forEach(el => {
-    el.classList.toggle('active', el.dataset.skin === cur);
+function familyLabel(key) {
+  const f = STYLE_FAMILIES.find(x => x.key === key);
+  return f ? f.label : STYLE_FAMILIES[0].label;
+}
+
+function updateThemePanelUI() {
+  const panel = document.getElementById('themePanel');
+  if (!panel) return;
+  const cur = currentStyleFamily();
+  panel.querySelectorAll('.level-option[data-family]').forEach(el => {
+    el.classList.toggle('active', el.dataset.family === cur);
+  });
+  const curWp = getWallpaperId(currentTheme);
+  panel.querySelectorAll('.bg-option[data-id]').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === curWp);
   });
 }
 
-function renderSkinPanel() {
-  const panel = document.getElementById('skinPanel');
-  if (!panel) return;
-  panel.innerHTML = GRAPH_NODE_SKINS.map(s =>
-    '<div class="level-option" data-skin="' + s.key + '" title="' + escapeHtml(s.desc || '') + '" onclick="setNodeSkin(\'' + s.key + '\')">'
-    + '<span class="level-emoji">' + SKIN_OPTION_ICON + '</span> ' + escapeHtml(s.label) + '</div>'
-  ).join('')
-  + (GRAPH_NODE_SKINS.length < 2 ? '<div class="skin-panel-hint">更多皮肤模板制作中</div>' : '');
-  updateSkinPanelUI();
-}
-
-function toggleSkinPanel(e) {
-  e?.stopPropagation();
-  const panel = document.getElementById('skinPanel');
-  if (!panel) return;
-  const willShow = !panel.classList.contains('show');
-  panel.classList.toggle('show');
-  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('skinBtn');
-  _setPanelTriggerState('skinPanel', willShow);
-  if (willShow) {
-    renderSkinPanel(); // 每次打开都重画：app.js 在 body 中段执行，脚本运行时面板还没解析，加载期调不到
-    // Close other panels（与难度/模型/数据面板互斥，同 toggleLevelPanel 口径）
-    ['levelPanel', 'modelPanel', 'dataPanel', 'bgPanel'].forEach(id => {
-      const p = document.getElementById(id);
-      if (p) p.classList.remove('show');
-      _setPanelTriggerState(id, false);
-    });
-    void panel.offsetHeight;
-    _positionPanel('skinPanel', trigger);
-  }
-}
-document.addEventListener('click', (e) => {
-  const panel = document.getElementById('skinPanel');
-  const btn = document.getElementById('skinBtn');
-  if (panel && !panel.contains(e.target) && !(btn && btn.contains(e.target))) {
-    panel.classList.remove('show');
-    _setPanelTriggerState('skinPanel', false);
-  }
-});
+// 启动即归位：把迁移结果落键＋属性对齐（幂等；updateThemePanelUI 在面板未建时静默返回）
+applyStyleFamily(currentStyleFamily());
 
 // ====== 壁纸挑选（成对主题背景，2026-10-02）======
 // 深浅模式各记各的选择（phymathia_bg_dark / _bg_light），切主题时 _desiredBgUrl 按
@@ -1996,64 +2024,136 @@ function setWallpaper(id, theme) {
   const t = theme || currentTheme;
   if (!WALLPAPER_SETS.some(s => s.id === id)) return false;
   try { localStorage.setItem(t === 'light' ? STORAGE_KEY_BG_LIGHT : STORAGE_KEY_BG_DARK, id); } catch (e) {}
-  if (t === currentTheme) updateBgImage();
+  if (t === currentTheme) {
+    updateBgImage();
+    // 换套＝符号密度/配色跟着换（2026-10-02 用户拍板：数量随主题，素纸多/星夜少）
+    if (typeof window.__syncFloatingSymbols === 'function') window.__syncFloatingSymbols();
+  }
   return true;
 }
 function currentWallpaperSet() {
   const id = getWallpaperId(currentTheme);
   return WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0];
 }
-// 挑选器面板（复用 .level-panel 定位/玻璃材质，同皮肤面板口径：互斥、外点关闭、按触发钮重定位）
-function toggleBgPicker(e) {
+// 当前模式的壁纸套 → 默认风格家族（缺行安全回落 aurora）
+function themeDefaultFamily() {
+  return THEME_DEFAULT_FAMILY[getWallpaperId(currentTheme)] || STYLE_FAMILIES[0].key;
+}
+// 主题挑选器（2026-10-02 第二轮：吸收原壁纸挑选器＋皮肤面板，顶栏 13→9 的合并位）。
+// 上半区三张壁纸主题卡、下半区风格家族五选一（当前主题默认族带★）。
+// 点主题卡＝换壁纸＋风格重置默认（Q2 拍板「切主题＝全套重置」）；点风格＝只换族不动壁纸。
+// 复用 .level-panel 定位/玻璃材质与 .bg-panel 卡片样式：互斥、外点关闭、按触发钮重定位。
+function toggleThemePicker(e) {
   e?.stopPropagation();
-  const panel = document.getElementById('bgPanel');
+  const panel = document.getElementById('themePanel');
   if (!panel) return;
   const willShow = !panel.classList.contains('show');
+  _closeHeaderMenus();
   panel.classList.toggle('show');
-  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('bgBtn');
-  _setPanelTriggerState('bgPanel', willShow);
+  const trigger = e && e.currentTarget ? e.currentTarget : document.getElementById('themePickBtn');
+  _setPanelTriggerState('themePanel', willShow);
   if (willShow) {
-    renderBgPanel(); // 每次打开都重画：缩略图与高亮跟随当前模式（同 toggleSkinPanel 口径）
-    ['skinPanel', 'levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
+    renderThemePanel(); // 每次打开都重画：缩略图/高亮/默认族星标跟随当前模式（同 renderModelList 时机口径）
+    ['levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
       const p = document.getElementById(id);
       if (p) p.classList.remove('show');
       _setPanelTriggerState(id, false);
     });
     void panel.offsetHeight;
-    _positionPanel('bgPanel', trigger);
+    _positionPanel('themePanel', trigger);
   }
 }
-function renderBgPanel() {
-  const panel = document.getElementById('bgPanel');
+function renderThemePanel() {
+  const panel = document.getElementById('themePanel');
   if (!panel) return;
   const isLight = currentTheme === 'light';
   const modeName = isLight ? '浅色' : '深色';
   const curId = getWallpaperId(currentTheme);
   const otherId = getWallpaperId(isLight ? 'dark' : 'light');
   const nameOf = (id) => (WALLPAPER_SETS.find(s => s.id === id) || WALLPAPER_SETS[0]).name;
-  let html = '<div class="bg-panel-title">背景壁纸 · ' + modeName + '模式</div><div class="bg-panel-list">';
+  const curFam = currentStyleFamily();
+  const defFam = themeDefaultFamily();
+  let html = '<div class="bg-panel-title">主题 · ' + modeName + '模式</div><div class="bg-panel-list">';
   for (const s of WALLPAPER_SETS) {
     const thumb = (isLight ? s.light : s.dark).land;
-    html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" onclick="pickWallpaper(\'' + s.id + '\')">'
+    html += '<button type="button" class="bg-option' + (s.id === curId ? ' active' : '') + '" data-id="' + s.id + '" onclick="pickTheme(\'' + s.id + '\')">'
       + '<span class="bg-option-thumb" style="background-image:url(\'' + thumb + '\')"></span>'
       + '<span class="bg-option-name">' + s.name + '</span>'
       + (s.id === curId ? '<svg class="bg-option-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>' : '')
       + '</button>';
   }
-  html += '</div><div class="bg-panel-hint">正在为' + modeName + '模式挑选，当前「' + nameOf(curId)
-    + '」；切到' + (isLight ? '深' : '浅') + '色模式可给那边单独挑（现为「' + nameOf(otherId) + '」）。</div>';
+  html += '</div><div class="bg-panel-title theme-style-title">风格 · 面板与节点同进退</div><div class="bg-panel-list theme-style-list">';
+  for (const f of STYLE_FAMILIES) {
+    html += '<div class="level-option' + (f.key === curFam ? ' active' : '') + '" data-family="' + f.key + '" title="' + escapeHtml(f.desc || '') + '" onclick="pickStyleFamily(\'' + f.key + '\')">'
+      + '<span class="level-emoji">' + SKIN_OPTION_ICON + '</span> ' + escapeHtml(f.label)
+      + (f.key === defFam ? '<span class="theme-default-star" title="当前主题默认">★</span>' : '')
+      + '</div>';
+  }
+  html += '</div><div class="bg-panel-hint">点主题卡＝换壁纸＋风格重置为默认（「' + nameOf(curId) + '」默认是「' + familyLabel(defFam)
+    + '」）；点风格＝面板/节点/强调色换族、壁纸不动。正在为' + modeName + '模式挑选（另侧现为「' + nameOf(otherId) + '」）。</div>';
   panel.innerHTML = html;
 }
-function pickWallpaper(id) {
+function pickTheme(id) {
   if (!setWallpaper(id)) return;
-  renderBgPanel();
+  applyStyleFamily(THEME_DEFAULT_FAMILY[id] || STYLE_FAMILIES[0].key); // 全套重置到默认搭配
+  renderThemePanel();
+}
+function pickStyleFamily(key) {
+  applyStyleFamily(key);
+  renderThemePanel();
 }
 document.addEventListener('click', (e) => {
-  const panel = document.getElementById('bgPanel');
-  const btn = document.getElementById('bgBtn');
+  const panel = document.getElementById('themePanel');
+  const btn = document.getElementById('themePickBtn');
   if (panel && !panel.contains(e.target) && !(btn && btn.contains(e.target))) {
     panel.classList.remove('show');
-    _setPanelTriggerState('bgPanel', false);
+    _setPanelTriggerState('themePanel', false);
+  }
+});
+
+/* ====== 顶栏收纳小菜单（知识/更多，2026-10-02 桌面主栏 13→9）======
+ * 静态内容面板（index.html 里写死行），只做开合/互斥/定位；行点击先 stopPropagation
+ * 再调原入口（否则 dataPanel 的外点关闭监听会在同一冒泡里把刚打开的面板立刻关掉）。 */
+const HEADER_MENUS = ['knowledgeMenu', 'moreMenu'];
+function _closeHeaderMenus(except) {
+  for (const id of HEADER_MENUS) {
+    if (id === except) continue;
+    const p = document.getElementById(id);
+    if (p) p.classList.remove('show');
+    _setPanelTriggerState(id, false);
+  }
+}
+function _toggleHeaderMenu(id, e) {
+  e?.stopPropagation();
+  const panel = document.getElementById(id);
+  if (!panel) return;
+  const willShow = !panel.classList.contains('show');
+  _closeHeaderMenus(id);
+  panel.classList.toggle('show');
+  _setPanelTriggerState(id, willShow);
+  if (willShow) {
+    ['levelPanel', 'modelPanel', 'dataPanel', 'themePanel'].forEach(pid => {
+      const p = document.getElementById(pid);
+      if (p) p.classList.remove('show');
+      _setPanelTriggerState(pid, false);
+    });
+    void panel.offsetHeight;
+    _positionPanel(id, e && e.currentTarget ? e.currentTarget : document.querySelector('[aria-controls="' + id + '"]'));
+  }
+}
+function toggleKnowledgeMenu(e) { _toggleHeaderMenu('knowledgeMenu', e); }
+function closeKnowledgeMenu() { _closeHeaderMenus(); }
+function toggleMoreMenu(e) { _toggleHeaderMenu('moreMenu', e); }
+function closeMoreMenu() { _closeHeaderMenus(); }
+document.addEventListener('click', (e) => {
+  for (const id of HEADER_MENUS) {
+    const panel = document.getElementById(id);
+    if (!panel || !panel.classList.contains('show')) continue;
+    const btn = document.querySelector('[aria-controls="' + id + '"]');
+    if (!panel.contains(e.target) && !(btn && btn.contains(e.target))) {
+      panel.classList.remove('show');
+      _setPanelTriggerState(id, false);
+    }
   }
 });
 

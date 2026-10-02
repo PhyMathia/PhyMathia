@@ -6,7 +6,17 @@
 <title>Utopia 查看器 · PhyMathia</title>
 <script>
   // 查看器首屏主题：快照里带主题则在装载时覆盖（见 viewer-main.js）；这里只给个不刺眼的默认
-  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('phymathia_theme') || 'dark'); } catch (e) {}
+  try {
+    document.documentElement.setAttribute('data-theme', localStorage.getItem('phymathia_theme') || 'dark');
+    // 跟随分享者本机的风格家族（2026-10-02 用户拍板 Q13「查看器跟随」）：一个 key 同挂
+    // 双属性，CSS 家族块在 styles.min.css/graph-override.min.css 里自动生效；缺家族键时
+    // 从旧 phymathia_node_skin 折算，默认 aurora 不挂属性＝默认玻璃脸。
+    var fam = localStorage.getItem('phymathia_style_family') || localStorage.getItem('phymathia_node_skin');
+    if (fam && fam !== 'aurora' && /^[a-z0-9-]{1,32}$/.test(fam)) {
+      document.documentElement.setAttribute('data-node-skin', fam);
+      document.documentElement.setAttribute('data-panel-skin', fam);
+    }
+  } catch (e) {}
 </script>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/css/styles.min.css">

@@ -6495,24 +6495,30 @@ check('画布多选：入口与样式在位，且单删/批删共用同一条删
   return true;
 });
 
-// 静态契约（T128）：皮肤模板机制四件套——注册表/存储键/入口/属性挂钩，防「机制在、入口丢」回退
-check('节点皮肤模板（T128）：注册表、存储键、页头入口、CSS 皮肤节与启动预置全接线', () => {
+// 静态契约（T128→2026-10-02 家族化）：风格家族机制——注册表/存储键/入口/双属性挂钩，防「机制在、入口丢」回退。
+// 家族＝面板质感＋节点皮肤＋强调色一个开关（用户拍板焊接），原皮肤面板/壁纸挑选器并入 #themePanel。
+check('风格家族（T128 演进）：注册表、存储键、页头入口、双属性与启动预置全接线', () => {
   const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
   if (!ui.includes('const GRAPH_NODE_SKINS') || !ui.includes("{ key: 'aurora'")) {
     throw new Error('ui.js 缺皮肤注册表 GRAPH_NODE_SKINS / aurora 默认模板');
   }
-  for (const fn of ['function currentNodeSkin()', 'function applyNodeSkin(', 'function toggleSkinPanel(', 'function renderSkinPanel()']) {
+  for (const fn of ['function currentStyleFamily()', 'function applyStyleFamily(', 'function toggleThemePicker(', 'function renderThemePanel()', 'function pickTheme(', 'function pickStyleFamily(', 'function setNodeSkin(']) {
     if (!ui.includes(fn)) throw new Error(`ui.js 缺 ${fn}`);
   }
-  if (!ui.includes("removeAttribute('data-node-skin')")) {
-    throw new Error('默认模板必须摘掉 data-node-skin 属性（基础规则即默认皮肤），否则切回默认不生效');
+  if (!ui.includes("removeAttribute('data-node-skin')") || !ui.includes("removeAttribute('data-panel-skin')")) {
+    throw new Error('默认族必须摘掉 data-node-skin 与 data-panel-skin 两属性（基础规则即默认），否则切回默认不生效');
+  }
+  if (!ui.includes("localStorage.setItem(STORAGE_KEY_NODE_SKIN, fam)")) {
+    throw new Error('家族应用须同步写旧 phymathia_node_skin（图导出快照等旧读者兼容）');
   }
   const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
   if (!cfg.includes("STORAGE_KEY_NODE_SKIN = 'phymathia_node_skin'")) throw new Error('config.js 缺皮肤存储键');
+  if (!cfg.includes("STORAGE_KEY_STYLE_FAMILY = 'phymathia_style_family'")) throw new Error('config.js 缺家族存储键');
   const html = fs.readFileSync('src/static/index.html', 'utf8');
-  if (!html.includes('id="skinBtn"') || !html.includes('toggleSkinPanel(event)')) throw new Error('页头缺皮肤按钮入口');
-  if (!html.includes('id="skinPanel"')) throw new Error('index.html 缺 #skinPanel 面板容器');
-  if (!html.includes("localStorage.getItem('phymathia_node_skin')")) throw new Error('启动内联脚本没预置皮肤（首屏会闪默认模板）');
+  if (!html.includes('id="themePickBtn"') || !html.includes('toggleThemePicker(event)')) throw new Error('页头缺主题挑选按钮入口');
+  if (!html.includes('id="themePanel"')) throw new Error('index.html 缺 #themePanel 面板容器');
+  if (!html.includes("localStorage.getItem('phymathia_style_family')")) throw new Error('启动内联脚本没预置家族（首屏会闪默认模板）');
+  if (!/setAttribute\('data-panel-skin', fam\)/.test(html)) throw new Error('启动预置缺 data-panel-skin（面板质感首屏闪默认）');
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   if (!css.includes('节点皮肤模板')) throw new Error('graph-override.css 缺「节点皮肤模板」节——新模板没有落点');
   return true;
@@ -6770,9 +6776,10 @@ await Promise.all(pendingChecks).catch(() => {});
   const stylesCss = fs.readFileSync('src/static/css/styles.css', 'utf8');
   const panelsCss = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
 
-  qcheck('T45：resize 不再静默关浮动面板，四个面板按触发按钮重定位', () => {
+  qcheck('T45：resize 不再静默关浮动面板，面板按触发按钮重定位', () => {
     if (uiSrc.includes('Close floating panels on resize to avoid mispositioning')) throw new Error('旧的「resize 一律关面板」还在');
-    for (const pid of ['modelPanel', 'dataPanel', 'levelPanel', 'skinPanel']) {
+    // 2026-10-02 第二轮起 skinPanel/bgPanel 并入 themePanel，另加两个收纳小菜单
+    for (const pid of ['modelPanel', 'dataPanel', 'levelPanel', 'themePanel', 'knowledgeMenu', 'moreMenu']) {
       if (!uiSrc.includes(`_repositionShownPanel('${pid}'`)) throw new Error('缺重定位：' + pid);
     }
     if (!uiSrc.includes("panel.classList.contains('show')")) throw new Error('重定位前未判面板打开态');
@@ -6892,17 +6899,17 @@ await Promise.all(pendingChecks).catch(() => {});
     return true;
   });
 
-  qcheck('壁纸挑选器：按钮/面板/函数接线＋互斥双向＋重定位与预载入列', () => {
-    if (!idxSrc.includes('id="bgBtn"') || !idxSrc.includes('id="bgPanel"')) throw new Error('index 缺按钮或面板');
-    ['toggleBgPicker', 'renderBgPanel', 'pickWallpaper', 'getWallpaperId', 'setWallpaper', 'currentWallpaperSet'].forEach(f => {
+  qcheck('主题挑选器：按钮/面板/函数接线＋互斥双向＋重定位与预载入列', () => {
+    if (!idxSrc.includes('id="themePickBtn"') || !idxSrc.includes('id="themePanel"')) throw new Error('index 缺按钮或面板');
+    ['toggleThemePicker', 'renderThemePanel', 'pickTheme', 'pickStyleFamily', 'getWallpaperId', 'setWallpaper', 'currentWallpaperSet', 'themeDefaultFamily'].forEach(f => {
       if (!uiSrc.includes('function ' + f)) throw new Error('ui 缺 ' + f);
     });
     if (!/WALLPAPER_SETS\.flatMap\(s => \[s\.dark\.land, s\.dark\.port, s\.light\.land, s\.light\.port\]/.test(uiSrc)) throw new Error('预载未走注册表');
-    if (!uiSrc.includes("_repositionShownPanel('bgPanel'")) throw new Error('T45 重定位未入列');
-    // 互斥双向：挑选器关四个老面板，老面板也关挑选器
-    if (!uiSrc.includes("['skinPanel', 'levelPanel', 'modelPanel', 'dataPanel'].forEach")) throw new Error('挑选器缺互斥列表');
-    if (!uiSrc.includes("['levelPanel', 'modelPanel', 'dataPanel', 'bgPanel'].forEach")) throw new Error('皮肤面板未关挑选器');
-    if (!/const bgPanelEl = document\.getElementById\('bgPanel'\);\s*\n\s*if \(bgPanelEl\) bgPanelEl\.classList\.remove\('show'\);/.test(uiSrc)) throw new Error('难度/模型/数据面板未关挑选器');
+    if (!uiSrc.includes("_repositionShownPanel('themePanel'")) throw new Error('T45 重定位未入列');
+    // 互斥双向：主题挑选器关三个老面板，老面板也关它（2026-10-02 第二轮起 bgPanel/skinPanel 已并入 themePanel）
+    if (!uiSrc.includes("['levelPanel', 'modelPanel', 'dataPanel'].forEach")) throw new Error('挑选器缺互斥列表');
+    if (!/const themePanelEl = document\.getElementById\('themePanel'\);\s*\n\s*if \(themePanelEl\) themePanelEl\.classList\.remove\('show'\);/.test(uiSrc)) throw new Error('难度/模型/数据面板未关挑选器');
+    if (idxSrc.includes('id="bgBtn"') || idxSrc.includes('id="skinBtn"') || idxSrc.includes('id="bgPanel"') || idxSrc.includes('id="skinPanel"')) throw new Error('旧壁纸/皮肤入口残留（应并入 themePanel）');
     return true;
   });
 
@@ -6927,6 +6934,90 @@ await Promise.all(pendingChecks).catch(() => {});
       + 'return "ok";'
       + '})()', sandbox);
     if (r !== 'ok') throw new Error(r);
+    return true;
+  });
+}
+
+// ====== 风格家族（面板质感＋节点皮肤＋强调色一个开关，2026-10-02 第二轮） ======
+{
+  const qcheck = (name, fn) => {
+    try {
+      const r = fn();
+      if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+      else console.log('✓', name);
+    } catch (e) {
+      failed++; console.error('❌', name, '->', (e && e.message) || e);
+    }
+  };
+  const cfgSrc = fs.readFileSync('src/static/js/config.js', 'utf8');
+  const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const idxSrc = fs.readFileSync('src/static/index.html', 'utf8');
+  const cssSrc = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  const viewerSrc = fs.readFileSync('src/static/viewer.html', 'utf8');
+
+  qcheck('风格家族：注册表五族齐全＝皮肤超集，主题默认搭配覆盖全部壁纸套', () => {
+    if (!cfgSrc.includes('const STYLE_FAMILIES = [')) throw new Error('config 缺 STYLE_FAMILIES');
+    const famKeys = [...cfgSrc.slice(cfgSrc.indexOf('const STYLE_FAMILIES')).slice(0, 2000).matchAll(/key: '([a-z]+)'/g)].map(m => m[1]);
+    for (const k of ['aurora', 'blueprint', 'inkstone', 'neon', 'candy']) {
+      if (!famKeys.includes(k)) throw new Error('家族缺 ' + k);
+    }
+    // 家族 ⊇ 皮肤：ui.js 皮肤注册表的每个 key 必须是家族（防两表漂移出「死家族/死皮肤」）
+    const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+    const start = ui.indexOf('const GRAPH_NODE_SKINS');
+    const skinKeys = [...ui.slice(start, ui.indexOf('];', start)).matchAll(/key:\s*'([a-z_]+)'/g)].map(m => m[1]);
+    const orphan = skinKeys.filter(k => !famKeys.includes(k));
+    if (orphan.length) throw new Error('皮肤注册表存在非家族 key：' + orphan.join(','));
+    if (!cfgSrc.includes('const THEME_DEFAULT_FAMILY')) throw new Error('缺主题默认搭配表');
+    for (const [wp, fam] of [['night', 'aurora'], ['paper', 'blueprint'], ['mountain', 'inkstone']]) {
+      if (!cfgSrc.includes(wp + ": '" + fam + "'")) throw new Error('默认搭配缺 ' + wp + '→' + fam);
+    }
+    return true;
+  });
+
+  qcheck('风格家族：每族面板质感 CSS 齐备（深浅成对＋三档 tier＋降级＋强调色/输入框）', () => {
+    const fams = ['blueprint', 'inkstone', 'neon', 'candy'];
+    for (const k of fams) {
+      if (!cssSrc.includes(`html[data-panel-skin="${k}"] .aurora-glass {`)) throw new Error(k + '：缺深色材质块');
+      if (!cssSrc.includes(`html[data-theme="light"][data-panel-skin="${k}"] .aurora-glass {`)) throw new Error(k + '：缺浅色材质块（深浅必须成对）');
+      for (const tier of ['--dialog', '--panel', '--plain']) {
+        if (!cssSrc.includes(`html[data-panel-skin="${k}"] .aurora-glass${tier} {`)) throw new Error(k + '：缺 ' + tier + ' 档族化底色（弹窗/大面板会回落墨玻璃）');
+      }
+      if (!cssSrc.includes(`html[data-panel-skin="${k}"] .aurora-glass { --glass-tint:`)) throw new Error(k + '：缺无磨砂降级块');
+      if (!cssSrc.includes(`html[data-panel-skin="${k}"] {\n      --accent:`)) throw new Error(k + '：缺强调色覆盖（家族强调色没接线）');
+      if (!cssSrc.includes(`html[data-theme="light"][data-panel-skin="${k}"] {\n      --accent:`)) throw new Error(k + '：缺浅色强调色覆盖');
+      if (!new RegExp(`html\\[data-panel-skin="${k}"\\] \\{[\\s\\S]*?--field-bg:`).test(cssSrc)) throw new Error(k + '：缺输入框底色覆盖（蓝图纸面贴墨蓝输入框）');
+    }
+    // 家族节必须待在 @supports 降级块之后：浅色极光切片（终点 @keyframes）不容家族冷色混入
+    const famStart = cssSrc.indexOf('====== 风格家族面板质感');
+    const keyframes = cssSrc.indexOf('@keyframes auroraDrift');
+    if (famStart < 0 || famStart < keyframes) throw new Error('家族节位置错：必须在 auroraDrift/@supports 之后（smoke 浅色切片红线）');
+    return true;
+  });
+
+  qcheck('风格家族：查看器跟随（Q13 拍板）＋顶栏收纳菜单接线', () => {
+    // 查看器只读页双属性预置（无 ui.js，靠内联脚本＋CSS 属性选择器生效）
+    if (!viewerSrc.includes("localStorage.getItem('phymathia_style_family')")) throw new Error('viewer 启动预置没读家族键');
+    if (!/setAttribute\('data-panel-skin', fam\)/.test(viewerSrc)) throw new Error('viewer 缺 data-panel-skin 预置');
+    // 顶栏 13→9：收纳菜单承载原 continent/quiz/data/clear 入口，函数仍可达
+    for (const [id, fn] of [['knowledgeMenu', 'toggleKnowledgeMenu(event)'], ['moreMenu', 'toggleMoreMenu(event)'], ['themePickBtn', 'toggleThemePicker(event)']]) {
+      if (!idxSrc.includes(`id="${id}"`) || !idxSrc.includes(fn)) throw new Error('顶栏缺 ' + id + ' 接线');
+    }
+    for (const fn of ['openContinentView()', 'toggleKnowledgePanel()', 'openQuiz()', 'openQuizGlobalDashboard()', 'toggleDataPanel(event)', 'clearChat()']) {
+      if (!idxSrc.includes(fn)) throw new Error('收纳菜单缺原入口：' + fn);
+    }
+    if (idxSrc.includes('id="continent-btn"') && /id="continentBtn"/.test(idxSrc)) throw new Error('大陆独立按钮应已并入知识菜单');
+    return true;
+  });
+
+  qcheck('飘浮符号随主题：每套 symbols 配置齐备＋换套重建接线', () => {
+    const cfg = cfgSrc.slice(cfgSrc.indexOf('const WALLPAPER_SETS'), cfgSrc.indexOf('const STYLE_FAMILIES'));
+    const counts = (cfg.match(/count: \d+/g) || []).length;
+    if (counts !== 3) throw new Error('三套壁纸应各带 symbols.count，实得 ' + counts);
+    if ((cfg.match(/color: 'rgba/g) || []).length !== 6) throw new Error('深浅×三套应 6 条符号配色');
+    if (!uiSrc.includes('window.__syncFloatingSymbols')) throw new Error('缺符号重建入口 __syncFloatingSymbols');
+    if (!uiSrc.includes('_desiredSymbolCount')) throw new Error('符号数量没按壁纸套取数');
+    if (!/applyStyleFamily\(THEME_DEFAULT_FAMILY\[id\]/.test(uiSrc)) throw new Error('点主题卡没重置风格到默认（Q2 全套重置拍板）');
+    if (!/window\.__syncFloatingSymbols\(\)/.test(uiSrc)) throw new Error('换套/切模式没触发符号同步');
     return true;
   });
 }
