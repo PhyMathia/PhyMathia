@@ -72,6 +72,21 @@
   --phi-kb-shadow: rgba(15, 23, 42, 0.12);
 }
 
+/* 风格家族联动（2026-10-02）：非默认家族时壳体取当前家族强调色派生——aurora 不挂属性＝
+   经典蓝橘宠物不动。块特异性 (0,2,0) 与浅色块同、源序在其后，浅色下也压得住默认壳色。
+   眼睛从「浅色蓝眼」改回琥珀并两模式固定：蓝眼在蓝图/青灰壳上会隐身，琥珀与四族壳色都拉开；
+   灯灭/键盘不改（灯灭原来在深色就跟随壳色，浅色的浅蓝灯灭换成跟随壳色保持一致）。 */
+html[data-panel-skin] .phi-pet {
+  --phi-body: var(--accent);
+  --phi-body-hi: color-mix(in srgb, var(--accent) 68%, #fff);
+  --phi-body-shadow: color-mix(in srgb, var(--accent) 52%, #000);
+  --phi-outline: color-mix(in srgb, var(--accent) 58%, #fff);
+  --phi-eye: #fbbf24;
+  --phi-eye-dark: #d97706;
+  --phi-lamp-off: color-mix(in srgb, var(--accent) 68%, #fff);
+  --phi-lamp-off-dark: var(--accent);
+}
+
 .phi-code-symbols {
   position: absolute;
   inset: 0;
