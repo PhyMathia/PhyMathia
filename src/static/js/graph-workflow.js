@@ -1551,7 +1551,7 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   if (shouldCount && !aborted) _advanceWorkflowProgress(label);
 }
 
-async function _runWorkflowGraph(subgraph, force, runtime) {
+async function _runWorkflowGraph(subgraph, force, runtime, forceTargets) {
   const processed = new Set();
   const failed = new Set();
   const blocked = new Set();
@@ -1629,7 +1629,8 @@ async function _runWorkflowGraph(subgraph, force, runtime) {
         }
         inFlight.add(node.id);
         try {
-          await _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime);
+          await _runWorkflowNodeConcurrent(node, subgraph,
+            force && (!forceTargets || forceTargets.has(node.id)), processed, failed, blocked, runtime);
         } finally {
           inFlight.delete(node.id);
           enqueueReadyNodes();
@@ -1652,6 +1653,11 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
     if (typeof showToast === 'function') showToast('没有可运行的节点');
     return;
   }
+  // force 只许作用在显式指定的目标节点上，不许跟着子图传染：子图会沿连线上溯把来源
+  // 节点圈进来（追问/重新生成的目标正好挂在上游），force 若对全子图生效，用户正要
+  // 追问的那颗模块/总结节点会被整颗重写、原内容丢失（2026-10-02 用户实测：追问数学
+  // 视角节点，数学视角内容被重新生成）。上游节点靠「内容没变就不重跑」的既有口径自然跳过。
+  const forceTargets = new Set(targetIds || []);
   const workflowStartedAt = Date.now();
   window.__wfLogs = [];
   workflowRunActive = true;
@@ -1660,7 +1666,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   const countedNodes = [...subgraph.ids]
     .map(id => _findGraphNode(id))
     .filter(node => node && (_workflowItemNeedsProgress(node)
-      || (force && (node.kind === 'module' || node.kind === 'summary'))));
+      || (force && forceTargets.has(node.id) && (node.kind === 'module' || node.kind === 'summary'))));
   const totalWork = countedNodes.length;
   // 任务列表：这一轮工作流 = 一条任务，节点明细 = 组里的条目（用户拍板的两级结构）。
   // 开跑前就把「要干哪几颗」记全，面板因此一眼能看到「3/6 已完成」这样的总数。
@@ -1683,7 +1689,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   _showWorkflowProgress(totalWork);
   let completed = false;
   try {
-    completed = await _runWorkflowGraph(subgraph, force, runtime);
+    completed = await _runWorkflowGraph(subgraph, force, runtime, forceTargets);
   } finally {
     const wasAborted = _workflowGlobalAborted();
     const userCancelled = runtime ? runtime.userCancelled.size : 0;
