@@ -6901,9 +6901,14 @@ await Promise.all(pendingChecks).catch(() => {});
 
   qcheck('主题挑选器：按钮/面板/函数接线＋互斥双向＋重定位与预载入列', () => {
     if (!idxSrc.includes('id="themePickBtn"') || !idxSrc.includes('id="themePanel"')) throw new Error('index 缺按钮或面板');
-    ['toggleThemePicker', 'renderThemePanel', 'pickTheme', 'pickStyleFamily', 'getWallpaperId', 'setWallpaper', 'currentWallpaperSet', 'themeDefaultFamily'].forEach(f => {
+    ['toggleThemePicker', 'renderThemePanel', 'pickTheme', 'pickStyleFamily', 'getWallpaperId', 'setWallpaper', 'currentWallpaperSet', 'themeDefaultFamily', 'themeSplitEnabled', 'setThemeSplit'].forEach(f => {
       if (!uiSrc.includes('function ' + f)) throw new Error('ui 缺 ' + f);
     });
+    if (!cfgSrc.includes("STORAGE_KEY_THEME_SPLIT = 'phymathia_theme_split'")) throw new Error('config 缺深浅独立开关存储键');
+    if (!cfgSrc.includes("STORAGE_KEY_STYLE_FAMILY_DARK = 'phymathia_style_family_dark'") || !cfgSrc.includes("STORAGE_KEY_STYLE_FAMILY_LIGHT = 'phymathia_style_family_light'")) throw new Error('config 缺分模式家族键');
+    if (!uiSrc.includes('theme-split-row') || !uiSrc.includes('setThemeSplit(this.checked)')) throw new Error('挑选器缺深浅独立开关行');
+    if (!/setWallpaper\(id, currentTheme === 'light' \? 'dark' : 'light'\)/.test(uiSrc)) throw new Error('联动模式点卡未双写另一侧（默认深浅同主题）');
+    if (!/applyStyleFamily\(currentStyleFamily\(\)\);/.test(uiSrc)) throw new Error('缺家族重挂调用（翻转/初始化对齐）');
     if (!/WALLPAPER_SETS\.flatMap\(s => \[s\.dark\.land, s\.dark\.port, s\.light\.land, s\.light\.port\]/.test(uiSrc)) throw new Error('预载未走注册表');
     if (!uiSrc.includes("_repositionShownPanel('themePanel'")) throw new Error('T45 重定位未入列');
     // 互斥双向：主题挑选器关三个老面板，老面板也关它（2026-10-02 第二轮起 bgPanel/skinPanel 已并入 themePanel）
@@ -6931,6 +6936,36 @@ await Promise.all(pendingChecks).catch(() => {});
       + 'if (localStorage.getItem("phymathia_bg_light") !== "mountain") return "浅色键未写";'
       + 'if (setWallpaper("bogus", "dark") !== false) return "非法 id 应拒绝";'
       + 'if (getWallpaperId("dark") !== "paper") return "读取未反映所选";'
+      + 'return "ok";'
+      + '})()', sandbox);
+    if (r !== 'ok') throw new Error(r);
+    return true;
+  });
+
+  qcheck('深浅主题联动：默认点卡双写两侧、独立后各写各的、关闭收拢为当前侧', () => {
+    const r = vm.runInContext('(function(){'
+      // 先定死当前侧：沙箱的 currentTheme 是跨用例共享的（前面的主题翻转用例可能改过它）
+      + 'if (typeof applyTheme === "function") applyTheme("dark");'
+      + 'if (typeof themeSplitEnabled !== "function" || typeof setThemeSplit !== "function") return "缺 split 读写函数";'
+      + 'if (themeSplitEnabled()) return "默认应为联动态";'
+      + 'setWallpaper("night", "dark"); setWallpaper("night", "light");'
+      + 'pickTheme("paper");'
+      + 'if (localStorage.getItem("phymathia_bg_dark") !== "paper" || localStorage.getItem("phymathia_bg_light") !== "paper") return "联动模式点卡没双写两侧";'
+      + 'if (localStorage.getItem("phymathia_style_family") !== "blueprint") return "联动点卡没重置家族默认（素纸→蓝图）";'
+      + 'setThemeSplit(true);'
+      + 'if (localStorage.getItem("phymathia_theme_split") !== "1") return "独立标志未写";'
+      + 'if (localStorage.getItem("phymathia_style_family_dark") !== "blueprint" || localStorage.getItem("phymathia_style_family_light") !== "blueprint") return "开启独立没从共享值落种两侧家族键";'
+      + 'setWallpaper("night", "light");'
+      + 'pickTheme("mountain");'
+      + 'if (localStorage.getItem("phymathia_bg_dark") !== "mountain") return "独立模式当前侧未写";'
+      + 'if (localStorage.getItem("phymathia_bg_light") !== "night") return "独立模式误写另一侧（违背各挑各的）";'
+      + 'if (localStorage.getItem("phymathia_style_family_dark") !== "inkstone") return "独立模式家族没写当前侧分键（山影→砚石）";'
+      + 'if (localStorage.getItem("phymathia_style_family") !== "inkstone") return "独立模式共享键没镜像最近挑选";'
+      + 'setThemeSplit(false);'
+      + 'if (localStorage.getItem("phymathia_theme_split") !== "0") return "关闭标志未写";'
+      + 'if (localStorage.getItem("phymathia_bg_light") !== localStorage.getItem("phymathia_bg_dark")) return "关闭独立没把壁纸收拢为同值";'
+      + 'if (localStorage.getItem("phymathia_style_family_dark") !== null || localStorage.getItem("phymathia_style_family_light") !== null) return "关闭独立没摘分模式家族键";'
+      + 'if (localStorage.getItem("phymathia_style_family") !== "inkstone") return "关闭独立共享键应取当前侧家族";'
       + 'return "ok";'
       + '})()', sandbox);
     if (r !== 'ok') throw new Error(r);

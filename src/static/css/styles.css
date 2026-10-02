@@ -1487,6 +1487,28 @@
       font-size: var(--fs-sm);
       flex: none;
     }
+    /* 深浅独立开关行（2026-10-02 第三轮）：默认两模式共用同一主题，勾选后各挑各的。
+       原生 checkbox 只换 accent-color＝强调色随家族走，不自绘开关（零新形状债务）。 */
+    .theme-split-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 6px 0;
+      padding: 7px 8px 5px;
+      border-top: 1px solid var(--border);
+      font-size: var(--fs-sm);
+      color: var(--text-primary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .theme-split-row input {
+      width: 14px;
+      height: 14px;
+      flex: none;
+      margin: 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
     /* 顶栏收纳小菜单（知识/更多，2026-10-02）：桌面主栏 13→9 的收纳位，行样式全复用
        .level-option；手机二级栏不受影响（本轮不动手机端）。 */
     .menu-panel { min-width: 190px; }
