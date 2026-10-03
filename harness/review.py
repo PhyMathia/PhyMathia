@@ -99,6 +99,7 @@ from .prompts import (
     build_review_messages,
 )
 from .tools import (
+    KB_TOOL_NAMES,
     READONLY_TOOL_NAMES,
     build_tools,
     execute_readonly_tool,
@@ -135,7 +136,16 @@ TOOLS_AUTO_HINT = (
 # 工具表含只读查询工具时（normal/expand/apply/preset），给 user 消息补的使用说明。
 READONLY_TOOLS_HINT = (
     "\n\n（你可以先调用只读查询工具（read_node / list_neighbors / search_nodes）"
-    "了解图中内容，再输出编辑操作；查询不会修改图。）"
+    "了解图中内容，用 search_knowledge / search_formulas 检索用户的知识库与公式速查，"
+    "再输出编辑操作；查询不会修改图。）"
+)
+# 答疑模式（2026-10-03 智能化第二期）专用的 user 消息工具说明：chat 相位工具表
+# 是纯只读，通用 TOOLS_AUTO_HINT 的「用户要求修改图请使用工具」与答疑红线矛盾，
+# 不能照抄——chat 只讲「先查后答、绝不改图」。
+HARNESS_CHAT_TOOLS_HINT = (
+    "\n\n（你可以调用只读查询工具：read_node / list_neighbors / search_nodes 查看图，"
+    "search_knowledge / search_formulas 检索用户的知识库与公式速查；先查再答，"
+    "回答引用出处。当前是答疑模式：不要输出任何编辑操作，直接用文字回答。）"
 )
 # 查询循环步数上限：达到后剥掉只读工具并明示模型直接出方案，防失控。
 MAX_TOOL_STEPS = 8
@@ -147,9 +157,53 @@ _DEFERRED_TOOL_RESULT = {
     "note": "编辑操作已暂存；请基于以上查询结果，在准备好后单独输出编辑类工具调用作为最终方案",
 }
 _TOOL_STEP_LIMIT_NOTICE = (
-    f"查询步数已达上限（{MAX_TOOL_STEPS} 步），请基于已获得的信息直接输出编辑操作"
-    "（工具调用）或最终 JSON，不要再查询。"
+    f"查询步数已达上限（{MAX_TOOL_STEPS} 步），请基于已获得的信息直接给出最终答案"
+    "（编辑类工具调用或最终 JSON；答疑模式直接用文字回答），不要再查询。"
 )
+
+# ---- 2026-10-03 智能化第二期：用户知识资产（知识库/公式速查）检索数据源 ----
+# 只在 Φ 进程内按 mtime 缓存，只读；server 包不可用（battery 测试桩/独立部署）
+# 或文件缺失/损坏时降级为空清单——检索工具回「数据不可用/为空」，绝不阻断主流程。
+_KB_CACHE: Dict[str, Any] = {
+    "knowledge_mtime": None,
+    "formulas_mtime": None,
+    "knowledge": [],
+    "formulas": [],
+}
+
+
+def _load_kb_file(path, mtime_key: str, list_key: str) -> list:
+    try:
+        mtime = path.stat().st_mtime_ns
+    except Exception:
+        return []
+    if _KB_CACHE[mtime_key] == mtime:
+        return _KB_CACHE[list_key]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        logger.warning("harness kb load failed: %s", path, exc_info=True)
+        return []
+    items = []
+    if isinstance(data, dict):
+        items = [item for item in data.values() if isinstance(item, dict)]
+    elif isinstance(data, list):
+        items = [item for item in data if isinstance(item, dict)]
+    _KB_CACHE[mtime_key] = mtime
+    _KB_CACHE[list_key] = items
+    return items
+
+
+def _load_user_kb() -> Dict[str, list]:
+    """知识检索工具的数据源：data/knowledge.json（知识面板）与 data/formulas.json（公式速查）。"""
+    try:
+        from server.config import FORMULAS_PATH, KNOWLEDGE_PATH
+    except Exception:
+        return {"knowledge": [], "formulas": []}
+    return {
+        "knowledge": _load_kb_file(KNOWLEDGE_PATH, "knowledge_mtime", "knowledge"),
+        "formulas": _load_kb_file(FORMULAS_PATH, "formulas_mtime", "formulas"),
+    }
 
 # ---- T94（评审路线 #9）上下文预算与自动压缩 ----
 # 长会话后期模型失忆的根因：历史只做「最近 6 条详细 + 更早压一行」，前面聊定的
@@ -1536,9 +1590,18 @@ def _assistant_tool_message(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _readonly_call_arg(name: str, args: Dict[str, Any]) -> str:
-    """进度事件里的查询参数预览（read_node/list_neighbors 取节点，search 取词）。"""
-    key = "keyword" if name == "search_nodes" else "node_id"
+    """进度事件里的查询参数预览（read_node/list_neighbors 取节点，search* 取词）。"""
+    key = "node_id" if name in ("read_node", "list_neighbors") else "keyword"
     return str(args.get(key) or args.get("id") or args.get("label") or "")[:60]
+
+
+def _readonly_tool_label(name: str) -> str:
+    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查。"""
+    if name == "search_knowledge":
+        return "知识库"
+    if name == "search_formulas":
+        return "公式速查"
+    return "图中信息"
 
 
 async def review_graph(
@@ -1586,11 +1649,13 @@ async def review_graph(
     切换候选，重开完整 attempt 循环；换上的候选在结果里走 fallback_used 字段，
     并给 journal 追一条 stage="fallback" 条目。非 list/无有效项 → 不启用。
 
-    T93 查询回灌：工具表含只读查询工具（normal/expand/apply/preset）时，模型可
-    先调用 read_node/list_neighbors/search_nodes，后端对完整快照执行查询并以
+    T93 查询回灌：工具表含只读查询工具（normal/expand/apply/preset/chat）时，模型可
+    先调用 read_node/list_neighbors/search_nodes（2026-10-03 起另有 search_knowledge/
+    search_formulas 检索用户知识库与公式速查），后端对完整快照/知识数据执行查询并以
     role:"tool" 消息回灌，模型看完结果再出编辑方案；最多 MAX_TOOL_STEPS 步，
     到顶后剥掉只读工具并明示直接出方案。同批混入的编辑调用不执行，只回
-    {"deferred": true} 让模型单独重发。chat/evaluate 保持单轮。
+    {"deferred": true} 让模型单独重发。evaluate 保持单轮；chat 工具表是纯只读
+    （2026-10-03 智能化第二期改），查询回灌照常工作但最终只出文字回答。
     """
     def _emit(event: Dict[str, Any]) -> None:
         if progress is None:
@@ -1755,6 +1820,16 @@ async def review_graph(
     last_raw = ""
     last_errors = []
 
+    # 2026-10-03 智能化第二期：知识检索工具的数据源（惰性加载——首个 kb 工具
+    # 调用时才读盘；同请求内只加载一次，跨请求由 _load_user_kb 的 mtime 缓存兜着）
+    kb_data: Optional[Dict[str, list]] = None
+
+    def _kb() -> Dict[str, list]:
+        nonlocal kb_data
+        if kb_data is None:
+            kb_data = _load_user_kb()
+        return kb_data
+
     def messages_for_attempt(retry_errors: str = "") -> list:
         if phase == "evaluate":
             return build_evaluate_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
@@ -1909,9 +1984,14 @@ async def review_graph(
                 if level_suffix and base_content.endswith(level_suffix):
                     base_content = base_content[: -len(level_suffix)]
                 if current_tools:
-                    base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
-                    if readonly_enabled:
-                        base_content += READONLY_TOOLS_HINT
+                    if phase == "chat":
+                        # 答疑模式：纯只读工具表，用专用提示（通用 AUTO 提示的
+                        # 「要求修改图请使用工具」与答疑红线矛盾，不能照抄）
+                        base_content += HARNESS_CHAT_TOOLS_HINT
+                    else:
+                        base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
+                        if readonly_enabled:
+                            base_content += READONLY_TOOLS_HINT
                 history_text = _history_block(history)
                 if history_text:
                     base_content += history_text
@@ -1973,7 +2053,7 @@ async def review_graph(
                             logger.warning("工具调用失败，降级为自由 JSON: %s", exc)
                             tools = None
                             tool_choice = None
-                            messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "")
+                            messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "").replace(HARNESS_CHAT_TOOLS_HINT, "")
                             journal_fallback = "json_mode"
                             raw = await _counted_call(
                                 messages,
@@ -2018,11 +2098,14 @@ async def review_graph(
                             _emit({
                                 "type": "status",
                                 "stage": "tool",
-                                "message": "🔎 查询图中信息：" + name + "(" + _readonly_call_arg(name, args) + ")",
+                                "message": "🔎 查询" + _readonly_tool_label(name) + "：" + name + "(" + _readonly_call_arg(name, args) + ")",
                                 "attempt": attempt,
                                 "step": tool_steps,
                             })
-                            output = execute_readonly_tool(name, args, full_snapshot)
+                            output = execute_readonly_tool(
+                                name, args, full_snapshot,
+                                kb=_kb() if name in KB_TOOL_NAMES else None,
+                            )
                             text = json.dumps(output, ensure_ascii=False)
                             ok = not (isinstance(output, dict) and output.get("error"))
                             if len(text) > _TOOL_RESULT_CHARS:

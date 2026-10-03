@@ -330,13 +330,14 @@ class HarnessToolsTest(unittest.TestCase):
     def test_build_tools_per_phase(self):
         from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, build_tools
         edit_tools = {"create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"}
-        # T93：normal/expand/apply/preset 追加三只读查询工具（先查图再改）
+        # T93＋2026-10-03 智能化第二期：normal/expand/apply/preset 追加五只读工具
+        # （图查询三件套＋知识检索 search_knowledge/search_formulas，先查再改）
         self.assertEqual(set(PHASE_TOOLS["normal"]), edit_tools | set(READONLY_TOOL_NAMES))
         self.assertEqual(PHASE_TOOLS["evaluate"], ["create_eval_node"])
         self.assertNotIn("create_node", PHASE_TOOLS["apply"])
-        self.assertEqual(len(build_tools("normal")), 9)
+        self.assertEqual(len(build_tools("normal")), 11)
         self.assertEqual(len(build_tools("evaluate")), 1)
-        self.assertEqual(len(build_tools("apply")), 8)
+        self.assertEqual(len(build_tools("apply")), 10)
         self.assertEqual(build_tools("resolve"), [])
 
     def test_parse_tool_calls_basic(self):
@@ -2999,14 +3000,15 @@ class HarnessChatPhaseTest(unittest.TestCase):
         # 09-30 补严：此前 explicit expand 混在 auto_phases 里，会被评价词覆盖成 evaluate
         self.assertEqual(_detect_phase("expand", "顺便评价一下这个图", {"nodes": []}), "expand")
 
-    def test_phase_tools_chat_same_as_normal(self):
+    def test_phase_tools_chat_readonly_only(self):
         from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, build_tools
-        # T93：chat 保持单轮——编辑工具表与 normal 相同，但不含只读查询工具
-        self.assertEqual(
-            PHASE_TOOLS["chat"],
-            [name for name in PHASE_TOOLS["normal"] if name not in READONLY_TOOL_NAMES],
-        )
-        self.assertEqual({t["function"]["name"] for t in build_tools("chat")}, set(PHASE_TOOLS["chat"]))
+        # 2026-10-03 智能化第二期：chat 工具表收敛为纯只读（图查询＋知识检索），
+        # 编辑工具根本不在表里——「只说不改」由工具表结构保证（旧口径「编辑表＋
+        # 红线禁用」已随用户点名的智能化升级修订；红线 prompt 与服务端保险丝保留）
+        self.assertEqual(PHASE_TOOLS["chat"], list(READONLY_TOOL_NAMES))
+        for edit_name in ("create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"):
+            self.assertNotIn(edit_name, PHASE_TOOLS["chat"])
+        self.assertEqual({t["function"]["name"] for t in build_tools("chat")}, set(READONLY_TOOL_NAMES))
 
     def test_review_graph_chat_readonly_redline_and_fuse(self):
         import asyncio
@@ -3068,3 +3070,29 @@ class HarnessChatPhaseTest(unittest.TestCase):
                 self.assertEqual(called["n"], 0, "锁定相位下撤销也必须走确定性路径、不调模型")
                 self.assertEqual(result["status"], "undo")
                 self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+
+
+class OperationsLimitTest(unittest.TestCase):
+    """T107（2026-10-03 销账）：单批操作数超上限不再静默截断。"""
+
+    def _ops(self, count):
+        return [
+            {"op": "create_node", "temp_id": f"t{i}", "kind": "knowledge",
+             "label": f"节点{i}", "reason": "批量"}
+            for i in range(count)
+        ]
+
+    def test_over_limit_records_error_and_truncates(self):
+        from harness.core import MAX_OPERATIONS, build_next_snapshot, normalize_operations
+        self.assertEqual(len(normalize_operations(self._ops(MAX_OPERATIONS + 5))), MAX_OPERATIONS)
+        snapshot = {"nodes": [], "edges": []}
+        result = build_next_snapshot(snapshot, self._ops(MAX_OPERATIONS + 5))
+        self.assertEqual(len(result["operations"]), MAX_OPERATIONS)
+        limit_errors = [e for e in result["errors"] if e.get("index") == "limit"]
+        self.assertEqual(len(limit_errors), 1)
+        self.assertIn("拆成下一批", limit_errors[0]["reason"])
+
+    def test_at_limit_no_error(self):
+        from harness.core import MAX_OPERATIONS, build_next_snapshot
+        result = build_next_snapshot({"nodes": [], "edges": []}, self._ops(MAX_OPERATIONS))
+        self.assertFalse([e for e in result["errors"] if e.get("index") == "limit"])

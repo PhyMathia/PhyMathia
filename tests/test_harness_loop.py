@@ -1,12 +1,15 @@
 """T93（评审路线 #8）只读查询回灌循环 + T82 相位识别收敛（后端超集）回归。
 
 覆盖：
-- build_tools：normal/expand/apply/preset 含三只读工具；chat/evaluate 不含；
+- build_tools：normal/expand/apply/preset 含五只读工具（图查询三件套＋知识检索
+  两件套，2026-10-03 扩容）；evaluate 不含、chat 为纯只读表；
 - execute_readonly_tool 直测：read_node 按 id/按 label/未找到、list_neighbors
-  方向与关系/截断、search_nodes label 优先/截断、坏参数返回 error 不抛；
+  方向与关系/截断、search_nodes label 优先/截断、search_knowledge/search_formulas
+  知识检索命中/空库/不可用/截断、坏参数返回 error 不抛；
 - review_graph 查询循环：两步（查→改）回灌形状、完整快照全文回灌（非压缩版）、
-  同批编辑调用延迟、步数上限剥只读工具、chat 零只读、journal step/tool_results、
-  SSE tool/model 事件、查询轮 HarnessError 交外层换模型候选链接住；
+  同批编辑调用延迟、步数上限剥只读工具、chat 纯只读表＋专用提示、journal
+  step/tool_results、SSE tool/model 事件、查询轮 HarnessError 交外层换模型
+  候选链接住、知识检索工具回灌真实结果（normal 与 chat 两相位）；
 - T82：后端关键词表逐词覆盖前端旧正则；payload phase=normal 时由 _detect_phase
   重判（评价/采纳建议/改成/重写）、显式 expand 直通不受关键词影响。
 
@@ -124,11 +127,16 @@ class ReadonlyToolsTableTest(unittest.TestCase):
             for readonly in READONLY_TOOL_NAMES:
                 self.assertIn(readonly, names, f"{phase} 缺少 {readonly}")
 
-    def test_chat_and_evaluate_stay_single_round(self):
-        for phase in ("chat", "evaluate"):
-            names = [schema["function"]["name"] for schema in build_tools(phase)]
-            for readonly in READONLY_TOOL_NAMES:
-                self.assertNotIn(readonly, names, f"{phase} 不应含 {readonly}")
+    def test_evaluate_stays_single_round_chat_is_readonly_only(self):
+        # 2026-10-03 智能化第二期：evaluate 维持单轮（无只读工具）；
+        # chat 反转为纯只读工具表（图查询＋知识检索），编辑工具不在表里
+        names = [schema["function"]["name"] for schema in build_tools("evaluate")]
+        for readonly in READONLY_TOOL_NAMES:
+            self.assertNotIn(readonly, names, "evaluate 不应含只读工具")
+        self.assertEqual(
+            sorted(schema["function"]["name"] for schema in build_tools("chat")),
+            sorted(READONLY_TOOL_NAMES),
+        )
 
     def test_readonly_schemas_required_params(self):
         schemas = {s["function"]["name"]: s for s in build_tools("normal")}
@@ -136,8 +144,9 @@ class ReadonlyToolsTableTest(unittest.TestCase):
             params = schemas[name]["function"]["parameters"]
             self.assertEqual(params["required"], ["node_id"])
             self.assertIn("node_id", params["properties"])
-        search = schemas["search_nodes"]["function"]["parameters"]
-        self.assertEqual(search["required"], ["keyword"])
+        for name in ("search_nodes", "search_knowledge", "search_formulas"):
+            search = schemas[name]["function"]["parameters"]
+            self.assertEqual(search["required"], ["keyword"])
 
 
 class ExecuteReadonlyToolTest(unittest.TestCase):
@@ -335,14 +344,19 @@ class QueryLoopTest(unittest.TestCase):
             self.assertNotIn(readonly, names)
         self.assertTrue(any("查询步数已达上限" in str(m.get("content") or "") for m in last["messages"]))
 
-    def test_chat_phase_never_offers_readonly_tools(self):
+    def test_chat_phase_offers_readonly_tools_only(self):
+        # 2026-10-03：chat 工具表＝五只读工具（先查再答），编辑工具一个都没有
         seen = []
         fake = _recording_fake([_llm(None, "这是一张关于导数的图")], seen)
         result = _run_review(fake, phase="chat", instruction="这个图讲了什么")
         self.assertEqual(result["phase"], "chat")
         names = [schema["function"]["name"] for schema in (seen[0]["tools"] or [])]
-        for readonly in READONLY_TOOL_NAMES:
-            self.assertNotIn(readonly, names)
+        self.assertEqual(sorted(names), sorted(READONLY_TOOL_NAMES))
+        # chat 专用提示：讲「先查再答」，不讲通用 AUTO 提示的「要求修改图请使用工具」
+        user_text = seen[0]["messages"][-1]["content"]
+        self.assertIn("答疑模式", user_text)
+        self.assertIn("search_knowledge", user_text)
+        self.assertNotIn("如果用户要求修改图，请使用工具", user_text)
 
     def test_journal_records_query_step_and_tool_results(self):
         journal = []
@@ -471,6 +485,100 @@ class PhaseConvergenceTest(unittest.TestCase):
         fake = _recording_fake([_llm(None, "好的")], [])
         result = _run_review(fake, phase="expand", instruction="评价一下这个图")
         self.assertEqual(result["phase"], "expand")
+
+
+class KnowledgeToolsTest(unittest.TestCase):
+    """2026-10-03 智能化第二期：search_knowledge / search_formulas 直测。"""
+
+    KB = {
+        "knowledge": [
+            {"title": "梯度的定义", "category": "math", "tags": ["向量分析"],
+             "summary": "梯度是标量场偏导数组合成的矢量场", "formulas": ["$\\nabla f$"]},
+            {"title": "阻尼振动", "category": "physics", "tags": ["振动"],
+             "summary": "振幅随时间衰减的振动", "formulas": []},
+        ],
+        "formulas": [
+            {"latex": "$\\nabla f = (\\partial f/\\partial x)$", "concept": "梯度的定义",
+             "meaning": "梯度方向是增长最快的方向"},
+            {"latex": "$F = ma$", "concept": "牛顿第二定律", "meaning": "力等于质量乘加速度"},
+        ],
+    }
+
+    def test_search_knowledge_hits_title_and_tags(self):
+        out = execute_readonly_tool("search_knowledge", {"keyword": "梯度"}, {}, kb=self.KB)
+        self.assertEqual(out["total"], 1)
+        self.assertEqual(out["matches"][0]["title"], "梯度的定义")
+        self.assertEqual(out["matches"][0]["formulas_count"], 1)
+        out2 = execute_readonly_tool("search_knowledge", {"keyword": "向量分析"}, {}, kb=self.KB)
+        self.assertEqual(out2["total"], 1, "tag 命中也要召回")
+
+    def test_search_knowledge_empty_and_unavailable(self):
+        out = execute_readonly_tool("search_knowledge", {"keyword": "x"}, {}, kb={"knowledge": [], "formulas": []})
+        self.assertEqual(out["matches"], [])
+        self.assertIn("知识库为空", out["note"])
+        err = execute_readonly_tool("search_knowledge", {"keyword": "x"}, {}, kb=None)
+        self.assertIn("不可用", err["error"])
+
+    def test_search_formulas_hits_concept_and_strips_dollars(self):
+        out = execute_readonly_tool("search_formulas", {"keyword": "梯度"}, {}, kb=self.KB)
+        self.assertEqual(out["total"], 1)
+        self.assertNotIn("$", out["matches"][0]["latex"])
+        out2 = execute_readonly_tool("search_formulas", {"keyword": "f = ma"}, {}, kb=self.KB)
+        self.assertEqual(out2["total"], 1, "latex 片段命中（大小写不敏感）")
+
+    def test_kb_tools_are_readonly_not_edit(self):
+        from harness.tools import KB_TOOL_NAMES, TOOL_TO_OP
+        for name in KB_TOOL_NAMES:
+            self.assertIn(name, READONLY_TOOL_NAMES)
+            self.assertNotIn(name, TOOL_TO_OP)
+
+    def test_search_limit_truncated_flag(self):
+        kb = {"knowledge": [{"title": f"振动{i}", "summary": "", "tags": []} for i in range(15)], "formulas": []}
+        out = execute_readonly_tool("search_knowledge", {"keyword": "振动"}, {}, kb=kb)
+        self.assertEqual(out["count"], 10)
+        self.assertEqual(out["total"], 15)
+        self.assertTrue(out["truncated"])
+
+
+class KnowledgeQueryLoopTest(unittest.TestCase):
+    """知识检索工具进查询循环：role:"tool" 回灌真实结果；chat 相位先查后答且保险丝兜底。"""
+
+    def test_kb_tool_roundtrip_normal_phase(self):
+        seen = []
+        fake = _recording_fake([
+            _llm([_tool_call("search_knowledge", {"keyword": "梯度"}, "call_1")]),
+            _llm([_tool_call("update_node",
+                             {"node_id": "A", "patch": {"label": "梯度"}, "reason": "对齐知识库"},
+                             "call_2")]),
+        ], seen)
+        kb = {"knowledge": [{"title": "梯度的定义", "summary": "矢量场", "tags": []}], "formulas": []}
+        with mock.patch.object(review_mod, "_load_user_kb", return_value=kb):
+            result = _run_review(fake)
+        self.assertEqual(result["status"], "ok")
+        tool_msg = [m for m in seen[1]["messages"] if m.get("role") == "tool"][0]
+        payload = json.loads(tool_msg["content"])
+        self.assertEqual(payload["matches"][0]["title"], "梯度的定义")
+
+    def test_chat_query_then_answer_with_fuse(self):
+        seen = []
+        fake = _recording_fake([
+            _llm([_tool_call("search_knowledge", {"keyword": "导数"}, "call_1")]),
+            _llm(None, "你图里的『导数』讲的是瞬时变化率；你的知识库也收录了相关笔记。"),
+        ], seen)
+        kb = {"knowledge": [{"title": "导数", "summary": "瞬时变化率", "tags": []}], "formulas": []}
+        events = []
+
+        def progress(event):
+            events.append(event)
+
+        with mock.patch.object(review_mod, "_load_user_kb", return_value=kb):
+            result = _run_review(fake, phase="chat", instruction="导数是什么", progress=progress)
+        self.assertEqual(result["operations"], [], "答疑保险丝必须清空图操作")
+        tool_msgs = [m for m in seen[1]["messages"] if m.get("role") == "tool"]
+        self.assertEqual(len(tool_msgs), 1)
+        self.assertIn("瞬时变化率", tool_msgs[0]["content"])
+        tool_events = [e for e in events if e.get("stage") == "tool"]
+        self.assertTrue(any("知识库" in e["message"] for e in tool_events), "进度事件应标注检索来源")
 
 
 if __name__ == "__main__":

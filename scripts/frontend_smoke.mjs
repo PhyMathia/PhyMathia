@@ -600,6 +600,30 @@ check('使用引导覆盖创造模式与自定义节点入口', () => {
   return true;
 });
 
+check('使用引导覆盖答疑先查再答与配方放置（2026-10-03 智能化第二期）', () => {
+  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const m = harnessSrc.match(/const HARNESS_GUIDE_TEXT = \[([\s\S]*?)\]\.join/);
+  if (!m) throw new Error('HARNESS_GUIDE_TEXT 未找到');
+  for (const needle of ['先查再答', '知识库和公式速查', '编辑模式也能直接放置']) {
+    if (!m[1].includes(needle)) throw new Error('引导缺少「' + needle + '」');
+  }
+  return true;
+});
+
+check('T117 澄清失配不清待决状态（确认命中才置空）', () => {
+  const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
+  const m = runSrc.match(/function confirmHarnessClarifyInput\(\) \{([\s\S]*?)\n  \}/);
+  if (!m) throw new Error('confirmHarnessClarifyInput 未找到');
+  const body = m[1];
+  const clearIdx = body.indexOf('harnessPendingClarify = null');
+  const branchIdx = body.indexOf('if (node) {');
+  if (clearIdx < 0) throw new Error('函数体缺 harnessPendingClarify 置空（语义异常）');
+  if (branchIdx < 0 || clearIdx < branchIdx) {
+    throw new Error('失配会提前清掉 harnessPendingClarify：置空必须发生在 if (node) 命中分支内（T117）');
+  }
+  return true;
+});
+
 check('寒暄拦截退役＋答疑纯问答语义合成', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
   if (runSrc.includes('_isHarnessCasualInstruction') || runSrc.includes('_harnessCasualReply')) {
@@ -7214,6 +7238,18 @@ await Promise.all(pendingChecks).catch(() => {});
       if (!idxSrc.includes(fn)) throw new Error('收纳菜单缺原入口：' + fn);
     }
     if (idxSrc.includes('id="continent-btn"') && /id="continentBtn"/.test(idxSrc)) throw new Error('大陆独立按钮应已并入知识菜单');
+    return true;
+  });
+
+  qcheck('知识菜单分组：画布/全局检测归「知识检测」组（2026-10-03），不再与大陆/总览并列', () => {
+    const km = idxSrc.slice(idxSrc.indexOf('id="knowledgeMenu"'), idxSrc.indexOf('id="moreMenu"'));
+    const labelPos = km.indexOf('menu-group-label');
+    const quizPos = km.indexOf('closeKnowledgeMenu(); openQuiz()');
+    const globalPos = km.indexOf('openQuizGlobalDashboard()');
+    if (labelPos < 0 || !km.includes('menu-group-label">知识检测</div>')) throw new Error('知识菜单缺「知识检测」分组标题');
+    if (!(labelPos < quizPos && quizPos < globalPos)) throw new Error('知识菜单顺序应为 大陆/总览 → 知识检测组（画布→全局）');
+    if (!km.includes('class="level-option menu-sub-item"')) throw new Error('两个检测入口应挂 menu-sub-item 缩进归属组下');
+    if (/menu-sub-item/.test(km.slice(0, labelPos))) throw new Error('大陆/总览不属于检测组，不应缩进');
     return true;
   });
 

@@ -801,11 +801,16 @@
     if (!text) return;
     const nodes = _graphNodes();
     const node = nodes.find(item => item.id === text || _nodeLabel(item) === text);
-    harnessPendingClarify = null;
+    // T117（2026-10-03 销账）：失配不再提前清掉 harnessPendingClarify——此前先置空
+    // 再匹配，输错一次名称候选按钮就全部失效、澄清卡滞留成死卡。改为只在命中时
+    // 置空：失配时保留待决状态与卡片，提示后聚焦输入框让用户改了再试（「取消」出口照旧）。
     if (node) {
+      harnessPendingClarify = null;
       runGraphHarnessWithFocus(pending.phase, [node.id], pending.instruction);
     } else {
-      _setHarnessStatus('未找到该节点，请选择列表中的节点或检查名称', 'error');
+      _setHarnessStatus('未找到该节点：' + text + '（可从上方列表点选，或检查名称后重试）', 'error');
+      input.focus();
+      input.select();
     }
   }
 
