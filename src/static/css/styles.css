@@ -1518,6 +1518,24 @@
     .level-option:hover { background: var(--hover-bg); }
     .level-option.active { background: var(--btn-active-bg); color: var(--accent); }
     .level-option .level-emoji { font-size: 16px; }
+    /* 知识菜单「知识检测」二级子菜单（2026-10-03）：悬停父项向左展开——菜单贴屏右缘，向右会溢出视口。
+       子面板是父行的 DOM 子节点，指针从父行移进去不算离开父行，无需留缝隙桥接；
+       触屏没有 hover，点父行 toggle .open 兜底；两处关菜单路径（closeKnowledgeMenu／外点关闭）
+       由 ui.js 同步收起 .open 防残留。 */
+    .menu-submenu-host { position: relative; }
+    .menu-submenu-host .menu-submenu-arrow { margin-left: auto; display: inline-flex; align-items: center; color: var(--text-secondary); }
+    .menu-submenu {
+      display: none;
+      position: absolute;
+      top: calc(var(--sp-3) * -1);
+      right: 100%;
+      min-width: 132px;
+      padding: var(--sp-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-lg);
+      z-index: 30;
+    }
+    .menu-submenu-host:hover .menu-submenu, .menu-submenu.open { display: block; }
 
     /* ====== 模型设置面板 ====== */
     /* 底色/磨砂交给 .aurora-glass（本规则再写 background 简写会重置 background-image，极光被盖掉） */
