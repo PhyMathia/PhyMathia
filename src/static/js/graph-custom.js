@@ -327,6 +327,12 @@ function deleteCustomNode(nodeId, pushUndo = true) {
   const state = _graphState();
   state.customNodes = (state.customNodes || []).filter(item => item.id !== nodeId);
   state.connections = (state.connections || []).filter(edge => edge.from !== nodeId && edge.to !== nodeId);
+  // 派生追问节点（sq- 反馈ts，由苏格拉底反馈自动落地）：不记墓碑的话下次构建会按反馈
+  // 消息重新生成。复用 harnessDeleted（Φ 助手删除派生节点的既有墓碑，随 graphState 持久化）。
+  if (String(nodeId).indexOf('sq-') === 0) {
+    state.harnessDeleted = state.harnessDeleted || {};
+    state.harnessDeleted[nodeId] = true;
+  }
   _saveGraphState(state);
   renderGraphCanvas();
 }

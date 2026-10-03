@@ -16,7 +16,6 @@ function _nodeAttribute(node) {
   if (node.kind === 'human_note') return GRAPH_NODE_ATTRIBUTES.human_note;
   if (node.kind === 'ai_eval') return GRAPH_NODE_ATTRIBUTES.ai_eval;
   if (node.kind === 'answer') return node.manual ? GRAPH_NODE_ATTRIBUTES.manual : GRAPH_NODE_ATTRIBUTES.answer;
-  if (node.kind === 'socratic_followup') return GRAPH_NODE_ATTRIBUTES.socratic;
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
   }
@@ -646,7 +645,7 @@ function _customNodeStatusHtml(node, force) {
 function _canMinimizeGraphNode(node) {
   if (!node) return false;
   if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation') return false;
-  if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'human_note' || node.kind === 'socratic_followup') return true;
+  if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'human_note') return true;
   return node.kind === 'module' || node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
 }
 
@@ -954,37 +953,12 @@ function _renderAiEvalNodeHtml(node, state) {
       deferred.forEach(el => _katexIO.observe(el));
     }
 
-    function _renderSocraticFollowupNodeHtml(node, messages, state) {
-  const message = messages[node.messageIndex];
-  const attr = _nodeAttribute(node);
-  const questions = Array.isArray(node.items) ? node.items : [];
-  const parentTs = String((message && message.timestamp) || node.timestamp || '');
-  // 问题列表复用 convertSocraticQuestions 出同一套 socratic-item 标记（按钮/样式/委托点击全同源）。
-  // 只预转义尖括号（防它的标签剥离吃字），引号等交给它内部 escapeHtml——预 escapeHtml 会双重转义
-  let listHtml = '';
-  if (questions.length && typeof convertSocraticQuestions === 'function') {
-    const safe = q => String(q.question || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const synthetic = '<ol>' + questions.map(q => '<li>[' + q.levelName + '] ' + safe(q) + '</li>').join('') + '</ol>';
-    listHtml = convertSocraticQuestions(synthetic, { parentId: parentTs, sourceModule: 'extend' });
-  }
-  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
-  const dimmedClass = node.hidden ? ' dimmed' : '';
-  const minimizedClass = node.minimized ? ' minimized' : '';
-  const body = node.minimized ? _minimizedBodyHtml() : '<div class="graph-node-full-content">' + listHtml + '</div>';
-  return '<div class="graph-node graph-node-draft graph-node-socratic-followup graph-node-branch graph-attr-' + attr.key + selectedClass + dimmedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
-    + _renderInputPorts(node)
-    + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">建议追问</span><span class="graph-node-sub">共 ' + questions.length + ' 问</span>' + _graphMinimizeToggleHtml(node) + '</div>'
-    + body
-    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
-    + '</div>'
-    + '</div>';
-}
+    // 派生追问节点的专用渲染器已退役（2026-10-03 用户拍板）：sq 节点改走 customNodes +
+    // module 渲染路径，与手建的「苏格拉底追问」节点完全同款同链路。
 
 function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
-  if (node.kind === 'socratic_followup') return _renderSocraticFollowupNodeHtml(node, messages, state);
   if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
   if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
   if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
@@ -1218,7 +1192,6 @@ function _graphDiffNodeHidden(hiddenMap, node) {
   const ts = node.timestamp != null ? String(node.timestamp) : '';
   if (node.kind === 'module' && node.moduleKey) keys.push(ts + ':' + node.moduleKey);
   if (node.kind === 'answer') keys.push(ts + ':answer');
-  if (node.kind === 'socratic_followup') keys.push(String(node.id));
   return keys.some(key => !!hiddenMap[key]);
 }
 

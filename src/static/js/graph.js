@@ -1153,7 +1153,7 @@ function _matchSuggestedFollowupNode(nodeById, msg) {
   if (!q) return null;
   for (const id in nodeById) {
     const n = nodeById[id];
-    if (!n || n.kind !== 'socratic_followup' || !Array.isArray(n.items)) continue;
+    if (!n || !n.sqAuto || !Array.isArray(n.items) || !n.items.length) continue;
     for (const item of n.items) {
       const iq = norm(item.question);
       if (iq && (iq === q || iq.includes(q) || q.includes(iq))) return n;
@@ -1172,6 +1172,7 @@ function _buildGraphData(messages, state) {
   const savedPositions = state.layoutVersion === LAYOUT_VERSION ? (state.positions || {}) : {};
   const pinnedMap = state.pinned || {};
   const savedSizes = state.sizes || {};
+  let addedSqCustom = false;
 
   let rootQuestionId = null;
   let lastMainAnswerId = null;
@@ -1404,52 +1405,57 @@ function _buildGraphData(messages, state) {
         _pushEdge(edges, id, moduleId, 'primary');
       });
 
-      // 苏格拉底反馈的建议追问派生成独立「苏格拉底追问」节点（用户拍板：问题与按钮属于追问节点，
-      // 不该融合在 AI 回答卡里）——链条 AI 回答→苏格拉底追问→（作答）→AI 回答
+      // 苏格拉底反馈的建议追问：直接复用自定义「苏格拉底追问」模块节点（用户拍板：与
+      // 手建的追问节点同款同渲染，不再另做卡片）——首次遇到该反馈时在 customNodes 落一个
+      // 永久条目（id 稳定 = sq-反馈ts），此后渲染/编辑/删除/折叠全走既有自定义节点链路；
+      // 删除经 deleteCustomNode 的 harnessDeleted 墓碑防止下次构建复活。
       if (msg.branchType === 'socratic' || /<socratic_meta\b/i.test(String(msg.content || ''))) {
         const suggested = _parseSuggestedFollowupQuestions(msg.content);
         if (suggested.length) {
           const sqId = _graphNodeId('sq', msg.timestamp);
-          if (!harnessDeleted[sqId] && !nodeById[sqId]) {
+          let cn = (state.customNodes || []).find(item => item.id === sqId);
+          if (!cn && !harnessDeleted[sqId]) {
             const savedSq = savedPositions[sqId];
             const sqX = savedSq ? savedSq.x : (node.isBranch && node.x != null ? node.x + (keys.length ? 190 * keys.length : 0) : radialX);
             const sqY = savedSq ? savedSq.y : (node.isBranch && node.y != null ? node.y + (keys.length ? 430 : 250) : radialY);
-            const sqNode = {
+            state.customNodes = state.customNodes || [];
+            cn = {
               id: sqId,
-              kind: 'socratic_followup',
+              kind: 'module',
+              moduleKey: 'socratic',
+              sqAuto: true,
+              manual: false,
+              content: '### 苏格拉底追问\n\n' + suggested.map(q => '- [' + q.levelName + '] ' + q.question).join('\n'),
+              status: 'done',
+              summary: suggested.map(q => q.question).join('；').slice(0, 120),
+              items: suggested,
+              parentId: id,
+              timestamp: msg.timestamp,
+              createdAt: msg.timestamp,
               x: sqX,
               y: sqY,
               depth: depth + 1,
               targetAngle,
               isRoot: false,
-              isBranch: true,
-              messageIndex: i,
-              timestamp: msg.timestamp,
-              moduleKey: '',
-              branchType: 'socratic',
-              branchLabel: '建议追问',
-              parentId: id,
-              items: suggested,
-              hidden: !!hiddenMap[id],
-              minimized: false,
-              pinned: !!(savedSq && pinnedMap[sqId]),
-              fixedX: savedSq ? savedSq.x : null,
-              fixedY: savedSq ? savedSq.y : null,
-              customWidth: savedSizes[sqId] && savedSizes[sqId].u ? savedSizes[sqId].w : null,
-              customHeight: savedSizes[sqId] && savedSizes[sqId].u ? savedSizes[sqId].h : null,
-              w: 0, h: 0, vx: 0, vy: 0,
+              busy: false,
+              generated: true,
             };
-            nodes.push(sqNode);
-            nodeById[sqId] = sqNode;
-            _pushEdge(edges, id, sqId, 'primary', 'out-' + ANSWER_OUTPUT_INDEX.socratic);
+            state.customNodes.push(cn);
+            state.connections = state.connections || [];
+            if (!state.connections.some(e => String(e.from) === String(id) && String(e.to) === String(sqId))) {
+              state.connections.push({ from: id, fromPort: 'out-' + ANSWER_OUTPUT_INDEX.socratic, to: sqId, toPort: 'in-0', type: 'custom', custom: true });
+            }
+            addedSqCustom = true;
           }
+          if (cn && !nodeById[sqId]) materializeCustom(cn);
         }
       }
     }
   }
 
-  (state.customNodes || []).forEach(cn => {
-    if (harnessDeleted[cn.id] || cn.hidden) return;
+  // 自定义节点实体化（函数声明提升：派生追问块在消息循环内也会调用）；
+  // nodeById 已有同 id 时跳过（sq 块已在循环内实体化，避免双份）
+  function materializeCustom(cn) {
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
     const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
@@ -1485,7 +1491,15 @@ function _buildGraphData(messages, state) {
     };
     nodes.push(node);
     nodeById[node.id] = node;
+  }
+  (state.customNodes || []).forEach(cn => {
+    if (harnessDeleted[cn.id] || cn.hidden || nodeById[cn.id]) return;
+    materializeCustom(cn);
   });
+
+  if (addedSqCustom && typeof _saveGraphState === 'function') {
+    try { _saveGraphState(state); } catch (e) { /* 持久化失败不影响本次渲染 */ }
+  }
 
   return { nodes, edges: _mapAnswerDefaultPorts(_assignDefaultPorts(edges), nodeById), nodeById };
 }
@@ -1576,7 +1590,6 @@ function _nodeContent(message, node) {
       return _text;
     }
   if (node.kind === 'user') return message.content || '';
-  if (node.kind === 'socratic_followup') return (node.items || []).map(q => q.question).join('\n');
   if (node.kind === 'answer') {
     const summary = _graphSummary(_graphFormulaDelimit(message.content));
     if (summary) return summary;
