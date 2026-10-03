@@ -157,16 +157,16 @@
       --domain-physics: #f59e0b;
       --domain-math: #3b82f6;
       --domain-graph: #0891b2;
-      --user-avatar-bg: rgba(74, 158, 255, 0.2);
-      --progress-bar-bg: rgba(74, 158, 255, 0.1);
-      --progress-bar-fill: linear-gradient(90deg, var(--accent), #a78bfa, var(--accent));
-      --btn-hover-bg: rgba(74, 158, 255, 0.15);
-      --btn-hover-border: rgba(74, 158, 255, 0.3);
-      --btn-active-bg: rgba(74, 158, 255, 0.12);
-      --btn-active-border: rgba(74, 158, 255, 0.3);
-      --btn-active-hover-bg: rgba(74, 158, 255, 0.25);
-      --theme-btn-hover-bg: rgba(74, 158, 255, 0.15);
-      --theme-btn-hover-border: rgba(74, 158, 255, 0.3);
+      --user-avatar-bg: color-mix(in srgb, var(--accent) 20%, transparent);
+      --progress-bar-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+      --progress-bar-fill: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff), var(--accent));
+      --btn-hover-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --btn-hover-border: color-mix(in srgb, var(--accent) 30%, transparent);
+      --btn-active-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --btn-active-border: color-mix(in srgb, var(--accent) 30%, transparent);
+      --btn-active-hover-bg: color-mix(in srgb, var(--accent) 25%, transparent);
+      --theme-btn-hover-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --theme-btn-hover-border: color-mix(in srgb, var(--accent) 30%, transparent);
       --theme-btn-hover-color: var(--accent);
       --overlay-bg: rgba(5, 8, 25, 0.55);
       --input-bg: var(--field-bg-strong);   /* 独立输入框（画布搜索/新建画布）走同一支 */
@@ -177,11 +177,11 @@
       --socratic-bg: rgba(255,255,255,0.06);
       --socratic-border: rgba(255,255,255,0.15);
       --mermaid-bg: rgba(255,255,255,0.06);
-      --mermaid-node-fill: #0c2d3e;
-      --mermaid-node-stroke: #0891b2;
-      --mermaid-node-text: #a5f3fc;
-      --mermaid-line-color: #22d3ee;
-      --mermaid-edge-text: #a5f3fc;
+      --mermaid-node-fill: color-mix(in srgb, var(--accent) 22%, #0a1220);
+      --mermaid-node-stroke: var(--accent);
+      --mermaid-node-text: color-mix(in srgb, var(--accent) 30%, #fff);
+      --mermaid-line-color: var(--accent);
+      --mermaid-edge-text: color-mix(in srgb, var(--accent) 30%, #fff);
       --sidebar-hover: rgba(255,255,255,0.06);
       --tip-color: rgba(255,255,255,0.3);
 
@@ -197,20 +197,20 @@
       --kp-stat-label-color: #7a8ba8;
       --kp-filter-bg: rgba(255,255,255,0.06);
       --kp-filter-color: #7a8ba8;
-      --kp-filter-active-bg: rgba(74,158,255,0.15);
-      --kp-filter-active-color: #4a9eff;
+      --kp-filter-active-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --kp-filter-active-color: var(--accent);
       --kp-search-bg: rgba(255,255,255,0.06);
       --kp-search-color: #e2e8f0;
       --kp-search-placeholder: #4a5568;
       --kp-search-focus-bg: rgba(255,255,255,0.1);
       --kp-scrollbar-thumb: rgba(255,255,255,0.1);
       --kp-date-label-color: #7a8ba8;
-      --kp-date-label-gradient-from: #4a9eff;
-      --kp-date-label-gradient-to: #8b5cf6;
+      --kp-date-label-gradient-from: var(--accent);
+      --kp-date-label-gradient-to: color-mix(in srgb, var(--accent) 45%, #fff);
       --kp-card-bg: rgba(20,24,40,0.6);
       --kp-card-border: rgba(255,255,255,0.05);
       --kp-card-hover-bg: rgba(30,36,58,0.8);
-      --kp-card-hover-border: rgba(74,158,255,0.3);
+      --kp-card-hover-border: color-mix(in srgb, var(--accent) 30%, transparent);
       --kp-card-title-color: #e2e8f0;
       --kp-card-meta-color: #5a6a85;
       --kp-card-summary-color: #94a3b8;
@@ -224,9 +224,9 @@
       --kp-btn-danger-hover-color: #ff6b6b;
       --kp-btn-danger-hover-border: rgba(255,107,107,0.3);
       --kp-empty-color: #4a5568;
-      --kp-extracting-bg: rgba(74,158,255,0.12);
-      --kp-extracting-color: #4a9eff;
-      --modal-bg: rgba(15,18,30,0.95);
+      --kp-extracting-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --kp-extracting-color: var(--accent);
+      --modal-bg: color-mix(in srgb, var(--bg-panel) 92%, transparent);
       --modal-border: rgba(255,255,255,0.08);
       --modal-title-color: #e2e8f0;
       --modal-label-color: #7a8ba8;
@@ -236,33 +236,33 @@
       --bm-btn-cancel-color: #94a3b8;
       --bm-btn-cancel-hover-color: #e2e8f0;
       --bm-btn-cancel-hover-bg: rgba(255,255,255,0.12);
-      --bm-btn-save-bg: rgba(74,158,255,0.12);
-      --bm-btn-save-color: #4a9eff;
-      --bm-btn-save-hover-bg: rgba(74,158,255,0.25);
+      --bm-btn-save-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --bm-btn-save-color: var(--accent);
+      --bm-btn-save-hover-bg: color-mix(in srgb, var(--accent) 25%, transparent);
       --bm-btn-replace-bg: rgba(245,158,11,0.3);
       --bm-btn-replace-color: #fff;
       --bm-btn-replace-hover-bg: rgba(245,158,11,0.5);
       --kp-panel-bg: rgba(10,12,22,0.85);
-      --kp-panel-border: rgba(74,158,255,0.12);
+      --kp-panel-border: color-mix(in srgb, var(--accent) 12%, transparent);
       --kp-panel-shadow: rgba(0,0,0,0);
       --onboarding-backdrop: rgba(5, 8, 25, 0.1);
       --onboarding-spotlight: rgba(5, 8, 25, 0);
-      --session-rename-bg: #1a1d2e;
+      --session-rename-bg: var(--bg-panel);
       --session-rename-color: #e0e0e0;
-      --icon-picker-bg: #1e2138;
+      --icon-picker-bg: var(--bg-panel);
       --icon-picker-border: rgba(255,255,255,0.15);
       --icon-picker-shadow: rgba(0,0,0,0.5);
-      --select-option-bg: #1a1f3a;
+      --select-option-bg: var(--bg-panel);
       --select-option-color: #f0f4f8;
       --katex-color: #f0f4f8;
-      --viz-card-bg: #0f142d;
+      --viz-card-bg: var(--bg-panel);
       --viz-card-border: rgba(0,0,0,0.1);
       --viz-card-shadow: rgba(0,0,0,0);
-      --viz-card-hover-border: #4a9eff;
-      --viz-toolbar-bg: rgba(74,158,255,0.12);
+      --viz-card-hover-border: var(--accent);
+      --viz-toolbar-bg: color-mix(in srgb, var(--accent) 12%, transparent);
       --viz-toolbar-border: rgba(100,130,200,0.25);
-      --viz-btn-bg: rgba(74,158,255,0.12);
-      --viz-btn-border: rgba(74,158,255,0.3);
+      --viz-btn-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --viz-btn-border: color-mix(in srgb, var(--accent) 30%, transparent);
       --viz-btn-color: #a0b0d0;
       --viz-overlay-bg: rgba(0,0,0,0.85);
       --viz-bar-bg: rgba(0,0,0,0.4);
@@ -281,9 +281,9 @@
       --kp-search-focus-shadow: 0 0 0 2px var(--btn-active-border);
       --modal-shadow: 0 8px 32px rgba(0,0,0,0);
       --kp-card-shadow: none;
-      --kp-panel-decoration-from: #4a9eff;
-      --kp-panel-decoration-to: #8b5cf6;
-      --kp-card-light-border: rgba(99,102,241,0.08);
+      --kp-panel-decoration-from: var(--accent);
+      --kp-panel-decoration-to: color-mix(in srgb, var(--accent) 45%, #fff);
+      --kp-card-light-border: color-mix(in srgb, var(--accent) 8%, transparent);
       --onboarding-shadow: 0 12px 48px rgba(0,0,0,0.4);
       /* ====== 图编辑 harness（AI 网络助手）主题变量（深色） ====== */
       /* ====== 通用面板/表面变量（修复历史缺失令牌） ====== */
@@ -391,16 +391,16 @@
       --domain-physics: #fbbf24;
       --domain-math: #60a5fa;
       --domain-graph: #22d3ee;
-      --user-avatar-bg: rgba(160, 120, 40, 0.15);
-      --progress-bar-bg: rgba(160, 120, 40, 0.12);
-      --progress-bar-fill: linear-gradient(90deg, #a07828, #d4a030, #a07828);
-      --btn-hover-bg: rgba(160, 120, 40, 0.15);
-      --btn-hover-border: rgba(160, 120, 40, 0.3);
-      --btn-active-bg: rgba(160, 120, 40, 0.12);
-      --btn-active-border: rgba(160, 120, 40, 0.3);
-      --btn-active-hover-bg: rgba(160, 120, 40, 0.25);
-      --theme-btn-hover-bg: rgba(160, 120, 40, 0.15);
-      --theme-btn-hover-border: rgba(160, 120, 40, 0.3);
+      --user-avatar-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --progress-bar-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --progress-bar-fill: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff), var(--accent));
+      --btn-hover-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --btn-hover-border: color-mix(in srgb, var(--accent) 30%, transparent);
+      --btn-active-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --btn-active-border: color-mix(in srgb, var(--accent) 30%, transparent);
+      --btn-active-hover-bg: color-mix(in srgb, var(--accent) 25%, transparent);
+      --theme-btn-hover-bg: color-mix(in srgb, var(--accent) 15%, transparent);
+      --theme-btn-hover-border: color-mix(in srgb, var(--accent) 30%, transparent);
       --theme-btn-hover-color: var(--accent);
       --overlay-bg: rgba(245, 240, 232, 0.45);
       --input-bg: rgba(255, 252, 248, 0.78);
@@ -411,11 +411,11 @@
       --socratic-bg: rgba(0,0,0,0.04);
       --socratic-border: rgba(0,0,0,0.10);
       --mermaid-bg: rgba(0,0,0,0.04);
-      --mermaid-node-fill: #f0fdfa;
-      --mermaid-node-stroke: #0891b2;
-      --mermaid-node-text: #134e4a;
-      --mermaid-line-color: #0891b2;
-      --mermaid-edge-text: #134e4a;
+      --mermaid-node-fill: color-mix(in srgb, var(--accent) 8%, #fff);
+      --mermaid-node-stroke: var(--accent);
+      --mermaid-node-text: color-mix(in srgb, var(--accent) 55%, #0f172a);
+      --mermaid-line-color: var(--accent);
+      --mermaid-edge-text: color-mix(in srgb, var(--accent) 55%, #0f172a);
       --sidebar-hover: rgba(0,0,0,0.05);
       --tip-color: rgba(0,0,0,0.35);
       /* 扩展变量：浅色主题 */
@@ -428,37 +428,37 @@
       --kp-stat-card-border: rgba(99,102,241,0.08);
       --kp-stat-num-color: #1e293b;
       --kp-stat-label-color: #94a3b8;
-      --kp-filter-bg: rgba(160,120,40,0.08);
-      --kp-filter-color: #8b6914;
-      --kp-filter-active-bg: rgba(160,120,40,0.2);
-      --kp-filter-active-color: #8b6914;
+      --kp-filter-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+      --kp-filter-color: var(--accent);
+      --kp-filter-active-bg: color-mix(in srgb, var(--accent) 20%, transparent);
+      --kp-filter-active-color: var(--accent);
       --kp-search-bg: rgba(0,0,0,0.04);
       --kp-search-color: #1e293b;
       --kp-search-placeholder: #94a3b8;
       --kp-search-focus-bg: #fff;
       --kp-scrollbar-thumb: rgba(0,0,0,0.1);
       --kp-date-label-color: #64748b;
-      --kp-date-label-gradient-from: #a07828;
-      --kp-date-label-gradient-to: #d4a030;
+      --kp-date-label-gradient-from: var(--accent);
+      --kp-date-label-gradient-to: color-mix(in srgb, var(--accent) 45%, #fff);
       --kp-card-bg: rgba(255,255,255,0.6);
-      --kp-card-border: rgba(99,102,241,0.08);
+      --kp-card-border: color-mix(in srgb, var(--accent) 8%, transparent);
       --kp-card-hover-bg: rgba(255,255,255,0.8);
-      --kp-card-hover-border: rgba(99,102,241,0.15);
+      --kp-card-hover-border: color-mix(in srgb, var(--accent) 15%, transparent);
       --kp-card-title-color: #1e293b;
       --kp-card-meta-color: #94a3b8;
       --kp-card-summary-color: #64748b;
-      --kp-tag-bg: rgba(160,120,40,0.08);
-      --kp-tag-color: #8b6914;
+      --kp-tag-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+      --kp-tag-color: var(--accent);
       --kp-detail-border: rgba(0,0,0,0.06);
-      --kp-formula-bg: rgba(160,120,40,0.06);
+      --kp-formula-bg: color-mix(in srgb, var(--accent) 6%, transparent);
       --kp-formula-color: #334155;
       --kp-btn-danger-color: #94a3b8;
       --kp-btn-danger-border: rgba(0,0,0,0.08);
       --kp-btn-danger-hover-color: #ef4444;
       --kp-btn-danger-hover-border: rgba(239,68,68,0.3);
       --kp-empty-color: #94a3b8;
-      --kp-extracting-bg: rgba(160,120,40,0.08);
-      --kp-extracting-color: #8b6914;
+      --kp-extracting-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+      --kp-extracting-color: var(--accent);
       --modal-bg: rgba(255,255,255,0.95);
       --modal-border: rgba(0,0,0,0.08);
       --modal-title-color: #1e293b;
@@ -469,14 +469,14 @@
       --bm-btn-cancel-color: #64748b;
       --bm-btn-cancel-hover-color: #334155;
       --bm-btn-cancel-hover-bg: rgba(0,0,0,0.1);
-      --bm-btn-save-bg: rgba(160,120,40,0.2);
-      --bm-btn-save-color: #8b6914;
-      --bm-btn-save-hover-bg: rgba(160,120,40,0.35);
+      --bm-btn-save-bg: color-mix(in srgb, var(--accent) 20%, transparent);
+      --bm-btn-save-color: var(--accent);
+      --bm-btn-save-hover-bg: color-mix(in srgb, var(--accent) 35%, transparent);
       --bm-btn-replace-bg: rgba(245,158,11,0.15);
       --bm-btn-replace-color: #d97706;
       --bm-btn-replace-hover-bg: rgba(245,158,11,0.3);
       --kp-panel-bg: rgba(255,255,255,0.82);
-      --kp-panel-border: rgba(99,102,241,0.1);
+      --kp-panel-border: color-mix(in srgb, var(--accent) 10%, transparent);
       --kp-panel-shadow: rgba(0,0,0,0.06);
       --onboarding-backdrop: rgba(245, 240, 232, 0.2);
       --onboarding-spotlight: rgba(245, 240, 232, 0);
@@ -491,11 +491,11 @@
       --viz-card-bg: #fff;
       --viz-card-border: rgba(0,0,0,0.1);
       --viz-card-shadow: rgba(0,0,0,0.06);
-      --viz-card-hover-border: #3b82f6;
-      --viz-toolbar-bg: rgba(160,120,40,0.06);
+      --viz-card-hover-border: var(--accent);
+      --viz-toolbar-bg: color-mix(in srgb, var(--accent) 6%, transparent);
       --viz-toolbar-border: rgba(0,0,0,0.06);
-      --viz-btn-bg: rgba(59,130,246,0.08);
-      --viz-btn-border: rgba(59,130,246,0.15);
+      --viz-btn-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+      --viz-btn-border: color-mix(in srgb, var(--accent) 15%, transparent);
       --viz-btn-color: #64748b;
       --viz-overlay-bg: rgba(255,255,255,0.95);
       --viz-bar-bg: #f1f5f9;
@@ -507,16 +507,16 @@
       --kp-card-dot-physics-shadow: 0 0 6px rgba(160,120,40,0.3);
       --kp-card-dot-math-shadow: 0 0 6px rgba(0,229,160,0.3);
       --kp-card-dot-other-shadow: 0 0 6px rgba(139,92,246,0.3);
-      --kp-btn-primary-bg: rgba(160,120,40,0.15);
-      --kp-btn-primary-color: #8b6914;
-      --kp-btn-primary-hover-bg: rgba(160,120,40,0.25);
+      --kp-btn-primary-bg: var(--btn-active-bg);
+      --kp-btn-primary-color: var(--accent);
+      --kp-btn-primary-hover-bg: var(--btn-active-hover-bg);
       --kp-card-hover-shadow: 0 4px 16px rgba(0,0,0,0.08);
-      --kp-search-focus-shadow: 0 0 0 2px rgba(160,120,40,0.2);
+      --kp-search-focus-shadow: 0 0 0 2px var(--btn-active-border);
       --modal-shadow: 0 8px 32px rgba(0,0,0,0.1);
       --kp-card-shadow: 0 1px 4px rgba(0,0,0,0.04);
-      --kp-panel-decoration-from: #a07828;
-      --kp-panel-decoration-to: #d4a030;
-      --kp-card-light-border: rgba(160,120,40,0.06);
+      --kp-panel-decoration-from: var(--accent);
+      --kp-panel-decoration-to: color-mix(in srgb, var(--accent) 45%, #fff);
+      --kp-card-light-border: color-mix(in srgb, var(--accent) 6%, transparent);
       --onboarding-shadow: 0 12px 48px rgba(0,0,0,0.12);
       /* ====== 图编辑 harness（AI 网络助手）主题变量（浅色） ====== */
       /* ====== 通用面板/表面变量（浅色） ====== */
@@ -1733,7 +1733,7 @@
       width: 11px;
       height: 11px;
       box-sizing: border-box;
-      border: 2px solid rgba(74, 158, 255, 0.25);
+      border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: taskSpin 0.7s linear infinite;
@@ -2665,12 +2665,14 @@
      * ＋淡蓝网格。纸不漂移（animation: none）；色斑归零，材质由网格＋veil 承载。 */
     html[data-panel-skin="blueprint"] {
       --accent: #4a8fe0;
+      --bg-panel: #0c1934;
       --accent-hover: #6cabf2;
       --field-bg: rgba(14, 27, 54, 0.46);
       --field-bg-strong: rgba(14, 27, 54, 0.78);
     }
     html[data-theme="light"][data-panel-skin="blueprint"] {
       --accent: #2f5fae;
+      --bg-panel: #f9f5ea;
       --accent-hover: #4470c0;
       --field-bg: rgba(238, 243, 251, 0.55);
       --field-bg-strong: rgba(238, 243, 251, 0.78);
@@ -2750,12 +2752,14 @@
      * 石纹洗染替代彩色色斑；浅色＝淡青灰石面。投影收敛、内描边细弱＝哑光语言。 */
     html[data-panel-skin="inkstone"] {
       --accent: #55b3a8;
+      --bg-panel: #0d1517;
       --accent-hover: #7cc9bf;
       --field-bg: rgba(13, 22, 24, 0.46);
       --field-bg-strong: rgba(13, 22, 24, 0.78);
     }
     html[data-theme="light"][data-panel-skin="inkstone"] {
       --accent: #3d7a72;
+      --bg-panel: #eef1ee;
       --accent-hover: #4f8d85;
       --field-bg: rgba(238, 243, 240, 0.55);
       --field-bg-strong: rgba(238, 243, 240, 0.78);
@@ -2818,12 +2822,14 @@
      * 内描边；浅色下霓虹收敛为冷青点缀（浅色玻璃底本就亮，双色光斑会脏）。 */
     html[data-panel-skin="neon"] {
       --accent: #22d3ee;
+      --bg-panel: #04070e;
       --accent-hover: #67e3f9;
       --field-bg: rgba(7, 12, 22, 0.46);
       --field-bg-strong: rgba(7, 12, 22, 0.78);
     }
     html[data-theme="light"][data-panel-skin="neon"] {
       --accent: #0e7490;
+      --bg-panel: #f4fafc;
       --accent-hover: #0e86a5;
       --field-bg: rgba(236, 247, 250, 0.55);
       --field-bg-strong: rgba(236, 247, 250, 0.78);
@@ -2883,12 +2889,14 @@
      * 浅色才是真正的奶白磨砂。保留漂移。 */
     html[data-panel-skin="candy"] {
       --accent: #f08fb4;
+      --bg-panel: #201a26;
       --accent-hover: #f6aac8;
       --field-bg: rgba(34, 26, 40, 0.46);
       --field-bg-strong: rgba(34, 26, 40, 0.78);
     }
     html[data-theme="light"][data-panel-skin="candy"] {
       --accent: #c05c86;
+      --bg-panel: #fdf9f6;
       --accent-hover: #cf739a;
       --field-bg: rgba(252, 245, 248, 0.55);
       --field-bg-strong: rgba(252, 245, 248, 0.78);
@@ -3020,7 +3028,7 @@
       cursor: not-allowed;
     }
     .progress-status .status-run-btn {
-      color: #22d3ee;
+      color: var(--accent);
     }
     .progress-status .status-progress {
       /* 不可缩（flex-shrink:0）：胶囊是 fixed 收缩适应宽度，Chrome 算 flex 容器固有宽度时
