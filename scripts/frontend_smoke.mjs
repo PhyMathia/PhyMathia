@@ -3014,20 +3014,22 @@ check('graph-continent: 打包块在场且零会话键写路径', () => {
     throw new Error('下钻必须复用既有 switchToSession/goToKnowledgeNode 通道');
   }
   // v2：主图唯一写路径是 KV continent_edges（现成端点），别的地方不许落笔
-  if (chunk.indexOf('/api/kv/continent_edges') < 0) throw new Error('大陆边必须走 /api/kv/continent_edges');
+  if (chunk.indexOf('/api/kv/continent_edges') < 0) throw new Error('用户连线必须走 /api/kv/continent_edges');
   return true;
 });
 
-check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 边界城市 / 确认落笔口 / 透明层底）', () => {
+check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 联运港 / 确认落笔口 / 透明层底）', () => {
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
   if (!src.includes('CONTINENT_EDGES_API')) throw new Error('KV 端点常量缺失');
   if (!src.includes('_continentEdgeUndo')) throw new Error('边操作撤销栈缺失');
   if (!/undoEntry\)\s*_continentEdgeUndo\.push\((undoEntry)\)/.test(src)) throw new Error('提交必须带 undoEntry 才入栈（视口不入栈）');
-  if (!src.includes('continent-node--boundary')) throw new Error('边界城市皮肤类缺失');
-  if (!src.includes('画成大陆边')) throw new Error('共享弹层缺「确认落笔」按钮');
+  if (!src.includes('continent-node--boundary')) throw new Error('联运港皮肤类缺失');
+  if (!src.includes('画成航线')) throw new Error('共享弹层缺「确认落笔」按钮');
+  // 2026-10-03 词汇表统一守卫：旧称不得回流
+  if (src.includes("画成大陆边") || src.includes("我的连线") || src.includes("暂无共享连线") || src.includes("座边界城市") || src.includes("清理断线")) throw new Error("大陆词汇表残留旧称（应为聚落/联运港/联运线/航线/断桥）");
   if (!src.includes('same_session')) throw new Error('同会话无效边未按断桥通道处理');
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
-  if (!css.includes('.continent-user-link')) throw new Error('我的大陆边样式缺失');
+  if (!css.includes('.continent-user-link')) throw new Error('我的航线样式缺失');
   if (!css.includes('.continent-dangle-link')) throw new Error('断桥样式缺失');
   if (!css.includes('.continent-popover')) throw new Error('大陆弹层样式缺失');
   // 用户拍板：大陆层透明，壁纸与星轨粒子从画布一直透到大陆
@@ -3827,7 +3829,7 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
   if (!src.includes('_continentCityPopover')) throw new Error('城市弹层缺失');
   if (!src.includes('enterContinentSession(sid, iid)')) throw new Error('「去看」未复用下钻转场');
   if (!src.includes('continent-city')) throw new Error('城市节点类缺失');
-  if (!src.includes('画成大陆边')) throw new Error('共享弹层缺「确认落笔」按钮');
+  if (!src.includes('画成航线')) throw new Error('共享弹层缺「确认落笔」按钮');
   if (!src.includes('_continentFoldedPopover')) throw new Error('折叠清单弹层缺失');
   if (!src.includes('continentWeakBtn')) throw new Error('顶栏折叠入口按钮缺失');
   if (!src.includes('data-link=')) throw new Error('落笔按钮缺失');
@@ -3853,7 +3855,7 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
     { entry: entry, reason: 'map_capped' },
     { entry: entry, reason: 'no_room' },
   ], idx);
-  ['弱证据', '已被更具体的城市覆盖', '超出每对上限', '超出全图上限', '无位可放'].forEach(label => {
+  ['弱证据', '已被更具体的联运港覆盖', '超出每对上限', '超出全图上限', '无位可放'].forEach(label => {
     if (allReasons.indexOf(label) < 0) throw new Error('折叠原因缺人话标注：' + label);
   });
   return true;
@@ -4179,7 +4181,7 @@ check('graph-continent: v5.4 岛牌一句话 + 空态引导（纯拼接 / 机制
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
   if (!src.includes('continent-cluster-sub')) throw new Error('岛牌副行缺失');
   if (!src.includes('continentGuide')) throw new Error('顶栏空态引导元素缺失');
-  if (src.indexOf('暂无共享连线') < 0) throw new Error('空态引导文案缺失');
+  if (src.indexOf('暂无联运港') < 0) throw new Error('空态引导文案缺失');
   if (src.indexOf('_continentGuideText') < 0) throw new Error('引导文案状态缺失');
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   if (!css.includes('.continent-cluster-sub')) throw new Error('岛牌副行样式缺失');
@@ -4313,17 +4315,17 @@ check('graph-continent: v8 族表编辑 + 纠正信号（规范化 / 术语解�
   return true;
 });
 
-check('graph-continent: 顶栏空态引导只留共享连线那一句（空画布说明已删）', () => {
+check('graph-continent: 顶栏空态引导只留联运港那一句（空画布说明已删）', () => {
   // 2026-09-27 用户要求删掉「有 N 个画布还没有知识点…」——那是对用户自己数据的
   // 统计，不是可操作的引导。_continentEmptyCanvasCount 随之整体退役。
-  // 留共享连线那一句：它教的是机制（同一个概念跨岛会亮起城市），用户能做点什么。
+  // 留联运港那一句：它教的是机制（同一个概念跨岛会设起联运港），用户能做点什么。
   if (sandbox._continentEmptyCanvasCount !== undefined) {
     throw new Error('_continentEmptyCanvasCount 应已删除');
   }
   const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
   if (src.indexOf('个画布还没有知识点') >= 0) throw new Error('空画布说明文案仍在');
   if (src.indexOf('window.getAllSessions') >= 0) throw new Error('不该再读前端会话清单');
-  if (src.indexOf('暂无共享连线') < 0) throw new Error('共享连线引导被误删');
+  if (src.indexOf('暂无联运港') < 0) throw new Error('联运港引导被误删');
   if (src.indexOf('_continentGuideText') < 0) throw new Error('引导文案状态缺失');
   return true;
 });
