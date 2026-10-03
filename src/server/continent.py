@@ -76,7 +76,7 @@ from .family import (
 from .knowledge import _is_concept_like_title, _clean_knowledge_title
 from .embedding import cosine as _vec_cosine
 
-__all__ = ["build_continent", "normalize_user_edge_payload"]
+__all__ = ["build_continent", "normalize_user_edge_payload", "purge_dangling_user_edges"]
 
 # 主图最多画多少条簇间连线：多了是毛线球，按强度取前 N
 SHARED_CONCEPT_LIMIT = 24
@@ -442,6 +442,17 @@ def normalize_user_edge_payload(raw) -> list:
     if not isinstance(raw, list):
         return []
     return [e for e in raw if isinstance(e, dict)]
+
+
+def purge_dangling_user_edges(edges: list, items: dict) -> list:
+    """删画布/清空画布后自动清断桥（2026-10-03 用户拍板）：任一端条目已不在知识库
+    的边整条移除——删除是主动行为，对端不会回来，留着只积累死虚线。只查端点
+    存在性，不判跨岛/同岛/自环（那是 _split_user_edges 的活）；概念单删与同名
+    合并产生的断桥不经这里，仍由用户在大陆顶栏「清理断桥」手动清。"""
+    return [e for e in edges
+            if isinstance(e, dict)
+            and str(e.get("fromItem") or "") in items
+            and str(e.get("toItem") or "") in items]
 
 
 # v7.2 航线样式的白名单（旧边无 style 走前端默认；未知键丢弃，防脏数据撑爆 KV）

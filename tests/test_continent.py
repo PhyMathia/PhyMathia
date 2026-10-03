@@ -24,7 +24,11 @@ for p in (ROOT, SRC):
 
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
-from server.continent import build_continent, normalize_user_edge_payload  # noqa: E402
+from server.continent import (  # noqa: E402
+    build_continent,
+    normalize_user_edge_payload,
+    purge_dangling_user_edges,
+)
 
 S1, S2, S3 = "sess_aaa", "sess_bbb", "sess_ccc"
 SESSIONS = {
@@ -1033,3 +1037,22 @@ class BuildContinentCrossSessionItemsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PurgeDanglingUserEdgesTest(unittest.TestCase):
+    """删画布自动清断桥（2026-10-03）：只查端点存在性——自环/垃圾条目的去留是
+    投影的事，这里钉住「端点都在则留、任一端不在则整条去」的契约。"""
+
+    def test_endpoint_existence_only(self):
+        items = {"k1": {"id": "k1"}, "k2": {"id": "k2"}}
+        edges = [
+            {"id": "keep", "fromItem": "k1", "toItem": "k2"},
+            {"id": "dead_to", "fromItem": "k1", "toItem": "gone"},
+            {"id": "dead_from", "fromItem": "gone", "toItem": "k2"},
+            {"id": "dead_both", "fromItem": "x", "toItem": "y"},
+            {"id": "loop", "fromItem": "k1", "toItem": "k1"},
+            "junk",
+            None,
+        ]
+        kept = purge_dangling_user_edges(edges, items)
+        self.assertEqual([e["id"] for e in kept], ["keep", "loop"])
