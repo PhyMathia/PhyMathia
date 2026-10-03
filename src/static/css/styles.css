@@ -2684,6 +2684,8 @@
     html[data-panel-skin="blueprint"] {
       --accent: #4a8fe0;
       --bg-panel: #0c1934;
+      /* T157：--bg-dark 跟族（candy 同款机制、无掺粉；:root 默认冷藏青与本族面板色温不符），浅色块回填 */
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
       --accent-hover: #6cabf2;
       --field-bg: rgba(14, 27, 54, 0.46);
       --field-bg-strong: rgba(14, 27, 54, 0.78);
@@ -2691,6 +2693,7 @@
     html[data-theme="light"][data-panel-skin="blueprint"] {
       --accent: #2f5fae;
       --bg-panel: #f9f5ea;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
       --accent-hover: #4470c0;
       --field-bg: rgba(238, 243, 251, 0.55);
       --field-bg-strong: rgba(238, 243, 251, 0.78);
@@ -2771,6 +2774,7 @@
     html[data-panel-skin="inkstone"] {
       --accent: #55b3a8;
       --bg-panel: #0d1517;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
       --accent-hover: #7cc9bf;
       --field-bg: rgba(13, 22, 24, 0.46);
       --field-bg-strong: rgba(13, 22, 24, 0.78);
@@ -2778,6 +2782,7 @@
     html[data-theme="light"][data-panel-skin="inkstone"] {
       --accent: #3d7a72;
       --bg-panel: #eef1ee;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
       --accent-hover: #4f8d85;
       --field-bg: rgba(238, 243, 240, 0.55);
       --field-bg-strong: rgba(238, 243, 240, 0.78);
@@ -2841,6 +2846,7 @@
     html[data-panel-skin="neon"] {
       --accent: #22d3ee;
       --bg-panel: #04070e;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
       --accent-hover: #67e3f9;
       --field-bg: rgba(7, 12, 22, 0.46);
       --field-bg-strong: rgba(7, 12, 22, 0.78);
@@ -2848,6 +2854,7 @@
     html[data-theme="light"][data-panel-skin="neon"] {
       --accent: #0e7490;
       --bg-panel: #f4fafc;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
       --accent-hover: #0e86a5;
       --field-bg: rgba(236, 247, 250, 0.55);
       --field-bg-strong: rgba(236, 247, 250, 0.78);
@@ -2908,6 +2915,11 @@
     html[data-panel-skin="candy"] {
       --accent: #f08fb4;
       --bg-panel: #201a26;
+      /* T157：--bg-dark（大陆顶栏/聚落/面包屑等底色）跟族——:root 默认是冷调藏青，
+       * 在糖果暖紫环境下浮成「死黑」。从面板色同族派生（2026-10-03 三档预览用户终拍①紫黑，
+       * = rgba(32,26,38,0.82)）；浅色块须回填（家族块特异性压过 [data-theme="light"]，
+       * 见本节头注释 2）。 */
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
       --accent-hover: #f6aac8;
       --field-bg: rgba(34, 26, 40, 0.46);
       --field-bg-strong: rgba(34, 26, 40, 0.78);
@@ -2915,6 +2927,7 @@
     html[data-theme="light"][data-panel-skin="candy"] {
       --accent: #c05c86;
       --bg-panel: #fdf9f6;
+      --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
       --accent-hover: #cf739a;
       --field-bg: rgba(252, 245, 248, 0.55);
       --field-bg-strong: rgba(252, 245, 248, 0.78);
