@@ -6495,6 +6495,48 @@ check('画布多选：入口与样式在位，且单删/批删共用同一条删
   return true;
 });
 
+// ===== answer 节点预览公式定界（2026-10-03）=====
+// answer 卡正文/标签走纯文本路径（escapeHtml 直出，不经 renderMarkdown），
+// <formula> 标签必须在 _nodeContent/label 渲染处转成 $..$，否则画布上原样露出。
+// 纯同步纯函数（不碰共享键、不 await），追加在任意位置安全。
+check('answer 节点预览：<formula> 标签转 $..$ 定界（消息路径＋override 路径）', () => {
+  const node = { id: 'a1', kind: 'answer', messageIndex: 0, timestamp: 1 };
+  const msg = { role: 'assistant', content: '结论正确：<formula>\\omega=\\sqrt{k/m}</formula>，其中 <formula>k/m</formula> 变小，再由 <formula>T=2\\pi\\sqrt{m/k}</formula> 得周期加倍。' };
+  sandbox.window.getGraphState = () => ({});
+  const out = sandbox._nodeContent(msg, node);
+  if (out.includes('<formula')) throw new Error('预览仍含 <formula> 标签：' + out.slice(0, 80));
+  if (!out.includes('$\\omega=\\sqrt{k/m}$')) throw new Error('公式未转 $..$ 定界：' + out.slice(0, 80));
+  // 区块标签照旧剥掉；<summary> 优先且里面的公式也转好
+  const node2 = { id: 'a2', kind: 'answer', messageIndex: 0, timestamp: 2 };
+  const msg2 = { role: 'assistant', content: '<physics>视角正文</physics><summary>核心：<formula>F=-kx</formula> 与 <formula>\\omega^2=k/m</formula></summary>' };
+  const out2 = sandbox._nodeContent(msg2, node2);
+  if (!out2.startsWith('核心：')) throw new Error('summary 应优先：' + out2.slice(0, 40));
+  if (out2.includes('<formula') || out2.includes('<physics>')) throw new Error('标签残留：' + out2);
+  if (!out2.includes('$F=-kx$')) throw new Error('summary 内公式未转定界：' + out2);
+  // override（Φ 改图/追问重写）路径同样转定界＋截断
+  sandbox.window.getGraphState = () => ({ harnessNodeOverrides: { a3: { content: '重写内容 <formula>\\frac{k}{2}</formula>' + '长'.repeat(300) } } });
+  const node3 = { id: 'a3', kind: 'answer', messageIndex: 0, timestamp: 3 };
+  const out3 = sandbox._nodeContent({ role: 'assistant', content: '旧内容' }, node3);
+  if (out3.includes('<formula')) throw new Error('override 路径标签残留');
+  if (!out3.includes('$\\frac{k}{2}$')) throw new Error('override 路径未转定界：' + out3.slice(0, 60));
+  if (!out3.endsWith('...') || out3.length > 246) throw new Error('override 路径应截 240 字：len=' + out3.length);
+  sandbox.window.getGraphState = () => ({});
+  return true;
+});
+
+check('answer 节点预览：截断落在公式半截时回退到上一个 $ 前，不留未配对 $', () => {
+  // 开标签 $ 压在 240 字截断线上（235 起，闭 $ 落在 240 外）：回退后公式整体让出，$ 配对
+  const long = '前'.repeat(235) + '$E=mc^2$ 之后还有很长的说明文字'.padEnd(300, '补充说明');
+  const out = sandbox._graphAnswerPreview(long);
+  const body = out.replace(/\.\.\.$/, '');
+  if (body.includes('$')) throw new Error('回退后不应残留 $：' + body.slice(-40));
+  if (!out.endsWith('...')) throw new Error('超长应带省略号：' + out.slice(-20));
+  if (body.length > 240) throw new Error('回退后应 ≤240 字：' + body.length);
+  const short = sandbox._graphAnswerPreview('短文本 $a^2+b^2=c^2$ 完');
+  if (short !== '短文本 $a^2+b^2=c^2$ 完') throw new Error('短文本应原样：' + short);
+  return true;
+});
+
 // 静态契约（T128→2026-10-02 家族化）：风格家族机制——注册表/存储键/入口/双属性挂钩，防「机制在、入口丢」回退。
 // 家族＝面板质感＋节点皮肤＋强调色一个开关（用户拍板焊接），原皮肤面板/壁纸挑选器并入 #themePanel。
 check('风格家族（T128 演进）：注册表、存储键、页头入口、双属性与启动预置全接线', () => {
