@@ -1101,6 +1101,41 @@ class SessionDeleteCleanupTest(RouteTestBase):
         # 再删一次不报错（前端重试 / 并发删除的安全网）
         self.assertEqual(self.client.delete(f"/api/sessions/{sid}").status_code, 200)
 
+    def test_delete_session_purges_dangling_continent_edges(self):
+        """删画布自动清断桥（2026-10-03 用户拍板）：端点随画布消失的航线整条移除；
+        端点都健在的边原样保留——只查端点存在性（同会话与否是投影的事）。"""
+        sid, other = self.SID, "sess_keepXX00000000000000000"
+        self._seed()
+        storage_mod._write_json(main_mod.SESSIONS_PATH, {
+            sid: {"id": sid, "title": "测试"}, other: {"id": other, "title": "保留"}})
+        storage_mod._write_json(main_mod.KNOWLEDGE_PATH, {
+            "ki_1": {"id": "ki_1", "sessionId": sid, "title": "机械能守恒"},
+            "ki_2": {"id": "ki_2", "sessionId": other, "title": "动量守恒"},
+            "ki_3": {"id": "ki_3", "sessionId": other, "title": "角动量守恒"}})
+        storage_mod.kv_write("continent_edges", [
+            {"id": "e_keep", "fromItem": "ki_2", "toItem": "ki_3", "createdAt": 1},
+            {"id": "e_dead", "fromItem": "ki_1", "toItem": "ki_2", "createdAt": 2},
+        ])
+        self.assertEqual(self.client.delete(f"/api/sessions/{sid}").status_code, 200)
+        self.assertEqual([e["id"] for e in storage_mod.kv_read("continent_edges")], ["e_keep"])
+
+    def test_clear_messages_purges_dangling_continent_edges(self):
+        """清空画布（清消息连带清概念）同批自动清断桥。"""
+        sid, other = self.SID, "sess_keepYY00000000000000000"
+        self._seed()
+        storage_mod._write_json(main_mod.SESSIONS_PATH, {
+            sid: {"id": sid, "title": "测试"}, other: {"id": other, "title": "保留"}})
+        storage_mod._write_json(main_mod.KNOWLEDGE_PATH, {
+            "ki_1": {"id": "ki_1", "sessionId": sid, "title": "机械能守恒"},
+            "ki_2": {"id": "ki_2", "sessionId": other, "title": "动量守恒"},
+            "ki_3": {"id": "ki_3", "sessionId": other, "title": "角动量守恒"}})
+        storage_mod.kv_write("continent_edges", [
+            {"id": "e_keep", "fromItem": "ki_2", "toItem": "ki_3", "createdAt": 1},
+            {"id": "e_dead", "fromItem": "ki_1", "toItem": "ki_2", "createdAt": 2},
+        ])
+        self.assertEqual(self.client.delete(f"/api/sessions/{sid}/messages").status_code, 200)
+        self.assertEqual([e["id"] for e in storage_mod.kv_read("continent_edges")], ["e_keep"])
+
 
 class KnowledgeOrphanGateTest(RouteTestBase):
     """POST /api/knowledge 拒收指向不存在会话的条目（空 sessionId 旧数据放行）。

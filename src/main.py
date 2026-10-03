@@ -929,6 +929,20 @@ async def api_update_session(session_id: str, request: Request):
     return {"ok": True}
 
 
+def _purge_dangling_continent_edges(session_id: str) -> None:
+    """删画布/清空画布后自动清断桥（2026-10-03 用户拍板）：端点条目已随画布消失的
+    航线整条从 KV continent_edges 移除，不留死虚线。清理失败只记警告、不阻断删除
+    主体（删除本身已生效，漏网的断桥下轮还能手动清）。概念单删类断桥不经这里。"""
+    try:
+        raw = continent.normalize_user_edge_payload(storage.kv_read("continent_edges"))
+        kept = continent.purge_dangling_user_edges(raw, _read_json(KNOWLEDGE_PATH, {}))
+        if len(kept) != len(raw):
+            storage.kv_write("continent_edges", kept)
+            logger.info(f"session {session_id}: purged {len(raw) - len(kept)} dangling continent edge(s)")
+    except Exception as e:  # 清理是删除的附带收益，不许让它拖垮主流程
+        logger.warning(f"purge dangling continent_edges failed: {e}")
+
+
 @app.delete("/api/sessions/{session_id}")
 async def api_delete_session(session_id: str):
     try:
@@ -945,6 +959,7 @@ async def api_delete_session(session_id: str):
     # 提取料把已删会话的知识点重新入库——孤岛的「复活」通道。
     _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
     _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
+    _purge_dangling_continent_edges(session_id)
     _delete_socratic_state(session_id)
     for stale in (msgs_path, KV_DIR / f"{session_id}.json"):
         try:
@@ -1070,6 +1085,7 @@ async def api_clear_messages(session_id: str):
     _write_json(msgs_path, [])
     _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
     _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
+    _purge_dangling_continent_edges(session_id)
     _delete_socratic_state(session_id)
     return {"ok": True}
 
