@@ -7243,15 +7243,18 @@ await Promise.all(pendingChecks).catch(() => {});
     return true;
   });
 
-  qcheck('知识菜单分组：画布/全局检测归「知识检测」组（2026-10-03），不再与大陆/总览并列', () => {
+  qcheck('知识菜单二级子菜单：知识检测悬停展开画布/全局（2026-10-03）', () => {
     const km = idxSrc.slice(idxSrc.indexOf('id="knowledgeMenu"'), idxSrc.indexOf('id="moreMenu"'));
-    const labelPos = km.indexOf('menu-group-label');
+    const hostPos = km.indexOf('menu-submenu-host');
+    const smPos = km.indexOf('id="knowledgeQuizSubmenu"');
     const quizPos = km.indexOf('closeKnowledgeMenu(); openQuiz()');
     const globalPos = km.indexOf('openQuizGlobalDashboard()');
-    if (labelPos < 0 || !km.includes('menu-group-label">知识检测</div>')) throw new Error('知识菜单缺「知识检测」分组标题');
-    if (!(labelPos < quizPos && quizPos < globalPos)) throw new Error('知识菜单顺序应为 大陆/总览 → 知识检测组（画布→全局）');
-    if (!km.includes('class="level-option menu-sub-item"')) throw new Error('两个检测入口应挂 menu-sub-item 缩进归属组下');
-    if (/menu-sub-item/.test(km.slice(0, labelPos))) throw new Error('大陆/总览不属于检测组，不应缩进');
+    if (hostPos < 0 || !km.includes('> 知识检测<')) throw new Error('知识菜单缺「知识检测」子菜单宿主项');
+    if (!(hostPos < smPos && smPos < quizPos && quizPos < globalPos)) throw new Error('结构应为 知识检测宿主行 → 子面板（画布检测→全局检测）');
+    if (!km.includes('class="menu-submenu aurora-glass aurora-glass--compact"')) throw new Error('子面板未挂 aurora-glass 玻璃载体');
+    if (!cssSrc.includes('.menu-submenu-host:hover .menu-submenu')) throw new Error('缺悬停展开 CSS（.menu-submenu-host:hover）');
+    if (!uiSrc.includes('function toggleKnowledgeQuizSubmenu') || !uiSrc.includes('_closeKnowledgeQuizSubmenu()')) throw new Error('缺触屏点击兜底/关闭收起接线（ui.js）');
+    if (!uiSrc.includes("if (panelId === 'knowledgeMenu') panel.style.overflowY = 'visible'")) throw new Error('知识菜单未放开内部滚动——_positionPanel 的 overflowY:auto 会把面板外子菜单裁掉');
     return true;
   });
 

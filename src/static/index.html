@@ -28,7 +28,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=0cb16757">
+  <link rel="stylesheet" href="/css/styles.min.css?v=38648077">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=6bd85ba8">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=c591416c">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
@@ -140,7 +140,7 @@
         <button class="header-btn theme-pick-btn" onclick="toggleThemePicker(event)" id="themePickBtn" title="主题与风格（壁纸＋面板＋节点成套换）" aria-label="挑选主题与风格" aria-controls="themePanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7a9.3 9.3 0 0 0 0 18.6c1.5 0 2.3-.9 2.3-2 0-1.4-1.1-1.9-1.1-3 0-1 .8-1.7 2-1.7h1.6c2.6 0 4.5-1.9 4.5-4.4C21.3 5.5 17.1 2.7 12 2.7z"></path><circle cx="7.6" cy="11.2" r="1.1"></circle><circle cx="10.6" cy="7.4" r="1.1"></circle><circle cx="15.2" cy="7.4" r="1.1"></circle></svg></button>
         <button class="header-btn model-btn" onclick="toggleModelPanel(event)" id="modelBtn" title="模型设置" aria-label="打开模型设置" aria-controls="modelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></button>
         <button class="header-btn level-btn" onclick="toggleLevelPanel(event)" id="levelBtn" title="选择难度" aria-label="选择难度" aria-controls="levelPanel" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M22 10 12 5 2 10l10 5 10-5z"></path><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path></svg> 大学</button>
-        <button class="header-btn knowledge-btn-icon" id="knowledgeBtn" onclick="toggleKnowledgeMenu(event)" title="知识（大陆/总览/画布检测/全局检测）" aria-label="打开知识菜单" aria-controls="knowledgeMenu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="7" x2="16" y2="7"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg></button>
+        <button class="header-btn knowledge-btn-icon" id="knowledgeBtn" onclick="toggleKnowledgeMenu(event)" title="知识（大陆/总览/知识检测）" aria-label="打开知识菜单" aria-controls="knowledgeMenu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="7" x2="16" y2="7"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg></button>
         <button class="header-btn more-btn" onclick="toggleMoreMenu(event)" id="moreBtn" title="更多（数据管理/清空画布）" aria-label="更多操作" aria-controls="moreMenu" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="19" cy="12" r="1.7"></circle></svg></button>
       </div>
     </div>
@@ -224,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=1b4a6ece"></script>
+  <script src="/js/app.js?v=1e48d81f"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -592,8 +592,12 @@
   <div class="level-panel menu-panel aurora-glass aurora-glass--compact" id="knowledgeMenu">
     <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openContinentView()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse></svg></span> 知识大陆</div>
     <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); toggleKnowledgePanel()"><span class="level-emoji"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><line x1="8" y1="7" x2="16" y2="7"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg></span> 知识总览</div>
-    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuiz()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 画布检测</div>
-    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuizGlobalDashboard()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 全局检测</div>
+    <div class="level-option menu-submenu-host" onclick="event.stopPropagation(); toggleKnowledgeQuizSubmenu(event)"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 知识检测<span class="menu-submenu-arrow"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg></span>
+      <div class="menu-submenu aurora-glass aurora-glass--compact" id="knowledgeQuizSubmenu">
+        <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuiz()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 画布检测</div>
+        <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuizGlobalDashboard()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 全局检测</div>
+      </div>
+    </div>
   </div>
   <div class="level-panel menu-panel aurora-glass aurora-glass--compact" id="moreMenu">
     <div class="level-option" onclick="event.stopPropagation(); closeMoreMenu(); toggleDataPanel(event)"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></span> 数据管理</div>

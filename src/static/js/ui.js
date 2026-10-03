@@ -76,6 +76,9 @@ function _positionPanel(panelId, triggerEl) {
   panel.style.top = top + 'px';
   panel.style.maxHeight = maxH + 'px';
   panel.style.overflowY = 'auto';
+  // 知识菜单例外（2026-10-03）：它带「知识检测」悬停子菜单，子面板 absolute 在面板左外侧，
+  // overflow:auto 会把面板框外的子菜单整个裁掉——该菜单只有三行，放弃内部滚动换子菜单完整显示。
+  if (panelId === 'knowledgeMenu') panel.style.overflowY = 'visible';
 }
 
 function toggleModelPanel(e) {
@@ -2210,8 +2213,19 @@ function _toggleHeaderMenu(id, e) {
     _positionPanel(id, e && e.currentTarget ? e.currentTarget : document.querySelector('[aria-controls="' + id + '"]'));
   }
 }
+/* 知识菜单「知识检测」二级子菜单（2026-10-03）：悬停展开是纯 CSS（.menu-submenu-host:hover），
+   这里只负责触屏点击兜底，以及两处关菜单路径（closeKnowledgeMenu／外点关闭）收起 .open 防残留。 */
+function _closeKnowledgeQuizSubmenu() {
+  const sm = document.getElementById('knowledgeQuizSubmenu');
+  if (sm) sm.classList.remove('open');
+}
+function toggleKnowledgeQuizSubmenu(e) {
+  e?.stopPropagation();
+  const sm = document.getElementById('knowledgeQuizSubmenu');
+  if (sm) sm.classList.toggle('open');
+}
 function toggleKnowledgeMenu(e) { _toggleHeaderMenu('knowledgeMenu', e); }
-function closeKnowledgeMenu() { _closeHeaderMenus(); }
+function closeKnowledgeMenu() { _closeHeaderMenus(); _closeKnowledgeQuizSubmenu(); }
 function toggleMoreMenu(e) { _toggleHeaderMenu('moreMenu', e); }
 function closeMoreMenu() { _closeHeaderMenus(); }
 document.addEventListener('click', (e) => {
@@ -2222,6 +2236,7 @@ document.addEventListener('click', (e) => {
     if (!panel.contains(e.target) && !(btn && btn.contains(e.target))) {
       panel.classList.remove('show');
       _setPanelTriggerState(id, false);
+      if (id === 'knowledgeMenu') _closeKnowledgeQuizSubmenu();
     }
   }
 });
