@@ -7243,14 +7243,15 @@ await Promise.all(pendingChecks).catch(() => {});
     return true;
   });
 
-  qcheck('知识菜单二级子菜单：知识检测悬停展开画布/全局（2026-10-03）', () => {
+  qcheck('知识菜单二级子菜单：知识检测悬停展开画布检测/检测总览（2026-10-03）', () => {
     const km = idxSrc.slice(idxSrc.indexOf('id="knowledgeMenu"'), idxSrc.indexOf('id="moreMenu"'));
     const hostPos = km.indexOf('menu-submenu-host');
     const smPos = km.indexOf('id="knowledgeQuizSubmenu"');
     const quizPos = km.indexOf('closeKnowledgeMenu(); openQuiz()');
     const globalPos = km.indexOf('openQuizGlobalDashboard()');
     if (hostPos < 0 || !km.includes('> 知识检测<')) throw new Error('知识菜单缺「知识检测」子菜单宿主项');
-    if (!(hostPos < smPos && smPos < quizPos && quizPos < globalPos)) throw new Error('结构应为 知识检测宿主行 → 子面板（画布检测→全局检测）');
+    if (!(hostPos < smPos && smPos < quizPos && quizPos < globalPos)) throw new Error('结构应为 知识检测宿主行 → 子面板（画布检测→检测总览）');
+    if (!idxSrc.includes('检测总览') || idxSrc.includes('全局检测')) throw new Error('旧称「全局检测」不得回流（应为检测总览：侧栏磁贴/顶栏按钮/子菜单三处）');
     if (!km.includes('class="menu-submenu aurora-glass aurora-glass--compact"')) throw new Error('子面板未挂 aurora-glass 玻璃载体');
     if (!cssSrc.includes('.menu-submenu-host:hover .menu-submenu')) throw new Error('缺悬停展开 CSS（.menu-submenu-host:hover）');
     if (!uiSrc.includes('function toggleKnowledgeQuizSubmenu') || !uiSrc.includes('_closeKnowledgeQuizSubmenu()')) throw new Error('缺触屏点击兜底/关闭收起接线（ui.js）');
