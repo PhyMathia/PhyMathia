@@ -1676,6 +1676,8 @@ async function _deleteSelectedGraphNodes(ids) {
   for (const id of ids) {
     const node = _findGraphNode(id);
     if (!node) continue;
+    // 派生节点随反馈消息存亡，删它等于删整条消息——批量选择里直接跳过
+    if (node.kind === 'socratic_followup') continue;
     if (node.kind === 'blank') {
       blanks.push(id);
       continue;

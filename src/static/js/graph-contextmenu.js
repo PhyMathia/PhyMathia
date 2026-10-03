@@ -147,13 +147,16 @@ function _graphContextItemsForNode(node, point) {
     items.push({ key: 'add-output-port', label: '添加输出端口', run: () => graphAddOutputPort(node.id) });
   }
   items.push({ key: 'sep' });
-  // 删除沿用 _deleteSelectedGraphNodes 的确认路径（消息节点 confirm、blank/draft/自定义静默）
-  items.push({
-    key: 'delete',
-    label: '删除节点',
-    danger: true,
-    run: () => { if (typeof _deleteSelectedGraphNodes === 'function') _deleteSelectedGraphNodes([node.id]); },
-  });
+  // 删除沿用 _deleteSelectedGraphNodes 的确认路径（消息节点 confirm、blank/draft/自定义静默）。
+  // 派生节点（socratic_followup）随其反馈消息存亡，单独删除无意义且会误删整条消息——不提供
+  if (node.kind !== 'socratic_followup') {
+    items.push({
+      key: 'delete',
+      label: '删除节点',
+      danger: true,
+      run: () => { if (typeof _deleteSelectedGraphNodes === 'function') _deleteSelectedGraphNodes([node.id]); },
+    });
+  }
   return items;
 }
 

@@ -6570,6 +6570,49 @@ check('answer 卡展开全文：可展开判定＋预览/展开两态渲染接�
   return true;
 });
 
+check('socratic_followup 节点：解析建议问题＋派生建点连线＋作答链挂到追问节点下', () => {
+  const feedback = '判断：理解正确 你抓住了关键。\n\n1. [基础] 先不用公式，复述一遍：为什么质量越大周期越长？\n2. [进阶] 想让周期缩短一半，质量应该变成多少倍？\n\n<socratic_meta correct="correct" done="false" />';
+  const qs = sandbox._parseSuggestedFollowupQuestions(feedback);
+  if (qs.length !== 2) throw new Error('应解析出 2 问，实际 ' + qs.length);
+  if (qs[0].level !== 'basic' || qs[1].level !== 'advanced') throw new Error('等级解析错：' + JSON.stringify(qs));
+  if (sandbox._parseSuggestedFollowupQuestions('正文里出现 基础：这种裸前缀不算').length !== 0) throw new Error('裸前缀不应误匹配（须方括号标签）');
+  const msgs = [
+    { role: 'user', content: '核心问题', timestamp: 100 },
+    { role: 'assistant', content: feedback, timestamp: 200, branchType: 'socratic', parentId: '100' },
+    { role: 'user', content: '[苏格拉底回答] 追问等级：基础 追问问题：为什么？\n我的回答：因为。', timestamp: 300, branchType: 'socratic', parentId: '200' },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const sq = data.nodes.find(n => n.kind === 'socratic_followup');
+  if (!sq) throw new Error('未派生苏格拉底追问节点');
+  if (!Array.isArray(sq.items) || sq.items.length !== 2) throw new Error('sq 节点问题数错');
+  if (!data.edges.find(e => e.from === 'a-200' && e.to === sq.id)) throw new Error('sq 未连到反馈回答节点');
+  const userNode = data.nodes.find(n => n.kind === 'user' && n.timestamp === 300);
+  const userEdge = data.edges.find(e => e.to === userNode.id);
+  if (!userEdge || userEdge.from !== sq.id) throw new Error('用户作答节点应挂在追问节点下，实际 from=' + (userEdge && userEdge.from));
+  const data2 = sandbox._buildGraphData([
+    { role: 'user', content: '问题', timestamp: 110 },
+    { role: 'assistant', content: '反馈但没有建议问题列表', timestamp: 210, branchType: 'socratic', parentId: '110' },
+  ], {});
+  if (data2.nodes.some(n => n.kind === 'socratic_followup')) throw new Error('无建议问题不应派生');
+  return true;
+});
+
+check('socratic_followup 节点渲染：四按钮同源＋parent 指向反馈消息＋折叠态收起列表', () => {
+  const node = { id: 'sq-999', kind: 'socratic_followup', messageIndex: 0, timestamp: 999, x: 0, y: 0, items: [{ levelName: '基础', level: 'basic', question: '为什么周期与振幅无关？' }] };
+  const msg = { role: 'assistant', content: '反馈正文', timestamp: 999, branchType: 'socratic' };
+  const html = sandbox._renderSocraticFollowupNodeHtml(node, [msg], {});
+  if (!html.includes('socratic-item')) throw new Error('缺问题列表');
+  if (!html.includes('data-parent-msg="999"')) throw new Error('按钮 parent 应指向反馈消息');
+  for (const t of ['我来回答', '直接问AI', '给点提示', '看讲解']) {
+    if (!html.includes(t)) throw new Error('缺按钮 ' + t);
+  }
+  if (!html.includes('建议追问')) throw new Error('缺徽标');
+  if (!html.includes('graph-attr-socratic')) throw new Error('缺苏格拉底属性色');
+  const min = sandbox._renderSocraticFollowupNodeHtml({ ...node, minimized: true }, [msg], {});
+  if (min.includes('socratic-item')) throw new Error('折叠态不应出列表');
+  return true;
+});
+
 check('answer 卡展开切换：toggleGraphNodeExpand 翻转 graphState.expandedAnswers 并保存', () => {
   const saved = [];
   sandbox.window.saveGraphState = (sid, state) => { saved.push(state); };
