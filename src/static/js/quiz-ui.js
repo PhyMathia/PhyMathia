@@ -15,7 +15,7 @@ async function openQuiz(mode = 'session') {
   _resetQuizPromptFile();
   // 三个请求互不依赖，并行省首屏等待（前两个加载自带 try/catch 不抛错；pool 构建仍在全部完成之后）
   try {
-    const [data] = await Promise.all([
+    const [, , data] = await Promise.all([
       _loadQuizStatsFromServer(),
       _loadQuizBankFromServer(),
       _fetchQuizData()
