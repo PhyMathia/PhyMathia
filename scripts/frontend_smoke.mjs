@@ -590,6 +590,16 @@ check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随'
   return true;
 });
 
+check('使用引导覆盖创造模式与自定义节点入口', () => {
+  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const m = harnessSrc.match(/const HARNESS_GUIDE_TEXT = \[([\s\S]*?)\]\.join/);
+  if (!m) throw new Error('HARNESS_GUIDE_TEXT 未找到');
+  for (const needle of ['三种模式', '自定义节点', '放一个到画布上试试', '我的配方', '存为配方', '删配方不影响']) {
+    if (!m[1].includes(needle)) throw new Error('引导缺少「' + needle + '」');
+  }
+  return true;
+});
+
 check('寒暄拦截退役＋答疑纯问答语义合成', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
   if (runSrc.includes('_isHarnessCasualInstruction') || runSrc.includes('_harnessCasualReply')) {
