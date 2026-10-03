@@ -376,6 +376,18 @@ def build_next_snapshot(
     valid_ops: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
     warnings: List[Dict[str, Any]] = []
+    # T107（2026-10-03 销账）：单批操作数超上限不再静默截断——记入 errors
+    # 带反馈重试，让模型把剩余修改拆成下一批；attempts 耗尽时 errors 随结果
+    # 返回，用户在界面上看得到丢了多少条，而不是无声消失。
+    if isinstance(operations, list) and len(operations) > MAX_OPERATIONS:
+        errors.append({
+            "index": "limit",
+            "op": "operations",
+            "reason": (
+                f"操作数 {len(operations)} 超过单批上限 {MAX_OPERATIONS}，仅保留前 {MAX_OPERATIONS} 条、"
+                f"其余 {len(operations) - MAX_OPERATIONS} 条被丢弃；请把剩余修改拆成下一批指令分两次执行"
+            ),
+        })
     temp_to_assigned: Dict[str, str] = {}
 
     # ---- 冲突预检：同一批次内“既改又删 / 引用即将被删除的节点” ----

@@ -37,12 +37,22 @@ TOOL_TO_OP: Dict[str, str] = {
 # T93（评审路线 #8）只读查询工具：模型可以先看图中内容再决定改哪。
 # 它们不产出任何图操作，也绝不进 TOOL_TO_OP——若混进最终编辑批次，
 # parse_tool_calls 会按既有「不支持的工具」错误软重试兜底。
-READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes")
+# 2026-10-03 智能化第二期：新增 search_knowledge / search_formulas 两只
+# 知识检索工具（数据源是用户对话中自动收集的知识库与公式速查），并把
+# chat 答疑相位的工具表收敛为纯只读——「只说不改」从红线约定升级为
+# 工具表层面的保证（编辑工具根本不在表里，服务端 ops 保险丝保留兜底）。
+READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes", "search_knowledge", "search_formulas")
+
+# 知识检索类工具（READONLY 的子集）：执行时需要调用方额外注入用户
+# 知识库/公式速查数据（kb 参数），图查询三件套用不到。
+KB_TOOL_NAMES = ("search_knowledge", "search_formulas")
 
 # 查询结果上限：邻接 40 条、搜索 10 条、摘录 80 字（回灌上下文预算）
 _READONLY_NEIGHBOR_LIMIT = 40
 _READONLY_SEARCH_LIMIT = 10
 _READONLY_EXCERPT_CHARS = 80
+# 公式 LaTeX 较长，摘录上限放宽到 160 字（够看出结构，不爆预算）
+_READONLY_FORMULA_CHARS = 160
 
 # read_node 返回的节点全字段（与 core.normalize_node 的输出字段一致）
 _NODE_QUERY_FIELDS = (
@@ -85,7 +95,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
             "content": _str_prop("正文/摘要（可空，最多 1200 字）"),
             "formula": _str_prop("公式（可空，纯 LaTeX，不带 $ 定界符）"),
             "module_key": _str_prop("kind=module 时必须填写模块类型（带 recipe_id 时可空）", list(ALLOWED_MODULE_KEYS)),
-            "recipe_id": _str_prop("创造模式专用：配方 ID（来自本批 create_recipe 的结果或 user_recipes 清单）——放一个该配方的节点到画布"),
+            "recipe_id": _str_prop("配方 ID（来自快照 user_recipes 清单或本批 create_recipe 的结果）——放置一个该配方的节点实例，编辑/创造模式均可"),
             "reason": _str_prop(REASON_DESC),
         },
         ["temp_id", "kind", "label", "reason"],
@@ -263,6 +273,23 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["keyword"],
     )
 
+    # ---- 2026-10-03 智能化第二期：用户知识资产检索（只读，不产出图操作） ----
+    search_knowledge = _tool(
+        "search_knowledge",
+        "在用户的知识库（对话中自动收集的知识点，跨会话）里按关键词搜索：标题/摘要/标签命中，"
+        "返回标题、分类、摘要摘录。回答知识问题或补图内容前先查它，能引用用户自己学过的表述。",
+        {"keyword": _str_prop("搜索关键词（不区分大小写）")},
+        ["keyword"],
+    )
+
+    search_formulas = _tool(
+        "search_formulas",
+        "在用户的公式速查（对话中自动收集的公式）里按关键词搜索：概念名/含义/LaTeX 片段命中，"
+        "返回 LaTeX、所属概念与含义摘录。",
+        {"keyword": _str_prop("搜索关键词（概念名或公式片段，不区分大小写）")},
+        ["keyword"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -277,14 +304,22 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "read_node": read_node,
         "list_neighbors": list_neighbors,
         "search_nodes": search_nodes,
+        "search_knowledge": search_knowledge,
+        "search_formulas": search_formulas,
     }
 
 
 _TOOL_DEFS = _tool_definitions()
 
 # 每个阶段可用的工具（与 prompts 中的阶段语义一致）
-# T93：normal/expand/apply/preset 追加三只读查询工具（模型先查图再改）；
-# chat/evaluate 保持单轮（拍板）——不加只读名，解析路径与工具表同构不变。
+# T93：normal/expand/apply/preset 追加只读查询工具（模型先查图再改）；
+# evaluate 保持单轮（拍板）——不加只读名，解析路径与工具表同构不变。
+# 2026-10-03 智能化第二期（拍板修订，用户点名「更智能、更像 harness」）：
+# ① chat 答疑相位从「编辑工具表＋红线禁用」改为**纯只读工具表**——图查询
+#   三件套＋知识检索两件套，先查图/查知识库再作答；编辑工具根本不在表里，
+#   「只说不改」由工具表结构保证（服务端 ops 保险丝与红线 prompt 保留兜底）；
+# ② 其余工具相位（normal/expand/apply/preset）随 READONLY_TOOL_NAMES 扩容
+#   自动获得知识检索能力。
 PHASE_TOOLS: Dict[str, List[str]] = {
     "normal": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
     + list(READONLY_TOOL_NAMES),
@@ -296,9 +331,8 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     # 创造模式（P3）：配方三件套＋create_node（带 recipe_id＝「在画布上放一个试试」）
     "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"]
     + list(READONLY_TOOL_NAMES),
-    # 答疑模式（三模式切换器）：编辑工具表与 normal 相同，但不含只读查询
-    #（chat 保持单轮）——「只说不改」由红线 prompt + 服务端 ops 保险丝双层保证
-    "chat": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"],
+    # 答疑模式（三模式切换器）：纯只读——查图、查知识库、查公式速查，绝不改图
+    "chat": list(READONLY_TOOL_NAMES),
 }
 
 
@@ -522,11 +556,15 @@ def _neighbor_entry(node_by_id: Dict[str, Dict[str, Any]], edge: Dict[str, Any],
     }
 
 
-def execute_readonly_tool(name: str, arguments: Any, snapshot: Any) -> Dict[str, Any]:
+def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Execute one read-only graph query against the snapshot.
 
     snapshot 必须是归一化后的完整快照（未做焦点收缩/正文压缩的那一份）——
     read_node 的价值就在于把目录行降级掉的正文全文取回来，调用方负责传对。
+
+    kb（2026-10-03 智能化第二期）：知识检索工具的数据源，形如
+    {"knowledge": [...], "formulas": [...]}，由调用方加载注入；缺省 None
+    时知识检索工具回「数据不可用」，图查询三件套不受影响。
 
     参数非法/缺必填时返回 {"error": ...} 而不是抛异常：这是回给模型的工具
     结果，让模型看到错误后自行纠正，不打断查询循环。
@@ -535,6 +573,68 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any) -> Dict[str,
         return {"error": f"未知的只读工具：{name or '空'}"}
     if not isinstance(arguments, dict):
         return {"error": f"参数无效：{name} 的参数必须是 JSON 对象"}
+
+    # ---- 知识检索两件套：数据源是 kb，不碰图快照 ----
+    if name in KB_TOOL_NAMES:
+        keyword = _text(arguments.get("keyword") or arguments.get("query") or arguments.get("text"))
+        if not keyword:
+            return {"error": f"参数无效：{name} 需要 keyword"}
+        if not isinstance(kb, dict):
+            return {"error": "知识库数据不可用（服务端未加载到用户知识数据）"}
+        needle = keyword.lower()
+        if name == "search_knowledge":
+            entries = [item for item in (kb.get("knowledge") or []) if isinstance(item, dict)]
+            if not entries:
+                return {"matches": [], "count": 0, "total": 0, "truncated": False,
+                        "note": "知识库为空：还没有从对话中收集到知识点"}
+            ranked = [
+                item for item in entries
+                if needle in _text(item.get("title")).lower()
+                or needle in _text(item.get("summary")).lower()
+                or needle in " ".join(str(tag) for tag in (item.get("tags") or [])).lower()
+            ]
+            matches = [
+                {
+                    "title": _text(item.get("title")),
+                    "category": _text(item.get("category")),
+                    "tags": [str(tag) for tag in (item.get("tags") or [])][:4],
+                    "excerpt": _text(item.get("summary"))[:_READONLY_EXCERPT_CHARS],
+                    "formulas_count": len(item.get("formulas") or []),
+                }
+                for item in ranked[:_READONLY_SEARCH_LIMIT]
+            ]
+            return {
+                "matches": matches,
+                "count": len(matches),
+                "total": len(ranked),
+                "truncated": len(ranked) > _READONLY_SEARCH_LIMIT,
+            }
+        # search_formulas
+        entries = [item for item in (kb.get("formulas") or []) if isinstance(item, dict)]
+        if not entries:
+            return {"matches": [], "count": 0, "total": 0, "truncated": False,
+                    "note": "公式速查为空：还没有从对话中收集到公式"}
+        ranked = [
+            item for item in entries
+            if needle in _text(item.get("latex")).lower()
+            or needle in _text(item.get("concept")).lower()
+            or needle in _text(item.get("meaning")).lower()
+        ]
+        matches = [
+            {
+                "latex": _text(item.get("latex")).replace("$", "")[:_READONLY_FORMULA_CHARS],
+                "concept": _text(item.get("concept")),
+                "meaning_excerpt": _text(item.get("meaning"))[:_READONLY_EXCERPT_CHARS],
+            }
+            for item in ranked[:_READONLY_SEARCH_LIMIT]
+        ]
+        return {
+            "matches": matches,
+            "count": len(matches),
+            "total": len(ranked),
+            "truncated": len(ranked) > _READONLY_SEARCH_LIMIT,
+        }
+
     data = snapshot if isinstance(snapshot, dict) else {}
     nodes = [node for node in (data.get("nodes") or []) if isinstance(node, dict)]
     edges = [edge for edge in (data.get("edges") or []) if isinstance(edge, dict)]
