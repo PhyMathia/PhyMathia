@@ -135,6 +135,7 @@ _split3.cjs
 /.export-demo/
 /演示视频/
 /docs/参赛材料/
+/录屏/
 
 # v9 向量证据：本地模型与向量缓存（大文件，不进 git）
 baseline/embedding/
