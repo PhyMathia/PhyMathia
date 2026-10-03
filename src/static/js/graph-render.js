@@ -1020,6 +1020,15 @@ function _renderAiEvalNodeHtml(node, state) {
   let body = skipBody ? '' : (node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
     : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : ''));
+  // answer 展开：正文区换完整渲染管线（renderMarkdown 剥 socratic_meta、转公式定界）
+  const expandable = _graphAnswerExpandable(node, message);
+  const expanded = expandable && !!(((state || _graphState()).expandedAnswers || {})[node.id]);
+  if (expanded && !skipBody) {
+    const raw = _graphAnswerExpandRaw(node, message);
+    body = (typeof renderMarkdown === 'function')
+      ? renderMarkdown(raw, { parentId: String((message && message.timestamp) || ''), sourceModule: node.moduleKey })
+      : escapeHtml(raw);
+  }
   // 渲染记忆：命中直接铺上次定形的 body；未命中登记待回填（textarea/viz 有状态不登记）
   if (body) {
     const _bodySig = _graphNodeHtmlSig(node, messages, state);
@@ -1050,13 +1059,14 @@ function _renderAiEvalNodeHtml(node, state) {
   const outputHtml = _renderOutputPorts(node, messages, graphState);
   const labelHtml = (node.kind === 'user' && node.messageIndex < 0)
     ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(label) + '</textarea>'
-    : '<div class="graph-node-label">' + escapeHtml(node.kind === 'answer' && typeof _graphFormulaDelimit === 'function' ? _graphFormulaDelimit(label) : label) + '</div>';
+    : (expanded ? '' : '<div class="graph-node-label">' + escapeHtml(node.kind === 'answer' && typeof _graphFormulaDelimit === 'function' ? _graphFormulaDelimit(label) : label) + '</div>');
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
+    + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" onclick="toggleGraphNodeExpand(\'' + node.id + '\')" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
     + _nodeActions(node)
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
@@ -2192,6 +2202,7 @@ function _graphNodeHtmlSig(node, messages, state) {
     message ? message.branchLabel : null,
     state.portCounts ? state.portCounts[node.id] : null,
     state.inputPortCounts ? state.inputPortCounts[node.id] : null,
+    state.expandedAnswers ? state.expandedAnswers[node.id] : null,
   ];
   let sigSrc = '';
   for (let i = 0; i < parts.length; i++) {

@@ -6537,6 +6537,58 @@ check('answer 节点预览：截断落在公式半截时回退到上一个 $ 前
   return true;
 });
 
+check('answer 卡展开全文：可展开判定＋预览/展开两态渲染接线', () => {
+  const longText = '你的结论完全正确。' + '既然你自评把握一般，那就把这个结论钉在物理图像里，别停在代数上。'.repeat(8)
+    + '<socratic_meta correct="correct" done="false" />';
+  const node = { id: 'a9', kind: 'answer', messageIndex: 0, timestamp: 9 };
+  const msg = { role: 'assistant', content: longText, timestamp: 9 };
+  sandbox.window.getGraphState = () => ({});
+  if (!sandbox._graphAnswerExpandable(node, msg)) throw new Error('长 socratic 文应可展开');
+  if (sandbox._graphAnswerExpandable(node, { role: 'assistant', content: '<summary>核心</summary>' + longText, timestamp: 9 })) throw new Error('有 summary 不应给展开（summary 整段直出）');
+  if (sandbox._graphAnswerExpandable({ ...node, messageIndex: -1 }, msg)) throw new Error('自定义节点不应给展开');
+  if (sandbox._graphAnswerExpandable({ ...node, manual: true }, msg)) throw new Error('manual 节点不应给展开');
+  if (sandbox._graphAnswerExpandable(node, { role: 'assistant', content: '短回答', timestamp: 9 })) throw new Error('短文不应给展开');
+  // 渲染接线（renderMarkdown 换桩：这里只验两态结构，不验渲染内部）
+  const realRM = sandbox.renderMarkdown;
+  sandbox.renderMarkdown = (t) => 'RM(' + String(t).length + ')';
+  try {
+    const collapsed = sandbox._renderNodeHtml(node, [msg], {});
+    if (!collapsed.includes('展开全文')) throw new Error('预览态缺展开按钮');
+    if (collapsed.includes('>收起')) throw new Error('预览态不应出收起');
+    const expanded = sandbox._renderNodeHtml(node, [msg], { expandedAnswers: { a9: true } });
+    if (!expanded.includes('>收起')) throw new Error('展开态缺收起按钮');
+    if (!expanded.includes('graph-node-full-content')) throw new Error('展开态缺正文区');
+    if (!expanded.includes('RM(')) throw new Error('展开态正文没走 renderMarkdown');
+    if (expanded.includes('class="graph-node-label"')) throw new Error('展开态不应再出预览 label');
+    // 折叠卡不给按钮、不出正文
+    const minimized = sandbox._renderNodeHtml({ ...node, minimized: true }, [msg], { expandedAnswers: { a9: true } });
+    if (minimized.includes('展开全文') || minimized.includes('>收起')) throw new Error('折叠卡不应出展开按钮');
+  } finally {
+    sandbox.renderMarkdown = realRM;
+    sandbox.window.getGraphState = () => ({});
+  }
+  return true;
+});
+
+check('answer 卡展开切换：toggleGraphNodeExpand 翻转 graphState.expandedAnswers 并保存', () => {
+  const saved = [];
+  sandbox.window.saveGraphState = (sid, state) => { saved.push(state); };
+  sandbox.window.renderGraphCanvas = () => {};
+  try {
+    sandbox.window.getGraphState = () => ({ portCounts: {} });
+    sandbox.toggleGraphNodeExpand('a7');
+    if (!saved.length || saved[saved.length - 1].expandedAnswers.a7 !== true) throw new Error('展开未落状态');
+    sandbox.window.getGraphState = () => ({ expandedAnswers: { a7: true } });
+    sandbox.toggleGraphNodeExpand('a7');
+    if (saved[saved.length - 1].expandedAnswers.a7 !== undefined) throw new Error('收起未清状态');
+  } finally {
+    sandbox.window.getGraphState = () => ({});
+    delete sandbox.window.saveGraphState;
+    delete sandbox.window.renderGraphCanvas;
+  }
+  return true;
+});
+
 // 静态契约（T128→2026-10-02 家族化）：风格家族机制——注册表/存储键/入口/双属性挂钩，防「机制在、入口丢」回退。
 // 家族＝面板质感＋节点皮肤＋强调色一个开关（用户拍板焊接），原皮肤面板/壁纸挑选器并入 #themePanel。
 check('风格家族（T128 演进）：注册表、存储键、页头入口、双属性与启动预置全接线', () => {
