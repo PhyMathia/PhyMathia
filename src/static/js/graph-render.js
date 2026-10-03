@@ -1050,7 +1050,7 @@ function _renderAiEvalNodeHtml(node, state) {
   const outputHtml = _renderOutputPorts(node, messages, graphState);
   const labelHtml = (node.kind === 'user' && node.messageIndex < 0)
     ? '<textarea class="graph-custom-question-input" rows="2" placeholder="输入问题..." onchange="updateCustomNodeContent(\'' + node.id + '\', this.value)">' + escapeHtml(label) + '</textarea>'
-    : '<div class="graph-node-label">' + escapeHtml(label) + '</div>';
+    : '<div class="graph-node-label">' + escapeHtml(node.kind === 'answer' && typeof _graphFormulaDelimit === 'function' ? _graphFormulaDelimit(label) : label) + '</div>';
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'

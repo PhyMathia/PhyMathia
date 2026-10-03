@@ -893,6 +893,27 @@ function _graphSummary(content) {
   return match ? match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
 }
 
+// answer 节点的正文/标签走纯文本路径（escapeHtml 直出，不经 renderMarkdown），
+// <formula> 标签须在此转成 $..$ 定界，画布重建后的 _graphKatexVisiblePass 才能铺成 KaTeX
+function _graphFormulaDelimit(text) {
+  let s = String(text || '');
+  s = s.replace(/\${1,2}\s*<formula>([\s\S]*?)<\/formula>\s*\${1,2}/gi, (m, latex) => '$' + latex.trim() + '$');
+  s = s.replace(/<formula>([\s\S]*?)<\/formula>/gi, (m, latex) => '$' + latex.trim() + '$');
+  s = s.replace(/<formula>[\s\S]*$/i, '').replace(/<\/formula>/gi, '');
+  return s;
+}
+
+// answer 卡预览：转定界 → 剥区块标签 → 压空白 → 截 240 字；截断落在公式半截时回退到上一个 $ 前
+function _graphAnswerPreview(text) {
+  let s = _graphFormulaDelimit(text);
+  if (typeof stripXmlTags === 'function') s = stripXmlTags(s);
+  const p = s.replace(/\s+/g, ' ').trim();
+  if (p.length <= 240) return p;
+  let cut = p.slice(0, 240);
+  if ((cut.match(/\$/g) || []).length % 2 === 1) cut = cut.slice(0, cut.lastIndexOf('$'));
+  return cut.trim() + '...';
+}
+
 function _graphModuleKeys(sections) {
   const keys = [];
   if (sections.physics) keys.push('physics');
@@ -1418,16 +1439,14 @@ function _nodeContent(message, node) {
     const _ov = ((_state && _state.harnessNodeOverrides) || {})[node.id];
     if (_ov && _ov.content != null) {
       const _text = String(_ov.content);
-      if (node.kind === 'answer') return _text.slice(0, 240) + (_text.length > 240 ? '...' : '');
+      if (node.kind === 'answer') return _graphAnswerPreview(_text);
       return _text;
     }
   if (node.kind === 'user') return message.content || '';
   if (node.kind === 'answer') {
-    const summary = _graphSummary(message.content);
+    const summary = _graphSummary(_graphFormulaDelimit(message.content));
     if (summary) return summary;
-    const plain = (typeof stripXmlTags === 'function') ? stripXmlTags(message.content || '') : (message.content || '');
-    const p = plain.replace(/\s+/g, ' ').trim();
-    return p.slice(0, 240) + (p.length > 240 ? '...' : '');
+    return _graphAnswerPreview(message.content);
   }
   if (node.kind === 'module') {
     const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
