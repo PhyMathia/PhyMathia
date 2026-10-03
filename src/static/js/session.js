@@ -400,6 +400,7 @@
         harnessDeleted: p.harnessDeleted || {},
         harnessNodeOverrides: p.harnessNodeOverrides || {},
         harnessCheckpoint: p.harnessCheckpoint || null,
+        expandedAnswers: p.expandedAnswers || {},
         updatedAt: p.updatedAt || 0,
       };
     }

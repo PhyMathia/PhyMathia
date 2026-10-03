@@ -914,6 +914,38 @@ function _graphAnswerPreview(text) {
   return cut.trim() + '...';
 }
 
+// answer 卡「展开全文」取原文（override 优先，与 _nodeContent 同口径）；
+// <socratic_meta> 是结构标注，交给 renderMarkdown 剥
+function _graphAnswerExpandRaw(node, message) {
+  const state = typeof _graphState === 'function' ? _graphState() : {};
+  const ov = ((state && state.harnessNodeOverrides) || {})[node.id];
+  if (ov && ov.content != null) return String(ov.content);
+  return message ? String(message.content || '') : '';
+}
+
+// 有 <summary> 的回答整段直出（_nodeContent 不截断），无需展开；纯长文（如 socratic 反馈
+// 400~900 字、尾部的「下一步建议追问」恰被 240 字预览截掉）才给展开开关
+function _graphAnswerExpandable(node, message) {
+  if (!node || node.kind !== 'answer' || node.manual || !(node.messageIndex >= 0)) return false;
+  const raw = _graphAnswerExpandRaw(node, message);
+  if (!raw || /<summary>[\s\S]*?<\/summary>/i.test(raw)) return false;
+  let plain = raw
+    .replace(/<socratic_meta\b[^>]*>[\s\S]*?<\/socratic_meta>/gi, '')
+    .replace(/<socratic_meta\b[^>]*\/?>/gi, '');
+  if (typeof stripXmlTags === 'function') plain = stripXmlTags(plain);
+  return plain.replace(/\s+/g, ' ').trim().length > 240;
+}
+
+// 展开/收起状态持久化在 graphState.expandedAnswers（与 portCounts 同一套存取），切换走整图重建
+function toggleGraphNodeExpand(nodeId) {
+  const state = _graphState();
+  state.expandedAnswers = state.expandedAnswers || {};
+  if (state.expandedAnswers[nodeId]) delete state.expandedAnswers[nodeId];
+  else state.expandedAnswers[nodeId] = true;
+  _saveGraphState(state);
+  if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+}
+
 function _graphModuleKeys(sections) {
   const keys = [];
   if (sections.physics) keys.push('physics');
