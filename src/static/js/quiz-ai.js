@@ -660,7 +660,7 @@ async function _generateQuestions(pool) {
       quizState.aiProgress = 0;
       quizState.sourceMode = 'local';
       quizState.aiNotice = '当前范围（画布检测=仅当前画布）没有可出题的知识点/公式；'
-        + '请改用「全局检测」，或先在画布对话中生成知识点，再重新出题';
+        + '请改用「检测总览」中的「全局出题」，或先在画布对话中生成知识点，再重新出题';
     }
     return [];
   }

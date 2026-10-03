@@ -36,7 +36,7 @@ function _renderQuizIntro() {
   ).join('');
   const quizModel = _pickQuizModel();
   const quizModelLabel = quizModel ? (quizModel.label || quizModel.model || quizModel.provider) : '本地出题（未配置 AI 模型）';
-  const entryLabel = quizMode === 'global' ? '全局检测' : '画布检测';
+  const entryLabel = quizMode === 'global' ? '跨画布检测' : '画布检测';
   const sourceModeLabel = quizState && quizState.aiPending
     ? 'AI 生成中'
     : quizState && quizState.sourceMode === 'ai'
