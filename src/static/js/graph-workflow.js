@@ -30,8 +30,8 @@ function _nodeStoredContent(node) {
     if (node.kind === 'user') return msg?.content || '';
     if (node.kind === 'answer') return _graphSummary(msg?.content || '') || '';
     if (node.kind === 'module') return _nodeContent(msg, node);
-    if (node.kind === 'socratic_followup') return (node.items || []).map(q => '[' + q.levelName + '] ' + q.question).join('\n');
   }
+  // 派生追问节点（sq- 前缀自定义节点，messageIndex=-1）落到这里返回其 markdown 内容
   return node.summary || node.content || '';
 }
 

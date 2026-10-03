@@ -6570,7 +6570,7 @@ check('answer 卡展开全文：可展开判定＋预览/展开两态渲染接�
   return true;
 });
 
-check('socratic_followup 节点：解析建议问题＋派生建点连线＋作答链挂到追问节点下', () => {
+check('sq 派生追问节点：复用 customNodes 自定义模块链路＋作答链挂到追问节点下＋墓碑防复活', () => {
   const feedback = '判断：理解正确 你抓住了关键。\n\n1. [基础] 先不用公式，复述一遍：为什么质量越大周期越长？\n2. [进阶] 想让周期缩短一半，质量应该变成多少倍？\n\n<socratic_meta correct="correct" done="false" />';
   const qs = sandbox._parseSuggestedFollowupQuestions(feedback);
   if (qs.length !== 2) throw new Error('应解析出 2 问，实际 ' + qs.length);
@@ -6581,35 +6581,61 @@ check('socratic_followup 节点：解析建议问题＋派生建点连线＋作�
     { role: 'assistant', content: feedback, timestamp: 200, branchType: 'socratic', parentId: '100' },
     { role: 'user', content: '[苏格拉底回答] 追问等级：基础 追问问题：为什么？\n我的回答：因为。', timestamp: 300, branchType: 'socratic', parentId: '200' },
   ];
-  const data = sandbox._buildGraphData(msgs, {});
-  const sq = data.nodes.find(n => n.kind === 'socratic_followup');
-  if (!sq) throw new Error('未派生苏格拉底追问节点');
+  const st = {};
+  const data = sandbox._buildGraphData(msgs, st);
+  const sq = data.nodes.find(n => n.kind === 'module' && n.moduleKey === 'socratic' && n.sqAuto);
+  if (!sq) throw new Error('未派生苏格拉底追问节点（应落 customNodes 走 module 链路）');
+  if (sq.messageIndex !== -1) throw new Error('sq 应按自定义节点实体化（messageIndex=-1）');
   if (!Array.isArray(sq.items) || sq.items.length !== 2) throw new Error('sq 节点问题数错');
-  if (!data.edges.find(e => e.from === 'a-200' && e.to === sq.id)) throw new Error('sq 未连到反馈回答节点');
+  if (!/- \[基础\] 先不用公式/.test(sq.content)) throw new Error('sq.content 应是同款 markdown 问题列表');
+  const cn = (st.customNodes || []).find(item => item.id === sq.id);
+  if (!cn) throw new Error('customNodes 里没有 sq 条目（编辑/删除无依托）');
+  if (!(st.connections || []).find(e => e.from === 'a-200' && e.to === sq.id)) throw new Error('sq 未连到反馈回答节点（connections 缺边）');
   const userNode = data.nodes.find(n => n.kind === 'user' && n.timestamp === 300);
   const userEdge = data.edges.find(e => e.to === userNode.id);
   if (!userEdge || userEdge.from !== sq.id) throw new Error('用户作答节点应挂在追问节点下，实际 from=' + (userEdge && userEdge.from));
+  // 同一 state 再建一次：条目幂等（不重复落地），节点照常实体化
+  const data1b = sandbox._buildGraphData(msgs, st);
+  if ((st.customNodes || []).filter(item => item.id === sq.id).length !== 1) throw new Error('sq 条目应幂等不重复');
+  if (!data1b.nodes.find(n => n.id === sq.id)) throw new Error('已有条目应照常实体化');
   const data2 = sandbox._buildGraphData([
     { role: 'user', content: '问题', timestamp: 110 },
     { role: 'assistant', content: '反馈但没有建议问题列表', timestamp: 210, branchType: 'socratic', parentId: '110' },
   ], {});
-  if (data2.nodes.some(n => n.kind === 'socratic_followup')) throw new Error('无建议问题不应派生');
+  if (data2.nodes.some(n => n.sqAuto)) throw new Error('无建议问题不应派生');
+  // 删除墓碑：harnessDeleted 记录后不再重建
+  const st3 = { harnessDeleted: { 'sq-200': true } };
+  const data3 = sandbox._buildGraphData(msgs, st3);
+  if (data3.nodes.some(n => n.sqAuto) || (st3.customNodes || []).some(item => item.id === 'sq-200')) throw new Error('墓碑节点不应复活');
   return true;
 });
 
-check('socratic_followup 节点渲染：四按钮同源＋parent 指向反馈消息＋折叠态收起列表', () => {
-  const node = { id: 'sq-999', kind: 'socratic_followup', messageIndex: 0, timestamp: 999, x: 0, y: 0, items: [{ levelName: '基础', level: 'basic', question: '为什么周期与振幅无关？' }] };
-  const msg = { role: 'assistant', content: '反馈正文', timestamp: 999, branchType: 'socratic' };
-  const html = sandbox._renderSocraticFollowupNodeHtml(node, [msg], {});
-  if (!html.includes('socratic-item')) throw new Error('缺问题列表');
-  if (!html.includes('data-parent-msg="999"')) throw new Error('按钮 parent 应指向反馈消息');
-  for (const t of ['我来回答', '直接问AI', '给点提示', '看讲解']) {
-    if (!html.includes(t)) throw new Error('缺按钮 ' + t);
+check('sq 派生追问节点渲染：与手建苏格拉底追问节点同款（module 卡＋四按钮＋完成徽章＋出口）', () => {
+  const node = { id: 'sq-999', kind: 'module', moduleKey: 'socratic', sqAuto: true, messageIndex: -1, timestamp: 999, x: 0, y: 0, status: 'done', content: '### 苏格拉底追问\n\n- [基础] 为什么周期与振幅无关？', items: [{ levelName: '基础', level: 'basic', question: '为什么周期与振幅无关？' }] };
+  // 沙箱无 marked：用轻量桩走同一条 convertSocraticQuestions 管线（按钮标记由此生成）
+  const realRM = sandbox.renderMarkdown;
+  sandbox.renderMarkdown = (text, opts) => {
+    const lis = String(text).split('\n').filter(l => /^- \[/.test(l.trim()))
+      .map(l => '<li>' + l.trim().replace(/^- /, '') + '</li>').join('');
+    return sandbox.convertSocraticQuestions('<ol>' + lis + '</ol>', opts || {});
+  };
+  try {
+    const html = sandbox._renderNodeHtml(node, [], {});
+    if (!html.includes('graph-node-module') || !html.includes('graph-module-socratic')) throw new Error('应走 module 渲染路径（与手建节点同类）');
+    if (!html.includes('graph-attr-socratic')) throw new Error('缺苏格拉底属性色');
+    if (!html.includes('socratic-item')) throw new Error('缺问题列表');
+    if (!html.includes('data-parent-msg="999"')) throw new Error('按钮 parent 应指向反馈消息');
+    for (const t of ['我来回答', '直接问AI', '给点提示', '看讲解']) {
+      if (!html.includes(t)) throw new Error('缺按钮 ' + t);
+    }
+    if (!html.includes('status-done') || !html.includes('完成')) throw new Error('缺完成徽章');
+    if (!html.includes('graph-node-edit-toggle') || !html.includes('graph-node-delete-toggle')) throw new Error('缺编辑/删除钮（自定义节点原生能力）');
+    if (!html.includes('问题1')) throw new Error('缺问题输出端口');
+    const min = sandbox._renderNodeHtml({ ...node, minimized: true }, [], {});
+    if (min.includes('socratic-item')) throw new Error('折叠态不应出列表');
+  } finally {
+    sandbox.renderMarkdown = realRM;
   }
-  if (!html.includes('建议追问')) throw new Error('缺徽标');
-  if (!html.includes('graph-attr-socratic')) throw new Error('缺苏格拉底属性色');
-  const min = sandbox._renderSocraticFollowupNodeHtml({ ...node, minimized: true }, [msg], {});
-  if (min.includes('socratic-item')) throw new Error('折叠态不应出列表');
   return true;
 });
 

@@ -148,15 +148,14 @@ function _graphContextItemsForNode(node, point) {
   }
   items.push({ key: 'sep' });
   // 删除沿用 _deleteSelectedGraphNodes 的确认路径（消息节点 confirm、blank/draft/自定义静默）。
-  // 派生节点（socratic_followup）随其反馈消息存亡，单独删除无意义且会误删整条消息——不提供
-  if (node.kind !== 'socratic_followup') {
-    items.push({
-      key: 'delete',
-      label: '删除节点',
-      danger: true,
-      run: () => { if (typeof _deleteSelectedGraphNodes === 'function') _deleteSelectedGraphNodes([node.id]); },
-    });
-  }
+  // 派生追问节点（sq- 前缀自定义节点）也走原生删除——deleteCustomNode 记 harnessDeleted
+  // 墓碑防止下次构建复活。
+  items.push({
+    key: 'delete',
+    label: '删除节点',
+    danger: true,
+    run: () => { if (typeof _deleteSelectedGraphNodes === 'function') _deleteSelectedGraphNodes([node.id]); },
+  });
   return items;
 }
 
