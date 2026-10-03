@@ -1064,7 +1064,7 @@
       touch-action: none;
       cursor: grab;
       background:
-        radial-gradient(circle at 12px 12px, rgba(74, 158, 255, 0.12) 1px, transparent 1px),
+        radial-gradient(circle at 12px 12px, color-mix(in srgb, var(--accent) 12%, transparent) 1px, transparent 1px),
         radial-gradient(circle at 0 0, rgba(0, 0, 0, 0.04), transparent 55%);
       background-size: 24px 24px, 100% 100%;
     }
@@ -1116,11 +1116,11 @@
     }
     .graph-node:hover {
       border-color: var(--accent);
-      box-shadow: 0 10px 32px rgba(74, 158, 255, 0.22);
+      box-shadow: 0 10px 32px color-mix(in srgb, var(--accent) 22%, transparent);
     }
     .graph-node.selected {
-      border-color: #22d3ee;
-      box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.28), 0 10px 32px rgba(0, 0, 0, 0.32);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent), 0 10px 32px rgba(0, 0, 0, 0.32);
     }
     .graph-node.dragging {
       cursor: grabbing;
@@ -1145,7 +1145,7 @@
       white-space: nowrap;
     }
     .graph-node-user {
-      border-color: rgba(74, 158, 255, 0.55);
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent);
     }
     .graph-node-answer {
       border-color: rgba(16, 185, 129, 0.5);
@@ -1264,16 +1264,16 @@
       max-width: min(680px, 88vw);
       min-height: 180px;
       z-index: 50;
-      border-color: #22d3ee;
+      border-color: var(--accent);
       box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
     }    .graph-node.expanded .graph-node-actions {
       display: flex;
     }    .graph-edge {
-      stroke: rgba(120, 180, 255, 0.9);
+      stroke: color-mix(in srgb, var(--accent) 72%, #fff);
       stroke-width: 3.5px;
       stroke-dasharray: none;
       opacity: 0.95;
-      filter: drop-shadow(0 0 3px rgba(74, 158, 255, 0.35));
+      filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 35%, transparent));
     }
 
     @media (max-width: 820px) {
@@ -1331,9 +1331,9 @@
       font-size: var(--fs-sm);
     }
     .graph-node-user {
-      border-color: rgba(74, 158, 255, 0.95) !important;
-      background: rgba(30, 74, 140, 0.24) !important;
-      box-shadow: 0 0 30px rgba(74, 158, 255, 0.38), 0 18px 50px rgba(0, 0, 0, 0.4);
+      border-color: color-mix(in srgb, var(--accent) 95%, transparent) !important;
+      background: color-mix(in srgb, var(--accent) 24%, transparent) !important;
+      box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 38%, transparent), 0 18px 50px rgba(0, 0, 0, 0.4);
     }
     .graph-node-answer {
       border-color: rgba(16, 185, 129, 0.95) !important;
@@ -1371,10 +1371,10 @@
       box-shadow: 0 0 34px rgba(168, 85, 247, 0.4), 0 18px 50px rgba(0, 0, 0, 0.42);
     }
     .graph-edge {
-      stroke: rgba(140, 190, 255, 0.95) !important;
+      stroke: color-mix(in srgb, var(--accent) 65%, #fff) !important;
       stroke-width: 7px !important;
       opacity: 1 !important;
-      filter: drop-shadow(0 0 7px rgba(74, 158, 255, 0.55));
+      filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 55%, transparent));
     }
 
     /* ====== 动态尺寸与知识网络连接线 ====== */
@@ -1460,7 +1460,7 @@
       white-space: nowrap;
     }
     .graph-node-user {
-      border-color: rgba(74, 158, 255, 0.4);
+      border-color: color-mix(in srgb, var(--accent) 40%, transparent);
     }
     .graph-node-answer {
       border-color: rgba(16, 185, 129, 0.4);
@@ -1765,7 +1765,7 @@
     .quiz-progress-fill {
       height: 100%;
       border-radius: var(--r-pill);
-      background: linear-gradient(90deg, var(--accent), #a78bfa);
+      background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff));
       transition: width 0.25s ease;
     }
     .quiz-question-prompt {
@@ -2230,7 +2230,7 @@
     .quiz-ai-progress-fill {
       height: 100%;
       border-radius: var(--r-pill);
-      background: linear-gradient(90deg, var(--accent), #a78bfa);
+      background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff));
       transition: width 0.2s ease;
     }
 
@@ -3302,11 +3302,11 @@
 .continent-layer.is-linking .continent-viewport { cursor: crosshair; }
 .continent-node.is-link-source {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(74, 158, 255, 0.35),
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 35%, transparent),
     0 4px 12px rgba(0, 0, 0, 0.30);
 }
 [data-theme="light"] .continent-node.is-link-source {
-  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(139, 105, 20, 0.3),
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent),
     0 3px 9px rgba(90, 70, 30, 0.14);
 }
 .continent-close {
@@ -3499,17 +3499,17 @@
  * 与自动检出的共享连线同色系（accent），一眼能看出「线连到哪两座城」 */
 .continent-node--boundary {
   border-color: var(--accent);
-  background: linear-gradient(180deg, rgba(74, 158, 255, 0.10), var(--bg-dark) 55%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), var(--bg-dark) 55%);
 }
 [data-theme="light"] .continent-node--boundary {
-  background: linear-gradient(180deg, rgba(160, 120, 42, 0.10), var(--bg-dark) 55%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), var(--bg-dark) 55%);
 }
 .continent-node--boundary:hover {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(74, 158, 255, 0.28),
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent),
     0 8px 20px rgba(0, 0, 0, 0.38);
 }
 [data-theme="light"] .continent-node--boundary:hover {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px rgba(139, 105, 20, 0.25),
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 12px color-mix(in srgb, var(--accent) 25%, transparent),
     0 6px 16px rgba(90, 70, 30, 0.18);
 }
 .continent-node-badge {
@@ -3525,11 +3525,11 @@
 /* 悬停共享标签时点亮两端节点（连线找得到头） */
 .continent-node.is-hot {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(74, 158, 255, 0.3),
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent),
     0 4px 12px rgba(0, 0, 0, 0.30);
 }
 [data-theme="light"] .continent-node.is-hot {
-  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(139, 105, 20, 0.25),
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px color-mix(in srgb, var(--accent) 25%, transparent),
     0 3px 9px rgba(90, 70, 30, 0.14);
 }
 .continent-node-title {
@@ -3571,17 +3571,17 @@
   justify-content: center;
   padding: 0 8px;
   cursor: pointer;
-  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.10);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 [data-theme="light"] .continent-city {
-  box-shadow: 0 0 0 3px rgba(139, 105, 20, 0.10);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .continent-city:hover {
-  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.22), 0 0 14px rgba(74, 158, 255, 0.3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 [data-theme="light"] .continent-city:hover {
-  box-shadow: 0 0 0 3px rgba(139, 105, 20, 0.2), 0 0 14px rgba(139, 105, 20, 0.25);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent), 0 0 14px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 /* T143 键盘可达：大陆所有可聚焦控件统一焦点环（_kact 补 tabindex 的件 + 原生按钮） */
 .continent-open [tabindex="0"]:focus-visible,
