@@ -30,6 +30,7 @@ function _nodeStoredContent(node) {
     if (node.kind === 'user') return msg?.content || '';
     if (node.kind === 'answer') return _graphSummary(msg?.content || '') || '';
     if (node.kind === 'module') return _nodeContent(msg, node);
+    if (node.kind === 'socratic_followup') return (node.items || []).map(q => '[' + q.levelName + '] ' + q.question).join('\n');
   }
   return node.summary || node.content || '';
 }

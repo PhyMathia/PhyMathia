@@ -946,6 +946,26 @@ function toggleGraphNodeExpand(nodeId) {
   if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
 }
 
+// socratic 反馈尾部的建议追问（[基础]/[进阶]/[拓展] 行）→ 派生「苏格拉底追问」节点的数据源。
+// 比render.js convertSocraticQuestions 收得更紧：必须有中/英方括号等级标签，防正文散文误匹配
+function _parseSuggestedFollowupQuestions(content) {
+  const text = String(content || '').replace(/<socratic_meta\b[^>]*>[\s\S]*?<\/socratic_meta>/gi, '');
+  const out = [];
+  for (const raw of text.split(/\n/)) {
+    const line = raw.replace(/<[^>]+>/g, ' ').replace(/\*\*/g, '').replace(/^\s*(?:\d+[.、)]\s*|[-*]\s*)?/, '');
+    const m = line.match(/^[[(【](基础|进阶|拓展)(?:题|层)?[\])】]\s*[:：]?\s*(.+?)\s*$/);
+    if (!m) continue;
+    const question = m[2].trim();
+    if (!question) continue;
+    out.push({
+      levelName: m[1],
+      level: m[1] === '基础' ? 'basic' : m[1] === '进阶' ? 'advanced' : 'expand',
+      question,
+    });
+  }
+  return out;
+}
+
 function _graphModuleKeys(sections) {
   const keys = [];
   if (sections.physics) keys.push('physics');
@@ -1123,6 +1143,25 @@ function _applyHarnessOverrides(node, state) {
   return node;
 }
 
+// socratic 作答消息（正文带「追问问题：…」行）对应哪张派生追问节点：按问题文本匹配 items。
+// 消息的 parentId 实际指回锚点而非上一条反馈（真机数据取证），文本匹配才是可靠对应
+function _matchSuggestedFollowupNode(nodeById, msg) {
+  const qm = String(msg.content || '').match(/追问问题[：:]\s*([^\n]+)/);
+  if (!qm) return null;
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+  const q = norm(qm[1]);
+  if (!q) return null;
+  for (const id in nodeById) {
+    const n = nodeById[id];
+    if (!n || n.kind !== 'socratic_followup' || !Array.isArray(n.items)) continue;
+    for (const item of n.items) {
+      const iq = norm(item.question);
+      if (iq && (iq === q || iq.includes(q) || q.includes(iq))) return n;
+    }
+  }
+  return null;
+}
+
 function _buildGraphData(messages, state) {
   const nodes = [];
   const edges = [];
@@ -1167,6 +1206,18 @@ function _buildGraphData(messages, state) {
           const answerId = _graphNodeId('a', parentTs);
           parentNode = nodeById[answerId] || null;
           parentId = answerId;
+        }
+        // 答题链视觉（与连边同一口径）：作答命中追问节点则定位跟随它
+        const matchedSqPos = _matchSuggestedFollowupNode(nodeById, msg);
+        if (matchedSqPos) {
+          parentNode = matchedSqPos;
+          parentId = matchedSqPos.id;
+        } else if (parentNode) {
+          const sqId = _graphNodeId('sq', parentTs);
+          if (nodeById[sqId]) {
+            parentNode = nodeById[sqId];
+            parentId = sqId;
+          }
         }
         if (!parentNode) {
           const customParent = _findCustomBranchParent(state.customNodes, parentTs, msg.sourceModule);
@@ -1233,6 +1284,14 @@ function _buildGraphData(messages, state) {
         if (!parentId) {
           const answerId = _graphNodeId('a', parentTs);
           if (nodeById[answerId]) parentId = answerId;
+        }
+        // 答题链视觉：作答的问题命中某张派生「苏格拉底追问」节点时，回答节点挂到它下面
+        const matchedSq = _matchSuggestedFollowupNode(nodeById, msg);
+        if (matchedSq) {
+          parentId = matchedSq.id;
+        } else if (parentId) {
+          const sqId = _graphNodeId('sq', parentTs);
+          if (nodeById[sqId]) parentId = sqId;
         }
         if (!parentId) {
           const customParent = _findCustomBranchParent(state.customNodes, parentTs, msg.sourceModule);
@@ -1344,6 +1403,48 @@ function _buildGraphData(messages, state) {
         nodeById[moduleId] = mNode;
         _pushEdge(edges, id, moduleId, 'primary');
       });
+
+      // 苏格拉底反馈的建议追问派生成独立「苏格拉底追问」节点（用户拍板：问题与按钮属于追问节点，
+      // 不该融合在 AI 回答卡里）——链条 AI 回答→苏格拉底追问→（作答）→AI 回答
+      if (msg.branchType === 'socratic' || /<socratic_meta\b/i.test(String(msg.content || ''))) {
+        const suggested = _parseSuggestedFollowupQuestions(msg.content);
+        if (suggested.length) {
+          const sqId = _graphNodeId('sq', msg.timestamp);
+          if (!harnessDeleted[sqId] && !nodeById[sqId]) {
+            const savedSq = savedPositions[sqId];
+            const sqX = savedSq ? savedSq.x : (node.isBranch && node.x != null ? node.x + (keys.length ? 190 * keys.length : 0) : radialX);
+            const sqY = savedSq ? savedSq.y : (node.isBranch && node.y != null ? node.y + (keys.length ? 430 : 250) : radialY);
+            const sqNode = {
+              id: sqId,
+              kind: 'socratic_followup',
+              x: sqX,
+              y: sqY,
+              depth: depth + 1,
+              targetAngle,
+              isRoot: false,
+              isBranch: true,
+              messageIndex: i,
+              timestamp: msg.timestamp,
+              moduleKey: '',
+              branchType: 'socratic',
+              branchLabel: '建议追问',
+              parentId: id,
+              items: suggested,
+              hidden: !!hiddenMap[id],
+              minimized: false,
+              pinned: !!(savedSq && pinnedMap[sqId]),
+              fixedX: savedSq ? savedSq.x : null,
+              fixedY: savedSq ? savedSq.y : null,
+              customWidth: savedSizes[sqId] && savedSizes[sqId].u ? savedSizes[sqId].w : null,
+              customHeight: savedSizes[sqId] && savedSizes[sqId].u ? savedSizes[sqId].h : null,
+              w: 0, h: 0, vx: 0, vy: 0,
+            };
+            nodes.push(sqNode);
+            nodeById[sqId] = sqNode;
+            _pushEdge(edges, id, sqId, 'primary', 'out-' + ANSWER_OUTPUT_INDEX.socratic);
+          }
+        }
+      }
     }
   }
 
@@ -1475,6 +1576,7 @@ function _nodeContent(message, node) {
       return _text;
     }
   if (node.kind === 'user') return message.content || '';
+  if (node.kind === 'socratic_followup') return (node.items || []).map(q => q.question).join('\n');
   if (node.kind === 'answer') {
     const summary = _graphSummary(_graphFormulaDelimit(message.content));
     if (summary) return summary;
