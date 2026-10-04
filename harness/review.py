@@ -31,6 +31,71 @@ from llm_common import (
     upstream_error_detail,
     validate_model_target,
 )
+
+# 2026-10-04 拆分（T163）：相位/意图识别、历史格式化、KB 检索源、图操作合成与
+# tool_call 归一等纯辅助移入姊妹模块，此处 re-import 保持调用方与 tests 导入路径不变。
+# tests 在本模块对象上 monkeypatch 的名字（_call_model/_stream_chat_completions/
+# _resolve_model/_selfcheck_ops/_log_context_metrics/usage_stats/预算常量等）及其
+# 全部调用方留守本文件——补丁打到重导出空壳上会静默失效，这是拆分的红线。
+from .review_phase import (
+    EVALUATE_HINTS,
+    APPLY_HINTS,
+    MODIFY_HINTS,
+    EXPAND_HINTS,
+    TOOLS_USER_HINT,
+    TOOLS_AUTO_HINT,
+    READONLY_TOOLS_HINT,
+    HARNESS_CHAT_TOOLS_HINT,
+    _REFUSAL_MARKERS,
+    _has_edit_intent,
+    _refusal_explained,
+    _detect_phase,
+    UNDO_HINTS,
+    _detect_undo_intent,
+    _filter_inverse_by_targets,
+    _undo_scope,
+)
+from .review_history import (
+    HISTORY_KEEP_RECENT,
+    _history_block,
+    _clamp_display_summary,
+    _extract_summary_from_json_shell,
+)
+from .review_kb import _load_kb_file, _load_user_kb
+from .review_ops import (
+    _JOURNAL_MESSAGE_CAP,
+    _JOURNAL_RAW_CAP,
+    _JOURNAL_REASONING_CAP,
+    _merge_post_ops,
+    _complete_expand_chains,
+    _auto_connect_isolated,
+    _fallback_summary,
+    _summarize_errors,
+    _focus_subgraph,
+    _journal_raw_dict,
+    _journal_roundtrip,
+    _tool_call_name_args,
+    _readonly_batch,
+    _assistant_tool_message,
+    _readonly_call_arg,
+    _readonly_tool_label,
+)
+
+
+def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
+    """Trim non-focus node content for large snapshots; raise when still too big."""
+    if len(json.dumps(snapshot, ensure_ascii=False)) <= MAX_SNAPSHOT_CHARS:
+        return snapshot
+    focus = {str(item) for item in (focus_node_ids or [])}
+    for node in snapshot.get("nodes", []):
+        if node.get("id") in focus or node.get("kind") == "ai_eval":
+            continue
+        node["content"] = str(node.get("content") or "")[:NON_FOCUS_CONTENT_CHARS]
+        node["formula"] = ""
+    if len(json.dumps(snapshot, ensure_ascii=False)) > MAX_SNAPSHOT_HARD_CHARS:
+        count = len(snapshot.get("nodes") or [])
+        raise HarnessError(f"快照过大（{count} 个节点），请先选中局部节点或缩小范围后再让 AI 修改")
+    return snapshot
 import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
 
 # harness 无会话上下文，按进程派生稳定 id（2026-10-01 起降级为兜底桶）：
@@ -108,45 +173,6 @@ from .tools import (
 
 logger = logging.getLogger("harness.review")
 
-# T82 收敛（后端半边）：相位识别权归 _detect_phase 一处。前端 payload 只直通
-# chat/preset/apply/expand，normal/evaluate 的本地猜测一律降级为 normal——所以
-# 下面四张关键词表必须覆盖前端旧正则的每一个分支（超集，缺词＝识别退化；
-# 逐词覆盖由 tests/test_harness_loop.py 的 T82 用例钉住）。
-EVALUATE_HINTS = (
-    "评价", "建议", "反馈", "点评", "指出", "哪里需要改进",
-    "挑错", "有问题吗", "对不对", "哪里不对", "帮我看看",
-)
-APPLY_HINTS = ("应用建议", "采纳建议", "按建议", "执行建议", "应用评价", "按评价")
-MODIFY_HINTS = (
-    "修改", "改成", "更正", "纠正", "重写", "更新", "删掉", "删除",
-    "补充", "新增", "创建", "连接", "加上", "加一个", "补一个", "改进", "完善",
-)
-EXPAND_HINTS = ("拓展", "进阶", "延伸学习", "深入学习", "深化")
-
-TOOLS_USER_HINT = (
-    "\n\n（本次请求支持工具调用：请优先使用提供的工具提交 operations，"
-    "不要在文本里重复输出 JSON；文本内容只写一句话 summary。若工具不可用，再按上面的 JSON 结构输出。）"
-)
-TOOLS_AUTO_HINT = (
-    "\n\n（本次支持两种回答方式：如果用户只是提问/讨论，请直接用文字回答，不需要调用工具；"
-    "如果用户要求修改图，请使用工具提交 operations，文本只写一句话 summary。）"
-)
-
-# ---- T93（评审路线 #8）只读查询回灌：先查图，看完了再决定改哪 ----
-# 工具表含只读查询工具时（normal/expand/apply/preset），给 user 消息补的使用说明。
-READONLY_TOOLS_HINT = (
-    "\n\n（你可以先调用只读查询工具（read_node / list_neighbors / search_nodes）"
-    "了解图中内容，用 search_knowledge / search_formulas 检索用户的知识库与公式速查，"
-    "再输出编辑操作；查询不会修改图。）"
-)
-# 答疑模式（2026-10-03 智能化第二期）专用的 user 消息工具说明：chat 相位工具表
-# 是纯只读，通用 TOOLS_AUTO_HINT 的「用户要求修改图请使用工具」与答疑红线矛盾，
-# 不能照抄——chat 只讲「先查后答、绝不改图」。
-HARNESS_CHAT_TOOLS_HINT = (
-    "\n\n（你可以调用只读查询工具：read_node / list_neighbors / search_nodes 查看图，"
-    "search_knowledge / search_formulas 检索用户的知识库与公式速查；先查再答，"
-    "回答引用出处。当前是答疑模式：不要输出任何编辑操作，直接用文字回答。）"
-)
 # 查询循环步数上限：达到后剥掉只读工具并明示模型直接出方案，防失控。
 MAX_TOOL_STEPS = 8
 # 单条查询结果回灌的字符上限（超长截断打标，护住上下文预算）
@@ -161,49 +187,6 @@ _TOOL_STEP_LIMIT_NOTICE = (
     "（编辑类工具调用或最终 JSON；答疑模式直接用文字回答），不要再查询。"
 )
 
-# ---- 2026-10-03 智能化第二期：用户知识资产（知识库/公式速查）检索数据源 ----
-# 只在 Φ 进程内按 mtime 缓存，只读；server 包不可用（battery 测试桩/独立部署）
-# 或文件缺失/损坏时降级为空清单——检索工具回「数据不可用/为空」，绝不阻断主流程。
-_KB_CACHE: Dict[str, Any] = {
-    "knowledge_mtime": None,
-    "formulas_mtime": None,
-    "knowledge": [],
-    "formulas": [],
-}
-
-
-def _load_kb_file(path, mtime_key: str, list_key: str) -> list:
-    try:
-        mtime = path.stat().st_mtime_ns
-    except Exception:
-        return []
-    if _KB_CACHE[mtime_key] == mtime:
-        return _KB_CACHE[list_key]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8") or "{}")
-    except Exception:
-        logger.warning("harness kb load failed: %s", path, exc_info=True)
-        return []
-    items = []
-    if isinstance(data, dict):
-        items = [item for item in data.values() if isinstance(item, dict)]
-    elif isinstance(data, list):
-        items = [item for item in data if isinstance(item, dict)]
-    _KB_CACHE[mtime_key] = mtime
-    _KB_CACHE[list_key] = items
-    return items
-
-
-def _load_user_kb() -> Dict[str, list]:
-    """知识检索工具的数据源：data/knowledge.json（知识面板）与 data/formulas.json（公式速查）。"""
-    try:
-        from server.config import FORMULAS_PATH, KNOWLEDGE_PATH
-    except Exception:
-        return {"knowledge": [], "formulas": []}
-    return {
-        "knowledge": _load_kb_file(KNOWLEDGE_PATH, "knowledge_mtime", "knowledge"),
-        "formulas": _load_kb_file(FORMULAS_PATH, "formulas_mtime", "formulas"),
-    }
 
 # ---- T94（评审路线 #9）上下文预算与自动压缩 ----
 # 长会话后期模型失忆的根因：历史只做「最近 6 条详细 + 更早压一行」，前面聊定的
@@ -215,7 +198,6 @@ def _load_user_kb() -> Dict[str, list]:
 HARNESS_CONTEXT_BUDGET_TOKENS = 24000
 # 历史条数超过该值即触发压缩（保留最近 HISTORY_KEEP_RECENT 条原文）
 HISTORY_COMPACT_TRIGGER_ENTRIES = 12
-HISTORY_KEEP_RECENT = 6
 # 摘要调用 max_tokens；摘要正文落库前再按字符数硬截（防上游无视 max_tokens 超长输出）
 HISTORY_SUMMARY_MAX_TOKENS = 300
 HISTORY_SUMMARY_MAX_CHARS = 400
@@ -242,192 +224,6 @@ _PHASE_LABELS = {
 # （不发思考参数＝现状行为零变化，且不给改图主路径加不可控延迟）。
 # 显式 thinking kwarg / 请求体字段优先，可覆盖任何相位默认（含关掉）。
 PHASE_THINKING = {"evaluate": "high", "preset": "high", "apply": "high", "chat": "low"}
-
-
-
-UNDO_HINTS = (
-    "撤销", "回退", "恢复", "还原", "撤回", "不要刚才", "重来",
-    "改回去", "改回", "退回", "退回去", "撤掉", "撤了", "不要了",
-    "刚加的", "删掉刚才", "undo", "rollback",
-)
-
-
-def _detect_undo_intent(instruction: str) -> bool:
-    text = str(instruction or "")
-    return any(hint in text.lower() for hint in UNDO_HINTS)
-
-
-def _filter_inverse_by_targets(inverse_ops: list, targets, snapshot=None) -> list:
-    targets = {str(item) for item in (targets or []) if str(item)}
-    if not targets:
-        return inverse_ops
-    edge_ends = {}
-    if snapshot is not None:
-        try:
-            norm = normalize_snapshot(snapshot)
-            for e in norm["edges"]:
-                key = str(e.get("key") or "")
-                if key:
-                    edge_ends[key] = {str(e.get("from") or ""), str(e.get("to") or "")}
-        except Exception:
-            edge_ends = {}
-    kept = []
-    for op in inverse_ops:
-        ids = [op.get("id"), op.get("from"), op.get("to"), op.get("temp_id"), op.get("force_id")]
-        if any(str(item) in targets for item in ids if item):
-            kept.append(op)
-            continue
-        ek = str(op.get("edge_key") or op.get("key") or "")
-        ends = edge_ends.get(ek)
-        if ends and ends & targets:
-            kept.append(op)
-    if kept:
-        # 恢复对成对判定：保住 add_edge(T->D) 时，它端点 D 的 restore_node 也
-        # 必须一起保——只留边不留节点，build_next_snapshot 会报「终点不存在」，
-        # 这条边从此撤不回来（09-20 修复）
-        kept_ends = set()
-        for op in kept:
-            if str(op.get("op") or "") == "add_edge":
-                for end in (op.get("from"), op.get("to")):
-                    if end:
-                        kept_ends.add(str(end))
-        if kept_ends:
-            for op in inverse_ops:
-                if str(op.get("op") or "") == "restore_node" \
-                        and str(op.get("id") or "") in kept_ends and op not in kept:
-                    kept.append(op)
-    return kept
-
-
-def _undo_scope(instruction: str, focus_node_ids) -> str:
-    """Decide how much history an undo request should revert.
-
-    - 'full': 撤销全部/所有修改（回到最初快照）
-    - 'targeted': 指定了目标节点，且表达“恢复原样/改回去/撤掉”等上下文反悔
-      —— 撤销该目标相关的全部历史改动，保留其它改动
-    - 'last': 只撤销上一步修改
-    """
-    text = str(instruction or "")
-    if "全部" in text or "所有" in text:
-        return "full"
-    if focus_node_ids and any(k in text for k in (
-        "恢复", "还原", "原样", "改回", "退回", "撤掉", "撤了", "不要了", "刚加的", "那边",
-    )):
-        return "targeted"
-    return "last"
-
-
-def _history_block(history) -> str:
-    """多轮编辑历史：最近 HISTORY_KEEP_RECENT 条详细（含操作摘要），更早条目压缩为一行，控制上下文体积。
-
-    T94：`role=="compact_summary"` 的条目（更早历史经一次模型摘要压缩而来）渲染成
-    一条「[此前 N 轮对话已压缩] 摘要：…」，统一排在历史块头部（即使用例传入的位置
-    不在开头），其余条目逻辑不变；编号沿用原枚举序号，摘要条目本身不占号。"""
-    if not history:
-        return ""
-    lines = ["\n\n此前多轮编辑历史（最新在后）："]
-    compact_notes: list = []
-    recent_start = max(0, len(history) - HISTORY_KEEP_RECENT)
-    for i, item in enumerate(history):
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "user")
-        if role == "compact_summary":
-            covered = item.get("covered")
-            try:
-                covered_n = int(covered or 0)
-            except (TypeError, ValueError):
-                covered_n = 0
-            compact_notes.append(
-                f"\n\n[此前 {covered_n} 轮对话已压缩] 摘要：{str(item.get('summary') or '')}"
-            )
-            continue
-        if role == "user":
-            text = str(item.get("instruction") or "")
-            if i < recent_start:
-                lines.append(f"{i + 1}. 用户：{text[:100]}")
-            else:
-                lines.append(f"{i + 1}. 用户：{text[:200]}")
-        else:
-            summary = str(item.get("summary") or "")
-            if i < recent_start:
-                lines.append(f"{i + 1}. 助手：{summary[:80]}")
-            else:
-                ops = item.get("operations") or []
-                op_desc = "；".join(
-                    f"{o.get('op')}({o.get('id') or o.get('temp_id') or o.get('label') or ''})"
-                    for o in ops[:20]
-                )
-                lines.append(f"{i + 1}. 助手：{summary[:120]}" + (f"；操作：{op_desc[:300]}" if op_desc else ""))
-    if compact_notes:
-        # 摘要条目始终排历史块头部（紧跟标题行）
-        lines[1:1] = compact_notes
-    return "\n".join(lines)
-
-
-def _clamp_display_summary(text, limit: int = 800) -> str:
-    """纯文字兜底 summary 的展示截断：推理模型的长篇思考即使剥离后仍可能
-    留下超长正文，面板只展示前 limit 字，避免“输出一大堆”刷屏。"""
-    t = str(text or "").strip()
-    if len(t) <= limit:
-        return t
-    return t[:limit].rstrip() + "……（模型输出过长，已截断显示）"
-
-
-def _extract_summary_from_json_shell(text):
-    """模型偶尔把整个 JSON 对象写进正文，且字符串内含未转义引号导致解析失败。
-    此时按"纯文字回答"兜底时，剥掉 JSON 外壳只保留 summary 文本，避免用户看到原始 JSON。"""
-    if not isinstance(text, str):
-        return None
-    cleaned = text.strip()
-    if not cleaned.startswith("{") or '"summary"' not in cleaned:
-        return None
-    marker = '"operations"'
-    prefix = cleaned[: cleaned.index(marker)] if marker in cleaned else cleaned
-    m = re.search(r'"summary"\s*:\s*"', prefix)
-    if not m:
-        return None
-    start = m.end()
-    # 闭引号定位：正文含未转义引号是常态，靠「第一个引号」会截半句；summary
-    # 与 operations 之间夹其他键（如 clarify/options）时，嵌套值的闭引号后面
-    # 同样是「, "下一个键":」——光看尾巴形状分不出来。两轮择优（都从最后
-    # 一个候选往回）：① 剩余是纯标点且提取值不含 JSON 结构痕迹（引号键、{、[）；
-    # ② 剩余紧跟下一个键且提取值干净。两种形态都取到完整 summary（09-20 修复）
-    candidates = []
-    esc = False
-    for i in range(start, len(prefix)):
-        ch = prefix[i]
-        if esc:
-            esc = False
-            continue
-        if ch == "\\":
-            esc = True
-            continue
-        if ch == '"':
-            candidates.append(i)
-    if not candidates:
-        return None
-
-    def _clean_value(pos):
-        value = prefix[start:pos]
-        return not re.search(r'[\[{]|"\s*:', value)
-
-    end = candidates[-1]
-    for pos in reversed(candidates):
-        if re.match(r'^[\s,}\]]*$', prefix[pos + 1:]) and _clean_value(pos):
-            end = pos
-            break
-    if end == candidates[-1] or not _clean_value(end):
-        for pos in reversed(candidates):
-            if re.match(r'^\s*,\s*"[^"\n]*"\s*:', prefix[pos + 1:]) and _clean_value(pos):
-                end = pos
-                break
-    if end <= start:
-        return None
-    value = prefix[start:end].strip()
-    if not value:
-        return None
-    return value.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t")
 
 
 class HarnessError(RuntimeError):
@@ -484,60 +280,6 @@ def _supports_json_mode(provider: str) -> bool:
 
 
 
-def _has_edit_intent(text: str) -> bool:
-    """True when the instruction contains explicit graph-edit verbs."""
-    return any(hint in str(text or "") for hint in MODIFY_HINTS)
-
-
-# 模型用文字解释"为什么不做操作"时的特征词：目标不存在/已满足/受保护/无内容等。
-# 此时再强制重试只是浪费一次模型调用（线上即数十秒延迟），应直接接受空操作结果。
-_REFUSAL_MARKERS = (
-    "不存在", "没有找到", "未找到", "找不到", "没有名为", "无此节点", "查无",
-    "只读", "无法删除", "无法修改", "不能删除", "不能修改", "受保护", "不适合", "不宜",
-    "已存在", "已经存在", "已有连线", "无需重复", "重复添加", "已经是",
-    "空的", "空图", "没有节点", "暂无节点", "没有可评价", "无可评价", "无从评价", "没有内容",
-)
-
-
-def _refusal_explained(summary: str) -> bool:
-    """模型是否在 summary 里给出了不做操作的具体原因。
-
-    空操作 + 解释 = 合法拒绝（目标不存在 / 操作已满足 / 节点只读 / 图为空），
-    强制重试只会逼模型编造操作；空操作 + 无解释才视为偷懒，需要重试。"""
-    text = str(summary or "").strip()
-    if len(text) < 8:
-        return False
-    return any(marker in text for marker in _REFUSAL_MARKERS)
-
-
-def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=None) -> str:
-    """Choose the intended harness phase from explicit phase or instruction hints."""
-    text = str(instruction or "")
-    has_eval = any(hint in text for hint in EVALUATE_HINTS)
-    has_modify = any(hint in text for hint in MODIFY_HINTS)
-    has_expand = any(hint in text for hint in EXPAND_HINTS)
-    has_apply = any(hint in text for hint in APPLY_HINTS)
-    focus_ids = [str(item) for item in (focus_node_ids or []) if str(item)]
-    has_eval_nodes = any(node.get("kind") == "ai_eval" for node in snapshot.get("nodes", []))
-    # 创造模式（P3，D-R6）：只有前端「✦ 创造模式」按钮显式锁定 phase=preset 才进入，
-    # 意图词检测永不猜它——误触少、边界清楚
-    if phase == "preset":
-        return "preset"
-    # 答疑模式（三模式切换器，2026-09-30）：显式只读通道，与 preset 同款直通，
-    # 意图词检测永不改写它
-    if phase == "chat":
-        return "chat"
-    auto_phases = ("", "auto", "normal")
-    if phase == "apply" or (phase in auto_phases and has_apply and has_eval_nodes):
-        return "apply"
-    # 显式 expand 直通（此前 explicit expand 混在 auto_phases 里，会被评价词覆盖）
-    if phase == "expand" or (phase in auto_phases and has_expand and focus_ids):
-        return "expand"
-    if phase == "evaluate" or (phase in auto_phases and has_eval):
-        return "evaluate"
-    if phase in auto_phases and has_modify and not has_eval:
-        return "normal"
-    return "normal"
 
 
 def _resolve_model(model: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1055,399 +797,6 @@ def _journal_history_compact(journal: Optional[list], covered: int, summary_char
         logger.debug("harness journal history_compact append failed", exc_info=True)
 
 
-def _merge_post_ops(current: Dict[str, Any], result: Dict[str, Any], extra_ops: list,
-                    diff_base: Any = None) -> Dict[str, Any]:
-    """把事后补的操作（自动连边/补链/评价清理）合并进既有结果并重算 diff。
-
-    三处「build_next_snapshot → operations 相加 → diff 重算 → errors append」
-    的公共形态（09-20 抽取）。追加的 errors 必须能把 ok 翻成 error——
-    此前 status 在 build_next_snapshot 里已定死，事后报错改不了它，
-    孤立节点依旧孤立、结果却显示成功。"""
-    ops = list(result.get("operations") or [])
-    merged = build_next_snapshot(result.get("next_snapshot") or current, extra_ops)
-    result["operations"] = ops + list(merged.get("operations") or [])
-    result["next_snapshot"] = merged["next_snapshot"]
-    result["diff"] = diff_snapshots(diff_base if diff_base is not None else current,
-                                    merged["next_snapshot"])
-    for err in merged.get("errors") or []:
-        result.setdefault("errors", []).append(err)
-    if result.get("errors") and result.get("status") == "ok":
-        result["status"] = "error"
-    return result
-
-
-def _complete_expand_chains(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
-    """Deterministic safety net for expand phase:
-    1. When the model created answer nodes but forgot the corresponding learn module,
-       auto-create one and connect it (answer -> learn).
-    2. When the model omitted an answer chain entirely for a focus target
-       (known weak-model behavior: merging/omitting multi-target expands),
-       auto-create the full chain (answer + learn + target->answer + answer->learn).
-    Only runs for created/answered targets; never touches existing nodes."""
-    ops = list(result.get("operations") or [])
-    answers = []
-    learn_ids = set()
-    edges = []
-    for op in ops:
-        name = str(op.get("op") or "")
-        node_id = str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
-        if name == "create_node":
-            if str(op.get("kind") or "") == "answer":
-                answers.append(op)
-            elif str(op.get("kind") or "") == "module" and str(op.get("module_key") or "") == "learn":
-                if node_id:
-                    learn_ids.add(node_id)
-        elif name == "add_edge":
-            edges.append((str(op.get("from") or ""), str(op.get("to") or "")))
-    edge_pairs = set(edges)
-
-    def _ans_id(op):
-        return str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "")
-
-    extra_ops = []
-    auto_learn_count = 0
-    auto_chain_count = 0
-
-    # pass 1: missing learn module for created answers
-    for op in answers:
-        answer_id = _ans_id(op)
-        if not answer_id:
-            continue
-        if any((answer_id, learn) in edge_pairs for learn in learn_ids):
-            continue
-        extra_ops.append({
-            "op": "create_node",
-            "temp_id": "auto_learn_" + answer_id,
-            "kind": "module",
-            "module_key": "learn",
-            "label": "进阶学习",
-            "content": str(op.get("content") or "")[:300] or "进阶学习内容",
-            "reason": "自动补全进阶学习模块（模型遗漏）",
-        })
-        extra_ops.append({
-            "op": "add_edge",
-            "from": answer_id,
-            "to": "auto_learn_" + answer_id,
-            "relation": "模块",
-            "label": "进入进阶内容",
-            "reason": "自动补全进阶学习链",
-        })
-        auto_learn_count += 1
-
-    # pass 2: full missing chain per focus target
-    current_nodes = {str(n.get("id")): n for n in (current.get("nodes") or [])}
-    answer_ids = set(_ans_id(op) for op in answers if _ans_id(op))
-    covered_targets = {
-        frm for (frm, to) in edge_pairs
-        if to in answer_ids
-    }
-    for tid in (focus_node_ids or []):
-        tid = str(tid)
-        if tid in covered_targets or tid not in current_nodes:
-            continue
-        target_label = str(current_nodes[tid].get("label") or current_nodes[tid].get("title") or tid)
-        ans_temp = "auto_ans_" + tid
-        learn_temp = "auto_learn_" + tid
-        extra_ops.append({
-            "op": "create_node",
-            "temp_id": ans_temp,
-            "kind": "answer",
-            "label": target_label + "的进阶学习",
-            "content": "深入「" + target_label + "」的高阶方向与应用（正文由内容生成流程填充）",
-            "reason": "自动补全进阶学习链（模型遗漏该目标）",
-        })
-        extra_ops.append({
-            "op": "create_node",
-            "temp_id": learn_temp,
-            "kind": "module",
-            "module_key": "learn",
-            "label": "进阶学习",
-            "content": "进阶方向占位（正文由内容生成流程填充）",
-            "reason": "自动补全进阶学习链（模型遗漏该目标）",
-        })
-        extra_ops.append({
-            "op": "add_edge",
-            "from": tid,
-            "to": ans_temp,
-            "relation": "进阶",
-            "label": "深入" + target_label,
-            "reason": "自动补全进阶学习链",
-        })
-        extra_ops.append({
-            "op": "add_edge",
-            "from": ans_temp,
-            "to": learn_temp,
-            "relation": "模块",
-            "label": "进入进阶内容",
-            "reason": "自动补全进阶学习链",
-        })
-        auto_chain_count += 1
-
-    if not extra_ops:
-        return result
-    _merge_post_ops(current, result, extra_ops)
-    reasons = []
-    if auto_learn_count:
-        reasons.append("为 " + str(auto_learn_count) + " 个 AI 回答节点自动补全进阶学习模块")
-    if auto_chain_count:
-        reasons.append("为 " + str(auto_chain_count) + " 个目标知识点自动补全进阶学习链（模型遗漏）")
-    if reasons:
-        result.setdefault("warnings", []).append({
-            "index": "auto-expand",
-            "op": "create_node",
-            "reason": "；".join(reasons),
-        })
-    return result
-
-def _auto_connect_isolated(current: Dict[str, Any], result: Dict[str, Any], focus_node_ids, instruction: str = "") -> Dict[str, Any]:
-    """Deterministic safety net: connect created nodes that ended up isolated
-    (no add_edge referencing them) to the focus node, or to the first existing
-    node when there is no focus. Never runs for evaluate/apply phases."""
-    text = str(instruction or "")
-    if any(word in text for word in ("独立", "单独", "不要连接", "不连接")):
-        return result
-    ops = list(result.get("operations") or [])
-    created = [op for op in ops if str(op.get("op")) == "create_node"]
-    if not created:
-        return result
-    edge_endpoints = set()
-    for op in ops:
-        if str(op.get("op")) == "add_edge":
-            if op.get("from"):
-                edge_endpoints.add(str(op.get("from")))
-            if op.get("to"):
-                edge_endpoints.add(str(op.get("to")))
-    isolated = [
-        op for op in created
-        if str(op.get("assigned_id") or op.get("id") or op.get("temp_id") or "") not in edge_endpoints
-    ]
-    if not isolated:
-        return result
-    # 锚点从合并后快照的存活节点里选：current 是操作应用前的图，同批
-    # 「删第一个节点 + 建孤立节点」会把锚连到已删节点上报「起点不存在」，
-    # 孤立节点依旧孤立（09-20 修复）
-    live_ids = [str(node.get("id"))
-                for node in (result.get("next_snapshot") or {}).get("nodes", [])]
-    existing_ids = live_ids or [str(node.get("id")) for node in current.get("nodes", [])]
-    anchors = [str(item) for item in (focus_node_ids or []) if str(item) in existing_ids]
-    anchor = anchors[0] if anchors else (existing_ids[0] if existing_ids else None)
-    if not anchor:
-        return result
-    extra_ops = [
-        {
-            "op": "add_edge",
-            "from": anchor,
-            "to": str(op.get("assigned_id") or op.get("id") or op.get("temp_id")),
-            "relation": "关联",
-            "label": "自动连接（避免孤立节点）",
-            "reason": "自动连接（避免孤立节点）",
-        }
-        for op in isolated
-    ]
-    _merge_post_ops(current, result, extra_ops)
-    result.setdefault("warnings", []).append({
-        "index": "auto-connect",
-        "op": "add_edge",
-        "reason": "为 " + str(len(extra_ops)) + " 个孤立新节点自动连接到「" + anchor + "」",
-    })
-    return result
-
-
-def _fallback_summary(ops: list) -> str:
-    """Build a compact, human-readable Chinese summary from validated operations
-    when the model returned no text (common with tool-calling where content is empty).
-    Uses labels attached by core.py; never exposes raw node ids or edge keys."""
-    counts = {
-        "create_node": 0, "create_eval_node": 0, "update_node": 0,
-        "delete_node": 0, "add_edge": 0, "remove_edge": 0, "update_edge": 0,
-    }
-    details = []
-    for op in ops or []:
-        name = str(op.get("op") or op.get("type") or "")
-        if name in counts:
-            counts[name] += 1
-        label = str(op.get("label") or op.get("title") or "")
-        frm = str(op.get("from_label") or op.get("from") or "")
-        to = str(op.get("to_label") or op.get("to") or "")
-        target = str(op.get("target_label") or op.get("target") or op.get("target_node_id") or "")
-        if name == "create_node":
-            details.append("新增「" + (label or "节点") + "」")
-        elif name == "create_eval_node":
-            details.append("为「" + (target or label or "目标节点") + "」生成评价")
-        elif name == "update_node":
-            details.append("修改「" + (label or "节点") + "」")
-        elif name == "delete_node":
-            details.append("删除「" + (label or "节点") + "」")
-        elif name == "add_edge":
-            details.append("新增连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
-        elif name == "remove_edge":
-            details.append("删除连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
-        elif name == "update_edge":
-            details.append("调整连线「" + (frm or "上游") + "」→「" + (to or "下游") + "」")
-    if not details:
-        return ""
-    count_parts = []
-    if counts["create_node"]:
-        count_parts.append("新增 " + str(counts["create_node"]) + " 个节点")
-    if counts["add_edge"]:
-        count_parts.append(str(counts["add_edge"]) + " 条连线")
-    if counts["update_node"]:
-        count_parts.append("修改 " + str(counts["update_node"]) + " 处")
-    if counts["update_edge"]:
-        count_parts.append("调整 " + str(counts["update_edge"]) + " 条连线")
-    if counts["delete_node"]:
-        count_parts.append("删除 " + str(counts["delete_node"]) + " 个节点")
-    if counts["remove_edge"]:
-        count_parts.append("移除 " + str(counts["remove_edge"]) + " 条连线")
-    if counts["create_eval_node"]:
-        count_parts.append(str(counts["create_eval_node"]) + " 条评价建议")
-    head = ""
-    if count_parts:
-        head = "好的，已按你的要求完成梳理，共 " + str(len(ops or [])) + " 处调整（" + "、".join(count_parts) + "）。"
-    return (head + " " + "；".join(details)).strip()[:300]
-
-
-def _summarize_errors(errors) -> str:
-    lines = []
-    for item in errors or []:
-        op = item.get("op") or "?"
-        reason = item.get("reason") or "?"
-        lines.append(f"- operation {item.get('index', '?')} ({op}): {reason}")
-    return "\n".join(lines)
-
-
-
-
-def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2, max_nodes: int = 40) -> Optional[Dict[str, Any]]:
-    """快照过大且有焦点时，抽取焦点节点邻域子图（焦点 + 至多 max_hops 跳邻居）。
-
-    返回新快照（含 omitted_node_count），无法抽取（无焦点/无邻居）时返回 None。
-    只保留焦点邻域内的节点与连线，显著减小发送给模型的上下文。
-    """
-    nodes = snapshot.get("nodes") or []
-    edges = snapshot.get("edges") or []
-    focus = {str(item) for item in (focus_node_ids or []) if str(item)}
-    if not focus:
-        return None
-    node_by_id = {str(n.get("id")): n for n in nodes}
-    adj = {}
-    for e in edges:
-        frm = str(e.get("from") or "")
-        to = str(e.get("to") or "")
-        if frm:
-            adj.setdefault(frm, set()).add(to)
-        if to:
-            adj.setdefault(to, set()).add(frm)
-    kept = {nid for nid in focus if nid in node_by_id}
-    if not kept:
-        return None
-    frontier = set(kept)
-    for _ in range(max_hops):
-        if len(kept) >= max_nodes:
-            break
-        nxt = set()
-        for nid in frontier:
-            for nb in adj.get(nid, ()):
-                if nb in node_by_id and nb not in kept and len(kept) < max_nodes:
-                    kept.add(nb)
-                    nxt.add(nb)
-        if not nxt:
-            break
-        frontier = nxt
-    # 保留 AI 评价节点
-    for n in nodes:
-        if n.get("kind") == "ai_eval" and str(n.get("id")) not in kept and len(kept) < max_nodes:
-            kept.add(str(n.get("id")))
-    kept_edges = [e for e in edges if str(e.get("from") or "") in kept and str(e.get("to") or "") in kept]
-    kept_nodes = [node_by_id[nid] for nid in kept if nid in node_by_id]
-    result = {
-        "nodes": kept_nodes,
-        "edges": kept_edges,
-        "omitted_node_count": len(nodes) - len(kept_nodes),
-    }
-    # M2：薄弱点不是图元素，抽邻域子图时原样带过去（否则大图一降采样提示词就看不到薄弱点）
-    if snapshot.get("quiz_weak"):
-        result["quiz_weak"] = snapshot["quiz_weak"]
-    # 大陆 v3：跨画布共享点同理——它是提示词参考字段，不随节点裁剪丢失
-    if snapshot.get("continent_shared"):
-        result["continent_shared"] = snapshot["continent_shared"]
-    return result
-
-
-def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
-    """Trim non-focus node content for large snapshots; raise when still too big."""
-    if len(json.dumps(snapshot, ensure_ascii=False)) <= MAX_SNAPSHOT_CHARS:
-        return snapshot
-    focus = {str(item) for item in (focus_node_ids or [])}
-    for node in snapshot.get("nodes", []):
-        if node.get("id") in focus or node.get("kind") == "ai_eval":
-            continue
-        node["content"] = str(node.get("content") or "")[:NON_FOCUS_CONTENT_CHARS]
-        node["formula"] = ""
-    if len(json.dumps(snapshot, ensure_ascii=False)) > MAX_SNAPSHOT_HARD_CHARS:
-        count = len(snapshot.get("nodes") or [])
-        raise HarnessError(f"快照过大（{count} 个节点），请先选中局部节点或缩小范围后再让 AI 修改")
-    return snapshot
-
-
-# ---- T96 会话事件日志：模型往返捕获（journal 由 api 层传入，None 时零开销） ----
-# 每条 journal 记录一次真实模型调用的进与出。messages 只在首轮存全文——重试轮的
-# 消息体 = 首轮 + retry_feedback 追加，存反馈文本即可无损重建，避免每轮重复背
-# 一整份快照把日志撑大。长度上限按「够重放」取，超限截断并打标。
-_JOURNAL_MESSAGE_CAP = 32000
-_JOURNAL_RAW_CAP = 30000
-_JOURNAL_REASONING_CAP = 8000
-
-
-def _journal_raw_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """模型原话（剥思考前的正文 + 思维链 + 工具调用），截长落盘。
-
-    测试桩的 _call_model 返回不含 raw_content（固定形状），退回 content——
-    桩路径本来也没有思考原文可记。"""
-    content = raw.get("raw_content")
-    if content is None:
-        content = raw.get("content")
-    content = str(content or "")
-    reasoning = str(raw.get("reasoning_content") or "")
-    return {
-        "content": content[:_JOURNAL_RAW_CAP],
-        "content_truncated": len(content) > _JOURNAL_RAW_CAP or None,
-        "reasoning_content": reasoning[:_JOURNAL_REASONING_CAP],
-        "reasoning_truncated": len(reasoning) > _JOURNAL_REASONING_CAP or None,
-        "tool_calls": raw.get("tool_calls") or [],
-    }
-
-
-def _journal_roundtrip(
-    journal: Optional[list],
-    stage: str,
-    raw: Dict[str, Any],
-    attempt: int = 0,
-    retry_feedback: str = "",
-    fallback: str = "",
-    messages: Optional[list] = None,
-    step: Optional[int] = None,
-) -> None:
-    if journal is None:
-        return
-    entry: Dict[str, Any] = {"stage": stage, "attempt": attempt}
-    if step is not None:
-        entry["step"] = int(step)
-    if fallback:
-        entry["fallback"] = fallback
-    if retry_feedback:
-        entry["retry_feedback"] = str(retry_feedback)[:2000]
-    if messages is not None:
-        shaped = []
-        for m in messages:
-            content = str(m.get("content") or "")
-            item = {"role": str(m.get("role") or ""), "content": content[:_JOURNAL_MESSAGE_CAP]}
-            if len(content) > _JOURNAL_MESSAGE_CAP:
-                item["content_truncated"] = True
-            shaped.append(item)
-        entry["messages"] = shaped
-    entry["raw"] = _journal_raw_dict(raw)
-    journal.append(entry)
 
 
 def _should_selfcheck_ops(ops: list) -> bool:
@@ -1527,81 +876,6 @@ def _log_context_metrics(messages: list, snapshot: dict, phase: str,
         return None
 
 
-# ---- T93 只读查询回灌：tool_call 归一化与批次判定 ----
-
-def _tool_call_name_args(call: Any) -> tuple:
-    """取一个 tool_call 的 (name, arguments dict)；参数串非法/非对象给空 dict。"""
-    if not isinstance(call, dict):
-        return "", {}
-    fn = call.get("function") if isinstance(call.get("function"), dict) else {}
-    name = str(fn.get("name") or "").strip()
-    raw_args = fn.get("arguments")
-    if isinstance(raw_args, dict):
-        return name, raw_args
-    text = str(raw_args or "").strip()
-    if not text:
-        return name, {}
-    try:
-        args = json.loads(text)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        args = repair_json(raw_args)
-    return name, args if isinstance(args, dict) else {}
-
-
-def _readonly_batch(tool_calls: Any) -> list:
-    """本批 tool_calls 里的只读查询调用；空列表＝无需进入查询循环。"""
-    if not isinstance(tool_calls, list):
-        return []
-    batch = []
-    for call in tool_calls:
-        name, _args = _tool_call_name_args(call)
-        if name in READONLY_TOOL_NAMES:
-            batch.append(call)
-    return batch
-
-
-def _assistant_tool_message(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """把模型输出归一化成 assistant 回声消息（tool_calls 形状与回灌一致）。
-
-    id 缺失时补 call_<n>——role:"tool" 消息的 tool_call_id 必须与它逐条对上，
-    否则上游/网关会拒整段对话。"""
-    calls = raw.get("tool_calls") if isinstance(raw, dict) else None
-    shaped = []
-    for index, call in enumerate(calls or []):
-        if not isinstance(call, dict):
-            call = {}
-        fn = call.get("function") if isinstance(call.get("function"), dict) else {}
-        args = fn.get("arguments")
-        if not isinstance(args, str):
-            args = json.dumps(args if args is not None else {}, ensure_ascii=False)
-        shaped.append({
-            "id": str(call.get("id") or f"call_{index + 1}"),
-            "type": "function",
-            "function": {
-                "name": str(fn.get("name") or ""),
-                "arguments": args,
-            },
-        })
-    return {
-        "role": "assistant",
-        "content": str((raw or {}).get("content") or ""),
-        "tool_calls": shaped,
-    }
-
-
-def _readonly_call_arg(name: str, args: Dict[str, Any]) -> str:
-    """进度事件里的查询参数预览（read_node/list_neighbors 取节点，search* 取词）。"""
-    key = "node_id" if name in ("read_node", "list_neighbors") else "keyword"
-    return str(args.get(key) or args.get("id") or args.get("label") or "")[:60]
-
-
-def _readonly_tool_label(name: str) -> str:
-    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查。"""
-    if name == "search_knowledge":
-        return "知识库"
-    if name == "search_formulas":
-        return "公式速查"
-    return "图中信息"
 
 
 async def review_graph(
