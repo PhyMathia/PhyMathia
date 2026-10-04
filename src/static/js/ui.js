@@ -1914,6 +1914,12 @@ function _desiredBgUrl() {
   const m = currentTheme === 'dark' ? currentWallpaperSet().dark : currentWallpaperSet().light;
   return isLandscape ? m.land : m.port;
 }
+// 壁纸套 id 上 DOM（.bg-overlay 按套分档的 CSS 读取依据）：与壁纸图同一同步块落地，
+// 防「有图无纱/有纱无图」的错配帧。
+function _markWallpaperSet() {
+  document.documentElement.setAttribute('data-wallpaper', getWallpaperId(currentTheme));
+}
+
 function updateBgImage() {
   const newUrl = _desiredBgUrl();
   if (_bgCurrentUrl === newUrl) return;
@@ -1923,6 +1929,7 @@ function updateBgImage() {
 
   // 首次加载：图多半已在缓存外的首屏路径上，直接设置
   if (!_bgInitialized) {
+    _markWallpaperSet();
     el.style.backgroundImage = `url('${newUrl}')`;
     el.style.opacity = '1';
     _bgInitialized = true;
@@ -1937,6 +1944,7 @@ function updateBgImage() {
   // 冷缓存则退回异步等载，行为与旧版一致。
   const apply = function() {
     if (_desiredBgUrl() !== newUrl) return;
+    _markWallpaperSet();
     el.style.backgroundImage = `url('${newUrl}')`;
     _bgCurrentUrl = newUrl;
   };

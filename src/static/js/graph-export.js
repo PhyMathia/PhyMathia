@@ -410,18 +410,23 @@
     });
   }
 
-  // 壁纸 cover 铺满 + 主题遮罩压一层（与页面 .bg-overlay 同色），返回是否画了
+  // 壁纸 cover 铺满 + 页面同款遮罩压一层，返回是否画了。遮罩已分档（2026-10-04 拍板：
+  // 深色全保留，浅色仅星夜 20% 纱），读真实 .bg-overlay 的计算色做单一生效源——
+  // 别直接读 --overlay-bg：浅色档要按壁纸套归零，只有元素本身的计算值与页面逐帧同色。
   function _drawBgPhoto(ctx, bgImg, canvas) {
     if (!bgImg || !bgImg.width) return false;
     var sc = Math.max(canvas.width / bgImg.width, canvas.height / bgImg.height);
     var dw = bgImg.width * sc, dh = bgImg.height * sc;
     ctx.drawImage(bgImg, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
-    var overlay = 'rgba(5, 8, 25, 0.55)';
+    var overlay = 'rgba(0, 0, 0, 0)';
     try {
-      overlay = getComputedStyle(document.documentElement).getPropertyValue('--overlay-bg').trim() || overlay;
+      var veil = document.querySelector('.bg-overlay');
+      if (veil) overlay = getComputedStyle(veil).backgroundColor || overlay;
     } catch (e) {}
-    ctx.fillStyle = overlay;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (overlay && overlay !== 'rgba(0, 0, 0, 0)' && overlay !== 'transparent') {
+      ctx.fillStyle = overlay;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     return true;
   }
 

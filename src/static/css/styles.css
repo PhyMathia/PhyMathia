@@ -617,9 +617,18 @@
     .bg-overlay {
       position: fixed;
       inset: 0;
+      /* 壁纸遮罩分档（用户拍板 2026-10-04）：深色全保留（--overlay-bg 深藏青 .55，
+         大陆节点投影/面板混色共用同一变量，别动取值）；浅色默认裸壁纸（下条归零），
+         唯一例外是星夜×浅色的 20% 奶白纱（再下条，按 data-wallpaper 套 id 命中）。 */
       background: var(--overlay-bg);
       z-index: -1;
       pointer-events: none;
+    }
+    [data-theme="light"] .bg-overlay {
+      background: none;
+    }
+    [data-theme="light"][data-wallpaper="night"] .bg-overlay {
+      background: rgba(245, 240, 232, 0.2);
     }
 
     /* ====== 鼠标特效 ====== */
