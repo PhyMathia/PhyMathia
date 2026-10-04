@@ -95,8 +95,11 @@
   }
 
   // 兜底样式：壁纸照片深浅两张都内联、随 data-theme 一起切换（用户实测：只内嵌单张
-  // 的话切主题壁纸不动，像「主题没生效」）+ 主题遮罩 + 渐变兜底底色（照片没抓到时接管）
-  function _buildOverrideCss(bgs) {
+  // 的话切主题壁纸不动，像「主题没生效」）+ 主题遮罩 + 渐变兜底底色（照片没抓到时接管）。
+  // 遮罩（::after）与主应用 .bg-overlay 同口径（2026-10-04 拍板）：深色保留藏青纱
+  // （--overlay-bg）；浅色按浅色那张壁纸的套 id 分档——星夜 20% 奶白、其余裸壁纸。
+  // 导出页壁纸固定为导出时的选择，浅色套 id 由调用方传入。
+  function _buildOverrideCss(bgs, wpLight) {
     var dark = bgs && bgs.dark, light = bgs && bgs.light;
     return (dark
       ? 'body::before{content:"";position:fixed;inset:0;z-index:-2;background:url(' + dark + ') center/cover no-repeat;}'
@@ -105,6 +108,7 @@
         ? '[data-theme="light"] body::before{background:url(' + light + ') center/cover no-repeat;}'
         : '')
       + 'body::after{content:"";position:fixed;inset:0;z-index:-1;background:var(--overlay-bg, rgba(5,8,25,.55));pointer-events:none;}'
+      + '[data-theme="light"] body::after{background:' + (wpLight === 'night' ? 'rgba(245,240,232,.2)' : 'none') + ';}'
       + 'body{background:linear-gradient(165deg, var(--bg-dark, #0a0e1e) 0%, #0d1426 55%, #0a1020 100%) !important;}'
       + '[data-theme="light"] body{background:linear-gradient(165deg, #eef3fb 0%, #e6edf8 55%, #eef2fa 100%) !important;}';
   }
@@ -290,9 +294,11 @@
         sc.replaceWith(inline);
       }
 
-      // 兜底样式收尾（放在 body 末尾的 style：壁纸 + 遮罩 + 渐变兜底底色）
+      // 兜底样式收尾（放在 body 末尾的 style：壁纸 + 遮罩 + 渐变兜底底色）；挑选器不可用
+      // 时回退 'night'——内联的 /bg_*_landscape.jpg 旧默认图本就是星夜那套
       var ov = doc.createElement('style');
-      ov.textContent = _buildOverrideCss({ dark: bgDark, light: bgLight });
+      ov.textContent = _buildOverrideCss({ dark: bgDark, light: bgLight },
+        (typeof getWallpaperId === 'function') ? getWallpaperId('light') : 'night');
       doc.body.appendChild(ov);
 
       var html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;

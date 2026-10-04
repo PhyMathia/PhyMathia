@@ -7272,5 +7272,53 @@ await Promise.all(pendingChecks).catch(() => {});
   });
 }
 
+// ===== 壁纸遮罩分档（2026-10-04 用户拍板）：深色全保留；浅色默认裸壁纸、仅星夜 20% 纱 =====
+// 全部为静态源断言（同步、不碰共享键），追加在文件末尾安全。
+{
+  const stylesCss = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const expSrc = fs.readFileSync('src/static/js/graph-export.js', 'utf8');
+  const utopiaSrc = fs.readFileSync('src/static/js/utopia-html.js', 'utf8');
+  const wcheck = (name, fn) => {
+    try { if (fn() === false) throw new Error('断言未通过'); console.log('✓', name); }
+    catch (e) { failed++; console.error('❌', name, '->', (e && e.message) || e); }
+  };
+  const ruleBlock = (text, sel) => {
+    const i = text.indexOf(sel);
+    if (i < 0) return null;
+    return text.slice(i, text.indexOf('}', i));
+  };
+
+  wcheck('壁纸遮罩：深色默认档 var(--overlay-bg)（压暗纱，与节点投影共用变量）', () => {
+    const block = ruleBlock(stylesCss, '.bg-overlay {');
+    if (!block) throw new Error('找不到 .bg-overlay 规则');
+    if (!/background\s*:\s*var\(--overlay-bg\)/.test(block)) throw new Error('深色默认遮罩丢了');
+    return true;
+  });
+
+  wcheck('壁纸遮罩：浅色默认裸壁纸，星夜×浅色 20% 奶白纱是唯一例外', () => {
+    const light = ruleBlock(stylesCss, '[data-theme="light"] .bg-overlay');
+    if (!light || !/background\s*:\s*none/.test(light)) throw new Error('浅色默认应 background:none');
+    if (!stylesCss.includes('[data-theme="light"][data-wallpaper="night"] .bg-overlay')) throw new Error('缺星夜浅色档规则');
+    if (!/rgba\(245,\s*240,\s*232,\s*0?\.2\)/.test(stylesCss)) throw new Error('纱色应为 rgba(245,240,232,0.2)');
+    return true;
+  });
+
+  wcheck('壁纸套 id 上 DOM：updateBgImage 首载与 apply 两条路径都落 data-wallpaper', () => {
+    if (!uiSrc.includes('function _markWallpaperSet')) throw new Error('缺 _markWallpaperSet');
+    const seg = uiSrc.slice(uiSrc.indexOf('function updateBgImage'), uiSrc.indexOf('function updateBgImageDebounced'));
+    if ((seg.match(/_markWallpaperSet\(\)/g) || []).length < 2) throw new Error('两条落地路径都要同步落属性');
+    return true;
+  });
+
+  wcheck('导出链路跟随：PNG 压纱读真实 .bg-overlay、导出 HTML 浅色按壁纸套分档', () => {
+    if (!expSrc.includes("querySelector('.bg-overlay')")) throw new Error('PNG 导出应读真实遮罩元素的计算色');
+    if (expSrc.includes("getPropertyValue('--overlay-bg')")) throw new Error('PNG 导出不该直接读变量（浅色要按套归零）');
+    if (!utopiaSrc.includes("wpLight === 'night' ? 'rgba(245,240,232,.2)' : 'none'")) throw new Error('导出 HTML 浅色遮罩未按套分档');
+    if (!utopiaSrc.includes("(typeof getWallpaperId === 'function') ? getWallpaperId('light') : 'night'")) throw new Error('导出 HTML 应传浅色壁纸套 id');
+    return true;
+  });
+}
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);
