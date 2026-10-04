@@ -36,7 +36,14 @@ const entries = [
   'utopia-html.js',
   'graph-contextmenu.js',
   'knowledge.js',
+  // 知识大陆（2026-10-04 T36 自单文件拆六，组内顺序即依赖顺序，view 必须最后：
+  // 文末 window.* 测试导出块加载期立即执行，引用前五件的全部导出函数）
   'graph-continent.js',
+  'graph-continent-layout.js',
+  'graph-continent-edges.js',
+  'graph-continent-explore.js',
+  'graph-continent-regions.js',
+  'graph-continent-view.js',
   'models.js',
   'harness.js',
   'harness-run.js',

@@ -6,6 +6,18 @@ import vm from 'node:vm';
 
 const code = fs.readFileSync('src/static/js/app.js', 'utf8');
 
+// 知识大陆源码 2026-10-04（T36）自单文件拆六：静态契约检查一律读拼接全集，
+// 防止「符号搬去了兄弟文件、单文件 contains 断言假红/假绿」。
+const CONTINENT_SRC_FILES = [
+  'graph-continent.js',
+  'graph-continent-layout.js',
+  'graph-continent-edges.js',
+  'graph-continent-explore.js',
+  'graph-continent-regions.js',
+  'graph-continent-view.js',
+];
+const readContinentSrc = () => CONTINENT_SRC_FILES.map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
+
 // 宽松对象：任意属性访问返回同款代理；可调用；可赋值。不用 has/trap 避免死循环。
 function loose(name) {
   const store = {};
@@ -2123,7 +2135,7 @@ check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静�
   }
 
   // T143：知识大陆键盘操作收敛进 _kact（调用 ≥15 处）+ 焦点可见样式
-  const srcContinent = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const srcContinent = readContinentSrc();
   if (!srcContinent.includes('function _kact')) throw new Error('T143 graph-continent.js 缺 function _kact');
   const kactCount = (srcContinent.match(/\b_kact\(/g) || []).length;
   if (kactCount < 15) throw new Error('T143 graph-continent.js _kact( 调用数不足 15: ' + kactCount);
@@ -3055,7 +3067,9 @@ check('harness：体验级八件套 T99–T106（停止续接/内容diff/时间�
 check('graph-continent: 打包块在场且零会话键写路径', () => {
   const marker = code.indexOf('/* graph-continent.js */');
   if (marker < 0) throw new Error('app.js 缺少 graph-continent.js 块（build_frontend.mjs 未注册？）');
-  let end = code.indexOf('/* ', marker + 5);
+  // 2026-10-04 T36 拆分后大陆是连续六块：切片须罩住整组（graph-continent.js …
+  // graph-continent-view.js 之后才算出界），单块切片会漏掉 view 里的下钻通道。
+  let end = code.indexOf('/* ', code.indexOf('/* graph-continent-view.js */') + 5);
   if (end < 0) end = code.length;
   const chunk = code.slice(marker, end);
   if (chunk.indexOf('/api/continent') < 0) throw new Error('块内没有 /api/continent 拉取');
@@ -3070,7 +3084,7 @@ check('graph-continent: 打包块在场且零会话键写路径', () => {
 });
 
 check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 联运港 / 确认落笔口 / 透明层底）', () => {
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('CONTINENT_EDGES_API')) throw new Error('KV 端点常量缺失');
   if (!src.includes('_continentEdgeUndo')) throw new Error('边操作撤销栈缺失');
   if (!/undoEntry\)\s*_continentEdgeUndo\.push\((undoEntry)\)/.test(src)) throw new Error('提交必须带 undoEntry 才入栈（视口不入栈）');
@@ -3092,7 +3106,7 @@ check('graph-continent: v2/v3 静态契约（撤销栈只记边操作 / 联运�
 });
 
 check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 + 减少动态效果降级）', () => {
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
 
   // ---- 常量：两方向共用同一组参数，是「严格镜像」的落点 ----
@@ -3178,7 +3192,7 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
 });
 
 check('graph-continent: T133 主题重涂（重涂函数 / data-theme 属性监听 / 渲染期收集三件套）', () => {
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('function _continentRepaintRouteTheme(')) throw new Error('重涂函数缺失');
   if (!/attributeFilter:\s*\['data-theme'\]/.test(src)) throw new Error('未监听 <html> data-theme 属性变化');
   if (!src.includes('.graph-workspace.continent-open')) throw new Error('重涂缺「大陆开着」短路（关着重涂是白干）');
@@ -3230,7 +3244,7 @@ check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退
   if (sandbox._continentPinchStep(1, 100, 0, 0, 0, 50, 50) !== null) throw new Error('d=0 必须拒动');
   if (sandbox._continentPinchStep(NaN, 100, 100, 0, 0, 50, 50) !== null) throw new Error('非有限输入必须拒动');
   // 挂点在场：锚定接进了指针事件、抬指/取消都清理指针登记
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('function _continentPinchAnchor(')) throw new Error('捏合锚定函数缺失');
   if (!/_continentPinchAnchor\(viewport\)/.test(src)) throw new Error('捏合未接进指针事件');
   if (!/_continentPointers\.delete\(e\.pointerId\)/.test(src)) throw new Error('指针登记未在抬指/取消时清理');
@@ -3238,7 +3252,7 @@ check('graph-continent: T136 双指捏合（纯函数锚点数学 / 夹取 / 退
 });
 
 check('graph-continent: T135/T142 开图加载态与顶栏折行（三路并行拉取 / spinner / 窄屏 wrap）', () => {
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const openAt = src.indexOf('async function openContinentView');
   const openSrc = src.slice(openAt, openAt + 2600);
   if (!/Promise\.all\(\[\s*_continentLoadRegionOverrides\(\),\s*_continentLoadCorrectionCount\(\),\s*_continentFetchData\(\),?\s*\]\)/.test(openSrc)) {
@@ -3283,7 +3297,7 @@ check('graph-continent: T137 搜索扩界与截断明示（城市/海域行 / ca
   const region = matches(data, '数学', 30, extras);
   if (region.length !== 1 || region[0].type !== 'region' || region[0].key !== 'math') throw new Error('海域命中错');
   if (matches(data, '梯度', 1, extras).length !== 1) throw new Error('cap 截断失效');
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!/_continentSearchMatches\(_continentData, q, CONTINENT_SEARCH_LIMIT \+ 1, extras\)/.test(src)) {
     throw new Error('搜索未用 cap+1 探满（截断不可见）');
   }
@@ -3301,7 +3315,7 @@ check('graph-continent: T138/T140/T139 岛悬停与卡展开与图例符号（ex
   if (capped.shown !== 9) throw new Error('基线 cardCap 行为变了');
   const expanded = measure(Object.assign({}, big, { expandAll: true }), false, 9);
   if (expanded.shown !== 12) throw new Error('expandAll 未生效');
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!/el\.title = '岛：'/.test(src)) throw new Error('岛悬停 title 缺失');
   if (!src.includes('data-island-expand')) throw new Error('展开钮缺失');
   if (!/_continentExpanded\[rect\.sessionId\]/.test(src)) throw new Error('展开态回显（收起钮）缺失');
@@ -3325,7 +3339,7 @@ check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种�
   if (prefix(undefined) !== '◈ ') throw new Error('未知来源应退回标题前缀（旧后端无 kind 时不能空）');
   // 静态断言：三处渲染（城市胶囊/共享点弹层/城市弹层/折叠行）都走同一个前缀函数，
   // 不许再各写一份三元表达式——两处各写一份必然漏一处
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   const inlineTernaries = code.match(/kind === 'formula' \? '∑ '/g) || [];
@@ -3370,7 +3384,7 @@ check('graph-continent: v10 补词建议（建议行转义完整 / 两个落笔�
   } finally { sandbox.escapeHtml = realEsc; }
   if (row(null) !== '' || row({}) !== '') throw new Error('缺字段的建议应渲染为空行');
   // 静态契约：建议 API 只在族表弹层里拉一次；拒绝记录落独立 KV；收下复用族表 KV 通道
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (!code.includes("'/api/families/suggestions'")) throw new Error('建议端点常量缺失');
@@ -3439,7 +3453,7 @@ check('graph-continent: v10 新族候选（Φ 起名契约判读 / 名单外领�
   if (evil.includes('<script>')) throw new Error('候选行没转义标题（XSS）');
   // 静态契约：起名走 proxyChatWithModel（与问 Φ 同通道）、按钮触发（不自动）、
   // 建族写族表 KV 通道
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (!code.includes('data-cluster-section')) throw new Error('族表弹层缺新领域候选区容器');
@@ -3479,7 +3493,7 @@ check('graph-continent: 航线备注标签落在线上（曾因 arc.qx undefined
   }
   // 静态断言：渲染处不许再出现「读 arcPath 返回值里的控制点」这种写法
   // （先剥注释——这条规则的说明文字里就写着那个字段名，不剥会把注释当代码误报）
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (/arc\.q[xy]/.test(code)) throw new Error('备注落点又去读 arcPath 没返回的字段了');
@@ -3559,7 +3573,7 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
     throw new Error('region 算不出色相时应回落旧默认蓝');
   }
   // 静态：v7.2 的单条可调与全局开关、岛级落笔、编辑撤销；大陆模块零 window.prompt（U1 收编）
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
   if (/window\.prompt/.test(code)) throw new Error('大陆模块仍有 window.prompt（U1 已收编）');
@@ -3656,7 +3670,7 @@ check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛
   const fitZoom = Math.min(1200 / lay48r.worldW, 800 / lay48r.worldH) * 0.92;
   if (fitZoom < 0.15) throw new Error('48 岛 6 海域在 0.15 下限下一屏装不下：' + fitZoom);
   // LOD 静态契约：四档阈值常量 + _continentApplyTransform 切类 + CSS 后代选择器显隐
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   ['CONTINENT_LOD_WORLD', 'CONTINENT_LOD_DETAIL', 'CONTINENT_LOD_HORIZON',
    'CONTINENT_CLOUD_SCALE_MAX', 'CONTINENT_COLLAPSED_KEY',
    'CONTINENT_ISLAND_CARD_MAX', "classList.toggle('lod-world'",
@@ -3876,7 +3890,7 @@ check('graph-continent: v5.1 边界城市（一概念三画布=1 城 3 辐条 / 
   if (html.indexOf('3 天前') < 0) throw new Error('清单未写学习时间');
   if (html.indexOf('data-go="s1" data-item="a1"') < 0) throw new Error('「去看」缺跳转目标');
   // 静态契约：城市弹层 + 复用既有下钻通道（不自建切会话协议）+ 样式
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('_continentCityPopover')) throw new Error('城市弹层缺失');
   if (!src.includes('enterContinentSession(sid, iid)')) throw new Error('「去看」未复用下钻转场');
   if (!src.includes('continent-city')) throw new Error('城市节点类缺失');
@@ -4055,7 +4069,7 @@ check('graph-continent: v7.1a 海域层（分组/单岛不划地盘/待确认/�
     if (!a || !Number.isFinite(a.x) || !Number.isFinite(a.y)) throw new Error('旧布局路径产物异常：' + sid);
   });
   // 铁律「门控只路由不证明」的数据层隔离（静态）：画城市的调用链不许读门控字段
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const planSrc = src.slice(src.indexOf('function _continentDrawPlan'),
     src.indexOf('function _continentRender'));
   if (/\.domain\b|domainConf|domainSource/.test(planSrc)) {
@@ -4138,7 +4152,7 @@ check('graph-continent: v7.1b 门控（提示词契约名单固定 / 判读防�
   if (pend2.map(c => c.id).join() !== 'x2,z1') throw new Error('hash 增量未生效（x1 该跳过）');
   // 静态契约：打开大陆不自动跑（openContinentView 不触发 classify）、入口按钮、
   // 每批落盘、关图中止、建议采纳写族表
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const openSrc = src.slice(src.indexOf('async function openContinentView'),
     src.indexOf('function closeContinentView'));
   if (openSrc.includes('_continentGateClassify()')) throw new Error('打开大陆不许自动触发 Φ 归类');
@@ -4200,7 +4214,7 @@ check('graph-continent: v5.3 问 Φ（提示词契约 / 判读解析 / 判断块
     sandbox.escapeHtml = realEsc;
   }
   // 静态契约：折叠行带「问 Φ」按钮；走 proxyChatWithModel（stream:false）既有通道
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('data-phi=')) throw new Error('折叠清单缺「问 Φ」按钮');
   if (!src.includes('_continentAskPhi')) throw new Error('问 Φ 处理函数缺失');
   if (!src.includes('proxyChatWithModel')) throw new Error('未复用模型代理通道（/api/models/chat）');
@@ -4229,7 +4243,7 @@ check('graph-continent: v5.4 岛牌一句话 + 空态引导（纯拼接 / 机制
   if (tagline(null, () => 'x') !== '') throw new Error('缺簇应空串');
   if (tagline({ items: [{ title: 'A', createdAt: 0 }] }, () => '') !== 'A') throw new Error('无时间时只拼概念名');
   // 静态契约：副行元素 + 顶栏引导文案 + 引导元素与连接提示互斥
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('continent-cluster-sub')) throw new Error('岛牌副行缺失');
   if (!src.includes('continentGuide')) throw new Error('顶栏空态引导元素缺失');
   if (src.indexOf('暂无联运港') < 0) throw new Error('空态引导文案缺失');
@@ -4264,7 +4278,7 @@ check('graph-continent: v8 岛牌真摘要（model/manual 优先，无摘要回�
   const long = tagline({ items: [{ title: 'A', summary: '长'.repeat(60), createdAt: 1 }] }, () => '');
   if (long.length !== 48) throw new Error('摘要截断口径错：长度 ' + long.length);
   // 静态契约：摘要分支在（旧拼接路径的既有断言在上面用例里继续生效）
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (src.indexOf('_continentClipText(summary, 48)') < 0) throw new Error('岛牌摘要截断缺失');
   return true;
 });
@@ -4309,7 +4323,7 @@ check('graph-continent: v8 顶栏搜索（归一匹配 / 标题优先 / 上限 /
     throw new Error('上限失效');
   }
   // 静态契约：搜索框与结果下拉在顶栏、命中高亮类、关闭大陆清搜索态、渲染收尾重放
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('continentSearch')) throw new Error('顶栏搜索输入缺失');
   if (!src.includes('is-search-hit')) throw new Error('搜索命中高亮缺失');
   if (!src.includes('_continentSearchClear()')) throw new Error('关闭/收起时未清搜索态');
@@ -4353,7 +4367,7 @@ check('graph-continent: v8 族表编辑 + 纠正信号（规范化 / 术语解�
     throw new Error('来源标记错');
   }
   // 静态契约：顶栏「族表」入口、KV 通道、纠正记录读写与图例可见
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (!src.includes('continentFamilyBtn')) throw new Error('族表按钮缺失');
   if (!src.includes('/api/families')) throw new Error('族表合并视图端点未接');
   if (!src.includes('/api/kv/continent_families')) throw new Error('族表 KV 写通道缺失');
@@ -4373,7 +4387,7 @@ check('graph-continent: 顶栏空态引导只留联运港那一句（空画布�
   if (sandbox._continentEmptyCanvasCount !== undefined) {
     throw new Error('_continentEmptyCanvasCount 应已删除');
   }
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   if (src.indexOf('个画布还没有知识点') >= 0) throw new Error('空画布说明文案仍在');
   if (src.indexOf('window.getAllSessions') >= 0) throw new Error('不该再读前端会话清单');
   if (src.indexOf('暂无联运港') < 0) throw new Error('联运港引导被误删');
@@ -5741,7 +5755,7 @@ check('graph-continent: v8.1 有机抖动层（确定性 / 不重叠 / 岛在板
   // 静态契约：抖动层**只**从 _continentRender 进，布局纯函数里一根毛都不许有——
   // 挪进去会让「3 卡岛宽===536 / 1 卡岛宽>=240 / 卡块内居中 / 世界罩住 / 两次
   // 逐字节一致」五条冻结断言当场红（docs/dev/concept-continent.md v8.1）
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const jitStart = src.indexOf('// ---------- v8.1 有机抖动层');
   const body = src.slice(src.indexOf('function _continentLayoutGrid'), jitStart);
   if (/JITTER|_continentJitter/.test(body)) throw new Error('抖动混进了布局纯函数（会毁掉冻结布局契约）');
@@ -5922,7 +5936,7 @@ check('graph-continent: v8.5 低频位移场（幅度上界 / 梯度上界 / 坐
 
   // 静态钉：本 check 硬编码了波长（沙箱里读不到 bundle 顶层 const 的值），源里改了
   // 常量必须同步改这里，否则会拿着旧波长量新场、静默放过回归。
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   [['CONTINENT_WARP_CELL_COARSE', COARSE], ['CONTINENT_WARP_CELL_FINE', FINE]].forEach(([k, v]) => {
     if (!new RegExp('const ' + k + ' = ' + v + ';').test(src)) {
       throw new Error(k + ' 与 smoke 硬编码的 ' + v + ' 不一致（改常量要同步改本 check）');
@@ -6115,7 +6129,7 @@ check('graph-continent: v8.3 岛间距按亲缘分级（强亲缘更近 / 总宽
   }
   // 静态：每处 _continentLayoutGrid 调用都必须喂同一份 kin——探针与落位喂不同 kin，
   // 板就按一套尺寸算、岛按另一套摆，岛会捅出板
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const gridCalls = (src.match(/_continentLayoutGrid\([^)]*?\)/g) || [])
     .filter(c => c !== '_continentLayoutGrid(measured, originX, originY, kin)' || true);
   if (gridCalls.length < 3) throw new Error('没找到 _continentLayoutGrid 的调用点');
@@ -6206,7 +6220,7 @@ check('graph-continent: v8.4 海岸线（确定性 / 网格态归零 / 令牌化
   if (bad.length) throw new Error(bad.slice(0, 6).join('\n    ') + '（共 ' + bad.length + ' 处）');
 
   // 静态契约：CSS 两条规则必须走 --r-coast 回落；渲染层岛与海域各接一处
-  const src = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const src = readContinentSrc();
   const coastCalls = (src.match(/(?<![A-Za-z0-9_])_continentCoast\((?!\s*key)/g) || []).length;
   if (coastCalls !== 2) throw new Error('_continentCoast 应恰好被调用 2 处（海域板 + 岛牌），实际 ' + coastCalls);
   if (/_continentCoast\(rect\.key, 'region'\)/.test(src) !== true
@@ -7020,7 +7034,7 @@ await Promise.all(pendingChecks).catch(() => {});
   };
   const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
   const sessSrc = fs.readFileSync('src/static/js/session.js', 'utf8');
-  const contSrc = fs.readFileSync('src/static/js/graph-continent.js', 'utf8');
+  const contSrc = readContinentSrc();
   const modelsSrc = fs.readFileSync('src/static/js/models.js', 'utf8');
   const idxHtml = fs.readFileSync('src/static/index.html', 'utf8');
   const stylesCss = fs.readFileSync('src/static/css/styles.css', 'utf8');
