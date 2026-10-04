@@ -379,7 +379,7 @@ bullet("设计稿：CSS 样式核心（styles.css / styles-panels.css）、探�
 bullet("代码仓库：本地 git 仓库 PhyMathia（99 次提交，2026-07-08 至 2026-08-27）", "4、代码仓库：")
 bullet("路演 PPT：参赛演示文稿（独立仓库，由 B 整理）", "5、路演 PPT：")
 bullet("视频 Demo：交互可视化录屏版（带字幕/干净版 mp4，成片本地归档）、Φ 智能体视频脚本、大图 S 形巡览视频", "6、视频 Demo：")
-bullet("其他材料：docs/归档/火山杯的文档.md、docs/日志/工作日志.md、微调支线脚本（finetune/ 采集平台）", "7、其他材料：")
+bullet("其他材料：docs/归档/火山杯的文档.md、docs/日志/工作日志.md、微调支线脚本（experiments/finetune/ 采集平台）", "7、其他材料：")
 
 doc.save(OUT)
 print("saved:", os.path.abspath(OUT))

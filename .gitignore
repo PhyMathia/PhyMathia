@@ -105,9 +105,9 @@ html/
 导出图片/
 .video-build/
 
-# 本地大文件：模型权重 / 微调产物 / 临时与部署目录（不入库）
-/Qwen2.5-0.5B-Instruct/
-/finetune/
+# 本地大文件：AI 实验遗留收拢进 experiments/（Qwen 底模＋finetune 微调支线＋探针输出，2026-10-04 T160；
+# baseline/＝视觉与嵌入基线、录屏/演示视频＝screen-studio skill 落盘位，各有活依赖留根勿挪）
+/experiments/
 /.tmp/
 /windows_deploy/
 
