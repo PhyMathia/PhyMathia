@@ -41,7 +41,7 @@ EMBED_BATCH = 32
 _CACHE_MAX_ENTRIES = 3000       # 1024 维 × 3 位小数 ≈ 5.5KB/条，封顶 ~16MB
 _CACHE_SUMMARY_CLIP = 200       # 摘要并入向量文本时的截断（与投影 formula 同级宽松度）
 
-# 模型目录：env 覆盖 → 项目根下两个约定位置（用户实测把模型放在 baseline/embedding）
+# 模型目录：env 覆盖 → 项目根 models/Qwen3-Embedding（2026-10-04 自 baseline/embedding 迁入，旧位作废；env 仍可指向任意处，如换 bge-small-zh）
 _ENV_DIR = "PHYMATHIA_EMBEDDING_DIR"
 _MODEL_FILE = "model_int8.onnx"
 _TOKENIZER_FILE = "tokenizer.json"
@@ -53,7 +53,6 @@ def _model_dir():
     if env:
         candidates.append(Path(env))
     root = Path(__file__).resolve().parents[2]
-    candidates.append(root / "baseline" / "embedding")
     candidates.append(root / "models" / "Qwen3-Embedding")
     for p in candidates:
         if (p / _MODEL_FILE).is_file() and (p / _TOKENIZER_FILE).is_file():

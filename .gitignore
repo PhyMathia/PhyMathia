@@ -137,8 +137,7 @@ _split3.cjs
 /docs/参赛材料/
 /录屏/
 
-# v9 向量证据：本地模型与向量缓存（大文件，不进 git）
-baseline/embedding/
+# v9 向量证据：本地模型与向量缓存（大文件，不进 git；模型 2026-10-04 自 baseline/embedding 迁入 models/Qwen3-Embedding）
 models/
 data/embedding_cache.json
 
