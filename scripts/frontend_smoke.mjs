@@ -2848,6 +2848,57 @@ check('quiz：题库存量迁移（老题全 A 打乱 + answersShuffled 标记�
   return true;
 });
 
+check('quiz：题库按画布分池（T159）——签名集合命中才复用、只取本画布的题、落库累积签名', () => {
+  const poolA = { knowledge: [{ title: '单摆周期' }], formulas: [] };
+  const poolB = { knowledge: [{ title: '梯度定义' }], formulas: [] };
+  const poolC = { knowledge: [{ title: '泊松分布' }], formulas: [] };
+  const sigA = sandbox._quizPoolSignature(poolA);
+  const sigB = sandbox._quizPoolSignature(poolB);
+  const q = (sid, n) => ({
+    id: 'ai_test_' + n, type: 'choice', prompt: '题干' + sid + n, promptHtml: '',
+    sessionId: sid, title: 't', difficulty: 'medium',
+    options: [{ key: 'A', text: '对' + n }, { key: 'B', text: '错' + n }], correctIndex: 0
+  });
+  const prevMode = vm.runInContext('quizMode', sandbox);
+  const prevGetSid = sandbox.window.getCurrentSessionId;
+  // quizBank/quizMode 是 quiz.js 的词法绑定，沙箱外不可达——经 vm.runInContext 原地改（同 graphView 先例）
+  const setBank = bank => vm.runInContext('quizBank = ' + JSON.stringify(bank) + ';', sandbox);
+  try {
+    vm.runInContext("quizMode = 'session';", sandbox);
+    sandbox.window.getCurrentSessionId = () => 'sess_A';
+    // 旧版形态（单一 poolKey）按「单成员签名集合」兼容：本画布命中即复用，且只取本会话的题
+    setBank({ poolKey: sigA, questions: [q('sess_A', 1), q('sess_A', 2), q('sess_B', 1), q('sess_B', 2)] });
+    let mine = sandbox._bankForPool(poolA);
+    if (!Array.isArray(mine) || mine.length !== 2 || mine.some(x => x.sessionId !== 'sess_A')) {
+      throw new Error('旧版单签名应复用本画布 2 题，实际 ' + (mine && mine.length));
+    }
+    // 未盖过章的画布 → 过期重出（素材变化防脱节的旧规则保留）
+    if (sandbox._bankForPool(poolC) !== null) throw new Error('未生成过题的画布应判过期');
+    // 新版形态：两个画布的章各管各的；本画布在库中不足 2 题也重出（不再拿别画布的题凑数）
+    setBank({ poolKeys: { [sigA]: 1, [sigB]: 1 }, questions: [q('sess_A', 1), q('sess_A', 2), q('sess_B', 3)] });
+    sandbox.window.getCurrentSessionId = () => 'sess_B';
+    if (sandbox._bankForPool(poolB) !== null) throw new Error('本画布题数不足 2 应重出而不是拿别画布的题凑');
+    setBank({ poolKeys: { [sigA]: 1, [sigB]: 1 }, questions: [q('sess_B', 3), q('sess_B', 4)] });
+    mine = sandbox._bankForPool(poolB);
+    if (!Array.isArray(mine) || mine.length !== 2) throw new Error('集合命中应复用本画布 2 题');
+    // 落库：签名累积而不是覆盖（换画布出题不再作废他画布刚盖的章）
+    sandbox.window.getCurrentSessionId = () => 'sess_A';
+    setBank(null);
+    sandbox.localStorage.setItem('phymathia_quiz_bank', JSON.stringify({ poolKeys: { [sigA]: 1 }, questions: [q('sess_A', 1), q('sess_A', 2)], updatedAt: 1 }));
+    sandbox._saveQuizBank(poolB, [q('sess_B', 3), q('sess_B', 4)]);
+    const saved = JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_bank'));
+    if (!saved.poolKeys || !saved.poolKeys[sigA] || !saved.poolKeys[sigB]) throw new Error('落库应累积两画布签名');
+    if (saved.poolKey !== undefined) throw new Error('新版落库不应再写单一 poolKey');
+    if (!saved.questions.some(x => x.id === 'ai_test_3') || !saved.questions.some(x => x.id === 'ai_test_1')) throw new Error('落库应合并新旧题');
+  } finally {
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    vm.runInContext('quizBank = null;', sandbox);
+    vm.runInContext('quizMode = ' + JSON.stringify(prevMode) + ';', sandbox);
+    sandbox.window.getCurrentSessionId = prevGetSid;
+  }
+  return true;
+});
+
 check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）', () => {
   sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
   sandbox.window.getCurrentSessionId = () => M2_SESSION;

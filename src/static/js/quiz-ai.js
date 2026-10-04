@@ -329,8 +329,19 @@ function _saveQuizBank(pool, aiQuestions) {
     seen.add(sig);
     merged.push(q);
   }
+  // T159：签名按画布累积成集合（旧版单一 poolKey 迁移为单成员集合；上限 60，超出淘汰最早的），
+  // 换画布出题不再改写掉他画布刚盖的章——否则多画布来回用永远在重出题。
+  const stamps = (existing && existing.poolKeys && typeof existing.poolKeys === 'object')
+    ? { ...existing.poolKeys }
+    : (existing && existing.poolKey ? { [existing.poolKey]: 1 } : {});
+  const sig = _quizPoolSignature(pool);
+  if (sig) {
+    stamps[sig] = 1;
+    const stampKeys = Object.keys(stamps);
+    for (const k of stampKeys.slice(0, Math.max(0, stampKeys.length - 60))) delete stamps[k];
+  }
   _persistQuizBank({
-    poolKey: _quizPoolSignature(pool),
+    poolKeys: stamps,
     // merged 是旧题在前、新题在后：保尾 30 保留最新题。
     // 此前 slice(0, 30) 在题库满后会把新生成的题全部静默丢弃（“补充AI题”看似成功实则无效）
     questions: merged.slice(-30),
@@ -481,12 +492,21 @@ function _migrateQuizBankAnswerPositions() {
 
 function _bankForPool(pool) {
   const bank = quizBank || _readQuizBank();
-  if (!bank || !Array.isArray(bank.questions) || bank.questions.length < 2) return null;
-  // 素材池已变化（知识点/公式增删）时旧题库过期，强制重新生成：
-  // 此前 poolKey 只存不校验，会话知识更新后仍复用与当前知识脱节的旧题
+  if (!bank || !Array.isArray(bank.questions)) return null;
+  // T159 按画布分池：池签名命中「生成过题的画布签名集合」才复用（旧版单一 poolKey 视为单成员集合），
+  // 换画布不再互相作废他画布刚出的题；素材池已变化（知识点/公式增删）仍按画布过期强制重出。
+  // 命中后只取归属当前会话的题——此前整库混入别画布的题，作答成绩会记到别画布名下。
   const expected = _quizPoolSignature(pool);
-  if (expected && bank.poolKey && bank.poolKey !== expected) return null;
-  return bank.questions;
+  const stamps = (bank.poolKeys && typeof bank.poolKeys === 'object')
+    ? bank.poolKeys
+    : (bank.poolKey ? { [bank.poolKey]: 1 } : {});
+  if (expected && Object.keys(stamps).length && !stamps[expected]) return null;
+  let mine = bank.questions;
+  if (quizMode === 'session') {
+    const ids = _quizCurrentSessionIds();
+    if (ids.size) mine = mine.filter(q => q && ids.has(q.sessionId || ''));
+  }
+  return mine.length >= 2 ? mine : null;
 }
 
 function _quizBankQuestions() {
