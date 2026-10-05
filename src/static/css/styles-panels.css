@@ -95,7 +95,7 @@
       display: flex; align-items: center; gap: 12px;
       color: var(--text-primary); border: 1px solid var(--border-color);
       border-radius: var(--r-md); padding: 8px 12px 8px 20px;
-      font-size: var(--fs-md); z-index: 9999; opacity: 0;
+      font-size: var(--fs-md); z-index: var(--z-toast-top); opacity: 0;
       transition: opacity 0.3s, transform 0.3s; white-space: nowrap;
     }
     .kp-undo-toast-btn {
@@ -350,7 +350,7 @@
 
     /* Bookmark modal */
     .bookmark-modal-overlay {
-      position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.5);
+      position: fixed; inset: 0; z-index: var(--z-above-toast); background: rgba(0,0,0,0.5);
       backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center;
     }
     .bookmark-modal-overlay.active { display: flex; }
@@ -409,7 +409,7 @@
     .onboarding-overlay {
       position: fixed;
       inset: 0;
-      z-index: 10000;
+      z-index: var(--z-guide);
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.4s ease;
@@ -689,7 +689,7 @@
     .example-guide-overlay {
       position: fixed;
       inset: 0;
-      z-index: 10050;
+      z-index: var(--z-guide-top);
       pointer-events: none;
     }
     .example-guide-backdrop {
@@ -996,7 +996,7 @@
     .viz-fullscreen-overlay {
       position: fixed;
       inset: 0;
-      z-index: 99999;
+      z-index: var(--z-max);
       background: var(--viz-overlay-bg);
       display: none;
       flex-direction: column;
@@ -2568,7 +2568,7 @@
   position: fixed;
   right: 24px;
   bottom: 104px;
-  z-index: 10050;
+  z-index: var(--z-guide-top);
   width: 296px;
   max-width: calc(100vw - 32px);
   display: flex;
@@ -3005,7 +3005,7 @@
 /* ===== 探索网右键菜单（M2 视觉细化）：玻璃卡 + 图标列 + 悬停强调条 + 快捷键提示 ===== */
 .graph-context-menu {
   position: fixed;
-  z-index: 3000;
+  z-index: var(--z-menu);
   min-width: 194px;
   max-width: 286px;
   max-height: min(70vh, 520px);
