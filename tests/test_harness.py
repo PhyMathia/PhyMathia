@@ -3096,3 +3096,24 @@ class OperationsLimitTest(unittest.TestCase):
         from harness.core import MAX_OPERATIONS, build_next_snapshot
         result = build_next_snapshot({"nodes": [], "edges": []}, self._ops(MAX_OPERATIONS))
         self.assertFalse([e for e in result["errors"] if e.get("index") == "limit"])
+
+
+class MachineTextSummaryTest(unittest.TestCase):
+    """T118：工具分支 content 机器文本判定——无中文/配方键名 → 回落计数摘要。"""
+
+    def test_english_monologue_is_machine_text(self):
+        from harness.review import _looks_like_machine_text
+        self.assertTrue(_looks_like_machine_text("Let me think about the recipe structure..."))
+        self.assertTrue(_looks_like_machine_text(""))
+        self.assertTrue(_looks_like_machine_text('{"level_tags": ["基础"]}'))
+
+    def test_chinese_prose_is_not_machine_text(self):
+        from harness.review import _looks_like_machine_text
+        self.assertFalse(_looks_like_machine_text("已创建「三问追踪」配方，出口为基础/进阶/拓展三档。"))
+        # 中文正文里夹少量英文术语不算机器文本
+        self.assertFalse(_looks_like_machine_text("这个配方用 KaTeX 渲染公式，max 最多 12 个出口。"))
+
+    def test_recipe_key_names_in_content_is_machine_text(self):
+        from harness.review import _looks_like_machine_text
+        self.assertTrue(_looks_like_machine_text("设置 confused_prompt 与 retry_prompt 两个槽"))
+        self.assertTrue(_looks_like_machine_text("level_tags=['基础','进阶','拓展'] 已写入"))

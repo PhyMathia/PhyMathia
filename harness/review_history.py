@@ -65,6 +65,24 @@ def _clamp_display_summary(text, limit: int = 800) -> str:
     return t[:limit].rstrip() + "……（模型输出过长，已截断显示）"
 
 
+# T118：工具分支 content 的机器文本特征——模型把独白/配方键名写进 content 时
+# 会原样上屏；无中文或带配方 schema 键名都判为机器文本，回落计数摘要
+_MACHINE_TEXT_MARKERS = (
+    "confused_prompt", "followup_prompt", "retry_prompt", "strict_output",
+    "level_tags", "label_from", "drag_form", "context_channel", "model_role",
+    "on_incomplete", "content_kind", "numbered_list",
+)
+
+
+def _looks_like_machine_text(text) -> bool:
+    """用户向 summary 是中文散文；无汉字（英文独白/JSON 残段）或混着配方
+    schema 键名（弱模型把 payload 草稿写进 content）都判为机器文本。"""
+    t = str(text or "")
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in t):
+        return True
+    return any(marker in t for marker in _MACHINE_TEXT_MARKERS)
+
+
 def _extract_summary_from_json_shell(text):
     """模型偶尔把整个 JSON 对象写进正文，且字符串内含未转义引号导致解析失败。
     此时按"纯文字回答"兜底时，剥掉 JSON 外壳只保留 summary 文本，避免用户看到原始 JSON。"""
