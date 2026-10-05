@@ -1106,7 +1106,7 @@
     function positionIconPicker(panel, iconEl) {
       const rect = iconEl.getBoundingClientRect();
       panel.style.position = 'fixed';
-      panel.style.zIndex = '9999';
+      panel.style.zIndex = 'var(--z-toast-top)';
       // 先设 top 再算 left，确保 offsetWidth 正确
       panel.style.top = rect.bottom + 4 + 'px';
       let left = rect.left + rect.width / 2 - panel.offsetWidth / 2;

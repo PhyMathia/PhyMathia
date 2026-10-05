@@ -351,14 +351,21 @@
       --z-popover: 500;    /* 浮层菜单、提示条 */
       --z-toast: 1000;     /* 全局提示 */
 
-      /* 高位带（T63 收编）：必须压过知识面板/右键菜单/引导遮罩一族的浮层。
+      /* 高位带（T63 起收编，T166 补齐旧裸值）：必须压过知识面板/右键菜单/引导遮罩一族的浮层。
          数值即档位，别插值也别再写裸 z-index——新浮层挂到语义最近的现有档上。 */
+      --z-above-toast: 1100;      /* 书签模态遮罩（压 --z-toast 一头） */
+      --z-menu: 3000;             /* 探索网右键菜单 */
       --z-pet-window: 9700;       /* Φ 桌宠聊天窗口 */
       --z-pet: 9800;              /* Φ 桌宠本体（压窗口一头） */
+      --z-panel-top: 9998;        /* 高位面板：模型面板/任务面板（压桌宠一头） */
+      --z-toast-top: 9999;        /* 压高位面板一头：模型提示/图标选择器/知识面板撤销条 */
+      --z-guide: 10000;           /* 首次引导遮罩 */
       --z-float: 10001;           /* 高位浮动面板：画布历史/图体检/模型对话框 */
       --z-float-top: 10002;       /* 压 --z-float 一头：体检面板、完成通知卡、苏格拉底输入 */
+      --z-guide-top: 10050;       /* 压引导一头：示例引导遮罩/检测返回胶囊 */
       --z-graph-modal: 12000;     /* 节点配方/关系网络全屏模态遮罩 */
       --z-graph-modal-top: 12100; /* 模态之上的取色层（必须高于 --z-graph-modal） */
+      --z-max: 99999;             /* 可视化全屏遮罩：本仓最高层 */
 
       /* 语义状态色：危险/成功/警告各只有一族，别再新造红绿黄。
          -fg 用于文字/描边，-bg 用于弱底，-border 用于描边组合 */
@@ -1137,7 +1144,7 @@
     /* 图标选择面板 */
     /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
     .icon-picker-panel {
-      z-index: 9999;
+      z-index: var(--z-toast-top);
       display: block;
       padding: 6px;
       border: 1px solid var(--icon-picker-border);
@@ -1565,7 +1572,7 @@
       border: 1px solid var(--border);
       border-radius: var(--r-lg);
       padding: 16px;
-      z-index: 9998;
+      z-index: var(--z-panel-top);
       min-width: 300px;
       max-width: 360px;
       color: var(--text-primary);
@@ -1592,7 +1599,7 @@
       border: 1px solid var(--border);
       border-radius: var(--r-lg);
       padding: 10px 10px 6px;
-      z-index: 9998;
+      z-index: var(--z-panel-top);
       min-width: 360px;
       max-width: 480px;
       color: var(--text-primary);
@@ -1896,7 +1903,7 @@
       padding: 8px 20px;
       border-radius: var(--r-md);
       font-size: var(--fs-md);
-      z-index: 9999;
+      z-index: var(--z-toast-top);
       opacity: 0;
       transition: transform 0.3s ease, opacity 0.3s ease;
       pointer-events: none;
