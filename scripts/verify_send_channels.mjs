@@ -19,7 +19,7 @@
 // 假装通过）。真实 data/ 只读不碰——全程在临时数据目录里跑。
 //
 // **不烧钱的跑法（backlog T57，2026-09-29 落地）**：先起本地 mock 上游
-//   node scripts/mock_upstream.mjs        # 127.0.0.1:5061，OpenAI 兼容 SSE/JSON 双格式
+//   node scripts/mock_upstream.mjs        # 127.0.0.1:5065，OpenAI 兼容 SSE/JSON 双格式
 // 再用环境变量把验证模型指过去（七条通道全走真实 UI 路径，只是上游换成 mock）：
 //   VERIFY_PROVIDER=opencode-go VERIFY_MODEL=mock-1 \
 //   VERIFY_BASE_URL=http://127.0.0.1:5061/v1 VERIFY_API_KEY=mock node scripts/verify_send_channels.mjs
