@@ -60,6 +60,7 @@ from .review_history import (
     _history_block,
     _clamp_display_summary,
     _extract_summary_from_json_shell,
+    _looks_like_machine_text,
 )
 from .review_kb import _load_kb_file, _load_user_kb
 from .review_ops import (
@@ -1447,7 +1448,12 @@ async def review_graph(
                         last_errors = tool_errors
                         logger.warning("tool_calls 解析失败: %s", tool_errors)
                         continue
-                    summary = str(raw.get("content") or "").strip()
+                    # T118：content 里常是模型独白/配方键名等机器文本（创造模式
+                    # create_recipe 高发），与纯文字分支同口径 clamp＋机器文本判定；
+                    # 空/机器文本回落计数摘要（result 组装处的 _fallback_summary）
+                    summary = _clamp_display_summary(str(raw.get("content") or "").strip())
+                    if _looks_like_machine_text(summary):
+                        summary = ""
                 else:
                     payload = extract_json(last_raw)
                     if payload is None and current_tools is not None:
