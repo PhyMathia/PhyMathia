@@ -3117,3 +3117,34 @@ class MachineTextSummaryTest(unittest.TestCase):
         from harness.review import _looks_like_machine_text
         self.assertTrue(_looks_like_machine_text("设置 confused_prompt 与 retry_prompt 两个槽"))
         self.assertTrue(_looks_like_machine_text("level_tags=['基础','进阶','拓展'] 已写入"))
+
+
+class RecipeDescPayloadMismatchTest(unittest.TestCase):
+    """T79：op 描述声称改了配方字段而 payload 未携带 → 后端 warning（不拦截）。"""
+
+    def _create_op(self, reason, recipe_extra=None):
+        recipe = {"name": "三问追踪", "base": {"kind": "module"}, "generate": {"prompt": "生成"}}
+        if recipe_extra:
+            recipe.update(recipe_extra)
+        return {"op": "create_recipe", "recipe": recipe, "reason": reason}
+
+    def test_desc_mentions_missing_key_warns(self):
+        from harness.core import build_next_snapshot
+        with self.assertLogs("harness.core", level="WARNING") as cm:
+            result = build_next_snapshot(
+                {"nodes": [], "edges": [], "user_recipes": []},
+                [self._create_op("把 level_tags 改为基础/进阶/拓展三档")],
+            )
+        self.assertTrue(any("level_tags" in line for line in cm.output))
+        # 只告警不拦截：配方照常入列
+        self.assertFalse(result["errors"])
+
+    def test_desc_without_keys_no_warn(self):
+        from harness.core import build_next_snapshot
+        recipe = {"name": "三问追踪", "base": {"kind": "module"}, "generate": {"prompt": "生成"},
+                  "ports": {"dynamic": {"parser": {"pattern": "numbered_list", "level_tags": ["基础", "进阶", "拓展"]}}}}
+        with self.assertNoLogs("harness.core", level="WARNING"):
+            build_next_snapshot(
+                {"nodes": [], "edges": [], "user_recipes": []},
+                [{"op": "create_recipe", "recipe": recipe, "reason": "建好苏格拉底式配方，带三档等级标签"}],
+            )
