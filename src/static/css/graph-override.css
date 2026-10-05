@@ -278,7 +278,7 @@
 }
 
 .graph-node-root {
-  border: 2px solid #ffffff !important;
+  border: 2px solid var(--white) !important;
 }
 
 .graph-node-branch {
@@ -288,25 +288,25 @@
 }
 
 .graph-node-module.graph-module-physics {
-  border-color: #f59e0b !important;
+  border-color: var(--node-physics) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
 
 .graph-node-module.graph-module-math {
-  border-color: #3b82f6 !important;
+  border-color: var(--node-math) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
 
 .graph-node-module.graph-module-graph {
-  border-color: #0891b2 !important;
+  border-color: var(--node-graph) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
 
 .graph-node-module.graph-module-viz {
-  border-color: #f472b6 !important;
+  border-color: var(--node-viz) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
@@ -316,13 +316,13 @@
 }
 
 .graph-node-module.graph-module-socratic {
-  border-color: #f43f5e !important;
+  border-color: var(--node-socratic) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
 
 .graph-node-module.graph-module-learn {
-  border-color: #a855f7 !important;
+  border-color: var(--node-learn) !important;
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
@@ -349,7 +349,7 @@
   font-size: var(--fs-2xs) !important;
   font-weight: 800 !important;
   letter-spacing: 0.04em !important;
-  color: #fff !important;
+  color: var(--white) !important;
   background: var(--accent) !important;
   text-transform: uppercase !important;
 }
@@ -586,7 +586,7 @@
 .chat-header .header-actions #runAllBtn {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
-  color: #fff !important;
+  color: var(--white) !important;
 }
 
 .chat-header .header-actions .header-btn.run-gen-btn:disabled,
@@ -602,7 +602,7 @@
 .chat-header .header-actions #runAllBtn:not(:disabled):hover {
   background: var(--accent-hover) !important;
   border-color: var(--accent) !important;
-  color: #fff !important;
+  color: var(--white) !important;
 }
 
 .app-container .progress-status {
@@ -871,28 +871,28 @@
 .graph-node-user {
   --graph-bubble-start: rgba(74, 158, 255, 0.12);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #4a9eff;
+  --graph-bubble-border: var(--node-question);
   --graph-bubble-glow: rgba(74, 158, 255, 0.38);
 }
 
 .graph-node-answer {
   --graph-bubble-start: rgba(16, 185, 129, 0.12);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #10b981;
+  --graph-bubble-border: var(--node-answer);
   --graph-bubble-glow: rgba(16, 185, 129, 0.38);
 }
 
 .graph-node-hub {
   --graph-bubble-start: rgba(234, 179, 8, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #eab308;
+  --graph-bubble-border: var(--node-hub);
   --graph-bubble-glow: rgba(234, 179, 8, 0.32);
 }
 
 .graph-node-summary {
   --graph-bubble-start: rgba(13, 148, 136, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #0d9488;
+  --graph-bubble-border: var(--node-summary);
   --graph-bubble-glow: rgba(13, 148, 136, 0.32);
 }
 
@@ -913,49 +913,49 @@
 .graph-node-module.graph-module-physics {
   --graph-bubble-start: rgba(245, 158, 11, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #f59e0b;
+  --graph-bubble-border: var(--node-physics);
   --graph-bubble-glow: rgba(245, 158, 11, 0.30);
 }
 
 .graph-node-module.graph-module-math {
   --graph-bubble-start: rgba(59, 130, 246, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #3b82f6;
+  --graph-bubble-border: var(--node-math);
   --graph-bubble-glow: rgba(59, 130, 246, 0.30);
 }
 
 .graph-node-module.graph-module-graph {
   --graph-bubble-start: rgba(8, 145, 178, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #0891b2;
+  --graph-bubble-border: var(--node-graph);
   --graph-bubble-glow: rgba(8, 145, 178, 0.30);
 }
 
 .graph-node-module.graph-module-viz {
   --graph-bubble-start: rgba(244, 114, 182, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #f472b6;
+  --graph-bubble-border: var(--node-viz);
   --graph-bubble-glow: rgba(244, 114, 182, 0.30);
 }
 
 .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #f43f5e;
+  --graph-bubble-border: var(--node-socratic);
   --graph-bubble-glow: rgba(244, 63, 94, 0.30);
 }
 
 .graph-node-module.graph-module-learn {
   --graph-bubble-start: rgba(168, 85, 247, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #a855f7;
+  --graph-bubble-border: var(--node-learn);
   --graph-bubble-glow: rgba(168, 85, 247, 0.30);
 }
 
 [data-theme="light"] .graph-node-user {
   --graph-bubble-start: rgba(74, 158, 255, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #4a9eff;
+  --graph-bubble-border: var(--node-question);
   --graph-bubble-glow: rgba(74, 158, 255, 0.30);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -963,7 +963,7 @@
 [data-theme="light"] .graph-node-answer {
   --graph-bubble-start: rgba(16, 185, 129, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #10b981;
+  --graph-bubble-border: var(--node-answer);
   --graph-bubble-glow: rgba(16, 185, 129, 0.28);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -971,7 +971,7 @@
 [data-theme="light"] .graph-node-hub {
   --graph-bubble-start: rgba(234, 179, 8, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #eab308;
+  --graph-bubble-border: var(--node-hub);
   --graph-bubble-glow: rgba(234, 179, 8, 0.28);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -979,7 +979,7 @@
 [data-theme="light"] .graph-node-summary {
   --graph-bubble-start: rgba(13, 148, 136, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #0d9488;
+  --graph-bubble-border: var(--node-summary);
   --graph-bubble-glow: rgba(13, 148, 136, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1003,7 +1003,7 @@
 [data-theme="light"] .graph-node-module.graph-module-physics {
   --graph-bubble-start: rgba(245, 158, 11, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #f59e0b;
+  --graph-bubble-border: var(--node-physics);
   --graph-bubble-glow: rgba(245, 158, 11, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1011,7 +1011,7 @@
 [data-theme="light"] .graph-node-module.graph-module-math {
   --graph-bubble-start: rgba(59, 130, 246, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #3b82f6;
+  --graph-bubble-border: var(--node-math);
   --graph-bubble-glow: rgba(59, 130, 246, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1019,7 +1019,7 @@
 [data-theme="light"] .graph-node-module.graph-module-graph {
   --graph-bubble-start: rgba(8, 145, 178, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #0891b2;
+  --graph-bubble-border: var(--node-graph);
   --graph-bubble-glow: rgba(8, 145, 178, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1027,7 +1027,7 @@
 [data-theme="light"] .graph-node-module.graph-module-viz {
   --graph-bubble-start: rgba(244, 114, 182, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #f472b6;
+  --graph-bubble-border: var(--node-viz);
   --graph-bubble-glow: rgba(244, 114, 182, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1035,7 +1035,7 @@
 [data-theme="light"] .graph-node-module.graph-module-socratic {
   --graph-bubble-start: rgba(244, 63, 94, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #f43f5e;
+  --graph-bubble-border: var(--node-socratic);
   --graph-bubble-glow: rgba(244, 63, 94, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1043,7 +1043,7 @@
 [data-theme="light"] .graph-node-module.graph-module-learn {
   --graph-bubble-start: rgba(168, 85, 247, 0.18);
   --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #a855f7;
+  --graph-bubble-border: var(--node-learn);
   --graph-bubble-glow: rgba(168, 85, 247, 0.26);
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
@@ -1240,7 +1240,7 @@
 }
 
 .graph-edge-label {
-  fill: var(--text-secondary, #94a3b8) !important;
+  fill: var(--text-secondary) !important;
   font-size: var(--fs-xs) !important;
   font-weight: 600 !important;
   paint-order: stroke !important;
@@ -1276,12 +1276,12 @@
 
 [data-theme="light"] .graph-port-dot {
   background: #fffdf7 !important;
-  border-color: var(--port-color, #8b6914) !important;
+  border-color: var(--port-color) !important;
   box-shadow: 0 0 0 2px rgba(139, 105, 20, 0.12), 0 0 8px rgba(139, 105, 20, 0.18) !important;
 }
 
 [data-theme="light"] .graph-output-port .graph-port-dot {
-  background: var(--port-color, #8b6914) !important;
+  background: var(--port-color) !important;
 }
 
 @media (max-width: 768px) {
@@ -1581,25 +1581,25 @@
 }
 
 /* 节点属性色（与 graph.js GRAPH_NODE_ATTRIBUTES 一致，驱动选中高亮与属性标签） */
-.graph-attr-question { --node-attr: #4a9eff; }
-.graph-attr-followup { --node-attr: #6366f1; }
-.graph-attr-answer { --node-attr: #10b981; }
-.graph-attr-physics { --node-attr: #f59e0b; }
-.graph-attr-math { --node-attr: #3b82f6; }
-.graph-attr-graph { --node-attr: #0891b2; }
-.graph-attr-viz { --node-attr: #f472b6; }
-.graph-attr-socratic { --node-attr: #f43f5e; }
-.graph-attr-learn { --node-attr: #a855f7; }
+.graph-attr-question { --node-attr: var(--node-question); }
+.graph-attr-followup { --node-attr: var(--node-followup); }
+.graph-attr-answer { --node-attr: var(--node-answer); }
+.graph-attr-physics { --node-attr: var(--node-physics); }
+.graph-attr-math { --node-attr: var(--node-math); }
+.graph-attr-graph { --node-attr: var(--node-graph); }
+.graph-attr-viz { --node-attr: var(--node-viz); }
+.graph-attr-socratic { --node-attr: var(--node-socratic); }
+.graph-attr-learn { --node-attr: var(--node-learn); }
 .graph-attr-manual { --node-attr: var(--ink-human); }
 .graph-attr-human_note { --node-attr: var(--ink-note); }
-.graph-attr-ai_eval { --node-attr: #f59e0b; }
-.graph-attr-hub { --node-attr: #eab308; }
-.graph-attr-summary { --node-attr: #0d9488; }
+.graph-attr-ai_eval { --node-attr: var(--node-physics); }
+.graph-attr-hub { --node-attr: var(--node-hub); }
+.graph-attr-summary { --node-attr: var(--node-summary); }
 .graph-attr-note { --node-attr: var(--ink-human); }
-.graph-attr-source { --node-attr: #06b6d4; }
-.graph-attr-knowledge { --node-attr: #84cc16; }
-.graph-attr-relation { --node-attr: #f43f5e; }
-.graph-attr-any { --node-attr: #94a3b8; }
+.graph-attr-source { --node-attr: var(--node-source); }
+.graph-attr-knowledge { --node-attr: var(--node-knowledge); }
+.graph-attr-relation { --node-attr: var(--node-socratic); }
+.graph-attr-any { --node-attr: var(--node-any); }
 
 .graph-node.dragging {
   z-index: 40 !important;
@@ -1615,11 +1615,11 @@
   z-index: 0;
   min-width: 220px;
   min-height: 140px;
-  border: 2px solid var(--group-color, #38bdf8);
+  border: 2px solid var(--group-color);
   border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--group-color, #38bdf8) 16%, transparent);
+  background: color-mix(in srgb, var(--group-color) 16%, transparent);
   box-shadow:
-    inset 0 0 34px color-mix(in srgb, var(--group-color, #38bdf8) 8%, transparent),
+    inset 0 0 34px color-mix(in srgb, var(--group-color) 8%, transparent),
     0 8px 30px rgba(0, 0, 0, 0.18);
   cursor: move;
   user-select: none;
@@ -1629,15 +1629,15 @@
 .graph-group.dragging {
   opacity: 0.92;
   box-shadow:
-    inset 0 0 44px color-mix(in srgb, var(--group-color, #38bdf8) 10%, transparent),
+    inset 0 0 44px color-mix(in srgb, var(--group-color) 10%, transparent),
     0 18px 46px rgba(0, 0, 0, 0.3);
 }
 
 .graph-group.selected {
-  border-color: var(--group-color, #38bdf8);
+  border-color: var(--group-color);
   box-shadow:
-    inset 0 0 34px color-mix(in srgb, var(--group-color, #38bdf8) 8%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--group-color, #38bdf8) 42%, transparent),
+    inset 0 0 34px color-mix(in srgb, var(--group-color) 8%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--group-color) 42%, transparent),
     0 12px 38px rgba(0, 0, 0, 0.3);
 }
 
@@ -1652,9 +1652,9 @@
   max-width: calc(100% - 36px);
   padding: 6px 12px;
   border-radius: var(--r-lg);
-  background: var(--group-color, #38bdf8);
-  color: #fff;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--group-color, #38bdf8) 36%, transparent);
+  background: var(--group-color);
+  color: var(--white);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--group-color) 36%, transparent);
   pointer-events: auto;
   cursor: default;
 }
@@ -1665,7 +1665,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #fff;
+  color: var(--white);
   font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
@@ -1693,7 +1693,7 @@
   border: 0;
   border-radius: var(--r-md);
   background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  color: var(--white);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
@@ -1712,7 +1712,7 @@
   height: 18px;
   border: 2px solid rgba(255, 255, 255, 0.82);
   border-radius: 50%;
-  background: var(--group-color, #38bdf8);
+  background: var(--group-color);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
   cursor: nwse-resize;
   pointer-events: auto;
@@ -1782,7 +1782,7 @@
 
 .graph-tool-btn.graph-select-btn.active,
 .graph-tool-btn.graph-harness-btn.active {
-  color: #fff !important;
+  color: var(--white) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
   box-shadow:
@@ -1793,7 +1793,7 @@
 
 [data-theme="light"] .graph-tool-btn.graph-select-btn.active,
 [data-theme="light"] .graph-tool-btn.graph-harness-btn.active {
-  color: #fff !important;
+  color: var(--white) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
   box-shadow:
@@ -1982,7 +1982,7 @@
 }
 
 .graph-node.graph-node-located {
-  box-shadow: 0 0 0 3px var(--accent, #4a9eff), 0 0 24px rgba(74, 158, 255, 0.55) !important;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 24px rgba(74, 158, 255, 0.55) !important;
   transition: box-shadow 0.2s ease;
 }
 
@@ -2002,7 +2002,7 @@
   border: 1px solid var(--accent);
   border-radius: var(--r-md);
   background: var(--accent);
-  color: #fff;
+  color: var(--white);
   font-size: var(--fs-md);
   font-weight: 700;
   cursor: pointer;
@@ -2034,7 +2034,7 @@
   max-height: 82vh;
   overflow-y: auto;
   padding: 20px 22px;
-  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 26%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   border-radius: var(--r-xl);
   box-shadow:
     0 26px 74px rgba(0, 0, 0, 0.46),
@@ -2287,7 +2287,7 @@
 }
 
 .graph-tool-btn.graph-search-btn.active {
-  color: #fff !important;
+  color: var(--white) !important;
   border-color: var(--accent) !important;
   background: var(--accent) !important;
 }
@@ -2310,7 +2310,7 @@
 .graph-node-relation {
   --graph-bubble-start: rgba(6, 182, 212, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #06b6d4;
+  --graph-bubble-border: var(--node-source);
   --graph-bubble-glow: rgba(6, 182, 212, 0.34);
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
 }
@@ -2318,7 +2318,7 @@
 .graph-node-knowledge {
   --graph-bubble-start: rgba(132, 204, 22, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #84cc16;
+  --graph-bubble-border: var(--node-knowledge);
   --graph-bubble-glow: rgba(132, 204, 22, 0.30);
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
 }
@@ -2326,7 +2326,7 @@
 .graph-node-relation {
   --graph-bubble-start: rgba(244, 63, 94, 0.14);
   --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #f43f5e;
+  --graph-bubble-border: var(--node-socratic);
   --graph-bubble-glow: rgba(244, 63, 94, 0.30);
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
 }
@@ -2341,19 +2341,19 @@
 
 [data-theme="light"] .graph-node-source {
   --graph-bubble-start: rgba(6, 182, 212, 0.16);
-  --graph-bubble-border: #06b6d4;
+  --graph-bubble-border: var(--node-source);
   --graph-bubble-glow: rgba(6, 182, 212, 0.24);
 }
 
 [data-theme="light"] .graph-node-knowledge {
   --graph-bubble-start: rgba(132, 204, 22, 0.16);
-  --graph-bubble-border: #84cc16;
+  --graph-bubble-border: var(--node-knowledge);
   --graph-bubble-glow: rgba(132, 204, 22, 0.22);
 }
 
 [data-theme="light"] .graph-node-relation {
   --graph-bubble-start: rgba(244, 63, 94, 0.14);
-  --graph-bubble-border: #f43f5e;
+  --graph-bubble-border: var(--node-socratic);
   --graph-bubble-glow: rgba(244, 63, 94, 0.20);
 }
 
@@ -2376,7 +2376,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
 
@@ -2399,7 +2399,7 @@
   padding: 8px 10px;
   font-size: var(--fs-sm);
   cursor: pointer;
-  color: var(--text-primary, #e5e7eb);
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.04);
 }
 
@@ -2417,21 +2417,21 @@
 
 .graph-source-controls input[type="number"] {
   width: 58px;
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--surface-container, #1e293b);
-  color: var(--text-primary, #f8fafc);
+  background: var(--surface-container);
+  color: var(--text-primary);
   padding: 4px 6px;
 }
 
 .graph-source-filename {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   word-break: break-all;
 }
 
 .graph-source-count {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
 
@@ -2622,7 +2622,7 @@
   padding: 6px 8px;
   border-radius: var(--r-sm);
   background: rgba(100, 116, 139, 0.12);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   font-family: 'KaTeX_Math', Cambria Math, serif;
   font-size: var(--fs-md);
   overflow-wrap: anywhere;
@@ -2651,7 +2651,7 @@
   max-height: calc(100vh - 48px);
   overflow: auto;
   border-radius: var(--r-xl);
-  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 26%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
   color: var(--text-primary);
   padding: 20px 22px 18px;
   box-shadow:
@@ -2678,7 +2678,7 @@
 .graph-network-modal-head button {
   border: none;
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
 }
@@ -2686,7 +2686,7 @@
 .graph-network-modal label {
   display: block;
   margin: 12px 0 6px;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
 
@@ -2696,9 +2696,9 @@
   box-sizing: border-box;
   padding: 8px 10px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
-  background: var(--input-bg, #0f172a);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
   font-size: var(--fs-md);
   outline: none;
 }
@@ -2717,9 +2717,9 @@
 .graph-network-modal-actions button {
   padding: 8px 14px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: var(--fs-md);
 }
@@ -2841,16 +2841,16 @@
 .graph-harness-guide .graph-harness-guide-back button {
   padding: 6px 14px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: var(--fs-md);
 }
 
 .graph-harness-guide .graph-harness-guide-back button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .graph-harness-chat {
@@ -2892,7 +2892,7 @@
 
 .graph-harness-meta {
   margin-top: 6px;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-xs);
 }
 
@@ -2906,16 +2906,16 @@
 .graph-harness-message-actions button {
   padding: 5px 9px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-secondary, #94a3b8);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   cursor: pointer;
 }
 
 .graph-harness-message-actions button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .graph-harness-feedback {
@@ -2927,15 +2927,15 @@
 .graph-harness-feedback-btn {
   padding: 2px 6px !important;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
   font-size: var(--fs-sm);
   cursor: pointer;
   line-height: 1.4;
 }
 
 .graph-harness-feedback-btn:hover {
-  border-color: var(--accent, #38bdf8);
+  border-color: var(--accent);
 }
 
 .graph-harness-feedback-btn.active-good {
@@ -2962,25 +2962,25 @@
   min-width: 0;
   padding: 5px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   background: rgba(10, 15, 35, 0.46);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
 }
 
 .graph-harness-feedback-form button {
   padding: 5px 9px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-secondary, #94a3b8);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   cursor: pointer;
 }
 
 .graph-harness-feedback-form button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .graph-harness-decision {
@@ -2997,7 +2997,7 @@
 }
 
 .graph-harness-composer {
-  border-top: 1px solid var(--border, #334155);
+  border-top: 1px solid var(--border);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -3012,9 +3012,9 @@
   max-height: 120px;
   padding: 8px 10px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
-  background: var(--input-bg, #0f172a);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
   font-size: var(--fs-md);
   outline: none;
 }
@@ -3034,7 +3034,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid var(--accent, #38bdf8);
+  border: 2px solid var(--accent);
   border-top-color: transparent;
   animation: graphHarnessSpin 0.8s linear infinite;
 }
@@ -3062,7 +3062,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--border, #334155);
+  border-bottom: 1px solid var(--border);
   font-size: 15px;
   font-weight: 600;
 }
@@ -3070,7 +3070,7 @@
 .graph-harness-head button {
   border: none;
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
@@ -3087,23 +3087,23 @@
 .graph-harness-apply-actions button {
   padding: 8px 14px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: var(--fs-md);
 }
 
 .graph-harness-actions button:hover,
 .graph-harness-apply-actions button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 #graphHarnessStopBtn {
   background: #dc2626;
   border-color: #dc2626;
-  color: #fff;
+  color: var(--white);
 }
 #graphHarnessStopBtn:hover {
   border-color: #f87171;
@@ -3116,7 +3116,7 @@
 .graph-harness-status {
   margin-top: 12px;
   font-size: var(--fs-md);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 .graph-harness-status-running {
@@ -3177,13 +3177,13 @@
 
 .graph-harness-op-main {
   font-size: var(--fs-sm);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 
 .graph-harness-op-reason {
   display: block;
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
@@ -3214,17 +3214,17 @@
 .graph-harness-clarify button {
   padding: 8px 10px;
   border-radius: var(--r-md);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: var(--fs-md);
   text-align: left;
 }
 
 .graph-harness-clarify button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .graph-harness-clarify-item {
@@ -3234,7 +3234,7 @@
 }
 
 .graph-harness-clarify-hint {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
 
@@ -3329,7 +3329,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   border: 2px dashed rgba(248, 113, 113, 0.85);
   border-radius: var(--r-md);
   background: rgba(248, 113, 113, 0.08);
-  color: var(--text-primary, #222);
+  color: var(--text-primary);
   opacity: 0.55;
   pointer-events: none;
   user-select: none;
@@ -3393,7 +3393,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   white-space: pre-wrap;
   line-height: 1.5;
   font-size: var(--fs-md);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   transition: color 0.35s ease !important;
 }
 
@@ -3425,9 +3425,9 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-ai-eval-ignore {
   padding: 3px 8px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-secondary, #94a3b8);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
   font-size: var(--fs-xs);
   cursor: pointer;
 }
@@ -3610,7 +3610,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   display: flex;
   flex-direction: column;
   /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
-  border: 1px solid var(--border, rgba(128,128,128,.35));
+  border: 1px solid var(--border);
   border-radius: var(--r-lg);
   z-index: var(--z-float);
   overflow: hidden;
@@ -3621,29 +3621,29 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--border, rgba(128,128,128,.25));
+  border-bottom: 1px solid var(--border);
 }
-.graph-history-title { font-weight: 600; color: var(--text-primary, #222); }
+.graph-history-title { font-weight: 600; color: var(--text-primary); }
 .graph-history-close {
   background: none;
   border: none;
   font-size: 22px;
   font-weight: 700;
   cursor: pointer;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   line-height: 1;
 }
 .graph-history-tools {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border, rgba(128,128,128,.2));
+  border-bottom: 1px solid var(--border);
 }
 .graph-history-tools button,
 .graph-history-actions button {
-  background: var(--btn-bg, #f0f0f0);
-  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
-  color: var(--text-primary, #222);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-primary);
   border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: var(--fs-sm);
@@ -3651,7 +3651,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-tools button:hover,
 .graph-history-actions button:hover {
-  background: var(--btn-active-bg, #e2e2e2);
+  background: var(--btn-active-bg);
 }
 .graph-history-list {
   flex: 1;
@@ -3659,19 +3659,19 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   padding: 8px 10px;
 }
 .graph-history-item {
-  border: 1px solid var(--border, rgba(128,128,128,.22));
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 8px 10px;
   margin-bottom: 6px;
-  background: var(--harness-msg-bg, rgba(128,128,128,.06));
+  background: var(--harness-msg-bg);
 }
 .graph-history-item.current {
-  border-color: var(--accent, #4f8cff);
-  box-shadow: 0 0 0 1px var(--accent, #4f8cff);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .graph-history-item.previewing {
-  border-color: var(--graph-bubble-border, #f59e0b);
-  box-shadow: 0 0 0 1px var(--graph-bubble-border, #f59e0b);
+  border-color: var(--graph-bubble-border);
+  box-shadow: 0 0 0 1px var(--graph-bubble-border);
 }
 .graph-history-head {
   display: flex;
@@ -3683,24 +3683,24 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   font-size: var(--fs-xs);
   padding: 1px 6px;
   border-radius: var(--r-sm);
-  color: #fff;
+  color: var(--white);
   background: #888;
 }
-.graph-history-badge.src-harness { background: var(--accent, #4f8cff); }
+.graph-history-badge.src-harness { background: var(--accent); }
 .graph-history-badge.src-user { background: #16a34a; }
 .graph-history-badge.src-undo { background: #ea580c; }
 .graph-history-badge.src-init { background: #64748b; }
 .graph-history-badge.src-now { background: #0d9488; }
 .graph-history-summary {
   flex: 1;
-  color: var(--text-primary, #222);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .graph-history-time {
   flex: none;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   font-size: var(--fs-xs);
 }
 .graph-history-actions {
@@ -3713,8 +3713,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid var(--border, rgba(128,128,128,.2));
-  color: var(--text-secondary, #666);
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   max-height: 80px;
   overflow-y: auto;
@@ -3726,9 +3726,9 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-exit-preview {
   flex: none;
-  background: var(--btn-bg, #f0f0f0);
-  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
-  color: var(--text-primary, #222);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-primary);
   border-radius: var(--r-sm);
   padding: 3px 10px;
   font-size: var(--fs-sm);
@@ -3736,9 +3736,9 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   white-space: nowrap;
 }
 .graph-history-exit-preview:hover {
-  background: var(--btn-active-bg, #e2e2e2);
-  border-color: var(--accent, #4f8cff);
-  color: var(--accent, #4f8cff);
+  background: var(--btn-active-bg);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ===== 节点/消息加粗强调（主题色） ===== */
@@ -3763,7 +3763,7 @@ html[data-theme="dark"] .graph-node strong{
   display: flex;
   flex-direction: column;
   /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
-  border: 1px solid var(--border, rgba(128,128,128,.35));
+  border: 1px solid var(--border);
   border-radius: var(--r-lg);
   z-index: var(--z-float-top);
   overflow: hidden;
@@ -3775,39 +3775,39 @@ html[data-theme="dark"] .graph-node strong{
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--border, rgba(128,128,128,.25));
+  border-bottom: 1px solid var(--border);
 }
-.graph-consistency-title { font-weight: 600; color: var(--text-primary, #222); }
+.graph-consistency-title { font-weight: 600; color: var(--text-primary); }
 .graph-consistency-close {
   background: none;
   border: none;
   font-size: 22px;
   font-weight: 700;
   cursor: pointer;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary);
   line-height: 1;
 }
 .graph-consistency-tools {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border, rgba(128,128,128,.2));
+  border-bottom: 1px solid var(--border);
 }
 .graph-consistency-tools button {
-  background: var(--btn-bg, #f0f0f0);
-  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
-  color: var(--text-primary, #222);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-primary);
   border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: var(--fs-sm);
   cursor: pointer;
 }
-.graph-consistency-tools button:hover { background: var(--btn-active-bg, #e2e2e2); }
+.graph-consistency-tools button:hover { background: var(--btn-active-bg); }
 .graph-consistency-summary {
   padding: 8px 12px;
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #666);
-  border-bottom: 1px solid var(--border, rgba(128,128,128,.15));
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
 }
 .graph-consistency-summary.has-error { color: var(--danger-fg); }
 .graph-consistency-summary.has-warning { color: var(--warn-fg); }
@@ -3821,20 +3821,20 @@ html[data-theme="dark"] .graph-node strong{
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  border: 1px solid var(--border, rgba(128,128,128,.22));
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 7px 9px;
   margin-bottom: 6px;
   cursor: pointer;
-  background: var(--harness-msg-bg, rgba(128,128,128,.06));
+  background: var(--harness-msg-bg);
 }
-.graph-consistency-item:hover { border-color: var(--accent, #4f8cff); }
+.graph-consistency-item:hover { border-color: var(--accent); }
 .graph-consistency-badge {
   flex: none;
   font-size: var(--fs-xs);
   padding: 1px 7px;
   border-radius: var(--r-sm);
-  color: #fff;
+  color: var(--white);
   background: #888;
 }
 .graph-consistency-item.sev-error .graph-consistency-badge { background: var(--danger); }
@@ -3842,7 +3842,7 @@ html[data-theme="dark"] .graph-node strong{
 .graph-consistency-item.sev-info .graph-consistency-badge { background: #64748b; }
 .graph-consistency-msg {
   flex: 1;
-  color: var(--text-primary, #222);
+  color: var(--text-primary);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -3859,10 +3859,10 @@ html[data-theme="dark"] .graph-node strong{
   box-sizing: border-box;
   margin-top: 6px;
   padding: 6px 8px;
-  border: 1px solid var(--border, rgba(128,128,128,.35));
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--input-bg, rgba(128,128,128,.08));
-  color: var(--text-primary, #222);
+  background: var(--input-bg);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
   line-height: 1.4;
   resize: vertical;
@@ -3874,19 +3874,19 @@ html[data-theme="dark"] .graph-node strong{
   margin-top: 6px;
   padding: 4px 10px;
   border-radius: var(--r-md);
-  border: 1px solid var(--btn-border, rgba(128,128,128,.3));
-  background: var(--btn-bg, #f0f0f0);
-  color: var(--text-primary, #222);
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
   cursor: pointer;
 }
-.graph-source-paste-btn:hover { background: var(--btn-active-bg, #e2e2e2); }
+.graph-source-paste-btn:hover { background: var(--btn-active-bg); }
 .graph-source-organize-btn {
-  background: var(--accent, #4f8cff);
-  border-color: var(--accent, #4f8cff);
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--white);
 }
-.graph-source-organize-btn:hover { background: var(--accent-hover, #3b78e6); }
+.graph-source-organize-btn:hover { background: var(--accent-hover); }
 /* ===== 联系箭头（联系模式 / link edge）===== */
 .graph-tool-btn.graph-link-btn {
   width: 38px !important;
@@ -3897,18 +3897,18 @@ html[data-theme="dark"] .graph-node strong{
   justify-content: center !important;
 }
 .graph-tool-btn.graph-link-btn.active {
-  color: #fff !important;
-  border-color: #f43f5e !important;
-  background: #f43f5e !important;
+  color: var(--white) !important;
+  border-color: var(--node-relation) !important;
+  background: var(--node-relation) !important;
   box-shadow:
     0 0 0 4px rgba(244, 63, 94, 0.25),
     0 0 22px rgba(244, 63, 94, 0.6),
     inset 0 0 0 1px rgba(255, 255, 255, 0.24) !important;
 }
 [data-theme="light"] .graph-tool-btn.graph-link-btn.active {
-  color: #fff !important;
-  border-color: #f43f5e !important;
-  background: #f43f5e !important;
+  color: var(--white) !important;
+  border-color: var(--node-relation) !important;
+  background: var(--node-relation) !important;
   box-shadow:
     0 0 0 4px rgba(244, 63, 94, 0.18),
     0 0 26px rgba(244, 63, 94, 0.5),
@@ -3919,12 +3919,12 @@ html[data-theme="dark"] .graph-node strong{
 }
 .graph-edge-link path {
   stroke-dasharray: 10 6 !important;
-  stroke: #f43f5e !important;
+  stroke: var(--node-relation) !important;
   opacity: 0.9 !important;
   filter: drop-shadow(0 0 4px rgba(244, 63, 94, 0.35)) !important;
 }
 .graph-edge-link-label {
-  fill: #f43f5e !important;
+  fill: var(--node-relation) !important;
   font-size: var(--fs-sm) !important;
   font-weight: 700 !important;
   pointer-events: auto !important;
@@ -3942,7 +3942,7 @@ html[data-theme="dark"] .graph-node strong{
   border-radius: var(--r-md) !important;
   border: 1px solid rgba(244, 63, 94, 0.45) !important;
   background: rgba(244, 63, 94, 0.08) !important;
-  color: #f43f5e !important;
+  color: var(--node-relation) !important;
   font-size: var(--fs-md) !important;
   cursor: pointer !important;
 }
@@ -3957,7 +3957,7 @@ html[data-theme="dark"] .graph-node strong{
   pointer-events: none !important;
 }
 .graph-edge-link-arrow {
-  fill: #f43f5e !important;
+  fill: var(--node-relation) !important;
 }
 .graph-link-arrow-options {
   display: flex !important;
@@ -3971,9 +3971,9 @@ html[data-theme="dark"] .graph-node strong{
   align-items: center !important;
   justify-content: center !important;
   border-radius: var(--r-md) !important;
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #94a3b8) 40%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 40%, transparent) !important;
   background: transparent !important;
-  color: var(--text-secondary, #94a3b8) !important;
+  color: var(--text-secondary) !important;
   cursor: pointer !important;
   transition: all 0.15s !important;
 }
@@ -3982,9 +3982,9 @@ html[data-theme="dark"] .graph-node strong{
   color: var(--accent) !important;
 }
 .graph-link-arrow-option.active {
-  border-color: #f43f5e !important;
+  border-color: var(--node-relation) !important;
   background: rgba(244, 63, 94, 0.12) !important;
-  color: #f43f5e !important;
+  color: var(--node-relation) !important;
   box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18) !important;
 }
 /* ===== 联系线贝塞尔曲线编辑（钢笔式手柄） ===== */
@@ -4015,8 +4015,8 @@ g.graph-edge-link > path.graph-edge-hit {
   cursor: grab !important;
 }
 g.graph-edge-link > circle.graph-edge-handle {
-  fill: #ffffff !important;
-  stroke: #f43f5e !important;
+  fill: var(--white) !important;
+  stroke: var(--node-relation) !important;
   stroke-width: 2px !important;
   filter: drop-shadow(0 1px 3px rgba(244, 63, 94, 0.45)) !important;
 }
@@ -4039,9 +4039,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-link-curve-option {
   padding: 6px 14px !important;
   border-radius: var(--r-md) !important;
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #94a3b8) 40%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 40%, transparent) !important;
   background: transparent !important;
-  color: var(--text-secondary, #94a3b8) !important;
+  color: var(--text-secondary) !important;
   font-size: var(--fs-sm) !important;
   cursor: pointer !important;
   transition: all 0.15s !important;
@@ -4051,9 +4051,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--accent) !important;
 }
 .graph-link-curve-option.active {
-  border-color: #f43f5e !important;
+  border-color: var(--node-relation) !important;
   background: rgba(244, 63, 94, 0.12) !important;
-  color: #f43f5e !important;
+  color: var(--node-relation) !important;
   box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.18) !important;
 }
 .graph-link-bend-row {
@@ -4063,12 +4063,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 .graph-link-curve-hint {
   font-size: var(--fs-xs) !important;
-  color: var(--text-secondary, #94a3b8) !important;
+  color: var(--text-secondary) !important;
   margin-bottom: 10px !important;
 }
 .graph-blank-hint {
   font-size: var(--fs-xs) !important;
-  color: var(--text-secondary, #94a3b8) !important;
+  color: var(--text-secondary) !important;
   padding: 4px 2px 2px !important;
   opacity: 0.85 !important;
 }
@@ -4079,20 +4079,20 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 8px 12px !important;
   margin-bottom: 10px !important;
   border-radius: var(--r-md) !important;
-  background: color-mix(in srgb, #f43f5e 10%, transparent) !important;
-  border: 1px solid color-mix(in srgb, #f43f5e 35%, transparent) !important;
-  color: var(--text-primary, #e2e8f0) !important;
+  background: color-mix(in srgb, var(--node-relation) 10%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--node-relation) 35%, transparent) !important;
+  color: var(--text-primary) !important;
   font-size: var(--fs-md) !important;
   font-weight: 600 !important;
   word-break: break-all !important;
 }
 .graph-link-edge-arrow {
-  color: #f43f5e !important;
+  color: var(--node-relation) !important;
   font-weight: 800 !important;
 }
 .graph-link-edge-delete {
   background: var(--danger);
-  color: #fff !important;
+  color: var(--white) !important;
 }
 .graph-link-edge-delete:hover {
   background: var(--danger);
@@ -4106,7 +4106,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-xs) !important;
   font-weight: 700 !important;
   letter-spacing: 0.08em !important;
-  color: var(--text-secondary, #94a3b8) !important;
+  color: var(--text-secondary) !important;
   padding: 6px 4px 4px !important;
   text-transform: uppercase !important;
 }
@@ -4133,7 +4133,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--btn-bg, rgba(255, 255, 255, 0.06)), transparent);
+  background: linear-gradient(180deg, var(--btn-bg), transparent);
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -4148,7 +4148,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   flex: none;
   border-radius: var(--r-xl);
   background: linear-gradient(135deg, #1d4ed8, #38bdf8);
-  color: #fff;
+  color: var(--white);
   font-size: var(--fs-lg);
   font-weight: 800;
   box-shadow: 0 2px 8px rgba(56, 189, 248, 0.35);
@@ -4167,16 +4167,16 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 .graph-harness-window .graph-harness-head button:hover {
-  background: var(--btn-bg, rgba(255, 255, 255, 0.08));
-  border-color: var(--border, #334155);
-  color: var(--text-primary, #e2e8f0);
+  background: var(--btn-bg);
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 
 .graph-harness-chat {
@@ -4187,7 +4187,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   width: 8px;
 }
 .graph-harness-chat::-webkit-scrollbar-thumb {
-  background: var(--border, #334155);
+  background: var(--border);
   border-radius: var(--r-xs);
 }
 
@@ -4224,7 +4224,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   font-weight: 800;
   background: linear-gradient(135deg, #1d4ed8, #38bdf8);
-  color: #fff;
+  color: var(--white);
   box-shadow: 0 2px 6px rgba(56, 189, 248, 0.35);
 }
 .graph-harness-avatar-user {
@@ -4249,7 +4249,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-time {
   font-size: var(--fs-2xs);
   line-height: 1;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   opacity: 0.75;
 }
 .graph-harness-message-actions {
@@ -4284,7 +4284,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   font-weight: 600;
   background: linear-gradient(135deg, #1d4ed8, #38bdf8);
-  color: #fff;
+  color: var(--white);
   box-shadow: 0 3px 10px rgba(56, 189, 248, 0.3);
   cursor: pointer;
   transition: filter 0.2s, transform 0.1s;
@@ -4311,7 +4311,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   font-weight: 600;
   background: linear-gradient(135deg, #dc2626, #f87171);
-  color: #fff;
+  color: var(--white);
   cursor: pointer;
 }
 
@@ -4424,7 +4424,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   justify-content: center;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -4433,7 +4433,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-head-actions button:hover {
   background: rgba(148, 163, 184, 0.14);
   border-color: rgba(148, 163, 184, 0.22);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 
 /* ---------- 对话流 ----------
@@ -4528,15 +4528,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-radius: var(--r-md);
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-xs);
   line-height: 1.5;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
 }
 .graph-harness-message-actions button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .graph-harness-feedback-btn {
   padding: 2px 6px !important;
@@ -4608,7 +4608,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-radius: var(--r-md);
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: transparent;
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
@@ -4616,15 +4616,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-apply-actions button:first-child {
   background: linear-gradient(135deg, #38bdf8, #2563eb);
   border-color: transparent;
-  color: #fff;
+  color: var(--white);
   box-shadow: 0 2px 8px rgba(56, 189, 248, 0.28);
 }
 .graph-harness-apply-actions button:first-child:hover {
   filter: brightness(1.08);
 }
 .graph-harness-apply-actions button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 /* T88：应用成功后两个应用按钮置 disabled（「撤销本次」保持可用）——灰化并去掉手型，
    否则禁用态与可点态外观一致，用户分不清为什么点了没反应 */
@@ -4653,18 +4653,18 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 8px 11px;
   border-radius: var(--r-lg);
   border: 1px solid rgba(148, 163, 184, 0.22);
-  background: var(--input-bg, rgba(15, 23, 42, 0.9));
-  color: var(--text-primary, #e2e8f0);
+  background: var(--input-bg);
+  color: var(--text-primary);
   font-size: var(--fs-md);
   outline: none;
   box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.14);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 [data-theme="light"] .graph-harness-composer textarea {
-  background: #fff;
+  background: var(--white);
 }
 .graph-harness-composer textarea:focus {
-  border-color: var(--accent, #38bdf8);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16);
 }
 [data-theme="light"] .graph-harness-composer textarea:focus {
@@ -4680,8 +4680,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 /* 三模式切换器（2026-09-30）：三模式统一 accent 令牌描边＋文字＋透明底（用户拍板：
    不要随模式变装的绿色兜底态，绿规则已整体删除），不引入新色值（同旧创造按钮口径） */
 .graph-harness-composer .graph-harness-actions .graph-harness-mode-btn {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
   background: transparent;
 }
 .graph-harness-composer .graph-harness-actions .graph-harness-btn-undo {
@@ -4690,14 +4690,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-radius: var(--r-md);
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
 }
 .graph-harness-composer .graph-harness-actions .graph-harness-btn-undo:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 #graphHarnessSendBtn {
@@ -4707,7 +4707,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   font-weight: 600;
   background: linear-gradient(135deg, #38bdf8, #2563eb);
-  color: #fff;
+  color: var(--white);
   box-shadow: 0 3px 12px rgba(56, 189, 248, 0.32);
   cursor: pointer;
   transition: filter 0.2s, transform 0.1s, box-shadow 0.2s;
@@ -4733,7 +4733,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: 15px;
   line-height: 1.3;
   margin: 0 0 8px;
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 .graph-harness-guide h2 {
   font-size: var(--fs-md);
@@ -4741,7 +4741,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   margin: 12px 0 6px;
   padding-bottom: 3px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-  color: var(--accent, #38bdf8);
+  color: var(--accent);
 }
 .graph-harness-guide p {
   margin: 4px 0;
@@ -4763,14 +4763,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border-radius: var(--r-md);
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: var(--fs-sm);
   transition: border-color 0.15s, color 0.15s;
 }
 .graph-harness-guide .graph-harness-guide-back button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* 让空结果区完全收拢（去掉基础样式的上下留白） */
@@ -5028,7 +5028,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-size: var(--fs-md);
   font-weight: 600;
   background: linear-gradient(135deg, #38bdf8, #2563eb);
-  color: #fff;
+  color: var(--white);
   box-shadow: 0 3px 12px color-mix(in srgb, var(--accent) 30%, transparent);
   cursor: pointer;
   transition: filter 0.2s, transform 0.1s;
@@ -5101,7 +5101,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-apply-actions button:first-child {
   background: linear-gradient(135deg, #38bdf8, #2563eb);
   border-color: transparent;
-  color: #fff;
+  color: var(--white);
 }
 [data-theme="light"] .graph-harness-apply-actions button:first-child {
   background: linear-gradient(135deg, #8b6914, #d4a030);
@@ -5183,14 +5183,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: block;
 }
 .graph-harness-window .graph-harness-chat::-webkit-scrollbar-thumb {
-  background: var(--border, #334155);
+  background: var(--border);
   border-radius: var(--r-xs);
 }
 /* 脱离全局基线（styles.css）的「悬停才显形」：这块要常显。--scroll-thumb 供
    下面那条 `*::-webkit-scrollbar-thumb` 兜底，scrollbar-color 给 Firefox 侧。 */
 .graph-harness-window .graph-harness-chat {
-  --scroll-thumb: var(--border, #334155);
-  scrollbar-color: var(--border, #334155) transparent;
+  --scroll-thumb: var(--border);
+  scrollbar-color: var(--border) transparent;
 }
 
 /* ---------- 性能修复：高倍缩放自动降级 ----------
@@ -5409,7 +5409,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   font-weight: 600;
   line-height: 1.4;
   padding: 3px 10px;
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   max-width: min(220px, 100%); /* 会话名过长时随头部可用宽收缩，别把「网络助手」标题挤折行 */
   overflow: hidden;
@@ -5419,8 +5419,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 .graph-harness-window .graph-harness-head .graph-harness-session-btn:hover {
-  color: var(--accent, #38bdf8);
-  border-color: var(--accent, #38bdf8);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* 长会话名进头部后，标题与右侧图标组不得参与挤压 */
@@ -5449,7 +5449,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   overflow: hidden;
   padding: 6px;
   border-radius: var(--r-lg);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 
 /* 菜单滚动层：会话行（或空态）装在这里滚，底部的危险区不被滚走 */
@@ -5484,7 +5484,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5496,13 +5496,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 .graph-harness-window .graph-harness-head .graph-harness-session-item.current {
-  color: var(--accent, #38bdf8);
+  color: var(--accent);
   font-weight: 600;
 }
 
 .graph-harness-session-menu .graph-harness-session-empty {
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   padding: 6px 8px;
 }
 
@@ -5531,7 +5531,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
@@ -5550,7 +5550,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-window .graph-harness-session-menu .graph-harness-session-menu-footer {
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid var(--border, #334155);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 .graph-harness-window .graph-harness-session-menu .graph-harness-session-clearall {
@@ -5596,7 +5596,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm span {
   flex: 1 1 100%;
   margin: 0;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.4;
 }
@@ -5611,10 +5611,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--btn-bg, #1e293b);
-  color: var(--text-secondary, #94a3b8);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   line-height: 1.4;
   cursor: pointer;
@@ -5629,8 +5629,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   background: var(--danger-bg);
 }
 .graph-harness-window .graph-harness-session-menu .graph-harness-clearall-confirm button:last-of-type:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Φ 独立会话菜单（2026-09-30 解耦）：顶部新建钮、会话行副行（绑定信息）、行内换绑钮。
@@ -5728,7 +5728,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   min-width: 230px;
   padding: 6px;
   border-radius: var(--r-lg);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item {
@@ -5738,7 +5738,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -5748,14 +5748,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-item.current {
-  color: var(--accent, #38bdf8);
+  color: var(--accent);
   font-weight: 600;
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-hint {
   margin-left: 8px;
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 /* T97 深度思考档位 ＋ T95 失败自动换备用模型开关（2026-09-30）：模式菜单底部的
@@ -5765,15 +5765,15 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-sep {
   height: 1px;
   margin: 4px 6px;
-  background: var(--border, #334155);
+  background: var(--border);
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-toggle {
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 .graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-toggle:hover {
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
 }
 
 .graph-harness-chat .graph-harness-session-notice {
@@ -5782,10 +5782,10 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 5px 12px;
   font-size: var(--fs-sm);
   text-align: center;
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--harness-op-bg);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 /* ===== 节点配方 P1：表单 / 面板组 / 管理列表的增量样式（全部取令牌，零新色字面量） ===== */
@@ -6113,7 +6113,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   overflow-y: auto;
   margin: 6px 12px 0;
   padding: 4px 8px;
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
 }
@@ -6139,7 +6139,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 .graph-harness-undo-row-meta {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6149,22 +6149,22 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   flex: 0 0 auto;
   padding: 3px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
+  border: 1px solid var(--border);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
 }
 
 .graph-harness-undo-row button:hover {
-  border-color: var(--accent, #38bdf8);
-  color: var(--accent, #38bdf8);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .graph-harness-undo-empty {
   padding: 8px 4px;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-sm);
   text-align: center;
 }
@@ -6188,7 +6188,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: block;
   margin: 6px 0 3px;
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   letter-spacing: 0.04em;
 }
 
@@ -6218,7 +6218,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 .graph-harness-op-detail > summary {
   cursor: pointer;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   font-size: var(--fs-xs);
   list-style: none;
   user-select: none;
@@ -6233,13 +6233,13 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   content: '▾ ';
 }
 .graph-harness-op-detail[open] > summary {
-  color: var(--accent, #38bdf8);
+  color: var(--accent);
 }
 .graph-harness-op-tick {
   /* 更早的待处理批次没有勾选框（应用路径锚在最新一批），用字形标出选中与否 */
   line-height: 1.35;
   font-size: var(--fs-sm);
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
 }
 
 /* T100：操作行展开后的内容级 diff（原文红 / 建议绿 / 删除红）。
@@ -6255,11 +6255,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 .graph-harness-op-diff-old,
 .graph-harness-op-diff-del {
-  color: var(--danger-fg, #ff6b6b);
+  color: var(--danger-fg);
   opacity: 0.92;
 }
 .graph-harness-op-diff-new {
-  color: var(--success-fg, #34d399);
+  color: var(--success-fg);
 }
 
 /* T102：流式光标（与正文同行的闪烁竖线）与聊天区实时气泡 */
@@ -6278,7 +6278,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 
 /* T99：中断条目上的「▶ 从中断处继续」——绿色描边区别于普通重试 */
 .graph-harness-message-actions .graph-harness-continue-btn {
-  border-color: var(--success-border, rgba(16, 185, 129, 0.32));
+  border-color: var(--success-border);
 }
 
 /* T105：空状态示例问题（虚线占位感，悬停转实线描边） */
@@ -6292,9 +6292,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   text-align: left;
   padding: 8px 12px;
   border-radius: var(--r-md);
-  border: 1px dashed var(--border, #334155);
+  border: 1px dashed var(--border);
   background: transparent;
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: var(--fs-sm);
   transition: border-color 0.15s, background 0.15s;
@@ -6314,9 +6314,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   box-sizing: border-box;
   padding: 6px 10px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border, #334155);
-  background: color-mix(in srgb, var(--text-secondary, #94a3b8) 6%, transparent);
-  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text-secondary) 6%, transparent);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
 }
 .graph-harness-window .graph-harness-session-menu .graph-harness-session-search input:focus {
@@ -6337,8 +6337,8 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   padding: 5px 8px;
   border-radius: var(--r-sm);
   border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--text-secondary, #94a3b8) 8%, transparent);
-  color: var(--text-primary, #e2e8f0);
+  background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  color: var(--text-primary);
   font-size: var(--fs-sm);
 }
 .graph-harness-window .graph-harness-session-menu .graph-harness-session-row-rename input:focus {
@@ -6358,7 +6358,7 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-secondary, #94a3b8);
+  color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
   font-size: var(--fs-sm);
