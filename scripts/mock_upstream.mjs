@@ -2,10 +2,10 @@
 // ===== 本地 mock 上游（OpenAI 兼容 /chat/completions SSE）=====
 // 用途（backlog T57 落地）：给「改了发送链必须真发验证」的脚本一个可提交的假上游，
 //   不花钱、不依赖真模型密钥。用法：
-//     node scripts/mock_upstream.mjs            # 默认端口 5061
+//     node scripts/mock_upstream.mjs            # 默认端口 5065（T84：5060/5061 是 undici 坏端口，Node 直连报 bad port）
 //     PORT=5070 node scripts/mock_upstream.mjs
 //   然后把某个模型槽指向它：
-//     provider=opencode-go, baseUrl=http://127.0.0.1:5061/v1, model=mock-1, apiKey 任意
+//     provider=opencode-go, baseUrl=http://127.0.0.1:5065/v1, model=mock-1, apiKey 任意
 //   已知的消费方：
 //     scripts/harness_battery.mjs  （MODEL_CFG 指到本 mock：node scripts/harness_battery.mjs http://localhost:5052 mock-1 里的 BASE/MODEL 配好即可）
 //     scripts/verify_send_channels.mjs（主聊天/分支/苏格拉底通道真发取证）
@@ -23,7 +23,7 @@
 //      GET /__stats 返回全局计数（真机脚本核对「同一对话真的发了 ≥2 次请求」）。
 import http from 'node:http';
 
-const PORT = Number(process.env.PORT || 5061);
+const PORT = Number(process.env.PORT || 5065);
 let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
 

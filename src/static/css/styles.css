@@ -3288,10 +3288,6 @@
 
     }
 
-    /* 横屏模式 */
-    @media (max-width: 768px) and (orientation: landscape) {
-      }
-
     /* ===== 横屏视觉打磨（2026-09-27）=====
        只在横屏生效，竖屏一像素不动；只改排版与间距，不碰调色板与全局令牌。
        取证数据与取舍见 docs/日志/2026-09-27.md。
@@ -3337,9 +3333,6 @@
       .app-container .chat-header .brand { min-width: 0; }
       .app-container .chat-header .brand-subtitle { display: none; }
     }
-
-    @supports (padding: env(safe-area-inset-bottom)) {
-      }
 
     /* ====== 主题切换窗口（渐变删除后收窄为单职责，2026-10-01） ======
        变量过渡与背景交叉淡入已删（见上方 :root 处说明），窗口只剩一件事：
