@@ -277,7 +277,8 @@ function _renderQuizBank() {
 }
 
 function _quizSessionChartSegments(sessions, rawStats) {
-  const colors = ['#4a9eff', '#f59e0b', '#10b981', '#a855f7', '#22d3ee', '#f43f5e', '#84cc16', '#fb923c'];
+  const colors = ['var(--node-question)', 'var(--node-physics)', 'var(--node-answer)', 'var(--node-learn)',
+    'var(--chart-seg-cyan)', 'var(--node-socratic)', 'var(--node-knowledge)', 'var(--chart-seg-warm)'];
   const segments = [];
   sessions.forEach((session, idx) => {
     const id = session.id || session.sessionId || '';
@@ -353,11 +354,11 @@ function _quizLineHtml(history) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
   return `<svg class="quiz-line-chart" viewBox="0 0 ${width} ${height}">
-    <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#7a8ba8" stroke-width="1"/>
-    <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" stroke="#7a8ba8" stroke-width="1"/>
+    <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" style="stroke:var(--chart-axis)" stroke-width="1"/>
+    <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" style="stroke:var(--chart-axis)" stroke-width="1"/>
     <text x="${padLeft - 6}" y="${padTop + 4}" fill="currentColor" font-size="9" text-anchor="end">100%</text>
     <text x="${padLeft - 6}" y="${height - padBottom + 4}" fill="currentColor" font-size="9" text-anchor="end">0%</text>
-    <polyline points="${points}" fill="none" stroke="#4a9eff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="${points}" fill="none" style="stroke:var(--node-question)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
 }
 

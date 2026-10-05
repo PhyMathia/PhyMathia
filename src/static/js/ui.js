@@ -617,8 +617,8 @@ document.addEventListener('click', (e) => {
       this.baseOpacity = (dark
         ? (isFormula ? 0.12 + Math.random() * 0.12 : 0.15 + Math.random() * 0.2)
         : (isFormula ? 0.08 + Math.random() * 0.08 : 0.10 + Math.random() * 0.12)) * opScale;
-      this.el.style.color = (sym && sym.color) || (dark ? 'rgba(140,180,255,1)' : 'rgba(160,120,70,1)');
-      const glow = (sym && sym.glow) || (dark ? 'rgba(100,150,255,0.3)' : 'rgba(180,140,80,0.2)');
+      this.el.style.color = (sym && sym.color) || (dark ? 'var(--sym-night-dark-ink)' : 'var(--sym-night-light-ink)');
+      const glow = (sym && sym.glow) || (dark ? 'var(--sym-night-dark-glow)' : 'var(--sym-night-light-glow)');
       const glowSize = sym && typeof sym.glowSize === 'number' ? sym.glowSize : (dark ? 8 : 6);
       this.el.style.textShadow = '0 0 ' + glowSize + 'px ' + glow;
     }
@@ -996,14 +996,14 @@ const EXAMPLE_GUIDE_VIZ_HTML = [
   '<html lang="zh-CN">',
   '<head><meta charset="UTF-8"><style>',
   ':root{color-scheme:dark}',
-  'html,body{margin:0;padding:0;background:transparent;color:#e8eefc;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
+  'html,body{margin:0;padding:0;background:transparent;color:%VIZ_TEXT%;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
   'body{padding:12px}',
   'h3{margin:0 0 6px;font-size:14px}',
-  'p{margin:6px 0;font-size:11px;line-height:1.6;color:#b9c7dd}',
+  'p{margin:6px 0;font-size:11px;line-height:1.6;color:%VIZ_DIM%}',
   '.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}',
-  'label{font-size:11px;color:#dbe6f6}',
-  'input{width:120px;accent-color:#38bdf8}',
-  '.note{margin-top:6px;font-size:11px;color:#7dd3a7}',
+  'label{font-size:11px;color:%VIZ_LABEL%}',
+  'input{width:120px;accent-color:%VIZ_LINE%}',
+  '.note{margin-top:6px;font-size:11px;color:%VIZ_NOTE%}',
   '</style></head>',
   '<body>',
   '<h3>简谐运动位移曲线</h3>',
@@ -1013,16 +1013,24 @@ const EXAMPLE_GUIDE_VIZ_HTML = [
   '<div class="note" id="t"></div>',
   '<script>',
   '(function(){var cv=document.getElementById("c"),ctx=cv.getContext("2d");var A=1,w=1.5;',
-  'function draw(){ctx.clearRect(0,0,cv.width,cv.height);ctx.strokeStyle="#38bdf8";ctx.lineWidth=2;ctx.beginPath();',
+  'function draw(){ctx.clearRect(0,0,cv.width,cv.height);ctx.strokeStyle="%VIZ_LINE%";ctx.lineWidth=2;ctx.beginPath();',
   'for(var x=0;x<=cv.width;x++){var t=x/cv.width*12;var y=85-A*40*Math.sin(w*t);if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}',
-  'ctx.stroke();ctx.strokeStyle="rgba(148,163,184,.5)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,85);ctx.lineTo(cv.width,85);ctx.stroke();',
+  'ctx.stroke();ctx.strokeStyle="%VIZ_AXIS%";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,85);ctx.lineTo(cv.width,85);ctx.stroke();',
   'document.getElementById("t").textContent="x(t)="+A.toFixed(1)+"·cos("+w.toFixed(1)+"t)。拖动滑块观察振幅和角频率的影响。";}',
   'document.getElementById("a").oninput=function(){A=parseFloat(this.value);draw();};',
   'document.getElementById("w").oninput=function(){w=parseFloat(this.value);draw();};draw();',
   '})();',
   '<\/script>',
   '</body></html>'
-].join('\n');
+].join('\n')
+  // T166：配色事实源在 styles.css「内置示例图讲解 iframe 配色」令牌区。srcdoc 是独立
+  // 文档、不加载主 CSS（iframe 里 var() 无值），故在此读出真值拼进模板；固定值不随主题。
+  .replace(/%VIZ_TEXT%/g, cssVarValue('--demo-viz-text'))
+  .replace(/%VIZ_DIM%/g, cssVarValue('--demo-viz-dim'))
+  .replace(/%VIZ_LABEL%/g, cssVarValue('--demo-viz-label'))
+  .replace(/%VIZ_LINE%/g, cssVarValue('--demo-viz-line'))
+  .replace(/%VIZ_NOTE%/g, cssVarValue('--demo-viz-note'))
+  .replace(/%VIZ_AXIS%/g, cssVarValue('--demo-viz-axis'));
 
 function _demoNode(id, kind, x, y, options) {
   const opt = options || {};

@@ -198,41 +198,42 @@ const LIGHT_PORT_URL = '/bg_light_portrait.jpg';
 // symbols（2026-10-02 用户拍板「符号只变色不换字符集＋数量随主题」）：飘浮符号的颜色/
 // 光晕/透明度系数按壁纸套配置（深浅各一档），count 为桌面数量（星夜显眼偏少、素纸底
 // 素净偏多、山影中等；移动端按 18/33 比例折算，ui.js __syncFloatingSymbols 换套重建）。
+// 色值本体（T166 收编）在 styles.css「壁纸飘浮符号配色」令牌区，这里只引用令牌名。
 const WALLPAPER_SETS = [
   { id: 'night', name: '星夜',
     dark: { land: DARK_LAND_URL, port: DARK_PORT_URL },
     light: { land: LIGHT_LAND_URL, port: LIGHT_PORT_URL },
     symbols: {
-      dark: { color: 'rgba(140,180,255,1)', glow: 'rgba(100,150,255,0.3)', glowSize: 8, opacity: 1 },
-      light: { color: 'rgba(160,120,70,1)', glow: 'rgba(180,140,80,0.2)', glowSize: 6, opacity: 1 },
+      dark: { color: 'var(--sym-night-dark-ink)', glow: 'var(--sym-night-dark-glow)', glowSize: 8, opacity: 1 },
+      light: { color: 'var(--sym-night-light-ink)', glow: 'var(--sym-night-light-glow)', glowSize: 6, opacity: 1 },
       count: 33 } },
   { id: 'paper', name: '素纸',
     dark: { land: '/bg_paper_dark_landscape.jpg', port: '/bg_paper_dark_portrait.jpg' },
     light: { land: '/bg_paper_light_landscape.jpg', port: '/bg_paper_light_portrait.jpg' },
     symbols: {
-      dark: { color: 'rgba(175,192,214,1)', glow: 'rgba(120,148,188,0.22)', glowSize: 7, opacity: 0.9 },
-      light: { color: 'rgba(96,86,66,1)', glow: 'rgba(122,106,76,0.16)', glowSize: 5, opacity: 0.8 },
+      dark: { color: 'var(--sym-paper-dark-ink)', glow: 'var(--sym-paper-dark-glow)', glowSize: 7, opacity: 0.9 },
+      light: { color: 'var(--sym-paper-light-ink)', glow: 'var(--sym-paper-light-glow)', glowSize: 5, opacity: 0.8 },
       count: 42 } },
   { id: 'mountain', name: '山影',
     dark: { land: '/bg_mountain_dark_landscape.jpg', port: '/bg_mountain_dark_portrait.jpg' },
     light: { land: '/bg_mountain_light_landscape.jpg', port: '/bg_mountain_light_portrait.jpg' },
     symbols: {
-      dark: { color: 'rgba(162,196,200,1)', glow: 'rgba(96,142,152,0.25)', glowSize: 7, opacity: 0.9 },
-      light: { color: 'rgba(78,98,95,1)', glow: 'rgba(102,128,120,0.18)', glowSize: 5, opacity: 0.85 },
+      dark: { color: 'var(--sym-mountain-dark-ink)', glow: 'var(--sym-mountain-dark-glow)', glowSize: 7, opacity: 0.9 },
+      light: { color: 'var(--sym-mountain-light-ink)', glow: 'var(--sym-mountain-light-glow)', glowSize: 5, opacity: 0.85 },
       count: 28 } },
   { id: 'neon', name: '霓虹',
     dark: { land: '/bg_neon_dark_landscape.jpg', port: '/bg_neon_dark_portrait.jpg' },
     light: { land: '/bg_neon_light_landscape.jpg', port: '/bg_neon_light_portrait.jpg' },
     symbols: {
-      dark: { color: 'rgba(125,211,252,1)', glow: 'rgba(34,211,238,0.30)', glowSize: 8, opacity: 0.95 },
-      light: { color: 'rgba(100,116,139,1)', glow: 'rgba(14,116,144,0.18)', glowSize: 5, opacity: 0.85 },
+      dark: { color: 'var(--sym-neon-dark-ink)', glow: 'var(--sym-neon-dark-glow)', glowSize: 8, opacity: 0.95 },
+      light: { color: 'var(--sym-neon-light-ink)', glow: 'var(--sym-neon-light-glow)', glowSize: 5, opacity: 0.85 },
       count: 36 } },
   { id: 'candy', name: '糖果',
     dark: { land: '/bg_candy_dark_landscape.jpg', port: '/bg_candy_dark_portrait.jpg' },
     light: { land: '/bg_candy_light_landscape.jpg', port: '/bg_candy_light_portrait.jpg' },
     symbols: {
-      dark: { color: 'rgba(249,168,212,1)', glow: 'rgba(244,114,182,0.26)', glowSize: 7, opacity: 0.9 },
-      light: { color: 'rgba(148,116,128,1)', glow: 'rgba(192,92,134,0.16)', glowSize: 5, opacity: 0.8 },
+      dark: { color: 'var(--sym-candy-dark-ink)', glow: 'var(--sym-candy-dark-glow)', glowSize: 7, opacity: 0.9 },
+      light: { color: 'var(--sym-candy-light-ink)', glow: 'var(--sym-candy-light-glow)', glowSize: 5, opacity: 0.8 },
       count: 33 } }
 ];
 
@@ -264,26 +265,28 @@ const MAX_PARTICLES = (window.innerWidth <= 768) ? 80 : 150;
 const initIsDark = localStorage.getItem(STORAGE_KEY_THEME) !== 'light';
 
 // ====== Mermaid 配置（懒加载，由 mermaid-loader 在首次需要时应用） ======
+// 色值（T166 收编）在 styles.css「Mermaid 图主题变量」令牌区（--mm-*，深浅各一套），
+// 这里按当前 data-theme 读计算值——themeVariables 必须是真色值（Mermaid 会做颜色运算）。
+// 注意：config.js 早于 utils.js 加载（本文件顶层的 configureMermaid 调用就在加载期跑），
+// 故用本文件私有读取、不引用 cssVarValue——同 graph-poster 的 _var，各文件私有实现。
+function _cfgToken(name) {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  } catch (e) { return ''; }
+}
 function getMermaidConfig(isDark) {
+  const v = _cfgToken;
   return {
     startOnLoad: false,
     theme: 'base',
     securityLevel: 'strict',
-    themeVariables: isDark ? {
-      primaryColor: '#0c2d3e', primaryTextColor: '#a5f3fc',
-      primaryBorderColor: '#0891b2', lineColor: '#22d3ee',
-      secondaryColor: '#0f3649', tertiaryColor: '#0a2533',
-      mainBkg: '#0c2d3e', nodeBorder: '#0891b2',
-      clusterBkg: '#0a2533', clusterBorder: '#0891b2',
-      titleColor: '#a5f3fc', edgeLabelBackground: '#0c2d3e',
-      fontFamily: 'inherit'
-    } : {
-      primaryColor: '#f0fdfa', primaryTextColor: '#134e4a',
-      primaryBorderColor: '#0891b2', lineColor: '#0891b2',
-      secondaryColor: '#f0fdfa', tertiaryColor: '#ecfdf5',
-      mainBkg: '#f0fdfa', nodeBorder: '#0891b2',
-      clusterBkg: '#ecfdf5', clusterBorder: '#0891b2',
-      titleColor: '#134e4a', edgeLabelBackground: '#f0fdfa',
+    themeVariables: {
+      primaryColor: v('--mm-bg'), primaryTextColor: v('--mm-ink'),
+      primaryBorderColor: v('--mm-border'), lineColor: v('--mm-line'),
+      secondaryColor: v('--mm-secondary'), tertiaryColor: v('--mm-tertiary'),
+      mainBkg: v('--mm-bg'), nodeBorder: v('--mm-border'),
+      clusterBkg: v('--mm-tertiary'), clusterBorder: v('--mm-border'),
+      titleColor: v('--mm-ink'), edgeLabelBackground: v('--mm-bg'),
       fontFamily: 'inherit'
     }
   };

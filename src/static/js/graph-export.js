@@ -418,12 +418,12 @@
     var sc = Math.max(canvas.width / bgImg.width, canvas.height / bgImg.height);
     var dw = bgImg.width * sc, dh = bgImg.height * sc;
     ctx.drawImage(bgImg, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
-    var overlay = 'rgba(0, 0, 0, 0)';
+    var overlay = 'transparent';
     try {
       var veil = document.querySelector('.bg-overlay');
       if (veil) overlay = getComputedStyle(veil).backgroundColor || overlay;
     } catch (e) {}
-    if (overlay && overlay !== 'rgba(0, 0, 0, 0)' && overlay !== 'transparent') {
+    if (overlay && overlay !== 'transparent') {
       ctx.fillStyle = overlay;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
@@ -488,9 +488,9 @@
           if (!_transparentBg) {
             // 背景：壁纸 + 遮罩（和画布上一致）；壁纸拿不到退回面板底色
             if (!_drawBgPhoto(ctx, bgImg, canvas)) {
-              var bg = '#ffffff';
+              var bg = 'white';
               try {
-                bg = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || '#ffffff';
+                bg = getComputedStyle(document.documentElement).getPropertyValue('--bg-panel').trim() || 'white';
               } catch (e) {}
               ctx.fillStyle = bg;
               ctx.fillRect(0, 0, canvas.width, canvas.height);

@@ -107,10 +107,12 @@
       + (light
         ? '[data-theme="light"] body::before{background:url(' + light + ') center/cover no-repeat;}'
         : '')
-      + 'body::after{content:"";position:fixed;inset:0;z-index:-1;background:var(--overlay-bg, rgba(5,8,25,.55));pointer-events:none;}'
-      + '[data-theme="light"] body::after{background:' + (wpLight === 'night' ? 'rgba(245,240,232,.2)' : 'none') + ';}'
-      + 'body{background:linear-gradient(165deg, var(--bg-dark, #0a0e1e) 0%, #0d1426 55%, #0a1020 100%) !important;}'
-      + '[data-theme="light"] body{background:linear-gradient(165deg, #eef3fb 0%, #e6edf8 55%, #eef2fa 100%) !important;}';
+      // T166：色值收在 styles.css「Utopia 单文件导出页配色」令牌区；导出包会内联全部
+      // CSS（含 :root），包内 var() 直接可用，旧的行内 fallback 一并删除。
+      + 'body::after{content:"";position:fixed;inset:0;z-index:-1;background:var(--overlay-bg);pointer-events:none;}'
+      + '[data-theme="light"] body::after{background:' + (wpLight === 'night' ? 'var(--utopia-veil-night)' : 'none') + ';}'
+      + 'body{background:linear-gradient(165deg, var(--bg-dark) 0%, var(--utopia-grad-mid) 55%, var(--utopia-grad-end) 100%) !important;}'
+      + '[data-theme="light"] body{background:linear-gradient(165deg, var(--utopia-grad-light-from) 0%, var(--utopia-grad-light-mid) 55%, var(--utopia-grad-light-to) 100%) !important;}';
   }
 
   // 顶栏整体剔除（用户拍板 2026-09-26：整栏难看，会话/适配/±/展开全部/导出 PNG
@@ -126,10 +128,10 @@
     // 描边 SVG（currentColor 随主题变色，emoji 用户嫌不好看——2026-09-26 复评）
     var floating =
       'position:fixed;right:18px;z-index:9999;width:44px;height:44px;'
-      + 'border-radius:50%;border:1px solid var(--border, rgba(100,130,200,.25));'
-      + 'background:var(--bg-panel, rgba(16,24,46,.72));color:var(--text-primary, #f0f4f8);'
+      + 'border-radius:50%;border:1px solid var(--border);'
+      + 'background:var(--bg-panel);color:var(--text-primary);'
       + 'cursor:pointer;backdrop-filter:blur(12px);'
-      + 'box-shadow:0 4px 18px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;';
+      + 'box-shadow:var(--utopia-btn-shadow);display:flex;align-items:center;justify-content:center;';
     var svg = function (inner) {
       return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"'
         + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';

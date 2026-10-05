@@ -182,6 +182,56 @@
       --mermaid-node-text: color-mix(in srgb, var(--accent) 30%, #fff);
       --mermaid-line-color: var(--accent);
       --mermaid-edge-text: color-mix(in srgb, var(--accent) 30%, #fff);
+      /* ====== Mermaid 图主题变量（T166：config.js getMermaidConfig 读这些令牌，JS 零 hex）======
+         深色一套 / 浅色一套（见 [data-theme="light"] 覆盖），命名按 Mermaid themeVariables 的用途。 */
+      --mm-bg: #0c2d3e;        /* primaryColor / mainBkg / edgeLabelBackground */
+      --mm-ink: #a5f3fc;       /* primaryTextColor / titleColor */
+      --mm-border: #0891b2;    /* primaryBorderColor / nodeBorder / clusterBorder */
+      --mm-line: #22d3ee;      /* lineColor */
+      --mm-secondary: #0f3649;
+      --mm-tertiary: #0a2533;  /* tertiaryColor / clusterBkg */
+      /* ====== 壁纸飘浮符号配色（T166：config.js WALLPAPER_SETS 只引用令牌名）======
+         「<套>-<主题档>」两维：night-dark＝星夜套在深色主题下的符号（-ink 是符号色、-glow 光晕）。
+         值固定，与套绑定；切主题只是换成另一组引用。 */
+      --sym-night-dark-ink: rgba(140,180,255,1);
+      --sym-night-dark-glow: rgba(100,150,255,0.3);
+      --sym-night-light-ink: rgba(160,120,70,1);
+      --sym-night-light-glow: rgba(180,140,80,0.2);
+      --sym-paper-dark-ink: rgba(175,192,214,1);
+      --sym-paper-dark-glow: rgba(120,148,188,0.22);
+      --sym-paper-light-ink: rgba(96,86,66,1);
+      --sym-paper-light-glow: rgba(122,106,76,0.16);
+      --sym-mountain-dark-ink: rgba(162,196,200,1);
+      --sym-mountain-dark-glow: rgba(96,142,152,0.25);
+      --sym-mountain-light-ink: rgba(78,98,95,1);
+      --sym-mountain-light-glow: rgba(102,128,120,0.18);
+      --sym-neon-dark-ink: rgba(125,211,252,1);
+      --sym-neon-dark-glow: rgba(34,211,238,0.30);
+      --sym-neon-light-ink: rgba(100,116,139,1);
+      --sym-neon-light-glow: rgba(14,116,144,0.18);
+      --sym-candy-dark-ink: rgba(249,168,212,1);
+      --sym-candy-dark-glow: rgba(244,114,182,0.26);
+      --sym-candy-light-ink: rgba(148,116,128,1);
+      --sym-candy-light-glow: rgba(192,92,134,0.16);
+      /* ====== 内置示例图讲解 iframe 配色（T166）======
+         示例 viz 是 srcdoc 独立文档、不加载本 CSS，ui.js 生成时读这些令牌拼进模板
+         （iframe 里不能用 var()）；固定值、不随主题。 */
+      --demo-viz-text: #e8eefc;
+      --demo-viz-dim: #b9c7dd;
+      --demo-viz-label: #dbe6f6;
+      --demo-viz-line: #38bdf8;
+      --demo-viz-note: #7dd3a7;
+      --demo-viz-axis: rgba(148,163,184,.5);
+      /* ====== Utopia 单文件导出页配色（T166）======
+         导出包内联全部 CSS（含本 :root），包内 var() 直接可用；
+         前两个是「壁纸照片没抓到时的渐变兜底底色」，后两组是导出页专属纱/按钮阴影。 */
+      --utopia-grad-mid: #0d1426;
+      --utopia-grad-end: #0a1020;
+      --utopia-grad-light-from: #eef3fb;
+      --utopia-grad-light-mid: #e6edf8;
+      --utopia-grad-light-to: #eef2fa;
+      --utopia-veil-night: rgba(245,240,232,.2);
+      --utopia-btn-shadow: 0 4px 18px rgba(0,0,0,.28);
       --sidebar-hover: rgba(255,255,255,0.06);
       --tip-color: rgba(255,255,255,0.3);
 
@@ -383,6 +433,12 @@
       --warn-bg: rgba(245, 158, 11, 0.12);
       --warn-border: rgba(245, 158, 11, 0.32);
 
+      /* 统计图表色（T166）：quiz 会话统计折线与多段环图的补色，JS 只引用令牌名。
+         前六段复用 --node-* 色板（见 graph-override.css），这里只补色板外的两支。 */
+      --chart-axis: #7a8ba8;
+      --chart-seg-cyan: #22d3ee;
+      --chart-seg-warm: #fb923c;
+
       /* 面层级：容器底走 --surface-*，表单字段底走 --field-* */
       --surface-1: rgba(255, 255, 255, 0.06);
       --surface-2: rgba(255, 255, 255, 0.08);
@@ -432,6 +488,13 @@
       --mermaid-node-text: color-mix(in srgb, var(--accent) 55%, #0f172a);
       --mermaid-line-color: var(--accent);
       --mermaid-edge-text: color-mix(in srgb, var(--accent) 55%, #0f172a);
+      /* Mermaid 图主题变量浅色套（T166，与 :root 深色套对应） */
+      --mm-bg: #f0fdfa;
+      --mm-ink: #134e4a;
+      --mm-border: #0891b2;
+      --mm-line: #0891b2;
+      --mm-secondary: #f0fdfa;
+      --mm-tertiary: #ecfdf5;
       --sidebar-hover: rgba(0,0,0,0.05);
       --tip-color: rgba(0,0,0,0.35);
       /* 扩展变量：浅色主题 */

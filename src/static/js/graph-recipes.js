@@ -9,20 +9,20 @@
 
 const BUILTIN_RECIPES = [
   // —— 视角模块（kind=module × moduleKey，顺序＝添加面板顺序）——
-  { key: 'physics', kind: 'module', moduleKey: 'physics', label: '物理视角', color: '#f59e0b', group: 'modules', desc: '' },
-  { key: 'math', kind: 'module', moduleKey: 'math', label: '数学视角', color: '#3b82f6', group: 'modules', desc: '' },
-  { key: 'graph', kind: 'module', moduleKey: 'graph', label: '知识图谱', color: '#0891b2', group: 'modules', desc: '' },
-  { key: 'viz', kind: 'module', moduleKey: 'viz', label: '交互可视化', color: '#f472b6', group: 'modules', desc: '' },
-  { key: 'learn', kind: 'module', moduleKey: 'learn', label: '进阶学习', color: '#a855f7', group: 'modules', desc: '' },
-  { key: 'socratic', kind: 'module', moduleKey: 'socratic', label: '苏格拉底追问', color: '#f43f5e', group: 'modules', desc: '' },
+  { key: 'physics', kind: 'module', moduleKey: 'physics', label: '物理视角', color: 'var(--node-physics)', group: 'modules', desc: '' },
+  { key: 'math', kind: 'module', moduleKey: 'math', label: '数学视角', color: 'var(--node-math)', group: 'modules', desc: '' },
+  { key: 'graph', kind: 'module', moduleKey: 'graph', label: '知识图谱', color: 'var(--node-graph)', group: 'modules', desc: '' },
+  { key: 'viz', kind: 'module', moduleKey: 'viz', label: '交互可视化', color: 'var(--node-viz)', group: 'modules', desc: '' },
+  { key: 'learn', kind: 'module', moduleKey: 'learn', label: '进阶学习', color: 'var(--node-learn)', group: 'modules', desc: '' },
+  { key: 'socratic', kind: 'module', moduleKey: 'socratic', label: '苏格拉底追问', color: 'var(--node-socratic)', group: 'modules', desc: '' },
   // —— AI 组 ——
-  { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: '#94a3b8', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
-  { key: 'answer', kind: 'answer', label: 'AI 回答', color: '#10b981', group: 'ai', desc: 'AI 回答节点（含摘要）' },
-  { key: 'summary', kind: 'summary', label: 'AI 总结', color: '#0d9488', group: 'ai', desc: 'AI 生成总结' },
+  { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: 'var(--node-any)', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
+  { key: 'answer', kind: 'answer', label: 'AI 回答', color: 'var(--node-answer)', group: 'ai', desc: 'AI 回答节点（含摘要）' },
+  { key: 'summary', kind: 'summary', label: 'AI 总结', color: 'var(--node-summary)', group: 'ai', desc: 'AI 生成总结' },
   // —— 素材组（data）——
-  { key: 'source', kind: 'source', label: '输入', color: '#06b6d4', group: 'data', desc: '导入文件/文本，解析出知识点' },
-  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: '#84cc16', group: 'data', desc: '手动记录一个知识点' },
-  { key: 'question', kind: 'user', label: '问题', color: '#4a9eff', group: 'data', desc: '提问节点，可接 AI 回答' },
+  { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '导入文件/文本，解析出知识点' },
+  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: 'var(--node-knowledge)', group: 'data', desc: '手动记录一个知识点' },
+  { key: 'question', kind: 'user', label: '问题', color: 'var(--node-question)', group: 'data', desc: '提问节点，可接 AI 回答' },
   // —— 人工组（human）——
   // manual 在 module 键空间有历史身份（后端 ALLOWED_MODULE_KEYS / GRAPH_MODULE_META 均含
   // manual 键），注册表带 moduleKey 对齐两侧键空间；它本体不是 module 节点，派生投影不受影响
@@ -30,13 +30,13 @@ const BUILTIN_RECIPES = [
   { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-note)', group: 'human', desc: '批注/笔记，可附公式' },
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
   // —— 结构组（structure）——
-  { key: 'hub', kind: 'hub', label: '汇聚', color: '#eab308', group: 'structure', desc: '汇总多路输入，可总结或追问' },
+  { key: 'hub', kind: 'hub', label: '汇聚', color: 'var(--node-hub)', group: 'structure', desc: '汇总多路输入，可总结或追问' },
   // —— 无手动入口的类型（hidden：不进添加面板，只作为 kind 存在）——
   // relation：创建口径已移除（Φ 提示词明示勿建、后端 ALLOWED_CREATE_KINDS 不含），
   // 但旧会话数据里可能仍有 relation 节点——注册表收录它只为白名单派生，
   // 让这些节点在保存/恢复时不再被静默抹掉（backlog T75）。
-  { key: 'relation', kind: 'relation', label: '联系', color: '#f43f5e', group: 'data', desc: '', hidden: true },
-  { key: 'ai_eval', kind: 'ai_eval', label: 'AI 评价', color: '#f59e0b', group: 'ai', desc: '', hidden: true },
+  { key: 'relation', kind: 'relation', label: '联系', color: 'var(--node-relation)', group: 'data', desc: '', hidden: true },
+  { key: 'ai_eval', kind: 'ai_eval', label: 'AI 评价', color: 'var(--node-ai-eval)', group: 'ai', desc: '', hidden: true },
 ];
 
 function _recipeByKey(key) {

@@ -368,7 +368,7 @@ function _renderInputPorts(node, state) {
     const label = node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node);
     const anyClass = isAnyInput ? ' graph-port-any-input' : '';
     const portAttr = (canAddInput || isAnyInput) ? 'any' : attr.key;
-    const portColor = isAnyInput ? '#94a3b8' : attr.color;
+    const portColor = isAnyInput ? 'var(--node-any)' : attr.color;
     const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
     html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
