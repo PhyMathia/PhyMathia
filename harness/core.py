@@ -7,6 +7,7 @@ with a small semantic graph contract so the harness can be reused elsewhere.
 from __future__ import annotations
 
 import copy
+import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -16,6 +17,8 @@ from .registry import (
     ALLOWED_NODE_KINDS,
 )
 from .recipes import RECIPE_DESC_MAX, RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
+
+logger = logging.getLogger(__name__)
 
 # 节点类型白名单的单一数据源见 harness/registry.py（前端投影 src/static/js/graph-recipes.js），
 # 两侧由 tests/test_registry_consistency.py 对拍守护，改任何一侧先同步另一侧。
@@ -357,6 +360,43 @@ def _operation_edge_key(op: Dict[str, Any], edges: Dict[str, Any]) -> Optional[s
     return None
 
 
+# T79：描述里声称要改的配方 schema 键名；reason 提到而 payload 未携带即告警
+_RECIPE_DESC_KEYS = (
+    "level_tags", "label_from", "numbered_list", "fallback", "content_kind",
+    "palette", "shape", "context_channel", "model_role", "on_incomplete",
+    "confused_prompt", "followup_prompt", "retry_prompt", "strict_output",
+    "drag_form", "on_generated",
+)
+
+
+def _warn_recipe_desc_payload_mismatch(op: Dict[str, Any], index: int, op_name: str, raw_recipe: Any) -> None:
+    """T79：弱模型常在 op 描述里说改了某字段、payload 却没带（实测形态＝
+    ports.dynamic.parser.level_tags 被静默归零成 []，链路本身无损）。只 warning
+    不拦截，便于事后归因；与 preset 提示词的「逐字复述」自检互为两头。"""
+
+    def _has_key(node: Any, key: str) -> bool:
+        if isinstance(node, dict):
+            if key in node:
+                return True
+            return any(_has_key(v, key) for v in node.values())
+        if isinstance(node, list):
+            return any(_has_key(item, key) for item in node)
+        return False
+
+    desc = " ".join(
+        _text(op.get(key)) for key in ("reason", "desc", "description") if op.get(key)
+    )
+    if not desc:
+        return
+    mentioned = sorted({key for key in _RECIPE_DESC_KEYS if key in desc})
+    missing = [key for key in mentioned if not _has_key(raw_recipe, key)]
+    if missing:
+        logger.warning(
+            "harness: %s op[%s] 描述声称修改 %s 但 recipe payload 未携带，将按默认值落库",
+            op_name, index, "/".join(missing),
+        )
+
+
 def build_next_snapshot(
     snapshot: Any,
     operations: Any,
@@ -505,6 +545,8 @@ def build_next_snapshot(
         # ---- 配方库操作（P3 创造模式）：不改图元素，只校验 payload 并透传给前端配方层 ----
         if op_name in ("create_recipe", "update_recipe", "delete_recipe"):
             existing_names = current.get("user_recipes") or []
+            if op_name in ("create_recipe", "update_recipe"):
+                _warn_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"))
             if op_name == "create_recipe":
                 normalized_recipe = normalize_recipe_input(op.get("recipe"))
                 if normalized_recipe is None:
