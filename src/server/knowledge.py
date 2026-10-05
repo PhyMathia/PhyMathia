@@ -624,7 +624,7 @@ _PROFILE_OP_KINDS = ("new", "confirm", "update", "remove")
 
 
 def _extract_json_array(text: str, key: str):
-    """从容错文本中提取 "key": [...] 的数组片段（含方括号），失败返回 None。
+    r"""从容错文本中提取 "key": [...] 的数组片段（含方括号），失败返回 None。
 
     用括号深度扫描而非懒惰正则：fact 文本本身含 `]`（如「物理[选修]」）时，
     `(\[[\s\S]*?\])` 停在第一个 `]` 上，截出的片段 JSON 非法 → 整轮画像
