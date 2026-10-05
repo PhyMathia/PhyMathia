@@ -158,7 +158,7 @@ const radius = distinct('border-radius', { bareOnly: true });
 const radiusAll = distinct('border-radius');
 const fontSize = distinct('font-size', { bareOnly: true });
 const fontSizeAll = distinct('font-size');
-const zIndex = distinct('z-index');
+const zIndex = distinct('z-index', { bareOnly: true });  // 裸值口径（同 radius/font-size）：var() 引用是尺子本身，不算新取值（T63）
 const shadow = distinct('box-shadow');
 
 // 动效时长（剔除 :root 的主题变量过渡表——那是刻意设计的机制，不是散装数值）
@@ -326,7 +326,7 @@ console.log('     令牌：' + report.radius.tokens.map(([v, n]) => v + '×' + n
 console.log('  font-size      ' + report.fontSize.decls + ' 条 / 裸值 ' + report.fontSize.distinct + ' 种 / 令牌引用 ' +
   report.fontSize.tokens.reduce((a, [, n]) => a + n, 0) + ' 处（' + report.fontSize.tokens.map(([v, n]) => v + '×' + n).join(' ') + '）/ var() 占比 ' + pct(report.fontSize.varShare));
 console.log('  box-shadow     ' + report.shadow.decls + ' 条 / ' + report.shadow.distinct + ' 种 / var() 占比 ' + pct(report.shadow.varShare));
-console.log('  z-index        ' + report.zIndex.decls + ' 条 / ' + report.zIndex.distinct + ' 种');
+console.log('  z-index        ' + report.zIndex.decls + ' 条 / 裸值 ' + report.zIndex.distinct + ' 种（var() 引用不计入——尺子本身，T63 起与 radius/font-size 同口径）');
 console.log('      ' + report.zIndex.values.slice(0, 14).map(([v, n]) => v + '×' + n).join('  '));
 console.log('  动效时长       ' + report.duration.decls + ' 条 / ' + report.duration.distinct + ' 种');
 console.log('      ' + report.duration.values.slice(0, 10).map(([v, n]) => v + '×' + n).join('  '));

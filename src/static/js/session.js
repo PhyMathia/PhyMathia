@@ -102,6 +102,7 @@
       if (typeof window.waitForFormulaSave === 'function') {
         await window.waitForFormulaSave();
       }
+      let mergedSessions = null;  // T78：本轮回合后的会话全集，供 current 指针判悬空用
       try {
         const [sessResp, knowResp, currResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
@@ -133,6 +134,7 @@
             }
           }
           localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(merged));
+          mergedSessions = merged;
 
           // 合并消息：一次批量拉取所有服务端会话消息，再按会话逐条合并
           const serverMessages = await _fetchServerMessagesBatch(serverSessionIds);
@@ -197,8 +199,13 @@
         }
         if (currResp.ok) {
           const cv = await currResp.json();
-          // 只有服务端有值时才覆盖本地
-          if (cv.value) {
+          // T78：服务端指针只在本地指针缺席/悬空（指向的画布已不存在）时才收编。
+          // 服务端 kv 是全局单值，新建画布后创建链上的异步写入若在途/丢失，这里的
+          // 旧值会把下一次刷新拉回旧画布（数据没丢但用户以为刚建的画布没了）；
+          // 本地指针有效时代表本标签页的真实活动，不能被旧值倒灌。
+          const localCurrent = localStorage.getItem(STORAGE_KEY_CURRENT);
+          const localDangling = !localCurrent || (!!mergedSessions && !mergedSessions[localCurrent]);
+          if (cv.value && localDangling) {
             localStorage.setItem(STORAGE_KEY_CURRENT, cv.value);
           }
         }
@@ -341,7 +348,11 @@
     function _saveSessionMeta(sid) {
       const s = sessions[sid];
       if (!s) return;
-      s.updatedAt = Date.now();
+      // T78：严格新于全表其余画布——同一毫秒内「切走 A＋切到 B」会让 Date.now() 打平，
+      // 恢复逻辑按 updatedAt 取「最近」分不出胜负，活动指针一旦丢失就会落回刚离开的旧画布
+      const newestOther = Object.keys(sessions).reduce(
+        (m, k) => (k === sid ? m : Math.max(m, sessions[k].updatedAt || 0)), 0);
+      s.updatedAt = Math.max(Date.now(), newestOther + 1);
       safeLocalStorageSet(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
       _saveSessionToServer(sid, s);
     }
@@ -631,6 +642,9 @@
       // 所以切走这件事不再会把它发错画布，也没有理由再把它扔掉。
       // 切换
       setCurrentSessionId(id);
+      // T78：被切到的画布 updatedAt 必须压过刚切走那颗（切走路径已把旧画布 bump）——
+      // 否则活动指针一旦丢失，恢复逻辑按 updatedAt 取「最近」会落回刚离开的旧画布
+      _saveSessionMeta(id);
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       if (typeof window.clearBranchAnchor === 'function') window.clearBranchAnchor();
       chatHistory = loadSessionMessages(id);
@@ -1260,6 +1274,9 @@
         currentSessionId = savedCurrent;
         SESSION_ID = sessions[savedCurrent].sessionId;
         chatHistory = loadSessionMessages(savedCurrent);
+        // T78：启动即以本地指针回写服务端（fire-and-forget，不阻塞首屏）——新建画布后
+        // 立刻刷新时创建链上的指针写入可能未落地，这一笔把服务端拉回本标签页的真实活动。
+        _saveCurrentSessionToServer(savedCurrent);
         console.log('[Init] Restored session', savedCurrent, 'messages:', chatHistory.length);
       } else if (sessionKeys.length > 0) {
         // savedCurrent 丢失但 sessions 存在，切换到最新的

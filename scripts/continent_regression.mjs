@@ -294,10 +294,11 @@ async function run() {
 
     // ===== 1. 开图适配 =====
     try {
-      await page.click('.continent-btn');           // 应用头栏的地球入口（真用户路径）
+      await page.click('.menu-btn');   // 打开画布列表侧栏
+      await page.click('.sidebar-tile[title^="跨画布总览"]');  // 「知识大陆」磁贴（T165：入口磁贴化后的现行通道；头栏大陆按钮在窄屏副条里不可见）
       await continentOpen(page);
       const stats = await page.evaluate(() => document.getElementById('continentStats').textContent);
-      if (!stats || stats.indexOf('个区域') < 0) throw new Error('顶栏统计未渲染：' + stats);
+      if (!stats || stats.indexOf('座岛') < 0 || stats.indexOf('聚落') < 0) throw new Error('顶栏统计未渲染：' + stats);  // 术语改版后统计为「N 座岛 · N 个聚落 · …」（T165 随手同步）
       const cls = await worldClass(page);
       if (!/lod-(world|region|detail)/.test(cls)) throw new Error('LOD 档位类缺失：' + cls);
       const fit = await page.evaluate(() => {
@@ -657,7 +658,8 @@ async function runScaleSuite() {
 
     // --- 1. 开图适配缩放必须落在「阈值敏感带」里（本套件存在的全部理由）---
     try {
-      await page.click('.continent-btn');
+      await page.click('.menu-btn');   // 同上（T165）：侧栏 → 知识大陆磁贴
+      await page.click('.sidebar-tile[title^="跨画布总览"]');
       await continentOpen(page);
       const m = await page.evaluate(() => {
         const world = document.getElementById('continentWorld');
@@ -718,8 +720,9 @@ async function runScaleSuite() {
       okS('边界城市 ' + m.cities + ' 座、折叠 ' + folded + ' 条：位移场与波长的改动有可观测后果');
 
       // --- 4. 顶栏统计口径（顺带钉住「折叠 N 条」是给用户看的，不只是内部变量）---
-      if (m.stats.indexOf('个区域') < 0) throw new Error('顶栏统计未渲染：' + m.stats);
-      if (m.stats.indexOf(String(data.clusterCount) + ' 个区域') < 0) {
+      // 统计术语已改版：「N 座岛 · N 个聚落 · …」，座岛数即簇数（T165 随手同步）
+      if (m.stats.indexOf('座岛') < 0) throw new Error('顶栏统计未渲染：' + m.stats);
+      if (m.stats.indexOf(String(data.clusterCount) + ' 座岛') < 0) {
         throw new Error('顶栏区域数与后端不一致：' + m.stats + ' vs ' + data.clusterCount);
       }
       okS('顶栏统计与后端口径一致（' + m.stats + '）');
