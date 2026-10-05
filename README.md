@@ -61,7 +61,7 @@ curl http://localhost:5050/health        # 返回 {"status":"ok",...} 即服务�
 
 ```bash
 python3 -m pytest tests/ -q              # 后端单测，应全部通过（基线数字见 AGENTS.md）
-node scripts/frontend_smoke.mjs          # 前端冒烟 90 条 ✓（需要 npm install 先装依赖）
+node scripts/frontend_smoke.mjs          # 前端冒烟 204 条 ✓（需要 npm install 先装依赖）
 ```
 
 ---
@@ -78,8 +78,6 @@ node scripts/frontend_smoke.mjs          # 前端冒烟 90 条 ✓（需要 npm 
 | `data/` | 运行时 JSON 数据，服务首次启动自动创建 |
 | `scripts/` | 前端构建与测试脚本 |
 | `tests/` | 后端单测 |
-| `docs/` | 手册、开发日志、参赛材料（见下方文档地图） |
-| `html/` | 参赛演示物料（海报 / 演示回放，独立 git 仓库） |
 
 ## 技术栈
 
@@ -95,14 +93,8 @@ node scripts/frontend_smoke.mjs          # 前端冒烟 90 条 ✓（需要 npm 
 
 ## 文档地图
 
-| 想了解 | 去看 |
-|---|---|
-| 开发硬规则与模块地图 | [AGENTS.md](AGENTS.md) |
-| 各领域设计事实源（7 本手册：知识管线 / 概念与知识大陆 / Φ 助手 / 界面视觉 / 画布交互 / 模型与 API / 设计变量） | [docs/dev/](docs/dev/) |
-| 每日开发日志与摘要 | [docs/日志/](docs/日志/) |
-| Φ 助手使用指南 | [docs/harness/使用指南.md](docs/harness/使用指南.md) |
-| 产品介绍 / PPT / 答辩稿 / 开发日志 PDF | [docs/参赛材料/](docs/参赛材料/) |
-| 参赛海报与演示回放 | `html/`（独立仓库） |
+- **开发硬规则与模块地图**：[AGENTS.md](AGENTS.md)——改动本仓库前必读。
+- 本项目另有一套**内部开发文档**：`docs/` 下的 7 本领域设计手册（知识管线 / 概念与知识大陆 / Φ 助手 / 界面视觉 / 画布交互 / 模型与 API / 设计变量）、每日开发日志、Φ 助手使用指南与参赛材料，以及参赛演示物料 `html/`（独立仓库）——这些仅保留在开发机上，**不随本开源仓库分发**。
 
 ---
 
