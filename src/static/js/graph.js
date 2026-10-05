@@ -1,20 +1,22 @@
 // ===== PhyMathia 知识网络画布：核心状态、分组与图数据构建 =====
 
 // ===== PhyMathia 知识网络画布 =====
+// 色板一律引用 CSS 令牌（值定义在 graph-override.css「节点属性色板」，T166 收编）；
+// 消费路径全是 DOM 样式（--node-attr / style color / --port-color），var() 即可即取。
 const GRAPH_MODULE_META = {
-  physics: { label: '物理视角', color: '#f59e0b' },
-  math: { label: '数学视角', color: '#3b82f6' },
-  graph: { label: '知识图谱', color: '#0891b2' },
-  viz: { label: '交互可视化', color: '#f472b6' },
-  socratic: { label: '苏格拉底追问', color: '#f43f5e' },
-  learn: { label: '进阶学习', color: '#a855f7' },
+  physics: { label: '物理视角', color: 'var(--node-physics)' },
+  math: { label: '数学视角', color: 'var(--node-math)' },
+  graph: { label: '知识图谱', color: 'var(--node-graph)' },
+  viz: { label: '交互可视化', color: 'var(--node-viz)' },
+  socratic: { label: '苏格拉底追问', color: 'var(--node-socratic)' },
+  learn: { label: '进阶学习', color: 'var(--node-learn)' },
   manual: { label: '我的回答', color: 'var(--ink-human)' },
-  hub: { label: '汇聚', color: '#eab308' },
-  summary: { label: 'AI 总结', color: '#0d9488' },
+  hub: { label: '汇聚', color: 'var(--node-hub)' },
+  summary: { label: 'AI 总结', color: 'var(--node-summary)' },
   note: { label: '我的总结', color: 'var(--ink-human)' },
-  source: { label: '输入', color: '#06b6d4' },
-  knowledge: { label: '知识点', color: '#84cc16' },
-  relation: { label: '联系', color: '#f43f5e' },
+  source: { label: '输入', color: 'var(--node-source)' },
+  knowledge: { label: '知识点', color: 'var(--node-knowledge)' },
+  relation: { label: '联系', color: 'var(--node-relation)' },
 };
 
 const GRAPH_MODULE_DEFAULT_OUTPUTS = {
@@ -35,25 +37,25 @@ function _moduleCanExpandOutputs(node) {
 }
 
 const GRAPH_NODE_ATTRIBUTES = {
-  question: { key: 'question', label: '问题', color: '#4a9eff' },
-  followup: { key: 'followup', label: '追问', color: '#6366f1' },
-  answer: { key: 'answer', label: 'AI 回答', color: '#10b981' },
-  physics: { key: 'physics', label: '物理视角', color: '#f59e0b' },
-  math: { key: 'math', label: '数学视角', color: '#3b82f6' },
-  graph: { key: 'graph', label: '知识图谱', color: '#0891b2' },
-  viz: { key: 'viz', label: '交互可视化', color: '#f472b6' },
-  socratic: { key: 'socratic', label: '苏格拉底追问', color: '#f43f5e' },
-  learn: { key: 'learn', label: '进阶学习', color: '#a855f7' },
+  question: { key: 'question', label: '问题', color: 'var(--node-question)' },
+  followup: { key: 'followup', label: '追问', color: 'var(--node-followup)' },
+  answer: { key: 'answer', label: 'AI 回答', color: 'var(--node-answer)' },
+  physics: { key: 'physics', label: '物理视角', color: 'var(--node-physics)' },
+  math: { key: 'math', label: '数学视角', color: 'var(--node-math)' },
+  graph: { key: 'graph', label: '知识图谱', color: 'var(--node-graph)' },
+  viz: { key: 'viz', label: '交互可视化', color: 'var(--node-viz)' },
+  socratic: { key: 'socratic', label: '苏格拉底追问', color: 'var(--node-socratic)' },
+  learn: { key: 'learn', label: '进阶学习', color: 'var(--node-learn)' },
   manual: { key: 'manual', label: '我的回答', color: 'var(--ink-human)' },
   human_note: { key: 'human_note', label: '我的理解', color: 'var(--ink-note)' },
-  ai_eval: { key: 'ai_eval', label: 'AI 评价', color: '#f59e0b' },
-  hub: { key: 'hub', label: '汇聚', color: '#eab308' },
-  summary: { key: 'summary', label: 'AI 总结', color: '#0d9488' },
+  ai_eval: { key: 'ai_eval', label: 'AI 评价', color: 'var(--node-ai-eval)' },
+  hub: { key: 'hub', label: '汇聚', color: 'var(--node-hub)' },
+  summary: { key: 'summary', label: 'AI 总结', color: 'var(--node-summary)' },
   note: { key: 'note', label: '我的总结', color: 'var(--ink-human)' },
-  source: { key: 'source', label: '输入', color: '#06b6d4' },
-  knowledge: { key: 'knowledge', label: '知识点', color: '#84cc16' },
-  relation: { key: 'relation', label: '联系', color: '#f43f5e' },
-  any: { key: 'any', label: '任意输入', color: '#94a3b8' },
+  source: { key: 'source', label: '输入', color: 'var(--node-source)' },
+  knowledge: { key: 'knowledge', label: '知识点', color: 'var(--node-knowledge)' },
+  relation: { key: 'relation', label: '联系', color: 'var(--node-relation)' },
+  any: { key: 'any', label: '任意输入', color: 'var(--node-any)' },
   // 配方节点的属性键（P1）：颜色按节点内嵌快照的色板令牌注入 --node-attr，
   // 这里只是 draft/端口兜底用的中性条目——具体颜色永远以 _recipeNodeAttribute 为准
   recipe: { key: 'recipe', label: '配方', color: 'var(--accent)' },
@@ -792,11 +794,13 @@ function _graphGroupBounds(nodeIds) {
 }
 
 function _renderGroupHtml(group) {
-  const color = group.color || '#38bdf8';
+  const color = group.color || 'var(--graph-group-default)';
+  // input[type=color] 只认 #rrggbb：令牌引用解析成计算值（T166），用户选过的真值原样
+  const colorHex = resolveCssColor(color);
   return '<div class="graph-group" data-group-id="' + group.id + '" style="left:' + group.x + 'px;top:' + group.y + 'px;width:' + group.width + 'px;height:' + group.height + 'px;--group-color:' + color + ';">'
     + '<div class="graph-group-header">'
     + '<input class="graph-group-name-input" value="' + escapeHtml(group.name || '分组') + '" title="重命名分组" onchange="graphRenameGroup(\'' + group.id + '\', this.value)">'
-    + '<input class="graph-group-color-input" type="color" value="' + escapeHtml(color) + '" title="调整分组颜色" onchange="graphSetGroupColor(\'' + group.id + '\', this.value)">'
+    + '<input class="graph-group-color-input" type="color" value="' + escapeHtml(colorHex) + '" title="调整分组颜色" onchange="graphSetGroupColor(\'' + group.id + '\', this.value)">'
     + '<button class="graph-group-add-btn" title="将选中节点加入此组" onclick="graphAddSelectedToGroup(\'' + group.id + '\')">+</button>'
     + '<button class="graph-group-delete-btn" title="删除分组" onclick="graphDeleteGroup(\'' + group.id + '\')">×</button>'
     + '</div>'
@@ -811,7 +815,7 @@ function _updateGroupElement(group) {
   el.style.top = group.y + 'px';
   el.style.width = group.width + 'px';
   el.style.height = group.height + 'px';
-  el.style.setProperty('--group-color', group.color || '#38bdf8');
+  el.style.setProperty('--group-color', group.color || 'var(--graph-group-default)');
 }
 
 function _fitGroupToMembers(group) {

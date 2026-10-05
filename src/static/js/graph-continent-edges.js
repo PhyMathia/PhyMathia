@@ -577,26 +577,38 @@ function _continentSaveRoutePrefs(prefs) {
   try { localStorage.setItem(CONTINENT_ROUTE_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 容忍 */ }
 }
 
-// 样式解析（纯函数）：颜色三档——gold 暖色（**默认**：「我画的路」专用色，与机器画
+// 样式解析：颜色三档——gold 暖色（**默认**：「我画的路」专用色，与机器画
 // 的辐条/断线、海域板色系拉开；**按主题选色相**：暗色机器线是蓝→航线用暖金，浅色
-// 机器线 accent 本身是暗金（#8b6914）→ 航线换**赭橙**（同属暖色语义、色相 45°→24°
+// 机器线 accent 本身是暗金→航线换**赭橙**（同属暖色语义、色相 45°→24°
 // 彻底分开，且不是报错红）。theme 只影响这一档。旧边无 style 字段走默认（实线/
-// normal/暖色）；region 算不出色相时仍回落旧默认蓝（查空是正常路径）
+// normal/暖色）；region 算不出色相时仍回落旧默认蓝（查空是正常路径）。
+// T166：色值收在 graph-override.css「知识大陆航线色」令牌区——SVG 属性不认 var()，
+// 这里读计算值；四个令牌都是固定值（gold 两档由 theme 参数选择，不随 data-theme 变），
+// 故可整表缓存，渲染热路径零 getComputedStyle 开销。
+const _continentRouteColorCache = {};
+function _continentRouteColor(token) {
+  if (_continentRouteColorCache[token] === undefined) {
+    // 无 CSS 环境（静态沙箱）里 cssVarValue 返回空——退回令牌名本身，
+    // 让断言校验「指向哪个令牌」而不必在 JS 里复活色值。
+    _continentRouteColorCache[token] = cssVarValue(token) || token;
+  }
+  return _continentRouteColorCache[token];
+}
 function _continentRouteStroke(style, edge, regionInfo, theme) {
   const s = style || {};
   const colorKey = s.color || 'gold';
   let color = null;
   if (colorKey === 'gold') {
-    color = theme === 'light' ? 'rgba(191, 91, 27, 0.92)' : 'rgba(217, 164, 65, 0.9)';
+    color = _continentRouteColor(theme === 'light' ? '--route-gold-light' : '--route-gold-dark');
   } else if (colorKey === 'neutral') {
-    color = 'rgba(150, 156, 170, 0.8)';
+    color = _continentRouteColor('--route-neutral');
   } else if (regionInfo && edge && regionInfo.bySid) {
     const info = regionInfo.bySid[edge.fromSession];
     const hue = info && info.key !== null && info.key !== undefined
       ? _continentRegionHue(info.key, null) : null;
     if (hue !== null && hue !== undefined) color = 'hsla(' + hue + ', 62%, 64%, 0.85)';
   }
-  if (!color) color = 'rgba(74, 158, 255, 0.85)';
+  if (!color) color = _continentRouteColor('--route-default');
   return {
     color: color,
     width: CONTINENT_ROUTE_WIDTH[s.width] || CONTINENT_ROUTE_WIDTH.normal,

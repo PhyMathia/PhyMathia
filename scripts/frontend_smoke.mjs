@@ -3558,19 +3558,28 @@ check('graph-continent: v7.2 航线（绕行不穿岛 / 直连可穿对照 / 沿
   if (lane.mode !== 'lane' || lane.d.indexOf('L') < 0) throw new Error('车道档应是折线');
   if (!Number.isFinite(lane.mid.x)) throw new Error('车道档标签落点不有限');
   // 样式解析：旧边（无 style）走默认；三档颜色/粗细/线型可辨
+  // T166：色值在 graph-override.css「知识大陆航线色」令牌区，JS 只产出令牌引用
+  // （静态沙箱无 CSS，_continentRouteColor 退回令牌名）；「值对不对」改读 CSS 源断言，强度不变。
+  const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const cssVarVal = (name) => (cssSrc.match(new RegExp('--' + name + ':\\s*([^;]+);')) || [])[1] || '';
   const def = stroke(null, { fromSession: 's1' }, null);
   if (!def.color || def.width !== 2 || def.dash) throw new Error('默认样式错：' + JSON.stringify(def));
   if (!stroke({ dash: 'dashed', color: 'gold', width: 'thick' }, null, null).dash) throw new Error('线型未解析');
-  if (stroke({ color: 'gold' }, null, null).color.indexOf('217') < 0) throw new Error('暖金档颜色错');
+  if (stroke({ color: 'gold' }, null, null).color.indexOf('--route-gold') < 0) throw new Error('暖金档未指向航线令牌');
   // 「我画的路」默认观感（09-20）：默认色=暖色且按主题选色相——暗色暖金（217,164,65），
   // 浅色赭橙（191,91,27；浅色机器辐条 accent 本身是暗金，航线必须换色相而不是加深）；
   // region 算不出色相回落旧默认蓝
   const lightGold = stroke(null, { fromSession: 's1' }, null, 'light');
-  if (lightGold.color.indexOf('191') < 0 || lightGold.color.indexOf('163, 114, 47') >= 0) {
-    throw new Error('浅色主题航线未换赭橙色相：' + lightGold.color);
+  if (lightGold.color.indexOf('--route-gold-light') < 0) {
+    throw new Error('浅色主题航线未指向赭橙令牌：' + lightGold.color);
   }
-  if (stroke({ color: 'region' }, { fromSession: 's1' }, null).color.indexOf('74') < 0) {
-    throw new Error('region 算不出色相时应回落旧默认蓝');
+  if (cssVarVal('route-gold-dark').indexOf('217') < 0 || cssVarVal('route-gold-light').indexOf('191') < 0
+      || cssVarVal('route-gold-light').indexOf('163, 114, 47') >= 0) {
+    throw new Error('航线 gold 两档令牌值不对：' + cssVarVal('route-gold-dark') + ' / ' + cssVarVal('route-gold-light'));
+  }
+  const regionFallback = stroke({ color: 'region' }, { fromSession: 's1' }, null).color;
+  if (regionFallback.indexOf('--route-default') < 0 || cssVarVal('route-default').indexOf('74') < 0) {
+    throw new Error('region 算不出色相时应回落默认蓝令牌：' + regionFallback);
   }
   // 静态：v7.2 的单条可调与全局开关、岛级落笔、编辑撤销；大陆模块零 window.prompt（U1 收编）
   const src = readContinentSrc();
@@ -7328,7 +7337,7 @@ await Promise.all(pendingChecks).catch(() => {});
     const cfg = cfgSrc.slice(cfgSrc.indexOf('const WALLPAPER_SETS'), cfgSrc.indexOf('const STYLE_FAMILIES'));
     const counts = (cfg.match(/count: \d+/g) || []).length;
     if (counts !== 5) throw new Error('五套壁纸应各带 symbols.count，实得 ' + counts);
-    if ((cfg.match(/color: 'rgba/g) || []).length !== 10) throw new Error('深浅×五套应 10 条符号配色');
+    if ((cfg.match(/color: 'var\(--sym-/g) || []).length !== 10) throw new Error('深浅×五套应 10 条符号配色（T166 起为令牌引用）');
     if (!uiSrc.includes('window.__syncFloatingSymbols')) throw new Error('缺符号重建入口 __syncFloatingSymbols');
     if (!uiSrc.includes('_desiredSymbolCount')) throw new Error('符号数量没按壁纸套取数');
     if (!/applyStyleFamily\(THEME_DEFAULT_FAMILY\[id\]/.test(uiSrc)) throw new Error('点主题卡没重置风格到默认（Q2 全套重置拍板）');
@@ -7379,7 +7388,9 @@ await Promise.all(pendingChecks).catch(() => {});
   wcheck('导出链路跟随：PNG 压纱读真实 .bg-overlay、导出 HTML 浅色按壁纸套分档', () => {
     if (!expSrc.includes("querySelector('.bg-overlay')")) throw new Error('PNG 导出应读真实遮罩元素的计算色');
     if (expSrc.includes("getPropertyValue('--overlay-bg')")) throw new Error('PNG 导出不该直接读变量（浅色要按套归零）');
-    if (!utopiaSrc.includes("wpLight === 'night' ? 'rgba(245,240,232,.2)' : 'none'")) throw new Error('导出 HTML 浅色遮罩未按套分档');
+    if (!utopiaSrc.includes("wpLight === 'night' ? 'var(--utopia-veil-night)' : 'none'")) throw new Error('导出 HTML 浅色遮罩未按套分档');
+    // T166：纱的色值在 styles.css 令牌区（导出包内联全部 CSS，包内 var() 可用）
+    if (!/--utopia-veil-night:\s*rgba\(245,\s*240,\s*232,\s*\.2\)/.test(stylesCss)) throw new Error('星夜浅色纱令牌值不对');
     if (!utopiaSrc.includes("(typeof getWallpaperId === 'function') ? getWallpaperId('light') : 'night'")) throw new Error('导出 HTML 应传浅色壁纸套 id');
     return true;
   });

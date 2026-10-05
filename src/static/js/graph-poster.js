@@ -177,23 +177,25 @@
   function _var(name, fallback) {
     try {
       var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-      return v || fallback;
-    } catch (e) { return fallback; }
+      return v || fallback || '';
+    } catch (e) { return fallback || ''; }
   }
 
+  // T166：色值事实源在 CSS 令牌（--bg-panel/--text-*/--accent/--poster-*），这里只读
+  // 计算值——canvas 不认 var()；旧的字面量 fallback 已删（令牌在 :root 必有值）。
   function _theme() {
     var light = (document.documentElement.getAttribute('data-theme') === 'light');
     return {
       light: light,
-      bg: _var('--bg-panel', light ? '#f4f7fb' : '#101828'),
-      dot: light ? 'rgba(15,23,42,.07)' : 'rgba(230,235,245,.06)',
-      text: _var('--text-primary', light ? '#1c2434' : '#e6ebf5'),
-      sub: _var('--text-secondary', light ? '#5b6478' : '#93a1bd'),
-      accent: _var('--accent', '#4a9eff'),
-      border: light ? 'rgba(15,23,42,.16)' : 'rgba(255,255,255,.16)',
-      card: light ? 'rgba(255,255,255,.92)' : 'rgba(255,255,255,.055)',
-      cardBorder: light ? 'rgba(15,23,42,.14)' : 'rgba(255,255,255,.14)',
-      edge: light ? 'rgba(71,85,105,.5)' : 'rgba(148,163,189,.5)',
+      bg: _var('--bg-panel'),
+      dot: _var('--poster-dot'),
+      text: _var('--text-primary'),
+      sub: _var('--text-secondary'),
+      accent: _var('--accent'),
+      border: _var('--poster-border'),
+      card: _var('--poster-card'),
+      cardBorder: _var('--poster-card-border'),
+      edge: _var('--poster-edge'),
     };
   }
 
@@ -206,7 +208,7 @@
 
   function _attrOf(node) {
     if (typeof _nodeAttribute === 'function') return _nodeAttribute(node) || {};
-    return { key: 'question', label: '节点', color: '#4a9eff' };
+    return { key: 'question', label: '节点', color: 'var(--node-question)' };
   }
 
   // ---------- 布局：拓扑分层紧凑网格 ----------
@@ -301,7 +303,7 @@
       return {
         id: n.id, w: CARD_W,
         attrLabel: attr.label || '节点',
-        attrColor: attr.color || '#4a9eff',
+        attrColor: attr.color || 'var(--node-question)',
         attrKey: attr.key || 'question',
         kind: n.kind, moduleKey: n.moduleKey || '',
         isRoot: !!n.isRoot, minimized: !!n.minimized,
@@ -370,7 +372,7 @@
       laidGroups.push({
         x: minX - pad, y: minY - pad,
         w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2,
-        name: g.name || '分组', color: g.color || '#38bdf8',
+        name: g.name || '分组', color: g.color || 'var(--graph-group-default)',
       });
     });
 

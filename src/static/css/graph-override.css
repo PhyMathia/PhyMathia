@@ -804,6 +804,41 @@
   --ink-rose: #e08a9f;
   --ink-teal: #74bfa8;
   --ink-violet: #b599e0;
+  /* 节点属性色板（T166）：画布节点/端口/配方色点的色值事实源，与下方 .graph-attr-*
+     的 --node-attr 同值同源。JS 侧只引用令牌名（graph.js GRAPH_NODE_ATTRIBUTES /
+     graph-recipes.js / quiz-render.js），不出现 hex——同 --ink-* 口径，
+     style_debt 的 jsColorLiterals 不受影响，令牌定义本身不计泄漏。
+     深浅主题共用一套（现状即如此，不随 data-theme 变）。 */
+  --node-question: #4a9eff;
+  --node-followup: #6366f1;
+  --node-answer: #10b981;
+  --node-physics: #f59e0b;
+  --node-math: #3b82f6;
+  --node-graph: #0891b2;
+  --node-viz: #f472b6;
+  --node-socratic: #f43f5e;
+  --node-learn: #a855f7;
+  --node-ai-eval: var(--node-physics);
+  --node-hub: #eab308;
+  --node-summary: #0d9488;
+  --node-source: #06b6d4;
+  --node-knowledge: #84cc16;
+  --node-relation: var(--node-socratic);
+  --node-any: #94a3b8;
+  /* 分组框默认色（graph.js/_renderGroupHtml 与新分组创建读它） */
+  --graph-group-default: #38bdf8;
+  /* 海报导出配色（T166）：graph-poster.js 读计算值（canvas 不认 var()），深浅两档 */
+  --poster-dot: rgba(230,235,245,.06);
+  --poster-border: rgba(255,255,255,.16);
+  --poster-card: rgba(255,255,255,.055);
+  --poster-card-border: rgba(255,255,255,.14);
+  --poster-edge: rgba(148,163,189,.5);
+  /* 知识大陆航线色（T166）：graph-continent-edges.js 读计算值（SVG 属性不认 var()）。
+     gold 两档由大陆视图的主题参数选择（不随 data-theme 自动切，保持与原逻辑一字不差） */
+  --route-gold-dark: rgba(217, 164, 65, 0.9);
+  --route-gold-light: rgba(191, 91, 27, 0.92);
+  --route-neutral: rgba(150, 156, 170, 0.8);
+  --route-default: rgba(74, 158, 255, 0.85);
   /* 画布工具栏图标墨色：深色=冷白，浅色=暖棕墨（用户反馈浅色下纯黑图标与暖米色环境违和） */
   --graph-tool-ink: #f0f4f8;
 }
@@ -825,6 +860,12 @@
   --graph-bubble-shadow: rgba(90, 70, 40, 0.16);
   --graph-edge-color: #eab308;
   --graph-edge-glow: rgba(234, 179, 8, 0.30);
+  /* 海报导出配色浅色档（T166，与 :root 深色档对应） */
+  --poster-dot: rgba(15,23,42,.07);
+  --poster-border: rgba(15,23,42,.16);
+  --poster-card: rgba(255,255,255,.92);
+  --poster-card-border: rgba(15,23,42,.14);
+  --poster-edge: rgba(71,85,105,.5);
 }
 
 .graph-node-user {

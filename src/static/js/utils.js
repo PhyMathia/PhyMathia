@@ -123,3 +123,26 @@ function safeLocalStorageSet(key, value) {
   }
 }
 window.safeLocalStorageSet = safeLocalStorageSet;
+
+// ---------- CSS 令牌取值（T166）----------
+// JS 需要「真值」的场合（canvas 取色、SVG 属性、input[type=color] 的 value）用本函数
+// 读 :root 令牌：颜色的唯一事实源留在 CSS，JS 源码里不再出现颜色字面量
+// （style_debt 的 jsColorLiterals 口径，同 config.js RECIPE_PALETTE 的既有做法）。
+function cssVarValue(name) {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  } catch (e) { return ''; }
+}
+
+// 'var(--x)' 引用 → 计算值；传入真值原样返回（给需要 #rrggbb 的控件/属性用）
+function resolveCssColor(value) {
+  const m = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(value || '').trim());
+  return m ? (cssVarValue(m[1]) || value) : value;
+}
+
+// 分组框默认色：读一次缓存（新建分组与兜底渲染共用，避免渲染路径反复触发样式计算）
+let _graphGroupDefaultColorCache = '';
+function graphDefaultGroupColor() {
+  if (!_graphGroupDefaultColorCache) _graphGroupDefaultColorCache = cssVarValue('--graph-group-default');
+  return _graphGroupDefaultColorCache;
+}

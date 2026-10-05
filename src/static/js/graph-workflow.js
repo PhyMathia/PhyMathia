@@ -1989,7 +1989,7 @@ function graphCreateGroup() {
   const group = {
     id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
     name: '分组 ' + (graphView.groups.length + 1),
-    color: '#38bdf8',
+    color: graphDefaultGroupColor(),
     nodeIds: selected.map(node => node.id),
     x: root && !selected.length ? root.x + 90 : bounds.x,
     y: root && !selected.length ? root.y + 60 : bounds.y,
