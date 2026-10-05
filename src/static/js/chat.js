@@ -128,6 +128,20 @@
       if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     }
 
+    // T17①（2026-10-05 拍板）：终态文案复活到胶囊——已停止/请求失败/可视化已生成
+    // 停在这里当 idle 文案，直到下一次 showProgress 被新进度覆盖；闲时默认仍是「待命」（D3）
+    function setProgressTerminal(label) {
+      if (progressStatusHideTimer) { clearTimeout(progressStatusHideTimer); progressStatusHideTimer = null; }
+      progressHidden = true;
+      const statusEl = document.getElementById('progressStatus');
+      if (statusEl) statusEl.classList.remove('active');
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+      _setProgress(100, label);
+      const timeEl = document.querySelector('#progressStatus .elapsed-time');
+      if (timeEl) timeEl.textContent = '';
+    }
+    window.setProgressTerminal = setProgressTerminal;
+
     const PROGRESS_POS_KEY = 'phymathia_progress_pos';
     function _applySavedProgressPosition() {
       try {
@@ -533,6 +547,7 @@
         hideProgress();
         sendTaskState = err.name === 'AbortError' ? 'stopped' : 'error';
         sendTaskNote = err.name === 'AbortError' ? '手动停止' : (err.message || '发送失败');
+        setProgressTerminal(err.name === 'AbortError' ? '已停止' : '请求失败');
         if (err.name === 'AbortError') {
           if (assistantContent.trim()) {
             streamingAssistant = null;

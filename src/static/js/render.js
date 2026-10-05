@@ -1270,6 +1270,8 @@ function _ensureKaTeX(callback) {
   }
   if (_katexFallbackState === 1) { if (callback) _katexFallbackQueue.push(callback); return; }
   _katexFallbackState = 1;
+  // T17③：首次触发加载的这次调用同样入队——onload 只 flush 队列，漏队的回调会被静默丢掉
+  if (callback) _katexFallbackQueue.push(callback);
   if (!document.querySelector('link[href*="katex.min.css"]')) {
     const css = document.createElement('link');
     css.rel = 'stylesheet';

@@ -757,7 +757,7 @@ def _branch_context_instruction(
     elif branch_type == "learn":
         lines.append("- 用户选择了进阶学习方向，请以该方向为目标，基于父回答生成新的完整探索回答簇。")
     elif branch_type == "continue":
-        lines.append("- 用户在当前节点自由续问；若问题与当前气泡无关，可以作为新主线回答。")
+        lines.append("- 用户在当前节点自由续问。")
     elif branch_type == "blank":
         lines.append("- 用户通过空白画布节点要求生成该模块的正文；只输出该模块内容，不要输出完整学习卡片的 XML 标签。")
         strict_instruction = _module_output_instruction(source_module)
