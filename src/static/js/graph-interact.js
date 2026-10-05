@@ -46,6 +46,9 @@ function renderGraphCanvas(streaming) {
   }
   const appContainer = document.querySelector('.app-container');
 
+  // T152：草稿卡是纯内存节点（不入 state），这里的全量清空会连卡带字一起冲掉
+  // （发送开始/流结束/Φ 改图都走全量重建）——清空前先收集现存草稿，重建后带回
+  const draftCarry = _collectDraftCarry();
   _removeSelectionBox();
   graphCanvas.innerHTML = '';
   graphView.nodes = [];
@@ -145,6 +148,7 @@ function renderGraphCanvas(streaming) {
   graphView.edges = _resolveGraphEdges(state, data.edges, data.nodeById);
   graphView.groups = Array.isArray(state.groups) ? state.groups.map(group => ({ ...group })) : [];
   _syncGroupMembers();
+  _reapplyDraftCarry(draftCarry); // T152：带回要赶在节点 html 拼接之前，草稿卡才会随重建重新渲染出来
 
   _katexPendingCaptures = []; // 只收本轮全量重建的节点（流式补丁期间的残留作废，重建会重新登记）
   const html = graphView.groups.map(group => _renderGroupHtml(group)).join('')
@@ -528,6 +532,8 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
     messageIndex: -1,
     timestamp: Date.now(),
     moduleKey: sourceModule,
+    // T152：标记所属会话——全量重渲带回草稿时只带本会话的，防切会话串场
+    sessionId: _currentSessionId(),
     branchType: meta.branchType || 'followup',
     portMeta: meta,
     pinned: false,
@@ -668,6 +674,35 @@ function buildGraphPathForAnchor(anchor) {
 function _findDraftSourceNodeId(nodeId) {
   const edge = (graphView.edges || []).find(e => String(e.to) === String(nodeId) && e.draft);
   return edge ? edge.from : '';
+}
+
+// T152：草稿输入的持久位在节点对象——textarea 的值只活在本帧 DOM，任何一次
+// 全量重渲都会整卡重建；输入即写回，重建的卡从对象取值（见 _renderDraftNodeHtml）
+function draftInputChanged(nodeId, value) {
+  const node = _findDraftNode(nodeId);
+  if (node && node.kind === 'draft') node.draftInput = String(value == null ? '' : value);
+}
+
+// T152：全量重建前收集现存草稿（只收本会话的，切会话不跟人）；
+// 草稿边一并收集，草稿卡才会带着来源连线一起回来
+function _collectDraftCarry() {
+  const sid = String(_currentSessionId() || '');
+  return {
+    nodes: (graphView.nodes || []).filter(n => n && n.kind === 'draft' && String(n.sessionId || '') === sid),
+    edges: (graphView.edges || []).filter(e => e && e.draft),
+  };
+}
+
+// T152：重建后把收集到的草稿带回 graphView（同 id 已被重建出来的跳过；
+// 边两端都还在才带）——须在 _renderNodeHtml 拼接前调用，卡才会重新渲染出来
+function _reapplyDraftCarry(carry) {
+  if (!carry || !carry.nodes.length) return;
+  const existIds = new Set(graphView.nodes.map(n => String(n.id)));
+  const readd = carry.nodes.filter(n => !existIds.has(String(n.id)));
+  if (!readd.length) return;
+  graphView.nodes.push(...readd);
+  readd.forEach(n => { graphView.nodeById[String(n.id)] = n; });
+  graphView.edges.push(...carry.edges.filter(e => graphView.nodeById[String(e.from)] && graphView.nodeById[String(e.to)]));
 }
 
 function submitDraftQuestion(nodeId) {

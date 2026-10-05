@@ -236,11 +236,16 @@ function _renderDraftNodeHtml(node) {
       + '<button class="graph-draft-btn graph-socratic-btn graph-socratic-ai" onclick="draftAskAi(\'' + node.id + '\')">直接问AI</button>'
       + '</div></div>';
   } else {
-    const prefill = isLearn
-      ? '请详细讲解：' + (meta.question || '')
-      : _draftPrefill(meta);
+    // T152：草稿输入的真身在节点对象（draftInput，输入即写回、随重渲存活），
+    // textarea 只是视图——有 draftInput 时（含用户主动清空的空串）不再回落
+    // 端口预填，否则一次全量重渲就把已打的字顶回预填
+    const prefill = typeof node.draftInput === 'string'
+      ? node.draftInput
+      : (isLearn
+        ? '请详细讲解：' + (meta.question || '')
+        : _draftPrefill(meta));
     body = '<div class="graph-draft-body">'
-      + '<textarea class="graph-draft-input" rows="3">' + escapeHtml(prefill) + '</textarea>'
+      + '<textarea class="graph-draft-input" rows="3" oninput="draftInputChanged(\'' + node.id + '\', this.value)">' + escapeHtml(prefill) + '</textarea>'
       + '<button class="graph-draft-btn graph-draft-send" onclick="submitDraftQuestion(\'' + node.id + '\')">发送提问</button>'
       + '</div>';
   }
