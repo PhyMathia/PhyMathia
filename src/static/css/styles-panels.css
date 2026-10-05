@@ -1,6 +1,6 @@
 
     .knowledge-panel {
-      position: fixed; top: 0; right: 0; bottom: 0; z-index: 1000;
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-toast);
       width: min(560px, 92vw);
       transform: translateX(100%); transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
       display: flex; flex-direction: column; overflow: hidden;
@@ -1185,7 +1185,7 @@
       gap: 4px;
       padding: 5px;
       border-radius: var(--r-xl);
-      z-index: 30;
+      z-index: var(--z-toolbar);
     }
     .graph-tool-btn {
       background: transparent;
@@ -1500,7 +1500,7 @@
     .quiz-modal-overlay {
       position: fixed;
       inset: 0;
-      z-index: 450;
+      z-index: var(--z-modal);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2741,7 +2741,7 @@
 .memory-clear-btn { width: 100%; padding: var(--sp-4); border: 1px solid var(--danger-border); border-radius: var(--r-md); background: transparent; color: var(--danger-fg); font-size: var(--fs-md); font-weight: 600; cursor: pointer; }
 .memory-clear-btn:hover { background: var(--danger-bg); }
 .memory-clear-desc { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; margin-top: 8px; }
-.memory-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 300; }
+.memory-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: var(--z-overlay); }
 .memory-dialog-overlay.show { display: flex; }
 /* 底色/磨砂/阴影交给 .aurora-glass--dialog（本规则再写 background 简写会盖掉极光层） */
 .memory-dialog { width: min(420px, 92vw); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px; }
@@ -3182,7 +3182,7 @@
 .continent-layer {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  z-index: var(--z-toolbar);
   overflow: hidden;
   background: transparent;
   /* 与 JS 的 CONTINENT_WARP_MS / CONTINENT_WARP_EASE 同源（420ms 同一条曲线）。

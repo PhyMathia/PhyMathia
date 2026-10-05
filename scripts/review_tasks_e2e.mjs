@@ -99,7 +99,7 @@ try {
     await wait(300);
     if (!(await panelOpen())) throw new Error('点了三角面板没打开');
     const t = await panelText();
-    if (!/手上没有活儿/.test(t)) throw new Error('空面板文案不对：' + t);
+    if (!/暂无/.test(t)) throw new Error('空面板文案不对：' + t);  // 314227c 空态文案收敛后渲染「暂无」（T62 同步断言）
     ok('面板：顶栏三角常驻，点开显示空态');
   } catch (e) { bad('面板开关', e); }
 

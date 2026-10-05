@@ -120,7 +120,7 @@
 
 .graph-node.dragging {
   cursor: grabbing !important;
-  z-index: 30 !important;
+  z-index: var(--z-toolbar) !important;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55) !important;
 }
 
@@ -523,7 +523,7 @@
   left: auto !important;
   display: flex !important;
   gap: 4px !important;
-  z-index: 30 !important;
+  z-index: var(--z-toolbar) !important;
 }
 
 /* 左簇（改图与审查：图体检/历史/选择文字/联系模式/分组），与右簇分居两角 */
@@ -611,7 +611,7 @@
   left: 50%;
   transform: translateX(-50%);
   margin: 0;
-  z-index: 80;
+  z-index: var(--z-panel);
   border: none;
   border-radius: var(--r-pill);      /* 真胶囊：与极光磨砂玻璃同一套语言 */
   padding: 7px 14px;
@@ -2590,7 +2590,7 @@
 .graph-network-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 12000;
+  z-index: var(--z-graph-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2699,7 +2699,7 @@
   font-size: 100px;
   cursor: grab;
   user-select: none;
-  z-index: 9800;
+  z-index: var(--z-pet);
   filter: drop-shadow(0 6px 18px rgba(2, 6, 23, 0.45));
   transition: transform 180ms ease, filter 180ms ease;
 }
@@ -2743,7 +2743,7 @@
   border: 1px solid var(--border);
   color: var(--text-primary);
   overflow: hidden;
-  z-index: 9700;
+  z-index: var(--z-pet-window);
   /* 第 5 轮磨砂化：本文件在 styles.css 之后加载，载体级写任何 background
      （连 transparent 简写都算）都会盖掉 .aurora-glass 的底色与色斑——
      底色/磨砂/阴影全归玻璃类（harness.js 挂 aurora-glass aurora-glass--dialog），
@@ -3571,7 +3571,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   border: 1px solid var(--border, rgba(128,128,128,.35));
   border-radius: var(--r-lg);
-  z-index: 10001;
+  z-index: var(--z-float);
   overflow: hidden;
   font-size: var(--fs-md);
 }
@@ -3724,7 +3724,7 @@ html[data-theme="dark"] .graph-node strong{
   /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
   border: 1px solid var(--border, rgba(128,128,128,.35));
   border-radius: var(--r-lg);
-  z-index: 10002;
+  z-index: var(--z-float-top);
   overflow: hidden;
   font-size: var(--fs-md);
 }
@@ -5840,11 +5840,11 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   --recipe-ink-anchor: #000000;
 }
 
-/* 盖在配方表单之上：.graph-network-modal-overlay 写死 12000，这里必须更高 */
+/* 盖在配方表单之上：.graph-network-modal-overlay var(--z-graph-modal)＝12000，这里必须更高 */
 .recipe-color-overlay {
   position: fixed;
   inset: 0;
-  z-index: 12100;
+  z-index: var(--z-graph-modal-top);
   display: flex;
   align-items: center;
   justify-content: center;
