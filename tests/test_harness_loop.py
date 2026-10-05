@@ -583,3 +583,26 @@ class KnowledgeQueryLoopTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AppendOnlyMessagesTest(unittest.TestCase):
+    """T150：tool 轮消息只增不改——后一轮请求的前缀与前一轮完全一致（provider 前缀缓存的前提）。"""
+
+    def test_tool_rounds_append_only(self):
+        seen = []
+        fake = _recording_fake([
+            _llm([_tool_call("search_knowledge", {"keyword": "梯度"}, "call_1")]),
+            _llm([_tool_call("search_knowledge", {"keyword": "散度"}, "call_2")]),
+            _llm([_tool_call("update_node",
+                             {"node_id": "A", "patch": {"label": "梯度"}, "reason": "对齐知识库"},
+                             "call_3")]),
+        ], seen)
+        kb = {"knowledge": [{"title": "梯度的定义", "summary": "矢量场", "tags": []}], "formulas": []}
+        with mock.patch.object(review_mod, "_load_user_kb", return_value=kb):
+            result = _run_review(fake)
+        self.assertEqual(result["status"], "ok")
+        self.assertGreaterEqual(len(seen), 3)
+        for i, (prev, curr) in enumerate(zip(seen, seen[1:])):
+            pm, cm = prev["messages"], curr["messages"]
+            self.assertTrue(len(cm) > len(pm), f"第 {i + 2} 轮消息应比前一轮多（只增）")
+            self.assertEqual(pm, cm[: len(pm)], f"第 {i + 2} 轮不得改写前一轮已发消息")

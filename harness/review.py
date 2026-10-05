@@ -1118,7 +1118,8 @@ async def review_graph(
             # 答疑模式（三模式切换器）：normal 提示词 + 只读红线段；
             # 工具表同 normal，解析路径完全同构
             messages = build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
-            messages[0]["content"] += HARNESS_CHAT_REDLINE
+            # T150：只增不改——红线段拼进头部消息的副本换槽，不动 build 期消息本体
+            messages[0] = {**messages[0], "content": messages[0]["content"] + HARNESS_CHAT_REDLINE}
             return messages
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
@@ -1270,7 +1271,10 @@ async def review_graph(
                 history_text = _history_block(history)
                 if history_text:
                     base_content += history_text
-                messages[-1]["content"] = base_content + level_suffix
+                # T150：只增不改——工具提示/历史/难度拼进最后一条 user 的副本后整表换新，
+                # build 期产出的消息本体不动；后续 tool 轮对这张表只 append，
+                # provider 看到的消息序列前缀只增不减（前缀缓存不被中途改写打穿）
+                messages = messages[:-1] + [{**messages[-1], "content": base_content + level_suffix}]
                 if attempt == 0:
                     context_metrics = _log_context_metrics(
                         messages, current, phase,
@@ -1328,7 +1332,8 @@ async def review_graph(
                             logger.warning("工具调用失败，降级为自由 JSON: %s", exc)
                             tools = None
                             tool_choice = None
-                            messages[-1]["content"] = messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "").replace(HARNESS_CHAT_TOOLS_HINT, "")
+                            # T150：只增不改——降级剥工具提示同样走副本换槽
+                            messages[-1] = {**messages[-1], "content": messages[-1]["content"].replace(TOOLS_USER_HINT, "").replace(TOOLS_AUTO_HINT, "").replace(READONLY_TOOLS_HINT, "").replace(HARNESS_CHAT_TOOLS_HINT, "")}
                             journal_fallback = "json_mode"
                             raw = await _counted_call(
                                 messages,
