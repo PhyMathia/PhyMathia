@@ -17,6 +17,8 @@ function setLevel(level) {
   currentLevel = level;
   localStorage.setItem(STORAGE_KEY_LEVEL, level);
   updateLevelUI();
+  // 隐式画像：手选难度是自我认知信号（服务端只锚定档位，不进能力向量）
+  if (typeof window.reportProfileEvent === 'function') window.reportProfileEvent('difficulty', String(level || ''));
   toggleLevelPanel();
 }
 function toggleLevelPanel(e) {

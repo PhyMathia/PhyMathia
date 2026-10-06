@@ -1311,11 +1311,22 @@ async def api_save_knowledge(request: Request):
 
     def updater(data):
         data = _normalize_knowledge(data)
-        # 合并：同 id 以新数据为准；全量上传时等价于覆盖
+        # 隐式画像：只对「本轮真正新增」的 id 记 extract 事件——前端定时同步会
+        # 反复全量推送，按 id 差分才不会每次同步都给兴趣加一次权重
+        new_keys = [k for k in incoming if k not in data]
         data.update(incoming)
-        return _dedupe_knowledge(data)
+        data = _dedupe_knowledge(data)
+        new_items.extend(incoming[k] for k in new_keys)
+        return data
 
+    new_items = []
     data = _mutate_json(KNOWLEDGE_PATH, updater)
+    _device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if _device_id and new_items:
+        events = [{"type": "extract",
+                   "topic": str(it.get("topic") or it.get("concept") or "")[:60]}
+                  for it in new_items if isinstance(it, dict)]
+        profile.record_implicit_event(_device_id, events)
     return {"ok": True, "count": len(data)}
 
 
@@ -1490,6 +1501,18 @@ async def api_extract_knowledge(request: Request):
         _is_socratic_followup(latest_assistant.get("content", ""))
         or latest_assistant.get("branchType") in ("followup", "confused", "socratic")
     ):
+        # 分支守卫：追问/没看懂/苏格拉底不做知识提取，但这是可靠的兴趣/风格信号——
+        # 记一条隐式画像事件（主题按用户分支问题文本归题）再返回
+        _branch_device = payload.get("device_id") or payload.get("deviceId") or ""
+        if _branch_device:
+            _branch_user = next((m.get("content") for m in reversed(messages)
+                                 if m.get("role") == "user"), "")
+            _branch_type = {"confused": "confused", "socratic": "socratic"}.get(
+                latest_assistant.get("branchType"), "followup")
+            profile.record_implicit_event(_branch_device, [{
+                "type": _branch_type,
+                "topic": profile.assign_topic(str(_branch_user or "")[:500]),
+            }])
         return {"items": []}
     # 推理泄漏闸门（先于 AI/本地两条路径）：正文其实是模型的思维链时，本轮不做提取。
     # 否则「用户要求：…」这类假标题 + 系统提示词回显的假公式会进库，并顺着
@@ -1595,6 +1618,22 @@ async def api_extract_knowledge(request: Request):
     added = _add_formulas_from_items(items, session_id, descriptions, message_id)
     if added:
         logger.info(f"Auto added {added} formulas to library")
+    if device_id:
+        # 隐式画像：主回答 = ask 事件（归题＋节奏篇幅）；带公式的条目 = formula 事件。
+        # extract 事件不在这里记——条目要等前端经 /api/knowledge 落库，那边按新 id 差分
+        try:
+            _ask_user = next((m.get("content") for m in reversed(messages)
+                              if m.get("role") == "user"), "")
+            _events = [{"type": "ask",
+                        "topic": profile.assign_topic(str(_ask_user or "")[:500]),
+                        "len": len(str((latest_assistant or {}).get("content") or ""))}]
+            for it in items:
+                if isinstance(it, dict) and it.get("formulas"):
+                    _events.append({"type": "formula",
+                                    "topic": str(it.get("topic") or it.get("title") or "")[:60]})
+            profile.record_implicit_event(device_id, _events)
+        except Exception as e:
+            logger.warning(f"Implicit ask event failed: {e}")
 
     return {"items": items, "descriptions": descriptions, "summaries": knowledge_summaries,
             "profile": profile_result or {"changed": 0, "promoted": []}}
@@ -1730,6 +1769,17 @@ async def api_get_kv(key: str):
 @app.post("/api/kv/{key}")
 async def api_set_kv(key: str, request: Request):
     payload = await _parse_json_object(request)
+    # 隐式画像：测验/苏格拉底作答统计写入时做新旧差分，产出逐次作答事件
+    # （history 里带对错/时间戳/questionId，无需前端新增记录逻辑）
+    if key == profile.QUIZ_STATS_KEY:
+        _device_id = str(payload.get("device_id") or "")
+        if _device_id:
+            try:
+                _events = profile.quiz_stats_events(storage.kv_read(key), payload.get("value"))
+                if _events:
+                    profile.record_implicit_event(_device_id, _events)
+            except Exception as e:
+                logger.warning(f"Quiz stats implicit diff failed: {e}")
     storage.kv_write(key, payload.get("value", ""))
     return {"ok": True}
 
@@ -1760,6 +1810,48 @@ async def api_update_profile(request: Request):
 async def api_delete_profile(device_id: str = ""):
     profile.delete_profile(device_id)
     return {"ok": True}
+
+
+@app.post("/api/profile/event")
+async def api_profile_event(request: Request):
+    """隐式画像事件上报（前端 expand/visualize/difficulty 等纯前端信号）。
+
+    body: {"device_id": str, "events": [{"type", "topic"?, "value"?}...]}
+    fire-and-forget 语义：失败只记日志，绝不影响调用方 UI。
+    """
+    payload = await _parse_json_object(request)
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 device_id")
+    events = payload.get("events")
+    if not isinstance(events, list) or not events or len(events) > 20:
+        raise HTTPException(status_code=400, detail="events must be a non-empty list (≤20)")
+    recorded = profile.record_implicit_event(device_id, events)
+    return {"ok": True, "recorded": bool(recorded)}
+
+
+@app.post("/api/profile/implicit")
+async def api_profile_implicit_manage(request: Request):
+    """隐式画像面板管理：freeze / unfreeze / set / reset（可见可纠原则的用户侧）。"""
+    payload = await _parse_json_object(request)
+    device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 device_id")
+    try:
+        return profile.manage_implicit(device_id, str(payload.get("action") or ""),
+                                       dim=str(payload.get("dim") or ""),
+                                       key=str(payload.get("key") or ""),
+                                       value=payload.get("value"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/profile/dashboard")
+async def api_profile_dashboard(device_id: str = ""):
+    """画像仪表盘：隐式状态的派生视图（衰减/保留/成熟度/账本都在服务端算）。"""
+    if not device_id:
+        raise HTTPException(status_code=400, detail="缺少 device_id")
+    return profile.implicit_dashboard(device_id)
 
 
 

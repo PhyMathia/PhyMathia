@@ -26,6 +26,7 @@ import time
 import uuid
 from pathlib import Path
 
+from . import profile_implicit as _implicit
 from .config import DATA_DIR
 from .storage import _invalidate_json_cache, _mutate_json, _read_json, _write_json
 
@@ -34,7 +35,9 @@ logger = logging.getLogger(__name__)
 PROFILES_DIR = DATA_DIR / "profiles"
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-PROFILE_VERSION = 2
+# v3（2026-10-06）：新增 implicit 隐式画像层（数学模型 v1，见 profile_implicit.py
+# 与 docs/用户画像数学模型-2026-10-06.md）；旧 v2 文件缺 implicit 键，归一化时补默认值
+PROFILE_VERSION = 3
 MAX_FACTS = 50
 MAX_PENDING = 30
 MAX_ARCHIVE = 10
@@ -80,6 +83,7 @@ def _default_profile() -> dict:
         "facts": [],
         "pending": [],
         "archive": [],
+        "implicit": _implicit.default_implicit(),
         "createdAt": time.time(),
         "updatedAt": time.time(),
     }
@@ -214,6 +218,7 @@ def _normalize_profile(data) -> dict:
     base["enabled"] = bool(data.get("enabled", True))
     _merge_explicit(base["explicit"], data.get("explicit"))
     _normalize_fact_lists(base, data)
+    base["implicit"] = _implicit.normalize_implicit(data.get("implicit"))
     return base
 
 
@@ -602,6 +607,47 @@ def mark_profile_used(device_id: str, fact_ids: list) -> None:
         logger.warning(f"Profile mark_used failed: {e}")
 
 
+def record_implicit_event(device_id: str, events: list, now: float = None) -> bool:
+    """隐式画像事件入口（行为痕迹 → W/M/F，数学模型 v1）。
+
+    enabled=False 时忽略（与显式采集同一开关）；首次调用触发一次性回填
+    （knowledge.json → W、历史测验 → M 回放）；异常静默——画像采集
+    永不影响主回答链路。事件形态见 profile_implicit.ALPHA 的键。
+    """
+    if not device_id or not isinstance(events, list) or not events:
+        return False
+    try:
+        path = _profile_path(device_id)
+        _implicit.ensure_seeded(path)
+        return _implicit.record_events(path, events, now=now)
+    except Exception as e:  # pragma: no cover - 存储异常不阻断回答
+        logger.warning(f"Implicit profile event failed: {e}")
+        return False
+
+
+def manage_implicit(device_id: str, action: str, dim: str = "",
+                    key: str = "", value=None) -> dict:
+    """面板原子操作（freeze/unfreeze/set/reset），用户主动管理不受 enabled 限制。
+
+    返回操作后的 implicit 状态子树（面板直接消费 frozen 等字段）。
+    """
+    result = _implicit.manage_implicit(_profile_path(device_id), action, dim=dim,
+                                       key=key, value=value)
+    if isinstance(result, dict) and "implicit" in result:
+        return result["implicit"]
+    return result if isinstance(result, dict) else {}
+
+
+def implicit_dashboard(device_id: str) -> dict:
+    """仪表盘派生视图（衰减到当前的 W/π、保留调整后的 m̂、成熟度、账本）。"""
+    profile = get_profile(device_id)
+    if not profile.get("enabled", True):
+        return {"enabled": False}
+    view = _implicit.dashboard_view(profile.get("implicit"))
+    view["enabled"] = True
+    return view
+
+
 def _profile_section_texts(profile: dict) -> tuple:
     """把画像组装为结构化段落（契约化注入的正文）。
 
@@ -691,7 +737,17 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
     profile = get_profile(device_id)
     if not profile.get("enabled", True):
         return {"text": "", "factIds": [], "sections": []}
+    # 一次性回填（幂等）：seeded 标记缺失时补 W/M 冷启动，回填后重读一遍再编译
+    try:
+        if _implicit.ensure_seeded(_profile_path(device_id)):
+            profile = get_profile(device_id)
+    except Exception as e:  # pragma: no cover - 回填失败不影响显式注入
+        logger.warning(f"Implicit profile seed failed: {e}")
     sections, _ = _profile_section_texts(profile)
+    # 隐式画像段挂最尾：预算不足时逐条回退循环先丢它（显式事实优先）；无事实 id 占位
+    implicit_items = _implicit.compile_user_model(profile.get("implicit"), profile)
+    if implicit_items:
+        sections.append(("【画像】", implicit_items, [None] * len(implicit_items)))
     if not sections:
         return {"text": "", "factIds": [], "sections": []}
     rules = [
@@ -808,4 +864,12 @@ __all__ = [
     "mark_profile_used", "profile_context", "profile_context_text",
     "profile_review_digest", "profile_weak_terms",
     "profile_ops_digest", "_norm_fact",
+    # 隐式画像层（数学模型 v1）转发：main.py 只 import profile，不直接碰 implicit
+    "record_implicit_event", "manage_implicit", "implicit_dashboard",
+    "QUIZ_STATS_KEY", "quiz_stats_events", "assign_topic",
 ]
+
+# main.py 挂钩用的转发符号（保持 main.py 的 import 面不变）
+QUIZ_STATS_KEY = _implicit.QUIZ_KV_KEY
+quiz_stats_events = _implicit.quiz_stats_events
+assign_topic = _implicit.assign_topic
