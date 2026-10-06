@@ -594,6 +594,159 @@ function _continentCoast(key, kind) {
   return hs.join(' ') + ' / ' + vs.join(' ');
 }
 
+// ===== v8.9 填色地貌 + v8.10 真海岸线（backlog T24 第三/四试）=====
+// 5a（差异化圆角）整图缩放下只「不再是同一个模子」；5b（clip-path＋SVG 岸线）败在填色
+// 太透——换了形状仍是「描了个边」，已完整回退（v8.4/v8.6 两节有案）。v8.6 把填色抬起
+// 来之后，第三试（v8.9，纯填色：岛色微差＋半透明地貌斑）用户实测「没看出区别」——
+// **半透明填色叠在壁纸上，明度差落到屏幕只剩几个 RGB 点，这是填色层的物理天花板**。
+// 于是按 v8.6 节预告的顺序走到轮廓：第四试（v8.10）把每块地皮的剪影本身雕出来。
+// **挪岛与雕岸线用同一条 v8.5 位移场**（_continentWarp1，世界坐标纯函数）：弯曲连贯、
+// 像地质、不像噪声，确定性白拿。内凹不越过卡区（PAD 18 / 岛牌 top 9），外凸不挤压
+// 城市走廊（各边分设上限，见 CONTINENT_COAST_CAPS）。网格态返回 null → 逐字节今天。
+// **盐的规矩（v8.5 踩了两次的坑）**：差异必须放在盐的靠前位置、后面再跟几个字符——
+// 'x-high'/'y-high' 可以，'tn-hx'/'tn-hy' 这种差异在末字符的会退化成对角线。
+function _continentTerrain(key) {
+  if (_continentStyleMode() === CONTINENT_STYLE_GRID) return null;
+  const k = String(key == null ? '' : key) + '|terrain';
+  const u = salt => _continentJitter1(k, salt) * 0.5 + 0.5;   // [-1,1] → [0,1]
+  // 三块地貌斑（v8.9）：高地（亮）/洼地（暗）/极性哈希翻转的中斑——有的岛两高一洼、
+  // 有的两洼一高。坐标半径全是**占地比例**（0~1），渲染层换算成 px 画进 SVG。
+  // 透明度系数 >1（1.3/1.1/0.9 × --fill-1）：斑要比底填充更实才读得出来；
+  // light/pending 档 --fill-1 只有 0.15，乘上去仍然温和，不盖档位语义。
+  const P = (salt, frx0, frxW, fry0, fryW, fx0, fxW, fy0, fyW, tone, dL) => ({
+    frx: frx0 + u(salt + '-rx') * frxW, fry: fry0 + u(salt + '-ry') * fryW,
+    fx: fx0 + u(salt + '-x') * fxW, fy: fy0 + u(salt + '-y') * fyW,
+    tone, dL,
+  });
+  return {
+    '--tn-h': String(Math.round(u('hue-tn') * 20 - 10)),  // 色相 ±10
+    '--tn-s': (u('sat-tn') * 12 - 6).toFixed(1) + '%',    // 饱和 ±6%
+    '--tn-l': (u('lit-tn') * 18 - 9).toFixed(1) + '%',    // 明度 ±9%
+    patches: [
+      P('high', 0.30, 0.25, 0.26, 0.24, 0.25, 0.50, 0.20, 0.35, 'hi', 13),
+      P('basin', 0.26, 0.22, 0.24, 0.22, 0.25, 0.50, 0.45, 0.40, 'lo', -11),
+      P('mid', 0.24, 0.22, 0.22, 0.22, 0.22, 0.56, 0.22, 0.56,
+        u('pol-mid') > 0.5 ? 'midUp' : 'midDown', u('pol-mid') > 0.5 ? 7 : -7),
+    ],
+  };
+}
+
+// ===== v8.10 岸线参数 =====
+// 内凹/外凸分边上限（世界 px）。内凹红线：岛牌在 top:9/left:10，卡区从 PAD 18 + HEADER_H 36
+// 开始——顶边内凹 ≤4、左边 ≤8 保证文字永远在岸内，底/右 ≤14 < PAD 18 保证卡不悬进水里；
+// 海域没卡，内凹放宽（再被「到最近岛的距离」逐点夹住，见下），但顶 ≤6（板头 top:8）、
+// 左边板名区另有 90px 护栏。外凸吃的是岛间走廊：岛的外凸被「到最近邻岛的距离-26」逐点
+// 夹住（两岛相向最多各长一段，永不粘连），海域外凸 ≤36（板间距实测充裕）。
+const CONTINENT_COAST_CAPS = {
+  island: { outTop: 14, outSide: 18, outBottom: 20, inTop: 4, inSide: 8, inBottom: 14 },
+  region: { outTop: 26, outSide: 36, outBottom: 36, inTop: 6, inSide: 44, inBottom: 44 },
+};
+const CONTINENT_COAST_SAMPLES = { island: 56, region: 96 };  // 沿边采样数：段短才平滑
+// 三档波长：粗 900 造整岛级的大弯、**中 420 造海湾/半岛（杀「方形」的主力）**、细 170 造
+// 岸线的小曲。v8.5 的教训：只有粗+细，中间尺度空缺，直边仍然读成直边。
+const CONTINENT_COAST_CELL = { c: 900, m: 420, f: 170 };
+// 底形圆角（杀「方形」第二刀）：顶角保持小（护住岛牌/板头文字），**底角开大弧**。
+// 上限由「卡角留在岸内」反推：pad p 的角在圆心距 √2(r-p) 内必须 ≤ r ⇒ r ≤ 2+p×√2/(√2-1)…
+// 解出岛（pad 18）r ≤ 43、海域（pad 26）r ≤ 62，取整留余量。
+const CONTINENT_COAST_RADIUS = {
+  island: { topLo: 12, topHi: 18, botLo: 28, botHi: 42 },
+  region: { topLo: 16, topHi: 22, botLo: 46, botHi: 60 },
+};
+
+// 岸线：沿**圆角矩形**底形走一圈（底角大弧），每点沿外法线按三档位移场推拉，中点二次
+// 贝塞尔闭合平滑。others＝同图其余地块（海域传本海域的岛、岛传其余岛），用于逐点夹住
+// 幅度：海域内凹不许吃岛（dist-12），岛外凸不许粘邻岛（dist-26）。返回 { d, pts }；
+// 网格态 null。rect.x/y 是**抖动后**的世界坐标——岸线场采样与这座岛被挪到的位置天然连续，
+// 同一块地每次刷新是同一条海岸。
+function _continentCoastPath(rect, kind, others) {
+  if (_continentStyleMode() === CONTINENT_STYLE_GRID) return null;
+  const caps = CONTINENT_COAST_CAPS[kind] || CONTINENT_COAST_CAPS.island;
+  const n = CONTINENT_COAST_SAMPLES[kind] || CONTINENT_COAST_SAMPLES.island;
+  const rad = CONTINENT_COAST_RADIUS[kind] || CONTINENT_COAST_RADIUS.island;
+  const isRegion = kind === 'region';
+  const k = String(rect.key == null ? rect.sessionId : rect.key) + '|coastshape|' + kind;
+  const u = salt => _continentJitter1(k, salt) * 0.5 + 0.5;
+  // 每角独立半径（v8.4「每块地自己的圆角」精神搬进剪影）：顶角小、底角大
+  const rTL = rad.topLo + u('r-tl') * (rad.topHi - rad.topLo);
+  const rTR = rad.topLo + u('r-tr') * (rad.topHi - rad.topLo);
+  const rBR = rad.botLo + u('r-br') * (rad.botHi - rad.botLo);
+  const rBL = rad.botLo + u('r-bl') * (rad.botHi - rad.botLo);
+  const w = rect.w, h = rect.h;
+  // 八段底形：4 直边 + 4 圆弧，样点按段长分配
+  const TAU2 = Math.PI / 2;
+  const segs = [
+    { len: w - rTL - rTR, cap: 'top',    p: t => [rTL + t * (w - rTL - rTR), 0],
+      nn: () => [0, -1] },
+    { len: TAU2 * rTR, cap: 'top',       p: t => { const a = -TAU2 + t * TAU2; return [w - rTR + Math.cos(a) * rTR, rTR + Math.sin(a) * rTR]; },
+      nn: t => { const a = -TAU2 + t * TAU2; return [Math.cos(a), Math.sin(a)]; } },
+    { len: h - rTR - rBR, cap: 'side',   p: t => [w, rTR + t * (h - rTR - rBR)],
+      nn: () => [1, 0] },
+    { len: TAU2 * rBR, cap: 'bottom',    p: t => { const a = t * TAU2; return [w - rBR + Math.cos(a) * rBR, h - rBR + Math.sin(a) * rBR]; },
+      nn: t => { const a = t * TAU2; return [Math.cos(a), Math.sin(a)]; } },
+    { len: w - rBR - rBL, cap: 'bottom', p: t => [w - rBR - t * (w - rBR - rBL), h],
+      nn: () => [0, 1] },
+    { len: TAU2 * rBL, cap: 'bottom',    p: t => { const a = TAU2 + t * TAU2; return [rBL + Math.cos(a) * rBL, h - rBL + Math.sin(a) * rBL]; },
+      nn: t => { const a = TAU2 + t * TAU2; return [Math.cos(a), Math.sin(a)]; } },
+    { len: h - rBL - rTL, cap: 'side',   p: t => [0, h - rBL - t * (h - rBL - rTL)],
+      nn: () => [-1, 0] },
+    { len: TAU2 * rTL, cap: 'top',       p: t => { const a = Math.PI + t * TAU2; return [rTL + Math.cos(a) * rTL, rTL + Math.sin(a) * rTL]; },
+      nn: t => { const a = Math.PI + t * TAU2; return [Math.cos(a), Math.sin(a)]; } },
+  ];
+  const total = segs.reduce((a, s) => a + s.len, 0);
+  const clampCap = (base, px, py, fieldV) => {
+    let cap = fieldV > 0
+      ? (base === 'top' ? caps.outTop : base === 'bottom' ? caps.outBottom : caps.outSide)
+      : (base === 'top' ? caps.inTop : base === 'bottom' ? caps.inBottom : caps.inSide);
+    if (!others || !others.length) return cap;
+    if (isRegion && fieldV < 0) {
+      // 海域内凹：不许越过任何一座岛（留 12px 水面）；板头区（左上 150×90）再压到 14
+      let lim = Math.min(cap, Math.max(rect.w, rect.h) * 0.14);
+      const wx = rect.x + px, wy = rect.y + py;
+      for (const o of others) {
+        const dx = Math.max(o.x - wx, 0, wx - (o.x + o.w));
+        const dy = Math.max(o.y - wy, 0, wy - (o.y + o.h));
+        lim = Math.min(lim, Math.max(0, Math.hypot(dx, dy) - 12));
+      }
+      if (px < 150 && py < 90) lim = Math.min(lim, 14);
+      cap = lim;
+    }
+    if (!isRegion && fieldV > 0) {
+      // 岛外凸：不许逼近邻岛（留 26px = 双方各长一段的余量）
+      let lim = cap;
+      const wx = rect.x + px, wy = rect.y + py;
+      for (const o of others) {
+        const dx = Math.max(o.x - wx, 0, wx - (o.x + o.w));
+        const dy = Math.max(o.y - wy, 0, wy - (o.y + o.h));
+        lim = Math.min(lim, Math.max(0, Math.hypot(dx, dy) - 26));
+      }
+      cap = lim;
+    }
+    return cap;
+  };
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    let d = (i / n) * total, si = 0;
+    while (si < segs.length - 1 && d > segs[si].len) { d -= segs[si].len; si++; }
+    const seg = segs[si], t = seg.len > 0 ? d / seg.len : 0;
+    const bp = seg.p(t), nn = seg.nn(t);
+    const fieldV = 0.35 * _continentWarp1(rect.x + bp[0], rect.y + bp[1], CONTINENT_COAST_CELL.c, 'coast-c')
+                 + 0.40 * _continentWarp1(rect.x + bp[0], rect.y + bp[1], CONTINENT_COAST_CELL.m, 'coast-m')
+                 + 0.25 * _continentWarp1(rect.x + bp[0], rect.y + bp[1], CONTINENT_COAST_CELL.f, 'coast-f');
+    const cap = clampCap(seg.cap, bp[0], bp[1], fieldV);
+    const disp = fieldV * cap;
+    pts.push([bp[0] + nn[0] * disp, bp[1] + nn[1] * disp]);
+  }
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const f1 = v => (Math.round(v * 10) / 10).toString();
+  const m0 = mid(pts[n - 1], pts[0]);
+  let dStr = 'M ' + f1(m0[0]) + ' ' + f1(m0[1]);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = mid(p, pts[(i + 1) % n]);
+    dStr += ' Q ' + f1(p[0]) + ' ' + f1(p[1]) + ' ' + f1(q[0]) + ' ' + f1(q[1]);
+  }
+  return { d: dStr + ' Z', pts };
+}
+
 // 有机/网格开关（渲染层偏好，非会话键：换会话不该换画风）
 function _continentStyleMode() {
   try {
