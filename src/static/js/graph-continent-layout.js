@@ -113,6 +113,16 @@ function _continentRegionHue(name, universe) {
   return 0;
 }
 
+// T32 远景短名：远景档（lod-horizon）里岛牌升格成「大地名」，字号被 --cloud-k 放大后
+// 长名必然省略号截断（真实库 13 岛里 4 个读不全）。给远景一份按字数封顶的短名——
+// 全名/短名两份都进 DOM（一次渲染写死、缩放全程不碰 DOM 的约定不变），切档只切 CSS。
+// cap 由调用方按岛宽算，本函数保持纯函数：只裁字，不量地。
+function _continentShortName(title, cap) {
+  const t = String(title == null ? '' : title).trim();
+  if (!t) return '未命名画布';
+  return t.length <= Math.max(2, cap | 0) ? t : t.slice(0, Math.max(2, cap | 0));
+}
+
 // 归属解析：后端概率 + 用户覆盖（KV continent_regions，优先级①）→ 每座岛的
 // {key, tier, source}。tier 三档：solid（p≥0.7）/ light（0.4–0.7，「?」徽标）/
 // pending（<0.4，中性灰不上地盘，进「待确认」）——「不确定也要可见」。
@@ -176,7 +186,10 @@ function _continentRegions(clusters, overrides, domainList) {
       : srcs.indexOf('gate') >= 0 ? 'gate' : 'family';
     r.userNamed = !r.merged && Object.prototype.hasOwnProperty.call(renames, r.key);
   });
-  return { regions: regions, singles: singles, neutral: neutral, pending: pending, bySid: bySid };
+  // T134：domainList 随产物带走——航线「跟海域色」必须与海域板同一份 universe 取色
+  //（_continentRegionHue 的线性探测占槽依赖 universe 全表），各传各的必在撞槽时分叉
+  return { regions: regions, singles: singles, neutral: neutral, pending: pending,
+           bySid: bySid, domainList: domainList || null };
 }
 
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------

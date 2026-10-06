@@ -710,6 +710,7 @@ window._continentPhiBlockHtml = _continentPhiBlockHtml;
 window._continentIslandTagline = _continentIslandTagline;
 // v7.1a 海域层：纯函数（无 DOM），smoke 直接断言（分组/配色确定性/两级布局罩住海域板）
 window._continentRegionHue = _continentRegionHue;
+window._continentShortName = _continentShortName;   // v8.11 T32 远景短名（纯函数）
 window._continentRegions = _continentRegions;
 window._continentRegionLayout = _continentRegionLayout;
 window._continentLayoutGrid = _continentLayoutGrid;

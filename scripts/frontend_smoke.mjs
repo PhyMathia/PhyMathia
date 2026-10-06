@@ -6420,6 +6420,77 @@ check('graph-continent: v8.10 真海岸线（确定性 / 网格态 null / 幅度
   return true;
 });
 
+check('graph-continent: v8.11 航线「跟海域色」与海域板同槽取色（T134 universe 口径一致）', () => {
+  const hue = sandbox._continentRegionHue;
+  const regions = sandbox._continentRegions;
+  const stroke = sandbox._continentRouteStroke;
+  if (typeof hue !== 'function' || typeof regions !== 'function' || typeof stroke !== 'function') {
+    throw new Error('纯函数未暴露（regionHue / regions / routeStroke）');
+  }
+  // 造一个「带 universe 会换槽」的撞槽名：hash 逐字确定，首个命中恒定
+  const A = '矢量分析', B = '守恒定律';
+  let K = null;
+  for (let i = 0; i < 500; i++) {
+    const cand = '领域' + i;
+    if (hue(cand, [A, B]) !== hue(cand, null)) { K = cand; break; }
+  }
+  if (K === null) throw new Error('500 个候选造不出撞槽对（hash 或 CONTINENT_HUE_COUNT 变了？）');
+  const cl = (sid, n) => ({ sessionId: sid, title: sid, domain: K, domainConf: 0.9,
+    domainSource: 'vote', itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })) });
+  const info = regions([cl('a', 2), cl('b', 1)], {}, [A, B]);
+  if (!Array.isArray(info.domainList) || info.domainList.join() !== A + ',' + B) {
+    throw new Error('regionInfo 没随产物带回 domainList（T134 契约缺失）');
+  }
+  const region = info.regions.find(r => r.key === K);
+  if (!region) throw new Error('同领域两岛应成一片海域');
+  if (region.hue !== hue(K, [A, B])) throw new Error('海域板取色口径漂了');
+  // 航线「跟海域色」必须与海域板同槽——旧代码传 null 撞槽时分叉，这条会红
+  const s = stroke({ color: 'region' }, { fromSession: 'a' }, info, 'dark');
+  if (s.color !== 'hsla(' + region.hue + ', 62%, 64%, 0.85)') {
+    throw new Error('航线取色与海域板不同槽：' + s.color + ' ≠ hsla(' + region.hue + ',…)');
+  }
+  // 兼容旧形态：手工构造、没有 domainList 的 regionInfo 退回单名占槽（不炸、仍有色）
+  const legacy = stroke({ color: 'region' }, { fromSession: 'a' }, { bySid: info.bySid }, 'dark');
+  if (legacy.color.indexOf('hsla(') !== 0) throw new Error('无 domainList 的 regionInfo 取色路径断了');
+  return true;
+});
+
+check('graph-continent: v8.11 远景短名（纯函数封顶 / 空名兜底 / 双份 DOM / CSS 切档）', () => {
+  const short = sandbox._continentShortName;
+  if (typeof short !== 'function') throw new Error('_continentShortName 未暴露');
+  if (short('梯度与优化方法基础', 6) !== '梯度与优化方') throw new Error('长名未按预算裁字');
+  if (short('短名', 6) !== '短名') throw new Error('短名不该动');
+  if (short('线性代数与矩阵论', 2) !== '线性') throw new Error('cap 下限 2');
+  if (short('', 6) !== '未命名画布') throw new Error('空名兜底');
+  if (short(null, 6) !== '未命名画布') throw new Error('null 兜底');
+  if (short('  带空格  ', 6) !== '带空格') throw new Error('未 trim');
+  const src = readContinentSrc();
+  if ((src.match(/continent-cluster-title-short/g) || []).length !== 2) {
+    throw new Error('短名 span 没在两个岛牌分支都接上');
+  }
+  if (src.indexOf('CONTINENT_HORIZON_NAME_CHAR_W') < 0 || src.indexOf('horizonCap') < 0) {
+    throw new Error('远景名宽预算没接进渲染');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const frag of ['.continent-cluster-title-short { display: none; }',
+    '.continent-world.lod-horizon .continent-cluster-title-full { display: none; }',
+    '.continent-world.lod-horizon .continent-cluster-title-short { display: block; }',
+    '.continent-world.lod-horizon .continent-domain-dot { display: none; }']) {
+    if (!css.includes(frag)) throw new Error('v8.11 短名 CSS 契约缺失：' + frag);
+  }
+  return true;
+});
+
+check('graph-continent: v8.11 未投影卡计数上顶栏（T141 stats 接 orphans + tooltip 解释）', () => {
+  const src = readContinentSrc();
+  if (src.indexOf("(data.orphans ? ' · 未投影 ' + data.orphans + ' 张卡' : '')") < 0) {
+    throw new Error('顶栏统计没接 orphans（T141）');
+  }
+  if (src.indexOf('缺标题或会话归属，投影不进大陆') < 0) throw new Error('orphan tooltip 解释缺失');
+  return true;
+});
+
 // ===== 串行边界追加：发送排队（T42）=====
 // 2026-09-27：AI 忙时点发送，过去一律是裸 `if (正在生成) return;`——不提示、不置灰、
 // 不留痕。免费模型一次工作流 2-8 分钟，这个忙窗口长得离谱，用户只会以为按钮坏了。

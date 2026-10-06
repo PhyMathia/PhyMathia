@@ -137,6 +137,11 @@ const CONTINENT_LOD_DETAIL = 1.1;
 // 各自拍脑袋就会出现「远景档里还在铺糊字」或「词流在还看得清时就提前收了」两种坏结果。
 const CONTINENT_LOD_HORIZON = 0.22;
 const CONTINENT_CLOUD_SCALE_MAX = 2.5;
+// T32 远景岛名预算：远景档（zoom<0.22）里 1/zoom 恒 >2.5，--cloud-k 恒顶在
+// CONTINENT_CLOUD_SCALE_MAX 上，大地名世界字号恒为 13(--fs-md) × 2.5 × 1.6 = 52 世界 px/字
+//（CJK 按全宽计）——短名预算＝岛内净宽 ÷ 它。改 lod-horizon 岛名字号公式
+//（styles-panels.css）必须同步这条式子，两头一条命。
+const CONTINENT_HORIZON_NAME_CHAR_W = 13 * CONTINENT_CLOUD_SCALE_MAX * 1.6;
 // 词流一次最多铺多少个词：岛内空地再大也铺不满（会被裁），限个数是为了让每座岛的词流块
 // 高度大致齐平、不会有一座岛拖出一长条把岛牌顶下去
 const CONTINENT_CLOUD_WORD_MAX = 24;
@@ -758,12 +763,18 @@ function _continentRender(data) {
         ? ' · <button class="continent-cluster-more" data-island-expand="' + esc(rect.sessionId) + '"' +
           ' title="收回进岛，只留前面几张">收起</button>'
         : '');
+    // T32 远景短名预算：远景档字号恒 52 世界 px/字，head 左右各让 10px、底盘边框 2px、
+    // 再留 2px 取整余量（真机实测 4 字名可超宽 2px 咬出省略号），岛内净宽除之＝放得下的
+    // 字数，下限 2。全名/短名两份都进 DOM，远景档由 CSS 切换
+    const horizonCap = Math.max(2, Math.floor((rect.w - 24) / CONTINENT_HORIZON_NAME_CHAR_W));
     let headHtml =
       '<div class="continent-cluster-head">' +
         '<span class="continent-cluster-headline">' +
           '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
             (rect.collapsed ? '▸' : '▾') + '</span>' +
-          '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-title continent-cluster-title-full">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-title continent-cluster-title-short" title="' + esc(rect.title) + '">' +
+            esc(_continentShortName(rect.title, horizonCap)) + '</span>' +
           '<span class="continent-cluster-count">' + rect.itemCount + ' 个聚落</span>' +
         '</span>' +
         (rect.collapsed || !tagline ? '' :
@@ -781,7 +792,9 @@ function _continentRender(data) {
         '<span class="continent-cluster-headline">' +
           '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
             (rect.collapsed ? '▸' : '▾') + '</span>' +
-          '<span class="continent-cluster-title">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-title continent-cluster-title-full">' + esc(rect.title) + '</span>' +
+          '<span class="continent-cluster-title continent-cluster-title-short" title="' + esc(rect.title) + '">' +
+            esc(_continentShortName(rect.title, horizonCap)) + '</span>' +
           '<span class="continent-cluster-count">' + rect.itemCount + ' 个聚落</span>' +
           '<button class="continent-domain-badge' + (tier === 'solid' ? '' : ' is-unsure') + '"' +
             ' data-domain-sid="' + esc(rect.sessionId) + '"' +
@@ -926,9 +939,17 @@ function _continentRender(data) {
   _continentStatsBase = data.clusterCount + ' 座岛 · ' + data.itemCount + ' 个聚落' +
     (regionInfo.regions.length ? ' · ' + regionInfo.regions.length + ' 片海域' : '') +
     (cityCount ? ' · ' + cityCount + ' 座联运港' : '') +
-    (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '');
+    (plan.folded.length ? ' · 折叠 ' + plan.folded.length + ' 条' : '') +
+    // T141：投影不出去的卡（缺标题/会话归属的脏数据）也要可见——正常为 0 不占位，
+    // 只在真有卡没上陆时出现；解释挂 tooltip（09-27 拍板：统计不占引导位）
+    (data.orphans ? ' · 未投影 ' + data.orphans + ' 张卡' : '');
   const stats = document.getElementById('continentStats');
-  if (stats) stats.textContent = _continentStatsBase + (mineCount ? ' · 我的航线 ' + mineCount : '');
+  if (stats) {
+    stats.textContent = _continentStatsBase + (mineCount ? ' · 我的航线 ' + mineCount : '');
+    stats.title = data.orphans
+      ? data.orphans + ' 张知识卡缺标题或会话归属，投影不进大陆'
+      : '';
+  }
   const empty = document.getElementById('continentEmpty');
   if (empty) empty.hidden = (data.itemCount || 0) > 0;
   // 空态引导（v5.4）：「暂无联运港」管「有岛但 0 港」，教的是共享概念怎么长成联运港。
