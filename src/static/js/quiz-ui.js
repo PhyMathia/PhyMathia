@@ -734,6 +734,10 @@ async function askQuizExplain() {
   if (!quizState || quizState.phase !== 'question' || quizState.explaining) return;
   const question = quizState.questions[quizState.index];
   const questionId = question && question.id;
+  // 隐式画像：检测页「这题没看懂」不经过主回答的分支守卫，这里直报弱负观测
+  if (question && typeof window.reportProfileEvent === 'function') {
+    window.reportProfileEvent('confused', String(question.title || ''));
+  }
   // 完成时校验仍是同一道题：等待期间用户答完点「下一题」后，迟到的解析
   // 直接丢弃，避免上一题的解析显示在下一题下方（串题）
   const stillSameQuestion = () =>

@@ -4494,3 +4494,15 @@
 .memory-item-time { flex-shrink: 0; font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }
 .memory-item-idle { opacity: .75; }
 .memory-item-archived { opacity: .65; }
+
+/* 行为画像仪表盘（隐式模型 v1）：名称 + 权重条 + 数值的三段行；条色走 accent 令牌 */
+.memory-model-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+.memory-model-frozen { display: inline-flex; align-items: center; gap: 10px; }
+.memory-model-freeze { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-2xs); color: var(--text-secondary); cursor: pointer; }
+.memory-model-sub { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 8px 0 4px; }
+.memory-model-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.memory-model-label { flex-shrink: 0; max-width: 42%; font-size: var(--fs-xs); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-bar { flex: 1; height: 6px; border-radius: var(--r-sm); background: var(--border); overflow: hidden; }
+.memory-bar i { display: block; height: 100%; border-radius: var(--r-sm); background: var(--accent); opacity: .8; }
+.memory-model-val { flex-shrink: 0; min-width: 3.5em; text-align: right; font-size: var(--fs-2xs); color: var(--text-secondary); }
+.memory-model-hint { font-size: var(--fs-2xs); color: var(--text-secondary); margin-top: 8px; }

@@ -602,6 +602,8 @@ function copyVizCode(vizId) {
 function openVizNewTab(vizId) {
   const html = _vizStore[vizId];
   if (!html) return;
+  // 隐式画像：主动打开可视化 = 具象/例子侧偏好信号
+  if (typeof window.reportProfileEvent === 'function') window.reportProfileEvent('visualize');
   // file:// 单文件场景：没有 /viz-preview.html 可跳，也没有可提权的站点 origin
   // （blob 继承 null origin），直接 Blob URL 打开是安全的
   if (location.protocol === 'file:') {

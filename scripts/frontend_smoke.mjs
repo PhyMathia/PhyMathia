@@ -7843,5 +7843,54 @@ check('note-export：接线（知识菜单两入口 + 构建条目注册紧跟 k
   return true;
 });
 
+
+// ====== 隐式行为画像（数学模型 v1，2026-10-06）：纯同步源契约＋纯函数渲染，不占串行边界段 ======
+
+check('隐式画像：前端上报器与仪表盘渲染（行为画像 v1）', () => {
+  if (typeof sandbox.reportProfileEvent !== 'function') throw new Error('reportProfileEvent 未定义');
+  if (typeof sandbox.memoryRenderModelHtml !== 'function') throw new Error('memoryRenderModelHtml 未定义');
+  const html = sandbox.memoryRenderModelHtml({
+    enabled: true, maturity: 0.78, events: 30, seeded: true,
+    topics: [{ topic: '电磁感应', w: 3.2, share: 0.34, p: 0.6, m: 0.58, h: 9.1, ans: 4, ok: 3,
+      ledger: [{ type: 'answer', at: Date.now(), x: 1, p: 0.6 }] }],
+    style: { f1: 0.4, f2: -0.2, ledger: [] },
+    frozen: { interest: false, mastery: false, style: false },
+  });
+  // 沙箱的 escapeHtml 走宽松 DOM 代理，行内标签与数值全被转义成垃圾串不可断言——
+  // 分节标题是原生拼接、且只在对应行成功渲染时才出现，用它当行渲染的行为证据
+  if (!html.includes('成熟度 78%')) throw new Error('成熟度未渲染');
+  if (!html.includes('兴趣（占注意力比例）')) throw new Error('兴趣行未渲染');
+  if (!html.includes('能力（含遗忘折算）')) throw new Error('能力行未渲染');
+  if (!html.includes('风格（只排呈现顺序与配比')) throw new Error('风格行未渲染');
+  if (!html.includes('memory-model-row') || !html.includes('memory-bar')) throw new Error('行结构未渲染');
+  if (!html.includes('memoryFreezeImplicit')) throw new Error('冻结开关未渲染');
+  const empty = sandbox.memoryRenderModelHtml({ enabled: true, maturity: 0, events: 0, topics: [],
+    style: { f1: 0, f2: 0 }, frozen: {}, seeded: true });
+  if (!empty.includes('行为数据还不够')) throw new Error('空态提示缺失');
+  return true;
+});
+
+check('隐式画像：前端接线契约（expand/visualize/difficulty/confused/kv device_id/面板区块）', () => {
+  const graph = fs.readFileSync('src/static/js/graph.js', 'utf8');
+  if (!graph.includes("window.reportProfileEvent('expand')")) throw new Error('graph.js 展开未上报 expand');
+  const render = fs.readFileSync('src/static/js/render.js', 'utf8');
+  if (!render.includes("window.reportProfileEvent('visualize')")) throw new Error('render.js 可视化未上报');
+  const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!ui.includes("window.reportProfileEvent('difficulty'")) throw new Error('ui.js 难度未上报');
+  const quizUi = fs.readFileSync('src/static/js/quiz-ui.js', 'utf8');
+  if (!quizUi.includes("window.reportProfileEvent('confused'")) throw new Error('quiz-ui.js 没看懂未上报');
+  const qstats = fs.readFileSync('src/static/js/quiz-stats.js', 'utf8');
+  if (!/phymathia_quiz_stats[\s\S]{0,220}device_id/.test(qstats)) throw new Error('kv 同步缺 device_id');
+  const memory = fs.readFileSync('src/static/js/memory.js', 'utf8');
+  if (!memory.includes("'/api/profile/event'")) throw new Error('memory.js 缺事件上报端点');
+  if (!memory.includes('/api/profile/dashboard?device_id=')) throw new Error('memory.js 缺仪表盘端点');
+  if (!memory.includes('_memoryEvidenceText')) throw new Error('memory.js 缺证据账本渲染');
+  const html = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!html.includes('id="memoryModelList"') || !html.includes('id="memoryModelMaturity"')) {
+    throw new Error('index.html 缺行为画像区块');
+  }
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

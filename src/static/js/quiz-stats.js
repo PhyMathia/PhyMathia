@@ -29,10 +29,11 @@ async function _saveQuizStats(stats) {
     }
   } catch (e) { /* 服务端不可用时按本地整表写（旧行为） */ }
   try {
+    // device_id 搭车：服务端在 kv 写入时差分出作答事件，喂给隐式行为画像（无 device 不记）
     fetch('/api/kv/phymathia_quiz_stats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value: stats })
+      body: JSON.stringify({ value: stats, device_id: (typeof getDeviceId === 'function' ? getDeviceId() : '') })
     }).catch(() => {});
   } catch (e) {}
 }

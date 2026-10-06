@@ -79,6 +79,139 @@ function memoryNotifyPromoted(promoted) {
   setTimeout(() => toast.classList.remove('show'), 4000);
 }
 
+// ---------- 隐式行为画像（数学模型 v1）----------
+// 前端纯行为信号（展开/可视化/难度切换）fire-and-forget 上报；服务端已有
+// 数据写入点（知识/公式/测验统计/主回答）自己挂钩，不经这里。
+// 铁律：画像采集绝不影响 UI——任何失败静默。
+function reportProfileEvent(type, text) {
+  try {
+    const devId = (typeof getDeviceId === 'function') ? getDeviceId() : '';
+    if (!devId) return;
+    fetch('/api/profile/event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: devId,
+        events: [{ type: String(type || ''), topic: String(text || '').slice(0, 60) }] })
+    }).catch(() => {});
+  } catch (e) { /* 静默 */ }
+}
+
+async function memoryFetchModel() {
+  try {
+    const res = await fetch('/api/profile/dashboard?device_id=' + encodeURIComponent(getDeviceId()));
+    if (!res.ok) return null;
+    return res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+// 仪表盘行：名称 + 权重条 + 右侧数值；title 挂证据账本（可解释性的最小实现）
+function _memoryModelRow(label, pct, tail, evidence) {
+  const width = Math.max(3, Math.min(100, Math.round(pct)));
+  return '<div class="memory-model-row" title="' + escapeHtml(evidence || '') + '">' +
+    '<span class="memory-model-label">' + escapeHtml(label) + '</span>' +
+    '<span class="memory-bar"><i style="width:' + width + '%"></i></span>' +
+    '<span class="memory-model-val">' + escapeHtml(tail || '') + '</span></div>';
+}
+
+function _memoryEvidenceText(ledger) {
+  if (!Array.isArray(ledger) || !ledger.length) return '暂无证据';
+  return '证据（最近 ' + ledger.length + ' 条）：' + ledger.map(e => {
+    const t = memoryRelTime(e.at);
+    if (e.type === 'interest') return t + ' 兴趣+' + e.w;
+    if (e.type === 'answer') return t + (e.x ? ' 答对' : ' 答错') + '→掌握' + e.p;
+    if (e.type === 'confused') return t + ' 没看懂→掌握' + e.p;
+    return t + ' ' + (e.type || '事件') + (e.val !== undefined ? ' ' + e.val : '');
+  }).join('；');
+}
+
+function memoryRenderModelHtml(view) {
+  if (!view || view.enabled === false) return '';
+  const frozen = view.frozen || {};
+  const parts = [];
+  parts.push('<div class="memory-model-head">' +
+    '<span>成熟度 ' + Math.round((view.maturity || 0) * 100) + '% · 行为 ' + (view.events || 0) + ' 条</span>' +
+    '<span class="memory-model-frozen">' +
+    ['interest', 'mastery', 'style'].map(dim => {
+      const labels = { interest: '兴趣', mastery: '能力', style: '风格' };
+      return '<label class="memory-model-freeze"><input type="checkbox" ' +
+        (frozen[dim] ? 'checked ' : '') + 'onchange="memoryFreezeImplicit(\'' + dim + '\', this.checked)">' +
+        labels[dim] + '</label>';
+    }).join('') +
+    '<button type="button" class="memory-item-btn memory-item-btn-danger" onclick="memoryResetImplicit()">重置</button>' +
+    '</span></div>');
+  if (view.seeded === false) {
+    parts.push('<div class="memory-empty">历史知识/测验会在下一次回答后自动回填进画像。</div>');
+  }
+  const topics = (view.topics || []).filter(t => t.w > 0);
+  const maxW = topics.length ? topics[0].w : 0;
+  const interestRows = topics.slice(0, 5).map(t =>
+    _memoryModelRow(t.topic, maxW ? t.w / maxW * 100 : 0, Math.round((t.share || 0) * 100) + '%',
+      _memoryEvidenceText(t.ledger)));
+  if (interestRows.length) {
+    parts.push('<div class="memory-model-sub">兴趣（占注意力比例）</div>' + interestRows.join(''));
+  }
+  const masteryRows = topics.filter(t => t.ans > 0).slice(0, 5).map(t =>
+    _memoryModelRow(t.topic, (t.m || 0) * 100, '掌握 ' + Math.round((t.m || 0) * 100) + '%',
+      _memoryEvidenceText(t.ledger) + '；对 ' + t.ok + '/' + t.ans + ' · 半衰期 ' + t.h + ' 天'));
+  if (masteryRows.length) {
+    parts.push('<div class="memory-model-sub">能力（含遗忘折算）</div>' + masteryRows.join(''));
+  }
+  const style = view.style || {};
+  const styleRows = [];
+  if (Math.abs(style.f1) >= 0.05) {
+    const pct = (style.f1 + 1) / 2 * 100;
+    styleRows.push(_memoryModelRow('直觉 ←→ 形式', pct, Math.round(pct) + '%',
+      _memoryEvidenceText(style.ledger)));
+  }
+  if (Math.abs(style.f2) >= 0.05) {
+    const pct = (style.f2 + 1) / 2 * 100;
+    styleRows.push(_memoryModelRow('具象 ←→ 抽象', pct, Math.round(pct) + '%', ''));
+  }
+  if (styleRows.length) {
+    parts.push('<div class="memory-model-sub">风格（只排呈现顺序与配比，不设能力上限）</div>' + styleRows.join(''));
+  }
+  if (!interestRows.length && !masteryRows.length && !styleRows.length) {
+    parts.push('<div class="memory-empty">行为数据还不够（少于 3 条）。正常提问、答题几次后，这里会长出兴趣/能力/风格画像；每项悬停可看证据，可冻结或改。</div>');
+  } else {
+    parts.push('<div class="memory-model-hint">由提问、答题、沉淀等行为统计推断（可逆，随时间衰减）；悬停可看证据。与「我的画像」冲突时以你明示的为准。</div>');
+  }
+  return parts.join('');
+}
+
+async function memoryRefreshModelSection() {
+  const el = document.getElementById('memoryModelList');
+  const countEl = document.getElementById('memoryModelMaturity');
+  if (!el) return;
+  const view = await memoryFetchModel();
+  if (countEl) countEl.textContent = (view && view.maturity !== undefined)
+    ? '(' + Math.round(view.maturity * 100) + '%)' : '';
+  el.innerHTML = memoryRenderModelHtml(view) || '';
+}
+
+async function memoryFreezeImplicit(dim, checked) {
+  try {
+    await fetch('/api/profile/implicit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: getDeviceId(), action: checked ? 'freeze' : 'unfreeze', dim })
+    });
+    await memoryRefreshModelSection();
+  } catch (e) { console.warn('Implicit freeze failed:', e); }
+}
+
+async function memoryResetImplicit() {
+  try {
+    await fetch('/api/profile/implicit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: getDeviceId(), action: 'reset' })
+    });
+    await memoryRefreshModelSection();
+  } catch (e) { console.warn('Implicit reset failed:', e); }
+}
+
 // ---------- 影响面说明（透明性）----------
 function memoryImpactAreas() {
   return [
@@ -240,6 +373,11 @@ window.memoryRefreshCache = memoryRefreshCache;
 window.memoryCachedContext = memoryCachedContext;
 window.memoryBadgeSections = memoryBadgeSections;
 window.memoryAppendProfileBadge = memoryAppendProfileBadge;
+window.reportProfileEvent = reportProfileEvent;
+window.memoryRefreshModelSection = memoryRefreshModelSection;
+window.memoryFreezeImplicit = memoryFreezeImplicit;
+window.memoryResetImplicit = memoryResetImplicit;
+window.memoryRenderModelHtml = memoryRenderModelHtml;
 
 // ---------- 记忆面板 UI ----------
 const MEMORY_CATEGORY_LABELS = { stage: '学段', goal: '目标', interest: '兴趣', weakness: '薄弱', style: '偏好', other: '其他' };
@@ -277,6 +415,9 @@ async function memoryRenderPanel() {
       '<span class="memory-impact-chip">' + a.label + ' — ' + a.desc + '</span>'
     ).join('');
   }
+
+  // 行为画像仪表盘（隐式模型派生视图，服务端算好衰减/保留/成熟度）
+  memoryRefreshModelSection();
 
   // 我的画像表单
   const formEl = document.getElementById('memoryExplicitForm');
