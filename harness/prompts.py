@@ -522,10 +522,6 @@ def slim_snapshot(value):
         for k, v in value.items():
             if v is None or v is False or (isinstance(v, str) and not v.strip()):
                 continue
-            # 节点配方 P0（T76）：类型清单穿过 normalize（数据不再断头）但不进提示词——
-            # P3 注入用户配方时才决定它的呈现方式，届时改为受控注入而非整表直出。
-            if k == "available_node_types":
-                continue
             out[k] = slim_snapshot(v)
         return out
     if isinstance(value, list):

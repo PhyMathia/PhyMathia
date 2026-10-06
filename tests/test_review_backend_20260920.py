@@ -23,7 +23,8 @@ D. harness/
   - parse_tool_calls 接受 dict 型 arguments（此前 TypeError 整次编辑报废）
   - 焦点过滤后逆操作为空 → 明确 no-op，绝不跌回模型路径
   - targeted 撤销保住 restore_node+add_edge 恢复对
-  - /graph/undo 缺 before_snapshot → 明确拒绝（不再拿当前态冒充前态）
+  - /graph/undo 缺 before_snapshot → 明确拒绝（不再拿当前态冒充前态；该端点
+    2026-10-06 随死代码退役删除，对应测试已移除）
   - 原始 add_edge（无 edge_key）也能生成逆操作
   - diff 签名补 status；patch 的 title/summary 归一到 label/content
   - summary JSON 外壳提取：summary 与 operations 之间夹其他键时取到干净文本
@@ -433,21 +434,6 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
             before, [{"op": "add_edge", "from": "A", "to": "B", "reason": "连线"}], None)
         self.assertTrue(any(op.get("op") == "remove_edge" for op in inverse),
                         "无 edge_key 的原始 add_edge 也应生成 remove_edge 逆操作")
-
-    def test_undo_endpoint_requires_before_snapshot(self):
-        client = TestClient(main_mod.app)
-        resp = client.post("/api/harness/graph/undo", json={
-            "snapshot": {"version": 1,
-                         "nodes": [{"id": "A", "kind": "knowledge", "label": "a"}],
-                         "edges": []},
-            "operations": [{"op": "update_node", "id": "A", "patch": {"label": "b"}}],
-        })
-        # 09-20 错误协议：缺请求前提属传输层故障，返回真实 400（body 形状不变）
-        self.assertEqual(resp.status_code, 400)
-        body = resp.json()
-        self.assertEqual(body["status"], "error")
-        self.assertIn("before_snapshot", str(body))
-
 
 class HarnessDiffAndPatchTest(unittest.TestCase):
     SNAP = {"version": 1,

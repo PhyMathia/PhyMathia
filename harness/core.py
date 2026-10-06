@@ -172,13 +172,6 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     user_profile = snapshot.get("user_profile")
     if isinstance(user_profile, str) and user_profile.strip():
         normalized["user_profile"] = user_profile.strip()
-    # 节点配方 P0（T76 接通）：available_node_types 是前端注册表派生的可用类型清单
-    # （提示词参考字段，不是图元素）。此前归一化直接丢弃——前端发了后端永远看不到的
-    # 断头通道；P0 起白名单清洗后放行，P3 注入用户配方清单时不再需要动 normalize。
-    # 注意它不进提示词：json_dumps/slim_snapshot 侧显式剔除（见 prompts.py）。
-    available_node_types = normalize_available_node_types(snapshot.get("available_node_types"))
-    if available_node_types:
-        normalized["available_node_types"] = available_node_types
     # 节点配方 P3（创造模式）：user_recipes 是用户配方清单摘要（提示词参考字段，
     # 仿 quiz_weak 范式——normalize 白名单放行＋preset 提示词行为规则）。Φ 在创造
     # 模式里据此查重/更新/删除；空清单不带该字段。
@@ -217,31 +210,6 @@ def normalize_user_recipes(raw: Any) -> List[Dict[str, str]]:
         ports = str(item.get("ports") or "").strip()[:40]
         if ports:
             entry["ports"] = ports
-        result.append(entry)
-        if len(result) >= 32:
-            break
-    return result
-
-
-def normalize_available_node_types(raw: Any) -> List[Dict[str, str]]:
-    """可用节点类型清单（P0）：每项 {kind, label, module_key?}，白名单清洗＋限条数。
-
-    kind 不在本注册表白名单内的条目直接丢弃（防注入未受控类型）；
-    缺 kind/非对象条目跳过；上限 32 条对齐前端清单量级（官方 16 + 用户配方余量）。
-    """
-    if not isinstance(raw, list):
-        return []
-    result: List[Dict[str, str]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "").strip()
-        if not kind or kind not in ALLOWED_NODE_KINDS:
-            continue
-        entry = {"kind": kind, "label": str(item.get("label") or "").strip()[:40]}
-        module_key = str(item.get("module_key") or "").strip()
-        if module_key:
-            entry["module_key"] = module_key[:40]
         result.append(entry)
         if len(result) >= 32:
             break

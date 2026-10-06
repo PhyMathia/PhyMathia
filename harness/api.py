@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .core import build_next_snapshot, normalize_snapshot
+from .core import normalize_snapshot
 from .events import (
     append_event,
     delete_all_events,
@@ -320,50 +320,6 @@ async def graph_review(request: Request):
         _log_review_event(payload, err, t0, "review", [])
         _log_usage(_usage_entry(payload, err, t0, "review"))
         return JSONResponse(status_code=500, content=err)
-
-
-@router.post("/graph/apply")
-async def graph_apply(request: Request):
-    try:
-        payload = await request.json()
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
-    return build_next_snapshot(payload.get("snapshot"), payload.get("operations") or [])
-
-
-
-
-@router.post("/graph/undo")
-async def graph_undo(request: Request):
-    """Deterministic undo: compute inverse ops from a before-snapshot + the ops
-    that were applied, then apply them to the current (after) snapshot."""
-    try:
-        payload = await request.json()
-    except Exception as exc:
-        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
-    try:
-        from .core import build_inverse_ops, build_next_snapshot, normalize_snapshot
-
-        current = normalize_snapshot(payload.get("snapshot") or payload.get("after_snapshot"))
-        before = payload.get("before_snapshot")
-        if not isinstance(before, dict):
-            # 缺无损前态时不能用当前态兜底冒充前态——恢复出的就是现状，图零变化
-            # 却报「已撤销成功」（与 review_graph 内部口径一致：明确拒绝）
-            return JSONResponse(status_code=400, content={
-                "status": "error",
-                "errors": [{"reason": "缺少撤销前态（before_snapshot），无法安全恢复；请使用画布的「撤销本次」按钮回退"}],
-            })
-        inverse_ops = build_inverse_ops(before, payload.get("operations") or [], current)
-        result = build_next_snapshot(current, inverse_ops)
-        result["status"] = "undo"
-        result["phase"] = "undo"
-        result["summary"] = "已撤销上一步修改"
-        result["undo_ops"] = inverse_ops
-        return result
-    except Exception as exc:
-        logger.exception("harness /graph/undo failed")
-        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"撤销失败: {exc}"}]})
-
 
 @router.post("/graph/apply_report")
 async def graph_apply_report(request: Request):

@@ -150,11 +150,6 @@ check('节点配方注册表（P0）：18 条官方配方派生 16 入口与 kin
   const kinds = sandbox.window.deriveGraphCustomNodeKinds();
   if (!Array.isArray(kinds) || !kinds.includes('relation')) throw new Error('kind 白名单缺 relation（T75 回归）');
   if (options.some(o => o.key === 'relation' || o.key === 'ai_eval')) throw new Error('hidden 类型不得进添加面板');
-  // Φ 快照类型清单与官方配方同源（16 项，module 项带 module_key）
-  const types = sandbox.window.deriveHarnessAvailableNodeTypes();
-  if (types.length !== 16) throw new Error('available_node_types 应 16 项，实际 ' + types.length);
-  const physics = types.find(t => t.kind === 'module' && t.module_key === 'physics');
-  if (!physics || physics.label !== '物理视角') throw new Error('module 类型项缺 module_key/label');
   return true;
 });
 

@@ -10,8 +10,9 @@ P0 原则是"数据收敛、行为零变化"：core.py 的三个白名单与 pro
 节点类型表在 P0 前后必须逐值（提示词则逐字）一致。
 
 标签口径说明：提示词里的标签以历史提示词为准（blank 是「空白节点」而非添加
-面板的「AI 生成空白」）；前端 available_node_types 里的 label 用面板口径，
-两处本来就不是同一份文案，对拍测试只对拍 kind/module_key 集合，不对拍 label。
+面板的「AI 生成空白」），与添加面板文案本就不是同一份；对拍测试只对拍
+kind/module_key 集合，不对拍 label。前端 available_node_types 通道已于
+2026-10-06 随死代码退役删除（T111，见 docs/dev/harness.md 当日节）。
 """
 
 from __future__ import annotations

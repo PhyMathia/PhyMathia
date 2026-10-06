@@ -2,8 +2,8 @@
 
 前端单一数据源 src/static/js/graph-recipes.js（BUILTIN_RECIPES）与后端
 harness/registry.py 的投影必须一致——改任何一侧先同步另一侧，再跑本文件。
-同时守护 T76：available_node_types 穿过 normalize（数据不断头）但被
-slim_snapshot 剔除（提示词零变化）。
+（T76 的 available_node_types 通道已于 2026-10-06 随死代码退役删除（T111），
+其两条守护测试一并移除，见 docs/dev/harness.md 当日节。）
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from harness.core import ALLOWED_CREATE_KINDS, ALLOWED_MODULE_KEYS, ALLOWED_NODE_KINDS, normalize_snapshot
-from harness.prompts import HARNESS_SYSTEM_PROMPT, json_dumps
+from harness.core import ALLOWED_CREATE_KINDS, ALLOWED_MODULE_KEYS, ALLOWED_NODE_KINDS
+from harness.prompts import HARNESS_SYSTEM_PROMPT
 from harness.registry import PROMPT_TYPE_LINES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,31 +85,3 @@ def test_prompt_type_lines_unchanged():
     assert "不要尝试创建 kind=relation 节点" in HARNESS_SYSTEM_PROMPT
     # 占位符必须已被替换（不能把 __NODE_TYPE_LINES__ 漏进提示词）
     assert "__NODE_TYPE_LINES__" not in HARNESS_SYSTEM_PROMPT
-
-
-def test_available_node_types_passes_normalize():
-    """T76：类型清单穿过归一化（白名单清洗），不再被静默丢弃。"""
-    snapshot = {
-        "nodes": [],
-        "edges": [],
-        "available_node_types": [
-            {"kind": "module", "module_key": "physics", "label": "物理视角"},
-            {"kind": "ghost", "label": "白名单外的类型"},  # 丢弃
-            {"kind": "knowledge"},
-            "junk",  # 非对象，丢弃
-            {"label": "缺 kind"},  # 丢弃
-        ],
-    }
-    out = normalize_snapshot(snapshot)
-    assert [e["kind"] for e in out["available_node_types"]] == ["module", "knowledge"]
-    assert out["available_node_types"][0]["module_key"] == "physics"
-    assert out["available_node_types"][0]["label"] == "物理视角"
-
-
-def test_available_node_types_kept_out_of_prompt():
-    """T76：清单进数据、不进提示词（slim_snapshot 剔除，P3 再决定注入方式）。"""
-    snapshot = normalize_snapshot(
-        {"nodes": [], "edges": [], "available_node_types": [{"kind": "hub", "label": "汇聚"}]}
-    )
-    assert "available_node_types" in snapshot, "数据侧必须保留（通道不断头）"
-    assert "available_node_types" not in json_dumps(snapshot), "提示词侧必须剔除（P0 行为零变化）"
