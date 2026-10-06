@@ -6923,6 +6923,29 @@ check('answer 卡展开全文：可展开判定＋预览/展开两态渲染接�
   return true;
 });
 
+check('socratic 反馈卡剥建议追问：预览/展开都不再重复，派生解析仍吃原文', () => {
+  // 真机取样的格式：正文 → 空行 → 1. [基础]…2. [进阶]…3. [拓展]… → 空行 → <socratic_meta/>
+  const feedback = '你的判断完全正确——我们把它再往下压实一层。\n\n'
+    + '1. [基础] 请你把「线性」说得再具体一点：固定一点后满足哪两条性质才叫线性？\n'
+    + '2. [进阶] 取极坐标下的温度场沿角方向的导数要乘以 1/r，这说明「那个固定矢量」还依赖什么结构？\n'
+    + '3. [拓展] 如果换成斜交基，「同一个物理矢量」的意义在哪一层上保持不变？\n\n'
+    + '<socratic_meta correct="correct" done="false" />';
+  const msg = { role: 'assistant', content: feedback, timestamp: 11, branchType: 'socratic' };
+  const node = { id: 'a11', kind: 'answer', messageIndex: 0, timestamp: 11 };
+  sandbox.window.getGraphState = () => ({});
+  const preview = sandbox._nodeContent(msg, node);
+  if (preview.includes('说得再具体') || preview.includes('斜交基') || preview.includes('socratic_meta')) throw new Error('预览不应含建议追问/meta：' + preview);
+  if (!preview.includes('压实一层')) throw new Error('预览应保留反馈正文：' + preview);
+  const raw = sandbox._graphAnswerExpandRaw(node, msg);
+  if (raw.includes('[基础]') || raw.includes('socratic_meta')) throw new Error('展开原文应剥追问块与 meta：' + raw);
+  if (sandbox._graphAnswerExpandable(node, msg)) throw new Error('剥后正文 ≤240 不应再给展开开关');
+  if (sandbox._parseSuggestedFollowupQuestions(feedback).length !== 3) throw new Error('派生解析仍应吃原文拿 3 问');
+  // 剥除只认 socratic 反馈（branchType/socratic_meta），普通回答里的 [基础] 字样不剥
+  const plain = sandbox._nodeContent({ role: 'assistant', content: '行内提法 [基础] 不该被剥', timestamp: 12 }, { id: 'a12', kind: 'answer', messageIndex: 0, timestamp: 12 });
+  if (!plain.includes('[基础]')) throw new Error('非 socratic 消息不应剥：' + plain);
+  return true;
+});
+
 check('sq 派生追问节点：复用 customNodes 自定义模块链路＋作答链挂到追问节点下＋墓碑防复活', () => {
   const feedback = '判断：理解正确 你抓住了关键。\n\n1. [基础] 先不用公式，复述一遍：为什么质量越大周期越长？\n2. [进阶] 想让周期缩短一半，质量应该变成多少倍？\n\n<socratic_meta correct="correct" done="false" />';
   const qs = sandbox._parseSuggestedFollowupQuestions(feedback);
