@@ -515,8 +515,55 @@ def _explicit_interest_text(profile: dict) -> str:
     return re.sub(r"\s+", "", "；".join(parts))
 
 
+def _knowledge_domains() -> dict:
+    """知识库领域归类：topic/concept 词 → category 集合（§8.2 相邻关系 v1 数据源）。"""
+    mapping = {}
+    data = _read_json(KNOWLEDGE_PATH, {})
+    if isinstance(data, dict):
+        for item in data.values():
+            if not isinstance(item, dict):
+                continue
+            term = str(item.get("topic") or item.get("concept") or "").strip()
+            cat = str(item.get("category") or "").strip()
+            if term and cat:
+                mapping.setdefault(term, set()).add(cat)
+    return mapping
+
+
+def _stretch_picks(rows, picked_names: list, explicit_norm: str, limit: int = 2) -> list:
+    """§8.2 拉伸分布 v1：三成探索位从「低活跃但相邻/同领域」的已归题主题里点名 1-2 个。
+
+    相邻 = 知识库 category 同域归类（与举例主侧任一主题同域者优先）；
+    归类拿不到（知识库无归类/无同域候选）退化为候选中 W 最小者——
+    排序键 (同域优先, W 升序) 一条式覆盖两条路。偏差说明见数学文档 §8.2 落地注记。
+    """
+    picked_set = set(picked_names)
+    cands = []
+    for name, w, _t in rows:
+        if name in picked_set:
+            continue
+        norm = re.sub(r"\s+", "", name)
+        if norm and norm in explicit_norm:  # 显式兴趣里的主题不占探索位（§8.1 同款去重）
+            continue
+        cands.append((name, w))
+    if not cands:
+        return []
+    domains = _knowledge_domains()
+    mine = set()
+    for name in picked_names:
+        mine |= domains.get(name, set())
+
+    def _order(entry):
+        name, w = entry
+        same = bool(mine) and bool(mine & domains.get(name, set()))
+        return (0 if same else 1, w)
+
+    cands.sort(key=_order)
+    return [name for name, _w in cands[:limit]]
+
+
 def compile_user_model(state, profile: dict, max_chars: int = 700) -> list:
-    """把隐式状态编译成【画像】注入段条目（文档 §8.1）。数据不足返回 []。
+    """把隐式状态编译成【画像】注入段条目（文档 §8.1 回答偏向＋§8.2 举例偏向）。数据不足返回 []。
 
     预算裁剪由调用方（profile_context 的逐条回退循环）兜底；本函数自限 max_chars。
     """
@@ -539,15 +586,21 @@ def compile_user_model(state, profile: dict, max_chars: int = 700) -> list:
     items = []
     if total > 0 and not frozen.get("interest"):
         picked = []
-        for name, w, _t in rows:
+        for name, _w, _t in rows:
             if len(picked) >= 3:
                 break
             # §8.1 去重：显式兴趣/薄弱/目标里已有的主题不重复占预算
             if re.sub(r"\s+", "", name) and re.sub(r"\s+", "", name) in explicit_norm:
                 continue
-            picked.append((name, w / total))
+            picked.append(name)
         if picked:
-            items.append("兴趣：" + " · ".join(f"{n} {int(p * 100)}%" for n, p in picked))
+            # §8.2 举例偏向：q = 0.7·π + 0.3·ν（β 见 §9 参数表）——七成顺兴趣 top
+            # 主题，三成往低活跃相邻主题带一步；v1 不做逐例采样，以措辞指令表达配比
+            line = "举例：七成用 " + "/".join(picked)
+            stretch = _stretch_picks(rows, picked, explicit_norm)
+            if stretch:
+                line += "，三成带一步 " + "/".join(stretch)
+            items.append(line)
     if not frozen.get("mastery"):
         depth = []
         for name, _w, t in rows:
