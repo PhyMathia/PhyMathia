@@ -6244,6 +6244,182 @@ check('graph-continent: v8.4 海岸线（确定性 / 网格态归零 / 令牌化
   return true;
 });
 
+// ===== v8.9 岛色微差 + v8.10 真海岸线：T24 三/四试 =====
+// 第三试（纯填色）用户实测「没看出区别」——半透明填色的物理天花板；第四试把剪影本身
+// 雕出来（位移场采样岸线 + SVG 地皮）。这两条 check 防三件事：哈希盐退化（v8.4/v8.5
+// 各踩过一次）、网格态漏回落、岸线幅度越界（内凹吃卡区 / 外凸挤走廊）。
+check('graph-continent: v8.9 岛色微差（确定性 / 网格态不设变量 / 微差铺得开 / 两轴不相关 / 斑参数完备）', () => {
+  const terrain = sandbox._continentTerrain;
+  if (typeof terrain !== 'function') throw new Error('_continentTerrain 未暴露');
+  const store = sandbox.localStorage;
+  const STYLE_KEY = 'phymathia_continent_style';
+  const prevMode = store.getItem(STYLE_KEY);
+  const setMode = v => store.setItem(STYLE_KEY, v);
+  const bad = [];
+  try {
+    setMode('organic');
+    const sids = ['ki_9f3', 'ki_2a71', 'ki_44c0', '矢量分析', 'x', '', 'a|b'];
+    for (const sid of sids) {
+      const a = terrain(sid);
+      if (JSON.stringify(a) !== JSON.stringify(terrain(sid))) bad.push('不确定：' + sid);
+      if (!a || typeof a['--tn-h'] !== 'string' || a['--tn-s'] === undefined || a['--tn-l'] === undefined) {
+        bad.push('岛色微差变量缺失：' + sid);
+      }
+      if (!Array.isArray(a && a.patches) || a.patches.length !== 3) bad.push('地貌斑不是 3 块：' + sid);
+      else {
+        const tones = new Set(a.patches.map(p => p.tone));
+        if (!tones.has('hi') || !tones.has('lo') ||
+            !(tones.has('midUp') || tones.has('midDown'))) bad.push('斑极性不全：' + sid);
+        for (const p of a.patches) {
+          for (const v of [p.frx, p.fry, p.fx, p.fy]) {
+            if (!(v > -0.05 && v < 1.2) || typeof v !== 'number' || !isFinite(v)) {
+              bad.push('斑比例越界/非数：' + sid + ' ' + JSON.stringify(p));
+              break;
+            }
+          }
+        }
+      }
+      if (a && /NaN|Infinity/.test(JSON.stringify(a))) bad.push('串里有非确定值：' + sid);
+    }
+    const lits = [], hues = [];
+    for (let n = 0; n < 40; n++) {
+      const v = terrain('ki_' + n.toString(16).padStart(4, '0'));
+      lits.push(parseFloat(v['--tn-l']));
+      hues.push(parseFloat(v['--tn-h']));
+    }
+    const spread = xs => Math.max(...xs) - Math.min(...xs);
+    if (spread(lits) < 10) bad.push('明度微差没铺开（区间 ' + spread(lits).toFixed(1) + '%，满宽 18%）：盐退化');
+    if (spread(hues) < 10) bad.push('色相微差没铺开（区间 ' + spread(hues).toFixed(1) + '°，满宽 20°）：盐退化');
+    const corr = (xs, ys) => {
+      const n = xs.length;
+      const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+      let sxy = 0, sxx = 0, syy = 0;
+      for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+      return sxy / Math.sqrt(sxx * syy);
+    };
+    const r = corr(hues, lits);
+    if (Math.abs(r) > 0.6) bad.push('色相与明度相关 r=' + r.toFixed(2) + '（两把盐退化了）');
+    setMode('grid');
+    for (const sid of sids) {
+      if (terrain(sid) !== null) bad.push('网格态没有归零：' + sid);
+    }
+  } finally {
+    if (prevMode === null || prevMode === undefined) store.removeItem(STYLE_KEY);
+    else store.setItem(STYLE_KEY, prevMode);
+  }
+  if (bad.length) throw new Error(bad.slice(0, 6).join('\n    ') + '（共 ' + bad.length + ' 处）');
+
+  // 静态契约：微差 calc 深浅两主题都在；岛色经 CSS 变量继承流进 SVG 地皮。
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const frag of ['calc(var(--region-h, 225) + var(--tn-h, 0))', 'calc(var(--region-h, 30) + var(--tn-h, 0))']) {
+    if (!css.includes(frag)) throw new Error('岛色微差没进两套主题：' + frag);
+  }
+  const src = readContinentSrc();
+  if (!/_continentTerrain\(rect\.sessionId\)/.test(src)) throw new Error('岛牌没接 --tn-*（岛色微差白做）');
+  return true;
+});
+
+check('graph-continent: v8.10 真海岸线（确定性 / 网格态 null / 幅度不越界 / 岛与海域各接一处 / SVG 地皮契约）', () => {
+  const coastPath = sandbox._continentCoastPath;
+  if (typeof coastPath !== 'function') throw new Error('_continentCoastPath 未暴露');
+  const store = sandbox.localStorage;
+  const STYLE_KEY = 'phymathia_continent_style';
+  const prevMode = store.getItem(STYLE_KEY);
+  const setMode = v => store.setItem(STYLE_KEY, v);
+  const bad = [];
+  try {
+    setMode('organic');
+    // ① 确定性：同一块地、同一坐标永远同一条海岸
+    const rects = [
+      { x: 1000, y: 2000, w: 536, h: 240, key: 'ki_9f3' },
+      { x: 300, y: 400, w: 300, h: 150, key: 'ki_2a71' },
+      { x: 5000, y: 100, w: 2200, h: 1400, key: '矢量分析' },
+    ];
+    for (const rect of rects) {
+      const kind = rect.w > 1000 ? 'region' : 'island';
+      const a = coastPath(rect, kind);
+      if (JSON.stringify(a) !== JSON.stringify(coastPath(rect, kind))) bad.push('不确定：' + rect.key);
+      if (!a || typeof a.d !== 'string' || a.d.slice(-1) !== 'Z') bad.push('岸线 path 不完整：' + rect.key);
+      // ② 幅度不越界：全部采样点必须落在「矩形 ± 各边上限」的包络盒里——内凹吃卡区
+      //    或外凸挤走廊都会在这里现形（caps 见 layout.js，包络留 0.5 容差）
+      // 包络盒只由**外凸**上限决定（内凹朝矩形内部走，永远落在 [0,w]×[0,h] 内）
+      const caps = kind === 'region' ? { ox: 36, oyT: 26, oyB: 36 } : { ox: 18, oyT: 14, oyB: 20 };
+      for (const p of a.pts) {
+        if (p[0] < -caps.ox - 0.5 || p[0] > rect.w + caps.ox + 0.5 ||
+            p[1] < -caps.oyT - 0.5 || p[1] > rect.h + caps.oyB + 0.5) {
+          bad.push('岸线点越出包络盒：' + rect.key + ' → (' + p[0].toFixed(1) + ',' + p[1].toFixed(1) + ')');
+          break;
+        }
+      }
+      // ②a 内凹红线：岛的海湾不许切进卡区（PAD 18 / HEADER_H 36，卡角在 [18,w-18]×[54,h-18]）
+      if (kind === 'island') {
+        for (const p of a.pts) {
+          if (p[0] > 18 && p[0] < rect.w - 18 && p[1] > 54 && p[1] < rect.h - 18) {
+            bad.push('海湾切进卡区：' + rect.key + ' → (' + p[0].toFixed(1) + ',' + p[1].toFixed(1) + ')');
+            break;
+          }
+        }
+      }
+      // ②b 限位必须真的生效：给一块海域配两座岛，岸线任何点到岛的扩边盒距离 ≥10
+      //    （内凹夹住在 dist-12）；给一座岛配近邻，外凸后到邻岛距离 ≥10（夹在 dist-26）
+      if (kind === 'region') {
+        const isls = [{ x: rect.x + 100, y: rect.y + 120, w: 400, h: 200 },
+                      { x: rect.x + rect.w - 520, y: rect.y + rect.h - 320, w: 420, h: 220 }];
+        const b = coastPath(rect, 'region', isls);
+        for (const p of b.pts) {
+          const wx = rect.x + p[0], wy = rect.y + p[1];
+          for (const o of isls) {
+            const dx = Math.max(o.x - wx, 0, wx - (o.x + o.w));
+            const dy = Math.max(o.y - wy, 0, wy - (o.y + o.h));
+            if (Math.hypot(dx, dy) < 10) { bad.push('海湾吃进岛了：' + rect.key); break; }
+          }
+          if (bad.length) break;
+        }
+      } else {
+        const near = { x: rect.x + rect.w + 60, y: rect.y, w: 300, h: 200 };  // 60px 外的邻岛
+        const b = coastPath(rect, 'island', [near]);
+        for (const p of b.pts) {
+          const wx = rect.x + p[0], wy = rect.y + p[1];
+          const dx = Math.max(near.x - wx, 0, wx - (near.x + near.w));
+          const dy = Math.max(near.y - wy, 0, wy - (near.y + near.h));
+          if (Math.hypot(dx, dy) < 10) { bad.push('岛岸线粘到邻岛了：' + rect.key); break; }
+        }
+      }
+    }
+    // ③ 参差：两块同尺寸地、不同位置/	key，岸线必须不同
+    const d1 = coastPath({ x: 100, y: 100, w: 400, h: 200, key: 'a' }, 'island').d;
+    const d2 = coastPath({ x: 130, y: 170, w: 400, h: 200, key: 'b' }, 'island').d;
+    if (d1 === d2) bad.push('两块地岸线撞形（场采样失效）');
+    setMode('grid');
+    for (const rect of rects) {
+      if (coastPath(rect, 'island') !== null) bad.push('网格态没有归零：' + rect.key);
+    }
+  } finally {
+    if (prevMode === null || prevMode === undefined) store.removeItem(STYLE_KEY);
+    else store.setItem(STYLE_KEY, prevMode);
+  }
+  if (bad.length) throw new Error(bad.slice(0, 6).join('\n    ') + '（共 ' + bad.length + ' 处）');
+
+  // 静态契约：SVG 地皮 + is-coast 矩形外观关闭 + drop-shadow 跟剪影 + 印章不参与 +
+  // 岛/海域各接线一处 + 网格态的老 CSS 规则原样保留。
+  const src = readContinentSrc();
+  if (!/_continentCoastPath\(rect, 'island', otherIslands\)/.test(src)) throw new Error('岛牌没接岸线（或没传邻岛限位）');
+  if (!/!rect\.stamp && _continentCoastPath\(rect, 'region', islandsOfRegion\)/.test(src)) throw new Error('海域岸线没跳过印章态（或没传岛限位）');
+  if ((src.match(/_continentGroundSvg\(/g) || []).length < 3) throw new Error('SVG 地皮构建器没接上（定义+两处调用）');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  for (const frag of ['.continent-cluster.is-coast', '.continent-region.is-coast',
+    '.continent-region.is-gray.is-coast', '.continent-ground', 'drop-shadow',
+    '--coast-band: hsla(var(--fill-h)', '--coast-line: hsla(var(--fill-h)',
+    '--coast-line: var(--accent)']) {
+    if (!css.includes(frag)) throw new Error('v8.10 CSS 契约缺失：' + frag);
+  }
+  // 岸带/岸线颜色的**使用**在 SVG 内联样式里（走 CSS 变量，主题与 hover 自动跟）
+  for (const frag of ['stroke: var(--coast-band,', 'stroke: var(--coast-line,']) {
+    if (!src.includes(frag)) throw new Error('SVG 地皮没用 CSS 变量上色：' + frag);
+  }
+  return true;
+});
+
 // ===== 串行边界追加：发送排队（T42）=====
 // 2026-09-27：AI 忙时点发送，过去一律是裸 `if (正在生成) return;`——不提示、不置灰、
 // 不留痕。免费模型一次工作流 2-8 分钟，这个忙窗口长得离谱，用户只会以为按钮坏了。

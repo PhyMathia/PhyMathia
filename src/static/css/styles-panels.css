@@ -3361,11 +3361,19 @@
  *    走）。这一手是让形状脱离「描边读法」最有效的：描边是**线**，岸带是**面**，
  *    线画出来永远是框，面才读成地。③ 向内衰减 `inset 0 0 26px`——边缘亮、中心沉，
  *    给出「近岸浅、内陆深」的纵深。两条 inset 阴影都必须写在顶边高光**之后**
- *    （box-shadow 是「先写的盖在后面」，顺序反了顶边高光会被埋掉）。 */
+ *    （box-shadow 是「先写的盖在后面」，顺序反了顶边高光会被埋掉）。
+ *
+ * v8.9/v8.10（backlog T24 三/四试）：岛色微差 --tn-h/s/l（JS 按 sessionId 哈希，calc 回落
+ * 0 时逐像素等于旧值）让同海域的岛不再一个模子；整图缩放下要读成「地貌」靠的是剪影，
+ * 所以有机态把地皮整个搬进 SVG（.is-coast 关掉这里的背景/边框/盒阴影，岸线/岸带/地貌斑
+ * 由 SVG path 传达，drop-shadow 跟实际剪影走）。网格态不加 is-coast＝下面这条老规则原样
+ * 生效。--coast-band/--coast-line 是 SVG 地皮的岸带/岸线颜色（浅色主题反过来用暗色）。 */
 .continent-cluster {
-  --fill-h: var(--region-h, 225);
-  --fill-s: 50%;
-  --fill-l: 62%;
+  --fill-h: calc(var(--region-h, 225) + var(--tn-h, 0));
+  --fill-s: calc(50% + var(--tn-s, 0%));
+  --fill-l: calc(62% + var(--tn-l, 0%));
+  --coast-band: hsla(var(--fill-h), 46%, 76%, 0.32);
+  --coast-line: hsla(var(--fill-h), 50%, 72%, 0.85);
   --fill-1: 0.22;
   --fill-2: 0.085;
   --fill-3: 0.13;
@@ -3388,9 +3396,11 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 [data-theme="light"] .continent-cluster {
-  --fill-h: var(--region-h, 30);
-  --fill-s: 52%;
-  --fill-l: 55%;
+  --fill-h: calc(var(--region-h, 30) + var(--tn-h, 0));
+  --fill-s: calc(52% + var(--tn-s, 0%));
+  --fill-l: calc(55% + var(--tn-l, 0%));
+  --coast-band: hsla(var(--fill-h), 45%, 38%, 0.26);
+  --coast-line: hsla(var(--fill-h), 45%, 32%, 0.75);
   --fill-1: 0.24;
   --fill-2: 0.09;
   --fill-3: 0.15;
@@ -3405,6 +3415,26 @@
     inset 0 0 24px hsla(var(--fill-h), 45%, 44%, 0.11);
 }
 .continent-cluster:hover { border-color: var(--accent); }
+/* v8.10 真海岸线（有机态）：地皮搬进 SVG 后，底盘不再画任何矩形外观——背景/边框/
+ * 盒阴影全关，改用 drop-shadow 滤镜（跟 SVG 剪影走，盒阴影只会跟着矩形走）。网格态
+ * 不加 is-coast，上面那条老规则原样生效。hover 通过 --coast-line 变量染岸线。 */
+.continent-cluster.is-coast {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  filter: drop-shadow(0 12px 32px rgba(0, 0, 0, 0.34)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.20));
+}
+[data-theme="light"] .continent-cluster.is-coast {
+  filter: drop-shadow(0 6px 18px rgba(90, 70, 30, 0.13)) drop-shadow(0 1px 3px rgba(90, 70, 30, 0.10));
+}
+.continent-cluster.is-coast:hover { --coast-line: var(--accent); }
+.continent-ground {
+  position: absolute;
+  inset: 0;
+  overflow: visible;   /* 岸线 stroke 一半在剪影外，不许被 svg 视口裁掉 */
+  pointer-events: none;
+}
 /* v5.4 岛牌两行：标题行（画布名 + 概念数）+ 副行（前 3 个概念名 + 最近更新）——
  * 看懂岛是看懂联系的前提 */
 /* T140「另有 k 张」展开钮：head 整体 pointer-events:none，按钮要自己接住点击 */
@@ -3914,6 +3944,9 @@
  * 中间就不会和板糊成一片。描边 alpha 从 .34 降到 .28 —— 有了辉光，边不再
  * 需要那么重，否则远看是一圈铁丝网。 */
 .continent-region {
+  /* v8.10：--coast-band/--coast-line 供 SVG 地皮的岸带/岸线用（is-coast 有机态） */
+  --coast-band: hsla(var(--region-h, 220), 55%, 62%, 0.28);
+  --coast-line: hsla(var(--region-h, 220), 46%, 60%, 0.5);
   position: absolute;
   /* v8.4 海岸线：--r-coast 由 JS 按 regionKey 哈希出 8 值椭圆角，没设时回落到今天的定值 */
   border-radius: var(--r-coast, var(--r-xl));
@@ -3923,6 +3956,18 @@
     0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10),
     inset 0 0 46px hsla(var(--region-h, 220), 55%, 60%, 0.09);
   transition: opacity 0.25s ease;
+}
+/* v8.10 有机态海域板：矩形外观全关（含外辉光），drop-shadow 跟 SVG 剪影走。
+ * 外辉光 0 0 70px 用 drop-shadow 复刻——比盒辉光柔，远看不糊。 */
+.continent-region.is-coast {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  filter: drop-shadow(0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10));
+}
+[data-theme="light"] .continent-region.is-coast {
+  filter: drop-shadow(0 0 34px hsla(var(--region-h, 30), 60%, 55%, 0.10));
 }
 [data-theme="light"] .continent-region {
   border-color: hsla(var(--region-h, 30), 48%, 45%, 0.34);
@@ -3937,6 +3982,16 @@
   border-color: rgba(128, 132, 148, 0.28);
   background: rgba(128, 132, 148, 0.05);
   box-shadow: none;
+}
+/* v8.10：灰档 + 有机态——is-gray 在本规则之后又把矩形外观写回来，这里再关一次，
+ * 岸带/岸线也换中性灰（灰板无 --region-h，上面的 hue 变量全走 220 回落会串色） */
+.continent-region.is-gray.is-coast {
+  --coast-band: rgba(128, 132, 148, 0.22);
+  --coast-line: rgba(128, 132, 148, 0.45);
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  filter: none;
 }
 .continent-region-head {
   position: absolute;

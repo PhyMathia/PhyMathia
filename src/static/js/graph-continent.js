@@ -207,6 +207,58 @@ const CONTINENT_WARP_NORM = Math.SQRT1_2;   // 1/√2：把逐轴上界换算成
 const CONTINENT_STYLE_KEY = 'phymathia_continent_style';  // 'organic'（默认）| 'grid'
 const CONTINENT_STYLE_ORGANIC = 'organic';
 const CONTINENT_STYLE_GRID = 'grid';
+
+// ===== v8.10 地皮 SVG：fill 渐变 + 三块地貌斑 + 岸带 + 岸线，一体画进一块 SVG =====
+// 有机态底盘不再用 CSS 背景/边框/盒阴影（那些只会跟着矩形走）：.is-coast 关掉它们，
+// 剪影、岸带、岸线全部由 path 传达，drop-shadow 滤镜跟的是 SVG 的实际剪影（盒阴影
+// 做不到）。id 用渲染序计数器——渲染顺序确定（布局纯函数）⇒ id 确定、无碰撞。
+// 颜色全走 CSS 变量（--fill-* / --region-h / --coast-band / --coast-line）：岛色微差
+// （--tn-h/s/l 设在底盘 div 上）经继承流进 SVG，主题切换也自动跟。
+let _continentGroundUid = 0;
+
+function _continentGroundSvg(rect, coast, patches, kind) {
+  const uid = ++_continentGroundUid;
+  const w = rect.w, h = rect.h;
+  const isRegion = kind === 'region';
+  const bandW = isRegion ? 20 : 14;     // 岸带（面）宽，stroke 一半在外被裁掉、一半留岸内
+  const lineW = isRegion ? 4 : 3.5;     // 岸线宽：世界 px，整图缩放 0.3 下 ≈1px 屏幕可读
+  const fill = isRegion
+    ? '<path d="' + coast.d + '" style="fill: hsla(var(--region-h, 220), 52%, 58%, 0.08)"/>'
+    : '<path d="' + coast.d + '" style="fill: url(#g' + uid + ')"/>';
+  const tone = (dL) =>
+    'hsla(var(--fill-h), var(--fill-s), calc(var(--fill-l) + ' + dL + '%), 1)';
+  const fade = (dL) =>
+    'hsla(var(--fill-h), var(--fill-s), calc(var(--fill-l) + ' + dL + '%), 0)';
+  const defs = isRegion ? '' :
+    '<defs>' +
+      '<linearGradient id="g' + uid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" style="stop-color: hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-1))"/>' +
+        '<stop offset="0.62" style="stop-color: hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-2))"/>' +
+        '<stop offset="1" style="stop-color: hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-3))"/>' +
+      '</linearGradient>' +
+      '<radialGradient id="h' + uid + '"><stop offset="0" style="stop-color: ' + tone(13) + '"/><stop offset="1" style="stop-color: ' + fade(13) + '"/></radialGradient>' +
+      '<radialGradient id="b' + uid + '"><stop offset="0" style="stop-color: ' + tone(-11) + '"/><stop offset="1" style="stop-color: ' + fade(-11) + '"/></radialGradient>' +
+      '<radialGradient id="mu' + uid + '"><stop offset="0" style="stop-color: ' + tone(7) + '"/><stop offset="1" style="stop-color: ' + fade(7) + '"/></radialGradient>' +
+      '<radialGradient id="md' + uid + '"><stop offset="0" style="stop-color: ' + tone(-7) + '"/><stop offset="1" style="stop-color: ' + fade(-7) + '"/></radialGradient>' +
+      '<clipPath id="c' + uid + '"><path d="' + coast.d + '"/></clipPath>' +
+    '</defs>';
+  // 地貌斑（v8.9）：只有岛有。透明度挂 --fill-1，随 solid/light/pending 档位自动淡化。
+  const patchEls = isRegion ? '' : (patches || []).map(p => {
+    const gid = p.tone === 'hi' ? ('h' + uid) : p.tone === 'lo' ? ('b' + uid)
+      : p.tone === 'midUp' ? ('mu' + uid) : ('md' + uid);
+    const alpha = p.tone === 'hi' ? 1.3 : p.tone === 'lo' ? 1.1 : 0.9;
+    return '<ellipse cx="' + (p.fx * w).toFixed(1) + '" cy="' + (p.fy * h).toFixed(1) +
+      '" rx="' + (p.frx * w).toFixed(1) + '" ry="' + (p.fry * h).toFixed(1) +
+      '" style="fill: url(#' + gid + '); opacity: calc(var(--fill-1) * ' + alpha + ')"/>';
+  }).join('');
+  return '<svg class="continent-ground" width="' + w + '" height="' + h +
+    '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' + defs + fill +
+    '<g clip-path="url(#c' + uid + ')">' + patchEls +
+      '<path d="' + coast.d + '" style="fill: none; stroke: var(--coast-band, rgba(200,215,235,0.3)); stroke-width: ' + bandW + '"/>' +
+    '</g>' +
+    '<path d="' + coast.d + '" style="fill: none; stroke: var(--coast-line, rgba(200,215,235,0.6)); stroke-width: ' + lineW + '"/>' +
+    '</svg>';
+}
 // ---------- v8.3 网格间距按亲缘分级 ----------
 // 病根（v8.1 只治了表面）：产品的核心主张是「相邻即有关联」，但岛间距是**定值** 150
 // ——强亲缘的两座岛和毫无关系的两座岛间距一模一样。地图说了真话，但说的都是同一句。
@@ -606,6 +658,14 @@ function _continentRender(data) {
       el.style.setProperty('--region-h', String(region.hue));
     }
     el.style.setProperty('--r-coast', _continentCoast(rect.key, 'region'));
+    // v8.10 真海岸线：有机态把海域板地皮搬进 SVG（印章态不参与——印章是按钮不是地貌）。
+    // 本海域的岛 rects 传给岸线生成器：内凹逐点夹住，海湾再深也不会吃掉岛。
+    const islandsOfRegion = (layout.clusterRects || []).filter(cr => {
+      const inf = regionInfo.bySid[cr.sessionId];
+      return inf && inf.key === rect.key;
+    });
+    const coastR = !rect.stamp && _continentCoastPath(rect, 'region', islandsOfRegion);
+    if (coastR) el.classList.add('is-coast');
     el.style.left = rect.x + 'px';
     el.style.top = rect.y + 'px';
     el.style.width = rect.w + 'px';
@@ -638,6 +698,7 @@ function _continentRender(data) {
       });
       _kact(fold);  // T143 键盘可达
     }
+    if (coastR) el.insertAdjacentHTML('afterbegin', _continentGroundSvg(rect, coastR, null, 'region'));
     world.appendChild(el);
   });
 
@@ -670,6 +731,18 @@ function _continentRender(data) {
       el.style.setProperty('--region-h', String(region.hue));
     }
     el.style.setProperty('--r-coast', _continentCoast(rect.sessionId, 'island'));
+    // v8.9 岛色微差（--tn-h/s/l）+ v8.10 真海岸线（岸线 + 地貌斑都进 SVG 地皮）。
+    // 网格态两者都返回 null，底盘走老 CSS 规则＝逐字节今天。
+    const tn = _continentTerrain(rect.sessionId);
+    if (tn) {
+      el.style.setProperty('--tn-h', tn['--tn-h']);
+      el.style.setProperty('--tn-s', tn['--tn-s']);
+      el.style.setProperty('--tn-l', tn['--tn-l']);
+    }
+    // 其余岛 rects 传给岸线生成器：外凸逐点夹住，两座岛永不粘连
+    const otherIslands = (layout.clusterRects || []).filter(cr => cr.sessionId !== rect.sessionId);
+    const coastV = _continentCoastPath(rect, 'island', otherIslands);
+    if (coastV) el.classList.add('is-coast');
     el.style.left = rect.x + 'px';
     el.style.top = rect.y + 'px';
     el.style.width = rect.w + 'px';
@@ -749,6 +822,7 @@ function _continentRender(data) {
       });
       _kact(moreBtn);  // T143 键盘可达
     }
+    if (coastV) el.insertAdjacentHTML('afterbegin', _continentGroundSvg(rect, coastV, tn && tn.patches, 'island'));
     world.appendChild(el);
   });
 
