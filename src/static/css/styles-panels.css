@@ -4289,9 +4289,19 @@
  * 夹回容器内，title 的 flex 收缩才生效，省略号才重新从词尾出现。 */
 .continent-world.lod-horizon .continent-cluster-headline { max-width: 100%; }
 .continent-world.lod-horizon .continent-cluster-title { font-size: calc(var(--fs-md) * var(--cloud-k, 1) * 1.6); }
+/* T32 远景短名：全名/短名两份都进 DOM（切档只切 CSS 不动 DOM），远景档换短名上——
+ * 字号放大后长名必然省略号截断，短名按岛内净宽预算裁字（JS 侧
+ * CONTINENT_HORIZON_NAME_CHAR_W，与本行字号公式同源），悬停 title 仍有全名。
+ * 非远景档短名不显示。 */
+.continent-cluster-title-short { display: none; }
+.continent-world.lod-horizon .continent-cluster-title-full { display: none; }
+.continent-world.lod-horizon .continent-cluster-title-short { display: block; }
 .continent-world.lod-horizon .continent-cluster-sub,
 .continent-world.lod-horizon .continent-cluster-count,
-.continent-world.lod-horizon .continent-domain-badge { display: none; }
+.continent-world.lod-horizon .continent-domain-badge,
+/* T32：次要领域色点在远景档是亚像素噪点，还占掉 ~13px（8px 点 + 5px flex gap）名宽
+ * ——隐藏清单此前收了徽标却漏了它，岛名预算一直被挤 */
+.continent-world.lod-horizon .continent-domain-dot { display: none; }
 /* 折叠钮在远景档是 16px 世界单位 × 0.22 ≈ 3.5px 屏幕——既看不清也点不中，纯噪点 */
 .continent-world.lod-horizon .continent-cluster-fold,
 .continent-world.lod-horizon .continent-region-fold { display: none; }

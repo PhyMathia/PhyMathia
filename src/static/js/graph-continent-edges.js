@@ -604,8 +604,11 @@ function _continentRouteStroke(style, edge, regionInfo, theme) {
     color = _continentRouteColor('--route-neutral');
   } else if (regionInfo && edge && regionInfo.bySid) {
     const info = regionInfo.bySid[edge.fromSession];
+    // T134：universe 与海域板同源（regionInfo.domainList，_continentRegions 随产物带回）——
+    // 传 null 会自己单独占槽，撞槽时航线与海域板不同色。旧形态 regionInfo（无 domainList）
+    // 退回单名占槽，不炸
     const hue = info && info.key !== null && info.key !== undefined
-      ? _continentRegionHue(info.key, null) : null;
+      ? _continentRegionHue(info.key, regionInfo.domainList) : null;
     if (hue !== null && hue !== undefined) color = 'hsla(' + hue + ', 62%, 64%, 0.85)';
   }
   if (!color) color = _continentRouteColor('--route-default');
