@@ -3,6 +3,7 @@
 全部走 tmp_path 与显式 path 参数，不触碰 data/profiles 真实画像。
 """
 
+import json
 import math
 import os
 import sys
@@ -474,6 +475,108 @@ def test_dashboard_view_shape(tmp_path, monkeypatch):
     assert view["topics"][0]["topic"] == "电磁感应"
     assert 0.0 <= view["topics"][0]["p"] <= 1.0
     assert "f1" in view["style"] and 0 <= view["maturity"] <= 1
+
+
+# ---- T176：账本 answer 条目补存 pHat/Δt ----
+
+def test_answer_ledger_stores_phat_and_dt():
+    state = _fresh()
+    t0 = 1_700_000_000.0
+    pi.apply_events(state, [_ev("quiz", "波动", correct=True, ts=t0)], t0)
+    first = state["topics"]["波动"]["ledger"][-1]
+    assert first["type"] == "answer"
+    assert first["pHat"] == pytest.approx(0.2, abs=1e-3)  # 首条：不衰减先验
+    assert "dt" not in first  # 首条作答间隔不可得
+    # 第二条：pHat = 当时 p 衰减到当前；dt = 距上次作答的间隔
+    p0, h0 = state["topics"]["波动"]["p"], state["topics"]["波动"]["h"]
+    pi.apply_events(state, [_ev("quiz", "波动", correct=False, ts=t0 + 3600)], t0 + 3600)
+    second = state["topics"]["波动"]["ledger"][-1]
+    assert second["dt"] == pytest.approx(3600.0, abs=0.1)
+    assert second["pHat"] == pytest.approx(round(p0 * pi.decay2(3600.0, h0), 3), abs=1e-3)
+    assert second["x"] == 0 and second["p"] > 0  # 更新后 p 照旧存
+
+
+def test_normalize_preserves_phat_dt():
+    raw = {"topics": {"X": {"w": 1.0, "wAt": 1.0, "p": 0.6, "h": 5.0, "hAt": 2.0,
+                            "ans": 1, "ok": 1,
+                            "ledger": [{"type": "answer", "at": 2.0, "x": 1,
+                                        "p": 0.6, "pHat": 0.35, "dt": 3600.0}]}}}
+    kept = pi.normalize_implicit(raw)["topics"]["X"]["ledger"][0]
+    assert kept["pHat"] == 0.35 and kept["dt"] == 3600.0  # 白名单不洗掉新字段
+
+
+# ---- T177：评估留痕 JSONL（append-only，回填不写，reset 同删） ----
+
+def test_record_events_appends_eval_trace(tmp_path):
+    path = tmp_path / "p.json"
+    path.write_text('{"enabled": true, "facts": []}', encoding="utf-8")
+    t0 = time.time()
+    assert pi.record_events(path, [_ev("quiz", "波动", correct=True, ts=t0),
+                                   _ev("ask", "波动", ts=t0 + 1)]) is True
+    trace_file = pi.eval_trace_path(path)
+    assert trace_file.name == "p.eval.jsonl" and trace_file.exists()
+    lines = [ln for ln in trace_file.read_text(encoding="utf-8").splitlines() if ln]
+    assert len(lines) == 1  # 只有答题事件入留痕，ask 不入
+    rec = json.loads(lines[0])
+    assert rec["topic"] == "波动" and rec["x"] == 1 and "pHat" in rec
+    # 非答题事件：applied 为真也不追加新行
+    assert pi.record_events(path, [_ev("ask", "波动", ts=t0 + 2)]) is True
+    assert len(trace_file.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_record_events_disabled_writes_no_trace(tmp_path):
+    path = tmp_path / "p.json"
+    path.write_text('{"enabled": false}', encoding="utf-8")
+    assert pi.record_events(path, [_ev("quiz", "波动", correct=True, ts=time.time())]) is False
+    assert not pi.eval_trace_path(path).exists()
+
+
+def test_ensure_seeded_backfill_writes_no_trace(tmp_path, monkeypatch):
+    monkeypatch.setattr(pi, "kv_read", lambda key, default=None: {
+        "q1": {"title": "牛顿第二定律", "history": [
+            {"correct": True, "at": 1700000000000, "questionId": "q1"}]}})
+    path = tmp_path / "p.json"
+    path.write_text('{"enabled": true}', encoding="utf-8")
+    assert pi.ensure_seeded(path) is True
+    assert not pi.eval_trace_path(path).exists()  # 回填的历史不是实时观测，不入留痕
+
+
+def test_manage_reset_removes_eval_trace(tmp_path):
+    path = tmp_path / "p.json"
+    path.write_text('{"enabled": true, "facts": []}', encoding="utf-8")
+    pi.record_events(path, [_ev("quiz", "波动", correct=True, ts=time.time())])
+    assert pi.eval_trace_path(path).exists()
+    pi.manage_implicit(path, "reset")
+    assert not pi.eval_trace_path(path).exists()  # §7 可控：重置不留行为数据底
+
+
+def test_eval_script_prefers_jsonl_exact(tmp_path):
+    """评估脚本：有留痕的设备走 JSONL 精确口径，无留痕走账本反解兜底。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "review_profile_eval", os.path.join(ROOT, "scripts", "review_profile_eval.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # 设备 A：有 JSONL 留痕（精确 p̂）；设备 B：只有账本（反解兜底）
+    (tmp_path / "dev_a.json").write_text('{"enabled": true, "implicit": {"events": 1}}',
+                                         encoding="utf-8")
+    (tmp_path / "dev_a.eval.jsonl").write_text(
+        json.dumps({"type": "answer", "at": 100.0, "x": 1, "p": 0.9, "pHat": 0.5,
+                    "dt": 3600.0, "topic": "波动"}, ensure_ascii=False) + "\n"
+        + "{bad line\n", encoding="utf-8")
+    (tmp_path / "dev_b.json").write_text(json.dumps({
+        "enabled": True, "implicit": {"topics": {"光学": {
+            "w": 1.0, "wAt": 50.0, "p": 0.9, "h": 5.0, "hAt": 100.0, "ans": 1, "ok": 1,
+            "ledger": [{"type": "answer", "at": 100.0, "x": 1, "p": 0.9}]}}}},
+        ensure_ascii=False), encoding="utf-8")
+    profiles = mod.load_profiles(tmp_path)
+    records, bad, n_trace = mod.reconstruct_answers(profiles, tmp_path)
+    assert n_trace == 1
+    a = [r for r in records if r["where"].startswith("dev_a")]
+    assert len(a) == 1 and bad  # 坏行被剔除计数
+    assert a[0]["p_hat"] == 0.5 and a[0]["has_gap"] and a[0]["gap"] == 3600.0  # 精确值不反解
+    b = [r for r in records if r["where"].startswith("dev_b")]
+    assert len(b) == 1 and b[0]["prior"] is not None and not b[0]["has_gap"]  # 反解兜底
 
 
 # ---- 路由级回归（走 RouteTestBase 临时目录，不碰真实画像/知识库） ----
