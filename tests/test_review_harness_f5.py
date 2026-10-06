@@ -1,14 +1,13 @@
-"""F5 regression: real HTTP undo, full text and evaluation-node restoration."""
-import json
-import os
+"""F5 regression: deterministic undo restores full text and evaluation nodes.
+
+原经 HTTP /graph/undo 端点真发；该端点 2026-10-06 随死代码退役删除
+（T110），改直连 core 的同一条恢复链（build_inverse_ops →
+build_next_snapshot），断言逐字保留。
+"""
 import pytest
 from copy import deepcopy
-from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from harness.api import router
+from harness.core import build_inverse_ops, build_next_snapshot, normalize_snapshot
 
 
 def undo_fixture():
@@ -31,18 +30,11 @@ def undo_fixture():
     return before, operations, after
 
 
-def test_real_undo_http_restores_full_fields(tmp_path):
-    app = FastAPI()
-    app.include_router(router, prefix="/api/harness")
+def test_undo_core_restores_full_fields():
     before, operations, after = undo_fixture()
-    with TestClient(app) as client:
-        response = client.post("/api/harness/graph/undo", json={
-            "before_snapshot": before, "snapshot": after, "operations": operations})
-    assert response.status_code == 200
-    result = response.json()
-    # Optional handoff fixture for the frontend owner's real-op VM replay.
-    fixture_path = Path(os.environ.get("F5_REPLAY_FIXTURE", str(tmp_path / "f5-undo.json")))
-    fixture_path.write_text(json.dumps({"before": before, "after": after, "result": result}, ensure_ascii=False), encoding="utf-8")
+    current = normalize_snapshot(after)
+    inverse = build_inverse_ops(before, operations, current)
+    result = build_next_snapshot(current, inverse)
     assert result.get("errors", []) == [], result
     assert any(op["op"] == "restore_node" for op in result["operations"]), result
     restored = {n["id"]: n for n in result["next_snapshot"]["nodes"]}

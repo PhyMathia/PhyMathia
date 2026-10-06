@@ -1029,9 +1029,6 @@ let harnessLastAppliedReport = null;
         label: String(edge.label || ''),
         custom: !!edge.custom,
       })),
-      // 节点类型清单由注册表派生（graph-recipes.js，P0 起单一事实源）；
-      // 后端 normalize_snapshot 会放行该字段（T76 接通），P3 注入用户配方时才扩这份清单
-      available_node_types: deriveHarnessAvailableNodeTypes(),
       scope_node_ids: Array.from(selected),
     };
     // 创造模式（P3）：用户配方清单摘要随快照注入（仿 quiz_weak 范式——结构化通道，
@@ -1080,7 +1077,6 @@ let harnessLastAppliedReport = null;
       version: 1,
       nodes: [],
       edges: [],
-      available_node_types: deriveHarnessAvailableNodeTypes(),
       scope_node_ids: [],
     };
     snapshot.snapshot_meta = {

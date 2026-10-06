@@ -1,7 +1,8 @@
 // ===== 节点配方注册表（官方类型单一事实源，P0 粒度）=====
 // 设计文档：docs/节点配方与创造模式-总体设计-2026-09-29.md（第 3 节 schema、第 8.1 节背景）。
 // P0 原则：只收敛数据、行为零变化——本表派生原散落三处的硬编码（前端 kind 白名单、
-// 添加面板 16 入口、Φ 快照的 available_node_types），渲染/生成逻辑仍读 graph.js 里
+// 添加面板 16 入口；第三处 Φ 快照的 available_node_types 已于 2026-10-06 随死通道
+// T111 退役，见 docs/dev/harness.md 当日节），渲染/生成逻辑仍读 graph.js 里
 // 由本表派生的同名常量；生成提示词四槽、动态出口、内容载体等行为维度 P1 起充实，
 // 官方配方「用户配方同模型」的完整形态见设计文档。
 // 后端投影在 harness/registry.py，两边由 tests/test_registry_consistency.py 对拍守护；
@@ -64,26 +65,9 @@ function deriveGraphCustomNodeKinds() {
   return kinds;
 }
 
-// Φ 快照的 available_node_types（原 harness.js 内联 16 项字面量；顺序与键序保持逐字一致，
-// 避免快照字节漂移——P3 把用户配方并入时才会变）
-function deriveHarnessAvailableNodeTypes() {
-  const order = ['physics', 'math', 'graph', 'viz', 'socratic', 'learn', 'knowledge', 'human_note', 'note', 'hub', 'summary', 'source', 'blank', 'question', 'answer', 'ai_eval'];
-  return order
-    .map(key => {
-      const recipe = _recipeByKey(key);
-      if (!recipe) return null;
-      const entry = { kind: recipe.kind };
-      if (recipe.kind === 'module') entry.module_key = recipe.moduleKey;
-      entry.label = recipe.label;
-      return entry;
-    })
-    .filter(Boolean);
-}
-
 window.BUILTIN_RECIPES = BUILTIN_RECIPES;
 window.deriveManualNodeOptions = deriveManualNodeOptions;
 window.deriveGraphCustomNodeKinds = deriveGraphCustomNodeKinds;
-window.deriveHarnessAvailableNodeTypes = deriveHarnessAvailableNodeTypes;
 
 // ===== 用户配方（P1 基础配方层）：schema 最小子集 / 色板 / 校验器 / 存取 =====
 // 设计文档第 3、6 节（P1）：配方是纯数据 JSON（D-R2），节点走「现有 kind 底座＋
