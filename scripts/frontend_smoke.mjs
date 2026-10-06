@@ -3441,9 +3441,10 @@ check('graph-continent: v10 新族候选（Φ 起名契约判读 / 名单外领�
     if (row(cluster, null, { cards: 0, at: 1 }).includes('上次你拒过') === false) throw new Error('拒后再提的标记没渲染');
   } finally { sandbox.escapeHtml = realEsc; }
   const evil = (() => {
+    const before = sandbox.escapeHtml; // T171：恢复摘除前的值，别装恒等函数（那会泄漏给其后全部用例）
     sandbox.escapeHtml = undefined;
     try { return row({ key: 'k', size: 3, cards: [{ id: 'a', title: '<script>' }] }, null, null); }
-    finally { sandbox.escapeHtml = t => (t == null ? '' : String(t)); }
+    finally { sandbox.escapeHtml = before; }
   })();
   if (evil.includes('<script>')) throw new Error('候选行没转义标题（XSS）');
   // 静态契约：起名走 proxyChatWithModel（与问 Φ 同通道）、按钮触发（不自动）、
@@ -6964,6 +6965,11 @@ check('sq 派生追问节点：复用 customNodes 自定义模块链路＋作答
 
 check('sq 派生追问节点渲染：与手建苏格拉底追问节点同款（module 卡＋四按钮＋完成徽章＋出口）', () => {
   const node = { id: 'sq-999', kind: 'module', moduleKey: 'socratic', sqAuto: true, messageIndex: -1, timestamp: 999, x: 0, y: 0, status: 'done', content: '### 苏格拉底追问\n\n- [基础] 为什么周期与振幅无关？', items: [{ levelName: '基础', level: 'basic', question: '为什么周期与振幅无关？' }] };
+  // 完成徽章文案走全局 escapeHtml（graph-render.js _customNodeStatusHtml），沙箱 loose
+  // document 下产物退化、字面断言不出来——本用例断言的是结构契约不是转义，按套件
+  // 惯例（2226/2543/3354 行同款）断言前换恒等，测完与 renderMarkdown 桩一并恢复。
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
   // 沙箱无 marked：用轻量桩走同一条 convertSocraticQuestions 管线（按钮标记由此生成）
   const realRM = sandbox.renderMarkdown;
   sandbox.renderMarkdown = (text, opts) => {
@@ -6987,6 +6993,7 @@ check('sq 派生追问节点渲染：与手建苏格拉底追问节点同款（m
     if (min.includes('socratic-item')) throw new Error('折叠态不应出列表');
   } finally {
     sandbox.renderMarkdown = realRM;
+    sandbox.escapeHtml = realEsc;
   }
   return true;
 });
@@ -7641,20 +7648,27 @@ await Promise.all(pendingChecks).catch(() => {});
 // ===== 串行边界追加：追问草稿卡重渲保字（T152，2026-10-05）=====
 // 全程同步、只在 vm 沙箱里用假节点，不碰共享键——追加在串行边界之后安全。
 check('追问草稿卡渲染取值（T152）：draftInput 优先、空串不回落预填、无值保留预填', () => {
-  const mk = (extra) => '_renderDraftNodeHtml(' + JSON.stringify({
-    id: 'draft-smk', kind: 'draft', x: 0, y: 0,
-    portMeta: { branchType: 'followup', question: '端口预填问题' },
-    ...extra,
-  }) + ')';
-  const typed = vm.runInContext(mk({ draftInput: '我自己打的字' }), sandbox);
-  if (!typed.includes('我自己打的字')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
-  if (typed.includes('端口预填问题')) throw new Error('draftInput 存在时不应回落端口预填');
-  if (!typed.includes('oninput="draftInputChanged(\'draft-smk\', this.value)"')) throw new Error('textarea 未挂 oninput 回写');
-  const cleared = vm.runInContext(mk({ draftInput: '' }), sandbox);
-  if (cleared.includes('端口预填问题')) throw new Error('用户主动清空后不应回落端口预填');
-  const fresh = vm.runInContext(mk({}), sandbox);
-  if (!fresh.includes('端口预填问题')) throw new Error('无 draftInput 时端口预填应保留');
-  return true;
+  // 本用例断言的是取值口径（draftInput vs 端口预填），不是转义；而 _renderDraftNodeHtml
+  // 走全局 escapeHtml，沙箱 loose document 下产物退化，字面中文断言不出来——
+  // 按套件惯例（2226/2543/3354 行同款）断言文案前换恒等，测完恢复。
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const mk = (extra) => '_renderDraftNodeHtml(' + JSON.stringify({
+      id: 'draft-smk', kind: 'draft', x: 0, y: 0,
+      portMeta: { branchType: 'followup', question: '端口预填问题' },
+      ...extra,
+    }) + ')';
+    const typed = vm.runInContext(mk({ draftInput: '我自己打的字' }), sandbox);
+    if (!typed.includes('我自己打的字')) throw new Error('重渲后没取节点对象上的 draftInput，字会丢');
+    if (typed.includes('端口预填问题')) throw new Error('draftInput 存在时不应回落端口预填');
+    if (!typed.includes('oninput="draftInputChanged(\'draft-smk\', this.value)"')) throw new Error('textarea 未挂 oninput 回写');
+    const cleared = vm.runInContext(mk({ draftInput: '' }), sandbox);
+    if (cleared.includes('端口预填问题')) throw new Error('用户主动清空后不应回落端口预填');
+    const fresh = vm.runInContext(mk({}), sandbox);
+    if (!fresh.includes('端口预填问题')) throw new Error('无 draftInput 时端口预填应保留');
+    return true;
+  } finally { sandbox.escapeHtml = realEsc; }
 });
 
 check('追问草稿卡重渲回带（T152）：本会话草稿与边带回、别会话不跟、字随对象活', () => {
@@ -7727,10 +7741,9 @@ check('note-export：noteMarkdown 结构（头部两行/概念节/$$ 块/剥定�
 });
 
 check('note-export：noteHtmlDocument 单文件契约（DOCTYPE/转义/无外部 url/无 KaTeX 降级/内联样式/打印样式）', () => {
-  // 前置旧用例（族表候选行）在 finally 里把全局 escapeHtml 恢复成了**恒等函数**
-  // 而非 utils 原版，此后一直泄漏；且 utils 的 escapeHtml 走 DOM，沙箱 loose
-  // document 下产物退化为代理。本用例要断言转义契约，临时装一份与 utils 等价的
-  // 转义（& < > " '，顺序一致），测完恢复原状——既不受泄漏影响也不改泄漏本身。
+  // utils 的 escapeHtml 走 DOM，沙箱 loose document 下产物退化为代理，没法据此
+  // 断言转义契约。本用例临时装一份与 utils 等价的转义（& < > " '，顺序一致），
+  // 测完恢复原状，不依赖、也不改变全局环境。
   const prevEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = (t) => String(t == null ? '' : t)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
