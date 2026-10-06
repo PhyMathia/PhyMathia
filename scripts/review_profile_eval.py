@@ -14,10 +14,10 @@
   ③ 兴趣稳定性   周间 π 的 L1 漂移 < 0.3（§10.3）。
 
 与 §10 口径的已知简化（详见 docs/画像有效性验证-2026-10-06.md「口径偏差」节）：
-  a) 账本 answer 条目只存更新后 p（后验＋学习步，profile_implicit._apply_answer），
-     未存当时预测 p̂——本脚本先解析反推更新前先验（更新链精确可逆、脚本自检回程），
-     再乘 2^(−Δt/h_当前) 重建 p̂：Δt 取账本相邻答题时间差（精确），h 用主题当前值
-     近似历史值；窗口首条答题 Δt 不可得，退化为不衰减先验（=p̂ 上界）。
+  a) T177/T176 落地（2026-10-06）后：答题事件实时追加 *.eval.jsonl（append-only，
+     含当时 pHat 与 Δt），本脚本**优先读 JSONL 走精确口径**（无反解、无近似）；
+     账本反解（先反推更新前先验、再乘 2^(−Δt/h_当前)，h 用主题当前值近似历史值、
+     窗口首条 Δt 不可得取上界）仅作为**无留痕文件设备**的旧数据兜底。
   b) 判据③周间 π 由 wAt 反向重建：t < wAt 的历史权重不可知，按当前值冻结（保守，
      低估「窗口内新增主题」造成的漂移）；已剪枝主题缺席（幸存者偏差）。
 
@@ -161,15 +161,71 @@ def kv_replayable_count(kv_path: Path) -> int:
 
 # ---- 答题 p̂ 重建（判据①②共用） ----
 
-def reconstruct_answers(profiles) -> tuple[list, list]:
-    """账本 answer 事件 → [{p_hat, prior, x, gap, has_gap, where}]。
+def load_eval_trace(profiles_dir: Path) -> dict:
+    """T177 评估留痕：*.eval.jsonl → {画像文件 stem: [条目…]}（只读）。
 
-    p̂ = 反解先验 · 2^(−Δt/h_当前)：Δt 用账本内相邻答题时间差（精确），h 用主题当前值
-    近似历史值（偏差见文件头 a 条）；窗口首条（更早答题被挤出环形账本）Δt 不可得，
-    p̂ 退化为不衰减先验（上界）。反解回程超出舍入容差的条目剔除并计数。
+    条目即 record_events 落盘的账本 answer 形状（type/at/x/p/pHat/dt?/topic），
+    JSONL 里坏行保留为 None，由 reconstruct_answers 剔除并计数。
     """
-    records, bad = [], []
+    out = {}
+    for path in sorted(profiles_dir.glob("*.eval.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            print(f"  ! 跳过不可读留痕文件 {path.name}: {e}")
+            continue
+        entries = []
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                e = json.loads(ln)
+                entries.append(e if isinstance(e, dict) else None)
+            except ValueError:
+                entries.append(None)
+        out[path.name[:-len(".eval.jsonl")]] = entries
+    return out
+
+
+def reconstruct_answers(profiles, profiles_dir: Path = None) -> tuple[list, list, int]:
+    """答题事件 → [{p_hat, prior, x, gap, has_gap, where}]；(records, 反解异常, JSONL 设备数)。
+
+    有 .eval.jsonl 留痕的设备走精确口径（T177：p̂/Δt 直接读，不反解不近似）；
+    无留痕的设备走账本反解兜底：p̂ = 反解先验 · 2^(−Δt/h_当前)，Δt 用账本相邻答题
+    时间差（精确），h 用主题当前值近似历史值；窗口首条 Δt 不可得，p̂ 退化为不衰减
+    先验（上界）。反解回程超出舍入容差的条目剔除并计数。
+    """
+    traces = load_eval_trace(profiles_dir) if profiles_dir else {}
+    records, bad, trace_devices = [], [], 0
     for fname, _raw, state in profiles:
+        stem = fname[:-5] if fname.endswith(".json") else fname
+        trace = traces.get(stem)
+        if trace is not None:
+            trace_devices += 1
+            for e in trace:
+                where = f"{fname}·{e.get('topic') or '?'}@{int(e.get('at') or 0)}" if e else f"{fname}(trace)坏行"
+                if not e or "pHat" not in e:
+                    bad.append(where)
+                    continue
+                try:
+                    p_hat = float(e["pHat"])
+                except (TypeError, ValueError):
+                    bad.append(where)
+                    continue
+                if not (0.0 <= p_hat <= 1.0):
+                    bad.append(where)
+                    continue
+                dt = e.get("dt")
+                try:
+                    has_gap = dt is not None and float(dt) > 0
+                    gap = float(dt) if has_gap else 0.0
+                except (TypeError, ValueError):
+                    has_gap, gap = False, 0.0
+                records.append({"p_hat": p_hat, "prior": None,
+                                "x": 1 if e.get("x") else 0,
+                                "gap": gap, "has_gap": has_gap, "where": where})
+            continue
         for topic, t in (state.get("topics") or {}).items():
             answers = sorted(
                 (e for e in (t.get("ledger") or [])
@@ -193,7 +249,7 @@ def reconstruct_answers(profiles) -> tuple[list, list]:
                 records.append({"p_hat": p_hat, "prior": prior, "x": x,
                                 "gap": gap, "has_gap": has_gap,
                                 "where": f"{fname}·{topic}@{int(at)}"})
-    return records, bad
+    return records, bad, trace_devices
 
 
 # ---- 判据①：BKT 校准度 ----
@@ -317,7 +373,7 @@ def main() -> int:
     profiles = load_profiles(Path(args.profiles))
     kv_n = kv_replayable_count(ROOT / "data" / "kv_store.json")
 
-    records, bad = reconstruct_answers(profiles)
+    records, bad, n_trace = reconstruct_answers(profiles, Path(args.profiles))
     c1 = criterion1(records, bad)
     c2 = criterion2(records)
     c3 = criterion3(profiles, args.now)
@@ -333,8 +389,9 @@ def main() -> int:
     print("-" * 72)
     print(f"画像文件 {len(profiles)} 份；含 implicit 状态 {n_impl} 份；"
           f"事件总数 {events}；主题总数 {n_topics}；"
-          f"账本答题重建 p̂ {c1['n']} 条（其中 Δt 可得 {c2['n_repeat']} 条、"
-          f"反解异常剔除 {len(c1['bad'])} 条）；"
+          f"答题 p̂ 重建 {c1['n']} 条（JSONL 精确口径 {n_trace} 台设备、"
+          f"账本反解兜底其余；Δt 可得 {c2['n_repeat']} 条、"
+          f"反解/坏行剔除 {len(c1['bad'])} 条）；"
           f"kv 可回放答题 {kv_n} 条（ensure_seeded 回填上限参考）")
     print("-" * 72)
     print("判据表")
@@ -368,9 +425,10 @@ def main() -> int:
             print(f"  {r['file']}: L1={lv}  主题={r['n_topics']}  "
                   f"窗口内活跃={r['n_fresh']}  {r['verdict']}")
     if records:
-        print("判据①样本明细（p̂ / 反解先验 / 对错 / 位置；p̂=先验·衰减，首条无 Δt 为上界）")
+        print("判据①样本明细（p̂ / 对错 / 位置；JSONL 条目 prior=—，反解条目 p̂=先验·衰减，首条无 Δt 为上界）")
         for r in sorted(records, key=lambda r: -r["p_hat"]):
-            print(f"  p̂={r['p_hat']:.3f}  prior={r['prior']:.3f}  x={r['x']}  {r['where']}")
+            prior = "—" if r["prior"] is None else f"{r['prior']:.3f}"
+            print(f"  p̂={r['p_hat']:.3f}  prior={prior}  x={r['x']}  {r['where']}")
     if c1["bad"]:
         print("判据①反解异常（超出舍入容差，已剔除；通常是 BKT 参数变更后旧账本未迁移）：")
         for b in c1["bad"]:

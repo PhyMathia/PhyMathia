@@ -13,10 +13,13 @@
   formula（/api/extract_knowledge 公式自动入库）、quiz/socratic_answer
   （/api/kv/phymathia_quiz_stats 写入时新旧差分）
 - 前端 3 类（expand/visualize/difficulty）走 POST /api/profile/event
+- 评估留痕（T177）：真实答题（quiz/socratic_answer）逐条追加 data/profiles/{device}.eval.jsonl
+  （含当时 p̂/Δt，T176），供 §10 有效性验证精确口径；回填不写、reset 同步删
 所有函数路径参数化（path 显式传入），本模块不 import profile，避免循环。
 """
 
 import copy
+import json
 import logging
 import math
 import re
@@ -167,7 +170,7 @@ def _norm_ledger(raw) -> list:
     if not isinstance(raw, list):
         return []
     return [{"type": str(e.get("type") or "")[:16], "at": _ts(e.get("at")),
-             **{k: v for k, v in e.items() if k in ("w", "x", "p", "axis", "val")}}
+             **{k: v for k, v in e.items() if k in ("w", "x", "p", "pHat", "dt", "axis", "val")}}
             for e in raw if isinstance(e, dict)][-LEDGER_K:]
 
 
@@ -210,17 +213,25 @@ def _bkt_posterior(p: float, x: int) -> float:
 
 
 def _apply_answer(state: dict, topic: str, x: int, ts: float):
-    """真实答题：半衰期校准（用旧 p 与预测 p̂）→ BKT 观测步 + 学习步。"""
+    """真实答题：半衰期校准（用旧 p 与预测 p̂）→ BKT 观测步 + 学习步。
+
+    账本条目补存当时预测 p̂ 与作答间隔 Δt（T176）：§10 事后校准评估免反解近似；
+    首条答题（此前无作答史）Δt 不可得，p̂ 取不衰减先验（上界）。
+    """
     t = state["topics"].setdefault(topic, _new_topic())
-    p_hat = t["p"] * decay2(ts - t["hAt"], t["h"]) if t["hAt"] > 0 else t["p"]
+    dt = ts - t["hAt"] if t["hAt"] > 0 else None
+    p_hat = t["p"] * decay2(dt, t["h"]) if dt is not None else t["p"]
     t["h"] = _clamp(t["h"] * math.exp(H_GAIN * (x - p_hat)), H_MIN_DAYS, H_MAX_DAYS)
     tilde = _bkt_posterior(t["p"], x)
     t["p"] = tilde + (1.0 - tilde) * P_TRANSIT
     t["hAt"] = ts
     t["ans"] += 1
     t["ok"] += x
-    t["ledger"] = _ledger_push(t["ledger"], {"type": "answer", "at": ts, "x": x,
-                                             "p": round(t["p"], 3)})
+    entry = {"type": "answer", "at": ts, "x": x, "p": round(t["p"], 3),
+             "pHat": round(p_hat, 3)}
+    if dt is not None:
+        entry["dt"] = round(dt, 1)
+    t["ledger"] = _ledger_push(t["ledger"], entry)
 
 
 def _apply_confused(state: dict, topic: str, ts: float):
@@ -246,8 +257,13 @@ def _bump_rhythm(state: dict, ts: float, length):
     rhythm["at"] = ts
 
 
-def apply_events(state: dict, events: list, now: float) -> bool:
-    """把事件流应用进状态（原地修改）；返回是否有变化。"""
+def apply_events(state: dict, events: list, now: float, trace: list = None) -> bool:
+    """把事件流应用进状态（原地修改）；返回是否有变化。
+
+    trace（可选）：传入 list 时，每次真实答题（quiz/socratic_answer）把刚入账本的
+    answer 条目（含 T176 的 pHat/dt）连同主题名收进 trace，供 record_events 落
+    评估 JSONL——回填（ensure_seeded）不传 trace，不产生评估留痕。
+    """
     changed = False
     for ev in events:
         if not isinstance(ev, dict):
@@ -266,6 +282,10 @@ def apply_events(state: dict, events: list, now: float) -> bool:
         # 能力：真实答题
         if etype in ("quiz", "socratic_answer") and topic and not frozen.get("mastery"):
             _apply_answer(state, topic, 1 if ev.get("correct") else 0, ts)
+            if trace is not None:
+                entry = dict(state["topics"][topic]["ledger"][-1])
+                entry["topic"] = topic
+                trace.append(entry)
         # 能力：没看懂弱负观测（同主题 24h 频率上限，防连点刷分）
         if etype == "confused" and topic and not frozen.get("mastery"):
             if ts - _ts(state["confusedAt"].get(topic)) >= CONFUSED_CAP_S:
@@ -301,18 +321,49 @@ def prune_topics(state: dict, now: float):
 
 # ---- 持久化入口（profile.py 包装后对外） ----
 
+def eval_trace_path(path):
+    """评估留痕文件路径：与画像 JSON 同目录同名（同一 device 隔离），后缀 .eval.jsonl（T177）。"""
+    return path.with_name(f"{path.stem}.eval.jsonl")
+
+
+def _append_eval_trace(path, trace: list):
+    """T177 评估留痕：答题事件逐条追加（append-only、不设环形深度）。
+
+    §10 校准需要全量「当时 p̂」序列，而证据账本是 8 条环形且 interest 同槽挤窗
+    （原 backlog T177：留痕链路全长不足）。与画像状态文件分离；best-effort——
+    写失败只告警，绝不阻断画像主流程。回填（ensure_seeded）不产生留痕。
+    """
+    if not trace:
+        return
+    try:
+        with open(eval_trace_path(path), "a", encoding="utf-8") as f:
+            for e in trace:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    except OSError as e:  # pragma: no cover - 磁盘异常不阻断画像主流程
+        logger.warning(f"Eval trace append failed: {e}")
+
+
+def _remove_eval_trace(path):
+    """reset 时连评估留痕一起删（文档 §7 可控：用户重置画像，行为数据不留底）。"""
+    try:
+        eval_trace_path(path).unlink(missing_ok=True)
+    except OSError as e:  # pragma: no cover
+        logger.warning(f"Eval trace remove failed: {e}")
+
+
 def record_events(path, events: list, now: float = None) -> bool:
     if not isinstance(events, list) or not events:
         return False
     now = now or time.time()
     applied = []
+    trace: list = []
 
     def updater(raw):
         profile = raw if isinstance(raw, dict) else {}
         if profile.get("enabled") is False:
             return None
         state = normalize_implicit(profile.get("implicit"))
-        if not apply_events(state, events, now):
+        if not apply_events(state, events, now, trace):
             return None
         prune_topics(state, now)
         applied.append(True)
@@ -324,6 +375,8 @@ def record_events(path, events: list, now: float = None) -> bool:
     # 注意 _mutate_json 在 updater 返回 None 时返回原数据（非 None）——
     # 「是否真的写了」必须用 applied 旗标表达，不能用返回值判空
     _mutate_json(path, updater)
+    if applied:
+        _append_eval_trace(path, trace)
     return bool(applied)
 
 
@@ -441,7 +494,10 @@ def manage_implicit(path, action: str, dim: str = "", key: str = "", value=None)
         profile["updatedAt"] = now
         return profile
 
-    return _mutate_json(path, updater) or {}
+    result = _mutate_json(path, updater) or {}
+    if action == "reset":
+        _remove_eval_trace(path)
+    return result
 
 
 # ---- 消费端 ----
