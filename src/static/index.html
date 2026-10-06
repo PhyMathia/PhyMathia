@@ -224,7 +224,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=b4a981a9"></script>
+  <script src="/js/app.js?v=4d2c6799"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -598,6 +598,8 @@
         <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); openQuizGlobalDashboard()"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8.5 12.5l2.2 2.2 4.8-5"></path></svg></span> 检测总览</div>
       </div>
     </div>
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); window.exportSessionNote('html')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 21h16"></path></svg></span> 导出笔记 · HTML</div>
+    <div class="level-option" onclick="event.stopPropagation(); closeKnowledgeMenu(); window.exportSessionNote('md')"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 11v6"></path><path d="M9 14l3 3 3-3"></path></svg></span> 导出笔记 · Markdown</div>
   </div>
   <div class="level-panel menu-panel aurora-glass aurora-glass--compact" id="moreMenu">
     <div class="level-option" onclick="event.stopPropagation(); closeMoreMenu(); toggleDataPanel(event)"><span class="level-emoji"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"></path><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></svg></span> 数据管理</div>

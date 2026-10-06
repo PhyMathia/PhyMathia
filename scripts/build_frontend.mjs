@@ -36,6 +36,9 @@ const entries = [
   'utopia-html.js',
   'graph-contextmenu.js',
   'knowledge.js',
+  // 学习笔记导出（2026-10-06）：紧跟 knowledge.js——正文纯函数依赖
+  // getKnowledgeItems/_stripFormulaDelimiters，入口还引用 utils 的 toastMsg
+  'note-export.js',
   // 知识大陆（2026-10-04 T36 自单文件拆六，组内顺序即依赖顺序，view 必须最后：
   // 文末 window.* 测试导出块加载期立即执行，引用前五件的全部导出函数）
   'graph-continent.js',
