@@ -7892,5 +7892,152 @@ check('隐式画像：前端接线契约（expand/visualize/difficulty/confused/
   return true;
 });
 
+// ===== 串行边界追加：知识检测出题吃隐式画像（2026-10-06）=====
+// 异步用例（覆写 sandbox.memoryFetchModel/fetch）放在全部并发用例之后串行独占跑；
+// 不写任何共享 localStorage 键（画像与统计全走 stub/缺省），覆写在 finally 恢复。
+// POOL_IMPL：池序故意排「已掌握→薄弱→没答过→画像外」，有画像时应被重排、无画像时保持原序。
+const POOL_IMPL = {
+  knowledge: [
+    { id: 'k_a', title: '主题乙', summary: '已掌握', formulas: [], sessionId: 's_impl' },
+    { id: 'k_b', title: '主题甲', summary: '薄弱', formulas: [], sessionId: 's_impl' },
+    { id: 'k_c', title: '主题丙', summary: '没答过', formulas: [], sessionId: 's_impl' },
+    { id: 'k_d', title: '画像外主题', summary: '画像没见过', formulas: [], sessionId: 's_impl' },
+  ],
+  formulas: []
+};
+{
+  const qcheck = async (name, fn) => {
+    try {
+      const r = await fn();
+      if (r === false) { failed++; console.error('❌', name, '-> 断言未通过'); }
+      else console.log('✓', name);
+    } catch (e) {
+      failed++; console.error('❌', name, '->', (e && e.message) || e);
+    }
+  };
+
+  await qcheck('quiz-ai：隐式画像门控（enabled=false/成熟度<0.3/请求失败→null；0.3 边界放行）', async () => {
+    const prev = sandbox.memoryFetchModel;
+    try {
+      sandbox.memoryFetchModel = async () => ({ enabled: false });
+      if (await sandbox._quizImplicitProfile() !== null) throw new Error('enabled=false 应返回 null');
+      sandbox.memoryFetchModel = async () => ({ enabled: true, maturity: 0.29, topics: [{ topic: '主题甲', m: 0.3, share: 0.4, ans: 4 }] });
+      if (await sandbox._quizImplicitProfile() !== null) throw new Error('maturity<0.3 应返回 null');
+      sandbox.memoryFetchModel = async () => { throw new Error('network down'); };
+      if (await sandbox._quizImplicitProfile() !== null) throw new Error('请求失败应静默返回 null');
+      sandbox.memoryFetchModel = async () => ({ enabled: true, maturity: 0.5, topics: [] });
+      if (await sandbox._quizImplicitProfile() !== null) throw new Error('无主题应返回 null');
+      sandbox.memoryFetchModel = async () => ({ enabled: true, maturity: 0.3, topics: [{ topic: '主题甲', m: 'x', share: 0.4, ans: 4 }] });
+      const ok = await sandbox._quizImplicitProfile();
+      if (!ok || ok.maturity !== 0.3 || ok.topics.length !== 1) throw new Error('成熟度 0.3 边界应放行');
+      if (ok.topics[0].m !== 0.2) throw new Error('非数值 m 应回落 0.2 先验');
+      return true;
+    } finally { sandbox.memoryFetchModel = prev; }
+  });
+
+  await qcheck('quiz-ai：出题链路吃隐式画像（素材薄弱前置＋难度配比行；门控关/失败与无画像逐字节一致）', async () => {
+    const MODEL_OUT = JSON.stringify({ questions: [
+      { title: '主题甲', prompt: '关于主题甲的检测题', options: ['甲对', '甲错一', '甲错二', '甲错三'], correctIndex: 0, explanation: '解析甲', difficulty: 'easy' },
+      { title: '主题丙', prompt: '关于主题丙的检测题', options: ['丙对', '丙错一', '丙错二', '丙错三'], correctIndex: 1, explanation: '解析丙', difficulty: 'medium' },
+    ] });
+    const captureFetch = (captures) => async (url, opts) => {
+      const u = String(url);
+      if (u.includes('quiz-prompt')) return { ok: true, status: 200, text: async () => '## 出题\n出题要求\n\n## 审题\n审题要求' };
+      if (u.includes('/api/profile')) return { ok: true, status: 200, json: async () => ({ enabled: false }) };
+      captures.body = opts && opts.body;
+      const chunk = 'data: ' + JSON.stringify({ choices: [{ delta: { content: MODEL_OUT } }] }) + '\n\n';
+      let sent = false;
+      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => {
+        if (sent) return { done: true };
+        sent = true;
+        return { done: false, value: new TextEncoder().encode(chunk) };
+      } }) } };
+    };
+    const prevFetch = sandbox.fetch;
+    const prevModel = sandbox.getActiveModelForRole;
+    const prevImplicit = sandbox.memoryFetchModel;
+    try {
+      sandbox.getActiveModelForRole = () => ({ provider: 'mock', apiKey: 'k', model: 'm', baseUrl: 'http://mock', thinking: '' });
+      // 有画像：薄弱（有作答且 m̂≤0.7）最前 → 没答过（保出场）→ 已掌握 → 画像外（探索保底）
+      const capOn = {};
+      sandbox.fetch = captureFetch(capOn);
+      sandbox.memoryFetchModel = async () => ({
+        enabled: true, maturity: 0.5, events: 40, seeded: true,
+        topics: [
+          { topic: '主题甲', w: 4, share: 0.4, m: 0.3, ans: 4, ok: 1 },
+          { topic: '主题乙', w: 4, share: 0.4, m: 0.95, ans: 6, ok: 6 },
+          { topic: '主题丙', w: 2, share: 0.2, m: 0.2, ans: 0, ok: 0 },
+        ]
+      });
+      const qs = await sandbox._aiGenerateQuizQuestions(POOL_IMPL, undefined, false);
+      if (!Array.isArray(qs) || qs.length !== 2) throw new Error('AI 题应解析出 2 道');
+      const msgOn = JSON.parse(capOn.body).messages.find(m => m.role === 'user').content;
+      const i甲 = msgOn.indexOf('知识点：主题甲'), i丙 = msgOn.indexOf('知识点：主题丙'),
+            i乙 = msgOn.indexOf('知识点：主题乙'), i外 = msgOn.indexOf('知识点：画像外主题');
+      if (i甲 < 0 || i丙 < 0 || i乙 < 0 || i外 < 0) throw new Error('素材行缺失');
+      if (!(i甲 < i丙 && i丙 < i乙 && i乙 < i外)) {
+        throw new Error('排序应为 薄弱→没答过→已掌握→画像外，实际 ' + [i甲, i丙, i乙, i外].join(','));
+      }
+      // 相关已答主题平均 m̂=(0.3+0.95)/2=0.625 → 2:4:4、d*=3.5 档（§3.4 连续值）
+      if (!msgOn.includes('难度配比建议') || !msgOn.includes('2:4:4') || !msgOn.includes('目标难度约 3.5/5 档')) {
+        throw new Error('难度配比行缺失或档位不符');
+      }
+      if (msgOn.includes('用户薄弱点')) throw new Error('不应混入显式薄弱点（显式画像 enabled=false）');
+      // 门控三关逐字节等价：enabled=false / 请求抛错 / 返回 null —— 全部与无画像一致
+      const baselines = [];
+      for (const stub of [async () => ({ enabled: false }), async () => { throw new Error('down'); }, async () => null]) {
+        const cap = {};
+        sandbox.fetch = captureFetch(cap);
+        sandbox.memoryFetchModel = stub;
+        await sandbox._aiGenerateQuizQuestions(POOL_IMPL, undefined, false);
+        baselines.push(JSON.parse(cap.body).messages.find(m => m.role === 'user').content);
+      }
+      if (baselines[0] !== baselines[1] || baselines[1] !== baselines[2]) throw new Error('门控各情形应逐字节一致');
+      if (baselines[0].includes('难度配比建议')) throw new Error('无画像不应出现难度配比行');
+      const b乙 = baselines[0].indexOf('知识点：主题乙'), b甲 = baselines[0].indexOf('知识点：主题甲');
+      if (!(b乙 >= 0 && b乙 < b甲)) throw new Error('无画像应保持 pool 原序（乙在甲前）');
+      if (baselines[0] === msgOn) throw new Error('有画像时应与无画像不同');
+      return true;
+    } finally {
+      sandbox.fetch = prevFetch;
+      sandbox.getActiveModelForRole = prevModel;
+      sandbox.memoryFetchModel = prevImplicit;
+    }
+  });
+}
+
+// 知识检测隐式画像：纯同步纯函数用例（不碰共享键），追加安全
+check('quiz-ai：隐式排序纯函数（薄弱前置/没答过保出场/pool 不动/无画像原序）', () => {
+  const implicit = { maturity: 0.5, topics: [
+    { name: '主题甲', key: '主题甲', m: 0.3, pi: 0.4, ans: 4 },
+    { name: '主题乙', key: '主题乙', m: 0.95, pi: 0.4, ans: 6 },
+    { name: '主题丙', key: '主题丙', m: 0.2, pi: 0.2, ans: 0 },
+  ] };
+  const pool = { knowledge: POOL_IMPL.knowledge.slice(), formulas: [] };
+  const titles = ctx => ctx.split('\n').filter(l => l.includes('知识点：'))
+    .map(l => (l.match(/知识点：(\S+)/) || [])[1]);
+  const ordered = titles(sandbox._buildQuizGenerationContext(pool, implicit));
+  if (ordered.join(',') !== '主题甲,主题丙,主题乙,画像外主题') throw new Error('排序不符：' + ordered.join(','));
+  if (pool.knowledge[0].id !== 'k_a') throw new Error('pool 本体被重排');
+  const plain = titles(sandbox._buildQuizGenerationContext(pool));
+  if (plain.join(',') !== '主题乙,主题甲,主题丙,画像外主题') throw new Error('无画像应保持原序：' + plain.join(','));
+  return true;
+});
+
+check('quiz-ai：难度配比四档（§3.4 d*=1+4m̂）与无证据不出手', () => {
+  const mk = (m, ans) => ({ name: '主题甲', key: '主题甲', m, pi: 0.4, ans });
+  const pool = { knowledge: [{ title: '主题甲' }], formulas: [] };
+  const hint = topics => sandbox._quizDifficultyRatioHint(topics && { maturity: 0.5, topics }, pool);
+  const low = hint([mk(0.3, 2)]);
+  if (!low.includes('6:3:1') || !low.includes('easy 为主')) throw new Error('m̂=0.3 应 easy 为主：' + low);
+  if (!low.includes('2.2/5 档')) throw new Error('d*=1+4m̂ 连续档位不符：' + low);
+  if (!hint([mk(0.45, 2)]).includes('3:5:2')) throw new Error('m̂=0.45 应 medium 为主');
+  if (!hint([mk(0.625, 2)]).includes('2:4:4')) throw new Error('m̂=0.625 应中高均衡');
+  if (!hint([mk(0.9, 2)]).includes('1:2:7')) throw new Error('m̂=0.9 应 hard 为主');
+  if (hint([mk(0.3, 0)]) !== '') throw new Error('相关主题没答过题不应给配比');
+  if (hint(null) !== '' || hint([]) !== '') throw new Error('无画像不应给配比');
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);
