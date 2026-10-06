@@ -33,24 +33,126 @@ function _quizMasteryAnnotation(item, stats) {
   }
 }
 
-function _buildQuizGenerationContext(pool) {
+// ===== 隐式画像出题偏向（docs/用户画像数学模型-2026-10-06.md §3.3/§3.4/§8.2/§8.3）=====
+// 数据走现成 GET /api/profile/dashboard（memoryFetchModel，memory.js），纯前端消费：
+// 素材按掌握度重排＋提示词追加难度配比一行。门控三关——enabled=false、maturity<0.3、
+// 请求/解析失败——一律静默退回无偏向（出题绝不因画像失败而报错或改变行为）。
+const QUIZ_IMPLICIT_MIN_MATURITY = 0.3; // 成熟度门控：事件太少时隐式层未成熟，不参与
+const QUIZ_IMPLICIT_P_STAR = 0.7;       // §3.3 到期阈值：m̂≤p* 且有作答记录的主题视为薄弱
+const QUIZ_IMPLICIT_KAPPA = 0.5;        // §3.3 兴趣指数 κ：π^κ 压平分布，防头部垄断
+const QUIZ_IMPLICIT_EPSILON = 0.1;      // §3.3 探索配额 ε：每个主题的保底出场项
+
+function _quizImplicitLabelKey(text) {
+  return String(text || '').toLowerCase().replace(/[^\w\u4e00-\u9fff]+/g, '');
+}
+
+// 拉 dashboard 派生视图并按口径门控；任何失败/未达标返回 null（调用方按无画像处理）。
+async function _quizImplicitProfile() {
+  try {
+    if (typeof memoryFetchModel !== 'function') return null;
+    const view = await memoryFetchModel();
+    if (!view || typeof view !== 'object' || view.enabled === false) return null;
+    const maturity = Number(view.maturity);
+    if (!Number.isFinite(maturity) || maturity < QUIZ_IMPLICIT_MIN_MATURITY) return null;
+    const topics = (Array.isArray(view.topics) ? view.topics : [])
+      .filter(t => t && typeof t === 'object')
+      .map(t => ({
+        name: String(t.topic || '').trim(),
+        key: _quizImplicitLabelKey(t.topic),
+        m: Number.isFinite(Number(t.m)) ? Number(t.m) : 0.2,
+        pi: Number.isFinite(Number(t.share)) ? Number(t.share) : 0,
+        ans: Math.max(0, Number(t.ans) || 0)
+      }))
+      .filter(t => t.name.length >= 2 && t.key.length >= 2);
+    return topics.length ? { maturity, topics } : null;
+  } catch (e) {
+    return null; // 网络失败静默降级：出题照旧
+  }
+}
+
+// 素材条目 → 画像主题：归一化双向包含（与服务端 assign_topic 的词表包含匹配同风格），
+// 多个命中取名字最长者（更具体）。宁漏勿错：任一侧归一后不足 2 字不认。
+function _quizImplicitMatchTopic(labelKey, topics) {
+  if (!labelKey || labelKey.length < 2 || !Array.isArray(topics)) return null;
+  let best = null;
+  for (const t of topics) {
+    if (labelKey.includes(t.key) || t.key.includes(labelKey)) {
+      if (!best || t.key.length > best.key.length) best = t;
+    }
+  }
+  return best;
+}
+
+// §3.3 出题优先级 score_i = (1−m̂)·π^κ + ε/‖T‖；画像没见过的条目只吃探索保底项。
+// 薄弱前置（boost）：有作答记录且保持率跌破 p*——排最前；从没答过的主题不带 boost，
+// 但吃 (1−0.2 先验)·π^κ＋保底，在第二梯队按兴趣保留出场（§8.2 混合分布：不被薄弱
+// 主题完全挤掉），且能排到已掌握主题前面。
+function _quizImplicitScore(topic, topicCount) {
+  const explore = QUIZ_IMPLICIT_EPSILON / Math.max(1, topicCount);
+  if (!topic) return { score: explore, boost: false };
+  const score = (1 - topic.m) * Math.pow(Math.max(0, topic.pi), QUIZ_IMPLICIT_KAPPA) + explore;
+  return { score, boost: topic.ans > 0 && topic.m <= QUIZ_IMPLICIT_P_STAR };
+}
+
+// 出题素材排序：薄弱最前（§3.3），其余按 score 降序，同分按原序（稳定）。
+// 无画像（implicit 为 null）按原序返回——与无画像行为逐字节一致；不改 pool 本体。
+function _quizImplicitOrder(items, implicit, labelOf) {
+  const list = Array.isArray(items) ? items.slice() : [];
+  if (!implicit || !Array.isArray(implicit.topics) || !implicit.topics.length) return list;
+  const topicCount = implicit.topics.length;
+  const scored = list.map((item, index) => {
+    const topic = _quizImplicitMatchTopic(_quizImplicitLabelKey(labelOf(item)), implicit.topics);
+    const s = _quizImplicitScore(topic, topicCount);
+    return { item, index, score: s.score, boost: s.boost };
+  });
+  scored.sort((a, b) => (b.boost - a.boost) || (b.score - a.score) || (a.index - b.index));
+  return scored.map(x => x.item);
+}
+
+// 难度配比一行（§3.4 目标难度 d*=1+4m̂ 的离散化）：按与素材相关的「已作答」主题平均
+// m̂ 分四档给 easy:medium:hard 建议配比；相关主题都没答过题时不给行（无证据不下手）。
+function _quizDifficultyRatioHint(implicit, pool) {
+  if (!implicit || !Array.isArray(implicit.topics) || !implicit.topics.length) return '';
+  const labelKeys = [];
+  for (const item of (pool && pool.knowledge) || []) labelKeys.push(_quizImplicitLabelKey(item && item.title));
+  for (const item of (pool && pool.formulas) || []) labelKeys.push(_quizImplicitLabelKey(item && item.concept));
+  const relevant = implicit.topics.filter(t =>
+    t.ans > 0 && labelKeys.some(k => k && k.length >= 2 && (k.includes(t.key) || t.key.includes(k))));
+  if (!relevant.length) return '';
+  const avgM = relevant.reduce((sum, t) => sum + t.m, 0) / relevant.length;
+  const bands = [
+    [0.35, '6:3:1', 'easy 为主'],
+    [0.55, '3:5:2', 'medium 为主'],
+    [0.75, '2:4:4', '中高难度均衡'],
+    [Infinity, '1:2:7', 'hard 为主']
+  ];
+  const band = bands.find(b => avgM < b[0]);
+  const level = (1 + 4 * avgM).toFixed(1);
+  return `难度配比建议（按画像掌握度）：easy:medium:hard ≈ ${band[1]}`
+    + `（相关主题平均掌握度 ${Math.round(avgM * 100)}%，目标难度约 ${level}/5 档，${band[2]}），请按此配比分配各难度的题量`;
+}
+
+function _buildQuizGenerationContext(pool, implicit) {
   const lines = ['# 出题素材'];
   // 掌握度统计一次读入；读取失败静默退化为无标注
   let stats = null;
   try {
     stats = _readQuizStats() || null;
   } catch (e) { stats = null; }
-  if (pool.knowledge.length) {
+  // 隐式画像可用时按 §3.3 重排素材（拷贝排序不动 pool 本体）；无画像保持原序
+  const knowledge = _quizImplicitOrder(pool.knowledge, implicit, item => item.title);
+  const formulas = _quizImplicitOrder(pool.formulas, implicit, item => item.concept);
+  if (knowledge.length) {
     lines.push('## 知识点');
-    for (const item of pool.knowledge) {
+    for (const item of knowledge) {
       lines.push(`- id: ${item.id} | 知识点：${item.title}${_quizMasteryAnnotation(item, stats)}`);
       lines.push(`  概述：${item.summary || '无'}`);
       if (item.formulas.length) lines.push(`  公式：${item.formulas.join('；')}`);
     }
   }
-  if (pool.formulas.length) {
+  if (formulas.length) {
     lines.push('## 公式库');
-    for (const item of pool.formulas) {
+    for (const item of formulas) {
       lines.push(`- id: ${item.id} | ${item.latex}${item.concept ? `（概念：${item.concept}）` : ''}${item.meaning ? `；含义：${item.meaning}` : ''}${_quizMasteryAnnotation(item, stats)}`);
     }
   }
@@ -177,7 +279,8 @@ function _sanitizeAIQuestions(raw, pool) {
 async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY_ENABLED) {
   const model = _pickQuizModel();
   if (!model) return null;
-  // 画像薄弱点注入（记忆开启且有薄弱信息时，出题优先考察）
+  // 画像注入两路并行：显式（记忆薄弱点）＋隐式（行为画像 dashboard），各自静默降级
+  const implicitPromise = _quizImplicitProfile();
   let weakProfileText = '';
   try {
     const profile = await memoryGetProfile();
@@ -191,6 +294,8 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
       if (weakParts.length) weakProfileText = weakParts.join('；');
     }
   } catch (e) { /* 画像不可用时静默降级 */ }
+  const implicit = await implicitPromise;
+  const difficultyHint = _quizDifficultyRatioHint(implicit, pool);
   const prompts = await _loadQuizPromptFile();
   const systemPrompt = (prompts.generate || DEFAULT_QUIZ_GENERATION_PROMPT)
     .replace(/\{\{LEVEL_PROMPT\}\}/g, getLevelPrompt())
@@ -199,7 +304,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
   // 空闲超时守卫：流式有数据就续期，只有持续无响应才中止（推理模型友好）
   const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
-  const context = _buildQuizGenerationContext(pool);
+  const context = _buildQuizGenerationContext(pool, implicit);
   quizAiStatusText = 'AI 正在生成检测题…';
   quizAiLastError = '';
   if (quizState) {
@@ -215,7 +320,7 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
       body: JSON.stringify({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `出题素材：\n${context}\n\n${weakProfileText ? '用户薄弱点（请优先出相关题目）：' + weakProfileText + '\n\n' : ''}请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。\n\n公式格式要求：题干、选项、解析中的公式一律用 <formula>纯LaTeX</formula> 或 $...$ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出不带定界符的裸 LaTeX。` }
+          { role: 'user', content: `出题素材：\n${context}\n\n${weakProfileText ? '用户薄弱点（请优先出相关题目）：' + weakProfileText + '\n\n' : ''}${difficultyHint ? difficultyHint + '\n\n' : ''}请只基于素材中的具体知识点和公式生成检测题，不要讨论“出题素材”或“知识上下文”本身。\n\n公式格式要求：题干、选项、解析中的公式一律用 <formula>纯LaTeX</formula> 或 $...$ 包裹（如 $\\nabla \\cdot \\vec{F}$），禁止输出不带定界符的裸 LaTeX。` }
         ],
         provider: model.provider,
         api_key: model.apiKey,
