@@ -279,7 +279,7 @@ def test_compile_gates_on_maturity():
     pi.apply_events(s, [_ev("ask", "Z", ts=now), _ev("ask", "Z", ts=now + 1),
                         _ev("ask", "Z", ts=now + 2)], now=now + 2)
     lines = pi.compile_user_model(s, {})
-    assert any(line.startswith("兴趣：") for line in lines)
+    assert any(line.startswith("举例：") for line in lines)
     assert any("成熟度" in line for line in lines)
 
 
@@ -288,7 +288,86 @@ def test_compile_dedupes_against_explicit_interests():
     pi.apply_events(s, [_ev("ask", "天体物理", ts=i) for i in range(3)], now=3)
     profile_data = {"explicit": {"interests": "天体物理"}, "facts": []}
     lines = pi.compile_user_model(s, profile_data)
-    assert not any("天体物理" in line for line in lines if line.startswith("兴趣："))
+    assert not any("天体物理" in line for line in lines if line.startswith("举例："))
+
+
+def test_compile_example_mixed_distribution_format():
+    """§8.2：兴趣条目升级为举例混合分布；无探索候选时只出七成侧。"""
+    s = _fresh()
+    now = time.time()
+    pi.apply_events(s, [_ev("ask", "电磁感应", ts=now), _ev("ask", "电磁感应", ts=now + 1),
+                        _ev("ask", "电磁感应", ts=now + 2)], now=now + 2)
+    lines = pi.compile_user_model(s, {})
+    ex = next(line for line in lines if line.startswith("举例："))
+    assert ex.startswith("举例：七成用 电磁感应")
+    assert "三成带一步" not in ex
+    assert not any(line.startswith("兴趣：") for line in lines)
+
+
+def test_compile_example_fallback_takes_coldest_recorded():
+    """拉伸侧退化路：知识库无归类时取候选中 W 最小的已归题主题。"""
+    s = _fresh()
+    now = time.time()
+    evs = [_ev("ask", "电磁感应", ts=now) for _ in range(3)]
+    evs += [_ev("ask", "微积分", ts=now) for _ in range(2)]
+    evs += [_ev("ask", "光学", ts=now)]
+    evs += [_ev("ask", "热学", ts=now - 2 * 86400)]
+    evs += [_ev("ask", "数列", ts=now - 10 * 86400)]
+    pi.apply_events(s, evs, now=now)
+    lines = pi.compile_user_model(s, {})
+    ex = next(line for line in lines if line.startswith("举例："))
+    assert "七成用 电磁感应/微积分/光学" in ex
+    assert "三成带一步 数列/热学" in ex
+
+
+def test_compile_example_stretch_prefers_same_domain(tmp_path, monkeypatch):
+    """拉伸侧主路：知识库 category 同域候选优先于更冷的异域候选。"""
+    kb = tmp_path / "kb.json"
+    kb.write_text('{"k1": {"topic": "电磁感应", "category": "physics"},'
+                  '"k2": {"topic": "力学", "category": "physics"},'
+                  '"k3": {"topic": "角动量", "category": "physics"},'
+                  '"k4": {"topic": "化学键", "category": "chemistry"}}', encoding="utf-8")
+    monkeypatch.setattr(pi, "KNOWLEDGE_PATH", kb)
+    s = _fresh()
+    now = time.time()
+    evs = [_ev("ask", "电磁感应", ts=now) for _ in range(3)]
+    evs += [_ev("ask", "微积分", ts=now) for _ in range(3)]
+    evs += [_ev("ask", "原子物理", ts=now) for _ in range(2)]
+    evs += [_ev("ask", "力学", ts=now - 86400)]          # 同域、w≈0.95
+    evs += [_ev("ask", "角动量", ts=now - 3 * 86400)]    # 同域、更冷 w≈0.86
+    evs += [_ev("ask", "化学键", ts=now - 22 * 86400)]   # 异域、最冷 w≈0.34
+    pi.apply_events(s, evs, now=now)
+    lines = pi.compile_user_model(s, {})
+    ex = next(line for line in lines if line.startswith("举例："))
+    stretch = ex.split("三成带一步 ", 1)[1]
+    assert "化学键" not in stretch      # 同域有候选时，异域再冷也不进探索位
+    assert stretch.index("角动量") < stretch.index("力学")  # 同域内冷的优先
+
+
+def test_compile_example_stretch_respects_explicit_dedupe():
+    """探索位同款 §8.1 去重：显式兴趣里已有的主题不占探索位。"""
+    s = _fresh()
+    now = time.time()
+    evs = [_ev("ask", "电磁感应", ts=now) for _ in range(3)]
+    evs += [_ev("ask", "微积分", ts=now) for _ in range(2)]
+    evs += [_ev("ask", "光学", ts=now)]
+    evs += [_ev("ask", "热学", ts=now - 86400)]
+    pi.apply_events(s, evs, now=now)
+    profile_data = {"explicit": {"interests": "热学"}, "facts": []}
+    lines = pi.compile_user_model(s, profile_data)
+    ex = next(line for line in lines if line.startswith("举例："))
+    assert "热学" not in ex
+    assert "三成带一步" not in ex   # 唯一候选被显式去重挡下，探索位空缺
+
+
+def test_compile_interest_frozen_drops_example_line():
+    """兴趣冻结：整条举例混合分布不注入（冻结维度不进注入段）。"""
+    s = _fresh()
+    now = time.time()
+    pi.apply_events(s, [_ev("ask", "电磁感应", ts=now + i) for i in range(3)], now=now + 3)
+    s["frozen"]["interest"] = True
+    lines = pi.compile_user_model(s, {})
+    assert not any(line.startswith("举例：") for line in lines)
 
 
 def test_compile_depth_uses_retention_adjusted_mastery():
