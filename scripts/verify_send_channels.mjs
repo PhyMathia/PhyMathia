@@ -22,7 +22,7 @@
 //   node scripts/mock_upstream.mjs        # 127.0.0.1:5065，OpenAI 兼容 SSE/JSON 双格式
 // 再用环境变量把验证模型指过去（七条通道全走真实 UI 路径，只是上游换成 mock）：
 //   VERIFY_PROVIDER=opencode-go VERIFY_MODEL=mock-1 \
-//   VERIFY_BASE_URL=http://127.0.0.1:5061/v1 VERIFY_API_KEY=mock node scripts/verify_send_channels.mjs
+//   VERIFY_BASE_URL=http://127.0.0.1:5065/v1 VERIFY_API_KEY=mock node scripts/verify_send_channels.mjs
 // mock 回包覆盖：问题概要 / 建议模块行 / 学习卡片 XML（含 <extend> 的苏格拉底＋进阶
 // 方向段——缺了产品会走兜底空端口，见 T57 坑②）/ 创造模式 create_recipe tool_calls。
 
@@ -453,6 +453,11 @@ async function main() {
       // 真实入口：打开 Φ 面板 → 模式按钮开菜单 → 点「✦ 创造」→ 填指令 → 发送。
       // 后端 preset 相位返回 operations（mock 上游回 create_recipe tool_calls），
       // 预览面板出现配方行即发通。
+      // T123（2026-10-06 实弹定位）：本通道 09-30 起恒红的真因是「绑定门槛」——
+      // 未绑定画布的 Φ 会话只放行问答（chat），preset 发送被拦、请求零发出，
+      // 操作清单永远等不到（当初登记的「mock 不回配方操作」是误诊：mock 的
+      // create_recipe 剧本、后端解析/校验/全循环实弹均正常）。修法＝发送前先把
+      // 当前 Φ 会话绑到当前画布；toggle 是开关，先查绑定态防反向解绑。
       try {
         await waitIdle('⑦ 创造模式');
         const preset = await page.evaluate(async () => {
@@ -460,6 +465,14 @@ async function main() {
           const panel = document.querySelector('.graph-harness-window');
           const panelOpen = panel && !panel.hidden;
           if (!panelOpen && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          // T123（2026-10-06 实弹定位）：09-30 起的绑定门槛会拦掉未绑定会话的
+          // preset 发送（只放行问答、请求零发出），先绑当前画布再进模式；toggle
+          // 是开关，先查绑定态防反向解绑。注意 currentPhiId/_harnessBoundSid 是
+          // 脚本 let 全局、不在 window 上，必须裸引用——window. 前缀守卫恒假
+          // 会静默跳过绑定（第一版修法就栽在这）。
+          if (typeof currentPhiId !== 'undefined' && typeof _harnessBoundSid === 'function' && !_harnessBoundSid()) {
+            toggleHarnessSessionBinding(currentPhiId);
+          }
           const modeBtn = document.getElementById('graphHarnessModeBtn');
           if (!modeBtn) return { err: '模式按钮不在面板里' };
           modeBtn.click();
