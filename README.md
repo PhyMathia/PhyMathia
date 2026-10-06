@@ -61,7 +61,7 @@ curl http://localhost:5050/health        # 返回 {"status":"ok",...} 即服务�
 
 ```bash
 python3 -m pytest tests/ -q              # 后端单测，应全部通过（基线数字见 AGENTS.md）
-node scripts/frontend_smoke.mjs          # 前端冒烟 222 条 ✓（需要 npm install 先装依赖）
+node scripts/frontend_smoke.mjs          # 前端冒烟 223 条 ✓（需要 npm install 先装依赖）
 ```
 
 ---

@@ -918,17 +918,46 @@ function _graphAnswerPreview(text) {
   return cut.trim() + '...';
 }
 
+// socratic 反馈在 answer 卡上的展示口径：尾部建议追问（1. [基础]… 三连）已由 _buildGraphData
+// 派生成独立「苏格拉底追问」节点（2026-10-06 用户拍板：追问只保留在派生节点，卡上不再重复），
+// 预览＋展开正文都剥——**只剥展示，msg.content 原文不动**（_parseSuggestedFollowupQuestions
+// 派生、_matchSuggestedFollowupNode 答题链匹配仍吃原文）。非 socratic 反馈原样返回。
+function _graphSocraticDisplayContent(raw, message) {
+  const s = String(raw || '');
+  if (!((message && message.branchType === 'socratic') || /<socratic_meta\b/i.test(s))) return s;
+  return _graphStripSuggestedFollowups(s);
+}
+
+// 剥建议追问块：从「其后到结尾只剩 [等级] 问题行/空行/socratic_meta」的最早一行起整段截掉
+//（含尾部 meta）；问题块其后还有正文时不动（防误伤散文）；纯问题无正文（cut=0）不剥防空卡；
+// 紧邻块上方 ≤30 字的追问类小节标题一并剥（### 苏格拉底追问／**下一步建议追问** 之类）
+function _graphStripSuggestedFollowups(text) {
+  const lines = String(text || '').split('\n');
+  const isQ = t => /^[[(【](?:基础|进阶|拓展)(?:题|层)?[\])】]/.test(
+    t.replace(/^\s*(?:\d+[.、)]\s*|[-*+]\s*)?/, '').replace(/\*/g, ''));
+  const isTailNoise = t => t.trim() === '' || /^<socratic_meta\b/i.test(t.trim());
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (isQ(lines[i]) && lines.slice(i + 1).every(t => isQ(t) || isTailNoise(t))) { cut = i; break; }
+  }
+  if (cut <= 0) return String(text || '');
+  const head = lines[cut - 1] || '';
+  if (head.trim().length <= 30 && /(苏格拉底)?追问|延伸思考/.test(head)) cut--;
+  return lines.slice(0, cut).join('\n').replace(/\s+$/, '');
+}
+
 // answer 卡「展开全文」取原文（override 优先，与 _nodeContent 同口径）；
-// <socratic_meta> 是结构标注，交给 renderMarkdown 剥
+// socratic 反馈先剥建议追问（见 _graphSocraticDisplayContent），<socratic_meta> 是结构
+// 标注，残余时交给 renderMarkdown 剥
 function _graphAnswerExpandRaw(node, message) {
   const state = typeof _graphState === 'function' ? _graphState() : {};
   const ov = ((state && state.harnessNodeOverrides) || {})[node.id];
-  if (ov && ov.content != null) return String(ov.content);
-  return message ? String(message.content || '') : '';
+  if (ov && ov.content != null) return _graphSocraticDisplayContent(String(ov.content), message);
+  return message ? _graphSocraticDisplayContent(String(message.content || ''), message) : '';
 }
 
-// 有 <summary> 的回答整段直出（_nodeContent 不截断），无需展开；纯长文（如 socratic 反馈
-// 400~900 字、尾部的「下一步建议追问」恰被 240 字预览截掉）才给展开开关
+// 有 <summary> 的回答整段直出（_nodeContent 不截断），无需展开；剥掉建议追问后仍 >240 字
+// 的回答才给展开开关（socratic 反馈的建议追问已派生独立节点、卡上剥除，见 _graphSocraticDisplayContent）
 function _graphAnswerExpandable(node, message) {
   if (!node || node.kind !== 'answer' || node.manual || !(node.messageIndex >= 0)) return false;
   const raw = _graphAnswerExpandRaw(node, message);
@@ -1590,14 +1619,14 @@ function _nodeContent(message, node) {
     const _ov = ((_state && _state.harnessNodeOverrides) || {})[node.id];
     if (_ov && _ov.content != null) {
       const _text = String(_ov.content);
-      if (node.kind === 'answer') return _graphAnswerPreview(_text);
+      if (node.kind === 'answer') return _graphAnswerPreview(_graphSocraticDisplayContent(_text, message));
       return _text;
     }
   if (node.kind === 'user') return message.content || '';
   if (node.kind === 'answer') {
     const summary = _graphSummary(_graphFormulaDelimit(message.content));
     if (summary) return summary;
-    return _graphAnswerPreview(message.content);
+    return _graphAnswerPreview(_graphSocraticDisplayContent(message.content, message));
   }
   if (node.kind === 'module') {
     const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
