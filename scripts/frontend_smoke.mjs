@@ -7078,6 +7078,136 @@ check('socratic 反馈卡剥建议追问：预览/展开都不再重复，派生
   return true;
 });
 
+check('_graphStripExtendDisplay：整段剥 <extend>（大小写/未闭合尾块/收尾空白/无 extend 原样）', () => {
+  const closed = '正文甲\n\n<extend>\n### 苏格拉底追问\n\n- [基础] 问题？\n\n### 进阶学习方向\n\n- 方向一\n</extend>';
+  const closedOut = sandbox._graphStripExtendDisplay(closed);
+  if (closedOut !== '正文甲') throw new Error('闭合段未剥净：' + JSON.stringify(closedOut));
+  const upper = '正文乙\n<EXTEND mode="m">\n### 进阶学习方向\n- 书目\n</Extend>\n\n';
+  const upperOut = sandbox._graphStripExtendDisplay(upper);
+  if (upperOut !== '正文乙') throw new Error('大小写/属性/尾空白未容错：' + JSON.stringify(upperOut));
+  const unclosed = '正文丙\n<extend>\n### 苏格拉底追问\n- [基础] 问题？';
+  const unclosedOut = sandbox._graphStripExtendDisplay(unclosed);
+  if (unclosedOut !== '正文丙') throw new Error('未闭合尾块未剥：' + JSON.stringify(unclosedOut));
+  const plain2 = '没有 extend 标签的正文';
+  if (sandbox._graphStripExtendDisplay(plain2) !== plain2) throw new Error('无 extend 应原样');
+  if (sandbox._graphStripExtendDisplay('') !== '') throw new Error('空串应原样');
+  // 中缀闭合块被剥、块外正文保留
+  const midOut = sandbox._graphStripExtendDisplay('前段\n<extend>\n内部\n</extend>\n\n后段');
+  if (midOut.includes('内部')) throw new Error('中缀块未剥净：' + JSON.stringify(midOut));
+  if (!midOut.includes('前段') || !midOut.includes('后段')) throw new Error('块外正文不应被波及：' + JSON.stringify(midOut));
+  return true;
+});
+
+check('根 answer 卡剥 <extend> 整段：预览/展开都不再重复，msg.content 原文与模块派生照吃原文（T172）', () => {
+  const rootIntro = '根回答正文：先把结论摆出来，再把推导逐层核对一遍。';
+  const rootContent = rootIntro + '\n\n<extend>\n### 苏格拉底追问\n\n'
+    + '- [基础] 为什么周期与振幅无关？\n- [进阶] 想让周期缩短一半，质量该怎么变？\n\n'
+    + '### 进阶学习方向\n\n- 精读《力学》第三章简谐振动小节\n- 动手写一个单摆数值模拟\n</extend>';
+  const msgs = [
+    { role: 'user', content: '单摆周期为什么会随质量变化？', timestamp: 100 },
+    { role: 'assistant', content: rootContent, timestamp: 200 },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const rootNode = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 200);
+  if (!rootNode) throw new Error('未构建根 answer 节点');
+  if (!rootNode.isRootAnswer) throw new Error('首个主回答应标记 isRootAnswer（T172 判定依据）');
+  sandbox.window.getGraphState = () => ({});
+  const preview = sandbox._nodeContent(msgs[1], rootNode);
+  for (const frag of ['苏格拉底追问', '进阶学习方向', '[基础]', '振幅', '精读', '单摆']) {
+    if (preview.includes(frag)) throw new Error('根卡预览不应含 extend 段内容：「' + frag + '」→ ' + preview);
+  }
+  if (preview !== rootIntro) throw new Error('根卡预览应等于 extend 之外的正文，实际：' + preview);
+  const raw = sandbox._graphAnswerExpandRaw(rootNode, msgs[1]);
+  for (const frag of ['<extend', '苏格拉底追问', '进阶学习方向', '[基础]', '精读']) {
+    if (raw.includes(frag)) throw new Error('根卡展开正文不应含 extend 段内容：「' + frag + '」');
+  }
+  if (raw !== rootIntro) throw new Error('根卡展开正文应等于 extend 之外的正文，实际：' + raw);
+  // 只剥展示：msg.content 原文一字不动，socratic/learn 派生模块照常上画布
+  if (msgs[1].content !== rootContent) throw new Error('msg.content 不应被改动');
+  if (!msgs[1].content.includes('### 进阶学习方向') || !msgs[1].content.includes('单摆数值模拟')) throw new Error('msg.content 应保持完整 extend 段');
+  const modKeys = data.nodes.filter(n => n.kind === 'module' && n.timestamp === 200).map(n => n.moduleKey);
+  if (!modKeys.includes('socratic') || !modKeys.includes('learn')) throw new Error('socratic/learn 模块节点应照常派生（剥展示不影响派生），实际 ' + JSON.stringify(modKeys));
+  // 剥后正文 ≤240 字且无 <summary>：不再给展开开关
+  if (sandbox._graphAnswerExpandable(rootNode, msgs[1])) throw new Error('剥后短正文不应再给展开开关');
+  return true;
+});
+
+check('根 answer 预览：240 字截断落在剥后正文上，extend 段不占预览窗口（T172）', () => {
+  const longIntro = '推演核对。'.repeat(60); // 300 字 > 240：截断必须发生在剥后正文上
+  const content = longIntro + '\n\n<extend>\n### 苏格拉底追问\n\n- [基础] 长卡的问题？\n\n### 进阶学习方向\n\n- 方向甲\n</extend>';
+  const msgs = [
+    { role: 'user', content: '核心问题？', timestamp: 1 },
+    { role: 'assistant', content, timestamp: 2 },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const node = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 2);
+  if (!node || !node.isRootAnswer) throw new Error('根 answer 节点未标记');
+  sandbox.window.getGraphState = () => ({});
+  const preview = sandbox._nodeContent(msgs[1], node);
+  if (preview !== longIntro.slice(0, 240) + '...') throw new Error('预览应为剥后正文前 240 字＋省略号，实际 ' + preview.length + ' 字：' + preview.slice(0, 20) + '…' + preview.slice(-20));
+  if (preview.includes('苏格拉底') || preview.includes('方向甲')) throw new Error('extend 段不应进入预览窗口：' + preview.slice(-40));
+  if (!sandbox._graphAnswerExpandable(node, msgs[1])) throw new Error('剥后正文仍 >240 字应保留展开开关');
+  const raw = sandbox._graphAnswerExpandRaw(node, msgs[1]);
+  if (raw !== longIntro) throw new Error('展开正文应只含 extend 之外正文（本夹具 extend 在尾）');
+  return true;
+});
+
+check('根 answer 卡叠加剥口：extend 剥除与 socratic 尾部追问剥除互不干扰（T172）', () => {
+  // 根卡同时是 socratic 反馈来源（内容带 socratic_meta＋尾部建议追问行）：extend 剥在外层，
+  // 残余的尾部追问块仍由 _graphSocraticDisplayContent 剥——两条剥口各管一段、都不误伤正文
+  const intro = '根回答正文：先把结论摆出来。';
+  const content = intro + '\n\n'
+    + '1. [基础] 尾部追问甲？\n2. [进阶] 尾部追问乙？\n\n'
+    + '<socratic_meta correct="correct" done="false" />\n\n'
+    + '<extend>\n### 进阶学习方向\n\n- 方向乙\n</extend>';
+  const msgs = [
+    { role: 'user', content: '核心？', timestamp: 300 },
+    { role: 'assistant', content, timestamp: 400 },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const node = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 400);
+  if (!node || !node.isRootAnswer) throw new Error('根 answer 节点未标记');
+  sandbox.window.getGraphState = () => ({});
+  const preview = sandbox._nodeContent(msgs[1], node);
+  for (const frag of ['追问甲', '追问乙', 'socratic_meta', '方向乙', '进阶学习方向']) {
+    if (preview.includes(frag)) throw new Error('叠加剥口未同时生效：「' + frag + '」→ ' + preview);
+  }
+  if (preview !== intro) throw new Error('叠加剥后应只剩 extend 之外的正文，实际：' + preview);
+  const raw = sandbox._graphAnswerExpandRaw(node, msgs[1]);
+  if (raw !== intro) throw new Error('展开正文同样两条剥口叠加，实际：' + raw);
+  return true;
+});
+
+check('非根 answer 卡不受影响：extend 照旧展示（T172 范围纪律）', () => {
+  const rootContent = '根回答正文。\n\n<extend>\n### 苏格拉底追问\n\n- [基础] 根卡的追问？\n</extend>';
+  const followIntro = '追问回答正文：这里只谈推导。';
+  const followContent = followIntro + '\n\n<extend>\n### 进阶学习方向\n\n- 精读《力学》第三章\n</extend>';
+  const msgs = [
+    { role: 'user', content: '核心问题？', timestamp: 100 },
+    { role: 'assistant', content: rootContent, timestamp: 200 },
+    { role: 'user', content: '再追问一句', timestamp: 300 },
+    { role: 'assistant', content: followContent, timestamp: 400 },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const rootNode = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 200);
+  const followNode = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 400);
+  if (!rootNode || !followNode) throw new Error('未构建两个 answer 节点');
+  if (!rootNode.isRootAnswer) throw new Error('首个主回答应标记根卡');
+  if (followNode.isRootAnswer) throw new Error('第二个主回答不应标记根卡');
+  sandbox.window.getGraphState = () => ({});
+  const followPreview = sandbox._nodeContent(msgs[3], followNode);
+  if (!followPreview.includes('进阶学习方向') || !followPreview.includes('精读《力学》第三章')) {
+    throw new Error('非根卡应照旧展示 extend 段（本拍板不改非根卡）：' + followPreview);
+  }
+  const followRaw = sandbox._graphAnswerExpandRaw(followNode, msgs[3]);
+  if (!followRaw.includes('进阶学习方向')) throw new Error('非根卡展开正文应照旧含 extend 段');
+  // 范围外发现：非根 answer 的 extend 同样被 _buildGraphData 派生成独立模块节点，重复依旧存在
+  //（本拍板只治根卡，其余作为发现上报，不扩大改动）
+  const followMods = data.nodes.filter(n => n.kind === 'module' && n.timestamp === 400).map(n => n.moduleKey);
+  if (!followMods.includes('learn')) throw new Error('非根卡的 learn 模块应照常派生（重复现象的证据）');
+  return true;
+});
+
 check('sq 派生追问节点：复用 customNodes 自定义模块链路＋作答链挂到追问节点下＋墓碑防复活', () => {
   const feedback = '判断：理解正确 你抓住了关键。\n\n1. [基础] 先不用公式，复述一遍：为什么质量越大周期越长？\n2. [进阶] 想让周期缩短一半，质量应该变成多少倍？\n\n<socratic_meta correct="correct" done="false" />';
   const qs = sandbox._parseSuggestedFollowupQuestions(feedback);

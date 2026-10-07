@@ -225,6 +225,97 @@ def test_expired_tombstone_purge_removes_profiles(env):
     assert not (profiles_dir / "dev_a1.json").exists()
 
 
+# ====== 共享设备保护（T188：清 A 的墓碑不得抹掉 B 还在用的画像） ======
+
+def _capture_removed(account, days=7):
+    """与删除路由同序：先注册表除名再墓碑化（直调 capture 不除名会踩新防御位）。"""
+    entry = dict(accounts.get_account(account))
+    accounts.remove_account(account)
+    return trash.capture_account(account, entry, days)
+
+
+def test_purge_shared_device_profile_protected_by_registry_account(env):
+    """同一 device 键被 A、B 两账号绑定（垫片失败/dev_local 兜底/手工拷键）：
+    清 A 的墓碑时 B 仍在注册表 → 画像本体与 eval 留痕都存活。"""
+    _, profiles_dir = env
+    _make("alice")
+    _make("bob")
+    accounts.add_account_devices("alice", ["dev_shared"])
+    accounts.add_account_devices("bob", ["dev_shared"])
+    _write_device_profile(profiles_dir, "dev_shared", {"enabled": True})
+    (profiles_dir / "dev_shared.eval.jsonl").write_text("{}", encoding="utf-8")
+    stone = _capture_removed("alice")
+    trash.purge_account_tombstone(stone)
+    assert (profiles_dir / "dev_shared.json").exists()
+    assert (profiles_dir / "dev_shared.eval.jsonl").exists()
+
+
+def test_purge_shared_device_profile_survives_unexpired_tombstone(env):
+    """B 也已删且墓碑未到期：清 A 的墓碑同样不动共享设备画像（B 恢复后还要
+    无缝重连）；B 的墓碑也到期后才真删。"""
+    _, profiles_dir = env
+    _make("alice")
+    _make("bob")
+    accounts.add_account_devices("alice", ["dev_shared"])
+    accounts.add_account_devices("bob", ["dev_shared"])
+    _write_device_profile(profiles_dir, "dev_shared", {"enabled": True})
+    a_stone = _capture_removed("alice")
+    b_stone = _capture_removed("bob")
+    trash.purge_account_tombstone(a_stone)
+    assert (profiles_dir / "dev_shared.json").exists()  # B 墓碑 meta.entry 还在保护
+    b_meta_path = trash.account_tombstone_dir() / b_stone / "meta.json"
+    b_meta = json.loads(b_meta_path.read_text(encoding="utf-8"))
+    b_meta["purgeAt"] = 1
+    storage._write_json(b_meta_path, b_meta)
+    assert trash.purge_expired_tombstones() == 1
+    assert not (profiles_dir / "dev_shared.json").exists()
+
+
+# ====== 恢复目标圈定（T189：快照/回滚枚举不波及邻账号画像） ======
+
+def test_restore_target_paths_scoped_to_account_devices(env):
+    """恢复目标（快照与回滚第二段共用）只列本账号归属的画像；B 的在枚举外。"""
+    _, profiles_dir = env
+    _make("alice")
+    _make("bob")
+    accounts.add_account_devices("alice", ["dev_a1"])
+    accounts.add_account_devices("bob", ["dev_b1"])
+    _write_device_profile(profiles_dir, "dev_a1", {"enabled": True})
+    _write_device_profile(profiles_dir, "dev_b1", {"enabled": True})
+    names = {p.name for p in backup._restore_target_paths("alice")}
+    assert "dev_a1.json" in names
+    assert "dev_b1.json" not in names
+
+
+def test_rollback_removes_own_new_profiles_keeps_neighbor(env):
+    """回滚第二段「快照外新文件一并移除」：本账号归属画像（恢复窗口内新建）
+    照删，邻账号画像不动——旧口径全量 glob 会误删后者。"""
+    _, profiles_dir = env
+    _make("alice")
+    _make("bob")
+    accounts.add_account_devices("alice", ["dev_a1"])
+    accounts.add_account_devices("bob", ["dev_b1"])
+    _write_device_profile(profiles_dir, "dev_a1", {"enabled": True})
+    _write_device_profile(profiles_dir, "dev_b1", {"enabled": True})
+    assert backup._rollback_restore_targets({}, "alice") == []
+    assert not (profiles_dir / "dev_a1.json").exists()
+    assert (profiles_dir / "dev_b1.json").exists()
+
+
+def test_restore_target_paths_fallback_without_binding(env):
+    """归属未知（无绑定）回退全量老口径（兼容 curl 直调）：画像全在目标内、
+    回滚仍全清。"""
+    _, profiles_dir = env
+    accounts.register_account("alice")
+    _write_device_profile(profiles_dir, "dev_x", {"enabled": True})
+    _write_device_profile(profiles_dir, "dev_y", {"enabled": True})
+    names = {p.name for p in backup._restore_target_paths("alice")}
+    assert {"dev_x.json", "dev_y.json"} <= names
+    assert backup._rollback_restore_targets({}, "alice") == []
+    assert not (profiles_dir / "dev_x.json").exists()
+    assert not (profiles_dir / "dev_y.json").exists()
+
+
 # ====== 路由端到端（device_id 圈定键随备份两路由透传） ======
 
 def test_backup_routes_carry_device_id(env):

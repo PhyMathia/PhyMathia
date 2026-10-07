@@ -1,120 +1,312 @@
-// 新手引导 v2 冒烟测试（click 型步骤 / 提问目标 / afterLeave）
+// 新手引导冒烟测试（当代 _obSteps 数据驱动引导；2026-10-07 backlog T33 重写）
 //
-// 路径按脚本位置解析，不再写死 D:/PhyMathia——那台机器之外一律 ENOENT，整个脚本
-// 连第一行都跑不到，等于早就废了（backlog T9）。
+// 测什么（src/static/js/ui.js 的「首次使用引导」段）：
+//   · _obSteps 数据驱动步骤数组：welcome / spotlight / click 三种 type；
+//     target/title/desc 多为 getter，按画布状态（有无中心节点、桌面/移动端）切换
+//   · startOnboarding(force)（force=false 时按 ONBOARDING_KEY 跳过）/
+//     _renderObStep() / _obStep 游标 / nextObStep() / endOnboarding()
+//   · 结束路径写完成标记：localStorage[ONBOARDING_KEY]（config.js:226 定义为
+//     'phymathia_onboarding_done'，写值 '1'）——本脚本按当代实现实际写入的键断言
+// 上一代引导（_buildFullObSteps / 旧签名 _renderObStep，切片标记「首次使用引导
+// (v2)」）已从 ui.js 删除；本脚本已按当代实现重写（旧版本曾因标记漂移 exit 2）。
 //
-// 原先的 A 段（演示会话 ensureDemoSession）已随 src/static/js/demo.js 一起删除：
-// 那个函数全仓只有本脚本在调，产品里没人用，是真正的死代码（backlog T1）。
-// 这里现在只测 ui.js 里活着的引导代码。
+// 怎么测：路径按本脚本位置解析（不写死盘符，见 backlog T9）；从 ui.js 截出引导段
+// （START_MARKER .. END_MARKER），在 vm.runInNewContext 里配一份「当代代码实际取用」
+// 的假 DOM（classList / innerHTML / getElementById / querySelector / innerWidth /
+// 可记录监听器的元素等）执行。真实布局测量（真机 spotlight 像素定位、滚动等）不在
+// 冒烟范围：这类行为退一步只断数据不变量，不硬造 DOM。
+//
+// 约束：切片靠下面两个标记行定位。**改 ui.js 引导段时若挪动或改写这两行，必须同步
+// 改本文件的 START_MARKER / END_MARKER**；找不到标记时本脚本 exit 2 并打印病因，
+// 绝不静默错位执行（上一代脚本正是这样对着错位切片跑废的）。
+//
+// 运行：node scripts/ob_smoke.mjs   → 尾部打印 SMOKE TEST PASSED，断言失败非零退出
 import vm from 'node:vm';
 import fs from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const R = resolve(ROOT, 'src', 'static');
-const uiTxt = fs.readFileSync(R + '/js/ui.js', 'utf8');
-const cfgTxt = fs.readFileSync(R + '/js/config.js', 'utf8');
+const SELF = fileURLToPath(import.meta.url);
+const ROOT = resolve(dirname(SELF), '..');
+const UI_JS = resolve(ROOT, 'src', 'static', 'js', 'ui.js');
+const CFG_JS = resolve(ROOT, 'src', 'static', 'js', 'config.js');
 
-const startM = uiTxt.indexOf('// ====== 首次使用引导 (v2) ======');
-const endM = uiTxt.indexOf('// Handle resize during onboarding');
+const START_MARKER = '// ====== 首次使用引导 ======';
+const END_MARKER = '// Handle resize during onboarding';
 
-// ---- 体检：这份脚本测的引导代码已经不是现在这一代了（2026-09-27 查实）----
-// 它切片的标记 `// ====== 首次使用引导 (v2) ======` 在 ui.js 里**根本不存在**，
-// indexOf 返回 -1，于是整段都在对着一份错位的切片跑；它调的
-// `_buildFullObSteps` / `_renderObStep` 也都不在了（现在是 `_obSteps` 数据驱动
-// 数组 + `startOnboarding` + `_obStep`，ui.js:770 起）。叠加此前写死的 D:/ 路径，
-// 这脚本从路径修好那一刻起就一次都没绿过。
-//
-// 恢复它是**重写不是修活**：要照现在这代引导重新写场景。本轮不做，登记在
-// docs/backlog.md。这里改成体检不过就立刻退出并说清病因——别再抛一句看不懂的
-// ReferenceError，那会让人误以为是产品回归。
-if (startM < 0 || endM < 0) {
+const uiTxt = fs.readFileSync(UI_JS, 'utf8');
+const cfgTxt = fs.readFileSync(CFG_JS, 'utf8');
+
+const startM = uiTxt.indexOf(START_MARKER);
+const endM = uiTxt.indexOf(END_MARKER);
+
+// ---- 切片标记漂移体检：找不到就 exit 2，不做错位执行 ----
+if (startM < 0 || endM < 0 || endM <= startM) {
+  const missing = [];
+  if (startM < 0) missing.push('起标记 ' + JSON.stringify(START_MARKER));
+  if (endM < 0) missing.push('止标记 ' + JSON.stringify(END_MARKER));
+  if (startM >= 0 && endM >= 0 && endM <= startM) missing.push('止标记出现在起标记之前');
   console.error(
-    'ob_smoke: 测的不是当前这一代引导代码，已停止。\n' +
-    '  · ui.js 里找不到切片标记：// ====== 首次使用引导 (v2) ======\n' +
-    '  · 本脚本调的 _buildFullObSteps / _renderObStep 在 ui.js 里已不存在\n' +
-    '  · 现在的引导是 _obSteps 数组 + startOnboarding + _obStep（ui.js:770 起）\n' +
-    '  → 需要重写，见 docs/backlog.md。在重写完成前，请不要把本脚本的退出当成产品回归。');
+    'ob_smoke: ui.js 中找不到引导段切片标记，已停止（非产品回归，是体检脚本与源码失去对齐）。\n' +
+    '  · 本脚本测当代引导：_obSteps（welcome/spotlight/click）+ startOnboarding/_renderObStep/_obStep\n' +
+    '  · 缺失：' + missing.join('、') + '\n' +
+    '  · 若这次改动挪动/改写了 ui.js「首次使用引导」段的标记行，请同步更新\n' +
+    '    ' + SELF + ' 顶部的 START_MARKER / END_MARKER\n' +
+    '  · 找不到标记时按设计退出码 2');
   process.exit(2);
 }
 const obSection = uiTxt.slice(startM, endM);
+const startLine = uiTxt.slice(0, startM).split('\n').length;
+const endLine = uiTxt.slice(0, endM).split('\n').length;
+console.log('slice: ui.js ' + startLine + '-' + (endLine - 1) + ' 行（止标记 "// Handle resize during onboarding" 在 ' + endLine + ' 行）');
 
-function makeBaseCtx(extra) {
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
+// ---- 假 DOM：按当代引导实际取用的字段扩充（缺什么补什么）----
+function makeEl() {
+  const classes = new Set();
+  return {
+    classList: {
+      add(...names) { names.forEach((n) => classes.add(n)); },
+      remove(...names) { names.forEach((n) => classes.delete(n)); },
+      toggle(name, force) {
+        const on = force === undefined ? !classes.has(name) : !!force;
+        if (on) classes.add(name); else classes.delete(name);
+        return on;
+      },
+      contains(name) { return classes.has(name); },
+    },
+    style: {},
+    className: '',
+    innerHTML: '',
+    textContent: '',
+    disabled: false,
+    listeners: {},
+    addEventListener(type, fn) {
+      if (!this.listeners[type]) this.listeners[type] = [];
+      this.listeners[type].push(fn);
+    },
+    removeEventListener(type, fn) {
+      const arr = this.listeners[type] || [];
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    getBoundingClientRect() {
+      return { left: 100, top: 200, right: 300, bottom: 250, width: 200, height: 50 };
+    },
+    offsetWidth: 380,
+    offsetHeight: 220,
+    querySelector() { return null; },
+  };
+}
+
+// selectorsPresent 里的选择器 querySelector 才命中；其余返回 null（如无中心节点的空画布）
+function makeDom(selectorsPresent) {
+  const present = new Set(selectorsPresent || []);
+  const pool = new Map();
+  const el = (key) => {
+    if (!pool.has(key)) pool.set(key, makeEl());
+    return pool.get(key);
+  };
+  return {
+    body: el('body'),
+    documentElement: el('html'),
+    querySelector(sel) { return present.has(sel) ? el('sel:' + sel) : null; },
+    getElementById(id) { return el('id:' + id); },
+  };
+}
+
+// 桌面端假 DOM 存在的选择器：覆盖 _obSteps 里 getter / click 型步骤会查询的目标
+const DESKTOP_SELECTORS = [
+  '.graph-new-session-node',
+  '.graph-canvas',
+  '.header-actions',
+  '.menu-btn',
+  '.session-item',
+];
+
+function makeCtx(opts) {
+  const options = opts || {};
+  const store = options.store || {};
   const ctx = {
     console,
-    document: { body: { classList: { add() {}, remove() {} } } },
-    localStorage: { getItem: () => null, setItem: () => {} },
-    requestAnimationFrame: (f) => f(),
+    document: makeDom(options.selectors),
+    localStorage: {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+    },
+    // 假定时器：立刻执行，冒烟不排队等待
     setTimeout: (f) => { f(); return 1; },
     clearTimeout: () => {},
-    mermaid: { initialize: () => {} },
-    UI_ICON_SVG: null,
-    ...(extra || {}),
+    requestAnimationFrame: (f) => { f(); return 1; },
+    cancelAnimationFrame: () => {},
+    // utils.js 的实现读 getComputedStyle；切片只在拼 EXAMPLE_GUIDE_VIZ_HTML 时取值，
+    // 冒烟不断言其内容，给常量即可
+    cssVarValue: () => '#808080',
+    innerWidth: 1440,
+    innerHeight: 900,
   };
   ctx.window = ctx;
   ctx.globalThis = ctx;
+  vm.runInNewContext(cfgTxt, ctx); // ONBOARDING_KEY / UI_ICON_SVG 等常量（config.js）
+  vm.runInNewContext(obSection, ctx); // 引导段切片
   return ctx;
 }
 
-// ====== B. 引导步骤：click 型 / 提问目标 / afterLeave ======
-function makeEl() {
-  return {
-    classList: { add() {}, remove() {}, toggle() { return true; }, contains() { return false; } },
-    style: {},
-    className: '', innerHTML: '',
-    offsetWidth: 360, offsetHeight: 240,
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 50, bottom: 50 }),
-    querySelector: () => null,
-    nextElementSibling: null,
-  };
+let centerStepIndex = -1;
+let centerTitle = '';
+
+// ====== 场景 1：_obSteps 数据形状（有中心节点的桌面假 DOM）======
+{
+  const ctx = makeCtx({ selectors: DESKTOP_SELECTORS });
+  const info = vm.runInNewContext(`_obSteps.map((s, i) => ({
+    index: i,
+    type: s.type,
+    isGetterTarget: !!(Object.getOwnPropertyDescriptor(s, 'target') || {}).get,
+    target: s.target,
+    title: s.title,
+    hasOnClick: typeof s.onClick === 'function'
+  }))`, ctx);
+
+  const types = info.map((s) => s.type);
+  const clickSteps = info.filter((s) => s.type === 'click');
+  const getterTargets = info.filter((s) => s.isGetterTarget).map((s) => s.target);
+  const centerStep = info.find((s) => s.target === '.graph-new-session-node');
+  console.log(
+    'SCENARIO 1 (steps shape): count=' + info.length +
+    ' types=' + [...new Set(types)].join('/') +
+    ' clickSteps=[' + clickSteps.map((s) => s.index).join(',') + ']' +
+    ' getterTargets=[' + getterTargets.join(', ') + ']'
+  );
+
+  assert(info.length >= 6, '引导步数应 ≥6，实际 ' + info.length);
+  info.forEach((s) => assert(['welcome', 'spotlight', 'click'].includes(s.type), '步骤 #' + s.index + ' 出现未知 type=' + s.type));
+  ['welcome', 'spotlight', 'click'].forEach((t) => assert(types.includes(t), '缺少 type=' + t + ' 的步骤'));
+  clickSteps.forEach((s) => assert(s.hasOnClick, 'click 型步骤 #' + s.index + ' 没有可调用的 onClick'));
+  info.filter((s) => s.type === 'spotlight').forEach((s) => {
+    assert(typeof s.target === 'string' && s.target, 'spotlight 型步骤 #' + s.index + ' 的 target 未解析出选择器');
+  });
+  assert(centerStep, '有中心节点的假 DOM 下，应有 target 解析到 .graph-new-session-node 的 getter 型步骤');
+  assert(centerStep.title === '在中心节点提问', '中心节点场景标题应为「在中心节点提问」，实际 ' + JSON.stringify(centerStep.title));
+  centerStepIndex = centerStep.index;
+  centerTitle = centerStep.title;
 }
-function makeUiCtx(domState, store) {
-  return makeBaseCtx({
-    document: { querySelector: (sel) => (domState[sel] ? {} : null), getElementById: () => makeEl(), body: makeEl() },
-    window: { innerWidth: 1440, innerHeight: 900 },
-    localStorage: { getItem: (k) => (store[k] ?? null), setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } },
+
+// ====== 场景 2：空画布回退（无 .graph-new-session-node）======
+{
+  const ctx = makeCtx({ selectors: ['.graph-canvas'] });
+  const fallback = vm.runInNewContext(
+    '({ target: _obSteps[' + centerStepIndex + '].target, title: _obSteps[' + centerStepIndex + '].title })',
+    ctx
+  );
+  console.log('SCENARIO 2 (empty canvas fallback): target=' + fallback.target + ' title=' + JSON.stringify(fallback.title));
+
+  assert(fallback.target === '.graph-canvas', '无中心节点时 target 应回退 .graph-canvas，实际 ' + fallback.target);
+  assert(fallback.title === '继续探索', '无中心节点时标题应切换为「继续探索」，实际 ' + JSON.stringify(fallback.title));
+  assert(fallback.title !== centerTitle, '空画布与中心节点两场景的标题应当不同');
+}
+
+// ====== 场景 3：startOnboarding(true) 在假 DOM 下跑通 + 三型渲染不抛错 ======
+{
+  const ctx = makeCtx({ selectors: DESKTOP_SELECTORS });
+  const res = vm.runInNewContext(`(() => {
+    startOnboarding(true);
+    const overlay = document.getElementById('onboardingOverlay');
+    const card = document.getElementById('onboardingCard');
+    const started = {
+      overlayActive: overlay.classList.contains('active'),
+      step: _obStep,
+      cardVisible: card.classList.contains('visible')
+    };
+    const rendered = { welcome: [], spotlight: [], click: [] };
+    const errors = [];
+    _obSteps.forEach((step, i) => {
+      try {
+        _obStep = i;
+        _renderObStep();
+        rendered[step.type].push(i);
+      } catch (e) {
+        errors.push(step.type + '#' + i + ': ' + (e && e.message ? e.message : String(e)));
+      }
+    });
+    return { started, rendered, errors };
+  })()`, ctx);
+
+  console.log(
+    'SCENARIO 3 (start + render): step=' + res.started.step +
+    ' rendered=' + JSON.stringify(res.rendered) +
+    ' errors=' + res.errors.length
+  );
+
+  assert(res.started.overlayActive, 'startOnboarding(true) 后 onboardingOverlay 应带 active');
+  assert(res.started.step === 0, 'startOnboarding(true) 应把 _obStep 置 0，实际 ' + res.started.step);
+  assert(res.started.cardVisible, '首次渲染完成后卡片应带 visible');
+  assert(res.errors.length === 0, '渲染步骤抛错：' + res.errors.join(' | '));
+  ['welcome', 'spotlight', 'click'].forEach((t) => {
+    assert(res.rendered[t].length > 0, '没有成功渲染 type=' + t + ' 的步骤');
   });
 }
 
-// 有内容画布（演示会话场景）
+// ====== 场景 4：走完整个步骤序列到达结束路径 + 完成标记写入假 localStorage ======
 {
-  const ctx = makeUiCtx({
-    '.graph-node-answer': 1, '.graph-node-user': 1, '.graph-harness-btn': 1,
-    '.graph-canvas-toolbar': 2, '.phi-pet-root': 1,
-  }, {});
-  vm.runInNewContext(cfgTxt, ctx);
-  vm.runInNewContext(obSection, ctx);
-  const steps = vm.runInNewContext('_buildFullObSteps()', ctx);
-  const step1Target = steps[1].target();
-  const step5Type = steps[5].type;
-  const step6Type = steps[6].type;
-  const hasAfterLeave = typeof steps[6].afterLeave === 'function';
-  const out = { step1Target, step5Type, step6Type, hasAfterLeave };
-  console.log('SCENARIO B1 (populated canvas):', JSON.stringify(out));
-  if (step1Target !== '.graph-node-user') throw new Error('step1 should target question node: ' + step1Target);
-  if (step5Type !== 'click' || step6Type !== 'click') throw new Error('steps 5/6 should be click type');
-  if (!hasAfterLeave) throw new Error('step6 needs afterLeave');
+  const store = {};
+  const ctx = makeCtx({ selectors: DESKTOP_SELECTORS, store });
+  const walk = vm.runInNewContext(`(() => {
+    const trace = [];
+    let error = '';
+    startOnboarding(true);
+    let guard = 0;
+    while (_obStep >= 0 && guard++ <= _obSteps.length + 2) {
+      const idx = _obStep;
+      const step = _obSteps[idx];
+      trace.push(idx + ':' + step.type);
+      if (step.type === 'click') {
+        // click 型：按真机路径触发绑在目标上的处理器（处理器内部会 nextObStep）
+        const el = document.querySelector(step.target);
+        const handlers = el && el.listeners && el.listeners.click ? el.listeners.click.slice() : [];
+        if (!handlers.length) { error = 'click 步 #' + idx + ' 渲染后未绑定点击处理器'; break; }
+        handlers.forEach(h => h({ stopPropagation() {} }));
+      } else if (idx === _obSteps.length - 1) {
+        endOnboarding(); // 末步「开始使用 / 跳过」按钮的结束路径
+      } else {
+        nextObStep();
+      }
+    }
+    return {
+      trace,
+      error,
+      finalCursor: _obStep,
+      overlayActive: document.getElementById('onboardingOverlay').classList.contains('active'),
+      doneValue: localStorage.getItem(ONBOARDING_KEY)
+    };
+  })()`, ctx);
 
-  // 空画布（中心节点场景）
-  const ctx2 = makeUiCtx({ '.graph-new-session-node': 1 }, {});
-  vm.runInNewContext(cfgTxt, ctx2);
-  vm.runInNewContext(obSection, ctx2);
-  const steps2 = vm.runInNewContext('_buildFullObSteps()', ctx2);
-  if (steps2[1].target() !== '.graph-new-session-node') throw new Error('empty canvas step1 target wrong');
-  console.log('SCENARIO B2 (empty canvas center node): OK');
-}
+  const onboardingKey = vm.runInNewContext('ONBOARDING_KEY', ctx);
+  const expectedTrace = vm.runInNewContext('_obSteps.map((s, i) => i + ":" + s.type).join(",")', ctx);
+  // 已有完成标记后 force=false 应跳过
+  const skip = vm.runInNewContext(`(() => {
+    startOnboarding(false);
+    return { cursor: _obStep, overlayActive: document.getElementById('onboardingOverlay').classList.contains('active') };
+  })()`, ctx);
 
-// ====== C. nextObStep 触发 afterLeave / click 渲染不报错 ======
-{
-  const ctx = makeUiCtx({}, {});
-  vm.runInNewContext(cfgTxt, ctx);
-  vm.runInNewContext(obSection, ctx);
-  // 手工跑一遍 click 步骤的渲染（无 DOM 目标 → ob-center 路径）
-  await vm.runInNewContext('startOnboarding(false)', ctx);
-  const r = await vm.runInNewContext('(async () => { try { _obStep = 5; _renderObStep(); return "render5-ok"; } catch (e) { return "ERR:" + e.message; } })()', ctx);
-  if (!String(r).includes('ok')) throw new Error('render click step failed: ' + r);
-  console.log('SCENARIO C1 (render click step):', r);
+  console.log(
+    'SCENARIO 4 (full walk): trace=[' + walk.trace.join(' -> ') + ']' +
+    ' | key=' + onboardingKey + ' value=' + JSON.stringify(store[onboardingKey]) +
+    ' | skip-after-done=' + (skip.cursor === -1 && !skip.overlayActive ? 'skipped' : 'FAILED')
+  );
+
+  // 完成标记键取当代实现实际写入的 ONBOARDING_KEY（config.js:226），并钉住当前字面值防漂移
+  assert(onboardingKey === 'phymathia_onboarding_done', 'ONBOARDING_KEY 已改名（现为 ' + onboardingKey + '），请同步本脚本断言');
+  assert(!walk.error, walk.error);
+  assert(walk.trace.join(',') === expectedTrace, '遍历顺序应为 ' + expectedTrace + '，实际 ' + walk.trace.join(','));
+  assert(walk.finalCursor === -1, '结束路径应把 _obStep 置 -1，实际 ' + walk.finalCursor);
+  assert(walk.overlayActive === false, 'endOnboarding 后 overlay 应移除 active');
+  assert(walk.doneValue === '1', '结束路径应写完成标记 ' + onboardingKey + '=1，实际 ' + JSON.stringify(walk.doneValue));
+  assert(store[onboardingKey] === '1', '假 localStorage 里应有 ' + onboardingKey + '=1');
+  assert(skip.cursor === -1 && !skip.overlayActive, '已有完成标记时 startOnboarding(false) 应直接跳过（不进任何一步）');
 }
 
 console.log('SMOKE TEST PASSED');

@@ -146,7 +146,14 @@ def _restore_target_paths(account: str = DEFAULT_ACCOUNT) -> list:
     p = accounts.resolve_paths(account)
     paths = [p.sessions_path, p.knowledge_path, p.formulas_path, p.kv_path]
     paths.extend(sorted(p.messages_dir.glob("*.json")))
-    paths.extend(sorted(PROFILES_DIR.glob("*.json")))
+    # 画像按账号隔离（T189）：快照与回滚枚举只覆盖本账号归属的画像——回滚第二
+    # 段「快照外新文件一并移除」用同一枚举，不过滤会把导入窗口内邻账号新建的
+    # 画像误删；归属未知（无绑定）回退全量，与导出/replace 清理同口径。
+    profile_keys = _account_profile_keys(account, None)
+    for path in sorted(PROFILES_DIR.glob("*.json")):
+        if profile_keys is not None and path.stem not in profile_keys:
+            continue
+        paths.append(path)
     # 会话级 KV 拆分文件也是恢复目标：回滚与「新建文件清理」都必须覆盖
     if p.kv_dir.exists():
         paths.extend(sorted(p.kv_dir.glob("*.json")))

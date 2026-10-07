@@ -946,14 +946,35 @@ function _graphStripSuggestedFollowups(text) {
   return lines.slice(0, cut).join('\n').replace(/\s+$/, '');
 }
 
+// 根 answer 卡（首个完整学习卡，T172 用户拍板）的展示口径：<extend> 整段（### 苏格拉底追问＋
+// ### 进阶学习方向）已由 _buildGraphData 拆成画布上独立的模块节点（_splitExtendSections），
+// 卡上再整段渲染属同构重复，展示时整段剥掉——口径同 2026-10-06 socratic 反馈卡：
+// **只剥展示，msg.content 原文一个字不动**（模块派生、答题链匹配、导出仍吃原文）。
+// 容忍大小写与未闭合尾块；剥后收尾空白。
+function _graphStripExtendDisplay(text) {
+  let s = String(text || '');
+  s = s.replace(/<extend\b[^>]*>[\s\S]*?<\/extend>/gi, '');
+  s = s.replace(/<extend\b[\s\S]*$/i, '');
+  return s.replace(/\s+$/, '');
+}
+
+// answer 卡展示文本总口径：根 answer 先剥 <extend> 整段，再走 socratic 反馈剥口。两条互不
+// 干扰：extend 剥走后残余正文里若还有 socratic_meta/建议追问，_graphSocraticDisplayContent
+// 照旧处理；非根卡只有 socratic 一条生效（T172 范围纪律：extend 剥除只对根卡）。
+function _graphAnswerDisplayContent(raw, message, node) {
+  let s = String(raw || '');
+  if (node && node.isRootAnswer) s = _graphStripExtendDisplay(s);
+  return _graphSocraticDisplayContent(s, message);
+}
+
 // answer 卡「展开全文」取原文（override 优先，与 _nodeContent 同口径）；
-// socratic 反馈先剥建议追问（见 _graphSocraticDisplayContent），<socratic_meta> 是结构
-// 标注，残余时交给 renderMarkdown 剥
+// 展示口径统一走 _graphAnswerDisplayContent（根卡剥 extend ＋ socratic 反馈剥建议追问），
+// <socratic_meta> 是结构标注，残余时交给 renderMarkdown 剥
 function _graphAnswerExpandRaw(node, message) {
   const state = typeof _graphState === 'function' ? _graphState() : {};
   const ov = ((state && state.harnessNodeOverrides) || {})[node.id];
-  if (ov && ov.content != null) return _graphSocraticDisplayContent(String(ov.content), message);
-  return message ? _graphSocraticDisplayContent(String(message.content || ''), message) : '';
+  if (ov && ov.content != null) return _graphAnswerDisplayContent(String(ov.content), message, node);
+  return message ? _graphAnswerDisplayContent(String(message.content || ''), message, node) : '';
 }
 
 // 有 <summary> 的回答整段直出（_nodeContent 不截断），无需展开；剥掉建议追问后仍 >240 字
@@ -1211,6 +1232,7 @@ function _buildGraphData(messages, state) {
   let addedSqCustom = false;
 
   let rootQuestionId = null;
+  let rootAnswerId = null; // 首个主回答＝根 answer 卡（T172：展示剥 <extend> 的判定依据）
   let lastMainAnswerId = null;
   let lastUserNode = null;
   const answerParentQuestion = {};
@@ -1350,6 +1372,7 @@ function _buildGraphData(messages, state) {
       const id = _graphNodeId('a', msg.timestamp);
       if (harnessDeleted[id]) continue;
       const isBranchAnswer = !!(msg.branchType && msg.branchType !== 'main');
+      const isRootAnswer = !rootAnswerId && !isBranchAnswer;
       const depth = parentQuestion ? parentQuestion.depth + 1 : 1;
       const targetAngle = parentQuestion ? parentQuestion.targetAngle + 0.04 : -Math.PI / 2;
       const saved = savedPositions[id];
@@ -1370,6 +1393,7 @@ function _buildGraphData(messages, state) {
         depth,
         targetAngle,
         isRoot: false,
+        isRootAnswer,
         isBranch: isBranchAnswer,
         messageIndex: i,
         timestamp: msg.timestamp,
@@ -1390,7 +1414,10 @@ function _buildGraphData(messages, state) {
       nodeById[id] = node;
       answerParentQuestion[id] = parentQuestionId;
       if (parentQuestionId) _pushEdge(edges, parentQuestionId, id, 'primary');
-      if (!(msg.branchType && msg.branchType !== 'main')) lastMainAnswerId = id;
+      if (!isBranchAnswer) {
+        lastMainAnswerId = id;
+        if (!rootAnswerId) rootAnswerId = id;
+      }
 
       const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(msg.content || '') : {});
       const keys = _graphModuleKeys(sections);
@@ -1622,14 +1649,14 @@ function _nodeContent(message, node) {
     const _ov = ((_state && _state.harnessNodeOverrides) || {})[node.id];
     if (_ov && _ov.content != null) {
       const _text = String(_ov.content);
-      if (node.kind === 'answer') return _graphAnswerPreview(_graphSocraticDisplayContent(_text, message));
+      if (node.kind === 'answer') return _graphAnswerPreview(_graphAnswerDisplayContent(_text, message, node));
       return _text;
     }
   if (node.kind === 'user') return message.content || '';
   if (node.kind === 'answer') {
     const summary = _graphSummary(_graphFormulaDelimit(message.content));
     if (summary) return summary;
-    return _graphAnswerPreview(_graphSocraticDisplayContent(message.content, message));
+    return _graphAnswerPreview(_graphAnswerDisplayContent(message.content, message, node));
   }
   if (node.kind === 'module') {
     const sections = _splitGraphSections((typeof parseXmlSections === 'function') ? parseXmlSections(message.content || '') : {});
