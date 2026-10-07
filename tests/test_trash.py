@@ -212,6 +212,115 @@ def test_restore_rejects_unsafe_item_id(acc_env):
             trash.restore_item(_paths(), bad)
 
 
+# ====== 清空单画布消息（T182：kind=messages 条目） ======
+
+def test_capture_cleared_messages_skips_entry_keeps_destroyed_set(acc_env):
+    """清空只毁「消息/独占知识/公式/graph: 键/苏格拉底/quiz」，画布条目保留——
+    快照不含 session.json，kv 拆分文件只捕 graph: 键（Φ 对话随画布存活不入站）。"""
+    _seed_session()
+    paths = _paths()
+    kv_snap_path = paths.kv_dir / "sess_aaa.json"
+    snap = storage._read_json(kv_snap_path, {})
+    snap["harness_history:sess_aaa"] = {"turns": 3}  # 清空不毁它，不该入站
+    storage._write_json(kv_snap_path, snap)
+
+    assert trash.capture_cleared_messages(paths, "sess_aaa") is True
+    items = trash.list_items(paths)
+    assert len(items) == 1
+    meta = items[0]
+    assert meta["kind"] == "messages"
+    assert meta["id"] == "sess_aaa" and meta["title"] == "物理画布"
+    key = meta["key"]
+    assert key != "sess_aaa" and key.startswith("sess_aaa__m")  # 目录名带时刻防互覆
+    item_dir = paths.root / "trash" / key
+    assert not (item_dir / "session.json").exists()  # 名单条目不入站
+    for name in ("messages.json", "knowledge.json", "formulas.json", "socratic.json",
+                 "quiz_stats.json", "quiz_bank.json", "kv__sess_aaa.json"):
+        assert (item_dir / name).is_file(), name
+    kv_payload = json.loads((item_dir / "kv__sess_aaa.json").read_text(encoding="utf-8"))
+    assert set(kv_payload) == {"graph:sess_aaa"}  # harness_history: 键被滤掉
+
+
+def test_restore_cleared_messages_refills_live_canvas(acc_env):
+    """恢复＝把被清掉的数据回填进活画布：名单条目不动、清空后新长的 Φ 对话不被覆盖。"""
+    _seed_session()
+    paths = _paths()
+    kv_snap_path = paths.kv_dir / "sess_aaa.json"
+    storage._write_json(kv_snap_path, {
+        "graph:sess_aaa": {"zoom": 0.9},
+        "harness_history:sess_aaa": {"turns": 3},
+    })
+    assert trash.capture_cleared_messages(paths, "sess_aaa") is True
+    key = trash.list_items(paths)[0]["key"]
+    # 模拟清空链路：消息清空、独占知识/公式抹掉、graph: 键删除（Φ 键存活并新聊两轮）、
+    # 苏格拉底与 quiz 条目清掉
+    storage._write_json(paths.messages_dir / "sess_aaa.json", [])
+    storage._write_json(paths.knowledge_path, {"k2": {"title": "共享条目"}, "k3": {}})
+    storage._write_json(paths.formulas_path, {})
+    storage._write_json(kv_snap_path, {"harness_history:sess_aaa": {"turns": 5}})
+    storage._write_json(paths.kv_path, {})
+    assert trash.restore_item(paths, key) == "sess_aaa"
+    # 消息与独占知识/公式回来；共享条目（k2/k3）不被覆盖
+    assert len(storage._read_json(paths.messages_dir / "sess_aaa.json", [])) == 1
+    knowledge = storage._read_json(paths.knowledge_path, {})
+    assert set(knowledge) == {"k1", "k2", "k3"}
+    assert storage._read_json(paths.formulas_path, {})["f1"]["latex"] == "F=ma"
+    # graph: 键回来；清空后的 Φ 对话（turns=5）是活数据，不被旧快照覆盖
+    kv_snap = storage._read_json(kv_snap_path, {})
+    assert kv_snap["graph:sess_aaa"] == {"zoom": 0.9}
+    assert kv_snap["harness_history:sess_aaa"] == {"turns": 5}
+    # 苏格拉底与 quiz（q1/wrong/open）回填，别人的 q2 不受影响
+    kv = storage._read_json(paths.kv_path, {})
+    assert kv["socratic:sess_aaa"]["stage"] == "hint"
+    assert kv["phymathia_quiz_stats"]["q1"]["score"] == 1
+    assert {"sessionId": "sess_aaa", "answer": "F=ma"} in kv["phymathia_quiz_stats"]["_meta"]["openResults"]
+    assert {q["id"] for q in kv["phymathia_quiz_bank"]["questions"]} == {"b1"}
+    # 名单条目原样（标题不被快照改写）；站内条目移除
+    assert storage._read_json(paths.sessions_path, {})["sess_aaa"]["title"] == "物理画布"
+    assert trash.list_items(paths) == []
+
+
+def test_restore_cleared_messages_refuses_when_canvas_has_new_messages(acc_env):
+    """活的优先：画布里已有新消息＝拒绝恢复防覆盖，站内条目保留、新消息原样。"""
+    _seed_session()
+    paths = _paths()
+    assert trash.capture_cleared_messages(paths, "sess_aaa") is True
+    key = trash.list_items(paths)[0]["key"]
+    storage._write_json(paths.messages_dir / "sess_aaa.json",
+                        [{"role": "user", "content": "清空后新问的", "timestamp": 2}])
+    with pytest.raises(trash.TrashConflictError):
+        trash.restore_item(paths, key)
+    assert len(trash.list_items(paths)) == 1
+    assert storage._read_json(paths.messages_dir / "sess_aaa.json", [])[0]["content"] == "清空后新问的"
+
+
+def test_restore_cleared_messages_refuses_when_canvas_deleted(acc_env):
+    """画布已被整删：先恢复对应的整画布条目再恢复消息（拒绝半恢复）。"""
+    _seed_session()
+    paths = _paths()
+    assert trash.capture_cleared_messages(paths, "sess_aaa") is True
+    key = trash.list_items(paths)[0]["key"]
+    sessions = storage._read_json(paths.sessions_path, {})
+    sessions.pop("sess_aaa")
+    storage._write_json(paths.sessions_path, sessions)
+    with pytest.raises(trash.TrashConflictError):
+        trash.restore_item(paths, key)
+    assert len(trash.list_items(paths)) == 1
+
+
+def test_capture_cleared_messages_nothing_when_no_data(acc_env):
+    paths = _paths()
+    assert trash.capture_cleared_messages(paths, "sess_ghost") is False
+    assert trash.list_items(paths) == []
+
+
+def test_retention_zero_disables_cleared_messages_capture(acc_env):
+    _seed_session()
+    trash.set_retention_days("default", 0)
+    assert trash.capture_cleared_messages(_paths(), "sess_aaa") is False
+    assert trash.list_items(_paths()) == []
+
+
 # ====== 过期清理 / 清空 / 列表 ======
 
 def test_purge_expired_lazy_on_list(acc_env):
@@ -385,6 +494,31 @@ def test_route_delete_formulas_by_session_no_name_error(acc_env):
         r = client.delete("/api/formulas", params={"session_id": "sess_aaa", "account_id": "alice"})
         assert r.status_code == 200, r.text
         assert json.loads(_paths("alice").formulas_path.read_text(encoding="utf-8")) == {}
+
+
+def test_route_clear_messages_goes_to_trash_and_restores(acc_env):
+    """清空单画布消息（T182）端到端：路由捕获→按 key（目录名）寻址恢复→消息回画布。"""
+    _seed_session(account="alice")
+    accounts.ensure_account("alice")
+    with _client() as client:
+        r = client.delete("/api/sessions/sess_aaa/messages", params={"account_id": "alice"})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        # 画布条目本身保留在名单里，快照已入站
+        assert "sess_aaa" in storage._read_json(_paths("alice").sessions_path, {})
+        item = client.get("/api/trash", params={"account_id": "alice"}).json()["items"][0]
+        assert item["kind"] == "messages" and item["id"] == "sess_aaa"
+        assert item["counts"]["messages"] == 1
+        key = item["key"]
+        assert key != "sess_aaa" and key.startswith("sess_aaa__m")
+        # 裸画布 id 寻址不到（目录名≠id）
+        assert client.post("/api/trash/sess_aaa/restore",
+                           params={"account_id": "alice"}).status_code == 404
+        # 按 key 恢复 → 消息回画布，条目出站
+        r = client.post(f"/api/trash/{key}/restore", params={"account_id": "alice"})
+        assert r.status_code == 200 and r.json()["sessionId"] == "sess_aaa"
+        msgs = client.get("/api/sessions/sess_aaa/messages", params={"account_id": "alice"})
+        assert msgs.status_code == 200 and len(msgs.json()) == 1
+        assert client.get("/api/trash", params={"account_id": "alice"}).json()["items"] == []
 
 
 # ====== 账号级墓碑（2026-10-07 删账号回收站化）======

@@ -2216,6 +2216,12 @@
     .trash-toolbar select { flex: 0 1 auto; min-width: 0; }
     .trash-empty-btn { margin-left: auto; }
     .trash-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* 清空消息条目的种类徽标（T182）：与整画布条目一眼区分 */
+    .trash-kind-tag {
+      display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: var(--r-pill);
+      font-size: var(--fs-xs); color: var(--text-secondary); background: rgba(127, 127, 127, 0.14);
+      vertical-align: middle; white-space: nowrap;
+    }
     .trash-section-title { font-size: var(--fs-sm); color: var(--text-secondary); margin: 12px 0 6px; }
 
     /* ====== 只读查阅悬浮条（P3 2026-10-07）======

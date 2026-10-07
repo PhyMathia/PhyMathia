@@ -8416,6 +8416,41 @@ check('回收站：行渲染纯函数（标题转义/id 消毒/按钮矩阵/剩�
   return true;
 });
 
+check('回收站：清空消息条目（T182）——key 寻址/kind 徽标/clearChat 服务端先行/确认文案/捕获点镜像', () => {
+  const s2 = _trashPanelContext();
+  // 清空消息条目：恢复/彻底删除必须按 key（目录名）寻址，行上带种类徽标
+  const row = s2._trashRowHtml({
+    id: 'sess_aaa', key: 'sess_aaa__m1730000000000', kind: 'messages',
+    title: '物理画布', purgeAt: Date.now() + 86400000,
+  });
+  if (!row.includes('data-trash-item="sess_aaa__m1730000000000"')) throw new Error('清空消息条目应按 key（目录名）寻址');
+  if (row.includes("restoreTrashItem('sess_aaa')")) throw new Error('不得用画布 id 寻址（目录名≠id）');
+  if (!row.includes('trash-kind-tag') || !row.includes('清空的消息')) throw new Error('缺清空消息徽标');
+  // 整画布条目（无 kind）无徽标；key 缺失回落 id（兼容旧口径）
+  const plain = s2._trashRowHtml({ id: 'sess_b', title: 't', purgeAt: 0 });
+  if (plain.includes('trash-kind-tag')) throw new Error('整画布条目不应有徽标');
+  if (!plain.includes('data-trash-item="sess_b"')) throw new Error('key 缺失应回落 id');
+  // 空态文案覆盖两类条目
+  const trashSrc = fs.readFileSync('src/static/js/trash.js', 'utf8');
+  if (!trashSrc.includes('删除的画布与清空的消息')) throw new Error('空态文案未覆盖清空消息');
+  // clearChat：服务端清空先行——回收站捕获点在 DELETE /messages 内，必须早于
+  // 前端探索网快照/quiz 清理，否则捕到的已是残骸（T182 顺序纪律）
+  const sessrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const seg = sessrc.slice(sessrc.indexOf('async function clearChat'), sessrc.indexOf('async function clearAllSessions'));
+  const delMsgs = seg.indexOf('`/api/sessions/${currentSessionId}/messages`');
+  const delGraph = seg.indexOf('await _deleteGraphStateOnServer(currentSessionId)');
+  if (delMsgs < 0 || delGraph < 0) throw new Error('clearChat 缺服务端清空调用');
+  if (delMsgs > delGraph) throw new Error('服务端清空必须先行——捕获点早于前端 graph 清理（T182）');
+  if (!seg.includes('本画布的消息会先进入回收站暂存')) throw new Error('清空确认文案未指向回收站');
+  if (!seg.includes('_trashRetentionLocal() === 0')) throw new Error('回收站关闭时清空确认文案必须如实警告');
+  // 服务端契约镜像：清空路由接捕获、trash.py 有 messages 条目的捕获/恢复函数
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  if (!mainpy.includes('trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)')) throw new Error('api_clear_messages 未接回收站捕获');
+  const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
+  if (!pysrc.includes('def capture_cleared_messages') || !pysrc.includes('def _restore_cleared_messages')) throw new Error('trash.py 缺清空消息条目函数');
+  return true;
+});
+
 check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/构建注册/确认文案指向回收站/只读守卫）', () => {
   const idx = fs.readFileSync('src/static/index.html', 'utf8');
   for (const frag of ['id="trashTile"', 'id="trashTileSub"', 'openTrashPanel()', 'id="trashDialog"',

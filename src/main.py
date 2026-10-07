@@ -1331,6 +1331,11 @@ async def api_clear_messages(session_id: str, request: Request = None):
         msgs_path = _get_messages_path(session_id, account)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
+    # 回收站（T182）：动手毁数据前先快照进站；快照抛异常＝中止清空（500），与
+    # 删除画布同一纪律。清空后画布条目本身保留，故捕 kind=messages（真正会被
+    # 抹掉的数据，不含 session.json）；保留天数 0＝回收站关闭，走原清空链路。
+    # 捕获点必须早于前端的 graph/quiz 清理（session.js clearChat 已同步重排）。
+    trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)
     # 清消息同样清滚动摘要并推进删除代次（阶段1 S1：复用会话 ID 不得吃旧记忆）
     context._delete_rolling_memory(session_id, account)
     if msgs_path.exists():

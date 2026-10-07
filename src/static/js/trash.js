@@ -1,12 +1,14 @@
 // ====== 回收站（2026-10-07）：防误删 —— 删掉的画布在保留期内可整体恢复 ======
 // 服务端在删除路由里先把会话整体快照进 data/users/<账号>/trash/（捕获集与
 // 拍板见 server/trash.py 模块注释）；本面板只管站内：列表 / 恢复 / 彻底删除 /
-// 清空 / 保留天数设置。恢复＝服务端把数据写回原位后整页 reload——会话名单是
-// localStorage+服务端双源合并，reload 是唯一不漏的刷新方式（同账号切换拍板）。
-// 保留天数按账号存服务端注册表（trashRetentionDays 字段，默认 7）；磁贴副行用
-// localStorage 缓存显示（经垫片自然分账号），打开面板时以服务端为准校正。
-// 查阅态：列表可看，恢复/删除/设置全被 _trashReadonlyGuard + fetch 包装 +
-// 服务端只读中间件三层拦下。
+// 清空 / 保留天数设置。条目两类（T182）：整删画布（kind=session，key==id）与
+// 清空单画布消息（kind=messages，目录名 <sid>__m<时刻>，恢复/删除按 key 寻址、
+// 行上带「清空的消息」徽标）；恢复＝服务端把数据写回原位后整页 reload——会话
+// 名单是 localStorage+服务端双源合并，reload 是唯一不漏的刷新方式（同账号切换
+// 拍板）。保留天数按账号存服务端注册表（trashRetentionDays 字段，默认 7）；
+// 磁贴副行用 localStorage 缓存显示（经垫片自然分账号），打开面板时以服务端为
+// 准校正。查阅态：列表可看，恢复/删除/设置全被 _trashReadonlyGuard + fetch 包装
+// + 服务端只读中间件三层拦下。
 
 function _trashRetentionLocal() {
   try {
@@ -53,14 +55,18 @@ function _trashDaysLeft(purgeAt) {
   return Math.max(0, Math.ceil((t - Date.now()) / 86400000));
 }
 
-// 行渲染纯函数（冒烟测试直接调用）：item = {id, title, deletedAt, purgeAt, counts}
-// 查阅态下整行只展示不操作（服务端兜底闸门同拦写操作）。id 是会话 id（服务端
-// 白名单 [A-Za-z0-9_-]），入 HTML 前再同款消毒一道，杜绝注入 onclick。
+// 行渲染纯函数（冒烟测试直接调用）：item = {id, key, kind, title, deletedAt,
+// purgeAt, counts}。key 是站内寻址键＝条目目录名（服务端 list_items 附；清空
+// 消息条目是 <sid>__m<时刻>，≠画布 id），恢复/彻底删除接口按它寻址，缺失回落
+// id。查阅态下整行只展示不操作（服务端兜底闸门同拦写操作）。id 是会话 id
+// （服务端白名单 [A-Za-z0-9_-]），入 HTML 前再同款消毒一道，杜绝注入 onclick。
 function _trashRowHtml(item) {
   if (!item || !item.id) return '';
-  const id = String(item.id).replace(/[^A-Za-z0-9_-]/g, '');
-  if (!id) return '';
+  const ref = String(item.key || item.id).replace(/[^A-Za-z0-9_-]/g, '');
+  if (!ref) return '';
   const title = escapeHtml(String(item.title || '未命名画布'));
+  // 种类徽标（T182）：清空消息条目与整画布条目一眼区分
+  const kindTag = item.kind === 'messages' ? '<span class="trash-kind-tag">清空的消息</span>' : '';
   const meta = [];
   const delStr = _accountsDateStr(item.deletedAt);
   if (delStr) meta.push('删除于 ' + delStr);
@@ -74,12 +80,12 @@ function _trashRowHtml(item) {
   if (parts.length) meta.push(parts.join(' · '));
   const ro = (typeof window !== 'undefined' && window.PHYMATHIA_READONLY);
   const actions = ro ? '' : '<div class="accounts-row-actions">'
-    + '<button class="accounts-act" onclick="restoreTrashItem(\'' + id + '\')">恢复</button>'
-    + '<button class="accounts-act accounts-act-danger" onclick="purgeTrashItem(\'' + id + '\')">彻底删除</button>'
+    + '<button class="accounts-act" onclick="restoreTrashItem(\'' + ref + '\')">恢复</button>'
+    + '<button class="accounts-act accounts-act-danger" onclick="purgeTrashItem(\'' + ref + '\')">彻底删除</button>'
     + '</div>';
-  return '<div class="accounts-row trash-row" data-trash-item="' + id + '">'
+  return '<div class="accounts-row trash-row" data-trash-item="' + ref + '">'
     + '<div class="accounts-row-main">'
-    + '<div class="accounts-row-name trash-row-title">' + title + '</div>'
+    + '<div class="accounts-row-name trash-row-title">' + title + kindTag + '</div>'
     + (meta.length ? '<div class="accounts-row-meta">' + meta.join(' · ') + '</div>' : '')
     + '</div>'
     + actions
@@ -148,7 +154,7 @@ async function renderTrashList() {
     : '';
   box.innerHTML = (sessionRows || accountSection)
     ? sessionRows + accountSection
-    : '<div class="accounts-row-loading">回收站是空的。删除的画布会先到这里暂存，超过保留天数自动清除。</div>';
+    : '<div class="accounts-row-loading">回收站是空的。删除的画布与清空的消息会先到这里暂存，超过保留天数自动清除。</div>';
 }
 
 async function restoreTrashItem(id) {
