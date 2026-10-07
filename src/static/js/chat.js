@@ -259,6 +259,8 @@
     // force 仅供排队重放使用：flush 时把之前抓下来的正文与锚点还原成全局态再走一遍
     // 正常路径，而不是另开一条发送实现——这样各入口原有的收尾动作一处不漏。
     async function sendMessage(force) {
+      // 只读查阅（P3）：普通发送/追问/苏格拉底回答共用这条发送链，入口一处拦全
+      if (phyIsReadonly()) { phyReadonlyBlock('发送消息'); return; }
       const text = (pendingQuickText || '').trim();
       pendingQuickText = '';
       if (!text) return;

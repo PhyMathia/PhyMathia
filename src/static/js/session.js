@@ -276,7 +276,8 @@
         // 流式生成期间不推不拉：此时 assistant 消息尚未完整入 history，
         // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染
         if (isStreaming) return;
-        if (currentSessionId && chatHistory.length > 0) {
+        // 只读查阅（P3）：拉取照旧（保持对方数据的实时视图），推送跳过
+        if (!phyIsReadonly() && currentSessionId && chatHistory.length > 0) {
           await _saveMessagesToServer(currentSessionId, chatHistory);
         }
         const synced = await _syncFromServer();
@@ -305,13 +306,20 @@
     window.addEventListener('beforeunload', () => {
       // 画布状态本地写是防抖的（150ms），卸载前同步冲刷——localStorage 同步写在卸载阶段仍有效
       _flushGraphStateLocalSave();
+      // 只读查阅（P3）：查阅态绝不向服务端回写——此时冲刷的全是对方的会话数据，
+      // 且 sendBeacon 不经 fetch 包装、服务端兜底闸门也拦不住，必须在此掐断
+      if (phyIsReadonly()) return;
+      // ★ 信封必须自带 account_id：sendBeacon 不走 config.js 的 fetch 包装（P2 盲区），
+      // 曾把所有账号的卸载冲刷都按缺省落进 default 账号域——妹妹退出时她的会话
+      // 元数据会写进「我的」。fetch keepalive 兜底路径手动补同样的参数（包装见已带不重补）。
+      const acctQ = '?account_id=' + encodeURIComponent((typeof ACCOUNT_ID !== 'undefined' && ACCOUNT_ID) || 'default');
       const beacon = (url, payload) => {
         try {
           const body = JSON.stringify(payload);
           if (navigator.sendBeacon) {
-            navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+            navigator.sendBeacon(url + acctQ, new Blob([body], { type: 'application/json' }));
           } else {
-            fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+            fetch(url + acctQ, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
           }
         } catch (e) { /* best effort */ }
       };
@@ -608,6 +616,7 @@
 
     // 创建新会话
     function createNewSession() {
+      if (phyIsReadonly()) { phyReadonlyBlock('新建会话'); return; }
       const id = 'sess_' + crypto.randomUUID().replace(/-/g, '');
       const sessionId = 'phymathia_' + crypto.randomUUID().replace(/-/g, '');
       sessions[id] = {
@@ -703,6 +712,7 @@
 
     // 删除会话
     async function deleteSession(id, e) {
+      if (phyIsReadonly()) { phyReadonlyBlock('删除会话'); return; }
       if (e) e.stopPropagation();
       // T58：生成中静默 return 观感等同按钮失灵——补提示
       if (isStreaming) {
@@ -1360,6 +1370,7 @@
     }
 
     async function clearAllSessions() {
+      if (phyIsReadonly()) { phyReadonlyBlock('清空会话'); return; }
       // T58：同 clearChat——生成中清空全部必须可见地拦住
       if (isStreaming) {
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空所有画布');

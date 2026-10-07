@@ -8179,5 +8179,125 @@ check('多账号：静态契约（第 7 磁贴/弹窗骨架/构建注册/枚举�
   return true;
 });
 
+// ===== 只读查阅（P3 2026-10-07）：查阅元键/只读旗标/fetch 闸门/行按钮/悬浮条 =====
+// 全程用独立 vm 上下文或源码断言，不改主沙箱共享键——不需要进串行边界段。
+
+check('只读查阅：config.js 源契约（元键常量/旗标初始化/残缺自清/只读头/本地 403）', () => {
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("const STORAGE_KEY_BROWSE_ACTIVE = 'phymathia_browse_active'")
+    || !cfg.includes("const STORAGE_KEY_BROWSE_RETURN = 'phymathia_browse_return'")) throw new Error('缺查阅态两元键常量');
+  if (!cfg.includes('window.PHYMATHIA_READONLY = ok')) throw new Error('缺只读旗标初始化');
+  if (!cfg.includes('_rawLsDel(STORAGE_KEY_BROWSE_ACTIVE)')) throw new Error('残缺状态必须清标记（防带病只读）');
+  if (!cfg.includes("h.set('X-Phymathia-Readonly', '1')")) throw new Error('放行请求必须带只读头');
+  if (!cfg.includes('status: 403')) throw new Error('客户端漏网写点必须本地 403 兜底');
+  // 只查代码用法（点号），注释里的「为何不用 sessionStorage」论证不算
+  if (cfg.includes('sessionStorage.')) throw new Error('浏览标记不许落 sessionStorage（关页即失旗标）');
+  return true;
+});
+
+check('只读查阅：元键齐备→只读旗标；残缺状态→自清且不进只读', () => {
+  const { s, store } = _accountVmContext(null, {
+    'phymathia_account': 'abcd1234efgh',
+    'phymathia_browse_active': 'abcd1234efgh',
+    'phymathia_browse_return': 'default',
+  });
+  if (vm.runInContext('window.PHYMATHIA_READONLY', s) !== true) throw new Error('元键齐备应进只读旗标');
+  if (vm.runInContext('window.PHY_BROWSE_RETURN', s) !== 'default') throw new Error('还原账号应记为 default');
+  // 指针与浏览目标不一致（被显式切换走）：清两枚标记，绝不带病只读
+  const s2ctx = _accountVmContext(null, {
+    'phymathia_account': 'default',
+    'phymathia_browse_active': 'abcd1234efgh',
+    'phymathia_browse_return': 'default',
+  });
+  if (vm.runInContext('window.PHYMATHIA_READONLY', s2ctx.s) !== false) throw new Error('残缺状态不得进只读');
+  if (s2ctx.store.has('phymathia_browse_active') || s2ctx.store.has('phymathia_browse_return')) throw new Error('残缺标记必须自清');
+  return true;
+});
+
+check('只读查阅：fetch 闸门（拦 POST 本地 403 不发包、白名单放行、GET 带只读头）', async () => {
+  const seen = [];
+  const heads = [];
+  const s0 = { console, URLSearchParams: URL, Headers, Response };
+  s0.fetch = (input, init) => {
+    seen.push(String(input));
+    heads.push(!!(init && init.headers && init.headers.get && init.headers.get('X-Phymathia-Readonly')));
+    return Promise.resolve({ ok: true });
+  };
+  s0.window = s0;
+  s0.innerWidth = 1200;
+  s0.localStorage = {
+    getItem: (k) => ({ 'phymathia_account': 'abcd1234efgh', 'phymathia_browse_active': 'abcd1234efgh', 'phymathia_browse_return': 'default' })[k] || null,
+    setItem() {}, removeItem() {},
+  };
+  s0.document = { documentElement: { setAttribute() {} } };
+  vm.createContext(s0);
+  vm.runInContext(fs.readFileSync('src/static/js/config.js', 'utf8'), s0, { filename: 'config.js' });
+  if (s0.PHYMATHIA_READONLY !== true) throw new Error('应进只读旗标');
+  const blocked = await s0.fetch('/api/kv/x', { method: 'POST', body: '{}' });
+  s0.fetch('/api/models/list', { method: 'POST', body: '{}' }); // 白名单：读语义 POST
+  s0.fetch('/api/sessions'); // GET：读
+  if (blocked.status !== 403 || blocked.ok !== false) throw new Error('被拦写点应回 403 Response');
+  const body = await blocked.json();
+  if (!body.detail || body.detail.indexOf('只读') < 0) throw new Error('403 应带明白话 detail');
+  if (seen.length !== 2) throw new Error('被拦 POST 不得发网络请求：' + JSON.stringify(seen));
+  if (!(heads[0] && heads[1])) throw new Error('放行请求必须带 X-Phymathia-Readonly 头');
+  if (!seen.includes('/api/models/list?account_id=abcd1234efgh')) throw new Error('白名单 POST 应放行并补 account_id：' + JSON.stringify(seen));
+  if (!seen.includes('/api/sessions?account_id=abcd1234efgh')) throw new Error('GET 应放行并补 account_id');
+  return true;
+});
+await Promise.all(pendingChecks).catch(() => {}); // 本段异步用例收口，否则断言赶不上退出判定
+
+check('只读查阅：面板行渲染（查阅钮矩阵/查阅态只展示不操作/查阅中徽标）', () => {
+  const s2 = _accountPanelContext();
+  const row = s2._accountRowHtml;
+  const on = row({ id: 'eeee11112222', name: '妹妹', allowBrowse: true, createdAt: 0 }, false);
+  if (!on.includes('enterBrowse')) throw new Error('allowBrowse=true 的非当前行应有查阅钮');
+  const off = row({ id: 'eeee11112222', name: '二号', allowBrowse: false, createdAt: 0 }, false);
+  if (off.includes('enterBrowse')) throw new Error('未开放查阅不得出查阅钮');
+  if (!off.includes('切换') || !off.includes('改名') || !off.includes('删除')) throw new Error('普通行按钮矩阵不变');
+  s2.window.PHYMATHIA_READONLY = true;
+  const ro = s2._accountRowHtml({ id: 'eeee11112222', name: '妹妹', allowBrowse: true, createdAt: 0 }, false);
+  if (ro.includes('enterBrowse') || ro.includes('switchAccount') || ro.includes('deleteAccountPrompt')) throw new Error('查阅态行不得有操作钮');
+  if (!ro.includes('允许查阅：开')) throw new Error('查阅态开关应降级为只读展示');
+  const roCur = s2._accountRowHtml({ id: 'abcd1234efgh', name: '妹妹', allowBrowse: true, createdAt: 0 }, true);
+  if (!roCur.includes('查阅中')) throw new Error('查阅态当前行应标「查阅中」');
+  return true;
+});
+
+check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸门/引导跳过/样式）', () => {
+  const idx = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!idx.includes('id="browseBar"') || !idx.includes('id="browseBarText"') || !idx.includes('exitBrowse()')) throw new Error('缺查阅悬浮条骨架');
+  const acc = fs.readFileSync('src/static/js/accounts.js', 'utf8');
+  if (!acc.includes('async function enterBrowse') || !acc.includes('function exitBrowse')) throw new Error('accounts.js 缺进入/退出查阅');
+  if (!acc.includes('STORAGE_KEY_BROWSE_RETURN')) throw new Error('进入查阅必须写浏览元键（_RAW_LS）');
+  if (!acc.includes('STORAGE_KEY_BROWSE_RETURN_NAME')) throw new Error('退出查阅必须还原归还账号昵称');
+  if (!acc.includes('_accountsReadonlyGuard()')) throw new Error('账号管理操作缺查阅守卫');
+  if (!acc.includes('removeItem(STORAGE_KEY_BROWSE_ACTIVE)')) throw new Error('显式切换账号必须清浏览标记');
+  const gates = [
+    ['src/static/js/chat.js', "phyReadonlyBlock('发送消息')"],
+    ['src/static/js/graph-workflow.js', "phyReadonlyBlock('发起提问')"],
+    ['src/static/js/harness-run.js', "phyReadonlyBlock('发送 Φ 消息')"],
+    ['src/static/js/quiz-ui.js', "phyReadonlyBlock('进行知识检测')"],
+    ['src/static/js/session.js', "phyReadonlyBlock('新建会话')"],
+    ['src/static/js/session.js', "phyReadonlyBlock('删除会话')"],
+    ['src/static/js/session.js', "phyReadonlyBlock('清空会话')"],
+    ['src/static/js/graph-interact.js', "phyReadonlyBlock('创建分支')"],
+    ['src/static/js/graph-interact.js', "phyReadonlyBlock('作答追问')"],
+    ['src/static/js/ui.js', "phyReadonlyBlock('导入备份')"],
+  ];
+  for (const [f, g] of gates) {
+    if (!fs.readFileSync(f, 'utf8').includes(g)) throw new Error(f + ' 缺写点闸门：' + g);
+  }
+  if (!fs.readFileSync('src/static/js/ui.js', 'utf8').includes('if (!phyIsReadonly()) startOnboarding()')) throw new Error('查阅态应跳过首次引导');
+  if (!fs.readFileSync('src/static/css/styles.css', 'utf8').includes('.browse-bar')) throw new Error('缺悬浮条样式');
+  // 卸载冲刷走 sendBeacon（不经 fetch 包装，fetch 闸门与服务端兜底都拦不到）——
+  // 必须在 handler 里自带只读跳过，且信封自带 account_id（否则按缺省落 default）
+  const sessrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!sessrc.includes("'?account_id=' + encodeURIComponent")) throw new Error('卸载冲刷信封缺 account_id');
+  if (!sessrc.includes('if (phyIsReadonly()) return;')) throw new Error('查阅态卸载冲刷必须整体跳过');
+  if (!sessrc.includes('if (!phyIsReadonly() && currentSessionId && chatHistory.length > 0)')) throw new Error('查阅态周期同步只应拉取不应推送');
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

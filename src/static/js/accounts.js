@@ -31,6 +31,78 @@ function _accountsSetTile(name) {
 }
 _accountsSetTile(_accountsCurrentName());
 
+// ====== 只读查阅（P3 2026-10-07）：进入/退出他人空间 ======
+// 进入＝重查一遍注册表确认对方仍开放（面板缓存可能过期）→ 劫持账号指针 +
+// 写两枚浏览元键（config.js 装载期据此置 PHYMATHIA_READONLY）→ reload。
+// 退出＝指针还原 + 清元键 → reload。状态落 localStorage 元键：关标签页/崩溃
+// 后重开仍在只读查阅，不会以写模式留在对方账号（拍板见当日日志）。
+async function enterBrowse(id) {
+  if (typeof window !== 'undefined' && window.PHYMATHIA_READONLY) {
+    toastMsg('已在查阅模式，请先退出再换', 2500);
+    return;
+  }
+  if (!id || id === ACCOUNT_ID) return;
+  try {
+    const resp = await fetch('/api/accounts');
+    const data = await resp.json();
+    const hit = ((data && data.accounts) || []).find(a => a && a.id === id);
+    if (!hit || !hit.allowBrowse) {
+      toastMsg('该账号未开放查阅', 2500);
+      renderAccountsList();
+      return;
+    }
+  } catch (e) {
+    toastMsg('进入查阅失败：无法确认查阅权限', 3000);
+    return;
+  }
+  try {
+    _RAW_LS.setItem(STORAGE_KEY_BROWSE_RETURN, String(ACCOUNT_ID || 'default'));
+    _RAW_LS.setItem(STORAGE_KEY_BROWSE_RETURN_NAME, _accountsCurrentName());
+    _RAW_LS.setItem(STORAGE_KEY_BROWSE_ACTIVE, String(id));
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, String(id));
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, _accountsNameOf(id));
+  } catch (e) {
+    toastMsg('进入查阅失败：浏览器本地存储不可用', 3000);
+    return;
+  }
+  location.reload();
+}
+
+function exitBrowse() {
+  const back = String((typeof window !== 'undefined' && window.PHY_BROWSE_RETURN) || 'default');
+  const backOk = ACCOUNT_ID_RE.test(back);
+  // 昵称还原：优先用进查阅时定格的名字，面板缓存兜底，最后回落「我的」——
+  // 不还原的话磁贴副行会一直挂着被查阅账号的昵称
+  const backName = ((typeof window !== 'undefined' && window.PHY_BROWSE_RETURN_NAME) || _accountsNameOf(back) || '我的');
+  try {
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, backOk ? back : 'default');
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, backOk ? backName : '我的');
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_ACTIVE);
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_RETURN);
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_RETURN_NAME);
+  } catch (e) {}
+  location.reload();
+}
+
+// 查阅态常驻悬浮条：告知「在谁的space里」＋唯一出口（boot 时渲染，非查阅态不动）
+(function _renderBrowseBar() {
+  const bar = document.getElementById('browseBar');
+  if (!bar) return;
+  if (!(typeof window !== 'undefined' && window.PHYMATHIA_READONLY)) { bar.hidden = true; return; }
+  const txt = document.getElementById('browseBarText');
+  if (txt) txt.textContent = '正在只读查阅「' + _accountsCurrentName() + '」的会话与知识';
+  bar.hidden = false;
+})();
+
+// 查阅态下面板自身也是只读的（服务端兜底同拦），账号管理类操作先礼后兵
+function _accountsReadonlyGuard() {
+  if (typeof window !== 'undefined' && window.PHYMATHIA_READONLY) {
+    toastMsg('查阅模式：不能修改账号设置，请先退出查阅', 2500);
+    return true;
+  }
+  return false;
+}
+
 function openAccountsPanel() {
   document.getElementById('accountsDialog').classList.add('show');
   renderAccountsList();
@@ -75,25 +147,35 @@ function _accountsDateStr(ms) {
 }
 
 // 行渲染纯函数（冒烟测试直接调用）：a = {id, name, allowBrowse, createdAt}
+// 查阅态（window.PHYMATHIA_READONLY）下整行只展示不操作：无开关无按钮，
+// 当前徽标改「查阅中」——面板自身也被兜底闸门拦写，按钮给了也点不动。
 function _accountRowHtml(a, isCurrent) {
   if (!a || !a.id) return '';
   const id = String(a.id);
   const name = escapeHtml(String(a.name || id));
   const dateStr = _accountsDateStr(a.createdAt);
+  const ro = (typeof window !== 'undefined' && window.PHYMATHIA_READONLY);
   const meta = [];
-  if (isCurrent) meta.push('当前使用');
+  if (isCurrent) meta.push(ro ? '查阅中' : '当前使用');
   if (dateStr) meta.push('创建于 ' + dateStr);
-  const checked = a.allowBrowse ? ' checked' : '';
-  const browse = '<label class="accounts-browse" title="开启后，其他账号将来可只读查阅此账号的会话与知识（只读查阅功能即将上线）">'
-    + '<input type="checkbox"' + checked + ' onchange="toggleAccountBrowse(\'' + id + '\', this.checked)">允许查阅</label>';
+  const browse = ro
+    ? '<span class="accounts-browse" title="查阅模式下不可更改">允许查阅：' + (a.allowBrowse ? '开' : '关') + '</span>'
+    : '<label class="accounts-browse" title="开启后，其他账号可只读查阅此账号的会话与知识">'
+      + '<input type="checkbox"' + (a.allowBrowse ? ' checked' : '') + ' onchange="toggleAccountBrowse(\'' + id + '\', this.checked)">允许查阅</label>';
   let actions = '';
-  if (!isCurrent) actions += '<button class="accounts-act" onclick="switchAccount(\'' + id + '\')">切换</button>';
-  actions += '<button class="accounts-act" onclick="renameAccountPrompt(\'' + id + '\')">改名</button>';
-  // default 是无账号标识请求的兜底落点，拒删（服务端同款防线）；其余账号都可删——
-  // 当前账号删除成功后由 deleteAccountPrompt 切回 default 并刷新（旧设计「当前账号
-  // 须先切走再删」导致唯一的非 default 账号在任何行都看不到删除钮，等于没这功能）
-  if (id !== 'default') {
-    actions += '<button class="accounts-act accounts-act-danger" onclick="deleteAccountPrompt(\'' + id + '\')">删除</button>';
+  if (!ro) {
+    // 对方开了「允许查阅」才出查阅钮（进门前 enterBrowse 还会重查一遍注册表）
+    if (!isCurrent && a.allowBrowse) {
+      actions += '<button class="accounts-act accounts-act-browse" onclick="enterBrowse(\'' + id + '\')">查阅</button>';
+    }
+    if (!isCurrent) actions += '<button class="accounts-act" onclick="switchAccount(\'' + id + '\')">切换</button>';
+    actions += '<button class="accounts-act" onclick="renameAccountPrompt(\'' + id + '\')">改名</button>';
+    // default 是无账号标识请求的兜底落点，拒删（服务端同款防线）；其余账号都可删——
+    // 当前账号删除成功后由 deleteAccountPrompt 切回 default 并刷新（旧设计「当前账号
+    // 须先切走再删」导致唯一的非 default 账号在任何行都看不到删除钮，等于没这功能）
+    if (id !== 'default') {
+      actions += '<button class="accounts-act accounts-act-danger" onclick="deleteAccountPrompt(\'' + id + '\')">删除</button>';
+    }
   }
   return '<div class="accounts-row" data-account="' + id + '">'
     + '<div class="accounts-row-main">'
@@ -119,6 +201,9 @@ function switchAccount(id) {
   try {
     _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, String(id));
     _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, _accountsNameOf(id));
+    // 任何显式切换都同时退出查阅态：只读旗标不能残留到下一个账号
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_ACTIVE);
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_RETURN);
   } catch (e) {
     toastMsg('切换失败：浏览器本地存储不可用', 3000);
     return;
@@ -127,6 +212,7 @@ function switchAccount(id) {
 }
 
 async function createAccount() {
+  if (_accountsReadonlyGuard()) return;
   const input = document.getElementById('accountNewName');
   const btn = document.getElementById('accountCreateBtn');
   if (btn && btn.disabled) return; // 回车与点击同触发，防重入双建
@@ -159,6 +245,7 @@ async function createAccount() {
 }
 
 function renameAccountPrompt(id) {
+  if (_accountsReadonlyGuard()) return;
   const old = _accountsNameOf(id);
   const next = (prompt('账号新昵称：', old) || '').trim();
   if (!next || next === old) return;
@@ -176,6 +263,7 @@ function renameAccountPrompt(id) {
 }
 
 function deleteAccountPrompt(id) {
+  if (_accountsReadonlyGuard()) return;
   const name = _accountsNameOf(id);
   const isSelf = (id === ACCOUNT_ID);
   const msg = isSelf
@@ -205,6 +293,7 @@ function deleteAccountPrompt(id) {
 }
 
 function toggleAccountBrowse(id, allow) {
+  if (_accountsReadonlyGuard()) { renderAccountsList(); return; }
   fetch('/api/accounts/allow_browse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

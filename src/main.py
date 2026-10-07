@@ -22,7 +22,7 @@ from pathlib import Path
 import uvicorn
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -92,6 +92,26 @@ app.add_middleware(
 )
 # 静态 JS/CSS/JSON 走 gzip；SSE（text/event-stream）会自动跳过压缩。
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+# ====== 只读查阅（P3 2026-10-07）：后端兜底闸门 ======
+# 前端处于只读查阅态时（config.js 查阅元键 → window.PHYMATHIA_READONLY），fetch
+# 包装给所有 /api/ 请求带 X-Phymathia-Readonly 头，并在客户端先拦非 GET。这里按
+# 同一张白名单兜底 403——防的是前端漏打的写点闸门让改写请求溜出去，不防手写
+# curl（本地无认证，allow_browse 是 UI 层礼节性隔离，诚实声明口径见 backlog T179）。
+_READONLY_MUTATING = {"POST", "PUT", "DELETE", "PATCH"}
+# 读语义 POST 白名单：上游代理查询，无本地存储写动作，查阅态放行
+# （与 config.js PHY_READONLY_SAFE_POST 一字对应，两边同改）
+_READONLY_SAFE_POST = {"/api/models/list", "/api/models/probe"}
+
+
+@app.middleware("http")
+async def _readonly_browse_gate(request: Request, call_next):
+    if request.method in _READONLY_MUTATING and request.headers.get("x-phymathia-readonly"):
+        path = request.url.path
+        if path.startswith("/api/") and path not in _READONLY_SAFE_POST:
+            return JSONResponse({"detail": "查阅模式：只读，不能修改数据"}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")

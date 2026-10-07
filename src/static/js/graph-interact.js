@@ -468,6 +468,7 @@ function _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
 }
 
 function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y) {
+  if (phyIsReadonly()) { phyReadonlyBlock('创建分支'); return; }
   const sourceNode = graphView.nodeById[sourceNodeId];
   if (!sourceNode || !portMeta) return;
 
@@ -719,6 +720,7 @@ function submitDraftQuestion(nodeId) {
 }
 
 function draftSocraticAnswer(nodeId) {
+  if (phyIsReadonly()) { phyReadonlyBlock('作答追问'); return; }
   const node = _findDraftNode(nodeId);
   if (!node) return;
   const meta = node.portMeta || {};

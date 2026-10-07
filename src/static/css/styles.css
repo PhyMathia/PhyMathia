@@ -2208,6 +2208,44 @@
     .accounts-new-row { display: flex; gap: 8px; }
     .accounts-new-row input { flex: 1; }
     .accounts-row-loading { font-size: var(--fs-sm); color: var(--text-secondary); text-align: center; padding: 14px 0; }
+    .accounts-act-browse { color: var(--accent); border-color: var(--accent); }
+
+    /* ====== 只读查阅悬浮条（P3 2026-10-07）======
+       查阅他人账号时的常驻身份条：告知「在谁的space里」＋唯一出口「退出查阅」。
+       底色/磨砂/阴影交给 .aurora-glass 家族，这里只管布局与字级；z-index 挂
+       --z-panel-top（高位面板档，压侧栏/知识面板一头，让 toasts 与弹窗仍在其上）。 */
+    .browse-bar {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: var(--z-panel-top);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: min(92vw, 560px);
+      padding: 8px 10px 8px 16px;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--accent);
+      font-size: var(--fs-sm);
+    }
+    .browse-bar[hidden] { display: none; }
+    .browse-bar span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .browse-bar-exit {
+      flex-shrink: 0;
+      background: var(--accent);
+      color: var(--bg-solid, #fff);
+      border: none;
+      border-radius: var(--r-pill);
+      font-size: var(--fs-sm);
+      padding: 4px 12px;
+      cursor: pointer;
+    }
+    .browse-bar-exit:hover { filter: brightness(1.1); }
 
     /* ====== 苏格拉底回答小输入框 ====== */
     .socratic-modal-overlay {
