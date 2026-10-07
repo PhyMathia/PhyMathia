@@ -8141,7 +8141,7 @@ check('多账号：fetch 包装给 /api/ 请求恒带 account_id，非 API 与�
   return true;
 });
 
-check('多账号：面板行渲染（当前徽标/default 拒删/当前账号不可自删/昵称转义）', () => {
+check('多账号：面板行渲染（当前徽标/default 拒删/当前可自删回 default/昵称转义）', () => {
   const row = sandbox.window._accountRowHtml;
   if (typeof row !== 'function') throw new Error('_accountRowHtml 未导出');
   const other = row({ id: 'default', name: '我的', allowBrowse: false, createdAt: 0 }, false);
@@ -8153,7 +8153,7 @@ check('多账号：面板行渲染（当前徽标/default 拒删/当前账号不
   if (esc.includes('<b>') || !esc.includes('我&lt;b&gt;的&lt;/b&gt;')) throw new Error('昵称必须转义：' + esc.slice(0, 80));
   const cur = row({ id: 'abcd1234efgh', name: '妹妹', allowBrowse: true, createdAt: 0 }, true);
   if (!cur.includes('当前') || cur.includes('切换')) throw new Error('当前行应有徽标且无切换钮');
-  if (cur.includes('删除')) throw new Error('当前账号不可自删（须先切走）');
+  if (!cur.includes('删除')) throw new Error('当前账号（非 default）也应有删除钮（删除后自动回 default）');
   if (!cur.includes('checked')) throw new Error('allowBrowse=true 应勾选');
   const otherNonDefault = row({ id: 'eeee11112222', name: '二号', allowBrowse: false, createdAt: 0 }, false);
   if (!otherNonDefault.includes('删除')) throw new Error('非 default 的非当前行应有删除钮');

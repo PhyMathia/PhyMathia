@@ -89,8 +89,10 @@ function _accountRowHtml(a, isCurrent) {
   let actions = '';
   if (!isCurrent) actions += '<button class="accounts-act" onclick="switchAccount(\'' + id + '\')">切换</button>';
   actions += '<button class="accounts-act" onclick="renameAccountPrompt(\'' + id + '\')">改名</button>';
-  // default 是无账号标识请求的兜底落点（服务端同款拒删）；当前账号须先切走再删
-  if (id !== 'default' && !isCurrent) {
+  // default 是无账号标识请求的兜底落点，拒删（服务端同款防线）；其余账号都可删——
+  // 当前账号删除成功后由 deleteAccountPrompt 切回 default 并刷新（旧设计「当前账号
+  // 须先切走再删」导致唯一的非 default 账号在任何行都看不到删除钮，等于没这功能）
+  if (id !== 'default') {
     actions += '<button class="accounts-act accounts-act-danger" onclick="deleteAccountPrompt(\'' + id + '\')">删除</button>';
   }
   return '<div class="accounts-row" data-account="' + id + '">'
@@ -175,7 +177,11 @@ function renameAccountPrompt(id) {
 
 function deleteAccountPrompt(id) {
   const name = _accountsNameOf(id);
-  const ok = confirm('确定删除账号「' + name + '」？\n\n该账号的全部会话、知识、公式与检测记录将一并从这台电脑上删除，不可恢复。');
+  const isSelf = (id === ACCOUNT_ID);
+  const msg = isSelf
+    ? '确定删除当前账号「' + name + '」？\n\n该账号的全部会话、知识、公式与检测记录将一并从这台电脑上删除，不可恢复。删除后将回到「我的」账号。'
+    : '确定删除账号「' + name + '」？\n\n该账号的全部会话、知识、公式与检测记录将一并从这台电脑上删除，不可恢复。';
+  const ok = confirm(msg);
   if (!ok) return;
   fetch('/api/accounts/delete', {
     method: 'POST',
@@ -183,6 +189,15 @@ function deleteAccountPrompt(id) {
     body: JSON.stringify({ account_id: id, delete_data: true })
   }).then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(() => {
+      if (isSelf) {
+        // 删除的是当前账号：指针元键切回 default 再刷新（垫片按新指针换命名空间）
+        try {
+          _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, 'default');
+          _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, _accountsNameOf('default') || '我的');
+        } catch (e) {}
+        location.reload();
+        return;
+      }
       toastMsg('账号「' + name + '」已删除', 2500);
       renderAccountsList();
     })
