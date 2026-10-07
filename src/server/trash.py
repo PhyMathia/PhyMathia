@@ -20,6 +20,18 @@
 - 保留天数 0＝关闭回收站：capture 直接返回 False，删除走原链路（不留任何
   快照）；确认弹窗文案在前端按本地缓存的保留天数随之变化。
 
+清空单画布消息（2026-10-07 T182）：清空与整删共用「先快照后毁数据」的纪律，
+但粒度不同——清空后画布条目本身保留，捕获集＝清空链路真正会抹掉的数据
+（kind="messages"）：消息、独占知识/公式、kv 拆分文件里的 graph: 键（清空链路
+经 DELETE /api/kv/graph:<sid> 抹掉它；harness_history: 等 Φ 对话随画布存活，
+不捕）、socratic: 状态、quiz 统计与题库条目——不含 session.json。目录名
+<sid>__m<毫秒>：同一画布可多次清空、清空后又整删（整删条目仍用裸 sid），各次
+快照互不覆盖；meta.id 仍是画布 id，list_items 附 key＝目录名（接口寻址用，
+整删条目 key==id）。恢复口径（_restore_cleared_messages）：画布必须还活着
+——整删了就先恢复对应的整画布条目再恢复消息；且画布当前无新消息（有新消息
+＝活的优先，整体拒绝防覆盖）；名单条目绝不写回，其余回填与整删同款
+setdefault「活的优先」。
+
 账号级墓碑（2026-10-07 删账号回收站化，与当日日志「文件清单」节拍板一致）：
 - 删除非 default 账号＝整个账号目录（含它自己的 trash/ 子目录）mv 进
   data/users/_trash/<id>_<删除时间戳>/，注册表先除名、移目录失败则按快照
@@ -81,12 +93,18 @@ def set_retention_days(account: str, days) -> int:
 
 # ====== 捕获（删除路由先调这里，失败即中止删除） ======
 
-def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path: Path = None) -> bool:
+def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path: Path = None,
+                    kind: str = "session") -> bool:
     """把一个会话的现行数据整体快照进回收站。返回是否捕获到东西。
 
     任何读写异常都向上抛——调用方必须中止删除。本函数只写入 trash 目录，
     不碰任何活数据（删除仍由原链路执行）。
+
+    kind="session"（整删，默认）捕全件套；kind="messages"（清空单画布消息，
+    T182）画布条目本身保留，只捕清空链路真正会抹掉的数据——不含 session.json。
     """
+    if kind not in ("session", "messages"):
+        raise ValueError(f"unknown trash capture kind: {kind!r}")
     if retention_days(paths.account) == 0:
         return False  # 保留天数 0：回收站关闭，删除即彻底清除
 
@@ -95,7 +113,7 @@ def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path
     match_variants, file_variants = _session_variants(session_id, entry)
 
     payloads = {}
-    if isinstance(entry, dict):
+    if kind == "session" and isinstance(entry, dict):
         payloads["session.json"] = entry
 
     if messages_path is None:
@@ -117,8 +135,16 @@ def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path
     # 落在不同拆分文件），文件名带 kv__ 前缀、恢复时各回各的拆分文件
     for variant in sorted(file_variants):
         snap = paths.kv_dir / f"{variant}.json"
-        if snap.exists():
-            payloads[f"kv__{variant}.json"] = storage._read_json(snap, {})
+        if not snap.exists():
+            continue
+        kv_data = storage._read_json(snap, {})
+        if kind == "messages":
+            # 清空链路只经 DELETE /api/kv/graph:<sid> 抹 graph: 键；同一拆分文件里
+            # 的 harness_history: 等 Φ 对话随画布存活，不捕不还
+            kv_data = {k: v for k, v in kv_data.items() if str(k).startswith("graph:")}
+            if not kv_data:
+                continue
+        payloads[f"kv__{variant}.json"] = kv_data
 
     socratic = context.snapshot_socratic_state(sorted(match_variants), paths.account)
     if socratic:
@@ -133,10 +159,15 @@ def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path
     if not payloads:
         return False
 
-    item_dir = trash_root(paths) / session_id
-    item_dir.mkdir(parents=True, exist_ok=True)
     now = int(time.time() * 1000)
     days = retention_days(paths.account)
+    if kind == "messages":
+        # 目录名带毫秒时刻：同一画布可多次清空、清空后又整删（整删条目仍用裸
+        # sid），各次快照互不覆盖；meta.id 仍是画布 id，list_items 附 key＝目录名
+        item_dir = trash_root(paths) / f"{session_id}__m{now}"
+    else:
+        item_dir = trash_root(paths) / session_id
+    item_dir.mkdir(parents=True, exist_ok=True)
     counts = {
         "messages": len(payloads.get("messages.json") or []) if isinstance(payloads.get("messages.json"), list) else 0,
         "knowledge": len(payloads.get("knowledge.json") or {}),
@@ -148,12 +179,23 @@ def capture_session(paths: accounts.AccountPaths, session_id: str, messages_path
     storage._write_json(item_dir / _META_NAME, {
         "id": session_id,
         "title": (entry or {}).get("title") or "未命名画布",
+        "kind": kind,
         "deletedAt": now,
         "purgeAt": now + days * _DAY_MS,
         "retentionDays": days,
         "counts": counts,
     })
     return True
+
+
+def capture_cleared_messages(paths: accounts.AccountPaths, session_id: str, messages_path: Path = None) -> bool:
+    """清空单画布消息（T182）入站：与整删同一纪律——先快照后毁数据、异常即中止。
+
+    调用点在 DELETE /api/sessions/{sid}/messages 内、必须早于前端清理
+    （session.js clearChat 已同步重排：服务端清空先行，graph/quiz 的前端清理
+    在后），否则快照捕到的已是残骸。返回是否捕获到东西。
+    """
+    return capture_session(paths, session_id, messages_path=messages_path, kind="messages")
 
 
 def capture_all(paths: accounts.AccountPaths) -> int:
@@ -251,6 +293,9 @@ def list_items(paths: accounts.AccountPaths) -> list:
     for child in sorted(root.iterdir()):
         meta = storage._read_json(child / _META_NAME, {}) if child.is_dir() else {}
         if meta.get("id"):
+            # 站内寻址键＝目录名：清空消息条目（<sid>__m<毫秒>）≠画布 id，恢复/
+            # 彻底删除接口按它寻址。与账号墓碑的 stone 同款「id 是本体、key 寻址」。
+            meta["key"] = child.name
             items.append(meta)
     items.sort(key=lambda m: m.get("deletedAt") or 0, reverse=True)
     return items
@@ -260,7 +305,9 @@ def restore_item(paths: accounts.AccountPaths, item_id: str) -> str:
     """整条恢复：快照数据写回原位，成功后移除站内条目。返回恢复的会话 id。
 
     键冲突一律「活的优先」（被删除会话的数据此刻不应存在，setdefault 兜底
-    防御重复恢复等异常时序）；目标会话 id 还活着则整体拒绝——半恢复比不恢复糟。
+    防御重复恢复等异常时序）；整删条目在目标会话 id 还活着时整体拒绝——
+    半恢复比不恢复糟。清空消息条目（kind=messages）另有恢复口径，见
+    _restore_cleared_messages。
     """
     _validate_item_id(item_id)
     item_dir = trash_root(paths) / item_id
@@ -268,15 +315,37 @@ def restore_item(paths: accounts.AccountPaths, item_id: str) -> str:
     if not meta.get("id"):
         raise KeyError(f"trash item not found: {item_id}")
 
+    if meta.get("kind") == "messages":
+        return _restore_cleared_messages(paths, item_id, meta)
+
     sessions = storage._read_json(paths.sessions_path, {})
     if item_id in sessions:
         raise TrashConflictError(f"会话 {item_id} 已存在，无法恢复")
 
+    p = item_dir / "session.json"
+    entry = storage._read_json(p, None) if p.exists() else None
+    if isinstance(entry, dict):
+        def sess_updater(data):
+            data[item_id] = entry
+            return data
+        storage._mutate_json(paths.sessions_path, sess_updater)
+
+    _restore_payload_data(paths, item_dir, item_id)
+
+    shutil.rmtree(item_dir, ignore_errors=True)
+    return item_id
+
+
+def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str) -> None:
+    """把快照里除名单条目外的数据写回原位：消息/知识/公式/探索网/苏格拉底/quiz。
+
+    整删与清空消息两类条目共用；合并一律「活的优先」（setdefault，quiz 元
+    列表按 JSON 串去重）。session.json 由调用方按条目种类决定是否写回。
+    """
     def _payload(name):
         p = item_dir / name
         return storage._read_json(p, None) if p.exists() else None
 
-    entry = _payload("session.json")
     messages = _payload("messages.json")
     knowledge = _payload("knowledge.json") or {}
     formulas = _payload("formulas.json") or {}
@@ -284,15 +353,9 @@ def restore_item(paths: accounts.AccountPaths, item_id: str) -> str:
     quiz_stats = _payload("quiz_stats.json")
     quiz_bank = _payload("quiz_bank.json")
 
-    if isinstance(entry, dict):
-        def sess_updater(data):
-            data[item_id] = entry
-            return data
-        storage._mutate_json(paths.sessions_path, sess_updater)
-
     if isinstance(messages, list):
         try:
-            msgs_path = storage._get_messages_path(item_id, paths.account)
+            msgs_path = storage._get_messages_path(sid, paths.account)
         except ValueError:
             msgs_path = None
         if msgs_path is not None:
@@ -373,8 +436,28 @@ def restore_item(paths: accounts.AccountPaths, item_id: str) -> str:
 
         storage._mutate_json(paths.kv_path, bank_merge)
 
-    shutil.rmtree(item_dir, ignore_errors=True)
-    return item_id
+
+def _restore_cleared_messages(paths: accounts.AccountPaths, item_id: str, meta: dict) -> str:
+    """恢复「清空单画布消息」条目（T182）：把被清掉的数据回填进还活着的画布。
+
+    两道闸（整体拒绝，半恢复比不恢复糟）：①画布已被整删——先恢复对应的整
+    画布条目再来；②画布里已有新消息——活的优先，拒绝恢复防覆盖。名单条目
+    绝不写回（画布从未死过）。
+    """
+    sid = _validate_item_id(str(meta.get("id") or ""))
+    sessions = storage._read_json(paths.sessions_path, {})
+    if sid not in sessions:
+        raise TrashConflictError("画布已被删除：请先恢复对应的整画布条目，再恢复这条清空快照")
+    try:
+        msgs_path = storage._get_messages_path(sid, paths.account)
+    except ValueError:
+        raise KeyError(f"invalid session id in trash meta: {sid!r}")
+    current = storage._read_json(msgs_path, [])
+    if isinstance(current, list) and current:
+        raise TrashConflictError("画布里已有新消息，恢复会覆盖它们，已中止")
+    _restore_payload_data(paths, trash_root(paths) / item_id, sid)
+    shutil.rmtree(trash_root(paths) / item_id, ignore_errors=True)
+    return sid
 
 
 def purge_item(paths: accounts.AccountPaths, item_id: str) -> None:

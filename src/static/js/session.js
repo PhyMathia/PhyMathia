@@ -1353,17 +1353,22 @@
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空当前画布');
         return;
       }
-      if (!confirm('确定清空当前画布吗？')) return;
+      // 确认文案与清空全部同口径：回收站开着说可恢复，关着（保留 0 天）如实警告
+      const clearHint = (typeof _trashRetentionLocal === 'function' && _trashRetentionLocal() === 0)
+        ? '回收站已关闭（保留天数为 0），清空后不可恢复！'
+        : '本画布的消息会先进入回收站暂存（超过保留天数自动清除），可在侧栏「回收站」恢复。';
+      if (!confirm('确定清空当前画布吗？\n\n' + clearHint)) return;
       chatHistory = [];
       if (typeof window.resetSocraticBranch === 'function') window.resetSocraticBranch();
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
       localStorage.removeItem('phymathia_graph_' + currentSessionId);
-      await _deleteGraphStateOnServer(currentSessionId);
-      // 直接调用 DELETE 清除服务端消息
+      // 服务端清空先行（T182）：回收站捕获点在 DELETE /messages 内，必须早于
+      // 探索网快照/quiz 的前端清理，否则捕到的已是残骸（同删除画布的顺序纪律）
       try {
         await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE' });
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
+      await _deleteGraphStateOnServer(currentSessionId);
       await deleteKnowledgeBySession(currentSessionId);
       await deleteFormulasBySession(currentSessionId);
       if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(currentSessionId);
