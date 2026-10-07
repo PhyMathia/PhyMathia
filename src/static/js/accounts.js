@@ -266,9 +266,15 @@ function deleteAccountPrompt(id) {
   if (_accountsReadonlyGuard()) return;
   const name = _accountsNameOf(id);
   const isSelf = (id === ACCOUNT_ID);
-  const msg = isSelf
-    ? '确定删除当前账号「' + name + '」？\n\n该账号的全部会话、知识、公式与检测记录将一并从这台电脑上删除，不可恢复。删除后将回到「我的」账号。'
-    : '确定删除账号「' + name + '」？\n\n该账号的全部会话、知识、公式与检测记录将一并从这台电脑上删除，不可恢复。';
+  // 删账号回收站化（2026-10-07）：文案如实——保留期内可在回收站恢复；回收站
+  // 关闭（保留天数 0）时如实警告不可恢复。天数取当前账号的本地缓存（与服务端
+  // purgeAt 同源口径：发起删除的账号的保留天数）。
+  const days = (typeof _trashRetentionLocal === 'function') ? _trashRetentionLocal() : 7;
+  const fate = days > 0
+    ? '该账号的全部会话、知识、公式与检测记录将整体移入回收站，保留 ' + days + ' 天，期间可在侧栏「回收站」恢复。'
+    : '回收站已关闭（保留天数为 0），该账号的全部数据将立即彻底删除，不可恢复！';
+  const back = isSelf ? '\n\n删除后将回到「我的」账号。' : '';
+  const msg = '确定删除账号「' + name + '」？\n\n' + fate + back;
   const ok = confirm(msg);
   if (!ok) return;
   fetch('/api/accounts/delete', {
@@ -278,7 +284,10 @@ function deleteAccountPrompt(id) {
   }).then(r => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(() => {
       if (isSelf) {
-        // 删除的是当前账号：指针元键切回 default 再刷新（垫片按新指针换命名空间）
+        // 删除的是当前账号：指针元键切回 default 再刷新（垫片按新指针换命名空间）。
+        // 先立「账号已自删」标志：reload 触发的 beforeunload 冲刷信封还带着已删
+        // 账号的 account_id，服务端墓碑闸门会拦，但前端主动掐断免得白发 500
+        try { window.__phyAccountJustDeleted = true; } catch (e) {}
         try {
           _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, 'default');
           _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, _accountsNameOf('default') || '我的');
@@ -286,7 +295,7 @@ function deleteAccountPrompt(id) {
         location.reload();
         return;
       }
-      toastMsg('账号「' + name + '」已删除', 2500);
+      toastMsg('账号「' + name + '」已移入回收站，保留期内可恢复', 2500);
       renderAccountsList();
     })
     .catch(() => toastMsg('删除失败，请稍后重试', 3000));

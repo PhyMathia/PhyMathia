@@ -86,6 +86,33 @@ function _trashRowHtml(item) {
     + '</div>';
 }
 
+// 已删账号行渲染纯函数（冒烟测试直接调用）：item = {stone, id, name, deletedAt,
+// purgeAt}。stone 是墓碑目录名（恢复/彻底删除接口用），id 是账号 id（仅展示）；
+// 与画布行同款消毒与查阅态只展示口径。
+function _trashAccountRowHtml(item) {
+  if (!item || !item.stone) return '';
+  const stone = String(item.stone).replace(/[^A-Za-z0-9_-]/g, '');
+  if (!stone) return '';
+  const name = escapeHtml(String(item.name || item.id || '已删账号'));
+  const meta = [];
+  const delStr = _accountsDateStr(item.deletedAt);
+  if (delStr) meta.push('删除于 ' + delStr);
+  const left = _trashDaysLeft(item.purgeAt);
+  if (left != null) meta.push(left > 0 ? ('剩 ' + left + ' 天') : '已到期，待清除');
+  const ro = (typeof window !== 'undefined' && window.PHYMATHIA_READONLY);
+  const actions = ro ? '' : '<div class="accounts-row-actions">'
+    + '<button class="accounts-act" onclick="restoreDeletedAccount(\'' + stone + '\')">恢复</button>'
+    + '<button class="accounts-act accounts-act-danger" onclick="purgeDeletedAccount(\'' + stone + '\')">彻底删除</button>'
+    + '</div>';
+  return '<div class="accounts-row trash-account-row" data-trash-account="' + stone + '">'
+    + '<div class="accounts-row-main">'
+    + '<div class="accounts-row-name trash-row-title">' + name + '</div>'
+    + (meta.length ? '<div class="accounts-row-meta">' + meta.join(' · ') + '</div>' : '')
+    + '</div>'
+    + actions
+    + '</div>';
+}
+
 let _trashCache = null; // 最近一次拉到的站内条目（与账号面板同款缓存惯例）
 
 async function renderTrashList() {
@@ -93,11 +120,13 @@ async function renderTrashList() {
   if (!box) return;
   box.innerHTML = '<div class="accounts-row-loading">读取中…</div>';
   let retention = null;
+  let accountItems = [];
   try {
     const resp = await fetch('/api/trash');
     const data = await resp.json();
     _trashCache = (data && Array.isArray(data.items)) ? data.items : null;
     retention = data ? data.retentionDays : null;
+    accountItems = (data && Array.isArray(data.deletedAccounts)) ? data.deletedAccounts : [];
   } catch (e) {
     _trashCache = null;
   }
@@ -111,8 +140,15 @@ async function renderTrashList() {
     box.innerHTML = '<div class="accounts-row-loading">读取失败，请稍后重试</div>';
     return;
   }
-  box.innerHTML = _trashCache.map(item => _trashRowHtml(item)).join('')
-    || '<div class="accounts-row-loading">回收站是空的。删除的画布会先到这里暂存，超过保留天数自动清除。</div>';
+  // 「已删账号」小节（2026-10-07 删账号回收站化）：没有条目就不渲染标题
+  const sessionRows = _trashCache.map(item => _trashRowHtml(item)).join('');
+  const accountRows = accountItems.map(item => _trashAccountRowHtml(item)).join('');
+  const accountSection = accountRows
+    ? '<div class="trash-section-title">已删账号（保留期内可恢复）</div>' + accountRows
+    : '';
+  box.innerHTML = (sessionRows || accountSection)
+    ? sessionRows + accountSection
+    : '<div class="accounts-row-loading">回收站是空的。删除的画布会先到这里暂存，超过保留天数自动清除。</div>';
 }
 
 async function restoreTrashItem(id) {
@@ -174,9 +210,40 @@ function saveTrashRetention() {
     .catch(() => { toastMsg('设置失败，已还原', 3000); renderTrashList(); });
 }
 
+// ===== 已删账号（墓碑）：恢复 = 目录移回 + 注册表重登记，账号 id 不变 =====
+
+async function restoreDeletedAccount(stone) {
+  if (_trashReadonlyGuard()) return;
+  if (!stone) return;
+  try {
+    const resp = await fetch('/api/trash/accounts/' + encodeURIComponent(stone) + '/restore', { method: 'POST' });
+    if (!resp.ok) {
+      let msg = '恢复失败（http ' + resp.status + '）';
+      try { const d = await resp.json(); if (d && d.detail) msg = String(d.detail); } catch (e) {}
+      throw new Error(msg);
+    }
+  } catch (e) {
+    toastMsg(e && e.message ? e.message : '恢复失败，请稍后重试', 3000);
+    return;
+  }
+  toastMsg('账号已恢复，可在「账号」面板切换过去', 2500);
+  renderTrashList();
+}
+
+function purgeDeletedAccount(stone) {
+  if (_trashReadonlyGuard()) return;
+  if (!stone) return;
+  if (!confirm('彻底删除该账号的全部数据？删除后无法恢复。')) return;
+  fetch('/api/trash/accounts/' + encodeURIComponent(stone), { method: 'DELETE' })
+    .then(r => { if (!r.ok) throw new Error('http ' + r.status); })
+    .then(() => { toastMsg('已彻底删除', 2000); renderTrashList(); })
+    .catch(() => toastMsg('删除失败，请稍后重试', 3000));
+}
+
 // 冒烟测试导出（与 accounts.js 等模块的 window.* 导出惯例一致）
 if (typeof window !== 'undefined') {
   window._trashRowHtml = _trashRowHtml;
+  window._trashAccountRowHtml = _trashAccountRowHtml;
   window._trashDaysLeft = _trashDaysLeft;
   window._trashRetentionLabel = _trashRetentionLabel;
   window.openTrashPanel = openTrashPanel;
@@ -186,4 +253,6 @@ if (typeof window !== 'undefined') {
   window.purgeTrashItem = purgeTrashItem;
   window.emptyTrash = emptyTrash;
   window.saveTrashRetention = saveTrashRetention;
+  window.restoreDeletedAccount = restoreDeletedAccount;
+  window.purgeDeletedAccount = purgeDeletedAccount;
 }

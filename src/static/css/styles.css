@@ -2216,6 +2216,7 @@
     .trash-toolbar select { flex: 0 1 auto; min-width: 0; }
     .trash-empty-btn { margin-left: auto; }
     .trash-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .trash-section-title { font-size: var(--fs-sm); color: var(--text-secondary); margin: 12px 0 6px; }
 
     /* ====== 只读查阅悬浮条（P3 2026-10-07）======
        查阅他人账号时的常驻身份条：告知「在谁的space里」＋唯一出口「退出查阅」。
