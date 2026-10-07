@@ -12,10 +12,11 @@ function _continentRegionSourceLabel(source) {
 
 // 混合岛次要领域色点（岛牌主导领域徽标旁）：后端 domains[1] 概率 ≥ 0.25 才有——
 // 「多标签」的可见形态，悬停显示分布
-function _continentSecondaryDot(cluster, domainList) {
+function _continentSecondaryDot(cluster, domainList, colors) {
   const second = cluster && cluster.domains && cluster.domains[1];
   if (!second || !(Number(second.p) >= CONTINENT_CONF_LIGHT - 0.15)) return '';
-  const hue = _continentRegionHue(second.name, domainList);
+  // v8.13：色点跟海域板同源——用户改过色就吃覆盖，否则色点与海域板会两副面孔
+  const hue = _continentHueWithOverride(second.name, domainList, colors);
   return '<span class="continent-domain-dot" style="--region-h:' + hue + '"' +
     ' title="次要领域：' + _continentEsc(second.name) + '（' + Math.round(Number(second.p) * 100) + '%）"></span>';
 }
@@ -50,7 +51,12 @@ function _continentRenderLegend(regionInfo, data) {
       over +
       '<span class="continent-legend-src">' + esc(_continentRegionSourceLabel(r.source)) + '</span>' +
       (r.merged ? '' : '<button class="continent-legend-rename" data-rename="' + esc(r.key) +
-        '" title="给这片海域改个名（只改显示名，颜色与归类不变）">改名</button>') +
+        '" title="给这片海域改个名（只改显示名，颜色与归类不变）">改名</button>' +
+        '<button class="continent-legend-color" data-color="' + esc(r.key) +
+        '" title="' + (r.hueCustom
+          ? '这片海的颜色是你改过的（点开可再调，或还原默认色）'
+          : '给这片海域换个颜色（海域板/岸线/岛底/航线「跟海域色」一起变；归类与布局不变）') +
+        '">换色</button>') +
       '</li>';
   }).join('');
   const totalIslands = ((data && data.clusters) || []).length;
@@ -124,6 +130,13 @@ function _continentRenderLegend(regionInfo, data) {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       _continentRenameRegionMenu(e, btn.getAttribute('data-rename'));
+    });
+    _kact(btn);  // T143 键盘可达
+  });
+  (legend.querySelectorAll ? legend.querySelectorAll('[data-color]') : []).forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentColorRegionMenu(e, btn.getAttribute('data-color'));
     });
     _kact(btn);  // T143 键盘可达
   });
@@ -273,6 +286,144 @@ function _continentRenameRegionMenu(ev, key) {
   });
 }
 
+// 海域换色（v8.13）：图例每行「换色」的落点。色相是海域唯一的颜色旋钮——海域板、
+// 岸带岸线、岛底色、航线「跟海域色」全部由 --region-h 派生（CSS 一处写死），所以这里
+// 只调色相、不引入第二套颜色变量，也就不可能「海域板一个色、岛底另一个色」。调色盘＝
+// 内置 12 槽（与自动配色同一份色盘；已被别片海占用的槽带点标记，撞色仍允许——撞不撞
+// 用户自己定）+ 滑块给色盘外的任意色相。落笔走同一份 KV 覆盖（colors:{规范键:色相}）
+// 与同一条撤销栈；弹层**不自动关**（点着试色、背后地图即时变），「完成」或点场外收起。
+const CONTINENT_HUE_STEP = 360 / CONTINENT_HUE_COUNT;
+function _continentNormHue(hue) {
+  // 先挡 null/undefined/空串：Number(null)===0（有限数！）——否则「还原默认色」（传 null）
+  // 会被归成色相 0，复位变成换成红色系。数字 0 是合法色相，只有「没有值」才返回 null
+  if (hue === null || hue === undefined || hue === '') return null;
+  const n = Number(hue);
+  if (!Number.isFinite(n)) return null;
+  return ((Math.round(n) % 360) + 360) % 360;
+}
+function _continentColorRegionMenu(ev, key) {
+  const info = _continentRegionInfo || {};
+  const defaultHue = _continentRegionHue(key, info.domainList);
+  const table = (_continentRegionOverrides && _continentRegionOverrides.colors) || {};
+  const hasOverride = Object.prototype.hasOwnProperty.call(table, key);
+  let current = hasOverride ? _continentNormHue(table[key]) : defaultHue;
+  if (current === null || current === undefined) current = defaultHue;
+  const before = hasOverride ? current : undefined;   // 撤销栈口径：无覆盖时 before=undefined
+  const esc = _continentEsc;
+  // 槽占用：别片海（含自动配色算出来的）已经用的色相 → 槽上点一枚标记，撞色时可提示
+  const usedBy = {};
+  (info.regions || []).forEach(r => {
+    if (!r || r.key === key) return;
+    const hue = _continentNormHue(r.hue);
+    if (hue === null) return;                         // 灰档（合并区「其他」）不占槽
+    usedBy[hue] = r.name || r.key;
+  });
+  const cells = [];
+  for (let i = 0; i < CONTINENT_HUE_COUNT; i++) {
+    const hue = Math.round(i * CONTINENT_HUE_STEP) % 360;
+    const who = usedBy[hue];
+    cells.push('<button class="continent-color-cell' + (hue === current ? ' is-cur' : '') +
+      (who ? ' is-taken' : '') + '" data-cell-hue="' + hue + '" style="--cell-h:' + hue + '"' +
+      ' title="用这个色相' + (who ? '（「' + esc(who) + '」已经用它）' : '') + '"></button>');
+  }
+  const html =
+    '<div class="continent-pop-title">海域换色</div>' +
+    '<div class="continent-pop-desc">色相是这片海唯一的颜色旋钮：海域板、岸带岸线、岛底、' +
+      '航线「跟海域色」都跟着它变。归类与布局不变，写进大陆记忆；Ctrl+Z 可撤销。</div>' +
+    '<div class="continent-color-grid">' + cells.join('') + '</div>' +
+    '<div class="continent-color-row">' +
+      '<input type="range" class="continent-color-range" data-color-range min="0" max="359" step="1"' +
+        ' value="' + current + '" title="任意色相（0–359）">' +
+      '<span class="continent-color-preview" data-color-preview style="--cell-h:' + current + '"></span>' +
+      '<span class="continent-color-val" data-color-val>' + current + '°</span>' +
+    '</div>' +
+    '<div class="continent-pop-actions">' +
+      // 常驻渲染、没改过时 hidden：改完色当场就能还原，不必重开弹层（重开才出现＝白等一步）
+      '<button class="continent-pop-btn is-quiet" data-color-reset' +
+        (hasOverride ? '' : ' hidden') + '>还原默认色</button>' +
+      '<button class="continent-pop-btn" data-color-done>完成</button>' +
+    '</div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  // 弹层自己的「当前」标记/预览就地刷新：大陆重渲不碰它（弹层在 layer 上，不在图例里）
+  const paint = hue => {
+    const at = _continentNormHue(hue);
+    el.querySelectorAll('[data-cell-hue]').forEach(cell => {
+      cell.classList.toggle('is-cur', Number(cell.getAttribute('data-cell-hue')) === at);
+    });
+    const range = el.querySelector('[data-color-range]');
+    const preview = el.querySelector('[data-color-preview]');
+    const val = el.querySelector('[data-color-val]');
+    if (range) range.value = String(at);
+    if (preview) preview.style.setProperty('--cell-h', String(at));
+    if (val) val.textContent = at + '°';
+  };
+  // 「还原默认色」的可见性跟生效态走（落笔后可能从「没改过」变成「改过」，反之亦然）
+  const syncReset = () => {
+    const btn = el.querySelector('[data-color-reset]');
+    if (!btn) return;
+    const live = (_continentRegionOverrides && _continentRegionOverrides.colors) || {};
+    btn.hidden = !Object.prototype.hasOwnProperty.call(live, key);
+  };
+  const after = hue => { paint(hue); syncReset(); };
+  const pick = hue => _continentApplyRegionColor(key, hue, before, after);
+  el.querySelectorAll('[data-cell-hue]').forEach(cell => {
+    cell.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      pick(Number(cell.getAttribute('data-cell-hue')));
+    });
+    _kact(cell);  // T143 键盘可达
+  });
+  const range = el.querySelector('[data-color-range]');
+  if (range) {
+    // 拖动只刷预览（每次落笔都要重渲大陆，逐帧落笔会把拖动拖死）；松手才落笔
+    range.addEventListener('input', () => paint(Number(range.value)));
+    range.addEventListener('change', () => pick(Number(range.value)));
+  }
+  const reset = el.querySelector('[data-color-reset]');
+  if (reset) {
+    reset.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      pick(null);   // 还原＝删覆盖，回确定性色槽（不是写死一个「默认色」）
+    });
+    _kact(reset);  // T143 键盘可达
+  }
+  const done = el.querySelector('[data-color-done]');
+  if (done) {
+    done.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentClosePopover();
+    });
+    _kact(done);  // T143 键盘可达
+  }
+}
+
+// 落笔：写覆盖 → 生效 → 弹层就地回读（复位走算法回默认槽，不缓存「原色」）
+async function _continentApplyRegionColor(key, hue, before, paint) {
+  const info = _continentRegionInfo || {};
+  const at = _continentNormHue(hue);
+  const next = _continentCopyRegionOverrides();
+  if (at === null) delete next.colors[key];
+  else next.colors[key] = at;
+  try {
+    await _continentCommitRegionOverrides(next,
+      { type: 'region', kind: 'color', key: key, before: before });
+    const table = (_continentRegionOverrides && _continentRegionOverrides.colors) || {};
+    const now = Object.prototype.hasOwnProperty.call(table, key)
+      ? table[key] : _continentRegionHue(key, info.domainList);
+    if (typeof paint === 'function') paint(now);
+    // 撞色不拦（用户自己定），但说一声：别片海已经用了这个色相
+    const clash = at === null ? null
+      : ((info.regions || []).find(r => r.key !== key && _continentNormHue(r.hue) === at) || null);
+    _continentToast(at === null
+      ? '海域已还原默认色（Ctrl+Z 可撤销）'
+      : '海域已换色' + (clash ? '——和「' + (clash.name || clash.key) + '」同色了' : '') +
+        '（Ctrl+Z 可撤销）');
+  } catch (err) {
+    _continentToast('保存失败：' + (err && err.message || err));
+  }
+}
+
 // 待确认清单（低置信岛）：每行「岛名 → 最优猜测（置信度）」+ 快捷指派——「不确定也
 // 要可见」的落点，机器不确定的事交给人一锤定音。v7.1b 起，Φ 归类跑出的建议（新领域
 // 提名 / 归并组）也落在这里等确认——模型只建议，落笔权永远在用户
@@ -329,10 +480,15 @@ function _continentPendingPopover(ev) {
 
 function _continentCopyRegionOverrides() {
   const src = _continentRegionOverrides || {};
-  const renames = {}, assign = {};
+  const renames = {}, assign = {}, colors = {};
   Object.keys(src.renames || {}).forEach(k => { renames[k] = src.renames[k]; });
   Object.keys(src.assign || {}).forEach(k => { assign[k] = src.assign[k]; });
-  return { renames: renames, assign: assign };
+  // v8.13 换色：键＝规范领域键，值＝0–359 色相整数（脏值在载入与生效两端各兜一次）
+  Object.keys(src.colors || {}).forEach(k => {
+    const hue = _continentNormHue(src.colors[k]);   // 归一化只此一份（空值/脏值都当没写）
+    if (hue !== null) colors[k] = hue;
+  });
+  return { renames: renames, assign: assign, colors: colors };
 }
 
 async function _continentLoadRegionOverrides() {
@@ -341,9 +497,17 @@ async function _continentLoadRegionOverrides() {
     if (!resp.ok) return;
     const data = await resp.json();
     const v = (data && data.value) || {};
+    const rawColors = (v && typeof v.colors === 'object' && !Array.isArray(v.colors)) ? v.colors : {};
+    const colors = {};
+    Object.keys(rawColors).forEach(k => {
+      // 手改过 KV 的库也吃得下：空值/非数当没写，负数/超界取模（别把 --region-h 写成 NaN）
+      const hue = _continentNormHue(rawColors[k]);
+      if (hue !== null) colors[k] = hue;
+    });
     _continentRegionOverrides = {
       renames: (v && typeof v.renames === 'object' && !Array.isArray(v.renames)) ? v.renames : {},
       assign: (v && typeof v.assign === 'object' && !Array.isArray(v.assign)) ? v.assign : {},
+      colors: colors,
     };
   } catch (e) { /* 查空是正常路径：没写过就是空覆盖 */ }
 }
@@ -378,6 +542,10 @@ async function _continentUndoRegionOp(op) {
   } else if (op.kind === 'rename') {
     if (op.before === undefined || op.before === null) delete next.renames[op.key];
     else next.renames[op.key] = op.before;
+  } else if (op.kind === 'color') {
+    // 与改名同口径：before=undefined＝原本没覆盖（撤销=删键，回确定性色槽）
+    if (op.before === undefined || op.before === null) delete next.colors[op.key];
+    else next.colors[op.key] = op.before;
   }
   await _continentCommitRegionOverrides(next);
 }

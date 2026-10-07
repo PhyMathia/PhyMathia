@@ -4105,6 +4105,75 @@ check('graph-continent: v7.1a 海域层（分组/单岛不划地盘/待确认/�
   return true;
 });
 
+check('graph-continent: v8.13 海域换色（覆盖优先/改色不改键/脏值兜底/同源产物/图例入口）', () => {
+  const regions = sandbox._continentRegions;
+  const hueWith = sandbox._continentHueWithOverride;
+  const norm = sandbox._continentNormHue;
+  if (typeof regions !== 'function' || typeof hueWith !== 'function' || typeof norm !== 'function') {
+    throw new Error('v8.13 纯函数未暴露（regions / hueWithOverride / normHue）');
+  }
+  const cl = (sid, domain, conf, n) => ({
+    sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
+    itemCount: n, items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  const clusters = [
+    cl('v1', '矢量分析', 0.95, 3), cl('v2', '矢量分析', 0.8, 1), cl('v3', '矢量分析', 0.5, 1),
+    cl('keep', '守恒定律', 0.98, 1),
+  ];
+  const list = ['矢量分析', '守恒定律', '量子力学'];
+  // 旧库形态（没写过 colors）：色相与今天逐字节同色，不许被改色通道扰动
+  const base = regions(clusters, { renames: {}, assign: {} }, list);
+  const baseHue = base.regions[0].hue;
+  if (base.regions[0].hueCustom) throw new Error('没改过色的海域不该标 hueCustom');
+  if (Number(baseHue) !== Number(hueWith('矢量分析', list, {}))) throw new Error('无覆盖时该等于确定性色槽');
+  // 改了色：色相吃覆盖
+  const painted = regions(clusters, { renames: {}, assign: {}, colors: { '矢量分析': 210 } }, list);
+  if (painted.regions[0].hue !== 210) throw new Error('换色覆盖没生效：' + painted.regions[0].hue);
+  if (!painted.regions[0].hueCustom) throw new Error('改过色的海域该标 hueCustom');
+  // 改色不改键：分组/来源/岛集合都不动，只有色相动（颜色跟规范键走，不跟显示名走）
+  if (painted.regions[0].key !== base.regions[0].key ||
+      painted.regions[0].sessions.join() !== base.regions[0].sessions.join() ||
+      painted.singles.join() !== base.singles.join()) throw new Error('改色不该动分组/散岛');
+  const both = regions(clusters, { renames: { '矢量分析': '场论基础' }, assign: {}, colors: { '矢量分析': 210 } }, list);
+  if (both.regions[0].name !== '场论基础' || both.regions[0].hue !== 210) {
+    throw new Error('改名+换色叠加口径错（改名不该换色）');
+  }
+  // 脏值兜底：非数当没写（退回默认槽）；负数/超界归一化进 0–359
+  if (hueWith('矢量分析', list, { '矢量分析': 'abc' }) !== baseHue) throw new Error('脏色相该退回默认槽');
+  if (hueWith('矢量分析', list, null) !== baseHue) throw new Error('colors 缺席该退回默认槽');
+  if (hueWith('矢量分析', list, { '矢量分析': -30 }) !== 330) throw new Error('负色相该归一化：' + hueWith('矢量分析', list, { '矢量分析': -30 }));
+  if (hueWith('矢量分析', list, { '矢量分析': 999 }) !== 279) throw new Error('超界色相该取模：' + hueWith('矢量分析', list, { '矢量分析': 999 }));
+  if (norm('abc') !== null || norm(750) !== 30) throw new Error('色相归一化口径错');
+  // 「还原默认色」传的就是 null——Number(null)===0 会把复位写成色相 0（数字 0 才是合法色相）
+  if (norm(null) !== null || norm(undefined) !== null || norm('') !== null) {
+    throw new Error('空值必须归 null（否则复位会变成换成红色系）：' + [norm(null), norm(undefined), norm('')]);
+  }
+  if (norm(0) !== 0 || norm(359.6) !== 0) throw new Error('数字 0/取模口径错');
+  // 同源：colors 随产物带走（航线「跟海域色」与次要领域色点都从它取色，不许各算各的）
+  if (painted.colors['矢量分析'] !== 210) throw new Error('colors 没随产物带走');
+  const src = readContinentSrc();
+  if (!src.includes("op.kind === 'color'")) throw new Error('撤销栈缺 color 分支');
+  // 载入/拷贝侧必须走同一个归一化（手改过 KV 的库：null/'' 当没写、负数取模）
+  if (!src.includes('const hue = _continentNormHue(src.colors[k]);') ||
+      !src.includes('const hue = _continentNormHue(rawColors[k]);')) {
+    throw new Error('colors 载入/拷贝没走同一份归一化');
+  }
+  if (!src.includes('data-color="')) throw new Error('图例换色入口缺失');
+  if (!src.includes('function _continentColorRegionMenu')) throw new Error('换色弹层缺失');
+  if (!src.includes('_continentHueWithOverride(info.key, regionInfo.domainList, regionInfo.colors)')) {
+    throw new Error('航线「跟海域色」没吃换色覆盖（颜色会与海域板分叉）');
+  }
+  if (!src.includes('_continentSecondaryDot(cluster, data.domainList, regionInfo.colors)')) {
+    throw new Error('次要领域色点没吃换色覆盖');
+  }
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  ['.continent-legend-color', '.continent-color-cell', '.continent-color-range',
+   '.continent-color-preview', '.continent-color-cell.is-taken'].forEach(sel => {
+    if (!css.includes(sel)) throw new Error('换色样式缺失：' + sel);
+  });
+  return true;
+});
+
 check('graph-continent: v7.1b 门控（提示词契约名单固定 / 判读防御与围栏剥离 / hash 增量 / 触发不自动）', () => {
   const msgs = sandbox._continentGateMessages;
   const parse = sandbox._continentGateParse;
