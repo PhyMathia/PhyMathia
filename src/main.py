@@ -37,7 +37,7 @@ from http_client import close_http_client, get_http_client  # noqa: E402
 import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
 import usage_stats  # noqa: E402  项目根共享层：token 用量与缓存命中计量落盘
 
-from server import backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage  # noqa: F401
+from server import accounts, backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -163,6 +163,32 @@ async def _parse_json_object(request: Request) -> dict:
     return payload
 
 
+def _account_id(request: Request = None, payload: dict = None) -> str:
+    """请求的账号域：query account_id → body account_id → default。
+
+    刻意**不回退 device_id**（accounts.py 模块注释有完整论证）：现有前端只在
+    一部分请求带 device_id（quiz-stats 的 kv 写带、读不带），拿它当账号键会让
+    读写分家。P2 前端落地前所有请求都落 default 账号＝与旧行为逐字节一致。
+    """
+    if request is not None:
+        try:
+            q = request.query_params.get("account_id") or request.query_params.get("accountId")
+        except Exception:
+            q = None
+        if q:
+            return accounts.validate_account_id(q)
+    if isinstance(payload, dict):
+        v = payload.get("account_id") or payload.get("accountId")
+        if v:
+            return accounts.validate_account_id(v)
+    return accounts.DEFAULT_ACCOUNT
+
+
+def _account_paths(request: Request = None, payload: dict = None):
+    """账号域解析 + 目录确保（ensure_account 幂等，热路径有 _ENSURED 缓存）。"""
+    return accounts.ensure_account(_account_id(request, payload))
+
+
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
@@ -261,6 +287,7 @@ async def api_models_chat(request: Request):
     base_url = payload.get("base_url", "")
     stream = payload.get("stream", True)
     context_budget = resolve_context_budget(model_name)
+    account = _account_id(request, payload)
 
     if not api_key and provider not in ("opencode", "opencode-go", "llama", "local"):
         raise HTTPException(
@@ -303,7 +330,7 @@ async def api_models_chat(request: Request):
                 socratic_mode = "answer"
         if not branch_id and is_socratic_prompt:
             # 手动输入 [苏格拉底回答] 且未带分支时，自动定位最近仍在进行的苏格拉底分支
-            resolved_branch = _resolve_socratic_branch(session_id)
+            resolved_branch = _resolve_socratic_branch(session_id, account)
             if resolved_branch:
                 branch_id = resolved_branch
                 socratic_ref = resolved_branch
@@ -311,16 +338,16 @@ async def api_models_chat(request: Request):
                     branch_type = "socratic"
                 if not source_module:
                     source_module = "extend"
-        socratic_state = _read_socratic_state(socratic_ref) if socratic_ref else None
+        socratic_state = _read_socratic_state(socratic_ref, account) if socratic_ref else None
         if socratic_state and not is_socratic_prompt:
             # 非苏格拉底的新提问开始时，结束当前苏格拉底支线
-            _delete_socratic_state(socratic_ref)
+            _delete_socratic_state(socratic_ref, account)
             socratic_state = None
         include_socratic = bool(socratic_state) or is_socratic_prompt
         if socratic_state and is_socratic_prompt:
             # 延续中的闭环：用本次消息里的问题/等级刷新状态（保留连对次数与已答轮数）
             _sync_socratic_state_from_prompt(socratic_state, prompt)
-            _write_socratic_state(socratic_ref, socratic_state)
+            _write_socratic_state(socratic_ref, socratic_state, account)
 
         # quick 寒暄提示词分支已随退役门禁删除（QUICK_SYSTEM_PROMPT 同步移除）：
         # 能走到这里的 prompt 请求必带锚，只剩工作流与分支两条路径
@@ -345,7 +372,7 @@ async def api_models_chat(request: Request):
             _wf_shared, _wf_target = _workflow_context_parts(workflow_context)
             if _wf_shared:
                 context_parts.append(_wf_shared)
-        state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode) if socratic_ref and is_socratic_prompt else ""
+        state_instruction = _socratic_state_instruction(socratic_ref, socratic_mode, account=account) if socratic_ref and is_socratic_prompt else ""
         if state_instruction:
             context_parts.append(state_instruction)
 
@@ -357,14 +384,14 @@ async def api_models_chat(request: Request):
             # 部块，与当前节点全文一起构成「当前全文 + 上两代详情」——下钻时尾
             # 部本就在缓存断点之后，细节零缓存代价；兄弟分叉时该段逐字节相同。
             _upstream_block = context.tree_upstream_detail_block(
-                session_id, graph_path, source_module=source_module, branch_id=branch_id)
+                session_id, graph_path, source_module=source_module, branch_id=branch_id, account=account)
             if _upstream_block:
                 context_parts.append(_upstream_block)
             # 前缀缓存拍板（2026-09-24）：路径历史区 assistant 一律摘要（只增不
             # 改），当前聚焦节点全文改由尾部上下文块提供——工作流模块再生成的
             # 唯一全文输入也随之落在这里。
             _active_block = context.tree_active_content_block(
-                session_id, graph_path, source_module=source_module, branch_id=branch_id)
+                session_id, graph_path, source_module=source_module, branch_id=branch_id, account=account)
             if _active_block:
                 context_parts.append(_active_block)
         # 2026-09-25 线性主聊天退役：linear_active_content_block 尾部块随现役 UI
@@ -384,6 +411,7 @@ async def api_models_chat(request: Request):
             concept_text = concept.concept_context_text(
                 prompt, session_id=session_id,
                 weak_terms=(profile.profile_weak_terms(_device_id) if _device_id else None),
+                account=account,
             )
             if concept_text:
                 context_parts.append(concept_text)
@@ -394,7 +422,7 @@ async def api_models_chat(request: Request):
         # 同时把「本次实际注入了什么」随响应回传（角标不再按前端缓存重算）。
         if not workflow_context and not branch_id:
             if _device_id:
-                _profile_ctx = profile.profile_context(_device_id)
+                _profile_ctx = profile.profile_context(_device_id, account=account)
                 profile_usage = {"sections": _profile_ctx["sections"],
                                  "factCount": len(_profile_ctx["factIds"])}
                 if _profile_ctx["text"]:
@@ -417,11 +445,12 @@ async def api_models_chat(request: Request):
                 current_prompt=prompt,
                 workflow_context=workflow_context,
                 budget_tokens=context_budget,
+                account=account,
             )
             messages.extend(history)
             # 会话记忆并入上下文块首位（不再插在历史第 0 位，见
             # context.rolling_memory_block 的拍板说明）
-            memory_block = context.rolling_memory_block(session_id)
+            memory_block = context.rolling_memory_block(session_id, account)
             if memory_block:
                 context_parts.insert(0, memory_block)
 
@@ -487,7 +516,7 @@ async def api_models_chat(request: Request):
         body.update(thinking_params)
 
     if session_id and prompt:
-        _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url)
+        _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url, account=account)
 
     logger.info(f"AI proxy: {provider}/{model_name} -> POST {url}")
 
@@ -610,7 +639,7 @@ async def api_models_chat(request: Request):
                                          "chat" if prompt else "legacy",
                                          session_id or session_bucket, last_usage)
                 _log_cache_hit_rate(last_usage)
-            _update_socratic_state_from_content("".join(streamed_content), socratic_ref)
+            _update_socratic_state_from_content("".join(streamed_content), socratic_ref, account)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
@@ -778,13 +807,13 @@ async def api_usage_stats(days: int = 7):
 _summary_tasks = {}
 
 
-def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url):
+def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, base_url, account=accounts.DEFAULT_ACCOUNT):
     """长会话后台滚动记忆：不阻塞当前请求，下次提问即可用上。"""
     if not session_id:
         return
     try:
         generation = context._rolling_memory_generation(session_id)
-        due = context._rolling_summary_due(session_id)
+        due = context._rolling_summary_due(session_id, account)
     except Exception:
         return
     if not due:
@@ -793,19 +822,19 @@ def _maybe_schedule_rolling_summary(session_id, provider, api_key, model_name, b
     if key in _summary_tasks:
         return
     task = asyncio.create_task(
-        _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due, generation=generation)
+        _run_rolling_summary(session_id, provider, api_key, model_name, base_url, due, generation=generation, account=account)
     )
     _summary_tasks[key] = task
     task.add_done_callback(lambda _t, _key=key: _summary_tasks.pop(_key, None))
 
 
-async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count, generation=None):
+async def _run_rolling_summary(session_id, provider, api_key, model_name, base_url, count, generation=None, account=accounts.DEFAULT_ACCOUNT):
     try:
         if generation is None:
             generation = context._rolling_memory_generation(session_id)
         elif generation != context._rolling_memory_generation(session_id):
             return
-        snapshot = context._rolling_memory_snapshot(session_id)
+        snapshot = context._rolling_memory_snapshot(session_id, account=account)
         input_text = snapshot["text"]
         if not input_text:
             return
@@ -829,7 +858,8 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             usage_stats.record_usage(provider, model_name, "summary", session_id, data["usage"])
         content = data["choices"][0]["message"]["content"]
         if context._write_rolling_memory(session_id, content, snapshot["messageCount"],
-                                         expected_generation=generation, snapshot=snapshot):
+                                         expected_generation=generation, snapshot=snapshot,
+                                         account=account):
             logger.info("rolling memory updated: session=%s count=%d", session_id, count)
     except Exception as e:
         logger.warning("rolling memory update failed: %s", e)
@@ -837,8 +867,8 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
 
 # ====== 会话管理 API ======
 @app.get("/api/sessions")
-async def api_get_sessions():
-    return _read_json_cached(SESSIONS_PATH, {})
+async def api_get_sessions(request: Request = None):
+    return _read_json_cached(_account_paths(request).sessions_path, {})
 
 
 @app.post("/api/sessions")
@@ -891,7 +921,7 @@ async def api_save_sessions(request: Request):
         return data
 
     written = 0
-    _mutate_json(SESSIONS_PATH, updater)
+    _mutate_json(_account_paths(request, payload).sessions_path, updater)
     # count 返回实际写入条数（非法 id 被跳过的不算），与 knowledge 路由口径一致
     return {"ok": True, "count": written}
 
@@ -899,8 +929,9 @@ async def api_save_sessions(request: Request):
 @app.put("/api/sessions/{session_id}")
 async def api_update_session(session_id: str, request: Request):
     payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
     try:
-        _get_messages_path(session_id)
+        _get_messages_path(session_id, account)
     except ValueError:
         # 与 DELETE 同口径：路径 id 先过白名单，PUT 不能为任意字符串建条目
         raise HTTPException(status_code=400, detail="Invalid session id")
@@ -925,43 +956,47 @@ async def api_update_session(session_id: str, request: Request):
         data[session_id]["updatedAt"] = now
         return data
 
-    _mutate_json(SESSIONS_PATH, updater)
+    _mutate_json(_account_paths(request, payload).sessions_path, updater)
     return {"ok": True}
 
 
-def _purge_dangling_continent_edges(session_id: str) -> None:
+def _purge_dangling_continent_edges(session_id: str, account: str = accounts.DEFAULT_ACCOUNT) -> None:
     """删画布/清空画布后自动清断桥（2026-10-03 用户拍板）：端点条目已随画布消失的
     航线整条从 KV continent_edges 移除，不留死虚线。清理失败只记警告、不阻断删除
     主体（删除本身已生效，漏网的断桥下轮还能手动清）。概念单删类断桥不经这里。"""
     try:
-        raw = continent.normalize_user_edge_payload(storage.kv_read("continent_edges"))
-        kept = continent.purge_dangling_user_edges(raw, _read_json(KNOWLEDGE_PATH, {}))
+        paths = accounts.resolve_paths(account)
+        raw = continent.normalize_user_edge_payload(storage.kv_read("continent_edges", account=account))
+        kept = continent.purge_dangling_user_edges(raw, _read_json(paths.knowledge_path, {}))
         if len(kept) != len(raw):
-            storage.kv_write("continent_edges", kept)
+            storage.kv_write("continent_edges", kept, account=account)
             logger.info(f"session {session_id}: purged {len(raw) - len(kept)} dangling continent edge(s)")
     except Exception as e:  # 清理是删除的附带收益，不许让它拖垮主流程
         logger.warning(f"purge dangling continent_edges failed: {e}")
 
 
 @app.delete("/api/sessions/{session_id}")
-async def api_delete_session(session_id: str):
+async def api_delete_session(session_id: str, request: Request = None):
+    payload = {}
+    account = _account_id(request, payload)
+    paths = _account_paths(request, payload)
     try:
-        msgs_path = _get_messages_path(session_id)
+        msgs_path = _get_messages_path(session_id, account)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
     # 删除别名映射前清理摘要并推进删除代次；失败中止，不能留下旧上下文却报清除成功
-    context._delete_rolling_memory(session_id)
+    context._delete_rolling_memory(session_id, account)
 
     # 先清资料、最后删名单（09-23 真机取证：3 座「已删除的画布」孤岛全是旧顺序
     # 「先 pop 名单、后清资料」中途被打断留下的——名单没了，知识点/公式/消息/
     # KV 快照原地保留。反过来中断最多留下一座还看得见的空岛，重删一次即可）。
     # 探索网快照（data/kv/<sid>.json 整文件）此前从不清，残留会被回填脚本当作
     # 提取料把已删会话的知识点重新入库——孤岛的「复活」通道。
-    _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
-    _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
-    _purge_dangling_continent_edges(session_id)
-    _delete_socratic_state(session_id)
-    for stale in (msgs_path, KV_DIR / f"{session_id}.json"):
+    _delete_items_by_session(paths.knowledge_path, session_id)  # T146: sessionIds 感知删除
+    _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
+    _purge_dangling_continent_edges(session_id, account)
+    _delete_socratic_state(session_id, account)
+    for stale in (msgs_path, paths.kv_dir / f"{session_id}.json"):
         try:
             if stale.exists():
                 stale.unlink()
@@ -972,21 +1007,23 @@ async def api_delete_session(session_id: str):
         data.pop(session_id, None)
         return data
 
-    _mutate_json(SESSIONS_PATH, updater)
+    _mutate_json(paths.sessions_path, updater)
     return {"ok": True}
 
 
 @app.delete("/api/sessions")
-async def api_clear_all_sessions():
-    context._clear_all_rolling_memory()
-    _write_json(SESSIONS_PATH, {})
-    for f in MESSAGES_DIR.glob("*.json"):
+async def api_clear_all_sessions(request: Request = None):
+    paths = _account_paths(request)
+    account = paths.account
+    context._clear_all_rolling_memory(account)
+    _write_json(paths.sessions_path, {})
+    for f in paths.messages_dir.glob("*.json"):
         f.unlink()
-    _write_json(KNOWLEDGE_PATH, {})
-    _write_json(FORMULAS_PATH, {})
-    _write_json(KV_PATH, {})
-    if KV_DIR.exists():
-        for f in KV_DIR.glob("*.json"):
+    _write_json(paths.knowledge_path, {})
+    _write_json(paths.formulas_path, {})
+    _write_json(paths.kv_path, {})
+    if paths.kv_dir.exists():
+        for f in paths.kv_dir.glob("*.json"):
             f.unlink()
     return {"ok": True}
 
@@ -1010,17 +1047,18 @@ async def api_get_messages_batch(request: Request):
         if len(session_ids) >= 500:
             break
 
+    account = _account_id(request, payload)
     result = {}
     for sid in session_ids:
-        msgs = _read_json_cached(_get_messages_path(sid), [])
+        msgs = _read_json_cached(_get_messages_path(sid, account), [])
         result[sid] = msgs if isinstance(msgs, list) else []
     return {"messages": result}
 
 
 @app.get("/api/sessions/{session_id}/messages")
-async def api_get_messages(session_id: str):
+async def api_get_messages(session_id: str, request: Request = None):
     try:
-        path = _get_messages_path(session_id)
+        path = _get_messages_path(session_id, _account_id(request))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
     return _read_json_cached(path, [])
@@ -1048,8 +1086,9 @@ async def api_save_messages(session_id: str, request: Request):
                     msg["summary_detail"] = context.summary_detail(msg)
                 except Exception:
                     pass
+    account = _account_id(request, payload)
     try:
-        msgs_path = _get_messages_path(session_id)
+        msgs_path = _get_messages_path(session_id, account)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
 
@@ -1073,20 +1112,22 @@ async def api_save_messages(session_id: str, request: Request):
 
 
 @app.delete("/api/sessions/{session_id}/messages")
-async def api_clear_messages(session_id: str):
+async def api_clear_messages(session_id: str, request: Request = None):
+    account = _account_id(request)
+    paths = _account_paths(request)
     try:
-        msgs_path = _get_messages_path(session_id)
+        msgs_path = _get_messages_path(session_id, account)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
     # 清消息同样清滚动摘要并推进删除代次（阶段1 S1：复用会话 ID 不得吃旧记忆）
-    context._delete_rolling_memory(session_id)
+    context._delete_rolling_memory(session_id, account)
     if msgs_path.exists():
         msgs_path.unlink()
     _write_json(msgs_path, [])
-    _delete_items_by_session(KNOWLEDGE_PATH, session_id)  # T146: sessionIds 感知删除
-    _delete_items_by_session(FORMULAS_PATH, session_id)  # T146: sessionIds 感知删除
-    _purge_dangling_continent_edges(session_id)
-    _delete_socratic_state(session_id)
+    _delete_items_by_session(paths.knowledge_path, session_id)  # T146: sessionIds 感知删除
+    _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
+    _purge_dangling_continent_edges(session_id, account)
+    _delete_socratic_state(session_id, account)
     return {"ok": True}
 
 
@@ -1133,10 +1174,11 @@ def _json_get_response(request: Request, path, transform, cache_key=None):
 
 @app.get("/api/knowledge")
 async def api_get_knowledge(request: Request = None):
+    paths = _account_paths(request)
     if request is None:
         # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
-        return _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
-    return _json_get_response(request, KNOWLEDGE_PATH, _dedupe_knowledge)
+        return _dedupe_knowledge(_read_json(paths.knowledge_path, {}))
+    return _json_get_response(request, paths.knowledge_path, _dedupe_knowledge)
 
 
 def _card_vector_text(item: dict) -> str:
@@ -1202,7 +1244,7 @@ def _continent_card_sims(items: dict, accepted_families: list):
 
 
 @app.get("/api/continent")
-async def api_get_continent():
+async def api_get_continent(request: Request = None):
     """大陆投影（v1 只读 + v2 簇间边）：跨会话概念聚簇 + 共享概念 + 用户连线。
 
     聚簇与共享概念纯本地推导（无 AI 网关调用）；用户簇间边是主图自有数据
@@ -1212,10 +1254,11 @@ async def api_get_continent():
     缓存，只算新文本），词面认不出的卡也能被路由进正确海域；缺模型自动降级，
     投影退回纯词面口径。向量只进 domain* 字段（门控只路由不证明）。
     """
-    items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
-    sessions = _read_json(SESSIONS_PATH, {})
+    paths = _account_paths(request)
+    items = _dedupe_knowledge(_read_json(paths.knowledge_path, {}))
+    sessions = _read_json(paths.sessions_path, {})
     # 合并视图：主文件 + data/kv/ 会话文件（用户连线/概念族等 KV 自有数据可能已拆分）
-    kv = storage.kv_all_data()
+    kv = storage.kv_all_data(paths.account)
     user_edges = kv.get("continent_edges")
     # v6 概念族：内置表 + KV 自有扩展（用户/Φ 确认过的汇聚结果，与簇间边同级的主图数据）
     user_families = kv.get("continent_families")
@@ -1230,16 +1273,16 @@ async def api_get_continent():
 
 
 @app.get("/api/families")
-async def api_get_families():
+async def api_get_families(request: Request = None):
     """概念族表合并视图（v8 族表编辑界面用）：内置表 + KV `continent_families` 覆盖。
 
     只读；增删改走既有 KV 通道（POST /api/kv/continent_families，同名覆盖内置）。
     """
-    return family.families_view(storage.kv_all_data().get("continent_families"))
+    return family.families_view(storage.kv_all_data(_account_id(request)).get("continent_families"))
 
 
 @app.get("/api/families/suggestions")
-async def api_get_family_suggestions():
+async def api_get_family_suggestions(request: Request = None):
     """v10 语义找亲（只读）：向量给族表查漏 + 新族候选，族表弹层渲染。
 
     两类候选按构造不相交（补词管「气味指向已有族」的卡，新族候选管「哪个族都
@@ -1250,8 +1293,9 @@ async def api_get_family_suggestions():
     `continent_family_suggestions`。向量通道缺席（缺模型/缺依赖/开关关）→
     两类候选整体为空——查空是正常路径，与投影降级同一立场。
     """
-    items = _dedupe_knowledge(_read_json(KNOWLEDGE_PATH, {}))
-    kv = storage.kv_all_data()
+    paths = _account_paths(request)
+    items = _dedupe_knowledge(_read_json(paths.knowledge_path, {}))
+    kv = storage.kv_all_data(paths.account)
     accepted = family.merge_families(family.BUILTIN_FAMILIES,
                                      family.families_from_payload(kv.get("continent_families")))
     card_sims, card_vecs = await asyncio.to_thread(_continent_vectors, items, accepted)
@@ -1300,7 +1344,7 @@ async def api_save_knowledge(request: Request):
     # 删除会话后 localStorage 里的残留条目会被前端定时同步推回（本端点是纯合并，
     # 推回即复活），没有这道闸门「已删除的画布」岛删了又复活——与上面的入库
     # 闸门同一条「删得掉」保证。正常链路都是先建会话后写知识，不受影响。
-    known_sessions = set(_read_json(SESSIONS_PATH, {}).keys())
+    known_sessions = set(_read_json(_account_paths(request, payload).sessions_path, {}).keys())
     orphaned = [k for k, v in incoming.items()
                 if isinstance(v, dict) and v.get("sessionId")
                 and str(v["sessionId"]) not in known_sessions]
@@ -1320,24 +1364,25 @@ async def api_save_knowledge(request: Request):
         return data
 
     new_items = []
-    data = _mutate_json(KNOWLEDGE_PATH, updater)
+    account = _account_id(request, payload)
+    data = _mutate_json(accounts.resolve_paths(account).knowledge_path, updater)
     _device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
     if _device_id and new_items:
         events = [{"type": "extract",
                    "topic": str(it.get("topic") or it.get("concept") or "")[:60]}
                   for it in new_items if isinstance(it, dict)]
-        profile.record_implicit_event(_device_id, events)
+        profile.record_implicit_event(_device_id, events, account=account)
     return {"ok": True, "count": len(data)}
 
 
 @app.delete("/api/knowledge/{item_id}")
-async def api_delete_knowledge(item_id: str):
+async def api_delete_knowledge(item_id: str, request: Request = None):
     def updater(data):
         data = _normalize_knowledge(data)
         data.pop(item_id, None)
         return data
 
-    _mutate_json(KNOWLEDGE_PATH, updater)
+    _mutate_json(_account_paths(request).knowledge_path, updater)
     return {"ok": True}
 
 
@@ -1362,11 +1407,12 @@ async def api_get_formulas(request: Request = None, q: str = ""):
         items.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
         return {"items": items, "count": len(items)}
 
+    paths = _account_paths(request)
     if request is None:
         # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
-        return _formula_payload(_read_json(FORMULAS_PATH, {}))
-    return _json_get_response(request, FORMULAS_PATH, _formula_payload,
-                              cache_key=f"{FORMULAS_PATH}::q={q}")
+        return _formula_payload(_read_json(paths.formulas_path, {}))
+    return _json_get_response(request, paths.formulas_path, _formula_payload,
+                              cache_key=f"{paths.formulas_path}::q={q}")
 
 
 @app.post("/api/formulas")
@@ -1444,7 +1490,7 @@ async def api_save_formulas(request: Request):
             count += 1
         return data if count else None
 
-    _mutate_json(FORMULAS_PATH, updater)
+    _mutate_json(_account_paths(request, payload).formulas_path, updater)
     return {"ok": True, "count": count}
 
 
@@ -1464,17 +1510,17 @@ async def api_delete_formulas_by_session(session_id: str = ""):
             data.clear()
         return data if removed else None
 
-    _mutate_json(FORMULAS_PATH, updater)
+    _mutate_json(_account_paths(request).formulas_path, updater)
     return {"ok": True, "count": len(removed)}
 
 
 @app.delete("/api/formulas/{formula_id}")
-async def api_delete_formula(formula_id: str):
+async def api_delete_formula(formula_id: str, request: Request = None):
     def updater(data):
         data.pop(formula_id, None)
         return data
 
-    _mutate_json(FORMULAS_PATH, updater)
+    _mutate_json(_account_paths(request).formulas_path, updater)
     return {"ok": True}
 
 
@@ -1488,6 +1534,7 @@ async def api_extract_knowledge(request: Request):
     if not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages):
         # 下方按角色/内容逐条取字段，契约外形状直接 400
         raise HTTPException(status_code=400, detail="'messages' must be a list of message objects")
+    account = _account_id(request, payload)
     session_id = payload.get("sessionId", "")
     provider = payload.get("provider", "")
     api_key = payload.get("api_key", "")
@@ -1511,8 +1558,8 @@ async def api_extract_knowledge(request: Request):
                 latest_assistant.get("branchType"), "followup")
             profile.record_implicit_event(_branch_device, [{
                 "type": _branch_type,
-                "topic": profile.assign_topic(str(_branch_user or "")[:500]),
-            }])
+                "topic": profile.assign_topic(str(_branch_user or "")[:500], account=account),
+            }], account=account)
         return {"items": []}
     # 推理泄漏闸门（先于 AI/本地两条路径）：正文其实是模型的思维链时，本轮不做提取。
     # 否则「用户要求：…」这类假标题 + 系统提示词回显的假公式会进库，并顺着
@@ -1615,7 +1662,7 @@ async def api_extract_knowledge(request: Request):
             logger.info(f"Generated {len(descriptions)} formula descriptions / {len(knowledge_summaries)} knowledge summaries for session {session_id}")
 
     message_id = str(latest_assistant.get("timestamp") or "") if latest_assistant else ""
-    added = _add_formulas_from_items(items, session_id, descriptions, message_id)
+    added = _add_formulas_from_items(items, session_id, descriptions, message_id, account=account)
     if added:
         logger.info(f"Auto added {added} formulas to library")
     if device_id:
@@ -1625,13 +1672,13 @@ async def api_extract_knowledge(request: Request):
             _ask_user = next((m.get("content") for m in reversed(messages)
                               if m.get("role") == "user"), "")
             _events = [{"type": "ask",
-                        "topic": profile.assign_topic(str(_ask_user or "")[:500]),
+                        "topic": profile.assign_topic(str(_ask_user or "")[:500], account=account),
                         "len": len(str((latest_assistant or {}).get("content") or ""))}]
             for it in items:
                 if isinstance(it, dict) and it.get("formulas"):
                     _events.append({"type": "formula",
                                     "topic": str(it.get("topic") or it.get("title") or "")[:60]})
-            profile.record_implicit_event(device_id, _events)
+            profile.record_implicit_event(device_id, _events, account=account)
         except Exception as e:
             logger.warning(f"Implicit ask event failed: {e}")
 
@@ -1762,31 +1809,32 @@ async def api_parse_document(request: Request):
 # 读写经 storage.kv_* 拆分路由：graph:<sid>/harness_history:<sid> 等会话级键
 # 落到 data/kv/<sid>.json（保存单会话不再全量重写主文件），全局键走主文件。
 @app.get("/api/kv/{key}")
-async def api_get_kv(key: str):
-    return {"key": key, "value": storage.kv_read(key)}
+async def api_get_kv(key: str, request: Request = None):
+    return {"key": key, "value": storage.kv_read(key, account=_account_id(request))}
 
 
 @app.post("/api/kv/{key}")
 async def api_set_kv(key: str, request: Request):
     payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
     # 隐式画像：测验/苏格拉底作答统计写入时做新旧差分，产出逐次作答事件
     # （history 里带对错/时间戳/questionId，无需前端新增记录逻辑）
     if key == profile.QUIZ_STATS_KEY:
         _device_id = str(payload.get("device_id") or "")
         if _device_id:
             try:
-                _events = profile.quiz_stats_events(storage.kv_read(key), payload.get("value"))
+                _events = profile.quiz_stats_events(storage.kv_read(key, account=account), payload.get("value"))
                 if _events:
-                    profile.record_implicit_event(_device_id, _events)
+                    profile.record_implicit_event(_device_id, _events, account=account)
             except Exception as e:
                 logger.warning(f"Quiz stats implicit diff failed: {e}")
-    storage.kv_write(key, payload.get("value", ""))
+    storage.kv_write(key, payload.get("value", ""), account=account)
     return {"ok": True}
 
 
 @app.delete("/api/kv/{key}")
-async def api_delete_kv(key: str):
-    storage.kv_delete(key)
+async def api_delete_kv(key: str, request: Request = None):
+    storage.kv_delete(key, account=_account_id(request))
     return {"ok": True}
 
 
@@ -1826,7 +1874,7 @@ async def api_profile_event(request: Request):
     events = payload.get("events")
     if not isinstance(events, list) or not events or len(events) > 20:
         raise HTTPException(status_code=400, detail="events must be a non-empty list (≤20)")
-    recorded = profile.record_implicit_event(device_id, events)
+    recorded = profile.record_implicit_event(device_id, events, account=_account_id(request, payload))
     return {"ok": True, "recorded": bool(recorded)}
 
 
@@ -1856,8 +1904,8 @@ async def api_profile_dashboard(device_id: str = ""):
 
 
 @app.get("/api/backup/export")
-async def api_backup_export():
-    return _build_backup_payload()
+async def api_backup_export(request: Request = None):
+    return _build_backup_payload(_account_id(request))
 
 
 @app.post("/api/backup/import")
@@ -1870,7 +1918,7 @@ async def api_backup_import(request: Request):
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
     try:
-        return _restore_backup(backup, mode == "replace")
+        return _restore_backup(backup, mode == "replace", account=_account_id(request, payload))
     except HTTPException:
         raise
     except Exception as exc:
@@ -1892,7 +1940,10 @@ async def serve_static_file(filename: str, request: Request):
             return _static_file_response(request, file_path)
     raise HTTPException(status_code=404, detail="Not found")
 
-# 启动前清理历史重复知识点
+# 启动前初始化账号域（默认账号）并清理历史重复知识点：
+# ensure_account 幂等——首次启动把 data/ 根的旧全局文件整体搬进 default 账号
+# 目录（只 mv 不删，flag 防重跑），之后每请求 ensure 命中缓存零开销。
+accounts.ensure_account()
 _dedupe_knowledge_file()
 
 # ====== 启动 ======

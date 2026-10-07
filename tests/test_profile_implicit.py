@@ -230,7 +230,7 @@ def test_ensure_seeded_backfills_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(pi, "KNOWLEDGE_PATH", kb)
     # patch 的是 implicit 模块命名空间里的 kv_read 名字（from-import 绑定，patch
     # storage 模块属性不影响这里）
-    monkeypatch.setattr(pi, "kv_read", lambda key, default=None: {
+    monkeypatch.setattr(pi, "kv_read", lambda key, default=None, *a, **k: {
         "q1": {"title": "牛顿第二定律", "correct": 1, "wrong": 1,
                "history": [{"correct": True, "at": 1700000000000, "questionId": "q1"},
                            {"correct": False, "at": 1700000000000 + 86400000, "questionId": "q1"}]},

@@ -33,19 +33,24 @@ class KnowledgeEtagTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(main_mod.app)
         main_mod._json_get_cache.clear()
-        self._old_k = main_mod.KNOWLEDGE_PATH
-        self._old_f = main_mod.FORMULAS_PATH
+        # 多账号 P1：路由经 accounts.resolve_paths 读库，patch DATA_DIR 一处
+        from server import accounts as accounts_mod
+        from server import config as config_mod
+        self._config_mod = config_mod
+        self._accounts_mod = accounts_mod
+        self._orig_data_dir = config_mod.DATA_DIR
         self._td = tempfile.TemporaryDirectory()
-        self.kp = Path(self._td.name) / "knowledge.json"
-        self.fp = Path(self._td.name) / "formulas.json"
+        config_mod.DATA_DIR = Path(self._td.name)
+        accounts_mod._ENSURED.clear()
+        self.kp = Path(self._td.name) / "users" / "default" / "knowledge.json"
+        self.fp = Path(self._td.name) / "users" / "default" / "formulas.json"
+        self.kp.parent.mkdir(parents=True, exist_ok=True)
         self.kp.write_text("{}", encoding="utf-8")
         self.fp.write_text("{}", encoding="utf-8")
-        main_mod.KNOWLEDGE_PATH = self.kp
-        main_mod.FORMULAS_PATH = self.fp
 
     def tearDown(self):
-        main_mod.KNOWLEDGE_PATH = self._old_k
-        main_mod.FORMULAS_PATH = self._old_f
+        self._config_mod.DATA_DIR = self._orig_data_dir
+        self._accounts_mod._ENSURED.clear()
         main_mod._json_get_cache.clear()
         self._td.cleanup()
 

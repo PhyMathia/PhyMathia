@@ -6,11 +6,20 @@ import re
 import time
 from copy import deepcopy
 
+from . import accounts
 from . import storage
-from .config import KV_PATH
+from .accounts import DEFAULT_ACCOUNT
 from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messages_path
-from . import config as _config_mod  # 模块属性读取，测试补丁 _config_mod.KV_PATH 才能生效
 from llm_common import estimate_tokens  # 唯一实现在项目根 llm_common.py，此处转出口（import * 与测试直引都走这里）
+
+
+def _kv_path(account: str = DEFAULT_ACCOUNT):
+    """本模块各处 KV 主文件路径统一入口（按账号现算，测试 patch config.DATA_DIR 生效）。"""
+    return accounts.resolve_paths(account).kv_path
+
+
+def _sessions_path(account: str = DEFAULT_ACCOUNT):
+    return accounts.resolve_paths(account).sessions_path
 
 # ====== 上下文窗口瘦身（旧窗口装配：工作流 / 分支 / 滚动记忆共用） ======
 _CONTEXT_MAX_USER_CHARS = 4000
@@ -349,10 +358,10 @@ def _extract_parent_source(all_messages: list, parent_id: str, source_module: st
     return ""
 
 
-def _load_messages(session_id: str) -> list:
+def _load_messages(session_id: str, account: str = DEFAULT_ACCOUNT) -> list:
     """读取会话消息；真实路径走缓存，字符串/测试兼容路径回退普通读取。"""
     try:
-        messages_path = _resolve_messages_path(session_id)
+        messages_path = _resolve_messages_path(session_id, account)
     except ValueError:
         return []
     if hasattr(messages_path, "stat"):
@@ -372,7 +381,7 @@ def _rolling_memory_key(session_id: str) -> str:
     return f"{ROLLING_MEMORY_KEY_PREFIX}{session_id}"
 
 
-def _session_aliases(session_id: str) -> list:
+def _session_aliases(session_id: str, account: str = DEFAULT_ACCOUNT) -> list:
     """返回会话的精确标识列表：local id 在前，server sessionId 别名在后。
 
     消息文件只有一份（按 local id 落盘），摘要会以两种键出现——上下文加载用
@@ -380,20 +389,20 @@ def _session_aliases(session_id: str) -> list:
     id。别名关系存在 sessions.json 里，所以删除必须赶在会话条目被删之前读。
     """
     ids = [session_id]
-    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    sessions = storage._read_json(_sessions_path(account), {})
     entry = sessions.get(session_id) if isinstance(sessions, dict) else None
     alias = entry.get("sessionId") if isinstance(entry, dict) else None
     if isinstance(alias, str) and alias and alias not in ids:
         # 直接消息文件优先，其次按 sessions 顺序解析别名；冲突时不误删别人的摘要。
         try:
-            if storage._resolve_messages_path(alias) == storage._get_messages_path(session_id):
+            if storage._resolve_messages_path(alias, account) == storage._get_messages_path(session_id, account):
                 ids.append(alias)
         except ValueError:
             pass
     return ids
 
 
-def _memory_owner(session_id: str) -> str:
+def _memory_owner(session_id: str, account: str = DEFAULT_ACCOUNT) -> str:
     """记忆归属：能唯一证明时返回该会话的 local id，证明不了返回空串。
 
     写入时把归属记进记录里，删除会话时即使 sessions.json 的别名映射已经丢失
@@ -402,7 +411,7 @@ def _memory_owner(session_id: str) -> str:
     """
     if not session_id:
         return ""
-    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    sessions = storage._read_json(_sessions_path(account), {})
     if not isinstance(sessions, dict):
         return ""
     if session_id in sessions:
@@ -412,7 +421,7 @@ def _memory_owner(session_id: str) -> str:
     return owners[0] if len(owners) == 1 else ""
 
 
-def _orphan_memory_keys(data: dict, ids: list, owner: str) -> list:
+def _orphan_memory_keys(data: dict, ids: list, owner: str, account: str = DEFAULT_ACCOUNT) -> list:
     """按记录里的 owner 找回「别名已从 sessions.json 消失」的记忆键。
 
     只清理能证明不再属于别人的键：本身是活跃会话键、自己有消息文件、或仍有会话
@@ -421,7 +430,7 @@ def _orphan_memory_keys(data: dict, ids: list, owner: str) -> list:
     """
     if not owner:
         return []
-    sessions = storage._read_json(storage.SESSIONS_PATH, {})
+    sessions = storage._read_json(_sessions_path(account), {})
     live = set(sessions) if isinstance(sessions, dict) else set()
     claimed = {e.get("sessionId") for e in sessions.values() if isinstance(e, dict)}
     known = {_rolling_memory_key(sid) for sid in ids}
@@ -435,7 +444,7 @@ def _orphan_memory_keys(data: dict, ids: list, owner: str) -> list:
         if alias in live or alias in claimed:
             continue
         try:
-            if storage._get_messages_path(alias).exists():
+            if storage._get_messages_path(alias, account).exists():
                 continue
         except ValueError:
             continue
@@ -443,15 +452,15 @@ def _orphan_memory_keys(data: dict, ids: list, owner: str) -> list:
     return found
 
 
-def _read_rolling_memory(session_id: str):
+def _read_rolling_memory(session_id: str, account: str = DEFAULT_ACCOUNT):
     if not session_id:
         return None
-    data = _read_json(_config_mod.KV_PATH, {})
+    data = _read_json(_kv_path(account), {})
     if not isinstance(data, dict):
         return None
     # 摘要会以 local id 或 server sessionId 两种键出现（见 _session_aliases）：
     # 读侧按同一归属列表回退，避免上下文加载与写入用了不同键时读不到。
-    for key in _session_aliases(session_id):
+    for key in _session_aliases(session_id, account):
         mem = data.get(_rolling_memory_key(key))
         if isinstance(mem, dict) and mem.get("summary"):
             return mem
@@ -470,11 +479,12 @@ def _rolling_memory_generation(session_id: str) -> tuple:
 
 
 def _write_rolling_memory(session_id: str, summary: str, message_count: int,
-                          *, expected_generation=None, snapshot=None) -> bool:
+                          *, expected_generation=None, snapshot=None,
+                          account: str = DEFAULT_ACCOUNT) -> bool:
     """删除代次校验与写入共用 JSON 锁；返回是否实际写入。"""
     if not session_id or not summary:
         return False
-    owner = _memory_owner(session_id)
+    owner = _memory_owner(session_id, account)
 
     def updater(data):
         data[_rolling_memory_key(session_id)] = {
@@ -493,7 +503,7 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
                 and expected_generation != _rolling_memory_generation(session_id)):
             return False
         if snapshot is None:
-            snapshot = _rolling_memory_snapshot(session_id, message_count=message_count)
+            snapshot = _rolling_memory_snapshot(session_id, message_count=message_count, account=account)
             if not snapshot["messageCount"]:
                 def write_legacy(data):
                     data[_rolling_memory_key(session_id)] = {
@@ -503,22 +513,22 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
                         "updatedAt": int(time.time() * 1000),
                     }
                     return data
-                _mutate_json(_config_mod.KV_PATH, write_legacy)
+                _mutate_json(_kv_path(account), write_legacy)
                 return True
-        messages = _load_messages(session_id)
+        messages = _load_messages(session_id, account)
         # 拒绝条件按「哪些变化会让这次摘要失效」定：整段历史被截断（位置信息作废，
         # 下次重算）或覆盖区被改写（会把过期内容写进记忆）才拒绝；尾部新增或编辑
         # 不影响已覆盖内容，不该丢掉这次（已经付费换来的）摘要。
         covered = int(snapshot.get("coveredMessageCount") or 0)
         if (len(messages) < snapshot["messageCount"]
                 or _rolling_prefix(messages[:covered]) != snapshot["coveredPrefix"]
-                or _read_rolling_memory(session_id) != snapshot["baseMemory"]):
+                or _read_rolling_memory(session_id, account) != snapshot["baseMemory"]):
             return False
-        _mutate_json(_config_mod.KV_PATH, updater)
+        _mutate_json(_kv_path(account), updater)
         return True
 
 
-def _delete_rolling_memory(session_id: str) -> None:
+def _delete_rolling_memory(session_id: str, account: str = DEFAULT_ACCOUNT) -> None:
     """在删除会话映射/消息前调用，清理该会话的精确键与归属它的记忆。
 
     除了 sessions.json 仍能证明的别名，还按记录里的 owner 找回映射已丢失的别名键，
@@ -527,13 +537,13 @@ def _delete_rolling_memory(session_id: str) -> None:
     if not session_id:
         return
     with storage._JSON_LOCK:
-        ids = _session_aliases(session_id)
+        ids = _session_aliases(session_id, account)
         for sid in ids:
             _rolling_memory_generations[sid] = _rolling_memory_generations.get(sid, 0) + 1
 
         def updater(data):
             present = [key for key in (_rolling_memory_key(sid) for sid in ids) if key in data]
-            orphans = [key for key in _orphan_memory_keys(data, ids, session_id) if key not in present]
+            orphans = [key for key in _orphan_memory_keys(data, ids, session_id, account) if key not in present]
             if not present and not orphans:
                 return None  # 该会话没有记忆：不重写文件
             for key in present + orphans:
@@ -543,10 +553,10 @@ def _delete_rolling_memory(session_id: str) -> None:
                 _rolling_memory_generations[alias] = _rolling_memory_generations.get(alias, 0) + 1
             return data
 
-        _mutate_json(_config_mod.KV_PATH, updater)
+        _mutate_json(_kv_path(account), updater)
 
 
-def _clear_all_rolling_memory() -> None:
+def _clear_all_rolling_memory(account: str = DEFAULT_ACCOUNT) -> None:
     """全局代次推进，使所有旧任务失效；后续清空整个 KV 也不会重置代次。"""
     global _rolling_memory_epoch
     with storage._JSON_LOCK:
@@ -557,18 +567,18 @@ def _clear_all_rolling_memory() -> None:
             return {key: value for key, value in data.items()
                     if not key.startswith(ROLLING_MEMORY_KEY_PREFIX)}
 
-        _mutate_json(_config_mod.KV_PATH, updater)
+        _mutate_json(_kv_path(account), updater)
 
 
-def _rolling_summary_due(session_id: str) -> int:
+def _rolling_summary_due(session_id: str, account: str = DEFAULT_ACCOUNT) -> int:
     """返回需要生成/刷新滚动记忆时的当前消息数；不需要返回 0。"""
     if not session_id:
         return 0
-    messages = _load_messages(session_id)
+    messages = _load_messages(session_id, account)
     count = len(messages)
     if count < ROLLING_MEMORY_TRIGGER_MESSAGES:
         return 0
-    mem = _read_rolling_memory(session_id)
+    mem = _read_rolling_memory(session_id, account)
     if not mem:
         return count
     cursor = mem.get("coveredMessageCount")
@@ -585,12 +595,13 @@ def _rolling_prefix(messages: list) -> str:
     return hashlib.sha256(json.dumps(messages, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _rolling_memory_snapshot(session_id: str, max_old_pairs: int = 6, message_count=None) -> dict:
+def _rolling_memory_snapshot(session_id: str, max_old_pairs: int = 6, message_count=None,
+                             account: str = DEFAULT_ACCOUNT) -> dict:
     with storage._JSON_LOCK:
-        messages = deepcopy(_load_messages(session_id))
+        messages = deepcopy(_load_messages(session_id, account))
         if message_count is not None:
             messages = messages[:max(0, int(message_count))]
-        mem = deepcopy(_read_rolling_memory(session_id))
+        mem = deepcopy(_read_rolling_memory(session_id, account))
     count = len(messages)
     starts = [i for i, m in enumerate(messages)
               if m.get("role") == "user" and not _is_socratic_message(m)]
@@ -622,11 +633,12 @@ def _rolling_memory_snapshot(session_id: str, max_old_pairs: int = 6, message_co
             "backlog": used < end}
 
 
-def _rolling_memory_input(session_id: str, max_old_pairs: int = 6) -> str:
-    return _rolling_memory_snapshot(session_id, max_old_pairs)["text"]
+def _rolling_memory_input(session_id: str, max_old_pairs: int = 6,
+                          account: str = DEFAULT_ACCOUNT) -> str:
+    return _rolling_memory_snapshot(session_id, max_old_pairs, account=account)["text"]
 
 
-def rolling_memory_block(session_id: str) -> str:
+def rolling_memory_block(session_id: str, account: str = DEFAULT_ACCOUNT) -> str:
     """滚动会话记忆的注入文本（无记忆时返回空串）。
 
     前缀缓存拍板（2026-09-21）：记忆不再 insert 进历史第 0 位——它站在整个
@@ -635,7 +647,7 @@ def rolling_memory_block(session_id: str) -> str:
     历史之后的上下文块、拼进最后一条 user 消息头部；「注入后第二刀收缩」
     也随之取消，预算收缩只剩一刀。
     """
-    mem = _read_rolling_memory(session_id)
+    mem = _read_rolling_memory(session_id, account)
     if not mem:
         return ""
     return "（会话记忆）" + str(mem.get("summary") or "")[:ROLLING_MEMORY_MAX_CHARS]
@@ -653,6 +665,7 @@ def _load_session_context(
     current_prompt: str = "",
     workflow_context: dict = None,
     budget_tokens: int = 0,
+    account: str = DEFAULT_ACCOUNT,
 ) -> list:
     """加载会话上下文消息，支持探索网分支隔离。
 
@@ -660,7 +673,7 @@ def _load_session_context(
     父回答中聚焦模块的内容，以及该分支自己的消息链。
     budget_tokens > 0 时按 token 预算收缩（保留最后一条消息）。
     """
-    all_messages = _load_messages(session_id)
+    all_messages = _load_messages(session_id, account)
     if not all_messages:
         return []
     if graph_path:
@@ -673,6 +686,7 @@ def _load_session_context(
             current_prompt=current_prompt,
             workflow_context=workflow_context,
             budget_tokens=budget_tokens,
+            account=account,
         )
     if not branch_id:
         # 2026-09-25 线性主聊天退役（前缀缓存拍板的追加式历史区随现役 UI 的
@@ -935,8 +949,9 @@ def _load_session_context_from_path(
     current_prompt: str = "",
     workflow_context: dict = None,
     budget_tokens: int = 0,
+    account: str = DEFAULT_ACCOUNT,
 ) -> list:
-    all_messages = _load_messages(session_id)
+    all_messages = _load_messages(session_id, account)
     if not all_messages or not graph_path:
         return []
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
@@ -998,6 +1013,7 @@ def tree_active_content_block(
     graph_path: list,
     source_module: str = "",
     branch_id: str = "",
+    account: str = DEFAULT_ACCOUNT,
 ) -> str:
     """当前聚焦节点的模块全文，作为尾部上下文块的参考资料段（无内容返回空串）。
 
@@ -1009,7 +1025,7 @@ def tree_active_content_block(
     """
     if not graph_path:
         return ""
-    all_messages = _load_messages(session_id)
+    all_messages = _load_messages(session_id, account)
     if not all_messages:
         return ""
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
@@ -1068,6 +1084,7 @@ def tree_upstream_detail_block(
     graph_path: list,
     source_module: str = "",
     branch_id: str = "",
+    account: str = DEFAULT_ACCOUNT,
 ) -> str:
     """三代窗的上游两代详摘要段（尾部上下文块用，无 assistant 上游返回空串）。
 
@@ -1079,7 +1096,7 @@ def tree_upstream_detail_block(
     前缀反而变长。user 祖先不进本段（历史区已是全文）。"""
     if not graph_path or len(graph_path) < 2:
         return ""
-    all_messages = _load_messages(session_id)
+    all_messages = _load_messages(session_id, account)
     if not all_messages:
         return ""
     by_ts = {str(msg.get("timestamp") or ""): msg for msg in all_messages}
@@ -1155,10 +1172,10 @@ def _socratic_branch_prefixes(session_raw: str) -> list:
     return prefixes
 
 
-def _read_socratic_state(ref: str):
+def _read_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT):
     # 纯读：过期状态的清理由 _resolve_socratic_branch / 显式删除负责，
     # 读路径不做写副作用
-    data = _read_json(KV_PATH, {})
+    data = _read_json(_kv_path(account), {})
     state = data.get(_socratic_key(ref))
     if isinstance(state, dict) and state.get("active"):
         if _socratic_state_expired(state):
@@ -1167,7 +1184,7 @@ def _read_socratic_state(ref: str):
     return None
 
 
-def _write_socratic_state(ref: str, state) -> None:
+def _write_socratic_state(ref: str, state, account: str = DEFAULT_ACCOUNT) -> None:
     def updater(data):
         if state is None:
             data.pop(_socratic_key(ref), None)
@@ -1176,10 +1193,10 @@ def _write_socratic_state(ref: str, state) -> None:
             data[_socratic_key(ref)] = state
         return data
 
-    _mutate_json(KV_PATH, updater)
+    _mutate_json(_kv_path(account), updater)
 
 
-def _delete_socratic_state(ref: str) -> None:
+def _delete_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT) -> None:
     """删除指定会话/分支的苏格拉底状态。
 
     兼容三种 key：
@@ -1202,10 +1219,10 @@ def _delete_socratic_state(ref: str) -> None:
             data.pop(key, None)
         return data
 
-    _mutate_json(KV_PATH, updater)
+    _mutate_json(_kv_path(account), updater)
 
 
-def _resolve_socratic_branch(session_id: str) -> str:
+def _resolve_socratic_branch(session_id: str, account: str = DEFAULT_ACCOUNT) -> str:
     """手动输入 [苏格拉底回答] 且未带分支时，定位最近仍在进行的苏格拉底分支。
 
     优先使用 KV 中该会话最新的活动分支状态；没有活动状态时，回退到消息里
@@ -1213,7 +1230,7 @@ def _resolve_socratic_branch(session_id: str) -> str:
     """
     if not session_id:
         return ""
-    data = _read_json(KV_PATH, {})
+    data = _read_json(_kv_path(account), {})
     prefixes = _socratic_branch_prefixes(session_id)
     best_ref = ""
     # 秒/毫秒混存时按归一化秒比较（占位值与非法值归一化为 0，用原始值打平手，
@@ -1238,10 +1255,10 @@ def _resolve_socratic_branch(session_id: str) -> str:
             for k in expired_keys:
                 d.pop(k, None)
             return d
-        _mutate_json(KV_PATH, updater)
+        _mutate_json(_kv_path(account), updater)
     if best_ref:
         return best_ref
-    messages = _load_messages(session_id)
+    messages = _load_messages(session_id, account)
     for msg in reversed(messages):
         if msg.get("role") == "user" and _is_socratic_message(msg):
             bid = str(msg.get("branchId") or "")
@@ -1250,8 +1267,9 @@ def _resolve_socratic_branch(session_id: str) -> str:
     return ""
 
 
-def _socratic_state_instruction(ref: str, mode: str = "answer") -> str:
-    state = _read_socratic_state(ref)
+def _socratic_state_instruction(ref: str, mode: str = "answer",
+                               account: str = DEFAULT_ACCOUNT) -> str:
+    state = _read_socratic_state(ref, account)
     if not state:
         return ""
     level = state.get("level", "") or "basic"
@@ -1306,7 +1324,8 @@ def _sync_socratic_state_from_prompt(state: dict, prompt: str) -> None:
         state["lastConfidence"] = confidence_match.group(1)
 
 
-def _update_socratic_state_from_content(content: str, ref: str) -> None:
+def _update_socratic_state_from_content(content: str, ref: str,
+                                        account: str = DEFAULT_ACCOUNT) -> None:
     """解析模型输出的 <socratic_meta>，更新或结束分支级追问状态。"""
     if not content or not ref:
         return
@@ -1323,7 +1342,7 @@ def _update_socratic_state_from_content(content: str, ref: str) -> None:
 
     correct = attr("correct", "").strip().lower()
     done = attr("done", "").strip().lower() in ("1", "true", "yes")
-    state = _read_socratic_state(ref) or {
+    state = _read_socratic_state(ref, account) or {
         "active": True,
         "level": "",
         "question": "",
@@ -1339,9 +1358,9 @@ def _update_socratic_state_from_content(content: str, ref: str) -> None:
     state["answeredCount"] = int(state.get("answeredCount", 0) or 0) + 1
 
     if done or int(state.get("correctStreak", 0) or 0) >= 2:
-        _delete_socratic_state(ref)
+        _delete_socratic_state(ref, account)
     else:
-        _write_socratic_state(ref, state)
+        _write_socratic_state(ref, state, account)
 
 
 

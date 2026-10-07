@@ -14,13 +14,13 @@ import usage_stats  # 项目根共享层：token 用量与缓存命中计量落�
 
 from .config import (
     AI_PROVIDERS,
-    FORMULAS_PATH,
-    KNOWLEDGE_PATH,
     LEVEL_PROMPTS,
     OPENCODE_DEFAULT_API_KEY,
     resolve_api_key,
     validate_model_target,
 )
+from . import accounts
+from .accounts import DEFAULT_ACCOUNT
 from .context import _is_socratic_followup
 from .prompts import DESCRIBE_PROMPT, EXTRACT_PROMPT
 from .storage import _mutate_json
@@ -417,11 +417,11 @@ def _dedupe_knowledge(data) -> dict:
     return data
 
 
-def _dedupe_knowledge_file() -> None:
+def _dedupe_knowledge_file(account: str = DEFAULT_ACCOUNT) -> None:
     def updater(data):
         return _dedupe_knowledge(data)
 
-    _mutate_json(KNOWLEDGE_PATH, updater)
+    _mutate_json(accounts.resolve_paths(account).knowledge_path, updater)
 
 
 def _pick_knowledge_title(titles: list, content: str) -> str:
@@ -779,7 +779,8 @@ def _formula_module_key(item: dict, formula: str) -> str:
 
 
 
-def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None, message_id: str = "") -> int:
+def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = None, message_id: str = "",
+                             account: str = DEFAULT_ACCOUNT) -> int:
     """将提取出的公式自动写入公式库，返回新增数量；descriptions 为 {latex: 简要描述}"""
     if not items:
         return 0
@@ -855,7 +856,7 @@ def _add_formulas_from_items(items: list, session_id: str, descriptions: dict = 
         # T146：写入路径顺手做一次全局去重（跨会话旧重复在第一次新写入时收敛）
         return _dedupe_formula_map(data) if count or changed else None
 
-    _mutate_json(FORMULAS_PATH, updater)
+    _mutate_json(accounts.resolve_paths(account).formulas_path, updater)
     return count
 
 

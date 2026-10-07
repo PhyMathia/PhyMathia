@@ -185,6 +185,8 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
         snapshot["user_profile"] = digest
     return {
         "snapshot": snapshot,
+        # 多账号 P1：知识检索读哪个账号的知识库（缺省 default，旧前端零影响）
+        "account": str(payload.get("account_id") or payload.get("accountId") or "default") or "default",
         "instruction": payload.get("instruction", ""),
         "model": payload.get("model"),
         "max_tokens": int(payload.get("max_tokens") or 4000),

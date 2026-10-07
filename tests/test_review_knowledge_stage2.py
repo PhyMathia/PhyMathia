@@ -32,7 +32,8 @@ def no_network(*a, **k):
     raise AssertionError('network is forbidden in E review')
 socket.socket.connect = no_network
 import main
-from server import knowledge, storage, concept, continent
+from server import accounts, knowledge, storage, concept, continent
+P = accounts.resolve_paths('default')   # 多账号 P1：账号域数据根
 class Request:
     # 不能用 self.body 存数据——会遮蔽 body() 方法（_parse_json_object 现在调它）
     def __init__(self, body): self._body = body
@@ -40,7 +41,7 @@ class Request:
     async def body(self): return json.dumps(self._body).encode('utf-8')
 async def run():
     sid = 'sess_review_e'
-    storage._write_json(main.SESSIONS_PATH, {sid: {'id': sid, 'title': 'E 复审'}})
+    storage._write_json(P.sessions_path, {sid: {'id': sid, 'title': 'E 复审'}})
     msgs = [{'role':'user','content':'胡克定律'},
             {'role':'assistant','timestamp':1,'content':'# 胡克定律\n<physics><formula>F=-kx</formula></physics><summary>弹簧回复力</summary>'}]
     result = await main.api_extract_knowledge(Request({'messages':msgs,'sessionId':sid}))
@@ -54,10 +55,10 @@ async def run():
     manual = dict(item, summary='人工核实的摘要', summarySource='manual', formulas=['$F=-kx$', '$E=kx^2/2$'])
     await main.api_save_knowledge(Request({'items':{'k':manual}}))
     await main.api_save_knowledge(Request({'items':{'k':item}}))
-    saved = storage._read_json(main.KNOWLEDGE_PATH, {})['k']
+    saved = storage._read_json(P.knowledge_path, {})['k']
     after = await main.api_get_continent()
     await main.api_save_formulas(Request({'items':[{'id':'prose','latex':'能量守恒','sessionId':sid}]}))
-    prose = storage._read_json(main.FORMULAS_PATH, {}).get('prose')
+    prose = storage._read_json(P.formulas_path, {}).get('prose')
     print(json.dumps({'baseline':baseline, 'saved':saved,
         'projectedSummary':after['clusters'][0]['items'][0]['summary'],
         'prose':prose}, ensure_ascii=False))

@@ -15,7 +15,8 @@
 import re
 
 from llm_common import estimate_tokens
-from .config import KNOWLEDGE_PATH, KV_PATH
+from . import accounts
+from .accounts import DEFAULT_ACCOUNT
 from .family import apply_aliases
 from .knowledge import _formula_key
 from .storage import _read_json_cached, kv_read
@@ -347,13 +348,13 @@ def _graph_state_keys(session_id: str) -> list:
     return keys
 
 
-def explicit_pairs(session_id: str, kv_path=None) -> list:
+def explicit_pairs(session_id: str, kv_path=None, account: str = DEFAULT_ACCOUNT) -> list:
     """画布显式边：两端都是知识点节点、且用户手工连了联系线的 (item_id, item_id, relation)。
 
     知识点条目的 nodeId 多数挂在模块气泡上（模块↔知识点不是「先导」关系），
     因此只有 `knowledgeKey`/`knowledge-custom-*` 这类真正的知识点节点才参与判定。
     """
-    kv = _read_json_cached(kv_path or KV_PATH, {}) or {}
+    kv = _read_json_cached(kv_path or accounts.resolve_paths(account).kv_path, {}) or {}
     state = None
     for key in _graph_state_keys(session_id):
         candidate = kv.get(key)
@@ -571,7 +572,7 @@ def _trim_to_budget(text: str) -> str:
 
 def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
                          kv_path=None, allow_cross_session: bool = True,
-                         weak_terms=None) -> str:
+                         weak_terms=None, account: str = DEFAULT_ACCOUNT) -> str:
     """主入口：问题 → 概念地基段。无命中返回空串（调用方追加空串即零回归）。
 
     `.env` 的 PHYMATHIA_CONCEPT_SCOPE=same_session 可把检索范围收窄到当前会话
@@ -583,7 +584,7 @@ def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
         return ""
     if allow_cross_session and not _env_scope_allows_cross():
         allow_cross_session = False
-    store = _read_json_cached(KNOWLEDGE_PATH, {}) if items is None else items
+    store = _read_json_cached(accounts.resolve_paths(account).knowledge_path, {}) if items is None else items
     if not isinstance(store, dict) or not store:
         return ""
     refs = match_concepts(
@@ -594,7 +595,7 @@ def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
         return ""
     data = build_grounding(
         store, refs, session_id=session_id,
-        pairs=explicit_pairs(session_id, kv_path=kv_path),
+        pairs=explicit_pairs(session_id, kv_path=kv_path, account=account),
         allow_cross_session=allow_cross_session,
     )
     return _trim_to_budget(render_concept_grounding(data))
