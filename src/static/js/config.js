@@ -302,7 +302,10 @@ const UI_ICON_SVG = {
   play: makeLineIcon('<path d="M7 4.8v14.4L19 12z"></path>'),
   stop: makeLineIcon('<rect x="6.5" y="6.5" width="11" height="11" rx="1.6" fill="currentColor" stroke="none"></rect>'),
   // 知识面板「手动收藏」来源标记——线稿五角星，与 sparkles（AI 提取）在轮廓上区分得开
-  star: makeLineIcon('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"></path>')
+  star: makeLineIcon('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"></path>'),
+  // 地球＝知识大陆（与 header 大陆按钮同线稿）；人形＝多账号（2026-10-07 引导更新）
+  globe: makeLineIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse>'),
+  user: makeLineIcon('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,
