@@ -28,11 +28,22 @@ from server import config as config_mod  # noqa: E402
 
 @pytest.fixture
 def acc_env(tmp_path, monkeypatch):
-    """DATA_DIR 指向临时目录 + 清 ensure 缓存（与 test_accounts 同款）。"""
+    """DATA_DIR 指向临时目录 + 清 ensure/注册表缓存（与 test_accounts 同款）。"""
     monkeypatch.setattr(config_mod, "DATA_DIR", tmp_path)
     accounts._ENSURED.clear()
+    accounts._REGISTRY_CACHE["key"] = None
+    accounts._REGISTRY_CACHE["entries"] = {}
     yield tmp_path
     accounts._ENSURED.clear()
+    accounts._REGISTRY_CACHE["key"] = None
+    accounts._REGISTRY_CACHE["entries"] = {}
+
+
+def _make(account, name=None):
+    """建账号的显式两步（2026-10-07 T186 起 ensure_account 不再自动登记非
+    default 账号）：先登记再 ensure，与生产路径（POST /api/accounts）同序同果。"""
+    accounts.register_account(account, name=name)
+    return accounts.ensure_account(account, name=name)
 
 
 def _paths(account="default"):
@@ -368,8 +379,8 @@ def test_purge_item_single(acc_env):
 # ====== 账号域 ======
 
 def test_trash_is_per_account(acc_env):
-    accounts.ensure_account("alice")
-    accounts.ensure_account("bob")
+    _make("alice")
+    _make("bob")
     _seed_session(account="alice")
     assert trash.capture_session(_paths("alice"), "sess_aaa") is True
     alice = trash.list_items(_paths("alice"))
@@ -385,12 +396,12 @@ def test_trash_is_per_account(acc_env):
 def test_retention_default_seven(acc_env):
     accounts.ensure_account("default")
     assert trash.retention_days("default") == 7
-    accounts.ensure_account("alice")
+    _make("alice")
     assert trash.retention_days("alice") == 7
 
 
 def test_retention_set_and_validate(acc_env):
-    accounts.ensure_account("alice")
+    _make("alice")
     assert trash.set_retention_days("alice", 30) == 30
     assert trash.retention_days("alice") == 30
     assert trash.set_retention_days("alice", "3") == 3  # 字符串整数也收（表单友好）
@@ -421,7 +432,7 @@ def _client():
 
 def test_route_delete_goes_to_trash_and_restores(acc_env):
     _seed_session(account="alice")
-    accounts.ensure_account("alice")
+    _make("alice")
     with _client() as client:
         # 删除（走原路由）→ 进回收站而非消失
         r = client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"})
@@ -445,8 +456,8 @@ def test_route_delete_goes_to_trash_and_restores(acc_env):
 
 def test_route_trash_is_account_scoped(acc_env):
     _seed_session(account="alice")
-    accounts.ensure_account("alice")
-    accounts.ensure_account("bob")
+    _make("alice")
+    _make("bob")
     with _client() as client:
         client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"})
         assert client.get("/api/trash").json()["items"] == []  # default 看不见 alice 的回收站
@@ -475,7 +486,7 @@ def test_route_trash_readonly_gate(acc_env):
 
 def test_route_purge_and_404(acc_env):
     _seed_session(account="alice")
-    accounts.ensure_account("alice")
+    _make("alice")
     with _client() as client:
         client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"})
         assert client.delete("/api/trash/sess_aaa", params={"account_id": "alice"}).json()["ok"] is True
@@ -489,7 +500,7 @@ def test_route_delete_formulas_by_session_no_name_error(acc_env):
     """回归钉子（2026-10-07 真机抓出）：P1 账号参数化漏改了本路由签名，
     函数体引用 request 而 signature 没有它——删画布的公式清理一直 500 静默失败。"""
     _seed_session(account="alice")
-    accounts.ensure_account("alice")
+    _make("alice")
     with _client() as client:
         r = client.delete("/api/formulas", params={"session_id": "sess_aaa", "account_id": "alice"})
         assert r.status_code == 200, r.text
@@ -499,7 +510,7 @@ def test_route_delete_formulas_by_session_no_name_error(acc_env):
 def test_route_clear_messages_goes_to_trash_and_restores(acc_env):
     """清空单画布消息（T182）端到端：路由捕获→按 key（目录名）寻址恢复→消息回画布。"""
     _seed_session(account="alice")
-    accounts.ensure_account("alice")
+    _make("alice")
     with _client() as client:
         r = client.delete("/api/sessions/sess_aaa/messages", params={"account_id": "alice"})
         assert r.status_code == 200 and r.json()["ok"] is True
@@ -527,7 +538,7 @@ def test_account_tombstone_roundtrip_with_own_trash(acc_env):
     """删账号→墓碑（meta 最后落盘＝完整标志、数据随行、账号自己的 trash/
     子目录一并入墓）→恢复→数据与注册表条目原样回归。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("kate")
+    _make("kate")
     k = accounts.resolve_paths("kate")
     k.kv_dir.mkdir(parents=True, exist_ok=True)
     storage._write_json(k.sessions_path, {"sess_x": {"id": "sess_x", "title": "凯特的画布"}})
@@ -558,8 +569,8 @@ def test_account_tombstone_roundtrip_with_own_trash(acc_env):
 def test_account_tombstone_list_shape(acc_env):
     """列表带 stone（墓碑目录名，接口用）与 id（账号 id），新删在前。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("leo")
-    accounts.ensure_account("mary")
+    _make("leo")
+    _make("mary")
     s1 = trash.capture_account("leo", accounts.get_account("leo"), 7)
     s2 = trash.capture_account("mary", accounts.get_account("mary"), 7)
     assert {it["id"] for it in trash.list_account_tombstones()} == {"leo", "mary"}
@@ -577,7 +588,7 @@ def test_account_tombstone_purge_expired_and_orphan(acc_env):
     """过期墓碑清理；无 meta 的孤儿目录（半写入残留）超一天一并扫掉。"""
     accounts.ensure_account("default")
     for name in ("frank", "grace"):
-        accounts.ensure_account(name)
+        _make(name)
         assert trash.capture_account(name, accounts.get_account(name), 7)
     root = trash.account_tombstone_dir()
     stones = sorted(p.name for p in root.iterdir())

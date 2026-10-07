@@ -7,6 +7,10 @@
   镜像（allow_browse 的裁决点，条目 {id, name, allowBrowse, createdAt}）。
 - 账号级墓碑区：`data/users/_trash/<id>_<删除时间戳>/`（2026-10-07 删账号回收站化，
   删除的账号整体暂存于此，保留期内可恢复；机制与拍板在 trash.py）。
+- 账号存在的唯一判据＝注册表有条目（`is_registered`）：目录可以是残留物，没登记
+  的 id 一律当已删（请求咽喉 404，见 main.py _account_id）。**账号登记只走显式
+  路由**（创建 / 墓碑恢复 / 保留天数设置）——ensure_account 对未登记的非 default
+  账号不建目录不登记，防残留页面的自动保存把彻底删掉的账号复活（T186）。
 - 不分账号保持共享：uploads/、embedding_cache.json、utopia_inbox/、usage/、
   harness_feedback.json、profiles/。
 - 画像不迁移：`data/profiles/<id>.json` 的 id 键语义从 device_id 升级为
@@ -131,22 +135,56 @@ def resolve_paths(account_id=DEFAULT_ACCOUNT) -> AccountPaths:
 
 
 # ====== 注册表（服务端镜像；P2 前端 CRUD 通道写入，P1 仅 ensure 自动登记） ======
+# 读取缓存：(路径, mtime_ns, size) → 条目表。每个非 default 请求的咽喉都要问
+# 一句「这账号登记过吗」（main.py _account_id 的幽灵闸门），不能每回都读盘解析
+# JSON；写入经 save_registry 同步刷新缓存，外部手改文件（测试/运维）靠
+# mtime/size 变键自然失效——文件不存在时不缓存（失败态便宜且自愈）。
+_REGISTRY_CACHE: dict = {"key": None, "entries": {}}
+
+
+def _registry_key(path: Path):
+    try:
+        st = path.stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(path), None, None)
+
 
 def load_registry() -> dict:
-    data = _read_json(registry_path(), {})
+    path = registry_path()
+    key = _registry_key(path)
+    if key[1] is not None and _REGISTRY_CACHE["key"] == key:
+        return _REGISTRY_CACHE["entries"]
+    data = _read_json(path, {})
     accounts = data.get("accounts") if isinstance(data, dict) else None
-    if not isinstance(accounts, list):
-        return {}
-    return {str(e.get("id")): e for e in accounts if isinstance(e, dict) and e.get("id")}
+    entries = {}
+    if isinstance(accounts, list):
+        entries = {str(e.get("id")): e for e in accounts if isinstance(e, dict) and e.get("id")}
+    _REGISTRY_CACHE["key"] = key
+    _REGISTRY_CACHE["entries"] = entries
+    return entries
 
 
 def save_registry(entries: dict) -> None:
     registry_path().parent.mkdir(parents=True, exist_ok=True)
     _write_json(registry_path(), {"accounts": list(entries.values())})
+    _REGISTRY_CACHE["key"] = _registry_key(registry_path())
+    _REGISTRY_CACHE["entries"] = entries
 
 
 def get_account(account_id: str) -> dict:
     return load_registry().get(validate_account_id(account_id)) or {}
+
+
+def is_registered(account_id) -> bool:
+    """账号是否登记过（default 恒真——它是无 account_id 请求的落点）。
+
+    「登记过」＝账号存在的唯一权威判据（数据目录可以有，但没登记的目录不算
+    账号：UI 列表来自注册表，请求咽喉与 ensure 的幽灵闸门同口径）。"""
+    account = validate_account_id(account_id)
+    if account == DEFAULT_ACCOUNT:
+        return True
+    return account in load_registry()
 
 
 def register_account(account_id: str, name: str = None) -> dict:
@@ -367,6 +405,14 @@ def ensure_account(account_id=DEFAULT_ACCOUNT, name: str = None) -> AccountPaths
     """建目录（幂等）+ 首次触发的旧数据迁移 + 注册表登记，返回路径组。
 
     每个存储请求都会过这里：_ENSURED 命中即直接回路径，不碰文件系统。
+
+    幽灵闸门（T186 2026-10-07）：非 default 账号「未登记且无墓碑」时不建目录、
+    不登记——账号登记只走显式路由（创建 / 墓碑恢复 / 保留天数设置），残留页面
+    （另一浏览器/标签还开着已删账号）的自动保存不能再把彻底删掉的账号拼回来
+    （保留 0 天的即删与墓碑到期清理之后墓碑消失，此前 ensure 会 mkdir＋
+    register 复活出一个昵称回落为 id 的空账号）。default 例外：它是无
+    account_id 请求的落点，首启即自登记。请求侧还有一道更早的闸（main.py
+    _account_id 对未登记账号 404），这里防的是绕过请求咽喉的直调。
     """
     account = validate_account_id(account_id)
     with _LOCK:
@@ -378,6 +424,8 @@ def ensure_account(account_id=DEFAULT_ACCOUNT, name: str = None) -> AccountPaths
             # 已删账号的迟到请求：不建目录、不重新登记（见 has_account_tombstone
             # 注释）。读请求自然落空文件默认值；写请求因目录缺失失败——
             # sendBeacon 是 fire-and-forget，无感。
+            return paths
+        if account != DEFAULT_ACCOUNT and account not in load_registry():
             return paths
         # 迁移门槛是 flag 不是「目录不存在」：中断续搬（目录已建、文件没搬完、
         # flag 未落）时重跑必须继续搬；flag 在则这里是零开销 no-op
@@ -425,7 +473,7 @@ def set_trash_retention(account_id: str, days) -> dict:
 __all__ = [
     "DEFAULT_ACCOUNT", "DEFAULT_ACCOUNT_NAME", "AccountPaths",
     "validate_account_id", "users_dir", "registry_path", "resolve_paths",
-    "ensure_account", "load_registry", "save_registry", "get_account",
+    "ensure_account", "load_registry", "save_registry", "get_account", "is_registered",
     "register_account", "rename_account", "set_allow_browse", "can_browse",
     "remove_account", "restore_entry", "forget_ensured", "has_account_tombstone",
     "get_trash_retention", "set_trash_retention",

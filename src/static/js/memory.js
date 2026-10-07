@@ -612,6 +612,10 @@ function closeMemoryClearDialog() {
 }
 
 async function memoryConfirmClear() {
+  // 查阅态拦下（2026-10-07 随整包导出闸门）：清除记忆自带「先整包备份再删」链路，
+  // 查阅态下备份已被拦（T187 拍板），继续走只会拿到「备份失败、已中止清除」的
+  // 误导文案——入口直接说明白。
+  if (phyIsReadonly()) { closeMemoryClearDialog(); phyReadonlyBlock('清除记忆'); return; }
   const includeLearning = document.getElementById('memoryClearIncludeLearning').checked;
   closeMemoryClearDialog();
   const results = { backup: false, profile: false, learning: includeLearning ? false : null };

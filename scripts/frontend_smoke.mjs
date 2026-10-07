@@ -8309,6 +8309,130 @@ check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸�
   return true;
 });
 
+// ===== 账号悬空自愈与只读副作用（T185/T186/T187 2026-10-07）=====
+// 独立 vm 上下文或源码断言，不改主沙箱共享键。
+
+// accounts.js 悬空自愈的独立上下文：指针指向 dead1234beef（列表里不存在时触发回落）
+function _accountRecoverContext(pointer, opts = {}) {
+  const { s } = _accountVmContext(pointer, opts.seed || {});
+  vm.runInContext('function escapeHtml(t){return String(t==null?"":t);} function toastMsg(){}', s);
+  s.location = { reload() { (s.__reloads = s.__reloads || []).push(1); } };
+  s.setTimeout = (fn) => { (s.__timers = s.__timers || []).push(fn); };
+  s.AbortSignal = AbortSignal;
+  s.fetch = opts.fetch;
+  vm.runInContext(fs.readFileSync('src/static/js/accounts.js', 'utf8'), s, { filename: 'accounts.js' });
+  return s;
+}
+
+check('账号悬空自愈：指针指向已删账号 → 回落「我的」并重载（T185）', async () => {
+  const s = _accountRecoverContext('dead1234beef', {
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ accounts: [{ id: 'default', name: '我的' }] }) }),
+  });
+  const out = await vm.runInContext('_accountsRecoverIfMissing()', s);
+  if (out !== true) throw new Error('账号不在列表里应触发回落');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_account")', s) !== 'default') throw new Error('指针应回落 default');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_account_name")', s) !== '我的') throw new Error('昵称缓存应同步');
+  if ((s.__timers || []).length !== 1) throw new Error('应安排一次重载');
+  s.__timers.forEach(fn => fn());
+  if (!(s.__reloads || []).length) throw new Error('重载应真正执行');
+  return true;
+});
+
+check('账号悬空自愈：查阅态被查阅账号被删 → 回落归还账号并清查阅标记（T185）', async () => {
+  const s = _accountRecoverContext('dead1234beef', {
+    seed: { 'phymathia_browse_active': 'dead1234beef', 'phymathia_browse_return': 'keep1234cafe',
+            'phymathia_browse_return_name': '妹妹' },
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ accounts: [
+      { id: 'default', name: '我的' }, { id: 'keep1234cafe', name: '妹妹' }] }) }),
+  });
+  if (vm.runInContext('window.PHYMATHIA_READONLY', s) !== true) throw new Error('前置：元键齐备应进只读旗标');
+  const out = await vm.runInContext('_accountsRecoverIfMissing()', s);
+  if (out !== true) throw new Error('被查阅账号缺失应触发回落');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_account")', s) !== 'keep1234cafe') throw new Error('应回落归还账号而非 default');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_account_name")', s) !== '妹妹') throw new Error('昵称应取列表条目');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_browse_active")', s) !== null
+    || vm.runInContext('_RAW_LS.getItem("phymathia_browse_return")', s) !== null) throw new Error('被查阅账号已删，查阅标记应清');
+  return true;
+});
+
+check('账号悬空自愈：列表拿不到/账号还在 → 不动指针（服务端不可达不得误判为已删）', async () => {
+  const s = _accountRecoverContext('dead1234beef', { fetch: () => Promise.reject(new Error('offline')) });
+  if (await vm.runInContext('_accountsRecoverIfMissing()', s) !== false) throw new Error('拿不到列表应放弃回落');
+  if (vm.runInContext('_RAW_LS.getItem("phymathia_account")', s) !== 'dead1234beef') throw new Error('指针不得被改动');
+  if ((s.__timers || []).length) throw new Error('不得安排重载');
+  const s2 = _accountRecoverContext('dead1234beef', { fetch: () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }) });
+  if (await vm.runInContext('_accountsRecoverIfMissing()', s2) !== false) throw new Error('非 2xx 应放弃回落');
+  const s3 = _accountRecoverContext('dead1234beef', { fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ accounts: [{ id: 'dead1234beef', name: '还在' }] }) }) });
+  if (await vm.runInContext('_accountsRecoverIfMissing()', s3) !== false) throw new Error('账号还在列表里不得回落');
+  const s4 = _accountRecoverContext(null, { fetch: () => { throw new Error('default 不该发请求'); } });
+  if (await vm.runInContext('_accountsRecoverIfMissing()', s4) !== false) throw new Error('default 无悬空可能，直接放行');
+  return true;
+});
+
+check('账号悬空自愈：fetch 包装识别 404 标记头 → 提示并安排重载（一次性）（T185）', async () => {
+  const toasts = [];
+  const timers = [];
+  let calls = 0;
+  const s0 = { console, URLSearchParams: URL, Headers, Response, setTimeout: (fn) => timers.push(fn) };
+  s0.fetch = () => {
+    calls++;
+    return Promise.resolve(new Response('{"detail":"该账号不存在（已被彻底删除）"}',
+      { status: 404, headers: { 'X-Phymathia-Account-Gone': '1', 'Content-Type': 'application/json' } }));
+  };
+  s0.window = s0;
+  s0.innerWidth = 1200;
+  s0.localStorage = { getItem: () => null, setItem() {}, removeItem() {}, length: 0, key: () => null };
+  s0.document = { documentElement: { setAttribute() {} }, getElementById: () => null };
+  s0.toastMsg = (m) => toasts.push(m);
+  vm.createContext(s0);
+  vm.runInContext(fs.readFileSync('src/static/js/config.js', 'utf8'), s0, { filename: 'config.js' });
+  const resp = await s0.fetch('/api/sessions');
+  await new Promise(r => setImmediate(r));
+  if (calls !== 1 || resp.status !== 404) throw new Error('请求应照常发出且调用方拿到原响应');
+  if (!toasts.length || toasts[0].indexOf('已被删除') < 0) throw new Error('应提示当前账号已删');
+  if (timers.length !== 1) throw new Error('应安排一次重载');
+  await s0.fetch('/api/kv/x');
+  await new Promise(r => setImmediate(r));
+  if (toasts.length !== 1 || timers.length !== 1) throw new Error('重复 404 应被一次性标志拦住');
+  // 无标记头的普通 404（如未知路由）不得触发
+  const s1 = { console, URLSearchParams: URL, Headers, Response, setTimeout: (fn) => timers.push(fn) };
+  s1.fetch = () => Promise.resolve(new Response('{"detail":"Not found"}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  s1.window = s1;
+  s1.innerWidth = 1200;
+  s1.localStorage = { getItem: () => null, setItem() {}, removeItem() {}, length: 0, key: () => null };
+  s1.document = { documentElement: { setAttribute() {} }, getElementById: () => null };
+  s1.toastMsg = (m) => toasts.push(m);
+  vm.createContext(s1);
+  vm.runInContext(fs.readFileSync('src/static/js/config.js', 'utf8'), s1, { filename: 'config.js' });
+  await s1.fetch('/api/nope');
+  await new Promise(r => setImmediate(r));
+  if (toasts.length !== 1 || timers.length !== 1) throw new Error('无标记头的 404 不得触发回落');
+  return true;
+});
+
+check('账号悬空自愈/只读副作用：静态契约（启动链/标记头/两处导出闸/服务端 403）', () => {
+  const acc = fs.readFileSync('src/static/js/accounts.js', 'utf8');
+  if (!acc.includes('async function _accountsRecoverIfMissing')) throw new Error('accounts.js 缺启动期账号校验');
+  if (!acc.includes('function _accountsRecoverIfMissing')) throw new Error('缺回落实现');
+  const uijs = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!uijs.includes('await _accountsRecoverIfMissing()')) throw new Error('ui.js 启动链未挂账号校验');
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("resp.headers.get('X-Phymathia-Account-Gone')")) throw new Error('fetch 包装未识别账号悬空标记头');
+  if (!cfg.includes('__phyAccountJustDeleted')) throw new Error('自删流程应跳过自动回落（与删除流程自带的重载不打架）');
+  if (!uijs.includes("phyReadonlyBlock('导出数据')")) throw new Error('ui.js exportData 缺查阅态闸门');
+  if (!fs.readFileSync('src/static/js/memory.js', 'utf8').includes("phyReadonlyBlock('清除记忆')")) throw new Error('memory.js 清除记忆缺查阅态闸门');
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  if (!mainpy.includes('"X-Phymathia-Account-Gone": "1"')) throw new Error('服务端 404 缺账号悬空标记头');
+  if (!mainpy.includes('不能导出对方数据')) throw new Error('服务端缺查阅态整包导出 403');
+  if (!mainpy.includes('if not _readonly_request(request):')) throw new Error('服务端画像面板缺查阅态绑定跳过');
+  const accpy = fs.readFileSync('src/server/accounts.py', 'utf8');
+  if (!accpy.includes('def is_registered')) throw new Error('accounts.py 缺 is_registered（幽灵闸门判据）');
+  if (!accpy.includes('account != DEFAULT_ACCOUNT and account not in load_registry()')) throw new Error('ensure_account 缺未登记闸门（T186）');
+  return true;
+});
+
+await Promise.all(pendingChecks).catch(() => {}); // 本段异步用例收口（T185 悬空自愈，否则断言赶不上退出判定）
+
 // 大陆六文件写点闸（P3 续 2026-10-07）：查阅他人账号时打开大陆，浏览痕迹不得写进
 // 对方账号——localStorage 写跳过（试玩型走内存影子）、边/海域提交跳 fetch 走本地
 // 镜像、管理动作（归类/采纳/族表/起名/清空/问 Φ）入口拦。静态契约走

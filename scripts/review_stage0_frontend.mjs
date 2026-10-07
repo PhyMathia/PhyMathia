@@ -38,6 +38,10 @@ async function memorySandbox() {
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,String(v)), removeItem: k => storage.delete(k) },
     document: { getElementById(id) { if (!nodes.has(id)) nodes.set(id, { textContent: '', innerHTML: '', classList: { add() {}, remove() {} } }); return nodes.get(id); } },
     fetch: async () => ({ ok: true, json: async () => clone(profile) }), escapeHtml: String,
+    // 本夹具只装 memory.js（不含 config.js）：补查阅态判据的缺省实现——memoryConfirmClear
+    // 的查阅闸门要问 phyIsReadonly（真实页面由 config.js 提供），夹具恒 false＝非查阅态，
+    // M8 各断言（清空链路本身）照常跑
+    phyIsReadonly: () => false,
   };
   s.window = s;
   vm.createContext(s);

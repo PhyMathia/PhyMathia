@@ -33,17 +33,28 @@ import main as main_mod  # noqa: E402
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """DATA_DIR + 画像目录重定向到临时目录（backup/profile 是 from-import，
-    命名空间里的 PROFILES_DIR 要分别补丁）；清 ensure 与 JSON 读缓存。"""
+    命名空间里的 PROFILES_DIR 要分别补丁）；清 ensure/注册表与 JSON 读缓存。"""
     monkeypatch.setattr(config_mod, "DATA_DIR", tmp_path)
     profiles_dir = tmp_path / "profiles"
     profiles_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(profile_mod, "PROFILES_DIR", profiles_dir)
     monkeypatch.setattr(backup, "PROFILES_DIR", profiles_dir)
     accounts._ENSURED.clear()
+    accounts._REGISTRY_CACHE["key"] = None
+    accounts._REGISTRY_CACHE["entries"] = {}
     storage._JSON_READ_CACHE.clear()
     yield tmp_path, profiles_dir
     accounts._ENSURED.clear()
+    accounts._REGISTRY_CACHE["key"] = None
+    accounts._REGISTRY_CACHE["entries"] = {}
     storage._JSON_READ_CACHE.clear()
+
+
+def _make(account, name=None):
+    """建账号的显式两步（2026-10-07 T186 起 ensure_account 不再自动登记非
+    default 账号）：先登记再 ensure，与生产路径（POST /api/accounts）同序同果。"""
+    accounts.register_account(account, name=name)
+    return accounts.ensure_account(account, name=name)
 
 
 def _write_device_profile(profiles_dir, dev, payload):
@@ -127,8 +138,8 @@ def test_export_legacy_fallback_without_binding(env):
 
 def test_import_replace_keeps_neighbor_profiles(env):
     tmp_path, profiles_dir = env
-    accounts.ensure_account("alice")
-    accounts.ensure_account("bob")
+    _make("alice")
+    _make("bob")
     accounts.add_account_devices("alice", ["dev_a1"])
     accounts.add_account_devices("bob", ["dev_b1"])
     _write_device_profile(profiles_dir, "dev_a1", {"enabled": True})
@@ -149,7 +160,7 @@ def test_import_replace_keeps_neighbor_profiles(env):
 
 def test_import_skips_stranger_devices(env):
     tmp_path, profiles_dir = env
-    accounts.ensure_account("alice")
+    _make("alice")
     accounts.add_account_devices("alice", ["dev_a1"])
     _write_device_profile(profiles_dir, "dev_b1", {"enabled": True, "note": "原状"})
     before_bob = (profiles_dir / "dev_b1.json").read_text(encoding="utf-8")
@@ -185,7 +196,7 @@ def test_purge_bound_profiles_removes_files_and_eval_trace(env):
 
 def test_tombstone_purge_removes_profiles(env):
     tmp_path, profiles_dir = env
-    accounts.ensure_account("alice")
+    _make("alice")
     accounts.add_account_devices("alice", ["dev_a1"])
     _write_device_profile(profiles_dir, "dev_a1", {"enabled": True})
     entry = accounts.get_account("alice")
@@ -200,7 +211,7 @@ def test_tombstone_purge_removes_profiles(env):
 
 def test_expired_tombstone_purge_removes_profiles(env):
     tmp_path, profiles_dir = env
-    accounts.ensure_account("alice")
+    _make("alice")
     accounts.add_account_devices("alice", ["dev_a1"])
     _write_device_profile(profiles_dir, "dev_a1", {"enabled": True})
     entry = accounts.get_account("alice")

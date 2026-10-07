@@ -12,12 +12,18 @@ for (const outcome of ['success', 'reject', 'http-failure', 'missing-profiles'])
   const calls = [], downloads = [], nodes = new Map();
   const profile = { enabled: true, facts: [], pending: [], archive: [] };
   const s = { console: { warn() {} }, setTimeout() {}, getDeviceId: () => 'isolated', escapeHtml: String,
+    // 只切 exportData 源码（不含 config.js）：补查阅态判据的缺省实现——
+    // exportData 的查阅闸门要问 phyIsReadonly（真实页面由 config.js 提供），
+    // 夹具恒 false＝非查阅态，导出/清除链路的断言照常跑
+    phyIsReadonly: () => false,
     document: { getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, { checked: true, classList: { add() {}, remove() {} } });
       return nodes.get(id);
     } }, localStorage: { removeItem() {} },
     fetch: async (url, opts = {}) => {
-      if (url === '/api/backup/export') { calls.push('export'); return pending; }
+      // 前缀匹配（85b709d 起导出 URL 带 ?device_id=…，全等比较自那时起恒不命中——
+      // 套件一直红着，2026-10-07 修复）
+      if (String(url).indexOf('/api/backup/export') === 0) { calls.push('export'); return pending; }
       if (opts.method === 'DELETE') calls.push('delete:' + url);
       return { ok: true, json: async () => profile };
     },
