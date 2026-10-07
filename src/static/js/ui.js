@@ -908,7 +908,8 @@ const _obSteps = [
       { icon: UI_ICON_SVG.formula, text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
       { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
       { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新画布从中心节点开始，答案与模块向外铺展' },
-      { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，构建你的专属知识库' },
+      { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，跨会话长成可探索的「知识大陆」' },
+      { icon: UI_ICON_SVG.lightbulb, text: '<strong>Φ 智能体</strong> — 画布上的 AI 助手：改图、答疑，回答前先查知识库' },
     ]
   },
   {
@@ -964,6 +965,18 @@ const _obSteps = [
       return '点击画布图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名画布</strong>，让你的画布列表更清晰有序。';
     },
     beforeShow() { document.getElementById('sidebar').classList.add('open'); }
+  },
+  {
+    type: 'welcome',
+    icon: UI_ICON_SVG.layout,
+    title: '侧边栏里还有一排工具',
+    features: [
+      { icon: UI_ICON_SVG.globe, text: '<strong>知识大陆</strong> — 所有画布的知识投影成一张可缩放、可探索的地图' },
+      { icon: UI_ICON_SVG.check, text: '<strong>知识检测</strong> — 对本画布出题摸底，「检测总览」汇总所有画布' },
+      { icon: UI_ICON_SVG.user, text: '<strong>多账号</strong> — 本机可建多个账号，数据互相隔离，还能只读查阅对方账号' },
+      { icon: UI_ICON_SVG.trash, text: '<strong>回收站</strong> — 画布与账号的删除先进站暂存，保留期内随时恢复' },
+      { icon: UI_ICON_SVG.download, text: '<strong>导出分享</strong> — PNG 知识海报与 .pmu 快照，外发网页默认只读' },
+    ]
   },
   {
     type: 'welcome',
