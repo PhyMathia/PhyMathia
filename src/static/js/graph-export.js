@@ -591,7 +591,7 @@
       return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes());
     })();
     try {
-      var sid = localStorage.getItem('phymathia_current_session');
+      var sid = localStorage.getItem(STORAGE_KEY_CURRENT);
       var s = sid && typeof window.getSessionById === 'function' ? window.getSessionById(sid) : null;
       var t = s && (s.title || '').trim();
       return t ? t.slice(0, 40) : fallback;

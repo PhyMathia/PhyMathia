@@ -280,3 +280,83 @@ def test_route_account_isolation_end_to_end(acc_env):
         assert client.get("/api/sessions", params={"account_id": "..%2F..%2Fetc"}).json() == {}
     alice_sessions = accounts.resolve_paths("alice").sessions_path
     assert json.loads(alice_sessions.read_text(encoding="utf-8"))["s1"]["title"] == "甲的会话"
+
+
+# ====== 账号管理路由（P2：/api/accounts CRUD）======
+
+def _client(acc_env):
+    from fastapi.testclient import TestClient
+    import main as main_mod
+    accounts._ENSURED.clear()
+    return TestClient(main_mod.app)
+
+
+def test_accounts_route_list_default_first(acc_env):
+    """列表：default 排最前，条目带 id/name/allowBrowse/createdAt。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("bob")
+    with _client(acc_env) as client:
+        items = client.get("/api/accounts").json()["accounts"]
+        ids = [e["id"] for e in items]
+        assert ids[0] == "default" and "bob" in ids
+        assert all(set(e) >= {"id", "name", "allowBrowse", "createdAt"} for e in items)
+
+
+def test_accounts_route_create_switch_domain(acc_env):
+    """新建：服务端生成 12 位十六进制 id、建目录登记；后续存储请求按新 id 分域。"""
+    with _client(acc_env) as client:
+        r = client.post("/api/accounts", json={"name": "妹妹的账号"})
+        assert r.status_code == 200
+        entry = r.json()
+        assert entry["name"] == "妹妹的账号" and entry["allowBrowse"] is False
+        assert len(entry["id"]) == 12
+        # 新账号目录已建（messages/kv 就位），且会话写入落自己的域
+        assert (accounts.resolve_paths(entry["id"]).messages_dir).is_dir()
+        client.post("/api/sessions", json={"id": "s1", "title": "新账号的画布", "account_id": entry["id"]})
+        assert client.get("/api/sessions").json() == {}  # default 看不见
+    names = {e["name"] for e in accounts.load_registry().values()}
+    assert "妹妹的账号" in names
+
+
+def test_accounts_route_create_name_clamp_and_default_name(acc_env):
+    """新建：空名落默认命名（id）；超长昵称截到 40 字符。"""
+    with _client(acc_env) as client:
+        e1 = client.post("/api/accounts", json={}).json()
+        assert e1["name"] == e1["id"]
+        e2 = client.post("/api/accounts", json={"name": "长" * 99}).json()
+        assert len(e2["name"]) == 40
+
+
+def test_accounts_route_rename_and_allow_browse(acc_env):
+    """改名与 allow_browse：对已登记账号生效；缺账号 404；空名/缺 id 400。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("carol")
+    with _client(acc_env) as client:
+        r = client.post("/api/accounts/rename", json={"account_id": "carol", "name": "卡罗"})
+        assert r.status_code == 200 and r.json()["name"] == "卡罗"
+        # default 也可改名（昵称显示用，id 不变）
+        assert client.post("/api/accounts/rename", json={"account_id": "default", "name": "我的主号"}).json()["name"] == "我的主号"
+        r = client.post("/api/accounts/allow_browse", json={"account_id": "carol", "allow": True})
+        assert r.status_code == 200 and r.json()["allowBrowse"] is True
+        assert accounts.can_browse("carol") is True
+        assert client.post("/api/accounts/rename", json={"account_id": "ghost", "name": "x"}).status_code == 404
+        assert client.post("/api/accounts/allow_browse", json={"account_id": "ghost", "allow": True}).status_code == 404
+        assert client.post("/api/accounts/rename", json={"account_id": "carol", "name": "  "}).status_code == 400
+        assert client.post("/api/accounts/rename", json={"name": "无目标"}).status_code == 400
+        # 非法 id（穿越串）在管理路由是 400 而非静默落 default——管理操作必须精确
+        assert client.post("/api/accounts/delete", json={"account_id": "../evil"}).status_code == 400
+
+
+def test_accounts_route_delete(acc_env):
+    """删除：非 default 连注册表带数据目录一起清；default 拒删 400。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("dave")
+    (accounts.resolve_paths("dave").kv_dir / "k.json").write_text("{}", encoding="utf-8")
+    with _client(acc_env) as client:
+        assert client.post("/api/accounts/delete", json={"account_id": "default", "delete_data": True}).status_code == 400
+        r = client.post("/api/accounts/delete", json={"account_id": "dave", "delete_data": True})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert "dave" not in accounts.load_registry()
+        assert not (accounts.users_dir() / "dave").exists()
+        # 幂等除名：账号已不存在时重复删仍 200（注册表 pop 静默）
+        assert client.post("/api/accounts/delete", json={"account_id": "dave"}).status_code == 200

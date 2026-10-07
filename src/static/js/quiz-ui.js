@@ -817,7 +817,7 @@ function changeQuizSourcePreference(value) {
   if (quizSourcePreference === next) return;
   quizSourcePreference = next;
   try {
-    localStorage.setItem('phymathia_quiz_source', next);
+    localStorage.setItem(STORAGE_KEY_QUIZ_SOURCE, next);
   } catch (e) {}
   if (quizState && quizState.pool) openQuiz();
 }

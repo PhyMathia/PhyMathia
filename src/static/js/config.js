@@ -1,6 +1,91 @@
 // ====== 应用版本 ======
 const APP_VERSION = '1.5.1';
 
+// ====== 本地多账号（P2 2026-10-07）：账号域 ======
+// 账号指针与昵称缓存是「元键」，永远不加前缀；default 账号前缀为空——现有键
+// 原样读写、零迁移。非 default 账号的所有 localStorage 键在物理层带
+// `u<id前8位>_` 前缀，业务代码继续用逻辑键（'phymathia_*'），由下面的垫片
+// 透明换算；服务端分域靠 fetch 包装给所有 /api/ 请求补 account_id
+// （main.py _account_id 只认它、刻意不回退 device_id，论证见 accounts.py）。
+const STORAGE_KEY_ACCOUNT = 'phymathia_account';
+const STORAGE_KEY_ACCOUNT_NAME = 'phymathia_account_name';
+const ACCOUNT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// 前缀纯函数：default / 非法指针 → ''（与旧版逐字节一致）；否则 `u<id前8位>_`
+function accountLsPrefix(accountId) {
+  return (accountId && accountId !== 'default' && ACCOUNT_ID_RE.test(accountId))
+    ? 'u' + accountId.slice(0, 8) + '_' : '';
+}
+function _readAccountPointer() {
+  try {
+    const v = (localStorage.getItem(STORAGE_KEY_ACCOUNT) || '').trim();
+    return (v && ACCOUNT_ID_RE.test(v)) ? v : 'default';
+  } catch (e) { return 'default'; }
+}
+const ACCOUNT_ID = _readAccountPointer();
+const ACCOUNT_LS_PREFIX = accountLsPrefix(ACCOUNT_ID);
+// 原生存储引用：垫片装上后闭包留存，供 lsKeys() 枚举物理键用
+const _RAW_LS = (typeof localStorage !== 'undefined') ? localStorage : null;
+
+if (ACCOUNT_LS_PREFIX) {
+  (function installAccountLsShim() {
+    const P = ACCOUNT_LS_PREFIX;
+    const shim = {
+      getItem(k) { return _RAW_LS.getItem(P + k); },
+      setItem(k, v) { _RAW_LS.setItem(P + k, String(v)); },
+      removeItem(k) { _RAW_LS.removeItem(P + k); },
+      key(i) { return lsKeys()[i] || null; },
+      clear() { lsKeys().forEach(k => _RAW_LS.removeItem(P + k)); },
+      get length() { return lsKeys().length; }
+    };
+    try {
+      Object.defineProperty(window, 'localStorage', { get: () => shim, configurable: true });
+    } catch (e) {
+      // 极老浏览器等装不上垫片：退回无前缀（=default 命名空间），宁可串到
+      // default 也不让页面瘫——账号切换后数据仍在服务端各账号域里
+      console.warn('[accounts] localStorage 垫片安装失败，本页退回 default 命名空间');
+    }
+  })();
+}
+
+// 枚举当前账号命名空间的逻辑键（default = 物理键原样；否则前缀命中后剥前缀）。
+// 「遍历键再回喂 getItem/removeItem」的代码（导出快照/清理白名单/迁移扫描）
+// 必须走这里：垫片对象上 Object.keys 拿到的是方法名，会静默得到空集。
+function lsKeys() {
+  const out = [];
+  try {
+    const raw = _RAW_LS || (typeof localStorage !== 'undefined' ? localStorage : null);
+    if (!raw || !raw.length) return out;
+    for (let i = 0; i < raw.length; i++) {
+      const k = raw.key(i);
+      if (!k) continue;
+      if (ACCOUNT_LS_PREFIX) {
+        if (k.indexOf(ACCOUNT_LS_PREFIX) === 0) out.push(k.slice(ACCOUNT_LS_PREFIX.length));
+      } else {
+        out.push(k);
+      }
+    }
+  } catch (e) {}
+  return out;
+}
+
+// 所有 /api/ 请求恒带 account_id（含 default——P1 拍板服务端只认它）。
+// 只重写「字符串 URL 且未带 account_id」的调用；Request 对象等少见形态保守
+// 放行（服务端缺 account_id 落 default，不会错账）。
+if (typeof fetch === 'function') {
+  (function installAccountFetch() {
+    const rawFetch = fetch;
+    const wrapped = function (input, init) {
+      try {
+        if (typeof input === 'string' && input.indexOf('/api/') !== -1 && input.indexOf('account_id=') === -1) {
+          input = input + (input.indexOf('?') === -1 ? '?' : '&') + 'account_id=' + encodeURIComponent(ACCOUNT_ID);
+        }
+      } catch (e) {}
+      return rawFetch.call(this, input, init);
+    };
+    try { window.fetch = wrapped; } catch (e) {}
+  })();
+}
+
 // ====== 存储键名常量 ======
 const STORAGE_KEY_THEME = 'phymathia_theme';
 // 壁纸挑选按深浅模式各记各的选择（ui.js 读写，键值＝WALLPAPER_SETS 的 id）
@@ -28,6 +113,8 @@ const STORAGE_KEY_CURRENT = 'phymathia_current_session';
 const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 // 知识总览面板上次停留的标签页（knowledge/formulas，全局键；重开面板时恢复）
 const STORAGE_KEY_KP_TAB = 'phymathia_kp_tab';
+// 检测出题素材源偏好（mixed/ai/local，quiz-ui.js 写、quiz.js 读）
+const STORAGE_KEY_QUIZ_SOURCE = 'phymathia_quiz_source';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写

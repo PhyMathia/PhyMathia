@@ -6,10 +6,17 @@
   <title>PhyMathia — 物理数学双域解释与可视化</title>
   <script>
     // 预置主题（在样式加载前执行，消灭首屏闪烁）
-    // 首次访问（localStorage 无值）跟随系统偏好；手动切换后以手动选择为准
+    // 首次访问（localStorage 无值）跟随系统偏好；手动切换后以手动选择为准。
+    // 本地多账号（P2）：主题/风格家族随账号走——物理键带账号前缀（config.js
+    // accountLsPrefix 的镜像实现；这段跑在 app.js 之前，只能自带一份最小逻辑）。
     (function() {
       try {
-        var t = localStorage.getItem('phymathia_theme');
+        var p = '';
+        try {
+          var a = (localStorage.getItem('phymathia_account') || '').trim();
+          if (a && a !== 'default' && /^[A-Za-z0-9_-]{1,64}$/.test(a)) p = 'u' + a.slice(0, 8) + '_';
+        } catch (e2) {}
+        var t = localStorage.getItem(p + 'phymathia_theme');
         if (t !== 'light' && t !== 'dark') {
           t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
         }
@@ -17,7 +24,7 @@
         // 预置风格家族（2026-10-02）：一个 key 同挂 data-node-skin 与 data-panel-skin（家族＝
         // 面板质感＋节点皮肤＋强调色）。缺家族键时从旧 phymathia_node_skin 折算（迁移同 ui.js）；
         // 默认 aurora 不挂属性（基础规则即默认），未知值安全回落默认。
-        var fam = localStorage.getItem('phymathia_style_family') || localStorage.getItem('phymathia_node_skin');
+        var fam = localStorage.getItem(p + 'phymathia_style_family') || localStorage.getItem(p + 'phymathia_node_skin');
         if (fam && fam !== 'aurora' && /^[a-z0-9-]{1,32}$/.test(fam)) {
           document.documentElement.setAttribute('data-node-skin', fam);
           document.documentElement.setAttribute('data-panel-skin', fam);
@@ -28,7 +35,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=0e997e48">
+  <link rel="stylesheet" href="/css/styles.min.css?v=f6380785">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=6604398c">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=67ad64ff">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
@@ -105,6 +112,13 @@
         <button class="sidebar-tile" onclick="closeSidebar();startOnboarding(true);">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"></path></svg>
           <span class="sidebar-tile-label">使用引导</span>
+        </button>
+        <!-- 本地多账号（P2 2026-10-07）：第 7 块磁贴——副行实时显示当前账号昵称，
+             让「我现在在谁的账号里」常驻可见（切错账号是多账号最常见事故）。 -->
+        <button class="sidebar-tile" id="accountTile" onclick="closeSidebar();openAccountsPanel();" title="多账号：新建、切换、管理本机账号">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"></path></svg>
+          <span class="sidebar-tile-label">账号</span>
+          <span class="sidebar-tile-sub" id="accountTileSub">我的</span>
         </button>
       </div>
       <!-- 清空是危险且不可撤销的操作，从横条降级成小字红字：要点得到，但不该占视觉重心 -->
@@ -224,7 +238,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=853a9b72"></script>
+  <script src="/js/app.js?v=f41449d7"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -584,6 +598,27 @@
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeModelConfig()">取消</button>
         <button class="md-btn md-btn-save" onclick="saveModelConfig()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 本地多账号（P2 2026-10-07）：账号管理弹窗。居中 modal 走 model-dialog-overlay
+       玻璃家族（侧栏磁贴触发时侧栏已关，levelPanel 那种锚定下拉没有稳定锚点）；
+       列表行由 accounts.js 渲染。 -->
+  <div class="model-dialog-overlay" id="accountsDialog" onclick="if(event.target===this)closeAccountsPanel()">
+    <div class="model-dialog accounts-dialog aurora-glass aurora-glass--dialog">
+      <h3>账号管理</h3>
+      <div class="accounts-list" id="accountsList"></div>
+      <div class="md-field">
+        <label>新建账号</label>
+        <div class="accounts-new-row">
+          <input type="text" id="accountNewName" placeholder="昵称，如「妹妹的账号」" maxlength="40">
+          <button class="md-btn md-btn-save" id="accountCreateBtn" onclick="createAccount()">新建</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">新建后自动切到新账号（当前页面会刷新）。会话、知识、公式、检测记录按账号各自独立；上传文件与模型设置保持共用，数据都存在这台电脑上。</div>
+      </div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeAccountsPanel()">关闭</button>
       </div>
     </div>
   </div>
