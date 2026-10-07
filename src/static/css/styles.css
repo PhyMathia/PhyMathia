@@ -2210,6 +2210,13 @@
     .accounts-row-loading { font-size: var(--fs-sm); color: var(--text-secondary); text-align: center; padding: 14px 0; }
     .accounts-act-browse { color: var(--accent); border-color: var(--accent); }
 
+    /* ====== 回收站弹窗（2026-10-07）：复用 accounts-* 行样式，只补工具行 ====== */
+    .trash-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .trash-toolbar label { font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; }
+    .trash-toolbar select { flex: 0 1 auto; min-width: 0; }
+    .trash-empty-btn { margin-left: auto; }
+    .trash-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
     /* ====== 只读查阅悬浮条（P3 2026-10-07）======
        查阅他人账号时的常驻身份条：告知「在谁的space里」＋唯一出口「退出查阅」。
        底色/磨砂/阴影交给 .aurora-glass 家族，这里只管布局与字级；z-index 挂

@@ -1196,28 +1196,47 @@ def _write_socratic_state(ref: str, state, account: str = DEFAULT_ACCOUNT) -> No
     _mutate_json(_kv_path(account), updater)
 
 
-def _delete_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT) -> None:
-    """删除指定会话/分支的苏格拉底状态。
+def _socratic_state_keys(refs, data) -> list:
+    """给出 kv 主文件数据与若干会话/分支引用，返回命中状态的键名列表（纯函数）。
 
     兼容三种 key：
     - 精确 key：socratic:{ref}（手动输入路径 / 会话级状态）
     - 分支链前缀：socratic:br_{会话标识}_{10位hex}（“我来回答”弹窗路径）；
       ref 本身是分支 id 时先解出会话标识，按完整标识 + 旧版 18 截断前缀匹配
+
+    删除（_delete_socratic_state）与回收站的删除前快照
+    （snapshot_socratic_state）共用同一套匹配，保证「快照到的＝会删掉的」。
     """
-    def updater(data):
+    remove_keys = []
+    for ref in refs or []:
         if not ref:
-            return data
-        remove_keys = []
-        exact = f"{SOCRATIC_STATE_PREFIX}{ref}"
-        if exact in data:
+            continue
+        exact = _socratic_key(str(ref))
+        if exact in data and exact not in remove_keys:
             remove_keys.append(exact)
-        m = re.match(r"^br_(?P<sess>.+)_[0-9a-fA-F]{10}$", ref)
+        m = re.match(r"^br_(?P<sess>.+)_[0-9a-fA-F]{10}$", str(ref))
         session_raw = m.group("sess") if m else ref
         for prefix in _socratic_branch_prefixes(session_raw):
             remove_keys.extend(k for k in data if k.startswith(prefix) and k not in remove_keys)
-        for key in remove_keys:
+    return remove_keys
+
+
+def snapshot_socratic_state(refs, account: str = DEFAULT_ACCOUNT) -> dict:
+    """删除前的只读快照：该会话/分支在 kv 主文件里的全部状态键→值。
+
+    回收站（2026-10-07）用：恢复时原样写回（只补缺）；没有命中状态返回空 dict。
+    """
+    with storage._JSON_LOCK:
+        data = _read_json(_kv_path(account), {})
+        return {k: data[k] for k in _socratic_state_keys(refs, data)}
+
+
+def _delete_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT) -> None:
+    """删除指定会话/分支的苏格拉底状态（键匹配规则见 _socratic_state_keys）。"""
+    def updater(data):
+        for key in _socratic_state_keys([ref], data):
             data.pop(key, None)
-        return data
+        return data  # 无命中也回写：stage1 契约钉住「清空后 kv 主文件字节不变」的基线（含空库建文件）
 
     _mutate_json(_kv_path(account), updater)
 

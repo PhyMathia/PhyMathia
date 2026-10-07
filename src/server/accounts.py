@@ -85,6 +85,7 @@ class AccountPaths:
     formulas_path: Path
     kv_path: Path
     kv_dir: Path
+    trash_dir: Path
 
 
 def validate_account_id(value) -> str:
@@ -118,6 +119,7 @@ def resolve_paths(account_id=DEFAULT_ACCOUNT) -> AccountPaths:
         formulas_path=root / "formulas.json",
         kv_path=root / "kv_store.json",
         kv_dir=root / "kv",
+        trash_dir=root / "trash",
     )
 
 
@@ -294,10 +296,44 @@ def ensure_account(account_id=DEFAULT_ACCOUNT, name: str = None) -> AccountPaths
         return paths
 
 
+# ====== 回收站保留天数（2026-10-07，按账号存注册表；读写函数供 trash.py 调用） ======
+
+TRASH_RETENTION_DEFAULT_DAYS = 7
+TRASH_RETENTION_MAX_DAYS = 365
+
+
+def get_trash_retention(account_id: str) -> int:
+    """读保留天数：未登记/脏值一律回默认 7（0 合法＝关闭回收站）。"""
+    entry = get_account(account_id)
+    try:
+        days = int(entry.get("trashRetentionDays", TRASH_RETENTION_DEFAULT_DAYS))
+    except (TypeError, ValueError):
+        return TRASH_RETENTION_DEFAULT_DAYS
+    return days if 0 <= days <= TRASH_RETENTION_MAX_DAYS else TRASH_RETENTION_DEFAULT_DAYS
+
+
+def set_trash_retention(account_id: str, days) -> dict:
+    """写保留天数（0–365 整数；0＝删除即彻底清除）。非法值抛 ValueError，路由层转 400。"""
+    account = validate_account_id(account_id)
+    try:
+        days_int = int(days)
+    except (TypeError, ValueError):
+        raise ValueError(f"retention days must be an integer, got {days!r}")
+    if not 0 <= days_int <= TRASH_RETENTION_MAX_DAYS:
+        raise ValueError(f"retention days out of range 0..{TRASH_RETENTION_MAX_DAYS}: {days_int}")
+    with _LOCK:
+        register_account(account)  # 幂等：未登记过（含 default 首启前）先登记
+        entries = load_registry()
+        entries[account]["trashRetentionDays"] = days_int
+        save_registry(entries)
+        return entries[account]
+
+
 __all__ = [
     "DEFAULT_ACCOUNT", "DEFAULT_ACCOUNT_NAME", "AccountPaths",
     "validate_account_id", "users_dir", "registry_path", "resolve_paths",
     "ensure_account", "load_registry", "save_registry", "get_account",
     "register_account", "rename_account", "set_allow_browse", "can_browse",
-    "remove_account",
+    "remove_account", "get_trash_retention", "set_trash_retention",
+    "TRASH_RETENTION_DEFAULT_DAYS", "TRASH_RETENTION_MAX_DAYS",
 ]

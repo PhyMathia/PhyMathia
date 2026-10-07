@@ -37,7 +37,7 @@ from http_client import close_http_client, get_http_client  # noqa: E402
 import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
 import usage_stats  # noqa: E402  项目根共享层：token 用量与缓存命中计量落盘
 
-from server import accounts, backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage  # noqa: F401
+from server import accounts, backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage, trash  # noqa: F401
 from server.backup import *
 from server.config import *
 from server.context import *
@@ -1077,6 +1077,10 @@ async def api_delete_session(session_id: str, request: Request = None):
         msgs_path = _get_messages_path(session_id, account)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
+    # 回收站（2026-10-07）：动手毁数据前先整体快照进站；快照抛异常＝中止删除
+    # （500）——「防误删」的前提是删了还能回来，宁可报错不可丢数据。保留天数
+    # 为 0（回收站关闭）时 capture 返回 False，走原删除链路。
+    trash.capture_session(paths, session_id, messages_path=msgs_path)
     # 删除别名映射前清理摘要并推进删除代次；失败中止，不能留下旧上下文却报清除成功
     context._delete_rolling_memory(session_id, account)
 
@@ -1108,6 +1112,12 @@ async def api_delete_session(session_id: str, request: Request = None):
 async def api_clear_all_sessions(request: Request = None):
     paths = _account_paths(request)
     account = paths.account
+    # 回收站：逐会话快照后再清空；任一快照失败即中止（500），一条都不会被删
+    try:
+        trash.capture_all(paths)
+    except Exception as e:
+        logger.warning(f"clear all: trash capture failed, abort: {e}")
+        raise HTTPException(status_code=500, detail="回收站快照失败，已中止清空，请稍后重试")
     context._clear_all_rolling_memory(account)
     _write_json(paths.sessions_path, {})
     for f in paths.messages_dir.glob("*.json"):
@@ -1119,6 +1129,59 @@ async def api_clear_all_sessions(request: Request = None):
         for f in paths.kv_dir.glob("*.json"):
             f.unlink()
     return {"ok": True}
+
+
+# ====== 回收站 API（2026-10-07：防误删——删除的会话在保留期内可整体恢复） ======
+# 捕获/恢复/清除的规则与拍板见 server/trash.py 模块注释；item id 即会话 id。
+# 只读查阅态：GET 放行（读站内列表无害），POST/DELETE 被 _readonly_browse_gate
+# 与前端 fetch 包装双层拦——回收站写操作无需额外白名单。
+
+@app.get("/api/trash")
+async def api_trash_list(request: Request = None):
+    paths = _account_paths(request)
+    return {
+        "items": trash.list_items(paths),
+        "retentionDays": trash.retention_days(paths.account),
+    }
+
+
+@app.post("/api/trash/settings")
+async def api_trash_settings(request: Request):
+    payload = await _parse_json_object(request)
+    paths = _account_paths(request, payload)
+    try:
+        days = trash.set_retention_days(paths.account, payload.get("days"))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"保留天数需为 0–365 的整数（{e}）")
+    return {"ok": True, "retentionDays": days}
+
+
+@app.post("/api/trash/{item_id}/restore")
+async def api_trash_restore(item_id: str, request: Request = None):
+    paths = _account_paths(request)
+    try:
+        sid = trash.restore_item(paths, item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="回收站里没有这个条目")
+    except trash.TrashConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"ok": True, "sessionId": sid}
+
+
+@app.delete("/api/trash/{item_id}")
+async def api_trash_purge(item_id: str, request: Request = None):
+    paths = _account_paths(request)
+    try:
+        trash.purge_item(paths, item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="回收站里没有这个条目")
+    return {"ok": True}
+
+
+@app.delete("/api/trash")
+async def api_trash_empty(request: Request = None):
+    paths = _account_paths(request)
+    return {"ok": True, "purged": trash.empty_trash(paths)}
 
 
 
@@ -1588,8 +1651,12 @@ async def api_save_formulas(request: Request):
 
 
 @app.delete("/api/formulas")
-async def api_delete_formulas_by_session(session_id: str = ""):
-    """按会话删除公式（session_id 为空时删除全部）"""
+async def api_delete_formulas_by_session(session_id: str = "", request: Request = None):
+    """按会话删除公式（session_id 为空时删除全部）。
+
+    request 形参不可省——函数体要拿它解析账号域（P1 参数化时漏改签名，
+    2026-10-07 真机实操抓出：删画布的公式清理自那时起一直 500 静默失败）。
+    """
     removed = 0
 
     def updater(data):
@@ -2038,6 +2105,11 @@ async def serve_static_file(filename: str, request: Request):
 # 目录（只 mv 不删，flag 防重跑），之后每请求 ensure 命中缓存零开销。
 accounts.ensure_account()
 _dedupe_knowledge_file()
+try:
+    # 回收站过期清理（2026-10-07，全账号惰性兜底；trash 目录缺失时 no-op）
+    trash.purge_expired_all()
+except Exception as _trash_e:
+    logger.warning(f"trash startup purge failed: {_trash_e}")
 
 # ====== 启动 ======
 def parse_args():

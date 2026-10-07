@@ -188,6 +188,9 @@ const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 const STORAGE_KEY_KP_TAB = 'phymathia_kp_tab';
 // 检测出题素材源偏好（mixed/ai/local，quiz-ui.js 写、quiz.js 读）
 const STORAGE_KEY_QUIZ_SOURCE = 'phymathia_quiz_source';
+// 回收站保留天数的本地缓存（trash.js 写读，仅作磁贴副行显示；权威值在服务端
+// 注册表 trashRetentionDays 字段，按账号独立——本键经垫片自然分账号）
+const STORAGE_KEY_TRASH_RETENTION = 'phymathia_trash_retention';
 const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写

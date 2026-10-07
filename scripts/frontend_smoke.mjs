@@ -8299,5 +8299,82 @@ check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸�
   return true;
 });
 
+// ===== 回收站（2026-10-07）：防误删面板 =====
+
+// trash.js 在独立上下文里跑（依赖 config.js 的 STORAGE_KEY_TRASH_RETENTION、
+// accounts.js 的 _accountsDateStr、注入的真 escapeHtml）
+function _trashPanelContext() {
+  const s = _accountPanelContext();
+  vm.runInContext(fs.readFileSync('src/static/js/trash.js', 'utf8'), s, { filename: 'trash.js' });
+  return s;
+}
+
+check('回收站：行渲染纯函数（标题转义/id 消毒/按钮矩阵/剩余天数/查阅态只展示）', () => {
+  const s2 = _trashPanelContext();
+  if (typeof s2._trashRowHtml !== 'function') throw new Error('trash.js 未装载');
+  const day = 86400000;
+  const row = s2._trashRowHtml({
+    id: 'sess_abc123', title: '<b>物理</b>画布', deletedAt: Date.now() - day,
+    purgeAt: Date.now() + 3 * day, counts: { messages: 5, knowledge: 2, formulas: 1 },
+  });
+  if (!row.includes('&lt;b&gt;物理&lt;/b&gt;画布')) throw new Error('标题必须转义');
+  if (row.includes('<b>物理')) throw new Error('标题未转义（XSS）');
+  if (!row.includes('data-trash-item="sess_abc123"')) throw new Error('缺条目标识');
+  if (!row.includes('恢复') || !row.includes('彻底删除')) throw new Error('行按钮矩阵应为 恢复+彻底删除');
+  if (!row.includes('剩 3 天')) throw new Error('剩余天数换算不对：' + row);
+  if (!row.includes('5 条消息') || !row.includes('2 个知识点') || !row.includes('1 条公式')) throw new Error('counts 摘要缺失');
+  // id 注入消毒：尖括号/引号/等号全部剥掉，只剩白名单字符进 onclick/属性
+  const evil = s2._trashRowHtml({ id: 'sess_<img src=x onerror=1>"', title: 't', purgeAt: 0 });
+  if (!evil.includes('data-trash-item="sess_imgsrcxonerror1"')) throw new Error('id 应剥成纯白名单字符');
+  if (evil.includes('<img') || evil.includes('onerror=1')) throw new Error('注入片段未剥净');
+  // purgeAt=0（不自动清除）不出「剩/已到期」字样
+  const noPurge = s2._trashRowHtml({ id: 'sess_a', title: 't', purgeAt: 0 });
+  if (noPurge.includes('剩 ') || noPurge.includes('已到期')) throw new Error('purgeAt=0 不应显示天数');
+  // 查阅态：整行只展示不操作
+  s2.window.PHYMATHIA_READONLY = true;
+  const ro = s2._trashRowHtml({ id: 'sess_a', title: 't', purgeAt: Date.now() + day });
+  if (ro.includes('restoreTrashItem') || ro.includes('purgeTrashItem')) throw new Error('查阅态行不得有操作钮');
+  if (!ro.includes('data-trash-item')) throw new Error('查阅态行仍应展示条目');
+  // 保留天数文案纯函数
+  if (s2._trashRetentionLabel(0) !== '不保留') throw new Error('0 天应显示 不保留');
+  if (s2._trashRetentionLabel(7) !== '留7天') throw new Error('7 天应显示 留7天');
+  if (s2._trashRetentionLabel('abc') !== '不保留') throw new Error('脏值应回落 不保留');
+  return true;
+});
+
+check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/构建注册/确认文案指向回收站/只读守卫）', () => {
+  const idx = fs.readFileSync('src/static/index.html', 'utf8');
+  for (const frag of ['id="trashTile"', 'id="trashTileSub"', 'openTrashPanel()', 'id="trashDialog"',
+    'id="trashList"', 'id="trashRetentionSelect"', 'onclick="emptyTrash()"']) {
+    if (!idx.includes(frag)) throw new Error('index.html 缺回收站骨架：' + frag);
+  }
+  if (!idx.includes('value="7" selected')) throw new Error('保留天数下拉默认必须 7 天');
+  if (!fs.readFileSync('scripts/build_frontend.mjs', 'utf8').includes("'trash.js',")) throw new Error('trash.js 未注册进构建清单');
+  if (!fs.readFileSync('src/static/css/styles.css', 'utf8').includes('.trash-toolbar')) throw new Error('缺回收站工具行样式');
+  if (!fs.readFileSync('src/static/js/config.js', 'utf8').includes("STORAGE_KEY_TRASH_RETENTION = 'phymathia_trash_retention'")) throw new Error('config.js 缺保留天数缓存键');
+  const trashSrc = fs.readFileSync('src/static/js/trash.js', 'utf8');
+  if (!trashSrc.includes('_trashReadonlyGuard()')) throw new Error('回收站写操作缺查阅守卫');
+  if (!trashSrc.includes("encodeURIComponent(id) + '/restore'")) throw new Error('恢复端点必须 encodeURIComponent');
+  if (!trashSrc.includes('location.reload()')) throw new Error('恢复后必须整页刷新（会话名单双源合并）');
+  // 删除/清空确认文案指向回收站（回收站关闭时如实警告不可恢复）
+  const sessrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!sessrc.includes('删除后进入回收站暂存')) throw new Error('单删确认文案未指向回收站');
+  if (!sessrc.includes('先进入回收站暂存')) throw new Error('批量删除确认文案未指向回收站');
+  if (!sessrc.includes('可在侧栏「回收站」恢复')) throw new Error('清空全部确认文案未指向回收站');
+  if (!sessrc.includes('_trashRetentionLocal() === 0')) throw new Error('回收站关闭时确认文案必须如实警告');
+  // 服务端契约镜像（trash.py 捕获点在删除路由内、路由五条都在）
+  const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
+  if (!pysrc.includes('meta.json 最后落盘') || !pysrc.includes('def capture_session') || !pysrc.includes('def restore_item')) throw new Error('trash.py 缺核心函数');
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  for (const frag of ['trash.capture_session(paths, session_id, messages_path=msgs_path)',
+    'trash.capture_all(paths)', '"/api/trash"', '"/api/trash/settings"',
+    '"/api/trash/{item_id}/restore"', 'trash.purge_expired_all()']) {
+    if (!mainpy.includes(frag)) throw new Error('main.py 缺回收站接入点：' + frag);
+  }
+  // 主沙箱（构建产物）里 trash.js 已随包装载
+  if (typeof sandbox._trashRowHtml !== 'function') throw new Error('trash.js 未进 app.js 构建产物');
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

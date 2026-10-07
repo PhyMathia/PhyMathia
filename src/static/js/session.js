@@ -719,7 +719,11 @@
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再删除画布');
         return;
       }
-      if (!confirm('确定删除此画布？')) return;
+      // 回收站（2026-10-07）：删除先进站暂存；保留天数为 0（回收站关闭）时文案如实警告
+      const trashHint = (typeof _trashRetentionLocal === 'function' && _trashRetentionLocal() === 0)
+        ? '回收站已关闭（保留天数为 0），删除后无法恢复！'
+        : '删除后进入回收站暂存，保留期内可在侧栏「回收站」一键恢复。';
+      if (!confirm('确定删除此画布？\n\n' + trashHint)) return;
 
       const r = await _purgeSessionData(id);
       if (!r.ok) {
@@ -795,7 +799,10 @@
         if (typeof showToast === 'function') showToast('请先勾选要删除的画布', TOAST_MS_LONG);
         return;
       }
-      if (!confirm(`确定删除选中的 ${ids.length} 个画布？\n它们的知识、公式与检测记录会一并清除，且不可撤销。`)) return;
+      const bulkHint = (typeof _trashRetentionLocal === 'function' && _trashRetentionLocal() === 0)
+        ? '回收站已关闭（保留天数为 0），删除后无法恢复！'
+        : '它们会先进入回收站暂存，保留期内可在侧栏「回收站」恢复。';
+      if (!confirm(`确定删除选中的 ${ids.length} 个画布？\n它们的知识、公式与检测记录会一并移除；${bulkHint}`)) return;
 
       _sessionBulkBusy = true;
       // 当前画布排最后：删它会触发切换，先把其余删完，落点才不像是被删的那一个
@@ -1376,7 +1383,10 @@
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空所有画布');
         return;
       }
-      if (!confirm('确定清空所有画布吗？此操作不可撤销！')) return;
+      const clearAllHint = (typeof _trashRetentionLocal === 'function' && _trashRetentionLocal() === 0)
+        ? '回收站已关闭（保留天数为 0），此操作不可撤销！'
+        : '所有画布会先进入回收站暂存（超过保留天数自动清除），可在侧栏「回收站」恢复。';
+      if (!confirm('确定清空所有画布吗？\n\n' + clearAllHint)) return;
 
       // 1. 批量删除服务端所有会话、消息和知识条目
       await _deleteOnServer('/api/sessions');
