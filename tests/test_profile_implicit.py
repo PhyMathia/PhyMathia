@@ -31,7 +31,11 @@ def _clear_json_read_cache():
 
 @pytest.fixture(autouse=True)
 def _isolate_seed_sources(monkeypatch, tmp_path):
-    """回填源隔离：ensure_seeded 只许碰测试造的 knowledge/kv，不许读真实数据。"""
+    """回填源隔离：ensure_seeded 只许碰测试造的 knowledge/kv，不许读真实数据。
+    DATA_DIR 一并重定向——画像事件入口会登记账号↔设备绑定（2026-10-07 画像
+    按账号隔离），不 patch 会把测试设备键写进真实 data/users/accounts.json。"""
+    from server import config as config_mod
+    monkeypatch.setattr(config_mod, "DATA_DIR", tmp_path)
     empty = tmp_path / "empty_kb.json"
     empty.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(pi, "KNOWLEDGE_PATH", empty)

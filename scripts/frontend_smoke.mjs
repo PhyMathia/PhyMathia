@@ -8504,5 +8504,28 @@ check('回收站：已删账号小节（行渲染/stone 消毒/查阅态只展�
   return true;
 });
 
+check('学习画像按账号隔离（2026-10-07）：备份两路由恒带 device_id 圈定键', () => {
+  const uisrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!uisrc.includes("'/api/backup/export?device_id=' + encodeURIComponent(getDeviceId())")) {
+    throw new Error('备份导出缺 device_id（服务端按账号圈定画像的提示键）');
+  }
+  if (!uisrc.includes('device_id: getDeviceId(), backup: data')) throw new Error('备份导入缺 device_id');
+  const pysrc = fs.readFileSync('src/server/backup.py', 'utf8');
+  for (const frag of ['_account_profile_keys', 'device_key as _device_key']) {
+    if (!pysrc.includes(frag)) throw new Error('backup.py 缺账号画像圈定：' + frag);
+  }
+  const accpy = fs.readFileSync('src/server/accounts.py', 'utf8');
+  if (!accpy.includes('def account_devices') || !accpy.includes('def add_account_devices')) {
+    throw new Error('accounts.py 缺账号↔设备绑定（entry.devices 归属快照）');
+  }
+  const profpy = fs.readFileSync('src/server/profile.py', 'utf8');
+  if (!profpy.includes('def note_device_binding')) throw new Error('profile.py 缺绑定登记入口');
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  if (!mainpy.includes('profile.note_device_binding')) throw new Error('main.py 备份路由缺绑定登记');
+  const trashpy = fs.readFileSync('src/server/trash.py', 'utf8');
+  if (!trashpy.includes('def purge_bound_profiles')) throw new Error('trash.py 缺彻底清除连画像');
+  return true;
+});
+
 console.log(failed ? '\n冒烟失败' : '\n前端冒烟全部通过');
 process.exit(failed ? 1 : 0);

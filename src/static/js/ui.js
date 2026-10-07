@@ -232,7 +232,9 @@ async function exportData(options = {}) {
   const local = _collectLocalBackup();
   let data = { ...local, version: 2, exportTime: new Date().toISOString() };
   try {
-    const resp = await fetch('/api/backup/export', { cache: 'no-cache' });
+    // device_id 恒传：服务端按账号圈定备份里的画像（只带走本账号归属的设备），
+    // 顺手把当前设备登记进账号绑定——画像按账号隔离的圈定键
+    const resp = await fetch('/api/backup/export?device_id=' + encodeURIComponent(getDeviceId()), { cache: 'no-cache' });
     if (!resp.ok && options.requireServer) throw new Error('备份请求失败：' + resp.status);
     if (resp.ok) {
       const server = await resp.json();
@@ -464,7 +466,8 @@ async function importData(event) {
         serverResp = await fetch('/api/backup/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode, backup: data })
+          // device_id 同导出：服务端据此圈定 replace 清除范围与本账号画像归属
+          body: JSON.stringify({ mode, device_id: getDeviceId(), backup: data })
         });
       } catch (serverErr) {
         console.warn('[Import] Server import unavailable, use local:', serverErr);

@@ -13,7 +13,7 @@ from .knowledge import (
     _normalize_formula_map,
     _normalize_knowledge,
 )
-from .profile import PROFILES_DIR, save_profile
+from .profile import PROFILES_DIR, device_key as _device_key, save_profile
 from .storage import (
     _SESSION_ID_RE,
     _get_messages_path,
@@ -24,7 +24,22 @@ from .storage import (
     kv_restore_bulk,
 )
 
-def _build_backup_payload(account: str = DEFAULT_ACCOUNT) -> dict:
+def _account_profile_keys(account: str = DEFAULT_ACCOUNT, device_id: str = "") -> set | None:
+    """账号的画像归属键集合（注册表绑定 ∪ 请求设备提示）。
+
+    None＝归属完全未知（账号从未有过画像活动、请求也没带 device_id）→ 调用方
+    回退旧口径（画像全量），兼容既有调用与 curl 直调；浏览器请求恒带
+    device_id（2026-10-07 起前端备份两路由补传），正常路径不会是 None。
+    """
+    keys = set(accounts.account_devices(account))
+    if device_id:
+        hint = _device_key(device_id)
+        if hint:
+            keys.add(hint)
+    return keys or None
+
+
+def _build_backup_payload(account: str = DEFAULT_ACCOUNT, device_id: str = None) -> dict:
     paths = accounts.resolve_paths(account)
     sessions = _read_json(paths.sessions_path, {})
     messages = {}
@@ -46,7 +61,13 @@ def _build_backup_payload(account: str = DEFAULT_ACCOUNT) -> dict:
         value = _read_json(path, [])
         messages[sid] = value if isinstance(value, list) else []
     profiles = {}
+    # 画像按账号隔离（2026-10-07）：只带走本账号归属的设备画像——旧口径全量
+    # 打包会把邻账号的画像一并塞进备份文件、恢复时还会覆盖对方（A 的备份
+    # 回滚 B 的画像）。归属未知（无绑定且无设备提示）时回退全量兼容旧调用。
+    profile_keys = _account_profile_keys(account, device_id)
     for path in sorted(PROFILES_DIR.glob("*.json")):
+        if profile_keys is not None and path.stem not in profile_keys:
+            continue
         value = _read_json(path, None)
         if isinstance(value, dict):
             profiles[path.stem] = value
@@ -146,7 +167,7 @@ def _snapshot_restore_targets(account: str = DEFAULT_ACCOUNT) -> dict:
     return snap
 
 
-def _rollback_restore_targets(snap: dict) -> list:
+def _rollback_restore_targets(snap: dict, account: str = DEFAULT_ACCOUNT) -> list:
     """尽力把数据文件恢复到快照状态；返回仍然失败的目标名。"""
     failed = []
     for path_str, content in snap.items():
@@ -165,8 +186,9 @@ def _rollback_restore_targets(snap: dict) -> list:
             _invalidate_json_cache(p)
         except OSError:
             failed.append(p.name)
-    # 恢复过程中新建、快照里不存在的文件也一并移除
-    for p in _restore_target_paths():
+    # 恢复过程中新建、快照里不存在的文件也一并移除（account 必须传：漏传会
+    # 按默认账号枚举，误删邻账号在恢复窗口内新建的文件）
+    for p in _restore_target_paths(account):
         if str(p) not in snap:
             try:
                 p.unlink(missing_ok=True)
@@ -176,21 +198,23 @@ def _rollback_restore_targets(snap: dict) -> list:
     return failed
 
 
-def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> dict:
+def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
+                    device_id: str = None) -> dict:
     # 恢复按 sessions→消息→知识→公式→kv→画像 依次落盘，中途异常（文件被占用/
     # 磁盘满）会留下半恢复状态。这里先做内容级快照，任一环节失败即整体回滚。
     snapshot = _snapshot_restore_targets(account)
     try:
-        return _apply_restore(backup, replace, account=account)
+        return _apply_restore(backup, replace, account=account, device_id=device_id)
     except Exception as exc:
-        rollback_failed = _rollback_restore_targets(snapshot)
+        rollback_failed = _rollback_restore_targets(snapshot, account)
         detail = f"恢复失败，已回滚到导入前状态：{exc}"
         if rollback_failed:
             detail += f"；以下文件回滚仍失败，请手动检查：{', '.join(rollback_failed)}"
         raise RuntimeError(detail) from exc
 
 
-def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> dict:
+def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT,
+                   device_id: str = None) -> dict:
     paths = accounts.resolve_paths(account)
     sessions = backup.get("sessions") or {}
     session_count = _restore_sessions(sessions, replace, account)
@@ -219,12 +243,20 @@ def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT) 
     profiles = backup.get("profiles") or {}
     profile_count = 0
     if isinstance(profiles, dict) and profiles:
+        # 画像按账号隔离（2026-10-07）：replace 只清本账号归属的画像文件（旧
+        # 口径全删会把邻账号的画像一并抹掉）；备份里不属本账号的设备画像
+        # （旧版全量备份会带）不写回——那是对别人的快照，恢复它＝回滚对方。
+        # 归属未知（无绑定且无设备提示）时回退旧口径兼容。
+        profile_keys = _account_profile_keys(account, device_id)
         if replace:
             for p in PROFILES_DIR.glob("*.json"):
-                p.unlink(missing_ok=True)
-        for device_id, pdata in profiles.items():
+                if profile_keys is None or p.stem in profile_keys:
+                    p.unlink(missing_ok=True)
+        for dev, pdata in profiles.items():
+            if profile_keys is not None and dev not in profile_keys:
+                continue
             if isinstance(pdata, dict):
-                save_profile(str(device_id), pdata)
+                save_profile(str(dev), pdata)
                 profile_count += 1
 
     return {

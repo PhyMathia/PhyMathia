@@ -44,7 +44,7 @@ import shutil
 import time
 from pathlib import Path
 
-from server import accounts, context, storage
+from server import accounts, context, profile, storage
 
 logger = logging.getLogger(__name__)
 
@@ -539,13 +539,38 @@ def restore_account_tombstone(stone_id: str) -> str:
     return account
 
 
+def purge_bound_profiles(entry: dict) -> int:
+    """彻底清除账号时连画像一起删：entry.devices 是该账号用过的画像设备键。
+
+    画像文件按 device_id 键、不在账号目录里（data/profiles/<stem>.json 与
+    <stem>.eval.jsonl），墓碑保留期内刻意原地不动——画像对其他账号不可见，
+    原地保留让「恢复账号→同一 localStorage 命名空间→同一 device_id」无缝
+    重连；到期彻底清除（或保留天数 0 的即删）才连归属设备一起抹掉。
+    绑定未覆盖的设备（服务端从未见过该设备的画像活动，如只浏览过从未触发
+    事件的浏览器）会漏删成孤儿文件，无害：无归属即无人读它。"""
+    devices = [d for d in ((entry or {}).get("devices") or []) if isinstance(d, str) and d]
+    removed = 0
+    for dev in devices:
+        for suffix in (".json", ".eval.jsonl"):
+            p = profile.PROFILES_DIR / (dev + suffix)
+            try:
+                if p.exists():
+                    p.unlink()
+                    removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def purge_account_tombstone(stone_id: str) -> None:
     """彻底删除一个墓碑（该账号全部数据不可恢复）。不存在抛 KeyError（路由层 404）。"""
     _validate_item_id(stone_id)
     stone_dir = account_tombstone_dir() / stone_id
     if not (stone_dir / _META_NAME).exists():
         raise KeyError(f"account tombstone not found: {stone_id}")
+    meta = storage._read_json(stone_dir / _META_NAME, {})
     shutil.rmtree(stone_dir, ignore_errors=True)
+    purge_bound_profiles(meta.get("entry") or {})  # 画像不在账号目录里，随墓碑一并彻底清除
 
 
 def purge_expired_tombstones() -> int:
@@ -565,6 +590,8 @@ def purge_expired_tombstones() -> int:
         orphan = not meta.get("id") and _dir_age_ms(child) > _DAY_MS
         if expired or orphan:
             shutil.rmtree(child, ignore_errors=True)
+            if expired and isinstance(meta.get("entry"), dict):
+                purge_bound_profiles(meta["entry"])  # 到期墓碑同款：画像随账号彻底清除
             purged += 1
     return purged
 
