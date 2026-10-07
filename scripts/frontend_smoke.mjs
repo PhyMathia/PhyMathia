@@ -8299,6 +8299,70 @@ check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸�
   return true;
 });
 
+// 大陆六文件写点闸（P3 续 2026-10-07）：查阅他人账号时打开大陆，浏览痕迹不得写进
+// 对方账号——localStorage 写跳过（试玩型走内存影子）、边/海域提交跳 fetch 走本地
+// 镜像、管理动作（归类/采纳/族表/起名/清空/问 Φ）入口拦。静态契约走
+// readContinentSrc() 六件拼接（切片锚按六件拼接顺序，锚缺失即红）。
+check('只读查阅：大陆六文件写点闸（localStorage 写跳过/提交跳 fetch 内存镜像/管理动作入口拦）', () => {
+  const src = readContinentSrc();
+  const between = (a, b) => {
+    const i = src.indexOf(a);
+    if (i < 0) throw new Error('切片锚缺失：' + a);
+    const j = b ? src.indexOf(b, i + 1) : src.length;
+    if (b && j < 0) throw new Error('切片锚缺失：' + b);
+    return src.slice(i, j);
+  };
+  if (!src.includes('function _continentReadonlyNudge')) throw new Error('缺大陆查阅温和提示 helper');
+  // ① localStorage 浏览痕迹：跳过落盘（读对方、写跳过）
+  for (const [a, b, what] of [
+    ['function _continentSaveCollapsed', 'function _continentToggleCollapse', '折叠清单'],
+    ['function _continentPersistView', 'function _continentToggleFullscreen', '视口保存'],
+  ]) {
+    if (!between(a, b).includes('phyIsReadonly()')) throw new Error(what + '缺查阅态写跳过');
+  }
+  // ② 试玩型显示偏好：切换内存影子生效、落盘跳过（影子读侧保证重渲不弹回）
+  for (const [a, b, what] of [
+    ['let _continentStyleMem', 'function _continentSyncStyleBtn', '画风开关'],
+    ['let _continentRoutePrefsMem', 'const _continentRouteColorCache', '航线偏好'],
+    ['let _continentLegendMem', 'function _continentToggleLegendFocus', '图例折叠'],
+  ]) {
+    if (!between(a, b).includes('phyIsReadonly()')) throw new Error(what + '缺查阅态内存影子');
+  }
+  // ③ 数据提交漏斗：查阅态跳过 fetch（省一次必败 403），继续本地镜像让撤销栈照常
+  for (const [a, b, what] of [
+    ['async function _continentCommit', 'async function _continentAddUserEdge', '边提交'],
+    ['async function _continentCommitRegionOverrides', 'async function _continentUndoRegionOp', '海域覆盖提交'],
+  ]) {
+    const blk = between(a, b);
+    if (!blk.includes('if (!phyIsReadonly())') || !blk.includes('_continentReadonlyNudge')) {
+      throw new Error(what + '缺查阅态跳 fetch 走内存镜像');
+    }
+  }
+  // ④ 管理动作入口拦（写对方数据/烧模型调用，不静默试玩）
+  for (const [a, b, what] of [
+    ['async function _continentGateClassify', '// 采纳归并建议', 'Φ 归类'],
+    ['async function _continentAdoptGateMerge', 'function _continentFamilySourceLabel', '采纳归并'],
+    ['async function _continentRecordCorrection', '// 保存 KV 后刷新投影', '纠正信号'],
+    ['const persist = async next =>', '// v10 补词建议', '族表持久化'],
+    ['const saveSuggestState = async state =>', '// 族表 KV 的当下快照', '候选状态落 KV'],
+    ['const rejectSuggestion = async s =>', '// ---------- v10 第二期：新族候选', '拒绝记录'],
+    ['if (nameBtn) nameBtn.addEventListener', 'if (createBtn) createBtn.addEventListener', 'Φ 起名'],
+  ]) {
+    if (!between(a, b).includes('phyIsReadonly()')) throw new Error(what + '缺查阅态入口拦');
+  }
+  if (!src.slice(src.indexOf('if (clearBtn) clearBtn.addEventListener')).includes('phyIsReadonly()')) {
+    throw new Error('纠正记录清空缺查阅态入口拦');
+  }
+  const askBlk = between('async function _continentAskPhi', '// 折叠清单的行是纯字符串拼装');
+  if (!askBlk.includes('phyIsReadonly()')) throw new Error('问 Φ 缺查阅态入口拦（只读态不放开模型通道）');
+  // ⑤ 白名单红线：SAFE_POST 不得加入模型对话通道（＝查阅态能借对方配置发对话）
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes("const PHY_READONLY_SAFE_POST = ['/api/models/list', '/api/models/probe']")) {
+    throw new Error('只读白名单被改动——模型对话通道不得放进 SAFE_POST');
+  }
+  return true;
+});
+
 // ===== 回收站（2026-10-07）：防误删面板 =====
 
 // trash.js 在独立上下文里跑（依赖 config.js 的 STORAGE_KEY_TRASH_RETENTION、
@@ -8373,6 +8437,60 @@ check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/
   }
   // 主沙箱（构建产物）里 trash.js 已随包装载
   if (typeof sandbox._trashRowHtml !== 'function') throw new Error('trash.js 未进 app.js 构建产物');
+  return true;
+});
+
+check('回收站：已删账号小节（行渲染/stone 消毒/查阅态只展示/确认文案/静态契约/服务端接入点镜像）', () => {
+  const s2 = _trashPanelContext();
+  if (typeof s2._trashAccountRowHtml !== 'function') throw new Error('trash.js 缺已删账号行渲染');
+  const day = 86400000;
+  const row = s2._trashAccountRowHtml({
+    stone: 'abcd1234efgh_1791360000000', id: 'abcd1234efgh', name: '<b>妹妹</b>',
+    deletedAt: Date.now() - day, purgeAt: Date.now() + 5 * day,
+  });
+  if (!row.includes('&lt;b&gt;妹妹&lt;/b&gt;')) throw new Error('账号昵称必须转义');
+  if (row.includes('<b>妹妹')) throw new Error('昵称未转义（XSS）');
+  if (!row.includes('data-trash-account="abcd1234efgh_1791360000000"')) throw new Error('缺墓碑标识 stone');
+  if (!row.includes('restoreDeletedAccount') || !row.includes('purgeDeletedAccount')) throw new Error('行按钮矩阵应为 恢复+彻底删除');
+  if (!row.includes('剩 5 天')) throw new Error('剩余天数换算不对：' + row);
+  // stone 注入消毒：墓碑目录名拼 onclick/属性，同画布行白名单口径
+  const evil = s2._trashAccountRowHtml({ stone: 'x_<img src=x onerror=1>"', id: 'x', name: 'n', purgeAt: 0 });
+  if (evil.includes('<img') || evil.includes('onerror=1')) throw new Error('stone 注入片段未剥净');
+  // 查阅态：整行只展示不操作
+  s2.window.PHYMATHIA_READONLY = true;
+  const ro = s2._trashAccountRowHtml({ stone: 'a_1', id: 'a', name: 'n', purgeAt: Date.now() + day });
+  if (ro.includes('restoreDeletedAccount') || ro.includes('purgeDeletedAccount')) throw new Error('查阅态行不得有操作钮');
+  if (!ro.includes('data-trash-account')) throw new Error('查阅态行仍应展示条目');
+  s2.window.PHYMATHIA_READONLY = false;
+  // 删账号确认文案如实指向回收站；回收站关闭（保留 0 天）如实警告不可恢复
+  const acc = fs.readFileSync('src/static/js/accounts.js', 'utf8');
+  if (!acc.includes('期间可在侧栏「回收站」恢复')) throw new Error('删账号确认文案未指向回收站');
+  if (!acc.includes('立即彻底删除，不可恢复')) throw new Error('回收站关闭时删账号文案必须如实警告');
+  if (!acc.includes('_trashRetentionLocal()')) throw new Error('删账号文案天数应取回收站保留天数缓存');
+  const trashSrc = fs.readFileSync('src/static/js/trash.js', 'utf8');
+  if (!trashSrc.includes("'/api/trash/accounts/' + encodeURIComponent(stone) + '/restore'")) throw new Error('恢复端点必须 encodeURIComponent');
+  if (!trashSrc.includes('trash-section-title')) throw new Error('缺已删账号小节标题渲染');
+  if (!fs.readFileSync('src/static/css/styles.css', 'utf8').includes('.trash-section-title')) throw new Error('缺小节标题样式');
+  // 自删账号的卸载冲刷跳过（真机抓出：reload 的 sendBeacon 信封还带已删账号 id，
+  // 会把账号在空目录上复活）——前端主动掐断 + 服务端 ensure 墓碑闸门双保险
+  if (!acc.includes('__phyAccountJustDeleted = true')) throw new Error('删当前账号必须先立卸载冲刷跳过标志');
+  const sessrc2 = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!sessrc2.includes('window.__phyAccountJustDeleted')) throw new Error('卸载冲刷缺自删账号跳过');
+  const accpy = fs.readFileSync('src/server/accounts.py', 'utf8');
+  if (!accpy.includes('def has_account_tombstone') || !accpy.includes('if has_account_tombstone(account):')) throw new Error('ensure 缺已删账号复活闸门');
+  // 服务端契约镜像（账号墓碑机制在 trash.py，接入点在 main.py）
+  const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
+  for (const frag of ['def capture_account', 'def restore_account_tombstone', 'def purge_expired_tombstones',
+    'meta.json 最后落盘＝完整性标志', 'total += purge_expired_tombstones()']) {
+    if (!pysrc.includes(frag)) throw new Error('trash.py 缺账号墓碑机制：' + frag);
+  }
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  for (const frag of ['"/api/trash/accounts/{stone_id}/restore"', 'trash.capture_account(account, entry, days)',
+    'accounts.forget_ensured(account)', 'accounts.restore_entry(entry)']) {
+    if (!mainpy.includes(frag)) throw new Error('main.py 缺删账号回收站化接入点：' + frag);
+  }
+  // 主沙箱（构建产物）里新函数已随包装载
+  if (typeof sandbox._trashAccountRowHtml !== 'function') throw new Error('trash.js 新函数未进 app.js 构建产物');
   return true;
 });
 

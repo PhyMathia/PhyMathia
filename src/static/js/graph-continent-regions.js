@@ -22,6 +22,9 @@ function _continentSecondaryDot(cluster, domainList) {
 
 // 图例本体（#continentLegend，挂在视口左下角——不与顶栏 #continentGuide/连接模式提示
 // 争位，那是 v5.4 踩过的互斥坑）。自身可折叠（不许变成新的复杂度）。
+// 图例折叠的查阅态内存影子：跳过落盘时保当次切换不弹回（重渲从这里读）；非查阅恒 null
+let _continentLegendMem = null;
+
 function _continentRenderLegend(regionInfo, data) {
   const legend = document.getElementById('continentLegend');
   if (!legend) return;
@@ -30,7 +33,9 @@ function _continentRenderLegend(regionInfo, data) {
   if (!regions.length && !pending.length) { legend.hidden = true; legend.innerHTML = ''; return; }
   legend.hidden = false;
   let collapsed = false;
-  try { collapsed = localStorage.getItem('phymathia_continent_legend') === '1'; } catch (e) { /* 容忍 */ }
+  // 查阅态：优先读内存影子（切换不落盘也能在重渲间存活）；非查阅恒 null 走 localStorage
+  if (_continentLegendMem !== null) collapsed = _continentLegendMem;
+  else try { collapsed = localStorage.getItem('phymathia_continent_legend') === '1'; } catch (e) { /* 容忍 */ }
   const esc = _continentEsc;
   const items = regions.map(r => {
     const hueAttr = (r.hue !== null && r.hue !== undefined) ? ' style="--region-h:' + r.hue + '"' : '';
@@ -90,10 +95,21 @@ function _continentRenderLegend(regionInfo, data) {
   const toggle = legend.querySelector ? legend.querySelector('.continent-legend-head') : null;
   if (toggle) toggle.addEventListener('pointerdown', e => {
     e.stopPropagation();
-    try {
-      localStorage.setItem('phymathia_continent_legend',
-        localStorage.getItem('phymathia_continent_legend') === '1' ? '0' : '1');
-    } catch (err) { /* 容忍 */ }
+    // 查阅态：切换写内存影子不落盘（写经账号垫片会进对方命名空间），浏览交互保留
+    if (phyIsReadonly()) {
+      const cur = _continentLegendMem !== null ? _continentLegendMem
+        : (function () {
+            try { return localStorage.getItem('phymathia_continent_legend') === '1'; }
+            catch (err) { return false; }
+          })();
+      _continentLegendMem = !cur;
+      _continentReadonlyNudge();
+    } else {
+      try {
+        localStorage.setItem('phymathia_continent_legend',
+          localStorage.getItem('phymathia_continent_legend') === '1' ? '0' : '1');
+      } catch (err) { /* 容忍 */ }
+    }
     _continentRenderLegend(_continentRegionInfo, data);
   });
   if (toggle) _kact(toggle);  // T143 键盘可达
@@ -333,12 +349,18 @@ async function _continentLoadRegionOverrides() {
 }
 
 async function _continentCommitRegionOverrides(next, undoEntry) {
-  const resp = await fetch(CONTINENT_REGIONS_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value: next }),
-  });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  // 查阅态：跳过落盘（会被 fetch 闸 403），继续走本地镜像——挪岛/改名在内存生效、
+  // 撤销栈照常，刷新即失；_continentAssignRegion 的纠正信号随后自行短路
+  if (!phyIsReadonly()) {
+    const resp = await fetch(CONTINENT_REGIONS_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: next }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  } else {
+    _continentReadonlyNudge('查阅模式：海域调整只在本次浏览内生效，不会保存');
+  }
   if (undoEntry) _continentEdgeUndo.push(undoEntry);
   _continentRegionOverrides = next;
   _continentLegendFocus = '';  // 分组可能变了，聚焦态不作数
@@ -470,6 +492,8 @@ function _continentGatePendingCards(clusters, entries) {
 // 批量归类主流程：分批（40/批）→ 每批判读 → **每批落盘**（中断不丢已完成的）→
 // 全部结束刷新投影（后端把 gate KV 合进同一层分区，来源标记变「Φ 归类」）
 async function _continentGateClassify() {
+  // 查阅态：归类会烧模型调用并写对方的 gate KV，入口直接拦（比 fetch 闸 403 更早、提示更明白）
+  if (phyIsReadonly()) { _continentToast('查阅模式：Φ 归类会写对方的归类结果，查阅态不可用'); return; }
   const data = _continentData;
   if (!data) return;
   const model = (typeof getActiveModelForRole === 'function')
@@ -558,6 +582,8 @@ async function _continentGateClassify() {
 // 采纳归并建议：写进 continent_families（与内置族同一条汇聚通道——从此会积累）。
 // terms 用这几张卡的标题：族匹配跑标题，同款/子串变体今后自动归族
 async function _continentAdoptGateMerge(m) {
+  // 查阅态：采纳会写对方的族表，入口直接拦
+  if (phyIsReadonly()) { _continentToast('查阅模式：采纳归并会写对方的族表，查阅态不可用'); return; }
   const terms = [];
   (m.titles || []).forEach(t => {
     const s = String(t || '').trim().slice(0, 24);
@@ -646,6 +672,8 @@ async function _continentLoadCorrectionCount() {
 // KV。本期只采集 + 图例可见 + 可清空；「≥5 次同向自动微调权重」是二期，攒够真实
 // 数据才接（大陆计划动工前优化④的口径）。记录失败不阻断纠正本身（纠正已生效）。
 async function _continentRecordCorrection(sid, fromDomain, toDomain) {
+  // 查阅态：纠正已在内存生效，只跳过信号落盘（静默——与「记录失败不阻断纠正」同口径）
+  if (phyIsReadonly()) return;
   try {
     let log = [];
     try {
@@ -914,6 +942,9 @@ async function _continentFamilyPopover(ev) {
   if (!el || !el.querySelectorAll) return;
 
   const persist = async next => {
+    // 查阅态：族表写（新增/编辑/删除/收下建议）一律拦下，抛错让各调用方的 catch
+    // 给出对应措辞（保存失败/删除失败），绝不在对方账号落盘
+    if (phyIsReadonly()) throw new Error('查阅模式：修改不保存');
     const resp = await fetch(CONTINENT_FAMILIES_KV_API, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: { families: next } }),
@@ -943,6 +974,8 @@ async function _continentFamilyPopover(ev) {
     try { await persist(next); } catch (err) { _continentToast('保存失败：' + (err && err.message || err)); }
   };
   const rejectSuggestion = async s => {
+    // 查阅态：拒绝记录要写对方的 KV，直接拦
+    if (phyIsReadonly()) { _continentToast('查阅模式：拒绝记录不会写进对方账号'); return; }
     try {
       let state = {};
       try {
@@ -982,6 +1015,8 @@ async function _continentFamilyPopover(ev) {
     } catch (e) { return {}; }
   };
   const saveSuggestState = async state => {
+    // 查阅态：候选状态（named/dismissed）落 KV 拦下，抛错走调用方 catch
+    if (phyIsReadonly()) throw new Error('查阅模式：修改不保存');
     const resp = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: Object.assign({ version: 1 }, state) }),
@@ -1012,6 +1047,8 @@ async function _continentFamilyPopover(ev) {
       const dismissBtn = row.querySelector('[data-cluster-dismiss]');
       if (nameBtn) nameBtn.addEventListener('click', async e => {
         e.stopPropagation();
+        // 查阅态：起名要烧模型调用并写对方的候选缓存，入口直接拦
+        if (phyIsReadonly()) { _continentToast('查阅模式：Φ 起名会写对方的候选记录，查阅态不可用'); return; }
         const model = (typeof getActiveModelForRole === 'function')
           ? (getActiveModelForRole('graph') || getActiveModelForRole('agent')) : null;
         if (!model) { _continentToast('先在「模型设置」里配置主模型，才能让 Φ 起名'); return; }
@@ -1269,6 +1306,8 @@ async function _continentFamilyPopover(ev) {
   const clearBtn = el.querySelector('[data-correction-clear]');
   if (clearBtn) clearBtn.addEventListener('click', async e => {
     e.stopPropagation();
+    // 查阅态：清空会删对方的纠正记录，入口直接拦
+    if (phyIsReadonly()) { _continentToast('查阅模式：不能清空对方的纠正记录'); return; }
     try {
       const resp = await fetch(CONTINENT_WEIGHTS_API, { method: 'DELETE' });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);

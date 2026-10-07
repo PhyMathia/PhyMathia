@@ -562,7 +562,11 @@ const CONTINENT_ROUTE_PREFS_KEY = 'phymathia_continent_routes'; // 非会话键�
 const CONTINENT_ROUTE_DASH = { solid: '', dashed: '7 5', dotted: '2 4' };
 const CONTINENT_ROUTE_WIDTH = { thin: 1.2, normal: 2, thick: 3.2 };
 
+// 查阅态：航线显示偏好在内存影子生效（重渲读影子不弹回），跳过落盘；
+// 非查阅恒 null 走 localStorage，路径零改动
+let _continentRoutePrefsMem = null;
 function _continentRoutePrefs() {
+  if (_continentRoutePrefsMem !== null) return _continentRoutePrefsMem;
   try {
     const raw = JSON.parse(localStorage.getItem(CONTINENT_ROUTE_PREFS_KEY) || 'null');
     if (raw && typeof raw === 'object') {
@@ -574,6 +578,7 @@ function _continentRoutePrefs() {
 }
 
 function _continentSaveRoutePrefs(prefs) {
+  if (phyIsReadonly()) { _continentRoutePrefsMem = prefs; _continentReadonlyNudge(); return; }
   try { localStorage.setItem(CONTINENT_ROUTE_PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 容忍 */ }
 }
 
@@ -810,12 +815,18 @@ function _continentEdgeList() {
 }
 
 async function _continentCommit(edges, undoEntry) {
-  const resp = await fetch(CONTINENT_EDGES_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value: edges.slice(0, CONTINENT_USER_EDGE_LIMIT) }),
-  });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  // 查阅态：跳过落盘（会被 fetch 闸 403），继续走本地镜像——画线/删线/改样式/撤销
+  // 都在内存里试玩，刷新即失，对方账号零痕迹；撤销栈照常可用
+  if (!phyIsReadonly()) {
+    const resp = await fetch(CONTINENT_EDGES_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: edges.slice(0, CONTINENT_USER_EDGE_LIMIT) }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  } else {
+    _continentReadonlyNudge('查阅模式：航线修改只在本次浏览内生效，不会保存');
+  }
   if (undoEntry) _continentEdgeUndo.push(undoEntry);
   // T144：边表是独立 KV，聚簇/共享概念/海域投影全不因它变——原先提交后重 GET
   // /api/continent（服务端全量重算）→ 整图重建重跑全部 KaTeX。现在本地镜像

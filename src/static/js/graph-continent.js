@@ -355,6 +355,8 @@ function _continentLoadCollapsed() {
 }
 
 function _continentSaveCollapsed() {
+  // 查阅态：折叠集本就是内存态 _continentCollapsed，跳过落盘不影响当次交互
+  if (phyIsReadonly()) { _continentReadonlyNudge(); return; }
   try { localStorage.setItem(CONTINENT_COLLAPSED_KEY, JSON.stringify(_continentCollapsed)); }
   catch (e) { /* 容忍 */ }
 }
@@ -392,6 +394,19 @@ function _continentKindClass(kind) {
 
 function _continentToast(msg) {
   if (typeof showToast === 'function') showToast(msg);
+}
+
+// ===== 只读查阅写点闸（P3 续 2026-10-07）：大陆六文件的落盘写逐处跳过 =====
+// 查阅他人账号时打开大陆：浏览交互（拖动/缩放/折叠/点开城市）全部保留，但一切落盘
+// 写跳过——localStorage 写经账号垫片会物理写进对方命名空间，API 写会被 config.js 的
+// fetch 闸拦成 403（这里提前跳过＝省一次必败请求，并把「保存失败」红提示降级成温和
+// 提示）。拍板：拦「落盘」不拦「浏览」；读侧照读对方已存值（读对方、写跳过）。
+// 温和提示整轮只弹一次（_continentToast 无节流，防连点刷屏）。
+let _continentReadonlyNudged = false;
+function _continentReadonlyNudge(msg) {
+  if (_continentReadonlyNudged) return;
+  _continentReadonlyNudged = true;
+  _continentToast(msg || '查阅模式：浏览痕迹不会保存到对方账号');
 }
 
 // 节点公式：渲成一行小字 KaTeX（不占地图视觉重量）；溢出交给容器裁剪，
