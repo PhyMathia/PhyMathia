@@ -612,8 +612,9 @@ function _continentRouteStroke(style, edge, regionInfo, theme) {
     // T134：universe 与海域板同源（regionInfo.domainList，_continentRegions 随产物带回）——
     // 传 null 会自己单独占槽，撞槽时航线与海域板不同色。旧形态 regionInfo（无 domainList）
     // 退回单名占槽，不炸
+    // v8.13：换色覆盖随 regionInfo 走（colors）——航线「跟海域色」必须与海域板同色
     const hue = info && info.key !== null && info.key !== undefined
-      ? _continentRegionHue(info.key, regionInfo.domainList) : null;
+      ? _continentHueWithOverride(info.key, regionInfo.domainList, regionInfo.colors) : null;
     if (hue !== null && hue !== undefined) color = 'hsla(' + hue + ', 62%, 64%, 0.85)';
   }
   if (!color) color = _continentRouteColor('--route-default');

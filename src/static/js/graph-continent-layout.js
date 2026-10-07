@@ -113,6 +113,19 @@ function _continentRegionHue(name, universe) {
   return 0;
 }
 
+// 用户改色（图例「换色」）的解析口：覆盖表里有键就吃覆盖，没有就退回上面的确定性色槽。
+// 纯函数——覆盖表当参数传（不吃模块态），所以 smoke 与各处调用都能独立验。铁律不变：
+// 色相仍由**规范领域键**决定，覆盖只改「这片海显示成什么色」，改名/挪岛/重排都不换色。
+// 值统一归一化成 0–359 的整数（写入口已夹取，这里再兜一次脏数据）；非有限数当没写。
+function _continentHueWithOverride(name, universe, colors) {
+  if (colors && typeof colors === 'object' &&
+      Object.prototype.hasOwnProperty.call(colors, name)) {
+    const hue = Number(colors[name]);
+    if (Number.isFinite(hue)) return ((Math.round(hue) % 360) + 360) % 360;
+  }
+  return _continentRegionHue(name, universe);
+}
+
 // T32 远景短名：远景档（lod-horizon）里岛牌升格成「大地名」，字号被 --cloud-k 放大后
 // 长名必然省略号截断（真实库 13 岛里 4 个读不全）。给远景一份按字数封顶的短名——
 // 全名/短名两份都进 DOM（一次渲染写死、缩放全程不碰 DOM 的约定不变），切档只切 CSS。
@@ -130,6 +143,9 @@ function _continentShortName(title, cap) {
 function _continentRegions(clusters, overrides, domainList) {
   const assign = (overrides && overrides.assign) || {};
   const renames = (overrides && overrides.renames) || {};
+  // 用户改色表（图例「换色」写的）：键＝规范领域键，值＝0–359 色相
+  const colors = (overrides && overrides.colors && typeof overrides.colors === 'object')
+    ? overrides.colors : {};
   const bySid = {};
   const groups = {};
   const pending = [];
@@ -179,7 +195,8 @@ function _continentRegions(clusters, overrides, domainList) {
   };
   regions.forEach(r => {
     r.name = r.merged ? '其他' : (renames[r.key] || r.key);
-    r.hue = r.merged ? null : _continentRegionHue(r.key, domainList);
+    r.hue = r.merged ? null : _continentHueWithOverride(r.key, domainList, colors);
+    r.hueCustom = !r.merged && Object.prototype.hasOwnProperty.call(colors, r.key);
     r.itemCount = r.sessions.reduce((acc, sid) => acc + itemCountOf(sid), 0);
     const srcs = r.sessions.map(sid => bySid[sid].source);
     r.source = srcs.indexOf('user') >= 0 ? 'user'
@@ -187,9 +204,10 @@ function _continentRegions(clusters, overrides, domainList) {
     r.userNamed = !r.merged && Object.prototype.hasOwnProperty.call(renames, r.key);
   });
   // T134：domainList 随产物带走——航线「跟海域色」必须与海域板同一份 universe 取色
-  //（_continentRegionHue 的线性探测占槽依赖 universe 全表），各传各的必在撞槽时分叉
+  //（_continentRegionHue 的线性探测占槽依赖 universe 全表），各传各的必在撞槽时分叉。
+  // colors 同理随产物带走（v8.13 换色）：否则航线/次要色点算出来与海域板不同色
   return { regions: regions, singles: singles, neutral: neutral, pending: pending,
-           bySid: bySid, domainList: domainList || null };
+           bySid: bySid, domainList: domainList || null, colors: colors };
 }
 
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------

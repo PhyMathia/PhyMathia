@@ -14,6 +14,7 @@
 //   7. v8 族表编辑（新增族 → /api/families 生效 → 地图重算）
 //   8. LOD 三档双向切换（滚轮缩放）
 //  10. v10 新族候选：Φ 起名 → 建族（浏览器侧拦截 mock 模型与建议端点）
+//  11. v8.13 海域换色：图例换色 → 海域板与岛底同步变色 → KV 落盘 → Ctrl+Z 回退
 //
 // 用法：node scripts/continent_regression.mjs
 // 隔离口径：临时目录里拷贝 src/（DATA_DIR 在导入期从 config.py 解析，symlink 会被
@@ -596,6 +597,76 @@ async function run() {
       try { await page.unroute('**/api/families/suggestions'); await page.unroute('**/api/models/chat'); } catch (e2) { /* 容忍 */ }
       fail('v10 新族候选：Φ 起名 → 建族 → 族表与投影同步生效', e);
     }
+
+    // ===== 11. v8.13 海域换色：图例换色 → 板/岛同步 + KV 落盘 → Ctrl+Z 回退 =====
+    // 覆盖 smoke 断言不到的「活 DOM」：色相要同时落到海域板与岛底（两个元素各写各的
+    // --region-h，不是继承），且必须真写进 KV 而不是只在内存里变。
+    try {
+      await closePopoverIfAny();
+      const regionKey = await page.evaluate(() => {
+        const info = typeof _continentRegionInfoOf === 'function' ? _continentRegionInfoOf() : null;
+        const by = info && info.bySid && info.bySid['sess_grad1'];
+        return (by && by.key) || '';
+      });
+      if (!regionKey) throw new Error('sess_grad1 没有海域归属（图例无行可点）');
+      const plateSel = '.continent-region[data-region="' + regionKey + '"]';
+      const islandSel = '.continent-cluster[data-session-id="sess_grad1"]';
+      const readHue = sel => page.locator(sel).first().evaluate(el => el.style.getPropertyValue('--region-h'));
+      const beforePlate = await readHue(plateSel);
+      const beforeIsland = await readHue(islandSel);
+      if (!beforePlate) throw new Error('海域板没有 --region-h（灰档不该出现在这片海）');
+      if (beforeIsland !== beforePlate) throw new Error('起点就不同色：板=' + beforePlate + ' 岛=' + beforeIsland);
+      await page.click('.continent-legend-item[data-region="' + regionKey + '"] [data-color]');
+      await page.waitForSelector('.continent-color-cell', { timeout: 4000 });
+      const fresh = page.locator('.continent-color-cell:not(.is-cur)');
+      if ((await fresh.count()) < 1) throw new Error('色盘里没有可选的非当前槽');
+      const pick = await fresh.first().getAttribute('data-cell-hue');
+      await fresh.first().click();
+      // 落笔是异步的（先 POST /api/kv/continent_regions 再重渲）——轮询等色相真的落地，
+      // 不等一锤子买卖（第一版就在这儿红过：点击一返回就读 DOM，读到的还是旧色）
+      const waitHue = (sel, want) => page.waitForFunction(arg => {
+        const el = document.querySelector(arg.sel);
+        return !!el && el.style.getPropertyValue('--region-h') === arg.want;
+      }, { sel: sel, want: want }, { timeout: 6000 });
+      await waitHue(plateSel, pick);
+      const afterPlate = await readHue(plateSel);
+      const afterIsland = await readHue(islandSel);
+      if (afterPlate !== pick) throw new Error('海域板色相没落到 ' + pick + '：' + afterPlate);
+      if (afterIsland !== afterPlate) throw new Error('岛底没跟上海域色：板=' + afterPlate + ' 岛=' + afterIsland);
+      await page.waitForFunction(async key => {
+        const j = await (await fetch('/api/kv/continent_regions', { cache: 'no-store' })).json();
+        return !!(j.value && j.value.colors &&
+          Object.prototype.hasOwnProperty.call(j.value.colors, key));
+      }, regionKey, { timeout: 6000 });
+      // 复位路径：「还原默认色」改完色当场就在（常驻渲染、改过才显示），别等重开弹层
+      const resetBtn = page.locator('.continent-popover [data-color-reset]');
+      if ((await resetBtn.count()) < 1) throw new Error('调色弹层没有「还原默认色」按钮');
+      if (await resetBtn.first().isHidden()) throw new Error('改过色后「还原默认色」还藏着（改完要能当场还原）');
+      await resetBtn.first().click();
+      await waitHue(plateSel, beforePlate);
+      await page.waitForFunction(async key => {
+        const j = await (await fetch('/api/kv/continent_regions', { cache: 'no-store' })).json();
+        return !(j.value && j.value.colors &&
+          Object.prototype.hasOwnProperty.call(j.value.colors, key));
+      }, regionKey, { timeout: 6000 });
+      // 再改一次，留给 Ctrl+Z 回退这条路径
+      const pick2 = await fresh.first().getAttribute('data-cell-hue');
+      await fresh.first().click();
+      await waitHue(plateSel, pick2);
+      // 弹层刻意不自动关（接着试色）——「完成」收起
+      await page.click('.continent-popover [data-color-done]');
+      await page.waitForFunction(() => !document.querySelector('.continent-popover'), null, { timeout: 4000 });
+      await page.keyboard.press('Control+z');
+      await page.waitForFunction(async key => {
+        const j = await (await fetch('/api/kv/continent_regions', { cache: 'no-store' })).json();
+        return !(j.value && j.value.colors &&
+          Object.prototype.hasOwnProperty.call(j.value.colors, key));
+      }, regionKey, { timeout: 6000 });
+      await waitHue(plateSel, beforePlate);   // 撤销同样异步：等色相还回来再断言
+      const backPlate = await readHue(plateSel);
+      if (backPlate !== beforePlate) throw new Error('撤销没还回原色：' + beforePlate + ' → ' + backPlate);
+      ok('v8.13 海域换色：图例落笔 + 板/岛同步 + KV 落盘 + 还原默认色 + 撤销回退');
+    } catch (e) { fail('v8.13 海域换色：图例落笔 + 板/岛同步 + KV 落盘 + 还原默认色 + 撤销回退', e); }
   } catch (err) {
     results.push(false);
     console.log('❌ 环境级失败 -> ' + (err && err.message || err));

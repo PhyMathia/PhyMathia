@@ -331,7 +331,8 @@ let _continentSearchTimer = 0;     // 输入防抖
 let _continentCorrectionCount = 0; // 归类纠正记录条数（图例脚注可见，族表弹层可清空）
 const _continentPhiInflight = new Set(); // v5.3 在途「问 Φ」请求：弹层关闭时全部中止
 // v7.1a 海域层状态
-let _continentRegionOverrides = { renames: {}, assign: {} }; // KV continent_regions（用户覆盖）
+// KV continent_regions（用户覆盖）：renames 改名 / assign 挪岛 / colors 换色（v8.13）
+let _continentRegionOverrides = { renames: {}, assign: {}, colors: {} };
 let _continentLegendFocus = '';    // 图例聚焦的海域 key（空=不聚焦；只淡化不删不重排）
 let _continentRegionInfo = null;   // 最近一次 _continentRegions 的产物（聚焦/徽标消费）
 // v7.3 折叠态（岛/海域，localStorage 非会话键）：收起的岛只留岛牌，收起的海域整片
@@ -798,7 +799,7 @@ function _continentRender(data) {
     // 领域徽标（v7.1a 手动纠正入口）：点开「归到哪个领域」清单——一步落笔写 KV。
     // 徽标不在（neutral 无归属）就不占位；淡色/待确认档带「?」（不确定也要可见）。
     // 徽标旁的色点 = 次要领域（混合岛，后端 domains[1] 概率够高才显示）
-    const secondaryDot = _continentSecondaryDot(cluster, data.domainList);
+    const secondaryDot = _continentSecondaryDot(cluster, data.domainList, regionInfo.colors);
     if (info.key && tier !== 'neutral') {
       const region2 = regionInfo.regions.find(r => r.key === info.key);
       const badgeName = region2 ? region2.name : info.key;
