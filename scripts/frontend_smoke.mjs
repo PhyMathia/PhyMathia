@@ -8164,6 +8164,8 @@ check('多账号：静态契约（第 7 磁贴/弹窗骨架/构建注册/枚举�
   const idx = fs.readFileSync('src/static/index.html', 'utf8');
   if (!idx.includes('id="accountTile"') || !idx.includes('openAccountsPanel')) throw new Error('侧栏缺账号磁贴');
   if (!idx.includes('id="accountsDialog"') || !idx.includes('id="accountsList"')) throw new Error('缺账号弹窗骨架');
+  const newNameAt = idx.indexOf('id="accountNewName"');
+  if (newNameAt < 0 || idx.slice(newNameAt, newNameAt + 300).indexOf('createAccount()') < 0) throw new Error('新建输入缺回车确认（onkeydown→createAccount）');
   if (!idx.includes("localStorage.getItem('phymathia_account')")) throw new Error('内联主题脚本未感知账号指针');
   const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
   if (!cfg.includes('installAccountLsShim') || !cfg.includes('function lsKeys') || !cfg.includes('installAccountFetch')) throw new Error('config.js 缺垫片/枚举/包装实现');

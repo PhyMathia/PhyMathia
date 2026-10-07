@@ -305,17 +305,17 @@ def test_accounts_route_list_default_first(acc_env):
 def test_accounts_route_create_switch_domain(acc_env):
     """新建：服务端生成 12 位十六进制 id、建目录登记；后续存储请求按新 id 分域。"""
     with _client(acc_env) as client:
-        r = client.post("/api/accounts", json={"name": "妹妹的账号"})
+        r = client.post("/api/accounts", json={"name": "测试账号"})
         assert r.status_code == 200
         entry = r.json()
-        assert entry["name"] == "妹妹的账号" and entry["allowBrowse"] is False
+        assert entry["name"] == "测试账号" and entry["allowBrowse"] is False
         assert len(entry["id"]) == 12
         # 新账号目录已建（messages/kv 就位），且会话写入落自己的域
         assert (accounts.resolve_paths(entry["id"]).messages_dir).is_dir()
         client.post("/api/sessions", json={"id": "s1", "title": "新账号的画布", "account_id": entry["id"]})
         assert client.get("/api/sessions").json() == {}  # default 看不见
     names = {e["name"] for e in accounts.load_registry().values()}
-    assert "妹妹的账号" in names
+    assert "测试账号" in names
 
 
 def test_accounts_route_create_name_clamp_and_default_name(acc_env):
