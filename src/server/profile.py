@@ -103,6 +103,35 @@ def _profile_path(device_id: str) -> Path:
     return PROFILES_DIR / f"{safe}.json"
 
 
+def device_key(device_id) -> str:
+    """device_id → 画像文件名 stem（与 _profile_path 同一折叠规则，绑定/圈定
+    备份范围时用它对齐文件键）。"""
+    return _profile_path(device_id).stem
+
+
+# 只收与文件名折叠完全一致的原始 id（且必须字母数字开头，挡住 ".."/".x" 这类
+# 纯标点假 id）：超长/含非法字符的 id 折叠后无法反查原始值，宁可不绑（归属
+# 缺一条只影响备份圈定回退到提示值），不误绑
+_DEVICE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def note_device_binding(device_id, account: str = DEFAULT_ACCOUNT) -> None:
+    """登记账号↔设备归属（学习画像按账号隔离的依据）。
+
+    画像文件仍按 device_id 键（P1 拍板：device_id 保持画像归因键，别改成按
+    账号路径存）——「按账号隔离」靠这份归属快照在边界处圈定哪些 device 属于
+    谁：备份导出/导入只碰本账号设备、删账号彻底清除连带删本账号画像文件。
+    异常静默：归属登记是画像的附属信息，不影响任何主链路。
+    """
+    try:
+        raw = str(device_id or "")
+        if not raw or not _DEVICE_KEY_RE.match(raw):
+            return
+        accounts.add_account_devices(account, [raw])
+    except Exception as e:  # pragma: no cover - 登记失败不影响画像本体
+        logger.warning(f"note_device_binding failed: {e}")
+
+
 def _finite_number(value):
     """只接受有限的数字/数字字符串；bool 不是画像数值。"""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
@@ -620,6 +649,7 @@ def record_implicit_event(device_id: str, events: list, now: float = None,
     """
     if not device_id or not isinstance(events, list) or not events:
         return False
+    note_device_binding(device_id, account=account)
     try:
         path = _profile_path(device_id)
         _implicit.ensure_seeded(path, account=account)
@@ -740,6 +770,7 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS,
     自己重新算一遍，两套同构算法不会随改动漂移。
     account 是知识库/测验统计的账号域（画像文件本身仍按 device_id 键）。
     """
+    note_device_binding(device_id, account=account)
     profile = get_profile(device_id)
     if not profile.get("enabled", True):
         return {"text": "", "factIds": [], "sections": []}

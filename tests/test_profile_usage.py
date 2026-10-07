@@ -16,6 +16,14 @@ import main as main_mod
 from server import profile as profile_mod
 
 
+@pytest.fixture(autouse=True)
+def _isolate_account_registry(monkeypatch, tmp_path):
+    """画像入口会登记账号↔设备绑定（2026-10-07 画像按账号隔离），注册表跟着
+    config.DATA_DIR 走——不重定向会把测试设备键写进真实 data/users/accounts.json。"""
+    from server import config as config_mod
+    monkeypatch.setattr(config_mod, "DATA_DIR", tmp_path)
+
+
 def seed_profile(device_id="dev-usage", enabled=True, facts=None):
     """学段/目标一条即固化；其余类别按约定同批两次陈述才固化。"""
     profile_mod.update_profile(device_id, {"enabled": enabled})

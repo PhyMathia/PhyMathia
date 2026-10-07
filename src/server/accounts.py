@@ -173,6 +173,9 @@ def register_account(account_id: str, name: str = None) -> dict:
                 if key not in entry:
                     entry[key] = False if key == "allowBrowse" else int(time.time() * 1000)
                     changed = True
+            if "devices" not in entry:  # 画像设备归属（account_devices），旧条目补空
+                entry["devices"] = []
+                changed = True
             if changed:
                 save_registry(entries)
         return entry
@@ -198,6 +201,49 @@ def set_allow_browse(account_id: str, allow: bool) -> dict:
         entries[account]["allowBrowse"] = bool(allow)
         save_registry(entries)
         return entries[account]
+
+
+ACCOUNT_DEVICES_LIMIT = 8
+
+
+def account_devices(account_id: str) -> list:
+    """账号绑定的画像设备键（data/profiles/ 文件名 stem）列表。
+
+    画像归因键是 device_id（P1 拍板不回退账号），画像文件天然按设备分家；
+    这里存的是「这个账号用过哪些设备」的归属快照，供备份按账号圈定画像与
+    删账号彻底清除消费。登记入口在 profile.note_device_binding（画像事件/
+    注入/面板/备份路由都会路过，随正常使用自然长全）。
+    """
+    devices = get_account(account_id).get("devices")
+    if not isinstance(devices, list):
+        return []
+    return [d for d in devices if isinstance(d, str) and d]
+
+
+def add_account_devices(account_id: str, devices: list) -> bool:
+    """把画像设备键并入账号条目（幂等，上限 8 个丢最旧——同账号多浏览器/换机
+    的现实上限，防注册表被脏 device 灌爆）。未登记的账号不凭空建条目：绑定
+    发生时账号必已 ensure（画像活动的前提是页面在跑）。返回是否发生写入。"""
+    account = validate_account_id(account_id)
+    clean = []
+    for d in devices or []:
+        if isinstance(d, str) and d and d not in clean:
+            clean.append(d)
+    if not clean:
+        return False
+    with _LOCK:
+        entries = load_registry()
+        entry = entries.get(account)
+        if entry is None:
+            return False
+        existing = [d for d in (entry.get("devices") or []) if isinstance(d, str) and d]
+        merged = existing + [d for d in clean if d not in existing]
+        merged = merged[-ACCOUNT_DEVICES_LIMIT:]
+        if merged != existing:
+            entry["devices"] = merged
+            save_registry(entries)
+            return True
+    return False
 
 
 def can_browse(target_account_id: str) -> bool:
@@ -383,5 +429,6 @@ __all__ = [
     "register_account", "rename_account", "set_allow_browse", "can_browse",
     "remove_account", "restore_entry", "forget_ensured", "has_account_tombstone",
     "get_trash_retention", "set_trash_retention",
+    "account_devices", "add_account_devices", "ACCOUNT_DEVICES_LIMIT",
     "TRASH_RETENTION_DEFAULT_DAYS", "TRASH_RETENTION_MAX_DAYS",
 ]

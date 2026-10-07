@@ -979,6 +979,7 @@ async def api_accounts_delete(request: Request):
     try:
         if days == 0:
             trash.purge_account_data(account)  # 回收站关闭：删除即彻底清除（与画布同口径）
+            trash.purge_bound_profiles(entry)  # 本账号归属的画像设备一并彻底清除（2026-10-07 画像按账号隔离）
         else:
             in_trash = trash.capture_account(account, entry, days) is not None
     except Exception as e:
@@ -2110,17 +2111,25 @@ async def api_profile_implicit_manage(request: Request):
 
 
 @app.get("/api/profile/dashboard")
-async def api_profile_dashboard(device_id: str = ""):
+async def api_profile_dashboard(request: Request = None, device_id: str = ""):
     """画像仪表盘：隐式状态的派生视图（衰减/保留/成熟度/账本都在服务端算）。"""
     if not device_id:
         raise HTTPException(status_code=400, detail="缺少 device_id")
+    # 打开画像面板＝最自然的归属登记点（新账号首次看面板即绑定，无需先聊天）
+    profile.note_device_binding(device_id, account=_account_id(request))
     return profile.implicit_dashboard(device_id)
 
 
 
 @app.get("/api/backup/export")
 async def api_backup_export(request: Request = None):
-    return _build_backup_payload(_account_id(request))
+    account = _account_id(request)
+    # 设备提示（前端 2026-10-07 起恒传）：画像按账号隔离的圈定键——导出只带
+    # 本账号归属的画像设备；顺手登记绑定，归属随首次导出/使用自然长全
+    device_id = str(request.query_params.get("device_id") or "") if request is not None else ""
+    if device_id:
+        profile.note_device_binding(device_id, account=account)
+    return _build_backup_payload(account, device_id)
 
 
 @app.post("/api/backup/import")
@@ -2132,8 +2141,12 @@ async def api_backup_import(request: Request):
     mode = str(payload.get("mode") or "merge").lower()
     if mode not in ("merge", "replace"):
         raise HTTPException(status_code=400, detail="mode must be merge or replace")
+    account = _account_id(request, payload)
+    device_id = str(payload.get("device_id") or "")
+    if device_id:
+        profile.note_device_binding(device_id, account=account)
     try:
-        return _restore_backup(backup, mode == "replace", account=_account_id(request, payload))
+        return _restore_backup(backup, mode == "replace", account=account, device_id=device_id)
     except HTTPException:
         raise
     except Exception as exc:
