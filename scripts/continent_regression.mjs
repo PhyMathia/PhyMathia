@@ -527,6 +527,15 @@ async function run() {
     //   /api/families/suggestions → 固定回一个三卡无主抱团簇；
     //   /api/models/chat → 固定回 Φ 的 new 判读 JSON。
     // 拦截只管「建议与模型」，建族落 KV / KV 状态读写都打真服务端，闭环可验。
+    // 匹配器用正则不用 glob（T183 根因，2026-10-07）：P2 起前端 fetch 包装给所有
+    // /api/ 请求补 `?account_id=`，而 Playwright 的 glob 是**整串锚定**（^…$）——
+    // 写 `'**/api/families/suggestions'` 对带查询串的 URL 整条不匹配，mock 静默
+    // 失效、请求真打服务端（隔离库没向量没模型，族表弹层一行不出，只表现为 6s
+    // 超时）。凡新加 page.route，匹配器都要容忍查询串。
+    const SUGGEST_ROUTE = /\/api\/families\/suggestions(\?|$)/;
+    const CHAT_ROUTE = /\/api\/models\/chat(\?|$)/;
+    let suggestHits = 0;
+    let chatHits = 0;
     try {
       await closePopoverIfAny();
       // 大陆若在第 9 段被关掉，先回大陆再开族表弹层
@@ -539,7 +548,7 @@ async function run() {
         }
       });
       await continentOpen(page);
-      await page.route('**/api/families/suggestions', r => r.fulfill({
+      await page.route(SUGGEST_ROUTE, r => { suggestHits++; return r.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
           embedEnabled: true,
@@ -553,12 +562,25 @@ async function run() {
             ],
           }],
         }),
-      }));
-      await page.route('**/api/models/chat', r => r.fulfill({
+      }); });
+      await page.route(CHAT_ROUTE, r => { chatHits++; return r.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ choices: [{ message: { content:
           '{"verdict":"new","name":"博弈论","terms":["纳什均衡","囚徒困境","占优策略"],"reason":"三卡共同指向策略互动分析"}' } }] }),
-      }));
+      }); });
+      // mock 自检（T183 教训）：先真发一次被拦端点（走页面 fetch 包装，会带
+      // ?account_id=），确认匹配器命中——路由失效时这里当场报白话，不至于
+      // 拖到下面「等元素 6s 超时」再倒查是不是查询串把 glob 整串匹配打掉了
+      await page.evaluate(async () => {
+        await fetch('/api/families/suggestions', { cache: 'no-store' }).catch(() => {});
+        await fetch('/api/models/chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        }).catch(() => {});
+      });
+      if (suggestHits < 1 || chatHits < 1) {
+        throw new Error('mock 路由没拦到（suggestions=' + suggestHits + ' chat=' + chatHits +
+          '）——匹配器要容忍 ?account_id= 查询串（glob 是整串锚定，见本条注释）');
+      }
       await page.click('#continentFamilyBtn');
       await page.waitForSelector('[data-cluster-key="regcluster1"]', { timeout: 6000 });
       // 隔离库没配模型槽位——起名按钮的守卫（getActiveModelForRole 为空就拒）是对的；
@@ -590,11 +612,11 @@ async function run() {
         const j = await r.json();
         return (j.domainList || []).indexOf('博弈论') >= 0;
       }, null, { timeout: 8000 });
-      await page.unroute('**/api/families/suggestions');
-      await page.unroute('**/api/models/chat');
+      await page.unroute(SUGGEST_ROUTE);
+      await page.unroute(CHAT_ROUTE);
       ok('v10 新族候选：Φ 起名 → 建族 → 族表与投影同步生效');
     } catch (e) {
-      try { await page.unroute('**/api/families/suggestions'); await page.unroute('**/api/models/chat'); } catch (e2) { /* 容忍 */ }
+      try { await page.unroute(SUGGEST_ROUTE); await page.unroute(CHAT_ROUTE); } catch (e2) { /* 容忍 */ }
       fail('v10 新族候选：Φ 起名 → 建族 → 族表与投影同步生效', e);
     }
 
