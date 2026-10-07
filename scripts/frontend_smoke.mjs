@@ -6431,6 +6431,59 @@ check('graph-continent: v8.10 真海岸线（确定性 / 网格态 null / 幅度
   return true;
 });
 
+// ===== v8.12 有机态矩形外观收口：海域/岛的矩形框不许再回来 =====
+// 病根（2026-10-07 用户报「海域改成了蜿蜒曲线，却仍留一个矩形框」）：`.is-coast` 关矩形
+// 外观，靠的是「写在后面」＋同/低特异性。档位（has-region/r-light，0,3,0）与浅色主题
+// （[data-theme="light"] .continent-region，同特异性后写）直接写 border-color/box-shadow/
+// background，把关闭顶回去 —— 真机实测 21/25 块地算出矩形外观（浅色 4 片海域全中）。
+// 现在矩形外观只由两条基类读变量画，档位/主题只喂 --plate-*/--region-*；这条契约扫全表：
+// 除基类、is-coast 收口、故意的状态规则（hover/搜索命中/印章/收起/聚焦）外，任何选中
+// 底盘的规则都不许再直接写矩形外观属性 —— 加了就当场红，不必等真机目检。
+check('graph-continent: v8.12 大陆底盘矩形外观只许「基类 + is-coast 收口」写（档位/主题只喂变量）', () => {
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  // 底盘类：后面不许跟词字符或连字符（否则 .continent-cluster-head 这类子元素会误入）
+  const PLATE = /\.continent-(?:region|cluster)(?![\w-])/;
+  const RECT = /(?:^|;)\s*(background|background-color|background-image|border|border-color|border-top-color|border-right-color|border-bottom-color|border-left-color|box-shadow|border-radius)\s*:/;
+  const STATE = /:hover|\.is-search-hit|\.is-stamp|\.is-collapsed|\.is-dim/;
+  const offenders = [];
+  for (const m of css.matchAll(/(^|[};])\s*([^{}@]+?)\s*\{([^}]*)\}/g)) {
+    const sel = m[2].replace(/\s+/g, ' ').trim();
+    if (!PLATE.test(sel) || !RECT.test(m[3])) continue;
+    for (const part of sel.split(',')) {
+      const p = part.trim();
+      // 只看**主体**（最后一个复合选择器）：`.continent-cluster.r-pending .continent-domain-badge`
+      // 这类规则的主体是徽标，底盘只是祖先，不算「给底盘写矩形外观」。
+      const subject = p.split(/[\s>+~]+/).filter(Boolean).pop() || '';
+      if (!PLATE.test(subject)) continue;
+      if (p === '.continent-region' || p === '.continent-cluster') continue; // 基类：矩形外观唯一画手
+      if (/\.is-coast/.test(p)) continue;                                     // 收口规则（关掉矩形）
+      if (STATE.test(p)) continue;                                            // 故意的状态外观
+      offenders.push(p);
+    }
+  }
+  if (offenders.length) {
+    throw new Error('这些规则直接写矩形外观会盖掉 .is-coast，请改喂 --plate-*/--region-* 变量：\n    ' +
+      [...new Set(offenders)].slice(0, 8).join('\n    '));
+  }
+  // 基类必须只读变量（否则档位改变量也白搭）
+  for (const frag of ['border: 1px solid var(--plate-line);', 'box-shadow: var(--plate-glow);',
+    'border: 1.5px solid var(--region-line);', 'background: var(--region-fill);',
+    'box-shadow: var(--region-glow);']) {
+    if (!css.includes(frag)) throw new Error('基类没走矩形外观变量：' + frag);
+  }
+  if ((css.match(/--plate-glow:/g) || []).length < 2) throw new Error('--plate-glow 只给了深色主题（浅色主题要覆盖它）');
+  if ((css.match(/--region-glow:/g) || []).length < 3) throw new Error('--region-glow 缺档（基类/浅色主题/灰档三处）');
+  // 收口规则要四件全关（漏一件就是「海岸线画在框里」）
+  for (const name of ['.continent-cluster.is-coast', '.continent-region.is-coast']) {
+    const at = css.indexOf(name + ' {');
+    if (at < 0) throw new Error('缺收口规则：' + name);
+    const body = css.slice(at, css.indexOf('}', at));
+    for (const decl of ['background: none', 'border-color: transparent', 'box-shadow: none', 'border-radius: 0']) {
+      if (!body.includes(decl)) throw new Error(name + ' 没关掉矩形外观：' + decl);
+    }
+  }
+});
+
 check('graph-continent: v8.11 航线「跟海域色」与海域板同槽取色（T134 universe 口径一致）', () => {
   const hue = sandbox._continentRegionHue;
   const regions = sandbox._continentRegions;

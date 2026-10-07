@@ -3377,21 +3377,28 @@
   --fill-1: 0.22;
   --fill-2: 0.085;
   --fill-3: 0.13;
-  position: absolute;
-  /* v8.4 海岸线：--r-coast 由 JS 按 sessionId 哈希出 8 值椭圆角，没设时回落到今天的定值。
-   * 只动圆角，位置与尺寸一个像素没改——所以下面的投影/描边/hover 全部原样工作。 */
-  border-radius: var(--r-coast, var(--r-xl));
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg,
-    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-1)) 0%,
-    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-2)) 62%,
-    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-3)) 100%);
-  box-shadow:
+  /* v8.12 矩形外观总闸（病根与口径见下面 .is-coast 上方的「有机态收口」注释）：
+   * **画矩形外观的声明只许出现在这一条基类里**，档位（has-region / r-light）与浅色主题
+   * 一律改 --plate-line / --plate-glow 变量，不再直接写 border-color / box-shadow ——
+   * 它们后写、特异性还高（0,3,0 甚至 0,4,0），会把 .is-coast（0,2,0）的「关掉矩形」
+   * 顶回去：海岸线画在框里、外面还留一圈矩形（2026-10-07 用户照这个框报的 bug）。 */
+  --plate-line: var(--border);
+  --plate-glow:
     0 12px 32px rgba(0, 0, 0, 0.34),
     0 2px 6px rgba(0, 0, 0, 0.20),
     inset 0 1px 0 hsla(var(--region-h, 225), 60%, 82%, 0.14),
     inset 0 0 0 5px hsla(var(--fill-h), 46%, 76%, 0.13),
     inset 0 0 26px hsla(var(--fill-h), 50%, 70%, 0.12);
+  position: absolute;
+  /* v8.4 海岸线：--r-coast 由 JS 按 sessionId 哈希出 8 值椭圆角，没设时回落到今天的定值。
+   * 只动圆角，位置与尺寸一个像素没改——所以下面的投影/描边/hover 全部原样工作。 */
+  border-radius: var(--r-coast, var(--r-xl));
+  border: 1px solid var(--plate-line);
+  background: linear-gradient(180deg,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-1)) 0%,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-2)) 62%,
+    hsla(var(--fill-h), var(--fill-s), var(--fill-l), var(--fill-3)) 100%);
+  box-shadow: var(--plate-glow);
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -3407,7 +3414,7 @@
   /* 浅底上深色投影会显脏：压到几乎不可见，改用「描边加重 + 极浅的落影」立形。
    * 岸带在浅底上要**反过来用暗色**——深底上岸是「亮的一圈」，浅底上就该是「暗的一圈」，
    * 同样是「近岸浅内陆深」，只是明度极性反过来。 */
-  box-shadow:
+  --plate-glow:
     0 6px 18px rgba(90, 70, 30, 0.13),
     0 1px 3px rgba(90, 70, 30, 0.10),
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
@@ -3417,7 +3424,14 @@
 .continent-cluster:hover { border-color: var(--accent); }
 /* v8.10 真海岸线（有机态）：地皮搬进 SVG 后，底盘不再画任何矩形外观——背景/边框/
  * 盒阴影全关，改用 drop-shadow 滤镜（跟 SVG 剪影走，盒阴影只会跟着矩形走）。网格态
- * 不加 is-coast，上面那条老规则原样生效。hover 通过 --coast-line 变量染岸线。 */
+ * 不加 is-coast，上面那条老规则原样生效。hover 通过 --coast-line 变量染岸线。
+ *
+ * v8.12 有机态收口：这条规则**靠特异性赢**，不许再靠「写在后面」——矩形外观的三件
+ * （background / border-color / box-shadow / border-radius）在整份表里只有两条基类
+ * （.continent-cluster / .continent-region）在写，档位与浅色主题只喂 --plate-* /
+ * --region-* 变量，所以 (0,2,0) 的这里必然压得住 (0,1,0) 的基类；反过来，谁要是把
+ * background/border-color/box-shadow 直接写进档位或主题规则（0,3,0 起），这层就废了
+ * ——冒烟里有一条静态契约专门扫这个（「大陆底盘矩形外观只许基类与状态规则写」）。 */
 .continent-cluster.is-coast {
   background: none;
   border-color: transparent;
@@ -3947,14 +3961,21 @@
   /* v8.10：--coast-band/--coast-line 供 SVG 地皮的岸带/岸线用（is-coast 有机态） */
   --coast-band: hsla(var(--region-h, 220), 55%, 62%, 0.28);
   --coast-line: hsla(var(--region-h, 220), 46%, 60%, 0.5);
+  /* v8.12 矩形外观总闸（与 .continent-cluster 同款，注释见那条）：矩形三件只在这里读
+   * 变量画，浅色主题与灰档改 --region-line/--region-fill/--region-glow，不直接写
+   * border-color/background/box-shadow —— 浅色主题那条原先后写又同特异性，把 is-coast
+   * 的「关掉矩形」顶回去，海域就成了「海岸线画在框里、外面留一圈矩形」。 */
+  --region-line: hsla(var(--region-h, 220), 46%, 60%, 0.28);
+  --region-fill: hsla(var(--region-h, 220), 52%, 58%, 0.08);
+  --region-glow:
+    0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10),
+    inset 0 0 46px hsla(var(--region-h, 220), 55%, 60%, 0.09);
   position: absolute;
   /* v8.4 海岸线：--r-coast 由 JS 按 regionKey 哈希出 8 值椭圆角，没设时回落到今天的定值 */
   border-radius: var(--r-coast, var(--r-xl));
-  border: 1.5px solid hsla(var(--region-h, 220), 46%, 60%, 0.28);
-  background: hsla(var(--region-h, 220), 52%, 58%, 0.08);
-  box-shadow:
-    0 0 70px hsla(var(--region-h, 220), 60%, 60%, 0.10),
-    inset 0 0 46px hsla(var(--region-h, 220), 55%, 60%, 0.09);
+  border: 1.5px solid var(--region-line);
+  background: var(--region-fill);
+  box-shadow: var(--region-glow);
   transition: opacity 0.25s ease;
 }
 /* v8.10 有机态海域板：矩形外观全关（含外辉光），drop-shadow 跟 SVG 剪影走。
@@ -3970,27 +3991,27 @@
   filter: drop-shadow(0 0 34px hsla(var(--region-h, 30), 60%, 55%, 0.10));
 }
 [data-theme="light"] .continent-region {
-  border-color: hsla(var(--region-h, 30), 48%, 45%, 0.34);
-  background: hsla(var(--region-h, 30), 55%, 55%, 0.12);
+  --region-line: hsla(var(--region-h, 30), 48%, 45%, 0.34);
+  --region-fill: hsla(var(--region-h, 30), 55%, 55%, 0.12);
   /* 浅底上大面积外辉光会糊成一片黄雾：改成向内的柔边，把「海岸」读成纸边 */
-  box-shadow:
+  --region-glow:
     0 0 34px hsla(var(--region-h, 30), 60%, 55%, 0.10),
     inset 0 0 40px hsla(var(--region-h, 30), 60%, 50%, 0.07);
 }
 /* 并「其他」的尾片：中性灰（色盘不硬造第 13 色） */
 .continent-region.is-gray {
-  border-color: rgba(128, 132, 148, 0.28);
-  background: rgba(128, 132, 148, 0.05);
-  box-shadow: none;
+  --region-line: rgba(128, 132, 148, 0.28);
+  --region-fill: rgba(128, 132, 148, 0.05);
+  --region-glow: none;
 }
-/* v8.10：灰档 + 有机态——is-gray 在本规则之后又把矩形外观写回来，这里再关一次，
- * 岸带/岸线也换中性灰（灰板无 --region-h，上面的 hue 变量全走 220 回落会串色） */
+/* v8.10：灰档 + 有机态——岸带/岸线换中性灰（灰板无 --region-h，上面的 hue 变量全走
+ * 220 回落会串色），灰板也不发光（filter:none）。
+ * v8.12：矩形外观那三行（background/border-color/box-shadow）不必再关一次了——灰档
+ * 现在只喂 --region-* 变量，矩形外观只有基类在画，.is-coast 靠特异性就能关掉；
+ * 这条留下的都是「灰板独有」的东西。 */
 .continent-region.is-gray.is-coast {
   --coast-band: rgba(128, 132, 148, 0.22);
   --coast-line: rgba(128, 132, 148, 0.45);
-  background: none;
-  border-color: transparent;
-  box-shadow: none;
   filter: none;
 }
 .continent-region-head {
@@ -4029,18 +4050,20 @@
 .continent-region-head:hover .continent-region-name { text-decoration: underline dotted; }
 
 /* 岛底板跟海域走：solid 实色、light 更淡、pending 中性灰不划地盘（「不确定也要可见」）
- * v8.1：档位只改 --fill-* 与描边，渐变与投影由基类统一给（见 .continent-cluster） */
+ * v8.1：档位只改 --fill-* 与描边，渐变与投影由基类统一给（见 .continent-cluster）
+ * v8.12：描边也改成喂变量（--plate-line），不再直接写 border-color —— 直接写的话
+ * 它比 .is-coast 后写又同/更高特异性，有机态会留下矩形框（详见基类注释） */
 .continent-cluster.has-region {
   --fill-1: 0.26;
   --fill-2: 0.10;
   --fill-3: 0.16;
-  border-color: hsla(var(--region-h, 220), 46%, 62%, 0.42);
+  --plate-line: hsla(var(--region-h, 220), 46%, 62%, 0.42);
 }
 .continent-cluster.has-region.r-light {
   --fill-1: 0.15;
   --fill-2: 0.058;
   --fill-3: 0.095;
-  border-color: hsla(var(--region-h, 220), 40%, 62%, 0.3);
+  --plate-line: hsla(var(--region-h, 220), 40%, 62%, 0.3);
 }
 .continent-cluster.r-pending {
   --fill-h: 220;
@@ -4055,13 +4078,13 @@
   --fill-1: 0.29;
   --fill-2: 0.115;
   --fill-3: 0.175;
-  border-color: hsla(var(--region-h, 30), 46%, 45%, 0.45);
+  --plate-line: hsla(var(--region-h, 30), 46%, 45%, 0.45);
 }
 [data-theme="light"] .continent-cluster.has-region.r-light {
   --fill-1: 0.175;
   --fill-2: 0.072;
   --fill-3: 0.115;
-  border-color: hsla(var(--region-h, 30), 40%, 45%, 0.34);
+  --plate-line: hsla(var(--region-h, 30), 40%, 45%, 0.34);
 }
 [data-theme="light"] .continent-cluster.r-pending {
   --fill-h: 34;
