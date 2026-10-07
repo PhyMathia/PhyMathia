@@ -965,8 +965,11 @@ async def api_accounts_create(request: Request):
     name = str(payload.get("name") or "").strip()[:40] or None
     # id 服务端生成（12 位十六进制；前端键前缀取前 8 位，见 config.js accountLsPrefix）
     entries = accounts.load_registry()
+    # 撞墓碑 id 也重摇（T191）：墓碑目录占名＋「已删账号」闸门会让新账号目录建不
+    # 起来且请求全 404；uuid 12 位撞概率极低，防御位零成本。
+    tombstoned = trash.tombstone_account_ids()
     account_id = uuid.uuid4().hex[:12]
-    while account_id in entries:
+    while account_id in entries or account_id in tombstoned:
         account_id = uuid.uuid4().hex[:12]
     entry = accounts.register_account(account_id, name=name)
     accounts.ensure_account(account_id, name=name)

@@ -370,6 +370,34 @@ def test_accounts_route_create_name_clamp_and_default_name(acc_env):
         assert len(e2["name"]) == 40
 
 
+def test_accounts_route_create_rerolls_id_colliding_with_tombstone(acc_env, monkeypatch):
+    """建号重摇（T191）：id 撞墓碑时目录建不起来（墓碑目录占名）且请求走
+    「已删账号」404，只能换号；monkeypatch uuid4 先给墓碑 id、再给新 id。"""
+    import types
+    import uuid as uuid_mod
+    import main as main_mod
+    accounts.ensure_account("default")
+    _make("deadbeefcafe")
+    entry = dict(accounts.get_account("deadbeefcafe"))
+    accounts.remove_account("deadbeefcafe")  # 与删除路由同序：注册表除名后墓碑化
+    assert trash.capture_account("deadbeefcafe", entry, 7)
+    real_uuid4 = uuid_mod.uuid4
+    pending = ["deadbeefcafe", "0f0f0f0f0f0f"]
+
+    def fake_uuid4():
+        if pending:
+            return types.SimpleNamespace(hex=pending.pop(0))
+        return real_uuid4()  # 其它调用方（落盘 tmp 文件名等）照常
+
+    with _client(acc_env) as client:
+        monkeypatch.setattr(main_mod.uuid, "uuid4", fake_uuid4)
+        r = client.post("/api/accounts", json={"name": "重摇"})
+    assert r.status_code == 200 and r.json()["id"] == "0f0f0f0f0f0f"
+    assert pending == []  # 预置两号都被取走：先撞墓碑、再摇到可用 id
+    assert "deadbeefcafe" not in accounts.load_registry()
+    assert trash.tombstone_account_ids() == {"deadbeefcafe"}
+
+
 def test_accounts_route_rename_and_allow_browse(acc_env):
     """改名与 allow_browse：对已登记账号生效；缺账号 404；空名/缺 id 400。"""
     accounts.ensure_account("default")
@@ -470,6 +498,23 @@ def test_account_restore_conflict_when_target_exists(acc_env):
     (accounts.users_dir() / "eve").mkdir(parents=True)
     with pytest.raises(trash.TrashConflictError):
         trash.restore_account_tombstone(stone)
+    assert (trash.account_tombstone_dir() / stone / "meta.json").exists()
+
+
+def test_account_restore_conflict_when_registry_entry_exists(acc_env):
+    """恢复前防御性检查（T191）：同 id 账号已新建（注册表有条目，目录可以不在）
+    → TrashConflictError，不得让 restore_entry 静默覆盖新账号的注册表条目；
+    条目与墓碑原样不动。"""
+    accounts.ensure_account("default")
+    _make("eve")
+    entry = dict(accounts.get_account("eve"))
+    accounts.remove_account("eve")
+    stone = trash.capture_account("eve", entry, 7)
+    assert stone
+    accounts.register_account("eve", name="新夏娃")  # 撞 id 新建（只有条目，未 ensure 目录）
+    with pytest.raises(trash.TrashConflictError):
+        trash.restore_account_tombstone(stone)
+    assert accounts.get_account("eve")["name"] == "新夏娃"
     assert (trash.account_tombstone_dir() / stone / "meta.json").exists()
 
 

@@ -606,3 +606,44 @@ class AppendOnlyMessagesTest(unittest.TestCase):
             pm, cm = prev["messages"], curr["messages"]
             self.assertTrue(len(cm) > len(pm), f"第 {i + 2} 轮消息应比前一轮多（只增）")
             self.assertEqual(pm, cm[: len(pm)], f"第 {i + 2} 轮不得改写前一轮已发消息")
+
+
+class KbCachePerAccountTest(unittest.TestCase):
+    """T190：kb 检索缓存按账号分桶——两账号文件 mtime_ns 恰好相等时不得跨账号串清单。"""
+
+    def test_kb_cache_per_account_no_crosstalk_on_equal_mtime(self):
+        import tempfile
+        from pathlib import Path
+
+        src = os.path.join(ROOT, "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)  # 单跑本文件时 server 包可导入（_load_user_kb 要在其中解析路径）
+        from server import config as config_mod
+        from harness import review_kb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mt = 1_700_000_000_000_000_000
+            for account, label in (("a", "甲"), ("b", "乙")):
+                d = root / "users" / account
+                d.mkdir(parents=True)
+                (d / "knowledge.json").write_text(
+                    json.dumps({"k": {"title": f"{label}的知识"}}, ensure_ascii=False), encoding="utf-8")
+                (d / "formulas.json").write_text(
+                    json.dumps({"f": {"latex": f"{label}的公式"}}, ensure_ascii=False), encoding="utf-8")
+                # 统一 mtime_ns：原全局单份缓存恰在此条件下把先查账号的清单顶给后查账号
+                for name in ("knowledge.json", "formulas.json"):
+                    os.utime(d / name, ns=(mt, mt))
+            a_files = [os.stat(root / "users" / "a" / n).st_mtime_ns
+                       for n in ("knowledge.json", "formulas.json")]
+            b_files = [os.stat(root / "users" / "b" / n).st_mtime_ns
+                       for n in ("knowledge.json", "formulas.json")]
+            self.assertEqual(a_files, b_files, "两账号 mtime_ns 必须相等：本用例的触发前提")
+            review_kb._KB_CACHE.clear()  # 清掉其他用例可能留下的桶，只测本轮
+            with mock.patch.object(config_mod, "DATA_DIR", root):
+                got = [(review_kb._load_user_kb(acc), label)
+                       for acc, label in (("a", "甲"), ("b", "乙"), ("a", "甲"), ("b", "乙"))]
+            review_kb._KB_CACHE.clear()
+        for kb_data, label in got:
+            self.assertEqual(kb_data["knowledge"][0]["title"], f"{label}的知识")
+            self.assertEqual(kb_data["formulas"][0]["latex"], f"{label}的公式")

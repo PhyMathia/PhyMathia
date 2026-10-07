@@ -531,6 +531,25 @@ def account_tombstone_dir() -> Path:
     return accounts.users_dir() / ACCOUNT_TRASH_DIR_NAME
 
 
+def tombstone_account_ids() -> set:
+    """墓碑区现存账号 id 集合（只读扫描 meta，不触发过期清理等副作用）。
+
+    建账号重摇 id 用（main.py）：撞墓碑 id 时目录建不起来（墓碑目录占名），
+    请求又被「已删账号」闸门 404，只能换号；半写入孤儿（无 meta.id）不算。
+    """
+    root = account_tombstone_dir()
+    if not root.is_dir():
+        return set()
+    ids = set()
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        meta = storage._read_json(child / _META_NAME, {})
+        if meta.get("kind") == "account" and meta.get("id"):
+            ids.add(str(meta["id"]))
+    return ids
+
+
 def capture_account(account: str, entry: dict, days: int) -> str | None:
     """删除账号：整个账号目录移入墓碑区，meta.json 最后落盘。返回墓碑目录名。
 
@@ -595,8 +614,10 @@ def list_account_tombstones() -> list:
 def restore_account_tombstone(stone_id: str) -> str:
     """墓碑恢复：账号目录移回原位 + 注册表按快照原样重登记。返回账号 id。
 
-    防御性检查目标目录不存在（同 id 目录还在＝同号冲突，整体拒绝）；注册表
-    登记失败时把目录放回墓碑区（可重试），不让账号落在「有数据没登记」的半态。
+    防御性检查目标目录不存在与注册表无同 id 条目（同 id 目录还在＝同号冲突；
+    同 id 账号已新建＝restore_entry/register_account 会静默覆盖它的注册表条
+    目）；注册表登记失败时把目录放回墓碑区（可重试），不让账号落在「有数据
+    没登记」的半态。
     """
     _validate_item_id(stone_id)
     stone_dir = account_tombstone_dir() / stone_id
@@ -609,6 +630,10 @@ def restore_account_tombstone(stone_id: str) -> str:
     target = accounts.users_dir() / account
     if target.exists():
         raise TrashConflictError(f"账号 {account} 已存在（同 id 目录还在），无法恢复")
+    if account in accounts.load_registry():
+        # 同 id 账号已新建（目录可以不在，注册表条目才是账号存在的判据）：
+        # 继续恢复会让 restore_entry/register_account 静默覆盖它的条目，整体拒
+        raise TrashConflictError(f"账号 {account} 已存在（同 id 注册表条目还在），无法恢复")
     shutil.move(str(stone_dir), str(target))
     entry = meta.get("entry")
     try:
@@ -622,18 +647,52 @@ def restore_account_tombstone(stone_id: str) -> str:
     return account
 
 
-def purge_bound_profiles(entry: dict) -> int:
+def _devices_still_in_use(exclude_account: str = None, exclude_stone: str = None) -> set:
+    """仍被需要的画像设备键保护集：注册表全部条目 + 墓碑区其余 meta.entry。
+
+    只读扫描，不触发 purge_expired_tombstones 等手段的副作用（清理另行调度）；
+    exclude_* 排除正在彻底清除的那个账号/墓碑——它的设备不该保护自己（注册表
+    除名失败或 rmtree 失败时也要删得干净）。
+    """
+    keep = set()
+    for account, entry in accounts.load_registry().items():
+        if account == exclude_account:
+            continue
+        keep.update(d for d in ((entry or {}).get("devices") or []) if isinstance(d, str) and d)
+    root = account_tombstone_dir()
+    if root.is_dir():
+        for child in root.iterdir():
+            if not child.is_dir() or child.name == exclude_stone:
+                continue
+            meta = storage._read_json(child / _META_NAME, {})
+            entry = meta.get("entry")
+            if meta.get("kind") != "account" or not isinstance(entry, dict):
+                continue
+            keep.update(d for d in (entry.get("devices") or []) if isinstance(d, str) and d)
+    return keep
+
+
+def purge_bound_profiles(entry: dict, exclude_stone: str = None) -> int:
     """彻底清除账号时连画像一起删：entry.devices 是该账号用过的画像设备键。
 
     画像文件按 device_id 键、不在账号目录里（data/profiles/<stem>.json 与
     <stem>.eval.jsonl），墓碑保留期内刻意原地不动——画像对其他账号不可见，
     原地保留让「恢复账号→同一 localStorage 命名空间→同一 device_id」无缝
     重连；到期彻底清除（或保留天数 0 的即删）才连归属设备一起抹掉。
-    绑定未覆盖的设备（服务端从未见过该设备的画像活动，如只浏览过从未触发
-    事件的浏览器）会漏删成孤儿文件，无害：无归属即无人读它。"""
+    共享设备保护（T188）：删前收集仍被使用的设备键（注册表其它条目 ∪ 墓碑区
+    其它墓碑 meta.entry），命中就跳过——同一 device 键被多账号绑定（垫片安装
+    失败/dev_local 兜底/手工拷键）时，清 A 不得抹掉 B 还要用的画像本体与 eval
+    留痕；B 也没了（墓碑全清）才真删。绑定未覆盖的设备（服务端从未见过该设备
+    的画像活动，如只浏览过从未触发事件的浏览器）会漏删成孤儿文件，无害：无归
+    属即无人读它。
+    """
     devices = [d for d in ((entry or {}).get("devices") or []) if isinstance(d, str) and d]
+    keep = _devices_still_in_use(exclude_account=(entry or {}).get("id"),
+                                 exclude_stone=exclude_stone)
     removed = 0
     for dev in devices:
+        if dev in keep:
+            continue
         for suffix in (".json", ".eval.jsonl"):
             p = profile.PROFILES_DIR / (dev + suffix)
             try:
@@ -653,7 +712,9 @@ def purge_account_tombstone(stone_id: str) -> None:
         raise KeyError(f"account tombstone not found: {stone_id}")
     meta = storage._read_json(stone_dir / _META_NAME, {})
     shutil.rmtree(stone_dir, ignore_errors=True)
-    purge_bound_profiles(meta.get("entry") or {})  # 画像不在账号目录里，随墓碑一并彻底清除
+    # 画像不在账号目录里，随墓碑一并彻底清除（exclude_stone 防 rmtree 失败时
+    # 本墓碑的 devices 把自己保护成漏删）
+    purge_bound_profiles(meta.get("entry") or {}, exclude_stone=stone_id)
 
 
 def purge_expired_tombstones() -> int:
@@ -674,7 +735,9 @@ def purge_expired_tombstones() -> int:
         if expired or orphan:
             shutil.rmtree(child, ignore_errors=True)
             if expired and isinstance(meta.get("entry"), dict):
-                purge_bound_profiles(meta["entry"])  # 到期墓碑同款：画像随账号彻底清除
+                # 到期墓碑同款：画像随账号彻底清除（排除当前墓碑——循环里逐个清，
+                # 保护集按「除这个之外」算，共享设备等它的绑定者全没了才真删）
+                purge_bound_profiles(meta["entry"], exclude_stone=child.name)
             purged += 1
     return purged
 

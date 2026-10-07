@@ -545,6 +545,7 @@ def test_account_tombstone_roundtrip_with_own_trash(acc_env):
     (k.trash_dir / "sess_x").mkdir(parents=True, exist_ok=True)
     storage._write_json(k.trash_dir / "sess_x" / "meta.json", {"id": "sess_x", "kind": "session"})
     entry = dict(accounts.get_account("kate"))
+    accounts.remove_account("kate")  # 与删除路由同序：先除名再墓碑化（恢复前查注册表条目）
     stone = trash.capture_account("kate", entry, 3)
     assert stone and stone.startswith("kate_")
     assert not k.root.exists()
@@ -615,3 +616,25 @@ def test_route_trash_readonly_gate_account_tombstones(acc_env):
         assert client.get("/api/trash", headers=ro).status_code == 200
         assert client.post("/api/trash/accounts/x/restore", headers=ro).status_code == 403
         assert client.delete("/api/trash/accounts/x", headers=ro).status_code == 403
+
+
+def test_tombstone_account_ids_readonly_scan(acc_env):
+    """建号防撞墓碑的 id 集合（T191）：只读扫 meta，不触发过期清理（过期墓碑
+    仍在集合里、目录不被顺手清掉）；无 meta.id 的孤儿与 kind 不符的目录不算。"""
+    accounts.ensure_account("default")
+    _make("ivy")
+    entry = dict(accounts.get_account("ivy"))
+    accounts.remove_account("ivy")
+    stone = trash.capture_account("ivy", entry, 1)
+    assert stone
+    root = trash.account_tombstone_dir()
+    meta_path = root / stone / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["purgeAt"] = 1  # 已过期：只读扫描不得顺势清理
+    storage._write_json(meta_path, meta)
+    (root / "half_written").mkdir(parents=True, exist_ok=True)
+    storage._write_json(root / "half_written" / "meta.json", {"kind": "account"})  # 无 id
+    (root / "not_account_99").mkdir(parents=True, exist_ok=True)
+    storage._write_json(root / "not_account_99" / "meta.json", {"id": "x", "kind": "session"})
+    assert trash.tombstone_account_ids() == {"ivy"}
+    assert (root / stone).exists()
