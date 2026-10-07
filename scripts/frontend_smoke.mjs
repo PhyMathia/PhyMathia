@@ -7062,7 +7062,8 @@ check('风格家族（T128 演进）：注册表、存储键、页头入口、�
   const html = fs.readFileSync('src/static/index.html', 'utf8');
   if (!html.includes('id="themePickBtn"') || !html.includes('toggleThemePicker(event)')) throw new Error('页头缺主题挑选按钮入口');
   if (!html.includes('id="themePanel"')) throw new Error('index.html 缺 #themePanel 面板容器');
-  if (!html.includes("localStorage.getItem('phymathia_style_family')")) throw new Error('启动内联脚本没预置家族（首屏会闪默认模板）');
+  // P2 多账号：内联脚本读键改为前缀感知（p + 'phymathia_style_family'），防闪语义不变
+  if (!html.includes("localStorage.getItem(p + 'phymathia_style_family')")) throw new Error('启动内联脚本没预置家族（首屏会闪默认模板）');
   if (!/setAttribute\('data-panel-skin', fam\)/.test(html)) throw new Error('启动预置缺 data-panel-skin（面板质感首屏闪默认）');
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
   if (!css.includes('节点皮肤模板')) throw new Error('graph-override.css 缺「节点皮肤模板」节——新模板没有落点');
@@ -8036,6 +8037,143 @@ check('quiz-ai：难度配比四档（§3.4 d*=1+4m̂）与无证据不出手', 
   if (!hint([mk(0.9, 2)]).includes('1:2:7')) throw new Error('m̂=0.9 应 hard 为主');
   if (hint([mk(0.3, 0)]) !== '') throw new Error('相关主题没答过题不应给配比');
   if (hint(null) !== '' || hint([]) !== '') throw new Error('无画像不应给配比');
+  return true;
+});
+
+// ===== 本地多账号（P2 2026-10-07）：键前缀纯函数 / 垫片 / fetch 包装 / 面板渲染 =====
+// 全程不改主沙箱共享键、不 await——不需要进串行边界段。
+
+check('多账号：accountLsPrefix 纯函数（default 空=零迁移契约，非 default u前8位_）', () => {
+  if (typeof sandbox.accountLsPrefix !== 'function') throw new Error('accountLsPrefix 未定义');
+  if (sandbox.accountLsPrefix('default') !== '') throw new Error('default 前缀必须为空（零迁移）');
+  if (sandbox.accountLsPrefix('abcd1234efgh') !== 'uabcd1234_') throw new Error('非 default 前缀应为 u<id前8位>_');
+  // 非法 id（穿越串/空）一律空前缀，与内联主题脚本、服务端白名单同口径
+  for (const bad of ['', '../evil', 'a b', 'x'.repeat(65)]) {
+    if (sandbox.accountLsPrefix(bad) !== '') throw new Error('非法 id 应回落空前缀：' + bad);
+  }
+  if (vm.runInContext('ACCOUNT_LS_PREFIX', sandbox) !== '' || vm.runInContext('ACCOUNT_ID', sandbox) !== 'default') throw new Error('主沙箱无账号指针应为 default/空前缀');
+  if (typeof sandbox.lsKeys !== 'function') throw new Error('lsKeys 未定义');
+  return true;
+});
+
+// 独立上下文：真枚举语义的 FakeStorage（key/length），跑 config.js 源码装垫片
+function _accountVmContext(pointer, seed = {}) {
+  const store = new Map(Object.entries(seed));
+  class FakeStorage {
+    get length() { return store.size; }
+    key(i) { return Array.from(store.keys())[i] ?? null; }
+    getItem(k) { return store.has(k) ? store.get(k) : null; }
+    setItem(k, v) { store.set(String(k), String(v)); }
+    removeItem(k) { store.delete(k); }
+  }
+  const s = { console, URLSearchParams: URL, TextEncoder, TextDecoder };
+  s.localStorage = new FakeStorage();
+  if (pointer) s.localStorage.setItem('phymathia_account', pointer);
+  s.window = s;
+  s.innerWidth = 1200;
+  s.document = { documentElement: { setAttribute() {} }, getElementById: () => null };
+  vm.createContext(s);
+  vm.runInContext(fs.readFileSync('src/static/js/config.js', 'utf8'), s, { filename: 'config.js' });
+  return { s, store };
+}
+
+// accounts.js 在独立上下文里跑（行渲染纯函数用真字符串 escapeHtml 验证转义）
+function _accountPanelContext() {
+  const { s } = _accountVmContext(null);
+  vm.runInContext(
+    'function escapeHtml(t){return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}'
+    + 'function toastMsg(){}', s);
+  s.location = { reload() {} };
+  vm.runInContext(fs.readFileSync('src/static/js/accounts.js', 'utf8'), s, { filename: 'accounts.js' });
+  return s;
+}
+
+check('多账号：垫片把逻辑键透明映射到 u<前8位>_ 物理键，账号外键不可见', () => {
+  const { s, store } = _accountVmContext('abcd1234efgh', {
+    // 物理层：default 的旧键 + 本账号前缀键并存（模拟同浏览器多账号）
+    'uabcd1234_phymathia_theme': 'light',
+    'phymathia_theme': 'dark',
+    'uabcd1234_phymathia_msgs_s1': '[1]',
+  });
+  if (vm.runInContext('ACCOUNT_ID', s) !== 'abcd1234efgh' || vm.runInContext('ACCOUNT_LS_PREFIX', s) !== 'uabcd1234_') throw new Error('指针/前缀解析错误');
+  if (s.localStorage.getItem('phymathia_theme') !== 'light') throw new Error('逻辑键应命中本账号前缀键');
+  if (s.localStorage.getItem('phymathia_msgs_s1') !== '[1]') throw new Error('会话键应走前缀');
+  if (!s.localStorage.getItem('phymathia_unknown')) { /* null 正常 */ } else throw new Error('未知键应 null');
+  s.localStorage.setItem('phymathia_x', '1');
+  if (!store.has('uabcd1234_phymathia_x') || store.has('phymathia_x')) throw new Error('写入必须落前缀物理键');
+  s.localStorage.removeItem('phymathia_x');
+  if (store.has('uabcd1234_phymathia_x')) throw new Error('removeItem 应删前缀键');
+  const keys = s.lsKeys();
+  if (!keys.includes('phymathia_theme') || keys.includes('msgs_x')) throw new Error('lsKeys 应返回剥前缀逻辑键');
+  if (keys.includes('phymathia_theme') && store.has('phymathia_theme') && keys.filter(k => k === 'phymathia_theme').length !== 1) throw new Error('lsKeys 不应混入 default 的同名物理键');
+  // default 的键不在本账号命名空间里
+  if (s.localStorage.getItem('phymathia_sessions') !== null) throw new Error('账号外键不可见（隔离）');
+  return true;
+});
+
+check('多账号：default 无垫片直通（现有键原样读写，零迁移）', () => {
+  const { s, store } = _accountVmContext(null, { 'phymathia_theme': 'dark' });
+  if (vm.runInContext('ACCOUNT_LS_PREFIX', s) !== '') throw new Error('default 前缀应为空');
+  if (s.localStorage.getItem('phymathia_theme') !== 'dark') throw new Error('default 应直通原键');
+  s.localStorage.setItem('phymathia_new_key', 'v');
+  if (!store.has('phymathia_new_key')) throw new Error('default 写入不带前缀');
+  return true;
+});
+
+check('多账号：fetch 包装给 /api/ 请求恒带 account_id，非 API 与已带的不动', () => {
+  const seen = [];
+  const s0 = { console, URLSearchParams: URL };
+  s0.fetch = (input, init) => { seen.push(input); return Promise.resolve({ ok: true }); };
+  s0.window = s0;
+  s0.innerWidth = 1200;
+  s0.localStorage = { getItem: () => 'abcd1234efgh', setItem() {}, removeItem() {} };
+  s0.document = { documentElement: { setAttribute() {} } };
+  vm.createContext(s0);
+  vm.runInContext(fs.readFileSync('src/static/js/config.js', 'utf8'), s0, { filename: 'config.js' });
+  s0.fetch('/api/sessions');
+  s0.fetch('/api/kv/phymathia_quiz_stats?x=1');
+  s0.fetch('/health');
+  s0.fetch('/api/sessions?account_id=other');
+  if (seen[0] !== '/api/sessions?account_id=abcd1234efgh') throw new Error('应补 account_id：' + seen[0]);
+  if (seen[1] !== '/api/kv/phymathia_quiz_stats?x=1&account_id=abcd1234efgh') throw new Error('已有 query 应接 &：' + seen[1]);
+  if (seen[2] !== '/health') throw new Error('非 /api/ 不动：' + seen[2]);
+  if (seen[3] !== '/api/sessions?account_id=other') throw new Error('已带 account_id 不重复补：' + seen[3]);
+  return true;
+});
+
+check('多账号：面板行渲染（当前徽标/default 拒删/当前账号不可自删/昵称转义）', () => {
+  const row = sandbox.window._accountRowHtml;
+  if (typeof row !== 'function') throw new Error('_accountRowHtml 未导出');
+  const other = row({ id: 'default', name: '我的', allowBrowse: false, createdAt: 0 }, false);
+  if (!other.includes('切换') || !other.includes('改名')) throw new Error('非当前行应有切换/改名');
+  if (other.includes('删除')) throw new Error('default 行不得有删除按钮');
+  // 昵称转义在真字符串上下文验证（主沙箱 DOM 代理的 innerHTML 不是真值）
+  const s2 = _accountPanelContext();
+  const esc = s2._accountRowHtml({ id: 'default', name: '我<b>的</b>', allowBrowse: false, createdAt: 0 }, false);
+  if (esc.includes('<b>') || !esc.includes('我&lt;b&gt;的&lt;/b&gt;')) throw new Error('昵称必须转义：' + esc.slice(0, 80));
+  const cur = row({ id: 'abcd1234efgh', name: '妹妹', allowBrowse: true, createdAt: 0 }, true);
+  if (!cur.includes('当前') || cur.includes('切换')) throw new Error('当前行应有徽标且无切换钮');
+  if (cur.includes('删除')) throw new Error('当前账号不可自删（须先切走）');
+  if (!cur.includes('checked')) throw new Error('allowBrowse=true 应勾选');
+  const otherNonDefault = row({ id: 'eeee11112222', name: '二号', allowBrowse: false, createdAt: 0 }, false);
+  if (!otherNonDefault.includes('删除')) throw new Error('非 default 的非当前行应有删除钮');
+  return true;
+});
+
+check('多账号：静态契约（第 7 磁贴/弹窗骨架/构建注册/枚举收编/内联脚本前缀）', () => {
+  const idx = fs.readFileSync('src/static/index.html', 'utf8');
+  if (!idx.includes('id="accountTile"') || !idx.includes('openAccountsPanel')) throw new Error('侧栏缺账号磁贴');
+  if (!idx.includes('id="accountsDialog"') || !idx.includes('id="accountsList"')) throw new Error('缺账号弹窗骨架');
+  if (!idx.includes("localStorage.getItem('phymathia_account')")) throw new Error('内联主题脚本未感知账号指针');
+  const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
+  if (!cfg.includes('installAccountLsShim') || !cfg.includes('function lsKeys') || !cfg.includes('installAccountFetch')) throw new Error('config.js 缺垫片/枚举/包装实现');
+  const build = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
+  if (!build.includes("'accounts.js'")) throw new Error('构建未注册 accounts.js');
+  if (!fs.readFileSync('src/static/js/accounts.js', 'utf8').includes('_RAW_LS.setItem(STORAGE_KEY_ACCOUNT')) throw new Error('账号指针必须写元键（_RAW_LS），防垫片加前缀');
+  const sess = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (sess.includes('Object.keys(localStorage')) throw new Error('session.js 枚举未收编到 lsKeys()');
+  const uijs = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (uijs.includes('Object.keys(localStorage')) throw new Error('ui.js 枚举未收编到 lsKeys()');
   return true;
 });
 

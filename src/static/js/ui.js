@@ -145,7 +145,7 @@ function updateDataStats() {
   });
   const knowledgeCount = Object.keys(knowledge).length;
   const formulaCount = Object.keys(formulas).length;
-  const graphCount = Object.keys(localStorage).filter(k => k.startsWith('phymathia_graph_')).length;
+  const graphCount = lsKeys().filter(k => k.startsWith('phymathia_graph_')).length;
   const quizCount = Object.keys(quizStats).filter(k => k !== '_meta').length;
   const el = document.getElementById('dataStats');
   if (el) {
@@ -181,7 +181,7 @@ function _collectLocalBackup() {
   });
   const graphs = {};
   const graphHistories = {};
-  Object.keys(localStorage).forEach(key => {
+  lsKeys().forEach(key => {
     // 历史快照单独成桶：此前混进 graphs（键 history_<sid>）会被导入错写成
     // graph:history_<sid> 的服务端键
     if (key.startsWith('phymathia_graph_history_')) {
@@ -295,7 +295,7 @@ function _normalizeBackup(data) {
 function updateStorageDebug() {
   const el = document.getElementById('storageDebug');
   if (!el) return;
-  const keys = Object.keys(localStorage).filter(k => k.startsWith('phymathia_'));
+  const keys = lsKeys().filter(k => k.startsWith('phymathia_'));
   let totalBytes = 0;
   const lines = keys.map(k => {
     const v = localStorage.getItem(k) || '';
@@ -339,7 +339,7 @@ function _applyLocalSettings(data) {
 
 function _applyLocalBackup(data, replace) {
   if (replace) {
-    Object.keys(localStorage).filter(k => k.startsWith('phymathia_')).forEach(k => localStorage.removeItem(k));
+    lsKeys().filter(k => k.startsWith('phymathia_')).forEach(k => localStorage.removeItem(k));
   }
   const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
   Object.assign(sessions, data.sessions || {});

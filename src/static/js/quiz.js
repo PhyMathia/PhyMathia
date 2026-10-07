@@ -163,7 +163,7 @@ function _quizAbortGuard(controller) {
 
 let quizAiProgressTimer = null;
 try {
-  const savedPreference = localStorage.getItem('phymathia_quiz_source');
+  const savedPreference = localStorage.getItem(STORAGE_KEY_QUIZ_SOURCE);
   if (savedPreference === 'ai' || savedPreference === 'mixed' || savedPreference === 'local') {
     quizSourcePreference = savedPreference;
   }

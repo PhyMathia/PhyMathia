@@ -2054,7 +2054,7 @@ let harnessLastAppliedReport = null;
     if (done) return;
     const legacySids = {};
     try {
-      Object.keys(localStorage).forEach(k => {
+      lsKeys().forEach(k => {
         if (!k.startsWith('phymathia_harness_history_')) return;
         const sid = k.slice('phymathia_harness_history_'.length);
         if (sid && !sid.startsWith('phi_')) legacySids[sid] = true;

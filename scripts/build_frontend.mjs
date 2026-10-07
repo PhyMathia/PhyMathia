@@ -53,6 +53,9 @@ const entries = [
   'harness-preview.js',
   'harness-apply.js',
   'ui.js',
+  // 本地多账号（P2 2026-10-07）：账号面板。依赖 config.js 的 ACCOUNT_ID/_RAW_LS
+  // 与 utils.js 的 toastMsg/escapeHtml，都在此前加载；面板函数按需调用。
+  'accounts.js',
   'quiz.js',
   'quiz-ai.js',
   'quiz-stats.js',

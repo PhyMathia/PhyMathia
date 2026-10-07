@@ -1380,7 +1380,7 @@
       // 检测素材源偏好 phymathia_quiz_source 此前漏清，清空后仍残留在全局题库
       // 注意：Φ 会话键（phi_sessions / current_phi_session / harness_history_phi_*）
       // 刻意不在清单里——清画布不动 Φ 对话（2026-09-30 解耦），只解绑
-      const keys = Object.keys(localStorage).filter(k =>
+      const keys = lsKeys().filter(k =>
         k.startsWith('phymathia_session_') ||
         k.startsWith('phymathia_msgs_') ||
         k.startsWith('phymathia_graph_') ||

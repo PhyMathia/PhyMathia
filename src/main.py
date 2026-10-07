@@ -865,6 +865,79 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
         logger.warning("rolling memory update failed: %s", e)
 
 
+# ====== 账号管理 API（本地多账号 P2，2026-10-07）======
+# 存储分域靠各存储路由的 account_id 请求参数（_account_id），这里只管账号
+# 注册表本身（data/users/accounts.json）。CRUD 函数与默认名/拒删规则在
+# accounts.py，路由层只做参数校验与 HTTP 语义。
+
+@app.get("/api/accounts")
+async def api_accounts_list():
+    # default 排最前（无 account_id 请求的落点），其余按创建时间升序
+    entries = accounts.load_registry()
+    items = sorted(entries.values(),
+                   key=lambda e: (e.get("id") != accounts.DEFAULT_ACCOUNT,
+                                  e.get("createdAt") or 0, e.get("id") or ""))
+    return {"accounts": items}
+
+
+async def _parse_account_payload(request: Request) -> tuple:
+    payload = await _parse_json_object(request)
+    raw = payload.get("account_id")
+    if not raw:
+        raise HTTPException(status_code=400, detail="account_id required")
+    account = accounts.validate_account_id(raw)
+    if account != raw:
+        # 白名单外（路径穿越等）直接拒——与 _account_id 的「落 default」不同：
+        # 这里是管理操作，目标必须精确存在，静默改写目标会造成误伤邻账号
+        raise HTTPException(status_code=400, detail="invalid account_id")
+    return account, payload
+
+
+@app.post("/api/accounts")
+async def api_accounts_create(request: Request):
+    payload = await _parse_json_object(request)
+    name = str(payload.get("name") or "").strip()[:40] or None
+    # id 服务端生成（12 位十六进制；前端键前缀取前 8 位，见 config.js accountLsPrefix）
+    entries = accounts.load_registry()
+    account_id = uuid.uuid4().hex[:12]
+    while account_id in entries:
+        account_id = uuid.uuid4().hex[:12]
+    entry = accounts.register_account(account_id, name=name)
+    accounts.ensure_account(account_id, name=name)
+    return entry
+
+
+@app.post("/api/accounts/rename")
+async def api_accounts_rename(request: Request):
+    account, payload = await _parse_account_payload(request)
+    name = str(payload.get("name") or "").strip()[:40]
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    try:
+        return accounts.rename_account(account, name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="account not found")
+
+
+@app.post("/api/accounts/allow_browse")
+async def api_accounts_allow_browse(request: Request):
+    account, payload = await _parse_account_payload(request)
+    try:
+        return accounts.set_allow_browse(account, bool(payload.get("allow")))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="account not found")
+
+
+@app.post("/api/accounts/delete")
+async def api_accounts_delete(request: Request):
+    account, payload = await _parse_account_payload(request)
+    if account == accounts.DEFAULT_ACCOUNT:
+        # default 是无 account_id 请求的兜底落点，删了数据就丢（accounts.remove_account 同款防线）
+        raise HTTPException(status_code=400, detail="default 账号不可删除")
+    accounts.remove_account(account, delete_data=bool(payload.get("delete_data")))
+    return {"ok": True, "id": account}
+
+
 # ====== 会话管理 API ======
 @app.get("/api/sessions")
 async def api_get_sessions(request: Request = None):
