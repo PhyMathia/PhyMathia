@@ -112,6 +112,46 @@ function closeAccountsPanel() {
   document.getElementById('accountsDialog').classList.remove('show');
 }
 
+// ----- 启动期账号自愈（T185 2026-10-07）-----
+// 指针指向已被删除的账号时（另一浏览器删的、双标签一边切走一边删、退出查阅时
+// 归还账号已被删），服务端对该账号的请求一律 404——页面看起来还能用，其实什么
+// 都存不上。应用初始化前查一次账号列表（GET /api/accounts 是账号无关路由，
+// 任何指针下都通），当前账号不在列表里就回落：查阅态回「归还账号」，否则回
+// 「我的」，写指针后重载（下一轮启动校验即通过，结构上不可能循环重载）。
+// 列表拿不到（服务端未起/超时/响应非法）时一律不动——绝不把「服务端暂时不可达」
+// 误判成「账号已删」。返回 true＝已安排重载（调用方别再初始化应用）。
+async function _accountsRecoverIfMissing() {
+  const current = (typeof ACCOUNT_ID !== 'undefined') ? ACCOUNT_ID : 'default';
+  if (current === 'default') return false; // 兜底账号服务端启动即登记，无悬空可能
+  let list = null;
+  try {
+    const resp = await fetch('/api/accounts', { cache: 'no-cache', signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    list = (data && Array.isArray(data.accounts)) ? data.accounts : null;
+  } catch (e) { return false; }
+  if (!list || list.some(a => a && a.id === current)) return false;
+  const ro = (typeof window !== 'undefined' && window.PHYMATHIA_READONLY);
+  let back = ro ? String((typeof window !== 'undefined' && window.PHY_BROWSE_RETURN) || 'default') : 'default';
+  if (!ACCOUNT_ID_RE.test(back) || back === current) back = 'default';
+  const hit = list.find(a => a && a.id === back);
+  const name = (hit && hit.name) ? String(hit.name) : (back === 'default' ? '我的' : back);
+  try {
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, back);
+    _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, name);
+    // 查阅态标记一并清：被查阅账号已删，留着只读旗标没有意义
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_ACTIVE);
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_RETURN);
+    _RAW_LS.removeItem(STORAGE_KEY_BROWSE_RETURN_NAME);
+  } catch (e) { return false; }
+  // 提示与重载都不许抛：这一步在应用初始化之前，抛出去会让启动链断掉（空壳）
+  try {
+    if (typeof toastMsg === 'function') toastMsg('当前账号已被删除，已切回「' + name + '」', 3000);
+  } catch (e) {}
+  setTimeout(() => { try { location.reload(); } catch (e) {} }, 1400);
+  return true;
+}
+
 // ----- 列表渲染 -----
 
 let _accountsCache = null; // 最近一次拉到的账号条目（handler 按 id 反查昵称，避免把用户输入拼进 onclick）

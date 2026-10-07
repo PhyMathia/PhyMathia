@@ -183,6 +183,25 @@ async def _parse_json_object(request: Request) -> dict:
     return payload
 
 
+def _readonly_request(request: Request = None) -> bool:
+    """请求是否来自只读查阅态（前端 fetch 包装恒带 X-Phymathia-Readonly 头）。
+
+    GET 路由里有「带副作用」的少数派（画像归属登记）：查阅者的动作不能写进
+    被查阅账号，用这个判据分流（T187 2026-10-07）。服务端无身份概念，只认头
+    ——与 _readonly_browse_gate 同一条诚实声明（防前端漏闸，不防手写 curl）。
+    """
+    try:
+        return bool(request is not None and request.headers.get("x-phymathia-readonly"))
+    except Exception:
+        return False
+
+
+# 账号已删/不存在：404 同时带标记头。前端 config.js 的 fetch 包装读它触发
+# 「自动切回」重载（指针悬空的活标签页不必等用户手动刷新）；detail 文案给人看、
+# 头给代码认——改文案不动这个契约，头名两边同改。
+_ACCOUNT_GONE_HEADERS = {"X-Phymathia-Account-Gone": "1"}
+
+
 def _account_id(request: Request = None, payload: dict = None) -> str:
     """请求的账号域：query account_id → body account_id → default。
 
@@ -190,15 +209,29 @@ def _account_id(request: Request = None, payload: dict = None) -> str:
     一部分请求带 device_id（quiz-stats 的 kv 写带、读不带），拿它当账号键会让
     读写分家。P2 前端落地前所有请求都落 default 账号＝与旧行为逐字节一致。
 
-    已删账号（墓碑在）的迟到请求一律 404：这是全部账号化路由的单一咽喉，
-    ensure 闸门只拦「经 _account_paths 的写」，而 kv_write 等存储原语自带
-    mkdir 会绕开它把已删账号目录在磁盘上拼回来（真机抓出：任务列表的
-    tasks:global 自动保存踩中）。404 对 sendBeacon 无感、对活人 tab 是明白话；
-    恢复账号后墓碑消失，请求自然恢复。default 无墓碑可言，零开销直通。
+    已删/不存在的账号一律 404：这是全部账号化路由的单一咽喉，ensure 闸门只拦
+    「经 _account_paths 的写」，而 kv_write 等存储原语自带 mkdir 会绕开它把已删
+    账号目录在磁盘上拼回来（真机抓出：任务列表的 tasks:global 自动保存踩中）。
+    两道判据（T186 2026-10-07 补第二道）：①有墓碑＝保留期内可恢复；②未登记且
+    无墓碑＝已被彻底删除（保留 0 天即删 / 墓碑到期清理之后，残留页面的自动保存
+    曾把账号连目录带注册表条目一起复活成幽灵空账号）。404 对 sendBeacon 无感、
+    对活人 tab 是明白话；恢复账号后两种状态都消失，请求自然恢复。default 无
+    墓碑可言、且是兜底落点，零开销直通。
     """
     account = _account_id_raw(request, payload)
-    if account != accounts.DEFAULT_ACCOUNT and accounts.has_account_tombstone(account):
-        raise HTTPException(status_code=404, detail="该账号已删除（保留期内可在回收站恢复）")
+    if account != accounts.DEFAULT_ACCOUNT:
+        if accounts.has_account_tombstone(account):
+            raise HTTPException(
+                status_code=404,
+                detail="该账号已删除（保留期内可在回收站恢复）",
+                headers=dict(_ACCOUNT_GONE_HEADERS),
+            )
+        if not accounts.is_registered(account):
+            raise HTTPException(
+                status_code=404,
+                detail="该账号不存在（已被彻底删除）",
+                headers=dict(_ACCOUNT_GONE_HEADERS),
+            )
     return account
 
 
@@ -2120,14 +2153,25 @@ async def api_profile_dashboard(request: Request = None, device_id: str = ""):
     """画像仪表盘：隐式状态的派生视图（衰减/保留/成熟度/账本都在服务端算）。"""
     if not device_id:
         raise HTTPException(status_code=400, detail="缺少 device_id")
-    # 打开画像面板＝最自然的归属登记点（新账号首次看面板即绑定，无需先聊天）
-    profile.note_device_binding(device_id, account=_account_id(request))
+    account = _account_id(request)
+    # 打开画像面板＝最自然的归属登记点（新账号首次看面板即绑定，无需先聊天）。
+    # 只读查阅态跳过（T187）：查阅者的设备不能绑进被查阅账号——否则挤占对方
+    # 绑定上限（8 个）、对方备份带走查阅者画像、对方彻底清除时误删查阅者画像
+    # 文件。面板本身照常出（读的是查阅者自己 device 的画像，不是对方的）。
+    if not _readonly_request(request):
+        profile.note_device_binding(device_id, account=account)
     return profile.implicit_dashboard(device_id)
 
 
 
 @app.get("/api/backup/export")
 async def api_backup_export(request: Request = None):
+    # 查阅态拒绝整包导出（2026-10-07 拍板，T187 顺带项）：allowBrowse 的礼节是
+    # 「只读查阅此账号的会话与知识」，整包 .pmu 是把对方全部内容（消息/知识/
+    # KV/画像）一次带走，超出浏览语义——读得走、搬不走。PNG 海报与单画布
+    # .pmu（纯前端产物）不受影响。前端 ui.js exportData 同步有闸（先礼后兵）。
+    if _readonly_request(request):
+        raise HTTPException(status_code=403, detail="查阅模式：只读，不能导出对方数据")
     account = _account_id(request)
     # 设备提示（前端 2026-10-07 起恒传）：画像按账号隔离的圈定键——导出只带
     # 本账号归属的画像设备；顺手登记绑定，归属随首次导出/使用自然长全

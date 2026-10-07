@@ -229,6 +229,10 @@ function _pickNewerQuizBank(a, b) {
 }
 
 async function exportData(options = {}) {
+  // 查阅态拦下（T187 2026-10-07 拍板）：allowBrowse 的礼节是「只读查阅会话与
+  // 知识」，整包导出是把对方全部内容一次带走，超出浏览语义（服务端同步 403）。
+  // PNG 海报与单画布 .pmu 是纯前端产物，不受影响。
+  if (phyIsReadonly()) { phyReadonlyBlock('导出数据'); return; }
   const local = _collectLocalBackup();
   let data = { ...local, version: 2, exportTime: new Date().toISOString() };
   try {
@@ -1784,6 +1788,8 @@ document.addEventListener('keydown', (e) => {
 // ====== 页面加载 ======
 window.addEventListener('load', async () => {
   await fetchModels();
+  // 账号指针自愈（T185）：指针悬空（账号已被删）时先回落并重载，不进应用初始化
+  if (typeof _accountsRecoverIfMissing === 'function' && await _accountsRecoverIfMissing()) return;
   // 必须先初始化应用（加载 session、恢复聊天状态）
   await initApp();
 

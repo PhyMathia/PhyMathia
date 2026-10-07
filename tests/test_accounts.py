@@ -28,11 +28,24 @@ from server import trash  # noqa: E402
 
 @pytest.fixture
 def acc_env(tmp_path, monkeypatch):
-    """DATA_DIR 指向临时目录 + 清 ensure 缓存；返回 (tmp 目录, accounts 模块)。"""
+    """DATA_DIR 指向临时目录 + 清 ensure/注册表缓存；返回 (tmp 目录, accounts 模块)。"""
     monkeypatch.setattr(config_mod, "DATA_DIR", tmp_path)
-    accounts._ENSURED.clear()
+    _reset_caches()
     yield tmp_path, accounts
+    _reset_caches()
+
+
+def _reset_caches():
     accounts._ENSURED.clear()
+    accounts._REGISTRY_CACHE["key"] = None
+    accounts._REGISTRY_CACHE["entries"] = {}
+
+
+def _make(account, name=None):
+    """建账号的显式两步（2026-10-07 T186 起 ensure_account 不再自动登记非
+    default 账号）：先登记再 ensure，与生产路径（POST /api/accounts）同序同果。"""
+    accounts.register_account(account, name=name)
+    return accounts.ensure_account(account, name=name)
 
 
 # ====== 账号 id 消毒（路径穿越防线） ======
@@ -102,30 +115,46 @@ def test_remove_account_registry_only_and_default_protected(acc_env):
     """remove_account 只除名不动磁盘（2026-10-07 删账号回收站化后，数据目录的
     处置——移入墓碑区或彻底清除——归 trash 层）；default 拒删不变。"""
     tmp_path, _ = acc_env
-    paths = accounts.ensure_account("bob")
+    paths = _make("bob")
     (paths.root / "sessions.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError):
         accounts.remove_account("default")  # 兜底账号拒删
     accounts.remove_account("bob")
     assert "bob" not in accounts.load_registry()
     assert (tmp_path / "users" / "bob" / "sessions.json").exists()  # 目录原样
-    # forget_ensured：删后清缓存，后续请求不会在空目录上复活账号
+    # forget_ensured 后 ensure 不再复活（T186 幽灵闸门）：登记只走显式路由——
+    # 恢复账号走 trash.restore_account_tombstone（按 meta.entry 重登记）
     accounts.forget_ensured("bob")
-    accounts.ensure_account("bob")  # 重新 ensure 是正常路径（显式恢复/重建）
+    accounts.ensure_account("bob")
+    assert "bob" not in accounts.load_registry()
+    # 显式恢复路径（register + ensure）照常
+    _make("bob")
     assert "bob" in accounts.load_registry()
 
 
 # ====== ensure_account：目录 + 缓存 + 登记 ======
 
-def test_ensure_account_creates_dirs_and_registers(acc_env):
+def test_ensure_account_creates_dirs_for_registered_account(acc_env):
+    """已登记账号：ensure 建目录并登记（幂等，重复调用不重建）。"""
     tmp_path, _ = acc_env
-    paths = accounts.ensure_account("carol")
+    paths = _make("carol")
     assert paths.messages_dir.is_dir()
     assert paths.kv_dir.is_dir()
     assert "carol" in accounts.load_registry()
-    # 幂等：重复调用不重建
     paths2 = accounts.ensure_account("carol")
     assert paths2 == paths
+
+
+def test_ensure_account_skips_unregistered_non_default(acc_env):
+    """未登记且无墓碑的非 default 账号：ensure 不建目录、不登记（T186 幽灵闸门
+    的直调防线——请求侧更早的闸在 main.py _account_id）。default 例外，首启自登记。"""
+    tmp_path, _ = acc_env
+    paths = accounts.ensure_account("ghost")
+    assert not paths.root.exists()
+    assert "ghost" not in accounts.load_registry()
+    # default 例外：它是无 account_id 请求的落点，首启即自登记
+    accounts.ensure_account()
+    assert "default" in accounts.load_registry()
 
 
 # ====== 旧数据迁移（一次性，只 mv 不删） ======
@@ -167,7 +196,7 @@ def test_migration_flag_prevents_second_run(acc_env):
     assert not (tmp_path / "sessions.json").exists()
     # flag 在：后续新账号/重复 ensure 都不再扫根目录（防偷走用户手动放回的文件）
     (tmp_path / "sessions.json").write_text('{"new": 1}', encoding="utf-8")
-    accounts.ensure_account("alice")
+    _make("alice")
     assert (tmp_path / "sessions.json").exists()  # 根目录文件未被第二个账号搬走
     assert not (tmp_path / "users" / "alice" / "sessions.json").exists()
 
@@ -229,7 +258,7 @@ def test_sessions_and_messages_isolated_between_accounts(acc_env):
 
 def test_kv_migrate_and_restore_bulk_per_account(acc_env):
     _, _ = acc_env
-    paths = accounts.ensure_account("alice")
+    paths = _make("alice")
     # 主文件里带会话级键 → 启动迁移按账号搬进 data/kv
     paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
     paths.kv_path.write_text(json.dumps({"graph:s1": {"n": 1}, "g:k": "v"}), encoding="utf-8")
@@ -250,7 +279,7 @@ def test_backup_payload_is_account_scoped(acc_env):
     tmp_path, _ = acc_env
     from server import backup
     accounts.ensure_account("default")
-    accounts.ensure_account("alice")
+    _make("alice")
     storage.kv_write("g:k", "v-default", account="default")
     storage.kv_write("g:k", "v-alice", account="alice")
     d_paths = accounts.resolve_paths("default")
@@ -272,11 +301,13 @@ def test_backup_payload_is_account_scoped(acc_env):
 # ====== 路由层 _account_id 透传（TestClient 端到端） ======
 
 def test_route_account_isolation_end_to_end(acc_env):
-    """带 account_id 的会话路由读写各自账号域；不带 account_id 落 default。"""
+    """带 account_id 的会话路由读写各自账号域；不带 account_id 落 default。
+    未登记的 account_id 一律 404（T186 幽灵闸门：账号存在＝注册表有条目）。"""
     tmp_path, _ = acc_env
     from fastapi.testclient import TestClient
     import main as main_mod
     accounts._ENSURED.clear()
+    _make("alice")
     with TestClient(main_mod.app) as client:
         r = client.post("/api/sessions", json={"id": "s1", "title": "甲的会话", "account_id": "alice"})
         assert r.status_code == 200 and r.json()["count"] == 1
@@ -284,6 +315,10 @@ def test_route_account_isolation_end_to_end(acc_env):
         assert client.get("/api/sessions").json() == {}
         # 带 account_id=alice 才看得见
         assert client.get("/api/sessions", params={"account_id": "alice"}).json()["s1"]["title"] == "甲的会话"
+        # 未登记的 id（曾把已删账号复活的形态）：404，不建目录不登记
+        assert client.get("/api/sessions", params={"account_id": "nobody"}).status_code == 404
+        assert not (tmp_path / "users" / "nobody").exists()
+        assert "nobody" not in accounts.load_registry()
         # 非法 account_id 消毒回 default，不会穿越出账号目录
         assert client.get("/api/sessions", params={"account_id": "..%2F..%2Fetc"}).json() == {}
     alice_sessions = accounts.resolve_paths("alice").sessions_path
@@ -302,7 +337,7 @@ def _client(acc_env):
 def test_accounts_route_list_default_first(acc_env):
     """列表：default 排最前，条目带 id/name/allowBrowse/createdAt。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("bob")
+    _make("bob")
     with _client(acc_env) as client:
         items = client.get("/api/accounts").json()["accounts"]
         ids = [e["id"] for e in items]
@@ -338,7 +373,7 @@ def test_accounts_route_create_name_clamp_and_default_name(acc_env):
 def test_accounts_route_rename_and_allow_browse(acc_env):
     """改名与 allow_browse：对已登记账号生效；缺账号 404；空名/缺 id 400。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("carol")
+    _make("carol")
     with _client(acc_env) as client:
         r = client.post("/api/accounts/rename", json={"account_id": "carol", "name": "卡罗"})
         assert r.status_code == 200 and r.json()["name"] == "卡罗"
@@ -360,7 +395,7 @@ def test_accounts_route_delete_enters_tombstone_and_restores(acc_env):
     标志；恢复＝数据与注册表条目全回（昵称/allowBrowse/createdAt 原样，
     账号 id 不变）。default 拒删 400、保留名 _trash 400 不变。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("dave")
+    _make("dave")
     accounts.rename_account("dave", "呆夫")
     accounts.set_allow_browse("dave", True)
     dave_paths = accounts.resolve_paths("dave")
@@ -399,7 +434,7 @@ def test_accounts_route_delete_trash_off_purges_immediately(acc_env):
     """保留天数 0（回收站关闭）＝删除即彻底清除，不留墓碑（与画布同口径；
     curl 直调不带 query 时按目标账号自身设置算天数）。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("henry")
+    _make("henry")
     kv_dir = accounts.resolve_paths("henry").kv_dir
     kv_dir.mkdir(parents=True, exist_ok=True)
     (kv_dir / "k.json").write_text("{}", encoding="utf-8")
@@ -414,7 +449,7 @@ def test_accounts_route_delete_trash_off_purges_immediately(acc_env):
 def test_trash_account_purge_route(acc_env):
     """墓碑彻底删除：200 后目录消失；再删 404。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("iris")
+    _make("iris")
     stone = trash.capture_account("iris", accounts.get_account("iris"), 7)
     assert stone
     with _client(acc_env) as client:
@@ -428,7 +463,7 @@ def test_account_restore_conflict_when_target_exists(acc_env):
     可重试。ensure 已被墓碑闸门拦住不会复活目录，这里手动建目标目录——
     防御检查本身保留，防的是未来新出现的复活路径。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("eve")
+    _make("eve")
     entry = accounts.get_account("eve")
     stone = trash.capture_account("eve", entry, 7)
     assert stone
@@ -466,11 +501,11 @@ def test_deleted_account_not_revived_by_late_requests(acc_env):
     冲刷还带着已删账号的 account_id，ensure 不得把它在空目录上复活——
     否则注册表出幽灵条目、墓碑恢复撞 409。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("peter")
+    _make("peter")
     (accounts.resolve_paths("peter").kv_dir.mkdir(parents=True, exist_ok=True))
     with _client(acc_env) as client:
         assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
-        accounts.ensure_account("peter")  # 模拟迟到请求过 ensure
+        accounts.ensure_account("peter")  # 模拟迟到请求过 ensure（不经请求咽喉的直调）
         assert "peter" not in accounts.load_registry()
         assert not (accounts.users_dir() / "peter").exists()
         stones = trash.list_account_tombstones()
@@ -482,7 +517,7 @@ def test_deleted_account_not_revived_by_late_requests(acc_env):
 def test_has_account_tombstone_suffix_must_be_digits(acc_env):
     """墓碑目录名后缀必须纯数字（<id>_<时间戳>）：防下划线账号前缀互撞
     （peter_x 的墓碑不算 peter 的）。"""
-    accounts.ensure_account("peter")
+    _make("peter")
     area = accounts.users_dir() / "_trash"
     (area / "peter_123").mkdir(parents=True)
     (area / "peter_x_456").mkdir(parents=True)
@@ -498,7 +533,7 @@ def test_tombstoned_account_requests_get_404(acc_env):
     闸门把已删账号目录拼回来——_account_id 单一咽喉必须拦：已删账号的请求
     一律 404，目录不复活、注册表不出幽灵、恢复不撞 409。"""
     accounts.ensure_account("default")
-    accounts.ensure_account("peter")
+    _make("peter")
     (accounts.resolve_paths("peter").kv_dir.mkdir(parents=True, exist_ok=True))
     with _client(acc_env) as client:
         assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
@@ -515,3 +550,104 @@ def test_tombstoned_account_requests_get_404(acc_env):
         stones = trash.list_account_tombstones()
         assert trash.restore_account_tombstone(stones[0]["stone"]) == "peter"
         assert client.get("/api/sessions", params={"account_id": "peter"}).status_code == 200
+
+
+def test_purged_account_requests_get_404_no_ghost_revival(acc_env):
+    """回归钉子（T186 2026-10-07）：保留天数 0 的即删／墓碑到期清理之后墓碑消失，
+    残留页面（另一浏览器/另一标签还开着该账号）的定时自动保存曾把账号连目录带
+    注册表条目一起复活成幽灵空账号（昵称回落为 id，看着像「账号还在、数据没了」）。
+    现在的口径：账号存在＝注册表有条目——未登记且无墓碑一律 404，目录与注册表
+    都不许被迟到请求拼回来。"""
+    accounts.ensure_account("default")
+    _make("peter")
+    with _client(acc_env) as client:
+        # 保留天数 0＝删除即彻底清除，不留墓碑（前端 fetch 包装恒带当前账号的
+        # query account_id，删除路由按发起删除的账号算保留天数——直调要显式带）
+        assert client.post("/api/trash/settings", json={"days": 0}).status_code == 200
+        assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True},
+                           params={"account_id": "default"}).status_code == 200
+        assert not accounts.has_account_tombstone("peter")
+        assert not (accounts.users_dir() / "peter").exists()
+        # 迟到的自动保存：kv 写（自带 mkdir 的存储原语）与 sessions 写都 404
+        r = client.post("/api/kv/tasks%3Aglobal", json={"value": []}, params={"account_id": "peter"})
+        assert r.status_code == 404
+        assert r.headers.get("X-Phymathia-Account-Gone") == "1"
+        assert client.post("/api/sessions", json={"sessions": {}}, params={"account_id": "peter"}).status_code == 404
+        assert client.get("/api/sessions", params={"account_id": "peter"}).status_code == 404
+        # 目录与注册表都没被拼回来（幽灵空账号的两个要件）
+        assert not (accounts.users_dir() / "peter").exists()
+        assert "peter" not in accounts.load_registry()
+        assert [e["id"] for e in client.get("/api/accounts").json()["accounts"]] == ["default"]
+        # 同 id 重新建号（显式路由）后照常可用——闸门只认「未登记」
+        _make("peter")
+        assert client.get("/api/sessions", params={"account_id": "peter"}).status_code == 200
+
+
+def test_expired_tombstone_purge_then_requests_404(acc_env):
+    """墓碑到期清理（含手动彻底删墓碑）之后同样不许复活：清理前墓碑闸门 404，
+    清理后走「未登记」闸门 404，两条路径都不建目录不登记。"""
+    accounts.ensure_account("default")
+    _make("peter")
+    with _client(acc_env) as client:
+        assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
+        stones = trash.list_account_tombstones()
+        assert len(stones) == 1
+        assert trash.purge_account_tombstone(stones[0]["stone"]) is None
+        assert not accounts.has_account_tombstone("peter")
+        assert client.post("/api/kv/tasks%3Aglobal", json={"value": []},
+                           params={"account_id": "peter"}).status_code == 404
+        assert not (accounts.users_dir() / "peter").exists()
+        assert "peter" not in accounts.load_registry()
+
+
+def test_registry_cache_tracks_external_edits(acc_env):
+    """注册表读取缓存按 (路径, mtime_ns, size) 失效：外部手改 accounts.json
+    （测试/运维/别的进程）必须被下一个请求看见——缓存不得把已删账号留成「仍登记」。"""
+    accounts.ensure_account("default")
+    _make("alice")
+    assert accounts.is_registered("alice") is True
+    reg = accounts.registry_path()
+    data = json.loads(reg.read_text(encoding="utf-8"))
+    data["accounts"] = [e for e in data["accounts"] if e.get("id") != "alice"]
+    reg.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    assert accounts.is_registered("alice") is False
+    # 反向：手写回条目也要立刻可见
+    data["accounts"].append({"id": "alice", "name": "手写", "allowBrowse": False, "createdAt": 1})
+    reg.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    assert accounts.is_registered("alice") is True
+
+
+# ====== 只读查阅的 GET 副作用（T187 2026-10-07）======
+
+def test_readonly_dashboard_skips_device_binding(acc_env):
+    """查阅态打开画像面板不得把查阅者设备绑进被查阅账号（会挤占对方绑定上限、
+    对方备份带走查阅者画像、对方彻底清除误删查阅者画像文件）；非查阅态照常登记。"""
+    accounts.ensure_account("default")
+    _make("bob")
+    accounts.set_allow_browse("bob", True)
+    with _client(acc_env) as client:
+        h = {"X-Phymathia-Readonly": "1"}
+        r = client.get("/api/profile/dashboard", params={"device_id": "dev_intruder", "account_id": "bob"}, headers=h)
+        assert r.status_code == 200
+        assert accounts.get_account("bob").get("devices") in (None, [])
+        # 不带只读头＝正常使用：面板即归属登记点（新账号首次看面板即绑定）
+        r = client.get("/api/profile/dashboard", params={"device_id": "dev_owner", "account_id": "bob"})
+        assert r.status_code == 200
+        assert accounts.get_account("bob")["devices"] == ["dev_owner"]
+
+
+def test_readonly_export_blocked(acc_env):
+    """查阅态整包导出被拒（403，2026-10-07 拍板）：allowBrowse 的礼节是只读查阅
+    会话与知识，整包 .pmu 是把对方全部内容一次带走；同时不给对方账号登记设备。"""
+    accounts.ensure_account("default")
+    _make("bob")
+    accounts.set_allow_browse("bob", True)
+    with _client(acc_env) as client:
+        h = {"X-Phymathia-Readonly": "1"}
+        r = client.get("/api/backup/export", params={"device_id": "dev_intruder", "account_id": "bob"}, headers=h)
+        assert r.status_code == 403
+        assert accounts.get_account("bob").get("devices") in (None, [])
+        # 非查阅态照常导出并登记归属
+        r = client.get("/api/backup/export", params={"device_id": "dev_owner", "account_id": "bob"})
+        assert r.status_code == 200
+        assert accounts.get_account("bob")["devices"] == ["dev_owner"]

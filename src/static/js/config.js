@@ -121,6 +121,24 @@ function lsKeys() {
 const PHY_READONLY_SAFE_POST = ['/api/models/list', '/api/models/probe'];
 if (typeof window !== 'undefined') window.PHY_READONLY_SAFE_POST = PHY_READONLY_SAFE_POST;
 
+// 账号悬空自愈（T185 2026-10-07）：指针指向已删/不存在的账号时，服务端对它的
+// 请求一律 404 并带 X-Phymathia-Account-Gone 头（main.py _account_id）。活标签页
+// （账号在另一标签/另一浏览器里被删）不必等用户手动刷新——提示一句后自动重载，
+// 重载后由 accounts.js 的启动期校验把指针落回「我的」或归还账号。自删流程
+// （window.__phyAccountJustDeleted）自己会重载，不重复触发；一次性标志防连点刷屏。
+let _phyAccountGoneHandling = false;
+function _phyHandleAccountGone() {
+  if (_phyAccountGoneHandling) return;
+  if (typeof window !== 'undefined' && window.__phyAccountJustDeleted) return;
+  _phyAccountGoneHandling = true;
+  try {
+    const msg = '当前账号已被删除，正在自动切回…';
+    if (typeof toastMsg === 'function') toastMsg(msg, 2600);
+    else if (typeof showToast === 'function') showToast(msg);
+  } catch (e) {}
+  setTimeout(() => { try { location.reload(); } catch (e) {} }, 1200);
+}
+
 if (typeof fetch === 'function') {
   (function installAccountFetch() {
     const rawFetch = fetch;
@@ -153,7 +171,21 @@ if (typeof fetch === 'function') {
           }
         }
       } catch (e) {}
-      return rawFetch.call(this, input, init);
+      const result = rawFetch.call(this, input, init);
+      // 旁路观察 404 的账号悬空标记：只读头、不改响应（调用方照常拿到原响应）
+      try {
+        if (result && typeof result.then === 'function') {
+          result.then(resp => {
+            try {
+              if (resp && resp.status === 404 && resp.headers
+                  && resp.headers.get('X-Phymathia-Account-Gone')) {
+                _phyHandleAccountGone();
+              }
+            } catch (e) {}
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      return result;
     };
     try { window.fetch = wrapped; } catch (e) {}
   })();
