@@ -127,6 +127,9 @@ function _continentRestoreOrFitView() {
 }
 
 function _continentPersistView() {
+  // 查阅态：视口是浏览痕迹，跳过落盘（写经账号垫片会进对方命名空间）；拖动/缩放
+  // 照常在内存生效，重开大陆按对方保存的视角打开——读对方、写跳过
+  if (phyIsReadonly()) { _continentReadonlyNudge(); return; }
   try {
     localStorage.setItem(CONTINENT_VIEW_KEY,
       JSON.stringify({ pan: { x: _continentPan.x, y: _continentPan.y }, zoom: _continentZoom }));

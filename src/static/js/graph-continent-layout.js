@@ -761,7 +761,11 @@ function _continentCoastPath(rect, kind, others) {
 }
 
 // 有机/网格开关（渲染层偏好，非会话键：换会话不该换画风）
+// 查阅态：切换只在内存生效（_continentStyleMem 影子），跳过落盘——重渲读影子才
+// 不会弹回；非查阅恒 null 走 localStorage，路径零改动
+let _continentStyleMem = null;
 function _continentStyleMode() {
+  if (_continentStyleMem !== null) return _continentStyleMem;
   try {
     const v = localStorage.getItem(CONTINENT_STYLE_KEY);
     return v === CONTINENT_STYLE_GRID ? CONTINENT_STYLE_GRID : CONTINENT_STYLE_ORGANIC;
@@ -771,6 +775,7 @@ function _continentStyleMode() {
 function _continentToggleStyleMode() {
   const next = _continentStyleMode() === CONTINENT_STYLE_ORGANIC
     ? CONTINENT_STYLE_GRID : CONTINENT_STYLE_ORGANIC;
+  if (phyIsReadonly()) { _continentStyleMem = next; _continentReadonlyNudge(); return next; }
   try { localStorage.setItem(CONTINENT_STYLE_KEY, next); } catch (e) { /* 容忍 */ }
   return next;
 }

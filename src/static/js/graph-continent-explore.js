@@ -202,6 +202,9 @@ async function _continentAskPhi(f, rowIndex, btn) {
   const model = (typeof getActiveModelForRole === 'function')
     ? (getActiveModelForRole('graph') || getActiveModelForRole('agent')) : null;
   if (!model) { _continentToast('先在「模型设置」里配置主模型，才能问 Φ'); return; }
+  // 查阅态：问 Φ 本身不落盘，但走 POST /api/models/chat——只读态不放开模型通道
+  //（SAFE_POST 白名单若加它＝查阅态能借对方配置发对话），入口拦并说明
+  if (phyIsReadonly()) { _continentToast('查阅模式：问 Φ 需要调用模型，查阅态不可用'); return; }
   if (btn) { btn.disabled = true; btn.textContent = 'Φ 看着…'; }
   const popover = _continentPopover;
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
