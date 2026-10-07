@@ -26,7 +26,9 @@ import time
 import uuid
 from pathlib import Path
 
+from . import accounts
 from . import profile_implicit as _implicit
+from .accounts import DEFAULT_ACCOUNT
 from .config import DATA_DIR
 from .storage import _invalidate_json_cache, _mutate_json, _read_json, _write_json
 
@@ -607,18 +609,20 @@ def mark_profile_used(device_id: str, fact_ids: list) -> None:
         logger.warning(f"Profile mark_used failed: {e}")
 
 
-def record_implicit_event(device_id: str, events: list, now: float = None) -> bool:
+def record_implicit_event(device_id: str, events: list, now: float = None,
+                          account: str = DEFAULT_ACCOUNT) -> bool:
     """隐式画像事件入口（行为痕迹 → W/M/F，数学模型 v1）。
 
     enabled=False 时忽略（与显式采集同一开关）；首次调用触发一次性回填
     （knowledge.json → W、历史测验 → M 回放）；异常静默——画像采集
     永不影响主回答链路。事件形态见 profile_implicit.ALPHA 的键。
+    account 是知识库/测验统计的账号域（画像文件本身仍按 device_id 键）。
     """
     if not device_id or not isinstance(events, list) or not events:
         return False
     try:
         path = _profile_path(device_id)
-        _implicit.ensure_seeded(path)
+        _implicit.ensure_seeded(path, account=account)
         return _implicit.record_events(path, events, now=now)
     except Exception as e:  # pragma: no cover - 存储异常不阻断回答
         logger.warning(f"Implicit profile event failed: {e}")
@@ -724,7 +728,8 @@ def _profile_section_texts(profile: dict) -> tuple:
     return sections, [fid for _, _, ids in sections for fid in ids if fid]
 
 
-def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dict:
+def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS,
+                    account: str = DEFAULT_ACCOUNT) -> dict:
     """生成契约化注入段；返回 {"text", "factIds", "sections"}。
 
     契约：不再丢一团事实让模型自由发挥，而是按类别给段落 + 明确的行为规则
@@ -732,20 +737,21 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> dic
     factIds 恒等于实际进入 text 的事实（预算裁剪时逐条回退），保证
     lastUsedAt 只刷新真正展示过的内容；sections 是同一份选中的
     `[{"label", "text"}]`，供回答角标展示「本次实际注入了什么」——前端不再
-    自己按缓存重算一遍，两套同构算法不会随改动漂移。
+    自己重新算一遍，两套同构算法不会随改动漂移。
+    account 是知识库/测验统计的账号域（画像文件本身仍按 device_id 键）。
     """
     profile = get_profile(device_id)
     if not profile.get("enabled", True):
         return {"text": "", "factIds": [], "sections": []}
     # 一次性回填（幂等）：seeded 标记缺失时补 W/M 冷启动，回填后重读一遍再编译
     try:
-        if _implicit.ensure_seeded(_profile_path(device_id)):
+        if _implicit.ensure_seeded(_profile_path(device_id), account=account):
             profile = get_profile(device_id)
     except Exception as e:  # pragma: no cover - 回填失败不影响显式注入
         logger.warning(f"Implicit profile seed failed: {e}")
     sections, _ = _profile_section_texts(profile)
     # 隐式画像段挂最尾：预算不足时逐条回退循环先丢它（显式事实优先）；无事实 id 占位
-    implicit_items = _implicit.compile_user_model(profile.get("implicit"), profile)
+    implicit_items = _implicit.compile_user_model(profile.get("implicit"), profile, account=account)
     if implicit_items:
         sections.append(("【画像】", implicit_items, [None] * len(implicit_items)))
     if not sections:

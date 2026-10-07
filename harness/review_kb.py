@@ -44,13 +44,19 @@ def _load_kb_file(path, mtime_key: str, list_key: str) -> list:
     return items
 
 
-def _load_user_kb() -> Dict[str, list]:
-    """知识检索工具的数据源：data/knowledge.json（知识面板）与 data/formulas.json（公式速查）。"""
+def _load_user_kb(account: str = "default") -> Dict[str, list]:
+    """知识检索工具的数据源：data/knowledge.json（知识面板）与 data/formulas.json（公式速查）。
+
+    account（多账号 P1）：存储账号域，经 server.accounts.resolve_paths 解析到
+    该账号自己的 knowledge/formulas 文件；server 包不可用（battery 测试桩/
+    独立部署）时降级空清单——与既有降级路同口径。"""
     try:
-        from server.config import FORMULAS_PATH, KNOWLEDGE_PATH
+        from server import accounts
+        paths = accounts.resolve_paths(account)
+        knowledge_path, formulas_path = paths.knowledge_path, paths.formulas_path
     except Exception:
         return {"knowledge": [], "formulas": []}
     return {
-        "knowledge": _load_kb_file(KNOWLEDGE_PATH, "knowledge_mtime", "knowledge"),
-        "formulas": _load_kb_file(FORMULAS_PATH, "formulas_mtime", "formulas"),
+        "knowledge": _load_kb_file(knowledge_path, "knowledge_mtime", "knowledge"),
+        "formulas": _load_kb_file(formulas_path, "formulas_mtime", "formulas"),
     }

@@ -31,6 +31,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
+from server import accounts as accounts_mod  # noqa: E402
 from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
@@ -41,15 +42,22 @@ _MISSING = object()
 
 
 def _patched_paths(td):
-    """main 与 storage 模块命名空间中的数据路径统一指向临时目录。"""
+    """多账号 P1 夹具：patch config.DATA_DIR 一处（accounts.resolve_paths 调用期
+    读取它），路径值改为账号域布局下的真实路径（data/users/default/…），保证
+    「夹具写入的目标」与「路由经 resolve_paths 读到的目标」是同一份文件。
+    返回的 main/storage/backup/profile 常量补丁只是兼容既有夹具写法——路由
+    本体已不读这些常量。本函数必须无副作用（setUp 靠先后顺序捕获原值）。"""
+    td = Path(td)
+    root = td / "users" / "default"
     return {
-        "MESSAGES_DIR": Path(td) / "messages",
-        "SESSIONS_PATH": Path(td) / "sessions.json",
-        "KNOWLEDGE_PATH": Path(td) / "knowledge.json",
-        "FORMULAS_PATH": Path(td) / "formulas.json",
-        "KV_PATH": Path(td) / "kv_store.json",
-        "KV_DIR": Path(td) / "kv",
-        "PROFILES_DIR": Path(td) / "profiles",
+        "DATA_DIR": td,
+        "MESSAGES_DIR": root / "messages",
+        "SESSIONS_PATH": root / "sessions.json",
+        "KNOWLEDGE_PATH": root / "knowledge.json",
+        "FORMULAS_PATH": root / "formulas.json",
+        "KV_PATH": root / "kv_store.json",
+        "KV_DIR": root / "kv",
+        "PROFILES_DIR": td / "profiles",
     }
 
 
@@ -59,6 +67,7 @@ class RouteTestBase(unittest.TestCase):
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
         paths = _patched_paths(self._td.name)
+        accounts_mod._ENSURED.clear()
         paths["MESSAGES_DIR"].mkdir(parents=True, exist_ok=True)
         # 画像写入走 storage 的临时文件落盘，父目录必须先存在
         paths["PROFILES_DIR"].mkdir(parents=True, exist_ok=True)
@@ -128,7 +137,7 @@ class PathTraversalTest(RouteTestBase):
 class CorruptFileTest(RouteTestBase):
     def test_gbk_messages_file_degrades_gracefully(self):
         # 模拟外部程序以 GBK 写入损坏字节：此前 UnicodeDecodeError 会穿透为 500
-        target = Path(self._td.name) / "messages" / "sess_corrupt.json"
+        target = Path(self._td.name) / "users" / "default" / "messages" / "sess_corrupt.json"
         target.write_bytes(b'{"k": "\xd6\xd0\xce\xc4"}')  # GBK "中文"
         resp = self.client.get("/api/sessions/sess_corrupt/messages")
         self.assertEqual(resp.status_code, 200)
@@ -483,8 +492,8 @@ class BackupRestoreRollbackTest(RouteTestBase):
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
     def test_failed_restore_rolls_back_all_sections(self):
-        td = Path(self._td.name)
-        (td / "profiles").mkdir(exist_ok=True)
+        td = Path(self._td.name) / "users" / "default"   # 账号域数据根
+        (Path(self._td.name) / "profiles").mkdir(exist_ok=True)
         # 导入前的现状
         storage_mod._write_json(td / "sessions.json", {
             "s1": {"id": "s1", "title": "旧会话", "createdAt": 1, "updatedAt": 1},
@@ -526,8 +535,8 @@ class BackupRestoreRollbackTest(RouteTestBase):
         self.assertIsNone(self._read_raw(td / "knowledge.json"))
 
     def test_successful_restore_still_merges(self):
-        td = Path(self._td.name)
-        (td / "profiles").mkdir(exist_ok=True)
+        td = Path(self._td.name) / "users" / "default"   # 账号域数据根
+        (Path(self._td.name) / "profiles").mkdir(exist_ok=True)
         payload = {
             "sessions": [{"id": "s2", "title": "新会话"}],
             "messages": {"s2": [{"role": "user", "content": "hi", "timestamp": 2}]},
@@ -780,7 +789,7 @@ class ContinentRouteTest(RouteTestBase):
     """
 
     def _seed(self):
-        td = Path(self._td.name)
+        td = Path(self._td.name) / "users" / "default"   # 账号域数据根
         (td / "knowledge.json").write_text(json.dumps({
             "k1": {"id": "k1", "sessionId": "sess_a", "title": "阻尼振动",
                    "formulas": [], "category": "", "createdAt": 1},
@@ -808,7 +817,7 @@ class ContinentRouteTest(RouteTestBase):
 
     def test_continent_endpoint_is_readonly(self):
         self._seed()
-        td = Path(self._td.name)
+        td = Path(self._td.name) / "users" / "default"   # 账号域数据根
         before = ((td / "knowledge.json").read_bytes(),
                   (td / "sessions.json").read_bytes())
         resp = self.client.get("/api/continent")
@@ -820,7 +829,7 @@ class ContinentRouteTest(RouteTestBase):
     def test_continent_merges_user_edges_from_kv(self):
         # v2：KV continent_edges 里的用户簇间边按当前投影校验后随响应下发
         self._seed()
-        td = Path(self._td.name)
+        td = Path(self._td.name) / "users" / "default"   # 账号域数据根
         (td / "kv_store.json").write_text(json.dumps({
             "continent_edges": {"edges": [
                 {"id": "e1", "fromItem": "k1", "toItem": "k2",

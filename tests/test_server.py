@@ -706,7 +706,7 @@ class ContextTest(unittest.TestCase):
         ]
         orig_resolve = context_mod._resolve_messages_path
         orig_read = context_mod._read_json
-        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         context_mod._read_json = lambda path_, default: msgs
         try:
             result = context_mod._load_session_context_from_path("s1", path)
@@ -726,7 +726,7 @@ class ContextTest(unittest.TestCase):
         ]
         orig_resolve = context_mod._resolve_messages_path
         orig_read = context_mod._read_json
-        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         context_mod._read_json = lambda path_, default: msgs
         try:
             result = context_mod._load_session_context_from_path("s1", path)
@@ -753,18 +753,26 @@ class DocumentTest(unittest.TestCase):
 
 class BackupTest(unittest.TestCase):
     def test_restore_sessions_merge(self):
+        # 多账号 P1：backup 路径经 accounts.resolve_paths 调用期读取，patch
+        # config.DATA_DIR 一处即整体重定向（不再有可 setattr 的模块常量）。
+        from server import accounts as accounts_mod
+        from server import config as config_mod
         with tempfile.TemporaryDirectory() as td:
-            old_path = backup_mod.SESSIONS_PATH
-            backup_mod.SESSIONS_PATH = Path(td) / "sessions.json"
+            old_data_dir = config_mod.DATA_DIR
+            config_mod.DATA_DIR = Path(td)
+            accounts_mod._ENSURED.clear()
             try:
-                backup_mod._write_json(backup_mod.SESSIONS_PATH, {"s1": {"id": "s1", "title": "旧"}})
+                sessions_path = accounts_mod.resolve_paths("default").sessions_path
+                sessions_path.parent.mkdir(parents=True, exist_ok=True)
+                backup_mod._write_json(sessions_path, {"s1": {"id": "s1", "title": "旧"}})
                 count = backup_mod._restore_sessions({"s2": {"id": "s2", "title": "新"}}, replace=False)
                 self.assertEqual(count, 1)
-                data = backup_mod._read_json(backup_mod.SESSIONS_PATH)
+                data = backup_mod._read_json(sessions_path)
                 self.assertIn("s1", data)
                 self.assertIn("s2", data)
             finally:
-                backup_mod.SESSIONS_PATH = old_path
+                config_mod.DATA_DIR = old_data_dir
+                accounts_mod._ENSURED.clear()
 
 
 class ContextOptimizationTest(unittest.TestCase):
@@ -800,7 +808,7 @@ class ContextOptimizationTest(unittest.TestCase):
         orig = context_mod._read_json
         orig_resolve6 = context_mod._resolve_messages_path
         context_mod._read_json = lambda _path, default=None: msgs
-        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         try:
             out = context_mod._load_session_context_from_path(
                 "sess_x", path, workflow_context={"upstream": [{"label": "x", "content": "..."}]}
@@ -815,7 +823,7 @@ class ContextOptimizationTest(unittest.TestCase):
         self.assertNotIn("A1正文", contents)
 
         context_mod._read_json = lambda _path, default=None: msgs
-        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         try:
             out2 = context_mod._load_session_context_from_path("sess_x", path)
         finally:
@@ -959,9 +967,9 @@ class Wave2OptimizationTest(unittest.TestCase):
         orig_resolve = context_mod._resolve_messages_path
         kv = {"socratic:br_sess_1234567890abc_1": {"active": True, "updatedAt": int(_time.time()) - 25 * 3600}}
         mutated = []
-        context_mod._read_json = lambda path, default=None: kv if str(path) == str(context_mod.KV_PATH) else (default if default is not None else [])
+        context_mod._read_json = lambda path, default=None: kv if str(path) == str(context_mod._kv_path()) else (default if default is not None else [])
         context_mod._mutate_json = lambda path, updater: mutated.append(updater(dict(kv)))
-        context_mod._resolve_messages_path = lambda sid: "fake"
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         try:
             ref = context_mod._resolve_socratic_branch("sess_1234567890abcdef123456")
         finally:
@@ -1012,13 +1020,13 @@ class RollingMemoryTest(unittest.TestCase):
     def test_rolling_summary_due(self):
         orig_load = context_mod._load_messages
         orig_read = context_mod._read_rolling_memory
-        context_mod._load_messages = lambda sid: [{"role": "user", "content": "x"}] * 20
-        context_mod._read_rolling_memory = lambda sid: None
+        context_mod._load_messages = lambda sid, *a, **k: [{"role": "user", "content": "x"}] * 20
+        context_mod._read_rolling_memory = lambda sid, *a, **k: None
         try:
             self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 20)
-            context_mod._read_rolling_memory = lambda sid: {"summary": "旧", "messageCount": 18}
+            context_mod._read_rolling_memory = lambda sid, *a, **k: {"summary": "旧", "messageCount": 18}
             self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 0)
-            context_mod._read_rolling_memory = lambda sid: {"summary": "旧", "messageCount": 10}
+            context_mod._read_rolling_memory = lambda sid, *a, **k: {"summary": "旧", "messageCount": 10}
             self.assertEqual(context_mod._rolling_summary_due("sess_abc"), 20)
         finally:
             context_mod._load_messages = orig_load
@@ -1027,11 +1035,11 @@ class RollingMemoryTest(unittest.TestCase):
     def test_rolling_memory_input(self):
         orig_load = context_mod._load_messages
         orig_read = context_mod._read_rolling_memory
-        context_mod._load_messages = lambda sid: [
+        context_mod._load_messages = lambda sid, *a, **k: [
             {"role": "user", "content": "问题%d" % i, "timestamp": i}
             for i in range(10)
         ]
-        context_mod._read_rolling_memory = lambda sid: {"summary": "旧记忆内容", "messageCount": 10}
+        context_mod._read_rolling_memory = lambda sid, *a, **k: {"summary": "旧记忆内容", "messageCount": 10}
         try:
             text = context_mod._rolling_memory_input("sess_abc", max_old_pairs=3)
         finally:
@@ -1052,8 +1060,8 @@ class RollingMemoryTest(unittest.TestCase):
         orig_resolve = context_mod._resolve_messages_path
         orig_rm = context_mod._read_rolling_memory
         context_mod._read_json = lambda path, default=None: msgs
-        context_mod._resolve_messages_path = lambda sid: "fake"
-        context_mod._read_rolling_memory = lambda sid: {"summary": "之前聊过简谐运动", "messageCount": 2}
+        context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
+        context_mod._read_rolling_memory = lambda sid, *a, **k: {"summary": "之前聊过简谐运动", "messageCount": 2}
         try:
             result = context_mod._load_session_context("sess_abc", max_rounds=2)
             block = context_mod.rolling_memory_block("sess_abc")

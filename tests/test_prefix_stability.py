@@ -65,7 +65,7 @@ class PrefixStabilityContextTest(unittest.TestCase):
 
     def test_same_state_renders_identical_bytes(self):
         messages = _rounds(8)
-        context_mod._load_messages = lambda sid: messages
+        context_mod._load_messages = lambda sid, *a, **k: messages
         a = context_mod._load_session_context("s", max_rounds=3, current_prompt="同一提问")
         b = context_mod._load_session_context("s", max_rounds=3, current_prompt="同一提问")
         self.assertEqual(a, b)
@@ -123,7 +123,7 @@ class TreePathPrefixStabilityTest(unittest.TestCase):
     def setUp(self):
         self._orig_load = context_mod._load_messages
         self.msgs = _tree_msgs()
-        context_mod._load_messages = lambda sid: self.msgs
+        context_mod._load_messages = lambda sid, *a, **k: self.msgs
 
     def tearDown(self):
         context_mod._load_messages = self._orig_load
@@ -204,7 +204,7 @@ class TreeUpstreamDetailBlockTest(unittest.TestCase):
     def setUp(self):
         self._orig_load = context_mod._load_messages
         self.msgs = _tree_msgs()
-        context_mod._load_messages = lambda sid: self.msgs
+        context_mod._load_messages = lambda sid, *a, **k: self.msgs
 
     def tearDown(self):
         context_mod._load_messages = self._orig_load

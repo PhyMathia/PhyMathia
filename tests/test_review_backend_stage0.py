@@ -21,10 +21,9 @@ from server import backup, context, storage
 def isolated():
     base = RouteTestBase()
     base.setUp()
-    # RouteTestBase patches main/storage/backup/config/profile, but not this
-    # from-import alias: both real state readers and writers must use tmp KV.
-    with mock.patch.object(context, "KV_PATH", Path(base._td.name) / "kv_store.json"), \
-         mock.patch.object(main_mod, "_summary_tasks", {}), \
+    # 多账号 P1：KV 主文件路径经 context._kv_path() 调用期解析（跟 RouteTestBase
+    # patch 的 config.DATA_DIR 走），无需再补丁本模块常量。
+    with mock.patch.object(main_mod, "_summary_tasks", {}), \
          mock.patch.object(context, "_rolling_memory_epoch", 0), \
          mock.patch.object(context, "_rolling_memory_generations", {}):
         try:
@@ -91,11 +90,11 @@ def test_b2_legacy_seconds_and_placeholder_controls(isolated, timestamp, visible
     state = {"active": True, "question": "legacy"}
     if timestamp is not None:
         state["updatedAt"] = timestamp
-    storage._write_json(context.KV_PATH, {"socratic:A": state})
-    before = context.KV_PATH.read_bytes()
+    storage._write_json(context._kv_path(), {"socratic:A": state})
+    before = context._kv_path().read_bytes()
     with mock.patch.object(context.time, "time", return_value=1_800_000_000 + 25 * 3600):
         assert (context._read_socratic_state("A") is not None) is visible
-    assert context.KV_PATH.read_bytes() == before, "state read must remain side-effect-free"
+    assert context._kv_path().read_bytes() == before, "state read must remain side-effect-free"
 
 
 def test_b3_refresh_input_covers_messages_leaving_short_term_window(isolated):
@@ -198,7 +197,7 @@ def test_s1_single_clear_removes_exact_session_memory(isolated, suffix, alias):
 def test_s1_all_clear_removes_existing_memory_control(isolated):
     seed_sessions(alias=True)
     assert isolated.client.delete("/api/sessions").status_code == 200
-    assert storage._read_json(context.KV_PATH, {}) == {}
+    assert storage._read_json(context._kv_path(), {}) == {}
     assert storage._read_json(main_mod.SESSIONS_PATH, {}) == {}
     assert context._load_messages("A") == context._load_messages("AB") == []
 
@@ -208,7 +207,7 @@ def test_s1_inflight_summary_cannot_resurrect_cleared_memory(isolated, path):
     seed_sessions()
     # Remove preexisting A memory to distinguish resurrection from the static
     # cleanup defect; AB remains as the exact-ID preservation control.
-    storage._mutate_json(context.KV_PATH, lambda data: {k: v for k, v in data.items() if k != "mem:A"})
+    storage._mutate_json(context._kv_path(), lambda data: {k: v for k, v in data.items() if k != "mem:A"})
 
     async def run():
         entered, release = asyncio.Event(), asyncio.Event()

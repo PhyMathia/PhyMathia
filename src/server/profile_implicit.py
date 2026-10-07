@@ -25,7 +25,8 @@ import math
 import re
 import time
 
-from .config import DATA_DIR
+from . import accounts
+from .accounts import DEFAULT_ACCOUNT
 from .storage import _mutate_json, _read_json, kv_read
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,15 @@ PRUNE_W = 0.05                  # 主题剪枝阈值（≈4.9 个半衰期 ≈ 6
 MAX_TOPICS = 400                # 主题表硬上限（防异常输入撑爆状态文件）
 
 QUIZ_KV_KEY = "phymathia_quiz_stats"
-KNOWLEDGE_PATH = DATA_DIR / "knowledge.json"
+# 知识库路径按账号现算（多账号 P1）。KNOWLEDGE_PATH 保留为测试注入点：
+# 非 None 时优先于按账号解析——既有用例 monkeypatch 它钉一份 kb。
+KNOWLEDGE_PATH = None
+
+
+def _knowledge_path(account: str = DEFAULT_ACCOUNT):
+    if KNOWLEDGE_PATH is not None:
+        return KNOWLEDGE_PATH
+    return accounts.resolve_paths(account).knowledge_path
 
 # 事件兴趣权重 α（文档 §1 表）；socratic_answer 是 kv 差分出的「苏格拉底答题」
 ALPHA = {
@@ -380,10 +389,11 @@ def record_events(path, events: list, now: float = None) -> bool:
     return bool(applied)
 
 
-def ensure_seeded(path) -> bool:
+def ensure_seeded(path, account: str = DEFAULT_ACCOUNT) -> bool:
     """一次性回填（文档 §6 冷启动）：knowledge.json → W、历史测验 → M 全量回放。
 
     幂等：seeded 标记已置位时零写入（updater 返回 None）。返回是否发生了回填。
+    知识库与测验统计按 account 账号域读取（画像文件本身仍按 path 的 device 键）。
     """
     applied = []
 
@@ -397,7 +407,7 @@ def ensure_seeded(path) -> bool:
         state = normalize_implicit(state)
         now = time.time()
         # W ← 知识库（主题=topic||concept，按 createdAt 衰减）
-        kb = _read_json(KNOWLEDGE_PATH, {})
+        kb = _read_json(_knowledge_path(account), {})
         if isinstance(kb, dict):
             for item in kb.values():
                 if not isinstance(item, dict):
@@ -414,7 +424,7 @@ def ensure_seeded(path) -> bool:
                 state["events"] += 1
         # M ← 历史测验/苏格拉底作答逐条回放（kv 全局键）
         try:
-            stats = kv_read(QUIZ_KV_KEY)
+            stats = kv_read(QUIZ_KV_KEY, account=account)
         except Exception as e:  # pragma: no cover - kv 异常不阻断回填
             logger.warning(f"Implicit seed kv_read failed: {e}")
             stats = None
@@ -502,9 +512,9 @@ def manage_implicit(path, action: str, dim: str = "", key: str = "", value=None)
 
 # ---- 消费端 ----
 
-def topic_vocab() -> list:
+def topic_vocab(account: str = DEFAULT_ACCOUNT) -> list:
     """归题词表：知识库的 topic/concept 全集（_read_json 有缓存，代价可控）。"""
-    data = _read_json(KNOWLEDGE_PATH, {})
+    data = _read_json(_knowledge_path(account), {})
     terms = []
     if isinstance(data, dict):
         for item in data.values():
@@ -517,12 +527,12 @@ def topic_vocab() -> list:
     return terms
 
 
-def assign_topic(text, vocab: list = None) -> str:
+def assign_topic(text, vocab: list = None, account: str = DEFAULT_ACCOUNT) -> str:
     """v1 归题：词表最长包含匹配；空文本/无命中返回空串（事件仍计入成熟度与节奏）。"""
     text = str(text or "")
     if not text.strip():
         return ""
-    for term in (vocab if vocab is not None else topic_vocab()):
+    for term in (vocab if vocab is not None else topic_vocab(account)):
         if term in text and len(term) > 0:
             return term[:60]
     return ""
@@ -571,10 +581,10 @@ def _explicit_interest_text(profile: dict) -> str:
     return re.sub(r"\s+", "", "；".join(parts))
 
 
-def _knowledge_domains() -> dict:
+def _knowledge_domains(account: str = DEFAULT_ACCOUNT) -> dict:
     """知识库领域归类：topic/concept 词 → category 集合（§8.2 相邻关系 v1 数据源）。"""
     mapping = {}
-    data = _read_json(KNOWLEDGE_PATH, {})
+    data = _read_json(_knowledge_path(account), {})
     if isinstance(data, dict):
         for item in data.values():
             if not isinstance(item, dict):
@@ -586,7 +596,8 @@ def _knowledge_domains() -> dict:
     return mapping
 
 
-def _stretch_picks(rows, picked_names: list, explicit_norm: str, limit: int = 2) -> list:
+def _stretch_picks(rows, picked_names: list, explicit_norm: str, limit: int = 2,
+                   account: str = DEFAULT_ACCOUNT) -> list:
     """§8.2 拉伸分布 v1：三成探索位从「低活跃但相邻/同领域」的已归题主题里点名 1-2 个。
 
     相邻 = 知识库 category 同域归类（与举例主侧任一主题同域者优先）；
@@ -604,7 +615,7 @@ def _stretch_picks(rows, picked_names: list, explicit_norm: str, limit: int = 2)
         cands.append((name, w))
     if not cands:
         return []
-    domains = _knowledge_domains()
+    domains = _knowledge_domains(account)
     mine = set()
     for name in picked_names:
         mine |= domains.get(name, set())
@@ -618,7 +629,8 @@ def _stretch_picks(rows, picked_names: list, explicit_norm: str, limit: int = 2)
     return [name for name, _w in cands[:limit]]
 
 
-def compile_user_model(state, profile: dict, max_chars: int = 700) -> list:
+def compile_user_model(state, profile: dict, max_chars: int = 700,
+                       account: str = DEFAULT_ACCOUNT) -> list:
     """把隐式状态编译成【画像】注入段条目（文档 §8.1 回答偏向＋§8.2 举例偏向）。数据不足返回 []。
 
     预算裁剪由调用方（profile_context 的逐条回退循环）兜底；本函数自限 max_chars。
@@ -653,7 +665,7 @@ def compile_user_model(state, profile: dict, max_chars: int = 700) -> list:
             # §8.2 举例偏向：q = 0.7·π + 0.3·ν（β 见 §9 参数表）——七成顺兴趣 top
             # 主题，三成往低活跃相邻主题带一步；v1 不做逐例采样，以措辞指令表达配比
             line = "举例：七成用 " + "/".join(picked)
-            stretch = _stretch_picks(rows, picked, explicit_norm)
+            stretch = _stretch_picks(rows, picked, explicit_norm, account=account)
             if stretch:
                 line += "，三成带一步 " + "/".join(stretch)
             items.append(line)

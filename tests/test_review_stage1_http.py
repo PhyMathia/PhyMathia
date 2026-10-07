@@ -108,7 +108,11 @@ class _HTTPChecks(unittest.TestCase):
         return response.json()
 
     def disk(self, relative):
-        return json.loads((self.data / relative).read_text(encoding="utf-8"))
+        # 多账号 P1：账号域数据（会话/知识/公式/KV/消息）落 users/default/；
+        # profiles 仍共享在 data 根。relative 首段是 profiles 时不加前缀。
+        first = str(relative).split("/", 1)[0]
+        prefix = "" if first == "profiles" else "users/default/"
+        return json.loads((self.data / prefix / relative).read_text(encoding="utf-8"))
 
     def get_profile(self):
         return self.request("GET", "/api/profile", params={"device_id": self.device})
@@ -204,7 +208,7 @@ class _HTTPChecks(unittest.TestCase):
         self.assertEqual(self.request("DELETE", "/api/sessions"), {"ok": True})
         for name in ("sessions.json", "knowledge.json", "formulas.json", "kv_store.json"):
             self.assertEqual(self.disk(name), {}, name)
-        self.assertEqual(list((self.data / "messages").glob("*.json")), [])
+        self.assertEqual(list((self.data / "users" / "default" / "messages").glob("*.json")), [])
         self.assertEqual(list((self.data / "profiles").glob("*.json")), [])
         self.assertEqual(self.request("GET", "/api/sessions"), {})
         for sid in expected["sessions"]:

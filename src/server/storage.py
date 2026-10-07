@@ -7,7 +7,8 @@ import threading
 import uuid
 from pathlib import Path
 
-from .config import KV_DIR, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
+from . import accounts
+from .accounts import DEFAULT_ACCOUNT
 
 # ====== JSON 文件持久化工具 ======
 _JSON_LOCK = threading.RLock()
@@ -103,28 +104,29 @@ def _delete_by_session(path: Path, session_id: str) -> int:
     return len(removed)
 
 
-def _get_messages_path(session_id: str) -> Path:
+def _get_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> Path:
     # 单会话路由的 session_id 直接拼文件路径，必须白名单校验，
     # 否则 URL 编码的 "..%5C" 反斜杠在 Windows 下可穿越到 data 目录之外
     if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
         raise ValueError(f"invalid session id: {session_id!r}")
-    return MESSAGES_DIR / f"{session_id}.json"
+    return accounts.resolve_paths(account).messages_dir / f"{session_id}.json"
 
 
-def _resolve_messages_path(session_id: str) -> Path:
+def _resolve_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> Path:
     """兼容两种会话标识：local key 直接找消息文件，server sessionId 反向查 sessions.json。"""
+    paths = accounts.resolve_paths(account)
     direct = None
     try:
-        direct = _get_messages_path(session_id)
+        direct = _get_messages_path(session_id, account)
         if direct.exists():
             return direct
     except ValueError:
         pass
-    sessions = _read_json(SESSIONS_PATH, {})
+    sessions = _read_json(paths.sessions_path, {})
     for sid, sdata in sessions.items():
         if isinstance(sdata, dict) and sdata.get("sessionId") == session_id:
             try:
-                return _get_messages_path(sid)
+                return _get_messages_path(sid, account)
             except ValueError:
                 continue
     if direct is not None:
@@ -137,8 +139,9 @@ def _resolve_messages_path(session_id: str) -> Path:
 # 拆到 data/kv/<sid>.json（{键: 值}），保存单个会话不再整写主文件（此前是
 # 全量重写 700KB+ 的 kv_store.json，且独占全局 JSON 锁）；其余全局键（测验
 # 题库/统计、continent_*、socratic、滚动记忆、当前会话）留在 kv_store.json。
-# 注意：本层用模块级绑定 KV_PATH/KV_DIR（测试按模块命名空间 setattr 补丁）；
-# context.py 的 socratic/滚动记忆小键不走本层——既有测试按主文件字节钉死。
+# 多账号（P1）：所有路径按 account 经 accounts.resolve_paths 现算（调用时读
+# config.DATA_DIR，测试 patch 一处即整体重定向）；context.py 的 socratic/
+# 滚动记忆小键不走本层——既有测试按主文件字节钉死。
 _KV_SESSION_PREFIXES = ("graph:", "harness_history:", "graph_history:")
 
 
@@ -153,30 +156,32 @@ def _kv_split_session(key: str):
     return None
 
 
-def _kv_session_path(sid: str) -> Path:
+def _kv_session_path(sid: str, account: str = DEFAULT_ACCOUNT) -> Path:
     if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
         raise ValueError(f"invalid session id: {sid!r}")
-    return KV_DIR / f"{sid}.json"
+    return accounts.resolve_paths(account).kv_dir / f"{sid}.json"
 
 
-def kv_read(key: str, default=None):
+def kv_read(key: str, default=None, account: str = DEFAULT_ACCOUNT):
     """按键读 KV：会话级键走 data/kv/<sid>.json，其余走主文件。"""
+    paths = accounts.resolve_paths(account)
     split = _kv_split_session(key)
     if split is not None:
-        data = _read_json(_kv_session_path(split[0]), {})
+        data = _read_json(_kv_session_path(split[0], account), {})
         if isinstance(data, dict) and key in data:
             return data[key]
         return default
-    main = _read_json(KV_PATH, {})
+    main = _read_json(paths.kv_path, {})
     if isinstance(main, dict) and key in main:
         return main[key]
     return default
 
 
-def kv_write(key: str, value) -> None:
+def kv_write(key: str, value, account: str = DEFAULT_ACCOUNT) -> None:
     """按键写 KV（upsert），自动路由到会话文件或主文件。"""
+    paths = accounts.resolve_paths(account)
     split = _kv_split_session(key)
-    path = _kv_session_path(split[0]) if split is not None else KV_PATH
+    path = _kv_session_path(split[0], account) if split is not None else paths.kv_path
 
     def updater(data):
         data = dict(data) if isinstance(data, dict) else {}
@@ -187,10 +192,10 @@ def kv_write(key: str, value) -> None:
     _mutate_json(path, updater, default={})
 
 
-def kv_delete(key: str) -> None:
+def kv_delete(key: str, account: str = DEFAULT_ACCOUNT) -> None:
     """按键删 KV；会话文件删空后移除文件本身（空 JSON 不是用户数据）。"""
     split = _kv_split_session(key)
-    path = _kv_session_path(split[0]) if split is not None else KV_PATH
+    path = _kv_session_path(split[0], account) if split is not None else accounts.resolve_paths(account).kv_path
 
     def updater(data):
         if not isinstance(data, dict) or key not in data:
@@ -207,18 +212,19 @@ def kv_delete(key: str) -> None:
             pass
 
 
-def kv_all_data() -> dict:
+def kv_all_data(account: str = DEFAULT_ACCOUNT) -> dict:
     """全量合并视图（主文件 + 所有会话文件，会话文件覆盖同名键）。
 
     备份导出与大陆投影等「要看到全部 KV」的场合用；会话文件优先——它与
     迁移中断时残留在主文件里的旧副本相比总是较新的一份。
     """
+    paths = accounts.resolve_paths(account)
     merged = {}
-    main = _read_json(KV_PATH, {})
+    main = _read_json(paths.kv_path, {})
     if isinstance(main, dict):
         merged.update(main)
-    if KV_DIR.exists():
-        for path in sorted(KV_DIR.glob("*.json")):
+    if paths.kv_dir.exists():
+        for path in sorted(paths.kv_dir.glob("*.json")):
             if not _SESSION_ID_RE.match(path.stem):
                 continue
             data = _read_json(path, {})
@@ -227,12 +233,13 @@ def kv_all_data() -> dict:
     return merged
 
 
-def kv_migrate_session_keys() -> int:
+def kv_migrate_session_keys(account: str = DEFAULT_ACCOUNT) -> int:
     """启动迁移：把主文件里的会话级键搬进 data/kv/<sid>.json，返回搬运键数。
 
     先写会话文件、全部成功后才从主文件移除——中途失败下次启动幂等重跑。
     """
-    main = _read_json(KV_PATH, {})
+    paths = accounts.resolve_paths(account)
+    main = _read_json(paths.kv_path, {})
     if not isinstance(main, dict):
         return 0
     to_move = {}
@@ -242,14 +249,14 @@ def kv_migrate_session_keys() -> int:
             to_move.setdefault(split[0], {})[key] = value
     if not to_move:
         return 0
-    KV_DIR.mkdir(parents=True, exist_ok=True)
+    paths.kv_dir.mkdir(parents=True, exist_ok=True)
     for sid, entries in to_move.items():
         def updater(data, _entries=entries):
             data = dict(data) if isinstance(data, dict) else {}
             data.update(_entries)
             return data
 
-        _mutate_json(_kv_session_path(sid), updater, default={})
+        _mutate_json(_kv_session_path(sid, account), updater, default={})
     moved_keys = {key for entries in to_move.values() for key in entries}
 
     def remove_moved(data):
@@ -258,16 +265,17 @@ def kv_migrate_session_keys() -> int:
         remaining = {k: v for k, v in data.items() if k not in moved_keys}
         return remaining if len(remaining) != len(data) else None
 
-    _mutate_json(KV_PATH, remove_moved)
+    _mutate_json(paths.kv_path, remove_moved)
     return len(moved_keys)
 
 
-def kv_restore_bulk(data, replace: bool) -> int:
+def kv_restore_bulk(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
     """备份导入：把一份 {键: 值} 按拆分路由落盘，返回导入键数。
 
     全局键合并进主文件（replace 时先清空）；会话键按 sid 分组合并进各自
     会话文件（replace 时先清空 data/kv/）。比逐键 kv_write 少 O(n) 次全量写。
     """
+    paths = accounts.resolve_paths(account)
     if not isinstance(data, dict):
         return 0
     global_part = {}
@@ -279,23 +287,25 @@ def kv_restore_bulk(data, replace: bool) -> int:
         else:
             session_parts.setdefault(split[0], {})[key] = value
     if replace:
-        _write_json(KV_PATH, {})
-        if KV_DIR.exists():
-            for p in KV_DIR.glob("*.json"):
+        paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(paths.kv_path, {})
+        if paths.kv_dir.exists():
+            for p in paths.kv_dir.glob("*.json"):
                 p.unlink(missing_ok=True)
     else:
-        existing = _read_json(KV_PATH, {})
+        existing = _read_json(paths.kv_path, {})
         global_part = {**(existing if isinstance(existing, dict) else {}), **global_part}
-    _write_json(KV_PATH, global_part)
+    paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(paths.kv_path, global_part)
     if session_parts:
-        KV_DIR.mkdir(parents=True, exist_ok=True)
+        paths.kv_dir.mkdir(parents=True, exist_ok=True)
     for sid, entries in session_parts.items():
         def updater(d, _entries=entries):
             d = dict(d) if isinstance(d, dict) else {}
             d.update(_entries)
             return d
 
-        _mutate_json(_kv_session_path(sid), updater, default={})
+        _mutate_json(_kv_session_path(sid, account), updater, default={})
     return len(data)
 
 

@@ -263,25 +263,35 @@ class SuggestRouteTest(unittest.TestCase):
 
     def setUp(self):
         from fastapi.testclient import TestClient
+        from server import accounts as accounts_mod
+        from server import config as config_mod
         from server import storage as storage_mod
         import main as main_mod  # src/main.py（与 test_routes.py 同一导入口径）
         self._td = tempfile.TemporaryDirectory()
         self._main = main_mod
         self._storage = storage_mod
-        self._orig_kp = main_mod.KNOWLEDGE_PATH
-        main_mod.KNOWLEDGE_PATH = Path(self._td.name) / "knowledge.json"
+        # 多账号 P1：路由经 accounts.resolve_paths 读知识库/KV，patch DATA_DIR 一处
+        self._config_mod = config_mod
+        self._accounts_mod = accounts_mod
+        self._orig_data_dir = config_mod.DATA_DIR
+        config_mod.DATA_DIR = Path(self._td.name)
+        accounts_mod._ENSURED.clear()
+        self.kp = Path(self._td.name) / "users" / "default" / "knowledge.json"
+        self.kp.parent.mkdir(parents=True, exist_ok=True)
+        self.kp.write_text("{}", encoding="utf-8")
         self._orig_kv = storage_mod.kv_all_data
         self._kv = {}
-        storage_mod.kv_all_data = lambda: dict(self._kv)
+        storage_mod.kv_all_data = lambda account="default": dict(self._kv)
         self.client = TestClient(main_mod.app)
 
     def tearDown(self):
-        self._main.KNOWLEDGE_PATH = self._orig_kp
         self._storage.kv_all_data = self._orig_kv
+        self._config_mod.DATA_DIR = self._orig_data_dir
+        self._accounts_mod._ENSURED.clear()
         self._td.cleanup()
 
     def _seed(self, items):
-        self._main.KNOWLEDGE_PATH.write_text(
+        self.kp.write_text(
             json.dumps(items, ensure_ascii=False), encoding="utf-8")
 
     def test_embed_absent_returns_empty_and_disabled(self):

@@ -21,22 +21,26 @@ from server import storage as storage_mod  # noqa: E402
 
 
 class KvSplitBase(unittest.TestCase):
-    """storage 的 KV_PATH/KV_DIR 绑定指向临时目录（与 test_routes 同口径）。"""
+    """多账号 P1 夹具：patch config.DATA_DIR 一处（storage 经 accounts.resolve_paths
+    调用期读取），kv_path/kv_dir 取账号域布局真实路径，与路由读取口径一致。"""
 
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
         td = Path(self._td.name)
-        self.kv_path = td / "kv_store.json"
-        self.kv_dir = td / "kv"
-        self._orig = {}
-        for name in ("KV_PATH", "KV_DIR", "MESSAGES_DIR", "SESSIONS_PATH"):
-            self._orig[name] = getattr(storage_mod, name, None)
-        storage_mod.KV_PATH = self.kv_path
-        storage_mod.KV_DIR = self.kv_dir
+        from server import accounts as accounts_mod
+        from server import config as config_mod
+        self._config_mod = config_mod
+        self._accounts_mod = accounts_mod
+        self._orig_data_dir = config_mod.DATA_DIR
+        config_mod.DATA_DIR = td
+        accounts_mod._ENSURED.clear()
+        self.kv_path = td / "users" / "default" / "kv_store.json"
+        self.kv_dir = td / "users" / "default" / "kv"
+        self.kv_path.parent.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
-        for name, value in self._orig.items():
-            setattr(storage_mod, name, value)
+        self._config_mod.DATA_DIR = self._orig_data_dir
+        self._accounts_mod._ENSURED.clear()
         self._td.cleanup()
 
 
@@ -143,62 +147,46 @@ class ConceptSplitFallbackTest(KvSplitBase):
 
 
 class BackupRoundtripTest(unittest.TestCase):
+    """多账号 P1 夹具：patch config.DATA_DIR 一处（backup/storage/profile 全部经
+    accounts.resolve_paths 调用期读取）。"""
+
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
         td = Path(self._td.name)
-        (td / "messages").mkdir()
+        from server import accounts as accounts_mod
+        from server import config as config_mod
+        self._config_mod = config_mod
+        self._accounts_mod = accounts_mod
+        self._orig_data_dir = config_mod.DATA_DIR
+        config_mod.DATA_DIR = td
+        accounts_mod._ENSURED.clear()
+        (td / "users" / "default" / "messages").mkdir(parents=True)
         (td / "profiles").mkdir()
-        self.paths = {
-            "SESSIONS_PATH": td / "sessions.json",
-            "MESSAGES_DIR": td / "messages",
-            "KNOWLEDGE_PATH": td / "knowledge.json",
-            "FORMULAS_PATH": td / "formulas.json",
-            "KV_PATH": td / "kv_store.json",
-            "KV_DIR": td / "kv",
-            "PROFILES_DIR": td / "profiles",
-        }
-        from server import backup as backup_mod
-        from server import profile as profile_mod
-        self._mods = (backup_mod, profile_mod)
-        self._orig = {}
-        for mod in self._mods:
-            for name, value in self.paths.items():
-                self._orig[(id(mod), name)] = getattr(mod, name, None)
-                setattr(mod, name, value)
 
     def tearDown(self):
-        for mod in self._mods:
-            for name in self.paths:
-                setattr(mod, name, self._orig[(id(mod), name)])
+        self._config_mod.DATA_DIR = self._orig_data_dir
+        self._accounts_mod._ENSURED.clear()
         self._td.cleanup()
 
     def test_export_import_roundtrip_with_split_keys(self):
         from server import backup as backup_mod
         from server import storage as storage_mod
 
-        storage_orig = {n: getattr(storage_mod, n) for n in ("KV_PATH", "KV_DIR", "SESSIONS_PATH", "MESSAGES_DIR")}
-        for n, value in self.paths.items():
-            if n in storage_orig:
-                setattr(storage_mod, n, value)
-        try:
-            storage_mod.kv_write("graph:sess_rt", {"connections": [1]})
-            storage_mod.kv_write("g:k", "v")
-            payload = backup_mod._build_backup_payload()
-            self.assertIn("graph:sess_rt", payload["kv"])
-            self.assertIn("g:k", payload["kv"])
-            # 破坏现场后恢复
-            storage_mod.kv_delete("graph:sess_rt")
-            storage_mod.kv_delete("g:k")
-            self.assertIsNone(storage_mod.kv_read("graph:sess_rt"))
-            backup_mod._restore_backup(
-                {"kv": payload["kv"], "sessions": {}, "messages": {}, "knowledge": {}, "formulas": {}, "profiles": {}},
-                replace=False,
-            )
-            self.assertEqual(storage_mod.kv_read("graph:sess_rt"), {"connections": [1]})
-            self.assertEqual(storage_mod.kv_read("g:k"), "v")
-        finally:
-            for n, value in storage_orig.items():
-                setattr(storage_mod, n, value)
+        storage_mod.kv_write("graph:sess_rt", {"connections": [1]})
+        storage_mod.kv_write("g:k", "v")
+        payload = backup_mod._build_backup_payload()
+        self.assertIn("graph:sess_rt", payload["kv"])
+        self.assertIn("g:k", payload["kv"])
+        # 破坏现场后恢复
+        storage_mod.kv_delete("graph:sess_rt")
+        storage_mod.kv_delete("g:k")
+        self.assertIsNone(storage_mod.kv_read("graph:sess_rt"))
+        backup_mod._restore_backup(
+            {"kv": payload["kv"], "sessions": {}, "messages": {}, "knowledge": {}, "formulas": {}, "profiles": {}},
+            replace=False,
+        )
+        self.assertEqual(storage_mod.kv_read("graph:sess_rt"), {"connections": [1]})
+        self.assertEqual(storage_mod.kv_read("g:k"), "v")
 
 
 if __name__ == "__main__":

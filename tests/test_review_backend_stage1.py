@@ -27,7 +27,7 @@ async def clear(kind):
 @pytest.mark.parametrize("started", [False, True], ids=["queued", "inflight"])
 def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind, started):
     seed_sessions(alias=True)
-    storage._mutate_json(context.KV_PATH, lambda d: {k: v for k, v in d.items()
+    storage._mutate_json(context._kv_path(), lambda d: {k: v for k, v in d.items()
                                                   if k != "mem:remote_A"})
 
     async def run():
@@ -66,7 +66,7 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
                         task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                 # Completion releases deduplication so a fresh task can run.
-                storage._mutate_json(context.KV_PATH, lambda d: {k: v for k, v in d.items()
+                storage._mutate_json(context._kv_path(), lambda d: {k: v for k, v in d.items()
                                                               if k != "mem:remote_A"})
                 main_mod._maybe_schedule_rolling_summary("remote_A", "opencode", "", "m",
                                                          "https://opencode.ai/zen/v1")
@@ -79,9 +79,9 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
 def test_s1_unknown_session_generation_survives_clear(isolated, kind):
     old = context._rolling_memory_generation("A")
     asyncio.run(clear(kind))
-    before = context.KV_PATH.read_bytes()
+    before = context._kv_path().read_bytes()
     assert not context._write_rolling_memory("A", "STALE", 16, expected_generation=old)
-    assert context.KV_PATH.read_bytes() == before
+    assert context._kv_path().read_bytes() == before
     current = context._rolling_memory_generation("A")
     assert current != old
     assert context._write_rolling_memory("A", "NEW", 16, expected_generation=current)
@@ -132,7 +132,7 @@ def test_b1_missing_file_deleted_but_empty_existing_file_restored(isolated):
     backup.SESSIONS_PATH.write_bytes(b"")
     assert not backup.KNOWLEDGE_PATH.exists()
 
-    def fail(*args):
+    def fail(*args, **kwargs):   # _apply_restore 现带 account 关键字（多账号 P1）
         backup.SESSIONS_PATH.write_bytes(b"changed")
         backup.KNOWLEDGE_PATH.write_bytes(b"new")
         (backup.MESSAGES_DIR / "new.json").write_bytes(b"[]")

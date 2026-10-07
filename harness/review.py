@@ -900,8 +900,12 @@ async def review_graph(
     journal: Optional[list] = None,
     thinking: str = "",
     fallback_models=None,
+    account: str = "default",
 ) -> Dict[str, Any]:
     """Review the snapshot and return validated graph operations.
+
+    account（多账号 P1）：知识检索工具（kb_*）读哪个账号的 knowledge/formulas
+    文件；缺省 default 与旧行为一致。
 
     mode: "tools" (force function calling), "json" (force free-form JSON),
     or "auto" (try tools, fall back to JSON when the provider rejects them).
@@ -1102,7 +1106,7 @@ async def review_graph(
     def _kb() -> Dict[str, list]:
         nonlocal kb_data
         if kb_data is None:
-            kb_data = _load_user_kb()
+            kb_data = _load_user_kb(account)
         return kb_data
 
     def messages_for_attempt(retry_errors: str = "") -> list:

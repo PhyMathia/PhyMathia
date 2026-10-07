@@ -5,7 +5,8 @@ import time
 import uuid
 from pathlib import Path
 
-from .config import FORMULAS_PATH, KNOWLEDGE_PATH, KV_DIR, KV_PATH, MESSAGES_DIR, SESSIONS_PATH
+from . import accounts
+from .accounts import DEFAULT_ACCOUNT
 from .knowledge import (
     _dedupe_formula_map,
     _dedupe_knowledge,
@@ -23,21 +24,22 @@ from .storage import (
     kv_restore_bulk,
 )
 
-def _build_backup_payload() -> dict:
-    sessions = _read_json(SESSIONS_PATH, {})
+def _build_backup_payload(account: str = DEFAULT_ACCOUNT) -> dict:
+    paths = accounts.resolve_paths(account)
+    sessions = _read_json(paths.sessions_path, {})
     messages = {}
     for sid in sessions:
         if not isinstance(sessions[sid], dict):
             continue
         try:
-            path = _get_messages_path(sid)
+            path = _get_messages_path(sid, account)
         except ValueError:
             # 历史脏键（非法 id 曾经能写进 sessions.json）：跳过而不是让
             # 整个导出 500——写入口已加同口径校验，这里只做纵深防御
             continue
         value = _read_json(path, [])
         messages[sid] = value if isinstance(value, list) else []
-    for path in sorted(MESSAGES_DIR.glob("*.json")):
+    for path in sorted(paths.messages_dir.glob("*.json")):
         sid = path.stem
         if sid in messages:
             continue
@@ -53,16 +55,17 @@ def _build_backup_payload() -> dict:
         "exportedAt": time.time(),
         "sessions": sessions,
         "messages": messages,
-        "knowledge": _read_json(KNOWLEDGE_PATH, {}),
-        "formulas": _read_json(FORMULAS_PATH, {}),
+        "knowledge": _read_json(paths.knowledge_path, {}),
+        "formulas": _read_json(paths.formulas_path, {}),
         # 合并视图：主文件 + data/kv/ 会话文件（graph:<sid> 等会话键已拆分存放）
-        "kv": kv_all_data(),
+        "kv": kv_all_data(account),
         "profiles": profiles,
     }
 
 
-def _restore_sessions(data: dict, replace: bool) -> int:
-    sessions = _read_json(SESSIONS_PATH, {})
+def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    paths = accounts.resolve_paths(account)
+    sessions = _read_json(paths.sessions_path, {})
     if replace:
         sessions = {}
     if not isinstance(data, (dict, list)):
@@ -87,13 +90,16 @@ def _restore_sessions(data: dict, replace: bool) -> int:
             "updatedAt": sdata.get("updatedAt", now),
         }
         count += 1
-    _write_json(SESSIONS_PATH, sessions)
+    paths.sessions_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(paths.sessions_path, sessions)
     return count
 
 
-def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
+def _restore_messages(data: dict, sessions: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
+    paths = accounts.resolve_paths(account)
     if replace:
-        for path in MESSAGES_DIR.glob("*.json"):
+        paths.messages_dir.mkdir(parents=True, exist_ok=True)
+        for path in paths.messages_dir.glob("*.json"):
             path.unlink(missing_ok=True)
     if not isinstance(data, dict):
         return 0
@@ -107,7 +113,7 @@ def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
         if not isinstance(msgs, list):
             continue
         try:
-            msgs_path = _get_messages_path(sid)
+            msgs_path = _get_messages_path(sid, account)
         except ValueError:
             continue
         _write_json(msgs_path, msgs)
@@ -115,23 +121,24 @@ def _restore_messages(data: dict, sessions: dict, replace: bool) -> int:
     return count
 
 
-def _restore_target_paths() -> list:
-    paths = [SESSIONS_PATH, KNOWLEDGE_PATH, FORMULAS_PATH, KV_PATH]
-    paths.extend(sorted(MESSAGES_DIR.glob("*.json")))
+def _restore_target_paths(account: str = DEFAULT_ACCOUNT) -> list:
+    p = accounts.resolve_paths(account)
+    paths = [p.sessions_path, p.knowledge_path, p.formulas_path, p.kv_path]
+    paths.extend(sorted(p.messages_dir.glob("*.json")))
     paths.extend(sorted(PROFILES_DIR.glob("*.json")))
     # 会话级 KV 拆分文件也是恢复目标：回滚与「新建文件清理」都必须覆盖
-    if KV_DIR.exists():
-        paths.extend(sorted(KV_DIR.glob("*.json")))
+    if p.kv_dir.exists():
+        paths.extend(sorted(p.kv_dir.glob("*.json")))
     return paths
 
 
 _SNAPSHOT_MISSING = object()
 
 
-def _snapshot_restore_targets() -> dict:
+def _snapshot_restore_targets(account: str = DEFAULT_ACCOUNT) -> dict:
     """读取完整快照；仅文件不存在可回滚删除，其他读取异常在写入前抛出。"""
     snap = {}
-    for p in _restore_target_paths():
+    for p in _restore_target_paths(account):
         try:
             snap[str(p)] = p.read_bytes()
         except FileNotFoundError:
@@ -169,12 +176,12 @@ def _rollback_restore_targets(snap: dict) -> list:
     return failed
 
 
-def _restore_backup(backup: dict, replace: bool) -> dict:
+def _restore_backup(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> dict:
     # 恢复按 sessions→消息→知识→公式→kv→画像 依次落盘，中途异常（文件被占用/
     # 磁盘满）会留下半恢复状态。这里先做内容级快照，任一环节失败即整体回滚。
-    snapshot = _snapshot_restore_targets()
+    snapshot = _snapshot_restore_targets(account)
     try:
-        return _apply_restore(backup, replace)
+        return _apply_restore(backup, replace, account=account)
     except Exception as exc:
         rollback_failed = _rollback_restore_targets(snapshot)
         detail = f"恢复失败，已回滚到导入前状态：{exc}"
@@ -183,30 +190,31 @@ def _restore_backup(backup: dict, replace: bool) -> dict:
         raise RuntimeError(detail) from exc
 
 
-def _apply_restore(backup: dict, replace: bool) -> dict:
+def _apply_restore(backup: dict, replace: bool, account: str = DEFAULT_ACCOUNT) -> dict:
+    paths = accounts.resolve_paths(account)
     sessions = backup.get("sessions") or {}
-    session_count = _restore_sessions(sessions, replace)
-    saved_sessions = _read_json(SESSIONS_PATH, {})
-    message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace)
+    session_count = _restore_sessions(sessions, replace, account)
+    saved_sessions = _read_json(paths.sessions_path, {})
+    message_count = _restore_messages(backup.get("messages") or {}, saved_sessions, replace, account)
 
     knowledge = _normalize_knowledge(backup.get("knowledge") or {})
     if replace:
-        _write_json(KNOWLEDGE_PATH, {})
-        _write_json(FORMULAS_PATH, {})
-        _write_json(KV_PATH, {})
+        for target in (paths.knowledge_path, paths.formulas_path, paths.kv_path):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(target, {})
     if knowledge:
-        existing_knowledge = _read_json(KNOWLEDGE_PATH, {})
-        _write_json(KNOWLEDGE_PATH, _dedupe_knowledge({**existing_knowledge, **knowledge}))
+        existing_knowledge = _read_json(paths.knowledge_path, {})
+        _write_json(paths.knowledge_path, _dedupe_knowledge({**existing_knowledge, **knowledge}))
 
     formulas = _normalize_formula_map(backup.get("formulas") or {})
     if formulas:
-        existing_formulas = _read_json(FORMULAS_PATH, {})
-        _write_json(FORMULAS_PATH, _dedupe_formula_map({**existing_formulas, **formulas}))
+        existing_formulas = _read_json(paths.formulas_path, {})
+        _write_json(paths.formulas_path, _dedupe_formula_map({**existing_formulas, **formulas}))
 
     kv_data = backup.get("kv") or {}
     if isinstance(kv_data, dict):
         # 拆分路由落盘：全局键合并主文件、会话键按 sid 进 data/kv/；replace 先清两边
-        kv_restore_bulk(kv_data, replace)
+        kv_restore_bulk(kv_data, replace, account)
 
     profiles = backup.get("profiles") or {}
     profile_count = 0
