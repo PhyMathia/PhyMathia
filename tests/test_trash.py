@@ -385,3 +385,88 @@ def test_route_delete_formulas_by_session_no_name_error(acc_env):
         r = client.delete("/api/formulas", params={"session_id": "sess_aaa", "account_id": "alice"})
         assert r.status_code == 200, r.text
         assert json.loads(_paths("alice").formulas_path.read_text(encoding="utf-8")) == {}
+
+
+# ====== 账号级墓碑（2026-10-07 删账号回收站化）======
+
+def test_account_tombstone_roundtrip_with_own_trash(acc_env):
+    """删账号→墓碑（meta 最后落盘＝完整标志、数据随行、账号自己的 trash/
+    子目录一并入墓）→恢复→数据与注册表条目原样回归。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("kate")
+    k = accounts.resolve_paths("kate")
+    k.kv_dir.mkdir(parents=True, exist_ok=True)
+    storage._write_json(k.sessions_path, {"sess_x": {"id": "sess_x", "title": "凯特的画布"}})
+    (k.trash_dir / "sess_x").mkdir(parents=True, exist_ok=True)
+    storage._write_json(k.trash_dir / "sess_x" / "meta.json", {"id": "sess_x", "kind": "session"})
+    entry = dict(accounts.get_account("kate"))
+    stone = trash.capture_account("kate", entry, 3)
+    assert stone and stone.startswith("kate_")
+    assert not k.root.exists()
+    troot = trash.account_tombstone_dir() / stone
+    assert (troot / "trash" / "sess_x" / "meta.json").exists()  # 账号自己的回收站随行
+    meta = json.loads((troot / "meta.json").read_text(encoding="utf-8"))
+    assert meta["id"] == "kate" and meta["kind"] == "account" and meta["retentionDays"] == 3
+    assert meta["purgeAt"] > meta["deletedAt"] and meta["entry"]["id"] == "kate"
+    with pytest.raises(ValueError):
+        trash.capture_account("default", {}, 7)  # default 拒墓碑化
+    with pytest.raises(ValueError):
+        trash.purge_account_data("default")
+    with pytest.raises(ValueError):
+        trash.capture_account("_trash", {}, 7)  # 保留名（_ 前缀）不可当账号删
+    assert trash.restore_account_tombstone(stone) == "kate"
+    assert json.loads(k.sessions_path.read_text(encoding="utf-8"))["sess_x"]["title"] == "凯特的画布"
+    assert (k.trash_dir / "sess_x" / "meta.json").exists()
+    assert accounts.load_registry()["kate"]["id"] == "kate"  # 按 meta.entry 原样重登记
+    assert trash.list_account_tombstones() == []
+
+
+def test_account_tombstone_list_shape(acc_env):
+    """列表带 stone（墓碑目录名，接口用）与 id（账号 id），新删在前。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("leo")
+    accounts.ensure_account("mary")
+    s1 = trash.capture_account("leo", accounts.get_account("leo"), 7)
+    s2 = trash.capture_account("mary", accounts.get_account("mary"), 7)
+    assert {it["id"] for it in trash.list_account_tombstones()} == {"leo", "mary"}
+    # 同毫秒捕获时 deletedAt 并列、顺序未定，把 leo 的删除时刻拨早再验「新删在前」
+    leo_stone = trash.account_tombstone_dir() / s1
+    meta = json.loads((leo_stone / "meta.json").read_text(encoding="utf-8"))
+    meta["deletedAt"] = 1
+    storage._write_json(leo_stone / "meta.json", meta)
+    items = trash.list_account_tombstones()
+    assert [it["stone"] for it in items] == [s2, s1]
+    assert items[0]["id"] == "mary" and "purgeAt" in items[0]
+
+
+def test_account_tombstone_purge_expired_and_orphan(acc_env):
+    """过期墓碑清理；无 meta 的孤儿目录（半写入残留）超一天一并扫掉。"""
+    accounts.ensure_account("default")
+    for name in ("frank", "grace"):
+        accounts.ensure_account(name)
+        assert trash.capture_account(name, accounts.get_account(name), 7)
+    root = trash.account_tombstone_dir()
+    stones = sorted(p.name for p in root.iterdir())
+    assert len(stones) == 2
+    frank_stone = next(s for s in stones if s.startswith("frank_"))
+    meta_path = root / frank_stone / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["purgeAt"] = int(time.time() * 1000) - 1000
+    storage._write_json(meta_path, meta)
+    orphan = root / "half_written"
+    orphan.mkdir()
+    old = time.time() - 2 * 86400
+    os.utime(orphan, (old, old))
+    assert trash.purge_expired_tombstones() == 2  # 过期墓碑 + 孤儿
+    assert not (root / frank_stone).exists() and not orphan.exists()
+    assert [it["id"] for it in trash.list_account_tombstones()] == ["grace"]
+
+
+def test_route_trash_readonly_gate_account_tombstones(acc_env):
+    """查阅态兜底：账号墓碑的恢复/彻底删除同样被只读头拦 403。"""
+    accounts.ensure_account("default")
+    with _client() as client:
+        ro = {"x-phymathia-readonly": "1"}
+        assert client.get("/api/trash", headers=ro).status_code == 200
+        assert client.post("/api/trash/accounts/x/restore", headers=ro).status_code == 403
+        assert client.delete("/api/trash/accounts/x", headers=ro).status_code == 403

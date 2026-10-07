@@ -23,6 +23,7 @@ os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")
 from server import accounts  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import storage  # noqa: E402
+from server import trash  # noqa: E402
 
 
 @pytest.fixture
@@ -43,8 +44,9 @@ def test_validate_account_id_accepts_safe(acc_env):
 
 
 def test_validate_account_id_rejects_traversal(acc_env):
-    # 空/None/路径分隔符/反斜杠/超长，一律回 default，杜绝拼路径穿越
-    for bad in ("", None, "..", "a/b", "..\\evil", "a b", "x" * 65):
+    # 空/None/路径分隔符/反斜杠/超长/服务保留名（_ 前缀＝_trash 墓碑区），
+    # 一律回 default，杜绝拼路径穿越
+    for bad in ("", None, "..", "a/b", "..\\evil", "a b", "x" * 65, "_trash", "_tmp"):
         assert accounts.validate_account_id(bad) == "default", bad
 
 
@@ -96,15 +98,21 @@ def test_rename_and_allow_browse(acc_env):
     assert accounts.can_browse("alice") is False
 
 
-def test_remove_account_and_default_protected(acc_env):
+def test_remove_account_registry_only_and_default_protected(acc_env):
+    """remove_account 只除名不动磁盘（2026-10-07 删账号回收站化后，数据目录的
+    处置——移入墓碑区或彻底清除——归 trash 层）；default 拒删不变。"""
     tmp_path, _ = acc_env
     paths = accounts.ensure_account("bob")
     (paths.root / "sessions.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError):
-        accounts.remove_account("default", delete_data=True)  # 兜底账号拒删
-    accounts.remove_account("bob", delete_data=True)
+        accounts.remove_account("default")  # 兜底账号拒删
+    accounts.remove_account("bob")
     assert "bob" not in accounts.load_registry()
-    assert not (tmp_path / "users" / "bob").exists()
+    assert (tmp_path / "users" / "bob" / "sessions.json").exists()  # 目录原样
+    # forget_ensured：删后清缓存，后续请求不会在空目录上复活账号
+    accounts.forget_ensured("bob")
+    accounts.ensure_account("bob")  # 重新 ensure 是正常路径（显式恢复/重建）
+    assert "bob" in accounts.load_registry()
 
 
 # ====== ensure_account：目录 + 缓存 + 登记 ======
@@ -347,19 +355,87 @@ def test_accounts_route_rename_and_allow_browse(acc_env):
         assert client.post("/api/accounts/delete", json={"account_id": "../evil"}).status_code == 400
 
 
-def test_accounts_route_delete(acc_env):
-    """删除：非 default 连注册表带数据目录一起清；default 拒删 400。"""
+def test_accounts_route_delete_enters_tombstone_and_restores(acc_env):
+    """删除：注册表除名 + 目录整体移入 data/users/_trash/ 墓碑区 + meta 完整
+    标志；恢复＝数据与注册表条目全回（昵称/allowBrowse/createdAt 原样，
+    账号 id 不变）。default 拒删 400、保留名 _trash 400 不变。"""
     accounts.ensure_account("default")
     accounts.ensure_account("dave")
-    (accounts.resolve_paths("dave").kv_dir / "k.json").write_text("{}", encoding="utf-8")
+    accounts.rename_account("dave", "呆夫")
+    accounts.set_allow_browse("dave", True)
+    dave_paths = accounts.resolve_paths("dave")
+    dave_paths.kv_dir.mkdir(parents=True, exist_ok=True)
+    (dave_paths.kv_dir / "k.json").write_text("{}", encoding="utf-8")
+    created_at = accounts.get_account("dave")["createdAt"]
     with _client(acc_env) as client:
         assert client.post("/api/accounts/delete", json={"account_id": "default", "delete_data": True}).status_code == 400
+        assert client.post("/api/accounts/delete", json={"account_id": "_trash", "delete_data": True}).status_code == 400
         r = client.post("/api/accounts/delete", json={"account_id": "dave", "delete_data": True})
-        assert r.status_code == 200 and r.json()["ok"] is True
+        assert r.status_code == 200 and r.json()["ok"] is True and r.json()["inTrash"] is True
         assert "dave" not in accounts.load_registry()
         assert not (accounts.users_dir() / "dave").exists()
-        # 幂等除名：账号已不存在时重复删仍 200（注册表 pop 静默）
-        assert client.post("/api/accounts/delete", json={"account_id": "dave"}).status_code == 200
+        stones = trash.list_account_tombstones()
+        assert len(stones) == 1 and stones[0]["id"] == "dave" and stones[0]["name"] == "呆夫"
+        stone = stones[0]["stone"]
+        assert (accounts.users_dir() / "_trash" / stone / "kv" / "k.json").exists()
+        assert (accounts.users_dir() / "_trash" / stone / "meta.json").exists()
+        # 幂等：重复删仍 200（目录已不在则不建墓碑）
+        assert client.post("/api/accounts/delete", json={"account_id": "dave", "delete_data": True}).status_code == 200
+        assert len(trash.list_account_tombstones()) == 1
+        # 恢复：数据 + 注册表条目全回
+        r = client.post(f"/api/trash/accounts/{stone}/restore")
+        assert r.status_code == 200 and r.json()["id"] == "dave"
+        assert (accounts.resolve_paths("dave").kv_dir / "k.json").exists()
+        entry = accounts.load_registry()["dave"]
+        assert entry["name"] == "呆夫" and entry["allowBrowse"] is True and entry["createdAt"] == created_at
+        assert trash.list_account_tombstones() == []
+        # 恢复后再删：新墓碑可再次恢复（id 不变，命名空间无缝）
+        client.post("/api/accounts/delete", json={"account_id": "dave", "delete_data": True})
+        stones = trash.list_account_tombstones()
+        assert len(stones) == 1 and trash.restore_account_tombstone(stones[0]["stone"]) == "dave"
+
+
+def test_accounts_route_delete_trash_off_purges_immediately(acc_env):
+    """保留天数 0（回收站关闭）＝删除即彻底清除，不留墓碑（与画布同口径；
+    curl 直调不带 query 时按目标账号自身设置算天数）。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("henry")
+    kv_dir = accounts.resolve_paths("henry").kv_dir
+    kv_dir.mkdir(parents=True, exist_ok=True)
+    (kv_dir / "k.json").write_text("{}", encoding="utf-8")
+    trash.set_retention_days("henry", 0)
+    with _client(acc_env) as client:
+        r = client.post("/api/accounts/delete", json={"account_id": "henry", "delete_data": True})
+        assert r.status_code == 200 and r.json()["inTrash"] is False
+        assert not (accounts.users_dir() / "henry").exists()
+        assert trash.list_account_tombstones() == []
+
+
+def test_trash_account_purge_route(acc_env):
+    """墓碑彻底删除：200 后目录消失；再删 404。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("iris")
+    stone = trash.capture_account("iris", accounts.get_account("iris"), 7)
+    assert stone
+    with _client(acc_env) as client:
+        assert client.delete(f"/api/trash/accounts/{stone}").status_code == 200
+        assert client.delete(f"/api/trash/accounts/{stone}").status_code == 404
+    assert not (trash.account_tombstone_dir() / stone).exists()
+
+
+def test_account_restore_conflict_when_target_exists(acc_env):
+    """恢复前防御性检查：目标目录已存在 → TrashConflictError，墓碑原样保留
+    可重试。ensure 已被墓碑闸门拦住不会复活目录，这里手动建目标目录——
+    防御检查本身保留，防的是未来新出现的复活路径。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("eve")
+    entry = accounts.get_account("eve")
+    stone = trash.capture_account("eve", entry, 7)
+    assert stone
+    (accounts.users_dir() / "eve").mkdir(parents=True)
+    with pytest.raises(trash.TrashConflictError):
+        trash.restore_account_tombstone(stone)
+    assert (trash.account_tombstone_dir() / stone / "meta.json").exists()
 
 
 # ====== 只读查阅兜底闸门（P3：X-Phymathia-Readonly 中间件）======
@@ -383,3 +459,59 @@ def test_readonly_gate_blocks_mutations_with_header(acc_env):
         assert client.post("/api/sessions", json={"id": "s1"}).status_code == 200
         # 非 /api/ 路径不拦（静态页面 POST 不存在，但别误伤 /v1/ 之外的未来路由判断）
         assert client.post("/health", headers=h).status_code == 405
+
+
+def test_deleted_account_not_revived_by_late_requests(acc_env):
+    """回归钉子（真机实操抓出）：删除页面 reload 的 beforeunload sendBeacon
+    冲刷还带着已删账号的 account_id，ensure 不得把它在空目录上复活——
+    否则注册表出幽灵条目、墓碑恢复撞 409。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("peter")
+    (accounts.resolve_paths("peter").kv_dir.mkdir(parents=True, exist_ok=True))
+    with _client(acc_env) as client:
+        assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
+        accounts.ensure_account("peter")  # 模拟迟到请求过 ensure
+        assert "peter" not in accounts.load_registry()
+        assert not (accounts.users_dir() / "peter").exists()
+        stones = trash.list_account_tombstones()
+        assert len(stones) == 1
+        assert trash.restore_account_tombstone(stones[0]["stone"]) == "peter"
+        assert "peter" in accounts.load_registry()
+
+
+def test_has_account_tombstone_suffix_must_be_digits(acc_env):
+    """墓碑目录名后缀必须纯数字（<id>_<时间戳>）：防下划线账号前缀互撞
+    （peter_x 的墓碑不算 peter 的）。"""
+    accounts.ensure_account("peter")
+    area = accounts.users_dir() / "_trash"
+    (area / "peter_123").mkdir(parents=True)
+    (area / "peter_x_456").mkdir(parents=True)
+    assert accounts.has_account_tombstone("peter") is True
+    assert accounts.has_account_tombstone("peter_x") is True
+    assert accounts.has_account_tombstone("other") is False
+    (area / "peter_123").rmdir()
+    assert accounts.has_account_tombstone("peter") is False
+
+
+def test_tombstoned_account_requests_get_404(acc_env):
+    """回归钉子（真机抓出第二段）：kv_write 等存储原语自带 mkdir，绕过 ensure
+    闸门把已删账号目录拼回来——_account_id 单一咽喉必须拦：已删账号的请求
+    一律 404，目录不复活、注册表不出幽灵、恢复不撞 409。"""
+    accounts.ensure_account("default")
+    accounts.ensure_account("peter")
+    (accounts.resolve_paths("peter").kv_dir.mkdir(parents=True, exist_ok=True))
+    with _client(acc_env) as client:
+        assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
+        # 迟到的写（任务列表 tasks:global 自动保存的路径）：404 且不建目录
+        assert client.post("/api/kv/tasks%3Aglobal", json={"value": {}},
+                           params={"account_id": "peter"}).status_code == 404
+        # 迟到的读同样 404（明白话，静默回落 default 会错账）
+        assert client.get("/api/sessions", params={"account_id": "peter"}).status_code == 404
+        assert not (accounts.users_dir() / "peter").exists()
+        assert "peter" not in accounts.load_registry()
+        # 重复删（幂等）仍 200：删除路由内部走 _account_id_raw 不吃自家闸门
+        assert client.post("/api/accounts/delete", json={"account_id": "peter", "delete_data": True}).status_code == 200
+        # 恢复不撞 409
+        stones = trash.list_account_tombstones()
+        assert trash.restore_account_tombstone(stones[0]["stone"]) == "peter"
+        assert client.get("/api/sessions", params={"account_id": "peter"}).status_code == 200

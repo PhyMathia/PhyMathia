@@ -189,7 +189,20 @@ def _account_id(request: Request = None, payload: dict = None) -> str:
     刻意**不回退 device_id**（accounts.py 模块注释有完整论证）：现有前端只在
     一部分请求带 device_id（quiz-stats 的 kv 写带、读不带），拿它当账号键会让
     读写分家。P2 前端落地前所有请求都落 default 账号＝与旧行为逐字节一致。
+
+    已删账号（墓碑在）的迟到请求一律 404：这是全部账号化路由的单一咽喉，
+    ensure 闸门只拦「经 _account_paths 的写」，而 kv_write 等存储原语自带
+    mkdir 会绕开它把已删账号目录在磁盘上拼回来（真机抓出：任务列表的
+    tasks:global 自动保存踩中）。404 对 sendBeacon 无感、对活人 tab 是明白话；
+    恢复账号后墓碑消失，请求自然恢复。default 无墓碑可言，零开销直通。
     """
+    account = _account_id_raw(request, payload)
+    if account != accounts.DEFAULT_ACCOUNT and accounts.has_account_tombstone(account):
+        raise HTTPException(status_code=404, detail="该账号已删除（保留期内可在回收站恢复）")
+    return account
+
+
+def _account_id_raw(request: Request = None, payload: dict = None) -> str:
     if request is not None:
         try:
             q = request.query_params.get("account_id") or request.query_params.get("accountId")
@@ -954,8 +967,25 @@ async def api_accounts_delete(request: Request):
     if account == accounts.DEFAULT_ACCOUNT:
         # default 是无 account_id 请求的兜底落点，删了数据就丢（accounts.remove_account 同款防线）
         raise HTTPException(status_code=400, detail="default 账号不可删除")
-    accounts.remove_account(account, delete_data=bool(payload.get("delete_data")))
-    return {"ok": True, "id": account}
+    # 删账号回收站化（2026-10-07）：整个账号目录移入 data/users/_trash/ 墓碑区，
+    # 保留期内可在回收站恢复；机制与拍板见 trash.py「账号级墓碑」节。
+    # 保留天数按发起删除的当前账号算（fetch 包装给所有 /api/ 请求恒带 query
+    # account_id＝当前账号；curl 直调无 query 时回落目标账号自身设置，再回默认 7）。
+    # 用 _account_id_raw：重复删（幂等除名）时目标已带墓碑，_account_id 会 404
+    days = trash.retention_days(_account_id_raw(request, payload))
+    entry = accounts.get_account(account)  # 注册表条目快照：墓碑 meta 与回滚都用它
+    accounts.remove_account(account)  # 先除名；移目录失败时 restore_entry 回滚
+    in_trash = False
+    try:
+        if days == 0:
+            trash.purge_account_data(account)  # 回收站关闭：删除即彻底清除（与画布同口径）
+        else:
+            in_trash = trash.capture_account(account, entry, days) is not None
+    except Exception as e:
+        accounts.restore_entry(entry)  # 移入失败＝原账号原样（宁可 500 不可丢数据）
+        raise HTTPException(status_code=500, detail=f"删除失败：账号数据未能移入回收站，原账号未受影响（{e}）")
+    accounts.forget_ensured(account)  # 防 ensure 缓存让已删账号以空目录复活
+    return {"ok": True, "id": account, "inTrash": in_trash, "restorableDays": days if in_trash else 0}
 
 
 # ====== 会话管理 API ======
@@ -1142,6 +1172,9 @@ async def api_trash_list(request: Request = None):
     return {
         "items": trash.list_items(paths),
         "retentionDays": trash.retention_days(paths.account),
+        # 已删账号的墓碑（2026-10-07 删账号回收站化）：全局一处不分账号，
+        # 任何账号的面板都能看到本机全部可恢复账号
+        "deletedAccounts": trash.list_account_tombstones(),
     }
 
 
@@ -1154,6 +1187,28 @@ async def api_trash_settings(request: Request):
     except (TypeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"保留天数需为 0–365 的整数（{e}）")
     return {"ok": True, "retentionDays": days}
+
+
+# 账号墓碑的恢复/彻底删除。字面段 accounts 与 {item_id} 参数段形状不同
+# （/api/trash/accounts/<stone> 是两段），与下方条目路由无匹配歧义。
+@app.post("/api/trash/accounts/{stone_id}/restore")
+async def api_trash_account_restore(stone_id: str):
+    try:
+        account = trash.restore_account_tombstone(stone_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="回收站里没有这个已删账号")
+    except trash.TrashConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"ok": True, "id": account}
+
+
+@app.delete("/api/trash/accounts/{stone_id}")
+async def api_trash_account_purge(stone_id: str):
+    try:
+        trash.purge_account_tombstone(stone_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="回收站里没有这个已删账号")
+    return {"ok": True}
 
 
 @app.post("/api/trash/{item_id}/restore")

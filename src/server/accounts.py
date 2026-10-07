@@ -5,6 +5,8 @@
 - 每账号存储：`data/users/<account_id>/{sessions.json, messages/, knowledge.json,
   formulas.json, kv_store.json, kv/}`；`data/users/accounts.json` 是服务端注册表
   镜像（allow_browse 的裁决点，条目 {id, name, allowBrowse, createdAt}）。
+- 账号级墓碑区：`data/users/_trash/<id>_<删除时间戳>/`（2026-10-07 删账号回收站化，
+  删除的账号整体暂存于此，保留期内可恢复；机制与拍板在 trash.py）。
 - 不分账号保持共享：uploads/、embedding_cache.json、utopia_inbox/、usage/、
   harness_feedback.json、profiles/。
 - 画像不迁移：`data/profiles/<id>.json` 的 id 键语义从 device_id 升级为
@@ -90,9 +92,14 @@ class AccountPaths:
 
 def validate_account_id(value) -> str:
     """账号 id 白名单消毒：非法/空值一律回 DEFAULT（与 session id 同防线口径：
-    id 直接拼文件路径，杜绝路径分隔符与 Windows 反斜杠穿越）。"""
+    id 直接拼文件路径，杜绝路径分隔符与 Windows 反斜杠穿越）。
+
+    `_` 前缀是服务保留名（`_trash`＝账号墓碑区，见 trash.py）：id 拼路径，
+    绝不能让「账号」落进保留区——正常账号 id 由服务端生成（12 位十六进制），
+    永不带下划线开头，这里收紧零代价。
+    """
     text = str(value or "").strip()
-    if text == DEFAULT_ACCOUNT or _ACCOUNT_ID_RE.match(text):
+    if text == DEFAULT_ACCOUNT or (_ACCOUNT_ID_RE.match(text) and not text.startswith("_")):
         return text
     return DEFAULT_ACCOUNT
 
@@ -205,9 +212,12 @@ def can_browse(target_account_id: str) -> bool:
     return bool(entry.get("allowBrowse"))
 
 
-def remove_account(account_id: str, delete_data: bool = False) -> None:
-    """注册表除名（幂等）。delete_data=True 时连数据目录一起删（P2 删除账号用；
-    default 账号拒删——它是无 account_id 请求的兜底落点，删了数据就丢）。"""
+def remove_account(account_id: str) -> None:
+    """注册表除名（幂等）。default 账号拒删——它是无 account_id 请求的兜底
+    落点，删了数据就丢。只动注册表不动磁盘：数据目录的处置（移入账号墓碑区
+    data/users/_trash/ 保留期内可恢复，或保留天数 0 时彻底清除）由调用方走
+    trash.capture_account / trash.purge_account_data——删账号已回收站化
+    （2026-10-07），硬删不再是本层的职责。"""
     account = validate_account_id(account_id)
     if account == DEFAULT_ACCOUNT:
         raise ValueError("default 账号不可删除")
@@ -215,20 +225,52 @@ def remove_account(account_id: str, delete_data: bool = False) -> None:
         entries = load_registry()
         entries.pop(account, None)
         save_registry(entries)
-        if delete_data:
-            root = users_dir() / account
-            for path in sorted(root.rglob("*"), reverse=True):
-                if path.is_file() or path.is_symlink():
-                    path.unlink(missing_ok=True)
-                else:
-                    try:
-                        path.rmdir()
-                    except OSError:
-                        pass
-            try:
-                root.rmdir()
-            except OSError:
-                pass
+
+
+def restore_entry(entry: dict) -> dict:
+    """按快照原样回写一条注册表条目（账号墓碑恢复用）：id/name/allowBrowse/
+    createdAt/trashRetentionDays 全量还原，不做缺省补齐。"""
+    if not isinstance(entry, dict) or not entry.get("id"):
+        raise ValueError("restore_entry: entry.id required")
+    account = str(entry["id"])
+    if account != validate_account_id(account):
+        raise ValueError(f"invalid account id in entry: {entry['id']!r}")
+    with _LOCK:
+        entries = load_registry()
+        restored = dict(entry)
+        restored["id"] = account
+        entries[account] = restored
+        save_registry(entries)
+        return restored
+
+
+def forget_ensured(account_id: str) -> None:
+    """账号删除/墓碑化后清 _ENSURED 缓存：缓存命中但目录已被移走时，后续打到
+    该账号的请求会走 ensure 重建空目录并重新登记（复活出一个同名空账号），
+    墓碑恢复反而撞 409——删完立刻忘掉它。"""
+    _ENSURED.discard((str(users_dir()), validate_account_id(account_id)))
+
+
+def has_account_tombstone(account_id: str) -> bool:
+    """该账号是否已有墓碑（data/users/_trash/<id>_<纯数字时间戳>/）。
+
+    ensure_account 用它拦「已删账号的迟到请求」——典型是删除页面 reload 时
+    beforeunload 的 sendBeacon 冲刷，信封还带着已删账号的 account_id；没有
+    这道闸账号会在空目录上复活（真机实操抓出），墓碑恢复反而撞 409。
+    目录名约定与 trash.capture_account 一致（后缀必须纯数字，防下划线账号
+    前缀互撞）；id 拼路径安全由 validate_account_id 保证。
+    """
+    account = validate_account_id(account_id)
+    if account == DEFAULT_ACCOUNT:
+        return False
+    area = users_dir() / "_trash"
+    if not area.is_dir():
+        return False
+    prefix = account + "_"
+    for p in area.iterdir():
+        if p.is_dir() and p.name.startswith(prefix) and p.name[len(prefix):].isdigit():
+            return True
+    return False
 
 
 # ====== 旧数据迁移（一次性，只 mv 不删） ======
@@ -286,6 +328,11 @@ def ensure_account(account_id=DEFAULT_ACCOUNT, name: str = None) -> AccountPaths
         key = (str(users_dir()), account)
         if key in _ENSURED and paths.root.is_dir():
             return paths
+        if has_account_tombstone(account):
+            # 已删账号的迟到请求：不建目录、不重新登记（见 has_account_tombstone
+            # 注释）。读请求自然落空文件默认值；写请求因目录缺失失败——
+            # sendBeacon 是 fire-and-forget，无感。
+            return paths
         # 迁移门槛是 flag 不是「目录不存在」：中断续搬（目录已建、文件没搬完、
         # flag 未落）时重跑必须继续搬；flag 在则这里是零开销 no-op
         _migrate_legacy_into(paths)
@@ -334,6 +381,7 @@ __all__ = [
     "validate_account_id", "users_dir", "registry_path", "resolve_paths",
     "ensure_account", "load_registry", "save_registry", "get_account",
     "register_account", "rename_account", "set_allow_browse", "can_browse",
-    "remove_account", "get_trash_retention", "set_trash_retention",
+    "remove_account", "restore_entry", "forget_ensured", "has_account_tombstone",
+    "get_trash_retention", "set_trash_retention",
     "TRASH_RETENTION_DEFAULT_DAYS", "TRASH_RETENTION_MAX_DAYS",
 ]

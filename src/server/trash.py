@@ -19,6 +19,22 @@
   条目（面板文案如实标注）。列表与启动时惰性清过期。
 - 保留天数 0＝关闭回收站：capture 直接返回 False，删除走原链路（不留任何
   快照）；确认弹窗文案在前端按本地缓存的保留天数随之变化。
+
+账号级墓碑（2026-10-07 删账号回收站化，与当日日志「文件清单」节拍板一致）：
+- 删除非 default 账号＝整个账号目录（含它自己的 trash/ 子目录）mv 进
+  data/users/_trash/<id>_<删除时间戳>/，注册表先除名、移目录失败则按快照
+  回滚注册表——「宁可 500 不可丢数据」同款纪律。
+- meta.json 最后落盘＝完整性标志（同 capture_session）；entry 字段快照删除
+  时刻的注册表条目，恢复时原样重登记（昵称/allowBrowse/createdAt 全还原，
+  账号 id 不变——localStorage 前缀命名空间天然对齐，数据无缝复活）。
+- purgeAt 入站时刻按发起删除的当前账号保留天数算死（路由层传；curl 直调
+  回落目标账号自身设置，再回默认 7）。保留 0 天＝回收站关闭：不建墓碑，
+  删除即彻底清除（与画布同口径，purge_account_data）。
+- 「清空回收站」只清画布条目不清账号墓碑——一键抹掉整个账号是墓碑机制
+  本身要防的事，逐条彻底删除才有。
+- 恢复前防御性检查目标目录不存在（另一浏览器还开着已删账号的页面可能让
+  ensure 复活空目录，见 accounts.forget_ensured）；恢复失败自动把目录放回
+  墓碑区，可重试。
 """
 
 import json
@@ -415,7 +431,142 @@ def purge_expired_all() -> int:
             total += purge_expired(accounts.resolve_paths(account))
         except Exception as e:  # 清理是附带收益，不许让它拖垮启动
             logger.warning("trash startup purge for %s failed: %s", account, e)
+    try:
+        total += purge_expired_tombstones()
+    except Exception as e:  # 账号墓碑区是全局目录，单独兜底
+        logger.warning("account tombstone startup purge failed: %s", e)
     return total
+
+
+# ====== 账号级墓碑（删账号回收站化：整个账号目录暂存，保留期内可恢复） ======
+
+ACCOUNT_TRASH_DIR_NAME = "_trash"
+
+
+def account_tombstone_dir() -> Path:
+    """账号墓碑区：data/users/_trash/（全局一处，不分账号——删除的是账号本身）。"""
+    return accounts.users_dir() / ACCOUNT_TRASH_DIR_NAME
+
+
+def capture_account(account: str, entry: dict, days: int) -> str | None:
+    """删除账号：整个账号目录移入墓碑区，meta.json 最后落盘。返回墓碑目录名。
+
+    调用方（main.py 删除路由）已先做注册表除名；本函数抛异常时由调用方
+    restore_entry 回滚。账号目录不存在（从未产生数据）→ 不建墓碑返回 None。
+    """
+    account = accounts.validate_account_id(account)
+    if account == accounts.DEFAULT_ACCOUNT:
+        raise ValueError("default 账号不可删除")
+    root = accounts.users_dir() / account
+    if not root.exists():
+        return None
+    try:
+        days = max(0, int(days))
+    except (TypeError, ValueError):
+        days = accounts.TRASH_RETENTION_DEFAULT_DAYS
+    stone_dir = account_tombstone_dir() / f"{account}_{int(time.time() * 1000)}"
+    stone_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(root), str(stone_dir))
+    now = int(time.time() * 1000)
+    # meta 最后写：meta 在＝墓碑完整（同 capture_session 的完整性标志口径）
+    storage._write_json(stone_dir / _META_NAME, {
+        "id": account,
+        "name": (entry or {}).get("name") or account,
+        "kind": "account",
+        "deletedAt": now,
+        "purgeAt": now + days * _DAY_MS,
+        "retentionDays": days,
+        "entry": entry or {},
+    })
+    return stone_dir.name
+
+
+def purge_account_data(account: str) -> None:
+    """保留天数 0（回收站关闭）时的删账号＝彻底清除，不留墓碑（与画布同口径）。
+    仅在注册表已除名后由删除路由调用。"""
+    account = accounts.validate_account_id(account)
+    if account == accounts.DEFAULT_ACCOUNT:
+        raise ValueError("default 账号不可删除")
+    root = accounts.users_dir() / account
+    if root.exists():
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def list_account_tombstones() -> list:
+    """墓碑条目（新删的在前）；顺手惰性清过期墓碑与孤儿目录。stone＝墓碑目录名
+    （恢复/彻底删除接口用它；meta.id 是账号 id，二者在目录名里以时间戳区分）。"""
+    purge_expired_tombstones()
+    root = account_tombstone_dir()
+    if not root.is_dir():
+        return []
+    items = []
+    for child in sorted(root.iterdir()):
+        meta = storage._read_json(child / _META_NAME, {}) if child.is_dir() else {}
+        if meta.get("id") and meta.get("kind") == "account":
+            meta["stone"] = child.name
+            items.append(meta)
+    items.sort(key=lambda m: m.get("deletedAt") or 0, reverse=True)
+    return items
+
+
+def restore_account_tombstone(stone_id: str) -> str:
+    """墓碑恢复：账号目录移回原位 + 注册表按快照原样重登记。返回账号 id。
+
+    防御性检查目标目录不存在（同 id 目录还在＝同号冲突，整体拒绝）；注册表
+    登记失败时把目录放回墓碑区（可重试），不让账号落在「有数据没登记」的半态。
+    """
+    _validate_item_id(stone_id)
+    stone_dir = account_tombstone_dir() / stone_id
+    meta = storage._read_json(stone_dir / _META_NAME, {})
+    account = accounts.validate_account_id(meta.get("id"))
+    if not meta.get("id") or account != meta.get("id") or account == accounts.DEFAULT_ACCOUNT:
+        # meta 缺失＝半写入孤儿（列表/恢复本就不该看到）；id 消毒变形或指向
+        # default 都不该发生——发生即拒绝，绝不把墓碑数据恢复成别人的账号
+        raise KeyError(f"account tombstone not found: {stone_id}")
+    target = accounts.users_dir() / account
+    if target.exists():
+        raise TrashConflictError(f"账号 {account} 已存在（同 id 目录还在），无法恢复")
+    shutil.move(str(stone_dir), str(target))
+    entry = meta.get("entry")
+    try:
+        if isinstance(entry, dict) and entry.get("id"):
+            accounts.restore_entry(entry)
+        else:
+            accounts.register_account(account, name=meta.get("name"))
+    except Exception:
+        shutil.move(str(target), str(stone_dir))
+        raise
+    return account
+
+
+def purge_account_tombstone(stone_id: str) -> None:
+    """彻底删除一个墓碑（该账号全部数据不可恢复）。不存在抛 KeyError（路由层 404）。"""
+    _validate_item_id(stone_id)
+    stone_dir = account_tombstone_dir() / stone_id
+    if not (stone_dir / _META_NAME).exists():
+        raise KeyError(f"account tombstone not found: {stone_id}")
+    shutil.rmtree(stone_dir, ignore_errors=True)
+
+
+def purge_expired_tombstones() -> int:
+    """清除 purgeAt 已到的账号墓碑；顺带扫掉超过一天的孤儿目录（半写入残留）。
+    挂在 purge_expired_all 的启动期清理里，list_account_tombstones 惰性兜底。"""
+    root = account_tombstone_dir()
+    if not root.is_dir():
+        return 0
+    now = int(time.time() * 1000)
+    purged = 0
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        meta = storage._read_json(child / _META_NAME, {})
+        purge_at = meta.get("purgeAt")
+        expired = isinstance(purge_at, int) and purge_at > 0 and purge_at <= now
+        orphan = not meta.get("id") and _dir_age_ms(child) > _DAY_MS
+        if expired or orphan:
+            shutil.rmtree(child, ignore_errors=True)
+            purged += 1
+    return purged
 
 
 def _dir_age_ms(path: Path) -> float:
