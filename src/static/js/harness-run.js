@@ -171,6 +171,7 @@
   }
 
   function runGraphHarnessWithText(text) {
+    if (phyIsReadonly()) { phyReadonlyBlock('发送 Φ 消息'); return; }
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.value = String(text || '');
     runGraphHarness();
@@ -248,6 +249,8 @@
   }
 
   async function runGraphHarness(phase = 'normal', opts) {
+    // 只读查阅（P3）：含排队重放（force）在内的所有 Φ 发送一律拦下
+    if (phyIsReadonly()) { phyReadonlyBlock('发送 Φ 消息'); return; }
     // T90 生成中发消息排队：过去这里是裸 `if (harnessBusy) return;`——字留在输入框里、
     // 点了毫无反应（免费模型一轮能跑 2-8 分钟，撞上的概率很高，用户以为按钮坏了）。
     // 现在把指令收下：先清空输入框（消息已被接走），再交给主聊天的发送队列，

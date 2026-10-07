@@ -446,6 +446,7 @@ async function _pushBackupToExistingApis(data) {
 }
 
 async function importData(event) {
+  if (phyIsReadonly()) { phyReadonlyBlock('导入备份'); return; }
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -1770,8 +1771,8 @@ window.addEventListener('load', async () => {
   // 必须先初始化应用（加载 session、恢复聊天状态）
   await initApp();
 
-  // 首次使用引导
-  setTimeout(() => startOnboarding(), 600);
+  // 首次使用引导（查阅模式跳过：引导完成标记会写进对方账号的浏览器命名空间）
+  setTimeout(() => { if (!phyIsReadonly()) startOnboarding(); }, 600);
 });
 
 // ====== 深色/浅色模式 ======

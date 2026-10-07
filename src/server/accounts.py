@@ -192,7 +192,13 @@ def set_allow_browse(account_id: str, allow: bool) -> dict:
 
 
 def can_browse(target_account_id: str) -> bool:
-    """只读查阅裁决：目标账号登记过且 allowBrowse=True（P3 查阅闸门调用）。"""
+    """只读查阅裁决：目标账号登记过且 allowBrowse=True。
+
+    P3 落地后的实际消费点在前端面板（GET /api/accounts 已带 allowBrowse，进门前
+    再重查一遍防缓存过期）；服务端无身份概念、无法强执法——本地无认证，allow_browse
+    是 UI 层礼节性隔离（诚实声明口径），服务端兜底闸门只认 X-Phymathia-Readonly 头
+    （main.py _readonly_browse_gate），这里保留给测试与未来可能的强执法位。
+    """
     entry = get_account(target_account_id)
     return bool(entry.get("allowBrowse"))
 

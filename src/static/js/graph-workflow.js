@@ -1169,6 +1169,8 @@ async function _extractKnowledgeFromWorkflow(question, moduleIds) {
 }
 
 async function startQuestionWorkflow(text, opts, handoffTaskId) {
+  // 只读查阅（P3）：工作流首问不经过 sendMessage，必须在它自己的入口拦
+  if (phyIsReadonly()) { phyReadonlyBlock('发起提问'); return; }
   const question = String((text || '').trim());
   if (!question) return;
   // T42：这条守卫过去只查 isStreaming，而工作流全程不碰 isStreaming（它走

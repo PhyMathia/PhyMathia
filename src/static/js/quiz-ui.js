@@ -1,6 +1,7 @@
 /* ====== 知识检测：交互动作（开始/作答/解析/设置） ====== */
 
 async function openQuiz(mode = 'session') {
+  if (phyIsReadonly()) { phyReadonlyBlock('进行知识检测'); return; }
   const overlay = document.getElementById('quizModal');
   if (!overlay) return;
   quizMode = mode === 'global' ? 'global' : 'session';

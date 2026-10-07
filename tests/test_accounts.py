@@ -360,3 +360,26 @@ def test_accounts_route_delete(acc_env):
         assert not (accounts.users_dir() / "dave").exists()
         # 幂等除名：账号已不存在时重复删仍 200（注册表 pop 静默）
         assert client.post("/api/accounts/delete", json={"account_id": "dave"}).status_code == 200
+
+
+# ====== 只读查阅兜底闸门（P3：X-Phymathia-Readonly 中间件）======
+
+def test_readonly_gate_blocks_mutations_with_header(acc_env):
+    """带 X-Phymathia-Readonly 头的改写请求一律 403（白名单两条例外）；
+    不带头不受影响（本地无认证，防的是前端漏闸不是手写 curl）。"""
+    accounts.ensure_account("default")
+    with _client(acc_env) as client:
+        h = {"X-Phymathia-Readonly": "1"}
+        # 改写请求 + 只读头 → 403
+        assert client.post("/api/sessions", json={"id": "s1"}, headers=h).status_code == 403
+        assert client.delete("/api/sessions", headers=h).status_code == 403
+        assert client.put("/api/profile", json={}, headers=h).status_code == 403
+        # 读请求 + 只读头 → 正常
+        assert client.get("/api/sessions", headers=h).status_code == 200
+        # 白名单读语义 POST：放行（models/list 缺 provider 会 400/422，但绝不是 403）
+        r = client.post("/api/models/list", json={}, headers=h)
+        assert r.status_code != 403
+        # 同样的改写请求不带只读头 → 照常（礼节性隔离口径）
+        assert client.post("/api/sessions", json={"id": "s1"}).status_code == 200
+        # 非 /api/ 路径不拦（静态页面 POST 不存在，但别误伤 /v1/ 之外的未来路由判断）
+        assert client.post("/health", headers=h).status_code == 405

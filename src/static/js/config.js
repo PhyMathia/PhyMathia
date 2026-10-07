@@ -26,6 +26,52 @@ const ACCOUNT_LS_PREFIX = accountLsPrefix(ACCOUNT_ID);
 // 原生存储引用：垫片装上后闭包留存，供 lsKeys() 枚举物理键用
 const _RAW_LS = (typeof localStorage !== 'undefined') ? localStorage : null;
 
+// ====== 只读查阅（P3 2026-10-07）：进入他人空间浏览 ======
+// 进入＝劫持账号指针（与切换账号同机制，复用垫片与 fetch 补 account_id 的读路径）
+// + 两个「元键」标记查阅态。标记刻意落 localStorage 而非 sessionStorage：
+// sessionStorage 关标签页即失效，会把指针留在对方账号上却失去只读旗标＝以写模式
+// 留在别人空间，严格更糟；localStorage 标记保证「中途关页→重开→仍在只读查阅→
+// 退出还原」闭环。两键与账号指针同纪律：只走 _RAW_LS，绝不经垫片。
+const STORAGE_KEY_BROWSE_ACTIVE = 'phymathia_browse_active';
+const STORAGE_KEY_BROWSE_RETURN = 'phymathia_browse_return';
+const STORAGE_KEY_BROWSE_RETURN_NAME = 'phymathia_browse_return_name';
+
+function _rawLsGet(k) { try { return _RAW_LS ? _RAW_LS.getItem(k) : null; } catch (e) { return null; } }
+function _rawLsSet(k, v) { try { if (_RAW_LS) _RAW_LS.setItem(k, String(v)); } catch (e) {} }
+function _rawLsDel(k) { try { if (_RAW_LS) _RAW_LS.removeItem(k); } catch (e) {} }
+
+(function initReadonlyBrowse() {
+  const target = (_rawLsGet(STORAGE_KEY_BROWSE_ACTIVE) || '').trim();
+  const back = (_rawLsGet(STORAGE_KEY_BROWSE_RETURN) || '').trim();
+  const ok = !!(target && back && ACCOUNT_ID_RE.test(target) && ACCOUNT_ID_RE.test(back)
+    && target === ACCOUNT_ID && back !== target);
+  if (!ok && (target || back)) {
+    // 残缺状态（指针被显式切换走／return 与 target 撞车等）：清标记，绝不带病只读
+    _rawLsDel(STORAGE_KEY_BROWSE_ACTIVE);
+    _rawLsDel(STORAGE_KEY_BROWSE_RETURN);
+    _rawLsDel(STORAGE_KEY_BROWSE_RETURN_NAME);
+  }
+  if (typeof window !== 'undefined') {
+    window.PHYMATHIA_READONLY = ok;
+    window.PHY_BROWSE_RETURN = ok ? back : '';
+    // 归还账号的昵称（进查阅时定格），退出时还原磁贴副行用
+    window.PHY_BROWSE_RETURN_NAME = ok ? ((_rawLsGet(STORAGE_KEY_BROWSE_RETURN_NAME) || '').trim()) : '';
+  }
+})();
+
+// 各模块写点闸门统一判据与提示（发送/检测/分支等入口函数开头调用）
+function phyIsReadonly() {
+  return !!(typeof window !== 'undefined' && window.PHYMATHIA_READONLY);
+}
+function phyReadonlyBlock(what) {
+  try {
+    const msg = '查阅模式：不能' + what + '，退出查阅后重试';
+    if (typeof toastMsg === 'function') toastMsg(msg, 2500);
+    else if (typeof showToast === 'function') showToast(msg);
+  } catch (e) {}
+  return true; // 恒真：配「if (phyReadonlyBlock('发送消息')) return;」
+}
+
 if (ACCOUNT_LS_PREFIX) {
   (function installAccountLsShim() {
     const P = ACCOUNT_LS_PREFIX;
@@ -71,13 +117,40 @@ function lsKeys() {
 // 所有 /api/ 请求恒带 account_id（含 default——P1 拍板服务端只认它）。
 // 只重写「字符串 URL 且未带 account_id」的调用；Request 对象等少见形态保守
 // 放行（服务端缺 account_id 落 default，不会错账）。
+// 查阅态放行的读语义 POST（与服务端 _READONLY_SAFE_POST 一字对应，两边同改）
+const PHY_READONLY_SAFE_POST = ['/api/models/list', '/api/models/probe'];
+if (typeof window !== 'undefined') window.PHY_READONLY_SAFE_POST = PHY_READONLY_SAFE_POST;
+
 if (typeof fetch === 'function') {
   (function installAccountFetch() {
     const rawFetch = fetch;
+    let _lastBlockToast = 0;
     const wrapped = function (input, init) {
       try {
-        if (typeof input === 'string' && input.indexOf('/api/') !== -1 && input.indexOf('account_id=') === -1) {
-          input = input + (input.indexOf('?') === -1 ? '?' : '&') + 'account_id=' + encodeURIComponent(ACCOUNT_ID);
+        if (typeof input === 'string' && input.indexOf('/api/') !== -1) {
+          if (phyIsReadonly()) {
+            const method = String((init && init.method) || 'GET').toUpperCase();
+            const safeHit = PHY_READONLY_SAFE_POST.some(p => input.indexOf(p) !== -1);
+            if (method !== 'GET' && method !== 'HEAD' && !safeHit) {
+              // 漏网写点兜底：本地拦下不发包，回 403 让调用方的 resp.ok/catch 正常
+              // 收尾；提示限流防连点刷屏（入口闸门已拦的路径到不了这里）
+              if (Date.now() - _lastBlockToast > 3000) {
+                _lastBlockToast = Date.now();
+                phyReadonlyBlock('修改数据');
+              }
+              return Promise.resolve(new Response(
+                JSON.stringify({ detail: '查阅模式：只读，不能修改数据' }),
+                { status: 403, headers: { 'Content-Type': 'application/json' } }
+              ));
+            }
+            init = Object.assign({}, init || {});
+            const h = new Headers(init.headers || {});
+            h.set('X-Phymathia-Readonly', '1');
+            init.headers = h;
+          }
+          if (input.indexOf('account_id=') === -1) {
+            input = input + (input.indexOf('?') === -1 ? '?' : '&') + 'account_id=' + encodeURIComponent(ACCOUNT_ID);
+          }
         }
       } catch (e) {}
       return rawFetch.call(this, input, init);
