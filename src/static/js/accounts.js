@@ -127,6 +127,7 @@ function switchAccount(id) {
 async function createAccount() {
   const input = document.getElementById('accountNewName');
   const btn = document.getElementById('accountCreateBtn');
+  if (btn && btn.disabled) return; // 回车与点击同触发，防重入双建
   const name = (input && input.value || '').trim();
   if (!name) {
     toastMsg('先给新账号起个昵称吧', 2500);
@@ -140,7 +141,11 @@ async function createAccount() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name })
     });
-    if (!resp.ok) throw new Error('http ' + resp.status);
+    if (!resp.ok) {
+      // 405＝前端已更新而后端还是旧进程（改 src/main.py 后忘了重启的典型症状：
+      // POST 落进旧后端的静态文件 GET 路由），报明白话别让人对着 405 猜
+      throw new Error(resp.status === 405 ? '服务端还是旧版，请重启 PhyMathia 服务后再试' : 'http ' + resp.status);
+    }
     const entry = await resp.json();
     _RAW_LS.setItem(STORAGE_KEY_ACCOUNT, String(entry.id));
     _RAW_LS.setItem(STORAGE_KEY_ACCOUNT_NAME, String(entry.name || name));

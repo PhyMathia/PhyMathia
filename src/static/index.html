@@ -238,7 +238,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=f41449d7"></script>
+  <script src="/js/app.js?v=a6f597cf"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -612,7 +612,7 @@
       <div class="md-field">
         <label>新建账号</label>
         <div class="accounts-new-row">
-          <input type="text" id="accountNewName" placeholder="昵称，如「妹妹的账号」" maxlength="40">
+          <input type="text" id="accountNewName" placeholder="昵称" maxlength="40" onkeydown="if(event.key==='Enter'){event.preventDefault();createAccount();}">
           <button class="md-btn md-btn-save" id="accountCreateBtn" onclick="createAccount()">新建</button>
         </div>
         <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">新建后自动切到新账号（当前页面会刷新）。会话、知识、公式、检测记录按账号各自独立；上传文件与模型设置保持共用，数据都存在这台电脑上。</div>
