@@ -56,6 +56,9 @@ const entries = [
   // 本地多账号（P2 2026-10-07）：账号面板。依赖 config.js 的 ACCOUNT_ID/_RAW_LS
   // 与 utils.js 的 toastMsg/escapeHtml，都在此前加载；面板函数按需调用。
   'accounts.js',
+  // 回收站（2026-10-07）：防误删面板。复用 accounts.js 的 _accountsDateStr 与
+  // config.js 的 STORAGE_KEY_TRASH_RETENTION，都在此前加载；面板函数按需调用。
+  'trash.js',
   'quiz.js',
   'quiz-ai.js',
   'quiz-stats.js',

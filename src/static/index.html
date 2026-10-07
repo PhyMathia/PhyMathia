@@ -35,7 +35,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=58cdf1b3">
+  <link rel="stylesheet" href="/css/styles.min.css?v=fbe48bd5">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=6604398c">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=67ad64ff">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
@@ -120,9 +120,16 @@
           <span class="sidebar-tile-label">账号</span>
           <span class="sidebar-tile-sub" id="accountTileSub">我的</span>
         </button>
+        <!-- 回收站（2026-10-07）：第 8 块磁贴——删除的画布先入站暂存，副行显示
+             保留天数（本地缓存，权威值在服务端注册表，开面板时校正）。 -->
+        <button class="sidebar-tile" id="trashTile" onclick="closeSidebar();openTrashPanel();" title="回收站：删除的画布在此暂存，保留期内可一键恢复">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
+          <span class="sidebar-tile-label">回收站</span>
+          <span class="sidebar-tile-sub" id="trashTileSub">留7天</span>
+        </button>
       </div>
-      <!-- 清空是危险且不可撤销的操作，从横条降级成小字红字：要点得到，但不该占视觉重心 -->
-      <button class="sidebar-clear-all" onclick="clearAllSessions()" title="删除全部画布及其知识、公式与检测记录，不可撤销">
+      <!-- 清空是危险操作：现在先进回收站（可按保留天数恢复），文案随之改口径 -->
+      <button class="sidebar-clear-all" onclick="clearAllSessions()" title="删除全部画布及其知识、公式与检测记录（先进入回收站暂存，保留期内可恢复）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
         清空所有画布
       </button>
@@ -243,7 +250,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=49874055"></script>
+  <script src="/js/app.js?v=b1078d04"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -624,6 +631,33 @@
       </div>
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeAccountsPanel()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 回收站（2026-10-07）：删除的画布在此暂存，保留期内可恢复。居中 modal 复用
+       账号管理弹窗的玻璃家族与 accounts-* 行样式；列表行由 trash.js 渲染。
+       保留天数按账号存服务端注册表；选 0＝关闭回收站（删除即彻底清除）。 -->
+  <div class="model-dialog-overlay" id="trashDialog" onclick="if(event.target===this)closeTrashPanel()">
+    <div class="model-dialog accounts-dialog trash-dialog aurora-glass aurora-glass--dialog">
+      <h3>回收站</h3>
+      <div class="trash-toolbar">
+        <label for="trashRetentionSelect">自动保留</label>
+        <select id="trashRetentionSelect" onchange="saveTrashRetention()">
+          <option value="0">不保留（删除即彻底清除）</option>
+          <option value="1">1 天</option>
+          <option value="3">3 天</option>
+          <option value="7" selected>7 天</option>
+          <option value="14">14 天</option>
+          <option value="30">30 天</option>
+          <option value="90">90 天</option>
+        </select>
+        <button class="accounts-act accounts-act-danger trash-empty-btn" onclick="emptyTrash()">清空回收站</button>
+      </div>
+      <div class="accounts-list" id="trashList"></div>
+      <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">恢复会连带找回该画布的消息、知识点、公式与检测记录；改保留天数只对之后删除的画布生效。</div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeTrashPanel()">关闭</button>
       </div>
     </div>
   </div>
