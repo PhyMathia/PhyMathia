@@ -685,18 +685,51 @@ function openHarnessOrganizeRelations(sourceNodeId) {
 function generateKnowledgeNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'knowledge' || node.busy) return;
-  _generateCustomNode(node);
+  _generateCustomNodeAsTask(node, 'knowledge', '生成知识节点' + (node.title ? '：' + node.title : ''));
 }
 
 function generateRelationNode(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'relation') return;
+  if (!node || node.kind !== 'relation' || node.busy) return;
   const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
   if (incoming.length < 2) {
     if (typeof showToast === 'function') showToast('请先连接至少两个上游节点');
     return;
   }
-  _generateCustomNode(node);
+  _generateCustomNodeAsTask(node, 'relation', '生成联系节点');
+}
+
+// T61：知识/联系节点的独立生成路接任务账。工作流内部的生成走的是调度口
+// _generateCustomNode(current, nodeSignal)（graph-workflow.js），不经这两个包装，
+// 所以这笔账不会和工作流那笔重复。不加 workflowRunActive 闸门：Φ 助手改图会在
+// 工作流跑动期间补建知识/联系节点（harness-apply.js 走的正是这两个入口）。
+// signal 用任务自己那颗 controller：面板上的「停止」掐的就是这一条流。
+async function _generateCustomNodeAsTask(node, nodeKind, title) {
+  if (!node || node.busy) return;
+  const jobAbort = new AbortController();
+  const taskId = (typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title, nodeId: node.id, nodeKind })
+    : null;
+  if (taskId && typeof _taskBindCancel === 'function') {
+    _taskBindCancel(taskId, () => jobAbort.abort());
+  }
+  try {
+    await _generateCustomNode(node, jobAbort.signal);
+  } catch (err) {
+    // _generateCustomNode 自己兜住了生成链的异常；这层是保险丝——提示词构建等
+    // 前置段若抛错，不能把任务账挂成「进行中」永不结账
+    if (typeof showToast === 'function') showToast('生成失败：' + ((err && err.message) || err));
+  } finally {
+    if (taskId && typeof _taskFinish === 'function') {
+      // 生成链里画布可能整体重建、节点对象被换成新对象（真机探针实证），账必须读
+      // 画布上**活着的那个**——与流式代码处处 _findGraphNode(node.id) 重找是同一条纪律
+      const live = (typeof _findGraphNode === 'function' && _findGraphNode(node.id)) || node;
+      const status = live.status || '';
+      if (jobAbort.signal.aborted) _taskFinish(taskId, 'stopped', '已停止');
+      else if (status === 'done') _taskFinish(taskId, 'done');
+      else _taskFinish(taskId, 'error', status === 'running' ? '节点已不在画布上' : '生成失败');
+    }
+  }
 }
 
 function _blankNodeGraphPath(node) {

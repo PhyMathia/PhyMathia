@@ -1861,6 +1861,13 @@ async function _streamBlankNodeResponse(resp, node) {
 async function generateBlankNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'blank' || node.busy) return;
+  // T58 同款闸门：工作流跑着时不许再单独起一条生成（排队语义只在发送链）。
+  // 这道闸同时保住下面任务自带的 AbortController 不与工作流总闸共用——
+  // 面板上的「停止」必须只掐这一条流，不能顺着共用 signal 把整轮工作流带走。
+  if (workflowRunActive) {
+    if (typeof showToast === 'function') showToast('工作流正在生成中，稍候再单独生成这个节点');
+    return;
+  }
   const input = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-blank-input');
   const requirements = (input?.value || '').trim();
   const incoming = (graphView.edges || []).find(edge => String(edge.to) === nodeId && !edge.draft);
@@ -1884,6 +1891,16 @@ async function generateBlankNode(nodeId) {
   if (!current) return;
 
   const meta = GRAPH_MODULE_META[current.moduleKey] || { label: current.moduleKey || 'AI 生成空白' };
+  // T61：空白节点的独立生成也记一笔任务账——面板看得见、停得掉、失败可重试。
+  // signal 用任务自己那颗 controller，不再借 workflowAbortController（上面已有互斥闸）。
+  const jobAbort = new AbortController();
+  const jobStartedAt = Date.now();
+  const taskId = (typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title: '生成' + meta.label, nodeId: nodeId, nodeKind: 'blank' })
+    : null;
+  if (taskId && typeof _taskBindCancel === 'function') {
+    _taskBindCancel(taskId, () => jobAbort.abort());
+  }
   if (typeof showProgress === 'function') showProgress('tool', 5, '正在生成' + meta.label);
   const graphPath = _blankNodeGraphPath(current);
   const pathQuestion = graphPath.find(item => item.kind === 'user');
@@ -1926,7 +1943,7 @@ async function generateBlankNode(nodeId) {
     graphPath,
     workflowContext,
   };
-  const signal = workflowAbortController ? workflowAbortController.signal : new AbortController().signal;
+  const signal = jobAbort.signal;
 
   try {
     let resp = null;
@@ -1951,16 +1968,23 @@ async function generateBlankNode(nodeId) {
       throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
     }
     await _streamBlankNodeResponse(resp, current);
+    if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
     if (typeof notifyTaskCompleted === 'function') {
-      notifyTaskCompleted(Date.now() - blankStartedAt, meta.label + '生成完成');
+      notifyTaskCompleted(Date.now() - jobStartedAt, meta.label + '生成完成');
     }
     if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
+    const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
+    if (taskId && typeof _taskFinish === 'function') {
+      _taskFinish(taskId, aborted ? 'stopped' : 'error',
+        aborted ? '已停止' : (((err && err.message) || String(err) || '生成失败')));
+    }
     const live = _findGraphNode(nodeId);
     if (live) live.busy = false;
     _saveCustomNodes();
     renderGraphCanvas();
-    if (typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
+    // 面板上的「停止」不算失败，别再弹「生成失败」吓人
+    if (!aborted && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
     if (typeof hideProgress === 'function') hideProgress();
   }
 }
