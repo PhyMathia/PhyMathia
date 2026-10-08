@@ -21,8 +21,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from http_client import get_http_client
-from llm_common import (
+from server.http_client import get_http_client
+from server.llm_common import (
     PROVIDER_BASE_URLS,
     estimate_tokens,
     opencode_gateway_headers,
@@ -97,7 +97,7 @@ def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any
         count = len(snapshot.get("nodes") or [])
         raise HarnessError(f"快照过大（{count} 个节点），请先选中局部节点或缩小范围后再让 AI 修改")
     return snapshot
-import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
+from server import usage_stats  # 共享层：token 用量与缓存命中计量落盘
 
 # harness 无会话上下文，按进程派生稳定 id（2026-10-01 起降级为兜底桶）：
 # 请求带合法 Φ 会话 id 时分桶走会话键（见 _harness_session_key），进程级 id

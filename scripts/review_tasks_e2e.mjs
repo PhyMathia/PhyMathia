@@ -49,7 +49,6 @@ await new Promise(r => mock.listen(MOCK_PORT, '127.0.0.1', r));
 const workDir = mkdtempSync(join(tmpdir(), 'phymathia-e2e-tasks-'));
 cpSync(join(ROOT, 'src'), join(workDir, 'src'), { recursive: true });
 cpSync(join(ROOT, 'harness'), join(workDir, 'harness'), { recursive: true });
-for (const f of ['http_client.py', 'llm_common.py', 'usage_stats.py']) cpSync(join(ROOT, f), join(workDir, f));
 
 const server = spawn('python3', ['src/main.py', '-p', String(APP_PORT)], { cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverLog = '';

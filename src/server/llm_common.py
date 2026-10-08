@@ -1,8 +1,8 @@
 """聊天主应用（src/server）与 Φ 图编辑智能体（harness）的共享底层事实源。
 
-两侧运行时都看得见项目根（src/main.py 启动时把根插进 sys.path，打包
---paths . 覆盖根目录模块；harness 的测试也从仓库根跑），与 http_client.py
-同层。收编此处前各自复制的逻辑：
+两侧运行时都 import 得到 server 包（src/main.py 启动时把 src 插进 sys.path，
+打包 --collect-submodules server 全收；harness 侧由 main 与 tests/conftest
+保证路径）。收编进本包前各自复制的逻辑：
 - estimate_tokens：token 估算（原 context.py 与 harness/review.py 各一份）
 - PROVIDER_BASE_URLS / OPENCODE_DEFAULT_API_KEY：供应商官方地址（原
   src/server/config.py 与 harness/review.py 各一份，harness 侧缺 opencode）

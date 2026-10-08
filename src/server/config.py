@@ -4,8 +4,8 @@ import os
 import sys
 from pathlib import Path
 
-import llm_common  # 项目根共享层：供应商表 / 密钥兜底 / token 估算的唯一事实源
-from llm_common import validate_model_target  # noqa: F401  下沉到 llm_common，harness 也要用同口径
+from . import llm_common  # 共享层：供应商表 / 密钥兜底 / token 估算的唯一事实源
+from .llm_common import validate_model_target  # noqa: F401  下沉到 llm_common，harness 也要用同口径
 
 # ====== .env 加载（无第三方依赖）======
 def _load_env_file(path: Path) -> None:

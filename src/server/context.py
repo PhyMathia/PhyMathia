@@ -10,7 +10,7 @@ from . import accounts
 from . import storage
 from .accounts import DEFAULT_ACCOUNT
 from .storage import _mutate_json, _read_json, _read_json_cached, _resolve_messages_path
-from llm_common import estimate_tokens  # 唯一实现在项目根 llm_common.py，此处转出口（import * 与测试直引都走这里）
+from .llm_common import estimate_tokens  # 唯一实现在 server/llm_common.py，此处转出口（import * 与测试直引都走这里）
 
 
 def _kv_path(account: str = DEFAULT_ACCOUNT):

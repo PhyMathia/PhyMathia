@@ -97,9 +97,6 @@ async function main() {
   const workDir = mkdtempSync(join(tmpdir(), 'phymathia-verify-send-'));
   cpSync(join(ROOT, 'src'), join(workDir, 'src'), { recursive: true });
   cpSync(join(ROOT, 'harness'), join(workDir, 'harness'), { recursive: true });
-  for (const f of ['http_client.py', 'llm_common.py', 'usage_stats.py']) {
-    cpSync(join(ROOT, f), join(workDir, f));
-  }
   const server = spawn('python3', ['src/main.py', '-p', String(PORT)], {
     cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'],
   });

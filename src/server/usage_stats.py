@@ -9,8 +9,8 @@ data/usage/YYYY-MM-DD.jsonl，并提供按天/模型汇总（GET /api/usage/stat
 - OpenAI 系: prompt_tokens_details.cached_tokens
 - Anthropic 式: cache_read_input_tokens（原生协议字段，个别兼容端点透传）
 
-与 llm_common.py 同层的理由：两侧运行时（src/main.py 与 harness/review.py）
-都看得见项目根，而 src 不是包，harness 导不进 src.server.*。
+住进 server 包的理由：聊天主应用与 Φ 智能体（harness）两侧运行时都
+import 得到 server 包（路径保证见 llm_common.py 头注）。
 只依赖标准库；本模块不得 import 任何使用方。
 """
 

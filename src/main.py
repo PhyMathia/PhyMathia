@@ -33,9 +33,9 @@ for _path in (_SRC_DIR, _ROOT_DIR):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from http_client import close_http_client, get_http_client  # noqa: E402
-import llm_common  # noqa: E402  项目根共享层：网关头/密钥兜底/token 估算唯一事实源
-import usage_stats  # noqa: E402  项目根共享层：token 用量与缓存命中计量落盘
+from server.http_client import close_http_client, get_http_client  # noqa: E402
+from server import llm_common  # noqa: E402  共享层：网关头/密钥兜底/token 估算唯一事实源
+from server import usage_stats  # noqa: E402  共享层：token 用量与缓存命中计量落盘
 
 from server import accounts, backup, concept, continent, context, documents, embedding, family, knowledge, profile, prompts, storage, trash  # noqa: F401
 from server.backup import *
