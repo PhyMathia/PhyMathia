@@ -7178,7 +7178,7 @@ check('根 answer 卡叠加剥口：extend 剥除与 socratic 尾部追问剥除
   return true;
 });
 
-check('非根 answer 卡不受影响：extend 照旧展示（T172 范围纪律）', () => {
+check('非根 answer 卡同样剥 <extend>：预览/展开不再重复，msg.content 原文与模块派生照旧（T192 扩面）', () => {
   const rootContent = '根回答正文。\n\n<extend>\n### 苏格拉底追问\n\n- [基础] 根卡的追问？\n</extend>';
   const followIntro = '追问回答正文：这里只谈推导。';
   const followContent = followIntro + '\n\n<extend>\n### 进阶学习方向\n\n- 精读《力学》第三章\n</extend>';
@@ -7195,16 +7195,47 @@ check('非根 answer 卡不受影响：extend 照旧展示（T172 范围纪律�
   if (!rootNode.isRootAnswer) throw new Error('首个主回答应标记根卡');
   if (followNode.isRootAnswer) throw new Error('第二个主回答不应标记根卡');
   sandbox.window.getGraphState = () => ({});
+  // T192 扩面（2026-10-08 用户拍板）：剥除从根卡扩到全部 answer 卡，非根卡同样不再重复渲染 extend 段
   const followPreview = sandbox._nodeContent(msgs[3], followNode);
-  if (!followPreview.includes('进阶学习方向') || !followPreview.includes('精读《力学》第三章')) {
-    throw new Error('非根卡应照旧展示 extend 段（本拍板不改非根卡）：' + followPreview);
+  if (followPreview !== followIntro) {
+    throw new Error('非根卡预览应只含 extend 之外的正文（T192 扩面）：' + followPreview);
   }
   const followRaw = sandbox._graphAnswerExpandRaw(followNode, msgs[3]);
-  if (!followRaw.includes('进阶学习方向')) throw new Error('非根卡展开正文应照旧含 extend 段');
-  // 范围外发现：非根 answer 的 extend 同样被 _buildGraphData 派生成独立模块节点，重复依旧存在
-  //（本拍板只治根卡，其余作为发现上报，不扩大改动）
+  if (followRaw !== followIntro) throw new Error('非根卡展开正文应剥掉 extend 段（T192 扩面）：' + followRaw);
+  // 只剥展示：msg.content 原文一字不动
+  if (msgs[3].content !== followContent) throw new Error('msg.content 不应被改动');
+  // 剥展示不影响派生：非根卡自己的 learn 模块节点照常上画布（被剥内容在模块节点仍可达）
   const followMods = data.nodes.filter(n => n.kind === 'module' && n.timestamp === 400).map(n => n.moduleKey);
-  if (!followMods.includes('learn')) throw new Error('非根卡的 learn 模块应照常派生（重复现象的证据）');
+  if (!followMods.includes('learn')) throw new Error('非根卡的 learn 模块应照常派生（剥展示不影响派生）');
+  return true;
+});
+
+check('非根 answer 卡展开全文观感：展开正文不含苏格拉底追问/进阶学习方向重复段标记（T192 扩面）', () => {
+  // 长正文（剥后 >240 字）展开开关保留；展开后读者看到干净正文——<extend> 里
+  // 「### 苏格拉底追问」「### 进阶学习方向」两段重复标记一个不剩（模块节点已各自成卡）
+  const longFollow = '追问回答正文：这里把推导逐层展开核对。'.repeat(20); // 380 字 > 240
+  const content = longFollow + '\n\n<extend>\n### 苏格拉底追问\n\n'
+    + '- [基础] 为什么斜面上摩擦力做功取负？\n\n'
+    + '### 进阶学习方向\n\n- 精读《力学》第三章摩擦力小节\n- 动手推导斜面自锁条件\n</extend>';
+  const msgs = [
+    { role: 'user', content: '核心问题？', timestamp: 500 },
+    { role: 'assistant', content: '根回答。', timestamp: 600 },
+    { role: 'user', content: '再问一层', timestamp: 700 },
+    { role: 'assistant', content, timestamp: 800 },
+  ];
+  const data = sandbox._buildGraphData(msgs, {});
+  const followNode = data.nodes.find(n => n.kind === 'answer' && n.timestamp === 800);
+  if (!followNode || followNode.isRootAnswer) throw new Error('第二张主回答卡应为非根卡');
+  sandbox.window.getGraphState = () => ({});
+  if (!sandbox._graphAnswerExpandable(followNode, msgs[3])) throw new Error('剥后正文 >240 字应保留展开全文开关');
+  const raw = sandbox._graphAnswerExpandRaw(followNode, msgs[3]);
+  for (const frag of ['<extend', '苏格拉底追问', '进阶学习方向', '[基础]', '精读', '自锁']) {
+    if (raw.includes(frag)) throw new Error('非根卡展开正文不应含重复段标记：「' + frag + '」');
+  }
+  if (raw !== longFollow) throw new Error('非根卡展开正文应只剩 extend 之外的正文，实际：' + raw.slice(0, 30) + '…');
+  const preview = sandbox._nodeContent(msgs[3], followNode);
+  if (preview.includes('进阶学习方向') || preview.includes('苏格拉底追问')) throw new Error('预览同样不应含重复段：' + preview.slice(-40));
+  if (msgs[3].content !== content) throw new Error('msg.content 原文不应被改动');
   return true;
 });
 

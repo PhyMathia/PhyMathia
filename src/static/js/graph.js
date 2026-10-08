@@ -946,7 +946,7 @@ function _graphStripSuggestedFollowups(text) {
   return lines.slice(0, cut).join('\n').replace(/\s+$/, '');
 }
 
-// 根 answer 卡（首个完整学习卡，T172 用户拍板）的展示口径：<extend> 整段（### 苏格拉底追问＋
+// answer 卡（T172 首拍根卡、T192 扩到全部 answer 卡）的展示口径：<extend> 整段（### 苏格拉底追问＋
 // ### 进阶学习方向）已由 _buildGraphData 拆成画布上独立的模块节点（_splitExtendSections），
 // 卡上再整段渲染属同构重复，展示时整段剥掉——口径同 2026-10-06 socratic 反馈卡：
 // **只剥展示，msg.content 原文一个字不动**（模块派生、答题链匹配、导出仍吃原文）。
@@ -958,12 +958,14 @@ function _graphStripExtendDisplay(text) {
   return s.replace(/\s+$/, '');
 }
 
-// answer 卡展示文本总口径：根 answer 先剥 <extend> 整段，再走 socratic 反馈剥口。两条互不
+// answer 卡展示文本总口径：先剥 <extend> 整段，再走 socratic 反馈剥口。两条互不
 // 干扰：extend 剥走后残余正文里若还有 socratic_meta/建议追问，_graphSocraticDisplayContent
-// 照旧处理；非根卡只有 socratic 一条生效（T172 范围纪律：extend 剥除只对根卡）。
+// 照旧处理。T192 扩面（2026-10-08 用户拍板）：T172 只剥根卡，剥除扩到全部 answer 卡——
+// 每个 answer 都派生自己的模块节点，卡上整段渲染同构重复；kind 判定保证非 answer 卡
+// （问题卡/我的回答卡等）不经过本口径，不受影响。
 function _graphAnswerDisplayContent(raw, message, node) {
   let s = String(raw || '');
-  if (node && node.isRootAnswer) s = _graphStripExtendDisplay(s);
+  if (node && node.kind === 'answer') s = _graphStripExtendDisplay(s);
   return _graphSocraticDisplayContent(s, message);
 }
 
@@ -1232,7 +1234,7 @@ function _buildGraphData(messages, state) {
   let addedSqCustom = false;
 
   let rootQuestionId = null;
-  let rootAnswerId = null; // 首个主回答＝根 answer 卡（T172：展示剥 <extend> 的判定依据）
+  let rootAnswerId = null; // 首个主回答＝根 answer 卡（isRootAnswer 标记；T192 起展示剥 <extend> 扩到全部 answer 卡，不再以此判定）
   let lastMainAnswerId = null;
   let lastUserNode = null;
   const answerParentQuestion = {};
