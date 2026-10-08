@@ -12,10 +12,11 @@ import unittest
 from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+for _p in (ROOT, os.path.join(ROOT, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-import usage_stats  # noqa: E402
+from server import usage_stats  # noqa: E402
 
 
 class UsageStatsBase(unittest.TestCase):

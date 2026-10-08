@@ -10,9 +10,9 @@ import time
 import uuid
 from pathlib import Path
 
-from http_client import get_http_client
-from llm_common import opencode_gateway_headers
-import usage_stats  # 项目根共享层：token 用量与缓存命中计量落盘
+from .http_client import get_http_client
+from .llm_common import opencode_gateway_headers
+from . import usage_stats  # 共享层：token 用量与缓存命中计量落盘
 
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, UPLOAD_DIR, UPLOADS_META_PATH, resolve_api_key, validate_model_target
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula

@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import llm_common
+from server import llm_common
 from harness import api as api_mod
 from harness import review as review_mod
 from harness.review import PHASE_THINKING, HarnessError

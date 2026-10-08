@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# server.knowledge 会 import 仓库根的 http_client（httpx 客户端单例），两个路径都要在
+# server.knowledge 经 server.http_client 建 httpx 客户端单例（T161 收编后 src 内自洽）；根路径留着兼容 harness 调试
 for _p in (str(ROOT), str(ROOT / "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)

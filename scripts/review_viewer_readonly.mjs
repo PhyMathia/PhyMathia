@@ -79,14 +79,10 @@ function makeSnapshot() {
 }
 
 async function run() {
-  // ===== 隔离环境：临时目录拷贝 src + harness + 根层共享模块（data/ 在 temp 下全新生成）=====
-  // main.py 把 src 与项目根都塞进 sys.path（http_client/llm_common/usage_stats 在根层），两处都要有
+  // ===== 隔离环境：临时目录拷贝 src + harness（data/ 在 temp 下全新生成；共享模块 T161 起在 src/server 内自洽）=====
   const workDir = mkdtempSync(join(tmpdir(), 'phymathia-viewer-ro-'));
   cpSync(join(ROOT, 'src'), join(workDir, 'src'), { recursive: true });
   cpSync(join(ROOT, 'harness'), join(workDir, 'harness'), { recursive: true });
-  for (const f of ['http_client.py', 'llm_common.py', 'usage_stats.py']) {
-    cpSync(join(ROOT, f), join(workDir, f));
-  }
   const proc = spawn('python3', ['src/main.py', '-p', String(PORT)], {
     cwd: workDir, stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -14,7 +14,7 @@
 
 import re
 
-from llm_common import estimate_tokens
+from .llm_common import estimate_tokens
 from . import accounts
 from .accounts import DEFAULT_ACCOUNT
 from .family import apply_aliases

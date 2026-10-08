@@ -28,7 +28,7 @@ import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
-import usage_stats  # noqa: E402
+from server import usage_stats  # noqa: E402
 from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import context as context_mod  # noqa: E402

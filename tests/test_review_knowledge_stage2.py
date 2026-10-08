@@ -19,9 +19,6 @@ def evidence(tmp_path_factory):
     root = tmp_path_factory.mktemp("review-e")
     shutil.copytree(ROOT / "src", root / "src",
                     ignore=shutil.ignore_patterns("__pycache__", "static"))
-    shutil.copy2(ROOT / "http_client.py", root / "http_client.py")
-    shutil.copy2(ROOT / "llm_common.py", root / "llm_common.py")  # server.config 顶层 import 它，沙箱子进程只插 src 路径
-    shutil.copy2(ROOT / "usage_stats.py", root / "usage_stats.py")  # main/knowledge 顶层 import 它，同上
     (root / "src" / "static").symlink_to(ROOT / "src" / "static", target_is_directory=True)
     shutil.copytree(ROOT / "harness", root / "harness",
                     ignore=shutil.ignore_patterns("__pycache__"))

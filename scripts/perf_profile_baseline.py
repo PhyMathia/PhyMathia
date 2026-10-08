@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT))          # http_client 等顶层模块在仓库根目录
+sys.path.insert(0, str(ROOT))          # harness 在仓库根目录（server.* 在 src/，上一行已插）
 
 
 def _isolate(tmp: Path):
