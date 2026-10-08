@@ -360,4 +360,33 @@ check('T94 历史条数放宽：80 条只发最近 60（单条截断不动）', 
   vm.runInContext('harnessHistory = [];', sandbox);
   return true;
 });
+
+// T124：更早批次灰化标注——stale 卡出字形与「仅最新一批」标注、不出真控件；
+// 当前批次照旧出真勾选框与三钮（用 create_node 走最短渲染路，不碰画布查询）
+check('T124 更早批次灰化：stale 卡带灰化类与标注、无勾选框/按钮；当前批次有真控件', () => {
+  const entry = {
+    id: 'h_t124', role: 'assistant', decision: 'pending',
+    operations: [{ op: 'create_node', label: '惯性', content: '惯性定义' }],
+  };
+  const stale = sandbox._harnessOpsCardHtml(entry, false);
+  if (!stale.includes('graph-harness-opcard-stale')) throw new Error('非当前批次未带灰化类');
+  if (!stale.includes('graph-harness-opcard-note') || !stale.includes('仅最新一批可勾选应用')) {
+    throw new Error('非当前批次缺「仅最新一批可勾选应用」标注');
+  }
+  if (stale.includes('type="checkbox"')) throw new Error('非当前批次不应出真勾选框');
+  if (stale.includes('graphHarnessApplyActions')) throw new Error('非当前批次不应出应用按钮');
+  const current = sandbox._harnessOpsCardHtml(entry, true);
+  if (current.includes('graph-harness-opcard-stale')) throw new Error('当前批次误带灰化类');
+  if (current.includes('graph-harness-opcard-note')) throw new Error('当前批次不应出历史标注');
+  if (!current.includes('type="checkbox"')) throw new Error('当前批次缺真勾选框');
+  if (!current.includes('graphHarnessApplyActions')) throw new Error('当前批次缺应用按钮');
+  return true;
+});
+
+check('T124 灰化与标注样式进源 CSS（.graph-harness-opcard-stale/-note）', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  if (!css.includes('.graph-harness-opcard-stale .graph-harness-oplist')) throw new Error('清单灰化规则缺失');
+  if (!css.includes('.graph-harness-opcard-note')) throw new Error('标注样式缺失');
+  return true;
+});
 }

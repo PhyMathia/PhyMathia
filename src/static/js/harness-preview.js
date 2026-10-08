@@ -56,6 +56,8 @@
   // entry 是 harnessHistory 里的助手条目，operations 早已随条目存盘。
   // isCurrent=true 仅限「最新一条待处理且有操作」——应用路径读全局 harnessResult，
   // 给更早的批次挂勾选框/应用按钮会让「应用所选」作用到错的那一批。
+  // T124：更早批次整卡灰化（.graph-harness-opcard-stale）并在按钮位放「仅最新一批
+  // 可勾选应用」标注，不再只靠静态字形 ☑/☐ 暗示不可用。
   function _harnessOpsCardHtml(entry, isCurrent) {
     const ops = Array.isArray(entry.operations) ? entry.operations : [];
     if (!ops.length) return '';
@@ -97,8 +99,11 @@
         + '<button type="button" id="graphHarnessApplyAllBtn" onclick="applyGraphHarness()" title="应用全部操作">应用全部</button>'
         + '<button type="button" id="graphHarnessUndoBtn" onclick="undoGraphHarness()" title="撤销本次全部修改">撤销本次</button>'
         + '</div>';
+    } else if (!isCurrent) {
+      // T124：标注放「应用所选」在当前批次的位置——两相对照，为何这批没有按钮一目了然
+      html += '<div class="graph-harness-opcard-note">仅最新一批可勾选应用，此批为历史记录</div>';
     }
-    return '<div class="graph-harness-opcard">' + html + '</div>';
+    return '<div class="graph-harness-opcard' + (isCurrent ? '' : ' graph-harness-opcard-stale') + '">' + html + '</div>';
   }
 
   // T100：单条操作的内容级 diff（T122 起收在 <details> 里，点开才渲染）：
