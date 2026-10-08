@@ -183,6 +183,15 @@ function seedScaleKnowledge() {
 // 真实库的规模是硬门槛：掉回小库，下面关于 LOD 的断言就重新变成没牙齿的断言
 const SCALE_MIN_CLUSTERS = 13;
 const SCALE_MIN_ITEMS = 48;
+// T28 基线（2026-10-08 实跑写死）：走廊最小净距与边界城市落位数。布局/波长有意改动后
+// 按断言提示更新这里的数字——新旧值的差会打在回归输出里，漂移由此可见。
+// 实测要点：最坏净距 127.9px，对 128px 需求（CITY_W 112 + 2×CITY_GAP 8）余量 **−0.1px**，
+// 正是手册 v8.5「余量仅 0~13px」的 0 端；当前无 no_room 折叠（6 座城市全部落位），
+// 因为落位是在一圈候选点里挑「放得下」的，不必非挤最窄那条走廊。余量为负属已知贴线态，
+// 检查里打印告警行而不判红；比基线收紧超 2px（真正往 no_room 滑）才红。
+const CORRIDOR_NEED_PX = 128;            // 边界城市过走廊的需求：CITY_W 112 + 2×CITY_GAP 8
+const CORRIDOR_MIN_CLEAR_BASELINE = 127.9; // 2026-10-08 实测（14 岛 91 对取最坏）
+const CITY_PLACED_BASELINE = 6;          // 2026-10-08 实测：真实规模下落位 6 座
 // 旧阈值 0.55 是「断言曾经失效」的那个值：适配缩放必须落在它与现行 0.35 之间，
 // 断言才咬得住。改了阈值又跑一次，若这里红了说明种子规模退化了，先修种子。
 const SCALE_STALE_LOD = 0.55;
@@ -811,6 +820,116 @@ async function runScaleSuite() {
       if (m.cities < 5) throw new Error('边界城市只有 ' + m.cities + ' 座，真实规模下不该这么少');
       if (folded < 1) throw new Error('折叠清单为空——真实规模下位移/波长改动没有可观测后果（T28）');
       okS('边界城市 ' + m.cities + ' 座、折叠 ' + folded + ' 条：位移场与波长的改动有可观测后果');
+
+      // --- 3b. T28 折叠告警：预期数量的边界城市必须全部落位，「无位可放」必须为零 ---
+      // 断言吃渲染路径的真实落袋：.continent-city 数 DOM、_continentFolded 是渲染期
+      // _continentDrawPlan 写入的原样产物（不是测试自己重算）。走廊挤不下（no_room）
+      // = 地图太挤把边界城市折掉了——粗八度波长 560 折掉第 5 座城市的事故就是它，
+      // 这是 T28 要拉的那根警报。其余折叠原因（弱证据/覆盖/上限）属设计内行为，
+      // 但必须逐条打印：改波长/幅度之后哪些城市换了折叠原因要一眼可见。
+      // 最后核对账目：共享概念总数 = 落位 + 折叠 + 按 LINE_LIMIT 的静默截断，一条不许凭空消失。
+      try {
+        const audit = await page.evaluate(async () => {
+          const reasonText = (typeof CONTINENT_FOLD_REASON === 'object' && CONTINENT_FOLD_REASON) || {};
+          const folded = (typeof _continentFolded !== 'undefined' && _continentFolded) || [];
+          const list = folded.map(f => {
+            const sids = new Set();
+            ((f.entry && f.entry.links) || []).forEach(l => {
+              if (l.fromSession) sids.add(l.fromSession);
+              if (l.toSession) sids.add(l.toSession);
+            });
+            return {
+              label: (f.entry && f.entry.label) || '(无名)',
+              reason: f.reason || '(无原因)',
+              text: reasonText[f.reason] || '折叠',
+              islands: sids.size,
+            };
+          });
+          let sharedTotal = -1;
+          try {
+            const j = await (await fetch('/api/continent', { cache: 'no-store' })).json();
+            sharedTotal = (j.shared || []).length;
+          } catch (e) { /* 拿不到总数就不核账目那一项 */ }
+          return {
+            cities: document.querySelectorAll('.continent-city').length,
+            lineLimit: (typeof CONTINENT_LINE_LIMIT === 'number') ? CONTINENT_LINE_LIMIT : 24,
+            sharedTotal: sharedTotal,
+            folds: list,
+          };
+        });
+        const noRoom = audit.folds.filter(f => f.reason === 'no_room');
+        if (noRoom.length > 0) {
+          throw new Error('T28 警报：边界城市被走廊挤掉 ' + noRoom.length + ' 条（no_room）：'
+            + noRoom.map(f => '「' + f.label + '」' + f.islands + ' 岛').join('、')
+            + '——地图摆不下了（波长/幅度/布局被改动？）');
+        }
+        if (audit.cities < CITY_PLACED_BASELINE) {
+          throw new Error('边界城市只落位 ' + audit.cities + ' 座，低于基线 ' + CITY_PLACED_BASELINE
+            + ' 座——有城市没落位且不在折叠清单里？');
+        }
+        if (audit.sharedTotal >= 0) {
+          const lost = audit.sharedTotal - audit.cities - audit.folds.length;
+          const allowLost = Math.max(0, audit.sharedTotal - audit.lineLimit);
+          if (lost !== allowLost) {
+            throw new Error('共享概念账目不平：总数 ' + audit.sharedTotal + ' ≠ 落位 ' + audit.cities
+              + ' + 折叠 ' + audit.folds.length + ' + 静默截断 ' + lost
+              + '（按 LINE_LIMIT=' + audit.lineLimit + ' 只允许截断 ' + allowLost + ' 条）');
+          }
+        }
+        if (audit.folds.length) {
+          audit.folds.forEach(f => console.log('  [折叠清单] 「' + f.label + '」 '
+            + f.text + '（' + f.reason + '）· ' + f.islands + ' 岛'));
+        }
+        okS('T28 折叠告警：无 no_room，边界城市 ' + audit.cities + ' 座全部落位，折叠 '
+          + audit.folds.length + ' 条逐条打印'
+          + (audit.sharedTotal >= 0 ? '（共享概念 ' + audit.sharedTotal + ' 条全部有归属）' : ''));
+      } catch (e) { failS('T28 折叠告警：无 no_room 折叠 + 折叠清单逐条可见', e); }
+
+      // --- 3c. T28 走廊净距余量：相邻岛矩形的最小净距必须装得下一座边界城市 ---
+      // 需求口径 CORRIDOR_NEED_PX = 128（城市胶囊 112 + 两侧最小间隙 8×2）：净距不足
+      // 128px 的走廊放不下城市，历史实测余量仅 0~13px。净距取抖动后全部岛矩形两两
+      // 间隙的最坏值（_continentClusterRects 与 _continentDrawPlan 吃的是同一份障碍）。
+      // 基线把当前实跑值写死：净距比基线收紧超 2px 当场红，有意改动就按提示更新
+      // CORRIDOR_MIN_CLEAR_BASELINE（文件头常量区），漂移在输出里可见。
+      try {
+        const rects = await page.evaluate(() =>
+          ((typeof _continentClusterRects !== 'undefined' && _continentClusterRects) || [])
+            .map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, sid: r.sessionId || '' })));
+        const warp = await page.evaluate(() => ({
+          coarse: (typeof CONTINENT_WARP_CELL_COARSE === 'number') ? CONTINENT_WARP_CELL_COARSE : null,
+          fine: (typeof CONTINENT_WARP_CELL_FINE === 'number') ? CONTINENT_WARP_CELL_FINE : null,
+        }));
+        let minClear = Infinity;
+        let worstPair = ['?', '?'];
+        for (let i = 0; i < rects.length; i++) {
+          for (let j = i + 1; j < rects.length; j++) {
+            const a = rects[i], b = rects[j];
+            const clear = Math.max(
+              Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)),
+              Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+            if (clear < minClear) { minClear = clear; worstPair = [a.sid, b.sid]; }
+          }
+        }
+        const margin = minClear - CORRIDOR_NEED_PX;
+        // 比 128px 需求低不当场判红：当前布局本就贴在历史「余量 0」档（见文件头基线注释），
+        // 打印醒目告警行让每次回归都看得见；真正往 no_room 滑（比基线收紧超 2px）才红。
+        if (margin < 0) {
+          console.log('  ⚠ T28 告警：走廊最小净距对 ' + CORRIDOR_NEED_PX + 'px 需求余量 '
+            + margin.toFixed(1) + 'px（贴历史 0 档；今日 no_room 折叠数见上一条折叠告警）');
+        }
+        if (minClear < CORRIDOR_MIN_CLEAR_BASELINE - 2) {
+          throw new Error('T28 警报：走廊最小净距 ' + minClear.toFixed(1) + 'px 比基线 '
+            + CORRIDOR_MIN_CLEAR_BASELINE + 'px 收紧超过 2px（对 ' + CORRIDOR_NEED_PX
+            + 'px 需求余量 ' + margin.toFixed(1) + 'px，最近一对 '
+            + worstPair[0] + ' ↔ ' + worstPair[1]
+            + '）——布局/波长被改动？有意改动请更新 CORRIDOR_MIN_CLEAR_BASELINE');
+        }
+        const pairs = rects.length * (rects.length - 1) / 2;
+        okS('T28 走廊余量：最小净距 ' + minClear.toFixed(1) + 'px，对 ' + CORRIDOR_NEED_PX
+          + 'px 需求余量 ' + (margin >= 0 ? '+' : '') + margin.toFixed(1) + 'px（基线 '
+          + CORRIDOR_MIN_CLEAR_BASELINE + 'px，波长 粗' + warp.coarse + '/细' + warp.fine
+          + '，' + rects.length + ' 岛 ' + pairs + ' 对取最坏）');
+      } catch (e) { failS('T28 走廊净距余量：最小净距不比基线收紧超 2px（贴 128px 需求线时打告警）', e); }
 
       // --- 4. 顶栏统计口径（顺带钉住「折叠 N 条」是给用户看的，不只是内部变量）---
       // 统计术语已改版：「N 座岛 · N 个聚落 · …」，座岛数即簇数（T165 随手同步）
