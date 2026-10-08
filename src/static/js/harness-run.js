@@ -555,6 +555,8 @@
     // T95 前端半边：失败自动换备用模型（用户开关，默认关）。开关关、或列表里没有
     // 别的模型时整个字段不上送（后端走无兜底行为）。
     const fallbackModels = _harnessFallbackEnabled() ? _harnessFallbackModels(model) : [];
+    // T109：本轮实际请求的模型载荷（体与历史条目同源一份，条目落模型名供反馈归因）
+    const modelPayload = _harnessModelForRequest(model);
     let resultData = null;
     try {
       const resp = await fetch(HARNESS_API, {
@@ -564,7 +566,7 @@
           snapshot,
           pure_chat: !!pureQuestion,
           instruction,
-          model: _harnessModelForRequest(model),
+          model: modelPayload,
           max_tokens: 6000,
           // T82 收敛（前端半边）：payload 只直通模式锁（chat/preset）与显式入口
           // （apply/expand）；normal/evaluate 的本地猜测交后端 _detect_phase 重判。
@@ -648,6 +650,8 @@
         clarifyOptions: (data.clarify && Array.isArray(data.clarify.options)) ? data.clarify.options : [],
         // T96：本条回复对应的服务端 review 事件 id（反馈归因用；旧数据留空）
         eventId: data.event_id || '',
+        // T109：本轮模型名随条目落盘，点反馈时随 POST 上送（旧数据留空）
+        model: (modelPayload && modelPayload.model) || '',
         _binding: requestBinding,
         phase: harnessPhase,
         decision: 'pending',

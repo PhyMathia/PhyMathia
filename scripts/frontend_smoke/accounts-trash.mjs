@@ -376,10 +376,12 @@ check('账号悬空自愈/只读副作用：静态契约（启动链/标记头/�
   if (!cfg.includes('__phyAccountJustDeleted')) throw new Error('自删流程应跳过自动回落（与删除流程自带的重载不打架）');
   if (!uijs.includes("phyReadonlyBlock('导出数据')")) throw new Error('ui.js exportData 缺查阅态闸门');
   if (!fs.readFileSync('src/static/js/memory.js', 'utf8').includes("phyReadonlyBlock('清除记忆')")) throw new Error('memory.js 清除记忆缺查阅态闸门');
-  const mainpy = fs.readFileSync('src/main.py', 'utf8');
-  if (!mainpy.includes('"X-Phymathia-Account-Gone": "1"')) throw new Error('服务端 404 缺账号悬空标记头');
-  if (!mainpy.includes('不能导出对方数据')) throw new Error('服务端缺查阅态整包导出 403');
-  if (!mainpy.includes('if not _readonly_request(request):')) throw new Error('服务端画像面板缺查阅态绑定跳过');
+  // T163 后接入点按属主模块镜像：悬空标记头在 request_ctx.py，画像/查阅态在 profile_routes.py
+  const ctxpy = fs.readFileSync('src/server/request_ctx.py', 'utf8');
+  if (!ctxpy.includes('"X-Phymathia-Account-Gone": "1"')) throw new Error('服务端 404 缺账号悬空标记头');
+  const profroutespy = fs.readFileSync('src/server/profile_routes.py', 'utf8');
+  if (!profroutespy.includes('不能导出对方数据')) throw new Error('服务端缺查阅态整包导出 403');
+  if (!profroutespy.includes('if not _readonly_request(request):')) throw new Error('服务端画像面板缺查阅态绑定跳过');
   const accpy = fs.readFileSync('src/server/accounts.py', 'utf8');
   if (!accpy.includes('def is_registered')) throw new Error('accounts.py 缺 is_registered（幽灵闸门判据）');
   if (!accpy.includes('account != DEFAULT_ACCOUNT and account not in load_registry()')) throw new Error('ensure_account 缺未登记闸门（T186）');
@@ -522,9 +524,9 @@ check('回收站：清空消息条目（T182）——key 寻址/kind 徽标/clea
   if (delMsgs > delGraph) throw new Error('服务端清空必须先行——捕获点早于前端 graph 清理（T182）');
   if (!seg.includes('本画布的消息会先进入回收站暂存')) throw new Error('清空确认文案未指向回收站');
   if (!seg.includes('_trashRetentionLocal() === 0')) throw new Error('回收站关闭时清空确认文案必须如实警告');
-  // 服务端契约镜像：清空路由接捕获、trash.py 有 messages 条目的捕获/恢复函数
-  const mainpy = fs.readFileSync('src/main.py', 'utf8');
-  if (!mainpy.includes('trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)')) throw new Error('api_clear_messages 未接回收站捕获');
+  // 服务端契约镜像（T163 后清空路由住 session_routes.py）：清空路由接捕获、trash.py 有 messages 条目的捕获/恢复函数
+  const sessionpy = fs.readFileSync('src/server/session_routes.py', 'utf8');
+  if (!sessionpy.includes('trash.capture_cleared_messages(paths, session_id, messages_path=msgs_path)')) throw new Error('api_clear_messages 未接回收站捕获');
   const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
   if (!pysrc.includes('def capture_cleared_messages') || !pysrc.includes('def _restore_cleared_messages')) throw new Error('trash.py 缺清空消息条目函数');
   return true;
@@ -553,12 +555,15 @@ check('回收站：静态契约（磁贴/弹窗骨架/保留天数下拉默认7/
   // 服务端契约镜像（trash.py 捕获点在删除路由内、路由五条都在）
   const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
   if (!pysrc.includes('meta.json 最后落盘') || !pysrc.includes('def capture_session') || !pysrc.includes('def restore_item')) throw new Error('trash.py 缺核心函数');
-  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  // T163 后回收站路由住 session_routes.py；purge_expired_all 是启动期清理、合法留在 main.py
+  const sessionpy2 = fs.readFileSync('src/server/session_routes.py', 'utf8');
   for (const frag of ['trash.capture_session(paths, session_id, messages_path=msgs_path)',
     'trash.capture_all(paths)', '"/api/trash"', '"/api/trash/settings"',
-    '"/api/trash/{item_id}/restore"', 'trash.purge_expired_all()']) {
-    if (!mainpy.includes(frag)) throw new Error('main.py 缺回收站接入点：' + frag);
+    '"/api/trash/{item_id}/restore"']) {
+    if (!sessionpy2.includes(frag)) throw new Error('session_routes.py 缺回收站接入点：' + frag);
   }
+  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  if (!mainpy.includes('trash.purge_expired_all()')) throw new Error('main.py 缺启动期回收站清理');
   // 主沙箱（构建产物）里 trash.js 已随包装载
   if (typeof sandbox._trashRowHtml !== 'function') throw new Error('trash.js 未进 app.js 构建产物');
   return true;
@@ -602,16 +607,16 @@ check('回收站：已删账号小节（行渲染/stone 消毒/查阅态只展�
   if (!sessrc2.includes('window.__phyAccountJustDeleted')) throw new Error('卸载冲刷缺自删账号跳过');
   const accpy = fs.readFileSync('src/server/accounts.py', 'utf8');
   if (!accpy.includes('def has_account_tombstone') || !accpy.includes('if has_account_tombstone(account):')) throw new Error('ensure 缺已删账号复活闸门');
-  // 服务端契约镜像（账号墓碑机制在 trash.py，接入点在 main.py）
+  // 服务端契约镜像（账号墓碑机制在 trash.py，接入点自 T163 起在 server/session_routes.py）
   const pysrc = fs.readFileSync('src/server/trash.py', 'utf8');
   for (const frag of ['def capture_account', 'def restore_account_tombstone', 'def purge_expired_tombstones',
     'meta.json 最后落盘＝完整性标志', 'total += purge_expired_tombstones()']) {
     if (!pysrc.includes(frag)) throw new Error('trash.py 缺账号墓碑机制：' + frag);
   }
-  const mainpy = fs.readFileSync('src/main.py', 'utf8');
+  const sessionpy = fs.readFileSync('src/server/session_routes.py', 'utf8');
   for (const frag of ['"/api/trash/accounts/{stone_id}/restore"', 'trash.capture_account(account, entry, days)',
     'accounts.forget_ensured(account)', 'accounts.restore_entry(entry)']) {
-    if (!mainpy.includes(frag)) throw new Error('main.py 缺删账号回收站化接入点：' + frag);
+    if (!sessionpy.includes(frag)) throw new Error('session_routes.py 缺删账号回收站化接入点：' + frag);
   }
   // 主沙箱（构建产物）里新函数已随包装载
   if (typeof sandbox._trashAccountRowHtml !== 'function') throw new Error('trash.js 新函数未进 app.js 构建产物');
@@ -634,8 +639,8 @@ check('学习画像按账号隔离（2026-10-07）：备份两路由恒带 devic
   }
   const profpy = fs.readFileSync('src/server/profile.py', 'utf8');
   if (!profpy.includes('def note_device_binding')) throw new Error('profile.py 缺绑定登记入口');
-  const mainpy = fs.readFileSync('src/main.py', 'utf8');
-  if (!mainpy.includes('profile.note_device_binding')) throw new Error('main.py 备份路由缺绑定登记');
+  const profileRoutespy = fs.readFileSync('src/server/profile_routes.py', 'utf8');
+  if (!profileRoutespy.includes('profile.note_device_binding')) throw new Error('profile_routes.py 备份路由缺绑定登记');
   const trashpy = fs.readFileSync('src/server/trash.py', 'utf8');
   if (!trashpy.includes('def purge_bound_profiles')) throw new Error('trash.py 缺彻底清除连画像');
   return true;
