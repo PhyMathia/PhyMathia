@@ -13,6 +13,11 @@
 // 「立即降亮→马上摘掉」在 150ms opacity 过渡下就是整板闪一下；②圆环在行内顶
 // 对齐不垂直居中：图例行数随统计范围变（7 天常只有两三个模型、30/90 天满
 // 7＋其他），居中让圆环跟着图例高度上下挪位＝两档之间看起来「不同心」。
+// 同日五轮（backlog T196/T198/T199 销账）：①「最近调用」明细卡——stats 接口
+// 带 records=100 返回范围内逐次调用（时间/用途/模型/token/耗时/状态），聚合图
+// 查不到「某天到底调了什么」时来这里翻，失败行标红、悬停看原因；②统计范围
+// 自定义天数（服务端本就支持 1-365，下拉补一个数字输入行）；③分线模式下点
+// 圆环图例聚焦对应模型折线（其余淡化，再点取消）。
 // 口径全局共享（backlog T180 拍板）：不按账号分账，所有账号共用。
 
 const TOKEN_USAGE_KIND_LABELS = {
@@ -34,7 +39,7 @@ const TOKEN_USAGE_PALETTE = ['var(--node-question)', 'var(--node-physics)', 'var
 // 必须同一份，否则动画终点和静态渲染对不上。改一处必同步另一处已由共引用保证。
 const TOKEN_LINE_GEOMETRY = { w: 640, h: 210, padL: 48, padR: 12, padT: 12, padB: 24 };
 
-let _tokenUsageDays = 30;     // 当前统计范围（7/30/90），与服务端 days 参数同源
+let _tokenUsageDays = 30;     // 当前统计范围（1-365 任意天数，预设 7/30/90＋自定义）
 let _tokenUsageSplit = false; // 折线图是否按模型分线
 let _tokenUsageCache = null;  // 最近一次拉到的 summarize 结果（切分线不重拉）
 let _tokenUsageLive = null;   // 当前画布上的图表状态快照（morph 起点；空态为 null）
@@ -42,6 +47,12 @@ let _tokenUsageFetchSeq = 0;  // 拉取序号：快速连点范围只让最后�
 let _tokenUsageInflight = 0;  // 在途拉取数：>0 时刷新图标旋转
 let _tokenUsageAnimSeq = 0;   // 动画序号：新一轮 morph 让上一轮逐帧回调立即失效
 let _tokenRangeDismissBound = false; // 文档级「点外部/Esc 收下拉」只绑一次
+let _tokenUsageHighlight = null; // 分线模式下点圆环图例聚焦的模型名（null=不聚焦）
+let _tokenPickBound = false;  // 圆环图例点击委托只绑一次（tokenUsageBody 是静态容器）
+
+// 明细卡一次拉取的条数：下钻诉求是「某天飙高时看逐次调用」，100 条足够覆盖
+// 近期高峰日（服务端另有 500 上限兜底）
+const TOKEN_USAGE_RECORDS_LIMIT = 100;
 
 // 旧图降亮的延迟阈值（ms）：低于它的拉取只靠刷新图标表态、不降亮——本地毫秒级
 // 返回时「降亮刚上就摘」，在 150ms opacity 过渡下观感是整板闪一下（三轮用户反馈）
@@ -67,6 +78,14 @@ function _tokenFormatMs(ms) {
   if (!Number.isFinite(v) || v < 0) return '—';
   if (v >= 1000) return (Math.round(v / 100) / 10) + 's';
   return Math.round(v) + 'ms';
+}
+
+// 明细行时间纯函数（冒烟测试直接调用）：isoformat "2026-10-08T21:33:45" →
+// "10-08 21:33"（当年省年份、秒不读）；形状不符原样返回，空值 → —
+function _tokenRecordTime(ts) {
+  const s = String(ts == null ? '' : ts);
+  if (s.length >= 16) return s.slice(5, 10) + ' ' + s.slice(11, 16);
+  return s || '—';
 }
 
 // 最近 N 天日期列表纯函数（冒烟测试直接调用）：[今天-N+1 … 今天]，YYYY-MM-DD。
@@ -241,7 +260,7 @@ function _tokenUsageLineHtml(data, days, split) {
     padLeft + (n <= 1 ? 0.5 : i / (n - 1)) * plotWidth,
     padTop + (1 - v / maxVal) * plotHeight,
   ];
-  const paths = defs.map(def => '<path d="' + _tokenUsageSmoothPath(def.values.map(pointAt))
+  const paths = defs.map(def => '<path data-label="' + escapeHtml(def.label) + '" d="' + _tokenUsageSmoothPath(def.values.map(pointAt))
     + '" fill="none" style="stroke:' + def.color
     + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>').join('');
   const hits = defs.map(def => '<g class="token-line-hits">' + def.values.map((v, i) => {
@@ -287,7 +306,9 @@ function _tokenUsageDonutStops(segments) {
 // 圆环图（冒烟测试直接调用）：conic-gradient 角度编码 token 占比，环孔与中心总量
 // 由 CSS mask/叠加层负责（styles-panels.css）；图例为行式布局（色点＋模型名＋数值、
 // 百分比右对齐，≥10% 取整、不足 10% 保留一位小数，对齐 ZCode）。
-function _tokenUsagePieHtml(segments) {
+// pickable=true（折线正按模型分线时）图例项带 data-model 可点——点击在趋势图
+// 聚焦/淡出该模型的折线（联动见 _bindTokenLegendPick）。
+function _tokenUsagePieHtml(segments, pickable) {
   if (!segments || !segments.length) return '<div class="token-chart-empty">暂无用量记录</div>';
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   if (!total) return '<div class="token-chart-empty">暂无用量记录</div>';
@@ -295,7 +316,9 @@ function _tokenUsagePieHtml(segments) {
   const legend = segments.map(segment => {
     const pct = segment.value / total * 100;
     const pctText = pct >= 10 ? Math.round(pct) + '%' : (Math.round(pct * 10) / 10) + '%';
-    return '<div class="token-donut-legend-item"><span class="token-donut-dot" style="background:'
+    return '<div class="token-donut-legend-item' + (pickable ? ' token-donut-legend-pick' : '') + '"'
+      + (pickable ? ' data-model="' + escapeHtml(segment.label) + '" title="点击在趋势图中聚焦该模型"' : '')
+      + '><span class="token-donut-dot" style="background:'
       + segment.color + '"></span>'
       + '<span class="token-donut-name" title="' + escapeHtml(segment.label) + '">' + escapeHtml(segment.label) + '</span>'
       + '<span class="token-donut-meta">' + _tokenFormatNum(segment.value) + ' tok</span>'
@@ -355,7 +378,34 @@ function _tokenUsageTableHtml(data) {
   return '<div class="token-usage-table">' + head + body + '</div>';
 }
 
-// 面板主体拼装（冒烟测试直接调用）：汇总卡＋四张图表卡；零调用走整体空态
+// 最近调用明细表（冒烟测试直接调用）：stats 的 records（时间倒序）→ 六列窄行，
+// 失败行淡红底＋「失败」徽标、原因截在 200 字符放行 title 悬停看全；成功行的
+// token 走 prompt+completion 合计口径（与趋势/圆环同源），旧记录无耗时自然 —。
+function _tokenUsageRecordsHtml(data) {
+  const records = (data && data.records) || [];
+  if (!records.length) return '<div class="token-chart-empty">暂无调用明细</div>';
+  const head = '<div class="token-table-row token-table-head token-records-row"><span>时间</span><span>用途</span>'
+    + '<span>模型</span><span>Tok</span><span>耗时</span><span>状态</span></div>';
+  const rows = records.map(r => {
+    const failed = r.status === 'error';
+    const total = (r.totalTokens != null) ? r.totalTokens
+      : ((r.promptTokens || 0) + (r.completionTokens || 0));
+    const kind = TOKEN_USAGE_KIND_LABELS[r.kind] || r.kind || '其他';
+    return '<div class="token-table-row token-records-row' + (failed ? ' token-record-failed' : '') + '"'
+      + (failed && r.error ? ' title="' + escapeHtml(r.error) + '"' : '') + '>'
+      + '<span>' + escapeHtml(_tokenRecordTime(r.ts)) + '</span>'
+      + '<span>' + escapeHtml(kind) + '</span>'
+      + '<span class="token-table-model">' + escapeHtml(r.model || '—') + '</span>'
+      + '<span>' + (failed ? '—' : _tokenFormatNum(total)) + '</span>'
+      + '<span>' + _tokenFormatMs(r.durationMs) + '</span>'
+      + '<span><em class="' + (failed ? 'token-record-err">失败' : 'token-record-ok">成功') + '</em></span>'
+      + '</div>';
+  }).join('');
+  return '<div class="token-usage-table token-records-table">' + head + rows + '</div>';
+}
+
+// 面板主体拼装（冒烟测试直接调用）：汇总卡＋五张卡（趋势/圆环/用途/模型明细/
+// 最近调用明细）；零调用走整体空态。圆环图例只在分线模式下可点（联动聚焦）。
 function _tokenUsageDashboardHtml(data, days, split) {
   if (!data || !data.total) return '<div class="token-chart-empty">暂无用量数据</div>';
   if (!data.total.requests) {
@@ -367,14 +417,18 @@ function _tokenUsageDashboardHtml(data, days, split) {
     + '<span class="token-chart-sub">纵轴 prompt+completion 合计，横轴按自然日补零，悬停数据点可读当日值</span></div>'
     + _tokenUsageLineHtml(data, days, split) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">模型用量占比'
-    + '<span class="token-chart-sub">圆环角度编码 prompt+completion 总 token，前 7 名其余并入其他，中心为范围内总量</span></div>'
-    + _tokenUsagePieHtml(_tokenUsageTopModels(data.models, 7)) + '</div>'
+    + '<span class="token-chart-sub">圆环角度编码 prompt+completion 总 token，前 7 名其余并入其他，中心为范围内总量'
+    + (split ? '；点图例可在趋势图中聚焦该模型' : '') + '</span></div>'
+    + _tokenUsagePieHtml(_tokenUsageTopModels(data.models, 7), split) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">用途分布'
     + '<span class="token-chart-sub">条形长度编码各用途总 token，看 token 都花在哪个功能上</span></div>'
     + _tokenUsageKindBarsHtml(data) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">模型明细'
     + '<span class="token-chart-sub">命中率只统计上游回报了缓存字段的请求；平均耗时只累计记录了时长的调用</span></div>'
-    + _tokenUsageTableHtml(data) + '</div>';
+    + _tokenUsageTableHtml(data) + '</div>'
+    + '<div class="token-chart-card"><div class="token-chart-title">最近调用明细'
+    + '<span class="token-chart-sub">范围内最近 ' + TOKEN_USAGE_RECORDS_LIMIT + ' 条逐次调用（新→旧）；失败行标红，悬停可看原因</span></div>'
+    + _tokenUsageRecordsHtml(data) + '</div>';
 }
 
 // ====== 切范围/切分线的平滑过渡（对齐 ZCode 控制台手感）======
@@ -669,6 +723,49 @@ function _runTokenMorph(body, prev, next) {
   if (ghost) setTimeout(() => { if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost); }, DUR + 240);
 }
 
+// ====== 圆环↔折线联动（backlog T199）：分线模式下点圆环图例聚焦该模型折线 ======
+// 聚焦＝命中曲线加粗、其余淡化到 0.15；再点同一名取消。聚焦态存模块变量，
+// innerHTML 重渲染/ morph 都不拆——morph 只重写 path 的 d，data-label 与行内
+// style 原样保留，落画布后 _applyTokenHighlight 重刷一遍即可。
+// 总量单线模式下图例不可点（无 pick 类）；聚焦名在当前折线里无命中时全体复位
+// （切范围后前几名换了、名字对不上属正常，不该把唯一一条总量线淡没了）。
+function _applyTokenHighlight(body) {
+  if (!body || typeof body.querySelectorAll !== 'function') return;
+  const paths = Array.prototype.slice.call(body.querySelectorAll('.token-line-chart path'));
+  const hasMatch = !!_tokenUsageHighlight
+    && paths.some(p => ((p.dataset || {}).label) === _tokenUsageHighlight);
+  paths.forEach(p => {
+    const on = hasMatch && ((p.dataset || {}).label) === _tokenUsageHighlight;
+    if (p.style) {
+      p.style.opacity = (hasMatch && !on) ? '0.15' : '';
+      p.style.strokeWidth = on ? '3.4' : '';
+    }
+  });
+  const picks = body.querySelectorAll('.token-donut-legend-pick');
+  if (picks && picks.forEach) {
+    picks.forEach(it => {
+      if (it.classList) it.classList.toggle('picked', hasMatch && ((it.dataset || {}).model) === _tokenUsageHighlight);
+    });
+  }
+}
+
+function _bindTokenLegendPick() {
+  if (_tokenPickBound || typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('tokenUsageBody');
+  if (!body || typeof body.addEventListener !== 'function' || typeof body.querySelector !== 'function') return;
+  _tokenPickBound = true;
+  body.addEventListener('click', (e) => {
+    const target = e && e.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const item = target.closest('.token-donut-legend-pick');
+    if (!item || !item.dataset) return;
+    const label = item.dataset.model;
+    if (!label) return;
+    _tokenUsageHighlight = (_tokenUsageHighlight === label) ? null : label;
+    _applyTokenHighlight(body);
+  });
+}
+
 // 落画布（内部）：innerHTML 先给终态字符串，再视条件起 morph。没 DOM（冒烟沙箱）、
 // 没旧快照（首开/空态）、用户开了减少动态效果，都直接停在终态。
 function _paintTokenDashboard(body, data) {
@@ -676,6 +773,7 @@ function _paintTokenDashboard(body, data) {
   const next = _captureTokenLive(data);
   body.innerHTML = _tokenUsageDashboardHtml(data, _tokenUsageDays, _tokenUsageSplit);
   _tokenUsageLive = next;
+  _applyTokenHighlight(body); // 重渲染换的是全新元素，聚焦态要重刷
   const reduced = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!prev || !next || reduced) return;
   if (typeof body.querySelector !== 'function' || typeof requestAnimationFrame !== 'function') return;
@@ -701,7 +799,7 @@ async function renderTokenUsage() {
   }
   let data = null;
   try {
-    const resp = await fetch('/api/usage/stats?days=' + _tokenUsageDays, {
+    const resp = await fetch('/api/usage/stats?days=' + _tokenUsageDays + '&records=' + TOKEN_USAGE_RECORDS_LIMIT, {
       cache: 'no-cache',
       signal: AbortSignal.timeout(10000),
     });
@@ -729,6 +827,7 @@ async function renderTokenUsage() {
 function openTokenUsagePanel() {
   const dlg = document.getElementById('tokenDialog');
   if (dlg) dlg.classList.add('show');
+  _bindTokenLegendPick();
   renderTokenUsage();
 }
 
@@ -752,7 +851,15 @@ function _setTokenRangeMenuOpen(open) {
 function toggleTokenRangeMenu() {
   const menu = document.getElementById('tokenRangeMenu');
   _bindTokenRangeDismiss();
-  _setTokenRangeMenuOpen(!(menu && !menu.hidden));
+  if (menu && !menu.hidden) {
+    _setTokenRangeMenuOpen(false);
+  } else {
+    // 开菜单时把当前范围同步进自定义输入框：自定义过（如 45 天）再开菜单，
+    // 输入框应显示 45 而不是上次输入的残留；预设档同理（改了能直接微调）
+    const input = document.getElementById('tokenRangeInput');
+    if (input && !(input === document.activeElement)) input.value = _tokenUsageDays;
+    _setTokenRangeMenuOpen(true);
+  }
 }
 
 function _bindTokenRangeDismiss() {
@@ -782,9 +889,21 @@ function pickTokenRangeDays(n) {
   setTokenUsageDays(String(n));
 }
 
+// 应用自定义天数（backlog T198）：服务端 days 本就吃 1-365，此前前端只认
+// 7/30/90 三档；菜单尾部补数字输入行。校验失败不收菜单（用户多半想改输入）。
+function applyTokenRangeCustom() {
+  const input = document.getElementById('tokenRangeInput');
+  const n = parseInt(input && input.value, 10);
+  if (!(n >= 1 && n <= 365)) {
+    toastMsg('统计范围要在 1–365 天之间', 2500);
+    return;
+  }
+  pickTokenRangeDays(n);
+}
+
 function setTokenUsageDays(value) {
   const n = parseInt(value, 10);
-  if (n !== 7 && n !== 30 && n !== 90) return;
+  if (!(n >= 1 && n <= 365)) return;
   if (n === _tokenUsageDays) return;
   _tokenUsageDays = n;
   renderTokenUsage();
@@ -823,6 +942,8 @@ if (typeof window !== 'undefined') {
   window._tokenUsagePieHtml = _tokenUsagePieHtml;
   window._tokenUsageKindBarsHtml = _tokenUsageKindBarsHtml;
   window._tokenUsageTableHtml = _tokenUsageTableHtml;
+  window._tokenUsageRecordsHtml = _tokenUsageRecordsHtml;
+  window._tokenRecordTime = _tokenRecordTime;
   window._tokenUsageDashboardHtml = _tokenUsageDashboardHtml;
   window.renderTokenUsage = renderTokenUsage;
   window.openTokenUsagePanel = openTokenUsagePanel;
@@ -831,4 +952,5 @@ if (typeof window !== 'undefined') {
   window.toggleTokenUsageSplit = toggleTokenUsageSplit;
   window.toggleTokenRangeMenu = toggleTokenRangeMenu;
   window.pickTokenRangeDays = pickTokenRangeDays;
+  window.applyTokenRangeCustom = applyTokenRangeCustom;
 }

@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=396d4e37">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=6db67a9a">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=f5b9bd4e">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=9e45fdbe">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=db47ef36"></script>
+  <script src="/js/app.js?v=53ec30d0"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -689,6 +689,13 @@
             <button type="button" class="token-range-item" role="option" data-days="7" onclick="pickTokenRangeDays(7)">近 7 天</button>
             <button type="button" class="token-range-item active" role="option" aria-selected="true" data-days="30" onclick="pickTokenRangeDays(30)">近 30 天</button>
             <button type="button" class="token-range-item" role="option" data-days="90" onclick="pickTokenRangeDays(90)">近 90 天</button>
+            <!-- 自定义天数（服务端 days 本就支持 1-365）：菜单尾部输入行，
+                 回车或「应用」都走 applyTokenRangeCustom（校验失败不收菜单） -->
+            <div class="token-range-custom">
+              <input id="tokenRangeInput" type="number" min="1" max="365" step="1" inputmode="numeric" aria-label="自定义统计天数" onkeydown="if(event.key==='Enter')applyTokenRangeCustom()">
+              <span class="token-range-custom-unit">天</span>
+              <button type="button" class="token-range-apply" onclick="applyTokenRangeCustom()">应用</button>
+            </div>
           </div>
         </div>
         <label class="token-split-toggle"><input type="checkbox" id="tokenUsageSplitChk" onclick="toggleTokenUsageSplit()"> 折线按模型分线</label>

@@ -177,7 +177,8 @@ export async function run() {
         },
       };
       const totalHtml = sandbox._tokenUsageLineHtml(data, 7, false);
-      const totalPaths = [...totalHtml.matchAll(/<path d="/g)].length;
+      // path 计数不锚定属性顺序（2026-10-08 五轮起 path 带 data-label）
+      const totalPaths = [...totalHtml.matchAll(/<path [^>]*d="/g)].length;
       if (totalPaths !== 1) throw new Error('总量模式应只有 1 条曲线：' + totalPaths);
       const dAttr = (totalHtml.match(/ d="([^"]+)"/) || [])[1] || '';
       if (!dAttr.startsWith('M') || (dAttr.match(/C/g) || []).length !== 6) {
@@ -190,7 +191,7 @@ export async function run() {
       const textCount = (totalHtml.match(/<text /g) || []).length;
       if (textCount !== 10) throw new Error('7 天应逐日标轴（7 轴标＋3 网格标）：' + textCount);
       const splitHtml = sandbox._tokenUsageLineHtml(data, 7, true);
-      const splitLines = [...splitHtml.matchAll(/<path d="/g)].length;
+      const splitLines = [...splitHtml.matchAll(/<path [^>]*d="/g)].length;
       if (splitLines !== 2) throw new Error('分线模式应为 2 条（两模型）：' + splitLines);
       if (!splitHtml.includes('deepseek-chat') || !splitHtml.includes('primary')) throw new Error('图例应含两模型名');
       if (!sandbox._tokenUsageLineHtml({ models: {} }, 7, true).includes('范围内没有 AI 调用记录')) {
@@ -273,6 +274,44 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：调用明细表＋圆环图例可点标记＋折线 data-label（五轮 T196/T199）', () => {
+      const t = sandbox._tokenRecordTime;
+      if (t('2026-10-08T21:33:45') !== '10-08 21:33') throw new Error('时间口径不符：' + t('2026-10-08T21:33:45'));
+      if (t('') !== '—' || t(null) !== '—') throw new Error('空时间应为 —');
+      const html = sandbox._tokenUsageRecordsHtml({
+        records: [
+          { ts: '2026-10-08T21:33:45', kind: 'chat', model: 'glm-4.7', status: 'ok', durationMs: 950, promptTokens: 9000, completionTokens: 800, totalTokens: 9800 },
+          { ts: '2026-10-08T21:30:01', kind: 'harness', model: 'deepseek-chat', status: 'error', durationMs: 120, error: 'HTTP 502 bad gateway', promptTokens: null, completionTokens: null, totalTokens: 0 },
+        ],
+      });
+      if (!html.includes('10-08 21:33') || !html.includes('950ms')) throw new Error('成功行时间/耗时应展示');
+      if (!html.includes('9800')) throw new Error('token 合计应展示');
+      if (!html.includes('聊天问答') || !html.includes('Φ 智能体')) throw new Error('用途应中文映射');
+      if (!html.includes('token-record-failed')) throw new Error('失败行应有标红类');
+      if (!html.includes('title="HTTP 502 bad gateway"')) throw new Error('失败原因应进行 title 悬停可读');
+      if (!html.includes('token-record-err">失败') || !html.includes('token-record-ok">成功')) {
+        throw new Error('状态列应区分成功/失败徽标');
+      }
+      // 空态与无 records 键
+      if (!sandbox._tokenUsageRecordsHtml({}).includes('暂无调用明细')) throw new Error('无 records 应给空态');
+      // 圆环 pickable（分线模式）：图例带 data-model＋pick 类；非分线不带
+      const pickHtml = sandbox._tokenUsagePieHtml([
+        { label: 'm1', value: 60, color: 'c1' }, { label: 'm2', value: 40, color: 'c2' },
+      ], true);
+      if (!pickHtml.includes('token-donut-legend-pick') || !pickHtml.includes('data-model="m1"')) {
+        throw new Error('pickable 图例应带 data-model');
+      }
+      if (sandbox._tokenUsagePieHtml([{ label: 'm1', value: 60, color: 'c1' }]).includes('token-donut-legend-pick')) {
+        throw new Error('非分线模式图例不应可点');
+      }
+      // 折线 path 带 data-label（联动聚焦的匹配键）
+      const lineHtml = sandbox._tokenUsageLineHtml({
+        days: {}, models: { m: { totalTokens: 5 } }, series: {},
+      }, 7, true);
+      if (!/path data-label="/.test(lineHtml)) throw new Error('折线 path 应带 data-label');
+      return true;
+    });
+
     check('token-usage：dashboard 空态两档与整体拼装', () => {
       if (!sandbox._tokenUsageDashboardHtml(null, 30, false).includes('暂无用量数据')) throw new Error('null 应给空态');
       if (!sandbox._tokenUsageDashboardHtml({ total: { requests: 0 } }, 30, false).includes('没有 AI 调用记录')) {
@@ -288,10 +327,11 @@ export async function run() {
       }, 7, false);
       if (!full.includes('token-summary-row')) throw new Error('应含汇总卡行');
       const cards = [...full.matchAll(/token-chart-card/g)].length;
-      if (cards !== 4) throw new Error('应拼四张图表卡：' + cards);
+      if (cards !== 5) throw new Error('应拼五张卡（趋势/圆环/用途/模型明细/最近调用）：' + cards);
       if (!full.includes('<svg') || !full.includes('conic-gradient') || !full.includes('token-kind-row') || !full.includes('token-usage-table')) {
         throw new Error('四图应齐全（折线/扇形/条形/明细表）');
       }
+      if (!full.includes('最近调用明细')) throw new Error('第五卡应为最近调用明细');
       return true;
     });
 
@@ -309,6 +349,7 @@ export async function run() {
       const chk = { checked: true };
       const rangeBtn = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
       const rangeLabel = { textContent: '近 30 天' };
+      const rangeInput = { value: '' };
       const mkItem = (days) => {
         const it = { dataset: { days }, active: days === '30' };
         it.classList = { toggle: (n, f) => { it.active = f; } };
@@ -322,7 +363,8 @@ export async function run() {
         getElementById: (id) => (id === 'tokenDialog' ? dlg : id === 'tokenUsageBody' ? body
           : id === 'tokenUsageSplitChk' ? chk : id === 'tokenRefreshBtn' ? refreshBtn
           : id === 'tokenUsageRange' ? rangeWrap : id === 'tokenRangeMenu' ? rangeMenu
-          : id === 'tokenRangeBtn' ? rangeBtn : id === 'tokenRangeLabel' ? rangeLabel : null),
+          : id === 'tokenRangeBtn' ? rangeBtn : id === 'tokenRangeLabel' ? rangeLabel
+          : id === 'tokenRangeInput' ? rangeInput : null),
       };
       const dates = sandbox._tokenUsageDateList(30);
       const fixture = {
@@ -352,7 +394,9 @@ export async function run() {
         sandbox.fetch = okFetch;
         await sandbox.renderTokenUsage();
         if (fetchCalls.length !== 1) throw new Error('应恰好拉取一次：' + fetchCalls.length);
-        if (fetchCalls[0].url !== '/api/usage/stats?days=30') throw new Error('默认范围应为 30 天：' + fetchCalls[0].url);
+        if (fetchCalls[0].url !== '/api/usage/stats?days=30&records=100') {
+          throw new Error('默认范围应为 30 天＋明细 100 条：' + fetchCalls[0].url);
+        }
         if (!fetchCalls[0].opts || fetchCalls[0].opts.cache !== 'no-cache' || !fetchCalls[0].opts.signal) {
           throw new Error('fetch 应带 cache:no-cache＋AbortSignal 超时');
         }
@@ -375,7 +419,7 @@ export async function run() {
         sandbox.setTokenUsageDays('90');
         await sandbox.renderTokenUsage();
         const last = fetchCalls[fetchCalls.length - 1];
-        if (last.url !== '/api/usage/stats?days=90') throw new Error('切范围后应按 90 天拉取：' + last.url);
+        if (last.url !== '/api/usage/stats?days=90&records=100') throw new Error('切范围后应按 90 天拉取：' + last.url);
         const countAfterRange = fetchCalls.length;
         sandbox.toggleTokenUsageSplit();
         if (fetchCalls.length !== countAfterRange) throw new Error('切分线只应用缓存重画，不应重拉');
@@ -401,6 +445,29 @@ export async function run() {
         sandbox.toggleTokenRangeMenu();
         sandbox.toggleTokenRangeMenu();
         if (rangeMenu.hidden !== true) throw new Error('二次 toggle 应回到收起');
+        // 自定义天数闭环（T198）：setTokenUsageDays 越界拒绝；输入行越界 toast＋
+        // 不收菜单不拉取；45 天经输入行应用后按新范围拉取、标签同步、预设全不选中
+        const beforeCustom = fetchCalls.length;
+        const toastsBefore = toasts.length;
+        sandbox.setTokenUsageDays('400');
+        sandbox.setTokenUsageDays('0');
+        if (fetchCalls.length !== beforeCustom) throw new Error('越界天数应被拒绝不拉取');
+        rangeMenu.hidden = false; // 模拟菜单开着填输入
+        rangeInput.value = '999';
+        sandbox.applyTokenRangeCustom();
+        if (rangeMenu.hidden !== false) throw new Error('越界输入不应收菜单');
+        if (toasts.length !== toastsBefore + 1) throw new Error('越界输入应 toast 一次');
+        if (!toasts[toasts.length - 1].includes('1–365')) throw new Error('toast 应说明范围');
+        if (fetchCalls.length !== beforeCustom) throw new Error('越界输入不应拉取');
+        rangeInput.value = '45';
+        sandbox.applyTokenRangeCustom();
+        if (rangeMenu.hidden !== true) throw new Error('合法输入应用后应收菜单');
+        if (rangeLabel.textContent !== '近 45 天') throw new Error('标签应同步自定义天数：' + rangeLabel.textContent);
+        if (rangeItems.some(it => it.active)) throw new Error('自定义天数下预设项应全不选中');
+        const customCalls = fetchCalls.slice(beforeCustom);
+        if (customCalls.length !== 1 || customCalls[0].url !== '/api/usage/stats?days=45&records=100') {
+          throw new Error('45 天应恰好拉一次：' + customCalls.map(c => c.url).join(','));
+        }
         return true;
       } finally {
         sandbox.document = prevDoc;
@@ -439,6 +506,18 @@ export async function run() {
       if (!src.includes('window.pickTokenRangeDays')) throw new Error('自绘下拉未导出冒烟');
       if (!src.includes('prefers-reduced-motion')) throw new Error('过渡动画应尊重减少动态偏好');
       if (!src.includes('_tokenUsageFetchSeq')) throw new Error('快速连点范围应有拉取序号护栏');
+      // 五轮契约（T196/T198/T199）：明细渲染/条数常量、折线 data-label、联动绑定、
+      // 自定义天数 1-365、明细表与图例可点样式
+      if (!src.includes('window._tokenUsageRecordsHtml')) throw new Error('调用明细渲染未导出冒烟');
+      if (!src.includes('window.applyTokenRangeCustom')) throw new Error('自定义天数未导出冒烟');
+      if (!src.includes('TOKEN_USAGE_RECORDS_LIMIT')) throw new Error('明细条数常量缺失');
+      if (!src.includes('_bindTokenLegendPick')) throw new Error('圆环折线联动未实现');
+      if (!src.includes('data-label="')) throw new Error('折线 path 缺 data-label（联动匹配键）');
+      const fnDays = src.match(/function setTokenUsageDays[\s\S]{0,220}/) || [''];
+      if (!/n >= 1 && n <= 365/.test(fnDays[0])) throw new Error('统计范围应放开到 1-365 天（T198）');
+      if (!panels.includes('.token-records-row')) throw new Error('调用明细表样式缺失');
+      if (!panels.includes('.token-donut-legend-pick')) throw new Error('图例可点样式缺失');
+      if (!panels.includes('.token-range-custom')) throw new Error('自定义天数输入行样式缺失');
       // 失败/耗时记账链（2026-10-08）：后端有 record_failure 与新聚合键，四个调用
       // 文件都接线；前端明细表有耗时列
       const usageStatsSrc = fs.readFileSync('src/server/usage_stats.py', 'utf8');
@@ -446,6 +525,7 @@ export async function run() {
       if (!usageStatsSrc.includes('errorRequests') || !usageStatsSrc.includes('avgDurationMs')) {
         throw new Error('聚合缺失败数/平均耗时');
       }
+      if (!usageStatsSrc.includes('record_limit')) throw new Error('summarize 缺 records 明细支持（T196）');
       for (const py of ['src/server/models_routes.py', 'src/server/knowledge.py',
         'src/server/documents.py', 'harness/review.py']) {
         if (!fs.readFileSync(py, 'utf8').includes('record_failure')) throw new Error(py + ' 未接失败记账');
@@ -453,7 +533,8 @@ export async function run() {
       const html = fs.readFileSync('src/static/index.html', 'utf8');
       for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"', 'id="tokenRangeMenu"',
         'id="tokenRangeBtn"', 'id="tokenRefreshBtn"', 'data-days="7"', 'data-days="30"', 'data-days="90"',
-        'pickTokenRangeDays(7)', 'toggleTokenRangeMenu()', 'toggleTokenUsageSplit()', 'aria-label="刷新"']) {
+        'pickTokenRangeDays(7)', 'toggleTokenRangeMenu()', 'toggleTokenUsageSplit()', 'aria-label="刷新"',
+        'id="tokenRangeInput"', 'applyTokenRangeCustom()', 'min="1" max="365"']) {
         if (!html.includes(needle)) throw new Error('index.html 缺 ' + needle);
       }
       if (/<select[^>]*id="tokenUsage/.test(html)) throw new Error('统计范围不应退回原生 select');
