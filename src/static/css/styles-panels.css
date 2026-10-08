@@ -4899,12 +4899,12 @@
 
 .token-kind-val { flex-shrink: 0; min-width: 9em; text-align: right; font-size: var(--fs-2xs); color: var(--text-secondary); }
 
-/* 模型明细表：五行网格（模型/请求/Prompt/Completion/命中率），行 hover 提亮 */
+/* 模型明细表：六列网格（模型/请求/Prompt/Completion/命中率/平均耗时），行 hover 提亮 */
 .token-usage-table { display: grid; gap: 2px; font-size: var(--fs-xs); }
 
 .token-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) .8fr 1fr 1.1fr .9fr;
+  grid-template-columns: minmax(0, 2.2fr) .8fr 1fr 1.1fr .9fr .9fr;
   gap: 6px;
   align-items: center;
   padding: 4px 6px;

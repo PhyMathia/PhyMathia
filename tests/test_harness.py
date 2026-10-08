@@ -2767,7 +2767,7 @@ class HarnessSessionBucketTest(unittest.TestCase):
                 "usage": {"prompt_tokens": 10, "completion_tokens": 2},
             })
 
-        def fake_record_usage(provider, model, kind, session_id, usage):
+        def fake_record_usage(provider, model, kind, session_id, usage, duration_ms=None):
             captured["usage_session"] = session_id
             return None
 

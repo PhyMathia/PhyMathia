@@ -8,6 +8,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from .http_client import get_http_client
 from .llm_common import opencode_gateway_headers
 from . import usage_stats  # 共享层：token 用量与缓存命中计量落盘
@@ -748,11 +750,19 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
     headers.update(opencode_gateway_headers(base_url, "phymathia-extract"))
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
     client = get_http_client()
-    resp = await client.post(url, json=body, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
+    extract_t0 = time.monotonic()
+    try:
+        resp = await client.post(url, json=body, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        # 失败也进账后原样再抛：调用方的回退/报错行为不变
+        usage_stats.record_failure(provider, model, "extract", "",
+                                   str(e) or type(e).__name__, usage_stats.elapsed_ms(extract_t0))
+        raise
     if data.get("usage"):
-        usage_stats.record_usage(provider, model, "extract", "", data["usage"])
+        usage_stats.record_usage(provider, model, "extract", "", data["usage"],
+                                 duration_ms=usage_stats.elapsed_ms(extract_t0))
     content = data["choices"][0]["message"]["content"]
     items = _parse_extract_json(content)
     profile_facts = _parse_profile_facts(content)
@@ -964,12 +974,21 @@ async def _describe_formulas(summary: str, formulas: list, knowledge_items: list
     headers.update(opencode_gateway_headers(base_url, "phymathia-describe"))
     body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
     try:
-        client = get_http_client()
-        resp = await client.post(url, json=body, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+        describe_t0 = time.monotonic()
+        try:
+            client = get_http_client()
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError) as e:
+            # 失败也进账后再抛，外层既有 except（记日志回退空值）行为不变
+            usage_stats.record_failure(provider, model, "describe", "",
+                                       str(e) or type(e).__name__,
+                                       usage_stats.elapsed_ms(describe_t0))
+            raise
         if data.get("usage"):
-            usage_stats.record_usage(provider, model, "describe", "", data["usage"])
+            usage_stats.record_usage(provider, model, "describe", "", data["usage"],
+                                     duration_ms=usage_stats.elapsed_ms(describe_t0))
         content = data["choices"][0]["message"]["content"]
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:

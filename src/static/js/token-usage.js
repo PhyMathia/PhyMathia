@@ -59,6 +59,16 @@ function _tokenFormatNum(n) {
   return String(Math.round(v));
 }
 
+// 耗时缩写纯函数（冒烟测试直接调用）：850 → 850ms、1234 → 1.2s、空值/负数/非法 → —
+// （空值必须先挡：Number(null) 是 0，会把「无耗时数据」画成 0ms）
+function _tokenFormatMs(ms) {
+  if (ms === null || ms === undefined || ms === '') return '—';
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v < 0) return '—';
+  if (v >= 1000) return (Math.round(v / 100) / 10) + 's';
+  return Math.round(v) + 'ms';
+}
+
 // 最近 N 天日期列表纯函数（冒烟测试直接调用）：[今天-N+1 … 今天]，YYYY-MM-DD。
 // 服务端 days 桶只含有调用的日期，折线图横轴必须补零填满整天，趋势才不失真。
 function _tokenUsageDateList(n) {
@@ -149,8 +159,13 @@ function _tokenUsageTopModels(models, cap) {
 function _tokenUsageSummaryHtml(total) {
   const t = total || {};
   const hit = (t.hitRate != null) ? Math.round(t.hitRate * 100) + '%' : '—';
+  // 「AI 调用」卡副注：平均耗时与失败次数有数才显（2026-10-08 起记账的字段，
+  // 旧数据无 durationMs/status，提示自然退回「次」）
+  const callHints = ['次'];
+  if (t.avgDurationMs != null) callHints.push('平均 ' + _tokenFormatMs(t.avgDurationMs));
+  if (t.errorRequests) callHints.push('失败 ' + t.errorRequests + ' 次');
   const cards = [
-    { label: 'AI 调用', value: String(t.requests || 0), hint: '次' },
+    { label: 'AI 调用', value: String(t.requests || 0), hint: callHints.join(' · ') },
     { label: 'Prompt', value: _tokenFormatNum(t.promptTokens), hint: 'tok' },
     { label: 'Completion', value: _tokenFormatNum(t.completionTokens), hint: 'tok' },
     { label: '缓存命中', value: hit, hint: t.hitKnownRequests ? ('样本 ' + t.hitKnownRequests + ' 次') : '无命中字段' },
@@ -318,14 +333,15 @@ function _tokenUsageKindBarsHtml(data) {
   }).join('');
 }
 
-// 模型明细表（冒烟测试直接调用）：models 桶 → 降序行，命中率沿用服务端口径
+// 模型明细表（冒烟测试直接调用）：models 桶 → 降序行，命中率沿用服务端口径，
+// 平均耗时为该模型带时长记录的均值（服务端 avgDurationMs，无记录显示 —）
 function _tokenUsageTableHtml(data) {
   const rows = Object.entries((data && data.models) || {})
     .map(([model, bucket]) => ({ model, bucket: bucket || {} }))
     .sort((a, b) => ((b.bucket.totalTokens || 0) - (a.bucket.totalTokens || 0)));
   if (!rows.length) return '<div class="token-chart-empty">暂无用量记录</div>';
   const head = '<div class="token-table-row token-table-head"><span>模型</span><span>请求</span>'
-    + '<span>Prompt</span><span>Completion</span><span>命中率</span></div>';
+    + '<span>Prompt</span><span>Completion</span><span>命中率</span><span>平均耗时</span></div>';
   const body = rows.map(r => {
     const b = r.bucket;
     const hit = (b.hitRate != null) ? Math.round(b.hitRate * 100) + '%' : '—';
@@ -333,7 +349,8 @@ function _tokenUsageTableHtml(data) {
       + escapeHtml(r.model) + '</span><span>' + (b.requests || 0) + '</span>'
       + '<span>' + _tokenFormatNum(b.promptTokens) + '</span>'
       + '<span>' + _tokenFormatNum(b.completionTokens) + '</span>'
-      + '<span>' + hit + '</span></div>';
+      + '<span>' + hit + '</span>'
+      + '<span>' + _tokenFormatMs(b.avgDurationMs) + '</span></div>';
   }).join('');
   return '<div class="token-usage-table">' + head + body + '</div>';
 }
@@ -356,7 +373,7 @@ function _tokenUsageDashboardHtml(data, days, split) {
     + '<span class="token-chart-sub">条形长度编码各用途总 token，看 token 都花在哪个功能上</span></div>'
     + _tokenUsageKindBarsHtml(data) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">模型明细'
-    + '<span class="token-chart-sub">命中率只统计上游回报了缓存字段的请求</span></div>'
+    + '<span class="token-chart-sub">命中率只统计上游回报了缓存字段的请求；平均耗时只累计记录了时长的调用</span></div>'
     + _tokenUsageTableHtml(data) + '</div>';
 }
 
@@ -789,6 +806,7 @@ function toggleTokenUsageSplit() {
 // 冒烟测试导出（与 accounts.js/trash.js 等模块的 window.* 导出惯例一致）
 if (typeof window !== 'undefined') {
   window._tokenFormatNum = _tokenFormatNum;
+  window._tokenFormatMs = _tokenFormatMs;
   window._tokenUsageDateList = _tokenUsageDateList;
   window._tokenUsageNiceMax = _tokenUsageNiceMax;
   window._tokenUsageTopModels = _tokenUsageTopModels;

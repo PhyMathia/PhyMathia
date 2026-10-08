@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
@@ -642,6 +643,7 @@ async def _call_model(
 
     message: Dict[str, Any] = {}
     last_exc: BaseException = HarnessError("模型调用失败")
+    call_t0 = time.monotonic()  # 成功/失败记账共用：覆盖重试全程
     max_attempts = len(_RETRY_DELAYS) + 1
     for round_index in range(max_attempts):
         retry_after: Optional[float] = None
@@ -657,6 +659,8 @@ async def _call_model(
             # status_code 由 _stream_chat_completions_once / _post_once 标注；
             # 无属性的 HarnessError（响应体缺内容等）不可重试，原样抛
             if getattr(exc, "status_code", None) not in _RETRYABLE_STATUS_CODES:
+                usage_stats.record_failure(model["provider"], model["model"], "harness",
+                                           session_key, str(exc), usage_stats.elapsed_ms(call_t0))
                 raise
             last_exc = exc
             retry_after = getattr(exc, "retry_after", None)
@@ -664,9 +668,14 @@ async def _call_model(
             # 网络抖动/连接断开：整次重发是安全的（尚未产出任何输出）
             last_exc = exc
         except httpx.HTTPError as exc:
+            usage_stats.record_failure(model["provider"], model["model"], "harness",
+                                       session_key, f"请求异常: {exc}",
+                                       usage_stats.elapsed_ms(call_t0))
             raise HarnessError(f"模型请求失败: {exc}") from exc
         if round_index >= max_attempts - 1 or streamed["any"]:
             # 重试用尽，或流式已有增量吐出（重发会重复渲染）
+            usage_stats.record_failure(model["provider"], model["model"], "harness",
+                                       session_key, str(last_exc), usage_stats.elapsed_ms(call_t0))
             if isinstance(last_exc, HarnessError):
                 raise last_exc
             raise HarnessError(f"模型请求失败: {last_exc}") from last_exc
@@ -684,7 +693,7 @@ async def _call_model(
     )
     if usage:
         usage_stats.record_usage(model["provider"], model["model"], "harness",
-                                 session_key, usage)
+                                 session_key, usage, duration_ms=usage_stats.elapsed_ms(call_t0))
     # 推理模型（deepseek-v4-flash / hy3 等）两种形态都要防：
     # ① 正文带 <think>…</think> 思考块（思考里还可能草拟残缺 JSON 干扰解析）；
     # ② 正文为空、全文落在 reasoning_content。
