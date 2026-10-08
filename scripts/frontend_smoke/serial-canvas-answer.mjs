@@ -154,6 +154,22 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
   }
 });
 
+// 静态契约（T205）：一轮回答只允许两次全量画布重建——发送（用户问题卡落画布）与成功
+// （流式补丁态同步成终态）。finally 的第三发在成功路径是零差异重复（两次调用之间
+// _getChatHistory 输入相同），已改「成功记标志、finally 未渲染才兜底」；失败/中止/空回复
+// 路径仍靠 finally 摘残留流式卡。变异验证：把 finally 的守卫拆掉改回无条件渲染，下面立刻红。
+check('发送链画布重建（T205）：成功路径记标志，finally 只兜未渲染路径', () => {
+  const src = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  if (!/let canvasRenderedThisRound = false;/.test(src)) throw new Error('缺本轮已渲染标志声明（T205 修复被拆）');
+  if (!/renderGraphCanvas\(\); canvasRenderedThisRound = true;/.test(src)) {
+    throw new Error('成功路径渲染没有记 canvasRenderedThisRound——一轮回答回到三连全量重建');
+  }
+  if (!/!canvasRenderedThisRound && typeof window\.renderGraphCanvas === 'function'\) window\.renderGraphCanvas\(\);/.test(src)) {
+    throw new Error('finally 渲染丢了「未渲染才兜底」守卫——成功路径会多吃一次全量重建（innerHTML 清空＋全节点 KaTeX 重跑）');
+  }
+  return true;
+});
+
 check('发送排队：模块已注册进构建顺序，且「待发送 N」标记挂在进度胶囊上', () => {
   const build = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
   if (!/'send-queue\.js'/.test(build)) {

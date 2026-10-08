@@ -301,6 +301,9 @@
         : null;
       let sendTaskState = 'done';
       let sendTaskNote = '';
+      // T205：一轮回答原本发送/成功/finally 三连全量重建（innerHTML 清空＋全节点
+      // markdown/KaTeX 重跑），成功后 finally 那发与成功那发之间画布输入零变化，纯浪费。
+      let canvasRenderedThisRound = false;
       if (sendTask && typeof _taskBindCancel === 'function') {
         // 面板上的「停止」= 掐断这条流，与顶部停止按钮同一条路
         _taskBindCancel(sendTask.id, function() { if (abortController) abortController.abort(); });
@@ -535,7 +538,9 @@
           autoExtractKnowledge(currentSessionId, chatHistory);
 
           await saveCurrentSession();
-          if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+          // T205：这里已把流式补丁态同步成终态（chatHistory 刚落完整回答、streamingAssistant
+          // 已置 null，_getChatHistory 两次输入相同），记标志让 finally 跳过重复的那发
+          if (typeof window.renderGraphCanvas === 'function') { window.renderGraphCanvas(); canvasRenderedThisRound = true; }
           renderSessionList(); // 更新侧边栏时间显示
           // 队列里还有东西时不弹「完成」：这一轮只是**这一轮**完了，活儿没干完，
           // 弹完成卡片是骗人，而且下一条马上自动发出去，卡片会跟新进度撞在一起。
@@ -583,7 +588,9 @@
         if (stopBtn) stopBtn.disabled = true;
         _syncProgressMiniButtons(false);
         streamingAssistant = null;
-        if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
+        // T205：只兜成功路径没走到的分支（失败/中止/空回复/切会话早退）——失败与空回复
+        // 还要靠这发把残留的流式卡从画布摘掉；成功路径重复渲染已在上面跳过
+        if (!canvasRenderedThisRound && typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
         if (pendingDeleteTimestamp) {
           const ts = pendingDeleteTimestamp;
           pendingDeleteTimestamp = null;
