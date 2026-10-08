@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -213,14 +214,37 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
     }
 
 
+# T108：SSE 进度队列有界化——生产（模型 delta/status 事件）快于消费（SSE 写
+# socket，速率＝客户端收得动）时，无界队列会把整段回复的 delta 堆在内存里。
+# 256 条是「正常消费根本到不了、只当挂起连接的内存闸门」的量级；满了丢最旧的
+# 进度事件保最新（流中丢段只影响打字机观感，最终正文以 result 事件为准）；
+# result 事件与结束哨兵走同一条腾位入队、永不丢（它们总是队尾最新，腾位弹出
+# 的永远是最旧的进度事件）。
+_SSE_QUEUE_MAX = 256
+
+
 async def _review_event_stream(payload: dict, kwargs: dict, journal: list):
     """SSE 流式评审：stage/delta 事件边跑边发，最终以 result 事件下发与
     非流式完全一致的结果 JSON。断连时取消后台任务，避免模型调用继续空烧。"""
     t0 = time.time()
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAX)
+
+    def _put_drop_oldest(item) -> None:
+        """腾位入队：满则丢最旧再试，直到成功。单生产者（事件轮内无 await），
+        至多两轮。对进度事件＝丢最旧进度；对 result/哨兵＝它们总是队尾最新，
+        腾位弹出的只会是更旧的进度事件，自身不会被丢。"""
+        while True:
+            try:
+                queue.put_nowait(item)
+                return
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueFull:
+                    pass
 
     def progress(event: dict) -> None:
-        queue.put_nowait(event)
+        _put_drop_oldest(event)
 
     async def _run():
         try:
@@ -231,20 +255,20 @@ async def _review_event_stream(payload: dict, kwargs: dict, journal: list):
             result["snapshot_node_count"] = len(normalize_snapshot(payload.get("snapshot"))["nodes"])
             _log_review_event(payload, result, t0, "review", journal)
             _log_usage(_usage_entry(payload, result, t0, "review"))
-            queue.put_nowait({"type": "result", "data": result})
+            _put_drop_oldest({"type": "result", "data": result})
         except HarnessError as exc:
             err = {"status": "error", "errors": [{"reason": str(exc)}]}
             _log_review_event(payload, err, t0, "review", journal)
             _log_usage(_usage_entry(payload, err, t0, "review"))
-            queue.put_nowait({"type": "result", "data": err})
+            _put_drop_oldest({"type": "result", "data": err})
         except Exception as exc:
             logger.exception("harness internal error (review stream)")
             err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}]}
             _log_review_event(payload, err, t0, "review", journal)
             _log_usage(_usage_entry(payload, err, t0, "review"))
-            queue.put_nowait({"type": "result", "data": err})
+            _put_drop_oldest({"type": "result", "data": err})
         finally:
-            queue.put_nowait(None)
+            _put_drop_oldest(None)
 
     task = asyncio.create_task(_run())
     try:
@@ -500,15 +524,32 @@ async def graph_resolve(request: Request):
         _log_usage(_usage_entry(payload, err, t0, "resolve"))
         return JSONResponse(status_code=400, content=err)
 
+# T109：反馈文件上限与读改写锁。热文件保持可整读的 JSON（挖掘脚本按数组读），
+# 超限的旧条目不再静默丢弃，改逐行追加进 harness_feedback.archive.jsonl（同目录，
+# 挖掘脚本把该路径当 argv 传入即可读归档）。锁为进程内锁：本服务单进程单事件轮，
+# 临界区内无 await 本不会交错，锁是多线程派发/未来多 worker 演化时的保险
+# （多进程部署不在此保护范围——本应用是本地单用户服务，不上多 worker）。
+_FEEDBACK_MAX = 2000
+_FEEDBACK_LOCK = threading.Lock()
+
+
 @router.post("/graph/feedback")
 async def graph_feedback(request: Request):
-    """收集用户对 harness 回答的反馈（阶段 0）：存到 data/harness_feedback.json。"""
+    """收集用户对 harness 回答的反馈（阶段 0）：存到 data/harness_feedback.json。
+
+    T109：读-改-写全程持 _FEEDBACK_LOCK（并发请求不再互相覆盖丢条目）；超
+    _FEEDBACK_MAX 的旧条目追加进归档 jsonl；条目另带 device_id/模型名/操作
+    明细——不再依赖 event_id join 事件日志才能归因（旧客户端/匿名反馈也有
+    模型名与操作可看）。"""
     try:
         payload = await request.json()
     except Exception as exc:
         return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
     try:
         from src.server.config import DATA_DIR
+        model_raw = payload.get("model")
+        model_name = str((model_raw or {}).get("model") or "") if isinstance(model_raw, dict) else str(model_raw or "")
+        ops = payload.get("operations") if isinstance(payload.get("operations"), list) else []
         entry = {
             "ts": round(time.time(), 3),
             "kind": str(payload.get("kind") or "bad")[:10],
@@ -522,20 +563,37 @@ async def graph_feedback(request: Request):
             # 拿到模型名、提示词与操作明细（不再是孤儿数据）
             "event_id": str(payload.get("event_id") or "")[:48],
             "phi_session_id": str(payload.get("phi_session_id") or "")[:80],
+            # T109 归因三件套：设备号、模型名（前端随条目上送的当轮模型）、
+            # 操作明细（截前 20 条，与事件日志 operations 同口径）；接受
+            # {model:...} 形状与裸字符串两种（旧客户端/直调都容）
+            "model": model_name[:100],
+            "device_id": str(payload.get("device_id") or payload.get("deviceId") or "")[:80],
+            "operations": ops[:20],
         }
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         path = DATA_DIR / "harness_feedback.json"
-        items = []
-        if path.exists():
-            try:
-                items = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                items = []
-        if not isinstance(items, list):
+        archived = 0
+        with _FEEDBACK_LOCK:
             items = []
-        items.append(entry)
-        items = items[-2000:]
-        path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+            if path.exists():
+                try:
+                    items = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    items = []
+            if not isinstance(items, list):
+                items = []
+            items.append(entry)
+            if len(items) > _FEEDBACK_MAX:
+                dropped = items[:-_FEEDBACK_MAX]
+                items = items[-_FEEDBACK_MAX:]
+                try:
+                    with open(DATA_DIR / "harness_feedback.archive.jsonl", "a", encoding="utf-8") as af:
+                        for old in dropped:
+                            af.write(json.dumps(old, ensure_ascii=False) + "\n")
+                    archived = len(dropped)
+                except Exception:
+                    archived = 0
+            path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
         # 同步在 Φ 会话事件日志里落一条 feedback 事件（关联 review 事件 id），
         # 会话文件里就能看到「请求→应用→反馈」的完整链条
         phi_sid = str(payload.get("phi_session_id") or "")[:80]
@@ -547,7 +605,8 @@ async def graph_feedback(request: Request):
                 "event_id": str(payload.get("event_id") or "")[:48],
                 "kind": entry["kind"],
                 "note": entry["note"],
+                "model": entry["model"],
             })
-        return {"status": "ok", "count": len(items)}
+        return {"status": "ok", "count": len(items), "archived": archived}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"status": "error", "errors": [{"reason": str(exc)}]})

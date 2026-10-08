@@ -1730,6 +1730,11 @@ let harnessLastAppliedReport = null;
         session_id: _sessionId(),
         event_id: entry.eventId || '',
         phi_session_id: (typeof _phiId === 'function' ? _phiId() : '') || '',
+        // T109 归因三件套：设备号、模型名（条目落盘的当轮模型，旧数据空串）、
+        // 操作明细（后端截前 20 条）——服务端不再只靠 event_id join 才能归因
+        device_id: (typeof getDeviceId === 'function' ? getDeviceId() : ''),
+        model: entry.model || '',
+        operations: Array.isArray(entry.operations) ? entry.operations : [],
       });
       _setHarnessStatus('已记录反馈', 'ok');
     } catch (err) {

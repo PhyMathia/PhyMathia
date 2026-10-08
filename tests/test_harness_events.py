@@ -4,6 +4,7 @@
 - review（非流式 / 流式 / 空快照早退 / 无 session_id）落事件与 roundtrips 内容；
 - apply_report / undo_report / graph/events 的快照剥离、types 过滤、event_id 精确取；
 - feedback 双写（feedback json + 会话事件）与非法 phi_session_id 的降级；
+  归因三件套（device_id/model/operations，T109）与溢出归档；SSE 进度队列有界（T108）；
 - 坏 JSONL 行的跳过与 seq 稳定性；journal 截长；usage 条目的 session_id/event_id；
 - resolve 端点的 endpoint='resolve' 事件；
 - apply_report 的 recipes_before（T101）：合法 list 落盘/列表剥离/event_id 带出，
@@ -356,6 +357,10 @@ def test_feedback_writes_json_and_session_event(client, events_dir, tmp_path, mo
         "kind": "bad", "instruction": "补充节点", "summary": "不对", "ops_count": 1,
         "phase": "normal", "note": "多画了一个节点",
         "event_id": "evt_review_x", "phi_session_id": "phi_feedback_1",
+        # T109 归因三件套：dict 形状的 model、设备号、操作明细（22 条截前 20）
+        "model": {"provider": "openai", "model": "test-model"},
+        "device_id": "dev_abc123",
+        "operations": [{"op": f"op{i}"} for i in range(22)],
     })
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "ok"
@@ -364,6 +369,11 @@ def test_feedback_writes_json_and_session_event(client, events_dir, tmp_path, mo
     assert len(items) == 1
     assert items[0]["event_id"] == "evt_review_x"
     assert items[0]["phi_session_id"] == "phi_feedback_1"
+    # T109：模型名（dict 形状取 model 键）/设备号落条目；操作明细截前 20 条
+    assert items[0]["model"] == "test-model"
+    assert items[0]["device_id"] == "dev_abc123"
+    assert len(items[0]["operations"]) == 20
+    assert items[0]["operations"][0] == {"op": "op0"}
 
     feed_events = events_mod.read_events("phi_feedback_1")
     assert len(feed_events) == 1
@@ -372,18 +382,76 @@ def test_feedback_writes_json_and_session_event(client, events_dir, tmp_path, mo
     assert evt["event_id"] == "evt_review_x"
     assert evt["kind"] == "bad"
     assert evt["note"] == "多画了一个节点"
+    assert evt["model"] == "test-model"
 
-    # phi_session_id 非法：feedback json 照记（200），但会话事件不落盘
+    # phi_session_id 非法：feedback json 照记（200），但会话事件不落盘；
+    # model 裸字符串形状也接受（旧客户端/直调）
     response2 = client.post("/api/harness/graph/feedback", json={
         "kind": "bad", "note": "第二个", "event_id": "evt_review_y",
-        "phi_session_id": "../evil",
+        "phi_session_id": "../evil", "model": "bare-model",
     })
     assert response2.status_code == 200
     items2 = json.loads((data_dir / "harness_feedback.json").read_text(encoding="utf-8"))
     assert len(items2) == 2
     assert items2[1]["phi_session_id"] == "../evil"
+    assert items2[1]["model"] == "bare-model"
     assert events_mod.read_events("../evil") == []
     assert [p.name for p in events_dir.glob("*.jsonl")] == ["phi_feedback_1.jsonl"]
+
+
+# ---- 8b. feedback 溢出归档（T109）：超上限不再静默丢弃 ----
+
+
+def test_feedback_overflow_archives_instead_of_discarding(client, events_dir, tmp_path, monkeypatch):
+    import src.server.config as server_config
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(server_config, "DATA_DIR", data_dir)
+    monkeypatch.setattr(api_mod, "_FEEDBACK_MAX", 2)
+
+    response = None
+    for i in range(3):
+        response = client.post("/api/harness/graph/feedback", json={
+            "kind": "bad", "note": f"第{i}条", "phi_session_id": "../evil",
+        })
+        assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 2 and body["archived"] == 1
+
+    items = json.loads((data_dir / "harness_feedback.json").read_text(encoding="utf-8"))
+    assert [it["note"] for it in items] == ["第1条", "第2条"]
+    archive_path = data_dir / "harness_feedback.archive.jsonl"
+    lines = archive_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["note"] == "第0条"
+
+
+# ---- 8c. SSE 进度队列有界（T108）：进度风暴不堆积，result 永不丢 ----
+
+
+def test_review_stream_progress_queue_bounded(client, events_dir, monkeypatch):
+    install_stub(monkeypatch, _review_content("有界摘要"), deltas=["δ"] * 1500)
+
+    result = None
+    delta_count = 0
+    with client.stream("POST", "/api/harness/graph/review",
+                       json=review_payload(stream=True)) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            if not line.startswith("data: "):
+                continue
+            item = json.loads(line[len("data: "):])
+            if item.get("type") == "delta":
+                delta_count += 1
+            if item.get("type") == "result":
+                result = item["data"]
+
+    # 单生产者一次性发 1500 条 delta：消费端收到的 delta 数被队列上限封顶
+    # （丢最旧），而 result 完整到达且内容无损
+    assert 0 < delta_count <= api_mod._SSE_QUEUE_MAX
+    assert result is not None and result["summary"] == "有界摘要"
 
 
 # ---- 9. 坏 JSONL 行：跳过不挤占 seq ----
