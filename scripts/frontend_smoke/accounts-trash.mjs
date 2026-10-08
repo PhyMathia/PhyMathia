@@ -655,4 +655,32 @@ check('删除链超时兜底全覆盖（T83）：三个删除/保存链 fetch �
   }
   return true;
 });
+
+check('删除链超时兜底全覆盖（T194）：clearChat 与 _deleteKnowledgeOnServer 均带超时 signal、失败非静默', () => {
+  const ssrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const cm = ssrc.match(/async function clearChat\([\s\S]*?\n    \}/);
+  if (!cm) throw new Error('session.js 缺 clearChat');
+  if (!cm[0].includes('AbortSignal.timeout(10000)')) throw new Error('clearChat 的 messages DELETE 仍无超时 signal（清空链首环挂死会静默停半路）');
+  const ksrc = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const km = ksrc.match(/async function _deleteKnowledgeOnServer\([\s\S]*?\n\}/);
+  if (!km) throw new Error('knowledge.js 缺 _deleteKnowledgeOnServer');
+  if (!km[0].includes('AbortSignal.timeout(10000)')) throw new Error('_deleteKnowledgeOnServer 仍无超时 signal（挂死一条卡整条删除链）');
+  if (!km[0].includes('resp.ok')) throw new Error('_deleteKnowledgeOnServer 非 ok 状态静默（须补 warn）');
+  return true;
+});
+
+check('删除链超时兜底全覆盖（T195）：公式两处 DELETE 与 quiz bank 全局 DELETE 均带超时 signal', () => {
+  const ksrc = fs.readFileSync('src/static/js/knowledge.js', 'utf8');
+  const bs = ksrc.match(/async function deleteFormulasBySession\([\s\S]*?\n\}/);
+  if (!bs) throw new Error('knowledge.js 缺 deleteFormulasBySession');
+  if (!bs[0].includes('AbortSignal.timeout(10000)')) throw new Error('deleteFormulasBySession 整段 DELETE 仍无超时 signal（挂死卡住清空/删会话链收尾）');
+  if (!bs[0].includes('!resp.ok')) throw new Error('deleteFormulasBySession 非 ok 状态静默（须补 warn）');
+  const df = ksrc.match(/async function confirmDeleteFormula\([\s\S]*?\n\}/);
+  if (!df) throw new Error('knowledge.js 缺 confirmDeleteFormula');
+  if (!df[0].includes('AbortSignal.timeout(10000)')) throw new Error('confirmDeleteFormula 单条 DELETE 仍无超时 signal');
+  if (!df[0].includes('!resp.ok')) throw new Error('confirmDeleteFormula 非 ok 状态静默（须补 warn）');
+  const ssrc = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!ssrc.includes("fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE', signal: AbortSignal.timeout(10000) })")) throw new Error('clearAllSessions 的 quiz bank 全局 DELETE 仍无超时 signal');
+  return true;
+});
 }
