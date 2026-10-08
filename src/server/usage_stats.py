@@ -25,11 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def _default_usage_dir() -> Path:
-    # 与 src/server/config.py 同口径：打包（frozen）时数据写到 exe 所在目录
+    # 与 src/server/config.py 的 DATA_DIR 同口径（仓库根 data/）：打包（frozen）
+    # 时数据写到 exe 所在目录。2026-10-08 从 src/server/data/usage 拨回——T161
+    # 收编模块时把目录带歪到包内，与全仓运行时数据约定相悖，且历史 JSONL 全在
+    # 仓库根，包内目录只有搬家后的零星几天，统计会凭空缺历史。
     if getattr(sys, "frozen", False):
         root = Path(sys.executable).resolve().parent
     else:
-        root = Path(__file__).resolve().parent
+        root = Path(__file__).resolve().parents[2]
     return root / "data" / "usage"
 
 
@@ -96,7 +99,7 @@ def record_usage(provider, model, kind, session_id, usage):
 
 def _agg_bucket():
     return {"requests": 0, "hitKnownRequests": 0, "promptTokens": 0,
-            "completionTokens": 0, "cachedTokens": 0}
+            "completionTokens": 0, "totalTokens": 0, "cachedTokens": 0}
 
 
 def _agg_add(bucket, entry):
@@ -108,6 +111,8 @@ def _agg_add(bucket, entry):
         bucket["promptTokens"] += prompt
     if completion is not None:
         bucket["completionTokens"] += completion
+    # 画图主数值：prompt+completion 合计（一侧缺失按 0 计，两个都缺仍是 0）
+    bucket["totalTokens"] += (prompt or 0) + (completion or 0)
     if hit is not None:
         # 命中率只在「上游确实回报了命中字段」的请求上累计——不回报的
         # 供应商混进分母只会把命中率无声拉低，读数时以 hitKnownRequests 为准
@@ -123,7 +128,16 @@ def _agg_finalize(bucket):
 
 
 def summarize(days=30):
-    """读最近 N 天的 JSONL，返回按天/按模型/总体的命中率汇总。"""
+    """读最近 N 天的 JSONL，返回按天/按模型/按用途/总体的汇总。
+
+    返回键：
+    - days/models/total：既有三桶（requests/promptTokens/completionTokens/
+      totalTokens/cachedTokens/hitRate/hitKnownRequests）
+    - series：天×模型交叉表 {日期: {模型: 聚合桶}}——前端「每日趋势按模型
+      分线」折线图的数据源
+    - kinds：按用途（chat/extract/describe/docs/summary/harness…）聚合
+      {用途: 聚合桶}——前端「用途分布」条形图的数据源
+    """
     try:
         day_limit = max(1, min(365, int(days)))
     except (TypeError, ValueError):
@@ -131,6 +145,8 @@ def summarize(days=30):
     cutoff = (datetime.now() - timedelta(days=day_limit - 1)).strftime("%Y-%m-%d")
     by_day = {}
     by_model = {}
+    by_kind = {}
+    by_series = {}
     total = _agg_bucket()
     try:
         files = sorted(USAGE_DIR.glob("*.jsonl"))
@@ -156,11 +172,17 @@ def summarize(days=30):
                 continue
             day_bucket = by_day.setdefault(day, _agg_bucket())
             model = str(entry.get("model") or "unknown")
+            kind = str(entry.get("kind") or "unknown")
             model_bucket = by_model.setdefault(model, _agg_bucket())
-            for bucket in (day_bucket, model_bucket, total):
+            kind_bucket = by_kind.setdefault(kind, _agg_bucket())
+            series_bucket = by_series.setdefault(day, {}).setdefault(model, _agg_bucket())
+            for bucket in (day_bucket, model_bucket, kind_bucket, series_bucket, total):
                 _agg_add(bucket, entry)
     return {
         "days": {day: _agg_finalize(b) for day, b in sorted(by_day.items())},
         "models": {model: _agg_finalize(b) for model, b in sorted(by_model.items())},
+        "kinds": {kind: _agg_finalize(b) for kind, b in sorted(by_kind.items())},
+        "series": {day: {m: _agg_finalize(b) for m, b in models_of_day.items()}
+                   for day, models_of_day in sorted(by_series.items())},
         "total": _agg_finalize(total),
     }
