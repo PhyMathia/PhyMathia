@@ -14,7 +14,7 @@ import pytest
 
 from test_routes import RouteTestBase
 import main as main_mod
-from server import backup, context, storage
+from server import backup, context, http_client, models_routes, storage
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def isolated():
     base.setUp()
     # 多账号 P1：KV 主文件路径经 context._kv_path() 调用期解析（跟 RouteTestBase
     # patch 的 config.DATA_DIR 走），无需再补丁本模块常量。
-    with mock.patch.object(main_mod, "_summary_tasks", {}), \
+    with mock.patch.object(models_routes, "_summary_tasks", {}), \
          mock.patch.object(context, "_rolling_memory_epoch", 0), \
          mock.patch.object(context, "_rolling_memory_generations", {}):
         try:
@@ -133,7 +133,7 @@ def test_b4_main_and_summary_transport_headers(isolated, provider, base_url):
 
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as upstream:
-            with mock.patch.object(main_mod, "get_http_client", return_value=upstream):
+            with mock.patch.object(http_client, "get_http_client", return_value=upstream):
                 # ASGI stays in the same event loop as the fake upstream.
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main_mod.app),
                                              base_url="http://test") as client:
@@ -218,10 +218,10 @@ def test_s1_inflight_summary_cannot_resurrect_cleared_memory(isolated, path):
             return httpx.Response(200, json={"choices": [{"message": {"content": "RESURRECTED_A"}}]})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(delayed_response)) as upstream:
-            with mock.patch.object(main_mod, "get_http_client", return_value=upstream):
+            with mock.patch.object(http_client, "get_http_client", return_value=upstream):
                 main_mod._maybe_schedule_rolling_summary("A", "opencode", "", "test-model",
                                                          "https://opencode.ai/zen/v1")
-                task = main_mod._summary_tasks["A:test-model"]
+                task = models_routes._summary_tasks["A:test-model"]
                 try:
                     await asyncio.wait_for(entered.wait(), timeout=2)
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main_mod.app),

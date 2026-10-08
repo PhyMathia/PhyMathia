@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
 from server import context_preview as cp  # noqa: E402
+from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
 from server.config import LEVEL_PROMPTS  # noqa: E402
 from server.prompts import MODULE_SYSTEM_PROMPT, get_system_prompt  # noqa: E402
 
@@ -140,9 +141,9 @@ class GateIsomorphismTest(unittest.TestCase):
         payload.setdefault("api_key", "test-key")
         payload.setdefault("model", "test-model")
         client = TestClient(main_mod.app)
-        # main.py 是 `from http_client import get_http_client`（模块级绑定），
-        # 所以要打在 main_mod 上，打 http_client 上没用——踩过一次，白等 30 秒。
-        with mock.patch.object(main_mod, "get_http_client", lambda: _DeadClient()):
+        # T163 起 chat 路由经 http_client 模块属性出网，打 server.http_client
+        # 单点即对全部出网通道生效（main_mod 死绑定坑已随拆分消除）。
+        with mock.patch.object(http_client_mod, "get_http_client", lambda: _DeadClient()):
             try:
                 resp = client.post("/api/models/chat", json=payload)
             except Exception:

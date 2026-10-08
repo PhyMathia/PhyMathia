@@ -10,6 +10,7 @@ import time
 from test_routes import RouteTestBase
 import main as main_mod
 from server import profile as profile_mod
+from server import knowledge as knowledge_mod  # _ai_extract_knowledge 属主（T163）
 
 
 class ProfileMemoryTest(RouteTestBase):
@@ -155,8 +156,8 @@ class ProfileMemoryTest(RouteTestBase):
             ])
         profile_mod.apply_profile_ops(self._dev(), [
             {"op": "new", "fact": "喜欢天体物理", "category": "interest"}])
-        orig = main_mod._ai_extract_knowledge
-        main_mod._ai_extract_knowledge = _fake_extract
+        orig = knowledge_mod._ai_extract_knowledge
+        knowledge_mod._ai_extract_knowledge = _fake_extract
         try:
             resp = self.client.post("/api/extract_knowledge", json={
                 "sessionId": "sess_prof",
@@ -168,7 +169,7 @@ class ProfileMemoryTest(RouteTestBase):
                 ],
             })
         finally:
-            main_mod._ai_extract_knowledge = orig
+            knowledge_mod._ai_extract_knowledge = orig
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["profile"]["promoted"], ["我是高二学生"])
         self.assertTrue(any(f["fact"] == "我是高二学生"
@@ -194,8 +195,8 @@ class ProfileMemoryTest(RouteTestBase):
             ], [
                 {"op": "new", "fact": "我是高二学生", "category": "stage"},  # 新格式同文本
             ])
-        orig = main_mod._ai_extract_knowledge
-        main_mod._ai_extract_knowledge = _fake_extract
+        orig = knowledge_mod._ai_extract_knowledge
+        knowledge_mod._ai_extract_knowledge = _fake_extract
         try:
             resp = self.client.post("/api/extract_knowledge", json={
                 "sessionId": "sess_dup", "device_id": self._dev(),
@@ -204,7 +205,7 @@ class ProfileMemoryTest(RouteTestBase):
                              {"role": "assistant", "content": "答"}],
             })
         finally:
-            main_mod._ai_extract_knowledge = orig
+            knowledge_mod._ai_extract_knowledge = orig
         self.assertEqual(resp.status_code, 200)
         p = profile_mod.get_profile(self._dev())
         stage_facts = [f for f in p["facts"] if f["fact"] == "我是高二学生"]

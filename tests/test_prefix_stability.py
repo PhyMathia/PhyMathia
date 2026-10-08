@@ -31,6 +31,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 from server import context as context_mod  # noqa: E402
 import main as main_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
+from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
 from test_routes import RouteTestBase  # noqa: E402
 
 
@@ -257,7 +258,7 @@ class AssemblyShapeTest(RouteTestBase):
 
     def _post_chat(self, payload, handler):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
             base = {
                 "prompt": "什么是电磁感应",
                 "level": "university",
@@ -418,7 +419,7 @@ class BucketHeaderTest(RouteTestBase):
         if bucket is not None:
             payload["session_bucket"] = bucket
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
             resp = self.client.post("/api/models/chat", json=payload)
         self.assertEqual(resp.status_code, 200)
         return seen["headers"].get("x-opencode-session")

@@ -32,6 +32,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
 from server import accounts as accounts_mod  # noqa: E402
+from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
+from server import knowledge as knowledge_mod  # noqa: E402  _describe_formulas 属主
 from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
@@ -209,7 +211,7 @@ class ModelsListEndpointTest(RouteTestBase):
 
             return R()
 
-        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+        with mock.patch.object(http_client_mod.get_http_client(), "get", side_effect=fake_get):
             resp = self.client.post(
                 "/api/models/list",
                 json={"provider": "ollama", "api_key": "", "base_url": "http://localhost:11434/v1"},
@@ -227,7 +229,7 @@ class ModelsListEndpointTest(RouteTestBase):
 
             return R()
 
-        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+        with mock.patch.object(http_client_mod.get_http_client(), "get", side_effect=fake_get):
             resp = self.client.post(
                 "/api/models/list",
                 json={"provider": "lmstudio", "api_key": "", "base_url": "http://localhost:1234/v1"},
@@ -252,7 +254,7 @@ class ModelsListEndpointTest(RouteTestBase):
 
             return R()
 
-        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+        with mock.patch.object(http_client_mod.get_http_client(), "get", side_effect=fake_get):
             resp = self.client.post(
                 "/api/models/list",
                 json={"provider": "opencode-go", "api_key": "sk-stale", "base_url": "https://opencode.ai/zen/go/v1"},
@@ -275,7 +277,7 @@ class ModelsListEndpointTest(RouteTestBase):
 
             return R()
 
-        with mock.patch.object(main_mod.get_http_client(), "get", side_effect=fake_get):
+        with mock.patch.object(http_client_mod.get_http_client(), "get", side_effect=fake_get):
             resp = self.client.post(
                 "/api/models/list",
                 json={"provider": "deepseek", "api_key": "sk-ds-live", "base_url": "https://api.deepseek.com"},
@@ -325,7 +327,7 @@ class ThinkingEffortProxyTest(RouteTestBase):
             return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
             resp = self.client.post(
                 "/api/models/chat",
                 json={
@@ -381,7 +383,7 @@ class LinearRetirementGateTest(RouteTestBase):
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
             return self._post(payload)
 
     def test_anchorless_prompt_rejected(self):
@@ -657,7 +659,7 @@ class ExtractKnowledgeEndpointTest(RouteTestBase):
             calls["titles"] = [it.get("title") for it in items]
             return {}, {"简谐运动": "回复力与位移成正比的周期性振动"}
 
-        with mock.patch.object(main_mod, "_describe_formulas", new=fake_describe):
+        with mock.patch.object(knowledge_mod, "_describe_formulas", new=fake_describe):
             resp = self.client.post("/api/extract_knowledge", json=self._payload(
                 descriptor_provider="deepseek",
                 descriptor_api_key="k",
@@ -678,7 +680,7 @@ class ExtractKnowledgeEndpointTest(RouteTestBase):
             called["n"] += 1
             return {}, {}
 
-        with mock.patch.object(main_mod, "_describe_formulas", new=fake_describe):
+        with mock.patch.object(knowledge_mod, "_describe_formulas", new=fake_describe):
             resp = self.client.post("/api/extract_knowledge", json=self._payload(
                 messages=[
                     {"role": "user", "content": "解释简谐运动"},
@@ -746,7 +748,7 @@ class ProxyOpencodeSessionHeaderTest(RouteTestBase):
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
         async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=async_client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=async_client):
             payload = {
                 "messages": [{"role": "user", "content": "hi"}],
                 "provider": provider,

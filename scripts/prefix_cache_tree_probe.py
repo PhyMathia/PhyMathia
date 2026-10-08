@@ -31,6 +31,7 @@ import main as main_mod  # noqa: E402
 from server import usage_stats  # noqa: E402
 from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
+from server import http_client as http_client_mod  # noqa: E402  出网口补丁单点（T163）
 from server import context as context_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
@@ -374,7 +375,7 @@ def main():
         client = TestClient(main_mod.app)
         # 路由会在 client 上调 build_request，必须给 AsyncClient 而非裸 transport
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with unittest.mock.patch.object(main_mod, "get_http_client", return_value=http):
+        with unittest.mock.patch.object(http_client_mod, "get_http_client", return_value=http):
             print("=" * 64)
             print("场景 B：树探索连钻 8 层（每层追加 追问+子回答 两个节点，同模块键持续下钻）")
             _run_tree(client, captured)

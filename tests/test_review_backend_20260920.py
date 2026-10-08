@@ -53,6 +53,7 @@ import main as main_mod  # noqa: E402
 from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import continent as continent_mod  # noqa: E402
+from server import knowledge as knowledge_mod  # noqa: E402  _ai_extract_knowledge 属主（T163）
 from server import context as context_mod  # noqa: E402
 from server import documents as documents_mod  # noqa: E402
 from server import family as family_mod  # noqa: E402
@@ -157,7 +158,7 @@ class ResolveApiKeySsrfTest(RouteTestBase):
             return [], [], []
 
         with unittest.mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-env-secret"}):
-            with unittest.mock.patch.object(main_mod, "_ai_extract_knowledge", new=fake_extract):
+            with unittest.mock.patch.object(knowledge_mod, "_ai_extract_knowledge", new=fake_extract):
                 resp = self.client.post("/api/extract_knowledge", json={
                     "sessionId": "sess_ssrf",
                     "provider": "deepseek", "model": "m",

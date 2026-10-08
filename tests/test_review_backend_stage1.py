@@ -9,7 +9,7 @@ import pytest
 
 from test_review_backend_stage0 import isolated, seed_sessions, save_messages
 import main as main_mod
-from server import backup, context, storage
+from server import backup, context, http_client, models_routes, storage
 
 
 async def clear(kind):
@@ -41,10 +41,10 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
             return httpx.Response(200, json={"choices": [{"message": {"content": "OLD_TASK"}}]})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as upstream:
-            with mock.patch.object(main_mod, "get_http_client", return_value=upstream):
+            with mock.patch.object(http_client, "get_http_client", return_value=upstream):
                 main_mod._maybe_schedule_rolling_summary("remote_A", "opencode", "", "m",
                                                          "https://opencode.ai/zen/v1")
-                task = main_mod._summary_tasks["remote_A:m"]
+                task = models_routes._summary_tasks["remote_A:m"]
                 try:
                     if started:
                         await asyncio.wait_for(entered.wait(), 2)
@@ -70,7 +70,7 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
                                                               if k != "mem:remote_A"})
                 main_mod._maybe_schedule_rolling_summary("remote_A", "opencode", "", "m",
                                                          "https://opencode.ai/zen/v1")
-                await asyncio.wait_for(main_mod._summary_tasks["remote_A:m"], 2)
+                await asyncio.wait_for(models_routes._summary_tasks["remote_A:m"], 2)
                 assert context._read_rolling_memory("remote_A")["summary"] == "OLD_TASK"
     asyncio.run(run())
 
