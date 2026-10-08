@@ -1,9 +1,11 @@
 // ====== Token 用量统计（2026-10-08）：AI 调用记账的只读可视化面板 ======
 // 数据源＝GET /api/usage/stats?days=N（server/usage_stats.summarize，记账点在
 // record_usage 的七个调用点：聊天流式/非流式、知识提取/描述、文档解析、记忆摘要、
-// Φ 智能体）。面板只读不写；图表零依赖——扇形 conic-gradient、折线手写 SVG、
-// 条形 div 宽度百分比（先例 quiz-render.js 的 _quizPieHtml/_quizLineHtml 与
-// memory-bar）。口径全局共享（backlog T180 拍板）：不按账号分账，所有账号共用。
+// Φ 智能体）。面板只读不写；图表零依赖——趋势线手写 SVG 单调三次平滑曲线、圆环
+// conic-gradient＋radial mask 挖孔、条形 div 宽度百分比（先例 quiz-render.js 的
+// _quizPieHtml/_quizLineHtml 与 memory-bar）。2026-10-08 借鉴 ZCode 控制台三件：
+// 平滑曲线（防过冲取单调插值）、圆环＋中心总量、数字万/亿中文口径。
+// 口径全局共享（backlog T180 拍板）：不按账号分账，所有账号共用。
 
 const TOKEN_USAGE_KIND_LABELS = {
   chat: '聊天问答',
@@ -24,17 +26,15 @@ let _tokenUsageDays = 30;     // 当前统计范围（7/30/90），与服务端 
 let _tokenUsageSplit = false; // 折线图是否按模型分线
 let _tokenUsageCache = null;  // 最近一次拉到的 summarize 结果（切分线不重拉）
 
-// 数字缩写纯函数（冒烟测试直接调用）：1234 → 1.2k，1234567 → 1.2M，空值 → —
+// 数字缩写纯函数（冒烟测试直接调用）：中文单位口径（对齐 ZCode 控制台）——
+// 999 → 999、25000 → 2.5万、820000000 → 8.2亿，万以下不缩写，空值 → —
 function _tokenFormatNum(n) {
   if (n === null || n === undefined || n === '') return '—';
   const v = Number(n);
   if (!Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
-  if (abs >= 1e6) return (Math.round(v / 1e5) / 10) + 'M';
-  if (abs >= 1e3) {
-    const k = Math.round(v / 100) / 10;
-    return Math.abs(k) >= 1000 ? (Math.round(k / 100) / 10) + 'M' : k + 'k';
-  }
+  if (abs >= 1e8) return (Math.round(v / 1e7) / 10) + '亿';
+  if (abs >= 1e4) return (Math.round(v / 1e3) / 10) + '万';
   return String(Math.round(v));
 }
 
@@ -61,6 +61,48 @@ function _tokenUsageNiceMax(v) {
     if (val <= u * pow) return u * pow;
   }
   return 10 * pow;
+}
+
+// 平滑曲线路径纯函数（冒烟测试直接调用）：单调三次插值（Fritsch–Carlson 限幅，
+// d3 curveMonotoneX 同族）——曲线过每个数据点、贝塞尔控制点不越出相邻数据值范围。
+// 普通 Catmull-Rom 会在尖峰过冲：token 图会冲破纵轴上限或插进 0 以下，趋势就失真了。
+// 入参 pts 为 [x, y] 数值对，返回 SVG path 的 d 串。
+function _tokenUsageSmoothPath(pts) {
+  const n = pts.length;
+  if (!n) return '';
+  if (n === 1) return 'M' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1);
+  if (n === 2) {
+    return 'M' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1)
+      + 'L' + pts[1][0].toFixed(1) + ' ' + pts[1][1].toFixed(1);
+  }
+  const dx = [], slope = [], tang = new Array(n);
+  for (let i = 0; i < n - 1; i++) {
+    dx[i] = pts[i + 1][0] - pts[i][0];
+    slope[i] = (pts[i + 1][1] - pts[i][1]) / dx[i];
+  }
+  tang[0] = slope[0];
+  tang[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    tang[i] = slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2;
+  }
+  for (let i = 0; i < n - 1; i++) {
+    if (slope[i] === 0) { tang[i] = 0; tang[i + 1] = 0; continue; }
+    const a = tang[i] / slope[i], b = tang[i + 1] / slope[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const f = 3 / Math.sqrt(s);
+      tang[i] = f * a * slope[i];
+      tang[i + 1] = f * b * slope[i];
+    }
+  }
+  let d = 'M' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1);
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i] / 3;
+    d += 'C' + (pts[i][0] + h).toFixed(1) + ' ' + (pts[i][1] + tang[i] * h).toFixed(1)
+      + ' ' + (pts[i + 1][0] - h).toFixed(1) + ' ' + (pts[i + 1][1] - tang[i + 1] * h).toFixed(1)
+      + ' ' + pts[i + 1][0].toFixed(1) + ' ' + pts[i + 1][1].toFixed(1);
+  }
+  return d;
 }
 
 // 模型占比分片纯函数（冒烟测试直接调用）：models 桶按总 token 排序取前 cap 名，
@@ -128,8 +170,9 @@ function _tokenUsageLineSeries(data, dateList) {
   return defs;
 }
 
-// 折线图（冒烟测试直接调用）：手写 SVG polyline，split=false 总量单线、
-// true 按模型分线（前 6 名＋其他）。横轴按 _tokenUsageDateList 补零填满整天。
+// 趋势图（冒烟测试直接调用）：手写 SVG 平滑曲线 path，split=false 总量单线、
+// true 按模型分线（前 6 名＋其他）。横轴按 _tokenUsageDateList 补零填满整天；
+// 每个数据点铺透明命中圆＋<title>，鼠标悬停可读当日数值。
 function _tokenUsageLineHtml(data, days, split) {
   const dateList = _tokenUsageDateList(days);
   let defs;
@@ -156,15 +199,18 @@ function _tokenUsageLineHtml(data, days, split) {
   const plotHeight = height - padTop - padBottom;
   const maxVal = _tokenUsageNiceMax(Math.max(1, ...defs.flatMap(s => s.values)));
   const n = dateList.length;
-  const polylines = defs.map(def => {
-    const points = def.values.map((v, i) => {
-      const x = padLeft + (n <= 1 ? 0.5 : i / (n - 1)) * plotWidth;
-      const y = padTop + (1 - v / maxVal) * plotHeight;
-      return x.toFixed(1) + ',' + y.toFixed(1);
-    }).join(' ');
-    return '<polyline points="' + points + '" fill="none" style="stroke:' + def.color
-      + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-  }).join('');
+  const pointAt = (v, i) => [
+    padLeft + (n <= 1 ? 0.5 : i / (n - 1)) * plotWidth,
+    padTop + (1 - v / maxVal) * plotHeight,
+  ];
+  const paths = defs.map(def => '<path d="' + _tokenUsageSmoothPath(def.values.map(pointAt))
+    + '" fill="none" style="stroke:' + def.color
+    + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>').join('');
+  const hits = defs.map(def => '<g class="token-line-hits">' + def.values.map((v, i) => {
+    const p = pointAt(v, i);
+    return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="7" fill="transparent">'
+      + '<title>' + dateList[i] + ' · ' + escapeHtml(def.label) + '：' + _tokenFormatNum(v) + ' tok</title></circle>';
+  }).join('') + '</g>').join('');
   const gridlines = [1, 0.5, 0].map(ratio => {
     const y = (padTop + (1 - ratio) * plotHeight).toFixed(1);
     return '<line x1="' + padLeft + '" y1="' + y + '" x2="' + (width - padRight) + '" y2="' + y
@@ -172,21 +218,24 @@ function _tokenUsageLineHtml(data, days, split) {
       + '<text x="' + (padLeft - 6) + '" y="' + (Number(y) + 3) + '" fill="currentColor" font-size="9" text-anchor="end">'
       + _tokenFormatNum(maxVal * ratio) + '</text>';
   }).join('');
-  const mid = Math.floor((n - 1) / 2);
-  const xLabels = [0, mid, n - 1].map((idx, pos) => {
+  // 短范围（≤10 天）逐日标轴（对齐 ZCode 观感），长范围收成首/中/尾三个免得挤成一团
+  const labelIdx = n <= 10 ? dateList.map((_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
+  const xLabels = labelIdx.map((idx, pos) => {
     const x = padLeft + (n <= 1 ? 0.5 : idx / (n - 1)) * plotWidth;
-    const anchor = pos === 0 ? 'start' : (pos === 1 ? 'middle' : 'end');
+    const anchor = pos === 0 ? 'start' : (pos === labelIdx.length - 1 ? 'end' : 'middle');
     return '<text x="' + x.toFixed(1) + '" y="' + (height - 8) + '" fill="currentColor" font-size="9" text-anchor="'
       + anchor + '">' + dateList[idx].slice(5) + '</text>';
   }).join('');
   const legend = defs.map(def => '<div class="token-chart-legend-item"><span style="background:' + def.color
     + '"></span>' + escapeHtml(def.label) + '</div>').join('');
   return '<svg class="token-line-chart" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">'
-    + gridlines + polylines + xLabels + '</svg>'
+    + gridlines + paths + hits + xLabels + '</svg>'
     + '<div class="token-chart-legend token-line-legend">' + legend + '</div>';
 }
 
-// 扇形图（冒烟测试直接调用）：conic-gradient 角度编码 token 占比，图例带数值
+// 圆环图（冒烟测试直接调用）：conic-gradient 角度编码 token 占比，环孔与中心总量
+// 由 CSS mask/叠加层负责（styles-panels.css）；图例为行式布局（色点＋模型名＋数值、
+// 百分比右对齐，≥10% 取整、不足 10% 保留一位小数，对齐 ZCode）。
 function _tokenUsagePieHtml(segments) {
   if (!segments || !segments.length) return '<div class="token-chart-empty">暂无用量记录</div>';
   const total = segments.reduce((sum, s) => sum + s.value, 0);
@@ -199,12 +248,18 @@ function _tokenUsagePieHtml(segments) {
     return segment.color + ' ' + start + '% ' + end + '%';
   }).join(', ');
   const legend = segments.map(segment => {
-    const pct = Math.round(segment.value / total * 100);
-    return '<div class="token-chart-legend-item"><span style="background:' + segment.color + '"></span>'
-      + escapeHtml(segment.label) + ' · ' + _tokenFormatNum(segment.value) + ' tok · ' + pct + '%</div>';
+    const pct = segment.value / total * 100;
+    const pctText = pct >= 10 ? Math.round(pct) + '%' : (Math.round(pct * 10) / 10) + '%';
+    return '<div class="token-donut-legend-item"><span class="token-donut-dot" style="background:'
+      + segment.color + '"></span>'
+      + '<span class="token-donut-name" title="' + escapeHtml(segment.label) + '">' + escapeHtml(segment.label) + '</span>'
+      + '<span class="token-donut-meta">' + _tokenFormatNum(segment.value) + ' tok</span>'
+      + '<span class="token-donut-pct">' + pctText + '</span></div>';
   }).join('');
-  return '<div class="token-usage-pie-row"><div class="token-usage-pie" style="background:conic-gradient('
-    + stops + ')"></div><div class="token-chart-legend">' + legend + '</div></div>';
+  return '<div class="token-usage-pie-row"><div class="token-usage-donut">'
+    + '<div class="token-usage-pie" style="background:conic-gradient(' + stops + ')"></div>'
+    + '<div class="token-usage-donut-center"><b>' + _tokenFormatNum(total) + '</b><span>tokens</span></div>'
+    + '</div><div class="token-chart-legend token-donut-legend">' + legend + '</div></div>';
 }
 
 // 用途分布横向条形（冒烟测试直接调用）：kinds 桶 → 降序条形行，条长按最大值归一
@@ -256,10 +311,10 @@ function _tokenUsageDashboardHtml(data, days, split) {
   }
   return '<div class="token-summary-row">' + _tokenUsageSummaryHtml(data.total) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">每日 token 趋势'
-    + '<span class="token-chart-sub">纵轴 prompt+completion 合计，横轴按自然日补零</span></div>'
+    + '<span class="token-chart-sub">纵轴 prompt+completion 合计，横轴按自然日补零，悬停数据点可读当日值</span></div>'
     + _tokenUsageLineHtml(data, days, split) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">模型用量占比'
-    + '<span class="token-chart-sub">扇形角度编码 prompt+completion 总 token，前 7 名其余并入其他</span></div>'
+    + '<span class="token-chart-sub">圆环角度编码 prompt+completion 总 token，前 7 名其余并入其他，中心为范围内总量</span></div>'
     + _tokenUsagePieHtml(_tokenUsageTopModels(data.models, 7)) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">用途分布'
     + '<span class="token-chart-sub">条形长度编码各用途总 token，看 token 都花在哪个功能上</span></div>'
@@ -328,6 +383,7 @@ if (typeof window !== 'undefined') {
   window._tokenUsageDateList = _tokenUsageDateList;
   window._tokenUsageNiceMax = _tokenUsageNiceMax;
   window._tokenUsageTopModels = _tokenUsageTopModels;
+  window._tokenUsageSmoothPath = _tokenUsageSmoothPath;
   window._tokenUsageSummaryHtml = _tokenUsageSummaryHtml;
   window._tokenUsageLineHtml = _tokenUsageLineHtml;
   window._tokenUsagePieHtml = _tokenUsagePieHtml;

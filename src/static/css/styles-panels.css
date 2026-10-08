@@ -4595,8 +4595,9 @@
 
 /* ===== Token 用量统计面板（2026-10-08）：记账只读可视化 =====
    容器在 index.html 的 #tokenDialog（复用 accounts-dialog 玻璃家族），内容全部由
-   token-usage.js 渲染。卡片/图例/折线样式抄 quiz-chart-* 先例，条形抄 memory-bar
-   先例，配色全走 CSS 变量——主题切换自动适配，不写死颜色。 */
+   token-usage.js 渲染。卡片/图例/趋势线样式抄 quiz-chart-* 先例，条形抄 memory-bar
+   先例，配色全走 CSS 变量——主题切换自动适配，不写死颜色。圆环挖孔与中心总量层
+   借鉴 ZCode 控制台（2026-10-08）。 */
 .token-dialog {
   width: min(760px, calc(100vw - 32px));
   max-width: none;
@@ -4709,20 +4710,69 @@
   flex-shrink: 0;
 }
 
-/* 扇形：conic-gradient 由 JS 内联（分片角度在那边才算得出来），这里只管形状 */
-.token-usage-pie-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+/* 圆环：conic-gradient 由 JS 内联（分片角度在那边才算得出来），radial mask 在
+   扇形上挖出环孔；中心总量是叠一层独立元素（不受 mask 影响）。阴影放包装层——
+   mask 会把元素自身 box-shadow 的环外部分一起裁掉。 */
+.token-usage-pie-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 
-.token-usage-pie {
-  width: 120px;
-  height: 120px;
+.token-usage-donut {
+  position: relative;
+  width: 132px;
+  height: 132px;
   flex-shrink: 0;
   margin: 0 auto;
-  border: 1px solid var(--border);
   border-radius: 50%;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 
-.token-usage-pie-row .token-chart-legend { flex: 1; min-width: 200px; }
+.token-usage-pie {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(circle at center, transparent 0 54%, #000 55% 100%);
+  mask: radial-gradient(circle at center, transparent 0 54%, #000 55% 100%);
+}
+
+.token-usage-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.token-usage-donut-center b { font-size: 15px; color: var(--text-primary); letter-spacing: .3px; }
+
+.token-usage-donut-center span { margin-top: 1px; font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+.token-usage-pie-row .token-chart-legend { flex: 1; min-width: 220px; }
+
+/* 圆环图例：行式布局（色点＋模型名＋数值靠右、百分比再靠右），行间细分隔线 */
+.token-donut-legend { gap: 0; }
+
+.token-donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.token-donut-legend-item:last-child { border-bottom: none; }
+
+.token-donut-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+.token-donut-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.token-donut-meta { margin-left: auto; flex-shrink: 0; font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+.token-donut-pct { flex-shrink: 0; min-width: 3.2em; text-align: right; font-weight: 600; color: var(--text); }
 
 /* 用途分布条形：memory-bar 同款三段行，条色走 accent 令牌 */
 .token-kind-row {
