@@ -645,4 +645,14 @@ check('学习画像按账号隔离（2026-10-07）：备份两路由恒带 devic
   if (!trashpy.includes('def purge_bound_profiles')) throw new Error('trash.py 缺彻底清除连画像');
   return true;
 });
+
+check('删除链超时兜底全覆盖（T83）：三个删除/保存链 fetch 均带 AbortSignal.timeout', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  for (const fn of ['_deleteOnServer', '_deleteGraphStateOnServer', '_postGraphState']) {
+    const m = src.match(new RegExp('async function ' + fn + '\\([\\s\\S]*?\\n    \\}'));
+    if (!m) throw new Error('session.js 缺 ' + fn);
+    if (!m[0].includes('AbortSignal.timeout(')) throw new Error(fn + ' 仍无超时 signal（删除链会静默挂死）');
+  }
+  return true;
+});
 }
