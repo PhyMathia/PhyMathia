@@ -6213,6 +6213,18 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   gap: 6px;
 }
 
+/* T124：更早的待处理批次（非 currentOpsId）整卡灰化＋标注——勾选与应用都锚在
+   最新一批（应用路径读全局 harnessResult），旧批挂真控件会作用到错的一批。
+   只灰清单本体：警告/自检/错误块保持可读；<details> 仍可展开看理由与对比，
+   标注（.graph-harness-opcard-note）落在当前批次放应用按钮的同一位置。 */
+.graph-harness-opcard-stale .graph-harness-oplist {
+  opacity: .55;
+}
+.graph-harness-opcard-note {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
 /* T122：单条操作压成一条约 30px 的细横条，理由与「原文 → 建议文」对比收进
    <details>。旧版是一块 9px/11px 内边距的方块、一张约 50px，6 张就 300px。
    18px 1fr 双列网格：勾选框落第 1 列，标题落第 2 列，展开区跨两列。 */
