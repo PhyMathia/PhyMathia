@@ -1374,7 +1374,8 @@
       // 服务端清空先行（T182）：回收站捕获点在 DELETE /messages 内，必须早于
       // 探索网快照/quiz 的前端清理，否则捕到的已是残骸（同删除画布的顺序纪律）
       try {
-        await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE' });
+        // 超时兜底（T194）：清空链首环挂死，后面快照/知识/公式/quiz 清理全部静默不执行
+        await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE', signal: AbortSignal.timeout(10000) });
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
       await _deleteGraphStateOnServer(currentSessionId);
       await deleteKnowledgeBySession(currentSessionId);
@@ -1438,7 +1439,8 @@
       if (typeof setFormulaCache === 'function') setFormulaCache({});
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof window.clearAllQuizStats === 'function') window.clearAllQuizStats();
-      try { fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE' }).catch(() => {}); } catch (e) {}
+      // 超时兜底（T195）：fire-and-forget 保持非阻塞，但失败记 warn 不静默
+      try { fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE', signal: AbortSignal.timeout(10000) }).catch(err => console.warn('[ClearAll] quiz bank delete failed:', err)); } catch (e) {}
 
       // 4. 创建新会话并刷新 UI
       if (typeof window.phiCanvasesCleared === 'function') window.phiCanvasesCleared();

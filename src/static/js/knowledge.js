@@ -223,7 +223,9 @@ async function _deleteKnowledgeOnServer(ids) {
   const list = (ids || []).filter(Boolean);
   for (const id of list) {
     try {
-      await fetch('/api/knowledge/' + encodeURIComponent(id), { method: 'DELETE' });
+      // 超时兜底（T194）：无 signal 时挂死一条，循环里后续 id 全不执行、调用方整条删除链卡死
+      const resp = await fetch('/api/knowledge/' + encodeURIComponent(id), { method: 'DELETE', signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) console.warn('Delete knowledge on server not ok:', id, resp.status);
     } catch (err) {
       console.warn('Delete knowledge on server failed:', id, err);
     }
@@ -1408,9 +1410,10 @@ async function deleteFormulasBySession(sessionId) {
     changed = true;
   }
   if (changed) setFormulaCache(items);
-  // 服务端按会话删除
+  // 服务端按会话删除（超时兜底 T195：无 signal 挂死会卡住清空/删会话链收尾）
   try {
-    await fetch('/api/formulas?session_id=' + encodeURIComponent(sessionId), { method: 'DELETE' });
+    const resp = await fetch('/api/formulas?session_id=' + encodeURIComponent(sessionId), { method: 'DELETE', signal: AbortSignal.timeout(10000) });
+    if (!resp.ok) console.warn('Delete formulas by session not ok:', resp.status);
   } catch (err) {
     console.warn('Delete formulas by session failed:', err);
   }
@@ -1767,7 +1770,8 @@ async function confirmDeleteFormula(id) {
   delete items[id];
   setFormulaCache(items);
   try {
-    await fetch('/api/formulas/' + encodeURIComponent(id), { method: 'DELETE' });
+    const resp = await fetch('/api/formulas/' + encodeURIComponent(id), { method: 'DELETE', signal: AbortSignal.timeout(10000) });
+    if (!resp.ok) console.warn('Delete formula on server not ok:', resp.status);
   } catch (err) {
     console.warn('Delete formula on server failed:', err);
   }
