@@ -20,3 +20,18 @@ _ROOT = str(Path(__file__).resolve().parent.parent)
 for _p in (_ROOT, _ROOT + "/src"):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+import pytest  # noqa: E402
+
+from server import usage_stats as _usage_stats  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_dir(tmp_path, monkeypatch):
+    """用量记账（record_usage/record_failure）在测试里一律落 tmp 目录。
+
+    2026-10-08 起失败调用也进账：打上游错误路径的用例（非 200/非 JSON/连接
+    异常）会触发 record_failure，不隔离就会写真仓库的 data/usage。
+    test_usage_stats 的 setUp 自设 USAGE_DIR，晚于本 fixture 生效，不受影响。
+    """
+    monkeypatch.setattr(_usage_stats, "USAGE_DIR", tmp_path / "usage")

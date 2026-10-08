@@ -377,6 +377,7 @@ class NonStreamUsagePassthroughTest(RouteTestBase):
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with mock.patch.object(http_client_mod, "get_http_client", return_value=client), \
              mock.patch.object(usage_stats_mod, "record_usage") as record, \
+             mock.patch.object(usage_stats_mod, "record_failure") as fail_record, \
              mock.patch.object(models_routes_mod, "_log_cache_hit_rate") as hit_rate:
             resp = self.client.post("/api/models/chat", json={
                 "messages": [{"role": "user", "content": "hi"}],
@@ -387,37 +388,45 @@ class NonStreamUsagePassthroughTest(RouteTestBase):
                 "stream": False,
                 "session_id": "sess-t149",
             })
-        return resp, record, hit_rate
+        return resp, record, hit_rate, fail_record
 
     def test_missing_content_still_records_usage(self):
         usage = {"prompt_tokens": 100, "completion_tokens": 0}
-        resp, record, hit_rate = self._post_chat(
+        resp, record, hit_rate, fail_record = self._post_chat(
             lambda request: httpx.Response(200, json={
                 "choices": [{"message": {"reasoning_content": "token 烧光"}}],
                 "usage": usage,
             }))
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["choices"][0]["message"]["reasoning_content"], "token 烧光")
-        record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage)
+        record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage,
+                                       duration_ms=mock.ANY)
         hit_rate.assert_called_once_with(usage)
+        fail_record.assert_not_called()
 
     def test_content_path_records_usage_unchanged(self):
         # 有 content 路径口径不变：记账参数与缺 content 分支完全一致
         usage = {"prompt_tokens": 10, "completion_tokens": 2}
-        resp, record, hit_rate = self._post_chat(
+        resp, record, hit_rate, fail_record = self._post_chat(
             lambda request: httpx.Response(200, json={
                 "choices": [{"message": {"content": "pong"}}], "usage": usage}))
         self.assertEqual(resp.status_code, 200)
-        record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage)
+        record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage,
+                                       duration_ms=mock.ANY)
         hit_rate.assert_called_once_with(usage)
+        fail_record.assert_not_called()
 
     def test_non_json_body_skips_usage(self):
-        # 非 JSON 正文（网关错误页）解析不出 usage，保持不记账
-        resp, record, hit_rate = self._post_chat(
+        # 非 JSON 正文（网关错误页）：解析不出 usage 不记成功账，但失败进账（2026-10-08）
+        resp, record, hit_rate, fail_record = self._post_chat(
             lambda request: httpx.Response(200, text="<html>bad gateway</html>"))
         self.assertEqual(resp.status_code, 200)
         record.assert_not_called()
         hit_rate.assert_not_called()
+        fail_record.assert_called_once()
+        call = fail_record.call_args
+        self.assertEqual(call.args[2], "legacy")  # kind
+        self.assertIn("非 JSON", call.args[4])    # error 原因
 
 
 class LinearRetirementGateTest(RouteTestBase):

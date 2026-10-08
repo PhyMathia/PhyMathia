@@ -92,6 +92,82 @@ class RecordUsageTest(UsageStatsBase):
         self.assertEqual(len(lines), 2)
 
 
+class FailureAndDurationTest(UsageStatsBase):
+    """2026-10-08 补的两维：失败进账（record_failure → errorRequests）＋请求耗时
+    （durationMs → avgDurationMs）；旧格式记录（无 status/durationMs 字段）按
+    「成功、无耗时」兼容读取，既有口径不受影响。"""
+
+    def _write(self, day, entries):
+        usage_stats.USAGE_DIR.mkdir(parents=True, exist_ok=True)
+        path = usage_stats.USAGE_DIR / f"{day}.jsonl"
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+
+    def test_record_failure_writes_error_entry(self):
+        entry = usage_stats.record_failure("deepseek", "m", "chat", "s1",
+                                           "HTTP 429: rate limited", duration_ms=1234)
+        self.assertEqual(entry["status"], "error")
+        self.assertEqual(entry["error"], "HTTP 429: rate limited")
+        self.assertEqual(entry["durationMs"], 1234)
+        self.assertIsNone(entry["prompt_tokens"])
+        self.assertIsNone(entry["completion_tokens"])
+        self.assertIsNone(entry["cache_hit_tokens"])
+        line = json.loads(list(usage_stats.USAGE_DIR.glob("*.jsonl"))[0]
+                          .read_text(encoding="utf-8").strip())
+        self.assertEqual(line["kind"], "chat")
+        self.assertEqual(line["sessionId"], "s1")
+
+    def test_record_failure_sanitizes_and_defaults(self):
+        # error 截断到 200 字符；None 兜底 unknown；非法 duration 归 None
+        entry = usage_stats.record_failure("p", "m", "chat", "", "x" * 500)
+        self.assertEqual(len(entry["error"]), 200)
+        self.assertEqual(usage_stats.record_failure("p", "m", "chat", "", None)["error"], "unknown")
+        self.assertIsNone(
+            usage_stats.record_failure("p", "m", "chat", "", "boom", duration_ms="abc")["durationMs"])
+
+    def test_record_usage_carries_status_and_duration(self):
+        entry = usage_stats.record_usage("deepseek", "m", "chat", "",
+                                         {"prompt_tokens": 10, "completion_tokens": 1}, duration_ms=250)
+        self.assertEqual(entry["status"], "ok")
+        self.assertEqual(entry["durationMs"], 250)
+        no_dur = usage_stats.record_usage("deepseek", "m", "chat", "",
+                                          {"prompt_tokens": 10, "completion_tokens": 1})
+        self.assertIsNone(no_dur["durationMs"])
+
+    def test_summarize_counts_errors_and_avg_duration(self):
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "a", "sessionId": "",
+             "status": "ok", "durationMs": 1000,
+             "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": None},
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "a", "sessionId": "",
+             "status": "ok", "durationMs": 3000,
+             "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": None},
+            # 失败调用：计次不计 token；本条不带 durationMs，也不进均值
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "a", "sessionId": "",
+             "status": "error", "error": "HTTP 502",
+             "prompt_tokens": None, "completion_tokens": None, "cache_hit_tokens": None},
+            # 旧格式记录：无 status/durationMs ＝成功、无耗时
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "b", "sessionId": "",
+             "prompt_tokens": 40, "completion_tokens": 5, "cache_hit_tokens": None},
+        ])
+        out = usage_stats.summarize(days=30)
+        total = out["total"]
+        self.assertEqual(total["requests"], 4)  # 失败也计次
+        self.assertEqual(total["errorRequests"], 1)
+        self.assertEqual(total["durationKnown"], 2)
+        self.assertEqual(total["avgDurationMs"], 2000)
+        self.assertEqual(total["promptTokens"], 240)  # 失败不污染 token 口径
+        self.assertEqual(total["totalTokens"], 265)
+        self.assertEqual(out["models"]["a"]["requests"], 3)
+        self.assertEqual(out["models"]["a"]["errorRequests"], 1)
+        self.assertEqual(out["models"]["a"]["avgDurationMs"], 2000)
+        self.assertEqual(out["models"]["b"]["errorRequests"], 0)
+        self.assertIsNone(out["models"]["b"]["avgDurationMs"])
+        self.assertEqual(out["days"][today]["errorRequests"], 1)
+        self.assertEqual(out["series"][today]["a"]["requests"], 3)
+        self.assertEqual(out["kinds"]["chat"]["errorRequests"], 1)
+
+
 class DefaultDirTest(unittest.TestCase):
     def test_default_dir_is_repo_root_data_usage(self):
         # 2026-10-08 拨回仓库根 data/usage（与 config.py DATA_DIR 同口径）：

@@ -27,6 +27,20 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：_tokenFormatMs 耗时口径（ms/s 分界与空值/非法值）', () => {
+      const f = sandbox._tokenFormatMs;
+      if (f(0) !== '0ms') throw new Error('0 应为 0ms：' + f(0));
+      if (f(850) !== '850ms') throw new Error('毫秒段应原样：' + f(850));
+      if (f(999) !== '999ms') throw new Error('1s 以下应为 ms：' + f(999));
+      if (f(1000) !== '1s') throw new Error('1000 应为 1s：' + f(1000));
+      if (f(1234) !== '1.2s') throw new Error('1234 应为 1.2s：' + f(1234));
+      if (f(95600) !== '95.6s') throw new Error('95600 应为 95.6s：' + f(95600));
+      for (const bad of [null, undefined, '', -5, 'abc']) {
+        if (f(bad) !== '—') throw new Error('空值/非法值应为 —：' + f(bad));
+      }
+      return true;
+    });
+
     check('token-usage：_tokenUsageDateList 整天序列与 _tokenUsageNiceMax 取整', () => {
       const list = sandbox._tokenUsageDateList(7);
       if (list.length !== 7) throw new Error('应返回 7 天：' + list.length);
@@ -230,22 +244,32 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：汇总卡与明细表（命中率空值 —、按总量降序）', () => {
+    check('token-usage：汇总卡与明细表（命中率空值 —、按总量降序、失败/耗时提示与列）', () => {
       const cards = sandbox._tokenUsageSummaryHtml({
         requests: 42, promptTokens: 1500000, completionTokens: 1234,
         cachedTokens: 0, hitKnownRequests: 0, hitRate: null,
       });
       if (!cards.includes('>42<') || !cards.includes('150万') || !cards.includes('1234')) throw new Error('数字卡数值不符');
       if (!cards.includes('缓存命中') || !cards.includes('—') || !cards.includes('无命中字段')) throw new Error('命中率空值口径不符');
+      // 旧数据（无 errorRequests/avgDurationMs）：提示只回「次」，不出现失败/平均
+      if (cards.includes('失败') || cards.includes('平均')) throw new Error('旧数据不应出现失败/平均提示');
+      const cards2 = sandbox._tokenUsageSummaryHtml({
+        requests: 7, promptTokens: 100, completionTokens: 10, cachedTokens: 0, hitKnownRequests: 0, hitRate: null,
+        errorRequests: 2, avgDurationMs: 1234,
+      });
+      if (!cards2.includes('失败 2 次')) throw new Error('失败次数应进提示：' + cards2);
+      if (!cards2.includes('平均 1.2s')) throw new Error('平均耗时应进提示：' + cards2);
       const table = sandbox._tokenUsageTableHtml({
         models: {
-          a: { requests: 2, promptTokens: 100, completionTokens: 10, totalTokens: 110, hitRate: 0.5 },
+          a: { requests: 2, promptTokens: 100, completionTokens: 10, totalTokens: 110, hitRate: 0.5, avgDurationMs: 850 },
           b: { requests: 1, promptTokens: 5, completionTokens: null, totalTokens: 5, hitRate: null },
         },
       });
       if (table.indexOf('>a<') > table.indexOf('>b<')) throw new Error('应按总 token 降序');
       if (!table.includes('50%')) throw new Error('命中率应展示百分比');
       if (!table.includes('—')) throw new Error('无命中字段模型应显示 —');
+      if (!table.includes('平均耗时')) throw new Error('明细表应有平均耗时列');
+      if (!table.includes('850ms')) throw new Error('平均耗时应按 ms/s 口径展示');
       return true;
     });
 
@@ -410,10 +434,22 @@ export async function run() {
         throw new Error('圆环行必须顶对齐（align-items: flex-start），居中会随图例高度挪位');
       }
       if (!src.includes("window.openTokenUsagePanel = openTokenUsagePanel")) throw new Error('冒烟导出块缺失');
+      if (!src.includes('window._tokenFormatMs')) throw new Error('耗时格式化未导出冒烟');
       if (!src.includes('window._tokenUsageSmoothPath')) throw new Error('平滑曲线函数未导出冒烟');
       if (!src.includes('window.pickTokenRangeDays')) throw new Error('自绘下拉未导出冒烟');
       if (!src.includes('prefers-reduced-motion')) throw new Error('过渡动画应尊重减少动态偏好');
       if (!src.includes('_tokenUsageFetchSeq')) throw new Error('快速连点范围应有拉取序号护栏');
+      // 失败/耗时记账链（2026-10-08）：后端有 record_failure 与新聚合键，四个调用
+      // 文件都接线；前端明细表有耗时列
+      const usageStatsSrc = fs.readFileSync('src/server/usage_stats.py', 'utf8');
+      if (!usageStatsSrc.includes('def record_failure')) throw new Error('后端缺 record_failure');
+      if (!usageStatsSrc.includes('errorRequests') || !usageStatsSrc.includes('avgDurationMs')) {
+        throw new Error('聚合缺失败数/平均耗时');
+      }
+      for (const py of ['src/server/models_routes.py', 'src/server/knowledge.py',
+        'src/server/documents.py', 'harness/review.py']) {
+        if (!fs.readFileSync(py, 'utf8').includes('record_failure')) throw new Error(py + ' 未接失败记账');
+      }
       const html = fs.readFileSync('src/static/index.html', 'utf8');
       for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"', 'id="tokenRangeMenu"',
         'id="tokenRangeBtn"', 'id="tokenRefreshBtn"', 'data-days="7"', 'data-days="30"', 'data-days="90"',

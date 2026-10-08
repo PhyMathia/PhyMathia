@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -379,6 +380,9 @@ async def api_models_chat(request: Request):
     # resp.ok 分辨失败；stream=false 分支也裸吐上游 JSON 却带 event-stream 媒体类型
     client = http_client.get_http_client()
 
+    # 计时起点（成功/失败记账共用）：覆盖首连与 400 降级重发全程
+    call_t0 = time.monotonic()
+
     async def _send_upstream():
         req = client.build_request("POST", url, json=body, headers=headers,
                                    timeout=httpx.Timeout(180.0, connect=15.0))
@@ -388,6 +392,9 @@ async def api_models_chat(request: Request):
         resp = await _send_upstream()
     except httpx.HTTPError as e:
         logger.error(f"AI proxy connect error: {e}")
+        usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                   session_id or session_bucket, f"连接失败: {e}",
+                                   usage_stats.elapsed_ms(call_t0))
         raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     if resp.status_code == 400 and "stream_options" in body:
         # 降级第一级：该供应商不认识 stream_options（整请求 400）时剥掉重发。
@@ -399,6 +406,9 @@ async def api_models_chat(request: Request):
             resp = await _send_upstream()
         except httpx.HTTPError as e:
             logger.error(f"AI proxy connect error: {e}")
+            usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                       session_id or session_bucket, f"连接失败: {e}",
+                                       usage_stats.elapsed_ms(call_t0))
             raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     if resp.status_code == 400 and thinking_params:
         # 降级安全网：该供应商不认识思考参数（整请求 400）时剥掉重发一次——
@@ -411,6 +421,9 @@ async def api_models_chat(request: Request):
             resp = await _send_upstream()
         except httpx.HTTPError as e:
             logger.error(f"AI proxy connect error: {e}")
+            usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                       session_id or session_bucket, f"连接失败: {e}",
+                                       usage_stats.elapsed_ms(call_t0))
             raise HTTPException(status_code=502, detail=f"上游连接失败: {e}")
     logger.info(f"AI proxy response: {resp.status_code} from {url}")
 
@@ -421,6 +434,10 @@ async def api_models_chat(request: Request):
             await resp.aclose()
         error_text = error_body.decode(errors='replace')[:500]
         logger.error(f"AI proxy upstream error: status={resp.status_code} body={error_text} url={url}")
+        usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                   session_id or session_bucket,
+                                   f"HTTP {resp.status_code}: {error_text}",
+                                   usage_stats.elapsed_ms(call_t0))
         # T43：401/403 或正文命中凭证错误时，文案带上「换钥」引导而非只报状态码
         raise HTTPException(status_code=502, detail=llm_common.upstream_error_detail(resp.status_code, error_text))
 
@@ -436,6 +453,9 @@ async def api_models_chat(request: Request):
             # 上游 200 却回非 JSON 正文（网关错误页等）：原样透传，但别让
             # 下面的状态更新/快照回填跟着裸 except 一起静默蒸发
             logger.warning("AI proxy non-stream: upstream 200 with non-JSON body")
+            usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                       session_id or session_bucket, "200 但正文非 JSON",
+                                       usage_stats.elapsed_ms(call_t0))
             return Response(content=raw, media_type="application/json")
         # usage 记账必须在 content 提取之前（T149）：推理型模型烧光 max_tokens
         # 时 200＋usage 齐全但 content 缺失，原先放在提取之后会被早退分支整个
@@ -445,7 +465,8 @@ async def api_models_chat(request: Request):
             logger.info(f"AI proxy usage: {data['usage']}")
             usage_stats.record_usage(provider, model_name,
                                      "chat" if prompt else "legacy",
-                                     session_id or session_bucket, data["usage"])
+                                     session_id or session_bucket, data["usage"],
+                                     duration_ms=usage_stats.elapsed_ms(call_t0))
             _log_cache_hit_rate(data["usage"])
         try:
             content = data["choices"][0]["message"]["content"]
@@ -495,11 +516,15 @@ async def api_models_chat(request: Request):
                 logger.info(f"AI proxy usage: {last_usage}")
                 usage_stats.record_usage(provider, model_name,
                                          "chat" if prompt else "legacy",
-                                         session_id or session_bucket, last_usage)
+                                         session_id or session_bucket, last_usage,
+                                         duration_ms=usage_stats.elapsed_ms(call_t0))
                 _log_cache_hit_rate(last_usage)
             _update_socratic_state_from_content("".join(streamed_content), socratic_ref, account)
         except Exception as e:
             logger.error(f"AI proxy error: {e}")
+            usage_stats.record_failure(provider, model_name, "chat" if prompt else "legacy",
+                                       session_id or session_bucket, f"流中断: {e}",
+                                       usage_stats.elapsed_ms(call_t0))
             yield f"data: {json.dumps({'error': 500, 'detail': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
         finally:
@@ -708,12 +733,23 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
             "max_tokens": 300,
         }
         client = http_client.get_http_client()
-        resp = await client.post(url, json=body, headers=headers, timeout=30.0)
-        if resp.status_code != 200:
-            return
-        data = resp.json()
+        summary_t0 = time.monotonic()
+        try:
+            resp = await client.post(url, json=body, headers=headers, timeout=30.0)
+            if resp.status_code != 200:
+                usage_stats.record_failure(provider, model_name, "summary", session_id,
+                                           f"HTTP {resp.status_code}", usage_stats.elapsed_ms(summary_t0))
+                return
+            data = resp.json()
+        except Exception as e:
+            # 只包 AI 调用段：连接/超时/解析失败都算调用失败进账，再抛给外层记日志；
+            # 记忆写入段的异常仍归外层 except，不冒充调用失败
+            usage_stats.record_failure(provider, model_name, "summary", session_id,
+                                       f"请求异常: {e}", usage_stats.elapsed_ms(summary_t0))
+            raise
         if data.get("usage"):
-            usage_stats.record_usage(provider, model_name, "summary", session_id, data["usage"])
+            usage_stats.record_usage(provider, model_name, "summary", session_id, data["usage"],
+                                     duration_ms=usage_stats.elapsed_ms(summary_t0))
         content = data["choices"][0]["message"]["content"]
         if context._write_rolling_memory(session_id, content, snapshot["messageCount"],
                                          expected_generation=generation, snapshot=snapshot,

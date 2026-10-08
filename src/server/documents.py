@@ -10,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from .http_client import get_http_client
 from .llm_common import opencode_gateway_headers
 from . import usage_stats  # 共享层：token 用量与缓存命中计量落盘
@@ -417,11 +419,19 @@ async def _ai_extract_document_knowledge(
     headers.update(opencode_gateway_headers(base_url, "phymathia-docs"))
     body = {"model": model, "messages": messages, "stream": False, "temperature": 0.2}
     client = get_http_client()
-    resp = await client.post(url, json=body, headers=headers, timeout=120.0)
-    resp.raise_for_status()
-    data = resp.json()
+    docs_t0 = time.monotonic()
+    try:
+        resp = await client.post(url, json=body, headers=headers, timeout=120.0)
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        # 失败也进账后原样再抛：调用方的回退/报错行为不变
+        usage_stats.record_failure(provider, model, "docs", "",
+                                   str(e) or type(e).__name__, usage_stats.elapsed_ms(docs_t0))
+        raise
     if data.get("usage"):
-        usage_stats.record_usage(provider, model, "docs", "", data["usage"])
+        usage_stats.record_usage(provider, model, "docs", "", data["usage"],
+                                 duration_ms=usage_stats.elapsed_ms(docs_t0))
     content = data["choices"][0]["message"]["content"]
     return _parse_document_extract_json(content, max_items)
 

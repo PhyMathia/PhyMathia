@@ -9,6 +9,12 @@ data/usage/YYYY-MM-DD.jsonl，并提供按天/模型汇总（GET /api/usage/stat
 - OpenAI 系: prompt_tokens_details.cached_tokens
 - Anthropic 式: cache_read_input_tokens（原生协议字段，个别兼容端点透传）
 
+2026-10-08 补两维（结果可见性）：①失败调用也进账——record_failure 在各调用
+点的错误出口（HTTP 非 200/连接异常/正文不可用）落 status=error 记录，token 数
+为 null、error 存截断到 200 字符的原因，聚合进 errorRequests；②请求耗时——
+成功与失败都带 durationMs（调用点用 elapsed_ms 从 monotonic 起点算），聚合出
+avgDurationMs。旧记录没有 status/durationMs 字段，聚合按「成功、无耗时」兼容。
+
 住进 server 包的理由：聊天主应用与 Φ 智能体（harness）两侧运行时都
 import 得到 server 包（路径保证见 llm_common.py 头注）。
 只依赖标准库；本模块不得 import 任何使用方。
@@ -18,6 +24,7 @@ import json
 import logging
 import sys
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -67,23 +74,8 @@ def parse_usage(usage):
     }
 
 
-def record_usage(provider, model, kind, session_id, usage):
-    """解析并追加一条用量记录；解析不出任何 token 数时静默跳过。
-
-    返回写入的条目 dict（测试/调用方可用），未写入返回 None。
-    计量是旁路观测：任何落盘失败只记警告，绝不影响主请求。
-    """
-    parsed = parse_usage(usage)
-    if parsed is None or (parsed["prompt_tokens"] is None and parsed["completion_tokens"] is None):
-        return None
-    entry = {
-        "ts": datetime.now().isoformat(timespec="seconds"),
-        "kind": str(kind or ""),
-        "provider": str(provider or ""),
-        "model": str(model or ""),
-        "sessionId": str(session_id or ""),
-        **parsed,
-    }
+def _write_entry(entry):
+    """JSONL 追加（当天一文件）；落盘失败只警告不抛——计量是旁路观测。"""
     try:
         usage_dir = USAGE_DIR
         usage_dir.mkdir(parents=True, exist_ok=True)
@@ -97,13 +89,82 @@ def record_usage(provider, model, kind, session_id, usage):
     return entry
 
 
+def elapsed_ms(t0):
+    """monotonic 起点 → 毫秒整数（耗时记账统一从这里取，负数截 0）。"""
+    return max(0, int((time.monotonic() - t0) * 1000))
+
+
+def _norm_duration(duration_ms):
+    try:
+        value = int(duration_ms)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def record_usage(provider, model, kind, session_id, usage, duration_ms=None):
+    """解析并追加一条成功用量记录；解析不出任何 token 数时静默跳过。
+
+    返回写入的条目 dict（测试/调用方可用），未写入返回 None。
+    计量是旁路观测：任何落盘失败只记警告，绝不影响主请求。
+    """
+    parsed = parse_usage(usage)
+    if parsed is None or (parsed["prompt_tokens"] is None and parsed["completion_tokens"] is None):
+        return None
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "kind": str(kind or ""),
+        "provider": str(provider or ""),
+        "model": str(model or ""),
+        "sessionId": str(session_id or ""),
+        "status": "ok",
+        "durationMs": _norm_duration(duration_ms),
+        **parsed,
+    }
+    return _write_entry(entry)
+
+
+def record_failure(provider, model, kind, session_id, error, duration_ms=None):
+    """失败调用也进账：HTTP 非 200/连接异常/正文不可用等落一条 status=error
+    记录（token 数为 null，error 存截断到 200 字符的原因）。
+
+    在调用方 except 链里被调用，自身绝不抛（写失败只警告），否则会顶掉原异常。
+    """
+    try:
+        message = str(error).strip() if error is not None else ""
+    except Exception:
+        message = ""
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "kind": str(kind or ""),
+        "provider": str(provider or ""),
+        "model": str(model or ""),
+        "sessionId": str(session_id or ""),
+        "status": "error",
+        "durationMs": _norm_duration(duration_ms),
+        "error": message[:200] or "unknown",
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "cache_hit_tokens": None,
+    }
+    return _write_entry(entry)
+
+
 def _agg_bucket():
-    return {"requests": 0, "hitKnownRequests": 0, "promptTokens": 0,
-            "completionTokens": 0, "totalTokens": 0, "cachedTokens": 0}
+    return {"requests": 0, "errorRequests": 0, "hitKnownRequests": 0,
+            "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
+            "cachedTokens": 0, "durationMsSum": 0, "durationKnown": 0}
 
 
 def _agg_add(bucket, entry):
     bucket["requests"] += 1
+    if entry.get("status") == "error":
+        # 失败调用计次不计 token（旧记录无 status 字段＝成功，向后兼容）
+        bucket["errorRequests"] += 1
+    duration = entry.get("durationMs")
+    if isinstance(duration, (int, float)) and duration >= 0:
+        bucket["durationMsSum"] += int(duration)
+        bucket["durationKnown"] += 1
     prompt = entry.get("prompt_tokens")
     completion = entry.get("completion_tokens")
     hit = entry.get("cache_hit_tokens")
@@ -124,6 +185,8 @@ def _agg_finalize(bucket):
     out = dict(bucket)
     out["hitRate"] = (round(bucket["cachedTokens"] / bucket["promptTokens"], 4)
                       if bucket["promptTokens"] else None)
+    out["avgDurationMs"] = (round(bucket["durationMsSum"] / bucket["durationKnown"])
+                            if bucket["durationKnown"] else None)
     return out
 
 
@@ -132,7 +195,9 @@ def summarize(days=30):
 
     返回键：
     - days/models/total：既有三桶（requests/promptTokens/completionTokens/
-      totalTokens/cachedTokens/hitRate/hitKnownRequests）
+      totalTokens/cachedTokens/hitRate/hitKnownRequests；requests 含失败调用，
+      失败次数看 errorRequests、平均耗时看 avgDurationMs——只累计带了
+      durationMs 的记录）
     - series：天×模型交叉表 {日期: {模型: 聚合桶}}——前端「每日趋势按模型
       分线」折线图的数据源
     - kinds：按用途（chat/extract/describe/docs/summary/harness…）聚合
