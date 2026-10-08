@@ -4615,13 +4615,85 @@
 
 .token-toolbar label { font-size: var(--fs-xs); color: var(--text-secondary); }
 
-.token-toolbar select {
-  padding: 5px 8px;
+/* 统计范围自绘下拉（2026-10-08 二轮）：原生 <select> 的弹出列表是浏览器原生渲染，
+   不吃任何页面 CSS，深色主题里弹一层系统亮色列表非常突兀——触发钮与弹层都自绘，
+   配色全走主题变量（--panel-bg/--accent），主题切换/浅深色自动跟随。 */
+.token-range { position: relative; }
+
+.token-range-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface-container);
   color: var(--text-primary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-out);
 }
+
+.token-range-btn:hover { border-color: var(--accent); }
+
+.token-range-caret { flex-shrink: 0; transition: transform var(--dur-base) var(--ease-out); }
+.token-range.open .token-range-caret { transform: rotate(180deg); }
+
+.token-range-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 40;
+  min-width: 100%;
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+/* 显式 display 会盖过 hidden 属性的 UA 样式，收起必须写死 */
+.token-range-menu[hidden] { display: none; }
+
+.token-range-item {
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.token-range-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+.token-range-item.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* 刷新改图标钮（2026-10-08 二轮）：文字钮占宽且读起来像个页签，环形箭头是全局
+   通识；描边/hover 沿 .accounts-act 先例，这里只管图标居中与在途旋转。 */
+.token-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.token-refresh-btn svg { display: block; }
+
+.token-refresh-btn.spinning svg { animation: token-spin .8s linear infinite; }
+
+@keyframes token-spin { to { transform: rotate(360deg); } }
 
 .token-split-toggle {
   display: inline-flex;
@@ -4632,7 +4704,27 @@
 
 .token-split-toggle input { accent-color: var(--accent); }
 
-.token-usage-body { display: grid; gap: 10px; }
+.token-usage-body { display: grid; gap: 10px; transition: opacity var(--dur-base) var(--ease-out); }
+
+/* 拉取在途且已有旧图时降亮旧图（token-usage.js 加 .token-refreshing），
+   表达「正在取新数据」而不是空白等待；新数据到达后由 JS morph 过渡。 */
+.token-usage-body.token-refreshing { opacity: .55; }
+
+/* 切范围/切分线的过渡辅助（2026-10-08 二轮）：几何 morph 由 JS rAF 驱动，这里只
+   管文字层——新轴标/图例/明细 .token-fade-in 淡入，旧轴标以 .token-axis-ghost
+   叠在原位淡出（网格线几何恒定，动的只有文字）。 */
+.token-fade-in { animation: token-fade-in .45s var(--ease-out) both; }
+
+@keyframes token-fade-in { from { opacity: .12; } to { opacity: 1; } }
+
+.token-axis-ghost { animation: token-axis-ghost .5s var(--ease-out) both; pointer-events: none; }
+
+@keyframes token-axis-ghost { from { opacity: 1; } to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .token-fade-in, .token-axis-ghost, .token-refresh-btn.spinning svg { animation: none; }
+  .token-usage-body { transition: none; }
+}
 
 /* 汇总卡行：四张数字卡，窄屏折两列 */
 .token-summary-row {
