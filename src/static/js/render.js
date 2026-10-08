@@ -649,6 +649,12 @@ function _cleanFormulaLatex(latex) {
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
 function renderMarkdown(text, renderCtx = {}) {
   if (!text) return '';
+  // 推理模型思考块全站兜底剥离（T85，口径对齐后端 harness/json_utils.py strip_reasoning）：
+  // 成对块整段删；未闭合（max_tokens 截断）从开标签丢弃到结尾。各上游通道自剥之外的
+  // 最后一道防线——旧缓存响应/漏接的上游仍可能把 <think> 带进渲染。
+  text = text.replace(/<(think|thinking|reasoning|thought)>[\s\S]*?<\/\s*\1\s*>/gi, '');
+  const _thinkOpen = text.match(/<(think|thinking|reasoning|thought)>/i);
+  if (_thinkOpen) text = text.slice(0, _thinkOpen.index);
   // 苏格拉底状态标签只用于后端/知识过滤，不显示给用户
   text = text
     .replace(/<socratic_meta\b[^>]*>[\s\S]*?<\/socratic_meta>/gi, '')

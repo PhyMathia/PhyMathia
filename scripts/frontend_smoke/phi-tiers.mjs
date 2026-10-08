@@ -92,4 +92,24 @@ check('harness：体验级八件套 T99–T106（停止续接/内容diff/时间�
   if (!hsrc.includes('context_metrics')) throw new Error('终态摘要未读 context_metrics token');
   return true;
 });
+
+check('render: renderMarkdown 剥离段认 <think>（T85 全站纵深防御，口径对齐 strip_reasoning）', () => {
+  const savedPurify = sandbox.window.DOMPurify;
+  const savedMarked = sandbox.marked;
+  sandbox.window.DOMPurify = null;        // 走正则降级路径，返回真实字符串
+  sandbox.marked = { parse: (s) => s };   // 直通桩：只验剥离段，不验 markdown 语法
+  try {
+    const out1 = String(sandbox.renderMarkdown('<think>草稿公式 <formula>F=ma</formula></think>\n\n# 答案正文'));
+    if (out1.includes('草稿')) throw new Error('成对 <think> 块未剥离');
+    if (!out1.includes('答案正文')) throw new Error('剥思考块误伤正文');
+    const out2 = String(sandbox.renderMarkdown('<think>被 max_tokens 截断的推理'));
+    if (out2.includes('截断的推理')) throw new Error('未闭合 <think> 未按截断口径从开标签丢弃');
+    const out3 = String(sandbox.renderMarkdown('thinking 这个词不能误伤'));
+    if (!out3.includes('thinking 这个词不能误伤')) throw new Error('裸词 thinking 被误剥');
+    return true;
+  } finally {
+    sandbox.window.DOMPurify = savedPurify;
+    sandbox.marked = savedMarked;
+  }
+});
 }

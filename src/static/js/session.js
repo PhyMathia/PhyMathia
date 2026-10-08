@@ -486,6 +486,8 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ value: state }),
+          // 超时兜底（T83）：挂死的保存会卡住切会话时的 _flushGraphStateServerSave
+          signal: AbortSignal.timeout(10000),
         });
       } catch (err) {
         console.warn('[GraphState] Failed to save server state:', err);
@@ -581,7 +583,13 @@
       _graphLocalSaveTimer = null;
       _graphStateMemCache.delete(sid);
       try {
-        await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), { method: 'DELETE' });
+        // 超时兜底（T83）：与 _deleteOnServer 同款——挂死的删除让单条删除链
+        // 静默停在半路（服务端图状态已删、后续知识/公式清理还没跑）
+        const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+          method: 'DELETE',
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) console.warn('[GraphState] Server delete failed:', resp.status);
       } catch (err) {
         console.warn('[GraphState] Failed to delete server state:', err);
       }
