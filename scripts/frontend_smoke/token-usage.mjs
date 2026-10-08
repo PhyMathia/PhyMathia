@@ -12,15 +12,15 @@ export async function run() {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   try {
-    check('token-usage：_tokenFormatNum 缩写与空值口径', () => {
+    check('token-usage：_tokenFormatNum 万/亿口径与空值', () => {
       const f = sandbox._tokenFormatNum;
       if (f(0) !== '0') throw new Error('0 应原样：' + f(0));
       if (f(999) !== '999') throw new Error('千以下应原样：' + f(999));
-      if (f(1234) !== '1.2k') throw new Error('1234 应为 1.2k：' + f(1234));
-      if (f(2500) !== '2.5k') throw new Error('2500 应为 2.5k：' + f(2500));
-      if (f(999999) !== '1M') throw new Error('999999 应进位为 1M：' + f(999999));
-      if (f(1234567) !== '1.2M') throw new Error('1234567 应为 1.2M：' + f(1234567));
-      if (f(2500000) !== '2.5M') throw new Error('2500000 应为 2.5M：' + f(2500000));
+      if (f(9999) !== '9999') throw new Error('万以下应原样：' + f(9999));
+      if (f(10000) !== '1万') throw new Error('10000 应为 1万：' + f(10000));
+      if (f(1234567) !== '123.5万') throw new Error('1234567 应为 123.5万：' + f(1234567));
+      if (f(999999) !== '100万') throw new Error('999999 应进位为 100万：' + f(999999));
+      if (f(820000000) !== '8.2亿') throw new Error('820000000 应为 8.2亿：' + f(820000000));
       for (const bad of [null, undefined, '']) {
         if (f(bad) !== '—') throw new Error('空值应为 —：' + f(bad));
       }
@@ -46,6 +46,32 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：_tokenUsageSmoothPath 单调三次——过点/控制点不过冲/退化形态', () => {
+      const sp = sandbox._tokenUsageSmoothPath;
+      if (sp([]) !== '') throw new Error('空入参应给空串');
+      if (!/^M[\d.]+ [\d.]+$/.test(sp([[5, 5]]))) throw new Error('单点应只剩 M：' + sp([[5, 5]]));
+      if (!sp([[0, 100], [100, 50]]).includes('L100.0 50.0')) throw new Error('两点应退化为直线段');
+      // 尖峰数据集（V 形＋平台＋陡降）：普通 Catmull-Rom 在这里会过冲越界
+      const pts = [[0, 200], [60, 120], [120, 180], [180, 40], [240, 40], [300, 160]];
+      const d = sp(pts);
+      const nums = (d.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+      if (/NaN|Infinity/.test(d) || nums.length !== 2 + (pts.length - 1) * 6) {
+        throw new Error('d 串结构应为 M＋(n-1) 个 C 六元组：' + nums.length);
+      }
+      if (nums[0] !== pts[0][0] || nums[1] !== pts[0][1]) throw new Error('起点应即首个数据点');
+      for (let k = 0; k < pts.length - 1; k++) {
+        const base = 2 + k * 6;
+        const c1y = nums[base + 1], c2y = nums[base + 3], endX = nums[base + 4], endY = nums[base + 5];
+        if (c1y < 39.9 || c1y > 200.1 || c2y < 39.9 || c2y > 200.1) {
+          throw new Error('控制点 y 越出数据范围（过冲）：' + c1y + ',' + c2y);
+        }
+        if (Math.abs(endX - pts[k + 1][0]) > 0.1 || Math.abs(endY - pts[k + 1][1]) > 0.1) {
+          throw new Error('曲线未过数据点：段 ' + k + ' 末点 ' + endX + ',' + endY);
+        }
+      }
+      return true;
+    });
+
     check('token-usage：_tokenUsageTopModels 排序取前 N＋其余并入其他，分片值总和守恒', () => {
       const models = {};
       for (let i = 1; i <= 10; i++) models['m' + i] = { totalTokens: i * 100 };
@@ -62,7 +88,7 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：折线图总量单线（点数＝整天数）／按模型分线／空态', () => {
+    check('token-usage：趋势平滑曲线（总量单线＝M＋6C/逐日标轴/悬停点）/分线/空态', () => {
       const dates = sandbox._tokenUsageDateList(7);
       const day = (i) => dates[dates.length - 1 - i]; // 倒数第 i+1 天
       const data = {
@@ -76,13 +102,20 @@ export async function run() {
         },
       };
       const totalHtml = sandbox._tokenUsageLineHtml(data, 7, false);
-      const totalPoints = [...totalHtml.matchAll(/points="([^"]+)"/g)].map(m => m[1].split(' ').length);
-      if (totalPoints.length !== 1) throw new Error('总量模式应只有 1 条折线：' + totalPoints.length);
-      if (totalPoints[0] !== 7) throw new Error('折线点数应＝整天数 7：' + totalPoints[0]);
+      const totalPaths = [...totalHtml.matchAll(/<path d="/g)].length;
+      if (totalPaths !== 1) throw new Error('总量模式应只有 1 条曲线：' + totalPaths);
+      const dAttr = (totalHtml.match(/ d="([^"]+)"/) || [])[1] || '';
+      if (!dAttr.startsWith('M') || (dAttr.match(/C/g) || []).length !== 6) {
+        throw new Error('7 天曲线应为 M＋6 段 C：' + dAttr.slice(0, 60));
+      }
+      if (/NaN|Infinity/.test(totalHtml)) throw new Error('坐标不应出现 NaN/Infinity');
+      if ((totalHtml.match(/<title>/g) || []).length !== 7) throw new Error('应有 7 个数据点悬停提示');
       if (!totalHtml.includes('总 token')) throw new Error('图例应含「总 token」');
       if (!totalHtml.includes(dates[6].slice(5))) throw new Error('横轴应含末日 MM-DD');
+      const textCount = (totalHtml.match(/<text /g) || []).length;
+      if (textCount !== 10) throw new Error('7 天应逐日标轴（7 轴标＋3 网格标）：' + textCount);
       const splitHtml = sandbox._tokenUsageLineHtml(data, 7, true);
-      const splitLines = [...splitHtml.matchAll(/<polyline/g)].length;
+      const splitLines = [...splitHtml.matchAll(/<path d="/g)].length;
       if (splitLines !== 2) throw new Error('分线模式应为 2 条（两模型）：' + splitLines);
       if (!splitHtml.includes('deepseek-chat') || !splitHtml.includes('primary')) throw new Error('图例应含两模型名');
       if (!sandbox._tokenUsageLineHtml({ models: {} }, 7, true).includes('范围内没有 AI 调用记录')) {
@@ -91,7 +124,7 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：扇形 conic-gradient 分段覆盖与图例数值', () => {
+    check('token-usage：圆环 conic 分段/中心总量/行式图例（百分比整位与小数位）', () => {
       const html = sandbox._tokenUsagePieHtml([
         { label: 'a', value: 75, color: 'c1' },
         { label: 'b', value: 25, color: 'c2' },
@@ -99,7 +132,18 @@ export async function run() {
       if (!html.includes('conic-gradient(c1 0% 75%, c2 75% 100%)')) {
         throw new Error('分段 stop 不符：' + (html.match(/conic-gradient\([^)]*\)/) || [''])[0]);
       }
-      if (!html.includes('a · 75 tok · 75%') || !html.includes('b · 25 tok · 25%')) throw new Error('图例数值不符');
+      if (!html.includes('token-usage-donut-center') || !html.includes('>100</b>')) {
+        throw new Error('中心应展示范围内总量（_tokenFormatNum）');
+      }
+      if (!html.includes('>75%<') || !html.includes('>25%<')) throw new Error('图例百分比不符');
+      if (!html.includes('75 tok') || !html.includes('25 tok')) throw new Error('图例数值不符');
+      const mix = sandbox._tokenUsagePieHtml([
+        { label: 'a', value: 919, color: 'c1' },
+        { label: 'b', value: 81, color: 'c2' },
+      ]);
+      if (!mix.includes('>92%<') || !mix.includes('>8.1%<')) {
+        throw new Error('不足 10% 应保留一位小数：' + mix);
+      }
       if (!sandbox._tokenUsagePieHtml([]).includes('暂无用量记录')) throw new Error('空分片应给空态');
       if (!sandbox._tokenUsagePieHtml([{ label: 'x', value: 0, color: 'c' }]).includes('暂无用量记录')) {
         throw new Error('全零分片应给空态');
@@ -130,7 +174,7 @@ export async function run() {
         requests: 42, promptTokens: 1500000, completionTokens: 1234,
         cachedTokens: 0, hitKnownRequests: 0, hitRate: null,
       });
-      if (!cards.includes('>42<') || !cards.includes('1.5M') || !cards.includes('1.2k')) throw new Error('数字卡数值不符');
+      if (!cards.includes('>42<') || !cards.includes('150万') || !cards.includes('1234')) throw new Error('数字卡数值不符');
       if (!cards.includes('缓存命中') || !cards.includes('—') || !cards.includes('无命中字段')) throw new Error('命中率空值口径不符');
       const table = sandbox._tokenUsageTableHtml({
         models: {
@@ -235,6 +279,7 @@ export async function run() {
       if (!src.includes("cache: 'no-cache'")) throw new Error('拉取应带 cache:no-cache');
       if (!src.includes('signal: AbortSignal.timeout(10000)')) throw new Error('拉取应带 10s AbortSignal');
       if (!src.includes("window.openTokenUsagePanel = openTokenUsagePanel")) throw new Error('冒烟导出块缺失');
+      if (!src.includes('window._tokenUsageSmoothPath')) throw new Error('平滑曲线函数未导出冒烟');
       const html = fs.readFileSync('src/static/index.html', 'utf8');
       for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"',
         'id="tokenUsageSplitChk"', 'openTokenUsagePanel()', 'setTokenUsageDays(this.value)', 'toggleTokenUsageSplit()']) {
