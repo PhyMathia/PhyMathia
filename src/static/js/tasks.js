@@ -294,6 +294,23 @@ function _tasksEndWorkflow(taskId, state, note) {
   _taskFinish(taskId, state, note);
 }
 
+// 单节点独立生成（T61：空白/知识/联系这三条不走 _executeParallelWorkflow 的生成路）
+// 也记一笔账。与工作流任务的差别：就一颗节点——没有节点明细、没有暂停，停止＝掐断
+// 这一条流（canceller 由调用方绑自己的 controller）。不设 _taskActiveCtx：独立生成
+// 只发生在当前画布，查找与保存照走画布，不需要任务上下文接管。
+function _taskBeginNodeJob(spec) {
+  const opts = spec || {};
+  const task = _taskCreate({
+    kind: 'node',
+    title: opts.title || '生成节点',
+    state: 'running',
+    replay: { nodeJob: { id: opts.nodeId || '', kind: opts.nodeKind || '' } },
+  });
+  task.startedAt = Date.now();
+  _taskChanged();
+  return task.id;
+}
+
 // 把任务上下文的节点重新绑到画布上的活对象。用户正看着任务所属会话时，两边是同一批
 // 对象（画面实时）；切走之后任务改自己那份副本，靠 _taskSaveCtxNodes 落到会话 state。
 function _taskSyncCtxNodes() {
@@ -436,6 +453,20 @@ async function _taskRegenerate(id) {
     if (typeof showToast === 'function') showToast('没能切到它所属的画布，请先手动切过去再试');
     return;
   }
+  // 单节点生成任务（T61）的重放：按记下的节点种类回到它自己的生成入口。
+  // 放在工作流分支前面：两种 replay 互斥，谁在前都不会撞。
+  if (replay && replay.nodeJob && replay.nodeJob.id) {
+    const job = replay.nodeJob;
+    const fn = job.kind === 'knowledge' ? window.generateKnowledgeNode
+      : job.kind === 'relation' ? window.generateRelationNode
+        : job.kind === 'blank' ? window.generateBlankNode
+          : null;
+    if (typeof fn === 'function' && typeof _findGraphNode === 'function' && _findGraphNode(job.id)) {
+      return fn(job.id);
+    }
+    if (typeof showToast === 'function') showToast('那个节点已经不在画布上了，没法重新生成');
+    return;
+  }
   if (task.kind === 'workflow' && replay && replay.nodeIds && replay.nodeIds.length) {
     if (typeof runWorkflowNodes !== 'function') return;
     const ok = await runWorkflowNodes(replay.nodeIds, !!replay.force);
@@ -535,7 +566,7 @@ function _taskSplitLoaded(raw) {
     if (!item || !item.id) continue;
     const task = {
       id: String(item.id),
-      kind: item.kind === 'workflow' ? 'workflow' : 'send',
+      kind: item.kind === 'workflow' ? 'workflow' : (item.kind === 'node' ? 'node' : 'send'),
       title: _taskClip(item.title || '任务', TASK_TITLE_LIMIT),
       state: item.state || 'done',
       sessionId: item.sessionId || '',

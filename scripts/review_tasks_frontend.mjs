@@ -249,6 +249,100 @@ test('落盘走服务端 kv 全局键，不碰 localStorage（T53：localStorage
   assert.equal(s.localStorage.getItem('phymathia_tasks'), null);
 });
 
+// ===== 单节点生成任务（T61：空白/知识/联系三条不走工作流的生成路）=====
+
+test('T61 单节点生成任务：独立成账、能停、失败带重试、重放按种类回各自入口', () => {
+  const { s, run } = fixture();
+  const taskId = run(`_taskBeginNodeJob({ title: '生成知识节点：简谐运动', nodeId: 'kn1', nodeKind: 'knowledge' });`);
+  assert.ok(taskId, '要返回任务 id');
+  let html = panelHtml(s);
+  assert.match(html, /生成知识节点：简谐运动/);
+  assert.match(html, /进行中/);
+  assert.match(html, /data-task-action="cancel"/, '在跑的能停');
+  assert.doesNotMatch(html, /data-task-action="pause"/, '单节点任务没有暂停——就一颗节点，停＝掐断');
+  // 面板上的「停止」掐的是任务自己绑的那条流
+  const controller = run('new AbortController()');
+  s.__ac = controller;
+  run(`_taskBindCancel('${taskId}', () => __ac.abort());`);
+  run(`_taskCancel('${taskId}');`);
+  assert.equal(controller.signal.aborted, true, '停止必须掐到任务自己的 controller');
+  // 失败结账：留在「未完成」页签并给一键重试
+  run(`_taskFinish('${taskId}', 'error', 'HTTP 502: 上游不给力');`);
+  assert.match(panelHtml(s), /重试/);
+  // 重放：节点还在画布上 → 按记下的种类回到它自己的生成入口
+  run(`_findGraphNode = id => graphView.nodeById[id] || null;
+       graphView.nodeById = { kn1: { id: 'kn1', kind: 'knowledge' }, r1: { id: 'r1', kind: 'relation' } };
+       __replayed = [];
+       window.generateKnowledgeNode = id => { __replayed.push(['knowledge', id]); };
+       window.generateRelationNode = id => { __replayed.push(['relation', id]); };
+       window.generateBlankNode = id => { __replayed.push(['blank', id]); };`);
+  run(`_taskRegenerate('${taskId}');`);
+  // vm 沙箱里的数组与宿主 realm 原型不同，deepEqual 前先 JSON 往返（同接线①的既有做法）
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__replayed'))), [['knowledge', 'kn1']],
+    '重放要回到生成知识节点的入口');
+  // 联系/空白同理（再造一条验种类分发）
+  const relId = run(`(function () {
+    const id = _taskBeginNodeJob({ title: '生成联系节点', nodeId: 'r1', nodeKind: 'relation' });
+    _taskFinish(id, 'error', '生成失败');
+    return id;
+  })()`);
+  run(`_taskRegenerate('${relId}');`);
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__replayed'))),
+    [['knowledge', 'kn1'], ['relation', 'r1']]);
+  // 节点已经不在画布上：当面说明，不许静默什么都不发生
+  run(`graphView.nodeById = {};
+       showToast = msg => { __lastToast = String(msg); };`);
+  run(`_taskRegenerate('${relId}');`);
+  assert.match(String(s.__lastToast || ''), /画布|重新生成/);
+});
+
+test('T61 重开页面：node 类任务不退化成 send，重放信息原样保留', () => {
+  const { s, run } = fixture();
+  const restored = run(`_taskSplitLoaded(${JSON.stringify([
+    { id: 'task_n1', kind: 'node', title: '生成空白节点', state: 'error', sessionId: 'sess_A',
+      sessionTitle: '简谐运动 1', createdAt: 1, replay: { nodeJob: { id: 'b1', kind: 'blank' } } },
+  ])})`);
+  assert.equal(restored.history[0].kind, 'node', 'node 类型重载后不能退化成 send（退化会丢掉正确的重放语义）');
+  assert.equal(restored.history[0].replay.nodeJob.kind, 'blank');
+  assert.equal(restored.history[0].replay.nodeJob.id, 'b1');
+});
+
+test('T61 源码：三条独立生成路各自接账，工作流调度口的直呼不双份记账', () => {
+  const wfSrc = readSrc('src/static/js/graph-workflow.js');
+  const customSrc = readSrc('src/static/js/graph-custom.js');
+  const tasksSrc = readSrc('src/static/js/tasks.js');
+  // tasks.js：记账接口 + 重载保留 node 类型 + 重放分支
+  assert.match(tasksSrc, /function _taskBeginNodeJob\(spec\)/);
+  assert.match(tasksSrc, /item\.kind === 'node' \? 'node' : 'send'/);
+  assert.match(tasksSrc, /replay && replay\.nodeJob && replay\.nodeJob\.id/);
+  // graph-workflow.js：空白节点独立生成——互斥闸 + 记账 + 任务自己的 controller
+  const blankStart = wfSrc.indexOf('async function generateBlankNode(');
+  const blankEnd = wfSrc.indexOf('\nfunction _addNodeIdsToGroup(', blankStart);
+  const blank = wfSrc.slice(blankStart, blankEnd);
+  assert.ok(blankStart > 0 && blankEnd > blankStart, 'generateBlankNode 要找得到');
+  assert.match(blank, /if \(workflowRunActive\)/, '工作流跑着时不许再单独起一条（T58 同款闸门）');
+  assert.match(blank, /_taskBeginNodeJob\(/, '独立生成要记一笔任务账');
+  assert.match(blank, /_taskBindCancel\(taskId/);
+  assert.match(blank, /const signal = jobAbort\.signal/, 'signal 用任务自己的 controller');
+  assert.match(blank, /_taskFinish\(taskId, 'done'\)/);
+  assert.match(blank, /jobStartedAt/, '完成卡计时用本函数自己的起点');
+  assert.doesNotMatch(blank, /blankStartedAt/, '旧计时残留必须清干净（它本是别的函数的局部量，成功路径曾因它抛 ReferenceError）');
+  // graph-custom.js：知识/联系两个入口都走记账包装，不许绕过
+  const knStart = customSrc.indexOf('function generateKnowledgeNode(');
+  const relEnd = customSrc.indexOf('\nfunction _blankNodeGraphPath(', knStart);
+  const pair = customSrc.slice(knStart, relEnd);
+  assert.match(pair, /_generateCustomNodeAsTask\(node, 'knowledge'/);
+  assert.match(pair, /_generateCustomNodeAsTask\(node, 'relation'/);
+  assert.equal((pair.match(/_generateCustomNode\(node\)/g) || []).length, 0, '两个入口不许绕过记账直呼生成');
+  const taskWrap = pair.slice(pair.indexOf('async function _generateCustomNodeAsTask('));
+  assert.match(taskWrap, /_taskBeginNodeJob\(/);
+  assert.match(taskWrap, /_generateCustomNode\(node, jobAbort\.signal\)/, 'signal 要真传进生成链');
+  assert.match(taskWrap, /finally/, '前置段抛错也不能把账挂成进行中永不结账');
+  // 工作流调度口那处直呼保持原样——那笔账由工作流任务统一记，包装后就会双份
+  assert.match(wfSrc, /await _generateCustomNode\(current, nodeSignal\);/,
+    '工作流内部生成必须保持直呼 _generateCustomNode，不许改走记账包装');
+});
+
 // ===== 三条接线契约（源码级，防改回去）=====
 
 test('接线① 任务自带来处：有任务在跑时，画布查找与保存都走任务自己的会话（T59）', () => {
