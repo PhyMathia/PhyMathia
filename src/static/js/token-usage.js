@@ -9,6 +9,10 @@
 // 页面 CSS，深色主题里弹系统亮色列表）；②刷新改环形箭头图标钮（拉取在途旋转）；
 // ③切范围/切分线不再整块跳变——折线重采样后逐帧 morph、圆环逐段边界插值、
 // 条宽与汇总数字滚动，轴标交叉淡入淡出（_runTokenMorph，rAF 驱动 520ms）。
+// 同日三轮（用户反馈两则）：①旧图降亮延迟 300ms 才生效——本地拉取毫秒级返回，
+// 「立即降亮→马上摘掉」在 150ms opacity 过渡下就是整板闪一下；②圆环在行内顶
+// 对齐不垂直居中：图例行数随统计范围变（7 天常只有两三个模型、30/90 天满
+// 7＋其他），居中让圆环跟着图例高度上下挪位＝两档之间看起来「不同心」。
 // 口径全局共享（backlog T180 拍板）：不按账号分账，所有账号共用。
 
 const TOKEN_USAGE_KIND_LABELS = {
@@ -38,6 +42,10 @@ let _tokenUsageFetchSeq = 0;  // 拉取序号：快速连点范围只让最后�
 let _tokenUsageInflight = 0;  // 在途拉取数：>0 时刷新图标旋转
 let _tokenUsageAnimSeq = 0;   // 动画序号：新一轮 morph 让上一轮逐帧回调立即失效
 let _tokenRangeDismissBound = false; // 文档级「点外部/Esc 收下拉」只绑一次
+
+// 旧图降亮的延迟阈值（ms）：低于它的拉取只靠刷新图标表态、不降亮——本地毫秒级
+// 返回时「降亮刚上就摘」，在 150ms opacity 过渡下观感是整板闪一下（三轮用户反馈）
+const TOKEN_REFRESH_DIM_DELAY = 300;
 
 // 数字缩写纯函数（冒烟测试直接调用）：中文单位口径（对齐 ZCode 控制台）——
 // 999 → 999、25000 → 2.5万、820000000 → 8.2亿，万以下不缩写，空值 → —
@@ -664,11 +672,15 @@ async function renderTokenUsage() {
   _tokenUsageInflight++;
   const btn = document.getElementById('tokenRefreshBtn');
   if (btn && btn.classList) btn.classList.add('spinning');
-  // 已有图表时保留旧图（半透明降亮）等新数据 morph 过去；只有首开/空态才显示占位
+  // 已有图表时保留旧图等新数据 morph 过去；只有首开/空态才显示占位。
+  // 降亮必须走 setTimeout 延迟：立即降亮在快返回时刚上就摘＝切范围闪一下。
+  let dimTimer = null;
   if (!_tokenUsageLive) {
     body.innerHTML = '<div class="token-chart-empty">统计中…</div>';
   } else if (body.classList) {
-    body.classList.add('token-refreshing');
+    dimTimer = setTimeout(() => {
+      if (seq === _tokenUsageFetchSeq && body.classList) body.classList.add('token-refreshing');
+    }, TOKEN_REFRESH_DIM_DELAY);
   }
   let data = null;
   try {
@@ -686,9 +698,11 @@ async function renderTokenUsage() {
     toastMsg('用量统计读取失败：' + (e && e.message ? e.message : '网络异常'), 3000);
     return;
   } finally {
+    if (dimTimer) clearTimeout(dimTimer);
     _tokenUsageInflight--;
     if (!_tokenUsageInflight && btn && btn.classList) btn.classList.remove('spinning');
-    if (body.classList) body.classList.remove('token-refreshing');
+    // 本轮已被更新的拉取顶掉时不摘降亮——那层降亮归属新一轮在途拉取
+    if (seq === _tokenUsageFetchSeq && body.classList) body.classList.remove('token-refreshing');
   }
   if (seq !== _tokenUsageFetchSeq) return; // 在途时又切了范围，只让最后一次落画
   _tokenUsageCache = (data && typeof data === 'object') ? data : null;

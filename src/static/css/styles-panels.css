@@ -4805,7 +4805,10 @@
 /* 圆环：conic-gradient 由 JS 内联（分片角度在那边才算得出来），radial mask 在
    扇形上挖出环孔；中心总量是叠一层独立元素（不受 mask 影响）。阴影放包装层——
    mask 会把元素自身 box-shadow 的环外部分一起裁掉。 */
-.token-usage-pie-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+/* 圆环必须顶对齐（align-items: flex-start）：图例行数随统计范围变（7 天常只有
+   两三个模型、30/90 天满 7＋其他），垂直居中会让圆环跟着图例高度上下挪位——
+   用户看到的就是 7 天与 30/90 天「不同心」；顶对齐后圆环锚在卡片顶不随档位移。 */
+.token-usage-pie-row { display: flex; align-items: flex-start; gap: 18px; flex-wrap: wrap; }
 
 .token-usage-donut {
   position: relative;
