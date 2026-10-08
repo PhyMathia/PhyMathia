@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=396d4e37">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=6ff50273">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=cc921c4c">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=9e45fdbe">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=bffd2f6c"></script>
+  <script src="/js/app.js?v=42561426"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -671,19 +671,30 @@
   <!-- Token 用量统计（2026-10-08）：AI 调用记账的只读可视化。居中 modal 复用
        账号管理弹窗的玻璃家族（同回收站的选型理由）；工具栏是静态的（范围切换/
        分线勾选/刷新），只有 tokenUsageBody 由 token-usage.js 重渲染，勾选态
-       跨重渲染不丢。数据全局共享（backlog T180 拍板），按天落本机 data/usage/。 -->
+       跨重渲染不丢。数据全局共享（backlog T180 拍板），按天落本机 data/usage/。
+       2026-10-08 二轮：统计范围换自绘下拉——原生 <select> 的弹出列表是浏览器
+       原生渲染、不吃页面 CSS，深色主题里会弹一层系统亮色列表；刷新改环形箭头
+       图标钮（拉取在途旋转）。弹层开关与选中逻辑都在 token-usage.js。 -->
   <div class="model-dialog-overlay" id="tokenDialog" onclick="if(event.target===this)closeTokenUsagePanel()">
     <div class="model-dialog accounts-dialog token-dialog aurora-glass aurora-glass--dialog">
       <h3>Token 用量统计</h3>
       <div class="token-toolbar">
-        <label for="tokenUsageRange">统计范围</label>
-        <select id="tokenUsageRange" onchange="setTokenUsageDays(this.value)">
-          <option value="7">近 7 天</option>
-          <option value="30" selected>近 30 天</option>
-          <option value="90">近 90 天</option>
-        </select>
+        <label class="token-toolbar-label">统计范围</label>
+        <div class="token-range" id="tokenUsageRange">
+          <button type="button" class="token-range-btn" id="tokenRangeBtn" aria-haspopup="listbox" aria-expanded="false" onclick="toggleTokenRangeMenu()">
+            <span id="tokenRangeLabel">近 30 天</span>
+            <svg class="token-range-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="token-range-menu" id="tokenRangeMenu" role="listbox" hidden>
+            <button type="button" class="token-range-item" role="option" data-days="7" onclick="pickTokenRangeDays(7)">近 7 天</button>
+            <button type="button" class="token-range-item active" role="option" aria-selected="true" data-days="30" onclick="pickTokenRangeDays(30)">近 30 天</button>
+            <button type="button" class="token-range-item" role="option" data-days="90" onclick="pickTokenRangeDays(90)">近 90 天</button>
+          </div>
+        </div>
         <label class="token-split-toggle"><input type="checkbox" id="tokenUsageSplitChk" onclick="toggleTokenUsageSplit()"> 折线按模型分线</label>
-        <button class="accounts-act" onclick="renderTokenUsage()">刷新</button>
+        <button type="button" class="accounts-act token-refresh-btn" id="tokenRefreshBtn" title="刷新" aria-label="刷新" onclick="renderTokenUsage()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
       </div>
       <div class="token-usage-body" id="tokenUsageBody"></div>
       <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">统计所有账号的全部 AI 调用（聊天、知识提取、Φ 智能体、记忆摘要等）；数据按天存在这台电脑的 data/usage/ 下，此处只读。</div>

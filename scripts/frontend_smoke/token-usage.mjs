@@ -72,6 +72,67 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：过渡动画纯函数——ease 端点/重采样同族平滑不落弦/morph 两端形态/圆环边界', () => {
+      const ease = sandbox._tokenUsageEase;
+      if (ease(0) !== 0 || ease(1) !== 1 || ease(0.5) !== 0.5) {
+        throw new Error('ease 端点不符：' + [ease(0), ease(0.5), ease(1)].join(','));
+      }
+      if (!(ease(0.25) > 0 && ease(0.25) < 0.25) || !(ease(0.75) > 0.75 && ease(0.75) < 1)) {
+        throw new Error('ease 应缓入缓出单调：' + ease(0.25) + ',' + ease(0.75));
+      }
+      const rs = sandbox._tokenUsageResample;
+      const mid = rs([0, 10], 3);
+      if (mid.length !== 3 || mid[0] !== 0 || mid[1] !== 5 || mid[2] !== 10) {
+        throw new Error('两点序列应退化为直线中点：' + mid.join(','));
+      }
+      if (rs([7], 4).some(v => v !== 7)) throw new Error('单点重采样应恒值');
+      const ends = rs([1, 2, 3, 9], 8);
+      if (ends[0] !== 1 || ends[ends.length - 1] !== 9) throw new Error('重采样应保端点');
+      // 闪帧回归（2026-10-08）：采样口径必须与显示同族（Fritsch–Carlson 单调三次），
+      // 线性插值会把 7↔30/90 天 morph 的中间帧整段拉直成折线——非线性序列的
+      // 采样点不得落在数据点直连弦上
+      const curve = rs([0, 100, 40], 7);
+      if (curve[3] !== 100) throw new Error('对齐数据点的采样位应取原值：' + curve[3]);
+      if (Math.abs(curve[1] - 1100 / 27) > 1e-6) {
+        throw new Error('1/3 位应取平滑曲线值 40.74 而非弦上 33.33：' + curve[1]);
+      }
+      if (!rs([0, 100, 0], 25).every(v => v >= 0 && v <= 100)) {
+        throw new Error('V 形序列采样不得越出数据值范围（过冲）');
+      }
+      // 采样点＝显示曲线上的点：像素空间画 _tokenUsageSmoothPath（y=100-v 仿射
+      // 映射），首段贝塞尔在 t=1/3 的 y 应等于数值采样点的同位映射（亚像素容差）
+      const dMorph = sandbox._tokenUsageSmoothPath([[0, 100], [60, 0], [120, 60]]);
+      const seg = dMorph.match(/M([\d.-]+) ([\d.-]+)C([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+)/);
+      if (!seg) throw new Error('平滑 path 结构不符：' + dMorph.slice(0, 50));
+      const [, , y0, , c1y, , c2y, , y1] = seg.map(Number);
+      const bez = (8 / 27) * y0 + (4 / 9) * c1y + (2 / 9) * c2y + (1 / 27) * y1;
+      if (Math.abs(bez - (100 - curve[1])) > 0.2) {
+        throw new Error('重采样点应落在显示曲线上：' + bez.toFixed(2) + ' vs ' + (100 - curve[1]).toFixed(2));
+      }
+      // 几何常量：padT=12、plotH=174 → 顶 12 / 基线 186；morph 两端必须各等于旧/新形态
+      const mp = sandbox._tokenUsageMorphPoints;
+      const g0 = mp(null, 100, [0, 50, 100], 100, 0, 5);
+      if (g0.some(p => p[1] !== 186)) throw new Error('t=0 无旧系列应全在基线：' + g0.map(p => p[1]).join(','));
+      const g1 = mp(null, 100, [0, 50, 100], 100, 1, 3);
+      if (Math.abs(g1[2][1] - 12) > 0.01) throw new Error('t=1 峰值应到顶：' + g1[2][1]);
+      const x0 = mp([0, 100], 100, [100, 0], 100, 0, 2).map(p => p[1]);
+      const x1 = mp([0, 100], 100, [100, 0], 100, 1, 2).map(p => p[1]);
+      if (x0.join(',') !== '186,12' || x1.join(',') !== '12,186') {
+        throw new Error('morph 两端应各等于旧/新形态：' + x0.join(',') + ' / ' + x1.join(','));
+      }
+      const db = sandbox._tokenUsageDonutBounds;
+      const b2 = db([{ value: 75 }, { value: 25 }]);
+      if (b2.length !== 3 || b2[0] !== 0 || Math.abs(b2[1] - 75) > 1e-9 || b2[2] !== 100) {
+        throw new Error('两段边界不符：' + b2.join(','));
+      }
+      if (db([]).join(',') !== '0,100') throw new Error('空分段应得 0→100：' + db([]).join(','));
+      const defTotal = sandbox._tokenUsageLineDefs({}, sandbox._tokenUsageDateList(7), false);
+      if (defTotal.length !== 1 || defTotal[0].label !== '总 token' || defTotal[0].values.some(v => v !== 0)) {
+        throw new Error('总量单线定义不符');
+      }
+      return true;
+    });
+
     check('token-usage：_tokenUsageTopModels 排序取前 N＋其余并入其他，分片值总和守恒', () => {
       const models = {};
       for (let i = 1; i <= 10; i++) models['m' + i] = { totalTokens: i * 100 };
@@ -210,14 +271,35 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：开合＋拉取渲染＋切范围／分线（不重拉）＋失败兜底', async () => {
-      // 定向 document 垫片：只认本面板三个 id，其余落空（还原时不污染全局）
-      const calls = { add: [], remove: [] };
-      const dlg = { classList: { add: (c) => calls.add.push(c), remove: (c) => calls.remove.push(c) } };
-      const body = { innerHTML: '' };
+    check('token-usage：开合＋拉取渲染＋失败兜底两档（空画布占位/旧图保留）＋切范围／分线＋自绘下拉闭环', async () => {
+      // 定向 document 垫片：只认本面板的工具栏 id，其余落空（还原时不污染全局）。
+      // 注意本域只允许这一个 async 用例——check() 注册即执行、多个 async 用例会在
+      // await 点交错，而 fetch 序号/范围/live 快照都是模块级状态，交错即串场。
+      const dlgCalls = { add: [], remove: [] };
+      const bodyCalls = { add: [], remove: [] };
+      const btnCalls = { add: [], remove: [] };
+      const wrapCalls = { add: [], remove: [] };
+      const dlg = { classList: { add: (c) => dlgCalls.add.push(c), remove: (c) => dlgCalls.remove.push(c) } };
+      const body = { innerHTML: '', classList: { add: (c) => bodyCalls.add.push(c), remove: (c) => bodyCalls.remove.push(c) } };
+      const refreshBtn = { classList: { add: (c) => btnCalls.add.push(c), remove: (c) => btnCalls.remove.push(c) } };
       const chk = { checked: true };
+      const rangeBtn = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+      const rangeLabel = { textContent: '近 30 天' };
+      const mkItem = (days) => {
+        const it = { dataset: { days }, active: days === '30' };
+        it.classList = { toggle: (n, f) => { it.active = f; } };
+        return it;
+      };
+      const rangeItems = [mkItem('7'), mkItem('30'), mkItem('90')];
+      const rangeMenu = { hidden: true, querySelectorAll: (sel) => (sel === '.token-range-item' ? rangeItems : []) };
+      const rangeWrap = { classList: { add: (c) => wrapCalls.add.push(c), remove: (c) => wrapCalls.remove.push(c) } };
       const prevDoc = sandbox.document;
-      sandbox.document = { getElementById: (id) => (id === 'tokenDialog' ? dlg : id === 'tokenUsageBody' ? body : id === 'tokenUsageSplitChk' ? chk : null) };
+      sandbox.document = {
+        getElementById: (id) => (id === 'tokenDialog' ? dlg : id === 'tokenUsageBody' ? body
+          : id === 'tokenUsageSplitChk' ? chk : id === 'tokenRefreshBtn' ? refreshBtn
+          : id === 'tokenUsageRange' ? rangeWrap : id === 'tokenRangeMenu' ? rangeMenu
+          : id === 'tokenRangeBtn' ? rangeBtn : id === 'tokenRangeLabel' ? rangeLabel : null),
+      };
       const dates = sandbox._tokenUsageDateList(30);
       const fixture = {
         total: { requests: 5, promptTokens: 500, completionTokens: 50, totalTokens: 550, cachedTokens: 100, hitKnownRequests: 2, hitRate: 0.2 },
@@ -228,14 +310,22 @@ export async function run() {
       };
       const fetchCalls = [];
       const toasts = [];
+      const okFetch = async (url, opts) => { fetchCalls.push({ url, opts }); return { ok: true, status: 200, json: async () => fixture }; };
+      const badFetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
       const prevFetch = sandbox.fetch;
       const prevSignal = sandbox.AbortSignal;
       const prevToast = sandbox.toastMsg;
       const prevRender = sandbox.renderTokenUsage;
-      sandbox.fetch = async (url, opts) => { fetchCalls.push({ url, opts }); return { ok: true, status: 200, json: async () => fixture }; };
       sandbox.AbortSignal = { timeout: (ms) => ({ __timeoutMs: ms }) };
       sandbox.toastMsg = (msg) => toasts.push(msg);
       try {
+        // 失败先行（空画布档）：占位文案＋toast，旧图不存在
+        sandbox.fetch = badFetch;
+        await sandbox.renderTokenUsage();
+        if (!body.innerHTML.includes('读取失败')) throw new Error('空画布失败应落失败占位');
+        if (!toasts.some(t => String(t).includes('用量统计读取失败'))) throw new Error('失败应 toast 提示');
+        // 成功：恰好一次拉取、参数齐全、落终态
+        sandbox.fetch = okFetch;
         await sandbox.renderTokenUsage();
         if (fetchCalls.length !== 1) throw new Error('应恰好拉取一次：' + fetchCalls.length);
         if (fetchCalls[0].url !== '/api/usage/stats?days=30') throw new Error('默认范围应为 30 天：' + fetchCalls[0].url);
@@ -246,8 +336,18 @@ export async function run() {
         if (!body.innerHTML.includes('token-summary-row') || !body.innerHTML.includes('每日 token 趋势')) {
           throw new Error('渲染产物缺汇总卡或折线卡');
         }
+        if (btnCalls.add.includes('spinning') && !btnCalls.remove.includes('spinning')) {
+          throw new Error('拉完应停转刷新图标');
+        }
         sandbox.openTokenUsagePanel();
-        if (!calls.add.includes('show')) throw new Error('开面板应加 .show');
+        if (!dlgCalls.add.includes('show')) throw new Error('开面板应加 .show');
+        // 失败但有旧图档：旧图保留（不白屏）＋toast
+        sandbox.fetch = badFetch;
+        await sandbox.renderTokenUsage();
+        if (!body.innerHTML.includes('token-summary-row')) throw new Error('已有旧图时失败不应清画布');
+        if (!toasts.some(t => String(t).includes('用量统计读取失败'))) throw new Error('旧图档失败同样应 toast');
+        // 切范围：90 天拉取（内部＋显式两连发，序号护栏只让最后一次落画）
+        sandbox.fetch = okFetch;
         sandbox.setTokenUsageDays('90');
         await sandbox.renderTokenUsage();
         const last = fetchCalls[fetchCalls.length - 1];
@@ -256,12 +356,27 @@ export async function run() {
         sandbox.toggleTokenUsageSplit();
         if (fetchCalls.length !== countAfterRange) throw new Error('切分线只应用缓存重画，不应重拉');
         if (!body.innerHTML.includes('token-summary-row')) throw new Error('切分线后应重渲染出内容');
-        sandbox.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
-        await sandbox.renderTokenUsage();
-        if (!body.innerHTML.includes('读取失败')) throw new Error('非 2xx 应走失败兜底文案');
-        if (!toasts.some(t => String(t).includes('用量统计读取失败'))) throw new Error('失败应 toast 提示');
         sandbox.closeTokenUsagePanel();
-        if (!calls.remove.includes('show')) throw new Error('关面板应移除 .show');
+        if (!dlgCalls.remove.includes('show')) throw new Error('关面板应移除 .show');
+        // 自绘下拉闭环：开合/aria/选中同步标签与 active/点选按新范围拉取/同值不重拉。
+        // 与上面的拉取共用 fetchCalls：此刻处于 90 天，点 7 天应恰好新增一次 days=7。
+        sandbox.toggleTokenRangeMenu();
+        if (rangeMenu.hidden !== false) throw new Error('开菜单应去掉 hidden');
+        if (!wrapCalls.add.includes('open')) throw new Error('wrap 应加 .open（箭头翻转钩子）');
+        if (rangeBtn.attrs['aria-expanded'] !== 'true') throw new Error('aria-expanded 应为 true');
+        sandbox.pickTokenRangeDays(7);
+        if (rangeMenu.hidden !== true) throw new Error('选中后应收菜单');
+        if (rangeLabel.textContent !== '近 7 天') throw new Error('触发钮标签应同步：' + rangeLabel.textContent);
+        if (!rangeItems[0].active || rangeItems[1].active || rangeItems[2].active) throw new Error('active 应挪到 7 天项');
+        const pickCalls = fetchCalls.slice(countAfterRange);
+        if (pickCalls.length !== 1 || !String(pickCalls[0].url).includes('days=7')) {
+          throw new Error('点选应按 7 天恰好再拉一次：' + pickCalls.map(c => c.url).join(','));
+        }
+        sandbox.pickTokenRangeDays(7);
+        if (fetchCalls.length !== countAfterRange + 1) throw new Error('同值再点不应重拉');
+        sandbox.toggleTokenRangeMenu();
+        sandbox.toggleTokenRangeMenu();
+        if (rangeMenu.hidden !== true) throw new Error('二次 toggle 应回到收起');
         return true;
       } finally {
         sandbox.document = prevDoc;
@@ -272,7 +387,7 @@ export async function run() {
       }
     });
 
-    check('token-usage：源码契约（fetch 必带 signal＋no-cache；HTML 容器与构建注册在位）', () => {
+    check('token-usage：源码契约（fetch 必带 signal＋no-cache；自绘下拉/图标钮/动画注册在位）', () => {
       const src = fs.readFileSync('src/static/js/token-usage.js', 'utf8');
       const fetchSites = [...src.matchAll(/fetch\('\/api\/usage\/stats[^']*'/g)];
       if (fetchSites.length !== 1) throw new Error('应有且只有一处用量拉取：' + fetchSites.length);
@@ -280,11 +395,16 @@ export async function run() {
       if (!src.includes('signal: AbortSignal.timeout(10000)')) throw new Error('拉取应带 10s AbortSignal');
       if (!src.includes("window.openTokenUsagePanel = openTokenUsagePanel")) throw new Error('冒烟导出块缺失');
       if (!src.includes('window._tokenUsageSmoothPath')) throw new Error('平滑曲线函数未导出冒烟');
+      if (!src.includes('window.pickTokenRangeDays')) throw new Error('自绘下拉未导出冒烟');
+      if (!src.includes('prefers-reduced-motion')) throw new Error('过渡动画应尊重减少动态偏好');
+      if (!src.includes('_tokenUsageFetchSeq')) throw new Error('快速连点范围应有拉取序号护栏');
       const html = fs.readFileSync('src/static/index.html', 'utf8');
-      for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"',
-        'id="tokenUsageSplitChk"', 'openTokenUsagePanel()', 'setTokenUsageDays(this.value)', 'toggleTokenUsageSplit()']) {
+      for (const needle of ['id="tokenDialog"', 'id="tokenUsageBody"', 'id="tokenUsageRange"', 'id="tokenRangeMenu"',
+        'id="tokenRangeBtn"', 'id="tokenRefreshBtn"', 'data-days="7"', 'data-days="30"', 'data-days="90"',
+        'pickTokenRangeDays(7)', 'toggleTokenRangeMenu()', 'toggleTokenUsageSplit()', 'aria-label="刷新"']) {
         if (!html.includes(needle)) throw new Error('index.html 缺 ' + needle);
       }
+      if (/<select[^>]*id="tokenUsage/.test(html)) throw new Error('统计范围不应退回原生 select');
       const buildSrc = fs.readFileSync('scripts/build_frontend.mjs', 'utf8');
       if (!buildSrc.includes("'token-usage.js'")) throw new Error('构建 entries 未注册 token-usage.js');
       return true;
