@@ -4677,6 +4677,45 @@
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+/* 自定义天数输入行（2026-10-08 五轮 T198）：菜单尾部分隔线下紧凑行，
+   回车与「应用」同效；校验失败不收菜单（token-usage.js） */
+.token-range-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 3px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.token-range-custom input {
+  width: 56px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-container);
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+.token-range-custom input:focus { outline: none; border-color: var(--accent); }
+
+.token-range-custom-unit { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.token-range-apply {
+  margin-left: auto;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.token-range-apply:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
 /* 刷新改图标钮（2026-10-08 二轮）：文字钮占宽且读起来像个页签，环形箭头是全局
    通识；描边/hover 沿 .accounts-act 先例，这里只管图标居中与在途旋转。 */
 .token-refresh-btn {
@@ -4869,6 +4908,22 @@
 
 .token-donut-pct { flex-shrink: 0; min-width: 3.2em; text-align: right; font-weight: 600; color: var(--text); }
 
+/* 圆环图例可点（2026-10-08 五轮 T199）：分线模式下点图例在趋势图聚焦该模型
+   （命中曲线加粗、其余淡化；再点取消）。聚焦态由 token-usage.js 挂 .picked */
+.token-donut-legend-item.token-donut-legend-pick { cursor: pointer; }
+
+.token-donut-legend-item.token-donut-legend-pick:hover .token-donut-name,
+.token-donut-legend-item.picked .token-donut-name { color: var(--accent); }
+
+.token-donut-legend-item.picked .token-donut-pct { color: var(--accent); }
+
+.token-donut-legend-item.picked .token-donut-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* 聚焦切换的淡化/加粗过渡（morph 动画只改 d，不与此冲突） */
+.token-line-chart path { transition: opacity .18s var(--ease-out), stroke-width .18s var(--ease-out); }
+
 /* 用途分布条形：memory-bar 同款三段行，条色走 accent 令牌 */
 .token-kind-row {
   display: flex;
@@ -4921,8 +4976,37 @@
 
 .token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 
+/* 最近调用明细（2026-10-08 五轮 T196）：六列窄行表。表自身限高滚动——
+   100 条明细不该把弹窗里的四张图全滚走，表头 sticky 跟滚；失败行淡红底＋
+   红字徽标，失败原因截在 200 字符放行 title 悬停看全 */
+.token-records-table { gap: 1px; font-size: var(--fs-2xs); max-height: 320px; overflow-y: auto; }
+
+.token-records-row {
+  grid-template-columns: 5.8em 5.4em minmax(0, 1fr) 4.4em 4.6em 3.2em;
+  gap: 4px;
+  padding: 3px 6px;
+}
+
+.token-records-row span:nth-child(-n+3) { text-align: left; }
+
+.token-records-table .token-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-bg);
+}
+
+.token-record-failed { background: var(--danger-bg); }
+
+.token-records-table .token-record-failed:hover { background: var(--danger-bg-strong); }
+
+.token-record-err { font-style: normal; font-weight: 600; color: var(--danger-fg); }
+
+.token-record-ok { font-style: normal; color: var(--text-secondary); }
+
 @media (max-width: 560px) {
   .token-summary-row { grid-template-columns: repeat(2, 1fr); }
   .token-usage-pie-row { justify-content: center; }
   .token-kind-val { min-width: 0; }
+  .token-records-row { grid-template-columns: 5em 4.6em minmax(0, 1fr) 3.6em 4em 3em; }
 }

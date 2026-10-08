@@ -263,6 +263,50 @@ class SummarizeTest(UsageStatsBase):
         out = usage_stats.summarize(days=7)
         self.assertEqual(out["series"], {})
         self.assertEqual(out["kinds"], {})
+        self.assertEqual(out["records"], [])
+
+    def test_records_recent_desc_and_fields(self):
+        # 2026-10-08 五轮 T196：records>0 附带最近 N 条明细（时间倒序，新的在前）。
+        # 字段驼峰化＋totalTokens 预合计；失败行带 error、旧记录无 status 按「成功」
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "status": "ok", "durationMs": 800,
+             "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": None},
+            {"ts": f"{today}T11:00:00", "kind": "harness", "provider": "q", "model": "b", "sessionId": "s2",
+             "status": "error", "error": "HTTP 502", "durationMs": 120,
+             "prompt_tokens": None, "completion_tokens": None, "cache_hit_tokens": None},
+            {"ts": f"{today}T12:00:00", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s3",
+             "prompt_tokens": 30, "completion_tokens": 5, "cache_hit_tokens": 0},
+        ])
+        out = usage_stats.summarize(days=30, records=2)
+        recs = out["records"]
+        self.assertEqual(len(recs), 2)
+        # JSONL 按写入序＝时间序，取末尾 N 条倒序：最后写入的最前
+        self.assertEqual(recs[0]["ts"], f"{today}T12:00:00")
+        self.assertEqual(recs[1]["ts"], f"{today}T11:00:00")
+        # 旧格式记录（无 status）按成功、无耗时为 None；token 预合计
+        self.assertEqual(recs[0]["status"], "ok")
+        self.assertEqual(recs[0]["durationMs"], None)
+        self.assertEqual(recs[0]["totalTokens"], 35)
+        # 失败行：error 透传、token 全空但 totalTokens 归 0（不抛 None+None）
+        self.assertEqual(recs[1]["status"], "error")
+        self.assertEqual(recs[1]["error"], "HTTP 502")
+        self.assertIsNone(recs[1]["promptTokens"])
+        self.assertEqual(recs[1]["totalTokens"], 0)
+        # 聚合桶口径不受 records 参数影响
+        self.assertEqual(out["total"]["requests"], 3)
+
+    def test_records_limit_bounds(self):
+        # 越界入参：0/负数/垃圾值 → 不带明细（空数组）；条数不足上限时全返回
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "p", "model": "a",
+             "sessionId": "", "prompt_tokens": 1, "completion_tokens": 1, "cache_hit_tokens": None},
+        ])
+        for bad in (0, -5, "abc", None):
+            self.assertEqual(usage_stats.summarize(days=7, records=bad)["records"], [])
+        self.assertEqual(len(usage_stats.summarize(days=7, records=500)["records"]), 1)
 
 
 if __name__ == "__main__":
