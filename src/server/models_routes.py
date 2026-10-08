@@ -437,17 +437,21 @@ async def api_models_chat(request: Request):
             # 下面的状态更新/快照回填跟着裸 except 一起静默蒸发
             logger.warning("AI proxy non-stream: upstream 200 with non-JSON body")
             return Response(content=raw, media_type="application/json")
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            logger.warning("AI proxy non-stream: upstream JSON missing choices[0].message.content")
-            return Response(content=raw, media_type="application/json")
+        # usage 记账必须在 content 提取之前（T149）：推理型模型烧光 max_tokens
+        # 时 200＋usage 齐全但 content 缺失，原先放在提取之后会被早退分支整个
+        # 跳过——usage 落盘与缓存命中率双双漏计。只要 JSON 解析得开且 usage 在，
+        # 就与有 content 路径同口径记账；正文透传不受影响。
         if data.get("usage"):
             logger.info(f"AI proxy usage: {data['usage']}")
             usage_stats.record_usage(provider, model_name,
                                      "chat" if prompt else "legacy",
                                      session_id or session_bucket, data["usage"])
             _log_cache_hit_rate(data["usage"])
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            logger.warning("AI proxy non-stream: upstream JSON missing choices[0].message.content")
+            return Response(content=raw, media_type="application/json")
         _update_socratic_state_from_content(content, socratic_ref)
         if profile_usage is not None:
             # 非流式出口同样回传注入快照；序列化失败退回原字节
