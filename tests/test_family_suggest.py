@@ -5,7 +5,7 @@
 - 查空是正常路径：向量缺席 / 候选全被卫生闸挡掉 → 空清单，不报错；
 - 纯函数边界：items / families / card_sims 全部调用方喂参，不加载模型不读缓存。
   本文件不加载真模型（conftest 统一 PHYMATHIA_EMBEDDING=0），路由测试直接
-  monkeypatch main._continent_card_sims 喂假相似度表。
+  monkeypatch knowledge_routes._continent_vectors 喂假相似度表（属主随 T163 拆分迁到 server.knowledge_routes）。
 """
 
 import json
@@ -267,8 +267,10 @@ class SuggestRouteTest(unittest.TestCase):
         from server import config as config_mod
         from server import storage as storage_mod
         import main as main_mod  # src/main.py（与 test_routes.py 同一导入口径）
+        from server import knowledge_routes as knowledge_routes_mod  # noqa: E402  _continent_vectors 属主（T163）
         self._td = tempfile.TemporaryDirectory()
         self._main = main_mod
+        self._kroutes = knowledge_routes_mod
         self._storage = storage_mod
         # 多账号 P1：路由经 accounts.resolve_paths 读知识库/KV，patch DATA_DIR 一处
         self._config_mod = config_mod
@@ -296,7 +298,7 @@ class SuggestRouteTest(unittest.TestCase):
 
     def test_embed_absent_returns_empty_and_disabled(self):
         self._seed({"k1": _item("k1", "泊松分布：稀疏事件的计数")})
-        with mock.patch.object(self._main, "_continent_vectors",
+        with mock.patch.object(self._kroutes, "_continent_vectors",
                                return_value=({}, {})):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
@@ -307,7 +309,7 @@ class SuggestRouteTest(unittest.TestCase):
         self._seed({"k1": _item("k1", "泊松分布：稀疏事件的计数")})
         sims = {"k1": {PROB: 0.72, "微积分": 0.30}}
         vecs = {"k1": [1.0, 0.0]}
-        with mock.patch.object(self._main, "_continent_vectors",
+        with mock.patch.object(self._kroutes, "_continent_vectors",
                                return_value=(sims, vecs)):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
@@ -322,7 +324,7 @@ class SuggestRouteTest(unittest.TestCase):
         self._kv["continent_family_suggestions"] = {
             "version": 1, "rejected": {PROB: {"泊松分布": {"cards": 1, "at": 1}}}}
         sims = {"k1": {PROB: 0.72}}
-        with mock.patch.object(self._main, "_continent_vectors",
+        with mock.patch.object(self._kroutes, "_continent_vectors",
                                return_value=(sims, {"k1": [1.0, 0.0]})):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)
@@ -334,7 +336,7 @@ class SuggestRouteTest(unittest.TestCase):
         self._seed(items)
         sims = {f"g{i}": {PROB: 0.30} for i in range(3)}
         vecs = {"g0": [1.0, 0.0], "g1": [0.98, 0.17], "g2": [0.95, 0.31]}
-        with mock.patch.object(self._main, "_continent_vectors",
+        with mock.patch.object(self._kroutes, "_continent_vectors",
                                return_value=(sims, vecs)):
             resp = self.client.get("/api/families/suggestions")
         self.assertEqual(resp.status_code, 200)

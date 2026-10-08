@@ -22,6 +22,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main as main_mod  # noqa: E402
+from server import knowledge_routes as knowledge_routes_mod  # noqa: E402  UTOPIA_INBOX_DIR 属主（T163）
 
 
 class UtopiaInboxTest(unittest.TestCase):
@@ -30,12 +31,12 @@ class UtopiaInboxTest(unittest.TestCase):
         inbox = Path(self._td.name) / "utopia_inbox"
         inbox.mkdir(parents=True, exist_ok=True)
         self._inbox = inbox
-        self._orig = main_mod.UTOPIA_INBOX_DIR
-        main_mod.UTOPIA_INBOX_DIR = inbox
+        self._orig = knowledge_routes_mod.UTOPIA_INBOX_DIR
+        knowledge_routes_mod.UTOPIA_INBOX_DIR = inbox
         self.client = TestClient(main_mod.app)
 
     def tearDown(self):
-        main_mod.UTOPIA_INBOX_DIR = self._orig
+        knowledge_routes_mod.UTOPIA_INBOX_DIR = self._orig
         self._td.cleanup()
 
     def _put(self, name: str, text: str):

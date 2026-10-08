@@ -14,6 +14,7 @@ from unittest import mock
 from test_routes import RouteTestBase
 import main as main_mod
 from server import profile as profile_mod
+from server import http_client as http_client_mod  # 出网口补丁单点（T163）
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +87,7 @@ class ProfileUsageRouteTest(RouteTestBase):
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with mock.patch.object(main_mod, "get_http_client", return_value=client):
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
             base = {
                 "prompt": "什么是电磁感应",
                 "level": "university",
