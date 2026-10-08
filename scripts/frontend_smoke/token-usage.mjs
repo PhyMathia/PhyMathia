@@ -387,12 +387,28 @@ export async function run() {
       }
     });
 
-    check('token-usage：源码契约（fetch 必带 signal＋no-cache；自绘下拉/图标钮/动画注册在位）', () => {
+    check('token-usage：源码契约（fetch 必带 signal＋no-cache；自绘下拉/图标钮/动画注册在位；降亮延迟；圆环顶对齐）', () => {
       const src = fs.readFileSync('src/static/js/token-usage.js', 'utf8');
       const fetchSites = [...src.matchAll(/fetch\('\/api\/usage\/stats[^']*'/g)];
       if (fetchSites.length !== 1) throw new Error('应有且只有一处用量拉取：' + fetchSites.length);
       if (!src.includes("cache: 'no-cache'")) throw new Error('拉取应带 cache:no-cache');
       if (!src.includes('signal: AbortSignal.timeout(10000)')) throw new Error('拉取应带 10s AbortSignal');
+      // 降亮必须延迟（用户反馈「切范围闪一下」的根因）：本地毫秒级返回时立即降亮
+      // 刚上就摘，150ms opacity 过渡折返＝整板闪。add('token-refreshing') 只许在
+      // setTimeout 回调里出现（源码里 add 位必须在 dimTimer 赋值位之后）。
+      const dimAddAt = src.indexOf("add('token-refreshing')");
+      const dimTimerAt = src.indexOf('dimTimer = setTimeout');
+      if (dimAddAt < 0 || dimTimerAt < 0 || dimTimerAt > dimAddAt) {
+        throw new Error('旧图降亮必须由 setTimeout 延迟触发（立即降亮＝切范围闪一下）');
+      }
+      if (!src.includes('TOKEN_REFRESH_DIM_DELAY')) throw new Error('降亮延迟阈值常量缺失');
+      // 圆环顶对齐（用户反馈 7 天与 30/90 天「不同心」的根因）：图例行数随范围变，
+      // 垂直居中会让圆环跟着图例高度上下挪位；必须 flex-start 锚在卡片顶。
+      const panels = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+      const pieRow = panels.match(/\.token-usage-pie-row \{[^}]*\}/);
+      if (!pieRow || !pieRow[0].includes('align-items: flex-start')) {
+        throw new Error('圆环行必须顶对齐（align-items: flex-start），居中会随图例高度挪位');
+      }
       if (!src.includes("window.openTokenUsagePanel = openTokenUsagePanel")) throw new Error('冒烟导出块缺失');
       if (!src.includes('window._tokenUsageSmoothPath')) throw new Error('平滑曲线函数未导出冒烟');
       if (!src.includes('window.pickTokenRangeDays')) throw new Error('自绘下拉未导出冒烟');
