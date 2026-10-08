@@ -2777,7 +2777,11 @@
   right: 18px;
   bottom: 152px;
   width: min(400px, calc(100vw - 36px));
-  height: min(560px, calc(100vh - 210px));
+  /* T125（2026-10-08）：height 与 bottom 是同一条预算——顶部余量 = 164 − 152 = 12px
+     恒定，改 height 公式必须连同 bottom 重推（曾建议 calc(100vh - 140px)，配本 bottom
+     会把面板顶出视口 12px）。620px 上限是合成单流（T122）后放的；主公式在视口 ≥572px
+     都装得下内容最小和（约 408px），更矮的视口交给下面 max-height:700px 兜底。 */
+  height: min(620px, calc(100vh - 164px));
   display: flex;
   flex-direction: column;
   border-radius: var(--r-xl);
@@ -2791,10 +2795,11 @@
      这里一条 background 都不能有 */
 }
 
-/* 矮视口兜底（≤700px 高）：height: min(560px, 100vh - 210px) 在 588px 高的视口下
-   只剩 378px，小于 head＋对话区保底＋应用行＋composer 的最小和——窗口是 overflow:hidden，
-   多出来的部分会把 composer/状态行切掉（2026-09-30 真机窄窗复现）。低屏改成接近全高，
-   让整块内容放得下。 */
+/* 矮视口兜底（≤700px 高）：2026-09-30 真机窄窗复现——当时 height: min(560px,
+   100vh - 210px) 在 588px 高的视口下只剩 378px，小于 head＋对话区保底＋composer 的
+   最小和，窗口 overflow:hidden 把 composer/状态行切掉。T125 放宽主公式后在视口
+   ≥572px 就装得下最小和，本兜底降级为观感层（低屏接近全高，比贴着下限好看），
+   断点与全高写法不动。 */
 @media (max-height: 700px) {
   .graph-harness-window {
     bottom: 12px;

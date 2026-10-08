@@ -140,6 +140,28 @@ check('T51 桌宠让位正解：body.harness-open + 内联定位暂存归还', (
   }
   return true;
 });
+
+check('T125 面板高度预算自洽：height 与 bottom 同一条预算、矮视口兜底仍在', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const start = css.indexOf('.graph-harness-window {');
+  const end = css.indexOf('/* 矮视口兜底', start);
+  if (start < 0 || end < 0) throw new Error('找不到 .graph-harness-window 基础块或矮视口兜底注释');
+  const block = css.slice(start, end);
+  const h = block.match(/height: min\((\d+)px, calc\(100vh - (\d+)px\)\);/);
+  if (!h) throw new Error('height 公式形状变了（应为 min(Npx, calc(100vh - Mpx))）');
+  const b = block.match(/bottom: (\d+)px;/);
+  if (!b) throw new Error('bottom 不见了');
+  // 顶部余量 = M − bottom 必须 > 0：height 吃满 calc 时面板不得顶出视口
+  const slack = Number(h[2]) - Number(b[1]);
+  if (slack <= 0) throw new Error(`预算失衡：height 预留 ${h[2]}px ≤ bottom ${b[1]}px，面板顶出视口（改公式须连 bottom 重推）`);
+  if (slack > 24) throw new Error(`顶部余量 ${slack}px 过大——height 公式被收紧而 bottom 没跟上，矮视口又不够高了`);
+  if (Number(h[1]) < 620 || Number(h[1]) > 700) throw new Error(`上限 ${h[1]}px 偏离 T125 拍板带 [620,700]（改动须同步 harness.md 手册）`);
+  const fallback = css.match(/@media \(max-height: 700px\) \{\s*\n\s*\.graph-harness-window \{[\s\S]{0,200}?\}/);
+  if (!fallback || !fallback[0].includes('height: calc(100vh - 24px)')) {
+    throw new Error('矮视口兜底（≤700px 接近全高）被移除——主公式 ≥572px 才装得下最小和，更矮全靠它');
+  }
+  return true;
+});
 // ===== Φ 基础修复用例结束 =====
 
 
