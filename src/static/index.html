@@ -36,7 +36,7 @@
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/css/styles.min.css?v=396d4e37">
-  <link rel="stylesheet" href="/css/styles-panels.min.css?v=543e4fe0">
+  <link rel="stylesheet" href="/css/styles-panels.min.css?v=e5d61ea4">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=9e45fdbe">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
   <script defer src="/vendor/katex/katex.min.js"></script>
@@ -126,6 +126,12 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>
           <span class="sidebar-tile-label">回收站</span>
           <span class="sidebar-tile-sub" id="trashTileSub">留7天</span>
+        </button>
+        <!-- Token 用量统计（2026-10-08）：第 9 块磁贴——AI 调用记账的可视化，
+             全局口径（所有账号共用，backlog T180 拍板）。数据只读，无副行。 -->
+        <button class="sidebar-tile" id="usageTile" onclick="closeSidebar();openTokenUsagePanel();" title="Token 用量统计：按日期、模型、用途查看 AI 调用量与缓存命中">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 3 3 5-6"></path></svg>
+          <span class="sidebar-tile-label">用量统计</span>
         </button>
       </div>
       <!-- 清空是危险操作：现在先进回收站（可按保留天数恢复），文案随之改口径 -->
@@ -250,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=cb5be102"></script>
+  <script src="/js/app.js?v=40adb888"></script>
   <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
@@ -658,6 +664,31 @@
       <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">恢复会连带找回该画布的消息、知识点、公式与检测记录；改保留天数只对之后删除的画布生效。</div>
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeTrashPanel()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Token 用量统计（2026-10-08）：AI 调用记账的只读可视化。居中 modal 复用
+       账号管理弹窗的玻璃家族（同回收站的选型理由）；工具栏是静态的（范围切换/
+       分线勾选/刷新），只有 tokenUsageBody 由 token-usage.js 重渲染，勾选态
+       跨重渲染不丢。数据全局共享（backlog T180 拍板），按天落本机 data/usage/。 -->
+  <div class="model-dialog-overlay" id="tokenDialog" onclick="if(event.target===this)closeTokenUsagePanel()">
+    <div class="model-dialog accounts-dialog token-dialog aurora-glass aurora-glass--dialog">
+      <h3>Token 用量统计</h3>
+      <div class="token-toolbar">
+        <label for="tokenUsageRange">统计范围</label>
+        <select id="tokenUsageRange" onchange="setTokenUsageDays(this.value)">
+          <option value="7">近 7 天</option>
+          <option value="30" selected>近 30 天</option>
+          <option value="90">近 90 天</option>
+        </select>
+        <label class="token-split-toggle"><input type="checkbox" id="tokenUsageSplitChk" onclick="toggleTokenUsageSplit()"> 折线按模型分线</label>
+        <button class="accounts-act" onclick="renderTokenUsage()">刷新</button>
+      </div>
+      <div class="token-usage-body" id="tokenUsageBody"></div>
+      <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">统计所有账号的全部 AI 调用（聊天、知识提取、Φ 智能体、记忆摘要等）；数据按天存在这台电脑的 data/usage/ 下，此处只读。</div>
+      <div class="md-actions">
+        <button class="md-btn md-btn-cancel" onclick="closeTokenUsagePanel()">关闭</button>
       </div>
     </div>
   </div>

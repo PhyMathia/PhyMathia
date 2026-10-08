@@ -4592,3 +4592,192 @@
 .memory-bar i { display: block; height: 100%; border-radius: var(--r-sm); background: var(--accent); opacity: .8; }
 .memory-model-val { flex-shrink: 0; min-width: 3.5em; text-align: right; font-size: var(--fs-2xs); color: var(--text-secondary); }
 .memory-model-hint { font-size: var(--fs-2xs); color: var(--text-secondary); margin-top: 8px; }
+
+/* ===== Token 用量统计面板（2026-10-08）：记账只读可视化 =====
+   容器在 index.html 的 #tokenDialog（复用 accounts-dialog 玻璃家族），内容全部由
+   token-usage.js 渲染。卡片/图例/折线样式抄 quiz-chart-* 先例，条形抄 memory-bar
+   先例，配色全走 CSS 变量——主题切换自动适配，不写死颜色。 */
+.token-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(80vh, 760px);
+  overflow-y: auto;
+}
+
+.token-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+
+.token-toolbar label { font-size: var(--fs-xs); color: var(--text-secondary); }
+
+.token-toolbar select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-container);
+  color: var(--text-primary);
+}
+
+.token-split-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.token-split-toggle input { accent-color: var(--accent); }
+
+.token-usage-body { display: grid; gap: 10px; }
+
+/* 汇总卡行：四张数字卡，窄屏折两列 */
+.token-summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.token-stat-card {
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-container);
+  text-align: center;
+  min-width: 0;
+}
+
+.token-stat-val { font-size: var(--fs-lg, 18px); font-weight: 700; color: var(--text-primary); }
+
+.token-stat-label { margin-top: 2px; font-size: var(--fs-2xs); color: var(--text-secondary); }
+.token-stat-label em { font-style: normal; opacity: .8; }
+
+/* 图表卡与空态：quiz-chart-card / accounts-row-loading 同款口径 */
+.token-chart-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-container);
+}
+
+.token-chart-title {
+  margin-bottom: 10px;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+
+.token-chart-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.token-chart-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.token-line-chart { display: block; width: 100%; height: auto; color: var(--text-secondary); }
+
+.token-chart-legend { display: grid; gap: 4px; }
+.token-line-legend { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-top: 8px; }
+
+.token-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-chart-legend-item span {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-xs);
+  flex-shrink: 0;
+}
+
+/* 扇形：conic-gradient 由 JS 内联（分片角度在那边才算得出来），这里只管形状 */
+.token-usage-pie-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+.token-usage-pie {
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.token-usage-pie-row .token-chart-legend { flex: 1; min-width: 200px; }
+
+/* 用途分布条形：memory-bar 同款三段行，条色走 accent 令牌 */
+.token-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: var(--fs-xs);
+}
+
+.token-kind-label {
+  flex-shrink: 0;
+  width: 64px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-kind-track {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--r-sm);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.token-kind-track i { display: block; height: 100%; border-radius: var(--r-sm); background: var(--accent); opacity: .8; }
+
+.token-kind-val { flex-shrink: 0; min-width: 9em; text-align: right; font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+/* 模型明细表：五行网格（模型/请求/Prompt/Completion/命中率），行 hover 提亮 */
+.token-usage-table { display: grid; gap: 2px; font-size: var(--fs-xs); }
+
+.token-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) .8fr 1fr 1.1fr .9fr;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  color: var(--text-secondary);
+}
+
+.token-table-row:not(.token-table-head):hover { background: var(--surface-container); }
+
+.token-table-head { font-size: var(--fs-2xs); color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+
+.token-table-row span { text-align: right; min-width: 0; }
+.token-table-row span:first-child { text-align: left; }
+
+.token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+
+@media (max-width: 560px) {
+  .token-summary-row { grid-template-columns: repeat(2, 1fr); }
+  .token-usage-pie-row { justify-content: center; }
+  .token-kind-val { min-width: 0; }
+}

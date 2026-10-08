@@ -92,6 +92,15 @@ class RecordUsageTest(UsageStatsBase):
         self.assertEqual(len(lines), 2)
 
 
+class DefaultDirTest(unittest.TestCase):
+    def test_default_dir_is_repo_root_data_usage(self):
+        # 2026-10-08 拨回仓库根 data/usage（与 config.py DATA_DIR 同口径）：
+        # 非 frozen 时＝src/../data/usage，防止再被带歪到包内
+        d = usage_stats._default_usage_dir()
+        expected = Path(usage_stats.__file__).resolve().parents[2] / "data" / "usage"
+        self.assertEqual(d, expected)
+
+
 class SummarizeTest(UsageStatsBase):
     def _write(self, day, entries):
         usage_stats.USAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -138,6 +147,46 @@ class SummarizeTest(UsageStatsBase):
         out = usage_stats.summarize(days=7)
         self.assertEqual(out["total"]["requests"], 0)
         self.assertIsNone(out["total"]["hitRate"])
+
+    def test_series_kinds_and_total_tokens(self):
+        # 2026-10-08 新增聚合：series（天×模型交叉，折线分线数据源）与
+        # kinds（按用途聚合，条形图数据源）；totalTokens＝prompt+completion
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "chat", "provider": "deepseek", "model": "a",
+             "sessionId": "s", "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": 50},
+            {"ts": f"{today}T11:00:00", "kind": "chat", "provider": "deepseek", "model": "a",
+             "sessionId": "s", "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": 100},
+            {"ts": f"{today}T12:00:00", "kind": "harness", "provider": "opencode", "model": "b",
+             "sessionId": "harness", "prompt_tokens": 40, "completion_tokens": 5, "cache_hit_tokens": None},
+        ])
+        out = usage_stats.summarize(days=30)
+        self.assertEqual(out["series"][today]["a"]["requests"], 2)
+        self.assertEqual(out["series"][today]["a"]["totalTokens"], 220)
+        self.assertEqual(out["series"][today]["b"]["totalTokens"], 45)
+        self.assertEqual(out["kinds"]["chat"]["requests"], 2)
+        self.assertEqual(out["kinds"]["chat"]["totalTokens"], 220)
+        self.assertEqual(out["kinds"]["harness"]["promptTokens"], 40)
+        self.assertEqual(out["total"]["totalTokens"], 265)
+        # 既有三桶口径不受影响
+        self.assertEqual(out["models"]["a"]["promptTokens"], 200)
+        self.assertEqual(out["days"][today]["requests"], 3)
+
+    def test_series_empty_day_and_unknown_kind(self):
+        # 空目录 series/kinds 为空壳；kind 缺失/空串归入 unknown，不丢条目
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "", "provider": "p", "model": "a",
+             "sessionId": "", "prompt_tokens": 10, "completion_tokens": None, "cache_hit_tokens": None},
+        ])
+        out = usage_stats.summarize(days=30)
+        self.assertEqual(out["kinds"]["unknown"]["requests"], 1)
+        self.assertEqual(out["series"][today]["a"]["totalTokens"], 10)
+
+    def test_empty_dir_structure(self):
+        out = usage_stats.summarize(days=7)
+        self.assertEqual(out["series"], {})
+        self.assertEqual(out["kinds"], {})
 
 
 if __name__ == "__main__":

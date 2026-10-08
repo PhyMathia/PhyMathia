@@ -59,6 +59,10 @@ const entries = [
   // 回收站（2026-10-07）：防误删面板。复用 accounts.js 的 _accountsDateStr 与
   // config.js 的 STORAGE_KEY_TRASH_RETENTION，都在此前加载；面板函数按需调用。
   'trash.js',
+  // Token 用量统计（2026-10-08）：AI 调用记账的只读可视化面板。依赖 utils.js 的
+  // escapeHtml/toastMsg（此前加载）；零依赖图表（conic-gradient 扇形＋手写 SVG
+  // 折线，先例 quiz-render.js），静态容器在 index.html 的 #tokenDialog。
+  'token-usage.js',
   'quiz.js',
   'quiz-ai.js',
   'quiz-stats.js',
