@@ -633,7 +633,8 @@
         content: degradeNoteBlock + _harnessAssistantContent(data),
         instruction,
         summary: data.summary || '',
-        operations: data.operations || [],
+        // T242：配方操作的差异文本/回查名随操作存盘（应用后旧配方被顶掉就补不回来了）
+        operations: _attachRecipeOpPreviews(data.operations || []),
         // T122：以下四项供 _harnessOpsCardHtml 渲染气泡内的可勾选清单（过去写在
         // 独立结果区里，随结果区取消一并搬进条目）。随条目存盘 → 切 Φ 会话能回来、
         // 不被整块重渲染吃掉、T96 事件日志也能归因。
@@ -866,6 +867,89 @@
     return m ? { from: m[1], to: m[2] } : null;
   }
 
+  // 配方前后字段差异（T242）：update_recipe 是整份覆盖——模型漏带的字段会被
+  // normalize 静默重置成默认（实测 level_tags 归零成 []），应用前必须让人看见。
+  // 旧配方取本地配方库（快照 user_recipes 只有身份摘要，没有完整 payload）。
+  // 最多报 4 项，超了截断——预览行是细横条，不是差异面板。
+  function _recipeFieldDiff(oldRecipe, newRecipe) {
+    if (!oldRecipe || !newRecipe) return '';
+    const changed = [];
+    const dropped = [];
+    const add = (list, text) => { if (list.length < 4) list.push(text); };
+    const oldName = String(oldRecipe.name || '');
+    const newName = String(newRecipe.name || '');
+    if (oldName && newName && oldName !== newName) {
+      add(changed, '名字「' + oldName + '」→「' + newName + '」');
+    }
+    // 静态出口：少了哪几个要说出来（模型常顺势裁出口）
+    const oldPorts = (oldRecipe.ports && oldRecipe.ports.static) || [];
+    const newPorts = (newRecipe.ports && newRecipe.ports.static) || [];
+    if (oldPorts.length !== newPorts.length) {
+      const gone = oldPorts.map(p => p.label).filter(l => !newPorts.some(p => p.label === l));
+      add(changed, '出口 ' + oldPorts.length + ' → ' + newPorts.length + ' 个'
+        + (gone.length ? '（少了「' + gone.join('、') + '」）' : ''));
+    }
+    // 动态出口＋档位标签：最高频的翻车点（三档追问被抹成一问一答）
+    const oldDyn = oldRecipe.ports && oldRecipe.ports.dynamic;
+    const newDyn = newRecipe.ports && newRecipe.ports.dynamic;
+    if (oldDyn && !newDyn) {
+      add(dropped, '动态解析出口');
+    } else if (!oldDyn && newDyn) {
+      add(changed, '新增动态解析出口');
+    } else if (oldDyn && newDyn) {
+      const tagList = r => ((r.ports.dynamic.parser || {}).level_tags || []).join('/');
+      const oldTags = tagList(oldRecipe);
+      const newTags = tagList(newRecipe);
+      if (oldTags !== newTags) {
+        (newTags ? changed : dropped).push('档位标签「' + (oldTags || '无') + '」→「' + (newTags || '无') + '」');
+      }
+    }
+    // 提示词槽：旧有内容、新 payload 为空 ＝ 被抹掉
+    const oldG = oldRecipe.generate || {};
+    const newG = newRecipe.generate || {};
+    const slots = [['prompt', '主提示词'], ['followup_prompt', '追问语'],
+      ['confused_prompt', '困惑语'], ['retry_prompt', '重试语'], ['strict_output', '严格输出']];
+    for (const [key, label] of slots) {
+      const before = String(oldG[key] || '').trim();
+      const after = String(newG[key] || '').trim();
+      if (before && !after) add(dropped, label);
+      else if (before !== after) add(changed, label + '已改写');
+    }
+    const oldAp = oldRecipe.appearance || {};
+    const newAp = newRecipe.appearance || {};
+    if ((oldAp.color || oldAp.palette) !== (newAp.color || newAp.palette) || oldAp.shape !== newAp.shape) {
+      add(changed, '长相（颜色/形状）');
+    }
+    if (String(oldRecipe.content_kind || '') !== String(newRecipe.content_kind || '')) {
+      add(changed, '内容载体「' + (oldRecipe.content_kind || '默认') + '」→「' + (newRecipe.content_kind || '默认') + '」');
+    }
+    const parts = [];
+    if (changed.length) parts.push(changed.join('；'));
+    if (dropped.length) parts.push('⚠️ 未包含在本次修改中、将被重置：' + dropped.join('、'));
+    return parts.join('；');
+  }
+
+  // T242：结果到达时一次性算好配方操作行的人话差异并随操作存进历史条目——
+  // 应用后旧配方已被新配方顶掉，事后重渲染（切会话/翻历史）就算不出来了。
+  // 顺带给 delete 兜底回查配方名（旧数据/后端漏带时预览行不显示内部 id）。
+  function _attachRecipeOpPreviews(ops) {
+    if (!Array.isArray(ops) || typeof getUserRecipes !== 'function') return ops;
+    const lib = getUserRecipes();
+    return ops.map(op => {
+      const name = op.op || op.type || '';
+      if (name === 'update_recipe') {
+        const old = lib.find(item => item.id === String(op.recipe_id || ''));
+        const diff = old ? _recipeFieldDiff(old, op.recipe) : '';
+        return diff ? Object.assign({}, op, { preview_diff: diff }) : op;
+      }
+      if (name === 'delete_recipe' && !op.recipe_name) {
+        const old = lib.find(item => item.id === String(op.recipe_id || ''));
+        return old && old.name ? Object.assign({}, op, { recipe_name: old.name }) : op;
+      }
+      return op;
+    });
+  }
+
   // 配方字段级人话摘要（P3 创造模式预览行）：给不懂编程的用户读
   function _recipeDigest(recipe) {
     const parts = [];
@@ -905,7 +989,9 @@
     }
     if (name === 'update_recipe') {
       const recipe = op.recipe || {};
-      return '修改配方「' + (recipe.name || op.recipe_id || '') + '」';
+      // T242：整份覆盖的字段级差异。recipe_name 是后端补的旧名（payload 里可能是新名）
+      return '修改配方「' + (op.recipe_name || recipe.name || op.recipe_id || '') + '」'
+        + (op.preview_diff ? '：' + op.preview_diff : '');
     }
     if (name === 'delete_recipe') {
       return '删除配方「' + (op.recipe_name || op.recipe_id || '') + '」';

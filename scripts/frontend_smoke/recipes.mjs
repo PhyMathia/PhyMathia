@@ -572,4 +572,135 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
   }
 });
 // ===== 节点配方 P3 用例结束 =====
+
+// ===== 2026-10-09 创造模式修复批次（T242/T243/T244＋微调入口）=====
+// 本组全部同步（无 await），不占串行边界段。
+
+check('快照配方清单按最近修改倒序注入（T244：32 条上限下的视野优先）', () => {
+  // 静态：注入点必须是 updatedAt 倒序的副本（不改 getUserRecipes 本身）
+  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  if (!/getUserRecipes\(\)\.slice\(\)\.sort\(\(a, b\) => \(b\.updatedAt \|\| 0\) - \(a\.updatedAt \|\| 0\)\)/.test(harnessSrc)) {
+    throw new Error('清单注入未按 updatedAt 倒序（T244 回归）');
+  }
+  // 行为：库里 [旧, 新] → 快照里 [新, 旧]（最近动过的优先进 Φ 视野）
+  const prevRecipes = sandbox.window.getUserRecipes();
+  const prevGet = sandbox.window.getGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const prevById = sandbox.window.getSessionById, prevView = sandbox.window.getGraphViewNodes;
+  const prevEdges = sandbox.window.getGraphViewEdges, prevSel = sandbox.window.getSelectedGraphNodeIds;
+  try {
+    sandbox.window.setUserRecipes([
+      { ..._smokeValidRecipe(), id: 'r-old', name: '旧配方', updatedAt: 1000 },
+      { ..._smokeValidRecipe(), id: 'r-new', name: '新配方', updatedAt: 9000 },
+    ]);
+    sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
+    sandbox.window.getCurrentSessionId = () => 'sess_test';
+    sandbox.window.getSessionById = (id) => ({ id, title: '画布' + id });
+    vm.runInContext('phiSessions = { phi_t: { id: "phi_t", title: "t", boundSid: "sess_test", createdAt: 1, updatedAt: 1 } }; currentPhiId = "phi_t";', sandbox);
+    sandbox.window.getGraphViewNodes = () => [];
+    sandbox.window.getGraphViewEdges = () => [];
+    sandbox.window.getSelectedGraphNodeIds = () => [];
+    const snap = sandbox.buildHarnessSnapshot(false, [], null);
+    const ids = (snap.user_recipes || []).map(r => r.id);
+    if (ids[0] !== 'r-new' || ids[1] !== 'r-old') {
+      throw new Error('快照清单应按 updatedAt 倒序（新的在前），实际 ' + JSON.stringify(ids));
+    }
+    return true;
+  } finally {
+    sandbox.window.setUserRecipes(prevRecipes || []);
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.getCurrentSessionId = prevSid;
+    sandbox.window.getSessionById = prevById;
+    sandbox.window.getGraphViewNodes = prevView;
+    sandbox.window.getGraphViewEdges = prevEdges;
+    sandbox.window.getSelectedGraphNodeIds = prevSel;
+  }
+});
+
+check('update_recipe 预览行字段差异（T242）：被抹掉的字段带着 ⚠️ 显示', () => {
+  // _recipeFieldDiff 是 harness-run.js 顶层函数声明：vm 全局，不经 window
+  const diff = sandbox._recipeFieldDiff;
+  if (typeof diff !== 'function') throw new Error('_recipeFieldDiff 未挂 vm 全局（harness-run.js）');
+  const old = {
+    name: '三级追问', desc: 'd', base: { kind: 'module' },
+    appearance: { palette: 'amber', shape: 'is-round' },
+    generate: { prompt: '输出三级追问', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    ports: {
+      static: [{ label: '追问', drag_form: 'draft' }, { label: '再测一道', drag_form: 'user' }],
+      dynamic: { parser: { level_tags: ['基础', '进阶', '拓展'], pattern: 'numbered_list', max: 12, label_from: 'index_question' } },
+    },
+    content_kind: 'markdown',
+  };
+  // 模型「重填整表」时丢了 dynamic、清空了主提示词、少带一个静态出口
+  const bare = {
+    name: '三级追问', desc: 'd', base: { kind: 'module' },
+    appearance: { palette: 'amber', shape: 'is-round' },
+    generate: { prompt: '', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    ports: { static: [{ label: '追问', drag_form: 'draft' }] },
+    content_kind: 'markdown',
+  };
+  const text = diff(old, bare);
+  if (!text.includes('动态解析出口')) throw new Error('整份丢掉 dynamic 未报出：' + text);
+  if (!text.includes('主提示词')) throw new Error('主提示词被清空未报出：' + text);
+  if (!text.includes('⚠️')) throw new Error('被抹掉的字段要带 ⚠️ 前缀：' + text);
+  if (!text.includes('出口 2 → 1 个') || !text.includes('再测一道')) throw new Error('出口减少未报出：' + text);
+  // 改名可见（T80 模型静默改名）
+  const renamed = { ...bare, name: '三级追问·升级', generate: { prompt: '输出三级追问' } };
+  const renText = diff(old, renamed);
+  if (!renText.includes('名字「三级追问」→「三级追问·升级」')) throw new Error('改名未显示前后对照：' + renText);
+  // 无差异回空串（不刷噪音）
+  if (diff(old, old) !== '') throw new Error('无变化应返回空串');
+  return true;
+});
+
+check('配方操作预览附着（T242/T243）：差异随操作存盘、delete 回查配方名', () => {
+  const attach = sandbox._attachRecipeOpPreviews;
+  if (typeof attach !== 'function') throw new Error('_attachRecipeOpPreviews 未挂 vm 全局');
+  const prevRecipes = sandbox.window.getUserRecipes();
+  try {
+    sandbox.window.setUserRecipes([
+      { ..._smokeValidRecipe(), id: 'r-1', name: '错题复盘', updatedAt: 5000,
+        ports: { static: [{ label: '追问', drag_form: 'draft' }],
+          dynamic: { parser: { level_tags: ['基础', '进阶', '拓展'], pattern: 'numbered_list', max: 12, label_from: 'index_question' } } } },
+    ]);
+    const ops = [
+      { op: 'update_recipe', recipe_id: 'r-1', reason: '把三档标签改一下',
+        recipe: { name: '错题复盘', base: { kind: 'module' }, appearance: { palette: 'amber', shape: 'is-round' },
+          generate: { prompt: 'x' }, ports: { static: [{ label: '追问', drag_form: 'draft' }] }, content_kind: 'markdown' } },
+      { op: 'delete_recipe', recipe_id: 'r-1', reason: '删' },
+    ];
+    const out = attach(ops);
+    if (!out[0].preview_diff || !out[0].preview_diff.includes('动态解析出口')) {
+      throw new Error('update 未附着字段差异：' + (out[0].preview_diff || ''));
+    }
+    if (out[1].recipe_name !== '错题复盘') throw new Error('delete 未回查到配方名：' + out[1].recipe_name);
+    // 回新数组、不搅动原 ops（应用路径读原 ops）
+    if (out === ops || ops[0].preview_diff) throw new Error('attach 应回新数组、不改原 ops');
+    return true;
+  } finally {
+    sandbox.window.setUserRecipes(prevRecipes || []);
+  }
+});
+
+check('已落库配方行挂「微调/放上画布」入口（T242 配套）：DOM 契约＋落地判据', () => {
+  const previewSrc = fs.readFileSync('src/static/js/harness-preview.js', 'utf8');
+  if (!previewSrc.includes('_harnessRecipeActionsHtml')) throw new Error('配方行动作渲染函数缺失');
+  for (const needle of ['openRecipeFormById(', 'createRecipeNode(', 'graph-harness-op-recipe-actions']) {
+    if (!previewSrc.includes(needle)) throw new Error('配方行入口缺 ' + needle);
+  }
+  // 只挂已落库的行：保留修改（decision=keep）或应用全部后（harnessResultApplied）——
+  // 待处理批次不挂（配方还不存在/改的还是旧版，入口会和应用动作打架）
+  if (!/entry\.decision === 'keep' \|\| \(isCurrent && harnessResultApplied\)/.test(previewSrc)) {
+    throw new Error('配方行入口的落地判据不对');
+  }
+  // 入口只在配方确在库里时渲染
+  if (!/getUserRecipes\(\)\.some\(item => item\.id === rid\)/.test(previewSrc)) throw new Error('入口缺库里存在判据');
+  // CSS：令牌复用，零新色值零新字号
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  for (const sel of ['.graph-harness-op-recipe-actions {', '.graph-harness-op-recipe-btn {']) {
+    if (!css.includes(sel)) throw new Error('缺样式 ' + sel);
+  }
+  if (/\.graph-harness-op-recipe-btn \{[^}]*#[0-9a-fA-F]{3}/.test(css)) throw new Error('按钮样式不许出现 hex 字面量（T8 红线）');
+  return true;
+});
+// ===== 2026-10-09 创造模式修复批次用例结束 =====
 }
