@@ -473,7 +473,7 @@ async def api_models_chat(request: Request):
         except (KeyError, IndexError, TypeError):
             logger.warning("AI proxy non-stream: upstream JSON missing choices[0].message.content")
             return Response(content=raw, media_type="application/json")
-        _update_socratic_state_from_content(content, socratic_ref)
+        _update_socratic_state_from_content(content, socratic_ref, account)
         if profile_usage is not None:
             # 非流式出口同样回传注入快照；序列化失败退回原字节
             try:
