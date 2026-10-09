@@ -13,6 +13,7 @@
 """
 
 import re
+import threading
 
 from .llm_common import estimate_tokens
 from . import accounts
@@ -281,22 +282,85 @@ def match_concept_details(prompt: str, items: dict, limit: int = 2, session_id: 
     return [row[3] for row in scored[: max(0, limit)]]
 
 
+# T207：共享串索引的进程内增量缓存。match_concept_details 每次提问都用它做稀有度
+# 分母与领域词判定，旧实现每请求 O(n·L²) 全量重建（n 条目标题 × 全部子串），知识库
+# 变大后等于每问一次全重建一遍。索引是 items 的**纯函数**（_normalize_title 只依赖
+# 原标题与静态 ALIASES 表，无外部可变输入），因此按条目增量维护：标题没变的条目
+# 零成本复用，变了的条目先从索引减掉旧贡献再加新贡献，稳态下每请求只剩 O(n) 次
+# 短串字面比对。
+# ——不带 account 维度：索引内容只由 (条目内容, 过滤口径) 决定，按条目标题比对
+# 天然隔离账号域（同 id 不同标题＝不同贡献，交替调用至多重建、不会串）。
+# ——生产路径（models_routes 主聊天、context_preview）全在事件循环线程同步调用；
+# 加锁只为将来误把检索挪进 to_thread 时不至于并发改崩共享 dict，常态无竞争。
+_TITLE_RUN_CACHE = {"key": None, "index": {}, "contrib": {}}
+_TITLE_RUN_LOCK = threading.RLock()
+
+
+def _reset_title_run_cache() -> None:
+    """清空共享串索引缓存（口径整体重建与单测隔离用）。"""
+    with _TITLE_RUN_LOCK:
+        _TITLE_RUN_CACHE.update({"key": None, "index": {}, "contrib": {}})
+
+
 def _title_run_index(items: dict, allow_cross_session: bool, session_id: str) -> dict:
-    """共享串 → 出现在多少个条目标题里（稀有度分母）。"""
-    index = {}
+    """共享串 → 出现在多少个条目标题里（稀有度分母）。
+
+    T207 起走进程内增量缓存：过滤口径（跨会话 / 收窄本会话）或任一条目标题变化才动
+    索引，稳态零重建。**返回的 dict 是共享对象，调用方只读**（_run_weight 与领域词
+    判定都只取 len，不改写）；全新结果与旧版逐字节等价由 tests/test_concept_index_cache.py
+    对照暴力参照实现钉死。
+    """
+    key = (bool(allow_cross_session), str(session_id or ""))
+    current = {}
     for item_id, item in items.items():
         if not isinstance(item, dict):
             continue
         if not allow_cross_session and str(item.get("sessionId") or "") not in ("", str(session_id)):
             continue
-        title = _normalize_title(item.get("title"))
-        for size in range(_TITLE_RUN_MIN_CJK, len(title) + 1):
-            for i in range(0, len(title) - size + 1):
-                piece = title[i:i + size]
-                if piece.isascii() and size < _TITLE_RUN_MIN_LATIN:
-                    continue
-                index.setdefault(piece, set()).add(str(item_id))
-    return index
+        current[str(item_id)] = str(item.get("title") or "")
+    with _TITLE_RUN_LOCK:
+        cache = _TITLE_RUN_CACHE
+        if cache["key"] != key:
+            # 口径切换：索引的条目集定义都变了（本会话收窄会换掉半个库），整体重建
+            cache["key"] = key
+            cache["index"] = {}
+            cache["contrib"] = {}
+        index = cache["index"]
+        contrib = cache["contrib"]
+        for gone in contrib.keys() - current.keys():
+            _title_run_retract(index, contrib.pop(gone)[1], gone)
+        for item_id, raw_title in current.items():
+            old = contrib.get(item_id)
+            if old is not None:
+                if old[0] == raw_title:
+                    continue  # 标题没动：归一化是原标题的纯函数，整份贡献直接复用
+                _title_run_retract(index, old[1], item_id)
+            title = _normalize_title(raw_title)
+            pieces = set()
+            for size in range(_TITLE_RUN_MIN_CJK, len(title) + 1):
+                for i in range(0, len(title) - size + 1):
+                    piece = title[i:i + size]
+                    if piece.isascii() and size < _TITLE_RUN_MIN_LATIN:
+                        continue
+                    index.setdefault(piece, set()).add(item_id)
+                    pieces.add(piece)
+            contrib[item_id] = (raw_title, pieces)
+        return index
+
+
+def _title_run_retract(index: dict, pieces, item_id: str) -> None:
+    """从索引里减掉某条目对这批共享串的贡献；桶空了连键一起删。
+
+    删键不是洁癖：_run_weight 的 `or 1` 兜底会把空桶的 df 算成 1，留下空集合就
+    等于给不存在的串发了一张「全库仅此一条」的稀有票。
+    """
+    for piece in pieces:
+        bucket = index.get(piece)
+        if bucket is None:
+            continue
+        bucket.discard(item_id)
+        if not bucket:
+            del index[piece]
 
 
 def _run_weight(run: str, title_index: dict) -> float:
