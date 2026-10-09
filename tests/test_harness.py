@@ -330,14 +330,15 @@ class HarnessToolsTest(unittest.TestCase):
     def test_build_tools_per_phase(self):
         from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, build_tools
         edit_tools = {"create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"}
-        # T93＋2026-10-03 智能化第二期：normal/expand/apply/preset 追加五只读工具
-        # （图查询三件套＋知识检索 search_knowledge/search_formulas，先查再改）
+        # T93＋2026-10-03 智能化第二期＋2026-10-09 优化新路径六：normal/expand/
+        # apply/preset 追加六只读工具（图查询三件套＋知识检索两件套＋graph_stats
+        # 学习体检，先查再改）
         self.assertEqual(set(PHASE_TOOLS["normal"]), edit_tools | set(READONLY_TOOL_NAMES))
         self.assertEqual(PHASE_TOOLS["evaluate"], ["create_eval_node"])
         self.assertNotIn("create_node", PHASE_TOOLS["apply"])
-        self.assertEqual(len(build_tools("normal")), 11)
+        self.assertEqual(len(build_tools("normal")), 12)
         self.assertEqual(len(build_tools("evaluate")), 1)
-        self.assertEqual(len(build_tools("apply")), 10)
+        self.assertEqual(len(build_tools("apply")), 11)
         self.assertEqual(build_tools("resolve"), [])
 
     def test_parse_tool_calls_basic(self):

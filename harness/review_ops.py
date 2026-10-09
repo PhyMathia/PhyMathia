@@ -467,14 +467,18 @@ def _assistant_tool_message(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def _readonly_call_arg(name: str, args: Dict[str, Any]) -> str:
     """进度事件里的查询参数预览（read_node/list_neighbors 取节点，search* 取词）。"""
+    if name == "graph_stats":
+        return ""
     key = "node_id" if name in ("read_node", "list_neighbors") else "keyword"
     return str(args.get(key) or args.get("id") or args.get("label") or "")[:60]
 
 
 def _readonly_tool_label(name: str) -> str:
-    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查。"""
+    """查询轮进度事件的来源标签：图查询 / 知识库 / 公式速查 / 学习体检。"""
     if name == "search_knowledge":
         return "知识库"
     if name == "search_formulas":
         return "公式速查"
+    if name == "graph_stats":
+        return "学习体检"
     return "图中信息"

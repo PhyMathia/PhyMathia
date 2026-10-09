@@ -76,6 +76,11 @@ const scenarios = [
   // mock /__stats 核对回灌结果确实带上了法拉第节点。依赖 battery 服务带 embedding
   // 模型（models/Qwen3-Embedding）；语义层降级环境下此场景必红——特性场景非回归场景。
   { id: 'semantic-recall', label: '同义检索：电磁感应→法拉第定律（语义召回）', instruction: '同义检索演练：搜一下电磁感应相关的节点，找到后给那个节点补充复习标注', phase: 'normal', focus: [], snapshotExtra: 'faraday', expect: { phase: 'normal', updateTargets: ['F'], allowedUpdateIds: ['F'], semanticRecall: true } },
+  // 路径六第 1 档（2026-10-09）：学习教练——故意缺先修连线的图（「动量守恒」孤岛＋
+  // quiz_weak 指着它）上问「该先学什么」，chat 答疑相位必须先拉 graph_stats 再答：
+  // statsPulled 经 mock /__stats 核对统计确实进了回灌；summaryIncludes 钉答案引用了
+  // 统计事实（孤岛节点名）而非泛泛而谈。依赖 mock 剧本（真模型不在此场景预期内）。
+  { id: 'graph-stats', label: '学习教练：先拉整图统计再答「先学什么」（答疑相位）', instruction: '学习路线演练：看看这张图，我该先学什么？', phase: 'chat', focus: [], snapshotExtra: 'broken-route', expect: { phase: 'chat', noOps: true, statsPulled: true, summaryIncludes: ['动量守恒'] } },
   { id: 'delete-derivative', label: '删除核心知识点 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
   { id: 'ref-by-content', label: '按内容引用节点', instruction: '把「当自变量趋近某个值时函数值趋近的值」这个节点改得更清楚', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['B'], allowedUpdateIds: ['B'] } },
   { id: 'apply-conflict', label: '冲突评价应用', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals-conflict', expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
@@ -660,6 +665,13 @@ function scoreScenario(sc, data) {
     if (!connected) issues.push('新模块未从期望节点引出连线');
   }
   if (!String(data.summary || '').trim()) issues.push('缺少 summary');
+  // 路径六第 1 档配套：答案必须引用统计事实（如孤岛节点名）而非泛泛而谈
+  if (ex.summaryIncludes) {
+    const s = String(data.summary || '');
+    for (const kw of ex.summaryIncludes) {
+      if (!s.includes(kw)) issues.push('summary 未引用统计事实（缺「' + kw + '」）: ' + s.slice(0, 80));
+    }
+  }
   if (ex.summaryReadable) {
     const s = String(data.summary || '');
     const rawId = /(hn_\d+|knowledge-custom-\d+|:\w+-\d+->|edge_key|temp_id|\b[A-Za-z]+-\d{6,}\b)/;
@@ -796,6 +808,7 @@ function makeInitialSnapshot(sc, graph) {
   if (sc.snapshotExtra === 'big') return makeBigSnapshot();
   if (sc.snapshotExtra === 'recipes') return makeRecipesSnapshot();
   if (sc.snapshotExtra === 'faraday') return makeFaradaySnapshot();
+  if (sc.snapshotExtra === 'broken-route') return makeBrokenRouteSnapshot();
   return makeSnapshot();
 }
 
@@ -805,6 +818,16 @@ function makeFaradaySnapshot() {
   const snap = makeSnapshot();
   snap.nodes.push({ id: 'F', kind: 'knowledge', label: '法拉第定律', content: '闭合回路中磁通量的变化会产生感应电动势，大小与磁通量变化率成正比。', formula: '\\varepsilon=-\\frac{d\\Phi}{dt}' });
   snap.edges.push({ key: 'A:out-0->F:in-0', from: 'A', to: 'F', relation: '应用', label: '导数描述变化率' });
+  return snap;
+}
+
+// 路径六第 1 档（学习教练）验收快照：故意缺先修连线——「动量守恒」是没有任何
+// 连线的孤岛，quiz_weak 指着它（图上有节点但没有进阶链）；「极限」入度为 0 无
+// 先修来源。graph_stats 的分量/无先修/覆盖率三指标都得能把这些指出来。
+function makeBrokenRouteSnapshot() {
+  const snap = makeSnapshot();
+  snap.nodes.push({ id: 'E', kind: 'knowledge', label: '动量守恒', content: '系统不受外力或外力矢量和为零时，总动量保持不变。', formula: '\\sum m_i v_i = \\text{const}' });
+  snap.quiz_weak = [{ title: '动量守恒', wrong: 2, mastery: 40, sessionId: 'quiz-battery' }];
   return snap;
 }
 
@@ -874,7 +897,7 @@ async function runTurns(sc, idx, graph, total) {
       // 路径二配套：质检请求「看到了结果图」的观测点在 mock /__stats
       // （selfcheckResultState 只在质检请求带「操作执行后的结果图」段时 +1）
       let mockStatsBefore = null;
-      if (turn.expect && (turn.expect.criticSawResultState || turn.expect.semanticRecall) && MOCK_BASE) {
+      if (turn.expect && (turn.expect.criticSawResultState || turn.expect.semanticRecall || turn.expect.statsPulled) && MOCK_BASE) {
         try { mockStatsBefore = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json(); } catch (e) {}
       }
       const data = await callReview(payload);
@@ -899,6 +922,20 @@ async function runTurns(sc, idx, graph, total) {
           if ((st.semantic_recall || 0) <= before) {
             score.passed = false;
             score.issues.push('语义召回未进入回灌（mock /__stats.semanticRecall 未增长）');
+          }
+        } catch (e) {
+          score.passed = false;
+          score.issues.push('无法读取 mock /__stats: ' + e.message);
+        }
+      }
+      // 路径六第 1 档配套：graph_stats 统计结果确实进了回灌（模型据此作答）
+      if (turn.expect && turn.expect.statsPulled && MOCK_BASE) {
+        try {
+          const st = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json();
+          const before = (mockStatsBefore && mockStatsBefore.graph_stats) || 0;
+          if ((st.graph_stats || 0) <= before) {
+            score.passed = false;
+            score.issues.push('整图统计未进入回灌（mock /__stats.graph_stats 未增长）');
           }
         } catch (e) {
           score.passed = false;

@@ -289,7 +289,7 @@ def build_review_messages(
 
 HARNESS_CHAT_REDLINE = """
 
-【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（create_node/update_node/delete_node/add_edge/remove_edge/update_edge）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（read_node / list_neighbors / search_nodes / search_knowledge / search_formulas）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。"""
+【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（create_node/update_node/delete_node/add_edge/remove_edge/update_edge）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（read_node / list_neighbors / search_nodes / search_knowledge / search_formulas / graph_stats）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。用户问“该先学什么/这张图作为学习路线合不合格/哪里薄弱”时，先调 graph_stats 拿整图统计（连通分量、链深梯度、无先修节点、检测薄弱点覆盖），回答必须引用其中的具体数字与节点，不要泛泛而谈。"""
 
 HARNESS_EVALUATE_SYSTEM_PROMPT = """你是知识网络评价 harness，只负责生成 AI 评价节点，不修改真实节点和连线。
 

@@ -1,8 +1,9 @@
 """T93（评审路线 #8）只读查询回灌循环 + T82 相位识别收敛（后端超集）回归。
 
 覆盖：
-- build_tools：normal/expand/apply/preset 含五只读工具（图查询三件套＋知识检索
-  两件套，2026-10-03 扩容）；evaluate 不含、chat 为纯只读表；
+- build_tools：normal/expand/apply/preset 含六只读工具（图查询三件套＋知识检索
+  两件套＋graph_stats 学习体检，2026-10-03/2026-10-09 两次扩容）；evaluate 不含、
+  chat 为纯只读表；
 - execute_readonly_tool 直测：read_node 按 id/按 label/未找到、list_neighbors
   方向与关系/截断、search_nodes label 优先/截断、search_knowledge/search_formulas
   知识检索命中/空库/不可用/截断、坏参数返回 error 不抛；
@@ -579,6 +580,167 @@ class KnowledgeQueryLoopTest(unittest.TestCase):
         self.assertIn("瞬时变化率", tool_msgs[0]["content"])
         tool_events = [e for e in events if e.get("stage") == "tool"]
         self.assertTrue(any("知识库" in e["message"] for e in tool_events), "进度事件应标注检索来源")
+
+
+class GraphStatsToolTest(unittest.TestCase):
+    """优化新路径六第 1 档（2026-10-09）：graph_stats 学习教练——整图统计直测。
+
+    基准图故意「缺先修连线」：C（动量守恒）不与任何人连通——分量/无先修/
+    链深三指标都得能把它指出来，这是「先拉 stats 再答」能引用的事实来源。
+    """
+
+    SNAP = {
+        "version": 1,
+        "nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+            {"id": "D", "kind": "module", "label": "物理视角", "module_key": "physics"},
+        ],
+        "edges": [
+            {"key": "B:out-0->A:in-0", "from": "B", "to": "A",
+             "fromPort": "out-0", "toPort": "in-0", "relation": "依赖"},
+            {"key": "A:out-0->D:in-0", "from": "A", "to": "D",
+             "fromPort": "out-0", "toPort": "in-0", "relation": "物理意义"},
+        ],
+    }
+
+    def test_basic_metrics(self):
+        out = execute_readonly_tool("graph_stats", {}, self.SNAP)
+        self.assertEqual(out["nodes"], 4)
+        self.assertEqual(out["edges"], 2)
+        self.assertEqual(out["components"], 2, "C 孤立，必须报出两个连通分量")
+        self.assertIn("互不连通", out["components_note"])
+        self.assertEqual(out["isolated_nodes"], 1)
+        self.assertEqual(out["no_prereq_knowledge"]["count"], 2, "极限/动量守恒都无先修来源")
+        self.assertEqual(
+            sorted(item["label"] for item in out["no_prereq_knowledge"]["items"]),
+            ["动量守恒", "极限"],
+        )
+        knowledge = out["depth_by_kind"]["knowledge"]
+        self.assertEqual(knowledge["nodes"], 3)
+        self.assertEqual(knowledge["depth_histogram"], {"0": 2, "1": 1})
+        self.assertEqual(knowledge["max_depth"], 1)
+        self.assertEqual(out["depth_by_kind"]["module"]["depth_histogram"], {"2": 1})
+
+    def test_quiz_weak_coverage_matched_without_chain_and_missing(self):
+        snap = dict(self.SNAP)
+        snap["quiz_weak"] = [
+            {"title": "动量守恒", "wrong": 2, "mastery": 40, "sessionId": "s1"},
+            {"title": "牛顿定律", "wrong": 1, "mastery": 55, "sessionId": "s1"},
+        ]
+        out = execute_readonly_tool("graph_stats", {}, normalize_snapshot(snap))
+        coverage = out["quiz_weak_coverage"]
+        self.assertTrue(coverage["present"])
+        self.assertEqual(coverage["total"], 2)
+        self.assertEqual(coverage["covered"], 1)
+        hit = next(item for item in coverage["items"] if item["covered"])
+        self.assertEqual(hit["node_id"], "C")
+        self.assertEqual(hit["outgoing_edges"], 0, "动量守恒在图上没有向外延伸的进阶链")
+        self.assertIn("缺进阶链", hit["note"])
+        miss = next(item for item in coverage["items"] if not item["covered"])
+        self.assertIn("尚未进图", miss["note"])
+
+    def test_quiz_weak_absent_reports_skip(self):
+        out = execute_readonly_tool("graph_stats", {}, self.SNAP)
+        self.assertFalse(out["quiz_weak_coverage"]["present"])
+        self.assertIn("跳过", out["quiz_weak_coverage"]["note"])
+
+    def test_cycle_locked_not_crashed(self):
+        snap = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "甲"},
+                {"id": "B", "kind": "knowledge", "label": "乙"},
+                {"id": "C", "kind": "knowledge", "label": "丙"},
+            ],
+            "edges": [
+                {"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖"},
+                {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
+                {"key": "A:out-1->C:in-0", "from": "A", "to": "C", "relation": "应用"},
+            ],
+        }
+        out = execute_readonly_tool("graph_stats", {}, snap)
+        self.assertEqual(out["components"], 1)
+        self.assertEqual(out["cycle_locked"], 3, "A/B 成环，C 的唯一入边又来自环——三者都无法定层")
+        self.assertIn("环", out["cycle_note"])
+        knowledge = out["depth_by_kind"]["knowledge"]
+        self.assertEqual(knowledge["cycle_locked"], 3)
+        self.assertEqual(knowledge["depth_histogram"], {}, "环锁节点不进直方图，不给假深度")
+
+    def test_empty_graph(self):
+        out = execute_readonly_tool("graph_stats", {}, {"nodes": [], "edges": []})
+        self.assertEqual(out["nodes"], 0)
+        self.assertIn("空图", out["note"])
+
+    def test_no_prereq_list_truncated(self):
+        snap = {
+            "nodes": [{"id": f"K{i}", "kind": "knowledge", "label": f"考点{i}"} for i in range(25)],
+            "edges": [],
+        }
+        out = execute_readonly_tool("graph_stats", {}, snap)
+        self.assertEqual(out["components"], 25)
+        section = out["no_prereq_knowledge"]
+        self.assertEqual(section["count"], 25)
+        self.assertEqual(len(section["items"]), 20, "清单封顶 20 条防预算爆")
+        self.assertTrue(section["truncated"])
+
+    def test_extra_arguments_accepted(self):
+        # 部分模型爱传 {"include": "all"}——不接受会平白多一轮纠错往返
+        out = execute_readonly_tool("graph_stats", {"include": "all"}, self.SNAP)
+        self.assertNotIn("error", out)
+
+    def test_graph_stats_readonly_wiring(self):
+        from harness.tools import TOOL_TO_OP
+        self.assertIn("graph_stats", READONLY_TOOL_NAMES)
+        self.assertNotIn("graph_stats", TOOL_TO_OP, "只读统计绝不产编辑操作")
+        self.assertIn("graph_stats", [s["function"]["name"] for s in build_tools("chat")])
+        schema = {s["function"]["name"]: s for s in build_tools("normal")}["graph_stats"]
+        self.assertEqual(schema["function"]["parameters"]["required"], [])
+
+
+class GraphStatsQueryLoopTest(unittest.TestCase):
+    """chat 答疑相位「先拉 stats 再答」：graph_stats 进查询回灌循环。"""
+
+    SNAP = {
+        "version": 1,
+        "nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+        ],
+        "edges": [{
+            "key": "B:out-0->A:in-0", "from": "B", "to": "A",
+            "fromPort": "out-0", "toPort": "in-0", "relation": "依赖",
+        }],
+    }
+
+    def test_chat_stats_then_answer(self):
+        seen = []
+        fake = _recording_fake([
+            _llm([_tool_call("graph_stats", {})]),
+            _llm(None, "你的图分成了 2 个互不连通的部分；『动量守恒』没有任何先修来源连线，先学『极限』。"),
+        ], seen)
+        events = []
+
+        def progress(event):
+            events.append(event)
+
+        result = _run_review(fake, snapshot=dict(self.SNAP), phase="chat",
+                             instruction="我该先学什么", progress=progress)
+        # chat 纯文字答案是既定 no_ops 语义（core.py: status = ok if valid_ops else no_ops）
+        self.assertEqual(result["status"], "no_ops")
+        self.assertEqual(result["operations"], [], "答疑保险丝必须清空图操作")
+        # 第一次请求的 user 提示必须点名 graph_stats（chat 专用 hint）
+        first_user = [m for m in seen[0]["messages"] if m.get("role") == "user"][-1]
+        self.assertIn("graph_stats", first_user["content"])
+        # 回灌的 role:"tool" 结果是真实统计事实（模型答案可引用的数字）
+        tool_msgs = [m for m in seen[1]["messages"] if m.get("role") == "tool"]
+        self.assertEqual(len(tool_msgs), 1)
+        payload = json.loads(tool_msgs[0]["content"])
+        self.assertEqual(payload["components"], 2)
+        self.assertEqual(payload["no_prereq_knowledge"]["count"], 2)
+        tool_events = [e for e in events if e.get("stage") == "tool"]
+        self.assertTrue(any("学习体检" in e["message"] for e in tool_events), "进度事件应标注学习体检来源")
 
 
 if __name__ == "__main__":
