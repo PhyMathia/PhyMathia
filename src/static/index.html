@@ -256,8 +256,15 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=ef362bef"></script>
-  <script>document.getElementById('appVersion').textContent = 'v' + APP_VERSION;</script>
+  <script src="/js/app.js?v=ef362bef" defer></script>
+  <script>
+    // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
+    // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
+    // 保证在 DOMContentLoaded 之前跑完，那时常量才存在。
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
+    });
+  </script>
   <script src="/phi/phi-pet.js?v=f35c5b04" defer></script>
 
   <div class="knowledge-panel memory-panel aurora-glass aurora-glass--panel" id="memoryPanel">
