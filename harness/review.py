@@ -140,6 +140,7 @@ def harness_session_bucket(raw: str):
         _HARNESS_SESSION_KEY.reset(token)
 
 from .core import (
+    MAX_OPERATIONS,
     MAX_SNAPSHOT_CHARS,
     MAX_SNAPSHOT_HARD_CHARS,
     NON_FOCUS_CONTENT_CHARS,
@@ -1028,6 +1029,13 @@ async def review_graph(
     use_full = scope in ("full", "targeted") and (all_previous_ops or [])
     prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
     prev_before = initial_snapshot if use_full else previous_snapshot
+    # T235：历史超单批上限时切「最新 N 条」而不是最旧——「撤销全部」要回滚的是
+    # 最近的改动，留头部会把最新改动整段留下、只回滚最旧的（语义拧反）。被切掉
+    # 的条数在撤销成功的 summary 里如实说明，不静默缩水。previous_ops（前端主
+    # 路径只带上一步）恒 ≤80，这个切片对它无操作。
+    prev_ops_truncated = len(prev_ops) > MAX_OPERATIONS
+    if prev_ops_truncated:
+        prev_ops = prev_ops[-MAX_OPERATIONS:]
     if undo_intent and prev_ops:
         # F5：撤销前态用后端原样快照（未截断），归一化会丢长正文与本地字段。
         current = normalize_snapshot(snapshot)
@@ -1067,6 +1075,21 @@ async def review_graph(
                     # 保留失败语义：status=error（与本函数其它失败出口同形状），
                     # summary 如实写失败项数；已回滚的部分留在
                     # operations/next_snapshot/undo_ops 里供前端与日志查证。
+                    for err in undo_errors:
+                        # T235：单批上限 error 的文案是编辑语境的「请把剩余修改拆成
+                        # 下一批指令」——撤销没有下一批，原样弹给用户是胡说。delete_node
+                        # 的逆一对多展开（restore＋每条入射边一条 add_edge）让两个多边
+                        # 删除就能顶过上限（tests/test_harness.py 的
+                        # test_undo_partial_failure_reports_error_not_undo 钉的就是这条）。
+                        # 半滚会把一条删除的 restore 和它的 add_edge 切两半，造出「节点
+                        # 回来、边没回来」的不一致态——按撤销语义重写：告知真实代价与
+                        # 可选动作（可再次撤销逐步回滚）。
+                        if "上限" in str(err.get("reason") or ""):
+                            err["reason"] = (
+                                f"本次要回滚的改动过多（逆操作 {len(inverse_ops)} 条超过单批上限 "
+                                f"{MAX_OPERATIONS} 条），只回滚一半会造成图状态不一致，画布未应用本次撤销；"
+                                "可先撤销更近的修改，再逐步回滚更早的"
+                            )
                     undo_result["status"] = "error"
                     undo_result["phase"] = "undo"
                     undo_result["summary"] = f"撤销未完全成功：{len(undo_errors)} 项失败"
@@ -1081,6 +1104,10 @@ async def review_graph(
                     # 如实说明只回滚了最后一步，别让「全部撤销」静默缩水
                     "（未收到完整操作历史，仅回滚了最后一步）"
                     if scope == "full" and not use_full else ""
+                ) + (
+                    # T235：>80 条历史只回滚最新 N 条（见上面 :1029 切片），如实说明
+                    f"（操作历史超过 {MAX_OPERATIONS} 条，仅回滚最近 {MAX_OPERATIONS} 条修改）"
+                    if prev_ops_truncated else ""
                 )
                 undo_result["status"] = "undo"
                 undo_result["phase"] = "undo"
@@ -1483,12 +1510,24 @@ async def review_graph(
                     last_raw, reasoning_only_seen = _consume_model_output(raw)
                     readonly_calls = _readonly_batch(raw.get("tool_calls")) if readonly_enabled else []
 
+                # T236：本趟尝试里解析失败的 tool_calls——末次放行时降级成 warnings
+                # （见下面 result 组装处）。每次尝试重新初始化，重试成功不得带上轮残留。
+                pending_tool_errors = []
                 if raw.get("tool_calls"):
                     raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
-                    if tool_errors:
+                    pending_tool_errors = tool_errors
+                    if tool_errors and attempt < retries:
                         last_errors = tool_errors
                         logger.warning("tool_calls 解析失败: %s", tool_errors)
                         continue
+                    # T236：末次尝试放行已解析出的合法 ops——parse_tool_calls 逐条
+                    # 解析、好坏分开返回，整批丢弃会让合法操作被连坐，重试耗尽后更只剩
+                    # operations: []（parse_error 出口全丢）。此时失败项转 warnings，
+                    # 与孤立节点/进阶链「有重试机会就重试、末次降 warnings」同体例；
+                    # 不能留 errors：errors 非空前端 harness-run.js:604 整批抛错，
+                    # 合法操作照样应用不上。
+                    if tool_errors:
+                        logger.warning("tool_calls 末次放行合法 ops，失败项降级 warnings: %s", tool_errors)
                     # T118：content 里常是模型独白/配方键名等机器文本（创造模式
                     # create_recipe 高发），与纯文字分支同口径 clamp＋机器文本判定；
                     # 空/机器文本回落计数摘要（result 组装处的 _fallback_summary）
@@ -1663,6 +1702,16 @@ async def review_graph(
                 ops_for_summary = result.get("operations") or []
                 result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
                 result["raw_has_ops"] = bool(raw_ops)
+                # T236：末次放行的失败 tool_calls 在这里降级——warnings 有可见出口
+                # （前端 harness-run.js:1009 渲染成 ⚠️ 行、:641 随条目存历史），用户
+                # 看得见哪几步被跳过、为什么；合法 ops 已由上面的 build_next_snapshot
+                # 照常应用。占 errors 会被前端整批抛错，合法操作又会被连坐。
+                for err in pending_tool_errors:
+                    result.setdefault("warnings", []).append({
+                        "index": err.get("index", "tool"),
+                        "op": err.get("op") or "tool_call",
+                        "reason": f"工具调用解析失败，该步已跳过：{err.get('reason') or '未知原因'}",
+                    })
                 if phase == "apply":
                     result = _cleanup_remaining_eval_nodes(result, current)
 
