@@ -123,7 +123,7 @@ def _http_error(status):
 
 class ReadonlyToolsTableTest(unittest.TestCase):
     def test_edit_phases_get_readonly_tools(self):
-        for phase in ("normal", "expand", "apply", "preset"):
+        for phase in ("normal", "expand", "apply", "preset", "coach"):
             names = [schema["function"]["name"] for schema in build_tools(phase)]
             for readonly in READONLY_TOOL_NAMES:
                 self.assertIn(readonly, names, f"{phase} 缺少 {readonly}")
@@ -741,6 +741,118 @@ class GraphStatsQueryLoopTest(unittest.TestCase):
         self.assertEqual(payload["no_prereq_knowledge"]["count"], 2)
         tool_events = [e for e in events if e.get("stage") == "tool"]
         self.assertTrue(any("学习体检" in e["message"] for e in tool_events), "进度事件应标注学习体检来源")
+
+
+class CoachReportTest(unittest.TestCase):
+    """路径六第 2 档：课程表体检相位——确定性指标注入＋一次模型调用出报告与建议批次。"""
+
+    SNAP = {
+        "version": 1,
+        "nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+        ],
+        "edges": [{
+            "key": "B:out-0->A:in-0", "from": "B", "to": "A",
+            "fromPort": "out-0", "toPort": "in-0", "relation": "依赖",
+        }],
+        "quiz_weak": [{"title": "动量守恒", "wrong": 2, "mastery": 40, "sessionId": "s1"}],
+    }
+
+    def test_detect_phase_coach_explicit_and_auto(self):
+        self.assertEqual(_detect_phase("coach", "随便说点什么", self.SNAP), "coach")
+        self.assertEqual(_detect_phase("normal", "帮我体检一下这张图的学习路线", self.SNAP), "coach")
+        self.assertEqual(_detect_phase("normal", "我该先学什么", self.SNAP), "coach")
+        self.assertEqual(_detect_phase("normal", "这份课程表合格吗", self.SNAP), "coach")
+        self.assertEqual(_detect_phase("", "做个学习规划", self.SNAP), "coach")
+
+    def test_detect_phase_coach_does_not_steal_existing_phases(self):
+        # coach 识别排在 expand 之后：拓展指令（带 focus）仍归 expand
+        self.assertEqual(_detect_phase("normal", "为导数生成进阶学习链", self.SNAP, ["A"]), "expand")
+        # 排在 evaluate 之前：「体检/学习路线」与评价词同现时归 coach（产品意图＝报告＋建议批次）
+        self.assertEqual(_detect_phase("normal", "评价一下我的学习路线合不合理", self.SNAP), "coach")
+        # 无 coach 词的既有指令不受影响
+        self.assertEqual(_detect_phase("normal", "帮我看看这张图", self.SNAP), "evaluate")
+        self.assertEqual(_detect_phase("normal", "把标题改成X", self.SNAP), "normal")
+        self.assertEqual(_detect_phase("chat", "帮我体检学习路线", self.SNAP), "chat")
+
+    def test_coach_messages_inject_stats_and_template(self):
+        seen = []
+        fake = _recording_fake([
+            _llm(None, "报告：图分成了 2 个互不连通的部分，「动量守恒」没有先修来源，检测薄弱同名节点缺进阶链。"),
+        ], seen)
+        events = []
+
+        def progress(event):
+            events.append(event)
+
+        result = _run_review(fake, snapshot=dict(self.SNAP), phase="normal",
+                             instruction="帮我体检一下这张图的学习路线", progress=progress)
+        self.assertEqual(result["phase"], "coach", "普通指令经自动识别进课程表体检相位")
+        self.assertEqual(result["model_calls"], 1, "统计预注入＝无需查询回灌，一次模型调用")
+        messages = seen[0]["messages"]
+        system = messages[0]["content"]
+        self.assertIn("课程表体检模式", system, "报告模板必须拼进 system")
+        last_user = [m for m in messages if m.get("role") == "user"][-1]["content"]
+        self.assertIn("整图学习结构统计", last_user, "统计块必须拼进 user 消息")
+        self.assertIn("不要再调用 graph_stats", last_user)
+        # 注入的是真实统计事实：孤岛分量数与 quiz_weak 覆盖条目都在
+        self.assertIn('"components":2', last_user.replace(" ", ""))
+        self.assertIn("动量守恒", last_user)
+        self.assertTrue(any(e.get("stage") == "coach" and "课程表体检" in e["message"] for e in events),
+                        "进度事件应标注课程表体检")
+
+    def test_coach_report_and_suggested_ops_flow(self):
+        seen = []
+        report = ("体检报告：图分成了 2 个互不连通的部分，「动量守恒」是孤岛且没有先修来源；"
+                  "检测薄弱的「动量守恒」在图上只有 1 个节点、没有进阶链。")
+        fake = _recording_fake([
+            _llm([
+                _tool_call("add_edge", {"from": "B", "to": "C", "relation": "前置",
+                                        "reason": "补先修连线：孤岛「动量守恒」接回主体"}, "call_c1"),
+                _tool_call("create_node", {"temp_id": "n_adv", "kind": "answer",
+                                           "label": "动量守恒的进阶学习",
+                                           "content": "碰撞与守恒律的进阶方向",
+                                           "reason": "为检测薄弱点补进阶链"}, "call_c2"),
+                _tool_call("add_edge", {"from": "C", "to": "n_adv", "relation": "进阶",
+                                        "reason": "薄弱点接上进阶链"}, "call_c3"),
+            ], report),
+        ], seen)
+        result = _run_review(fake, snapshot=dict(self.SNAP), phase="coach",
+                             instruction="体检一下学习路线")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["phase"], "coach")
+        self.assertEqual(len(result["operations"]), 3, "建议批次＝补先修连线＋扩进阶链")
+        self.assertIn("动量守恒", result["summary"])
+        # 建议批次照旧走全套管线：结果图里孤岛已接回主体
+        ids = {n["id"] for n in result["next_snapshot"]["nodes"]}
+        self.assertIn("C", ids)
+
+    def test_coach_report_without_ops_is_legal(self):
+        fake = _recording_fake([
+            _llm(None, "体检报告：图结构健康，1 个连通分量、梯度平缓，无需修补。"),
+        ], [])
+        result = _run_review(fake, snapshot=dict(self.SNAP), phase="coach",
+                             instruction="体检一下学习路线")
+        self.assertEqual(result["status"], "no_ops", "全部健康＝报告＋空建议批次，合法")
+        self.assertEqual(result["operations"], [])
+        self.assertIn("体检报告", result["summary"])
+
+    def test_coach_rejects_eval_node_with_coach_reason(self):
+        seen = []
+        fake = _recording_fake([
+            _llm([_tool_call("create_eval_node",
+                             {"temp_id": "ev1", "target_node_id": "C",
+                              "suggestion": "建议补先修", "reason": "体检"}, "call_e1")],
+                 "报告"),
+            _llm(None, "好的，改为只出报告：图分成了 2 个部分。"),
+        ], seen)
+        result = _run_review(fake, snapshot=dict(self.SNAP), phase="coach",
+                             instruction="体检一下学习路线", retries=1)
+        retry_user = [m for m in seen[1]["messages"] if m.get("role") == "user"][-1]["content"]
+        self.assertIn("课程表体检只做结构修复", retry_user, "coach 相位越权评价节点须带相位专属反馈重试")
+        self.assertEqual(result["phase"], "coach")
 
 
 if __name__ == "__main__":
