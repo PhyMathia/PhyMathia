@@ -30,6 +30,7 @@
 //   profile-implicit       隐式行为画像（纯同步段＋尾部「出题吃画像」串行段）
 //   accounts-trash         本地多账号＋只读查阅＋悬空自愈（T185–T187）＋回收站防误删面板（尾部含收口线；回收站用例复用账号夹具 _accountPanelContext，故同文件）
 //   token-usage            Token 用量统计面板（纯函数图表＋行为垫片＋源码契约，2026-10-08）
+//   load-order             首屏脚本加载契约（T208：app.js defer 与 appVersion 内联脚本时序的静态守卫）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -54,6 +55,7 @@ import { run as _notes_export } from './frontend_smoke/notes-export.mjs';
 import { run as _profile_implicit } from './frontend_smoke/profile-implicit.mjs';
 import { run as _accounts_trash } from './frontend_smoke/accounts-trash.mjs';
 import { run as _token_usage } from './frontend_smoke/token-usage.mjs';
+import { run as _load_order } from './frontend_smoke/load-order.mjs';
 
 _recipes();
 _phi();
@@ -78,4 +80,5 @@ _notes_export();
 await _profile_implicit();
 await _accounts_trash();
 await _token_usage();
+_load_order();
 await finish();
