@@ -339,6 +339,8 @@ def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2,
     # 时同样必须透传——否则快照一大就看不到配方清单（T234）
     if snapshot.get("user_recipes"):
         result["user_recipes"] = snapshot["user_recipes"]
+    if snapshot.get("recipe_detail"):
+        result["recipe_detail"] = snapshot["recipe_detail"]
     return result
 
 

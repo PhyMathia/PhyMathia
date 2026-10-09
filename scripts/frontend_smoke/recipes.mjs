@@ -91,6 +91,14 @@ check('配方校验器（P1）：色板令牌 / 提示词预算 / 出口上限 /
   if (normalized.aggregation !== 'ancestors') throw new Error('module 底座应推导 ancestors');
   if (normalize({ ..._smokeValidRecipe(), base: { kind: 'knowledge' } }).aggregation !== 'self_fields') throw new Error('knowledge 底座应推导 self_fields');
   if (normalize({ ..._smokeValidRecipe(), base: { kind: 'note' } }).aggregation !== 'none') throw new Error('note 底座应推导 none');
+  // 形状不是配方参数（2026-10-09 用户拍板）：输入里的 shape 一律忽略，按底座推导——
+  // 此前 Φ 能写、却只在「添加节点」面板圆点生效，节点卡不生效（设了不生效）。
+  if (normalize({ ..._smokeValidRecipe(), appearance: { palette: 'amber', shape: 'is-diamond' } }).appearance.shape !== 'is-round') {
+    throw new Error('模块底座形状应按底座推导 is-round，输入 shape 不得生效');
+  }
+  if (normalize({ ..._smokeValidRecipe(), base: { kind: 'note' }, appearance: { palette: 'amber', shape: 'is-ring' } }).appearance.shape !== 'is-square') {
+    throw new Error('手填底座形状应按底座推导 is-square，输入 shape 不得生效');
+  }
   return true;
 });
 
@@ -468,7 +476,10 @@ check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随'
   if (!harnessSrc.includes('window._harnessMode')) throw new Error('模式状态未暴露给发送链');
   if (!harnessSrc.includes('snapshot.user_recipes')) throw new Error('配方清单未随快照注入（结构化通道）');
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes('phase = lockedMode')) throw new Error('发送链未按锁定模式改写相位');
+  if (!/const requestMode = _harnessResolveRequestMode\(opts\);/.test(runSrc)) throw new Error('发送起点未锁定请求模式');
+  if (!/if \(requestMode !== 'edit' && phase !== 'apply'\) phase = requestMode;/.test(runSrc)) {
+    throw new Error('发送链未按锁定模式改写相位（apply 例外需保留）');
+  }
   if (!runSrc.includes('harnessPhase !== \'preset\' && !harnessSingleEvalId')) throw new Error('preset 未旁路目标解析');
   if (!runSrc.includes("harnessPhase !== 'preset'")) throw new Error('preset 未旁路空画布拦截');
   if (!runSrc.includes('create_recipe')) throw new Error('op 人话描述未覆盖配方三件套');
@@ -703,4 +714,784 @@ check('已落库配方行挂「微调/放上画布」入口（T242 配套）：D
   return true;
 });
 // ===== 2026-10-09 创造模式修复批次用例结束 =====
+
+// ===== 2026-10-09 Φ 创造模式优化批次（目标配方上下文/起草示例/草稿试用 T246+T247）=====
+// 与上一批同口径：全部同步（无 await、不返回 promise），不占串行边界段；
+// 每个用例在 finally 里还原 DOM 桩、被替换的函数与 phymathia_node_recipes 键。
+
+const RECIPE_LS_KEY = 'phymathia_node_recipes';
+function _lsRecipeRaw() { return localStorage.getItem(RECIPE_LS_KEY); }
+function _lsRecipeRestore(raw) {
+  if (raw == null) localStorage.removeItem(RECIPE_LS_KEY);
+  else localStorage.setItem(RECIPE_LS_KEY, raw);
+}
+function _lsRecipeSeed(recipes) { localStorage.setItem(RECIPE_LS_KEY, JSON.stringify(recipes)); }
+// harnessHistory / harnessLastAppliedOps / harnessBusy 是 app.js 顶层 let 词法绑定：
+// 经 vm.runInContext 读写才能既改到真状态、又原样还原（JSON 往返只带纯数据）。
+function _harnessStateGet(expr) { return JSON.parse(vm.runInContext('JSON.stringify(' + expr + ')', sandbox)); }
+function _harnessStateSet(expr, value) {
+  sandbox.__smokeHarnessTmp = JSON.stringify(value);
+  vm.runInContext(expr + ' = JSON.parse(__smokeHarnessTmp)', sandbox);
+  delete sandbox.__smokeHarnessTmp;
+}
+function _domStub(map) {
+  const prev = sandbox.document.getElementById;
+  sandbox.document.getElementById = id => (Object.prototype.hasOwnProperty.call(map, id) ? map[id] : null);
+  return prev;
+}
+function _domRestore(prev) { sandbox.document.getElementById = prev; }
+
+check('配方目标注入（创造模式优化）：第 40 条旧配方置顶＋摘要上限 32＋仅一份整份 detail＋不写库不突变', () => {
+  const rawBefore = _lsRecipeRaw();
+  const targetEl = { value: 'r-40' };
+  const prevDom = _domStub({ graphHarnessRecipeTarget: targetEl });
+  try {
+    // 40 条配方、目标 r-40 是最旧的一条（updatedAt=1）：默认摘要排序会把它压到末尾
+    const seeded = [];
+    for (let i = 1; i <= 40; i++) {
+      const base = _smokeValidRecipe();
+      seeded.push({
+        ...base,
+        id: 'r-' + String(i).padStart(2, '0'),
+        name: '配方' + i,
+        generate: { ...base.generate, prompt: '提示词' + i },
+        updatedAt: i === 40 ? 1 : (41 - i) * 1000,
+      });
+    }
+    _lsRecipeSeed(seeded);
+    const rawSeeded = _lsRecipeRaw();
+    const snap = {};
+    const out = sandbox._attachHarnessRecipeContext(snap);
+    if (out !== snap) throw new Error('应原地返回同一个 snapshot');
+    // 整份配置只带目标那一份（recipe_detail），且是完整 payload
+    if (!snap.recipe_detail || snap.recipe_detail.id !== 'r-40') {
+      throw new Error('recipe_detail 不是指定目标：' + JSON.stringify(snap.recipe_detail && snap.recipe_detail.id));
+    }
+    if (!snap.recipe_detail.generate || snap.recipe_detail.generate.prompt !== '提示词40') {
+      throw new Error('recipe_detail 缺整份生成配置');
+    }
+    if (!snap.recipe_detail.ports || !Array.isArray(snap.recipe_detail.ports.static) || snap.recipe_detail.ports.static.length !== 2) {
+      throw new Error('recipe_detail 缺出口配置');
+    }
+    const serialized = JSON.stringify(snap);
+    if ((serialized.match(/"提示词40"/g) || []).length !== 1) throw new Error('整份配置应恰好出现一次');
+    if (serialized.includes('"提示词39"')) throw new Error('非目标配方不该带整份配置');
+    // 摘要：≤32、目标置顶、无重复、其余按最近修改倒序
+    const summaries = snap.user_recipes;
+    if (!Array.isArray(summaries) || summaries.length !== 32) {
+      throw new Error('摘要应为 32 条，实际 ' + (summaries && summaries.length));
+    }
+    if (summaries[0].id !== 'r-40') throw new Error('指定的旧配方未置顶：' + JSON.stringify(summaries[0]));
+    if (summaries[1].id !== 'r-01' || summaries[31].id !== 'r-31') {
+      throw new Error('置顶之外的摘要未按最近修改倒序：' + JSON.stringify([summaries[1] && summaries[1].id, summaries[31] && summaries[31].id]));
+    }
+    const ids = summaries.map(item => item.id);
+    if (new Set(ids).size !== ids.length) throw new Error('摘要出现重复 id');
+    if (ids.includes('r-32')) throw new Error('第 32 位之外的配方不该带进快照');
+    if (summaries.some(item => item.generate || item.ports || item.base || item.appearance)) {
+      throw new Error('摘要条目混入了整份配置（只有 recipe_detail 是整份）');
+    }
+    // 不写库：原始字节不变；detail 是深拷贝：改它不波及库
+    if (_lsRecipeRaw() !== rawSeeded) throw new Error('注入过程改写了配方库');
+    snap.recipe_detail.name = '被改';
+    snap.recipe_detail.ports.static[0].label = '被改';
+    const target = sandbox.window.getUserRecipes().find(item => item.id === 'r-40');
+    if (!target || target.name !== '配方40' || target.ports.static[0].label !== '追问') {
+      throw new Error('recipe_detail 与库共享引用（改快照波及库）');
+    }
+    // 显式 targetId（发送起点/排队回放锁定的路径）：id 优先于面板当前值；
+    // 空串＝明确不指定目标（不读 DOM）；undefined 保留旧调用行为
+    targetEl.value = 'r-01';
+    const lockedSnap = {};
+    sandbox._attachHarnessRecipeContext(lockedSnap, 'r-40');
+    if (!lockedSnap.recipe_detail || lockedSnap.recipe_detail.id !== 'r-40') throw new Error('显式 targetId 未优先于面板当前值');
+    const emptyTargetSnap = {};
+    sandbox._attachHarnessRecipeContext(emptyTargetSnap, '');
+    if (emptyTargetSnap.recipe_detail) throw new Error('空串 targetId＝明确不指定目标，不该注入');
+    const implicitSnap = {};
+    sandbox._attachHarnessRecipeContext(implicitSnap);
+    if (!implicitSnap.recipe_detail || implicitSnap.recipe_detail.id !== 'r-01') throw new Error('旧调用（undefined）应回落读面板当前值');
+    return true;
+  } finally {
+    _domRestore(prevDom);
+    _lsRecipeRestore(rawBefore);
+  }
+});
+
+check('起草示例填充（创造模式优化）：只填输入框不发送、不覆已有输入、成功时清目标选择、只读拦截', () => {
+  const input = { value: '', focus() { this.focused = true; } };
+  const target = { value: 'r-9' };
+  const prevDom = _domStub({ graphHarnessInstruction: input, graphHarnessRecipeTarget: target });
+  const prevStatus = sandbox._setHarnessStatus;
+  const prevToast = sandbox.toastMsg;
+  const prevSend = sandbox.runGraphHarnessWithText;
+  const prevRun = sandbox.runGraphHarness;
+  const statuses = [];
+  let sent = 0;
+  sandbox._setHarnessStatus = (text) => { statuses.push(String(text)); };
+  sandbox.toastMsg = () => {};
+  sandbox.runGraphHarnessWithText = () => { sent++; };
+  sandbox.runGraphHarness = () => { sent++; };
+  const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
+  try {
+    sandbox.window.PHYMATHIA_READONLY = false;
+    // 1. 空输入：只填示例 + 清目标，绝不发送
+    sandbox.fillHarnessRecipeBrief('review');
+    if (!String(input.value).includes('错题复盘')) throw new Error('review 示例未填入输入框：' + input.value);
+    if (target.value !== '') throw new Error('填示例后未清掉修改目标（应回到「新建/未指定」）');
+    if (!input.focused) throw new Error('填充后应聚焦输入框');
+    if (sent !== 0) throw new Error('填示例触发了发送/生成');
+    // 2. 已有输入：不覆盖、给提示、不动目标
+    input.value = '我自己写的需求';
+    target.value = 'r-9';
+    statuses.length = 0;
+    sandbox.fillHarnessRecipeBrief('physics');
+    if (input.value !== '我自己写的需求') throw new Error('已有输入被覆盖');
+    if (!statuses.some(s => s.includes('已有内容'))) throw new Error('覆盖拦截提示缺失：' + JSON.stringify(statuses));
+    if (target.value !== 'r-9') throw new Error('已有输入被拦截时不该动目标选择');
+    // 3. 未知 key：不动任何状态
+    input.value = '';
+    target.value = 'r-9';
+    sandbox.fillHarnessRecipeBrief('nope');
+    if (input.value !== '' || target.value !== 'r-9' || sent !== 0) throw new Error('未知示例 key 不该有动作');
+    // 4. 只读查阅：整段拦截
+    sandbox.window.PHYMATHIA_READONLY = true;
+    statuses.length = 0;
+    sandbox.fillHarnessRecipeBrief('proof');
+    if (input.value !== '') throw new Error('只读模式下不该填示例');
+    return true;
+  } finally {
+    sandbox.window.PHYMATHIA_READONLY = prevReadonly;
+    sandbox.runGraphHarnessWithText = prevSend;
+    sandbox.runGraphHarness = prevRun;
+    sandbox._setHarnessStatus = prevStatus;
+    sandbox.toastMsg = prevToast;
+    _domRestore(prevDom);
+  }
+});
+
+check('配方字段差异（T242 补齐）：同数换名/换序、max、label_from、each、fallback 各给用户后果', () => {
+  const diff = sandbox._recipeFieldDiff;
+  if (typeof diff !== 'function') throw new Error('_recipeFieldDiff 未挂 vm 全局（harness-run.js）');
+  const base = {
+    name: '追问器', desc: '', base: { kind: 'module' },
+    appearance: { palette: 'amber', shape: 'is-round' },
+    generate: { prompt: '输出追问', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    ports: {
+      static: [{ label: '追问', drag_form: 'draft' }, { label: '再测一道', drag_form: 'user' }],
+      dynamic: {
+        parser: { pattern: 'numbered_list', level_tags: ['基础', '进阶', '拓展'], max: 12, label_from: 'index_question' },
+        fallback: { mode: 'label_questions_from_text', labels: ['问题1', '问题2'] },
+        each: { type: 'socratic', branch_type: 'socratic', drag_form: 'draft' },
+      },
+    },
+    content_kind: 'markdown',
+  };
+  const withPorts = staticPorts => ({ ...base, ports: { ...base.ports, static: staticPorts } });
+  const withDynamic = dynamic => ({ ...base, ports: { ...base.ports, dynamic } });
+  // 1. 出口数量没变也可能是翻车：换序 / 换名 / 拖出行为变化都要报，并给前后对照
+  const reordered = diff(base, withPorts([base.ports.static[1], base.ports.static[0]]));
+  if (!reordered.includes('出口名称、顺序或拖出行为已改变')) throw new Error('同数换序未报出：' + reordered);
+  if (!reordered.includes('「追问、再测一道」→「再测一道、追问」')) throw new Error('换序未给前后对照：' + reordered);
+  const renamed = diff(base, withPorts([base.ports.static[0], { label: '换个条件', drag_form: 'user' }]));
+  if (!renamed.includes('「追问、再测一道」→「追问、换个条件」')) throw new Error('同数换名未给前后对照：' + renamed);
+  const dragChanged = diff(base, withPorts([base.ports.static[0], { label: '再测一道', drag_form: 'draft' }]));
+  if (!dragChanged.includes('出口名称、顺序或拖出行为已改变')) throw new Error('拖出行为变化未报出：' + dragChanged);
+  // 2. 动态出口上限与标题取法（模型重填整表时最常见的静默重置）
+  const tuned = diff(base, withDynamic({
+    ...base.ports.dynamic,
+    parser: { ...base.ports.dynamic.parser, max: 6, label_from: 'question_trunc12' },
+  }));
+  if (!tuned.includes('最多生成出口 12 → 6 个')) throw new Error('max 变化未报出：' + tuned);
+  if (!tuned.includes('动态出口标题的取法已改变')) throw new Error('label_from 变化未报出：' + tuned);
+  // 3. each：追问类型/拖出行为
+  const eachChanged = diff(base, withDynamic({ ...base.ports.dynamic, each: { type: 'learn', branch_type: 'learn', drag_form: 'user' } }));
+  if (!eachChanged.includes('动态出口的追问类型或拖出行为已改变')) throw new Error('each 变化未报出：' + eachChanged);
+  // 4. fallback：给用户能懂的行为后果，而不是内部 mode 名
+  const fbStatic = diff(base, withDynamic({ ...base.ports.dynamic, fallback: { mode: 'static', labels: ['问题1'] } }));
+  if (!fbStatic.includes('识别不到出口时：显示固定备用出口（问题1）')) throw new Error('fallback static 人话后果缺失：' + fbStatic);
+  const fbNone = diff(base, withDynamic({ ...base.ports.dynamic, fallback: { mode: 'none', labels: [] } }));
+  if (!fbNone.includes('识别不到出口时：不显示备用出口')) throw new Error('fallback none 人话后果缺失：' + fbNone);
+  // 5. 同两份不刷噪音
+  if (diff(base, JSON.parse(JSON.stringify(base))) !== '') throw new Error('同一份配方不该报差异');
+  return true;
+});
+
+check('撤销上一条（T247）：配方批只给指引不发模型、previous_ops 原样、普通批仍走原撤销路', () => {
+  const prevApplied = _harnessStateGet('harnessLastAppliedOps');
+  const prevHistory = _harnessStateGet('harnessHistory');
+  const prevStatus = sandbox._setHarnessStatus;
+  const prevSend = sandbox.runGraphHarnessWithText;
+  const statuses = [];
+  let sent = [];
+  sandbox._setHarnessStatus = (text) => { statuses.push(String(text)); };
+  sandbox.runGraphHarnessWithText = (text) => { sent.push(text); };
+  try {
+    const batchEntry = {
+      id: 'h-batch', role: 'assistant', decision: 'applied',
+      previous_ops: [{ op: 'create_node', node_id: 'n1' }], harnessBefore: { nodes: 1 },
+    };
+    const entryRaw = JSON.stringify(batchEntry);
+    // A. update_recipe 批：不调模型，只指去操作卡「撤销本次」
+    _harnessStateSet('harnessLastAppliedOps', [{ op: 'update_recipe', recipe_id: 'r-1' }]);
+    _harnessStateSet('harnessHistory', [batchEntry]);
+    statuses.length = 0; sent = [];
+    sandbox.undoLastHarnessEdit();
+    if (sent.length) throw new Error('配方批撤销不该发模型：' + JSON.stringify(sent));
+    if (!statuses.some(s => s.includes('配方修改或删除') && s.includes('撤销本次'))) {
+      throw new Error('未给「撤销本次」指引：' + JSON.stringify(statuses));
+    }
+    if (JSON.stringify(_harnessStateGet('harnessLastAppliedOps')) !== JSON.stringify([{ op: 'update_recipe', recipe_id: 'r-1' }])) {
+      throw new Error('harnessLastAppliedOps 被撤销入口改写');
+    }
+    if (JSON.stringify(_harnessStateGet('harnessHistory')[0]) !== entryRaw) throw new Error('历史条目的 previous_ops 被改写');
+    // B. 混合批（普通 op ＋ delete_recipe）：同一指引，仍不发模型
+    _harnessStateSet('harnessLastAppliedOps', [{ op: 'create_node', node_id: 'n2' }, { op: 'delete_recipe', recipe_id: 'r-2' }]);
+    statuses.length = 0;
+    sandbox.undoLastHarnessEdit();
+    if (sent.length) throw new Error('混合批撤销不该发模型');
+    if (!statuses.some(s => s.includes('配方修改或删除'))) throw new Error('混合批未给指引');
+    // C. 普通批：照旧走智能撤销（发固定撤销指令）
+    _harnessStateSet('harnessLastAppliedOps', [{ op: 'create_node', node_id: 'n3' }]);
+    statuses.length = 0;
+    sandbox.undoLastHarnessEdit();
+    if (sent.length !== 1 || sent[0] !== '撤销刚才的修改，恢复原样') throw new Error('普通批未走原撤销路：' + JSON.stringify(sent));
+    return true;
+  } finally {
+    _harnessStateSet('harnessLastAppliedOps', prevApplied || []);
+    _harnessStateSet('harnessHistory', prevHistory || []);
+    sandbox._setHarnessStatus = prevStatus;
+    sandbox.runGraphHarnessWithText = prevSend;
+  }
+});
+
+check('配方依赖勾选（T246）：只勾节点不勾新建配方＝不放实例且回 null、勾选态与库都不改写', () => {
+  const rawBefore = _lsRecipeRaw();
+  const prevHistory = _harnessStateGet('harnessHistory');
+  const prevStatus = sandbox._setHarnessStatus;
+  const statuses = [];
+  sandbox._setHarnessStatus = (text) => { statuses.push(String(text)); };
+  try {
+    const recipeDraft = { ..._smokeValidRecipe(), id: 'r-sel-dep', name: '依赖配方' };
+    const nodeOp = { op: 'create_node', kind: 'module', label: '依赖节点', recipe_id: 'r-sel-dep' };
+    const recipeOp = { op: 'create_recipe', recipe_id: 'r-sel-dep', recipe: recipeDraft, reason: '先建配方' };
+    const entry = { id: 'h-sel', role: 'assistant', decision: 'pending', operations: [recipeOp, nodeOp], selectedOps: [1] };
+    _lsRecipeSeed([]); // 库里没有这个配方
+    const rawSeeded = _lsRecipeRaw();
+    // 1. 依赖未满足：回 null → 调用方不放实例、也不再让「应用」的通用提示覆盖这条错误
+    _harnessStateSet('harnessHistory', [entry]);
+    statuses.length = 0;
+    const blocked = sandbox._selectedOps();
+    if (blocked !== null) {
+      throw new Error('依赖未满足应回 null（不放实例且不覆盖提示），实际 ' + JSON.stringify(blocked));
+    }
+    if (!statuses.some(s => s.includes('请同时勾选'))) throw new Error('缺依赖指引：' + JSON.stringify(statuses));
+    if (JSON.stringify(_harnessStateGet('harnessHistory')[0].selectedOps) !== '[1]') throw new Error('勾选状态被改写');
+    if (_lsRecipeRaw() !== rawSeeded || sandbox.window.getUserRecipes().length !== 0) throw new Error('_selectedOps 写了配方库');
+    // 2. 全选（selectedOps=null）：依赖随行齐全 → 放行两条
+    _harnessStateSet('harnessHistory', [{ ...entry, selectedOps: null }]);
+    statuses.length = 0;
+    const all = sandbox._selectedOps();
+    if (!Array.isArray(all) || all.length !== 2) throw new Error('全选应放行两条，实际 ' + ((all || []).length));
+    if (statuses.length) throw new Error('全选不该出错误态：' + JSON.stringify(statuses));
+    // 3. 配方已在库：只勾节点也放行
+    _lsRecipeSeed([recipeDraft]);
+    _harnessStateSet('harnessHistory', [entry]);
+    statuses.length = 0;
+    const onlyNode = sandbox._selectedOps();
+    if (!Array.isArray(onlyNode) || onlyNode.length !== 1 || onlyNode[0].op !== 'create_node') {
+      throw new Error('配方已在库时应放行节点：' + JSON.stringify((onlyNode || []).map(op => op.op)));
+    }
+    return true;
+  } finally {
+    _harnessStateSet('harnessHistory', prevHistory || []);
+    sandbox._setHarnessStatus = prevStatus;
+    _lsRecipeRestore(rawBefore);
+  }
+});
+
+check('草稿试用守卫（创造模式优化）：不写库不自动生成、忙碌/校验/绑定三道守、成功只放草稿节点', () => {
+  const rawBefore = _lsRecipeRaw();
+  const prevHistory = _harnessStateGet('harnessHistory');
+  const prevBusy = vm.runInContext('harnessBusy', sandbox);
+  const prevStatus = sandbox._setHarnessStatus;
+  const prevCreate = sandbox.createRecipeNode;
+  const prevBound = sandbox._harnessBoundSid;
+  const prevSid = sandbox._sessionId;
+  const prevSend = sandbox.runGraphHarness;
+  const prevRunNodes = sandbox.runWorkflowNodes;
+  const prevCanApply = sandbox._harnessCanApply;
+  const prevVersionSource = sandbox._harnessVersionSource;
+  const prevGraphStateFn = sandbox._harnessGraphState;
+  const prevGraphVersion = sandbox._harnessGraphVersion;
+  const prevSaveHistory = sandbox._saveHarnessHistory;
+  const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
+  const statuses = [];
+  const created = [];
+  let generated = 0;
+  let claimed = 0;
+  const gstate = { customNodes: [] };
+  sandbox._setHarnessStatus = (text) => { statuses.push(String(text)); };
+  sandbox.createRecipeNode = (id, draft) => {
+    created.push({ id, draft });
+    const nodeId = 'node-' + id;
+    gstate.customNodes = gstate.customNodes.concat([{ id: nodeId }]);
+    return nodeId;
+  };
+  sandbox.runGraphHarness = () => { generated++; };
+  sandbox.runWorkflowNodes = () => { generated++; };
+  // 试用现在先过 _harnessCanApply（真实现含 trial 双指纹），并捕获前后版本决定是否认领：
+  // 这些链按真实同形打桩（_harnessVersionSource 返回七字段数组的 JSON 字符串），
+  // 让本用例只盯「不写库/不自动生成/三道守卫」本身（认领另有专测）。
+  sandbox._harnessCanApply = () => true;
+  sandbox._harnessGraphState = () => gstate;
+  sandbox._harnessVersionSource = state => {
+    const s = state || {};
+    const pick = key => (Object.prototype.hasOwnProperty.call(s, key) ? s[key] : null);
+    return JSON.stringify([pick('customNodes'), pick('harnessNodeOverrides'), pick('harnessDeleted'),
+      pick('connections'), pick('removedEdges'), pick('portCounts'), pick('inputPortCounts')]);
+  };
+  sandbox._harnessGraphVersion = () => 'v-trial-smoke';
+  sandbox._saveHarnessHistory = () => { claimed++; };
+  try {
+    sandbox.window.PHYMATHIA_READONLY = false;
+    _harnessStateSet('harnessBusy', false);
+    sandbox._harnessBoundSid = () => 'sess_draft';
+    sandbox._sessionId = () => 'sess_draft';
+    const recipe = { ..._smokeValidRecipe(), id: 'r-trial', name: '草稿源配方' };
+    const op = { op: 'create_recipe', recipe_id: 'r-trial', recipe, reason: 'x' };
+    const entry = { id: 'h-trial', role: 'assistant', decision: 'pending', operations: [op], selectedOps: null, _binding: { sessionId: 'sess_draft' } };
+    _lsRecipeSeed([{ ..._smokeValidRecipe(), id: 'r-existing', name: '库里已有' }]);
+    const rawSeeded = _lsRecipeRaw();
+    _harnessStateSet('harnessHistory', [entry]);
+    // 1. 成功路径：只把草稿节点交给 createRecipeNode（真节点创建由协调补测单测），
+    //    库字节不变、不调模型/工作流、状态说明「库未改变＋手动生成才产生费用」
+    statuses.length = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length !== 1) throw new Error('应放置 1 个草稿节点，实际 ' + created.length);
+    if (!String(created[0].id).startsWith('recipe-trial-')) throw new Error('草稿节点 id 前缀不对：' + created[0].id);
+    if (created[0].draft.name !== '草稿源配方·草稿试用') throw new Error('草稿名字应带「草稿试用」后缀：' + created[0].draft.name);
+    if (created[0].draft.id !== created[0].id) throw new Error('draft.id 与传入 id 不一致');
+    if (!created[0].draft.generate || !created[0].draft.generate.prompt) throw new Error('草稿缺整份生成配置');
+    if (op.recipe.name !== '草稿源配方') throw new Error('试用改写了操作里的草稿 payload');
+    if (generated !== 0) throw new Error('试用不该自动调模型/跑工作流');
+    if (_lsRecipeRaw() !== rawSeeded) throw new Error('试用写了配方库：' + _lsRecipeRaw());
+    if (claimed !== 1) throw new Error('成功试用应认领并落盘历史一次，实际 ' + claimed);
+    if (!statuses.some(s => s.includes('正式配方库未改变'))) throw new Error('缺「配方库未改变」交代：' + JSON.stringify(statuses));
+    if (!statuses.some(s => s.includes('费用'))) throw new Error('状态未说明手动生成会调用模型产生费用');
+    // 2. 忙碌守卫
+    _harnessStateSet('harnessBusy', true);
+    statuses.length = 0; created.length = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length) throw new Error('生成中仍放置了草稿');
+    if (!statuses.some(s => s.includes('请等当前生成结束'))) throw new Error('忙碌守卫提示缺失');
+    _harnessStateSet('harnessBusy', false);
+    // 3. 校验守卫：非法色板
+    _harnessStateSet('harnessHistory', [{ ...entry, operations: [{ ...op, recipe: { ...recipe, appearance: { palette: 'hotpink', shape: 'is-round' } } }] }]);
+    statuses.length = 0; created.length = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length) throw new Error('非法草稿仍被放置');
+    if (!statuses.some(s => s.includes('未通过校验'))) throw new Error('校验守卫提示缺失');
+    // 4. 绑定守卫：未绑定 / 绑了别的画布
+    _harnessStateSet('harnessHistory', [entry]);
+    sandbox._harnessBoundSid = () => '';
+    statuses.length = 0; created.length = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length) throw new Error('未绑定画布仍放置草稿');
+    if (!statuses.some(s => s.includes('先打开 Φ 绑定的画布'))) throw new Error('绑定守卫提示缺失');
+    sandbox._harnessBoundSid = () => 'sess_other';
+    statuses.length = 0; created.length = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length) throw new Error('绑定别的画布仍放置草稿');
+    // 5. 越界索引：静默无动作
+    sandbox._harnessBoundSid = () => 'sess_draft';
+    statuses.length = 0; created.length = 0;
+    sandbox.trialHarnessRecipe(9);
+    if (created.length || statuses.length) throw new Error('越界索引不该有任何动作');
+    return true;
+  } finally {
+    sandbox.window.PHYMATHIA_READONLY = prevReadonly;
+    _harnessStateSet('harnessBusy', !!prevBusy);
+    sandbox.createRecipeNode = prevCreate;
+    sandbox._harnessBoundSid = prevBound;
+    sandbox._sessionId = prevSid;
+    sandbox._setHarnessStatus = prevStatus;
+    sandbox.runGraphHarness = prevSend;
+    sandbox.runWorkflowNodes = prevRunNodes;
+    sandbox._harnessCanApply = prevCanApply;
+    sandbox._harnessVersionSource = prevVersionSource;
+    sandbox._harnessGraphState = prevGraphStateFn;
+    sandbox._harnessGraphVersion = prevGraphVersion;
+    sandbox._saveHarnessHistory = prevSaveHistory;
+    _harnessStateSet('harnessHistory', prevHistory || []);
+    _lsRecipeRestore(rawBefore);
+  }
+});
+
+check('试用指纹认领（创造模式优化）：扣除本次试用节点后版本相等才认领；失败/再改图都不认领', () => {
+  const rawStart = _lsRecipeRaw();
+  const prevHistory = _harnessStateGet('harnessHistory');
+  const prevResult = vm.runInContext('harnessResult', sandbox);
+  const prevBusy = vm.runInContext('harnessBusy', sandbox);
+  const prevStatus = sandbox._setHarnessStatus;
+  const prevCreate = sandbox.createRecipeNode;
+  const prevBound = sandbox._harnessBoundSid;
+  const prevSid = sandbox._sessionId;
+  const prevCanApply = sandbox._harnessCanApply;
+  const prevVersionSource = sandbox._harnessVersionSource;
+  const prevGraphStateFn = sandbox._harnessGraphState;
+  const prevGraphVersion = sandbox._harnessGraphVersion;
+  const prevSaveHistory = sandbox._saveHarnessHistory;
+  const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
+  const statuses = [];
+  const created = [];
+  let gstate = { customNodes: [] };
+  let canApplyVerdict = true;
+  let otherFieldOnCreate = false;
+  let saveCalls = 0;
+  sandbox._setHarnessStatus = (text) => { statuses.push(String(text)); };
+  sandbox.createRecipeNode = (id, draft) => {
+    created.push({ id, draft });
+    const nodeId = 'node-' + id;
+    // 恰好一条与返回 nodeID 同 id 的新节点（认领前提）；负例再改另一版本字段
+    gstate.customNodes = (gstate.customNodes || []).concat([{ id: nodeId }]);
+    if (otherFieldOnCreate) gstate.connections = [{ from: 'x', to: 'y' }];
+    return nodeId;
+  };
+  sandbox._harnessCanApply = () => canApplyVerdict;
+  sandbox._harnessGraphState = () => gstate;
+  // 与真实 _harnessVersionSource 同形：七字段数组的 JSON 字符串，第 0 位是 customNodes
+  sandbox._harnessVersionSource = state => {
+    const s = state || {};
+    const pick = key => (Object.prototype.hasOwnProperty.call(s, key) ? s[key] : null);
+    return JSON.stringify([pick('customNodes'), pick('harnessNodeOverrides'), pick('harnessDeleted'),
+      pick('connections'), pick('removedEdges'), pick('portCounts'), pick('inputPortCounts')]);
+  };
+  sandbox._harnessGraphVersion = () => 'v-trial-stub';
+  sandbox._saveHarnessHistory = () => { saveCalls++; };
+  try {
+    sandbox.window.PHYMATHIA_READONLY = false;
+    _harnessStateSet('harnessBusy', false);
+    sandbox._harnessBoundSid = () => 'sess_draft';
+    sandbox._sessionId = () => 'sess_draft';
+    const recipe = { ..._smokeValidRecipe(), id: 'r-fp', name: '指纹配方' };
+    const op = { op: 'create_recipe', recipe_id: 'r-fp', recipe, reason: 'x' };
+    const entry = {
+      id: 'h-fp', role: 'assistant', decision: 'pending', operations: [op], selectedOps: null,
+      _binding: { sessionId: 'sess_draft', trialNodeIds: ['node-old'] },
+    };
+    // 1. 成功：只新增本次试用节点 → 扣除后版本相等 → 认领版本并只追加该节点
+    _harnessStateSet('harnessHistory', [entry]);
+    _harnessStateSet('harnessResult', { _binding: null });
+    canApplyVerdict = true; otherFieldOnCreate = false;
+    statuses.length = 0; created.length = 0; saveCalls = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length !== 1) throw new Error('成功路径应放置 1 个草稿节点，实际 ' + created.length);
+    const nodeId1 = 'node-' + created[0].id;
+    const hist1 = _harnessStateGet('harnessHistory')[0];
+    if (hist1._binding.trialGraphVersion !== 'v-trial-stub') {
+      throw new Error('成功试用未认领 trialGraphVersion：' + JSON.stringify(hist1._binding));
+    }
+    if (JSON.stringify(hist1._binding.trialNodeIds) !== JSON.stringify(['node-old', nodeId1])) {
+      throw new Error('trialNodeIds 应只在原清单后追加本次节点：' + JSON.stringify(hist1._binding.trialNodeIds));
+    }
+    if (saveCalls !== 1) throw new Error('认领后应落盘历史一次，实际 ' + saveCalls);
+    const result1 = _harnessStateGet('harnessResult');
+    if (JSON.stringify(result1 && result1._binding) !== JSON.stringify(hist1._binding)) {
+      throw new Error('harnessResult._binding 未同步认领');
+    }
+    if (!statuses.some(s => s.includes('正式配方库未改变'))) throw new Error('缺成功状态：' + JSON.stringify(statuses));
+    if (_lsRecipeRaw() !== rawStart) throw new Error('试用认领写了配方库');
+    // 1b. 画布此前没有 customNodes 键（原始第 0 位是 null）：扣除后第 0 位保留 null，仍应认领
+    gstate = {};
+    _harnessStateSet('harnessHistory', [entry]);
+    statuses.length = 0; created.length = 0; saveCalls = 0;
+    sandbox.trialHarnessRecipe(0);
+    const histB = _harnessStateGet('harnessHistory')[0];
+    if (histB._binding.trialGraphVersion !== 'v-trial-stub' || saveCalls !== 1) {
+      throw new Error('无 customNodes 键的画布应照常认领：' + JSON.stringify(histB._binding));
+    }
+    // 2. _harnessCanApply 拒绝（严格 _binding/双指纹不符）：不放节点、不认领、不落盘
+    canApplyVerdict = false;
+    _harnessStateSet('harnessHistory', [entry]);
+    statuses.length = 0; created.length = 0; saveCalls = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length) throw new Error('_harnessCanApply 拒绝后仍放置了草稿');
+    const hist2 = _harnessStateGet('harnessHistory')[0];
+    if (Object.prototype.hasOwnProperty.call(hist2._binding, 'trialGraphVersion')) throw new Error('被拒后不该认领版本');
+    if (JSON.stringify(hist2._binding.trialNodeIds) !== JSON.stringify(['node-old'])) throw new Error('被拒后不该追加 trialNodeIds');
+    if (saveCalls !== 0) throw new Error('被拒后不该落盘');
+    // 3. 试用期间其他版本字段也变了（扣掉本次节点后仍不等）：照常放节点但不认领
+    canApplyVerdict = true; otherFieldOnCreate = true;
+    _harnessStateSet('harnessHistory', [entry]);
+    statuses.length = 0; created.length = 0; saveCalls = 0;
+    sandbox.trialHarnessRecipe(0);
+    if (created.length !== 1) throw new Error('再改图时应照常放草稿节点，实际 ' + created.length);
+    const hist3 = _harnessStateGet('harnessHistory')[0];
+    if (Object.prototype.hasOwnProperty.call(hist3._binding, 'trialGraphVersion')) {
+      throw new Error('扣除本次节点后版本仍变化，不该认领 trialGraphVersion');
+    }
+    if (JSON.stringify(hist3._binding.trialNodeIds) !== JSON.stringify(['node-old'])) {
+      throw new Error('不该追加 trialNodeIds：' + JSON.stringify(hist3._binding.trialNodeIds));
+    }
+    if (saveCalls !== 0) throw new Error('未认领不该落盘，实际 ' + saveCalls);
+    if (!statuses.some(s => s.includes('正式配方库未改变'))) throw new Error('放置成功状态仍应给出（只是不认领）');
+    return true;
+  } finally {
+    sandbox.window.PHYMATHIA_READONLY = prevReadonly;
+    _harnessStateSet('harnessBusy', !!prevBusy);
+    sandbox._harnessCanApply = prevCanApply;
+    sandbox._harnessVersionSource = prevVersionSource;
+    sandbox._harnessGraphState = prevGraphStateFn;
+    sandbox._harnessGraphVersion = prevGraphVersion;
+    sandbox._saveHarnessHistory = prevSaveHistory;
+    sandbox.createRecipeNode = prevCreate;
+    sandbox._harnessBoundSid = prevBound;
+    sandbox._sessionId = prevSid;
+    sandbox._setHarnessStatus = prevStatus;
+    _harnessStateSet('harnessHistory', prevHistory || []);
+    sandbox.__smokeHarnessTmp = prevResult;
+    vm.runInContext('harnessResult = __smokeHarnessTmp', sandbox);
+    delete sandbox.__smokeHarnessTmp;
+    _lsRecipeRestore(rawStart);
+  }
+});
+
+check('草稿试用入口渲染（创造模式优化）：可编辑的配方行出现试用按钮、标题写明不保存与费用', () => {
+  const row = sandbox._harnessOpRowHtml;
+  if (typeof row !== 'function') throw new Error('_harnessOpRowHtml 未挂 vm 全局');
+  const op = { op: 'create_recipe', recipe_id: 'r-x', recipe: { ..._smokeValidRecipe(), id: 'r-x' }, reason: 'r' };
+  const html = String(row(op, 0, [op], true, null, false));
+  if (!html.includes('trialHarnessRecipe(0)')) throw new Error('配方行缺试用入口：' + html);
+  if (!html.includes('草稿试用')) throw new Error('试用按钮文案缺失');
+  if (!/title="[^"]*费用[^"]*"/.test(html)) throw new Error('试用按钮标题未说明费用：' + html);
+  if (!html.includes('不保存配方')) throw new Error('试用按钮标题未说明不落库：' + html);
+  const nodeOp = { op: 'create_node', kind: 'ground', label: 'x', reason: 'r' };
+  const nodeHtml = String(row(nodeOp, 0, [nodeOp], true, null, false));
+  if (nodeHtml.includes('trialHarnessRecipe')) throw new Error('非配方 op 不该出试用入口');
+  const lockedHtml = String(row(op, 0, [op], false, null, false));
+  if (lockedHtml.includes('trialHarnessRecipe')) throw new Error('不可编辑行不该出试用入口');
+  return true;
+});
+
+check('草稿节点真实落地（协调补测）：createRecipeNode(draft.id, draft) 内嵌快照、入图不写配方库', () => {
+  const rawBefore = _lsRecipeRaw();
+  const prevGraphState = sandbox._graphState;
+  const prevSaveState = sandbox._saveGraphState;
+  const prevPushUndo = sandbox._pushGraphUndo;
+  const prevRender = sandbox.renderGraphCanvas;
+  const prevClose = sandbox.closeAddBlankNodeModal;
+  const prevToast = sandbox.toastMsg;
+  let state = { customNodes: [] };
+  const calls = { save: 0, undo: 0, render: 0, close: 0 };
+  const toasts = [];
+  sandbox._graphState = () => state;
+  sandbox._saveGraphState = (next) => { calls.save++; state = next; };
+  sandbox._pushGraphUndo = () => { calls.undo++; };
+  sandbox.renderGraphCanvas = () => { calls.render++; };
+  sandbox.closeAddBlankNodeModal = () => { calls.close++; };
+  sandbox.toastMsg = (msg) => { toasts.push(String(msg)); };
+  try {
+    _lsRecipeSeed([]);
+    const rawSeeded = _lsRecipeRaw();
+    const draft = { ..._smokeValidRecipe(), id: 'recipe-trial-node-1', name: '错题复盘·草稿试用' };
+    const returnedId = sandbox.createRecipeNode(draft.id, draft);
+    const nodes = state.customNodes || [];
+    if (nodes.length !== 1) throw new Error('应落 1 个节点，实际 ' + nodes.length);
+    const node = nodes[0];
+    if (!returnedId || returnedId !== node.id) throw new Error('createRecipeNode 应回节点 id（trial 认领靠它）：' + returnedId);
+    if (node.recipeId !== draft.id) throw new Error('节点 recipeId 未指向草稿：' + node.recipeId);
+    if (!node.recipe || node.recipe.name !== '错题复盘·草稿试用') throw new Error('节点缺内嵌配方快照');
+    if (!node.recipe.generate || node.recipe.generate.prompt !== draft.generate.prompt) throw new Error('内嵌快照缺生成配置');
+    if (!node.recipe.ports || node.recipe.ports.static.length !== 2) throw new Error('内嵌快照缺出口配置');
+    if (node.kind !== 'module') throw new Error('module 底座应落 kind=module，实际 ' + node.kind);
+    if (calls.save !== 1 || calls.render !== 1 || calls.close !== 1) throw new Error('收尾动作未按预期各一次：' + JSON.stringify(calls));
+    if (calls.undo !== 1) throw new Error('未记一次撤销点');
+    if (toasts.length) throw new Error('不该有报错提示：' + JSON.stringify(toasts));
+    if (_lsRecipeRaw() !== rawSeeded) throw new Error('真实节点函数改写了配方库');
+    if (sandbox.window.getUserRecipes().some(item => item.id === draft.id)) throw new Error('草稿 id 进了配方库');
+    // 负例：库无此 id 且未带草稿 → 提示不存在、不入图、不回 id
+    const missingId = sandbox.createRecipeNode('recipe-missing');
+    if (missingId) throw new Error('建节点失败不该回 id：' + missingId);
+    if ((state.customNodes || []).length !== 1) throw new Error('不存在的配方不该建节点');
+    if (!toasts.some(t => t.includes('配方不存在'))) throw new Error('缺「配方不存在」提示：' + JSON.stringify(toasts));
+    return true;
+  } finally {
+    sandbox._graphState = prevGraphState;
+    sandbox._saveGraphState = prevSaveState;
+    sandbox._pushGraphUndo = prevPushUndo;
+    sandbox.renderGraphCanvas = prevRender;
+    sandbox.closeAddBlankNodeModal = prevClose;
+    sandbox.toastMsg = prevToast;
+    _lsRecipeRestore(rawBefore);
+  }
+});
+check('配方实例落地映射（创造模式优化）：_newHarnessNode 按 base.kind 映射 note/manual/question，普通 kind 不变', () => {
+  const rawBefore = _lsRecipeRaw();
+  try {
+    const mk = (id, name, baseKind) => ({ ..._smokeValidRecipe(), id, name, base: { kind: baseKind } });
+    _lsRecipeSeed([
+      mk('r-note', '手填总结配方', 'note'),
+      mk('r-manual', '手填回答配方', 'manual'),
+      mk('r-question', '问题配方', 'question'),
+      mk('r-module', 'AI 模块配方', 'module'),
+    ]);
+    const pos = { x: 0, y: 0 };
+    // note：不落 op.kind=module，kind 保持 note（手填类）
+    const noteNode = sandbox._newHarnessNode('n-note', { kind: 'module', label: 'x', recipe_id: 'r-note' }, pos);
+    if (noteNode.kind !== 'note') throw new Error('note 底座应映射 kind=note，实际 ' + noteNode.kind);
+    if (noteNode.manual !== true) throw new Error('note 配方实例应 manual=true');
+    if (noteNode.recipeId !== 'r-note' || !noteNode.recipe || noteNode.recipe.name !== '手填总结配方') {
+      throw new Error('note 实例缺内嵌快照');
+    }
+    // manual：与 createRecipeNode 的 kindMap 同款 → answer 且 manual
+    const manualNode = sandbox._newHarnessNode('n-manual', { kind: 'module', label: 'x', recipe_id: 'r-manual' }, pos);
+    if (manualNode.kind !== 'answer') throw new Error('manual 底座应映射 kind=answer，实际 ' + manualNode.kind);
+    if (manualNode.manual !== true) throw new Error('manual 配方实例应 manual=true');
+    // question → user，且不是手填
+    const questionNode = sandbox._newHarnessNode('n-question', { kind: 'module', label: 'x', recipe_id: 'r-question' }, pos);
+    if (questionNode.kind !== 'user') throw new Error('question 底座应映射 kind=user，实际 ' + questionNode.kind);
+    if (questionNode.manual !== false) throw new Error('question 配方实例应 manual=false');
+    // module 底座保持 module
+    const moduleNode = sandbox._newHarnessNode('n-module', { kind: 'module', label: 'x', recipe_id: 'r-module' }, pos);
+    if (moduleNode.kind !== 'module') throw new Error('module 底座应保持 module，实际 ' + moduleNode.kind);
+    // 无配方：op.kind 原样；库中无此 id：回落 op.kind 且不带快照
+    const plain = sandbox._newHarnessNode('n-plain', { kind: 'knowledge', label: 'y' }, pos);
+    if (plain.kind !== 'knowledge' || plain.recipeId || plain.recipe) throw new Error('无配方 op 不该改 kind/挂快照');
+    const missing = sandbox._newHarnessNode('n-missing', { kind: 'summary', label: 'z', recipe_id: 'r-not-in-lib' }, pos);
+    if (missing.kind !== 'summary' || missing.recipeId || missing.recipe) throw new Error('库中无此配方应回落 op.kind 且不带快照');
+    return true;
+  } finally {
+    _lsRecipeRestore(rawBefore);
+  }
+});
+
+check('应用守卫（创造模式优化）：原版本/trial 版本放行，改图或配方库变化拒绝，视图与时间戳不误挡', () => {
+  const rawBefore = _lsRecipeRaw();
+  const prevGetState = sandbox.window.getGraphState;
+  const prevGetSid = sandbox.window.getCurrentSessionId;
+  const prevStatus = sandbox._setHarnessStatus;
+  const statuses = [];
+  let gstate = { customNodes: [{ id: 'n1' }], connections: [] };
+  sandbox.window.getGraphState = () => gstate;
+  sandbox.window.getCurrentSessionId = () => 'sess_apply';
+  sandbox._setHarnessStatus = (text, kind) => { statuses.push(String(text) + '|' + (kind || '')); };
+  try {
+    const can = binding => sandbox._harnessCanApply(binding);
+    const vNow = sandbox._harnessGraphVersion('sess_apply');
+    // 1. 正常原版本放行；平移/缩放/坐标/时间戳等视图字段不进指纹，不误挡
+    statuses.length = 0;
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow }) !== true) throw new Error('原版本应放行');
+    if (statuses.length) throw new Error('放行不该出错误态：' + JSON.stringify(statuses));
+    gstate = {
+      customNodes: [{ id: 'n1' }], connections: [],
+      pan: { x: 999, y: -5 }, zoom: 2.4, positions: { n1: { x: 1, y: 2 } }, focus: 'n1', updatedAt: 99999,
+    };
+    if (sandbox._harnessGraphVersion('sess_apply') !== vNow) throw new Error('视图字段不该进图指纹');
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow }) !== true) throw new Error('仅视图变化不该误挡');
+    gstate = { customNodes: [{ id: 'n1' }], connections: [] };
+    // 2. trial 版本放行：画布恰多了用户自己放的试用节点（真实指纹）
+    gstate = { customNodes: [{ id: 'n1' }, { id: 'trial-1' }], connections: [] };
+    const vTrial = sandbox._harnessGraphVersion('sess_apply');
+    if (vTrial === vNow) throw new Error('种子自检：加试用节点应改变指纹');
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, trialGraphVersion: vTrial, trialNodeIds: ['trial-1'] }) !== true) {
+      throw new Error('trial 版本应放行');
+    }
+    // 2b. trialNodeIds 为空：不认 trial 指纹
+    statuses.length = 0;
+    if (can({ sessionId: 'sess_apply', trialGraphVersion: vTrial, trialNodeIds: [] }) !== false) throw new Error('trialNodeIds 空不该放行');
+    if (!statuses.some(s => s.includes('画布或会话已变化'))) throw new Error('缺画布变化提示');
+    // 3. 试用后又被改图 → 拒绝
+    gstate = { customNodes: [{ id: 'n1' }, { id: 'trial-1' }, { id: 'other' }], connections: [] };
+    statuses.length = 0;
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, trialGraphVersion: vTrial, trialNodeIds: ['trial-1'] }) !== false) {
+      throw new Error('试用后另改图应拒绝');
+    }
+    if (!statuses.some(s => s.includes('画布或会话已变化'))) throw new Error('缺画布变化提示');
+    // 3b. 删掉试用节点、指纹回到 graphVersion → 放行
+    gstate = { customNodes: [{ id: 'n1' }], connections: [] };
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, trialGraphVersion: vTrial, trialNodeIds: ['trial-1'] }) !== true) {
+      throw new Error('删掉试用节点回到原指纹应放行');
+    }
+    // 4. recipeVersion：内容没变、仅 updatedAt/库顺序变化不误挡；内容改了才拒绝
+    const mk = (id, name, updatedAt) => ({ ..._smokeValidRecipe(), id, name, updatedAt });
+    _lsRecipeSeed([mk('r-a', '库A', 1000), mk('r-b', '库B', 2000)]);
+    const rvA = sandbox._harnessRecipeVersion();
+    _lsRecipeSeed([mk('r-b', '库B', 99000), mk('r-a', '库A', 55000)]); // 顺序颠倒＋updatedAt 变
+    const rvB = sandbox._harnessRecipeVersion();
+    if (rvA !== rvB) throw new Error('配方时间戳/库顺序不该进版本指纹');
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, recipeVersion: rvA }) !== true) throw new Error('仅时间戳/顺序变化不该误挡');
+    _lsRecipeSeed([mk('r-a', '库A2', 1000), mk('r-b', '库B', 2000)]); // 内容真变了
+    const rvC = sandbox._harnessRecipeVersion();
+    if (rvC === rvA) throw new Error('种子自检：改配方内容应改变版本');
+    statuses.length = 0;
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, recipeVersion: rvB }) !== false) throw new Error('配方库变化应拒绝');
+    if (!statuses.some(s => s.includes('配方库已变化'))) throw new Error('缺配方库变化提示：' + JSON.stringify(statuses));
+    if (can({ sessionId: 'sess_apply', graphVersion: vNow, recipeVersion: rvC }) !== true) throw new Error('配方库版本一致应放行');
+    // 5. 会话不符 / 无 binding 拒绝
+    statuses.length = 0;
+    if (can({ sessionId: 'sess_other', graphVersion: vNow }) !== false) throw new Error('别的画布应拒绝');
+    if (can(null) !== false) throw new Error('无 binding 应拒绝');
+    if (!statuses.some(s => s.includes('画布或会话已变化'))) throw new Error('缺画布变化提示');
+    return true;
+  } finally {
+    sandbox.window.getGraphState = prevGetState;
+    sandbox.window.getCurrentSessionId = prevGetSid;
+    sandbox._setHarnessStatus = prevStatus;
+    _lsRecipeRestore(rawBefore);
+  }
+});
+check('请求模式/目标锁定（创造模式优化）：opts 优先、空目标显式不指定、不绑图空快照同口径', () => {
+  const rawBefore = _lsRecipeRaw();
+  const targetEl = { value: 'r-dom' };
+  const prevDom = _domStub({ graphHarnessRecipeTarget: targetEl });
+  try {
+    _lsRecipeSeed([
+      { ..._smokeValidRecipe(), id: 'r-lock', name: '锁定配方' },
+      { ..._smokeValidRecipe(), id: 'r-dom', name: '面板配方' },
+    ]);
+    // 解析器：opts 显式优先；未传回落面板当前模式；空串回落（不误当锁定）
+    if (sandbox._harnessResolveRequestMode({ mode: 'preset' }) !== 'preset') throw new Error('opts.mode 未优先');
+    const modeBefore = sandbox.window._harnessMode();
+    sandbox.window.chooseHarnessMode('chat');
+    try {
+      if (sandbox._harnessResolveRequestMode({}) !== 'chat') throw new Error('未传 mode 应回落面板当前模式');
+      if (sandbox._harnessResolveRequestMode({ mode: '' }) !== 'chat') throw new Error('空 mode 应回落当前模式');
+    } finally { sandbox.window.chooseHarnessMode(modeBefore); }
+    if (sandbox._harnessResolveRecipeTargetId({ recipeTargetId: '' }) !== '') throw new Error('显式空目标应原样返回空串（不读 DOM）');
+    if (sandbox._harnessResolveRecipeTargetId({ recipeTargetId: 'r-lock' }) !== 'r-lock') throw new Error('显式目标未优先');
+    if (sandbox._harnessResolveRecipeTargetId(null) !== 'r-dom') throw new Error('未传目标应读面板当前选择');
+    // 不绑图的空快照同口径：preset 才注入；显式空目标不读 DOM；chat 不注入
+    const locked = sandbox._emptyHarnessSnapshot({ mode: 'preset', recipeTargetId: 'r-lock' });
+    if (!locked.nodes || locked.nodes.length !== 0) throw new Error('空快照不该带图内容');
+    if (!locked.recipe_detail || locked.recipe_detail.id !== 'r-lock') throw new Error('preset＋显式目标应注入目标配方');
+    const noTarget = sandbox._emptyHarnessSnapshot({ mode: 'preset', recipeTargetId: '' });
+    if (noTarget.recipe_detail) throw new Error('显式空目标＝不指定，不该回读 DOM 注入 r-dom');
+    const chat = sandbox._emptyHarnessSnapshot({ mode: 'chat', recipeTargetId: 'r-lock' });
+    if (chat.recipe_detail) throw new Error('chat 相位不该注入配方上下文');
+    return true;
+  } finally {
+    _domRestore(prevDom);
+    _lsRecipeRestore(rawBefore);
+  }
+});
+// ===== 配方节点卡片配色（2026-10-09 用户验收：与内置节点只差颜色）=====
+// 静态是唯一可行口径：冒烟沙箱执行 app.js 但不跑 CSS，与「设计尺子」「玻璃载体」同法读源。
+check('配方节点卡片配色：与内置模块同款 4px 彩框＋彩色渐变＋彩色辉光，颜色取 --node-attr', () => {
+  const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+  const m = css.match(/\[data-theme="dark"\] (\.graph-node\.graph-attr-recipe[^{]*)\{([^}]*)\}/);
+  if (!m) throw new Error('配方节点卡片配色规则缺失（graph-attr-recipe）——配方卡会退回 1px 白描边的近黑卡');
+  const [, selector, block] = m;
+  if (!/border-color:\s*var\(--node-attr\)/.test(block)) throw new Error('配方卡边框未取配方颜色 var(--node-attr)');
+  if (!/border-width:\s*4px/.test(block) || !/border-left-width:\s*7px/.test(block)) {
+    throw new Error('配方卡缺与内置模块同款的 4px 彩框（左 7px）');
+  }
+  if (!/--graph-bubble-start:\s*color-mix\(in srgb, var\(--node-attr\)/.test(block)) throw new Error('配方卡缺彩色渐变起点');
+  if (!/--graph-bubble-glow:\s*color-mix\(in srgb, var\(--node-attr\)/.test(block)) throw new Error('配方卡缺彩色辉光');
+  if (!css.includes('[data-theme="light"] .graph-node.graph-attr-recipe')) throw new Error('配方卡缺浅色主题档');
+  // 从配方端口拖出的草稿小卡要保持轻量样式，规则必须排除它
+  if (!selector.includes(':not(.graph-node-draft)')) throw new Error('配方卡规则应排除 .graph-node-draft（草稿小卡另样）');
+  return true;
+});
+// ===== Φ 配方上下文与草稿试用批次用例结束 =====
 }

@@ -176,9 +176,26 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
     # 仿 quiz_weak 范式——normalize 白名单放行＋preset 提示词行为规则）。Φ 在创造
     # 模式里据此查重/更新/删除；空清单不带该字段。
     user_recipes = normalize_user_recipes(snapshot.get("user_recipes"))
+    raw_detail = snapshot.get("recipe_detail")
+    detail = normalize_recipe_input(raw_detail) if isinstance(raw_detail, dict) and _text(raw_detail.get("id")) else None
+    if detail and validate_recipe(detail, [])["ok"]:
+        normalized["recipe_detail"] = detail
+        user_recipes = [entry for entry in user_recipes if entry["id"] != detail["id"]]
+        user_recipes.insert(0, {"id": detail["id"], "name": detail["name"]})
     if user_recipes:
-        normalized["user_recipes"] = user_recipes
+        normalized["user_recipes"] = user_recipes[:32]
     return normalized
+
+
+def _merge_recipe_patch(before: dict, patch: dict) -> dict:
+    """对象递归合并；数组整体替换，显式 null/空值仍可用于清除配置。"""
+    result = copy.deepcopy(before)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_recipe_patch(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 def normalize_user_recipes(raw: Any) -> List[Dict[str, str]]:
@@ -389,28 +406,37 @@ def _recipe_desc_payload_gaps(op: Dict[str, Any], raw_recipe: Any) -> List[str]:
 
 
 def _note_recipe_desc_payload_mismatch(
-    op: Dict[str, Any], index: int, op_name: str, raw_recipe: Any, warnings: List[Dict[str, Any]]
+    op: Dict[str, Any], index: int, op_name: str, raw_recipe: Any, warnings: List[Dict[str, Any]],
+    *, merged_target: bool = False,
 ) -> None:
     """T79「只 warning 不拦截」拍板的双通道落地：服务端日志归因＋用户可见 warnings。
 
     T242 前只有日志——用户侧零可见，应用前无从判断哪一栏会被抹掉。warnings 键随
-    build_next_snapshot 返回值直达客户端（前端 _harnessOpsCardHtml 渲染）。"""
+    build_next_snapshot 返回值直达客户端（前端 _harnessOpsCardHtml 渲染）。
+
+    merged_target：本次 update 是否对 recipe_detail 选定目标做局部合并。合并路径下
+    未提交字段保持原值（不是被重置），文案必须照实说，否则用户会去「补」根本不缺的字段。"""
     missing = _recipe_desc_payload_gaps(op, raw_recipe)
     if not missing:
         return
     logger.warning(
-        "harness: %s op[%d] 描述声称修改 %s 但 recipe payload 未携带，将按默认值落库",
+        "harness: %s op[%d] 描述声称修改 %s 但 recipe payload 未携带（%s）",
         op_name, index, "/".join(missing),
+        "局部合并：未提交字段保持原值" if merged_target else "整份覆盖：未提交字段按默认值落库",
     )
     labels = "、".join(_RECIPE_KEY_LABELS.get(key, key) for key in missing)
-    warnings.append({
-        "index": index,
-        "op": op_name,
-        "reason": (
+    if merged_target:
+        reason = (
+            f"修改说明里提到「{labels}」但这次提交的字段里没有它们；对选中的目标配方是"
+            "局部合并，这些字段会保持原值（不会被重置）——若确实要改，请把改后的完整值"
+            "带上；若说明与实际不符，请修正修改说明"
+        )
+    else:
+        reason = (
             f"修改说明里提到「{labels}」但新配方没有带上这些内容，对应字段将被重置为默认值"
             "——请核对预览中的前后差异，或应用后到配方编辑器补上"
-        ),
-    })
+        )
+    warnings.append({"index": index, "op": op_name, "reason": reason})
 
 
 def build_next_snapshot(
@@ -445,15 +471,25 @@ def build_next_snapshot(
             ),
         })
     temp_to_assigned: Dict[str, str] = {}
+    recipe_refs: Dict[str, str] = {}
+    recipe_entries = copy.deepcopy(current.get("user_recipes") or [])
+    recipe_detail = current.get("recipe_detail")
 
-    # ---- 冲突预检：同一批次内“既改又删 / 引用即将被删除的节点” ----
+    # ---- 冲突预检：同一批次内“既改又删 / 引用即将被删除的节点/配方” ----
     blocked_indices: set = set()
     deleted_ids: set = set()
+    deleted_recipe_ids: set = set()
     for op in ops:
-        if _text(op.get("op")) == "delete_node":
+        op_name = _text(op.get("op"))
+        if op_name == "delete_node":
             node_id = _text(op.get("id"))
             if node_id:
                 deleted_ids.add(node_id)
+        elif op_name == "delete_recipe":
+            raw_recipe = op.get("recipe") if isinstance(op.get("recipe"), dict) else {}
+            recipe_id = _text(op.get("recipe_id") or op.get("recipeId") or raw_recipe.get("id"))
+            if recipe_id:
+                deleted_recipe_ids.add(recipe_id)
     for index, op in enumerate(ops):
         op_name = _text(op.get("op"))
         if op_name == "update_node" and _text(op.get("id")) in deleted_ids:
@@ -465,6 +501,19 @@ def build_next_snapshot(
             if from_id in deleted_ids or to_id in deleted_ids:
                 target = from_id if from_id in deleted_ids else to_id
                 errors.append({"index": index, "op": op_name, "reason": f"add_edge 引用了即将被删除的节点 {target}，已跳过"})
+                blocked_indices.add(index)
+        elif op_name == "create_node":
+            # 同批「删配方 + 放该配方的节点」= 节点落成没有配方快照的空壳
+            # （前端查不到配方会静默退化成普通 module 节点），与节点删除预检同口径拦截。
+            recipe_ref = _text(op.get("recipe_id") or op.get("recipeId"))
+            if recipe_ref and recipe_ref in deleted_recipe_ids:
+                errors.append({"index": index, "op": op_name, "reason": f"配方 {recipe_ref} 在同一批中将被删除，不能放置该配方的节点，已跳过"})
+                blocked_indices.add(index)
+        elif op_name == "update_recipe":
+            raw_recipe = op.get("recipe") if isinstance(op.get("recipe"), dict) else {}
+            recipe_ref = _text(op.get("recipe_id") or op.get("recipeId") or raw_recipe.get("id"))
+            if recipe_ref and recipe_ref in deleted_recipe_ids:
+                errors.append({"index": index, "op": op_name, "reason": f"配方 {recipe_ref} 在同一批中将被删除，不能修改，已跳过"})
                 blocked_indices.add(index)
 
     def resolve_ref(value: Any) -> str:
@@ -530,12 +579,13 @@ def build_next_snapshot(
             # 配方节点（P3 创造模式「在画布上放一个试试」）：带 recipe_id 的 create_node
             # 是配方实例——module 底座允许空 module_key（外观/出口/提示词都由配方快照决定）
             recipe_id = _text(op.get("recipe_id") or op.get("recipeId"))
+            recipe_id = recipe_refs.get(recipe_id, recipe_id)
             module_key = _text(op.get("module_key") or op.get("moduleKey"))
             if recipe_id:
                 if kind != "module":
                     errors.append({"index": index, "op": op_name, "reason": "配方节点只支持 module 底座"})
                     continue
-                if not any(r.get("id") == recipe_id for r in current.get("user_recipes") or []):
+                if not any(r.get("id") == recipe_id for r in recipe_entries):
                     errors.append({"index": index, "op": op_name, "reason": f"配方不存在: {recipe_id}（只可引用 user_recipes 里列出的）"})
                     continue
             elif kind == "module" and module_key not in ALLOWED_MODULE_KEYS:
@@ -555,13 +605,17 @@ def build_next_snapshot(
                 "read_only": False,
             }
             temp_to_assigned[temp_id] = assigned_id
-            valid_ops.append({**op, "assigned_id": assigned_id})
+            valid_ops.append({**op, "assigned_id": assigned_id, "recipe_id": recipe_id})
             continue
 
         # ---- 配方库操作（P3 创造模式）：不改图元素，只校验 payload 并透传给前端配方层 ----
         if op_name in ("create_recipe", "update_recipe", "delete_recipe"):
-            existing_names = current.get("user_recipes") or []
+            existing_names = recipe_entries
             if op_name == "create_recipe":
+                temp_recipe_id = _text(op.get("temp_recipe_id"))
+                if temp_recipe_id and (temp_recipe_id in recipe_refs or any(r.get("id") == temp_recipe_id for r in existing_names)):
+                    errors.append({"index": index, "op": op_name, "reason": "配方临时 ID 重复，请使用新的 temp_recipe_id"})
+                    continue
                 normalized_recipe = normalize_recipe_input(op.get("recipe"))
                 if normalized_recipe is None:
                     errors.append({"index": index, "op": op_name, "reason": "配方 payload 不合法（normalize 失败：缺名称或底座不合法）"})
@@ -572,6 +626,9 @@ def build_next_snapshot(
                     continue
                 recipe_id = f"recipe-hn-{time.time_ns()}_{index + 1}"
                 normalized_recipe["id"] = recipe_id
+                recipe_entries.append({"id": recipe_id, "name": normalized_recipe["name"]})
+                if temp_recipe_id:
+                    recipe_refs[temp_recipe_id] = recipe_id
                 _note_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"), warnings)
                 valid_ops.append({
                     **op,
@@ -594,7 +651,13 @@ def build_next_snapshot(
                 errors.append({"index": index, "op": op_name, "reason": f"配方不存在: {recipe_id}"})
                 continue
             if op_name == "update_recipe":
-                normalized_recipe = normalize_recipe_input(op.get("recipe"))
+                payload = op.get("recipe")
+                merged_target = bool(
+                    recipe_detail and recipe_detail.get("id") == recipe_id and isinstance(payload, dict)
+                )
+                if merged_target:
+                    payload = _merge_recipe_patch(recipe_detail, payload)
+                normalized_recipe = normalize_recipe_input(payload)
                 if normalized_recipe is None:
                     errors.append({"index": index, "op": op_name, "reason": "配方 payload 不合法（normalize 失败：缺名称或底座不合法）"})
                     continue
@@ -605,15 +668,30 @@ def build_next_snapshot(
                 if not verdict["ok"]:
                     errors.append({"index": index, "op": op_name, "reason": "配方未通过校验：" + "；".join(verdict["errors"])})
                     continue
-                _note_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"), warnings)
+                _note_recipe_desc_payload_mismatch(
+                    op, index, op_name, op.get("recipe"), warnings, merged_target=merged_target,
+                )
+                if merged_target:
+                    recipe_detail = normalized_recipe
+                # T243：旧名必须在改账本【之前】捕获——matched 就是账本里的同一个
+                # dict，先改 name 会把「before→after」的 before 也改成新名。
+                matched_name = _text(matched.get("name"))
+                # 名称账本批内更新：同批后续 create/update 的重名判定必须按改后的
+                # 名字来，否则「把 A 改名为 X」+「新建名叫 X 的配方」会双双通过。
+                for entry in recipe_entries:
+                    if entry.get("id") == recipe_id:
+                        entry["name"] = normalized_recipe["name"]
+                        break
                 valid_ops.append({
                     **op,
                     "recipe": normalized_recipe,
                     "recipe_id": recipe_id,
                     # 旧名（update 的 payload 里可能是新名；前端差异行要 before→after）
-                    "recipe_name": _text(matched.get("name")),
+                    "recipe_name": matched_name,
                 })
             else:
+                # 名称账本同步移除：同批删除后，同名新建/引用检查按「删完」的状态判。
+                recipe_entries = [entry for entry in recipe_entries if entry.get("id") != recipe_id]
                 valid_ops.append({**op, "recipe_id": recipe_id, "recipe_name": _text(matched.get("name"))})
             continue
 

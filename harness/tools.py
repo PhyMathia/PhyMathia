@@ -95,7 +95,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
             "content": _str_prop("正文/摘要（可空，最多 1200 字）"),
             "formula": _str_prop("公式（可空，纯 LaTeX，不带 $ 定界符）"),
             "module_key": _str_prop("kind=module 时必须填写模块类型（带 recipe_id 时可空）", list(ALLOWED_MODULE_KEYS)),
-            "recipe_id": _str_prop("配方 ID（来自快照 user_recipes 清单或本批 create_recipe 的结果）——放置一个该配方的节点实例，编辑/创造模式均可"),
+            "recipe_id": _str_prop("配方 ID（来自快照 user_recipes 清单或本批先创建的 create_recipe.temp_recipe_id）——放置一个该配方的节点实例，编辑/创造模式均可"),
             "reason": _str_prop(REASON_DESC),
         },
         ["temp_id", "kind", "label", "reason"],
@@ -200,7 +200,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
     recipe_obj_prop = {
         "type": "object",
         "description": "配方完整 JSON：name(必填≤24字) / desc(≤80) / base:{kind:module|summary|knowledge|relation|note|human_note|manual|question} / "
-        "appearance:{palette:amber|blue|rose|teal|violet|human|note, shape:is-round|is-square|is-diamond|is-ring} / "
+        "appearance:{palette:amber|blue|rose|teal|violet|human|note}（外观只有颜色，形状按底座推导、别写 shape） / "
         "generate:{prompt(必填≤800字), strict_output, followup_prompt, confused_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
         "model_role:agent|html|branch|graph|quiz|descriptor, on_incomplete:{max_retries:0|1|2}} / "
         "ports:{static:[{label≤12字, drag_form:draft|user|connected:<官方key>}], dynamic:{parser:{pattern:numbered_list, level_tags, max≤12, "
@@ -212,7 +212,6 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
             "base": {"type": "object", "properties": {"kind": _str_prop("底座类型")}},
             "appearance": {"type": "object", "properties": {
                 "palette": _str_prop("色板令牌", ["amber", "blue", "rose", "teal", "violet", "human", "note"]),
-                "shape": _str_prop("形状族", ["is-round", "is-square", "is-diamond", "is-ring"]),
             }},
             "generate": {"type": "object", "description": "生成四槽＋通道＋模型槽＋重试"},
             "ports": {"type": "object", "description": "静态出口表＋动态出口声明"},
@@ -225,16 +224,17 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "create_recipe",
         "创造模式：新建一个节点配方（用户可复用的自定义节点类型，纯 JSON）。需求不明时先用 clarify 问清"
         "（用途/出口/载体），明确后一次性产出完整配方；保存前想过校验器（名称查重/枚举白名单/预算）。",
-        {"recipe": recipe_obj_prop, "reason": _str_prop(REASON_DESC)},
+        {"recipe": recipe_obj_prop, "reason": _str_prop(REASON_DESC),
+         "temp_recipe_id": _str_prop("可选临时配方 ID；同批先创建配方，再用 create_node.recipe_id 引用此值")},
         ["recipe", "reason"],
     )
 
     update_recipe = _tool(
         "update_recipe",
-        "创造模式：修改现有配方（只能改 user_recipes 清单里列出的 id；payload 与 create 同构，整份提交）。",
+        "创造模式：修改现有配方（只能改 user_recipes 清单里列出的 id）。目标与 recipe_detail.id 一致时只提交改变的字段，未提交字段递归保留；数组整体替换，null 清除可选配置。其他目标必须整份提交。",
         {
             "recipe_id": _str_prop("要修改的配方 ID（必须来自 user_recipes 清单）"),
-            "recipe": recipe_obj_prop,
+            "recipe": {**recipe_obj_prop, "required": []},
             "reason": _str_prop(REASON_DESC),
         },
         ["recipe_id", "recipe", "reason"],
@@ -378,9 +378,11 @@ def _args_to_op(name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if name in ("create_recipe", "update_recipe"):
         reason = _text(args.get("reason"))
         recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else None
-        if not reason or not isinstance(recipe, dict) or not _text(recipe.get("name")):
+        if not reason or not isinstance(recipe, dict) or (name == "create_recipe" and not _text(recipe.get("name"))):
             return None
         op: Dict[str, Any] = {"op": name, "recipe": recipe, "reason": reason}
+        if name == "create_recipe" and _text(args.get("temp_recipe_id")):
+            op["temp_recipe_id"] = _text(args.get("temp_recipe_id"))
         if name == "update_recipe":
             recipe_id = _text(args.get("recipe_id"))
             if not recipe_id:

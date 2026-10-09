@@ -415,6 +415,14 @@ def test_frontend_normalize_shape_matches_backend():
     )
 
 
+def test_normalize_ignores_input_shape():
+    """2026-10-09 用户拍板：形状不是配方参数——输入里的 shape 一律忽略，按底座推导。"""
+    raw = {**_valid_sample(), "appearance": {"palette": "amber", "shape": "is-diamond"}}
+    assert normalize_recipe_input(raw)["appearance"]["shape"] == "is-round"
+    note = {**raw, "base": {"kind": "note"}}
+    assert normalize_recipe_input(note)["appearance"]["shape"] == "is-square"
+
+
 def test_validate_name_dup_ignores_same_id():
     sample = _valid_sample()
     verdict = validate_recipe(sample, [dict(sample)])

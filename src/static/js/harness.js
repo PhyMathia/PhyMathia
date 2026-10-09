@@ -175,9 +175,39 @@ let harnessLastAppliedReport = null;
     return _harnessFingerprint(_harnessVersionSource(_harnessGraphState(sid)));
   }
 
-  function _harnessBinding() {
+  // 配方库指纹（2026-10-09 时效边界）：只覆盖每份配方的归一化实质配置——按 id 排序、
+  // 逐字段 JSON，剔除 createdAt/updatedAt（服务端镜像对账 syncUserRecipesFromServer
+  // 按 updatedAt 取新、可能整份搬运或只动时间戳，那不是用户改过的配置，不该让建议
+  // 失效）。字段清单与 normalizeRecipeInput 的产出对齐；无配方库的载体（viewer）返回
+  // 空列表的稳定指纹。仅 preset 相位的 binding 携带（其他模式冻结契约不变）。
+  const HARNESS_RECIPE_FIELDS = ['name', 'desc', 'base', 'appearance', 'generate', 'ports',
+    'content_kind', 'aggregation', 'analysis_phase', 'on_generated'];
+
+  function _harnessRecipeVersionSource() {
+    const recipes = (typeof getUserRecipes === 'function' ? getUserRecipes() : [])
+      .slice()
+      .sort((a, b) => String((a && a.id) || '').localeCompare(String((b && b.id) || '')));
+    return JSON.stringify(recipes.map(recipe => {
+      const parts = [String((recipe && recipe.id) || '')];
+      HARNESS_RECIPE_FIELDS.forEach(key => {
+        parts.push(recipe && Object.prototype.hasOwnProperty.call(recipe, key)
+          ? JSON.stringify(recipe[key]) : '');
+      });
+      return parts.join('\u0001');
+    }));
+  }
+
+  function _harnessRecipeVersion() {
+    return _harnessFingerprint(_harnessRecipeVersionSource());
+  }
+
+  function _harnessBinding(mode) {
     // sessionId = 这条建议所属的画布（绑定 sid，即改图写回目标）；phiId/epoch 守 Φ 会话切换。
-    return { phiId: _phiId(), sessionId: _harnessBoundSid(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
+    const binding = { phiId: _phiId(), sessionId: _harnessBoundSid(), graphVersion: _harnessGraphVersion(), epoch: harnessSessionEpoch };
+    // 创造模式（preset）的建议额外锁配方库指纹：图没变但配方被改/删时也要在应用前拦住。
+    // 其他模式不带 recipeVersion（undefined = 不校验），既定冻结契约原样保留。
+    if (String(mode || harnessMode) === 'preset') binding.recipeVersion = _harnessRecipeVersion();
+    return binding;
   }
 
   // 旧条目迁移：阶段1 把整份画布状态当版本号存进历史，既占地方又永远比对失败。
@@ -212,11 +242,28 @@ let harnessLastAppliedReport = null;
   }
 
   function _harnessCanApply(binding) {
-    // 建议所属画布必须是当前打开的画布（应用走当前画布的实时视图与撤销栈）；
-    // 有指纹还必须与该画布当前内容一致。指纹缺失只说明建议来自迁移前的旧条目
-    // （或状态无法解析），此时按画布校验放行这条已展示过的建议。
-    if (binding && binding.sessionId && binding.sessionId === _sessionId()
-        && (!binding.graphVersion || binding.graphVersion === _harnessGraphVersion(binding.sessionId))) return true;
+    // 建议所属画布必须是当前打开的画布（应用走当前画布的实时视图与撤销栈）。
+    // 图指纹：缺指纹（迁移前的旧条目）按画布放行；有指纹必须与当前内容一致。
+    // 试用认领（trialGraphVersion＋非空 trialNodeIds）：承认「生成后唯一的确定性
+    // 变更＝用户自己放的那次试用插入」——由试用路径严格比对后写入，不是忽略指纹。
+    // 任何其它改动两个哈希都不匹配，照旧拦截；删掉试用节点后指纹回到 graphVersion，
+    // 建议自动恢复可应用。
+    // 配方库指纹（recipeVersion，仅 preset 相位携带）：图没变但配方被改/删也要拦。
+    if (binding && binding.sessionId && binding.sessionId === _sessionId()) {
+      const graphNow = (binding.graphVersion || binding.trialGraphVersion)
+        ? _harnessGraphVersion(binding.sessionId) : '';
+      const graphOk = (!binding.graphVersion && !binding.trialGraphVersion)
+        || binding.graphVersion === graphNow
+        || (!!binding.trialGraphVersion && binding.trialGraphVersion === graphNow
+            && Array.isArray(binding.trialNodeIds) && binding.trialNodeIds.length > 0);
+      const recipeOk = binding.recipeVersion === undefined
+        || binding.recipeVersion === _harnessRecipeVersion();
+      if (graphOk && recipeOk) return true;
+      _setHarnessStatus(graphOk && !recipeOk
+        ? '配方库已变化（配方被修改或删除），请重新生成建议后再应用'
+        : '画布或会话已变化，请重新生成建议后再应用', 'error');
+      return false;
+    }
     _setHarnessStatus('画布或会话已变化，请重新生成建议后再应用', 'error');
     return false;
   }
@@ -239,6 +286,11 @@ let harnessLastAppliedReport = null;
     harnessLastAppliedOps = [];
     harnessLastAppliedBeforeSnapshot = null;
     harnessLastAppliedReport = null;
+    // 配方目标选择是「这次请求的上下文」：切/清/删 Φ 会话后必须清掉，否则下一句
+    // preset 消息会静默带上上一个会话选的配方（把 A 会话的目标改到 B 会话去）。
+    // 面板 DOM 常驻，getElementById 直接改值即可；面板未创建时 getElementById 返回 null。
+    const recipeTargetResetEl = document.getElementById('graphHarnessRecipeTarget');
+    if (recipeTargetResetEl) recipeTargetResetEl.value = '';
     // T96：撤销时间线是会话级视图——切/清/删 Φ 会话时收起并清空，别残留上一个
     // 会话的批次行（行里的快照只能在对应会话里取，留着只会点了报「找不到前态」）
     const undoTimelineBox = document.getElementById('graphHarnessUndoTimeline');
@@ -397,6 +449,9 @@ let harnessLastAppliedReport = null;
     // （幽灵节点残留在新画布上是事故）、刷新绑定显示与打开着的菜单
     if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
     if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
+    // 画布换了，上一张画布上选的修改目标不再适用（详见 resetHarnessSession 同款注释）
+    const recipeTargetEl = document.getElementById('graphHarnessRecipeTarget');
+    if (recipeTargetEl) recipeTargetEl.value = '';
     _refreshHarnessSessionMenuIfOpen();
     _syncHarnessSessionBtn();
   }
@@ -1062,7 +1117,10 @@ let harnessLastAppliedReport = null;
     // 【口头】建议去大陆连接——跨画布连线不是本画布图操作，落笔在大陆弹层里用户确认。
     const continentShared = continentData ? _harnessContinentShared(continentData) : [];
     if (continentShared.length) snapshot.continent_shared = continentShared;
-    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges, quiz_weak: snapshot.quiz_weak, continent_shared: snapshot.continent_shared });
+    if (_harnessResolveRequestMode(opts) === 'preset') {
+      _attachHarnessRecipeContext(snapshot, _harnessResolveRecipeTargetId(opts));
+    }
+    const serialized = JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges, quiz_weak: snapshot.quiz_weak, continent_shared: snapshot.continent_shared, recipe_detail: snapshot.recipe_detail });
     snapshot.snapshot_meta = {
       total_nodes: nodes.length,
       directory_nodes: snapshot.nodes.filter(n => n.directory).length,
@@ -1076,8 +1134,9 @@ let harnessLastAppliedReport = null;
 
   // 未绑定/绑定了别的画布时的占位快照：纯问答不需要图内容（chat 相位与 pure_chat
   // 在后端都放行空快照），构造与 buildHarnessSnapshot 同构的空体——绝不能把当前
-  // 打开的画布内容塞进一段与它无关的对话里。
-  function _emptyHarnessSnapshot() {
+  // 打开的画布内容塞进一段与它无关的对话里。opts 与 buildHarnessSnapshot 同口径
+  // （recipeTargetId/mode 显式传入，undefined 时回落到面板当前值）。
+  function _emptyHarnessSnapshot(opts) {
     const snapshot = {
       version: 1,
       nodes: [],
@@ -1092,6 +1151,9 @@ let harnessLastAppliedReport = null;
       deleted_filtered: 0,
       est_tokens: 0,
     };
+    if (_harnessResolveRequestMode(opts) === 'preset') {
+      _attachHarnessRecipeContext(snapshot, _harnessResolveRecipeTargetId(opts));
+    }
     return snapshot;
   }
 
@@ -1234,6 +1296,16 @@ let harnessLastAppliedReport = null;
       // （对话区保底），绝不能做绝对定位浮层
       + '<div id="graphHarnessUndoTimeline" class="graph-harness-undo-timeline" hidden></div>'
       + '<div class="graph-harness-composer">'
+      + '<details id="graphHarnessRecipeGuide" class="graph-harness-recipe-guide" ontoggle="if(this.open) _refreshHarnessRecipeTargets()" hidden>'
+      + '<summary>配方起草与修改</summary>'
+      + '<label>修改目标 <select id="graphHarnessRecipeTarget" aria-label="选择要修改的配方"></select></label>'
+      + '<p>选中后只把这份配方的完整配置交给 Φ，没要求改的字段会保留。修改与保存配方需先把本 Φ 会话绑定到当前画布。</p>'
+      + '<div class="graph-harness-recipe-starts">'
+      + '<button type="button" onclick="fillHarnessRecipeBrief(\'review\')">错题复盘</button>'
+      + '<button type="button" onclick="fillHarnessRecipeBrief(\'physics\')">物理建模</button>'
+      + '<button type="button" onclick="fillHarnessRecipeBrief(\'formula\')">公式理解</button>'
+      + '<button type="button" onclick="fillHarnessRecipeBrief(\'proof\')">数学证明</button>'
+      + '</div><p>起草示例只填入输入框，不会自动发送或保存配方。</p></details>'
       + '<textarea id="graphHarnessInstruction" rows="2" placeholder="对网络助手说话…可改图，可提问"></textarea>'
       + '<div class="graph-harness-actions">'
       + '<span class="graph-harness-mode" id="graphHarnessMode">'
@@ -1956,6 +2028,70 @@ let harnessLastAppliedReport = null;
     }
     const inputEl = document.getElementById('graphHarnessInstruction');
     if (inputEl) inputEl.placeholder = def.placeholder;
+    const guide = document.getElementById('graphHarnessRecipeGuide');
+    if (guide) guide.hidden = harnessMode !== 'preset';
+    if (harnessMode === 'preset') _refreshHarnessRecipeTargets();
+  }
+
+  function _refreshHarnessRecipeTargets() {
+    const select = document.getElementById('graphHarnessRecipeTarget');
+    if (!select) return;
+    const current = select.value;
+    const recipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+    select.innerHTML = '<option value="">新建配方 / 未指定目标</option>'
+      + recipes.map(recipe => '<option value="' + _escapeHtml(recipe.id) + '">'
+        + _escapeHtml(recipe.name) + '</option>').join('');
+    select.value = recipes.some(recipe => recipe.id === current) ? current : '';
+  }
+
+  // 本次请求锁定的创造模式上下文（发送起点解析一次；排队回放经 opts 传入入队
+  // 时刻的值）。只影响这一次请求的快照与 binding，不写回 UI——用户当前看到的
+  // 模式/目标不被后台回放改写，全局模式也不自动切换。
+  function _harnessResolveRequestMode(opts) {
+    const locked = opts && typeof opts.mode === 'string' ? opts.mode : '';
+    return locked || harnessMode;
+  }
+
+  function _harnessResolveRecipeTargetId(opts) {
+    if (opts && typeof opts.recipeTargetId === 'string') return opts.recipeTargetId;
+    const select = document.getElementById('graphHarnessRecipeTarget');
+    return select ? String(select.value || '') : '';
+  }
+
+  // targetId 显式传入（含空串＝明确不指定目标）时不再读 DOM：发送队列回放按
+  // 入队时刻锁定的目标走，途中用户改下拉不影响在途请求。undefined 保持旧行为。
+  function _attachHarnessRecipeContext(snapshot, targetId) {
+    const targetValue = targetId === undefined
+      ? _harnessResolveRecipeTargetId(null)
+      : String(targetId || '');
+    const recipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+    const recipe = recipes.find(item => item.id === targetValue);
+    if (!recipe) return snapshot;
+    snapshot.recipe_detail = JSON.parse(JSON.stringify(recipe));
+    const summaries = snapshot.user_recipes || recipes.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .map(item => ({ id: item.id, name: item.name }));
+    snapshot.user_recipes = [{ id: recipe.id, name: recipe.name }, ...summaries.filter(item => item.id !== recipe.id)].slice(0, 32);
+    return snapshot;
+  }
+
+  function fillHarnessRecipeBrief(key) {
+    if (phyIsReadonly()) { phyReadonlyBlock('起草配方'); return; }
+    const briefs = {
+      review: '帮我创建一个错题复盘节点：用于高中学生，输出错因、正确思路、同类练习，提供「提示」和「再测一道」出口。',
+      physics: '帮我创建一个物理建模节点：用于高中学生，依次说明研究对象、假设、受力、方程和结果检查，提供「解释假设」和「换个条件」出口。',
+      formula: '帮我创建一个公式理解节点：用于高中学生，讲清适用条件、各量含义、量纲和常见误用，提供「推导过程」和「应用练习」出口。',
+      proof: '帮我创建一个数学证明节点：用于高中学生，列出已知条件、关键思路、证明步骤和条件检查，提供「给个提示」和「反例检查」出口。',
+    };
+    const input = document.getElementById('graphHarnessInstruction');
+    if (!input || !briefs[key]) return;
+    if (String(input.value || '').trim()) {
+      _setHarnessStatus('输入框已有内容，请先保留或清空，再选择起草示例。', 'ok');
+      return;
+    }
+    const target = document.getElementById('graphHarnessRecipeTarget');
+    if (target) target.value = '';
+    input.value = briefs[key];
+    input.focus();
   }
 
   function toggleHarnessModeMenu(event) {

@@ -1029,6 +1029,22 @@ async def review_graph(
     use_full = scope in ("full", "targeted") and (all_previous_ops or [])
     prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
     prev_before = initial_snapshot if use_full else previous_snapshot
+    # 配方批整批拒绝（2026-10-09）：update/delete_recipe 没有确定性逆
+    # （build_inverse_ops 只逆 create_recipe），图撤销不会还原配方库——含这类操作的
+    # 批必须整批拒绝，绝不做「图回滚、配方不动」的半撤。判断必须放在 MAX_OPERATIONS
+    # 截片【之前】：切片保留最新 N 条，配方操作排在更早位置时会被切掉、漏检后跌回
+    # 半撤路径。op/type 两种键名都认（历史记录与不同客户端的形态不一）。
+    if undo_intent and any(
+        (op.get("op") or op.get("type")) in ("update_recipe", "delete_recipe")
+        for op in prev_ops if isinstance(op, dict)
+    ):
+        reason_text = "这批修改包含配方修改或删除，请用「撤销本次」或「撤销历史」整批恢复；整批还原会覆盖之后的手工修改。"
+        _emit({"type": "status", "stage": "undo", "message": reason_text})
+        return {
+            "status": "no_ops", "summary": reason_text, "operations": [],
+            "next_snapshot": current, "diff": [], "errors": [], "warnings": [],
+            "raw_has_ops": False, "model_calls": call_counter["n"],
+        }
     # T235：历史超单批上限时切「最新 N 条」而不是最旧——「撤销全部」要回滚的是
     # 最近的改动，留头部会把最新改动整段留下、只回滚最旧的（语义拧反）。被切掉
     # 的条数在撤销成功的 summary 里如实说明，不静默缩水。previous_ops（前端主
