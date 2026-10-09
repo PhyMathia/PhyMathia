@@ -67,6 +67,15 @@ const scenarios = [
   // criticSawResultState 经 mock /__stats 核对质检请求确实带上了结果图段）。
   // 依赖 mock 上游剧本，真模型跑不在此场景预期内（仅 mock 基建）。
   { id: 'selfcheck-resultstate', label: '质检看结果图：操作合法但未达成指令（重试纠正）', instruction: '公式核对演练：把导数的公式改成 F=ma', phase: 'normal', focus: ['A'], expect: { phase: 'normal', updateTargets: ['A'], updatePatch: { id: 'A', formula: 'F=ma' }, criticSawResultState: true } },
+  // 路径二第二步（2026-10-09）：达成清单机检——两条合法操作＋自报 checklist「公式
+  // 已更新」但实际没改公式；≤3 条操作不触发质检门，只有本地机检能拦下并重试。
+  // checklistWarned 断言重试达成后 warnings 里有「本次目标 N 条」汇总行。
+  { id: 'checklist-machine', label: '达成清单机检：自报目标未达成必须重试（不花质检）', instruction: '达成清单演练：把导数的公式改成 F=ma', phase: 'normal', focus: ['A'], expect: { phase: 'normal', updateTargets: ['A'], updatePatch: { id: 'A', formula: 'F=ma' }, checklistWarned: true } },
+  // 路径三（2026-10-09）：字面 miss 的同义召回——图里只有「法拉第定律」节点（正文
+  // 无「电磁感应」字样），指令搜「电磁感应」必须经语义召回命中；semanticRecall 经
+  // mock /__stats 核对回灌结果确实带上了法拉第节点。依赖 battery 服务带 embedding
+  // 模型（models/Qwen3-Embedding）；语义层降级环境下此场景必红——特性场景非回归场景。
+  { id: 'semantic-recall', label: '同义检索：电磁感应→法拉第定律（语义召回）', instruction: '同义检索演练：搜一下电磁感应相关的节点，找到后给那个节点补充复习标注', phase: 'normal', focus: [], snapshotExtra: 'faraday', expect: { phase: 'normal', updateTargets: ['F'], allowedUpdateIds: ['F'], semanticRecall: true } },
   { id: 'delete-derivative', label: '删除核心知识点 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
   { id: 'ref-by-content', label: '按内容引用节点', instruction: '把「当自变量趋近某个值时函数值趋近的值」这个节点改得更清楚', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['B'], allowedUpdateIds: ['B'] } },
   { id: 'apply-conflict', label: '冲突评价应用', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals-conflict', expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
@@ -614,6 +623,13 @@ function scoreScenario(sc, data) {
     if (!hit) issues.push('修改字段未达成: 期望 ' + JSON.stringify(want)
       + '，实际 ' + JSON.stringify(ops.filter(o => opName(o) === 'update_node').map(o => ({ id: o.id, patch: o.patch }))));
   }
+  // 路径二第二步配套：达成清单的 warnings 汇总行（「本次目标 N 条，达成 M 条」）
+  if (ex.checklistWarned) {
+    const w = Array.isArray(data.warnings) ? data.warnings : [];
+    if (!w.some(x => x && x.index === 'checklist' && /本次目标 \d+ 条/.test(String(x.reason || '')))) {
+      issues.push('达成清单未汇总进 warnings（缺「本次目标 N 条」行）: ' + JSON.stringify(w));
+    }
+  }
   if (ex.mustIncludeTargets) {
     const evalTargets = ops.filter(o => opName(o) === 'create_eval_node').map(o => o.target_node_id || o.target);
     for (const t of ex.mustIncludeTargets) if (!evalTargets.includes(t)) issues.push('未评价目标 ' + t);
@@ -779,7 +795,17 @@ function makeInitialSnapshot(sc, graph) {
   if (sc.snapshotExtra === 'evals-conflict') return makeConflictSnapshot();
   if (sc.snapshotExtra === 'big') return makeBigSnapshot();
   if (sc.snapshotExtra === 'recipes') return makeRecipesSnapshot();
+  if (sc.snapshotExtra === 'faraday') return makeFaradaySnapshot();
   return makeSnapshot();
+}
+
+// 路径三（语义召回）验收快照：正文刻意不含「电磁感应」字样——字面路径必 miss，
+// 只有 embedding 近邻能召回「法拉第定律」。
+function makeFaradaySnapshot() {
+  const snap = makeSnapshot();
+  snap.nodes.push({ id: 'F', kind: 'knowledge', label: '法拉第定律', content: '闭合回路中磁通量的变化会产生感应电动势，大小与磁通量变化率成正比。', formula: '\\varepsilon=-\\frac{d\\Phi}{dt}' });
+  snap.edges.push({ key: 'A:out-0->F:in-0', from: 'A', to: 'F', relation: '应用', label: '导数描述变化率' });
+  return snap;
 }
 
 // 创造模式（P3）：带已有配方清单的快照（模拟用户配方库非空——Φ 需据此查重/删除）
@@ -848,7 +874,7 @@ async function runTurns(sc, idx, graph, total) {
       // 路径二配套：质检请求「看到了结果图」的观测点在 mock /__stats
       // （selfcheckResultState 只在质检请求带「操作执行后的结果图」段时 +1）
       let mockStatsBefore = null;
-      if (turn.expect && turn.expect.criticSawResultState && MOCK_BASE) {
+      if (turn.expect && (turn.expect.criticSawResultState || turn.expect.semanticRecall) && MOCK_BASE) {
         try { mockStatsBefore = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json(); } catch (e) {}
       }
       const data = await callReview(payload);
@@ -860,6 +886,19 @@ async function runTurns(sc, idx, graph, total) {
           if ((st.selfcheck_result_state || 0) <= before) {
             score.passed = false;
             score.issues.push('质检请求没有看到结果图（mock /__stats.selfcheckResultState 未增长）');
+          }
+        } catch (e) {
+          score.passed = false;
+          score.issues.push('无法读取 mock /__stats: ' + e.message);
+        }
+      }
+      if (turn.expect && turn.expect.semanticRecall && MOCK_BASE) {
+        try {
+          const st = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json();
+          const before = (mockStatsBefore && mockStatsBefore.semantic_recall) || 0;
+          if ((st.semantic_recall || 0) <= before) {
+            score.passed = false;
+            score.issues.push('语义召回未进入回灌（mock /__stats.semanticRecall 未增长）');
           }
         } catch (e) {
           score.passed = false;

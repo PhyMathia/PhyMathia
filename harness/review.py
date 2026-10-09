@@ -152,8 +152,15 @@ from .core import (
 from .selfcheck import (
     SELFCHECK_TOOL,
     build_selfcheck_messages,
+    normalize_checklist,
     parse_selfcheck,
     parse_selfcheck_tool,
+    verify_checklist,
+)
+from .semantic import (
+    rank_recipes_for_instruction,
+    semantic_kb_recall,
+    semantic_node_recall,
 )
 from .semantics import find_isolated_created_nodes, find_missing_expansion_chains, rule_selfcheck
 from .json_utils import extract_json, repair_json, strip_reasoning
@@ -821,16 +828,18 @@ def _should_selfcheck_ops(ops: list) -> bool:
     )
 
 
-async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None, journal: Optional[list] = None, result_snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None, journal: Optional[list] = None, result_snapshot: Optional[Dict[str, Any]] = None, checklist: Optional[list] = None) -> Dict[str, Any]:
     """One lightweight critic call checking instruction coverage. Never blocks on failure.
 
     result_snapshot：操作执行后的结果图（路径二第一步）——critic 从「对账操作单」
-    升级为「对账结果图」；None 时消息与从前逐字节一致（降级回归）。"""
+    升级为「对账结果图」；None 时消息与从前逐字节一致（降级回归）。
+    checklist：达成清单里机检未覆盖的语义条目（路径二第二步）——拼进 critic user
+    消息供逐条核对；None/空时消息与从前逐字节一致。"""
     def _tick():
         if counter is not None:
             counter["n"] += 1
 
-    messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops, result_snapshot)
+    messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops, result_snapshot, checklist)
     # 主循环对 required 有 provider 门控（opencode 免费模型不支持，见
     # _supports_required_tool_choice），自检不带门控会在这些链路上每次
     # 白烧一整轮注定 400 的调用 + 一轮 JSON 重试（09-20 修复）
@@ -986,6 +995,16 @@ async def review_graph(
     # T93：只读查询的取数源＝归一化后的完整快照（未做焦点收缩/正文压缩）。
     # 必须独立 normalize 一次——_compact_snapshot 会原地裁剪节点正文，与 current
     # 共用同一批 dict 会把「全文」提前压掉，read_node 就取不回目录行的全文了。
+    # 路径三落点三（2026-10-09）：快照配方清单超过后端截断上限（core.py 的
+    # user_recipes[:32]）时，名额从纯「最近更新」改成「与指令相关度优先＋其余
+    # 保序」——本地 embedding 计算，不发任何模型请求；语义层降级时顺序原样
+    # （与 T244 的 updatedAt 倒序行为一致）。
+    if (isinstance(snapshot, dict) and isinstance(snapshot.get("user_recipes"), list)
+            and len(snapshot["user_recipes"]) > 32 and str(instruction or "").strip()):
+        ordered = await rank_recipes_for_instruction(snapshot["user_recipes"], instruction, account)
+        if isinstance(ordered, list) and len(ordered) == len(snapshot["user_recipes"]):
+            snapshot = dict(snapshot)
+            snapshot["user_recipes"] = ordered
     full_snapshot = normalize_snapshot(snapshot)
     current = normalize_snapshot(snapshot)
     if len(json.dumps(current, ensure_ascii=False)) > MAX_SNAPSHOT_CHARS:
@@ -1468,6 +1487,29 @@ async def review_graph(
                                 name, args, full_snapshot,
                                 kb=_kb() if name in KB_TOOL_NAMES else None,
                             )
+                            # 路径三（2026-10-09）：字面完全 miss 的检索用本地
+                            # embedding 补召回（字面命中≥1 条时零变化；语义层
+                            # 降级回 [] 时行为与从前逐字一致）
+                            if (name in ("search_nodes", "search_knowledge", "search_formulas")
+                                    and isinstance(args, dict) and isinstance(output, dict)
+                                    and not output.get("total")):
+                                keyword = str(args.get("keyword") or args.get("query")
+                                              or args.get("text") or "").strip()
+                                if keyword:
+                                    hits = []
+                                    if name == "search_nodes":
+                                        hits = await semantic_node_recall(full_snapshot, keyword, account)
+                                    else:
+                                        hits = await semantic_kb_recall(
+                                            "knowledge" if name == "search_knowledge" else "formulas",
+                                            _kb(), keyword, account,
+                                        )
+                                    if hits:
+                                        output = execute_readonly_tool(
+                                            name, args, full_snapshot,
+                                            kb=_kb() if name in KB_TOOL_NAMES else None,
+                                            semantic_hits=hits,
+                                        )
                             text = json.dumps(output, ensure_ascii=False)
                             ok = not (isinstance(output, dict) and output.get("error"))
                             if len(text) > _TOOL_RESULT_CHARS:
@@ -1532,6 +1574,10 @@ async def review_graph(
                 # T236：本趟尝试里解析失败的 tool_calls——末次放行时降级成 warnings
                 # （见下面 result 组装处）。每次尝试重新初始化，重试成功不得带上轮残留。
                 pending_tool_errors = []
+                # 路径二第二步：本趟模型自报的达成清单（模型可选字段，缺失＝静默降级，
+                # 与不带 checklist 的旧路径行为逐字节一致）。每次尝试重新初始化。
+                pending_checklist: list = []
+                checklist_state: Optional[Dict[str, Any]] = None
                 if raw.get("tool_calls"):
                     raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
                     pending_tool_errors = tool_errors
@@ -1553,6 +1599,15 @@ async def review_graph(
                     summary = _clamp_display_summary(str(raw.get("content") or "").strip())
                     if _looks_like_machine_text(summary):
                         summary = ""
+                    # 路径二第二步：工具通道下 checklist 从 content 的 JSON 外壳惰性
+                    # 提取（模型自报、可选）。外壳里同时给了人话 summary 就用它顶替
+                    # 整段 JSON 文本（否则会被机器文本判定整段丢掉）；纯散文 content
+                    # 解析不出 dict，零影响。
+                    content_payload = extract_json(str(raw.get("content") or ""))
+                    if isinstance(content_payload, dict) and isinstance(content_payload.get("checklist"), list):
+                        pending_checklist = normalize_checklist(content_payload.get("checklist"))
+                        if pending_checklist and isinstance(content_payload.get("summary"), str) and str(content_payload.get("summary") or "").strip():
+                            summary = _clamp_display_summary(str(content_payload["summary"]).strip())
                 else:
                     payload = extract_json(last_raw)
                     if payload is None and current_tools is not None:
@@ -1580,6 +1635,9 @@ async def review_graph(
                             last_errors = [{"index": "schema", "op": "operations", "reason": "operations 必须是数组"}]
                             continue
                         summary = str(payload.get("summary") or "").strip()
+                        # 路径二第二步：JSON 通道的 checklist 是顶层可选字段（弱模型
+                        # 丢了不影响任何既有行为——normalize_checklist 坏形态回 []）
+                        pending_checklist = normalize_checklist(payload.get("checklist"))
                         if isinstance(payload.get("clarify"), dict):
                             clarify_result = {
                                 "status": "clarify",
@@ -1780,12 +1838,49 @@ async def review_graph(
                         })
 
                 # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
+                # 路径二第二步：达成清单的本地机检先行——可机检条目（节点存在/字段
+                # 等于/边已连/已删）零成本核对 next snapshot，未达成按 T236 体例带
+                # 反馈重试（continue 在 critic 之前＝不为已知未达成的结果花质检调用）；
+                # 末次放行降 warnings。语义条目（解析不出机检结构）才交 critic。
+                if pending_checklist and raw_ops:
+                    checklist_state = verify_checklist(
+                        pending_checklist, current, result.get("next_snapshot"),
+                    )
+                    result["self_check"]["checklist"] = checklist_state
+                    machine_failed = [i for i in checklist_state["items"]
+                                      if i["kind"] == "machine" and not i["passed"]]
+                    if machine_failed and attempt < retries:
+                        last_errors = [
+                            {
+                                "index": "checklist",
+                                "op": "goal",
+                                "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）。"
+                                          "请补上达成该目标所需的操作，或修正清单后再提交",
+                            }
+                            for i in machine_failed
+                        ]
+                        continue
+                    summary_line = (f"本次目标 {checklist_state['total']} 条，"
+                                    f"达成 {checklist_state['achieved']} 条")
+                    if checklist_state["semantic"]:
+                        summary_line += f"（另有 {len(checklist_state['semantic'])} 条语义条目由深度自检核对）"
+                    result["warnings"].append({"index": "checklist", "op": "goal", "reason": summary_line})
+                    for i in machine_failed:
+                        result["warnings"].append({
+                            "index": "checklist",
+                            "op": "goal",
+                            "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）",
+                        })
                 if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
                     _emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
                     critic = await _selfcheck_ops(
                         current, instruction, raw_ops, resolved_model, counter=call_counter,
                         result_snapshot=result.get("next_snapshot"),
                         **({"journal": journal} if journal is not None else {}),
+                        # checklist 只在有机检未覆盖的语义条目时才传（条件 kwargs：
+                        # 缺 checklist 的旧路径调用形态不变，tests 固定签名桩不受扰）
+                        **({"checklist": checklist_state["semantic"]}
+                           if checklist_state and checklist_state.get("semantic") else {}),
                     )
                     result["self_check"]["critic"] = critic
                     if not critic.get("ok", True) and attempt < retries:

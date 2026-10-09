@@ -28,7 +28,7 @@ let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
 
 // 剧本计数器（长驻进程按全局；verify 脚本按增量读 /__stats）
-const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0 };
+const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0, semanticRecall: 0 };
 const rateLimitSeen = {};
 
 // 从请求 messages 里抽取"要看什么"的判据文本
@@ -114,6 +114,43 @@ function replyOf(body) {
         { id: 'call_e1_' + nextId(), type: 'function', function: { name: 'update_edge', arguments: JSON.stringify({ edge_key: 'B:out-0->A:in-0', patch: { relation: '前置' }, reason: '明确关系' }) } },
         { id: 'call_e2_' + nextId(), type: 'function', function: { name: 'add_edge', arguments: JSON.stringify({ from: 'D', to: 'C', relation: '补充', reason: '把理解接到物理视角' }) } },
       ],
+    };
+  }
+  // —— 路径二第二步（达成清单机检，2026-10-09）：≤3 条操作不触发质检门，
+  // 只有本地机检能拦下「自报目标未达成」。主链路第一次两条合法操作＋content
+  // JSON 外壳里带 checklist（自报「导数的 formula 已更新为 F=ma」，实际没改公式）
+  // → 机检带反馈重试；重试消息含「达成清单未达成」→ 回正确的一条 update_node＋
+  // 同一份 checklist（重试达成→warnings 汇总「本次目标 1 条，达成 1 条」）。
+  if (!j.tools.includes('submit_selfcheck') && t.includes('达成清单演练')) {
+    const checklist = ['「导数」的 formula 已更新为「F=ma」'];
+    if (j.allText.includes('达成清单未达成')) {
+      return {
+        content: JSON.stringify({ summary: '已把导数的公式改成 F=ma', checklist }),
+        tool_calls: [{ id: 'call_chkfix_' + nextId(), type: 'function', function: { name: 'update_node', arguments: JSON.stringify({ node_id: 'A', patch: { formula: 'F=ma' }, reason: '按达成清单把导数公式改成 F=ma' }) } }],
+      };
+    }
+    return {
+      content: JSON.stringify({ summary: '已按要求整理导数', checklist }),
+      tool_calls: [
+        { id: 'call_ck1_' + nextId(), type: 'function', function: { name: 'update_node', arguments: JSON.stringify({ node_id: 'A', patch: { label: '导数（概念）' }, reason: '整理标题' }) } },
+        { id: 'call_ck2_' + nextId(), type: 'function', function: { name: 'update_node', arguments: JSON.stringify({ node_id: 'D', patch: { content: '（润色）导数描述变化快慢' }, reason: '顺手润色' }) } },
+      ],
+    };
+  }
+  // —— 路径三（语义检索，2026-10-09）：第一次回 search_nodes(keyword=电磁感应)；
+  // 图里只有「法拉第定律」节点（正文无「电磁感应」字样），字面必 miss——回灌的
+  // role:"tool" 结果里含「法拉第定律」即语义召回命中（stats.semanticRecall 计数，
+  // battery semanticRecall 断言读 /__stats），据此回 update_node 改 F 节点。
+  if (j.tools.includes('search_nodes') && t.includes('同义检索演练')) {
+    const fedTool = (Array.isArray(body.messages) ? body.messages : [])
+      .some(m => m && m.role === 'tool' && String(m.content || '').includes('法拉第定律'));
+    if (fedTool) {
+      stats.semanticRecall += 1;
+      return toolCall('update_node', { node_id: 'F', patch: { content: '（已结合电磁感应复习）磁通量变化产生感应电动势，ε=-dΦ/dt' }, reason: '按检索到的法拉第定律节点补充复习标注' });
+    }
+    return {
+      content: '',
+      tool_calls: [{ id: 'call_sem1', type: 'function', function: { name: 'search_nodes', arguments: JSON.stringify({ keyword: '电磁感应' }) } }],
     };
   }
   if (j.tools.includes('read_node') && t.includes('细读')) {
@@ -229,7 +266,7 @@ const server = http.createServer((req, res) => {
     // 真机脚本核对观测点（通道⑪）：chat_requests 总次数 + 各剧本关键词的
     // attempts（本关键词收到的 /chat/completions 次数）/ rejected_429（真的 429 了几次）
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState }));
+    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState, semantic_recall: stats.semanticRecall }));
     return;
   }
   if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {

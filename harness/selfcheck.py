@@ -9,7 +9,8 @@ it only reports issues so the main flow can retry once with feedback.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List, Optional
 
 from .json_utils import extract_json, repair_json
 
@@ -25,6 +26,8 @@ SELFCHECK_SYSTEM_PROMPT = """你是图修改结果质检员。下面给出用户
 - 不要检查格式是否正确，只检查语义是否符合指令。
 - 没有问题时 ok 为 true，issues 和 missing 都为空数组。
 - 指令本身模糊时不要强行挑错，ok 为 true。
+- 若给出「模型自报的达成清单」，它是模型自己声明的目标（机检未覆盖的语义条目）：
+  逐条对照结果图核对，未达成的条目必须判 false 并写进 missing。
 """
 
 
@@ -148,7 +151,7 @@ def _result_state_excerpt(before: Any, result: Any, ops: list) -> Any:
     return {"nodes": nodes_out, "edges": kept_edges, "removed_node_ids": sorted(deleted)}
 
 
-def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list, result_snapshot: Any = None) -> list:
+def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list, result_snapshot: Any = None, checklist: Optional[list] = None) -> list:
     compact = {
         "nodes": [
             {"id": node.get("id"), "kind": node.get("kind"), "label": node.get("label")}
@@ -170,6 +173,13 @@ def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list, result
         user_text += (
             "\n\n操作执行后的结果图（触及节点与一跳邻居；content/formula 为截断摘录）：\n"
             + json_dumps(result_excerpt)
+        )
+    # 路径二第二步：模型自报达成清单里解析不出机检结构的「语义条目」交 critic
+    # 核对（机检条目已本地验过，不重复喂）；缺 checklist 时该段不出现（降级回归）。
+    if checklist:
+        user_text += (
+            "\n\n模型自报的达成清单（语义条目，逐条核对是否达成）：\n"
+            + "\n".join("- " + str(item) for item in checklist)
         )
     user_text += "\n\n只输出质检 JSON。"
     return [
@@ -298,4 +308,181 @@ def check_snapshot_consistency(snapshot: Any) -> Dict[str, Any]:
         "issues": issues,
         "node_count": len(nodes),
         "edge_count": len(edges),
+    }
+
+
+# ---- 路径二第二步（2026-10-09）：显式达成清单 checklist 的本地免费机检 ----
+# checklist 是主模型的【自报】字段（弱模型可丢，T79/T80 教训）：缺失时整条链路
+# 静默降级回现状，绝不因此拒绝合法操作。这里只把「可机检」的条目（节点存在/
+# 字段等于新值/边已连/节点已删）在 next snapshot 上核对——零模型调用；解析不出
+# 机检结构的条目归为 semantic 交 critic（调用方按 T236 体例处理重试与降级）。
+# 只认「节点标题」引号格式（提示词教的写法），其余自然语言一律走 semantic，
+# 不做模糊猜测——机检宁可漏认不可错认。
+
+_CHECKLIST_MAX_ITEMS = 8
+_CHECKLIST_ITEM_CHARS = 120
+_CHECKLIST_VALUE_CHARS = 200
+
+_CHECKLIST_FIELD_ALIASES = {
+    "公式": "formula", "formula": "formula",
+    "正文": "content", "内容": "content", "摘要": "content", "content": "content",
+    "标题": "label", "名称": "label", "名字": "label", "label": "label",
+    "状态": "status", "status": "status",
+}
+
+_LABEL = r"[「『\"](?P<label>[^」』\"]{1,60})[」』\"]"
+_LABEL_ALT = r"[「『\"](?P<label_alt>[^」』\"]{1,60})[」』\"]"
+_VALUE = r"(?:[「『\"](?P<value>[^」』\"]{0,%d})[」』\"]|(?P<value2>[^「」『』。;；]{1,%d}))" % (_CHECKLIST_VALUE_CHARS, _CHECKLIST_VALUE_CHARS)
+
+_RE_CHECKLIST_UPDATE = re.compile(
+    r"^%s的?\s*(?P<field>[\w]{0,10}?)\s*(?:字段)?(?:已经|已)?(?:更新为|更改为|修改为|改成|改为|设为|设置为|变成|更新到)%s$" % (_LABEL, _VALUE)
+)
+_RE_CHECKLIST_DELETE = re.compile(
+    r"^(?:%s(?:节点)?(?:已经|已)?(?:删除|删掉|移除|删了)|(?:已经|已)?(?:删除|删掉|移除|删除了)(?:节点)?%s)$" % (_LABEL, _LABEL_ALT)
+)
+_RE_CHECKLIST_EXISTS = re.compile(
+    r"^(?:%s(?:节点)?(?:已经|已)?(?:创建|新建|新增|存在|建好)|(?:已经|已)?(?:创建|新建|新增)(?:了)?(?:节点)?%s)$" % (_LABEL, _LABEL_ALT)
+)
+_RE_CHECKLIST_EDGE = re.compile(
+    r"^[「『\"](?P<label_a>[^」』\"]{1,60})[」『\"](?:与|和|同|跟)[「『\"](?P<label_b>[^」』\"]{1,60})[」『\"](?:节点间)?(?:之间)?(?:已经|已)?(?:连线|相连|连接|连上|建立连线)$"
+)
+
+
+def normalize_checklist(raw: Any) -> list:
+    """模型自报的 checklist → 干净的字符串列表；坏形态/空 → []（静默降级）。"""
+    if not isinstance(raw, list):
+        return []
+    items = []
+    for item in raw[:_CHECKLIST_MAX_ITEMS]:
+        text = str(item or "").strip()
+        if text:
+            items.append(text[:_CHECKLIST_ITEM_CHARS])
+    return items
+
+
+def _checklist_value(match: "re.Match") -> str:
+    return str(match.group("value") if match.group("value") is not None else (match.group("value2") or "")).strip()
+
+
+def _norm_ws(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _labels_index(nodes: list) -> Dict[str, List[str]]:
+    by_label: Dict[str, List[str]] = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = str(n.get("id") or "")
+        label = str(n.get("label") or "").strip()
+        if nid and label:
+            by_label.setdefault(label, []).append(nid)
+    return by_label
+
+
+def _resolve_ids(label: str, before_by_label: Dict[str, List[str]], result_by_label: Dict[str, List[str]]) -> List[str]:
+    """条目引用的「节点标题」→ 节点 id 集：先在改前图里认（改标题后仍可对账），
+    认不出再到结果图里认（同批新建的节点只在结果图里）。"""
+    return before_by_label.get(label) or result_by_label.get(label) or []
+
+
+def verify_checklist(checklist: list, before: Any, result: Any) -> Dict[str, Any]:
+    """达成清单的本地机检（纯函数，零模型调用）。
+
+    返回 {"items":[{text,kind,passed,detail}...], "total", "achieved",
+    "machine_failed":[text...], "semantic":[text...]}；kind=machine 表示已核对
+    （passed 真/假），kind=semantic 表示解析不出机检结构（交 critic）。
+    before/result 形态不对时全部按 semantic 处理（不因机检崩坏拦合法操作）。"""
+    before_nodes = [n for n in ((before or {}).get("nodes") or []) if isinstance(n, dict)] \
+        if isinstance(before, dict) else []
+    result_nodes = [n for n in ((result or {}).get("nodes") or []) if isinstance(n, dict)] \
+        if isinstance(result, dict) else []
+    items: List[Dict[str, Any]] = []
+    if not isinstance(result, dict) or not isinstance(before, dict):
+        # 无结果图/无改前图可对账：机检做不了，全部交 critic（绝不因证据缺失
+        # 给出「未达成」的假判定而拦下合法操作）
+        items = [{"text": str(t).strip(), "kind": "semantic", "passed": None, "detail": ""}
+                 for t in (checklist or []) if isinstance(t, str) and t.strip()]
+        return {
+            "items": items,
+            "total": len(items),
+            "achieved": 0,
+            "machine_failed": [],
+            "semantic": [i["text"] for i in items],
+        }
+    result_edges = [e for e in ((result or {}).get("edges") or []) if isinstance(e, dict)]
+    before_ids = {str(n.get("id") or "") for n in before_nodes}
+    result_by_id = {str(n.get("id") or ""): n for n in result_nodes if str(n.get("id") or "")}
+    before_by_label = _labels_index(before_nodes)
+    result_by_label = _labels_index(result_nodes)
+
+    items: List[Dict[str, Any]] = []
+    for text in checklist or []:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        text = text.strip()
+        entry: Dict[str, Any] = {"text": text, "kind": "semantic", "passed": None, "detail": ""}
+        m = _RE_CHECKLIST_UPDATE.match(text)
+        if m:
+            field = _CHECKLIST_FIELD_ALIASES.get(str(m.group("field") or "").strip().lower())
+            if field:
+                ids = _resolve_ids(m.group("label"), before_by_label, result_by_label)
+                if not ids:
+                    entry.update(kind="machine", passed=False, detail="图中没有该节点")
+                else:
+                    value = _checklist_value(m)
+                    current = next((str(result_by_id[i].get(field) or "") for i in ids if i in result_by_id), None)
+                    if current is None:
+                        entry.update(kind="machine", passed=False, detail="该节点不在结果图中")
+                    else:
+                        # 相等或「声明值 ⊆ 实际值」（清单可只写关键片段）才算达成；
+                        # 反向包含不算——改得比声明的少（如只改了前半）必须拦下
+                        nv, nc = _norm_ws(value), _norm_ws(current)
+                        if nv and (nv == nc or nv in nc):
+                            entry.update(kind="machine", passed=True, detail="")
+                        else:
+                            shown = current[:_RESULT_STATE_EXCERPT_CHARS] or "（空）"
+                            entry.update(kind="machine", passed=False,
+                                         detail=f"{field} 当前为「{shown}」，不是「{value[:_RESULT_STATE_EXCERPT_CHARS]}」")
+        else:
+            m = _RE_CHECKLIST_DELETE.match(text)
+            if m:
+                label = m.group("label") or m.group("label_alt")
+                ids = _resolve_ids(label, before_by_label, result_by_label)
+                if not ids:
+                    entry.update(kind="machine", passed=False, detail="图中本就没有该节点")
+                elif any(i in result_by_id for i in ids):
+                    entry.update(kind="machine", passed=False, detail="该节点仍在图中")
+                else:
+                    entry.update(kind="machine", passed=True, detail="")
+            else:
+                m = _RE_CHECKLIST_EXISTS.match(text)
+                if m:
+                    label = m.group("label") or m.group("label_alt")
+                    ids = _resolve_ids(label, before_by_label, result_by_label)
+                    entry.update(kind="machine", passed=bool(any(i in result_by_id for i in ids)),
+                                 detail="" if any(i in result_by_id for i in ids) else "结果图中没有该节点")
+                else:
+                    m = _RE_CHECKLIST_EDGE.match(text)
+                    if m:
+                        a_ids = set(_resolve_ids(m.group("label_a"), before_by_label, result_by_label))
+                        b_ids = set(_resolve_ids(m.group("label_b"), before_by_label, result_by_label))
+                        if not a_ids or not b_ids:
+                            entry.update(kind="machine", passed=False, detail="有节点不在图中，无法核对连线")
+                        else:
+                            hit = any(
+                                (str(e.get("from") or "") in a_ids and str(e.get("to") or "") in b_ids)
+                                or (str(e.get("to") or "") in a_ids and str(e.get("from") or "") in b_ids)
+                                for e in result_edges
+                            )
+                            entry.update(kind="machine", passed=hit, detail="" if hit else "两点之间没有连线")
+        items.append(entry)
+
+    machine = [i for i in items if i["kind"] == "machine"]
+    return {
+        "items": items,
+        "total": len(items),
+        "achieved": sum(1 for i in machine if i["passed"]),
+        "machine_failed": [i["text"] for i in machine if not i["passed"]],
+        "semantic": [i["text"] for i in items if i["kind"] == "semantic"],
     }
