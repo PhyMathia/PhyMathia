@@ -8,6 +8,7 @@ PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线�
 import argparse
 import asyncio
 import base64
+import copy
 import hashlib
 import json
 import logging
@@ -17,10 +18,12 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from logging.config import dictConfig
 from pathlib import Path
 
 import uvicorn
 import httpx
+from uvicorn.config import LOGGING_CONFIG as _UVICORN_LOGGING_CONFIG
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -124,6 +127,66 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# ====== 服务端日志文件（T211） ======
+# 应用此前只往 console 打日志：logs/server-<port>.log 是 shell 重定向的产物，无限
+# append、换端口/启动方式另起新文件永不清理（实测约 0.5MB/h）。这里给应用装上自己的
+# 轮转文件句柄——基于 uvicorn 默认 LOGGING_CONFIG 派生，单例 RotatingFileHandler
+# 经 dictConfig 同时挂 root 与 uvicorn/uvicorn.access（uvicorn.error 无 handler，
+# 记录经 root 传播一并进文件）；每文件 5MB×5 份封顶，console 观感不变。
+# 文件不可写（只读目录/权限不足）时整体退回 console-only 原行为。
+_LOG_FILE_TEMPLATE = "server-{port}.log"
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUP_COUNT = 5
+_LOG_FORMATTER = "phymathia"
+_LOG_FILE_HANDLER = "phymathia_file"
+_LOG_CONSOLE_HANDLER = "phymathia_console"
+
+
+def _resolve_log_file(port: int):
+    """返回 logs/server-<port>.log 路径（目录不存在则建）；不可写时返回 None。"""
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(_ROOT_DIR)
+    log_dir = base / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / _LOG_FILE_TEMPLATE.format(port=port)
+        with open(log_file, "a", encoding="utf-8"):
+            pass  # 预建文件＋可写性探测，失败即走 console-only
+        return log_file
+    except OSError as e:
+        logger.warning(f"file logging disabled: cannot write {log_dir} ({e})")
+        return None
+
+
+def _server_log_config(log_file: Path) -> dict:
+    """派生 uvicorn 默认日志配置：console 句柄原样保留，另加单例轮转文件句柄。"""
+    cfg = copy.deepcopy(_UVICORN_LOGGING_CONFIG)
+    cfg["formatters"][_LOG_FORMATTER] = {
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    }
+    cfg["handlers"][_LOG_FILE_HANDLER] = {
+        "class": "logging.handlers.RotatingFileHandler",
+        "formatter": _LOG_FORMATTER,
+        "filename": str(log_file),
+        "maxBytes": _LOG_MAX_BYTES,
+        "backupCount": _LOG_BACKUP_COUNT,
+        "encoding": "utf-8",
+    }
+    # root：dictConfig 的 root 段会整体替换 basicConfig 装的 console 句柄，
+    # 所以 console 必须在这里显式列出，否则控制台直接静默
+    cfg["handlers"][_LOG_CONSOLE_HANDLER] = {
+        "formatter": _LOG_FORMATTER,
+        "class": "logging.StreamHandler",
+        "stream": "ext://sys.stderr",
+    }
+    cfg["root"] = {"level": "INFO", "handlers": [_LOG_CONSOLE_HANDLER, _LOG_FILE_HANDLER]}
+    # uvicorn 两个自带 handler 的 logger 追加同一文件句柄实例（共享单例，不会出现
+    # 两个句柄各转各的轮转混乱）；uvicorn.error 无 handler，靠 root 传播
+    for name in ("uvicorn", "uvicorn.access"):
+        handlers = cfg["loggers"].setdefault(name, {}).setdefault("handlers", [])
+        if _LOG_FILE_HANDLER not in handlers:
+            handlers.append(_LOG_FILE_HANDLER)
+    return cfg
 
 # ====== FastAPI 应用 ======
 @asynccontextmanager
@@ -279,11 +342,21 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Start PhyMathia (offline test mode)")
     parser.add_argument("-p", "--port", type=int, default=5050, help="Server port")
     parser.add_argument("--reload", action="store_true", help="Enable auto reload")
+    parser.add_argument("--no-file-log", action="store_true",
+                        help="Disable rotating file logging (logs/server-<port>.log)")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    # T211：文件日志在 banner 之前装配，启动横幅与后续 uvicorn 访问日志都进文件；
+    # 未启用（--no-file-log 或文件不可写）时 uvicorn 侧保持默认装配，行为不变
+    _log_config = None
+    if not args.no_file_log:
+        _log_file = _resolve_log_file(args.port)
+        if _log_file is not None:
+            _log_config = _server_log_config(_log_file)
+            dictConfig(_log_config)
     logger.info("=" * 50)
     logger.info("PhyMathia (Offline Test Mode)")
     logger.info(f"  - Port: {args.port}")
@@ -302,4 +375,5 @@ if __name__ == "__main__":
         port=args.port,
         reload=args.reload,
         workers=1,
+        **({"log_config": None} if _log_config is not None else {}),
     )
