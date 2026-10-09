@@ -28,7 +28,7 @@ let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
 
 // 剧本计数器（长驻进程按全局；verify 脚本按增量读 /__stats）
-const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0, semanticRecall: 0, graphStats: 0 };
+const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0, semanticRecall: 0, graphStats: 0, coachReport: 0 };
 const rateLimitSeen = {};
 
 // 从请求 messages 里抽取"要看什么"的判据文本
@@ -151,6 +151,24 @@ function replyOf(body) {
     return {
       content: '',
       tool_calls: [{ id: 'call_sem1', type: 'function', function: { name: 'search_nodes', arguments: JSON.stringify({ keyword: '电磁感应' }) } }],
+    };
+  }
+  // —— 路径六第 2 档（课程表体检报告，2026-10-09）：统计已由服务端预计算注入
+  // user 消息（匹配锚「已代你计算」——注入块独有措辞；不能用「整图学习结构统计」
+  // 作锚：chat 答疑相位的工具提示词里本来就有这六个字，会把第 1 档的答疑剧本
+  // 全部截胡，首跑实踩），据此一次调用直接回报告＋建议批次（3 条 ops：补先修
+  // 连线把孤岛「动量守恒」接回主体＋为检测薄弱点补进阶链；≤3 条不触发质检门）。
+  // stats.coachReport 计数「体检请求确实带上了注入统计块」（battery statsInjected
+  // 断言读 /__stats）。排在「学习路线演练」分支之前双保险。
+  if (j.tools.includes('graph_stats') && j.userText.includes('已代你计算')) {
+    stats.coachReport += 1;
+    return {
+      content: '体检报告：这张图分成了 2 个互不连通的部分，「动量守恒」是孤岛主题（没有任何连线），也没有先修来源；检测薄弱的「动量守恒」错了 2 次掌握度 40，图上只有这 1 个节点、没有进阶链。建议先学连通主体打地基，再补动量守恒的先修连线与进阶链。',
+      tool_calls: [
+        { id: 'call_coach_e1_' + nextId(), type: 'function', function: { name: 'add_edge', arguments: JSON.stringify({ from: 'B', to: 'E', relation: '前置', label: '动量守恒的冲量计算依赖微积分基础', reason: '补先修连线：孤岛「动量守恒」接回连通主体' }) } },
+        { id: 'call_coach_n1_' + nextId(), type: 'function', function: { name: 'create_node', arguments: JSON.stringify({ temp_id: 'n_coach_adv', kind: 'answer', label: '动量守恒的进阶学习', content: '碰撞与守恒律、变质量系统的进阶方向', reason: '为检测薄弱点「动量守恒」补进阶链' }) } },
+        { id: 'call_coach_e2_' + nextId(), type: 'function', function: { name: 'add_edge', arguments: JSON.stringify({ from: 'E', to: 'n_coach_adv', relation: '进阶', reason: '薄弱点「动量守恒」接上进阶链' }) } },
+      ],
     };
   }
   // —— 路径六第 1 档（学习教练，2026-10-09）：答疑「先拉 stats 再答」——
@@ -282,7 +300,7 @@ const server = http.createServer((req, res) => {
     // 真机脚本核对观测点（通道⑪）：chat_requests 总次数 + 各剧本关键词的
     // attempts（本关键词收到的 /chat/completions 次数）/ rejected_429（真的 429 了几次）
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState, semantic_recall: stats.semanticRecall, graph_stats: stats.graphStats }));
+    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState, semantic_recall: stats.semanticRecall, graph_stats: stats.graphStats, coach_report: stats.coachReport }));
     return;
   }
   if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {

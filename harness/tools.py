@@ -349,6 +349,11 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     + list(READONLY_TOOL_NAMES),
     # 答疑模式（三模式切换器）：纯只读——查图、查知识库、查公式速查，绝不改图
     "chat": list(READONLY_TOOL_NAMES),
+    # 课程表体检（路径六第 2 档，2026-10-09）：与 normal 同表——报告里的建议
+    # 批次是普通编辑操作，统计已由服务端预计算注入（graph_stats 仍在表里供
+    # 模型复查个别节点时用，提示词已注明不必重复拉整图统计）
+    "coach": ["create_node", "update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
+    + list(READONLY_TOOL_NAMES),
 }
 
 

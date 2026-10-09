@@ -81,6 +81,12 @@ const scenarios = [
   // statsPulled 经 mock /__stats 核对统计确实进了回灌；summaryIncludes 钉答案引用了
   // 统计事实（孤岛节点名）而非泛泛而谈。依赖 mock 剧本（真模型不在此场景预期内）。
   { id: 'graph-stats', label: '学习教练：先拉整图统计再答「先学什么」（答疑相位）', instruction: '学习路线演练：看看这张图，我该先学什么？', phase: 'chat', focus: [], snapshotExtra: 'broken-route', expect: { phase: 'chat', noOps: true, statsPulled: true, summaryIncludes: ['动量守恒'] } },
+  // 路径六第 2 档（2026-10-09）：课程表体检报告——phase 给 normal 走自动识别
+  // （用户真实路径：编辑模式下打字「体检学习路线」），expect.phase 钉识别命中；
+  // statsInjected 经 mock /__stats 核对统计块确实预注入（区别于第 1 档的查询回灌）；
+  // connectPair＋hasAnswer 钉建议批次形状（孤岛接桥＋薄弱点扩进阶链）；
+  // summaryIncludes 钉报告引用统计事实而非泛泛而谈。依赖 mock 剧本。
+  { id: 'coach-report', label: '学习教练：课程表体检报告＋建议批次（自动识别 coach 相位）', instruction: '帮我体检一下这张图的学习路线，看看该先学什么', phase: 'normal', focus: [], snapshotExtra: 'broken-route', expect: { phase: 'coach', connectPair: ['B', 'E'], hasAnswer: true, statsInjected: true, summaryIncludes: ['互不连通', '动量守恒'] } },
   { id: 'delete-derivative', label: '删除核心知识点 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
   { id: 'ref-by-content', label: '按内容引用节点', instruction: '把「当自变量趋近某个值时函数值趋近的值」这个节点改得更清楚', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['B'], allowedUpdateIds: ['B'] } },
   { id: 'apply-conflict', label: '冲突评价应用', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals-conflict', expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
@@ -897,7 +903,7 @@ async function runTurns(sc, idx, graph, total) {
       // 路径二配套：质检请求「看到了结果图」的观测点在 mock /__stats
       // （selfcheckResultState 只在质检请求带「操作执行后的结果图」段时 +1）
       let mockStatsBefore = null;
-      if (turn.expect && (turn.expect.criticSawResultState || turn.expect.semanticRecall || turn.expect.statsPulled) && MOCK_BASE) {
+      if (turn.expect && (turn.expect.criticSawResultState || turn.expect.semanticRecall || turn.expect.statsPulled || turn.expect.statsInjected) && MOCK_BASE) {
         try { mockStatsBefore = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json(); } catch (e) {}
       }
       const data = await callReview(payload);
@@ -936,6 +942,21 @@ async function runTurns(sc, idx, graph, total) {
           if ((st.graph_stats || 0) <= before) {
             score.passed = false;
             score.issues.push('整图统计未进入回灌（mock /__stats.graph_stats 未增长）');
+          }
+        } catch (e) {
+          score.passed = false;
+          score.issues.push('无法读取 mock /__stats: ' + e.message);
+        }
+      }
+      // 路径六第 2 档配套：体检请求确实带上了服务端预注入的统计块（一次模型
+      // 调用的前提——区别于第 1 档的「查询回灌后二次作答」）
+      if (turn.expect && turn.expect.statsInjected && MOCK_BASE) {
+        try {
+          const st = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json();
+          const before = (mockStatsBefore && mockStatsBefore.coach_report) || 0;
+          if ((st.coach_report || 0) <= before) {
+            score.passed = false;
+            score.issues.push('体检请求没有携带预注入统计块（mock /__stats.coach_report 未增长）');
           }
         } catch (e) {
           score.passed = false;

@@ -166,8 +166,10 @@ from .semantics import find_isolated_created_nodes, find_missing_expansion_chain
 from .json_utils import extract_json, repair_json, strip_reasoning
 from .prompts import (
     HARNESS_CHAT_REDLINE,
+    HARNESS_COACH_REPORT_PROMPT,
     _level_requirement,
     build_apply_messages,
+    build_coach_stats_block,
     build_evaluate_messages,
     build_expand_messages,
     build_preset_messages,
@@ -177,6 +179,7 @@ from .prompts import (
 from .tools import (
     KB_TOOL_NAMES,
     READONLY_TOOL_NAMES,
+    _graph_stats,
     build_tools,
     execute_readonly_tool,
     parse_tool_calls,
@@ -227,6 +230,7 @@ _PHASE_LABELS = {
     "expand": "拓展进阶",
     "preset": "创造模式",
     "chat": "答疑模式",
+    "coach": "课程表体检",
     "undo": "撤销回滚",
 }
 
@@ -1015,6 +1019,21 @@ async def review_graph(
     current = _compact_snapshot(current, focus_node_ids)
     instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
     phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
+    # ---- 路径六第 2 档：课程表体检——确定性指标在消息 build 期前算好 ----
+    # 「确定性指标＋一次模型调用」：统计由服务端对完整未压缩快照预计算（quiz_weak
+    # 覆盖率也在这里出），拼进 user 消息尾部，模型不必（也不应）再调 graph_stats
+    # 拉一遍——比查询回灌省一轮往返。每请求一次，重试/换模型候选共用同一份。
+    coach_block = ""
+    if phase == "coach":
+        coach_stats = _graph_stats(
+            full_snapshot.get("nodes") or [], full_snapshot.get("edges") or [], full_snapshot
+        )
+        coach_block = build_coach_stats_block(coach_stats)
+        _emit({
+            "type": "status",
+            "stage": "coach",
+            "message": "📊 课程表体检：整图统计已计算完毕，正在生成报告与建议批次",
+        })
     _emit({
         "type": "status",
         "stage": "start",
@@ -1221,6 +1240,24 @@ async def review_graph(
             messages = build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
             # T150：只增不改——红线段拼进头部消息的副本换槽，不动 build 期消息本体
             messages[0] = {**messages[0], "content": messages[0]["content"] + HARNESS_CHAT_REDLINE}
+            return messages
+        if phase == "coach":
+            # 课程表体检：报告模板拼 system 尾（同 chat 红线的副本换槽），预计算
+            # 统计块拼最后一条 user 消息尾部（副本换槽）。统计块要插在难度后缀
+            # 【前面】——外层会把 user 尾部重组为「原文＋工具提示＋history＋难度」
+            # （1391-1411），若统计块压住难度后缀，重组的 endswith 剥离会失配、
+            # 难度文本在正文里出现两遍。
+            messages = build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
+            messages[0] = {**messages[0], "content": messages[0]["content"] + HARNESS_COACH_REPORT_PROMPT}
+            for idx in range(len(messages) - 1, -1, -1):
+                if isinstance(messages[idx], dict) and messages[idx].get("role") == "user":
+                    content = str(messages[idx].get("content") or "")
+                    level_text = _level_requirement(level)
+                    level_suffix = ("\n\n" + level_text) if level_text else ""
+                    if level_suffix and content.endswith(level_suffix):
+                        content = content[: -len(level_suffix)]
+                    messages[idx] = {**messages[idx], "content": content + coach_block + level_suffix}
+                    break
             return messages
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
@@ -1700,13 +1737,18 @@ async def review_graph(
                         op for op in raw_ops
                         if isinstance(op, dict) and op.get("op") == "create_eval_node"
                     ]
-                elif phase in ("normal", "apply"):
+                elif phase in ("normal", "apply", "coach"):
                     eval_ops = [
                         op for op in raw_ops
                         if isinstance(op, dict) and op.get("op") == "create_eval_node"
                     ]
                     if eval_ops:
-                        reason = "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令" if phase == "normal" else "应用阶段不能创建 AI 评价节点，请根据已有评价节点执行真实修改"
+                        if phase == "normal":
+                            reason = "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令"
+                        elif phase == "coach":
+                            reason = "课程表体检只做结构修复（补先修连线/扩进阶链），不要创建 AI 评价节点"
+                        else:
+                            reason = "应用阶段不能创建 AI 评价节点，请根据已有评价节点执行真实修改"
                         last_errors = [{
                             "index": "phase",
                             "op": "create_eval_node",
@@ -1902,7 +1944,7 @@ async def review_graph(
                 if result["errors"] and attempt < retries:
                     last_errors = result["errors"]
                     continue
-                if phase in ("normal", "expand"):
+                if phase in ("normal", "expand", "coach"):
                     result = _auto_connect_isolated(current, result, focus_node_ids, instruction)
                 if phase == "expand":
                     result = _complete_expand_chains(current, result, focus_node_ids)

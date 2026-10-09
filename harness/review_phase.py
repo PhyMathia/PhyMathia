@@ -21,6 +21,12 @@ MODIFY_HINTS = (
     "补充", "新增", "创建", "连接", "加上", "加一个", "补一个", "改进", "完善",
 )
 EXPAND_HINTS = ("拓展", "进阶", "延伸学习", "深入学习", "深化")
+# 路径六第 2 档（2026-10-09）：学习教练——课程表体检报告相位。关键词刻意收窄
+# 且不与既有四表重叠（体检/课程表/学习路线……都不在 EVALUATE/MODIFY/EXPAND 词
+# 表里），避免偷既有相位；自动识别排在 expand 之后 evaluate 之前：「拓展学习
+# 路线」仍走 expand，「评价一下这张图」仍走 evaluate，只有「体检/该先学什么」
+# 这类课程表级问题才进 coach。
+COACH_HINTS = ("体检", "课程表", "学习路线", "学习规划", "学习计划", "先学什么")
 
 TOOLS_USER_HINT = (
     "\n\n（本次请求支持工具调用：请优先使用提供的工具提交 operations，"
@@ -195,12 +201,21 @@ def _detect_phase(phase: str, instruction: str, snapshot: dict, focus_node_ids=N
     # 意图词检测永不改写它
     if phase == "chat":
         return "chat"
+    # 课程表体检（路径六第 2 档，2026-10-09）：显式直通（battery/未来前端入口），
+    # 与 preset/chat 同款——意图词检测永不改写显式 coach
+    if phase == "coach":
+        return "coach"
     auto_phases = ("", "auto", "normal")
     if phase == "apply" or (phase in auto_phases and has_apply and has_eval_nodes):
         return "apply"
     # 显式 expand 直通（此前 explicit expand 混在 auto_phases 里，会被评价词覆盖）
     if phase == "expand" or (phase in auto_phases and has_expand and focus_ids):
         return "expand"
+    # 课程表体检的自动识别：排在 expand 之后（「拓展学习路线」归 expand）、
+    # evaluate 之前（「体检/评价学习路线合不合理」归 coach——产品意图就是要
+    # 报告＋建议批次，不是 evaluate 的 ai_eval 节点循环）
+    if phase in auto_phases and any(hint in text for hint in COACH_HINTS):
+        return "coach"
     if phase == "evaluate" or (phase in auto_phases and has_eval):
         return "evaluate"
     if phase in auto_phases and has_modify and not has_eval:
