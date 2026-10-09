@@ -32,6 +32,7 @@ from .documents import (
 )
 from .knowledge import (
     _add_formulas_from_items,
+    _coerce_created_at,
     _dedupe_formula_map,
     _dedupe_knowledge,
     _extract_summary,
@@ -42,6 +43,7 @@ from .knowledge import (
     _local_extract_knowledge,
     _normalize_formula,
     _normalize_knowledge,
+    _num_or_zero,
 )
 from .context import _is_socratic_followup
 from .llm_common import resolve_api_key
@@ -340,7 +342,10 @@ async def api_get_formulas(request: Request = None, q: str = ""):
                      ql in (it.get("topic") or "").lower() or
                      ql in (it.get("latex") or "").lower() or
                      any(ql in (t or "").lower() for t in (it.get("related") or []))]
-        items.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
+        # T224：存量脏数据里有字符串 createdAt，裸 get 当排序键 int/str 混比
+        # 抛 TypeError 把整条 /api/formulas 打成 500（continent 侧同型事故的
+        # knowledge 漏修）——读侧统一走 knowledge._num_or_zero 兜底
+        items.sort(key=lambda x: _num_or_zero(x.get("createdAt")), reverse=True)
         return {"items": items, "count": len(items)}
 
     paths = _account_paths(request)
@@ -421,7 +426,11 @@ async def api_save_formulas(request: Request):
                 "messageId": it.get("messageId", ""),
                 "moduleKey": it.get("moduleKey", ""),
                 "nodeId": it.get("nodeId", ""),
-                "createdAt": it.get("createdAt") or int(time.time() * 1000),
+                # T224：写入入口收敛 createdAt——原样收客户端值曾让字符串
+                # 时间戳进得了库，把此后所有读侧排序打成 500。数值原收、
+                # 纯数字字符串转 int，其余落服务端当前毫秒
+                "createdAt": _coerce_created_at(
+                    it.get("createdAt"), int(time.time() * 1000)),
             }
             count += 1
         return data if count else None
