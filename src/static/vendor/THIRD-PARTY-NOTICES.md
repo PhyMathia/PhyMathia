@@ -23,3 +23,10 @@ DOMPurify 的双许可声明也必须完整保留——它靠这段文字让使�
 
 版本号以 `git ls-files src/static/vendor` 记录的文件为准。若要核对某个库的确切版本，
 比对文件哈希是最可靠的办法（`mermaid` 的版本号无法从压缩产物里读出，压缩会把版本常量一并去掉）。
+
+## 升级拍板（2026-10-09 T210）
+
+- **DOMPurify 3.1.6 → 3.4.16**：CVE-2024-45801（mXSS 命名空间混淆绕过，3.2.0 修复）正好打在本项目「AI 输出 HTML→sanitize→innerHTML」的场景上；取最新线吃全累积修复——项目调用面仅 render.js 的 `sanitize(html, {ADD_ATTR})` 单点，跨 3.1→3.4 零适配。
+- **KaTeX 0.16.9 → 0.16.47**：0.16 稳定线内顺车升。**刻意不跳 0.19**（npm latest 已是 0.19.0）——三个大版本漂移对渲染 HTML 输出/字体/类名敏感，且超出当时的条目意图；后续要跨线升级须单独评估渲染回归。
+- **Mermaid 维持 10.9.8**：10.x EOL 风险已认知，缓升是原拍板。
+- 升级操作口径：`npm pack <pkg>@<ver>` 解包拷 dist 对应文件＋LICENSE；DOMPurify 新包把许可证拆成 LICENSE（Apache）/LICENSE-MPL 两个文件，须拼回本目录「双许可单文件」惯例（头照抄，含 a) Apache b) MPL 两行）；KaTeX 的 fonts/ 须与 CSS 引用数核对（0.16 线为 60/60、20 族×3 格式）。
