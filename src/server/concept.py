@@ -429,7 +429,10 @@ def explicit_pairs(session_id: str, kv_path=None, account: str = DEFAULT_ACCOUNT
         # 会话级 KV 已拆到 data/kv/<sid>.json（storage.kv_* 路由层）：
         # 主文件里没有的 graph:<sid> 从拆分层取（显式 kv_path 是测试注入，不越层）
         for key in _graph_state_keys(session_id):
-            candidate = kv_read(key)
+            # T230：回落读必须带同一 account——主文件读取用的是该账号 kv_path，
+            # 缺一个 account 参数就落回 storage 默认值，多账号下会读到默认账号
+            # 的会话文件（跨号拿到别人的画布连线）
+            candidate = kv_read(key, account=account)
             if isinstance(candidate, dict):
                 state = candidate
                 break

@@ -334,6 +334,11 @@ def _focus_subgraph(snapshot: Dict[str, Any], focus_node_ids, max_hops: int = 2,
     # 大陆 v3：跨画布共享点同理——它是提示词参考字段，不随节点裁剪丢失
     if snapshot.get("continent_shared"):
         result["continent_shared"] = snapshot["continent_shared"]
+    # P3 节点配方：user_recipes 是用户配方清单摘要，与 quiz_weak/continent_shared
+    # 同为提示词参考字段（Φ 据它查重/引用 recipe_id），本身不是图节点，大图降采样
+    # 时同样必须透传——否则快照一大就看不到配方清单（T234）
+    if snapshot.get("user_recipes"):
+        result["user_recipes"] = snapshot["user_recipes"]
     return result
 
 

@@ -251,12 +251,18 @@ def kv_delete(key: str, account: str = DEFAULT_ACCOUNT) -> None:
         data.pop(key, None)
         return data
 
-    result = _mutate_json(path, updater, default={})
-    if target is not None and isinstance(result, dict) and not result:
-        try:
-            target.unlink(missing_ok=True)
-        except OSError:
-            pass
+    # T233：mutate＋空判＋unlink 必须整段持 _JSON_LOCK。_mutate_json 返回时锁已
+    # 释放，此时到 unlink 之间有个窗口：并发 kv_write 往同一拆分层写入新键，
+    # 外层再按「删完后读到的空 dict」判断就把整个文件 unlink 掉，新键一起蒸发。
+    # _JSON_LOCK 是 RLock 且 updater 只做纯本地 dict 操作（不回调 kv_*），同线程
+    # 二次拿锁安全，也没有再入死锁路径。
+    with _JSON_LOCK:
+        result = _mutate_json(path, updater, default={})
+        if target is not None and isinstance(result, dict) and not result:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def kv_all_data(account: str = DEFAULT_ACCOUNT) -> dict:

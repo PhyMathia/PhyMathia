@@ -167,6 +167,11 @@ async def api_models_chat(request: Request):
     if not isinstance(graph_path, list):
         # _graph_path_instruction 会逐项 item.get，字符串/数字进来就是 500
         raise HTTPException(status_code=400, detail="graph_path must be a list")
+    # T231：list 合法但项不是 dict 时，_graph_path_instruction 的第一句 item.get
+    # 同样是 500（["x"] / [1] / [null]）——守卫逐项收紧，非 dict 一律 400
+    for item in graph_path:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="each item of graph_path must be an object")
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
     socratic_mode = "answer"  # 显式初始化：此前靠三个前缀分支隐式保证，漏一个分支就 NameError
     socratic_ref = branch_id or session_id
