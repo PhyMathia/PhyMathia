@@ -1961,6 +1961,127 @@ class HarnessContextualUndoTest(unittest.TestCase):
         self.assertEqual(result["next_snapshot"]["edges"], [])
 
 
+class HarnessUndoShortInstructionGateTest(unittest.TestCase):
+    """T226：确定性撤销的短指令门槛 + 部分失败的 status 语义。
+
+    背景：UNDO_HINTS 是宽泛子串匹配，「这个公式不要了，删掉它」这类**复合编辑
+    指令**误命中撤销词 → 图被确定性回滚、summary 谎报「已撤销上一步修改」；
+    且 build_next_snapshot 带回 errors 时 status 仍被无条件盖成 undo。修法：
+    review.py:1018 处给撤销意图加「指令足够短/指回上一步」门槛、review.py:1060
+    处 errors 非空时报 error。桩姿势与同文件其它撤销测试一致（patch
+    review_mod._call_model 计数）。
+    """
+
+    MODEL = {"provider": "opencode", "model": "mimo-v2.5-free",
+             "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
+    BEFORE = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
+    AFTER = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+    PREV_OPS = [{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}]
+
+    def _run(self, instruction, previous_ops=None, previous_snapshot=None, snapshot=None, **kw):
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                self.AFTER if snapshot is None else snapshot,
+                instruction,
+                model=self.MODEL,
+                mode="tools",
+                self_check="off",
+                retries=0,
+                previous_ops=self.PREV_OPS if previous_ops is None else previous_ops,
+                previous_snapshot=self.BEFORE if previous_snapshot is None else previous_snapshot,
+                **kw,
+            ))
+        return result, called
+
+    def test_gate_counts_short_undo_phrases(self):
+        from harness.review import _is_unambiguous_undo
+
+        for phrase in ("撤销", "撤销上一步", "不要了", "恢复", "回退一下",
+                       "撤销刚才的修改", "撤销刚才的修改，恢复原样",
+                       "把刚才所有修改全部撤销", "把刚才加的固有频率撤掉"):
+            self.assertTrue(_is_unambiguous_undo(phrase), phrase)
+        for phrase in ("这个公式不要了，删掉它", "把公式恢复成正确写法", "", "   "):
+            self.assertFalse(_is_unambiguous_undo(phrase), phrase)
+
+    def test_compound_edit_instructions_no_longer_roll_back_deterministically(self):
+        """复合编辑指令（撤销词只是从句里的附带说法）必须改走模型路径（T226）。"""
+        for instruction in ("这个公式不要了，删掉它", "把公式恢复成正确写法"):
+            with self.subTest(instruction=instruction):
+                result, called = self._run(instruction)
+                self.assertGreaterEqual(called["n"], 1, "应到达模型路径，而不是确定性回滚")
+                self.assertNotEqual(result["status"], "undo")
+                self.assertEqual(
+                    result["next_snapshot"]["nodes"][0]["content"], "新",
+                    "不得把图反向回滚成撤销前",
+                )
+
+    def test_short_undo_instructions_still_skip_model(self):
+        """短小的明确撤销指令零模型调用、直接回滚（命中即不调模型的拍板原样保留）。"""
+        for instruction in ("撤销", "撤销上一步", "不要了", "恢复", "回退一下"):
+            with self.subTest(instruction=instruction):
+                result, called = self._run(instruction)
+                self.assertEqual(called["n"], 0, "短明确的撤销指令必须不调模型")
+                self.assertEqual(result["status"], "undo")
+                self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+
+    def test_composer_button_instruction_stays_deterministic(self):
+        """前端「↩ 撤销上一条」按钮实发文案（harness-run.js undoLastHarnessEdit）：
+
+        「撤销刚才的修改，恢复原样」——12 字符，比误报示例「把公式恢复成正确写法」
+        （10 字符）还长，任何纯长度阈值都无法放行它又分流误报；靠「明确指回上一步」
+        豁免留在确定性路径（T226）。这条用例钉住主撤销入口不回归。
+        """
+        result, called = self._run("撤销刚才的修改，恢复原样")
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(result["status"], "undo")
+        self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
+
+    def test_undo_partial_failure_reports_error_not_undo(self):
+        """build_next_snapshot 部分失败（errors 非空）时 status 不得盖成 undo（T226）。
+
+        构造：delete_node 的逆 = restore_node + 每条入射边一条 add_edge——删两个各带
+        40 条边的节点 → 82 条逆操作，超过 MAX_OPERATIONS=80 → build_next_snapshot
+        记 1 条 limit error、前 80 条生效（status 本是 partial）。后端必须如实报
+        error 与失败项数。注意不能靠 previous_ops 条数超限：normalize_operations
+        会先把入参截到 80，逆操作永远碰不到上限。
+        """
+        neighbors = 40
+        before = {"nodes": [
+            {"id": "A", "kind": "knowledge", "label": "甲", "content": "a"},
+            {"id": "B", "kind": "knowledge", "label": "乙", "content": "b"},
+        ] + [{"id": f"n{i}", "kind": "knowledge", "label": f"邻{i}", "content": "c"}
+             for i in range(neighbors)],
+            "edges": [{"key": f"A:out-0->n{i}:in-0", "from": "A", "to": f"n{i}"}
+                      for i in range(neighbors)] +
+                     [{"key": f"B:out-0->n{i}:in-0", "from": "B", "to": f"n{i}"}
+                      for i in range(neighbors)]}
+        ops = [{"op": "delete_node", "id": "A", "reason": "删除"},
+               {"op": "delete_node", "id": "B", "reason": "删除"}]
+        after = {"nodes": before["nodes"][2:], "edges": []}
+        result, called = self._run(
+            "撤销", previous_ops=ops, previous_snapshot=before, snapshot=after,
+        )
+        self.assertEqual(called["n"], 0, "撤销路径不调模型")
+        self.assertEqual(result["status"], "error", result.get("summary"))
+        self.assertIn("撤销未完全成功：1 项失败", result["summary"])
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("上限", result["errors"][0]["reason"])
+        self.assertEqual(len(result["operations"]), 80)
+        restored = {nd["id"] for nd in result["next_snapshot"]["nodes"]}
+        self.assertIn("A", restored)
+        self.assertIn("B", restored)
+
+
 class HarnessConsistencyTest(unittest.TestCase):
     """C：图一致性体检——断链/孤儿/重复标签/重复模块。"""
 

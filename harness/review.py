@@ -53,6 +53,7 @@ from .review_phase import (
     _detect_phase,
     UNDO_HINTS,
     _detect_undo_intent,
+    _is_unambiguous_undo,
     _filter_inverse_by_targets,
     _undo_scope,
 )
@@ -1014,8 +1015,14 @@ async def review_graph(
     provider = resolved_model["provider"]
 
     mode = str(mode or "auto").strip().lower()
-    # ---- 确定性撤销：指令含撤销意图且有上一步操作时，不调用模型 ----
-    undo_intent = _detect_undo_intent(instruction)
+    # ---- 确定性撤销：指令是无歧义撤销、有上一步操作时，不调用模型 ----
+    # T226：_detect_undo_intent 是宽泛子串匹配，复合编辑指令（如「这个公式
+    # 不要了，删掉它」）会误命中撤销词，图被反向回滚、summary 谎报成功。门槛
+    # 加在本使用处而非 _detect_undo_intent 内部（它还有 :1605 的编辑意图重试
+    # 判定在用）：仅短指令或明确指回「上一步」的指令才走确定性撤销（拍板
+    # 「命中即不调模型」对此原样保留）；长复合指令改走模型路径，由模型带全套
+    # 上下文自行判断它到底是编辑还是撤销。详见 review_phase.py T226 注释。
+    undo_intent = _detect_undo_intent(instruction) and _is_unambiguous_undo(instruction)
     text_lower = str(instruction or "").lower()
     scope = _undo_scope(instruction, focus_node_ids)
     use_full = scope in ("full", "targeted") and (all_previous_ops or [])
@@ -1051,6 +1058,22 @@ async def review_graph(
             if inverse_ops:
                 _emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
                 undo_result = build_next_snapshot(current, inverse_ops)
+                undo_errors = undo_result.get("errors") or []
+                if undo_errors:
+                    # T226：build_next_snapshot 部分失败时不得把 status 无条件盖成
+                    # undo「成功」——前端按 errors 非空判失败（harness-run.js 主路径
+                    # 与 harness.js harnessFetchJson 都是 status==='error' 或
+                    # errors.length 即抛），后端却报 undo 成功，两边语义打架。
+                    # 保留失败语义：status=error（与本函数其它失败出口同形状），
+                    # summary 如实写失败项数；已回滚的部分留在
+                    # operations/next_snapshot/undo_ops 里供前端与日志查证。
+                    undo_result["status"] = "error"
+                    undo_result["phase"] = "undo"
+                    undo_result["summary"] = f"撤销未完全成功：{len(undo_errors)} 项失败"
+                    undo_result["raw_has_ops"] = bool(inverse_ops)
+                    undo_result["undo_ops"] = inverse_ops
+                    undo_result["model_calls"] = call_counter["n"]
+                    return undo_result
                 undo_result["summary"] = "已撤销上一步修改" + (
                     "（仅撤销指定节点相关改动）" if focus_node_ids else ""
                 ) + (
