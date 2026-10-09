@@ -265,7 +265,10 @@ async def api_save_knowledge(request: Request):
     # 删除会话后 localStorage 里的残留条目会被前端定时同步推回（本端点是纯合并，
     # 推回即复活），没有这道闸门「已删除的画布」岛删了又复活——与上面的入库
     # 闸门同一条「删得掉」保证。正常链路都是先建会话后写知识，不受影响。
-    known_sessions = set(_read_json(_account_paths(request, payload).sessions_path, {}).keys())
+    # T201：sessions.json 读取挪 to_thread（本端点被前端定时同步反复调用）。
+    sessions_raw = await asyncio.to_thread(
+        _read_json, _account_paths(request, payload).sessions_path, {})
+    known_sessions = set(sessions_raw.keys()) if isinstance(sessions_raw, dict) else set()
     orphaned = [k for k, v in incoming.items()
                 if isinstance(v, dict) and v.get("sessionId")
                 and str(v["sessionId"]) not in known_sessions]
@@ -293,7 +296,9 @@ async def api_save_knowledge(request: Request):
 
     new_items = []
     account = _account_id(request, payload)
-    data = _mutate_json(accounts.resolve_paths(account).knowledge_path, updater)
+    # T201：读并+合并+去重+写盘挪 to_thread，同步推送高峰不再卡流式下发
+    data = await asyncio.to_thread(
+        _mutate_json, accounts.resolve_paths(account).knowledge_path, updater)
     _device_id = str(payload.get("device_id") or payload.get("deviceId") or "")
     if _device_id and new_items:
         events = [{"type": "extract",

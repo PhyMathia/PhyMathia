@@ -6,6 +6,7 @@ tests 的批量路径重定向夹具无需补丁本模块）；数据读写走 s
 删除链路的回收站快照纪律见 server/trash.py。
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -272,22 +273,29 @@ async def api_delete_session(session_id: str, request: Request = None):
 async def api_clear_all_sessions(request: Request = None):
     paths = _account_paths(request)
     account = paths.account
-    # 回收站：逐会话快照后再清空；任一快照失败即中止（500），一条都不会被删
+    # 回收站：逐会话快照后再清空；任一快照失败即中止（500），一条都不会被删。
+    # capture 保持同步：它的 await 点会让排队中的滚动摘要任务赶在下方代次
+    # bump 前抢跑发请求（S1 失效保护拍板「失效任务一个请求都不发」，实测被
+    # test_s1_alias_task_invalidated 逮住）；删除块的等待点已落在 bump 之后。
     try:
         trash.capture_all(paths)
     except Exception as e:
         logger.warning(f"clear all: trash capture failed, abort: {e}")
         raise HTTPException(status_code=500, detail="回收站快照失败，已中止清空，请稍后重试")
-    context._clear_all_rolling_memory(account)
-    _write_json(paths.sessions_path, {})
-    for f in paths.messages_dir.glob("*.json"):
-        f.unlink()
-    _write_json(paths.knowledge_path, {})
-    _write_json(paths.formulas_path, {})
-    _write_json(paths.kv_path, {})
-    if paths.kv_dir.exists():
-        for f in paths.kv_dir.glob("*.json"):
+    context._clear_all_rolling_memory(account)  # 先失效在途摘要任务（代次 bump），必须先于一切 await
+
+    def _clear_all_io():
+        _write_json(paths.sessions_path, {})
+        for f in paths.messages_dir.glob("*.json"):
             f.unlink()
+        _write_json(paths.knowledge_path, {})
+        _write_json(paths.formulas_path, {})
+        _write_json(paths.kv_path, {})
+        if paths.kv_dir.exists():
+            for f in paths.kv_dir.glob("*.json"):
+                f.unlink()
+
+    await asyncio.to_thread(_clear_all_io)  # T201：批量写/删文件不压事件循环
     return {"ok": True}
 
 
@@ -389,11 +397,17 @@ async def api_get_messages_batch(request: Request):
             break
 
     account = _account_id(request, payload)
-    result = {}
-    for sid in session_ids:
-        msgs = _read_json_cached(_get_messages_path(sid, account), [])
-        result[sid] = msgs if isinstance(msgs, list) else []
-    return {"messages": result}
+
+    def _read_batch():
+        # T201：批量读最多 500 个消息文件，挪 to_thread 跑，不再压在事件循环
+        # 上卡流式回复下发（_read_json_cached 自带 RLock，线程安全）
+        result = {}
+        for sid in session_ids:
+            msgs = _read_json_cached(_get_messages_path(sid, account), [])
+            result[sid] = msgs if isinstance(msgs, list) else []
+        return result
+
+    return {"messages": await asyncio.to_thread(_read_batch)}
 
 
 @router.get("/api/sessions/{session_id}/messages")
@@ -448,7 +462,9 @@ async def api_save_messages(session_id: str, request: Request):
             return None  # 没有任何新东西：不写盘
         return merged
 
-    _mutate_json(msgs_path, msgs_updater, default=[])
+    # T201：读并+合并+写盘挪 to_thread，长会话保存不再卡流式下发
+    # （storage._JSON_LOCK 是 threading.RLock，跨线程照常串行，语义不变）
+    await asyncio.to_thread(_mutate_json, msgs_path, msgs_updater, default=[])
     return {"ok": True, "count": len(messages)}
 
 
