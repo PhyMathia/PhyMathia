@@ -643,6 +643,28 @@ class KnowledgeIngestGateTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("ki_manual", self.client.get("/api/knowledge").json())
 
+    def test_steady_state_push_does_not_rewrite(self):
+        # T202：前端定时同步反复全量推送 /api/knowledge，内容已收敛的稳态推送
+        # 不再全库重写+全库去重（对照消息保存的短路）——二次同内容 POST 后
+        # 库存文件 mtime 不动；内容真变化仍照常写盘。
+        storage_mod._write_json(main_mod.SESSIONS_PATH,
+                                {"sess_gate": {"id": "sess_gate", "title": "闸门"}})
+        item = {"id": "ki_steady", "sessionId": "sess_gate", "source": "ai_extract",
+                "title": "牛顿第二定律", "summary": "F=ma"}
+        first = self.client.post("/api/knowledge", json={"items": {"ki_steady": item}})
+        self.assertEqual(first.status_code, 200)
+        kf = Path(main_mod.SESSIONS_PATH).parent / "knowledge.json"
+        mtime1 = kf.stat().st_mtime_ns
+        time.sleep(0.02)
+        second = self.client.post("/api/knowledge", json={"items": {"ki_steady": item}})
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["count"], 1)
+        self.assertEqual(kf.stat().st_mtime_ns, mtime1)
+        changed = self.client.post("/api/knowledge", json={
+            "items": {"ki_steady": {**item, "summary": "F = m·a（更新摘要）"}}})
+        self.assertEqual(changed.status_code, 200)
+        self.assertGreater(kf.stat().st_mtime_ns, mtime1)
+
     def test_extract_skips_reasoning_leak_content(self):
         leak = ("用户要求：从方向导数最大值推导梯度在直角坐标与正交曲线坐标下的分量表达式。"
                 "这是一个数学主题。当前分支类型是\"进阶学习\"，需要生成完整探索回答簇。"

@@ -275,14 +275,21 @@ async def api_save_knowledge(request: Request):
         logger.info(f"Ingest gate rejected {len(orphaned)} orphan-session items")
 
     def updater(data):
-        data = _normalize_knowledge(data)
+        normalized = _normalize_knowledge(data)
         # 隐式画像：只对「本轮真正新增」的 id 记 extract 事件——前端定时同步会
         # 反复全量推送，按 id 差分才不会每次同步都给兴趣加一次权重
-        new_keys = [k for k in incoming if k not in data]
-        data.update(incoming)
-        data = _dedupe_knowledge(data)
+        new_keys = [k for k in incoming if k not in normalized]
+        merged = dict(normalized)
+        merged.update(incoming)
+        merged = _dedupe_knowledge(merged)
         new_items.extend(incoming[k] for k in new_keys)
-        return data
+        # T202：合并结果与库存一致就不写盘（对照消息保存的短路）。库存本就是
+        # 本管线（归一化+去重）的产物、两步对已收敛数据幂等，前端定时同步的
+        # 稳态全量推送在此逐字节收敛；此前的「恒 return data」让本端点每轮
+        # 同步都全库重写+全库去重一遍（路由内旧注释自述的痛点）。
+        if merged == data:
+            return None
+        return merged
 
     new_items = []
     account = _account_id(request, payload)
