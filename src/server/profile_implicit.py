@@ -528,14 +528,23 @@ def topic_vocab(account: str = DEFAULT_ACCOUNT) -> list:
 
 
 def assign_topic(text, vocab: list = None, account: str = DEFAULT_ACCOUNT) -> str:
-    """v1 归题：词表最长包含匹配；空文本/无命中返回空串（事件仍计入成熟度与节奏）。"""
+    """v1 归题：词表最长包含匹配；空文本/无命中返回空串（事件仍计入成熟度与节奏）。
+
+    T232：文档口径「最长包含匹配」此前没落实——词表序首个命中就返回，「求偏导数」
+    会被「导数」截胡。改为单遍扫描、命中的里面取最长者；同长取词表序在先的，
+    保证同输入恒定得同一结果（词表本身顺序稳定）。截断到 60 字的比对在截断前
+    完成，否则短前缀会抢走长词。
+    """
     text = str(text or "")
     if not text.strip():
         return ""
-    for term in (vocab if vocab is not None else topic_vocab(account)):
-        if term in text and len(term) > 0:
-            return term[:60]
-    return ""
+    terms = vocab if vocab is not None else topic_vocab(account)
+    best = ""
+    for term in terms:
+        term = str(term or "")
+        if len(term) > len(best) and term in text:
+            best = term
+    return best[:60]
 
 
 def quiz_stats_events(old_stats, new_stats) -> list:
