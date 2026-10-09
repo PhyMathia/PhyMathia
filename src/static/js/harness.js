@@ -1784,10 +1784,15 @@ let harnessLastAppliedReport = null;
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        // T229：触屏被系统抢占（来电/手势）只发 pointercancel 不发 pointerup——不收尾则
+        // pointermove 残留，下次触摸用旧起点瞬移；cancel 与 up 走同一收尾（参照
+        // graph-continent-view.js / chat.js 的 pointercancel 处理）
+        window.removeEventListener('pointercancel', up);
         setTimeout(() => { petMoved = false; }, 0);
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up, { once: true });
+      window.addEventListener('pointercancel', up);
     });
     harnessPet.addEventListener('click', () => {
       if (!petMoved) toggleGraphHarnessWindow();
@@ -1814,9 +1819,12 @@ let harnessLastAppliedReport = null;
         const up = () => {
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          // T229：同上——系统抢占手势只发 pointercancel，不收尾则 pointermove 残留瞬移
+          window.removeEventListener('pointercancel', up);
         };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up, { once: true });
+        window.addEventListener('pointercancel', up);
       });
     }
   }

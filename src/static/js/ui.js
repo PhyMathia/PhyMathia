@@ -132,16 +132,21 @@ function toggleDataPanel(e) {
   }
 }
 
+// T227：localStorage 键可能因旧版脏数据/手改变成非法 JSON——裸 JSON.parse 一抛异常，
+// 统计数字与整个数据面板一起没；统一走本文件 _safeParseJSON（157 行函数声明有提升，
+// 前向调用无碍），解析失败按对应 fallback 计
 function updateDataStats() {
-  const sessions = JSON.parse(localStorage.getItem('phymathia_sessions') || '{}');
-  const knowledge = JSON.parse(localStorage.getItem('phymathia_knowledge') || '{}');
+  const sessions = _safeParseJSON(localStorage.getItem('phymathia_sessions'), {});
+  const knowledge = _safeParseJSON(localStorage.getItem('phymathia_knowledge'), {});
   const formulas = (typeof getFormulaCache === 'function' ? getFormulaCache() : {}) || {};
-  const quizStats = JSON.parse(localStorage.getItem('phymathia_quiz_stats') || '{}');
+  const quizStats = _safeParseJSON(localStorage.getItem('phymathia_quiz_stats'), {});
   const sessionCount = Object.keys(sessions).length;
   let msgCount = 0;
   Object.keys(sessions).forEach(sid => {
-    const msgs = JSON.parse(localStorage.getItem('phymathia_msgs_' + sid) || '[]');
-    msgCount += msgs.length;
+    // T227：某会话 msgs 键损坏按该会话 0 条计；内容非数组同样按 0 计，
+    // 别让一条脏数据把整页统计打成 NaN
+    const msgs = _safeParseJSON(localStorage.getItem('phymathia_msgs_' + sid), []);
+    msgCount += Array.isArray(msgs) ? msgs.length : 0;
   });
   const knowledgeCount = Object.keys(knowledge).length;
   const formulaCount = Object.keys(formulas).length;
@@ -904,6 +909,10 @@ document.addEventListener('pointerdown', () => {
 
 // ====== 首次使用引导 ======
 let _obStep = -1;
+// T228：当前 click 型步骤绑在目标元素上的 (target, handler)。click 处理器原本只在
+// 「自己被点到」时自摘，跳过/换步时残留的监听会继续触发旧 step.onClick()+nextObStep()
+// 并 stopPropagation 劫持正常交互；重绑与 endOnboarding 都凭这条记录摘除。
+let _obClickBinding = null;
 const _isMobile = () => window.innerWidth <= 768;
 const ONBOARDING_EXAMPLE_QUESTION = '请解释简谐运动的物理和数学本质，并生成交互式可视化';
 const _obSteps = [
@@ -1683,13 +1692,21 @@ function _renderObStep() {
           spotlight.style.pointerEvents = 'none';
           const targetEl = document.querySelector(step.target);
           if (targetEl) {
+            // T228：绑新前先摘旧绑定——上一步的 click 监听只在被点时自摘，
+            // 用户没点中就换步/跳过时旧的会残留
+            if (_obClickBinding) {
+              _obClickBinding.target.removeEventListener('click', _obClickBinding.handler);
+              _obClickBinding = null;
+            }
             const handler = (e) => {
               e.stopPropagation();
               targetEl.removeEventListener('click', handler);
+              _obClickBinding = null;
               step.onClick();
               nextObStep();
             };
             targetEl.addEventListener('click', handler);
+            _obClickBinding = { target: targetEl, handler };
           }
         }
       };
@@ -1722,6 +1739,12 @@ function nextObStep() {
 function endOnboarding() {
   localStorage.setItem(ONBOARDING_KEY, '1');
   _obStep = -1;
+  // T228：摘掉 click 型步骤残留在目标元素上的监听——只隐藏浮层不清监听的话，
+  // 用户点「跳过」后再点菜单按钮仍会触发旧 step.onClick()+nextObStep()
+  if (_obClickBinding) {
+    _obClickBinding.target.removeEventListener('click', _obClickBinding.handler);
+    _obClickBinding = null;
+  }
   const overlay = document.getElementById('onboardingOverlay');
   const card = document.getElementById('onboardingCard');
   const spotlight = document.getElementById('onboardingSpotlight');
