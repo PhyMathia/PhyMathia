@@ -141,6 +141,11 @@ def resolve_paths(account_id=DEFAULT_ACCOUNT) -> AccountPaths:
 # 一句「这账号登记过吗」（main.py _account_id 的幽灵闸门），不能每回都读盘解析
 # JSON；写入经 save_registry 同步刷新缓存，外部手改文件（测试/运维）靠
 # mtime/size 变键自然失效——文件不存在时不缓存（失败态便宜且自愈）。
+# T238：缓存的读与两步写都必须持 _LOCK。旧代码 load 把「比 key」与「取 entries」
+# 拆成两次独立 dict 读，save 又把「换 key」与「换 entries」拆成两次独立写：
+# 读者若在 save 的两次写之间到达，比中新文件指纹却拿到旧条目表——刚登记的
+# 账号在缓存里查无此人，_account_id 幽灵闸门当场 404。RLock 可重入，registry
+# 写路径（register_account 等）本就在 _LOCK 里调这两个函数，不会自锁。
 _REGISTRY_CACHE: dict = {"key": None, "entries": {}}
 
 
@@ -155,23 +160,27 @@ def _registry_key(path: Path):
 def load_registry() -> dict:
     path = registry_path()
     key = _registry_key(path)
-    if key[1] is not None and _REGISTRY_CACHE["key"] == key:
-        return _REGISTRY_CACHE["entries"]
-    data = _read_json(path, {})
-    accounts = data.get("accounts") if isinstance(data, dict) else None
-    entries = {}
-    if isinstance(accounts, list):
-        entries = {str(e.get("id")): e for e in accounts if isinstance(e, dict) and e.get("id")}
-    _REGISTRY_CACHE["key"] = key
-    _REGISTRY_CACHE["entries"] = entries
-    return entries
+    with _LOCK:
+        if key[1] is not None and _REGISTRY_CACHE["key"] == key:
+            return _REGISTRY_CACHE["entries"]
+        data = _read_json(path, {})
+        accounts = data.get("accounts") if isinstance(data, dict) else None
+        entries = {}
+        if isinstance(accounts, list):
+            entries = {str(e.get("id")): e for e in accounts if isinstance(e, dict) and e.get("id")}
+        _REGISTRY_CACHE["key"] = key
+        _REGISTRY_CACHE["entries"] = entries
+        return entries
 
 
 def save_registry(entries: dict) -> None:
     registry_path().parent.mkdir(parents=True, exist_ok=True)
     _write_json(registry_path(), {"accounts": list(entries.values())})
-    _REGISTRY_CACHE["key"] = _registry_key(registry_path())
-    _REGISTRY_CACHE["entries"] = entries
+    # T238：key/entries 两步写进同一把锁——读者要么看到旧键旧表、要么看到新键
+    # 新表，不会在中间态读到「新指纹＋旧条目」的撕裂组合
+    with _LOCK:
+        _REGISTRY_CACHE["key"] = _registry_key(registry_path())
+        _REGISTRY_CACHE["entries"] = entries
 
 
 def get_account(account_id: str) -> dict:

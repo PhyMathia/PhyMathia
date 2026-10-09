@@ -84,8 +84,11 @@ def _json_get_payload(path, transform, cache_key=None):
     return body, etag
 
 
-def _json_get_response(request: Request, path, transform, cache_key=None):
-    body, etag = _json_get_payload(path, transform, cache_key)
+async def _json_get_response(request: Request, path, transform, cache_key=None):
+    # T240：缓存 miss 时的「读盘＋去重＋序列化」整块挪 to_thread——它此前同步压在
+    # 事件循环上，后台线程持 _JSON_LOCK 写同表时循环阻塞在锁里，全服务请求一起
+    # 停摆。指纹命中回缓存的快路径也一并进线程：省不出值得为它开分支的耗时
+    body, etag = await asyncio.to_thread(_json_get_payload, path, transform, cache_key)
     inm = request.headers.get("if-none-match") or ""
     if inm and etag in inm:
         return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
@@ -101,7 +104,7 @@ async def api_get_knowledge(request: Request = None):
     if request is None:
         # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
         return _dedupe_knowledge(_read_json(paths.knowledge_path, {}))
-    return _json_get_response(request, paths.knowledge_path, _dedupe_knowledge)
+    return await _json_get_response(request, paths.knowledge_path, _dedupe_knowledge)
 
 
 def _card_vector_text(item: dict) -> str:
@@ -320,7 +323,8 @@ async def api_delete_knowledge(item_id: str, request: Request = None):
         data.pop(item_id, None)
         return data
 
-    _mutate_json(_account_paths(request).knowledge_path, updater)
+    # T240：知识表单条删除同样整文件重写，随 POST/GET 一并离线程
+    await asyncio.to_thread(_mutate_json, _account_paths(request).knowledge_path, updater)
     return {"ok": True}
 
 
@@ -352,8 +356,8 @@ async def api_get_formulas(request: Request = None, q: str = ""):
     if request is None:
         # 直调兼容（脚本/回归子进程直接 await 端点函数）：回原始 dict，不过 HTTP 层
         return _formula_payload(_read_json(paths.formulas_path, {}))
-    return _json_get_response(request, paths.formulas_path, _formula_payload,
-                              cache_key=f"{paths.formulas_path}::q={q}")
+    return await _json_get_response(request, paths.formulas_path, _formula_payload,
+                                    cache_key=f"{paths.formulas_path}::q={q}")
 
 
 @router.post("/api/formulas")
@@ -435,7 +439,10 @@ async def api_save_formulas(request: Request):
             count += 1
         return data if count else None
 
-    _mutate_json(_account_paths(request, payload).formulas_path, updater)
+    # T240：updater 里的全库 dedupe＋整文件写入挪 to_thread（T201 首波同款，
+    # 收尾漏了公式库这条）——持 _JSON_LOCK 的磁盘 IO 压在事件循环上时，后台
+    # 线程持锁写大文件会把全服务请求一起堵停
+    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).formulas_path, updater)
     return {"ok": True, "count": count}
 
 
@@ -459,7 +466,7 @@ async def api_delete_formulas_by_session(session_id: str = "", request: Request 
             data.clear()
         return data if removed else None
 
-    _mutate_json(_account_paths(request).formulas_path, updater)
+    await asyncio.to_thread(_mutate_json, _account_paths(request).formulas_path, updater)
     return {"ok": True, "count": len(removed)}
 
 
@@ -469,7 +476,7 @@ async def api_delete_formula(formula_id: str, request: Request = None):
         data.pop(formula_id, None)
         return data
 
-    _mutate_json(_account_paths(request).formulas_path, updater)
+    await asyncio.to_thread(_mutate_json, _account_paths(request).formulas_path, updater)
     return {"ok": True}
 
 

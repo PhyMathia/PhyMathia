@@ -175,7 +175,10 @@ async def api_save_sessions(request: Request):
         return data
 
     written = 0
-    _mutate_json(_account_paths(request, payload).sessions_path, updater)
+    # T240：sessions.json 的读-改-写整体挪 to_thread（T201 首波漏了会话名单表，
+    # 收尾补上）——整表重写持全局 _JSON_LOCK，压在事件循环上时后台持锁写大文件
+    # 会把全服务请求堵停。updater 是纯本地 dict 操作，无线程安全问题
+    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).sessions_path, updater)
     # count 返回实际写入条数（非法 id 被跳过的不算），与 knowledge 路由口径一致
     return {"ok": True, "count": written}
 
@@ -210,7 +213,8 @@ async def api_update_session(session_id: str, request: Request):
         data[session_id]["updatedAt"] = now
         return data
 
-    _mutate_json(_account_paths(request, payload).sessions_path, updater)
+    # T240：与 POST 同表同患——单条 upsert 也是整文件重写，一并离线程
+    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).sessions_path, updater)
     return {"ok": True}
 
 
