@@ -858,7 +858,12 @@ def build_inverse_ops(before_snapshot: Any, operations: Any, after_snapshot: Any
     after = normalize_snapshot(after_snapshot) if after_snapshot is not None else None
     after_nodes = {node["id"]: node for node in after["nodes"]} if after else {}
     inverse: _InverseOperations = _InverseOperations()
-    for op in reversed(list(normalize_operations(operations))):
+    # 撤销入参是调用方记录的操作历史（前端上一步记录/测试），不是模型批量输出：
+    # 这里不做 normalize_operations 的 MAX_OPERATIONS 留头截断——那会静默丢掉
+    # 最新的改动，而撤销要回滚的恰恰是它们。单批上限由 review.py 撤销分支显式切
+    # 「最新 N 条」并如实告知，截断语义不外溢到这个纯函数里。
+    history = operations if isinstance(operations, list) else []
+    for op in reversed([_flatten_op(op) for op in history if isinstance(op, dict)]):
         name = _text(op.get("op"))
         reason = "撤销上一步修改"
         if name == "create_node":

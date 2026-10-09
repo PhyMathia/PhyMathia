@@ -1798,6 +1798,53 @@ class HarnessFullUndoTest(unittest.TestCase):
         self.assertEqual(result["next_snapshot"]["nodes"][0]["content"], "原")
         self.assertEqual(result["next_snapshot"]["nodes"][1]["label"], "极限")
 
+    def test_long_undo_history_keeps_newest_not_oldest(self):
+        """T235：撤销历史超 80 条时切「最新 80 条」回滚，而不是最旧。
+
+        旧行为 normalize_operations 留头截断会把最新改动整段留下、只回滚最早的
+        改动——「撤销全部」语义拧反，且无任何提示。构造 90 个节点各一条
+        update_node（旧→新），逆操作 1:1 展开不触限：断言最旧 10 步对应的节点
+        保持「新」，其余 80 个回到「原」，summary 明示只回滚了最近 80 条。
+        """
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {"content": "", "tool_calls": []}
+
+        total = 90
+        initial = {"nodes": [{"id": f"A{i}", "kind": "knowledge", "label": f"节点{i}", "content": f"原{i}"} for i in range(total)], "edges": []}
+        after_all = {"nodes": [{"id": f"A{i}", "kind": "knowledge", "label": f"节点{i}", "content": f"新{i}"} for i in range(total)], "edges": []}
+        ops = [{"op": "update_node", "id": f"A{i}", "patch": {"content": f"新{i}"}, "reason": "修改"} for i in range(total)]
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                after_all,
+                "把刚才所有修改全部撤销",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                previous_snapshot=None,
+                previous_ops=[],
+                initial_snapshot=initial,
+                all_previous_ops=ops,
+            ))
+        self.assertEqual(called["n"], 0, "确定性撤销不调模型")
+        self.assertEqual(result["status"], "undo", result.get("summary"))
+        self.assertIn("仅回滚最近", result["summary"], "超上限要如实说明只回滚了最近 N 条")
+        self.assertNotIn("未收到完整操作历史", result["summary"])
+        contents = {n["id"]: n["content"] for n in result["next_snapshot"]["nodes"]}
+        for i in range(total):
+            expected = f"新{i}" if i < 10 else f"原{i}"
+            self.assertEqual(
+                contents[f"A{i}"], expected,
+                f"A{i}：{'最旧 10 步应保留生效' if i < 10 else '最近 80 步应被回滚'}",
+            )
+
     def test_normal_phase_edit_intent_retries_when_no_ops(self):
         import asyncio
         import unittest.mock
@@ -2076,6 +2123,10 @@ class HarnessUndoShortInstructionGateTest(unittest.TestCase):
         self.assertIn("撤销未完全成功：1 项失败", result["summary"])
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("上限", result["errors"][0]["reason"])
+        # T235：撤销语境的 limit error 必须重写——原文案「请把剩余修改拆成下一批指令」
+        # 是编辑语境建议，撤销没有下一批；改为告知「画布未应用、可再次撤销逐步回滚」。
+        self.assertNotIn("拆成下一批指令", result["errors"][0]["reason"])
+        self.assertIn("未应用", result["errors"][0]["reason"])
         self.assertEqual(len(result["operations"]), 80)
         restored = {nd["id"] for nd in result["next_snapshot"]["nodes"]}
         self.assertIn("A", restored)
@@ -2254,6 +2305,99 @@ class HarnessConcatenatedJsonTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(ops), 1)
         self.assertEqual(ops[0]["op"], "update_node")
+
+
+class HarnessToolBatchFallthroughTest(unittest.TestCase):
+    """T236：工具批一错不全弃——末次尝试放行合法 ops，失败项降级 warnings。"""
+
+    MODEL = {"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
+
+    def test_last_attempt_applies_valid_ops_and_warns_failed_item(self):
+        """一个坏 tool call 不再连坐整批：retries=0（末次即第一次）也要放行合法项。
+
+        旧行为：任一项失败即 continue 整批重试，retries 耗尽后落 parse_error、
+        operations: []——两个完全合法的 update_node 被[1,2,3]这个坏项带走。
+        新行为：合法 ops 照常应用，坏项进 warnings（前端渲染 ⚠️、存历史）。
+        """
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        called = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            called["n"] += 1
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"label": "瞬时变化率"}, "reason": "更准确"}'}},
+                    # 合法 JSON 但不是对象：repair_json 也救不回来，该项注定失败
+                    {"function": {"name": "create_node", "arguments": "[1, 2, 3]"}},
+                    {"function": {"name": "update_node", "arguments": '{"node_id": "B", "patch": {"content": "深入理解"}, "reason": "展开"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"},
+                           {"id": "B", "kind": "knowledge", "label": "极限"}], "edges": []},
+                "把这两个知识点改准确些",
+                model=self.MODEL,
+                mode="tools",
+                self_check="off",
+                retries=0,
+            ))
+        self.assertEqual(called["n"], 1)
+        self.assertEqual(result["status"], "ok", result.get("errors"))
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["operations"]), 2)
+        nodes = {n["id"]: n for n in result["next_snapshot"]["nodes"]}
+        self.assertEqual(nodes["A"]["label"], "瞬时变化率")
+        self.assertEqual(nodes["B"]["content"], "深入理解")
+        failed = [w for w in result["warnings"] if "工具调用解析失败" in str(w.get("reason") or "")]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("create_node", failed[0]["reason"])
+
+    def test_retryable_attempt_still_retries_whole_batch(self):
+        """还有重试机会时仍旧整批重试——保留「JSON 被截断就重新生成干净批次」的好处。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"label": "对"}, "reason": "r"}'}},
+                        {"function": {"name": "create_node", "arguments": "[1, 2, 3]"}},
+                    ],
+                }
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"label": "对"}, "reason": "r"}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                "改准确些",
+                model=self.MODEL,
+                mode="tools",
+                self_check="off",
+                retries=2,
+            ))
+        self.assertEqual(calls["n"], 2, "首轮有坏项应整批重试，而不是就地放行")
+        self.assertEqual(result["status"], "ok", result.get("errors"))
+        self.assertEqual(
+            [w for w in result["warnings"] if "工具调用解析失败" in str(w.get("reason") or "")],
+            [], "重试成功了就不该留失败 warnings",
+        )
 
 
 class HarnessNodeIdAliasTest(unittest.TestCase):
