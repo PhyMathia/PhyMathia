@@ -2,6 +2,7 @@
 记忆候选与管理、备份导出导入。
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -146,7 +147,8 @@ async def api_backup_export(request: Request = None):
     device_id = str(request.query_params.get("device_id") or "") if request is not None else ""
     if device_id:
         profile.note_device_binding(device_id, account=account)
-    return _build_backup_payload(account, device_id)
+    # T201：整包导出要读全部会话消息文件，挪 to_thread 防卡事件循环
+    return await asyncio.to_thread(_build_backup_payload, account, device_id)
 
 
 @router.post("/api/backup/import")
@@ -163,7 +165,9 @@ async def api_backup_import(request: Request):
     if device_id:
         profile.note_device_binding(device_id, account=account)
     try:
-        return _restore_backup(backup, mode == "replace", account=account, device_id=device_id)
+        # T201：导入是全量写（会话/消息/知识/公式/KV），挪 to_thread 防卡事件循环
+        return await asyncio.to_thread(
+            _restore_backup, backup, mode == "replace", account=account, device_id=device_id)
     except HTTPException:
         raise
     except Exception as exc:
