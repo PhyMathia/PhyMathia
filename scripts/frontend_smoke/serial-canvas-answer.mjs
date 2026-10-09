@@ -848,6 +848,131 @@ check('节点皮肤模板：根级皮肤变量块不得引用 --node-attr（须�
 await msTail;
 await Promise.all(sqChecks).catch(() => {});
 
+// ===== 串行边界追加：15 秒同步的变化检测（T204，2026-10-09）=====
+// _syncFromServer 改按「确有数据变化」返回：两边已收敛的稳态零消息拉取、不写盘、
+// 返回 false，15 秒轮询据此跳过侧栏/知识面板的全量重建。按变化拉取的前提是
+// 「消息链路的所有写入点都 bump 会话 updatedAt 并 upsert 服务端（saveCurrentSession）」
+// ——这条前提若被新代码绕过（加了只写消息不 bump updatedAt 的路径），跨标签页
+// 传播会静默失效，只有行为断言能抓住。用例写共享 phymathia_sessions/msgs 键且
+// await fetch，接在多选链之后串行跑，共用同一批键不互踩。
+if (!sandbox.AbortSignal) sandbox.AbortSignal = AbortSignal; // vm 上下文没有宿主全局，_syncFromServer 的 fetch 选项要用
+const syncEval = (code) => vm.runInContext(code, sandbox);
+const syncOkJson = (data) => ({ ok: true, status: 200, json: async () => data });
+const SYNC_KEYS = ['phymathia_sessions', 'phymathia_msgs_s1', 'phymathia_msgs_s2', 'phymathia_knowledge', 'phymathia_current_session'];
+const syncSavedStore = Object.fromEntries(SYNC_KEYS.map(k => [k, storageData[k]]));
+let syncTail = Promise.resolve();
+const checkSync = (name, fn) => {
+  syncTail = syncTail.then(async () => {
+    try {
+      const r = await fn();
+      if (r === false) throw new Error('断言未通过');
+      console.log('✓', name);
+    } catch (e) {
+      addFailed();
+      console.error('❌', name, '->', e.message);
+    }
+  });
+};
+
+checkSync('15秒同步：稳态（两边已收敛）零消息拉取且返回 false', async () => {
+  const prevFetch = sandbox.fetch;
+  const calls = [];
+  sandbox.fetch = async (url, init) => {
+    const u = String(url);
+    calls.push((init && init.method || 'GET') + ' ' + u);
+    if (u === '/api/sessions') return syncOkJson({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    if (u === '/api/knowledge') return syncOkJson({});
+    if (u === '/api/kv/phymathia_current_session') return syncOkJson({ value: null });
+    return syncOkJson({});
+  };
+  try {
+    storageData['phymathia_sessions'] = JSON.stringify({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    storageData['phymathia_msgs_s1'] = JSON.stringify([{ role: 'user', content: 'hi', timestamp: 1 }]);
+    const changed = await syncEval('_syncFromServer()');
+    if (changed !== false) throw new Error('稳态应返回 false（轮询据此跳过界面重建），实返 ' + changed);
+    const batch = calls.filter(c => c.includes('messages-batch'));
+    if (batch.length !== 0) throw new Error('稳态不应拉任何会话消息，实际发了：' + batch.join(','));
+  } finally { sandbox.fetch = prevFetch; }
+});
+
+checkSync('15秒同步：只拉 updatedAt 更新的会话，合并后不回传；第二轮收敛零请求', async () => {
+  const prevFetch = sandbox.fetch;
+  const m1 = { role: 'user', content: 'hi', timestamp: 1 };
+  const m2 = { role: 'assistant', content: 'new', timestamp: 2 };
+  const calls = [];
+  const batchBodies = [];
+  sandbox.fetch = async (url, init) => {
+    const u = String(url);
+    calls.push((init && init.method || 'GET') + ' ' + u);
+    if (u === '/api/sessions') return syncOkJson({
+      s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 },
+      s2: { id: 's2', title: '乙', sessionId: 'p2', updatedAt: 200 },
+    });
+    if (u === '/api/knowledge') return syncOkJson({});
+    if (u === '/api/kv/phymathia_current_session') return syncOkJson({ value: null });
+    if (u === '/api/sessions/messages-batch') {
+      batchBodies.push(JSON.parse(init.body));
+      return syncOkJson({ messages: { s2: [m1, m2] } });
+    }
+    return syncOkJson({});
+  };
+  try {
+    storageData['phymathia_sessions'] = JSON.stringify({
+      s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 },
+      s2: { id: 's2', title: '乙', sessionId: 'p2', updatedAt: 100 },
+    });
+    storageData['phymathia_msgs_s1'] = JSON.stringify([m1]);
+    storageData['phymathia_msgs_s2'] = JSON.stringify([m1]);
+    const changed = await syncEval('_syncFromServer()');
+    if (changed !== true) throw new Error('服务端有新消息应返回 true，实返 ' + changed);
+    if (JSON.stringify(batchBodies[0] && batchBodies[0].session_ids) !== '["s2"]') {
+      throw new Error('应只拉 s2，实际：' + JSON.stringify(batchBodies));
+    }
+    if (calls.some(c => c.startsWith('POST /api/sessions/s1/messages'))) throw new Error('未变化的 s1 不该被上传');
+    if (calls.some(c => c.startsWith('POST /api/sessions/s2/messages'))) throw new Error('合并结果与服务端一致时不该回传 s2');
+    if (JSON.parse(storageData['phymathia_msgs_s2']).length !== 2) throw new Error('s2 的新消息没落本地');
+    if (JSON.parse(storageData['phymathia_sessions']).s2.updatedAt !== 200) throw new Error('s2 元数据没跟上服务端');
+    // 第二轮：全部时间戳持平 → 收敛，零拉取零变化
+    calls.length = 0; batchBodies.length = 0;
+    const changed2 = await syncEval('_syncFromServer()');
+    if (changed2 !== false) throw new Error('第二轮稳态应返回 false，实返 ' + changed2);
+    if (batchBodies.length !== 0) throw new Error('第二轮不应再拉消息');
+  } finally { sandbox.fetch = prevFetch; }
+});
+
+checkSync('15秒同步：本地消息键缺失时即使时间戳持平也要从服务端补全', async () => {
+  const prevFetch = sandbox.fetch;
+  const m1 = { role: 'user', content: 'hi', timestamp: 1 };
+  const batchBodies = [];
+  sandbox.fetch = async (url, init) => {
+    const u = String(url);
+    if (u === '/api/sessions') return syncOkJson({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    if (u === '/api/knowledge') return syncOkJson({});
+    if (u === '/api/kv/phymathia_current_session') return syncOkJson({ value: null });
+    if (u === '/api/sessions/messages-batch') {
+      batchBodies.push(JSON.parse(init.body));
+      return syncOkJson({ messages: { s1: [m1] } });
+    }
+    return syncOkJson({});
+  };
+  try {
+    storageData['phymathia_sessions'] = JSON.stringify({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    delete storageData['phymathia_msgs_s1'];
+    const changed = await syncEval('_syncFromServer()');
+    if (changed !== true) throw new Error('补全本地缺失消息应算变化，实返 ' + changed);
+    if (JSON.stringify(batchBodies[0] && batchBodies[0].session_ids) !== '["s1"]') throw new Error('消息键缺失的会话应被拉取');
+    if (JSON.parse(storageData['phymathia_msgs_s1']).length !== 1) throw new Error('本地消息没被补全');
+  } finally {
+    sandbox.fetch = prevFetch;
+    // 共享键还原（多选链与后续分域还在用它们）
+    for (const k of SYNC_KEYS) {
+      if (syncSavedStore[k] === undefined) delete storageData[k];
+      else storageData[k] = syncSavedStore[k];
+    }
+  }
+});
+await syncTail;
+
 await drain();
 
 await drain();
