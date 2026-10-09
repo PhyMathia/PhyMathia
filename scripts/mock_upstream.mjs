@@ -28,7 +28,7 @@ let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
 
 // 剧本计数器（长驻进程按全局；verify 脚本按增量读 /__stats）
-const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0, semanticRecall: 0 };
+const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0, semanticRecall: 0, graphStats: 0 };
 const rateLimitSeen = {};
 
 // 从请求 messages 里抽取"要看什么"的判据文本
@@ -153,6 +153,22 @@ function replyOf(body) {
       tool_calls: [{ id: 'call_sem1', type: 'function', function: { name: 'search_nodes', arguments: JSON.stringify({ keyword: '电磁感应' }) } }],
     };
   }
+  // —— 路径六第 1 档（学习教练，2026-10-09）：答疑「先拉 stats 再答」——
+  // 第一次（还没回灌统计）回 graph_stats 调用；后端执行整图统计并以 role:"tool"
+  // 回灌；第二次看到统计事实（"components" 等字段）后 stats.graphStats 计数并回
+  // 引用统计数字的文字答案（chat 相位纯文本，绝不带编辑 ops）。
+  if (j.tools.includes('graph_stats') && t.includes('学习路线演练')) {
+    const fedStats = (Array.isArray(body.messages) ? body.messages : [])
+      .some(m => m && m.role === 'tool' && String(m.content || '').includes('"components"'));
+    if (fedStats) {
+      stats.graphStats += 1;
+      return text('先学「极限」：整图统计显示图分成了 2 个互不连通的部分，「动量守恒」是孤岛主题，且它没有任何先修来源连线；检测薄弱的「动量守恒」在图上有节点但没有向外延伸的进阶链——建议先学极限打地基，再给动量守恒补前置连线 ' + sfx);
+    }
+    return {
+      content: '',
+      tool_calls: [{ id: 'call_gs1', type: 'function', function: { name: 'graph_stats', arguments: '{}' } }],
+    };
+  }
   if (j.tools.includes('read_node') && t.includes('细读')) {
     const fedBack = (Array.isArray(body.messages) ? body.messages : []).some(m => m && m.role === 'tool');
     if (!fedBack) {
@@ -266,7 +282,7 @@ const server = http.createServer((req, res) => {
     // 真机脚本核对观测点（通道⑪）：chat_requests 总次数 + 各剧本关键词的
     // attempts（本关键词收到的 /chat/completions 次数）/ rejected_429（真的 429 了几次）
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState, semantic_recall: stats.semanticRecall }));
+    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState, semantic_recall: stats.semanticRecall, graph_stats: stats.graphStats }));
     return;
   }
   if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {

@@ -41,7 +41,9 @@ TOOL_TO_OP: Dict[str, str] = {
 # 知识检索工具（数据源是用户对话中自动收集的知识库与公式速查），并把
 # chat 答疑相位的工具表收敛为纯只读——「只说不改」从红线约定升级为
 # 工具表层面的保证（编辑工具根本不在表里，服务端 ops 保险丝保留兜底）。
-READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes", "search_knowledge", "search_formulas")
+# 2026-10-09 优化新路径六第 1 档：新增 graph_stats 整图学习结构体检工具
+# （学习教练）：把整张图当课程表看的统计入口，chat 答疑相位立即可用。
+READONLY_TOOL_NAMES = ("read_node", "list_neighbors", "search_nodes", "search_knowledge", "search_formulas", "graph_stats")
 
 # 知识检索类工具（READONLY 的子集）：执行时需要调用方额外注入用户
 # 知识库/公式速查数据（kb 参数），图查询三件套用不到。
@@ -53,6 +55,8 @@ _READONLY_SEARCH_LIMIT = 10
 _READONLY_EXCERPT_CHARS = 80
 # 公式 LaTeX 较长，摘录上限放宽到 160 字（够看出结构，不爆预算）
 _READONLY_FORMULA_CHARS = 160
+# graph_stats 的无先修知识节点清单上限（只数不列全，超限截断）
+_READONLY_STATS_NODE_LIMIT = 20
 
 # read_node 返回的节点全字段（与 core.normalize_node 的输出字段一致）
 _NODE_QUERY_FIELDS = (
@@ -290,6 +294,17 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         ["keyword"],
     )
 
+    # ---- 优化新路径六第 1 档（2026-10-09）：学习教练——整图学习结构体检 ----
+    graph_stats = _tool(
+        "graph_stats",
+        "整张图的学习结构体检（只读统计，不改图）：连通分量数（>1 说明有互不连通的孤岛主题）、"
+        "各类节点的链深分布（难度梯度）、没有任何先修来源的知识节点（可能是缺前置连线）、"
+        "检测薄弱点（quiz_weak）在图上的覆盖情况。用户问「该先学什么/这张图作为学习路线"
+        "合不合格/哪里薄弱」时先调它，回答要引用具体数字与节点，不要泛泛而谈。",
+        {},
+        [],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -306,6 +321,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "search_nodes": search_nodes,
         "search_knowledge": search_knowledge,
         "search_formulas": search_formulas,
+        "graph_stats": graph_stats,
     }
 
 
@@ -558,6 +574,168 @@ def _neighbor_entry(node_by_id: Dict[str, Dict[str, Any]], edge: Dict[str, Any],
     }
 
 
+def _graph_stats(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], data: Dict[str, Any]) -> Dict[str, Any]:
+    """整图学习结构体检（优化新路径六第 1 档）：确定性统计、零模型调用。
+
+    四个指标对着「把整张图当课程表」的问题：
+    ① 连通分量数——先修链在主题之间有没有断开（孤岛）；
+    ② 按 kind 的链深分布——难度梯度顺不顺（叶子到根的深度直方图）；
+    ③ 入度为 0 的知识节点——无先修来源，是起点还是缺前置连线；
+    ④ quiz_weak 覆盖率——检测薄弱点在图上有没有节点与进阶链（只统计、
+       只读；quiz_weak 红线禁的是建状态类图元素，统计事实出口相容）。
+
+    深度用 Kahn 拓扑分层算最长路径层：环上的节点无法定层，计入
+    cycle_locked 单独报告（不因数据有环就崩或给假深度）。
+    """
+    node_ids = {_text(node.get("id")) for node in nodes}
+    if not node_ids:
+        return {"nodes": 0, "edges": len(edges), "note": "空图：还没有节点，先从一个问题或一个概念开始建图。"}
+
+    adjacent: Dict[str, set] = {nid: set() for nid in node_ids}
+    out_adjacent: Dict[str, List[str]] = {nid: [] for nid in node_ids}
+    in_degree = {nid: 0 for nid in node_ids}
+    out_degree = {nid: 0 for nid in node_ids}
+    for edge in edges:
+        from_id = _text(edge.get("from"))
+        to_id = _text(edge.get("to"))
+        if from_id not in node_ids or to_id not in node_ids or from_id == to_id:
+            continue
+        adjacent[from_id].add(to_id)
+        adjacent[to_id].add(from_id)
+        out_adjacent[from_id].append(to_id)
+        in_degree[to_id] += 1
+        out_degree[from_id] += 1
+
+    # ① 连通分量（无向口径：先修链断裂/孤岛主题）
+    visited = set()
+    components = 0
+    isolated_nodes = 0
+    for start in sorted(node_ids):
+        if start in visited:
+            continue
+        components += 1
+        if not adjacent[start]:
+            visited.add(start)
+            isolated_nodes += 1
+            continue
+        stack = [start]
+        visited.add(start)
+        while stack:
+            current = stack.pop()
+            for neighbor in adjacent[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+
+    # ② 链深（Kahn 最长路径分层；环锁住的节点拿不到深度，单独计数）
+    working_in_degree = dict(in_degree)
+    depth: Dict[str, int] = {}
+    queue = sorted(nid for nid in node_ids if working_in_degree[nid] == 0)
+    for nid in queue:
+        depth[nid] = 0
+    head = 0
+    while head < len(queue):
+        current = queue[head]
+        head += 1
+        for nxt in out_adjacent[current]:
+            candidate = depth[current] + 1
+            if candidate > depth.get(nxt, -1):
+                depth[nxt] = candidate
+            working_in_degree[nxt] -= 1
+            if working_in_degree[nxt] == 0:
+                queue.append(nxt)
+                depth.setdefault(nxt, 0)
+    cycle_locked = [nid for nid in node_ids if nid not in depth]
+
+    depth_by_kind: Dict[str, Dict[str, Any]] = {}
+    for node in nodes:
+        kind = _text(node.get("kind")) or "unknown"
+        entry = depth_by_kind.setdefault(kind, {"nodes": 0, "max_depth": 0, "depth_histogram": {}})
+        node_depth = depth.get(_text(node.get("id")))
+        if node_depth is None:
+            entry["cycle_locked"] = entry.get("cycle_locked", 0) + 1
+            continue
+        entry["nodes"] += 1
+        entry["max_depth"] = max(entry["max_depth"], node_depth)
+        bucket = str(node_depth)
+        entry["depth_histogram"][bucket] = entry["depth_histogram"].get(bucket, 0) + 1
+
+    # ③ 无先修来源的知识节点（入度为 0；模块/笔记不算——它们本就不是知识链一环）
+    no_prereq = [
+        {"id": _text(node.get("id")), "label": _text(node.get("label"))}
+        for node in nodes
+        if _text(node.get("kind")) == "knowledge" and in_degree.get(_text(node.get("id")), 0) == 0
+    ]
+
+    # ④ quiz_weak 覆盖率（快照可选参考字段；缺失时明说跳过，不猜）
+    quiz_raw = data.get("quiz_weak")
+    if not isinstance(quiz_raw, list) or not quiz_raw:
+        quiz_section: Dict[str, Any] = {"present": False, "note": "快照未带检测薄弱点（quiz_weak），跳过覆盖率统计"}
+    else:
+        items = []
+        for entry in quiz_raw:
+            if not isinstance(entry, dict):
+                continue
+            title = _text(entry.get("title"))
+            if not title:
+                continue
+            needle = title.lower()
+            matched = None
+            for node in nodes:
+                if _text(node.get("label")).lower() == needle:
+                    matched = node
+                    break
+            if matched is None:
+                for node in nodes:
+                    label = _text(node.get("label")).lower()
+                    if label and (needle in label or label in needle):
+                        matched = node
+                        break
+            if matched is not None:
+                matched_id = _text(matched.get("id"))
+                outgoing = out_degree.get(matched_id, 0)
+                items.append({
+                    "title": title,
+                    "covered": True,
+                    "node_id": matched_id,
+                    "node_label": _text(matched.get("label")),
+                    "outgoing_edges": outgoing,
+                    "note": "图上有对应节点" + ("；但它没有任何向外延伸的连线，缺进阶链" if outgoing == 0 else ""),
+                })
+            else:
+                items.append({"title": title, "covered": False, "note": "图上没有对应节点——薄弱考点尚未进图"})
+        covered_count = sum(1 for item in items if item.get("covered"))
+        quiz_section = {
+            "present": True,
+            "total": len(items),
+            "covered": covered_count,
+            "items": items,
+        }
+
+    result: Dict[str, Any] = {
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "components": components,
+        "components_note": (
+            "全部节点连成一片，没有孤岛主题" if components <= 1
+            else f"图分成了 {components} 个互不连通的部分——主题之间的先修链断了，建议补连线"
+        ),
+        "isolated_nodes": isolated_nodes,
+        "depth_by_kind": depth_by_kind,
+        "no_prereq_knowledge": {
+            "count": len(no_prereq),
+            "items": no_prereq[:_READONLY_STATS_NODE_LIMIT],
+            "truncated": len(no_prereq) > _READONLY_STATS_NODE_LIMIT,
+            "note": "这些知识节点没有任何先修来源连线——是真正的学习起点，还是缺了前置连线，需结合内容判断",
+        },
+        "quiz_weak_coverage": quiz_section,
+    }
+    if cycle_locked:
+        result["cycle_locked"] = len(cycle_locked)
+        result["cycle_note"] = "有连线成环，环上节点的深度无法计层（不进直方图）——建议检查是否有互相依赖"
+    return result
+
+
 def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional[Dict[str, Any]] = None, semantic_hits: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Execute one read-only graph query against the snapshot.
 
@@ -688,6 +866,11 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional
     data = snapshot if isinstance(snapshot, dict) else {}
     nodes = [node for node in (data.get("nodes") or []) if isinstance(node, dict)]
     edges = [edge for edge in (data.get("edges") or []) if isinstance(edge, dict)]
+
+    # 学习教练（路径六第 1 档）：整图统计不取参数，多余的 arguments 也接受
+    # （部分模型爱传 {} 或 {"include": "all"}，不接受会平白多一轮纠错往返）
+    if name == "graph_stats":
+        return _graph_stats(nodes, edges, data)
 
     if name == "read_node":
         query = _text(arguments.get("node_id") or arguments.get("id") or arguments.get("label"))

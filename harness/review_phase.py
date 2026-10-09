@@ -33,9 +33,11 @@ TOOLS_AUTO_HINT = (
 
 # ---- T93（评审路线 #8）只读查询回灌：先查图，看完了再决定改哪 ----
 # 工具表含只读查询工具时（normal/expand/apply/preset），给 user 消息补的使用说明。
+# 2026-10-09 优化新路径六第 1 档：并入 graph_stats（学习教练）。
 READONLY_TOOLS_HINT = (
     "\n\n（你可以先调用只读查询工具（read_node / list_neighbors / search_nodes）"
     "了解图中内容，用 search_knowledge / search_formulas 检索用户的知识库与公式速查，"
+    "用 graph_stats 做整图学习结构体检（连通分量/链深梯度/无先修知识节点/检测薄弱点覆盖）；"
     "再输出编辑操作；查询不会修改图。）"
 )
 # 答疑模式（2026-10-03 智能化第二期）专用的 user 消息工具说明：chat 相位工具表
@@ -43,8 +45,9 @@ READONLY_TOOLS_HINT = (
 # 不能照抄——chat 只讲「先查后答、绝不改图」。
 HARNESS_CHAT_TOOLS_HINT = (
     "\n\n（你可以调用只读查询工具：read_node / list_neighbors / search_nodes 查看图，"
-    "search_knowledge / search_formulas 检索用户的知识库与公式速查；先查再答，"
-    "回答引用出处。当前是答疑模式：不要输出任何编辑操作，直接用文字回答。）"
+    "search_knowledge / search_formulas 检索用户的知识库与公式速查，"
+    "graph_stats 查整图学习结构统计——用户问「该先学什么/学习路线合不合理」时先拉它再答；"
+    "先查再答，回答引用出处。当前是答疑模式：不要输出任何编辑操作，直接用文字回答。）"
 )
 UNDO_HINTS = (
     "撤销", "回退", "恢复", "还原", "撤回", "不要刚才", "重来",
