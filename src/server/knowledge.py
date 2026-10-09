@@ -113,6 +113,40 @@ def _looks_like_formula(latex: str) -> bool:
     return True
 
 
+def _num_or_zero(raw) -> float:
+    """T224：任意时间戳/数值字段的数值兜底（与 continent._num_or_zero 同型，
+    本地定义、不跨模块 import——knowledge 不该为一处兜底把投影层拖成依赖）。
+
+    公式库与知识点条目全程假设 createdAt 是数值，真机存量数据里一条字符串
+    时间戳就能让排序 key 变成 int/str 混比抛 TypeError，把读写全打成 500。
+    读侧兜底即可：GET /api/formulas 是只读视图（读→去重→覆盖有竞态，
+    knowledge_routes 已拍板），不做写回自愈。
+    """
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_created_at(raw, now: int) -> int:
+    """T224：POST /api/formulas 写入路径的 createdAt 收敛——入口不设防、
+    原样收客户端值正是本 bug 的直接根因：字符串进得了库，读侧排序此后全炸。
+
+    客户端数值（int/float）原样收；纯数字字符串转 int；其余（坏字符串/
+    None/容器/bool）落 now（调用方传服务端当前毫秒）。bool 是 int 子类但
+    真值不是时间戳，一并归入其余。
+    """
+    if isinstance(raw, bool):
+        return now
+    if isinstance(raw, (int, float)):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if re.fullmatch(r"-?\d+", s):
+            return int(s)
+    return now
+
+
 def _dedupe_formula_map(data: dict) -> dict:
     """按规范化公式全局去重（T146 起不再按会话分区），保留较优记录。
 
@@ -135,7 +169,7 @@ def _dedupe_formula_map(data: dict) -> dict:
     for entries in groups.values():
         entries.sort(key=lambda kv: (
             0 if (kv[1].get("meaningSource") or "") == "model" else 1,
-            -(kv[1].get("createdAt", 0) or 0),
+            -_num_or_zero(kv[1].get("createdAt")),
         ))
         keep_id, keep = entries[0]
         for _, other in entries[1:]:
@@ -381,7 +415,8 @@ def _dedupe_knowledge(data) -> dict:
             -_summary_source_rank(kv[1]),
             len(str(kv[1].get("summary") or "")),
             len(kv[1].get("formulas") or []),
-            kv[1].get("createdAt") or 0,
+            # T224：末位 createdAt tie-break 同样会 int/str 混比 TypeError
+            _num_or_zero(kv[1].get("createdAt")),
         ))
         keep_id, keep = group[-1]
         formulas = []
