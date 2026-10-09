@@ -1168,7 +1168,7 @@ async function _extractKnowledgeFromWorkflow(question, moduleIds) {
   }
 }
 
-async function startQuestionWorkflow(text, opts, handoffTaskId) {
+async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   // 只读查阅（P3）：工作流首问不经过 sendMessage，必须在它自己的入口拦
   if (phyIsReadonly()) { phyReadonlyBlock('发起提问'); return; }
   const question = String((text || '').trim());
@@ -1178,13 +1178,21 @@ async function startQuestionWorkflow(text, opts, handoffTaskId) {
   // 工作流正跑着还能再点一次「提问」，并发开出第二个工作流、两棵节点树打架。
   // 忙碌判定统一收敛到 _isSendBusy()（send-queue.js），分支/苏格拉底与工作流两条路都覆盖。
   // 整个函数原样重入即可，所以排队闭包不需要拆解它的收尾动作。
-  if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+  //
+  // T225：_isSendBusy() 把 _sendQueueFlushing（队列正在放行）也算忙，而 flush 的循环
+  // 条件是 _isActuallyBusy()（刻意不含放行标志，见 send-queue.js:124-132）。没有旁路时，
+  // flush 取出排队的「提问」→ 执行 → 守卫命中 → 原样再入队 → 循环再取出……同会话场景
+  // （_sendQueueReady 无切画布 await）全程只有已 resolve 的 Promise 微任务，事件循环被饿死、
+  // 页面假死，且每圈 _taskCreate 新开一行任务 + toastMsg 弹窗，内存无上限增长。
+  // fromQueue 与 sendMessage 的 force（chat.js:278 `!force && …`）同型：只有排队放行那条
+  // 闭包传 true，正常三参调用一律 undefined 走守卫，行为不变。
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
     const capturedQuestion = question;
     const capturedOpts = opts;
     // handoffTaskId：排队那条「提问」任务的 id。轮到它跑起来时，工作流任务接手，
     // 面板上就地把它结掉——不然同一个动作会留两行（等待中的提问 + 进行中的工作流）。
     // text 给面板当标题：只写「提问」两个字，用户认不出等的是哪句问题。
-    _enqueueSend('提问', function(taskId) { return startQuestionWorkflow(capturedQuestion, capturedOpts, taskId); },
+    _enqueueSend('提问', function(taskId) { return startQuestionWorkflow(capturedQuestion, capturedOpts, taskId, true); },
       { text: capturedQuestion });
     return;
   }

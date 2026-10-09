@@ -102,6 +102,84 @@ checkSq('发送排队：workflowRunActive 也算忙（startQuestionWorkflow 过�
   if (sqEval('__wf') !== 1) throw new Error('工作流结束后没有自动发出');
 });
 
+// ===== 串行边界追加：排队放行的自我重入（T225，2026-10-09）=====
+// T225 冻结场景：_isSendBusy() 把 _sendQueueFlushing（队列正在放行）也算忙，而
+// _flushSendQueue 的循环条件是 _isActuallyBusy()——刻意不含放行标志。startQuestionWorkflow
+// 的忙碌守卫若没有「排队放行旁路」（sendMessage 的 force 同型：chat.js:278 `!force && …`），
+// flush 取出排队的「提问」→ 执行 → 守卫命中 → 原样再入队 → 循环再取出……同会话场景
+// （_sendQueueReady 无切画布 await）全程只有已 resolve 的 Promise 微任务、无宏任务让出，
+// 事件循环被饿死页面假死；每圈 _taskCreate 新建任务行 + toastMsg 弹 toast，内存无上限增长。
+// 下面两条把「旁路必须存在」钉死：(a) 带旁路调不再入队；(b) 忙碌三参调用入队一次，
+// 取出的闭包重放时不再二次入队。
+checkSq('发送排队：T225 flush 放行时带 fromQueue 旁路的「提问」不再自我重入', async () => {
+  sqReset();
+  sqEval('isStreaming = true;');          // 忙碌：没有旁路时守卫必然命中
+  sqEval('_sendQueueFlushing = true;');   // 复刻 T225 现场：队列放行窗口内
+  const enqCalls = [];
+  const tplCalls = [];
+  const prevEnq = sandbox._enqueueSend;
+  const prevTpl = sandbox._createQuestionWorkflowTemplate;
+  sandbox._enqueueSend = function(label, run, meta) { enqCalls.push(label); return true; };
+  // 守卫之后第一个真实动作就是建模板：让它抛桩中止，不必把整条工作流真跑完
+  sandbox._createQuestionWorkflowTemplate = function() { tplCalls.push(1); throw new Error('__stop__'); };
+  try {
+    await sandbox.startQuestionWorkflow('排队放行的问题', {}, 'task-stub', true);
+    throw new Error('带旁路调用没有继续往下跑——它被守卫拦下来了');
+  } catch (e) {
+    if (String(e && e.message) !== '__stop__') throw e;
+  } finally {
+    sandbox._enqueueSend = prevEnq;
+    sandbox._createQuestionWorkflowTemplate = prevTpl;
+    sqReset();
+  }
+  if (enqCalls.length !== 0) {
+    throw new Error('fromQueue=true 仍走了 _enqueueSend：flush 取出排队的「提问」会无限'
+      + '自我重入，事件循环被饿死、页面假死（T225）');
+  }
+  if (tplCalls.length !== 1) {
+    throw new Error('旁路后没继续跑（_createQuestionWorkflowTemplate 调用 ' + tplCalls.length + ' 次）');
+  }
+});
+
+checkSq('发送排队：T225 忙碌三参「提问」入队一次，取出的闭包重放不再二次入队', async () => {
+  sqReset();
+  sqEval('isStreaming = true;');
+  const items = [];
+  const prevEnq = sandbox._enqueueSend;
+  // 完全替掉入队：真入队会 _taskCreate 新开任务行 + toastMsg，这里只收闭包不落队
+  sandbox._enqueueSend = function(label, run, meta) { items.push({ label: label, run: run, meta: meta }); return true; };
+  const prevTpl = sandbox._createQuestionWorkflowTemplate;
+  sandbox._createQuestionWorkflowTemplate = function() { throw new Error('__stop__'); };
+  try {
+    await sandbox.startQuestionWorkflow('忙碌时打的问题', { sourceNodeId: 'n1', sourcePort: 'out' }, '');
+    if (items.length !== 1) {
+      throw new Error('忙碌时三参调用应入队一次，实际 ' + items.length + '（含 0＝守卫放了行、消息会丢失）');
+    }
+    if (items[0].label !== '提问') throw new Error('入队标签应为「提问」，实际 ' + items[0].label);
+    if (!items[0].meta || items[0].meta.text !== '忙碌时打的问题') {
+      throw new Error('meta.text 应带原问题当任务标题，实际 ' + JSON.stringify(items[0].meta));
+    }
+    if (typeof items[0].run !== 'function') throw new Error('入队的不是闭包');
+    // 模拟 _flushSendQueue 取出并执行它：此刻 _sendQueueFlushing=true 同样算忙，
+    // 没有旁路的闭包会在这一步再次入队——真机上就是 flush 循环里的无限自我重入。
+    sqEval('_sendQueueFlushing = true;');
+    try {
+      await items[0].run('task-queued');
+      throw new Error('排队闭包重放时没有继续往下跑——它又被守卫拦下入队了（T225）');
+    } catch (e) {
+      if (String(e && e.message) !== '__stop__') throw e;
+    }
+    if (items.length !== 1) {
+      throw new Error('排队闭包重放时二次入队（共 ' + items.length + ' 次）：flush 循环会'
+        + '无限自我重入，页面假死（T225）');
+    }
+  } finally {
+    sandbox._enqueueSend = prevEnq;
+    sandbox._createQuestionWorkflowTemplate = prevTpl;
+    sqReset();
+  }
+});
+
 // 静态半。这些护栏全删掉也不会让上面任何一条行为断言变红——只能靠读源码钉住。
 // 变异验证：把任一发送入口改回裸 `if (isStreaming…) return;`，或把 startQuestionWorkflow
 // 的判定改回只查 isStreaming，下面立刻红。
@@ -148,6 +226,16 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
   }
   if (!/_isSendBusy\(\)/.test(wfBody)) {
     throw new Error('startQuestionWorkflow 没用统一的 _isSendBusy()——工作流通道又变回形同虚设');
+  }
+  // T225：守卫必须带 fromQueue 排队放行旁路。_isSendBusy() 把 _sendQueueFlushing 也算忙，
+  // 而 flush 循环只看 _isActuallyBusy()——没有旁路时，flush 取出排队的「提问」会自我重入
+  // 饿死事件循环、页面假死。旁路名与 sendMessage 的 force（chat.js:278）同型。
+  if (!/!fromQueue && typeof _isSendBusy/.test(wfBody)) {
+    throw new Error('startQuestionWorkflow 的忙碌守卫缺 fromQueue 排队放行旁路：flush 放行'
+      + '排队的「提问」时会无限自我重入，事件循环被饿死、页面假死（T225）');
+  }
+  if (/startQuestionWorkflow\(capturedQuestion, capturedOpts, taskId\)/.test(wfBody)) {
+    throw new Error('排队的「提问」闭包没带 fromQueue=true：轮到它跑时又会命中忙碌守卫再入队（T225）');
   }
   if (/if \(typeof isStreaming !== 'undefined' && isStreaming\) return;/.test(wfBody)) {
     throw new Error('startQuestionWorkflow 又只查 isStreaming 了：工作流不碰这个标志位，守卫会失效');
