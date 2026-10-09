@@ -189,8 +189,11 @@ async def api_get_continent(request: Request = None):
     accepted = family.merge_families(family.BUILTIN_FAMILIES,
                                      family.families_from_payload(user_families))
     card_sims, _ = await asyncio.to_thread(_continent_card_sims, items, accepted)
-    return continent.build_continent(items, sessions, user_edges, user_families, gate,
-                                     card_sims=card_sims)
+    # T207：build_continent 本体（跨会话聚簇＋布局推导，纯本地 CPU）此前只包了向量
+    # 准备、本体留在事件循环里同步跑——开一次图就占住整个循环若干秒，期间其他请求
+    # 全部排队。这里一并挪出，与 card_sims 同口径。
+    return await asyncio.to_thread(continent.build_continent, items, sessions,
+                                   user_edges, user_families, gate, card_sims=card_sims)
 
 
 @router.get("/api/families")
