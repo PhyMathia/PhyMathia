@@ -205,10 +205,10 @@
       --sym-mountain-dark-glow: rgba(96,142,152,0.25);
       --sym-mountain-light-ink: rgba(78,98,95,1);
       --sym-mountain-light-glow: rgba(102,128,120,0.18);
-      --sym-neon-dark-ink: rgba(125,211,252,1);
-      --sym-neon-dark-glow: rgba(34,211,238,0.30);
-      --sym-neon-light-ink: rgba(100,116,139,1);
-      --sym-neon-light-glow: rgba(14,116,144,0.18);
+      --sym-neon-dark-ink: rgba(176,138,250,1);
+      --sym-neon-dark-glow: rgba(153,69,234,0.3);
+      --sym-neon-light-ink: rgba(124,90,160,1);
+      --sym-neon-light-glow: rgba(153,69,234,0.16);
       --sym-candy-dark-ink: rgba(249,168,212,1);
       --sym-candy-dark-glow: rgba(244,114,182,0.26);
       --sym-candy-light-ink: rgba(148,116,128,1);
@@ -3021,38 +3021,38 @@
      * 近黑玻璃＋青/品红双色流动光斑（保留漂移——霓虹的「活」就是光在走）＋霓虹青
      * 内描边；浅色下霓虹收敛为冷青点缀（浅色玻璃底本就亮，双色光斑会脏）。 */
     html[data-panel-skin="neon"] {
-      --accent: #22d3ee;
+      --accent: #9945ea;
       --bg-panel: #04070e;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 82%, transparent);
-      --accent-hover: #67e3f9;
+      --accent-hover: #b97ef0;
       --field-bg: rgba(7, 12, 22, 0.46);
       --field-bg-strong: rgba(7, 12, 22, 0.78);
     }
     html[data-theme="light"][data-panel-skin="neon"] {
-      --accent: #0e7490;
+      --accent: #8e40d9;
       --bg-panel: #f4fafc;
       --bg-dark: color-mix(in srgb, var(--bg-panel) 90%, transparent);
-      --accent-hover: #0e86a5;
+      --accent-hover: #a764e6;
       --field-bg: rgba(236, 247, 250, 0.55);
       --field-bg-strong: rgba(236, 247, 250, 0.78);
     }
     html[data-panel-skin="neon"] .aurora-glass {
-      --aurora-1: rgba(34, 211, 238, 0.14);
+      --aurora-1: rgba(153, 69, 234, 0.16);
       --aurora-2: rgba(217, 70, 239, 0.10);
-      --aurora-3: rgba(59, 130, 246, 0.10);
+      --aurora-3: rgba(109, 70, 220, 0.10);
       --glass-tint: rgba(5, 8, 16, 0.60);
-      --glass-veil: linear-gradient(180deg, rgba(103, 227, 249, 0.04), rgba(1, 3, 8, 0.14) 84%);
-      --glass-inner-line: rgba(103, 227, 249, 0.20);
+      --glass-veil: linear-gradient(180deg, rgba(185, 126, 240, 0.04), rgba(1, 3, 8, 0.14) 84%);
+      --glass-inner-line: rgba(185, 126, 240, 0.20);
       --glass-shadow: rgba(2, 4, 10, 0.50);
       box-shadow:
         0 18px 44px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(34, 211, 238, 0.28);
+        inset 0 0 0 1px rgba(153, 69, 234, 0.30);
     }
     html[data-theme="light"][data-panel-skin="neon"] .aurora-glass {
-      --aurora-1: rgba(14, 165, 182, 0.08);
+      --aurora-1: rgba(153, 69, 234, 0.08);
       --aurora-2: rgba(204, 108, 230, 0.05);
-      --aurora-3: rgba(37, 99, 235, 0.05);
+      --aurora-3: rgba(96, 76, 200, 0.05);
       --glass-tint: rgba(244, 250, 252, 0.78);
       --glass-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(244, 250, 252, 0.12) 72%);
       --glass-inner-line: rgba(255, 255, 255, 0.92);
@@ -3060,7 +3060,7 @@
       box-shadow:
         0 16px 36px var(--glass-shadow),
         inset 0 1px 0 var(--glass-inner-line),
-        inset 0 0 0 1px rgba(14, 165, 182, 0.30);
+        inset 0 0 0 1px rgba(153, 69, 234, 0.26);
     }
     html[data-panel-skin="neon"] .aurora-glass--dialog { --glass-tint: rgba(4, 7, 14, 0.88); }
     html[data-panel-skin="neon"] .aurora-glass--panel { --glass-tint: rgba(4, 7, 14, 0.70); }
