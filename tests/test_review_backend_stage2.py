@@ -36,22 +36,22 @@ def test_snapshot_rejects_competing_base_memory(isolated):
     first = context._rolling_memory_snapshot("A")
     competing = context._rolling_memory_snapshot("A")
     assert context._write_rolling_memory("A", "winner", 24, snapshot=first)
-    before = context._kv_path().read_bytes()
+    before = context._mem_path().read_bytes()
     assert not context._write_rolling_memory("A", "stale loser", 24, snapshot=competing)
-    assert context._kv_path().read_bytes() == before
+    assert context._mem_path().read_bytes() == before
     assert context._read_rolling_memory("A")["summary"] == "winner"
 
 
 def test_legacy_message_count_is_not_a_covered_cursor(isolated):
     save_messages("A", 20)
-    storage._write_json(context._kv_path(), {
+    storage._write_json(context._mem_path(), {
         "mem:A": {"summary": "unknown coverage", "messageCount": 40, "updatedAt": 123}
     })
-    before = context._kv_path().read_bytes()
+    before = context._mem_path().read_bytes()
     # Legacy refresh-gap contract (test_server RollingMemoryTest) stays intact:
     # Forty saved messages with no growth stay below the refresh gap.
     assert context._rolling_summary_due("A") == 0
-    assert context._kv_path().read_bytes() == before
+    assert context._mem_path().read_bytes() == before
     # Replay from the start happens at the next scheduled refresh, not eagerly.
     save_messages("A", 24)
     assert context._rolling_summary_due("A") == 48
@@ -65,7 +65,7 @@ def test_legacy_message_count_is_not_a_covered_cursor(isolated):
 
 def test_backlog_stays_due_without_new_messages(isolated):
     save_messages("A", 20)
-    storage._write_json(context._kv_path(), {
+    storage._write_json(context._mem_path(), {
         "mem:A": {"summary": "old", "messageCount": 20,
                   "coveredMessageCount": 12, "coveredPrefix": "stale", "updatedAt": 123}
     })

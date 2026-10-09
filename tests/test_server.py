@@ -967,7 +967,8 @@ class Wave2OptimizationTest(unittest.TestCase):
         orig_resolve = context_mod._resolve_messages_path
         kv = {"socratic:br_sess_1234567890abc_1": {"active": True, "updatedAt": int(_time.time()) - 25 * 3600}}
         mutated = []
-        context_mod._read_json = lambda path, default=None: kv if str(path) == str(context_mod._kv_path()) else (default if default is not None else [])
+        # T214：苏格拉底状态读的是 socratic 族拆分文件（data/kv/meta/socratic.json）
+        context_mod._read_json = lambda path, default=None: kv if str(path) == str(context_mod._socratic_path()) else (default if default is not None else [])
         context_mod._mutate_json = lambda path, updater: mutated.append(updater(dict(kv)))
         context_mod._resolve_messages_path = lambda sid, *a, **k: "fake"
         try:

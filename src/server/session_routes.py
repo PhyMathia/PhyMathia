@@ -291,9 +291,10 @@ async def api_clear_all_sessions(request: Request = None):
         _write_json(paths.knowledge_path, {})
         _write_json(paths.formulas_path, {})
         _write_json(paths.kv_path, {})
-        if paths.kv_dir.exists():
-            for f in paths.kv_dir.glob("*.json"):
-                f.unlink()
+        for directory in (paths.kv_dir, paths.kv_meta_dir):
+            if directory.exists():
+                for f in directory.glob("*.json"):
+                    f.unlink()
 
     await asyncio.to_thread(_clear_all_io)  # T201：批量写/删文件不压事件循环
     return {"ok": True}

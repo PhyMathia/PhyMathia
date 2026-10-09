@@ -18,6 +18,20 @@ def _kv_path(account: str = DEFAULT_ACCOUNT):
     return accounts.resolve_paths(account).kv_path
 
 
+def _socratic_path(account: str = DEFAULT_ACCOUNT):
+    """苏格拉底状态族拆分文件（data/kv/meta/socratic.json）。
+
+    与主文件拆分（T214）：状态键的写入不再连带重写 quiz/continent/其余全局键。
+    落点必须与 storage.kv_* 路由层同一函数算，别在这里另拼路径。
+    """
+    return storage._kv_meta_path("socratic", account)
+
+
+def _mem_path(account: str = DEFAULT_ACCOUNT):
+    """滚动记忆族拆分文件（data/kv/meta/mem.json），路由 rationale 同 _socratic_path。"""
+    return storage._kv_meta_path("mem", account)
+
+
 def _sessions_path(account: str = DEFAULT_ACCOUNT):
     return accounts.resolve_paths(account).sessions_path
 
@@ -455,7 +469,7 @@ def _orphan_memory_keys(data: dict, ids: list, owner: str, account: str = DEFAUL
 def _read_rolling_memory(session_id: str, account: str = DEFAULT_ACCOUNT):
     if not session_id:
         return None
-    data = _read_json(_kv_path(account), {})
+    data = _read_json(_mem_path(account), {})
     if not isinstance(data, dict):
         return None
     # 摘要会以 local id 或 server sessionId 两种键出现（见 _session_aliases）：
@@ -513,7 +527,7 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
                         "updatedAt": int(time.time() * 1000),
                     }
                     return data
-                _mutate_json(_kv_path(account), write_legacy)
+                _mutate_json(_mem_path(account), write_legacy)
                 return True
         messages = _load_messages(session_id, account)
         # 拒绝条件按「哪些变化会让这次摘要失效」定：整段历史被截断（位置信息作废，
@@ -524,7 +538,7 @@ def _write_rolling_memory(session_id: str, summary: str, message_count: int,
                 or _rolling_prefix(messages[:covered]) != snapshot["coveredPrefix"]
                 or _read_rolling_memory(session_id, account) != snapshot["baseMemory"]):
             return False
-        _mutate_json(_kv_path(account), updater)
+        _mutate_json(_mem_path(account), updater)
         return True
 
 
@@ -553,7 +567,7 @@ def _delete_rolling_memory(session_id: str, account: str = DEFAULT_ACCOUNT) -> N
                 _rolling_memory_generations[alias] = _rolling_memory_generations.get(alias, 0) + 1
             return data
 
-        _mutate_json(_kv_path(account), updater)
+        _mutate_json(_mem_path(account), updater)
 
 
 def _clear_all_rolling_memory(account: str = DEFAULT_ACCOUNT) -> None:
@@ -563,11 +577,11 @@ def _clear_all_rolling_memory(account: str = DEFAULT_ACCOUNT) -> None:
         _rolling_memory_epoch += 1
         _rolling_memory_generations.clear()
 
-        def updater(data):
-            return {key: value for key, value in data.items()
-                    if not key.startswith(ROLLING_MEMORY_KEY_PREFIX)}
-
-        _mutate_json(_kv_path(account), updater)
+        # 族文件里全是 mem: 键，整族清空＝移除文件（无键可留）
+        try:
+            _mem_path(account).unlink()
+        except OSError:
+            pass
 
 
 def _rolling_summary_due(session_id: str, account: str = DEFAULT_ACCOUNT) -> int:
@@ -1175,7 +1189,7 @@ def _socratic_branch_prefixes(session_raw: str) -> list:
 def _read_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT):
     # 纯读：过期状态的清理由 _resolve_socratic_branch / 显式删除负责，
     # 读路径不做写副作用
-    data = _read_json(_kv_path(account), {})
+    data = _read_json(_socratic_path(account), {})
     state = data.get(_socratic_key(ref))
     if isinstance(state, dict) and state.get("active"):
         if _socratic_state_expired(state):
@@ -1193,7 +1207,7 @@ def _write_socratic_state(ref: str, state, account: str = DEFAULT_ACCOUNT) -> No
             data[_socratic_key(ref)] = state
         return data
 
-    _mutate_json(_kv_path(account), updater)
+    _mutate_json(_socratic_path(account), updater)
 
 
 def _socratic_state_keys(refs, data) -> list:
@@ -1227,7 +1241,7 @@ def snapshot_socratic_state(refs, account: str = DEFAULT_ACCOUNT) -> dict:
     回收站（2026-10-07）用：恢复时原样写回（只补缺）；没有命中状态返回空 dict。
     """
     with storage._JSON_LOCK:
-        data = _read_json(_kv_path(account), {})
+        data = _read_json(_socratic_path(account), {})
         return {k: data[k] for k in _socratic_state_keys(refs, data)}
 
 
@@ -1236,9 +1250,9 @@ def _delete_socratic_state(ref: str, account: str = DEFAULT_ACCOUNT) -> None:
     def updater(data):
         for key in _socratic_state_keys([ref], data):
             data.pop(key, None)
-        return data  # 无命中也回写：stage1 契约钉住「清空后 kv 主文件字节不变」的基线（含空库建文件）
+        return data  # 无命中也回写：stage1 契约钉住「清空后族文件字节不变」的基线（含空库建文件）
 
-    _mutate_json(_kv_path(account), updater)
+    _mutate_json(_socratic_path(account), updater)
 
 
 def _resolve_socratic_branch(session_id: str, account: str = DEFAULT_ACCOUNT) -> str:
@@ -1249,7 +1263,7 @@ def _resolve_socratic_branch(session_id: str, account: str = DEFAULT_ACCOUNT) ->
     """
     if not session_id:
         return ""
-    data = _read_json(_kv_path(account), {})
+    data = _read_json(_socratic_path(account), {})
     prefixes = _socratic_branch_prefixes(session_id)
     best_ref = ""
     # 秒/毫秒混存时按归一化秒比较（占位值与非法值归一化为 0，用原始值打平手，
@@ -1274,7 +1288,7 @@ def _resolve_socratic_branch(session_id: str, account: str = DEFAULT_ACCOUNT) ->
             for k in expired_keys:
                 d.pop(k, None)
             return d
-        _mutate_json(_kv_path(account), updater)
+        _mutate_json(_socratic_path(account), updater)
     if best_ref:
         return best_ref
     messages = _load_messages(session_id, account)
@@ -1443,7 +1457,7 @@ __all__ = [
     "tree_active_content_block", "summary_detail", "tree_upstream_detail_block",
     "DETAIL_SUMMARY_CHARS",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
-    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
+    "SOCRATIC_STATE_PREFIX", "SOCRATIC_STATE_TTL_SECONDS", "estimate_tokens", "resolve_context_budget", "_shrink_history_to_budget", "_content_timestamp_map", "_socratic_state_expired", "_viz_digest", "_socratic_key", "_kv_path", "_socratic_path", "_mem_path", "_read_rolling_memory", "_write_rolling_memory", "_rolling_summary_due", "_rolling_memory_input", "rolling_memory_block", "_read_socratic_state",
     "_write_socratic_state", "_delete_socratic_state", "_resolve_socratic_branch", "_socratic_state_instruction",
     "_sync_socratic_state_from_prompt", "_update_socratic_state_from_content", "_is_socratic_followup",
     "merge_message_lists",

@@ -90,11 +90,11 @@ def test_b2_legacy_seconds_and_placeholder_controls(isolated, timestamp, visible
     state = {"active": True, "question": "legacy"}
     if timestamp is not None:
         state["updatedAt"] = timestamp
-    storage._write_json(context._kv_path(), {"socratic:A": state})
-    before = context._kv_path().read_bytes()
+    storage._write_json(context._socratic_path(), {"socratic:A": state})
+    before = context._socratic_path().read_bytes()
     with mock.patch.object(context.time, "time", return_value=1_800_000_000 + 25 * 3600):
         assert (context._read_socratic_state("A") is not None) is visible
-    assert context._kv_path().read_bytes() == before, "state read must remain side-effect-free"
+    assert context._socratic_path().read_bytes() == before, "state read must remain side-effect-free"
 
 
 def test_b3_refresh_input_covers_messages_leaving_short_term_window(isolated):
@@ -207,7 +207,7 @@ def test_s1_inflight_summary_cannot_resurrect_cleared_memory(isolated, path):
     seed_sessions()
     # Remove preexisting A memory to distinguish resurrection from the static
     # cleanup defect; AB remains as the exact-ID preservation control.
-    storage._mutate_json(context._kv_path(), lambda data: {k: v for k, v in data.items() if k != "mem:A"})
+    storage._mutate_json(context._mem_path(), lambda data: {k: v for k, v in data.items() if k != "mem:A"})
 
     async def run():
         entered, release = asyncio.Event(), asyncio.Event()

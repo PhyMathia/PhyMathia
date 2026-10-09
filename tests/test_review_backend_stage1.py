@@ -27,7 +27,7 @@ async def clear(kind):
 @pytest.mark.parametrize("started", [False, True], ids=["queued", "inflight"])
 def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind, started):
     seed_sessions(alias=True)
-    storage._mutate_json(context._kv_path(), lambda d: {k: v for k, v in d.items()
+    storage._mutate_json(context._mem_path(), lambda d: {k: v for k, v in d.items()
                                                   if k != "mem:remote_A"})
 
     async def run():
@@ -66,7 +66,7 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
                         task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                 # Completion releases deduplication so a fresh task can run.
-                storage._mutate_json(context._kv_path(), lambda d: {k: v for k, v in d.items()
+                storage._mutate_json(context._mem_path(), lambda d: {k: v for k, v in d.items()
                                                               if k != "mem:remote_A"})
                 main_mod._maybe_schedule_rolling_summary("remote_A", "opencode", "", "m",
                                                          "https://opencode.ai/zen/v1")
@@ -79,9 +79,12 @@ def test_s1_alias_task_invalidated_before_start_or_after_response(isolated, kind
 def test_s1_unknown_session_generation_survives_clear(isolated, kind):
     old = context._rolling_memory_generation("A")
     asyncio.run(clear(kind))
-    before = context._kv_path().read_bytes()
+    # T214：清空全部会移除 mem 族文件（此前是主文件写成 {}）——陈旧代次的写入
+    # 既不许改文件、也不许把它凭空建回来
+    before = context._mem_path().read_bytes() if context._mem_path().exists() else None
     assert not context._write_rolling_memory("A", "STALE", 16, expected_generation=old)
-    assert context._kv_path().read_bytes() == before
+    after = context._mem_path().read_bytes() if context._mem_path().exists() else None
+    assert after == before
     current = context._rolling_memory_generation("A")
     assert current != old
     assert context._write_rolling_memory("A", "NEW", 16, expected_generation=current)

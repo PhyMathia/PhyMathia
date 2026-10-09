@@ -91,6 +91,7 @@ class AccountPaths:
     formulas_path: Path
     kv_path: Path
     kv_dir: Path
+    kv_meta_dir: Path
     trash_dir: Path
 
 
@@ -130,6 +131,7 @@ def resolve_paths(account_id=DEFAULT_ACCOUNT) -> AccountPaths:
         formulas_path=root / "formulas.json",
         kv_path=root / "kv_store.json",
         kv_dir=root / "kv",
+        kv_meta_dir=root / "kv" / "meta",
         trash_dir=root / "trash",
     )
 
@@ -432,6 +434,7 @@ def ensure_account(account_id=DEFAULT_ACCOUNT, name: str = None) -> AccountPaths
         _migrate_legacy_into(paths)
         paths.messages_dir.mkdir(parents=True, exist_ok=True)
         paths.kv_dir.mkdir(parents=True, exist_ok=True)
+        paths.kv_meta_dir.mkdir(parents=True, exist_ok=True)
         register_account(account, name=name)
         _ENSURED.add(key)
         return paths

@@ -20,6 +20,7 @@ import httpx
 from test_routes import RouteTestBase
 from server import accounts as accounts_mod
 from server import http_client as http_client_mod
+from server import storage as storage_mod
 
 
 _SOCRATIC_CONTENT = "追问回答。<socratic_meta correct='correct' done='false'/>"
@@ -35,7 +36,8 @@ def _register_account(account: str) -> None:
 
 
 def _kv_keys(account: str) -> dict:
-    path = Path(accounts_mod.resolve_paths(account).kv_path)
+    # T214：socratic:<ref> 状态落在 socratic 族拆分文件（data/kv/meta/socratic.json）
+    path = Path(storage_mod._kv_meta_path("socratic", account))
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
