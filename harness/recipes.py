@@ -179,7 +179,8 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
     appearance = raw.get("appearance") if isinstance(raw.get("appearance"), dict) else {}
     palette = _text(appearance.get("palette")) or "amber"
     custom_color = _normalize_color(appearance.get("color"))
-    shape = _text(appearance.get("shape")) or _default_shape(base_kind)
+    # 形状不是配方参数（2026-10-09 用户拍板）：按底座推导，输入里的 shape 一律忽略
+    shape = _default_shape(base_kind)
     g = raw.get("generate") if isinstance(raw.get("generate"), dict) else {}
     ports = raw.get("ports") if isinstance(raw.get("ports"), dict) else {}
     static_ports = ports.get("static") if isinstance(ports.get("static"), list) else []

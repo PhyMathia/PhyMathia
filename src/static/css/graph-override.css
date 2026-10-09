@@ -1048,6 +1048,30 @@
   --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
 }
 
+/* ---------- 6.5 配方节点卡片：与内置节点只差颜色（2026-10-09 用户验收反馈）----------
+   六个内置模块卡各有「4px 彩框（左 7px）＋ 14% 彩色渐变 ＋ 彩色辉光」，配方节点
+   （graph-attr-recipe）此前一条卡片级规则都没有——只剩 1px 白描边的近黑卡，用户
+   上手一眼判「和别的节点不是一个样式」。这里补齐同款卡片配方，颜色统一取
+   --node-attr（渲染层 graph-render.js 按配方 appearance 注入：色板令牌或自由色
+   掺混），于是配方节点与内置节点的区别只剩颜色——名称/出口/载体本就是配方参数。
+   只覆盖 start/border/glow 三枚：--graph-bubble-end 与 --graph-bubble-shadow 仍
+   随主题基座（深色深底/浅色暖底），换了主题不用改这里。
+   排除 .graph-node-draft：从配方端口拖出的草稿小卡保持原有的轻量样式。 */
+[data-theme="dark"] .graph-node.graph-attr-recipe:not(.graph-node-draft),
+[data-theme="light"] .graph-node.graph-attr-recipe:not(.graph-node-draft) {
+  border-color: var(--node-attr) !important;
+  border-width: 4px !important;
+  border-left-width: 7px !important;
+  --graph-bubble-start: color-mix(in srgb, var(--node-attr) 14%, transparent);
+  --graph-bubble-border: var(--node-attr);
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr) 30%, transparent);
+}
+
+[data-theme="light"] .graph-node.graph-attr-recipe:not(.graph-node-draft) {
+  --graph-bubble-start: color-mix(in srgb, var(--node-attr) 18%, transparent);
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr) 26%, transparent);
+}
+
 .graph-node,
 [data-theme="dark"] .graph-node,
 [data-theme="light"] .graph-node {
@@ -3194,6 +3218,41 @@
 
 /* 已落库配方行的直达入口（T242 配套）：与描述同行内联，不占新行、不动 grid。
    令牌全复用（--btn-bg/--border/--text-secondary/--accent），零新色值零新字号。 */
+.graph-harness-recipe-guide {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  max-height: 150px;
+  overflow-y: auto;
+}
+.graph-harness-recipe-guide[hidden] { display: none; }
+.graph-harness-recipe-guide summary { cursor: pointer; }
+.graph-harness-recipe-guide label { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.graph-harness-recipe-guide select {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+.graph-harness-recipe-guide p { margin: 6px 0; }
+.graph-harness-recipe-starts { display: flex; flex-wrap: wrap; gap: 6px; }
+.graph-harness-recipe-starts button {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.graph-harness-recipe-starts button:focus-visible,
+.graph-harness-recipe-guide select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .graph-harness-op-recipe-actions {
   display: inline-flex;
   gap: 6px;

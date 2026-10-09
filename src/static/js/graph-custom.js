@@ -237,8 +237,8 @@ function createManualNode(nodeKind) {
 // 配方节点（P1，D-R3 覆盖层）：现有 kind 底座 + recipeId + 内嵌快照。
 // 快照随节点落库（customNodes 整条透传：_normalizeGraphState / .pmu 导出导入 /
 // Φ 指纹（customNodes 已含 recipeId）都不需要另开字段）——删配方不毁旧节点。
-function createRecipeNode(recipeId) {
-  const recipe = (typeof getUserRecipes === 'function' ? getUserRecipes() : []).find(item => item.id === recipeId);
+function createRecipeNode(recipeId, draftRecipe) {
+  const recipe = draftRecipe || (typeof getUserRecipes === 'function' ? getUserRecipes() : []).find(item => item.id === recipeId);
   if (!recipe) {
     toastMsg('配方不存在或已删除');
     closeAddBlankNodeModal();
@@ -254,8 +254,9 @@ function createRecipeNode(recipeId) {
   _pushGraphUndo();
   const state = _graphState();
   state.customNodes = state.customNodes || [];
+  const nodeId = 'recipe-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   state.customNodes.push({
-    id: 'recipe-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    id: nodeId,
     kind,
     moduleKey: '',
     manual: embed.base.kind === 'manual',
@@ -301,6 +302,7 @@ function createRecipeNode(recipeId) {
   _saveGraphState(state);
   closeAddBlankNodeModal();
   renderGraphCanvas();
+  return nodeId;
 }
 
 function deleteBlankNode(nodeId, pushUndo = true) {

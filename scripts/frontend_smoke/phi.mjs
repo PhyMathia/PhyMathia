@@ -15,8 +15,22 @@ function clonePhi(vm, sandbox, id) {
 
 check('Φ 相位转换放宽：三模式锁定时旧相位不得绕过（apply 例外）', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes("if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;")) {
-    throw new Error('锁定模式未泛化到 chat——重试/重发路径仍可携带 expand/evaluate 绕过');
+  // 发送起点把本次请求的模式锁进 requestMode（改名自 lockedMode，语义不变：chat/preset 锁定、apply 例外）
+  if (!/const requestMode = _harnessResolveRequestMode\(opts\);/.test(runSrc)) {
+    throw new Error('发送起点未锁定请求模式（排队回放须经 opts.mode 带入队时刻值）');
+  }
+  if (!/if \(requestMode !== 'edit' && phase !== 'apply'\) phase = requestMode;/.test(runSrc)) {
+    throw new Error('锁定模式未泛化到 chat——重试/重发路径仍可携带 expand/evaluate 绕过（apply 例外须保留）');
+  }
+  // 排队回放：入队即锁定 mode/target，出队按入队时刻语义发（不改用户当前 UI 选择）
+  if (!/const queuedMode = typeof window\._harnessMode === 'function' \? window\._harnessMode\(\) : 'edit';/.test(runSrc)) {
+    throw new Error('入队时未锁定模式');
+  }
+  if (!runSrc.includes('const queuedRecipeTargetId = _harnessResolveRecipeTargetId(null);')) {
+    throw new Error('入队时未锁定配方目标');
+  }
+  if (!/mode: queuedMode,\s*\n\s*recipeTargetId: queuedRecipeTargetId,/.test(runSrc)) {
+    throw new Error('排队回放未把入队时刻的 mode/target 经 opts 带入');
   }
   return true;
 });
@@ -100,7 +114,9 @@ check('Φ 解耦接线：切画布不再重置 Φ 对话＋删画布只解绑＋
   if (!sessionSrc.includes('window.phiCanvasesCleared()')) throw new Error('清空画布未解绑 Φ 会话');
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
   if (!runSrc.includes('canvasReady')) throw new Error('改图缺「绑定画布=当前画布」门槛（canvasReady）');
-  if (!runSrc.includes('_emptyHarnessSnapshot()')) throw new Error('纯问答路径未改用空快照');
+  if (!runSrc.includes(': _emptyHarnessSnapshot({ mode: requestMode, recipeTargetId: requestRecipeTargetId })')) {
+    throw new Error('纯问答路径未改用空快照（不绑图分支须把本次请求锁定的 mode/target 带进空快照）');
+  }
   const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
   if (!src.includes('phymathia_phi_migration_done')) throw new Error('缺旧数据一次性迁移标记');
   if (!src.includes('_migrateLegacyPhiHistory')) throw new Error('缺迁移函数');
@@ -225,6 +241,11 @@ check('T94 大图自动降级：degrade 邻域收到 1 跳、无焦点保持原�
   if (noFocus.snapshot_meta.est_tokens !== plain.snapshot_meta.est_tokens) throw new Error('无焦点时 degrade 快照应与原样逐字节一致');
   const focused2 = sandbox.buildHarnessSnapshot(false, ['d0'], null);
   const focused1 = sandbox.buildHarnessSnapshot(false, ['d0'], null, null, { degrade: true });
+  // degrade 带本次请求锁定的 mode/target 后半径不变（仍 1 跳；preset＋显式空目标不注入）
+  const focused1Locked = sandbox.buildHarnessSnapshot(false, ['d0'], null, null, { degrade: true, mode: 'preset', recipeTargetId: '' });
+  if (focused1Locked.snapshot_meta.directory_nodes !== focused1.snapshot_meta.directory_nodes) {
+    throw new Error('degrade 带 mode/target 后邻域半径不该变（仍 1 跳）');
+  }
   if (focused1.snapshot_meta.directory_nodes <= 0) throw new Error('有焦点时 degrade 应把外层节点压成目录行');
   if (focused1.snapshot_meta.directory_nodes <= focused2.snapshot_meta.directory_nodes) {
     throw new Error('degrade 邻域应比默认 2 跳更紧：1 跳 ' + focused1.snapshot_meta.directory_nodes + ' 目录行 vs 2 跳 ' + focused2.snapshot_meta.directory_nodes);
@@ -235,7 +256,9 @@ check('T94 大图自动降级：degrade 邻域收到 1 跳、无焦点保持原�
 
 check('T94 三级降级接线：先重算 degrade、降不动才报错、无焦点报错文案不变', () => {
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes('{ degrade: true }')) throw new Error('超预算未接 degrade 重算');
+  if (!runSrc.includes('{ degrade: true, mode: requestMode, recipeTargetId: requestRecipeTargetId }')) {
+    throw new Error('超预算未接 degrade 重算（须带本次请求锁定的 mode/target）');
+  }
   if (!runSrc.includes('图较大，已自动聚焦到目标附近区域（可在画布选中节点缩小范围）')) throw new Error('缺降级成功提示文案');
   if (!runSrc.includes('（聚焦后仍过大）')) throw new Error('缺「降级后仍超限」兜底说明');
   if (!/est_tokens <= 30000/.test(runSrc)) throw new Error('降级后未回预算判定（≤30000 才采用）');

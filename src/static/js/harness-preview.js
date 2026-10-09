@@ -195,6 +195,9 @@
         : '<span class="graph-harness-op-tick" aria-hidden="true">' + (on ? '☑' : '☐') + '</span>')
       + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops))
       + (recipeActionsLive ? _harnessRecipeActionsHtml(op) : '')
+      + (editable && op.recipe && ['create_recipe', 'update_recipe'].includes(op.op || op.type)
+        ? '<button type="button" class="graph-harness-op-recipe-btn" onclick="trialHarnessRecipe(' + index + ')"'
+          + ' title="仅在画布放置草稿，不保存配方；手动生成可能触发多次模型调用并产生相应费用">放置草稿试用</button>' : '')
       + '</span>'
       + ((reason || diff)
         ? '<details class="graph-harness-op-detail"><summary>理由与对比</summary>'
@@ -203,6 +206,42 @@
           + '</details>'
         : '')
       + '</div>';
+  }
+
+  function trialHarnessRecipe(index) {
+    if (phyIsReadonly()) { phyReadonlyBlock('试用配方草稿'); return; }
+    if (harnessBusy) { _setHarnessStatus('请等当前生成结束后再试用草稿。', 'ok'); return; }
+    const entry = _harnessCurrentOpsEntry();
+    const op = entry && (entry.operations || [])[index];
+    if (!op || !op.recipe || !['create_recipe', 'update_recipe'].includes(op.op || op.type)) return;
+    const recipe = typeof normalizeRecipeInput === 'function' ? normalizeRecipeInput(op.recipe) : null;
+    const verdict = recipe && typeof validateRecipe === 'function' ? validateRecipe(recipe, []) : null;
+    if (!verdict || !verdict.ok) {
+      _setHarnessStatus('草稿配置未通过校验，无法试用。', 'error');
+      return;
+    }
+    if (!_harnessBoundSid() || _harnessBoundSid() !== _sessionId()) {
+      _setHarnessStatus('请先打开 Φ 绑定的画布，再放置草稿试用。', 'error');
+      return;
+    }
+    if (!_harnessCanApply(entry._binding)) return;
+    const before = _harnessVersionSource(_harnessGraphState());
+    const draft = Object.assign({}, recipe, { id: 'recipe-trial-' + Date.now(), name: recipe.name + '·草稿试用' });
+    const nodeId = createRecipeNode(draft.id, draft);
+    if (!nodeId) return;
+    // 只认领本次新增的试用节点，原版本仍保留；任何其他内容变化继续由应用守卫拒绝。
+    const original = JSON.parse(before);
+    const after = JSON.parse(_harnessVersionSource(_harnessGraphState()));
+    const trialNodes = after[0] || [];
+    const withoutTrial = trialNodes.filter(node => node.id !== nodeId);
+    after[0] = original[0] === null && !withoutTrial.length ? null : withoutTrial;
+    if (trialNodes.filter(node => node.id === nodeId).length === 1 && JSON.stringify(after) === before) {
+      entry._binding.trialGraphVersion = _harnessGraphVersion();
+      entry._binding.trialNodeIds = [...(entry._binding.trialNodeIds || []), nodeId];
+      if (harnessResult) harnessResult._binding = entry._binding;
+      if (typeof _saveHarnessHistory === 'function') _saveHarnessHistory();
+    }
+    _setHarnessStatus('草稿已放上画布，正式配方库未改变。接入一个样例问题后手动生成；可能触发多次模型调用并产生相应费用。生成后画布内容变化，保存前需重新生成建议；不需要的试用节点可直接删除。', 'ok');
   }
 
   // 勾选写回历史条目（而不是留在 DOM 里）：_renderHarnessChat 是整块 innerHTML 重写，
@@ -238,6 +277,14 @@
     const picked = Array.isArray(entry.selectedOps) ? entry.selectedOps : null;
     // selectedOps 为 null ＝还没人动过勾选，按全选
     const selected = picked === null ? ops.slice() : picked.map(i => ops[i]).filter(Boolean);
+    const availableRecipes = new Set(typeof getUserRecipes === 'function' ? getUserRecipes().map(recipe => recipe.id) : []);
+    for (const op of selected) {
+      if ((op.op || op.type) === 'create_recipe') availableRecipes.add(op.recipe_id || (op.recipe && op.recipe.id));
+      if ((op.op || op.type) === 'create_node' && op.recipe_id && !availableRecipes.has(op.recipe_id)) {
+        _setHarnessStatus('请同时勾选这个节点依赖的新建配方，或先保存配方后再放置节点。', 'error');
+        return null;
+      }
+    }
     // 全部取消勾选＝什么都不选，不再回退成“应用全部”——旧回退会把用户特意
     // 排除的删除类操作整包应用。是否放行由调用方提示用户决定。
     return selected;
@@ -261,11 +308,10 @@
   }
 
   function _newHarnessNode(id, op, pos) {
-    const kind = op.kind || 'knowledge';
+    let kind = op.kind || 'knowledge';
     const label = String(op.label || op.title || '节点');
     const content = String(op.content || '');
     const formula = String(op.formula || '');
-    const isManual = ['knowledge', 'relation', 'human_note', 'note', 'source', 'blank'].includes(kind);
     // 配方实例节点（P3 创造模式「在画布上放一个试试」）：内嵌创建时刻的配方快照
     // （与 createRecipeNode 同款覆盖层口径——删配方不毁旧节点）
     const recipeRef = String(op.recipe_id || op.recipeId || '');
@@ -274,6 +320,11 @@
       const found = getUserRecipes().find(item => item.id === recipeRef);
       recipeEmbed = found ? recipeEmbedSnapshot(found) : null;
     }
+    if (recipeEmbed) {
+      const kindMap = { manual: 'answer', question: 'user' };
+      kind = kindMap[recipeEmbed.base.kind] || recipeEmbed.base.kind;
+    }
+    const isManual = ['knowledge', 'relation', 'human_note', 'note', 'source', 'blank'].includes(kind);
     return {
       id,
       kind,
@@ -282,7 +333,7 @@
       moduleKey: kind === 'module'
         ? String(op.module_key || op.moduleKey || '')
         : (kind === 'hub' || kind === 'summary' || kind === 'note' ? (op.module_key || op.moduleKey || '') : ''),
-      manual: kind === 'answer' ? !!op.manual : (kind === 'user' ? false : isManual),
+      manual: kind === 'answer' ? (recipeEmbed ? recipeEmbed.base.kind === 'manual' : !!op.manual) : (kind === 'user' ? false : isManual),
       content,
       status: 'done',
       summary: content.slice(0, 120),

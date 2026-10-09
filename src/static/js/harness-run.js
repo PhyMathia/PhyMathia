@@ -184,6 +184,10 @@
   // 会把批次之后的手工编辑一并卷走。
   function undoLastHarnessEdit() {
     if (Array.isArray(harnessLastAppliedOps) && harnessLastAppliedOps.length) {
+      if (harnessLastAppliedOps.some(op => ['update_recipe', 'delete_recipe'].includes(op.op || op.type))) {
+        _setHarnessStatus('这次涉及配方修改或删除，请用操作卡中的「撤销本次」恢复；它会还原整批修改前的画布和配方库，也会覆盖之后的手工修改。', 'ok');
+        return;
+      }
       runGraphHarnessWithText('撤销刚才的修改，恢复原样');
       return;
     }
@@ -265,12 +269,21 @@
       if (queuedInput) queuedInput.value = '';
       _appendQueuedHarnessMessage(queuedText);
       if (typeof _enqueueSend === 'function') {
+        // 入队即锁定这一次请求的模式与配方目标：排队等待期间用户切模式/换目标，
+        // 回放仍按入队时刻的语义发（否则会出现「排队的是创造模式改配方、出队却
+        // 变成编辑模式改图」的错位）。只经 opts 传入，不改用户当前的 UI 选择。
+        const queuedMode = typeof window._harnessMode === 'function' ? window._harnessMode() : 'edit';
+        const queuedRecipeTargetId = _harnessResolveRecipeTargetId(null);
         _enqueueSend('Φ 消息', function () {
           // 轮到时回填输入框再走主路径（与 runGraphHarnessWithFocus 同一惯例：文本经
           // 输入框回填而非旁路传参）。force 只用于越过忙守卫——队列放行前已确认空闲。
           const back = document.getElementById('graphHarnessInstruction');
           if (back) back.value = queuedText;
-          return runGraphHarness(phase, Object.assign({}, opts, { force: true }));
+          return runGraphHarness(phase, Object.assign({}, opts, {
+            force: true,
+            mode: queuedMode,
+            recipeTargetId: queuedRecipeTargetId,
+          }));
         }, { text: queuedText });
         _setHarnessStatus('已加入排队，本轮结束后自动发送', 'running');
       } else {
@@ -281,7 +294,12 @@
       }
       return;
     }
-    const requestBinding = _harnessBinding();
+    // 发送起点锁定本次请求的模式与配方目标（排队回放经 opts 带入队时刻的值）：
+    // 之后任何 await 或用户操作都不改变这一请求的语义。target 显式传空串＝
+    // 明确不指定目标，与「没传这个字段」区分开。
+    const requestMode = _harnessResolveRequestMode(opts);
+    const requestRecipeTargetId = _harnessResolveRecipeTargetId(opts);
+    const requestBinding = _harnessBinding(requestMode);
     // 并发守卫（解耦后 2026-09-30）：phiId/epoch 只在 Φ 会话切换/清空时变，切画布
     // 不再打断纯问答；改图类请求仍要求「生成时绑定的画布」始终是当前打开的画布
     // （预览与应用都落在实时视图与撤销栈上，跨画布落笔是事故）。
@@ -302,8 +320,8 @@
     // 重新执行历史建议（entry.phase）、聚焦澄清重跑（pending.phase）携带的旧相位一律让位；
     // 唯一例外是内部 apply 流程（应用 AI 评价节点建议）。编辑模式 = 不锁定，走原有自动路由。
     // 撤销不需要例外：后端确定性撤销（_detect_undo_intent）在相位分派之前、不看相位。
-    const lockedMode = ((typeof window._harnessMode === 'function' && window._harnessMode()) || 'edit');
-    if (lockedMode !== 'edit' && phase !== 'apply') phase = lockedMode;
+    // 模式取值在发送起点已锁进 requestMode（见上，队列回放带入队时刻的值）。
+    if (requestMode !== 'edit' && phase !== 'apply') phase = requestMode;
     // T103：换模型重试＝一次性覆盖（重试按钮设置 harnessModelOverride，取用即清，
     // 不改用户的模型槽位；缺省回落原有 graph→agent 槽位链）
     const model = harnessModelOverride
@@ -433,8 +451,9 @@
     _setHarnessBusy(false);
     let snapshot = canvasReady
       ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
-          harnessPhase === 'normal' ? continentData : null)
-      : _emptyHarnessSnapshot();
+          harnessPhase === 'normal' ? continentData : null,
+          { mode: requestMode, recipeTargetId: requestRecipeTargetId })
+      : _emptyHarnessSnapshot({ mode: requestMode, recipeTargetId: requestRecipeTargetId });
     harnessSnapshot = snapshot;
     const _snapshotMeta = snapshot.snapshot_meta || {};
     if (_snapshotMeta.est_tokens > 30000) {
@@ -447,7 +466,8 @@
       const hasFocus = canvasReady && (focusIds.length > 0 || canvasSelectedIds.length > 0);
       const degraded = hasFocus
         ? buildHarnessSnapshot(harnessPhase === 'evaluate', focusIds, harnessSingleEvalId,
-            harnessPhase === 'normal' ? continentData : null, { degrade: true })
+            harnessPhase === 'normal' ? continentData : null,
+            { degrade: true, mode: requestMode, recipeTargetId: requestRecipeTargetId })
         : null;
       const degradedMeta = degraded ? (degraded.snapshot_meta || {}) : null;
       if (degraded && degradedMeta.est_tokens <= 30000) {
@@ -888,6 +908,9 @@
       const gone = oldPorts.map(p => p.label).filter(l => !newPorts.some(p => p.label === l));
       add(changed, '出口 ' + oldPorts.length + ' → ' + newPorts.length + ' 个'
         + (gone.length ? '（少了「' + gone.join('、') + '」）' : ''));
+    } else if (JSON.stringify(oldPorts) !== JSON.stringify(newPorts)) {
+      add(changed, '出口名称、顺序或拖出行为已改变：「' + oldPorts.map(p => p.label).join('、')
+        + '」→「' + newPorts.map(p => p.label).join('、') + '」');
     }
     // 动态出口＋档位标签：最高频的翻车点（三档追问被抹成一问一答）
     const oldDyn = oldRecipe.ports && oldRecipe.ports.dynamic;
@@ -902,6 +925,16 @@
       const newTags = tagList(newRecipe);
       if (oldTags !== newTags) {
         (newTags ? changed : dropped).push('档位标签「' + (oldTags || '无') + '」→「' + (newTags || '无') + '」');
+      }
+      const oldParser = oldDyn.parser || {}, newParser = newDyn.parser || {};
+      if (oldParser.label_from !== newParser.label_from) add(changed, '动态出口标题的取法已改变');
+      if (oldParser.max !== newParser.max) add(changed, '最多生成出口 ' + oldParser.max + ' → ' + newParser.max + ' 个');
+      if (JSON.stringify(oldDyn.each || {}) !== JSON.stringify(newDyn.each || {})) add(changed, '动态出口的追问类型或拖出行为已改变');
+      const oldFallback = oldDyn.fallback || {}, newFallback = newDyn.fallback || {};
+      if (JSON.stringify(oldFallback) !== JSON.stringify(newFallback)) {
+        const modes = { none: '不显示备用出口', static: '显示固定备用出口', label_questions_from_text: '从正文提取备用问题' };
+        add(changed, '识别不到出口时：' + (modes[newFallback.mode] || '使用默认备用规则')
+          + (Array.isArray(newFallback.labels) ? '（' + newFallback.labels.join('、') + '）' : ''));
       }
     }
     // 提示词槽：旧有内容、新 payload 为空 ＝ 被抹掉

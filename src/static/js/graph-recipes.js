@@ -237,7 +237,9 @@ function normalizeRecipeInput(raw) {
   if (!name || !RECIPE_BASE_KINDS.includes(baseKind)) return null;
   const paletteKey = String((raw.appearance && raw.appearance.palette) || 'amber');
   const customColor = normalizeRecipeColor(raw.appearance && raw.appearance.color);
-  const shape = String((raw.appearance && raw.appearance.shape) || _recipeDefaultShape(baseKind));
+  // 形状不是配方参数（2026-10-09 用户拍板）：一律按底座推导，输入里的 shape 忽略——
+  // 此前 Φ 能写、却只在「添加节点」面板圆点生效、节点卡不生效（设了不生效）。
+  const shape = _recipeDefaultShape(baseKind);
   const g = (raw.generate && typeof raw.generate === 'object') ? raw.generate : {};
   const ports = Array.isArray(raw.ports && raw.ports.static) ? raw.ports.static : [];
   const dynamic = _normalizeRecipeDynamic(raw.ports && raw.ports.dynamic);

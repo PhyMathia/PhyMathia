@@ -284,6 +284,43 @@
       console.warn('Harness knowledge sync failed:', e);
     }
   }
+  // 配方依赖预检（2026-10-09，全路径守卫）：按操作顺序在「实时配方库」上推演——
+  // create_recipe 入册、delete_recipe 出册，任何 create_node.recipe_id /
+  // update_recipe.recipe_id 不在当前册上就整批拒绝（返回失败文案；空串＝通过）。
+  // 覆盖图指纹管不到的两件事：建议生成后配方被外部编辑/删除；同批「先删后建」的引用。
+  // 只在 _applyOps 一处调用，所有应用路径（应用全部/应用所选/历史保留/撤销回放）统一生效。
+  function _harnessRecipePreflight(ops) {
+    const list = (ops || []).filter(op => op
+      && ['create_recipe', 'update_recipe', 'delete_recipe', 'create_node'].includes(op.op || op.type || ''));
+    if (!list.length) return '';
+    if (typeof getUserRecipes !== 'function') return '配方库不可用，无法应用配方相关操作';
+    const available = new Set(getUserRecipes().map(recipe => String((recipe && recipe.id) || '')));
+    for (const op of list) {
+      const name = op.op || op.type || '';
+      if (name === 'create_recipe') {
+        const createdId = String(op.recipe_id || op.recipeId || (op.recipe && op.recipe.id) || '');
+        if (createdId) available.add(createdId);
+        continue;
+      }
+      if (name === 'create_node') {
+        const ref = String(op.recipe_id || op.recipeId || '');
+        if (!ref) continue; // 普通节点（后端会给空 recipe_id）：与配方无关
+        if (!available.has(ref)) return '要放置的配方不存在或已被删除，请重新生成建议后再应用';
+        continue;
+      }
+      const rid = String(op.recipe_id || op.recipeId || (op.recipe && op.recipe.id) || '');
+      if (!rid) return '操作缺少配方 ID，无法应用';
+      if (name === 'delete_recipe') {
+        if (!available.has(rid)) return '要删除的配方已不存在，请重新生成建议后再应用';
+        available.delete(rid);
+        continue;
+      }
+      // update_recipe：目标必须在实时库里（本批 create_recipe 创建的也算）
+      if (!available.has(rid)) return '要修改的配方不存在或已被删除，请重新生成建议后再应用';
+    }
+    return '';
+  }
+
   // reportMode（T96 会话事件日志）：'all' 应用全部 / 'selected' 应用所选 /
   // 'keep' 历史建议「保留修改」——要上报成 applied 批次；null＝调用方明确不上报
   // （对话式撤销应用的 inverse 操作，是回滚不是应用）。默认 'all' 兜住所有旧调用点。
@@ -299,6 +336,13 @@
     // 或重新生成建议。标志由应用成功/撤销/新结果渲染/Φ 会话重置/新一轮生成负责复位。
     if (harnessResultApplied) {
       _setHarnessStatus('这条建议已经应用过：需要重来请先点「撤销本次」，或重新生成建议', 'error');
+      return;
+    }
+    // 配方依赖预检（全路径，2026-10-09）：必须在动图/动配方库之前，对实时配方库按序
+    // 判定（含 update/delete 目标缺失＝明确报错而不是静默空转）；失败整批拒绝。
+    const recipeBlock = _harnessRecipePreflight(ops);
+    if (recipeBlock) {
+      _setHarnessStatus(recipeBlock, 'error');
       return;
     }
     const before = JSON.parse(JSON.stringify(state));
@@ -411,6 +455,9 @@
   function applySelectedGraphHarness() {
     if (!_harnessCanApply(harnessResult?._binding)) return;
     const selected = _selectedOps();
+    // null＝依赖缺失：_selectedOps 已给出「补勾依赖配方」的具体报错，这里必须原样
+    // 返回，绝不能用下方「没有勾选任何操作」把它盖掉（空数组仍保留旧的空选语义）。
+    if (selected === null) return;
     if (!selected.length) {
       _setHarnessStatus('没有勾选任何操作：勾选想保留的条目再点「应用所选」，或改用「应用全部」', 'error');
       return;
