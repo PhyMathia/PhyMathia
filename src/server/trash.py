@@ -248,9 +248,10 @@ def _sole_owner_items(path: Path, variants: set) -> dict:
 
 def _capture_quiz(paths: accounts.AccountPaths, variants: set) -> dict:
     """检测统计与题库里本会话的条目（全局 kv 键内按 sessionId 归属的子条目）。"""
-    store = storage._read_json(paths.kv_path, {})
+    # 两键都在 quiz 族拆分文件里（T214），经 kv_read 路由取，别直读主文件
+    stats = storage.kv_read(QUIZ_STATS_KV_KEY, account=paths.account)
+    bank = storage.kv_read(QUIZ_BANK_KV_KEY, account=paths.account)
     out = {"stats": None, "bank": None}
-    stats = store.get(QUIZ_STATS_KV_KEY)
     if isinstance(stats, dict):
         captured = {"_meta": {}}
         got = False
@@ -272,7 +273,6 @@ def _capture_quiz(paths: accounts.AccountPaths, variants: set) -> dict:
                         got = True
         if got:
             out["stats"] = captured
-    bank = store.get(QUIZ_BANK_KV_KEY)
     if isinstance(bank, dict) and isinstance(bank.get("questions"), list):
         hits = [q for q in bank["questions"]
                 if isinstance(q, dict) and str(q.get("sessionId") or "") in variants]
@@ -392,7 +392,11 @@ def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str
                 data.setdefault(k, v)
             return data
 
-        storage._mutate_json(paths.kv_path, soc_merge)
+        # socratic 族拆分文件（T214）：与 context._socratic_path 同一路由落点
+        storage._mutate_json(storage._kv_meta_path("socratic", paths.account), soc_merge)
+
+    # quiz 族拆分文件：统计与题库共居（T214）
+    quiz_path = storage._kv_meta_path("quiz", paths.account)
 
     if isinstance(quiz_stats, dict):
         def stats_merge(data, _snap=quiz_stats):
@@ -416,7 +420,7 @@ def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str
             data[QUIZ_STATS_KV_KEY] = merged
             return data
 
-        storage._mutate_json(paths.kv_path, stats_merge)
+        storage._mutate_json(quiz_path, stats_merge)
 
     if isinstance(quiz_bank, dict):
         def bank_merge(data, _snap=quiz_bank):
@@ -434,7 +438,7 @@ def _restore_payload_data(paths: accounts.AccountPaths, item_dir: Path, sid: str
             data[QUIZ_BANK_KV_KEY] = cur
             return data
 
-        storage._mutate_json(paths.kv_path, bank_merge)
+        storage._mutate_json(quiz_path, bank_merge)
 
 
 def _restore_cleared_messages(paths: accounts.AccountPaths, item_id: str, meta: dict) -> str:

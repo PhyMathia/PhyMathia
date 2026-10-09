@@ -918,7 +918,9 @@ class ContinentRouteTest(RouteTestBase):
         # v2：KV continent_edges 里的用户簇间边按当前投影校验后随响应下发
         self._seed()
         td = Path(self._td.name) / "users" / "default"   # 账号域数据根
-        (td / "kv_store.json").write_text(json.dumps({
+        # T214：continent_edges 在 continent 族拆分文件里（经 /api/kv 路由读写）
+        (td / "kv" / "meta").mkdir(parents=True, exist_ok=True)
+        (td / "kv" / "meta" / "continent.json").write_text(json.dumps({
             "continent_edges": {"edges": [
                 {"id": "e1", "fromItem": "k1", "toItem": "k2",
                  "fromSession": "sess_a", "toSession": "sess_b",

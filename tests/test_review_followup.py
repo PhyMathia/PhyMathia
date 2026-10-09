@@ -21,11 +21,12 @@ def seed_alias_session():
     storage._write_json(storage.SESSIONS_PATH, {"A": {"id": "A", "sessionId": "remote_A"}})
     save_messages("A")
     assert context._write_rolling_memory("remote_A", "ALIAS_MEMORY", 16)
-    return context._kv_path().read_bytes()
+    return context._mem_path().read_bytes()
 
 
 def kv_keys():
-    return set(storage._read_json(context._kv_path(), {}))
+    # T214：mem:/socratic: 已拆进 data/kv/meta/ 族文件，合并视图即全量键集
+    return set(storage.kv_all_data())
 
 
 def test_orphan_alias_memory_removed_after_mapping_lost(isolated):
@@ -65,11 +66,11 @@ def test_alias_with_own_messages_file_is_preserved(isolated):
 
 def test_other_sessions_memory_is_never_swept(isolated):
     seed_alias_session()
-    storage._mutate_json(context._kv_path(), lambda d: {**d, "mem:other": {
+    storage._mutate_json(context._mem_path(), lambda d: {**d, "mem:other": {
         "summary": "OTHER", "messageCount": 16, "owner": "other"}})
     storage._write_json(storage.SESSIONS_PATH, {})
     context._delete_rolling_memory("A")
-    data = storage._read_json(context._kv_path(), {})
+    data = storage._read_json(context._mem_path(), {})
     assert data["mem:other"]["summary"] == "OTHER"
 
 
@@ -79,6 +80,7 @@ def test_delete_without_memory_does_not_rewrite_kv(isolated):
     before = context._kv_path().read_bytes()
     context._delete_rolling_memory("A")
     assert context._kv_path().read_bytes() == before, "no memory for this session: leave the file alone"
+    assert not context._mem_path().exists(), "T214: 无记忆可删时不得凭空建出族文件"
 
 
 # ---------- B2 残留：苏格拉底分支状态秒/毫秒混存 ----------
@@ -88,7 +90,7 @@ def branch_ref(name):
 
 
 def write_state(name, updated_at, active=True):
-    storage._mutate_json(context._kv_path(), lambda d: {**d, f"socratic:{branch_ref(name)}": {
+    storage._mutate_json(context._socratic_path(), lambda d: {**d, f"socratic:{branch_ref(name)}": {
         "active": active, "level": "basic", "updatedAt": updated_at}})
 
 
@@ -114,7 +116,7 @@ def test_legacy_placeholder_states_still_resolve(isolated):
 
 def test_junk_timestamps_do_not_crash_or_win(isolated):
     now = int(time.time())
-    storage._mutate_json(context._kv_path(), lambda d: {**d,
+    storage._mutate_json(context._socratic_path(), lambda d: {**d,
         f"socratic:{branch_ref('a')}": {"active": True, "updatedAt": "garbage"},
         f"socratic:{branch_ref('b')}": {"active": True, "updatedAt": now}})
     assert context._resolve_socratic_branch("A") == branch_ref("b")

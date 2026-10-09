@@ -262,7 +262,7 @@ def test_kv_migrate_and_restore_bulk_per_account(acc_env):
     # 主文件里带会话级键 → 启动迁移按账号搬进 data/kv
     paths.kv_path.parent.mkdir(parents=True, exist_ok=True)
     paths.kv_path.write_text(json.dumps({"graph:s1": {"n": 1}, "g:k": "v"}), encoding="utf-8")
-    assert storage.kv_migrate_session_keys(account="alice") == 1  # 搬的是会话级键数（graph:s1）
+    assert storage.kv_migrate_split_keys(account="alice") == 1  # 搬的是会话级键数（graph:s1）
     assert (paths.kv_dir / "s1.json").exists()
     assert json.loads(paths.kv_path.read_text(encoding="utf-8")) == {"g:k": "v"}  # 全局键留主文件
     # 备份导入按账号落盘
@@ -271,6 +271,33 @@ def test_kv_migrate_and_restore_bulk_per_account(acc_env):
     assert storage.kv_read("g:k2", account="default") is None
     merged = storage.kv_all_data(account="alice")
     assert merged["g:k"] == "v" and merged["g:k2"] == "v2" and merged["graph:s2"] == {"n": 2}
+
+
+def test_startup_migration_covers_all_registered_accounts(acc_env):
+    """T214：启动迁移必须逐账号跑——非 default 账号主文件里没迁走的族键会变成
+    读路由（只认拆分落点）拿不到的孤儿。真机取证：16ba 账号的 socratic 状态
+    就躺在它自己的 kv_store.json 里。"""
+    import main as main_mod
+
+    default_paths = accounts.ensure_account("default")
+    default_paths.kv_path.write_text(
+        json.dumps({"socratic:def": {"active": True}, "g:k": "v"}), encoding="utf-8")
+    alice_paths = _make("alice")
+    alice_paths.kv_path.write_text(json.dumps(
+        {"mem:alice_sess": {"summary": "s"}, "phymathia_quiz_bank": {"questions": []},
+         "tasks:global": {"t": 1}}), encoding="utf-8")
+
+    main_mod._migrate_kv_split_all_accounts()
+
+    # default 与 alice 两域的族键都进了各自拆分文件，且读路由拿得到
+    assert storage.kv_read("socratic:def", account="default") == {"active": True}
+    assert storage.kv_read("mem:alice_sess", account="alice") == {"summary": "s"}
+    assert storage.kv_read("phymathia_quiz_bank", account="alice") == {"questions": []}
+    # 主文件只余小全局键
+    assert json.loads(default_paths.kv_path.read_text(encoding="utf-8")) == {"g:k": "v"}
+    assert json.loads(alice_paths.kv_path.read_text(encoding="utf-8")) == {"tasks:global": {"t": 1}}
+    # 账号域不串：default 读不到 alice 的记忆
+    assert storage.kv_read("mem:alice_sess", account="default") is None
 
 
 # ====== 备份按账号导出/恢复 ======

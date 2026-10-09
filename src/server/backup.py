@@ -157,6 +157,9 @@ def _restore_target_paths(account: str = DEFAULT_ACCOUNT) -> list:
     # 会话级 KV 拆分文件也是恢复目标：回滚与「新建文件清理」都必须覆盖
     if p.kv_dir.exists():
         paths.extend(sorted(p.kv_dir.glob("*.json")))
+    # 族拆分文件（socratic/mem/quiz/continent）同理
+    if p.kv_meta_dir.exists():
+        paths.extend(sorted(p.kv_meta_dir.glob("*.json")))
     return paths
 
 

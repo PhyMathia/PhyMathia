@@ -189,12 +189,24 @@ def _server_log_config(log_file: Path) -> dict:
     return cfg
 
 # ====== FastAPI 应用 ======
+def _migrate_kv_split_all_accounts() -> None:
+    """启动迁移（幂等）：把主文件里的会话级键与族键搬进各自拆分文件。
+
+    必须逐账号跑：读路由只认拆分落点，非 default 账号主文件里没迁走的旧键
+    （T214 前 socratic/mem/quiz/continent 都写主文件）会变成读不到的孤儿。
+    单个账号失败只记警告不中断启动——下次启动幂等重跑。
+    """
+    for account in [accounts.DEFAULT_ACCOUNT, *accounts.load_registry()]:
+        try:
+            storage.kv_migrate_split_keys(account=account)
+        except Exception as e:
+            logger.warning(f"kv split migration failed for account {account}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _app.state.http_client = http_client.get_http_client()
-    # KV 会话级键拆分的一次性迁移（幂等）：把主文件里的 graph:/harness_history:
-    # 等会话键搬进 data/kv/<sid>.json，成功前不动主文件
-    storage.kv_migrate_session_keys()
+    _migrate_kv_split_all_accounts()
     try:
         yield
     finally:

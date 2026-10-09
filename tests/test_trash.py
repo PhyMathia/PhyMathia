@@ -76,9 +76,12 @@ def _seed_session(account="default", sid="sess_aaa", title="物理画布"):
         "f1": {"latex": "F=ma", "sessionId": sid},
     })
     storage._write_json(paths.kv_dir / f"{sid}.json", {"graph:" + sid: {"zoom": 0.9}})
-    storage._write_json(paths.kv_path, {
+    # T214：socratic 族与 quiz 族各自拆分文件，capture 经 storage 路由读同一落点
+    storage._write_json(paths.kv_meta_dir / "socratic.json", {
         "socratic:" + sid: {"active": True, "stage": "hint"},
         "socratic:br_" + sid + "_1234567890": {"active": True, "stage": "answer"},
+    })
+    storage._write_json(paths.kv_meta_dir / "quiz.json", {
         "phymathia_quiz_stats": {
             "q1": {"sessionId": sid, "score": 1},
             "q2": {"sessionId": "sess_bbb", "score": 0},
@@ -172,8 +175,9 @@ def test_restore_roundtrip_brings_everything_back(acc_env):
     storage._write_json(paths.knowledge_path, {"k2": {"title": "共享条目"}, "k3": {}})
     storage._write_json(paths.formulas_path, {})
     (paths.kv_dir / "sess_aaa.json").unlink()
-    storage._write_json(paths.kv_path, {"phymathia_quiz_stats": {"q2": {"sessionId": "sess_bbb"}},
-                                        "phymathia_quiz_bank": {"questions": [{"id": "b2", "sessionId": "sess_bbb"}]}})
+    storage._write_json(paths.kv_meta_dir / "quiz.json",
+                        {"phymathia_quiz_stats": {"q2": {"sessionId": "sess_bbb"}},
+                         "phymathia_quiz_bank": {"questions": [{"id": "b2", "sessionId": "sess_bbb"}]}})
     assert trash.restore_item(paths, "sess_aaa") == "sess_aaa"
     # 名单与消息回来
     assert storage._read_json(paths.sessions_path, {})["sess_aaa"]["title"] == "物理画布"
@@ -185,11 +189,12 @@ def test_restore_roundtrip_brings_everything_back(acc_env):
     assert storage._read_json(paths.formulas_path, {})["f1"]["latex"] == "F=ma"
     # 探索网快照回原拆分文件
     assert storage._read_json(paths.kv_dir / "sess_aaa.json", {})["graph:sess_aaa"] == {"zoom": 0.9}
-    # 苏格拉底两代键（精确 + 分支链）都回来
-    kv = storage._read_json(paths.kv_path, {})
-    assert kv["socratic:sess_aaa"]["stage"] == "hint"
-    assert kv["socratic:br_sess_aaa_1234567890"]["active"] is True
-    # quiz 统计（q1/wrong/open）与题库 b1 回填，别人的 q2/b2 不受影响
+    # 苏格拉底两代键（精确 + 分支链）都回来（T214：回 socratic 族文件）
+    socratic = storage._read_json(paths.kv_meta_dir / "socratic.json", {})
+    assert socratic["socratic:sess_aaa"]["stage"] == "hint"
+    assert socratic["socratic:br_sess_aaa_1234567890"]["active"] is True
+    # quiz 统计（q1/wrong/open）与题库 b1 回填，别人的 q2/b2 不受影响（quiz 族文件）
+    kv = storage._read_json(paths.kv_meta_dir / "quiz.json", {})
     stats = kv["phymathia_quiz_stats"]
     assert stats["q1"]["score"] == 1 and "q2" in stats
     assert {"sessionId": "phymathia_aaa", "q": "w1"} in stats["_meta"]["wrongQuestions"]
@@ -269,7 +274,11 @@ def test_restore_cleared_messages_refills_live_canvas(acc_env):
     storage._write_json(paths.knowledge_path, {"k2": {"title": "共享条目"}, "k3": {}})
     storage._write_json(paths.formulas_path, {})
     storage._write_json(kv_snap_path, {"harness_history:sess_aaa": {"turns": 5}})
+    # 苏格拉底与 quiz 条目清掉：T214 后它们在族拆分文件里，主文件写 {} 之外
+    # 还要连族文件一起清（socratic 族清空、quiz 族只留别人的 q2/b2）
     storage._write_json(paths.kv_path, {})
+    storage._write_json(paths.kv_meta_dir / "socratic.json", {})
+    storage._write_json(paths.kv_meta_dir / "quiz.json", {})
     assert trash.restore_item(paths, key) == "sess_aaa"
     # 消息与独占知识/公式回来；共享条目（k2/k3）不被覆盖
     assert len(storage._read_json(paths.messages_dir / "sess_aaa.json", [])) == 1
@@ -280,12 +289,13 @@ def test_restore_cleared_messages_refills_live_canvas(acc_env):
     kv_snap = storage._read_json(kv_snap_path, {})
     assert kv_snap["graph:sess_aaa"] == {"zoom": 0.9}
     assert kv_snap["harness_history:sess_aaa"] == {"turns": 5}
-    # 苏格拉底与 quiz（q1/wrong/open）回填，别人的 q2 不受影响
-    kv = storage._read_json(paths.kv_path, {})
-    assert kv["socratic:sess_aaa"]["stage"] == "hint"
-    assert kv["phymathia_quiz_stats"]["q1"]["score"] == 1
-    assert {"sessionId": "sess_aaa", "answer": "F=ma"} in kv["phymathia_quiz_stats"]["_meta"]["openResults"]
-    assert {q["id"] for q in kv["phymathia_quiz_bank"]["questions"]} == {"b1"}
+    # 苏格拉底与 quiz（q1/wrong/open）回填，别人的 q2 不受影响（T214：族文件）
+    socratic = storage._read_json(paths.kv_meta_dir / "socratic.json", {})
+    assert socratic["socratic:sess_aaa"]["stage"] == "hint"
+    quiz = storage._read_json(paths.kv_meta_dir / "quiz.json", {})
+    assert quiz["phymathia_quiz_stats"]["q1"]["score"] == 1
+    assert {"sessionId": "sess_aaa", "answer": "F=ma"} in quiz["phymathia_quiz_stats"]["_meta"]["openResults"]
+    assert {q["id"] for q in quiz["phymathia_quiz_bank"]["questions"]} == {"b1"}
     # 名单条目原样（标题不被快照改写）；站内条目移除
     assert storage._read_json(paths.sessions_path, {})["sess_aaa"]["title"] == "物理画布"
     assert trash.list_items(paths) == []
