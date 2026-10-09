@@ -558,7 +558,7 @@ def _neighbor_entry(node_by_id: Dict[str, Dict[str, Any]], edge: Dict[str, Any],
     }
 
 
-def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional[Dict[str, Any]] = None, semantic_hits: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Execute one read-only graph query against the snapshot.
 
     snapshot 必须是归一化后的完整快照（未做焦点收缩/正文压缩的那一份）——
@@ -567,6 +567,11 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional
     kb（2026-10-03 智能化第二期）：知识检索工具的数据源，形如
     {"knowledge": [...], "formulas": [...]}，由调用方加载注入；缺省 None
     时知识检索工具回「数据不可用」，图查询三件套不受影响。
+
+    semantic_hits（优化新路径三，2026-10-09）：字面检索完全 miss 时的语义召回
+    候选，由调用方（review.py 的查询回灌循环）经 harness.semantic 算好注入——
+    本函数保持纯同步、不碰 embedding；只在对应检索零字面命中时用于补位，
+    条目带 semantic/score 标记。None/空时行为与从前逐字节一致。
 
     参数非法/缺必填时返回 {"error": ...} 而不是抛异常：这是回给模型的工具
     结果，让模型看到错误后自行纠正，不打断查询循环。
@@ -595,6 +600,29 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional
                 or needle in _text(item.get("summary")).lower()
                 or needle in " ".join(str(tag) for tag in (item.get("tags") or [])).lower()
             ]
+            if not ranked and semantic_hits:
+                # 路径三：字面完全 miss 才用语义召回补位（条目由调用方算好注入，
+                # 数量已封顶；semantic 标记让模型知道这是近似匹配）
+                sem_matches = [
+                    {
+                        "title": _text(hit.get("item", {}).get("title")),
+                        "category": _text(hit.get("item", {}).get("category")),
+                        "tags": [str(tag) for tag in (hit.get("item", {}).get("tags") or [])][:4],
+                        "excerpt": _text(hit.get("item", {}).get("summary"))[:_READONLY_EXCERPT_CHARS],
+                        "formulas_count": len(hit.get("item", {}).get("formulas") or []),
+                        "semantic": True,
+                        "score": hit.get("score"),
+                    }
+                    for hit in semantic_hits[:_READONLY_SEARCH_LIMIT]
+                    if isinstance(hit, dict) and isinstance(hit.get("item"), dict)
+                ]
+                return {
+                    "matches": sem_matches,
+                    "count": len(sem_matches),
+                    "total": len(sem_matches),
+                    "truncated": False,
+                    "note": "字面无命中，以下为语义近似结果",
+                }
             matches = [
                 {
                     "title": _text(item.get("title")),
@@ -622,6 +650,26 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional
             or needle in _text(item.get("concept")).lower()
             or needle in _text(item.get("meaning")).lower()
         ]
+        if not ranked and semantic_hits:
+            # 路径三：公式速查的字面 miss 语义补位（同知识库口径）
+            sem_matches = [
+                {
+                    "latex": _text(hit.get("item", {}).get("latex")).replace("$", "")[:_READONLY_FORMULA_CHARS],
+                    "concept": _text(hit.get("item", {}).get("concept")),
+                    "meaning_excerpt": _text(hit.get("item", {}).get("meaning"))[:_READONLY_EXCERPT_CHARS],
+                    "semantic": True,
+                    "score": hit.get("score"),
+                }
+                for hit in semantic_hits[:_READONLY_SEARCH_LIMIT]
+                if isinstance(hit, dict) and isinstance(hit.get("item"), dict)
+            ]
+            return {
+                "matches": sem_matches,
+                "count": len(sem_matches),
+                "total": len(sem_matches),
+                "truncated": False,
+                "note": "字面无命中，以下为语义近似结果",
+            }
         matches = [
             {
                 "latex": _text(item.get("latex")).replace("$", "")[:_READONLY_FORMULA_CHARS],
@@ -691,6 +739,33 @@ def execute_readonly_tool(name: str, arguments: Any, snapshot: Any, kb: Optional
         elif needle in _text(node.get("content")).lower():
             content_hits.append(node)
     ranked = label_hits + content_hits
+    if not ranked and semantic_hits:
+        # 路径三落点一：字面完全 miss 才用语义召回补位——「搜电磁感应找不到
+        # 法拉第定律」由此召回。命中数已由调用方封顶；条目带 semantic/score
+        # 标记，摘录从快照原文取（调用方只传 id/label/kind/score）。
+        by_id = {_text(node.get("id")): node for node in nodes}
+        sem_matches = []
+        for hit in semantic_hits[:_READONLY_SEARCH_LIMIT]:
+            if not isinstance(hit, dict):
+                continue
+            node = by_id.get(_text(hit.get("id")))
+            if node is None:
+                continue
+            sem_matches.append({
+                "id": _text(node.get("id")),
+                "label": _text(node.get("label")),
+                "kind": _text(node.get("kind")),
+                "excerpt": _text(node.get("content"))[:_READONLY_EXCERPT_CHARS],
+                "semantic": True,
+                "score": hit.get("score"),
+            })
+        return {
+            "matches": sem_matches,
+            "count": len(sem_matches),
+            "total": len(sem_matches),
+            "truncated": False,
+            "note": "字面无命中，以下为语义近似结果",
+        }
     truncated = len(ranked) > _READONLY_SEARCH_LIMIT
     matches = [
         {

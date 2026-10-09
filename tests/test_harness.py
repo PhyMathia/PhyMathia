@@ -1066,6 +1066,437 @@ class HarnessSelfCheckTest(unittest.TestCase):
         self.assertTrue(result["ok"])
 
 
+class HarnessChecklistTest(unittest.TestCase):
+    """路径二第二步（2026-10-09）：显式达成清单——机检/重试/降级/语义条目交 critic。"""
+
+    MODEL = {"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
+
+    SNAPSHOT = {
+        "nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "旧正文", "formula": ""},
+            {"id": "H", "kind": "knowledge", "label": "旧笔记", "content": ""},
+        ],
+        "edges": [],
+    }
+
+    def test_verify_checklist_machine_patterns(self):
+        from harness.selfcheck import verify_checklist
+        before = self.SNAPSHOT
+        result = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新正文", "formula": "F=ma"},
+                {"id": "N1", "kind": "knowledge", "label": "新概念", "content": ""},
+            ],
+            "edges": [{"key": "N1:out-0->A:in-0", "from": "N1", "to": "A", "relation": "支持"}],
+        }
+        v = verify_checklist([
+            "「导数」的 formula 已更新为「F=ma」",      # 更新达成（含空格容忍）
+            "「导数」的公式已更新为「F = ma」",
+            "「旧笔记」已删除",                          # 删除达成（改前有、结果无）
+            "「新概念」已创建",                          # 存在达成
+            "「新概念」与「导数」已连线",                # 边达成（无向）
+            "「导数」的 label 已更新为「导数（核心）」",  # 更新未达成（改得比声明的少）
+            "「幽灵」已删除",                            # 删除未达成（本就没有）
+            "「导数」的正文足够严谨",                    # 语义条目（解析不出机检结构）
+        ], before, result)
+        kinds = {i["text"]: (i["kind"], i["passed"]) for i in v["items"]}
+        self.assertEqual(kinds["「导数」的 formula 已更新为「F=ma」"], ("machine", True))
+        self.assertEqual(kinds["「导数」的公式已更新为「F = ma」"], ("machine", True))
+        self.assertEqual(kinds["「旧笔记」已删除"], ("machine", True))
+        self.assertEqual(kinds["「新概念」已创建"], ("machine", True))
+        self.assertEqual(kinds["「新概念」与「导数」已连线"], ("machine", True))
+        self.assertEqual(kinds["「导数」的 label 已更新为「导数（核心）」"], ("machine", False))
+        self.assertEqual(kinds["「幽灵」已删除"], ("machine", False))
+        self.assertEqual(kinds["「导数」的正文足够严谨"], ("semantic", None))
+        self.assertEqual(v["achieved"], 5)
+        self.assertEqual(len(v["machine_failed"]), 2)
+        self.assertEqual(len(v["semantic"]), 1)
+
+    def test_verify_checklist_bad_shapes_all_semantic(self):
+        from harness.selfcheck import verify_checklist
+        v = verify_checklist(["「导数」已删除"], None, None)
+        self.assertEqual(v["items"][0]["kind"], "semantic")
+        self.assertEqual(v["semantic"], ["「导数」已删除"])
+
+    def test_normalize_checklist(self):
+        from harness.selfcheck import normalize_checklist
+        self.assertEqual(normalize_checklist("bad"), [])
+        self.assertEqual(normalize_checklist(None), [])
+        self.assertEqual(normalize_checklist(["  ", "ok"]), ["ok"])
+        self.assertEqual(len(normalize_checklist(["x"] * 20)), 8)  # 条数封顶
+
+    def _tool_call(self, name, args):
+        return {"function": {"name": name, "arguments": __import__("json").dumps(args, ensure_ascii=False)}}
+
+    def test_checklist_machine_retry_and_summary(self):
+        """机检未达成→带反馈重试（T236 体例）；重试达成→warnings 汇总「本次目标」。"""
+        import asyncio
+        import json
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+        checklist = ["「导数」的 formula 已更新为「F=ma」"]
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # 两条合法操作但没一条改公式——checklist 自报目标未达成
+                return {
+                    "content": json.dumps({"summary": "已按要求整理导数", "checklist": checklist}, ensure_ascii=False),
+                    "tool_calls": [
+                        self._tool_call("update_node", {"node_id": "A", "patch": {"label": "导数（概念）"}, "reason": "整理标题"}),
+                        self._tool_call("update_node", {"node_id": "H", "patch": {"content": "润色"}, "reason": "顺手润色"}),
+                    ],
+                }
+            # 重试轮：反馈里必须带机检失败原因
+            self.assertTrue(any("达成清单未达成" in str(m.get("content") or "") for m in messages))
+            return {
+                "content": json.dumps({"summary": "已把导数公式改成 F=ma", "checklist": checklist}, ensure_ascii=False),
+                "tool_calls": [
+                    self._tool_call("update_node", {"node_id": "A", "patch": {"formula": "F=ma"}, "reason": "按清单改公式"}),
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                self.SNAPSHOT, "把导数的公式改成 F=ma", model=self.MODEL,
+                mode="tools", retries=1, self_check="auto",
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(calls["n"], 2)
+        # 结果级断言：公式确实改成了 F=ma
+        ops = result["operations"]
+        self.assertTrue(any(o.get("op") == "update_node" and o.get("id") == "A"
+                            and o.get("patch", {}).get("formula") == "F=ma" for o in ops))
+        # warnings 汇总行（「本次目标 N 条，达成 M 条」）
+        self.assertTrue(any(w.get("index") == "checklist" and "本次目标 1 条" in w.get("reason", "")
+                            for w in result["warnings"]))
+        self.assertEqual(result["self_check"]["checklist"]["achieved"], 1)
+        # ≤3 条操作不触发质检门：机检独立起效，无 critic 调用
+        self.assertNotIn("critic", result["self_check"])
+        # 工具通道的 JSON 外壳 summary 被顶替成外壳里的人话 summary
+        self.assertEqual(result["summary"], "已把导数公式改成 F=ma")
+
+    def test_checklist_last_attempt_downgrades_to_warnings(self):
+        """无重试机会（retries=0）时机检失败不拦截，末次放行降 warnings。"""
+        import asyncio
+        import json
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": json.dumps({"summary": "整理", "checklist": ["「导数」的 formula 已更新为「F=ma」"]}, ensure_ascii=False),
+                "tool_calls": [
+                    self._tool_call("update_node", {"node_id": "A", "patch": {"label": "导数（概念）"}, "reason": "整理"}),
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                self.SNAPSHOT, "把导数的公式改成 F=ma", model=self.MODEL,
+                mode="tools", retries=0, self_check="auto",
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(any(w.get("index") == "checklist" and "达成清单未达成" in w.get("reason", "")
+                            for w in result["warnings"]))
+        self.assertTrue(any(w.get("index") == "checklist" and "本次目标 1 条，达成 0 条" in w.get("reason", "")
+                            for w in result["warnings"]))
+
+    def test_checklist_json_payload_path(self):
+        """JSON 降级通道（无工具）的 checklist 同样生效——顶层可选字段。"""
+        import asyncio
+        import json
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                payload = {
+                    "summary": "整理一下",
+                    "checklist": ["「旧笔记」已删除"],
+                    "operations": [
+                        {"op": "update_node", "id": "A", "patch": {"label": "导数（概念）"}, "reason": "整理"},
+                    ],
+                }
+                return {"content": json.dumps(payload, ensure_ascii=False)}
+            return {"content": json.dumps({
+                "summary": "已删除旧笔记",
+                "checklist": ["「旧笔记」已删除"],
+                "operations": [
+                    {"op": "delete_node", "id": "H", "reason": "按清单删除"},
+                ],
+            }, ensure_ascii=False)}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                self.SNAPSHOT, "把旧笔记删掉", model=self.MODEL,
+                mode="json", retries=1, self_check="auto",
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(any(o.get("op") == "delete_node" and o.get("id") == "H" for o in result["operations"]))
+        self.assertEqual(result["self_check"]["checklist"]["achieved"], 1)
+
+    def test_checklist_missing_degrades_silently(self):
+        """checklist 缺失＝静默降级：无 checklist 键、无 checklist warnings、消息无清单段。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+        from harness.selfcheck import build_selfcheck_messages
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": "", "tool_calls": [
+                self._tool_call("update_node", {"node_id": "A", "patch": {"label": "导数（概念）"}, "reason": "整理"}),
+            ]}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                self.SNAPSHOT, "把导数改严谨", model=self.MODEL,
+                mode="tools", retries=1, self_check="auto",
+            ))
+        self.assertEqual(result["status"], "ok")
+        self.assertNotIn("checklist", result["self_check"])
+        self.assertFalse(any(w.get("index") == "checklist" for w in result["warnings"]))
+        msgs = build_selfcheck_messages("指令", self.SNAPSHOT, [{"op": "update_node", "id": "A"}], None, None)
+        self.assertNotIn("达成清单", msgs[1]["content"])
+
+    def test_checklist_semantic_items_reach_critic(self):
+        """语义条目交 critic（条件 kwargs），机检达成条目不重复喂。"""
+        import asyncio
+        import json
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": json.dumps({"summary": "删掉", "checklist": [
+                "「旧笔记」已删除",             # 机检达成
+                "「导数」的正文足够严谨",        # 语义条目
+            ]}, ensure_ascii=False), "tool_calls": [
+                self._tool_call("delete_node", {"node_id": "H", "reason": "删除"}),
+            ]}
+
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None,
+                                 result_snapshot=None, checklist=None):
+            captured["checklist"] = checklist
+            return {"ok": True, "issues": [], "missing": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            with unittest.mock.patch.object(review_mod, "_selfcheck_ops", new=fake_selfcheck):
+                result = asyncio.run(review_mod.review_graph(
+                    self.SNAPSHOT, "把旧笔记删掉", model=self.MODEL,
+                    mode="tools", retries=1, self_check="auto",
+                ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(captured["checklist"], ["「导数」的正文足够严谨"])
+
+
+class HarnessSemanticSearchTest(unittest.TestCase):
+    """路径三（2026-10-09）：语义检索层——字面 miss 补召回、账号分桶缓存、逐字降级。"""
+
+    def test_semantic_recall_degrades_without_embedding(self):
+        """conftest 已设 PHYMATHIA_EMBEDDING=0：召回回 []（降级＝字面行为逐字一致）。"""
+        import asyncio
+        from harness.semantic import semantic_node_recall
+        snap = {"nodes": [{"id": "F", "kind": "knowledge", "label": "法拉第定律",
+                           "content": "磁通量变化产生感应电动势"}]}
+        self.assertEqual(asyncio.run(semantic_node_recall(snap, "电磁感应")), [])
+
+    def test_semantic_node_recall_with_fake_vectors(self):
+        import asyncio
+        import unittest.mock
+        from harness import semantic as sem
+
+        snap = {"nodes": [
+            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+        ]}
+        vectors = {"F": [0.95, 0.1], "A": [0.0, 1.0]}
+        gather_calls = {"n": 0}
+
+        def fake_gather(texts):
+            gather_calls["n"] += 1
+            return ({k: vectors[k] for k in texts}, True)
+
+        def fake_embed(texts):
+            # 关键词 → 查询向量：「电磁感应」贴法拉第、「再搜一次」谁也不贴（反向）
+            return [[1.0, 0.0] if "电磁" in str(t) else [-1.0, 0.0] for t in texts]
+
+        async def run():
+            with unittest.mock.patch.object(sem, "gather_vectors", new=fake_gather), \
+                 unittest.mock.patch.object(sem, "embed_texts", new=fake_embed):
+                first = await sem.semantic_node_recall(snap, "电磁感应")
+                second = await sem.semantic_node_recall(snap, "再搜一次", account="default")
+                other = await sem.semantic_node_recall(snap, "电磁感应", account="other-account")
+            return first, second, other
+
+        first, second, other = asyncio.run(run())
+        self.assertEqual([h["id"] for h in first], ["F"])
+        self.assertGreaterEqual(first[0]["score"], 0.40)
+        # 同账号同图第二次复用索引（gather 只被叫一次）；换账号重建（T190 分桶）
+        self.assertEqual(gather_calls["n"], 2)
+        self.assertEqual(second, [])  # 反向查询向量：两个节点都过不了门槛
+        self.assertEqual([h["id"] for h in other], ["F"])
+
+    def test_semantic_node_recall_graph_change_invalidates(self):
+        import asyncio
+        import unittest.mock
+        from harness import semantic as sem
+
+        snap = {"nodes": [{"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量"}]}
+        gather_calls = {"n": 0}
+
+        def fake_gather(texts):
+            gather_calls["n"] += 1
+            return ({k: [0.9, 0.1] for k in texts}, True)
+
+        async def run():
+            with unittest.mock.patch.object(sem, "gather_vectors", new=fake_gather), \
+                 unittest.mock.patch.object(sem, "embed_texts", new=lambda texts: [[1.0, 0.0]]):
+                await sem.semantic_node_recall(snap, "电磁感应")
+                snap["nodes"].append({"id": "A", "kind": "knowledge", "label": "导数", "content": "x"})
+                await sem.semantic_node_recall(snap, "电磁感应")
+
+        asyncio.run(run())
+        self.assertEqual(gather_calls["n"], 2)  # 图变化（签名变）即重建
+
+    def test_search_nodes_semantic_only_on_miss(self):
+        from harness.tools import execute_readonly_tool
+        snap = {"nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+        ], "edges": []}
+        # 字面命中：输出与既有形状完全一致（不带 semantic 键）
+        hit = execute_readonly_tool("search_nodes", {"keyword": "导数"}, snap)
+        self.assertEqual(hit["count"], 1)
+        self.assertNotIn("semantic", hit["matches"][0])
+        self.assertNotIn("note", hit)
+        # 字面 miss＋语义命中：补位条目带 semantic/score 标记
+        miss = execute_readonly_tool("search_nodes", {"keyword": "电磁感应"}, snap, semantic_hits=[
+            {"id": "F", "label": "法拉第定律", "kind": "knowledge", "score": 0.55},
+        ])
+        self.assertEqual(miss["count"], 1)
+        self.assertEqual(miss["matches"][0]["id"], "F")
+        self.assertTrue(miss["matches"][0]["semantic"])
+        self.assertEqual(miss["matches"][0]["score"], 0.55)
+        self.assertIn("语义近似", miss["note"])
+        # 字面 miss＋无召回：与从前逐字一致的空结果
+        empty = execute_readonly_tool("search_nodes", {"keyword": "电磁感应"}, snap)
+        self.assertEqual(empty, {"matches": [], "count": 0, "total": 0, "truncated": False})
+
+    def test_search_knowledge_semantic_fill(self):
+        from harness.tools import execute_readonly_tool
+        kb = {"knowledge": [{"title": "法拉第定律", "summary": "磁通量变化产生感应电动势", "tags": []}]}
+        out = execute_readonly_tool("search_knowledge", {"keyword": "电磁感应"}, None, kb=kb, semantic_hits=[
+            {"item": {"title": "法拉第定律", "summary": "磁通量变化产生感应电动势", "tags": []}, "score": 0.55},
+        ])
+        self.assertEqual(out["count"], 1)
+        self.assertEqual(out["matches"][0]["title"], "法拉第定律")
+        self.assertTrue(out["matches"][0]["semantic"])
+
+    def test_rank_recipes_degrades_and_promotes(self):
+        import asyncio
+        import unittest.mock
+        from harness import semantic as sem
+
+        recipes = [{"id": "r%d" % i, "name": "配方%d" % i, "desc": ""} for i in range(34)]
+
+        async def degraded():
+            with unittest.mock.patch.object(sem, "embed_texts", new=lambda texts: None):
+                return await sem.rank_recipes_for_instruction(recipes, "帮我出题")
+
+        self.assertIsNone(asyncio.run(degraded()))
+
+        async def promoted():
+            with unittest.mock.patch.object(sem, "gather_vectors", new=lambda texts: ({
+                    "r33": [1.0, 0.0], "r0": [0.0, 1.0]}, True)), \
+                 unittest.mock.patch.object(sem, "embed_texts", new=lambda texts: [[1.0, 0.0]]):
+                return await sem.rank_recipes_for_instruction(recipes, "帮我出题")
+
+        ordered = asyncio.run(promoted())
+        self.assertEqual(len(ordered), 34)  # 重排只挪位置不丢条目
+        self.assertEqual(ordered[0]["id"], "r33")
+
+    def test_review_tool_loop_injects_semantic_hits(self):
+        """查询回灌循环接线穿透：字面 miss 的 search_nodes 回灌结果里带语义召回条目。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            if any(m.get("role") == "tool" for m in messages):
+                captured["tool_results"] = [str(m.get("content") or "") for m in messages if m.get("role") == "tool"]
+                return {"content": "", "tool_calls": [
+                    {"function": {"name": "update_node",
+                                  "arguments": '{"node_id": "F", "patch": {"content": "已复习"}, "reason": "补充标注"}'}},
+                ]}
+            return {"content": "", "tool_calls": [
+                {"function": {"name": "search_nodes", "arguments": '{"keyword": "电磁感应"}'}},
+            ]}
+
+        async def fake_recall(snapshot, keyword, account="default", **kw):
+            captured["keyword"] = keyword
+            return [{"id": "F", "label": "法拉第定律", "kind": "knowledge", "score": 0.55}]
+
+        snap = {"nodes": [
+            {"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"},
+            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+        ], "edges": []}
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            with unittest.mock.patch.object(review_mod, "semantic_node_recall", new=fake_recall):
+                result = asyncio.run(review_mod.review_graph(
+                    snap, "搜一下电磁感应并补充标注", model=self.MODEL,
+                    mode="tools", retries=1, self_check="auto",
+                ))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(captured["keyword"], "电磁感应")
+        self.assertTrue(any("法拉第定律" in t for t in captured["tool_results"]))
+        self.assertTrue(any(o.get("op") == "update_node" and o.get("id") == "F" for o in result["operations"]))
+
+    def test_review_reorders_recipes_only_over_limit(self):
+        """落点三接线：user_recipes 超后端截断上限（32）才触发重排，≤32 零打扰。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        calls = {"n": 0}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {"content": "", "tool_calls": [
+                {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"label": "导数（概念）"}, "reason": "整理"}'}},
+            ]}
+
+        async def fake_rank(recipes, instruction, account="default", **kw):
+            calls["n"] += 1
+            calls["count"] = len(recipes)
+            return list(reversed(recipes))
+
+        base_nodes = [{"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"}]
+        small = {"nodes": base_nodes, "edges": [], "user_recipes": [{"id": "r1", "name": "a"}]}
+        big = {"nodes": base_nodes, "edges": [],
+               "user_recipes": [{"id": "r%d" % i, "name": "n%d" % i} for i in range(33)]}
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            with unittest.mock.patch.object(review_mod, "rank_recipes_for_instruction", new=fake_rank):
+                asyncio.run(review_mod.review_graph(
+                    dict(small), "整理", model=self.MODEL, mode="tools", retries=0, self_check="off"))
+                self.assertEqual(calls["n"], 0)  # 不超上限不重排
+                result = asyncio.run(review_mod.review_graph(
+                    dict(big), "帮我出题", model=self.MODEL, mode="tools", retries=0, self_check="off"))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(calls["count"], 33)
+
+    MODEL = {"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
+
+
 class HarnessCompressTest(unittest.TestCase):
     def test_compact_snapshot_trims_non_focus(self):
         import json
