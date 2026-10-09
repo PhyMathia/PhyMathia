@@ -337,10 +337,35 @@ _RECIPE_DESC_KEYS = (
 )
 
 
-def _warn_recipe_desc_payload_mismatch(op: Dict[str, Any], index: int, op_name: str, raw_recipe: Any) -> None:
-    """T79：弱模型常在 op 描述里说改了某字段、payload 却没带（实测形态＝
-    ports.dynamic.parser.level_tags 被静默归零成 []，链路本身无损）。只 warning
-    不拦截，便于事后归因；与 preset 提示词的「逐字复述」自检互为两头。"""
+# schema 键名 → 人话标签（警告文案给用户读，不进英文键名）
+_RECIPE_KEY_LABELS = {
+    "level_tags": "档位标签", "label_from": "出口标签方式", "numbered_list": "编号解析",
+    "fallback": "兜底出口", "content_kind": "内容载体", "palette": "色板", "shape": "形状",
+    "context_channel": "上下文通道", "model_role": "模型槽位", "on_incomplete": "重试次数",
+    "confused_prompt": "困惑语", "followup_prompt": "追问语", "retry_prompt": "重试语",
+    "strict_output": "严格输出提示词", "drag_form": "拖出方式", "on_generated": "生成后动作",
+}
+
+
+# 中文说辞别名 → schema 键：模型 reason 常写中文（「把三档标签改一下」），
+# 只匹配英文键名会大面积漏检
+_RECIPE_DESC_ALIASES = {
+    "档位标签": "level_tags", "三档": "level_tags",
+    "出口标签": "label_from", "编号解析": "numbered_list",
+    "兜底出口": "fallback", "兜底": "fallback",
+    "内容载体": "content_kind", "色板": "palette",
+    "形状": "shape", "上下文通道": "context_channel", "模型槽": "model_role",
+    "重试次数": "on_incomplete", "困惑语": "confused_prompt", "追问语": "followup_prompt",
+    "重试语": "retry_prompt", "严格输出": "strict_output", "拖出方式": "drag_form",
+    "生成后动作": "on_generated",
+}
+
+
+def _recipe_desc_payload_gaps(op: Dict[str, Any], raw_recipe: Any) -> List[str]:
+    """T79/T242：op 描述里点名、payload 却没带的 schema 键（将被静默重置成默认）。
+
+    实测形态＝ports.dynamic.parser.level_tags 被归零成 []（模型说改三档、payload
+    没带），链路本身无损。返回缺失键名（英文 schema 键，调用方翻人话）。"""
 
     def _has_key(node: Any, key: str) -> bool:
         if isinstance(node, dict):
@@ -355,14 +380,37 @@ def _warn_recipe_desc_payload_mismatch(op: Dict[str, Any], index: int, op_name: 
         _text(op.get(key)) for key in ("reason", "desc", "description") if op.get(key)
     )
     if not desc:
+        return []
+    claimed = {key for key in _RECIPE_DESC_KEYS if key in desc}
+    for alias, key in _RECIPE_DESC_ALIASES.items():
+        if alias in desc:
+            claimed.add(key)
+    return [key for key in sorted(claimed) if not _has_key(raw_recipe, key)]
+
+
+def _note_recipe_desc_payload_mismatch(
+    op: Dict[str, Any], index: int, op_name: str, raw_recipe: Any, warnings: List[Dict[str, Any]]
+) -> None:
+    """T79「只 warning 不拦截」拍板的双通道落地：服务端日志归因＋用户可见 warnings。
+
+    T242 前只有日志——用户侧零可见，应用前无从判断哪一栏会被抹掉。warnings 键随
+    build_next_snapshot 返回值直达客户端（前端 _harnessOpsCardHtml 渲染）。"""
+    missing = _recipe_desc_payload_gaps(op, raw_recipe)
+    if not missing:
         return
-    mentioned = sorted({key for key in _RECIPE_DESC_KEYS if key in desc})
-    missing = [key for key in mentioned if not _has_key(raw_recipe, key)]
-    if missing:
-        logger.warning(
-            "harness: %s op[%s] 描述声称修改 %s 但 recipe payload 未携带，将按默认值落库",
-            op_name, index, "/".join(missing),
-        )
+    logger.warning(
+        "harness: %s op[%d] 描述声称修改 %s 但 recipe payload 未携带，将按默认值落库",
+        op_name, index, "/".join(missing),
+    )
+    labels = "、".join(_RECIPE_KEY_LABELS.get(key, key) for key in missing)
+    warnings.append({
+        "index": index,
+        "op": op_name,
+        "reason": (
+            f"修改说明里提到「{labels}」但新配方没有带上这些内容，对应字段将被重置为默认值"
+            "——请核对预览中的前后差异，或应用后到配方编辑器补上"
+        ),
+    })
 
 
 def build_next_snapshot(
@@ -513,8 +561,6 @@ def build_next_snapshot(
         # ---- 配方库操作（P3 创造模式）：不改图元素，只校验 payload 并透传给前端配方层 ----
         if op_name in ("create_recipe", "update_recipe", "delete_recipe"):
             existing_names = current.get("user_recipes") or []
-            if op_name in ("create_recipe", "update_recipe"):
-                _warn_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"))
             if op_name == "create_recipe":
                 normalized_recipe = normalize_recipe_input(op.get("recipe"))
                 if normalized_recipe is None:
@@ -526,14 +572,25 @@ def build_next_snapshot(
                     continue
                 recipe_id = f"recipe-hn-{time.time_ns()}_{index + 1}"
                 normalized_recipe["id"] = recipe_id
-                valid_ops.append({**op, "recipe": normalized_recipe, "recipe_id": recipe_id})
+                _note_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"), warnings)
+                valid_ops.append({
+                    **op,
+                    "recipe": normalized_recipe,
+                    "recipe_id": recipe_id,
+                    # T243：新配方的名字（预览行/历史不再回落显示内部 id）
+                    "recipe_name": normalized_recipe["name"],
+                })
                 continue
             raw_recipe = op.get("recipe") if isinstance(op.get("recipe"), dict) else {}
             recipe_id = _text(op.get("recipe_id") or op.get("recipeId") or raw_recipe.get("id"))
             if not recipe_id:
                 errors.append({"index": index, "op": op_name, "reason": "缺少 recipe_id（只能操作 user_recipes 里列出的配方）"})
                 continue
-            if not any(r.get("id") == recipe_id for r in existing_names):
+            # T243：删除/修改都要把「操作对象的名字」带上——此前只透传 recipe_id，
+            # 前端 _opDescription 的 delete 分支没有 recipe_name 可显示，预览行
+            # 回落成内部 id（recipe-hn-<ns>_1），用户应用前认不出删的是哪个配方。
+            matched = next((r for r in existing_names if r.get("id") == recipe_id), None)
+            if matched is None:
                 errors.append({"index": index, "op": op_name, "reason": f"配方不存在: {recipe_id}"})
                 continue
             if op_name == "update_recipe":
@@ -548,9 +605,16 @@ def build_next_snapshot(
                 if not verdict["ok"]:
                     errors.append({"index": index, "op": op_name, "reason": "配方未通过校验：" + "；".join(verdict["errors"])})
                     continue
-                valid_ops.append({**op, "recipe": normalized_recipe, "recipe_id": recipe_id})
+                _note_recipe_desc_payload_mismatch(op, index, op_name, op.get("recipe"), warnings)
+                valid_ops.append({
+                    **op,
+                    "recipe": normalized_recipe,
+                    "recipe_id": recipe_id,
+                    # 旧名（update 的 payload 里可能是新名；前端差异行要 before→after）
+                    "recipe_name": _text(matched.get("name")),
+                })
             else:
-                valid_ops.append({**op, "recipe_id": recipe_id})
+                valid_ops.append({**op, "recipe_id": recipe_id, "recipe_name": _text(matched.get("name"))})
             continue
 
         if op_name == "create_eval_node":

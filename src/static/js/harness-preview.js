@@ -86,11 +86,16 @@
     const groups = typeof _harnessGroupedOps === 'function'
       ? _harnessGroupedOps(ops)
       : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
+    // T242 配套：配方操作已真的落到库里才挂「微调/放上画布」入口——
+    // 「保留修改」落库走 decision==='keep'，「应用全部」落库走 T88 的
+    // harnessResultApplied 标志；待处理批次不挂（配方还不存在/改的还是旧版，
+    // 入口会和应用动作打架）。
+    const recipeActionsLive = entry.decision === 'keep' || (isCurrent && harnessResultApplied);
     html += '<div class="graph-harness-oplist">'
       + groups.map(group => ''
         + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
         + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
-        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops, isCurrent, picked)).join('')
+        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops, isCurrent, picked, recipeActionsLive)).join('')
       ).join('')
       + '</div>';
     if (isCurrent && entry.decision === 'pending') {
@@ -149,12 +154,37 @@
     return '<span class="graph-harness-op-diff">' + lines.join('') + '</span>';
   }
 
+  // T242 配套：已落库的配方操作行内联「✎ 微调」「＋ 放上画布」直达入口——
+  // 「AI 起草＋人工微调」是常态路径（本机模型常漏深层参数），此前要从 Φ 面板
+  // 走 添加节点→我的配方→管理→编辑 四步。按钮与描述同行（内联在 main 里），
+  // 不占新行、不动 grid 布局；create 未落库时行内不出现（下方 exists 判据）。
+  function _harnessRecipeActionsHtml(op) {
+    const name = op.op || op.type || '';
+    if (name !== 'create_recipe' && name !== 'update_recipe') return '';
+    const rid = String(op.recipe_id || op.recipeId || '');
+    if (!rid || typeof getUserRecipes !== 'function') return '';
+    if (!getUserRecipes().some(item => item.id === rid)) return '';
+    const ridAttr = _escapeHtml(rid);
+    let html = '<span class="graph-harness-op-recipe-actions">';
+    if (typeof openRecipeFormById === 'function') {
+      html += '<button type="button" class="graph-harness-op-recipe-btn"'
+        + ' onclick="openRecipeFormById(\'' + ridAttr + '\')"'
+        + ' title="在配方编辑器里打开这份配方：补齐模型漏掉的字段（如三档标签）">✎ 微调</button>';
+    }
+    if (typeof createRecipeNode === 'function') {
+      html += '<button type="button" class="graph-harness-op-recipe-btn"'
+        + ' onclick="createRecipeNode(\'' + ridAttr + '\')"'
+        + ' title="按这份配方在画布上放一个节点，试试生成效果">＋ 放上画布</button>';
+    }
+    return html + '</span>';
+  }
+
   // T122：单条操作行压成一条细横条（约 30px），理由与「原文 → 建议文」对比收进
   // <details>，点「理由与对比」才展开——旧版是一块带边框的方块、一张约 50px，
   // 6 张就 300px，在 228px 的结果区里一张都露不出来。结构上从 <label> 改成 <div>：
   // label 会把 summary 的点击当成勾选，两处点击区互相打架。
   // data-op-index 仍是 _selectedOps 回查 operations 的唯一依据，绝不重排。
-  function _harnessOpRowHtml(op, index, ops, editable, picked) {
+  function _harnessOpRowHtml(op, index, ops, editable, picked, recipeActionsLive) {
     const on = picked === null || picked.indexOf(index) >= 0;
     const reason = String(op.reason || '');
     const diff = _harnessOpDiffHtml(op);
@@ -163,7 +193,9 @@
         ? '<input type="checkbox"' + (on ? ' checked' : '') + ' data-op-index="' + index
           + '" onchange="toggleHarnessOpSelected(this)" title="勾选/取消这条改动">'
         : '<span class="graph-harness-op-tick" aria-hidden="true">' + (on ? '☑' : '☐') + '</span>')
-      + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops)) + '</span>'
+      + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops))
+      + (recipeActionsLive ? _harnessRecipeActionsHtml(op) : '')
+      + '</span>'
       + ((reason || diff)
         ? '<details class="graph-harness-op-detail"><summary>理由与对比</summary>'
           + (reason ? '<span class="graph-harness-op-reason">' + _escapeHtml(reason) + '</span>' : '')

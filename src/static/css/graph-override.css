@@ -3192,6 +3192,30 @@
   line-height: 1.4;
 }
 
+/* 已落库配方行的直达入口（T242 配套）：与描述同行内联，不占新行、不动 grid。
+   令牌全复用（--btn-bg/--border/--text-secondary/--accent），零新色值零新字号。 */
+.graph-harness-op-recipe-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.graph-harness-op-recipe-btn {
+  padding: 1px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+}
+
+.graph-harness-op-recipe-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .graph-harness-op-create_node {
   border-color: rgba(52, 211, 153, 0.42);
 }

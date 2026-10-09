@@ -1033,7 +1033,12 @@ let harnessLastAppliedReport = null;
     };
     // 创造模式（P3）：用户配方清单摘要随快照注入（仿 quiz_weak 范式——结构化通道，
     // 绝不拼进 instruction 文本）。Φ 据此查重/更新/删除；preset 提示词有行为规则。
-    const userRecipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+    // T244：按最近修改倒序注入。后端清单上限 32 条且按序截断——按存储顺序时，
+    // 第 33 个之后创建的配方静默跌出 Φ 视野（在创造模式里改/删它们会报
+    // 「配方不存在」并触发莫名重试）。最近动过的优先进视野。
+    const userRecipes = typeof getUserRecipes === 'function'
+      ? getUserRecipes().slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      : [];
     if (userRecipes.length) {
       snapshot.user_recipes = userRecipes.map(recipe => {
         const entry = {

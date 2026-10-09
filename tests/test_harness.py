@@ -3068,6 +3068,53 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         self.assertEqual(missing["status"], "invalid")
         self.assertIn("配方不存在", missing["errors"][0]["reason"])
 
+    def test_recipe_ops_carry_name_for_preview(self):
+        """T243：三类配方操作都带 recipe_name——预览/历史行不再回落显示内部 id。"""
+        dele = build_next_snapshot(self.snapshot, [
+            {"op": "delete_recipe", "recipe_id": "recipe-1", "reason": "用户要求删除"},
+        ])
+        self.assertEqual(dele["status"], "ok")
+        self.assertEqual(dele["operations"][0]["recipe_name"], "错题复盘")
+        upd = build_next_snapshot(self.snapshot, [
+            {"op": "update_recipe", "recipe_id": "recipe-1",
+             "recipe": self._recipe(name="错题复盘·改"), "reason": "改个名"},
+        ])
+        # update 带的是旧名（新名在 payload 里）——前端差异行要 before→after
+        self.assertEqual(upd["operations"][0]["recipe_name"], "错题复盘")
+        self.assertEqual(upd["operations"][0]["recipe"]["name"], "错题复盘·改")
+        cre = build_next_snapshot(self.snapshot, [
+            {"op": "create_recipe", "recipe": self._recipe(), "reason": "用户要求"},
+        ])
+        self.assertEqual(cre["operations"][0]["recipe_name"], "考前速记")
+
+    def test_recipe_desc_gap_warning_is_user_visible(self):
+        """T242：「描述说改了、payload 没带」从纯服务端日志升级为用户可见 warnings。
+
+        T79「只 warning 不拦截」拍板不变——链路照旧落库，只是用户在应用前
+        终于看得见哪一栏会被静默重置。"""
+        snapshot = dict(self.snapshot, user_recipes=[{
+            "id": "recipe-1", "name": "三级追问", "base_kind": "module",
+            "content_kind": "markdown", "ports": "动态解析出口",
+        }])
+        base_op = {"op": "update_recipe", "recipe_id": "recipe-1", "recipe": self._recipe(name="三级追问")}
+        # 英文键说辞：reason 提 level_tags、payload 没带 → 档位标签将被重置
+        result = build_next_snapshot(snapshot, [dict(base_op, reason="把 level_tags 改成基础/进阶/拓展")])
+        self.assertEqual(result["status"], "ok")
+        hits = [w for w in result["warnings"] if "档位标签" in w.get("reason", "")]
+        self.assertEqual(len(hits), 1)
+        self.assertIn("重置为默认值", hits[0]["reason"])
+        # 中文说辞别名同样检出（模型 reason 常写中文）
+        zh = build_next_snapshot(snapshot, [dict(base_op, reason="把兜底出口改一下")])
+        self.assertTrue(any("兜底出口" in w.get("reason", "") for w in zh["warnings"]))
+        # payload 真带了就不警告——不误报
+        carried = dict(base_op, reason="把 level_tags 改成基础/进阶/拓展",
+                       recipe=self._recipe(name="三级追问", ports={
+                           "static": [{"label": "再测一道"}],
+                           "dynamic": {"parser": {"level_tags": ["基础", "进阶", "拓展"]}},
+                       }))
+        ok = build_next_snapshot(snapshot, [carried])
+        self.assertFalse(any("档位标签" in w.get("reason", "") for w in ok["warnings"]))
+
     def test_create_node_with_recipe_id(self):
         result = build_next_snapshot(self.snapshot, [
             {"op": "create_node", "temp_id": "t1", "kind": "module", "label": "考前速记",
