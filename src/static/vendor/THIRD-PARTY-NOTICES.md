@@ -5,10 +5,10 @@ PhyMathia 坚持**零 CDN 依赖**：`src/static/vendor/` 下的四个前端库�
 
 | 库 | 目录 | 版本 | 许可证 | 版权归属 |
 |---|---|---|---|---|
-| KaTeX | `katex/` | 0.16.9 | MIT | Khan Academy and other contributors |
+| KaTeX | `katex/` | 0.16.47 | MIT | Khan Academy and other contributors |
 | Marked | `marked/` | 15.0.12 | MIT | Christopher Jeffrey (及贡献者) |
 | Mermaid | `mermaid/` | 10.9.8 | MIT | Knut Sveidqvist (及贡献者) |
-| DOMPurify | `dompurify/` | 3.1.6 | MPL-2.0 **或** Apache-2.0（任选其一） | Dr.-Ing. Mario Heiderich, Cure53 |
+| DOMPurify | `dompurify/` | 3.4.16 | MPL-2.0 **或** Apache-2.0（任选其一） | Dr.-Ing. Mario Heiderich, Cure53 |
 
 各库的许可证原文已随代码放在**同目录的 `LICENSE` 文件**中：
 
