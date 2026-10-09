@@ -62,6 +62,11 @@ const scenarios = [
   { id: 'whitespace-instruction', label: '纯空白指令', instruction: '   ', phase: 'normal', focus: [], expect: { noCrash: true } },
   { id: 'long-instruction', label: '超长指令', instruction: '请帮我仔细审阅一下当前这个知识网络，重点检查导数、极限、物理视角和我的理解这四个节点之间的逻辑关系是否清晰，导数定义是否严谨，物理视角是否准确，我的理解是否存在偏差，如果有问题请直接指出并给出修改建议，最好能把缺少的前置概念也补上。', phase: 'normal', focus: [], expect: { noCrash: true } },
   { id: 'formula-edit', label: '按指定公式修改（聚焦 A）', instruction: '把导数的公式改成标准极限定义形式 f\\\'(x)=lim_{dx->0} (f(x+dx)-f(x))/dx', phase: 'normal', focus: ['A'], expect: { phase: 'normal', updateTargets: ['A'] } },
+  // 路径二第一步（2026-10-09）：四条操作各自合法但没一条改公式——三层校验全过，
+  // 只有「看了结果图」的质检员能拦下（mock 剧本：质检判 false→重试补公式；
+  // criticSawResultState 经 mock /__stats 核对质检请求确实带上了结果图段）。
+  // 依赖 mock 上游剧本，真模型跑不在此场景预期内（仅 mock 基建）。
+  { id: 'selfcheck-resultstate', label: '质检看结果图：操作合法但未达成指令（重试纠正）', instruction: '公式核对演练：把导数的公式改成 F=ma', phase: 'normal', focus: ['A'], expect: { phase: 'normal', updateTargets: ['A'], updatePatch: { id: 'A', formula: 'F=ma' }, criticSawResultState: true } },
   { id: 'delete-derivative', label: '删除核心知识点 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
   { id: 'ref-by-content', label: '按内容引用节点', instruction: '把「当自变量趋近某个值时函数值趋近的值」这个节点改得更清楚', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['B'], allowedUpdateIds: ['B'] } },
   { id: 'apply-conflict', label: '冲突评价应用', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals-conflict', expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
@@ -599,6 +604,16 @@ function scoreScenario(sc, data) {
     const updated = ops.filter(o => opName(o) === 'update_node').map(o => o.id);
     for (const t of ex.updateTargets) if (!updated.includes(t)) issues.push('未修改目标 ' + t + '，实际修改: ' + updated.join(','));
   }
+  // 路径二配套：结果级断言——update_node 的 patch 指定字段必须等于期望值
+  // （「操作合法」不够，改完的图要达成指令）
+  if (ex.updatePatch) {
+    const want = ex.updatePatch, wantId = String(want.id || '');
+    const fields = Object.keys(want).filter(k => k !== 'id');
+    const hit = ops.some(o => opName(o) === 'update_node' && String(o.id) === wantId
+      && fields.every(k => String((o.patch || {})[k]) === String(want[k])));
+    if (!hit) issues.push('修改字段未达成: 期望 ' + JSON.stringify(want)
+      + '，实际 ' + JSON.stringify(ops.filter(o => opName(o) === 'update_node').map(o => ({ id: o.id, patch: o.patch }))));
+  }
   if (ex.mustIncludeTargets) {
     const evalTargets = ops.filter(o => opName(o) === 'create_eval_node').map(o => o.target_node_id || o.target);
     for (const t of ex.mustIncludeTargets) if (!evalTargets.includes(t)) issues.push('未评价目标 ' + t);
@@ -830,8 +845,27 @@ async function runTurns(sc, idx, graph, total) {
     }) };
     const payload = buildTurnPayload(snapshot, turn, history, lastOps, lastBeforeSnapshot, allOps, initialSnapshot);
     try {
+      // 路径二配套：质检请求「看到了结果图」的观测点在 mock /__stats
+      // （selfcheckResultState 只在质检请求带「操作执行后的结果图」段时 +1）
+      let mockStatsBefore = null;
+      if (turn.expect && turn.expect.criticSawResultState && MOCK_BASE) {
+        try { mockStatsBefore = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json(); } catch (e) {}
+      }
       const data = await callReview(payload);
       const score = turnScore(turn, data);
+      if (turn.expect && turn.expect.criticSawResultState && MOCK_BASE) {
+        try {
+          const st = await (await fetch(MOCK_BASE.replace(/\/v1$/, '') + '/__stats')).json();
+          const before = (mockStatsBefore && mockStatsBefore.selfcheck_result_state) || 0;
+          if ((st.selfcheck_result_state || 0) <= before) {
+            score.passed = false;
+            score.issues.push('质检请求没有看到结果图（mock /__stats.selfcheckResultState 未增长）');
+          }
+        } catch (e) {
+          score.passed = false;
+          score.issues.push('无法读取 mock /__stats: ' + e.message);
+        }
+      }
       turnResults.push({ turn: ti, status: data.status, score, data });
       if (data && data.next_snapshot && (data.status === 'ok' || data.status === 'undo')) {
         lastBeforeSnapshot = JSON.parse(JSON.stringify(snapshot));

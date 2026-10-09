@@ -10,6 +10,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from harness.selfcheck import (
+    _result_state_excerpt,
     build_selfcheck_messages,
     check_snapshot_consistency,
     parse_selfcheck,
@@ -68,6 +69,84 @@ class BuildSelfcheckMessagesTest(unittest.TestCase):
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("把导数改成英文", messages[1]["content"])
         self.assertIn("导数", messages[1]["content"])
+
+
+class ResultStateExcerptTest(unittest.TestCase):
+    """路径二第一步：结果图摘录（触及＋一跳邻居、80 字截断、降级逐字节一致）。"""
+
+    @staticmethod
+    def _snapshot():
+        return {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数", "content": "x" * 200, "formula": "f'(x)"},
+                {"id": "B", "kind": "knowledge", "label": "极限", "content": "趋近", "formula": ""},
+                {"id": "C", "kind": "module", "label": "物理视角", "content": "速度", "formula": ""},
+                {"id": "D", "kind": "knowledge", "label": "远岛", "content": "不相邻", "formula": ""},
+            ],
+            "edges": [
+                {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
+                {"key": "A:out-0->C:in-0", "from": "A", "to": "C", "relation": "视角"},
+            ],
+        }
+
+    def test_touched_neighbors_and_truncation(self):
+        before = self._snapshot()
+        result = {
+            "nodes": [dict(n) for n in before["nodes"]] + [
+                {"id": "N1", "kind": "module", "label": "新模块", "content": "新内容", "formula": ""},
+            ],
+            "edges": before["edges"] + [
+                {"key": "N1:out-0->A:in-1", "from": "N1", "to": "A", "relation": "补充"},
+            ],
+        }
+        ops = [
+            {"op": "create_node", "temp_id": "t1", "kind": "module", "label": "新模块", "reason": "r"},
+            {"op": "add_edge", "from": "N1", "to": "A", "reason": "连线"},
+        ]
+        excerpt = _result_state_excerpt(before, result, ops)
+        by_id = {n["id"]: n for n in excerpt["nodes"]}
+        # 触及＝新建 N1＋连线的 A；B、C 是 A 的一跳邻居；D 与触及区域无连线不该出现
+        self.assertIn("N1", by_id)
+        self.assertIn("A", by_id)
+        self.assertIn("B", by_id)
+        self.assertIn("C", by_id)
+        self.assertNotIn("D", by_id)
+        self.assertTrue(by_id["N1"]["touched"])
+        self.assertTrue(by_id["A"]["touched"])
+        self.assertFalse(by_id["B"]["touched"])
+        self.assertFalse(by_id["C"]["touched"])
+        # 80 字截断＋省略号（对齐只读工具 _READONLY_EXCERPT_CHARS 口径）
+        self.assertEqual(by_id["A"]["content"], "x" * 80 + "…")
+        edge_keys = [e["key"] for e in excerpt["edges"]]
+        self.assertIn("N1:out-0->A:in-1", edge_keys)
+        self.assertIn("B:out-0->A:in-0", edge_keys)
+        messages = build_selfcheck_messages("加一个新模块并连到导数", before, ops, result)
+        content = messages[1]["content"]
+        self.assertIn("操作执行后的结果图", content)
+        self.assertIn("新模块", content)
+        self.assertIn("x" * 80 + "…", content)
+        self.assertNotIn("x" * 81, content)
+        # D（远岛）在前态精简图里本就存在，只该从「结果图」段缺席
+        result_section = content.split("操作执行后的结果图", 1)[1]
+        self.assertNotIn("远岛", result_section)
+
+    def test_deleted_nodes_listed(self):
+        before = self._snapshot()
+        result = {
+            "nodes": [n for n in before["nodes"] if n["id"] != "B"],
+            "edges": [e for e in before["edges"] if e.get("from") != "B"],
+        }
+        excerpt = _result_state_excerpt(before, result, [{"op": "delete_node", "id": "B", "reason": "r"}])
+        self.assertIn("B", excerpt["removed_node_ids"])
+        self.assertNotIn("B", [n["id"] for n in excerpt["nodes"]])
+
+    def test_bad_result_shapes_degrade_identically(self):
+        before = self._snapshot()
+        ops = [{"op": "update_node", "id": "A", "patch": {"label": "X"}, "reason": "r"}]
+        legacy = build_selfcheck_messages("改标题", before, ops)
+        self.assertNotIn("操作执行后的结果图", legacy[1]["content"])
+        for bad in (None, "not-a-dict", 123, {"nodes": "oops"}):
+            self.assertEqual(build_selfcheck_messages("改标题", before, ops, bad), legacy)
 
 
 class CheckSnapshotConsistencyTest(unittest.TestCase):

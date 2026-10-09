@@ -912,7 +912,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 ],
             }
 
-        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None):
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None, result_snapshot=None):
             return {"ok": False, "issues": ["用户要求删除 H，但操作只修改了 B"], "missing": []}
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
@@ -944,7 +944,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 ],
             }
 
-        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None):
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None, result_snapshot=None):
             return {"ok": True, "issues": [], "missing": []}
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
@@ -961,6 +961,51 @@ class HarnessSelfCheckTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["self_check"]["critic"]["ok"])
 
+
+    def test_review_graph_critic_receives_result_state(self):
+        """路径二第一步：critic 收到的 result_snapshot 必须是操作执行后的结果图，
+        before 快照保持旧值——「对账操作单」升级为「对账结果图」的接线穿透。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        captured = {}
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "",
+                "tool_calls": [
+                    {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"content": "改后的正文"}, "reason": "按指令修改"}'}},
+                    {"function": {"name": "delete_node", "arguments": '{"node_id": "H", "reason": "超纲"}'}},
+                ],
+            }
+
+        async def fake_selfcheck(snapshot, instruction, ops, model, counter=None, result_snapshot=None):
+            captured["before"] = snapshot
+            captured["result"] = result_snapshot
+            return {"ok": True, "issues": [], "missing": []}
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            with unittest.mock.patch.object(review_mod, "_selfcheck_ops", new=fake_selfcheck):
+                result = asyncio.run(review_mod.review_graph(
+                    {"nodes": [
+                        {"id": "A", "kind": "knowledge", "label": "A", "content": "旧正文"},
+                        {"id": "H", "kind": "knowledge", "label": "超纲"},
+                    ], "edges": []},
+                    "把 A 的正文改掉并删掉 H",
+                    model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                    mode="tools",
+                    retries=1,
+                    self_check="auto",
+                ))
+        self.assertEqual(result["status"], "ok")
+        self.assertIsInstance(captured["result"], dict)
+        result_nodes = {n["id"]: n for n in captured["result"].get("nodes", [])}
+        self.assertEqual(result_nodes["A"]["content"], "改后的正文")
+        self.assertNotIn("H", result_nodes)
+        before_nodes = {n["id"]: n for n in captured["before"].get("nodes", [])}
+        self.assertEqual(before_nodes["A"]["content"], "旧正文")
+        self.assertIn("H", before_nodes)
 
     def test_parse_selfcheck_tool(self):
         from harness.selfcheck import parse_selfcheck_tool

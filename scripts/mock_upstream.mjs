@@ -28,7 +28,7 @@ let seq = 0;
 const nextId = () => 'mock-' + Date.now() + '-' + (++seq);
 
 // 剧本计数器（长驻进程按全局；verify 脚本按增量读 /__stats）
-const stats = { chatRequests: 0, retryScripts: {} };
+const stats = { chatRequests: 0, retryScripts: {}, selfcheckResultState: 0 };
 const rateLimitSeen = {};
 
 // 从请求 messages 里抽取"要看什么"的判据文本
@@ -83,6 +83,39 @@ function replyOf(body) {
   // —— T93 只读查询回灌（Φ 多步循环真机通道⑩）：先查图，回灌后再出编辑 ops ——
   // 第一次（messages 里还没有 role:"tool"）回 read_node 查询；后端执行查询并以
   // role:"tool" 回灌后的第二次回 update_node 编辑调用（reason 必填，照工具 schema）。
+  // —— 路径二第一步（质检看结果图，2026-10-09）两个分支须在 toolCall 声明之后
+  // （同一函数作用域，放在声明前是 TDZ ReferenceError，critic 请求会把 mock 进程
+  // 直接打崩——本轮 battery 首跑实踩）——
+  // ① 质检员请求＝tools 含 submit_selfcheck：stats.selfcheckResultState 计数
+  //    「质检请求确实看到了结果图段」（battery criticSawResultState 断言读 /__stats）；
+  //    「公式核对演练」剧本判 false（公式未达成）→ 主循环带反馈重试；其他场景的
+  //    质检请求不在此返回，维持既有「落兜底文本→parse_error→放行」，零行为变化。
+  if (j.tools.includes('submit_selfcheck')) {
+    if (j.allText.includes('操作执行后的结果图')) stats.selfcheckResultState += 1;
+    if (t.includes('公式核对演练')) {
+      return toolCall('submit_selfcheck', {
+        ok: false,
+        issues: ['公式未达成：导数节点的公式没有改成 F=ma，改的都不是公式字段'],
+        missing: ['把导数节点 A 的公式更新为 F=ma'],
+      });
+    }
+  }
+  // ② 主链路剧本：第一次四条合法操作（>3 条触发质检门）但没一条改公式；
+  //    重试消息带质检反馈「公式未达成」字样，据此回正确的一条 update_node。
+  if (!j.tools.includes('submit_selfcheck') && t.includes('公式核对演练')) {
+    if (j.allText.includes('公式未达成')) {
+      return toolCall('update_node', { node_id: 'A', patch: { formula: 'F=ma' }, reason: '按指令把导数公式改成 F=ma' });
+    }
+    return {
+      content: '好的，按你的要求整理导数相关的图 ' + sfx,
+      tool_calls: [
+        { id: 'call_u1_' + nextId(), type: 'function', function: { name: 'update_node', arguments: JSON.stringify({ node_id: 'A', patch: { label: '导数（概念）' }, reason: '整理标题' }) } },
+        { id: 'call_u2_' + nextId(), type: 'function', function: { name: 'update_node', arguments: JSON.stringify({ node_id: 'D', patch: { content: '（润色）导数描述变化快慢' }, reason: '顺手润色' }) } },
+        { id: 'call_e1_' + nextId(), type: 'function', function: { name: 'update_edge', arguments: JSON.stringify({ edge_key: 'B:out-0->A:in-0', patch: { relation: '前置' }, reason: '明确关系' }) } },
+        { id: 'call_e2_' + nextId(), type: 'function', function: { name: 'add_edge', arguments: JSON.stringify({ from: 'D', to: 'C', relation: '补充', reason: '把理解接到物理视角' }) } },
+      ],
+    };
+  }
   if (j.tools.includes('read_node') && t.includes('细读')) {
     const fedBack = (Array.isArray(body.messages) ? body.messages : []).some(m => m && m.role === 'tool');
     if (!fedBack) {
@@ -196,7 +229,7 @@ const server = http.createServer((req, res) => {
     // 真机脚本核对观测点（通道⑪）：chat_requests 总次数 + 各剧本关键词的
     // attempts（本关键词收到的 /chat/completions 次数）/ rejected_429（真的 429 了几次）
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts }));
+    res.end(JSON.stringify({ mock: true, seq, chat_requests: stats.chatRequests, retry_scripts: stats.retryScripts, selfcheck_result_state: stats.selfcheckResultState }));
     return;
   }
   if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {

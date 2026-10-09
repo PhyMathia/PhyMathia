@@ -13,8 +13,8 @@ from typing import Any, Dict
 
 from .json_utils import extract_json, repair_json
 
-SELFCHECK_SYSTEM_PROMPT = """你是图修改结果质检员。下面给出用户指令、图快照（精简）和已经生成的操作。
-检查这些操作是否准确、完整地执行了用户指令：有没有选错节点、漏做关键动作、做了多余或冲突的修改。
+SELFCHECK_SYSTEM_PROMPT = """你是图修改结果质检员。下面给出用户指令、图快照（精简）、已经生成的操作；若提供「操作执行后的结果图」，它是操作全部执行完毕后的真实图状态（触及节点与一跳邻居，正文为截断摘录，removed_node_ids 为本批删除的节点）。
+对照用户指令逐项核对：操作有没有选错节点、漏做关键动作、做了多余或冲突的修改；提供结果图时以结果图为准对账——操作各自合法但结果没达成指令（要改的字段没改成要求值、要删的节点还在、删 A 建 B 式换血后新内容与指令不符）必须判 false。
 
 如果环境提供了 submit_selfcheck 工具，必须调用它提交结论（ok/issues/missing），不要在文本里重复输出 JSON。
 如果环境没有提供该工具，则只输出 JSON：
@@ -70,7 +70,85 @@ def parse_selfcheck_tool(tool_calls):
     return None
 
 
-def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list) -> list:
+# 结果态摘录的规模与截断口径：critic 消息里的触及区域不能随图大小无限膨胀，
+# 正文摘录长度对齐只读工具的 _READONLY_EXCERPT_CHARS=80。
+_RESULT_STATE_MAX_NODES = 30
+_RESULT_STATE_MAX_EDGES = 60
+_RESULT_STATE_EXCERPT_CHARS = 80
+
+
+def _result_state_excerpt(before: Any, result: Any, ops: list) -> Any:
+    """操作执行后的「触及区域」摘录：触及节点＋一跳邻居（带截断正文）＋被删清单。
+
+    critic 以前只看操作单、从不见改完之后的图，「操作各自合法、结果未达成
+    指令」的批次由此漏过（docs/Φ智能体优化新路径-2026-10-09.md 路径二）。
+    触及集合＝ops 里的目标 id ∪ 结果图相对原图新建的节点 ∪ 被删节点；输入
+    形态不对（任一非 dict、结果图无 nodes 列表）返回 None，调用方按「没有
+    结果态」降级，消息与从前逐字节一致。"""
+    if not isinstance(before, dict) or not isinstance(result, dict):
+        return None
+    if not isinstance(result.get("nodes"), list):
+        return None
+    before_ids = {
+        str(n.get("id") or "")
+        for n in (before.get("nodes") or []) if isinstance(n, dict)
+    }
+    result_nodes = [n for n in result["nodes"] if isinstance(n, dict)]
+    result_ids = {str(n.get("id") or "") for n in result_nodes}
+    touched: set = set()
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        for key in ("id", "from", "to", "target_node_id"):
+            val = str(op.get(key) or "")
+            if val:
+                touched.add(val)
+    created = {nid for nid in result_ids if nid and nid not in before_ids}
+    deleted = {nid for nid in before_ids if nid and nid not in result_ids}
+    touched |= created | deleted
+    edges = [e for e in (result.get("edges") or []) if isinstance(e, dict)]
+    # 一跳邻居：与触及节点直接相连的端点（不含二跳）
+    neighbor_ids: set = set()
+    for e in edges:
+        f, t = str(e.get("from") or ""), str(e.get("to") or "")
+        if f in touched and t:
+            neighbor_ids.add(t)
+        if t in touched and f:
+            neighbor_ids.add(f)
+    region = {nid for nid in (touched | neighbor_ids) if nid in result_ids}
+    nodes_out = []
+    for n in result_nodes:
+        nid = str(n.get("id") or "")
+        if nid not in region:
+            continue
+        content = str(n.get("content") or "")
+        formula = str(n.get("formula") or "")
+        nodes_out.append({
+            "id": nid,
+            "kind": n.get("kind"),
+            "label": n.get("label"),
+            "touched": nid in touched,
+            "content": content[:_RESULT_STATE_EXCERPT_CHARS] + ("…" if len(content) > _RESULT_STATE_EXCERPT_CHARS else ""),
+            "formula": formula[:_RESULT_STATE_EXCERPT_CHARS] + ("…" if len(formula) > _RESULT_STATE_EXCERPT_CHARS else ""),
+        })
+        if len(nodes_out) >= _RESULT_STATE_MAX_NODES:
+            break
+    kept_edges = [
+        {
+            "key": e.get("key"),
+            "from": str(e.get("from") or ""),
+            "to": str(e.get("to") or ""),
+            "relation": e.get("relation") or e.get("label") or "",
+        }
+        for e in edges
+        if str(e.get("from") or "") in region and str(e.get("to") or "") in region
+    ][:_RESULT_STATE_MAX_EDGES]
+    if not nodes_out and not kept_edges and not deleted:
+        return None
+    return {"nodes": nodes_out, "edges": kept_edges, "removed_node_ids": sorted(deleted)}
+
+
+def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list, result_snapshot: Any = None) -> list:
     compact = {
         "nodes": [
             {"id": node.get("id"), "kind": node.get("kind"), "label": node.get("label")}
@@ -85,8 +163,15 @@ def build_selfcheck_messages(instruction: str, snapshot: dict, ops: list) -> lis
 
     user_text = (
         f"用户指令：{instruction}\n\n图快照（精简）：\n{json_dumps(compact)}"
-        f"\n\n已生成操作：\n{json_dumps(ops)}\n\n只输出质检 JSON。"
+        f"\n\n已生成操作：\n{json_dumps(ops)}"
     )
+    result_excerpt = _result_state_excerpt(snapshot, result_snapshot, ops)
+    if result_excerpt is not None:
+        user_text += (
+            "\n\n操作执行后的结果图（触及节点与一跳邻居；content/formula 为截断摘录）：\n"
+            + json_dumps(result_excerpt)
+        )
+    user_text += "\n\n只输出质检 JSON。"
     return [
         {"role": "system", "content": SELFCHECK_SYSTEM_PROMPT},
         {"role": "user", "content": user_text},

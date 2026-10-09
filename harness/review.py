@@ -821,13 +821,16 @@ def _should_selfcheck_ops(ops: list) -> bool:
     )
 
 
-async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None, journal: Optional[list] = None) -> Dict[str, Any]:
-    """One lightweight critic call checking instruction coverage. Never blocks on failure."""
+async def _selfcheck_ops(snapshot: Dict[str, Any], instruction: str, ops: list, model: Dict[str, Any], counter: Optional[Dict[str, int]] = None, journal: Optional[list] = None, result_snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """One lightweight critic call checking instruction coverage. Never blocks on failure.
+
+    result_snapshot：操作执行后的结果图（路径二第一步）——critic 从「对账操作单」
+    升级为「对账结果图」；None 时消息与从前逐字节一致（降级回归）。"""
     def _tick():
         if counter is not None:
             counter["n"] += 1
 
-    messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops)
+    messages = build_selfcheck_messages(str(instruction or ""), snapshot, ops, result_snapshot)
     # 主循环对 required 有 provider 门控（opencode 免费模型不支持，见
     # _supports_required_tool_choice），自检不带门控会在这些链路上每次
     # 白烧一整轮注定 400 的调用 + 一轮 JSON 重试（09-20 修复）
@@ -1781,6 +1784,7 @@ async def review_graph(
                     _emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
                     critic = await _selfcheck_ops(
                         current, instruction, raw_ops, resolved_model, counter=call_counter,
+                        result_snapshot=result.get("next_snapshot"),
                         **({"journal": journal} if journal is not None else {}),
                     )
                     result["self_check"]["critic"] = critic
