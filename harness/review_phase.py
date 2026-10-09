@@ -58,6 +58,39 @@ def _detect_undo_intent(instruction: str) -> bool:
     return any(hint in text.lower() for hint in UNDO_HINTS)
 
 
+# ---- T226：确定性撤销的「短指令」门槛 ----
+# UNDO_HINTS 是宽泛子串匹配，「这个公式不要了，删掉它」「把公式恢复成正确写法」
+# 这类**复合编辑指令**会误命中撤销词 → 图被确定性回滚、summary 还谎报「已撤销
+# 上一步修改」。修法：给确定性撤销加「指令足够短」门槛，配在 review.py:1018
+# 使用处（_detect_undo_intent 函数内部**不动**——它还有 review.py:1605 的
+# 「编辑意图重试」判定在用，改内部会顺带改掉那处语义）。
+# 取舍一：长指令＝复合编辑指令，交给模型带上下文自行判断；「命中即不调模型」的
+# 拍板对短指令原样保留。
+# 取舍二：前端「↩ 撤销上一条」按钮的实际文案是「撤销刚才的修改，恢复原样」
+# （12 字符，harness-run.js undoLastHarnessEdit 实发），语义却毫不含糊就是撤
+# 上一步；而误报示例「把公式恢复成正确写法」只有 10 字符——**任何纯长度阈值
+# 都无法同时放行前者又分流后者**。故对明确指回「上一步」的指令放开长度限制
+# （回溯标记均出自本表撤销语族：刚才/刚加/上一步…）。复合编辑指令不会指回
+# 上一步，两者可分。
+UNDO_MAX_INSTRUCTION_CHARS = 8
+_PREVIOUS_STEP_MARKERS = ("刚才", "刚刚", "刚加", "上一步", "上一次")
+
+
+def _is_unambiguous_undo(text: str) -> bool:
+    """指令是否构成无歧义撤销（T226 短指令门槛）。
+
+    指令去空白后足够短（<= UNDO_MAX_INSTRUCTION_CHARS），或明确指回「上一步」
+    时返回 True——此时命中撤销词就是撤销本身；否则视为复合编辑指令，其中的
+    撤销词只是从句里的附带说法，不应触发确定性回滚。
+    """
+    s = str(text or "").strip()
+    if not s:
+        return False
+    if len(s) <= UNDO_MAX_INSTRUCTION_CHARS:
+        return True
+    return any(marker in s for marker in _PREVIOUS_STEP_MARKERS)
+
+
 def _filter_inverse_by_targets(inverse_ops: list, targets, snapshot=None) -> list:
     targets = {str(item) for item in (targets or []) if str(item)}
     if not targets:
