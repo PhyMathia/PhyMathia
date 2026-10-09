@@ -57,7 +57,7 @@
     <div class="sidebar-header">
       <h3>画布列表</h3>
       <div class="sidebar-header-actions">
-        <button class="sidebar-multiselect-btn" id="sessionMultiSelectBtn" onclick="toggleSessionMultiSelect()" title="多选画布：勾选后可一次性删除">
+        <button class="sidebar-multiselect-btn" id="sessionMultiSelectBtn" onclick="toggleSessionMultiSelect()" title="多选画布">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M16 4h2a2 2 0 0 1 2 2v2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><path d="M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 12h6"></path></svg>
         </button>
         <button aria-label="关闭" class="sidebar-close" onclick="closeSidebar()">✕</button>
@@ -96,7 +96,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="8" height="4" rx="1.4"></rect><path d="M8 5H6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path><path d="M9 13l2 2 4-4"></path></svg>
           <span class="sidebar-tile-label">画布检测</span>
         </button>
-        <button class="sidebar-tile" onclick="closeSidebar();openQuizGlobalDashboard()" title="全部画布的检测总览">
+        <button class="sidebar-tile" onclick="closeSidebar();openQuizGlobalDashboard()" title="知识检测总览">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"></path><path d="M9 12h6"></path></svg>
           <span class="sidebar-tile-label">检测总览</span>
         </button>
@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=d7f490c9" defer></script>
+  <script src="/js/app.js?v=35fa7a8c" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
