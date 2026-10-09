@@ -971,6 +971,68 @@ checkSync('15秒同步：本地消息键缺失时即使时间戳持平也要从�
     }
   }
 });
+// ===== 串行边界追加：15 秒轮询的推送去重（T203，2026-10-09）=====
+// 轮询体抽成具名 _periodicSyncTick：当前会话内容与「最近一次成功推送」逐字节
+// 一致就跳过 POST——显式保存链（saveCurrentSession）与同步合并推送都经
+// _saveMessagesToServer 在 resp.ok 时记签名，失败不记、下一拍照常重试；
+// beforeunload beacon 兜底不走这条。此前每拍无条件推整份 chatHistory，服务端
+// 虽有合并短路兜底，网络传输与服务端读并每 15 秒白干一遍。
+checkSync('15秒推送：稳态零推送，内容变化才推整份历史，失败不记签名会重试', async () => {
+  const prevFetch = sandbox.fetch;
+  const prevSid = syncEval('currentSessionId');
+  const prevHist = syncEval('JSON.stringify(chatHistory)');
+  const posts = [];
+  let failPost = false;
+  sandbox.fetch = async (url, init) => {
+    const u = String(url);
+    const method = (init && init.method) || 'GET';
+    if (method === 'POST' && u === '/api/sessions/s1/messages') {
+      if (failPost) return { ok: false, status: 500, json: async () => ({}) };
+      posts.push(JSON.parse(init.body));
+      return syncOkJson({ ok: true });
+    }
+    if (u === '/api/sessions') return syncOkJson({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    if (u === '/api/knowledge') return syncOkJson({});
+    if (u === '/api/kv/phymathia_current_session') return syncOkJson({ value: null });
+    return syncOkJson({});
+  };
+  try {
+    storageData['phymathia_sessions'] = JSON.stringify({ s1: { id: 's1', title: '甲', sessionId: 'p1', updatedAt: 100 } });
+    storageData['phymathia_msgs_s1'] = JSON.stringify([{ role: 'user', content: 'hi', timestamp: 1 }]);
+    syncEval('currentSessionId = "s1"');
+    syncEval('chatHistory = [{ role: "user", content: "hi", timestamp: 1 }]');
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 1) throw new Error('签名未知的首拍应推送一次，实际 ' + posts.length);
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 1) throw new Error('内容未变的第二拍不该再推（T203 核心），多推了 ' + (posts.length - 1) + ' 次');
+    syncEval('chatHistory.push({ role: "assistant", content: "new", timestamp: 2 })');
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 2) throw new Error('内容变化后应恢复推送，实际 ' + posts.length);
+    if (!Array.isArray(posts[1].messages) || posts[1].messages.length !== 2) {
+      throw new Error('应推整份 chatHistory：' + JSON.stringify(posts[1]));
+    }
+    // 推送失败不记签名：内容再变后失败一拍、下一拍必须重试，成功后恢复安静
+    syncEval('chatHistory.push({ role: "user", content: "again", timestamp: 3 })');
+    failPost = true;
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 2) throw new Error('失败拍不该记成功');
+    failPost = false;
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 3) throw new Error('失败后的下一拍应重试，实际 ' + posts.length);
+    if (posts[2].messages.length !== 3) throw new Error('重试应带最新整份历史');
+    await syncEval('_periodicSyncTick()');
+    if (posts.length !== 3) throw new Error('重试成功后应恢复稳态零推送');
+  } finally {
+    sandbox.fetch = prevFetch;
+    syncEval('currentSessionId = ' + JSON.stringify(prevSid));
+    syncEval('chatHistory = ' + prevHist);
+    // 共享键还原（多选链与后续分域还在用它们）
+    for (const k of SYNC_KEYS) {
+      if (syncSavedStore[k] === undefined) delete storageData[k];
+      else storageData[k] = syncSavedStore[k];
+    }
+  }
+});
 await syncTail;
 
 await drain();

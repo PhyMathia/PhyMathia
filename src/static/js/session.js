@@ -289,9 +289,16 @@
       return _postToServer('/api/sessions', { ...sessData, id: sid });
     }
 
-    // 保存消息到服务端
+    // 保存消息到服务端。T203：成功推送后记录该会话的内容签名——15 秒轮询据此
+    // 跳过「与上次成功推送逐字节一致」的重复推送（服务端合并短路是第二道兜底，
+    // 整份 chatHistory 的网络传输＋服务端读并才是大头）。签名只在 resp.ok 时
+    // 更新：失败的下一拍照常重试。beacon（beforeunload 兜底）不走这里、不拦。
+    const _lastPushedMsgsSig = new Map(); // sessionId -> 最近一次成功推送的消息 JSON 串
     async function _saveMessagesToServer(sessionId, msgs) {
-      return _postToServer(`/api/sessions/${sessionId}/messages`, { messages: msgs || [] });
+      const msgsJson = JSON.stringify(msgs || []);
+      const ok = await _postToServer(`/api/sessions/${sessionId}/messages`, { messages: msgs || [] });
+      if (ok) _lastPushedMsgsSig.set(sessionId, msgsJson);
+      return ok;
     }
 
     // 保存知识条目到服务端
@@ -305,15 +312,21 @@
     }
 
     // 定期自动同步（每 15 秒）：推送当前消息 + 全量拉取 + 刷新界面
-    // （根治跨标签页/服务端变化时"要刷新才出现"的问题）
-    setInterval(async () => {
+    // （根治跨标签页/服务端变化时"要刷新才出现"的问题）。
+    // 抽成具名函数：冒烟直接调 _periodicSyncTick() 驱动轮询拍（T203）。
+    async function _periodicSyncTick() {
       try {
         // 流式生成期间不推不拉：此时 assistant 消息尚未完整入 history，
         // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染
         if (isStreaming) return;
         // 只读查阅（P3）：拉取照旧（保持对方数据的实时视图），推送跳过
         if (!phyIsReadonly() && currentSessionId && chatHistory.length > 0) {
-          await _saveMessagesToServer(currentSessionId, chatHistory);
+          // T203：与最近一次成功推送逐字节一致就跳过——显式保存链
+          // （saveCurrentSession）与同步合并推送都经 _saveMessagesToServer 记
+          // 签名，稳态轮询零推送，活跃轮次不再把整份历史每 15 秒重发一遍
+          if (JSON.stringify(chatHistory) !== _lastPushedMsgsSig.get(currentSessionId)) {
+            await _saveMessagesToServer(currentSessionId, chatHistory);
+          }
         }
         const synced = await _syncFromServer();
         if (synced) {
@@ -334,7 +347,8 @@
       } catch (e) {
         console.warn('[Storage] Periodic sync failed:', e);
       }
-    }, 15000);
+    }
+    setInterval(_periodicSyncTick, 15000);
 
     // 页面关闭前保护
     // 注意：同步 XHR 在 Chrome 88+ 的卸载阶段会被丢弃，改用 sendBeacon
@@ -1407,6 +1421,8 @@
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
       localStorage.removeItem('phymathia_graph_' + currentSessionId);
+      // T203：服务端副本已 DELETE，旧推送签名作废——此后重建的内容必须照常推送
+      _lastPushedMsgsSig.delete(currentSessionId);
       // 服务端清空先行（T182）：回收站捕获点在 DELETE /messages 内，必须早于
       // 探索网快照/quiz 的前端清理，否则捕到的已是残骸（同删除画布的顺序纪律）
       try {
