@@ -91,6 +91,15 @@
       return merged;
     }
 
+    // 从服务端拉取并合并（会话元数据/消息/知识/活动指针）。
+    // 返回值＝本轮「数据是否确有变化」（T204）：两边已收敛的稳态返回 false，
+    // 15 秒轮询据此跳过侧栏/知识面板的全量重建。判据：
+    //   - 会话元数据：合并结果与本地原串逐字节不同
+    //   - 消息：只拉「服务端 updatedAt 更新或本地消息键缺失」的会话（消息链路
+    //     的所有写入点都伴随会话 updatedAt bump 并 upsert 服务端，见
+    //     saveCurrentSession——时间戳持平即视为已收敛），合并结果与本地不同才写
+    //   - 知识：合并结果与本地不同才写
+    // 调用方不得把它当「服务端可用性」用（服务端可达但无变化也是 false）。
     async function _syncFromServer() {
       // T70：不再先 _checkServer() 单独探活（它自己也 GET /api/sessions）再全量拉
       // 一遍——首个请求本身就是探活。启动与 15 秒轮询各少一次重复请求（此前
@@ -103,6 +112,7 @@
         await window.waitForFormulaSave();
       }
       let mergedSessions = null;  // T78：本轮回合后的会话全集，供 current 指针判悬空用
+      let changed = false;        // T204：本轮是否确有数据落盘变化（决定返回值）
       try {
         const [sessResp, knowResp, currResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
@@ -133,18 +143,37 @@
               if (serverTime > localTime) merged[sid] = serverSessions[sid];
             }
           }
-          localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(merged));
+          // T204：与本地原串一致就不写盘、不计变化（{...local} 保序，稳态下逐字节相同）
+          const mergedSessionsJson = JSON.stringify(merged);
+          if (mergedSessionsJson !== localSessionsRaw) {
+            localStorage.setItem(STORAGE_KEY_SESSIONS, mergedSessionsJson);
+            changed = true;
+          }
           mergedSessions = merged;
 
-          // 合并消息：一次批量拉取所有服务端会话消息，再按会话逐条合并
-          const serverMessages = await _fetchServerMessagesBatch(serverSessionIds);
+          // 合并消息（T204：只拉「服务端可能有新消息」的会话）。此前每轮批量拉
+          // 全部会话消息＋每会话 3 次全量 stringify，稳态下全是空转。判据：会话
+          // updatedAt 服务端更新（消息链路的写入点都会 bump 它），或本地消息键
+          // 缺失（首次落库/被清，须从服务端补全——时间戳帮不上忙）。
+          const pullIds = [];
+          for (const sid of serverSessionIds) {
+            const localTime = (localSessions[sid] && localSessions[sid].updatedAt) || 0;
+            if ((serverSessions[sid].updatedAt || 0) > localTime
+              || localStorage.getItem('phymathia_msgs_' + sid) === null) {
+              pullIds.push(sid);
+            }
+          }
+          const serverMessages = await _fetchServerMessagesBatch(pullIds);
           const allSessionIds = new Set([...localSessionIds, ...serverSessionIds]);
           for (const sid of allSessionIds) {
             try {
+              const isServerSession = serverSessionIds.includes(sid);
+              // 时间戳与本地持平且本地已有消息：两边已收敛，parse/stringify 全跳
+              if (isServerSession && !pullIds.includes(sid)) continue;
               const localMsgsRaw = localStorage.getItem('phymathia_msgs_' + sid);
               const localMsgs = localMsgsRaw ? JSON.parse(localMsgsRaw) : [];
 
-              if (serverSessionIds.includes(sid)) {
+              if (isServerSession) {
                 const serverMsgs = Array.isArray(serverMessages[sid]) ? serverMessages[sid] : [];
                 // 逐条合并（按 timestamp 身份）：两边各自独有的消息都保留、
                 // 字段互补——不再「条数多者胜」整份丢掉少的一边独有的消息
@@ -152,6 +181,7 @@
                 const mergedJson = JSON.stringify(mergedMsgs);
                 if (mergedJson !== JSON.stringify(localMsgs)) {
                   safeLocalStorageSet('phymathia_msgs_' + sid, mergedJson);
+                  changed = true;
                 }
                 // 并集推回服务端，两边收敛一致
                 if (mergedJson !== JSON.stringify(serverMsgs)) {
@@ -159,7 +189,7 @@
                 }
               }
               // 服务端不存在的 session（本地独有），保留本地数据，同时上传到服务端
-              if (!serverSessionIds.includes(sid) && localMsgs.length > 0) {
+              if (!isServerSession && localMsgs.length > 0) {
                 console.log(`[Storage] Uploading local-only session ${sid} to server`);
                 try {
                   await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名画布', sessionId: sid });
@@ -191,7 +221,12 @@
           const serverCount = Object.keys(serverMap).length;
           const localCount = Object.keys(localKnow || {}).length;
           if (serverCount > 0) {
-            localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(merged));
+            // T204：与本地一致就不写盘、不计变化（此前每轮无条件全量写知识表）
+            const mergedJson = JSON.stringify(merged);
+            if (mergedJson !== JSON.stringify(localKnow || {})) {
+              localStorage.setItem(STORAGE_KEY_KNOWLEDGE, mergedJson);
+              changed = true;
+            }
           } else if (localCount > 0) {
             // 本地有数据但服务端为空：上传补全服务端
             try { await _postToServer('/api/knowledge', { items: localKnow }); } catch(e) { console.warn('[Storage] Upload knowledge failed:', e); }
@@ -209,7 +244,7 @@
             localStorage.setItem(STORAGE_KEY_CURRENT, cv.value);
           }
         }
-        return true;
+        return changed;
       } catch (e) {
         console.warn('[Storage] Sync failed:', e);
         return false;
@@ -282,7 +317,8 @@
         }
         const synced = await _syncFromServer();
         if (synced) {
-          // 服务端有更新则刷新界面
+          // T204：_syncFromServer 现按「确有数据变化」返回——稳态每轮到此为止，
+          // 不再每 15 秒全量重建侧栏与知识面板
           loadSessions();
           renderSessionList();
           const panel = document.getElementById('knowledgePanel');
