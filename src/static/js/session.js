@@ -31,7 +31,10 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_ids: sessionIds }),
-          cache: 'no-cache'
+          cache: 'no-cache',
+          // 超时兜底（T237）：批量拉取是页面加载链路的第一站，一处挂死会让整轮
+          // 同步（含后续切画布）静默停在半路
+          signal: AbortSignal.timeout(10000)
         });
         if (resp.ok) {
           const data = await resp.json();
@@ -46,7 +49,7 @@
       // 旧服务端/异常时退回并行单会话请求，仍比串行快一个数量级
       const entries = await Promise.all(sessionIds.map(async (sid) => {
         try {
-          const msgsResp = await fetch(`/api/sessions/${sid}/messages`, { cache: 'no-cache' });
+          const msgsResp = await fetch(`/api/sessions/${sid}/messages`, { cache: 'no-cache', signal: AbortSignal.timeout(10000) });
           const msgs = msgsResp.ok ? await msgsResp.json() : [];
           return [sid, Array.isArray(msgs) ? msgs : []];
         } catch (e) {
@@ -116,8 +119,8 @@
       try {
         const [sessResp, knowResp, currResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
-          fetch('/api/knowledge', { cache: 'no-cache' }),
-          fetch('/api/kv/phymathia_current_session', { cache: 'no-cache' }),
+          fetch('/api/knowledge', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
+          fetch('/api/kv/phymathia_current_session', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
         ]);
         _serverAvailable = sessResp.ok;
         _serverAvailableCheckedAt = Date.now();
@@ -259,6 +262,9 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          // 超时兜底（T237）：会话/消息保存是全部本地改动的落盘点，一处挂死
+          // 会让后续 save 链静默停在半路（本地改了、服务端没有）
+          signal: AbortSignal.timeout(10000)
         });
         if (!resp.ok) {
           console.error('[Storage] Server save failed:', url, resp.status);
@@ -372,7 +378,9 @@
           if (navigator.sendBeacon) {
             navigator.sendBeacon(url + acctQ, new Blob([body], { type: 'application/json' }));
           } else {
-            fetch(url + acctQ, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+            // 超时兜底（T237）：卸载冲刷是最后一道写入，若浏览器无 sendBeacon
+            // 退到 fetch keepalive，同样不能无限挂等（keepalive 语义不受 signal 影响）
+            fetch(url + acctQ, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true, signal: AbortSignal.timeout(10000) }).catch(() => {});
           }
         } catch (e) { /* best effort */ }
       };
@@ -549,7 +557,10 @@
       if (_isBadGraphSid(sid)) return;
       if (!sid) return;
       try {
-        const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid));
+        // 超时兜底（T237）：切画布时的服务端图状态拉取，与 _postGraphState 同款
+        const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+          signal: AbortSignal.timeout(10000),
+        });
         if (!resp.ok) return;
         const data = await resp.json();
         const serverState = data.value;
@@ -1048,7 +1059,7 @@
       const msBtn = document.getElementById('sessionMultiSelectBtn');
       if (msBtn) {
         msBtn.classList.toggle('on', _sessionMultiSelect);
-        msBtn.title = _sessionMultiSelect ? '完成选择' : '多选画布：勾选后可一次性删除';
+        msBtn.title = _sessionMultiSelect ? '完成选择' : '多选画布';
         msBtn.innerHTML = _sessionMultiSelect ? MS_ICON_ON : MS_ICON_OFF;
       }
 
@@ -1139,11 +1150,13 @@
         if (sessions[sessionId]) {
           sessions[sessionId].title = newTitle;
           _saveSessionMeta(sessionId);
-          // 同步到服务端
+          // 同步到服务端（超时兜底 T237：重命名是一次性 fire-and-forget，挂死的
+          // PUT 不会有第二次机会补发）
           fetch(`/api/sessions/${sessionId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: newTitle })
+            body: JSON.stringify({ title: newTitle }),
+            signal: AbortSignal.timeout(10000),
           }).catch(() => {});
         }
         renderSessionList();
@@ -1243,11 +1256,12 @@
       if (sessions[sessionId]) {
         sessions[sessionId].icon = icon || undefined;
         _saveSessionMeta(sessionId);
-        // 同步到服务端
+        // 同步到服务端（超时兜底 T237：图标切换同上，fire-and-forget 无重试）
         fetch(`/api/sessions/${sessionId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ icon: icon || '' })
+          body: JSON.stringify({ icon: icon || '' }),
+          signal: AbortSignal.timeout(10000),
         }).catch(() => {});
       }
       closeIconPicker();
