@@ -47,8 +47,8 @@ router = APIRouter()
 
 @router.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
-    """兼容占位：本地 Mock 已移除，请通过前端模型设置使用真实模型（可用 opencode 免费模型）。"""
-    raise HTTPException(status_code=400, detail="本地 Mock 已移除，请在模型设置中配置 AI 模型（可直接使用免费模型）")
+    """兼容占位：本地 Mock 已移除，请在「模型设置」中配置模型后经 /api/models/chat 使用。"""
+    raise HTTPException(status_code=400, detail="本地 Mock 已移除，请在模型设置中配置 AI 模型")
 
 
 def _opencode_session_headers(base_url: str, session_id: str) -> dict:
