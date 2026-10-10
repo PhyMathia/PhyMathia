@@ -7,7 +7,7 @@ PhyMathia 是一个本地部署的 Web 应用：对每一个问题，AI **同时
 
 画布右下角还住着一个会敲键盘的小助手 **Φ**：既能用自然语言帮你整理知识网络（先预览、后应用、一句话撤销），也能随口回答物理数学小问题，还能帮你「发明」新类型的知识节点。
 
-所有 AI 能力开箱即用——内置免费模型，**无需申请任何 API Key** 即可完整体验；KaTeX / Marked / Mermaid / DOMPurify 全部为本地副本，**零 CDN 依赖**，断网也能渲染。
+AI 能力接入即用——在「模型设置」里添加一个模型即可开始（DeepSeek、智谱、Kimi、OpenRouter、本地 Ollama 等 OpenAI 兼容接口均可）；KaTeX / Marked / Mermaid / DOMPurify 全部为本地副本，**零 CDN 依赖**，断网也能渲染。
 
 ---
 

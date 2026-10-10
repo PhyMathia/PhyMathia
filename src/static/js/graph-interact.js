@@ -848,8 +848,8 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
     }
   }
 
-  if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
-  throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+  if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置');
+  throw new Error('未配置 AI 模型，请在模型设置中配置');
 }
 
 const _generatingVizNodes = new Set();

@@ -606,7 +606,7 @@
       const models = [];
       if (htmlModel) models.push(htmlModel);
       if (agentModel && (!htmlModel || agentModel.id !== htmlModel.id)) models.push(agentModel);
-      if (!models.length) throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+      if (!models.length) throw new Error('未配置 AI 模型，请在模型设置中配置');
 
       let lastError = null;
       for (let index = 0; index < models.length; index++) {

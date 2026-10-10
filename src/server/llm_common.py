@@ -62,7 +62,7 @@ PROVIDER_BASE_URLS = {
     "opencode": "https://opencode.ai/zen/v1",
 }
 
-# 免费 opencode（zen/v1）不需要密钥；保留常量名，调用方不必硬编码空串
+# zen 免费档已对第三方关闭（FreeTierError，2026-09-21 实测）；常量保留作兼容，调用方不必硬编码空串
 OPENCODE_DEFAULT_API_KEY = ""
 
 _OPENCODE_GO_ALIASES = ("opencode-go", "opencode_go", "opencodego", "go")
@@ -155,7 +155,7 @@ def resolve_api_key(provider, api_key, base_url="", wide_go=False, deepseek_last
         env = os.getenv("DEEPSEEK_API_KEY", "")
         return env, bool(env)
     if provider == "opencode":
-        # 免费 opencode（zen/v1）不需要 key，也不应把别家密钥发给网关
+        # opencode 走空密钥兜底（zen 免费档已对第三方关闭，见 PROVIDER_BASE_URLS 上方注）；别家密钥不发网关
         return OPENCODE_DEFAULT_API_KEY, False
     if deepseek_last_resort:
         env = os.getenv("DEEPSEEK_API_KEY", "")

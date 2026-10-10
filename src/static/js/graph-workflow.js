@@ -558,7 +558,7 @@ async function _generateAnalysis(node, nodeSignal) {
       }
     }
     if (!resp) {
-      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+      throw new Error('未配置 AI 模型，请在模型设置中配置');
     }
     if (!resp.ok) {
       const errText = await resp.text();
@@ -660,7 +660,7 @@ async function _generateCustomNode(node, nodeSignal) {
       }, signal);
     }
     if (!resp) {
-      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+      throw new Error('未配置 AI 模型，请在模型设置中配置');
     }
     if (!resp.ok) {
       const errText = await resp.text();
@@ -1969,7 +1969,7 @@ async function generateBlankNode(nodeId) {
       }
     }
     if (!resp) {
-      throw new Error('未配置 AI 模型，请在模型设置中配置（可直接使用免费模型）');
+      throw new Error('未配置 AI 模型，请在模型设置中配置');
     }
     if (!resp.ok) {
       const errText = await resp.text();

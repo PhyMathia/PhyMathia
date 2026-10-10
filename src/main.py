@@ -1,7 +1,7 @@
 """
 PhyMathia Web Application - 物理数学双域解释与可视化助手 (离线测试版)
 
-使用 opencode 免费模型（无需 API Key），也支持自定义 OpenAI 兼容模型。
+模型在「模型设置」中配置（支持自定义 OpenAI 兼容模型）。
 数据持久化使用 JSON 文件存储，无需 Supabase 或任何外部服务。
 """
 
@@ -372,7 +372,7 @@ if __name__ == "__main__":
     logger.info("=" * 50)
     logger.info("PhyMathia (Offline Test Mode)")
     logger.info(f"  - Port: {args.port}")
-    logger.info(f"  - 模型：免费模型模式（opencode，无需 API Key）")
+    logger.info("  - 模型：需在「模型设置」中配置（支持 OpenAI 兼容接口）")
     logger.info("=" * 50)
     logger.info(f"访问地址: http://localhost:{args.port}")
     # 打包版（PyInstaller）自动打开浏览器；开发模式不自动打开
