@@ -253,7 +253,8 @@ function _nodeInputLabel(node) {
 // 置灰「待命名」，连上某个输出口后采用该口的 label/type（_adoptedInputPortMeta）。
 // 渲染输入口与输出口「待命名」继承（_adoptedOutputPortMeta）共用它，保证端口上
 // 显示的名字与连线继承来的名字永远同一个口径。seen 是环路护栏：匿名口↔匿名口
-// 互为命名来源时会互相递归，访问过即回空白（两端都无身份，保持待命名）。
+// 互为命名来源时会互相递归，访问过即回空白，由 _adoptedInputPortMeta 回落宿主
+// 品类标签兜底——已接线必有身份（2026-10-10 双匿名死锁修复），未连线仍待命名。
 function _nodeInputPortMeta(node, portIndex, seen) {
   seen = seen || new Set();
   const key = String(node && node.id) + ':in-' + portIndex;
@@ -275,6 +276,10 @@ function _nodeInputPortMeta(node, portIndex, seen) {
 // 附加输入口的「待命名」继承：找落在本口上的边，取来源输出口的身份（基础口直接
 // 用表内名字；来源也是附加口时递归其继承，seen 拦环路）。fan-in 口（hub/knowledge）
 // 多条边落同一口时取第一条，与苏格拉底/进阶多路口附加口取首边的口径一致。
+// 匿名输出口↔匿名输入口互为命名来源时递归撞 seen 返回空——已接线却两头无名，
+// 会永远停在「待命名」（用户实测：A/B 匿名出口接总结节点，落基础口的那对当场
+// 继承「AI 总结」，落附加口的那对死锁）。此时回落宿主节点品类标签兜底，与基础口
+// 同口径；未连线仍返回 null 保持待命名。
 function _adoptedInputPortMeta(node, portIndex, seen) {
   if (!node || typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.edges)) return null;
   const portId = 'in-' + portIndex;
@@ -282,11 +287,11 @@ function _adoptedInputPortMeta(node, portIndex, seen) {
     String(item.to) === String(node.id) && String(item.toPort || 'in-0') === portId);
   if (!edge) return null;
   const fromNode = graphView.nodeById ? graphView.nodeById[String(edge.from)] : null;
-  if (!fromNode) return null;
   const fromIndex = parseInt(String(edge.fromPort || 'out-0').replace('out-', ''), 10) || 0;
   const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
-  const meta = _nodeOutputPortMeta(fromNode, fromIndex, messages, seen);
-  return meta && meta.label ? { label: meta.label, type: meta.type, sourceId: edge.from } : null;
+  const meta = fromNode ? _nodeOutputPortMeta(fromNode, fromIndex, messages, seen) : null;
+  if (meta && meta.label) return { label: meta.label, type: meta.type, sourceId: edge.from };
+  return { label: _nodeInputLabel(node), type: '' };
 }
 
 // 输出口身份读取（给输入口继承用）：基础口走唯一事实源表，附加口递归其
