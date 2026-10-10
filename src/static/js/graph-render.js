@@ -33,49 +33,19 @@ function _nodeAttribute(node) {
   return GRAPH_NODE_ATTRIBUTES.question;
 }
 
+// 连线自由化（2026-10-10）：结构连线不再做语义裁判——除「不能自己连自己」外
+// 一律放行。原 kind×端口白名单矩阵（hub 出口白名单、summary 只接 hub out-0、
+// note 只接 hub out-1、answer 的 AI/手写分流、human_note/blank 出口白名单、
+// module→user/draft 属性匹配、兜底 return false）整体移除。
+// 端口身份没丢、也从未依赖这一步：hub 的 out-0/out-1（AI 总结/我的总结）与
+// user 的 AI/手写回答口，在建点/拖拽时就由 portMeta 把身份落定了，连线层只是
+// 把已有的点连起来。Φ 的 add_edge（harness-apply.js）本就不经 _canConnect、
+// 联系线模式（graph-custom.js）向来任意两节点仅禁自连——手动结构连线此前比
+// 另两条都严，现在对齐同一红线。
+// fromPort 形参保留仅为调用点签名对称（连线不再看端口）。
+// 自连保留拦截：自环没有语义，且输入侧没有可挂的端口。
 function _canConnect(fromNode, fromPort, toNode) {
-  if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
-  // 知识点节点输入为通用入口：任意来源都可接入（须在 hub 出口白名单之前判断）
-  if (toNode.kind === 'knowledge') return true;
-  // T263 端口分类体系 v2 拍板：配方节点输入口接受任意来源（连线完全自由，
-  // 端口类型只作标注与喂料分组，不做连线拦截）
-  if (toNode.kind === 'module' && toNode.recipeId) return true;
-  if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
-  if (toNode.kind === 'summary') return fromNode.kind === 'hub' && String(fromPort || 'out-0') === 'out-0';
-  if (toNode.kind === 'note') return fromNode.kind === 'hub' && String(fromPort || 'out-1') === 'out-1';
-  if (fromNode.kind === 'hub') {
-    const hubPort = String(fromPort || 'out-0');
-    if (hubPort === 'out-0' || hubPort === 'out-1') return false;
-    return ['user', 'blank', 'module', 'answer'].includes(toNode.kind);
-  }
-  if (toNode.kind === 'human_note') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
-  if (toNode.kind === 'user') return fromNode.kind !== 'summary' && fromNode.kind !== 'note';
-  if (fromNode.kind === 'human_note') {
-    return ['human_note', 'module', 'answer', 'blank', 'relation', 'hub', 'user'].includes(toNode.kind);
-  }
-  const messages = _getChatHistory();
-  const fromAttr = _portAttribute(fromNode, fromPort, messages);
-  const toAttr = _nodeAttribute(toNode).key;
-  const fromPortKey = String(fromPort || 'out-0');
-  const isUserAiOutput = fromNode.kind === 'user' && fromPortKey === 'out-0';
-  const isUserManualOutput = fromNode.kind === 'user' && fromPortKey !== 'out-0';
-  if (toNode.kind === 'blank') {
-    return fromNode.kind !== 'draft' && fromNode.kind !== 'blank';
-  }
-  if (fromNode.kind === 'answer' && toNode.kind === 'module') return toNode.recipeId ? true : fromAttr === toAttr;
-  if ((fromNode.kind === 'user' || fromNode.kind === 'knowledge') && toNode.kind === 'answer') {
-    const isAiOutput = fromNode.kind === 'user'
-      ? isUserAiOutput
-      : String(fromPort || 'out-0') === 'out-0';
-    return isAiOutput ? !toNode.manual : !!toNode.manual;
-  }
-  if (fromNode.kind === 'blank') return ['user', 'answer', 'module', 'hub', 'summary', 'note'].includes(toNode.kind);
-  if (fromNode.kind === 'draft' && toNode.kind === 'answer') return true;
-  if (fromNode.kind === 'module' && toNode.kind === 'user') return true;
-  if (fromNode.kind === 'module' && toNode.kind === 'draft') {
-    return fromAttr === toAttr;
-  }
-  return false;
+  return !!fromNode && !!toNode && fromNode.id !== toNode.id;
 }
 
 function _flashInvalidConnection() {
@@ -312,32 +282,6 @@ function _knowledgeOutputPorts(node) {
     { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
     { label: '问题', type: 'branch', branchType: 'followup', attribute: 'question', group: 'question', question: '' },
   ];
-}
-
-function _portAttribute(node, portId, messages) {
-  const isOutput = /^out-/.test(String(portId || ''));
-  if (isOutput) {
-    const index = parseInt(String(portId).replace('out-', ''), 10);
-    if (node.kind === 'blank') return node.moduleKey || 'followup';
-    if (node.kind === 'source') return 'knowledge';
-    if (node.kind === 'module') {
-      const ports = _moduleOutputPorts(node, messages[node.messageIndex]);
-      return (ports[index] && ports[index].attribute) || 'followup';
-    }
-    if (node.kind === 'answer') {
-      const ports = _answerOutputPorts(node, messages);
-      return (ports[index] && ports[index].attribute) || 'answer';
-    }
-    if (node.kind === 'human_note') return 'human_note';
-    if (node.kind === 'knowledge') {
-      const ports = _knowledgeOutputPorts(node);
-      return (ports[index] && ports[index].attribute) || 'question';
-    }
-    if (node.kind === 'user') return index === 0 ? 'answer' : 'manual';
-    if (node.kind === 'hub') return index === 0 ? 'summary' : (index === 1 ? 'note' : 'followup');
-    return 'followup';
-  }
-  return _nodeAttribute(node).key;
 }
 
 function _nodeOutputCount(node, messages, state) {
