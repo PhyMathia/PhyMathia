@@ -3019,6 +3019,145 @@
   }
 }
 
+/* ---------- 节点全屏阅读层（2026-10-10 ⑦）---------- */
+/* 与笔记本同配方：大面积 chrome → aurora-glass--panel 档（本体禁写 background/box-shadow，
+   极光层全归玻璃类）；遮罩 blur(3px)。浮层必须自带文字色 color: var(--text-primary)——
+   body 默认色是黑，正文是不挂组件类的原生 markdown 元素，漏了这行深色下整片黑字
+   （笔记本浮层用户实测报过三次「文字是黑色的」） */
+.graph-node-fs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-graph-modal);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: clamp(12px, 3vh, 28px) clamp(12px, 4vw, 56px);
+  background: var(--harness-overlay-bg);
+  backdrop-filter: blur(3px);
+  color: var(--text-primary);
+}
+
+.graph-node-fs {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  min-height: 0;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+}
+
+.graph-node-fs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.graph-node-fs-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-node-fs-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.graph-node-fs-head-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.graph-node-fs-head-actions button:hover {
+  color: var(--accent);
+}
+
+.graph-node-fs-head-actions button svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* 正文列：可滚动。内表面走 --text-primary 混色亮纱规则的同款口径（不做实底面板） */
+.graph-node-fs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 28px;
+}
+
+.graph-node-fs-content {
+  max-width: 860px;
+  margin: 0 auto;
+  font-size: var(--fs-md);
+  line-height: 1.7;
+}
+
+/* 浮层内 markdown 元素全局规则不伸进来：链接/行内代码显式上色（同笔记本参考正文） */
+.graph-node-fs-content a {
+  color: var(--accent);
+}
+
+.graph-node-fs-content code,
+.graph-node-fs-content pre {
+  color: var(--text-primary);
+}
+
+/* 头部全屏钮：与编辑/删除钮同规格（26px 方钮＋描边），纯图标无文字 */
+.graph-node-fs-toggle {
+  margin-left: 2px !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: var(--r-sm) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--btn-bg) !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.graph-node-fs-toggle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.graph-node-fs-toggle:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+
+/* 新窗口取材用离屏渲染容器：visibility 保留布局（mermaid/katex 需要真实排版），
+   位置抛出视口外 */
+.graph-node-fs-offscreen {
+  position: fixed;
+  left: -99999px;
+  top: 0;
+  width: min(880px, 90vw);
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
 /* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
 .graph-node.graph-link-drop-target {

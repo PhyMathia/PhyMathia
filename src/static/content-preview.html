@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhyMathia 内容预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: #0f142d; color: #cfd6f4;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  #contentFrame { width: 100%; height: 100%; border: 0; display: block; flex: 1; }
+  #hint {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #8b93b8; font-size: 14px; padding: 24px; text-align: center;
+  }
+</style>
+</head>
+<body>
+<iframe id="contentFrame" sandbox="allow-scripts"></iframe>
+<div id="hint">未找到内容，请回到应用内重新点击「新窗口全屏」。</div>
+<script>
+// 与 viz-preview.html 同一安全模型：本页是可信的同源页面；画布节点的渲染产物
+// （主应用渲染管线已 sanitize 的 markdown/公式/mermaid 静态 HTML，经 sessionStorage
+// 交接）只进入 sandbox iframe 展示，不与本页 origin 交互。
+// 注意勿退回 Blob URL 直开：Blob 文档继承主站 origin（viz-preview.md 同款结论）。
+try {
+  var page = sessionStorage.getItem('phymathia_content_preview');
+  sessionStorage.removeItem('phymathia_content_preview');
+  if (page) {
+    document.getElementById('contentFrame').srcdoc = page;
+    document.getElementById('hint').style.display = 'none';
+  } else {
+    document.getElementById('contentFrame').style.display = 'none';
+  }
+} catch (e) {
+  document.getElementById('contentFrame').style.display = 'none';
+}
+</script>
+</body>
+</html>

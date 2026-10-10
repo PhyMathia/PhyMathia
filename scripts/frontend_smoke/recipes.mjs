@@ -2030,4 +2030,95 @@ check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏�
   }
   return true;
 });
+
+check('节点全屏阅读（2026-10-10 ⑦）：内容节点头部纯图标双全屏钮＋本页全屏层＋新窗口交接', () => {
+  // 1. 静态契约：渲染侧注入点在位（共享头部＋内联头部各一处）
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!grSrc.includes("typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : ''")) throw new Error('内联头部缺全屏钮注入');
+  if (!grSrc.includes("typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : ''")) throw new Error('共享头部（知识点等卡）缺全屏钮注入');
+  // 2. viz 工具栏纯图标：四个按钮不再拼中文文字（title 兜底提示保留）
+  const rSrc = fs.readFileSync('src/static/js/render.js', 'utf8');
+  for (const tail of [' 没看懂</button>', ' 全屏</button>', ' 复制</button>', ' 新窗口</button>']) {
+    if (rSrc.includes(tail)) throw new Error('viz 工具栏按钮仍带中文文字：' + JSON.stringify(tail));
+  }
+  if (!rSrc.includes("UI_ICON_SVG.expand + '</button>'") || !rSrc.includes("UI_ICON_SVG.external + '</button>'")) throw new Error('viz 全屏/新窗口按钮缺图标');
+  // 3. DOM：有内容的总结节点开本页全屏层——玻璃档＋正文＋两枚头钮（按钮内无中文文字）
+  //    沙箱是全域共享的：所有桩必须在 finally 全量还原，且用例保持同步
+  //    （沙箱内渲染器全缺席 → openNodeNewWindow 无 await 点，同步落盘，无需 async）
+  const realEsc = sandbox.escapeHtml;
+  const realDoc = sandbox.document;
+  const realOpen = sandbox.window.open;
+  const realSession = sandbox.sessionStorage;
+  const realLocation = sandbox.location;
+  const realToast = sandbox.showToast;
+  // 沙箱里裸 escapeHtml 解析到 loose 代理（恒返回 0），标题/正文会被吞——同笔记本用例先桩掉
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  const noteNode = { id: 'nt9', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 9, title: '力学总结', content: '角动量守恒的直观理解' };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(noteNode) + ']; graphView.nodeById = { nt9: graphView.nodes[0] }; graphView.edges = []; graphView.defaultEdges = [];', sandbox);
+  const docStub = {
+    createElement: () => ({ className: '', innerHTML: '', style: {}, listeners: {},
+      addEventListener(t, fn) { this.listeners[t] = fn; }, remove() {} }),
+    getElementById: () => null,
+    body: { appendChild: () => {} },
+  };
+  sandbox.document = docStub;
+  const ssStore = {};
+  sandbox.sessionStorage = {
+    setItem: (k, v) => { ssStore[k] = String(v); },
+    getItem: k => (k in ssStore ? ssStore[k] : null),
+    removeItem: k => { delete ssStore[k]; },
+  };
+  sandbox.location = { protocol: 'http:' };
+  let openedUrl = '';
+  sandbox.window.open = url => { openedUrl = String(url); return {}; };
+  sandbox.showToast = () => {};
+  // 剪 await 点：沙箱里 renderMermaidInElement 存在且为 async，openNodeNewWindow 会
+  // await 它——后续微任务跑在桩还原之后。临时置空让新窗口链路全程同步，finally 还原。
+  const hadMermaid = vm.runInContext('typeof renderMermaidInElement === "function"', sandbox);
+  const realMermaidFn = hadMermaid ? vm.runInContext('renderMermaidInElement', sandbox) : null;
+  if (hadMermaid) vm.runInContext('renderMermaidInElement = undefined', sandbox);
+  try {
+    sandbox.openNodeFullscreen('nt9');
+    let overlay = vm.runInContext('nodeFsOverlay', sandbox);
+    if (!overlay || overlay.className !== 'graph-node-fs-overlay') throw new Error('应开节点全屏层，实际 ' + (overlay && overlay.className));
+    const html = String(overlay.innerHTML);
+    if (!html.includes('graph-node-fs aurora-glass aurora-glass--panel')) throw new Error('全屏层未挂玻璃档');
+    if (!html.includes('graph-node-fs-content') || !html.includes('角动量守恒的直观理解')) throw new Error('正文缺内容');
+    if (!html.includes('力学总结')) throw new Error('标题应用节点标题');
+    if (!html.includes('title="新窗口全屏"')) throw new Error('头钮缺新窗口全屏');
+    if (/全屏<\/button>|新窗口<\/button>/.test(html)) throw new Error('头钮应为纯图标（不得有中文文字）');
+    sandbox.closeNodeFullscreen();
+    if (vm.runInContext('nodeFsOverlay', sandbox) != null) throw new Error('关闭后应清层');
+    // 4. 无内容不挂钮；viz 模块不重复挂（卡片工具栏自带全屏）
+    if (sandbox._nodeFsTogglesHtml({ id: 'e1', kind: 'note', messageIndex: -1, content: '' }) !== '') throw new Error('无内容节点不应挂全屏钮');
+    if (sandbox._nodeFsTogglesHtml({ id: 'v1', kind: 'module', moduleKey: 'viz', messageIndex: -1, content: 'x' }) !== '') throw new Error('viz 模块不应重复挂全屏钮');
+    // 5. 新窗口：sessionStorage 交接＋打开 /content-preview.html
+    sandbox.openNodeNewWindow('nt9');
+    const page = ssStore['phymathia_content_preview'] || '';
+    if (openedUrl !== '/content-preview.html') throw new Error('新窗口应打开 /content-preview.html，实际 ' + openedUrl);
+    if (!page.includes('<!DOCTYPE html>') || !page.includes('角动量守恒的直观理解') || !page.includes('/vendor/katex/katex.min.css')) throw new Error('预览文档缺内容/katex 样式链');
+    // 6. CSS 契约：全屏层必须自带 text-primary 文字色（同笔记本，深色下黑字不可读的教训）
+    const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+    if (!/\.graph-node-fs-overlay\s*\{[^}]*color:\s*var\(--text-primary\)/s.test(cssSrc)) {
+      throw new Error('节点全屏层未自带 text-primary 文字色');
+    }
+    // 7. 预览页：读交接键＋sandbox iframe（安全模型与 viz-preview 同款）
+    const cpSrc = fs.readFileSync('src/static/content-preview.html', 'utf8');
+    if (!cpSrc.includes('phymathia_content_preview') || !cpSrc.includes('sandbox="allow-scripts"')) throw new Error('content-preview.html 缺交接键或沙箱 iframe');
+  } finally {
+    sandbox.document = realDoc;
+    sandbox.escapeHtml = realEsc;
+    sandbox.window.open = realOpen;
+    if (realSession === undefined) delete sandbox.sessionStorage; else sandbox.sessionStorage = realSession;
+    if (realLocation === undefined) delete sandbox.location; else sandbox.location = realLocation;
+    if (realToast === undefined) delete sandbox.showToast; else sandbox.showToast = realToast;
+    if (hadMermaid) {
+      sandbox.__smokeRealMermaid = realMermaidFn;
+      vm.runInContext('renderMermaidInElement = window.__smokeRealMermaid; delete window.__smokeRealMermaid;', sandbox);
+      delete sandbox.__smokeRealMermaid;
+    }
+    vm.runInContext('nodeFsOverlay = null; graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
 }

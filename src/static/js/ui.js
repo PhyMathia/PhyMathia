@@ -585,6 +585,10 @@ document.addEventListener('keydown', (e) => {
     if (overlay && overlay.classList.contains('active')) {
       closeVizFullscreen();
     }
+    // 节点全屏阅读层（graph-custom.js）：与 viz 全屏遮罩同级，Esc 退出
+    if (document.querySelector('.graph-node-fs-overlay') && typeof closeNodeFullscreen === 'function') {
+      closeNodeFullscreen();
+    }
   }
 });
 

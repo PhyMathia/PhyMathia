@@ -905,7 +905,8 @@
       border: 1px solid var(--viz-btn-border);
       color: var(--viz-btn-color);
       font-size: var(--fs-md);
-      padding: var(--sp-1) var(--sp-4);
+      /* 2026-10-10 起按钮为纯图标（中文文字删除，hover title 兜底），收紧为方钮内边距 */
+      padding: var(--sp-1) var(--sp-2);
       border-radius: var(--r-md);
       cursor: pointer;
       transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);

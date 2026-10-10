@@ -740,6 +740,7 @@ function _customNodeHeaderHtml(node, attr, extraButtons) {
     + (sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '')
     + statusHtml
     + _graphMinimizeToggleHtml(node)
+    + (typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : '')
     + (extraButtons || '')
     + '<button class="graph-node-delete-toggle" onclick="deleteCustomNode(\'' + node.id + '\')" title="删除节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>'
     + '</div>';
@@ -1113,6 +1114,7 @@ function _renderNodeHtml(node, messages, state) {
   const subHtml = sub ? '<span class="graph-node-sub">' + escapeHtml(sub) + '</span>' : '';
   const statusHtml = _customNodeStatusHtml(node);
   const minimizeToggle = _graphMinimizeToggleHtml(node);
+  const fsBtnsHtml = typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : '';
   const editBtn = node.kind === 'module'
     ? '<button class="graph-node-edit-toggle" onclick="editModuleNode(\'' + node.id + '\')" title="人工编辑模块"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'
     : (((node.kind === 'summary' || node.kind === 'note' || (node.kind === 'answer' && node.manual)) && !(node.messageIndex >= 0))
@@ -1136,7 +1138,7 @@ function _renderNodeHtml(node, messages, state) {
   return '<div class="' + baseClass + modClass + attrClass + rootClass + branchClass + selectedClass + dimmedClass + minimizedClass + resizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + inputHtml
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + quickConnectBtn + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span>' + badgeHtml + subHtml + statusHtml + minimizeToggle + editBtn + fsBtnsHtml + quickConnectBtn + deleteBtn + '</div>'
     + labelHtml
     + (skipBody ? _minimizedBodyHtml() : (body ? '<div class="graph-node-full-content">' + body + '</div>' : ''))
     + (expandable && !skipBody ? '<div class="graph-node-actions"><button class="graph-answer-expand-btn" onclick="toggleGraphNodeExpand(\'' + node.id + '\')" title="' + (expanded ? '收起，回到预览' : '查看完整内容') + '">' + (expanded ? '收起 ▴' : '展开全文 ▾') + '</button></div>' : '')
