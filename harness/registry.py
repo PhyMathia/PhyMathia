@@ -43,9 +43,10 @@ MODULE_LABELS = {
     "manual": "我的回答",
 }
 
-# 创建口径已移除的 kind：提示词明示"不要创建 kind=relation"（关系一律用连线表达），
-# ALLOWED_CREATE_KINDS 不含它们；但快照里允许出现（旧会话数据存续），更新/删除不受限。
-REMOVED_CREATE_KINDS = ("relation",)
+# 创建口径已移除的 kind：relation 提示词明示"不要创建 kind=relation"（关系一律用连线表达）；
+# hub 于 2026-10-10 退役（backlog 267，多端口任意连后接线职能已被「＋加输入口」取代）。
+# ALLOWED_CREATE_KINDS 均不含它们；但快照里允许出现（旧会话数据存续），更新/删除不受限。
+REMOVED_CREATE_KINDS = ("relation", "hub")
 
 ALLOWED_NODE_KINDS = set(NODE_KIND_LABELS) | {"module"}
 ALLOWED_CREATE_KINDS = ALLOWED_NODE_KINDS - set(REMOVED_CREATE_KINDS)
@@ -64,7 +65,6 @@ PROMPT_TYPE_LINES = (
     "- kind=human_note：我的理解",
     "- kind=ai_eval：AI 评价节点，用于评价/建议/反馈",
     "- kind=note：我的总结",
-    "- kind=hub：汇聚",
     "- kind=summary：AI 总结",
     "- kind=source：输入（原材料节点；快照里带 items 字段，是该材料解析出的知识点列表，建立/检查关系时以 items 内容为准）",
     "- kind=blank：空白节点",
