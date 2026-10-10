@@ -125,10 +125,10 @@ function buildVizCard(htmlContent, vizId) {
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
-    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz(this)" title="没看懂，请求解释">' + UI_ICON_SVG.question + ' 没看懂</button>'
-    + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + ' 全屏</button>'
-    + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + ' 复制</button>'
-    + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + ' 新窗口</button>'
+    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz(this)" title="没看懂，请求解释">' + UI_ICON_SVG.question + '</button>'
+    + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + '</button>'
+    + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + '</button>'
+    + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + '</button>'
     + '</div></div>'
     + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts" data-viz-id="' + vizId + '" loading="lazy"></iframe>'
     + '</div>';
@@ -587,11 +587,13 @@ function copyVizCode(vizId) {
     navigator.clipboard.writeText(html).then(() => {
       ok();
       // 简易提示
+      // 按钮已改纯图标（无中文文字），反馈换成图标切换：copy → check 一闪
       const btn = document.querySelector('#' + vizId + ' .viz-btn[title="复制源码"]');
       if (btn) {
-        const orig = btn.textContent;
-        btn.textContent = '✓ 已复制';
-        setTimeout(() => { btn.textContent = orig; }, 1500);
+        const orig = btn.innerHTML;
+        btn.innerHTML = UI_ICON_SVG.check;
+        btn.title = '已复制';
+        setTimeout(() => { btn.innerHTML = orig; btn.title = '复制源码'; }, 1500);
       }
     }, fallback);
   } else {

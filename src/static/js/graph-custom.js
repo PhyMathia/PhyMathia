@@ -477,6 +477,172 @@ function updateCustomNodeContent(nodeId, value) {
   _saveGraphState(state);
 }
 
+// ===== 节点全屏阅读（2026-10-10 ⑦）：内容节点头部两枚纯图标钮＝本页全屏＋新窗口全屏 =====
+// 与交互可视化卡的工具栏同权：本页走全屏遮罩（同笔记本玻璃配方），新窗口走
+// sessionStorage + content-preview.html（同 viz-preview.html 的 sandbox 沙箱模型）。
+// 按钮不带中文文字（hover title 兜底）；标题词表与笔记本参考列同源。
+
+function _nodeFsTitle(node) {
+  if (node.title) return node.title;
+  if (node.kind === 'user') return '问题';
+  if (node.kind === 'summary') return 'AI 总结';
+  if (node.kind === 'note') return '我的总结';
+  if (node.kind === 'answer') return node.manual ? '我的回答' : '问题分析';
+  if (node.kind === 'knowledge') return node.label || '知识点';
+  if (node.kind === 'human_note') return '我的理解';
+  if (node.kind === 'relation') return '知识联系';
+  if (node.kind === 'source') return '输入';
+  if (node.kind === 'hub') return '汇聚';
+  if (node.kind === 'module') {
+    return ((typeof GRAPH_MODULE_META !== 'undefined' && GRAPH_MODULE_META[node.moduleKey]) || {}).label || '模块内容';
+  }
+  return node.label || '节点内容';
+}
+
+// 全屏正文取材：AI 回答吃全量原文（「展开全文」同款，不吃卡上摘要预览），模块吃
+// 解析后的分节文本，其余吃自有 content。空串＝无内容可看（头部按钮由渲染侧同判据隐藏）
+function _nodeFsSourceText(node, message) {
+  if (!node) return '';
+  if (node.kind === 'answer' && !node.manual && node.messageIndex >= 0) {
+    return typeof _graphAnswerExpandRaw === 'function' ? (_graphAnswerExpandRaw(node, message) || '') : '';
+  }
+  if (node.kind === 'module') {
+    return typeof _nodeContent === 'function' ? (_nodeContent(message, node) || '') : (node.content || '');
+  }
+  return node.content || '';
+}
+
+// 头部全屏钮（渲染侧注入点：_customNodeHeaderHtml 与 _renderNodeHtml 内联头部）。
+// viz 模块不注入——它的卡片工具栏本就自带全屏/新窗口，重复挂两份反而混乱
+function _nodeFsTogglesHtml(node, message) {
+  const text = String(_nodeFsSourceText(node, message) || '');
+  if (!text.trim()) return '';
+  if (node.kind === 'module' && node.moduleKey === 'viz') return '';
+  const expandIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.expand) || '⛶';
+  const externalIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.external) || '↗';
+  return '<button class="graph-node-fs-toggle" onclick="openNodeFullscreen(\'' + node.id + '\')" title="本页全屏">' + expandIcon + '</button>'
+    + '<button class="graph-node-fs-toggle" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>';
+}
+
+let nodeFsOverlay = null;
+
+function closeNodeFullscreen() {
+  if (nodeFsOverlay) {
+    nodeFsOverlay.remove();
+    nodeFsOverlay = null;
+  }
+}
+
+// 渲染器缺失/抛错时降级纯转义——全屏层可以朴素，不能开不出来（同笔记本参考列口径）
+function _nodeFsRenderedHtml(text, ctx) {
+  try {
+    return typeof renderMarkdown === 'function' ? renderMarkdown(text, ctx) : escapeHtml(text);
+  } catch (e) {
+    return escapeHtml(text);
+  }
+}
+
+function openNodeFullscreen(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const text = _nodeFsSourceText(node, message);
+  if (!String(text || '').trim()) return;
+  closeModuleNodeModal();
+  closeNodeFullscreen();
+  const externalIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.external) || '↗';
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-node-fs-overlay';
+  overlay.innerHTML = '<div class="graph-node-fs aurora-glass aurora-glass--panel">'
+    + '<div class="graph-node-fs-head"><span class="graph-node-fs-title">' + escapeHtml(_nodeFsTitle(node)) + '</span>'
+    + '<span class="graph-node-fs-head-actions">'
+    + '<button type="button" onclick="openNodeNewWindow(\'' + node.id + '\')" title="新窗口全屏">' + externalIcon + '</button>'
+    + '<button type="button" onclick="closeNodeFullscreen()" title="关闭（Esc）">×</button>'
+    + '</span></div>'
+    + '<div class="graph-node-fs-body"><div class="graph-node-fs-content">'
+    + _nodeFsRenderedHtml(text, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' })
+    + '</div></div></div>';
+  overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeNodeFullscreen(); });
+  document.body.appendChild(overlay);
+  nodeFsOverlay = overlay;
+  _renderNotebookRich(overlay);
+}
+
+// 新窗口全屏：主应用内先把内容渲染成静态 HTML（公式同步、mermaid 等 promise、viz iframe
+// srcdoc 全部落定）再序列化，预览页零渲染逻辑、只负责沙箱展示
+async function openNodeNewWindow(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node) return;
+  const messages = typeof _getChatHistory === 'function' ? _getChatHistory() : [];
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const text = _nodeFsSourceText(node, message);
+  if (!String(text || '').trim()) return;
+  const title = _nodeFsTitle(node);
+  const holder = document.createElement('div');
+  holder.className = 'graph-node-fs-offscreen';
+  holder.innerHTML = _nodeFsRenderedHtml(text, { parentId: String((message && message.timestamp) || node.timestamp || ''), sourceModule: node.moduleKey || '' });
+  document.body.appendChild(holder);
+  if (typeof renderMath === 'function') { try { renderMath(holder); } catch (e) { /* 静态兜底 */ } }
+  if (typeof renderMermaidInElement === 'function') { try { await renderMermaidInElement(holder); } catch (e) { /* 静态兜底 */ } }
+  if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder); } catch (e) { /* 静态兜底 */ } }
+  const contentHtml = holder.innerHTML;
+  holder.remove();
+  const page = _buildContentPreviewPage(title, contentHtml);
+  // file:// 单文件场景：没有同源预览页可跳，Blob URL 直开（同 openVizNewTab 先例；
+  // 外链 katex css 会静默失载，数学退化为行内文本，可接受）
+  if (typeof location !== 'undefined' && location.protocol === 'file:') {
+    try {
+      const url = URL.createObjectURL(new Blob([page], { type: 'text/html' }));
+      const win = window.open(url, '_blank');
+      if (!win && typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (typeof showToast === 'function') showToast('新窗口打开失败');
+    }
+    return;
+  }
+  try {
+    sessionStorage.setItem('phymathia_content_preview', page);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('内容过大，无法在新窗口打开');
+    return;
+  }
+  const win = window.open('/content-preview.html', '_blank');
+  if (!win) {
+    try { sessionStorage.removeItem('phymathia_content_preview'); } catch (e2) {}
+    if (typeof showToast === 'function') showToast('浏览器拦截了弹出窗口，请允许弹窗后重试');
+  }
+}
+
+// 新窗口页面文档：自带排版（深色定版，同 viz-preview 色板），katex css 走同源外链。
+// 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不再执行任何渲染脚本
+function _buildContentPreviewPage(title, contentHtml) {
+  return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+    + '<title>' + escapeHtml(title) + ' · PhyMathia</title>'
+    + '<link rel="stylesheet" href="/vendor/katex/katex.min.css">'
+    + '<style>'
+    + 'html,body{margin:0;padding:0;background:#0f142d;color:#cfd6f4;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}'
+    + '.cp-head{display:flex;align-items:center;gap:8px;padding:10px 18px;font-size:13px;color:#8b93b8;border-bottom:1px solid rgba(139,147,184,.18);}'
+    + '.cp-body{max-width:880px;margin:0 auto;padding:26px 30px 72px;line-height:1.75;font-size:15px;overflow-wrap:break-word;}'
+    + '.cp-body h1,.cp-body h2,.cp-body h3,.cp-body h4,.cp-body h5,.cp-body h6{line-height:1.4;margin:1.4em 0 .6em;}'
+    + '.cp-body p{margin:.7em 0;}'
+    + '.cp-body a{color:#7ab8ff;}'
+    + '.cp-body code{background:rgba(139,147,184,.16);border-radius:4px;padding:1px 5px;font-size:.92em;}'
+    + '.cp-body pre{background:rgba(139,147,184,.12);border:1px solid rgba(139,147,184,.18);border-radius:8px;padding:12px 14px;overflow-x:auto;}'
+    + '.cp-body pre code{background:transparent;padding:0;}'
+    + '.cp-body blockquote{margin:.8em 0;padding:2px 14px;border-left:3px solid rgba(139,147,184,.4);color:#a7b0d6;}'
+    + '.cp-body img{max-width:100%;}'
+    + '.cp-body table{border-collapse:collapse;margin:.9em 0;max-width:100%;display:block;overflow-x:auto;}'
+    + '.cp-body th,.cp-body td{border:1px solid rgba(139,147,184,.3);padding:6px 10px;}'
+    + '.cp-body svg{max-width:100%;}'
+    + '.katex{color:#cfd6f4;}'
+    + '</style></head><body>'
+    + '<div class="cp-head">PhyMathia · ' + escapeHtml(title) + '</div>'
+    + '<div class="cp-body">' + contentHtml + '</div></body></html>';
+}
+
 function updateSourceNodeMax(nodeId, value) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'source') return;
