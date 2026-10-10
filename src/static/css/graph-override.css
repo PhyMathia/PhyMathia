@@ -1225,8 +1225,19 @@
   color: var(--text-primary) !important;
 }
 
+/* T266 输出端口「待命名」态：未连线的匿名附加输出口（手动＋加出来的）标签置灰、
+   细体斜字——连上某个输入口后即改用该口的实名字＋内容类型徽标（graph-render.js
+   _adoptedOutputPortMeta）。与已具名端口的实字区分「身份未定、由连线决定」。
+   用 opacity 而不是另设色值：保持 --text-secondary 的主题适配（暗/亮各一套） */
+.graph-port-label-blank {
+  opacity: 0.55 !important;
+  font-weight: 500 !important;
+  font-style: italic !important;
+}
+
 /* T263 端口类型徽标：具名输入口的 content type 小标（文本/公式/图示/网页），
-   色随所在端口的 --port-color（配方节点即配方色），纯展示不响应指针 */
+   色随所在端口的 --port-color（配方节点即配方色），纯展示不响应指针。
+   T266 起输出口也挂此徽标（待命名口继承所连输入口的类型），样式两侧通用 */
 .graph-port-type {
   margin-left: 4px !important;
   padding: 1px 4px !important;
