@@ -167,7 +167,8 @@ function renderGraphCanvas(streaming) {
     if (needsFit) _runLayout(true);
     else _updateNodeTransforms();
     _redrawEdges();
-    _renderGraphHarnessPreview();
+    // 预览渲染归族至 harness-preview.js（T261 拆分）：viewer 子集无该文件，守卫调用
+    if (typeof _renderGraphHarnessPreview === 'function') _renderGraphHarnessPreview();
     _scheduleGraphMermaidRender();
   });
 
