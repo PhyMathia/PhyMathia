@@ -1162,8 +1162,11 @@
   margin-left: -10px !important;
 }
 
+/* 输出列左对齐：圆点在行内首位（DOM 即 dot→label→×），列内各行以圆点左边缘排齐，
+   文字长短参差——与输入列（align-items: flex-start）同一口径；旧值 flex-end 是
+   「文字右对齐、圆点被长短不一的标签顶得左一个右一个」 */
 .graph-output-col {
-  align-items: flex-end !important;
+  align-items: flex-start !important;
   margin-right: -10px !important;
 }
 
@@ -1183,7 +1186,7 @@
 }
 
 .graph-output-port {
-  flex-direction: row-reverse !important;
+  flex-direction: row !important;
   padding-right: 12px !important;
 }
 

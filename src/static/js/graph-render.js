@@ -463,8 +463,10 @@ function _renderOutputPorts(node, messages, state) {
       + (meta.item ? ' data-port-item="' + encodeURIComponent(JSON.stringify(meta.item)) + '"' : '')
       + ' style="--port-color:' + attr.color + ';"'
       + ' title="输出端口：拖到空处创建提问节点，或拖到输入端口重连">'
-      + '<span class="graph-port-label">' + escapeHtml(label) + '</span>'
+      // 圆点必须是行内首个子元素：输出列左对齐（点对齐、文字参差），删除键跟在文字后，
+      // 否则 row-reverse 老顺序下带 × 的端口圆点会被顶偏，一列里两种点位
       + '<span class="graph-port-dot"></span>'
+      + '<span class="graph-port-label">' + escapeHtml(label) + '</span>'
       + (meta.custom
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveOutputPort(\'' + node.id + '\',' + i + ')" title="删除输出端口">×</button>'
         : '')
