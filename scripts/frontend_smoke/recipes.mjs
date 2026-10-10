@@ -1789,7 +1789,7 @@ check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、sum
 });
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
 
-check('附加输入口「待命名」态（2026-10-10 统一）：加出来的输入口未连线空白、连线后继承输出口名字、断开回落；人工内容输入退役；匿名口互连环路保持空白', () => {
+check('附加输入口「待命名」态（2026-10-10 统一）：加出来的输入口未连线空白、连线后继承输出口名字、断开回落；人工内容输入退役；匿名口互连环路回落宿主品类标签（双匿名死锁修复）', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
   try {
@@ -1821,13 +1821,29 @@ check('附加输入口「待命名」态（2026-10-10 统一）：加出来的�
     html = String(sandbox._renderInputPorts(moduleNode, { portCounts: {}, inputPortCounts: { m1: 1 } }));
     if (!html.includes('>待命名</span>') || !html.includes('graph-port-label-blank')) throw new Error('断开后应回待命名');
 
-    // 4. 匿名出口↔匿名入口互为命名来源：环路护栏让两端都保持待命名
+    // 4. 匿名出口↔匿名入口互为命名来源：递归撞 seen 回空白后回落宿主品类标签
+    //    （2026-10-10 双匿名死锁修复：已接线必有身份，不再永远停在待命名）
     const userNode = { id: 'u1', kind: 'user', branchType: 'followup', messageIndex: -1, timestamp: 4, isRoot: false };
     setView([{ from: 'm1', fromPort: 'out-1', to: 'u1', toPort: 'in-1' }], { m1: moduleNode, u1: userNode });
     html = String(sandbox._renderInputPorts(userNode, { portCounts: {}, inputPortCounts: { u1: 1 } }));
-    if (!html.includes('>待命名</span>')) throw new Error('环路中的匿名输入口应保持待命名');
+    if (!html.includes('>任意输入</span>')) throw new Error('互连环路中的附加输入口应回落宿主品类标签（用户节点＝任意输入）');
     html = String(sandbox._renderOutputPorts(moduleNode, [], { portCounts: { m1: 2 }, inputPortCounts: {} }));
-    if (!html.includes('>待命名</span>')) throw new Error('环路中的匿名输出口应保持待命名');
+    if (!html.includes('>任意输入</span>')) throw new Error('互连环路中的匿名输出口应继承输入口的回落标签');
+
+    // 4b. 用户实测场景复现：summary 基础口 in-0 ＋ 附加口 in-1，两个匿名出口各接一口，
+    //     两对都得有身份（基础口那对继承「AI 总结」，附加口那对回落宿主标签同值）
+    const blankA = { id: 'na', kind: 'blank', moduleKey: 'followup', messageIndex: -1, timestamp: 5 };
+    const blankB = { id: 'nb', kind: 'blank', moduleKey: 'followup', messageIndex: -1, timestamp: 6 };
+    setView(
+      [{ from: 'na', fromPort: 'out-1', to: 'sum1', toPort: 'in-0' },
+       { from: 'nb', fromPort: 'out-1', to: 'sum1', toPort: 'in-1' }],
+      { sum1: sumNode, na: blankA, nb: blankB });
+    html = String(sandbox._renderInputPorts(sumNode, { portCounts: {}, inputPortCounts: { sum1: 1 } }));
+    if (html.includes('>待命名</span>')) throw new Error('已连线的 summary 附加输入口不应再待命名');
+    html = String(sandbox._renderOutputPorts(blankA, [], { portCounts: { na: 2 }, inputPortCounts: {} }));
+    if (!html.includes('>AI 总结</span>')) throw new Error('接基础口的匿名输出口应继承「AI 总结」');
+    html = String(sandbox._renderOutputPorts(blankB, [], { portCounts: { nb: 2 }, inputPortCounts: {} }));
+    if (!html.includes('>AI 总结</span>')) throw new Error('接附加口的匿名输出口应回落宿主「AI 总结」');
 
     // 5. 静态契约：输入口继承与输出口身份读取函数在位（与 _adoptedOutputPortMeta 对称）
     const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
