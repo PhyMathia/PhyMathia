@@ -35,6 +35,13 @@ const entries = [
   'graph-interact.js',
   'graph-custom.js',
   'graph-recipe-edit.js',
+  // 工作流族（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家）：主件留尾部——
+  // 其尾部 window 导出块加载期执行、引用族内各件函数（同 graph-continent view 最后的先例）；
+  // 流式/生成段（T218 在案）留守主件未动
+  'graph-workflow-prompt.js',
+  'graph-workflow-recipe.js',
+  'graph-workflow-template.js',
+  'graph-workflow-progress.js',
   'graph-workflow.js',
   'graph-export.js',
   'graph-poster.js',

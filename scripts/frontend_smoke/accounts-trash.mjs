@@ -242,7 +242,7 @@ check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸�
   if (!acc.includes('removeItem(STORAGE_KEY_BROWSE_ACTIVE)')) throw new Error('显式切换账号必须清浏览标记');
   const gates = [
     ['src/static/js/chat.js', "phyReadonlyBlock('发送消息')"],
-    ['src/static/js/graph-workflow.js', "phyReadonlyBlock('发起提问')"],
+    ['src/static/js/graph-workflow-template.js', "phyReadonlyBlock('发起提问')"],
     ['src/static/js/harness-run.js', "phyReadonlyBlock('发送 Φ 消息')"],
     ['src/static/js/quiz-ui.js', "phyReadonlyBlock('进行知识检测')"],
     ['src/static/js/session.js', "phyReadonlyBlock('新建会话')"],

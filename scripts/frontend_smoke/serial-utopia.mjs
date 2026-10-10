@@ -73,14 +73,17 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   // 「某类节点偶发不更新」，静态断言看不出来，只有真发才知道（而真发需要可用模型，
   // 见 docs/backlog.md T37）。所以退化成重复时必须在这里就红。
   //
-  // **注意这条断言的作用域：它只读 graph-workflow.js 一个文件。**
+  // **注意这条断言的作用域：T261 拆分后它读工作流族五件（主件+prompt/recipe/template/progress）。**
   // 2026-09-27 之前它叫「SSE 帧读取全仓只有一份」，那句是错的：全仓另有 4 处各自一份
   // getReader() 副本（chat.js:308 / chat-features.js:647 / quiz-ui.js:675 /
   // harness-run.js:113，后者是 buf+handleLine 的变体），B2 只合并了 graph-workflow 里的
   // 3 份。名字写成「全仓」会让人以为另外四处已被覆盖、进而不再去合并。
   // 那 4 处的合并已登记 backlog（连同真发验证要求），不在本轮范围：动发送链路按硬规则 6
   // 必须配可用模型真发验证，而现在没有可用凭证。所以这里改成如实描述作用域。
-  const gw = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  // 族内分布：共享口 _sseContentFrames 与 3 个调用点在主件、配方概要调用点在 recipe 件。
+  const gw = ['graph-workflow.js', 'graph-workflow-prompt.js', 'graph-workflow-recipe.js',
+    'graph-workflow-template.js', 'graph-workflow-progress.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   // 数代码，不数散文：先把注释剥掉再数。上面那段说明里就写了 getReader() 字面量，
   // 原先直接对原文匹配，注释一改就假红——这正是本项目吃过亏的那类「护栏自己变摆设」。
   // 剥法：块注释全去，行注释只去「行首（可含缩进）//」那种。行尾注释与字符串里的 //
@@ -89,8 +92,8 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   const gwCode = gw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const readers = (gwCode.match(/getReader\(\)/g) || []).length;
   if (readers !== 1) {
-    throw new Error('graph-workflow.js 里 getReader() 出现 ' + readers
-      + ' 次（应为 1）——有人在这三个通道之外又把 SSE 读取抄了一份');
+    throw new Error('工作流族五件里 getReader() 出现 ' + readers
+      + ' 次（应为 1）——有人在这些通道之外又把 SSE 读取抄了一份');
   }
   if (!/async function\* _sseContentFrames\(resp\)/.test(gwCode)) {
     throw new Error('共享读取口 _sseContentFrames 不见了');

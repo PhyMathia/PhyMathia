@@ -29,6 +29,11 @@ const entries = [
   'graph-render-layout.js',
   'graph-interact.js',
   'graph-custom.js',
+  // 工作流族四件随迁（T261 拆分）：主件尾部导出块与 DOMContentLoaded 初始化引用族内函数
+  'graph-workflow-prompt.js',
+  'graph-workflow-recipe.js',
+  'graph-workflow-template.js',
+  'graph-workflow-progress.js',
   'graph-workflow.js',
   'graph-poster.js',
   'graph-export.js',
