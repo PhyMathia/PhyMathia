@@ -347,8 +347,11 @@ check('配方生成维度（P2）：模型槽位优先＋回落、载体归一/�
     if (pick(builtinSocratic).id !== 'agent-model') throw new Error('内置 socratic 在 branch 槽未配置时应回落 agent（行为零变化）');
   } finally { sandbox.getActiveModelForRole = prevRole; }
   // 静态断言：viz 收口扩到配方 html_iframe（重试预算/重试提示词）、mermaid 包围栏、
-  // 双阶段概要与 on_generated 钩子的接线（这些分支要真模型才走到，行为留真机验收）
-  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  // 双阶段概要与 on_generated 钩子的接线（这些分支要真模型才走到，行为留真机验收）。
+  // T261 拆分后接线散在工作流族内（主件生成段+recipe 件+prompt 件），按族拼接断言
+  const wfSrc = ['graph-workflow.js', 'graph-workflow-prompt.js', 'graph-workflow-recipe.js',
+    'graph-workflow-template.js', 'graph-workflow-progress.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!wfSrc.includes("recipe.content_kind === 'html_iframe'")) throw new Error('viz 收口未覆盖配方 html_iframe');
   if (!wfSrc.includes('on_incomplete.max_retries')) throw new Error('重试预算未接 on_incomplete');
   if (!wfSrc.includes('retry_prompt')) throw new Error('重试提示词未接 retry_prompt');

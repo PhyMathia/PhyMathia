@@ -217,8 +217,8 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
         + '用户只会以为按钮坏了（docs/backlog.md T42）');
     }
   }
-  // startQuestionWorkflow 必须走统一忙碌判定
-  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  // startQuestionWorkflow 必须走统一忙碌判定（T261 拆分后住在 graph-workflow-template.js）
+  const wf = fs.readFileSync('src/static/js/graph-workflow-template.js', 'utf8');
   const wfBody = extract(wf, 'startQuestionWorkflow');
   if (wfBody === null) throw new Error('找不到 startQuestionWorkflow');
   if (!wfBody.includes('removeDraftNode')) {
