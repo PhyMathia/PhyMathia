@@ -350,7 +350,7 @@ _RECIPE_DESC_KEYS = (
     "level_tags", "label_from", "numbered_list", "fallback", "content_kind",
     "palette", "shape", "context_channel", "model_role", "on_incomplete",
     "confused_prompt", "followup_prompt", "retry_prompt", "strict_output",
-    "drag_form", "on_generated",
+    "drag_form", "on_generated", "inputs", "type",
 )
 
 
@@ -361,6 +361,7 @@ _RECIPE_KEY_LABELS = {
     "context_channel": "上下文通道", "model_role": "模型槽位", "on_incomplete": "重试次数",
     "confused_prompt": "困惑语", "followup_prompt": "追问语", "retry_prompt": "重试语",
     "strict_output": "严格输出提示词", "drag_form": "拖出方式", "on_generated": "生成后动作",
+    "inputs": "输入端口", "type": "端口类型",
 }
 
 
@@ -375,6 +376,7 @@ _RECIPE_DESC_ALIASES = {
     "重试次数": "on_incomplete", "困惑语": "confused_prompt", "追问语": "followup_prompt",
     "重试语": "retry_prompt", "严格输出": "strict_output", "拖出方式": "drag_form",
     "生成后动作": "on_generated",
+    "输入端口": "inputs", "输入口": "inputs",
 }
 
 

@@ -281,6 +281,23 @@ class RecipeDetailMergeTest(unittest.TestCase):
         self.assertEqual(recipe["generate"]["prompt"], "新的生成提示词")
         self.assertEqual(recipe["generate"]["followup_prompt"], "要不要再练一题？")
 
+    def test_inputs_array_replace_wholesale(self):
+        # T263：具名输入端口同「数组整体替换」口径——只提交新表，旧表不残留；
+        # 同层 static/dynamic 是未提交字段，递归合并保留
+        result = self._update(
+            _snapshot_with_recipes(recipe_detail=_detail()),
+            "recipe-1",
+            {"ports": {"inputs": [{"label": "力一", "type": "text"}, {"label": "力二", "type": ""}]}},
+        )
+        self.assertEqual(result["status"], "ok")
+        recipe = result["operations"][0]["recipe"]
+        self.assertEqual(recipe["ports"]["inputs"],
+                         [{"label": "力一", "type": "text"}, {"label": "力二", "type": ""}])
+        self.assertEqual(recipe["ports"]["static"][0]["label"], "再练一题")
+        self.assertEqual(recipe["ports"]["dynamic"]["parser"]["level_tags"], ["基础", "进阶", "拓展"])
+        # 未提交的主提示词不被重置
+        self.assertEqual(recipe["generate"]["prompt"], "按错因分类精讲，每类给一道变式。")
+
     def test_build_next_snapshot_leaves_inputs_untouched(self):
         snapshot = _snapshot_with_recipes(recipe_detail=_detail())
         ops = [{"op": "update_recipe", "recipe_id": "recipe-1",

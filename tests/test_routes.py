@@ -1112,7 +1112,7 @@ class HarnessStreamReviewTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         result = resp.json()
         self.assertEqual(result["status"], "clarify")
-        self.assertEqual(result["clarify"]["question"], "做什么用？")
+        self.assertEqual(result["clarify"]["questions"][0]["question"], "做什么用？")
         self.assertGreaterEqual(result.get("model_calls", 0), 1)
 
     def test_empty_snapshot_chat_passes_defense(self):

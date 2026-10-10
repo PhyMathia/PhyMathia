@@ -1500,5 +1500,51 @@ check('配方节点卡片配色：与内置模块同款 4px 彩框＋彩色渐�
   if (!selector.includes(':not(.graph-node-draft)')) throw new Error('配方卡规则应排除 .graph-node-draft（草稿小卡另样）');
   return true;
 });
+// ===== T263 端口分类体系 v2：具名输入端口与内容类型 =====
+check('配方端口分类 v2：输入端口 normalize/校验/出口类型推导/画布契约（T263）', () => {
+  const w = sandbox.window;
+  if (!Array.isArray(w.RECIPE_PORT_TYPES) || w.RECIPE_PORT_TYPES.join(',') !== 'text,formula,diagram,html') {
+    throw new Error('RECIPE_PORT_TYPES 枚举应是 text/formula/diagram/html');
+  }
+  const norm = w.normalizeRecipeInput({
+    name: '矢量合成', base: { kind: 'module' },
+    generate: { prompt: '合成两个力' },
+    ports: {
+      static: [{ label: '合力讲解', drag_form: 'draft', type: 'text' }, { label: '示意图', drag_form: 'draft', type: 'diagram' }],
+      inputs: [{ label: '力一', type: 'text' }, { label: '力二', type: '' }, { label: '  ', type: 'html' }, '垃圾项'],
+    },
+  });
+  if (JSON.stringify(norm.ports.inputs) !== JSON.stringify([{ label: '力一', type: 'text' }, { label: '力二', type: '' }])) {
+    throw new Error('具名输入口归一化错误：' + JSON.stringify(norm.ports.inputs));
+  }
+  if (norm.ports.static[0].type !== 'text' || norm.ports.static[1].type !== 'diagram') throw new Error('出口 type 未保留');
+  const noType = w.normalizeRecipeInput({ name: '无类型', base: { kind: 'module' }, generate: { prompt: 'x' }, ports: { static: [{ label: '追问', drag_form: 'draft' }] } });
+  if ('type' in noType.ports.static[0]) throw new Error('未声明 type 的出口不得设 type 键（两侧对拍同形）');
+  const legacy = w.normalizeRecipeInput({ name: '旧稿', base: { kind: 'module' }, generate: { prompt: 'x' }, ports: { static: [], inputs: 1 } });
+  if (legacy.ports.inputs) throw new Error('旧设计稿数字型 inputs 应剥除');
+  const base = { name: '矢量合成', base: { kind: 'module' }, generate: { prompt: 'x' }, appearance: { palette: 'amber' } };
+  const dup = w.validateRecipe({ ...base, ports: { static: [{ label: '追问', drag_form: 'draft' }], inputs: [{ label: '力一', type: '' }, { label: '力一', type: 'text' }] } }, []);
+  if (dup.ok || !dup.errors.some(e => e.includes('输入端口名字重复'))) throw new Error('输入口重名应拒绝');
+  const badType = w.validateRecipe({ ...base, ports: { static: [{ label: '追问', drag_form: 'draft' }], inputs: [{ label: '速度', type: 'number' }] } }, []);
+  if (badType.ok || !badType.errors.some(e => e.includes('类型不合法'))) throw new Error('输入口类型枚举外应拒绝');
+  const badOut = w.validateRecipe({ ...base, ports: { static: [{ label: '追问', drag_form: 'draft', type: 'quiz' }] } }, []);
+  if (badOut.ok || !badOut.errors.some(e => e.includes('类型不合法'))) throw new Error('出口类型枚举外应拒绝');
+  if (w._recipePortTypeForContent('mermaid') !== 'diagram' || w._recipePortTypeForContent('html_iframe') !== 'html' || w._recipePortTypeForContent('markdown') !== 'text') {
+    throw new Error('出口类型按载体推导口径错误');
+  }
+  const node = { recipeId: 'r1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } } };
+  if (w._recipeInputPorts(node).length !== 1 || w._recipeInputPorts({ recipeId: 'r2', recipe: { name: '旧' } }).length !== 0) {
+    throw new Error('_recipeInputPorts 快照读取口径错误（无声明应回落空表）');
+  }
+  // 画布源码契约：连线放宽（配方节点接受任意来源）与具名输入口渲染/喂料分路的插点在位
+  const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!renderSrc.includes("toNode.kind === 'module' && toNode.recipeId) return true")) throw new Error('_canConnect 缺配方节点任意来源放行');
+  if (!renderSrc.includes('graph-port-type')) throw new Error('输入口缺类型徽标 DOM');
+  const promptSrc = fs.readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
+  if (!promptSrc.includes('input_port')) throw new Error('喂料分路缺 input_port 标注');
+  const applySrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
+  if (!applySrc.includes('_nodeBaseInputPortCount')) throw new Error('harness add_edge 未按配方声明数分配附加口');
+  return true;
+});
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
 }

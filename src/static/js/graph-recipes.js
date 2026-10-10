@@ -135,6 +135,11 @@ const RECIPE_CONTEXT_CHANNELS = ['workflow_context', 'prompt_inline'];
 const RECIPE_MODEL_ROLES = ['agent', 'html', 'branch', 'graph', 'quiz', 'descriptor'];
 const RECIPE_PROMPT_BUDGET = 800;   // 每个提示词槽的建议上限（字符）
 const RECIPE_MAX_PORTS = 8;
+// ── T263 端口分类体系 v2：内容类型（与内容载体同源，线上流的永远是文本，类型只做
+// 徽标显示＋喂料分组标题＋访谈词汇，不拦连线）。不填＝不限（按文本处理，不挂徽标）。
+const RECIPE_PORT_TYPES = ['text', 'formula', 'diagram', 'html'];
+const RECIPE_PORT_TYPE_LABELS = { text: '文本', formula: '公式', diagram: '图示', html: '网页' };
+const RECIPE_MAX_INPUTS = 8;
 // ── P2 动态出口（S2 维度，苏格拉底/进阶学习式）──
 const RECIPE_PARSER_PATTERNS = ['numbered_list'];      // 内置解析器枚举（不开放自由正则）
 const RECIPE_LABEL_FROM = ['index_question', 'question_trunc12'];
@@ -242,6 +247,7 @@ function normalizeRecipeInput(raw) {
   const shape = _recipeDefaultShape(baseKind);
   const g = (raw.generate && typeof raw.generate === 'object') ? raw.generate : {};
   const ports = Array.isArray(raw.ports && raw.ports.static) ? raw.ports.static : [];
+  const inputPorts = Array.isArray(raw.ports && raw.ports.inputs) ? raw.ports.inputs : [];
   const dynamic = _normalizeRecipeDynamic(raw.ports && raw.ports.dynamic);
   const onGenerated = _normalizeRecipeOnGenerated(raw.on_generated);
   const modelRole = RECIPE_MODEL_ROLES.includes(g.model_role) ? g.model_role : 'agent';
@@ -250,11 +256,24 @@ function normalizeRecipeInput(raw) {
     : 1;
   const contentKind = RECIPE_CONTENT_KINDS.includes(raw.content_kind) ? raw.content_kind : 'markdown';
   const portsOut = {
-    static: ports.slice(0, RECIPE_MAX_PORTS + 4).map(port => ({
-      label: String((port && port.label) || '').trim().slice(0, 12),
-      drag_form: String((port && port.drag_form) || 'draft'),
-    })).filter(port => port.label),
+    static: ports.slice(0, RECIPE_MAX_PORTS + 4).map(port => {
+      const item = {
+        label: String((port && port.label) || '').trim().slice(0, 12),
+        drag_form: String((port && port.drag_form) || 'draft'),
+      };
+      // 出口类型可选（覆盖时才落库，缺省按 content_kind 自动推导，见 _recipePortTypeForContent）
+      const portType = RECIPE_PORT_TYPES.includes(port && port.type) ? port.type : '';
+      if (portType) item.type = portType;
+      return item;
+    }).filter(port => port.label),
   };
+  // 具名输入端口（T263）：{label, type}，type 缺省 ''＝不限；旧设计稿的数字型
+  // inputs 不是数组，走到这里自然剥除；空表不设键（与 dynamic 同法，对拍友好）
+  const inputsOut = inputPorts.slice(0, RECIPE_MAX_INPUTS + 4).map(port => ({
+    label: String((port && port.label) || '').trim().slice(0, 12),
+    type: RECIPE_PORT_TYPES.includes(port && port.type) ? port.type : '',
+  })).filter(port => port.label);
+  if (inputsOut.length) portsOut.inputs = inputsOut;
   if (dynamic) portsOut.dynamic = dynamic;   // 无声明不设键（与后端 normalize 同形，对拍友好）
   const out = {
     id: String(raw.id || ('recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8))),
@@ -325,6 +344,19 @@ function validateRecipe(recipe, existing) {
     seenLabels.add(label);
     const form = String((port && port.drag_form) || 'draft');
     if (form !== 'draft' && form !== 'user' && !/^connected:[a-z_]+$/.test(form)) fail('出口「' + label + '」的拖出目标不合法');
+    if (port && port.type && !RECIPE_PORT_TYPES.includes(port.type)) fail('出口「' + label + '」的类型不合法（text/formula/diagram/html 或留空）');
+  });
+  // 具名输入端口（T263）：与出口同款校验，去重独立于出口表
+  const inputPorts = (recipe.ports && Array.isArray(recipe.ports.inputs)) ? recipe.ports.inputs : [];
+  if (inputPorts.length > RECIPE_MAX_INPUTS) fail('输入端口最多 ' + RECIPE_MAX_INPUTS + ' 个');
+  const seenInputLabels = new Set();
+  inputPorts.forEach(port => {
+    const label = String((port && port.label) || '').trim();
+    if (!label) fail('存在没有名字的输入端口');
+    else if (label.length > 12) fail('输入端口「' + label + '」名字最长 12 字');
+    if (seenInputLabels.has(label)) fail('输入端口名字重复：「' + label + '」');
+    seenInputLabels.add(label);
+    if (port && port.type && !RECIPE_PORT_TYPES.includes(port.type)) fail('输入端口「' + label + '」的类型不合法（text/formula/diagram/html 或留空）');
   });
   // 动态出口（P2）：仅 module 底座可声明；解析器/兜底/端口行为全走枚举
   const dyn = (recipe.ports && recipe.ports.dynamic) || null;
@@ -482,6 +514,22 @@ function _recipeStaticPorts(node) {
   }));
 }
 
+// 具名输入端口表（T263）：_renderInputPorts / 喂料分路读取。无声明返回 []（旧配方
+// /旧节点快照回落单匿名口）。顺序即端口索引：具名口占 in-0..k，附加匿名口顺延。
+function _recipeInputPorts(node) {
+  const recipe = _nodeRecipeSnapshot(node);
+  if (!recipe || !Array.isArray(recipe.ports && recipe.ports.inputs)) return [];
+  return recipe.ports.inputs.filter(port => port && port.label);
+}
+
+// 出口类型按内容载体自动推导（T263）：markdown/plain→文本、mermaid→图示、
+// html_iframe→网页。formulas_list 尚未开放为配方载体，公式出口靠显式 type 覆盖。
+function _recipePortTypeForContent(contentKind) {
+  if (contentKind === 'mermaid') return 'diagram';
+  if (contentKind === 'html_iframe') return 'html';
+  return 'text';
+}
+
 // ---- 动态出口（P2）：numbered_list 内置解析器 ----
 // 正则与官方 _parsePortQuestions（graph-render.js）同一条——苏格拉底/进阶学习的
 // 编号行契约，但按配方参数化（级别白名单 level_tags、上限 max、标签方式 label_from）。
@@ -594,6 +642,9 @@ window.RECIPE_ON_GENERATED_KINDS = RECIPE_ON_GENERATED_KINDS;
 window.RECIPE_MAX_DYNAMIC = RECIPE_MAX_DYNAMIC;
 window.RECIPE_PROMPT_BUDGET = RECIPE_PROMPT_BUDGET;
 window.RECIPE_MAX_PORTS = RECIPE_MAX_PORTS;
+window.RECIPE_PORT_TYPES = RECIPE_PORT_TYPES;
+window.RECIPE_PORT_TYPE_LABELS = RECIPE_PORT_TYPE_LABELS;
+window.RECIPE_MAX_INPUTS = RECIPE_MAX_INPUTS;
 window.normalizeRecipeInput = normalizeRecipeInput;
 window.validateRecipe = validateRecipe;
 window.getUserRecipes = getUserRecipes;
@@ -603,6 +654,8 @@ window.recipeEmbedSnapshot = recipeEmbedSnapshot;
 window._nodeRecipeSnapshot = _nodeRecipeSnapshot;
 window._recipeNodeAttribute = _recipeNodeAttribute;
 window._recipeStaticPorts = _recipeStaticPorts;
+window._recipeInputPorts = _recipeInputPorts;
+window._recipePortTypeForContent = _recipePortTypeForContent;
 window._recipeDynamicPorts = _recipeDynamicPorts;
 window._recipeParseNumberedList = _recipeParseNumberedList;
 window._recipeQuestionTextsFromContent = _recipeQuestionTextsFromContent;

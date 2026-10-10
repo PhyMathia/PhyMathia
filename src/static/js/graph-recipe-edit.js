@@ -7,7 +7,8 @@
 let recipeModalOverlay = null;
 let recipeManageOverlay = null;
 let recipeEditingId = null;     // 编辑中的配方 id；null = 新建
-let recipePortRows = [];        // 出口编辑器当前行：[{ label, drag_form }]
+let recipePortRows = [];        // 出口编辑器当前行：[{ label, drag_form, type? }]
+let recipeInputRows = [];       // 输入口编辑器当前行（T263）：[{ label, type }]，type ''＝不限
 // 动态出口编辑器状态（P2，module 底座）
 let recipeDynEnabled = false;
 let recipeDynCheckLevel = true;
@@ -50,8 +51,12 @@ function openRecipeForm(prefill) {
   const baseKind = (init.base && init.base.kind) || 'module';
   const baseMeta = RECIPE_BASE_META[baseKind] || RECIPE_BASE_META.module;
   recipePortRows = (init.ports && Array.isArray(init.ports.static))
-    ? init.ports.static.map(port => ({ label: port.label || '', drag_form: port.drag_form || 'draft' })).slice(0, RECIPE_MAX_PORTS)
-    : (baseKind === 'module' ? [{ label: '追问', drag_form: 'draft' }] : []);
+    ? init.ports.static.map(port => ({ label: port.label || '', drag_form: port.drag_form || 'draft', type: port.type || '' })).slice(0, RECIPE_MAX_PORTS)
+    : (baseKind === 'module' ? [{ label: '追问', drag_form: 'draft', type: '' }] : []);
+  // 输入口编辑器初值（T263）：type 缺省 ''＝不限
+  recipeInputRows = (init.ports && Array.isArray(init.ports.inputs))
+    ? init.ports.inputs.map(port => ({ label: port.label || '', type: port.type || '' })).slice(0, RECIPE_MAX_INPUTS)
+    : [];
   // 动态出口编辑器初值（P2）
   const dyn = (init.ports && init.ports.dynamic) || null;
   recipeDynEnabled = !!dyn;
@@ -150,6 +155,11 @@ function openRecipeForm(prefill) {
     + '<div id="recipePortRows"></div>'
     + '<button type="button" class="recipe-port-add" onclick="recipeAddPortRow()">＋ 添加出口</button>'
     + '</div>'
+    + '<div id="recipeInputEditorWrap">'
+    + '<label>输入端口（连线接入点，生成时按口分组喂材料，最多 ' + RECIPE_MAX_INPUTS + ' 个）</label>'
+    + '<div id="recipeInputRows"></div>'
+    + '<button type="button" class="recipe-port-add" onclick="recipeAddInputRow()">＋ 添加输入口</button>'
+    + '</div>'
     + '<div id="recipeDynamicWrap">'
     + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeDynEnabled" onchange="recipeDynToggle()"'
     + (recipeDynEnabled ? ' checked' : '') + '> 动态出口：从生成内容的编号行现场解析出口（苏格拉底式）</label>'
@@ -198,6 +208,7 @@ function openRecipeForm(prefill) {
   _recipeSyncColorChip();
   recipeBaseChanged();
   _recipeRenderPortRows();
+  _recipeRenderInputRows();
 }
 
 function closeRecipeForm() {
@@ -222,6 +233,9 @@ function recipeBaseChanged() {
   if (aiFields) aiFields.style.display = RECIPE_AI_BASE_KINDS.includes(kind) ? '' : 'none';
   const portWrap = document.getElementById('recipePortEditorWrap');
   if (portWrap) portWrap.style.display = (kind === 'module' || kind === 'manual') ? '' : 'none';
+  // T263：输入口编辑器与出口编辑器同显隐（module/manual 底座）
+  const inputWrap = document.getElementById('recipeInputEditorWrap');
+  if (inputWrap) inputWrap.style.display = (kind === 'module' || kind === 'manual') ? '' : 'none';
   // P2 分区：动态出口/双阶段/单链只在 module 底座；mermaid/html_iframe 载体只在 AI 底座
   const dynWrap = document.getElementById('recipeDynamicWrap');
   if (dynWrap) dynWrap.style.display = kind === 'module' ? '' : 'none';
@@ -625,6 +639,7 @@ function _recipeRenderPortRows() {
     const opts = _recipeDragFormOptions();
     return '<div class="recipe-port-row">'
       + '<input class="recipe-port-label" maxlength="12" placeholder="出口名" value="' + escapeHtml(row.label || '') + '" onchange="recipePortLabelChanged(' + index + ',this.value)">'
+      + _recipePortTypeSelectHtml('recipePortTypeChanged(' + index + ',this.value)', row.type || '')
       + '<select class="recipe-port-form" onchange="recipePortFormChanged(' + index + ',this.value)">'
       + opts.map(opt => '<option value="' + opt.value + '"' + (opt.value === (row.drag_form || 'draft') ? ' selected' : '') + '>' + escapeHtml(opt.label) + '</option>').join('')
       + '</select>'
@@ -639,6 +654,59 @@ function recipePortLabelChanged(index, value) {
 
 function recipePortFormChanged(index, value) {
   if (recipePortRows[index]) recipePortRows[index].drag_form = String(value || 'draft');
+}
+
+function recipePortTypeChanged(index, value) {
+  if (recipePortRows[index]) recipePortRows[index].type = String(value || '').trim();
+}
+
+// ---- 输入口编辑器（T263）：[{label, type}]，type ''＝不限 ----
+
+function _recipePortTypeOptions() {
+  const labels = (typeof RECIPE_PORT_TYPE_LABELS !== 'undefined') ? RECIPE_PORT_TYPE_LABELS : {};
+  return [{ value: '', label: '类型不限' }].concat(
+    (typeof RECIPE_PORT_TYPES !== 'undefined' ? RECIPE_PORT_TYPES : []).map(key => ({ value: key, label: labels[key] || key }))
+  );
+}
+
+function _recipePortTypeSelectHtml(onchange, selected) {
+  return '<select class="recipe-port-type" onchange="' + onchange + '">'
+    + _recipePortTypeOptions().map(opt => '<option value="' + opt.value + '"' + (opt.value === selected ? ' selected' : '') + '>' + escapeHtml(opt.label) + '</option>').join('')
+    + '</select>';
+}
+
+function recipeAddInputRow() {
+  if (recipeInputRows.length >= RECIPE_MAX_INPUTS) {
+    toastMsg('输入口最多 ' + RECIPE_MAX_INPUTS + ' 个');
+    return;
+  }
+  recipeInputRows.push({ label: '', type: '' });
+  _recipeRenderInputRows();
+}
+
+function recipeRemoveInputRow(index) {
+  recipeInputRows.splice(index, 1);
+  _recipeRenderInputRows();
+}
+
+function _recipeRenderInputRows() {
+  const wrap = document.getElementById('recipeInputRows');
+  if (!wrap) return;
+  wrap.innerHTML = recipeInputRows.map((row, index) => {
+    return '<div class="recipe-port-row">'
+      + '<input class="recipe-port-label" maxlength="12" placeholder="输入口名" value="' + escapeHtml(row.label || '') + '" onchange="recipeInputLabelChanged(' + index + ',this.value)">'
+      + _recipePortTypeSelectHtml('recipeInputTypeChanged(' + index + ',this.value)', row.type || '')
+      + '<button type="button" class="recipe-port-remove" onclick="recipeRemoveInputRow(' + index + ')" title="删除此输入口">×</button>'
+      + '</div>';
+  }).join('');
+}
+
+function recipeInputLabelChanged(index, value) {
+  if (recipeInputRows[index]) recipeInputRows[index].label = String(value || '').trim();
+}
+
+function recipeInputTypeChanged(index, value) {
+  if (recipeInputRows[index]) recipeInputRows[index].type = String(value || '').trim();
 }
 
 function _recipeCollectForm() {
@@ -672,7 +740,14 @@ function _recipeCollectForm() {
     ports: {
       static: recipePortRows
         .filter(row => row.label)
-        .map(row => ({ label: row.label, drag_form: row.drag_form || 'draft' })),
+        .map(row => {
+          const item = { label: row.label, drag_form: row.drag_form || 'draft' };
+          if (row.type) item.type = row.type;   // 类型可选：留空＝按内容载体自动推导
+          return item;
+        }),
+      inputs: recipeInputRows
+        .filter(row => row.label)
+        .map(row => ({ label: row.label, type: row.type || '' })),
     },
     content_kind: val('recipeContentKind') || 'markdown',
     analysis_phase: baseKind === 'module' ? checked('recipeAnalysisPhase') : false,
@@ -747,7 +822,7 @@ function openRecipeManage() {
         return '<div class="recipe-manage-row">'
           + '<span class="graph-add-node-dot is-round" style="background:' + recipeAppearanceColor(recipe.appearance) + '"></span>'
           + '<span class="recipe-manage-name">' + escapeHtml(recipe.name) + '</span>'
-          + '<span class="recipe-manage-meta">' + escapeHtml((meta.label || '').split('（')[0]) + ' · ' + recipe.ports.static.length + ' 出口</span>'
+          + '<span class="recipe-manage-meta">' + escapeHtml((meta.label || '').split('（')[0]) + ' · ' + ((recipe.ports && recipe.ports.inputs) ? recipe.ports.inputs.length : 0) + ' 入 / ' + recipe.ports.static.length + ' 出</span>'
           + '<button class="recipe-manage-edit" onclick="openRecipeFormById(\'' + recipe.id + '\')">编辑</button>'
           + '<button class="recipe-manage-delete" onclick="deleteRecipeById(\'' + recipe.id + '\')">删除</button>'
           + '</div>';
@@ -831,6 +906,9 @@ function recipeFromNode(nodeId) {
     },
     ports: {
       static: portLabels.filter(Boolean).slice(0, RECIPE_MAX_PORTS).map(label => ({ label: String(label).slice(0, 12), drag_form: 'draft' })),
+      inputs: (node.recipe && node.recipe.ports && Array.isArray(node.recipe.ports.inputs))
+        ? node.recipe.ports.inputs.slice(0, RECIPE_MAX_INPUTS).map(port => ({ label: port.label || '', type: port.type || '' }))
+        : [],
     },
     content_kind: (node.recipe && node.recipe.content_kind) || (baseKind === 'human_note' ? 'plain' : 'markdown'),
   };

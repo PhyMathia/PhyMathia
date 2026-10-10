@@ -2196,7 +2196,9 @@ class HarnessUndoTest(unittest.TestCase):
                 retries=0,
             ))
         self.assertEqual(result["status"], "clarify")
-        self.assertEqual(result["clarify"]["question"], "想改哪个节点？")
+        # T263：clarify 归一化成 questions[]（旧单问载荷走兼容通道）
+        self.assertEqual(result["clarify"]["questions"][0]["question"], "想改哪个节点？")
+        self.assertEqual(result["clarify"]["questions"][0]["options"], ["导数", "极限"])
 
     def test_history_block_injected_into_messages(self):
         import asyncio
@@ -3644,11 +3646,43 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         # 意图词永不猜 preset（D-R6：显式按钮入口，不做自动识别）
         self.assertNotEqual(_detect_phase("auto", "帮我做一个考前速记配方", {}), "preset")
 
+    def test_preset_ask_user_tool_short_circuits_to_clarify(self):
+        """T263 访谈协议：preset 相位 ask_user 工具调用短路成 clarify 返回，
+        问题文本随 questions 走（前端渲染进气泡并写进历史，多轮不失忆）。"""
+        import asyncio
+        import unittest.mock
+        from harness import review as review_mod
+
+        async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
+            return {
+                "content": "我先确认几个问题",
+                "tool_calls": [
+                    {"function": {"name": "ask_user", "arguments": '{"questions": [{"question": "这个节点帮用户做什么？", "options": ["受力分析"]}, {"question": "输入口叫什么？"}]}'}},
+                ],
+            }
+
+        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+            result = asyncio.run(review_mod.review_graph(
+                {"nodes": [], "edges": []},
+                "做一个受力分析节点",
+                model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
+                mode="tools",
+                self_check="off",
+                retries=0,
+                phase="preset",
+            ))
+        self.assertEqual(result["status"], "clarify")
+        self.assertEqual(len(result["clarify"]["questions"]), 2)
+        self.assertEqual(result["clarify"]["questions"][0]["question"], "这个节点帮用户做什么？")
+        self.assertEqual(result["clarify"]["questions"][0]["options"], ["受力分析"])
+        self.assertEqual(result["operations"], [])
+        self.assertEqual(result["summary"], "我先确认几个问题")
+
     def test_phase_tools_preset_set(self):
         from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, TOOL_TO_OP, build_tools, _args_to_op
         self.assertEqual(
             set(PHASE_TOOLS["preset"]),
-            {"create_recipe", "update_recipe", "delete_recipe", "create_node"} | set(READONLY_TOOL_NAMES),
+            {"ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node"} | set(READONLY_TOOL_NAMES),
         )
         tools = build_tools("preset")
         names = {t["function"]["name"] for t in tools}
@@ -3663,6 +3697,16 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         op = _args_to_op("delete_recipe", {"recipe_id": "recipe-1", "reason": "用户要求删除"})
         self.assertEqual(op, {"op": "delete_recipe", "recipe_id": "recipe-1", "reason": "用户要求删除"})
         self.assertIsNone(_args_to_op("delete_recipe", {"reason": "缺 id"}))
+        # T263 访谈协议：ask_user 归一化成 questions[]；全部问题为空拒绝
+        op = _args_to_op("ask_user", {"questions": [
+            {"question": "这个节点帮用户做什么？", "options": ["错题复盘", "公式速查"]},
+            {"question": "输入口叫什么？", "options": []},
+        ]})
+        self.assertEqual(op["op"], "ask_user")
+        self.assertEqual(op["questions"][0]["options"], ["错题复盘", "公式速查"])
+        self.assertEqual(op["questions"][1], {"question": "输入口叫什么？"})
+        self.assertIsNone(_args_to_op("ask_user", {"questions": [{"question": "   "}]})
+                          or _args_to_op("ask_user", {"questions": "不是列表"}))
 
     def test_create_recipe_valid_and_dup(self):
         result = build_next_snapshot(self.snapshot, [

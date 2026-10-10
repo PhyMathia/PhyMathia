@@ -213,6 +213,31 @@ function replyOf(body) {
       }],
     };
   }
+  // —— T263 访谈协议剧本：第一轮回 ask_user 追问；用户答（末条用户消息含「访谈定稿」）后第二轮出配方 ——
+  if (t.includes('访谈定稿')) {
+    return toolCall('create_recipe', {
+      reason: '访谈定稿：按用户回答产出合力计算配方',
+      recipe: {
+        name: '访谈试炼节点', desc: '访谈产出的合力计算器',
+        base: { kind: 'module' },
+        appearance: { palette: 'blue', shape: 'is-round' },
+        generate: { prompt: '输入「力一」「力二」是待合成的两个力；输出合力讲解与示意图。', context_channel: 'workflow_context' },
+        ports: {
+          static: [{ label: '合力讲解', drag_form: 'draft', type: 'text' }, { label: '示意图', drag_form: 'draft', type: 'diagram' }],
+          inputs: [{ label: '力一', type: 'text' }, { label: '力二', type: '' }],
+        },
+        content_kind: 'markdown',
+      },
+    });
+  }
+  if (j.tools.includes('ask_user') && t.includes('访谈试炼')) {
+    return toolCall('ask_user', {
+      questions: [
+        { question: '这个节点帮用户做什么？', options: ['力的合成', '速度合成'] },
+        { question: '需要哪个输入口？', options: ['力一', '力二'] },
+      ],
+    });
+  }
   if (j.tools.includes('create_recipe') && t.includes('三级追问')) {
     return toolCall('create_recipe', {
       reason: '用户要一个三级追问节点',

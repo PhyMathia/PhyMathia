@@ -23,11 +23,13 @@ from harness.recipes import (
     RECIPE_FALLBACK_MODES,
     RECIPE_LABEL_FROM,
     RECIPE_MAX_DYNAMIC,
+    RECIPE_MAX_INPUTS,
     RECIPE_MAX_PORTS,
     RECIPE_MODEL_ROLES,
     RECIPE_ON_GENERATED_KINDS,
     RECIPE_PARSER_PATTERNS,
     RECIPE_PALETTE_KEYS,
+    RECIPE_PORT_TYPES,
     RECIPE_PROMPT_BUDGET,
     RECIPE_SHAPES,
     normalize_recipe_input,
@@ -59,6 +61,7 @@ def _js_constants() -> dict:
     out["fallback_modes"] = arr("RECIPE_FALLBACK_MODES")
     out["dynamic_port_types"] = arr("RECIPE_DYNAMIC_PORT_TYPES")
     out["on_generated_kinds"] = arr("RECIPE_ON_GENERATED_KINDS")
+    out["port_types"] = arr("RECIPE_PORT_TYPES")
     m = re.search(r"RECIPE_PALETTE\s*=\s*\[(.*?)\];", src, re.S)
     assert m, "前端缺 RECIPE_PALETTE"
     out["palette_keys"] = re.findall(r"key:\s*'([^']+)'", m.group(1))
@@ -71,6 +74,9 @@ def _js_constants() -> dict:
     m = re.search(r"RECIPE_MAX_DYNAMIC\s*=\s*(\d+)", src)
     assert m, "前端缺 RECIPE_MAX_DYNAMIC"
     out["max_dynamic"] = int(m.group(1))
+    m = re.search(r"RECIPE_MAX_INPUTS\s*=\s*(\d+)", src)
+    assert m, "前端缺 RECIPE_MAX_INPUTS"
+    out["max_inputs"] = int(m.group(1))
     return out
 
 
@@ -87,10 +93,12 @@ def test_constants_match_between_frontend_and_backend():
     assert tuple(js["fallback_modes"]) == RECIPE_FALLBACK_MODES
     assert tuple(js["dynamic_port_types"]) == RECIPE_DYNAMIC_PORT_TYPES
     assert tuple(js["on_generated_kinds"]) == RECIPE_ON_GENERATED_KINDS
+    assert tuple(js["port_types"]) == RECIPE_PORT_TYPES
     assert tuple(js["palette_keys"]) == RECIPE_PALETTE_KEYS
     assert js["prompt_budget"] == RECIPE_PROMPT_BUDGET
     assert js["max_ports"] == RECIPE_MAX_PORTS
     assert js["max_dynamic"] == RECIPE_MAX_DYNAMIC
+    assert js["max_inputs"] == RECIPE_MAX_INPUTS
 
 
 # ---- 样本：两侧都必须给出同样判决 ----
@@ -109,7 +117,8 @@ def _valid_sample() -> dict:
             "confused_prompt": "",
             "context_channel": "workflow_context",
         },
-        "ports": {"static": [{"label": "追问", "drag_form": "draft"}]},
+        "ports": {"static": [{"label": "追问", "drag_form": "draft"}],
+                  "inputs": [{"label": "错题", "type": "text"}]},
         "content_kind": "markdown",
     }
 
@@ -153,6 +162,26 @@ def _samples() -> list:
         ("too_many_ports", {**_valid_sample(), "ports": {"static": [
             {"label": f"口{i}", "drag_form": "draft"} for i in range(RECIPE_MAX_PORTS + 1)]}},
          [f"出口最多 {RECIPE_MAX_PORTS} 个"]),
+        # ---- T263 端口分类体系 v2：具名输入端口与内容类型 ----
+        ("valid_input_ports", {**_valid_sample(), "ports": {
+            "static": [{"label": "合力讲解", "drag_form": "draft", "type": "text"},
+                       {"label": "示意图", "drag_form": "draft", "type": "diagram"}],
+            "inputs": [{"label": "力一", "type": "text"}, {"label": "力二", "type": ""}]}}, []),
+        ("dup_input", {**_valid_sample(), "ports": {
+            "static": [{"label": "追问", "drag_form": "draft"}],
+            "inputs": [{"label": "力一", "type": ""}, {"label": "力一", "type": "text"}]}},
+         ["输入端口名字重复：「力一」"]),
+        ("bad_input_type", {**_valid_sample(), "ports": {
+            "static": [{"label": "追问", "drag_form": "draft"}],
+            "inputs": [{"label": "速度", "type": "number"}]}},
+         ["输入端口「速度」的类型不合法（text/formula/diagram/html 或留空）"]),
+        ("bad_output_type", {**_valid_sample(), "ports": {
+            "static": [{"label": "追问", "drag_form": "draft", "type": "quiz"}]}},
+         ["出口「追问」的类型不合法（text/formula/diagram/html 或留空）"]),
+        ("too_many_inputs", {**_valid_sample(), "ports": {
+            "static": [{"label": "追问", "drag_form": "draft"}],
+            "inputs": [{"label": f"入{i}", "type": ""} for i in range(RECIPE_MAX_INPUTS + 1)]}},
+         [f"输入端口最多 {RECIPE_MAX_INPUTS} 个"]),
         ("bad_content_kind", {**_valid_sample(), "content_kind": "formula"},
          ["内容载体不合法（markdown / plain / mermaid / html_iframe）"]),
         # ---- P2：动态出口 / 载体 / 模型槽 / 取材与编排 ----
@@ -377,7 +406,8 @@ def test_frontend_normalize_shape_matches_backend():
         "content_kind": "html_iframe",
         "generate": {**_valid_sample()["generate"], "model_role": "html",
                      "retry_prompt": "只输出完整 HTML。", "on_incomplete": {"max_retries": 1}},
-        "ports": {"static": [{"label": "追问", "drag_form": "draft"}], "dynamic": _dynamic_ports_spec()},
+        "ports": {"static": [{"label": "追问", "drag_form": "draft"}], "dynamic": _dynamic_ports_spec(),
+                  "inputs": [{"label": "力一", "type": "text"}, {"label": "力二", "type": ""}]},
         "on_generated": {
             "create": [
                 {"as": "$0", "base": {"kind": "answer"}, "label_template": "{self.label}的进阶学习",
@@ -440,3 +470,16 @@ def test_prompt_budget_enforced():
     verdict = validate_recipe(sample, [])
     assert not verdict["ok"]
     assert any("超预算" in e for e in verdict["errors"])
+
+
+def test_legacy_numeric_inputs_stripped():
+    """旧设计稿的 ports.inputs 是数字（v1 草案遗留）；归一化必须剥除而非猜转换（T263）。"""
+    raw = {**_valid_sample(), "ports": {"static": [{"label": "追问", "drag_form": "draft"}], "inputs": 1}}
+    out = normalize_recipe_input(raw)
+    assert "inputs" not in out["ports"]
+    # 合法输入端口表：type 缺省收敛为 ""（＝不限），非法枚举值剥成 ""
+    raw2 = {**_valid_sample(), "ports": {
+        "static": [{"label": "追问", "drag_form": "draft"}],
+        "inputs": [{"label": "力一", "type": "number"}, {"label": "力二"}]}}
+    out2 = normalize_recipe_input(raw2)
+    assert out2["ports"]["inputs"] == [{"label": "力一", "type": ""}, {"label": "力二", "type": ""}]

@@ -1222,6 +1222,27 @@
   color: var(--text-primary) !important;
 }
 
+/* T263 端口类型徽标：具名输入口的 content type 小标（文本/公式/图示/网页），
+   色随所在端口的 --port-color（配方节点即配方色），纯展示不响应指针 */
+.graph-port-type {
+  margin-left: 4px !important;
+  padding: 1px 4px !important;
+  border-radius: var(--r-xs) !important;
+  font-size: 9px !important;
+  line-height: 1.2 !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+  color: var(--text-secondary) !important;
+  background: color-mix(in srgb, var(--port-color, var(--accent)) 16%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--port-color, var(--accent)) 32%, transparent) !important;
+  pointer-events: none !important;
+  flex-shrink: 0 !important;
+}
+
+.graph-node.minimized .graph-port-type {
+  display: none !important;
+}
+
 .graph-add-port-btn {
   width: 22px !important;
   height: 22px !important;

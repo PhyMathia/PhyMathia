@@ -416,4 +416,13 @@ check('T124 灰化与标注样式进源 CSS（.graph-harness-opcard-stale/-note�
   if (!css.includes('.graph-harness-opcard-note')) throw new Error('标注样式缺失');
   return true;
 });
+
+check('T263 创造模式访谈协议：ask_user 短路＋问题文本进正文与历史（源码契约）', () => {
+  if (!code.includes('function _harnessClarifyQuestions')) throw new Error('缺 clarify 载荷归一化函数');
+  if (!code.includes('clarifyQuestions:_harnessClarifyQuestions(')) throw new Error('追问问题未随条目存盘');
+  if (!code.includes('向用户追问：')) throw new Error('结构化历史未携带追问问题文本（多轮访谈会失忆）');
+  if (!code.includes('**问 ')) throw new Error('追问问题未渲染进气泡正文');
+  if (!code.includes('_harnessClarifyOptionList')) throw new Error('选项按钮列表未走多问扁平化');
+  return true;
+});
 }
