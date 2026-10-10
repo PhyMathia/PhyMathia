@@ -46,7 +46,7 @@ check('graph-contextmenu: 目标三分支分类（node/link/canvas）', () => {
   return true;
 });
 
-check('graph-contextmenu: 节点菜单按 kind 裁剪（端口/折叠/删除白名单 + M2 居中/复制节点）', () => {
+check('graph-contextmenu: 节点菜单裁剪（端口统一门 2026-10-10/折叠/删除 + M2 居中/复制节点）', () => {
   const keysFor = (node) => sandbox._graphContextItemsForNode(node).map(i => i.key);
   // draft：无收藏/折叠/端口/复制节点，有居中与删除
   const draft = keysFor({ id: 'd1', kind: 'draft' });
@@ -54,14 +54,21 @@ check('graph-contextmenu: 节点菜单按 kind 裁剪（端口/折叠/删除白�
   if (draft.includes('add-input-port') || draft.includes('add-output-port')) return false;
   if (draft.includes('duplicate')) return false;
   if (!draft.includes('delete') || !draft.includes('focus')) return false;
-  // source：有输出端口、无输入端口
+  // source：有输出端口、无输入端口（源头节点没有输入侧——统一门的例外之一）
   const source = keysFor({ id: 's1', kind: 'source', items: [{}] });
   if (!source.includes('add-output-port') || source.includes('add-input-port')) return false;
   if (!source.includes('focus')) return false;
-  // hub：有输入端口、无输出端口
+  // 端口机制统一（2026-10-10）：hub/summary 等常驻节点两侧都开放加口
   const hub = keysFor({ id: 'h1', kind: 'hub' });
-  if (!hub.includes('add-input-port') || hub.includes('add-output-port')) return false;
-  // module（白名单键 physics）：输入/输出端口都有；折叠项按 minimized 切换文案（M2 标签统一）
+  if (!hub.includes('add-input-port') || !hub.includes('add-output-port')) return false;
+  const summary = keysFor({ id: 'sum1', kind: 'summary' });
+  if (!summary.includes('add-input-port') || !summary.includes('add-output-port')) return false;
+  // 例外口径：动态出口配方锁出口（输入侧仍开放）；answer 底座配方未声明静态出口同锁（T263）
+  const dynRecipe = keysFor({ id: 'm3', kind: 'module', moduleKey: 'physics', messageIndex: -1, content: '内容', recipeId: 'r1', recipe: { ports: { dynamic: { parser: 'numbered_list' } } } });
+  if (!dynRecipe.includes('add-input-port') || dynRecipe.includes('add-output-port')) return false;
+  const bareAnswerRecipe = keysFor({ id: 'a1', kind: 'answer', manual: true, recipeId: 'r2', recipe: {} });
+  if (!bareAnswerRecipe.includes('add-input-port') || bareAnswerRecipe.includes('add-output-port')) return false;
+  // module（physics）：输入/输出端口都有；折叠项按 minimized 切换文案（M2 标签统一）
   const folded = sandbox._graphContextItemsForNode({ id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, minimized: true, content: '内容' });
   const mini = folded.find(i => i.key === 'minimize');
   if (!mini || mini.label !== '展开节点') return false;

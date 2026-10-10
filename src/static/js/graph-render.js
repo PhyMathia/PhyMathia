@@ -264,23 +264,91 @@ function _nodeInputPortMeta(node, portIndex) {
   return { label, type: '' };
 }
 
-function _nodeOutputLabels(node, messages) {
-  if (node.kind === 'draft') return [];
-  if (node.kind === 'blank') return ['追问'];
-  if (node.kind === 'human_note') return ['人工内容'];
-  if (node.kind === 'user') return ['问题分析', '我的回答'];
-  if (node.kind === 'source') return (node.items || []).map(item => item.title || '知识点 ' + ((node.items || []).indexOf(item) + 1));
-  if (node.kind === 'knowledge') return ['问题分析', '问题'];
-  if (node.kind === 'relation') return [];
-  if (node.kind === 'module') {
-    return _moduleOutputPorts(node, messages[node.messageIndex]).map(item => item.label);
+// 端口机制统一（2026-10-10）：每类节点的基础（身份）出口表——唯一事实源。
+// _renderOutputPorts 渲染、_nodeOutputLabels 取名、_nodeOutputCount 计数、
+// graph-interact 增删口的基数全部走这里；附加口（用户「＋」出的匿名口）不在
+// 表内，由 portCounts 记账、渲染时接在表后（T266 待命名态）。改某类节点的
+// 出口身份只改这里，别在渲染/守卫里另写分支。
+function _nodeBaseOutputPorts(node, messages) {
+  if (!node || node.kind === 'draft') return [];
+  if (node.kind === 'user') {
+    return [
+      { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
+      { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
+    ];
+  }
+  if (node.kind === 'blank') {
+    return [{
+      label: '追问',
+      type: 'branch',
+      branchType: 'followup',
+      attribute: node.moduleKey || 'followup',
+      question: '',
+    }];
+  }
+  if (node.kind === 'human_note') {
+    return [{
+      label: '人工内容',
+      type: 'custom',
+      branchType: '',
+      attribute: 'human_note',
+      group: 'human',
+      question: '',
+    }];
   }
   if (node.kind === 'answer') {
-    return _answerOutputPorts(node, messages).map(item => item.label);
+    // 配方节点（manual 底座）：声明了静态出口就替代默认 6 出口
+    const recipePorts = node.recipeId && typeof _recipeStaticPorts === 'function' ? _recipeStaticPorts(node) : [];
+    return recipePorts.length ? recipePorts : _answerOutputPorts(node, messages);
   }
-  if (node.kind === 'hub') return ['AI 总结', '我的总结', '追问'];
-  if (node.kind === 'summary' || node.kind === 'note') return [];
-  return ['输出'];
+  if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]);
+  if (node.kind === 'source') {
+    return (node.items || []).map((item, index) => ({
+      label: item.title || '知识点 ' + (index + 1),
+      type: 'knowledge',
+      branchType: '',
+      attribute: 'knowledge',
+      group: 'knowledge',
+      question: '',
+      item: item,
+    }));
+  }
+  if (node.kind === 'knowledge') return _knowledgeOutputPorts(node);
+  if (node.kind === 'hub') {
+    return [{
+      label: 'AI 总结',
+      type: 'branch',
+      branchType: 'summary',
+      attribute: 'summary',
+      question: '',
+    }, {
+      label: '我的总结',
+      type: 'branch',
+      branchType: 'note',
+      attribute: 'note',
+      question: '',
+    }, {
+      label: '追问',
+      type: 'branch',
+      branchType: 'followup',
+      attribute: 'question',
+      question: '',
+    }];
+  }
+  // summary/note/relation：基础出口 0（开放附加口后输出列只挂＋号）；其余
+  // 未知 kind（ai_eval 等）回落单个「输出」口，与统一前的兜底逐字节一致
+  if (node.kind === 'summary' || node.kind === 'note' || node.kind === 'relation') return [];
+  return [{
+    label: '输出',
+    type: 'branch',
+    branchType: 'followup',
+    attribute: 'followup',
+    question: '',
+  }];
+}
+
+function _nodeOutputLabels(node, messages) {
+  return _nodeBaseOutputPorts(node, messages).map(item => item.label);
 }
 
 function _answerOutputPorts(node, messages) {
@@ -301,15 +369,13 @@ function _knowledgeOutputPorts(node) {
 }
 
 function _nodeOutputCount(node, messages, state) {
+  // 端口机制统一：总量＝max(基础口数, portCounts 存量)——portCounts 是绝对
+  // 口径（存的是总口数，见 graph-interact 的加口公式），与 inputPortCounts
+  // 的附加口径不同，别混
   if (node.kind === 'draft') return 0;
-  if (node.kind === 'summary' || node.kind === 'note') return 0;
-  if (node.kind === 'relation') return 0;
-  if (node.kind === 'source') {
-    const savedCount = state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
-    return Math.max((node.items || []).length, savedCount || 0);
-  }
-  const savedCount = state.portCounts && state.portCounts[node.id];
-  return Math.max(1, _nodeOutputLabels(node, messages).length, savedCount || 0);
+  const base = _nodeBaseOutputPorts(node, messages).length;
+  const saved = (state && state.portCounts && state.portCounts[node.id]) || 0;
+  return Math.max(base, saved);
 }
 
 function _renderInputPorts(node, state) {
@@ -318,20 +384,20 @@ function _renderInputPorts(node, state) {
   const savedCount = state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
-  // T263：配方节点开放手动加输入口（追加匿名口，排在具名口之后）
-  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation' || node.kind === 'blank'
-    || (node.kind === 'module' && !!node.recipeId);
+  // 端口机制统一（2026-10-10）：加输入口的权限走统一门（graph.js），常驻节点
+  // 一律「基础口＋附加口」；附加口由 inputPortCounts 记账（附加数口径）。官方
+  // 模块与配方模块同权——此前官方模块右键能加、卡上不出＋号的不一致就此对齐
+  const canAddInput = _nodeCanAddInputPorts(node);
   // 具名输入端口（T263）：声明了就替换默认匿名口，顺序＝端口索引；旧快照无声明回落原样
   const declared = (node.kind === 'module' && typeof _recipeInputPorts === 'function')
     ? _recipeInputPorts(node)
     : [];
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
-  const baseCount = node.kind === 'relation' ? 2 : node.kind === 'module' ? Math.max(1, declared.length) : 1;
-  const count = node.kind === 'module'
+  // isRoot 只标在根 answer 卡（graph.js 建图时落），其基础输入口为 0
+  const baseCount = node.isRoot ? 0 : _nodeBaseInputPortCount(node);
+  const count = canAddInput
     ? baseCount + savedCount
-    : canAddInput
-      ? baseCount + savedCount
-      : (node.isRoot ? 0 : 1);
+    : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
   const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge';
   for (let i = 0; i < count; i++) {
@@ -343,7 +409,7 @@ function _renderInputPorts(node, state) {
     const anyClass = isAnyInput ? ' graph-port-any-input' : '';
     const portAttr = (canAddInput || isAnyInput) ? 'any' : attr.key;
     const portColor = isAnyInput ? 'var(--node-any)' : attr.color;
-    const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
+    const canRemove = canAddInput && i >= baseCount;
     const portTitle = named
       ? '输入「' + label + '」' + (typeLabel ? '（' + typeLabel + '）' : '') + '：可连接任意来源（类型仅作标注）'
       : (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源');
@@ -384,90 +450,15 @@ function _adoptedOutputPortMeta(node, portIndex) {
 
 function _renderOutputPorts(node, messages, state) {
   if (node.kind === 'draft') return '';
-  if (node.kind === 'summary' || node.kind === 'note') return '';
-  let ports = [];
-  if (node.kind === 'user') {
-    ports = [
-      { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
-      { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
-    ];
-  } else if (node.kind === 'blank') {
-    ports = [{
-      label: '追问',
-      type: 'branch',
-      branchType: 'followup',
-      attribute: node.moduleKey || 'followup',
-      question: '',
-    }];
-  } else if (node.kind === 'human_note') {
-    ports = [{
-      label: '人工内容',
-      type: 'custom',
-      branchType: '',
-      attribute: 'human_note',
-      group: 'human',
-      question: '',
-    }];
-  } else if (node.kind === 'answer') {
-    // 配方节点（manual 底座）：声明了静态出口就替代默认 6 出口
-    const recipePorts = node.recipeId && typeof _recipeStaticPorts === 'function' ? _recipeStaticPorts(node) : [];
-    ports = recipePorts.length ? recipePorts : _answerOutputPorts(node, messages);
-  } else if (node.kind === 'module') {
-    ports = _moduleOutputPorts(node, messages[node.messageIndex]);
-  } else if (node.kind === 'source') {
-    ports = (node.items || []).map((item, index) => ({
-      label: item.title || '知识点 ' + (index + 1),
-      type: 'knowledge',
-      branchType: '',
-      attribute: 'knowledge',
-      group: 'knowledge',
-      question: '',
-      item: item,
-    }));
-  } else if (node.kind === 'knowledge') {
-    ports = _knowledgeOutputPorts(node);
-  } else if (node.kind === 'relation') {
-    return '';
-  } else if (node.kind === 'hub') {
-    ports = [{
-      label: 'AI 总结',
-      type: 'branch',
-      branchType: 'summary',
-      attribute: 'summary',
-      question: '',
-    }, {
-      label: '我的总结',
-      type: 'branch',
-      branchType: 'note',
-      attribute: 'note',
-      question: '',
-    }, {
-      label: '追问',
-      type: 'branch',
-      branchType: 'followup',
-      attribute: 'question',
-      question: '',
-    }];
-  } else {
-    const labels = _nodeOutputLabels(node, messages);
-    ports = labels.map((label, index) => ({
-      label,
-      type: node.kind === 'user' ? 'answer' : 'branch',
-      branchType: node.kind === 'user' ? '' : 'followup',
-      attribute: node.kind === 'user' ? 'answer' : node.kind === 'answer' ? 'answer' : 'followup',
-      question: '',
-    }));
-  }
-  // T263：配方节点开放手动加出口（声明表为基追加匿名口；动态出口声明不开放——出口数随内容解析）
-  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
-  const recipeHasDynamic = recipeNode && typeof _nodeRecipeSnapshot === 'function'
-    ? !!((_nodeRecipeSnapshot(node) || {}).ports || {}).dynamic
-    : false;
-  const canAddPort = _moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge'
-    || (recipeNode && !recipeHasDynamic && (node.kind === 'module' || (typeof _recipeStaticPorts === 'function' && _recipeStaticPorts(node).length > 0)));
-  const savedCount = canAddPort && state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
+  // 端口机制统一（2026-10-10）：基础口走 _nodeBaseOutputPorts 唯一事实源，
+  // 加口权限走统一门（graph.js _nodeCanAddOutputPorts）。summary/note/relation
+  // 基础口为 0 但已开放附加口——无附加口时输出列也渲染（只挂＋号），
+  // 「数量为 0 且不可加」才整列免渲染
+  const ports = _nodeBaseOutputPorts(node, messages);
+  const canAddPort = _nodeCanAddOutputPorts(node);
+  const savedCount = (state && state.portCounts && state.portCounts[node.id]) || 0;
   const count = Math.max(ports.length, savedCount);
-  if (count <= 0) return '';
+  if (count <= 0 && !canAddPort) return '';
   let html = '<div class="graph-port-col graph-output-col">';
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   for (let i = 0; i < count; i++) {

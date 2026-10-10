@@ -135,11 +135,10 @@ function _graphContextItemsForNode(node, point) {
       run: () => { if (typeof _toggleGraphNodeMinimize === 'function') _toggleGraphNodeMinimize(node); },
     });
   }
-  // 输出端口白名单与 graphAddOutputPort 的守卫一致；输入端口白名单与 graphAddInputPort 一致
-  const canOutput = (typeof _moduleCanExpandOutputs === 'function' && _moduleCanExpandOutputs(node))
-    || node.kind === 'source' || node.kind === 'knowledge';
-  const canInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation'
-    || node.kind === 'module' || node.kind === 'blank';
+  // 端口机制统一（2026-10-10）：加口项的显隐与渲染＋号、增删守卫同走统一门
+  // （graph.js _nodeCanAddInputPorts / _nodeCanAddOutputPorts），此处不再维护 kind 名单
+  const canOutput = typeof _nodeCanAddOutputPorts === 'function' && _nodeCanAddOutputPorts(node);
+  const canInput = typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(node);
   if (canInput) {
     items.push({ key: 'add-input-port', label: '添加输入端口', run: () => graphAddInputPort(node.id) });
   }

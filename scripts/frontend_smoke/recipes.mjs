@@ -1604,5 +1604,50 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
   }
   return true;
 });
+
+check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、summary 输出列挂＋号、isRoot 根卡基础口 0、计数公式单一来源', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    // 1. summary（基础口 0 的「新开放」类）：无附加口时输出列仍渲染（只挂＋号），加口后走待命名态
+    const sumNode = { id: 'sum1', kind: 'summary', messageIndex: -1, timestamp: 5 };
+    let html = String(sandbox._renderOutputPorts(sumNode, [], { portCounts: {}, inputPortCounts: {} }));
+    if (!html.includes('graph-add-port-btn')) throw new Error('summary 开放附加口后应渲染＋号');
+    if (html.includes('graph-output-port')) throw new Error('summary 无附加口时不应有端口行');
+    html = String(sandbox._renderOutputPorts(sumNode, [], { portCounts: { sum1: 1 }, inputPortCounts: {} }));
+    if (!html.includes('>未命名</span>')) throw new Error('summary 附加口应走待命名态');
+
+    // 2. 输入侧新开放：answer 渲染＋号且基础口显品类标签；isRoot 根 answer 基础口 0 但仍可加
+    const ansNode = { id: 'a1', kind: 'answer', messageIndex: -1, manual: false, timestamp: 6 };
+    html = String(sandbox._renderInputPorts(ansNode, { portCounts: {}, inputPortCounts: {} }));
+    if (!html.includes('graph-add-input-btn')) throw new Error('answer 应开放输入口＋号');
+    if (!html.includes('>问题分析</span>')) throw new Error('answer 基础输入口应显示品类标签');
+    const rootAns = { id: 'a0', kind: 'answer', messageIndex: -1, manual: false, isRoot: true, timestamp: 7 };
+    html = String(sandbox._renderInputPorts(rootAns, { portCounts: {}, inputPortCounts: {} }));
+    if (html.includes('graph-input-port')) throw new Error('isRoot 根 answer 基础输入口应为 0');
+    if (!html.includes('graph-add-input-btn')) throw new Error('根 answer 仍应可加输入口');
+
+    // 3. draft/source 例外：draft 无＋号；source 输入侧整列不渲染
+    html = String(sandbox._renderInputPorts({ id: 'd1', kind: 'draft' }, { inputPortCounts: {} }));
+    if (html.includes('graph-add-input-btn')) throw new Error('draft 不应开放输入口');
+    if (String(sandbox._renderInputPorts({ id: 's1', kind: 'source', items: [] }, { inputPortCounts: {} })) !== '') throw new Error('source 输入侧应整列免渲染');
+
+    // 4. 静态契约：权限门与计数公式的单一来源（改散了这里会红）
+    const graphSrc = fs.readFileSync('src/static/js/graph.js', 'utf8');
+    if (!graphSrc.includes('_nodeCanAddInputPorts') || !graphSrc.includes('_nodeCanAddOutputPorts')) throw new Error('统一权限门缺失');
+    if (graphSrc.includes('_moduleCanExpandOutputs')) throw new Error('旧模块白名单应已删除');
+    const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+    if (!interactSrc.includes('Math.max(state.portCounts[nodeId] || 0, base) + 1')) throw new Error('加口公式未统一为绝对口径');
+    if (interactSrc.includes('function _baseOutputPortCount')) throw new Error('旧镜像链 _baseOutputPortCount 应已删除');
+    const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+    if (!renderSrc.includes('function _nodeBaseOutputPorts')) throw new Error('基础出口表 _nodeBaseOutputPorts 缺失');
+    const viewerSrc = fs.readFileSync('src/static/js/viewer-main.js', 'utf8');
+    if (!viewerSrc.includes('graphRemoveOutputPort') || !viewerSrc.includes('graphRemoveInputPort')) throw new Error('viewer 只读桩应补删口函数');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
 }

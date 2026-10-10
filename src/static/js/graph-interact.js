@@ -1008,33 +1008,24 @@ function _removeGraphEdge(edgeKey) {
 
 function graphAddOutputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node) return;
-  // T263：配方节点开放手动加出口（声明表为基追加匿名口；动态出口声明不开放——出口数随内容解析）
-  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
-  if (recipeNode) {
-    const snapshot = typeof _nodeRecipeSnapshot === 'function' ? _nodeRecipeSnapshot(node) : null;
-    if (!snapshot || (snapshot.ports && snapshot.ports.dynamic)) return;
-    if (node.kind === 'answer' && !(typeof _recipeStaticPorts === 'function' && _recipeStaticPorts(node).length > 0)) return;
-  } else if (!(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) {
-    return;
-  }
+  // 端口机制统一（2026-10-10）：权限走统一门（graph.js _nodeCanAddOutputPorts）；
+  // 计数统一为绝对口径一条公式 max(存量, 基础口数)+1——官方模块旧的「存量+1」
+  // 在基础口因内容重解析变多时会让加口不可见（存量追不上基数），配方侧的
+  // 公式才是对的，全类统一到它
+  if (!node || !_nodeCanAddOutputPorts(node)) return;
   _pushGraphUndo();
   const state = _graphState();
   state.portCounts = state.portCounts || {};
-  if (recipeNode) {
-    // 配方出口以声明表为基的绝对计数（每点一次 + 实长一个口）；官方模块/source/knowledge 沿用旧累加口径
-    const declared = (typeof _recipeStaticPorts === 'function') ? _recipeStaticPorts(node).length : 0;
-    state.portCounts[nodeId] = Math.max(state.portCounts[nodeId] || 0, declared) + 1;
-  } else {
-    state.portCounts[nodeId] = (state.portCounts[nodeId] || 0) + 1;
-  }
+  const base = _nodeBaseOutputPorts(node, _getChatHistory()).length;
+  state.portCounts[nodeId] = Math.max(state.portCounts[nodeId] || 0, base) + 1;
   _saveGraphState(state);
   renderGraphCanvas();
 }
 
 function graphAddInputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module' && node.kind !== 'blank')) return;
+  // 端口机制统一：权限走统一门；inputPortCounts 保持附加数口径（基础口之外加几个）
+  if (!node || !_nodeCanAddInputPorts(node)) return;
   _pushGraphUndo();
   const state = _graphState();
   state.inputPortCounts = state.inputPortCounts || {};
@@ -1045,9 +1036,10 @@ function graphAddInputPort(nodeId) {
 
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module' && node.kind !== 'blank')) return;
+  // 端口机制统一：权限走统一门；可删下限与渲染同基（isRoot 根 answer 卡基础口为 0）
+  if (!node || !_nodeCanAddInputPorts(node)) return;
   // T263：基础口数配方感知（具名声明替换默认匿名口，声明口不可删，只删附加口）
-  const minPort = _nodeBaseInputPortCount(node);
+  const minPort = node.isRoot ? 0 : _nodeBaseInputPortCount(node);
   if (portIndex < minPort) return;
   _pushGraphUndo();
   const state = _graphState();
@@ -1067,36 +1059,14 @@ function graphRemoveInputPort(nodeId, portIndex) {
   renderGraphCanvas();
 }
 
-function _baseOutputPortCount(node) {
-  if (!node) return 0;
-  const messages = _getChatHistory();
-  if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]).length;
-  if (node.kind === 'human_note') return 1;
-  if (node.kind === 'user') return 1;
-  if (node.kind === 'answer') return _nodeOutputLabels(node, messages).length;
-  if (node.kind === 'hub') return 1;
-  if (node.kind === 'source') return (node.items || []).length;
-  if (node.kind === 'knowledge') return _nodeOutputLabels(node, messages).length;
-  if (node.kind === 'summary' || node.kind === 'note') return 0;
-  return 0;
-}
-
 function graphRemoveOutputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node) return;
-  // T263：配方节点删附加匿名出口（声明静态表为基；动态出口声明不开放——出口随内容解析）
-  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
-  let baseCount;
-  if (recipeNode) {
-    const snapshot = typeof _nodeRecipeSnapshot === 'function' ? _nodeRecipeSnapshot(node) : null;
-    if (!snapshot || (snapshot.ports && snapshot.ports.dynamic)) return;
-    baseCount = (Array.isArray(snapshot.ports && snapshot.ports.static) ? snapshot.ports.static : [])
-      .filter(port => port && port.label).length;
-    if (node.kind === 'answer' && !baseCount) return;
-  } else {
-    if (!(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
-    baseCount = _baseOutputPortCount(node);
-  }
+  // 端口机制统一（2026-10-10）：权限与基数同源——门（graph.js）判能不能删，
+  // 基础口数取 _nodeBaseOutputPorts 唯一事实源，替代旧的 _baseOutputPortCount
+  // 镜像链与配方快照两条分路（旧链对 hub 的基数 1 是错值，从前被门挡住没爆）。
+  // 基础口不可删，删的只能是附加口；动态出口配方在门里整体锁死
+  if (!node || !_nodeCanAddOutputPorts(node)) return;
+  const baseCount = _nodeBaseOutputPorts(node, _getChatHistory()).length;
   if (portIndex < baseCount) return;
   const state = _graphState();
   state.portCounts = state.portCounts || {};
