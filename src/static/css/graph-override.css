@@ -782,8 +782,10 @@
   --graph-bubble-border: rgba(255, 255, 255, 0.12);
   --graph-bubble-glow: rgba(74, 158, 255, 0.28);
   --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
-  --graph-edge-color: #22d3ee;
-  --graph-edge-glow: rgba(34, 211, 238, 0.42);
+  /* 2026-10-10 T252 对齐：画布强调色跟面板 accent 走（霓虹家族下即星阑紫，默认族即极光蓝）；
+     浅色档黄色边（下方 [data-theme="light"] 重定义）是拍板值，不受此行影响 */
+  --graph-edge-color: var(--accent);
+  --graph-edge-glow: color-mix(in srgb, var(--accent) 42%, transparent);
   /* 玻璃节点底座（blank / human_note 等皮肤分层的最底一层；深浅各一套） */
   --node-glass-base: rgba(12, 18, 36, 0.90);
   /* 人工家族墨色（我的回答 / 我的理解 / 我的总结 共用一色）。深浅两档是必须的：这个色同时
@@ -1284,9 +1286,9 @@
   left: 0;
   top: 0;
   z-index: 6 !important;
-  border: 1.5px dashed #22d3ee !important;
+  border: 1.5px dashed var(--accent) !important;
   border-radius: var(--r-xs) !important;
-  background: rgba(34, 211, 238, 0.10) !important;
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
   pointer-events: none !important;
 }
 
@@ -1324,9 +1326,9 @@
   width: 340px !important;
   min-width: 340px !important;
   max-width: 420px !important;
-  border-color: #22d3ee !important;
-  background: linear-gradient(135deg, rgba(8, 51, 68, 0.96), rgba(14, 22, 44, 0.98)) !important;
-  box-shadow: 0 0 34px rgba(34, 211, 238, 0.22), 0 18px 48px rgba(0, 0, 0, 0.42) !important;
+  border-color: var(--accent) !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, rgba(14, 22, 44, 0.98)), rgba(14, 22, 44, 0.98)) !important;
+  box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 22%, transparent), 0 18px 48px rgba(0, 0, 0, 0.42) !important;
 }
 
 .graph-draft-body {
@@ -1425,9 +1427,9 @@
 
 .graph-draft-send {
   margin-left: auto !important;
-  background: rgba(34, 211, 238, 0.14) !important;
-  border-color: rgba(34, 211, 238, 0.36) !important;
-  color: #22d3ee !important;
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent) !important;
+  color: var(--accent) !important;
 }
 
 .graph-draft-close {
@@ -1455,7 +1457,7 @@
 
 [data-theme="light"] .graph-node-draft {
   background: linear-gradient(135deg, rgba(224, 242, 254, 0.96), rgba(255, 253, 247, 0.98)) !important;
-  box-shadow: 0 0 28px rgba(34, 211, 238, 0.2), 0 14px 36px rgba(90, 70, 40, 0.14) !important;
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 20%, transparent), 0 14px 36px rgba(90, 70, 40, 0.14) !important;
 }
 
 /* ---------- 12. ComfyUI 属性色与端口删除 ---------- */
@@ -1965,7 +1967,7 @@
 }
 
 .graph-node-status.status-running {
-  color: #22d3ee;
+  color: var(--accent);
 }
 
 .graph-node-status.status-running::before {
@@ -1973,8 +1975,8 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 2px solid rgba(34, 211, 238, 0.3);
-  border-top-color: #22d3ee;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
   animation: graphSpin 0.7s linear infinite;
 }
 
