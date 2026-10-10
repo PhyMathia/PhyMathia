@@ -53,6 +53,11 @@ const entries = [
   'harness-preview.js',
   'harness-apply.js',
   'ui.js',
+  // 数据备份与首次引导（2026-10-10 自 ui.js 拆出，T261 纯搬家）：两件都只按需调用
+  // （面板开合 / 页面 load / 用户点击）；加载期求值的只有引导模板的 cssVarValue
+  // （utils.js 此前已载），函数声明全脚本提升，置于 ui.js 之后即安全。
+  'ui-backup.js',
+  'ui-onboarding.js',
   // 本地多账号（P2 2026-10-07）：账号面板。依赖 config.js 的 ACCOUNT_ID/_RAW_LS
   // 与 utils.js 的 toastMsg/escapeHtml，都在此前加载；面板函数按需调用。
   'accounts.js',

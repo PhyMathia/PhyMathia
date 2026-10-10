@@ -1,6 +1,7 @@
 // 新手引导冒烟测试（当代 _obSteps 数据驱动引导；2026-10-07 backlog T33 重写）
 //
-// 测什么（src/static/js/ui.js 的「首次使用引导」段）：
+// 测什么（src/static/js/ui-onboarding.js——2026-10-10 T261 起「首次使用引导」段
+// 自 ui.js 纯搬家至此，切片止标记随之从 ui.js 的 resize 注释行改为本文件尾）：
 //   · _obSteps 数据驱动步骤数组：welcome / spotlight / click 三种 type；
 //     target/title/desc 多为 getter，按画布状态（有无中心节点、桌面/移动端）切换
 //   · startOnboarding(force)（force=false 时按 ONBOARDING_KEY 跳过）/
@@ -10,14 +11,14 @@
 // 上一代引导（_buildFullObSteps / 旧签名 _renderObStep，切片标记「首次使用引导
 // (v2)」）已从 ui.js 删除；本脚本已按当代实现重写（旧版本曾因标记漂移 exit 2）。
 //
-// 怎么测：路径按本脚本位置解析（不写死盘符，见 backlog T9）；从 ui.js 截出引导段
-// （START_MARKER .. END_MARKER），在 vm.runInNewContext 里配一份「当代代码实际取用」
+// 怎么测：路径按本脚本位置解析（不写死盘符，见 backlog T9）；从 ui-onboarding.js 截出
+// 引导段（START_MARKER .. 文件尾），在 vm.runInNewContext 里配一份「当代代码实际取用」
 // 的假 DOM（classList / innerHTML / getElementById / querySelector / innerWidth /
 // 可记录监听器的元素等）执行。真实布局测量（真机 spotlight 像素定位、滚动等）不在
 // 冒烟范围：这类行为退一步只断数据不变量，不硬造 DOM。
 //
-// 约束：切片靠下面两个标记行定位。**改 ui.js 引导段时若挪动或改写这两行，必须同步
-// 改本文件的 START_MARKER / END_MARKER**；找不到标记时本脚本 exit 2 并打印病因，
+// 约束：切片靠 START_MARKER 定位、止于文件尾。**改 ui-onboarding.js 引导段时若挪动或
+// 改写标记行，必须同步改本文件的 START_MARKER**；找不到标记时本脚本 exit 2 并打印病因，
 // 绝不静默错位执行（上一代脚本正是这样对着错位切片跑废的）。
 //
 // 运行：node scripts/ob_smoke.mjs   → 尾部打印 SMOKE TEST PASSED，断言失败非零退出
@@ -28,37 +29,30 @@ import { fileURLToPath } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
 const ROOT = resolve(dirname(SELF), '..');
-const UI_JS = resolve(ROOT, 'src', 'static', 'js', 'ui.js');
+const UI_JS = resolve(ROOT, 'src', 'static', 'js', 'ui-onboarding.js');
 const CFG_JS = resolve(ROOT, 'src', 'static', 'js', 'config.js');
 
 const START_MARKER = '// ====== 首次使用引导 ======';
-const END_MARKER = '// Handle resize during onboarding';
 
 const uiTxt = fs.readFileSync(UI_JS, 'utf8');
 const cfgTxt = fs.readFileSync(CFG_JS, 'utf8');
 
 const startM = uiTxt.indexOf(START_MARKER);
-const endM = uiTxt.indexOf(END_MARKER);
 
 // ---- 切片标记漂移体检：找不到就 exit 2，不做错位执行 ----
-if (startM < 0 || endM < 0 || endM <= startM) {
-  const missing = [];
-  if (startM < 0) missing.push('起标记 ' + JSON.stringify(START_MARKER));
-  if (endM < 0) missing.push('止标记 ' + JSON.stringify(END_MARKER));
-  if (startM >= 0 && endM >= 0 && endM <= startM) missing.push('止标记出现在起标记之前');
+if (startM < 0) {
   console.error(
-    'ob_smoke: ui.js 中找不到引导段切片标记，已停止（非产品回归，是体检脚本与源码失去对齐）。\n' +
+    'ob_smoke: ui-onboarding.js 中找不到引导段切片标记，已停止（非产品回归，是体检脚本与源码失去对齐）。\n' +
     '  · 本脚本测当代引导：_obSteps（welcome/spotlight/click）+ startOnboarding/_renderObStep/_obStep\n' +
-    '  · 缺失：' + missing.join('、') + '\n' +
-    '  · 若这次改动挪动/改写了 ui.js「首次使用引导」段的标记行，请同步更新\n' +
-    '    ' + SELF + ' 顶部的 START_MARKER / END_MARKER\n' +
+    '  · 缺失：起标记 ' + JSON.stringify(START_MARKER) + '\n' +
+    '  · 若这次改动挪动/改写了 ui-onboarding.js「首次使用引导」段的标记行，请同步更新\n' +
+    '    ' + SELF + ' 顶部的 START_MARKER\n' +
     '  · 找不到标记时按设计退出码 2');
   process.exit(2);
 }
-const obSection = uiTxt.slice(startM, endM);
+const obSection = uiTxt.slice(startM);
 const startLine = uiTxt.slice(0, startM).split('\n').length;
-const endLine = uiTxt.slice(0, endM).split('\n').length;
-console.log('slice: ui.js ' + startLine + '-' + (endLine - 1) + ' 行（止标记 "// Handle resize during onboarding" 在 ' + endLine + ' 行）');
+console.log('slice: ui-onboarding.js ' + startLine + '-' + uiTxt.split('\n').length + ' 行（起标记后到文件尾）');
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);

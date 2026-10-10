@@ -515,7 +515,7 @@ check('使用引导覆盖答疑先查再答与配方放置（2026-10-03 智能�
 });
 
 check('首次使用引导覆盖版本新功能（2026-10-07：大陆/检测/多账号/回收站/导出/Φ）', () => {
-  const uiSrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const uiSrc = fs.readFileSync('src/static/js/ui-onboarding.js', 'utf8');
   const m = uiSrc.match(/const _obSteps = \[([\s\S]*?)\n\];/);
   if (!m) throw new Error('_obSteps 未找到');
   for (const needle of ['知识大陆', '知识检测', '多账号', '回收站', '导出', 'Φ 智能体', '只读查阅', '先查知识库']) {

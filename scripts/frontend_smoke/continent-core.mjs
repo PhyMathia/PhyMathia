@@ -1854,8 +1854,8 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
     ['src/static/js/graph-continent.js', "el.className = 'continent-popover aurora-glass aurora-glass--dialog'", '大陆弹层'],
     ['src/static/js/session.js', "panel.className = 'icon-picker-panel aurora-glass aurora-glass--dialog'", '图标选择面板'],
     // 引导浮卡内容每次重渲都会整串重写 className——漏一处就会退回实底（本处踩过）
-    ['src/static/js/ui.js', "card.className = 'onboarding-card aurora-glass aurora-glass--dialog'", '引导浮卡(步骤)'],
-    ['src/static/js/ui.js', "card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog'", '引导浮卡(欢迎页)'],
+    ['src/static/js/ui-onboarding.js', "card.className = 'onboarding-card aurora-glass aurora-glass--dialog'", '引导浮卡(步骤)'],
+    ['src/static/js/ui-onboarding.js', "card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog'", '引导浮卡(欢迎页)'],
     // 第 5 轮磨砂化补漏：Φ 面板 / 全局 toast / 完成通知卡
     ['src/static/js/harness.js', "harnessPanel.className = 'graph-harness-window aurora-glass aurora-glass--dialog'", 'Φ 网络助手面板'],
     ['src/static/js/ui.js', "toast.className = 'aurora-glass aurora-glass--compact'", '全局 toast'],

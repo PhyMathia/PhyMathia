@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 const root = new URL('../src/static/js/', import.meta.url);
 const memory = fs.readFileSync(new URL('memory.js', root), 'utf8');
-const ui = fs.readFileSync(new URL('ui.js', root), 'utf8');
+// T261（2026-10-10）起 exportData/_normalizeBackup 住在 ui-backup.js（自 ui.js 纯搬家）
+const ui = fs.readFileSync(new URL('ui-backup.js', root), 'utf8');
 // Load the actual export function without unrelated UI startup side effects.
 const exportSource = ui.slice(ui.indexOf('async function exportData('), ui.indexOf('\nfunction _normalizeBackup('));
 for (const outcome of ['success', 'reject', 'http-failure', 'missing-profiles']) {
