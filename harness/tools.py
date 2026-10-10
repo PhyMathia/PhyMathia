@@ -32,6 +32,9 @@ TOOL_TO_OP: Dict[str, str] = {
     "create_recipe": "create_recipe",
     "update_recipe": "update_recipe",
     "delete_recipe": "delete_recipe",
+    # T263 访谈协议：结构化追问（review_graph 在 preset 相位短路成 clarify 结果，
+    # 绝不进 build_next_snapshot——混进批次也会被先捞出来）
+    "ask_user": "ask_user",
 }
 
 # T93（评审路线 #8）只读查询工具：模型可以先看图中内容再决定改哪。
@@ -207,7 +210,9 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "appearance:{palette:amber|blue|rose|teal|violet|human|note}（外观只有颜色，形状按底座推导、别写 shape） / "
         "generate:{prompt(必填≤800字), strict_output, followup_prompt, confused_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
         "model_role:agent|html|branch|graph|quiz|descriptor, on_incomplete:{max_retries:0|1|2}} / "
-        "ports:{static:[{label≤12字, drag_form:draft|user|connected:<官方key>}], dynamic:{parser:{pattern:numbered_list, level_tags, max≤12, "
+        "ports:{static:[{label≤12字, drag_form:draft|user|connected:<官方key>, type:text|formula|diagram|html}], "
+        "inputs:[{label≤12字, type:text|formula|diagram|html}](具名输入端口：这条线等什么材料；type 留空＝不限), "
+        "dynamic:{parser:{pattern:numbered_list, level_tags, max≤12, "
         "label_from:index_question|question_trunc12}, fallback:{mode:static|label_questions_from_text|none, labels}, each:{type:socratic|learn|branch, "
         "drag_form:draft|user}}}（dynamic 仅 module 底座）/ content_kind:markdown|plain|mermaid|html_iframe（后两者须 AI 底座）",
         "properties": {
@@ -218,7 +223,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
                 "palette": _str_prop("色板令牌", ["amber", "blue", "rose", "teal", "violet", "human", "note"]),
             }},
             "generate": {"type": "object", "description": "生成四槽＋通道＋模型槽＋重试"},
-            "ports": {"type": "object", "description": "静态出口表＋动态出口声明"},
+            "ports": {"type": "object", "description": "静态出口表＋具名输入端口表(inputs)＋动态出口声明"},
             "content_kind": _str_prop("内容载体", ["markdown", "plain", "mermaid", "html_iframe"]),
         },
         "required": ["name"],
@@ -226,8 +231,8 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
 
     create_recipe = _tool(
         "create_recipe",
-        "创造模式：新建一个节点配方（用户可复用的自定义节点类型，纯 JSON）。需求不明时先用 clarify 问清"
-        "（用途/出口/载体），明确后一次性产出完整配方；保存前想过校验器（名称查重/枚举白名单/预算）。",
+        "创造模式：新建一个节点配方（用户可复用的自定义节点类型，纯 JSON）。需求不明时先用 ask_user 追问"
+        "（用途/输入口/出口/载体），明确后一次性产出完整配方；保存前想过校验器（名称查重/枚举白名单/预算）。",
         {"recipe": recipe_obj_prop, "reason": _str_prop(REASON_DESC),
          "temp_recipe_id": _str_prop("可选临时配方 ID；同批先创建配方，再用 create_node.recipe_id 引用此值")},
         ["recipe", "reason"],
@@ -305,6 +310,30 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         [],
     )
 
+    # ---- T263 访谈协议：创造模式的结构化追问（走工具通道，兼容 tool_choice=required）----
+    ask_user = _tool(
+        "ask_user",
+        "创造模式：向用户追问澄清节点需求。信息不足时必须先问再产出配方：一次 1~3 个问题、"
+        "最多追问 3 轮，问过的不要重复问；问题要具体到可回答（这个节点帮用户做什么/每个输入口"
+        "叫什么、等什么材料/每个出口叫什么、拖出去干什么/内容载体/要不要动态出口）。"
+        "信息足够后立即产出配方，不要再问。",
+        {
+            "questions": {
+                "type": "array",
+                "description": "问题列表（1~3 个，每项 {question, options?}；options 是可点选的候选项，每项 ≤60 字、最多 6 个）",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": _str_prop("问题正文（一次问清一件事，≤200 字）"),
+                        "options": {"type": "array", "items": {"type": "string"}, "description": "候选答案（可选，用户点选即答）"},
+                    },
+                    "required": ["question"],
+                },
+            },
+        },
+        ["questions"],
+    )
+
     return {
         "create_node": create_node,
         "update_node": update_node,
@@ -316,6 +345,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "create_recipe": create_recipe,
         "update_recipe": update_recipe,
         "delete_recipe": delete_recipe,
+        "ask_user": ask_user,
         "read_node": read_node,
         "list_neighbors": list_neighbors,
         "search_nodes": search_nodes,
@@ -344,8 +374,8 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     "evaluate": ["create_eval_node"],
     "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
     + list(READONLY_TOOL_NAMES),
-    # 创造模式（P3）：配方三件套＋create_node（带 recipe_id＝「在画布上放一个试试」）
-    "preset": ["create_recipe", "update_recipe", "delete_recipe", "create_node"]
+    # 创造模式（P3）：配方三件套＋ask_user（T263 访谈）＋create_node（带 recipe_id＝「在画布上放一个试试」）
+    "preset": ["ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node"]
     + list(READONLY_TOOL_NAMES),
     # 答疑模式（三模式切换器）：纯只读——查图、查知识库、查公式速查，绝不改图
     "chat": list(READONLY_TOOL_NAMES),
@@ -367,6 +397,39 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def normalize_ask_questions(raw: Any) -> Optional[Dict[str, Any]]:
+    """T263 访谈协议：追问载荷归一化（ask_user 工具参数与 JSON clarify 通道共用）。
+
+    接受 ``{questions: [{question, options?}]}``（新多问）或 ``{question, options}``
+    （旧单问兼容）；问题正文必填非空（≤200 字）、options 每项 ≤60 字最多 6 个、
+    单轮最多 3 问。全部问题为空返回 None（调用方走重试反馈，不原样透传脏载荷）。
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_entry(item: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(item, dict):
+            return None
+        text = _text(item.get("question"))
+        if not text:
+            return None
+        entry: Dict[str, Any] = {"question": text[:200]}
+        options = item.get("options") if isinstance(item.get("options"), list) else []
+        clean = [_text(option)[:60] for option in options if _text(option)][:6]
+        if clean:
+            entry["options"] = clean
+        return entry
+
+    questions = [entry for entry in (_clean_entry(item) for item in (raw.get("questions") if isinstance(raw.get("questions"), list) else [])[:3]) if entry]
+    if not questions:
+        legacy = _clean_entry(raw)
+        if legacy:
+            questions.append(legacy)
+    if not questions:
+        return None
+    return {"questions": questions}
 
 
 def _args_to_op(name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -417,6 +480,13 @@ def _args_to_op(name: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not reason or not recipe_id:
             return None
         return {"op": "delete_recipe", "recipe_id": recipe_id, "reason": reason}
+
+    if name == "ask_user":
+        # T263 访谈协议：追问不产出任何图/配方操作，归一化后由 review_graph 短路成 clarify
+        normalized = normalize_ask_questions(args)
+        if not normalized:
+            return None
+        return {"op": "ask_user", "questions": normalized["questions"], "reason": _text(args.get("reason"))}
 
     if name == "update_node":
         node_id = _text(args.get("node_id") or args.get("id"))

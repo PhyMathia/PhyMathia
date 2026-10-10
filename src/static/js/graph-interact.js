@@ -329,7 +329,11 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
     const free = _freeModuleInputPort(state, toNodeId, resolvedToPort);
     resolvedToPort = free.port;
     state.inputPortCounts = state.inputPortCounts || {};
-    state.inputPortCounts[toNodeId] = Math.max(state.inputPortCounts[toNodeId] || 0, free.index);
+    // T263：附加口数＝占用的基础口之外的端口数（具名声明时基础口数＝声明数）
+    state.inputPortCounts[toNodeId] = Math.max(
+      state.inputPortCounts[toNodeId] || 0,
+      Math.max(0, free.index - _nodeBaseInputPortCount(toNode) + 1)
+    );
   }
   const edge = {
     from: fromNodeId,
@@ -1004,11 +1008,26 @@ function _removeGraphEdge(edgeKey) {
 
 function graphAddOutputPort(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || !(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
+  if (!node) return;
+  // T263：配方节点开放手动加出口（声明表为基追加匿名口；动态出口声明不开放——出口数随内容解析）
+  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
+  if (recipeNode) {
+    const snapshot = typeof _nodeRecipeSnapshot === 'function' ? _nodeRecipeSnapshot(node) : null;
+    if (!snapshot || (snapshot.ports && snapshot.ports.dynamic)) return;
+    if (node.kind === 'answer' && !(typeof _recipeStaticPorts === 'function' && _recipeStaticPorts(node).length > 0)) return;
+  } else if (!(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) {
+    return;
+  }
   _pushGraphUndo();
   const state = _graphState();
   state.portCounts = state.portCounts || {};
-  state.portCounts[nodeId] = (state.portCounts[nodeId] || 0) + 1;
+  if (recipeNode) {
+    // 配方出口以声明表为基的绝对计数（每点一次 + 实长一个口）；官方模块/source/knowledge 沿用旧累加口径
+    const declared = (typeof _recipeStaticPorts === 'function') ? _recipeStaticPorts(node).length : 0;
+    state.portCounts[nodeId] = Math.max(state.portCounts[nodeId] || 0, declared) + 1;
+  } else {
+    state.portCounts[nodeId] = (state.portCounts[nodeId] || 0) + 1;
+  }
   _saveGraphState(state);
   renderGraphCanvas();
 }
@@ -1027,7 +1046,8 @@ function graphAddInputPort(nodeId) {
 function graphRemoveInputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
   if (!node || (node.kind !== 'user' && node.kind !== 'hub' && node.kind !== 'relation' && node.kind !== 'module' && node.kind !== 'blank')) return;
-  const minPort = node.kind === 'relation' ? 2 : 1;
+  // T263：基础口数配方感知（具名声明替换默认匿名口，声明口不可删，只删附加口）
+  const minPort = _nodeBaseInputPortCount(node);
   if (portIndex < minPort) return;
   _pushGraphUndo();
   const state = _graphState();
@@ -1063,8 +1083,20 @@ function _baseOutputPortCount(node) {
 
 function graphRemoveOutputPort(nodeId, portIndex) {
   const node = _findGraphNode(nodeId);
-  if (!node || !(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
-  const baseCount = _baseOutputPortCount(node);
+  if (!node) return;
+  // T263：配方节点删附加匿名出口（声明静态表为基；动态出口声明不开放——出口随内容解析）
+  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
+  let baseCount;
+  if (recipeNode) {
+    const snapshot = typeof _nodeRecipeSnapshot === 'function' ? _nodeRecipeSnapshot(node) : null;
+    if (!snapshot || (snapshot.ports && snapshot.ports.dynamic)) return;
+    baseCount = (Array.isArray(snapshot.ports && snapshot.ports.static) ? snapshot.ports.static : [])
+      .filter(port => port && port.label).length;
+    if (node.kind === 'answer' && !baseCount) return;
+  } else {
+    if (!(_moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge')) return;
+    baseCount = _baseOutputPortCount(node);
+  }
   if (portIndex < baseCount) return;
   const state = _graphState();
   state.portCounts = state.portCounts || {};

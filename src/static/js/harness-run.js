@@ -17,9 +17,14 @@
       if (entry.role === 'user') {
         return { role: 'user', instruction: String(entry.instruction || entry.content || '').slice(0, 400) };
       }
+      // T263 访谈协议：追问轮把问题文本带进历史——下一轮模型必须看得见自己问过什么，
+      // 否则多轮访谈必失忆（用户孤零零一句「3 个」没有上下文）
+      const questions = Array.isArray(entry.clarifyQuestions) ? entry.clarifyQuestions : [];
       return {
         role: 'assistant',
-        summary: String(entry.summary || entry.content || '').slice(0, 400),
+        summary: String(questions.length
+          ? '向用户追问：' + questions.map(q => q.question).join(' / ')
+          : (entry.summary || entry.content || '')).slice(0, 400),
         operations: Array.isArray(entry.operations) ? entry.operations.slice(0, 20).map(op => ({
           op: op.op || op.type || '',
           id: op.id || '',
@@ -667,8 +672,10 @@
           const c = (data.self_check && data.self_check.critic) || {};
           return (c.issues || []).concat((c.missing || []).map(item => '缺少：' + item));
         })(),
-        // 澄清分支：选项按钮渲染在气泡里（旧版写结果区）
-        clarifyOptions: (data.clarify && Array.isArray(data.clarify.options)) ? data.clarify.options : [],
+        // 澄清分支：选项按钮渲染在气泡里（旧版写结果区）；T263 问题文本随条目存盘
+        // （渲染进气泡正文＋写进结构化历史，多轮访谈不失忆）
+        clarifyOptions: _harnessClarifyOptionList(data.clarify),
+        clarifyQuestions: _harnessClarifyQuestions(data.clarify),
         // T96：本条回复对应的服务端 review 事件 id（反馈归因用；旧数据留空）
         eventId: data.event_id || '',
         // T109：本轮模型名随条目落盘，点反馈时随 POST 上送（旧数据留空）
@@ -912,6 +919,17 @@
       add(changed, '出口名称、顺序或拖出行为已改变：「' + oldPorts.map(p => p.label).join('、')
         + '」→「' + newPorts.map(p => p.label).join('、') + '」');
     }
+    // 具名输入端口（T263）：增删与改名同出口待遇（模型常顺势裁口）
+    const oldInputs = (oldRecipe.ports && oldRecipe.ports.inputs) || [];
+    const newInputs = (newRecipe.ports && newRecipe.ports.inputs) || [];
+    if (oldInputs.length !== newInputs.length) {
+      const gone = oldInputs.map(p => p.label).filter(l => !newInputs.some(p => p.label === l));
+      add(changed, '输入口 ' + oldInputs.length + ' → ' + newInputs.length + ' 个'
+        + (gone.length ? '（少了「' + gone.join('、') + '」）' : ''));
+    } else if (oldInputs.length && JSON.stringify(oldInputs) !== JSON.stringify(newInputs)) {
+      add(changed, '输入口名称或类型已改变：「' + oldInputs.map(p => p.label).join('、')
+        + '」→「' + newInputs.map(p => p.label).join('、') + '」');
+    }
     // 动态出口＋档位标签：最高频的翻车点（三档追问被抹成一问一答）
     const oldDyn = oldRecipe.ports && oldRecipe.ports.dynamic;
     const newDyn = newRecipe.ports && newRecipe.ports.dynamic;
@@ -996,9 +1014,11 @@
     const g = recipe.generate || {};
     if (g.model_role && g.model_role !== 'agent') parts.push(g.model_role.toUpperCase() + ' 槽');
     const staticCount = (recipe.ports && Array.isArray(recipe.ports.static)) ? recipe.ports.static.length : 0;
+    const inputCount = (recipe.ports && Array.isArray(recipe.ports.inputs)) ? recipe.ports.inputs.length : 0;
     const hasDynamic = !!(recipe.ports && recipe.ports.dynamic);
     const portBits = [];
-    if (staticCount) portBits.push('静态 ' + staticCount);
+    if (inputCount) portBits.push('入 ' + inputCount);
+    if (staticCount) portBits.push('出 ' + staticCount);
     if (hasDynamic) portBits.push('动态解析出口');
     if (portBits.length) parts.push(portBits.join('＋'));
     return parts.length ? '（' + parts.join(' · ') + '）' : '';
@@ -1115,6 +1135,30 @@
     return countParts.length ? '**共 ' + list.length + ' 处调整**：' + countParts.join('、') + '。' : '';
   }
 
+  // T263 访谈协议：clarify 载荷归一化（新多问 questions[] ＋ 旧单问 question 兼容）。
+  // 此前 question 全程无人读取——前端只存 options、正文只取 summary，UI 只显示
+  // 「需要向你确认一下」＋裸选项按钮，用户根本不知道被问了什么。
+  function _harnessClarifyQuestions(clarify) {
+    if (!clarify || typeof clarify !== 'object') return [];
+    const clean = item => ({
+      question: String((item && item.question) || '').trim(),
+      options: Array.isArray(item && item.options) ? item.options.map(opt => String(opt || '').trim()).filter(Boolean) : [],
+    });
+    if (Array.isArray(clarify.questions) && clarify.questions.length) {
+      return clarify.questions.map(clean).filter(item => item.question).slice(0, 3);
+    }
+    const legacy = clean(clarify);
+    return legacy.question ? [legacy] : [];
+  }
+
+  function _harnessClarifyOptionList(clarify) {
+    const questions = _harnessClarifyQuestions(clarify);
+    if (questions.length) {
+      return questions.reduce((acc, item) => acc.concat(item.options), []);
+    }
+    return (clarify && Array.isArray(clarify.options)) ? clarify.options.map(opt => String(opt || '').trim()).filter(Boolean) : [];
+  }
+
   function _harnessAssistantContent(data) {
     const ops = Array.isArray(data.operations) ? data.operations : [];
     // 前端兜底：剥离推理模型可能残留的 <think> 思考块
@@ -1122,6 +1166,12 @@
     const summary = rawSummary
       || (ops.length ? '已生成 ' + ops.length + ' 条图修改建议' : '模型没有提出可执行修改');
     const parts = [summary];
+    // T263：追问问题文本进气泡正文（编号列出，选项按钮仍渲染在其下方）
+    const questions = _harnessClarifyQuestions(data.clarify);
+    if (questions.length) {
+      parts.push(questions.map((item, index) => '**问 ' + (index + 1) + '：' + item.question + '**'
+        + (item.options.length ? '（可点下方选项快捷回答）' : '')).join('\n\n'));
+    }
     // T122：正文只留计数概览一行，逐条清单由气泡内的可勾选卡承担
     const head = _buildHumanReadableReportHead(ops);
     if (head) parts.push(head);

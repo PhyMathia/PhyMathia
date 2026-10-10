@@ -37,6 +37,9 @@ function _canConnect(fromNode, fromPort, toNode) {
   if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
   // 知识点节点输入为通用入口：任意来源都可接入（须在 hub 出口白名单之前判断）
   if (toNode.kind === 'knowledge') return true;
+  // T263 端口分类体系 v2 拍板：配方节点输入口接受任意来源（连线完全自由，
+  // 端口类型只作标注与喂料分组，不做连线拦截）
+  if (toNode.kind === 'module' && toNode.recipeId) return true;
   if (toNode.kind === 'hub') return fromNode.kind !== 'hub';
   if (toNode.kind === 'summary') return fromNode.kind === 'hub' && String(fromPort || 'out-0') === 'out-0';
   if (toNode.kind === 'note') return fromNode.kind === 'hub' && String(fromPort || 'out-1') === 'out-1';
@@ -355,8 +358,15 @@ function _renderInputPorts(node, state) {
   const savedCount = state && state.inputPortCounts && state.inputPortCounts[node.id]
     ? state.inputPortCounts[node.id]
     : 0;
-  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation' || node.kind === 'blank';
-  const baseCount = node.kind === 'relation' ? 2 : 1;
+  // T263：配方节点开放手动加输入口（追加匿名口，排在具名口之后）
+  const canAddInput = node.kind === 'user' || node.kind === 'hub' || node.kind === 'relation' || node.kind === 'blank'
+    || (node.kind === 'module' && !!node.recipeId);
+  // 具名输入端口（T263）：声明了就替换默认匿名口，顺序＝端口索引；旧快照无声明回落原样
+  const declared = (node.kind === 'module' && typeof _recipeInputPorts === 'function')
+    ? _recipeInputPorts(node)
+    : [];
+  const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
+  const baseCount = node.kind === 'relation' ? 2 : node.kind === 'module' ? Math.max(1, declared.length) : 1;
   const count = node.kind === 'module'
     ? baseCount + savedCount
     : canAddInput
@@ -365,13 +375,24 @@ function _renderInputPorts(node, state) {
   let html = '<div class="graph-port-col graph-input-col">';
   const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge';
   for (let i = 0; i < count; i++) {
-    const label = node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node);
+    const named = declared[i] || null;
+    const label = named
+      ? named.label
+      : (node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node));
+    const typeKey = (named && named.type) || '';
+    const typeLabel = typeKey ? (typeLabels[typeKey] || '') : '';
     const anyClass = isAnyInput ? ' graph-port-any-input' : '';
     const portAttr = (canAddInput || isAnyInput) ? 'any' : attr.key;
     const portColor = isAnyInput ? 'var(--node-any)' : attr.color;
     const canRemove = (canAddInput || node.kind === 'module') && i >= baseCount;
-    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '" style="--port-color:' + portColor + ';" title="' + (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源') + '">'
+    const portTitle = named
+      ? '输入「' + label + '」' + (typeLabel ? '（' + typeLabel + '）' : '') + '：可连接任意来源（类型仅作标注）'
+      : (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源');
+    html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"'
+      + (named ? ' data-port-label="' + encodeURIComponent(label) + '"' + (typeKey ? ' data-port-type="' + typeKey + '"' : '') : '')
+      + ' style="--port-color:' + portColor + ';" title="' + escapeHtml(portTitle) + '">'
       + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(label) + '</span>'
+      + (typeLabel ? '<span class="graph-port-type" data-port-type="' + typeKey + '">' + escapeHtml(typeLabel) + '</span>' : '')
       + (canRemove
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveInputPort(\'' + node.id + '\',' + i + ')" title="删除输入端口">×</button>'
         : '')
@@ -460,7 +481,13 @@ function _renderOutputPorts(node, messages, state) {
       question: '',
     }));
   }
-  const canAddPort = _moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge';
+  // T263：配方节点开放手动加出口（声明表为基追加匿名口；动态出口声明不开放——出口数随内容解析）
+  const recipeNode = !!node.recipeId && (node.kind === 'module' || node.kind === 'answer');
+  const recipeHasDynamic = recipeNode && typeof _nodeRecipeSnapshot === 'function'
+    ? !!((_nodeRecipeSnapshot(node) || {}).ports || {}).dynamic
+    : false;
+  const canAddPort = _moduleCanExpandOutputs(node) || node.kind === 'source' || node.kind === 'knowledge'
+    || (recipeNode && !recipeHasDynamic && (node.kind === 'module' || (typeof _recipeStaticPorts === 'function' && _recipeStaticPorts(node).length > 0)));
   const savedCount = canAddPort && state.portCounts && state.portCounts[node.id] ? state.portCounts[node.id] : 0;
   const count = Math.max(ports.length, savedCount);
   if (count <= 0) return '';
@@ -474,7 +501,7 @@ function _renderOutputPorts(node, messages, state) {
           : '追问 ' + (i - ports.length + 1),
       type: node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'branch' : 'custom',
       branchType: 'followup',
-      attribute: node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'question' : 'followup',
+      attribute: node.recipeId ? 'recipe' : node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'question' : 'followup',
       question: '',
       custom: true,
     };

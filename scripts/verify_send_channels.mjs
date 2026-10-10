@@ -545,6 +545,58 @@ async function main() {
         }
         ok('⑧ 答疑模式：已发通（chat 相位纯文字回答「' + chat.text + '…」，画布未被改动）');
       } catch (e) { bad('⑧ 答疑模式', e); }
+      // ===== ⑫ Φ 创造模式访谈流（T263：ask_user 追问 → 用户答 → create_recipe）=====
+      // 创造模式从「浅层单问 clarify」升级成多轮访谈：第一轮模型调 ask_user（后端
+      // 短路成 clarify、问题文本必须渲染进气泡），用户答完第二轮才出配方操作行。
+      // 真发两轮验整条链：问得出、显示得出、答完续得上（历史带问题文本不失忆）。
+      try {
+        await waitIdle('⑫ 创造模式访谈');
+        const round1 = await page.evaluate(async () => {
+          if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          const panel = document.querySelector('.graph-harness-window');
+          if ((!panel || panel.hidden) && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
+          if (typeof currentPhiId !== 'undefined' && typeof _harnessBoundSid === 'function' && !_harnessBoundSid()) {
+            toggleHarnessSessionBinding(currentPhiId);
+          }
+          if (window.chooseHarnessMode && window._harnessMode() !== 'preset') window.chooseHarnessMode('preset');
+          const input = document.getElementById('graphHarnessInstruction');
+          input.value = '访谈试炼：帮我造一个合力计算节点';
+          document.getElementById('graphHarnessSendBtn').click();
+          const t0 = Date.now();
+          while (Date.now() - t0 < 90000) {
+            const opts = document.querySelectorAll('#graphHarnessChat .graph-harness-clarify-opt');
+            if (opts.length >= 2) {
+              const contents = [...document.querySelectorAll('#graphHarnessChat .graph-harness-message-content')];
+              const last = contents.length ? contents[contents.length - 1] : null;
+              return { ok: true, options: opts.length, hasQuestion: last ? /问 1/.test(last.textContent || '') : false };
+            }
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          return { err: '第一轮追问未出现（ask_user 短路或选项没渲染）' };
+        });
+        if (round1.err) throw new Error(round1.err);
+        if (!round1.hasQuestion) throw new Error('追问选项在、问题文本不在气泡里（T263 渲染断）');
+        const round2 = await page.evaluate(async () => {
+          const input = document.getElementById('graphHarnessInstruction');
+          input.value = '访谈定稿：输入口是力一和力二，出口要合力讲解和示意图。';
+          document.getElementById('graphHarnessSendBtn').click();
+          const t0 = Date.now();
+          while (Date.now() - t0 < 90000) {
+            const chat = document.getElementById('graphHarnessChat');
+            const text = chat ? chat.textContent : '';
+            if (/访谈试炼节点/.test(text)) {
+              if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
+              return { ok: true, ops: chat.querySelectorAll('.graph-harness-op').length, digest: /入 2/.test(text) };
+            }
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
+          return { err: '第二轮配方操作行未出现（访谈历史携带或 mock 第二轮剧本断）' };
+        });
+        if (round2.err) throw new Error(round2.err);
+        ok('⑫ 创造模式访谈：已发通（第一轮 ask_user 追问含 ' + round1.options + ' 个选项、问题文本进气泡；'
+          + '第二轮答完出配方操作行' + (round2.digest ? '，预览含「入 2」端口摘要' : '') + '）');
+      } catch (e) { bad('⑫ 创造模式访谈', e); }
     } else {
       ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑦ 创造模式', '⑧ 答疑模式'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));

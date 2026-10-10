@@ -1,6 +1,6 @@
 // ===== PhyMathia 图编辑 harness：应用操作与建议（含 window 导出）=====
 
-  function _applyOneHarnessOp(op, state, nodeKindById) {
+  function _applyOneHarnessOp(op, state, nodeById) {
     const opName = op.op || op.type || '';
     // ---- 配方库操作（P3 创造模式）：落前端配方库（localStorage＋服务端镜像），不动图 ----
     if (opName === 'create_recipe' || opName === 'update_recipe' || opName === 'delete_recipe') {
@@ -130,12 +130,17 @@
       if (!from || !to) return;
       const fromPort = (parts ? parts.fromPort : op.fromPort) || 'out-0';
       let toPort = (parts ? parts.toPort : op.toPort) || 'in-0';
-      const targetKind = nodeKindById.get(to);
+      const targetNode = nodeById.get(to) || (state.customNodes || []).find(item => item.id === to);
+      const targetKind = targetNode ? targetNode.kind : '';
       if (targetKind === 'module' && typeof window.freeModuleInputPort === 'function') {
         const free = window.freeModuleInputPort(state, to, toPort);
         toPort = free.port;
         state.inputPortCounts = state.inputPortCounts || {};
-        state.inputPortCounts[to] = Math.max(state.inputPortCounts[to] || 0, free.index);
+        // T263：具名输入声明时附加口数以声明数为基（同批新建的节点走 customNodes 兜底查找）
+        const baseInputs = (targetNode && typeof _nodeBaseInputPortCount === 'function')
+          ? _nodeBaseInputPortCount(targetNode)
+          : 1;
+        state.inputPortCounts[to] = Math.max(state.inputPortCounts[to] || 0, Math.max(0, free.index - baseInputs + 1));
       }
       const key = _edgeKey({ from, fromPort, to, toPort });
       if (state.connections.some(edge => _edgeKey(edge) === key)) return;
@@ -350,7 +355,7 @@
     harnessLastAppliedOps = Array.isArray(ops) ? ops.slice() : [];
     harnessLastAppliedBeforeSnapshot = _harnessUndoSnapshot(state);
     if (typeof window.pushGraphUndo === 'function') window.pushGraphUndo(false, { source: 'harness', summary: (harnessResult && harnessResult.summary) || 'AI 修改' });
-    const nodeKindById = new Map(_graphNodes().map(node => [node.id, node.kind]));
+    const nodeById = new Map(_graphNodes().map(node => [node.id, node]));
     state.customNodes = Array.isArray(state.customNodes) ? state.customNodes : [];
     state.connections = Array.isArray(state.connections) ? state.connections : [];
     state.harnessDeleted = state.harnessDeleted || {};
@@ -362,7 +367,7 @@
     state.inputPortCounts = state.inputPortCounts || {};
     const hasRecipeOps = ops.some(op => ['create_recipe', 'update_recipe', 'delete_recipe'].includes(op.op || op.type || ''));
     const recipesBefore = hasRecipeOps && typeof getUserRecipes === 'function' ? getUserRecipes().slice() : null;
-    ops.forEach(op => _applyOneHarnessOp(op, state, nodeKindById));
+    ops.forEach(op => _applyOneHarnessOp(op, state, nodeById));
     if (harnessPhase === 'apply' && cleanupEval) {
       const evalIds = state.customNodes.filter(node => node.kind === 'ai_eval').map(node => node.id);
       evalIds.forEach(id => {

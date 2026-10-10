@@ -15,6 +15,9 @@ P3 起 Φ 产出配方时后端把关（preset 相位的 create_recipe/update_re
   自由色（#rrggbb / #rgb；2026-09-30 用户拍板放宽），给了就压过 palette 令牌
 - AI 底座必须有主提示词；每个提示词槽（含 retry_prompt）≤800 字
 - 出口 ≤8 个，名字 ≤12 字、不重复；drag_form 只允许 draft / user / connected:<key>
+- T263 端口分类体系 v2：出口/输入端口可选内容类型（text/formula/diagram/html，与内容
+  载体同源，不填＝不限）；具名输入端口 ``ports.inputs`` ≤8 个 {label, type}，
+  名字 ≤12 字、组内不重复（与出口表各自独立去重）；类型不拦连线
 - P2：动态出口（parser.numbered_list / label_from / fallback.mode / each.type）全枚举；
   content_kind 允许 mermaid / html_iframe（须 AI 底座）；model_role 六槽；
   aggregation: first_inbound 与 analysis_phase 仅 module 底座；on_generated 引用闭环
@@ -42,6 +45,9 @@ RECIPE_ON_GENERATED_KINDS = ("answer", "module", "blank", "user", "note", "human
 RECIPE_ON_GENERATED_CONTENT_FROM = ("", "self_content", "self_directions")
 RECIPE_PROMPT_BUDGET = 800
 RECIPE_MAX_PORTS = 8
+# T263 端口分类体系 v2：内容类型枚举（与前端 RECIPE_PORT_TYPES 对拍；不填＝不限）
+RECIPE_PORT_TYPES = ("text", "formula", "diagram", "html")
+RECIPE_MAX_INPUTS = 8
 RECIPE_MAX_DYNAMIC = 12
 RECIPE_MAX_ON_GENERATED = 4
 RECIPE_NAME_MAX = 24
@@ -191,7 +197,26 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
         label = _text(port.get("label"))[:RECIPE_PORT_LABEL_MAX]
         if not label:
             continue
-        static_out.append({"label": label, "drag_form": _text(port.get("drag_form")) or "draft"})
+        entry: Dict[str, Any] = {"label": label, "drag_form": _text(port.get("drag_form")) or "draft"}
+        # 出口类型可选（覆盖时才落库，缺省按 content_kind 自动推导）
+        port_type = port.get("type") if port.get("type") in RECIPE_PORT_TYPES else ""
+        if port_type:
+            entry["type"] = port_type
+        static_out.append(entry)
+    # 具名输入端口（T263）：{label, type}，type 缺省 ""＝不限；旧设计稿的数字型
+    # inputs 不是列表，走到这里自然剥除；空表不设键（与 dynamic 同法，对拍友好）
+    input_ports = ports.get("inputs") if isinstance(ports.get("inputs"), list) else []
+    inputs_out = []
+    for port in input_ports[: RECIPE_MAX_INPUTS + 4]:
+        if not isinstance(port, dict):
+            continue
+        label = _text(port.get("label"))[:RECIPE_PORT_LABEL_MAX]
+        if not label:
+            continue
+        inputs_out.append({
+            "label": label,
+            "type": port.get("type") if port.get("type") in RECIPE_PORT_TYPES else "",
+        })
     channel = _text(g.get("context_channel"))
     model_role = g.get("model_role") if g.get("model_role") in RECIPE_MODEL_ROLES else "agent"
     on_incomplete_raw = g.get("on_incomplete") if isinstance(g.get("on_incomplete"), dict) else {}
@@ -240,6 +265,8 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
     }
     if dynamic is not None:
         recipe["ports"]["dynamic"] = dynamic
+    if inputs_out:
+        recipe["ports"]["inputs"] = inputs_out
     if on_generated is not None:
         recipe["on_generated"] = on_generated
     return recipe
@@ -304,6 +331,27 @@ def validate_recipe(recipe: Any, existing: Optional[List[Any]] = None) -> Dict[s
         form = _text(port.get("drag_form")) or "draft"
         if form not in ("draft", "user") and not _DRAG_FORM_RE.match(form):
             errors.append(f"出口「{label}」的拖出目标不合法")
+        if port.get("type") and port.get("type") not in RECIPE_PORT_TYPES:
+            errors.append(f"出口「{label}」的类型不合法（text/formula/diagram/html 或留空）")
+    # 具名输入端口（T263）：与出口同款校验，去重独立于出口表
+    input_ports = ports.get("inputs") if isinstance(ports.get("inputs"), list) else []
+    if len(input_ports) > RECIPE_MAX_INPUTS:
+        errors.append(f"输入端口最多 {RECIPE_MAX_INPUTS} 个")
+    seen_input_labels = set()
+    for port in input_ports:
+        if not isinstance(port, dict):
+            errors.append("存在没有名字的输入端口")
+            continue
+        label = _text(port.get("label"))
+        if not label:
+            errors.append("存在没有名字的输入端口")
+        elif len(label) > RECIPE_PORT_LABEL_MAX:
+            errors.append(f"输入端口「{label}」名字最长 {RECIPE_PORT_LABEL_MAX} 字")
+        if label in seen_input_labels:
+            errors.append(f"输入端口名字重复：「{label}」")
+        seen_input_labels.add(label)
+        if port.get("type") and port.get("type") not in RECIPE_PORT_TYPES:
+            errors.append(f"输入端口「{label}」的类型不合法（text/formula/diagram/html 或留空）")
     dynamic = ports.get("dynamic") if isinstance(ports.get("dynamic"), dict) else None
     if dynamic is not None:
         if base_kind != "module":

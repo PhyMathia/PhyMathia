@@ -60,20 +60,22 @@ function _nodeOutputContent(node, seen) {
 function _collectUpstreamPath(node) {
   const ordered = [];
   const orderedIds = new Set();
-  function collect(current) {
+  // T263 喂料分路：记录每个祖先经由哪条入边（toPort）进入，具名输入口分组用
+  function collect(current, viaPort) {
     if (!current || orderedIds.has(current.id)) return;
     const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
-      if (source) collect(source);
+      if (source) collect(source, edge.toPort || 'in-0');
     }
     if (!orderedIds.has(current.id)) {
       orderedIds.add(current.id);
-      ordered.push(current);
+      ordered.push({ node: current, port: viaPort || '' });
     }
   }
-  collect(node);
-  return ordered.map(item => {
+  collect(node, '');
+  return ordered.map(entry => {
+    const item = entry.node;
     const raw = _nodeOutputContent(item);
     return {
       kind: item.kind,
@@ -83,6 +85,7 @@ function _collectUpstreamPath(node) {
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
+      toPort: entry.port,
     };
   });
 }
@@ -91,16 +94,19 @@ function _collectUpstreamPath(node) {
 // 与 _collectUpstreamPath 输出同形（含自身，answer 仍被抽出进 analysis 槽）
 function _collectInboundChain(node) {
   const chain = [];
+  const ports = [];
   const visited = new Set();
   let current = node;
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
     chain.push(current);
     const incoming = (graphView.edges || []).find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    ports.push(incoming ? (incoming.toPort || 'in-0') : '');
     current = incoming ? _findGraphNode(incoming.from) : null;
   }
   chain.reverse();
-  return chain.map(item => {
+  ports.reverse();
+  return chain.map((item, index) => {
     const raw = _nodeOutputContent(item);
     return {
       kind: item.kind,
@@ -110,6 +116,7 @@ function _collectInboundChain(node) {
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
+      toPort: ports[index] || '',
     };
   });
 }
@@ -141,37 +148,82 @@ function _buildWorkflowContextForNode(node) {
   const analysisNode = allUpstream.find(item => item.kind === 'answer' && !item.manual);
   const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
   const questionNode = upstream.find(item => item.kind === 'user');
+  // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」，
+  // 结构化载荷与内联文本都按口分组；未声明（旧配方/旧快照）不设键，载荷形状与今日一致
+  const declaredInputs = (node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
+  const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
+  const portMetaFor = (toPort) => {
+    if (!declaredInputs.length || !toPort) return null;
+    const m = /^in-(\d+)$/.exec(String(toPort));
+    if (!m) return null;
+    const named = declaredInputs[parseInt(m[1], 10)];
+    if (named) return { label: named.label, type: named.type || '' };
+    return { label: '其他输入', type: '' };
+  };
   return {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
     question: questionNode ? questionNode.content : '',
     analysis: analysisNode ? analysisNode.analysis : '',
     mode: 'module',
     requirements: node.requirements || '',
-    upstream: upstream.map(item => ({
-      kind: item.kind,
-      module: item.module,
-      label: item.kind === 'user'
-        ? '问题'
-        : item.kind === 'knowledge'
-          ? '知识点'
-          : item.kind === 'relation'
-            ? '知识联系'
-            : item.kind === 'source'
-              ? '输入'
-        : item.kind === 'answer'
-          ? (item.manual ? '我的回答' : 'AI 回答')
-          : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
-      summary: item.summary,
-      analysis: item.analysis || '',
-      content: (item.content || '').slice(0, 800),
-    })),
+    upstream: upstream.map(item => {
+      const entry = {
+        kind: item.kind,
+        module: item.module,
+        label: item.kind === 'user'
+          ? '问题'
+          : item.kind === 'knowledge'
+            ? '知识点'
+            : item.kind === 'relation'
+              ? '知识联系'
+              : item.kind === 'source'
+                ? '输入'
+          : item.kind === 'answer'
+            ? (item.manual ? '我的回答' : 'AI 回答')
+            : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
+        summary: item.summary,
+        analysis: item.analysis || '',
+        content: (item.content || '').slice(0, 800),
+      };
+      const portMeta = portMetaFor(item.toPort);
+      if (portMeta) {
+        entry.input_port = portMeta.label;
+        if (portMeta.type) entry.input_type = typeLabels[portMeta.type] || portMeta.type;
+      }
+      return entry;
+    }),
   };
+}
+
+// T263：内联上游文本（summary/relation 与配方 prompt_inline 共用）。条目带 input_port
+// （目标配方声明了具名输入口）时按口分组加小标题；未声明保持旧拼法逐条平铺。
+function _upstreamInlineText(upstream) {
+  const items = (upstream || []).filter(item => item && item.content);
+  if (!items.some(item => item.input_port)) {
+    return items.map(item => item.label + '：\n' + item.content).join('\n\n').slice(0, 8000);
+  }
+  const order = [];
+  const byPort = new Map();
+  items.forEach(item => {
+    const key = item.input_port || '';
+    if (!byPort.has(key)) { byPort.set(key, []); order.push(key); }
+    byPort.get(key).push(item);
+  });
+  return order.map(key => {
+    const body = byPort.get(key)
+      .map(item => item.label + (item.input_type ? '（' + item.input_type + '）' : '') + '：\n' + item.content)
+      .join('\n\n');
+    return key ? '【输入「' + key + '」】\n' + body : body;
+  }).join('\n\n').slice(0, 8000);
 }
 
 function _nodeInputHash(node) {
   const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
+  // T263：仅当目标配方声明具名输入口时才把接线口计入哈希——旧图哈希逐字节不变，
+  // 不会触发存量节点全量重生成；新配方换口接线能正确触发重生成
+  const usePorts = !!(node.recipeId && typeof _recipeInputPorts === 'function' && _recipeInputPorts(node).length);
   const parts = incoming
-    .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from)))
+    .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from)) + (usePorts ? '@' + (edge.toPort || 'in-0') : ''))
     .sort();
   return _simpleHash((node.moduleKey || '') + '|' + (node.recipeId || '') + '|' + (node.requirements || '') + '|' + parts.join('|'));
 }
@@ -185,11 +237,7 @@ function _recipeWorkflowPrompt(node, recipe, workflowContext, targetLabel) {
   const name = recipe.name || targetLabel || '配方';
   let inline = '';
   if (baseKind === 'summary' || baseKind === 'relation' || (baseKind === 'module' && g.context_channel === 'prompt_inline')) {
-    inline = (workflowContext.upstream || [])
-      .map(item => (item.content ? item.label + '：\n' + item.content : ''))
-      .filter(Boolean)
-      .join('\n\n')
-      .slice(0, 8000);
+    inline = _upstreamInlineText(workflowContext.upstream);
   } else if (baseKind === 'knowledge') {
     inline = [
       node.title || name,

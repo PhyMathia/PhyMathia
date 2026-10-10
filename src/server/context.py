@@ -912,11 +912,36 @@ def _workflow_context_parts(workflow_context) -> tuple:
         shared_lines.append(f"- 原始问题：{question[:1200]}")
     if analysis:
         shared_lines.append(f"- 隐藏问题分析（用于保持一致）：{analysis[:1200]}")
-    for item in upstream[:8]:
-        label = item.get("label") or item.get("kind") or "上游节点"
-        content = str(item.get("summary") or item.get("content") or "").strip()
-        if content:
-            shared_lines.append(f"- {label}：{content[:800]}")
+    # T263 喂料分路：目标配方声明具名输入口时（upstream 条目带 input_port），按口分组
+    # 渲染；未声明保持旧平铺（逐条 - label：content），字节级不变
+    recent_upstream = upstream[:8] if isinstance(upstream, list) else []
+    if any(isinstance(item, dict) and item.get("input_port") for item in recent_upstream):
+        grouped = {}
+        port_order = []
+        for item in recent_upstream:
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label") or item.get("kind") or "上游节点"
+            content = str(item.get("summary") or item.get("content") or "").strip()
+            if not content:
+                continue
+            port = str(item.get("input_port") or "").strip()
+            if port not in grouped:
+                grouped[port] = []
+                port_order.append(port)
+            grouped[port].append((label, str(item.get("input_type") or "").strip(), content))
+        for port in port_order:
+            if port:
+                shared_lines.append(f"【输入「{port}」】")
+            for label, port_type, content in grouped[port]:
+                suffix = f"（{port_type}）" if port_type else ""
+                shared_lines.append(f"- {label}{suffix}：{content[:800]}")
+    else:
+        for item in recent_upstream:
+            label = item.get("label") or item.get("kind") or "上游节点" if isinstance(item, dict) else "上游节点"
+            content = str((item.get("summary") if isinstance(item, dict) else "") or (item.get("content") if isinstance(item, dict) else "") or "").strip()
+            if content:
+                shared_lines.append(f"- {label}：{content[:800]}")
     target_lines = ["\n\n# 工作流节点生成指令"]
     if mode == "analysis":
         target_lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")

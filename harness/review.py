@@ -182,6 +182,7 @@ from .tools import (
     _graph_stats,
     build_tools,
     execute_readonly_tool,
+    normalize_ask_questions,
     parse_tool_calls,
 )
 
@@ -189,6 +190,39 @@ logger = logging.getLogger("harness.review")
 
 # 查询循环步数上限：达到后剥掉只读工具并明示模型直接出方案，防失控。
 MAX_TOOL_STEPS = 8
+
+
+def _clarify_result_payload(
+    summary: str,
+    clarify: Dict[str, Any],
+    current: Dict[str, Any],
+    call_counter: Dict[str, int],
+    last_raw: str,
+    reasoning_seen: Dict[str, bool],
+    fallback_used: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """T263 访谈协议：追问结果统一出口——ask_user 工具通道与 JSON clarify 通道共用。
+
+    追问轮不产出任何操作（operations 空批），问题文本随 clarify.questions 返回前端
+    （前端渲染进气泡并写进历史，下一轮模型才看得见问过什么——多轮不失忆的命根子）。
+    """
+    result: Dict[str, Any] = {
+        "status": "clarify",
+        "summary": summary or "需要向你确认一下",
+        "clarify": clarify,
+        "operations": [],
+        "next_snapshot": current,
+        "diff": [],
+        "errors": [],
+        "warnings": [],
+        "raw_has_ops": False,
+        "model_calls": call_counter["n"],
+        "out_chars": len(last_raw),
+        "reasoning_stripped": reasoning_seen["hit"],
+    }
+    if fallback_used:
+        result["fallback_used"] = dict(fallback_used)
+    return result
 # 单条查询结果回灌的字符上限（超长截断打标，护住上下文预算）
 _TOOL_RESULT_CHARS = 4000
 # 同批混入的编辑类调用统一延迟到最终方案，不执行（一次批次只处理查询）
@@ -1617,6 +1651,25 @@ async def review_graph(
                 checklist_state: Optional[Dict[str, Any]] = None
                 if raw.get("tool_calls"):
                     raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
+                    # T263 访谈协议：创造模式的 ask_user＝追问，立即结束本轮返回前端
+                    # （与 JSON clarify 同出口）；访谈轮不夹带配方/图操作，其余调用一并忽略
+                    ask_op = next(
+                        (o for o in raw_ops if isinstance(o, dict) and o.get("op") == "ask_user"),
+                        None,
+                    ) if phase == "preset" else None
+                    if ask_op:
+                        ask_summary = _clamp_display_summary(str(raw.get("content") or "").strip())
+                        if _looks_like_machine_text(ask_summary):
+                            ask_summary = ""
+                        return _clarify_result_payload(
+                            ask_summary,
+                            {"questions": ask_op.get("questions") or []},
+                            current,
+                            call_counter,
+                            last_raw,
+                            reasoning_seen,
+                            fallback_used,
+                        )
                     pending_tool_errors = tool_errors
                     if tool_errors and attempt < retries:
                         last_errors = tool_errors
@@ -1676,23 +1729,19 @@ async def review_graph(
                         # 丢了不影响任何既有行为——normalize_checklist 坏形态回 []）
                         pending_checklist = normalize_checklist(payload.get("checklist"))
                         if isinstance(payload.get("clarify"), dict):
-                            clarify_result = {
-                                "status": "clarify",
-                                "summary": summary or "需要向你确认一下",
-                                "clarify": payload["clarify"],
-                                "operations": [],
-                                "next_snapshot": current,
-                                "diff": [],
-                                "errors": [],
-                                "warnings": [],
-                                "raw_has_ops": False,
-                                "model_calls": call_counter["n"],
-                                "out_chars": len(last_raw),
-                                "reasoning_stripped": reasoning_seen["hit"],
-                            }
-                            if fallback_used:
-                                clarify_result["fallback_used"] = dict(fallback_used)
-                            return clarify_result
+                            # T263：clarify 归一化——兼容旧单问 {question, options} 与新多问
+                            # {questions:[...]}；全部问题为空不返回（落到下方空操作路径走重试反馈）
+                            clarify_payload = normalize_ask_questions(payload["clarify"])
+                            if clarify_payload:
+                                return _clarify_result_payload(
+                                    summary,
+                                    clarify_payload,
+                                    current,
+                                    call_counter,
+                                    last_raw,
+                                    reasoning_seen,
+                                    fallback_used,
+                                )
 
                 # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
                 normalized_ops = []

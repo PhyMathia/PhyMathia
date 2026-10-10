@@ -264,8 +264,9 @@
         };
         if (recipe.desc) entry.desc = String(recipe.desc);
         const staticCount = (recipe.ports && Array.isArray(recipe.ports.static)) ? recipe.ports.static.length : 0;
+        const inputCount = (recipe.ports && Array.isArray(recipe.ports.inputs)) ? recipe.ports.inputs.length : 0;
         const hasDynamic = !!(recipe.ports && recipe.ports.dynamic);
-        entry.ports = '静态 ' + staticCount + (hasDynamic ? ' ＋ 动态解析' : '');
+        entry.ports = '入 ' + inputCount + ' / 出 ' + staticCount + (hasDynamic ? ' ＋ 动态解析' : '');
         return entry;
       });
     }

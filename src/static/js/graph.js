@@ -1579,6 +1579,20 @@ function _normalizeGraphEdge(edge) {
   };
 }
 
+// T263：配方节点的具名输入口数与基础输入口数。声明了 ports.inputs 就替换默认的
+// 1 个匿名口（顺序＝端口索引 in-0..k），附加匿名口始终排在具名口之后；无声明回落 1。
+function _nodeDeclaredInputCount(node) {
+  if (node && node.kind === 'module' && node.recipeId && typeof _recipeInputPorts === 'function') {
+    return _recipeInputPorts(node).length;
+  }
+  return 0;
+}
+
+function _nodeBaseInputPortCount(node) {
+  if (node && node.kind === 'module') return Math.max(1, _nodeDeclaredInputCount(node));
+  return (node && node.kind === 'relation') ? 2 : 1;
+}
+
 function _freeModuleInputPort(state, toNodeId, preferredPort) {
   const used = new Set([
     ...(state.connections || []),
