@@ -1225,9 +1225,10 @@
   color: var(--text-primary) !important;
 }
 
-/* T266 输出端口「待命名」态：未连线的匿名附加输出口（手动＋加出来的）标签置灰、
-   细体斜字——连上某个输入口后即改用该口的实名字＋内容类型徽标（graph-render.js
-   _adoptedOutputPortMeta）。与已具名端口的实字区分「身份未定、由连线决定」。
+/* 端口「待命名」态（输出口 T266／输入口 2026-10-10 统一，两侧通用）：未连线的
+   匿名附加口（手动＋加出来的）标签置灰、细体斜字——连上对侧端口后即改用其
+   实名字＋类型徽标（graph-render.js _adoptedOutputPortMeta／_adoptedInputPortMeta）。
+   与已具名端口的实字区分「身份未定、由连线决定」。
    用 opacity 而不是另设色值：保持 --text-secondary 的主题适配（暗/亮各一套） */
 .graph-port-label-blank {
   opacity: 0.55 !important;

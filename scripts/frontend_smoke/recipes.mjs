@@ -1565,13 +1565,13 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
     const setView = (edges, nodeById) => vm.runInContext(
       'graphView.edges = ' + JSON.stringify(edges) + '; graphView.nodeById = ' + JSON.stringify(nodeById) + ';', sandbox);
 
-    // 1. 未连线：附加口显示「未命名」并挂置灰类；基本口「追问」保持原名、不参与继承
+    // 1. 未连线：附加口显示「待命名」并挂置灰类；基本口「追问」保持原名、不参与继承
     setView([], {});
     let html = String(sandbox._renderOutputPorts(moduleNode, [], state));
-    if (!html.includes('>未命名</span>')) throw new Error('未连线的附加输出口应显示「未命名」');
-    if (!html.includes('graph-port-label-blank')) throw new Error('未命名口缺置灰类 graph-port-label-blank');
+    if (!html.includes('>待命名</span>')) throw new Error('未连线的附加输出口应显示「待命名」');
+    if (!html.includes('graph-port-label-blank')) throw new Error('待命名口缺置灰类 graph-port-label-blank');
     if (!html.includes('>追问</span>')) throw new Error('基本输出口「追问」应保持原名');
-    if (html.includes('graph-port-type')) throw new Error('未命名口不应有类型徽标');
+    if (html.includes('graph-port-type')) throw new Error('待命名口不应有类型徽标');
 
     // 2. 连到配方节点的具名输入口（力一/text）：输出口采用该口的名字＋内容类型徽标
     setView([{ from: 'm1', fromPort: 'out-1', to: 'r1', toPort: 'in-0' }], { r1: recipeNode });
@@ -1590,7 +1590,7 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
     // 4. 断开即回空白（不新增持久化字段，身份纯由连线派生）
     setView([], {});
     html = String(sandbox._renderOutputPorts(moduleNode, [], state));
-    if (!html.includes('graph-port-label-blank') || !html.includes('>未命名</span>')) throw new Error('断开后应回空白');
+    if (!html.includes('graph-port-label-blank') || !html.includes('>待命名</span>')) throw new Error('断开后应回空白');
     if (html.includes('>力一</span>')) throw new Error('断开后不应残留继承名');
 
     // 5. source 节点的匿名附加口同属待命名族（fallback type knowledge 保留给拖拽建点）
@@ -1627,7 +1627,7 @@ check('T266 追补（真机缺口）：连线/断线/删边必须触发整画布
     if (renderCalls !== 1) throw new Error('连线后应触发 1 次整画布重渲染，实际 ' + renderCalls);
     const edge = (mem.connections || []).find(c => c.from === 'm1' && (c.fromPort || 'out-0') === 'out-1');
     if (!edge || edge.to !== 'r1') throw new Error('连线未落 state.connections');
-    // 2. 断线（拖走输入口的线）：继承口回「未命名」同样依赖重渲染
+    // 2. 断线（拖走输入口的线）：继承口回「待命名」同样依赖重渲染
     sandbox._disconnectInputPort('r1', 'in-0');
     if (renderCalls !== 2) throw new Error('断线后应再触发 1 次重渲染，实际 ' + renderCalls);
     if ((mem.connections || []).some(c => c.to === 'r1')) throw new Error('断线未删 custom 边');
@@ -1656,7 +1656,7 @@ check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、sum
     if (!html.includes('graph-add-port-btn')) throw new Error('summary 开放附加口后应渲染＋号');
     if (html.includes('graph-output-port')) throw new Error('summary 无附加口时不应有端口行');
     html = String(sandbox._renderOutputPorts(sumNode, [], { portCounts: { sum1: 1 }, inputPortCounts: {} }));
-    if (!html.includes('>未命名</span>')) throw new Error('summary 附加口应走待命名态');
+    if (!html.includes('>待命名</span>')) throw new Error('summary 附加口应走待命名态');
 
     // 2. 输入侧新开放：answer 渲染＋号且基础口显品类标签；isRoot 根 answer 基础口 0 但仍可加
     const ansNode = { id: 'a1', kind: 'answer', messageIndex: -1, manual: false, timestamp: 6 };
@@ -1691,4 +1691,56 @@ check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、sum
   return true;
 });
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
+
+check('附加输入口「待命名」态（2026-10-10 统一）：加出来的输入口未连线空白、连线后继承输出口名字、断开回落；人工内容输入退役；匿名口互连环路保持空白', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, recipeId: '', timestamp: 1 };
+    const hubNode = { id: 'h1', kind: 'hub', messageIndex: -1, timestamp: 2 };
+    const setView = (edges, nodeById) => vm.runInContext(
+      'graphView.edges = ' + JSON.stringify(edges) + '; graphView.nodeById = ' + JSON.stringify(nodeById) + ';', sandbox);
+
+    // 1. 未连线：模块/summary 的附加输入口都显示「待命名」置灰；旧「人工内容输入」退役
+    setView([], {});
+    let html = String(sandbox._renderInputPorts(moduleNode, { portCounts: {}, inputPortCounts: { m1: 1 } }));
+    if (!html.includes('>待命名</span>')) throw new Error('未连线的附加输入口应显示「待命名」');
+    if (!html.includes('graph-port-label-blank')) throw new Error('待命名输入口缺置灰类');
+    if (html.includes('人工内容输入')) throw new Error('模块附加输入口不应再叫「人工内容输入」');
+    if (html.includes('graph-port-type')) throw new Error('待命名的输入口不应有类型徽标');
+    const sumNode = { id: 'sum1', kind: 'summary', messageIndex: -1, timestamp: 3 };
+    html = String(sandbox._renderInputPorts(sumNode, { portCounts: {}, inputPortCounts: { sum1: 1 } }));
+    if (!html.includes('>待命名</span>')) throw new Error('summary 附加输入口应同样待命名');
+
+    // 2. 连上 hub 的「AI 总结」基础输出口：输入口当场采用其名字；基础口 in-0 保持品类标签
+    setView([{ from: 'h1', fromPort: 'out-0', to: 'm1', toPort: 'in-1' }], { m1: moduleNode, h1: hubNode });
+    html = String(sandbox._renderInputPorts(moduleNode, { portCounts: {}, inputPortCounts: { m1: 1 } }));
+    if (!html.includes('>AI 总结</span>')) throw new Error('附加输入口未继承所连输出口的名字');
+    if (html.includes('graph-port-label-blank')) throw new Error('已连线输入口不应再空白');
+    if (!html.includes('>物理视角</span>')) throw new Error('模块基础输入口应保持品类标签');
+
+    // 3. 断开回空白（身份纯由连线派生，零持久化）
+    setView([], {});
+    html = String(sandbox._renderInputPorts(moduleNode, { portCounts: {}, inputPortCounts: { m1: 1 } }));
+    if (!html.includes('>待命名</span>') || !html.includes('graph-port-label-blank')) throw new Error('断开后应回待命名');
+
+    // 4. 匿名出口↔匿名入口互为命名来源：环路护栏让两端都保持待命名
+    const userNode = { id: 'u1', kind: 'user', branchType: 'followup', messageIndex: -1, timestamp: 4, isRoot: false };
+    setView([{ from: 'm1', fromPort: 'out-1', to: 'u1', toPort: 'in-1' }], { m1: moduleNode, u1: userNode });
+    html = String(sandbox._renderInputPorts(userNode, { portCounts: {}, inputPortCounts: { u1: 1 } }));
+    if (!html.includes('>待命名</span>')) throw new Error('环路中的匿名输入口应保持待命名');
+    html = String(sandbox._renderOutputPorts(moduleNode, [], { portCounts: { m1: 2 }, inputPortCounts: {} }));
+    if (!html.includes('>待命名</span>')) throw new Error('环路中的匿名输出口应保持待命名');
+
+    // 5. 静态契约：输入口继承与输出口身份读取函数在位（与 _adoptedOutputPortMeta 对称）
+    const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+    if (!renderSrc.includes('function _adoptedInputPortMeta') || !renderSrc.includes('function _nodeOutputPortMeta')) {
+      throw new Error('附加输入口继承函数缺失');
+    }
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
 }
