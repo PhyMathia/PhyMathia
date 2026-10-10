@@ -257,74 +257,44 @@
   background: rgba(234, 179, 8, 0.12) !important;
 }
 
-.graph-node-user {
-  border-left: 6px solid #4a9eff !important;
+/* ---------- 属性书脊与模块粗边（2026-10-10 统一）----------
+   宽度在这里，颜色一律随 --node-attr（渲染层每节点内联注入）。旧版逐类型
+   border-left: 6px solid <裸 hex> 是 T166 收编漏网，与 --node-* 令牌、气泡变量
+   三处各存一份色值；收成模板后颜色只剩 --node-attr 一份事实源。
+   特异性保持 (0,2,0) 不降——blank 草稿卡（1px 虚线）等更晚的规则还靠同级源序压。 */
+.graph-node.graph-node-user,
+.graph-node.graph-node-answer,
+.graph-node.graph-node-hub,
+.graph-node.graph-node-summary {
+  border-left-width: 6px !important;
 }
 
-.graph-node-answer {
-  border-left: 6px solid #10b981 !important;
+.graph-node.graph-node-root {
+  border-width: 2px !important;
+  --graph-bubble-border: var(--white);
+  --graph-bubble-start: color-mix(in srgb, var(--node-attr, var(--accent)) 25%, transparent);
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr, var(--accent)) 45%, transparent);
 }
 
-.graph-node-hub {
-  border-left: 6px solid #eab308 !important;
+/* 根节点浅色描边：深色白描边在暖米纸上不可读，改为属性色向墨色压深的中间调
+   （旧版是写死的琥珀 hex，不随属性走，属统一前的漏改）。 */
+[data-theme="light"] .graph-node.graph-node-root {
+  --graph-bubble-border: color-mix(in srgb, var(--node-attr, var(--accent)) 55%, var(--text-primary));
 }
 
-.graph-node-summary {
-  border-left: 6px solid #0d9488 !important;
-}
-
-.graph-node-note {
-  border-left: 6px solid var(--ink-human) !important;
-}
-
-.graph-node-root {
-  border: 2px solid var(--white) !important;
-}
-
-.graph-node-branch {
+.graph-node.graph-node-branch {
   border-style: solid !important;
   border-color: var(--accent) !important;
   opacity: 0.92 !important;
 }
 
-.graph-node-module.graph-module-physics {
-  border-color: var(--node-physics) !important;
+.graph-node.graph-node-module {
   border-width: 4px !important;
   border-left-width: 7px !important;
 }
 
-.graph-node-module.graph-module-math {
-  border-color: var(--node-math) !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
-}
-
-.graph-node-module.graph-module-graph {
-  border-color: var(--node-graph) !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
-}
-
-.graph-node-module.graph-module-viz {
-  border-color: var(--node-viz) !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
-}
-
-.graph-node-module.graph-module-viz:not(.graph-node-pending) {
+.graph-node.graph-node-module.graph-module-viz:not(.graph-node-pending) {
   min-height: 560px !important;
-}
-
-.graph-node-module.graph-module-socratic {
-  border-color: var(--node-socratic) !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
-}
-
-.graph-node-module.graph-module-learn {
-  border-color: var(--node-learn) !important;
-  border-width: 4px !important;
-  border-left-width: 7px !important;
 }
 
 .graph-node.dimmed {
@@ -870,185 +840,23 @@
   --poster-edge: rgba(71,85,105,.5);
 }
 
-.graph-node-user {
-  --graph-bubble-start: rgba(74, 158, 255, 0.12);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-question);
-  --graph-bubble-glow: rgba(74, 158, 255, 0.38);
+/* ---------- 节点卡面模板（2026-10-10 统一）：一类一张卡，类型只差颜色 ----------
+   旧版此处每类型一块手抄 rgba（user/answer/hub/summary/note/root/六模块，深浅各
+   一遍共 26 块）。现在卡面材质只有下面基础规则一条，类型差异全部是 --node-attr
+   （渲染层每节点内联注入）的派生：染色/描边/光晕从属性色 color-mix 出来，深浅
+   主题只调配比；end（卡底）与 shadow 不在类型层定义，随主题基座
+   （:root / [data-theme="light"]）走。新节点类型 = 定义一个属性色令牌，零 CSS 分块。 */
+.graph-node {
+  --graph-bubble-start: color-mix(in srgb, var(--node-attr, var(--accent)) 14%, transparent);
+  --graph-bubble-border: var(--node-attr, var(--accent));
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr, var(--accent)) 32%, transparent);
 }
 
-.graph-node-answer {
-  --graph-bubble-start: rgba(16, 185, 129, 0.12);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-answer);
-  --graph-bubble-glow: rgba(16, 185, 129, 0.38);
+[data-theme="light"] .graph-node {
+  --graph-bubble-start: color-mix(in srgb, var(--node-attr, var(--accent)) 18%, transparent);
+  --graph-bubble-glow: color-mix(in srgb, var(--node-attr, var(--accent)) 26%, transparent);
 }
 
-.graph-node-hub {
-  --graph-bubble-start: rgba(234, 179, 8, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-hub);
-  --graph-bubble-glow: rgba(234, 179, 8, 0.32);
-}
-
-.graph-node-summary {
-  --graph-bubble-start: rgba(13, 148, 136, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-summary);
-  --graph-bubble-glow: rgba(13, 148, 136, 0.32);
-}
-
-.graph-node-note {
-  --graph-bubble-start: color-mix(in srgb, var(--ink-human) 14%, transparent);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--ink-human);
-  --graph-bubble-glow: color-mix(in srgb, var(--ink-human) 32%, transparent);
-}
-
-.graph-node-root {
-  --graph-bubble-start: rgba(74, 158, 255, 0.25);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: #ffffff;
-  --graph-bubble-glow: rgba(74, 158, 255, 0.45);
-}
-
-.graph-node-module.graph-module-physics {
-  --graph-bubble-start: rgba(245, 158, 11, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-physics);
-  --graph-bubble-glow: rgba(245, 158, 11, 0.30);
-}
-
-.graph-node-module.graph-module-math {
-  --graph-bubble-start: rgba(59, 130, 246, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-math);
-  --graph-bubble-glow: rgba(59, 130, 246, 0.30);
-}
-
-.graph-node-module.graph-module-graph {
-  --graph-bubble-start: rgba(8, 145, 178, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-graph);
-  --graph-bubble-glow: rgba(8, 145, 178, 0.30);
-}
-
-.graph-node-module.graph-module-viz {
-  --graph-bubble-start: rgba(244, 114, 182, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-viz);
-  --graph-bubble-glow: rgba(244, 114, 182, 0.30);
-}
-
-.graph-node-module.graph-module-socratic {
-  --graph-bubble-start: rgba(244, 63, 94, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-socratic);
-  --graph-bubble-glow: rgba(244, 63, 94, 0.30);
-}
-
-.graph-node-module.graph-module-learn {
-  --graph-bubble-start: rgba(168, 85, 247, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-learn);
-  --graph-bubble-glow: rgba(168, 85, 247, 0.30);
-}
-
-[data-theme="light"] .graph-node-user {
-  --graph-bubble-start: rgba(74, 158, 255, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-question);
-  --graph-bubble-glow: rgba(74, 158, 255, 0.30);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-answer {
-  --graph-bubble-start: rgba(16, 185, 129, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-answer);
-  --graph-bubble-glow: rgba(16, 185, 129, 0.28);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-hub {
-  --graph-bubble-start: rgba(234, 179, 8, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-hub);
-  --graph-bubble-glow: rgba(234, 179, 8, 0.28);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-summary {
-  --graph-bubble-start: rgba(13, 148, 136, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-summary);
-  --graph-bubble-glow: rgba(13, 148, 136, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-note {
-  --graph-bubble-start: color-mix(in srgb, var(--ink-human) 18%, transparent);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--ink-human);
-  --graph-bubble-glow: color-mix(in srgb, var(--ink-human) 26%, transparent);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-root {
-  --graph-bubble-start: rgba(139, 105, 20, 0.20);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: #8b6914;
-  --graph-bubble-glow: rgba(139, 105, 20, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-physics {
-  --graph-bubble-start: rgba(245, 158, 11, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-physics);
-  --graph-bubble-glow: rgba(245, 158, 11, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-math {
-  --graph-bubble-start: rgba(59, 130, 246, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-math);
-  --graph-bubble-glow: rgba(59, 130, 246, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-graph {
-  --graph-bubble-start: rgba(8, 145, 178, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-graph);
-  --graph-bubble-glow: rgba(8, 145, 178, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-viz {
-  --graph-bubble-start: rgba(244, 114, 182, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-viz);
-  --graph-bubble-glow: rgba(244, 114, 182, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-socratic {
-  --graph-bubble-start: rgba(244, 63, 94, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-socratic);
-  --graph-bubble-glow: rgba(244, 63, 94, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-module.graph-module-learn {
-  --graph-bubble-start: rgba(168, 85, 247, 0.18);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-border: var(--node-learn);
-  --graph-bubble-glow: rgba(168, 85, 247, 0.26);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
 
 /* ---------- 6.5 配方节点卡片：与内置节点只差颜色（2026-10-09 用户验收反馈）----------
    六个内置模块卡各有「4px 彩框（左 7px）＋ 14% 彩色渐变 ＋ 彩色辉光」，配方节点
@@ -1082,28 +890,6 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 34px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
 }
 
-[data-theme="dark"] .graph-node-user,
-[data-theme="light"] .graph-node-user,
-[data-theme="dark"] .graph-node-answer,
-[data-theme="light"] .graph-node-answer,
-[data-theme="dark"] .graph-node-root,
-[data-theme="light"] .graph-node-root,
-[data-theme="dark"] .graph-node-module.graph-module-physics,
-[data-theme="light"] .graph-node-module.graph-module-physics,
-[data-theme="dark"] .graph-node-module.graph-module-math,
-[data-theme="light"] .graph-node-module.graph-module-math,
-[data-theme="dark"] .graph-node-module.graph-module-graph,
-[data-theme="light"] .graph-node-module.graph-module-graph,
-[data-theme="dark"] .graph-node-module.graph-module-viz,
-[data-theme="light"] .graph-node-module.graph-module-viz,
-[data-theme="dark"] .graph-node-module.graph-module-socratic,
-[data-theme="light"] .graph-node-module.graph-module-socratic,
-[data-theme="dark"] .graph-node-module.graph-module-learn,
-[data-theme="light"] .graph-node-module.graph-module-learn {
-  background: linear-gradient(135deg, var(--graph-bubble-start) 0%, var(--graph-bubble-end) 60%) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 34px var(--graph-bubble-glow), 0 14px 44px var(--graph-bubble-shadow) !important;
-}
-
 [data-theme="dark"] .graph-node:hover,
 [data-theme="light"] .graph-node:hover {
   border-color: var(--graph-bubble-border) !important;
@@ -1112,7 +898,7 @@
 
 [data-theme="dark"] .graph-node.selected,
 [data-theme="light"] .graph-node.selected {
-  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25), 0 20px 56px var(--graph-bubble-shadow) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--node-attr, var(--accent)) 30%, transparent), 0 20px 56px var(--graph-bubble-shadow) !important;
 }
 
 [data-theme="dark"] .graph-node.dragging,
@@ -2365,58 +2151,6 @@
   .graph-search-header input {
     font-size: 16px !important;
   }
-}
-
-.graph-node-source,
-.graph-node-knowledge,
-.graph-node-relation {
-  --graph-bubble-start: rgba(6, 182, 212, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-source);
-  --graph-bubble-glow: rgba(6, 182, 212, 0.34);
-  --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
-}
-
-.graph-node-knowledge {
-  --graph-bubble-start: rgba(132, 204, 22, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-knowledge);
-  --graph-bubble-glow: rgba(132, 204, 22, 0.30);
-  --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
-}
-
-.graph-node-relation {
-  --graph-bubble-start: rgba(244, 63, 94, 0.14);
-  --graph-bubble-end: rgba(16, 24, 46, 0.97);
-  --graph-bubble-border: var(--node-socratic);
-  --graph-bubble-glow: rgba(244, 63, 94, 0.30);
-  --graph-bubble-shadow: rgba(0, 0, 0, 0.38);
-}
-
-[data-theme="light"] .graph-node-source,
-[data-theme="light"] .graph-node-knowledge,
-[data-theme="light"] .graph-node-relation {
-  --graph-bubble-start: rgba(255, 253, 247, 0.98);
-  --graph-bubble-end: rgba(255, 253, 247, 0.98);
-  --graph-bubble-shadow: rgba(90, 70, 40, 0.10);
-}
-
-[data-theme="light"] .graph-node-source {
-  --graph-bubble-start: rgba(6, 182, 212, 0.16);
-  --graph-bubble-border: var(--node-source);
-  --graph-bubble-glow: rgba(6, 182, 212, 0.24);
-}
-
-[data-theme="light"] .graph-node-knowledge {
-  --graph-bubble-start: rgba(132, 204, 22, 0.16);
-  --graph-bubble-border: var(--node-knowledge);
-  --graph-bubble-glow: rgba(132, 204, 22, 0.22);
-}
-
-[data-theme="light"] .graph-node-relation {
-  --graph-bubble-start: rgba(244, 63, 94, 0.14);
-  --graph-bubble-border: var(--node-socratic);
-  --graph-bubble-glow: rgba(244, 63, 94, 0.20);
 }
 
 .graph-source-body,
@@ -6928,10 +6662,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
  * 2) 模块属性色统一走 var(--node-attr)（渲染层每节点内联注入），整组重映射也只动配比；
  * 3) 块内顺序固定：泛规则 → :hover → .selected → 人工家族左条 → root → branch →
  *    module → module:hover → module.selected，后写的赢（同级特异性靠源序）。
- * 4) module 覆盖块必须整组重写 background + box-shadow——主题的
- *    [data-theme] .graph-node-module.graph-module-* 是 (0,3,0) 且带 !important，比泛规则 (0,2,0) 高，
- *    只写 border-color 的话模块卡面整卡锁在默认皮（2026-10-01 用户真机实锤）；
- *    module 块写了静态投影，module:hover / module.selected（(0,4,0)）必须跟在后面补回属性色环。
+ * 4) （2026-10-10 起）节点卡面统一成一条模板派生后，主题层不再有逐类型材质块，
+ *    新皮肤的 module 块只需写边语言（border-color/border-style）与 hover/selected
+ *    的属性色环。现存五套皮肤的 module 块保留（多写不报错，与泛规则等值）。
  * 5) 卡内编辑控件（textarea/input，manual 内容框、draft 草稿框等）基础样式固定 var(--input-bg) 深底，
  *    皮肤泛规则管不到——每套皮肤末尾单独铺一条跟随卡面材质与描边（:focus 用模板高亮色保住聚焦反馈）。
  * 6) 皮肤颜色一律走「皮肤局部变量」（2026-10-01）：深色配方定义在 [data-node-skin="<key>"]，
