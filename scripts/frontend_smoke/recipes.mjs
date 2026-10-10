@@ -1605,6 +1605,47 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
   return true;
 });
 
+check('T266 追补（真机缺口）：连线/断线/删边必须触发整画布重渲染，「待命名」口改名才实时可见', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  let renderCalls = 0;
+  sandbox.renderGraphCanvas = () => { renderCalls += 1; };
+  const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, recipeId: '', timestamp: 1 };
+  const recipeNode = { id: 'r1', kind: 'module', recipeId: 'rec1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } }, messageIndex: -1, timestamp: 2 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: { m1: 2 }, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t266_live';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(moduleNode) + ',' + JSON.stringify(recipeNode) + '];'
+    + 'graphView.nodeById = { m1: graphView.nodes[0], r1: graphView.nodes[1] }; graphView.defaultEdges = [];', sandbox);
+  try {
+    // 1. 建边（匿名附加口 out-1 → 配方具名输入口）：改了「待命名」继承身份，必须全量重渲染
+    sandbox._connectPorts('m1', 'out-1', 'r1', 'in-0');
+    if (renderCalls !== 1) throw new Error('连线后应触发 1 次整画布重渲染，实际 ' + renderCalls);
+    const edge = (mem.connections || []).find(c => c.from === 'm1' && (c.fromPort || 'out-0') === 'out-1');
+    if (!edge || edge.to !== 'r1') throw new Error('连线未落 state.connections');
+    // 2. 断线（拖走输入口的线）：继承口回「未命名」同样依赖重渲染
+    sandbox._disconnectInputPort('r1', 'in-0');
+    if (renderCalls !== 2) throw new Error('断线后应再触发 1 次重渲染，实际 ' + renderCalls);
+    if ((mem.connections || []).some(c => c.to === 'r1')) throw new Error('断线未删 custom 边');
+    // 3. 删边（双击删除路径）：同族缺口
+    vm.runInContext('graphView.edges = [{ from: "m1", fromPort: "out-1", to: "r1", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    sandbox._removeGraphEdge(sandbox._edgeKey({ from: 'm1', fromPort: 'out-1', to: 'r1', toPort: 'in-0', type: 'custom', custom: true }));
+    if (renderCalls !== 3) throw new Error('删边后应再触发 1 次重渲染，实际 ' + renderCalls);
+  } finally {
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.escapeHtml = realEsc;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
 check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、summary 输出列挂＋号、isRoot 根卡基础口 0、计数公式单一来源', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
