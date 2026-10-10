@@ -2791,6 +2791,213 @@
   border-color: #10b981;
   color: #042f2e;
 }
+
+/* ---------- 总结类节点的笔记本编辑模式（2026-10-10 ①）---------- */
+/* 全屏左右分栏：左上游参考（details 逐路折叠）、右书写区（标题＋正文）。
+   面板刻意不用 aurora-glass：大面积阅读面上磨砂透字会伤可读性，走实底
+   panel-bg（与设置面板同语言）；遮罩自身保留 blur 拉开层次。 */
+.graph-notebook-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-graph-modal);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: clamp(12px, 3vh, 28px) clamp(12px, 4vw, 56px);
+  background: var(--harness-overlay-bg);
+  backdrop-filter: blur(6px);
+}
+
+.graph-notebook {
+  display: flex;
+  flex-direction: column;
+  width: min(1240px, 100%);
+  min-height: 0;
+  border-radius: var(--r-xl);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.graph-notebook-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.graph-notebook-head button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.graph-notebook-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 上游参考列：可滚动，条目用原生 details 折叠（零 JS） */
+.graph-notebook-src-col {
+  flex: 1 1 46%;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+  border-right: 1px solid var(--border);
+}
+
+.graph-notebook-col-title {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  margin-bottom: 8px;
+}
+
+.graph-notebook-src {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  margin-bottom: 8px;
+  background: var(--input-bg);
+}
+
+.graph-notebook-src summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.graph-notebook-src summary::-webkit-details-marker {
+  display: none;
+}
+
+.graph-notebook-src summary::before {
+  content: '▸';
+  color: var(--text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.graph-notebook-src[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.graph-notebook-src-body {
+  padding: 2px 12px 10px;
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+  overflow-x: auto;
+}
+
+.graph-notebook-empty {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  padding: 16px 6px;
+}
+
+/* 书写列：标题＋大书写区，保存条贴底 */
+.graph-notebook-edit-col {
+  flex: 1 1 54%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px 16px;
+}
+
+.graph-notebook-edit-col label {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  margin: 0 0 6px;
+}
+
+.graph-notebook-edit-col input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  outline: none;
+}
+
+.graph-notebook-edit-col textarea {
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-family: inherit;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+
+.graph-notebook-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  flex: 0 0 auto;
+}
+
+.graph-notebook-actions button {
+  padding: 8px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--fs-md);
+}
+
+.graph-notebook-actions .graph-notebook-save {
+  background: #10b981;
+  border-color: #10b981;
+  color: #042f2e;
+}
+
+/* 窄屏纵排：参考列限高保书写区可见 */
+@media (max-width: 860px) {
+  .graph-notebook-body {
+    flex-direction: column;
+  }
+  .graph-notebook-src-col {
+    flex: 0 0 auto;
+    max-height: 38%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ---------- 拖线吸附高亮（2026-10-10 ② 统一吸附）---------- */
+/* 拖线悬停在「松手即可连」的节点身上时打虚线描边；与选中态（实线）区分 */
+.graph-node.graph-link-drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 3px;
+}
+
 /* ---------- Desktop pet + chat window ---------- */
 /* ---------- Φ 桌宠（harness 化身）+ chat window ---------- */
 .phi-pet-root {

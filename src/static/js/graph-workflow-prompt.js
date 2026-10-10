@@ -82,6 +82,8 @@ function _collectUpstreamPath(node) {
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
       manual: !!item.manual,
+      // 节点标题（2026-10-10 ③）：note/我的回答 起的名优先于品类名进下游喂料标签
+      title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
@@ -113,6 +115,7 @@ function _collectInboundChain(node) {
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
       manual: !!item.manual,
+      title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
@@ -127,13 +130,13 @@ function _buildWorkflowContextForNode(node) {
     : node.kind === 'module'
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
-      ? { label: node.manual ? '我的回答' : '问题分析' }
+      ? { label: node.manual ? (node.title || '我的回答') : '问题分析' }
       : node.kind === 'hub'
         ? { label: '汇聚' }
         : node.kind === 'summary'
           ? { label: 'AI 总结' }
       : node.kind === 'note'
-          ? { label: '我的总结' }
+          ? { label: node.title || '我的总结' }
           : node.kind === 'source'
             ? { label: '输入' }
             : node.kind === 'knowledge'
@@ -172,14 +175,16 @@ function _buildWorkflowContextForNode(node) {
         module: item.module,
         label: item.kind === 'user'
           ? '问题'
-          : item.kind === 'knowledge'
-            ? '知识点'
-            : item.kind === 'relation'
-              ? '知识联系'
-              : item.kind === 'source'
-                ? '输入'
+          : item.kind === 'note'
+            ? (item.title || '我的总结')
+            : item.kind === 'knowledge'
+              ? '知识点'
+              : item.kind === 'relation'
+                ? '知识联系'
+                : item.kind === 'source'
+                  ? '输入'
           : item.kind === 'answer'
-            ? (item.manual ? '我的回答' : '问题分析')
+            ? (item.manual ? (item.title || '我的回答') : '问题分析')
             : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
         summary: item.summary,
         analysis: item.analysis || '',
