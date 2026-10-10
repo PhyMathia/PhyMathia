@@ -235,7 +235,7 @@ function _renderDraftNodeHtml(node) {
 function _nodeInputLabel(node) {
   if (node.recipeId && node.recipe && node.recipe.name) return node.recipe.name;
   if (node.kind === 'human_note') return '任意输入';
-  if (node.kind === 'answer') return node.manual ? '我的回答' : 'AI 回答';
+  if (node.kind === 'answer') return node.manual ? '我的回答' : '问题分析';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   if (node.kind === 'blank') return '任意输入';
   if (node.kind === 'hub') return '汇聚输入';
@@ -252,9 +252,9 @@ function _nodeOutputLabels(node, messages) {
   if (node.kind === 'draft') return [];
   if (node.kind === 'blank') return ['追问'];
   if (node.kind === 'human_note') return ['人工内容'];
-  if (node.kind === 'user') return ['AI 回答', '我的回答'];
+  if (node.kind === 'user') return ['问题分析', '我的回答'];
   if (node.kind === 'source') return (node.items || []).map(item => item.title || '知识点 ' + ((node.items || []).indexOf(item) + 1));
-  if (node.kind === 'knowledge') return ['AI 回答', '问题'];
+  if (node.kind === 'knowledge') return ['问题分析', '问题'];
   if (node.kind === 'relation') return [];
   if (node.kind === 'module') {
     return _moduleOutputPorts(node, messages[node.messageIndex]).map(item => item.label);
@@ -279,7 +279,7 @@ function _answerOutputPorts(node, messages) {
 
 function _knowledgeOutputPorts(node) {
   return [
-    { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
+    { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
     { label: '问题', type: 'branch', branchType: 'followup', attribute: 'question', group: 'question', question: '' },
   ];
 }
@@ -355,7 +355,7 @@ function _renderOutputPorts(node, messages, state) {
   let ports = [];
   if (node.kind === 'user') {
     ports = [
-      { label: 'AI 回答', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
+      { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
       { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
     ];
   } else if (node.kind === 'blank') {
@@ -533,6 +533,11 @@ function _cleanBlankNodeContent(node, rawContent) {
 
 function _renderCustomNodeContentHtml(node) {
   let text = String(node.kind === 'answer' && !node.manual ? (node.analysis || node.content || '') : (node.content || ''));
+  // 问题分析末尾的「建议模块：…」是内部控制行（_parseSuggestedModules 的解析依据），
+  // 不渲染给用户；渲染时剥，存量图的 analysis 同覆盖，node.analysis 原字段不动
+  if (node.kind === 'answer' && !node.manual && typeof stripSuggestedModulesLine === 'function') {
+    text = stripSuggestedModulesLine(text);
+  }
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   // 配方载体分派（P1 plain / P2 mermaid·html_iframe）：plain 不解析 Markdown、
@@ -957,7 +962,7 @@ function _renderNodeHtml(node, messages, state) {
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
-  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : 'AI 回答簇') : ''));
+  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : '问题分析') : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.recipeId && node.recipe && node.recipe.name
     ? node.recipe.name
@@ -970,7 +975,7 @@ function _renderNodeHtml(node, messages, state) {
         : node.kind === 'note'
           ? '我的总结'
           : (node.kind === 'answer' && node.messageIndex < 0
-            ? (node.manual ? '我的回答' : 'AI 回答')
+            ? (node.manual ? '我的回答' : '问题分析')
             : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
   // T69：折叠卡不建内容子树（CSS 本就 display:none），展开时整卡重建补水

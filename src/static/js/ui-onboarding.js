@@ -207,7 +207,7 @@ function _demoNode(id, kind, x, y, options) {
 function _buildExampleGraphDemoState() {
   const nodes = [
     _demoNode('demo-question', 'user', -700, -260, { manual: true, content: '请解释简谐运动的物理和数学本质，并生成交互式可视化' }),
-    _demoNode('demo-answer', 'answer', -220, -260, { analysis: '核心概念：回复力 F=-kx；数学结构：二阶线性微分方程；建议模块：物理视角、数学视角、知识图谱、交互可视化、进阶学习、苏格拉底追问。' }),
+    _demoNode('demo-answer', 'answer', -220, -260, { analysis: '核心概念：回复力 F=-kx；数学结构：二阶线性微分方程。' }),
     _demoNode('demo-physics', 'module', 340, -540, { moduleKey: 'physics', content: '物体偏离平衡位置越远，回复力越大。回复力 <formula>F=-kx</formula> 总指向平衡位置，动能和弹性势能不断转换。' }),
     _demoNode('demo-math', 'module', 350, -180, { moduleKey: 'math', content: '由牛顿第二定律得到 <formula>m\\frac{d^2x}{dt^2}=-kx</formula>，通解为 <formula>x(t)=A\\cos(\\omega t+\\phi)</formula>。' }),
     _demoNode('demo-graph', 'module', 350, 180, { moduleKey: 'graph', content: '知识图谱：回复力 → 位移 → 速度 → 加速度 → 能量守恒。' }),
@@ -262,7 +262,7 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '这是内置演示图',
     icon: UI_ICON_SVG.sparkles,
-    desc: '已经载入一张以「简谐运动」为主题的示例探索网，并已使用画布自带的<strong>自动整理</strong>重新排布：问题 → AI 回答 → 各模块 → 延伸与结构节点，层级更清晰。',
+    desc: '已经载入一张以「简谐运动」为主题的示例探索网，并已使用画布自带的<strong>自动整理</strong>重新排布：问题 → 问题分析 → 各模块 → 延伸与结构节点，层级更清晰。',
     points: ['演示期间不会调用模型，也不会写入你的会话。', '你也可以随时点击右下角工具栏的“自动整理”再次重排。', '关闭示例后，画布会恢复成你原来的图。'],
     target: '[data-node-id="demo-answer"]',
   },
@@ -276,14 +276,14 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '问题节点：探索的起点',
     icon: UI_ICON_SVG.pencil,
-    desc: '问题节点保存原始问题，右侧有两个输出端口：<strong>AI 回答</strong>和<strong>我的回答</strong>，分别连接自动回答或手写回答。',
+    desc: '问题节点保存原始问题，右侧有两个输出端口：<strong>问题分析</strong>和<strong>我的回答</strong>，分别连接 AI 自动分析或手写回答。',
     points: ['把输出端口拖到空白处可快速创建下一级节点。', '问题文本可以直接在节点中编辑。'],
     target: '[data-node-id="demo-question"]',
   },
   {
-    title: 'AI 回答节点：模块分发器',
+    title: '问题分析节点：概要 ＋ 模块分发器',
     icon: UI_ICON_SVG.sparkles,
-    desc: 'AI 回答节点根据问题分析结果，把回答拆成物理视角、数学视角、知识图谱、交互可视化、进阶学习和苏格拉底追问等模块。',
+    desc: '问题分析节点先给出一段问题概要，再把内容拆成物理视角、数学视角、知识图谱、交互可视化、进阶学习和苏格拉底追问等<strong>模块节点</strong>——深入内容都在模块里。',
     points: ['每个输出端口对应一个模块。', '状态徽标会显示“分析中 / 完成 / 失败”。'],
     target: '[data-node-id="demo-answer"]',
   },

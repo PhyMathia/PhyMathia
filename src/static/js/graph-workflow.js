@@ -218,7 +218,7 @@ async function _generateAnalysis(node, nodeSignal) {
 
   const workflowContext = {
     mode: 'analysis',
-    target: { kind: 'answer', label: 'AI 回答' },
+    target: { kind: 'answer', label: '问题分析' },
     question,
     requirements: node.requirements || '',
   };
@@ -315,7 +315,7 @@ async function _generateCustomNode(node, nodeSignal) {
   else renderGraphCanvas();
 
   const recipe = node.recipeId && node.recipe ? node.recipe : null;
-  // 配方双阶段（P2，analysis_phase＝AI 回答式）：正文生成前先产出问题概要，写进
+  // 配方双阶段（P2，analysis_phase＝问题分析式）：正文生成前先产出问题概要，写进
   // 自身 analysis——提示词与 workflow_context 拿到与官方 answer 同款的「隐藏分析」
   if (recipe && recipe.analysis_phase) {
     await _recipeGenerateAnalysis(node, nodeSignal);
@@ -812,7 +812,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
       let parallelInfo = '';
       const wfLogs = window.__wfLogs || [];
       const moduleStarts = wfLogs
-        .filter(e => e.type === 'start' && e.label && e.label !== '我的回答' && e.label !== 'AI 回答')
+        .filter(e => e.type === 'start' && e.label && e.label !== '我的回答' && e.label !== '问题分析')
         .map(e => e.t);
       if (moduleStarts.length > 1) {
         const spread = Math.max.apply(null, moduleStarts) - Math.min.apply(null, moduleStarts);
@@ -1011,7 +1011,7 @@ async function generateBlankNode(nodeId) {
         label: item.kind === 'user'
           ? '问题'
           : item.kind === 'answer'
-            ? 'AI 回答'
+            ? '问题分析'
             : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
         summary: _graphSummary(rawContent) || '',
         content: rawContent.slice(0, 800),

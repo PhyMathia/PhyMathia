@@ -87,7 +87,7 @@
 
   // 节点文本多级回退（画布渲染读什么这里就读什么）：
   // ① _nodeContent（消息节点主路径，模块切片/AI 摘要）
-  // ② content / analysis（手工与 Φ 生成节点的正文——AI 回答节点内容在 analysis，
+  // ② content / analysis（手工与 Φ 生成节点的正文——问题分析节点内容在 analysis，
   //    _nodeContent 不看它，漏了就整卡空白：用户泊松分布画布实测踩过）
   // ③ summary / label ④ 原始消息
   function posterNodeText(n, msg) {
@@ -105,6 +105,11 @@
       }
     }
     if (!raw) raw = String(n.label || '');
+    // 「建议模块：…」内部控制行不进海报：与画布渲染层同一把尺子（utils.js
+    // stripSuggestedModulesLine），只作用于 answer 非 manual 节点的取文
+    if (n.kind === 'answer' && !n.manual && typeof stripSuggestedModulesLine === 'function') {
+      raw = stripSuggestedModulesLine(raw);
+    }
     return raw;
   }
 
@@ -704,6 +709,7 @@
     titleSummary: posterTitleSummary,
     wrapLines: posterWrapLines,
     rectAnchor: posterRectAnchor,
+    nodeText: posterNodeText,
     layout: posterLayout,
   };
 })();

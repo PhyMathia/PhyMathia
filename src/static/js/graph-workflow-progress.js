@@ -9,7 +9,7 @@ function _workflowProgressLabel(node) {
   if (node.manual) return node.kind === 'note' ? '我的总结' : '我的回答';
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
-  if (node.kind === 'answer') return 'AI 回答';
+  if (node.kind === 'answer') return '问题分析';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   return node.kind;
 }

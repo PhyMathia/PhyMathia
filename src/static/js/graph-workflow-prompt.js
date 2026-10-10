@@ -127,7 +127,7 @@ function _buildWorkflowContextForNode(node) {
     : node.kind === 'module'
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
-      ? { label: node.manual ? '我的回答' : 'AI 回答' }
+      ? { label: node.manual ? '我的回答' : '问题分析' }
       : node.kind === 'hub'
         ? { label: '汇聚' }
         : node.kind === 'summary'
@@ -179,7 +179,7 @@ function _buildWorkflowContextForNode(node) {
               : item.kind === 'source'
                 ? '输入'
           : item.kind === 'answer'
-            ? (item.manual ? '我的回答' : 'AI 回答')
+            ? (item.manual ? '我的回答' : '问题分析')
             : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
         summary: item.summary,
         analysis: item.analysis || '',
@@ -297,7 +297,7 @@ function _workflowPromptForNode(node, workflowContext) {
       + (sourceText || '（暂无知识点内容）');
   }
   if (node.kind === 'answer' && !node.manual) {
-    return '请根据用户问题生成 AI 回答节点的完整内容。'
+    return '请根据用户问题生成问题分析节点的完整内容。'
       + '按 PhyMathia 系统提示词输出完整学习卡片 XML，包含 physics/math/graph/viz/learn/socratic 等标签，末尾输出 <summary>。';
   }
   if (node.kind === 'module') {

@@ -31,6 +31,16 @@ function _edgeKey(edge) {
   return (edge.from || '') + ':' + (edge.fromPort || 'out-0') + '->' + (edge.to || '') + ':' + (edge.toPort || 'in-0');
 }
 
+// ---------- 问题分析文本清洗 ----------
+// 「建议模块：…」是模型按分析提示词附在问题分析末尾的**内部控制行**——
+// _parseSuggestedModules 靠它决定建哪些模块节点，同一信息也由回答节点底部
+// 带名字的输出端口表达，从来不是给用户看的正文。在渲染层剥而不是存盘时：
+// 存量图的 node.analysis 里也躺着这行，渲染时剥一次全覆盖，且原字段不动、
+// 解析建点链路零影响。只用于 answer（非 manual）节点的展示取文。
+function stripSuggestedModulesLine(text) {
+  return String(text == null ? '' : text).replace(/\n?[ \t]*建议模块[ \t]*[：:][^\n]*/g, '');
+}
+
 // HTML 转义（DOM 方式 + 引号补齐）
 // 引号必须转义：结果会被拼进 value="..." 属性与 onclick 单引号字符串，
 // 不转义会造成属性逃逸注入
