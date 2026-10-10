@@ -28,12 +28,32 @@ const GRAPH_MODULE_DEFAULT_OUTPUTS = {
   learn: ['进阶学习', '追问'],
 };
 
-// 允许手工增加/删除输出端口的模块节点白名单（物理/数学/知识图谱/可视化/苏格拉底/进阶学习），
-// 渲染门控与增删动作共用此判定（source/knowledge 节点的能力另行判断）。
-const GRAPH_MODULE_OUTPUT_EXPANDABLE = Object.keys(GRAPH_MODULE_DEFAULT_OUTPUTS);
+// ── 端口机制统一（2026-10-10）：加口权限的唯一裁决处 ──
+// 渲染（graph-render 的＋号与×键）、右键菜单（graph-contextmenu）、增删守卫
+// （graph-interact）三处共用这两个门，别再在各处另写 kind 名单。口径＝常驻
+// 节点两侧都开放附加口，例外只有三条：draft（临时提问卡，两侧全关）、
+// source 的输入侧（源头节点，连输入列都不渲染）、动态出口配方（出口数随
+// 正文解析，手加会被冲掉）——answer 底座配方未声明静态出口同样锁出口
+// （T263 口径）。基础口（身份口）永远不可删，删的只能是附加口。
+function _nodeRecipeOutputLocked(node) {
+  if (!node || !node.recipeId) return false;
+  if (node.kind !== 'module' && node.kind !== 'answer') return false;
+  const snapshot = typeof _nodeRecipeSnapshot === 'function' ? _nodeRecipeSnapshot(node) : null;
+  if (!snapshot || (snapshot.ports && snapshot.ports.dynamic)) return true;
+  if (node.kind === 'answer' && !(typeof _recipeStaticPorts === 'function' && _recipeStaticPorts(node).length > 0)) return true;
+  return false;
+}
 
-function _moduleCanExpandOutputs(node) {
-  return !!node && node.kind === 'module' && GRAPH_MODULE_OUTPUT_EXPANDABLE.includes(node.moduleKey);
+function _nodeCanAddInputPorts(node) {
+  if (!node) return false;
+  if (node.kind === 'draft' || node.kind === 'source') return false;
+  return true;
+}
+
+function _nodeCanAddOutputPorts(node) {
+  if (!node) return false;
+  if (node.kind === 'draft') return false;
+  return !_nodeRecipeOutputLocked(node);
 }
 
 const GRAPH_NODE_ATTRIBUTES = {

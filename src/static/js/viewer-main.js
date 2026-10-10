@@ -119,6 +119,10 @@
     openLinkEdgeModal: '只读快照：联系线不可编辑',
     graphAddOutputPort: '只读快照：不能增删端口',
     graphAddInputPort: '只读快照：不能增删端口',
+    // 端口机制统一（2026-10-10）：删口函数补进只读桩——此前只拦了加口，×键
+    // 仅靠 CSS 隐藏挡着，控制台仍可调；统一后更多节点带附加口，一并堵上
+    graphRemoveOutputPort: '只读快照：不能增删端口',
+    graphRemoveInputPort: '只读快照：不能增删端口',
     _graphCtxDuplicateNode: '只读快照：不能复制出新节点',
     _graphCtxPasteNode: '只读快照：不能粘贴成新节点',
     _graphCtxCreateBlankNodeWithText: '只读快照：不能新建节点',
