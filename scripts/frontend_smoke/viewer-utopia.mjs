@@ -109,9 +109,9 @@ check('节点皮肤与弹窗：blank/我的理解 玻璃分层 + 双击节点面
   if (!/max-width:\s*340px\s*!important/.test(hn)) throw new Error('我的理解窄卡比例会被通用 min/max-width 吃掉（需 !important）');
   // 双击节点/连线面板：三个创建点都挂 aurora-glass，且弹窗规则不得再写 background 简写（会盖掉极光）。
   // 2026-10-10 起为三处：原第四个创建点（总结类编辑弹窗）升级成全屏笔记本编辑模式
-  // （graph-notebook，左上游右书写）——大面积阅读面刻意走实底 panel-bg 不用玻璃，
-  // 自带底色不可能出现「纯透明玻璃」事故，不受本契约约束（契约反斜在 recipes.mjs
-  // 的笔记本用例：overlay 类名＋标题输入框在位）。
+  // （graph-notebook，左上游右书写）——它是独立全屏载体，不属 graph-network-modal 家族，
+  // 玻璃口径由 aurora-glass--panel 档承担（本体 CSS 禁写底色），本契约正则不扫它；
+  // 契约反斜在 recipes.mjs 的笔记本用例（overlay 类名＋标题输入框在位）。
   const gc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
   if ((gc.match(/graph-network-modal aurora-glass/g) || []).length < 3) {
     throw new Error('节点弹窗未全部挂 aurora-glass');
