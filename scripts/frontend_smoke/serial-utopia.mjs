@@ -118,6 +118,18 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
     if (!seg.includes('_sseContentFrames(resp)')) {
       throw new Error(fn + ' 没走共享读取口');
     }
+    // T218：流式卡片渲染 250ms 节流（原每 rAF 帧整卡 innerHTML 重建＋KaTeX 全量
+    // 重跑，长文本整流 O(n²)；口径对齐 chat.js 同路径 250ms）。节流常量统一走
+    // GRAPH_STREAM_RENDER_MS，别在哪个函数里私开一个数字。
+    if (seg.includes('requestAnimationFrame')) {
+      throw new Error(fn + ' 的流式渲染仍在按帧重建（T218：应 setTimeout + GRAPH_STREAM_RENDER_MS 节流）');
+    }
+    if (!seg.includes('}, GRAPH_STREAM_RENDER_MS)')) {
+      throw new Error(fn + ' 缺 GRAPH_STREAM_RENDER_MS 节流收尾');
+    }
+  }
+  if (!gwCode.includes('const GRAPH_STREAM_RENDER_MS = 250')) {
+    throw new Error('T218 流式渲染节流常量缺失或不是 250ms');
   }
 });
 

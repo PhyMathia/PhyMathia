@@ -505,6 +505,9 @@ function _recipeNodeAttribute(node) {
 // 静态出口表（_moduleOutputPorts / answer 分支优先读取）。
 // 返回渲染层端口 meta：type/branchType 走 branch+followup（= 拖出建提问草稿），
 // drag_form 单独放 dragCreates 字段，由 _createBranchNodeFromOutput 路由。
+// contentType 是内容类型（text/formula/diagram/html，T264 管线）：显式声明优先，
+// 缺省按配方载体推导（_recipePortTypeForContent）——与 type（拖拽语义）分属两条轴，
+// 渲染层落到输出口 DOM 的 data-port-content-type，别写进 data-port-type。
 function _recipeStaticPorts(node) {
   const recipe = _nodeRecipeSnapshot(node);
   if (!recipe || !Array.isArray(recipe.ports && recipe.ports.static)) return [];
@@ -515,6 +518,7 @@ function _recipeStaticPorts(node) {
     attribute: 'recipe',
     question: '',
     dragCreates: port.drag_form || 'draft',
+    contentType: port.type || _recipePortTypeForContent(recipe.content_kind),
   }));
 }
 

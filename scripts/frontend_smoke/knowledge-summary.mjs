@@ -220,13 +220,16 @@ check('knowledge: 导出 Markdown 接线（按钮/整库口径/两个 tab 构建
 });
 
 check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静态接线', () => {
-  // T39：fitGraph 里画布滚动位置清零（缩放/适配后不残留滚动偏移）
-  const srcInteract = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
-  for (const frag of ['graphCanvas.scrollTop = 0', 'graphCanvas.scrollLeft = 0']) {
-    if (!srcInteract.includes(frag)) throw new Error('T39 graph-interact.js 缺滚动清零: ' + frag);
+  // T39/T259：画布滚动位置清零收进 _applyGraphTransform 公共入口（原先只在 fitGraph
+  // 一条路清；工作流收尾焦点/Φ 预览等其他写 pan/zoom 的路径残留偏移会把世界坐标→屏幕
+  // 映射整体带偏，实测偏 321–846px）。fitGraph 收尾必经该入口，不再单独清。
+  const srcRenderT39 = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  if (!/function _applyGraphTransform\(\) \{[\s\S]{0,700}graphCanvas\.scrollTop = 0;[\s\S]{0,80}graphCanvas\.scrollLeft = 0;/.test(srcRenderT39)) {
+    throw new Error('T39/T259 _applyGraphTransform 公共入口未清零 scrollTop/scrollLeft');
   }
-  if (!/function fitGraph\(\) \{[\s\S]{0,400}graphCanvas\.scrollTop = 0/.test(srcInteract)) {
-    throw new Error('T39 fitGraph 函数体 400 字符内未清零 scrollTop');
+  const srcInteract = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  if (/function fitGraph\(\) \{[\s\S]{0,400}graphCanvas\.scrollTop = 0/.test(srcInteract)) {
+    throw new Error('T259 fitGraph 里的清零应删（公共入口已统一清，双写留漂移口）');
   }
 
   // T54：导出/海报大画布面积上限 + 空白画布兜底（超限自动降采样，不再出白图）
