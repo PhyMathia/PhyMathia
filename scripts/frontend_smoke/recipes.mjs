@@ -1646,6 +1646,101 @@ check('T266 追补（真机缺口）：连线/断线/删边必须触发整画布
   return true;
 });
 
+check('待命名口拖空开节点菜单（2026-10-10 拍板）：不再预设提问卡，选中即自动连回源口，取消即清挂起', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  const realOpenModal = sandbox.openAddBlankNodeModal;
+  const srcNode = { id: 'm9', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  const opened = [];
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_port_drag_menu';
+  sandbox.renderGraphCanvas = () => {};
+  sandbox.openAddBlankNodeModal = (x, y) => { opened.push({ x, y }); };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ']; graphView.nodeById = { m9: graphView.nodes[0] };', sandbox);
+  try {
+    // 1. 待命名附加口拖到空处：于落点打开面板＋记挂起连线；一个节点都不建（提问卡路径不进）
+    sandbox._createBranchNodeFromOutput('m9', 'out-1', { type: 'custom', branchType: 'followup', attribute: 'followup', question: '', level: '', label: '待命名', item: null, dragCreates: '' }, 111, 222);
+    if (opened.length !== 1 || opened[0].x !== 111 || opened[0].y !== 222) throw new Error('拖空应于落点打开添加节点面板，实际 ' + JSON.stringify(opened));
+    const pending = vm.runInContext('addBlankNodePendingLink', sandbox);
+    if (!pending || pending.sourceNodeId !== 'm9' || pending.sourcePortId !== 'out-1') throw new Error('应记挂起连线指向来源口，实际 ' + JSON.stringify(pending));
+    if (vm.runInContext('graphView.nodes.length', sandbox) !== 1) throw new Error('拖空不应建任何节点（含提问草稿卡）');
+
+    // 2. 面板里选中节点：建点即自动连回来源口（与建点同一条 state），挂起当场清空
+    vm.runInContext('addBlankNodePoint = { x: 111, y: 222 };', sandbox);
+    sandbox.createManualNode('note');
+    const conn = (mem.connections || []).find(c => c.from === 'm9' && (c.fromPort || 'out-0') === 'out-1');
+    if (!conn || conn.toPort !== 'in-0' || conn.type !== 'custom') throw new Error('面板建点后应自动连回来源口');
+    const newNode = (mem.customNodes || []).find(n => n.id === conn.to);
+    if (!newNode || newNode.kind !== 'note') throw new Error('选中的节点类型应落在 state.customNodes');
+    if (vm.runInContext('addBlankNodePendingLink', sandbox) !== null) throw new Error('消费后挂起连线应清空');
+
+    // 3. 取消路径：关面板清挂起；此后普通双击建点不带任何连线
+    vm.runInContext('addBlankNodePendingLink = { sourceNodeId: "x9", sourcePortId: "out-0" };', sandbox);
+    sandbox.closeAddBlankNodeModal();
+    if (vm.runInContext('addBlankNodePendingLink', sandbox) !== null) throw new Error('关闭面板应清掉挂起连线');
+    const before = (mem.customNodes || []).length;
+    sandbox.createManualNode('note');
+    if ((mem.customNodes || []).length !== before + 1) throw new Error('普通双击建点应照常');
+    if ((mem.connections || []).some(c => c.from === 'x9')) throw new Error('无挂起时建点不得带出连线');
+  } finally {
+    sandbox.openAddBlankNodeModal = realOpenModal;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; addBlankNodePendingLink = null; addBlankNodePoint = { x: 0, y: 0 };', sandbox);
+  }
+  return true;
+});
+
+check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2026-10-10）', () => {
+  // 具名口行为回归：source 具名条目口（type knowledge）拖空仍直建知识点节点并连线，不开面板
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  const realOpenModal = sandbox.openAddBlankNodeModal;
+  const srcNode = { id: 's9', kind: 'source', items: [{ title: '导数' }], fileId: '', fileName: '', messageIndex: -1, timestamp: 2 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  let openedCount = 0;
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_port_named';
+  sandbox.renderGraphCanvas = () => {};
+  sandbox.openAddBlankNodeModal = () => { openedCount += 1; };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ']; graphView.nodeById = { s9: graphView.nodes[0] };', sandbox);
+  try {
+    sandbox._createBranchNodeFromOutput('s9', 'out-0', { type: 'knowledge', branchType: '', attribute: 'knowledge', question: '', level: '', label: '导数', item: { title: '导数', summary: '瞬时变化率' }, dragCreates: '' }, 33, 44);
+    if (openedCount !== 0) throw new Error('具名口拖空不应打开节点菜单');
+    const conn = (mem.connections || []).find(c => c.from === 's9');
+    if (!conn) throw new Error('知识点口拖空应照旧建知识点节点并连线');
+    const node = (mem.customNodes || []).find(n => n.id === conn.to);
+    if (!node || node.kind !== 'knowledge') throw new Error('具名知识点口应直建知识点节点');
+  } finally {
+    sandbox.openAddBlankNodeModal = realOpenModal;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  // 静态契约：菜单分支只认「待命名」且先于 knowledge fallback；挂起连线三件套插点在位
+  const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const menuIdx = interactSrc.indexOf("if (label === '待命名')");
+  const knowledgeIdx = interactSrc.indexOf("if (type === 'knowledge')");
+  if (menuIdx < 0 || knowledgeIdx < 0 || menuIdx > knowledgeIdx) throw new Error('待命名菜单分支应存在且先于知识点 fallback 分支');
+  const customSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  if (!customSrc.includes('function _consumePendingPortLink')) throw new Error('挂起连线消费函数缺失');
+  const hooks = customSrc.split('_consumePendingPortLink(state, nodeId);').length - 1;
+  if (hooks !== 2) throw new Error('createManualNode/createRecipeNode 应各消费一次挂起连线，实际 ' + hooks + ' 处');
+  if (!customSrc.includes('addBlankNodePendingLink = null')) throw new Error('关面板应清挂起连线');
+  if (!fs.readFileSync('src/static/js/graph.js', 'utf8').includes('let addBlankNodePendingLink = null')) throw new Error('挂起连线全局声明缺失');
+  if (!fs.readFileSync('src/static/js/graph-render.js', 'utf8').includes('拖到空处打开节点菜单')) throw new Error('待命名口 tooltip 未同步新行为');
+  return true;
+});
+
 check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、summary 输出列挂＋号、isRoot 根卡基础口 0、计数公式单一来源', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));

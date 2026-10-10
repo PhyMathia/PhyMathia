@@ -185,6 +185,10 @@ const TARGET_R = [0, 420, 940, 1460, 2000, 2560, 3120, 3680];
 const MAX_ITERATIONS = 120;
 let addBlankNodePoint = { x: 0, y: 0 };
 let addBlankNodeOverlay = null;
+// 添加节点面板的「挂起连线」：待命名附加输出口拖到空处时记下来源端口，面板里
+// 选中节点后由 createManualNode/createRecipeNode 消费（建点即自动连回来源口）；
+// 关闭面板（取消/改道）就地清掉。普通双击建点无挂起，消费函数是空操作。
+let addBlankNodePendingLink = null;
 
 
 const GRAPH_LAYOUT_FIELDS = ["positions", "sizes", "pan", "zoom", "collapsed", "hidden", "pinned", "layoutVersion", "groups", "portCounts", "inputPortCounts"];

@@ -494,6 +494,17 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
     return;
   }
   const option = _findManualOptionByPort(portMeta);
+  // 待命名附加输出口（＋手动加出、未连线继承名字）：身份未定，拖到空处不再预设
+  // 「提问」（source 的 knowledge fallback 也让位）——打开添加节点面板（与双击空白
+  // 同款）由用户自己选；选中后经挂起连线（addBlankNodePendingLink →
+  // _consumePendingPortLink）建点即自动连回本口，关闭面板则什么都不建。
+  // 具名口不进此分支（身份已定，沿用各自拖出目标：问题/追问口→提问卡、
+  // 知识点口→知识点节点、配方口→drag_creates 声明）。
+  if (label === '待命名') {
+    openAddBlankNodeModal(x, y);
+    addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
+    return;
+  }
   if (type === 'knowledge') {
     _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
     return;
