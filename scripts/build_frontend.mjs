@@ -63,6 +63,11 @@ const entries = [
   'graph-continent-view.js',
   'models.js',
   'harness.js',
+  // Φ 会话管理与快照构建（2026-10-10 自 harness.js 拆出，T261 纯搬家）：sessions 件
+  // 尾部带原顶层立即调用 _initPhiSessions()（同步前缀读域内 let，故须在 harness.js
+  // 状态块之后执行）；快照件纯函数，run/apply 运行期调用
+  'harness-sessions.js',
+  'harness-snapshot.js',
   'harness-run.js',
   'harness-preview.js',
   'harness-apply.js',

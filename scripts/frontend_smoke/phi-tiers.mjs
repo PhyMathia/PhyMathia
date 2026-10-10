@@ -11,7 +11,9 @@ export function run() {
 // 静默丢弃、phase 不得裸英文、清空不得用原生 confirm。
 check('harness：第一档七件套 T86–T92（澄清不抹历史/流式重置/应用防重入/切换守卫/排队/phase 中文/清空内联确认）', () => {
   const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // T261 拆分后 Φ 域分散在 harness 家族，按家族拼接断言
+  const hsrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   const asrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
   const psrc = fs.readFileSync('src/static/js/harness-preview.js', 'utf8');
   const ssrc = fs.readFileSync('src/static/js/send-queue.js', 'utf8');
@@ -55,7 +57,9 @@ check('harness：第一档七件套 T86–T92（澄清不抹历史/流式重置/
 // 有引导、长等待有进度感。
 check('harness：体验级八件套 T99–T106（停止续接/内容diff/时间线语义/流式渲染/换模型重试/改名搜索/空态引导/进度感）', () => {
   const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // T261 拆分后 Φ 域分散在 harness 家族，按家族拼接断言
+  const hsrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   const asrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
   const psrc = fs.readFileSync('src/static/js/harness-preview.js', 'utf8');
   const css = fs.readFileSync('src/static/css/graph-override.css', 'utf8');

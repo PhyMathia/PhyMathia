@@ -474,7 +474,8 @@ check('draftAskAi 空问题提示（T56②）：兜底端口点「直接问AI」
 // ===== 节点配方 P3：创造模式（Φ 面板 / 配方 op 应用 / 相位直通）=====
 
 check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随', () => {
-  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const harnessSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!harnessSrc.includes('graphHarnessModeBtn')) throw new Error('模式按钮未进面板');
   if (!harnessSrc.includes('window._harnessMode')) throw new Error('模式状态未暴露给发送链');
   if (!harnessSrc.includes('snapshot.user_recipes')) throw new Error('配方清单未随快照注入（结构化通道）');
@@ -498,7 +499,8 @@ check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随'
 });
 
 check('使用引导覆盖创造模式与自定义节点入口', () => {
-  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const harnessSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   const m = harnessSrc.match(/const HARNESS_GUIDE_TEXT = \[([\s\S]*?)\]\.join/);
   if (!m) throw new Error('HARNESS_GUIDE_TEXT 未找到');
   for (const needle of ['三种模式', '自定义节点', '放一个到画布上试试', '我的配方', '存为配方', '删配方不影响']) {
@@ -508,7 +510,8 @@ check('使用引导覆盖创造模式与自定义节点入口', () => {
 });
 
 check('使用引导覆盖答疑先查再答与配方放置（2026-10-03 智能化第二期）', () => {
-  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const harnessSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   const m = harnessSrc.match(/const HARNESS_GUIDE_TEXT = \[([\s\S]*?)\]\.join/);
   if (!m) throw new Error('HARNESS_GUIDE_TEXT 未找到');
   for (const needle of ['先查再答', '知识库和公式速查', '编辑模式也能直接放置']) {
@@ -592,7 +595,8 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
 
 check('快照配方清单按最近修改倒序注入（T244：32 条上限下的视野优先）', () => {
   // 静态：注入点必须是 updatedAt 倒序的副本（不改 getUserRecipes 本身）
-  const harnessSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const harnessSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!/getUserRecipes\(\)\.slice\(\)\.sort\(\(a, b\) => \(b\.updatedAt \|\| 0\) - \(a\.updatedAt \|\| 0\)\)/.test(harnessSrc)) {
     throw new Error('清单注入未按 updatedAt 倒序（T244 回归）');
   }

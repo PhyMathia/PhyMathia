@@ -193,7 +193,7 @@ function sessionsFixture(extra = []) {
 // graph-recipes.js（节点配方注册表，P0）必须先于 harness.js 加载——注册表是单一
 // 事实源（available_node_types 通道 2026-10-06 退役后 harness.js 不再调它的派生函数，
 // 但加载顺序契约不变）
-const harnessModules = ['graph-recipes.js', 'harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
+const harnessModules = ['graph-recipes.js', 'harness.js', 'harness-sessions.js', 'harness-snapshot.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
 function harnessFixture() {
   const f = sessionsFixture(harnessModules); const { s } = f;
   // Φ 会话解耦（2026-09-30）：真实页面 init 必然存在一个（默认绑当前画布的）当前 Φ
