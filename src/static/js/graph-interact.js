@@ -307,6 +307,41 @@ function _startLinkDrag(event, portEl) {
   _redrawEdges();
 }
 
+// 拖线松手/悬停共用的「落点在哪个节点身上」：只认 .graph-node 祖先，落在端口上时
+// 上层分支已先行处理，这里兜底返回同一节点（端口也在节点内）。
+function _linkDragNodeEl(event) {
+  if (!event.target || typeof event.target.closest !== 'function') return null;
+  return event.target.closest('.graph-node');
+}
+
+// 拖线悬停高亮（2026-10-10 统一吸附）：指针下方是「松手即可吸附」的节点时打高亮，
+// 让用户松手前就知道会连上。输出口拖拽认「能加输入口」的目标；输入口拖拽认「至少有
+// 一个输出口」的目标；自己永远不高亮（自连禁）。指针捕获会让 event.target 恒为起点
+// 端口，所以用 elementFromPoint 做真实命中测试。
+function _updateLinkDragHover(clientX, clientY) {
+  _clearLinkDragHover();
+  const drag = graphView.linkDrag;
+  if (!drag) return;
+  const hit = (typeof document !== 'undefined' && document.elementFromPoint)
+    ? document.elementFromPoint(clientX, clientY)
+    : null;
+  const nodeEl = hit && typeof hit.closest === 'function' ? hit.closest('.graph-node') : null;
+  if (!nodeEl || !graphInner || !graphInner.contains(nodeEl)) return;
+  if (nodeEl.dataset.nodeId === drag.nodeId) return;
+  if (drag.mode === 'output') {
+    const target = _findGraphNode(nodeEl.dataset.nodeId);
+    if (target && typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(target)) {
+      nodeEl.classList.add('graph-link-drop-target');
+    }
+  } else if (nodeEl.querySelector('.graph-output-port')) {
+    nodeEl.classList.add('graph-link-drop-target');
+  }
+}
+
+function _clearLinkDragHover() {
+  graphInner?.querySelectorAll('.graph-node.graph-link-drop-target').forEach(el => el.classList.remove('graph-link-drop-target'));
+}
+
 function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) return;
   const fromNode = _findGraphNode(fromNodeId);
@@ -325,14 +360,17 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
     return !sameSource && (toNode.kind !== 'hub' || !sameInput);
   });
   let resolvedToPort = toPort || 'in-0';
-  if (toNode.kind === 'module') {
+  // 统一吸附/自动长口（2026-10-10）：凡是过加口门的节点，连线一律「瞄准的口空着就用
+  // 它、占用就顺延到下一个空口、口不够就长一个」——此前只有配方模块享有（T263），
+  // hub 退役后多路汇拢全靠这条路径。isRoot 根卡基础口数与渲染口径一致取 0。
+  if (typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(toNode)) {
     const free = _freeModuleInputPort(state, toNodeId, resolvedToPort);
     resolvedToPort = free.port;
+    const baseCount = toNode.isRoot ? 0 : _nodeBaseInputPortCount(toNode);
     state.inputPortCounts = state.inputPortCounts || {};
-    // T263：附加口数＝占用的基础口之外的端口数（具名声明时基础口数＝声明数）
     state.inputPortCounts[toNodeId] = Math.max(
       state.inputPortCounts[toNodeId] || 0,
-      Math.max(0, free.index - _nodeBaseInputPortCount(toNode) + 1)
+      Math.max(0, free.index - baseCount + 1)
     );
   }
   const edge = {
@@ -1444,6 +1482,7 @@ function _applyPointerDrag(clientX, clientY) {
     graphView.linkDrag.currentY = point.y;
     // 只更新拖拽线本身的 d；结构不在（缓存被清）时退回全量重建
     if (!_refreshLinkDragPath()) _redrawEdges();
+    if (graphView.moved) _updateLinkDragHover(clientX, clientY);
     return;
   }
   if (graphView.boxSelect) {
@@ -1564,12 +1603,35 @@ function _endPointerDrag(event) {
       const sourceNodeId = dropPort.closest('.graph-node')?.dataset.nodeId;
       _connectPorts(sourceNodeId, dropPort.dataset.portId, drag.nodeId, drag.portId);
     } else if (drag.mode === 'input' && graphView.moved) {
-      _disconnectInputPort(drag.nodeId, drag.portId);
-    } else if (drag.mode === 'output' && graphView.moved
-      && (!event.target || typeof event.target.closest !== 'function' || !event.target.closest('.graph-node'))) {
-      const point = _clientToGraphLocal(event.clientX, event.clientY);
-      _createBranchNodeFromOutput(drag.nodeId, drag.portId, drag.portMeta, point.x, point.y);
+      // 拖输入口的线落到节点身上（非具体输出口）：吸附该节点第一个输出口；没有输出口
+      // 或落回自己，维持原「拖走即断开」语义。不自动长输出口——出口有身份语义
+      // （追问/知识点/配方出口各自拖出不同的东西），匿名长出来没有明确指向。
+      const hoverEl = _linkDragNodeEl(event);
+      const outPort = hoverEl && hoverEl.dataset.nodeId !== drag.nodeId
+        ? hoverEl.querySelector('.graph-output-port')
+        : null;
+      if (outPort) {
+        _connectPorts(hoverEl.dataset.nodeId, outPort.dataset.portId, drag.nodeId, drag.portId);
+      } else {
+        _disconnectInputPort(drag.nodeId, drag.portId);
+      }
+    } else if (drag.mode === 'output' && graphView.moved) {
+      // 拖输出口的线落到节点身上（非具体输入口）：目标能加输入口就吸附到下一个空口
+      // （口满了自动长一个，与瞄准具体口同一条路径）；落在不能加口的节点（草稿卡）上
+      // 是无操作。只有落到纯空白处才走「拖空建点/开面板」分支。
+      const hoverEl = _linkDragNodeEl(event);
+      if (hoverEl) {
+        const targetId = hoverEl.dataset.nodeId;
+        const target = targetId && targetId !== drag.nodeId ? _findGraphNode(targetId) : null;
+        if (target && typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(target)) {
+          _connectPorts(drag.nodeId, drag.portId, targetId, '');
+        }
+      } else {
+        const point = _clientToGraphLocal(event.clientX, event.clientY);
+        _createBranchNodeFromOutput(drag.nodeId, drag.portId, drag.portMeta, point.x, point.y);
+      }
     }
+    _clearLinkDragHover();
     graphView.linkDrag = null;
     graphView.pointerId = null;
     graphView.panning = false;

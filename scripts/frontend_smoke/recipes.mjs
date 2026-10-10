@@ -1856,4 +1856,172 @@ check('附加输入口「待命名」态（2026-10-10 统一）：加出来的�
   }
   return true;
 });
+
+check('统一吸附/自动长口（2026-10-10 ②）：连线对任意可加口节点吸附空口、口满自动长、瞄准占用口顺延', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  sandbox.renderGraphCanvas = () => {};
+  const sumNode = { id: 's1', kind: 'summary', moduleKey: 'summary', manual: true, messageIndex: -1, timestamp: 3 };
+  const phyNode = { id: 'p1', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 1 };
+  const noteNode = { id: 'n1', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 2 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_snap_2026_10_10';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(phyNode) + ',' + JSON.stringify(noteNode) + ',' + JSON.stringify(sumNode) + '];'
+    + 'graphView.nodeById = { p1: graphView.nodes[0], n1: graphView.nodes[1], s1: graphView.nodes[2] }; graphView.defaultEdges = []; graphView.edges = [];', sandbox);
+  try {
+    // 1. 拖到节点身上（toPort 空）：吸附第一个空口 in-0（summary 基础口 1，附加口 0）
+    sandbox._connectPorts('p1', 'out-0', 's1', '');
+    let edges = mem.connections || [];
+    if (!edges.some(c => c.from === 'p1' && c.to === 's1' && c.toPort === 'in-0')) throw new Error('落身应吸附基础空口 in-0');
+    if ((mem.inputPortCounts || {}).s1) throw new Error('未超基础口不应记附加口数');
+    // 2. 第二条线仍落身：自动长到 in-1，附加口数记 1
+    sandbox._connectPorts('n1', 'out-0', 's1', '');
+    edges = mem.connections || [];
+    if (!edges.some(c => c.from === 'n1' && c.to === 's1' && c.toPort === 'in-1')) throw new Error('口满应自动长到 in-1');
+    if ((mem.inputPortCounts || {}).s1 !== 1) throw new Error('附加口数应记 1，实际 ' + (mem.inputPortCounts || {}).s1);
+    // 3. 瞄准已占用的 in-0：顺延到下一个空口 in-2（不再静默丢线），附加口数 2
+    sandbox._connectPorts('p1', 'out-1', 's1', 'in-0');
+    edges = mem.connections || [];
+    if (!edges.some(c => c.from === 'p1' && c.fromPort === 'out-1' && c.to === 's1' && c.toPort === 'in-2')) throw new Error('瞄准占用口应顺延到 in-2');
+    if ((mem.inputPortCounts || {}).s1 !== 2) throw new Error('附加口数应记 2，实际 ' + (mem.inputPortCounts || {}).s1);
+    // 4. 同一输出口重连别处：旧线被撤走（一口一线），不残留双线
+    sandbox._connectPorts('p1', 'out-1', 's1', '');
+    edges = (mem.connections || []).filter(c => c.from === 'p1' && c.fromPort === 'out-1');
+    if (edges.length !== 1) throw new Error('同一输出口重连应撤旧线只留一条');
+    // 5. 静态契约：松手分支与悬停高亮在位（行为级 pointerup 事件不在沙盒模拟范围）
+    const iaSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+    if (!iaSrc.includes('function _updateLinkDragHover') || !iaSrc.includes('function _linkDragNodeEl')) throw new Error('吸附悬停高亮函数缺失');
+    if (!iaSrc.includes('_nodeCanAddInputPorts(toNode)')) throw new Error('连线吸附未走统一加口门');
+  } finally {
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
+check('节点标题（2026-10-10 ③）：副标题与喂料标签有标题用标题，画布搜索口径一致', () => {
+  // 1. 副标题：note/manual answer 有标题显示标题，无标题回落品类名
+  if (sandbox._nodeSub({ kind: 'note', title: '力学总结' }) !== '力学总结') throw new Error('note 副标题应优先标题');
+  if (sandbox._nodeSub({ kind: 'note' }) !== '我的总结') throw new Error('note 无标题应回落品类名');
+  if (sandbox._nodeSub({ kind: 'answer', manual: true, title: '自己答的' }) !== '自己答的') throw new Error('我的回答副标题应优先标题');
+  if (sandbox._nodeSub({ kind: 'answer', manual: true }) !== '我的回答') throw new Error('我的回答无标题应回落品类名');
+  if (sandbox._nodeSub({ kind: 'answer', manual: false, title: '不应生效' }) === '不应生效') throw new Error('问题分析不吃标题');
+  // 2. 喂料标签：下游生成上下文里上游 note/我的回答 用标题，与词表一致
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_title_2026_10_10';
+  const userNode = { id: 'q1', kind: 'user', messageIndex: -1, timestamp: 1, content: '什么是角动量守恒' };
+  const noteA = { id: 'na', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 2, title: '力学部分', content: '转动惯量守恒' };
+  const noteB = { id: 'nbt', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 3, content: '无标题总结' };
+  const sumNode = { id: 'sd', kind: 'summary', moduleKey: 'summary', manual: true, messageIndex: -1, timestamp: 4 };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(userNode) + ',' + JSON.stringify(noteA) + ',' + JSON.stringify(noteB) + ',' + JSON.stringify(sumNode) + '];'
+    + 'graphView.nodeById = { q1: graphView.nodes[0], na: graphView.nodes[1], nbt: graphView.nodes[2], sd: graphView.nodes[3] };', sandbox);
+  vm.runInContext('graphView.defaultEdges = []; graphView.edges = ['
+    + '{ from: "q1", fromPort: "out-0", to: "na", toPort: "in-0", type: "custom", custom: true },'
+    + '{ from: "na", fromPort: "out-0", to: "sd", toPort: "in-0", type: "custom", custom: true },'
+    + '{ from: "nbt", fromPort: "out-0", to: "sd", toPort: "in-1", type: "custom", custom: true }];', sandbox);
+  try {
+    const ctx = sandbox._buildWorkflowContextForNode(sumNode);
+    const labels = (ctx.upstream || []).map(item => item.label);
+    if (!labels.includes('力学部分')) throw new Error('有标题的 note 上游标签应用标题，实际 ' + JSON.stringify(labels));
+    if (!labels.includes('我的总结')) throw new Error('无标题的 note 上游标签应回落品类名');
+    if ((ctx.target || {}).label !== 'AI 总结') throw new Error('summary 目标标签不应变');
+    // 目标是带标题 note 时，target 标签用标题
+    const ctx2 = sandbox._buildWorkflowContextForNode(noteA);
+    if ((ctx2.target || {}).label !== '力学部分') throw new Error('带标题 note 的目标标签应用标题');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  // 3. 静态契约：建点带 title 字段（新节点不用等编辑就落形状）
+  const customSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  if (!/title: '',/.test(customSrc)) throw new Error('createManualNode 未落 title 字段');
+  return true;
+});
+
+check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏左右分栏，左侧上游参考右侧书写＋标题', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realDoc = sandbox.document;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_nb_2026_10_10';
+  const userNode = { id: 'q1', kind: 'user', messageIndex: -1, timestamp: 1, content: '什么是角动量守恒' };
+  const noteNode = { id: 'nt1', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 2, title: '', content: '旧内容' };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(userNode) + ',' + JSON.stringify(noteNode) + '];'
+    + 'graphView.nodeById = { q1: graphView.nodes[0], nt1: graphView.nodes[1] }; graphView.defaultEdges = [];', sandbox);
+  vm.runInContext('graphView.edges = [{ from: "q1", fromPort: "out-0", to: "nt1", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+  let overlay = null;
+  const docStub = {
+    createElement: () => {
+      const el = { className: '', innerHTML: '', style: {}, listeners: {},
+        addEventListener(t, fn) { this.listeners[t] = fn; },
+        remove() {} };
+      return el;
+    },
+    getElementById: () => null,
+    body: { appendChild: () => {} },
+  };
+  sandbox.document = docStub;
+  try {
+    // 1. 编辑入口产出笔记本骨架：左上游参考（含上游「问题」条目）＋右标题输入与正文框
+    sandbox.editCustomNodeContent('nt1');
+    overlay = vm.runInContext('moduleNodeModalOverlay', sandbox);
+    if (!overlay || overlay.className !== 'graph-notebook-overlay') throw new Error('编辑总结应开笔记本全屏层，实际 ' + (overlay && overlay.className));
+    if (!String(overlay.innerHTML).includes('graph-notebook-src-col')) throw new Error('缺上游参考列');
+    if (!String(overlay.innerHTML).includes('上游参考')) throw new Error('缺上游参考标题');
+    if (!String(overlay.innerHTML).includes('>问题</span>')) throw new Error('上游参考应含「问题」条目');
+    if (String(overlay.innerHTML).includes('>我的总结</span>')) throw new Error('参考列不应含节点自身（生成语义的自身条目要剔除）');
+    if (!String(overlay.innerHTML).includes('customNodeTitleBox')) throw new Error('缺标题输入框');
+    if (!String(overlay.innerHTML).includes('customNodeContentBox')) throw new Error('缺正文书写框');
+    if (!String(overlay.innerHTML).includes('旧内容')) throw new Error('正文框应预填现内容');
+    // 2. 保存写回：标题落节点、内容更新、状态与摘要同步
+    const fields = {
+      customNodeTitleBox: { value: '  力学总结  ' },
+      customNodeContentBox: { value: '新写的总结' },
+    };
+    docStub.getElementById = id => fields[id] || null;
+    sandbox.saveCustomNodeContent('nt1');
+    const saved = vm.runInContext('graphView.nodeById.nt1', sandbox);
+    if (saved.title !== '力学总结') throw new Error('保存应落裁剪后的标题，实际 ' + JSON.stringify(saved.title));
+    if (saved.content !== '新写的总结') throw new Error('保存应更新内容');
+    if (saved.status !== 'done') throw new Error('有内容状态应为 done');
+    if (vm.runInContext('moduleNodeModalOverlay', sandbox)) throw new Error('保存后应关层');
+    // 3. 我的回答也走笔记本（manual answer 进编辑门）；带 messageIndex 的官方回答拒绝
+    const manualNode = { id: 'ma1', kind: 'answer', manual: true, moduleKey: 'manual', messageIndex: -1, timestamp: 5, content: '' };
+    vm.runInContext('graphView.nodes.push(' + JSON.stringify(manualNode) + '); graphView.nodeById.ma1 = graphView.nodes[graphView.nodes.length - 1];', sandbox);
+    sandbox.editCustomNodeContent('ma1');
+    if (vm.runInContext('moduleNodeModalOverlay', sandbox) == null) throw new Error('我的回答应可进笔记本编辑');
+    sandbox.closeModuleNodeModal();
+    // 4. 标签词表：有标题用标题（与喂料标签同源）
+    if (sandbox._notebookSourceLabel({ kind: 'note', title: '光学' }) !== '光学') throw new Error('参考条目标签应优先标题');
+    if (sandbox._notebookSourceLabel({ kind: 'user' }) !== '问题') throw new Error('user 条目标签应为「问题」');
+    if (sandbox._notebookSourceLabel({ kind: 'answer', manual: true }) !== '我的回答') throw new Error('manual answer 条目应回落品类名');
+  } finally {
+    sandbox.document = realDoc;
+    sandbox.escapeHtml = realEsc;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('moduleNodeModalOverlay = null; graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
 }

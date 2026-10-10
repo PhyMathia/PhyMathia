@@ -213,6 +213,7 @@ function createManualNode(nodeKind) {
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
     manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
+    title: '',
     content: '',
     status: 'empty',
     summary: '',
@@ -361,33 +362,97 @@ function deleteCustomNode(nodeId, pushUndo = true) {
   renderGraphCanvas();
 }
 
-// ===== 总结类节点（AI 总结 / 我的总结）的人工编辑 =====
-// 此前这两类节点一旦有内容即只读：我的总结的内联输入框只在空内容时出现，
-// AI 总结生成完成后无任何修改入口。这里补一个与模块编辑一致的弹窗。
+// ===== 总结类节点（AI 总结 / 我的总结 / 我的回答）的笔记本编辑模式 =====
+// 全屏左右分栏（2026-10-10 ①）：左侧上游参考（画布同款渲染、逐路 <details> 可折叠），
+// 右侧书写区（可选标题＋正文）。「汇聚后自己写」的完整动作在一个界面完成：看左写右。
+// 上游料现取自 _collectUpstreamPath——与 AI 总结生成时看到的是同一份，进编辑器即最新。
+// 此前形态是小弹窗＋纯 textarea（我的总结内联框只在空内容时出现），看不到上游。
+function _notebookEditableKind(node) {
+  return !!node && (node.kind === 'summary' || node.kind === 'note' || (node.kind === 'answer' && node.manual));
+}
+
+// 上游条目的显示名：与喂料标签同词表（graph-workflow-prompt.js），有标题用标题
+function _notebookSourceLabel(item) {
+  if (item.kind === 'user') return '问题';
+  if (item.kind === 'note') return item.title || '我的总结';
+  if (item.kind === 'summary') return 'AI 总结';
+  if (item.kind === 'knowledge') return item.title || '知识点';
+  if (item.kind === 'relation') return '知识联系';
+  if (item.kind === 'source') return '输入';
+  if (item.kind === 'answer') return item.manual ? (item.title || '我的回答') : '问题分析';
+  if (item.kind === 'hub') return '汇聚';
+  if (item.kind === 'human_note') return '我的理解';
+  if (item.kind === 'blank') return 'AI 生成空白';
+  return ((typeof GRAPH_MODULE_META !== 'undefined' ? GRAPH_MODULE_META[item.module] : null) || {}).label || item.module || '上游节点';
+}
+
+function _notebookSourceHtml(item, index) {
+  let text = String(item.content || item.summary || '');
+  if ((item.kind === 'answer' || item.kind === 'summary' || item.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
+  // parentId 与节点卡同款：上游内容里的苏格拉底「我来回答」按钮要能解析回父节点。
+  // 渲染器缺失/抛错时降级纯转义——参考列宁可朴素也不能让整个编辑器开不出来
+  let body = '';
+  try {
+    body = typeof renderMarkdown === 'function'
+      ? renderMarkdown(text, { parentId: String(item.timestamp || ''), sourceModule: item.module || '' })
+      : escapeHtml(text);
+  } catch (e) {
+    body = escapeHtml(text);
+  }
+  return '<details class="graph-notebook-src"' + (index === 0 ? ' open' : '') + '>'
+    + '<summary><span class="graph-notebook-src-label">' + escapeHtml(_notebookSourceLabel(item)) + '</span></summary>'
+    + '<div class="graph-notebook-src-body">' + body + '</div>'
+    + '</details>';
+}
+
+// 参考列的富文本收尾：公式／mermaid／viz iframe 与节点卡同一批渲染器，各自守卫缺函数
+function _renderNotebookRich(container) {
+  if (!container) return;
+  if (typeof renderMath === 'function') { try { renderMath(container); } catch (e) { /* 静态兜底 */ } }
+  if (typeof renderMermaidInElement === 'function') { try { renderMermaidInElement(container).catch(() => {}); } catch (e) { /* 静态兜底 */ } }
+  if (typeof _initVizIframes === 'function') { try { _initVizIframes(container); } catch (e) { /* 静态兜底 */ } }
+}
+
 function editCustomNodeContent(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.messageIndex >= 0 || (node.kind !== 'summary' && node.kind !== 'note')) return;
+  if (!node || node.messageIndex >= 0 || !_notebookEditableKind(node)) return;
   closeModuleNodeModal();
-  const title = node.kind === 'summary' ? '人工编辑：AI 总结' : '人工编辑：我的总结';
+  const title = node.kind === 'summary' ? '编辑：AI 总结' : node.kind === 'note' ? '编辑：我的总结' : '编辑：我的回答';
+  // 剔除节点自身：_collectUpstreamPath 的生成语义含自身（重生成要能看到上一版，
+  // backlog T5 拍板保留），参考列只看「接进来的」上游
+  const upstream = (typeof _collectUpstreamPath === 'function' ? _collectUpstreamPath(node) : [])
+    .filter(item => !(item.kind === node.kind && String(item.timestamp || '') === String(node.timestamp || '')));
+  const srcHtml = upstream.length
+    ? upstream.map((item, i) => _notebookSourceHtml(item, i)).join('')
+    : '<div class="graph-notebook-empty">还没有接上游——回画布把要总结的节点连进来（拖线到本节点身上即可自动接入），再回来写</div>';
   const overlay = document.createElement('div');
-  overlay.className = 'graph-network-modal-overlay';
-  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
-    + '<div class="graph-network-modal-head"><span>' + escapeHtml(title) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
-    + '<label>总结内容</label>'
-    + '<textarea id="customNodeContentBox" rows="8">' + escapeHtml(node.content || '') + '</textarea>'
-    + '<div class="graph-network-modal-actions">'
-    + '<button class="graph-network-modal-save" onclick="saveCustomNodeContent(\'' + node.id + '\')">保存</button>'
+  overlay.className = 'graph-notebook-overlay';
+  overlay.innerHTML = '<div class="graph-notebook">'
+    + '<div class="graph-notebook-head"><span>' + escapeHtml(title) + '</span><button onclick="closeModuleNodeModal()" title="关闭（不保存）">×</button></div>'
+    + '<div class="graph-notebook-body">'
+    + '<div class="graph-notebook-src-col"><div class="graph-notebook-col-title">上游参考</div>' + srcHtml + '</div>'
+    + '<div class="graph-notebook-edit-col">'
+    + '<label for="customNodeTitleBox">标题（可选，显示在节点上、喂给下游 AI）</label>'
+    + '<input id="customNodeTitleBox" type="text" maxlength="24" placeholder="给这个节点起个名字" value="' + escapeHtml(node.title || '') + '">'
+    + '<label for="customNodeContentBox">内容</label>'
+    + '<textarea id="customNodeContentBox" rows="16">' + escapeHtml(node.content || '') + '</textarea>'
+    + '<div class="graph-notebook-actions">'
+    + '<button class="graph-notebook-save" onclick="saveCustomNodeContent(\'' + node.id + '\')">保存</button>'
     + '<button onclick="closeModuleNodeModal()">取消</button>'
-    + '</div>'
-    + '</div>';
+    + '</div></div></div></div>';
   overlay.addEventListener('pointerdown', ev => { if (ev.target === overlay) closeModuleNodeModal(); });
   document.body.appendChild(overlay);
   moduleNodeModalOverlay = overlay;
+  const contentBox = document.getElementById('customNodeContentBox');
+  if (contentBox && typeof contentBox.focus === 'function') contentBox.focus();
+  _renderNotebookRich(overlay);
 }
 
 function saveCustomNodeContent(nodeId) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.messageIndex >= 0 || (node.kind !== 'summary' && node.kind !== 'note')) return;
+  if (!node || node.messageIndex >= 0 || !_notebookEditableKind(node)) return;
+  const titleBox = document.getElementById('customNodeTitleBox');
+  node.title = titleBox && titleBox.value ? String(titleBox.value).trim().slice(0, 24) : '';
   node.content = document.getElementById('customNodeContentBox')?.value || '';
   node.summary = _graphSummary(node.content);
   node.status = (node.content || '').trim() ? 'done' : 'waiting';
