@@ -139,8 +139,10 @@ check('多账号：静态契约（第 7 磁贴/弹窗骨架/构建注册/枚举�
   if (!fs.readFileSync('src/static/js/accounts.js', 'utf8').includes('_RAW_LS.setItem(STORAGE_KEY_ACCOUNT')) throw new Error('账号指针必须写元键（_RAW_LS），防垫片加前缀');
   const sess = fs.readFileSync('src/static/js/session.js', 'utf8');
   if (sess.includes('Object.keys(localStorage')) throw new Error('session.js 枚举未收编到 lsKeys()');
-  const uijs = fs.readFileSync('src/static/js/ui.js', 'utf8');
-  if (uijs.includes('Object.keys(localStorage')) throw new Error('ui.js 枚举未收编到 lsKeys()');
+  // T261 拆分后 ui 家族三件都要守 lsKeys 纪律（备份段是枚举大户）
+  for (const f of ['ui.js', 'ui-backup.js', 'ui-onboarding.js']) {
+    if (fs.readFileSync('src/static/js/' + f, 'utf8').includes('Object.keys(localStorage')) throw new Error(f + ' 枚举未收编到 lsKeys()');
+  }
   return true;
 });
 
@@ -248,7 +250,7 @@ check('只读查阅：静态契约（悬浮条/进入退出/逐模块写点闸�
     ['src/static/js/session.js', "phyReadonlyBlock('清空会话')"],
     ['src/static/js/graph-interact.js', "phyReadonlyBlock('创建分支')"],
     ['src/static/js/graph-interact.js', "phyReadonlyBlock('作答追问')"],
-    ['src/static/js/ui.js', "phyReadonlyBlock('导入备份')"],
+    ['src/static/js/ui-backup.js', "phyReadonlyBlock('导入备份')"],
   ];
   for (const [f, g] of gates) {
     if (!fs.readFileSync(f, 'utf8').includes(g)) throw new Error(f + ' 缺写点闸门：' + g);
@@ -374,7 +376,7 @@ check('账号悬空自愈/只读副作用：静态契约（启动链/标记头/�
   const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
   if (!cfg.includes("resp.headers.get('X-Phymathia-Account-Gone')")) throw new Error('fetch 包装未识别账号悬空标记头');
   if (!cfg.includes('__phyAccountJustDeleted')) throw new Error('自删流程应跳过自动回落（与删除流程自带的重载不打架）');
-  if (!uijs.includes("phyReadonlyBlock('导出数据')")) throw new Error('ui.js exportData 缺查阅态闸门');
+  if (!fs.readFileSync('src/static/js/ui-backup.js', 'utf8').includes("phyReadonlyBlock('导出数据')")) throw new Error('ui-backup.js exportData 缺查阅态闸门');
   if (!fs.readFileSync('src/static/js/memory.js', 'utf8').includes("phyReadonlyBlock('清除记忆')")) throw new Error('memory.js 清除记忆缺查阅态闸门');
   // T163 后接入点按属主模块镜像：悬空标记头在 request_ctx.py，画像/查阅态在 profile_routes.py
   const ctxpy = fs.readFileSync('src/server/request_ctx.py', 'utf8');
@@ -624,7 +626,7 @@ check('回收站：已删账号小节（行渲染/stone 消毒/查阅态只展�
 });
 
 check('学习画像按账号隔离（2026-10-07）：备份两路由恒带 device_id 圈定键', () => {
-  const uisrc = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  const uisrc = fs.readFileSync('src/static/js/ui-backup.js', 'utf8');
   if (!uisrc.includes("'/api/backup/export?device_id=' + encodeURIComponent(getDeviceId())")) {
     throw new Error('备份导出缺 device_id（服务端按账号圈定画像的提示键）');
   }
