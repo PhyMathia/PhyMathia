@@ -2860,12 +2860,14 @@
   margin-bottom: 8px;
 }
 
-/* 上游参考条目：玻璃 idiom 的淡 accent 洗涤面（不写实底，让极光透上来） */
+/* 上游参考条目：浮起面。用 --text-primary 混色而不是实底/实色 accent——
+   深色主题 text-primary 近白→7% 白纱从深玻璃上浮起，浅色近黑→深纱内凹，
+   一条规则双主题自动反向（此前 5% accent 洗涤在深色下≈纯黑看不见，用户实测报过） */
 .graph-notebook-src {
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
   border-radius: var(--r-md);
   margin-bottom: 8px;
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .graph-notebook-src summary {
@@ -2923,17 +2925,25 @@
   margin: 0 0 6px;
 }
 
+/* 书写列的标题/正文：同参考条目一样走 --text-primary 亮纱面（深色浮起/浅色内凹），
+   不用 --input-bg 实底——实底在深色玻璃上是黑块，用户实测报过「看不清楚」。
+   书写面比参考面亮一档（10%），聚焦时换 accent 描边给反馈。 */
 .graph-notebook-edit-col input {
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
   margin-bottom: 14px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: var(--input-bg);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
   color: var(--text-primary);
   font-size: var(--fs-md);
   outline: none;
+}
+
+.graph-notebook-edit-col input:focus,
+.graph-notebook-edit-col textarea:focus {
+  border-color: var(--accent);
 }
 
 .graph-notebook-edit-col textarea {
@@ -2943,8 +2953,8 @@
   min-height: 180px;
   padding: 10px 12px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: var(--input-bg);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
   color: var(--text-primary);
   font-size: var(--fs-md);
   font-family: inherit;
