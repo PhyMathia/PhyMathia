@@ -346,8 +346,9 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   state.removedEdges = state.removedEdges.filter(key => key !== _edgeKey(edge));
   state.connections.push(edge);
   _saveGraphState(state);
-  graphView.edges = _resolveGraphEdges(state, graphView.defaultEdges || [], graphView.nodeById);
-  _redrawEdges();
+  // 建边会改输出口「待命名」继承身份（T266 是渲染时从 graphView.edges 现算的）——
+  // 必须全量重渲染（内部自会重解析边），只重画线层不更新端口文字
+  renderGraphCanvas();
 }
 
 function _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
@@ -984,8 +985,8 @@ function _disconnectInputPort(toNodeId, toPort) {
   }
   state.removedEdges = Array.from(removed);
   _saveGraphState(state);
-  graphView.edges = _resolveGraphEdges(state, graphView.defaultEdges || [], graphView.nodeById);
-  _redrawEdges();
+  // 同 _connectPorts：断边让继承口回「未命名」，须全量重渲染才看得到
+  renderGraphCanvas();
 }
 
 function _removeGraphEdge(edgeKey) {
@@ -1002,8 +1003,8 @@ function _removeGraphEdge(edgeKey) {
     state.removedEdges = Array.from(new Set(state.removedEdges));
   }
   _saveGraphState(state);
-  graphView.edges = _resolveGraphEdges(state, graphView.defaultEdges || [], graphView.nodeById);
-  _redrawEdges();
+  // 同 _connectPorts：删边让继承口回「未命名」，须全量重渲染才看得到
+  renderGraphCanvas();
 }
 
 function graphAddOutputPort(nodeId) {
