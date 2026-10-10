@@ -530,7 +530,7 @@ function _renderOutputPorts(node, messages, state) {
     const portTitle = meta.custom
       ? (adopted
         ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处创建提问节点，或拖到输入端口重连'
-        : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处创建提问节点')
+        : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处打开节点菜单，选择要创建的节点（自动连线）')
       : '输出端口：拖到空处创建提问节点，或拖到输入端口重连';
     html += '<div class="graph-port graph-output-port" data-node-id="' + node.id + '" data-port-id="out-' + i + '"'
       + ' data-port-type="' + (meta.type || 'branch') + '"'

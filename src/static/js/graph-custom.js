@@ -65,10 +65,29 @@ function openAddBlankNodeModal(x, y) {
 }
 
 function closeAddBlankNodeModal() {
+  addBlankNodePendingLink = null;
   if (addBlankNodeOverlay) {
     addBlankNodeOverlay.remove();
     addBlankNodeOverlay = null;
   }
+}
+
+// 挂起连线消费：把面板刚建的节点连回拖出端口（待命名口拖空 → 用户在面板选型）。
+// 必须在 _saveGraphState 之前调，让连线与建点进同一条 state（同一可撤销步）；
+// 边形状与 _createConnectedManualNode 的 connected 路径逐字段一致。
+function _consumePendingPortLink(state, nodeId) {
+  if (!addBlankNodePendingLink) return;
+  const link = addBlankNodePendingLink;
+  addBlankNodePendingLink = null;
+  state.connections = state.connections || [];
+  state.connections.push({
+    from: link.sourceNodeId,
+    fromPort: link.sourcePortId || 'out-0',
+    to: nodeId,
+    toPort: 'in-0',
+    type: 'custom',
+    custom: true,
+  });
 }
 
 function _replaceModuleSection(content, moduleKey, newText) {
@@ -188,8 +207,9 @@ function createManualNode(nodeKind) {
   _pushGraphUndo();
   const state = _graphState();
   state.customNodes = state.customNodes || [];
+  const nodeId = option.key + '-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   state.customNodes.push({
-    id: option.key + '-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    id: nodeId,
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
     manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
@@ -229,6 +249,7 @@ function createManualNode(nodeKind) {
     vx: 0,
     vy: 0,
   });
+  _consumePendingPortLink(state, nodeId);
   _saveGraphState(state);
   closeAddBlankNodeModal();
   renderGraphCanvas();
@@ -299,6 +320,7 @@ function createRecipeNode(recipeId, draftRecipe) {
     vx: 0,
     vy: 0,
   });
+  _consumePendingPortLink(state, nodeId);
   _saveGraphState(state);
   closeAddBlankNodeModal();
   renderGraphCanvas();
