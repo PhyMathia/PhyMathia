@@ -2808,6 +2808,9 @@
   padding: clamp(12px, 3vh, 28px) clamp(12px, 4vw, 56px);
   background: var(--harness-overlay-bg);
   backdrop-filter: blur(3px);
+  /* body 默认色是黑（应用各组件各自上色），参考正文是原生 markdown 元素不挂组件类——
+     浮层子树必须自带文字色，否则深色下整片黑字不可读（用户实测报过「文字是黑色的」） */
+  color: var(--text-primary);
 }
 
 .graph-notebook {
@@ -2901,6 +2904,22 @@
   font-size: var(--fs-sm);
   line-height: 1.65;
   overflow-x: auto;
+}
+
+/* 参考正文里的 markdown 元素：全局规则不会伸进这个浮层，链接/行内代码显式上色 */
+.graph-notebook-src-body a {
+  color: var(--accent);
+}
+
+.graph-notebook-src-body code,
+.graph-notebook-src-body pre {
+  color: var(--text-primary);
+}
+
+/* 书写框占位符：默认黑在深色玻璃上不可读 */
+.graph-notebook-edit-col input::placeholder,
+.graph-notebook-edit-col textarea::placeholder {
+  color: color-mix(in srgb, var(--text-primary) 45%, transparent);
 }
 
 .graph-notebook-empty {

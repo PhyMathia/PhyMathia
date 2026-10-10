@@ -2014,6 +2014,12 @@ check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏�
     if (sandbox._notebookSourceLabel({ kind: 'note', title: '光学' }) !== '光学') throw new Error('参考条目标签应优先标题');
     if (sandbox._notebookSourceLabel({ kind: 'user' }) !== '问题') throw new Error('user 条目标签应为「问题」');
     if (sandbox._notebookSourceLabel({ kind: 'answer', manual: true }) !== '我的回答') throw new Error('manual answer 条目应回落品类名');
+    // 5. 静态契约：浮层必须自带文字色——body 默认色是黑（应用各组件各自上色），
+    //    参考正文是原生 markdown 元素不挂组件类，漏了 text-primary 整片黑字不可读
+    const cssSrc = fs.readFileSync('src/static/css/graph-override.css', 'utf8');
+    if (!/\.graph-notebook-overlay\s*\{[^}]*color:\s*var\(--text-primary\)/s.test(cssSrc)) {
+      throw new Error('笔记本浮层未自带 text-primary 文字色（深色下参考正文黑字不可读）');
+    }
   } finally {
     sandbox.document = realDoc;
     sandbox.escapeHtml = realEsc;
