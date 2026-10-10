@@ -263,9 +263,10 @@ check('配方 P1 边界（P1）：knowledge/relation 配方节点走 AI 生成�
     const html = String(sandbox._renderCustomNodeContentHtml(plainNode));
     if (html !== '<div class="graph-custom-node-render"><b>加粗不该解析</b></div>') throw new Error('plain 载体应原样输出，实际：' + html);
   } finally { sandbox.escapeHtml = realEsc; }
-  // answer→module 连线口径：配方模块接受任意 answer 出口（fromAttr === toAttr 的旁路）
+  // answer→module 连线口径：2026-10-10 连线自由化后属性匹配旁路整体退役——_canConnect 只保留自连拦截（配方模块接受任意 answer 出口是其子集）
   const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
-  if (!renderSrc.includes('toNode.recipeId ? true : fromAttr === toAttr')) throw new Error('配方模块连线旁路缺失');
+  if (renderSrc.includes('fromAttr === toAttr')) throw new Error('连线矩阵应已移除：answer→module 不再需要属性匹配旁路');
+  if (!renderSrc.includes('fromNode.id !== toNode.id')) throw new Error('_canConnect 应只保留自连拦截（任意互联）');
   return true;
 });
 // ===== 节点配方 P1 用例结束 =====
@@ -1536,9 +1537,9 @@ check('配方端口分类 v2：输入端口 normalize/校验/出口类型推导/
   if (w._recipeInputPorts(node).length !== 1 || w._recipeInputPorts({ recipeId: 'r2', recipe: { name: '旧' } }).length !== 0) {
     throw new Error('_recipeInputPorts 快照读取口径错误（无声明应回落空表）');
   }
-  // 画布源码契约：连线放宽（配方节点接受任意来源）与具名输入口渲染/喂料分路的插点在位
+  // 画布源码契约：连线全放开（任意互联、仅禁自连；配方/知识点任意来源是其子集）与具名输入口渲染/喂料分路的插点在位
   const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
-  if (!renderSrc.includes("toNode.kind === 'module' && toNode.recipeId) return true")) throw new Error('_canConnect 缺配方节点任意来源放行');
+  if (!renderSrc.includes('fromNode.id !== toNode.id')) throw new Error('_canConnect 应只保留自连拦截（任意互联）');
   if (!renderSrc.includes('graph-port-type')) throw new Error('输入口缺类型徽标 DOM');
   const promptSrc = fs.readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
   if (!promptSrc.includes('input_port')) throw new Error('喂料分路缺 input_port 标注');
