@@ -39,7 +39,7 @@ function _moduleCanExpandOutputs(node) {
 const GRAPH_NODE_ATTRIBUTES = {
   question: { key: 'question', label: '问题', color: 'var(--node-question)' },
   followup: { key: 'followup', label: '追问', color: 'var(--node-followup)' },
-  answer: { key: 'answer', label: 'AI 回答', color: 'var(--node-answer)' },
+  answer: { key: 'answer', label: '问题分析', color: 'var(--node-answer)' },
   physics: { key: 'physics', label: '物理视角', color: 'var(--node-physics)' },
   math: { key: 'math', label: '数学视角', color: 'var(--node-math)' },
   graph: { key: 'graph', label: '知识图谱', color: 'var(--node-graph)' },

@@ -44,7 +44,7 @@
     if (node.label) return node.label;
     if (node.title) return node.title;
     if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.branchLabel || '问题');
-    if (node.kind === 'answer') return node.branchLabel || node.summary || _harnessNodeContent(node).slice(0, 40) || 'AI 回答';
+    if (node.kind === 'answer') return node.branchLabel || node.summary || _harnessNodeContent(node).slice(0, 40) || '问题分析';
     if (node.kind === 'module') return _moduleLabel(node.moduleKey);
     return node.summary || node.content || '节点';
   }
@@ -153,7 +153,7 @@
     const labels = {
       blank: 'AI 生成空白',
       user: '问题',
-      answer: 'AI 回答',
+      answer: '问题分析',
       module: '模块',
       hub: '汇聚',
       summary: 'AI 总结',

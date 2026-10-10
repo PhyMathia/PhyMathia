@@ -18,12 +18,12 @@ const BUILTIN_RECIPES = [
   { key: 'socratic', kind: 'module', moduleKey: 'socratic', label: '苏格拉底追问', color: 'var(--node-socratic)', group: 'modules', desc: '' },
   // —— AI 组 ——
   { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: 'var(--node-any)', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
-  { key: 'answer', kind: 'answer', label: 'AI 回答', color: 'var(--node-answer)', group: 'ai', desc: 'AI 回答节点（含摘要）' },
+  { key: 'answer', kind: 'answer', label: '问题分析', color: 'var(--node-answer)', group: 'ai', desc: '问题分析节点（含概要，回答内容拆到各模块）' },
   { key: 'summary', kind: 'summary', label: 'AI 总结', color: 'var(--node-summary)', group: 'ai', desc: 'AI 生成总结' },
   // —— 素材组（data）——
   { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '导入文件/文本，解析出知识点' },
   { key: 'knowledge', kind: 'knowledge', label: '知识点', color: 'var(--node-knowledge)', group: 'data', desc: '手动记录一个知识点' },
-  { key: 'question', kind: 'user', label: '问题', color: 'var(--node-question)', group: 'data', desc: '提问节点，可接 AI 回答' },
+  { key: 'question', kind: 'user', label: '问题', color: 'var(--node-question)', group: 'data', desc: '提问节点，可接问题分析' },
   // —— 人工组（human）——
   // manual 在 module 键空间有历史身份（后端 ALLOWED_MODULE_KEYS / GRAPH_MODULE_META 均含
   // manual 键），注册表带 moduleKey 对齐两侧键空间；它本体不是 module 节点，派生投影不受影响
@@ -88,7 +88,7 @@ const RECIPE_BASE_META = {
   note: { label: '我的总结（手填）', family: 'human', shape: 'is-square', hint: '人工书写，不调 AI。' },
   human_note: { label: '我的理解（手填，纯文本）', family: 'human', shape: 'is-square', hint: '批注/笔记，内容按纯文本渲染。' },
   manual: { label: '我的回答（手填）', family: 'human', shape: 'is-square', hint: '人工书写回答，可继续发散。' },
-  question: { label: '问题（手填）', family: 'data', shape: 'is-ring', hint: '提问节点，接 AI 回答或继续追问。' },
+  question: { label: '问题（手填）', family: 'data', shape: 'is-ring', hint: '提问节点，接问题分析或继续追问。' },
 };
 
 // 成对色板（D-R8 的预设档）。令牌定义在 graph-override.css 的 --ink-* 块（深浅两套）；

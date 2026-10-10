@@ -291,7 +291,7 @@ async function exportSessionNote(format) {
   }
   const items = filterSessionKnowledgeItems(getKnowledgeItems(), sid);
   if (!items.length) {
-    toastMsg('本会话暂无知识条目可导出（条目由 AI 回答自动提取）');
+    toastMsg('本会话暂无知识条目可导出（条目由每轮回答自动提取）');
     return;
   }
   const now = new Date();

@@ -147,7 +147,7 @@ function openRecipeForm(prefill) {
     + '<input id="recipeRetryPrompt" maxlength="800" placeholder="例如：请务必只输出完整 HTML，不要任何解释。" value="' + escapeHtml(gen.retry_prompt || '') + '">'
     + '</div>'
     + '<div id="recipeModuleExtras">'
-    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeAnalysisPhase"' + (init.analysis_phase ? ' checked' : '') + '> 生成前先产出问题概要（AI 回答式双阶段）</label>'
+    + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeAnalysisPhase"' + (init.analysis_phase ? ' checked' : '') + '> 生成前先产出问题概要（问题分析式双阶段）</label>'
     + '<label class="recipe-plain-toggle"><input type="checkbox" id="recipeFirstInbound"' + (init.aggregation === 'first_inbound' ? ' checked' : '') + '> 只沿第一条连线的单链取材（空白节点式，多路汇聚时只讲直接上游）</label>'
     + '</div>'
     + '<div id="recipePortEditorWrap">'

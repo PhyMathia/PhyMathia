@@ -507,6 +507,77 @@ check('answer 节点预览：截断落在公式半截时回退到上一个 $ 前
   return true;
 });
 
+// ===== 问题分析节点：剥「建议模块」内部控制行＋「AI 回答」→「问题分析」改名（2026-10-10）=====
+// 「建议模块：…」是模型按分析提示词附在概要末尾的控制行（_parseSuggestedModules 靠它决定
+// 建哪些模块节点），同一信息由节点底部带名字的输出端口表达，从来不是给用户看的正文——
+// 渲染层剥而不是存盘时：存量 analysis 同覆盖、原字段不动、解析建点链路零影响。
+// 改名：分析节点实物是 ≤300 字问题概要（提示词明确「不要输出完整答案」），叫「AI 回答」
+// 名不副实——聊天心智的用户读到概要就以为拿到了全部答案。
+check('问题分析节点：渲染剥「建议模块」行，概要正文与 manual 手写不受影响', () => {
+  const strip = sandbox.stripSuggestedModulesLine;
+  if (typeof strip !== 'function') throw new Error('stripSuggestedModulesLine 未暴露为共享工具');
+  if (strip('核心概念：回复力 F=-kx；\n建议模块：物理视角、数学视角。') !== '核心概念：回复力 F=-kx；') {
+    throw new Error('独立行未剥');
+  }
+  if (strip('概要完。建议模块：物理视角') !== '概要完。') throw new Error('行内未剥');
+  if (strip('a\n建议模块：甲\nb\n建议模块:乙') !== 'a\nb') throw new Error('多行未剥净');
+  if (strip('普通文本，没有标记') !== '普通文本，没有标记') throw new Error('无标记被误改');
+  // 画布渲染路径（answer 非 manual）：桩掉 renderMarkdown 捕获送渲染的正文
+  // （沙箱不加载 marked，真渲染路径依赖浏览器侧 vendor；这里只验剥行契约）
+  sandbox.window.getGraphState = () => ({});
+  const realRM = sandbox.renderMarkdown;
+  let captured = '';
+  sandbox.renderMarkdown = (t) => { captured = String(t); return 'RM'; };
+  try {
+    const html = sandbox._renderCustomNodeContentHtml({
+      id: 'an1', kind: 'answer', messageIndex: -1, timestamp: 1,
+      analysis: '核心概念：回复力 F=-kx；数学结构：二阶线性微分方程。\n建议模块：物理视角、数学视角、知识图谱。',
+    });
+    if (html !== 'RM') throw new Error('渲染没走 renderMarkdown：' + html.slice(0, 60));
+    if (captured.includes('建议模块')) throw new Error('送渲染的正文仍含建议模块行：' + captured.slice(0, 120));
+    if (!captured.includes('核心概念：回复力') || !captured.includes('二阶线性微分方程')) throw new Error('概要正文被误剥：' + captured.slice(0, 120));
+    // manual 手写回答不剥（用户自己的内容不碰）
+    captured = '';
+    const manualHtml = sandbox._renderCustomNodeContentHtml({
+      id: 'an2', kind: 'answer', manual: true, messageIndex: -1, timestamp: 2,
+      content: '我的笔记：建议模块：物理视角',
+    });
+    if (!captured.includes('建议模块')) throw new Error('manual 节点内容不该被剥');
+  } finally {
+    sandbox.renderMarkdown = realRM;
+  }
+  // 海报取文路径（与画布同一把尺子）
+  const dbg = sandbox.window.graphPosterDebug;
+  if (!dbg || typeof dbg.nodeText !== 'function') throw new Error('graphPosterDebug.nodeText 未暴露');
+  const ptext = dbg.nodeText({ id: 'an3', kind: 'answer', messageIndex: -1, analysis: '概要。\n建议模块：物理视角。' }, null);
+  if (ptext.includes('建议模块') || !ptext.includes('概要')) throw new Error('海报取文未剥建议模块：' + ptext);
+  return true;
+});
+
+check('问题分析节点改名：徽标/标题/端口/属性注册表全部对齐（「AI 回答」退役）', () => {
+  sandbox.window.getGraphState = () => ({});
+  // 沙箱 document 是宽松代理：escapeHtml 取 innerHTML 会被 ToPrimitive 转成 0，
+  // 徽标/标题在沙箱里渲染成 0——换真转义桩才能断言到这两个字符串
+  const realRM = sandbox.renderMarkdown;
+  const realEsc = sandbox.escapeHtml;
+  sandbox.renderMarkdown = (t) => 'RM(' + String(t).length + ')';
+  sandbox.escapeHtml = (t) => String(t == null ? '' : t);
+  try {
+    const html = sandbox._renderNodeHtml({ id: 'rn1', kind: 'answer', messageIndex: -1, timestamp: 3, analysis: '概要：回复力与位移反向成正比。' }, [], {});
+    if (!html.includes('问题分析')) throw new Error('渲染缺「问题分析」标识：' + html.slice(0, 300));
+    if (html.includes('AI 回答') || html.includes('回答簇')) throw new Error('渲染仍含旧名：' + html.slice(0, 300));
+    if (!html.includes('RM(')) throw new Error('正文没走 renderMarkdown，桩没生效');
+  } finally {
+    sandbox.renderMarkdown = realRM;
+    sandbox.escapeHtml = realEsc;
+  }
+  if (sandbox._nodeInputLabel({ kind: 'answer' }) !== '问题分析') throw new Error('输入口标签未改名');
+  if (sandbox._nodeOutputLabels({ kind: 'user' }, []).join(',') !== '问题分析,我的回答') throw new Error('问题节点出口未改名');
+  if (sandbox._nodeOutputLabels({ kind: 'knowledge' }, []).join(',') !== '问题分析,问题') throw new Error('知识点出口未改名');
+  if (sandbox._nodeAttribute({ kind: 'answer' }).label !== '问题分析') throw new Error('属性注册表未改名');
+  return true;
+});
+
 check('answer 卡展开全文：可展开判定＋预览/展开两态渲染接线', () => {
   const longText = '你的结论完全正确。' + '既然你自评把握一般，那就把这个结论钉在物理图像里，别停在代数上。'.repeat(8)
     + '<socratic_meta correct="correct" done="false" />';
