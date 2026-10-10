@@ -248,6 +248,22 @@ function _nodeInputLabel(node) {
   return '来源';
 }
 
+// T266：输入端口身份（label/type）的单一事实源——具名声明（配方 ports.inputs）
+// 优先，模块节点第 2 个起的附加匿名口叫「人工内容输入」，其余回落节点品类标签。
+// 渲染输入口与输出口「待命名」继承（_adoptedOutputPortMeta）共用它，保证端口上
+// 显示的名字与连线继承来的名字永远同一个口径。
+function _nodeInputPortMeta(node, portIndex) {
+  const declared = (node && node.kind === 'module' && typeof _recipeInputPorts === 'function')
+    ? _recipeInputPorts(node)
+    : [];
+  const named = declared[portIndex];
+  if (named) return { label: named.label, type: named.type || '' };
+  const label = (node && node.kind === 'module' && portIndex >= 1)
+    ? '人工内容输入'
+    : _nodeInputLabel(node);
+  return { label, type: '' };
+}
+
 function _nodeOutputLabels(node, messages) {
   if (node.kind === 'draft') return [];
   if (node.kind === 'blank') return ['追问'];
@@ -320,10 +336,9 @@ function _renderInputPorts(node, state) {
   const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge';
   for (let i = 0; i < count; i++) {
     const named = declared[i] || null;
-    const label = named
-      ? named.label
-      : (node.kind === 'module' && i >= 1 ? '人工内容输入' : _nodeInputLabel(node));
-    const typeKey = (named && named.type) || '';
+    const inputMeta = _nodeInputPortMeta(node, i);
+    const label = inputMeta.label;
+    const typeKey = inputMeta.type;
     const typeLabel = typeKey ? (typeLabels[typeKey] || '') : '';
     const anyClass = isAnyInput ? ' graph-port-any-input' : '';
     const portAttr = (canAddInput || isAnyInput) ? 'any' : attr.key;
@@ -347,6 +362,24 @@ function _renderInputPorts(node, state) {
   }
   html += '</div>';
   return html;
+}
+
+// T266：输出端口「待命名」态。匿名附加输出口（＋手动加出来、由渲染兜底的那些）
+// 未连线时保持空白；连上某个输入口后实时采用该输入口的 label/type。身份由连线
+// 本身派生、不新增持久化字段——旧图、查看器快照、Φ add_edge、撤销重做全部零
+// 迁移自动生效，断开即回空白。查的是 graphView.edges（已解析的自定义＋结构边），
+// 与画布上真正画出来的线一致。基本口（内置身份口/配方声明口）不参与——它们的
+// 身份在建点/拖拽时就由 portMeta 定死了（见 canvas 手册「端口身份本就在建点时定」）。
+function _adoptedOutputPortMeta(node, portIndex) {
+  if (!node || typeof graphView === 'undefined' || !graphView || !Array.isArray(graphView.edges)) return null;
+  const portId = 'out-' + portIndex;
+  const edge = graphView.edges.find(item =>
+    String(item.from) === String(node.id) && String(item.fromPort || 'out-0') === portId);
+  if (!edge) return null;
+  const toNode = graphView.nodeById ? graphView.nodeById[String(edge.to)] : null;
+  if (!toNode) return null;
+  const meta = _nodeInputPortMeta(toNode, parseInt(String(edge.toPort || 'in-0').replace('in-', ''), 10) || 0);
+  return { label: meta.label, type: meta.type, targetId: edge.to };
 }
 
 function _renderOutputPorts(node, messages, state) {
@@ -436,21 +469,34 @@ function _renderOutputPorts(node, messages, state) {
   const count = Math.max(ports.length, savedCount);
   if (count <= 0) return '';
   let html = '<div class="graph-port-col graph-output-col">';
+  const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   for (let i = 0; i < count; i++) {
+    // T266：匿名附加输出口的「待命名」态——未连线空白，连线后采用目标输入口的
+    // 名字与内容类型（_adoptedOutputPortMeta 从 graphView.edges 现算，断开即回空白）；
+    // 基本口（ports[i] 有值）一律保持建点时定死的身份，不参与
+    const adopted = ports[i] ? null : _adoptedOutputPortMeta(node, i);
     const meta = ports[i] || {
-      label: node.kind === 'source'
-        ? '知识点 ' + (i + 1)
-        : node.kind === 'knowledge'
-          ? '问题 ' + (i - ports.length + 1)
-          : '追问 ' + (i - ports.length + 1),
-      type: node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'branch' : 'custom',
+      label: adopted ? adopted.label : '',
+      type: (adopted && adopted.type)
+        ? adopted.type
+        : node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'branch' : 'custom',
       branchType: 'followup',
       attribute: node.recipeId ? 'recipe' : node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'question' : 'followup',
       question: '',
       custom: true,
     };
-    const label = meta.label || ('输出 ' + (i + 1));
+    const label = meta.label || '未命名';
+    const blankClass = meta.label ? '' : ' graph-port-label-blank';
     const attr = GRAPH_NODE_ATTRIBUTES[meta.attribute] || GRAPH_NODE_ATTRIBUTES.followup;
+    // 类型徽标与输入口同源（RECIPE_PORT_TYPE_LABELS）：内置口的 branch/socratic 等
+    // 内部类型不在表内不挂徽标，只有配方内容类型（文本/公式/图示/网页）才显示
+    const typeKey = (meta.type && typeLabels[meta.type]) ? meta.type : '';
+    const typeLabel = typeKey ? (typeLabels[typeKey] || '') : '';
+    const portTitle = meta.custom
+      ? (adopted
+        ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处创建提问节点，或拖到输入端口重连'
+        : '未命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处创建提问节点')
+      : '输出端口：拖到空处创建提问节点，或拖到输入端口重连';
     html += '<div class="graph-port graph-output-port" data-node-id="' + node.id + '" data-port-id="out-' + i + '"'
       + ' data-port-type="' + (meta.type || 'branch') + '"'
       + ' data-port-branch="' + (meta.branchType || 'followup') + '"'
@@ -462,11 +508,12 @@ function _renderOutputPorts(node, messages, state) {
       + (meta.dragCreates ? ' data-port-drag="' + encodeURIComponent(meta.dragCreates) + '"' : '')
       + (meta.item ? ' data-port-item="' + encodeURIComponent(JSON.stringify(meta.item)) + '"' : '')
       + ' style="--port-color:' + attr.color + ';"'
-      + ' title="输出端口：拖到空处创建提问节点，或拖到输入端口重连">'
+      + ' title="' + escapeHtml(portTitle) + '">'
       // 圆点必须是行内首个子元素：输出列左对齐（点对齐、文字参差），删除键跟在文字后，
       // 否则 row-reverse 老顺序下带 × 的端口圆点会被顶偏，一列里两种点位
       + '<span class="graph-port-dot"></span>'
-      + '<span class="graph-port-label">' + escapeHtml(label) + '</span>'
+      + '<span class="graph-port-label' + blankClass + '">' + escapeHtml(label) + '</span>'
+      + (typeLabel ? '<span class="graph-port-type" data-port-type="' + typeKey + '">' + escapeHtml(typeLabel) + '</span>' : '')
       + (meta.custom
         ? '<button class="graph-port-remove" onclick="event.stopPropagation();graphRemoveOutputPort(\'' + node.id + '\',' + i + ')" title="删除输出端口">×</button>'
         : '')

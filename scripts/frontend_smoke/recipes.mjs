@@ -1541,10 +1541,67 @@ check('配方端口分类 v2：输入端口 normalize/校验/出口类型推导/
   const renderSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
   if (!renderSrc.includes('fromNode.id !== toNode.id')) throw new Error('_canConnect 应只保留自连拦截（任意互联）');
   if (!renderSrc.includes('graph-port-type')) throw new Error('输入口缺类型徽标 DOM');
+  if (!renderSrc.includes('_adoptedOutputPortMeta') || !renderSrc.includes('graphView.edges.find')) {
+    throw new Error('输出口「待命名」态派生函数缺失（T266）');
+  }
   const promptSrc = fs.readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
   if (!promptSrc.includes('input_port')) throw new Error('喂料分路缺 input_port 标注');
   const applySrc = fs.readFileSync('src/static/js/harness-apply.js', 'utf8');
   if (!applySrc.includes('_nodeBaseInputPortCount')) throw new Error('harness add_edge 未按配方声明数分配附加口');
+  return true;
+});
+
+check('输出端口「待命名」态（T266）：匿名附加口未连线空白、连线后继承输入口名字与类型、断开回落；基本口不参与', () => {
+  // 沙箱 document 是宽松代理，escapeHtml 的 innerHTML 拼接会被 ToPrimitive 成 0——
+  // 沿用 P1 边界用例的恒等替换口径，断言送进 DOM 的标签原文
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    // physics 模块默认 1 个「追问」口；portCounts=2 撑出 1 个匿名附加口 out-1（待命名态候选）
+    const moduleNode = { id: 'm1', kind: 'module', moduleKey: 'physics', messageIndex: -1, recipeId: '', timestamp: 1 };
+    const state = { portCounts: { m1: 2 }, inputPortCounts: {} };
+    const recipeNode = { id: 'r1', kind: 'module', recipeId: 'rec1', recipe: { name: '矢量合成', ports: { inputs: [{ label: '力一', type: 'text' }] } }, messageIndex: -1, timestamp: 2 };
+    const userNode = { id: 'u1', kind: 'user', branchType: 'followup', messageIndex: -1, timestamp: 3, isRoot: false };
+    const setView = (edges, nodeById) => vm.runInContext(
+      'graphView.edges = ' + JSON.stringify(edges) + '; graphView.nodeById = ' + JSON.stringify(nodeById) + ';', sandbox);
+
+    // 1. 未连线：附加口显示「未命名」并挂置灰类；基本口「追问」保持原名、不参与继承
+    setView([], {});
+    let html = String(sandbox._renderOutputPorts(moduleNode, [], state));
+    if (!html.includes('>未命名</span>')) throw new Error('未连线的附加输出口应显示「未命名」');
+    if (!html.includes('graph-port-label-blank')) throw new Error('未命名口缺置灰类 graph-port-label-blank');
+    if (!html.includes('>追问</span>')) throw new Error('基本输出口「追问」应保持原名');
+    if (html.includes('graph-port-type')) throw new Error('未命名口不应有类型徽标');
+
+    // 2. 连到配方节点的具名输入口（力一/text）：输出口采用该口的名字＋内容类型徽标
+    setView([{ from: 'm1', fromPort: 'out-1', to: 'r1', toPort: 'in-0' }], { r1: recipeNode });
+    html = String(sandbox._renderOutputPorts(moduleNode, [], state));
+    if (!html.includes('>力一</span>')) throw new Error('附加输出口未继承具名输入口的 label');
+    if (!html.includes('<span class="graph-port-type" data-port-type="text">文本</span>')) throw new Error('附加输出口未继承输入口 type 徽标');
+    if (html.includes('graph-port-label-blank')) throw new Error('已连线口不应再空白');
+    if (!html.includes('>追问</span>')) throw new Error('连线后基本口「追问」仍应保持原名');
+
+    // 3. 连到匿名输入口（user 的任意输入）：继承标签文本、无类型徽标
+    setView([{ from: 'm1', fromPort: 'out-1', to: 'u1', toPort: 'in-0' }], { u1: userNode });
+    html = String(sandbox._renderOutputPorts(moduleNode, [], state));
+    if (!html.includes('>任意输入</span>')) throw new Error('匿名输入口应回落其品类标签');
+    if (html.includes('graph-port-type')) throw new Error('匿名输入口无类型，输出口不应挂徽标');
+
+    // 4. 断开即回空白（不新增持久化字段，身份纯由连线派生）
+    setView([], {});
+    html = String(sandbox._renderOutputPorts(moduleNode, [], state));
+    if (!html.includes('graph-port-label-blank') || !html.includes('>未命名</span>')) throw new Error('断开后应回空白');
+    if (html.includes('>力一</span>')) throw new Error('断开后不应残留继承名');
+
+    // 5. source 节点的匿名附加口同属待命名族（fallback type knowledge 保留给拖拽建点）
+    const sourceNode = { id: 's1', kind: 'source', items: [{ title: '导数' }], messageIndex: -1, timestamp: 4 };
+    html = String(sandbox._renderOutputPorts(sourceNode, [], { portCounts: { s1: 2 }, inputPortCounts: {} }));
+    if (!html.includes('>导数</span>')) throw new Error('source 基本口应保持条目名');
+    if (!html.includes('graph-port-label-blank')) throw new Error('source 附加输出口应空白');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
   return true;
 });
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
