@@ -22,7 +22,7 @@ function element() {
     querySelector() { return null; }, querySelectorAll() { return []; }, appendChild() {} };
 }
 
-const harnessModules = ['config.js', 'utils.js', 'session.js', 'harness.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
+const harnessModules = ['config.js', 'utils.js', 'session.js', 'harness.js', 'harness-sessions.js', 'harness-snapshot.js', 'harness-run.js', 'harness-preview.js', 'harness-apply.js'];
 
 // 只替换视图与网络边界；快照/应用/保存/加载仍是真实源码。
 // Φ 会话解耦（2026-09-30）：夹具预置一个绑定画布 A 的 phi 会话并落迁移标记，

@@ -36,7 +36,9 @@ check('Φ 相位转换放宽：三模式锁定时旧相位不得绕过（apply �
 });
 
 check('Φ 独立会话：菜单入口齐全＋解耦红线（Φ 菜单无任何删画布语义）', () => {
-  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // T261 拆分后 Φ 会话域在 harness-sessions.js，按家族拼接断言
+  const src = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!src.includes('graphHarnessSessionBtn')) throw new Error('标题旁会话按钮未进面板');
   if (!src.includes('graphHarnessSessionMenu')) throw new Error('会话下拉菜单未进面板');
   if (!src.includes('新建 Φ 会话')) throw new Error('菜单缺「新建 Φ 会话」入口');
@@ -117,7 +119,8 @@ check('Φ 解耦接线：切画布不再重置 Φ 对话＋删画布只解绑＋
   if (!runSrc.includes(': _emptyHarnessSnapshot({ mode: requestMode, recipeTargetId: requestRecipeTargetId })')) {
     throw new Error('纯问答路径未改用空快照（不绑图分支须把本次请求锁定的 mode/target 带进空快照）');
   }
-  const src = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const src = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!src.includes('phymathia_phi_migration_done')) throw new Error('缺旧数据一次性迁移标记');
   if (!src.includes('_migrateLegacyPhiHistory')) throw new Error('缺迁移函数');
   return true;
@@ -262,7 +265,8 @@ check('T94 三级降级接线：先重算 degrade、降不动才报错、无焦�
   if (!runSrc.includes('图较大，已自动聚焦到目标附近区域（可在画布选中节点缩小范围）')) throw new Error('缺降级成功提示文案');
   if (!runSrc.includes('（聚焦后仍过大）')) throw new Error('缺「降级后仍超限」兜底说明');
   if (!/est_tokens <= 30000/.test(runSrc)) throw new Error('降级后未回预算判定（≤30000 才采用）');
-  const hSrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const hSrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!/const degrade = !!\(opts && opts\.degrade\)/.test(hSrc)) throw new Error('buildHarnessSnapshot 缺 opts.degrade 第 5 参');
   if (!hSrc.includes('degrade ? 1 : 2')) throw new Error('降级邻域半径未收到 1 跳');
   return true;

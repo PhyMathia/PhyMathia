@@ -720,7 +720,8 @@ check('graph-continent: v3 Φ 摆渡口径（_harnessContinentShared 只挑当�
     sandbox.window.getCurrentSessionId = realSid;
   }
   // 快照注入口径：harness.js 必须把 continent_shared 放进快照与 token 估算
-  const hsrc = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  const hsrc = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!hsrc.includes('snapshot.continent_shared')) throw new Error('快照未注入 continent_shared');
   const rsrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
   if (!rsrc.includes('_harnessFetchContinent')) throw new Error('审阅路径未拉取大陆投影');

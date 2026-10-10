@@ -255,7 +255,9 @@ check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静�
   }
 
   // T127：Harness 事件轮询两态 URL（全库聚合 / 单会话）
-  const srcHarness = fs.readFileSync('src/static/js/harness.js', 'utf8');
+  // T261 拆分后事件 URL 分布在 harness 家族（全库 DELETE 在 sessions 件、单会话轮询在主件）
+  const srcHarness = ['harness.js', 'harness-sessions.js', 'harness-snapshot.js']
+    .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   for (const frag of ['/api/harness/graph/events?all=1', '/api/harness/graph/events?session_id=']) {
     if (!srcHarness.includes(frag)) throw new Error('T127 harness.js 缺事件轮询 URL: ' + frag);
   }
