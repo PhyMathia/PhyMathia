@@ -23,6 +23,10 @@ const entries = [
   'graph.js',
   'graph-search.js',
   'graph-render.js',
+  // T261 拆分随迁：graph-interact 裸调 _runLayout/_savePositions、graph.js 守卫调
+  // diff 高亮、graph-workflow.js 导出块读 autoArrangeGraph——viewer 子集两件都要带
+  'graph-render-diff.js',
+  'graph-render-layout.js',
   'graph-interact.js',
   'graph-custom.js',
   'graph-workflow.js',

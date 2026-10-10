@@ -25,6 +25,13 @@ const entries = [
   'graph.js',
   'graph-search.js',
   'graph-render.js',
+  // 版本对比高亮与自动布局（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）：
+  // 两件只被运行期调用（typeof 守卫/裸调用均可），紧跟本体保持族内顺序。
+  'graph-render-diff.js',
+  'graph-render-layout.js',
+  // Φ 预览画布层（同日拆出）：不进 stage0/f3b 的 harness 沙箱清单、不进 viewer——
+  // 两处都靠 typeof 守卫把画布侧函数当可缺席项（沙箱无 graph.js，viewer 无 Φ）
+  'graph-render-preview.js',
   'graph-interact.js',
   'graph-custom.js',
   'graph-recipe-edit.js',
