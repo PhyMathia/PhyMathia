@@ -1187,9 +1187,11 @@ let harnessLastAppliedReport = null;
       // 两个 handler 都 stopPropagation，点击只换文案不收菜单（与模式项「选中即收起」相反）。
       + '<div class="graph-harness-mode-sep"></div>'
       + '<button type="button" id="graphHarnessThinkingBtn" class="graph-harness-mode-item graph-harness-mode-toggle" onclick="cycleHarnessThinking(event)">'
-      + HARNESS_THINKING_TEXT() + '</button>'
+      + '<span class="graph-harness-mode-label">' + HARNESS_THINKING_TEXT() + '</span></button>'
       + '<button type="button" id="graphHarnessFallbackBtn" class="graph-harness-mode-item graph-harness-mode-toggle" onclick="toggleHarnessFallback(event)">'
-      + HARNESS_FALLBACK_TEXT() + '</button>';
+      + '<span class="graph-harness-btn-ico graph-harness-mode-icon" aria-hidden="true">'
+      + ((typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.repeat) || '') + '</span>'
+      + '<span class="graph-harness-mode-label">' + HARNESS_FALLBACK_TEXT() + '</span></button>';
     menu.hidden = false;
   }
 
@@ -1207,8 +1209,11 @@ let harnessLastAppliedReport = null;
     } catch (e) { return ''; }
   }
 
+  // 2026-10-10：两行的 emoji 前缀（🧠/🔁）换成图标制——深度思考整枚去掉，
+  // 备用模型那行换 UI_ICON_SVG.repeat 线性图标。文案更新只写 .graph-harness-mode-label，
+  // 免得 textContent 整节点覆盖把图标一起冲掉。
   function HARNESS_THINKING_TEXT() {
-    return '🧠 深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '自动');
+    return '深度思考：' + (HARNESS_THINKING_LABELS[_harnessThinkingLevel()] || '自动');
   }
 
   // 自动 → 浅 → 深 → 最深 → 自动；返回新档位（纯逻辑，smoke 直接调）
@@ -1217,7 +1222,7 @@ let harnessLastAppliedReport = null;
     const next = HARNESS_THINKING_LEVELS[(HARNESS_THINKING_LEVELS.indexOf(current) + 1) % HARNESS_THINKING_LEVELS.length];
     if (typeof safeLocalStorageSet === 'function') safeLocalStorageSet(STORAGE_KEY_HARNESS_THINKING, next);
     const btn = document.getElementById('graphHarnessThinkingBtn');
-    if (btn) btn.textContent = HARNESS_THINKING_TEXT();
+    if (btn) _setHarnessToggleText(btn, HARNESS_THINKING_TEXT());
     if (typeof toastMsg === 'function') toastMsg('深度思考：' + HARNESS_THINKING_LABELS[next]);
     return next;
   }
@@ -1232,7 +1237,15 @@ let harnessLastAppliedReport = null;
   }
 
   function HARNESS_FALLBACK_TEXT() {
-    return '🔁 失败自动换备用模型：' + (_harnessFallbackEnabled() ? '开' : '关');
+    return '失败自动换备用模型：' + (_harnessFallbackEnabled() ? '开' : '关');
+  }
+
+  // 只改按钮里的文案 span；宽松 DOM（冒烟沙箱）下 querySelector 返回代理时走 textContent 兜底。
+  function _setHarnessToggleText(btn, text) {
+    if (!btn) return;
+    const label = typeof btn.querySelector === 'function' ? btn.querySelector('.graph-harness-mode-label') : null;
+    if (label) label.textContent = text;
+    else btn.textContent = text;
   }
 
   function toggleHarnessFallback(event) {
@@ -1240,7 +1253,7 @@ let harnessLastAppliedReport = null;
     const next = !_harnessFallbackEnabled();
     if (typeof safeLocalStorageSet === 'function') safeLocalStorageSet(STORAGE_KEY_HARNESS_FALLBACK, next ? '1' : '0');
     const btn = document.getElementById('graphHarnessFallbackBtn');
-    if (btn) btn.textContent = HARNESS_FALLBACK_TEXT();
+    if (btn) _setHarnessToggleText(btn, HARNESS_FALLBACK_TEXT());
     if (typeof toastMsg === 'function') toastMsg('失败自动换备用模型：' + (next ? '开' : '关'));
     return next;
   }

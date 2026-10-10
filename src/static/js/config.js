@@ -337,7 +337,9 @@ const UI_ICON_SVG = {
   star: makeLineIcon('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"></path>'),
   // 地球＝知识大陆（与 header 大陆按钮同线稿）；人形＝多账号（2026-10-07 引导更新）
   globe: makeLineIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><ellipse cx="12" cy="12" rx="4.5" ry="9"></ellipse>'),
-  user: makeLineIcon('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>')
+  user: makeLineIcon('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>'),
+  // Φ 模式菜单「失败自动换备用模型」开关：双向循环＝换一个再来，与 reset（单向环）区分
+  repeat: makeLineIcon('<path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path>')
 };
 const LEVEL_ICON_SVG = {
   'middle': UI_ICON_SVG.school,

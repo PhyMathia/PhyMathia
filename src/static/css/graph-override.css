@@ -5866,6 +5866,14 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--text-primary);
 }
 
+/* 备用模型开关的 repeat 线性图标（2026-10-10 替掉 🔁 emoji）：尺寸与墨色复用
+   .graph-harness-btn-ico（14px 见方、currentColor、hover 跟着变色），这里只补
+   与文字的间距和纵向居中——菜单项是 flex，没有 align-self 图标会被拉满高度。 */
+.graph-harness-composer .graph-harness-mode-menu .graph-harness-mode-icon {
+  align-self: center;
+  margin-right: 6px;
+}
+
 .graph-harness-chat .graph-harness-session-notice {
   width: fit-content;
   margin: 6px auto;
