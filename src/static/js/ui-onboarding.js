@@ -168,7 +168,7 @@ function _demoNode(id, kind, x, y, options) {
     manual: !!opt.manual,
     label: opt.label || '',
     content: opt.content || '',
-    status: opt.status || ((opt.content || opt.analysis || kind === 'hub') ? 'done' : 'waiting'),
+    status: opt.status || ((opt.content || opt.analysis) ? 'done' : 'waiting'),
     summary: opt.summary || '',
     analysis: opt.analysis || '',
     analysisHash: '',
@@ -218,7 +218,7 @@ function _buildExampleGraphDemoState() {
     _demoNode('demo-source', 'source', -260, 560, { manual: true, items: [{ title: '简谐运动' }, { title: '回复力' }, { title: '角频率' }] }),
     _demoNode('demo-knowledge', 'knowledge', 320, 820, { manual: true, content: '简谐运动：回复力与位移成正比且反向，系统围绕平衡位置做周期性运动。', formulas: ['F=-kx'] }),
     _demoNode('demo-human', 'human_note', -720, 640, { manual: true, label: '我的理解', content: '回复力像“拉回平衡位置的橡皮筋”，偏离越多拉得越强。' }),
-    _demoNode('demo-hub', 'hub', 900, -420, {}),
+    _demoNode('demo-summary', 'summary', 900, -420, { content: '总结：简谐运动由线性回复力 <formula>F=-kx</formula> 主导，运动方程与能量转换都源于它。', status: 'done' }),
     _demoNode('demo-note', 'note', 900, 720, { manual: true, content: '我的总结：简谐运动的核心是线性回复力，它同时决定了运动方程与能量关系。' }),
   ];
   const positions = {};
@@ -241,15 +241,15 @@ function _buildExampleGraphDemoState() {
       { from: 'demo-answer', fromPort: 'out-3', to: 'demo-viz', toPort: 'in-0', type: 'custom', custom: true },
       { from: 'demo-answer', fromPort: 'out-4', to: 'demo-learn', toPort: 'in-0', type: 'custom', custom: true },
       { from: 'demo-answer', fromPort: 'out-5', to: 'demo-socratic', toPort: 'in-0', type: 'custom', custom: true },
-      { from: 'demo-physics', fromPort: 'out-0', to: 'demo-hub', toPort: 'in-0', type: 'custom', custom: true },
-      { from: 'demo-math', fromPort: 'out-0', to: 'demo-hub', toPort: 'in-1', type: 'custom', custom: true },
+      { from: 'demo-physics', fromPort: 'out-0', to: 'demo-summary', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'demo-math', fromPort: 'out-0', to: 'demo-summary', toPort: 'in-1', type: 'custom', custom: true },
       { from: 'demo-graph', fromPort: 'out-0', to: 'demo-human', toPort: 'in-0', type: 'custom', custom: true },
       { from: 'demo-learn', fromPort: 'out-0', to: 'demo-blank', toPort: 'in-0', type: 'custom', custom: true },
       { from: 'demo-source', fromPort: 'out-0', to: 'demo-knowledge', toPort: 'in-0', type: 'custom', custom: true },
     ],
     removedEdges: [],
     portCounts: {},
-    inputPortCounts: { 'demo-hub': 1 },
+    inputPortCounts: { 'demo-summary': 1 },
     groups: [],
     customNodes: nodes,
     harnessDeleted: {},
@@ -323,11 +323,11 @@ const EXAMPLE_GUIDE_STEPS = [
     target: '[data-node-id="demo-source"]',
   },
   {
-    title: '结构节点：汇聚与总结',
+    title: '总结节点：收束多路输入',
     icon: UI_ICON_SVG.book,
-    desc: '<strong>汇聚节点</strong>收集多条上游输入，再分发到 AI 总结、我的总结或追问。<strong>我的总结</strong>用于人工收束一条探索路径；本示例中它被收拢在右侧素材区。',
-    points: ['汇聚节点可以点击 + 增加输入端口。', '总结节点默认没有输出端口（需要收出下一段探索时可点 + 添加）。'],
-    target: '[data-node-id="demo-hub"]',
+    desc: '<strong>AI 总结</strong>把多条上游输入收束成一段总结，任意节点都能点 + 增加输入端口来汇入更多内容。<strong>我的总结</strong>用于人工收束一条探索路径；本示例中它被收拢在右侧素材区。',
+    points: ['节点默认一个输入端口，点 + 可增加端口接收多路上游。', '总结节点默认没有输出端口（需要收出下一段探索时可点 + 添加）。'],
+    target: '[data-node-id="demo-summary"]',
   },
   {
     title: '空白节点：自由生成',
@@ -385,7 +385,7 @@ function _exampleGuideSpotRect(step) {
 function _compactDemoMaterialNodes() {
   const state = typeof window.getGraphState === 'function' ? window.getGraphState() : null;
   if (!state || !state.positions) return;
-  const treeIds = ['demo-question', 'demo-answer', 'demo-physics', 'demo-math', 'demo-graph', 'demo-viz', 'demo-learn', 'demo-socratic', 'demo-hub', 'demo-human', 'demo-blank'];
+  const treeIds = ['demo-question', 'demo-answer', 'demo-physics', 'demo-math', 'demo-graph', 'demo-viz', 'demo-learn', 'demo-socratic', 'demo-summary', 'demo-human', 'demo-blank'];
   let maxX = -Infinity;
   treeIds.forEach(id => {
     const pos = state.positions[id];

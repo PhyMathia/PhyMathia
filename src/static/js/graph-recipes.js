@@ -30,8 +30,12 @@ const BUILTIN_RECIPES = [
   { key: 'manual', kind: 'answer', manual: true, moduleKey: 'manual', label: '我的回答', color: 'var(--ink-human)', group: 'human', desc: '手写回答，可继续发散（无摘要）' },
   { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-note)', group: 'human', desc: '批注/笔记，可附公式' },
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
-  // —— 结构组（structure）——
-  { key: 'hub', kind: 'hub', label: '汇聚', color: 'var(--node-hub)', group: 'structure', desc: '汇总多路输入，可总结或追问' },
+  // —— 结构组（structure，2026-10-10 起退役）——
+  // hub 创建口径移除（backlog 267）：多端口任意连之后接线职能已冗余——单口多线汇入可被
+  // 任意节点「＋加输入口」替代，AI 总结/我的总结可直接新建再自由连线。机制与 relation 同款：
+  // hidden 不进添加面板（空分组自动不渲染）、后端 REMOVED_CREATE_KINDS 同步移除；kind 保留，
+  // 存量图照常渲染/保存、Φ 仍可更新/删除旧汇聚节点（节点身份渲染走 GRAPH_NODE_ATTRIBUTES.hub）。
+  { key: 'hub', kind: 'hub', label: '汇聚', color: 'var(--node-hub)', group: 'structure', desc: '汇总多路输入，可总结或追问', hidden: true },
   // —— 无手动入口的类型（hidden：不进添加面板，只作为 kind 存在）——
   // relation：创建口径已移除（Φ 提示词明示勿建、后端 ALLOWED_CREATE_KINDS 不含），
   // 但旧会话数据里可能仍有 relation 节点——注册表收录它只为白名单派生，
@@ -44,7 +48,7 @@ function _recipeByKey(key) {
   return BUILTIN_RECIPES.find(recipe => recipe.key === key) || null;
 }
 
-// 添加节点面板的 16 入口（P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
+// 添加节点面板的入口（2026-10-10 hub 退役后 15 个；P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
 // module 组原本就没有 desc，派生时 desc 为空串则不设键，保持形状不变）
 function deriveManualNodeOptions() {
   return BUILTIN_RECIPES
