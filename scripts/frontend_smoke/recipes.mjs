@@ -1728,11 +1728,15 @@ check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2
     sandbox.window.getCurrentSessionId = prevSid;
     vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};', sandbox);
   }
-  // 静态契约：菜单分支只认「待命名」且先于 knowledge fallback；挂起连线三件套插点在位
+  // 静态契约：菜单分支认「待命名 OR 基础口表外的附加口」（269 已采纳名也算）且先于
+  // knowledge fallback；附加口身份现场按基础口表重算（不信 dataset 显示名）；挂起连线三件套插点在位
   const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
-  const menuIdx = interactSrc.indexOf("if (label === '待命名')");
+  const menuIdx = interactSrc.indexOf("if (label === '待命名' || isAdditionalPort)");
   const knowledgeIdx = interactSrc.indexOf("if (type === 'knowledge')");
   if (menuIdx < 0 || knowledgeIdx < 0 || menuIdx > knowledgeIdx) throw new Error('待命名菜单分支应存在且先于知识点 fallback 分支');
+  if (!interactSrc.includes('const isAdditionalPort = Array.isArray(basePorts) && portIndex >= basePorts.length')) {
+    throw new Error('269 附加口身份应现场按基础出口表重算（portIndex 落表外＝附加口）');
+  }
   const customSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
   if (!customSrc.includes('function _consumePendingPortLink')) throw new Error('挂起连线消费函数缺失');
   const hooks = customSrc.split('_consumePendingPortLink(state, nodeId);').length - 1;
@@ -1740,6 +1744,83 @@ check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2
   if (!customSrc.includes('addBlankNodePendingLink = null')) throw new Error('关面板应清挂起连线');
   if (!fs.readFileSync('src/static/js/graph.js', 'utf8').includes('let addBlankNodePendingLink = null')) throw new Error('挂起连线全局声明缺失');
   if (!fs.readFileSync('src/static/js/graph-render.js', 'utf8').includes('拖到空处打开节点菜单')) throw new Error('待命名口 tooltip 未同步新行为');
+  return true;
+});
+
+check('已采纳名的附加输出口拖空也开节点菜单（269）：身份现场重算，不信 dataset 显示名', () => {
+  // 匿名附加口连上输入口后继承下游身份（label「AI 总结」是下游类型、不是提问语义）——
+  // 拖空必须走面板分支，不得按显示名走提问草稿兜底
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  const realOpenModal = sandbox.openAddBlankNodeModal;
+  // physics 模块基础口 1 个（追问）：out-1 是附加口
+  const srcNode = { id: 'm269', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 3 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  const opened = [];
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_port_269';
+  sandbox.renderGraphCanvas = () => {};
+  sandbox.openAddBlankNodeModal = (x, y) => { opened.push({ x, y }); };
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ']; graphView.nodeById = { m269: graphView.nodes[0] };', sandbox);
+  try {
+    // 1. 已采纳名的附加口（out-1，显示名已是继承来的「AI 总结」）拖空：开面板＋挂起连线，不建草稿卡
+    sandbox._createBranchNodeFromOutput('m269', 'out-1', { type: 'branch', branchType: 'followup', attribute: 'followup', question: '', level: '', label: 'AI 总结', item: null, dragCreates: '' }, 88, 99);
+    if (opened.length !== 1 || opened[0].x !== 88 || opened[0].y !== 99) throw new Error('已采纳名的附加口拖空应于落点开面板，实际 ' + JSON.stringify(opened));
+    const pending = vm.runInContext('addBlankNodePendingLink', sandbox);
+    if (!pending || pending.sourceNodeId !== 'm269' || pending.sourcePortId !== 'out-1') throw new Error('应记挂起连线指向来源口，实际 ' + JSON.stringify(pending));
+    if (vm.runInContext('graphView.nodes.length', sandbox) !== 1) throw new Error('不应按显示名走提问草稿兜底建卡');
+
+    // 2. 反例：recipe 静态出口在基础口表内（非附加口），drag_creates 路由不受影响——
+    //    用配方 answer 节点验证（dragForm=connected:note 建已连线节点，不开面板）
+    const recipeNode = {
+      id: 'r269', kind: 'answer', recipeId: 'rec269', manual: false, messageIndex: -1, timestamp: 4,
+      recipe: { id: 'rec269', name: '口粮', content_kind: 'markdown', ports: { static: [{ label: '产出', drag_form: 'connected:note' }] } },
+    };
+    vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ',' + JSON.stringify(recipeNode) + ']; graphView.nodeById = { m269: graphView.nodes[0], r269: graphView.nodes[1] };', sandbox);
+    sandbox._createBranchNodeFromOutput('r269', 'out-0', { type: 'branch', branchType: 'followup', attribute: 'recipe', question: '', level: '', label: '产出', item: null, dragCreates: 'connected:note' }, 11, 22);
+    if (opened.length !== 1) throw new Error('配方基础口（表内）拖空不应进面板分支');
+    const conn = (mem.connections || []).find(c => c.from === 'r269');
+    if (!conn || !(mem.customNodes || []).some(n => n.id === conn.to)) throw new Error('配方 drag_creates=connected:note 应照旧建已连线节点');
+  } finally {
+    sandbox.openAddBlankNodeModal = realOpenModal;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; addBlankNodePendingLink = null;', sandbox);
+  }
+  return true;
+});
+
+check('配方出口内容类型管线（T264）：显式声明优先、缺省按载体推导、输出口 DOM 带 data-port-content-type', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const rnode = {
+      id: 'rec264', kind: 'answer', recipeId: 'rec-x', manual: false, messageIndex: -1, timestamp: 9,
+      recipe: {
+        id: 'rec-x', name: '图示卡', content_kind: 'mermaid',
+        ports: { static: [{ label: '结论', drag_form: 'draft' }, { label: '公式', drag_form: 'draft', type: 'formula' }] },
+      },
+    };
+    // 1. map 带 contentType：未声明的按 content_kind=mermaid 推 diagram；显式 formula 优先；语义轴 type 保持 branch
+    const ports = sandbox._recipeStaticPorts(rnode);
+    if (ports.length !== 2) throw new Error('配方静态出口应 2 个');
+    if (ports[0].contentType !== 'diagram') throw new Error('未声明 type 应按载体推导 diagram，实际 ' + ports[0].contentType);
+    if (ports[1].contentType !== 'formula') throw new Error('显式声明 formula 应优先，实际 ' + ports[1].contentType);
+    if (ports[0].type !== 'branch') throw new Error('拖拽语义轴 type 应保持 branch');
+    // 2. 输出口 DOM 落 data-port-content-type；无内容类型的口不落空属性
+    const html = String(sandbox._renderOutputPorts(rnode, [], { portCounts: {}, inputPortCounts: {} }));
+    if (!html.includes('data-port-content-type="diagram"')) throw new Error('输出口 DOM 缺 data-port-content-type="diagram"');
+    if (!html.includes('data-port-content-type="formula"')) throw new Error('输出口 DOM 缺 data-port-content-type="formula"');
+    const plainNode = { id: 'u264', kind: 'user', messageIndex: -1, timestamp: 10 };
+    const plainHtml = String(sandbox._renderOutputPorts(plainNode, [], { portCounts: {}, inputPortCounts: {} }));
+    if (plainHtml.includes('data-port-content-type')) throw new Error('非配方口不应落 data-port-content-type');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+  }
   return true;
 });
 

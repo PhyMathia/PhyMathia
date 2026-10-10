@@ -3,6 +3,12 @@
 // 流式渲染节流：多路并行流式时，把“全图 measure + 节点 transform + 边重绘”合并为
 // 最长 ~150ms 一次，避免每个流式块都全图强刷（原实现每帧对全部节点/全部边做同步布局
 // 与整层 SVG 重建，图越大越闪烁）。流式内容本身仍即时局部更新。
+// 流式卡片渲染节流（T218）：三处流式 scheduleRender 共用。旧实现每 rAF 帧
+// （≈16ms）整卡 innerHTML 重建＋KaTeX 全量重跑，长文本整流 O(n²)（对照 chat.js
+// 同路径 250ms 节流）。流式中的卡是「生长中」视觉反馈，250ms 一跳足够顺；流结束
+// 各自的收尾渲染一次性铺最终全文，终态不受节流影响。
+const GRAPH_STREAM_RENDER_MS = 250;
+
 let _graphSyncTimer = null;
 function _scheduleGraphSync() {
   if (_graphSyncTimer) return;
@@ -65,7 +71,7 @@ async function _streamCustomNodeResponse(resp, node) {
   function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (live) live.content = content;
@@ -82,7 +88,7 @@ async function _streamCustomNodeResponse(resp, node) {
       if (textarea) textarea.value = content;
       if (node.kind === 'blank') _renderBlankNodeLive(node, content);
       _scheduleGraphSync();
-    });
+    }, GRAPH_STREAM_RENDER_MS);
   }
 
   for await (const piece of _sseContentFrames(resp)) {
@@ -114,7 +120,7 @@ async function _streamAnalysisResponse(resp, node, question) {
   function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (!live) return;
@@ -125,7 +131,7 @@ async function _streamAnalysisResponse(resp, node, question) {
         if (typeof renderMath === 'function') renderMath(renderBox);
       }
       _scheduleGraphSync();
-    });
+    }, GRAPH_STREAM_RENDER_MS);
   }
 
   for await (const piece of _sseContentFrames(resp)) {
@@ -905,13 +911,13 @@ async function _streamBlankNodeResponse(resp, node) {
   function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       renderPending = false;
       const live = _findGraphNode(node.id);
       if (live) live.content = content;
       _renderBlankNodeLive(node, content);
       _scheduleGraphSync();
-    });
+    }, GRAPH_STREAM_RENDER_MS);
   }
 
   function scheduleSave() {

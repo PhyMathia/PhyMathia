@@ -296,6 +296,9 @@ function _startLinkDrag(event, portEl) {
       label: decodeAttr(portEl.dataset.portLabel),
       item: itemMeta,
       dragCreates: portEl.dataset.portDrag ? decodeAttr(portEl.dataset.portDrag) : '',
+      // T264 内容类型管线：输出口 DOM 的 data-port-content-type（配方口有值）透传给
+      // 拖拽对象，将来「输入口按内容类型点亮」等按类型的功能从这里取源数据
+      contentType: portEl.dataset.portContentType || '',
     },
     pointerId: event.pointerId,
     currentX: null,
@@ -538,7 +541,16 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   // _consumePendingPortLink）建点即自动连回本口，关闭面板则什么都不建。
   // 具名口不进此分支（身份已定，沿用各自拖出目标：问题/追问口→提问卡、
   // 知识点口→知识点节点、配方口→drag_creates 声明）。
-  if (label === '待命名') {
+  // 269：显示名可能是「连线采纳来的」（匿名附加口连上输入口后继承下游身份——名字
+  // 是下游类型不是提问语义），不能只认「待命名」三个字。身份现场按基础出口表重算
+  // （与渲染 adopted 判定同一事实源）：序数落在表外＝附加口，已采纳名也走面板分支；
+  // 不信拖拽 dataset 的显示名（采纳名渲染时已写进 dataset，手里那份 portMeta 已被污染）。
+  const portIndex = parseInt(String(sourcePortId || 'out-0').replace('out-', ''), 10) || 0;
+  const basePorts = typeof _nodeBaseOutputPorts === 'function' && typeof _getChatHistory === 'function'
+    ? _nodeBaseOutputPorts(sourceNode, _getChatHistory())
+    : null;
+  const isAdditionalPort = Array.isArray(basePorts) && portIndex >= basePorts.length;
+  if (label === '待命名' || isAdditionalPort) {
     openAddBlankNodeModal(x, y);
     addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
     return;
@@ -1193,11 +1205,9 @@ function zoomGraph(factor, centerX, centerY) {
 
 function fitGraph() {
   if (!graphView.nodes.length || !graphCanvas) return;
-  // T39：容器残留 scrollTop/scrollLeft 会把 fit 的世界坐标整体带偏、节点顶出屏外
-  // （实测 scrollTop=409 时 6 节点 2 个在屏外；来源疑工作流收尾焦点，另查）。
-  // fit 的语义就是「整图回到视口」，先归零再算。
-  graphCanvas.scrollTop = 0;
-  graphCanvas.scrollLeft = 0;
+  // T39→T259：容器残留 scrollTop/scrollLeft 会把 fit 的世界坐标整体带偏、节点顶出
+  // 屏外（实测 scrollTop=409 时 6 节点 2 个在屏外）。归零已收进 _applyGraphTransform
+  // 公共入口（所有写 pan/zoom 的路径统一免疫），fit 收尾必经该入口，此处不再单独清。
   const state = _graphState();
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const n of graphView.nodes) {

@@ -534,11 +534,12 @@ function _renderOutputPorts(node, messages, state) {
     const typeLabel = typeKey ? (typeLabels[typeKey] || '') : '';
     const portTitle = meta.custom
       ? (adopted
-        ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处创建提问节点，或拖到输入端口重连'
+        ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处打开节点菜单（选中自动连回本口），或拖到输入端口重连'
         : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处打开节点菜单，选择要创建的节点（自动连线）')
       : '输出端口：拖到空处创建提问节点，或拖到输入端口重连';
     html += '<div class="graph-port graph-output-port" data-node-id="' + node.id + '" data-port-id="out-' + i + '"'
       + ' data-port-type="' + (meta.type || 'branch') + '"'
+      + (meta.contentType ? ' data-port-content-type="' + escapeHtml(meta.contentType) + '"' : '')
       + ' data-port-branch="' + (meta.branchType || 'followup') + '"'
       + ' data-attribute="' + attr.key + '"'
       + ' data-port-question="' + encodeURIComponent(meta.question || '') + '"'
@@ -1493,6 +1494,13 @@ const GRAPH_HEAVY_ZOOM_THRESHOLD = 2.2;
 function _applyGraphTransform() {
   if (!graphInner) return;
   const state = _graphState();
+  // T259：容器残留 scrollTop/scrollLeft（浏览器把焦点元素自动滚进视口的副作用）会把
+  // 世界坐标→屏幕映射整体带偏。T39 原先只在 fitGraph 一条路归零，工作流收尾焦点、
+  // Φ 预览等其余写 pan/zoom 的路径同样踩——归零收进本公共入口，所有路径统一免疫。
+  if (typeof graphCanvas !== 'undefined' && graphCanvas) {
+    graphCanvas.scrollTop = 0;
+    graphCanvas.scrollLeft = 0;
+  }
   graphInner.style.transform = 'translate(' + state.pan.x + 'px, ' + state.pan.y + 'px) scale(' + state.zoom + ')';
   graphView.zoom = state.zoom;
   if (typeof graphCanvas !== 'undefined' && graphCanvas) {
