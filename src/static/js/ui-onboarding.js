@@ -305,7 +305,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '输入端口：重连或断开',
     icon: UI_ICON_SVG.monitor,
     desc: '按住<strong>左侧输入端口</strong>拖动：拖到其他节点的输出端口可以重连来源；拖到空白处松手则断开当前输入。',
-    points: ['模块节点默认有一个输入端口。', '问题、汇聚、空白节点可点击 + 增加输入端口。'],
+    points: ['所有常驻节点都能点击 + 增加输入端口。', '加出来的端口先显示「待命名」，连上输出口后会自动改用它的名字。'],
     target: '[data-node-id="demo-math"] .graph-input-port',
   },
   {
@@ -326,7 +326,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '结构节点：汇聚与总结',
     icon: UI_ICON_SVG.book,
     desc: '<strong>汇聚节点</strong>收集多条上游输入，再分发到 AI 总结、我的总结或追问。<strong>我的总结</strong>用于人工收束一条探索路径；本示例中它被收拢在右侧素材区。',
-    points: ['汇聚节点可以点击 + 增加输入端口。', '总结节点没有输出端口，表示路径暂告一段落。'],
+    points: ['汇聚节点可以点击 + 增加输入端口。', '总结节点默认没有输出端口（需要收出下一段探索时可点 + 添加）。'],
     target: '[data-node-id="demo-hub"]',
   },
   {

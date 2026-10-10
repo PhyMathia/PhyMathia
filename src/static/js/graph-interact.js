@@ -985,7 +985,7 @@ function _disconnectInputPort(toNodeId, toPort) {
   }
   state.removedEdges = Array.from(removed);
   _saveGraphState(state);
-  // 同 _connectPorts：断边让继承口回「未命名」，须全量重渲染才看得到
+  // 同 _connectPorts：断边让继承口回「待命名」，须全量重渲染才看得到
   renderGraphCanvas();
 }
 
@@ -1003,7 +1003,7 @@ function _removeGraphEdge(edgeKey) {
     state.removedEdges = Array.from(new Set(state.removedEdges));
   }
   _saveGraphState(state);
-  // 同 _connectPorts：删边让继承口回「未命名」，须全量重渲染才看得到
+  // 同 _connectPorts：删边让继承口回「待命名」，须全量重渲染才看得到
   renderGraphCanvas();
 }
 
