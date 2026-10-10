@@ -2794,8 +2794,10 @@
 
 /* ---------- 总结类节点的笔记本编辑模式（2026-10-10 ①）---------- */
 /* 全屏左右分栏：左上游参考（details 逐路折叠）、右书写区（标题＋正文）。
-   面板刻意不用 aurora-glass：大面积阅读面上磨砂透字会伤可读性，走实底
-   panel-bg（与设置面板同语言）；遮罩自身保留 blur 拉开层次。 */
+   载体＞1200×700 属大面积 chrome → 按玻璃手册三档口径挂 aurora-glass--panel
+   （底色更实、色斑更弱、模糊更浅，长阅读不压可读性）；本体规则**绝不写
+   background/box-shadow**——底色/色斑/磨砂/阴影全由玻璃类给，写了就是盖极光层。
+   遮罩与 .graph-network-modal-overlay 同款：blur(3px) 不抢玻璃自己的模糊。 */
 .graph-notebook-overlay {
   position: fixed;
   inset: 0;
@@ -2805,7 +2807,7 @@
   justify-content: center;
   padding: clamp(12px, 3vh, 28px) clamp(12px, 4vw, 56px);
   background: var(--harness-overlay-bg);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(3px);
 }
 
 .graph-notebook {
@@ -2814,10 +2816,6 @@
   width: min(1240px, 100%);
   min-height: 0;
   border-radius: var(--r-xl);
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
-  background: var(--panel-bg);
-  color: var(--text-primary);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
 
@@ -2862,11 +2860,12 @@
   margin-bottom: 8px;
 }
 
+/* 上游参考条目：玻璃 idiom 的淡 accent 洗涤面（不写实底，让极光透上来） */
 .graph-notebook-src {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
   border-radius: var(--r-md);
   margin-bottom: 8px;
-  background: var(--input-bg);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .graph-notebook-src summary {

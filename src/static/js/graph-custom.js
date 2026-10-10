@@ -427,7 +427,7 @@ function editCustomNodeContent(nodeId) {
     : '<div class="graph-notebook-empty">还没有接上游——回画布把要总结的节点连进来（拖线到本节点身上即可自动接入），再回来写</div>';
   const overlay = document.createElement('div');
   overlay.className = 'graph-notebook-overlay';
-  overlay.innerHTML = '<div class="graph-notebook">'
+  overlay.innerHTML = '<div class="graph-notebook aurora-glass aurora-glass--panel">'
     + '<div class="graph-notebook-head"><span>' + escapeHtml(title) + '</span><button onclick="closeModuleNodeModal()" title="关闭（不保存）">×</button></div>'
     + '<div class="graph-notebook-body">'
     + '<div class="graph-notebook-src-col"><div class="graph-notebook-col-title">上游参考</div>' + srcHtml + '</div>'
