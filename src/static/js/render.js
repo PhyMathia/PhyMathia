@@ -650,8 +650,19 @@ function openVizNewTab(vizId) {
 }
 
 // 公式内容清洗：去掉外层 $/$$、转义 \$、清理 \= 等无效命令，避免生成 $$$..$$$ 导致 KaTeX 错位
+// 公式内容里的 HTML 实体不是 LaTeX（模型偶尔把 > < & 写成 &gt; &lt; &amp;），原样进
+// KaTeX 会在 & 处 ParseError、整段公式变红——统一解码；&amp; 放最后，避免 &amp;gt; 被二次解码
+function _decodeMathEntities(s) {
+  return String(s || '')
+    .replace(/&gt;/gi, '>')
+    .replace(/&lt;/gi, '<')
+    .replace(/&quot;/gi, '"')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
+}
+
 function _cleanFormulaLatex(latex) {
-  let s = String(latex || '').trim();
+  let s = _decodeMathEntities(String(latex || '').trim());
   if (typeof _stripFormulaDelimiters === 'function') s = _stripFormulaDelimiters(s);
   else s = s.replace(/^\$+|\$+$/g, '').trim();
   return s
@@ -681,6 +692,13 @@ function renderMarkdown(text, renderCtx = {}) {
   text = text.replace(/<formula>([\s\S]*?)<\/formula>/gi, (match, latex) => {
     return '$$' + _cleanFormulaLatex(latex) + '$$';
   });
+  // 未闭合 <formula>（流式截断/生成中断）：从标签起整段截掉，与 _graphFormulaDelimit
+  // 预览路径同口径——半截公式转定界只会吃 KaTeX ParseError 变红，留着又是一行裸 LaTeX。
+  // ``` 栅栏内不动（奇偶判定）：viz 页面里的标签由 iframe 桥 cvtFormulaTags 自行处理
+  const _unclosedFormula = /<formula>(?![\s\S]*<\/formula>)/i.exec(text);
+  if (_unclosedFormula && (text.slice(0, _unclosedFormula.index).match(/```/g) || []).length % 2 === 0) {
+    text = text.slice(0, _unclosedFormula.index);
+  }
   // <summary> 摘要标签仅用于知识库/公式描述，不渲染给用户
   text = text.replace(/<summary>[\s\S]*?<\/summary>/gi, '');
   const mermaidBlocks = [];
@@ -706,7 +724,7 @@ function renderMarkdown(text, renderCtx = {}) {
   // 还原公式占位符（HTML 转义防 < > & 被当作标签；KaTeX auto-render 在文本节点中识别）
   // 同时匹配 marked 转义后的形式（&lt;!--...--&gt;），覆盖代码块内的占位符
   html = html.replace(/&lt;!--MATH_PLACEHOLDER_(\d+)--&gt;|<!--MATH_PLACEHOLDER_(\d+)-->/g, (match, escapedIdx, rawIdx) => {
-    return escapeHtml(mathBlocks[parseInt(escapedIdx != null ? escapedIdx : rawIdx)]);
+    return escapeHtml(_decodeMathEntities(mathBlocks[parseInt(escapedIdx != null ? escapedIdx : rawIdx)]));
   });
   html = html.replace(/<!--MERMAID_PLACEHOLDER_(\d+)-->/g, (match, idx) => {
     const id = 'mermaid_' + Math.random().toString(36).substr(2, 9);
