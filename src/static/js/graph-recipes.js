@@ -30,10 +30,22 @@ const BUILTIN_RECIPES = [
   { key: 'manual', kind: 'answer', manual: true, moduleKey: 'manual', label: '我的回答', color: 'var(--ink-human)', group: 'human', desc: '手写回答，可继续发散（无摘要）' },
   { key: 'human_note', kind: 'human_note', label: '我的理解', color: 'var(--ink-note)', group: 'human', desc: '批注/笔记，可附公式' },
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
-  // —— 结构组（structure，2026-10-10 起退役）——
+  // —— 中转节点（junction，2026-10-11 用户拍板）——
+  // 走线锚点：固定一进一出两个任意口，四种基数全合法——1→1 / 多→1（in-0 扇入，
+  // 与 hub/knowledge 共用 fan-in 白名单）/ 1→多（out-0 扇出，_connectPorts 的
+  // sameSource 替换对 junction 为源的边开口子）/ 多→多（两者叠加）。它补的是
+  // hub 退役评估（backlog 267「接线职能已被覆盖」）漏看的真空白：结构边一口一边、
+  // 同源互顶之外，普通节点没有任何走线中转手段。
+  // 无内容、无生成/追问行为（_nodeActions 屏蔽、右键只剩结构与删除项）——追问链
+  // 穿过它时完全透明（_collectUpstreamPath 跳过自身、_nodeOutputContent 直通上游
+  // 内容），下游看到的就是上游本身。用户工具的定位同 relation：面板可见、Φ 不建
+  // （后端 REMOVED_CREATE_KINDS 同步）——267 备注「结构组不补新成员」就此个案
+  // 修订，理由与验收口径见 docs/dev/canvas-modules.md「中转节点」节。
+  { key: 'junction', kind: 'junction', label: '中转', color: 'var(--node-junction)', group: 'structure', desc: '走线中转：多路汇入扇出，内容直通下游' },
+  // —— 结构组其余（hub 2026-10-10 退役；结构组由 junction 复活，不再空转）——
   // hub 创建口径移除（backlog 267）：多端口任意连之后接线职能已冗余——单口多线汇入可被
   // 任意节点「＋加输入口」替代，AI 总结/我的总结可直接新建再自由连线。机制与 relation 同款：
-  // hidden 不进添加面板（空分组自动不渲染）、后端 REMOVED_CREATE_KINDS 同步移除；kind 保留，
+  // hidden 不进添加面板、后端 REMOVED_CREATE_KINDS 同步移除；kind 保留，
   // 存量图照常渲染/保存、Φ 仍可更新/删除旧汇聚节点（节点身份渲染走 GRAPH_NODE_ATTRIBUTES.hub）。
   { key: 'hub', kind: 'hub', label: '汇聚', color: 'var(--node-hub)', group: 'structure', desc: '汇总多路输入，可总结或追问', hidden: true },
   // —— 无手动入口的类型（hidden：不进添加面板，只作为 kind 存在）——
@@ -48,7 +60,7 @@ function _recipeByKey(key) {
   return BUILTIN_RECIPES.find(recipe => recipe.key === key) || null;
 }
 
-// 添加节点面板的入口（2026-10-10 hub 退役后 15 个；P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
+// 添加节点面板的入口（2026-10-11 junction 复活结构组后 16 个；P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
 // module 组原本就没有 desc，派生时 desc 为空串则不设键，保持形状不变）
 function deriveManualNodeOptions() {
   return BUILTIN_RECIPES

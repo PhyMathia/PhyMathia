@@ -792,6 +792,7 @@
   --node-learn: #a855f7;
   --node-ai-eval: var(--node-physics);
   --node-hub: #eab308;
+  --node-junction: #64748b;
   --node-summary: #0d9488;
   --node-source: #06b6d4;
   --node-knowledge: #84cc16;
@@ -1442,6 +1443,7 @@
 .graph-attr-human_note { --node-attr: var(--ink-note); }
 .graph-attr-ai_eval { --node-attr: var(--node-physics); }
 .graph-attr-hub { --node-attr: var(--node-hub); }
+.graph-attr-junction { --node-attr: var(--node-junction); }
 .graph-attr-summary { --node-attr: var(--node-summary); }
 .graph-attr-note { --node-attr: var(--ink-human); }
 .graph-attr-source { --node-attr: var(--node-source); }
@@ -2242,6 +2244,51 @@
 .graph-relation-actions {
   display: flex;
   gap: 8px;
+}
+
+/* ---------- 中转节点（junction，2026-10-11）：走线锚点小卡 ----------
+   固定一进一出（graph.js 加口门对 junction 两侧全关）、无内容无状态行。卡面只有
+   一枚属性色圆点，尺寸刻意收窄——它是线路上的一"扣"，不是内容节点。颜色单一
+   事实源 --node-attr（GRAPH_NODE_ATTRIBUTES.junction → --node-junction），
+   深浅主题共用。端口文字撤掉只留圆点，悬停 title 仍有「任意来源」说明。 */
+.graph-node.graph-node-junction.graph-node-compact {
+  min-width: 116px !important;
+  max-width: 116px !important;
+  min-height: 40px !important;
+  padding: 0 6px !important;
+  border-radius: var(--r-lg) !important;
+  border-left-width: 4px !important;
+}
+
+.graph-node-junction .graph-node-main {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.graph-node-junction .graph-junction-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 2px 0;
+}
+
+.graph-node-junction .graph-junction-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--node-attr);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--node-attr) 55%, transparent);
+  flex: none;
+}
+
+.graph-node-junction .graph-port-label {
+  display: none;
+}
+
+.graph-node-junction .graph-port {
+  padding: 0 2px;
 }
 
 .graph-node-relation.graph-node-compact {

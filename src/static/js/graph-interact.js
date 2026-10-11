@@ -333,7 +333,11 @@ function _updateLinkDragHover(clientX, clientY) {
   if (nodeEl.dataset.nodeId === drag.nodeId) return;
   if (drag.mode === 'output') {
     const target = _findGraphNode(nodeEl.dataset.nodeId);
-    if (target && typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(target)) {
+    // junction（2026-10-11）固定单进口（不加口门里关着），但它就是合法的汇入
+    // 落点——悬停高亮放行，松手走 _connectPorts 的 in-0 扇入
+    const targetOk = target && (target.kind === 'junction'
+      || (typeof _nodeCanAddInputPorts === 'function' && _nodeCanAddInputPorts(target)));
+    if (targetOk) {
       nodeEl.classList.add('graph-link-drop-target');
     }
   } else if (nodeEl.querySelector('.graph-output-port')) {
@@ -360,6 +364,10 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   state.connections = state.connections.filter(c => {
     const sameSource = c.from === fromNodeId && (c.fromPort || 'out-0') === fromPort;
     const sameInput = c.to === toNodeId && (c.toPort || 'in-0') === toPort;
+    // junction（2026-10-11）扇出口子：源是中转节点时同源边不顶掉——out-0 一源
+    // 可带多目标（1→多/多→多都靠这条）。hub 的同口互顶（汇聚口按"替换来源"语义）
+    // 与 junction 的单口多线 fan-in 不互斥，各自原样。
+    if (sameSource && fromNode.kind === 'junction') return true;
     return !sameSource && (toNode.kind !== 'hub' || !sameInput);
   });
   let resolvedToPort = toPort || 'in-0';

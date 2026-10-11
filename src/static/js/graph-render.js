@@ -19,7 +19,7 @@ function _nodeAttribute(node) {
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
   }
-  if (node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'relation') {
+  if (node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'relation' || node.kind === 'junction') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.question;
   }
   if (node.kind === 'user') {
@@ -58,7 +58,8 @@ function _flashInvalidConnection() {
 
 function _nodeActions(node) {
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) return '';
-  if (node.messageIndex < 0 && (node.manual || node.kind === 'hub')) return '';
+  // junction（2026-10-11 中转节点）同 hub：无内容可生成，卡上不挂任何动作钮
+  if (node.messageIndex < 0 && (node.manual || node.kind === 'hub' || node.kind === 'junction')) return '';
   if (node.messageIndex < 0) {
     const isBusy = !!node.busy;
     const label = isBusy ? '生成中...' : node.content ? '重新生成' : '生成';
@@ -245,6 +246,7 @@ function _nodeInputLabel(node) {
   if (node.kind === 'source') return '文件输入';
   if (node.kind === 'knowledge') return '知识点来源';
   if (node.kind === 'relation') return '联系输入';
+  if (node.kind === 'junction') return '任意汇入';
   return '来源';
 }
 
@@ -374,6 +376,17 @@ function _nodeBaseOutputPorts(node, messages) {
       question: '',
     }];
   }
+  // junction（2026-10-11）：固定一进一出，出口单一枚「输出」——扇出是连线层
+  // 的事（_connectPorts 同源不互顶），不长第二个口
+  if (node.kind === 'junction') {
+    return [{
+      label: '输出',
+      type: 'branch',
+      branchType: 'followup',
+      attribute: 'junction',
+      question: '',
+    }];
+  }
   // summary/note/relation：基础出口 0（开放附加口后输出列只挂＋号）；其余
   // 未知 kind（ai_eval 等）回落单个「输出」口，与统一前的兜底逐字节一致
   if (node.kind === 'summary' || node.kind === 'note' || node.kind === 'relation') return [];
@@ -438,7 +451,9 @@ function _renderInputPorts(node, state) {
     ? baseCount + savedCount
     : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
-  const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge';
+  // junction（2026-10-11）入口同 knowledge family：任意来源可接（连线自由化后
+  // 本无裁判，这里只是端口显示口径——灰点＋「可连接任意来源」）
+  const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge' || node.kind === 'junction';
   for (let i = 0; i < count; i++) {
     const named = declared[i] || null;
     const inputMeta = _nodeInputPortMeta(node, i);
@@ -715,7 +730,7 @@ function _customNodeStatusHtml(node, force) {
 
 function _canMinimizeGraphNode(node) {
   if (!node) return false;
-  if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation') return false;
+  if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation' || node.kind === 'junction') return false;
   if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'human_note') return true;
   return node.kind === 'module' || node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
 }
@@ -825,6 +840,23 @@ function _renderRelationNodeHtml(node, state) {
     + '<div class="graph-node-main">'
     + '<div class="graph-node-full-content">' + body + '</div>'
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
+    + '</div>'
+    + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
+// 中转节点（junction，2026-10-11）小卡渲染：迷你圆角方块＋中心圆点，无状态行、
+// 无 resize 手柄、无内容区。固定一进一出两个端口（统一门在 graph.js 关掉加口），
+// 多路汇入/扇出走单口多线。卡面极小是为了让线能穿过它而不喧宾夺主——它是走线
+// 锚点不是内容节点。viewer 只读页同样渲染（纯静态 HTML，无编辑钩子）。
+function _renderJunctionNodeHtml(node, state) {
+  const attr = _nodeAttribute(node);
+  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
+  const body = '<div class="graph-junction-dot" title="中转节点：多路汇入扇出，内容直通下游"></div>';
+  return '<div class="graph-node graph-node-junction graph-attr-junction graph-node-compact' + selectedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';">'
+    + _renderInputPorts(node, state)
+    + '<div class="graph-node-main">'
+    + '<div class="graph-junction-body">' + body + '</div>'
     + '</div>'
     + _renderOutputPorts(node, [], state || _graphState())
     + '</div>';
@@ -1034,6 +1066,7 @@ function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
   if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
   if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
+  if (node.kind === 'junction') return _renderJunctionNodeHtml(node, state);
   if (node.kind === 'human_note') return _renderHumanNoteNodeHtml(node, state);
   if (node.kind === 'ai_eval') return _renderAiEvalNodeHtml(node, state);
   const message = messages[node.messageIndex];

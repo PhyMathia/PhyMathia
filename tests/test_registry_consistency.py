@@ -45,11 +45,11 @@ def _parse_frontend_recipes() -> list[dict]:
 
 
 def test_frontend_registry_shape():
-    """18 条官方配方：15 个手动入口 + relation/ai_eval/hub 三个 hidden 类型（2026-10-10 hub 退役）。"""
+    """19 条官方配方：16 个手动入口 + relation/ai_eval/hub 三个 hidden 类型（2026-10-11 junction 复活结构组）。"""
     entries = _parse_frontend_recipes()
-    assert len(entries) == 18, f"官方配方应为 18 条（15 入口 + relation/ai_eval/hub），实际 {len(entries)}"
+    assert len(entries) == 19, f"官方配方应为 19 条（16 入口 + relation/ai_eval/hub），实际 {len(entries)}"
     visible = [e for e in entries if not e["hidden"]]
-    assert len(visible) == 15, "添加面板入口应保持 15 个（2026-10-10 hub 退役后）"
+    assert len(visible) == 16, "添加面板入口应保持 16 个（2026-10-11 junction 复活结构组后）"
     keys = [e["key"] for e in entries]
     assert len(keys) == len(set(keys)), "配方 key 不允许重复"
     assert all(e["label"] for e in entries), "每条配方必须有中文 label"
@@ -72,6 +72,18 @@ def test_kinds_match_between_frontend_and_backend():
     hub = next(e for e in entries if e["key"] == "hub")
     assert hub["hidden"] is True
     assert "hub" not in ALLOWED_CREATE_KINDS, "创建口径保持移除（hub 2026-10-10 退役）"
+
+
+    # hub 同款（2026-10-10 退役，backlog 267）：hidden 且不可创建，kind 保留存续
+    hub = next(e for e in entries if e["key"] == "hub")
+    assert hub["hidden"] is True
+    assert "hub" not in ALLOWED_CREATE_KINDS, "创建口径保持移除（hub 2026-10-10 退役）"
+    # junction（2026-10-11 用户拍板）：走线锚点，面板可见（entry 不 hidden）但 Φ 不建
+    # ——用户手动工具的定位，kind 进白名单只为存量存续与 viewer 渲染
+    junction = next(e for e in entries if e["key"] == "junction")
+    assert junction["hidden"] is False, "junction 应进添加面板（用户手动走线工具）"
+    assert "junction" in kinds, "junction 必须进 kind 白名单（存量图/查看器存续）"
+    assert "junction" not in ALLOWED_CREATE_KINDS, "Φ 不建 junction（提示词红线）"
 
 
 def test_module_keys_match_between_frontend_and_backend():

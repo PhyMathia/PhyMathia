@@ -31,10 +31,12 @@ const GRAPH_MODULE_DEFAULT_OUTPUTS = {
 // ── 端口机制统一（2026-10-10）：加口权限的唯一裁决处 ──
 // 渲染（graph-render 的＋号与×键）、右键菜单（graph-contextmenu）、增删守卫
 // （graph-interact）三处共用这两个门，别再在各处另写 kind 名单。口径＝常驻
-// 节点两侧都开放附加口，例外只有三条：draft（临时提问卡，两侧全关）、
+// 节点两侧都开放附加口，例外有四条：draft（临时提问卡，两侧全关）、
 // source 的输入侧（源头节点，连输入列都不渲染）、动态出口配方（出口数随
 // 正文解析，手加会被冲掉）——answer 底座配方未声明静态出口同样锁出口
-// （T263 口径）。基础口（身份口）永远不可删，删的只能是附加口。
+// （T263 口径）——以及 junction（2026-10-11 中转节点：固定一进一出，
+// 多路汇入/扇出走单口多线，扇入口子在 _resolveGraphEdges、扇出在
+// _connectPorts，都不长口）。基础口（身份口）永远不可删，删的只能是附加口。
 function _nodeRecipeOutputLocked(node) {
   if (!node || !node.recipeId) return false;
   if (node.kind !== 'module' && node.kind !== 'answer') return false;
@@ -46,13 +48,13 @@ function _nodeRecipeOutputLocked(node) {
 
 function _nodeCanAddInputPorts(node) {
   if (!node) return false;
-  if (node.kind === 'draft' || node.kind === 'source') return false;
+  if (node.kind === 'draft' || node.kind === 'source' || node.kind === 'junction') return false;
   return true;
 }
 
 function _nodeCanAddOutputPorts(node) {
   if (!node) return false;
-  if (node.kind === 'draft') return false;
+  if (node.kind === 'draft' || node.kind === 'junction') return false;
   return !_nodeRecipeOutputLocked(node);
 }
 
@@ -75,6 +77,7 @@ const GRAPH_NODE_ATTRIBUTES = {
   source: { key: 'source', label: '输入', color: 'var(--node-source)' },
   knowledge: { key: 'knowledge', label: '知识点', color: 'var(--node-knowledge)' },
   relation: { key: 'relation', label: '联系', color: 'var(--node-relation)' },
+  junction: { key: 'junction', label: '中转', color: 'var(--node-junction)' },
   any: { key: 'any', label: '任意输入', color: 'var(--node-any)' },
   // 配方节点的属性键（P1）：颜色按节点内嵌快照的色板令牌注入 --node-attr，
   // 这里只是 draft/端口兜底用的中性条目——具体颜色永远以 _recipeNodeAttribute 为准
@@ -1554,7 +1557,9 @@ function _buildGraphData(messages, state) {
       kind,
       x: saved.x != null ? saved.x : (cn.x || 0),
       y: saved.y != null ? saved.y : (cn.y || 0),
-      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module' || kind === 'hub') ? 3 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 1)),
+      // junction（2026-10-11）进 depth 3 组：走线锚点多落在源与目标之间，
+      // 放顶层（depth 1）会被自动整理扔到画布最上一行
+      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module' || kind === 'hub' || kind === 'junction') ? 3 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 1)),
       targetAngle: cn.targetAngle != null ? cn.targetAngle : 0,
       w: 0,
       h: 0,
@@ -1641,8 +1646,9 @@ function _resolveGraphEdges(state, defaults, nodeById) {
   for (const customEdge of custom) {
     const inputKey = customEdge.to + ':' + customEdge.toPort;
     const toNode = nodeById[customEdge.to];
-    // hub 与 knowledge 的输入允许多路汇入：多条连线可指向同一输入端口
-    const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'knowledge');
+    // hub 与 knowledge 的输入允许多路汇入：多条连线可指向同一输入端口。
+    // junction（2026-10-11 中转节点）同入此列——它的 in-0 就是单口多线 fan-in 口。
+    const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'knowledge' || toNode.kind === 'junction');
     if (!isFanInInput && occupiedInputs.has(inputKey)) continue;
     edges.push({ ...customEdge, type: customEdge.type || 'custom', custom: true });
     if (!isFanInInput) occupiedInputs.add(inputKey);
