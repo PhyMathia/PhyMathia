@@ -235,7 +235,8 @@
     var margin = (opts && opts.margin != null) ? opts.margin : POSTER_MARGIN;
 
     var vis = nodes.filter(function (n) {
-      return n && n.kind !== 'draft' && !n.hidden;
+      // junction（2026-10-11）同 draft：走线锚点无内容，海报不排它（否则出一张空白卡）
+      return n && n.kind !== 'draft' && n.kind !== 'junction' && !n.hidden;
     });
     if (!vis.length) return null;
 

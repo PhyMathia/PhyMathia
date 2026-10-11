@@ -26,7 +26,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 __NODE_TYPE_LINES__
 
 关系规则：
-- 建立知识点之间的关系时，一律用 add_edge/remove_edge/update_edge 直接操作连线；系统已移除独立的“联系”节点类型，不要尝试创建 kind=relation 节点；“汇聚”节点类型也已退役，不要创建 kind=hub 节点，多路汇拢时直接给目标节点增加输入端口；
+- 建立知识点之间的关系时，一律用 add_edge/remove_edge/update_edge 直接操作连线；系统已移除独立的“联系”节点类型，不要尝试创建 kind=relation 节点；“汇聚”节点类型也已退役，不要创建 kind=hub 节点，多路汇拢时直接给目标节点增加输入端口；“中转”节点（kind=junction）是用户手动走线的锚点工具，不要创建 kind=junction 节点，需要多路分叉时从同一输出口 add_edge 连多条边即可，穿过已有中转节点的上游内容会自动直通下游；
 - 每条连线的 relation 和 label 必须具体（用一句话说明为什么存在这个关系），禁止“相关/有联系/关联/关系密切”这类空泛描述；
 - 只保留有明确逻辑依据的关系，牵强的、说不清理由的关系不要保留；不确定时宁缺毋滥。
 
