@@ -111,7 +111,7 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   }
   // 预设注册表覆盖主流供应商（新增口径的最低门槛；注册表挂 window 供运行时读取）
   if (!code.includes('window.MODEL_PRESETS')) throw new Error('注册表未挂 window');
-  for (const p of ['zhipu', 'moonshot', 'dashscope', 'bigmodel', 'minimaxi', 'siliconflow', 'generativelanguage', 'anthropic', 'openrouter', 'groq', '11434', '1234']) {
+  for (const p of ['zhipu', 'moonshot', 'dashscope', 'bigmodel', 'minimaxi', 'siliconflow', 'generativelanguage', 'anthropic', 'openrouter', 'groq', 'xiaomimimo', '11434', '1234']) {
     if (!code.includes(p)) throw new Error('预设注册表缺供应商特征串：' + p);
   }
   // 每个预设的 hot（推荐星）id 必须真实存在于该预设的 models 里——hot 指向不存在的

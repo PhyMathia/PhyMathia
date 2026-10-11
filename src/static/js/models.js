@@ -68,7 +68,8 @@ const OPENCODE_GO_MODEL_LABELS = {
 // 手填，所以预设清单只是方便，不是门槛。
 // 模型 id 口径（2026-09-15 核对各家官方文档）：智谱 glm-5.3 系 / Kimi k3 系
 // （k2.5 与 moonshot-v1 已于 2026-08-31 下线，勿再加）/ 百炼 qwen3.8 系 /
-// OpenAI gpt-6-astra + gpt-5.6 三档 / Gemini 3.x 系。
+// OpenAI gpt-6-astra + gpt-5.6 三档 / Gemini 3.x 系 /
+// 小米 MiMo v2.6 系（2026-10-11 核对 mimo.mi.com 官方 model.md，v2.5 系 10-21 下线）。
 function _presetModels(labels, hotIds = []) {
   return Object.entries(labels).map(([id, label]) => ({ id, label, hot: hotIds.includes(id) }));
 }
@@ -148,6 +149,18 @@ const MODEL_PRESETS = {
       'MiniMax-M3': 'MiniMax M3（旗舰）',
       'MiniMax-M2.7-highspeed': 'MiniMax M2.7 高速版',
     }, ['MiniMax-M3']),
+  },
+  mimo: {
+    name: '小米 MiMo',
+    tagline: '小米官方 API，v2.6 系 1M 上下文深度思考；v2.5 系 2026-10-21 下线（勿再加）',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    apiKeyHint: 'sk-...（Token 套餐密钥为 tp-... / ttp-...）',
+    docs: 'https://platform.xiaomimimo.com/#/console/api-keys',
+    models: _presetModels({
+      'mimo-v2.6-pro': 'MiMo V2.6 Pro（旗舰）',
+      'mimo-v2.6-flash': 'MiMo V2.6 Flash（性价比）',
+      'mimo-v2.6-pro-ultraspeed': 'MiMo V2.6 Pro UltraSpeed（限流需定制）',
+    }, ['mimo-v2.6-pro', 'mimo-v2.6-flash']),
   },
   siliconflow: {
     name: '硅基流动',

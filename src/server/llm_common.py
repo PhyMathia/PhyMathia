@@ -60,6 +60,7 @@ PROVIDER_BASE_URLS = {
     "deepseek": "https://api.deepseek.com",
     "openai": "https://api.openai.com/v1",
     "opencode": "https://opencode.ai/zen/v1",
+    "mimo": "https://api.xiaomimimo.com/v1",
 }
 
 # zen 免费档已对第三方关闭（FreeTierError，2026-09-21 实测）；常量保留作兼容，调用方不必硬编码空串
@@ -171,7 +172,7 @@ def thinking_request_params(provider: str, level: str) -> dict:
     用户档位 default('')/low/high/max：default 不发送任何思考参数——现状行为
     零变化。各家 OpenAI 兼容端点的思考字段不统一：OpenAI 系（含 Gemini/
     OpenRouter/Groq/自定义网关）用 reasoning_effort，千问百炼用 enable_thinking，
-    智谱用 thinking.type，Ollama 用 think。reasoning_effort 只有 low/medium/high
+    智谱/MiMo 用 thinking.type，Ollama 用 think。reasoning_effort 只有 low/medium/high
     三档，low/high/max 按序拉伸映射（low→low、high→medium、max→high），
     三档在每个 reasoning_effort 供应商上都有区分度；布尔开关族（qwen/zhipu/
     ollama）三档同为「开启」。上游不认识注入字段而拒绝整个请求时，由调用方
@@ -184,7 +185,7 @@ def thinking_request_params(provider: str, level: str) -> dict:
         return {}
     if p == "qwen":
         return {"enable_thinking": True}
-    if p == "zhipu":
+    if p in ("zhipu", "mimo"):
         return {"thinking": {"type": "enabled"}}
     if p == "ollama":
         return {"think": True}
