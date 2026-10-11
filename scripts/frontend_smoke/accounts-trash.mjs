@@ -685,4 +685,50 @@ check('删除链超时兜底全覆盖（T195）：公式两处 DELETE 与 quiz b
   if (!ssrc.includes("fetch('/api/kv/phymathia_quiz_bank', { method: 'DELETE', signal: AbortSignal.timeout(10000) })")) throw new Error('clearAllSessions 的 quiz bank 全局 DELETE 仍无超时 signal');
   return true;
 });
+
+// ===== T271 复活防线（2026-10-11）：删除的画布不许回来 =====
+// 三条通道（当日日志「T271：删掉的画布会复活」节实测取证）：①兄弟标签页内存
+// 旧副本的卸载信标回写；②15 秒同步与删除竞态（旧快照写回本地→下轮当「本地
+// 独有」整条上传）；③服务端盲 upsert。服务端闸门由 pytest 钉；这里钉客户端三件。
+
+check('T271 复活防线：三处删除口互斥让位 15 秒同步（单删/批量/清空全部）', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  // 同步入口的让位 guard（竞态通道的正门）
+  if (!src.includes('if (_sessionDeletionBusy) return false;')) throw new Error('_syncFromServer 缺删除让位 guard');
+  // 轮询拍整拍让位（推送在删除进行中也是白写）
+  const tick = src.match(/async function _periodicSyncTick\(\) \{[\s\S]*?if \(_sessionDeletionBusy\) return;/);
+  if (!tick) throw new Error('_periodicSyncTick 缺删除让位 guard');
+  // 三个删除口都要有互斥（try/finally 收口，删失败也得复位，否则同步永久停摆）
+  for (const fn of ['async function deleteSession(', 'async function deleteSelectedSessions()', 'async function clearAllSessions()']) {
+    const i = src.indexOf(fn);
+    if (i < 0) throw new Error('缺删除函数：' + fn);
+    const seg = src.slice(i, i + 2600);
+    if (!seg.includes('_sessionDeletionBusy = true')) throw new Error(fn + ' 缺删除互斥');
+  }
+  if (!/_sessionDeletionBusy = false;\s*\n\s*\}/.test(src)) throw new Error('互斥复位缺失');
+  return true;
+});
+
+check('T271 复活防线：卸载信标跳过墓碑在册的 id（兄弟标签页旧副本关页不回写）', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const i = src.indexOf("window.addEventListener('beforeunload'");
+  if (i < 0) throw new Error('beforeunload 监听缺失');
+  const seg = src.slice(i, i + 2400);
+  if (!seg.includes('if (_tombstonedSids.has(sid)) continue;')) throw new Error('全量信标未按墓碑逐条跳过');
+  if (!seg.includes('!_tombstonedSids.has(currentSessionId)')) throw new Error('当前会话消息信标未按墓碑跳过');
+  return true;
+});
+
+check('T271 复活防线：同步按服务端墓碑清本地残留＋storage 事件跨标签页刷名单', () => {
+  const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+  if (!src.includes("fetch('/api/sessions/deleted-ids'")) throw new Error('同步缺已删登记表拉取');
+  if (!src.includes('!_tombstonedSids.has(sid)')) throw new Error('本地独有上传分支未按墓碑跳过');
+  // 墓碑清理必须发生在并集合并前（否则并集策略把残留永远留在名单里）
+  const iClean = src.indexOf('_tombstonedSids.clear()');
+  const iMerge = src.indexOf('// 合并策略：session 取并集');
+  if (!(iClean > 0 && iMerge > iClean)) throw new Error('墓碑清理须在并集合并之前');
+  // 跨标签页：storage 事件刷新内存副本（旧副本留在侧栏、关页回写是通道之一）
+  if (!src.includes("window.addEventListener('storage'")) throw new Error('缺跨标签页 storage 监听');
+  return true;
+});
 }

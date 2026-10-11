@@ -65,14 +65,23 @@ _MISSING = object()
 
 
 def _patched_paths(td):
+    """与 test_routes.py 同一套补丁口径（2026-10-11 T271 对齐）：patch
+    config.DATA_DIR 一处（accounts.resolve_paths 调用期读取它），路径值改为
+    账号域布局（data/users/default/…），保证「夹具写入的目标」与「路由经
+    resolve_paths 读到的目标」是同一份文件。此前缺 DATA_DIR，本文件的账号域
+    路由全部解析到真实 data 目录——pytest 全量跑会把真实用户会话删进真机
+    回收站并在 T271 登记表留墓碑（当日日志「夹具缺口插曲」节）。"""
+    td = Path(td)
+    root = td / "users" / "default"
     return {
-        "MESSAGES_DIR": Path(td) / "messages",
-        "SESSIONS_PATH": Path(td) / "sessions.json",
-        "KNOWLEDGE_PATH": Path(td) / "knowledge.json",
-        "FORMULAS_PATH": Path(td) / "formulas.json",
-        "KV_PATH": Path(td) / "kv_store.json",
-        "KV_DIR": Path(td) / "kv",
-        "PROFILES_DIR": Path(td) / "profiles",
+        "DATA_DIR": td,
+        "MESSAGES_DIR": root / "messages",
+        "SESSIONS_PATH": root / "sessions.json",
+        "KNOWLEDGE_PATH": root / "knowledge.json",
+        "FORMULAS_PATH": root / "formulas.json",
+        "KV_PATH": root / "kv_store.json",
+        "KV_DIR": root / "kv",
+        "PROFILES_DIR": td / "profiles",
     }
 
 

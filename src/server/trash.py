@@ -333,6 +333,8 @@ def restore_item(paths: accounts.AccountPaths, item_id: str) -> str:
     _restore_payload_data(paths, item_dir, item_id)
 
     shutil.rmtree(item_dir, ignore_errors=True)
+    # T271：整画布复活成功，同步除名墓碑登记——恢复后的画布要能照常收写
+    tombstone_unregister(paths, item_id)
     return item_id
 
 
@@ -523,6 +525,79 @@ def purge_expired_all() -> int:
     except Exception as e:  # 账号墓碑区是全局目录，单独兜底
         logger.warning("account tombstone startup purge failed: %s", e)
     return total
+
+
+# ====== 已删会话墓碑登记表（2026-10-11 T271：删除「复活」防线，服务端半边） ======
+# 背景（当日日志「T271：删掉的画布会复活」节实测取证）：删除链路本身干净，但
+# 客户端的「并集合并＋本地独有重传」离线优先策略会把任何一份还活着的旧副本
+# （兄弟标签页内存的卸载信标、15 秒同步与删除竞态写回的本地快照）重新推回服
+# 务端，而 POST/PUT /api/sessions 原是盲 upsert——画布因此「复活」。本登记表
+# 是权威防线：删除（单删/清空全部）把 id 登记进 trash/_deleted_sessions.json
+# （id→删除毫秒时刻），名单写接口对登记中的 id 一律拒收；回收站整画布恢复时
+# 除名，恢复后照常收写。彻底删除/清空回收站/保留期到期清除都**保留**登记——
+# 「已彻底删除」被旧副本复活正是要防的事。登记表是 trash 目录下的一个文件：
+# list_items/purge_expired/empty_trash 只认子目录（meta 在才成条目），不会把
+# 它当条目列出或清掉；随删账号整体入墓碑区、恢复随账号回来，无需特殊处理。
+
+DELETED_REGISTRY_NAME = "_deleted_sessions.json"
+
+# 登记退役时限：90 天前的墓碑在下次登记时顺手 GC。旧标签页不可能开 90 天，
+# 卸载信标复活 90 天前的删除不是真实威胁；不放 GC 登记表会无限膨胀（每轮
+# /api/sessions/deleted-ids 都要全量下发）。
+_TOMBSTONE_TTL_MS = 90 * _DAY_MS
+
+
+def deleted_registry_path(paths: accounts.AccountPaths) -> Path:
+    return trash_root(paths) / DELETED_REGISTRY_NAME
+
+
+def tombstone_read(paths: accounts.AccountPaths) -> dict:
+    """已删会话登记表（id→删除毫秒时刻）。脏值逐项剔除、缺失回落空表。
+
+    只读不主动加锁——名单写接口在 updater（已持 _JSON_LOCK）里调它，与登记
+    写天然串行；GET deleted-ids 在锁外调，读到片刻旧的登记无碍（前端清理是
+    收敛性的，下一轮同步还会拉）。
+    """
+    data = storage._read_json(deleted_registry_path(paths), {})
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in data.items():
+        if isinstance(k, str) and _ITEM_ID_RE.match(k) and isinstance(v, (int, float)) and v > 0:
+            out[k] = int(v)
+    return out
+
+
+def tombstone_register(paths: accounts.AccountPaths, session_ids, at_ms: int = None) -> None:
+    """登记已删会话（删除/清空全部路由在 sessions.json 的 updater 内调用——
+    同持全局锁，杜绝「POST 读登记表→删除登记→POST 写名单」的竞窗）。"""
+    ids = [s for s in (session_ids or []) if isinstance(s, str) and _ITEM_ID_RE.match(s)]
+    if not ids:
+        return
+    now = int(at_ms) if at_ms and int(at_ms) > 0 else int(time.time() * 1000)
+    data = tombstone_read(paths)
+    for sid in ids:
+        data[sid] = now
+    cutoff = now - _TOMBSTONE_TTL_MS
+    data = {k: v for k, v in data.items() if v >= cutoff}
+    trash_root(paths).mkdir(parents=True, exist_ok=True)
+    storage._write_json(deleted_registry_path(paths), data)
+
+
+def tombstone_unregister(paths: accounts.AccountPaths, session_id: str) -> None:
+    """回收站整画布恢复成功后除名：恢复的画布要能照常收写（改名/推消息/同步）。
+
+    失败不抛——恢复主体已成功，登记残留只挡这个 id 的后续写入，可由再次
+    恢复纠正；向上抛反而会把已成功的恢复报成失败。"""
+    try:
+        if session_id not in tombstone_read(paths):
+            return
+        def _drop(data):
+            data.pop(session_id, None)
+            return data
+        storage._mutate_json(deleted_registry_path(paths), _drop)
+    except Exception as e:
+        logger.warning("tombstone unregister %s failed: %s", session_id, e)
 
 
 # ====== 账号级墓碑（删账号回收站化：整个账号目录暂存，保留期内可恢复） ======

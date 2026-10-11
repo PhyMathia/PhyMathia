@@ -5,7 +5,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import accounts
+from . import accounts, trash
 from .accounts import DEFAULT_ACCOUNT
 from .knowledge import (
     _dedupe_formula_map,
@@ -92,6 +92,7 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT)
     if not isinstance(data, (dict, list)):
         return 0
     count = 0
+    restored = []
     entries = data.items() if isinstance(data, dict) else [(None, item) for item in data]
     for raw_key, sdata in entries:
         if not isinstance(sdata, dict):
@@ -111,8 +112,14 @@ def _restore_sessions(data: dict, replace: bool, account: str = DEFAULT_ACCOUNT)
             "updatedAt": sdata.get("updatedAt", now),
         }
         count += 1
+        restored.append(sid)
     paths.sessions_path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(paths.sessions_path, sessions)
+    # T271：恢复出的会话若还在「已删登记表」里，同步除名——否则恢复后改名/推
+    # 消息/同步全被墓碑闸门拒收（备份导入是用户明确要回来的数据，等同回收站恢复）。
+    # 只清本次导入新增的 id：存量活会话不在册，逐个空写一遍纯浪费
+    for sid in restored:
+        trash.tombstone_unregister(paths, sid)
     return count
 
 

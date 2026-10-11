@@ -648,3 +648,154 @@ def test_tombstone_account_ids_readonly_scan(acc_env):
     storage._write_json(root / "not_account_99" / "meta.json", {"id": "x", "kind": "session"})
     assert trash.tombstone_account_ids() == {"ivy"}
     assert (root / stone).exists()
+
+
+# ====== 已删会话墓碑登记表（2026-10-11 T271：删除「复活」防线，服务端半边） ======
+# 钉死的拍板：删除（单删/清空全部）登记 id，POST 对「带删前 updatedAt 的旧副本」
+# 拒收（无 updatedAt 的净新建放行＝同 id 重建以新为准）、PUT/消息推送对在册 id 一律
+# 拒收——兄弟标签页卸载信标、同步竞态回传必带删前 updatedAt，写不回；只登记删除
+# 时刻确在名单的 id；回收站整画布恢复除名；彻底删除/清空回收站保留登记；回收站
+# 关闭（保留 0 天）登记照常。
+
+def test_delete_registers_tombstone_and_blocks_all_writes(acc_env):
+    """单删登记墓碑；名单 POST/PUT 与消息推送三口全拒；存活会话不受牵连。"""
+    _seed_session(account="alice")
+    _make("alice")
+    with _client() as client:
+        assert client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"}).status_code == 200
+        # 登记表可见（GET deleted-ids）
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        assert deleted.get("sess_aaa", 0) > 0
+        deleted_at = deleted["sess_aaa"]
+        # 卸载信标/同步竞态回传（POST 单条，带删前 updatedAt）→ 拒收不重建
+        r = client.post("/api/sessions",
+                        json={"id": "sess_aaa", "title": "旧副本", "sessionId": "phymathia_aaa",
+                              "updatedAt": deleted_at - 1},
+                        params={"account_id": "alice"})
+        assert r.status_code == 200 and r.json()["count"] == 0
+        assert r.json()["rejected"] == ["sess_aaa"]
+        assert "sess_aaa" not in storage._read_json(_paths("alice").sessions_path, {})
+        # 无 updatedAt 的净新建放行（同 id 重建以新为准；测试/新客户端首建形态）
+        r = client.post("/api/sessions", json={"id": "sess_fresh", "title": "新建"},
+                        params={"account_id": "alice"})
+        assert r.json() == {"ok": True, "count": 1}
+        assert "sess_fresh" in storage._read_json(_paths("alice").sessions_path, {})
+        # 改名/换图标的 PUT → 409，条目同样不建
+        r = client.put("/api/sessions/sess_aaa", json={"title": "改名"}, params={"account_id": "alice"})
+        assert r.status_code == 409
+        assert "sess_aaa" not in storage._read_json(_paths("alice").sessions_path, {})
+        # 消息推送 → ok 但不落文件（静默跳过，防信标/同步重试风暴）
+        r = client.post("/api/sessions/sess_aaa/messages",
+                        json={"messages": [{"role": "user", "content": "hi", "timestamp": 1}]},
+                        params={"account_id": "alice"})
+        assert r.status_code == 200 and r.json().get("tombstoned") is True
+        assert not (_paths("alice").messages_dir / "sess_aaa.json").exists()
+        # 存活会话不受牵连：sess_bbb 照常可写（rejected 仅真有拒收才附带——冻结
+        # 契约对稳态响应做精确断言，空表不添键，形状与旧版逐字节一致）
+        r = client.post("/api/sessions", json={"id": "sess_bbb", "title": "还活着"}, params={"account_id": "alice"})
+        assert r.json() == {"ok": True, "count": 1}
+        # 账号隔离：default 的登记表看不见 alice 的
+        assert client.get("/api/sessions/deleted-ids").json()["deleted"] == {}
+
+
+def test_restore_unregisters_tombstone(acc_env):
+    """回收站整画布恢复 → 除名 → 恢复后的画布照常收写（PUT/POST 不再被拒）。"""
+    _seed_session(account="alice")
+    _make("alice")
+    with _client() as client:
+        client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"})
+        assert client.put("/api/sessions/sess_aaa", json={"title": "x"},
+                          params={"account_id": "alice"}).status_code == 409
+        assert client.post("/api/trash/sess_aaa/restore", params={"account_id": "alice"}).status_code == 200
+        assert client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"] == {}
+        r = client.put("/api/sessions/sess_aaa", json={"title": "恢复后改名"}, params={"account_id": "alice"})
+        assert r.status_code == 200
+        assert storage._read_json(_paths("alice").sessions_path, {})["sess_aaa"]["title"] == "恢复后改名"
+
+
+def test_tombstone_survives_purge_and_empty_trash(acc_env):
+    """彻底删除/清空回收站都保留登记——「已彻底删除」被旧副本复活正是要防的事。"""
+    _seed_session(account="alice")
+    _make("alice")
+    with _client() as client:
+        client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"})
+        client.delete("/api/sessions/sess_bbb", params={"account_id": "alice"})
+        assert client.delete("/api/trash/sess_aaa", params={"account_id": "alice"}).json()["ok"] is True
+        assert client.delete("/api/trash", params={"account_id": "alice"}).json()["ok"] is True
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        assert "sess_aaa" in deleted and "sess_bbb" in deleted
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        for sid in ("sess_aaa", "sess_bbb"):
+            r = client.post("/api/sessions",
+                            json={"id": sid, "title": "复活失败", "updatedAt": deleted[sid] - 1},
+                            params={"account_id": "alice"})
+            assert r.json()["rejected"] == [sid]
+        assert storage._read_json(_paths("alice").sessions_path, {}) == {}
+
+
+def test_clear_all_registers_all_sessions(acc_env):
+    """清空全部 → 现存 id 全部登记；卸载信标逐条回传全部被拒。"""
+    _seed_session(account="alice")
+    _make("alice")
+    with _client() as client:
+        assert client.delete("/api/sessions", params={"account_id": "alice"}).status_code == 200
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        assert set(deleted) >= {"sess_aaa", "sess_bbb"}
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        r = client.post("/api/sessions", json=[
+            {"id": "sess_aaa", "title": "a", "updatedAt": deleted["sess_aaa"] - 1},
+            {"id": "sess_bbb", "title": "b", "updatedAt": deleted["sess_bbb"] - 1},
+        ], params={"account_id": "alice"})
+        assert r.json()["count"] == 0
+        assert sorted(r.json()["rejected"]) == ["sess_aaa", "sess_bbb"]
+        assert storage._read_json(_paths("alice").sessions_path, {}) == {}
+
+
+def test_tombstone_registered_even_when_trash_disabled(acc_env):
+    """保留 0 天（回收站关闭）＝删除即彻底清除，墓碑登记照常——防复活不依赖回收站。"""
+    _seed_session(account="alice")
+    _make("alice")
+    trash.set_retention_days("alice", 0)
+    with _client() as client:
+        assert client.delete("/api/sessions/sess_aaa", params={"account_id": "alice"}).status_code == 200
+        assert client.get("/api/trash", params={"account_id": "alice"}).json()["items"] == []
+        deleted = client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"]
+        assert "sess_aaa" in deleted
+        r = client.post("/api/sessions",
+                        json={"id": "sess_aaa", "title": "复活失败", "updatedAt": deleted["sess_aaa"] - 1},
+                        params={"account_id": "alice"})
+        assert r.json()["rejected"] == ["sess_aaa"]
+
+
+def test_clear_messages_does_not_tombstone(acc_env):
+    """清空消息（T182）画布还活着：不得登记墓碑，否则画布从此收写全被拒。"""
+    _seed_session(account="alice")
+    _make("alice")
+    with _client() as client:
+        client.delete("/api/sessions/sess_aaa/messages", params={"account_id": "alice"})
+        assert client.get("/api/sessions/deleted-ids", params={"account_id": "alice"}).json()["deleted"] == {}
+        r = client.post("/api/sessions/sess_aaa/messages",
+                        json={"messages": [{"role": "user", "content": "新消息", "timestamp": 2}]},
+                        params={"account_id": "alice"})
+        assert r.status_code == 200 and "tombstoned" not in r.json()
+        assert len(client.get("/api/sessions/sess_aaa/messages", params={"account_id": "alice"}).json()) == 1
+
+
+def test_tombstone_gc_prunes_beyond_90d(acc_env):
+    """90 天前的登记在下次登记时顺手退役——登记表不无限膨胀（每轮下发全量）。"""
+    paths = _paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    old = int(time.time() * 1000) - 91 * 86_400_000
+    trash.tombstone_register(paths, ["sess_old"], at_ms=old)
+    trash.tombstone_register(paths, ["sess_new"])
+    data = trash.tombstone_read(paths)
+    assert data.get("sess_new", 0) > 0
+    assert "sess_old" not in data
+
+
+def test_tombstone_register_validates_ids(acc_env):
+    """白名单外的 id 不入登记表（登记表在 trash 目录下，键要拼得进文件名口径）。"""
+    paths = _paths()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    trash.tombstone_register(paths, ["../evil", "ok_id", "", None])
+    assert list(trash.tombstone_read(paths)) == ["ok_id"]

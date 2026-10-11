@@ -132,9 +132,30 @@ async def api_save_sessions(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    paths = _account_paths(request, payload)
+
     def updater(data):
-        nonlocal written
+        nonlocal written, rejected
         now = int(time.time() * 1000)
+        # T271 墓碑闸门：已删会话的**删前旧副本**拒收不重建（兄弟标签页卸载信标、
+        # 同步竞态写回的本地快照都带删前 updatedAt）。时间戳感知——只拒「带
+        # updatedAt 且 ≤ 删除时刻」的副本；无 updatedAt 的净新建放行（语义即
+        # 「同 id 重建以新为准」，也是测试/新客户端首建的合法形态）。在 updater
+        # 内读登记表——与删除路由的登记同持全局 _JSON_LOCK，杜绝「读表→删除
+        # 登记→写名单」的竞窗。
+        tombstones = trash.tombstone_read(paths)
+
+        def _stale_copy(sid, sdata):
+            deleted_at = tombstones.get(sid)
+            if deleted_at is None:
+                return False
+            raw = sdata.get("updatedAt") if isinstance(sdata, dict) else None
+            if raw is None:
+                return False  # 净新建（无时间戳）：放行
+            try:
+                return int(raw) <= deleted_at
+            except (TypeError, ValueError):
+                return True  # 脏时间戳按旧副本从严
 
         def _entry(sid, sdata):
             # 消息文件路径按 sid 直接拼路径（_get_messages_path 白名单）——
@@ -156,31 +177,48 @@ async def api_save_sessions(request: Request):
                 if not isinstance(sdata, dict) or not sdata.get("id"):
                     continue
                 entry = _entry(sdata["id"], sdata)
-                if entry:
-                    data[entry["id"]] = entry
-                    written += 1
+                if not entry:
+                    continue
+                if _stale_copy(entry["id"], sdata):
+                    rejected.append(entry["id"])
+                    continue
+                data[entry["id"]] = entry
+                written += 1
         elif isinstance(payload, dict) and "id" in payload:
             entry = _entry(payload["id"], payload)
             if entry:
-                data[entry["id"]] = entry
-                written += 1
+                if _stale_copy(entry["id"], payload):
+                    rejected.append(entry["id"])
+                else:
+                    data[entry["id"]] = entry
+                    written += 1
         elif isinstance(payload, dict):
             for sid, sdata in payload.items():
                 if not isinstance(sdata, dict):
                     continue
                 entry = _entry(sdata.get("id") or sid, sdata)
-                if entry:
-                    data[entry["id"]] = entry
-                    written += 1
+                if not entry:
+                    continue
+                if _stale_copy(entry["id"], sdata):
+                    rejected.append(entry["id"])
+                    continue
+                data[entry["id"]] = entry
+                written += 1
         return data
 
     written = 0
+    rejected = []
     # T240：sessions.json 的读-改-写整体挪 to_thread（T201 首波漏了会话名单表，
     # 收尾补上）——整表重写持全局 _JSON_LOCK，压在事件循环上时后台持锁写大文件
     # 会把全服务请求堵停。updater 是纯本地 dict 操作，无线程安全问题
-    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).sessions_path, updater)
-    # count 返回实际写入条数（非法 id 被跳过的不算），与 knowledge 路由口径一致
-    return {"ok": True, "count": written}
+    await asyncio.to_thread(_mutate_json, paths.sessions_path, updater)
+    # count 返回实际写入条数（非法 id 被跳过的不算），与 knowledge 路由口径一致。
+    # rejected 仅在真有墓碑拒收时附带——冻结契约（review_stage1_http）对响应做
+    # 精确断言，稳态空表不添键，形状与旧版逐字节一致
+    result = {"ok": True, "count": written}
+    if rejected:
+        result["rejected"] = rejected
+    return result
 
 
 @router.put("/api/sessions/{session_id}")
@@ -192,9 +230,18 @@ async def api_update_session(session_id: str, request: Request):
     except ValueError:
         # 与 DELETE 同口径：路径 id 先过白名单，PUT 不能为任意字符串建条目
         raise HTTPException(status_code=400, detail="Invalid session id")
+    paths = accounts.resolve_paths(account)
+
+    tombstoned = False
 
     def updater(data):
+        nonlocal tombstoned
         now = int(time.time() * 1000)
+        # T271 墓碑闸门：已删会话不重建条目（改名/换图标的 PUT 不该复活画布）。
+        # 在 updater 内读登记表，与删除登记同锁无竞窗；置位后在锁外回 409。
+        if session_id in trash.tombstone_read(paths):
+            tombstoned = True
+            return data
         if session_id not in data:
             data[session_id] = {
                 "id": session_id,
@@ -214,7 +261,9 @@ async def api_update_session(session_id: str, request: Request):
         return data
 
     # T240：与 POST 同表同患——单条 upsert 也是整文件重写，一并离线程
-    await asyncio.to_thread(_mutate_json, _account_paths(request, payload).sessions_path, updater)
+    await asyncio.to_thread(_mutate_json, paths.sessions_path, updater)
+    if tombstoned:
+        raise HTTPException(status_code=409, detail="该画布已删除，无法更新（保留期内可在回收站恢复）")
     return {"ok": True}
 
 
@@ -266,7 +315,13 @@ async def api_delete_session(session_id: str, request: Request = None):
             logger.warning(f"delete session: unlink {stale.name} failed: {e}")
 
     def updater(data):
+        existed = session_id in data
         data.pop(session_id, None)
+        # T271：登记已删墓碑（与名单删除同锁同刻）——此后带删前 updatedAt 的
+        # 旧副本（卸载信标/同步竞态）写不回。只登记删除时刻确在名单的 id：
+        # 重复删/幻 id 不入登记表，登记表不积垃圾
+        if existed:
+            trash.tombstone_register(paths, [session_id])
         return data
 
     _mutate_json(paths.sessions_path, updater)
@@ -286,6 +341,13 @@ async def api_clear_all_sessions(request: Request = None):
     except Exception as e:
         logger.warning(f"clear all: trash capture failed, abort: {e}")
         raise HTTPException(status_code=500, detail="回收站快照失败，已中止清空，请稍后重试")
+    # T271：清空前把现存 id 全部登记成墓碑（失败同样中止）——否则兄弟标签页
+    # 的卸载信标/同步竞态回传会把它们逐条写回，清空等于白清
+    try:
+        trash.tombstone_register(paths, list(_read_json(paths.sessions_path, {}).keys()))
+    except Exception as e:
+        logger.warning(f"clear all: tombstone register failed, abort: {e}")
+        raise HTTPException(status_code=500, detail="删除登记失败，已中止清空，请稍后重试")
     context._clear_all_rolling_memory(account)  # 先失效在途摘要任务（代次 bump），必须先于一切 await
 
     def _clear_all_io():
@@ -302,6 +364,15 @@ async def api_clear_all_sessions(request: Request = None):
 
     await asyncio.to_thread(_clear_all_io)  # T201：批量写/删文件不压事件循环
     return {"ok": True}
+
+
+@router.get("/api/sessions/deleted-ids")
+async def api_deleted_session_ids(request: Request = None):
+    """已删会话墓碑登记表（T271，id→删除毫秒时刻）。前端 15 秒同步轮询它清
+    本地残留（删除竞态写回的名单条目、兄弟标签页删掉的画布）——复活防线的
+    客户端半边；服务端写闸门见 POST/PUT /api/sessions 的墓碑拒收。"""
+    paths = _account_paths(request)
+    return {"deleted": trash.tombstone_read(paths)}
 
 
 # ====== 回收站 API（2026-10-07：防误删——删除的会话在保留期内可整体恢复） ======
@@ -452,7 +523,16 @@ async def api_save_messages(session_id: str, request: Request):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
 
+    tombstoned_msgs = False
+
     def msgs_updater(existing):
+        nonlocal tombstoned_msgs
+        # T271 墓碑闸门：已删会话的消息推送静默不落盘（不建孤儿消息文件）。
+        # 与删除登记同持全局 _JSON_LOCK，无竞窗；响应仍 ok（信标/同步调用方
+        # 只看 resp.ok，静默跳过防重试风暴）。
+        if session_id in trash.tombstone_read(accounts.resolve_paths(account)):
+            tombstoned_msgs = True
+            return None
         # 逐条合并（按 timestamp 身份，与前端 _mergeMessageLists 同口径）：
         # 两边各自独有的消息都保留、字段互补——取代旧「消息更多的一方取胜」
         # （旧规则在两边各有一些消息时会把少的一边独有的整份丢掉）。
@@ -470,6 +550,8 @@ async def api_save_messages(session_id: str, request: Request):
     # T201：读并+合并+写盘挪 to_thread，长会话保存不再卡流式下发
     # （storage._JSON_LOCK 是 threading.RLock，跨线程照常串行，语义不变）
     await asyncio.to_thread(_mutate_json, msgs_path, msgs_updater, default=[])
+    if tombstoned_msgs:
+        return {"ok": True, "count": 0, "tombstoned": True}
     return {"ok": True, "count": len(messages)}
 
 

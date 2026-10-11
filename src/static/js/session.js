@@ -104,6 +104,8 @@
     //   - 知识：合并结果与本地不同才写
     // 调用方不得把它当「服务端可用性」用（服务端可达但无变化也是 false）。
     async function _syncFromServer() {
+      // T271：删除进行中让位——本轮同步的旧名单快照会把刚删的画布并集回本地
+      if (_sessionDeletionBusy) return false;
       // T70：不再先 _checkServer() 单独探活（它自己也 GET /api/sessions）再全量拉
       // 一遍——首个请求本身就是探活。启动与 15 秒轮询各少一次重复请求（此前
       // /api/sessions 每轮 ×2）。服务端可用性沿用 _checkServer 的结果缓存字段，
@@ -117,10 +119,13 @@
       let mergedSessions = null;  // T78：本轮回合后的会话全集，供 current 指针判悬空用
       let changed = false;        // T204：本轮是否确有数据落盘变化（决定返回值）
       try {
-        const [sessResp, knowResp, currResp] = await Promise.all([
+        const [sessResp, knowResp, currResp, delResp] = await Promise.all([
           fetch('/api/sessions', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }),
           fetch('/api/knowledge', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
           fetch('/api/kv/phymathia_current_session', { cache: 'no-cache', signal: AbortSignal.timeout(10000) }),
+          // T271：已删会话登记表——本地残留按它清。自带 catch 落 null：这条新
+          // 端点网络挂了不该拖垮整轮同步（404/非 ok 走 delResp.ok 判断跳过）
+          fetch('/api/sessions/deleted-ids', { cache: 'no-cache', signal: AbortSignal.timeout(3000) }).catch(() => null),
         ]);
         _serverAvailable = sessResp.ok;
         _serverAvailableCheckedAt = Date.now();
@@ -132,6 +137,37 @@
           const serverSessions = await sessResp.json();
           const localSessionsRaw = localStorage.getItem(STORAGE_KEY_SESSIONS);
           const localSessions = localSessionsRaw ? JSON.parse(localSessionsRaw) : {};
+          // T271：按服务端墓碑清本地残留（删除竞态写回的名单条目、兄弟标签页删掉
+          // 的画布）。必须在并集合并前剔除——并集策略会把这类 id 永远留在本地名单
+          // 里（残留清理循环只删消息键、从不删名单条目）。内存副本一并清：另一标
+          // 签页清理过 localStorage 而本页内存未刷新时，下面对不上就不写盘、changed
+          // 也不会亮，旧副本会一直留在侧栏并被保存链写回。当前画布是墓碑时按既有
+          // 落点切走（同本页删除的收尾）。
+          if (delResp && delResp.ok) {
+            try {
+              const delData = await delResp.json();
+              const delMap = (delData && delData.deleted && typeof delData.deleted === 'object') ? delData.deleted : null;
+              if (delMap) {
+                _tombstonedSids.clear();
+                for (const dsid of Object.keys(delMap)) _tombstonedSids.add(dsid);
+                let currentTombstoned = false;
+                for (const dsid of Object.keys(delMap)) {
+                  if (localSessions[dsid]) {
+                    delete localSessions[dsid];
+                    localStorage.removeItem('phymathia_msgs_' + dsid);
+                    localStorage.removeItem('phymathia_graph_' + dsid);
+                    changed = true;
+                  }
+                  if (sessions[dsid]) {
+                    delete sessions[dsid];
+                    changed = true;
+                  }
+                  if (currentSessionId === dsid) currentTombstoned = true;
+                }
+                if (currentTombstoned && !isStreaming) _switchAfterCurrentDeleted();
+              }
+            } catch (e) { console.warn('[Storage] Tombstone cleanup failed:', e); }
+          }
           const localSessionIds = Object.keys(localSessions);
           const serverSessionIds = Object.keys(serverSessions);
 
@@ -192,7 +228,8 @@
                 }
               }
               // 服务端不存在的 session（本地独有），保留本地数据，同时上传到服务端
-              if (!isServerSession && localMsgs.length > 0) {
+              // （T271：墓碑在册的不传——那是删除竞态的残留，传了就是复活）
+              if (!isServerSession && localMsgs.length > 0 && !_tombstonedSids.has(sid)) {
                 console.log(`[Storage] Uploading local-only session ${sid} to server`);
                 try {
                   await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名画布', sessionId: sid });
@@ -300,6 +337,15 @@
     // 整份 chatHistory 的网络传输＋服务端读并才是大头）。签名只在 resp.ok 时
     // 更新：失败的下一拍照常重试。beacon（beforeunload 兜底）不走这里、不拦。
     const _lastPushedMsgsSig = new Map(); // sessionId -> 最近一次成功推送的消息 JSON 串
+
+    // ====== T271 复活防线（客户端半边，服务端墓碑闸门在 session_routes/trash.py） ======
+    // _tombstonedSids：服务端「已删会话」登记表的本地镜像（每轮同步刷新；本页
+    // 删除成功后即刻补登）。卸载信标与「本地独有上传」对在册 id 静默跳过——
+    // 兄弟标签页内存里的旧副本不再把已删画布写回服务端。
+    const _tombstonedSids = new Set();
+    // 删除进行中标志：15 秒同步让位——同步入口的旧名单快照会把刚删的画布
+    // 并集回本地，下一轮再当「本地独有」整条上传（实测复活通道之二）
+    let _sessionDeletionBusy = false;
     async function _saveMessagesToServer(sessionId, msgs) {
       const msgsJson = JSON.stringify(msgs || []);
       const ok = await _postToServer(`/api/sessions/${sessionId}/messages`, { messages: msgs || [] });
@@ -322,6 +368,9 @@
     // 抽成具名函数：冒烟直接调 _periodicSyncTick() 驱动轮询拍（T203）。
     async function _periodicSyncTick() {
       try {
+        // T271：删除进行中整拍让位——推送会把当前画布的旧内容写回（若删的就是
+        // 它，服务端闸门虽能拦，本地却会白写一轮），拉取的旧快照同理
+        if (_sessionDeletionBusy) return;
         // 流式生成期间不推不拉：此时 assistant 消息尚未完整入 history，
         // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染
         if (isStreaming) return;
@@ -385,15 +434,18 @@
         } catch (e) { /* best effort */ }
       };
       try {
-        if (currentSessionId && chatHistory.length > 0) {
+        // T271：墓碑在册的 id 信标一律跳过——兄弟标签页内存旧副本的卸载回写是
+        // 复活通道之一；服务端闸门兜底，这里不发省一次必被拒的请求
+        if (currentSessionId && !_tombstonedSids.has(currentSessionId) && chatHistory.length > 0) {
           beacon(`/api/sessions/${currentSessionId}/messages`, { messages: chatHistory });
         }
         // 保存所有会话元数据
         for (const [sid, sdata] of Object.entries(sessions)) {
+          if (_tombstonedSids.has(sid)) continue;
           beacon('/api/sessions', { ...sdata, id: sid });
         }
         // 保存当前会话 ID
-        if (currentSessionId) {
+        if (currentSessionId && !_tombstonedSids.has(currentSessionId)) {
           beacon('/api/kv/phymathia_current_session', { value: currentSessionId });
         }
       } catch (e) { /* best effort */ }
@@ -797,20 +849,28 @@
         : '删除后进入回收站暂存，保留期内可在侧栏「回收站」一键恢复。';
       if (!confirm('确定删除此画布？\n\n' + trashHint)) return;
 
-      const r = await _purgeSessionData(id);
-      if (!r.ok) {
-        if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', TOAST_MS_LONG);
-        return;
-      }
-      if (r.offline && typeof showToast === 'function') {
-        showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
-      }
+      _sessionDeletionBusy = true;
+      try {
+        const r = await _purgeSessionData(id);
+        if (!r.ok) {
+          if (typeof showToast === 'function') showToast('服务器删除失败，画布未删除，请稍后重试', TOAST_MS_LONG);
+          return;
+        }
+        if (r.offline && typeof showToast === 'function') {
+          showToast('当前离线，仅从本机删除；服务器上的资料可能残留', TOAST_MS_LONG);
+        } else {
+          // T271：删除已生效，登记表本地即刻补登——卸载信标等不到下一轮同步刷新
+          _tombstonedSids.add(id);
+        }
 
-      delete sessions[id];
-      saveSessions();
-      _afterSessionRemoval([id]);
-      if (currentSessionId === id) _switchAfterCurrentDeleted();
-      renderSessionList();
+        delete sessions[id];
+        saveSessions();
+        _afterSessionRemoval([id]);
+        if (currentSessionId === id) _switchAfterCurrentDeleted();
+        renderSessionList();
+      } finally {
+        _sessionDeletionBusy = false;
+      }
     }
 
     // ====== 画布多选（批量删除）======
@@ -877,6 +937,7 @@
       if (!confirm(`确定删除选中的 ${ids.length} 个画布？\n它们的知识、公式与检测记录会一并移除；${bulkHint}`)) return;
 
       _sessionBulkBusy = true;
+      _sessionDeletionBusy = true; // T271：批量删除期间让位 15 秒同步（同单删口径）
       // 当前画布排最后：删它会触发切换，先把其余删完，落点才不像是被删的那一个
       const ordered = ids.filter(id => id !== currentSessionId).concat(ids.filter(id => id === currentSessionId));
       const removed = [];
@@ -887,6 +948,7 @@
           const r = await _purgeSessionData(id);
           if (!r.ok) { failed.push(id); continue; }
           if (r.offline) offlineAny = true;
+          else _tombstonedSids.add(id); // T271：删除已生效即刻补登，不等下轮同步
           removed.push(id);
           delete sessions[id];
           _sessionSelected.delete(id);
@@ -894,6 +956,7 @@
         }
       } finally {
         _sessionBulkBusy = false;
+        _sessionDeletionBusy = false;
       }
 
       if (removed.length > 0) {
@@ -1302,6 +1365,19 @@
         if (document.querySelector('.session-item')) renderSessionList();
       }, 60000);
 
+      // T271：跨标签页名单同步——别的标签页删/建/改画布写 localStorage 时，本页
+      // 内存副本立刻跟着刷。此前只靠 15 秒同步且仅在「有数据变化」时重载：旧副本
+      // 会一直留在侧栏，关页时还会被卸载信标回写（复活通道之一）。storage 事件
+      // 只在其他标签页触发、本页自身写入不响，不会成环。
+      window.addEventListener('storage', (e) => {
+        if (e.key !== null && e.key !== STORAGE_KEY_SESSIONS) return;
+        loadSessions();
+        renderSessionList();
+        if (currentSessionId && !sessions[currentSessionId] && !isStreaming) {
+          _switchAfterCurrentDeleted();
+        }
+      });
+
       loadSessions();
       const hasLocalData = Object.keys(sessions).length > 0 || !!getCurrentSessionId();
 
@@ -1471,8 +1547,16 @@
         : '所有画布会先进入回收站暂存（超过保留天数自动清除），可在侧栏「回收站」恢复。';
       if (!confirm('确定清空所有画布吗？\n\n' + clearAllHint)) return;
 
-      // 1. 批量删除服务端所有会话、消息和知识条目
-      await _deleteOnServer('/api/sessions');
+      // 1. 批量删除服务端所有会话、消息和知识条目（T271：删除期间让位 15 秒同步）
+      _sessionDeletionBusy = true;
+      try {
+        if (await _deleteOnServer('/api/sessions')) {
+          // T271：清空已生效，全部在册——卸载信标/上传分支即刻全跳
+          for (const sid of Object.keys(sessions)) _tombstonedSids.add(sid);
+        }
+      } finally {
+        _sessionDeletionBusy = false;
+      }
 
       // 2. 清空内存
       sessions = {};
