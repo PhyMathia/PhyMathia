@@ -58,6 +58,57 @@ function _nodeCanAddOutputPorts(node) {
   return !_nodeRecipeOutputLocked(node);
 }
 
+// ===== T275：生成中断电清扫 =====
+// 生成入口（graph-workflow/graph-custom）都是「先存 busy=true/status='running'
+// 再发请求」，页面中途被关后负责复位的 catch/finally 永远不会跑——持久层把
+// 「生成中」原样带回重启后的画布，节点永久转圈，且生成守卫让重生成点不动。
+// 口径：凡「从外部存储水合」的时刻（启动、历史版本回放）不可能仍有合法生成
+// 在跑，busy 一律剥除、status==='running' 归位空串；勿接进每帧渲染与常规保存
+// ——生成期间的重渲染和落盘恰恰靠持久层里的 busy 存活。
+function _sanitizeStaleBusyCustomNodes(list) {
+  if (!Array.isArray(list)) return list;
+  let changed = false;
+  const next = list.map(cn => {
+    if (cn && typeof cn === 'object' && (cn.busy || cn.status === 'running')) {
+      changed = true;
+      return { ...cn, busy: false, status: cn.status === 'running' ? '' : cn.status };
+    }
+    return cn;
+  });
+  return changed ? next : list;
+}
+
+// 启动全库扫一次（同 session.js 坏键清扫的手法）：只洗活图键 phymathia_graph_*，
+// 历史快照键不动（体量大，且回放时有 _restoreGraphVersion 兜住）；洗完顺手把
+// 服务端 kv 镜像也覆写成净值——否则下次切会话「服务端较新」分支会把脏
+// customNodes 原样盖回本地。
+function _sweepStaleBusyGraphKeys() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('phymathia_graph_') || key.startsWith('phymathia_graph_history_')) continue;
+      const raw = localStorage.getItem(key);
+      // 预过滤避免逐键 JSON.parse：两串取值均出自 JSON.stringify（无空格）
+      if (!raw || (raw.indexOf('"busy":true') === -1 && raw.indexOf('"status":"running"') === -1)) continue;
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (e) { continue; }
+      if (!parsed || typeof parsed !== 'object') continue;
+      const cleaned = _sanitizeStaleBusyCustomNodes(parsed.customNodes);
+      if (cleaned === parsed.customNodes) continue; // busy 只出现在 checkpoint 等无关字段：不动
+      parsed.customNodes = cleaned;
+      try { localStorage.setItem(key, JSON.stringify(parsed)); } catch (e) { continue; }
+      try {
+        fetch('/api/kv/' + encodeURIComponent('graph:' + key.slice('phymathia_graph_'.length)), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: parsed }),
+        }).catch(function () {});
+      } catch (e) { /* 服务端洗不动无害：本地已净，下次启动再补 */ }
+    }
+  } catch (e) { /* localStorage 不可用等：清扫只是兜底，不阻断启动 */ }
+}
+_sweepStaleBusyGraphKeys();
+
 const GRAPH_NODE_ATTRIBUTES = {
   question: { key: 'question', label: '问题', color: 'var(--node-question)' },
   followup: { key: 'followup', label: '追问', color: 'var(--node-followup)' },
@@ -512,7 +563,14 @@ async function _restoreGraphVersion(snapshot) {
     await window.replaceChatHistory(snapshot.messages);
   }
   if (snapshot.state) {
-    _saveGraphState(snapshot.state);
+    // T275：快照可能在生成进行中被拍下（busy 已随 _saveCustomNodes 持久化），
+    // 事后回放会让转圈复活——落盘前洗一次。同页生成仍在跑时回放会提前摘转圈，
+    // 可接受：生成结果照常经 _findGraphNode 落到节点上。
+    const restoredState = {
+      ...snapshot.state,
+      customNodes: _sanitizeStaleBusyCustomNodes(snapshot.state.customNodes),
+    };
+    _saveGraphState(restoredState);
     if (typeof window.flushGraphStateServerSave === "function") window.flushGraphStateServerSave();
   }
   renderGraphCanvas();

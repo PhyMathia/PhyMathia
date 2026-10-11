@@ -42,6 +42,9 @@ export const localStorage = {
   getItem: (k) => (k in storageData ? storageData[k] : null),
   setItem: (k, v) => { storageData[k] = String(v); },
   removeItem: (k) => { delete storageData[k]; },
+  // T275：真 localStorage 的 length/key(i) 枚举口径——graph.js 启动清扫按它遍历
+  get length() { return Object.keys(storageData).length; },
+  key: (i) => (Object.keys(storageData)[i] != null ? Object.keys(storageData)[i] : null),
 };
 
 export const sandbox = {

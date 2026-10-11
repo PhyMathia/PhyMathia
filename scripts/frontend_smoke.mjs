@@ -32,6 +32,7 @@
 //   token-usage            Token 用量统计面板（纯函数图表＋行为垫片＋源码契约，2026-10-08）
 //   load-order             首屏脚本加载契约（T208：app.js defer 与 appVersion 内联脚本时序的静态守卫）
 //   storage-fetch           会话存储层 fetch 超时契约（T237：session.js 每处 fetch 必带 AbortSignal.timeout 的静态守卫）
+//   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -58,6 +59,7 @@ import { run as _accounts_trash } from './frontend_smoke/accounts-trash.mjs';
 import { run as _token_usage } from './frontend_smoke/token-usage.mjs';
 import { run as _load_order } from './frontend_smoke/load-order.mjs';
 import { run as _storage_fetch } from './frontend_smoke/storage-fetch.mjs';
+import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
 
 _recipes();
 _phi();
@@ -84,4 +86,5 @@ await _accounts_trash();
 await _token_usage();
 _load_order();
 _storage_fetch();
+await _graph_busy_sweep();
 await finish();
