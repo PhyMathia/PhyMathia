@@ -128,6 +128,27 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   return true;
 });
 
+check('model-add：预设标签一律光模型名＋布尔族思考开/关两档（选项与徽标口径）', () => {
+  // 2026-10-11 用户拍板：模型名不挂（旗舰）（性价比）这类注解，档位/定位说明走供应商 tagline
+  for (const [key, preset] of Object.entries(sandbox.window.MODEL_PRESETS)) {
+    for (const m of preset.models || []) {
+      if (/[（(]/.test(m.label)) throw new Error('预设 ' + key + ' 标签带注解：' + m.label);
+    }
+  }
+  if (!sandbox.window.THINKING_BOOLEAN_PROVIDERS) throw new Error('布尔开关族清单未挂 window');
+  const boolOpts = sandbox._thinkingOptionsFor('mimo');
+  if (boolOpts.length !== 2 || boolOpts[0].value !== 'on' || boolOpts[1].value !== 'off') {
+    throw new Error('布尔族（mimo）思考选项应为开/关两档');
+  }
+  const effortOpts = sandbox._thinkingOptionsFor('deepseek');
+  if (effortOpts.length !== 4 || effortOpts[0].value !== '') throw new Error('effort 族应保持 default+三档');
+  if (sandbox._thinkingBadge('mimo', 'off') !== '关') throw new Error('mimo off 徽标应为「关」');
+  if (sandbox._thinkingBadge('mimo', 'low') !== '开') throw new Error('mimo 旧档位徽标应为「开」');
+  if (sandbox._thinkingBadge('mimo', '') !== '') throw new Error('mimo 空档位不应标注');
+  if (sandbox._thinkingBadge('openai', 'max') !== 'max') throw new Error('effort 族徽标应保持档位值');
+  return true;
+});
+
 check('model-add：无自动预置（loadUserModels 后列表为空）+ 预设添加核心（勾选入库 + 组密钥同步 + 重复跳过）', () => {
   sandbox.localStorage.removeItem('phymathia_user_models');
   sandbox.localStorage.removeItem('phymathia_model_group_keys');

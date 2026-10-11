@@ -175,21 +175,41 @@ def thinking_request_params(provider: str, level: str) -> dict:
     智谱/MiMo 用 thinking.type，Ollama 用 think。reasoning_effort 只有 low/medium/high
     三档，low/high/max 按序拉伸映射（low→low、high→medium、max→high），
     三档在每个 reasoning_effort 供应商上都有区分度；布尔开关族（qwen/zhipu/
-    ollama）三档同为「开启」。上游不认识注入字段而拒绝整个请求时，由调用方
+    ollama/mimo）三档同为「开启」。
+
+    2026-10-11 起 on/off 是布尔族的正式取值（配置界面两档开/关，MiMo 这类
+    上游只有开关的供应商不再显示无效的 low/high/max）：on 直发开启参数、off
+    直发关闭参数；旧档位 low/high/max 在布尔族仍按「开」兼容，''（default）
+    依旧不发参数。reasoning_effort 族表达不了「关」，收到 on/off 一律不发参数。
+    上游不认识注入字段而拒绝整个请求时，由调用方
     剥掉参数降级重试一次（主应用与 harness 各有一级——后者是 2026-09-30 接入的
     相位档位，Φ 的 evaluate/preset/apply 深、chat 浅，见 harness/review.py
     PHASE_THINKING）。
     """
     p = (provider or "").strip().lower()
-    if level not in ("low", "high", "max"):
-        return {}
+    boolean_on = level in ("low", "high", "max", "on")
+    boolean_off = level == "off"
     if p == "qwen":
-        return {"enable_thinking": True}
+        if boolean_off:
+            return {"enable_thinking": False}
+        if boolean_on:
+            return {"enable_thinking": True}
+        return {}
     if p in ("zhipu", "mimo"):
-        return {"thinking": {"type": "enabled"}}
+        if boolean_off:
+            return {"thinking": {"type": "disabled"}}
+        if boolean_on:
+            return {"thinking": {"type": "enabled"}}
+        return {}
     if p == "ollama":
-        return {"think": True}
-    return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
+        if boolean_off:
+            return {"think": False}
+        if boolean_on:
+            return {"think": True}
+        return {}
+    if level in ("low", "high", "max"):
+        return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
+    return {}
 
 
 # ====== opencode.ai 网关会话头 ======

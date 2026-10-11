@@ -15,7 +15,7 @@ const OPENCODE_GO_MODEL_LABELS = {
   'deepseek-v4-flash': 'DeepSeek V4 Flash',
   'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
   'deepseek-flash': 'DeepSeek Flash',
-  'deepseek-v4-flash-vision-exp': 'DeepSeek V4 Flash Vision（实验）',
+  'deepseek-v4-flash-vision-exp': 'DeepSeek V4 Flash Vision',
   'qwen3.8-max': 'Qwen3.8 Max',
   'qwen3.8-flash': 'Qwen3.8 Flash',
   'qwen3.7-max': 'Qwen3.7 Max',
@@ -70,6 +70,8 @@ const OPENCODE_GO_MODEL_LABELS = {
 // （k2.5 与 moonshot-v1 已于 2026-08-31 下线，勿再加）/ 百炼 qwen3.8 系 /
 // OpenAI gpt-6-astra + gpt-5.6 三档 / Gemini 3.x 系 /
 // 小米 MiMo v2.6 系（2026-10-11 核对 mimo.mi.com 官方 model.md，v2.5 系 10-21 下线）。
+// 标签口径（2026-10-11 用户拍板）：label 一律光模型名，不挂（旗舰）（性价比）这类注解；
+// 档位/定位说明放供应商 tagline，不进模型名。
 function _presetModels(labels, hotIds = []) {
   return Object.entries(labels).map(([id, label]) => ({ id, label, hot: hotIds.includes(id) }));
 }
@@ -89,8 +91,8 @@ const MODEL_PRESETS = {
     apiKeyHint: 'sk-...',
     docs: 'https://platform.deepseek.com/api_keys',
     models: _presetModels({
-      'deepseek-chat': 'DeepSeek Chat（V4 通用）',
-      'deepseek-reasoner': 'DeepSeek Reasoner（推理）',
+      'deepseek-chat': 'DeepSeek Chat',
+      'deepseek-reasoner': 'DeepSeek Reasoner',
     }, ['deepseek-chat']),
   },
   zhipu: {
@@ -100,8 +102,8 @@ const MODEL_PRESETS = {
     apiKeyHint: '密钥在 open.bigmodel.cn 获取',
     docs: 'https://open.bigmodel.cn/usercenter/apikeys',
     models: _presetModels({
-      'glm-5.3': 'GLM-5.3（旗舰）',
-      'glm-5.3-flash': 'GLM-5.3 Flash（轻量）',
+      'glm-5.3': 'GLM-5.3',
+      'glm-5.3-flash': 'GLM-5.3 Flash',
       'glm-5.2': 'GLM-5.2',
       'glm-5': 'GLM-5',
     }, ['glm-5.3']),
@@ -113,9 +115,9 @@ const MODEL_PRESETS = {
     apiKeyHint: 'sk-...',
     docs: 'https://platform.kimi.com/docs/get-api-key',
     models: _presetModels({
-      'kimi-k3': 'Kimi K3（旗舰）',
-      'kimi-k2.7-code': 'Kimi K2.7 Code（编程）',
-      'kimi-k2.6': 'Kimi K2.6（通用）',
+      'kimi-k3': 'Kimi K3',
+      'kimi-k2.7-code': 'Kimi K2.7 Code',
+      'kimi-k2.6': 'Kimi K2.6',
     }, ['kimi-k3']),
   },
   qwen: {
@@ -125,11 +127,11 @@ const MODEL_PRESETS = {
     apiKeyHint: 'sk-...',
     docs: 'https://bailian.console.aliyun.com/',
     models: _presetModels({
-      'qwen3.8-max': 'Qwen3.8 Max（旗舰）',
-      'qwen3.8-flash': 'Qwen3.8 Flash（性价比）',
+      'qwen3.8-max': 'Qwen3.8 Max',
+      'qwen3.8-flash': 'Qwen3.8 Flash',
       'qwen3.7-plus': 'Qwen3.7 Plus',
-      'qwen-plus': 'Qwen Plus（最新别名）',
-      'qwen-flash': 'Qwen Flash（最新别名）',
+      'qwen-plus': 'Qwen Plus',
+      'qwen-flash': 'Qwen Flash',
     }, ['qwen3.8-max', 'qwen3.8-flash']),
   },
   doubao: {
@@ -146,20 +148,20 @@ const MODEL_PRESETS = {
     baseUrl: 'https://api.minimaxi.com/v1',
     apiKeyHint: '密钥在 platform.minimaxi.com 获取',
     models: _presetModels({
-      'MiniMax-M3': 'MiniMax M3（旗舰）',
+      'MiniMax-M3': 'MiniMax M3',
       'MiniMax-M2.7-highspeed': 'MiniMax M2.7 高速版',
     }, ['MiniMax-M3']),
   },
   mimo: {
     name: '小米 MiMo',
-    tagline: '小米官方 API，v2.6 系 1M 上下文深度思考；v2.5 系 2026-10-21 下线（勿再加）',
+    tagline: '小米官方 API，v2.6 系 1M 上下文深度思考（ultraspeed 限流需联系官方定制）；v2.5 系 2026-10-21 下线勿再加',
     baseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyHint: 'sk-...（Token 套餐密钥为 tp-... / ttp-...）',
     docs: 'https://platform.xiaomimimo.com/#/console/api-keys',
     models: _presetModels({
-      'mimo-v2.6-pro': 'MiMo V2.6 Pro（旗舰）',
-      'mimo-v2.6-flash': 'MiMo V2.6 Flash（性价比）',
-      'mimo-v2.6-pro-ultraspeed': 'MiMo V2.6 Pro UltraSpeed（限流需定制）',
+      'mimo-v2.6-pro': 'MiMo V2.6 Pro',
+      'mimo-v2.6-flash': 'MiMo V2.6 Flash',
+      'mimo-v2.6-pro-ultraspeed': 'MiMo V2.6 Pro UltraSpeed',
     }, ['mimo-v2.6-pro', 'mimo-v2.6-flash']),
   },
   siliconflow: {
@@ -171,7 +173,7 @@ const MODEL_PRESETS = {
     models: [
       { id: 'deepseek-ai/DeepSeek-V4-Pro', label: 'DeepSeek V4 Pro', hot: true },
       { id: 'Qwen/Qwen3.5-397B-A17B', label: 'Qwen3.5 397B', hot: false },
-      { id: 'Qwen/Qwen3-8B', label: 'Qwen3 8B（轻量）', hot: false },
+      { id: 'Qwen/Qwen3-8B', label: 'Qwen3 8B', hot: false },
     ],
   },
   openai: {
@@ -180,10 +182,10 @@ const MODEL_PRESETS = {
     baseUrl: 'https://api.openai.com/v1',
     apiKeyHint: 'sk-...',
     models: _presetModels({
-      'gpt-6-astra': 'GPT-6 Astra（旗舰）',
-      'gpt-5.6-sol': 'GPT-5.6 Sol（强）',
-      'gpt-5.6-terra': 'GPT-5.6 Terra（均衡）',
-      'gpt-5.6-luna': 'GPT-5.6 Luna（低价）',
+      'gpt-6-astra': 'GPT-6 Astra',
+      'gpt-5.6-sol': 'GPT-5.6 Sol',
+      'gpt-5.6-terra': 'GPT-5.6 Terra',
+      'gpt-5.6-luna': 'GPT-5.6 Luna',
     }, ['gpt-5.6-terra']),
   },
   gemini: {
@@ -196,7 +198,7 @@ const MODEL_PRESETS = {
       'gemini-3.1-pro': 'Gemini 3.1 Pro',
       'gemini-3.8-flash': 'Gemini 3.8 Flash',
       'gemini-3.5-flash': 'Gemini 3.5 Flash',
-      'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite（轻量）',
+      'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
     }, ['gemini-3.1-pro', 'gemini-3.8-flash']),
   },
   anthropic: {
@@ -207,7 +209,7 @@ const MODEL_PRESETS = {
     models: _presetModels({
       'cla-opus-4-5': 'Claude Opus 4.5',
       'cla-sonnet-4-5': 'Claude Sonnet 4.5',
-      'cla-haiku-4-5': 'Claude Haiku 4.5（轻量）',
+      'cla-haiku-4-5': 'Claude Haiku 4.5',
     }, ['cla-sonnet-4-5']),
   },
   openrouter: {
@@ -336,9 +338,37 @@ let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz
 
 // 思考程度（模型条目上的 thinking 字段）：''（default）= 跟随模型默认不发送参数；
 // low/high/max 由后端按供应商族映射（reasoning_effort 三档拉伸 / enable_thinking /
-// thinking.type / think），上游不认识时自动剥掉重发（见 main.py _thinking_request_params）。
+// thinking.type / think），上游不认识时自动剥掉重发（见 llm_common.thinking_request_params）。
+// 布尔开关族（上游只有开/关：qwen/zhipu/ollama/mimo）配置界面用 on/off 两档直发
+// 开/关参数；旧档位 low/high/max 仍兼容（后端一律当「开」），legacy '' 显示为开、
+// 保存时归一为 on。reasoning_effort 族表达不了「关」，收到 on/off 后端不发参数。
 const THINKING_LEVELS = ['low', 'high', 'max'];
+const THINKING_BOOLEAN_PROVIDERS = ['qwen', 'zhipu', 'ollama', 'mimo'];
 window.THINKING_LEVELS = THINKING_LEVELS;
+window.THINKING_BOOLEAN_PROVIDERS = THINKING_BOOLEAN_PROVIDERS;
+
+// 配置弹窗思考档位选项（纯函数，冒烟直测）：布尔族两档开/关，其余保持四档
+function _thinkingOptionsFor(provider) {
+  if (THINKING_BOOLEAN_PROVIDERS.includes(provider)) {
+    return [{ value: 'on', label: '开' }, { value: 'off', label: '关' }];
+  }
+  return [
+    { value: '', label: 'default（跟随模型默认）' },
+    { value: 'low', label: 'low' },
+    { value: 'high', label: 'high' },
+    { value: 'max', label: 'max' },
+  ];
+}
+
+// 模型条目「思考:x」徽标文案（纯函数，冒烟直测）：布尔族旧档位按后端口径显示「开」，
+// '' 不标注；effort 族维持原始档位值
+function _thinkingBadge(provider, thinking) {
+  if (THINKING_BOOLEAN_PROVIDERS.includes(provider)) {
+    if (thinking === 'off') return '关';
+    return thinking ? '开' : '';
+  }
+  return THINKING_LEVELS.includes(thinking) ? thinking : '';
+}
 
 function loadUserModels() {
   try {
@@ -584,10 +614,10 @@ function renderModelList() {
       // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
       const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       const hasKey = !!(m.apiKey || getGroupKey(provider));
-      const showThinking = THINKING_LEVELS.includes(m.thinking);
+      const thinkingBadge = _thinkingBadge(provider, m.thinking);
       return `<div class="model-item">
         <div class="model-item-info">
-          <div class="model-item-name">${escapeHtml(m.label || m.model)}${showThinking ? `<span class="model-item-thinking">思考:${escapeHtml(m.thinking)}</span>` : ''}</div>
+          <div class="model-item-name">${escapeHtml(m.label || m.model)}${thinkingBadge ? `<span class="model-item-thinking">思考:${escapeHtml(thinkingBadge)}</span>` : ''}</div>
           <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
         </div>
         <div class="model-item-actions">
@@ -618,7 +648,16 @@ function openModelConfig(id) {
   document.getElementById('mcApiKey').value = model.apiKey || '';
   document.getElementById('mcModel').value = model.model;
   document.getElementById('mcBaseUrl').value = model.baseUrl || preset?.baseUrl || '';
-  document.getElementById('mcThinking').value = model.thinking || '';
+  const mcThinking = document.getElementById('mcThinking');
+  mcThinking.innerHTML = _thinkingOptionsFor(model.provider)
+    .map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('');
+  // 布尔族旧取值（''/low/high/max）语义都是「开」：显示归一，用户保存时才写回 on/off
+  mcThinking.value = THINKING_BOOLEAN_PROVIDERS.includes(model.provider)
+    ? (model.thinking === 'off' ? 'off' : 'on')
+    : (model.thinking || '');
+  document.getElementById('mcThinkingHint').textContent = THINKING_BOOLEAN_PROVIDERS.includes(model.provider)
+    ? '该供应商思考只有开/关：直接控制上游开关参数；旧档位 low/high/max 也按「开」处理。'
+    : 'default 不发送思考参数；供应商不支持时自动去掉该参数重发，不会导致报错。';
   document.getElementById('mcPresetName').textContent = preset?.name || model.provider;
   document.getElementById('modelConfigDialog').classList.add('show');
 }
