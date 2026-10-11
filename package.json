@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build:js": "node scripts/build_frontend.mjs",
-    "build:viewer": "node scripts/build_viewer.mjs"
+    "build:viewer": "node scripts/build_viewer.mjs",
+    "verify": "node scripts/frontend_smoke.mjs && python3 -m pytest tests/ -q"
   },
   "devDependencies": {
     "esbuild": "0.25.6",

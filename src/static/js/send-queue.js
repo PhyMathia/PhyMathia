@@ -96,6 +96,7 @@ function _enqueueSend(label, run, meta) {
     run,
     taskId: task ? task.id : null,
     sessionId: task ? task.sessionId : info.sessionId,
+    dedupeKey: opts.dedupeKey || null,
   });
   _renderQueueChip();
   toastMsg('已收到「' + name + '」，当前任务完成后自动开始');
@@ -108,14 +109,41 @@ function _enqueueSend(label, run, meta) {
 // 闭包必须把「放行」标志一路带下去（runWorkflowNode/generateBlankNode 的 fromQueue）：
 // 放行时 _isSendBusy() 仍含着 _sendQueueFlushing（队列正在放行）这个空窗标志，
 // 没有旁路会原地自我重入、事件循环被饿死、页面假死（T225）。
+// 连点去重（T280，2026-10-11）：同一颗节点的同一动作在「等待中」已有排队时不再收第二条。
+// 不去重的代价：节点排队期间自身不 busy，各入口的 busy 闸门拦不住第二下，「重新生成」
+// 连点两下＝两条都进队，轮到后连跑两遍——第二遍烧一次模型钱，买回来的还是同样的产出。
+// 去重键从 meta.replay 派生（两种既有形状都够用，调用点零改动）：
+//   · replay.nodeJob = {id, kind} → '<kind>|job|<动作>|<节点id>'（viz / 重新生成 / 空白节点）；
+//   · replay.nodeIds = [...]     → '<kind>|ids|<排序后的 id 表>'（工作流单颗/多颗、知识/联系）。
+// 派生不出键（两者都没有）就放行＝行为同旧。重新生成不看要求文本：同颗节点等待中只收
+// 一条，想换要求先在任务列表把等待那条取消。只看等待中（_sendQueue）：正在跑的那条已
+// 出队且节点自身 busy，此刻再点是「跑完再改一遍」的明确意图，照旧收下；取消/整队丢弃
+// 之后键自动解除，可以重排。
+function _nodeJobDedupeKey(opts) {
+  const replay = opts.replay || {};
+  if (replay.nodeJob && replay.nodeJob.id != null) {
+    return (opts.kind || 'node') + '|job|' + (replay.nodeJob.kind || '') + '|' + replay.nodeJob.id;
+  }
+  if (Array.isArray(replay.nodeIds) && replay.nodeIds.length) {
+    return (opts.kind || 'node') + '|ids|' + replay.nodeIds.map(String).sort().join(',');
+  }
+  return null;
+}
+
 function _enqueueNodeJob(label, run, meta) {
   const opts = meta || {};
+  const dedupeKey = _nodeJobDedupeKey(opts);
+  if (dedupeKey && _sendQueue.some(item => item.dedupeKey === dedupeKey)) {
+    toastMsg('「' + (opts.title || label) + '」已经在排队了，轮到后会自动跑');
+    return false;
+  }
   return _enqueueSend(label, run, {
     title: opts.title || label,
     kind: opts.kind || 'node',
     replay: opts.replay || null,
     sessionId: opts.sessionId,
     sessionTitle: opts.sessionTitle,
+    dedupeKey: dedupeKey,
   });
 }
 

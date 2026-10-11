@@ -251,6 +251,34 @@ checkSq('画布活儿排队（2026-10-11）：节点生成的活儿也进队列�
   sqEval('_taskActive = []; _taskHistory = [];');
 });
 
+checkSq('排队连点去重（T280）：同颗节点同款活儿等待中只收一条', async () => {
+  sqReset();
+  sqEval('isStreaming = true; _taskActive = []; _taskHistory = [];');
+  const regenMeta = "{ kind: 'node', replay: { nodeJob: { id: 'n1', kind: 'regen', text: '换个说法' } } }";
+  sqEval("_enqueueNodeJob('重新生成物理视角', function(){ return Promise.resolve(); }, " + regenMeta + ")");
+  if (!sqEval('_hasPendingSend()')) throw new Error('第一条没进队列');
+  // 连点第二下：同节点同动作 → 拒收（返回 false、队列不增长、任务列表不增行）
+  const again = sqEval("_enqueueNodeJob('重新生成物理视角', function(){ return Promise.resolve(); }, " + regenMeta + ")");
+  if (again !== false) throw new Error('同款活儿第二下应被拒收（返回 false），轮到后会连跑两遍白烧一次模型钱');
+  if (sqEval('_sendQueue.length') !== 1) throw new Error('队列里出现了第二条同款活儿');
+  if (sqEval('_taskActive.length') !== 1) throw new Error('被拒收的那条不该在任务列表上记行');
+  // 不同节点、同节点不同动作都不误伤
+  const otherNode = sqEval("_enqueueNodeJob('重新生成化学视角', function(){ return Promise.resolve(); }, "
+    + "{ kind: 'node', replay: { nodeJob: { id: 'n2', kind: 'regen' } } })");
+  if (otherNode !== true) throw new Error('不同节点的同款活儿不该被误拦');
+  const otherAction = sqEval("_enqueueNodeJob('生成可视化', function(){ return Promise.resolve(); }, "
+    + "{ kind: 'node', replay: { nodeJob: { id: 'n1', kind: 'viz' } } })");
+  if (otherAction !== true) throw new Error('同节点不同动作（viz）不该被误拦');
+  if (sqEval('_sendQueue.length') !== 3) throw new Error('队列应恰好 3 条（1 原条＋2 不同款）');
+  // 整队丢弃后可以重排同款（去重随取消解除）
+  sqEval("_clearSendQueue('测试丢弃')");
+  const requeue = sqEval("_enqueueNodeJob('重新生成物理视角', function(){ return Promise.resolve(); }, " + regenMeta + ")");
+  if (requeue !== true) throw new Error('丢弃后同款活儿应能重新入队');
+  sqEval('isStreaming = false; _taskActive = []; _taskHistory = [];');
+  await sqEval('_flushSendQueue()');
+  if (sqEval('_hasPendingSend()')) throw new Error('放行后队列没清空');
+});
+
 // 静态半。这些护栏全删掉也不会让上面任何一条行为断言变红——只能靠读源码钉住。
 // 变异验证：把任一发送入口改回裸 `if (isStreaming…) return;`，或把 startQuestionWorkflow
 // 的判定改回只查 isStreaming，下面立刻红。
