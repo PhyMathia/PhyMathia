@@ -836,7 +836,8 @@ class ContextOptimizationTest(unittest.TestCase):
         from server import prompts as prompts_mod
         self.assertTrue(prompts_mod.MODULE_SYSTEM_PROMPT)
         self.assertIn("<formula>", prompts_mod.MODULE_SYSTEM_PROMPT)
-        self.assertIn("不输出完整探索卡片", prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertIn("不生成完整学习卡片", prompts_mod.MODULE_SYSTEM_PROMPT)
+        self.assertIn("HTML 可视化", prompts_mod.MODULE_SYSTEM_PROMPT)
         self.assertLess(len(prompts_mod.MODULE_SYSTEM_PROMPT), 1200)
 
 
@@ -845,9 +846,10 @@ class ContextOptimizationTest(unittest.TestCase):
 class WorkflowAnalysisInstructionTest(unittest.TestCase):
     def test_analysis_mode_lists_suggested_modules(self):
         inst = context_mod._workflow_context_instruction({"mode": "analysis", "target": {"kind": "answer", "label": "AI 回答"}, "question": "解释简谐运动"})
-        self.assertIn("只输出简洁问题概要", inst)
+        self.assertIn("可供下游节点使用的问题概要", inst)
         self.assertIn("建议模块：", inst)
         self.assertIn("物理视角/数学视角", inst)
+        self.assertIn("不要编造历史、定律或公式", inst)
 
     def test_module_mode_keeps_analysis_injection(self):
         inst = context_mod._workflow_context_instruction({"mode": "module", "target": {"kind": "module", "module": "physics", "label": "物理视角"}, "analysis": "核心是回复力与位移成正比", "question": "简谐运动"})

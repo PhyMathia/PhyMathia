@@ -295,7 +295,7 @@ function _workflowPromptForNode(node, workflowContext) {
       .join('\n\n')
       .slice(0, 8000);
     return '请根据以下已连接内容生成一份简明、结构化的 AI 总结。'
-      + '要求：提炼物理直觉、数学本质、关键结论、公式和后续建议；只输出总结正文；不要输出完整学习卡片 XML，不要输出 <summary> 标签，不要输出其他模块正文；如出现公式仍按 <formula> 规范标注。\n\n'
+      + '要求：只提炼有依据的物理直觉、数学本质、关键结论、公式和后续建议；不要逐段复述上游，也不要为了完整而编造缺失信息；只输出总结正文；不要输出完整学习卡片 XML，不要输出 <summary> 标签，不要输出其他模块正文；如出现公式仍按 <formula> 规范标注。\n\n'
       + (upstreamText || '（暂无已连接的上游内容）');
   }
   if (node.kind === 'relation') {
@@ -305,7 +305,7 @@ function _workflowPromptForNode(node, workflowContext) {
       .join('\n\n')
       .slice(0, 8000);
     return '请基于以下已连接节点，用一句简短中文说明它们之间的联系。'
-      + '要求：内容简短，最好不超过100字；如果涉及多个节点，说明它们之间共同的知识关系；不要输出XML标签，不要重复完整节点内容；如出现公式仍按 <formula> 规范标注。\n\n'
+      + '要求：只陈述上游内容能够支持的关系，内容简短，最好不超过100字；如果证据不足，直接说明关系尚不明确；不要输出XML标签，不要重复完整节点内容；如出现公式仍按 <formula> 规范标注。\n\n'
       + (upstreamText || '（暂无已连接的上游内容）');
   }
   if (node.kind === 'knowledge') {
@@ -319,8 +319,10 @@ function _workflowPromptForNode(node, workflowContext) {
       + (sourceText || '（暂无知识点内容）');
   }
   if (node.kind === 'answer' && !node.manual) {
-    return '请根据用户问题生成问题分析节点的完整内容。'
-      + '按 PhyMathia 系统提示词输出完整学习卡片 XML，包含 physics/math/graph/viz/learn/socratic 等标签，末尾输出 <summary>。';
+    return '请根据原始问题和上游上下文生成“问题分析”节点的完整内容。'
+      + '这是工作流的分析分发节点：输出可供下游物理视角、数学视角、知识图谱、交互可视化、苏格拉底追问和进阶学习节点共同使用的结构化学习底稿。'
+      + '除非工作流另有明确要求，不要输出完整学习卡片 XML，不要输出 <physics>、<math>、<graph>、<viz>、<extend>、<summary> 或 <socratic_meta> 标签。'
+      + '请覆盖：问题核心、关键概念、必要假设/适用条件、物理与数学的主要方向、适合的可视化线索，以及下游应避免重复的内容。使用清晰的 Markdown 小标题。';
   }
   if (node.kind === 'module') {
     const strictInstruction = _strictModuleOutputInstruction(node.moduleKey || workflowContext.target.module || '');
@@ -354,7 +356,8 @@ function _strictModuleOutputInstruction(moduleKey) {
   }
   if (moduleKey === 'graph') {
     return '严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n'
-      + '用 ```mermaid ... ``` 代码块包裹；至少 3 个上游 + 3 个下游概念，中文标注，箭头表示关系，节点文字避免括号（可用下划线替代）。';
+      + '用 ```mermaid ... ``` 代码块包裹；优先保留真实且有教学价值的关系，通常提供 2~4 个上游和 2~4 个下游概念；如果真实关系不足，不要为了凑数编造节点。\n'
+      + '箭头尽量用关系标签说明前置概念、推广、特例或应用；中文标注，节点文字避免括号（可用下划线替代）。';
   }
   if (moduleKey === 'viz') {
     return '严格输出 ```html ... ``` 完整 HTML 交互可视化页面，禁止只输出文字描述而不输出 HTML：\n'
@@ -364,6 +367,7 @@ function _strictModuleOutputInstruction(moduleKey) {
       + '**和公式的联系**：图中现象与公式如何互相印证；\n'
       + '**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n'
       + '每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n'
+      + '优先使用简单、可暂停、可调速的交互；只有确实有助于理解时才使用动画或 3D。页面必须自包含，不引入 CDN 或外部资源。\n'
       + '不要输出 XML 标签，不要输出其他模块内容。';
   }
   return '';

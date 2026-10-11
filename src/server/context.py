@@ -816,7 +816,8 @@ def _module_output_instruction(module_key: str) -> str:
     if module_key == "graph":
         return (
             "严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n"
-            "用 ```mermaid ... ``` 代码块包裹；至少 3 个上游 + 3 个下游概念，中文标注，箭头表示关系，节点文字避免括号（可用下划线替代）。"
+            "用 ```mermaid ... ``` 代码块包裹；优先保留真实且有教学价值的关系，通常提供 2~4 个上游和 2~4 个下游概念；如果真实关系不足，不要为了凑数编造节点。\n"
+            "箭头尽量用关系标签说明前置概念、推广、特例或应用；中文标注，节点文字避免括号（可用下划线替代）。"
         )
     if module_key == "viz":
         return (
@@ -827,6 +828,7 @@ def _module_output_instruction(module_key: str) -> str:
             "**和公式的联系**：图中现象与公式如何互相印证；\n"
             "**自测**：1 个不实际操作就答不出的问题（只提问不给答案）。\n"
             "每个滑块/按钮旁标注对应物理量/数学量及在公式中的位置，关键结论数值旁给出对应公式。\n"
+            "优先使用简单、可暂停、可调速的交互；只有确实有助于理解时才使用动画或 3D。页面必须自包含，不引入 CDN 或外部资源。\n"
             "不要输出 XML 标签，不要输出其他模块内容。"
         )
     return ""
@@ -944,7 +946,9 @@ def _workflow_context_parts(workflow_context) -> tuple:
                 shared_lines.append(f"- {label}：{content[:800]}")
     target_lines = ["\n\n# 工作流节点生成指令"]
     if mode == "analysis":
-        target_lines.append("- 当前为隐藏问题分析模式：只输出简洁问题概要，不生成任何模块内容，不输出 XML 标签，不生成完整回答。")
+        target_lines.append("- 当前为隐藏问题分析模式：只输出简洁、可供下游节点使用的问题概要，不生成任何模块正文，不输出 XML 标签，不生成完整学习卡片。")
+        target_lines.append("- 概要至少说明：用户真正要解决的问题、关键概念或变量、必要假设/适用条件，以及物理视角和数学视角各自的讲解重点；不要展开完整推导，不要替下游节点写成品正文。")
+        target_lines.append("- 对题意歧义、缺失参数或结论依赖的条件要明确标出，不要擅自补齐；不要编造历史、定律或公式。")
         target_lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
     if target:
         target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
@@ -961,6 +965,7 @@ def _workflow_context_parts(workflow_context) -> tuple:
         elif target.get("kind") == "summary":
             target_lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
             target_lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
+            target_lines.append("- 只保留上游内容中有依据的关键结论、关系和下一步建议；不要为了完整而编造缺失信息，不要逐段复述上游。")
             target_lines.append("- 总结中如出现公式，仍按全局 <formula> 规范标注，不标注单个符号或单位。")
         elif target.get("kind") == "hub":
             target_lines.append("- 汇聚节点只负责收集上游内容，不生成正文。")
