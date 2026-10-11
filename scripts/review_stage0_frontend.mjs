@@ -204,6 +204,10 @@ function harnessFixture() {
   s.getGraphViewNodes = () => s.getGraphState().customNodes;
   s.getGraphViewEdges = () => [];
   s.getSelectedGraphNodeIds = () => [];
+  // getSlotThinkingForRole 住 models.js（不在 harnessModules 沙箱清单内），但 harness-run.js
+  // 的 thinking 行运行时必调——打空槽桩（返回 '' 即图槽空语义），缺了 runGraphHarness 抛
+  // ReferenceError、F3 的 review POST 根本发不出去（T277）。
+  s.getSlotThinkingForRole = () => '';
   s._setHarnessStatus = () => {}; s._setPhiMode = () => {}; s._renderHarnessChat = () => {};
   s.flushGraphStateServerSave = async () => {};
   s.fetch = async () => ({ ok: true, json: async () => ({}) });
