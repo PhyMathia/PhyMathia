@@ -10,7 +10,7 @@ from . import concept as concept_mod
 from . import context as context_mod
 from . import profile as profile_mod
 from .config import LEVEL_PROMPTS
-from .prompts import MODULE_SYSTEM_PROMPT, get_system_prompt
+from .prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT
 
 router = APIRouter(prefix="/api/context", tags=["context-preview"])
 
@@ -48,7 +48,7 @@ async def preview_context(
     if workflow:
         system_content = MODULE_SYSTEM_PROMPT
     else:
-        system_content = get_system_prompt()
+        system_content = BRANCH_SYSTEM_PROMPT
     budget = context_mod.resolve_context_budget(model_name)
     # 概念地基（M4）：体检工具必须与真实 chat 路径同构，否则「预览里没有」会被当成没生效。
     # 2026-09-25 起与 chat 完全同位：概念地基进末条 user 消息的上下文块（此前

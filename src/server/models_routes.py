@@ -37,7 +37,7 @@ from .context import (
     estimate_tokens,
 )
 from .llm_common import resolve_api_key
-from .prompts import MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT, get_system_prompt
+from .prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
 from .request_ctx import _account_id, _parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,8 @@ async def api_models_chat(request: Request):
         if workflow_context:
             system_content = MODULE_SYSTEM_PROMPT
         else:
-            system_content = get_system_prompt()
+            # 2026-10-11 退役 src/system prompt.md：分支/支线通道改用代码内常量
+            system_content = BRANCH_SYSTEM_PROMPT
         # 前缀缓存拍板（2026-09-21）：system 只保留场景底座。逐轮易变的注入
         # （支线状态/分支/路径/工作流/会话记忆/概念地基/画像）原来追加在 system
         # 尾部——位于历史之前，任何一处变化都会把「system+全部历史」的 provider

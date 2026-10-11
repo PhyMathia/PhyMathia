@@ -1,5 +1,3 @@
-import re
-
 from .registry import prompt_node_type_lines
 
 """System prompt for the independent graph harness."""
@@ -144,32 +142,25 @@ def _level_requirement(level: str) -> str:
     return ""
 
 
-def _trim_harness_context(context: str) -> str:
-    """主程序 system prompt（src/system prompt.md）对 harness 只保留教学/约束相关部分：
-    去掉完整学习卡片 XML 格式、可视化、苏格拉底等 harness 用不到的章节，减少无效 token。"""
-    if not context:
-        return ""
-    headings = list(re.finditer(r"^#{1,4} (.+)$", context, re.M))
-    if not headings:
-        return context[:6000]
-    card_pos = None
-    for m in headings:
-        if m.group(1).strip().startswith("完整探索流程"):
-            card_pos = m.start()
-            break
-    if card_pos is None:
-        return context[:6000]
-    head_text = context[:card_pos].strip()
-    keep_extra = []
-    for i, m in enumerate(headings):
-        if m.start() < card_pos:
-            continue
-        title = m.group(1).strip()
-        if title.startswith("约束") or title.startswith("输出格式"):
-            end = headings[i + 1].start() if i + 1 < len(headings) else len(context)
-            keep_extra.append(context[m.start():end].strip())
-    parts = [head_text] + keep_extra
-    return "\n\n".join(parts)[:6000]
+# Φ 默认上下文（2026-10-11 随 src/system prompt.md 退役立为常量）：底稿是旧
+# _trim_harness_context 对该文件的真实裁剪输出（1357 字符，sha256
+# f28d78731bcc357285f27de124179e58fc19b3897d791b69986bc7526b0b83eb），
+# 再点名删除卡片/苏格拉底渲染专属条目（逐条清单见 docs/日志/2026-10-11.md）。
+PHI_CONTEXT = """# 角色定义
+你是 PhyMathia——物理数学双域解释与可视化智能体。精通物理学与数学，擅长从「物理直觉」与「数学结构」两个维度阐释科学问题，并生成交互式HTML可视化。表达风格：像博学但极具耐心的导师，把最复杂的概念讲得妙趣横生。
+
+# 约束
+1. 禁止编造物理定律或数学定理
+2. 内部推理过程绝不输出
+3. 多轮对话在已有上下文上增量更新
+4. 历史故事绝不虚构
+5. 回答正文中不得出现裸 JSON 数据块
+6. 纠偏时态度温和，不说"你错了"，而是用类比解释
+7. 所有输出（正文、标题、列表）不使用 emoji 表情符号；标题保持纯文字，不带任何表情或符号前缀
+
+# 输出格式
+回答用自然中文，可用 Markdown/LaTeX 表达公式；不输出学习卡片 XML 格式。
+"""
 
 
 def _context_block(context: str = "") -> str:
@@ -181,8 +172,8 @@ def _context_block(context: str = "") -> str:
     if not context:
         return ""
     return (
-        "PhyMathia 系统上下文（已精简，只含角色、意图识别、约束与输出格式等对图编辑有用的部分；忽略聊天 XML 卡片输出格式）：\n"
-        + _trim_harness_context(context)
+        "PhyMathia 系统上下文（已精简，只含角色、约束与输出格式等对图编辑有用的部分；忽略聊天 XML 卡片输出格式）：\n"
+        + (context if len(context) <= 6000 else context[:6000])
     )
 
 

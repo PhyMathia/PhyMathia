@@ -219,15 +219,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.state.harness_context = get_system_prompt()
-
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from harness.api import router as harness_router
+from harness.prompts import PHI_CONTEXT
 
 app.include_router(harness_router, prefix="/api/harness")
 app.include_router(context_preview_router)  # 开发调试用，正式版可删
+
+# Φ 默认上下文：2026-10-11 随 src/system prompt.md 退役改为代码内常量
+# （harness/api.py 的 payload.context 优先、app.state 兜底的取值口不变）。
+app.state.harness_context = PHI_CONTEXT
 
 app.add_middleware(
     CORSMiddleware,
@@ -260,13 +263,6 @@ async def _readonly_browse_gate(request: Request, call_next):
             return JSONResponse({"detail": "查阅模式：只读，不能修改数据"}, status_code=403)
     return await call_next(request)
 
-
-@app.middleware("http")
-async def _refresh_harness_context(request: Request, call_next):
-    # 只在 harness 请求前热刷新系统提示词；普通/静态请求不再产生文件 stat 开销。
-    if request.url.path.startswith("/api/harness"):
-        request.app.state.harness_context = get_system_prompt()
-    return await call_next(request)
 
 # ====== 页面路由 ======
 # 显式缓存口径（根治「改了没生效必须 Ctrl+Shift+R」）：应用产物文件名无内容指纹
