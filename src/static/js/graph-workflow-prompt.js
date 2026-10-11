@@ -45,9 +45,9 @@ function _nodeOutputContent(node, seen) {
   if (seen.has(node.id)) return '';
   seen.add(node.id);
   // hub（存量汇聚）与 junction（2026-10-11 中转）都无自己的内容：入边内容拼接后
-  // 当自己的输出——追问链穿过它们时，下游看到的就是上游本身。两者差别只在收集
-  // 清单里：hub 作为集合点出现在上游清单，junction 透明不出场（见
-  // _collectUpstreamPath：它的"内容"就是上游拼接，再进一份等于每篇上游写两遍）。
+  // 当自己的输出——追问链穿过它们时，下游看到的就是上游本身。收集清单里两者都
+  // 透明不出场（_collectUpstreamPath / _collectInboundChain；T273：hub 原先作为
+  // 集合点出现在清单里，它的"内容"就是上游拼接，再进一份等于每篇上游写两遍）。
   if (node.kind === 'hub' || node.kind === 'junction') {
     const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
     return incoming
@@ -74,9 +74,9 @@ function _collectUpstreamPath(node) {
     }
     if (!orderedIds.has(current.id)) {
       orderedIds.add(current.id);
-      // 中转节点（2026-10-11）透明：上游照常递归（内容经 _nodeOutputContent 直通），
-      // 自身不进取材清单——否则上游每篇内容会在提示词里出现两遍
-      if (current.kind !== 'junction') {
+      // 无内容节点（junction/hub）透明：上游照常递归（内容经 _nodeOutputContent
+      // 直通），自身不进取材清单——否则上游每篇内容会在提示词里出现两遍（T273）
+      if (current.kind !== 'junction' && current.kind !== 'hub') {
         ordered.push({ node: current, port: viaPort || '' });
       }
     }
@@ -109,9 +109,9 @@ function _collectInboundChain(node) {
   let current = node;
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
-    // 中转节点（2026-10-11）穿透：自身不进链，顺它的第一条入边继续往上走——
-    // 单链取材对它是"线的一截"，不是链上的一环
-    if (current.kind === 'junction') {
+    // 无内容节点（junction/hub）穿透：自身不进链，顺它的第一条入边继续往上走——
+    // 单链取材对它是"线的一截"，不是链上的一环（T273：与 collect 同口径去双写）
+    if (current.kind === 'junction' || current.kind === 'hub') {
       const hop = (graphView.edges || []).find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
       current = hop ? _findGraphNode(hop.from) : null;
       continue;

@@ -333,16 +333,26 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(blank, /_taskFinish\(taskId, 'done'\)/);
   assert.match(blank, /jobStartedAt/, '完成卡计时用本函数自己的起点');
   assert.doesNotMatch(blank, /blankStartedAt/, '旧计时残留必须清干净（它本是别的函数的局部量，成功路径曾因它抛 ReferenceError）');
-  // graph-custom.js：知识/联系两个入口都走记账包装，不许绕过
+  // graph-custom.js：知识/联系两个入口都走记账包装，不许绕过。T280：忙时经统一
+  // 忙碌判定收进队列（排队不是禁用），Φ 改图带 fromPhi 直通（排队会掐死 Φ 这条能力）。
   const knStart = customSrc.indexOf('function generateKnowledgeNode(');
   const relEnd = customSrc.indexOf('\nfunction _blankNodeGraphPath(', knStart);
   const pair = customSrc.slice(knStart, relEnd);
-  assert.match(pair, /_generateCustomNodeAsTask\(node, 'knowledge'/);
-  assert.match(pair, /_generateCustomNodeAsTask\(node, 'relation'/);
+  assert.match(pair, /_generateCustomNodeAsTask\(\w+, 'knowledge'/);
+  assert.match(pair, /_generateCustomNodeAsTask\(\w+, 'relation'/);
   assert.equal((pair.match(/_generateCustomNode\(node\)/g) || []).length, 0, '两个入口不许绕过记账直呼生成');
+  assert.match(pair, /_isActuallyBusy\(\)/, 'T280：用户入口忙时必须走统一忙碌判定');
+  assert.match(pair, /_enqueueNodeJob\(/, 'T280：忙时排队不是禁用');
+  assert.match(pair, /fromPhi/, 'T280：Φ 改图必须有直通旁路');
+  assert.match(pair, /_queuedJobNodeGuard\(taskId, nodeId\)/, 'T280：排队轮到时节点没了要就地结账');
   const taskWrap = pair.slice(pair.indexOf('async function _generateCustomNodeAsTask('));
   assert.match(taskWrap, /_taskBeginNodeJob\(/);
   assert.match(taskWrap, /_generateCustomNode\(node, jobAbort\.signal\)/, 'signal 要真传进生成链');
+  assert.match(taskWrap, /handoffTaskId/, 'T280：排队路径的账由队列先记，这里接手同一行');
+  // harness-apply.js：Φ 补建知识/联系节点必须带 fromPhi 直通（T280）
+  const applySrc = readSrc('src/static/js/harness-apply.js');
+  assert.match(applySrc, /generateKnowledgeNode\(id, \{ fromPhi: true \}\)/, 'Φ 补建知识节点要直通');
+  assert.match(applySrc, /generateRelationNode\(id, \{ fromPhi: true \}\)/, 'Φ 补建联系节点要直通');
   assert.match(taskWrap, /finally/, '前置段抛错也不能把账挂成进行中永不结账');
   // 工作流调度口那处直呼保持原样——那笔账由工作流任务统一记，包装后就会双份
   assert.match(wfSrc, /await _generateCustomNode\(current, nodeSignal\);/,

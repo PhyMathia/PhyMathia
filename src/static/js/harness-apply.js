@@ -181,9 +181,10 @@
       const node = (typeof window.getGraphViewNodes === 'function' ? window.getGraphViewNodes() : []).find(item => item.id === id);
       if (!node) continue;
       if (node.kind === 'knowledge' && typeof window.generateKnowledgeNode === 'function') {
-        window.generateKnowledgeNode(id);
+        // T280：Φ 在工作流跑动期间补建这两类节点，必须带 fromPhi 直通忙碌排队
+        window.generateKnowledgeNode(id, { fromPhi: true });
       } else if (node.kind === 'relation' && typeof window.generateRelationNode === 'function') {
-        window.generateRelationNode(id);
+        window.generateRelationNode(id, { fromPhi: true });
       } else if (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || (node.kind === 'answer' && !node.manual)) {
         workflowIds.push(id);
       }

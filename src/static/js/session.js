@@ -910,8 +910,10 @@
     async function deleteSession(id, e) {
       if (phyIsReadonly()) { phyReadonlyBlock('删除会话'); return; }
       if (e) e.stopPropagation();
-      // T58：生成中静默 return 观感等同按钮失灵——补提示
-      if (isStreaming) {
+      // T58：生成中静默 return 观感等同按钮失灵——补提示。T279 收窄口径：流式写回
+      // 早已按会话寻址（appendMessageToSession / updateMessageInSession 对已删画布
+      // 就地丢弃），只有**正在被流写的那张**不能删，删别的画布照常。
+      if (isStreaming && _streamingSessionId() === id) {
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再删除画布');
         return;
       }
@@ -992,9 +994,10 @@
     // 批量删除选中的画布。逐条走 _purgeSessionData 主路径：
     // 名单与面板刷新各只做一次；失败的画布留在选中态里，可直接重试。
     async function deleteSelectedSessions() {
-      // T58：生成中要拦且要说（批量删除期间按钮本就隐藏，_sessionBulkBusy 保持静默）
-      if (isStreaming) {
-        if (typeof showToast === 'function') showToast('正在生成回答，稍候再批量删除画布');
+      // T58：生成中要拦且要说（批量删除期间按钮本就隐藏，_sessionBulkBusy 保持静默）。
+      // T279：只拦选中列表里含流目标画布的情况，删别的画布照常。
+      if (isStreaming && _sessionSelected.has(_streamingSessionId())) {
+        if (typeof showToast === 'function') showToast('选中列表里有正在生成回答的画布，稍候再批量删除画布');
         return;
       }
       if (_sessionBulkBusy) return;
@@ -1568,8 +1571,9 @@
     // docs/dev/linear-chat-retired.md。
 
     async function clearChat() {
-      // T58：生成中清空会静默丢掉在途结果，拦下并告知
-      if (isStreaming) {
+      // T58：生成中清空会静默丢掉在途结果，拦下并告知。T279：只拦清**流正在写的
+      // 这张**（用户切到别的画布时，清那边与在途回答互不相干）。
+      if (isStreaming && _streamingSessionId() === currentSessionId) {
         if (typeof showToast === 'function') showToast('正在生成回答，稍候再清空当前画布');
         return;
       }

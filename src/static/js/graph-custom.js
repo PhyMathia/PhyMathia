@@ -937,18 +937,43 @@ function openHarnessOrganizeRelations(sourceNodeId) {
     window.runGraphHarnessWithFocus('normal', focusIds);
   }
 }
-function generateKnowledgeNode(nodeId) {
+function generateKnowledgeNode(nodeId, opts) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'knowledge' || node.busy) return;
-  _generateCustomNodeAsTask(node, 'knowledge', '生成知识节点' + (node.title ? '：' + node.title : ''));
+  const title = '生成知识节点' + (node.title ? '：' + node.title : '');
+  // T280：忙则排队（与六个画布生成入口同款「排队不是禁用」），轮到时重找节点、
+  // 以队列 taskId 做 handoff——面板上始终一行账。Φ 改图（harness-apply.js）带
+  // {fromPhi:true} 直通：它在工作流跑动期间同步补建知识/联系节点，排队会把
+  // Φ 的这条能力掐死（排到空闲才跑＝永远轮不上）。
+  if (!(opts && opts.fromPhi) && typeof _isActuallyBusy === 'function' && _isActuallyBusy()
+      && typeof _enqueueNodeJob === 'function') {
+    _enqueueNodeJob(title, function (taskId) {
+      // 轮到它时先看节点还在不在（等待期间可能被删/被撤销）：不在就地结账失败
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      const fresh = _findGraphNode(nodeId);
+      if (fresh) _generateCustomNodeAsTask(fresh, 'knowledge', title, taskId);
+    }, { kind: 'node', replay: { nodeIds: [nodeId] } });
+    return;
+  }
+  _generateCustomNodeAsTask(node, 'knowledge', title);
 }
 
-function generateRelationNode(nodeId) {
+function generateRelationNode(nodeId, opts) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'relation' || node.busy) return;
   const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft);
   if (incoming.length < 2) {
     if (typeof showToast === 'function') showToast('请先连接至少两个上游节点');
+    return;
+  }
+  // T280：忙则排队（同 generateKnowledgeNode），Φ 带 {fromPhi:true} 直通
+  if (!(opts && opts.fromPhi) && typeof _isActuallyBusy === 'function' && _isActuallyBusy()
+      && typeof _enqueueNodeJob === 'function') {
+    _enqueueNodeJob('生成联系节点', function (taskId) {
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      const fresh = _findGraphNode(nodeId);
+      if (fresh) _generateCustomNodeAsTask(fresh, 'relation', '生成联系节点', taskId);
+    }, { kind: 'node', replay: { nodeIds: [nodeId] } });
     return;
   }
   _generateCustomNodeAsTask(node, 'relation', '生成联系节点');
@@ -959,12 +984,13 @@ function generateRelationNode(nodeId) {
 // 所以这笔账不会和工作流那笔重复。不加 workflowRunActive 闸门：Φ 助手改图会在
 // 工作流跑动期间补建知识/联系节点（harness-apply.js 走的正是这两个入口）。
 // signal 用任务自己那颗 controller：面板上的「停止」掐的就是这一条流。
-async function _generateCustomNodeAsTask(node, nodeKind, title) {
+async function _generateCustomNodeAsTask(node, nodeKind, title, handoffTaskId) {
   if (!node || node.busy) return;
   const jobAbort = new AbortController();
-  const taskId = (typeof _taskBeginNodeJob === 'function')
+  // T280：排队路径的账由队列先记（waiting），这里接手同一行（handoff），不再新开
+  const taskId = handoffTaskId || ((typeof _taskBeginNodeJob === 'function')
     ? _taskBeginNodeJob({ title, nodeId: node.id, nodeKind })
-    : null;
+    : null);
   if (taskId && typeof _taskBindCancel === 'function') {
     _taskBindCancel(taskId, () => jobAbort.abort());
   }

@@ -1734,10 +1734,11 @@ check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2
     sandbox.window.getCurrentSessionId = prevSid;
     vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {};', sandbox);
   }
-  // 静态契约：菜单分支认「待命名 OR 基础口表外的附加口」（269 已采纳名也算）且先于
-  // knowledge fallback；附加口身份现场按基础口表重算（不信 dataset 显示名）；挂起连线三件套插点在位
+  // 静态契约：菜单分支认「待命名 OR 基础口表外的附加口（269 已采纳名也算）OR junction
+  //（T272：单出口是基础口但无拖出目标，拖空同样开面板）」且先于 knowledge fallback；
+  // 附加口身份现场按基础口表重算（不信 dataset 显示名）；挂起连线三件套插点在位
   const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
-  const menuIdx = interactSrc.indexOf("if (label === '待命名' || isAdditionalPort)");
+  const menuIdx = interactSrc.indexOf("if (label === '待命名' || isAdditionalPort || sourceNode.kind === 'junction')");
   const knowledgeIdx = interactSrc.indexOf("if (type === 'knowledge')");
   if (menuIdx < 0 || knowledgeIdx < 0 || menuIdx > knowledgeIdx) throw new Error('待命名菜单分支应存在且先于知识点 fallback 分支');
   if (!interactSrc.includes('const isAdditionalPort = Array.isArray(basePorts) && portIndex >= basePorts.length')) {
@@ -1875,6 +1876,60 @@ check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、sum
   return true;
 });
 // ===== Φ 配方上下文与草稿试用批次用例结束 =====
+
+// T272：junction 的单出口是基础口（附加口判定够不着），拖空过去会落到默认草稿路径
+// 建 draft 提问卡——现在与「待命名附加口」同口径：开添加节点面板＋挂起连线接回本口。
+check('T272：junction 输出口拖空开添加节点面板（挂起连线同款）', () => {
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const jNode = { id: 'j1', kind: 'junction', messageIndex: -1, timestamp: 9, label: '中转' };
+    vm.runInContext('graphView.edges = []; graphView.nodeById = ' + JSON.stringify({ j1: jNode }) + ';', sandbox);
+    vm.runInContext('__panelOpened = 0; openAddBlankNodeModal = function () { __panelOpened++; };', sandbox);
+    sandbox._createBranchNodeFromOutput('j1', 'out-0', { label: '转发', type: '' }, 10, 10);
+    if (vm.runInContext('__panelOpened', sandbox) !== 1) throw new Error('junction 拖空应开添加节点面板');
+    const pending = vm.runInContext('JSON.stringify(addBlankNodePendingLink)', sandbox);
+    if (pending !== JSON.stringify({ sourceNodeId: 'j1', sourcePortId: 'out-0' })) {
+      throw new Error('挂起连线没接回本口: ' + pending);
+    }
+    if (vm.runInContext('Object.keys(graphView.nodeById).length', sandbox) !== 1) {
+      throw new Error('不该顺手建出 draft 节点');
+    }
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
+
+// T273：hub 的"内容"＝上游拼接，原先作为集合点进清单＝每篇上游在提示词里两遍
+// （token 浪费＋模型可能重复引用）。与 junction 同口径：全祖先清单与单父链都穿透。
+check('T273：hub 在上游清单/单父链透明——去双写', () => {
+  const s1 = { id: 's1', kind: 'source', content: '输入甲', messageIndex: -1, timestamp: 1 };
+  const s2 = { id: 's2', kind: 'knowledge', content: '知识点乙', messageIndex: -1, timestamp: 2 };
+  const hub = { id: 'h1', kind: 'hub', messageIndex: -1, timestamp: 3 };
+  const sum = { id: 't1', kind: 'summary', messageIndex: -1, timestamp: 4 };
+  try {
+    vm.runInContext('graphView.edges = ' + JSON.stringify([
+      { from: 's1', fromPort: 'out-0', to: 'h1', toPort: 'in-0' },
+      { from: 's2', fromPort: 'out-0', to: 'h1', toPort: 'in-1' },
+      { from: 'h1', fromPort: 'out-0', to: 't1', toPort: 'in-0' },
+    ]) + '; graphView.nodeById = ' + JSON.stringify({ s1, s2, h1: hub, t1: sum }) + ';', sandbox);
+    const items = sandbox._collectUpstreamPath(sum);
+    if (JSON.stringify(items).includes('"hub"')) throw new Error('hub 不应再进取材清单（T273）');
+    if (items.length !== 3) throw new Error('清单应恰 3 条（两上游＋summary 自身），实际 ' + items.length);
+    for (const frag of ['输入甲', '知识点乙']) {
+      const hits = items.filter(i => String(i.content || '').includes(frag)).length;
+      if (hits !== 1) throw new Error('「' + frag + '」应恰好出现一次，实际 ' + hits + '（双写未除）');
+    }
+    const chain = sandbox._collectInboundChain(sum);
+    if (JSON.stringify(chain).includes('"hub"')) throw new Error('单父链也应穿透 hub');
+    if (chain.length !== 2) throw new Error('单父链应恰 2 条（s1＋summary 自身），实际 ' + chain.length);
+  } finally {
+    vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
 
 check('附加输入口「待命名」态（2026-10-10 统一）：加出来的输入口未连线空白、连线后继承输出口名字、断开回落；人工内容输入退役；匿名口互连环路回落宿主品类标签（双匿名死锁修复）', () => {
   const realEsc = sandbox.escapeHtml;

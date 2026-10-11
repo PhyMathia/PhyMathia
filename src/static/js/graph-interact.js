@@ -558,7 +558,10 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
     ? _nodeBaseOutputPorts(sourceNode, _getChatHistory())
     : null;
   const isAdditionalPort = Array.isArray(basePorts) && portIndex >= basePorts.length;
-  if (label === '待命名' || isAdditionalPort) {
+  // T272：junction 的单出口是基础口（恒在出口表内，附加口判定够不着），但它没有
+  // 自己的拖出目标——拖空同样开添加节点面板（挂起连线同款），选中后自动接回本口；
+  // 过去落到默认草稿路径建 draft 提问卡，从中继往外再接一个中转凭空多两步。
+  if (label === '待命名' || isAdditionalPort || sourceNode.kind === 'junction') {
     openAddBlankNodeModal(x, y);
     addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
     return;

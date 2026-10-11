@@ -247,6 +247,13 @@ check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静�
   for (const frag of ['稍候再删除画布', '稍候再批量删除画布', '稍候再清空当前画布', '稍候再清空所有画布']) {
     if (!srcSession.includes(frag)) throw new Error('T119 session.js 缺: ' + frag);
   }
+  // T279：删除/清空守卫收窄到「正在被流写的那张」（流式写回已按会话寻址，
+  // 删别的画布/清别的画布照常；清空所有仍整拦——它必然覆盖流目标）
+  for (const frag of ['isStreaming && _streamingSessionId() === id',
+                      'isStreaming && _sessionSelected.has(_streamingSessionId())',
+                      'isStreaming && _streamingSessionId() === currentSessionId']) {
+    if (!srcSession.includes(frag)) throw new Error('T279 守卫收窄缺: ' + frag);
+  }
   // 2026-10-11：画布上的节点生成不再「忙就拒绝」（那两句「稍候再单独生成这个节点」
   // 「稍候再生成可视化」已随改造删除），改成收进队列。这里换契约守着新口径：
   // 两处入口都必须走统一的忙碌判定 + 放行旁路，且都必须把活儿交给队列。
