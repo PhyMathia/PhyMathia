@@ -77,6 +77,9 @@ let _taskTickTimer = null;
 let _taskExpanded = {};    // taskId -> 是否展开节点明细（纯 UI 态，不落盘）
 let _taskTab = 'active';   // 面板页签：'active' = 未完成（在跑/排队/失败），'done' = 已完成
                            // 用户 2026-09-27 要求两个分开：一边是"要盯的"，一边是"账本"。
+// 全部清空的世代号：每次清空自增。`_taskLoadFromServer` 的回填是异步的，若响应在
+// 清空之后才落地，没有这道闸会把用户刚清掉的旧账原样顶回来（清空→回填竞态）。
+let _taskClearEpoch = 0;
 
 // 运行中的工作流任务上下文。**一次只跑一个任务**（用户拍板），所以一个模块级指针就够，
 // 不需要每任务各持一份。它的职责就两件：
@@ -437,6 +440,34 @@ function _taskForget(id) {
   if (_taskHistory.length !== before) _taskChanged();
 }
 
+// 一键全部清空（用户 2026-10-12 要求）：在跑的掐停、排队的从队里摘掉、两本账全清——
+// 失败/中断/干成的记录一并清掉，点完账本就是空的。与「清除记录」的分工：那边只清
+// 干成的、失败与中断的留着等重试（清记录不该把待办也清了）；这边是用户明说「全都
+// 不要了」。在跑的按下 canceller 就放手，它稍后的结账（_taskFinish/_tasksEndWorkflow）
+// 找不到活账自然空转——graph-workflow.js 收尾段靠的就是这个空转安全，不会搅乱流程。
+function _tasksClearAll() {
+  const active = [..._taskActive];
+  const removed = active.length + _taskHistory.length;
+  _taskClearEpoch++;   // 作废在途的服务端回填：清空不能被迟到的那份旧账顶回来
+  for (const task of active) {
+    if (task.state === 'waiting') {
+      // 排队中的必须从队里摘掉，否则账清了活儿还在队列里等着一会儿照跑
+      if (typeof _removeQueuedSend === 'function') _removeQueuedSend(task.id);
+    } else if (task.canceller) {
+      try {
+        task.canceller();
+      } catch (err) {
+        console.warn('[Tasks] cancel failed:', err);
+      }
+    }
+  }
+  _taskActive = [];
+  _taskActiveCtx = null;
+  _taskHistory = [];
+  _taskChanged();
+  if (typeof showToast === 'function') showToast(removed ? '已清空 ' + removed + ' 条任务' : '没有可清空的任务');
+}
+
 // ===== 重新生成（关页面后重开那条路） =====
 
 async function _taskRegenerate(id) {
@@ -618,12 +649,15 @@ function _taskSplitLoaded(raw) {
 async function _taskLoadFromServer() {
   if (_taskLoaded || typeof fetch !== 'function') return;
   _taskLoaded = true;
+  const epoch = _taskClearEpoch;
   try {
     const resp = await fetch('/api/kv/' + encodeURIComponent(TASK_KV_KEY), { cache: 'no-cache' });
     if (!resp || !resp.ok) return;
     const data = await resp.json();
     const value = data && data.value;
     if (!value || !Array.isArray(value.tasks)) return;
+    // 回填在途时用户按了「全部清空」：这份账已作废，原样落下等于把旧账顶回来
+    if (epoch !== _taskClearEpoch) return;
     // 页面刚打开、内存账本还是空的：服务端那份就是全部历史
     const split = _taskSplitLoaded(value.tasks);
     if (!_taskActive.length && !_taskHistory.length) {
@@ -888,6 +922,9 @@ function _renderTaskPanel() {
     clearDone.hidden = _taskTab !== 'done';
     clearDone.disabled = _taskDoneRecords().length === 0;
   }
+  // 全部清空在两个页签都亮（它是全账本的动作，不分页签）：两本账全空才灰。
+  const clearAll = document.getElementById('taskPanelClearAll');
+  if (clearAll) clearAll.disabled = _taskActive.length === 0 && _taskHistory.length === 0;
 }
 
 function _taskRenderSoon() {
@@ -1102,9 +1139,10 @@ if (typeof document !== 'undefined') {
   }
 }
 
-// 行内 onclick 只用到这三个；面板内部的按钮走事件委托，不往全局撒函数。
+// 行内 onclick 只用到这四个；面板内部的按钮走事件委托，不往全局撒函数。
 window.toggleTaskPanel = toggleTaskPanel;
 window.stopAllTasks = _tasksStopAll;
 window.clearDoneTasks = _tasksClearDone;
+window.clearAllTasks = _tasksClearAll;
 // 胶囊被拖动时由 chat.js 回调，让停靠着的面板跟过去（不跟就脱钩了）。
 window._taskPanelDockFollow = _dockTaskPanel;

@@ -256,7 +256,7 @@
 
   <div class="model-toast aurora-glass aurora-glass--compact" id="modelToast"></div>
 
-  <script src="/js/app.js?v=9f7a11e0" defer></script>
+  <script src="/js/app.js?v=5c72f88b" defer></script>
   <script>
     // app.js 改 defer 后本脚本先于它执行，而 APP_VERSION 是 config.js 的顶层
     // const——内联脚本无法加 defer，只能等 DOMContentLoaded：所有 defer 脚本
@@ -741,6 +741,7 @@
       <span class="task-panel-head-btns">
         <button type="button" class="task-btn task-btn--warn" id="taskPanelStopAll" onclick="stopAllTasks()" disabled>全部停止</button>
         <button type="button" class="task-btn task-btn--warn" id="taskPanelClearDone" onclick="clearDoneTasks()" hidden disabled>清除记录</button>
+        <button type="button" class="task-btn task-btn--warn" id="taskPanelClearAll" onclick="clearAllTasks()" title="停掉在跑与排队的，并清掉全部任务记录（含失败与已完成）" aria-label="一键全部清空任务列表" disabled>全部清空</button>
       </span>
     </div>
     <div class="task-panel-body" id="taskPanelBody"></div>

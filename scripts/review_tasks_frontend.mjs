@@ -471,6 +471,60 @@ test('一键清除记录：只清干成的，失败与在跑的必须留着（�
   assert.equal(run('_taskHistory.length'), 0, '单条删除要生效');
 });
 
+test('一键全部清空：在跑的掐停、排队的摘除、历史全清（含失败与干成的）', () => {
+  const { s, run } = fixture();
+  run(`
+    var _cancels = [], _dequeued = [];
+    _taskCreate({ kind: 'send', title: '在跑的甲', state: 'running' });
+    var _runningId = _taskActive[0].id;
+    _taskBindCancel(_runningId, function () { _cancels.push(_runningId); });
+    _taskCreate({ kind: 'send', title: '排队的乙', state: 'waiting' });
+    var _waitingId = _taskActive[0].id;
+    _removeQueuedSend = function (id) { _dequeued.push(id); _taskFinish(id, 'stopped', '已取消'); return true; };
+    _tasksBeginWorkflow({ title: '干成的丙', workNodes: [{ id: 'n1', label: '物理视角' }], allIds: ['n1'] });
+    _tasksEndWorkflow(_taskActive[0].id, 'done', '');
+    _tasksBeginWorkflow({ title: '失败的丁', workNodes: [{ id: 'n2', label: '数学视角' }], allIds: ['n2'] });
+    _tasksEndWorkflow(_taskActive[0].id, 'error', '模型返回了空内容');
+  `);
+  assert.equal(run('_taskActive.length'), 2, '铺账：在跑 + 排队');
+  assert.equal(run('_taskHistory.length'), 2, '铺账：干成 + 失败');
+  run('_tasksClearAll();');
+  assert.equal(run('_taskActive.length'), 0, '在跑与排队的都要清掉');
+  assert.equal(run('_taskHistory.length'), 0, '历史（含失败与干成的）都要清掉');
+  assert.equal(run('_taskActiveCtx'), null, '工作流上下文不许活着出来');
+  // 沙箱里的数组与测试文件不同 realm，deepEqual 会在原型上误红——逐个标量比
+  assert.equal(run('_cancels.length'), 1, '在跑的要按它自己的 canceller');
+  assert.equal(run('_cancels[0]'), run('_runningId'), '按的是在跑那条自己的 canceller');
+  assert.equal(run('_dequeued.length'), 1, '排队的要从队里摘除');
+  assert.equal(run('_dequeued[0]'), run('_waitingId'), '摘的是排队那条');
+  // 迟到的结账（工作流收尾那发 _taskFinish）：找不到活账自然空转，不许复活记录
+  run(`_taskFinish(_waitingId, 'stopped', '迟到的结账');`);
+  assert.equal(run('_taskHistory.length'), 0, '清空后的迟到结账不能把记录顶回来');
+});
+
+test('一键全部清空的接线：头部按钮、window 导出、回填作废闸', () => {
+  const html = readSrc('src/static/index.html');
+  assert.match(html, /id="taskPanelClearAll"[^>]*onclick="clearAllTasks\(\)"/, '面板头部要有「全部清空」按钮并接上 clearAllTasks');
+  const src = readSrc('src/static/js/tasks.js');
+  assert.match(src, /window\.clearAllTasks = _tasksClearAll/, '行内 onclick 依赖 window 导出');
+  assert.match(src, /epoch !== _taskClearEpoch/, '回填落地前要查清空世代——清空后迟到的服务端旧账必须作废');
+});
+
+test('一键全部清空的按钮口径：两个页签都在，两本账全空才灰', () => {
+  const { s, run, els } = fixture();
+  const clearAll = makeEl('button');
+  els.taskPanelClearAll = clearAll;
+  // _renderTaskPanel 只在面板开着时干活，沙箱里手动置开
+  run(`_taskPanelOpen = true; _taskCreate({ kind: 'send', title: '在跑的', state: 'running' });`);
+  run('_renderTaskPanel()');
+  assert.equal(clearAll.disabled, false, '有活账就该亮');
+  assert.equal(clearAll.hidden, false, '未完成页签要看得见');
+  run(`_taskTab = 'done'; _renderTaskPanel();`);
+  assert.equal(clearAll.hidden, false, '已完成页签也要看得见');
+  run(`_taskTab = 'active'; _tasksClearAll(); _renderTaskPanel();`);
+  assert.equal(clearAll.disabled, true, '两本账全空才灰');
+});
+
 test('进行中的转圈是 CSS 圆环，不是 ⟳ 字符（字符旋转偏心、会跳，用户反馈过）', () => {
   const { s, run } = fixture();
   run(`_taskCreate({ kind: 'send', title: '跑着的', state: 'running' });`);
