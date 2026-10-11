@@ -122,7 +122,9 @@ async def api_accounts_delete(request: Request):
 # ====== 会话管理 API ======
 @router.get("/api/sessions")
 async def api_get_sessions(request: Request = None):
-    return _read_json_cached(_account_paths(request).sessions_path, {})
+    # T241：_read_json_cached 的 stat 也在 _JSON_LOCK 内做——后台线程持锁写大文件时，
+    # 这次 stat 会把事件循环堵在锁上（前端 15 秒同步反复打这个端点）。读盘整体离线程。
+    return await asyncio.to_thread(_read_json_cached, _account_paths(request).sessions_path, {})
 
 
 @router.post("/api/sessions")
@@ -282,27 +284,19 @@ def _purge_dangling_continent_edges(session_id: str, account: str = accounts.DEF
         logger.warning(f"purge dangling continent_edges failed: {e}")
 
 
-@router.delete("/api/sessions/{session_id}")
-async def api_delete_session(session_id: str, request: Request = None):
-    payload = {}
-    account = _account_id(request, payload)
-    paths = _account_paths(request, payload)
-    try:
-        msgs_path = _get_messages_path(session_id, account)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session id")
-    # 回收站（2026-10-07）：动手毁数据前先整体快照进站；快照抛异常＝中止删除
-    # （500）——「防误删」的前提是删了还能回来，宁可报错不可丢数据。保留天数
-    # 为 0（回收站关闭）时 capture 返回 False，走原删除链路。
-    trash.capture_session(paths, session_id, messages_path=msgs_path)
-    # 删除别名映射前清理摘要并推进删除代次；失败中止，不能留下旧上下文却报清除成功
-    context._delete_rolling_memory(session_id, account)
+def _delete_session_sync(paths, account, session_id, msgs_path) -> None:
+    """T241：DELETE /api/sessions/{id} 的整套磁盘活儿，整体在 to_thread 里跑。
 
-    # 先清资料、最后删名单（09-23 真机取证：3 座「已删除的画布」孤岛全是旧顺序
-    # 「先 pop 名单、后清资料」中途被打断留下的——名单没了，知识点/公式/消息/
-    # KV 快照原地保留。反过来中断最多留下一座还看得见的空岛，重删一次即可）。
-    # 探索网快照（data/kv/<sid>.json 整文件）此前从不清，残留会被回填脚本当作
-    # 提取料把已删会话的知识点重新入库——孤岛的「复活」通道。
+    顺序语义不能动（09-23 真机取证）：先清资料、最后删名单——反过来中断会留下
+    「名单没了、资料还在」的孤岛；探索网快照（data/kv/<sid>.json 整文件）必须清，
+    残留会被回填脚本当提取料把已删会话的知识点重新入库（孤岛的「复活」通道）。
+    全链在同一个工作线程里串行执行，先后次序与旧版逐句跑一致；_JSON_LOCK 是
+    threading.RLock 跨线程照常串行，墓碑登记与名单删除仍同锁同刻。快照抛异常
+    ＝中止删除（500），语义不变。"""
+    # 回收站（2026-10-07）：动手毁数据前先整体快照进站——「防误删」的前提是删了
+    # 还能回来，宁可报错不可丢数据。保留天数为 0（回收站关闭）时 capture 返回
+    # False，走原删除链路。
+    trash.capture_session(paths, session_id, messages_path=msgs_path)
     _delete_items_by_session(paths.knowledge_path, session_id)  # T146: sessionIds 感知删除
     _delete_items_by_session(paths.formulas_path, session_id)  # T146: sessionIds 感知删除
     _purge_dangling_continent_edges(session_id, account)
@@ -325,6 +319,28 @@ async def api_delete_session(session_id: str, request: Request = None):
         return data
 
     _mutate_json(paths.sessions_path, updater)
+
+
+@router.delete("/api/sessions/{session_id}")
+async def api_delete_session(session_id: str, request: Request = None):
+    payload = {}
+    account = _account_id(request, payload)
+    paths = _account_paths(request, payload)
+    try:
+        msgs_path = _get_messages_path(session_id, account)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    # 滚动摘要的失效边界必须先于一切 await（S1 红线「失效任务零请求」在单删链的
+    # 落法，test_s1_alias_task_invalidated[delete-queued] 钉死）：先在循环线程上
+    # 作废该会话排队的摘要任务，再把整套慢 IO 离线程——线程切换的空窗里，排队
+    # 任务没有抢跑发请求的机会。mem 族文件小，这一步留在循环线程是刻意的；
+    # 失败中止，不能留下旧上下文却报清除成功。它先于快照跑是无损重排：快照捕的
+    # 是 session/messages/knowledge/formulas/kv，不含 mem 键。
+    context._delete_rolling_memory(session_id, account)
+    # T241：快照＋资料清理×2＋断桥＋苏格拉底状态＋消息/KV unlink＋名单表重写
+    # 原来逐句压在事件循环线程上，删大会话期间全服务请求停摆；整体收拢进
+    # _delete_session_sync 离线程，顺序契约在其 docstring 里钉死。
+    await asyncio.to_thread(_delete_session_sync, paths, account, session_id, msgs_path)
     return {"ok": True}
 
 
@@ -492,7 +508,8 @@ async def api_get_messages(session_id: str, request: Request = None):
         path = _get_messages_path(session_id, _account_id(request))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session id")
-    return _read_json_cached(path, [])
+    # T241：与 GET /api/sessions 同型——_read_json_cached 的 stat 持全局锁，离线程
+    return await asyncio.to_thread(_read_json_cached, path, [])
 
 
 @router.post("/api/sessions/{session_id}/messages")

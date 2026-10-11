@@ -33,6 +33,7 @@ from server import config as config_mod  # noqa: E402
 from server import knowledge_routes  # noqa: E402
 from server import session_routes  # noqa: E402
 from server import storage  # noqa: E402
+from server import trash  # noqa: E402
 
 
 class _FakeRequest:
@@ -146,6 +147,59 @@ def test_event_loop_not_blocked_during_slow_formula_write(acc_env, monkeypatch):
     ticks = asyncio.run(main())
     assert ticks > 5, f"写盘 0.3s 内循环只被让渡 {ticks} 次（旧代码恒为 0）"
     assert "F=ma" in str(storage._read_json(acc_env.formulas_path, {}))
+
+
+# ====== T241：单删链与名单读路径离线事件循环（T240 收尾登记的最后一处）======
+
+def test_delete_session_io_runs_off_event_loop(acc_env, monkeypatch):
+    """整删链（快照→资料清理→unlink→名单表重写）必须在工作者线程跑——旧代码
+    整块同步压在循环线程上，删大会话期间全服务请求停摆。"""
+    storage._write_json(acc_env.sessions_path, {"s1": {"id": "s1", "title": "画布一"}})
+    storage._write_json(storage._get_messages_path("s1", "default"),
+                        [{"role": "user", "content": "你好"}])
+    spy = _ThreadSpy(session_routes._delete_items_by_session)
+    monkeypatch.setattr(session_routes, "_delete_items_by_session", spy)
+    spy.loop_thread = threading.current_thread()
+
+    result = asyncio.run(session_routes.api_delete_session("s1", None))
+
+    assert result == {"ok": True}
+    assert spy.calls >= 1
+    assert spy.run_thread is not spy.loop_thread, "DELETE /api/sessions 的清理块仍在事件循环线程上"
+    # 行为不回退：名单摘除＋消息文件 unlink＋墓碑登记（T271 契约原样）
+    assert "s1" not in storage._read_json(acc_env.sessions_path, {})
+    assert not storage._get_messages_path("s1", "default").exists()
+    assert "s1" in trash.tombstone_read(acc_env)
+
+
+def test_get_sessions_read_runs_off_event_loop(acc_env, monkeypatch):
+    """GET /api/sessions 的 _read_json_cached（stat 持全局锁）离线程——后台持锁
+    写大文件时它会把循环堵在锁上，前端 15 秒同步反复打这个端点。"""
+    storage._write_json(acc_env.sessions_path, {"s1": {"id": "s1", "title": "画布一"}})
+    spy = _ThreadSpy(session_routes._read_json_cached)
+    monkeypatch.setattr(session_routes, "_read_json_cached", spy)
+    spy.loop_thread = threading.current_thread()
+
+    result = asyncio.run(session_routes.api_get_sessions(_FakeRequest()))
+
+    assert result["s1"]["title"] == "画布一"
+    assert spy.calls == 1
+    assert spy.run_thread is not spy.loop_thread, "GET /api/sessions 的读路径仍在事件循环线程上"
+
+
+def test_get_messages_read_runs_off_event_loop(acc_env, monkeypatch):
+    """单条消息 GET 与 GET /api/sessions 同型（_read_json_cached 的 stat 持锁）。"""
+    storage._write_json(storage._get_messages_path("s1", "default"),
+                        [{"role": "user", "content": "你好"}])
+    spy = _ThreadSpy(session_routes._read_json_cached)
+    monkeypatch.setattr(session_routes, "_read_json_cached", spy)
+    spy.loop_thread = threading.current_thread()
+
+    result = asyncio.run(session_routes.api_get_messages("s1", None))
+
+    assert result[0]["content"] == "你好"
+    assert spy.calls == 1
+    assert spy.run_thread is not spy.loop_thread, "单条消息 GET 的读路径仍在事件循环线程上"
 
 
 # ====== T238：注册表缓存撕裂读 ======
