@@ -1316,7 +1316,11 @@
   flex-shrink: 0 !important;
 }
 
-.graph-output-port:hover .graph-port-remove {
+/* 删除键 hover 显形：基础规则是 opacity:0!important，显形必须同样带 !important
+   ——styles-panels 输入侧那条不带的 0.75 压不过它。只写输出侧会漏掉输入口删除键
+   （2026-10-11 T274：桌面端输入端口删不掉） */
+.graph-output-port:hover .graph-port-remove,
+.graph-input-port:hover .graph-port-remove {
   opacity: 1 !important;
 }
 
