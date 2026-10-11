@@ -35,7 +35,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-  <link rel="stylesheet" href="/css/styles.min.css?v=104e5664">
+  <link rel="stylesheet" href="/css/styles.min.css?v=7c0b340b">
   <link rel="stylesheet" href="/css/styles-panels.min.css?v=85e35d5b">
   <link rel="stylesheet" href="/css/graph-override.min.css?v=758a99f1">
   <link rel="stylesheet" href="/phi/phi-pet.min.css?v=259b0ac7">
@@ -458,6 +458,7 @@
       </select>
       <div class="model-desc" id="agentModelDesc">未配置模型。请在模型设置中添加</div>
       <div class="model-tags" id="agentModelTags"><span class="model-tag">未配置</span></div>
+      <select class="model-select model-thinking-select" id="agentModelThinking" onchange="onSlotThinkingChange('agent')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
     </div>
     <div class="model-section">
       <div class="model-section-title">HTML 生成模型</div>
@@ -466,6 +467,7 @@
       </select>
       <div class="model-desc" id="htmlModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="htmlModelTags"><span class="model-tag">可选</span></div>
+      <select class="model-select model-thinking-select" id="htmlModelThinking" onchange="onSlotThinkingChange('html')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
     </div>
     <div class="model-section">
       <div class="model-section-title">Φ 助手模型</div>
@@ -474,6 +476,7 @@
       </select>
       <div class="model-desc" id="graphModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="graphModelTags"><span class="model-tag">可选</span></div>
+      <select class="model-select model-thinking-select" id="graphModelThinking" onchange="onSlotThinkingChange('graph')" title="思考程度：自动＝由 Φ 面板深度思考按钮/相位默认决定；关＝强制关闭思考"></select>
     </div>
     <div class="model-section">
       <div class="model-section-title">苏格拉底 / 进阶学习模型</div>
@@ -482,6 +485,7 @@
       </select>
       <div class="model-desc" id="branchModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="branchModelTags"><span class="model-tag">可选</span></div>
+      <select class="model-select model-thinking-select" id="branchModelThinking" onchange="onSlotThinkingChange('branch')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
     </div>
     <div class="model-section">
       <div class="model-section-title">公式描述模型</div>
@@ -490,6 +494,7 @@
       </select>
       <div class="model-desc" id="descriptorModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="descriptorModelTags"><span class="model-tag">可选</span></div>
+      <select class="model-select model-thinking-select" id="descriptorModelThinking" onchange="onSlotThinkingChange('descriptor')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
     </div>
     <div class="model-section">
       <div class="model-section-title">出题模型</div>
@@ -498,6 +503,7 @@
       </select>
       <div class="model-desc" id="quizModelDesc">默认与主模型相同，无需单独配置</div>
       <div class="model-tags" id="quizModelTags"><span class="model-tag">可选</span></div>
+      <select class="model-select model-thinking-select" id="quizModelThinking" onchange="onSlotThinkingChange('quiz')" title="思考程度：跟随模型默认＝不发思考参数；关＝强制关闭思考"></select>
     </div>
     <div class="model-section model-section-mgmt">
       <div class="model-section-title">管理自定义模型</div>
@@ -609,16 +615,6 @@
       <div class="md-field">
         <label>API 地址</label>
         <input type="text" id="mcBaseUrl" placeholder="https://api.deepseek.com/v1">
-      </div>
-      <div class="md-field">
-        <label>思考程度 <span style="color:var(--text-secondary);font-size:11px"></span></label>
-        <select id="mcThinking">
-          <option value="">default</option>
-          <option value="low">low</option>
-          <option value="high">high</option>
-          <option value="max">max</option>
-        </select>
-        <div id="mcThinkingHint" style="font-size:11px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">default 不发送思考参数；供应商不支持时自动去掉该参数重发，不会导致报错。</div>
       </div>
       <div class="md-actions">
         <button class="md-btn md-btn-cancel" onclick="closeModelConfig()">取消</button>

@@ -343,15 +343,17 @@ check('配方生成维度（P2）：模型槽位优先＋回落、载体归一/�
   // getActiveModelForRole 是 models.js 顶层函数声明：挂 vm 全局（sandbox.*），
   // 不是 window 代理（宽松代理只写自己的 store，不影响裸标识符解析）
   const prevRole = sandbox.getActiveModelForRole;
-  sandbox.getActiveModelForRole = role => (role === 'html' ? { id: 'html-model' } : role === 'agent' ? { id: 'agent-model' } : null);
+  sandbox.getActiveModelForRole = role => (role === 'html' ? { id: 'html-model' } : role === 'branch' ? { id: 'branch-model' } : role === 'agent' ? { id: 'agent-model' } : null);
   try {
-    const pick = sandbox._modelForWorkflowNode;
+    // 2026-10-11 槽位思考：解析器同时返回落点槽位 role（思考档位跟提供模型的槽走）
+    const pick = sandbox._slotCallForWorkflowNode;
     const recipeNode = { kind: 'module', recipeId: 'r', recipe: { generate: { model_role: 'html' } } };
-    if (pick(recipeNode).id !== 'html-model') throw new Error('配方 model_role=html 应选 html 槽');
+    if (pick(recipeNode).model.id !== 'html-model' || pick(recipeNode).role !== 'html') throw new Error('配方 model_role=html 应选 html 槽（role=html）');
     const unconfigured = { kind: 'module', recipeId: 'r', recipe: { generate: { model_role: 'graph' } } };
-    if (pick(unconfigured).id !== 'agent-model') throw new Error('槽位未配置应回落主模型');
+    if (pick(unconfigured).model.id !== 'agent-model' || pick(unconfigured).role !== 'agent') throw new Error('槽位未配置应回落主模型（role=agent）');
     const builtinSocratic = { kind: 'module', moduleKey: 'socratic' };
-    if (pick(builtinSocratic).id !== 'agent-model') throw new Error('内置 socratic 在 branch 槽未配置时应回落 agent（行为零变化）');
+    if (pick(builtinSocratic).model.id !== 'branch-model' || pick(builtinSocratic).role !== 'branch') throw new Error('内置 socratic 在 branch 槽配置时应选 branch 槽');
+    if (pick({ kind: 'module', moduleKey: 'viz' }).model.id !== 'html-model') throw new Error('内置 viz 应选 html 槽');
   } finally { sandbox.getActiveModelForRole = prevRole; }
   // 静态断言：viz 收口扩到配方 html_iframe（重试预算/重试提示词）、mermaid 包围栏、
   // 双阶段概要与 on_generated 钩子的接线（这些分支要真模型才走到，行为留真机验收）。

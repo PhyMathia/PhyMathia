@@ -177,10 +177,12 @@ def thinking_request_params(provider: str, level: str) -> dict:
     三档在每个 reasoning_effort 供应商上都有区分度；布尔开关族（qwen/zhipu/
     ollama/mimo）三档同为「开启」。
 
-    2026-10-11 起 on/off 是布尔族的正式取值（配置界面两档开/关，MiMo 这类
-    上游只有开关的供应商不再显示无效的 low/high/max）：on 直发开启参数、off
-    直发关闭参数；旧档位 low/high/max 在布尔族仍按「开」兼容，''（default）
-    依旧不发参数。reasoning_effort 族表达不了「关」，收到 on/off 一律不发参数。
+    2026-10-11 起 on/off 是正式取值（配置界面按供应商给档）：布尔族 on/off 直发
+    enabled/disabled，旧档位 low/high/max 在布尔族仍按「开」兼容，''（default）
+    依旧不发参数。effort 族同日起 off 也表达「关」：发 reasoning_effort "none"
+    （OpenAI 官方取值，gpt-5.1 起；Gemini 兼容层映射到关思考），模型不支持的
+    端点整请求 400 → 调用方剥参降级重试一次，最坏退化＝不发参数跟随模型默认；
+    on 对 effort 族无意义（不存在「比默认更开」），不发参数。
     上游不认识注入字段而拒绝整个请求时，由调用方
     剥掉参数降级重试一次（主应用与 harness 各有一级——后者是 2026-09-30 接入的
     相位档位，Φ 的 evaluate/preset/apply 深、chat 浅，见 harness/review.py
@@ -207,6 +209,10 @@ def thinking_request_params(provider: str, level: str) -> dict:
         if boolean_on:
             return {"think": True}
         return {}
+    if level == "off":
+        # effort 族「关」：reasoning_effort none（OpenAI gpt-5.1+ 正式取值）；
+        # 不支持的模型/网关整请求 400 → 调用方剥参重发，退化＝跟随模型默认
+        return {"reasoning_effort": "none"}
     if level in ("low", "high", "max"):
         return {"reasoning_effort": {"low": "low", "high": "medium", "max": "high"}[level]}
     return {}

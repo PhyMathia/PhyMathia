@@ -617,10 +617,12 @@
             : '';
           const combinedInstruction = [extraInstruction, retryInstruction].filter(Boolean).join('\n');
           const prompt = _buildVisualizationPrompt(sourceContent, combinedInstruction);
+          // 槽位思考（2026-10-11）：本轮尝试用哪个槽的模型，就带哪个槽的思考档位
           const resp = await proxyChatWithModel(model, {
             messages: [{ role: 'user', content: prompt + '\n\n' + String(sourceContent || '').slice(0, 12000) }],
             stream: true,
             session_bucket: 'phymathia-viz',
+            thinking: getSlotThinkingForRole(htmlModel && model.id === htmlModel.id ? 'html' : 'agent'),
           }, signal);
           const reply = await collectStreamText(resp, (progress, length) => {
             const pct = progress !== null && progress !== undefined

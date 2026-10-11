@@ -336,38 +336,33 @@ function saveGroupKeyCommitted(provider, inputEl) {
 let userModelConfigs = [];
 let activeModels = { agent_model: '', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' };
 
-// 思考程度（模型条目上的 thinking 字段）：''（default）= 跟随模型默认不发送参数；
-// low/high/max 由后端按供应商族映射（reasoning_effort 三档拉伸 / enable_thinking /
-// thinking.type / think），上游不认识时自动剥掉重发（见 llm_common.thinking_request_params）。
-// 布尔开关族（上游只有开/关：qwen/zhipu/ollama/mimo）配置界面用 on/off 两档直发
-// 开/关参数；旧档位 low/high/max 仍兼容（后端一律当「开」），legacy '' 显示为开、
-// 保存时归一为 on。reasoning_effort 族表达不了「关」，收到 on/off 后端不发参数。
+// 思考程度：2026-10-11 起改挂**槽位**（activeModels 的 <role>_thinking 键），不再挂模型条目
+// ——同一个模型主聊天要深思、出题/可视化不要，档位跟着用途走而不是跟着模型走。取值：
+// ''（跟随模型默认，不发思考参数）/ on / off / low / high / max，由后端按供应商族映射
+// （reasoning_effort 三档拉伸＋off→"none" / enable_thinking / thinking.type / think），
+// 上游不认识时自动剥掉重发（见 llm_common.thinking_request_params）。布尔开关族
+// （qwen/zhipu/ollama/mimo）界面用 on/off 两档；effort 族 off 发 reasoning_effort:"none"
+// （OpenAI gpt-5.1 起的正式取值），旧端点不支持就 400 剥参退化。
 const THINKING_LEVELS = ['low', 'high', 'max'];
 const THINKING_BOOLEAN_PROVIDERS = ['qwen', 'zhipu', 'ollama', 'mimo'];
 window.THINKING_LEVELS = THINKING_LEVELS;
 window.THINKING_BOOLEAN_PROVIDERS = THINKING_BOOLEAN_PROVIDERS;
 
-// 配置弹窗思考档位选项（纯函数，冒烟直测）：布尔族两档开/关，其余保持四档
-function _thinkingOptionsFor(provider) {
+// 槽位思考档位选项（纯函数，冒烟直测）：布尔族 跟随默认/开/关 三档，effort 族
+// 跟随默认/关/low/high/max 五档。role==='graph'（Φ 槽）的「跟随默认」含义不同：
+// 不发思考参数＝交给 Φ 面板按钮/后端相位默认，故文案改「自动」
+function _thinkingOptionsFor(provider, role) {
+  const autoLabel = role === 'graph' ? '思考：自动（Φ 按钮可覆盖）' : '思考：跟随模型默认';
   if (THINKING_BOOLEAN_PROVIDERS.includes(provider)) {
-    return [{ value: 'on', label: '开' }, { value: 'off', label: '关' }];
+    return [{ value: '', label: autoLabel }, { value: 'on', label: '思考：开' }, { value: 'off', label: '思考：关' }];
   }
   return [
-    { value: '', label: 'default（跟随模型默认）' },
-    { value: 'low', label: 'low' },
-    { value: 'high', label: 'high' },
-    { value: 'max', label: 'max' },
+    { value: '', label: autoLabel },
+    { value: 'off', label: '思考：关' },
+    { value: 'low', label: '思考：low' },
+    { value: 'high', label: '思考：high' },
+    { value: 'max', label: '思考：max' },
   ];
-}
-
-// 模型条目「思考:x」徽标文案（纯函数，冒烟直测）：布尔族旧档位按后端口径显示「开」，
-// '' 不标注；effort 族维持原始档位值
-function _thinkingBadge(provider, thinking) {
-  if (THINKING_BOOLEAN_PROVIDERS.includes(provider)) {
-    if (thinking === 'off') return '关';
-    return thinking ? '开' : '';
-  }
-  return THINKING_LEVELS.includes(thinking) ? thinking : '';
 }
 
 function loadUserModels() {
@@ -452,20 +447,59 @@ function getAllModels() {
   return result;
 }
 
+// 六个槽位键：agent_model 等（模型引用）＋ <role>_thinking（槽位思考档位，2026-10-11 起）
+const SLOT_MODEL_KEYS = { agent: 'agent_model', html: 'html_model', descriptor: 'descriptor_model', quiz: 'quiz_model', graph: 'graph_model', branch: 'branch_model' };
+
 function getModelById(id) {
   return userModelConfigs.find(m => m.id === id) || null;
 }
 
 function getActiveModelForRole(role) {
-  const key = role === 'agent' ? 'agent_model' : role === 'html' ? 'html_model' : role === 'graph' ? 'graph_model' : role === 'quiz' ? 'quiz_model' : role === 'branch' ? 'branch_model' : 'descriptor_model';
-  const id = activeModels[key];
+  const id = activeModels[SLOT_MODEL_KEYS[role] || 'descriptor_model'];
   if (!id) return null;
   return getModelById(id);
+}
+
+// 槽位思考档位（纯读，冒烟直测）：跟随**提供模型的那个槽**——槽配了自己的模型就用
+// 该槽档位；槽空（与主模型相同）连思考也跟主模型，保住「与主模型相同」的字面语义。
+// 例外：graph（Φ 槽）空时返回 ''——主模型档位灌进 Φ 请求会绕过 T97 相位档位
+// （evaluate 深/chat 浅），Φ 的思考归面板按钮与相位默认，见 harness-run 发送点。
+function getSlotThinkingForRole(role) {
+  const own = activeModels[SLOT_MODEL_KEYS[role]] ? getModelById(activeModels[SLOT_MODEL_KEYS[role]]) : null;
+  if (own) return activeModels[role + '_thinking'] || '';
+  if (role === 'graph') return '';
+  if (role === 'agent') return '';
+  return activeModels.agent_thinking || '';
+}
+window.getSlotThinkingForRole = getSlotThinkingForRole;
+
+// 槽位思考下拉的档位选项按「实际会被调用的模型」的供应商族渲染：槽空时跟随主模型，
+// 就用主模型的族；主模型也没有时给 effort 族全集（后端按真实供应商映射，错档无害）
+function _slotThinkingProvider(role) {
+  const model = getActiveModelForRole(role) || (role !== 'agent' ? getActiveModelForRole('agent') : null);
+  return model ? model.provider : '';
 }
 
 async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
+  // 一次性迁移（2026-10-11）：旧版思考档位挂在模型条目上，播种到指向它的槽位后删条目
+  // 字段——槽位是思考档位的唯一事实源。布尔族旧档位（low/high/max）语义都是「开」，归一
+  // 为 on。条目字段此后无写入方（配置弹窗已删该输入）；备份恢复回来的旧条目下次加载再迁。
+  let thinkingMigrated = false;
+  for (const role of Object.keys(SLOT_MODEL_KEYS)) {
+    const model = activeModels[SLOT_MODEL_KEYS[role]] ? getModelById(activeModels[SLOT_MODEL_KEYS[role]]) : null;
+    if (model && model.thinking && !activeModels[role + '_thinking']) {
+      activeModels[role + '_thinking'] = THINKING_BOOLEAN_PROVIDERS.includes(model.provider) && model.thinking !== 'off'
+        ? 'on'
+        : model.thinking;
+      thinkingMigrated = true;
+    }
+  }
+  for (const m of userModelConfigs) {
+    if (m.thinking !== undefined) { delete m.thinking; thinkingMigrated = true; }
+  }
+  if (thinkingMigrated) saveUserModels();
   // 悬空引用清理：槽位指向已删除的条目时回空（不强行回退到任何预设——
   // 列表里只该有用户主动加过的模型，回空由界面提示补配）
   for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
@@ -531,6 +565,7 @@ function renderModelSelects() {
 }
 
 function updateModelMeta(type) {
+  _refreshSlotThinkingSelect(type);
   const selectMap = { agent: 'agentModelSelect', html: 'htmlModelSelect', descriptor: 'descriptorModelSelect', quiz: 'quizModelSelect', graph: 'graphModelSelect', branch: 'branchModelSelect' };
   const descMap = { agent: 'agentModelDesc', html: 'htmlModelDesc', descriptor: 'descriptorModelDesc', quiz: 'quizModelDesc', graph: 'graphModelDesc', branch: 'branchModelDesc' };
   const tagsMap = { agent: 'agentModelTags', html: 'htmlModelTags', descriptor: 'descriptorModelTags', quiz: 'quizModelTags', graph: 'graphModelTags', branch: 'branchModelTags' };
@@ -565,6 +600,40 @@ async function onModelChange(type) {
   else if (type === 'graph') activeModels.graph_model = select.value;
   else if (type === 'branch') activeModels.branch_model = select.value;
   else activeModels.descriptor_model = select.value;
+  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  // 主模型换了供应商族时，回落主模型的空槽思考选项也要跟着换族（如 on 只在布尔族有效）
+  _refreshSlotThinkingSelects();
+}
+
+// ====== 槽位思考档位（2026-10-11 从模型条目迁来，见 fetchModels 迁移注释）======
+
+// 单个槽位思考下拉：选项按实际会被调用的模型的供应商族渲染；存量档位在新族下
+// 无效（如 on 只在布尔族有效）时回「跟随默认」并落盘
+function _refreshSlotThinkingSelect(role) {
+  const select = document.getElementById(role + 'ModelThinking');
+  if (!select) return;
+  const options = _thinkingOptionsFor(_slotThinkingProvider(role), role);
+  select.innerHTML = options.map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('');
+  const current = activeModels[role + '_thinking'] || '';
+  if (options.some(o => o.value === current)) {
+    select.value = current;
+  } else {
+    if (current) {
+      activeModels[role + '_thinking'] = '';
+      localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+    }
+    select.value = '';
+  }
+}
+
+function _refreshSlotThinkingSelects() {
+  for (const role of Object.keys(SLOT_MODEL_KEYS)) _refreshSlotThinkingSelect(role);
+}
+
+function onSlotThinkingChange(role) {
+  const select = document.getElementById(role + 'ModelThinking');
+  if (!select) return;
+  activeModels[role + '_thinking'] = select.value || '';
   localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
 }
 
@@ -614,10 +683,9 @@ function renderModelList() {
       // label/model 是用户自由输入，必须转义；id 进 onclick 单引号串需做 JS 转义
       const jsId = String(m.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       const hasKey = !!(m.apiKey || getGroupKey(provider));
-      const thinkingBadge = _thinkingBadge(provider, m.thinking);
       return `<div class="model-item">
         <div class="model-item-info">
-          <div class="model-item-name">${escapeHtml(m.label || m.model)}${thinkingBadge ? `<span class="model-item-thinking">思考:${escapeHtml(thinkingBadge)}</span>` : ''}</div>
+          <div class="model-item-name">${escapeHtml(m.label || m.model)}</div>
           <div class="model-item-key">${hasKey ? UI_ICON_SVG.check + ' 密钥已配置' : UI_ICON_SVG.key + ' 密钥可留空（后端环境变量）'}</div>
         </div>
         <div class="model-item-actions">
@@ -648,16 +716,7 @@ function openModelConfig(id) {
   document.getElementById('mcApiKey').value = model.apiKey || '';
   document.getElementById('mcModel').value = model.model;
   document.getElementById('mcBaseUrl').value = model.baseUrl || preset?.baseUrl || '';
-  const mcThinking = document.getElementById('mcThinking');
-  mcThinking.innerHTML = _thinkingOptionsFor(model.provider)
-    .map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('');
-  // 布尔族旧取值（''/low/high/max）语义都是「开」：显示归一，用户保存时才写回 on/off
-  mcThinking.value = THINKING_BOOLEAN_PROVIDERS.includes(model.provider)
-    ? (model.thinking === 'off' ? 'off' : 'on')
-    : (model.thinking || '');
-  document.getElementById('mcThinkingHint').textContent = THINKING_BOOLEAN_PROVIDERS.includes(model.provider)
-    ? '该供应商思考只有开/关：直接控制上游开关参数；旧档位 low/high/max 也按「开」处理。'
-    : 'default 不发送思考参数；供应商不支持时自动去掉该参数重发，不会导致报错。';
+  // 思考档位不再在条目上配置（2026-10-11 迁到模型面板各槽位），此弹窗只管密钥/名称/地址
   document.getElementById('mcPresetName').textContent = preset?.name || model.provider;
   document.getElementById('modelConfigDialog').classList.add('show');
 }
@@ -671,9 +730,8 @@ function saveModelConfig() {
   const apiKey = document.getElementById('mcApiKey').value.trim();
   const model = document.getElementById('mcModel').value.trim();
   const baseUrl = document.getElementById('mcBaseUrl').value.trim();
-  const thinking = document.getElementById('mcThinking').value || '';
   if (!model) { alert('请填写模型名称'); return; }
-  const ok = updateUserModel(id, { apiKey, model, baseUrl, thinking });
+  const ok = updateUserModel(id, { apiKey, model, baseUrl });
   if (ok) {
     closeModelConfig();
     renderModelList();
@@ -1224,7 +1282,9 @@ async function proxyChatWithModel(model, body, signal) {
       api_key: model.apiKey,
       model: model.model,
       base_url: model.baseUrl,
-      thinking: model.thinking || '',
+      // 思考档位：调用方按槽位传（getSlotThinkingForRole）；未传时回落条目遗留字段
+      // （迁移前的旧备份/未刷新页面场景），两者皆空＝跟随模型默认不发参
+      thinking: body.thinking || model.thinking || '',
       device_id: (typeof getDeviceId === 'function' ? getDeviceId() : ''),
       // 网关会话分桶：没有聊天会话 id 的旧格式调用按功能落稳定桶
       // （后端按 session_bucket 白名单消毒后用作 x-opencode-session）；
@@ -1255,11 +1315,13 @@ async function proxyChat(prompt, level, sessionId, stream = true, signal, branch
   }
   // 分支锚点使用 camelCase，后端契约是 snake_case：在 API 边界统一转换
   const { graphPath, parentId, sourceModule, branchId, branchLabel, position, ...rest } = branchMeta;
+  // 槽位思考档位：苏格拉底/进阶学习走 branch 槽，其余走主模型槽（槽空连思考一起跟主模型）
   return proxyChatWithModel(agentModel, {
     prompt,
     level,
     session_id: sessionId,
     stream,
+    thinking: getSlotThinkingForRole(isSocraticOrLearn ? 'branch' : 'agent'),
     ...rest,
     parent_id: parentId || '',
     source_module: sourceModule || '',

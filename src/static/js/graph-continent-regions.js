@@ -698,6 +698,7 @@ async function _continentGateClassify() {
         const resp = await proxyChatWithModel(model, {
           messages: _continentGateMessages(batch, domainList), stream: false,
           session_bucket: 'phymathia-continent',
+          thinking: getSlotThinkingForRole('graph'),
         }, ctrl ? ctrl.signal : undefined);
         const j = await resp.json();
         const raw = j && j.choices && j.choices[0] && j.choices[0].message
@@ -1227,6 +1228,7 @@ async function _continentFamilyPopover(ev) {
             messages: _continentNameMessages(cluster, knownNames),
             stream: false,
             session_bucket: 'phymathia-continent',
+            thinking: getSlotThinkingForRole('graph'),
           });
           const data = await resp.json();
           const raw = data && data.choices && data.choices[0] && data.choices[0].message

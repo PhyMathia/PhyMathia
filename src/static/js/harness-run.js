@@ -597,7 +597,9 @@
           // （apply/expand）；normal/evaluate 的本地猜测交后端 _detect_phase 重判。
           phase: _harnessPayloadPhase(harnessPhase),
           // T97：深度思考档位（''/low/high/max）；参数映射归后端按供应商族做。
-          thinking: _harnessThinkingLevel(),
+          // 槽位思考（2026-10-11）：面板按钮显式档位优先；自动（''）回落 Φ 槽位档位
+          // （图槽空时 getSlotThinkingForRole 返回 ''，相位默认照旧生效不被绕过）
+          thinking: _harnessThinkingLevel() || getSlotThinkingForRole('graph'),
           // T95：备用模型兜底列表（开关开且非空才带，字段形状 {provider,api_key,model,base_url}）
           ...(fallbackModels.length ? { fallback_models: fallbackModels } : {}),
           // T96 会话事件日志：带上 Φ 会话 id，后端把整次往返（含最终 result）写进

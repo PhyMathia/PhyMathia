@@ -132,9 +132,9 @@ class ThinkingRequestParamsSharedTest(unittest.TestCase):
         for level in ("", "default", "medium", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "ollama", "openai", ""):
                 self.assertEqual(f(provider, level), {})
-        # 'off' 只在布尔开关族发关闭参数；reasoning_effort 族表达不了「关」→ 不发
+        # 'off'：布尔族直发关闭参数；effort 族发 reasoning_effort none（2026-10-11 起）
         for provider in ("deepseek", "openai", "custom-gw", ""):
-            self.assertEqual(f(provider, "off"), {})
+            self.assertEqual(f(provider, "off"), {"reasoning_effort": "none"})
 
 
 # ====== T97：_call_model 的注入与 400 剥参降级 ======

@@ -128,7 +128,7 @@ check('model-add：双模式添加接线（预设/手动选项卡 + 勾选清单
   return true;
 });
 
-check('model-add：预设标签一律光模型名＋布尔族思考开/关两档（选项与徽标口径）', () => {
+check('model-add：预设标签一律光模型名＋槽位思考选项（布尔族三档/effort 族五档/Φ 槽自动）', () => {
   // 2026-10-11 用户拍板：模型名不挂（旗舰）（性价比）这类注解，档位/定位说明走供应商 tagline
   for (const [key, preset] of Object.entries(sandbox.window.MODEL_PRESETS)) {
     for (const m of preset.models || []) {
@@ -136,16 +136,17 @@ check('model-add：预设标签一律光模型名＋布尔族思考开/关两档
     }
   }
   if (!sandbox.window.THINKING_BOOLEAN_PROVIDERS) throw new Error('布尔开关族清单未挂 window');
+  // 思考档位 2026-10-11 迁到槽位：布尔族 跟随默认/开/关 三档，effort 族加「关」共五档
   const boolOpts = sandbox._thinkingOptionsFor('mimo');
-  if (boolOpts.length !== 2 || boolOpts[0].value !== 'on' || boolOpts[1].value !== 'off') {
-    throw new Error('布尔族（mimo）思考选项应为开/关两档');
+  if (boolOpts.length !== 3 || boolOpts[0].value !== '' || boolOpts[1].value !== 'on' || boolOpts[2].value !== 'off') {
+    throw new Error('布尔族（mimo）槽位思考选项应为 跟随默认/开/关 三档');
   }
   const effortOpts = sandbox._thinkingOptionsFor('deepseek');
-  if (effortOpts.length !== 4 || effortOpts[0].value !== '') throw new Error('effort 族应保持 default+三档');
-  if (sandbox._thinkingBadge('mimo', 'off') !== '关') throw new Error('mimo off 徽标应为「关」');
-  if (sandbox._thinkingBadge('mimo', 'low') !== '开') throw new Error('mimo 旧档位徽标应为「开」');
-  if (sandbox._thinkingBadge('mimo', '') !== '') throw new Error('mimo 空档位不应标注');
-  if (sandbox._thinkingBadge('openai', 'max') !== 'max') throw new Error('effort 族徽标应保持档位值');
+  if (effortOpts.length !== 5 || effortOpts[0].value !== '' || effortOpts[1].value !== 'off' || effortOpts[4].value !== 'max') {
+    throw new Error('effort 族槽位思考选项应为 跟随默认/关/low/high/max 五档');
+  }
+  const graphOpts = sandbox._thinkingOptionsFor('deepseek', 'graph');
+  if (!graphOpts[0].label.includes('自动')) throw new Error('Φ 槽「跟随默认」应标注自动（相位默认/按钮可覆盖）');
   return true;
 });
 

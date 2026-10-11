@@ -1940,6 +1940,13 @@
       transition: border-color 0.2s;
     }
     .model-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--btn-active-border); }
+    /* 槽位思考档位下拉（2026-10-11 从配置弹窗迁来）：比主选择器轻一档，标明是次要设置 */
+    .model-thinking-select {
+      margin-top: -2px;
+      padding: 5px 26px 5px 10px;
+      font-size: var(--fs-sm);
+      color: var(--text-secondary);
+    }
     .model-select option {
       background: var(--select-option-bg);
       color: var(--select-option-color);

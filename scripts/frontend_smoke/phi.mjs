@@ -304,7 +304,9 @@ check('T97 深度思考档位：四档循环回自动＋菜单行/Payload/存储
     throw new Error('档位按钮未 stopPropagation（点一下会收起菜单）');
   }
   const runSrc = fs.readFileSync('src/static/js/harness-run.js', 'utf8');
-  if (!runSrc.includes('thinking: _harnessThinkingLevel()')) throw new Error('payload 未带 thinking');
+  if (!runSrc.includes("thinking: _harnessThinkingLevel() || getSlotThinkingForRole('graph')")) {
+    throw new Error('payload 未带 thinking（按钮档位优先，自动时回落 Φ 槽位档位）');
+  }
   const cfg = fs.readFileSync('src/static/js/config.js', 'utf8');
   if (!cfg.includes("STORAGE_KEY_HARNESS_THINKING = 'phymathia_harness_thinking'")) throw new Error('存储键未走 config.js 常量表');
   return true;

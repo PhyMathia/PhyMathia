@@ -581,7 +581,7 @@ ${getLevelPrompt()}
         api_key: model.apiKey,
         model: model.model,
         base_url: model.baseUrl,
-        thinking: model.thinking || '',
+        thinking: getSlotThinkingForRole('quiz'),
         session_bucket: 'phymathia-quiz',
         stream: true
       })
@@ -779,7 +779,7 @@ async function askQuizExplain() {
         api_key: model.apiKey,
         model: model.model,
         base_url: model.baseUrl,
-        thinking: model.thinking || '',
+        thinking: getSlotThinkingForRole('quiz'),
         session_bucket: 'phymathia-quiz',
         stream: true
       })

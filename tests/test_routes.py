@@ -296,9 +296,10 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
         for level in ("", "default", "medium", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
                 self.assertEqual(main_mod._thinking_request_params(provider, level), {})
-        # 'off' 只在布尔开关族有意义；reasoning_effort 族表达不了「关」→ 不发参数
+        # 'off'：布尔族直发关闭参数；effort 族发 reasoning_effort none（2026-10-11 起，
+        # OpenAI gpt-5.1+ 正式取值；不支持的端点由 400 剥参降级兜底）
         for provider in ("deepseek", "openai", "custom-gw", ""):
-            self.assertEqual(main_mod._thinking_request_params(provider, "off"), {})
+            self.assertEqual(main_mod._thinking_request_params(provider, "off"), {"reasoning_effort": "none"})
 
     def test_reasoning_effort_stretches_three_tiers(self):
         # low/high/max 按序拉伸到 reasoning_effort 的 low/medium/high 三档，
@@ -332,7 +333,8 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
 class ThinkingEffortProxyTest(RouteTestBase):
     """/api/models/chat 的思考参数注入与 400 降级重试（上游交互走 MockTransport）。"""
 
-    def _post_chat(self, thinking_value, reject_first=False):
+    def _post_chat(self, thinking_value, reject_first=False, provider="deepseek",
+                   base_url="https://api.deepseek.com", model="deepseek-chat"):
         captured = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -347,10 +349,10 @@ class ThinkingEffortProxyTest(RouteTestBase):
                 "/api/models/chat",
                 json={
                     "messages": [{"role": "user", "content": "hi"}],
-                    "provider": "deepseek",
+                    "provider": provider,
                     "api_key": "sk-test",
-                    "base_url": "https://api.deepseek.com",
-                    "model": "deepseek-chat",
+                    "base_url": base_url,
+                    "model": model,
                     "stream": False,
                     "thinking": thinking_value,
                 },
@@ -369,6 +371,32 @@ class ThinkingEffortProxyTest(RouteTestBase):
         self.assertNotIn("reasoning_effort", captured[0])
         self.assertNotIn("thinking", captured[0])
         self.assertNotIn("enable_thinking", captured[0])
+
+    def test_effort_off_sends_none_and_degrades_on_reject(self):
+        # 2026-10-11 effort 族「关」：发 reasoning_effort none（OpenAI gpt-5.1+ 取值）；
+        # 上游不认识的端点整请求 400 → 剥掉重发一次，聊天不坏（退化为跟随模型默认）
+        resp, captured = self._post_chat("off")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(captured[0].get("reasoning_effort"), "none")
+        resp, captured = self._post_chat("off", reject_first=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(captured[0].get("reasoning_effort"), "none")
+        self.assertNotIn("reasoning_effort", captured[1])
+        self.assertEqual(captured[1]["messages"], captured[0]["messages"])
+
+    def test_boolean_off_reaches_upstream_disabled(self):
+        # 布尔开关族「关」直发关闭参数（千问 enable_thinking / 智谱 thinking.type）
+        resp, captured = self._post_chat("off", provider="qwen",
+                                         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                         model="qwen3-max")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIs(captured[0].get("enable_thinking"), False)
+        resp, captured = self._post_chat("off", provider="zhipu",
+                                         base_url="https://open.bigmodel.cn/api/paas/v4",
+                                         model="glm-4.7")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(captured[0].get("thinking"), {"type": "disabled"})
 
     def test_rejected_thinking_param_retries_without_it(self):
         # 降级安全网：上游不认识思考参数整请求 400 时，剥掉重发一次，聊天不坏

@@ -279,26 +279,30 @@ async function _generateAnalysis(node, nodeSignal) {
   }
 }
 
-function _modelForWorkflowNode(node) {
+function _slotCallForWorkflowNode(node) {
   // 配方声明模型槽位（P2，model_role）：优先用指定槽（html/branch/graph/quiz/descriptor），
-  // 槽位没配模型时回落主模型——与官方 viz 的 html 槽回落口径一致
+  // 槽位没配模型时回落主模型——与官方 viz 的 html 槽回落口径一致。
+  // 2026-10-11 起同时返回落点槽位 role：思考档位跟提供模型的槽走（getSlotThinkingForRole）
   const recipeRole = node && node.recipeId && node.recipe && node.recipe.generate
     ? String(node.recipe.generate.model_role || '') : '';
   if (recipeRole && recipeRole !== 'agent' && typeof getActiveModelForRole === 'function') {
     const roleModel = getActiveModelForRole(recipeRole);
-    if (roleModel) return roleModel;
+    if (roleModel) return { model: roleModel, role: recipeRole };
   }
   if (node && node.kind === 'module' && (node.moduleKey === 'socratic' || node.moduleKey === 'learn') && typeof getActiveModelForRole === 'function') {
     // 苏格拉底追问/进阶学习优先使用单独配置的 branch 模型，未配置时再跟随主模型。
     const branchModel = getActiveModelForRole('branch');
-    if (branchModel) return branchModel;
+    if (branchModel) return { model: branchModel, role: 'branch' };
   }
   if (node && node.kind === 'module' && node.moduleKey === 'viz' && typeof getActiveModelForRole === 'function') {
     // 交互可视化优先使用专门配置的 HTML 生成模型，避免弱主模型反复输出空内容。
     const htmlModel = getActiveModelForRole('html');
-    if (htmlModel) return htmlModel;
+    if (htmlModel) return { model: htmlModel, role: 'html' };
   }
-  if (typeof getActiveModelForRole === 'function') return getActiveModelForRole('agent');
+  if (typeof getActiveModelForRole === 'function') {
+    const agentModel = getActiveModelForRole('agent');
+    if (agentModel) return { model: agentModel, role: 'agent' };
+  }
   return null;
 }
 
@@ -344,13 +348,14 @@ async function _generateCustomNode(node, nodeSignal) {
 
   try {
     let resp = null;
-    const model = _modelForWorkflowNode(node);
-    if (model && typeof proxyChatWithModel === 'function') {
-      resp = await proxyChatWithModel(model, {
+    const slotCall = _slotCallForWorkflowNode(node);
+    if (slotCall && typeof proxyChatWithModel === 'function') {
+      resp = await proxyChatWithModel(slotCall.model, {
         prompt,
         level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
         session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
         stream: true,
+        thinking: getSlotThinkingForRole(slotCall.role),
         parent_id: branchMeta.parentId,
         source_module: branchMeta.sourceModule,
         branch_type: branchMeta.branchType,

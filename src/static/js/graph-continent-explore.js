@@ -217,6 +217,7 @@ async function _continentAskPhi(f, rowIndex, btn) {
       messages: _continentPhiMessages(left, right, entry.label || ''),
       stream: false,
       session_bucket: 'phymathia-continent',
+      thinking: getSlotThinkingForRole('graph'),
     }, ctrl ? ctrl.signal : undefined);
     const data = await resp.json();
     const raw = data && data.choices && data.choices[0] && data.choices[0].message

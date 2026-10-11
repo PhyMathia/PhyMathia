@@ -917,6 +917,8 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
         ],
         stream: true,
         session_bucket: 'phymathia-module',
+        // 槽位思考（2026-10-11）：苏格拉底/进阶学习重生成走 branch 槽，其余跟主模型槽
+        thinking: getSlotThinkingForRole(moduleKey === 'socratic' || moduleKey === 'learn' ? 'branch' : 'agent'),
       });
       reply = await collectStreamText(resp);
       if (reply.trim()) return _replaceModuleContent(message?.content || '', moduleKey, reply);

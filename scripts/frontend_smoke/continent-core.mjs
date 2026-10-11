@@ -1504,18 +1504,36 @@ try {
   addFailed();
   console.error('❌ model-group：请求边界携带同步后的组密钥 ->', e.message);
 }
-// 串行边界（依赖替换全局 fetch）：思考程度必须随模型条目走到请求边界；
-// 未设置的条目必须发空串（后端零参数，保持现状行为）
+// 串行边界（依赖替换全局 fetch）：思考档位已从模型条目迁到槽位（2026-10-11）——
+// 旧条目档位一次性播种到指向它的槽位；主聊天走 agent 槽、苏格拉底/进阶学习走 branch 槽；
+// 未设置的槽位发空串（后端零参数）；条目遗留字段走 hub 回退（迁移前备份恢复场景）
 try {
   sandbox.localStorage.removeItem('phymathia_user_models');
   sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
   sandbox.loadUserModels();
   if (sandbox.addModelsForProvider('deepseek', 'sk-think', 'https://api.deepseek.com', [{ model: 'deepseek-chat', label: 'DeepSeek Chat' }, { model: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }]) !== 2) {
     throw new Error('种入测试条目失败');
   }
-  const withThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Chat'));
-  sandbox.updateUserModel(withThinking.id, { thinking: 'max' }); // 与配置弹窗「保存」同一写入口
-  const withoutThinking = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Reasoner'));
+  if (sandbox.addModelsForProvider('qwen', 'sk-think', 'https://dashscope.aliyuncs.com/compatible-mode/v1', [{ model: 'qwen3-max', label: 'Qwen3 Max' }]) !== 1) {
+    throw new Error('种入布尔族条目失败');
+  }
+  const agentEntry = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Chat'));
+  const branchEntry = sandbox.getAllModels().find(m => m.provider === 'deepseek' && m.name.includes('Reasoner'));
+  const boolEntry = sandbox.getAllModels().find(m => m.provider === 'qwen');
+  // 旧世界状态：档位挂在条目上，槽位只记模型引用（无 thinking 键）
+  sandbox.updateUserModel(agentEntry.id, { thinking: 'max' });
+  sandbox.updateUserModel(branchEntry.id, { thinking: 'off' });
+  sandbox.updateUserModel(boolEntry.id, { thinking: 'high' });
+  sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({
+    agent_model: agentEntry.id, branch_model: branchEntry.id, descriptor_model: boolEntry.id,
+  }));
+  await sandbox.fetchModels(); // 迁移：条目档位播种到槽位＋条目字段剥除
+  if (sandbox.getModelById(agentEntry.id).thinking !== undefined) throw new Error('迁移后条目不应再带 thinking 字段');
+  const slotCfg = JSON.parse(sandbox.localStorage.getItem('phymathia_active_models'));
+  if (slotCfg.agent_thinking !== 'max') throw new Error('agent 槽应从条目播种 max，实际 ' + JSON.stringify(slotCfg.agent_thinking));
+  if (slotCfg.branch_thinking !== 'off') throw new Error('branch 槽应从条目播种 off，实际 ' + JSON.stringify(slotCfg.branch_thinking));
+  if (slotCfg.descriptor_thinking !== 'on') throw new Error('布尔族旧档位 high 应归一为 on，实际 ' + JSON.stringify(slotCfg.descriptor_thinking));
   const bodies = [];
   const origFetch = sandbox.fetch;
   sandbox.fetch = async (url, init) => {
@@ -1523,26 +1541,44 @@ try {
     return { ok: true, status: 200, text: async () => 'ok' };
   };
   try {
-    await sandbox.proxyChatWithModel(sandbox.getModelById(withThinking.id), { prompt: 'p' });
-    await sandbox.proxyChatWithModel(sandbox.getModelById(withoutThinking.id), { prompt: 'p' });
+    await sandbox.proxyChat('p', 'university', 's1', false, undefined, {});
+    await sandbox.proxyChat('p', 'university', 's1', false, undefined, { branchType: 'socratic' });
   } finally {
     sandbox.fetch = origFetch;
   }
-  if (bodies[0].thinking !== 'max') throw new Error('设置的条目应携带 thinking=max，实际 ' + JSON.stringify(bodies[0].thinking));
-  if (bodies[1].thinking !== '') throw new Error('未设置的条目应发空串，实际 ' + JSON.stringify(bodies[1].thinking));
-  console.log('✓ model-thinking：请求边界携带条目思考程度（未设置为空串）');
+  if (bodies[0].thinking !== 'max') throw new Error('主聊天应携带 agent 槽位档位 max，实际 ' + JSON.stringify(bodies[0].thinking));
+  if (bodies[1].thinking !== 'off') throw new Error('苏格拉底应携带 branch 槽位档位 off，实际 ' + JSON.stringify(bodies[1].thinking));
+  // hub 回退：直接调 proxyChatWithModel 且调用方没传槽位档位时，条目遗留字段仍生效（迁移前备份）
+  sandbox.updateUserModel(agentEntry.id, { thinking: 'low' });
+  const origFetch2 = sandbox.fetch;
+  sandbox.fetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, text: async () => 'ok' }; };
+  try {
+    await sandbox.proxyChatWithModel(sandbox.getModelById(agentEntry.id), { prompt: 'p' });
+  } finally {
+    sandbox.fetch = origFetch2;
+  }
+  if (bodies[2].thinking !== 'low') throw new Error('条目遗留字段应作为 hub 回退生效，实际 ' + JSON.stringify(bodies[2].thinking));
+  await sandbox.fetchModels(); // 再迁移：剥掉刚写回的遗留字段，且不覆盖已配置的槽位档位
+  if (sandbox.getModelById(agentEntry.id).thinking !== undefined) throw new Error('二次迁移应剥除条目遗留 thinking');
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_thinking !== 'max') {
+    throw new Error('二次迁移不应覆盖已配置的槽位档位');
+  }
+  console.log('✓ model-thinking：思考档位迁移到槽位（条目播种/布尔族归一/hub 回退/二次迁移不回写）');
 } catch (e) {
   addFailed();
-  console.error('❌ model-thinking：请求边界携带条目思考程度 ->', e.message);
+  console.error('❌ model-thinking：思考档位迁移到槽位 ->', e.message);
 }
-check('model-thinking：出题四处自带请求体与配置弹窗下拉就位', () => {
+check('model-thinking：出题四处槽位思考接线＋六槽下拉就位＋配置弹窗不再有思考字段', () => {
   for (const f of ['src/static/js/quiz-ai.js', 'src/static/js/quiz-ui.js']) {
     const src = fs.readFileSync(f, 'utf8');
-    const n = (src.match(/thinking: model\.thinking \|\| ''/g) || []).length;
-    if (n !== 2) throw new Error(f + ' 应有 2 处请求体携带 thinking，实际 ' + n);
+    const n = (src.match(/thinking: getSlotThinkingForRole\('quiz'\)/g) || []).length;
+    if (n !== 2) throw new Error(f + ' 应有 2 处请求体携带槽位思考，实际 ' + n);
   }
   const html = fs.readFileSync('src/static/index.html', 'utf8');
-  if (!html.includes('id="mcThinking"')) throw new Error('配置模型弹窗缺「思考程度」下拉');
+  for (const role of ['agent', 'html', 'graph', 'branch', 'descriptor', 'quiz']) {
+    if (!html.includes(`id="${role}ModelThinking"`)) throw new Error('模型面板槽位缺思考下拉：' + role);
+  }
+  if (html.includes('id="mcThinking"')) throw new Error('配置弹窗不应再有思考字段（已迁槽位）');
   return true;
 });
 check('quiz-relearn：结果页正确率环形图按真实比例（旧版是与分数无关的静态圈）', () => {
