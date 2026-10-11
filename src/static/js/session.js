@@ -844,6 +844,25 @@
       return true;
     }
 
+    // 把指定会话里一条既有消息的内容原地改写（T281：流式回答的可视化后台回填）。
+    // 与 appendMessageToSession 同一条存取路子：人还在这张画布上就改内存数组里那条
+    // （saveSessionMessages 落盘＋推服务端——旧实现在场时只写 localStorage，服务端
+    // 副本会一直缺可视化，这里顺手对齐）；人切走了也不丢弃，读目标画布自己的消息、
+    // 按「时间戳＋原文」找刚存的那条回答再写——时间戳相同不代表同一条，原文比对
+    // 挡住「已删除/已重新生成」。找不到或画布已删返回 false，绝不碰现在看的那张画布。
+    async function updateMessageInSession(sessionId, timestamp, originalContent, newContent) {
+      // 画布不在名单里＝已删/不存在：就地丢弃，绝不写回——含「人恰好还停在刚被删的
+      // 画布上」的删除竞态窗口（写了会给已删画布再造幽灵消息键，T271 同类复活通道）
+      if (!sessionId || !sessions[sessionId]) return false;
+      const away = sessionId !== currentSessionId;
+      const hist = away ? loadSessionMessages(sessionId) : chatHistory;
+      const target = hist.find(m => m.role === 'assistant' && m.timestamp === timestamp && m.content === originalContent);
+      if (!target) return false;
+      target.content = newContent;
+      await saveSessionMessages(sessionId, hist);
+      return true;
+    }
+
     // 单个画布的删除内核（单删与多选批量共用同一条路径，清理口径不分叉）：
     // 只清资料不动名单，返回 { ok, offline } —— 名单移除与 UI 刷新交给调用方，
     // 批量删除才能把 saveSessions() 收成一次（逐条调用是 O(n²) 次 upsert 请求）。

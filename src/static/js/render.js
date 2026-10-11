@@ -139,7 +139,13 @@ function buildVizCard(htmlContent, vizId) {
 // 并检测页面是否自带主题机制（有则通知父页面走原生切换，无则父页面用滤镜兜底深色化）。
 // 2026-10-01：原桥还向 iframe 注入 * 通配 0.4s 颜色过渡（主题切换渐变的一部分），
 // 随渐变整体删除——iframe 换主题即切即稳，不再逐帧插值。
+// T258（2026-10-11）：原生机制检测**延后到 DOMContentLoaded**——桥接脚本注入在 </head>，
+// AI 页面的主题脚本常在 body 末尾，桥接当场检测时函数还没定义，必误判「无机制」，
+// 深色设计的页面被父侧 invert 滤镜翻成浅色、文字发糊；DOMContentLoaded 时 body 末尾的
+// 经典脚本已全部跑完，函数扫描才可信。另：页面在 <html> 上静态声明 data-theme（applyT
+// 覆写前抓拍存 st）＝页面 CSS 自带主题键，直接视为有机制放行（hook 进 detect 的兜底位）。
 const _VIZ_THEME_BRIDGE = '<script>(function(){'
+  + 'var st=null;try{st=document.documentElement.getAttribute("data-theme");}catch(e){}'
   + 'function applyT(t){'
   + 'try{'
   + 'document.documentElement.setAttribute("data-theme",t);'
@@ -158,12 +164,18 @@ const _VIZ_THEME_BRIDGE = '<script>(function(){'
   + 'if(pt==="light"||pt==="dark")applyT(pt);}}catch(e){}'
   + 'window.addEventListener("message",function(e){var d=e.data;'
   + 'if(d&&d.type==="phymathia-theme"&&(d.theme==="light"||d.theme==="dark"))applyT(d.theme);});'
-  + 'try{var has=false,nodes=document.querySelectorAll("button,[class*=\\"theme\\" i],[id*=\\"theme\\" i]");'
+  + 'var has=false;'
+  + 'function _vizNativeDetect(){'
+  + 'try{'
+  + 'var nodes=document.querySelectorAll("button,[class*=\\"theme\\" i],[id*=\\"theme\\" i]");'
   + 'for(var i=0;i<nodes.length;i++){var txt=(nodes[i].textContent||"")+(nodes[i].title||"");'
   + 'if(/🌙|☀️|深色|浅色|暗色|亮色|dark|light/i.test(txt)){has=true;break;}}'
   + 'if(!has&&(typeof window.applyTheme==="function"||typeof window.setTheme==="function"||typeof window.toggleTheme==="function"))has=true;'
-  + 'window["parent"].postMessage({type:"phymathia-theme-native",has:has},"*");'
-  + '}catch(e){window["parent"]&&window["parent"].postMessage({type:"phymathia-theme-native",has:false},"*");}'
+  + 'if(!has&&st)has=true;'
+  + '}catch(e){}'
+  + 'try{window["parent"].postMessage({type:"phymathia-theme-native",has:has},"*");}catch(e){}'
+  + '}'
+  + 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",_vizNativeDetect);}else{_vizNativeDetect();}'
   + '})();<\/script>';
 
 // ====== 可视化 iframe 公式桥接 ======

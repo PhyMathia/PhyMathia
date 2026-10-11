@@ -510,22 +510,17 @@
             chatHistory.push(assistantMessage);
           }
 
-          // 交互可视化缺失时后台补齐：先保存/展示主回答，模型生成完成后原地回填。
-          // （stage2 源码审计按字符串定位本回调与 sourceSessionId/originatingAssistant
-          // 两行，改结构前先看 scripts/review_stage2_frontend.mjs 的 F 审计段）
+          // 交互可视化缺失时后台补齐：先保存/展示主回答，模型生成完成后回填。
+          // （stage2 源码审计按字符串定位本回调与 sourceSessionId 行，改结构前先看
+          // scripts/review_stage2_frontend.mjs 的 F 审计段）
           if (typeof scheduleVisualizationInBackground === 'function') {
-            // 形态别改（F 段按字符串钉着这一行）：stillHere 时它刚被 appendMessageToSession
-            // 推进 chatHistory 末尾；人已切走（stillHere=false）时这发回调会立刻早退
-            // （currentSessionId 已不等于 sourceSessionId），这个绑定压根用不到。
-            const originatingAssistant = chatHistory[chatHistory.length - 1];
-            scheduleVisualizationInBackground(assistantContent, (updatedContent) => {
+            // T281：回填按会话寻址。过去人切走（currentSessionId 已不等于
+            // sourceSessionId）整段丢弃，这条回答从此没有可视化；现在交给
+            // updateMessageInSession——人在原地改内存里这条，切走了读原画布自己的
+            // 消息按「时间戳＋原文」写回，目标已删/已重生成时它自己丢弃。
+            scheduleVisualizationInBackground(assistantContent, async (updatedContent) => {
               try {
-                // 切会话或原回答已被删除/重生成时丢弃；时间戳相同不代表同一条回答。
-                if (currentSessionId !== sourceSessionId || !chatHistory.includes(originatingAssistant)) return;
-                originatingAssistant.content = updatedContent;
-                try {
-                  localStorage.setItem('phymathia_msgs_' + sourceSessionId, JSON.stringify(chatHistory));
-                } catch (e) {}
+                await updateMessageInSession(sourceSessionId, ts, assistantContent, updatedContent);
               } catch (err) {
                 console.warn('Failed to apply background visualization:', err);
               }

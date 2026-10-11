@@ -182,6 +182,54 @@ checkSq('发送排队：T225 忙碌三参「提问」入队一次，取出的闭
 
 // 行为半（2026-10-11）：画布上的活儿也进这台队列——进队的是「活儿」（kind/replay 都记下），
 // 标题用活儿自己的名字，放行后队列照常清空。用户要的就是「点一下就有回音、账上看得见」。
+// ===== 串行边界追加：可视化回填按会话寻址（T281，2026-10-11）=====
+// 流式回答的背景可视化回填过去只认「人还在原画布」，切走即整段丢弃（该回答从此
+// 没有可视化）。现在 updateMessageInSession（session.js，与 appendMessageToSession
+// 同一条存取路子）按会话寻址写回。这条守住寻址语义：切走写回原画布且不碰现画布、
+// 在场原地改内存、时间戳撞车靠原文区分、目标已重生成/画布已删时丢弃。
+// 状态自设自还原（共享键用完即清，符合本文件串行边界契约）。
+checkSq('可视化回填按会话寻址（T281）：切走写回原画布/在场原地改/撞车原文区分/丢弃口径', async () => {
+  const prevSid = sqEval('currentSessionId');
+  const prevSessions = sqEval('JSON.stringify(sessions)');
+  const prevHist = sqEval('JSON.stringify(chatHistory)');
+  try {
+    sqEval('currentSessionId = "b281"; sessions = { a281:{id:"a281",sessionId:"ra281"}, b281:{id:"b281",sessionId:"rb281"} }; chatHistory = [{ role: "user", content: "B 的问题", timestamp: 90 }];');
+    sandbox.localStorage.setItem('phymathia_msgs_a281', JSON.stringify([
+      { role: 'user', content: 'A 的问题', timestamp: 80 },
+      { role: 'assistant', timestamp: 111, content: '撞车兄弟' },
+      { role: 'assistant', timestamp: 111, content: '回答原文' },
+    ]));
+    sandbox.localStorage.setItem('phymathia_msgs_b281', '[{"role":"user","content":"B 已有消息","timestamp":1}]');
+    // ① 人切走了：写回 A 画布自己的那条，不碰现画布（B）的内存历史与存储
+    let ok = await sqEval('updateMessageInSession("a281", 111, "回答原文", "回答原文＋<viz>补的图</viz>")');
+    if (ok !== true) throw new Error('切走后寻址写回应成功');
+    const aMsgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_a281'));
+    if (aMsgs[2].content !== '回答原文＋<viz>补的图</viz>') throw new Error('A 画布目标消息没写回：' + aMsgs[2].content);
+    if (aMsgs[1].content !== '撞车兄弟') throw new Error('时间戳撞车的兄弟消息被误改');
+    if (aMsgs[0].content !== 'A 的问题') throw new Error('A 画布其他消息被动过');
+    if (sqEval('chatHistory[0].content') !== 'B 的问题') throw new Error('现画布（B）内存历史被碰');
+    if (JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_b281'))[0].content !== 'B 已有消息') throw new Error('现画布（B）存储被碰');
+    // ② 人回到 A：原地改内存数组那条（引用同一对象，下次渲染直接见效）
+    sqEval('currentSessionId = "a281"; chatHistory = ' + JSON.stringify(aMsgs) + ';');
+    ok = await sqEval('updateMessageInSession("a281", 111, "回答原文＋<viz>补的图</viz>", "回答原文＋<viz>补的图</viz>＋注")');
+    if (ok !== true) throw new Error('在场原地改应成功');
+    if (sqEval('chatHistory[2].content') !== '回答原文＋<viz>补的图</viz>＋注') throw new Error('内存数组没被原地改');
+    if (!JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_a281'))[2].content.includes('＋注')) throw new Error('在场改没落盘');
+    // ③ 丢弃口径：原文对不上（已重生成）→ false；画布已删 → false
+    ok = await sqEval('updateMessageInSession("a281", 111, "已经被重新生成的版本", "x")');
+    if (ok !== false) throw new Error('原文对不上（已重生成）应丢弃');
+    sqEval('delete sessions.a281;');
+    ok = await sqEval('updateMessageInSession("a281", 111, "回答原文＋<viz>补的图</viz>＋注", "x")');
+    if (ok !== false) throw new Error('画布已删应丢弃');
+  } finally {
+    sqEval('currentSessionId = ' + JSON.stringify(prevSid) + ';');
+    sqEval('sessions = ' + prevSessions + ';');
+    sqEval('chatHistory = ' + prevHist + ';');
+    sandbox.localStorage.removeItem('phymathia_msgs_a281');
+    sandbox.localStorage.removeItem('phymathia_msgs_b281');
+  }
+});
+
 checkSq('画布活儿排队（2026-10-11）：节点生成的活儿也进队列，kind/replay/标题都记对', async () => {
   sqReset();
   sqEval('isStreaming = true; _taskActive = []; _taskHistory = [];');

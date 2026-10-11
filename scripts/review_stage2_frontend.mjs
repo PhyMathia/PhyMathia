@@ -261,41 +261,34 @@ test('F audit stopGeneration aborts controller without touching lock state', asy
   assert.equal(evaluate(s, 'isStreaming'), true, 'lock release belongs to sendMessage finally, not stop');
 });
 
-// Safety regression: A's background visualization after switching to B must not
-// overwrite the timestamp-colliding B assistant message nor write B storage.
-// This is a real production contract now, asserted via actual chat.js callback source.
+// Safety regression (T281): A's background visualization must stay addressed to A
+// even after the user switches to B. The callback must not touch the current
+// chatHistory (B's live array) nor write storage directly — it routes through the
+// session-addressed helper (updateMessageInSession) with the SOURCE session id;
+// the helper itself loads A's own history, so colliding B messages are unreachable.
 const chatSource = fs.readFileSync(new URL('src/static/js/chat.js', root), 'utf8');
-const callbackStart = chatSource.indexOf('scheduleVisualizationInBackground(assistantContent, (updatedContent) => {');
+const CB_HEAD = 'scheduleVisualizationInBackground(assistantContent, async (updatedContent) => {';
+const callbackStart = chatSource.indexOf(CB_HEAD);
 const callbackEnd = chatSource.indexOf('\n            });', callbackStart);
 assert.ok(callbackStart > 0 && callbackEnd > callbackStart, 'callback boundary must exist');
 const prefix = chatSource.slice(0, callbackStart);
 assert.ok(/const sourceSessionId = currentSessionId;/.test(prefix), 'sendMessage must capture the source session');
-assert.ok(/const originatingAssistant = chatHistory\[chatHistory\.length - 1\];/.test(prefix), 'callback must capture originating assistant identity');
-function runCallback(history, sessionId, original = { role: 'assistant', timestamp: 123, content: 'A original' }) {
-  const callbackBody = chatSource.slice(callbackStart + 'scheduleVisualizationInBackground(assistantContent, (updatedContent) => {'.length, callbackEnd);
-  const audit = vm.createContext({ console, ts: 123, original, currentSessionId: sessionId, chatHistory: history, assistantDiv: null, isStreaming: false,
-    saveSessionMessages: (...args) => { audit.saved = args; },
-    localStorage: { setItem(k, v) { audit.written = { k, v: JSON.parse(v) }; } } });
-  vm.runInContext('const sourceSessionId="A"; const originatingAssistant=original;(updatedContent => {' + callbackBody + '})("A late visualization")', audit);
-  return audit;
+function runCallback(sessionId) {
+  const callbackBody = chatSource.slice(callbackStart + CB_HEAD.length, callbackEnd);
+  const audit = vm.createContext({ console, ts: 123, assistantContent: 'A original', sourceSessionId: 'A', currentSessionId: sessionId,
+    chatHistory: [{ role: 'assistant', timestamp: 123, content: 'B colliding' }],
+    updateMessageInSession: (...args) => { audit.addressed = args; return Promise.resolve(true); } });
+  return vm.runInContext('(async (updatedContent) => {' + callbackBody + '})("A late visualization")', audit).then(() => audit);
 }
-test('F background visualization for A must not touch colliding B message after switch', async () => {
-  const bHistory = [{ role: 'assistant', timestamp: 123, content: 'B original' }];
-  const audit = runCallback(bHistory, 'B', { role: 'assistant', timestamp: 123, content: 'A original' });
-  assert.equal(bHistory[0].content, 'B original', 'timestamp-colliding B content must stay untouched');
-  assert.equal(audit.written, undefined, 'B storage must not be written');
-  assert.equal(audit.saved, undefined, 'no server save for B');
+test('F background visualization must address the source session even after switch (T281)', async () => {
+  const audit = await runCallback('B');
+  assert.deepEqual(audit.addressed, ['A', 123, 'A original', 'A late visualization'],
+    'must route through the session-addressed helper with the SOURCE session id');
 });
-test('F callback discards when originating assistant is gone but still applies same-session', async () => {
-  const history = [{ role: 'user', content: 'next question' }];
-  const audit = runCallback(history, 'A');
-  assert.equal(history.some(m => m.content === 'A late visualization'), false, 'regenerated-away original must not mutate history');
-  assert.equal(audit.saved, undefined, 'no server save when original is gone');
-  assert.equal(audit.written, undefined, 'no local write when original is gone');
-  const original = { role: 'assistant', timestamp: 123, content: 'A original' };
-  const normal = runCallback([original], 'A', original);
-  assert.equal(original.content, 'A late visualization', 'normal completion must still update the original');
-  assert.equal(normal.written.k, 'phymathia_msgs_A');
+test('F callback must not mutate current history nor write storage directly (T281)', async () => {
+  const audit = await runCallback('B');
+  assert.equal(audit.chatHistory[0].content, 'B colliding', 'current canvas history must stay untouched');
+  assert.equal(audit.written, undefined, 'no direct localStorage write from the callback');
 });
 
 let pass = 0, fail = 0;

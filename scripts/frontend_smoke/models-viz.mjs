@@ -22,6 +22,61 @@ check('viz-check：角标三态文案与重生成意图', () => {
   return true;
 });
 
+// T258（2026-10-11）：主题桥的原生机制检测延后到 DOMContentLoaded——注入在 </head> 时
+// body 末尾的主题函数还没定义，当场必误判「无机制」→ 深色页面被父侧 invert 滤镜翻色。
+// 从 render.js 源码提取真实桥接串，在隔离 vm 里用假 DOM 跑四个场景：
+// loading 期不上报 / DOMContentLoaded 后认出 body 末尾函数 / 静态 data-theme 直接放行 /
+// 全无机制才报 has:false（父侧才挂兜底滤镜）。
+check('viz-theme（T258）：桥接检测延后 DOMContentLoaded＋静态 data-theme 放行', () => {
+  const src = fs.readFileSync(new URL('../../src/static/js/render.js', import.meta.url), 'utf8');
+  const start = src.indexOf('const _VIZ_THEME_BRIDGE = ');
+  const end = src.indexOf("';", start);
+  if (start < 0 || end < 0) throw new Error('render.js 源码里找不到 _VIZ_THEME_BRIDGE 赋值');
+  const expr = src.slice(src.indexOf('=', start) + 1, end + 1);
+  const bridgeJs = new Function('return (' + expr + ');')()
+    .replace(/^<script>/, '').replace(/<\/script>$/, '');
+  const runBridge = ({ theme = null, readyState = 'loading' }) => {
+    const posted = [];
+    const listeners = {};
+    const s = {
+      console: { log() {}, warn() {}, error() {} },
+      document: {
+        readyState,
+        documentElement: { getAttribute: k => (k === 'data-theme' ? theme : null) },
+        addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); },
+        querySelectorAll: () => [],
+      },
+      parent: { postMessage: m => posted.push(m) },
+      addEventListener: (t, fn) => { (listeners['w:' + t] = listeners['w:' + t] || []).push(fn); },
+    };
+    s.window = s;
+    vm.createContext(s);
+    vm.runInContext(bridgeJs, s);
+    return { s, posted, fireDOMContentLoaded: () => (listeners.DOMContentLoaded || []).forEach(fn => fn()) };
+  };
+  // ① 页面解析中（桥在 head）：绝不能提前上报——此时判什么都是误判
+  const a = runBridge({ readyState: 'loading' });
+  if (a.posted.length !== 0) throw new Error('loading 期间就上报了检测结果（T258 的事故形态）');
+  // ② body 末尾定义的主题函数：DOMContentLoaded 后必须被认出（修复前为 false → 错误反色）
+  const b = runBridge({ readyState: 'loading' });
+  vm.runInContext('window.applyTheme=function(){};', b.s);   // 模拟 body 末尾脚本补定义
+  b.fireDOMContentLoaded();
+  if (b.posted.length !== 1 || b.posted[0].type !== 'phymathia-theme-native' || b.posted[0].has !== true) {
+    throw new Error('DOMContentLoaded 后没认出 body 末尾的主题函数: ' + JSON.stringify(b.posted));
+  }
+  // ③ 静态声明 data-theme（无任何函数/按钮）：直接放行
+  const c = runBridge({ theme: 'dark', readyState: 'interactive' });
+  if (c.posted.length !== 1 || c.posted[0].has !== true) {
+    throw new Error('静态 data-theme 页面应放行: ' + JSON.stringify(c.posted));
+  }
+  // ④ 真的什么都没有：才报 has:false（父侧挂兜底滤镜）
+  const d = runBridge({ readyState: 'interactive' });
+  if (d.posted.length !== 1 || d.posted[0].has !== false) {
+    throw new Error('无机制页面应报 has:false: ' + JSON.stringify(d.posted));
+  }
+  return true;
+});
+
 check('viz-check：_vizCheckEnergyTotals 分量求和与 NaN 计数', () => {
   const r = sandbox._vizCheckEnergyTotals([
     { t: 0, energy: { kinetic: 1, potential: 1 } },

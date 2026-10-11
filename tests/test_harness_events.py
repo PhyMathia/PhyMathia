@@ -692,3 +692,66 @@ def test_graph_events_delete_route(client, events_dir):
     assert "removed" in cleared.json()
     assert cleared.json()["removed"] == 1  # 单会话删除后只剩 phi_route_other
     assert list(events_dir.glob("*.jsonl")) == []
+
+
+# ---- T209 体量治理：读缓存 + 保行号压缩 ----
+
+
+def test_read_cache_reflects_appends_and_exact_fetch(events_dir):
+    """缓存命中路径下：新 append 可见、seq 仍＝行号、event_id 精确取带重字段。"""
+    events_mod.append_event(SID, {"id": "e1", "type": "review", "roundtrips": [{"raw": "模型原话"}]})
+    first = events_mod.read_events(SID)
+    assert [e["seq"] for e in first] == [1]
+    events_mod.append_event(SID, {"id": "e2", "type": "undo"})
+    second = events_mod.read_events(SID)
+    assert [e["seq"] for e in second] == [1, 2]
+    assert second[0]["roundtrips"] == [{"raw": "模型原话"}]
+    one = events_mod.read_events(SID, event_id="e1")
+    assert one[0]["roundtrips"] == [{"raw": "模型原话"}]
+    assert events_mod.read_events(SID, event_id="nope") == []
+
+
+def test_compaction_leans_old_events_keeps_recent_full_line_count_stable(events_dir, monkeypatch):
+    """超软上限触发压缩：行数不变（seq 契约）、最新 12 条 applied／6 条 review 保全量、
+    更老的原行减重（before_snapshot/roundtrips 剥掉）、id 与类型保留。"""
+    monkeypatch.setattr(events_mod, "_COMPACT_SOFT_BYTES", 2000)
+    monkeypatch.setattr(events_mod, "_COMPACT_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(events_mod, "_COMPACT_HARD_BYTES", 10 ** 9)
+    big = "x" * 400
+    for i in range(30):
+        events_mod.append_event(SID, {"id": f"a{i}", "type": "applied",
+                                      "before_snapshot": {"nodes": [big]}})
+    for i in range(10):
+        events_mod.append_event(SID, {"id": f"r{i}", "type": "review",
+                                      "roundtrips": [{"raw": big}]})
+    events_mod.append_event(SID, {"id": "z", "type": "undo"})
+    path = events_mod._session_path(SID)
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 41   # 只减重、绝不删行
+    evts = {e["id"]: e for e in events_mod.read_events(SID, include_snapshot=True)}
+    assert [e["seq"] for e in sorted(evts.values(), key=lambda e: e["seq"])] == list(range(1, 42))
+    assert "before_snapshot" in evts["a29"] and "before_snapshot" in evts["a18"]
+    assert "before_snapshot" not in evts["a17"]
+    assert "roundtrips" in evts["r9"] and "roundtrips" not in evts["r3"]
+    assert evts["z"]["type"] == "undo"
+
+
+def test_compaction_hard_limit_replaces_stale_events_with_pruned_markers(events_dir, monkeypatch):
+    """减重后仍超硬上限：最老的非保留事件整行换成等行数 pruned 占位（id 保留），
+    保留窗内不动、小事件「换了不省就跳过」。"""
+    monkeypatch.setattr(events_mod, "_COMPACT_SOFT_BYTES", 1000)
+    monkeypatch.setattr(events_mod, "_COMPACT_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(events_mod, "_COMPACT_HARD_BYTES", 12000)
+    fill = "s" * 200
+    for i in range(40):
+        events_mod.append_event(SID, {"id": f"a{i}", "type": "applied",
+                                      "summary": fill,
+                                      "before_snapshot": {"nodes": ["x" * 300]}})
+    events_mod.append_event(SID, {"id": "z", "type": "undo"})
+    path = events_mod._session_path(SID)
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 41
+    evts = {e["id"]: e for e in events_mod.read_events(SID, include_snapshot=True)}
+    assert any(e["type"] == "pruned" for e in evts.values()), "应出现 pruned 占位"
+    assert evts["a39"]["type"] == "applied" and "before_snapshot" in evts["a39"]
+    assert evts["a28"]["type"] == "applied"       # 保留窗（最新 12 条）不占位
+    assert evts["z"]["type"] == "undo"            # 小事件换 marker 不省 → 原样保留
+    assert path.stat().st_size <= 12000 + 400
