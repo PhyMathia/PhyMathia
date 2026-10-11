@@ -115,17 +115,26 @@ class ThinkingRequestParamsSharedTest(unittest.TestCase):
         self.assertEqual(f("deepseek", "max"), {"reasoning_effort": "high"})
         self.assertEqual(f("custom-gw", "high"), {"reasoning_effort": "medium"})
 
-    def test_boolean_switch_families(self):
+    def test_boolean_switch_on_off(self):
+        # 布尔开关族：on/off 正式两档（2026-10-11 配置界面改开/关），low/high/max 兼容＝开
         f = llm_common.thinking_request_params
-        self.assertEqual(f("qwen", "low"), {"enable_thinking": True})
-        self.assertEqual(f("zhipu", "high"), {"thinking": {"type": "enabled"}})
-        self.assertEqual(f("ollama", "max"), {"think": True})
+        self.assertEqual(f("qwen", "on"), {"enable_thinking": True})
+        self.assertEqual(f("qwen", "off"), {"enable_thinking": False})
+        self.assertEqual(f("zhipu", "on"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("zhipu", "off"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(f("mimo", "on"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("mimo", "off"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(f("ollama", "on"), {"think": True})
+        self.assertEqual(f("ollama", "off"), {"think": False})
 
     def test_default_and_unknown_send_nothing(self):
         f = llm_common.thinking_request_params
-        for level in ("", "default", "off", "medium", "turbo"):
+        for level in ("", "default", "medium", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "ollama", "openai", ""):
                 self.assertEqual(f(provider, level), {})
+        # 'off' 只在布尔开关族发关闭参数；reasoning_effort 族表达不了「关」→ 不发
+        for provider in ("deepseek", "openai", "custom-gw", ""):
+            self.assertEqual(f(provider, "off"), {})
 
 
 # ====== T97：_call_model 的注入与 400 剥参降级 ======

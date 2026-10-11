@@ -293,9 +293,12 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
 
     def test_default_and_unknown_sends_nothing(self):
         # ''/default = 跟随模型默认：现状行为零变化；旧值与乱值一律不发参数
-        for level in ("", "default", "off", "medium", "turbo"):
+        for level in ("", "default", "medium", "turbo"):
             for provider in ("deepseek", "qwen", "zhipu", "openai", ""):
                 self.assertEqual(main_mod._thinking_request_params(provider, level), {})
+        # 'off' 只在布尔开关族有意义；reasoning_effort 族表达不了「关」→ 不发参数
+        for provider in ("deepseek", "openai", "custom-gw", ""):
+            self.assertEqual(main_mod._thinking_request_params(provider, "off"), {})
 
     def test_reasoning_effort_stretches_three_tiers(self):
         # low/high/max 按序拉伸到 reasoning_effort 的 low/medium/high 三档，
@@ -307,13 +310,23 @@ class ThinkingRequestParamsUnitTest(unittest.TestCase):
         self.assertEqual(f("deepseek", "low"), {"reasoning_effort": "low"})
         self.assertEqual(f("custom-gw", "max"), {"reasoning_effort": "high"})
 
-    def test_qwen_zhipu_ollama_boolean_switch(self):
-        # 布尔开关族只有开/关：low/high/max 三档同为「开启」
+    def test_boolean_switch_on_off(self):
+        # 布尔开关族只有开/关：on/off 是正式取值（配置界面两档），low/high/max 兼容旧档位＝开
         f = main_mod._thinking_request_params
+        self.assertEqual(f("qwen", "on"), {"enable_thinking": True})
+        self.assertEqual(f("qwen", "off"), {"enable_thinking": False})
         self.assertEqual(f("qwen", "low"), {"enable_thinking": True})
         self.assertEqual(f("qwen", "max"), {"enable_thinking": True})
+        self.assertEqual(f("zhipu", "on"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("zhipu", "off"), {"thinking": {"type": "disabled"}})
         self.assertEqual(f("zhipu", "high"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("ollama", "on"), {"think": True})
+        self.assertEqual(f("ollama", "off"), {"think": False})
         self.assertEqual(f("ollama", "max"), {"think": True})
+        # MiMo（thinking.type 族）on/off 直发，旧档位同为「开」
+        self.assertEqual(f("mimo", "on"), {"thinking": {"type": "enabled"}})
+        self.assertEqual(f("mimo", "off"), {"thinking": {"type": "disabled"}})
+        self.assertEqual(f("mimo", "max"), {"thinking": {"type": "enabled"}})
 
 
 class ThinkingEffortProxyTest(RouteTestBase):
