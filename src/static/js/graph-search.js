@@ -244,7 +244,9 @@ async function focusGraphSearchResult(btn) {
     if (sessionId && sessionId !== currentId && typeof window.switchToSession === 'function') {
       await window.switchToSession(sessionId);
       if (typeof window.getCurrentSessionId === 'function' && window.getCurrentSessionId() !== sessionId) {
-        if (typeof showToast === 'function') showToast('当前正在生成，暂不能跳转');
+        // 2026-10-11：生成中已经能切画布了，走到这儿只剩「那张画布已经不在了」
+        // （旧文案「当前正在生成，暂不能跳转」是切换被 isStreaming 拦掉的年代留下的）
+        if (typeof showToast === 'function') showToast('没能切到那张画布，它可能已经被删掉了');
         return;
       }
     }

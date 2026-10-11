@@ -305,7 +305,181 @@ try {
     ok('一键清除记录：只清干成的（服务端 ' + before + ' -> ' + after.total + ' 条），未完成的不动');
   } catch (e) { bad('两个页签与一键清除', e); }
 
-  // ⑦ 页面无异常
+  // ⑦ 忙的时候点节点生成 = 排队（2026-10-11；用户：「设置了任务列表就是想要可以排队」）
+  // 旧行为是 toast 挡回去「稍候再单独生成这个节点」——点了等于没点，也没有账。
+  try {
+    await page.evaluate(async () => {
+      if (typeof _clearSendQueue === 'function') _clearSendQueue('');
+      // 等干净：没有在跑的活儿、没有在写的流
+      const dl = Date.now() + 60000;
+      while (Date.now() < dl && (isStreaming || workflowRunActive )) await new Promise(r => setTimeout(r, 500));
+    });
+    const picked = await page.evaluate(() => {
+      const node = graphView.nodes.find(n => n.messageIndex < 0 && n.kind === 'module' && !n.busy);
+      if (!node) return null;
+      const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
+      // 「别处正忙」这个位真机上由工作流/流式回答持有；这里直接摆位，省得赌时序。
+      // 摆的是同一个词法绑定，走的是同一条守卫（_isSendBusy → _enqueueNodeJob）。
+      workflowRunActive = true;
+      window.runWorkflowNode(node.id, true);
+      return { id: node.id, label: label, sid: window.getCurrentSessionId() };
+    });
+    if (!picked) throw new Error('画布上找不到可单独生成的模块节点');
+    const st = await page.evaluate(() => ({
+      n: _sendQueue.length,
+      pending: _hasPendingSend(),
+      running: _taskActive.filter(t => t.state === 'running').length,
+      rows: _taskActive.map(t => t.title + '|' + t.state + '|' + t.sessionId),
+    }));
+    if (!st.pending || st.n !== 1) throw new Error('忙时点生成没有进队列（又被拒绝了）：' + JSON.stringify(st));
+    if (st.running !== 0) throw new Error('排队的那条不该当场开跑：' + JSON.stringify(st));
+    if (!st.rows.some(r => r.indexOf(picked.label) >= 0 && r.indexOf('waiting') >= 0)) {
+      throw new Error('任务列表里没有「等待中」的那条：' + JSON.stringify(st.rows));
+    }
+    if (!st.rows.some(r => r.indexOf(picked.sid) >= 0)) {
+      throw new Error('排队那条没记下它属于哪张画布（自带来处）：' + JSON.stringify(st.rows));
+    }
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); }
+    await wait(600);   // 面板是 120ms 防抖重渲染的，读早了看到的是上一版内容
+    const queuedView = await panelText();
+    if (!queuedView.includes(picked.label) || !/等待中/.test(queuedView)) {
+      throw new Error('面板上看不到排队的那条：' + queuedView);
+    }
+    ok('忙时点节点生成 → 收进队列（' + picked.label + ' · 等待中 · 记在它自己那张画布上）');
+
+    // 放行：忙位一撤，队列把它跑起来，节点上出内容
+    await page.evaluate(() => { workflowRunActive = false; _flushSendQueue(); });
+    const dl = Date.now() + 120000;
+    let got = '';
+    while (Date.now() < dl) {
+      got = await page.evaluate((id) => {
+        const node = graphView.nodes.find(n => n.id === id);
+        return node && node.content ? String(node.content) : '';
+      }, picked.id);
+      if (got.trim().length > 20) break;
+      await wait(1000);
+    }
+    if (got.trim().length <= 20) throw new Error('放行之后排队的节点生成没跑起来（内容仍为空）');
+    const hist = await page.evaluate(() => _taskHistory.filter(t => t.kind === 'workflow')
+      .map(t => t.title + '|' + t.state).slice(0, 3));
+    ok('放行：队列自己把它跑完（节点出内容 ' + got.trim().length + ' 字，历史 ' + hist.join(' / ') + '）');
+  } catch (e) { bad('忙时排队（节点生成）', e); }
+
+  // ⑦b 排队跨画布：在 A 排的节点活儿，人切到新画布之后轮到自己时把视图带回 A（自带来处）
+  try {
+    await page.evaluate(async () => {
+      if (typeof _clearSendQueue === 'function') _clearSendQueue('');
+      const dl = Date.now() + 60000;
+      while (Date.now() < dl && (isStreaming || workflowRunActive)) await new Promise(r => setTimeout(r, 500));
+    });
+    const setup = await page.evaluate(() => {
+      const node = graphView.nodes.find(n => n.messageIndex < 0 && n.kind === 'module' && !n.busy);
+      if (!node) return null;
+      const sidA = window.getCurrentSessionId();
+      workflowRunActive = true;                       // 摆上「别处正忙」
+      window.runWorkflowNode(node.id, true);
+      return { id: node.id, sidA: sidA, queued: _hasPendingSend() };
+    });
+    if (!setup) throw new Error('画布上找不到可单独生成的模块节点');
+    if (!setup.queued) throw new Error('忙时点生成没有进队列');
+    const went = await page.evaluate(async (sidA) => {
+      window.createNewSession();
+      const dl = Date.now() + 15000;
+      while (Date.now() < dl) {
+        await new Promise(r => setTimeout(r, 200));
+        const sid = window.getCurrentSessionId();
+        if (sid && sid !== sidA) return sid;
+      }
+      return window.getCurrentSessionId();
+    }, setup.sidA);
+    if (went === setup.sidA) throw new Error('没能切到新画布');
+    // 放行：排队的活儿应当自己把视图带回 A 再跑
+    await page.evaluate(() => { workflowRunActive = false; _flushSendQueue(); });
+    const dl = Date.now() + 120000;
+    let back = '';
+    while (Date.now() < dl) {
+      back = await page.evaluate(() => window.getCurrentSessionId());
+      if (back === setup.sidA) break;
+      await wait(500);
+    }
+    if (back !== setup.sidA) throw new Error('轮到时没有切回它所属的画布：现在在 ' + String(back).slice(0, 12));
+    let content = '';
+    const dl2 = Date.now() + 120000;
+    while (Date.now() < dl2) {
+      content = await page.evaluate((id) => {
+        const node = graphView.nodes.find(n => n.id === id);
+        return node && node.content ? String(node.content) : '';
+      }, setup.id);
+      if (content.trim().length > 20) break;
+      await wait(1000);
+    }
+    if (content.trim().length <= 20) throw new Error('切回原画布后那条活儿没跑出内容');
+    ok('排队跨画布：在 A 排的活儿，人切走后轮到自己把视图带回 A 并跑完（' + content.trim().length + ' 字）');
+  } catch (e) { bad('排队跨画布', e); }
+
+  // ⑧ 流式回答进行中切画布：切得过去，回答写回原来那张（用户报的核心症状）
+  // 旧行为：switchToSession 头一行 `if (isStreaming) return;` —— 点侧栏毫无反应（静默）。
+  try {
+    const started = await page.evaluate(async () => {
+      const dl = Date.now() + 60000;
+      while (Date.now() < dl && (isStreaming || workflowRunActive)) await new Promise(r => setTimeout(r, 500));
+      // 锚点只要一颗画布上的节点即可（工作流建的模块节点是自定义节点，messageIndex=-1，
+      // 所以不能只挑消息节点——buildGraphPathForAnchor 认不出父节点时会给个占位路径）
+      const anchorNode = graphView.nodes.find(n => n.kind === 'module') || graphView.nodes[0];
+      if (!anchorNode) return null;
+      const sidA = window.getCurrentSessionId();
+      window.sendBranchQuick('追问测试：简谐运动的周期由什么决定？', {
+        parentId: String(anchorNode.timestamp || ''),
+        sourceModule: anchorNode.moduleKey || '',
+        branchType: 'branch',
+        branchId: '',
+        branchLabel: '追问测试',
+      });
+      return { sidA: sidA };
+    });
+    if (!started) throw new Error('画布上没有消息节点，造不出追问锚点');
+    await page.waitForFunction(() => isStreaming === true, null, { timeout: 30000 });
+    const switched = await page.evaluate(async (sidA) => {
+      window.createNewSession();          // 用户点侧栏「新建画布」走的就是这一条
+      const dl = Date.now() + 15000;
+      while (Date.now() < dl) {
+        await new Promise(r => setTimeout(r, 200));
+        if (!isStreaming) break;          // 生成已经结束了，这条用例就失去意义
+        const sid = window.getCurrentSessionId();
+        if (sid && sid !== sidA) return sid;
+      }
+      return window.getCurrentSessionId();
+    }, started.sidA);
+    if (!switched || switched === started.sidA) throw new Error('生成中没能切到新画布（切画布被拦了）');
+    const phantom = await page.evaluate(() => _getChatHistory().length);
+    if (phantom !== 0) throw new Error('新画布上冒出了别处那条正在写的回答（幽灵节点）：' + phantom + ' 条');
+    ok('生成中切画布：切得过去（' + String(started.sidA).slice(0, 12) + '… → ' + String(switched).slice(0, 12) + '…），新画布干净');
+
+    await page.waitForFunction(() => isStreaming === false, null, { timeout: 180000 });
+    await wait(1500);
+    const stored = await page.evaluate(async (sid) => {
+      const r = await fetch('/api/sessions/' + sid + '/messages', { cache: 'no-cache' });
+      const j = await r.json();
+      const msgs = Array.isArray(j) ? j : (j.messages || []);
+      return msgs.map(m => m.role + ':' + String(m.content || '').slice(0, 12));
+    }, started.sidA);
+    const answerBack = stored.filter(m => m.startsWith('assistant:')).length;
+    if (!answerBack) throw new Error('切走之后那条回答没写回原画布（消息：' + JSON.stringify(stored) + '）');
+    const sendTask = await page.evaluate(() => _taskHistory.filter(t => t.kind === 'send')
+      .map(t => t.state + '|' + t.sessionId).slice(0, 3));
+    ok('切走之后回答照样落回原画布（' + answerBack + ' 条 assistant；发送任务 ' + sendTask.join(' / ') + '）');
+
+    await page.evaluate((sid) => window.switchToSession(sid), started.sidA);
+    await wait(2000);
+    const back = await page.evaluate(() => {
+      const nodes = graphView.nodes.filter(n => n.messageIndex >= 0 && n.branchType === 'branch');
+      return { n: nodes.length, hasText: nodes.some(n => /追问|周期|回复力|正文/.test(String(n.content || ''))) };
+    });
+    if (!back.n) throw new Error('切回原画布看不到那条追问的产出（节点没了）');
+    ok('切回原画布：产出在（' + back.n + ' 个追问节点，带正文=' + back.hasText + '）');
+  } catch (e) { bad('生成中切画布', e); }
+
+  // ⑨ 页面无异常
   try {
     if (pageErrors.length) throw new Error(pageErrors.slice(0, 3).join(' | '));
     ok('全程无页面异常（pageerror / 任务相关 console.error）');

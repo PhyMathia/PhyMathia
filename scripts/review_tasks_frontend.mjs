@@ -320,7 +320,13 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   const blankEnd = wfSrc.indexOf('\nfunction _addNodeIdsToGroup(', blankStart);
   const blank = wfSrc.slice(blankStart, blankEnd);
   assert.ok(blankStart > 0 && blankEnd > blankStart, 'generateBlankNode 要找得到');
-  assert.match(blank, /if \(workflowRunActive\)/, '工作流跑着时不许再单独起一条（T58 同款闸门）');
+  // 2026-10-11：闸门口径从「工作流跑着就拒绝」改成「忙就排队」——旧断言
+  // `if (workflowRunActive)` 已随改造作废（用户要的是能排队，不是被挡回去）。
+  // 新契约三件：统一忙碌判定 + fromQueue 放行旁路 + 真把活儿交给队列。
+  assert.match(blank, /!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy\(\)/,
+    '独立生成要在忙时排队（统一忙碌判定 + 放行旁路，同 startQuestionWorkflow 的 T225 口径）');
+  assert.match(blank, /_enqueueNodeJob\(/, '忙时要真把活儿交给队列，而不是只弹一句提示');
+  assert.match(blank, /_queuedJobNodeGuard\(/, '轮到它跑时节点可能已经不在了，要就地结账标失败');
   assert.match(blank, /_taskBeginNodeJob\(/, '独立生成要记一笔任务账');
   assert.match(blank, /_taskBindCancel\(taskId/);
   assert.match(blank, /const signal = jobAbort\.signal/, 'signal 用任务自己的 controller');

@@ -247,9 +247,19 @@ check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静�
   for (const frag of ['稍候再删除画布', '稍候再批量删除画布', '稍候再清空当前画布', '稍候再清空所有画布']) {
     if (!srcSession.includes(frag)) throw new Error('T119 session.js 缺: ' + frag);
   }
+  // 2026-10-11：画布上的节点生成不再「忙就拒绝」（那两句「稍候再单独生成这个节点」
+  // 「稍候再生成可视化」已随改造删除），改成收进队列。这里换契约守着新口径：
+  // 两处入口都必须走统一的忙碌判定 + 放行旁路，且都必须把活儿交给队列。
   const srcWorkflow = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
-  if (!srcWorkflow.includes('稍候再单独生成这个节点')) throw new Error('T119 graph-workflow.js 缺「稍候再单独生成这个节点」');
-  if (!srcInteract.includes('稍候再生成可视化')) throw new Error('T119 graph-interact.js 缺「稍候再生成可视化」');
+  if (!/!fromQueue && typeof _isSendBusy/.test(srcWorkflow)) {
+    throw new Error('graph-workflow.js 的节点生成入口没用统一忙碌判定 _isSendBusy()（T42 口径）');
+  }
+  if (!srcWorkflow.includes('_enqueueNodeJob(')) {
+    throw new Error('graph-workflow.js 忙时没有排队（_enqueueNodeJob）——点节点生成又会撞回「稍候再…」的拒绝');
+  }
+  if (!srcInteract.includes('_enqueueNodeJob(')) {
+    throw new Error('graph-interact.js 忙时没有排队（_enqueueNodeJob）——可视化/没看懂又会撞回拒绝');
+  }
 
   // T58：可视化重生成忙态标志（防并发重入）
   const srcRender = fs.readFileSync('src/static/js/graph-render.js', 'utf8');

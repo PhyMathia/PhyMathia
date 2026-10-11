@@ -83,8 +83,10 @@ function _nodeActions(node) {
       }
     }
     const label = node.moduleKey === 'graph' ? '重新生成' : '没看懂';
-    // T58：主回答生成中「没看懂/重新生成」置灰（发送走排队，但按钮先给出可见状态）
-    const regenBusy = typeof isStreaming !== 'undefined' && isStreaming;
+    // T58 忙态：口径 2026-10-11 收紧成「这颗节点自己在重生成」。过去把 isStreaming
+    // （别处在生成回答）也算进来，按钮被置灰 = 排队入口自己封了；现在别处忙照点，
+    // 点了进队列（graph-interact.js submitRegenerateNode），只有这颗自己忙才置灰。
+    const regenBusy = typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id);
     return '<div class="graph-node-actions">'
       + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, regenBusy)
       + '</div>';

@@ -842,7 +842,12 @@ window.getGraphVersionList = _graphVersions;
 function _getChatHistory() {
   const base = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
   const live = typeof window.getStreamingAssistant === 'function' ? window.getStreamingAssistant() : null;
-  return live ? base.concat([live]) : base;
+  if (!live) return base;
+  // 在写的这条回答自带来处（2026-10-11）：生成中允许切画布了，它只属于它自己那张。
+  // 不按会话过滤的话，切到别的画布会把这条半截回答画成人家画布上的幽灵节点。
+  const sid = typeof getCurrentSessionId === 'function' ? getCurrentSessionId() : '';
+  if (live.sessionId && sid && live.sessionId !== sid) return base;
+  return base.concat([live]);
 }
 
 function _graphNodeId(kind, timestamp, moduleKey) {

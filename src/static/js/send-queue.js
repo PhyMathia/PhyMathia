@@ -1,10 +1,17 @@
-// ===== PhyMathia 发送排队：AI 忙的时候先收下，跑完自动发 =====
+// ===== PhyMathia 排队台：AI 忙的时候先收下，轮到它再跑 =====
 //
 // 为什么有这个东西（docs/backlog.md T42）：
 // 发送入口过去一律是裸 `if (正在生成) return;`——不弹提示、不置灰、不留痕。
 // 一次工作流在免费模型上要跑 2-8 分钟，这个「忙」窗口长得离谱，撞上的概率很高；
 // 用户看到的就是弹窗原样留着、节点毫无变化，于是以为按钮坏了，反复点。
 // 真发验证脚本只能靠「每条通道前等工作流空闲」绕开，**但用户没有这个绕法**。
+//
+// 2026-10-11 扩成通用队列（用户：「我给他设置任务列表就是想要可以启动多个任务排队的」）：
+// 过去只有「发送」这一条链排队，画布上点节点生成撞上忙碌一律拒绝（toast 挡回去）。
+// 现在**所有会占住 AI 的入口**都从这里过——发送（提问/追问/苏格拉底/Φ）与画布上的
+// 节点活儿（生成/重新生成/空白节点/可视化/全部生成）。忙的时候点什么都当场有回音：
+// 收进队列、任务列表上看得见（等待中）、轮到自己时把视图带回它所属的画布再原样跑一遍。
+// 一次仍然只跑一件（用户 2026-09-27 拍板），队列只是让"排在后面"成为可能。
 //
 // 为什么选「排队」而不是「置灰」：
 // 置灰宣告的是「这功能不可用」，可这里按钮是可用的——只是要等。纯置灰的结果是
@@ -54,8 +61,17 @@ function _hasPendingSend() {
 
 // 收下一次发送请求。label 只用于提示文案（「苏格拉底回答」「追问」…），
 // run 必须返回 promise：flush 靠 await 它来保证下一条等上一条真的发出去了。
-// meta（可选）：{ text, sessionId, sessionTitle } —— text 给任务列表当标题与重放内容；
-// 不传时按当前会话记账（任务列表那条「自带来处」的约定，见 tasks.js）。
+// meta（可选）：{ text, title, kind, replay, sessionId, sessionTitle }。
+//   · text   = 用户那句话，给任务列表当标题与重放内容；
+//   · title  = 显式标题（节点生成这类活儿没有"用户那句话"，用它写「生成数学视角」）；
+//   · kind   = 任务种类（'send' / 'workflow' / 'node'），决定面板上的重试语义；
+//   · replay = 显式重放描述（节点活儿要给 nodeIds / nodeJob，重试才找得到地方重跑）。
+// 不传会话时按当前会话记账（任务列表那条「自带来处」的约定，见 tasks.js）。
+//
+// 2026-10-11（用户：「设置了任务列表就是想要可以启动多个任务排队」）：这台队列过去只服务
+// 「发送」那一条链，画布上点节点生成撞上忙碌一律拒绝（toast「稍候再单独生成这个节点」）。
+// 现在它是通用的活儿队列——发送、工作流、单节点生成全从这儿过，忙时一律收下，
+// 轮到自己时把视图带回它所属的画布再原样跑一遍。
 function _enqueueSend(label, run, meta) {
   if (typeof run !== 'function') return false;
   const name = label || '请求';
@@ -67,12 +83,12 @@ function _enqueueSend(label, run, meta) {
   // 轮到它时能自己找回去（会话寻址），不再像过去那样「一换画布整队被丢弃」。
   const task = (typeof _taskCreate === 'function')
     ? _taskCreate({
-        kind: 'send',
-        title: opts.text ? String(opts.text) : name,
+        kind: opts.kind || 'send',
+        title: opts.title ? String(opts.title) : (opts.text ? String(opts.text) : name),
         state: 'waiting',
         sessionId: opts.sessionId || info.sessionId,
         sessionTitle: opts.sessionTitle || info.sessionTitle,
-        replay: opts.text ? { text: String(opts.text).slice(0, 500) } : null,
+        replay: opts.replay || (opts.text ? { text: String(opts.text).slice(0, 500) } : null),
       })
     : null;
   _sendQueue.push({
@@ -82,8 +98,35 @@ function _enqueueSend(label, run, meta) {
     sessionId: task ? task.sessionId : info.sessionId,
   });
   _renderQueueChip();
-  toastMsg('已收到「' + name + '」，当前回答完成后自动发送');
+  toastMsg('已收到「' + name + '」，当前任务完成后自动开始');
   return true;
+}
+
+// 画布上的活儿（单节点/工作流）排队入口。与发送的区别只有两点：
+//   · 标题用活儿自己的名字（这类活儿没有"用户那句话"）；
+//   · 记下节点 id 与种类，面板上的「重试」才找得到地方重跑（tasks.js 的 replay 约定）。
+// 闭包必须把「放行」标志一路带下去（runWorkflowNode/generateBlankNode 的 fromQueue）：
+// 放行时 _isSendBusy() 仍含着 _sendQueueFlushing（队列正在放行）这个空窗标志，
+// 没有旁路会原地自我重入、事件循环被饿死、页面假死（T225）。
+function _enqueueNodeJob(label, run, meta) {
+  const opts = meta || {};
+  return _enqueueSend(label, run, {
+    title: opts.title || label,
+    kind: opts.kind || 'node',
+    replay: opts.replay || null,
+    sessionId: opts.sessionId,
+    sessionTitle: opts.sessionTitle,
+  });
+}
+
+// 排队任务轮到执行时的兜底：它盯的那颗节点已经不在了（换过画布、被删、被撤销回放）。
+// 就地结账标「失败」，别让队列放行后那条「等待中」被 flush 顺手记成「已完成」——
+// 活儿根本没干，账不能平（run 里先结掉的话，flush 那次 _taskFinish 找不到活账、自然空转）。
+function _queuedJobNodeGuard(taskId, nodeId) {
+  if (typeof _findGraphNode === 'function' && _findGraphNode(nodeId)) return true;
+  if (typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '节点已不在画布上');
+  if (typeof showToast === 'function') showToast('轮到这条时，那颗节点已经不在画布上了');
+  return false;
 }
 
 // 单条取消（任务列表面板上的「取消」）。返回 true 表示确实从队里摘掉了一条。
@@ -97,7 +140,8 @@ function _removeQueuedSend(taskId) {
 }
 
 // 轮到自己时先把视图带回它所属的画布。任务自带来处，而发送这条通道（分支/苏格拉底）
-// 的产物只能落在"当前画布"上，所以只能这样兑现；工作流那条长通道不切视图，它自带上下文。
+// 与画布上的节点活儿（生成/重新生成）都只能落在"当前画布"上，所以只能这样兑现；
+// 工作流那条长通道不切视图，它自带上下文。
 async function _sendQueueReady(item) {
   const sid = item.sessionId;
   const current = (typeof getCurrentSessionId === 'function') ? getCurrentSessionId() : '';
@@ -108,7 +152,7 @@ async function _sendQueueReady(item) {
   const exists = (typeof getSessionById === 'function') && getSessionById(sid);
   if (!exists || typeof switchToSession !== 'function') {
     if (typeof _taskFinish === 'function') _taskFinish(item.taskId, 'error', '它所属的画布已被删除');
-    toastMsg('已跳过一条待发送：它所属的画布已被删除');
+    toastMsg('已跳过一条排队的活儿：它所属的画布已被删除');
     return false;
   }
   await switchToSession(sid);
@@ -159,22 +203,24 @@ function _clearSendQueue(reason) {
   if (typeof _taskFinish === 'function') {
     for (const item of items) _taskFinish(item.taskId, 'stopped', reason || '已丢弃');
   }
-  if (reason) toastMsg(reason + '（已丢弃 ' + n + ' 条待发送）');
+  if (reason) toastMsg(reason + '（已丢弃 ' + n + ' 条排队的活儿）');
 }
 
-// 「待发送 N」标记挂在进度胶囊里——那是用户盯着等的时候本来就在看的地方，
+// 「排队 N」标记挂在进度胶囊里——那是用户盯着等的时候本来就在看的地方，
 // 不用去学一个全新的位置。点它 = 全部丢弃，反悔的唯一出口。
+// 2026-10-11 文案从「待发送」改成「排队」：这台队列现在也装画布上的节点活儿，
+// 「待发送」会把「等一张图生成」说成「等一条消息」。
 function _renderQueueChip() {
   const chip = document.getElementById('sendQueueChip');
   if (!chip) return;
   const n = _sendQueue.length;
-  chip.textContent = n > 0 ? '待发送 ' + n : '';
+  chip.textContent = n > 0 ? '排队 ' + n : '';
   chip.hidden = n === 0;
   if (n === 0) {
     chip.removeAttribute('title');
     return;
   }
-  chip.title = '点击丢弃全部待发送';
+  chip.title = '点击丢弃全部排队任务';
   // 队列非空却不在生成中（正常只发生在收队与 flush 之间的那一瞬），
   // 胶囊可能正处在 hideProgress 的延迟退场倒计时里——把标记露出来，别让它跟着一起消失。
   const capsule = document.getElementById('progressStatus');
@@ -186,7 +232,7 @@ function _initSendQueue() {
   if (chip && !chip.dataset.bound) {
     chip.dataset.bound = '1';
     chip.addEventListener('click', function() {
-      _clearSendQueue('已丢弃待发送');
+      _clearSendQueue('已丢弃排队任务');
     });
   }
   _renderQueueChip();

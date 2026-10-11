@@ -180,6 +180,29 @@ checkSq('发送排队：T225 忙碌三参「提问」入队一次，取出的闭
   }
 });
 
+// 行为半（2026-10-11）：画布上的活儿也进这台队列——进队的是「活儿」（kind/replay 都记下），
+// 标题用活儿自己的名字，放行后队列照常清空。用户要的就是「点一下就有回音、账上看得见」。
+checkSq('画布活儿排队（2026-10-11）：节点生成的活儿也进队列，kind/replay/标题都记对', async () => {
+  sqReset();
+  sqEval('isStreaming = true; _taskActive = []; _taskHistory = [];');
+  sqEval("_enqueueNodeJob('生成物理视角', function(){ return Promise.resolve(); }, "
+    + "{ kind: 'workflow', replay: { nodeIds: ['n1'], force: true } })");
+  if (!sqEval('_hasPendingSend()')) throw new Error('忙时排的活儿没进队列——又被拒绝了（用户报的症状）');
+  const raw = sqEval('JSON.stringify({ kind: _taskActive[0].kind, title: _taskActive[0].title,'
+    + ' state: _taskActive[0].state, replay: _taskActive[0].replay })');
+  const row = JSON.parse(raw);
+  if (row.state !== 'waiting') throw new Error('排队那条不是「等待中」：' + raw);
+  if (row.kind !== 'workflow') throw new Error('活儿种类没记下（面板上的「重试」会找错入口）：' + raw);
+  if (row.title !== '生成物理视角') throw new Error('标题没用活儿自己的名字：' + raw);
+  if (!row.replay || !row.replay.nodeIds || row.replay.nodeIds[0] !== 'n1' || row.replay.force !== true) {
+    throw new Error('replay 没记全（失败后重试会找不到地方重跑）：' + raw);
+  }
+  sqEval('isStreaming = false;');
+  await sqEval('_flushSendQueue()');
+  if (sqEval('_hasPendingSend()')) throw new Error('放行之后队列没清空——下一条永远轮不到');
+  sqEval('_taskActive = []; _taskHistory = [];');
+});
+
 // 静态半。这些护栏全删掉也不会让上面任何一条行为断言变红——只能靠读源码钉住。
 // 变异验证：把任一发送入口改回裸 `if (isStreaming…) return;`，或把 startQuestionWorkflow
 // 的判定改回只查 isStreaming，下面立刻红。
@@ -239,6 +262,78 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
   }
   if (/if \(typeof isStreaming !== 'undefined' && isStreaming\) return;/.test(wfBody)) {
     throw new Error('startQuestionWorkflow 又只查 isStreaming 了：工作流不碰这个标志位，守卫会失效');
+  }
+});
+
+// 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
+// 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
+// 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。
+// 这条守两件事：①六个节点生成入口忙时必须排队（不许再出现「稍候再…」的拒绝/置灰）；
+// ②switchToSession 不许再留裸 isStreaming 闸门，流式回答必须按会话寻址。
+// 变异验证：把任一入口改回拒绝式守卫、或把 switchToSession 的闸门加回去，下面立刻红。
+check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口收队、切画布不再被拦', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const grab = (file, name) => {
+    const src = fs.readFileSync('src/static/js/' + file, 'utf8');
+    const body = extract(src, name);
+    if (body === null) throw new Error('找不到函数 ' + name + '（' + file + '）——断言本身该更新了');
+    return body;
+  };
+  // ① 六个节点生成入口：统一忙碌判定 + 放行旁路 + 交给队列
+  const entries = [
+    ['graph-workflow.js', 'runWorkflowNode'],
+    ['graph-workflow.js', 'runWorkflowNodes'],
+    ['graph-workflow.js', 'runAllWorkflowNodes'],
+    ['graph-workflow.js', 'generateBlankNode'],
+    ['graph-interact.js', 'generateVizNode'],
+    ['graph-interact.js', 'submitRegenerateNode'],
+  ];
+  for (const [file, fn] of entries) {
+    const body = grab(file, fn);
+    if (!/_enqueueNodeJob\(/.test(body)) {
+      throw new Error(file + ' 的 ' + fn + ' 忙时没有排队（_enqueueNodeJob）——用户点了只得到一句拒绝，'
+        + '任务列表上也没有账（2026-10-11 用户报的核心症状）');
+    }
+    if (!/_isSendBusy\(\)/.test(body)) {
+      throw new Error(file + ' 的 ' + fn + ' 没用统一忙碌判定 _isSendBusy()——画布这条通道又变回形同虚设');
+    }
+    if (/if \(workflowRunActive\)/.test(body) || /if \(typeof isStreaming !== 'undefined' && isStreaming\)/.test(body)) {
+      throw new Error(file + ' 的 ' + fn + ' 又出现了「忙就拒绝」的老写法：忙时要排队，不是挡回去');
+    }
+  }
+  if (!/!fromQueue && typeof _isSendBusy/.test(grab('graph-workflow.js', 'runWorkflowNode'))) {
+    throw new Error('runWorkflowNode 的忙碌守卫缺 fromQueue 放行旁路：队列放行时会原地自我重入（T225 同型）');
+  }
+  // ② 切画布：switchToSession 不许再有裸 isStreaming 闸门；流式回答要自带来处
+  const sess = fs.readFileSync('src/static/js/session.js', 'utf8');
+  const switchBody = extract(sess, 'switchToSession');
+  if (switchBody === null) throw new Error('找不到 switchToSession——断言本身该更新了');
+  if (/if \(isStreaming\)[^)]*\) return;/.test(switchBody)) {
+    throw new Error('switchToSession 又有裸 isStreaming 闸门：生成中点侧栏会**静默**没反应'
+      + '（用户 2026-10-11 报的两个症状之一）');
+  }
+  if (!/function appendMessageToSession\(/.test(sess) || !/async function appendMessageToSession\(/.test(sess)) {
+    throw new Error('session.js 缺 appendMessageToSession——切走之后那条回答没有按会话寻址的落点');
+  }
+  const chat = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  if (!/sessionId: sourceSessionId/.test(chat)) {
+    throw new Error('chat.js 的 streamingAssistant 没记它属于哪张画布——切走之后会在别人画布上画出幽灵节点');
+  }
+  if (!/appendMessageToSession\(sourceSessionId/.test(chat)) {
+    throw new Error('chat.js 收尾没有按会话寻址落盘（appendMessageToSession）——回答会被写进用户后来切到的那张画布');
+  }
+  const graphSrc = fs.readFileSync('src/static/js/graph.js', 'utf8');
+  if (!/live\.sessionId !== sid/.test(graphSrc)) {
+    throw new Error('_getChatHistory 没按会话过滤在写的回答——别的画布上会出现幽灵节点');
   }
 });
 

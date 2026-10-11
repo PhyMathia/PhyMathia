@@ -11,7 +11,9 @@
 //   1) **任务自带来处**：创建时快照会话上下文（currentSessionId + 标题），运行期间不再
 //      现场读全局——切会话因此不会把产出写进别的画布（T59 的修复就落在这条上）。
 //   2) **一次只跑一个任务**：本文件不引入并发，只做账；排队与互斥仍由 send-queue.js 与
-//      workflowRunActive 把守。
+//      workflowRunActive 把守。**2026-10-11 补**：那台队列已从「只装发送」升格为装所有
+//      活儿的通用排队台（画布上的生成/重新生成也进队，见 send-queue.js 的 `_enqueueNodeJob`），
+//      本条语义没变——排队的活儿仍是等前一件跑完再跑。
 //   3) **暂停 = 软暂停**：不再派新节点，已经在跑的跑完（闸门在工作流调度口）。
 //
 // 落盘走服务端 kv 全局键 `tasks:global`，**不落 localStorage**——T53 记着「修改历史」已
@@ -457,6 +459,20 @@ async function _taskRegenerate(id) {
   // 放在工作流分支前面：两种 replay 互斥，谁在前都不会撞。
   if (replay && replay.nodeJob && replay.nodeJob.id) {
     const job = replay.nodeJob;
+    // viz / regen（2026-10-11 加）：可视化补生成、以及「没看懂」重生成。后者的要求
+    // 是用户当初手写的那句话，存在 replay.text 里——重试时原样再交回去。
+    if (job.kind === 'viz' || job.kind === 'regen') {
+      if (typeof _findGraphNode !== 'function' || !_findGraphNode(job.id)) {
+        if (typeof showToast === 'function') showToast('那个节点已经不在画布上了，没法重新生成');
+        return;
+      }
+      if (job.kind === 'viz') {
+        if (typeof window.generateVizNode === 'function') return window.generateVizNode(job.id);
+        return;
+      }
+      if (typeof window.regenNodeWith === 'function') return window.regenNodeWith(job.id, job.text || '');
+      return;
+    }
     const fn = job.kind === 'knowledge' ? window.generateKnowledgeNode
       : job.kind === 'relation' ? window.generateRelationNode
         : job.kind === 'blank' ? window.generateBlankNode

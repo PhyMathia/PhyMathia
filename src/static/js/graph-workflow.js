@@ -790,6 +790,13 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
       && _taskActiveCtx.taskId === taskId)
     ? Object.assign({ taskId }, _taskActiveCtx.runtime)
     : null;
+  // 排队中的那条任务（「提问」/节点生成）被这一轮接手了：**开跑前**就地结掉，面板上
+  // 从始至终只有一行活账（那条「等待中」直接变成这行的「进行中」）。2026-10-11 从
+  // finally 挪到这儿：留在 finally 的话整轮跑动期间面板上会吊着一条永远「等待中」的行，
+  // 用户以为它还没轮到。
+  if (meta && meta.handoffTaskId && typeof _taskFinish === 'function') {
+    _taskFinish(meta.handoffTaskId, 'done', '已交给工作流');
+  }
   _showWorkflowProgress(totalWork);
   let completed = false;
   try {
@@ -812,10 +819,8 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
         : ((userCancelled || userStopped) ? '有节点被停掉' : (completed ? '' : '有节点没跑完'));
       _tasksEndWorkflow(taskId, taskState, taskNote);
     }
-    // 排队中的「提问」被这一轮接手了：把那条等待任务就地结掉，别在面板上留两行
-    if (meta && meta.handoffTaskId && typeof _taskFinish === 'function') {
-      _taskFinish(meta.handoffTaskId, 'done', '已交给工作流');
-    }
+    // 排队那条任务的结账在开跑前已经做过（见上面 handoffTaskId 处）：放行它的队列
+    // 收尾那发 _taskFinish 找不到活账，自然空转，不会把这一轮的账搅乱。
     // 队列里还有东西时不报「工作流完成」：这轮完了但活儿没完，而且下一条马上
     // 自动开跑，完成卡片会跟新进度撞在一起（chat.js 的「回复完成」同此口径）。
     if (!wasAborted && completed && typeof notifyTaskCompleted === 'function'
@@ -837,39 +842,89 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   }
 }
 
-async function runWorkflowNode(nodeId, force = false) {
+// 单个节点的「生成/重新生成」。忙的时候不再拒绝，改成排队（2026-10-11）：
+// 用户把任务列表当"多任务排队台"用，点一下就该有回音——收进队列、面板上看得见、
+// 轮到它时自动切回这张画布跑起来。fromQueue 是放行旁路（同 sendMessage 的 force /
+// startQuestionWorkflow 的 fromQueue，见 send-queue.js 的 T225 注）。
+async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoffTaskId = null) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || node.busy) return;
-  // T58：工作流生成中再点单个节点的生成钮原先只是静默 return——补一句提示，
-  // 别让用户以为按钮失灵（排队语义只在发送链，这里语义是「不允许并行起跑」）
-  if (workflowRunActive) {
-    if (typeof showToast === 'function') showToast('工作流正在生成中，稍候再单独生成这个节点');
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    const capturedForce = !!force;
+    const label = '生成' + _workflowProgressLabel(node);
+    _enqueueNodeJob(label, function(taskId) {
+      // 轮到它时先看那颗节点还在不在（等待期间可能被删/被撤销）：不在就地把账结失败，
+      // 别让队列收尾顺手记成「已完成」
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      return runWorkflowNode(nodeId, capturedForce, true, taskId);
+    }, {
+      kind: 'workflow',
+      // 重试语义与工作流任务同型：记下要跑哪几颗，失败后能从面板上重跑
+      replay: { nodeIds: [nodeId], force: capturedForce },
+    });
     return;
   }
-  await _executeParallelWorkflow([nodeId], force, { title: '生成' + _workflowProgressLabel(node) });
+  await _executeParallelWorkflow([nodeId], force, {
+    title: '生成' + _workflowProgressLabel(node),
+    handoffTaskId,
+  });
 }
 
-async function runWorkflowNodes(nodeIds, force = false) {
-  if (workflowRunActive) return false;
-  const targets = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
+// 一组节点的重生成（任务列表「重试」走这里）。忙时同样收进队列，返回 true 表示
+// 「已经安排上了」——调用方（_taskRegenerate）靠它区分「排队了」与「节点没了」。
+async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, handoffTaskId = null) {
+  const ids = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
     const node = _findGraphNode(id);
     return node && node.messageIndex < 0 && !node.busy
       && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer');
   });
-  if (!targets.length) return false;
-  await _executeParallelWorkflow(targets, !!force, { title: '生成 ' + targets.length + ' 个节点' });
+  if (!ids.length) return false;
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    const capturedForce = !!force;
+    _enqueueNodeJob('生成 ' + ids.length + ' 个节点', function(taskId) {
+      return runWorkflowNodes(ids, capturedForce, true, taskId).then(function(ran) {
+        // 等待期间节点可能被删/被改动，轮到它时一颗都不剩：就地结失败，别记成「已完成」
+        if (ran === false && typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '节点已不在画布上');
+      });
+    }, {
+      kind: 'workflow',
+      replay: { nodeIds: ids.slice(), force: capturedForce },
+    });
+    return true;
+  }
+  await _executeParallelWorkflow(ids, !!force, { title: '生成 ' + ids.length + ' 个节点', handoffTaskId });
   return true;
 }
 
 async function runAllWorkflowNodes() {
-  if (workflowRunActive) return;
   // 防重跑：只运行空节点/依赖发生变化的节点，已生成且未变化的直接跳过
   const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary') && _workflowItemNeedsProgress(node));
   if (!targets.length) {
     if (typeof showToast === 'function') showToast('没有需要生成的模块/总结节点');
     return;
   }
-  await _executeParallelWorkflow(targets.map(node => node.id), false, { title: '全部生成' });
+  const ids = targets.map(node => node.id);
+  if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+    _enqueueNodeJob('全部生成', function(taskId) {
+      // 轮到它时重新筛一遍：刚才忙的那一轮可能已经把其中几颗干完了，别白重跑一遍
+      const pending = ids.filter(id => {
+        const node = _findGraphNode(id);
+        return node && !node.busy && _workflowItemNeedsProgress(node);
+      });
+      if (!pending.length) {
+        if (typeof _taskFinish === 'function') _taskFinish(taskId, 'done', '轮到它时已经没有要生成的节点了');
+        return;
+      }
+      return runWorkflowNodes(pending, false, true, taskId).then(function(ran) {
+        if (ran === false && typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '节点已不在画布上');
+      });
+    }, {
+      kind: 'workflow',
+      replay: { nodeIds: ids, force: false },
+    });
+    return;
+  }
+  await _executeParallelWorkflow(ids, false, { title: '全部生成' });
 }
 
 function stopWorkflowRun() {
@@ -959,14 +1014,23 @@ async function _streamBlankNodeResponse(resp, node) {
   _updateNodeTransforms();
 }
 
-async function generateBlankNode(nodeId) {
+async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'blank' || node.busy) return;
-  // T58 同款闸门：工作流跑着时不许再单独起一条生成（排队语义只在发送链）。
+  // 忙时排队（2026-10-11，同 runWorkflowNode）：过去这里是「工作流跑着就不许再起一条」的
+  // 硬闸，用户点了只得到一句「稍候再单独生成这个节点」。现在收进队列等着，轮到它时
+  // 队列把视图带回这张画布再跑——互斥仍然成立，只是把「拒绝」换成了「排队」。
   // 这道闸同时保住下面任务自带的 AbortController 不与工作流总闸共用——
   // 面板上的「停止」必须只掐这一条流，不能顺着共用 signal 把整轮工作流带走。
-  if (workflowRunActive) {
-    if (typeof showToast === 'function') showToast('工作流正在生成中，稍候再单独生成这个节点');
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    const label = '生成' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '空白节点');
+    _enqueueNodeJob(label, function(taskId) {
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      return generateBlankNode(nodeId, true, taskId);
+    }, {
+      kind: 'node',
+      replay: { nodeJob: { id: nodeId, kind: 'blank' } },
+    });
     return;
   }
   const input = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-blank-input');
@@ -999,6 +1063,8 @@ async function generateBlankNode(nodeId) {
   const taskId = (typeof _taskBeginNodeJob === 'function')
     ? _taskBeginNodeJob({ title: '生成' + meta.label, nodeId: nodeId, nodeKind: 'blank' })
     : null;
+  // 排队的那条任务被这笔真账接手：就地结掉，面板上不留两行（同「提问」的 handoffTaskId）
+  if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已交给生成');
   if (taskId && typeof _taskBindCancel === 'function') {
     _taskBindCancel(taskId, () => jobAbort.abort());
   }

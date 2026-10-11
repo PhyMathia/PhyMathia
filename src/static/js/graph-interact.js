@@ -931,11 +931,20 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
 
 const _generatingVizNodes = new Set();
 
-async function generateVizNode(nodeId) {
+// 生成交互可视化。忙时排队（2026-10-11）：过去这里直接挡回去（「正在生成回答，稍候再
+// 生成可视化」）——用户点了只得到一句拒绝。现在收进队列，轮到它时队列把视图切回这张画布。
+// 它自己那颗 AbortController 也接上了任务账：面板上的「停」掐得掉这条流（过去是一颗
+// 谁都不认领的 controller）。
+async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) {
   if (_generatingVizNodes.has(nodeId)) return;
-  // T58：生成中静默 return 观感等同按钮失灵——补提示
-  if (typeof isStreaming !== 'undefined' && isStreaming) {
-    if (typeof showToast === 'function') showToast('正在生成回答，稍候再生成可视化');
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    _enqueueNodeJob('生成可视化', function(taskId) {
+      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
+      return generateVizNode(nodeId, true, taskId);
+    }, {
+      kind: 'node',
+      replay: { nodeJob: { id: nodeId, kind: 'viz' } },
+    });
     return;
   }
   const node = _findGraphNode(nodeId);
@@ -944,9 +953,16 @@ async function generateVizNode(nodeId) {
   const message = messages[node.messageIndex];
   if (!message) return;
 
+  const jobAbort = new AbortController();
+  const taskId = (typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title: '生成可视化', nodeId: nodeId, nodeKind: 'viz' })
+    : null;
+  if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已交给生成');
+  if (taskId && typeof _taskBindCancel === 'function') _taskBindCancel(taskId, () => jobAbort.abort());
+
   _generatingVizNodes.add(nodeId);
   try {
-    const nextContent = await ensureVisualization(message.content || '', new AbortController().signal);
+    const nextContent = await ensureVisualization(message.content || '', jobAbort.signal);
     if (nextContent === message.content) {
       throw new Error('模型未返回完整 HTML 页面，请检查模型配置后重试');
     }
@@ -961,14 +977,25 @@ async function generateVizNode(nodeId) {
     if (typeof hideProgress === 'function') hideProgress();
     if (typeof window.setProgressTerminal === 'function') window.setProgressTerminal('可视化已生成');
     if (typeof showToast === 'function') showToast('交互可视化已生成');
+    if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
   } catch (err) {
+    const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
     console.warn('Generate visualization node failed:', err);
     if (typeof hideProgress === 'function') hideProgress();
-    if (typeof showToast === 'function') showToast('生成可视化失败：' + (err.message || err));
+    if (!aborted && typeof showToast === 'function') showToast('生成可视化失败：' + (err.message || err));
+    if (taskId && typeof _taskFinish === 'function') {
+      _taskFinish(taskId, aborted ? 'stopped' : 'error', aborted ? '已停止' : ((err && err.message) || '生成失败'));
+    }
   } finally {
     _generatingVizNodes.delete(nodeId);
   }
 }
+
+// 「没看懂」重生成的内核出口：任务列表的「重试」要按当初那句要求原样重跑（tasks.js 的
+// replay.nodeJob.kind==='regen'），而那时候面板早就没了——所以留一个不经 UI 的入口。
+window.regenNodeWith = function(nodeId, confusion) {
+  return _applyNodeRegenerate(nodeId, confusion);
+};
 
 function graphOpenRegenerate(nodeId) {
   const node = _findGraphNode(nodeId);
@@ -1004,23 +1031,23 @@ function closeRegeneratePanel(nodeId) {
   _updateNodeTransforms();
 }
 
-async function submitRegenerateNode(nodeId) {
-  const node = _findGraphNode(nodeId);
-  const el = graphInner?.querySelector('[data-node-id="' + nodeId + '"]');
-  const panel = el?.querySelector('.graph-regenerate-panel');
-  const input = panel?.querySelector('.graph-regenerate-input');
-  if (!node || !el || !panel || !input) return;
-  const confusion = input.value.trim();
-  if (!confusion) return;
-  const messages = _getChatHistory();
-  const message = messages[node.messageIndex];
-  if (!message) return;
+// 「没看懂 / 重新生成」的内核：只干这一件事，失败**抛出去**（调用方各自决定怎么
+// 提示、怎么记账）。从面板点的那条路在上面包一层错误显示；排队那条路由队列接住异常，
+// 面板上那条任务会自动标「失败」。
+// _regeneratingNodes 是这颗节点自己的忙态（T58「防并发重入」的正确口径）：
+// 过去画布把 `isStreaming`（别处的回答在生成）当成它的忙态、直接置灰按钮，等于把
+// 排队入口自己封了（2026-10-11 改：别处忙 → 排队；这颗自己忙 → 才置灰）。
+const _regeneratingNodes = new Set();
 
-  const buttons = panel.querySelectorAll('button');
-  buttons.forEach(btn => { btn.disabled = true; });
-  input.disabled = true;
-  panel.classList.add('busy');
+async function _applyNodeRegenerate(nodeId, confusion) {
+  if (_regeneratingNodes.has(nodeId)) return;
+  _regeneratingNodes.add(nodeId);
   try {
+    const node = _findGraphNode(nodeId);
+    if (!node || !(node.messageIndex >= 0)) throw new Error('节点已不在画布上');
+    const messages = _getChatHistory();
+    const message = messages[node.messageIndex];
+    if (!message) throw new Error('节点已不在画布上');
     const newContent = await _regenerateModuleContent(message, node.moduleKey, confusion);
     const updated = typeof window.updateChatHistoryMessage === 'function'
       ? window.updateChatHistoryMessage(message.timestamp, item => ({ ...item, content: newContent }))
@@ -1032,6 +1059,43 @@ async function submitRegenerateNode(nodeId) {
     }
     if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
     if (typeof renderCurrentChat === 'function') await renderCurrentChat();
+  } finally {
+    _regeneratingNodes.delete(nodeId);
+  }
+}
+
+async function submitRegenerateNode(nodeId) {
+  const node = _findGraphNode(nodeId);
+  const el = graphInner?.querySelector('[data-node-id="' + nodeId + '"]');
+  const panel = el?.querySelector('.graph-regenerate-panel');
+  const input = panel?.querySelector('.graph-regenerate-input');
+  if (!node || !el || !panel || !input) return;
+  const confusion = input.value.trim();
+  if (!confusion) return;
+  // 忙时排队（2026-10-11）：过去这条只在 isStreaming 时被按钮置灰挡住（工作流跑着反而
+  // 能并发写同一颗节点）。现在统一收进队列，轮到它时切回这张画布再跑。面板先收起来——
+  // 等待期间画布会重建好几次，那个 textarea 留不住；用户写的要求随队列带走。
+  if (typeof _isSendBusy === 'function' && _isSendBusy()) {
+    closeRegeneratePanel(nodeId);
+    const label = '重新生成' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '节点');
+    _enqueueNodeJob(label, function() {
+      return _applyNodeRegenerate(nodeId, confusion);
+    }, {
+      kind: 'node',
+      replay: { nodeJob: { id: nodeId, kind: 'regen', text: confusion } },
+    });
+    return;
+  }
+  const messages = _getChatHistory();
+  const message = messages[node.messageIndex];
+  if (!message) return;
+
+  const buttons = panel.querySelectorAll('button');
+  buttons.forEach(btn => { btn.disabled = true; });
+  input.disabled = true;
+  panel.classList.add('busy');
+  try {
+    await _applyNodeRegenerate(nodeId, confusion);
   } catch (err) {
     console.warn('Regenerate module failed:', err);
     const errorEl = panel.querySelector('.graph-regenerate-error');

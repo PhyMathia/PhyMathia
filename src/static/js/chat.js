@@ -321,10 +321,15 @@
       }
       chatHistory.push(userMessage);
       await saveCurrentSession();
-      if (sourceSessionId !== currentSessionId) return;
+      // 2026-10-11：这里过去是 `if (sourceSessionId !== currentSessionId) return;`——
+      // 「你切画布了，这轮就算了」。现在生成中允许切画布（switchToSession 不再拦），
+      // 所以改成**自带来处**：这条流写回 sourceSessionId 那张画布，用户切到哪儿都不影响它。
+      // renderGraphCanvas 也照旧发——画布按会话取消息，别的画布不会看见这条未完的回答
+      // （_getChatHistory 按 streamingAssistant.sessionId 过滤）。
 
       if (typeof window.renderGraphCanvas === 'function') window.renderGraphCanvas();
-      streamingAssistant = { role: 'assistant', content: '', timestamp: Date.now(), ...branchMeta };
+      // sessionId 记的是这条流**属于哪张画布**：画布渲染据此决定要不要把它当幽灵节点画出来
+      streamingAssistant = { role: 'assistant', content: '', timestamp: Date.now(), sessionId: sourceSessionId, ...branchMeta };
 
       if (stopBtn) stopBtn.disabled = false;
       _syncProgressMiniButtons(true);
@@ -486,18 +491,32 @@
             assistantMeta.branch = 'socratic';
             assistantMeta.branchId = assistantMeta.branchId || currentBranchId;
           }
-          chatHistory.push({
+          // 2026-10-11：**按会话寻址**地落这条回答。用户可能在生成期间切到别的画布上去了
+          // （switchToSession 现在不拦），直接 chatHistory.push 会把回答写进别人家的画布——
+          // 那正是过去拿 isStreaming 锁住切画布的原因。appendMessageToSession 在
+          // 「还在原来那张」时走内存数组，切走了就按会话读—追—存（session.js）。
+          const assistantMessage = {
             role: 'assistant',
             content: assistantContent,
             timestamp: ts,
             duration,
             ...assistantMeta,
-          });
+          };
+          const stillHere = sourceSessionId === currentSessionId;
+          if (typeof appendMessageToSession === 'function') {
+            await appendMessageToSession(sourceSessionId, assistantMessage);
+          } else if (stillHere) {
+            // 兜底只兜「还在原来那张」：宁可不写，也不把回答塞进别人家的画布
+            chatHistory.push(assistantMessage);
+          }
 
           // 交互可视化缺失时后台补齐：先保存/展示主回答，模型生成完成后原地回填。
           // （stage2 源码审计按字符串定位本回调与 sourceSessionId/originatingAssistant
           // 两行，改结构前先看 scripts/review_stage2_frontend.mjs 的 F 审计段）
           if (typeof scheduleVisualizationInBackground === 'function') {
+            // 形态别改（F 段按字符串钉着这一行）：stillHere 时它刚被 appendMessageToSession
+            // 推进 chatHistory 末尾；人已切走（stillHere=false）时这发回调会立刻早退
+            // （currentSessionId 已不等于 sourceSessionId），这个绑定压根用不到。
             const originatingAssistant = chatHistory[chatHistory.length - 1];
             scheduleVisualizationInBackground(assistantContent, (updatedContent) => {
               try {
@@ -527,20 +546,31 @@
                 title: (qm && qm[1] ? qm[1].trim() : '') || '苏格拉底追问',
                 question: (qm && qm[1] ? qm[1].trim() : '') || '',
                 correct: socraticMetaMatch[1].toLowerCase() === 'correct',
-                sessionId: (typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID) || '',
+                // 记录也按会话寻址：这条回答属于 sourceSessionId，不是用户现在看的那张
+                sessionId: sourceSessionId || ((typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID) || ''),
                 level: lm ? lm[1] : '',
               });
             }
           }
 
           // 先生成本地知识条目，消息上传继续在后台进行。
+          // 知识也必须记在**它自己那张画布**上：切走之后若还按当前会话写，这条概念会
+          // 出现在用户后来切到的那张画布的知识库里（而正文根本不在那儿）。
           _setProgress(98, '正在提取知识');
-          autoExtractKnowledge(currentSessionId, chatHistory);
+          if (stillHere) {
+            autoExtractKnowledge(sourceSessionId, chatHistory);
+          } else if (typeof appendMessageToSession === 'function') {
+            // 已由 appendMessageToSession 落盘；知识提取按该会话自己的那份消息跑
+            autoExtractKnowledge(sourceSessionId, loadSessionMessages(sourceSessionId));
+          }
 
-          await saveCurrentSession();
+          if (stillHere) await saveCurrentSession();
           // T205：这里已把流式补丁态同步成终态（chatHistory 刚落完整回答、streamingAssistant
-          // 已置 null，_getChatHistory 两次输入相同），记标志让 finally 跳过重复的那发
-          if (typeof window.renderGraphCanvas === 'function') { window.renderGraphCanvas(); canvasRenderedThisRound = true; }
+          // 已置 null，_getChatHistory 两次输入相同），记标志让 finally 跳过重复的那发。
+          // stillHere（2026-10-11）：人已经切到别的画布上时就别拿这条回答去重建人家的画布了，
+          // 让 finally 照常兜底那一次即可；这一行连写两句的格式被冒烟脚本按字符串钉着
+          // （scripts/frontend_smoke/serial-canvas-answer.mjs 的 T205 契约），别拆行。
+          if (stillHere && typeof window.renderGraphCanvas === 'function') { window.renderGraphCanvas(); canvasRenderedThisRound = true; }
           renderSessionList(); // 更新侧边栏时间显示
           // 队列里还有东西时不弹「完成」：这一轮只是**这一轮**完了，活儿没干完，
           // 弹完成卡片是骗人，而且下一条马上自动发出去，卡片会跟新进度撞在一起。
@@ -565,15 +595,21 @@
               assistantMeta.branch = 'socratic';
               assistantMeta.branchId = assistantMeta.branchId || currentBranchId;
             }
-            chatHistory.push({
+            // 中止时留下的半截回答同样按会话寻址（用户可能已经切到别的画布上按的停止）
+            const abortedMessage = {
               role: 'assistant',
               content: assistantContent,
               timestamp: ts,
               duration: progressStartTime ? (Date.now() - progressStartTime) : null,
               aborted: true,
               ...assistantMeta,
-            });
-            await saveCurrentSession();
+            };
+            if (sourceSessionId === currentSessionId) {
+              chatHistory.push(abortedMessage);
+              await saveCurrentSession();
+            } else if (typeof appendMessageToSession === 'function') {
+              await appendMessageToSession(sourceSessionId, abortedMessage);
+            }
           }
         } else {
           console.error('Chat error:', err);

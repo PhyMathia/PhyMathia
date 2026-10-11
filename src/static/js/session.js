@@ -372,8 +372,11 @@
         // 它，服务端闸门虽能拦，本地却会白写一轮），拉取的旧快照同理
         if (_sessionDeletionBusy) return;
         // 流式生成期间不推不拉：此时 assistant 消息尚未完整入 history，
-        // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染
-        if (isStreaming) return;
+        // 推送会把"只有 user 消息"的半截状态写上服务端；拉取刷新则会打断渲染。
+        // 2026-10-11：生成中允许切画布之后，这条只该管「这条流正写在眼前这张画布上」——
+        // 流还在别的画布上写、人已经在这张上干活时，照推照拉（否则用户在这张画布上
+        // 一干几分钟都不同步，跨标签页的改动也看不见）。
+        if (isStreaming && _streamingSessionId() === currentSessionId) return;
         // 只读查阅（P3）：拉取照旧（保持对方数据的实时视图），推送跳过
         if (!phyIsReadonly() && currentSessionId && chatHistory.length > 0) {
           // T203：与最近一次成功推送逐字节一致就跳过——显式保存链
@@ -756,9 +759,21 @@
     }
 
     // 切换到指定会话
+    //
+    // 2026-10-11（用户：「一个画布正在生成的时候不能切换画布」）：这里过去是
+    // `if (isStreaming) return;` 两道**静默**闸门——生成中点侧栏等于按钮失灵，
+    // 不提示、不置灰、不留痕（与 T42 报告的症状同一类）。现在生成中照切：
+    //   · 在途回答**自带来处**（chat.js 捕获 sourceSessionId + streamingAssistant.sessionId），
+    //     写完照样落回它自己那张画布，切走只是「你现在看哪张」变了（同工作流 T59 的口径）；
+    //   · 队列里的待发送**不跟着切会话丢弃**（每条队列项自带会话，轮到它时把视图带回去）。
+    // 唯一的例外仍是：切走时要把当前画布的消息存好——这是保存，不是拦截。
     async function switchToSession(id) {
-      if (isStreaming) return;
       if (!sessions[id]) return;
+      if (id === currentSessionId) return;
+      // 生成中切走时说明一句：那条还在写、写回的是原来那张画布（不说的话用户会
+      // 以为它断了，或者以为产出会落在眼前这张上）
+      const leavingWithStream = (typeof isStreaming !== 'undefined' && isStreaming)
+        && (typeof _streamingSessionId === 'function' && _streamingSessionId() === currentSessionId);
 
       // 保存当前会话的消息
       if (currentSessionId && sessions[currentSessionId]) {
@@ -768,11 +783,9 @@
         saveSessions();
       }
 
-      // 保存期间可能已开始发送，不能再切换到另一份聊天历史。
-      if (isStreaming) return;
-      // 队列里的待发送**不再跟着切会话一起丢弃**（2026-09-27 任务列表）：每条队列项
-      // 创建时就记下了自己的会话（send-queue.js），轮到它时会把视图带回去再发，
-      // 所以切走这件事不再会把它发错画布，也没有理由再把它扔掉。
+      // 保存期间用户又点了另一张画布：以最后一次点击为准的前提是这次已经切过去了——
+      // 若期间已经被切到别处（id 不再是目标），这次就作废，别再抢回视图
+      if (currentSessionId === id) return;
       // 切换
       setCurrentSessionId(id);
       // T78：被切到的画布 updatedAt 必须压过刚切走那颗（切走路径已把旧画布 bump）——
@@ -789,6 +802,46 @@
       // insertAdjacentHTML + 整图 KaTeX 跑两遍，实测 18 节点画布白烧 ~30-60ms
       renderCurrentChat();
       renderSessionList();
+      if (leavingWithStream && typeof showToast === 'function') {
+        showToast('这轮回答还在写，会落回刚才那张画布', TOAST_MS_LONG);
+      }
+    }
+
+    // 这一轮流式回答写在哪张画布上（没在生成时为空串）。chat.js 在开跑前记下它，
+    // 收尾时按它把回答写回去；session 这边只读来判定「切走要不要提示」。
+    function _streamingSessionId() {
+      if (typeof window.getStreamingAssistant !== 'function') return '';
+      const live = window.getStreamingAssistant();
+      return (live && live.sessionId) || '';
+    }
+
+    // 把一条消息写进**指定会话**（用户可能已经切到别的画布上去了）。
+    // 为什么不能直接 chatHistory.push + saveCurrentSession：chatHistory 是「当前画布」
+    // 的数组，切会话时被整体换掉（switchToSession 里那句赋值），所以流式回答写到一半
+    // 用户切走之后，再 push 就落到别人家的画布上了——这正是过去拿 isStreaming 拦住
+    // 切画布的原因。现在按会话寻址：当前就在这张画布上就走内存数组，切走了就
+    // 读—追—存（switchToSession 切走前已经把这边的消息存过一轮，不会丢东西）。
+    async function appendMessageToSession(sessionId, message) {
+      if (!sessionId || !message) return false;
+      if (sessionId === currentSessionId) {
+        chatHistory.push(message);
+        await saveCurrentSession();
+        return true;
+      }
+      if (!sessions[sessionId]) return false;   // 画布被删了：就地丢弃，绝不写进别的画布
+      const hist = loadSessionMessages(sessionId);
+      hist.push(message);
+      await saveSessionMessages(sessionId, hist);
+      sessions[sessionId].updatedAt = Date.now();
+      // 自动标题照旧（_maybeAutoTitleSession 读的是当前会话的 chatHistory，这里要按
+      // 目标会话自己的那份判，不能借它）
+      const s = sessions[sessionId];
+      if (s && (!s.title || ['新对话', '新画布', '未命名对话', '未命名画布'].includes(s.title))) {
+        const firstUser = hist.find(m => m.role === 'user');
+        if (firstUser) s.title = String(firstUser.content || '').substring(0, 30) + (String(firstUser.content || '').length > 30 ? '...' : '');
+      }
+      saveSessions();
+      return true;
     }
 
     // 单个画布的删除内核（单删与多选批量共用同一条路径，清理口径不分叉）：
