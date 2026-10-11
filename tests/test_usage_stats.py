@@ -309,5 +309,66 @@ class SummarizeTest(UsageStatsBase):
         self.assertEqual(len(usage_stats.summarize(days=7, records=500)["records"]), 1)
 
 
+class ReadCacheTest(UsageStatsBase):
+    """T200 读缓存（平移 T209 文件指纹法）：指纹未变的重复汇总零重读、
+    追加（指纹失配）后立即反映。用 read_text 计数桩观察实际 IO 次数。"""
+
+    def _write(self, day, entries):
+        usage_stats.USAGE_DIR.mkdir(parents=True, exist_ok=True)
+        path = usage_stats.USAGE_DIR / f"{day}.jsonl"
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+
+    def test_repeat_summarize_hits_cache_and_append_invalidates(self):
+        from unittest import mock
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "a", "sessionId": "",
+             "prompt_tokens": 10, "completion_tokens": 1, "cache_hit_tokens": None},
+        ])
+        path = usage_stats.USAGE_DIR / f"{today}.jsonl"
+        real_read_text = Path.read_text
+        with mock.patch.object(Path, "read_text", autospec=True, side_effect=real_read_text) as rt:
+            out1 = usage_stats.summarize(days=30)
+            self.assertEqual(out1["total"]["requests"], 1)
+            self.assertEqual(rt.call_count, 1)            # 首读恰好落盘一次
+            out2 = usage_stats.summarize(days=30)         # 指纹未变：零重读
+            self.assertEqual(rt.call_count, 1)
+            self.assertEqual(out2["total"]["requests"], 1)
+            with path.open("a", encoding="utf-8") as f:   # 追加→指纹失配→恰好重读一次
+                f.write(json.dumps({"ts": "t", "kind": "chat", "provider": "p", "model": "a",
+                                    "sessionId": "", "prompt_tokens": 5, "completion_tokens": 1,
+                                    "cache_hit_tokens": None}, ensure_ascii=False) + "\n")
+            out3 = usage_stats.summarize(days=30)
+            self.assertEqual(rt.call_count, 2)
+            self.assertEqual(out3["total"]["requests"], 2)
+
+    def test_corrupt_lines_skipped_consistently_across_cache(self):
+        # 坏行口径走缓存前后一致：坏行不计数、不进缓存条目
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": "t", "kind": "chat", "provider": "p", "model": "a", "sessionId": "",
+             "prompt_tokens": 10, "completion_tokens": 1, "cache_hit_tokens": None},
+        ])
+        path = usage_stats.USAGE_DIR / f"{today}.jsonl"
+        path.write_text(path.read_text(encoding="utf-8") + "{broken json}\n", encoding="utf-8")
+        first = usage_stats.summarize(days=30)
+        second = usage_stats.summarize(days=30)
+        self.assertEqual(first["total"]["requests"], 1)
+        self.assertEqual(second["total"]["requests"], 1)
+
+    def test_shared_entries_not_mutated_by_records_view(self):
+        # 明细卡（records>0）从缓存条目取值建新 dict：缓存本体绝不就地改
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": "t1", "kind": "chat", "provider": "p", "model": "a", "sessionId": "s1",
+             "prompt_tokens": 10, "completion_tokens": 1, "cache_hit_tokens": None},
+        ])
+        out = usage_stats.summarize(days=30, records=5)
+        self.assertEqual(out["records"][0]["ts"], "t1")
+        out["records"][0]["ts"] = "tampered"
+        again = usage_stats.summarize(days=30, records=5)
+        self.assertEqual(again["records"][0]["ts"], "t1")
+
+
 if __name__ == "__main__":
     unittest.main()

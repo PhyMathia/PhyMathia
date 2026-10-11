@@ -1,6 +1,6 @@
-import { build, transform } from 'esbuild';
+import { transform } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -95,23 +95,42 @@ const entries = [
   'quiz-relearn.js',
 ];
 
+// ===== 漏注册守卫（T215）：entries 是手工维护的有序名单，js/ 新增源文件忘登记时
+// 构建静默跳过——文件「看起来在」却根本没进包，线上行为与源码对不上还没报错。
+// 这里强扫目录：目录里每个 .js 必须在 entries、或属 viewer 家族（build_viewer.mjs
+// 自己的名单与产物）、或在下方豁免清单里，否则硬失败并列出名单。
+const nonAppEntries = new Set([
+  'app.js',          // 本脚本的构建产物
+  'viewer.js',       // build_viewer.mjs 的构建产物
+  'viewer-main.js',  // viewer 家族源文件（归 build_viewer.mjs 的 entries 管）
+  'viewer-shims.js',
+]);
+const onDisk = (await readdir(jsDir)).filter(function (f) { return f.endsWith('.js'); });
+const unregistered = onDisk.filter(function (f) { return !entries.includes(f) && !nonAppEntries.has(f); });
+if (unregistered.length) {
+  console.error(`[build_frontend] js/ 发现未登记源文件（不会进 app.js 包，属漏注册）: ${unregistered.join(', ')}`);
+  console.error('[build_frontend] 在本文件 entries 数组登记；确认属 viewer 家族则加进 nonAppEntries 豁免。');
+  process.exit(1);
+}
+
+// 逐文件压缩改走 transform（T215）：bundle:false 本就没有模块解析，纯字符串压缩，
+// build() 的入口点解析与选项装配全是白付的；全部文件并发跑（esbuild JS API 的服务
+// 进程自动复用）。产物与 build() 实现逐字节一致（同 esbuild 版本），?v= 哈希不受影响。
+const results = await Promise.all(entries.map(async function (file) {
+  try {
+    const entry = resolve(jsDir, file);
+    const source = await readFile(entry, 'utf8');
+    const result = await transform(source, { minify: true, legalComments: 'none', charset: 'utf8' });
+    return { file, source, code: result.code.trim() };
+  } catch (e) {
+    throw new Error(`[build_frontend] ${file} 压缩失败: ${e.message}`);
+  }
+}));
 const chunks = [];
 let totalIn = 0;
-for (const file of entries) {
-  const entry = resolve(jsDir, file);
-  const source = await readFile(entry, 'utf8');
-  totalIn += Buffer.byteLength(source);
-  const result = await build({
-    entryPoints: [entry],
-    bundle: false,
-    minify: true,
-    legalComments: 'none',
-    charset: 'utf8',
-    write: false,
-    logLevel: 'silent',
-  });
-  const code = result.outputFiles[0].text.trim();
-  chunks.push(`/* ${file} */\n${code}`);
+for (const r of results) {
+  totalIn += Buffer.byteLength(r.source);
+  chunks.push(`/* ${r.file} */\n${r.code}`);
 }
 
 const bundle = chunks.join('\n;\n') + '\n';

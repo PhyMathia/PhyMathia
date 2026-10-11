@@ -190,6 +190,51 @@ def _agg_finalize(bucket):
     return out
 
 
+# ===== 读缓存（T200，平移 T209 的文件指纹法）：summarize 过去每次调用全量重扫——
+# 逐文件 read_text + 逐行 json.loads，历史文件内容永不变化也得陪跑，用量面板每开
+# 一次付一次。按「文件指纹 (mtime_ns, size)」缓存整份解析结果：指纹未变的重复读取
+# 零 IO（历史文件天然全命中），只有当天在追加的文件失配重读。LRU 上限防长驻进程
+# 把读过的文件全留在内存；entries 是缓存共享 dict，调用方只读、绝不就地改。
+_USAGE_CACHE_MAX_FILES = 32
+_usage_cache: dict = {}   # str(path) -> {"key": (mtime_ns, size), "entries": [entry, ...]}
+
+
+def _load_day_entries(path: Path) -> list:
+    """带缓存的整文件解析 → [entry_dict]。坏行/空行/非 dict 行跳过（与从前逐行
+    扫描同口径）；读不到（含文件消失）返回 [] 并顺手清掉该路径的缓存。"""
+    strpath = str(path)
+    try:
+        st = path.stat()
+    except OSError:
+        _usage_cache.pop(strpath, None)
+        return []
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _usage_cache.get(strpath)
+    if hit and hit["key"] == key:
+        _usage_cache[strpath] = _usage_cache.pop(strpath)   # LRU：命中挪到队尾
+        return hit["entries"]
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        _usage_cache.pop(strpath, None)
+        return []
+    entries: list = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    _usage_cache[strpath] = {"key": key, "entries": entries}
+    if len(_usage_cache) > _USAGE_CACHE_MAX_FILES:
+        _usage_cache.pop(next(iter(_usage_cache)))
+    return entries
+
+
 def summarize(days=30, records=0):
     """读最近 N 天的 JSONL，返回按天/按模型/按用途/总体的汇总。
 
@@ -230,20 +275,7 @@ def summarize(days=30, records=0):
         day = path.stem
         if day < cutoff:
             continue
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(entry, dict):
-                continue
+        for entry in _load_day_entries(path):
             day_bucket = by_day.setdefault(day, _agg_bucket())
             model = str(entry.get("model") or "unknown")
             kind = str(entry.get("kind") or "unknown")

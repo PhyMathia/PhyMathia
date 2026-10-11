@@ -33,6 +33,7 @@
 //   load-order             首屏脚本加载契约（T208：app.js defer 与 appVersion 内联脚本时序的静态守卫）
 //   storage-fetch           会话存储层 fetch 超时契约（T237：session.js 每处 fetch 必带 AbortSignal.timeout 的静态守卫）
 //   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
+//   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -60,6 +61,7 @@ import { run as _token_usage } from './frontend_smoke/token-usage.mjs';
 import { run as _load_order } from './frontend_smoke/load-order.mjs';
 import { run as _storage_fetch } from './frontend_smoke/storage-fetch.mjs';
 import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
+import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
 
 _recipes();
 _phi();
@@ -87,4 +89,5 @@ await _token_usage();
 _load_order();
 _storage_fetch();
 await _graph_busy_sweep();
+await _graph_mirror_slim();
 await finish();

@@ -329,18 +329,38 @@ function _persistGraphHistory() {
     s = JSON.stringify(slim.slice(-keep));
   }
   safeLocalStorageSet(_graphHistoryKey(sid), s);
-  // 硬盘保险：全量（不截断）镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。
-  // 本地配额满或被截断时服务端是完整副本，换设备/清浏览器数据也能从存档读回。
+  // 硬盘保险：镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。本地配额满
+  // 或被截断时服务端是更宽的存档窗口（体量治理见下节：最新窗口全量＋更老占位），
+  // 换设备/清浏览器数据也能从存档读回整个撤销窗口。
   _scheduleGraphHistoryMirror(sid, slim);
 }
 
 // ===== 探索网历史的服务端镜像（图历史上限 30 步撤销是既有设计，这里只保存储安全） =====
+// 体量治理（T212，平移 T209 的「只减重、绝不删条目」口径）：镜像原本无上限——
+// 本地 30 步/1.5MB 截断后服务端仍全量照收，且撤销栈采纳更长的服务端存档后长度
+// 只升不降（棘轮），用久了又占盘又拖慢每次防抖写。改法：最新 _GRAPH_HISTORY_MIRROR_KEEP
+// 条保全量（存档窗口，宽于本地截断上限），更老的原位换成 pruned 占位（sessionId/meta
+// 保留、条数与顺序不动——_upgradeGraphHistoryFromServer「更长才采纳」契约不受影响）；
+// 读回 hydrate 天然丢弃无 state 的占位，等价回落到「只留撤销窗口」语义，存量棘轮
+// 在下次读回时自然泄掉。减重只发生在镜像序列化这一条路径上，内存栈与 localStorage
+// 形状原样。
+const _GRAPH_HISTORY_MIRROR_KEEP = 60;
+
+function _graphHistoryMirrorSlim(arr) {
+  if (!Array.isArray(arr) || arr.length <= _GRAPH_HISTORY_MIRROR_KEEP) return arr;
+  const cut = arr.length - _GRAPH_HISTORY_MIRROR_KEEP;
+  return arr.map(function (x, i) {
+    if (i >= cut || !x || x.pruned) return x;
+    return { sessionId: x.sessionId, meta: x.meta || null, pruned: true };
+  });
+}
+
 let _graphHistoryMirrorTimer = null;
 let _graphHistoryMirrorPending = null;
 
 function _scheduleGraphHistoryMirror(sid, arr) {
   if (!sid || !arr.length) return;
-  _graphHistoryMirrorPending = { sid: sid, value: arr };
+  _graphHistoryMirrorPending = { sid: sid, value: _graphHistoryMirrorSlim(arr) };
   if (_graphHistoryMirrorTimer) clearTimeout(_graphHistoryMirrorTimer);
   _graphHistoryMirrorTimer = setTimeout(_flushGraphHistoryMirror, 800);
 }
