@@ -67,6 +67,10 @@ function _collectLocalBackup() {
   const rawModels = _safeParseJSON(localStorage.getItem('phymathia_user_models'), []);
   const userModels = Array.isArray(rawModels) ? rawModels.map(m => ({ ...m, apiKey: '' })) : [];
   const activeModels = _safeParseJSON(localStorage.getItem('phymathia_active_models'), {});
+  // T284：组密钥一并入快照（与既有条目 apiKey 抹空口径不同——组密钥是备份里
+  // 唯一能原地恢复的密钥通道，缺失它「恢复备份＝组密钥全空」无解；快照本就
+  // 明文含全部对话，密钥的边际暴露一致。要收紧时与 apiKey 抹空一起收）
+  const modelGroupKeys = _safeParseJSON(localStorage.getItem('phymathia_model_group_keys'), {});
   const formulas = (typeof getFormulaCache === 'function' ? getFormulaCache() : {}) || {};
   return {
     sessions,
@@ -79,6 +83,7 @@ function _collectLocalBackup() {
     quizBank: _safeParseJSON(localStorage.getItem('phymathia_quiz_bank'), null),
     userModels,
     activeModels,
+    modelGroupKeys,
     currentSession: localStorage.getItem('phymathia_current_session') || '',
     level: localStorage.getItem('phymathia_level') || 'university',
     theme: _getInitialTheme(),
@@ -207,6 +212,11 @@ function _applyLocalSettings(data) {
       return m;
     });
     localStorage.setItem('phymathia_user_models', JSON.stringify(merged));
+    // T284：先把合并后的列表拉进内存，再恢复组密钥（importModelGroupKeys→
+    // saveGroupKey 会把组密钥同步进组内条目并走统一保存出口；replace 模式刚清过
+    // 存储，reload 保证内存与磁盘同源）
+    if (typeof reloadModelsFromStorage === 'function') reloadModelsFromStorage();
+    if (typeof importModelGroupKeys === 'function') importModelGroupKeys(data.modelGroupKeys);
   }
   if (data.activeModels && typeof data.activeModels === 'object') localStorage.setItem('phymathia_active_models', JSON.stringify(data.activeModels));
   const quizStats = data.quizStats && typeof data.quizStats === 'object'
@@ -215,6 +225,11 @@ function _applyLocalSettings(data) {
   if (quizStats && typeof quizStats === 'object') localStorage.setItem('phymathia_quiz_stats', JSON.stringify(quizStats));
   const quizBank = data.quizBank || (data.kv && data.kv['phymathia_quiz_bank']) || null;
   if (quizBank && typeof quizBank === 'object') localStorage.setItem('phymathia_quiz_bank', JSON.stringify(quizBank));
+  // T284：导入绕过 save* 直写 localStorage——内存拉回最新后整包推服务端；
+  // importData 在刷新前还会 await flushModelsSync 兜底（乐观同步戳已随
+  // scheduleModelsSync 落地，即使这里没推成，刷新后也按「本地较新→补传」收敛）
+  if (typeof reloadModelsFromStorage === 'function') reloadModelsFromStorage();
+  if (typeof scheduleModelsSync === 'function') scheduleModelsSync(0);
 }
 
 function _applyLocalBackup(data, replace) {
@@ -359,6 +374,9 @@ async function importData(event) {
       if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
       if (typeof setFormulaCache === 'function') setFormulaCache(_safeParseJSON(localStorage.getItem('phymathia_formulas'), {}));
       updateDataStats();
+      // T284：把导入后的模型配置先推到服务端再刷新（推送失败也无碍——乐观同步戳
+      // 在 scheduleModelsSync 时已落地，刷新后按「本地较新→补传」收敛）
+      if (typeof flushModelsSync === 'function') { try { await flushModelsSync(); } catch (e) {} }
       alert('数据导入成功！页面即将刷新。');
       location.reload();
     } catch (err) {

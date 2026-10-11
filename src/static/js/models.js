@@ -287,7 +287,22 @@ function saveGroupKey(provider, key) {
     }
   }
   if (changed) saveUserModels();
+  else scheduleModelsSync(); // 只动了组密钥、条目没变也要上传（saveUserModels 里已含镜像写入）
   _refreshGroupKeyBadges(provider);
+}
+
+// 备份导入通道（ui-backup.js 调用）：合并组密钥——本地仍持有的组密钥优先
+// （与导入时 apiKey 合并同口径），缺失的组从备份补入；saveGroupKey 顺带把组密钥
+// 同步到组内条目并走统一保存出口。按 localStorage 判「本地仍持有」，replace 模式
+// 清过存储后内存已被 reloadModelsFromStorage 拉空，两处口径一致。
+function importModelGroupKeys(incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem(MODEL_GROUP_KEYS_STORAGE) || '{}') || {}; } catch (e) {}
+  for (const [provider, key] of Object.entries(incoming)) {
+    if (typeof key !== 'string' || !key) continue;
+    if (!stored[provider]) saveGroupKey(provider, key);
+  }
 }
 
 // 输入过程中就地刷新组内条目的密钥徽标——不重建 DOM（会丢输入框焦点），
@@ -377,7 +392,150 @@ function loadUserModels() {
 }
 
 function saveUserModels() {
-  localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(userModelConfigs));
+  try { localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(userModelConfigs)); } catch (e) {}
+  scheduleModelsSync();
+}
+
+// ====== 模型配置服务端同步（T284，2026-10-11） ======
+// 真相源＝服务端按账号落盘的 models.json（GET/POST /api/models/config，整包读写）；
+// localStorage 镜像只当缓存与离线兜底。此前配置只存浏览器——换端口/换主机名打开、
+// 清浏览器数据、无痕窗口、多账号切命名空间，任一事件都表现为「配置全丢」（用户实报）。
+// 冲突解决＝服务端 updatedAt 新盖旧（时间戳由服务端打，不信客户端时钟）。
+// 剩余已知竞态（刻意接受）：两个标签页同时编辑，后上传者整体覆盖——挂起未上传时
+// visibilitychange 拉取会跳过，正常「切走再切回」即对齐。
+const MODELS_CONFIG_SYNC_PATH = '/api/models/config';
+const MODELS_SYNCED_AT_KEY = 'phymathia_models_synced_at';
+let _modelsSyncTimer = null;
+let _modelsSyncInflight = false;
+let _modelsDirtyAfterInflight = false;
+let _modelsSyncedAt = 0; // 服务端最后确认的 updatedAt（上传成功或采纳服务端时推进）
+
+// 纯函数（冒烟直测）：给定服务端时间戳与本地状态，决定同步动作。
+// serverTs<=0＝服务端还没有存档：本地有数据就整体上传（首启迁移／服务端存档丢失自愈）。
+function _modelsSyncAction(serverTs, localTs, localHas) {
+  if (!(serverTs > 0)) return localHas ? 'push' : 'none';
+  if (!localHas) return 'adopt';
+  return serverTs >= localTs ? 'adopt' : 'push';
+}
+
+function _localModelsHasAny() {
+  return userModelConfigs.length > 0
+    || Object.keys(modelGroupKeys).some(k => modelGroupKeys[k])
+    || Object.keys(activeModels).some(k => activeModels[k]);
+}
+
+function _modelsSyncBlob() {
+  return { userModels: userModelConfigs, modelGroupKeys: modelGroupKeys, activeModels: activeModels };
+}
+
+// 服务端 blob → 内存＋本地镜像。返回是否采纳（调用方负责按需重渲染）。
+function _adoptModelsConfig(blob) {
+  if (!blob || typeof blob !== 'object') return false;
+  if (Array.isArray(blob.userModels)) userModelConfigs = blob.userModels.filter(m => m && typeof m === 'object');
+  if (blob.modelGroupKeys && typeof blob.modelGroupKeys === 'object') modelGroupKeys = { ...blob.modelGroupKeys };
+  if (blob.activeModels && typeof blob.activeModels === 'object') activeModels = { ...blob.activeModels };
+  try {
+    localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(userModelConfigs));
+    localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys));
+    localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  } catch (e) {}
+  return true;
+}
+
+function _stampSynced(ts) {
+  _modelsSyncedAt = Number(ts) || 0;
+  try { localStorage.setItem(MODELS_SYNCED_AT_KEY, String(_modelsSyncedAt)); } catch (e) {}
+}
+
+function scheduleModelsSync(delay = 400) {
+  // 乐观打点：改动一发生就推进本地同步戳。本应用服务端就在本机（同一时钟），
+  // 浏览器时间戳与服务端时间戳可直接比较——删/改模型后立刻关页，下次启动按
+  // 「本地较新→补传」走，不会被「服务端较新→采纳」回滚；上传成功后本戳被
+  // 服务端回戳覆盖为真相值。
+  _stampSynced(Date.now() / 1000);
+  clearTimeout(_modelsSyncTimer);
+  _modelsSyncTimer = setTimeout(() => { _modelsSyncTimer = null; flushModelsSync(); }, delay);
+}
+
+async function flushModelsSync() {
+  if (_modelsSyncInflight) { _modelsDirtyAfterInflight = true; return; }
+  _modelsSyncInflight = true;
+  try {
+    const resp = await fetch(MODELS_CONFIG_SYNC_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_modelsSyncBlob()),
+    });
+    if (resp.ok) {
+      const data = await resp.json().catch(() => null);
+      if (data && typeof data.updatedAt === 'number') _stampSynced(data.updatedAt);
+    }
+    // 非 2xx（含只读查阅 403、离线）：静默放弃，本地镜像仍在；下次改动或下次加载再收敛
+  } catch (e) {
+  } finally {
+    _modelsSyncInflight = false;
+    if (_modelsDirtyAfterInflight) { _modelsDirtyAfterInflight = false; scheduleModelsSync(0); }
+  }
+}
+
+// 启动对齐：服务端空＋本地有 → 首启迁移上传；服务端较新或本地空 → 采纳服务端；
+// 本地较新（上次上传没成）→ 补传。GET 失败静默＝保持本地镜像，行为与旧版一致。
+async function syncModelsConfigFromServer() {
+  try {
+    _modelsSyncedAt = Number(localStorage.getItem(MODELS_SYNCED_AT_KEY) || 0) || 0;
+  } catch (e) {}
+  let blob = null;
+  try {
+    const resp = await fetch(MODELS_CONFIG_SYNC_PATH, { cache: 'no-cache' });
+    if (resp.ok) blob = await resp.json();
+  } catch (e) {}
+  const serverTs = blob && typeof blob === 'object' ? (Number(blob.updatedAt) || 0) : 0;
+  const action = _modelsSyncAction(serverTs, _modelsSyncedAt, _localModelsHasAny());
+  if (action === 'adopt') {
+    if (_adoptModelsConfig(blob)) _stampSynced(serverTs);
+  } else if (action === 'push') {
+    scheduleModelsSync(0);
+  }
+}
+
+// 切回标签页时对齐其他标签页的改动（本地有挂起上传就不拉，防把未上传改动盖掉）
+async function refreshModelsIfServerNewer() {
+  if (_modelsSyncInflight || _modelsSyncTimer != null) return;
+  let blob = null;
+  try {
+    const resp = await fetch(MODELS_CONFIG_SYNC_PATH, { cache: 'no-cache' });
+    if (resp.ok) blob = await resp.json();
+  } catch (e) {}
+  const serverTs = blob && typeof blob === 'object' ? (Number(blob.updatedAt) || 0) : 0;
+  if (serverTs > _modelsSyncedAt && _adoptModelsConfig(blob)) {
+    _stampSynced(serverTs);
+    renderModelSelects();
+    renderModelList();
+  }
+}
+
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshModelsIfServerNewer();
+  });
+}
+
+// 导入备份等「绕过 save* 直写 localStorage」的通道：先用它把内存拉回最新，再 scheduleModelsSync(0)
+function reloadModelsFromStorage() {
+  loadUserModels();
+  try {
+    const raw = localStorage.getItem('phymathia_active_models');
+    if (raw) activeModels = JSON.parse(raw) || activeModels;
+  } catch (e) {}
+  try {
+    _modelsSyncedAt = Number(localStorage.getItem(MODELS_SYNCED_AT_KEY) || 0) || 0;
+  } catch (e) {}
+}
+
+// activeModels 的统一写出口：本地镜像＋调度服务端同步（槽位/思考档变更走这里）
+function persistActiveModels() {
+  try { localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels)); } catch (e) {}
+  scheduleModelsSync();
 }
 
 function addUserModel(config) {
@@ -405,7 +563,7 @@ function _clearActiveModelRefs(ids) {
       changed = true;
     }
   }
-  if (changed) localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  if (changed) persistActiveModels();
 }
 
 function deleteUserModel(id) {
@@ -483,6 +641,9 @@ function _slotThinkingProvider(role) {
 async function fetchModels() {
   loadUserModels();
   try { const raw = localStorage.getItem('phymathia_active_models'); if (raw) activeModels = JSON.parse(raw); } catch {}
+  // T284：先与服务端真相源对齐（首启迁移上传／服务端较新采纳／本地较新补传），
+  // 再跑下面的思考档迁移与悬空清理——迁移的是对齐后的最终状态
+  await syncModelsConfigFromServer();
   // 一次性迁移（2026-10-11）：旧版思考档位挂在模型条目上，播种到指向它的槽位后删条目
   // 字段——槽位是思考档位的唯一事实源。布尔族旧档位（low/high/max）语义都是「开」，归一
   // 为 on。条目字段此后无写入方（配置弹窗已删该输入）；备份恢复回来的旧条目下次加载再迁。
@@ -505,7 +666,7 @@ async function fetchModels() {
   for (const key of ['agent_model', 'html_model', 'descriptor_model', 'quiz_model', 'graph_model', 'branch_model']) {
     if (activeModels[key] && !getModelById(activeModels[key])) activeModels[key] = '';
   }
-  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  persistActiveModels();
   renderModelSelects();
 }
 
@@ -600,7 +761,7 @@ async function onModelChange(type) {
   else if (type === 'graph') activeModels.graph_model = select.value;
   else if (type === 'branch') activeModels.branch_model = select.value;
   else activeModels.descriptor_model = select.value;
-  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  persistActiveModels();
   // 主模型换了供应商族时，回落主模型的空槽思考选项也要跟着换族（如 on 只在布尔族有效）
   _refreshSlotThinkingSelects();
 }
@@ -620,7 +781,7 @@ function _refreshSlotThinkingSelect(role) {
   } else {
     if (current) {
       activeModels[role + '_thinking'] = '';
-      localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+      persistActiveModels();
     }
     select.value = '';
   }
@@ -634,7 +795,7 @@ function onSlotThinkingChange(role) {
   const select = document.getElementById(role + 'ModelThinking');
   if (!select) return;
   activeModels[role + '_thinking'] = select.value || '';
-  localStorage.setItem('phymathia_active_models', JSON.stringify(activeModels));
+  persistActiveModels();
 }
 
 function _positionPanelBelowBtn(panel, btn) {

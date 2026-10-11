@@ -38,7 +38,7 @@ from .context import (
 )
 from .llm_common import resolve_api_key
 from .prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
-from .request_ctx import _account_id, _parse_json_object
+from .request_ctx import _account_id, _account_paths, _parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -677,6 +677,92 @@ async def api_models_probe(request: Request):
         # T60：200 但内容为空的「假活」——列表在、实际不可用，标注出来别误导
         return {"ok": False, "detail": "返回 200 但内容为空（疑似不可用）"}
     return {"ok": True, "detail": "可用"}
+
+
+# ====== 模型配置持久化（T284，2026-10-11） ======
+# 此前模型列表/组密钥/槽位只存浏览器 localStorage——换端口或换主机名打开、清
+# 浏览器数据、无痕窗口、多账号切命名空间，任一事件都表现为「配置全丢」（用户
+# 实报）。现服务端按账号落盘 data/users/<id>/models.json 作真相源，前端本地
+# 镜像只当缓存与离线兜底；密钥明文落本机账号目录（单机应用，data/ 不入库，
+# 风险面与同目录的 sessions/knowledge 一致）。整包读写：模型列表撑死几百条，
+# 不做条目级增量；前端冲突解决＝updatedAt 新盖旧（服务端打戳，不信客户端时钟）。
+
+_MODELS_CONFIG_MAX_BYTES = 512 * 1024
+_MODELS_CONFIG_EMPTY = {"userModels": [], "modelGroupKeys": {}, "activeModels": {}, "updatedAt": 0}
+
+
+def _models_config_path(account: str):
+    return accounts.resolve_paths(account).root / "models.json"
+
+
+def _read_models_config(account: str) -> dict:
+    try:
+        raw = _models_config_path(account).read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return dict(_MODELS_CONFIG_EMPTY)
+    if not isinstance(data, dict):
+        return dict(_MODELS_CONFIG_EMPTY)
+    models = data.get("userModels")
+    group_keys = data.get("modelGroupKeys")
+    active = data.get("activeModels")
+    updated = data.get("updatedAt", 0)
+    return {
+        "userModels": models if isinstance(models, list) else [],
+        "modelGroupKeys": group_keys if isinstance(group_keys, dict) else {},
+        "activeModels": active if isinstance(active, dict) else {},
+        "updatedAt": updated if isinstance(updated, (int, float)) else 0,
+    }
+
+
+@router.get("/api/models/config")
+async def api_models_config_get(request: Request):
+    """读当前账号的模型配置。账号闸门走 _account_id（已删账号 404 带墓碑头）；
+    读路径刻意不 ensure——目录没建过就返回空配置，不给未初始化账号凭空造目录。"""
+    account = _account_id(request)
+    return await asyncio.to_thread(_read_models_config, account)
+
+
+@router.post("/api/models/config")
+async def api_models_config_save(request: Request):
+    """整包写入当前账号的模型配置。前端「本地镜像即时写＋防抖整包上传」，冲突
+    新盖旧。只读查阅态由 main 的 _readonly_browse_gate 拦（POST 不在白名单），
+    这里不重复设闸；已删账号由 _account_id 咽喉 404。"""
+    payload = await _parse_json_object(request)
+    account = _account_id(request, payload)
+    user_models = payload.get("userModels")
+    group_keys = payload.get("modelGroupKeys")
+    active_models = payload.get("activeModels")
+    if not isinstance(user_models, list) or not all(isinstance(m, dict) for m in user_models):
+        raise HTTPException(status_code=400, detail="userModels 必须是对象数组")
+    if not isinstance(group_keys, dict) or not isinstance(active_models, dict):
+        raise HTTPException(status_code=400, detail="modelGroupKeys/activeModels 必须是对象")
+    if len(user_models) > 1000:
+        raise HTTPException(status_code=400, detail="userModels 条目过多")
+    # 消毒：条目与键值只收标量（模型条目/槽位映射/组密钥都是平面结构），键长限幅
+    clean_models = []
+    for m in user_models:
+        clean = {}
+        for k, v in m.items():
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                clean[str(k)[:64]] = v
+        clean_models.append(clean)
+    group_keys = {str(k)[:128]: str(v)[:4096] for k, v in group_keys.items()
+                  if isinstance(v, (str, int, float, bool))}
+    active_models = {str(k)[:64]: str(v)[:256] for k, v in active_models.items()
+                     if isinstance(v, (str, int, float, bool))}
+    blob = {
+        "userModels": clean_models,
+        "modelGroupKeys": group_keys,
+        "activeModels": active_models,
+        "updatedAt": time.time(),
+    }
+    raw = json.dumps(blob, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > _MODELS_CONFIG_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="模型配置体量异常（>512KB），拒绝写入")
+    _account_paths(request, payload)  # ensure 目录（幂等；已删账号在此前已被 404 闸拦下）
+    await asyncio.to_thread(accounts._write_json, _models_config_path(account), blob)
+    return {"ok": True, "updatedAt": blob["updatedAt"]}
 
 
 @router.get("/api/usage/stats")

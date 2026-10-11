@@ -298,32 +298,69 @@ check('model-update：diffUpstreamModels 纯逻辑（新增/已下线/去空白�
   return true;
 });
 
-check('model-update：_applyModelListDiff（新增入库 + 移除条目 + 悬空槽位清理 + 幂等）', () => {
+// ===== T284（2026-10-11）：模型配置服务端同步 =====
+// （含 await 的 model-update 用例已按串行边界契约挪至 serial-models-sync.mjs）
+check('models-sync（T284）：同步决策纯函数 adopt/push/none', () => {
+  const start = code.indexOf('function _modelsSyncAction');
+  if (start < 0) throw new Error('打包产物缺 _modelsSyncAction');
+  let depth = 0, end = -1;
+  for (let i = code.indexOf('{', start); i < code.length; i++) {
+    if (code[i] === '{') depth++;
+    else if (code[i] === '}') { depth--; if (!depth) { end = i + 1; break; } }
+  }
+  if (end < 0) throw new Error('_modelsSyncAction 花括号配对失败');
+  const fn = new Function('return (' + code.slice(start, end) + ');')();
+  if (fn(0, 0, true) !== 'push') throw new Error('服务端空＋本地有 → 应 push（首启迁移）');
+  if (fn(0, 0, false) !== 'none') throw new Error('双方皆空 → 应 none');
+  if (fn(100, 0, false) !== 'adopt') throw new Error('服务端有＋本地无 → 应 adopt（浏览器被清后恢复）');
+  if (fn(100, 50, true) !== 'adopt') throw new Error('服务端较新 → 应 adopt');
+  if (fn(50, 100, true) !== 'push') throw new Error('本地较新（乐观戳/上传失败）→ 应 push');
+  if (fn(100, 100, true) !== 'adopt') throw new Error('时间戳相等 → 应 adopt');
+  return true;
+});
+
+check('models-sync（T284）：保存出口接同步、启动对齐、导入链路对接', () => {
+  if (!code.includes('/api/models/config')) throw new Error('缺同步端点 /api/models/config');
+  if (!code.includes('await syncModelsConfigFromServer()')) throw new Error('fetchModels 未先做服务端对齐');
+  if (!/function saveUserModels\(\)\{.{0,200}?scheduleModelsSync\(\)/.test(code)) throw new Error('saveUserModels 未调度服务端同步');
+  if (!/function persistActiveModels\(\)\{.{0,200}?scheduleModelsSync\(\)/.test(code)) throw new Error('persistActiveModels 未调度服务端同步');
+  if (!code.includes('refreshModelsIfServerNewer')) throw new Error('缺切回标签页对齐');
+  if (!code.includes('importModelGroupKeys')) throw new Error('备份导入未接组密钥合并');
+  if (!code.includes('reloadModelsFromStorage')) throw new Error('导入后未把内存拉回最新');
+  return true;
+});
+
+check('models-sync（T284）：快照导出补收组密钥、导入刷新前 flush', () => {
+  if (!/modelGroupKeys\s*[:,]/.test(code)) throw new Error('快照导出未收集组密钥');
+  if (!code.includes('await flushModelsSync()')) throw new Error('导入刷新前未 flush 模型配置');
+  return true;
+});
+
+check('models-sync（T284）：_adoptModelsConfig 采纳服务端 blob 并镜像本地', () => {
   sandbox.localStorage.removeItem('phymathia_user_models');
   sandbox.localStorage.removeItem('phymathia_model_group_keys');
   sandbox.localStorage.removeItem('phymathia_active_models');
+  sandbox.localStorage.removeItem('phymathia_models_synced_at');
   sandbox.loadUserModels();
-  const goPreset = sandbox.window.MODEL_PRESETS['opencode-go'];
-  const seeded = sandbox.addModelsForProvider('opencode-go', 'sk-upd', goPreset.baseUrl, [
-    { model: 'm-keep', label: '保留模型' }, { model: 'm-stale', label: '已下线模型' },
-  ]);
-  if (seeded !== 2) throw new Error('播种 2 条应全部入库，实际 ' + seeded);
-  const stale = sandbox.getAllModels().find(m => m.provider === 'opencode-go' && m.name.includes('已下线模型'));
-  if (!stale) throw new Error('播种条目未找到');
-  // 主模型槽位指向将被移除的条目，应用后必须被清空（deleteUserModel 的悬空引用清理）
-  sandbox.localStorage.setItem('phymathia_active_models', JSON.stringify({ agent_model: stale.id, html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' }));
-  sandbox.fetchModels(); // 异步签名但函数体全同步：直接调用即完成槽位装载
-  const res = sandbox._applyModelListDiff('opencode-go', goPreset.baseUrl, [{ model: 'm-new', label: '上游新增' }], ['m-stale']);
-  if (res.added !== 1 || res.removed !== 1) throw new Error('应用结果不符: ' + JSON.stringify(res));
-  const names = sandbox.getAllModels().filter(m => m.provider === 'opencode-go').map(m => m.name);
-  if (names.length !== 2) throw new Error('应用后应剩 2 条: ' + names.join(','));
-  if (!names.some(s => s.includes('保留模型')) || !names.some(s => s.includes('上游新增'))) throw new Error('保留/新增条目缺失: ' + names.join(','));
-  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_model !== '') throw new Error('指向已移除条目的槽位未清空');
-  const again = sandbox._applyModelListDiff('opencode-go', goPreset.baseUrl, [{ model: 'm-new', label: '上游新增' }], ['m-stale']);
-  if (again.added !== 0 || again.removed !== 0) throw new Error('重复应用应零变更: ' + JSON.stringify(again));
+  const ok = sandbox._adoptModelsConfig({
+    userModels: [{ id: 'm_sync1', provider: 'deepseek', model: 'deepseek-chat', apiKey: 'sk-sync' }],
+    modelGroupKeys: { deepseek: 'sk-group-sync' },
+    activeModels: { agent_model: 'm_sync1', html_model: '', descriptor_model: '', quiz_model: '', graph_model: '', branch_model: '' },
+    updatedAt: 1728600000,
+  });
+  if (!ok) throw new Error('合法 blob 应被采纳');
+  if (sandbox.getAllModels().length !== 1) throw new Error('条目未进内存');
+  if (sandbox.localStorage.getItem('phymathia_user_models').indexOf('sk-sync') < 0) throw new Error('条目未镜像 localStorage');
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_model_group_keys')).deepseek !== 'sk-group-sync') throw new Error('组密钥未镜像');
+  if (JSON.parse(sandbox.localStorage.getItem('phymathia_active_models')).agent_model !== 'm_sync1') throw new Error('槽位未镜像');
+  sandbox._stampSynced(1728600000);
+  if (sandbox.localStorage.getItem('phymathia_models_synced_at') !== '1728600000') throw new Error('同步戳未落地');
+  if (sandbox._adoptModelsConfig(null) !== false) throw new Error('非法 blob 应拒绝');
+  // 清场（这些键共享沙箱 storage，别漏给后续用例）
   sandbox.localStorage.removeItem('phymathia_user_models');
   sandbox.localStorage.removeItem('phymathia_model_group_keys');
   sandbox.localStorage.removeItem('phymathia_active_models');
+  sandbox.localStorage.removeItem('phymathia_models_synced_at');
   return true;
 });
 }
