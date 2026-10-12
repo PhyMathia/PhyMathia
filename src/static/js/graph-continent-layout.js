@@ -5,6 +5,12 @@ const CONTINENT_KIN_STRONG = 1;
 const CONTINENT_KIN_WEAK = 0.3;
 const CONTINENT_KIN_WEAK_CAP = 0.9;
 const CONTINENT_KIN_EDGE = 2;
+// 块级网格选列数的适配基准（v8.15）：0.92 × 1440×900 横屏设计视口。布局纯函数看不见
+// 运行时视口，用横屏常量做列数之间的相对比较——世界宽高比越贴它，开图适配 zoom 越大。
+// 散岛锚分组让块数变多后，固定 sqrt 列数会把世界摊得又宽又扁（真实规模实测 10 块
+// 4 列 → worldW 3758，适配 zoom 0.3525 贴着 0.35 世界档阈值，只剩 28px 余量）。
+const CONTINENT_BLOCK_FIT_W = 1325;
+const CONTINENT_BLOCK_FIT_H = 828;
 
 function _continentKinshipKey(a, b) {
   return String(a) < String(b) ? a + '|' + b : b + '|' + a;
@@ -388,11 +394,12 @@ function _continentLayoutClusters(clusters, collapsed, cardCap, kin) {
            regionRects: [], worldW: worldW, worldH: worldH };
 }
 
-// 两级布局（v7.1a）：先按海域分块——块内岛走既有亲缘排序 + 蛇形填充；块间按
-// 「跨海域亲缘总和」降序（并列按海域名稳定序，散岛块永居末位）排进块级网格，
-// 间距用更大的 REGION_GAP。海域板 = 块内岛矩形并集外扩（顶部多留一行给海域牌）。
-// worldW/H 必须罩住**海域板**（板比岛并集大一圈）——否则边缘板上的联运港会被
-// 判「出界」折叠。
+// 两级布局（v7.1a）：先按海域分块——块内岛走既有亲缘排序 + 蛇形填充；块间走贪心
+// 亲缘链（v8.15，并列有确定性兜底序：板按跨块亲缘总和降序、海域名稳定序，散岛殿后）
+// 排进块级网格，间距用更大的 REGION_GAP。散岛（单岛领域/中性/待确认）按**锚**分块：
+// 与哪片海亲缘最强就贴哪片海，无锚的进殿后块。海域板 = 块内岛矩形并集外扩（顶部多
+// 留一行给海域牌）。worldW/H 必须罩住**海域板**（板比岛并集大一圈）——否则边缘板上
+// 的联运港会被判「出界」折叠。
 function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, collapsed) {
   const collapsedSet = new Set((collapsed && collapsed.sessions) || []);
   const collapsedRegions = new Set((collapsed && collapsed.regions) || []);
@@ -404,8 +411,10 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
     const key = info.key || '';
     (byKey[key] = byKey[key] || []).push(c);
   });
-  // 块定义：每片海域一块（板），单岛领域 + 中性 + 待确认合成一块「散岛」（无板）；
-  // 收起的海域整块收成一枚印章（岛不占位不渲染），展开回来布局不变（确定性）
+  // 块定义：每片海域一块（板）；散岛（单岛领域 + 中性 + 待确认）按锚分块（无板，见下）。
+  // v8.15 前散岛合成一块「散岛块」居末位——全世界无主岛挤进同一个格子里，跟谁像都不挨着，
+  // 地图上读成一坨「不属于任何海域的岛」。收起的海域整块收成一枚印章（岛不占位不渲染），
+  // 展开回来布局不变
   const blocks = [];
   regions.forEach(r => blocks.push({ key: r.key, name: r.name, plate: true,
     stamp: collapsedRegions.has(r.key), clusters: byKey[r.key] || [] }));
@@ -413,14 +422,43 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
   Object.keys(byKey).forEach(key => {
     if (!key) { loose.push.apply(loose, byKey[key]); return; }
     const inRegion = regions.some(r => r.key === key);
-    if (!inRegion) loose.push.apply(loose, byKey[key]); // 单岛领域：不上板，进散岛块
+    if (!inRegion) loose.push.apply(loose, byKey[key]); // 单岛领域：不上板
   });
-  if (loose.length) blocks.push({ key: '', name: '', plate: false, stamp: false, clusters: loose });
 
-  // 块内亲缘排序（复用 v5.2 的贪心链式）；块间按跨块亲缘总和排序。
+  const allSids = (clusters || []).map(c => String(c.sessionId || ''));
+  const kin = _continentKinship(allSids, shared, userEdges);
+
+  // v8.15 散岛分块（打散，不再合成末尾一坨）：每座散岛找**跨岛亲缘总和最强的海域当锚**，
+  // 同锚散岛合成一小块，由下面的贪心链送进锚海旁边——散岛的位置＝它与哪片海最像。
+  // 对所有海域亲缘全零的散岛没有相似度依据，进「殿后块」维持 v8.15 前的末位聚落
+  // （零亲缘时散岛结构与改前逐字节一致，世界不白涨——真实规模回归的缩放带就压在这）。
+  // 锚并列取海域表序（确定性）。块键 \u0001 前缀与海域名永不撞（crossKin 索引按键取）。
+  // 刻意**不**给每座散岛单独开块：真实规模实测 6 块 → 适配 zoom 0.4094 → 0.3452，
+  // 跌破 0.35 世界档阈值——开图变空盒子（v8.7 修的那类回归），锚分组正是往回收的这一刀。
+  const anchorKeyOf = c => {
+    const sid = String(c.sessionId || '');
+    let bestKey = '', bestW = 0;
+    regions.forEach(r => {
+      let w = 0;
+      (r.sessions || []).forEach(t => { w += kin[_continentKinshipKey(sid, t)] || 0; });
+      if (w > bestW) { bestW = w; bestKey = r.key; }
+    });
+    return bestKey ? '\u0001g:' + bestKey : '\u0001tail';
+  };
+  const looseGroups = {};
+  loose.forEach(c => {
+    const gk = anchorKeyOf(c);
+    if (!looseGroups[gk]) {
+      looseGroups[gk] = { key: gk, name: '', plate: false, stamp: false, clusters: [] };
+    }
+    looseGroups[gk].clusters.push(c);
+  });
+  Object.keys(looseGroups).forEach(gk => blocks.push(looseGroups[gk]));
+
+  // 块内亲缘排序（复用 v5.2 的贪心链式）；块间排序在下面（兜底序＋贪心亲缘链）。
   // 收起的海域整块收成**一枚**印章（岛不占位不渲染）——多枚印章叠着看全局
-  const laid = blocks.map(b => {
-    // 排序**刻意不共用**下面的全局 kin：贪心链的并列裁决看 total[sid]，块内表只含
+  let laid = blocks.map(b => {
+    // 排序**刻意不共用**全局 kin（上面那份）：贪心链的并列裁决看 total[sid]，块内表只含
     // 同块权重、全局表还含跨海域权重，换成全局会改掉既有的岛序（v5.2 冻结契约）。
     // 间距分级用全局表没问题——它对同块内的取值与块内表逐字节相同。
     const ordered = _continentClusterOrder(b.clusters, shared, userEdges);
@@ -430,8 +468,6 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
       : ordered.map(c => _continentMeasure(c, collapsedSet.has(c.sessionId), cap));
     return { block: b, measured: measured, sids: ordered.map(c => String(c.sessionId || '')) };
   });
-  const allSids = (clusters || []).map(c => String(c.sessionId || ''));
-  const kin = _continentKinship(allSids, shared, userEdges);
   const crossKin = {};
   laid.forEach(a => laid.forEach(b => {
     if (a === b) return;
@@ -441,48 +477,103 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
         (crossKin[a.block.key + '\u0000' + b.block.key] || 0) + w;
     }));
   }));
+  const weightCache = {};
   const blockWeight = key => {
+    if (Object.prototype.hasOwnProperty.call(weightCache, key)) return weightCache[key];
     let sum = 0;
     Object.keys(crossKin).forEach(pairKey => {
       const parts = pairKey.split('\u0000');
       if (parts[0] === key || parts[1] === key) sum += crossKin[pairKey];
     });
-    return sum;
+    return (weightCache[key] = sum);
   };
-  laid.sort((a, b) => {
+  // 块序兜底（v8.15 前的排序原样保留）：板按跨块亲缘总和降序（并列按海域名稳定序），
+  // 散岛殿后。它不再是最终块序，而是贪心链每一步并列裁决的**确定性兜底**——零亲缘
+  // （无共享词、无用户边）时链序逐字节退化成这份序，与改前行为一致。
+  const baseSorted = laid.slice().sort((a, b) => {
     const ka = a.block.plate ? blockWeight(a.block.key) : -1;
     const kb = b.block.plate ? blockWeight(b.block.key) : -1;
     if (ka !== kb) return kb - ka;
     if (a.block.plate && b.block.plate) return String(a.block.name).localeCompare(String(b.block.name), 'zh');
-    return a.block.plate ? -1 : 1;  // 散岛块永居末位（无板无名，不参与海域排序）
+    return a.block.plate ? -1 : 1;
   });
+  // v8.15 块间贪心亲缘链（岛级 v5.2 的 _continentClusterOrder 同款思路搬到块级）：
+  // 从兜底序首块（亲缘总和最强的板）出发，每步走向与当前块**跨块亲缘总和**最高的下一块
+  // （并列看候选块自己的总亲缘，再并列回兜底序）。链序喂给下面的蛇形块级网格 →
+  // 链上相邻＝格上相邻：相似的海域彼此为邻（海域间相对位置＝相似度），散岛插进与它
+  // 最像的那片海旁边——不再全体挤在末尾一坨。两块间的亲缘读 crossKin 双向（构建时
+  // 有序对全在，这里兜底反向只是防御）。
+  const coupling = (a, b) =>
+    crossKin[a.block.key + '\u0000' + b.block.key] ||
+    crossKin[b.block.key + '\u0000' + a.block.key] || 0;
+  const remaining = baseSorted.slice();
+  let cur = remaining.shift();
+  const chainOrdered = [cur];
+  while (remaining.length) {
+    let bi = 0, bk = coupling(cur, remaining[0]), bt = blockWeight(remaining[0].block.key);
+    for (let i = 1; i < remaining.length; i++) {
+      const k = coupling(cur, remaining[i]);
+      const t = blockWeight(remaining[i].block.key);
+      if (k > bk || (k === bk && t > bt)) { bi = i; bk = k; bt = t; }
+    }
+    cur = remaining.splice(bi, 1)[0];
+    chainOrdered.push(cur);
+  }
+  laid = chainOrdered;
 
   // 块级网格：与岛级同一套 colW/rowH 逻辑，间距换 REGION_GAP；先按内容尺寸摆好块，
   // 再在块内部按「板框 = 内容外扩」重排——板的 padding 计入块尺寸，岛内相对坐标不变
-  const cols = Math.max(1, Math.ceil(Math.sqrt(laid.length)));
-  const blockW = [], blockH = [];
   laid.forEach(l => {
-    // 探针与落位（下面 :590 那次）**必须喂同一份 kin**，否则板尺寸按一套间距算、
+    // 探针与落位（下面那次）**必须喂同一份 kin**，否则板尺寸按一套间距算、
     // 岛坐标按另一套摆，岛会捅出板。v8.3 的间距分级让这条从「无所谓」变成硬约束。
     const grid = _continentLayoutGrid(l.measured, 0, 0, kin);
     l.grid = grid;
     l.paddedW = grid.w + (l.block.plate ? CONTINENT_REGION_PAD * 2 : 0);
     l.paddedH = grid.h + (l.block.plate ? CONTINENT_REGION_PAD * 2 + CONTINENT_REGION_HEADER_H : 0);
   });
-  const gridPos = i => {
-    const ri = Math.floor(i / cols), posInRow = i % cols;
-    return { ci: ri % 2 === 1 ? cols - 1 - posInRow : posInRow, ri: ri };
+  // 一种列数下的块级摆法（蛇形填充，与岛级同一套 gridPos/colW/rowH 逻辑）
+  const packFor = ncols => {
+    const gridPos = i => {
+      const ri = Math.floor(i / ncols), posInRow = i % ncols;
+      return { ci: ri % 2 === 1 ? ncols - 1 - posInRow : posInRow, ri: ri };
+    };
+    const blockW = [], blockH = [];
+    laid.forEach((l, i) => {
+      const g = gridPos(i);
+      blockW[g.ci] = Math.max(blockW[g.ci] || 0, l.paddedW);
+      blockH[g.ri] = Math.max(blockH[g.ri] || 0, l.paddedH);
+    });
+    const colX = [], rowY = [];
+    let accX = CONTINENT_WORLD_MARGIN;
+    for (let i = 0; i < blockW.length; i++) { colX.push(accX); accX += blockW[i] + CONTINENT_REGION_GAP; }
+    let accY = CONTINENT_WORLD_MARGIN;
+    for (let i = 0; i < blockH.length; i++) { rowY.push(accY); accY += blockH[i] + CONTINENT_REGION_GAP; }
+    return {
+      gridPos: gridPos, blockW: blockW, blockH: blockH, colX: colX, rowY: rowY,
+      worldW: Math.max(400, accX - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN),
+      worldH: Math.max(300, accY - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN),
+    };
   };
-  laid.forEach((l, i) => {
-    const g = gridPos(i);
-    blockW[g.ci] = Math.max(blockW[g.ci] || 0, l.paddedW);
-    blockH[g.ri] = Math.max(blockH[g.ri] || 0, l.paddedH);
-  });
-  const colX = [], rowY = [];
-  let accX = CONTINENT_WORLD_MARGIN;
-  for (let i = 0; i < blockW.length; i++) { colX.push(accX); accX += blockW[i] + CONTINENT_REGION_GAP; }
-  let accY = CONTINENT_WORLD_MARGIN;
-  for (let i = 0; i < blockH.length; i++) { rowY.push(accY); accY += blockH[i] + CONTINENT_REGION_GAP; }
+  // 列数不再固定 sqrt（v8.15）：在 1..块数里挑「适配缩放最大」的摆法（并列取列数
+  // 较小者，向旧行为收敛）。适配 zoom = min(FIT_W/worldW, FIT_H/worldH)——横屏下
+  // 太宽的世界 zoom 被宽度卡死，太扁的被高度卡死；锚分组多出来的块必须靠选列数
+  // 找回宽高比，否则真实规模实测 zoom 0.4094 → 0.3525，贴着 0.35 世界档阈值只剩
+  // 28px 余量。确定性：纯算术比较，同输入永远同列数。
+  // zoom 是唯一准绳（试过「先保宽度填充 ≥70% 再挑 zoom」：真实规模只有「方的
+  // 0.3833/填充 68%」与「宽的 0.3525/填充 92%」两个局部最优，约束把选择推回宽的，
+  // zoom 贴回悬崖——岛的可读性由 zoom 直接决定，填充率只是代理，回归那边把下限
+  // 收到 65% 与本规则对齐）。
+  let best = null;
+  for (let nc = 1; nc <= laid.length; nc++) {
+    const p = packFor(nc);
+    const zoom = Math.min(CONTINENT_BLOCK_FIT_W / p.worldW, CONTINENT_BLOCK_FIT_H / p.worldH);
+    if (!best || zoom > best.zoom) best = { zoom: zoom, pack: p };
+  }
+  const gridPos = best.pack.gridPos;
+  const blockW = best.pack.blockW;
+  const blockH = best.pack.blockH;
+  const colX = best.pack.colX;
+  const rowY = best.pack.rowY;
 
   const placements = {};
   const clusterRects = [];
@@ -505,10 +596,9 @@ function _continentRegionLayout(regions, bySid, clusters, shared, userEdges, col
       });
     }
   });
-  const worldW = Math.max(400, accX - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN);
-  const worldH = Math.max(300, accY - CONTINENT_REGION_GAP + CONTINENT_WORLD_MARGIN);
   return { placements: placements, clusterRects: clusterRects,
-           regionRects: regionRects, worldW: worldW, worldH: worldH };
+           regionRects: regionRects,
+           worldW: best.pack.worldW, worldH: best.pack.worldH };
 }
 
 // ---------- v8.1 有机抖动层 ----------

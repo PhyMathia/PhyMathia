@@ -190,8 +190,11 @@ const SCALE_MIN_ITEMS = 48;
 // 因为落位是在一圈候选点里挑「放得下」的，不必非挤最窄那条走廊。余量为负属已知贴线态，
 // 检查里打印告警行而不判红；比基线收紧超 2px（真正往 no_room 滑）才红。
 const CORRIDOR_NEED_PX = 128;            // 边界城市过走廊的需求：CITY_W 112 + 2×CITY_GAP 8
-const CORRIDOR_MIN_CLEAR_BASELINE = 127.9; // 2026-10-08 实测（14 岛 91 对取最坏）
-const CITY_PLACED_BASELINE = 6;          // 2026-10-08 实测：真实规模下落位 6 座
+// 基线 127.9 → 125.4（v8.15，2026-10-12）：散岛按锚分块后玻色子↔均匀分布两岛贴得更近，
+// 最坏对从别处换到了这一对；无 no_room 折叠（6 座城市仍全部落位），余量 -2.6px 仍属
+// 已知贴线态。
+const CORRIDOR_MIN_CLEAR_BASELINE = 125.4; // 2026-10-12 实测（14 岛 91 对取最坏）
+const CITY_PLACED_BASELINE = 6;          // 2026-10-08 实测：真实规模下落位 6 座（v8.15 复测不变）
 // 旧阈值 0.55 是「断言曾经失效」的那个值：适配缩放必须落在它与现行 0.35 之间，
 // 断言才咬得住。改了阈值又跑一次，若这里红了说明种子规模退化了，先修种子。
 const SCALE_STALE_LOD = 0.55;
@@ -370,7 +373,11 @@ async function run() {
     try {
       await page.click('#continentBreadcrumb');
       await continentOpen(page);
-      const city = page.locator('.continent-city').first();
+      // v8.15 起世界变高（散岛按锚分块撑出纵向），入口把当前会话的岛滚到中央后
+      // 顶部岛可能出屏——要点具体城市的，先显式把视口摆到它那座岛上（本文件
+      // focusSessionIsland 注释里的同一条教条），再按概念名定位那枚城市。
+      await focusSessionIsland(page, 'sess_shm1');
+      const city = page.locator('.continent-city', { hasText: '简谐运动' }).first();
       if ((await city.count()) < 1) throw new Error('种子库应有「简谐运动」边界城市');
       await city.click();
       await page.waitForSelector('.continent-popover', { timeout: 4000 });
@@ -391,6 +398,8 @@ async function run() {
       const first = page.locator('.continent-node[data-session-id="sess_shm1"]').first();
       const second = page.locator('.continent-node[data-session-id="sess_grad1"]').first();
       await first.click();
+      // 世界变高后两岛不再同屏：点第二座岛前先把它摆进视口（同旅程 5 的教条）
+      await focusSessionIsland(page, 'sess_grad1');
       await second.click();
       await page.waitForSelector('svg.continent-links path.continent-route', { timeout: 4000 });
       const drawn = await page.locator('path.continent-route').count();
@@ -801,9 +810,15 @@ async function runScaleSuite() {
           + Math.round(vp.bottom - vp.top) + ' vs 视口 ' + vp.vw + '×' + vp.vh);
       }
       const fill = (vp.right - vp.left) / vp.vw;
-      if (fill < 0.7) {
+      // 门槛 0.70 → 0.65（v8.15，2026-10-12）：散岛按锚分块＋块级网格按「适配 zoom
+      // 最大」选列数后，世界的形状由内容决定、比旧的宽排法更方——真实规模实测两个
+      // 局部最优是「zoom 0.3833 / 填充 68%」与「zoom 0.3525 / 填充 92%」，没有两全。
+      // 岛的可读性由 zoom 直接决定（0.3833 的岛比 0.3525 大 8.7%，且离 0.35 世界档
+      // 悬崖有真余量），填充率只是代理；选 zoom 最大的摆法，这条下限收到 65% 兜住
+      // 「缩成一小块」的原始失败模式。
+      if (fill < 0.65) {
         throw new Error('适配后世界只占视口宽度 ' + (fill * 100).toFixed(0)
-          + '%，岛会小成看不见的点（门槛 70%）');
+          + '%，岛会小成看不见的点（门槛 65%）');
       }
       okS('适配后世界不溢出且占视口宽度 ' + Math.round(fill * 100)
           + '%（' + Math.round(vp.right - vp.left) + '×' + Math.round(vp.bottom - vp.top)

@@ -1046,6 +1046,72 @@ check('graph-continent: v7.1a 海域层（分组/单岛不划地盘/待确认/�
   return true;
 });
 
+check('graph-continent: v8.15 散岛打散（有亲缘与锚海共带 / 零亲缘抱团殿后 / 不闯板 / 确定性）', () => {
+  const regions = sandbox._continentRegions;
+  const regionLayout = sandbox._continentRegionLayout;
+  if (typeof regions !== 'function' || typeof regionLayout !== 'function') {
+    throw new Error('v8.15 纯函数未暴露（regions / regionLayout）');
+  }
+  const cl = (sid, domain, conf, n) => ({
+    sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
+    itemCount: n, items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // 两片海域（各 2 岛）+ 三座散岛：keep1 只亲 A 海、keep2 只亲 B 海、keep3 无亲缘
+  const clusters = [
+    cl('a1', 'A海', 0.95, 1), cl('a2', 'A海', 0.9, 1),
+    cl('b1', 'B海', 0.95, 1), cl('b2', 'B海', 0.9, 1),
+    cl('keep1', '守恒定律', 0.98, 1), cl('keep2', '光程', 0.98, 1), cl('keep3', null, 0, 1),
+  ];
+  const info = regions(clusters, { renames: {}, assign: {} }, ['A海', 'B海', '守恒定律', '光程']);
+  if (info.regions.length !== 2) throw new Error('该是两片海域：' + info.regions.length);
+  const strong = (label, sids) => ({ kind: 'title', label, strength: 'strong', sessions: sids, links: [], owners: [] });
+  const shared = [strong('守恒', ['a1', 'keep1']), strong('光程', ['b1', 'keep2'])];
+  const lay = regionLayout(info.regions, info.bySid, clusters, shared, []);
+  const rectOf = {}; lay.clusterRects.forEach(r => { rectOf[r.sessionId] = r; });
+  const plateOf = {}; lay.regionRects.forEach(r => { plateOf[r.key] = r; });
+  if (!plateOf['A海'] || !plateOf['B海']) throw new Error('海域板缺失');
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  ['keep1', 'keep2', 'keep3'].forEach(sid => {
+    if (overlaps(rectOf[sid], plateOf['A海']) || overlaps(rectOf[sid], plateOf['B海'])) {
+      throw new Error('散岛 ' + sid + ' 闯进了海域板');
+    }
+  });
+  // 有亲缘：keep1 锚定 A 海、keep2 锚定 B 海，链序 [A海, keep1, B海, keep2, 殿后组]。
+  // 贪心链上相邻的块在蛇形网格里**必然同行或同列**（行末换行也同列）——散岛与它的
+  // 锚海共行/列带即锚定生效。v8.15 前散岛全挤在末尾一个「散岛块」里，跟哪片海都不
+  // 保证共带。列数是动态选的，断言只认「共带」这个布局无关的关系。
+  const sharesBand = (r, p) => (r.y < p.y + p.h && r.y + r.h > p.y)
+    || (r.x < p.x + p.w && r.x + r.w > p.x);
+  if (!sharesBand(rectOf['keep1'], plateOf['A海'])) {
+    throw new Error('keep1 没贴着锚海 A（该与 A 同行/同列带）：keep1='
+      + JSON.stringify(rectOf['keep1']) + ' A海=' + JSON.stringify(plateOf['A海']));
+  }
+  if (!sharesBand(rectOf['keep2'], plateOf['B海'])) {
+    throw new Error('keep2 没贴着锚海 B（该与 B 同行/同列带）：keep2='
+      + JSON.stringify(rectOf['keep2']) + ' B海=' + JSON.stringify(plateOf['B海']));
+  }
+  // 确定性：同输入两次布局逐字节一致
+  const again = regionLayout(info.regions, info.bySid, clusters, shared, []);
+  if (JSON.stringify(again) !== JSON.stringify(lay)) throw new Error('散岛打散后布局不确定');
+  // 零亲缘：三座散岛全进殿后块互相抱团（没有相似度依据就不拆散），keep1 与 keep2
+  // 必然同行/列带；对散岛仍是确定性 + 不闯板（上面两个不变式在这份布局里再验一遍）。
+  const bare = regionLayout(info.regions, info.bySid, clusters, [], []);
+  const bareRect = {}; bare.clusterRects.forEach(r => { bareRect[r.sessionId] = r; });
+  const barePlate = {}; bare.regionRects.forEach(r => { barePlate[r.key] = r; });
+  if (!sharesBand(bareRect['keep1'], bareRect['keep2'])) {
+    throw new Error('零亲缘散岛没抱团：keep1=' + JSON.stringify(bareRect['keep1'])
+      + ' keep2=' + JSON.stringify(bareRect['keep2']));
+  }
+  ['keep1', 'keep2', 'keep3'].forEach(sid => {
+    if (overlaps(bareRect[sid], barePlate['A海']) || overlaps(bareRect[sid], barePlate['B海'])) {
+      throw new Error('零亲缘散岛 ' + sid + ' 闯进了海域板');
+    }
+  });
+  const bareAgain = regionLayout(info.regions, info.bySid, clusters, [], []);
+  if (JSON.stringify(bareAgain) !== JSON.stringify(bare)) throw new Error('零亲缘布局不确定');
+  return true;
+});
+
 check('graph-continent: v8.13 海域换色（覆盖优先/改色不改键/脏值兜底/同源产物/图例入口）', () => {
   const regions = sandbox._continentRegions;
   const hueWith = sandbox._continentHueWithOverride;
