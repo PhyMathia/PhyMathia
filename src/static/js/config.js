@@ -214,6 +214,9 @@ const STORAGE_KEY_STYLE_FAMILY_DARK = 'phymathia_style_family_dark';
 const STORAGE_KEY_STYLE_FAMILY_LIGHT = 'phymathia_style_family_light';
 const STORAGE_KEY_LEVEL = 'phymathia_level';
 const STORAGE_KEY_SESSIONS = 'phymathia_sessions';
+// 公式渲染自愈修复字典（render.js）：{ 坏公式原文: 修好公式 }，启发式/AI 修复共用，
+// 命中即原位换修好版——只动显示不改存盘内容（2026-10-12）
+const STORAGE_KEY_LATEX_REPAIRS = 'phymathia_latex_repairs';
 const STORAGE_KEY_CURRENT = 'phymathia_current_session';
 const STORAGE_KEY_KNOWLEDGE = 'phymathia_knowledge';
 // 知识总览面板上次停留的标签页（knowledge/formulas，全局键；重开面板时恢复）

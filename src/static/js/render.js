@@ -671,6 +671,265 @@ function _cleanFormulaLatex(latex) {
     .trim();
 }
 
+// ====== 公式渲染出错自愈（2026-10-12）：字典命中 / 本地启发式 / AI 修复芯片 ======
+// 口径：KaTeX auto-render(throwOnError:false) 失败处留下 .katex-error（红字＋title 报错）。
+// _runKaTeX 之后扫描它做三层处置：①修复字典命中 → 原位换修好版；②本地启发式修得过 →
+// 静默换＋记入字典；③都不行 → 中性芯片＋「AI 修」按钮（发模型的上下文只有公式本体＋
+// 报错行，走描述槽，回退主模型槽）。字典/启发式只动显示不改存盘内容；修好的键值随
+// localStorage 持久，下次渲染（重建/重开/跨会话同文）直接命中，_latexRepairEpoch
+// 进节点签名令渲染记忆在字典变化后整体失效一轮。
+
+const _LATEX_REPAIR_CMD_FALLBACKS = { oiint: 'oint', oiiint: 'iiint', degree: '^{\\circ}', Bbb: 'mathbb', bm: 'boldsymbol' };
+const _LATEX_REPAIR_DICT_MAX = 200;
+let _latexRepairEpoch = 0;
+let _latexRepairDict = null;
+
+function _loadLatexRepairs() {
+  if (_latexRepairDict) return _latexRepairDict;
+  _latexRepairDict = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY_LATEX_REPAIRS) || 'null');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) _latexRepairDict = parsed;
+  } catch (e) {}
+  return _latexRepairDict;
+}
+
+function _saveLatexRepair(bad, good) {
+  bad = String(bad || '');
+  good = String(good || '');
+  if (!bad || !good || bad === good) return;
+  const dict = _loadLatexRepairs();
+  dict[bad] = good;
+  while (Object.keys(dict).length > _LATEX_REPAIR_DICT_MAX) delete dict[Object.keys(dict)[0]];
+  try { localStorage.setItem(STORAGE_KEY_LATEX_REPAIRS, JSON.stringify(dict)); } catch (e) {}
+  _latexRepairEpoch++;
+}
+
+// 本地 KaTeX 验证：null=可渲染，否则报错串。KaTeX 未就绪时不判错（此刻 auto-render
+// 同样没跑，不存在可见失败，判了反而会在加载窗口误挂芯片）
+function _validateLatex(latex, displayMode) {
+  if (!window.katex) return null;
+  try {
+    window.katex.renderToString(String(latex || ''), { throwOnError: true, displayMode: !!displayMode });
+    return null;
+  } catch (e) { return String((e && e.message) || e); }
+}
+
+// 大括号净深（跳过 \{ \} \\ 转义对）：截断公式的典型伤是多开未闭
+function _latexBraceDepth(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\\') { i++; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return depth;
+}
+
+// 本地启发式修复：逐条试，每一步都必须过 KaTeX 验证才算数，全不中返回 null（交给芯片）。
+// 规则按报错信息驱动，不盲改——修不出来宁可保持原样，绝不越修越坏。
+function _heuristicRepairLatex(latex, error, displayMode) {
+  const s = String(latex || '');
+  if (!s) return null;
+  const err = String(error || '');
+  const attempt = (candidate) => {
+    const t = String(candidate || '').trim();
+    if (!t || t === s) return null;
+    return _validateLatex(t, displayMode) === null ? t : null;
+  };
+  // 1) 大括号配平
+  const depth = _latexBraceDepth(s);
+  if (depth > 0 && attempt(s + '}'.repeat(depth))) return s + '}'.repeat(depth);
+  if (depth < 0 && attempt(s.replace(/\}+$/, (m) => m.slice(0, Math.max(0, m.length + depth))))) {
+    return s.replace(/\}+$/, (m) => m.slice(0, Math.max(0, m.length + depth)));
+  }
+  // 2) \left 无 \right 收口
+  const nL = (s.match(/\\left(?=[({[\|.]|$)/g) || []).length;
+  const nR = (s.match(/\\right(?=[)}[\|.]|$)/g) || []).length;
+  if (nL > nR) {
+    const opens = s.match(/\\left([({[\|.])/g);
+    const openCh = opens ? opens[opens.length - 1].slice(5) : '(';
+    const closer = { '(': ')', '{': '}', '[': ']', '|': '|', '.': '.' }[openCh] || ')';
+    const t = s + '\\right' + closer;
+    if (attempt(t)) return t;
+  }
+  // 3) 矩阵环境被截断（报错点名 Expected & or … \end）→ 补 \end{环境}
+  if (err.indexOf('Expected & or') >= 0 || err.indexOf('\\end at end of input') >= 0) {
+    const opens = s.match(/\\begin\{([a-zA-Z*]+)\}/g) || [];
+    const ends = s.match(/\\end\{([a-zA-Z*]+)\}/g) || [];
+    if (opens.length > ends.length) {
+      const env = (opens[opens.length - 1].match(/\{([a-zA-Z*]+)\}/) || [])[1];
+      if (env && attempt(s + '\\end{' + env + '}')) return s + '\\end{' + env + '}';
+    }
+  }
+  // 4) 尾部孤立的 \（截断残尾）
+  if (/\\$/.test(s) && attempt(s.replace(/\\+$/, ''))) return s.replace(/\\+$/, '');
+  // 5) 报错点名 & 且无矩阵环境 → 转义成 \&
+  if (err.indexOf("got '&'") >= 0 && !/\\begin\{/.test(s)) {
+    const t = s.replace(/&/g, '\\&');
+    if (attempt(t)) return t;
+  }
+  // 6) KaTeX 不认识的命令 → 查降级表
+  const undef = err.match(/Undefined control sequence: \\([A-Za-z]+)/);
+  if (undef && Object.prototype.hasOwnProperty.call(_LATEX_REPAIR_CMD_FALLBACKS, undef[1])) {
+    const t = s.replace(new RegExp('\\\\' + undef[1] + '(?![A-Za-z])'), _LATEX_REPAIR_CMD_FALLBACKS[undef[1]]);
+    if (attempt(t)) return t;
+  }
+  // 7) ^/_ 后面缺组 → 补空组
+  if (err.indexOf("Expected group after '^'") >= 0 || err.indexOf("Expected group after '_'") >= 0) {
+    const t = s.replace(/([\^_])(?=$|[\s,;)\]}])/g, '$1{}');
+    if (attempt(t)) return t;
+  }
+  // 8) 公式里混进裸 $（嵌套定界）→ 剥掉
+  if (err.indexOf("'$'") >= 0 && /\$/.test(s)) {
+    const t = s.replace(/\$/g, '');
+    if (attempt(t)) return t;
+  }
+  return null;
+}
+
+function _latexRepairHash(s) {
+  let h = 5381;
+  const t = String(s || '');
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0;
+  return h.toString(36) + t.length.toString(36);
+}
+
+// 剥掉块首尾定界符得裸 LaTeX（display/inline 判定与提取期同口径）
+function _stripMathBlockDelimiters(text) {
+  const t = String(text || '').trim();
+  if (t.startsWith('$$') && t.endsWith('$$') && t.length > 4) return t.slice(2, -2).trim();
+  if (t.startsWith('$') && t.endsWith('$') && t.length > 2) return t.slice(1, -1).trim();
+  if (t.startsWith('\\(') && t.endsWith('\\)') && t.length > 4) return t.slice(2, -2).trim();
+  if (t.startsWith('\\[') && t.endsWith('\\]') && t.length > 4) return t.slice(2, -2).trim();
+  return t;
+}
+
+// 自愈统一处置口：拿裸 LaTeX＋报错＋模式，走「字典 → 启发式 → 芯片」三档。
+// 返回 'fixed'（原位换好）/ 'chip'（落芯片）/ 'skip'（无父节点等边界）。
+function _formulaSelfHeal(latex, error, displayMode, errEl, buildChipAt) {
+  const dict = _loadLatexRepairs();
+  let fixed = Object.prototype.hasOwnProperty.call(dict, latex) ? String(dict[latex]) : null;
+  if (!fixed) {
+    const repaired = _heuristicRepairLatex(latex, error, displayMode);
+    if (repaired) { _saveLatexRepair(latex, repaired); fixed = repaired; }
+  }
+  if (fixed) {
+    try {
+      const holder = document.createElement('span');
+      holder.innerHTML = window.katex.renderToString(fixed, { throwOnError: false, displayMode });
+      while (holder.firstChild) buildChipAt.insertBefore(holder.firstChild, errEl);
+      buildChipAt.removeChild(errEl);
+      return 'fixed';
+    } catch (e) { /* 换不动就落芯片 */ }
+  }
+  const fid = 'f' + _latexRepairHash(latex);
+  const chip = document.createElement('span');
+  chip.className = 'formula-broken';
+  chip.setAttribute('data-fid', fid);
+  chip.setAttribute('data-latex', latex);
+  chip.setAttribute('data-err', error);
+  chip.setAttribute('data-mode', displayMode ? 'display' : 'inline');
+  chip.setAttribute('title', '公式渲染失败：' + (error || 'KaTeX 无法解析'));
+  const codeEl = document.createElement('code');
+  codeEl.textContent = latex.length > 60 ? latex.slice(0, 58) + '…' : latex;
+  chip.appendChild(codeEl);
+  if (!window.PHYMATHIA_READONLY) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'formula-broken-fix';
+    btn.textContent = 'AI 修';
+    btn.setAttribute('onclick', "repairBrokenFormula('" + fid + "')");
+    chip.appendChild(btn);
+  }
+  buildChipAt.replaceChild(chip, errEl);
+  return 'chip';
+}
+
+// 自愈扫描（_runKaTeX 末尾调用）。两条失败通道都要扫：
+// ① .katex-error——KaTeX 直接渲染的报错标记（textContent 即原始公式）；
+// ② .math-raw 里残留定界符的——auto-render 的定界扫描带花括号计数，括号不配对的
+//    公式它认不出结尾、整段放弃并回填原文（截断损伤最常见的形态），不产生任何
+//    错误标记，只能靠「渲染后仍残留 $$..$」发现。报错信息现场用验证器补拿。
+function _chipifyKatexErrors(rootEl) {
+  if (!rootEl || !rootEl.querySelectorAll || !window.katex || !window.renderMathInElement) return;
+  for (const wrap of Array.from(rootEl.querySelectorAll('.math-raw'))) {
+    const text = String(wrap.textContent || '').trim();
+    if (!/^(\$\$|\$|\\\(|\\\[)/.test(text)) continue; // 已被 auto-render 成功替换的不含定界符
+    const displayMode = wrap.getAttribute('data-mmode') === 'display';
+    const latex = _stripMathBlockDelimiters(text);
+    if (!latex) continue;
+    _formulaSelfHeal(latex, _validateLatex(latex, displayMode) || 'KaTeX 无法解析', displayMode, wrap, wrap.parentNode);
+  }
+  for (const errEl of Array.from(rootEl.querySelectorAll('.katex-error'))) {
+    if (errEl.closest('.formula-broken')) continue;
+    const latex = String(errEl.textContent || '').trim();
+    if (!latex) continue;
+    const rawWrap = errEl.closest('.math-raw');
+    const displayMode = !!(rawWrap && rawWrap.getAttribute('data-mmode') === 'display');
+    const error = String(errEl.getAttribute('title') || '');
+    _formulaSelfHeal(latex, error, displayMode, errEl, errEl.parentNode);
+  }
+}
+
+// AI 修复：上下文只有公式本体＋KaTeX 报错行（纯语法问题不需要更多上下文），描述槽
+// 优先、主模型槽兜底。返回值必须先过本地验证，修不好就明说，绝不把坏结果写进字典。
+window.repairBrokenFormula = async function (fid) {
+  const chips = document.querySelectorAll('.formula-broken[data-fid="' + fid + '"]');
+  if (!chips.length) return;
+  const first = chips[0];
+  const latex = String(first.getAttribute('data-latex') || '');
+  const error = String(first.getAttribute('data-err') || '');
+  const displayMode = first.getAttribute('data-mode') === 'display';
+  const btns = document.querySelectorAll('.formula-broken[data-fid="' + fid + '"] .formula-broken-fix');
+  const setBtn = (text, disabled) => { for (const b of btns) { b.textContent = text; b.disabled = !!disabled; } };
+  const fail = (msg) => { if (typeof showToast === 'function') showToast(msg); setBtn('AI 修', false); };
+  setBtn('修复中…', true);
+  try {
+    let slot = null;
+    let slotRole = '';
+    if (typeof getActiveModelForRole === 'function') {
+      slot = getActiveModelForRole('descriptor') || null;
+      slotRole = 'descriptor';
+      if (!slot || !slot.model) { slot = getActiveModelForRole('agent') || null; slotRole = 'agent'; }
+    }
+    if (!slot || !slot.model) return fail('先在模型设置里配一个模型（描述槽或主模型），才能用 AI 修公式');
+    const payload = { latex, error, provider: slot.provider || '', api_key: slot.apiKey || '', model: slot.model || '', base_url: slot.baseUrl || '' };
+    // 思考档跟实际被用的槽走（同主聊天口径）；修公式是小任务，档位过高只会更慢
+    if (typeof getSlotThinkingForRole === 'function') payload.thinking = getSlotThinkingForRole(slotRole);
+    const resp = await fetch('/api/models/fix-formula', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      let detail = 'HTTP ' + resp.status;
+      try { detail = String((await resp.json()).detail || detail).slice(0, 80); } catch (e) {}
+      return fail('修复请求失败：' + detail);
+    }
+    const data = await resp.json();
+    const fixed = String(data && data.latex || '').trim();
+    if (!fixed || _validateLatex(fixed, displayMode) !== null) {
+      return fail('AI 没能修好这条公式，试试重新生成这段内容');
+    }
+    _saveLatexRepair(latex, fixed);
+    for (const chip of Array.from(chips)) {
+      try {
+        const holder = document.createElement('span');
+        holder.innerHTML = window.katex.renderToString(fixed, { throwOnError: false, displayMode });
+        const parent = chip.parentNode;
+        if (!parent) continue;
+        while (holder.firstChild) parent.insertBefore(holder.firstChild, chip);
+        parent.removeChild(chip);
+      } catch (e) {}
+    }
+    if (typeof showToast === 'function') showToast('公式已修复');
+  } catch (e) {
+    fail('修复请求失败：' + String((e && e.message) || e).slice(0, 80));
+  }
+};
+
 // ====== Markdown + KaTeX + Mermaid 渲染 ======
 function renderMarkdown(text, renderCtx = {}) {
   if (!text) return '';
@@ -722,9 +981,15 @@ function renderMarkdown(text, renderCtx = {}) {
     .replace(/\\\([\s\S]+?\\\)/g, extractMath);       // inline: \(..\)
   let html = _sanitizeMarkdownHtml(marked.parse(processed));
   // 还原公式占位符（HTML 转义防 < > & 被当作标签；KaTeX auto-render 在文本节点中识别）
-  // 同时匹配 marked 转义后的形式（&lt;!--...--&gt;），覆盖代码块内的占位符
+  // 同时匹配 marked 转义后的形式（&lt;!--...--&gt;），覆盖代码块内的占位符。
+  // 正常位置的公式包一层 .math-raw 并标定界模式（display/inline）——_chipifyKatexErrors
+  // 靠它知道原位重渲该用哪种模式；代码栅栏内保持纯文本（auto-render 不进 pre/code，
+  // 也不会失败，无需参与自愈），包了 span 反而会污染 viz 源码
   html = html.replace(/&lt;!--MATH_PLACEHOLDER_(\d+)--&gt;|<!--MATH_PLACEHOLDER_(\d+)-->/g, (match, escapedIdx, rawIdx) => {
-    return escapeHtml(_decodeMathEntities(mathBlocks[parseInt(escapedIdx != null ? escapedIdx : rawIdx)]));
+    const block = _decodeMathEntities(mathBlocks[parseInt(escapedIdx != null ? escapedIdx : rawIdx)]);
+    if (escapedIdx != null) return escapeHtml(block);
+    const mode = (block.startsWith('$$') || block.startsWith('\\[')) ? 'display' : 'inline';
+    return '<span class="math-raw" data-mmode="' + mode + '">' + escapeHtml(block) + '</span>';
   });
   html = html.replace(/<!--MERMAID_PLACEHOLDER_(\d+)-->/g, (match, idx) => {
     const id = 'mermaid_' + Math.random().toString(36).substr(2, 9);
@@ -1299,6 +1564,8 @@ function _runKaTeX(element) {
   } catch (e) {
     console.warn('KaTeX 渲染失败：', e);
   }
+  // 自愈层：KaTeX 自己判过的失败处（.katex-error）做字典/启发式/芯片三处置
+  try { _chipifyKatexErrors(element); } catch (e) {}
 }
 
 function _ensureKaTeX(callback) {

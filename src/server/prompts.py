@@ -236,4 +236,11 @@ ROLLING_SUMMARY_PROMPT = """你是会话记忆压缩助手。把下面的对话�
 - 不要：流水账、客套话、重复内容
 - 如果前面已有一段旧记忆，只在其基础上补充新变化，不要复述旧内容
 只输出压缩后的记忆文本本身，不要输出任何其他内容。"""
-__all__ = ["BRANCH_SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT", "ROLLING_SUMMARY_PROMPT"]
+
+# 公式语法修复（/api/models/fix-formula）：纯语法任务，上下文只有公式本体＋KaTeX 报错行，
+# 不需要任何对话/节点上下文——前端已用本地 KaTeX 验证返回值，这里只管把语法修对
+FIX_FORMULA_PROMPT = """你是 LaTeX 修复助手。用户给你一段无法被 KaTeX 渲染的公式和对应的报错信息。
+任务：只修复语法错误（配对括号、补齐残缺的环境结尾、删掉截断残尾、替换 KaTeX 不支持的命令、转义非法字符），绝不改变公式的数学含义。
+- 修不好或没有把握时，原样返回输入的公式。
+- 只输出修复后的公式本体（LaTeX），不要代码块标记、不要 $ 定界符、不要任何解释。"""
+__all__ = ["BRANCH_SYSTEM_PROMPT", "MODULE_SYSTEM_PROMPT", "EXTRACT_PROMPT", "DESCRIBE_PROMPT", "FIX_FORMULA_PROMPT", "ROLLING_SUMMARY_PROMPT"]

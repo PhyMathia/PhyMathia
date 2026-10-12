@@ -1565,6 +1565,9 @@ function _graphNodeHtmlSig(node, messages, state) {
     state.portCounts ? state.portCounts[node.id] : null,
     state.inputPortCounts ? state.inputPortCounts[node.id] : null,
     state.expandedAnswers ? state.expandedAnswers[node.id] : null,
+    // 公式自愈修复字典的版本号（render.js）：字典一变，所有节点 body 缓存整体失效
+    // 一轮——芯片被换成交好的公式后，重建不再回放旧芯片（2026-10-12）
+    typeof _latexRepairEpoch === 'number' ? _latexRepairEpoch : 0,
   ];
   let sigSrc = '';
   for (let i = 0; i < parts.length; i++) {

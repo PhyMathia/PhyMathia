@@ -3451,3 +3451,40 @@
       -webkit-backdrop-filter: none !important;
     }
 
+
+    /* ===== 公式渲染失败芯片（render.js _chipifyKatexErrors，2026-10-12）=====
+       三层自愈的兜底外观：字典/启发式都修不好的公式不再以 KaTeX 红字示人，
+       而是一枚中性芯片（虚线框＋等宽源码＋「AI 修」按钮，只读查看器不出按钮）。 */
+    .formula-broken {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      margin: 0 2px;
+      padding: 2px 8px;
+      border: 1px dashed var(--border);
+      border-radius: var(--r-sm);
+      background: rgba(148, 158, 182, 0.10);
+      vertical-align: middle;
+    }
+    .formula-broken code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--fs-xs);
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 280px;
+    }
+    .formula-broken-fix {
+      flex-shrink: 0;
+      border: none;
+      border-radius: var(--r-xs);
+      padding: 2px 8px;
+      font-size: var(--fs-xs);
+      cursor: pointer;
+      background: rgba(143, 180, 255, 0.15);
+      color: var(--accent);
+    }
+    .formula-broken-fix:hover { background: rgba(143, 180, 255, 0.28); }
+    .formula-broken-fix:disabled { opacity: 0.5; cursor: default; }

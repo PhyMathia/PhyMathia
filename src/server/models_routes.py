@@ -37,7 +37,7 @@ from .context import (
     estimate_tokens,
 )
 from .llm_common import resolve_api_key
-from .prompts import BRANCH_SYSTEM_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
+from .prompts import BRANCH_SYSTEM_PROMPT, FIX_FORMULA_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
 from .request_ctx import _account_id, _account_paths, _parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -763,6 +763,88 @@ async def api_models_config_save(request: Request):
     _account_paths(request, payload)  # ensure 目录（幂等；已删账号在此前已被 404 闸拦下）
     await asyncio.to_thread(accounts._write_json, _models_config_path(account), blob)
     return {"ok": True, "updatedAt": blob["updatedAt"]}
+
+
+def _strip_fix_formula_reply(content: str) -> str:
+    """修复模型的自由文本 → 裸 LaTeX：剥思考块/代码围栏/包裹定界符，截断到安全长度。"""
+    text = re.sub(r"<(think|thinking|reasoning|thought)>[\s\S]*?</\s*\1\s*>", "", str(content or ""), flags=re.I)
+    text = text.strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    text = re.sub(r"^(?:\$\$|\$|\\\(|\\\[)", "", text).strip()
+    text = re.sub(r"(?:\$\$|\$|\\\)|\\\])$", "", text).strip()
+    return text[:600].strip()
+
+
+@router.post("/api/models/fix-formula")
+async def api_fix_formula(request: Request):
+    """公式语法修复（一键小任务，2026-10-12）：纯语法问题，上下文最小化——只有公式
+    本体＋KaTeX 报错行，不带节点/对话/上游内容。槽位由前端解析（描述槽优先、主模型
+    兜底，同知识提取的 descriptor 传参口径）；返回值前端会用本地 KaTeX 验证后才采纳，
+    后端不二次校验渲染性，只负责把语法修对和记账（usage role='fix_formula'）。"""
+    payload = await _parse_json_object(request)
+    latex = str(payload.get("latex") or "").strip()
+    error = str(payload.get("error") or "").strip()[:300]
+    if not latex:
+        raise HTTPException(status_code=400, detail="'latex' is required")
+    if len(latex) > 800:
+        raise HTTPException(status_code=400, detail="'latex' too long (>800)")
+    provider = str(payload.get("provider") or "")
+    api_key = str(payload.get("api_key") or "")
+    api_key, env_key_used = resolve_api_key(provider, api_key)
+    model = str(payload.get("model") or "")[:128]
+    base_url = str(payload.get("base_url") or "")
+    if not model or (not api_key and provider not in ("opencode", "opencode-go")):
+        raise HTTPException(status_code=409, detail="未配置可用的模型（描述槽或主模型）")
+    if not base_url:
+        base_url = AI_PROVIDERS.get(provider, {}).get("base_url", "")
+    try:
+        base_url = validate_model_target(provider, base_url, env_key_used)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=f"模型目标不可用：{e}")
+    msgs = [
+        {"role": "system", "content": FIX_FORMULA_PROMPT},
+        {"role": "user", "content": f"公式：\n{latex}\n\n报错：\n{error}"},
+    ]
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.0}
+    # 思考档跟实际被用的槽走（前端按槽传档，同主聊天的 payload.thinking 口径）；
+    # 供应商不认识思考参数（整请求 400）时剥掉重发一次——小任务不能被配错档弄坏
+    thinking_params = _thinking_request_params(provider, str(payload.get("thinking") or ""))
+    if thinking_params:
+        body.update(thinking_params)
+    headers = _chat_request_headers(provider, api_key, base_url, "fix-formula")
+    t0 = time.monotonic()
+
+    async def _send_fix():
+        client = http_client.get_http_client()
+        return await client.post(url, json=body, headers=headers)
+
+    try:
+        resp = await _send_fix()
+        if resp.status_code == 400 and thinking_params:
+            await resp.aclose()
+            for key in thinking_params:
+                body.pop(key, None)
+            logger.warning("AI fix-formula: upstream rejected thinking params, retried without them")
+            resp = await _send_fix()
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        usage_stats.record_failure(provider, model, "fix_formula", "",
+                                   str(e) or type(e).__name__,
+                                   usage_stats.elapsed_ms(t0))
+        raise HTTPException(status_code=502, detail="修复模型调用失败")
+    if data.get("usage"):
+        usage_stats.record_usage(provider, model, "fix_formula", "", data["usage"],
+                                 duration_ms=usage_stats.elapsed_ms(t0))
+    try:
+        content = str(data["choices"][0]["message"]["content"] or "")
+    except (KeyError, IndexError, TypeError):
+        raise HTTPException(status_code=502, detail="修复模型返回格式异常")
+    fixed = _strip_fix_formula_reply(content)
+    if not fixed:
+        raise HTTPException(status_code=502, detail="修复模型返回为空")
+    return {"latex": fixed}
 
 
 @router.get("/api/usage/stats")
