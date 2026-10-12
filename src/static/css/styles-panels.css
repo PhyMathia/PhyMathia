@@ -2354,7 +2354,9 @@
       font-weight: 700;
     }
 
-    .quiz-chart-pie {
+    /* 占比环：外框（边＋投影）在壳层，填充层 conic-gradient 用径向 mask 挖空中空——壳层不被 mask 才保得住边和投影 */
+    .quiz-chart-donut {
+      position: relative;
       width: 120px;
       height: 120px;
       margin: 0 auto 10px;
@@ -2363,7 +2365,15 @@
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
     }
 
-    /* 图表标题副行：写清「扇形角度到底编码了什么」，避免读成正确率分布 */
+    .quiz-chart-donut-fill {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      -webkit-mask: radial-gradient(circle closest-side, transparent 58%, #000 59%);
+      mask: radial-gradient(circle closest-side, transparent 58%, #000 59%);
+    }
+
+    /* 图表标题副行：写清「环形角度到底编码了什么」，避免读成正确率分布 */
     .quiz-chart-sub {
       display: block;
       margin-top: 2px;
@@ -2391,6 +2401,54 @@
       height: 10px;
       border-radius: var(--r-xs);
       flex-shrink: 0;
+    }
+
+    /* 各画布正确率条形图：三列网格（名称可截断 / 轨道自适应 / 数值右对齐） */
+    .quiz-rate-bars {
+      display: grid;
+      gap: 8px;
+      padding: 4px 0;
+    }
+
+    .quiz-rate-row {
+      display: grid;
+      grid-template-columns: minmax(0, 88px) 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quiz-rate-name {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+    }
+
+    .quiz-rate-track {
+      height: 8px;
+      border-radius: var(--r-pill);
+      background: var(--border);
+      overflow: hidden;
+    }
+
+    .quiz-rate-fill {
+      height: 100%;
+      border-radius: var(--r-pill);
+      transition: width 0.3s ease;
+    }
+
+    .quiz-rate-num {
+      min-width: 34px;
+      color: var(--text-primary);
+      font-size: var(--fs-xs);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 趋势线通栏：与两张半宽卡（占比环＋正确率）凑满两行网格 */
+    .quiz-chart-card--wide {
+      grid-column: 1 / -1;
     }
 
     .quiz-line-chart {

@@ -372,4 +372,35 @@ check('harness：澄清重跑委托主路径 / 零勾选不回退应用全部 / 
   if (!hsrc.includes('_showHarnessFeedbackForm')) throw new Error('差评备注内联表单缺失');
   return true;
 });
+
+check('quiz 总览：占比环改中空环形（donut 结构 + 角度=题量），图例只带题量不带正确率', () => {
+  const html = sandbox._quizDonutHtml([
+    { label: '甲画布', value: 3, correctRate: 67, color: 'red' },
+    { label: '乙画布', value: 1, correctRate: 100, color: 'blue' },
+  ]);
+  if (!html.includes('quiz-chart-donut-fill')) throw new Error('缺环形填充层');
+  // 4 题中甲占 3 → 0%~75%，乙 75%~100%；角度必须跟题量走
+  if (!html.includes('conic-gradient(red 0% 75%, blue 75% 100%)')) throw new Error('扇区角度未按题量切分: ' + html);
+  if (html.includes('quiz-chart-pie')) throw new Error('残留旧实心饼图类名');
+  if (html.includes('正确率')) throw new Error('图例不应带正确率（正确率归条形图，避免双口径）');
+  if (sandbox._quizDonutHtml([]).includes('quiz-chart-donut')) throw new Error('空数据应落 quiz-chart-empty 占位');
+  return true;
+});
+
+check('quiz 总览：各画布正确率条形图（降序 + 宽度内联 + 空数据占位）＋总览接线（环形卡/条形卡/趋势通栏）', () => {
+  const html = sandbox._quizRateBarsHtml([
+    { label: '甲画布', value: 3, correctRate: 67, color: 'red' },
+    { label: '乙画布', value: 1, correctRate: 100, color: 'blue' },
+  ]);
+  if (html.indexOf('乙画布') > html.indexOf('甲画布')) throw new Error('未按正确率降序排');
+  if (!html.includes('width:100%;background:blue')) throw new Error('条宽未编码正确率');
+  if (!html.includes('width:67%;background:red')) throw new Error('条色未与占比环同色对应');
+  if (sandbox._quizRateBarsHtml([]).includes('quiz-rate-row')) throw new Error('空数据应落 quiz-chart-empty 占位');
+  // 总览接线：三卡结构在打包产物里（环形＋条形半宽并排，趋势线通栏）；只断全局函数名/类名字面量，局部变量会被压缩器改名
+  if (!code.includes('_quizDonutHtml(')) throw new Error('总览未接环形图');
+  if (!code.includes('_quizRateBarsHtml(')) throw new Error('总览未接正确率条形图');
+  if (!code.includes('quiz-chart-card--wide')) throw new Error('趋势卡缺通栏类');
+  if (code.includes('quiz-chart-pie') || code.includes('_quizPieHtml')) throw new Error('打包产物残留旧饼图');
+  return true;
+});
 }

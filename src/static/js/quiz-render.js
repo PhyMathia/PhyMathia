@@ -303,7 +303,8 @@ function _quizSessionChartSegments(sessions, rawStats) {
   return segments;
 }
 
-function _quizPieHtml(segments) {
+// 占比环（中空）：角度编码已测题数而非正确率；正确率归 _quizRateBarsHtml，图例只带题量避免双口径混在一张图
+function _quizDonutHtml(segments) {
   if (!segments.length) return '<div class="quiz-chart-empty">暂无答题数据</div>';
   const total = segments.reduce((sum, item) => sum + item.value, 0);
   let acc = 0;
@@ -316,10 +317,24 @@ function _quizPieHtml(segments) {
   const legend = segments.map(segment => `
     <div class="quiz-chart-legend-item">
       <span style="background:${segment.color}"></span>
-      ${_quizEscape(segment.label)} · 已测 ${segment.value} 题 · 正确率 ${segment.correctRate}%
+      ${_quizEscape(segment.label)} · 已测 ${segment.value} 题
     </div>
   `).join('');
-  return `<div class="quiz-chart-pie" style="background:conic-gradient(${stops})"></div><div class="quiz-chart-legend">${legend}</div>`;
+  return `<div class="quiz-chart-donut"><div class="quiz-chart-donut-fill" style="background:conic-gradient(${stops})"></div></div><div class="quiz-chart-legend">${legend}</div>`;
+}
+
+// 各画布正确率条形图：颜色与占比环同源对应，按正确率降序（同率题量多的在前）方便排名
+function _quizRateBarsHtml(segments) {
+  if (!segments.length) return '<div class="quiz-chart-empty">暂无答题数据</div>';
+  const sorted = segments.slice().sort((a, b) => b.correctRate - a.correctRate || b.value - a.value);
+  const rows = sorted.map(segment => `
+    <div class="quiz-rate-row">
+      <div class="quiz-rate-name">${_quizEscape(segment.label)}</div>
+      <div class="quiz-rate-track"><div class="quiz-rate-fill" style="width:${Math.min(100, Math.max(0, segment.correctRate))}%;background:${segment.color}"></div></div>
+      <div class="quiz-rate-num">${segment.correctRate}%</div>
+    </div>
+  `).join('');
+  return `<div class="quiz-rate-bars">${rows}</div>`;
 }
 
 function _quizTrendData() {
@@ -408,10 +423,14 @@ function _renderQuizGlobalDashboard() {
     </div>
     <div class="quiz-charts">
       <div class="quiz-chart-card">
-        <div class="quiz-chart-title">各画布答题量占比<span class="quiz-chart-sub">扇形角度=已测题数，正确率见图例</span></div>
-        ${_quizPieHtml(chartSegments)}
+        <div class="quiz-chart-title">各画布答题量占比<span class="quiz-chart-sub">环形角度=已测题数</span></div>
+        ${_quizDonutHtml(chartSegments)}
       </div>
       <div class="quiz-chart-card">
+        <div class="quiz-chart-title">各画布正确率<span class="quiz-chart-sub">颜色与占比环对应</span></div>
+        ${_quizRateBarsHtml(chartSegments)}
+      </div>
+      <div class="quiz-chart-card quiz-chart-card--wide">
         <div class="quiz-chart-title">最近答题趋势</div>
         ${_quizLineHtml(trendHistory)}
       </div>
