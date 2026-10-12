@@ -170,6 +170,7 @@ _KV_SOLO_KEYS = {
     "continent_gate": "continent",
     "continent_gate_weights": "continent",
     "continent_regions": "continent",
+    "continent_seas": "continent",
 }
 
 _KV_META_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")

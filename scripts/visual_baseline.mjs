@@ -84,7 +84,7 @@ const SURFACES = [
   { name: '05-knowledge', closeAll: true, expect: 'knowledgePanel', js: "toggleKnowledgePanel()", wait: 1200 },
   { name: '06-memory', closeAll: true, expect: 'memoryPanel', js: "openMemoryPanel()", wait: 1200 },
   { name: '07-quiz', closeAll: true, expect: 'quizModal', js: "openQuiz()", wait: 1800 },
-  { name: '08-data-panel', closeAll: true, expect: 'dataPanel', js: "document.querySelector('.header-actions [title=\"数据管理\"]').click()" },
+  { name: '08-data-panel', closeAll: true, expect: 'dataPanel', js: "document.querySelector('.data-btn').click()" },
   { name: '09-continent', closeAll: true, js: "openContinentView()", wait: 2000 },
   { name: '10-addmodel', closeAll: true, expect: 'addModelDialog', js: "showAddModelDialog()" },
   { name: '11-search', closeAll: true, js: "openGraphSearchPanel()" },

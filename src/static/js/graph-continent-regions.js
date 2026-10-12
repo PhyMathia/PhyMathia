@@ -184,7 +184,9 @@ function _continentApplyFocus() {
 // v2 踩过 setPointerCapture 把 pointerup 重定向的坑）
 function _continentDomainMenu(ev, sid) {
   const data = _continentData || {};
-  const list = (data.domainList || []).slice();
+  // v8.14：指派菜单换**海域口径**名单（assign 从此写海域键，与 cluster.domain 同口径）；
+  // 旧投影无 seaList 时回落细族名单（行为不变）
+  const list = ((data.seaList && data.seaList.length) ? data.seaList : (data.domainList || [])).slice();
   const override = (_continentRegionOverrides && _continentRegionOverrides.assign) || {};
   const hadOverride = Object.prototype.hasOwnProperty.call(override, sid);
   const current = hadOverride ? override[sid]
@@ -230,6 +232,115 @@ async function _continentAssignRegion(sid, domain, before) {
   } catch (err) {
     _continentToast('保存失败：' + (err && err.message || err));
   }
+}
+
+// ===== v8.14 海域粗粒度：族 → 海域 的用户归属（族表编辑弹层行内 ⚓ 入口）=====
+// 归属写 KV continent_seas（{map:{细族:海域}}，稀疏覆盖内置默认）；「独立成海」也是
+// 一条用户决定（族名→族名，把该族从内置海里拆出来，服务端 resolve 时解释成删键）。
+// 落笔后地图自动重算（与族表编辑同一口径）；查阅态拦下不落盘。
+
+async function _continentFetchSeasKv() {
+  try {
+    const r = await fetch(CONTINENT_SEAS_KV_API, { cache: 'no-cache' });
+    if (r.ok) {
+      const j = await r.json();
+      const v = j && j.value;
+      const m = (v && typeof v === 'object' && !Array.isArray(v))
+        ? (v.map && typeof v.map === 'object' && !Array.isArray(v.map) ? v.map : v)
+        : {};
+      return m;
+    }
+  } catch (e) { /* 读不到就当空表 */ }
+  return {};
+}
+
+function _continentSeaMenu(ev, fam, seaUser) {
+  const data = _continentData || {};
+  const esc = _continentEsc;
+  const effective = (data.seaMap && data.seaMap[fam]) || fam;
+  const names = [];
+  const push = n => { n = String(n || ''); if (n && names.indexOf(n) < 0) names.push(n); };
+  (data.seaList || []).forEach(push);
+  Object.keys(data.seaMap || {}).forEach(k => push(data.seaMap[k]));
+  const rows = names.map(n =>
+    '<button class="continent-pop-btn' + (n === effective ? ' is-current' : '') +
+    '" data-sea-pick="' + esc(n) + '">' + esc(n) +
+    (n === effective ? '（当前）' : '') + '</button>').join('');
+  const isCustom = seaUser && Object.prototype.hasOwnProperty.call(seaUser, fam);
+  const html =
+    '<div class="continent-pop-title">「' + esc(fam) + '」归到哪片海域？</div>' +
+    '<div class="continent-pop-desc">海域是岛的分组口径（细族是证据语言）。你的指派优先于内置默认，' +
+    '保存后地图自动重算；「独立成海」把该族从默认海里拆出来单独成片。</div>' +
+    '<div class="continent-pop-actions is-wrap">' + rows +
+    '<button class="continent-pop-btn' + (effective === fam ? ' is-current' : '') +
+    '" data-sea-pick="' + esc(fam) + '">⚓ 独立成海</button>' +
+    (isCustom ? '<button class="continent-pop-btn is-danger" data-sea-reset>跟随默认</button>' : '') +
+    '</div>' +
+    '<div class="continent-pop-row"><input class="continent-pop-input" data-sea-new maxlength="16" placeholder="新海域名（如：光学与声学）"></div>' +
+    '<div class="continent-pop-actions"><button class="continent-pop-btn" data-sea-new-save>归入新海域</button></div>';
+  const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
+  if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-sea-pick]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentClosePopover();
+      _continentAssignSea(fam, btn.getAttribute('data-sea-pick'));
+    });
+    _kact(btn);
+  });
+  const resetBtn = el.querySelector('[data-sea-reset]');
+  if (resetBtn) {
+    resetBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentClosePopover();
+      _continentResetSea(fam);
+    });
+    _kact(resetBtn);
+  }
+  const saveNew = el.querySelector('[data-sea-new-save]');
+  if (saveNew) {
+    saveNew.addEventListener('click', e => {
+      e.stopPropagation();
+      const input = el.querySelector('[data-sea-new]');
+      const name = String((input && input.value) || '').trim();
+      if (!name) { _continentToast('海域名要有'); return; }
+      _continentClosePopover();
+      _continentAssignSea(fam, name);
+    });
+    _kact(saveNew);
+  }
+}
+
+async function _continentCommitSeasKv(map, message) {
+  if (phyIsReadonly()) { _continentToast('查阅模式：修改不保存'); return false; }
+  try {
+    const resp = await fetch(CONTINENT_SEAS_KV_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { map: map } }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    await _continentRefreshAfterFamilies();
+    _continentToast(message);
+    return true;
+  } catch (err) {
+    _continentToast('保存失败：' + (err && err.message || err));
+    return false;
+  }
+}
+
+async function _continentAssignSea(fam, sea) {
+  sea = String(sea || '').trim();
+  if (!fam || !sea) return;
+  const map = Object.assign({}, await _continentFetchSeasKv());
+  map[fam] = sea;
+  await _continentCommitSeasKv(map, '「' + fam + '」已归入「' + sea + '」，地图已重算');
+}
+
+async function _continentResetSea(fam) {
+  const map = Object.assign({}, await _continentFetchSeasKv());
+  if (!Object.prototype.hasOwnProperty.call(map, fam)) return;
+  delete map[fam];
+  await _continentCommitSeasKv(map, '「' + fam + '」已恢复内置归属，地图已重算');
 }
 
 // 海域名修改：只改显示名，色槽与归类键不变（颜色跟规范名走，改名不换色）
@@ -875,14 +986,20 @@ async function _continentRefreshAfterFamilies() {
   } catch (e) { /* 刷新失败下次打开自然生效 */ }
 }
 
-function _continentFamilyRowHtml(f) {
+function _continentFamilyRowHtml(f, seaMap, seaUser) {
   const terms = (f && f.terms) || [];
   const preview = terms.slice(0, 6).map(_continentEsc).join('、') + (terms.length > 6 ? ' …' : '');
+  // v8.14：行内 ⚓ 归属徽标——这片族折进哪片海域（seaMap 覆盖优先，否则族名恒等）；
+  // 用户改过的带 ✎ 角标。点击开归属菜单（_continentSeaMenu）。
+  const sea = (seaMap && seaMap[f.canonical]) || f.canonical;
+  const seaCustom = seaUser && Object.prototype.hasOwnProperty.call(seaUser, f.canonical);
   return '<div class="continent-family-row" data-family-canonical="' + _continentEsc(f.canonical) + '">' +
     '<div class="continent-family-line">' +
       '<span class="continent-family-name">' + _continentEsc(f.canonical) + '</span>' +
       '<span class="continent-family-src">' + _continentEsc(_continentFamilySourceLabel(f.source)) + '</span>' +
       '<span class="continent-family-terms" title="' + _continentEsc(terms.join('、')) + '">' + preview + '</span>' +
+      '<button class="continent-pop-btn is-quiet" data-family-sea="' + _continentEsc(f.canonical) + '"' +
+        ' title="这片族折进哪片海域——点开可改归属（写进大陆记忆，地图自动重算）">⚓ ' + _continentEsc(sea) + (seaCustom ? ' ✎' : '') + '</button>' +
       '<button class="continent-pop-btn is-quiet" data-family-edit>改</button>' +
     '</div>' +
   '</div>';
@@ -1083,6 +1200,9 @@ async function _continentFamilyPopover(ev) {
         (v && Array.isArray(v.families)) ? v.families : (Array.isArray(v) ? v : []));
     }
   } catch (e) { /* 读不到就当空表 */ }
+  // v8.14：用户海域归属 KV——行内 ⚓ 徽标与归属菜单共用；生效表以最近一次投影为准
+  const seaUser = await _continentFetchSeasKv();
+  const seaEffective = (_continentData && _continentData.seaMap) || null;
   const builtinCount = merged.filter(f => f.source === 'builtin').length;
   const esc = _continentEsc;
   const html =
@@ -1091,7 +1211,7 @@ async function _continentFamilyPopover(ev) {
     '就会设起一座 ❖ 联运港、聚进同一片海域。内置 ' + builtinCount + ' 族是底线；你保存过的族以内表为准。' +
     '保存后地图自动重算（名单变了，旧 Φ 打标自动作废重打）。</div>' +
     '<div class="continent-family-list" data-family-list>' +
-      merged.map(f => _continentFamilyRowHtml(f)).join('') +
+      merged.map(f => _continentFamilyRowHtml(f, seaEffective, seaUser)).join('') +
     '</div>' +
     '<div data-suggest-section></div>' +
     '<div data-cluster-section></div>' +
@@ -1109,6 +1229,14 @@ async function _continentFamilyPopover(ev) {
       : '');
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
+
+  // v8.14：行内 ⚓ 归属按钮 → 海域菜单（写 continent_seas，地图自动重算）
+  el.querySelectorAll('[data-family-sea]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      _continentSeaMenu(e, btn.getAttribute('data-family-sea'), seaUser);
+    });
+  });
 
   const persist = async next => {
     // 查阅态：族表写（新增/编辑/删除/收下建议）一律拦下，抛错让各调用方的 catch

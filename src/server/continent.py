@@ -72,6 +72,7 @@ from .family import (
     match_family_terms,
     merge_families,
     prepare_families,
+    resolve_sea_map,
 )
 from .knowledge import _is_concept_like_title, _clean_knowledge_title
 from .embedding import cosine as _vec_cosine
@@ -908,10 +909,30 @@ def _softmax(scores: dict) -> dict:
     return {d: e / total for d, e in exps.items()}
 
 
+def _maxfold_by_sea(scores: dict, fold: dict) -> dict:
+    """细族键评分 → 海域键评分（v8.14 粗粒度层）：同海域取**最强**细族，海间比强弱。
+
+    fold 为空时原样返回（逐字节现行为）。取 max 而不是求和是实测教育出来的：宽海
+    （数学分析 3 族、电磁学 5 族）族多，向量证据对每族都洒一点，求和会让宽海把
+    证据单薄的卡整批吸走（实测：卡方分布岛被数学分析吸走，概率与统计反而输）；
+    max 读作「这张卡属于它最匹配细族所在的那片海」，宽海窄海一律公平。恒等折叠
+    （键一一对应）时 max 与原值相同，逐字节现行为。
+    """
+    if not fold:
+        return scores
+    out = {}
+    for d, v in scores.items():
+        key = fold.get(d, d)
+        if key not in out or v > out[key]:
+            out[key] = v
+    return out
+
+
 def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     """岛级归属＝卡级概率聚合（不是数票）：raw_d = Σ_c 信息量(c)·p_d(c) + 2.0·岛名命中。
     信息量用 1 + min(3, 公式数)——带公式的卡内容更多，说话更算数；章节号标题的卡
     没有本地证据，贡献为零（岛名兜底）。归一化后输出 top-K 概率与「谁说了算」。
+    v8.14 起入参的键是**海域**（卡级概率与岛名命中由调用方先折叠，见 _maxfold_by_sea）。
 
     domainSource 归属（图例据此标「按概念族推断 / Φ 归类 / 你指定」）：对有打标的卡
     另算一份**只含本地证据**的概率（card_probs_local），对比主导领域的岛级质量——
@@ -1005,12 +1026,18 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
 
 
 def build_continent(items: dict, sessions: dict = None, user_edges=None,
-                    families=None, gate=None, card_sims=None) -> dict:
+                    families=None, gate=None, card_sims=None, sea_map=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
 
     card_sims（v9 向量证据，调用方喂参）：{itemId: {领域名: 余弦相似度}}——
     卡片向量与概念族向量中心的余弦，由路由层用本地模型算好（有缓存）传入；
     本函数不加载模型、不读缓存文件。缺省/空表 = 向量证据关闭，投影与 v8 逐字一致。
+
+    sea_map（v8.14 海域粗粒度层，调用方喂参）：{细族: 海域} 生效折叠表——路由层用
+    family.resolve_sea_map(用户 KV, 生效名单) 算好传入；本函数不读 KV。缺省/空表 =
+    恒等折叠，投影与既往逐字一致（细族即海域）。折叠点在**卡级评分、softmax 之前**
+    （海内取最强细族，见 _maxfold_by_sea），domain 域四字段从此装**海域键**，
+    domainList 仍装细族（Φ 打标名单与白名单的口径），seaList/seaMap 是海域口径。
 
     返回 {generatedAt, clusterCount, itemCount, orphans, clusters, shared,
     userEdges, danglingEdges, domainList}：
@@ -1190,18 +1217,36 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
                 if s > 0 and d in accepted_names} or None
         if sims:
             embed_used = True
-        local = _softmax(_gate_card_scores(hits, struct, None, term_df, n_scored, term_k, sims))
-        full = (_softmax(_gate_card_scores(hits, struct, gate_labels, term_df, n_scored, term_k, sims))
-                if gate_labels else local)
+        # v8.14 海域粗粒度层：评分在 softmax **之前**按海域折叠（海内取最强细族），
+        # 卡级概率的键从此是海域。恒等折叠时 _maxfold_by_sea 原样返回，逐字节现行为。
+        local_scores = _maxfold_by_sea(
+            _gate_card_scores(hits, struct, None, term_df, n_scored, term_k, sims), sea_map)
+        local = _softmax(local_scores)
+        full = (_softmax(_maxfold_by_sea(
+            _gate_card_scores(hits, struct, gate_labels, term_df, n_scored, term_k, sims),
+            sea_map))
+            if gate_labels else local)
         if local:
             card_probs_local[iid] = local
         if full:
             card_probs[iid] = full
     for cluster in clusters:
+        island_seas = ({(sea_map or {}).get(f, f) for f in
+                        session_fams.get(cluster["sessionId"]) or ()}
+                       if sea_map else session_fams.get(cluster["sessionId"]) or ())
         cluster.update(_cluster_domain_row(
             [row["itemId"] for row in cluster["items"]],
-            items, card_probs, card_probs_local,
-            session_fams.get(cluster["sessionId"]) or ()))
+            items, card_probs, card_probs_local, island_seas))
+
+    # v8.14 海域口径名单：seaList＝生效折叠表值域（按生效族表序去重，前端色槽/菜单
+    # universe，与 domainList 同 cap）；seaMap＝生效折叠表原样（族表编辑显示当前归属、
+    # 折入细族的旧色继承都用它）。T134 同源铁律：两键随投影一起下发，前端不再自算。
+    fold = sea_map or {}
+    sea_list = []
+    for f in accepted_families:
+        sea = fold.get(f["canonical"], f["canonical"])
+        if sea not in sea_list:
+            sea_list.append(sea)
 
     # ===== v2 用户簇间边：主图自有数据（KV continent_edges，调用方喂参）=====
     valid_edges, dangling_edges = _split_user_edges(
@@ -1217,6 +1262,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         "userEdges": valid_edges,
         "danglingEdges": dangling_edges,
         "domainList": [f["canonical"] for f in accepted_families][:DOMAIN_LIST_MAX],
+        "seaList": sea_list[:DOMAIN_LIST_MAX],
+        "seaMap": dict(fold),
         # v7.1b：当前评分口径的版本指纹——前端写 gate KV 时带上它，名单/权重变了
         # 整批作废重打（版本单一来源在此，不许前端自己算）
         "gateVersion": gate_ver,

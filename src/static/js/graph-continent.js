@@ -28,6 +28,8 @@
 const CONTINENT_VIEW_KEY = 'phymathia_continent_view'; // 视口记忆（非会话键）
 const CONTINENT_EDGES_API = '/api/kv/continent_edges'; // 主图簇间边的读写端点（现成 KV 通道）
 const CONTINENT_REGIONS_API = '/api/kv/continent_regions'; // v7.1a 海域覆盖（改名/挪岛）的读写端点
+// v8.14 海域粗粒度层：族 → 海域 的用户归属（稀疏覆盖内置默认），读写走既有 KV 通道
+const CONTINENT_SEAS_KV_API = '/api/kv/continent_seas';
 // v8 族表编辑：合并视图走专用只读端点（内置+KV 一次拿全），增删改走既有 KV 通道
 const CONTINENT_FAMILIES_API = '/api/families';
 const CONTINENT_FAMILIES_KV_API = '/api/kv/continent_families';
@@ -83,11 +85,12 @@ const CONTINENT_WARP_MS = 420;
 const CONTINENT_WARP_EASE = 'cubic-bezier(.22,.75,.3,1)';
 const CONTINENT_WARP_CANVAS_OUT = 0.5;  // 会话图退场缩放
 // v7.1a 海域层：两级布局的块间距与海域板尺寸（板 = 块内岛矩形并集外扩，
-// 顶部另留一行给海域牌）；色盘 12 格，同领域永远同色。
+// 顶部另留一行给海域牌）；色盘 16 格（v8.14 从 12 扩——默认海域 15 片，留 1 槽余量），
+// 同领域永远同色。
 const CONTINENT_REGION_GAP = 230;
 const CONTINENT_REGION_PAD = 26;
 const CONTINENT_REGION_HEADER_H = 34;
-const CONTINENT_HUE_COUNT = 12;
+const CONTINENT_HUE_COUNT = 16;
 // 置信度三档（后端如实报概率，档位是前端消费口径）：实色 / 淡色+「?」 / 中性+待确认。
 // 与服务端 GATE_CONF_SOLID / GATE_CONF_LIGHT 同数值（前端只拿 domainConf 判档）。
 const CONTINENT_CONF_SOLID = 0.7;
@@ -614,9 +617,11 @@ function _continentRender(data) {
   if (!world) return null;
   world.innerHTML = '';
   // v7.1a 海域层：后端概率 + 用户覆盖（KV）→ 归属解析；有 ≥2 座岛同领域才走两级
-  // 布局（海域分块），否则走 v6 旧单网格（行为不变，不引入回归）
+  // 布局（海域分块），否则走 v6 旧单网格（行为不变，不引入回归）。
+  // v8.14：分组键与色槽 universe 换**海域口径**（seaList；旧数据回落 domainList），
+  // Φ 打标名单（domainList，细族）不受扰——gate 消息与白名单的口径在服务端没动。
   const regionInfo = _continentRegions(data.clusters || [], _continentRegionOverrides,
-                                       data.domainList);
+                                       data.seaList || data.domainList, data.seaMap);
   _continentRegionInfo = regionInfo;
   // T140：展开态以浅拷贝带旗进布局——原 data 不动（缓存与确定性都不受扰）
   const clustersForLayout = (data.clusters || []).map(c =>
@@ -799,7 +804,7 @@ function _continentRender(data) {
     // 领域徽标（v7.1a 手动纠正入口）：点开「归到哪个领域」清单——一步落笔写 KV。
     // 徽标不在（neutral 无归属）就不占位；淡色/待确认档带「?」（不确定也要可见）。
     // 徽标旁的色点 = 次要领域（混合岛，后端 domains[1] 概率够高才显示）
-    const secondaryDot = _continentSecondaryDot(cluster, data.domainList, regionInfo.colors);
+    const secondaryDot = _continentSecondaryDot(cluster, data.seaList || data.domainList, regionInfo.colors);
     if (info.key && tier !== 'neutral') {
       const region2 = regionInfo.regions.find(r => r.key === info.key);
       const badgeName = region2 ? region2.name : info.key;

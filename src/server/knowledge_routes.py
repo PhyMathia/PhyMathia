@@ -193,12 +193,16 @@ async def api_get_continent(request: Request = None):
     # v9 向量证据：族中心锚点与 build_continent 内部同一份合并口径（同名族 KV 覆盖内置）
     accepted = family.merge_families(family.BUILTIN_FAMILIES,
                                      family.families_from_payload(user_families))
+    # v8.14 海域粗粒度层：生效折叠表 = 内置默认 ∪ KV continent_seas 用户稀疏覆盖
+    sea_map = family.resolve_sea_map(kv.get("continent_seas"),
+                                     [f["canonical"] for f in accepted])
     card_sims, _ = await asyncio.to_thread(_continent_card_sims, items, accepted)
     # T207：build_continent 本体（跨会话聚簇＋布局推导，纯本地 CPU）此前只包了向量
     # 准备、本体留在事件循环里同步跑——开一次图就占住整个循环若干秒，期间其他请求
     # 全部排队。这里一并挪出，与 card_sims 同口径。
     return await asyncio.to_thread(continent.build_continent, items, sessions,
-                                   user_edges, user_families, gate, card_sims=card_sims)
+                                   user_edges, user_families, gate, card_sims=card_sims,
+                                   sea_map=sea_map)
 
 
 @router.get("/api/families")

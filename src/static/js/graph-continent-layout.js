@@ -87,8 +87,8 @@ function _continentClusterOrder(clusters, shared, userEdges) {
 
 // 领域名 → 稳定色相。铁律②的视觉面：专家名单固定 → 色槽确定——内置名单先分配
 // （表序固定，槽位永不动），自定义领域按 domainList 里的稳定顺序排在后面，新增
-// 自定义只会影响排在其后的自定义项。>12 个活跃领域由 _continentRegions 并「其他」，
-// 所以色槽永远够用。
+// 自定义只会影响排在其后的自定义项。>CONTINENT_HUE_COUNT 个活跃领域由
+// _continentRegions 并「其他」，所以色槽永远够用。
 function _continentStrHash(s) {
   let h = 5381;
   const str = String(s == null ? '' : s);
@@ -140,7 +140,7 @@ function _continentShortName(title, cap) {
 // {key, tier, source}。tier 三档：solid（p≥0.7）/ light（0.4–0.7，「?」徽标）/
 // pending（<0.4，中性灰不上地盘，进「待确认」）——「不确定也要可见」。
 // 用户指派永远 solid（人说了算，conf=1）。查空是正常路径：没证据 → neutral。
-function _continentRegions(clusters, overrides, domainList) {
+function _continentRegions(clusters, overrides, domainList, seaMap) {
   const assign = (overrides && overrides.assign) || {};
   const renames = (overrides && overrides.renames) || {};
   // 用户改色表（图例「换色」写的）：键＝规范领域键，值＝0–359 色相
@@ -193,9 +193,29 @@ function _continentRegions(clusters, overrides, domainList) {
     const c = (clusters || []).find(x => String(x.sessionId) === sid);
     return (c && c.itemCount) || 0;
   };
+  // v8.14 孤儿色继承：粗键（海域）自己没有换色覆盖时，沿 seaMap 找折入该海的细族里
+  // 有没有旧换色——粗粒度化不改用户已调过的颜色（按 domainList 序扫描，确定性不变）。
+  // 优先级：colors[海域键] > 折入细族的 colors[细族键] > 确定性色槽。
+  const inheritedHue = (key) => {
+    const list = domainList || [];
+    for (let i = 0; i < list.length; i++) {
+      const fam = list[i];
+      if (seaMap && seaMap[fam] === key &&
+          colors && Object.prototype.hasOwnProperty.call(colors, fam)) {
+        const h = Number(colors[fam]);
+        if (Number.isFinite(h)) return ((Math.round(h) % 360) + 360) % 360;
+      }
+    }
+    return null;
+  };
   regions.forEach(r => {
     r.name = r.merged ? '其他' : (renames[r.key] || r.key);
-    r.hue = r.merged ? null : _continentHueWithOverride(r.key, domainList, colors);
+    if (r.merged) { r.hue = null; }
+    else {
+      const hasOwn = colors && Object.prototype.hasOwnProperty.call(colors, r.key);
+      const inh = hasOwn ? null : inheritedHue(r.key);
+      r.hue = inh !== null ? inh : _continentHueWithOverride(r.key, domainList, colors);
+    }
     r.hueCustom = !r.merged && Object.prototype.hasOwnProperty.call(colors, r.key);
     r.itemCount = r.sessions.reduce((acc, sid) => acc + itemCountOf(sid), 0);
     const srcs = r.sessions.map(sid => bySid[sid].source);
@@ -205,9 +225,11 @@ function _continentRegions(clusters, overrides, domainList) {
   });
   // T134：domainList 随产物带走——航线「跟海域色」必须与海域板同一份 universe 取色
   //（_continentRegionHue 的线性探测占槽依赖 universe 全表），各传各的必在撞槽时分叉。
-  // colors 同理随产物带走（v8.13 换色）：否则航线/次要色点算出来与海域板不同色
+  // colors 同理随产物带走（v8.13 换色）：否则航线/次要色点算出来与海域板不同色。
+  // seaMap 同理（v8.14）：孤儿色继承与后续海域口径消费共用同一份生效折叠表
   return { regions: regions, singles: singles, neutral: neutral, pending: pending,
-           bySid: bySid, domainList: domainList || null, colors: colors };
+           bySid: bySid, domainList: domainList || null, colors: colors,
+           seaMap: seaMap || null };
 }
 
 // ---------- 纯布局：簇网格摆放，簇内概念流式网格；坐标全部解析算出，无需 DOM 实测 ----------

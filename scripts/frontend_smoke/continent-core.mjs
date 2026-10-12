@@ -1104,7 +1104,8 @@ check('graph-continent: v8.13 海域换色（覆盖优先/改色不改键/脏值
   if (!src.includes('_continentHueWithOverride(info.key, regionInfo.domainList, regionInfo.colors)')) {
     throw new Error('航线「跟海域色」没吃换色覆盖（颜色会与海域板分叉）');
   }
-  if (!src.includes('_continentSecondaryDot(cluster, data.domainList, regionInfo.colors)')) {
+  // v8.14：次要色点 universe 换海域口径（seaList，旧数据回落 domainList），仍与海域板同源
+  if (!src.includes('_continentSecondaryDot(cluster, data.seaList || data.domainList, regionInfo.colors)')) {
     throw new Error('次要领域色点没吃换色覆盖');
   }
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
@@ -1402,6 +1403,41 @@ check('graph-continent: v8 族表编辑 + 纠正信号（规范化 / 术语解�
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   if (!css.includes('.continent-family-row')) throw new Error('族表行样式缺失');
   if (!css.includes('.continent-family-chip')) throw new Error('词条芯片样式缺失');
+  return true;
+});
+
+check('graph-continent: v8.14 海域粗粒度（seaList 接线 / 族行 ⚓ 归属 / KV 端点 / 投影带 seaMap）', () => {
+  const src = readContinentSrc();
+  // 静态契约：分组与色槽 universe 换海域口径（旧数据回落细族名单）；Φ 打标名单不动
+  if (!src.includes('data.seaList || data.domainList')) throw new Error('投影没消费 seaList');
+  if (!src.includes("((data.seaList && data.seaList.length) ? data.seaList : (data.domainList || [])).slice()")) {
+    throw new Error('岛牌指派菜单没换海域口径');
+  }
+  if (!src.includes('CONTINENT_SEAS_KV_API') || !src.includes('/api/kv/continent_seas')) {
+    throw new Error('海域归属 KV 端点缺失');
+  }
+  if (!src.includes('data-family-sea') || !src.includes('function _continentSeaMenu') ||
+      !src.includes('function _continentAssignSea')) {
+    throw new Error('族行归属入口/菜单缺失');
+  }
+  if (!src.includes('seaMap: seaMap || null')) throw new Error('regionInfo 产物没带 seaMap（T134 同源断）');
+  // 行为：⚓ 徽标接线与 ✎ 角标（esc 过的海域名正文断不了——沙箱 escapeHtml 走 DOM
+  // 返回空串，与既有 check 同口径只断结构与未转义段）
+  const row = sandbox._continentFamilyRowHtml(
+    { canonical: '静电场', terms: ['电容'], source: 'builtin' },
+    { 静电场: '电磁学' }, {});
+  if (row.indexOf('⚓') < 0 || row.indexOf('data-family-sea') < 0 ||
+      row.indexOf('这片族折进哪片海域') < 0) {
+    throw new Error('行内归属徽标缺失');
+  }
+  const row2 = sandbox._continentFamilyRowHtml(
+    { canonical: '数论', terms: ['素数'], source: 'builtin' }, {}, null);
+  if (row2.indexOf('⚓') < 0 || row2.indexOf('✎') >= 0) throw new Error('未改归属不该有 ✎ 角标');
+  const row3 = sandbox._continentFamilyRowHtml(
+    { canonical: '数论', terms: ['素数'], source: 'builtin' }, {}, { 数论: '数论' });
+  if (row3.indexOf('✎') < 0) throw new Error('用户改过的归属缺 ✎ 角标');
+  // 行为：色槽 16 格扩容（默认 15 片海 + 1 槽余量）
+  if (vm.runInContext('CONTINENT_HUE_COUNT', sandbox) !== 16) throw new Error('CONTINENT_HUE_COUNT 应为 16');
   return true;
 });
 
