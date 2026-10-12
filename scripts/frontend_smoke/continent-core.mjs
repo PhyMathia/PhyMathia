@@ -136,6 +136,50 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
   return true;
 });
 
+check('graph-continent: T298 下钻转场复合缩放（端点/测量/指针三处换算对祖先 scale 免疫）', () => {
+  const rs = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  // 静态：三处换算不许再裸除 graphView.zoom——切会话排进的 rAF 落进
+  // is-continent-retreat（scale .5→1）窗口时，裸 zoom 反解把端点按半距画死
+  for (const fn of ['function _clientToGraphLocal', 'function _portAnchor', 'function _measureNodes']) {
+    const start = rs.indexOf(fn);
+    if (start < 0) throw new Error('graph-render.js 缺函数：' + fn);
+    if (!rs.slice(start, start + 1400).includes('_graphCompositeScale')) {
+      throw new Error(fn + ' 未走复合缩放换算（T298 回退）');
+    }
+  }
+  // 执行：祖先 scale(.5) × zoom 1 的转场窗口里，端点与指针坐标必须按复合缩放
+  // 0.5 还原本地坐标（容器布局宽 2000 → 屏幕宽 1000）
+  const raw = vm.runInContext(`
+    (() => {
+      const prevInner = graphInner, prevZoom = graphView.zoom;
+      graphInner = {
+        offsetWidth: 2000,
+        getBoundingClientRect: () => ({ left: 40, top: 20, width: 1000, height: 500 }),
+      };
+      graphView.zoom = 1;
+      try {
+        const port = { getBoundingClientRect: () => ({ left: 240, top: 120, width: 20, height: 10 }) };
+        const a = _portAnchor({ x: 0, w: 120 }, port, false, null);
+        const local = _clientToGraphLocal(240, 120);
+        return JSON.stringify({ ax: a.x, ay: a.y, lx: local.x, ly: local.y });
+      } finally {
+        graphInner = prevInner;
+        graphView.zoom = prevZoom;
+      }
+    })()
+  `, sandbox);
+  const out = JSON.parse(raw);
+  // 端口中心屏幕位 (250,125)，差 (210,105)，÷0.5 → (420,210)
+  if (Math.abs(out.ax - 420) > 0.01 || Math.abs(out.ay - 210) > 0.01) {
+    throw new Error('_portAnchor 未按复合缩放反解：' + JSON.stringify(out));
+  }
+  // (240,120)-(40,20)=(200,100)，÷0.5 → (400,200)
+  if (Math.abs(out.lx - 400) > 0.01 || Math.abs(out.ly - 200) > 0.01) {
+    throw new Error('_clientToGraphLocal 未按复合缩放反解：' + JSON.stringify(out));
+  }
+  return true;
+});
+
 check('graph-continent: T133 主题重涂（重涂函数 / data-theme 属性监听 / 渲染期收集三件套）', () => {
   const src = readContinentSrc();
   if (!src.includes('function _continentRepaintRouteTheme(')) throw new Error('重涂函数缺失');

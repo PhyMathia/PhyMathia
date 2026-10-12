@@ -1195,12 +1195,13 @@ function _measureNodes() {
     elById.set(el.dataset.nodeId, el);
   });
   const zigzagNodes = [];
+  const composite = _graphCompositeScale();
   graphView.nodes.forEach(node => {
     const el = elById.get(String(node.id));
     if (!el) return;
     const r = el.getBoundingClientRect();
-    node.w = r.width / (graphView.zoom || 1);
-    node.h = r.height / (graphView.zoom || 1);
+    node.w = r.width / composite;
+    node.h = r.height / composite;
     if (node.kind === 'ai_eval') zigzagNodes.push(node);
   });
   for (const node of zigzagNodes) _updateAiEvalZigzag(node);
@@ -1292,10 +1293,25 @@ function _updateNodeTransforms(onlyIds) {
   }
 }
 
+// 复合缩放：graphInner 自身 scale(zoom) 之外还有祖先变换——大陆下钻转场把
+// scale(.5→1) 挂在 .graph-canvas 上（is-continent-retreat），切会话排进的 rAF
+// 恰好落进转场窗口，按 zoom 单独反解不感知祖先缩放，会把节点尺寸与边线端点
+// 按半距算死进本地坐标（T298：下钻后边线整体悬空，拖节点触发重测重画才愈）。
+// offsetWidth 是布局宽（不受任何变换影响），与 getBoundingClientRect().width
+// 之比即真实屏幕复合缩放，对一切祖先变换免疫；取不到（display:none 等）退回 zoom。
+function _graphCompositeScale(innerRect) {
+  const zoom = graphView.zoom || 1;
+  if (!graphInner) return zoom;
+  const layoutW = graphInner.offsetWidth;
+  if (!layoutW) return zoom;
+  const ratio = (innerRect || graphInner.getBoundingClientRect()).width / layoutW;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : zoom;
+}
+
 function _clientToGraphLocal(clientX, clientY) {
   if (!graphInner) return { x: 0, y: 0 };
   const rect = graphInner.getBoundingClientRect();
-  const zoom = graphView.zoom || 1;
+  const zoom = _graphCompositeScale(rect);
   return {
     x: (clientX - rect.left) / zoom,
     y: (clientY - rect.top) / zoom,
@@ -1307,7 +1323,7 @@ function _portAnchor(node, portEl, isOutput, innerRect) {
     const rect = portEl.getBoundingClientRect();
     // innerRect 由调用方一次读取传入（一帧一次布局读），不再每条边重复读
     const box = innerRect || graphInner.getBoundingClientRect();
-    const zoom = graphView.zoom || 1;
+    const zoom = _graphCompositeScale(box);
     return {
       x: (rect.left + rect.width / 2 - box.left) / zoom,
       y: (rect.top + rect.height / 2 - box.top) / zoom,
