@@ -4646,7 +4646,7 @@
 .memory-model-freeze { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-2xs); color: var(--text-secondary); cursor: pointer; }
 .memory-model-sub { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 8px 0 4px; }
 .memory-model-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-.memory-model-label { flex-shrink: 0; max-width: 42%; font-size: var(--fs-xs); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-model-label { flex-shrink: 0; max-width: 42%; font-size: var(--fs-xs); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memory-bar { flex: 1; height: 6px; border-radius: var(--r-sm); background: var(--border); overflow: hidden; }
 .memory-bar i { display: block; height: 100%; border-radius: var(--r-sm); background: var(--accent); opacity: .8; }
 .memory-model-val { flex-shrink: 0; min-width: 3.5em; text-align: right; font-size: var(--fs-2xs); color: var(--text-secondary); }
@@ -4721,7 +4721,7 @@
   border: none;
   border-radius: var(--r-sm);
   background: none;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--fs-xs);
   text-align: left;
   white-space: nowrap;
@@ -4753,7 +4753,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface-container);
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--fs-xs);
 }
 
@@ -4961,11 +4961,11 @@
 
 .token-donut-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
-.token-donut-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-donut-name { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .token-donut-meta { margin-left: auto; flex-shrink: 0; font-size: var(--fs-2xs); color: var(--text-secondary); }
 
-.token-donut-pct { flex-shrink: 0; min-width: 3.2em; text-align: right; font-weight: 600; color: var(--text); }
+.token-donut-pct { flex-shrink: 0; min-width: 3.2em; text-align: right; font-weight: 600; color: var(--text-primary); }
 
 /* 圆环图例可点（2026-10-08 五轮 T199）：分线模式下点图例在趋势图聚焦该模型
    （命中曲线加粗、其余淡化；再点取消）。聚焦态由 token-usage.js 挂 .picked */
@@ -4995,7 +4995,7 @@
 .token-kind-label {
   flex-shrink: 0;
   width: 64px;
-  color: var(--text);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5033,7 +5033,7 @@
 .token-table-row span { text-align: right; min-width: 0; }
 .token-table-row span:first-child { text-align: left; }
 
-.token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
 
 /* 最近调用明细（2026-10-08 五轮 T196）：六列窄行表。表自身限高滚动——
    100 条明细不该把弹窗里的四张图全滚走，表头 sticky 跟滚；失败行淡红底＋
