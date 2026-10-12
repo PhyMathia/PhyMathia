@@ -203,10 +203,24 @@ def _migrate_kv_split_all_accounts() -> None:
             logger.warning(f"kv split migration failed for account {account}: {e}")
 
 
+def _migrate_model_keys_all_accounts() -> None:
+    """启动迁移（幂等，2026-10-12 密钥分家）：models.json 里内联的条目密钥/
+    组密钥搬进同目录 auth.json（0600），models.json 改写为无密钥版。models_routes
+    在本文件尾部才 import，这里函数内局部取模块（lifespan 运行时早已加载完）。
+    逐账号跑，单个失败只记警告不中断——下次启动幂等重跑。"""
+    from server import models_routes as _models_routes
+    for account in [accounts.DEFAULT_ACCOUNT, *accounts.load_registry()]:
+        try:
+            _models_routes.migrate_split_model_keys(account=account)
+        except Exception as e:
+            logger.warning(f"model key split migration failed for account {account}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _app.state.http_client = http_client.get_http_client()
     _migrate_kv_split_all_accounts()
+    _migrate_model_keys_all_accounts()
     try:
         yield
     finally:
@@ -242,6 +256,32 @@ app.add_middleware(
 )
 # 静态 JS/CSS/JSON 走 gzip；SSE（text/event-stream）会自动跳过压缩。
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+# ====== Host 白名单（T289，2026-10-12）：本地服务只认本机 Host ======
+# 防 DNS rebinding：恶意网页把攻击域名解析到 127.0.0.1，就能借浏览器对本地 API
+# 发「简单请求」（不经 CORS 预检，POST 写动作会真实执行）。服务只绑 127.0.0.1，
+# 合法 Host 只有本机名——其余一律 403，rebinding 域名进不了任何路由。HTTP/1.0
+# 无 Host 头放行（浏览器必带 Host，无头请求构不成 rebinding 面）。日后若要开放
+# 局域网访问，绑定地址与这里白名单要一起改。tests 的 TestClient 已统一指到
+# 127.0.0.1（base_url），与真实 localhost 语义一致。
+_LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def _host_hostname(raw: str) -> str:
+    if raw.startswith("["):  # [::1]:5050
+        return raw[1:raw.index("]")] if "]" in raw else raw[1:]
+    if raw.count(":") == 1:  # localhost:5050
+        return raw.split(":", 1)[0]
+    return raw  # 不带端口（普通域名或裸 IPv6）
+
+
+@app.middleware("http")
+async def _host_allowlist_gate(request: Request, call_next):
+    raw = (request.headers.get("host") or "").strip().lower()
+    if raw and _host_hostname(raw) not in _LOCAL_HOSTNAMES:
+        return JSONResponse({"detail": "forbidden: 本地服务只接受本机 Host 访问"}, status_code=403)
+    return await call_next(request)
 
 
 # ====== 只读查阅（P3 2026-10-07）：后端兜底闸门 ======

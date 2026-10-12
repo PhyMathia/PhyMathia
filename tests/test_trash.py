@@ -437,7 +437,7 @@ def _client():
     from fastapi.testclient import TestClient
     import main as main_mod
     accounts._ENSURED.clear()
-    return TestClient(main_mod.app)
+    return TestClient(main_mod.app, base_url="http://127.0.0.1")
 
 
 def test_route_delete_goes_to_trash_and_restores(acc_env):

@@ -114,7 +114,7 @@ class SaveMessagesRouteTest(unittest.TestCase):
             {"role": "user", "content": "旧消息", "timestamp": 1},
             {"role": "assistant", "content": "旧回复", "timestamp": 2, "summary": "服务端摘要"},
         ])
-        client = TestClient(self._main.app)
+        client = TestClient(self._main.app, base_url="http://127.0.0.1")
         resp = client.post(f"/api/sessions/{sid}/messages", json=[
             {"role": "user", "content": "新消息", "timestamp": 3},
             {"role": "assistant", "content": "旧回复", "timestamp": 2, "summary": ""},
@@ -129,7 +129,7 @@ class SaveMessagesRouteTest(unittest.TestCase):
         sid = "sess_empty"
         seed = [{"role": "user", "content": "唯一副本", "timestamp": 1}]
         self._seed(sid, seed)
-        client = TestClient(self._main.app)
+        client = TestClient(self._main.app, base_url="http://127.0.0.1")
         resp = client.post(f"/api/sessions/{sid}/messages", json=[])
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(self._saved(sid), seed)  # 09-20 保护：空列表不写
@@ -140,7 +140,7 @@ class SaveMessagesRouteTest(unittest.TestCase):
         seed = [{"role": "user", "content": "同样", "timestamp": 1}]
         self._seed(sid, seed)
         before = storage_mod._get_messages_path(sid).read_bytes()
-        client = TestClient(self._main.app)
+        client = TestClient(self._main.app, base_url="http://127.0.0.1")
         client.post(f"/api/sessions/{sid}/messages", json=seed)
         self.assertEqual(storage_mod._get_messages_path(sid).read_bytes(), before)
 

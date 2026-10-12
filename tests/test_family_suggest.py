@@ -284,7 +284,7 @@ class SuggestRouteTest(unittest.TestCase):
         self._orig_kv = storage_mod.kv_all_data
         self._kv = {}
         storage_mod.kv_all_data = lambda account="default": dict(self._kv)
-        self.client = TestClient(main_mod.app)
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
 
     def tearDown(self):
         self._storage.kv_all_data = self._orig_kv

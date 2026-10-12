@@ -11,8 +11,10 @@ _summary_tasks 只在本模块内读写；tests 直取 server.models_routes._sum
 import asyncio
 import json
 import logging
+import os
 import re
 import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -683,9 +685,14 @@ async def api_models_probe(request: Request):
 # 此前模型列表/组密钥/槽位只存浏览器 localStorage——换端口或换主机名打开、清
 # 浏览器数据、无痕窗口、多账号切命名空间，任一事件都表现为「配置全丢」（用户
 # 实报）。现服务端按账号落盘 data/users/<id>/models.json 作真相源，前端本地
-# 镜像只当缓存与离线兜底；密钥明文落本机账号目录（单机应用，data/ 不入库，
-# 风险面与同目录的 sessions/knowledge 一致）。整包读写：模型列表撑死几百条，
-# 不做条目级增量；前端冲突解决＝updatedAt 新盖旧（服务端打戳，不信客户端时钟）。
+# 镜像只当缓存与离线兜底。整包读写：模型列表撑死几百条，不做条目级增量；前端
+# 冲突解决＝updatedAt 新盖旧（服务端打戳，不信客户端时钟）。
+# 密钥分家（2026-10-12，模仿 Codex auth.json / Claude Code credentials 惯例）：
+# 条目 apiKey 与组密钥只落同目录 auth.json（0600，仅本用户可读），models.json
+# 从此只存无害配置、整个文件可以随便给人看。对外 GET/POST 契约不变：GET 把
+# auth 的钥按条目 id 回填（前端与发送链零改动），POST 拆开落两份。发送侧密钥
+# 始终来自请求 payload（resolve_api_key 只做 .env 兜底），从不读 models.json，
+# 分家不触碰发送链。
 
 _MODELS_CONFIG_MAX_BYTES = 512 * 1024
 _MODELS_CONFIG_EMPTY = {"userModels": [], "modelGroupKeys": {}, "activeModels": {}, "updatedAt": 0}
@@ -695,21 +702,122 @@ def _models_config_path(account: str):
     return accounts.resolve_paths(account).root / "models.json"
 
 
+def _models_auth_path(account: str):
+    return accounts.resolve_paths(account).root / "auth.json"
+
+
+def _read_models_auth(account: str) -> dict:
+    """读 auth.json（密钥真相源）。缺失/损坏一律回空壳：发送侧密钥另有请求
+    payload 与 .env 兜底，auth 读不到只表现为「这个账号的密钥暂时不可见」。"""
+    try:
+        data = json.loads(_models_auth_path(account).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {"modelKeys": {}, "groupKeys": {}}
+    if not isinstance(data, dict):
+        return {"modelKeys": {}, "groupKeys": {}}
+    model_keys, group_keys = data.get("modelKeys"), data.get("groupKeys")
+    return {
+        "modelKeys": {str(k): str(v)[:4096] for k, v in model_keys.items()} if isinstance(model_keys, dict) else {},
+        "groupKeys": {str(k)[:128]: str(v)[:4096] for k, v in group_keys.items()} if isinstance(group_keys, dict) else {},
+    }
+
+
+def _write_models_auth(account: str, model_keys: dict, group_keys: dict) -> None:
+    path = _models_auth_path(account)
+    accounts._write_json(path, {"modelKeys": model_keys, "groupKeys": group_keys})
+    try:
+        os.chmod(path, 0o600)  # 密钥文件只许本用户读；Windows 上近似 no-op，失败不致命
+    except OSError:
+        pass
+
+
+def _split_model_keys(clean_models: list) -> dict:
+    """就地抽出条目里的 apiKey → 按 id 索引的 modelKeys（条目原位抹掉该字段）。
+    没带 id 的条目现场补一个，保证「密钥只住 auth.json」无例外。"""
+    model_keys = {}
+    for entry in clean_models:
+        key = entry.pop("apiKey", "")
+        if isinstance(key, str) and key:
+            mid = str(entry.get("id") or "")
+            if not mid:
+                mid = "m" + uuid.uuid4().hex[:12]
+                entry["id"] = mid
+            model_keys[mid] = key[:4096]
+    return model_keys
+
+
+def migrate_split_model_keys(account: str) -> bool:
+    """启动迁移（幂等）：models.json 里内联的条目密钥/组密钥搬进 auth.json
+    （0600），models.json 原地改写为无密钥版。已分家的档零改动，返回是否迁移。"""
+    path = _models_config_path(account)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    raw_models = data.get("userModels")
+    raw_models = raw_models if isinstance(raw_models, list) else []
+    auth = _read_models_auth(account)
+    model_keys = dict(auth["modelKeys"])
+    moved = False
+    clean_models = []
+    for m in raw_models:
+        if not isinstance(m, dict):
+            clean_models.append(m)
+            continue
+        entry = dict(m)
+        key = entry.pop("apiKey", "")
+        if isinstance(key, str) and key:
+            mid = str(entry.get("id") or "")
+            if not mid:
+                mid = "m" + uuid.uuid4().hex[:12]
+                entry["id"] = mid
+            model_keys[mid] = key[:4096]
+            moved = True
+        clean_models.append(entry)
+    raw_groups = data.get("modelGroupKeys")
+    raw_groups = raw_groups if isinstance(raw_groups, dict) else {}
+    if raw_groups:
+        moved = True
+    if not moved:
+        return False
+    group_keys = {str(k)[:128]: str(v)[:4096] for k, v in raw_groups.items()}
+    group_keys.update(auth["groupKeys"])  # auth 已有的（更晚写过）优先
+    _write_models_auth(account, model_keys, group_keys)
+    accounts._write_json(path, {**data, "userModels": clean_models, "modelGroupKeys": {}})
+    return True
+
+
 def _read_models_config(account: str) -> dict:
     try:
         raw = _models_config_path(account).read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return dict(_MODELS_CONFIG_EMPTY)
+        data = None
     if not isinstance(data, dict):
-        return dict(_MODELS_CONFIG_EMPTY)
+        data = {}
     models = data.get("userModels")
-    group_keys = data.get("modelGroupKeys")
+    models = models if isinstance(models, list) else []
+    # 密钥回填：条目缺 apiKey（分家后的常态）按 id 从 auth 补；条目自带 apiKey
+    # （未迁移旧档）以条目为准。全程只读零副作用——GET 刻意不落盘（T187 口径）。
+    auth = _read_models_auth(account)
+    filled = []
+    for m in models:
+        if isinstance(m, dict) and not m.get("apiKey"):
+            mid = str(m.get("id") or "")
+            if mid in auth["modelKeys"]:
+                m = {**m, "apiKey": auth["modelKeys"][mid]}
+        filled.append(m)
+    group_keys = dict(auth["groupKeys"])
+    inline_groups = data.get("modelGroupKeys")
+    if isinstance(inline_groups, dict):
+        group_keys.update(inline_groups)
     active = data.get("activeModels")
     updated = data.get("updatedAt", 0)
     return {
-        "userModels": models if isinstance(models, list) else [],
-        "modelGroupKeys": group_keys if isinstance(group_keys, dict) else {},
+        "userModels": filled,
+        "modelGroupKeys": group_keys,
         "activeModels": active if isinstance(active, dict) else {},
         "updatedAt": updated if isinstance(updated, (int, float)) else 0,
     }
@@ -751,16 +859,23 @@ async def api_models_config_save(request: Request):
                   if isinstance(v, (str, int, float, bool))}
     active_models = {str(k)[:64]: str(v)[:256] for k, v in active_models.items()
                      if isinstance(v, (str, int, float, bool))}
+    model_keys = _split_model_keys(clean_models)  # 密钥出列：条目钥与组密钥都只进 auth.json
     blob = {
         "userModels": clean_models,
-        "modelGroupKeys": group_keys,
+        "modelGroupKeys": {},  # 分家后恒空：组密钥住 auth.json，读路径回填
         "activeModels": active_models,
         "updatedAt": time.time(),
     }
     raw = json.dumps(blob, ensure_ascii=False)
     if len(raw.encode("utf-8")) > _MODELS_CONFIG_MAX_BYTES:
         raise HTTPException(status_code=400, detail="模型配置体量异常（>512KB），拒绝写入")
+    auth_raw = json.dumps({"modelKeys": model_keys, "groupKeys": group_keys}, ensure_ascii=False)
+    if len(auth_raw.encode("utf-8")) > 256 * 1024:
+        raise HTTPException(status_code=400, detail="密钥体量异常（>256KB），拒绝写入")
     _account_paths(request, payload)  # ensure 目录（幂等；已删账号在此前已被 404 闸拦下）
+    # 先密钥后配置：两写之间崩溃最坏留「新钥＋旧配置」，GET 回填与前端本地镜像
+    # 都会推下一次 POST 收敛，不存在密钥丢失窗口
+    await asyncio.to_thread(_write_models_auth, account, model_keys, group_keys)
     await asyncio.to_thread(accounts._write_json, _models_config_path(account), blob)
     return {"ok": True, "updatedAt": blob["updatedAt"]}
 

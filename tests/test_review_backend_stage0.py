@@ -136,7 +136,7 @@ def test_b4_main_and_summary_transport_headers(isolated, provider, base_url):
             with mock.patch.object(http_client, "get_http_client", return_value=upstream):
                 # ASGI stays in the same event loop as the fake upstream.
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main_mod.app),
-                                             base_url="http://test") as client:
+                                             base_url="http://127.0.0.1") as client:
                     response = await client.post("/api/models/chat", json={
                         "messages": [{"role": "user", "content": "hello"}],
                         "session_id": "A", "provider": provider, "base_url": base_url,
@@ -225,7 +225,7 @@ def test_s1_inflight_summary_cannot_resurrect_cleared_memory(isolated, path):
                 try:
                     await asyncio.wait_for(entered.wait(), timeout=2)
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main_mod.app),
-                                                 base_url="http://test") as client:
+                                                 base_url="http://127.0.0.1") as client:
                         assert (await client.delete(path)).status_code == 200
                     assert context._read_rolling_memory("A") is None
                     release.set()

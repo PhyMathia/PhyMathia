@@ -103,7 +103,7 @@ class RouteTestBase(unittest.TestCase):
             self._orig_config[name] = getattr(config_mod, name, _MISSING)
             setattr(config_mod, name, value)
         storage_mod._JSON_READ_CACHE.clear()
-        self.client = TestClient(main_mod.app)
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
 
     def tearDown(self):
         for (mid, name), value in self._orig_modules.items():

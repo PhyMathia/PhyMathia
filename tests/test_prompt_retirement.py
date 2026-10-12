@@ -103,7 +103,7 @@ class HarnessContextWiringTest(unittest.TestCase):
     """接线与优先级：payload.context 显式非空优先，缺省回退 PHI_CONTEXT。"""
 
     def setUp(self):
-        self.client = TestClient(main_mod.app)
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
 
     def test_app_state_defaults_to_phi_context(self):
         self.assertEqual(main_mod.app.state.harness_context, harness_prompts.PHI_CONTEXT)

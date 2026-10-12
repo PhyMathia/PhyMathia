@@ -33,7 +33,7 @@ class UtopiaInboxTest(unittest.TestCase):
         self._inbox = inbox
         self._orig = knowledge_routes_mod.UTOPIA_INBOX_DIR
         knowledge_routes_mod.UTOPIA_INBOX_DIR = inbox
-        self.client = TestClient(main_mod.app)
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
 
     def tearDown(self):
         knowledge_routes_mod.UTOPIA_INBOX_DIR = self._orig

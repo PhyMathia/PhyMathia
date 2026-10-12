@@ -335,7 +335,7 @@ def test_route_account_isolation_end_to_end(acc_env):
     import main as main_mod
     accounts._ENSURED.clear()
     _make("alice")
-    with TestClient(main_mod.app) as client:
+    with TestClient(main_mod.app, base_url="http://127.0.0.1") as client:
         r = client.post("/api/sessions", json={"id": "s1", "title": "甲的会话", "account_id": "alice"})
         assert r.status_code == 200 and r.json()["count"] == 1
         # 不带账号 = default：看不见 alice 的会话
@@ -358,7 +358,7 @@ def _client(acc_env):
     from fastapi.testclient import TestClient
     import main as main_mod
     accounts._ENSURED.clear()
-    return TestClient(main_mod.app)
+    return TestClient(main_mod.app, base_url="http://127.0.0.1")
 
 
 def test_accounts_route_list_default_first(acc_env):

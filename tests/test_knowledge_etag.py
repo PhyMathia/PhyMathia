@@ -31,7 +31,7 @@ import main as main_mod  # noqa: E402
 
 class KnowledgeEtagTest(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(main_mod.app)
+        self.client = TestClient(main_mod.app, base_url="http://127.0.0.1")
         main_mod._json_get_cache.clear()
         # 多账号 P1：路由经 accounts.resolve_paths 读库，patch DATA_DIR 一处
         from server import accounts as accounts_mod

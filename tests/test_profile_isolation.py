@@ -326,7 +326,7 @@ def test_backup_routes_carry_device_id(env):
     accounts.add_account_devices("bob", ["dev_b1"])
     _write_device_profile(profiles_dir, "dev_a9", {"enabled": True})
     _write_device_profile(profiles_dir, "dev_b1", {"enabled": True})
-    with TestClient(main_mod.app) as client:
+    with TestClient(main_mod.app, base_url="http://127.0.0.1") as client:
         # 导出带 device_id：alice 未绑定也即时圈定 + 顺手登记绑定
         r = client.get("/api/backup/export",
                        params={"account_id": "alice", "device_id": "dev_a9"})

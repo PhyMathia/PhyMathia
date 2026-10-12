@@ -140,7 +140,7 @@ class GateIsomorphismTest(unittest.TestCase):
         payload.setdefault("provider", "openai")
         payload.setdefault("api_key", "test-key")
         payload.setdefault("model", "test-model")
-        client = TestClient(main_mod.app)
+        client = TestClient(main_mod.app, base_url="http://127.0.0.1")
         # T163 起 chat 路由经 http_client 模块属性出网，打 server.http_client
         # 单点即对全部出网通道生效（main_mod 死绑定坑已随拆分消除）。
         with mock.patch.object(http_client_mod, "get_http_client", lambda: _DeadClient()):

@@ -87,7 +87,7 @@ def _isolated_client(directory):
             if isinstance(value, Path) and (name.endswith("_PATH") or name.endswith("_DIR")):
                 if value == production or production in value.parents:
                     raise AssertionError(f"Unisolated path: {module.__name__}.{name}")
-    return TestClient(main.app)
+    return TestClient(main.app, base_url="http://127.0.0.1")
 
 
 class _HTTPChecks(unittest.TestCase):
