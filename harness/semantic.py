@@ -18,10 +18,11 @@ search_nodes 节点召回、search_knowledge/search_formulas 知识资产召回�
   的持久缓存（data/embedding_cache.json），重建时未变文本零推理。线程口径同
   review_kb._KB_CACHE：无锁（桶字段一次赋值整体替换）。
 
-门槛与封顶的本机实测依据（Qwen3-Embedding int8，2026-10-09）：查询「电磁感应」
-对「法拉第定律＋磁通量变化率正文」节点余弦 0.55–0.56，对导数/物理视角等噪声
-节点 0.24–0.30、极限 0.40（最贴的噪声）——0.42 门槛在信号与噪声之间留出两侧
-余量；改模型（PHYMATHIA_EMBEDDING_DIR 换 bge 系）后应重测调整。
+门槛与封顶的本机实测依据（2026-10-12 换型 bge-small-zh-v1.5 重标定）：查询
+「电磁感应」对法拉第/电磁感应类节点余弦 0.71–0.83，对导数等噪声节点 0.28–0.45
+（实测最高一条 0.446）——0.55 门槛两侧留余量。旧 Qwen3-Embedding（2026-10-09
+口径）信号 0.55–0.56、噪声 0.24–0.40、门槛 0.42；bge 分数带整体上移故重标，
+再换模型（PHYMATHIA_EMBEDDING_DIR）照此流程重测。
 """
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ except Exception:  # pragma: no cover - 独立部署路径，CI 里 server 始�
     embed_texts = None
     gather_vectors = None
 
-SEMANTIC_MIN_SCORE = 0.42       # 召回分数门槛（见模块 docstring 的实测依据）
+SEMANTIC_MIN_SCORE = 0.55       # 召回分数门槛（见模块 docstring 的实测依据）
 SEMANTIC_LIMIT = 5              # 单次召回条数封顶（永远排在字面命中之后且不占字面名额）
 _SEMANTIC_MAX_NODES = 512       # 建索引的图规模上限：超过即语义关闭，字面路径不受影响
 _NODE_TEXT_CLIP = 200           # 节点向量文本＝label＋正文前 N 字（与大陆摘要口径同级）

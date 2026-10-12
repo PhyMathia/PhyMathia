@@ -189,7 +189,7 @@ class EmbedThresholdSensitivityTest(unittest.TestCase):
         pull = _embed_pull({"概率统计": 0.71, "量子力学": 0.22})
         self.assertEqual(list(pull), ["概率统计"], "0.22 没过下限，不该拿到证据")
         self.assertAlmostEqual(pull["概率统计"], GATE_W_EMBED * (0.71 - GATE_EMBED_FLOOR), places=9)
-        self.assertAlmostEqual(pull["概率统计"], 3.12, places=9)
+        self.assertAlmostEqual(pull["概率统计"], 1.92, places=9)  # 12×(0.71−0.55)，2026-10-12 bge 重标定
 
     def test_floor_is_strict(self):
         """下限是严格大于：恰好等于下限不给证据（`>` 不是 `>=`）。"""
@@ -198,7 +198,7 @@ class EmbedThresholdSensitivityTest(unittest.TestCase):
 
     def test_floor_actually_gates(self):
         """把下限抬到 0.65，0.58/0.63 那两座就该失去证据——证明下限真的在筛。"""
-        below = [f for f, s in _FAMILY_VECTORS["概率统计"].items() if 0.45 < s <= 0.65]
+        below = [f for f, s in _FAMILY_VECTORS["概率统计"].items() if GATE_EMBED_FLOOR < s <= 0.65]
         self.assertTrue(below, "前提失效：表里得有过 floor 但不过 0.65 的族")
         for fam in below:
             self.assertIn(fam, _embed_pull({fam: _FAMILY_VECTORS["概率统计"][fam]}))

@@ -15,9 +15,11 @@
 3. **纯函数边界**：本模块只负责「文本 → 向量 + 缓存」；评分、聚合仍在
    continent.py 的纯函数里（测试注入假向量，不依赖模型）。
 
-模型：Qwen3-Embedding-0.6B（int8 ONNX，社区转换版），离线本地推理，CPU 毫秒级。
-池化按官方口径：左侧填充 + 取最后一个位置的隐状态 + L2 归一（等价于官方
-`padding_side='left'` + last_token_pool）。向量缓存落 `data/embedding_cache.json`
+模型：bge-small-zh-v1.5（int8 ONNX，Xenova 社区转换版，2026-10-12 换型上线；
+此前用 Qwen3-Embedding-0.6B，现归档在 models/_archive/Qwen3-Embedding，env 指回去仍可用），
+离线本地推理，CPU 毫秒级。池化按架构自适应：解码器架构（有 KV-cache 输入）＝
+左侧填充 + 取最后一个位置的隐状态；BERT 编码器架构（bge 系）＝右侧填充 + 取 CLS；
+输出一律 L2 归一。向量缓存落 `data/embedding_cache.json`
 （独立文件，不进 kv_store.json——热 KV 每次改动全量重写，256KB 级的向量表
 会把它顶过性能红线）。
 """
@@ -35,13 +37,14 @@ __all__ = [
     "EMBED_MODEL_TAG", "EMBED_MAX_TOKENS",
 ]
 
-EMBED_MODEL_TAG = "qwen3-embedding-0.6b-int8"
+EMBED_MODEL_TAG = "bge-small-zh-v1.5-int8"
 EMBED_MAX_TOKENS = 128          # 卡片标题与族术语都是短文本，128 足够
 EMBED_BATCH = 32
-_CACHE_MAX_ENTRIES = 3000       # 1024 维 × 3 位小数 ≈ 5.5KB/条，封顶 ~16MB
+_CACHE_MAX_ENTRIES = 3000       # 512 维 × 3 位小数 ≈ 2.8KB/条，封顶 ~8MB
 _CACHE_SUMMARY_CLIP = 200       # 摘要并入向量文本时的截断（与投影 formula 同级宽松度）
 
-# 模型目录：env 覆盖 → 项目根 models/Qwen3-Embedding（2026-10-04 自 baseline/embedding 迁入，旧位作废；env 仍可指向任意处，如换 bge-small-zh）
+# 模型目录：env 覆盖 → 项目根 models/bge-small-zh-v1.5（2026-10-12 自 Qwen3-0.6B 换型，
+# 旧模型归档在 models/_archive/Qwen3-Embedding；env 仍可指向任意处，如指回归档的旧模型做 A/B）
 _ENV_DIR = "PHYMATHIA_EMBEDDING_DIR"
 _MODEL_FILE = "model_int8.onnx"
 _TOKENIZER_FILE = "tokenizer.json"
@@ -53,7 +56,7 @@ def _model_dir():
     if env:
         candidates.append(Path(env))
     root = Path(__file__).resolve().parents[2]
-    candidates.append(root / "models" / "Qwen3-Embedding")
+    candidates.append(root / "models" / "bge-small-zh-v1.5")
     for p in candidates:
         if (p / _MODEL_FILE).is_file() and (p / _TOKENIZER_FILE).is_file():
             return p
@@ -104,13 +107,15 @@ def _load():
 
 
 def _graph_signature(sess):
-    """从会话签名读出（需要 position_ids, KV 层数, KV 头数, 头维度）。
+    """从会话签名读出（需要 position_ids / token_type_ids, KV 层数, KV 头数, 头维度）。
 
     onnx-community 的 int8 导出带 KV-cache 输入（past_key_values.N.key/value），
-    首轮喂零长度过去即可等价于普通编码器前向——这是 0.6B 解码器架构做
-    feature-extraction 的标准姿势，不是要真的做增量解码。
+    首轮喂零长度过去即可等价于普通编码器前向——这是解码器架构做
+    feature-extraction 的标准姿势，不是要真的做增量解码。BERT 系导出（bge）
+    没有这些，但多一个 token_type_ids 输入，照喂零即可。
     """
     need_pos = any(i.name == "position_ids" for i in sess.get_inputs())
+    need_tt = any(i.name == "token_type_ids" for i in sess.get_inputs())
     kv_layers, kv_heads, kv_dim = 0, 0, 0
     for i in sess.get_inputs():
         if i.name.endswith(".key") and "past_key_values" in i.name:
@@ -118,12 +123,18 @@ def _graph_signature(sess):
             shape = i.shape
             if len(shape) == 4 and isinstance(shape[1], int):
                 kv_heads, kv_dim = shape[1], shape[3]
-    return need_pos, kv_layers, kv_heads, kv_dim
+    return need_pos, need_tt, kv_layers, kv_heads, kv_dim
 
 
 def _infer(sess, tok, np, texts, sig):
-    """一批文本 → L2 归一后的向量矩阵（list[list[float]]）。失败抛异常由上层接。"""
-    need_pos, kv_layers, kv_heads, kv_dim = sig
+    """一批文本 → L2 归一后的向量矩阵（list[list[float]]）。失败抛异常由上层接。
+
+    池化按架构自适应：有 KV-cache 输入＝解码器架构（Qwen3 系），左填充 + 取最后
+    一个位置（官方 last_token_pool 口径）；否则＝BERT 编码器（bge 系），右填充 +
+    取 CLS（bge 官方口径——CLS 必须落在第 0 位，不能左填充）。
+    """
+    need_pos, need_tt, kv_layers, kv_heads, kv_dim = sig
+    decoder = kv_layers > 0
     seqs = []
     for t in texts:
         ids = tok.encode(str(t or "")).ids[:EMBED_MAX_TOKENS]
@@ -131,30 +142,38 @@ def _infer(sess, tok, np, texts, sig):
     max_len = max(len(s) for s in seqs) if seqs else 1
     input_ids = np.zeros((len(seqs), max_len), dtype=np.int64)
     attn = np.zeros((len(seqs), max_len), dtype=np.int64)
-    pos = np.zeros((len(seqs), max_len), dtype=np.int64)
     for i, s in enumerate(seqs):
-        # 左填充：最后一个位置恒为该行最后一个真实 token（官方 last_token_pool 口径；
-        # 填充位被 attention_mask 挡住，取位置 -1 时与填充用什么 id 无关）
-        input_ids[i, max_len - len(s):] = s
-        attn[i, max_len - len(s):] = 1
-        pos[i, max_len - len(s):] = np.arange(len(s))
+        if decoder:
+            # 左填充：最后一个位置恒为该行最后一个真实 token（官方 last_token_pool
+            # 口径；填充位被 attention_mask 挡住，取位置 -1 时与填充用什么 id 无关）
+            input_ids[i, max_len - len(s):] = s
+            attn[i, max_len - len(s):] = 1
+        else:
+            input_ids[i, :len(s)] = s
+            attn[i, :len(s)] = 1
     names = {i.name for i in sess.get_inputs()}
     feed = {"input_ids": input_ids, "attention_mask": attn}
     if need_pos:
+        pos = np.zeros((len(seqs), max_len), dtype=np.int64)
+        for i, s in enumerate(seqs):
+            start = max_len - len(s) if decoder else 0
+            pos[i, start:start + len(s)] = np.arange(len(s))
         feed["position_ids"] = pos
-    if kv_layers:
+    if decoder:
         zeros = np.zeros((len(seqs), kv_heads, 0, kv_dim), dtype=np.float32)
         for layer in range(kv_layers):
             feed[f"past_key_values.{layer}.key"] = zeros
             feed[f"past_key_values.{layer}.value"] = zeros
+    if need_tt:
+        feed["token_type_ids"] = np.zeros((len(seqs), max_len), dtype=np.int64)
     feed = {k: v for k, v in feed.items() if k in names}
     out_names = [o.name for o in sess.get_outputs()]
     pick = "last_hidden_state" if "last_hidden_state" in out_names else out_names[0]
     hidden = sess.run([pick], feed)[0]
     if hidden.ndim != 3:
         raise ValueError(f"unexpected output rank {hidden.ndim}")
-    # 取最后一个位置（左填充下恒为最后一个真实 token），再 L2 归一
-    vecs = hidden[:, -1, :].astype(np.float32)
+    # 解码器取最后一个位置（左填充下恒为最后一个真实 token），BERT 取 CLS，再 L2 归一
+    vecs = hidden[:, -1 if decoder else 0, :].astype(np.float32)
     norms = np.linalg.norm(vecs, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     vecs = vecs / norms
@@ -166,7 +185,7 @@ def embed_texts(texts):
 
     总开关 PHYMATHIA_EMBEDDING=0/off/false 时直接返回 None（测试沙箱与
     「就要纯词面口径」的场景用）；调用方在 async 路由里必须 asyncio.to_thread
-    包一层（613MB 模型首次加载 1-3 秒、批推理百毫秒级，不能阻塞事件循环）。
+    包一层（模型首次加载亚秒～数秒、批推理毫秒～百毫秒级，不能阻塞事件循环）。
     """
     if str(os.environ.get("PHYMATHIA_EMBEDDING") or "").strip().lower() in ("0", "off", "false"):
         return None
