@@ -4,6 +4,46 @@
 
     // ===== Auto Extract after AI response =====
 
+    // 回退 $..$ 扫描前剥掉 <viz> 块与代码围栏：里面的 $ 属于演示物料/代码（JS 模板串
+    // $${x}、shell $HOME），不是公式标注——实测曾把「${r.p}</b> 和$」当公式提走。
+    // 标记优先哲学：<formula> 才是权威标注，回退只为没按约定标注的旧模型兜底，宁缺勿滥。
+    // 与后端 knowledge._strip_formula_scan_noise 同口径。
+    function _stripFormulaScanNoise(content) {
+      let s = String(content || '').replace(/<viz>[\s\S]*?<\/viz>/gi, ' ');
+      s = s.replace(/```[\s\S]*?```/g, ' ');
+      // 未闭合围栏/<viz>（流截断）：其后是代码尾，同样不参与扫描
+      const openIdx = s.search(/```|<viz>/i);
+      if (openIdx >= 0) s = s.slice(0, openIdx);
+      return s;
+    }
+
+    // 未闭合 <formula>（流式截断/模型漏闭合）补捞：渲染层从标签处截断显示，提取层
+    // 同位兜底——只收标签后到行尾的尾段，且必须过闸门＋花括号配平＋不以悬空命令/
+    // 上下标符结尾（截断常发生在公式中间，残缺 LaTeX 宁可不收）。与后端
+    // knowledge._salvage_unclosed_formula 同口径。
+    function _salvageUnclosedFormula(content) {
+      const text = String(content || '');
+      const m = /<formula>(?![\s\S]*<\/formula>)/i.exec(text);
+      if (!m) return '';
+      // 与渲染层同款围栏保护：未闭合标签在代码围栏内＝字面文本，不是标注
+      if ((text.slice(0, m.index).match(/```/g) || []).length % 2 === 1) return '';
+      let tail = text.slice(m.index + m[0].length);
+      const nl = tail.indexOf('\n');
+      if (nl >= 0) tail = tail.slice(0, nl);
+      tail = tail.trim();
+      if (!tail) return '';
+      if (/[\\^_{,]$/.test(tail)) return '';
+      // 尾 token 是裸的吃参数命令（\frac、\sqrt 等）：参数还没写出来＝截断在公式中段
+      if (/\\(frac|dfrac|tfrac|sqrt|text|textrm|textbf|mathrm|mathbf|mathit|vec|hat|bar|tilde|overline|underline|dot|ddot|left|right|begin|end)$/.test(tail)) return '';
+      let depth = 0;
+      for (const ch of tail) {
+        if (ch === '{') depth += 1;
+        else if (ch === '}') depth -= 1;
+        if (depth < 0) return '';
+      }
+      return depth === 0 ? tail : '';
+    }
+
     function extractLocalFormulas(content) {
       const formulas = [];
       const addFormula = (expr) => {
@@ -14,12 +54,21 @@
         }
       };
 
+      // 标记优先：AI 按约定标注的 <formula>…</formula> 是唯一权威来源
       const tagged = content.match(/<formula>[\s\S]*?<\/formula>/gi) || [];
       for (const match of tagged) addFormula(match.replace(/<\/?formula>/gi, ''));
+      // 一条闭合标注都没有、但存在未闭合开标签时，按渲染层截断位补捞
       if (formulas.length === 0) {
-        const fallback = /\$\$([^$\n]+)\$\$|\\\((.+?)\\\)|\\\[(.+?)\\\]|\$([^$\n]+)\$/g;
+        const salvaged = _salvageUnclosedFormula(content);
+        if (salvaged) addFormula(salvaged);
+      }
+      if (formulas.length === 0) {
+        // 回退扫描只看正文（剥 viz/代码围栏）；$$…$$ 与 \[…\] 允许多行（2026-10-12 前
+        // 正则不跨行，多行块公式整块漏提），行内 $…$ 仍限单行
+        const scanText = _stripFormulaScanNoise(content);
+        const fallback = /\$\$([\s\S]+?)\$\$|\\\((.+?)\\\)|\\\[([\s\S]+?)\\\]|\$([^$\n]+)\$/g;
         let match;
-        while ((match = fallback.exec(content)) && formulas.length < 8) {
+        while ((match = fallback.exec(scanText)) && formulas.length < 8) {
           addFormula(match.slice(1).find(Boolean) || '');
         }
       }

@@ -104,10 +104,13 @@ def _looks_like_formula(latex: str) -> bool:
     # 纯中文（含中文标点/全角字符）：是概念名不是公式——能量守恒、动量定理
     if re.fullmatch(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+", s):
         return False
-    # 含中文散文但没有任何 LaTeX 结构（\ ^ _ { } = <> 与数字）：是回显的提示词/正文
+    # 含中文散文但没有任何 LaTeX 结构（命令/上下标/花括号/关系符）：是回显的提示词/正文
     # 片段，不是公式。实测踩过：推理泄漏的正文被 AI 提取成
     # 「$标签包裹。物理直觉里"尽量少公式"。$」这样的条目公式，全是中文标点散文。
-    if re.search(r"[\u4e00-\u9fff]", s) and not re.search(r"[\\^_={}<>±≤≥→\d]", s):
+    # 2026-10-12 起 \d 不再算「结构」——「$5 一个，支架 $」这类中文＋数字散文
+    # （美元金额/编号混进正文）前后端一致拒收；真带中文的公式总有 \ ^ _ { } = 等结构
+    # （与前端 utils.js _looksLikeFormula 同口径，改一处必改另一处）。
+    if re.search(r"[\u4e00-\u9fff]", s) and not re.search(r"[\\^_={}<>±≤≥→]", s):
         return False
     # 其余视为公式（含 = + - ( ) { } 数字、函数结构等）
     return True
@@ -162,6 +165,11 @@ def _dedupe_formula_map(data: dict) -> dict:
         key = _formula_key(item.get("latex") or "")
         if not key:
             passthrough[fid] = item
+            continue
+        # 提取闸门口径收口（2026-10-12）：闸门补齐前混进库存的散文/概念「公式」
+        # （POST /api/formulas 早已拒收同类新条目）在每次写入口径化清除——
+        # 留着就是永远同步不上的僵尸数据
+        if not _looks_like_formula(item.get("latex") or ""):
             continue
         groups.setdefault(key, []).append((fid, item))
     result = passthrough
@@ -402,6 +410,18 @@ def _dedupe_knowledge(data) -> dict:
     for item_id, item in data.items():
         if not isinstance(item, dict):
             continue
+        # 2026-10-12：单条不成组的条目同样过公式闸门（成组的在下方合并时已过）——
+        # 知识点里夹带的散文「公式」与公式库同口径清除；只在真有变化时赋值，
+        # 不破坏 api_save_knowledge 的「合并结果与库存一致就不写盘」短路
+        if item.get("formulas"):
+            cleaned, seen = [], set()
+            for formula in item["formulas"]:
+                normalized = _normalize_formula(str(formula))
+                if normalized and _looks_like_formula(normalized) and normalized not in seen:
+                    seen.add(normalized)
+                    cleaned.append(normalized)
+            if len(cleaned) != len(item["formulas"]):
+                item["formulas"] = cleaned
         title_key = _normalize_knowledge_key(item.get("title", ""))
         if not title_key:
             continue
@@ -428,7 +448,9 @@ def _dedupe_knowledge(data) -> dict:
                 keep["anchorSummary"] = it["anchorSummary"]
             for formula in it.get("formulas") or []:
                 normalized = _normalize_formula(str(formula))
-                if normalized and normalized not in seen:
+                # 2026-10-12：同过 _looks_like_formula 闸门——知识点条目里夹带的
+                # 散文「公式」与公式库同口径清除，POST /api/knowledge 不再收
+                if normalized and _looks_like_formula(normalized) and normalized not in seen:
                     seen.add(normalized)
                     formulas.append(normalized)
         keep["formulas"] = formulas
@@ -561,6 +583,51 @@ def _local_knowledge_summary(title: str, formulas: list, category: str) -> str:
     return s[:120]
 
 
+def _strip_formula_scan_noise(content: str) -> str:
+    """回退 $..$ 扫描前剥掉 <viz> 块与代码围栏：里面的 $ 属于演示物料/代码（JS 模板串
+    $${x}、shell $HOME），不是公式标注——实测曾把「${r.p}</b> 和$」当公式提走。
+    标记优先哲学：<formula> 才是权威标注，回退只为没按约定标注的旧模型兜底，宁缺勿滥。
+    与前端 chat-features.js _stripFormulaScanNoise 同口径。"""
+    s = re.sub(r"<viz>[\s\S]*?</viz>", " ", str(content or ""), flags=re.I)
+    s = re.sub(r"```[\s\S]*?```", " ", s)
+    # 未闭合围栏/<viz>（流截断）：其后是代码尾，同样不参与扫描
+    m = re.search(r"```|<viz>", s, re.I)
+    if m:
+        s = s[:m.start()]
+    return s
+
+
+def _salvage_unclosed_formula(content: str) -> str:
+    """未闭合 <formula>（流式截断/模型漏闭合）补捞：渲染层从标签处截断显示，提取层
+    同位兜底——只收标签后到行尾的尾段，且必须花括号配平、不以悬空命令/上下标符结尾
+    （截断常发生在公式中间，残缺 LaTeX 宁可不收）。与前端 _salvageUnclosedFormula 同口径。"""
+    text = str(content or "")
+    m = re.search(r"<formula>(?![\s\S]*</formula>)", text, re.I)
+    if not m:
+        return ""
+    # 与渲染层同款围栏保护：未闭合标签在代码围栏内＝字面文本，不是标注
+    if len(re.findall(r"```", text[:m.start()])) % 2 == 1:
+        return ""
+    tail = text[m.end():].split("\n", 1)[0].strip()
+    if not tail:
+        return ""
+    if re.search(r"[\\^_{,]$", tail):
+        return ""
+    # 尾 token 是裸的吃参数命令（\frac、\sqrt 等）：参数还没写出来＝截断在公式中段
+    if re.search(r"\\(frac|dfrac|tfrac|sqrt|text|textrm|textbf|mathrm|mathbf|mathit"
+                 r"|vec|hat|bar|tilde|overline|underline|dot|ddot|left|right|begin|end)$", tail):
+        return ""
+    depth = 0
+    for ch in tail:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if depth < 0:
+            return ""
+    return tail if depth == 0 else ""
+
+
 def _local_extract_knowledge(messages: list) -> list:
     """本地正则兜底提取：从最近的 assistant 消息提取公式与标题"""
     for msg in reversed(messages):
@@ -575,7 +642,7 @@ def _local_extract_knowledge(messages: list) -> list:
             return []
 
         formulas = []
-        # 优先提取 AI 按规范标注的 <formula>...</formula> 标签（精准公式）
+        # 标记优先：AI 按规范标注的 <formula>...</formula> 是唯一权威来源
         tagged = re.findall(r"<formula>([\s\S]*?)</formula>", content, re.I)
         if tagged:
             for expr in tagged:
@@ -584,9 +651,19 @@ def _local_extract_knowledge(messages: list) -> list:
                     formulas.append(normalized)
                 if len(formulas) >= 8:
                     break
-        # 无标注时回退：同时匹配 $$..$$、\(..\)（AI 实际输出格式）、\[..\]、$..$
+        # 一条闭合标注都没有、但存在未闭合开标签时，按渲染层截断位补捞
         if not formulas:
-            for m in re.finditer(r"\$\$([^$\n]+)\$\$|\\\((.+?)\\\)|\\\[(.+?)\\\]|\$([^$\n]+)\$", content):
+            salvaged = _salvage_unclosed_formula(content)
+            if salvaged:
+                normalized = _normalize_formula(salvaged)
+                if normalized and _looks_like_formula(normalized):
+                    formulas.append(normalized)
+        # 无标注时回退：同时匹配 $$..$$、\(..\)（AI 实际输出格式）、\[..\]、$..$；
+        # 扫描源先剥 viz/代码围栏，$$ 与 \[..\] 允许多行（2026-10-12 前正则不跨行，
+        # 多行块公式整块漏提），行内 $..$ 仍限单行
+        if not formulas:
+            for m in re.finditer(r"\$\$([\s\S]+?)\$\$|\\\((.+?)\\\)|\\\[([\s\S]+?)\\\]|\$([^$\n]+)\$",
+                                 _strip_formula_scan_noise(content)):
                 expr = next((g for g in m.groups() if g), "")
                 normalized = _normalize_formula(expr)
                 # 过滤单字符/纯命令/纯单位等非公式（如 \(m\)、\(\omega\)、\text{rad/s}）

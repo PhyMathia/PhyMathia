@@ -49,10 +49,28 @@ function _summarySourceRankOf(item) {
 function dedupeKnowledgeItems(items) {
   const map = items && typeof items === 'object' && !Array.isArray(items) ? items : {};
   const groups = {};
+  let formulasCleaned = false;
   for (const id in map) {
     const item = map[id];
     if (!item || typeof item !== 'object') continue;
-    // T146：按规范化标题全局合并（不再按会话硬分区）——同名概念跨会话只留一条，
+    // 2026-10-12：条目公式同过闸门（与后端 _dedupe_knowledge 同口径，单条不成组的
+    // 也清）——散文「公式」在合并时清除；只在真有变化时赋值，减少无谓的落盘
+    if (Array.isArray(item.formulas) && item.formulas.length) {
+      const cleaned = [];
+      const seenF = new Set();
+      for (const formula of item.formulas) {
+        const key = _canonicalFormulaText(formula);
+        if (formula && key && !seenF.has(key) && _looksLikeFormula(key)) {
+          seenF.add(key);
+          cleaned.push(formula);
+        }
+      }
+      if (cleaned.length !== item.formulas.length) {
+        item.formulas = cleaned;
+        formulasCleaned = true;
+      }
+    }
+    // T146：按规范化标题全局合并（不再按会话分区）——同名概念跨会话只留一条，
     // 全部归属写 sessionIds（大陆投影/按会话删除据此保住跨画布信号）
     const key = _normalizeKnowledgeKey(item.title);
     if (!key) continue;
@@ -80,7 +98,9 @@ function dedupeKnowledgeItems(items) {
       if (!keep.anchorSummary && entry.item.anchorSummary) keep.anchorSummary = entry.item.anchorSummary;
       for (const formula of entry.item.formulas || []) {
         const key = _canonicalFormulaText(formula);
-        if (formula && key && !seen.has(key)) {
+        // 2026-10-12：同过 _looksLikeFormula 闸门（与后端 _dedupe_knowledge 同口径）——
+        // 知识点条目里夹带的散文「公式」在合并时清除，POST /api/knowledge 不再收
+        if (formula && key && !seen.has(key) && _looksLikeFormula(key)) {
           seen.add(key);
           formulas.push(formula);
         }
@@ -113,7 +133,7 @@ function dedupeKnowledgeItems(items) {
     for (let i = 1; i < ranked.length; i++) removeIds.add(ranked[i].id);
   }
 
-  if (removeIds.size) {
+  if (removeIds.size || formulasCleaned) {
     for (const id of removeIds) delete map[id];
     try {
       localStorage.setItem(STORAGE_KEY_KNOWLEDGE, JSON.stringify(map));
@@ -1340,6 +1360,9 @@ function dedupeFormulaItems(items) {
     // T146：按公式全局合并（不再按会话分区），归属写 sessionIds
     const key = _formulaKey(it.latex);
     if (!key) continue;
+    // 2026-10-12：闸门不过的「公式」不进合并结果（与后端 _dedupe_formula_map 同口径）
+    // ——POST /api/formulas 从未收过这类条目，留着就是永远同步不上的本地僵尸
+    if (!_looksLikeFormula(it.latex)) continue;
     if (!groups[key]) groups[key] = [];
     groups[key].push([id, it]);
   }

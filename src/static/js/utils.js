@@ -77,15 +77,22 @@ function _stripFormulaDelimiters(latex) {
   return String(latex || '').replace(/^\$+|\$+$/g, '').trim();
 }
 
-// 公式：与后端 _looks_like_formula 一致（排除单字符/纯短字母/纯命令/纯 \text{}/单位斜杠）
+// 公式：与后端 _looks_like_formula 一致（排除单字符/纯短字母/纯命令/纯 \text{}/单位斜杠/
+// 纯中文/中文散文无 LaTeX 结构）。2026-10-12 前缺后端独有的两条中文闸门——$能量守恒$
+// 这类概念名能进本地公式缓存，而 POST /api/formulas 按后端闸门拒收，本地条目永远
+// 同步不上去，面板里就成了清不掉的僵尸条目；入参带 $ 定界符时先剥（与后端同口径）。
 function _looksLikeFormula(latex) {
-  const s = String(latex || '').trim();
+  const s = String(latex || '').trim().replace(/^\$+|\$+$/g, '').trim();
   if (!s) return false;
   if (s.length === 1) return false;                        // 单字符：m、k
   if (/^[A-Za-z]{1,3}$/.test(s)) return false;             // 纯短字母：rad、Hz
   if (/^\\[A-Za-z]+$/.test(s)) return false;               // 纯符号命令：\omega
   if (/^\\text\{[^{}]*\}$/.test(s)) return false;          // 纯 \text{...}：\text{rad/s}
   if (/^[A-Za-z]{1,4}(\/[A-Za-z]{1,4})+$/.test(s)) return false; // 单位：rad/s、m/s
+  if (/^[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+$/.test(s)) return false; // 纯中文：能量守恒
+  // 含中文但没有真实 LaTeX 结构（命令/上下标/花括号/关系符；数字不算——「$5 一个，支架$」
+  // 这类中文＋数字散文前后端一致拒收）＝回显的正文片段，不是公式
+  if (/[\u4e00-\u9fff]/.test(s) && !/[\\^_={}<>±≤≥→]/.test(s)) return false;
   return true;
 }
 

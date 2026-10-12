@@ -477,4 +477,98 @@ check('chat：推理通道不混进正文（混进去 → 整轮知识提取被�
   if (!code.includes('混进了模型的思考过程')) throw new Error('打包产物缺提示文案（未 build:js？）');
   return true;
 });
+
+// ===== 提取链加固（2026-10-12）：前后端闸门对齐＋回退扫描安全化＋未闭合补捞 =====
+// 与后端 tests/test_extract_hardening.py 同口径（改一处必改另一处）。
+
+check('extract：_looksLikeFormula 补齐中文闸门（与后端对齐，纯中文/中文＋数字散文拒收）', () => {
+  const f = sandbox._looksLikeFormula;
+  if (typeof f !== 'function') throw new Error('_looksLikeFormula 未暴露');
+  // 修复前前端缺这两条：$能量守恒$ 概念名进本地缓存、POST /api/formulas 拒收 → 僵尸条目
+  for (const bad of ['能量守恒', '$动量定理$', '5 一个，支架 ', '$5 一个，支架 $']) {
+    if (f(bad)) throw new Error('中文散文被当公式：' + bad);
+  }
+  // 真公式与带中文结构的公式照常放行；入参带 $ 定界符先剥（与后端同口径）
+  for (const good of ['F=-kx', '$E=mc^2$', '力 F=ma', 'v_{初}']) {
+    if (!f(good)) throw new Error('真公式被误拒：' + good);
+  }
+  for (const bad of ['m', '$m$', 'rad', '\\omega', '\\text{rad/s}', 'rad/s']) {
+    if (f(bad)) throw new Error('单字符/单位被当公式：' + bad);
+  }
+  return true;
+});
+
+check('extract：回退扫描剥 viz/代码围栏（JS 模板串与 shell 变量不再是公式）', () => {
+  const ex = sandbox.extractLocalFormulas;
+  if (typeof ex !== 'function') throw new Error('extractLocalFormulas 未暴露');
+  const viz = '先看正文说明。\n\n```html\n<script>\nrows.forEach(r => el.innerHTML += `<b>$${r.p}</b> 和 $${r.n} 项`);\n</script>\n```\n\n正文没有公式标签。';
+  if (ex(viz).length) throw new Error('viz JS 模板串被当公式：' + JSON.stringify(ex(viz)));
+  const shell = '安装步骤：\n\n```bash\necho $HOME 和 $PATH 要先设置\n```\n\n完成。';
+  if (ex(shell).length) throw new Error('shell 变量被当公式：' + JSON.stringify(ex(shell)));
+  const dollar = '实验器材预算：传感器 $5 一个，支架 $10 一套，超预算了。';
+  if (ex(dollar).length) throw new Error('美元散文被当公式：' + JSON.stringify(ex(dollar)));
+  const fenceTail = '说明如下：\n\n```\nconst a = "$x$"; const b = "$y$";\n';
+  if (ex(fenceTail).length) throw new Error('未闭合围栏后的代码尾被当公式');
+  return true;
+});
+
+check('extract：多行 $$ 与 \\[..\\] 块公式不再整块漏提（2026-10-12 前正则不跨行）', () => {
+  const ex = sandbox.extractLocalFormulas;
+  const content = '由牛顿第二定律：\n$$\nF = ma\n$$\n同时能量：\n\\[\nE = \\frac{1}{2}mv^2\n\\]\n完毕。';
+  const got = ex(content);
+  if (got.length !== 2 || !got[0].includes('F = ma') || !got[1].includes('mv^2')) {
+    throw new Error('多行块公式漏提：' + JSON.stringify(got));
+  }
+  return true;
+});
+
+check('extract：未闭合 <formula> 按渲染层截断位补捞，残缺 LaTeX 不捞', () => {
+  const ex = sandbox.extractLocalFormulas;
+  // 完整公式＋漏闭合标签 → 补捞成功（此前整条丢失）
+  if (!ex('## 胡克定律\n恢复力与位移成正比：\n<formula>F=-kx\n\n后续内容被截断。').some(f => f.includes('F=-kx'))) {
+    throw new Error('未闭合 formula 的完整公式没有被补捞');
+  }
+  // 截断发生在公式中间（悬空 ^ / 裸 \frac / 花括号不配平）→ 宁可不收
+  for (const bad of [
+    '## 能量\n<formula>E=\\frac{1}{2}mv^',
+    '## 能量\n<formula>E=\\frac{1}{2',
+    '## 能量\n<formula>E=\\frac',
+    '## 能量\n<formula>E=\\frac{1}{2}mv^2}}',
+  ]) {
+    if (ex(bad).length) throw new Error('残缺 LaTeX 被当公式收了：' + JSON.stringify(ex(bad)));
+  }
+  // 代码围栏里的 <formula> 是字面文本，不补捞
+  if (ex('```\n<formula>F=-kx\n```').length) throw new Error('围栏内字面 formula 被当标注');
+  return true;
+});
+
+check('extract：正常标注路径不回归（标记优先——<formula> 是唯一权威来源）', () => {
+  const ex = sandbox.extractLocalFormulas;
+  const got = ex('## 胡克定律\n恢复力 <formula>F=-kx</formula>，能量 <formula>E=\\frac{1}{2}kx^2</formula>。\n<summary>胡克定律恢复力与位移成正比</summary>');
+  if (got.length !== 2) throw new Error('正常标注提取回归：' + JSON.stringify(got));
+  // 渲染层兼容的 $$<formula>..</formula>$$ 双层包裹，提取层同口径
+  const wrapped = ex('## 弹性势能\n$$<formula>E=\\frac{1}{2}kx^2</formula>$$ 是标量。');
+  if (wrapped.length !== 1 || !wrapped[0].includes('kx^2')) throw new Error('双层定界符兼容回归');
+  return true;
+});
+
+check('extract：存量僵尸清理（dedupeFormulaItems/dedupeKnowledgeItems 同过闸门）', () => {
+  const df = sandbox.dedupeFormulaItems;
+  const r1 = df({
+    f1: { id: 'f1', latex: '$能量守恒$', sessionId: 's1' },
+    f2: { id: 'f2', latex: '$F=-kx$', sessionId: 's1' },
+    f3: { id: 'f3', latex: '$5 一个，支架 $', sessionId: 's1' },
+  });
+  if (r1.f1 || r1.f3 || !r1.f2) throw new Error('公式库僵尸条目没有被清掉');
+  const dk = sandbox.dedupeKnowledgeItems;
+  const r2 = dk({
+    k1: { id: 'k1', title: '胡克定律', sessionId: 's1', summarySource: 'local',
+          summary: 's', formulas: ['$F=-kx$', '$能量守恒$', '$5 一个，支架 $'] },
+  });
+  // 单条不成组的条目公式也清（与后端 _dedupe_knowledge 同口径）
+  if (JSON.stringify(r2.k1.formulas) !== JSON.stringify(['$F=-kx$'])) {
+    throw new Error('知识点条目里的散文公式没有被清掉：' + JSON.stringify(r2.k1.formulas));
+  }
+  return true;
+});
 }
