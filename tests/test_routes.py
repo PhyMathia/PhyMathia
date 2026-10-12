@@ -40,6 +40,7 @@ from server import backup as backup_mod  # noqa: E402
 from server import config as config_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
+from server import knowledge_routes as knowledge_routes_mod  # noqa: E402  T293 大陆结果缓存打桩位
 
 
 _MISSING = object()
@@ -954,6 +955,35 @@ class ContinentRouteTest(RouteTestBase):
         after = ((td / "knowledge.json").read_bytes(),
                  (td / "sessions.json").read_bytes())
         self.assertEqual(before, after, "只读端点不得改动数据文件")
+
+    def test_continent_result_cache_hit_and_invalidate(self):
+        # T293：输入文件指纹不变 → 第二次请求直接回缓存（build_continent 不再跑）；
+        # knowledge 落盘 → 指纹失效 → 重算并反映新数据
+        self._seed()
+        real_build = knowledge_routes_mod.continent.build_continent
+        with mock.patch.object(knowledge_routes_mod.continent, "build_continent",
+                               wraps=real_build) as build:
+            r1 = self.client.get("/api/continent")
+            self.assertEqual(r1.status_code, 200)
+            r2 = self.client.get("/api/continent")
+            self.assertEqual(r2.status_code, 200)
+            self.assertEqual(r2.json(), r1.json())
+            self.assertEqual(build.call_count, 1)   # 第二次没重算
+
+            td = Path(self._td.name) / "users" / "default"
+            (td / "knowledge.json").write_text(json.dumps({
+                "k1": {"id": "k1", "sessionId": "sess_a", "title": "阻尼振动",
+                       "formulas": [], "category": "", "createdAt": 1},
+                "k2": {"id": "k2", "sessionId": "sess_b", "title": "非线性振动",
+                       "formulas": [], "category": "", "createdAt": 2},
+                "k3": {"id": "k3", "sessionId": "sess_a", "title": "共振",
+                       "formulas": [], "category": "", "createdAt": 3},
+            }, ensure_ascii=False), encoding="utf-8")
+            storage_mod._JSON_READ_CACHE.clear()
+            r3 = self.client.get("/api/continent")
+            self.assertEqual(r3.status_code, 200)
+            self.assertEqual(build.call_count, 2)   # 文件变了必须重算
+            self.assertEqual(r3.json()["itemCount"], 3)
 
     def test_continent_merges_user_edges_from_kv(self):
         # v2：KV continent_edges 里的用户簇间边按当前投影校验后随响应下发

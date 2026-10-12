@@ -98,6 +98,34 @@ async def _json_get_response(request: Request, path, transform, cache_key=None):
                     headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
+# T293：大陆投影结果缓存——build_continent（跨会话聚簇＋布局推导，纯本地 CPU
+# 重活）此前每次打开都全量重算（2026-10-12 实测 4.2–4.5s，二次打开毫无变快）。
+# 按全部输入文件的指纹缓存整份结果：knowledge/sessions/KV 全层（kv_layer_stats）
+# /向量缓存（embedding._cache_path）任一落盘即改指纹，缓存自然失效，无需主动清。
+# 改大陆布局算法或内置族表口径时 bump 版本号，防旧结果滞留。
+_CONTINENT_CACHE_VERSION = 1
+_continent_result_cache: dict = {}   # {account: (sig, result)}
+_CONTINENT_RESULT_CACHE_MAX = 8      # 按账号一格，超限整体清（防长跑膨胀）
+
+
+def _continent_input_signature(paths, account: str):
+    """大陆投影全部输入文件的指纹（只 stat 不读内容）。"""
+    sig = [_CONTINENT_CACHE_VERSION, account]
+    for p in (paths.knowledge_path, paths.sessions_path):
+        try:
+            st = os.stat(p)
+            sig.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append(None)
+    sig.append(storage.kv_layer_stats(account))
+    try:
+        st = os.stat(embedding._cache_path())
+        sig.append((st.st_mtime_ns, st.st_size))
+    except OSError:
+        sig.append(None)
+    return tuple(sig)
+
+
 @router.get("/api/knowledge")
 async def api_get_knowledge(request: Request = None):
     paths = _account_paths(request)
@@ -179,8 +207,16 @@ async def api_get_continent(request: Request = None):
     v9 向量证据：本地 embedding 模型给「卡片 × 族中心」算余弦（data/embedding_cache.json
     缓存，只算新文本），词面认不出的卡也能被路由进正确海域；缺模型自动降级，
     投影退回纯词面口径。向量只进 domain* 字段（门控只路由不证明）。
+
+    T293 结果缓存：输入文件（knowledge/sessions/KV 全层/向量缓存）指纹不变时
+    直接回上一份投影，任一落盘即失效重算。
     """
     paths = _account_paths(request)
+    account = _account_id(request)
+    sig = _continent_input_signature(paths, account)
+    hit = _continent_result_cache.get(account)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
     items = _dedupe_knowledge(_read_json(paths.knowledge_path, {}))
     sessions = _read_json(paths.sessions_path, {})
     # 合并视图：主文件 + data/kv/ 会话文件（用户连线/概念族等 KV 自有数据可能已拆分）
@@ -200,9 +236,13 @@ async def api_get_continent(request: Request = None):
     # T207：build_continent 本体（跨会话聚簇＋布局推导，纯本地 CPU）此前只包了向量
     # 准备、本体留在事件循环里同步跑——开一次图就占住整个循环若干秒，期间其他请求
     # 全部排队。这里一并挪出，与 card_sims 同口径。
-    return await asyncio.to_thread(continent.build_continent, items, sessions,
-                                   user_edges, user_families, gate, card_sims=card_sims,
-                                   sea_map=sea_map)
+    result = await asyncio.to_thread(continent.build_continent, items, sessions,
+                                     user_edges, user_families, gate, card_sims=card_sims,
+                                     sea_map=sea_map)
+    if len(_continent_result_cache) >= _CONTINENT_RESULT_CACHE_MAX:
+        _continent_result_cache.clear()
+    _continent_result_cache[account] = (sig, result)
+    return result
 
 
 @router.get("/api/families")

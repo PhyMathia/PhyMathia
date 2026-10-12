@@ -192,6 +192,12 @@ def embed_texts(texts):
 # ===== 向量缓存（独立文件 data/embedding_cache.json，不进 kv_store.json） =====
 _cache_lock = threading.Lock()
 _CACHE_VERSION = 1
+# T294：解析结果常驻内存，按缓存文件路径键控（测试会 monkeypatch _cache_path 换
+# 临时文件——指纹可能撞车，路径必不同）。指纹＝(mtime_ns, size)，文件没变不重读
+# 不重解析；此前每次 gather_vectors 都整文件 json.load（2026-10-12 实测 5.5MB、
+# 封顶 16MB），写回也是每个新向量整文件重写。全部持 _cache_lock 读写。
+_MEM_CACHE: dict = {}          # {path_str: (fp, texts)}
+_MEM_CACHE_MAX = 8
 
 
 def _cache_path():
@@ -203,29 +209,53 @@ def _text_hash(text):
     return hashlib.sha1(f"{EMBED_MODEL_TAG}|{text}".encode("utf-8")).hexdigest()
 
 
-def _cache_load():
+def _cache_stat():
     try:
-        with open(_cache_path(), "r", encoding="utf-8") as f:
+        st = _cache_path().stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _cache_load():
+    """读缓存文本表；磁盘指纹没变时直接用内存副本。返回的 dict 归调用方
+    原地更新（gather_vectors 会增量写入再整体落盘）。"""
+    path = _cache_path()
+    fp = _cache_stat()
+    hit = _MEM_CACHE.get(str(path))
+    if hit is not None and hit[0] == fp:
+        return hit[1]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict) and data.get("version") == _CACHE_VERSION \
                 and data.get("model") == EMBED_MODEL_TAG \
                 and isinstance(data.get("texts"), dict):
-            return data["texts"]
+            texts = data["texts"]
+        else:
+            texts = {}
     except (OSError, ValueError):
-        pass
-    return {}
+        texts = {}
+    if len(_MEM_CACHE) >= _MEM_CACHE_MAX:
+        _MEM_CACHE.clear()
+    _MEM_CACHE[str(path)] = (fp, texts)
+    return texts
 
 
 def _cache_store(texts_map):
-    """texts_map: {hash: vec}。写失败静默（缓存只是加速，丢了重算）。"""
+    """texts_map: {hash: vec}。写失败静默（缓存只是加速，丢了重算）。
+    调用方持 _cache_lock；成功落盘后同步内存指纹——否则下一轮 gather 会对着
+    刚写完的文件白做一次整文件解析。"""
+    path = _cache_path()
     payload = {"version": _CACHE_VERSION, "model": EMBED_MODEL_TAG,
                "savedAt": int(time.time()), "texts": texts_map}
-    tmp = Path(str(_cache_path()) + ".tmp")
+    tmp = Path(str(path) + ".tmp")
     try:
-        _cache_path().parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, _cache_path())
+        os.replace(tmp, path)
+        _MEM_CACHE[str(path)] = (_cache_stat(), texts_map)
     except OSError:
         pass
 

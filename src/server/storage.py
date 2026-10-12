@@ -266,30 +266,47 @@ def kv_delete(key: str, account: str = DEFAULT_ACCOUNT) -> None:
                 pass
 
 
+def _kv_layer_paths(account: str = DEFAULT_ACCOUNT) -> list:
+    """kv_all_data 的读取清单（主文件＋会话拆分＋族拆分；顺序＝合并优先级，
+    拆分在后覆盖主文件同名键）。kv_layer_stats 与 kv_all_data 共用一份清单，
+    防「指纹看漏一层」与「合并多读一层」各自漂移。"""
+    paths = accounts.resolve_paths(account)
+    out = [paths.kv_path]
+    if paths.kv_dir.exists():
+        out.extend(p for p in sorted(paths.kv_dir.glob("*.json"))
+                   if _SESSION_ID_RE.match(p.stem))
+    if paths.kv_meta_dir.exists():
+        out.extend(sorted(paths.kv_meta_dir.glob("*.json")))
+    return out
+
+
 def kv_all_data(account: str = DEFAULT_ACCOUNT) -> dict:
     """全量合并视图（主文件 + 会话文件 + 族文件，拆分文件覆盖同名键）。
 
     备份导出与大陆投影等「要看到全部 KV」的场合用；拆分文件优先——它与
     迁移中断时残留在主文件里的旧副本相比总是较新的一份。
     """
-    paths = accounts.resolve_paths(account)
     merged = {}
-    main = _read_json(paths.kv_path, {})
-    if isinstance(main, dict):
-        merged.update(main)
-    if paths.kv_dir.exists():
-        for path in sorted(paths.kv_dir.glob("*.json")):
-            if not _SESSION_ID_RE.match(path.stem):
-                continue
-            data = _read_json(path, {})
-            if isinstance(data, dict):
-                merged.update(data)
-    if paths.kv_meta_dir.exists():
-        for path in sorted(paths.kv_meta_dir.glob("*.json")):
-            data = _read_json(path, {})
-            if isinstance(data, dict):
-                merged.update(data)
+    for path in _kv_layer_paths(account):
+        data = _read_json(path, {})
+        if isinstance(data, dict):
+            merged.update(data)
     return merged
+
+
+def kv_layer_stats(account: str = DEFAULT_ACCOUNT) -> tuple:
+    """kv_all_data 会读到的每一层文件的 (mtime_ns, size)（文件缺失记 None）。
+
+    结果级缓存（大陆投影 T293）拿它当输入指纹：任何一层落盘即变，缓存自然
+    失效——只 stat 不读内容，微秒级。"""
+    out = []
+    for p in _kv_layer_paths(account):
+        try:
+            st = p.stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
 
 
 def kv_migrate_split_keys(account: str = DEFAULT_ACCOUNT) -> int:

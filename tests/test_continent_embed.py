@@ -218,6 +218,39 @@ class EmbeddingModuleTest(unittest.TestCase):
             self.assertTrue(changed)
             self.assertEqual(calls[-1], ["新文本"])  # 增量：只算没见过的
 
+    def test_cache_parse_is_resident_in_memory(self):
+        # T294：指纹不变时第二轮 gather 不再整文件 json.load（此前每次都重解析，
+        # 真机上 5.5MB 文件跟着每次开大陆/语义找亲白吃一遍 CPU）
+        with mock.patch.object(embedding, "embed_texts",
+                               lambda ts: [[1.0] for _ in ts]), \
+             mock.patch.object(embedding.json, "load",
+                               wraps=embedding.json.load) as jload:
+            embedding.gather_vectors({"a": "文本甲"})
+            loads_after_first = jload.call_count
+            vecs, changed = embedding.gather_vectors({"a": "文本甲"})
+        self.assertFalse(changed)
+        self.assertEqual(vecs["a"], [1.0])
+        self.assertEqual(jload.call_count, loads_after_first)  # 没有第二次解析
+
+    def test_cache_reload_when_file_replaced(self):
+        # 磁盘文件被外部替换（指纹变）→ 必须重读新文件，不得沿用内存旧副本
+        with mock.patch.object(embedding, "embed_texts",
+                               lambda ts: [[9.0] for _ in ts]):
+            first, _ = embedding.gather_vectors({"a": "文本甲"})
+            self.assertEqual(first["a"], [9.0])
+        payload = {"version": 1, "model": embedding.EMBED_MODEL_TAG, "savedAt": 0,
+                   "texts": {embedding._text_hash("文本甲"): [0.5]}}
+        (Path(self._td.name) / "embedding_cache.json").write_text(
+            json.dumps(payload), encoding="utf-8")
+
+        def must_not_embed(ts):
+            raise AssertionError("文件里已有该文本向量，不应再推理")
+
+        with mock.patch.object(embedding, "embed_texts", must_not_embed):
+            second, changed = embedding.gather_vectors({"a": "文本甲"})
+        self.assertFalse(changed)
+        self.assertEqual(second["a"], [0.5])   # 读到的是新文件的 0.5，不是内存旧值 9.0
+
     def test_corrupt_cache_rebuilds(self):
         (Path(self._td.name) / "embedding_cache.json").write_text("not json{")
         with mock.patch.object(embedding, "embed_texts", lambda ts: [[1.0] for _ in ts]):
