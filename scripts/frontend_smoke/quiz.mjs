@@ -641,4 +641,25 @@ check('quiz-loop：面板行显示素材量统计（rawPool 全量口径），�
   }
   return true;
 });
+
+// T309（2026-10-13）：题干兜底 _quizWrapBareLatex 必须认识文字体命令——AI 违反 quiz-prompt
+// 输出裸 \boldsymbol/\mathbf 时（刚体转动题干实例），旧白名单不认识 → 整段不包 $..$ 原样露源码，
+// 而选项因含 \nabla 命中白名单正常渲染，同屏一边渲染一边不渲染
+check('题干兜底：裸 \\mathbf/\\boldsymbol 片段自动包 $..$，已包裹的与路径英文不受影响', () => {
+  const wrap = sandbox._quizWrapBareLatex;
+  if (typeof wrap !== 'function') throw new Error('_quizWrapBareLatex 未挂到沙箱');
+  const stem = '一个刚体以角速度 \\boldsymbol{\\Omega} 转动，其速度场写作 \\mathbf{v}=\\boldsymbol{\\Omega}\\times\\mathbf{r}。';
+  const out = wrap(stem);
+  if (!out.includes('$\\boldsymbol{\\Omega}$')) throw new Error('裸 \\boldsymbol{\\Omega} 未被包裹：' + out);
+  if (!out.includes('$\\mathbf{v}=\\boldsymbol{\\Omega}\\times\\mathbf{r}$')) throw new Error('连续片段未被整段包裹：' + out);
+  const bare = out.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/\$[^$]*\$/g, '').replace(/\\\[[\s\S]*?\\\]/g, '');
+  if (bare.includes('\\boldsymbol') || bare.includes('\\mathbf')) throw new Error('数学定界符外仍有裸命令残留：' + out);
+  // 已包裹/显式定界的不动（防二次包裹）
+  const wrapped = wrap('已知 $\\mathbf{F}=m\\mathbf{a}$ 与 \\[\\boldsymbol{\\omega}\\] 两式。');
+  if (wrapped !== '已知 $\\mathbf{F}=m\\mathbf{a}$ 与 \\[\\boldsymbol{\\omega}\\] 两式。') throw new Error('已包裹公式被二次处理：' + wrapped);
+  // 负例：Windows 路径、无反斜杠的普通文本不受影响
+  const plain = '访问 C:\\Users\\name 的说明 README.md';
+  if (wrap(plain) !== plain) throw new Error('路径/普通文本被误包裹：' + wrap(plain));
+  return true;
+});
 }

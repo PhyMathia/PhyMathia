@@ -211,8 +211,11 @@ function _quizWrapBareLatex(text) {
   // 后行断言，且会在脚本解析期抛 SyntaxError 导致整站不可用
   t = t.replace(/(^|[^\\$A-Za-z0-9])(\\[A-Za-z]+(?:\s*\{[^{}]*\})*(?:\s*(?:\\[A-Za-z]+(?:\s*\{[^{}]*\})*|\{[^{}]*\}|[0-9A-Za-z_=+\-*/^.,;:<>()\[\]]+))*)/g, function (match, pre, frag) {
     if (frag.length > 240) return match;
-    // 强公式命令直接判为公式；弱命令（bar/hat/to 等）需要后跟花括号参数，避免误伤路径/英文
-    if (!/\\?(?:frac|partial|nabla|cdot|vec|int|sum|sqrt|begin|end|text|mathrm|overline|underline|dfrac|displaystyle|limits|lim|sin|cos|tan|log|ln|exp|infty|pi|theta|lambda|sigma|omega|alpha|beta|gamma|phi|Delta)(?![A-Za-z])/.test(frag)
+    // 强公式命令直接判为公式；弱命令（bar/hat/to 等）需要后跟花括号参数，避免误伤路径/英文。
+    // 文字体命令（mathbf/boldsymbol/bm/mathcal/mathbb…）必须在内：刚体转动这类题干只有
+    // \boldsymbol{\Omega}、\mathbf{v}=\boldsymbol{\Omega}\times\mathbf{r} 时，若不认识就整段
+    // 不包 $..$，题干原样露源码而选项（含 \nabla）正常渲染——T309
+    if (!/\\?(?:frac|partial|nabla|cdot|vec|int|sum|sqrt|begin|end|text|mathrm|mathbf|mathcal|mathbb|mathsf|mathtt|mathfrak|boldsymbol|bm|operatorname|overline|underline|dfrac|displaystyle|limits|lim|sin|cos|tan|log|ln|exp|infty|pi|theta|lambda|sigma|omega|alpha|beta|gamma|phi|Delta)(?![A-Za-z])/.test(frag)
         && !/\\?(?:bar|hat|dot|ddot|to|rightarrow|leftarrow|in|div|pm|mp|times|leq|geq|neq|approx|left|right|quad|qquad)\s*\{/.test(frag)) return match;
     return pre + (frag.indexOf('\n') >= 0 ? ('$$' + frag + '$$') : ('$' + frag + '$'));
   });
