@@ -513,8 +513,15 @@ check('graph-continent: 航线备注标签落在线上（曾因 arc.qx undefined
   if (scale(100) !== 0.4) throw new Error('过小倍率未夹住下界：' + scale(100));
   if (scale(0.01) !== 4) throw new Error('过大倍率未夹住上界：' + scale(0.01));
   if (scale(NaN) !== 1 || scale(0) !== 1) throw new Error('脏倍率未兜底成 1');
-  if (!/_continentSyncEdgeLabels\(\);/.test(code.split('function _continentApplyTransform')[1] || '')) {
-    throw new Error('缩放路径未同步备注标签字号');
+  // T304 分速后缩放路径＝_continentApplyTransform 全路径 → _continentApplyZoomDeps → 标签同步；
+  // 两环缺一不可（只快不落＝新画完的边在下次 settle 前保持变形字号）
+  const depsChunk = (code.split('function _continentApplyZoomDeps')[1] || '')
+    .split('function _continentCancelZoomSettle')[0] || '';
+  if (!/_continentSyncEdgeLabels\(\);/.test(depsChunk)) {
+    throw new Error('缩放路径未同步备注标签字号（_continentApplyZoomDeps 内须调 _continentSyncEdgeLabels）');
+  }
+  if (!/_continentApplyZoomDeps\(\)/.test(code.split('function _continentApplyTransform')[1] || '')) {
+    throw new Error('_continentApplyTransform 全路径未接 _continentApplyZoomDeps');
   }
   if (!code.includes('_continentSyncEdgeLabels();\n  return layout;')) {
     throw new Error('渲染结尾未同步备注标签字号（新画的边会保持变形字号）');
@@ -692,10 +699,11 @@ check('graph-continent: v7.3 渐进披露与收纳（48 岛一屏装得下 / 岛
     if (!src.includes(marker)) throw new Error('LOD/折叠实现缺失：' + marker);
   });
   if (!/const CONTINENT_ZOOM_MIN = 0\.15/.test(src)) throw new Error('缩放下限未放到 0.15');
-  // v8.8 词流：反缩放变量必须由 _continentApplyTransform 写进世界层，且**带死区**——
-  // 少了死区就是「滚轮每帧重算整棵子树的字号」，缩放时词流逐帧抖（真机才看得出来）
-  const applySrc = src.split('function _continentApplyTransform')[1] || '';
-  if (!/setProperty\('--cloud-k'/.test(applySrc)) throw new Error('词流反缩放变量没写在 _continentApplyTransform 里');
+  // v8.8 词流：反缩放变量必须由缩放相关件收口 _continentApplyZoomDeps 写进世界层
+  // （T304 分速后全路径与 settle 都经过它），且**带死区**——少了死区就是「滚轮每帧
+  // 重算整棵子树的字号」，缩放时词流逐帧抖（真机才看得出来）
+  const applySrc = src.split('function _continentApplyZoomDeps')[1] || '';
+  if (!/setProperty\('--cloud-k'/.test(applySrc)) throw new Error('词流反缩放变量没写在 _continentApplyZoomDeps 里');
   if (!/_continentCloudK/.test(applySrc)) throw new Error('词流反缩放缺死区比对（每帧重排）');
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   ['.continent-world.lod-world .continent-node', '.continent-world.lod-region .continent-node-formula',
@@ -2223,6 +2231,28 @@ check('画布工具栏图标：浅色走暖棕墨（不再是近黑，且不低�
   if (onGlass > 12) throw new Error('浅色图标仍是近黑（对比度 ' + onGlass.toFixed(2) + ':1），与暖米色环境违和');
   const [lr, lg, lb] = [1, 3, 5].map(i => parseInt(lightInk.slice(i, i + 2), 16));
   if (!(lr > lg && lg > lb)) throw new Error('浅色图标墨色不是暖色相（应 R > G > B）');
+  return true;
+});
+
+check('graph-continent: T304 缩放分速（快速路径只写 transform，档位/词流/标签归 settle）', () => {
+  const src = readContinentSrc();
+  if (!src.includes('function _continentApplyTransform(opts)')) throw new Error('ApplyTransform 缺快速路径参数');
+  if (!src.includes('CONTINENT_ZOOM_SETTLE_MS')) throw new Error('settle 时长常量缺失');
+  if (!src.includes('_continentScheduleZoomSettle') || !src.includes('_continentFlushZoomSettle')) {
+    throw new Error('settle 调度/冲刷缺失');
+  }
+  // 快速路径早退必须先于 zoom 相关重活（先早退再调 _continentApplyZoomDeps 才叫分速）
+  const at = src.indexOf('function _continentApplyTransform(opts)');
+  const body = src.slice(at, src.indexOf('function _continentPinchStep', at));
+  const fastAt = body.indexOf('opts.fast');
+  const depsAt = body.indexOf('_continentApplyZoomDeps');
+  if (fastAt < 0 || depsAt < 0 || fastAt > depsAt) throw new Error('快速路径早退必须在 _continentApplyZoomDeps 之前');
+  // 滚轮 rAF：快速路径与 settle 续期必须同帧（只快不续＝档位永不落定）
+  const wheel = src.slice(src.indexOf('_contWheelRaf = requestAnimationFrame'),
+    src.indexOf('}, { passive: false })'));
+  if (wheel.indexOf('{ fast: true }') < 0 || wheel.indexOf('_continentScheduleZoomSettle') < 0) {
+    throw new Error('滚轮快速路径须同帧续期 settle');
+  }
   return true;
 });
 }

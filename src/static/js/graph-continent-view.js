@@ -18,11 +18,20 @@ function _continentSyncEdgeLabels() {
   return labels.length;
 }
 
-function _continentApplyTransform() {
+// ===== 缩放分速（T304，2026-10-13 滚轮缩放卡顿修复）=====
+// 每帧真正便宜的只有 transform 写入（合成器合成活）；下面三件全是主线程重活：
+// 档位类切换（子树整树重算样式）、--cloud-k（一写全图词流按新字号重排版）、标签
+// 反缩放（全树 querySelectorAll）。手势进行中它们每帧都跑：一次缩放手势跨 0.04
+// 死区约 20 次＝整图文字重排 20 次，这就是滚轮卡顿的主因。分速后：滚轮/捏合/平移
+// 进行中只走快速路径（纯 transform，文字跟着地图一起缩放，视觉自洽），档位/词流/
+// 标签攒到手停 CONTINENT_ZOOM_SETTLE_MS 后一次性校准回屏幕恒定字号。程序化缩放
+// （适配/恢复/飞岛/转场落位）保持全路径同步，行为与回归不变。
+const CONTINENT_ZOOM_SETTLE_MS = 150;
+let _contZoomSettleTimer = 0;
+
+// 缩放相关件：LOD 档位 + 词流反缩放 + 航线标签反缩放（全路径每帧调＝旧行为）。
+function _continentApplyZoomDeps() {
   const world = document.getElementById('continentWorld');
-  if (world && world.style) {
-    world.style.transform = 'translate(' + _continentPan.x + 'px,' + _continentPan.y + 'px) scale(' + _continentZoom + ')';
-  }
   // v7.3 渐进披露：细节只切一个 CSS 类（零重建 DOM）——远景档只画海域板+岛牌+城市+航线；
   // 世界档在陆地内部铺词流；区域档加卡片标题；细节档加公式行与锚点短接。一次性全量渲染
   // + CSS 显隐，不动既有 DOM 契约。v8.8 由三档扩到四档，多出来的远景档收掉词流、只留大地名。
@@ -36,7 +45,7 @@ function _continentApplyTransform() {
     world.classList.toggle('lod-detail', tier === 'lod-detail');
     // 词流的反向缩放补偿（推导见 CONTINENT_CLOUD_SCALE_MAX 处）：屏幕字号 = 13px×zoom×k，
     // k 取 1/zoom 于是恒定在 13px 可读档。**带死区**：--cloud-k 写在世界层上，改一次就要
-    // 整棵子树重算字号，而滚轮每帧都调这里——0.04 死区把重算从「每帧」压到「每 ~4% 缩放」。
+    // 整棵子树重算字号——分速后这里只在 settle 与程序化缩放时走到，死区继续压重复写。
     const k = Math.min(CONTINENT_CLOUD_SCALE_MAX, Math.max(1, 1 / _continentZoom));
     if (Math.abs(k - _continentCloudK) > 0.04) {
       _continentCloudK = k;
@@ -44,6 +53,36 @@ function _continentApplyTransform() {
     }
   }
   _continentSyncEdgeLabels();
+}
+
+// settle 收口：schedule 供手势中每帧续期（最后一帧 150ms 后结算一次）；flush 供
+// 拖拽起步/关图/下钻把在途结算立刻落地——只取消不应用会留脏档位，平移快速路径
+// 敢跳过 deps 靠的就是「pointerdown 时已冲刷」这条保证。
+function _continentCancelZoomSettle() {
+  if (_contZoomSettleTimer) { clearTimeout(_contZoomSettleTimer); _contZoomSettleTimer = 0; }
+}
+function _continentFlushZoomSettle() {
+  const pending = _contZoomSettleTimer;
+  _continentCancelZoomSettle();
+  if (pending) _continentApplyZoomDeps();
+}
+function _continentScheduleZoomSettle() {
+  _continentCancelZoomSettle();
+  _contZoomSettleTimer = setTimeout(() => {
+    _contZoomSettleTimer = 0;
+    _continentApplyZoomDeps();
+  }, CONTINENT_ZOOM_SETTLE_MS);
+}
+
+function _continentApplyTransform(opts) {
+  const world = document.getElementById('continentWorld');
+  if (world && world.style) {
+    world.style.transform = 'translate(' + _continentPan.x + 'px,' + _continentPan.y + 'px) scale(' + _continentZoom + ')';
+  }
+  // 快速路径（滚轮/捏合/平移进行中）：到此为止，重活留给 settle
+  if (opts && opts.fast) return;
+  _continentCancelZoomSettle();   // 全路径已把 deps 落到当前 zoom，在途结算作废
+  _continentApplyZoomDeps();
 }
 
 // 双指捏合一步（纯函数，T136）：锚点语义与 _continentZoomAt 相同——捏合开始时中点下的
@@ -79,14 +118,14 @@ function _continentPinchAnchor(viewport) {
   };
 }
 
-function _continentZoomAt(factor, cx, cy) {
+function _continentZoomAt(factor, cx, cy, opts) {
   const next = Math.min(CONTINENT_ZOOM_MAX, Math.max(CONTINENT_ZOOM_MIN, _continentZoom * factor));
   const ratio = next / _continentZoom;
   // pan' = c − (c − pan)·ratio：世界点 (c − pan)/zoom 在缩放前后都落在屏幕 c 处
   _continentPan.x = cx - (cx - _continentPan.x) * ratio;
   _continentPan.y = cy - (cy - _continentPan.y) * ratio;
   _continentZoom = next;
-  _continentApplyTransform();
+  _continentApplyTransform(opts);
 }
 
 function _continentCenter() {
@@ -166,6 +205,8 @@ function _continentBindViewport(viewport) {
   if (!viewport || !viewport.addEventListener) return;
   viewport.addEventListener('pointerdown', e => {
     if (e.button !== 0) return; // 右键留给浏览器原生菜单
+    // 缩放 settle 在途就先落地：平移走快速路径跳过 deps，靠的就是这里保最新
+    _continentFlushZoomSettle();
     // 记下按下时的目标：setPointerCapture 会把 pointerup 重定目标到 viewport，
     // 那时 e.target 不再是被点的节点——点击判定必须用 down 时的目标
     _continentDragState = {
@@ -198,7 +239,8 @@ function _continentBindViewport(viewport) {
         _continentZoom = step.k;
         _continentPan.x = step.x;
         _continentPan.y = step.y;
-        _continentApplyTransform();
+        _continentApplyTransform({ fast: true });
+        _continentScheduleZoomSettle();
       }
       return; // 捏合期间不走单指平移
     }
@@ -209,7 +251,8 @@ function _continentBindViewport(viewport) {
     if (st.moved) {
       _continentPan.x = st.panX + dx;
       _continentPan.y = st.panY + dy;
-      _continentApplyTransform();
+      // 平移不改 zoom：快速路径即可（deps 在 pointerdown 的 flush 里已保证最新）
+      _continentApplyTransform({ fast: true });
     }
   });
   viewport.addEventListener('pointerup', e => {
@@ -256,7 +299,8 @@ function _continentBindViewport(viewport) {
     _continentDragState = null;
   });
   // 滚轮缩放合帧（与探索网画布同一口径）：连发 wheel 只累乘系数、记最新锚点，
-  // rAF 内重取一次 rect 再缩放——rect 不能在事件里缓存到帧执行时（布局可能已变）
+  // rAF 内重取一次 rect 再缩放——rect 不能在事件里缓存到帧执行时（布局可能已变）。
+  // T304 分速：rAF 里只做合成缩放（fast），档位/词流/标签由 settle 收口
   let _contWheelRaf = 0, _contWheelFactor = 1, _contWheelX = 0, _contWheelY = 0;
   viewport.addEventListener('wheel', e => {
     e.preventDefault();
@@ -269,7 +313,8 @@ function _continentBindViewport(viewport) {
         const factor = _contWheelFactor;
         _contWheelFactor = 1;
         const rect = viewport.getBoundingClientRect();
-        _continentZoomAt(factor, _contWheelX - rect.left, _contWheelY - rect.top);
+        _continentZoomAt(factor, _contWheelX - rect.left, _contWheelY - rect.top, { fast: true });
+        _continentScheduleZoomSettle();
       });
     }
   }, { passive: false });
@@ -325,13 +370,13 @@ function _continentWarpRelease(token) {
 
 // 绝对 zoom + 锚点落点。_continentZoomAt 只有相对倍率，跨转场需要直接落到某个绝对值：
 // 「从目标视口的 0.35 倍长回去」= 先压到 0.35 倍、绕同一锚点再放回目标。
-function _continentSetZoomAt(zoom, cx, cy) {
+function _continentSetZoomAt(zoom, cx, cy, opts) {
   const next = Math.min(CONTINENT_ZOOM_MAX, Math.max(CONTINENT_ZOOM_MIN, zoom));
   const ratio = _continentZoom > 0 ? next / _continentZoom : 1;
   _continentPan.x = cx - (cx - _continentPan.x) * ratio;
   _continentPan.y = cy - (cy - _continentPan.y) * ratio;
   _continentZoom = next;
-  _continentApplyTransform();
+  _continentApplyTransform(opts);
 }
 
 // ---- 1) 交叉淡化：大陆层 ↔ 会话画布 ----
@@ -577,6 +622,7 @@ function _continentSettleWorld(entrySession, fromBreadcrumb) {
 function closeContinentView() {
   if (!_continentOpen) return; // 未开先关必须幂等
   _continentOpen = false;
+  _continentFlushZoomSettle();   // 手停在半路就关图：档位/词流先落定再退场
   // v7.1b：在途的 Φ 批量归类随大陆关闭中止（已完成的批已落盘，不丢）
   if (_continentGateCtrl) {
     try { _continentGateCtrl.abort(); } catch (e) { /* 容忍 */ }
@@ -636,6 +682,7 @@ async function enterContinentSession(sessionId, itemId) {
   if (!sessionId || _continentDrilling) return;
   if (typeof switchToSession !== 'function') { closeContinentView(); return; }
   _continentDrilling = true;
+  _continentFlushZoomSettle();   // 手停在半路就下钻：档位/词流先落定，退场转场读干净态
   // 留给回程的「离开时视口」是用户此刻的浏览态——下钻动画会把镜头推远，
   // 那是跳转动作不是浏览位置，close 时的持久化要跳过，别让它覆盖
   _continentPersistView();
