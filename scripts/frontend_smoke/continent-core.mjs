@@ -2128,6 +2128,39 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
   return true;
 });
 
+// T300：全局 toast 的复制钮。用户实踩「报错只能赶在消失前截图」——报错类 toast
+// 尾部挂复制钮（clipboard API 主路 + execCommand 兜底），非报错 toast 无钮；
+// 时长仍守 TOAST_MS / TOAST_MS_LONG 两个常量，不加第三个值，改用悬停暂停续命。
+check('错误 toast 带复制钮：报错一键复制、非报错无钮、时长仍两档（T300）', () => {
+  const src = fs.readFileSync('src/static/js/ui.js', 'utf8');
+  if (!src.includes("btn.innerHTML = 'toast-copy-btn'") && !src.includes('class="toast-copy-btn"')) throw new Error('ui.js 未建复制钮');
+  if (!src.includes('function _toastIsErrorMsg')) throw new Error('缺报错文案识别函数');
+  if (!/失败\|错误\|无法/.test(src)) throw new Error('报错识别正则缺关键字');
+  if (!src.includes('navigator.clipboard')) throw new Error('复制缺 clipboard API 主路');
+  if (!src.includes('execCommand')) throw new Error('复制缺 execCommand 兜底（file:// 直开静默失败过）');
+  if (!src.includes('toast-copyable')) throw new Error('非报错 toast 未按类隐藏复制钮');
+  if (!src.includes('toast.style.pointerEvents = wantCopy')) throw new Error('复制型 toast 未放开 pointer-events（悬停暂停收不到事件）');
+  if (!src.includes("addEventListener('click'") || !src.includes('closest')) throw new Error('复制钮缺事件委托（桩环境无子节点 API）');
+  if (!src.includes('mouseenter') || !src.includes('toast._remaining')) throw new Error('缺悬停暂停续命');
+  if (!src.includes('TOAST_MS_LONG : TOAST_MS')) throw new Error('报错 toast 未走长档时长');
+  if (!src.includes("toast.className = 'aurora-glass aurora-glass--compact'")) throw new Error('全局 toast 丢了玻璃载体类');
+  if (/cssText = '[^']*background/.test(src)) throw new Error('toast 内联样式不许写 background（会整块盖掉极光层）');
+  const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
+  const at = css.indexOf('#phymathia_toast .toast-copy-btn');
+  if (at < 0) throw new Error('CSS 缺复制钮规则');
+  const rule = css.slice(at, css.indexOf('}', at));
+  if (!rule.includes('display: none')) throw new Error('复制钮默认未隐藏（非报错 toast 不许出现）');
+  // 负向前查要连空格一起吃：background: transparent 的冒号后是空格，
+  // (?!transparent) 会在冒号位就通过（漏拦实底）
+  if (/background(?:-color|-image)?\s*:\s*(?!\s*transparent)/.test(rule)) throw new Error('复制钮规则不许写实底');
+  if (!rule.includes('var(--text-secondary)')) throw new Error('复制钮未接主题色（深浅两套都读变量）');
+  const hoverAt = css.indexOf('#phymathia_toast .toast-copy-btn:hover');
+  if (hoverAt < 0 || !css.slice(hoverAt, css.indexOf('}', hoverAt)).includes('var(--accent)')) throw new Error('复制钮悬停态未接主题 accent');
+  const showAt = css.indexOf('#phymathia_toast.toast-copyable .toast-copy-btn');
+  if (showAt < 0 || !/display:\s*inline-flex/.test(css.slice(showAt, css.indexOf('}', showAt)))) throw new Error('.toast-copyable 未放开复制钮显示');
+  return true;
+});
+
 check('aurora-glass--dialog：表单类弹窗档（深浅两套 + 可读性优先的底色 + 降级）', () => {
   const css = fs.readFileSync('src/static/css/styles.css', 'utf8');
   if (!/\.aurora-glass--dialog \{/.test(css)) throw new Error('缺 --dialog 弹窗变体');

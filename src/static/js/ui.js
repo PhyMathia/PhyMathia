@@ -418,7 +418,58 @@ document.addEventListener('click', (e) => {
 })();
 
 // ====== 简易 Toast ======
-function showToast(msg, duration = 2500) {
+// 报错类 toast 带复制钮（2026-10-13）：用户实踩报错只能赶在 toast 消失前截图，
+// 「生成失败：NetworkError…」这类排障信息改成一键复制。时长仍守 toastMsg 的两个
+// 常量——没传时长时报错类走长档（TOAST_MS_LONG），且悬停暂停自动消失，
+// 不然 2.5s/3.6s 也来不及点复制。
+//
+// 结构走 innerHTML 拼 + toast 自身事件委托（不 createElement 子节点、不 querySelector
+// 持有引用）：冒烟沙箱的 document 桩是裸对象，子节点 API 一概没有，委托处理器只在
+// 真实点击时才跑，桩环境天然摸不到。
+function _toastIsErrorMsg(msg) {
+  return /失败|错误|无法|异常|超时|Error|error|拒绝/.test(String(msg == null ? '' : msg));
+}
+
+// 复制走 navigator.clipboard；file:// 直开等无 API 的场景退 execCommand
+// （与 render.js 的 copyVizCode 同一套路，那边是用户单文件实测静默失败过）。
+function _copyToastText(toast, btn) {
+  const span = toast.querySelector('.toast-msg-text');
+  const text = span ? span.textContent : '';
+  if (!text) return;
+  const setBtn = (icon, title) => {
+    if (!btn || !btn.isConnected) return;
+    if (icon != null) btn.innerHTML = icon;
+    btn.title = title;
+  };
+  const done = () => {
+    setBtn((typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.check) || '✓', '已复制');
+    setTimeout(() => setBtn((typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.clipboard) || '⧉', '复制'), 1500);
+  };
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      setBtn(null, ok ? '已复制' : '复制失败');
+    } catch (e) {
+      setBtn(null, '复制失败');
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function showToast(msg, duration = null, opts) {
+  const text = String(msg == null ? '' : msg);
+  const wantCopy = opts && typeof opts.copyable === 'boolean' ? opts.copyable : _toastIsErrorMsg(text);
+  const copyIcon = (typeof UI_ICON_SVG !== 'undefined' && UI_ICON_SVG.clipboard) || '⧉';
   let toast = document.getElementById('phymathia_toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -426,19 +477,50 @@ function showToast(msg, duration = 2500) {
     // 第 5 轮磨砂化：全局 toast 统一极光磨砂（--compact 胶囊档）——
     // 底色/阴影归玻璃类，内联样式里不能再写 background（会整块盖掉极光层）
     toast.className = 'aurora-glass aurora-glass--compact';
-    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:nowrap;';
+    toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%) translateY(10px);color:var(--text-primary);border:1px solid var(--border-color);border-radius:10px;padding:10px 20px;font-size:13px;z-index:9999;opacity:0;transition:opacity 0.3s,transform 0.3s;pointer-events:none;white-space:nowrap;display:flex;align-items:center;gap:10px;';
+    // 文案与复制钮每次整块重渲（innerHTML 拼），按钮显隐由 .toast-copyable 类驱动
+    // （CSS 默认 display:none），避免持有子节点引用
+    // 事件委托：点复制钮只认按钮自身，toast 其余区域不拦点击
+    toast.addEventListener('click', (e) => {
+      const t = e && e.target;
+      if (t && typeof t.closest === 'function' && t.closest('.toast-copy-btn')) {
+        _copyToastText(toast, t.closest('.toast-copy-btn'));
+      }
+    });
+    // 悬停暂停自动消失（复制型 toast 才收得到 mouseenter：见下方 pointer-events 切换）
+    toast.addEventListener('mouseenter', () => {
+      clearTimeout(toast._timer);
+      toast._remaining = Math.max(0, (toast._deadline || 0) - Date.now());
+    });
+    toast.addEventListener('mouseleave', () => {
+      if (toast._hiding) return;   // 已进入消失动画，不用续命
+      _toastArm(toast, toast._remaining == null ? 0 : toast._remaining);
+    });
     document.body.appendChild(toast);
   }
-  toast.textContent = msg;
+  toast.innerHTML = '<span class="toast-msg-text">' + escapeHtml(text)
+    + '</span><button type="button" class="toast-copy-btn" title="复制" aria-label="复制">' + copyIcon + '</button>';
+  toast.className = 'aurora-glass aurora-glass--compact' + (wantCopy ? ' toast-copyable' : '');
+  // 有复制钮就整条 pill 可交互（非复制型保持 pointer-events:none 不挡点击）
+  toast.style.pointerEvents = wantCopy ? 'auto' : 'none';
+  // 时长只认 toastMsg 的两个常量：显式传了听调用方的，没传时报错类走长档
+  const life = duration == null ? (wantCopy ? TOAST_MS_LONG : TOAST_MS) : duration;
   requestAnimationFrame(() => {
     toast.style.opacity = '1';
     toast.style.transform = 'translateX(-50%) translateY(0)';
   });
+  _toastArm(toast, life);
+}
+
+function _toastArm(toast, ms) {
   clearTimeout(toast._timer);
+  toast._deadline = Date.now() + ms;
+  toast._hiding = false;
   toast._timer = setTimeout(() => {
+    toast._hiding = true;
     toast.style.opacity = '0';
     toast.style.transform = 'translateX(-50%) translateY(10px)';
-  }, duration);
+  }, ms);
 }
 
 function showCompletionCard(title, subtitle, duration = 4000) {

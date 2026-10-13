@@ -2000,6 +2000,41 @@
       opacity: 1;
     }
 
+    /* ====== 全局 toast 的复制钮（2026-10-13 加）=====
+       报错 toast 尾部的小图标磁贴（ui.js 给 toast 挂 .toast-copyable 才显示），
+       悬停才出底色，不抢文案的视觉重量。挂在 #phymathia_toast 上而不是裸类，
+       免得别处复用 .toast-copy-btn 被误伤。
+       结构/动效归此，底色/磨砂仍在 .aurora-glass--compact（ui.js 挂类）。 */
+    #phymathia_toast .toast-copy-btn {
+      display: none;
+      flex: none;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      margin: 0;
+      padding: 0;
+      border: none;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      pointer-events: auto;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    #phymathia_toast.toast-copyable .toast-copy-btn {
+      display: inline-flex;
+    }
+    #phymathia_toast .toast-copy-btn:hover {
+      background: var(--btn-active-bg);
+      color: var(--accent);
+    }
+    #phymathia_toast .toast-copy-btn svg {
+      display: block;
+      width: 13px;
+      height: 13px;
+    }
+
     /* ====== 完成通知卡片 ====== */
 
     .completion-card {
