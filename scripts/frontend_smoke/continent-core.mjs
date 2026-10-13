@@ -319,6 +319,21 @@ check('graph-continent: T138/T140/T139 岛悬停与卡展开与图例符号（ex
   return true;
 });
 
+check('graph-continent: T286 散岛区「海域在哪」答案面（有散岛图例即显＋直达钮＋并海规则）', () => {
+  const src = readContinentSrc();
+  if (!/if \(!regions\.length && !pending\.length && !scattered\)/.test(src)) {
+    throw new Error('有散岛时图例未强制可见（答案面隐身＝T286 现场复现）');
+  }
+  if (!src.includes('data-locate')) throw new Error('「海域在哪」直达钮缺失');
+  if (!src.includes('_continentSearchFocusRegion')) throw new Error('直达钮未接镜头飞行函数（T137 同款）');
+  if (!src.includes('尚无海域')) throw new Error('无海域并海规则说明缺失');
+  if (!src.includes('未并成海域')) throw new Error('有海域时散岛脚注缺失');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-legend-locate')) throw new Error('直达钮样式缺失');
+  if (!css.includes('.continent-legend-note')) throw new Error('并海规则说明样式缺失');
+  return true;
+});
+
 check('graph-continent: v6 概念族条目有独立视觉（❖ 前缀 / 三种来源分得清）', () => {
   const prefix = sandbox._continentKindPrefix;
   if (typeof prefix !== 'function') throw new Error('族前缀纯函数未暴露（_continentKindPrefix）');

@@ -31,7 +31,13 @@ function _continentRenderLegend(regionInfo, data) {
   if (!legend) return;
   const regions = (regionInfo && regionInfo.regions) || [];
   const pending = (regionInfo && regionInfo.pending) || [];
-  if (!regions.length && !pending.length) { legend.hidden = true; legend.innerHTML = ''; return; }
+  const totalIslands = ((data && data.clusters) || []).length;
+  // T286：散岛数＝总岛 − 板上岛（单岛领域/中性/待确认都在板上之外）。有散岛时图例
+  // 必须亮着——「海域在哪」的答案面常驻视口左下，滚到散岛区的人才看得到；此前
+  // regions/pending 双空即 hide，全单岛领域时答案面整个隐身（2026-10-11 用户实踩）
+  const regionIslands = regions.reduce((s, r) => s + ((r.sessions || []).length), 0);
+  const scattered = totalIslands - regionIslands;
+  if (!regions.length && !pending.length && !scattered) { legend.hidden = true; legend.innerHTML = ''; return; }
   legend.hidden = false;
   let collapsed = false;
   // 查阅态：优先读内存影子（切换不落盘也能在重渲间存活）；非查阅恒 null 走 localStorage
@@ -59,7 +65,6 @@ function _continentRenderLegend(regionInfo, data) {
         '">换色</button>') +
       '</li>';
   }).join('');
-  const totalIslands = ((data && data.clusters) || []).length;
   const pendingRatio = totalIslands ? Math.round(pending.length * 100 / totalIslands) : 0;
   // 负载均衡提示（MoE 的 aux loss 位：只提示不硬拆——均衡不是目标，可读才是）：
   // 某领域吃掉 >35% 的卡且库 ≥30 卡时提一句「可拆子海域」，拆不拆用户说了算
@@ -82,14 +87,24 @@ function _continentRenderLegend(regionInfo, data) {
   if (_continentCorrectionCount > 0) {
     footBits.push('归类纠正已记录 ' + _continentCorrectionCount + ' 次（族表弹层可清空）');
   }
+  // T286：滚到散岛区的人会误读「海域没分出来」——脚注把「海域在哪」说全，
+  // 图例头的「海域在哪」钮把镜头直接带到岛上最多的那片海
+  if (regions.length && scattered > 0) {
+    footBits.push('另有 ' + scattered + ' 座散岛（单岛领域/中性/待确认）未并成海域——点图例「海域在哪」把镜头带到海域板');
+  }
   legend.innerHTML =
     '<div class="continent-legend-head">' +
       '<span class="continent-legend-title">图例' + (collapsed ? ' ▸' : ' ▾') + '</span>' +
+      (regions.length
+        ? '<button class="continent-legend-locate" data-locate title="把镜头飞到岛上最多的那片海域（海域板都在这片大陆上，只是滚出视野了）">海域在哪</button>'
+        : '') +
       (pending.length
         ? '<button class="continent-legend-pending" data-pending>待确认 ' + pending.length + ' 座岛</button>'
         : '') +
     '</div>' +
     (collapsed ? '' :
+      (regions.length ? '' :
+        '<div class="continent-legend-note">尚无海域：同一领域的岛至少 2 座才会并成一片海——现有 ' + scattered + ' 座散岛</div>') +
       '<ul class="continent-legend-list">' + items + '</ul>' +
       // T139 符号说明：三种前缀/三种线/布局语义不解释＝没画（前缀语义此前只有代码注释知道）
       '<div class="continent-legend-syms">' +
@@ -146,7 +161,21 @@ function _continentRenderLegend(regionInfo, data) {
       e.stopPropagation();
       _continentPendingPopover(e);
     });
-    _kact(pendingBtn);  // T143 键盘可达
+    _kact(pendingBtn);
+  }
+  // T286：「海域在哪」钮——飞岛上最多的那片海（并列取图例行序第一片＝块序最前，
+  // 确定性无歧义）。镜头直达复用 T137 搜索同款 _continentSearchFocusRegion，不另写数学
+  const locateBtn = legend.querySelector ? legend.querySelector('[data-locate]') : null;
+  if (locateBtn) {
+    locateBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      const biggest = regions.reduce((a, b) =>
+        (!a || (b.sessions || []).length > (a.sessions || []).length) ? b : a, null);
+      if (biggest && typeof _continentSearchFocusRegion === 'function') {
+        _continentSearchFocusRegion(biggest.key);
+      }
+    });
+    _kact(locateBtn);  // T143 键盘可达
   }
 }
 

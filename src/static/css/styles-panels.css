@@ -4228,6 +4228,24 @@
   background: transparent;
 }
 .continent-legend-pending:hover { color: var(--accent); border-color: var(--accent); }
+/* T286：图例头「海域在哪」——滚到散岛区误读「海域没分出来」的答案面，比「待确认」
+   更该被看见：accent 实线边（灰虚线读作附属信息，这条读作出路） */
+.continent-legend-locate {
+  border: 1px solid var(--accent);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  font-size: var(--fs-2xs);
+  color: var(--accent);
+  cursor: pointer;
+  background: transparent;
+}
+.continent-legend-locate:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+/* T286：一片海都没有时的并海规则说明（图例唯一内容时也要把话说全） */
+.continent-legend-note {
+  margin-top: 6px;
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+}
 .continent-legend-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .continent-legend-item {
   display: flex;
