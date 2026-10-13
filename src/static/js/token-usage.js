@@ -19,6 +19,14 @@
 // 自定义天数（服务端本就支持 1-365，下拉补一个数字输入行）；③分线模式下点
 // 圆环图例聚焦对应模型折线（其余淡化，再点取消）。
 // 口径全局共享（backlog T180 拍板）：不按账号分账，所有账号共用。
+// 2026-10-13 四轮（用户点名的美化）：圆环从单块 conic-gradient＋radial mask 重构为
+// SVG 逐扇区 path——单块上没有「块」，做不了逐块动画。悬停某扇区＝该块沿自身中角
+// 向外弹出＋回弹缓动＋投影（浮起），其余各块向环心收缩＋降透明（邻块收缩），
+// 整环再朝悬停扇区方向 perspective 倾起（pseudo-3D 视差），中心读数交叉淡化为
+// 「模型名＋token＋占比·次数」。命中检测不走 DOM hover（扇区弹出后元素会挪走，
+// 指针在边界会抖），改指针坐标反解角度/半径对照静态边界算命中扇区——几何稳定
+// 不闪。图例行悬停同样驱动浮起（细扇区好点）；分线模式下点扇区＝点图例（聚焦
+// 折线，复用 _tokenUsageHighlight 链）。prefers-reduced-motion 时只保留中心换字。
 
 const TOKEN_USAGE_KIND_LABELS = {
   chat: '聊天问答',
@@ -39,6 +47,13 @@ const TOKEN_USAGE_PALETTE = ['var(--node-question)', 'var(--node-physics)', 'var
 // 必须同一份，否则动画终点和静态渲染对不上。改一处必同步另一处已由共引用保证。
 const TOKEN_LINE_GEOMETRY = { w: 640, h: 210, padL: 48, padR: 12, padT: 12, padB: 24 };
 
+// 圆环几何常量（SVG viewBox 坐标系，2026-10-13 起逐扇区 path 用）：外半径 57 /
+// 内半径 32，外径占比与旧 conic 版（132px、mask 挖孔 54%）观感一致；命中检测、
+// morph 逐帧重建与静态绘制共用这一份。弹出距离/倾角也在这里调。
+const TOKEN_DONUT_GEOMETRY = { size: 120, rOuter: 57, rInner: 32 };
+const TOKEN_DONUT_POP = 7;   // 悬停扇区沿中角外移量（viewBox 单位，渲染时 ≈×1.1px）
+const TOKEN_DONUT_TILT = 7;  // 悬停时整环朝该扇区倾起的最大角度（deg）
+
 let _tokenUsageDays = 30;     // 当前统计范围（1-365 任意天数，预设 7/30/90＋自定义）
 let _tokenUsageSplit = false; // 折线图是否按模型分线
 let _tokenUsageCache = null;  // 最近一次拉到的 summarize 结果（切分线不重拉）
@@ -49,6 +64,9 @@ let _tokenUsageAnimSeq = 0;   // 动画序号：新一轮 morph 让上一轮逐�
 let _tokenRangeDismissBound = false; // 文档级「点外部/Esc 收下拉」只绑一次
 let _tokenUsageHighlight = null; // 分线模式下点圆环图例聚焦的模型名（null=不聚焦）
 let _tokenPickBound = false;  // 圆环图例点击委托只绑一次（tokenUsageBody 是静态容器）
+let _tokenDonutBound = false;    // 圆环悬停委托只绑一次（同上，静态容器）
+let _tokenDonutFocus = null;     // 当前悬停聚焦的扇区序号（null=无，回收收缩/倾起）
+let _tokenUsageDonutLive = null; // 圆环命中检测用的静态几何（segs＋百分比边界）
 
 // 明细卡一次拉取的条数：下钻诉求是「某天飙高时看逐次调用」，100 条足够覆盖
 // 近期高峰日（服务端另有 500 上限兜底）
@@ -156,20 +174,32 @@ function _tokenUsageSmoothPath(pts) {
 }
 
 // 模型占比分片纯函数（冒烟测试直接调用）：models 桶按总 token 排序取前 cap 名，
-// 其余合并为「其他」；与扇形图/折线分线共用，保证两图同名模型同色。
+// 其余合并为「其他」；与扇形图/折线分线共用，保证两图同名模型同色。requests 随
+// 分片带出（2026-10-13 悬停中心读数要显「N 次」），「其他」的次数同样聚合。
 function _tokenUsageTopModels(models, cap) {
   const entries = Object.entries(models || {})
-    .map(([model, bucket]) => ({ model, value: (bucket && bucket.totalTokens) || 0 }))
+    .map(([model, bucket]) => ({
+      model,
+      value: (bucket && bucket.totalTokens) || 0,
+      requests: (bucket && bucket.requests) || 0,
+    }))
     .filter(e => e.value > 0)
     .sort((a, b) => b.value - a.value);
   const top = entries.slice(0, cap).map((e, i) => ({
     label: e.model,
     value: e.value,
+    requests: e.requests,
     color: TOKEN_USAGE_PALETTE[i % TOKEN_USAGE_PALETTE.length],
   }));
-  const restValue = entries.slice(cap).reduce((sum, e) => sum + e.value, 0);
+  const rest = entries.slice(cap);
+  const restValue = rest.reduce((sum, e) => sum + e.value, 0);
   if (restValue > 0) {
-    top.push({ label: '其他', value: restValue, color: TOKEN_USAGE_PALETTE[TOKEN_USAGE_PALETTE.length - 1] });
+    top.push({
+      label: '其他',
+      value: restValue,
+      requests: rest.reduce((sum, e) => sum + e.requests, 0),
+      color: TOKEN_USAGE_PALETTE[TOKEN_USAGE_PALETTE.length - 1],
+    });
   }
   return top;
 }
@@ -290,33 +320,66 @@ function _tokenUsageLineHtml(data, days, split) {
     + '<div class="token-chart-legend token-line-legend">' + legend + '</div>';
 }
 
-// 圆环分段 stop 串纯函数（冒烟测试直接调用）：segments → 'c1 0% 75%, c2 75% 100%'
-// 形态；绘制与 morph 终帧共用，保证动画收尾和静态渲染同串。
-function _tokenUsageDonutStops(segments) {
-  const total = segments.reduce((sum, s) => sum + s.value, 0);
-  let acc = 0;
-  return segments.map(segment => {
-    const start = Math.round(acc / total * 100);
-    acc += segment.value;
-    const end = Math.round(acc / total * 100);
-    return segment.color + ' ' + start + '% ' + end + '%';
-  }).join(', ');
+// 圆环扇区弧 path 纯函数（冒烟测试直接调用）：[startPct, endPct] → 环形扇区
+// （外弧顺时针＋内弧逆时针闭合），角度编码与旧 conic-gradient 同口径——0% 在
+// 12 点钟、顺时针。满圆（单模型 100%）时弧命令首尾重合会画空，钳到 99.99 留
+// 发丝缝（132px 渲染下不足半像素）；零宽段给空串（morph 中间帧可能路过）。
+function _tokenUsageDonutSegPath(startPct, endPct) {
+  const g = TOKEN_DONUT_GEOMETRY;
+  const c = g.size / 2;
+  const sweep = Math.min(Math.max(0, endPct - startPct), 99.99);
+  if (!(sweep > 0)) return '';
+  const a0 = startPct / 100 * Math.PI * 2 - Math.PI / 2;
+  const a1 = a0 + sweep / 100 * Math.PI * 2;
+  const large = sweep > 50 ? 1 : 0;
+  const pt = (r, a) => (c + r * Math.cos(a)).toFixed(2) + ' ' + (c + r * Math.sin(a)).toFixed(2);
+  return 'M' + pt(g.rOuter, a0)
+    + 'A' + g.rOuter + ' ' + g.rOuter + ' 0 ' + large + ' 1 ' + pt(g.rOuter, a1)
+    + 'L' + pt(g.rInner, a1)
+    + 'A' + g.rInner + ' ' + g.rInner + ' 0 ' + large + ' 0 ' + pt(g.rInner, a0)
+    + 'Z';
 }
 
-// 圆环图（冒烟测试直接调用）：conic-gradient 角度编码 token 占比，环孔与中心总量
-// 由 CSS mask/叠加层负责（styles-panels.css）；图例为行式布局（色点＋模型名＋数值、
-// 百分比右对齐，≥10% 取整、不足 10% 保留一位小数，对齐 ZCode）。
+// 全部分扇区 path 纯函数（冒烟测试直接调用）：segments → d 串数组，静态绘制与
+// morph 收尾共用，保证动画终点＝静态渲染（与 _tokenUsageFinalPath 同一角色）。
+function _tokenUsageDonutSegsD(segments) {
+  const bounds = _tokenUsageDonutBounds(segments);
+  const out = [];
+  for (let i = 0; i < bounds.length - 1; i++) out.push(_tokenUsageDonutSegPath(bounds[i], bounds[i + 1]));
+  return out;
+}
+
+// 指针角度归属纯函数（冒烟测试直接调用）：pct（0-100，12 点钟起顺时针）落在
+// 哪个扇区的 [start, end) 区间；恰在 100% 收口点或负值都算界外（-1）。
+function _tokenUsageDonutSegIndexAt(bounds, pct) {
+  const b = bounds || [];
+  if (!(pct >= 0) || pct >= 100) return -1;
+  for (let i = 0; i < b.length - 1; i++) {
+    if (pct >= b[i] && pct < b[i + 1]) return i;
+  }
+  return -1;
+}
+
+// 圆环图（冒烟测试直接调用）：SVG 逐扇区 path 角度编码 token 占比（2026-10-13
+// 起替代单块 conic-gradient——逐扇区才能做「悬停浮起＋邻块收缩」的 3D 聚焦），
+// 每条 path 带 data-idx/data-label；中心总量与悬停读数是叠层（pointer-events:
+// none），悬停读数由 JS 现填。图例为行式布局（色点＋模型名＋数值、百分比右对
+// 齐，≥10% 取整、不足 10% 保留一位小数，对齐 ZCode），行带 data-idx 与圆环联动。
 // pickable=true（折线正按模型分线时）图例项带 data-model 可点——点击在趋势图
-// 聚焦/淡出该模型的折线（联动见 _bindTokenLegendPick）。
+// 聚焦/淡出该模型的折线（联动见 _bindTokenLegendPick），点扇区等效。
 function _tokenUsagePieHtml(segments, pickable) {
   if (!segments || !segments.length) return '<div class="token-chart-empty">暂无用量记录</div>';
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   if (!total) return '<div class="token-chart-empty">暂无用量记录</div>';
-  const stops = _tokenUsageDonutStops(segments);
-  const legend = segments.map(segment => {
+  const ds = _tokenUsageDonutSegsD(segments);
+  const paths = segments.map((segment, i) => '<path class="token-donut-seg" data-idx="' + i + '"'
+    + ' data-label="' + escapeHtml(segment.label) + '" d="' + ds[i] + '"'
+    + ' style="fill:' + segment.color + '"/>').join('');
+  const legend = segments.map((segment, i) => {
     const pct = segment.value / total * 100;
     const pctText = pct >= 10 ? Math.round(pct) + '%' : (Math.round(pct * 10) / 10) + '%';
     return '<div class="token-donut-legend-item' + (pickable ? ' token-donut-legend-pick' : '') + '"'
+      + ' data-idx="' + i + '"'
       + (pickable ? ' data-model="' + escapeHtml(segment.label) + '" title="点击在趋势图中聚焦该模型"' : '')
       + '><span class="token-donut-dot" style="background:'
       + segment.color + '"></span>'
@@ -325,8 +388,12 @@ function _tokenUsagePieHtml(segments, pickable) {
       + '<span class="token-donut-pct">' + pctText + '</span></div>';
   }).join('');
   return '<div class="token-usage-pie-row"><div class="token-usage-donut">'
-    + '<div class="token-usage-pie" style="background:conic-gradient(' + stops + ')"></div>'
-    + '<div class="token-usage-donut-center"><b>' + _tokenFormatNum(total) + '</b><span>tokens</span></div>'
+    + '<svg class="token-usage-donut-svg" viewBox="0 0 ' + TOKEN_DONUT_GEOMETRY.size + ' ' + TOKEN_DONUT_GEOMETRY.size
+    + '" aria-hidden="true">' + paths + '</svg>'
+    + '<div class="token-usage-donut-center">'
+    + '<div class="token-donut-center-total"><b>' + _tokenFormatNum(total) + '</b><span>tokens</span></div>'
+    + '<div class="token-donut-center-focus"><span class="tcf-name"></span><b class="tcf-val"></b><span class="tcf-sub"></span></div>'
+    + '</div>'
     + '</div><div class="token-chart-legend token-donut-legend">' + legend + '</div></div>';
 }
 
@@ -606,8 +673,8 @@ function _runTokenMorph(body, prev, next) {
   const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   const svg = body.querySelector('.token-line-chart');
   const paths = Array.prototype.slice.call(body.querySelectorAll('.token-line-chart path'));
-  const pieEl = body.querySelector('.token-usage-pie');
-  const centerEl = body.querySelector('.token-usage-donut-center b');
+  const donutSegs = body.querySelectorAll('.token-donut-seg');
+  const centerEl = body.querySelector('.token-donut-center-total b');
   const statVals = body.querySelectorAll('.token-stat-val');
   const kindRows = body.querySelectorAll('.token-kind-row');
   const oldBounds = _tokenUsageDonutBounds(prev.donut);
@@ -650,17 +717,19 @@ function _runTokenMorph(body, prev, next) {
       p.setAttribute('d', _tokenUsageSmoothPath(_tokenUsageMorphPoints(
         old ? old.values : null, old ? prev.maxVal : next.maxVal, def.values, next.maxVal, e, k)));
     }
-    if (pieEl && pieEl.style) {
+    if (donutSegs && donutSegs.length) {
+      // 圆环＝逐段边界（百分比）按序插值，逐帧重建每条扇区 path 的 d（配色按
+      // 名次索引固定在各自 path 上，morph 只动几何不动颜色）
       const b = [];
       for (let i = 0; i < boundsLen; i++) {
         const ov = oldBounds[Math.min(i, oldBounds.length - 1)];
         const nv = newBounds[Math.min(i, newBounds.length - 1)];
         b.push(ov + (nv - ov) * e);
       }
-      const colors = [];
-      for (let i = 0; i < boundsLen - 1; i++) colors.push(((next.donut[i] || prev.donut[i]) || {}).color);
-      pieEl.style.background = 'conic-gradient(' + colors.map((c, i) =>
-        c + ' ' + Math.round(b[i]) + '% ' + Math.round(b[i + 1]) + '%').join(', ') + ')';
+      for (let i = 0; i < donutSegs.length; i++) {
+        const d = _tokenUsageDonutSegPath(b[i], b[i + 1]);
+        if (d) donutSegs[i].setAttribute('d', d);
+      }
     }
     if (centerEl) {
       centerEl.textContent = _tokenFormatNum(Math.round(
@@ -699,7 +768,12 @@ function _runTokenMorph(body, prev, next) {
   const applyFinal = () => {
     applyMorph(1);
     for (const { p, def } of pairs) p.setAttribute('d', _tokenUsageFinalPath(def, next.maxVal));
-    if (pieEl && pieEl.style) pieEl.style.background = 'conic-gradient(' + _tokenUsageDonutStops(next.donut) + ')';
+    if (donutSegs && donutSegs.length) {
+      const finalD = _tokenUsageDonutSegsD(next.donut);
+      for (let i = 0; i < donutSegs.length; i++) {
+        if (finalD[i]) donutSegs[i].setAttribute('d', finalD[i]);
+      }
+    }
     if (centerEl) centerEl.textContent = _tokenFormatNum(next.centerTotal);
     if (statVals && statVals.forEach) {
       statVals.forEach((el, i) => {
@@ -757,12 +831,149 @@ function _bindTokenLegendPick() {
   body.addEventListener('click', (e) => {
     const target = e && e.target;
     if (!target || typeof target.closest !== 'function') return;
+    let label = null;
     const item = target.closest('.token-donut-legend-pick');
-    if (!item || !item.dataset) return;
-    const label = item.dataset.model;
+    if (item && item.dataset) label = item.dataset.model;
+    // 分线模式下点扇区＝点对应图例行（聚焦该模型折线）；总单线模式点了不响应
+    if (!label) {
+      const seg = target.closest('.token-donut-seg');
+      if (seg && seg.dataset && body.querySelector('.token-donut-legend-pick')) label = seg.dataset.label;
+    }
     if (!label) return;
     _tokenUsageHighlight = (_tokenUsageHighlight === label) ? null : label;
     _applyTokenHighlight(body);
+  });
+}
+
+// ====== 圆环悬停 3D 聚焦（2026-10-13）：扇区浮起＋邻块收缩＋整环倾起 ======
+// 命中检测不走 DOM hover：扇区弹出后元素挪离指针，边界上会「弹起→移出→落回」
+// 抖个不停。改为指针坐标反解成 viewBox 极坐标（半径过滤＋角度归段），对照
+// _tokenUsageDonutLive 里的静态百分比边界算命中——几何不随动画变，稳定不闪。
+function _tokenDonutRadialDir(i) {
+  const b = (_tokenUsageDonutLive && _tokenUsageDonutLive.bounds) || [0, 100];
+  const lo = b[Math.min(i, b.length - 2)] || 0;
+  const hi = b[Math.min(i + 1, b.length - 1)] || 100;
+  const mid = ((lo + hi) / 2) / 100 * Math.PI * 2; // 0 = 12 点钟，顺时针
+  return [Math.sin(mid), -Math.cos(mid)];
+}
+
+// 指针位置 → 扇区序号（内部）：viewBox 坐标过滤半径后按角度归段，环外给 null
+function _tokenDonutHitAt(ux, uy) {
+  const g = TOKEN_DONUT_GEOMETRY;
+  const live = _tokenUsageDonutLive;
+  if (!live || !live.bounds || live.bounds.length < 2) return null;
+  const c = g.size / 2;
+  const dx = ux - c, dy = uy - c;
+  const r = Math.hypot(dx, dy);
+  if (r < g.rInner - 2 || r > g.rOuter + 6) return null; // 外留 6u 余量：悬停贴外缘不脱手
+  let ang = Math.atan2(dy, dx) + Math.PI / 2;
+  if (ang < 0) ang += Math.PI * 2;
+  const idx = _tokenUsageDonutSegIndexAt(live.bounds, ang / (Math.PI * 2) * 100);
+  return idx >= 0 ? idx : null;
+}
+
+// 聚焦应用（内部）：idx=null 回idle。悬停块沿中角弹出＋微放大（浮起，CSS 回弹
+// 缓动），其余块向环心收缩＋降透明；整环朝悬停块倾起（--donut-rx/--donut-ry，
+// CSS perspective 消费）；中心读数换「模型名＋token＋占比·次数」；图例行同步高
+// 亮。prefers-reduced-motion 时跳过全部几何动画，只换中心读数与高亮。
+function _setTokenDonutFocus(idx) {
+  _tokenDonutFocus = (idx != null && idx >= 0) ? idx : null;
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('tokenUsageBody');
+  if (!body || typeof body.querySelectorAll !== 'function') return;
+  const donut = body.querySelector('.token-usage-donut');
+  const segs = body.querySelectorAll('.token-donut-seg');
+  const list = (_tokenUsageDonutLive && _tokenUsageDonutLive.segs) || [];
+  if (!donut || !segs.length) return;
+  const reduced = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const focus = _tokenDonutFocus;
+  for (let i = 0; i < segs.length; i++) {
+    const p = segs[i];
+    if (!p || !p.style) continue;
+    const active = focus != null && i === focus;
+    const recede = focus != null && !active;
+    if (active && !reduced) {
+      const dir = _tokenDonutRadialDir(i);
+      p.style.transform = 'translate(' + (dir[0] * TOKEN_DONUT_POP).toFixed(2) + 'px, '
+        + (dir[1] * TOKEN_DONUT_POP).toFixed(2) + 'px) scale(1.05)';
+    } else if (recede && !reduced) {
+      p.style.transform = 'scale(0.93)';
+    } else {
+      p.style.transform = '';
+    }
+    p.style.opacity = recede ? '0.45' : '';
+    if (p.classList) p.classList.toggle('active', active);
+  }
+  if (!reduced) {
+    // 倾起方向：悬停块在哪一侧，那一侧朝观察者抬起（右块 rotateY 负、下块
+    // rotateX 正），离手回正。角随扇区中角、不随像素走，段内不抖。
+    if (focus != null) {
+      const dir = _tokenDonutRadialDir(focus);
+      donut.style.setProperty('--donut-ry', (-dir[0] * TOKEN_DONUT_TILT).toFixed(2) + 'deg');
+      donut.style.setProperty('--donut-rx', (dir[1] * TOKEN_DONUT_TILT).toFixed(2) + 'deg');
+    } else {
+      donut.style.setProperty('--donut-ry', '0deg');
+      donut.style.setProperty('--donut-rx', '0deg');
+    }
+  }
+  if (donut.classList) donut.classList.toggle('focus-mode', focus != null);
+  const focusBox = body.querySelector('.token-donut-center-focus');
+  if (focusBox && focus != null && list[focus]) {
+    const seg = list[focus];
+    const sum = list.reduce((s, x) => s + x.value, 0) || 1;
+    const pct = seg.value / sum * 100;
+    const pctText = pct >= 10 ? Math.round(pct) + '%' : (Math.round(pct * 10) / 10) + '%';
+    const nameEl = focusBox.querySelector('.tcf-name');
+    const valEl = focusBox.querySelector('.tcf-val');
+    const subEl = focusBox.querySelector('.tcf-sub');
+    if (nameEl) { nameEl.textContent = seg.label; nameEl.title = seg.label; }
+    if (valEl) valEl.textContent = _tokenFormatNum(seg.value);
+    if (subEl) subEl.textContent = pctText + (seg.requests ? ' · ' + seg.requests + ' 次' : '');
+  }
+  if (body.querySelectorAll('.token-donut-legend-item[data-idx]').forEach) {
+    body.querySelectorAll('.token-donut-legend-item[data-idx]').forEach(it => {
+      if (it.classList) it.classList.toggle('hl', focus != null && Number(it.dataset.idx) === focus);
+    });
+  }
+}
+
+function _tokenDonutHandleMove(e) {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('tokenUsageBody');
+  if (!body) return;
+  let idx = null;
+  // 图例行优先（细扇区从图例聚焦最顺手），其次圆环本体极坐标命中
+  const item = (e && e.target && typeof e.target.closest === 'function')
+    ? e.target.closest('.token-donut-legend-item[data-idx]') : null;
+  if (item && item.dataset) {
+    idx = Number(item.dataset.idx);
+  } else {
+    const svg = body.querySelector('.token-usage-donut-svg');
+    if (svg && svg.getBoundingClientRect) {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const g = TOKEN_DONUT_GEOMETRY;
+        const ux = (e.clientX - rect.left) / rect.width * g.size;
+        const uy = (e.clientY - rect.top) / rect.height * g.size;
+        idx = _tokenDonutHitAt(ux, uy);
+      }
+    }
+  }
+  if (idx !== _tokenDonutFocus) _setTokenDonutFocus(idx);
+}
+
+function _bindTokenDonutHover() {
+  if (_tokenDonutBound || typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('tokenUsageBody');
+  if (!body || typeof body.addEventListener !== 'function') return;
+  _tokenDonutBound = true;
+  // 不走 rAF 节流：命中检测＝一次 getBoundingClientRect＋≤8 段小循环，60Hz 同步
+  // 跑毫无压力；反而节流会让聚焦应用押后一帧（后台标签页 rAF 暂停时无限押后）
+  body.addEventListener('pointermove', (e) => {
+    if (e) _tokenDonutHandleMove(e);
+  });
+  body.addEventListener('pointerleave', () => {
+    if (_tokenDonutFocus != null) _setTokenDonutFocus(null);
   });
 }
 
@@ -773,6 +984,10 @@ function _paintTokenDashboard(body, data) {
   const next = _captureTokenLive(data);
   body.innerHTML = _tokenUsageDashboardHtml(data, _tokenUsageDays, _tokenUsageSplit);
   _tokenUsageLive = next;
+  _tokenDonutFocus = null; // 重渲染换的是全新 DOM，悬停态不跨渲染保留
+  _tokenUsageDonutLive = next
+    ? { segs: next.donut, bounds: _tokenUsageDonutBounds(next.donut) }
+    : null; // 圆环命中检测的静态几何（弹出的扇区不影响归属判定）
   _applyTokenHighlight(body); // 重渲染换的是全新元素，聚焦态要重刷
   const reduced = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!prev || !next || reduced) return;
@@ -828,6 +1043,7 @@ function openTokenUsagePanel() {
   const dlg = document.getElementById('tokenDialog');
   if (dlg) dlg.classList.add('show');
   _bindTokenLegendPick();
+  _bindTokenDonutHover();
   renderTokenUsage();
 }
 
@@ -931,7 +1147,10 @@ if (typeof window !== 'undefined') {
   window._tokenUsageTopModels = _tokenUsageTopModels;
   window._tokenUsageSmoothPath = _tokenUsageSmoothPath;
   window._tokenUsageLineDefs = _tokenUsageLineDefs;
-  window._tokenUsageDonutStops = _tokenUsageDonutStops;
+  window.TOKEN_DONUT_GEOMETRY = TOKEN_DONUT_GEOMETRY;
+  window._tokenUsageDonutSegPath = _tokenUsageDonutSegPath;
+  window._tokenUsageDonutSegsD = _tokenUsageDonutSegsD;
+  window._tokenUsageDonutSegIndexAt = _tokenUsageDonutSegIndexAt;
   window._tokenUsageKindEntries = _tokenUsageKindEntries;
   window._tokenUsageEase = _tokenUsageEase;
   window._tokenUsageResample = _tokenUsageResample;

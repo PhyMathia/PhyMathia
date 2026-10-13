@@ -4918,9 +4918,10 @@
   flex-shrink: 0;
 }
 
-/* 圆环：conic-gradient 由 JS 内联（分片角度在那边才算得出来），radial mask 在
-   扇形上挖出环孔；中心总量是叠一层独立元素（不受 mask 影响）。阴影放包装层——
-   mask 会把元素自身 box-shadow 的环外部分一起裁掉。 */
+/* 圆环：SVG 逐扇区 path（2026-10-13 起，替代单块 conic-gradient＋radial mask
+   挖孔——单块上没有「块」，做不了逐块动画；角度编码在 JS 侧
+   _tokenUsageDonutSegPath）。中心总量/悬停读数是叠层（pointer-events:none）。
+   阴影放包装层（border-radius:50% 的圆形阴影，不随扇区逐个走）。 */
 /* 圆环必须顶对齐（align-items: flex-start）：图例行数随统计范围变（7 天常只有
    两三个模型、30/90 天满 7＋其他），垂直居中会让圆环跟着图例高度上下挪位——
    用户看到的就是 7 天与 30/90 天「不同心」；顶对齐后圆环锚在卡片顶不随档位移。 */
@@ -4934,16 +4935,40 @@
   margin: 0 auto;
   border-radius: 50%;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  /* 悬停时整环朝该扇区倾起（pseudo-3D 视差）：--donut-rx/--donut-ry 由 JS 按
+     扇区中角写入，离手回正。transform 恒在位（idle 全 0），避免首次悬停才建层 */
+  transform: perspective(680px) rotateX(var(--donut-rx, 0deg)) rotateY(var(--donut-ry, 0deg));
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.token-usage-pie {
+.token-usage-donut-svg {
   width: 100%;
   height: 100%;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  -webkit-mask: radial-gradient(circle at center, transparent 0 54%, #000 55% 100%);
-  mask: radial-gradient(circle at center, transparent 0 54%, #000 55% 100%);
+  display: block;
+  /* 扇区弹出会越出 viewBox（外缘 57＋弹出 7 > 60），剪裁必须放开让浮起可见 */
+  overflow: visible;
 }
+
+/* 逐扇区：transform-origin 钉在整环中心（transform-box: view-box）——悬停块沿
+   中角平移＋微放大、邻块向环心收缩，两种状态共用同一原点，过渡不跳轴。
+   回弹曲线（back-out）给「浮起来」的 Q 弹；投影只挂在 active 上（浮起才有影子） */
+.token-donut-seg {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transition: transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.26s ease,
+    filter 0.34s ease;
+  will-change: transform;
+  stroke: rgba(0, 0, 0, 0.18);
+  stroke-width: 0.5;
+}
+
+.token-usage-donut.focus-mode .token-donut-seg.active {
+  filter: brightness(1.14) saturate(1.18) drop-shadow(0 5px 8px rgba(0, 0, 0, 0.45));
+}
+
+/* 分线模式下扇区可点＝点图例聚焦折线（点击委托在 token-usage.js） */
+.token-usage-pie-row:has(.token-donut-legend-pick) .token-donut-seg { cursor: pointer; }
 
 .token-usage-donut-center {
   position: absolute;
@@ -4954,6 +4979,48 @@
   justify-content: center;
   text-align: center;
   pointer-events: none;
+}
+
+/* 中心读数两态：总量（常显）与悬停模型读数（JS 现填），交叉淡化切换 */
+.token-donut-center-total,
+.token-donut-center-focus {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.18s ease;
+}
+
+.token-donut-center-total { padding: 0 8px; }
+
+.token-donut-center-focus { opacity: 0; padding: 0 10px; }
+
+.token-usage-donut.focus-mode .token-donut-center-total { opacity: 0; }
+.token-usage-donut.focus-mode .token-donut-center-focus { opacity: 1; }
+
+.token-donut-center-focus .tcf-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+}
+
+.token-donut-center-focus .tcf-sub {
+  margin-top: 1px;
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .token-donut-seg,
+  .token-donut-center-total,
+  .token-donut-center-focus { transition: none; }
+  .token-usage-donut { transition: none; transform: none !important; }
 }
 
 .token-usage-donut-center b { font-size: 15px; color: var(--text-primary); letter-spacing: .3px; }
@@ -4972,8 +5039,13 @@
   min-width: 0;
   padding: 7px 2px;
   border-bottom: 1px solid var(--border);
+  border-radius: var(--r-xs);
   font-size: var(--fs-xs);
+  transition: background 0.2s ease;
 }
+
+/* 悬停圆环扇区时对应图例行同步点亮（JS 挂 .hl，与圆环聚焦一体） */
+.token-donut-legend-item.hl { background: var(--hover-bg); }
 
 .token-donut-legend-item:last-child { border-bottom: none; }
 

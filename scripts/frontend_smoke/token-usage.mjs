@@ -147,18 +147,22 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：_tokenUsageTopModels 排序取前 N＋其余并入其他，分片值总和守恒', () => {
+    check('token-usage：_tokenUsageTopModels 排序取前 N＋其余并入其他，分片值/次数总和守恒', () => {
       const models = {};
-      for (let i = 1; i <= 10; i++) models['m' + i] = { totalTokens: i * 100 };
+      for (let i = 1; i <= 10; i++) models['m' + i] = { totalTokens: i * 100, requests: i };
       const all = sandbox._tokenUsageTopModels(models, 100);
       if (all.length !== 10) throw new Error('不超上限不应出现其他：' + all.length);
       if (all[0].label !== 'm10') throw new Error('应按 token 降序：' + all[0].label);
+      if (all[0].requests !== 10) throw new Error('分片应带请求次数：' + all[0].requests);
       const top = sandbox._tokenUsageTopModels(models, 7);
       if (top.length !== 8) throw new Error('前 7 名＋其他应为 8 片：' + top.length);
       if (top[top.length - 1].label !== '其他') throw new Error('末位应为其他');
       const sum = top.reduce((s, x) => s + x.value, 0);
       const expect = Object.values(models).reduce((s, b) => s + b.totalTokens, 0);
       if (sum !== expect) throw new Error('分片值总和不守恒：' + sum + ' vs ' + expect);
+      const reqSum = top.reduce((s, x) => s + x.requests, 0);
+      const reqExpect = Object.values(models).reduce((s, b) => s + b.requests, 0);
+      if (reqSum !== reqExpect) throw new Error('次数总和不守恒（其他聚合漏了）：' + reqSum + ' vs ' + reqExpect);
       if (!top[0].color) throw new Error('分片应带配色');
       return true;
     });
@@ -200,19 +204,37 @@ export async function run() {
       return true;
     });
 
-    check('token-usage：圆环 conic 分段/中心总量/行式图例（百分比整位与小数位）', () => {
-      const html = sandbox._tokenUsagePieHtml([
+    check('token-usage：圆环 SVG 逐扇区（弧几何/命中归属/中心总量）/行式图例（百分比整位与小数位）', () => {
+      // 常量不是顶层 function 声明（不挂 vm 全局），走 window 导出取
+      const g = sandbox.window.TOKEN_DONUT_GEOMETRY;
+      const segHtml = sandbox._tokenUsagePieHtml([
         { label: 'a', value: 75, color: 'c1' },
         { label: 'b', value: 25, color: 'c2' },
       ]);
-      if (!html.includes('conic-gradient(c1 0% 75%, c2 75% 100%)')) {
-        throw new Error('分段 stop 不符：' + (html.match(/conic-gradient\([^)]*\)/) || [''])[0]);
+      const paths = [...segHtml.matchAll(/<path class="token-donut-seg" data-idx="(\d+)" data-label="([^"]*)" d="([^"]+)"/g)];
+      if (paths.length !== 2) throw new Error('应逐扇区出 2 条 path：' + paths.length);
+      if (paths.map(p => Number(p[1])).join(',') !== '0,1') throw new Error('path data-idx 应按序');
+      if (paths[0][2] !== 'a' || paths[1][2] !== 'b') throw new Error('data-label 应带模型名');
+      // 弧命令：外弧顺时针（sweep=1）、内弧逆时针（sweep=0），半径取几何常量；
+      // 75% 段跨过半圆走 large-arc=1，25% 段不走
+      const d0 = paths[0][3], d1 = paths[1][3];
+      if (!d0.includes('A' + g.rOuter + ' ' + g.rOuter + ' 0 1 1 ')) throw new Error('75% 段外弧应 large-arc 顺时针：' + d0);
+      if (!d0.includes('A' + g.rInner + ' ' + g.rInner + ' 0 1 0 ')) throw new Error('内弧应逆时针闭合：' + d0);
+      if (!d1.includes('A' + g.rOuter + ' ' + g.rOuter + ' 0 0 1 ')) throw new Error('25% 段外弧不应 large-arc：' + d1);
+      // 12 点钟起点（与旧 conic 同口径）：首段外弧起点 x＝圆心、y＝圆心-外半径
+      const c = g.size / 2;
+      if (!d0.startsWith('M' + c.toFixed(2) + ' ' + (c - g.rOuter).toFixed(2))) {
+        throw new Error('首段应从 12 点钟起笔：' + d0.slice(0, 30));
       }
-      if (!html.includes('token-usage-donut-center') || !html.includes('>100</b>')) {
+      if (segHtml.includes('style="fill:c1"') === false || !segHtml.includes('style="fill:c2"')) {
+        throw new Error('扇区填充应取分片配色');
+      }
+      if (!segHtml.includes('token-usage-donut-center') || !segHtml.includes('>100</b>')) {
         throw new Error('中心应展示范围内总量（_tokenFormatNum）');
       }
-      if (!html.includes('>75%<') || !html.includes('>25%<')) throw new Error('图例百分比不符');
-      if (!html.includes('75 tok') || !html.includes('25 tok')) throw new Error('图例数值不符');
+      if (!segHtml.includes('token-donut-center-focus')) throw new Error('中心应有悬停读数叠层');
+      if (!segHtml.includes('>75%<') || !segHtml.includes('>25%<')) throw new Error('图例百分比不符');
+      if (!segHtml.includes('75 tok') || !segHtml.includes('25 tok')) throw new Error('图例数值不符');
       const mix = sandbox._tokenUsagePieHtml([
         { label: 'a', value: 919, color: 'c1' },
         { label: 'b', value: 81, color: 'c2' },
@@ -223,6 +245,19 @@ export async function run() {
       if (!sandbox._tokenUsagePieHtml([]).includes('暂无用量记录')) throw new Error('空分片应给空态');
       if (!sandbox._tokenUsagePieHtml([{ label: 'x', value: 0, color: 'c' }]).includes('暂无用量记录')) {
         throw new Error('全零分片应给空态');
+      }
+      // 弧 path 纯函数：满圆钳到 99.99（不画空不出 NaN）、零宽给空串、半圆翻转 large-arc
+      const full = sandbox._tokenUsageDonutSegPath(0, 100);
+      if (!full || /NaN|Infinity/.test(full)) throw new Error('满圆扇区应钳到 99.99°而非画空');
+      if (sandbox._tokenUsageDonutSegPath(40, 40) !== '') throw new Error('零宽段应给空串');
+      if (!sandbox._tokenUsageDonutSegPath(0, 60).includes(' 0 1 1 ')) throw new Error('>50% 应走 large-arc');
+      // 命中归属：区间 [start, end) 左闭右开，收口点与界外都不命中
+      const at = sandbox._tokenUsageDonutSegIndexAt;
+      if (at([0, 75, 100], 0) !== 0 || at([0, 75, 100], 40) !== 0 || at([0, 75, 100], 80) !== 1) {
+        throw new Error('命中应按边界归段');
+      }
+      if (at([0, 75, 100], 75) !== 1 || at([0, 75, 100], 100) !== -1 || at([0, 75, 100], -0.5) !== -1) {
+        throw new Error('收口点/界外不应命中');
       }
       return true;
     });
@@ -328,7 +363,7 @@ export async function run() {
       if (!full.includes('token-summary-row')) throw new Error('应含汇总卡行');
       const cards = [...full.matchAll(/token-chart-card/g)].length;
       if (cards !== 5) throw new Error('应拼五张卡（趋势/圆环/用途/模型明细/最近调用）：' + cards);
-      if (!full.includes('<svg') || !full.includes('conic-gradient') || !full.includes('token-kind-row') || !full.includes('token-usage-table')) {
+      if (!full.includes('<svg') || !full.includes('token-donut-seg') || !full.includes('token-kind-row') || !full.includes('token-usage-table')) {
         throw new Error('四图应齐全（折线/扇形/条形/明细表）');
       }
       if (!full.includes('最近调用明细')) throw new Error('第五卡应为最近调用明细');
@@ -512,12 +547,18 @@ export async function run() {
       if (!src.includes('window.applyTokenRangeCustom')) throw new Error('自定义天数未导出冒烟');
       if (!src.includes('TOKEN_USAGE_RECORDS_LIMIT')) throw new Error('明细条数常量缺失');
       if (!src.includes('_bindTokenLegendPick')) throw new Error('圆环折线联动未实现');
+      if (!src.includes('_bindTokenDonutHover')) throw new Error('圆环悬停 3D 聚焦未绑定（2026-10-13）');
       if (!src.includes('data-label="')) throw new Error('折线 path 缺 data-label（联动匹配键）');
       const fnDays = src.match(/function setTokenUsageDays[\s\S]{0,220}/) || [''];
       if (!/n >= 1 && n <= 365/.test(fnDays[0])) throw new Error('统计范围应放开到 1-365 天（T198）');
       if (!panels.includes('.token-records-row')) throw new Error('调用明细表样式缺失');
       if (!panels.includes('.token-donut-legend-pick')) throw new Error('图例可点样式缺失');
       if (!panels.includes('.token-range-custom')) throw new Error('自定义天数输入行样式缺失');
+      // 悬停 3D 聚焦（2026-10-13）：逐扇区样式与「邻块向环心收缩」的原点契约——
+      // transform-box: view-box 缩放原点必须是整环中心，否则收缩/放大方向跳轴
+      if (!panels.includes('.token-donut-seg')) throw new Error('圆环逐扇区样式缺失');
+      if (!panels.includes('transform-box: view-box')) throw new Error('扇区缩放原点应为整环中心（transform-box: view-box）');
+      if (!panels.includes('.token-usage-pie')) throw new Error('圆环包装层样式缺失');
       // 失败/耗时记账链（2026-10-08）：后端有 record_failure 与新聚合键，四个调用
       // 文件都接线；前端明细表有耗时列
       const usageStatsSrc = fs.readFileSync('src/server/usage_stats.py', 'utf8');
