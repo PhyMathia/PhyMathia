@@ -134,6 +134,12 @@ const QUIZ_DAY_MS = 24 * 60 * 60 * 1000;
 
 const QUIZ_BANK_KEY = 'phymathia_quiz_bank';
 
+// T308 题库容量：多选画布循环出题一轮就是「画布数 × 每画布题量」（21 张画布＝105 题），
+// 旧版是全局硬上限 30——第 7 张画布一出题，第 1 张画布的 5 题就被静默挤掉（用户实踩「题没进题库」）。
+// 改成「按画布各留最新 N 题 + 全库总量上限下公平淘汰」，让一次全选出题的所有画布都留得住。
+const QUIZ_BANK_SESSION_MAX = 10;
+const QUIZ_BANK_MAX = 160;
+
 let quizSourcePreference = 'ai';
 
 let quizBank = null;

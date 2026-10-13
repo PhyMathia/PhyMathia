@@ -1,11 +1,39 @@
 /* ====== 知识检测：面板渲染与导出 ====== */
 
 // 全局检测的多选画布面板：勾选态只渲染自 quizSelectedSessions（intro 会被进度 tick 整份重画）。
-// 行右侧平时显示该画布素材量（勾选依据），循环生成中换成逐画布进度徽标（排队/正在出题/已完成/无素材）。
+// 行右侧平时显示该画布素材量＋题库已有题数（勾选依据），循环生成中换成逐画布进度徽标。
+//
+// 底部摘要与「全选/全不选」文案由独立函数产出：整份重画与就地同步（_quizLoopPanelSyncSelection）
+// 共用同一份文案，避免两条路径说不一样的话。
+function _quizLoopBankCount(counts, sessionId) {
+  let n = 0;
+  for (const v of _quizSessionIdVariants(sessionId)) n += counts.get(v) || 0;
+  return n;
+}
+
+// 选中画布的题库题数合计（未传 counts 时自行取表，供就地同步路径调用）
+function _quizLoopSelectedBankTotal(counts) {
+  const map = counts || _quizBankCountsBySession();
+  let total = 0;
+  for (const id of quizSelectedSessions) total += _quizLoopBankCount(map, id);
+  return total;
+}
+
+function _quizLoopSummaryText(counts) {
+  const selected = quizSelectedSessions.size;
+  return `已选 ${selected} 张 · 每画布 ${quizTargetCount} 题 · 本轮约 ${selected * quizTargetCount} 题`
+    + ` · 选中画布题库共 ${_quizLoopSelectedBankTotal(counts)} 题`;
+}
+
+function _quizLoopSelectAllLabel() {
+  const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+  const known = sessions.map(s => s.id || s.sessionId || '').filter(Boolean);
+  return known.length > 0 && quizSelectedSessions.size >= known.length ? '全不选' : '全选';
+}
+
 function _quizLoopPanelHtml() {
   if (quizMode !== 'global') return '';
   const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
-  const known = sessions.map(s => s.id || s.sessionId || '').filter(Boolean);
   const inLoop = !!(quizLoopProgress && quizState && quizState.aiPending && quizScope === 'select');
   if (!quizLoopPanelOpen) {
     // 摘要为纯数字/静态词（无用户输入面），不走 _quizEscape——沙箱 DOM 代理下转义会失真
@@ -29,6 +57,8 @@ function _quizLoopPanelHtml() {
     for (const item of (quizState.rawPool.knowledge || [])) bump(item.sessionId, 'k');
     for (const item of (quizState.rawPool.formulas || [])) bump(item.sessionId, 'f');
   }
+  // 题库已有题数：用户要看的是「这张画布已经出了多少题」，不只是素材量
+  const bankCounts = _quizBankCountsBySession();
   const progressMap = new Map((quizLoopProgress && quizLoopProgress.items || []).map(it => [it.id, it]));
   const badgeLabels = { run: '正在出题…', wait: '排队中', done: '✓', empty: '无素材' };
   // encodeURIComponent 不转义单引号，id 带引号会截断内联 onclick 字符串，补一道 %27
@@ -52,37 +82,81 @@ function _quizLoopPanelHtml() {
         const c = materialBySession.get(v);
         if (c) { k += c.k; f += c.f; }
       }
-      const parts = [];
-      if (k) parts.push(k + ' 知识');
-      if (f) parts.push(f + ' 公式');
-      metaHtml = parts.length
-        ? `<span class="quiz-loop-meta">${parts.join(' · ')}</span>`
-        : '<span class="quiz-loop-meta is-empty">无素材</span>';
+      const bankCount = _quizLoopBankCount(bankCounts, id);
+      const material = [];
+      if (k) material.push(k + ' 知识');
+      if (f) material.push(f + ' 公式');
+      const bankHtml = `<span class="quiz-loop-meta quiz-loop-bank${bankCount ? '' : ' is-empty'}"
+        title="这张画布在题库里已经有 ${bankCount} 道 AI 题">题库 ${bankCount} 题</span>`;
+      metaHtml = material.length
+        ? `<span class="quiz-loop-meta">${material.join(' · ')}</span>${bankHtml}`
+        : `<span class="quiz-loop-meta is-empty">无素材</span>${bankHtml}`;
     }
     return `<label class="quiz-loop-row">
-      <input type="checkbox" ${quizSelectedSessions.has(id) ? 'checked' : ''} onchange="toggleQuizLoopSession('${attrId(id)}')">
+      <input type="checkbox" data-session="${attrId(id)}" ${quizSelectedSessions.has(id) ? 'checked' : ''} onchange="toggleQuizLoopSession('${attrId(id)}')">
       <span class="quiz-loop-title" title="${_quizEscape(session.title || id)}">${_quizEscape(session.title || id)}</span>
       ${metaHtml}
     </label>`;
   }).join('');
   const selected = quizSelectedSessions.size;
-  const allChecked = known.length > 0 && selected >= known.length;
   return `<div class="quiz-loop-panel">
     <div class="quiz-loop-head">
       <span class="quiz-loop-head-title">多选画布出题</span>
-      <button class="quiz-btn-secondary" onclick="toggleQuizLoopSelectAll()">${allChecked ? '全不选' : '全选'}</button>
+      <button class="quiz-btn-secondary" id="quizLoopSelectAll" onclick="toggleQuizLoopSelectAll()">${_quizLoopSelectAllLabel()}</button>
     </div>
     <div class="quiz-loop-list">${rows || '<div class="quiz-loop-empty">暂无画布</div>'}</div>
     <div class="quiz-loop-foot">
-      <span>已选 ${selected} 张 · 每画布 ${quizTargetCount} 题 · 共约 ${selected * quizTargetCount} 题</span>
+      <span id="quizLoopFoot">${_quizLoopSummaryText(bankCounts)}</span>
       <span class="quiz-loop-hint">逐张画布依次出题，保证每张选中画布都被覆盖</span>
     </div>
     <div class="quiz-loop-actions">
-      <button class="quiz-btn-primary" ${selected ? '' : 'disabled'} onclick="applyQuizLoopSelection()">开始出题</button>
+      <button class="quiz-btn-primary" id="quizLoopStart" ${selected ? '' : 'disabled'} onclick="applyQuizLoopSelection()">开始出题</button>
       ${quizScope === 'select' ? '<button class="quiz-btn-secondary" onclick="resetQuizLoopScope()">改用全部画布</button>' : ''}
       <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">收起</button>
     </div>
   </div>`;
+}
+
+// 勾选态就地同步（T308 用户实踩）：勾一行就整份重画会把列表滚动位置清零——
+// 21 张画布时列表要滚很久，勾一下弹回顶部就找不着刚才那行了。
+// 这里只改 checkbox / 页脚数字 / 按钮态，完全不碰 innerHTML，滚动位置与焦点都保住。
+// 返回 false＝面板不在 DOM 里（收起态、非全局入口、测试沙箱），调用侧回退整份重画。
+function _quizLoopPanelSyncSelection() {
+  if (typeof document === 'undefined' || !document.querySelector) return false;
+  const list = document.querySelector('.quiz-loop-list');
+  if (!list) return false;
+  const boxes = list.querySelectorAll('.quiz-loop-row input[data-session]');
+  if (!boxes || !boxes.length) return false;
+  for (const box of boxes) {
+    let id = '';
+    try { id = decodeURIComponent(box.getAttribute('data-session') || ''); } catch (e) { id = ''; }
+    box.checked = !!id && quizSelectedSessions.has(id);
+  }
+  const foot = document.getElementById('quizLoopFoot');
+  if (foot) foot.textContent = _quizLoopSummaryText();
+  const start = document.getElementById('quizLoopStart');
+  if (start) start.disabled = !quizSelectedSessions.size;
+  const all = document.getElementById('quizLoopSelectAll');
+  if (all) all.textContent = _quizLoopSelectAllLabel();
+  // 待选态的主按钮文案带选中数（「重新出题（已选 N 张）」），同步刷新防陈旧
+  const cta = document.getElementById('quizLoopCta');
+  if (cta) cta.textContent = `重新出题（已选 ${quizSelectedSessions.size} 张）`;
+  return true;
+}
+
+// 整份重画会丢滚动位置（弹窗主体与面板内列表各自可滚）：重画前后把两处 scrollTop 接回去。
+// 面板不在场时零成本；就地同步能走通的路径不必用它。
+function _renderQuizKeepLoopScroll() {
+  const list = typeof document !== 'undefined' && document.querySelector ? document.querySelector('.quiz-loop-list') : null;
+  const bodyEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('quizBody') : null;
+  const listTop = (list && Number(list.scrollTop)) || 0;
+  const bodyTop = (bodyEl && Number(bodyEl.scrollTop)) || 0;
+  renderQuiz();
+  if (!listTop && !bodyTop) return;
+  const listAfter = typeof document !== 'undefined' && document.querySelector ? document.querySelector('.quiz-loop-list') : null;
+  const bodyAfter = typeof document !== 'undefined' && document.getElementById ? document.getElementById('quizBody') : null;
+  if (listAfter && listTop) listAfter.scrollTop = listTop;
+  if (bodyAfter && bodyTop) bodyAfter.scrollTop = bodyTop;
 }
 
 function _renderQuizIntro() {
@@ -141,7 +215,7 @@ function _renderQuizIntro() {
   const ctaIsLoop = quizScope === 'select';
   const startHtml = awaitingScope
     ? `<div class="quiz-start">
-        <button class="quiz-btn-primary quiz-btn-large" onclick="${ctaIsLoop ? 'applyQuizLoopSelection()' : 'startGlobalQuizGeneration()'}">${ctaIsLoop ? '重新出题（已选 ' + quizSelectedSessions.size + ' 张）' : '开始出题（全部画布）'}</button>
+        <button class="quiz-btn-primary quiz-btn-large" ${ctaIsLoop ? 'id="quizLoopCta"' : ''} onclick="${ctaIsLoop ? 'applyQuizLoopSelection()' : 'startGlobalQuizGeneration()'}">${ctaIsLoop ? '重新出题（已选 ' + quizSelectedSessions.size + ' 张）' : '开始出题（全部画布）'}</button>
         ${hasOpen ? '<button class="quiz-btn-primary" onclick="openOpenQuiz()">深度问答</button>' : ''}
         ${hasWrong ? `<button class="quiz-btn-primary" onclick="openWrongReview()">错题回顾(${hasWrong})</button>` : ''}
       </div>

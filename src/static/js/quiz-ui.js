@@ -277,15 +277,17 @@ if (!window._quizEscBound) {
 
 function toggleQuizLoopPanel() {
   quizLoopPanelOpen = !quizLoopPanelOpen;
-  renderQuiz();
+  _renderQuizKeepLoopScroll();
 }
 
+// 勾选/全选只做就地同步（勾一行就把列表整份重画会让它瞬间弹回顶部——用户实踩）；
+// 面板不在 DOM（收起态/非全局入口/测试沙箱）才回退整份重画
 function toggleQuizLoopSession(encodedId) {
   const id = decodeURIComponent(encodedId || '');
   if (!id) return;
   if (quizSelectedSessions.has(id)) quizSelectedSessions.delete(id);
   else quizSelectedSessions.add(id);
-  renderQuiz();
+  if (!_quizLoopPanelSyncSelection()) _renderQuizKeepLoopScroll();
 }
 
 function toggleQuizLoopSelectAll() {
@@ -297,7 +299,7 @@ function toggleQuizLoopSelectAll() {
   } else {
     for (const id of ids) quizSelectedSessions.add(id);
   }
-  renderQuiz();
+  if (!_quizLoopPanelSyncSelection()) _renderQuizKeepLoopScroll();
 }
 
 async function applyQuizLoopSelection() {

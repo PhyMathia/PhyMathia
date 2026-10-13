@@ -224,4 +224,74 @@ seqCheck('quiz-loop：全局入口先选范围再出题（不自动生成＋CTA 
   }
   return true;
 });
+
+
+// T308（2026-10-13，用户报「实际出的题似乎并没有进入题库」）：旧版题库是全局硬上限 30 题，
+// 多选画布循环一轮＝画布数×每画布题量（用户真机 21 张画布＝105 题），一出题就把先出题画布的题静默挤掉
+// ——真机实测库里只剩 30 题、只覆盖最后 6 张画布。本用例钉新口径：按画布各留最新 N 题 + 超量时公平淘汰。
+seqCheck('quiz-bank：多选循环一轮不再被全局 30 题上限挤掉（按画布保留＋公平淘汰＋落盘瘦身）', () => {
+  const prevBank = vm.runInContext('quizBank', sandbox);
+  const mkQ = (sid, i) => ({
+    id: 'ai_' + sid + '_' + i, type: 'concept', title: 'T', prompt: 'p' + sid + i,
+    options: [
+      { key: 'A', text: 'a', html: '<span class="katex">A</span>' },
+      { key: 'B', text: 'b', html: '' }, { key: 'C', text: 'c', html: '' }, { key: 'D', text: 'd', html: '' },
+    ],
+    correctIndex: 0, difficulty: 'medium', explanation: 'e', sessionId: sid,
+  });
+  const save = (sid, qs) => sandbox._saveQuizBank({ knowledge: [{ id: 'k_' + sid, sessionId: sid }], formulas: [] }, qs);
+  const readBank = () => JSON.parse(sandbox.localStorage.getItem('phymathia_quiz_bank'));
+  const perSession = (bank) => {
+    const per = new Map();
+    for (const q of bank.questions) per.set(q.sessionId, (per.get(q.sessionId) || 0) + 1);
+    return per;
+  };
+  sandbox.localStorage.removeItem('phymathia_quiz_bank');
+  try {
+    // ① 21 张画布各出 5 题（＝真机规模）：105 题全留，首张画布不再被挤空
+    const live = [];
+    for (let c = 0; c < 21; c++) {
+      const sid = 'sessB' + c;
+      const qs = Array.from({ length: 5 }, (_, i) => mkQ(sid, i));
+      if (c === 0) live.push(...qs);
+      save(sid, qs);
+    }
+    let bank = readBank();
+    if (bank.questions.length !== 105) throw new Error('21 画布×5 题应全留 105 题，实际 ' + bank.questions.length);
+    const per = perSession(bank);
+    if (per.size !== 21) throw new Error('应覆盖 21 张画布，实际 ' + per.size);
+    if (per.get('sessB0') !== 5) throw new Error('先出题的画布被挤掉了：sessB0=' + per.get('sessB0'));
+    // ② 落盘瘦身：option.html 是预渲染 KaTeX（占单题体积约八成），入库必须丢；
+    //    本次会话刚生成的题（原对象）不受影响，答题界面渲染逐字节不变
+    if (bank.questions[0].options[0].html) throw new Error('落盘未瘦身：option.html 仍在');
+    if (!live[0].options[0].html) throw new Error('瘦身误伤了本次会话的原对象');
+    // ③ 单画布反复出题：只留最新 10 题（同画布内先出先淘汰）
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    vm.runInContext('quizBank = null', sandbox);
+    for (let r = 0; r < 5; r++) save('solo', Array.from({ length: 5 }, (_, i) => mkQ('solo', r * 5 + i)));
+    bank = readBank();
+    if (bank.questions.length !== 10) throw new Error('单画布应只留最新 10 题，实际 ' + bank.questions.length);
+    if (!String(bank.questions[9].id).endsWith('_24')) throw new Error('应保留最新一批，实际末题 ' + bank.questions[9].id);
+    // ④ 公平淘汰：40 画布×5＝200 题超全库上限时，每张画布按比例留题、不许有画布被清零
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    vm.runInContext('quizBank = null', sandbox);
+    for (let c = 0; c < 40; c++) {
+      const sid = 'manyB' + c;
+      save(sid, Array.from({ length: 5 }, (_, i) => mkQ(sid, i)));
+    }
+    bank = readBank();
+    const per4 = perSession(bank);
+    if (bank.questions.length > 160) throw new Error('超出全库上限：' + bank.questions.length);
+    if (per4.size !== 40) throw new Error('公平淘汰不该整张画布清零，覆盖 ' + per4.size + '/40');
+    // 面板计数同源：题库按画布归集（面板行「题库 N 题」读的就是它）
+    const counts = sandbox._quizBankCountsBySession();
+    if (counts.get('manyB0') !== per4.get('manyB0')) throw new Error('面板计数与库内不一致');
+  } finally {
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    sandbox.__prevQuizBank = prevBank;
+    vm.runInContext('quizBank = __prevQuizBank', sandbox);
+    delete sandbox.__prevQuizBank;
+  }
+  return true;
+});
 }

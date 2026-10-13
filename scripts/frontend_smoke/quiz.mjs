@@ -458,6 +458,13 @@ check('quiz-loop：静态接线（面板渲染＋交互入口＋循环生成内�
   if (!code.includes('applyQuizLoopSelection(') || !code.includes('global-loop')) throw new Error('缺提交入口或 global-loop 分支');
   if (!code.includes('_aiGenerateLoopQuizQuestions(') || !code.includes('_quizLoopPlan(')) throw new Error('缺循环生成内核/切池');
   if (!code.includes('startGlobalQuizGeneration(')) throw new Error('全局先选范围再出题缺 CTA 生成入口');
+  // T308：勾选/全选改走就地同步（整份重画会把列表滚动位置清零→勾一下弹回顶部），面板不在 DOM 才回退重画
+  if (!code.includes('_quizLoopPanelSyncSelection()')) throw new Error('勾选态就地同步入口缺失');
+  // 压缩器会把 `if (!f()) g()` 改写成 `f()||g()`——两种形状都认，判据＝就地同步与否决重画相邻
+  if (!/_quizLoopPanelSyncSelection\(\)\s*(\|\||&&|\)\s*\{?\s*_renderQuizKeepLoopScroll)/.test(code)) {
+    throw new Error('勾选/全选未走就地同步回退链');
+  }
+  if (!code.includes('_renderQuizKeepLoopScroll(')) throw new Error('重画未接滚动位置保持');
   // 压缩产物会吃掉空格：截断豁免契约用宽松正则钉（前缀必须挂着 _quizLoopActive 守卫，
   // 语义：循环模式下 startQuiz 不按单池题量裁卷）
   if (!/!?_quizLoopActive\(\)\s*&&\s*quizState\.questions\.length\s*>\s*quizTargetCount/.test(code)) {
@@ -618,6 +625,14 @@ check('quiz-loop：面板行显示素材量统计（rawPool 全量口径），�
     if (!html.includes('无素材')) throw new Error('空画布应标无素材');
     if (!html.includes('>开始出题</button>')) throw new Error('面板按钮文案应为「开始出题」');
     if (html.includes('quiz-loop-meta is-run')) throw new Error('非生成中不应出进度徽标');
+    // T308：行内要显示本画布题库已有题数（用户反馈「不展示本画布已经有多少道题了」），
+    // checkbox 带 data-session＝就地同步按它回填勾选态的锚点
+    if (!html.includes('题库 0 题')) throw new Error('行内缺题库题数');
+    if (!html.includes('data-session=')) throw new Error('checkbox 缺 data-session 锚点');
+    if (!html.includes('id="quizLoopFoot"') || !html.includes('id="quizLoopStart"') || !html.includes('id="quizLoopSelectAll"')) {
+      throw new Error('就地同步锚点缺失（页脚/开始钮/全选钮）');
+    }
+    if (!/已选 0 张 · 每画布 \d+ 题 · 本轮约 0 题 · 选中画布题库共 0 题/.test(html)) throw new Error('页脚摘要缺题库合计');
     // 生成中（select 口径）：徽标替换素材统计
     vm.runInContext(`quizScope = 'select'; quizState.aiPending = true;
       quizLoopProgress = { items: [
@@ -628,6 +643,7 @@ check('quiz-loop：面板行显示素材量统计（rawPool 全量口径），�
     if (!html2.includes('✓ 已出 5 题')) throw new Error('完成徽标缺失');
     if (!html2.includes('无素材')) throw new Error('无素材徽标缺失');
     if (html2.includes('3 知识')) throw new Error('生成中不应再显示素材统计');
+    if (html2.includes('题库 0 题')) throw new Error('生成中不该再叠题库题数（该位已被进度徽标占用）');
     // 收起态摘要
     vm.runInContext('quizLoopPanelOpen = false', sandbox);
     const entry = sandbox._quizLoopPanelHtml();

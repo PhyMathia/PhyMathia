@@ -72,7 +72,8 @@ async function _aiGenerateLoopQuizQuestions(loop, requestId) {
     const entry = plan[i];
     const progressItem = quizLoopProgress.items.find(it => it.id === entry.id);
     if (progressItem) progressItem.status = 'run';
-    if (quizState && quizState.phase === 'intro') renderQuiz();
+    // 逐画布 tick 重画：面板可见时要保住列表/弹窗滚动位置（21 张画布时列表要滚很久）
+    if (quizState && quizState.phase === 'intro') _renderQuizKeepLoopScroll();
     const base = Math.round(i / plan.length * 80);
     const ai = await _aiGenerateQuizQuestions(
       entry.pool,
@@ -104,7 +105,8 @@ async function _aiGenerateLoopQuizQuestions(loop, requestId) {
     if (quizState && quizState.aiPending && i + 1 < plan.length) {
       quizState.aiProgress = Math.round((i + 1) / plan.length * 88);
     }
-    if (quizState && quizState.phase === 'intro') renderQuiz();
+    // 逐画布 tick 重画：面板可见时要保住列表/弹窗滚动位置（21 张画布时列表要滚很久）
+    if (quizState && quizState.phase === 'intro') _renderQuizKeepLoopScroll();
   }
   return collected.length >= 2 ? collected : null;
 }
@@ -514,19 +516,99 @@ function _readQuizBank() {
   }
 }
 
+// T308 落盘瘦身：option.html 是生成时预渲染的 KaTeX 片段（实测占单题体积约 79%，单题 8.7KB→1.1KB），
+// 渲染侧本来就有 `option.html || _quizInlineRichText(option.text)` 兜底，题库不必存它——
+// 不瘦身则「按画布保留 10 题 × 21 画布」会把 localStorage 顶到配额边缘，写失败又是静默丢题。
+// 只改落盘/上行的那份：本次会话刚生成的题仍是带 html 的原对象，答题界面渲染体验逐字节不变。
+function _quizBankSlim(bank) {
+  const questions = bank && Array.isArray(bank.questions) ? bank.questions : null;
+  if (!questions || !questions.length) return bank;
+  return {
+    ...bank,
+    questions: questions.map(q => {
+      if (!q || !Array.isArray(q.options) || !q.options.some(o => o && o.html)) return q;
+      return { ...q, options: q.options.map(o => (o && o.html ? { ...o, html: '' } : o)) };
+    })
+  };
+}
+
 function _persistQuizBank(bank) {
   if (!bank) return;
-  quizBank = bank;
+  const stored = _quizBankSlim(bank);
+  quizBank = stored;
   try {
-    localStorage.setItem(QUIZ_BANK_KEY, JSON.stringify(bank));
+    localStorage.setItem(QUIZ_BANK_KEY, JSON.stringify(stored));
   } catch (e) {}
   try {
     fetch('/api/kv/phymathia_quiz_bank', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value: bank })
+      body: JSON.stringify({ value: stored })
     }).catch(() => {});
   } catch (e) {}
+}
+
+// T308 题库保留策略（入参＝旧题在前、新题在后的全量名单）：
+// ① 按画布各留最新 QUIZ_BANK_SESSION_MAX 题；② 仍超全库上限时做公平淘汰——
+// 每轮淘汰「当前题数最多」那张画布的最旧一题（并列取名单里靠前的），直到达标。
+// 这样「全选 21 张画布各 5 题＝105 题」整批留得住，而单张画布反复出题也不会把别的画布挤空。
+function _quizBankRetain(questions) {
+  const list = (questions || []).filter(q => q && q.id);
+  if (!list.length) return list;
+  const order = new Map();
+  const bySession = new Map();
+  list.forEach((q, i) => {
+    order.set(q, i);
+    const key = q.sessionId || '';
+    if (!bySession.has(key)) bySession.set(key, []);
+    bySession.get(key).push(q);
+  });
+  const kept = [];
+  for (const [key, arr] of bySession) {
+    // 没带 sessionId 的（历史/异常数据）不做单画布裁剪，只受全库上限约束，
+    // 否则会被当成「同一张画布」互相挤掉
+    for (const q of (key ? arr.slice(-QUIZ_BANK_SESSION_MAX) : arr)) kept.push(q);
+  }
+  kept.sort((a, b) => order.get(a) - order.get(b));
+  if (kept.length <= QUIZ_BANK_MAX) return kept;
+  const groups = new Map();
+  for (const q of kept) {
+    const key = q.sessionId || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(q); // kept 已按入库序排好，组内同样是旧→新
+  }
+  const counts = new Map();
+  for (const [key, arr] of groups) counts.set(key, arr.length);
+  const drop = new Set();
+  let total = kept.length;
+  while (total > QUIZ_BANK_MAX) {
+    let target = null;
+    for (const [key, n] of counts) {
+      if (!n) continue;
+      if (target === null || n > counts.get(target)) target = key;
+    }
+    if (target === null) break;
+    const arr = groups.get(target);
+    const n = counts.get(target);
+    counts.set(target, n - 1);
+    drop.add(arr[arr.length - n]); // 剩余 n 题时该组最旧的那题
+    total--;
+  }
+  return kept.filter(q => !drop.has(q));
+}
+
+// 多选面板用：题库按画布（sessionId）归集现有题数。优先用模块缓存（_persistQuizBank 同步维护），
+// 未加载时回退 localStorage；两者都没有＝空表。
+function _quizBankCountsBySession() {
+  const bank = quizBank || _readQuizBank();
+  const counts = new Map();
+  const questions = bank && Array.isArray(bank.questions) ? bank.questions : [];
+  for (const q of questions) {
+    const sid = q && q.sessionId;
+    if (!sid) continue;
+    counts.set(sid, (counts.get(sid) || 0) + 1);
+  }
+  return counts;
 }
 
 function _saveQuizBank(pool, aiQuestions) {
@@ -555,9 +637,10 @@ function _saveQuizBank(pool, aiQuestions) {
   }
   _persistQuizBank({
     poolKeys: stamps,
-    // merged 是旧题在前、新题在后：保尾 30 保留最新题。
-    // 此前 slice(0, 30) 在题库满后会把新生成的题全部静默丢弃（“补充AI题”看似成功实则无效）
-    questions: merged.slice(-30),
+    // T308：merged 是旧题在前、新题在后，保留策略按画布各留最新 N 题再对超量部分公平淘汰。
+    // 此前 slice(0, 30) 在题库满后把新生成的题静默丢弃（“补充AI题”看似成功实则无效），
+    // 改成 slice(-30) 后又换成「先出题的画布被整批挤掉」——多选循环一轮 21 画布 × 5 题时只有 6 张画布进库
+    questions: _quizBankRetain(merged),
     updatedAt: Date.now()
   });
 }

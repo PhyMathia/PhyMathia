@@ -2683,6 +2683,9 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      /* 行右侧要同时放「素材量＋题库题数」两个 meta，标题必须可压缩，否则长标题把 meta 顶出行外 */
+      flex: 1 1 auto;
+      min-width: 0;
     }
 
     /* 行右侧元信息：平时＝素材量统计，循环生成中＝逐画布进度徽标（is-run 强调当前、is-empty 降灰） */
@@ -2691,6 +2694,20 @@
       flex: none;
       color: var(--text-secondary);
       font-size: var(--fs-xs);
+    }
+
+    /* 素材量之后的第二个 meta：本画布题库已有题数（T308 用户反馈「不展示本画布已经有多少道题了」） */
+    .quiz-loop-meta.quiz-loop-bank {
+      margin-left: 8px;
+      padding: 1px 6px;
+      /* 真胶囊：令牌口径（设计尺子禁止裸圆角值） */
+      border-radius: var(--r-pill);
+      background: var(--surface-container-high, var(--btn-hover-bg, transparent));
+      white-space: nowrap;
+    }
+
+    .quiz-loop-meta.quiz-loop-bank.is-empty {
+      opacity: 0.55;
     }
 
     .quiz-loop-meta.is-run {
