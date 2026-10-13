@@ -427,6 +427,50 @@ check('工作流停止：总闸必须连在跑的节点一起掐断（T299）', 
   evalC('workflowInFlightControllers = new Set(); workflowAbortController = null;');
 });
 
+// 静态契约（T303）：重新生成预警「可能失效」口径——面板路提示行＋三个直接按钮路
+// confirm 闸（工作流/空白/知识点）。排队轮到与任务重试（fromQueue/handoffTaskId）
+// 不得二次弹窗；Φ 直通（fromPhi）不得弹窗（自动改图链路不能被 confirm 卡死）。
+check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不弹（T303）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const warnBody = extract(giSrc, '_warnDownstreamBeforeRegenerate');
+  if (warnBody === null) throw new Error('找不到 _warnDownstreamBeforeRegenerate——断言本身该更新了');
+  if (!warnBody.includes('可能失效')) {
+    throw new Error('预警 confirm 文案丢了「可能失效」口径：用户拍板不把话说死（T303）');
+  }
+  // 面板路：提示行走 .graph-regenerate-warn，且用户没点发送前不动任何内容
+  if (!giSrc.includes('graph-regenerate-warn')) {
+    throw new Error('重新生成面板丢了「下游可能失效」提示行（T303 回退）');
+  }
+  // 直接按钮路：三个入口都要接闸
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const runBody = extract(gwSrc, 'runWorkflowNode');
+  if (runBody === null) throw new Error('找不到 runWorkflowNode——断言本身该更新了');
+  if (!/force && !fromQueue && !handoffTaskId && !_warnDownstreamBeforeRegenerate/.test(runBody)) {
+    throw new Error('工作流节点重生成没接预警闸，或排队/重试路会二次弹窗（T303）');
+  }
+  const blankBody = extract(gwSrc, 'generateBlankNode');
+  if (blankBody === null) throw new Error('找不到 generateBlankNode——断言本身该更新了');
+  if (!/!fromQueue && !handoffTaskId && \(node\.content \|\| ''\)\.trim\(\) && !_warnDownstreamBeforeRegenerate/.test(blankBody)) {
+    throw new Error('空白节点重生成没接预警闸（首次生成不弹、排队不弹丢了）（T303）');
+  }
+  const gcSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
+  const knowBody = extract(gcSrc, 'generateKnowledgeNode');
+  if (knowBody === null) throw new Error('找不到 generateKnowledgeNode——断言本身该更新了');
+  if (!/!\(opts && opts\.fromPhi\) && !_warnDownstreamBeforeRegenerate/.test(knowBody)) {
+    throw new Error('知识点生成没接预警闸，或丢了 Φ 直通不弹（fromPhi）旁路（T303）');
+  }
+});
+
 // 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
 // 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
 // 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。

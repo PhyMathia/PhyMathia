@@ -1410,6 +1410,14 @@
   line-height: 1.5 !important;
 }
 
+/* T303 重生成预警：面板内「下游可能失效」提示行——琥珀随主题 --warn 令牌 */
+.graph-regenerate-warn {
+  margin-top: 8px !important;
+  color: var(--warn);
+  font-size: var(--fs-sm) !important;
+  line-height: 1.5 !important;
+}
+
 .graph-regenerate-panel.busy {
   opacity: 0.7 !important;
   pointer-events: none !important;

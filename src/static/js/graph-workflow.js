@@ -862,6 +862,9 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
 async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoffTaskId = null) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || node.busy) return;
+  // 重生成预警（T303）：改写内容前确认下游可能失效。排队轮到/任务重试
+  // （fromQueue/handoffTaskId）视为用户已确认过，不再二次弹窗
+  if (force && !fromQueue && !handoffTaskId && !_warnDownstreamBeforeRegenerate(node)) return;
   if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
     const capturedForce = !!force;
     const label = '生成' + _workflowProgressLabel(node);
@@ -1034,6 +1037,8 @@ async function _streamBlankNodeResponse(resp, node) {
 async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'blank' || node.busy) return;
+  // 重生成预警（T303）：首次生成不弹（下游没基于任何旧内容）；重生成且有下游才确认
+  if (!fromQueue && !handoffTaskId && (node.content || '').trim() && !_warnDownstreamBeforeRegenerate(node)) return;
   // 忙时排队（2026-10-11，同 runWorkflowNode）：过去这里是「工作流跑着就不许再起一条」的
   // 硬闸，用户点了只得到一句「稍候再单独生成这个节点」。现在收进队列等着，轮到它时
   // 队列把视图带回这张画布再跑——互斥仍然成立，只是把「拒绝」换成了「排队」。

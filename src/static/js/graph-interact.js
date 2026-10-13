@@ -1000,6 +1000,36 @@ window.regenNodeWith = function(nodeId, confusion) {
   return _applyNodeRegenerate(nodeId, confusion);
 };
 
+// ===== 重新生成预警（T303，方案 A：只提示不拦链）=====
+// 数下游：沿已保存连线 BFS（穿过中转/汇聚的直通都算），返回不含自己的可达节点数。
+function _countDownstreamNodes(nodeId) {
+  const state = _graphState();
+  const connections = (state && state.connections) || [];
+  const start = String(nodeId);
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.shift();
+    connections.forEach(c => {
+      if (!c) return;
+      const to = String(c.to || '');
+      if (String(c.from) === cur && to && !seen.has(to)) { seen.add(to); queue.push(to); }
+    });
+  }
+  return seen.size - 1;
+}
+
+// 用户拍板口径：说「可能失效」不说「会失效」——下游是按旧内容生成的，对不对得
+// 上要看新旧内容差多少，系统不替用户断言。面板路（没看懂/重新生成）提示写在面板
+// 里、点发送即确认；直接按钮路（工作流/空白/知识点）走 confirm。无下游一律不打扰。
+// 返回 false＝用户取消，调用方就此打住。
+function _warnDownstreamBeforeRegenerate(node) {
+  if (!node) return true;
+  const n = _countDownstreamNodes(node.id);
+  if (!n) return true;
+  return confirm('该节点重新生成后，下游 ' + n + ' 颗节点可能失效。\n仍要重新生成吗？');
+}
+
 function graphOpenRegenerate(nodeId) {
   const node = _findGraphNode(nodeId);
   const el = graphInner?.querySelector('[data-node-id="' + nodeId + '"]');
@@ -1013,9 +1043,14 @@ function graphOpenRegenerate(nodeId) {
   }
   const main = el.querySelector('.graph-node-main');
   if (!main) return;
+  const downstreamCount = _countDownstreamNodes(nodeId);
+  const warnHtml = downstreamCount
+    ? '<div class="graph-regenerate-warn">该节点重新生成后，下游 ' + downstreamCount + ' 颗节点可能失效</div>'
+    : '';
   main.insertAdjacentHTML('beforeend',
     '<div class="graph-regenerate-panel">'
     + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里没看懂？例如：第三步推导跳步了"></textarea>'
+    + warnHtml
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'
     + '<button class="graph-draft-btn graph-draft-send graph-icon-btn" onclick="submitRegenerateNode(\'' + nodeId + '\')" title="重新生成此节点">' + _regenIconHtml() + '</button>'

@@ -940,6 +940,8 @@ function openHarnessOrganizeRelations(sourceNodeId) {
 function generateKnowledgeNode(nodeId, opts) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'knowledge' || node.busy) return;
+  // 重生成预警（T303）：Φ 直通（fromPhi）不弹——自动改图链路不能被 confirm 卡住
+  if (!(opts && opts.fromPhi) && !_warnDownstreamBeforeRegenerate(node)) return;
   const title = '生成知识节点' + (node.title ? '：' + node.title : '');
   // T280：忙则排队（与六个画布生成入口同款「排队不是禁用」），轮到时重找节点、
   // 以队列 taskId 做 handoff——面板上始终一行账。Φ 改图（harness-apply.js）带
