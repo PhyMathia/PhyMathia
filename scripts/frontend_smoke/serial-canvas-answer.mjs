@@ -341,6 +341,41 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
   }
 });
 
+// 静态契约（T285）：工作流任务行开场必须把 canceller 绑到总闸 stopWorkflowRun——
+// 面板上的「停」/「全部停止」/「全部清空」才真停，否则退回只结账、节点在后台继续
+// 生成。行为半在 review_tasks_e2e.mjs ⑥c/⑥d，用 mock 请求计数钉死。
+check('工作流停链：任务行 canceller 绑在总闸 stopWorkflowRun 上（T285）', () => {
+  // 按函数名抽函数体（花括号配平），marker 自检「确实抽到了完整函数体」，防抽残漏判。
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const body = extract(wfSrc, '_executeParallelWorkflow');
+  if (body === null) throw new Error('找不到 _executeParallelWorkflow——断言本身该更新了');
+  if (!body.includes('_tasksBeginWorkflow')) {
+    throw new Error('抽到的函数体不完整（缺 _tasksBeginWorkflow），判定会漏——断言本身坏了');
+  }
+  if (!body.includes('_taskBindCancel(taskId, () => stopWorkflowRun())')) {
+    throw new Error('工作流任务行没绑总闸：面板上「停/全部停止/全部清空」退回只结账不真停（T285）');
+  }
+  // 收尾提取同闸：被停的那轮不再烧一次模型调用去提取半截画布。
+  const tplBody = extract(fs.readFileSync('src/static/js/graph-workflow-template.js', 'utf8'), 'startQuestionWorkflow');
+  if (tplBody === null) throw new Error('找不到 startQuestionWorkflow（模板）——断言本身该更新了');
+  if (!tplBody.includes('_extractKnowledgeFromWorkflow')) {
+    throw new Error('抽到的模板函数体不完整（缺提取调用），判定会漏——断言本身坏了');
+  }
+  if (!/if \(!workflowLastAborted\) await _extractKnowledgeFromWorkflow/.test(tplBody)) {
+    throw new Error('收尾提取丢了 workflowLastAborted 闸：被停的工作流还会为半截画布烧一次提取调用（T285）');
+  }
+});
+
 // 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
 // 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
 // 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。

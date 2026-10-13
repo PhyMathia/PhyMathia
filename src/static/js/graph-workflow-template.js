@@ -263,5 +263,7 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   }
   const moduleIds = _createWorkflowModuleNodes(moduleKeys, liveAnswer2.id);
   await _executeParallelWorkflow(moduleIds, true, { title: question, handoffTaskId: handoffTaskId || '' });
-  await _extractKnowledgeFromWorkflow(question, moduleIds);
+  // T285：被停掉的那轮不再做收尾提取——用户喊停之后还烧一次模型调用去提取半截
+  // 画布，与「停止＝不再花钱」矛盾；部分产出留在画布上，想要可手动再提取。
+  if (!workflowLastAborted) await _extractKnowledgeFromWorkflow(question, moduleIds);
 }

@@ -765,6 +765,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   const workflowStartedAt = Date.now();
   window.__wfLogs = [];
   workflowRunActive = true;
+  workflowLastAborted = false;
   workflowAbortController = new AbortController();
   _setWorkflowStopButton(true);
   const countedNodes = [...subgraph.ids]
@@ -786,6 +787,13 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
         allIds: [...subgraph.ids],
       })
     : null;
+  // T285：开场就把这条任务行的 canceller 绑到总闸 stopWorkflowRun()——绑之前面板上的
+  // 「停」/「全部停止」/「全部清空」对工作流行只是账面动作（无 canceller 直接结成
+  // 「已停止」），节点在后台继续生成。三入口自此与画布进度条同一闸；收尾 finally
+  // 按 wasAborted 落「已停止/手动停止」。
+  if (taskId && typeof _taskBindCancel === 'function') {
+    _taskBindCancel(taskId, () => stopWorkflowRun());
+  }
   const runtime = (taskId && typeof _taskActiveCtx !== 'undefined' && _taskActiveCtx
       && _taskActiveCtx.taskId === taskId)
     ? Object.assign({ taskId }, _taskActiveCtx.runtime)
@@ -803,6 +811,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
     completed = await _runWorkflowGraph(subgraph, force, runtime, forceTargets);
   } finally {
     const wasAborted = _workflowGlobalAborted();
+    workflowLastAborted = wasAborted;
     const userCancelled = runtime ? runtime.userCancelled.size : 0;
     const userStopped = runtime ? (runtime.userStopped || 0) : 0;
     workflowRunActive = false;

@@ -212,6 +212,8 @@ const graphView = {
 
 let workflowAbortController = null;
 let workflowRunActive = false;
+// 上一轮工作流是否被用户停掉（T285）：收尾提取等「跑完才该做的事」以此为闸。
+let workflowLastAborted = false;
 const WORKFLOW_MAX_CONCURRENCY = 6;
 let workflowProgressActive = new Set();
 let _graphMermaidTimer = null;

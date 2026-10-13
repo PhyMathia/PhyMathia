@@ -305,6 +305,106 @@ try {
     ok('一键清除记录：只清干成的（服务端 ' + before + ' -> ' + after.total + ' 条），未完成的不动');
   } catch (e) { bad('两个页签与一键清除', e); }
 
+  // ⑥c 面板停整条工作流必须真停（T285）：旧行为是行上「停」只结账（工作流任务行
+  // 没绑 canceller，直接落「已停止」），节点在后台继续生成、mock 继续被打。判真停的
+  // 尺子是 mock 上游的请求计数——行落账之后观察窗内零新请求才算数，账面动作骗不过它。
+  // 开跑前先等 mock 静默 2.5s：上一轮**跑完**的工作流有收尾提取（合法流量），
+  // 别让它串进这一拍的基线或观察窗。
+  const waitMockQuiet = async () => {
+    const dl = Date.now() + 30000;
+    let last = mockHits, since = Date.now();
+    while (Date.now() < dl) {
+      await wait(500);
+      if (mockHits !== last) { last = mockHits; since = Date.now(); continue; }
+      if (Date.now() - since >= 2500) return;
+    }
+  };
+  try {
+    await waitMockQuiet();
+    await page.evaluate(() => { window.startQuestionWorkflow('第四条（行上停掉的）'); });
+    const rowState = async (tag) => page.evaluate((t) => {
+      const item = [...document.querySelectorAll('#taskPanelBody .task-item')]
+        .find(el => new RegExp(t).test(el.textContent));
+      return item ? (item.className.match(/state-([a-z]+)/) || [])[1] : '';
+    }, tag);
+    const dl = Date.now() + 30000;
+    let st = '';
+    while (Date.now() < dl) {
+      st = await rowState('第四条');
+      if (st === 'running') break;
+      await wait(500);
+    }
+    if (st !== 'running') throw new Error('停前任务行没进进行中：' + st);
+    await wait(3000);   // 让分析＋若干模块真发出去（mock 流速 400ms/片）
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); await wait(300); }
+    const hitsBefore = mockHits;
+    const clicked = await page.evaluate(() => {
+      const item = [...document.querySelectorAll('#taskPanelBody .task-item')]
+        .find(el => /第四条/.test(el.textContent));
+      if (!item) return 'no-item';
+      const btn = item.querySelector('[data-task-action="cancel"]');
+      if (!btn) return 'no-btn';
+      btn.click();
+      return 'clicked';
+    });
+    if (clicked !== 'clicked') throw new Error('找不到工作流任务行的停止按钮：' + clicked);
+    const dl2 = Date.now() + 30000;
+    let settled = '';
+    while (Date.now() < dl2) {
+      settled = await page.evaluate(() => {
+        const h = _taskHistory.find(t => /第四条/.test(t.title));
+        return h ? h.state + '|' + h.note : '';
+      });
+      if (/^stopped\|/.test(settled)) break;
+      await wait(500);
+    }
+    if (settled !== 'stopped|手动停止') throw new Error('行没落「已停止/手动停止」：' + settled);
+    await wait(6000);   // 观察窗：后台若还有节点在排/在发，mockHits 必涨
+    if (mockHits !== hitsBefore) throw new Error('行上停了但后台还在发请求：' + hitsBefore + ' -> ' + mockHits);
+    if (await page.evaluate(() => workflowRunActive)) throw new Error('总闸没收：workflowRunActive 仍为 true');
+    ok('行上停整条工作流（T285）：行落已停止/手动停止，停后 6s mock 零新请求（基线 ' + hitsBefore + '），总闸已收');
+  } catch (e) { bad('行上停整条工作流（T285）', e); }
+
+  // ⑥d 「全部清空」同闸（T285 的「含全部清空」）：_tasksClearAll 对在跑的也走
+  // canceller；清完两本账全空、被掐停的工作流稍后结账找不到活账自然空转（手册口径）。
+  try {
+    await page.evaluate(() => { window.startQuestionWorkflow('第五条（清空停掉的）'); });
+    const dl = Date.now() + 30000;
+    let st = '';
+    while (Date.now() < dl) {
+      st = await page.evaluate(() => {
+        const item = [...document.querySelectorAll('#taskPanelBody .task-item')]
+          .find(el => /第五条/.test(el.textContent));
+        return item ? (item.className.match(/state-([a-z]+)/) || [])[1] : '';
+      });
+      if (st === 'running') break;
+      await wait(500);
+    }
+    if (st !== 'running') throw new Error('清空前任务行没进进行中：' + st);
+    await wait(2500);
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); await wait(300); }
+    const hitsBefore = mockHits;
+    const btnState = await page.evaluate(() => {
+      const b = document.getElementById('taskPanelClearAll');
+      if (!b) return 'no-btn';
+      if (b.disabled) return 'disabled';
+      b.click();
+      return 'clicked';
+    });
+    if (btnState !== 'clicked') throw new Error('全部清空按钮点不了（' + btnState + '）');
+    await wait(800);
+    const left = await page.evaluate(() => ({
+      active: _taskActive.length,
+      hist: _taskHistory.length,
+      row: [...document.querySelectorAll('#taskPanelBody .task-item')].filter(el => /第五条/.test(el.textContent)).length,
+    }));
+    if (left.active || left.hist || left.row) throw new Error('清空后账没清干净：' + JSON.stringify(left));
+    await wait(6000);
+    if (mockHits !== hitsBefore) throw new Error('清空后后台还在发请求：' + hitsBefore + ' -> ' + mockHits);
+    if (await page.evaluate(() => workflowRunActive)) throw new Error('总闸没收：workflowRunActive 仍为 true');
+    ok('全部清空真停（T285）：两本账全空、停后 6s mock 零新请求（基线 ' + hitsBefore + '），总闸已收');
+  } catch (e) { bad('全部清空停整条工作流（T285）', e); }
+
   // ⑦ 忙的时候点节点生成 = 排队（2026-10-11；用户：「设置了任务列表就是想要可以排队」）
   // 旧行为是 toast 挡回去「稍候再单独生成这个节点」——点了等于没点，也没有账。
   try {
