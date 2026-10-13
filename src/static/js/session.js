@@ -202,7 +202,24 @@
               pullIds.push(sid);
             }
           }
-          const serverMessages = await _fetchServerMessagesBatch(pullIds);
+          // T305：图内容量批拉与消息批量拉取并行（图状态按需加载，空徽标需要
+          // 服务端口径才不会误伤「有内容未加载」的画布）
+          const [serverMessages, serverGraphStats] = await Promise.all([
+            _fetchServerMessagesBatch(pullIds),
+            _fetchServerGraphStats(serverSessionIds),
+          ]);
+          for (const [sid, st] of Object.entries(serverGraphStats)) {
+            const prev = _serverGraphStats.get(sid);
+            if (JSON.stringify(prev || null) !== JSON.stringify(st)) {
+              _serverGraphStats.set(sid, st);
+              _emptyBadgeCache.delete(sid);
+              _badgeDirty = true;
+            }
+          }
+          // 服务端已不存在的会话：口径表同步清掉，别拿旧结论给已删画布留徽标
+          for (const sid of Array.from(_serverGraphStats.keys())) {
+            if (!(sid in serverSessions)) { _serverGraphStats.delete(sid); _badgeDirty = true; }
+          }
           const allSessionIds = new Set([...localSessionIds, ...serverSessionIds]);
           for (const sid of allSessionIds) {
             try {
@@ -392,7 +409,10 @@
           }
         }
         const synced = await _syncFromServer();
-        if (synced) {
+        // T204 稳态空转除外：空徽标的服务端口径变化（别的设备只写图、sessions.json
+        // 不 bump，changed 仍为 false）也要重画侧栏
+        if (synced || _badgeDirty) {
+          _badgeDirty = false;
           // T204：_syncFromServer 现按「确有数据变化」返回——稳态每轮到此为止，
           // 不再每 15 秒全量重建侧栏与知识面板
           loadSessions();
@@ -1196,36 +1216,76 @@
       _saveSessionToServer(sid, s);
     }
 
-    // 空判定口径：消息为空 且 图状态无内容——customNodes/connections 是工作流与
-    // 自绘节点的内容载体，nodes 是服务端图状态的同义字段，任一非空即不算空
-    //（「微分」「磁场」这类纯工作流画布没有消息但有 7 个自绘节点，不能误判空）。
-    // 只读本地不发网络：服务端名单里的幽灵条目（测试夹具/别的设备的空画布）在本机
-    // 没有消息与图状态键，自然判空。按会话缓存，写入点逐 key 失效，别在渲染热路径
-    // 反复 parse 大对象。
+    // 服务端图状态内容量（15 秒同步批拉，T305 补「未加载」口径）：图状态按需
+    // 加载（只切进画布拉一次 graph:<sid>），没在本机加载过的画布本地没有图状态
+    // 键——单看本地会把「有内容但未加载」的画布误判为空（实踩：别的设备/账号画
+    // 的画布被打空徽标）。表值＝{custom,connections,nodes} 计数；缺条目＝未知。
+    const _serverGraphStats = new Map();
+    function _serverHasGraphContent(sid) {
+      const st = _serverGraphStats.get(sid);
+      if (!st) return null;
+      return (st.custom || 0) > 0 || (st.connections || 0) > 0 || (st.nodes || 0) > 0;
+    }
+
+    // 空判定三层口径（服务端口径优先，本地其次，两边都不知道就不判空）：
+    // ①有消息→不空（消息链路每轮同步，本地键可信）；
+    // ②服务端图内容量说有内容→不空（不管本机有没有加载过）；
+    // ③本机说了算的两类：当前画布（内存态）与本地有 graph_ 键的画布（曾加载过/写过）——
+    //    这两类真的没内容才判空。本地图键不在、服务端也没同步过＝未知，不打徽标。
+    // 按会话缓存，写入点＋同步口径变化逐 key 失效，别在渲染热路径反复 parse 大对象。
     const _emptyBadgeCache = new Map();
     function _sessionIsEmpty(sid) {
       if (_emptyBadgeCache.has(sid)) return _emptyBadgeCache.get(sid);
       let empty = false;
       try {
-        let msgs = null;
-        if (sid === currentSessionId) msgs = chatHistory;
-        else {
+        let msgCount = 0;
+        if (sid === currentSessionId) {
+          msgCount = (chatHistory || []).length;
+        } else {
           const raw = localStorage.getItem('phymathia_msgs_' + sid);
-          if (raw) msgs = JSON.parse(raw);
+          if (raw) { try { msgCount = (JSON.parse(raw) || []).length; } catch (e) {} }
         }
+        if (msgCount > 0) { _emptyBadgeCache.set(sid, false); return false; }
+        if (_serverHasGraphContent(sid) === true) { _emptyBadgeCache.set(sid, false); return false; }
         let g = null;
-        if (sid === currentSessionId) g = getGraphState(sid);
-        else {
+        if (sid === currentSessionId) {
+          g = getGraphState(sid);
+        } else {
           const raw = localStorage.getItem('phymathia_graph_' + sid);
-          if (raw) g = JSON.parse(raw);
+          if (raw) { try { g = JSON.parse(raw); } catch (e) { g = {}; } }
         }
+        const hasLocalGraphKey = sid === currentSessionId || !!localStorage.getItem('phymathia_graph_' + sid);
         const hasGraph = !!(g && ((Array.isArray(g.customNodes) && g.customNodes.length)
           || (Array.isArray(g.connections) && g.connections.length)
           || (Array.isArray(g.nodes) && g.nodes.length)));
-        empty = !(Array.isArray(msgs) && msgs.length > 0) && !hasGraph;
+        if (!hasGraph && (hasLocalGraphKey || _serverHasGraphContent(sid) === false)) {
+          empty = true;
+        }
       } catch (e) { empty = false; }
       _emptyBadgeCache.set(sid, empty);
       return empty;
+    }
+
+    // 同步口径是否变了某张画布的空/非空结论（服务端图内容量每轮批拉；别的设备
+    // 只写图不写消息时 sessions.json 不 bump，靠这个脏标记驱动列表重画）
+    let _badgeDirty = false;
+    async function _fetchServerGraphStats(sessionIds) {
+      if (!sessionIds || sessionIds.length === 0) return {};
+      try {
+        const resp = await fetch('/api/sessions/graph-stats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_ids: sessionIds }),
+          cache: 'no-cache',
+          // 超时兜底（T237 同款口径）：批量拉取挂死不该拖垮整轮同步
+          signal: AbortSignal.timeout(10000)
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          return (data && data.stats) || {};
+        }
+      } catch (e) { /* 静默：拿不到服务端口径时退回纯本地判定 */ }
+      return {};
     }
 
     // 空画布标记：虚线空方框（图形语义＝空画布，不用文字），整行淡化交给 CSS
@@ -1535,7 +1595,8 @@
         // 本地已有数据：先立即渲染本地会话（首屏不阻塞），再后台同步服务端
         await initSessionState();
         _syncFromServer().then((synced) => {
-          if (!synced) return;
+          if (!synced && !_badgeDirty) return;
+          _badgeDirty = false;
           loadSessions();
           renderSessionList();
         }).catch(() => {});

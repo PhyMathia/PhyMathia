@@ -1332,5 +1332,40 @@ class KnowledgeOrphanGateTest(RouteTestBase):
 
 
 
+
+class GraphStatsBatchTest(RouteTestBase):
+    """POST /api/sessions/graph-stats：空画布徽标的服务端口径（T305）。
+
+    图状态按需加载（只切进画布拉一次 graph:<sid>），前端 15 秒同步靠这个批量
+    口径判「有内容但未加载」，防止空徽标误伤别的设备/账号画的画布（实踩）。
+    """
+
+    def test_counts_zero_and_filtering(self):
+        sid_a = "sess_stats000000000000000000000"
+        sid_no = "sess_nostate000000000000000000"
+        storage_mod.kv_write("graph:" + sid_a, {
+            "customNodes": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "connections": [{"from": 1, "to": 2}],
+        })
+        resp = self.client.post("/api/sessions/graph-stats", json={
+            "session_ids": [sid_a, sid_no, "../etc/passwd", ""],
+        })
+        self.assertEqual(resp.status_code, 200)
+        stats = resp.json()["stats"]
+        self.assertEqual(stats[sid_a], {"custom": 3, "connections": 1, "nodes": 0})
+        self.assertEqual(stats[sid_no], {"custom": 0, "connections": 0, "nodes": 0})
+        # 白名单外 id（路径穿越/空串）过滤，不进响应
+        self.assertNotIn("../etc/passwd", stats)
+        self.assertNotIn("", stats)
+
+    def test_non_dict_state_degrades_to_zero(self):
+        sid = "sess_badstate000000000000000000"
+        storage_mod.kv_write("graph:" + sid, "not-a-dict")
+        resp = self.client.post("/api/sessions/graph-stats", json={"ids": [sid]})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json()["stats"][sid],
+            {"custom": 0, "connections": 0, "nodes": 0})
+
 if __name__ == "__main__":
     unittest.main()

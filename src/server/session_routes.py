@@ -502,6 +502,53 @@ async def api_get_messages_batch(request: Request):
     return {"messages": await asyncio.to_thread(_read_batch)}
 
 
+@router.post("/api/sessions/graph-stats")
+async def api_get_graph_stats(request: Request):
+    """一次读取多个会话的图状态内容量（customNodes/connections/nodes 计数），
+    供前端 15 秒同步判定「空画布」徽标。图状态按需加载（只切进画布拉一次
+    graph:<sid>），没在本机加载过的画布本地没有图状态键——不拿服务端口径就会
+    把「有内容但未加载」的画布误判为空（2026-10-13 用户实踩）。只回数量不回
+    内容，响应体积与一张图的大小脱钩。"""
+    payload = await _parse_json_object(request)
+
+    raw_ids = payload.get("session_ids") or payload.get("ids") or []
+    if isinstance(raw_ids, str):
+        raw_ids = [raw_ids]
+    session_ids = []
+    for raw_sid in raw_ids:
+        sid = str(raw_sid).strip()
+        # 与 messages-batch 同一把白名单，防止批量接口被用来做路径穿越
+        if storage._SESSION_ID_RE.match(sid):
+            session_ids.append(sid)
+        if len(session_ids) >= 500:
+            break
+
+    account = _account_id(request, payload)
+
+    def _read_batch():
+        result = {}
+        for sid in session_ids:
+            try:
+                state = storage.kv_read("graph:" + sid, None, account)
+            except Exception:
+                state = None
+            if not isinstance(state, dict):
+                state = {}
+
+            def _count(field):
+                value = state.get(field)
+                return len(value) if isinstance(value, list) else 0
+
+            result[sid] = {
+                "custom": _count("customNodes"),
+                "connections": _count("connections"),
+                "nodes": _count("nodes"),
+            }
+        return result
+
+    return {"stats": await asyncio.to_thread(_read_batch)}
+
+
 @router.get("/api/sessions/{session_id}/messages")
 async def api_get_messages(session_id: str, request: Request = None):
     try:

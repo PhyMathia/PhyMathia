@@ -46,19 +46,27 @@ export async function run() {
     return true;
   });
 
-  check('空画布徽标（2026-10-13 空会话治理）：判定含 customNodes/connections/nodes 口径＋两处渲染挂 is-empty＋写入点失效缓存', () => {
+  check('空画布徽标（2026-10-13 空会话治理）：三层判定（服务端图内容量优先／本地图键其次／未知不判空）＋两处渲染挂 is-empty＋写入点与口径变化失效缓存', () => {
     const src = fs.readFileSync('src/static/js/session.js', 'utf8');
-    const fn = src.match(/function _sessionIsEmpty\([\s\S]{0,1600}?\n    \}/);
+    const fn = src.match(/function _sessionIsEmpty\([\s\S]{0,2400}?\n    \}/);
     if (!fn) throw new Error('找不到 _sessionIsEmpty');
     for (const key of ['customNodes', 'connections', 'nodes']) {
       if (!fn[0].includes(key)) throw new Error('空判定漏了 ' + key + ' 口径（纯工作流画布没有消息但不能误判空）');
     }
+    if (!src.includes('if (!st) return null;')) throw new Error('_serverHasGraphContent 缺条目须回 null（未知）');
+    if (!fn[0].includes('hasLocalGraphKey')) throw new Error('空判定缺「本地图键说了算」层（未加载的画布不许本地拍空）');
+    const dirtyRefs = (src.match(/_badgeDirty/g) || []).length;
+    if (dirtyRefs < 6) throw new Error('_badgeDirty 脏标记须接通同步（设）＋15秒 tick＋启动后台同步（读/复位），实打 ' + dirtyRefs + ' 处引用');
+    if (!/Promise\.all\(\[[\s\S]{0,300}?_fetchServerGraphStats/.test(src)) {
+      throw new Error('同步链路没拉服务端图内容量（graph-stats 与 messages-batch 并行）');
+    }
+    if (!src.includes('/api/sessions/graph-stats')) throw new Error('缺 graph-stats 拉取调用');
     const badges = src.match(/\$\{empty \? SESSION_EMPTY_MARK : ''\}/g) || [];
     if (badges.length < 2) throw new Error('普通行与多选行的标题都要挂空徽标，实挂 ' + badges.length + ' 处');
     if ((src.match(/' is-empty' : ''}/g) || []).length < 2) throw new Error('两处 renderItem 都要挂 is-empty 类');
     const invalidations = src.match(/_emptyBadgeCache\.delete\(/g) || [];
     if (invalidations.length < 6) {
-      throw new Error('写入点（消息保存/图保存/服务端图拉回/清空/删除/同步拉回）都要失效徽标缓存，实打 ' + invalidations.length + ' 处');
+      throw new Error('写入点（消息保存/图保存/服务端图拉回/清空/删除/同步消息拉回）都要失效徽标缓存，实打 ' + invalidations.length + ' 处');
     }
     return true;
   });
