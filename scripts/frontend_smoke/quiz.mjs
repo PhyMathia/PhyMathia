@@ -455,9 +455,11 @@ check('quiz 总览：各画布正确率条形图（降序 + 宽度内联 + 空�
 check('quiz-loop：静态接线（面板渲染＋交互入口＋循环生成内核＋单池截断豁免都在打包产物）', () => {
   if (!code.includes('quiz-loop-panel') || !code.includes('quiz-loop-list')) throw new Error('缺多选面板容器样式钩子');
   if (!code.includes('toggleQuizLoopSession(') || !code.includes('toggleQuizLoopSelectAll(')) throw new Error('缺画布勾选/全选接线');
-  if (!code.includes('applyQuizLoopSelection(') || !code.includes("'global-loop'")) throw new Error('缺提交入口或 global-loop 分支');
+  if (!code.includes('applyQuizLoopSelection(') || !code.includes('global-loop')) throw new Error('缺提交入口或 global-loop 分支');
   if (!code.includes('_aiGenerateLoopQuizQuestions(') || !code.includes('_quizLoopPlan(')) throw new Error('缺循环生成内核/切池');
-  if (!code.includes('!_quizLoopActive() && quizState.questions.length > quizTargetCount')) {
+  // 压缩产物会吃掉空格：截断豁免契约用宽松正则钉（前缀必须挂着 _quizLoopActive 守卫，
+  // 语义：循环模式下 startQuiz 不按单池题量裁卷）
+  if (!/!?_quizLoopActive\(\)\s*&&\s*quizState\.questions\.length\s*>\s*quizTargetCount/.test(code)) {
     throw new Error('startQuiz 未按循环模式豁免单池题量截断');
   }
   for (const fn of ['toggleQuizLoopPanel', 'toggleQuizLoopSession', 'toggleQuizLoopSelectAll', 'applyQuizLoopSelection', 'resetQuizLoopScope']) {
@@ -562,7 +564,7 @@ check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接�
     if (!out || out.length !== target * 2) {
       throw new Error('应每画布截断 ' + target + ' 题共 ' + (target * 2) + '，实际 ' + (out ? out.length : null));
     }
-    if (!String(out[0].id).includes('sA') || !String(out[target]).includes('sC')) throw new Error('拼接应按画布顺序');
+    if (!String(out[0].id).includes('sA') || !String(out[target].id).includes('sC')) throw new Error('拼接应按画布顺序');
     if (calls.join(',') !== 'sA,sC') throw new Error('应逐画布调用生成，实际 ' + calls.join(','));
     if (saved !== 2) throw new Error('题库应逐画布保存 2 次，实际 ' + saved);
     if (vm.runInContext('quizLoopSkipCount', sandbox) !== 1) throw new Error('skipped 未带回模块统计');

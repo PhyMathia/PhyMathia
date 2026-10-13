@@ -2614,6 +2614,105 @@
       color: var(--text-primary);
     }
 
+    /* 多选画布循环出题（全局检测）：面板与 quiz-model-note 同族材质（border+surface-container），零新增色值 */
+    .quiz-loop-entry {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 6px 0 2px;
+    }
+
+    .quiz-loop-entry-note {
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+    }
+
+    .quiz-loop-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 10px 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      background: var(--surface-container);
+    }
+
+    .quiz-loop-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .quiz-loop-head-title {
+      color: var(--text-primary);
+      font-size: var(--fs-sm);
+    }
+
+    .quiz-loop-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 176px;
+      overflow-y: auto;
+    }
+
+    .quiz-loop-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+    }
+
+    .quiz-loop-row:hover {
+      background: var(--btn-hover-bg, transparent);
+    }
+
+    .quiz-loop-row input {
+      accent-color: var(--accent);
+      flex: none;
+    }
+
+    .quiz-loop-title {
+      color: var(--text-primary);
+      font-size: var(--fs-sm);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .quiz-loop-empty {
+      padding: 10px 0;
+      color: var(--text-secondary);
+      font-size: var(--fs-sm);
+      text-align: center;
+    }
+
+    .quiz-loop-foot {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+    }
+
+    .quiz-loop-hint {
+      opacity: 0.85;
+    }
+
+    .quiz-loop-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     html[data-theme="dark"] .quiz-modal,
     html[data-theme="dark"] .quiz-setting-row select,
     html[data-theme="dark"] .quiz-wrong-head select {

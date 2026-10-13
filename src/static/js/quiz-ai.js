@@ -3,6 +3,88 @@
 // 题库/错题跳转查看知识点后的返回现场（由 quiz-ui.js 消费）
 let quizReturnState = null;
 
+// 多选画布循环出题的当轮统计（_aiGenerateLoopQuizQuestions 写、两条生成入口读）：
+// skipped=无素材被跳过的画布数；aiCount/localCount=循环内两路题源各自的产出数（供 sourceMode 判定）
+let quizLoopSkipCount = 0;
+let quizLoopAiCount = 0;
+let quizLoopLocalCount = 0;
+
+// 循环出题是否生效：select 范围且勾了至少一张画布
+function _quizLoopActive() {
+  return quizScope === 'select' && quizSelectedSessions.size > 0;
+}
+
+// 把已过滤到选中画布的整池按画布切成子池（保持 getAllSessions 的名单序）。
+// 无素材的选中画布计入 skipped（含已删/未同步、不在名单里的），生成后提示「已跳过 N 个无素材画布」。
+function _quizLoopPlan(pool) {
+  const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+  const plan = [];
+  let skipped = 0;
+  const known = new Set();
+  for (const session of sessions) {
+    const id = session.id || session.sessionId || '';
+    if (!id) continue;
+    known.add(id);
+    if (!quizSelectedSessions.has(id)) continue;
+    const variants = new Set(_quizSessionIdVariants(id));
+    const subPool = {
+      knowledge: (pool.knowledge || []).filter(item => variants.has(item.sessionId || '')),
+      formulas: (pool.formulas || []).filter(item => variants.has(item.sessionId || ''))
+    };
+    if (!subPool.knowledge.length && !subPool.formulas.length) {
+      skipped++;
+      continue;
+    }
+    plan.push({ id, title: session.title || id, pool: subPool });
+  }
+  for (const id of quizSelectedSessions) {
+    if (!known.has(id)) skipped++;
+  }
+  return { plan, skipped };
+}
+
+// 循环出题内核：逐画布依次「AI 生成＋审题 → 本地补足 → 逐画布合并截断 → 入题库」，
+// 顺序拼接返回。每画布各出 quizTargetCount 题（默认 5），避免整池单次生成时大画布淹没小画布。
+// 题库保存与 sourceMode 素材（quizLoopAiCount/LocalCount/skipCount）都在本函数收口，
+// 两条外层入口拿到数组后不再整池 _mergeQuizQuestions/_saveQuizBank。
+async function _aiGenerateLoopQuizQuestions(loop, requestId) {
+  const { plan, skipped } = loop;
+  quizLoopSkipCount = skipped;
+  quizLoopAiCount = 0;
+  quizLoopLocalCount = 0;
+  const collected = [];
+  const seen = new Set();
+  for (let i = 0; i < plan.length; i++) {
+    if (requestId !== quizAiRequestId) return null;
+    const entry = plan[i];
+    const base = Math.round(i / plan.length * 80);
+    const ai = await _aiGenerateQuizQuestions(
+      entry.pool,
+      requestId,
+      QUIZ_AI_VERIFY_ENABLED,
+      `AI 正在为「${entry.title}」出题（${i + 1}/${plan.length}）…`,
+      base
+    );
+    if (requestId !== quizAiRequestId) return null;
+    if (ai && ai.length) {
+      quizLoopAiCount += ai.length;
+      _saveQuizBank(entry.pool, ai);
+    }
+    const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(entry.pool);
+    if (local.length) quizLoopLocalCount += local.length;
+    for (const q of _mergeQuizQuestions(ai || [], local)) {
+      const sig = _quizSignature(q);
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      collected.push(q);
+    }
+    if (quizState && quizState.aiPending && i + 1 < plan.length) {
+      quizState.aiProgress = Math.round((i + 1) / plan.length * 88);
+    }
+  }
+  return collected.length >= 2 ? collected : null;
+}
+
 function _pickQuizModel() {
   if (typeof getActiveModelForRole !== 'function') return null;
   return getActiveModelForRole('quiz') || getActiveModelForRole('agent');
@@ -276,7 +358,8 @@ function _sanitizeAIQuestions(raw, pool) {
   return result;
 }
 
-async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY_ENABLED) {
+// statusLabel/progressStart 只被循环出题用到（逐画布状态文案与进度基线），单池路径保持默认值不变
+async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY_ENABLED, statusLabel = '', progressStart = 5) {
   const model = _pickQuizModel();
   if (!model) return null;
   // 画像注入两路并行：显式（记忆薄弱点）＋隐式（行为画像 dashboard），各自静默降级
@@ -305,12 +388,12 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
   const guard = (typeof _quizAbortGuard === 'function') ? _quizAbortGuard(controller) : null;
   if (controller) quizAiController = controller;
   const context = _buildQuizGenerationContext(pool, implicit);
-  quizAiStatusText = 'AI 正在生成检测题…';
+  quizAiStatusText = statusLabel || 'AI 正在生成检测题…';
   quizAiLastError = '';
   if (quizState) {
-    quizState.aiProgress = 5;
+    quizState.aiProgress = Math.max(quizState.aiProgress || 0, progressStart);
     quizState.aiStage = 'generate';
-    _startQuizProgress(85);
+    _startQuizProgress(85, progressStart);
   }
   try {
     const resp = await fetch('/api/models/chat', {
@@ -334,7 +417,8 @@ async function _aiGenerateQuizQuestions(pool, requestId, verify = QUIZ_AI_VERIFY
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw = await _readModelStream(resp, received => {
       if (guard) guard.bump();
-      if (quizState) quizState.aiProgress = Math.min(85, 10 + Math.round(received / 1200 * 70));
+      // 取 max 保证单调：循环出题第 i 张画布的流式进度不得把上一张攒下的进度打回去
+      if (quizState) quizState.aiProgress = Math.max(quizState.aiProgress || 0, Math.min(85, 10 + Math.round(received / 1200 * 70)));
     });
     const questions = _sanitizeAIQuestions(raw, pool);
     if (questions.length < 2) {
@@ -776,16 +860,21 @@ async function _aiVerifyQuizQuestions(pool, questions) {
 async function _generateQuestions(pool) {
   const requestId = ++quizAiRequestId;
   if (quizAiController) quizAiController.abort();
+  // 循环出题：整池已按选中画布过滤，逐画布生成在 _aiGenerateLoopQuizQuestions 内完成
+  const loop = _quizLoopActive() ? _quizLoopPlan(pool) : null;
+  if (!loop) quizLoopSkipCount = 0;
   // 素材池为空时直接给出可行动的提示，不再把空素材发给模型（否则模型只能返回空题库）
-  const emptyPool = !(pool.knowledge || []).length && !(pool.formulas || []).length;
+  const emptyPool = loop ? !loop.plan.length : (!(pool.knowledge || []).length && !(pool.formulas || []).length);
   if (emptyPool && quizSourcePreference !== 'local') {
     quizAiLastError = '当前范围没有可出题的知识点/公式';
     if (quizState) {
       quizState.aiPending = false;
       quizState.aiProgress = 0;
       quizState.sourceMode = 'local';
-      quizState.aiNotice = '当前范围（画布检测=仅当前画布）没有可出题的知识点/公式；'
-        + '请改用「检测总览」中的「全局出题」，或先在画布对话中生成知识点，再重新出题';
+      quizState.aiNotice = loop
+        ? '选中的画布都没有可出题的知识点/公式；请先在画布对话中生成知识点，或改用「全部画布」'
+        : '当前范围（画布检测=仅当前画布）没有可出题的知识点/公式；'
+          + '请改用「检测总览」中的「全局出题」，或先在画布对话中生成知识点，再重新出题';
     }
     return [];
   }
@@ -794,51 +883,68 @@ async function _generateQuestions(pool) {
     quizState.aiProgress = 0;
     quizState.aiStage = 'generate';
   }
-  const ai = emptyPool ? [] : (await _aiGenerateQuizQuestions(pool, requestId) || []);
+  const ai = emptyPool
+    ? []
+    : (await (loop ? _aiGenerateLoopQuizQuestions(loop, requestId) : _aiGenerateQuizQuestions(pool, requestId)) || []);
   // 等待期间被新一代请求取代（useLocalQuiz/重新出题/重开检测）：放弃本次结果。
   // 不再写 quizState——否则迟到的续尾会把用户已开始的答题拽回第 1 题并清空回答记录
   if (requestId !== quizAiRequestId) return null;
-  const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool);
+  const local = loop ? [] : (quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool));
   if (quizState) quizState.aiPending = false;
-  if (ai.length) _saveQuizBank(pool, ai);
+  if (ai.length && !loop) _saveQuizBank(pool, ai);
   if (quizState) {
-    quizState.sourceMode = quizSourcePreference === 'ai'
-      ? 'ai'
-      : ai.length
-        ? (local.length ? 'mixed' : 'ai')
-        : 'local';
+    quizState.sourceMode = loop
+      ? (quizSourcePreference === 'ai'
+          ? 'ai'
+          : quizLoopAiCount ? (quizLoopLocalCount ? 'mixed' : 'ai') : 'local')
+      : (quizSourcePreference === 'ai'
+          ? 'ai'
+          : ai.length
+            ? (local.length ? 'mixed' : 'ai')
+            : 'local');
     const model = quizSourcePreference === 'local' ? null : _pickQuizModel();
     quizState.aiNotice = ai.length
-      ? ''
+      ? (quizLoopSkipCount ? '已跳过 ' + quizLoopSkipCount + ' 个无素材画布' : '')
       : quizSourcePreference === 'local'
-        ? (local.length ? '当前为仅本地模式' : '当前为仅本地模式，但本地题不足')
+        ? ((loop ? quizLoopLocalCount : local.length) ? '当前为仅本地模式' : '当前为仅本地模式，但本地题不足')
         : (model ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，已自动使用本地题；请检查出题模型/主模型的 API Key 和地址' : '未配置 AI 模型，已使用本地题');
   }
-  return _mergeQuizQuestions(ai, local);
+  // 循环模式返回的就是逐画布合并截断后的拼接（_mergeQuizQuestions 的整池截断会把 N×每画布题量裁回单池题量）
+  return loop ? ai : _mergeQuizQuestions(ai, local);
 }
 
 function _startQuizGeneration(pool) {
   const requestId = ++quizAiRequestId;
   if (quizAiController) quizAiController.abort();
-  const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool);
+  // 循环出题：local 逐画布生成后拼接（每画布已各自截断），AI 侧交给 _aiGenerateLoopQuizQuestions
+  const loop = _quizLoopActive() ? _quizLoopPlan(pool) : null;
+  if (!loop) quizLoopSkipCount = 0;
+  const local = loop
+    ? loop.plan.flatMap(sp => (quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(sp.pool)))
+    : (quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(pool));
   const model = quizSourcePreference === 'local' ? null : _pickQuizModel();
   const promise = model
-    ? _aiGenerateQuizQuestions(pool, requestId).then(ai => {
+    ? (loop ? _aiGenerateLoopQuizQuestions(loop, requestId) : _aiGenerateQuizQuestions(pool, requestId)).then(ai => {
         if (requestId !== quizAiRequestId || !quizState) return null;
-        if (ai) quizState.aiNotice = '';
-        if (ai && ai.length) _saveQuizBank(pool, ai);
-        const merged = _mergeQuizQuestions(ai || [], local);
+        if (ai) quizState.aiNotice = quizLoopSkipCount ? '已跳过 ' + quizLoopSkipCount + ' 个无素材画布' : '';
+        if (ai && ai.length && !loop) _saveQuizBank(pool, ai);
+        // 循环模式 ai 已是逐画布合并截断后的拼接，不得再过整池 _mergeQuizQuestions（会被裁回单池题量）
+        const merged = loop ? (ai || []) : _mergeQuizQuestions(ai || [], local);
         if (merged.length >= 2) {
           quizState.questions = merged;
         }
         quizState.aiPending = false;
         quizState.aiProgress = 100;
         quizState.aiStage = '';
-        quizState.sourceMode = quizSourcePreference === 'ai'
-          ? 'ai'
-          : ai && ai.length
-            ? (local.length ? 'mixed' : 'ai')
-            : 'local';
+        quizState.sourceMode = loop
+          ? (quizSourcePreference === 'ai'
+              ? 'ai'
+              : quizLoopAiCount ? (quizLoopLocalCount ? 'mixed' : 'ai') : 'local')
+          : (quizSourcePreference === 'ai'
+              ? 'ai'
+              : ai && ai.length
+                ? (local.length ? 'mixed' : 'ai')
+                : 'local');
         if (!ai) {
           quizState.aiNotice = quizSourcePreference === 'ai'
             ? 'AI 出题失败' + (quizAiLastError ? '（' + quizAiLastError + '）' : '') + '，当前为仅AI模式，暂无可用题；请检查出题模型/主模型的 API Key 和地址'

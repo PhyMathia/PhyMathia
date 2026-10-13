@@ -4,10 +4,12 @@ async function openQuiz(mode = 'session') {
   if (phyIsReadonly()) { phyReadonlyBlock('进行知识检测'); return; }
   const overlay = document.getElementById('quizModal');
   if (!overlay) return;
-  quizMode = mode === 'global' ? 'global' : 'session';
-  quizScope = quizMode === 'global' ? 'all' : 'current';
+  // 'global-loop' = 全局检测的多选画布循环出题：仍属 global 模式，只是素材范围收窄到勾选画布
+  quizMode = mode === 'global' || mode === 'global-loop' ? 'global' : 'session';
+  quizScope = mode === 'global-loop' ? 'select' : (quizMode === 'global' ? 'all' : 'current');
   quizBankFilterSession = '';
   quizFilterTopic = 'all';
+  if (mode !== 'global-loop') quizLoopPanelOpen = false;
   overlay.hidden = false;
   overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
@@ -25,7 +27,8 @@ async function openQuiz(mode = 'session') {
     quizBank = _readQuizBank();
     quizState = { phase: 'loading', pool };
     renderQuiz();
-    const bankQuestions = quizSourcePreference !== 'local' ? _bankForPool(pool) : null;
+    // 循环出题不吃题库快径：题库复用没有「每画布都被覆盖」的保证，循环的意义正是逐画布兜底
+    const bankQuestions = quizSourcePreference !== 'local' && !_quizLoopActive() ? _bankForPool(pool) : null;
     if (bankQuestions) {
       const local = quizSourcePreference === 'mixed' ? _generateQuizQuestions(pool) : [];
       const merged = _mergeQuizQuestions(bankQuestions, local);
@@ -258,6 +261,55 @@ if (!window._quizEscBound) {
   });
 }
 
+/* ====== 多选画布循环出题（全局检测）：面板交互 ====== */
+
+function toggleQuizLoopPanel() {
+  quizLoopPanelOpen = !quizLoopPanelOpen;
+  renderQuiz();
+}
+
+function toggleQuizLoopSession(encodedId) {
+  const id = decodeURIComponent(encodedId || '');
+  if (!id) return;
+  if (quizSelectedSessions.has(id)) quizSelectedSessions.delete(id);
+  else quizSelectedSessions.add(id);
+  renderQuiz();
+}
+
+function toggleQuizLoopSelectAll() {
+  const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+  const ids = sessions.map(s => s.id || s.sessionId || '').filter(Boolean);
+  if (!ids.length) return;
+  if (quizSelectedSessions.size >= ids.length) {
+    for (const id of ids) quizSelectedSessions.delete(id);
+  } else {
+    for (const id of ids) quizSelectedSessions.add(id);
+  }
+  renderQuiz();
+}
+
+async function applyQuizLoopSelection() {
+  if (!quizSelectedSessions.size) {
+    if (typeof showToast === 'function') showToast('请先勾选至少一张画布');
+    return;
+  }
+  quizLoopPanelOpen = true;
+  await openQuiz('global-loop');
+}
+
+// 放弃多选、回到全部画布口径（会重新拉素材并出一轮题，与题源切换同代价）
+function resetQuizLoopScope() {
+  quizSelectedSessions.clear();
+  quizLoopPanelOpen = false;
+  openQuiz('global');
+}
+
+window.toggleQuizLoopPanel = toggleQuizLoopPanel;
+window.toggleQuizLoopSession = toggleQuizLoopSession;
+window.toggleQuizLoopSelectAll = toggleQuizLoopSelectAll;
+window.applyQuizLoopSelection = applyQuizLoopSelection;
+window.resetQuizLoopScope = resetQuizLoopScope;
+
 function handleQuizBack() {
   if (!quizState) return;
   if (quizState.phase === 'loading' || quizState.phase === 'intro' || quizState.phase === 'global') {
@@ -279,7 +331,8 @@ async function startQuiz() {
     renderQuiz();
     return;
   }
-  if (quizState.questions.length > quizTargetCount) {
+  // 循环出题的卷面 = 每画布题量×画布数（生成端已逐画布截断），不得再按单池题量裁剪
+  if (!_quizLoopActive() && quizState.questions.length > quizTargetCount) {
     quizState.questions = quizState.questions.slice(0, quizTargetCount);
   }
   quizState.phase = 'question';
@@ -820,7 +873,10 @@ function changeQuizSourcePreference(value) {
   try {
     localStorage.setItem(STORAGE_KEY_QUIZ_SOURCE, next);
   } catch (e) {}
-  if (quizState && quizState.pool) openQuiz();
+  // 重建时保持当前范围（此前裸调 openQuiz() 会把全局/多选检测悄悄拽回画布检测）
+  if (quizState && quizState.pool) {
+    openQuiz(quizMode === 'global' ? (quizScope === 'select' ? 'global-loop' : 'global') : 'session');
+  }
 }
 
 function openQuizBank(filterSession = '') {
@@ -852,7 +908,12 @@ function useLocalQuiz() {
   if (quizAiController) quizAiController.abort();
   quizState.aiPending = false;
   quizState.aiPromise = null;
-  quizState.questions = _generateQuizQuestions(quizState.pool || { knowledge: [], formulas: [] });
+  const pool = quizState.pool || { knowledge: [], formulas: [] };
+  // 循环模式下也按画布逐个出本地题再拼接，保持「每画布都被覆盖」的口径
+  const loop = _quizLoopActive() ? _quizLoopPlan(pool) : null;
+  quizState.questions = loop && loop.plan.length
+    ? loop.plan.flatMap(sp => _generateQuizQuestions(sp.pool))
+    : _generateQuizQuestions(pool);
   if (!quizState.questions.length) {
     if (typeof showToast === 'function') showToast('本地题不足，暂无法生成');
     renderQuiz();

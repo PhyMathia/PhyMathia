@@ -28,6 +28,12 @@ let quizScope = 'current';
 
 let quizMode = 'session';
 
+// 多选画布循环出题（全局检测）：quizScope === 'select' 时生效。
+// 选中画布 id 存集合不存 DOM——intro 会被进度 tick 整份重画，勾选态必须跨重绘存活（对齐侧栏多选口径）。
+let quizSelectedSessions = new Set();
+
+let quizLoopPanelOpen = false;
+
 let quizBankFilterSession = '';
 
 // 兜底提示词：仅在 /quiz-prompt.md 加载失败（静态资源缺失/离线）时使用。
@@ -223,7 +229,7 @@ function _renderQuizMath(body) {
   }
 }
 
-function _startQuizProgress(max) {
+function _startQuizProgress(max, baseOverride) {
   if (!quizState) return;
   if (quizAiProgressTimer) clearInterval(quizAiProgressTimer);
   const startedAt = Date.now();
@@ -234,7 +240,7 @@ function _startQuizProgress(max) {
       return;
     }
     const elapsed = Date.now() - startedAt;
-    const base = quizState.aiStage === 'verify' ? 90 : 5;
+    const base = baseOverride != null ? baseOverride : (quizState.aiStage === 'verify' ? 90 : 5);
     const target = Math.min(max, base + Math.round(elapsed / 45000 * (max - base)));
     quizState.aiProgress = Math.max(quizState.aiProgress || 0, target);
     const fill = document.querySelector('#quizBody .quiz-ai-progress-fill');
@@ -391,10 +397,23 @@ function _quizItemInSession(item) {
   return ids.has(item.sessionId || '');
 }
 
+function _quizSelectedVariantSet() {
+  // 画布 id 与知识/公式条目上的 sessionId 可能是同画布的不同变体（长短号），
+  // 与检测总览的画布匹配同口径：按变体全集匹配，宁多认不漏认。
+  const set = new Set();
+  for (const id of quizSelectedSessions) {
+    for (const v of _quizSessionIdVariants(id)) set.add(v);
+  }
+  return set;
+}
+
 function _filterQuizMap(map) {
+  const selected = quizScope === 'select' ? _quizSelectedVariantSet() : null;
   const result = {};
   for (const [id, item] of Object.entries(map || {})) {
-    if (quizScope === 'all' || _quizItemInSession(item)) result[id] = item;
+    if (quizScope === 'all' || (selected ? selected.has(item.sessionId || '') : _quizItemInSession(item))) {
+      result[id] = item;
+    }
   }
   return result;
 }

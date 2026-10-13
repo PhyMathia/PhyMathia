@@ -1,5 +1,46 @@
 /* ====== 知识检测：面板渲染与导出 ====== */
 
+// 全局检测的多选画布面板：勾选态只渲染自 quizSelectedSessions（intro 会被进度 tick 整份重画）
+function _quizLoopPanelHtml() {
+  if (quizMode !== 'global') return '';
+  const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
+  const known = sessions.map(s => s.id || s.sessionId || '').filter(Boolean);
+  if (!quizLoopPanelOpen) {
+    return `<div class="quiz-loop-entry">
+      <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">多选画布循环出题</button>
+      ${quizScope === 'select' ? `<span class="quiz-loop-entry-note">循环中：已选 ${quizSelectedSessions.size} 张画布</span>` : ''}
+    </div>`;
+  }
+  // encodeURIComponent 不转义单引号，id 带引号会截断内联 onclick 字符串，补一道 %27
+  const attrId = id => encodeURIComponent(id || '').replace(/'/g, '%27');
+  const rows = sessions.map(session => {
+    const id = session.id || session.sessionId || '';
+    if (!id) return '';
+    return `<label class="quiz-loop-row">
+      <input type="checkbox" ${quizSelectedSessions.has(id) ? 'checked' : ''} onchange="toggleQuizLoopSession('${attrId(id)}')">
+      <span class="quiz-loop-title" title="${_quizEscape(session.title || id)}">${_quizEscape(session.title || id)}</span>
+    </label>`;
+  }).join('');
+  const selected = quizSelectedSessions.size;
+  const allChecked = known.length > 0 && selected >= known.length;
+  return `<div class="quiz-loop-panel">
+    <div class="quiz-loop-head">
+      <span class="quiz-loop-head-title">多选画布循环出题</span>
+      <button class="quiz-btn-secondary" onclick="toggleQuizLoopSelectAll()">${allChecked ? '全不选' : '全选'}</button>
+    </div>
+    <div class="quiz-loop-list">${rows || '<div class="quiz-loop-empty">暂无画布</div>'}</div>
+    <div class="quiz-loop-foot">
+      <span>已选 ${selected} 张 · 每画布 ${quizTargetCount} 题 · 共约 ${selected * quizTargetCount} 题</span>
+      <span class="quiz-loop-hint">逐画布依次出题，保证每张选中画布都被覆盖</span>
+    </div>
+    <div class="quiz-loop-actions">
+      <button class="quiz-btn-primary" ${selected ? '' : 'disabled'} onclick="applyQuizLoopSelection()">开始循环出题</button>
+      ${quizScope === 'select' ? '<button class="quiz-btn-secondary" onclick="resetQuizLoopScope()">改用全部画布</button>' : ''}
+      <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">收起</button>
+    </div>
+  </div>`;
+}
+
 function _renderQuizIntro() {
   const body = document.getElementById('quizBody');
   const stats = _quizStatSummary();
@@ -36,7 +77,9 @@ function _renderQuizIntro() {
   ).join('');
   const quizModel = _pickQuizModel();
   const quizModelLabel = quizModel ? (quizModel.label || quizModel.model || quizModel.provider) : '本地出题（未配置 AI 模型）';
-  const entryLabel = quizMode === 'global' ? '跨画布检测' : '画布检测';
+  const entryLabel = quizMode === 'global'
+    ? (quizScope === 'select' ? `跨画布检测·循环（${quizSelectedSessions.size} 画布）` : '跨画布检测')
+    : '画布检测';
   const sourceModeLabel = quizState && quizState.aiPending
     ? 'AI 生成中'
     : quizState && quizState.sourceMode === 'ai'
@@ -67,9 +110,10 @@ function _renderQuizIntro() {
         <option value="mixed" ${quizSourcePreference === 'mixed' ? 'selected' : ''}>AI+本地</option>
         <option value="local" ${quizSourcePreference === 'local' ? 'selected' : ''}>仅本地</option>
       </select>
-      <span>题量</span>
-      <select id="quizCountSelect" onchange="changeQuizQuestionCount()" title="改变题量会重新生成一组题（AI 模式下会调用一次模型）">${countOptions}</select>
+      <span>${quizScope === 'select' ? '每画布题量' : '题量'}</span>
+      <select id="quizCountSelect" onchange="changeQuizQuestionCount()" title="改变题量会重新生成一组题（AI 模式下会调用一次模型；循环出题时每张选中画布各按此题量出一组）">${countOptions}</select>
     </div>
+    ${_quizLoopPanelHtml()}
     <div class="quiz-start">
       <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
       <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="重新生成一组 AI 题（会调用一次模型）；不会删除AI题库">换一组题</button>
