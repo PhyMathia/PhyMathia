@@ -34,6 +34,11 @@ let quizSelectedSessions = new Set();
 
 let quizLoopPanelOpen = false;
 
+// 循环出题的逐画布进度（_aiGenerateLoopQuizQuestions 写、面板渲染读）：
+// items 按名单序带 status（wait/run/done/empty）与该画布最终题数；done/total 供收起态摘要。
+// 只在生成中（aiPending）显示徽标，生成结束回到素材统计口径。
+let quizLoopProgress = null;
+
 let quizBankFilterSession = '';
 
 // 兜底提示词：仅在 /quiz-prompt.md 加载失败（静态资源缺失/离线）时使用。
@@ -457,9 +462,11 @@ async function _fetchQuizData() {
 
   const localKnowledge = typeof getKnowledgeItems === 'function' ? getKnowledgeItems() : {};
   const localFormulas = typeof getFormulaCache === 'function' ? getFormulaCache() : {};
+  // 返回全量（local＋server 合并，不按 quizScope 过滤）：多选面板要统计每张画布的素材量，
+  // 过滤后的池看不到未选中画布；范围过滤由调用侧 _filterQuizMap 收口（openQuiz 是唯一调用方）
   return {
-    knowledge: { ..._filterQuizMap(localKnowledge), ..._filterQuizMap(serverKnowledge) },
-    formulas: { ..._filterQuizMap(localFormulas), ..._filterQuizMap(serverFormulas) }
+    knowledge: { ...localKnowledge, ...serverKnowledge },
+    formulas: { ...localFormulas, ...serverFormulas }
   };
 }
 

@@ -15,10 +15,12 @@ function _quizLoopActive() {
 }
 
 // 把已过滤到选中画布的整池按画布切成子池（保持 getAllSessions 的名单序）。
-// 无素材的选中画布计入 skipped（含已删/未同步、不在名单里的），生成后提示「已跳过 N 个无素材画布」。
+// 无素材的选中画布进 empties（渲染进度列表标「无素材」，不发起生成）；
+// 已删/未同步不在名单里的选中 id 只计入 skipped 总数（无处渲染）。
 function _quizLoopPlan(pool) {
   const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
   const plan = [];
+  const empties = [];
   let skipped = 0;
   const known = new Set();
   for (const session of sessions) {
@@ -32,6 +34,7 @@ function _quizLoopPlan(pool) {
       formulas: (pool.formulas || []).filter(item => variants.has(item.sessionId || ''))
     };
     if (!subPool.knowledge.length && !subPool.formulas.length) {
+      empties.push({ id, title: session.title || id });
       skipped++;
       continue;
     }
@@ -40,7 +43,7 @@ function _quizLoopPlan(pool) {
   for (const id of quizSelectedSessions) {
     if (!known.has(id)) skipped++;
   }
-  return { plan, skipped };
+  return { plan, empties, skipped };
 }
 
 // 循环出题内核：逐画布依次「AI 生成＋审题 → 本地补足 → 逐画布合并截断 → 入题库」，
@@ -48,15 +51,28 @@ function _quizLoopPlan(pool) {
 // 题库保存与 sourceMode 素材（quizLoopAiCount/LocalCount/skipCount）都在本函数收口，
 // 两条外层入口拿到数组后不再整池 _mergeQuizQuestions/_saveQuizBank。
 async function _aiGenerateLoopQuizQuestions(loop, requestId) {
-  const { plan, skipped } = loop;
-  quizLoopSkipCount = skipped;
+  const { plan, empties, skipped } = loop;
+  quizLoopSkipCount = skipped || 0;
   quizLoopAiCount = 0;
   quizLoopLocalCount = 0;
+  // 逐画布进度：面板按 id 查徽标（排队/正在出题/已完成/无素材）；代际作废不重置——
+  // 迟到的旧轮不该把新一轮的进度表冲回白纸
+  quizLoopProgress = {
+    items: [
+      ...((loop.empties || []).map(e => ({ id: e.id, title: e.title, status: 'empty', questions: 0 }))),
+      ...plan.map(p => ({ id: p.id, title: p.title, status: 'wait', questions: 0 })),
+    ],
+    done: 0,
+    total: plan.length,
+  };
   const collected = [];
   const seen = new Set();
   for (let i = 0; i < plan.length; i++) {
     if (requestId !== quizAiRequestId) return null;
     const entry = plan[i];
+    const progressItem = quizLoopProgress.items.find(it => it.id === entry.id);
+    if (progressItem) progressItem.status = 'run';
+    if (quizState && quizState.phase === 'intro') renderQuiz();
     const base = Math.round(i / plan.length * 80);
     const ai = await _aiGenerateQuizQuestions(
       entry.pool,
@@ -72,15 +88,23 @@ async function _aiGenerateLoopQuizQuestions(loop, requestId) {
     }
     const local = quizSourcePreference === 'ai' ? [] : _generateQuizQuestions(entry.pool);
     if (local.length) quizLoopLocalCount += local.length;
+    let entryCount = 0;
     for (const q of _mergeQuizQuestions(ai || [], local)) {
       const sig = _quizSignature(q);
       if (seen.has(sig)) continue;
       seen.add(sig);
       collected.push(q);
+      entryCount++;
     }
+    if (progressItem) {
+      progressItem.status = 'done';
+      progressItem.questions = entryCount;
+    }
+    quizLoopProgress.done = i + 1;
     if (quizState && quizState.aiPending && i + 1 < plan.length) {
       quizState.aiProgress = Math.round((i + 1) / plan.length * 88);
     }
+    if (quizState && quizState.phase === 'intro') renderQuiz();
   }
   return collected.length >= 2 ? collected : null;
 }

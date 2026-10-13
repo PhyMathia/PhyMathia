@@ -1,40 +1,84 @@
 /* ====== 知识检测：面板渲染与导出 ====== */
 
-// 全局检测的多选画布面板：勾选态只渲染自 quizSelectedSessions（intro 会被进度 tick 整份重画）
+// 全局检测的多选画布面板：勾选态只渲染自 quizSelectedSessions（intro 会被进度 tick 整份重画）。
+// 行右侧平时显示该画布素材量（勾选依据），循环生成中换成逐画布进度徽标（排队/正在出题/已完成/无素材）。
 function _quizLoopPanelHtml() {
   if (quizMode !== 'global') return '';
   const sessions = typeof window.getAllSessions === 'function' ? window.getAllSessions() : [];
   const known = sessions.map(s => s.id || s.sessionId || '').filter(Boolean);
+  const inLoop = !!(quizLoopProgress && quizState && quizState.aiPending && quizScope === 'select');
   if (!quizLoopPanelOpen) {
+    // 摘要为纯数字/静态词（无用户输入面），不走 _quizEscape——沙箱 DOM 代理下转义会失真
+    const note = inLoop
+      ? `多选出题中 ${quizLoopProgress.done}/${quizLoopProgress.total}`
+      : (quizScope === 'select' ? `多选出题：已选 ${quizSelectedSessions.size} 张画布` : '');
     return `<div class="quiz-loop-entry">
-      <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">多选画布循环出题</button>
-      ${quizScope === 'select' ? `<span class="quiz-loop-entry-note">循环中：已选 ${quizSelectedSessions.size} 张画布</span>` : ''}
+      <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">多选画布出题</button>
+      ${note ? `<span class="quiz-loop-entry-note">${note}</span>` : ''}
     </div>`;
   }
+  // 素材量统计按画布变体归集（rawPool 是未过滤的全量池，未选中画布也有数）
+  const materialBySession = new Map();
+  if (quizState && quizState.rawPool) {
+    const bump = (sessionId, key) => {
+      if (!sessionId) return;
+      const cur = materialBySession.get(sessionId) || { k: 0, f: 0 };
+      cur[key]++;
+      materialBySession.set(sessionId, cur);
+    };
+    for (const item of (quizState.rawPool.knowledge || [])) bump(item.sessionId, 'k');
+    for (const item of (quizState.rawPool.formulas || [])) bump(item.sessionId, 'f');
+  }
+  const progressMap = new Map((quizLoopProgress && quizLoopProgress.items || []).map(it => [it.id, it]));
+  const badgeLabels = { run: '正在出题…', wait: '排队中', done: '✓', empty: '无素材' };
   // encodeURIComponent 不转义单引号，id 带引号会截断内联 onclick 字符串，补一道 %27
   const attrId = id => encodeURIComponent(id || '').replace(/'/g, '%27');
   const rows = sessions.map(session => {
     const id = session.id || session.sessionId || '';
     if (!id) return '';
+    let metaHtml = '';
+    if (inLoop) {
+      const item = progressMap.get(id);
+      if (item) {
+        // 徽标文案为静态词＋数字（无用户输入面），不走 _quizEscape——沙箱 DOM 代理下转义会失真
+        const text = item.status === 'done' ? '✓ 已出 ' + item.questions + ' 题' : (badgeLabels[item.status] || '');
+        if (text) metaHtml = `<span class="quiz-loop-meta is-${item.status}">${text}</span>`;
+      }
+    }
+    if (!metaHtml) {
+      let k = 0;
+      let f = 0;
+      for (const v of _quizSessionIdVariants(id)) {
+        const c = materialBySession.get(v);
+        if (c) { k += c.k; f += c.f; }
+      }
+      const parts = [];
+      if (k) parts.push(k + ' 知识');
+      if (f) parts.push(f + ' 公式');
+      metaHtml = parts.length
+        ? `<span class="quiz-loop-meta">${parts.join(' · ')}</span>`
+        : '<span class="quiz-loop-meta is-empty">无素材</span>';
+    }
     return `<label class="quiz-loop-row">
       <input type="checkbox" ${quizSelectedSessions.has(id) ? 'checked' : ''} onchange="toggleQuizLoopSession('${attrId(id)}')">
       <span class="quiz-loop-title" title="${_quizEscape(session.title || id)}">${_quizEscape(session.title || id)}</span>
+      ${metaHtml}
     </label>`;
   }).join('');
   const selected = quizSelectedSessions.size;
   const allChecked = known.length > 0 && selected >= known.length;
   return `<div class="quiz-loop-panel">
     <div class="quiz-loop-head">
-      <span class="quiz-loop-head-title">多选画布循环出题</span>
+      <span class="quiz-loop-head-title">多选画布出题</span>
       <button class="quiz-btn-secondary" onclick="toggleQuizLoopSelectAll()">${allChecked ? '全不选' : '全选'}</button>
     </div>
     <div class="quiz-loop-list">${rows || '<div class="quiz-loop-empty">暂无画布</div>'}</div>
     <div class="quiz-loop-foot">
       <span>已选 ${selected} 张 · 每画布 ${quizTargetCount} 题 · 共约 ${selected * quizTargetCount} 题</span>
-      <span class="quiz-loop-hint">逐画布依次出题，保证每张选中画布都被覆盖</span>
+      <span class="quiz-loop-hint">逐张画布依次出题，保证每张选中画布都被覆盖</span>
     </div>
     <div class="quiz-loop-actions">
-      <button class="quiz-btn-primary" ${selected ? '' : 'disabled'} onclick="applyQuizLoopSelection()">开始循环出题</button>
+      <button class="quiz-btn-primary" ${selected ? '' : 'disabled'} onclick="applyQuizLoopSelection()">开始出题</button>
       ${quizScope === 'select' ? '<button class="quiz-btn-secondary" onclick="resetQuizLoopScope()">改用全部画布</button>' : ''}
       <button class="quiz-btn-secondary" onclick="toggleQuizLoopPanel()">收起</button>
     </div>
@@ -83,7 +127,7 @@ function _renderQuizIntro() {
   const quizModel = _pickQuizModel();
   const quizModelLabel = quizModel ? (quizModel.label || quizModel.model || quizModel.provider) : '本地出题（未配置 AI 模型）';
   const entryLabel = quizMode === 'global'
-    ? (quizScope === 'select' ? `跨画布检测·循环（${quizSelectedSessions.size} 画布）` : '跨画布检测')
+    ? (quizScope === 'select' ? `跨画布检测·多选（${quizSelectedSessions.size} 画布）` : '跨画布检测')
     : '画布检测';
   const sourceModeLabel = quizState && quizState.aiPending
     ? 'AI 生成中'
@@ -97,13 +141,13 @@ function _renderQuizIntro() {
   const ctaIsLoop = quizScope === 'select';
   const startHtml = awaitingScope
     ? `<div class="quiz-start">
-        <button class="quiz-btn-primary quiz-btn-large" onclick="${ctaIsLoop ? 'applyQuizLoopSelection()' : 'startGlobalQuizGeneration()'}">${ctaIsLoop ? '重新循环出题（已选 ' + quizSelectedSessions.size + ' 张）' : '开始出题（全部画布）'}</button>
+        <button class="quiz-btn-primary quiz-btn-large" onclick="${ctaIsLoop ? 'applyQuizLoopSelection()' : 'startGlobalQuizGeneration()'}">${ctaIsLoop ? '重新出题（已选 ' + quizSelectedSessions.size + ' 张）' : '开始出题（全部画布）'}</button>
         ${hasOpen ? '<button class="quiz-btn-primary" onclick="openOpenQuiz()">深度问答</button>' : ''}
         ${hasWrong ? `<button class="quiz-btn-primary" onclick="openWrongReview()">错题回顾(${hasWrong})</button>` : ''}
       </div>
       <div class="quiz-model-note">${ctaIsLoop
-        ? '将对已选的 ' + quizSelectedSessions.size + ' 张画布逐张循环出题，每画布 ' + quizTargetCount + ' 题'
-        : '点「开始出题」用全部画布素材混合出一组 ' + quizTargetCount + ' 题；或先在上方勾选画布，逐张循环出题（每张 ' + quizTargetCount + ' 题）'}</div>`
+        ? '将对已选的 ' + quizSelectedSessions.size + ' 张画布逐张出题，每画布 ' + quizTargetCount + ' 题'
+        : '点「开始出题」用全部画布素材混合出一组 ' + quizTargetCount + ' 题；或先在上方勾选画布，逐张出题（每张 ' + quizTargetCount + ' 题）'}</div>`
     : `<div class="quiz-start">
       <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
       <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="重新生成一组 AI 题（会调用一次模型）；不会删除AI题库">换一组题</button>

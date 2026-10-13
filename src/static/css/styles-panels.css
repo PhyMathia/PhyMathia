@@ -2685,6 +2685,26 @@
       white-space: nowrap;
     }
 
+    /* 行右侧元信息：平时＝素材量统计，循环生成中＝逐画布进度徽标（is-run 强调当前、is-empty 降灰） */
+    .quiz-loop-meta {
+      margin-left: auto;
+      flex: none;
+      color: var(--text-secondary);
+      font-size: var(--fs-xs);
+    }
+
+    .quiz-loop-meta.is-run {
+      color: var(--accent);
+    }
+
+    .quiz-loop-meta.is-empty {
+      opacity: 0.6;
+    }
+
+    .quiz-loop-meta.is-done {
+      color: var(--success, var(--text-secondary));
+    }
+
     .quiz-loop-empty {
       padding: 10px 0;
       color: var(--text-secondary);

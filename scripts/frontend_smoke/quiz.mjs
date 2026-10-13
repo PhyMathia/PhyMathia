@@ -516,6 +516,9 @@ check('quiz-loop：切池按画布分组、保持名单序、无素材与名单�
     if (loop.plan.length !== 2) throw new Error('应只切出 2 个有素材画布，实际 ' + loop.plan.length);
     if (loop.plan[0].id !== 'sA' || loop.plan[1].id !== 'sC') throw new Error('切池应保持名单序，实际 ' + loop.plan.map(p => p.id).join(','));
     if (loop.skipped !== 2) throw new Error('无素材 sB＋名单外 sGhost 应计入 skipped=2，实际 ' + loop.skipped);
+    if (!loop.empties || loop.empties.length !== 1 || loop.empties[0].id !== 'sB') {
+      throw new Error('无素材选中画布应进 empties 供进度列表渲染');
+    }
     if (loop.plan[0].pool.knowledge.length !== 2 || loop.plan[0].pool.formulas.length !== 1) throw new Error('sA 子池切分不对');
     if (loop.plan[1].pool.knowledge.length !== 1 || loop.plan[1].pool.formulas.length !== 0) throw new Error('sC 子池切分不对');
     if (pool.knowledge.length !== 4) throw new Error('不得改动传入整池');
@@ -526,7 +529,7 @@ check('quiz-loop：切池按画布分组、保持名单序、无素材与名单�
   return true;
 });
 
-check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接＋逐画布入库＋代际作废', async () => {
+check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接＋逐画布入库＋代际作废＋进度表', async () => {
   const realGen = sandbox._aiGenerateQuizQuestions;
   const realSave = sandbox._saveQuizBank;
   const prevPref = vm.runInContext('quizSourcePreference', sandbox);
@@ -557,6 +560,7 @@ check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接�
         { id: 'sA', title: '甲', pool: { knowledge: [{ id: 'k1', title: '甲定律', sessionId: 'sA' }], formulas: [] } },
         { id: 'sC', title: '丙', pool: { knowledge: [{ id: 'k3', title: '丙定律', sessionId: 'sC' }], formulas: [] } },
       ],
+      empties: [{ id: 'sB', title: '乙' }],
       skipped: 1,
     };
     const target = vm.runInContext('quizTargetCount', sandbox);
@@ -569,6 +573,13 @@ check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接�
     if (calls.join(',') !== 'sA,sC') throw new Error('应逐画布调用生成，实际 ' + calls.join(','));
     if (saved !== 2) throw new Error('题库应逐画布保存 2 次，实际 ' + saved);
     if (vm.runInContext('quizLoopSkipCount', sandbox) !== 1) throw new Error('skipped 未带回模块统计');
+    // 进度表：跑完后全 done（带各自题数）＋无素材画布标 empty
+    const progress = vm.runInContext('quizLoopProgress', sandbox);
+    const byId = new Map(progress.items.map(it => [it.id, it]));
+    if (progress.done !== 2 || progress.total !== 2) throw new Error('进度计数应 2/2，实际 ' + progress.done + '/' + progress.total);
+    if (byId.get('sA').status !== 'done' || byId.get('sA').questions !== target) throw new Error('sA 应 done 带题数 ' + target);
+    if (byId.get('sC').status !== 'done' || byId.get('sC').questions !== target) throw new Error('sC 应 done 带题数');
+    if (byId.get('sB').status !== 'empty') throw new Error('无素材画布应标 empty');
     // 代际作废：过期 requestId 不发起任何生成就返回 null
     calls.length = 0;
     const stale = await sandbox._aiGenerateLoopQuizQuestions(loop, reqId - 999);
@@ -577,7 +588,56 @@ check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接�
   } finally {
     sandbox._aiGenerateQuizQuestions = realGen;
     sandbox._saveQuizBank = realSave;
-    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}`, sandbox);
+    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}; quizLoopProgress = null`, sandbox);
+  }
+  return true;
+});
+
+check('quiz-loop：面板行显示素材量统计（rawPool 全量口径），生成中换进度徽标＋收起态摘要', () => {
+  const realGetAll = sandbox.window.getAllSessions;
+  sandbox.window.getAllSessions = () => [
+    { id: 'sA', title: '力学' },
+    { id: 'sB', title: '空画布' },
+  ];
+  // 本用例与 async 用例并发跑：quizState/quizLoopProgress 必须恢复原引用而不是硬置 null
+  //（否则把挂起中的循环生成用例刚写好的进度表冲掉，null.done 崩）
+  const prev = vm.runInContext('JSON.stringify({mode: quizMode, scope: quizScope, panel: quizLoopPanelOpen})', sandbox);
+  const prevState = vm.runInContext('quizState', sandbox);
+  const prevProgress = vm.runInContext('quizLoopProgress', sandbox);
+  sandbox.__prevQuizState = prevState;
+  sandbox.__prevQuizProgress = prevProgress;
+  try {
+    vm.runInContext(`quizMode = 'global'; quizScope = 'all'; quizLoopPanelOpen = true; quizLoopProgress = null;
+      quizState = { phase: 'intro', aiPending: false, pool: { knowledge: [], formulas: [] },
+        rawPool: { knowledge: [
+          { id: 'k1', title: 'a', sessionId: 'sA' }, { id: 'k2', title: 'b', sessionId: 'sA' }, { id: 'k3', title: 'c', sessionId: 'sA' },
+        ], formulas: [{ id: 'f1', latex: 'F=ma', sessionId: 'sA' }] },
+        questions: [{ id: 'q1' }] }`, sandbox);
+    const html = sandbox._quizLoopPanelHtml();
+    if (!html.includes('3 知识 · 1 公式')) throw new Error('素材统计未按 rawPool 全量显示：' + html.slice(html.indexOf('力学'), html.indexOf('力学') + 120));
+    if (!html.includes('无素材')) throw new Error('空画布应标无素材');
+    if (!html.includes('>开始出题</button>')) throw new Error('面板按钮文案应为「开始出题」');
+    if (html.includes('quiz-loop-meta is-run')) throw new Error('非生成中不应出进度徽标');
+    // 生成中（select 口径）：徽标替换素材统计
+    vm.runInContext(`quizScope = 'select'; quizState.aiPending = true;
+      quizLoopProgress = { items: [
+        { id: 'sA', title: '力学', status: 'done', questions: 5 },
+        { id: 'sB', title: '空画布', status: 'empty', questions: 0 },
+      ], done: 1, total: 1 }`, sandbox);
+    const html2 = sandbox._quizLoopPanelHtml();
+    if (!html2.includes('✓ 已出 5 题')) throw new Error('完成徽标缺失');
+    if (!html2.includes('无素材')) throw new Error('无素材徽标缺失');
+    if (html2.includes('3 知识')) throw new Error('生成中不应再显示素材统计');
+    // 收起态摘要
+    vm.runInContext('quizLoopPanelOpen = false', sandbox);
+    const entry = sandbox._quizLoopPanelHtml();
+    if (!entry.includes('多选出题中 1/1')) throw new Error('收起态应显示进度摘要');
+    if (!entry.includes('多选画布出题')) throw new Error('入口按钮文案应为「多选画布出题」');
+  } finally {
+    if (realGetAll) sandbox.window.getAllSessions = realGetAll; else delete sandbox.window.getAllSessions;
+    vm.runInContext(`const p = ${JSON.stringify(prev)}; quizMode = p.mode; quizScope = p.scope; quizLoopPanelOpen = p.panel; quizLoopProgress = __prevQuizProgress; quizState = __prevQuizState`, sandbox);
+    delete sandbox.__prevQuizState;
+    delete sandbox.__prevQuizProgress;
   }
   return true;
 });

@@ -23,9 +23,15 @@ async function openQuiz(mode = 'session') {
       _loadQuizBankFromServer(),
       _fetchQuizData()
     ]);
-    const pool = _buildQuizPool(data);
+    // _fetchQuizData 返回全量（面板要统计未选中画布的素材量）：这里按当前范围过滤后再建池，
+    // 全量池另存 quizState.rawPool 供多选面板逐画布计数
+    const pool = _buildQuizPool({
+      knowledge: _filterQuizMap(data.knowledge),
+      formulas: _filterQuizMap(data.formulas)
+    });
+    const rawPool = _buildQuizPool(data);
     quizBank = _readQuizBank();
-    quizState = { phase: 'loading', pool };
+    quizState = { phase: 'loading', pool, rawPool };
     renderQuiz();
     // 循环出题不吃题库快径：题库复用没有「每画布都被覆盖」的保证，循环的意义正是逐画布兜底
     const bankQuestions = quizSourcePreference !== 'local' && !_quizLoopActive() ? _bankForPool(pool) : null;
@@ -35,6 +41,7 @@ async function openQuiz(mode = 'session') {
       quizState = {
         phase: 'intro',
         pool,
+        rawPool,
         questions: merged,
         aiPromise: null,
         aiPending: false,
@@ -58,6 +65,7 @@ async function openQuiz(mode = 'session') {
       quizState = {
         phase: 'intro',
         pool,
+        rawPool,
         questions: generation ? generation.local : [],
         aiPromise: generation ? generation.promise : null,
         aiPending: !!generation,
