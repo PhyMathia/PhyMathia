@@ -242,7 +242,32 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
 
   const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
-  await _generateAnalysis(liveAnswer);
+  // T299：问题分析这一段过去整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow
+  // 开工才启用，而分析恰恰是全程最长的一段（免费模型动辄几十秒），用户点了没反应；
+  // analysis 的 fetch 也没接任何可被总闸 abort 的 signal，按钮即便可用也停不掉。
+  // 开工先撑伞：busy 标志＋控制器＋停止按钮三件与 _executeParallelWorkflow 同一套口径，
+  // 分析被停就止步——不建模块、不收尾提取，画布上留下半截分析待用户重试。
+  workflowRunActive = true;
+  workflowAbortController = new AbortController();
+  _setWorkflowStopButton(true);
+  const analysisController = new AbortController();
+  workflowInFlightControllers.add(analysisController);
+  try {
+    await _generateAnalysis(liveAnswer, analysisController.signal);
+  } finally {
+    workflowInFlightControllers.delete(analysisController);
+  }
+  const analysisStopped = analysisController.signal.aborted;
+  // 收伞：没被停的话 _executeParallelWorkflow 会另起一把（模块阶段自己的闸）
+  workflowAbortController = null;
+  workflowRunActive = false;
+  _setWorkflowStopButton(false);
+  if (analysisStopped) {
+    workflowLastAborted = true;
+    // 排队那条「提问」若在（handoffTaskId），就地结掉——不然永远挂在等待中
+    if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'stopped', '已停止');
+    return;
+  }
 
   const liveAnswer2 = _findGraphNode(template.answerNode.id);
   if (!liveAnswer2 || !(liveAnswer2.analysis || '').trim()) {

@@ -214,6 +214,10 @@ let workflowAbortController = null;
 let workflowRunActive = false;
 // 上一轮工作流是否被用户停掉（T285）：收尾提取等「跑完才该做的事」以此为闸。
 let workflowLastAborted = false;
+// 在跑节点各自 AbortController 的登记簿（T299）：总闸 stopWorkflowRun 按下时要连
+// 正在流的节点一起掐断。只结总账不管它们的话，最多 6 颗并行节点会各自把当前这一轮
+// 流式跑完才收工——用户点了「停止生成」还在出字，等于按钮失灵。
+let workflowInFlightControllers = new Set();
 const WORKFLOW_MAX_CONCURRENCY = 6;
 let workflowProgressActive = new Set();
 let _graphMermaidTimer = null;

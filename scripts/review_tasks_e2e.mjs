@@ -405,6 +405,129 @@ try {
     ok('全部清空真停（T285）：两本账全空、停后 6s mock 零新请求（基线 ' + hitsBefore + '），总闸已收');
   } catch (e) { bad('全部清空停整条工作流（T285）', e); }
 
+  // ⑥e 分析段停止（T299）：问题分析这一段（_generateAnalysis，全程最长的一段）过去
+  // 整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow 开工才启用，用户原话
+  // 「停止生成按钮似乎失效了」首先就是它。判尺：analysis 已出字时顶栏按钮必须是可点的，
+  // 点了之后 analysis 长度冻住、节点落 waiting（只有 AbortError 走这条，跑完是 done），
+  // 伞收掉按钮回禁用态。分析段被停时模块还没建、工作流行还没开，面板无行属预期语义。
+  try {
+    await waitMockQuiet();
+    await page.evaluate(() => { window.startQuestionWorkflow('第六条（停分析段）'); });
+    const dl = Date.now() + 30000;
+    let picked = null;
+    while (Date.now() < dl) {
+      picked = await page.evaluate(() => {
+        const n = graphView.nodes.find(x => x.kind === 'answer' && x.busy && (x.analysis || '').length > 0);
+        return n ? { id: n.id, len: n.analysis.length, stopDisabled: document.getElementById('stopBtn').disabled } : null;
+      });
+      if (picked) break;
+      await wait(400);
+    }
+    if (!picked) throw new Error('等不到 analysis 流式出字——工作流没跑起来');
+    if (picked.stopDisabled !== false) throw new Error('分析跑着顶栏停止按钮却是禁用态：用户点不到（伞没撑到分析段）');
+    const nodeId = picked.id;
+    const hitsBefore = mockHits;
+    await page.evaluate(() => { document.getElementById('stopBtn').click(); });
+    const dl2 = Date.now() + 20000;
+    let st = '';
+    while (Date.now() < dl2) {
+      st = await page.evaluate((id) => {
+        const n = graphView.nodes.find(x => String(x.id) === String(id));
+        return n ? n.status + '|' + (n.analysis || '').length : 'gone';
+      }, nodeId);
+      if (st !== 'running' && st !== 'gone') break;
+      await wait(300);
+    }
+    if (!/^waiting\|/.test(st)) throw new Error('点了顶栏停止，在跑的 analysis 没被掐断（落 ' + st + '，跑完才是 done）');
+    const frozenLen = Number(st.split('|')[1]);
+    await wait(3000);   // 流若还活着，3s 按 400ms/片至少再吐 7 片≈70 字
+    const afterLen = await page.evaluate((id) => {
+      const n = graphView.nodes.find(x => String(x.id) === String(id));
+      return n ? (n.analysis || '').length : -1;
+    }, nodeId);
+    if (afterLen !== frozenLen) throw new Error('停止后 analysis 还在长：被停的流没断（' + frozenLen + ' -> ' + afterLen + '）');
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); await wait(300); }
+    const umb = await page.evaluate(() => ({
+      stopDisabled: document.getElementById('stopBtn').disabled,
+      runActive: workflowRunActive,
+      reg: workflowInFlightControllers.size,
+      row: [...document.querySelectorAll('#taskPanelBody .task-item')].filter(el => /第六条/.test(el.textContent)).length,
+    }));
+    if (umb.stopDisabled !== true) throw new Error('停完伞没收：顶栏停止按钮还亮着（没有在跑的活儿了）');
+    if (umb.runActive) throw new Error('停完 busy 标志没收：workflowRunActive 仍为 true');
+    if (umb.reg !== 0) throw new Error('在跑登记簿没收干净：剩 ' + umb.reg + ' 颗');
+    if (umb.row !== 0) throw new Error('分析段被停不该留下工作流行（模块还没建、行还没开），实际 ' + umb.row + ' 行');
+    await wait(4000);   // 观察窗：总闸真收了才零新请求
+    if (mockHits !== hitsBefore) throw new Error('停了但后台还在发请求：' + hitsBefore + ' -> ' + mockHits);
+    ok('分析段可停（T299）：按钮可点、analysis 冻在 ' + frozenLen + ' 字、节点落 waiting、伞收起、停后 4s mock 零新请求');
+  } catch (e) { bad('分析段可停（T299）', e); }
+
+  // ⑥f 模块段在跑流（T299 的另一半）：总闸过去只断 workflowAbortController，正在流的
+  // 节点各拿自己的 controller，各自跑完才收工。判尺同 ⑥e，但这趟行真的开了（分析跑完、
+  // 模块开工），停完必须落「已停止/手动停止」，抓到的那颗 busy 模块必须落 waiting 且
+  // 正文冻住——不是 done（自己跑完的）。
+  try {
+    await waitMockQuiet();
+    await page.evaluate(() => { window.startQuestionWorkflow('第七条（停模块段）'); });
+    if (!(await panelOpen())) { await page.click('#taskPanelBtn'); await wait(300); }
+    const dl = Date.now() + 40000;
+    let picked = null;
+    while (Date.now() < dl) {
+      picked = await page.evaluate(() => {
+        const item = [...document.querySelectorAll('#taskPanelBody .task-item')]
+          .find(el => /第七条/.test(el.textContent));
+        const running = item ? /state-running/.test(item.className) : false;
+        const n = graphView.nodes.find(x => x.kind === 'module' && x.busy && (x.content || '').length > 0);
+        return (running && n)
+          ? { id: n.id, len: n.content.length, stopDisabled: document.getElementById('stopBtn').disabled }
+          : null;
+      });
+      if (picked) break;
+      await wait(400);
+    }
+    if (!picked) throw new Error('等不到模块开工（行 running + 模块流式出字）');
+    if (picked.stopDisabled !== false) throw new Error('模块跑着顶栏停止按钮却是禁用态');
+    const nodeId = picked.id;
+    const hitsBefore = mockHits;
+    await page.evaluate(() => { document.getElementById('stopBtn').click(); });
+    const dl2 = Date.now() + 25000;
+    let st = '';
+    while (Date.now() < dl2) {
+      st = await page.evaluate((id) => {
+        const n = graphView.nodes.find(x => String(x.id) === String(id));
+        return n ? n.status + '|' + (n.content || '').length : 'gone';
+      }, nodeId);
+      if (st !== 'running' && st !== 'gone') break;
+      await wait(300);
+    }
+    if (!/^waiting\|/.test(st)) throw new Error('点了顶栏停止，在跑的模块流没被掐断（落 ' + st + '，跑完才是 done）');
+    const frozenLen = Number(st.split('|')[1]);
+    await wait(3000);
+    const afterLen = await page.evaluate((id) => {
+      const n = graphView.nodes.find(x => String(x.id) === String(id));
+      return n ? (n.content || '').length : -1;
+    }, nodeId);
+    if (afterLen !== frozenLen) throw new Error('停止后模块正文还在长：被停的流没断（' + frozenLen + ' -> ' + afterLen + '）');
+    const dl3 = Date.now() + 20000;
+    let settled = '';
+    while (Date.now() < dl3) {
+      settled = await page.evaluate(() => {
+        const h = _taskHistory.find(t => /第七条/.test(t.title));
+        return h ? h.state + '|' + h.note : '';
+      });
+      if (/^stopped\|/.test(settled)) break;
+      await wait(300);
+    }
+    if (settled !== 'stopped|手动停止') throw new Error('行没落「已停止/手动停止」：' + settled);
+    await wait(4000);   // 观察窗
+    if (mockHits !== hitsBefore) throw new Error('停了但后台还在发请求：' + hitsBefore + ' -> ' + mockHits);
+    if (await page.evaluate(() => workflowRunActive)) throw new Error('总闸没收：workflowRunActive 仍为 true');
+    const leftReg = await page.evaluate(() => workflowInFlightControllers.size);
+    if (leftReg !== 0) throw new Error('在跑登记簿没收干净：剩 ' + leftReg + ' 颗（泄漏会让之后的总闸 abort 到旧 controller）');
+    ok('模块段在跑流可停（T299）：正文冻在 ' + frozenLen + ' 字、节点落 waiting、行落已停止/手动停止、停后 4s mock 零新请求、登记簿清零');
+  } catch (e) { bad('模块段在跑流可停（T299）', e); }
+
+
   // ⑦ 忙的时候点节点生成 = 排队（2026-10-11；用户：「设置了任务列表就是想要可以排队」）
   // 旧行为是 toast 挡回去「稍候再单独生成这个节点」——点了等于没点，也没有账。
   try {

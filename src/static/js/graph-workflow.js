@@ -606,6 +606,8 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   if (shouldCount) _markWorkflowCurrentNode(node);
   // 每颗节点一个 controller：面板上的「停」只掐这一颗，不惊动同轮的其他节点
   const nodeController = new AbortController();
+  // 登记进登记簿：总闸按下时 stopWorkflowRun 要能连这颗在跑的节点一起掐断（T299）
+  workflowInFlightControllers.add(nodeController);
   if (runtime) {
     runtime.nodeControllers.set(node.id, nodeController);
     if (_workflowGlobalAborted()) nodeController.abort();
@@ -635,6 +637,8 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   const nodeStopped = nodeController.signal.aborted && !globalAborted;
   const aborted = globalAborted || nodeStopped;
   if (runtime) runtime.nodeControllers.delete(node.id);
+  // 摘登记（正常完成/失败/被单停都走这儿；被总闸掐断的也走这儿——见上面 catch 后直落）
+  workflowInFlightControllers.delete(nodeController);
   if (nodeStopped) {
     // 用户停掉了这一颗：它自己算失败（不再重试），下游按「上游缺失」传播
     if (runtime) runtime.userStopped = (runtime.userStopped || 0) + 1;
@@ -938,6 +942,10 @@ async function runAllWorkflowNodes() {
 
 function stopWorkflowRun() {
   if (workflowAbortController) workflowAbortController.abort();
+  // T299：在跑的节点一起掐断。总闸只断自己的话，这最多 6 颗并行节点会各自把当前这
+  // 一流式跑完（免费模型一颗几十秒到几分钟），用户点了「停止生成」还在出字——
+  // 按钮全程有反应、活儿不停，就是按钮失灵的样子。
+  workflowInFlightControllers.forEach(function(controller) { controller.abort(); });
 }
 
 function _renderBlankNodeLive(node, content) {

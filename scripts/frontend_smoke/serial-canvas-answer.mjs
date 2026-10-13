@@ -376,6 +376,57 @@ check('工作流停链：任务行 canceller 绑在总闸 stopWorkflowRun 上（
   }
 });
 
+// T299：总闸 stopWorkflowRun 必须连在跑的节点一起掐断。2026-09-27 d74809c 给每颗节点
+// 配了自己的 controller 之后，总闸只断 workflowAbortController：还没派工的节点在
+// runWorker 循环顶部被拦下，正在流的那几颗（最多 6 颗并行）却各自跑完才收工——用户
+// 点了「停止生成」还在出字，实测症状就是「按钮失效」。行为半在沙箱里真的调一次
+// stopWorkflowRun（注入两颗假 controller 看是否被 abort）。
+check('工作流停止：总闸必须连在跑的节点一起掐断（T299）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  // 静态半①：节点开工登记、收工摘除（漏任一半都会重演/泄漏）
+  const nodeBody = extract(wfSrc, '_runWorkflowNodeConcurrent');
+  if (nodeBody === null) throw new Error('找不到 _runWorkflowNodeConcurrent——断言本身该更新了');
+  if (!nodeBody.includes('new AbortController()')) {
+    throw new Error('抽到的函数体不完整（缺节点 controller 创建），判定会漏——断言本身坏了');
+  }
+  if (!nodeBody.includes('workflowInFlightControllers.add(nodeController)')) {
+    throw new Error('在跑节点没登记进登记簿：总闸够不着正在流的节点，点了停止它自己跑完（T299）');
+  }
+  if (!nodeBody.includes('workflowInFlightControllers.delete(nodeController)')) {
+    throw new Error('节点收工没摘登记：登记簿只涨不消，下一轮总闸会去 abort 早已结束的 controller（T299）');
+  }
+  // 静态半②：总闸函数体必须广播到登记簿
+  const stopBody = extract(wfSrc, 'stopWorkflowRun');
+  if (stopBody === null) throw new Error('找不到 stopWorkflowRun——断言本身该更新了');
+  if (!stopBody.includes('workflowAbortController') || !stopBody.includes('workflowInFlightControllers')) {
+    throw new Error('stopWorkflowRun 没管登记簿：在跑节点不会随总闸中断（T299）');
+  }
+  // 行为半：沙箱里真调一次 stopWorkflowRun，两颗在跑 controller 必须被 abort
+  const evalC = (c) => vm.runInContext(c, sandbox);
+  evalC('__wfSrc1 = { aborted:false, abort(){ this.aborted = true; } };'
+      + '__wfSrc2 = { aborted:false, abort(){ this.aborted = true; } };');
+  evalC('workflowInFlightControllers = new Set([__wfSrc1, __wfSrc2]);');
+  evalC('workflowAbortController = { signal:{aborted:false}, abort(){ this.signal.aborted = true; } };');
+  evalC('stopWorkflowRun();');
+  if (!evalC('__wfSrc1.aborted') || !evalC('__wfSrc2.aborted')) {
+    throw new Error('stopWorkflowRun 没掐断在跑节点：点了停止生成，正在流的节点继续跑（T299）');
+  }
+  if (!evalC('workflowAbortController.signal.aborted')) {
+    throw new Error('stopWorkflowRun 连总闸都没断——行为回归（T285/T299）');
+  }
+  evalC('workflowInFlightControllers = new Set(); workflowAbortController = null;');
+});
+
 // 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
 // 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
 // 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。
