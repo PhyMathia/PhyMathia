@@ -373,17 +373,63 @@ check('harness：澄清重跑委托主路径 / 零勾选不回退应用全部 / 
   return true;
 });
 
-check('quiz 总览：占比环改中空环形（donut 结构 + 角度=题量），图例只带题量不带正确率', () => {
-  const html = sandbox._quizDonutHtml([
+check('quiz 总览：占比环改 SVG 逐扇区（角度=题量、中心读数叠层、图例带 data-idx 不带正确率）', () => {
+  const segs = [
     { label: '甲画布', value: 3, correctRate: 67, color: 'red' },
     { label: '乙画布', value: 1, correctRate: 100, color: 'blue' },
-  ]);
-  if (!html.includes('quiz-chart-donut-fill')) throw new Error('缺环形填充层');
-  // 4 题中甲占 3 → 0%~75%，乙 75%~100%；角度必须跟题量走
-  if (!html.includes('conic-gradient(red 0% 75%, blue 75% 100%)')) throw new Error('扇区角度未按题量切分: ' + html);
+  ];
+  const html = sandbox._quizDonutHtml(segs);
+  if (!html.includes('quiz-chart-donut-svg')) throw new Error('缺 SVG 环');
+  // 4 题中甲占 3 → 边界 0/75/100；角度必须跟题量走
+  if (JSON.stringify(sandbox._quizDonutBounds(segs)) !== '[0,75,100]') {
+    throw new Error('扇区边界未按题量切分: ' + JSON.stringify(sandbox._quizDonutBounds(segs)));
+  }
+  const segPaths = [...html.matchAll(/<path class="quiz-donut-seg" data-idx="(\d+)" data-label="[^"]*" d="M[^"]+"/g)];
+  if (segPaths.length !== 2 || segPaths[0][1] !== '0' || segPaths[1][1] !== '1') {
+    throw new Error('逐扇区 path 缺 data-idx/d（label 经 _quizEscape 转义，沙箱无 DOM 不比对原文）: ' + html);
+  }
+  // 扇区↔数值对应：图例「已测 3 题」在前（甲 3/4 占 0~75%）、已测 1 题在后
+  if (html.indexOf('已测 3 题') > html.indexOf('已测 1 题')) throw new Error('图例行序与扇区序不一致');
+  if (!html.includes('quiz-donut-center-total') || !html.includes('<b>4</b>')) throw new Error('中心应显已测总题数');
+  if (!html.includes('quiz-donut-center-focus')) throw new Error('中心缺悬停读数叠层');
+  if (!html.includes('quiz-donut-dot')) throw new Error('图例色点缺专门类（裸 span 通配会误伤文字列）');
+  if (!html.includes('data-idx="0"') || !html.includes('data-idx="1"')) throw new Error('图例行缺 data-idx（悬停联动）');
+  if (html.includes('quiz-chart-donut-fill')) throw new Error('残留旧 conic 填充层');
   if (html.includes('quiz-chart-pie')) throw new Error('残留旧实心饼图类名');
   if (html.includes('正确率')) throw new Error('图例不应带正确率（正确率归条形图，避免双口径）');
   if (sandbox._quizDonutHtml([]).includes('quiz-chart-donut')) throw new Error('空数据应落 quiz-chart-empty 占位');
+  return true;
+});
+
+check('quiz 总览：占比环几何纯函数（满圆钳缝/零宽空串/large-arc/指针角度归属）', () => {
+  // 与 token-usage 的 _tokenUsageDonutSegPath 族同一套契约（2026-10-13 对齐用量圆环）
+  if (!sandbox._quizDonutSegPath(0, 100).includes(' 0 1 1 ')) throw new Error('满圆应钳 99.99 走 large-arc');
+  if (sandbox._quizDonutSegPath(40, 40) !== '') throw new Error('零宽段应给空串');
+  if (!sandbox._quizDonutSegPath(0, 60).includes(' 0 1 1 ')) throw new Error('>50% 应走 large-arc');
+  if (!sandbox._quizDonutSegPath(0, 30).includes(' 0 0 1 ')) throw new Error('≤50% 应走 small-arc');
+  const at = sandbox._quizDonutSegIndexAt;
+  if (at([0, 75, 100], 74.9) !== 0 || at([0, 75, 100], 75) !== 1) throw new Error('角度归属区间错');
+  if (at([0, 75, 100], 100) !== -1 || at([0, 75, 100], -1) !== -1) throw new Error('收口点/负值应算界外');
+  return true;
+});
+
+check('quiz 总览：占比环悬停 3D 聚焦接线（指针命中/倾起变量/逐扇区与壳层样式/reduced-motion）', () => {
+  const src = fs.readFileSync('src/static/js/quiz-render.js', 'utf8');
+  for (const needle of ['_bindQuizDonutHover', '_quizDonutHandleMove', '_quizDonutHitAt',
+    '_quizDonutLive', 'QUIZ_DONUT_GEOMETRY', 'prefers-reduced-motion',
+    'pointermove', 'pointerleave', '--quiz-donut-rx', '--quiz-donut-ry', 'focus-mode']) {
+    if (!src.includes(needle)) throw new Error('quiz-render.js 缺 ' + needle);
+  }
+  const panels = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!panels.includes('.quiz-donut-seg')) throw new Error('占比环逐扇区样式缺失');
+  // 「邻块向环心收缩」的原点契约：transform-box: view-box 缩放原点必须是整环中心
+  const segCss = panels.match(/\.quiz-donut-seg \{[^}]*\}/);
+  if (!segCss || !segCss[0].includes('transform-box: view-box')) {
+    throw new Error('扇区缩放原点应为整环中心（transform-box: view-box）');
+  }
+  const donutCss = panels.match(/\.quiz-chart-donut \{[^}]*\}/);
+  if (!donutCss || !donutCss[0].includes('perspective(680px)')) throw new Error('壳层缺倾起 perspective');
+  if (panels.includes('.quiz-chart-donut-fill')) throw new Error('残留旧 conic 填充层样式');
   return true;
 });
 
@@ -401,6 +447,135 @@ check('quiz 总览：各画布正确率条形图（降序 + 宽度内联 + 空�
   if (!code.includes('_quizRateBarsHtml(')) throw new Error('总览未接正确率条形图');
   if (!code.includes('quiz-chart-card--wide')) throw new Error('趋势卡缺通栏类');
   if (code.includes('quiz-chart-pie') || code.includes('_quizPieHtml')) throw new Error('打包产物残留旧饼图');
+  return true;
+});
+
+// ===== 全局检测·多选画布循环出题：静态接线 / select 范围过滤 / 切池 / 循环生成内核 =====
+
+check('quiz-loop：静态接线（面板渲染＋交互入口＋循环生成内核＋单池截断豁免都在打包产物）', () => {
+  if (!code.includes('quiz-loop-panel') || !code.includes('quiz-loop-list')) throw new Error('缺多选面板容器样式钩子');
+  if (!code.includes('toggleQuizLoopSession(') || !code.includes('toggleQuizLoopSelectAll(')) throw new Error('缺画布勾选/全选接线');
+  if (!code.includes('applyQuizLoopSelection(') || !code.includes("'global-loop'")) throw new Error('缺提交入口或 global-loop 分支');
+  if (!code.includes('_aiGenerateLoopQuizQuestions(') || !code.includes('_quizLoopPlan(')) throw new Error('缺循环生成内核/切池');
+  if (!code.includes('!_quizLoopActive() && quizState.questions.length > quizTargetCount')) {
+    throw new Error('startQuiz 未按循环模式豁免单池题量截断');
+  }
+  for (const fn of ['toggleQuizLoopPanel', 'toggleQuizLoopSession', 'toggleQuizLoopSelectAll', 'applyQuizLoopSelection', 'resetQuizLoopScope']) {
+    if (typeof sandbox[fn] !== 'function') throw new Error(fn + ' 未暴露为全局入口');
+  }
+  return true;
+});
+
+check('quiz-loop：select 范围过滤吃画布变体（长短号同认、未选画布与无主条目剔除）', () => {
+  sandbox.window.getSessionIdVariants = (id) => [id, id + ':long'];
+  const prevScope = vm.runInContext('quizScope', sandbox);
+  vm.runInContext("quizSelectedSessions.clear(); quizSelectedSessions.add('sA'); quizScope = 'select'", sandbox);
+  try {
+    const filtered = sandbox._filterQuizMap({
+      a: { id: 'a', sessionId: 'sA' },
+      b: { id: 'b', sessionId: 'sA:long' },
+      c: { id: 'c', sessionId: 'sB' },
+      d: { id: 'd', sessionId: '' },
+    });
+    const keys = Object.keys(filtered).sort().join(',');
+    if (keys !== 'a,b') throw new Error('select 过滤应只留选中画布（含变体），实际 ' + keys);
+    // 回到 all/current 口径不受残留选中集合影响
+    vm.runInContext("quizScope = 'all'", sandbox);
+    if (Object.keys(sandbox._filterQuizMap({ c: { id: 'c', sessionId: 'sB' } })).length !== 1) {
+      throw new Error('all 口径应放行全部条目');
+    }
+  } finally {
+    vm.runInContext(`quizScope = ${JSON.stringify(prevScope)}; quizSelectedSessions.clear()`, sandbox);
+    delete sandbox.window.getSessionIdVariants;
+  }
+  return true;
+});
+
+check('quiz-loop：切池按画布分组、保持名单序、无素材与名单外画布计入跳过', () => {
+  const realGetAll = sandbox.window.getAllSessions;
+  sandbox.window.getAllSessions = () => [
+    { id: 'sA', title: '力学' },
+    { id: 'sB', title: '热学（无素材）' },
+    { id: 'sC', title: '电磁学' },
+  ];
+  vm.runInContext("quizSelectedSessions.clear(); quizSelectedSessions.add('sA'); quizSelectedSessions.add('sB'); quizSelectedSessions.add('sC'); quizSelectedSessions.add('sGhost')", sandbox);
+  try {
+    const pool = {
+      knowledge: [
+        { id: 'k1', title: '牛顿第一定律', sessionId: 'sA' },
+        { id: 'k2', title: '牛顿第二定律', sessionId: 'sA' },
+        { id: 'k3', title: '法拉第定律', sessionId: 'sC' },
+        { id: 'k4', title: '无主条目', sessionId: '' },
+      ],
+      formulas: [{ id: 'f1', latex: 'F=ma', sessionId: 'sA' }],
+    };
+    const loop = sandbox._quizLoopPlan(pool);
+    if (loop.plan.length !== 2) throw new Error('应只切出 2 个有素材画布，实际 ' + loop.plan.length);
+    if (loop.plan[0].id !== 'sA' || loop.plan[1].id !== 'sC') throw new Error('切池应保持名单序，实际 ' + loop.plan.map(p => p.id).join(','));
+    if (loop.skipped !== 2) throw new Error('无素材 sB＋名单外 sGhost 应计入 skipped=2，实际 ' + loop.skipped);
+    if (loop.plan[0].pool.knowledge.length !== 2 || loop.plan[0].pool.formulas.length !== 1) throw new Error('sA 子池切分不对');
+    if (loop.plan[1].pool.knowledge.length !== 1 || loop.plan[1].pool.formulas.length !== 0) throw new Error('sC 子池切分不对');
+    if (pool.knowledge.length !== 4) throw new Error('不得改动传入整池');
+  } finally {
+    vm.runInContext('quizSelectedSessions.clear()', sandbox);
+    if (realGetAll) sandbox.window.getAllSessions = realGetAll; else delete sandbox.window.getAllSessions;
+  }
+  return true;
+});
+
+check('quiz-loop：循环生成逐画布调用＋逐画布截断＋顺序拼接＋逐画布入库＋代际作废', async () => {
+  const realGen = sandbox._aiGenerateQuizQuestions;
+  const realSave = sandbox._saveQuizBank;
+  const prevPref = vm.runInContext('quizSourcePreference', sandbox);
+  vm.runInContext('quizSourcePreference = "ai"', sandbox); // 本地路置空，只验证循环拼接语义
+  const calls = [];
+  sandbox._aiGenerateQuizQuestions = async (pool) => {
+    calls.push(pool.knowledge[0].sessionId);
+    // 每画布给 7 题（超过 quizTargetCount，验证逐画布截断而非整池截断）
+    return Array.from({ length: 7 }, (_, i) => ({
+      id: 'ai_' + pool.knowledge[0].sessionId + '_' + i,
+      type: 'concept',
+      title: pool.knowledge[0].title,
+      prompt: 'p' + pool.knowledge[0].sessionId + i,
+      options: [
+        { key: 'A', text: 'a' }, { key: 'B', text: 'b' },
+        { key: 'C', text: 'c' }, { key: 'D', text: 'd' },
+      ],
+      correctIndex: 0,
+      difficulty: 'medium',
+      explanation: 'e',
+    }));
+  };
+  let saved = 0;
+  sandbox._saveQuizBank = () => { saved++; };
+  try {
+    const loop = {
+      plan: [
+        { id: 'sA', title: '甲', pool: { knowledge: [{ id: 'k1', title: '甲定律', sessionId: 'sA' }], formulas: [] } },
+        { id: 'sC', title: '丙', pool: { knowledge: [{ id: 'k3', title: '丙定律', sessionId: 'sC' }], formulas: [] } },
+      ],
+      skipped: 1,
+    };
+    const target = vm.runInContext('quizTargetCount', sandbox);
+    const reqId = vm.runInContext('quizAiRequestId', sandbox);
+    const out = await sandbox._aiGenerateLoopQuizQuestions(loop, reqId);
+    if (!out || out.length !== target * 2) {
+      throw new Error('应每画布截断 ' + target + ' 题共 ' + (target * 2) + '，实际 ' + (out ? out.length : null));
+    }
+    if (!String(out[0].id).includes('sA') || !String(out[target]).includes('sC')) throw new Error('拼接应按画布顺序');
+    if (calls.join(',') !== 'sA,sC') throw new Error('应逐画布调用生成，实际 ' + calls.join(','));
+    if (saved !== 2) throw new Error('题库应逐画布保存 2 次，实际 ' + saved);
+    if (vm.runInContext('quizLoopSkipCount', sandbox) !== 1) throw new Error('skipped 未带回模块统计');
+    // 代际作废：过期 requestId 不发起任何生成就返回 null
+    calls.length = 0;
+    const stale = await sandbox._aiGenerateLoopQuizQuestions(loop, reqId - 999);
+    if (stale !== null) throw new Error('过期代际应返回 null');
+    if (calls.length !== 0) throw new Error('过期代际不应发起生成，实际 ' + calls.join(','));
+  } finally {
+    sandbox._aiGenerateQuizQuestions = realGen;
+    sandbox._saveQuizBank = realSave;
+    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}`, sandbox);
+  }
   return true;
 });
 }

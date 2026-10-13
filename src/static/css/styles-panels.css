@@ -2354,7 +2354,9 @@
       font-weight: 700;
     }
 
-    /* 占比环：外框（边＋投影）在壳层，填充层 conic-gradient 用径向 mask 挖空中空——壳层不被 mask 才保得住边和投影 */
+    /* 占比环（2026-10-13 起 SVG 逐扇区 path，替代单块 conic-gradient＋radial mask
+       挖孔——单块上没有「块」，做不了逐块动画；几何在 JS 侧 _quizDonutSegPath）。
+       壳层管边框＋投影（圆形投影不随扇区逐个走），中心读数是叠层（pointer-events:none）。 */
     .quiz-chart-donut {
       position: relative;
       width: 120px;
@@ -2363,14 +2365,90 @@
       border: 1px solid var(--border);
       border-radius: 50%;
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+      /* 悬停时整环朝该扇区倾起（pseudo-3D 视差，对齐 token-usage 圆环）：
+         --quiz-donut-rx/--quiz-donut-ry 由 JS 按扇区中角写入，离手回正。
+         transform 恒在位（idle 全 0），避免首次悬停才建层 */
+      transform: perspective(680px) rotateX(var(--quiz-donut-rx, 0deg)) rotateY(var(--quiz-donut-ry, 0deg));
+      transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
     }
 
-    .quiz-chart-donut-fill {
+    .quiz-chart-donut-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      /* 扇区弹出会越出 viewBox（外缘 57＋弹出 6 > 60），剪裁必须放开让浮起可见 */
+      overflow: visible;
+    }
+
+    /* 逐扇区：transform-origin 钉在整环中心（transform-box: view-box）——悬停块沿
+       中角平移＋微放大、邻块向环心收缩，两种状态共用同一原点，过渡不跳轴。
+       回弹曲线（back-out）给「浮起来」的 Q 弹；投影只挂在 active 上（浮起才有影子） */
+    .quiz-donut-seg {
+      transform-box: view-box;
+      transform-origin: 50% 50%;
+      transition: transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1),
+        opacity 0.26s ease,
+        filter 0.34s ease;
+      will-change: transform;
+      stroke: rgba(0, 0, 0, 0.18);
+      stroke-width: 0.5;
+    }
+
+    .quiz-chart-donut.focus-mode .quiz-donut-seg.active {
+      filter: brightness(1.14) saturate(1.18) drop-shadow(0 5px 8px rgba(0, 0, 0, 0.45));
+    }
+
+    .quiz-chart-donut-center {
       position: absolute;
       inset: 0;
-      border-radius: 50%;
-      -webkit-mask: radial-gradient(circle closest-side, transparent 58%, #000 59%);
-      mask: radial-gradient(circle closest-side, transparent 58%, #000 59%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    /* 中心读数两态：已测总题数（常显）与悬停画布读数（JS 现填），交叉淡化切换 */
+    .quiz-donut-center-total,
+    .quiz-donut-center-focus {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.18s ease;
+    }
+
+    .quiz-donut-center-total { padding: 0 8px; }
+
+    .quiz-donut-center-focus { opacity: 0; padding: 0 10px; }
+
+    .quiz-chart-donut.focus-mode .quiz-donut-center-total { opacity: 0; }
+    .quiz-chart-donut.focus-mode .quiz-donut-center-focus { opacity: 1; }
+
+    .quiz-donut-center-total b,
+    .quiz-donut-center-focus b { font-size: 15px; color: var(--text-primary); letter-spacing: .3px; }
+
+    .quiz-donut-center-total span,
+    .quiz-donut-center-focus span { margin-top: 1px; font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+    .quiz-donut-center-focus .qcf-name {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--fs-2xs);
+      color: var(--text-secondary);
+    }
+
+    .quiz-donut-center-focus .qcf-sub { white-space: nowrap; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .quiz-donut-seg,
+      .quiz-donut-center-total,
+      .quiz-donut-center-focus { transition: none; }
+      .quiz-chart-donut { transition: none; transform: none !important; }
     }
 
     /* 图表标题副行：写清「环形角度到底编码了什么」，避免读成正确率分布 */
@@ -2392,16 +2470,37 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      padding: 2px 4px;
+      border-radius: var(--r-xs);
       color: var(--text-secondary);
       font-size: var(--fs-xs);
+      transition: background 0.2s ease;
     }
 
-    .quiz-chart-legend-item span {
+    /* 色点用专门类（行内还有名称/题量/占比文字 span，不能用裸 span 通配定尺寸） */
+    .quiz-donut-dot {
       width: 10px;
       height: 10px;
       border-radius: var(--r-xs);
       flex-shrink: 0;
     }
+
+    /* 占比环图例行（2026-10-13 起带 data-idx 与圆环联动）：悬停同步点亮（JS 挂 .hl）；
+       名称列可截断，题量靠右、占比再靠右（token-donut-legend 同款布局） */
+    .quiz-chart-legend-item.hl { background: var(--hover-bg); }
+
+    .quiz-donut-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-primary);
+    }
+
+    .quiz-donut-meta { flex-shrink: 0; font-size: var(--fs-2xs); color: var(--text-secondary); }
+
+    .quiz-donut-pct { flex-shrink: 0; min-width: 3.2em; text-align: right; font-weight: 600; color: var(--text-primary); }
 
     /* 各画布正确率条形图：三列网格（名称可截断 / 轨道自适应 / 数值右对齐） */
     .quiz-rate-bars {

@@ -82,8 +82,11 @@ check('graph-continent: v9 跨层转场（拉远/推近同参数 + 交叉淡化 
   if (!/matchMedia\('\(prefers-reduced-motion: reduce\)'\)/.test(src)) {
     throw new Error('转场未认 prefers-reduced-motion（T21 未销）');
   }
-  const rmBlock = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/);
-  if (!rmBlock || !/\.graph-canvas/.test(rmBlock[0])) {
+  // 契约＝「存在覆盖 .graph-canvas 的降级块」（2026-10-13 起扫全部块：占比环等
+  // 新组件的 reduced-motion 块可以加在文件任意位置，不抢「第一个」）
+  const rmBlocks = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/g) || [];
+  const rmBlock = rmBlocks.find(b => /\.graph-canvas/.test(b));
+  if (!rmBlock) {
     throw new Error('减少动态效果降级未覆盖会话画布');
   }
   const graphCss = fs.readFileSync('src/static/css/graph-override.css', 'utf8');

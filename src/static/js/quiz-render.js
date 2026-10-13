@@ -303,24 +303,245 @@ function _quizSessionChartSegments(sessions, rawStats) {
   return segments;
 }
 
-// 占比环（中空）：角度编码已测题数而非正确率；正确率归 _quizRateBarsHtml，图例只带题量避免双口径混在一张图
+// ====== 全局总览占比环（2026-10-13 起 SVG 逐扇区，对齐 token-usage.js 圆环手感）======
+// 旧版是单块 conic-gradient＋radial mask 挖孔——单块上没有「块」，做不了逐块动画。
+// 现改为 SVG 逐扇区 path（几何常量 QUIZ_DONUT_GEOMETRY），悬停交互与用量圆环同一套：
+// 悬停块沿中角弹出＋回弹放大＋投影、其余块向环心收缩＋降透明、整环朝扇区 perspective
+// 倾起、中心读数交叉淡化换「画布名＋题数＋占比」、图例行同步点亮（悬停图例同样驱动，
+// 细扇区好点）。命中检测不走 DOM hover（扇区弹出后元素挪位，边界会抖），改指针坐标
+// 反解角度/半径对照静态边界算命中——几何稳定不闪。角度仍编码已测题数而非正确率；
+// 正确率归 _quizRateBarsHtml，图例只带题量避免双口径混在一张图。
+// 几何纯函数与 token-usage.js 的 _tokenUsageDonutSegPath 族同一套公式（壳层同为
+// 120px），不跨文件复用是刻意复制：token 版内嵌 TOKEN_DONUT_GEOMETRY 常量，抽参
+// 要动它的冒烟契约，两份各 20 行比共享签名划算（配色数组同款先例）。
+
+// 占比环几何常量（SVG viewBox 坐标系）：壳层 .quiz-chart-donut 仍是 120px 圆
+// （边框＋投影不变），SVG 填满壳层；内半径与旧 mask 挖孔 58% 观感一致。
+const QUIZ_DONUT_GEOMETRY = { size: 120, rOuter: 57, rInner: 33 };
+const QUIZ_DONUT_POP = 6;   // 悬停扇区沿中角外移量（viewBox 单位，渲染 1:1px）
+const QUIZ_DONUT_TILT = 7;  // 悬停时整环朝该扇区倾起的最大角度（deg）
+
+let _quizDonutBound = false; // quizBody 悬停委托只绑一次（静态容器）
+let _quizDonutFocus = null;  // 当前悬停聚焦的扇区序号（null=无，回收收缩/倾起）
+let _quizDonutLive = null;   // 命中检测用的静态几何（segs＋百分比边界），总览渲染时刷新
+
+// 扇区弧 path 纯函数（冒烟测试直接调用）：[startPct, endPct] → 环形扇区（外弧顺时针
+// ＋内弧逆时针闭合），角度编码与旧 conic-gradient 同口径——0% 在 12 点钟、顺时针。
+// 满圆（单画布 100%）时弧命令首尾重合会画空，钳到 99.99 留发丝缝；零宽段给空串。
+function _quizDonutSegPath(startPct, endPct) {
+  const g = QUIZ_DONUT_GEOMETRY;
+  const c = g.size / 2;
+  const sweep = Math.min(Math.max(0, endPct - startPct), 99.99);
+  if (!(sweep > 0)) return '';
+  const a0 = startPct / 100 * Math.PI * 2 - Math.PI / 2;
+  const a1 = a0 + sweep / 100 * Math.PI * 2;
+  const large = sweep > 50 ? 1 : 0;
+  const pt = (r, a) => (c + r * Math.cos(a)).toFixed(2) + ' ' + (c + r * Math.sin(a)).toFixed(2);
+  return 'M' + pt(g.rOuter, a0)
+    + 'A' + g.rOuter + ' ' + g.rOuter + ' 0 ' + large + ' 1 ' + pt(g.rOuter, a1)
+    + 'L' + pt(g.rInner, a1)
+    + 'A' + g.rInner + ' ' + g.rInner + ' 0 ' + large + ' 0 ' + pt(g.rInner, a0)
+    + 'Z';
+}
+
+// 累积边界纯函数（冒烟测试直接调用）：segments → [0, …, 100]，长度＝段数+1
+function _quizDonutBounds(segments) {
+  const list = segments || [];
+  const total = list.reduce((sum, s) => sum + s.value, 0);
+  const bounds = [0];
+  let acc = 0;
+  for (const s of list) {
+    acc += s.value;
+    bounds.push(total ? acc / total * 100 : 100);
+  }
+  if (bounds.length === 1) bounds.push(100); // 空分段也保持「0→100 整圆」形态
+  return bounds;
+}
+
+// 全部分扇区 path 纯函数（冒烟测试直接调用）：segments → d 串数组
+function _quizDonutSegsD(segments) {
+  const bounds = _quizDonutBounds(segments);
+  const out = [];
+  for (let i = 0; i < bounds.length - 1; i++) out.push(_quizDonutSegPath(bounds[i], bounds[i + 1]));
+  return out;
+}
+
+// 指针角度归属纯函数（冒烟测试直接调用）：pct（0-100，12 点钟起顺时针）落在哪个
+// 扇区的 [start, end) 区间；恰在 100% 收口点或负值都算界外（-1）。
+function _quizDonutSegIndexAt(bounds, pct) {
+  const b = bounds || [];
+  if (!(pct >= 0) || pct >= 100) return -1;
+  for (let i = 0; i < b.length - 1; i++) {
+    if (pct >= b[i] && pct < b[i + 1]) return i;
+  }
+  return -1;
+}
+
+// 占比百分数文案（内部）：≥10% 取整、不足 10% 保留一位小数（与用量圆环图例同口径）
+function _quizDonutPctText(pct) {
+  return pct >= 10 ? Math.round(pct) + '%' : (Math.round(pct * 10) / 10) + '%';
+}
+
+// 占比环（冒烟测试直接调用）：SVG 逐扇区 path＋中心读数叠层（总量常显，悬停读数
+// JS 现填）＋图例（行带 data-idx 与圆环联动，悬停可驱动扇区浮起）。
 function _quizDonutHtml(segments) {
   if (!segments.length) return '<div class="quiz-chart-empty">暂无答题数据</div>';
   const total = segments.reduce((sum, item) => sum + item.value, 0);
-  let acc = 0;
-  const stops = segments.map(segment => {
-    const start = Math.round(acc / total * 100);
-    acc += segment.value;
-    const end = Math.round(acc / total * 100);
-    return `${segment.color} ${start}% ${end}%`;
-  }).join(', ');
-  const legend = segments.map(segment => `
-    <div class="quiz-chart-legend-item">
-      <span style="background:${segment.color}"></span>
-      ${_quizEscape(segment.label)} · 已测 ${segment.value} 题
+  if (!total) return '<div class="quiz-chart-empty">暂无答题数据</div>';
+  const ds = _quizDonutSegsD(segments);
+  const paths = segments.map((segment, i) => `<path class="quiz-donut-seg" data-idx="${i}" data-label="${_quizEscape(segment.label)}" d="${ds[i]}" style="fill:${segment.color}"/>`).join('');
+  const legend = segments.map((segment, i) => {
+    const pct = segment.value / total * 100;
+    return `
+    <div class="quiz-chart-legend-item" data-idx="${i}">
+      <span class="quiz-donut-dot" style="background:${segment.color}"></span>
+      <span class="quiz-donut-name" title="${_quizEscape(segment.label)}">${_quizEscape(segment.label)}</span>
+      <span class="quiz-donut-meta">已测 ${segment.value} 题</span>
+      <span class="quiz-donut-pct">${_quizDonutPctText(pct)}</span>
     </div>
-  `).join('');
-  return `<div class="quiz-chart-donut"><div class="quiz-chart-donut-fill" style="background:conic-gradient(${stops})"></div></div><div class="quiz-chart-legend">${legend}</div>`;
+  `;
+  }).join('');
+  return `<div class="quiz-chart-donut">
+      <svg class="quiz-chart-donut-svg" viewBox="0 0 ${QUIZ_DONUT_GEOMETRY.size} ${QUIZ_DONUT_GEOMETRY.size}" aria-hidden="true">${paths}</svg>
+      <div class="quiz-chart-donut-center">
+        <div class="quiz-donut-center-total"><b>${total}</b><span>已测题</span></div>
+        <div class="quiz-donut-center-focus"><span class="qcf-name"></span><b class="qcf-val"></b><span class="qcf-sub"></span></div>
+      </div>
+    </div><div class="quiz-chart-legend">${legend}</div>`;
+}
+
+// ====== 占比环悬停 3D 聚焦（对齐 token-usage.js 同名机制）======
+// 命中检测不走 DOM hover：扇区弹出后元素挪离指针，边界上会「弹起→移出→落回」抖个
+// 不停。改为指针坐标反解成 viewBox 极坐标（半径过滤＋角度归段），对照 _quizDonutLive
+// 里的静态百分比边界算命中——几何不随动画变，稳定不闪。
+function _quizDonutRadialDir(i) {
+  const b = (_quizDonutLive && _quizDonutLive.bounds) || [0, 100];
+  const lo = b[Math.min(i, b.length - 2)] || 0;
+  const hi = b[Math.min(i + 1, b.length - 1)] || 100;
+  const mid = ((lo + hi) / 2) / 100 * Math.PI * 2; // 0 = 12 点钟，顺时针
+  return [Math.sin(mid), -Math.cos(mid)];
+}
+
+// 指针位置 → 扇区序号（内部）：viewBox 坐标过滤半径后按角度归段，环外给 null
+function _quizDonutHitAt(ux, uy) {
+  const g = QUIZ_DONUT_GEOMETRY;
+  const live = _quizDonutLive;
+  if (!live || !live.bounds || live.bounds.length < 2) return null;
+  const c = g.size / 2;
+  const dx = ux - c, dy = uy - c;
+  const r = Math.hypot(dx, dy);
+  if (r < g.rInner - 2 || r > g.rOuter + 6) return null; // 外留 6u 余量：悬停贴外缘不脱手
+  let ang = Math.atan2(dy, dx) + Math.PI / 2;
+  if (ang < 0) ang += Math.PI * 2;
+  const idx = _quizDonutSegIndexAt(live.bounds, ang / (Math.PI * 2) * 100);
+  return idx >= 0 ? idx : null;
+}
+
+// 聚焦应用（内部）：idx=null 回 idle。悬停块沿中角弹出＋微放大（CSS 回弹缓动），
+// 其余块向环心收缩＋降透明；整环朝悬停块倾起（--quiz-donut-rx/--quiz-donut-ry，
+// CSS perspective 消费）；中心读数换「画布名＋题数＋占比」；图例行同步点亮。
+// prefers-reduced-motion 时跳过全部几何动画，只换中心读数与高亮。
+function _setQuizDonutFocus(idx) {
+  _quizDonutFocus = (idx != null && idx >= 0) ? idx : null;
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('quizBody');
+  if (!body || typeof body.querySelectorAll !== 'function') return;
+  const donut = body.querySelector('.quiz-chart-donut');
+  const segs = body.querySelectorAll('.quiz-donut-seg');
+  const list = (_quizDonutLive && _quizDonutLive.segs) || [];
+  if (!donut || !segs.length) return;
+  const reduced = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const focus = _quizDonutFocus;
+  for (let i = 0; i < segs.length; i++) {
+    const p = segs[i];
+    if (!p || !p.style) continue;
+    const active = focus != null && i === focus;
+    const recede = focus != null && !active;
+    if (active && !reduced) {
+      const dir = _quizDonutRadialDir(i);
+      p.style.transform = 'translate(' + (dir[0] * QUIZ_DONUT_POP).toFixed(2) + 'px, '
+        + (dir[1] * QUIZ_DONUT_POP).toFixed(2) + 'px) scale(1.05)';
+    } else if (recede && !reduced) {
+      p.style.transform = 'scale(0.93)';
+    } else {
+      p.style.transform = '';
+    }
+    p.style.opacity = recede ? '0.45' : '';
+    if (p.classList) p.classList.toggle('active', active);
+  }
+  if (!reduced) {
+    // 倾起方向：悬停块在哪一侧，那一侧朝观察者抬起（右块 rotateY 负、下块
+    // rotateX 正），离手回正。角随扇区中角、不随像素走，段内不抖。
+    if (focus != null) {
+      const dir = _quizDonutRadialDir(focus);
+      donut.style.setProperty('--quiz-donut-ry', (-dir[0] * QUIZ_DONUT_TILT).toFixed(2) + 'deg');
+      donut.style.setProperty('--quiz-donut-rx', (dir[1] * QUIZ_DONUT_TILT).toFixed(2) + 'deg');
+    } else {
+      donut.style.setProperty('--quiz-donut-ry', '0deg');
+      donut.style.setProperty('--quiz-donut-rx', '0deg');
+    }
+  }
+  if (donut.classList) donut.classList.toggle('focus-mode', focus != null);
+  const focusBox = body.querySelector('.quiz-donut-center-focus');
+  if (focusBox && focus != null && list[focus]) {
+    const seg = list[focus];
+    const sum = list.reduce((s, x) => s + x.value, 0) || 1;
+    const pctText = _quizDonutPctText(seg.value / sum * 100);
+    const nameEl = focusBox.querySelector('.qcf-name');
+    const valEl = focusBox.querySelector('.qcf-val');
+    const subEl = focusBox.querySelector('.qcf-sub');
+    if (nameEl) { nameEl.textContent = seg.label; nameEl.title = seg.label; }
+    if (valEl) valEl.textContent = String(seg.value);
+    if (subEl) subEl.textContent = '题 · ' + pctText;
+  }
+  if (body.querySelectorAll('.quiz-chart-legend-item[data-idx]').forEach) {
+    body.querySelectorAll('.quiz-chart-legend-item[data-idx]').forEach(it => {
+      if (it.classList) it.classList.toggle('hl', focus != null && Number(it.dataset.idx) === focus);
+    });
+  }
+}
+
+function _quizDonutHandleMove(e) {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('quizBody');
+  if (!body) return;
+  const svg = body.querySelector('.quiz-chart-donut-svg');
+  if (!svg) {
+    // 当前相位没有占比环（答题/结果/错题等），悬停态复位即可
+    if (_quizDonutFocus != null) _setQuizDonutFocus(null);
+    return;
+  }
+  let idx = null;
+  // 图例行优先（细扇区从图例聚焦最顺手），其次圆环本体极坐标命中
+  const item = (e && e.target && typeof e.target.closest === 'function')
+    ? e.target.closest('.quiz-chart-legend-item[data-idx]') : null;
+  if (item && item.dataset) {
+    idx = Number(item.dataset.idx);
+  } else if (svg.getBoundingClientRect) {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const g = QUIZ_DONUT_GEOMETRY;
+      const ux = (e.clientX - rect.left) / rect.width * g.size;
+      const uy = (e.clientY - rect.top) / rect.height * g.size;
+      idx = _quizDonutHitAt(ux, uy);
+    }
+  }
+  if (idx !== _quizDonutFocus) _setQuizDonutFocus(idx);
+}
+
+function _bindQuizDonutHover() {
+  if (_quizDonutBound || typeof document === 'undefined' || !document.getElementById) return;
+  const body = document.getElementById('quizBody');
+  if (!body || typeof body.addEventListener !== 'function') return;
+  _quizDonutBound = true;
+  // 不走 rAF 节流（同 token-usage）：节流会让聚焦应用押后一帧，后台标签页 rAF
+  // 暂停时无限押后；命中检测＝一次 getBoundingClientRect＋≤画布数段小循环，无压力
+  body.addEventListener('pointermove', (e) => {
+    if (e) _quizDonutHandleMove(e);
+  });
+  body.addEventListener('pointerleave', () => {
+    if (_quizDonutFocus != null) _setQuizDonutFocus(null);
+  });
 }
 
 // 各画布正确率条形图：颜色与占比环同源对应，按正确率降序（同率题量多的在前）方便排名
@@ -442,6 +663,13 @@ function _renderQuizGlobalDashboard() {
     </div>
     <div class="quiz-global-title">画布答题概览</div>
     <div class="quiz-global-session-list">${sessionCards || '<div class="quiz-weak-empty">暂无画布</div>'}</div>`;
+  // 占比环命中检测的静态几何（弹出的扇区不影响归属判定）＋悬停委托（只绑一次）；
+  // 重渲染换的是全新 DOM，悬停态不跨渲染保留
+  _quizDonutLive = chartSegments.length
+    ? { segs: chartSegments, bounds: _quizDonutBounds(chartSegments) }
+    : null;
+  _quizDonutFocus = null;
+  _bindQuizDonutHover();
 }
 
 function _renderWrongReview() {
