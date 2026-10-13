@@ -48,7 +48,11 @@ function _renderQuizIntro() {
   const hasOpen = !!(quizState && quizState.openQuestions && quizState.openQuestions.length);
   const hasWrong = stats.wrongCount > 0;
   const bankCount = _quizBankQuestions().length;
-  if (!hasQuestions && !(quizState && quizState.aiPending)) {
+  // 全局检测·待选范围：素材在、还没出题、也不在生成中——不落空态/纯进度分支，主界面出「开始出题」CTA
+  const poolHasMaterial = !!(quizState && quizState.pool
+    && ((quizState.pool.knowledge || []).length || (quizState.pool.formulas || []).length));
+  const awaitingScope = quizMode === 'global' && poolHasMaterial && !hasQuestions && !(quizState && quizState.aiPending);
+  if (!hasQuestions && !(quizState && quizState.aiPending) && !awaitingScope) {
     body.innerHTML = `
       <div class="quiz-empty">
         <div class="quiz-empty-icon">${UI_ICON_SVG.book}</div>
@@ -63,7 +67,8 @@ function _renderQuizIntro() {
       </div>`;
     return;
   }
-  if (!hasQuestions && quizState && quizState.aiPending) {
+  // 全局检测生成中不落纯进度分支：主界面带内联进度＋选择面板，可中途改选画布（提交即废弃在跑轮）
+  if (!hasQuestions && quizState && quizState.aiPending && quizMode !== 'global') {
     body.innerHTML = `
       <div class="quiz-ai-status">
         <div class="quiz-ai-progress"><div class="quiz-ai-progress-fill" style="width:${quizState.aiProgress || 5}%"></div></div>
@@ -87,6 +92,27 @@ function _renderQuizIntro() {
       : quizState && quizState.sourceMode === 'mixed'
         ? 'AI+本地题'
         : '本地题';
+  // 待选范围态：主按钮是「开始出题」而不是「开始检测」（还没有题可开考）；
+  // 已在循环口径（scope=select，如上一轮循环失败后回到待选）则按钮回到循环提交
+  const ctaIsLoop = quizScope === 'select';
+  const startHtml = awaitingScope
+    ? `<div class="quiz-start">
+        <button class="quiz-btn-primary quiz-btn-large" onclick="${ctaIsLoop ? 'applyQuizLoopSelection()' : 'startGlobalQuizGeneration()'}">${ctaIsLoop ? '重新循环出题（已选 ' + quizSelectedSessions.size + ' 张）' : '开始出题（全部画布）'}</button>
+        ${hasOpen ? '<button class="quiz-btn-primary" onclick="openOpenQuiz()">深度问答</button>' : ''}
+        ${hasWrong ? `<button class="quiz-btn-primary" onclick="openWrongReview()">错题回顾(${hasWrong})</button>` : ''}
+      </div>
+      <div class="quiz-model-note">${ctaIsLoop
+        ? '将对已选的 ' + quizSelectedSessions.size + ' 张画布逐张循环出题，每画布 ' + quizTargetCount + ' 题'
+        : '点「开始出题」用全部画布素材混合出一组 ' + quizTargetCount + ' 题；或先在上方勾选画布，逐张循环出题（每张 ' + quizTargetCount + ' 题）'}</div>`
+    : `<div class="quiz-start">
+      <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
+      <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="重新生成一组 AI 题（会调用一次模型）；不会删除AI题库">换一组题</button>
+      <button class="quiz-btn-primary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答${stats.openCount ? `(${stats.openCount})` : ''}</button>
+      <button class="quiz-btn-primary" onclick="openWrongReview()" ${hasWrong ? '' : 'disabled'}>错题回顾${hasWrong ? `(${hasWrong})` : ''}</button>
+      ${stats.reviewCount ? `<button class="quiz-btn-primary" onclick="startReviewQuiz()">开始复习(${stats.reviewCount})</button>` : ''}
+      ${bankCount ? `<button class="quiz-btn-secondary" onclick="openQuizBank()">AI题库(${bankCount})</button>` : ''}
+      <button class="quiz-btn-secondary" onclick="clearQuizRecords()">清空记录</button>
+    </div>`;
   body.innerHTML = `
     <div class="quiz-stats">
       <div class="quiz-stat"><span class="quiz-stat-num">${stats.total}</span><span class="quiz-stat-label">已测</span></div>
@@ -114,15 +140,7 @@ function _renderQuizIntro() {
       <select id="quizCountSelect" onchange="changeQuizQuestionCount()" title="改变题量会重新生成一组题（AI 模式下会调用一次模型；循环出题时每张选中画布各按此题量出一组）">${countOptions}</select>
     </div>
     ${_quizLoopPanelHtml()}
-    <div class="quiz-start">
-      <button class="quiz-btn-primary quiz-btn-large" onclick="startQuiz()" ${hasQuestions ? '' : 'disabled'}>开始检测</button>
-      <button class="quiz-btn-primary" onclick="reshuffleQuiz()" ${hasQuestions ? '' : 'disabled'} title="重新生成一组 AI 题（会调用一次模型）；不会删除AI题库">换一组题</button>
-      <button class="quiz-btn-primary" onclick="openOpenQuiz()" ${hasOpen ? '' : 'disabled'}>深度问答${stats.openCount ? `(${stats.openCount})` : ''}</button>
-      <button class="quiz-btn-primary" onclick="openWrongReview()" ${hasWrong ? '' : 'disabled'}>错题回顾${hasWrong ? `(${hasWrong})` : ''}</button>
-      ${stats.reviewCount ? `<button class="quiz-btn-primary" onclick="startReviewQuiz()">开始复习(${stats.reviewCount})</button>` : ''}
-      ${bankCount ? `<button class="quiz-btn-secondary" onclick="openQuizBank()">AI题库(${bankCount})</button>` : ''}
-      <button class="quiz-btn-secondary" onclick="clearQuizRecords()">清空记录</button>
-    </div>`;
+    ${startHtml}`;
 }
 
 function _renderQuizQuestion() {

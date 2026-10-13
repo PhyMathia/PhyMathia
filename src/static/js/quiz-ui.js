@@ -50,17 +50,21 @@ async function openQuiz(mode = 'session') {
         explainError: ''
       };
     } else {
-      const generation = _startQuizGeneration(pool);
+      // 先选范围再出题（2026-10-13 用户拍板）：全局检测（未多选）题库快径未命中时不自动调模型，
+      // 展开选择面板等用户点「开始出题」；'global-loop'（多选循环提交）是显式意图，进来即生成
+      const auto = !(quizMode === 'global' && quizScope !== 'select');
+      const generation = auto ? _startQuizGeneration(pool) : null;
+      if (!auto) quizLoopPanelOpen = true;
       quizState = {
         phase: 'intro',
         pool,
-        questions: generation.local,
-        aiPromise: generation.promise,
-        aiPending: true,
+        questions: generation ? generation.local : [],
+        aiPromise: generation ? generation.promise : null,
+        aiPending: !!generation,
         aiProgress: 0,
-        aiStage: 'generate',
+        aiStage: generation ? 'generate' : '',
         aiNotice: '',
-        sourceMode: 'local',
+        sourceMode: generation ? 'local' : quizSourcePreference,
         openQuestions: _generateOpenQuestions(pool),
         wrongList: _readWrongQuestions(),
         explaining: false,
@@ -304,11 +308,21 @@ function resetQuizLoopScope() {
   openQuiz('global');
 }
 
+// 全局检测「先选范围再出题」的主按钮：对当前范围显式触发出题。
+// aiPromise/aiPending 由 _startQuizGeneration 自带接线，这里只补同步本地题与重渲。
+function startGlobalQuizGeneration() {
+  if (!quizState || !quizState.pool) return;
+  const generation = _startQuizGeneration(quizState.pool);
+  quizState.questions = generation.local;
+  renderQuiz();
+}
+
 window.toggleQuizLoopPanel = toggleQuizLoopPanel;
 window.toggleQuizLoopSession = toggleQuizLoopSession;
 window.toggleQuizLoopSelectAll = toggleQuizLoopSelectAll;
 window.applyQuizLoopSelection = applyQuizLoopSelection;
 window.resetQuizLoopScope = resetQuizLoopScope;
+window.startGlobalQuizGeneration = startGlobalQuizGeneration;
 
 function handleQuizBack() {
   if (!quizState) return;

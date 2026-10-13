@@ -457,6 +457,7 @@ check('quiz-loop：静态接线（面板渲染＋交互入口＋循环生成内�
   if (!code.includes('toggleQuizLoopSession(') || !code.includes('toggleQuizLoopSelectAll(')) throw new Error('缺画布勾选/全选接线');
   if (!code.includes('applyQuizLoopSelection(') || !code.includes('global-loop')) throw new Error('缺提交入口或 global-loop 分支');
   if (!code.includes('_aiGenerateLoopQuizQuestions(') || !code.includes('_quizLoopPlan(')) throw new Error('缺循环生成内核/切池');
+  if (!code.includes('startGlobalQuizGeneration(')) throw new Error('全局先选范围再出题缺 CTA 生成入口');
   // 压缩产物会吃掉空格：截断豁免契约用宽松正则钉（前缀必须挂着 _quizLoopActive 守卫，
   // 语义：循环模式下 startQuiz 不按单池题量裁卷）
   if (!/!?_quizLoopActive\(\)\s*&&\s*quizState\.questions\.length\s*>\s*quizTargetCount/.test(code)) {

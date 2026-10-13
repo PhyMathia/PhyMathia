@@ -178,4 +178,50 @@ seqCheck('quiz-loop：多选画布循环出题全链路（勾选→global-loop �
   }
   return true;
 });
+
+// ===== 全局入口「先选范围再出题」（2026-10-13 用户拍板）=====
+// 全局出题（未多选）题库未命中时不得自动调模型；CTA 显式触发；画布检测保持打开即出题。
+seqCheck('quiz-loop：全局入口先选范围再出题（不自动生成＋CTA 显式触发＋画布检测不受影响）', async () => {
+  const realFetch = sandbox.fetch;
+  const realPick = sandbox._pickQuizModel;
+  const prevPref = vm.runInContext('quizSourcePreference', sandbox);
+  vm.runInContext('quizSourcePreference = "ai"', sandbox);
+  // 无出题模型：生成链只落「未配置 AI 模型」notice，不发真请求——notice 有无即「是否触发了生成」的判据
+  sandbox._pickQuizModel = () => null;
+  sandbox.localStorage.removeItem('phymathia_quiz_bank');
+  sandbox.fetch = async (url) => {
+    if (String(url).includes('/api/knowledge')) {
+      return { ok: true, status: 200, json: async () => ({ items: {
+        kA1: { id: 'kA1', title: '牛顿第一定律', summary: '惯性定律', sessionId: 'sA' },
+        kA2: { id: 'kA2', title: '牛顿第二定律', summary: 'F=ma', sessionId: 'sA' },
+      } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ value: [] }), text: async () => '' };
+  };
+  try {
+    await sandbox.openQuiz('global');
+    if (vm.runInContext('quizState.phase', sandbox) !== 'intro') throw new Error('应停在 intro');
+    if (vm.runInContext('quizState.aiPending', sandbox)) throw new Error('全局入口不应自动进入生成中');
+    if (vm.runInContext('quizState.aiNotice', sandbox)) {
+      throw new Error('未自动出题却落了生成侧提示：' + vm.runInContext('quizState.aiNotice', sandbox));
+    }
+    if (vm.runInContext('quizState.questions.length', sandbox) !== 0) throw new Error('不应预置题目');
+    if (!vm.runInContext('quizLoopPanelOpen', sandbox)) throw new Error('选择面板应默认展开');
+    if (typeof sandbox.startGlobalQuizGeneration !== 'function') throw new Error('CTA 未暴露');
+    // CTA 点击触发出题链：无模型分支的 notice 在微任务里落，冲一遍微任务队列再读
+    sandbox.startGlobalQuizGeneration();
+    await new Promise(r => setImmediate(r));
+    if (!vm.runInContext('quizState.aiNotice', sandbox)) throw new Error('CTA 点击应触发出题链');
+    // 画布检测保持打开即出题（同一 else 分支，auto 不得误伤 session）
+    await sandbox.openQuiz('session');
+    await new Promise(r => setImmediate(r));
+    if (!vm.runInContext('quizState.aiNotice', sandbox)) throw new Error('画布检测应保持打开即出题');
+  } finally {
+    sandbox.fetch = realFetch;
+    sandbox._pickQuizModel = realPick;
+    sandbox.localStorage.removeItem('phymathia_quiz_bank');
+    vm.runInContext(`quizSourcePreference = ${JSON.stringify(prevPref)}; quizSelectedSessions.clear(); quizLoopPanelOpen = false`, sandbox);
+  }
+  return true;
+});
 }
