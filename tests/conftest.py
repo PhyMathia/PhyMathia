@@ -35,3 +35,24 @@ def _isolate_usage_dir(tmp_path, monkeypatch):
     test_usage_stats 的 setUp 自设 USAGE_DIR，晚于本 fixture 生效，不受影响。
     """
     monkeypatch.setattr(_usage_stats, "USAGE_DIR", tmp_path / "usage")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_dir(tmp_path, monkeypatch):
+    """数据目录全局隔离：config.DATA_DIR 一律指向 tmp，杜绝测试夹具写真库。
+
+    2026-10-13 实证：只补 main/storage 路径常量、漏补 config.DATA_DIR 的测试
+    （test_message_merge.SaveMessagesRouteTest）里，storage._get_messages_path
+    经 accounts.resolve_paths 在调用期读真 DATA_DIR，sess_merge/sess_empty/
+    sess_same 等夹具直接落进 data/users/default/，再被前端 15 秒并集同步拉进
+    用户侧栏——空会话事故的出生点之一（同款坑 test_review_backend 已犯过一次，
+    见其 _patched_paths 注释）。各测试文件自带的同款补丁与本 fixture 幂等，
+    setUp 晚于本 fixture 生效、后到者胜，行为不变。
+    """
+    from server import accounts as _accounts
+    from server import config as _config
+    from server import storage as _storage
+
+    monkeypatch.setattr(_config, "DATA_DIR", tmp_path)
+    _accounts._ENSURED.clear()
+    _storage._JSON_READ_CACHE.clear()

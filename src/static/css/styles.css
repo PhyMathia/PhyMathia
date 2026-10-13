@@ -1082,6 +1082,22 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    /* 空画布（2026-10-13 空会话治理）：整行淡化＋标题尾随一枚虚线空方框；
+       悬停/当前行/多选已勾选恢复实感——正在看或正要动手的行淡化会让人以为没选中 */
+    .session-item.is-empty { opacity: 0.55; }
+    .session-item.is-empty:hover,
+    .session-item.is-empty.active,
+    .session-item.is-empty.picked { opacity: 1; }
+    .session-item .session-empty-mark {
+      display: inline-flex;
+      align-items: center;
+      vertical-align: -2px;
+      margin-left: 6px;
+      color: var(--text-secondary);
+      opacity: 0.8;
+      flex-shrink: 0;
+    }
+    .session-item .session-empty-mark svg { width: 13px; height: 13px; }
     .session-item .session-time {
       font-size: var(--fs-2xs);
       color: var(--text-secondary);

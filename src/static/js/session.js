@@ -220,6 +220,7 @@
                 const mergedJson = JSON.stringify(mergedMsgs);
                 if (mergedJson !== JSON.stringify(localMsgs)) {
                   safeLocalStorageSet('phymathia_msgs_' + sid, mergedJson);
+                  _emptyBadgeCache.delete(sid);
                   changed = true;
                 }
                 // 并集推回服务端，两边收敛一致
@@ -229,7 +230,8 @@
               }
               // 服务端不存在的 session（本地独有），保留本地数据，同时上传到服务端
               // （T271：墓碑在册的不传——那是删除竞态的残留，传了就是复活）
-              if (!isServerSession && localMsgs.length > 0 && !_tombstonedSids.has(sid)) {
+              if (!isServerSession && localMsgs.length > 0 && !_tombstonedSids.has(sid)
+                && !(localSessions[sid] && localSessions[sid].provisional)) {
                 console.log(`[Storage] Uploading local-only session ${sid} to server`);
                 try {
                   await _postToServer('/api/sessions', localSessions[sid] || { id: sid, title: '未命名画布', sessionId: sid });
@@ -327,8 +329,11 @@
       }
     }
 
-    // 保存会话到服务端（upsert 单个会话，不再用 bulk DELETE+INSERT）
+    // 保存会话到服务端（upsert 单个会话，不再用 bulk DELETE+INSERT）。
+    // 暂定画布闸门：saveSessions 全表循环、_saveSessionMeta、改名后的同步都汇到
+    // 这里，一道闸拦住全部元数据上送口（信标与同步上传两处单独拦，不走本函数）
     async function _saveSessionToServer(sid, sessData) {
+      if (sessData && sessData.provisional) return;
       return _postToServer('/api/sessions', { ...sessData, id: sid });
     }
 
@@ -438,13 +443,14 @@
       };
       try {
         // T271：墓碑在册的 id 信标一律跳过——兄弟标签页内存旧副本的卸载回写是
-        // 复活通道之一；服务端闸门兜底，这里不发省一次必被拒的请求
+        // 复活通道之一；服务端闸门兜底，这里不发省一次必被拒的请求。
+        // 暂定画布同跳：没内容不上名单（信标不走 _saveSessionToServer，须单独拦）
         if (currentSessionId && !_tombstonedSids.has(currentSessionId) && chatHistory.length > 0) {
           beacon(`/api/sessions/${currentSessionId}/messages`, { messages: chatHistory });
         }
         // 保存所有会话元数据
         for (const [sid, sdata] of Object.entries(sessions)) {
-          if (_tombstonedSids.has(sid)) continue;
+          if (_tombstonedSids.has(sid) || sdata.provisional) continue;
           beacon('/api/sessions', { ...sdata, id: sid });
         }
         // 保存当前会话 ID
@@ -502,6 +508,8 @@
     async function saveSessionMessages(sessionId, msgs) {
       // 本地快速缓存写失败（配额满）不阻断：下一行的服务端同步照常执行，数据不丢
       safeLocalStorageSet('phymathia_msgs_' + sessionId, JSON.stringify(msgs));
+      if (Array.isArray(msgs) && msgs.length > 0) _markSessionContented(sessionId);
+      _emptyBadgeCache.delete(sessionId);
       return _saveMessagesToServer(sessionId, msgs); // 传入消息数据而非从 localStorage 重读
     }
 
@@ -626,6 +634,7 @@
           const merged = _normalizeGraphState({ ...local, ...serverState });
           _graphStateMemCache.set(sid, merged);
           safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(merged));
+          _emptyBadgeCache.delete(sid);
         }
       } catch (err) {
         console.warn('[GraphState] Failed to load server state:', err);
@@ -671,6 +680,11 @@
       const snap = { ...state, updatedAt: Date.now() };
       _graphStateMemCache.set(sid, snap);
       _scheduleGraphStateServerSave(sid, snap);
+      // 工作流/自绘节点落地＝有内容：暂定画布摘帽。消息派生内容不走这里（它有
+      // 消息，saveSessionMessages 已摘）；只有自绘结构能先于消息出现
+      if ((Array.isArray(snap.customNodes) && snap.customNodes.length)
+        || (Array.isArray(snap.connections) && snap.connections.length)) _markSessionContented(sid);
+      _emptyBadgeCache.delete(sid);
       if (opts && opts.deferLocalWrite) {
         _graphLocalSavePending = { sid, snap };
         if (!_graphLocalSaveTimer) {
@@ -751,7 +765,13 @@
         title: '新画布',
         sessionId: sessionId,
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        // 暂定画布：还没有任何内容前不上服务端（元数据上送/卸载信标/同步上传全过
+        // _saveSessionToServer 与信标处的同一道闸）——否则新账号首进、清缓存、
+        // 新浏览器这些「本地名单为空」的场景都会生出一张空「新画布」，再经 15 秒
+        // 并集同步传染到所有设备（2026-10-13 空会话事故主出生点）。首条消息或首个
+        // 图节点落地时 _markSessionContented 摘帽，恢复正常双写。
+        provisional: true
       };
       saveSessions();
       switchToSession(id);
@@ -938,6 +958,7 @@
         }
 
         delete sessions[id];
+        _emptyBadgeCache.delete(id);
         saveSessions();
         _afterSessionRemoval([id]);
         if (currentSessionId === id) _switchAfterCurrentDeleted();
@@ -1164,6 +1185,53 @@
     let _sessionRenameActive = false;
 
     // 渲染会话列表
+    // ====== 暂定画布摘帽与空画布判定（2026-10-13 空会话治理）======
+    // 暂定（provisional）画布：新建时打标、没内容不上服务端；首个真实内容落地即
+    // 摘帽，恢复正常双写同步。
+    function _markSessionContented(sid) {
+      const s = sessions[sid];
+      if (!s || !s.provisional) return;
+      delete s.provisional;
+      safeLocalStorageSet(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+      _saveSessionToServer(sid, s);
+    }
+
+    // 空判定口径：消息为空 且 图状态无内容——customNodes/connections 是工作流与
+    // 自绘节点的内容载体，nodes 是服务端图状态的同义字段，任一非空即不算空
+    //（「微分」「磁场」这类纯工作流画布没有消息但有 7 个自绘节点，不能误判空）。
+    // 只读本地不发网络：服务端名单里的幽灵条目（测试夹具/别的设备的空画布）在本机
+    // 没有消息与图状态键，自然判空。按会话缓存，写入点逐 key 失效，别在渲染热路径
+    // 反复 parse 大对象。
+    const _emptyBadgeCache = new Map();
+    function _sessionIsEmpty(sid) {
+      if (_emptyBadgeCache.has(sid)) return _emptyBadgeCache.get(sid);
+      let empty = false;
+      try {
+        let msgs = null;
+        if (sid === currentSessionId) msgs = chatHistory;
+        else {
+          const raw = localStorage.getItem('phymathia_msgs_' + sid);
+          if (raw) msgs = JSON.parse(raw);
+        }
+        let g = null;
+        if (sid === currentSessionId) g = getGraphState(sid);
+        else {
+          const raw = localStorage.getItem('phymathia_graph_' + sid);
+          if (raw) g = JSON.parse(raw);
+        }
+        const hasGraph = !!(g && ((Array.isArray(g.customNodes) && g.customNodes.length)
+          || (Array.isArray(g.connections) && g.connections.length)
+          || (Array.isArray(g.nodes) && g.nodes.length)));
+        empty = !(Array.isArray(msgs) && msgs.length > 0) && !hasGraph;
+      } catch (e) { empty = false; }
+      _emptyBadgeCache.set(sid, empty);
+      return empty;
+    }
+
+    // 空画布标记：虚线空方框（图形语义＝空画布，不用文字），整行淡化交给 CSS
+    const SESSION_EMPTY_MARK = '<span class="session-empty-mark" title="空画布：暂无消息与节点">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3.5 3.5" stroke-linecap="round"><rect x="4.5" y="4.5" width="15" height="15" rx="3.5"/></svg></span>';
+
     function renderSessionList() {
       const list = document.getElementById('sessionList');
       if (!list) return;
@@ -1218,25 +1286,26 @@
         const time = formatRelativeTime(s.updatedAt || s.createdAt);
         const icon = getSessionIconHtml(s.icon || 'wave');
         const title = q ? _highlightSessionTitle(s.title, q) : escapeHtml(s.title);
+        const empty = _sessionIsEmpty(id);
         if (multi) {
           // 多选态：整行点击＝切换勾选，行内单画布按钮（改名/删除/换图标）全部收掉，
           // 免得批量操作时误触单条路径
           const picked = _sessionSelected.has(id);
           return `
-          <div class="session-item multi-select-item ${picked ? 'picked' : ''} ${isActive ? 'current' : ''}" onclick="toggleSessionSelect('${id}')" title="${picked ? '取消选择' : '选择此画布'}">
+          <div class="session-item multi-select-item ${picked ? 'picked' : ''} ${isActive ? 'current' : ''}${empty ? ' is-empty' : ''}" onclick="toggleSessionSelect('${id}')" title="${picked ? '取消选择' : '选择此画布'}">
             <span class="session-check">${picked ? UI_ICON_SVG.check : ''}</span>
             <span class="session-icon session-icon-static">${icon}</span>
             <div class="session-info">
-              <div class="session-title">${title}</div>
+              <div class="session-title">${title}${empty ? SESSION_EMPTY_MARK : ''}</div>
               <div class="session-time">${time}</div>
             </div>
           </div>`;
         }
         return `
-          <div class="session-item ${isActive ? 'active' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
+          <div class="session-item ${isActive ? 'active' : ''}${empty ? ' is-empty' : ''}" onclick="switchToSession('${id}'); closeSidebar();">
             <span class="session-icon" onclick="toggleIconPicker(event, '${id}')" title="切换图标">${icon}</span>
             <div class="session-info">
-              <div class="session-title">${title}</div>
+              <div class="session-title">${title}${empty ? SESSION_EMPTY_MARK : ''}</div>
               <div class="session-time">${time}</div>
             </div>
             <button class="session-rename-btn" onclick="startRenameSession(event, '${id}')" title="重命名">${UI_ICON_SVG.pencil}</button>
@@ -1289,8 +1358,9 @@
           sessions[sessionId].title = newTitle;
           _saveSessionMeta(sessionId);
           // 同步到服务端（超时兜底 T237：重命名是一次性 fire-and-forget，挂死的
-          // PUT 不会有第二次机会补发）
-          fetch(`/api/sessions/${sessionId}`, {
+          // PUT 不会有第二次机会补发）。暂定画布跳过——PUT 对陌生 id 会建条目，
+          // 等于绕开暂定闸门把空画布推上服务端名单
+          if (!sessions[sessionId].provisional) fetch(`/api/sessions/${sessionId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle }),
@@ -1540,7 +1610,10 @@
           title: '新画布',
           sessionId: SESSION_ID,
           createdAt: Date.now(),
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          // 同 createNewSession：兜底建的画布没内容不上服务端（此分支下次启动走
+          // 「恢复最新」复用它，不会反复新建）
+          provisional: true
         };
         saveSessions();
         setCurrentSessionId(id);
@@ -1587,6 +1660,7 @@
       // 清除 localStorage
       localStorage.removeItem('phymathia_msgs_' + currentSessionId);
       localStorage.removeItem('phymathia_graph_' + currentSessionId);
+      _emptyBadgeCache.delete(currentSessionId);
       // T203：服务端副本已 DELETE，旧推送签名作废——此后重建的内容必须照常推送
       _lastPushedMsgsSig.delete(currentSessionId);
       // 服务端清空先行（T182）：回收站捕获点在 DELETE /messages 内，必须早于

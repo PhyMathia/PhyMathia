@@ -714,7 +714,7 @@ check('T271 复活防线：卸载信标跳过墓碑在册的 id（兄弟标签�
   const i = src.indexOf("window.addEventListener('beforeunload'");
   if (i < 0) throw new Error('beforeunload 监听缺失');
   const seg = src.slice(i, i + 2400);
-  if (!seg.includes('if (_tombstonedSids.has(sid)) continue;')) throw new Error('全量信标未按墓碑逐条跳过');
+  if (!seg.includes('if (_tombstonedSids.has(sid) || sdata.provisional) continue;')) throw new Error('全量信标未按墓碑/暂定画布逐条跳过（2026-10-13 起暂定画布同跳）');
   if (!seg.includes('!_tombstonedSids.has(currentSessionId)')) throw new Error('当前会话消息信标未按墓碑跳过');
   return true;
 });
