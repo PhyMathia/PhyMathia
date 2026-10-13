@@ -497,6 +497,18 @@ check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋rege
   if (!actionsBody.includes("'runWorkflowNode(\\'' + node.id + '\\',false)'")) {
     throw new Error('空白工作流节点的「生成」直跑入口丢了');
   }
+  // 命名统一（2026-10-13 清理）：面板已泛化成带要求重生成，旧称「没看懂」整体退役——
+  // 画布上任何「重新生成」按钮开的是同一个小面板，不再一颗节点一个叫法
+  if (actionsBody.includes("'没看懂'") || actionsBody.includes('"没看懂"')) {
+    throw new Error('消息模块节点按钮还留着旧称「没看懂」——同面板不同名（2026-10-13 已统一清理）');
+  }
+  // 消息模块分支必须自己声明 regenBusy：工作流分支的 const 在 if 块里不外溢。真机复验
+  // 实证——声明被删时 _nodeActions 抛 ReferenceError，整个画布渲染不出来（0 节点），
+  // 而字符串契约对引用错误全盲，只能在源码层把声明本身钉住
+  const msgBranch = actionsBody.split("node.kind === 'module' && node.moduleKey !== 'socratic'")[1] || '';
+  if (!msgBranch.includes('const regenBusy')) {
+    throw new Error('消息模块分支丢了 regenBusy 声明——_nodeActions 会抛引用错误、整个画布渲染不出来');
+  }
   // ② 知识点按钮：已生成过内容才弹面板，首次生成保持直跑
   if (!grSrc.includes("_iconRegenButton('graphOpenRegenerate(\\'' + node.id + '\\')', node.busy ? '生成中' : '重新生成', node.busy)")) {
     throw new Error('知识点节点的重新生成没有接带要求面板');

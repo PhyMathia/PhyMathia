@@ -90,13 +90,12 @@ function _nodeActions(node) {
           + '</div>';
       }
     }
-    const label = node.moduleKey === 'graph' ? '重新生成' : '没看懂';
-    // T58 忙态：口径 2026-10-11 收紧成「这颗节点自己在重生成」。过去把 isStreaming
-    // （别处在生成回答）也算进来，按钮被置灰 = 排队入口自己封了；现在别处忙照点，
-    // 点了进队列（graph-interact.js submitRegenerateNode），只有这颗自己忙才置灰。
-    const regenBusy = typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id);
+    // 2026-10-13 命名统一：面板已泛化成「带要求重生成」（可留空），旧称「没看懂」整体
+    // 退役——画布上任何「重新生成」按钮开的是同一个小面板，不再一颗节点一个叫法。
+    // 忙态口径同 T58：这颗自己在重生成（_regeneratingNodes）才置灰。
+    const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
     return '<div class="graph-node-actions">'
-      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', label, regenBusy)
+      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
       + '</div>';
   }
   return '';
