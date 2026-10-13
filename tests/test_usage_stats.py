@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import httpx
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (ROOT, os.path.join(ROOT, "src")):
     if _p not in sys.path:
@@ -132,6 +134,21 @@ class FailureAndDurationTest(UsageStatsBase):
         no_dur = usage_stats.record_usage("deepseek", "m", "chat", "",
                                           {"prompt_tokens": 10, "completion_tokens": 1})
         self.assertIsNone(no_dur["durationMs"])
+
+    def test_failure_detail_appends_upstream_body(self):
+        # T302：raise_for_status 型异常把上游拒绝原因（响应体）拼进错误串，
+        # 与 chat 主链路「HTTP {status}: {body}」同口径
+        req = httpx.Request("POST", "http://upstream/v1/chat/completions")
+        resp = httpx.Response(400, request=req, text='{"error":"invalid api key"}')
+        exc = httpx.HTTPStatusError("Client error '400 Bad Request'", request=req, response=resp)
+        detail = usage_stats.failure_detail(exc)
+        self.assertIn("HTTP 400", detail)
+        self.assertIn("invalid api key", detail)
+
+    def test_failure_detail_falls_back_to_str(self):
+        # 无响应对象（连接/超时/解析类）退回 str(e)；空串退类型名
+        self.assertEqual(usage_stats.failure_detail(ValueError("boom")), "boom")
+        self.assertEqual(usage_stats.failure_detail(ValueError("")), "ValueError")
 
     def test_summarize_counts_errors_and_avg_duration(self):
         today = "2099-01-01"
@@ -258,6 +275,25 @@ class SummarizeTest(UsageStatsBase):
         out = usage_stats.summarize(days=30)
         self.assertEqual(out["kinds"]["unknown"]["requests"], 1)
         self.assertEqual(out["series"][today]["a"]["totalTokens"], 10)
+
+    def test_primary_slot_records_excluded(self):
+        # T288：旧 harness 记账把槽位名 "primary" 当模型名落盘（prompt_tokens=1
+        # 的退化 usage，真实模型不会叫这个名字）——四桶与明细一并跳过
+        today = "2099-01-01"
+        self._write(today, [
+            {"ts": f"{today}T10:00:00", "kind": "harness", "provider": "opencode",
+             "model": "primary", "prompt_tokens": 1, "completion_tokens": None},
+            {"ts": f"{today}T10:00:05", "kind": "chat", "provider": "deepseek",
+             "model": "deepseek-chat", "prompt_tokens": 100, "completion_tokens": 50},
+        ])
+        out = usage_stats.summarize(days=30, records=10)
+        self.assertNotIn("primary", out["models"])
+        self.assertNotIn("primary", out["days"][today])
+        self.assertNotIn("primary", out["series"][today])
+        self.assertNotIn("harness", out["kinds"])
+        self.assertEqual(out["models"]["deepseek-chat"]["requests"], 1)
+        self.assertEqual(out["total"]["promptTokens"], 100)
+        self.assertEqual([r["model"] for r in out["records"]], ["deepseek-chat"])
 
     def test_empty_dir_structure(self):
         out = usage_stats.summarize(days=7)

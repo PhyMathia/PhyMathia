@@ -124,6 +124,26 @@ def record_usage(provider, model, kind, session_id, usage, duration_ms=None):
     return _write_entry(entry)
 
 
+def failure_detail(exc) -> str:
+    """失败记账用的错误串（T302）：HTTPStatusError（resp.raise_for_status 抛出）
+    时把上游响应体片段拼进去——此前 raise_for_status 型发送段只存「状态码+URL」，
+    上游拒绝原因（响应体）丢失，排障只能外部 curl 复现。口径与 chat 主链路
+    （models_routes「HTTP {status}: {body}」）一致；其余异常退回 str(e)，
+    最终 200 字截断仍由 record_failure 统一收口。"""
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            body = (resp.text or "").strip()
+        except Exception:
+            body = ""
+        if body:
+            return f"HTTP {getattr(resp, 'status_code', '')}: {body[:300]}"
+    try:
+        return str(exc).strip() or type(exc).__name__
+    except Exception:
+        return type(exc).__name__
+
+
 def record_failure(provider, model, kind, session_id, error, duration_ms=None):
     """失败调用也进账：HTTP 非 200/连接异常/正文不可用等落一条 status=error
     记录（token 数为 null，error 存截断到 200 字符的原因）。
@@ -276,6 +296,13 @@ def summarize(days=30, records=0):
         if day < cutoff:
             continue
         for entry in _load_day_entries(path):
+            # T288：2026-09-30~10-08 的 harness 记账曾把槽位名 "primary" 当模型名
+            # 落盘（上游退化 usage，prompt_tokens=1、completion 为 null；同秒还有
+            # 重复行）。真实模型不会叫这个名字，产生点已随发送端改传真实模型名
+            # 死掉（harness-run.js _harnessModelForRequest 只传注册表模型名）——
+            # 聚合与明细一并跳过，不再污染模型分布/趋势线；原始 JSONL 保持不动。
+            if str(entry.get("model") or "") == "primary":
+                continue
             day_bucket = by_day.setdefault(day, _agg_bucket())
             model = str(entry.get("model") or "unknown")
             kind = str(entry.get("kind") or "unknown")

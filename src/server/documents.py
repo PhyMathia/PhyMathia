@@ -427,7 +427,7 @@ async def _ai_extract_document_knowledge(
     except (httpx.HTTPError, ValueError) as e:
         # 失败也进账后原样再抛：调用方的回退/报错行为不变
         usage_stats.record_failure(provider, model, "docs", "",
-                                   str(e) or type(e).__name__, usage_stats.elapsed_ms(docs_t0))
+                                   usage_stats.failure_detail(e), usage_stats.elapsed_ms(docs_t0))
         raise
     if data.get("usage"):
         usage_stats.record_usage(provider, model, "docs", "", data["usage"],

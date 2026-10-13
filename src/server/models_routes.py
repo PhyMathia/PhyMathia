@@ -946,7 +946,7 @@ async def api_fix_formula(request: Request):
         data = resp.json()
     except (httpx.HTTPError, ValueError) as e:
         usage_stats.record_failure(provider, model, "fix_formula", "",
-                                   str(e) or type(e).__name__,
+                                   usage_stats.failure_detail(e),
                                    usage_stats.elapsed_ms(t0))
         raise HTTPException(status_code=502, detail="修复模型调用失败")
     if data.get("usage"):
@@ -1027,15 +1027,23 @@ async def _run_rolling_summary(session_id, provider, api_key, model_name, base_u
         try:
             resp = await client.post(url, json=body, headers=headers, timeout=30.0)
             if resp.status_code != 200:
+                # T302：非流式响应正文已就位，拒绝原因（响应体）一并进账
+                try:
+                    body_snippet = resp.text.strip()[:200]
+                except Exception:
+                    body_snippet = ""
                 usage_stats.record_failure(provider, model_name, "summary", session_id,
-                                           f"HTTP {resp.status_code}", usage_stats.elapsed_ms(summary_t0))
+                                           f"HTTP {resp.status_code}: {body_snippet}" if body_snippet
+                                           else f"HTTP {resp.status_code}",
+                                           usage_stats.elapsed_ms(summary_t0))
                 return
             data = resp.json()
         except Exception as e:
             # 只包 AI 调用段：连接/超时/解析失败都算调用失败进账，再抛给外层记日志；
             # 记忆写入段的异常仍归外层 except，不冒充调用失败
             usage_stats.record_failure(provider, model_name, "summary", session_id,
-                                       f"请求异常: {e}", usage_stats.elapsed_ms(summary_t0))
+                                       f"请求异常: {usage_stats.failure_detail(e)}",
+                                       usage_stats.elapsed_ms(summary_t0))
             raise
         if data.get("usage"):
             usage_stats.record_usage(provider, model_name, "summary", session_id, data["usage"],
