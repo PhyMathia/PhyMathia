@@ -892,18 +892,22 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
     const html = await _requestVisualizationHtml(
       message?.content || '',
       new AbortController().signal,
-      '用户没看懂/有新要求：' + confusion
+      '用户对当前版本有反馈/新要求：' + (confusion || '整体重新生成一版，换一种讲法')
     );
     return _replaceModuleContent(message?.content || '', moduleKey, '## 交互探索\n\n```html\n' + html + '\n```');
   }
 
   const moduleLabel = (GRAPH_MODULE_META[moduleKey] || {}).label || moduleKey;
   const original = _extractRawModuleSection(message?.content || '', moduleKey) || '（没有原内容）';
-  const prompt = '用户对下面「' + moduleLabel + '」中的内容有没看懂的地方。'
+  // 2026-10-13 泛化：从「没看懂→一律简讲」扩成「按用户反馈/要求定向修订」——写了具体
+  // 问题只改该问题，提出新要求按要求调，留空（可留空直发）才整体换讲法。
+  const prompt = '用户对下面「' + moduleLabel + '」模块的当前版本不满意，或对它有新的要求。'
     + '请只重新生成这个模块，不改变其他模块。'
-    + '要求：用更简单、更慢、更生活化的语言重讲；保留公式和 Markdown；'
-    + '如果是苏格拉底追问或进阶学习，只输出该小节内容，不要输出整个学习卡片。\n\n'
-    + '原内容：\n' + original + '\n\n用户没看懂：\n' + confusion;
+    + '规则：用户指出了具体问题时，只针对该问题修改，没提到的部分尽量原样保留；'
+    + '用户提出了新要求时，按要求调整；用户没有说明具体问题时，换一种更清楚、更生活化的讲法整体重讲。'
+    + '保留公式和 Markdown；如果是苏格拉底追问或进阶学习，只输出该小节内容，格式不变。\n\n'
+    + '当前版本：\n' + original + '\n\n用户的反馈或要求：\n'
+    + (confusion || '（用户没有具体说明，请换一种讲法重讲）');
   let reply = '';
 
   if (typeof getActiveModelForRole === 'function') {
@@ -996,8 +1000,12 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
 
 // 「没看懂」重生成的内核出口：任务列表的「重试」要按当初那句要求原样重跑（tasks.js 的
 // replay.nodeJob.kind==='regen'），而那时候面板早就没了——所以留一个不经 UI 的入口。
+// 2026-10-13 起按节点分流量：消息模块节点走 _applyNodeRegenerate（写回 message），
+// 工作流节点（含知识点）走 _applyWorkflowNodeRegenerate（写回 node.content）。
 window.regenNodeWith = function(nodeId, confusion) {
-  return _applyNodeRegenerate(nodeId, confusion);
+  const node = _findGraphNode(nodeId);
+  if (node && !(node.messageIndex >= 0)) return _applyWorkflowNodeRegenerate(nodeId, confusion || '');
+  return _applyNodeRegenerate(nodeId, confusion || '');
 };
 
 // ===== 重新生成预警（T303，方案 A：只提示不拦链）=====
@@ -1049,7 +1057,7 @@ function graphOpenRegenerate(nodeId) {
     : '';
   main.insertAdjacentHTML('beforeend',
     '<div class="graph-regenerate-panel">'
-    + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里没看懂？例如：第三步推导跳步了"></textarea>'
+    + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里不满意，或想加点什么？可留空。例如：第三步跳步了 / 太啰嗦 / 换个比喻"></textarea>'
     + warnHtml
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'
@@ -1102,38 +1110,148 @@ async function _applyNodeRegenerate(nodeId, confusion) {
   }
 }
 
+// ===== 工作流节点（含知识点）的「带要求重生成」（2026-10-13）=====
+// 主流程画布上只有工作流节点，「重新生成」过去点了直跑、没处写字。现在按钮也弹
+// graphOpenRegenerate 面板：留空直发＝回 runWorkflowNode 原管线整体重跑（现状行为）；
+// 写了字＝修订式——旧内容+用户反馈一起喂模型，只改用户指出的点，其余尽量保留。
+function _regenNodeActionLabel(node) {
+  if (!node) return '重新生成';
+  if (node.kind === 'knowledge') return '重新生成知识点' + (node.title ? '：' + node.title : '');
+  const metaLabel = (GRAPH_MODULE_META[node.moduleKey] || {}).label;
+  return '重新生成' + (metaLabel || node.title || '节点');
+}
+
+async function _regenWorkflowNodeContent(node, text, signal) {
+  const label = node.kind === 'knowledge' ? (node.title || '知识点')
+    : ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.title || '节点');
+  const old = String(node.content || '').trim();
+  if (!old) throw new Error('节点还没有内容，直接用「生成」即可');
+  const prompt = '用户对下面「' + label + '」节点的当前内容不满意，或对它有新的要求。请重写整份内容。\n'
+    + '规则：用户指出了具体问题时，只针对该问题修改，没提到的部分尽量原样保留；'
+    + '用户提出了新要求时，按要求调整；用户没有说明具体问题时，换一种讲法整体重写，不要原样照抄。'
+    + '保留公式与 Markdown 结构，公式仍按 <formula> 规范标注。\n\n'
+    + '当前内容：\n' + old + '\n\n用户的反馈或要求：\n' + text;
+  let model = null;
+  let role = 'agent';
+  // 模型槽跟这颗节点生成时同槽（配方/苏格拉底·进阶/可视化的专用槽照旧生效），回退主模型
+  if (typeof _slotCallForWorkflowNode === 'function') {
+    const slot = _slotCallForWorkflowNode(node);
+    if (slot) { model = slot.model; role = slot.role || 'agent'; }
+  }
+  if (!model && typeof getActiveModelForRole === 'function') model = getActiveModelForRole('agent');
+  if (!model || typeof proxyChatWithModel !== 'function' || typeof collectStreamText !== 'function') {
+    if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置');
+    throw new Error('未配置 AI 模型，请在模型设置中配置');
+  }
+  const resp = await proxyChatWithModel(model, {
+    messages: [
+      { role: 'system', content: getLevelPrompt() },
+      { role: 'user', content: prompt },
+    ],
+    stream: true,
+    session_bucket: 'phymathia-module',
+    thinking: getSlotThinkingForRole(role),
+  }, signal);
+  const reply = await collectStreamText(resp);
+  if (!(reply || '').trim()) throw new Error('模型返回了空内容');
+  return reply;
+}
+
+async function _applyWorkflowNodeRegenerate(nodeId, text) {
+  if (_regeneratingNodes.has(nodeId)) return;
+  const node = _findGraphNode(nodeId);
+  if (!node) throw new Error('节点已不在画布上');
+  if (!(text || '').trim()) {
+    // 留空直发＝现状重跑。confirmed=true：下游提醒已写在面板里，发送即确认，不再二弹。
+    return runWorkflowNode(nodeId, true, false, null, true);
+  }
+  _regeneratingNodes.add(nodeId);
+  const jobAbort = new AbortController();
+  const taskId = (typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title: _regenNodeActionLabel(node), nodeId: nodeId, nodeKind: node.kind })
+    : null;
+  if (taskId && typeof _taskBindCancel === 'function') _taskBindCancel(taskId, () => jobAbort.abort());
+  let done = false;
+  try {
+    const reply = await _regenWorkflowNodeContent(node, text, jobAbort.signal);
+    // 生成链里画布可能整体重建、节点对象被换成新对象：账必须读画布上活着的那个
+    const live = _findGraphNode(nodeId);
+    if (!live) throw new Error('节点已不在画布上');
+    live.content = reply;
+    live.summary = typeof _graphSummary === 'function' ? _graphSummary(reply) : reply.slice(0, 120);
+    live.busy = false;
+    live.generated = true;
+    live.status = 'done';
+    if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+    if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
+    done = true;
+  } catch (err) {
+    const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
+    if (taskId && typeof _taskFinish === 'function') {
+      _taskFinish(taskId, aborted ? 'stopped' : 'error', aborted ? '已停止' : ((err && err.message) || '重新生成失败'));
+    }
+    throw err;
+  } finally {
+    _regeneratingNodes.delete(nodeId);
+  }
+  // 渲染必须放在摘掉忙账之后：按钮的置灰态读 _regeneratingNodes，先渲染会把
+  // 「重新生成」钉死在「生成中...」（真机实证：mock 验证 B 通道当场抓到）
+  if (done) {
+    if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+    if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+  }
+}
+
 async function submitRegenerateNode(nodeId) {
   const node = _findGraphNode(nodeId);
   const el = graphInner?.querySelector('[data-node-id="' + nodeId + '"]');
   const panel = el?.querySelector('.graph-regenerate-panel');
   const input = panel?.querySelector('.graph-regenerate-input');
   if (!node || !el || !panel || !input) return;
-  const confusion = input.value.trim();
-  if (!confusion) return;
+  const text = input.value.trim();
+  // 消息模块节点走 _applyNodeRegenerate（写回 message），工作流节点/知识点走
+  // _applyWorkflowNodeRegenerate（写回 node.content；留空＝原管线整体重跑）。
+  const isMessageModule = node.messageIndex >= 0;
   // 忙时排队（2026-10-11）：过去这条只在 isStreaming 时被按钮置灰挡住（工作流跑着反而
   // 能并发写同一颗节点）。现在统一收进队列，轮到它时切回这张画布再跑。面板先收起来——
   // 等待期间画布会重建好几次，那个 textarea 留不住；用户写的要求随队列带走。
   if (typeof _isSendBusy === 'function' && _isSendBusy()) {
     closeRegeneratePanel(nodeId);
-    const label = '重新生成' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '节点');
+    const label = isMessageModule
+      ? '重新生成' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '节点')
+      : _regenNodeActionLabel(node);
     _enqueueNodeJob(label, function() {
-      return _applyNodeRegenerate(nodeId, confusion);
+      return isMessageModule ? _applyNodeRegenerate(nodeId, text) : _applyWorkflowNodeRegenerate(nodeId, text);
     }, {
       kind: 'node',
-      replay: { nodeJob: { id: nodeId, kind: 'regen', text: confusion } },
+      replay: { nodeJob: { id: nodeId, kind: 'regen', text: text } },
     });
     return;
   }
-  const messages = _getChatHistory();
-  const message = messages[node.messageIndex];
-  if (!message) return;
+  if (isMessageModule) {
+    const messages = _getChatHistory();
+    if (!messages[node.messageIndex]) return;
+  }
 
   const buttons = panel.querySelectorAll('button');
   buttons.forEach(btn => { btn.disabled = true; });
   input.disabled = true;
   panel.classList.add('busy');
   try {
-    await _applyNodeRegenerate(nodeId, confusion);
+    if (isMessageModule) await _applyNodeRegenerate(nodeId, text);
+    else {
+      await _applyWorkflowNodeRegenerate(nodeId, text);
+      // 成功路径画布会整体重建、面板随节点重绘消失；若面板还挂着（如直跑被静默拒绝），
+      // 恢复按钮让用户能再试，别留一颗永久置灰的发送键
+      const livePanel = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-regenerate-panel');
+      const liveNode = _findGraphNode(nodeId);
+      if (livePanel && liveNode && !liveNode.busy) {
+        livePanel.querySelectorAll('button').forEach(btn => { btn.disabled = false; });
+        const liveInput = livePanel.querySelector('.graph-regenerate-input');
+        if (liveInput) liveInput.disabled = false;
+        livePanel.classList.remove('busy');
+      }
+    }
   } catch (err) {
     console.warn('Regenerate module failed:', err);
     const errorEl = panel.querySelector('.graph-regenerate-error');

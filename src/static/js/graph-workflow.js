@@ -859,12 +859,13 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
 // 用户把任务列表当"多任务排队台"用，点一下就该有回音——收进队列、面板上看得见、
 // 轮到它时自动切回这张画布跑起来。fromQueue 是放行旁路（同 sendMessage 的 force /
 // startQuestionWorkflow 的 fromQueue，见 send-queue.js 的 T225 注）。
-async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoffTaskId = null) {
+async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoffTaskId = null, confirmed = false) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || node.busy) return;
   // 重生成预警（T303）：改写内容前确认下游可能失效。排队轮到/任务重试
-  // （fromQueue/handoffTaskId）视为用户已确认过，不再二次弹窗
-  if (force && !fromQueue && !handoffTaskId && !_warnDownstreamBeforeRegenerate(node)) return;
+  // （fromQueue/handoffTaskId）视为用户已确认过，不再二次弹窗；2026-10-13 起面板路
+  // （带要求重生成）提示写在面板里、发送即确认，走 confirmed=true 旁路
+  if (force && !fromQueue && !handoffTaskId && !confirmed && !_warnDownstreamBeforeRegenerate(node)) return;
   if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
     const capturedForce = !!force;
     const label = '生成' + _workflowProgressLabel(node);

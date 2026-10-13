@@ -451,12 +451,12 @@ check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不�
   if (!giSrc.includes('graph-regenerate-warn')) {
     throw new Error('重新生成面板丢了「下游可能失效」提示行（T303 回退）');
   }
-  // 直接按钮路：三个入口都要接闸
+  // 直接按钮路：三个入口都要接闸（2026-10-13 起面板路 confirmed 旁路入列，意图不变）
   const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
   const runBody = extract(gwSrc, 'runWorkflowNode');
   if (runBody === null) throw new Error('找不到 runWorkflowNode——断言本身该更新了');
-  if (!/force && !fromQueue && !handoffTaskId && !_warnDownstreamBeforeRegenerate/.test(runBody)) {
-    throw new Error('工作流节点重生成没接预警闸，或排队/重试路会二次弹窗（T303）');
+  if (!/force && !fromQueue && !handoffTaskId && !confirmed && !_warnDownstreamBeforeRegenerate/.test(runBody)) {
+    throw new Error('工作流节点重生成没接预警闸，或排队/重试/面板路会二次弹窗（T303）');
   }
   const blankBody = extract(gwSrc, 'generateBlankNode');
   if (blankBody === null) throw new Error('找不到 generateBlankNode——断言本身该更新了');
@@ -466,8 +466,88 @@ check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不�
   const gcSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
   const knowBody = extract(gcSrc, 'generateKnowledgeNode');
   if (knowBody === null) throw new Error('找不到 generateKnowledgeNode——断言本身该更新了');
-  if (!/!\(opts && opts\.fromPhi\) && !_warnDownstreamBeforeRegenerate/.test(knowBody)) {
-    throw new Error('知识点生成没接预警闸，或丢了 Φ 直通不弹（fromPhi）旁路（T303）');
+  if (!/!\(opts && \(opts\.fromPhi \|\| opts\.confirmed\)\) && !_warnDownstreamBeforeRegenerate/.test(knowBody)) {
+    throw new Error('知识点生成没接预警闸，或丢了 Φ 直通（fromPhi）/面板（confirmed）不弹旁路（T303）');
+  }
+});
+
+// 静态契约（2026-10-13）：带要求重生成——工作流节点/知识点的「重新生成」改弹面板
+// （可留空直发＝原直跑重跑），写字走修订式（旧内容＋用户反馈喂模型，只改用户指出的点）；
+// submitRegenerateNode 放行空文本并按节点分流；任务重试 regenNodeWith 同步分流；
+// 面板旁路 confirmed 不二弹。变异验证：按钮改回直跑、空文本拦死、replay 丢文字，下面立刻红。
+check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋regenNodeWith 分流（2026-10-13）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  // ① 工作流节点按钮：有内容弹面板、没内容保留「生成」直跑
+  const actionsBody = extract(grSrc, '_nodeActions');
+  if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
+  if (!actionsBody.includes("graphOpenRegenerate(\\'' + node.id + '\\')")) {
+    throw new Error('工作流节点的「重新生成」没有改弹带要求面板（2026-10-13 回退）');
+  }
+  if (!actionsBody.includes("'runWorkflowNode(\\'' + node.id + '\\',false)'")) {
+    throw new Error('空白工作流节点的「生成」直跑入口丢了');
+  }
+  // ② 知识点按钮：已生成过内容才弹面板，首次生成保持直跑
+  if (!grSrc.includes("_iconRegenButton('graphOpenRegenerate(\\'' + node.id + '\\')', node.busy ? '生成中' : '重新生成', node.busy)")) {
+    throw new Error('知识点节点的重新生成没有接带要求面板');
+  }
+  // ③ 面板提交：放行空文本（不许 if (!confusion) return 拦死）＋按节点分流＋队列 replay 带文字
+  const submitBody = extract(giSrc, 'submitRegenerateNode');
+  if (submitBody === null) throw new Error('找不到 submitRegenerateNode——断言本身该更新了');
+  if (/if \(!confusion\) return;/.test(submitBody)) {
+    throw new Error('面板提交又把空文本拦死了——「可留空直发」回退了');
+  }
+  if (!submitBody.includes('_applyWorkflowNodeRegenerate') || !submitBody.includes('_applyNodeRegenerate(nodeId, text)')) {
+    throw new Error('submitRegenerateNode 丢了按节点分流（消息模块 vs 工作流节点）');
+  }
+  if (!/kind: 'regen', text: text/.test(submitBody)) {
+    throw new Error('队列 replay 不再携带用户文字——任务重试没法原样重跑');
+  }
+  // ④ 修订内核：喂旧内容＋用户反馈，模型槽跟生成时同槽
+  const kernelBody = extract(giSrc, '_regenWorkflowNodeContent');
+  if (kernelBody === null) throw new Error('找不到修订内核 _regenWorkflowNodeContent');
+  if (!kernelBody.includes('用户的反馈或要求') || !kernelBody.includes('当前内容')) {
+    throw new Error('修订 prompt 丢了「当前内容＋用户反馈」结构——定向修订变成盲重写');
+  }
+  if (!kernelBody.includes('_slotCallForWorkflowNode')) {
+    throw new Error('修订内核没跟节点生成时同槽（模型槽位回退丢失）');
+  }
+  // ⑤ 留空直发＝runWorkflowNode 原管线，confirmed 旁路不二弹
+  const applyBody = extract(giSrc, '_applyWorkflowNodeRegenerate');
+  if (applyBody === null) throw new Error('找不到 _applyWorkflowNodeRegenerate');
+  if (!applyBody.includes('runWorkflowNode(nodeId, true, false, null, true)')) {
+    throw new Error('留空直发没有回 runWorkflowNode 原管线（或丢了 confirmed 旁路）');
+  }
+  // ⑤b 成功渲染必须在忙账释放之后：按钮置灰态读 _regeneratingNodes，先渲染会把
+  // 「重新生成」钉死在「生成中...」（2026-10-13 mock 真发 B 通道当场抓到）
+  const afterRelease = applyBody.split('_regeneratingNodes.delete(nodeId)')[1] || '';
+  if (!afterRelease.includes('renderGraphCanvas')) {
+    throw new Error('成功渲染跑到忙账释放之前——重生成后按钮会永久置灰');
+  }
+  // ⑥ 任务重试出口同步分流
+  const regenWithTail = giSrc.split('window.regenNodeWith')[1] || '';
+  if (!/!\(node\.messageIndex >= 0\)/.test(regenWithTail)) {
+    throw new Error('regenNodeWith 没按节点分流——任务重试对工作流节点会走错通道');
+  }
+  // ⑦ 面板占位文案告诉用户「可留空」
+  if (!giSrc.includes('可留空')) {
+    throw new Error('面板占位文案丢了「可留空」提示');
+  }
+  // ⑧ 面板路 prompt 泛化：不再写死「用户没看懂：」单一框架
+  const modRegenBody = extract(giSrc, '_regenerateModuleContent');
+  if (modRegenBody === null) throw new Error('找不到 _regenerateModuleContent');
+  if (modRegenBody.includes('用户没看懂：') || !modRegenBody.includes('用户的反馈或要求')) {
+    throw new Error('消息模块面板路 prompt 没泛化成「按反馈/要求修订」');
   }
 });
 

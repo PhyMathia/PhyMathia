@@ -61,10 +61,18 @@ function _nodeActions(node) {
   // junction（2026-10-11 中转节点）同 hub：无内容可生成，卡上不挂任何动作钮
   if (node.messageIndex < 0 && (node.manual || node.kind === 'hub' || node.kind === 'junction')) return '';
   if (node.messageIndex < 0) {
-    const isBusy = !!node.busy;
-    const label = isBusy ? '生成中...' : node.content ? '重新生成' : '生成';
+    // 2026-10-13：有内容的节点「重新生成」改弹带要求小面板（可留空直发＝原直跑重生成，
+    // 留空时 _applyWorkflowNodeRegenerate 回 runWorkflowNode 原管线）；没内容的「生成」
+    // 保持直接跑。忙态口径同 T58：这颗自己在跑（工作流 busy / 修订中）才置灰。
+    const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
+    if (!(node.content || '').trim()) {
+      const label = regenBusy ? '生成中...' : '生成';
+      return '<div class="graph-node-actions">'
+        + _iconRegenButton('runWorkflowNode(\'' + node.id + '\',false)', label, regenBusy)
+        + '</div>';
+    }
     return '<div class="graph-node-actions">'
-      + _iconRegenButton('runWorkflowNode(\'' + node.id + '\',' + (node.content ? 'true' : 'false') + ')', isBusy ? '生成中...' : (node.content ? '重新生成' : '生成'), isBusy)
+      + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
       + '</div>';
   }
   if (node.kind === 'module' && node.moduleKey !== 'socratic') {
@@ -812,7 +820,11 @@ function _renderKnowledgeNodeHtml(node, state) {
   const body = node.minimized ? _minimizedBodyHtml() : ('<div class="graph-knowledge-body">'
     + (formulas ? '<div class="graph-knowledge-formulas">' + formulas + '</div>' : '')
     + '<textarea class="graph-custom-node-content" rows="3" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)">' + escapeHtml(node.content || node.summary || '') + '</textarea>'
-    + '<div class="graph-knowledge-actions">' + _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy) + '</div>'
+    + '<div class="graph-knowledge-actions">' + ((node.content || '').trim()
+      // 2026-10-13：已生成过内容的知识点，重新生成同样弹带要求面板（可留空直发）；
+      // 还没内容的是首次生成，保持直接跑
+      ? _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy)
+      : _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '生成', node.busy)) + '</div>'
     + '</div>');
   return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
