@@ -295,6 +295,35 @@ checkSq('排队连点去重（T280）：同颗节点同款活儿等待中只收�
 const wfEval = (code) => vm.runInContext(code, sandbox);
 const WF_SID_A = 'a313w', WF_SID_B = 'b313w';
 
+// 前置域（phi.mjs 的 harnessDeleted 桩、quiz.mjs 的 M2_SESSION 夹具、本文件 multi-select
+// 段的 () => ({})）把 window.getGraphState/getCurrentSessionId 换成桩且未还原，而 T313/T314
+// 的世界访问器（_workflowEdgeTable/_graphStateFor/_taskSaveCtxNodes/_worldCustomNodeById）
+// 与 _graphState/_saveGraphState 全走这两个函数——不钉回来三条用例读到的永远是空世界。
+// 这里按真机语义钉成本地存储 backed 的一对（getCurrentSessionId 读 currentSessionId 变量，
+// 与 session.js:763 一致），finally 原样还原，不污染后续用例（quiz.mjs:121 同款手法）。
+const wfPinWorldAccessors = () => {
+  const prev = {
+    getState: sandbox.window.getGraphState,
+    saveState: sandbox.window.saveGraphState,
+    getSid: sandbox.window.getCurrentSessionId,
+  };
+  sandbox.window.getGraphState = (sid) => {
+    const key = 'phymathia_graph_' + (sid || wfEval('currentSessionId'));
+    try { return JSON.parse(sandbox.localStorage.getItem(key) || '{}'); } catch (e) { return {}; }
+  };
+  sandbox.window.saveGraphState = (sid, st) => {
+    const key = 'phymathia_graph_' + (sid || wfEval('currentSessionId'));
+    try { sandbox.localStorage.setItem(key, JSON.stringify(st)); } catch (e) { /* 配额满：与真机一致静默 */ }
+  };
+  sandbox.window.getCurrentSessionId = () => wfEval('currentSessionId');
+  return prev;
+};
+const wfUnpinWorldAccessors = (prev) => {
+  sandbox.window.getGraphState = prev.getState;
+  sandbox.window.saveGraphState = prev.saveState;
+  sandbox.window.getCurrentSessionId = prev.getSid;
+};
+
 checkSq('T313 窗口A：分析期间切画布，分析结果仍落回所属画布、busy 不残留、不误诊为空', async () => {
   const prev = {
     sid: wfEval('currentSessionId'),
@@ -315,6 +344,12 @@ checkSq('T313 窗口A：分析期间切画布，分析结果仍落回所属画�
   const prevModel = sandbox.getActiveModelForRole;
   const prevProxy = sandbox.proxyChat;
   const prevCreateMods = sandbox._createWorkflowModuleNodes;
+  const prevWorld = wfPinWorldAccessors();
+  // graphInner：前置域跑过真 renderGraphCanvas 之后它是个恒真 DOM 替身，而本沙箱的
+  // vendor marked 从未加载（renderMarkdown 必抛）——流式收尾的渲染路径会被它带进
+  // 死路，干净环境里它是 null、整条路径被 ?. 短路（debug-t313.mjs 同款语义）。
+  // 本条验的是会话归属不是渲染：期间置空，finally 还原。
+  wfEval('__wfSavedGraphInner = graphInner; graphInner = null;');
   try {
     sandbox.localStorage.setItem('phymathia_current_session', WF_SID_A);
     wfEval('currentSessionId = ' + JSON.stringify(WF_SID_A) + '; SESSION_ID = ' + JSON.stringify('r' + WF_SID_A) + ';'
@@ -339,6 +374,7 @@ checkSq('T313 窗口A：分析期间切画布，分析结果仍落回所属画�
     sandbox.showProgress = () => {};
     sandbox.hideProgress = () => {};
     sandbox.getActiveModelForRole = () => ({ id: 'mock-agent' });
+    sandbox.showToast = () => {};
     // 假 SSE：第二帧取出时把人切到 B 画布（视图整体换成 B 的）——正是用户「首问后
     // 迅速另开新会话」的那一下。世界 ctx 应接住后续的落盘与查找。
     let switched = false;
@@ -392,6 +428,8 @@ checkSq('T313 窗口A：分析期间切画布，分析结果仍落回所属画�
     if ((bState.customNodes || []).some(n => n.id === answer.id)) throw new Error('答案节点被写进了 B 画布');
     if (wfEval('_taskActiveCtx') !== null) throw new Error('世界 ctx 没收干净（会外溢到下一轮）');
   } finally {
+    wfUnpinWorldAccessors(prevWorld);
+    wfEval('graphInner = __wfSavedGraphInner; delete __wfSavedGraphInner;');
     sandbox.renderGraphCanvas = prevRender;
     sandbox._scheduleWorkflowStreamProgress = prevStreamProgress;
     sandbox._setWorkflowStopButton = prevStopBtn;
@@ -427,6 +465,7 @@ checkSq('T313 窗口B＋接手：切画布后上游问题/边表/会话号/保�
     edges: wfEval('JSON.stringify(graphView.edges)'),
     lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
   };
+  const prevWorld = wfPinWorldAccessors();
   try {
     wfEval('currentSessionId = ' + JSON.stringify(B) + '; SESSION_ID = ' + JSON.stringify('r' + B) + ';'
       + ' sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "A", updatedAt: 1 }, '
@@ -493,6 +532,7 @@ checkSq('T313 窗口B＋接手：切画布后上游问题/边表/会话号/保�
     wfEval('_tasksEndWorkflow(' + JSON.stringify(taskId) + ', "done", "")');
     if (wfEval('_taskActiveCtx') !== null) throw new Error('任务结账后 ctx 没清');
   } finally {
+    wfUnpinWorldAccessors(prevWorld);
     if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
     else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
     sandbox.localStorage.removeItem('phymathia_graph_' + A);
@@ -518,6 +558,7 @@ checkSq('T314：收尾知识提取记回工作流所属画布，取材从世界 
     lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
   };
   const prevExtract = sandbox.autoExtractKnowledge;
+  const prevWorld = wfPinWorldAccessors();
   try {
     wfEval('currentSessionId = ' + JSON.stringify(B) + '; sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "A", updatedAt: 1 }, '
       + B + ': { id: "' + B + '", sessionId: "r' + B + '", title: "B", updatedAt: 1 } }; chatHistory = [];');
@@ -543,6 +584,7 @@ checkSq('T314：收尾知识提取记回工作流所属画布，取材从世界 
     await sandbox._extractKnowledgeFromWorkflow('另一个问题', [modId]);
     if (calls.length !== 1) throw new Error('缺省路径行为变了');
   } finally {
+    wfUnpinWorldAccessors(prevWorld);
     sandbox.autoExtractKnowledge = prevExtract;
     if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
     else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
