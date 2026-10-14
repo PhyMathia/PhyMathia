@@ -3667,7 +3667,7 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         from harness.tools import PHASE_TOOLS, READONLY_TOOL_NAMES, TOOL_TO_OP, build_tools, _args_to_op
         self.assertEqual(
             set(PHASE_TOOLS["preset"]),
-            {"ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node"} | set(READONLY_TOOL_NAMES),
+            {"ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node", "add_edge"} | set(READONLY_TOOL_NAMES),
         )
         tools = build_tools("preset")
         names = {t["function"]["name"] for t in tools}

@@ -386,7 +386,9 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     "apply": ["update_node", "delete_node", "add_edge", "remove_edge", "update_edge"]
     + list(READONLY_TOOL_NAMES),
     # 创造模式（P3）：配方三件套＋ask_user（T263 访谈）＋create_node（带 recipe_id＝「在画布上放一个试试」）
-    "preset": ["ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node"]
+    # T320 翻案（2026-10-14）：add_edge 准入但受约束——只许「画布既有节点 → 本次新放实例」，
+    # 收窄在 review.py 的 preset 过滤器（按同批 create_node 的 temp_id 判），提示词教访谈答案落地接线
+    "preset": ["ask_user", "create_recipe", "update_recipe", "delete_recipe", "create_node", "add_edge"]
     + list(READONLY_TOOL_NAMES),
     # 答疑模式（三模式切换器）：纯只读——查图、查知识库、查公式速查，绝不改图
     "chat": list(READONLY_TOOL_NAMES),

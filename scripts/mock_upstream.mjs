@@ -289,6 +289,25 @@ function replyOf(body) {
   if (j.tools.includes('delete_recipe') && t.includes('删除配方')) {
     return toolCall('delete_recipe', { recipe_id: 'recipe-b1', reason: '用户明确要求删除' });
   }
+  // —— T320 翻案剧本（创造模式同批接线）：带线演练 → create_recipe＋create_node＋add_edge 三连 ——
+  if (j.tools.includes('create_recipe') && t.includes('带线演练')) {
+    const recipe = {
+      name: '带线合力', desc: '访谈材料就地接线的演示配方',
+      base: { kind: 'module' },
+      appearance: { palette: 'teal', shape: 'is-round' },
+      generate: { prompt: '输入「上游概念」是已学过的材料；结合它输出合力讲解。', context_channel: 'workflow_context' },
+      ports: { static: [{ label: '合力讲解', drag_form: 'draft', type: 'text' }], inputs: [{ label: '上游概念', type: 'text' }] },
+      content_kind: 'markdown',
+    };
+    return {
+      content: '配方已备好，同批把导数接进输入口 ' + sfx,
+      tool_calls: [
+        { id: 'call_pw_' + nextId(), type: 'function', function: { name: 'create_recipe', arguments: JSON.stringify({ temp_recipe_id: 'new_recipe', reason: '带线演练：先建配方', recipe }) } },
+        { id: 'call_nw_' + nextId(), type: 'function', function: { name: 'create_node', arguments: JSON.stringify({ temp_id: 'n_wire', kind: 'module', recipe_id: 'new_recipe', label: '带线合力演示', reason: '把配方实例放上画布' }) } },
+        { id: 'call_aw_' + nextId(), type: 'function', function: { name: 'add_edge', arguments: JSON.stringify({ from: 'A', to: 'n_wire', to_port: 'in-0', relation: '依赖', reason: '按访谈把导数接进输入口「上游概念」' }) } },
+      ],
+    };
+  }
   // —— 主链路（verify_send_channels）：问题概要 / 模块 XML / 苏格拉底编号行 ——
   if (t.includes('只输出简洁的问题概要')) {
     return text('### 问题概要 ' + sfx + '\n核心概念：简谐运动；数学结构：二阶常系数线性微分方程；关系：回复力线性化导出振动方程。');

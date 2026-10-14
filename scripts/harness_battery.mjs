@@ -110,6 +110,11 @@ const scenarios = [
     snapshotExtra: 'recipes',
     instruction: '请删除配方「错题复盘」，我不再需要它。',
     focus: [], expect: { phase: 'preset', recipeDelete: 'recipe-b1' } },
+  // T320 翻案（2026-10-14）：同批接线——配方＋实例＋从既有节点接进具名输入口。
+  // 「带线演练」是 mock 独占标记（harness 后端提示词零命中，T263 剧本判据坑）
+  { id: 'preset-wiring', label: '创造模式：配方＋实例＋同批接线（访谈材料落地）', phase: 'preset',
+    instruction: '带线演练：做一个合力演示配方，把导数接进它的输入口',
+    focus: [], expect: { phase: 'preset', recipeCreate: {}, recipeWiring: { from: 'A', toPort: 'in-0' } } },
   {
     id: 'feedback-iterate', label: '反馈迭代：加物理视角后再要求深入',
     turns: [
@@ -605,6 +610,17 @@ function scoreScenario(sc, data) {
     const del = ops.find(o => opName(o) === 'delete_recipe');
     if (!del) issues.push('未产出 delete_recipe');
     else if (String(del.recipe_id || '') !== ex.recipeDelete) issues.push('delete_recipe 目标不符: ' + del.recipe_id);
+  }
+  // T320 翻案（2026-10-14）：同批接线——add_edge 必须从既有节点接进本批新放的实例
+  if (ex.recipeWiring) {
+    const edge = ops.find(o => opName(o) === 'add_edge');
+    if (!edge) issues.push('创造模式同批接线缺失: 未产出 add_edge');
+    else {
+      if (ex.recipeWiring.from && String(edge.from) !== ex.recipeWiring.from) issues.push('接线来源不符: ' + edge.from);
+      if (ex.recipeWiring.toPort && String(edge.toPort || edge.to_port || '') !== ex.recipeWiring.toPort) issues.push('接线 to_port 不符: ' + (edge.toPort || edge.to_port));
+      const createdIds = ops.filter(o => opName(o) === 'create_node').map(o => String(o.assigned_id || o.id || o.temp_id || ''));
+      if (!createdIds.includes(String(edge.to))) issues.push('接线目标不是本批新放实例: ' + edge.to + '，本批新建: ' + createdIds.join(','));
+    }
   }
   if (ex.createModule && !ops.some(o => opName(o) === 'create_node' && o.kind === 'module' && (o.module_key || o.moduleKey) === ex.createModule)) {
     issues.push('未创建 ' + ex.createModule + ' 模块');

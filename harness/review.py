@@ -1758,12 +1758,28 @@ async def review_graph(
 
                 if phase == "preset":
                     # 创造模式（P3）：只放行配方三件套＋「放一个试试」的配方实例 create_node；
-                    # 模型若跑偏去改普通图节点，带反馈重试而不是静默丢弃
+                    # 模型若跑偏去改普通图节点，带反馈重试而不是静默丢弃。
+                    # T320 翻案（2026-10-14）：add_edge 受约束放行——to 必须是本批带 recipe_id 的
+                    # create_node 的 temp_id、from 必须不是（「画布既有材料 → 本次新放实例」单向），
+                    # 其余图操作照旧剥掉带反馈重试；护栏落在这里而非只靠提示词
+                    preset_temp_ids: set = set()
+                    for _op in raw_ops:
+                        if not isinstance(_op, dict) or _op.get("op") != "create_node":
+                            continue
+                        if not str(_op.get("recipe_id") or _op.get("recipeId") or ""):
+                            continue
+                        _node_payload = _op.get("node") if isinstance(_op.get("node"), dict) else {}
+                        _temp = str(_op.get("temp_id") or _op.get("id") or _node_payload.get("temp_id") or "").strip()
+                        if _temp:
+                            preset_temp_ids.add(_temp)
                     preset_ops = [
                         op for op in raw_ops
                         if isinstance(op, dict) and (
                             op.get("op") in ("create_recipe", "update_recipe", "delete_recipe")
                             or (op.get("op") == "create_node" and str(op.get("recipe_id") or op.get("recipeId") or ""))
+                            or (op.get("op") == "add_edge"
+                                and str(op.get("to") or "") in preset_temp_ids
+                                and str(op.get("from") or "") not in preset_temp_ids)
                         )
                     ]
                     dropped = len(raw_ops) - len(preset_ops)
@@ -1771,7 +1787,7 @@ async def review_graph(
                         last_errors = [{
                             "index": "phase",
                             "op": "preset",
-                            "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），本次丢弃了 {dropped} 个越权图操作",
+                            "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），外加从画布既有节点接进本次新放实例的 add_edge（to 写新实例 temp_id、from 写快照既有节点，禁止既有节点之间互连或反向），本次丢弃了 {dropped} 个越权图操作",
                         }]
                         continue
                     raw_ops = preset_ops

@@ -855,6 +855,68 @@ class CoachReportTest(unittest.TestCase):
         self.assertEqual(result["phase"], "coach")
 
 
+class PresetWiringGateTest(unittest.TestCase):
+    """T320 翻案（2026-10-14）：preset 相位 add_edge 受约束放行——
+    只许「画布既有节点 → 本次新放的配方实例」（to＝本批 create_node 的 temp_id）；
+    既有节点之间互连、新实例反向接入照旧剥掉并带相位反馈重试。"""
+
+    RECIPE = {
+        "name": "考前速记", "desc": "分考点与口诀两段",
+        "base": {"kind": "module"},
+        "appearance": {"palette": "teal", "shape": "is-round"},
+        "generate": {"prompt": "输出考点与口诀两段。", "context_channel": "workflow_context"},
+        "ports": {"static": [{"label": "再测一道", "drag_form": "user"}],
+                  "inputs": [{"label": "上游概念", "type": "text"}]},
+        "content_kind": "markdown",
+    }
+
+    def test_wiring_into_new_instance_passes(self):
+        fake = _recording_fake([
+            _llm([
+                _tool_call("create_recipe", {"temp_recipe_id": "new_recipe", "recipe": dict(self.RECIPE),
+                                             "reason": "先建配方"}, "call_p1"),
+                _tool_call("create_node", {"temp_id": "n1", "kind": "module", "recipe_id": "new_recipe",
+                                           "label": "合力演示", "reason": "放上画布试试"}, "call_p2"),
+                _tool_call("add_edge", {"from": "A", "to": "n1", "to_port": "in-0",
+                                        "relation": "依赖", "reason": "按访谈把导数接进输入口"}, "call_p3"),
+            ], "配方已备好并同批接线"),
+        ], [])
+        result = _run_review(fake, phase="preset", instruction="做一个配方并把导数接进来")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["phase"], "preset")
+        self.assertEqual(len(result["operations"]), 3, "配方＋实例＋接线三件全放行")
+        node = next(n for n in result["next_snapshot"]["nodes"] if n.get("label") == "合力演示")
+        edge = next(e for e in result["next_snapshot"]["edges"]
+                    if e.get("from") == "A" and e.get("to") == node["id"])
+        self.assertEqual(edge.get("toPort"), "in-0", "接线落在新实例的具名输入口上")
+
+    def test_wiring_between_existing_nodes_dropped_with_feedback(self):
+        recipe = dict(self.RECIPE)
+        seen = []
+        fake = _recording_fake([
+            _llm([
+                _tool_call("add_edge", {"from": "A", "to": "B", "relation": "依赖",
+                                        "reason": "既有节点互连"}, "call_x1"),
+                _tool_call("add_edge", {"from": "n1", "to": "A", "relation": "依赖",
+                                        "reason": "新实例反向接入既有节点"}, "call_x2"),
+            ], "我改一下"),
+            _llm([
+                _tool_call("create_recipe", {"temp_recipe_id": "new_recipe", "recipe": recipe,
+                                             "reason": "先建配方"}, "call_y1"),
+                _tool_call("create_node", {"temp_id": "n1", "kind": "module", "recipe_id": "new_recipe",
+                                           "label": "合力演示", "reason": "放上画布试试"}, "call_y2"),
+            ], "好的"),
+        ], seen)
+        result = _run_review(fake, phase="preset", instruction="越权连线应当被剥掉", retries=1)
+        retry_user = [m for m in seen[1]["messages"] if m.get("role") == "user"][-1]["content"]
+        self.assertIn("创造模式只允许配方操作", retry_user, "preset 越权图操作须带相位专属反馈重试")
+        self.assertIn("add_edge", retry_user, "反馈要写明 add_edge 的受约束例外，否则模型无从改对")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["operations"]), 2, "越权连线被剥掉，只留配方＋实例")
+        self.assertFalse(any(op.get("op") == "add_edge" for op in result["operations"]),
+                         "既有节点之间与反向接入的连线都不得落地")
+
+
 if __name__ == "__main__":
     unittest.main()
 
