@@ -2082,6 +2082,21 @@ check('节点标题（2026-10-10 ③）：副标题与喂料标签有标题用�
     // 目标是带标题 note 时，target 标签用标题
     const ctx2 = sandbox._buildWorkflowContextForNode(noteA);
     if ((ctx2.target || {}).label !== '力学部分') throw new Error('带标题 note 的目标标签应用标题');
+    // T327：上游规范顺序——排序键只取节点属性（timestamp 优先），与边在 edge 表里
+    // 的插入序无关。同样三条边整表翻转后，同一份上游集合必须拼出同一串顺序
+    // （与 _nodeInputHash 的 sorted parts 同口径，hash 公式不动）
+    const seq1 = (ctx.upstream || []).map(item => item.label);
+    vm.runInContext('graphView.edges = ['
+      + '{ from: "nbt", fromPort: "out-0", to: "sd", toPort: "in-1", type: "custom", custom: true },'
+      + '{ from: "na", fromPort: "out-0", to: "sd", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "q1", fromPort: "out-0", to: "na", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    const seq2 = (sandbox._buildWorkflowContextForNode(sumNode).upstream || []).map(item => item.label);
+    if (JSON.stringify(seq1) !== JSON.stringify(seq2)) {
+      throw new Error('边序翻转后上游顺序应稳定：' + JSON.stringify(seq1) + ' vs ' + JSON.stringify(seq2));
+    }
+    if (seq1.join(',') !== '问题,力学部分,我的总结,AI 总结') {
+      throw new Error('上游应按 timestamp 规范排序：' + seq1.join(','));
+    }
   } finally {
     sandbox.escapeHtml = realEsc;
     sandbox.window.getGraphState = prevGet;

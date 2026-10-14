@@ -105,6 +105,10 @@ def _norm_duration(duration_ms):
 
 _WF_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
+# 按运行聚合返回的轮数上限（T327）：窗口内每轮工作流一条，高频使用能上百轮；
+# 面板只翻近期轮次，取最近 50 轮（与 records 的 500 同思路，防响应膨胀）
+_WF_RUN_LIMIT = 50
+
 
 def normalize_wf(wf):
     """工作流运行级标签消毒（2026-10-14）：前端 wfStats → 记账用精简体。
@@ -311,6 +315,11 @@ def summarize(days=30, records=0):
     - records：records>0 时附带范围内最近 N 条调用明细（时间倒序，上限
       500）——前端「最近调用」明细卡的数据源；旧记录无 status 按「成功」、
       无 durationMs 为 null（与聚合同一套兼容口径）
+    - wfRuns（T327）：按 wf.run 把工作流调用聚成一轮一行，{run: 聚合桶+run/
+      nodes/waves/firstTs/lastTs}，按最近活跃时间倒序、封顶 50 轮——前端
+      「工作流运行（按轮）」卡的数据源。聚合桶与既有桶同构（requests 含失败，
+      cachedTokens≈预计省下的 prompt），nodes/waves 为去重计数；非工作流
+      调用与缺 run 形状不进这里
     """
     try:
         day_limit = max(1, min(365, int(days)))
@@ -326,6 +335,7 @@ def summarize(days=30, records=0):
     by_model = {}
     by_kind = {}
     by_series = {}
+    by_wf_run = {}
     total = _agg_bucket()
     collected = []
     try:
@@ -352,6 +362,33 @@ def summarize(days=30, records=0):
             series_bucket = by_series.setdefault(day, {}).setdefault(model, _agg_bucket())
             for bucket in (day_bucket, model_bucket, kind_bucket, series_bucket, total):
                 _agg_add(bucket, entry)
+            # T327：按运行（wf.run）聚合——每轮工作流一条读数：节点数（wf.node
+            # 去重）、波数（wf.wave 去重）、调用数（含失败）、token 与缓存命中
+            # （cachedTokens≈预计省下的 prompt）。wf 缺 run（normalize_wf 的极端
+            # 形状）与非工作流调用不进这里；run 键沿用落盘时的白名单消毒口径
+            wf = entry.get("wf")
+            if isinstance(wf, dict):
+                run_id = wf.get("run")
+                if isinstance(run_id, str) and _WF_KEY_RE.match(run_id):
+                    run_row = by_wf_run.get(run_id)
+                    if run_row is None:
+                        run_row = {"agg": _agg_bucket(), "nodes": set(),
+                                   "waves": set(), "firstTs": None, "lastTs": None}
+                        by_wf_run[run_id] = run_row
+                    _agg_add(run_row["agg"], entry)
+                    node_id = wf.get("node")
+                    if isinstance(node_id, str) and node_id:
+                        run_row["nodes"].add(node_id)
+                    wave = wf.get("wave")
+                    if isinstance(wave, int) and not isinstance(wave, bool):
+                        run_row["waves"].add(wave)
+                    ts = str(entry.get("ts") or "")
+                    if ts:
+                        # ts 定长 isoformat，字典序即时序；同一条目的首末端各记一次
+                        if run_row["firstTs"] is None or ts < run_row["firstTs"]:
+                            run_row["firstTs"] = ts
+                        if run_row["lastTs"] is None or ts > run_row["lastTs"]:
+                            run_row["lastTs"] = ts
             if record_limit:
                 collected.append(entry)
     record_items = []
@@ -381,12 +418,29 @@ def summarize(days=30, records=0):
                 "wf": entry.get("wf"),
                 "error": entry.get("error"),
             })
+    # T327：wfRuns 按最近活跃时间倒序（新→旧），同刻按 run 字典序决胜；
+    # 封顶 _WF_RUN_LIMIT 轮。聚合桶与既有桶同构（_agg_finalize），另带
+    # run/nodes/waves/firstTs/lastTs
+    ordered_runs = sorted(
+        by_wf_run.items(),
+        key=lambda kv: (kv[1]["lastTs"] or kv[1]["firstTs"] or "", kv[0]),
+        reverse=True)[:_WF_RUN_LIMIT]
+    wf_runs = {}
+    for run_id, row in ordered_runs:
+        item = _agg_finalize(row["agg"])
+        item["run"] = run_id
+        item["nodes"] = len(row["nodes"])
+        item["waves"] = len(row["waves"])
+        item["firstTs"] = row["firstTs"]
+        item["lastTs"] = row["lastTs"]
+        wf_runs[run_id] = item
     return {
         "days": {day: _agg_finalize(b) for day, b in sorted(by_day.items())},
         "models": {model: _agg_finalize(b) for model, b in sorted(by_model.items())},
         "kinds": {kind: _agg_finalize(b) for kind, b in sorted(by_kind.items())},
         "series": {day: {m: _agg_finalize(b) for m, b in models_of_day.items()}
                    for day, models_of_day in sorted(by_series.items())},
+        "wfRuns": wf_runs,
         "records": record_items,
         "total": _agg_finalize(total),
     }

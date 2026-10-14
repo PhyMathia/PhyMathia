@@ -522,6 +522,83 @@ class WorkflowStatsProxyTest(RouteTestBase):
         self.assertNotIn("wf", line)
 
 
+class WorkflowContextNormalizeProxyTest(RouteTestBase):
+    """workflow_context 入口规范化（2026-10-14 T327）：垃圾形状不得 500。
+
+    target 非 dict（客户端传 "x"/42/["m"]）此前一路走到
+    _workflow_context_parts 的 target.get 上抛 AttributeError；规范化后按
+    「无 target」渲染，请求 200 照常。走 prompt 新格式＋MockTransport 截获
+    上游，不触网。
+    """
+
+    def _post(self, workflow_context):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            })
+
+        payload = {
+            "prompt": "请生成物理视角模块正文",
+            "session_id": "s_norm_ctx",
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "sk-test",
+            "model": "deepseek-chat",
+            "stream": False,
+            "workflow_context": workflow_context,
+        }
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
+            return self.client.post("/api/models/chat", json=payload)
+
+    def test_garbage_target_shapes_do_not_500(self):
+        for bad in ("x", 42, ["m"], {"kind": None}):
+            resp = self._post({"mode": "module", "target": bad, "question": "简谐运动"})
+            self.assertEqual(resp.status_code, 200,
+                             f"target={bad!r} 不应 500：{resp.text[:200]}")
+
+    def test_garbage_whole_context_does_not_500(self):
+        for bad in ("x", 42, ["upstream"], {"upstream": "not-a-list"}):
+            resp = self._post(bad)
+            self.assertEqual(resp.status_code, 200,
+                             f"workflow_context={bad!r} 不应 500：{resp.text[:200]}")
+
+    def test_valid_context_still_renders_workflow_prompt(self):
+        # 有效形状回归：规范化不改变既有渲染（MODULE 底座＋shared 段进尾部块）
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content.decode())
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            })
+
+        payload = {
+            "prompt": "请生成物理视角模块正文",
+            "session_id": "s_norm_ctx",
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "sk-test",
+            "model": "deepseek-chat",
+            "stream": False,
+            "workflow_context": {
+                "mode": "module",
+                "target": {"kind": "module", "module": "physics", "label": "物理视角"},
+                "question": "简谐运动",
+                "upstream": [{"label": "问题", "content": "简谐运动"}],
+            },
+        }
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
+            resp = self.client.post("/api/models/chat", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        tail = str(seen["body"]["messages"][-1]["content"])
+        self.assertIn("原始问题：简谐运动", tail)
+        self.assertIn("当前生成目标：物理视角", tail)
+
+
 class LinearRetirementGateTest(RouteTestBase):
     """线性主聊天退役硬门禁（2026-09-25）：prompt 新格式只受理画布锚定请求。
 

@@ -364,6 +364,38 @@ export async function run() {
       return true;
     });
 
+    check('token-usage：工作流运行（按轮）汇总表（T327 wfRuns 轮次聚合读数）', () => {
+      // 空态：无 wfRuns（非工作流用户）给专属空态而非崩
+      if (!sandbox._tokenUsageWfRunsHtml({}).includes('暂无工作流运行记录')) {
+        throw new Error('无 wfRuns 应给空态');
+      }
+      const html = sandbox._tokenUsageWfRunsHtml({
+        wfRuns: {
+          'wf-aaa': { run: 'wf-aaa', nodes: 3, waves: 2, requests: 4, errorRequests: 1,
+                      totalTokens: 12345, cachedTokens: 8000, hitKnownRequests: 3,
+                      firstTs: '2026-10-14T19:40:11', lastTs: '2026-10-14T19:41:03' },
+          'wf-bbb': { run: 'wf-bbb', nodes: 1, waves: 1, requests: 1, errorRequests: 0,
+                      totalTokens: 2246, cachedTokens: 0, hitKnownRequests: 0,
+                      firstTs: '2026-10-14T18:00:00', lastTs: '2026-10-14T18:00:44' },
+        },
+      });
+      if (!html.includes('<span>节点·波</span>')) throw new Error('表头应有节点·波列');
+      if (!html.includes('token-runs-row')) throw new Error('应有 runs 行类');
+      if (!html.includes('3·2')) throw new Error('节点·波应为去重计数');
+      if (!html.includes('4 次')) throw new Error('调用数应展示（含失败）');
+      if (!html.includes('失1')) throw new Error('失败数应红字后缀');
+      if (!html.includes('1.2万')) throw new Error('tok 应走万口径');
+      if (!html.includes('8000')) throw new Error('命中 tok 应展示');
+      // 上游不报缓存字段的轮显 —（与明细表三档口径一致，不拿 0 冒充零命中）
+      if (!html.includes('>—<')) throw new Error('无命中字段的轮应显 —');
+      // 时间倒序兜底：对象键序不保证，前端按 lastTs 再排一次
+      if (html.indexOf('wf-aaa') > html.indexOf('wf-bbb')) throw new Error('应按 lastTs 倒序（新→旧）');
+      if (!html.includes('title="工作流 wf-aaa · 起 10-14 19:40 讫 10-14 19:41 · 节点 3 · 波 2 · 调用 4 次（失败 1） · 缓存命中 8000 tok ≈ 预计省"')) {
+        throw new Error('运行行 title 应带完整归因（run/起止/节点/波/调用/命中）');
+      }
+      return true;
+    });
+
     check('token-usage：dashboard 空态两档与整体拼装', () => {
       if (!sandbox._tokenUsageDashboardHtml(null, 30, false).includes('暂无用量数据')) throw new Error('null 应给空态');
       if (!sandbox._tokenUsageDashboardHtml({ total: { requests: 0 } }, 30, false).includes('没有 AI 调用记录')) {
@@ -376,14 +408,17 @@ export async function run() {
         models: { 'deepseek-chat': { totalTokens: 265, requests: 3, hitRate: 0.625 } },
         series: { [dates[6]]: { 'deepseek-chat': { totalTokens: 265 } } },
         kinds: { chat: { totalTokens: 265, requests: 3 } },
+        wfRuns: { 'wf-aaa': { run: 'wf-aaa', nodes: 2, waves: 1, requests: 3, errorRequests: 0, totalTokens: 265, cachedTokens: 150, hitKnownRequests: 2, lastTs: dates[6] + 'T19:41:03' } },
       }, 7, false);
       if (!full.includes('token-summary-row')) throw new Error('应含汇总卡行');
       const cards = [...full.matchAll(/token-chart-card/g)].length;
-      if (cards !== 5) throw new Error('应拼五张卡（趋势/圆环/用途/模型明细/最近调用）：' + cards);
+      if (cards !== 6) throw new Error('应拼六张卡（趋势/圆环/用途/模型明细/工作流运行/最近调用）：' + cards);
       if (!full.includes('<svg') || !full.includes('token-donut-seg') || !full.includes('token-kind-row') || !full.includes('token-usage-table')) {
         throw new Error('四图应齐全（折线/扇形/条形/明细表）');
       }
-      if (!full.includes('最近调用明细')) throw new Error('第五卡应为最近调用明细');
+      if (!full.includes('工作流运行（按轮）')) throw new Error('应有工作流运行卡（T327）');
+      if (!full.includes('token-runs-row')) throw new Error('工作流运行卡应带 runs 行');
+      if (!full.includes('最近调用明细')) throw new Error('末卡应为最近调用明细');
       return true;
     });
 
@@ -584,6 +619,13 @@ export async function run() {
         throw new Error('聚合缺失败数/平均耗时');
       }
       if (!usageStatsSrc.includes('record_limit')) throw new Error('summarize 缺 records 明细支持（T196）');
+      // T327：工作流运行（按轮）卡——渲染导出、样式、后端 wfRuns 聚合键与
+      // workflow_context 入口规范化都在位
+      if (!src.includes('window._tokenUsageWfRunsHtml')) throw new Error('运行汇总渲染未导出冒烟');
+      if (!panels.includes('.token-runs-row')) throw new Error('工作流运行表样式缺失');
+      if (!usageStatsSrc.includes('wfRuns')) throw new Error('summarize 缺 wfRuns 轮次聚合（T327）');
+      const contextSrc = fs.readFileSync('src/server/context.py', 'utf8');
+      if (!contextSrc.includes('def normalize_workflow_context')) throw new Error('workflow_context 入口规范化缺失（T327）');
       for (const py of ['src/server/models_routes.py', 'src/server/knowledge.py',
         'src/server/documents.py', 'harness/review.py']) {
         if (!fs.readFileSync(py, 'utf8').includes('record_failure')) throw new Error(py + ' 未接失败记账');

@@ -504,8 +504,45 @@ function _tokenUsageRecordsHtml(data) {
   return '<div class="token-usage-table token-records-table">' + head + rows + '</div>';
 }
 
-// 面板主体拼装（冒烟测试直接调用）：汇总卡＋五张卡（趋势/圆环/用途/模型明细/
-// 最近调用明细）；零调用走整体空态。圆环图例只在分线模式下可点（联动聚焦）。
+// 工作流运行（按轮）汇总表（冒烟测试直接调用）：stats 的 wfRuns（后端按 wf.run
+// 聚合，T327）→ 每轮一行：节点数（wf.node 去重）、波数（wf.wave 去重＝本轮串
+// 行了几波）、实际调用（含失败）、总 token、缓存命中 tok（≈预计省下的 prompt
+// ——上游不报缓存字段的轮显 —，与明细表口径一致）。行序前端再按 lastTs 倒序
+// 兜底（JSON 对象键序不保证）；运行 id/起止/失败明细进行 title 悬停。
+function _tokenUsageWfRunsHtml(data) {
+  const runs = Object.values((data && data.wfRuns) || {})
+    .map(r => r || {})
+    .sort((a, b) => String(b.lastTs || '').localeCompare(String(a.lastTs || '')));
+  if (!runs.length) return '<div class="token-chart-empty">暂无工作流运行记录（工作流画布跑过节点后按轮汇总到这里）</div>';
+  const head = '<div class="token-table-row token-table-head token-runs-row"><span>运行</span><span>节点·波</span>'
+    + '<span>调用</span><span>Tok</span><span>命中≈省</span><span>时间</span></div>';
+  const rows = runs.map(r => {
+    const nodes = r.nodes || 0;
+    const waves = r.waves || 0;
+    const requests = r.requests || 0;
+    const errors = r.errorRequests || 0;
+    const hitCell = r.hitKnownRequests ? _tokenFormatNum(r.cachedTokens) : '—';
+    const titleBits = [
+      '工作流 ' + (r.run || '?'),
+      '起 ' + _tokenRecordTime(r.firstTs) + ' 讫 ' + _tokenRecordTime(r.lastTs),
+      '节点 ' + nodes + ' · 波 ' + waves,
+      '调用 ' + requests + ' 次（失败 ' + errors + '）',
+    ];
+    if (r.hitKnownRequests) titleBits.push('缓存命中 ' + _tokenFormatNum(r.cachedTokens) + ' tok ≈ 预计省');
+    return '<div class="token-table-row token-runs-row" title="' + escapeHtml(titleBits.join(' · ')) + '">'
+      + '<span class="token-table-model">' + escapeHtml(r.run || '—') + '</span>'
+      + '<span>' + nodes + (waves ? '·' + waves : '') + '</span>'
+      + '<span>' + requests + ' 次' + (errors ? ' <em class="token-record-err">失' + errors + '</em>' : '') + '</span>'
+      + '<span>' + _tokenFormatNum(r.totalTokens) + '</span>'
+      + '<span>' + hitCell + '</span>'
+      + '<span>' + escapeHtml(_tokenRecordTime(r.lastTs)) + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div class="token-usage-table token-runs-table">' + head + rows + '</div>';
+}
+
+// 面板主体拼装（冒烟测试直接调用）：汇总卡＋六张卡（趋势/圆环/用途/模型明细/
+// 工作流运行/最近调用明细）；零调用走整体空态。圆环图例只在分线模式下可点（联动聚焦）。
 function _tokenUsageDashboardHtml(data, days, split) {
   if (!data || !data.total) return '<div class="token-chart-empty">暂无用量数据</div>';
   if (!data.total.requests) {
@@ -526,6 +563,9 @@ function _tokenUsageDashboardHtml(data, days, split) {
     + '<div class="token-chart-card"><div class="token-chart-title">模型明细'
     + '<span class="token-chart-sub">命中率只统计上游回报了缓存字段的请求；平均耗时只累计记录了时长的调用</span></div>'
     + _tokenUsageTableHtml(data) + '</div>'
+    + '<div class="token-chart-card"><div class="token-chart-title">工作流运行（按轮）'
+    + '<span class="token-chart-sub">每轮工作流一条（按 wf.run 聚合）：节点数去重、调用含失败、命中＝上游缓存 token ≈ 预计省下的 prompt</span></div>'
+    + _tokenUsageWfRunsHtml(data) + '</div>'
     + '<div class="token-chart-card"><div class="token-chart-title">最近调用明细'
     + '<span class="token-chart-sub">范围内最近 ' + TOKEN_USAGE_RECORDS_LIMIT + ' 条逐次调用（新→旧）；失败行标红，悬停可看原因</span></div>'
     + _tokenUsageRecordsHtml(data) + '</div>';
@@ -1195,6 +1235,7 @@ if (typeof window !== 'undefined') {
   window._tokenUsageKindBarsHtml = _tokenUsageKindBarsHtml;
   window._tokenUsageTableHtml = _tokenUsageTableHtml;
   window._tokenUsageRecordsHtml = _tokenUsageRecordsHtml;
+  window._tokenUsageWfRunsHtml = _tokenUsageWfRunsHtml;
   window._tokenRecordTime = _tokenRecordTime;
   window._tokenUsageDashboardHtml = _tokenUsageDashboardHtml;
   window.renderTokenUsage = renderTokenUsage;

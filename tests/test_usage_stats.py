@@ -145,6 +145,106 @@ class WorkflowStatsTagTest(UsageStatsBase):
         self.assertEqual(len(lines), 2)
 
 
+class WorkflowRunAggregationTest(UsageStatsBase):
+    """2026-10-14 T327：summarize 的 wfRuns（按 wf.run 的轮次聚合）。
+
+    每轮一行：nodes/waves 去重计数、requests 含失败、cachedTokens≈预计省；
+    最近活跃倒序、封顶 50 轮；非工作流调用与缺 run/run 不合白名单不进。
+    """
+
+    def _write(self, day, entries):
+        usage_stats.USAGE_DIR.mkdir(parents=True, exist_ok=True)
+        path = usage_stats.USAGE_DIR / f"{day}.jsonl"
+        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+
+    def test_groups_by_run_with_nodes_waves_and_failures(self):
+        today = "2099-01-01"
+        self._write(today, [
+            # 本轮：3 个节点、2 波（wave 0/1）、1 次失败＋2 次成功，命中两笔
+            {"ts": f"{today}T10:00:00", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 100, "completion_tokens": 10, "cache_hit_tokens": 50,
+             "wf": {"run": "wf-aaa", "node": "n1", "wave": 0}},
+            {"ts": f"{today}T10:00:30", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 200, "completion_tokens": 20, "cache_hit_tokens": 120,
+             "wf": {"run": "wf-aaa", "node": "n2", "wave": 0}},
+            # 同节点重试算两次调用但只计一个节点；失败计次不计 token
+            {"ts": f"{today}T10:01:00", "kind": "chat", "model": "a", "status": "error",
+             "prompt_tokens": None, "completion_tokens": None, "cache_hit_tokens": None,
+             "error": "boom", "wf": {"run": "wf-aaa", "node": "n2", "wave": 1}},
+            # 另一轮：更晚，倒序应排在前
+            {"ts": f"{today}T11:00:00", "kind": "chat", "model": "b", "status": "ok",
+             "prompt_tokens": 40, "completion_tokens": 5, "cache_hit_tokens": None,
+             "wf": {"run": "wf-bbb", "node": "n9", "wave": 0}},
+            # 非工作流调用不进 wfRuns
+            {"ts": f"{today}T12:00:00", "kind": "harness", "model": "b", "status": "ok",
+             "prompt_tokens": 7, "completion_tokens": 1, "cache_hit_tokens": None},
+        ])
+        out = usage_stats.summarize(days=30)
+        runs = out["wfRuns"]
+        self.assertEqual(list(runs), ["wf-bbb", "wf-aaa"], "按最近活跃时间倒序（新→旧）")
+        a, b = runs["wf-aaa"], runs["wf-bbb"]
+        self.assertEqual([a["nodes"], a["waves"], a["requests"], a["errorRequests"]], [2, 2, 3, 1])
+        self.assertEqual(a["promptTokens"], 300)
+        self.assertEqual(a["totalTokens"], 330)
+        self.assertEqual(a["cachedTokens"], 170)
+        self.assertEqual(a["hitKnownRequests"], 2)
+        self.assertEqual(a["hitRate"], round(170 / 300, 4))
+        self.assertEqual([a["firstTs"], a["lastTs"]],
+                         [f"{today}T10:00:00", f"{today}T10:01:00"])
+        self.assertEqual([b["nodes"], b["requests"]], [1, 1])
+        self.assertEqual(b["cachedTokens"], 0)
+        # 上游不报缓存字段：hitKnownRequests=0（面板据此显 —，不拿 0% 冒充
+        # 「零命中」）；hitRate 沿袭 _agg_finalize 口径＝0.0
+        self.assertEqual(b["hitKnownRequests"], 0)
+        self.assertEqual(b["hitRate"], 0.0)
+        # 聚合桶与既有桶同构（requests/errorRequests/…/hitRate/avgDurationMs 都在）
+        for key in ("requests", "errorRequests", "promptTokens", "completionTokens",
+                    "totalTokens", "cachedTokens", "hitKnownRequests", "hitRate", "avgDurationMs"):
+            self.assertIn(key, a)
+
+    def test_entries_without_valid_run_excluded(self):
+        today = "2099-01-02"
+        self._write(today, [
+            # 无 wf 键（非工作流调用）
+            {"ts": f"{today}T10:00:00", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 10, "completion_tokens": 1},
+            # wf 缺 run / run 非白名单形状（直接落盘的脏 key）
+            {"ts": f"{today}T10:00:01", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 10, "completion_tokens": 1, "wf": {"node": "n1"}},
+            {"ts": f"{today}T10:00:02", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 10, "completion_tokens": 1, "wf": {"run": "bad run!", "node": "n1"}},
+            {"ts": f"{today}T10:00:03", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 10, "completion_tokens": 1, "wf": "wf-x"},
+        ])
+        out = usage_stats.summarize(days=30)
+        self.assertEqual(out["wfRuns"], {})
+        self.assertEqual(out["total"]["requests"], 4)
+
+    def test_run_limit_and_window(self):
+        # 窗口外（旧日子）的轮不进；窗口内封顶 50 轮、留最新的
+        self._write("2000-01-01", [
+            {"ts": "2000-01-01T10:00:00", "kind": "chat", "model": "a", "status": "ok",
+             "prompt_tokens": 1, "completion_tokens": 1, "wf": {"run": "wf-old", "node": "n0"}},
+        ])
+        today = "2099-01-03"
+        entries = []
+        for i in range(55):
+            entries.append({"ts": f"{today}T{10 + i // 60:02d}:{i % 60:02d}:00",
+                            "kind": "chat", "model": "a", "status": "ok",
+                            "prompt_tokens": 1, "completion_tokens": 1,
+                            "wf": {"run": f"wf-cap-{i:02d}", "node": f"n{i}"}})
+        self._write(today, entries)
+        out = usage_stats.summarize(days=30)
+        runs = out["wfRuns"]
+        self.assertEqual(len(runs), usage_stats._WF_RUN_LIMIT)
+        self.assertLessEqual(len(runs), 50)
+        self.assertNotIn("wf-old", runs, "窗口外的轮不进")
+        # ts 递升 → 最新的是 cap-54、最旧被截掉的是 cap-00
+        self.assertIn("wf-cap-54", runs)
+        self.assertNotIn("wf-cap-00", runs)
+        self.assertEqual(list(runs)[0], "wf-cap-54", "第一条应是最新轮")
+
+
 class FailureAndDurationTest(UsageStatsBase):
     """2026-10-08 补的两维：失败进账（record_failure → errorRequests）＋请求耗时
     （durationMs → avgDurationMs）；旧格式记录（无 status/durationMs 字段）按

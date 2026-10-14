@@ -141,6 +141,31 @@ function _collectInboundChain(node) {
   });
 }
 
+// T327：工作流上游条目的规范化顺序（_buildWorkflowContextForNode 排序用）：
+// timestamp 优先——建点时间，链上图天然「源节点在前」，与 _collectUpstreamPath
+// 的后序遍历多数场景重合；同秒/缺时间戳按 kind/module/title/label/content 稳定
+// 决胜。排序键只取节点属性，与边在 edge 表里的插入顺序无关——同一份上游集合
+// 任何时候都拼出同一串上下文字节，与 _nodeInputHash 对 parts 的 sort 口径同属
+// 「规范化后无序敏感」（hash 公式不动，存量节点哈希仍可比）；兄弟模块的共享
+// 前缀（T4）与重放/排队重放的缓存命中因此稳定。
+function _wfTsRank(v) {
+  if (v === '' || v === null || v === undefined) return -1;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : -1;
+}
+
+function _workflowUpstreamCompare(a, b) {
+  const ta = _wfTsRank(a.timestamp), tb = _wfTsRank(b.timestamp);
+  if (ta !== tb) return ta - tb;
+  const ka = [a.kind || '', a.module || '', a.title || '', a.label || '', a.summary || '', a.content || ''];
+  const kb = [b.kind || '', b.module || '', b.title || '', b.label || '', b.summary || '', b.content || ''];
+  for (let i = 0; i < ka.length; i++) {
+    if (ka[i] < kb[i]) return -1;
+    if (ka[i] > kb[i]) return 1;
+  }
+  return 0;
+}
+
 function _buildWorkflowContextForNode(node) {
   const meta = node.recipeId && node.recipe && node.recipe.name
     ? { label: node.recipe.name }
@@ -169,6 +194,9 @@ function _buildWorkflowContextForNode(node) {
   const allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
   const analysisNode = allUpstream.find(item => item.kind === 'answer' && !item.manual);
   const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
+  // T327：规范化顺序——排序键是节点属性的稳定函数，与边插入序无关（见
+  // _workflowUpstreamCompare 注）；同一份上游集合永远拼出同一串上下文字节
+  upstream.sort(_workflowUpstreamCompare);
   const questionNode = upstream.find(item => item.kind === 'user');
   // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」，
   // 结构化载荷与内联文本都按口分组；未声明（旧配方/旧快照）不设键，载荷形状与今日一致

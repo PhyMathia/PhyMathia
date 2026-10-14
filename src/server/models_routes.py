@@ -37,6 +37,7 @@ from .context import (
     _workflow_context_parts,
     _write_socratic_state,
     estimate_tokens,
+    normalize_workflow_context,
 )
 from .llm_common import resolve_api_key
 from .prompts import BRANCH_SYSTEM_PROMPT, FIX_FORMULA_PROMPT, MODULE_SYSTEM_PROMPT, ROLLING_SUMMARY_PROMPT
@@ -175,6 +176,10 @@ async def api_models_chat(request: Request):
         if not isinstance(item, dict):
             raise HTTPException(status_code=400, detail="each item of graph_path must be an object")
     workflow_context = payload.get("workflow_context") or payload.get("workflowContext") or {}
+    # 工作流上下文入口规范化（T327）：非 dict → {}、target 非 dict 收 {}（原形状
+    # 会让 _workflow_context_parts 的 target.get 抛 AttributeError 500）、文本
+    # 字段统一空值形态、upstream 剔非 dict 项——下游只面对规范化形状
+    workflow_context = normalize_workflow_context(workflow_context)
     # 工作流运行级统计标签（2026-10-14）：前端工作流节点请求带 wfStats
     # {run, node, wave, hash}，随记账落 JSONL → 用量面板「波」列。消毒后
     # None 时记账不带 wf 键（旧记录/非工作流调用向后兼容）

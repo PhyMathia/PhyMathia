@@ -907,6 +907,89 @@ class WorkflowContextPartsSplitTest(unittest.TestCase):
         self.assertEqual(context_mod._workflow_context_instruction(None), "")
 
 
+class NormalizeWorkflowContextTest(unittest.TestCase):
+    """T327：workflow_context 入口规范化（models_routes 解析后必经）。
+
+    修一个真形状缺口：target 非 dict（客户端传字符串）此前会让
+    _workflow_context_parts 的 target.get 抛 AttributeError → 500。
+    """
+
+    def test_non_dict_shapes_become_empty(self):
+        for bad in (None, "x", 42, [], ["a"]):
+            self.assertEqual(context_mod.normalize_workflow_context(bad), {})
+        # 空 dict 也归 {}：models_routes 的 `if workflow_context:` 判「是不是
+        # 工作流请求」挂在真值上，补满空键会把 graph_path-only 请求误判成工作流
+        self.assertEqual(context_mod.normalize_workflow_context({}), {})
+        self.assertFalse(context_mod.normalize_workflow_context({}))
+
+    def test_target_non_dict_is_sanitized_and_renderable(self):
+        # 原缺口：target="x" 时 _workflow_context_parts 在 target.get 上 500
+        for bad_target in ("x", 42, ["m"], None):
+            ctx = context_mod.normalize_workflow_context(
+                {"mode": "module", "target": bad_target, "question": "问题"})
+            self.assertEqual(ctx["target"], {})
+            s, t = context_mod._workflow_context_parts(ctx)   # 不再抛
+            self.assertIn("原始问题：问题", s)
+        # dict target 的已知字段统一成字符串（缺失 → ''，缺键与空串同形）
+        ctx = context_mod.normalize_workflow_context({"target": {"kind": "module", "module": 7}})
+        self.assertEqual(ctx["target"], {"kind": "module", "module": "7", "label": ""})
+        # target 的未识别键保留（前向兼容）
+        ctx2 = context_mod.normalize_workflow_context({"target": {"future": 1}})
+        self.assertEqual(ctx2["target"]["future"], 1)
+
+    def test_text_fields_unify_empty_shapes(self):
+        ctx = context_mod.normalize_workflow_context({"mode": None, "question": ["脏"], "analysis": 5})
+        self.assertEqual(ctx["mode"], "")
+        self.assertEqual(ctx["question"], "")
+        self.assertEqual(ctx["analysis"], "5")
+        self.assertEqual(ctx["requirements"], "")
+
+    def test_upstream_items_normalized_and_junk_dropped(self):
+        ctx = context_mod.normalize_workflow_context({"upstream": [
+            {"label": "问题", "content": "文本", "extra_key": {"keep": 1}},
+            {"kind": "module", "summary": None, "content": 12},
+            "not-a-dict",
+            None,
+            {"label": 3, "content": "c", "input_port": "材料", "input_type": None},
+            {"label": "b", "content": "c", "input_port": ""},
+        ]})
+        items = ctx["upstream"]
+        self.assertEqual(len(items), 4, "非 dict 项丢弃（字符串/None），dict 项全留")
+        self.assertEqual(items[0]["label"], "问题")
+        self.assertEqual(items[0]["content"], "文本")
+        self.assertEqual(items[0]["extra_key"], {"keep": 1}, "未识别键原样保留")
+        self.assertEqual(items[1]["summary"], "", "None → ''")
+        self.assertEqual(items[1]["content"], "12", "数字转字符串")
+        # input_port 非空保留、None/空串丢键（与前端条件带键形状一致）
+        self.assertEqual(items[2]["input_port"], "材料")
+        self.assertNotIn("input_type", items[2])
+        self.assertNotIn("input_port", items[1])
+
+    def test_upstream_non_list_becomes_empty_list(self):
+        for bad in ("x", {"a": 1}, 3, None):
+            self.assertEqual(context_mod.normalize_workflow_context({"upstream": bad})["upstream"], [])
+
+    def test_order_is_preserved_not_reordered(self):
+        # 后端不重排：规范顺序由前端 _buildWorkflowContextForNode 排定，规范化
+        # 不得改变提示词字节（顺序原样透传）
+        ctx = context_mod.normalize_workflow_context({"upstream": [
+            {"label": "b", "content": "2"}, {"label": "a", "content": "1"}]})
+        self.assertEqual([i["label"] for i in ctx["upstream"]], ["b", "a"])
+
+    def test_normalized_context_renders_same_bytes_for_real_shapes(self):
+        # 前端真实形状（含空串缺键混排）规范化前后渲染字节零变化
+        raw = {
+            "mode": "module", "target": {"kind": "module", "module": "physics", "label": "物理视角"},
+            "question": "简谐运动", "analysis": "", "requirements": "",
+            "upstream": [{"kind": "module", "module": "math", "label": "数学视角",
+                          "summary": "摘要", "analysis": "", "content": "正文"}],
+        }
+        norm = context_mod.normalize_workflow_context(raw)
+        self.assertEqual(context_mod._workflow_context_parts(raw),
+                         context_mod._workflow_context_parts(norm),
+                         "规范形状的上下文渲染字节不得因规范化而变")
+
+
 
 class Wave2OptimizationTest(unittest.TestCase):
     def test_trim_context_keeps_viz_digest(self):

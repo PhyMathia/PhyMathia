@@ -5360,6 +5360,26 @@
 
 .token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
 
+/* 工作流运行（按轮）汇总表（T327）：六列网格（运行/节点·波/调用/Tok/命中≈省/
+   时间）。后端封顶 50 轮，表自身限高滚动＋表头 sticky（同最近调用明细）；失败
+   数以红字「失N」缀在调用列，完整 run/起止/归因进行 title 悬停 */
+.token-runs-table { gap: 1px; font-size: var(--fs-2xs); max-height: 320px; overflow-y: auto; }
+
+.token-runs-row {
+  grid-template-columns: minmax(0, 2.2fr) .9fr .9fr 1fr 1fr 5.8em;
+  gap: 4px;
+  padding: 3px 6px;
+}
+
+.token-runs-row span:nth-child(-n+3) { text-align: left; }
+
+.token-runs-table .token-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-bg);
+}
+
 /* 最近调用明细（2026-10-08 五轮 T196）：窄行表。表自身限高滚动——
    100 条明细不该把弹窗里的四张图全滚走，表头 sticky 跟滚；失败行淡红底＋
    红字徽标，失败原因截在 200 字符放行 title 悬停看全。T325 起七列：Tok 后
@@ -5395,5 +5415,7 @@
   .token-summary-row { grid-template-columns: repeat(2, 1fr); }
   .token-usage-pie-row { justify-content: center; }
   .token-kind-val { min-width: 0; }
-  .token-records-row { grid-template-columns: 5em 4.4em minmax(0, 1fr) 3.6em 3em 4em 3em; }
+  /* 明细表八列（T326 加「波」后移动端漏改，第七条起会挤到隐式第二行——补齐） */
+  .token-records-row { grid-template-columns: 5em 4.4em minmax(0, 1fr) 3.6em 3em 2.2em 4em 3em; }
+  .token-runs-row { grid-template-columns: minmax(0, 1.8fr) .8fr .9fr .8fr .9fr 4.2em; }
 }

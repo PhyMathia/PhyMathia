@@ -984,6 +984,72 @@ def _workflow_context_instruction(workflow_context) -> str:
     return "".join(p for p in _workflow_context_parts(workflow_context) if p)
 
 
+def _norm_ctx_text(value) -> str:
+    """工作流上下文文本字段消毒：str 原样、int/float 转串，其余（None/bool/
+    容器）→ ''。渲染侧本就 strip，空值形态由这里统一成 ''。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return str(value)
+    return ""
+
+
+_WF_CTX_TEXT_FIELDS = ("kind", "module", "label", "summary", "analysis", "content")
+
+
+def normalize_workflow_context(workflow_context) -> dict:
+    """工作流上下文入口规范化（T327）：下游只面对规范化形状。
+
+    - 非 dict（None/字符串/列表）与空 dict → {}——按「无工作流上下文」处理。
+      空 dict 必须保持 falsy：models_routes 用 `if workflow_context:` 判「这是
+      不是工作流请求」（系统底座/画像注入范围都挂在这个真值上），补满空键会
+      把 graph_path-only 的请求误判成工作流请求
+    - target 非 dict → {}：此前的真形状缺口——`_workflow_context_parts` 的
+      target.get 会在字符串 target 上抛 AttributeError（客户端传 "x" 即 500）
+    - mode/question/analysis/requirements → 字符串（缺失 → ''，缺键与空串
+      从此同形）；target 的 kind/module/label 同口径
+    - upstream → list 的规范化条目：非 list → []、非 dict 项丢弃；已知文本字段
+      统一成字符串；input_port/input_type 空值丢键（与前端条件带键的形状一致）；
+      未识别键原样保留（前向兼容）
+    - 顺序原样保持：规范顺序由前端 `_buildWorkflowContextForNode` 排定
+      （timestamp 优先的稳定键，与 `_nodeInputHash` 的 sorted parts 同属
+      「规范化后与边插入序无关」的口径），后端不重排——规范化不改提示词字节
+    """
+    if not isinstance(workflow_context, dict) or not workflow_context:
+        return {}
+    out = dict(workflow_context)
+    target = out.get("target")
+    if isinstance(target, dict):
+        norm_target = dict(target)
+        for field in ("kind", "module", "label"):
+            norm_target[field] = _norm_ctx_text(target.get(field))
+        out["target"] = norm_target
+    else:
+        out["target"] = {}
+    for key in ("mode", "question", "analysis", "requirements"):
+        out[key] = _norm_ctx_text(out.get(key))
+    raw_upstream = out.get("upstream")
+    items = []
+    if isinstance(raw_upstream, list):
+        for item in raw_upstream:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            for field in _WF_CTX_TEXT_FIELDS:
+                entry[field] = _norm_ctx_text(item.get(field))
+            for field in ("input_port", "input_type"):
+                value = item.get(field)
+                if isinstance(value, str) and value:
+                    entry[field] = value
+                else:
+                    entry.pop(field, None)
+            items.append(entry)
+    out["upstream"] = items
+    return out
+
+
 def _load_session_context_from_path(
     session_id: str,
     graph_path: list,
@@ -1484,6 +1550,7 @@ __all__ = [
     "_branch_source_content", "_extract_parent_source", "_load_session_context", "_branch_context_instruction",
     "_module_output_instruction", "_graph_message_summary", "_graph_path_instruction",
     "_workflow_context_instruction", "_workflow_context_parts", "_load_session_context_from_path",
+    "normalize_workflow_context",
     "tree_active_content_block", "summary_detail", "tree_upstream_detail_block",
     "DETAIL_SUMMARY_CHARS",
     "_prompt_wants_viz", "_trim_context_content", "VIZ_PLACEHOLDER",
