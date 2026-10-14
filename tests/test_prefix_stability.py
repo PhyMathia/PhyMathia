@@ -434,5 +434,77 @@ class BucketHeaderTest(RouteTestBase):
         self.assertEqual(self._post(None), "phymathia-anonymous")
 
 
+class WorkflowSharedLayoutContractTest(unittest.TestCase):
+    """2026-10-14 T322 查证拍板：shared 段行序（question→analysis→upstream）冻结。
+
+    被否决的重排（upstream 提到 analysis 行前，让分析请求预热模块波）前提本就
+    不成立——官方分析请求（前端 _generateAnalysis）手拼最小载荷、根本不带
+    upstream；且 analysis 行后移会让重生成/二级节点的缓存断点提前到 analysis 行
+    之前（本类 P2/P3 两条绊线钉住的性质）。真机竞速探针另证：部分前缀复用是
+    网关×模型行为（deepseek-v4.1-flash 兄弟全 0%，mimo 顺序 73%/同时 0%，重放
+    必中 87-100%），布局侧已无可靠增量收益。改这个行序前先重读
+    docs/dev/models-api.md「工作流链路缓存」节与 scripts/workflow_cache_race_probe.py。"""
+
+    AN = "核心是通过磁通量变化率刻画感应电动势，物理图像是磁力线与导体回路的相对运动。"
+
+    def _shared(self, analysis="", upstream=()):
+        ctx = {
+            "mode": "module",
+            "target": {"kind": "module", "module": "physics", "label": "物理视角"},
+            "question": "法拉第电磁感应定律的物理图像与数学表达是什么",
+            "analysis": analysis,
+            "requirements": "",
+            "upstream": list(upstream),
+        }
+        return context_mod._workflow_context_parts(ctx)[0]
+
+    @staticmethod
+    def _common(a, b):
+        n = 0
+        while n < min(len(a), len(b)) and a[n] == b[n]:
+            n += 1
+        return a[:n]
+
+    def test_analysis_request_prewarms_exactly_through_question(self):
+        # P1：分析请求形状（analysis 空、仿 _generateAnalysis 不带 upstream）的
+        # shared 段是模块请求 shared 段的逐字节前缀，且分界紧跟 question 行——
+        # 分析请求的预热天花板＝system＋question（T4 实测的 678 字口径）。想抬高
+        # 天花板只能改前端载荷让分析请求带上 upstream，光重排行序无效。
+        pre = self._shared(analysis="")
+        post = self._shared(analysis=self.AN,
+                            upstream=[{"label": "问题", "content": "问题内容" * 20}])
+        self.assertTrue(pre and post)
+        self.assertTrue(post.startswith(pre),
+                        "分析请求 shared 段应是模块请求 shared 段的逐字节前缀")
+        self.assertTrue(post[len(pre):].startswith("\n- 隐藏问题分析"),
+                        "分界应紧跟 question 行——现布局模块侧的下一行是 analysis 行")
+
+    def test_regeneration_keeps_analysis_line_inside_common_prefix(self):
+        # P2 绊线：同节点重生成＝自己的旧文多出一条 upstream 条目（末尾追加），
+        # 它与首生成的公共前缀必须仍包含完整 analysis 行。被否决的 T322 重排
+        # （upstream 前移）会把断点挪到 analysis 行之前，本条即红。
+        entry = {"label": "问题", "content": "问题内容" * 20}
+        self_entry = {"label": "物理视角", "content": "旧版物理正文" * 40}
+        first_gen = self._shared(analysis=self.AN, upstream=[entry])
+        regen = self._shared(analysis=self.AN, upstream=[entry, self_entry])
+        common = self._common(first_gen, regen)
+        analysis_line = f"- 隐藏问题分析（用于保持一致）：{self.AN}"
+        self.assertIn(analysis_line, common,
+                      "重生成与首生成的公共前缀必须包含完整 analysis 行（重排 upstream 前移会破坏此性质）")
+
+    def test_second_wave_and_grouped_ports_keep_analysis_line_inside_common_prefix(self):
+        # P3 绊线：二级节点（如总结）＝upstream 追加模块条目；具名输入口（T263
+        # 分组渲染）同款性质。两种形状的公共前缀都必须包含完整 analysis 行。
+        entry = {"label": "问题", "content": "问题内容" * 20, "input_port": "材料"}
+        module_entry = {"label": "物理视角", "content": "模块正文" * 30, "input_port": "材料"}
+        wave1 = self._shared(analysis=self.AN, upstream=[entry])
+        wave2 = self._shared(analysis=self.AN, upstream=[entry, module_entry])
+        common = self._common(wave1, wave2)
+        analysis_line = f"- 隐藏问题分析（用于保持一致）：{self.AN}"
+        self.assertIn(analysis_line, common,
+                      "二级节点与首波的公共前缀必须包含完整 analysis 行（分组喂料同款）")
+        self.assertIn("- 问题：", common, "首条 upstream 条目应已在公共前缀内")
+
+
 if __name__ == "__main__":
     unittest.main()
