@@ -5164,8 +5164,8 @@
 
 .token-usage-donut {
   position: relative;
-  width: 132px;
-  height: 132px;
+  width: 150px;
+  height: 150px;
   flex-shrink: 0;
   margin: 0 auto;
   border-radius: 50%;

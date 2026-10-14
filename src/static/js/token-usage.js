@@ -48,9 +48,10 @@ const TOKEN_USAGE_PALETTE = ['var(--node-question)', 'var(--node-physics)', 'var
 const TOKEN_LINE_GEOMETRY = { w: 640, h: 210, padL: 48, padR: 12, padT: 12, padB: 24 };
 
 // 圆环几何常量（SVG viewBox 坐标系，2026-10-13 起逐扇区 path 用）：外半径 57 /
-// 内半径 32，外径占比与旧 conic 版（132px、mask 挖孔 54%）观感一致；命中检测、
-// morph 逐帧重建与静态绘制共用这一份。弹出距离/倾角也在这里调。
-const TOKEN_DONUT_GEOMETRY = { size: 120, rOuter: 57, rInner: 32 };
+// 内半径 37（2026-10-14 容器 132→150px、环带收细＝新旧内径折中，中心留白放宽
+// 总量/悬停读数）；命中检测、morph 逐帧重建与静态绘制共用这一份。弹出距离/倾
+// 角也在这里调。
+const TOKEN_DONUT_GEOMETRY = { size: 120, rOuter: 57, rInner: 37 };
 const TOKEN_DONUT_POP = 7;   // 悬停扇区沿中角外移量（viewBox 单位，渲染时 ≈×1.1px）
 const TOKEN_DONUT_TILT = 7;  // 悬停时整环朝该扇区倾起的最大角度（deg）
 
