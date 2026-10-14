@@ -2812,31 +2812,65 @@
   }
 }
 
-/* ---------- 节点全屏阅读层（2026-10-10 ⑦）---------- */
+/* ---------- 节点全屏阅读层（2026-10-10 ⑦；2026-10-14 观感重制）---------- */
 /* 与笔记本同配方：大面积 chrome → aurora-glass--panel 档（本体禁写 background/box-shadow，
-   极光层全归玻璃类）；遮罩 blur(3px)。浮层必须自带文字色 color: var(--text-primary)——
+   极光层全归玻璃类）。浮层必须自带文字色 color: var(--text-primary)——
    body 默认色是黑，正文是不挂组件类的原生 markdown 元素，漏了这行深色下整片黑字
-   （笔记本浮层用户实测报过三次「文字是黑色的」） */
+   （笔记本浮层用户实测报过三次「文字是黑色的」；冒烟静态契约钉死本块 color 行）。
+   2026-10-14 重制三件（用户报「全屏背景丑」）：①遮罩平铺压暗改中心聚光径向纱——
+   平铺死灰把整屏糊成雾板；②面板通高贴边 stretch 改居中画幅，内容矮时收成内容高；
+   ③--panel 档色斑在近千像素宽面板上几乎不可见＝观感死黑平板，按 situational 口径
+   在本层加浓 --aurora-*（浅色只许暖调琥珀/蜜桃/暖陶土，红线同 styles.css 浅色极光）。 */
 .graph-node-fs-overlay {
   position: fixed;
   inset: 0;
   z-index: var(--z-graph-modal);
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: center;
-  padding: clamp(12px, 3vh, 28px) clamp(12px, 4vw, 56px);
-  background: var(--harness-overlay-bg);
+  padding: clamp(20px, 5vh, 48px) clamp(12px, 4vw, 56px);
+  background:
+    radial-gradient(120% 120% at 50% 42%, rgba(2, 8, 23, 0.30) 0%, rgba(2, 8, 23, 0.64) 100%),
+    var(--harness-overlay-bg);
   backdrop-filter: blur(3px);
   color: var(--text-primary);
+  animation: graph-fs-fade 0.18s ease-out;
+}
+
+html[data-theme="light"] .graph-node-fs-overlay,
+[data-theme="light"] .graph-node-fs-overlay {
+  background:
+    radial-gradient(120% 120% at 50% 42%, rgba(96, 78, 48, 0.04) 0%, rgba(96, 78, 48, 0.17) 100%),
+    var(--harness-overlay-bg);
 }
 
 .graph-node-fs {
+  --aurora-1: rgba(14, 116, 233, 0.22);
+  --aurora-2: rgba(109, 40, 217, 0.18);
+  --aurora-3: rgba(15, 118, 110, 0.20);
   display: flex;
   flex-direction: column;
   width: min(980px, 100%);
+  max-height: 100%;
   min-height: 0;
   border-radius: var(--r-xl);
   overflow: hidden;
+  animation: graph-fs-sheet 0.24s cubic-bezier(0.22, 0.8, 0.36, 1);
+}
+
+html[data-theme="light"] .graph-node-fs,
+[data-theme="light"] .graph-node-fs {
+  --aurora-1: rgba(251, 191, 36, 0.13);
+  --aurora-2: rgba(249, 168, 132, 0.10);
+  --aurora-3: rgba(214, 148, 96, 0.08);
+}
+
+@keyframes graph-fs-fade {
+  from { opacity: 0; }
+}
+
+@keyframes graph-fs-sheet {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); }
 }
 
 .graph-node-fs-head {
@@ -2844,8 +2878,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 18px;
-  font-size: 15px;
+  padding: 14px 16px 13px 22px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
@@ -2855,6 +2889,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 标题前 accent 短棒：给纯灰头一个主题色锚点（通灰头是「死板」观感的另一半来源） */
+.graph-node-fs-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 15px;
+  border-radius: var(--r-pill);
+  margin-right: 10px;
+  vertical-align: -2px;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 35%, transparent));
 }
 
 .graph-node-fs-head-actions {
@@ -2871,13 +2917,15 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  padding: 3px;
+  padding: 5px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
 }
 
 .graph-node-fs-head-actions button:hover {
   color: var(--accent);
+  background: var(--btn-hover-bg);
 }
 
 .graph-node-fs-head-actions button svg {
@@ -2891,7 +2939,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 22px 28px;
+  padding: 20px 24px 30px;
 }
 
 .graph-node-fs-content {

@@ -617,7 +617,9 @@ async function openNodeNewWindow(nodeId) {
   }
 }
 
-// 新窗口页面文档：自带排版（深色定版，同 viz-preview 色板），katex css 走同源外链。
+// 新窗口页面文档：自带排版（深色定版，同 viz-preview 色板；2026-10-14 观感重制——
+// 纯平 #0f142d 被用户报丑，改「极光纱底＋磨砂吸顶头条」：三团固定径向色斑呼应主应用
+// 深色极光（蓝/紫/青玉低 alpha），头条 sticky+blur，长文滚动时标题常驻），katex css 走同源外链。
 // 内容是主应用渲染管线已 sanitize 的静态 HTML，页面内不再执行任何渲染脚本
 function _buildContentPreviewPage(title, contentHtml) {
   return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">'
@@ -625,9 +627,20 @@ function _buildContentPreviewPage(title, contentHtml) {
     + '<title>' + escapeHtml(title) + ' · PhyMathia</title>'
     + '<link rel="stylesheet" href="/vendor/katex/katex.min.css">'
     + '<style>'
-    + 'html,body{margin:0;padding:0;background:#0f142d;color:#cfd6f4;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}'
-    + '.cp-head{display:flex;align-items:center;gap:8px;padding:10px 18px;font-size:13px;color:#8b93b8;border-bottom:1px solid rgba(139,147,184,.18);}'
-    + '.cp-body{max-width:880px;margin:0 auto;padding:26px 30px 72px;line-height:1.75;font-size:15px;overflow-wrap:break-word;}'
+    + 'html,body{margin:0;padding:0;background:#0b1026;color:#cfd6f4;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}'
+    + 'body{min-height:100vh;background-attachment:fixed;background-image:'
+    + 'radial-gradient(110% 70% at 10% 0%,rgba(14,116,233,.16),transparent 55%),'
+    + 'radial-gradient(90% 60% at 96% 0%,rgba(109,40,217,.13),transparent 52%),'
+    + 'radial-gradient(130% 90% at 78% 100%,rgba(15,118,110,.15),transparent 58%);}'
+    + '::selection{background:rgba(45,212,191,.32);}'
+    + '.cp-head{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:9px;padding:11px 20px;'
+    + 'font-size:13px;color:#8b93b8;background:rgba(9,13,32,.58);border-bottom:1px solid rgba(139,147,184,.16);'
+    + '-webkit-backdrop-filter:blur(14px) saturate(140%);backdrop-filter:blur(14px) saturate(140%);}'
+    + '.cp-dot{width:9px;height:9px;border-radius:50%;flex:none;background:radial-gradient(circle at 30% 30%,#5eead4,#0e74e9);box-shadow:0 0 8px rgba(45,212,191,.45);}'
+    + '.cp-brand{color:#cfd6f4;font-weight:600;letter-spacing:.02em;flex:none;}'
+    + '.cp-sep{opacity:.45;flex:none;}'
+    + '.cp-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    + '.cp-body{max-width:880px;margin:0 auto;padding:30px 34px 80px;line-height:1.75;font-size:15px;overflow-wrap:break-word;}'
     + '.cp-body h1,.cp-body h2,.cp-body h3,.cp-body h4,.cp-body h5,.cp-body h6{line-height:1.4;margin:1.4em 0 .6em;}'
     + '.cp-body p{margin:.7em 0;}'
     + '.cp-body a{color:#7ab8ff;}'
@@ -641,7 +654,8 @@ function _buildContentPreviewPage(title, contentHtml) {
     + '.cp-body svg{max-width:100%;}'
     + '.katex{color:#cfd6f4;}'
     + '</style></head><body>'
-    + '<div class="cp-head">PhyMathia · ' + escapeHtml(title) + '</div>'
+    + '<div class="cp-head"><span class="cp-dot"></span><span class="cp-brand">PhyMathia</span>'
+    + '<span class="cp-sep">·</span><span class="cp-title">' + escapeHtml(title) + '</span></div>'
     + '<div class="cp-body">' + contentHtml + '</div></body></html>';
 }
 
