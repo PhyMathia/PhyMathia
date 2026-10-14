@@ -506,6 +506,9 @@
         saveExtractedKnowledgeItems(sessionId, extractionMessages, localItems, false, opts);
         saveExtractedFormulas(sessionId, localItems, extractionMessages, {}, opts);
         refreshKnowledgePanelIfOpen();
+        // T317：检测面板（多选画布出题）素材量吃 openQuiz 快照，提取落库后刷一遍，
+        // 面板开着就不用关掉重开才见数
+        if (typeof refreshQuizMaterialCounts === 'function') refreshQuizMaterialCounts();
         // 本轮一条都没提取到、而且原因是被判成思维链泄漏 → 明说（一次性提示，不刷屏）。
         // 静默是这里最大的坑：用户以为「问过了就该进库」，实际上永远进不来。
         if (!localItems.length && _knowledgeSkipReason === 'reasoning_leak'
@@ -552,6 +555,7 @@
           applyModelKnowledgeSummaries(sessionId, aiResult.summaries);
           saveExtractedFormulas(sessionId, aiItems, extractionMessages, aiResult.descriptions || {}, opts);
           refreshKnowledgePanelIfOpen();
+          if (typeof refreshQuizMaterialCounts === 'function') refreshQuizMaterialCounts();
         }
       } catch (err) {
         console.warn('Auto extract knowledge failed:', err);

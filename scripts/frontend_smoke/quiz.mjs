@@ -678,4 +678,45 @@ check('题干兜底：裸 \\mathbf/\\boldsymbol 片段自动包 $..$，已包裹
   if (wrap(plain) !== plain) throw new Error('路径/普通文本被误包裹：' + wrap(plain));
   return true;
 });
+
+// T318（2026-10-14）：提取产出的「结构标题」条目曾被 _quizUsableTitle 黑名单整条丢弃——
+// 知识面板看得见、检测面板计 0（奥托循环真机实例 ki_dedce6c6…）。切段救援：标题里拖在
+// 结构名后的真实主题可出题就救回条目；纯结构名救不出主题，维持丢弃口径。
+check('quiz 素材救援（T318）：结构标题切段取尾段救回条目，纯结构名仍丢弃、小数不误切', () => {
+  if (typeof sandbox._quizRescueUsableTitle !== 'function') throw new Error('_quizRescueUsableTitle 未挂到沙箱');
+  // 真机实例原串（奥托循环 ki_dedce6c6…，提取落库时截在 40 字符）
+  const rescued = sandbox._quizRescueUsableTitle('### 进阶学习 ### 进阶学习方向 1. 探究比热比与压缩比如何共同决定理想');
+  if (rescued !== '探究比热比与压缩比如何共同决定理想') throw new Error('尾段救援未命中：' + rescued);
+  const rescuedLong = sandbox._quizRescueUsableTitle('### 进阶学习 ### 进阶学习方向 1. 探究比热比与压缩比如何共同决定理想奥托循环的热效率');
+  if (rescuedLong !== '探究比热比与压缩比如何共同决定理想奥托循环的热效率') throw new Error('全长标题尾段救援未命中：' + rescuedLong);
+  // 纯结构名救不出主题 → 维持丢弃
+  if (sandbox._quizRescueUsableTitle('## 物理直觉') !== '') throw new Error('纯结构名不该救回');
+  // 小数点不当序号切（2.5D 不拆出「5D …」），整体仍是结构名 → 救不出
+  const decimal = sandbox._quizRescueUsableTitle('### 学习方向 2.5D 波动仿真');
+  if (decimal !== '') throw new Error('小数点被误切：' + decimal);
+  // 池构建接线：结构标题条目带救援主题进池，纯结构名仍丢弃，正常条目不受影响
+  const pool = sandbox._buildQuizPool({ knowledge: {
+    k1: { id: 'k1', title: '### 进阶学习 ### 进阶学习方向 1. 探究比热比与压缩比如何共同决定理想奥托循环的热效率', summary: '奥托循环热效率', sessionId: 'sA', formulas: [] },
+    k2: { id: 'k2', title: '## 物理直觉', summary: '「## 物理直觉」：物理知识点', sessionId: 'sA', formulas: [] },
+    k3: { id: 'k3', title: '牛顿第二定律', summary: 'F=ma', sessionId: 'sA', formulas: [] },
+  }, formulas: {} });
+  if (pool.knowledge.length !== 2) throw new Error('应救回 1 条＋保留 1 条、丢弃 1 条，实际 ' + pool.knowledge.length);
+  const k1 = pool.knowledge.find(k => k.id === 'k1');
+  if (!k1 || k1.title !== '探究比热比与压缩比如何共同决定理想奥托循环的热效率') throw new Error('救援条目标题不对：' + (k1 && k1.title));
+  if (!pool.knowledge.some(k => k.id === 'k3')) throw new Error('正常条目不应受影响');
+  return true;
+});
+
+// T317（2026-10-14）：多选面板素材量吃 openQuiz 快照，知识提取要等回答流完才落库——
+// 面板开着会一直「无素材」直到关掉重开。提取链两处落库＋面板展开自愈共三处调用刷新；
+// 行为守卫（intro＋空闲＋弹窗开着、代际比对）在 serial-quiz-retest.mjs 真跑。
+check('quiz 素材刷新（T317）：提取落库→面板素材计数刷新的接线（静态断言，压缩产物口径）', () => {
+  if (!/window\.refreshQuizMaterialCounts=refreshQuizMaterialCounts/.test(code)) throw new Error('刷新入口未挂 window');
+  // 声明 1＋chat-features 两处落库 2＋面板展开自愈 1
+  const refs = (code.match(/refreshQuizMaterialCounts\(/g) || []).length;
+  if (refs < 4) throw new Error('接线不完整（声明＋2 落库＋1 自愈应 ≥4 处），实际 ' + refs);
+  if (!/quizPoolEpoch\+\+/.test(code)) throw new Error('openQuiz 未自增池代际');
+  if ((code.match(/quizPoolEpoch/g) || []).length < 4) throw new Error('代际守卫不完整（声明/自增/快照/比对）');
+  return true;
+});
 }

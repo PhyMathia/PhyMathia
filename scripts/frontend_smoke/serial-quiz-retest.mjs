@@ -294,4 +294,71 @@ seqCheck('quiz-bank：多选循环一轮不再被全局 30 题上限挤掉（按
   }
   return true;
 });
+
+// ===== T317（2026-10-14）提取落库→检测面板素材计数刷新 =====
+// 面板素材量吃 openQuiz 快照、提取要等回答流完才落库——刷新入口须在「弹窗开着＋intro＋
+// 空闲」真刷两份池；生成中（生成端正按旧池出题）与关窗一律不动。沙箱 getElementById 每次
+// 返回新 loose 代理（hidden 属性读不回真值），用真对象假元素顶住守卫读取。
+seqCheck('quiz 素材刷新（T317）：intro 空闲刷新两份池，生成中与关窗不动', async () => {
+  const realFetch = sandbox.fetch;
+  const realGEB = sandbox.document.getElementById;
+  const realGetAll = sandbox.window.getAllSessions;
+  const prev = vm.runInContext('JSON.stringify({mode:quizMode,scope:quizScope,panel:quizLoopPanelOpen})', sandbox);
+  const prevState = vm.runInContext('quizState', sandbox);
+  sandbox.__prevQuizState = prevState;
+  sandbox.localStorage.removeItem('phymathia_knowledge');
+  sandbox.invalidateKnowledgeCache();
+  let knowledgeItems = { kNew: { id: 'kNew', title: '新落库的知识点', summary: '刚提取完的条目', sessionId: 'sA' } };
+  sandbox.fetch = async (url) => {
+    if (String(url).includes('/api/knowledge')) {
+      return { ok: true, status: 200, json: async () => ({ items: knowledgeItems }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ value: [] }), text: async () => '' };
+  };
+  sandbox.window.getAllSessions = () => [{ id: 'sA', title: '力学画布' }];
+  const els = {
+    quizModal: loose('fakeQuizModal'),
+    quizBody: loose('fakeQuizBody'),
+  };
+  els.quizModal.hidden = false;
+  els.quizModal.classList = { contains: () => true };
+  sandbox.document.getElementById = (id) => els[id] || realGEB(id);
+  try {
+    vm.runInContext(`quizMode = 'global'; quizScope = 'all'; quizLoopPanelOpen = true;
+      quizState = { phase: 'intro', aiPending: false, aiProgress: 0,
+        pool: { knowledge: [], formulas: [] }, rawPool: { knowledge: [], formulas: [] }, questions: [] }`, sandbox);
+    await sandbox.refreshQuizMaterialCounts();
+    let n = vm.runInContext('quizState.rawPool.knowledge.length', sandbox);
+    if (n !== 1) throw new Error('空闲刷新应把新落库条目刷进全量池，实际 ' + n);
+    n = vm.runInContext('quizState.pool.knowledge.length', sandbox);
+    if (n !== 1) throw new Error('范围池应同步刷新，实际 ' + n);
+    if (vm.runInContext('quizState.pool.knowledge[0].title', sandbox) !== '新落库的知识点') {
+      throw new Error('刷新后条目标题不对：' + vm.runInContext('quizState.pool.knowledge[0] && quizState.pool.knowledge[0].title', sandbox));
+    }
+    // 生成中：不动池（生成端正按旧池出题，中途换池会鸡飞狗跳）
+    knowledgeItems = {
+      kNew: { id: 'kNew', title: '新落库的知识点', summary: '刚提取完的条目', sessionId: 'sA' },
+      kNew2: { id: 'kNew2', title: '第二条新知识', summary: '稍后落库', sessionId: 'sA' },
+    };
+    vm.runInContext('quizState.aiPending = true', sandbox);
+    await sandbox.refreshQuizMaterialCounts();
+    if (vm.runInContext('quizState.rawPool.knowledge.length', sandbox) !== 1) throw new Error('生成中不应刷新池');
+    // 关窗：不刷新
+    vm.runInContext('quizState.aiPending = false', sandbox);
+    els.quizModal.hidden = true;
+    await sandbox.refreshQuizMaterialCounts();
+    if (vm.runInContext('quizState.rawPool.knowledge.length', sandbox) !== 1) throw new Error('关窗不应刷新池');
+  } finally {
+    sandbox.fetch = realFetch;
+    sandbox.document.getElementById = realGEB;
+    if (realGetAll) sandbox.window.getAllSessions = realGetAll; else delete sandbox.window.getAllSessions;
+    // 沙箱 context 顶层 const 绑定跨 runInContext 持久（面板用例的 const p 已占坑），别再声明同名
+    const p = JSON.parse(prev);
+    vm.runInContext(`quizState = __prevQuizState; quizMode = ${JSON.stringify(p.mode)}; quizScope = ${JSON.stringify(p.scope)}; quizLoopPanelOpen = ${p.panel}`, sandbox);
+    delete sandbox.__prevQuizState;
+    sandbox.localStorage.removeItem('phymathia_knowledge');
+    sandbox.invalidateKnowledgeCache();
+  }
+  return true;
+});
 }

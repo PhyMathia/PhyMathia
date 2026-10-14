@@ -375,6 +375,24 @@ function _quizUsableTitle(title) {
   return true;
 }
 
+// T318：结构标题救援。提取（AI 增强与本地都有实踩）偶尔把条目标题写成回答的模块名/
+// 章节名整段（「### 进阶学习 ### 进阶学习方向 1. 探究比热比…」），黑名单毙的应是结构名
+// 而不是这条知识本身——知识面板看得见、检测面板计 0。按标题记号与序号切段、从尾段
+// 往前找第一段可出题的（真实主题通常拖在结构名后缀里）；撞到结构名段就停手（结构名只
+// 出现在主题之前，再往前只会切出更多结构名）；纯结构名（「## 物理直觉」）救不出主题，维持丢弃。
+function _quizRescueUsableTitle(raw) {
+  const s = String(raw || '');
+  if (!s.trim()) return '';
+  // 小数点不当序号切（「2.5D」不拆成「5D」）
+  const segments = s.split(/#+|\s*\d+\s*[.、)）](?!\d)\s*/).map(t => _quizCleanTitle(t)).filter(Boolean);
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (_quizUsableTitle(seg)) return seg;
+    if (QUIZ_MODULE_TITLE_KEYWORDS.some(keyword => seg.toLowerCase().includes(keyword))) return '';
+  }
+  return '';
+}
+
 function _quizIsMetaPrompt(text) {
   const s = _quizOptionKey(text);
   if (!s) return false;
@@ -484,7 +502,9 @@ function _buildQuizPool(data) {
   const formulas = [];
   for (const [id, item] of Object.entries(data.knowledge || {})) {
     if (!item || typeof item !== 'object') continue;
-    if (!_quizUsableTitle(item.title)) continue;
+    // T318：黑名单毙掉的标题先走结构救援，救出可出题的主题就收下这条
+    const title = _quizUsableTitle(item.title) ? _quizCleanTitle(item.title) : _quizRescueUsableTitle(item.title);
+    if (!title) continue;
     const rawFormulas = Array.isArray(item.formulas) ? item.formulas : [];
     const formulaSet = new Set();
     for (const raw of rawFormulas) {
@@ -494,7 +514,7 @@ function _buildQuizPool(data) {
     }
     const knowledgeItem = {
       id: id || 'k_' + knowledge.length,
-      title: _quizCleanTitle(item.title) || '未命名知识点',
+      title,
       summary: _quizCleanSummary(item.summary, 170),
       formulas: Array.from(formulaSet),
       category: item.category || 'other',

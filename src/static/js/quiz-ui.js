@@ -1,7 +1,12 @@
 /* ====== 知识检测：交互动作（开始/作答/解析/设置） ====== */
 
+// 池数据代际：openQuiz 每次重开自增。后台素材刷新（T317）await 期间面板可能被重开/
+// 换范围，用代际识别并放弃写回，不让旧数据盖住新流程。
+let _quizPoolEpoch = 0;
+
 async function openQuiz(mode = 'session') {
   if (phyIsReadonly()) { phyReadonlyBlock('进行知识检测'); return; }
+  _quizPoolEpoch++;
   const overlay = document.getElementById('quizModal');
   if (!overlay) return;
   // 'global-loop' = 全局检测的多选画布循环出题：仍属 global 模式，只是素材范围收窄到勾选画布
@@ -278,6 +283,8 @@ if (!window._quizEscBound) {
 function toggleQuizLoopPanel() {
   quizLoopPanelOpen = !quizLoopPanelOpen;
   _renderQuizKeepLoopScroll();
+  // T317：展开时顺手拉一遍最新素材——提取可能落在面板收起期间或上次开面板之后
+  if (quizLoopPanelOpen) refreshQuizMaterialCounts();
 }
 
 // 勾选/全选只做就地同步（勾一行就把列表整份重画会让它瞬间弹回顶部——用户实踩）；
@@ -333,6 +340,35 @@ window.toggleQuizLoopSelectAll = toggleQuizLoopSelectAll;
 window.applyQuizLoopSelection = applyQuizLoopSelection;
 window.resetQuizLoopScope = resetQuizLoopScope;
 window.startGlobalQuizGeneration = startGlobalQuizGeneration;
+window.refreshQuizMaterialCounts = refreshQuizMaterialCounts;
+
+// T317：多选面板的素材量读 openQuiz 时抓的 rawPool 快照，而知识提取要等该画布回答流完
+// 才落库（发送链尾部 autoExtractKnowledge）——面板开着等提取的画布会一直显示「无素材」，
+// 直到关掉重开。提取链每步落库后调这里：弹窗开着、停在 intro 且没在生成中，就把全量池
+// 与范围池重建一遍再重渲（面板展开走保滚动路径）；生成中不动池（生成端正按旧池出题），
+// 关窗/答题相位一律不碰。空态连带修复：开面板时素材还没落库、intro 落了「还没有足够的
+// 知识条目」，刷新后池有了料会重渲出「开始出题」CTA。
+async function refreshQuizMaterialCounts() {
+  const overlay = document.getElementById('quizModal');
+  if (!overlay || overlay.hidden || !overlay.classList.contains('active')) return;
+  if (!quizState || quizState.phase !== 'intro' || !quizState.pool || quizState.aiPending) return;
+  const epoch = _quizPoolEpoch;
+  try {
+    const data = await _fetchQuizData();
+    if (epoch !== _quizPoolEpoch) return; // 期间面板被重开：新流程自有新数据
+    const el = document.getElementById('quizModal');
+    if (!quizState || quizState.phase !== 'intro' || quizState.aiPending
+      || !el || el.hidden || !el.classList.contains('active')) return;
+    quizState.rawPool = _buildQuizPool(data);
+    quizState.pool = _buildQuizPool({
+      knowledge: _filterQuizMap(data.knowledge),
+      formulas: _filterQuizMap(data.formulas)
+    });
+    if (quizLoopPanelOpen) _renderQuizKeepLoopScroll(); else renderQuiz();
+  } catch (e) {
+    console.warn('Quiz material refresh failed:', e);
+  }
+}
 
 function handleQuizBack() {
   if (!quizState) return;
