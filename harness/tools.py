@@ -17,7 +17,17 @@ from .json_utils import repair_json
 
 REASON_DESC = "修改理由：为什么执行这个操作（必填，没有理由的操作不会被应用）"
 NODE_ID_DESC = "快照中真实存在的节点 ID（不能是新建节点的 temp_id）"
-PORT_DESC = "端口名，例如 out-0 / in-0；不填时默认 out-0 / in-0"
+PORT_DESC = "端口名 out-N / in-N（不填默认 out-0 / in-0）"
+# T319：具名输入口的指名接线教学只挂在 add_edge 的 to_port 上——共享 PORT_DESC 会把
+# 长文案带进 remove/update_edge 共 6 处，工具表 token 成本翻倍；只有 add_edge 承担
+# 「按口分组喂料」的语义。快照侧配套：节点条目带 inputs（口名按序=in-0..k）、
+# 连线条目带 toPort（看哪个口已被占用）。
+TO_PORT_DESC = (
+    PORT_DESC
+    + "。配方节点可能声明具名输入口：快照该节点条目的 inputs 按序列出（inputs[k] 即 in-k，"
+    "如 inputs=[\"温度\",\"压强\"] 时 in-1=压强）。要把材料分组喂进指定输入口就显式写 to_port；"
+    "先对照快照 edges 里同一节点的 toPort 避开已占用的口——目标口被占用时系统会自动顺延到下一个空闲口"
+)
 
 # 工具名 -> 内部 op 名（与 core.ALLOWED_OPERATIONS 保持一致）
 TOOL_TO_OP: Dict[str, str] = {
@@ -141,14 +151,15 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
     add_edge = _tool(
         "add_edge",
         "添加一条连线。from 表示上游/基础/来源，to 表示下游/结果/补充视角；"
-        "from/to 可以是同批 create_node 的 temp_id。",
+        "from/to 可以是同批 create_node 的 temp_id。"
+        "目标是配方节点时，可按其具名输入口分组喂料（见 to_port 说明）。",
         {
             "from": _str_prop("起点节点 ID（或同批 create_node 的 temp_id）"),
             "to": _str_prop("终点节点 ID（或同批 create_node 的 temp_id）"),
             "relation": _str_prop("关系，优先：依赖、前置、导出、支持、反例、适用条件、等价、物理意义、数学意义、应用、追问、进阶"),
             "label": _str_prop("连线说明（可空）"),
             "from_port": _str_prop("起点端口 " + PORT_DESC),
-            "to_port": _str_prop("终点端口 " + PORT_DESC),
+            "to_port": _str_prop("终点端口 " + TO_PORT_DESC),
             "reason": _str_prop(REASON_DESC),
         },
         ["from", "to", "reason"],

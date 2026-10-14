@@ -3800,6 +3800,46 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         stripped = normalize_snapshot({"nodes": [], "edges": [], "user_recipes": [{"id": "", "name": ""}]})
         self.assertNotIn("user_recipes", stripped)
 
+    def test_normalize_snapshot_passes_named_input_ports(self):
+        """T319：配方具名输入口的三份载体都穿过归一化——节点条目 inputs、
+        连线条目 fromPort/toPort、user_recipes 条目 inputs；垃圾/空值静默剥除。"""
+        snapshot = {
+            "nodes": [
+                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "M", "kind": "module", "label": "错题本",
+                 "inputs": ["题目", "错因", "  ", None, "超长标签" * 5] + ["多余口%d" % i for i in range(10)]},
+            ],
+            "edges": [{"key": "A:out-0->M:in-0", "from": "A", "to": "M",
+                       "fromPort": "out-0", "toPort": "in-0"}],
+            "user_recipes": [
+                {"id": "recipe-1", "name": "错题复盘", "ports": "入 2 / 出 1",
+                 "inputs": ["题目", "错因", "", "  "]},
+            ],
+        }
+        normalized = normalize_snapshot(snapshot)
+        node = next(n for n in normalized["nodes"] if n["id"] == "M")
+        # 空白/None 剥除；超长标签截到配方端口名上限（RECIPE_PORT_LABEL_MAX=12）；
+        # 总数截到配方输入口上限（RECIPE_MAX_INPUTS=8），多余的口名不进提示词。
+        self.assertEqual(node["inputs"][0], "题目")
+        self.assertEqual(node["inputs"][1], "错因")
+        self.assertEqual(len(node["inputs"][2]), 12)
+        self.assertLessEqual(len(node["inputs"]), 8)
+        plain = next(n for n in normalized["nodes"] if n["id"] == "A")
+        self.assertNotIn("inputs", plain, "非配方节点不该带 inputs 字段")
+        edge = normalized["edges"][0]
+        self.assertEqual(edge["fromPort"], "out-0")
+        self.assertEqual(edge["toPort"], "in-0")
+        self.assertEqual(normalized["user_recipes"][0]["inputs"], ["题目", "错因"])
+        # inputs 非列表（旧数据/脏数据）→ 整字段剥除，不带键
+        bare = normalize_snapshot({"nodes": [{"id": "B", "kind": "knowledge", "inputs": "题目"}]})
+        self.assertNotIn("inputs", bare["nodes"][0])
+        # 连线缺端口时回落默认 out-0/in-0（既有口径，防回归）
+        default_edge = normalize_snapshot({"nodes": [
+            {"id": "A", "kind": "knowledge"}, {"id": "B", "kind": "knowledge"}],
+            "edges": [{"from": "A", "to": "B"}]})["edges"][0]
+        self.assertEqual(default_edge["fromPort"], "out-0")
+        self.assertEqual(default_edge["toPort"], "in-0")
+
     def test_preset_messages_reference_recipe_list(self):
         from harness.prompts import build_preset_messages
         msgs = build_preset_messages(normalize_snapshot(self.snapshot), "帮我做一个考前速记节点")

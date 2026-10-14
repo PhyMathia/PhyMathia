@@ -223,6 +223,50 @@ check('_stripThinkText 思考块剥离（回归：推理模型刷屏事故）', 
   return true;
 });
 
+check('T319 配方输入口可见性：快照节点 inputs＋连线端口＋user_recipes inputs 三件套', () => {
+  // graph-recipes.js 不在 Φ 冒烟加载清单：临时注入 _recipeInputPorts stub（保存/复原，
+  // 不污染同沙箱的其他用例）。契约点：具名输入口名按序随节点条目下发（in-0..k）、
+  // 连线带 fromPort/toPort（Φ 对照选空闲口）、配方清单条目带 inputs（同批放实例＋接线用）。
+  const savedRIP = sandbox._recipeInputPorts;
+  const savedRecipes = sandbox.getUserRecipes;
+  sandbox._recipeInputPorts = (node) => (node && node.recipeId && node.recipe
+    && node.recipe.ports && Array.isArray(node.recipe.ports.inputs))
+    ? node.recipe.ports.inputs.filter(p => p && p.label)
+    : [];
+  sandbox.getUserRecipes = () => [{
+    id: 'rec_t319', name: '错题本', base_kind: 'module', content_kind: 'markdown',
+    ports: { static: [{ label: '出口' }], inputs: [{ label: '题目' }, { label: '错因' }] },
+  }];
+  try {
+    sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
+    sandbox.window.getGraphViewNodes = () => [
+      { id: 'k1', kind: 'knowledge', label: '知识点' },
+      { id: 'mod1', kind: 'module', moduleKey: '', recipeId: 'rec_t319', label: '错题本',
+        recipe: { ports: { inputs: [{ label: '题目' }, { label: '错因' }] } } },
+    ];
+    sandbox.window.getGraphViewEdges = () => [{ from: 'k1', to: 'mod1', fromPort: 'out-0', toPort: 'in-0' }];
+    sandbox.window.getSelectedGraphNodeIds = () => [];
+    const snap = sandbox.buildHarnessSnapshot(false, [], null);
+    const recipeEntry = snap.nodes.find(n => n.id === 'mod1');
+    if (!recipeEntry || JSON.stringify(recipeEntry.inputs) !== JSON.stringify(['题目', '错因'])) {
+      throw new Error('配方节点条目缺具名输入口名：' + JSON.stringify(recipeEntry));
+    }
+    const plain = snap.nodes.find(n => n.id === 'k1');
+    if (plain && plain.inputs !== undefined) throw new Error('非配方节点不该带 inputs 字段');
+    if (!snap.edges[0] || snap.edges[0].fromPort !== 'out-0' || snap.edges[0].toPort !== 'in-0') {
+      throw new Error('连线条目缺 fromPort/toPort（占用口对 Φ 不可见）：' + JSON.stringify(snap.edges[0]));
+    }
+    const rec = (snap.user_recipes || [])[0];
+    if (!rec || JSON.stringify(rec.inputs) !== JSON.stringify(['题目', '错因'])) {
+      throw new Error('user_recipes 条目缺 inputs 数组：' + JSON.stringify(rec));
+    }
+    return true;
+  } finally {
+    if (savedRIP === undefined) delete sandbox._recipeInputPorts; else sandbox._recipeInputPorts = savedRIP;
+    if (savedRecipes === undefined) delete sandbox.getUserRecipes; else sandbox.getUserRecipes = savedRecipes;
+  }
+});
+
 // ===== Φ 评审路线第二档前端半边（T94/T95/T97/T82/T93，2026-09-30）=====
 
 check('T94 大图自动降级：degrade 邻域收到 1 跳、无焦点保持原样', () => {

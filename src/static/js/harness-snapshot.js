@@ -212,7 +212,9 @@
         if (neighborSet && !isFocus && !neighborSet.has(node.id)) {
           return { id: node.id, kind: node.kind, module_key: node.moduleKey || '', label: _nodeLabel(node).slice(0, 80), directory: true };
         }
-        return {
+        // T319：配方节点的具名输入口名随快照下发（按序对应 in-0..k），Φ 据此指名接线——
+        // 否则按口分组喂料（T263）只对手动拖线生效；非配方/无声明节点不带该字段。
+        const entry = {
           id: node.id,
           kind: node.kind,
           module_key: node.moduleKey || '',
@@ -235,11 +237,23 @@
           suggestion: node.suggestion || '',
           priority: node.priority || '',
         };
+        if (node.kind === 'module' && typeof _recipeInputPorts === 'function') {
+          const inputNames = _recipeInputPorts(node)
+            .map(port => String(port.label || '').trim())
+            .filter(Boolean)
+            .slice(0, 8);
+          if (inputNames.length) entry.inputs = inputNames;
+        }
+        return entry;
       }),
       edges: edges.map(edge => ({
         key: _edgeKey(edge),
         from: edge.from,
         to: edge.to,
+        // T319：端口随连线下发（后端 normalize_edge 本就放行这两键，此前前端没发，
+        // 占用口只能从 key 里猜）——Φ 对照具名输入口选空闲口，不再盲目指定。
+        fromPort: edge.fromPort || 'out-0',
+        toPort: edge.toPort || 'in-0',
         relation: String(edge.relation || ''),
         label: String(edge.label || ''),
         custom: !!edge.custom,
@@ -267,6 +281,12 @@
         const inputCount = (recipe.ports && Array.isArray(recipe.ports.inputs)) ? recipe.ports.inputs.length : 0;
         const hasDynamic = !!(recipe.ports && recipe.ports.dynamic);
         entry.ports = '入 ' + inputCount + ' / 出 ' + staticCount + (hasDynamic ? ' ＋ 动态解析' : '');
+        // T319：输入口名结构化下发（按序对应 in-0..k）——同批 create_node(recipe_id)
+        // 放完实例就接线时，节点还不在这份快照里，Φ 只能从配方清单条目拿到口名。
+        const inputNames = (recipe.ports && Array.isArray(recipe.ports.inputs))
+          ? recipe.ports.inputs.map(port => String((port && port.label) || '').trim()).filter(Boolean).slice(0, 8)
+          : [];
+        if (inputNames.length) entry.inputs = inputNames;
         return entry;
       });
     }

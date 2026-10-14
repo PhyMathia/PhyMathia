@@ -16,7 +16,14 @@ from .registry import (
     ALLOWED_MODULE_KEYS,
     ALLOWED_NODE_KINDS,
 )
-from .recipes import RECIPE_DESC_MAX, RECIPE_NAME_MAX, normalize_recipe_input, validate_recipe
+from .recipes import (
+    RECIPE_DESC_MAX,
+    RECIPE_MAX_INPUTS,
+    RECIPE_NAME_MAX,
+    RECIPE_PORT_LABEL_MAX,
+    normalize_recipe_input,
+    validate_recipe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +89,24 @@ def _edge_key(from_id: str, to_id: str, from_port: str = "out-0", to_port: str =
     return f"{from_id}:{from_port}->{to_id}:{to_port}"
 
 
+def _label_list(raw: Any) -> List[str]:
+    """T319：具名输入口名清单清洗（快照节点条目 inputs / user_recipes inputs 共用）。
+
+    只收非空字符串标签，逐条截到配方端口名上限、总数截到配方输入口上限——
+    与 recipes.py 的 normalize/validate 口径一致，超限垃圾静默剥除。
+    """
+    if not isinstance(raw, list):
+        return []
+    result: List[str] = []
+    for item in raw:
+        label = str(item or "").strip()[:RECIPE_PORT_LABEL_MAX]
+        if label:
+            result.append(label)
+        if len(result) >= RECIPE_MAX_INPUTS:
+            break
+    return result
+
+
 def normalize_node(node: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(node, dict):
         return None
@@ -94,7 +119,7 @@ def normalize_node(node: Any) -> Optional[Dict[str, Any]]:
     label = _text(node.get("label") or node.get("title") or node.get("name"))
     content = _text(node.get("content") or node.get("summary"))[:MAX_NODE_CONTENT_LENGTH]
     formula = _text(node.get("formula"))[:500]
-    return {
+    normalized: Dict[str, Any] = {
         "id": node_id,
         "kind": kind,
         "label": label,
@@ -109,6 +134,12 @@ def normalize_node(node: Any) -> Optional[Dict[str, Any]]:
         "status": _text(node.get("status")),
         "read_only": _bool(node.get("read_only") or node.get("readOnly")),
     }
+    # T319：配方节点的具名输入口名（提示词参考字段，非图元素）必须穿过归一化——
+    # 与 quiz_weak 同理，前端注入了、这里一白名单就剥，提示词永远看不到。非空才带。
+    inputs = _label_list(node.get("inputs"))
+    if inputs:
+        normalized["inputs"] = inputs
+    return normalized
 
 
 def normalize_edge(edge: Any) -> Optional[Dict[str, Any]]:
@@ -198,8 +229,8 @@ def _merge_recipe_patch(before: dict, patch: dict) -> dict:
     return result
 
 
-def normalize_user_recipes(raw: Any) -> List[Dict[str, str]]:
-    """用户配方清单摘要（P3）：每项 {id, name, desc, base_kind, content_kind, ports}。
+def normalize_user_recipes(raw: Any) -> List[Dict[str, Any]]:
+    """用户配方清单摘要（P3）：每项 {id, name, desc, base_kind, content_kind, ports, inputs}。
 
     只保留 Φ 感知所需的身份字段（完整 payload 不进快照——preset 相位产出完整配方，
     这里只让 Φ 看见「已有什么」）；id/name 缺失的条目跳过，上限 32 条。
@@ -227,6 +258,11 @@ def normalize_user_recipes(raw: Any) -> List[Dict[str, str]]:
         ports = str(item.get("ports") or "").strip()[:40]
         if ports:
             entry["ports"] = ports
+        # T319：具名输入口名清单（按序对应 in-0..k）——同批 create_node(recipe_id)
+        # 放完实例就接线时节点不在快照里，Φ 只能从这条清单拿到口名指名接线。
+        inputs = _label_list(item.get("inputs"))
+        if inputs:
+            entry["inputs"] = inputs
         result.append(entry)
         if len(result) >= 32:
             break
