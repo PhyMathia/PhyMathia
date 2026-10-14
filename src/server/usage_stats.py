@@ -22,6 +22,7 @@ import 得到 server 包（路径保证见 llm_common.py 头注）。
 
 import json
 import logging
+import re
 import sys
 import threading
 import time
@@ -102,11 +103,43 @@ def _norm_duration(duration_ms):
     return value if value >= 0 else None
 
 
-def record_usage(provider, model, kind, session_id, usage, duration_ms=None):
+_WF_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def normalize_wf(wf):
+    """工作流运行级标签消毒（2026-10-14）：前端 wfStats → 记账用精简体。
+
+    只留 {run, node, hash}（≤64 字符白名单，超长/带空白/非字符串丢键）与
+    wave（0-99 整数，非数/越界丢键）。全空返回 None——调用方据此不带 wf 键，
+    旧代码不传即 None，与旧记录形状完全兼容。只做观测口径，不进 prompt 字节。
+    """
+    if not isinstance(wf, dict):
+        return None
+    out = {}
+    for key in ("run", "node", "hash"):
+        value = wf.get(key)
+        if isinstance(value, str) and _WF_KEY_RE.match(value):
+            out[key] = value
+    wave = wf.get("wave")
+    if isinstance(wave, bool):
+        wave = None
+    else:
+        try:
+            wave = int(str(wave))
+        except (TypeError, ValueError):
+            wave = None
+    if isinstance(wave, int) and 0 <= wave <= 99:
+        out["wave"] = wave
+    return out or None
+
+
+def record_usage(provider, model, kind, session_id, usage, duration_ms=None, wf=None):
     """解析并追加一条成功用量记录；解析不出任何 token 数时静默跳过。
 
     返回写入的条目 dict（测试/调用方可用），未写入返回 None。
     计量是旁路观测：任何落盘失败只记警告，绝不影响主请求。
+    wf：工作流运行级标签（normalize_wf 精简化）——前端工作流请求带上来，
+    非工作流调用不传；落 entry 的 "wf" 键， summarize records 原样透出。
     """
     parsed = parse_usage(usage)
     if parsed is None or (parsed["prompt_tokens"] is None and parsed["completion_tokens"] is None):
@@ -121,6 +154,9 @@ def record_usage(provider, model, kind, session_id, usage, duration_ms=None):
         "durationMs": _norm_duration(duration_ms),
         **parsed,
     }
+    norm_wf = normalize_wf(wf)
+    if norm_wf:
+        entry["wf"] = norm_wf
     return _write_entry(entry)
 
 
@@ -144,11 +180,13 @@ def failure_detail(exc) -> str:
         return type(exc).__name__
 
 
-def record_failure(provider, model, kind, session_id, error, duration_ms=None):
+def record_failure(provider, model, kind, session_id, error, duration_ms=None, wf=None):
     """失败调用也进账：HTTP 非 200/连接异常/正文不可用等落一条 status=error
     记录（token 数为 null，error 存截断到 200 字符的原因）。
 
     在调用方 except 链里被调用，自身绝不抛（写失败只警告），否则会顶掉原异常。
+    wf：同 record_usage 的工作流运行级标签——失败的节点也归得到它那一轮，
+    面板「波」列才连失败行也看得见是谁出的事。
     """
     try:
         message = str(error).strip() if error is not None else ""
@@ -167,6 +205,9 @@ def record_failure(provider, model, kind, session_id, error, duration_ms=None):
         "completion_tokens": None,
         "cache_hit_tokens": None,
     }
+    norm_wf = normalize_wf(wf)
+    if norm_wf:
+        entry["wf"] = norm_wf
     return _write_entry(entry)
 
 
@@ -334,6 +375,10 @@ def summarize(days=30, records=0):
                 # T325：缓存命中的逐次口径（探针/工作流竞速验证靠它）——上游
                 # 报了缓存字段的请求才有数值，None=该上游不报（面板显 —）
                 "cacheHitTokens": entry.get("cache_hit_tokens"),
+                # 工作流运行级标签（2026-10-14）：{run, node, wave, hash} 或 null。
+                # 前端「最近调用」明细据此显波次、title 悬停看 run/node/hash，
+                # 回答「这轮工作流哪个节点、第几波、什么输入」；非工作流调用为 null
+                "wf": entry.get("wf"),
                 "error": entry.get("error"),
             })
     return {

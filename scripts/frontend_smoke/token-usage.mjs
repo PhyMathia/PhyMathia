@@ -315,7 +315,7 @@ export async function run() {
       if (t('') !== '—' || t(null) !== '—') throw new Error('空时间应为 —');
       const html = sandbox._tokenUsageRecordsHtml({
         records: [
-          { ts: '2026-10-08T21:33:45', kind: 'chat', model: 'glm-4.7', status: 'ok', durationMs: 950, promptTokens: 9000, completionTokens: 800, totalTokens: 9800, cacheHitTokens: 8000 },
+          { ts: '2026-10-08T21:33:45', kind: 'chat', model: 'glm-4.7', status: 'ok', durationMs: 950, promptTokens: 9000, completionTokens: 800, totalTokens: 9800, cacheHitTokens: 8000, wf: { run: 'wf-lz1a2b-3cd', node: 'n1234567890', wave: 1, hash: 'xyz8a7b' } },
           { ts: '2026-10-08T21:32:00', kind: 'chat', model: 'deepseek-v4.1-flash', status: 'ok', durationMs: 800, promptTokens: 1746, completionTokens: 500, totalTokens: 2246, cacheHitTokens: 0 },
           { ts: '2026-10-08T21:31:00', kind: 'chat', model: 'glm-4.7', status: 'ok', durationMs: 700, promptTokens: 3000, completionTokens: 200, totalTokens: 3200 },
           { ts: '2026-10-08T21:30:01', kind: 'harness', model: 'deepseek-chat', status: 'error', durationMs: 120, error: 'HTTP 502 bad gateway', promptTokens: null, completionTokens: null, totalTokens: 0 },
@@ -336,6 +336,14 @@ export async function run() {
       if (!html.includes('0%')) throw new Error('零命中行应显 0%（与不报字段的 — 可分）');
       if (!html.includes('title="缓存命中 8000 / prompt 9000 tok"')) throw new Error('命中列 title 应带绝对值口径');
       if (!html.includes('3200</span><span>—</span>')) throw new Error('无 cacheHitTokens 的成功行命中列应为 —');
+      // 波列（T326 工作流运行级统计）：表头有列名；工作流行命中 cell 后紧跟
+      // 波次号，非工作流行（无 wf）恒 —；run/节点/输入哈希进行 title 悬停
+      if (!html.includes('<span>波</span>')) throw new Error('明细表头应有波列');
+      if (!html.includes('89%</span><span>1</span>')) throw new Error('工作流行命中后应显波次');
+      if (!html.includes('title="工作流 wf-lz1a2b-3cd · 节点 n1234567890 · 输入 xyz8a7b"')) {
+        throw new Error('工作流行 title 应带 run/节点/输入归因');
+      }
+      if (!html.includes('3200</span><span>—</span><span>—</span>')) throw new Error('非工作流行波列应为 —');
       // 空态与无 records 键
       if (!sandbox._tokenUsageRecordsHtml({}).includes('暂无调用明细')) throw new Error('无 records 应给空态');
       // 圆环 pickable（分线模式）：图例带 data-model＋pick 类；非分线不带

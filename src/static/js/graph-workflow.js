@@ -239,6 +239,7 @@ async function _generateAnalysis(node, nodeSignal) {
     branchLabel: '问题分析',
     graphPath: [],
     workflowContext,
+    wfStats: _wfStatsForNode(node),
   };
   const signal = _workflowNodeSignal(nodeSignal);
   const blankStartedAt = Date.now();
@@ -343,6 +344,7 @@ async function _generateCustomNode(node, nodeSignal) {
     branchLabel: workflowContext.target.label,
     graphPath,
     workflowContext,
+    wfStats: _wfStatsForNode(node),
   };
   const signal = _workflowNodeSignal(nodeSignal);
 
@@ -363,6 +365,7 @@ async function _generateCustomNode(node, nodeSignal) {
         branch_label: branchMeta.branchLabel,
         graph_path: branchMeta.graphPath,
         workflow_context: branchMeta.workflowContext,
+        wfStats: branchMeta.wfStats,
       }, signal);
     }
     if (!resp) {
@@ -600,6 +603,11 @@ function _markWorkflowDependentsBlocked(failedId, subgraph, processed, blocked, 
 }
 
 async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, failed, blocked, runtime) {
+  // 并发重复触发兜底：busy＝已有一份在途请求在生成这颗节点（手动点重生成撞上
+  // 自动工作流、两条入口同一 tick 派发等）。本 worker 直接空转不归档——失败/
+  // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径
+  // _workflowReadyNodes/入口 busy 门挡在前面，这里是双保险
+  if (node.busy) return;
   const shouldForce = force && (node.kind === 'module' || node.kind === 'summary');
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   const taskId = runtime ? runtime.taskId : null;
@@ -755,6 +763,60 @@ async function _runWorkflowGraph(subgraph, force, runtime, forceTargets) {
   return completed && failed.size === 0 && blocked.size === 0;
 }
 
+// 工作流运行级统计（2026-10-14 T326）：每轮开跑生成 runId、按拓扑深度给节点
+// 编波次，随记账请求带 wfStats {run, node, wave, hash} 上后端（usage JSONL →
+// 用量面板「波」列）。只做观测——不进 prompt、不进 inputHash 判定；wave 标签
+// 与调度推进顺序天然一致（_workflowReadyNodes 逐层放行），不改调度本身。
+let _wfRunStats = null;
+
+// 请求上带的统计标签。run 外调用（手动单节点模板链等）返回 null，后端据此
+// 记普通明细行。hash 复用去重判定同源的 _nodeInputHash——同一份输入口径，
+// 面板上「哪次调用其实发的是同一份输入」肉眼可查
+function _wfStatsForNode(node) {
+  if (!node || !_wfRunStats) return null;
+  const wave = _wfRunStats.waves && typeof _wfRunStats.waves.get === 'function'
+    ? _wfRunStats.waves.get(node.id) : undefined;
+  return {
+    run: _wfRunStats.run,
+    node: String(node.id || ''),
+    wave: Number.isFinite(wave) ? wave : 0,
+    hash: String(_nodeInputHash(node) || ''),
+  };
+}
+
+// wave = 到源节点的最长依赖深度：问题/分析为 0，同层兄弟同号，汇聚/总结 +1。
+// 迭代式拓扑求深（节点不动员 DFS 递归，深链也不爆栈）
+function _workflowWaveMap(subgraph) {
+  const depths = new Map();
+  const indeg = new Map();
+  const outgoing = new Map();
+  for (const id of subgraph.ids) { indeg.set(id, 0); outgoing.set(id, []); }
+  for (const edge of subgraph.edges) {
+    if (!indeg.has(edge.from) || !indeg.has(edge.to)) continue;
+    indeg.set(edge.to, (indeg.get(edge.to) || 0) + 1);
+    outgoing.get(edge.from).push(edge.to);
+  }
+  const queue = [];
+  for (const [id, deg] of indeg) { if (deg === 0) { depths.set(id, 0); queue.push(id); } }
+  let settled = 0;
+  while (queue.length) {
+    const id = queue.shift();
+    settled++;
+    const depth = depths.get(id) || 0;
+    for (const to of (outgoing.get(id) || [])) {
+      const next = Math.max(depths.get(to) || 0, depth + 1);
+      depths.set(to, next);
+      indeg.set(to, (indeg.get(to) || 0) - 1);
+      if (indeg.get(to) === 0) queue.push(to);
+    }
+  }
+  // 环形依赖的遗留节点（调度层会报「循环依赖」拦住）：发 -1 之前给个 0 兜底
+  if (settled < subgraph.ids.size) {
+    for (const id of subgraph.ids) { if (!depths.has(id)) depths.set(id, 0); }
+  }
+  return depths;
+}
+
 async function _executeParallelWorkflow(targetIds, force, meta) {
   const subgraph = _buildWorkflowSubgraph(targetIds);
   if (!subgraph.ids.size) {
@@ -767,6 +829,12 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   // 视角节点，数学视角内容被重新生成）。上游节点靠「内容没变就不重跑」的既有口径自然跳过。
   const forceTargets = new Set(targetIds || []);
   const workflowStartedAt = Date.now();
+  // 运行级统计上下文（T326）：runId 每轮唯一——手动重跑/排队重放/刷新后重来
+  // 天然分成不同轮，面板上各自归组；wave 拓扑深度在本轮图定形后一次算好
+  _wfRunStats = {
+    run: 'wf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+    waves: _workflowWaveMap(subgraph),
+  };
   window.__wfLogs = [];
   workflowRunActive = true;
   workflowLastAborted = false;
@@ -820,6 +888,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
     const userStopped = runtime ? (runtime.userStopped || 0) : 0;
     workflowRunActive = false;
     workflowAbortController = null;
+    _wfRunStats = null;
     _setWorkflowStopButton(false);
     _hideWorkflowProgress();
     _saveCustomNodes();
@@ -861,7 +930,14 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
 // startQuestionWorkflow 的 fromQueue，见 send-queue.js 的 T225 注）。
 async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoffTaskId = null, confirmed = false) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.messageIndex >= 0 || node.busy) return;
+  if (!node || node.messageIndex >= 0) return;
+  // busy=这颗节点已有在途生成（自动工作流/另一次手动触发）：静默 return 用户
+  // 看不出所以然， toe 一下让人知道点了有反应。进 _isSendBusy 队列的是发送
+  // 总线忙的场景，与本分支不同
+  if (node.busy) {
+    if (typeof showToast === 'function') showToast('「' + _workflowProgressLabel(node) + '」正在生成中，稍候');
+    return;
+  }
   // 重生成预警（T303）：改写内容前确认下游可能失效。排队轮到/任务重试
   // （fromQueue/handoffTaskId）视为用户已确认过，不再二次弹窗；2026-10-13 起面板路
   // （带要求重生成）提示写在面板里、发送即确认，走 confirmed=true 旁路
@@ -898,7 +974,11 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
     return node && node.messageIndex < 0 && !node.busy
       && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer');
   });
-  if (!ids.length) return false;
+  if (!ids.length) {
+    // busy 滤空（或节点已删除）也给个回音，别让按钮看起来没点上
+    if (typeof showToast === 'function') showToast('所选节点都在生成中或已不在画布上');
+    return false;
+  }
   if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
     const capturedForce = !!force;
     _enqueueNodeJob('生成 ' + ids.length + ' 个节点', function(taskId) {
@@ -1041,7 +1121,11 @@ async function _streamBlankNodeResponse(resp, node) {
 
 async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null) {
   const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'blank' || node.busy) return;
+  if (!node || node.kind !== 'blank') return;
+  if (node.busy) {
+    if (typeof showToast === 'function') showToast('这个空白节点正在生成中，稍候');
+    return;
+  }
   // 重生成预警（T303）：首次生成不弹（下游没基于任何旧内容）；重生成且有下游才确认
   if (!fromQueue && !handoffTaskId && (node.content || '').trim() && !_warnDownstreamBeforeRegenerate(node)) return;
   // 忙时排队（2026-10-11，同 runWorkflowNode）：过去这里是「工作流跑着就不许再起一条」的

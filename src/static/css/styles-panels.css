@@ -5360,14 +5360,16 @@
 
 .token-table-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
 
-/* 最近调用明细（2026-10-08 五轮 T196）：六列窄行表。表自身限高滚动——
+/* 最近调用明细（2026-10-08 五轮 T196）：窄行表。表自身限高滚动——
    100 条明细不该把弹窗里的四张图全滚走，表头 sticky 跟滚；失败行淡红底＋
    红字徽标，失败原因截在 200 字符放行 title 悬停看全。T325 起七列：Tok 后
-   插「命中」列（占 prompt 百分比，—=上游不报缓存字段、0%=报了但零命中） */
+   插「命中」列（占 prompt 百分比，—=上游不报缓存字段、0%=报了但零命中）。
+   T326 起八列：「命中」后插「波」列（工作流运行级统计的拓扑层号，同层兄弟
+   同号、汇聚/总结在更深波；非工作流调用—） */
 .token-records-table { gap: 1px; font-size: var(--fs-2xs); max-height: 320px; overflow-y: auto; }
 
 .token-records-row {
-  grid-template-columns: 5.8em 5.4em minmax(0, 1fr) 4.4em 3.4em 4.6em 3.2em;
+  grid-template-columns: 5.8em 5.4em minmax(0, 1fr) 4.4em 3.4em 2.2em 4.6em 3.2em;
   gap: 4px;
   padding: 3px 6px;
 }

@@ -446,18 +446,22 @@ function _tokenUsageTableHtml(data) {
   return '<div class="token-usage-table">' + head + body + '</div>';
 }
 
-// 最近调用明细表（冒烟测试直接调用）：stats 的 records（时间倒序）→ 七列窄行，
+// 最近调用明细表（冒烟测试直接调用）：stats 的 records（时间倒序）→ 八列窄行，
 // 失败行淡红底＋「失败」徽标、原因截在 200 字符放行 title 悬停看全；成功行的
 // token 走 prompt+completion 合计口径（与趋势/圆环同源），旧记录无耗时自然 —。
 // 命中列（T325）：null=上游不报缓存字段（—，与模型明细表口径一致）、0%=报了
 // 但零命中——工作流并发吃不到前缀缓存的模型（T324 实测 deepseek-v4.1-flash
 // 兄弟全 0%）在面板上就是这副长相，与「测不了」一眼可分；有命中显百分比
 // （hit/prompt），title 悬停看命中 tok 绝对值。
+// 波列（T326 工作流运行级统计）：工作流节点请求带 wf{run,node,wave,hash}，
+// wave=该节点在本轮拓扑里的层号（同层兄弟同号）——「这轮哪几个节点在哪一波
+// 一起发、谁是串行后续」一眼可查；非工作流调用（Φ/提取/摘要…）恒 —，
+// 完整 run/node/输入哈希归因进行 title 悬停。
 function _tokenUsageRecordsHtml(data) {
   const records = (data && data.records) || [];
   if (!records.length) return '<div class="token-chart-empty">暂无调用明细</div>';
   const head = '<div class="token-table-row token-table-head token-records-row"><span>时间</span><span>用途</span>'
-    + '<span>模型</span><span>Tok</span><span>命中</span><span>耗时</span><span>状态</span></div>';
+    + '<span>模型</span><span>Tok</span><span>命中</span><span>波</span><span>耗时</span><span>状态</span></div>';
   const rows = records.map(r => {
     const failed = r.status === 'error';
     const total = (r.totalTokens != null) ? r.totalTokens
@@ -471,16 +475,28 @@ function _tokenUsageRecordsHtml(data) {
       hitCell = (Number.isFinite(pTok) && pTok > 0)
         ? Math.round(hitTok / pTok * 100) + '%'
         : _tokenFormatNum(hitTok);
-      hitTitle = ' title="缓存命中 ' + _tokenFormatNum(hitTok) + ' / prompt '
-        + _tokenFormatNum(Number.isFinite(pTok) ? pTok : 0) + ' tok"';
+      hitTitle = '缓存命中 ' + _tokenFormatNum(hitTok) + ' / prompt '
+        + _tokenFormatNum(Number.isFinite(pTok) ? pTok : 0) + ' tok';
     }
+    // 波列与运行级归因：无 wf（旧记录/非工作流调用）显 —；title 与失败原因
+    // 拼接（同一行可同时是失败节点和工作流节点，两段都要看得见）
+    let waveCell = '—';
+    let wfTitle = '';
+    if (r.wf && r.wf.wave != null) {
+      waveCell = String(r.wf.wave);
+      wfTitle = '工作流 ' + (r.wf.run || '?')
+        + (r.wf.node ? ' · 节点 ' + r.wf.node : '')
+        + (r.wf.hash ? ' · 输入 ' + r.wf.hash : '');
+    }
+    const rowTitle = [failed && r.error ? r.error : '', wfTitle].filter(Boolean).join('；');
     return '<div class="token-table-row token-records-row' + (failed ? ' token-record-failed' : '') + '"'
-      + (failed && r.error ? ' title="' + escapeHtml(r.error) + '"' : '') + '>'
+      + (rowTitle ? ' title="' + escapeHtml(rowTitle) + '"' : '') + '>'
       + '<span>' + escapeHtml(_tokenRecordTime(r.ts)) + '</span>'
       + '<span>' + escapeHtml(kind) + '</span>'
       + '<span class="token-table-model">' + escapeHtml(r.model || '—') + '</span>'
       + '<span>' + (failed ? '—' : _tokenFormatNum(total)) + '</span>'
-      + '<span' + hitTitle + '>' + hitCell + '</span>'
+      + '<span' + (hitTitle ? ' title="' + escapeHtml(hitTitle) + '"' : '') + '>' + hitCell + '</span>'
+      + '<span>' + waveCell + '</span>'
       + '<span>' + _tokenFormatMs(r.durationMs) + '</span>'
       + '<span><em class="' + (failed ? 'token-record-err">失败' : 'token-record-ok">成功') + '</em></span>'
       + '</div>';

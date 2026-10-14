@@ -68,7 +68,58 @@ class ParseUsageTest(UsageStatsBase):
         self.assertIsNone(usage_stats.record_usage("deepseek", "m", "chat", "", {"prompt_tokens": "abc"}))
 
 
-class RecordUsageTest(UsageStatsBase):
+class WorkflowStatsTagTest(UsageStatsBase):
+    """2026-10-14 T326：工作流运行级标签（前端 wfStats → 记账 wf 键 → 面板波列）。
+
+    消毒口径、record_usage/record_failure 的入键开关、summarize records 的
+    透出三格各钉一条；旧调用不传 wf 不带键，旧记录/旧面板零影响。
+    """
+
+    def test_normalize_wf_passes_and_filters(self):
+        good = {"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 2, "hash": "xyz8a7b"}
+        self.assertEqual(usage_stats.normalize_wf(good), good)
+        # wave 数字字符串可转；布尔不当整数（True 不能当 1 波）
+        self.assertEqual(usage_stats.normalize_wf({"wave": "3"}), {"wave": 3})
+        self.assertEqual(usage_stats.normalize_wf({"run": "wf-1", "wave": True}), {"run": "wf-1"})
+        # 非 dict / 空 / 无合法字段 → None（调用方据此不带 wf 键）
+        self.assertIsNone(usage_stats.normalize_wf(None))
+        self.assertIsNone(usage_stats.normalize_wf("wf-x"))
+        self.assertIsNone(usage_stats.normalize_wf({}))
+        # 无任何合法字段 → None；有合法字段时只留合法键
+        self.assertIsNone(usage_stats.normalize_wf({"wave": "NaN"}))
+        self.assertEqual(usage_stats.normalize_wf({"run": "ok", "wave": "NaN"}), {"run": "ok"})
+        # 白名单外字符/超长丢键（run 65 字符出局、hash 64 字符保留）
+        self.assertEqual(usage_stats.normalize_wf({"run": "wf-1", "node": "bad node!"}), {"run": "wf-1"})
+        self.assertEqual(usage_stats.normalize_wf({"run": "x" * 65, "hash": "h" * 64}), {"hash": "h" * 64})
+        # wave 越界/非数丢键，其余键照常
+        self.assertEqual(usage_stats.normalize_wf({"run": "wf-1", "wave": "-1"}), {"run": "wf-1"})
+        self.assertEqual(usage_stats.normalize_wf({"run": "wf-1", "wave": 100}), {"run": "wf-1"})
+
+    def test_record_usage_carries_wf_when_present(self):
+        entry = usage_stats.record_usage(
+            "deepseek", "m", "chat", "s1", {"prompt_tokens": 10, "completion_tokens": 1},
+            wf={"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 2, "hash": "xyz8a7b"})
+        self.assertEqual(entry["wf"],
+                         {"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 2, "hash": "xyz8a7b"})
+        # 不传 wf 不带键（旧调用方零影响）
+        plain = usage_stats.record_usage("deepseek", "m", "chat", "s1",
+                                         {"prompt_tokens": 10, "completion_tokens": 1})
+        self.assertNotIn("wf", plain)
+
+    def test_record_failure_carries_wf(self):
+        entry = usage_stats.record_failure("deepseek", "m", "chat", "s1", "boom",
+                                           wf={"run": "wf-x1", "wave": 3})
+        self.assertEqual(entry["wf"], {"run": "wf-x1", "wave": 3})
+        self.assertNotIn("wf", usage_stats.record_failure("deepseek", "m", "chat", "s1", "boom"))
+
+    def test_summarize_records_exposes_wf(self):
+        usage_stats.record_usage("deepseek", "m", "chat", "s1",
+                                 {"prompt_tokens": 10, "completion_tokens": 1},
+                                 wf={"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 1})
+        out = usage_stats.summarize(days=30, records=10)
+        self.assertEqual(len(out["records"]), 1)
+        self.assertEqual(out["records"][0]["wf"]["node"], "n1234567890")
+        self.assertEqual(out["records"][0]["wf"]["wave"], 1)
     def test_writes_jsonl_line(self):
         entry = usage_stats.record_usage("deepseek", "deepseek-chat", "chat", "sess_1", {
             "prompt_tokens": 100, "completion_tokens": 20, "prompt_cache_hit_tokens": 80,

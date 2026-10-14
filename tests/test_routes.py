@@ -442,7 +442,7 @@ class NonStreamUsagePassthroughTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["choices"][0]["message"]["reasoning_content"], "token 烧光")
         record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage,
-                                       duration_ms=mock.ANY)
+                                       duration_ms=mock.ANY, wf=None)  # wf=None：无工作流标签（T326）
         hit_rate.assert_called_once_with(usage)
         fail_record.assert_not_called()
 
@@ -454,7 +454,7 @@ class NonStreamUsagePassthroughTest(RouteTestBase):
                 "choices": [{"message": {"content": "pong"}}], "usage": usage}))
         self.assertEqual(resp.status_code, 200)
         record.assert_called_once_with("deepseek", "deepseek-chat", "legacy", "sess-t149", usage,
-                                       duration_ms=mock.ANY)
+                                       duration_ms=mock.ANY, wf=None)  # wf=None：无工作流标签（T326）
         hit_rate.assert_called_once_with(usage)
         fail_record.assert_not_called()
 
@@ -469,6 +469,57 @@ class NonStreamUsagePassthroughTest(RouteTestBase):
         call = fail_record.call_args
         self.assertEqual(call.args[2], "legacy")  # kind
         self.assertIn("非 JSON", call.args[4])    # error 原因
+
+
+class WorkflowStatsProxyTest(RouteTestBase):
+    """wf_stats 从前端请求体透传到 usage JSONL（2026-10-14 T326 运行级统计）。
+
+    走旧格式 messages 直传（不碰工作流消息组装链）：记账点对 prompt 新旧两种
+    格式同一口径收口，kind 记 legacy 无碍透传验证。断言读 conftest 隔离的
+    USAGE_DIR 当天 jsonl——落盘形状即面板「波」列与 title 归因的数据源。
+    """
+
+    def _post_with_wf(self, wf_stats):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20,
+                          "prompt_cache_hit_tokens": 60},
+            })
+
+        payload = {
+            "messages": [{"role": "user", "content": "生成物理视角"}],
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "sk-test",
+            "model": "deepseek-chat",
+            "stream": False,
+        }
+        if wf_stats is not None:
+            payload["wfStats"] = wf_stats  # 前端 proxyChat 展开 branchMeta 的键名（驼峰）
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with mock.patch.object(http_client_mod, "get_http_client", return_value=client):
+            resp = self.client.post("/api/models/chat", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        files = sorted(usage_stats_mod.USAGE_DIR.glob("*.jsonl"))
+        self.assertEqual(len(files), 1, "应落一天一文件")
+        return json.loads(files[0].read_text(encoding="utf-8").strip())
+
+    def test_wf_stats_reach_jsonl(self):
+        line = self._post_with_wf(
+            {"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 2, "hash": "xyz8a7b"})
+        self.assertEqual(line["wf"],
+                         {"run": "wf-lz1a2b-3cd", "node": "n1234567890", "wave": 2, "hash": "xyz8a7b"})
+        self.assertEqual(line["cache_hit_tokens"], 60)
+
+    def test_garbage_wf_dropped_no_key(self):
+        # 消毒后无合法字段 → 记账不带 wf 键，请求本身不受影响（200 照常）
+        line = self._post_with_wf({"run": "bad run!", "wave": 999})
+        self.assertNotIn("wf", line)
+
+    def test_no_wf_no_key(self):
+        line = self._post_with_wf(None)
+        self.assertNotIn("wf", line)
 
 
 class LinearRetirementGateTest(RouteTestBase):
