@@ -287,6 +287,10 @@
       }
       isStreaming = true;
       const sourceSessionId = currentSessionId;
+      // T315：请求要带的会话号当场抓一份。过去 365 行现场读 SESSION_ID——它离
+      // saveCurrentSession 的 await 只差几行，保存空窗里切画布的话请求会带上另一张
+      // 画布的 session_id，服务端上下文串画布（落盘不受影响，按 sourceSessionId）。
+      const sendSessionId = (typeof SESSION_ID !== 'undefined') ? SESSION_ID : '';
       const stopBtn = document.getElementById('stopBtn');
       // 任务列表：这条发送也是一件活儿（普通发送 / 追问 / 苏格拉底回答都从这儿过），
       // 面板上看得见、停得掉。只有"直接发"记账——排队重放那条已经由队列记过了，
@@ -362,7 +366,7 @@
           showProgress('tool', 26, '正在连接 AI 服务');
           // 寒暄快捷通道已随线性主聊天退役：分支/苏格拉底请求一律走完整回答路径，
           // 不再带 quick/max_tokens（此前这里引用了未定义的 isCasual，请求发出前即抛 ReferenceError）
-          resp = await proxyChat(text, currentLevel, SESSION_ID, true, abortController.signal, branchMeta);
+          resp = await proxyChat(text, currentLevel, sendSessionId, true, abortController.signal, branchMeta);
           if (!resp) throw new Error('无法连接到 AI 服务');
         } else {
           if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置');
@@ -625,7 +629,8 @@
         if (pendingDeleteTimestamp) {
           const ts = pendingDeleteTimestamp;
           pendingDeleteTimestamp = null;
-          await _performDeleteMessages(ts);
+          // T315：补删按会话寻址——生成途中切了画布的话，chatHistory 已是别人家的数组
+          await _performDeleteMessages(ts, sourceSessionId);
         }
         // 队列放最后：删除确认是这条 finally 里的收尾动作，抢在它前面发下一条会串台
         if (typeof _flushSendQueue === 'function') await _flushSendQueue();

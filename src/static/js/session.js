@@ -841,6 +841,11 @@
       // 它的唯一职责就是这一次画布渲染），这里不再重复调——曾经每次切会话全图
       // insertAdjacentHTML + 整图 KaTeX 跑两遍，实测 18 节点画布白烧 ~30-60ms
       renderCurrentChat();
+      // T313：切回工作流所属画布时把任务上下文的节点重新绑到新视图。ctx.nodes 只在
+      // 建立/接手时同步过；切走又切回后视图对象已从 state 整体重建，不重绑的话工作流
+      // 还在写旧副本、画面看不到进度。流式写入是整串覆盖（live.content = 全量累计），
+      // 重绑不会截断在写的字。
+      if (typeof _taskSyncCtxNodes === 'function') _taskSyncCtxNodes();
       renderSessionList();
       if (leavingWithStream && typeof showToast === 'function') {
         showToast('这轮回答还在写，会落回刚才那张画布', TOAST_MS_LONG);

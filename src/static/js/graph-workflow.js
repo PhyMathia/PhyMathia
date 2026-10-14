@@ -251,7 +251,7 @@ async function _generateAnalysis(node, nodeSignal) {
         resp = await proxyChat(
           prompt,
           typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
+          _workflowSessionId(),
           true,
           signal,
           branchMeta
@@ -353,7 +353,7 @@ async function _generateCustomNode(node, nodeSignal) {
       resp = await proxyChatWithModel(slotCall.model, {
         prompt,
         level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-        session_id: typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
+        session_id: _workflowSessionId(),
         stream: true,
         thinking: getSlotThinkingForRole(slotCall.role),
         parent_id: branchMeta.parentId,
@@ -479,7 +479,7 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
   if (_workflowNodeAborted(nodeSignal)) return false;
 
   if (current.kind === 'hub') {
-    const hasInput = (graphView.edges || []).some(edge => String(edge.to) === current.id && !edge.draft);
+    const hasInput = _workflowEdgeTable().some(edge => String(edge.to) === current.id && !edge.draft);
     current.status = hasInput ? 'done' : 'waiting';
     return true;
   }
@@ -532,7 +532,7 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
 
 function _workflowDependencyEdges() {
   const seen = new Set();
-  return (graphView.edges || []).filter(edge => {
+  return _workflowEdgeTable().filter(edge => {
     if (edge.draft || !edge.from || !edge.to || edge.from === edge.to) return false;
     const key = String(edge.from) + '|' + String(edge.to);
     if (seen.has(key)) return false;
@@ -889,7 +889,10 @@ async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoff
 
 // 一组节点的重生成（任务列表「重试」走这里）。忙时同样收进队列，返回 true 表示
 // 「已经安排上了」——调用方（_taskRegenerate）靠它区分「排队了」与「节点没了」。
-async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, handoffTaskId = null) {
+// anchorSid（T313）：排队条目自带来处用——工作流跑动期间配方 on_generated 建出的
+// 子节点属于世界画布，放行时要把视图带回世界；用户手点的活儿不传（默认按当前画布
+// 记账，_sendQueueReady 本来就会把视图带回它那边）。
+async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, handoffTaskId = null, anchorSid = '') {
   const ids = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
     const node = _findGraphNode(id);
     return node && node.messageIndex < 0 && !node.busy
@@ -906,6 +909,7 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
     }, {
       kind: 'workflow',
       replay: { nodeIds: ids.slice(), force: capturedForce },
+      sessionId: anchorSid || undefined,
     });
     return true;
   }

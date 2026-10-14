@@ -279,6 +279,319 @@ checkSq('排队连点去重（T280）：同颗节点同款活儿等待中只收�
   if (sqEval('_hasPendingSend()')) throw new Error('放行后队列没清空');
 });
 
+// ===== 串行边界追加：工作流世界——跑动期间切画布不再换世界观（T313/T314/T315，2026-10-13）=====
+// 画布工作流的世界观过去＝「当前显示的画布」：graphView.nodes/edges、_graphState()、
+// SESSION_ID 全是现场读。新会话首问后切走画布，三条口子同时炸：
+//   · 窗口 A（问题分析阶段任务行未建）：分析结果因 _findGraphNode 落空被静默丢弃，
+//     误诊「问题分析为空」整轮中止，busy 残留进持久层（同页切回转圈、重生成被闸挡）；
+//   · 窗口 B（模块生成阶段）：上游边表读成新画布空表→问题解析成空串→「请先连接并
+//     填写问题节点」→全模块「上游缺失」→任务 partial；
+//   · 收尾知识提取按 currentSessionId 记进人正在看的那张画布（T314）；
+//   · sendMessage 保存空窗里切画布，请求带上别家的 session_id（T315）。
+// 修法＝开场钉世界（_taskBeginWorkflowWorld 提前到分析之前）＋边表/会话号/消息/图状态
+// 走世界访问器（人不在世界画布上时改读世界会话自己的持久 state）。行为用例真跑这条链，
+// 共享键自设自还原；window.getCurrentSessionId（读变量）与 getCurrentSessionId()（读
+// localStorage）两套口径在用例里保持同步——真机由 setCurrentSessionId 一起写。
+const wfEval = (code) => vm.runInContext(code, sandbox);
+const WF_SID_A = 'a313w', WF_SID_B = 'b313w';
+
+checkSq('T313 窗口A：分析期间切画布，分析结果仍落回所属画布、busy 不残留、不误诊为空', async () => {
+  const prev = {
+    sid: wfEval('currentSessionId'),
+    sessId: wfEval('typeof SESSION_ID !== "undefined" ? SESSION_ID : ""'),
+    sessions: wfEval('JSON.stringify(sessions)'),
+    hist: wfEval('JSON.stringify(chatHistory)'),
+    nodes: wfEval('JSON.stringify(graphView.nodes)'),
+    edges: wfEval('JSON.stringify(graphView.edges)'),
+    runActive: wfEval('workflowRunActive'),
+    lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
+  };
+  const prevRender = sandbox.renderGraphCanvas;
+  const prevStreamProgress = sandbox._scheduleWorkflowStreamProgress;
+  const prevStopBtn = sandbox._setWorkflowStopButton;
+  const prevToast = sandbox.showToast;
+  const prevShowProgress = sandbox.showProgress;
+  const prevHideProgress = sandbox.hideProgress;
+  const prevModel = sandbox.getActiveModelForRole;
+  const prevProxy = sandbox.proxyChat;
+  const prevCreateMods = sandbox._createWorkflowModuleNodes;
+  try {
+    sandbox.localStorage.setItem('phymathia_current_session', WF_SID_A);
+    wfEval('currentSessionId = ' + JSON.stringify(WF_SID_A) + '; SESSION_ID = ' + JSON.stringify('r' + WF_SID_A) + ';'
+      + ' sessions = { ' + WF_SID_A + ': { id: "' + WF_SID_A + '", sessionId: "r' + WF_SID_A + '", title: "", updatedAt: 1 }, '
+      + WF_SID_B + ': { id: "' + WF_SID_B + '", sessionId: "r' + WF_SID_B + '", title: "B 画布", updatedAt: 1 } };'
+      + ' chatHistory = []; workflowRunActive = false;');
+    sandbox.localStorage.setItem('phymathia_graph_' + WF_SID_A, JSON.stringify({ customNodes: [], connections: [], updatedAt: 1 }));
+    sandbox.localStorage.removeItem('phymathia_graph_' + WF_SID_B);
+    // 视图按「当前会话的 state」重建——真机 renderGraphCanvas 的最小替身：模板建点后
+    // 视图要能看到新点，分析的上游边表才有得走；切画布时同一句把视图整体换成 B 的
+    wfEval('__wfMiniRender = function() {'
+      + '  const st = window.getGraphState(getCurrentSessionId());'
+      + '  graphView.nodes = (st.customNodes || []).map(function(n) { return Object.assign({}, n); });'
+      + '  graphView.nodeById = {};'
+      + '  graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; });'
+      + '  graphView.edges = (st.connections || []).slice();'
+      + '};');
+    sandbox.renderGraphCanvas = () => wfEval('__wfMiniRender()');
+    sandbox._scheduleWorkflowStreamProgress = () => {};
+    sandbox._setWorkflowStopButton = () => {};
+    sandbox.showToast = () => {};
+    sandbox.showProgress = () => {};
+    sandbox.hideProgress = () => {};
+    sandbox.getActiveModelForRole = () => ({ id: 'mock-agent' });
+    // 假 SSE：第二帧取出时把人切到 B 画布（视图整体换成 B 的）——正是用户「首问后
+    // 迅速另开新会话」的那一下。世界 ctx 应接住后续的落盘与查找。
+    let switched = false;
+    const frames = [
+      '核心物理概念：量子隧穿。核心数学结构：势阱穿透系数。\n',
+      '建议模块：物理视角、数学视角\n',
+    ];
+    sandbox.proxyChat = async () => ({
+      ok: true, status: 200,
+      body: { getReader() {
+        let i = 0;
+        return { read: async () => {
+          if (i === 1 && !switched) {
+            switched = true;
+            sandbox.localStorage.setItem('phymathia_current_session', WF_SID_B);
+            wfEval('currentSessionId = ' + JSON.stringify(WF_SID_B) + '; SESSION_ID = ' + JSON.stringify('r' + WF_SID_B) + ';');
+            wfEval('__wfMiniRender()');
+          }
+          if (i < frames.length) {
+            const chunk = 'data: ' + JSON.stringify({ choices: [{ delta: { content: frames[i++] } }] }) + '\n\n';
+            return { done: false, value: new TextEncoder().encode(chunk) };
+          }
+          return { done: true, value: undefined };
+        } };
+      } },
+    });
+    const modCalls = [];
+    sandbox._createWorkflowModuleNodes = function(keys, answerId, sid) {
+      modCalls.push({ keys: (keys || []).slice(), answerId: answerId, sid: sid });
+      throw new Error('__stop__');
+    };
+    let err = null;
+    try {
+      await sandbox.startQuestionWorkflow('量子隧穿是什么？', {}, '', false);
+    } catch (e) { err = e; }
+    if (!err || err.message !== '__stop__') throw new Error('流程没有走到建模块点：' + (err && err.message));
+    if (!switched) throw new Error('切换没有在流中发生（用例自身坏了）');
+    if (modCalls.length !== 1 || modCalls[0].sid !== WF_SID_A) {
+      throw new Error('建模块点没带世界会话：' + JSON.stringify(modCalls));
+    }
+    const aState = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + WF_SID_A) || '{}');
+    const custom = aState.customNodes || [];
+    const answer = custom.find(n => n.kind === 'answer');
+    if (!answer) throw new Error('A 画布 state 里没有答案节点（分析产物被静默丢弃——T313 窗口 A 原始症状）');
+    if (!(answer.analysis || '').includes('建议模块')) throw new Error('分析没写进 A 画布：' + (answer.analysis || '').slice(0, 40));
+    if (answer.busy) throw new Error('busy 残留进持久层（同页切回一直转圈、重生成被闸挡）');
+    if (answer.status !== 'done') throw new Error('status=' + answer.status);
+    const user = custom.find(n => n.kind === 'user');
+    if (!user || user.content !== '量子隧穿是什么？') throw new Error('问题节点没落进 A 画布');
+    const bState = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + WF_SID_B) || '{"customNodes":[]}');
+    if ((bState.customNodes || []).some(n => n.id === answer.id)) throw new Error('答案节点被写进了 B 画布');
+    if (wfEval('_taskActiveCtx') !== null) throw new Error('世界 ctx 没收干净（会外溢到下一轮）');
+  } finally {
+    sandbox.renderGraphCanvas = prevRender;
+    sandbox._scheduleWorkflowStreamProgress = prevStreamProgress;
+    sandbox._setWorkflowStopButton = prevStopBtn;
+    sandbox.showToast = prevToast;
+    sandbox.showProgress = prevShowProgress;
+    sandbox.hideProgress = prevHideProgress;
+    sandbox.getActiveModelForRole = prevModel;
+    sandbox.proxyChat = prevProxy;
+    sandbox._createWorkflowModuleNodes = prevCreateMods;
+    sandbox.localStorage.removeItem('phymathia_graph_' + WF_SID_A);
+    sandbox.localStorage.removeItem('phymathia_graph_' + WF_SID_B);
+    if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
+    else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
+    wfEval('currentSessionId = ' + JSON.stringify(prev.sid) + '; SESSION_ID = ' + JSON.stringify(prev.sessId)
+      + '; sessions = ' + prev.sessions + '; chatHistory = ' + prev.hist
+      + '; workflowRunActive = ' + prev.runActive + '; _taskActiveCtx = null;');
+    wfEval('graphView.nodes = ' + prev.nodes + '; graphView.nodeById = {};'
+      + ' graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; });'
+      + ' graphView.edges = ' + prev.edges + ';');
+    wfEval('typeof _invalidateGraphStateCache === "function" && _invalidateGraphStateCache();');
+  }
+});
+
+checkSq('T313 窗口B＋接手：切画布后上游问题/边表/会话号/保存全锚世界，任务行沿用世界', async () => {
+  const A = 'a313x', B = 'b313x';
+  const userId = 'user-x', ansId = 'answer-x', modId = 'physics-x';
+  const prev = {
+    sid: wfEval('currentSessionId'),
+    sessId: wfEval('typeof SESSION_ID !== "undefined" ? SESSION_ID : ""'),
+    sessions: wfEval('JSON.stringify(sessions)'),
+    hist: wfEval('JSON.stringify(chatHistory)'),
+    nodes: wfEval('JSON.stringify(graphView.nodes)'),
+    edges: wfEval('JSON.stringify(graphView.edges)'),
+    lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
+  };
+  try {
+    wfEval('currentSessionId = ' + JSON.stringify(B) + '; SESSION_ID = ' + JSON.stringify('r' + B) + ';'
+      + ' sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "A", updatedAt: 1 }, '
+      + B + ': { id: "' + B + '", sessionId: "r' + B + '", title: "B", updatedAt: 1 } };'
+      + ' chatHistory = [];');
+    sandbox.localStorage.setItem('phymathia_current_session', B);
+    sandbox.localStorage.setItem('phymathia_graph_' + A, JSON.stringify({
+      updatedAt: 1,
+      customNodes: [
+        { id: userId, kind: 'user', messageIndex: -1, content: '量子隧穿是什么？', summary: '', analysis: '', busy: false, status: 'done', moduleKey: '' },
+        { id: ansId, kind: 'answer', manual: false, messageIndex: -1, content: '', analysis: '概要', analysisHash: 'h', busy: false, status: 'done', moduleKey: '', requirements: '' },
+        { id: modId, kind: 'module', moduleKey: 'physics', messageIndex: -1, content: '', busy: true, status: 'running', label: '物理视角' },
+      ],
+      connections: [
+        { from: userId, to: ansId, fromPort: 'out-0', toPort: 'in-0' },
+        { from: ansId, to: modId, fromPort: 'out-0', toPort: 'in-0' },
+      ],
+    }));
+    // 人已切到 B（空画布），视图是 B 的
+    wfEval('graphView.nodes = []; graphView.nodeById = {}; graphView.edges = [];');
+    wfEval('_taskBeginWorkflowWorld(' + JSON.stringify(A) + ', [' + JSON.stringify(userId) + ', ' + JSON.stringify(ansId) + ', ' + JSON.stringify(modId) + '])');
+    if (wfEval('_workflowEdgeTable().length') !== 2) {
+      throw new Error('边表没读世界会话：' + wfEval('_workflowEdgeTable().length'));
+    }
+    const found = wfEval('_findGraphNode(' + JSON.stringify(modId) + ')');
+    if (!found || found.id !== modId) throw new Error('切画布后模块节点找不到了（窗口 B 原始症状）');
+    const q = wfEval('_findQuestionContentUpstream(_findGraphNode(' + JSON.stringify(modId) + '))');
+    if (q !== '量子隧穿是什么？') throw new Error('问题解析成：' + JSON.stringify(q) + '（窗口 B 会整轮失败的那一步）');
+    const upstream = wfEval('_collectUpstreamPath(_findGraphNode(' + JSON.stringify(modId) + '))');
+    if (!Array.isArray(upstream) || upstream.length !== 3) throw new Error('上游取材不全：' + (upstream && upstream.length));
+    if (wfEval('_workflowSessionId()') !== A) throw new Error('模型请求会话号没跟世界：' + wfEval('_workflowSessionId()'));
+    // 世界补登（模拟分析完才建的模块点）：人不在，_findGraphNode 靠 state 兜底捞到
+    wfEval('var __st = window.getGraphState(' + JSON.stringify(A) + ');'
+      + ' __st.customNodes.push({ id: "late-node", kind: "module", moduleKey: "math", messageIndex: -1, content: "", busy: false });'
+      + ' window.saveGraphState(' + JSON.stringify(A) + ', __st);');
+    wfEval('_taskExtendWorkflowWorld(["late-node"])');
+    if (!wfEval('_findGraphNode("late-node")')) throw new Error('世界补登的节点捞不到');
+    // 世界消息表：messageIndex 派生节点读 A 自己的消息，不是内存 chatHistory（B 的）
+    sandbox.localStorage.setItem('phymathia_msgs_' + A, JSON.stringify([{ role: 'user', content: 'A 的历史消息', timestamp: 1 }]));
+    wfEval('chatHistory = [{ role: "user", content: "B 的消息", timestamp: 2 }];');
+    const mc = wfEval('_nodeStoredContent({ messageIndex: 0, kind: "user" })');
+    if (mc !== 'A 的历史消息') throw new Error('messageIndex 取材读错了画布的消息：' + mc);
+    // 保存出口合并不截胡：模块副本落 A；B 视图自己的节点照落 B
+    wfEval('var __n = _findGraphNode(' + JSON.stringify(modId) + '); __n.content = "物理视角内容"; __n.busy = false;');
+    wfEval('graphView.nodes = [{ id: "b-node", kind: "module", moduleKey: "math", messageIndex: -1, content: "B 的笔记" }];'
+      + ' graphView.nodeById = { "b-node": graphView.nodes[0] };');
+    wfEval('_saveCustomNodes()');
+    const aAfter = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + A));
+    const modSaved = (aAfter.customNodes || []).find(n => n.id === modId);
+    if (!modSaved || modSaved.content !== '物理视角内容' || modSaved.busy) {
+      throw new Error('工作流产出没落进世界画布：' + JSON.stringify(modSaved));
+    }
+    const bAfter = JSON.parse(sandbox.localStorage.getItem('phymathia_graph_' + B) || '{"customNodes":[]}');
+    if (!(bAfter.customNodes || []).some(n => n.id === 'b-node')) throw new Error('现画布自己的节点改动被世界截胡丢盘了');
+    if ((aAfter.customNodes || []).some(n => n.id === 'b-node')) throw new Error('B 的节点被误并进 A');
+    // 任务行接手：锚世界会话、沿用工作副本；结账后 ctx 收干净
+    const taskId = wfEval('_tasksBeginWorkflow({ title: "x", workNodes: [{ id: ' + JSON.stringify(modId) + ', label: "物理视角" }], allIds: [' + JSON.stringify(modId) + '] })');
+    if (wfEval('(_taskFind(' + JSON.stringify(taskId) + ') || {}).sessionId') !== A) {
+      throw new Error('任务行没锚到世界会话（T59 保存出口会跟着写错家）');
+    }
+    if (wfEval('_taskActiveCtx.nodes.get(' + JSON.stringify(modId) + ') === undefined')) {
+      throw new Error('接手时工作副本没沿用（会退化成从视图找，视图是别人家的）');
+    }
+    wfEval('_tasksEndWorkflow(' + JSON.stringify(taskId) + ', "done", "")');
+    if (wfEval('_taskActiveCtx') !== null) throw new Error('任务结账后 ctx 没清');
+  } finally {
+    if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
+    else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
+    sandbox.localStorage.removeItem('phymathia_graph_' + A);
+    sandbox.localStorage.removeItem('phymathia_graph_' + B);
+    sandbox.localStorage.removeItem('phymathia_msgs_' + A);
+    wfEval('currentSessionId = ' + JSON.stringify(prev.sid) + '; SESSION_ID = ' + JSON.stringify(prev.sessId)
+      + '; sessions = ' + prev.sessions + '; chatHistory = ' + prev.hist + '; _taskActiveCtx = null;');
+    wfEval('graphView.nodes = ' + prev.nodes + '; graphView.nodeById = {};'
+      + ' graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; });'
+      + ' graphView.edges = ' + prev.edges + ';');
+    wfEval('typeof _invalidateGraphStateCache === "function" && _invalidateGraphStateCache();');
+  }
+});
+
+checkSq('T314：收尾知识提取记回工作流所属画布，取材从世界 state 捞', async () => {
+  const A = 'a314', B = 'b314';
+  const modId = 'physics-y';
+  const prev = {
+    sid: wfEval('currentSessionId'),
+    sessions: wfEval('JSON.stringify(sessions)'),
+    hist: wfEval('JSON.stringify(chatHistory)'),
+    nodes: wfEval('JSON.stringify(graphView.nodes)'),
+    lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
+  };
+  const prevExtract = sandbox.autoExtractKnowledge;
+  try {
+    wfEval('currentSessionId = ' + JSON.stringify(B) + '; sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "A", updatedAt: 1 }, '
+      + B + ': { id: "' + B + '", sessionId: "r' + B + '", title: "B", updatedAt: 1 } }; chatHistory = [];');
+    sandbox.localStorage.setItem('phymathia_current_session', B);
+    sandbox.localStorage.setItem('phymathia_graph_' + A, JSON.stringify({
+      updatedAt: 1,
+      customNodes: [
+        { id: modId, kind: 'module', moduleKey: 'physics', messageIndex: -1, content: '物理视角内容', busy: false, status: 'done', label: '物理视角' },
+      ],
+      connections: [],
+    }));
+    wfEval('graphView.nodes = []; graphView.nodeById = {}; graphView.edges = [];');
+    const calls = [];
+    sandbox.autoExtractKnowledge = async (sid, messages, opts) => { calls.push({ sid: sid, messages: messages, opts: opts }); return true; };
+    await sandbox._extractKnowledgeFromWorkflow('量子隧穿是什么？', [modId], A);
+    if (calls.length !== 1) throw new Error('提取没有发生（人切走后取材落空，静默跳过）');
+    if (calls[0].sid !== A) throw new Error('知识记到了 ' + calls[0].sid + '（T314：正文不在那张画布上）');
+    const msgs = calls[0].messages || [];
+    if (msgs.length < 2 || !String(msgs[1].content || '').includes('物理视角内容')) {
+      throw new Error('取材没从世界 state 捞到模块内容：' + JSON.stringify(msgs));
+    }
+    // 兼容旧两参调用：worldSid 缺省＝按当前会话寻址，取不到内容就静默跳过（不炸）
+    await sandbox._extractKnowledgeFromWorkflow('另一个问题', [modId]);
+    if (calls.length !== 1) throw new Error('缺省路径行为变了');
+  } finally {
+    sandbox.autoExtractKnowledge = prevExtract;
+    if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
+    else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
+    sandbox.localStorage.removeItem('phymathia_graph_' + A);
+    wfEval('currentSessionId = ' + JSON.stringify(prev.sid) + '; sessions = ' + prev.sessions + '; chatHistory = ' + prev.hist + ';');
+    wfEval('graphView.nodes = ' + prev.nodes + '; graphView.nodeById = {};'
+      + ' graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; }); graphView.edges = [];');
+    wfEval('typeof _invalidateGraphStateCache === "function" && _invalidateGraphStateCache();');
+  }
+});
+
+checkSq('T315：发送链补删按会话寻址——切走后删的是原画布的消息，不碰现画布', async () => {
+  const A = 'a315', B = 'b315';
+  const prev = {
+    sid: wfEval('currentSessionId'),
+    sessions: wfEval('JSON.stringify(sessions)'),
+    hist: wfEval('JSON.stringify(chatHistory)'),
+    nodes: wfEval('JSON.stringify(graphView.nodes)'),
+    lsCurrent: sandbox.localStorage.getItem('phymathia_current_session'),
+  };
+  const prevRender = sandbox.window.renderGraphCanvas;
+  try {
+    wfEval('currentSessionId = ' + JSON.stringify(B) + '; sessions = { ' + A + ': { id: "' + A + '", sessionId: "r' + A + '", title: "A", updatedAt: 1 }, '
+      + B + ': { id: "' + B + '", sessionId: "r' + B + '", title: "B", updatedAt: 1 } };'
+      + ' chatHistory = [{ role: "user", content: "B 的消息", timestamp: 9 }];');
+    sandbox.localStorage.setItem('phymathia_current_session', B);
+    sandbox.window.renderGraphCanvas = () => {};   // 直删路径的收尾重渲：沙箱里不真渲
+    sandbox.localStorage.setItem('phymathia_msgs_' + A, JSON.stringify([
+      { role: 'user', content: 'A 的问题', timestamp: 100 },
+      { role: 'assistant', content: 'A 的回答', timestamp: 101 },
+    ]));
+    await sandbox._performDeleteMessages('100', A);
+    const aMsgs = JSON.parse(sandbox.localStorage.getItem('phymathia_msgs_' + A) || '[]');
+    if (aMsgs.length !== 0) throw new Error('A 的消息没删掉（剩 ' + aMsgs.length + ' 条）：切走后的补删读错了消息表');
+    if (wfEval('chatHistory.length') !== 1 || wfEval('chatHistory[0].timestamp') !== 9) throw new Error('现画布 chatHistory 被碰了');
+    // 不带会话的直删照旧走内存数组（用户在本画布上直接删）
+    await sandbox._performDeleteMessages('9');
+    if (wfEval('chatHistory.length') !== 0) throw new Error('本画布直删失效');
+  } finally {
+    sandbox.window.renderGraphCanvas = prevRender;
+    if (prev.lsCurrent === null) sandbox.localStorage.removeItem('phymathia_current_session');
+    else sandbox.localStorage.setItem('phymathia_current_session', prev.lsCurrent);
+    sandbox.localStorage.removeItem('phymathia_msgs_' + A);
+    wfEval('currentSessionId = ' + JSON.stringify(prev.sid) + '; sessions = ' + prev.sessions + '; chatHistory = ' + prev.hist + ';');
+    wfEval('graphView.nodes = ' + prev.nodes + '; graphView.nodeById = {};'
+      + ' graphView.nodes.forEach(function(n) { graphView.nodeById[n.id] = n; }); graphView.edges = [];');
+  }
+});
+
 // 静态半。这些护栏全删掉也不会让上面任何一条行为断言变红——只能靠读源码钉住。
 // 变异验证：把任一发送入口改回裸 `if (isStreaming…) return;`，或把 startQuestionWorkflow
 // 的判定改回只查 isStreaming，下面立刻红。
@@ -338,6 +651,54 @@ check('发送排队：发送入口不允许再出现裸 isStreaming 守卫（T42
   }
   if (/if \(typeof isStreaming !== 'undefined' && isStreaming\) return;/.test(wfBody)) {
     throw new Error('startQuestionWorkflow 又只查 isStreaming 了：工作流不碰这个标志位，守卫会失效');
+  }
+});
+
+// 静态契约（T313/T314/T315）：世界锚点必须钉死在链路的三个口子上——开场立世界、
+// 建模块点带世界会话、收世界；发送链会话号当场抓、补删带来源会话；工作流族的
+// 运行期读取不许再裸读 graphView.edges（切画布即换世界观的根）。
+check('工作流世界：开场立世界/建点带世界会话/发送链会话号当场抓（T313/T314/T315）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const tplSrc = fs.readFileSync('src/static/js/graph-workflow-template.js', 'utf8');
+  const wfBody = extract(tplSrc, 'startQuestionWorkflow');
+  if (wfBody === null) throw new Error('找不到 startQuestionWorkflow——断言本身该更新了');
+  for (const marker of ['_taskBeginWorkflowWorld', '_taskExtendWorkflowWorld', '_taskEndWorkflowWorld',
+    '_extractKnowledgeFromWorkflow(question, moduleIds, worldSid)']) {
+    if (!wfBody.includes(marker)) throw new Error('startQuestionWorkflow 缺世界锚点 ' + marker + '（T313/T314）');
+  }
+  const modBody = extract(tplSrc, '_createWorkflowModuleNodes');
+  if (modBody === null || !modBody.includes('_graphStateFor(worldSid)')) {
+    throw new Error('建模块点没走世界寻址的图状态（分析窗口里切画布会把模块点建进别人家）');
+  }
+  const extractBody = extract(tplSrc, '_extractKnowledgeFromWorkflow');
+  if (extractBody === null || !extractBody.includes('(question, moduleIds, worldSid)')) {
+    throw new Error('知识提取没把 worldSid 当第一顺位（T314）');
+  }
+  const chatSrc = fs.readFileSync('src/static/js/chat.js', 'utf8');
+  const sendBody = extract(chatSrc, 'sendMessage');
+  if (sendBody === null) throw new Error('找不到 sendMessage');
+  if (!sendBody.includes('const sendSessionId')) throw new Error('sendMessage 没有当场抓 sendSessionId（T315：保存空窗里切画布会带别家的 session_id）');
+  if (!sendBody.includes('proxyChat(text, currentLevel, sendSessionId')) throw new Error('sendMessage 没把 sendSessionId 传给 proxyChat（T315）');
+  if (!sendBody.includes('_performDeleteMessages(ts, sourceSessionId)')) throw new Error('发送链补删没带来源会话（T315）');
+  // 工作流族的运行期读取一律走 _workflowEdgeTable：这两处文件里不许再出现裸读视图
+  for (const f of ['graph-workflow-prompt.js', 'graph-workflow-recipe.js']) {
+    const src = fs.readFileSync('src/static/js/' + f, 'utf8');
+    if (src.includes('(graphView.edges || [])')) {
+      throw new Error(f + ' 还有裸读 graphView.edges 的运行期读取（T313：切画布即换世界观）');
+    }
+  }
+  const depBody = extract(fs.readFileSync('src/static/js/graph-workflow.js', 'utf8'), '_workflowDependencyEdges');
+  if (depBody === null || !depBody.includes('_workflowEdgeTable()')) {
+    throw new Error('工作流子图的边表没走 _workflowEdgeTable（T313 窗口 B 的根）');
   }
 });
 

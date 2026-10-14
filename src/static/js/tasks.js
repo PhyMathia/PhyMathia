@@ -270,18 +270,30 @@ function _taskWasNodeCancelled(nodeId) {
 function _tasksBeginWorkflow(meta) {
   const opts = meta || {};
   const workNodes = Array.isArray(opts.workNodes) ? opts.workNodes : [];
+  // T313：提问工作流在分析阶段立的「画布世界」先于任务行存在。任务必须记同一个
+  // 会话、ctx 必须沿用同一批节点工作副本——过去这里现场读当前画布，分析期间切了
+  // 画布的话，任务与 ctx 会锚到新画布，T59 的保存出口跟着写错家。
+  const world = (_taskActiveCtx && !_taskActiveCtx.taskId) ? _taskActiveCtx : null;
+  const worldSid = (world && world.sessionId) || '';
   const task = _taskCreate({
     kind: 'workflow',
     title: opts.title || '生成工作流',
     state: 'running',
     replay: { nodeIds: workNodes.map(n => n.id).slice(0, TASK_NODE_LIMIT), force: !!opts.force },
+    sessionId: worldSid || undefined,
+    sessionTitle: worldSid
+      ? ((((typeof getSessionById === 'function') && getSessionById(worldSid)) || {}).title || '')
+      : undefined,
   });
   task.startedAt = Date.now();
   const ctx = {
     taskId: task.id,
     sessionId: task.sessionId,
-    nodes: new Map(),
-    ids: new Set(Array.isArray(opts.allIds) ? opts.allIds : workNodes.map(n => n.id)),
+    nodes: world ? world.nodes : new Map(),
+    ids: new Set([
+      ...((world && world.ids) || []),
+      ...(Array.isArray(opts.allIds) ? opts.allIds : workNodes.map(n => n.id)),
+    ]),
     runtime: {
       nodeControllers: new Map(),
       userCancelled: new Set(),
@@ -297,6 +309,119 @@ function _tasksBeginWorkflow(meta) {
 function _tasksEndWorkflow(taskId, state, note) {
   if (_taskActiveCtx && _taskActiveCtx.taskId === taskId) _taskActiveCtx = null;
   _taskFinish(taskId, state, note);
+}
+
+// ===== T313：提问工作流的「画布世界」 =====
+// startQuestionWorkflow 在模板建点后、问题分析（全程最长的第一步）开跑前先立世界：
+// 过去分析阶段任务行还没建（_taskActiveCtx 要等 _executeParallelWorkflow 才存在），
+// 这一段切画布＝_findGraphNode 落空＝分析结果被静默丢弃、busy 残留进持久层。
+// 世界 ctx 与任务 ctx 同构（taskId 空），_tasksBeginWorkflow 接手时原地沿用节点表；
+// 只有世界的 ctx 由 _taskEndWorkflowWorld 收，任务行的照旧归 _tasksEndWorkflow。
+function _taskBeginWorkflowWorld(sessionId, ids) {
+  if (!sessionId) return null;
+  const ctx = {
+    taskId: null,
+    sessionId,
+    nodes: new Map(),
+    ids: new Set(Array.isArray(ids) ? ids : []),
+    runtime: { nodeControllers: new Map(), userCancelled: new Set() },
+  };
+  _taskActiveCtx = ctx;
+  _taskSyncCtxNodes();
+  return ctx;
+}
+
+// 世界补登节点（分析完才建模块点、配方 on_generated 建点）：id 进集合；节点本体
+// 由 _taskSyncCtxNodes（人在世界画布上，视图里有活对象）或 _taskNodeOverride 的
+// state 兜底（人不在，从世界会话持久 state 捞）收编成工作副本。
+function _taskExtendWorkflowWorld(ids) {
+  const ctx = _taskActiveCtx;
+  if (!ctx) return;
+  for (const id of (Array.isArray(ids) ? ids : [])) ctx.ids.add(String(id));
+  _taskSyncCtxNodes();
+}
+
+// 收世界：只收「还没被任务行接手」的 ctx（taskId 空）；被接手的由 _tasksEndWorkflow 结账。
+function _taskEndWorkflowWorld() {
+  if (_taskActiveCtx && !_taskActiveCtx.taskId) _taskActiveCtx = null;
+}
+
+// ===== T313 工作流世界访问器 =====
+// 画布工作流的世界观过去＝「当前显示的画布」：graphView.nodes/edges、_graphState()
+// 现场读 currentSessionId，人此刻看着哪儿就读哪儿。跑动期间切画布＝换世界观——
+// 上游边表读成新画布的空表、messageIndex 派生节点按索引取到别人家的消息、模型请求
+// 带上另一张画布的 session_id（docs/backlog.md T313/T315）。修法＝开场钉世界：
+// 节点走 _taskActiveCtx（上面那组），边表／会话号／消息／图状态走下面这些访问器——
+// 人不在世界画布上时改读世界会话自己的持久 state，在工作流期间不再跟着视图漂。
+function _workflowCtx() {
+  return (typeof _taskActiveCtx !== 'undefined') ? _taskActiveCtx : null;
+}
+
+function _workflowWorldSid() {
+  const ctx = _workflowCtx();
+  return (ctx && ctx.sessionId) || '';
+}
+
+// 世界会话的边表。人在世界画布上＝graphView.edges（实时，与旧行为一致）；
+// 切走了＝世界会话持久 state 里的 connections（草稿边是纯视图态，本来就不落盘）。
+function _workflowEdgeTable() {
+  const sid = _workflowWorldSid();
+  if (sid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== sid
+      && typeof window.getGraphState === 'function') {
+    const state = window.getGraphState(sid);
+    return Array.isArray(state && state.connections) ? state.connections : [];
+  }
+  if (typeof graphView !== 'undefined' && graphView) return graphView.edges || [];
+  return [];
+}
+
+// 工作流期间模型请求该带的会话号：有世界跟世界，没世界跟现场（SESSION_ID，旧口径）。
+function _workflowSessionId() {
+  const sid = _workflowWorldSid();
+  if (sid) return sid;
+  return (typeof SESSION_ID !== 'undefined') ? SESSION_ID : '';
+}
+
+// 世界会话的消息表。messageIndex 派生节点的内容取材走这里：人在世界画布上读内存
+// chatHistory（实时），切走了读世界会话自己的持久消息（读一次缓存在 ctx 上——
+// 工作流跑动期间那边的消息不会换，也不能跟着别人家换）。
+function _workflowWorldMessages() {
+  const ctx = _workflowCtx();
+  const sid = _workflowWorldSid();
+  if (sid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== sid) {
+    if (!ctx._worldMessages) {
+      ctx._worldMessages = (typeof loadSessionMessages === 'function') ? loadSessionMessages(sid) : [];
+    }
+    return ctx._worldMessages;
+  }
+  return (typeof _getChatHistory === 'function') ? _getChatHistory() : [];
+}
+
+// 世界 state 里的自定义节点（按 id）。人在别的画布期间新建的节点不在任何视图上，
+// _taskNodeOverride 与知识提取的取材靠它从世界 state 捞。
+function _worldCustomNodeById(sid, nodeId) {
+  if (!sid || typeof window.getGraphState !== 'function') return null;
+  const state = window.getGraphState(sid);
+  const list = Array.isArray(state && state.customNodes) ? state.customNodes : [];
+  return list.find(item => String(item && item.id) === String(nodeId)) || null;
+}
+
+// 世界会话寻址的图状态读写：sid 缺省或人正在 sid 上＝原路（_graphState/_saveGraphState）。
+function _graphStateFor(sid) {
+  if (sid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== sid
+      && typeof window.getGraphState === 'function') {
+    return window.getGraphState(sid);
+  }
+  return _graphState();
+}
+
+function _saveGraphStateFor(sid, state) {
+  if (sid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== sid
+      && typeof window.saveGraphState === 'function') {
+    window.saveGraphState(sid, state);
+    return;
+  }
+  _saveGraphState(state);
 }
 
 // 单节点独立生成（T61：空白/知识/联系这三条不走 _executeParallelWorkflow 的生成路）
@@ -335,20 +460,37 @@ function _taskLiveNode(nodeId) {
 }
 
 // 画布层的查找覆盖：工作流任务跑动期间优先看任务自己的节点表（其余节点照旧走画布）。
+// T313：人不在世界画布上时，ctx 建立之后才新建的节点（分析完才建的模块点、配方
+// on_generated 建的点）不在任何视图上——从世界会话的持久 state 捞一份收编进 ctx.nodes，
+// 后续读写都落这份工作副本，保存时经 _taskSaveCtxNodes 合回世界 state。捞一次收编一次，
+// 对象身份稳定（同一个节点反复查找拿到同一个副本，busy/content 写入不丢）。
 function _taskNodeOverride(nodeId) {
   const ctx = _taskActiveCtx;
   if (!ctx) return null;
-  return ctx.nodes.get(nodeId) || null;
+  const known = ctx.nodes.get(nodeId);
+  if (known) return known;
+  if (ctx.sessionId && typeof getCurrentSessionId === 'function'
+      && getCurrentSessionId() !== ctx.sessionId) {
+    const found = _worldCustomNodeById(ctx.sessionId, nodeId);
+    if (found) {
+      const copy = Object.assign({}, found);
+      ctx.nodes.set(nodeId, copy);
+      return copy;
+    }
+  }
+  return null;
 }
 
-// 画布层的保存出口覆盖：任务上下文活着时，_saveCustomNodes 改写到这里，落进
-// **任务所属会话**的 state（按 id 合并，不碰该会话的其他节点）。切会话之所以不再
-// 把产出写错画布，就是这一处 + _taskNodeOverride 顶住的（T59）。
+// 画布层的保存出口覆盖（T59）：任务上下文活着时，ctx 里的节点先合并进**任务所属会话**
+// 的 state（按 id 合并，不碰该会话的其他节点）。T313 起合并后放行原路：人不在世界画布上
+// 时，当前画布（别人家）自己的节点改动照常落自己的 state——过去整条出口被截胡，工作流
+// 跑动期间在现画布上编辑节点会丢盘；人在世界画布上时原路写的就是视图全量（含 ctx 节点
+// 本身，同一批对象），与合并结果一致。
 function _taskSaveNodesOverride() {
   const ctx = _taskActiveCtx;
   if (!ctx) return false;
   _taskSaveCtxNodes(ctx);
-  return true;
+  return false;
 }
 
 function _taskSaveCtxNodes(ctx) {

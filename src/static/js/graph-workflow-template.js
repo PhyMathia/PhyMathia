@@ -26,8 +26,10 @@ function _parseSuggestedModules(analysisText) {
   return keys;
 }
 
-function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort, placement) {
-  const state = _graphState();
+function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort, placement, worldSid) {
+  // T313：worldSid＝工作流所属画布。提问入口建点是同步的（人必然还在那张画布上），
+  // 传不传结果一样；统一走世界寻址的读写，后续建模块点（异步，人可能已切走）同款。
+  const state = _graphStateFor(worldSid);
   state.customNodes = state.customNodes || [];
   state.connections = state.connections || [];
   const now = Date.now();
@@ -72,7 +74,7 @@ function _createQuestionWorkflowTemplate(questionText, sourceNodeId, sourcePort,
     state.connections.push({ from: sourceNodeId, fromPort: sourcePort || 'out-0', to: userNode.id, toPort: 'in-0', type: 'custom', custom: true });
   }
   state.connections.push({ from: userNode.id, fromPort: 'out-0', to: answerNode.id, toPort: 'in-0', type: 'custom', custom: true });
-  _saveGraphState(state);
+  _saveGraphStateFor(worldSid, state);
   renderGraphCanvas();
   return { userNode, answerNode };
 }
@@ -131,8 +133,10 @@ function _workflowModulePositions(moduleKeys, answerNodeId) {
   return positions.map(p => ({ x: p.x, y: p.y }));
 }
 
-function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
-  const state = _graphState();
+function _createWorkflowModuleNodes(moduleKeys, answerNodeId, worldSid) {
+  // T313：模块点在问题分析**之后**才建——免费模型几十秒的分析窗口里人早可能切到
+  // 别的画布了，过去现场读 _graphState() 会把模块点建进别人家的 state
+  const state = _graphStateFor(worldSid);
   state.customNodes = state.customNodes || [];
   state.connections = state.connections || [];
   const now = Date.now();
@@ -155,17 +159,19 @@ function _createWorkflowModuleNodes(moduleKeys, answerNodeId) {
     const outIndex = Math.max(0, ANSWER_OUTPUT_SCHEMA.indexOf(key));
     state.connections.push({ from: answerNodeId, fromPort: 'out-' + outIndex, to: id, toPort: 'in-0', type: 'custom', custom: true });
   });
-  _saveGraphState(state);
+  _saveGraphStateFor(worldSid, state);
   renderGraphCanvas();
   return ids;
 }
 
-function _workflowNodesToExtractionMessages(question, moduleIds) {
+function _workflowNodesToExtractionMessages(question, moduleIds, worldSid) {
   const userMsg = { role: 'user', content: String(question || ''), timestamp: Date.now() };
   const parts = [];
   const nodeIdByModuleKey = {};
   for (const id of moduleIds || []) {
-    const node = _findGraphNode(id);
+    // T314：结账提取跑在工作流 ctx 结掉之后——人切走了的话视图上没有这些节点，
+    // 从世界会话的持久 state 捞（工作流收尾已把最终内容合并进去），两处都没有才算空
+    const node = _findGraphNode(id) || (worldSid ? _worldCustomNodeById(worldSid, id) : null);
     if (!node || !(node.content || '').trim()) continue;
     const meta = GRAPH_MODULE_META[node.moduleKey] || {};
     const label = meta.label || node.moduleKey || '内容';
@@ -181,12 +187,16 @@ function _workflowNodesToExtractionMessages(question, moduleIds) {
   };
 }
 
-async function _extractKnowledgeFromWorkflow(question, moduleIds) {
-  const { messages, nodeIdByModuleKey } = _workflowNodesToExtractionMessages(question, moduleIds);
+async function _extractKnowledgeFromWorkflow(question, moduleIds, worldSid) {
+  const { messages, nodeIdByModuleKey } = _workflowNodesToExtractionMessages(question, moduleIds, worldSid);
   if (!messages || messages.length < 2) return;
   try {
     if (typeof autoExtractKnowledge === 'function') {
-      await autoExtractKnowledge(typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID, messages, { nodeIdByModuleKey });
+      // T314：知识记进**工作流所属的那张画布**——过去现场读 currentSessionId，
+      // 工作流属 A、人在 B 时会记进 B 的知识库（正文根本不在那儿）
+      await autoExtractKnowledge(worldSid
+        || (typeof currentSessionId !== 'undefined' ? currentSessionId : SESSION_ID),
+        messages, { nodeIdByModuleKey });
     }
   } catch (err) {
     console.warn('Workflow knowledge extraction failed:', err);
@@ -240,55 +250,74 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     if (typeof saveSessions === 'function') saveSessions();
   }
 
-  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement);
+  // T313：先钉世界再建点。工作流所属画布从这一刻起固定——问题分析、建模块点、
+  // 模块生成、知识提取全部对着它读写，人切到别的画布不再换世界观（T313 三个窗口
+  // 的总根：画布工作流的世界观过去＝当前显示的画布，切画布即换）。
+  const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
+    || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement, worldSid);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   // T299：问题分析这一段过去整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow
   // 开工才启用，而分析恰恰是全程最长的一段（免费模型动辄几十秒），用户点了没反应；
   // analysis 的 fetch 也没接任何可被总闸 abort 的 signal，按钮即便可用也停不掉。
   // 开工先撑伞：busy 标志＋控制器＋停止按钮三件与 _executeParallelWorkflow 同一套口径，
   // 分析被停就止步——不建模块、不收尾提取，画布上留下半截分析待用户重试。
-  workflowRunActive = true;
-  workflowAbortController = new AbortController();
-  _setWorkflowStopButton(true);
-  const analysisController = new AbortController();
-  workflowInFlightControllers.add(analysisController);
+  if (worldSid && typeof _taskBeginWorkflowWorld === 'function') {
+    // 世界在分析开跑前立起来：_findGraphNode/_saveCustomNodes 从第一毫秒起就锚定
+    // 所属会话（任务行要等 _executeParallelWorkflow 才建，分析阶段靠它顶住窗口 A）
+    _taskBeginWorkflowWorld(worldSid, [template.userNode.id, template.answerNode.id]);
+  }
   try {
-    await _generateAnalysis(liveAnswer, analysisController.signal);
-  } finally {
-    workflowInFlightControllers.delete(analysisController);
-  }
-  const analysisStopped = analysisController.signal.aborted;
-  // 收伞：没被停的话 _executeParallelWorkflow 会另起一把（模块阶段自己的闸）
-  workflowAbortController = null;
-  workflowRunActive = false;
-  _setWorkflowStopButton(false);
-  if (analysisStopped) {
-    workflowLastAborted = true;
-    // 排队那条「提问」若在（handoffTaskId），就地结掉——不然永远挂在等待中
-    if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'stopped', '已停止');
-    return;
-  }
-
-  const liveAnswer2 = _findGraphNode(template.answerNode.id);
-  if (!liveAnswer2 || !(liveAnswer2.analysis || '').trim()) {
-    if (liveAnswer2) {
-      liveAnswer2.status = 'error';
-      liveAnswer2.busy = false;
+    workflowRunActive = true;
+    workflowAbortController = new AbortController();
+    _setWorkflowStopButton(true);
+    const analysisController = new AbortController();
+    workflowInFlightControllers.add(analysisController);
+    try {
+      await _generateAnalysis(liveAnswer, analysisController.signal);
+    } finally {
+      workflowInFlightControllers.delete(analysisController);
     }
-    _saveCustomNodes();
-    if (typeof showToast === 'function') showToast('问题分析为空，请检查模型配置或重试');
-    return;
+    const analysisStopped = analysisController.signal.aborted;
+    // 收伞：没被停的话 _executeParallelWorkflow 会另起一把（模块阶段自己的闸）
+    workflowAbortController = null;
+    workflowRunActive = false;
+    _setWorkflowStopButton(false);
+    if (analysisStopped) {
+      workflowLastAborted = true;
+      // 排队那条「提问」若在（handoffTaskId），就地结掉——不然永远挂在等待中
+      if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'stopped', '已停止');
+      return;
+    }
+
+    const liveAnswer2 = _findGraphNode(template.answerNode.id);
+    if (!liveAnswer2 || !(liveAnswer2.analysis || '').trim()) {
+      if (liveAnswer2) {
+        liveAnswer2.status = 'error';
+        liveAnswer2.busy = false;
+      }
+      _saveCustomNodes();
+      if (typeof showToast === 'function') showToast('问题分析为空，请检查模型配置或重试');
+      return;
+    }
+    const moduleKeys = _parseSuggestedModules(liveAnswer2.analysis);
+    if (!moduleKeys.length) return;
+    // 主界面直接提问：必定生成 进阶学习 + 苏格拉底追问（画布手动追问不强制）
+    if (!options.sourceNodeId) {
+      if (!moduleKeys.includes('learn')) moduleKeys.push('learn');
+      if (!moduleKeys.includes('socratic')) moduleKeys.push('socratic');
+    }
+    const moduleIds = _createWorkflowModuleNodes(moduleKeys, liveAnswer2.id, worldSid);
+    // 模块点补登进世界：人在原地时 _taskSyncCtxNodes 直接绑到新视图的活对象，
+    // 人切走了由 _taskNodeOverride 的 state 兜底从世界会话的持久 state 收编
+    if (typeof _taskExtendWorkflowWorld === 'function') _taskExtendWorkflowWorld(moduleIds);
+    await _executeParallelWorkflow(moduleIds, true, { title: question, handoffTaskId: handoffTaskId || '' });
+    // T285：被停掉的那轮不再做收尾提取——用户喊停之后还烧一次模型调用去提取半截
+    // 画布，与「停止＝不再花钱」矛盾；部分产出留在画布上，想要可手动再提取。
+    if (!workflowLastAborted) await _extractKnowledgeFromWorkflow(question, moduleIds, worldSid);
+  } finally {
+    // 收世界：任务行已接手的话 ctx 已由 _tasksEndWorkflow 结掉，这里对 null 空转；
+    // 分析阶段就早退（被停/分析为空）的世界 ctx 在这儿收掉，不外溢到下一轮。
+    if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
   }
-  const moduleKeys = _parseSuggestedModules(liveAnswer2.analysis);
-  if (!moduleKeys.length) return;
-  // 主界面直接提问：必定生成 进阶学习 + 苏格拉底追问（画布手动追问不强制）
-  if (!options.sourceNodeId) {
-    if (!moduleKeys.includes('learn')) moduleKeys.push('learn');
-    if (!moduleKeys.includes('socratic')) moduleKeys.push('socratic');
-  }
-  const moduleIds = _createWorkflowModuleNodes(moduleKeys, liveAnswer2.id);
-  await _executeParallelWorkflow(moduleIds, true, { title: question, handoffTaskId: handoffTaskId || '' });
-  // T285：被停掉的那轮不再做收尾提取——用户喊停之后还烧一次模型调用去提取半截
-  // 画布，与「停止＝不再花钱」矛盾；部分产出留在画布上，想要可手动再提取。
-  if (!workflowLastAborted) await _extractKnowledgeFromWorkflow(question, moduleIds);
 }

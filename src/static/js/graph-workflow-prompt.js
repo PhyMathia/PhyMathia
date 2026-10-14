@@ -13,7 +13,9 @@ function _simpleHash(value) {
 function _nodeStoredContent(node) {
   if (!node) return '';
   if (node.messageIndex >= 0) {
-    const msg = _getChatHistory()[node.messageIndex] || null;
+    // T313：messageIndex 派生节点的内容取材走世界消息表——切了画布之后
+    // _getChatHistory 是别人家的消息，按索引取会张冠李戴（没世界时就是现场表）
+    const msg = _workflowWorldMessages()[node.messageIndex] || null;
     if (node.kind === 'user') return msg?.content || '';
     if (node.kind === 'answer') return _graphSummary(msg?.content || '') || '';
     if (node.kind === 'module') return _nodeContent(msg, node);
@@ -28,7 +30,7 @@ function _findQuestionContentUpstream(node) {
     if (!current || visited.has(current.id)) return '';
     visited.add(current.id);
     if (current.kind === 'user') return _nodeStoredContent(current);
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
       const found = walk(source);
@@ -49,7 +51,7 @@ function _nodeOutputContent(node, seen) {
   // 透明不出场（_collectUpstreamPath / _collectInboundChain；T273：hub 原先作为
   // 集合点出现在清单里，它的"内容"就是上游拼接，再进一份等于每篇上游写两遍）。
   if (node.kind === 'hub' || node.kind === 'junction') {
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
+    const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
     return incoming
       .map(edge => _nodeOutputContent(_findGraphNode(edge.from), seen))
       .filter(Boolean)
@@ -67,7 +69,7 @@ function _collectUpstreamPath(node) {
   // T263 喂料分路：记录每个祖先经由哪条入边（toPort）进入，具名输入口分组用
   function collect(current, viaPort) {
     if (!current || orderedIds.has(current.id)) return;
-    const incoming = (graphView.edges || []).filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
       if (source) collect(source, edge.toPort || 'in-0');
@@ -112,12 +114,12 @@ function _collectInboundChain(node) {
     // 无内容节点（junction/hub）穿透：自身不进链，顺它的第一条入边继续往上走——
     // 单链取材对它是"线的一截"，不是链上的一环（T273：与 collect 同口径去双写）
     if (current.kind === 'junction' || current.kind === 'hub') {
-      const hop = (graphView.edges || []).find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+      const hop = _workflowEdgeTable().find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
       current = hop ? _findGraphNode(hop.from) : null;
       continue;
     }
     chain.push(current);
-    const incoming = (graphView.edges || []).find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    const incoming = _workflowEdgeTable().find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     ports.push(incoming ? (incoming.toPort || 'in-0') : '');
     current = incoming ? _findGraphNode(incoming.from) : null;
   }
@@ -240,7 +242,7 @@ function _upstreamInlineText(upstream) {
 }
 
 function _nodeInputHash(node) {
-  const incoming = (graphView.edges || []).filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
+  const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
   // T263：仅当目标配方声明具名输入口时才把接线口计入哈希——旧图哈希逐字节不变，
   // 不会触发存量节点全量重生成；新配方换口接线能正确触发重生成
   const usePorts = !!(node.recipeId && typeof _recipeInputPorts === 'function' && _recipeInputPorts(node).length);

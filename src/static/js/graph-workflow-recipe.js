@@ -27,7 +27,7 @@ async function _recipeGenerateAnalysis(node, nodeSignal) {
       if (agentModel) {
         resp = await proxyChat(prompt,
           typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
+          _workflowSessionId(),
           true,
           signal,
           { parentId: String(node.timestamp || ''), branchLabel: '配方概要', workflowContext }
@@ -72,7 +72,9 @@ function _recipeAfterGenerated(node) {
     _saveCustomNodes();
     renderGraphCanvas();
     const aiIds = created.filter(item => item.ai).map(item => item.id);
-    if (aiIds.length) runWorkflowNodes(aiIds);
+    // anchorSid＝世界画布（T313）：这批子节点建在世界会话的 state 里，人此刻可能
+    // 正看着别的画布——放行时必须把视图带回世界，不然按当前画布记账会找不到节点。
+    if (aiIds.length) runWorkflowNodes(aiIds, false, false, null, _workflowWorldSid());
   } catch (err) {
     console.warn('Recipe on_generated failed:', err);
   }
@@ -82,6 +84,15 @@ function _recipeAfterGenerated(node) {
 // 或用户配方 id（带内嵌快照，复用 createRecipeNode 同款模板）
 function _recipeCreateOnGeneratedNodes(node, spec) {
   const created = [];
+  // T313：人不在世界画布上时，建点改写世界会话的持久 state——往 graphView（现画布）
+  // push 会把节点寄存在别人家的视图里，下一次渲染就没影了，工作流也找不到它们
+  const worldSid = _workflowWorldSid();
+  const awayWorld = !!(worldSid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== worldSid);
+  const worldState = awayWorld ? _graphStateFor(worldSid) : null;
+  if (worldState) {
+    if (!Array.isArray(worldState.customNodes)) worldState.customNodes = [];
+    if (!Array.isArray(worldState.connections)) worldState.connections = [];
+  }
   spec.create.forEach((item, index) => {
     const kind = item.base && item.base.kind;
     if (!kind) return;
@@ -159,8 +170,12 @@ function _recipeCreateOnGeneratedNodes(node, spec) {
       vx: 0,
       vy: 0,
     };
-    graphView.nodes.push(newNode);
-    graphView.nodeById[id] = newNode;
+    if (worldState) {
+      worldState.customNodes.push(newNode);
+    } else {
+      graphView.nodes.push(newNode);
+      graphView.nodeById[id] = newNode;
+    }
     // 与 harness _generateHarnessCreatedContent 同口径：module/blank/summary/answer(!manual)
     // 交回工作流生成；note/user/human_note 是人工节点不生成
     created.push({
@@ -169,21 +184,31 @@ function _recipeCreateOnGeneratedNodes(node, spec) {
       ai: kind === 'module' || kind === 'blank' || (kind === 'answer'),
     });
   });
+  if (worldState) _saveGraphStateFor(worldSid, worldState);
   return created;
 }
 
 // 按 spec.connect 建边（去重），chain_check＝再按声明顺序补全缺失的链边
 function _recipeConnectOnGenerated(node, spec, created) {
+  // T313：与建点同口径——人不在世界画布上时，边改写世界会话的持久 state
+  const worldSid = _workflowWorldSid();
+  const awayWorld = !!(worldSid && typeof getCurrentSessionId === 'function' && getCurrentSessionId() !== worldSid);
+  const worldState = awayWorld ? _graphStateFor(worldSid) : null;
+  if (worldState) {
+    if (!Array.isArray(worldState.customNodes)) worldState.customNodes = [];
+    if (!Array.isArray(worldState.connections)) worldState.connections = [];
+  }
+  const edgeTable = worldState ? worldState.connections : graphView.edges;
   const byAs = new Map(created.map(item => [item.as, item.id]));
   const resolve = ref => (ref === 'self' ? node.id : (byAs.get(ref) || ''));
   const edgeKey = (from, to) => from + '|' + to;
-  const existing = new Set((graphView.edges || []).map(edge => edgeKey(String(edge.from), String(edge.to))));
+  const existing = new Set((edgeTable || []).map(edge => edgeKey(String(edge.from), String(edge.to))));
   const addEdge = (fromId, toId, relation) => {
     if (!fromId || !toId || fromId === toId) return;
     const key = edgeKey(fromId, toId);
     if (existing.has(key)) return;
     existing.add(key);
-    graphView.edges.push({
+    edgeTable.push({
       from: fromId,
       fromPort: 'out-0',
       to: toId,
@@ -197,7 +222,10 @@ function _recipeConnectOnGenerated(node, spec, created) {
   (spec.connect || []).forEach(item => {
     addEdge(resolve(item.from), resolve(item.to), item.relation);
   });
-  if (!spec.chain_check) return;
+  if (!spec.chain_check) {
+    if (worldState) _saveGraphStateFor(worldSid, worldState);
+    return;
+  }
   // 补链（find_missing_expansion_chains 思路）：按 create 声明顺序两两核对，
   // 缺的边用声明里的 relation（没有则「模块」）补上
   let prev = node.id;
@@ -208,4 +236,5 @@ function _recipeConnectOnGenerated(node, spec, created) {
     addEdge(prev, cur, declared ? declared.relation : '模块');
     prev = cur;
   });
+  if (worldState) _saveGraphStateFor(worldSid, worldState);
 }

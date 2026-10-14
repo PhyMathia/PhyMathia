@@ -1,9 +1,11 @@
 // ===== PhyMathia 知识网络画布：自定义/输入/文档节点 =====
 
 function _saveCustomNodes() {
-  // 任务列表：有工作流任务在跑时，保存出口改写到**任务所属会话**的 state（T59）。
-  // 否则切了会话之后，产出会跟着当前画布写进别人家（graphView 与 SESSION_ID 都是现场读的）。
-  if (typeof _taskSaveNodesOverride === 'function' && _taskSaveNodesOverride()) return;
+  // 任务列表：有工作流任务/画布世界在跑时，ctx 里的节点先按会话寻址合并进**世界会话**
+  // 的 state（T59/T313），随后原路照常保存当前画布——合并不截胡：人不在世界画布上时，
+  // 现画布自己的节点改动照落自己的 state（过去整条出口被改写，工作流跑动期间在现画布
+  // 上编辑节点会丢盘）。
+  if (typeof _taskSaveNodesOverride === 'function') _taskSaveNodesOverride();
   const state = _graphState();
   state.customNodes = graphView.nodes
     .filter(node => node.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(node.kind))
@@ -1023,7 +1025,7 @@ function _blankNodeGraphPath(node) {
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
     if (current.kind !== 'blank') ordered.push(current);
-    const incoming = (graphView.edges || []).find(edge => String(edge.to) === current.id);
+    const incoming = _workflowEdgeTable().find(edge => String(edge.to) === current.id);
     current = incoming ? _findGraphNode(incoming.from) : null;
   }
   ordered.reverse();
@@ -1033,7 +1035,7 @@ function _blankNodeGraphPath(node) {
     module: item.moduleKey || '',
     branchType: item.branchType || '',
     content: item.messageIndex >= 0
-      ? _nodeContent(_getChatHistory()[item.messageIndex] || null, item)
+      ? _nodeContent(_workflowWorldMessages()[item.messageIndex] || null, item)
       : (item.content || ''),
   }));
 }

@@ -262,18 +262,25 @@
 
     let pendingDeleteTimestamp = null;
 
-    async function _performDeleteMessages(timestamps) {
+    async function _performDeleteMessages(timestamps, sessionId) {
       const targets = Array.isArray(timestamps)
         ? timestamps.map(String).filter(Boolean)
         : [String(timestamps || '')];
       if (!targets.length) return;
+      // T315：发送链 finally 的补删按会话寻址——生成途中切了画布的话，chatHistory
+      // 已换成新画布的数组，按它删会删到空手（甚至误伤别人的消息）。人不在原画布
+      // 就读原画布自己的消息删（switchToSession 切走前已把这边的消息存过一轮，
+      // 读到的就是全量），存回原画布，不碰现画布的内存数组、不重渲现画布。
+      const away = !!(sessionId && sessionId !== currentSessionId
+        && typeof loadSessionMessages === 'function' && typeof saveSessionMessages === 'function');
+      let list = away ? loadSessionMessages(sessionId) : chatHistory;
       const removed = new Set(targets);
       for (const target of targets) {
-        const targetIndex = chatHistory.findIndex(msg => String(msg.timestamp || '') === target);
-        if (targetIndex >= 0 && chatHistory[targetIndex].role === 'user') {
-          for (let i = targetIndex + 1; i < chatHistory.length; i++) {
-            if (chatHistory[i].role === 'assistant') {
-              removed.add(String(chatHistory[i].timestamp || ''));
+        const targetIndex = list.findIndex(msg => String(msg.timestamp || '') === target);
+        if (targetIndex >= 0 && list[targetIndex].role === 'user') {
+          for (let i = targetIndex + 1; i < list.length; i++) {
+            if (list[i].role === 'assistant') {
+              removed.add(String(list[i].timestamp || ''));
             } else {
               break;
             }
@@ -284,7 +291,7 @@
       while (changed) {
         changed = false;
         const next = [];
-        for (const msg of chatHistory) {
+        for (const msg of list) {
           const ts = String(msg.timestamp || '');
           const parent = String(msg.parentId || '');
           if (removed.has(ts) || removed.has(parent)) {
@@ -294,8 +301,13 @@
           }
           next.push(msg);
         }
-        chatHistory = next;
+        list = next;
       }
+      if (away) {
+        await saveSessionMessages(sessionId, list);
+        return;
+      }
+      chatHistory = list;
       await saveCurrentSession();
       renderSessionList();
       await renderCurrentChat();
