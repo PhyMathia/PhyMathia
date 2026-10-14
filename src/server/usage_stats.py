@@ -331,6 +331,9 @@ def summarize(days=30, records=0):
                 "promptTokens": prompt,
                 "completionTokens": completion,
                 "totalTokens": (prompt or 0) + (completion or 0),
+                # T325：缓存命中的逐次口径（探针/工作流竞速验证靠它）——上游
+                # 报了缓存字段的请求才有数值，None=该上游不报（面板显 —）
+                "cacheHitTokens": entry.get("cache_hit_tokens"),
                 "error": entry.get("error"),
             })
     return {

@@ -330,6 +330,10 @@ class SummarizeTest(UsageStatsBase):
         self.assertEqual(recs[1]["error"], "HTTP 502")
         self.assertIsNone(recs[1]["promptTokens"])
         self.assertEqual(recs[1]["totalTokens"], 0)
+        # T325：records 逐条带 cacheHitTokens（驼峰化）——面板「命中」列数据源；
+        # 0=上游报了但零命中、None=该上游不报缓存字段（面板显 —）
+        self.assertEqual(recs[0]["cacheHitTokens"], 0)
+        self.assertIsNone(recs[1]["cacheHitTokens"])
         # 聚合桶口径不受 records 参数影响
         self.assertEqual(out["total"]["requests"], 3)
 
