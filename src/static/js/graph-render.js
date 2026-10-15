@@ -68,10 +68,13 @@ function _nodeActions(node) {
     // 版本导航（T339）：账上有历史版本就挂 ‹ n/n › ＋删版；生成中不挂（忙态收干净）。
     // 内容为空的节点也挂——异常中断后 content 被清空时，靠它把上一版点回来。
     if (!(node.content || '').trim()) {
-      const label = regenBusy ? '生成中...' : '生成';
+      // 2026-10-15：空内容＝这颗从没生成过，本就「没有当前内容」——挂播放三角
+      // （T338 从头生成口径），循环箭头只留给「重新」场景。force 仍传 false：
+      // 空节点没有内容可清，true 只会多弹一次下游失效确认。
+      const label = regenBusy ? '生成中...' : '从头生成';
       return '<div class="graph-node-actions">'
         + _nodeVersionNavHtml(node, regenBusy)
-        + _iconRegenButton('runWorkflowNode(\'' + node.id + '\',false)', label, regenBusy)
+        + _iconPlayButton('runWorkflowNode(\'' + node.id + '\',false)', label, regenBusy)
         + '</div>';
     }
     return '<div class="graph-node-actions">'

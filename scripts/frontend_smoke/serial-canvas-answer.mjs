@@ -988,8 +988,9 @@ check('播放三角「从头生成」：不带内容直跑原管线＋T303 下�
     throw new Error('工作流节点丢了播放三角「从头生成」直跑入口（T338）');
   }
   // 三角必须排在循环箭头（面板入口）之后：_syncBlankNodeControls 取首个 .graph-regen-btn
-  // 重置标题，排前面会被误当宿主按钮
-  if (actionsBody.indexOf('_iconPlayButton') < actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
+  // 重置标题，排前面会被误当宿主按钮（锚 force=true 那颗＝有内容分支；空内容分支的独钮
+  // 不参与本序）
+  if (actionsBody.indexOf("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',true)'") < actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
     throw new Error('播放三角排到了循环箭头之前——会被 _syncBlankNodeControls 误当宿主按钮');
   }
   // force=true 真重跑；confirmed 必须留缺省——有下游时 T303 confirm 闸照走，误传 true＝绕闸
@@ -999,6 +1000,34 @@ check('播放三角「从头生成」：不带内容直跑原管线＋T303 下�
   }
   if (!grSrc.includes('function _playIconHtml') || !grSrc.includes('function _iconPlayButton')) {
     throw new Error('播放三角图标/按钮函数丢了（T338）');
+  }
+});
+
+// 静态契约（2026-10-15）：空内容节点（从没生成过）那颗唯一动作键必须是播放三角
+// 「从头生成」——它没有当前内容，「生成」本身就是从头跑；循环箭头只该出现在
+// 「重新」场景。变异验证：把空分支换回 _iconRegenButton 直跑，下面立刻红。
+check('空内容节点挂播放三角「从头生成」：没生成过不该出现循环箭头（2026-10-15）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const actionsBody = extract(grSrc, '_nodeActions');
+  if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
+  // 空内容分支：force 仍 false（空节点没内容可清，true 只会多弹下游失效确认），
+  // 但图标/入口必须是播放三角
+  if (!actionsBody.includes("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',false)'")) {
+    throw new Error('空内容节点丢了播放三角「从头生成」入口');
+  }
+  // 循环箭头的 direct-run 宿主退役：runWorkflowNode(id,false) 不该再由 _iconRegenButton 挂
+  if (actionsBody.includes("_iconRegenButton('runWorkflowNode(")) {
+    throw new Error('空内容节点还挂着循环箭头直跑入口——没生成的节点顶着「重新生成」图标');
   }
 });
 
