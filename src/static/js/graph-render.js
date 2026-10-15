@@ -65,13 +65,17 @@ function _nodeActions(node) {
     // 留空时 _applyWorkflowNodeRegenerate 回 runWorkflowNode 原管线）；没内容的「生成」
     // 保持直接跑。忙态口径同 T58：这颗自己在跑（工作流 busy / 修订中）才置灰。
     const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
+    // 版本导航（T339）：账上有历史版本就挂 ‹ n/n › ＋删版；生成中不挂（忙态收干净）。
+    // 内容为空的节点也挂——异常中断后 content 被清空时，靠它把上一版点回来。
     if (!(node.content || '').trim()) {
       const label = regenBusy ? '生成中...' : '生成';
       return '<div class="graph-node-actions">'
+        + _nodeVersionNavHtml(node, regenBusy)
         + _iconRegenButton('runWorkflowNode(\'' + node.id + '\',false)', label, regenBusy)
         + '</div>';
     }
     return '<div class="graph-node-actions">'
+      + _nodeVersionNavHtml(node, regenBusy)
       + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
       // 播放三角（T338）：不带当前内容的「从头生成」，force=true 真重跑；confirmed 留缺省
       // ＝有下游时照 T303 直接按钮路的 confirm 口径，无下游静默放行。排在循环箭头之后：
@@ -134,6 +138,37 @@ function _iconPlayButton(onclick, title, disabled) {
 
 function _iconRegenButton(onclick, title, disabled) {
   return '<button class="graph-regen-btn graph-icon-btn" onclick="' + onclick + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _regenIconHtml() + '</button>';
+}
+
+// ===== 版本历史导航（2026-10-15 T339）：‹ 2/5 › ＋ 删当前版 =====
+// 排在循环箭头之前、整个住在 .graph-node-actions 里——导出/只读查看器剥整行，导航自动消失，
+// 不用进它们的剥离清单。类名不用 graph-regen-btn：_syncBlankNodeControls 按 .graph-regen-btn
+// 取首个按钮重置标题，导航沾这个类会被误捞。
+function _versionChevronLeftHtml() {
+  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+}
+
+function _versionChevronRightHtml() {
+  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+}
+
+function _versionTrashHtml() {
+  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+}
+
+function _nodeVersionNavHtml(node, busy) {
+  if (busy) return '';
+  const versions = Array.isArray(node.versions) ? node.versions : [];
+  if (!versions.length) return '';
+  const total = versions.length;
+  const av = (typeof node.activeVersion === 'number' && node.activeVersion >= 0 && node.activeVersion < total)
+    ? node.activeVersion : total - 1;
+  return '<span class="graph-version-nav" title="版本历史（重新生成/从头生成的旧版本都留在这里）">'
+    + '<button class="graph-version-btn" onclick="graphNodeVersionStep(\'' + node.id + '\',-1)" title="上一版本"' + (av <= 0 ? ' disabled' : '') + '>' + _versionChevronLeftHtml() + '</button>'
+    + '<span class="graph-version-count" title="当前看到第 ' + (av + 1) + ' / ' + total + ' 版">' + (av + 1) + '/' + total + '</span>'
+    + '<button class="graph-version-btn" onclick="graphNodeVersionStep(\'' + node.id + '\',1)" title="下一版本"' + (av >= total - 1 ? ' disabled' : '') + '>' + _versionChevronRightHtml() + '</button>'
+    + '<button class="graph-version-btn graph-version-del" onclick="graphNodeVersionDelete(\'' + node.id + '\')" title="删除当前看到的这个版本">' + _versionTrashHtml() + '</button>'
+    + '</span>';
 }
 
 function _parsePortQuestions(content, withLevel) {

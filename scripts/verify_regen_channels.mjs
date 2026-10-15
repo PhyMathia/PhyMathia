@@ -107,10 +107,12 @@ try {
   console.log('  物理视角节点就绪：' + physId + '（内容 ' + content0.length + ' 字）');
 
   const openPanel = async (id) => {
-    // 上一轮生成收尾的画布重建可能恰好把刚弹出的面板擦掉：重试弹，弹不出才算失败
+    // 上一轮生成收尾的画布重建可能恰好把刚弹出的面板擦掉：重试弹，弹不出才算失败。
+    // 定位用 .graph-regen-btn（循环箭头）而非「第一个 button」——T339 起版本导航
+    // （.graph-version-btn，不带 regen 类）排在它前面，第一个按钮不再是循环箭头。
     for (let i = 0; i < 4; i++) {
       await page.evaluate((nid) => {
-        const b = document.querySelector('[data-node-id="' + nid + '"] .graph-node-actions button');
+        const b = document.querySelector('[data-node-id="' + nid + '"] .graph-node-actions .graph-regen-btn');
         if (b) b.click();
       }, id);
       try {
@@ -154,7 +156,7 @@ try {
     await wait(3000);
     const diag = await page.evaluate((nid) => {
       const el = document.querySelector('[data-node-id="' + nid + '"]');
-      const btn = el && el.querySelector('.graph-node-actions button');
+      const btn = el && el.querySelector('.graph-node-actions .graph-regen-btn');
       let directCall = 'not-tried';
       try {
         if (typeof graphOpenRegenerate === 'function') { graphOpenRegenerate(nid); directCall = el && el.querySelector('.graph-regenerate-panel') ? 'panel-opened' : 'no-panel'; }

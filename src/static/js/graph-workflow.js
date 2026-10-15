@@ -316,6 +316,8 @@ async function _generateCustomNode(node, nodeSignal) {
   if (!node || node.busy) return;
   if (node.kind === 'answer' && !node.manual) return;
   if (node.kind === 'hub') return;
+  // 版本账（T339）：旧内容先收进账本再清空——生成期间节点从空白重写，旧版随时 ‹› 切回
+  _beginWorkflowNodeVersionCycle(node);
   node.busy = true;
   node.status = 'running';
   _saveCustomNodes();
@@ -421,6 +423,8 @@ async function _generateCustomNode(node, nodeSignal) {
         live.summary = '';
         live.status = wasAborted ? 'waiting' : 'error';
         live.busy = false;
+        // 版本账（T339）：这轮没产出可用内容，兜回上一版（账上有版本时旧内容原样回来）
+        _restoreWorkflowNodeVersion(live);
         _saveCustomNodes();
         if (workflowRunActive) _refreshWorkflowNodeUi(live);
         else renderGraphCanvas();
@@ -433,6 +437,8 @@ async function _generateCustomNode(node, nodeSignal) {
       live.summary = _graphSummary(normalized);
       live.status = 'done';
       live.busy = false;
+      // 版本账（T339）：归一后的整页 HTML 收作新版本
+      _commitWorkflowNodeVersion(live);
       _saveCustomNodes();
       if (workflowRunActive) _refreshWorkflowNodeUi(live);
       else renderGraphCanvas();
@@ -453,11 +459,15 @@ async function _generateCustomNode(node, nodeSignal) {
     if (live && !(live.content || '').trim()) {
       live.status = 'error';
       live.busy = false;
+      // 版本账（T339）：空内容不算新版本，兜回上一版
+      _restoreWorkflowNodeVersion(live);
       _saveCustomNodes();
       _refreshWorkflowNodeStatusUi(live);
       if (typeof showToast === 'function') showToast('生成失败：模型返回了空内容，请点击该节点重试');
       return;
     }
+    // 版本账（T339）：成功收账（放在 mermaid 归一之后——归一改写过的 content 才是落定的版本）
+    _commitWorkflowNodeVersion(live);
     // on_generated 编排钩子（P2）：生成成功后按声明自动建链（进阶学习四步链的数据版）
     if (live && recipe && recipe.on_generated) _recipeAfterGenerated(live);
   } catch (err) {
@@ -465,6 +475,8 @@ async function _generateCustomNode(node, nodeSignal) {
     if (live) {
       live.busy = false;
       live.status = err.name === 'AbortError' ? 'waiting' : 'error';
+      // 版本账（T339）：流式草稿不算数，兜回上一版——中止/失败都不丢旧内容
+      _restoreWorkflowNodeVersion(live);
     }
     _saveCustomNodes();
     _refreshWorkflowNodeStatusUi(live);
@@ -920,6 +932,116 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   }
 }
 
+// ===== 节点版本历史（2026-10-15 T339）：重新生成/从头生成保留旧版本，可 ‹› 切换、可删 =====
+// 账本住在节点对象上（node.versions + node.activeVersion），随 _saveCustomNodes 的整对象
+// 快照自动落盘、随撤销 checkpoint（JSON 深克隆）自动入历史。不变量：node.content 恒等于
+// node.versions[node.activeVersion].content——凡是绕过账本直接改 content 的路（Φ 改图、
+// 人工编辑、旧数据），都会在下一次生成开跑时被 _commitWorkflowNodeVersion 收编，旧内容不丢。
+// 流式/修订写到一半的草稿不算版本：失败/中止由 _restoreWorkflowNodeVersion 兜回上一版。
+var GRAPH_NODE_VERSION_MAX = 10;
+
+function _nodeVersionsOf(node) {
+  if (!node) return [];
+  if (!Array.isArray(node.versions)) node.versions = [];
+  return node.versions;
+}
+
+function _nodeActiveVersionIndex(node, versions) {
+  const total = versions.length;
+  if (!total) return -1;
+  if (typeof node.activeVersion === 'number' && node.activeVersion >= 0 && node.activeVersion < total) {
+    return node.activeVersion;
+  }
+  return total - 1;
+}
+
+// 把节点当前 content 收进版本账本；与 activeVersion 指的那版逐字相同则不重收
+function _commitWorkflowNodeVersion(node) {
+  if (!node || node.messageIndex >= 0) return;
+  const content = String(node.content || '');
+  if (!content.trim()) return;
+  const versions = _nodeVersionsOf(node);
+  const av = _nodeActiveVersionIndex(node, versions);
+  if (versions[av] && versions[av].content === content) {
+    node.activeVersion = av;
+    return;
+  }
+  versions.push({ content: content, at: Date.now() });
+  if (versions.length > GRAPH_NODE_VERSION_MAX) versions.splice(0, versions.length - GRAPH_NODE_VERSION_MAX);
+  node.activeVersion = versions.length - 1;
+}
+
+// 生成开跑前：旧内容先收账、立刻清空 content——新内容从空白流式写出（2026-10-15 用户拍板：
+// 不许旧文压着新流）。失败/中止由 _restoreWorkflowNodeVersion 兜回上一版。
+function _beginWorkflowNodeVersionCycle(node) {
+  if (!node || node.messageIndex >= 0) return;
+  _commitWorkflowNodeVersion(node);
+  node.content = '';
+}
+
+// 失败/中止结算：content 兜回 activeVersion 那一版（草稿不算数）；账上没版本就清空回未生成态
+function _restoreWorkflowNodeVersion(node) {
+  if (!node || node.messageIndex >= 0) return;
+  const versions = _nodeVersionsOf(node);
+  if (!versions.length) {
+    node.activeVersion = undefined;
+    if ((node.content || '') !== '') {
+      node.content = '';
+      node.summary = '';
+    }
+    return;
+  }
+  const av = _nodeActiveVersionIndex(node, versions);
+  node.activeVersion = av;
+  if (String(node.content || '') !== versions[av].content) {
+    node.content = versions[av].content;
+    node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
+  }
+}
+
+// ‹› 切版本：切到的版本就是节点内容——下游取材、导出、全屏读到的都是它（显示即内容）
+function graphNodeVersionStep(nodeId, dir) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.busy) return;
+  if (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(nodeId)) return;
+  const versions = _nodeVersionsOf(node);
+  if (!versions.length) return;
+  const av = _nodeActiveVersionIndex(node, versions);
+  const next = Math.min(versions.length - 1, Math.max(0, av + (dir < 0 ? -1 : 1)));
+  if (next === av) return;
+  node.activeVersion = next;
+  node.content = versions[next].content;
+  node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
+  _saveCustomNodes();
+  if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+  renderGraphCanvas();
+}
+
+// 删掉当前看到的这个版本：删完看邻位（同位次的新版优先，删末版看前版）；删到最后一版＝
+// 节点回到未生成态（内容清空、动作区回「生成」键），再想要就从「从头生成」重跑
+function graphNodeVersionDelete(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.busy) return;
+  if (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(nodeId)) return;
+  const versions = _nodeVersionsOf(node);
+  if (!versions.length) return;
+  const av = _nodeActiveVersionIndex(node, versions);
+  versions.splice(av, 1);
+  if (versions.length) {
+    node.activeVersion = Math.min(av, versions.length - 1);
+    node.content = versions[node.activeVersion].content;
+    node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
+  } else {
+    node.activeVersion = undefined;
+    node.content = '';
+    node.summary = '';
+  }
+  _saveCustomNodes();
+  if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
+  renderGraphCanvas();
+  if (typeof showToast === 'function') showToast(versions.length ? '已删除该版本，现显示相邻版本' : '已删除该版本，节点内容已清空');
+}
+
 // 单个节点的「生成/重新生成」。忙的时候不再拒绝，改成排队（2026-10-11）：
 // 用户把任务列表当"多任务排队台"用，点一下就该有回音——收进队列、面板上看得见、
 // 轮到它时自动切回这张画布跑起来。fromQueue 是放行旁路（同 sendMessage 的 force /
@@ -1106,6 +1228,8 @@ async function _streamBlankNodeResponse(resp, node) {
     live.summary = _graphSummary(content);
     live.busy = false;
     live.generated = true;
+    // 版本账（T339）：空白节点流式成品收作新版本
+    _commitWorkflowNodeVersion(live);
   }
   _saveCustomNodes();
   _renderBlankNodeLive(node, content);
@@ -1154,6 +1278,8 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
   }
 
   node.requirements = requirements;
+  // 版本账（T339）：重跑有内容的空白节点时旧内容先收账，再清空流式重写
+  _beginWorkflowNodeVersionCycle(node);
   node.content = '';
   node.busy = true;
   node.generated = true;
@@ -1177,7 +1303,9 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
   }
   if (typeof showProgress === 'function') showProgress('tool', 5, '正在生成' + meta.label);
   const graphPath = _blankNodeGraphPath(current);
-  const pathQuestion = graphPath.find(item => item.kind === 'user');
+  // T340：链上问题取最近一次追问（数组是根→目标序，反向扫）——旧 find 取到根问题，
+  // 深链空白节点生成跟着最初的问题跑（与 _collectWorkflowContext 的 question 同修）
+  const pathQuestion = _nearestUserInPath(graphPath);
   const question = pathQuestion ? pathQuestion.content || '' : '';
   const strictInstruction = _strictModuleOutputInstruction(current.moduleKey || '');
   const prompt = '用户问题：' + (question || '未填写') + '\n'
@@ -1254,7 +1382,11 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
         aborted ? '已停止' : (((err && err.message) || String(err) || '生成失败')));
     }
     const live = _findGraphNode(nodeId);
-    if (live) live.busy = false;
+    if (live) {
+      live.busy = false;
+      // 版本账（T339）：流式草稿不算数，兜回上一版
+      _restoreWorkflowNodeVersion(live);
+    }
     _saveCustomNodes();
     renderGraphCanvas();
     // 面板上的「停止」不算失败，别再弹「生成失败」吓人
@@ -1831,6 +1963,10 @@ window.generateVizNode = generateVizNode;
 window.closeRegeneratePanel = closeRegeneratePanel;
 
 window.submitRegenerateNode = submitRegenerateNode;
+
+window.graphNodeVersionStep = graphNodeVersionStep;
+
+window.graphNodeVersionDelete = graphNodeVersionDelete;
 
 window.zoomGraph = zoomGraph;
 

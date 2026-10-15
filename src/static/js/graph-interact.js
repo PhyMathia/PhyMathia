@@ -1127,10 +1127,11 @@ function _regenNodeActionLabel(node) {
   return '重新生成' + (metaLabel || node.title || '节点');
 }
 
-async function _regenWorkflowNodeContent(node, text, signal) {
+async function _regenWorkflowNodeContent(node, text, signal, oldContent) {
   const label = node.kind === 'knowledge' ? (node.title || '知识点')
     : ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.title || '节点');
-  const old = String(node.content || '').trim();
+  // 修订底稿由调用方显式传入（T339：开跑前 content 已被版本账清空，不能再从节点上读）
+  const old = String(oldContent != null ? oldContent : node.content || '').trim();
   if (!old) throw new Error('节点还没有内容，直接用「生成」即可');
   const prompt = '用户对下面「' + label + '」节点的当前内容不满意，或对它有新的要求。请重写整份内容。\n'
     + '规则：用户指出了具体问题时，只针对该问题修改，没提到的部分尽量原样保留；'
@@ -1176,6 +1177,10 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
   // 置 busy 后重绘，徽标「完成→生成中」、按钮区「生成中...」，与留空直发同观感。
   // 顺序照 _generateCustomNode 的老套路：先改账→快照→重绘（重绘从快照重建节点对象，
   // 之后的账一律 _findGraphNode 重取）。重绘会把面板收走，用户写的要求已随 text 带走。
+  // 版本账（T339）：旧内容先抓出来当修订底稿（清空后 _regenWorkflowNodeContent 读不到
+  // node.content 了），再收进账本、清空——修订期间节点从空白等待新版落地
+  const revisionBase = String(node.content || '');
+  if (typeof _beginWorkflowNodeVersionCycle === 'function') _beginWorkflowNodeVersionCycle(node);
   node.busy = true;
   node.status = 'running';
   if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
@@ -1188,7 +1193,7 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
   if (taskId && typeof _taskBindCancel === 'function') _taskBindCancel(taskId, () => jobAbort.abort());
   let done = false;
   try {
-    const reply = await _regenWorkflowNodeContent(node, text, jobAbort.signal);
+    const reply = await _regenWorkflowNodeContent(node, text, jobAbort.signal, revisionBase);
     // 生成链里画布可能整体重建、节点对象被换成新对象：账必须读画布上活着的那个
     const live = _findGraphNode(nodeId);
     if (!live) throw new Error('节点已不在画布上');
@@ -1197,6 +1202,8 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     live.busy = false;
     live.generated = true;
     live.status = 'done';
+    // 版本账（T339）：修订成品收作新版本
+    if (typeof _commitWorkflowNodeVersion === 'function') _commitWorkflowNodeVersion(live);
     if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
     if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
     done = true;
@@ -1208,6 +1215,9 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     if (liveErr) {
       liveErr.busy = false;
       liveErr.status = aborted ? 'done' : 'error';
+      // 版本账（T339）：生成前旧内容已收账、content 已清空，中止/失败兜回上一版
+      // ——「中止→旧内容一字未动」的口径由版本账续上
+      if (typeof _restoreWorkflowNodeVersion === 'function') _restoreWorkflowNodeVersion(liveErr);
     }
     if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
     if (typeof _refreshWorkflowNodeStatusUi === 'function') _refreshWorkflowNodeStatusUi(liveErr);

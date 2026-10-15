@@ -2382,6 +2382,73 @@
   background: rgba(255, 107, 107, 0.1) !important;
 }
 
+/* ===== 30. 节点版本历史导航（2026-10-15 T339） =====
+   ‹ 2/5 › ＋删版，挂在 .graph-node-actions 行内、循环箭头之前。观感对齐 .graph-icon-btn
+   （同 --btn-bg/--border 底、26px 高），内部箭头钮更小（18px 宽），计数用 11px 小字。
+   删版钮 hover 才泛红——它是破坏性动作，但默认态要安静。忙态下整段不渲染（render 层）。 */
+.graph-version-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 26px;
+  margin-right: 2px;
+  padding: 0 3px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--btn-bg);
+}
+
+.graph-version-nav .graph-version-btn {
+  width: 18px !important;
+  height: 20px !important;
+  /* padding/尺寸必须 !important：.graph-node-actions button（456 行段）的
+     6px 12px !important 会把 border-box 内容区挤空，svg 缩成 0 宽（真机实锤） */
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  border: none !important;
+  background: transparent !important;
+  border-radius: var(--r-sm);
+  color: var(--text-secondary) !important;
+  cursor: pointer;
+  font-size: 12px !important;
+}
+
+.graph-version-nav .graph-version-btn svg {
+  width: 12px !important;
+  height: 12px !important;
+  flex-shrink: 0;
+}
+
+.graph-version-nav .graph-version-btn:hover:not(:disabled) {
+  color: var(--text-primary) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.graph-version-nav .graph-version-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.graph-version-nav .graph-version-count {
+  min-width: 26px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.graph-version-nav .graph-version-del {
+  margin-left: 1px;
+}
+
+.graph-version-nav .graph-version-del:hover:not(:disabled) {
+  color: #ff6b6b !important;
+  background: rgba(255, 107, 107, 0.1) !important;
+}
+
 .graph-knowledge-actions {
   display: flex;
   justify-content: flex-end;

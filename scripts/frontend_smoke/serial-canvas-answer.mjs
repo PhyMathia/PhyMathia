@@ -1002,6 +1002,75 @@ check('播放三角「从头生成」：不带内容直跑原管线＋T303 下�
   }
 });
 
+// 静态契约（2026-10-15 T339）：节点版本历史——重新生成/从头生成保留旧版本，‹n/n›切换＋删版。
+// 三条生成口（原管线直跑／带字修订／播放三角）开跑前必须「旧内容先收进 node.versions 再立刻
+// 清空 content」（新内容从空白流式写出），成功收新账，失败/中止兜回上一版；导航排在循环箭头
+// 之前、整个住在 .graph-node-actions 里（导出/只读查看器剥整行自动消失），且不沾
+// graph-regen-btn 类（_syncBlankNodeControls 按它取首个按钮重置标题）。
+// 变异验证：删掉任一挂点、把导航排到循环箭头后、导航沾上 regen 类、忙态不藏导航，下面立刻红。
+check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T339）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  // 账本三件套在
+  for (const fn of ['_beginWorkflowNodeVersionCycle', '_commitWorkflowNodeVersion', '_restoreWorkflowNodeVersion']) {
+    if (!gwSrc.includes('function ' + fn)) throw new Error('版本账函数丢了：' + fn + '（T339）');
+  }
+  // 渲染层：导航函数在、忙态收干净、不沾 regen 类
+  const navBody = extract(grSrc, '_nodeVersionNavHtml');
+  if (navBody === null) throw new Error('找不到 _nodeVersionNavHtml——断言本身该更新了');
+  if (!/if \(busy\) return ''/.test(navBody)) throw new Error('版本导航忙态没有收干净（T339）');
+  if (grSrc.includes('graph-regen-btn graph-version') || grSrc.includes('graph-version-nav graph-regen-btn')) {
+    throw new Error('版本导航沾了 graph-regen-btn——会被 _syncBlankNodeControls 误当宿主按钮');
+  }
+  // 动作区两个分支（空内容/有内容）都挂导航，且有内容分支里导航排在循环箭头之前
+  const actionsBody = extract(grSrc, '_nodeActions');
+  if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
+  if ((actionsBody.match(/_nodeVersionNavHtml\(node, regenBusy\)/g) || []).length < 2) {
+    throw new Error('工作流节点动作区两个分支没有都挂版本导航（T339）');
+  }
+  if (actionsBody.lastIndexOf('_nodeVersionNavHtml') > actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
+    throw new Error('版本导航排到了循环箭头之后（T339）');
+  }
+  // 三个生成口的挂点：开跑收账清空、成功收新账、失败/中止兜回
+  const genBody = extract(gwSrc, '_generateCustomNode');
+  if (genBody === null || !genBody.includes('_beginWorkflowNodeVersionCycle(node);')
+      || !genBody.includes('_commitWorkflowNodeVersion(live);')
+      || !genBody.includes('_restoreWorkflowNodeVersion(live);')) {
+    throw new Error('_generateCustomNode 缺版本账挂点（T339）');
+  }
+  const blankStream = extract(gwSrc, '_streamBlankNodeResponse');
+  if (blankStream === null || !blankStream.includes('_commitWorkflowNodeVersion(live);')) {
+    throw new Error('_streamBlankNodeResponse 缺收账挂点（T339）');
+  }
+  const blankGen = extract(gwSrc, 'generateBlankNode');
+  if (blankGen === null || !blankGen.includes('_beginWorkflowNodeVersionCycle(node);')
+      || !blankGen.includes('_restoreWorkflowNodeVersion(live);')) {
+    throw new Error('generateBlankNode 缺版本账挂点（T339）');
+  }
+  const regenBody = extract(giSrc, '_applyWorkflowNodeRegenerate');
+  if (regenBody === null || !regenBody.includes('_beginWorkflowNodeVersionCycle(node);')
+      || !regenBody.includes('_commitWorkflowNodeVersion(live);')
+      || !regenBody.includes('_restoreWorkflowNodeVersion(liveErr);')) {
+    throw new Error('_applyWorkflowNodeRegenerate 缺版本账挂点（T339）');
+  }
+  // 切换/删版是 inline onclick，靠 window 导出活
+  if (!gwSrc.includes('window.graphNodeVersionStep = graphNodeVersionStep;')
+      || !gwSrc.includes('window.graphNodeVersionDelete = graphNodeVersionDelete;')) {
+    throw new Error('版本切换/删版函数没有挂到 window（T339）');
+  }
+});
+
 // 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
 // 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
 // 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。
