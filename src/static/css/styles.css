@@ -3242,6 +3242,18 @@
       animation: statusFadeIn 0.3s ease;
       touch-action: none;
     }
+    /* 胶囊是悬浮在画布上的玻璃条：拖过之后 fixed + z-panel 悬在半空，停在哪儿就
+       挡到哪儿。本体若整块接鼠标，压在底下的画布按钮（重新生成面板的发送键、
+       节点小按钮…）看得见却永远点不着——2026-10-15 用户报「重新生成面板发送键
+       点了没反应」，真机 elementFromPoint 实锤是「待命」胶囊停在发送键正上方。
+       改法：本体 pointer-events 穿透（文字/进度条/耗时本就是纯展示），只有真控件
+       （拖拽把手、开始/停止/任务列表、排队章）保留接鼠标。拖拽不受影响：pointerdown
+       落在把手上，随后 setPointerCapture 把 move/up 定向给胶囊，命中测试不参与
+       （chat.js initProgressDragging）。 */
+    .progress-status { pointer-events: none; }
+    .progress-status .status-drag-handle,
+    .progress-status .status-control-btn,
+    .progress-status .send-queue-chip { pointer-events: auto; }
     .progress-status.active { display: flex; }
     .progress-status.dragged {
       position: fixed;
