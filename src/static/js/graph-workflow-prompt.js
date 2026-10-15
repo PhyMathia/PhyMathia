@@ -198,7 +198,16 @@ function _followupSourceNodeId(node) {
   }
   if (!current || current.kind !== 'user') return '';
   const parentEdges = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
-  const source = parentEdges.length ? _findGraphNode(parentEdges[0].from) : null;
+  let source = parentEdges.length ? _findGraphNode(parentEdges[0].from) : null;
+  // T332：来源卡与问题之间隔 junction/hub（透明节点）时沿第一条入边继续上溯，
+  // 透明节点不占来源名额；复用 visited 防来源侧成环——落到已访问节点即视为无
+  // 来源，穿透落点是 user 同样等于没有来源卡（根问题链语义）
+  while (source && (source.kind === 'junction' || source.kind === 'hub')) {
+    if (visited.has(source.id)) return '';
+    visited.add(source.id);
+    const hopEdges = _workflowEdgeTable().filter(edge => String(edge.to) === source.id && !edge.draft && !edge.link);
+    source = hopEdges.length ? _findGraphNode(hopEdges[0].from) : null;
+  }
   if (!source || source.kind === 'user') return '';
   return String(source.id || '');
 }
@@ -244,11 +253,23 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
 // 配方双阶段概要步（P2，analysis_phase）同源复用，target 由调用方给。
 function _buildAnalysisWorkflowContext(node, question, target) {
   const allUpstream = _collectUpstreamPath(node);
-  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
+  // T331：追问来源卡若是「问题分析」卡则豁免 answer-filter——追问恰恰常针对
+  // 分析卡提，整条剔出的话 full 就落空、被追问内容缺席；豁免条目经
+  // _workflowUpstreamEntry 按 id 匹配 isSource，自动获 full＋大额度
+  const sourceId = _followupSourceNodeId(node);
+  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual) || String(item.id || '') === sourceId);
   // T327 同款规范化：排序键与模块步一致，同一份上游集合任何时候拼出同串字节
   upstream.sort(_workflowUpstreamCompare);
   const questionNode = upstream.find(item => item.kind === 'user');
-  const sourceId = _followupSourceNodeId(node);
+  // T333b：链上最近的问题分析（反向遍历取第一个；必须排除目标自身——分析步的
+  // 目标自己就是 answer 且在 allUpstream 末尾，从尾找会撞上自己）。单层链没有
+  // 其他分析 → 空串，后端 shared 段 `if analysis:` 不渲染该行，字节与旧口径一致；
+  // 双层链补出直接父分析，第二层分析不再看不到第一层分析
+  let analysisNode = null;
+  for (let i = allUpstream.length - 1; i >= 0; i--) {
+    const item = allUpstream[i];
+    if (item && item.kind === 'answer' && !item.manual && item.id !== node.id) { analysisNode = item; break; }
+  }
   const declaredInputs = (node && node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   const portMetaFor = (toPort) => {
@@ -263,6 +284,7 @@ function _buildAnalysisWorkflowContext(node, question, target) {
     mode: 'analysis',
     target: target,
     question: (question !== undefined && question !== null && question !== '') ? question : (questionNode ? questionNode.content : ''),
+    analysis: analysisNode ? analysisNode.analysis : '',
     requirements: (node && node.requirements) || '',
     upstream: upstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor(item.toPort), typeLabels)),
   };
@@ -294,8 +316,17 @@ function _buildWorkflowContextForNode(node) {
   // 回溯单父链，不收全祖先——多路汇聚的画布上节点只讲它直接挂着的那条线
   const recipeAgg = node.recipeId && node.recipe ? node.recipe.aggregation : '';
   const allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
-  const analysisNode = allUpstream.find(item => item.kind === 'answer' && !item.manual);
-  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
+  // T331：追问来源卡豁免 answer-filter（来源若是分析卡也要进 upstream 拿 full）
+  const sourceId = _followupSourceNodeId(node);
+  // T333a：隐藏分析取「最近」的问题分析——反向遍历取第一个匹配（勿用 findLast，
+  // 防旧内核）。单层链唯一分析、结果与旧 find 一致（字节零变）；双层链修正为
+  // 直接父分析，不再错位回最早那层
+  let analysisNode = null;
+  for (let i = allUpstream.length - 1; i >= 0; i--) {
+    const item = allUpstream[i];
+    if (item && item.kind === 'answer' && !item.manual) { analysisNode = item; break; }
+  }
+  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual) || String(item.id || '') === sourceId);
   // T327：规范化顺序——排序键是节点属性的稳定函数，与边插入序无关（见
   // _workflowUpstreamCompare 注）；同一份上游集合永远拼出同一串上下文字节
   upstream.sort(_workflowUpstreamCompare);
@@ -314,7 +345,6 @@ function _buildWorkflowContextForNode(node) {
   };
   // T328：追问来源卡（A）全文条目——与分析步同规则同额度，见
   // _workflowUpstreamEntry 注；非来源条目字节与旧口径逐字节一致
-  const sourceId = _followupSourceNodeId(node);
   return {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
     question: questionNode ? questionNode.content : '',

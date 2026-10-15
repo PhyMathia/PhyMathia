@@ -2169,6 +2169,88 @@ check('T328 追问来源卡全文：分析步穿过问题节点取 A（full 条�
   return true;
 });
 
+check('T331/T332/T333 追问来源卡豁免 answer-filter＋透明节点穿透＋隐藏分析取最近', () => {
+  // 画布取材策略统一·第一步（docs/画布取材策略统一-实施计划-2026-10-15.md）三条缺口一次钉住：
+  // T331 来源卡是「问题分析」卡时不再被 answer-filter 整条剔出（否则 full 落空、被追问内容缺席）；
+  // T332 来源卡与问题之间隔 junction/hub 时穿透取实体节点（透明节点不占名额）；
+  // T333 双层链上隐藏分析取最近的直接父分析（模块步 T333a／分析步 T333b 同口径）。
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t331_answer_source';
+  try {
+    // 场景一（T331）：对「问题分析(X)」拖追问——来源卡本身是 answer 卡
+    const xAns = { id: 'X', kind: 'answer', manual: false, messageIndex: -1, timestamp: 10, content: '', analysis: 'X 的分析正文：张力沿弧长积分得势能。'.repeat(60) };
+    const xq = { id: 'xq', kind: 'user', manual: true, messageIndex: -1, timestamp: 20, content: '针对 X 追问：这里为什么用弧长积分' };
+    const xAns2 = { id: 'X2', kind: 'answer', manual: false, messageIndex: -1, timestamp: 21, content: '', analysis: '' };
+    vm.runInContext('graphView.nodes = [' + [xAns, xq, xAns2].map(n => JSON.stringify(n)).join(',') + '];'
+      + 'graphView.nodeById = { X: graphView.nodes[0], xq: graphView.nodes[1], X2: graphView.nodes[2] };'
+      + 'graphView.defaultEdges = []; graphView.edges = ['
+      + '{ from: "X", fromPort: "out-0", to: "xq", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "xq", fromPort: "out-0", to: "X2", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    if (sandbox._followupSourceNodeId(xAns2) !== 'X') throw new Error('T331：来源应定位到分析卡 X');
+    const xCtx = sandbox._buildAnalysisWorkflowContext(xAns2, xq.content, { kind: 'answer', label: '问题分析' });
+    const xEntry = (xCtx.upstream || []).find(item => item.label === '问题分析');
+    if (!xEntry) throw new Error('T331：来源为分析卡时应进 upstream（不再被 answer-filter 剔出）');
+    if (xEntry.full !== true) throw new Error('T331：豁免的分析卡条目应标 full');
+    if (xEntry.summary !== '') throw new Error('T331：full 条目 summary 应置空');
+    if (xEntry.content.length <= 800) throw new Error('T331：full 条目应获 6000 大额度');
+    if (!xEntry.content.startsWith('X 的分析正文')) throw new Error('T331：full 条目 content 应是分析正文（_nodeOutputContent 对 answer 返回 analysis）');
+
+    // 场景二（T332）：问题与来源卡之间隔 junction——应穿透取实体来源 S
+    const sNode = { id: 'S', kind: 'module', moduleKey: 'physics', manual: false, messageIndex: -1, timestamp: 5, content: 'S 的实体内容：波速 v=fλ。' };
+    const jNode = { id: 'J', kind: 'junction', manual: false, messageIndex: -1, timestamp: 6, content: '' };
+    const jq = { id: 'jq', kind: 'user', manual: true, messageIndex: -1, timestamp: 30, content: '穿过 junction 的追问' };
+    const jAns = { id: 'JA', kind: 'answer', manual: false, messageIndex: -1, timestamp: 31, content: '', analysis: '' };
+    vm.runInContext('graphView.nodes = [' + [sNode, jNode, jq, jAns].map(n => JSON.stringify(n)).join(',') + '];'
+      + 'graphView.nodeById = { S: graphView.nodes[0], J: graphView.nodes[1], jq: graphView.nodes[2], JA: graphView.nodes[3] };'
+      + 'graphView.defaultEdges = []; graphView.edges = ['
+      + '{ from: "S", fromPort: "out-0", to: "J", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "J", fromPort: "out-0", to: "jq", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "jq", fromPort: "out-0", to: "JA", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    if (sandbox._followupSourceNodeId(jAns) !== 'S') throw new Error('T332：应穿透 junction 取实体来源 S，而不是透明节点 J');
+    const jCtx = sandbox._buildAnalysisWorkflowContext(jAns, jq.content, { kind: 'answer', label: '问题分析' });
+    const sEntry = (jCtx.upstream || []).find(item => item.label === '物理视角');
+    if (!sEntry || sEntry.full !== true || sEntry.content.indexOf('波速') === -1) throw new Error('T332：穿透后 S 条目应 full 且带实体内容');
+
+    // 场景三（T333）：双层追问链 问题A→分析(A)→A1→追问A1→分析(A1)→A11
+    const aQ = { id: 'AQ', kind: 'user', manual: true, messageIndex: -1, timestamp: 100, content: '根问题 A' };
+    const aAns = { id: 'AA', kind: 'answer', manual: false, messageIndex: -1, timestamp: 101, content: '', analysis: '第一层分析（问题分析(A)）' };
+    const m1 = { id: 'M1', kind: 'module', moduleKey: 'physics', manual: false, messageIndex: -1, timestamp: 110, content: '第一层模块' };
+    const q1 = { id: 'Q1', kind: 'user', manual: true, messageIndex: -1, timestamp: 200, content: '追问 A1' };
+    const ans1 = { id: 'AA1', kind: 'answer', manual: false, messageIndex: -1, timestamp: 201, content: '', analysis: '第二层分析（问题分析(A1)）' };
+    const m11 = { id: 'M11', kind: 'module', moduleKey: 'math', manual: false, messageIndex: -1, timestamp: 210, content: '第二层模块' };
+    vm.runInContext('graphView.nodes = [' + [aQ, aAns, m1, q1, ans1, m11].map(n => JSON.stringify(n)).join(',') + '];'
+      + 'graphView.nodeById = { AQ: graphView.nodes[0], AA: graphView.nodes[1], M1: graphView.nodes[2], Q1: graphView.nodes[3], AA1: graphView.nodes[4], M11: graphView.nodes[5] };'
+      + 'graphView.defaultEdges = []; graphView.edges = ['
+      + '{ from: "AQ", fromPort: "out-0", to: "AA", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "AA", fromPort: "out-1", to: "M1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "M1", fromPort: "out-0", to: "Q1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "Q1", fromPort: "out-0", to: "AA1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "AA1", fromPort: "out-1", to: "M11", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    // T333a：模块步隐藏分析＝直接父分析 AA1（旧 find 取最早会错位回 AA）
+    const m11Ctx = sandbox._buildWorkflowContextForNode(m11);
+    if (m11Ctx.analysis !== '第二层分析（问题分析(A1)）') throw new Error('T333a：模块步隐藏分析应取最近的直接父分析');
+    const m1Entry = (m11Ctx.upstream || []).find(item => item.label === '物理视角');
+    if (!m1Entry || m1Entry.full !== true) throw new Error('T333a 场景：来源卡 M1 条目应 full');
+    // T333b：分析步（AA1）补 analysis 字段＝第一层分析 AA（排除目标自身）
+    const ans1Ctx = sandbox._buildAnalysisWorkflowContext(ans1, q1.content, { kind: 'answer', label: '问题分析' });
+    if (ans1Ctx.analysis !== '第一层分析（问题分析(A)）') throw new Error('T333b：分析步 analysis 字段应指向直接父分析且排除自身');
+    if ((ans1Ctx.upstream || []).some(item => item.label === '问题分析')) throw new Error('T333b 场景：链上分析卡（非来源）仍应按 answer-filter 剔出 upstream');
+    // 根链回归：单层链 analysis 字段为空串（后端不渲染该行，字节零变红线）
+    const aaCtx = sandbox._buildAnalysisWorkflowContext(aAns, aQ.content, { kind: 'answer', label: '问题分析' });
+    if (aaCtx.analysis !== '') throw new Error('单层链 analysis 字段应为空串（字节零变红线）');
+  } finally {
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
 check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏左右分栏，左侧上游参考右侧书写＋标题', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
