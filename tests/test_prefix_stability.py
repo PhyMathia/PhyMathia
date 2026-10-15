@@ -506,5 +506,54 @@ class WorkflowSharedLayoutContractTest(unittest.TestCase):
         self.assertIn("- 问题：", common, "首条 upstream 条目应已在公共前缀内")
 
 
+class WorkflowFollowupSourceContextTest(unittest.TestCase):
+    """2026-10-14 T328：追问来源卡（full 条目）免 800 截断、免 8 条闸。
+
+    前端 _buildAnalysisWorkflowContext/_buildWorkflowContextForNode 给「问题
+    节点上面第一颗节点」（追问被拖出的那张卡 A）打 full 标记＋6000 字额度；
+    shared 段渲染只认 full 标记放大上限——800 的闸有两道（前端 slice＋本处
+    [:800]），不改这里前端发全文也会被砍回 800。非 full 条目字节不变：T4 兄弟
+    共享前缀与 T322/T323 冻结的 shared 段行序都不受影响。"""
+
+    LONG = "甲" * 1500  # 超 800 的哨兵文本
+
+    def _ctx(self, upstream):
+        return {
+            "mode": "analysis",
+            "target": {"kind": "answer", "label": "问题分析"},
+            "question": "为什么认为做功为TΔs，如果力合力和位移点乘似乎不能直接得到这个近似",
+            "analysis": "",
+            "requirements": "",
+            "upstream": upstream,
+        }
+
+    def test_full_entry_escapes_800_cap(self):
+        shared, _ = context_mod._workflow_context_parts(
+            self._ctx([{"label": "物理视角", "content": self.LONG, "full": True}]))
+        self.assertIn(self.LONG, shared, "full 条目应整条进 shared 段（1500 字不被 800 砍断）")
+
+    def test_plain_entry_still_capped_at_800(self):
+        shared, _ = context_mod._workflow_context_parts(
+            self._ctx([{"label": "物理视角", "content": self.LONG}]))
+        self.assertIn(self.LONG[:800], shared)
+        self.assertNotIn(self.LONG, shared, "无 full 标记仍走 800 旧口径（字节不变）")
+
+    def test_full_entry_survives_eight_entry_cap(self):
+        filler = [{"label": f"祖先{i}", "content": f"内容{i}"} for i in range(8)]
+        shared, _ = context_mod._workflow_context_parts(
+            self._ctx(filler + [{"label": "物理视角", "content": self.LONG, "full": True}]))
+        self.assertIn(self.LONG, shared, "full 条目被 8 条闸挡下时必须补回来（深链上 A 排得靠后）")
+        self.assertIn("- 祖先0：内容0", shared, "8 条闸内的普通条目照旧渲染")
+
+    def test_full_entry_honored_in_grouped_ports(self):
+        items = [
+            {"label": "材料", "content": self.LONG, "full": True, "input_port": "材料"},
+            {"label": "问题", "content": "裸问题", "input_port": "材料"},
+        ]
+        shared, _ = context_mod._workflow_context_parts(self._ctx(items))
+        self.assertIn(self.LONG, shared, "具名输入口分组渲染下 full 条目同样免 800")
+        self.assertIn("【输入「材料」】", shared, "分组 rendering 结构不变")
+
+
 if __name__ == "__main__":
     unittest.main()

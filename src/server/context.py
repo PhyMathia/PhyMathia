@@ -813,6 +813,21 @@ def _module_output_instruction(module_key: str) -> str:
             "3. 方向3\n"
             "禁止输出 XML 标签，禁止输出“苏格拉底追问”，每条方向只保留一个短句。"
         )
+    if module_key == "physics":
+        return (
+            "物理视角必须从现实系统如何发生出发，不能只是把数学视角换一种说法："
+            "先明确研究对象、系统边界、环境、可观测量和时间尺度；说明现实中什么在变化、什么在相互作用。"
+            "至少给出一条具体因果链：机制或相互作用 → 可观测变化 → 可检验预测；只使用与主题真正相关的受力、能量、动量、场、约束、耗散、守恒等物理语言。"
+            "明确模型假设、近似、初始/边界条件和适用范围，并说明改变关键条件后现象如何变化。"
+            "至少给出一个可操作的实验、测量或数量级判断，并用极限情形或反事实检查直觉。"
+            "公式只保留能表达物理机制或可测关系的少量公式，逐项解释物理意义；不要展开数学推导，不要用泛泛类比代替机制。"
+            "正文至少覆盖物理对象与现象、机制与因果链、假设与边界、预测或实验检查；不要重复数学视角的形式推导。"
+        )
+    if module_key == "math":
+        return (
+            "数学视角必须解释数学结构和推理，而不是复述物理故事：明确数学对象、定义、变量关系、推导步骤、不变量或对称性，以及结论成立的条件。"
+            "用 LaTeX 展示必要公式并逐项解释符号；不要把实验、受力、能量或生活类比当作主体，也不要重复物理视角的因果叙述。"
+        )
     if module_key == "graph":
         return (
             "严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n"
@@ -899,6 +914,11 @@ def _graph_path_instruction(graph_path: list, source_module: str = "") -> str:
 # T4 前缀缓存拍板（2026-10-01）：工作流上下文拆 shared/target 两段。shared 段
 # （question/analysis/upstream）对同一次工作流的兄弟模块逐字节相同，前置供其命中
 # 请求前缀；per-module 的 target 块与严格格式指令后移到公共前缀之后的缓存断点。
+# T328：追问来源卡（前端 full 标记条目）的大额度上限——与前端
+# WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS 对齐；普通条目仍是 800。
+_UPSTREAM_FULL_MAX_CHARS = 6000
+
+
 def _workflow_context_parts(workflow_context) -> tuple:
     """拆分工作流上下文：(shared, target)，shared 为兄弟模块公共前缀段。"""
     if not isinstance(workflow_context, dict):
@@ -917,6 +937,12 @@ def _workflow_context_parts(workflow_context) -> tuple:
     # T263 喂料分路：目标配方声明具名输入口时（upstream 条目带 input_port），按口分组
     # 渲染；未声明保持旧平铺（逐条 - label：content），字节级不变
     recent_upstream = upstream[:8] if isinstance(upstream, list) else []
+    # T328：full 条目（追问来源卡 A）不被 8 条闸切掉——上游按时间戳排序，
+    # 深链上 A 排得靠后；补到末尾不改变既有条目的字节与顺序
+    if isinstance(upstream, list):
+        for extra in upstream[8:]:
+            if isinstance(extra, dict) and extra.get("full") and not any(extra is kept for kept in recent_upstream):
+                recent_upstream.append(extra)
     if any(isinstance(item, dict) and item.get("input_port") for item in recent_upstream):
         grouped = {}
         port_order = []
@@ -927,23 +953,25 @@ def _workflow_context_parts(workflow_context) -> tuple:
             content = str(item.get("summary") or item.get("content") or "").strip()
             if not content:
                 continue
+            cap = _UPSTREAM_FULL_MAX_CHARS if item.get("full") else 800
             port = str(item.get("input_port") or "").strip()
             if port not in grouped:
                 grouped[port] = []
                 port_order.append(port)
-            grouped[port].append((label, str(item.get("input_type") or "").strip(), content))
+            grouped[port].append((label, str(item.get("input_type") or "").strip(), content, cap))
         for port in port_order:
             if port:
                 shared_lines.append(f"【输入「{port}」】")
-            for label, port_type, content in grouped[port]:
+            for label, port_type, content, cap in grouped[port]:
                 suffix = f"（{port_type}）" if port_type else ""
-                shared_lines.append(f"- {label}{suffix}：{content[:800]}")
+                shared_lines.append(f"- {label}{suffix}：{content[:cap]}")
     else:
         for item in recent_upstream:
             label = item.get("label") or item.get("kind") or "上游节点" if isinstance(item, dict) else "上游节点"
             content = str((item.get("summary") if isinstance(item, dict) else "") or (item.get("content") if isinstance(item, dict) else "") or "").strip()
             if content:
-                shared_lines.append(f"- {label}：{content[:800]}")
+                cap = _UPSTREAM_FULL_MAX_CHARS if (isinstance(item, dict) and item.get("full")) else 800
+                shared_lines.append(f"- {label}：{content[:cap]}")
     target_lines = ["\n\n# 工作流节点生成指令"]
     if mode == "analysis":
         target_lines.append("- 当前为隐藏问题分析模式：只输出简洁、可供下游节点使用的问题概要，不生成任何模块正文，不输出 XML 标签，不生成完整学习卡片。")

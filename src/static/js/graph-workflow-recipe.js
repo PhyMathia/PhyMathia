@@ -10,12 +10,8 @@ async function _recipeGenerateAnalysis(node, nodeSignal) {
   if (!question.trim()) return;
   const analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
   if (node.analysis && node.analysisHash === analysisHash) return;
-  const workflowContext = {
-    mode: 'analysis',
-    target: { kind: 'module', label: (node.recipe && node.recipe.name) || '配方' },
-    question,
-    requirements: node.requirements || '',
-  };
+  // T328：与官方分析步同源带上游（追问来源卡全文），修「只带裸问题」
+  const workflowContext = _buildAnalysisWorkflowContext(node, question, { kind: 'module', label: (node.recipe && node.recipe.name) || '配方' });
   const prompt = '请分析用户问题，只输出简洁的问题概要。'
     + '要求：1) 核心物理概念；2) 核心数学结构；3) 物理与数学的关系；4) 相关知识点。'
     + '不要输出完整答案，不要输出 XML 标签，不要生成任何模块内容，控制在300字以内。';

@@ -2110,6 +2110,65 @@ check('节点标题（2026-10-10 ③）：副标题与喂料标签有标题用�
   return true;
 });
 
+check('T328 追问来源卡全文：分析步穿过问题节点取 A（full 条目），模块步同规则', () => {
+  // 用户实测根因（T328）：追问链 A→问题→分析，旧 _findQuestionContentUpstream
+  // 找到问题节点就停，分析请求只带裸问题——画布问答不写会话消息表，模型零
+  // 上下文下把机械波的 T·Δs 读成热力学 T·ΔS。本契约钉住修复后的取材形状。
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t328_followup_full';
+  try {
+    const longContent = '张力沿弧长积分得势能 dU=T·½u_x²dx；小振幅下弦元水平投影长度近似为 dx。'.repeat(40)
+      + '\n```html\n<!DOCTYPE html><html><body>巨型页面</body></html>\n```\n';
+    const aNode = { id: 'A', kind: 'module', moduleKey: 'physics', manual: false, messageIndex: -1, timestamp: 100, content: longContent };
+    const qNode = { id: 'q', kind: 'user', manual: true, messageIndex: -1, timestamp: 200, content: '为什么认为做功为TΔs，如果力合力和位移点乘似乎不能直接得到这个近似' };
+    const ansNode = { id: 'ans', kind: 'answer', manual: false, messageIndex: -1, timestamp: 201, content: '', analysis: '' };
+    const modNode = { id: 'mod', kind: 'module', moduleKey: 'math', manual: false, messageIndex: -1, timestamp: 300, content: '' };
+    vm.runInContext('graphView.nodes = [' + [aNode, qNode, ansNode, modNode].map(n => JSON.stringify(n)).join(',') + '];'
+      + 'graphView.nodeById = { A: graphView.nodes[0], q: graphView.nodes[1], ans: graphView.nodes[2], mod: graphView.nodes[3] };'
+      + 'graphView.defaultEdges = []; graphView.edges = ['
+      + '{ from: "A", fromPort: "out-0", to: "q", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "q", fromPort: "out-0", to: "ans", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "ans", fromPort: "out-1", to: "mod", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    // 1) 来源定位：从分析节点与模块节点上溯都命中 A
+    if (sandbox._followupSourceNodeId(ansNode) !== 'A') throw new Error('分析节点应定位到追问来源卡 A');
+    if (sandbox._followupSourceNodeId(modNode) !== 'A') throw new Error('模块节点应定位到追问来源卡 A');
+    // 2) 分析步：A 进 upstream 且 full＋超 800 额度＋summary 置空＋html 围栏折叠
+    const ctx = sandbox._buildAnalysisWorkflowContext(ansNode, qNode.content, { kind: 'answer', label: '问题分析' });
+    if (ctx.mode !== 'analysis' || ctx.question !== qNode.content) throw new Error('分析上下文形状不对');
+    const aEntry = (ctx.upstream || []).find(item => item.label === '物理视角');
+    if (!aEntry) throw new Error('分析步 upstream 缺追问来源卡条目');
+    if (aEntry.full !== true) throw new Error('A 条目未标 full');
+    if (aEntry.content.length <= 800) throw new Error('A 条目未获大额度（仍被 800 截断）');
+    if (aEntry.summary !== '') throw new Error('A 条目 summary 应置空（否则后端 summary 优先会截走全文）');
+    if (aEntry.content.includes('```html')) throw new Error('A 条目 html 围栏应折叠');
+    const qEntry = (ctx.upstream || []).find(item => item.label === '问题');
+    if (!qEntry || qEntry.full) throw new Error('问题条目不应标 full');
+    // 3) 模块步同规则
+    const modCtx = sandbox._buildWorkflowContextForNode(modNode);
+    const modA = (modCtx.upstream || []).find(item => item.label === '物理视角');
+    if (!modA || modA.full !== true || modA.content.length <= 800) throw new Error('模块步的 A 条目也应 full＋大额度');
+    // 4) 根问题链（无追问来源）：无任何 full 条目，字节与旧口径一致
+    const rootQ = { id: 'rq', kind: 'user', manual: true, messageIndex: -1, timestamp: 1, content: '根问题' };
+    const rootA = { id: 'ra', kind: 'answer', manual: false, messageIndex: -1, timestamp: 2, content: '', analysis: '' };
+    vm.runInContext('graphView.nodes = [' + JSON.stringify(rootQ) + ',' + JSON.stringify(rootA) + '];'
+      + 'graphView.nodeById = { rq: graphView.nodes[0], ra: graphView.nodes[1] };'
+      + 'graphView.edges = [{ from: "rq", fromPort: "out-0", to: "ra", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    const rootCtx = sandbox._buildAnalysisWorkflowContext(rootA, '根问题', { kind: 'answer', label: '问题分析' });
+    if ((rootCtx.upstream || []).some(item => item.full)) throw new Error('根问题链不应有 full 条目');
+    if ((rootCtx.upstream || []).length !== 1) throw new Error('根问题链 upstream 应只有问题条目');
+  } finally {
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
 check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏左右分栏，左侧上游参考右侧书写＋标题', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));

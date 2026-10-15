@@ -88,6 +88,7 @@ function _collectUpstreamPath(node) {
     const item = entry.node;
     const raw = _nodeOutputContent(item);
     return {
+      id: item.id,
       kind: item.kind,
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
@@ -128,6 +129,7 @@ function _collectInboundChain(node) {
   return chain.map((item, index) => {
     const raw = _nodeOutputContent(item);
     return {
+      id: item.id,
       kind: item.kind,
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
@@ -164,6 +166,106 @@ function _workflowUpstreamCompare(a, b) {
     if (ka[i] > kb[i]) return 1;
   }
   return 0;
+}
+
+// ===== T328：追问来源卡（链上 A→问题→分析/模块 的 A）全文取材 =====
+// 旧取材断在问题节点上：_findQuestionContentUpstream 找到 user 节点就返回，
+// 模块侧 _collectUpstreamPath 虽收全祖先、每条却只切 800 字。追问常常是针对
+// 被追问那张卡中后段的某一步/某个公式提的——用户实测：机械波弦的 T·Δs 在
+// 上游缺席时被模型读成热力学 T·ΔS，整棵问题分析答错领域（T328）。
+// 规则：从目标节点上溯找到问题节点，它第一条入边的来源＝追问来源卡；该条
+// 目标 full 走大额度，其余祖先维持 800 字旧口径（非 full 条目字节形状不变，
+// T4 兄弟共享前缀与 T322/T323 冻结的 shared 段行序都不破）。
+const WORKFLOW_UPSTREAM_MAX_CHARS = 800;
+const WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS = 6000;
+
+// A 可能是 viz 节点：正文是完整 HTML 页面（几万字节）。围栏折叠成占位行——
+// 全文灌进「1 次分析＋N 个兄弟」只会稀释注意力、白烧 token（6000 字兜底之上
+// 的第二道闸，viz 追问场景 HTML 本身也不是分析需要的形态）。
+function _foldHtmlFences(text) {
+  return String(text || '').replace(/```html[\s\S]*?(?:```|$)/gi, '（交互可视化 HTML 页面已折叠）');
+}
+
+function _followupSourceNodeId(node) {
+  if (!node) return '';
+  const visited = new Set();
+  let current = node;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (current.kind === 'user') break;
+    const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    current = incoming.length ? _findGraphNode(incoming[0].from) : null;
+  }
+  if (!current || current.kind !== 'user') return '';
+  const parentEdges = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+  const source = parentEdges.length ? _findGraphNode(parentEdges[0].from) : null;
+  if (!source || source.kind === 'user') return '';
+  return String(source.id || '');
+}
+
+// 上游条目映射（模块步与分析步共用，原 _buildWorkflowContextForNode 内联 logic
+// 提来共用）。追问来源条目：full 标记＋6000 字额度＋summary 置空——后端 shared
+// 段渲染是 summary 优先，不置空的话 A 的 <summary> 会抢先、全文仍旧进不去。
+function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
+  const isSource = !!sourceId && String(item.id || '') === sourceId;
+  const entry = {
+    kind: item.kind,
+    module: item.module,
+    label: item.kind === 'user'
+      ? '问题'
+      : item.kind === 'note'
+        ? (item.title || '我的总结')
+        : item.kind === 'knowledge'
+          ? '知识点'
+          : item.kind === 'relation'
+            ? '知识联系'
+            : item.kind === 'source'
+              ? '输入'
+          : item.kind === 'answer'
+            ? (item.manual ? (item.title || '我的回答') : '问题分析')
+            : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
+    summary: isSource ? '' : item.summary,
+    analysis: item.analysis || '',
+    content: isSource
+      ? _foldHtmlFences(item.content || '').slice(0, WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS)
+      : (item.content || '').slice(0, WORKFLOW_UPSTREAM_MAX_CHARS),
+  };
+  if (isSource) entry.full = true;
+  if (portMeta) {
+    entry.input_port = portMeta.label;
+    if (portMeta.type) entry.input_type = (typeLabels || {})[portMeta.type] || portMeta.type;
+  }
+  return entry;
+}
+
+// T328：问题分析步的上下文。与模块步同款收全上游（A 全文），修掉「分析请求
+// 只带裸问题」——画布工作流问答不写会话消息表，后端 _recent_context_messages
+// 的历史兜底对纯画布会话也是空的，上游缺席时模型只能就着歧义记号猜领域。
+// 配方双阶段概要步（P2，analysis_phase）同源复用，target 由调用方给。
+function _buildAnalysisWorkflowContext(node, question, target) {
+  const allUpstream = _collectUpstreamPath(node);
+  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual));
+  // T327 同款规范化：排序键与模块步一致，同一份上游集合任何时候拼出同串字节
+  upstream.sort(_workflowUpstreamCompare);
+  const questionNode = upstream.find(item => item.kind === 'user');
+  const sourceId = _followupSourceNodeId(node);
+  const declaredInputs = (node && node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
+  const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
+  const portMetaFor = (toPort) => {
+    if (!declaredInputs.length || !toPort) return null;
+    const m = /^in-(\d+)$/.exec(String(toPort));
+    if (!m) return null;
+    const named = declaredInputs[parseInt(m[1], 10)];
+    if (named) return { label: named.label, type: named.type || '' };
+    return { label: '其他输入', type: '' };
+  };
+  return {
+    mode: 'analysis',
+    target: target,
+    question: (question !== undefined && question !== null && question !== '') ? question : (questionNode ? questionNode.content : ''),
+    requirements: (node && node.requirements) || '',
+    upstream: upstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor(item.toPort), typeLabels)),
+  };
 }
 
 function _buildWorkflowContextForNode(node) {
@@ -210,40 +312,16 @@ function _buildWorkflowContextForNode(node) {
     if (named) return { label: named.label, type: named.type || '' };
     return { label: '其他输入', type: '' };
   };
+  // T328：追问来源卡（A）全文条目——与分析步同规则同额度，见
+  // _workflowUpstreamEntry 注；非来源条目字节与旧口径逐字节一致
+  const sourceId = _followupSourceNodeId(node);
   return {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
     question: questionNode ? questionNode.content : '',
     analysis: analysisNode ? analysisNode.analysis : '',
     mode: 'module',
     requirements: node.requirements || '',
-    upstream: upstream.map(item => {
-      const entry = {
-        kind: item.kind,
-        module: item.module,
-        label: item.kind === 'user'
-          ? '问题'
-          : item.kind === 'note'
-            ? (item.title || '我的总结')
-            : item.kind === 'knowledge'
-              ? '知识点'
-              : item.kind === 'relation'
-                ? '知识联系'
-                : item.kind === 'source'
-                  ? '输入'
-          : item.kind === 'answer'
-            ? (item.manual ? (item.title || '我的回答') : '问题分析')
-            : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
-        summary: item.summary,
-        analysis: item.analysis || '',
-        content: (item.content || '').slice(0, 800),
-      };
-      const portMeta = portMetaFor(item.toPort);
-      if (portMeta) {
-        entry.input_port = portMeta.label;
-        if (portMeta.type) entry.input_type = typeLabels[portMeta.type] || portMeta.type;
-      }
-      return entry;
-    }),
+    upstream: upstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor(item.toPort), typeLabels)),
   };
 }
 
@@ -383,6 +461,18 @@ function _strictModuleOutputInstruction(moduleKey) {
       + '2. 方向2\n'
       + '3. 方向3\n'
       + '不要使用 XML 标签，不要输出“苏格拉底追问”，每条方向只保留一个短句，不要展开学习步骤。';
+  }
+  if (moduleKey === 'physics') {
+    return '物理视角必须从“现实中的系统如何发生”出发，而不是把数学视角换一种说法：\n'
+      + '1. 先明确研究对象、系统边界、环境、可观测量和时间尺度；说明在现实中什么在变化、什么在相互作用。\n'
+      + '2. 写出至少一条具体因果链：机制/相互作用 → 可观测变化 → 可检验预测；优先使用受力、能量、动量、场、约束、耗散、守恒等物理语言，但只使用与主题真正相关的概念。\n'
+      + '3. 明确模型假设和适用条件（例如理想化、近似、初始条件、边界条件），并说明改变关键条件后现象会怎样变化。\n'
+      + '4. 至少给出一个可操作的实验、测量或数量级判断，并用极限情形/反事实检查直觉；不要只写泛泛类比。\n'
+      + '5. 若需要公式，只写能表达物理机制或可测关系的少量公式，并逐项解释其物理意义；不要展开数学推导，也不要把定义、定理、函数性质当作物理解释。\n'
+      + '正文至少覆盖：物理对象与现象、机制与因果链、假设与边界、预测/实验检查。不要重复数学视角的形式推导。';
+  }
+  if (moduleKey === 'math') {
+    return '数学视角必须解释结构和推理，而不是复述物理故事：明确数学对象、定义、变量关系、推导步骤、不变性/对称性，以及结论成立的条件；用 LaTeX 展示必要公式并逐项解释符号。不要把实验、受力、能量或生活类比当作主体，也不要重复物理视角的因果叙述。';
   }
   if (moduleKey === 'graph') {
     return '严格输出知识图谱 Mermaid 代码，不要输出其他模块、不要输出 XML 标签：\n'

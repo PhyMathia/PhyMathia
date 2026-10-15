@@ -222,12 +222,9 @@ async function _generateAnalysis(node, nodeSignal) {
   else renderGraphCanvas();
   if (typeof showProgress === 'function') showProgress('thinking', 8, '正在分析问题');
 
-  const workflowContext = {
-    mode: 'analysis',
-    target: { kind: 'answer', label: '问题分析' },
-    question,
-    requirements: node.requirements || '',
-  };
+  // T328：带上游（追问来源卡 A 全文）——旧实现只带裸问题，画布问答又不写
+  // 会话消息表，模型在零上下文下把机械波的 T·Δs 读成热力学 T·ΔS（见 T328）
+  const workflowContext = _buildAnalysisWorkflowContext(node, question, { kind: 'answer', label: '问题分析' });
   const prompt = '请分析用户问题，只输出简洁的问题概要。'
     + '要求：1) 核心物理概念；2) 核心数学结构；3) 物理与数学的关系；4) 相关知识点。'
     + '不要输出完整答案，不要输出 XML 标签，不要生成任何模块内容，控制在300字以内。';
