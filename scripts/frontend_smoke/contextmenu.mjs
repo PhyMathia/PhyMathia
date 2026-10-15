@@ -97,16 +97,30 @@ check('graph-contextmenu: 收藏为知识点走书签弹窗预填（复用 saveB
 
 check('graph-contextmenu: 画布菜单项齐备且「粘贴为节点」受剪贴板能力门控（M2 补三项）', () => {
   const keys = sandbox._graphContextItemsForCanvas().map(i => i.key);
-  // 既有七 key 不回退 + M2 新增：新建分组 / 缩放复位 / 全选节点
-  for (const k of ['add-node', 'paste-node', 'fit', 'zoom-reset', 'arrange', 'create-group', 'select-all', 'export', 'undo', 'redo']) {
+  for (const k of ['add-node', 'paste-node', 'paste-clip', 'fit', 'zoom-reset', 'arrange', 'create-group', 'select-all', 'export', 'undo', 'redo']) {
     if (!keys.includes(k)) return false;
   }
   const paste0 = sandbox._graphContextItemsForCanvas().find(i => i.key === 'paste-node');
-  if (paste0.disabled !== true) return false; // 沙箱 navigator.clipboard 无 readText → 禁用
+  if (paste0.disabled !== true) return false;
+  // 「粘贴节点」（ComfyUI 式剪贴板，2026-10-15）：空剪贴板 → 禁用；有载荷 → 可用
+  const realReadonly = sandbox.phyIsReadonly; // 沙箱 window 是宽松代理：不打桩 phyIsReadonly() 恒真会把粘贴项锁死
+  sandbox.phyIsReadonly = () => false;
+  vm.runInContext('graphNodeClipboard = null', sandbox);
+  delete storageData['phymathia_node_clipboard'];
+  let clip = sandbox._graphContextItemsForCanvas().find(i => i.key === 'paste-clip');
+  if (clip.disabled !== true) return false;
+  storageData['phymathia_node_clipboard'] = JSON.stringify({ nodes: [{ oid: 'n1', kind: 'module', moduleKey: 'physics', x: 0, y: 0 }], edges: [], at: 1 });
+  vm.runInContext('graphNodeClipboard = null', sandbox); // 逼它走 localStorage 镜像装载
+  clip = sandbox._graphContextItemsForCanvas().find(i => i.key === 'paste-clip');
+  if (clip.disabled === true) return false;
+  if (String(clip.title || '').indexOf('1 个节点') < 0) return false;
   sandbox.navigator.clipboard.readText = async () => 'E = mc^2';
   const paste1 = sandbox._graphContextItemsForCanvas().find(i => i.key === 'paste-node');
   const ok = paste1.disabled === false;
   delete sandbox.navigator.clipboard.readText;
+  sandbox.phyIsReadonly = realReadonly;
+  vm.runInContext('graphNodeClipboard = null', sandbox);
+  delete storageData['phymathia_node_clipboard'];
   return ok;
 });
 
@@ -159,10 +173,14 @@ check('graph-contextmenu: 多选感知（已选 N 语境：删除选择集 / 折
     const items = sandbox._graphContextItemsForNode(nodes[0]);
     const keys = items.map(i => i.key);
     if (!keys.includes('minimize') || !keys.includes('delete')) return false;
-    // 单目标项在多选语境隐藏（收藏/复制全文/居中/复制节点/端口）
-    for (const k of ['bookmark', 'copy', 'focus', 'duplicate', 'add-input-port', 'add-output-port']) {
+    // 单目标项在多选语境隐藏（收藏/复制全文/居中/端口）——复制节点反而是多选主场
+    // （2026-10-15 剪贴板化：一次复制整组，含组内连线）
+    for (const k of ['bookmark', 'copy', 'focus', 'add-input-port', 'add-output-port']) {
       if (keys.includes(k)) return false;
     }
+    if (!keys.includes('duplicate')) return false;
+    const dup = items.find(i => i.key === 'duplicate');
+    if (dup.label !== '复制 2 个节点') return false;
     const del = items.find(i => i.key === 'delete');
     if (del.label !== '删除 2 个节点' || del.danger !== true) return false;
     // 折叠/展开作用于整个选择集：混合状态统一方向（任一未折叠 → 全部折叠，已折叠的跳过）
@@ -378,26 +396,21 @@ check('graph-contextmenu: 画布事件接线（pointerdown 右键过滤 + contex
   return true;
 });
 
-check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚点 / 多选标题 / 复制落点）静态+行为断言', () => {
+check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚点 / 多选标题 / 剪贴板复制）静态+行为断言', () => {
   const src = fs.readFileSync('src/static/js/graph-contextmenu.js', 'utf8');
-  // 节点菜单新增两项：居中此节点（focusGraphNodeById）/ 复制节点（复用 _graphCtxCreateBlankNodeWithText）
+  // 节点菜单新增两项：居中此节点（focusGraphNodeById）/ 复制节点（剪贴板化）
   if (!src.includes("focusGraphNodeById(node.id)")) throw new Error('居中此节点缺 focusGraphNodeById 接线');
-  if (!src.includes('function _graphCtxDuplicateNode') || !src.includes('_graphCtxCreateBlankNodeWithText(')) {
-    throw new Error('复制节点未复用 _graphCtxCreateBlankNodeWithText 链路');
+  if (!src.includes('function graphCopySelectedNodes') || !src.includes('function graphPasteNodeClipboard')) {
+    throw new Error('复制/粘贴未落在 graphCopySelectedNodes/graphPasteNodeClipboard 剪贴板链路');
   }
-  // 复制节点落点：原节点旁 +24/+24，内容为 _nodeStoredContent 同源文本（行为断言）
-  const realCreate = sandbox._graphCtxCreateBlankNodeWithText;
-  let captured = null;
-  try {
-    sandbox._graphCtxCreateBlankNodeWithText = (pt, text) => { captured = { pt, text }; };
-    sandbox._graphCtxDuplicateNode({ id: 'n1', x: 100, y: 50 }, '节点内容');
-    if (!captured || captured.pt.x !== 124 || captured.pt.y !== 74) {
-      throw new Error('复制节点落点不是原节点旁 +24/+24: ' + JSON.stringify(captured && captured.pt));
-    }
-    if (captured.text !== '节点内容') throw new Error('复制节点内容未透传');
-  } finally {
-    sandbox._graphCtxCreateBlankNodeWithText = realCreate;
-  }
+  // 复制节点 run 接线：单选传 [node]、多选传整组；draft 不进剪贴板
+  if (!src.includes("run: () => graphCopySelectedNodes([node]),")) throw new Error('节点菜单「复制节点」未接剪贴板入口');
+  if (!src.includes("run: () => graphCopySelectedNodes(nodes),")) throw new Error('多选菜单「复制 N 个节点」未接剪贴板入口');
+  if (!src.includes("key: 'paste-clip'")) throw new Error('画布菜单缺「粘贴节点」项');
+  // 物化取材：answer 派生节点吃整段正文，其余走 _nodeStoredContent
+  if (!src.includes('_graphAnswerExpandRaw(node, msg)')) throw new Error('复制取材缺 answer 整段正文分支');
+  // localStorage 镜像键名集中一处（phymathia_ 前缀，硬规则 3）
+  if (!src.includes("const GRAPH_CLIP_LS_KEY = 'phymathia_node_clipboard';")) throw new Error('剪贴板镜像键缺失或非集中定义');
   // 多选标题 + 目标高亮 + 关联生命周期
   if (!src.includes("'已选 ' + multi.length + ' 个节点'")) throw new Error('多选标题缺失');
   if (!src.includes("el.classList.add('graph-ctx-target')") || !src.includes("el.classList.remove('graph-ctx-target')")) {
@@ -427,11 +440,121 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
   // 高亮样式落位 + 打包产物符号
   const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
   if (!css.includes('.graph-node.graph-ctx-target')) throw new Error('styles-panels.css 缺 .graph-ctx-target');
-  for (const sym of ['_graphCtxMultiSelection', '_graphContextItemsForMultiNodes', '_graphCtxHistoryUsable', '_graphCtxMarkTarget', '_graphCtxUnmarkTarget']) {
+  for (const sym of ['_graphCtxMultiSelection', '_graphContextItemsForMultiNodes', '_graphCtxHistoryUsable', '_graphCtxMarkTarget', '_graphCtxUnmarkTarget',
+                     'graphCopySelectedNodes', 'graphPasteNodeClipboard', '_graphClipCount', '_graphClipLoad', '_graphClipSave']) {
     if (!code.includes(sym)) throw new Error('打包产物缺符号: ' + sym);
   }
-  if (!code.includes('graph-ctx-target')) throw new Error('打包产物缺 graph-ctx-target');
+  if (!code.includes('phymathia_node_clipboard')) throw new Error('打包产物缺剪贴板镜像键');
+  // 快捷键接线（graph-workflow.js 的 _handleGraphKeydown）：Ctrl+C/Ctrl+V 分支 +
+  // 文字选择期/输入框放行 + selectMode 早退在前
+  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const kh = wf.indexOf('function _handleGraphKeydown');
+  if (kh < 0) throw new Error('_handleGraphKeydown 未找到');
+  const khBody = wf.slice(kh, wf.indexOf('function _initGraphCanvasEvents'));
+  for (const frag of [
+    "event.key === 'c' || event.key === 'C'",
+    "event.key === 'v' || event.key === 'V'",
+    'graphCopySelectedNodes(picked)',
+    'graphPasteNodeClipboard(',
+    "String(window.getSelection() || '').trim()",
+  ]) {
+    if (!khBody.includes(frag)) throw new Error('Ctrl+C/Ctrl+V 接线缺: ' + frag);
+  }
+  const selModeAt = khBody.indexOf('if (graphView.selectMode) return;');
+  const copyAt = khBody.indexOf("event.key === 'c' || event.key === 'C'");
+  if (selModeAt < 0 || copyAt < 0 || copyAt < selModeAt) {
+    throw new Error('复制分支必须排在 selectMode 早退之后（选文字模式不劫持 Ctrl+C）');
+  }
   return true;
+});
+
+check('graph-contextmenu: 节点剪贴板复制→粘贴 roundtrip（类型/内容/相对布局/组内连线/撤销一步）', () => {
+  const realReadonly = sandbox.phyIsReadonly;
+  sandbox.phyIsReadonly = () => false;
+  vm.runInContext('graphNodeClipboard = null', sandbox);
+  delete storageData['phymathia_node_clipboard'];
+  const realState = sandbox._graphState;
+  const realUndo = sandbox._pushGraphUndo;
+  const realSave = sandbox._saveGraphState;
+  const realRender = sandbox.renderGraphCanvas;
+  const realWorld = sandbox._workflowWorldMessages;
+  const realExpandRaw = sandbox._graphAnswerExpandRaw; // 先存原引用：answer 分支要打桩，finally 原样还回去
+  let undoCount = 0;
+  const state = {
+    customNodes: [],
+    connections: [
+      { from: 'n_a', fromPort: 'out-0', to: 'n_b', toPort: 'in-0', type: 'custom', custom: true },
+      { from: 'n_a', fromPort: 'link-0', to: 'n_x', toPort: 'link-0', type: 'custom', custom: true, link: true, label: '有关' },
+    ],
+  };
+  try {
+    sandbox._graphState = () => state;
+    sandbox._pushGraphUndo = () => { undoCount += 1; };
+    sandbox._saveGraphState = () => {};
+    sandbox.renderGraphCanvas = () => {};
+    sandbox._workflowWorldMessages = () => [{ role: 'assistant', content: '<physics>## 物理视角\n回复力与摆幅成正比。</physics>' }];
+    // 复制：两颗节点（module 派生 + knowledge 手填），line-0 两端都在集内 → 带走；
+    // 联系线另一端 n_x 不在集内 → 不带
+    const copied = sandbox.graphCopySelectedNodes([
+      { id: 'n_a', kind: 'module', moduleKey: 'physics', messageIndex: 0, x: 100, y: 40, content: '' },
+      { id: 'n_b', kind: 'knowledge', messageIndex: -1, label: '简谐运动', content: 'kb 正文', x: 460, y: 40 },
+      { id: 'n_draft', kind: 'draft', x: 0, y: 0 },
+    ]);
+    if (copied !== 2) throw new Error('draft 应被过滤，复制数=2：' + copied);
+    let clip = vm.runInContext('graphNodeClipboard', sandbox);
+    if (!clip || clip.nodes.length !== 2 || clip.edges.length !== 1) throw new Error('剪贴板载荷形状错');
+    if (clip.nodes[0].kind !== 'module' || clip.nodes[0].moduleKey !== 'physics') throw new Error('module 类型/moduleKey 未保留');
+    if (!clip.nodes[0].content || clip.nodes[0].content.indexOf('回复力与摆幅成正比') < 0) throw new Error('模块内容未物化：' + clip.nodes[0].content);
+    if (clip.nodes[1].label !== '简谐运动' || clip.nodes[1].content !== 'kb 正文') throw new Error('knowledge 未保留');
+    // localStorage 镜像：memory → 空后仍可从镜像装载（跨画布/刷新）
+    if (!storageData['phymathia_node_clipboard']) throw new Error('localStorage 镜像未写');
+    vm.runInContext('graphNodeClipboard = null', sandbox);
+    if (sandbox._graphClipCount() !== 2) throw new Error('镜像装载失败');
+    // 粘贴：包围盒中心落在光标点，组内相对布局不变
+    const pasted = sandbox.graphPasteNodeClipboard({ x: 800, y: 300 });
+    if (pasted !== 2) throw new Error('粘贴数=2：' + pasted);
+    if (state.customNodes.length !== 2) throw new Error('customNodes 未追加');
+    if (undoCount !== 1) throw new Error('整组粘贴只推一次撤销：' + undoCount);
+    const [na, nb] = state.customNodes;
+    if (na.kind !== 'module' || na.moduleKey !== 'physics' || na.messageIndex !== -1) throw new Error('粘贴节点类型/下标错');
+    if (!na.content || na.content.indexOf('回复力与摆幅成正比') < 0) throw new Error('粘贴内容丢失');
+    if (na.status !== 'done' || na.generated !== true) throw new Error('粘贴节点应即「完成」态');
+    if (nb.kind !== 'knowledge' || nb.label !== '简谐运动') throw new Error('knowledge 粘贴形态错');
+    // 原跨度 x 100..460（中心 280）、y 同为 40（中心 40）→ 平移 (+520, +260)
+    if (na.x !== 620 || nb.x !== 980 || na.y !== 300 || nb.y !== 300) {
+      throw new Error('相对布局/落点错：' + JSON.stringify({ ax: na.x, bx: nb.x, ay: na.y, by: nb.y }));
+    }
+    // 组内连线重映射：旧 from/to 换成新 id，port 与 type 原样
+    const remapped = state.connections.filter(e => e.from === na.id && e.to === nb.id);
+    if (remapped.length !== 1 || remapped[0].fromPort !== 'out-0' || remapped[0].custom !== true) throw new Error('组内连线未重映射');
+    if (state.connections.length !== 3) throw new Error('集外联系线不应带入：' + state.connections.length);
+    // answer 非 manual 复制：analysis/content 双写（渲染取 analysis，_nodeStoredContent 取 content）
+    state.customNodes.length = 0;
+    sandbox._graphAnswerExpandRaw = (node, msg) => String((msg && msg.content) || '') + '｜展开全文';
+    sandbox._workflowWorldMessages = () => [{ role: 'assistant', content: '<summary>一句话</summary>分析正文……' }];
+    sandbox.graphCopySelectedNodes([{ id: 'n_ans', kind: 'answer', messageIndex: 0, x: 0, y: 0 }]);
+    sandbox.graphPasteNodeClipboard({ x: 500, y: 500 });
+    const ans = state.customNodes[0];
+    if (ans.kind !== 'answer' || ans.manual !== false) throw new Error('answer 复制形态错');
+    if (ans.content !== '<summary>一句话</summary>分析正文……｜展开全文') throw new Error('answer 未吃整段正文');
+    if (ans.analysis !== ans.content) throw new Error('answer 非 manual 卡应在 analysis 双写');
+    // 只读查看页：粘贴被禁断（菜单项被 viewer 白名单剪掉，快捷键入口在此设防）
+    sandbox.phyIsReadonly = () => true;
+    const before = state.customNodes.length;
+    const blocked = sandbox.graphPasteNodeClipboard({ x: 0, y: 0 });
+    if (blocked !== 0 || state.customNodes.length !== before) throw new Error('只读页粘贴未被禁断');
+    return true;
+  } finally {
+    sandbox._graphState = realState;
+    sandbox._pushGraphUndo = realUndo;
+    sandbox._saveGraphState = realSave;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox._workflowWorldMessages = realWorld;
+    sandbox._graphAnswerExpandRaw = realExpandRaw;
+    sandbox.phyIsReadonly = realReadonly;
+    vm.runInContext('graphNodeClipboard = null', sandbox);
+    delete storageData['phymathia_node_clipboard'];
+  }
 });
 
 check('graph-export: 一页概览图（完整内容模式已按用户要求移除）+ 画框纯函数', () => {

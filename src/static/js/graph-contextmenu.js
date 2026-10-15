@@ -108,12 +108,15 @@ function _graphContextItemsForNode(node, point) {
     label: '居中此节点',
     run: () => { if (typeof focusGraphNodeById === 'function') focusGraphNodeById(node.id); },
   });
-  // 复制节点：复用「粘贴为节点」同一条落地链路（draft 不提供，与收藏同口径）
-  if (hasContent && node.kind !== 'draft') {
+  // 复制节点：进「节点剪贴板」（ComfyUI 式，2026-10-15）——选几颗复制几颗，之后
+  // 画布菜单/Ctrl+V 粘贴到任意画布，内容随节点一起带走。draft 草稿不提供（与收藏同口径，
+  // 多选集里的 draft 由 graphCopySelectedNodes 过滤）；只读查看页按 label 白名单剪掉。
+  if (node.kind !== 'draft') {
     items.push({
       key: 'duplicate',
       label: '复制节点',
-      run: () => _graphCtxDuplicateNode(node, content),
+      title: '复制到剪贴板（Ctrl+C），可粘贴到任意画布',
+      run: () => graphCopySelectedNodes([node]),
     });
   }
   // 存为配方（P1）：从现有节点提炼可复用类型。只读查看页（viewer）没有配方库与
@@ -178,7 +181,8 @@ function _graphCtxMultiSelection(node) {
 // 多选语境菜单（M2）：删除作用于整个选择集（_deleteSelectedGraphNodes 本就接受 id 数组，
 // 沿用其确认路径）；折叠/展开在集内全部满足 _canMinimizeGraphNode 时作用于选择集，否则隐藏
 // （混合状态统一方向：任一未折叠即「折叠节点」，仅切换不在目标态的节点）；收藏/复制全文/
-// 居中/复制节点/端口等单目标项在多选语境隐藏，避免歧义。
+// 居中/端口等单目标项在多选语境隐藏，避免歧义。复制节点反而是多选的主场（2026-10-15 起
+// 走剪贴板，一次复制整组）。
 function _graphContextItemsForMultiNodes(nodes) {
   const items = [];
   const canToggleAll = (typeof _canMinimizeGraphNode === 'function')
@@ -194,6 +198,12 @@ function _graphContextItemsForMultiNodes(nodes) {
       },
     });
   }
+  items.push({
+    key: 'duplicate',
+    label: '复制 ' + nodes.length + ' 个节点',
+    title: '整组进剪贴板（Ctrl+C），组内相对布局与连线一起带走',
+    run: () => graphCopySelectedNodes(nodes),
+  });
   items.push({ key: 'sep' });
   items.push({
     key: 'delete',
@@ -245,6 +255,18 @@ function _graphContextItemsForCanvas(point, client) {
     disabled: !canReadClipboard,
     title: canReadClipboard ? '把剪贴板文本粘贴为空白节点' : '当前环境不可读取剪贴板',
     run: () => _graphCtxPasteNode(pt),
+  });
+  // 节点剪贴板粘贴（ComfyUI 式，2026-10-15）：与文本「粘贴为节点」并列——那个建空白
+  // 卡吃剪贴板文本，这个把「复制节点」带走的整组按原类型原内容落在光标处。
+  const clipCount = _graphClipCount();
+  const clipReadonly = _graphClipReadonly();
+  items.push({
+    key: 'paste-clip',
+    label: '粘贴节点',
+    disabled: !clipCount || clipReadonly,
+    title: clipReadonly ? '查阅模式：不能新建节点'
+      : (clipCount ? '从剪贴板粘贴 ' + clipCount + ' 个节点（Ctrl+V）' : '节点剪贴板为空（先在节点上「复制节点」）'),
+    run: () => graphPasteNodeClipboard(pt),
   });
   items.push({ key: 'sep' });
   items.push({ key: 'fit', label: '适配画布', run: () => fitGraph() });
@@ -399,6 +421,7 @@ const GRAPH_CTX_ICONS = {
   copy: 'copy',
   focus: 'target',
   duplicate: 'clipboard',
+  'paste-clip': 'clipboard',
   minimize: 'collapse',
   'add-input-port': 'plus',
   'add-output-port': 'plus',
@@ -423,6 +446,8 @@ const GRAPH_CTX_KEYS = {
   undo: 'Ctrl+Z',
   redo: 'Ctrl+Y',
   delete: 'Del',
+  duplicate: 'Ctrl+C',
+  'paste-clip': 'Ctrl+V',
 };
 
 function _graphCtxIconSvg(key) {
@@ -580,14 +605,179 @@ function _graphCtxPasteNode(point) {
   });
 }
 
-// 复制节点（M2）：复用「粘贴为节点」同一条落地链路——createManualNode('blank') 建节点
-// （含撤销栈/持久化/重渲）+ updateCustomNodeContent 写入原节点内容（_nodeStoredContent 同源）；
-// 落点为原节点旁偏移 +24/+24。
-function _graphCtxDuplicateNode(node, content) {
-  _graphCtxCreateBlankNodeWithText(
-    { x: (Number(node.x) || 0) + 24, y: (Number(node.y) || 0) + 24 },
-    String(content || ''),
-  );
+// ---------- 节点复制/粘贴（ComfyUI 式剪贴板，2026-10-15）----------
+// 口径：复制进「节点剪贴板」，不在原节点旁 +24/+24 立刻复制一份——选几颗复制几颗，
+// 之后想到哪粘到哪（同画布别处 / 另一张画布 / 刷新页面后都行，localStorage 镜像兜底）。
+// payload 只带重建节点所需字段与原坐标，不引用消息下标：AI 派生内容复制时已物化成
+// 全文（messageIndex 一律 -1），所以换画布也粘得出来。「保留节点生成内容」即指此。
+const GRAPH_CLIP_LS_KEY = 'phymathia_node_clipboard';
+let graphNodeClipboard = null; // { nodes:[…], edges:[…], at }
+
+// 只读查看页（viewer）禁新建节点：菜单项被 READONLY_MENU_LABELS 剪掉，快捷键入口在此设防
+function _graphClipReadonly() {
+  return typeof phyIsReadonly === 'function' && phyIsReadonly();
+}
+
+function _graphClipLoad() {
+  if (graphNodeClipboard) return graphNodeClipboard;
+  try {
+    const raw = localStorage.getItem(GRAPH_CLIP_LS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length) graphNodeClipboard = parsed;
+  } catch (e) { /* 坏 JSON 当空剪贴板：粘贴项禁用 */ }
+  return graphNodeClipboard;
+}
+
+function _graphClipSave(payload) {
+  graphNodeClipboard = (payload && Array.isArray(payload.nodes) && payload.nodes.length) ? payload : null;
+  try {
+    if (graphNodeClipboard) localStorage.setItem(GRAPH_CLIP_LS_KEY, JSON.stringify(graphNodeClipboard));
+    else localStorage.removeItem(GRAPH_CLIP_LS_KEY);
+  } catch (e) { /* 隐私模式等写不进：内存剪贴板仍在，本页内照样粘 */ }
+}
+
+function _graphClipCount() {
+  const clip = _graphClipLoad();
+  return clip && Array.isArray(clip.nodes) ? clip.nodes.length : 0;
+}
+
+// 复制取材：answer 派生节点吃整段正文（与全屏阅读同一取材），其余走 _nodeStoredContent
+// （模块分节 / 追问 markdown / 知识正文都靠它物化）。切过画布后按索引取世界消息表，张冠李戴不了。
+function _graphCtxClipContent(node) {
+  if (!node) return '';
+  if (node.messageIndex >= 0) {
+    const msgs = typeof _workflowWorldMessages === 'function' ? _workflowWorldMessages() : [];
+    const msg = msgs[node.messageIndex];
+    if (node.kind === 'answer' && !node.manual && typeof _graphAnswerExpandRaw === 'function') {
+      const raw = _graphAnswerExpandRaw(node, msg);
+      if (raw) return raw;
+    }
+  }
+  return typeof _nodeStoredContent === 'function'
+    ? _nodeStoredContent(node)
+    : (node.content || node.summary || '');
+}
+
+// 复制入口：nodes 为节点对象数组（单选 1 个 / 多选 N 个）。draft 草稿不进剪贴板
+// （与收藏同口径）。两端都在复制集里的 custom 连线（含联系线）一并带走——
+// AI 结构边（消息派生）不带：copy 落地是 custom 节点，默认边无从重建。
+function graphCopySelectedNodes(nodes) {
+  const picked = (Array.isArray(nodes) ? nodes : [])
+    .filter(node => node && node.id && node.kind !== 'draft');
+  if (!picked.length) return 0;
+  const ids = new Set(picked.map(node => String(node.id)));
+  const payloadNodes = picked.map(node => ({
+    oid: String(node.id), // 仅连线重映射用，不落库
+    kind: node.kind,
+    moduleKey: node.kind === 'module' ? (node.moduleKey || '') : '',
+    manual: !!node.manual,
+    title: String(node.title || ''),
+    label: String(node.label || ''),
+    content: _graphCtxClipContent(node),
+    x: Number(node.x) || 0,
+    y: Number(node.y) || 0,
+  }));
+  const state = typeof _graphState === 'function' ? _graphState() : {};
+  const edges = (state.connections || [])
+    .filter(edge => ids.has(String(edge.from)) && ids.has(String(edge.to)))
+    .map(edge => ({ ...edge }));
+  _graphClipSave({ nodes: payloadNodes, edges, at: Date.now() });
+  _graphCtxToast('已复制 ' + payloadNodes.length + ' 个节点（可粘贴到任意画布）');
+  return payloadNodes.length;
+}
+
+// kind 白名单校准：custom kind 原样保留，其余（ai_eval 等）回落 blank，_saveCustomNodes 不丢
+function _graphClipSafeKind(kind) {
+  return (typeof GRAPH_CUSTOM_NODE_KINDS !== 'undefined' && GRAPH_CUSTOM_NODE_KINDS.includes(kind)) ? kind : 'blank';
+}
+
+// 粘贴入口：point 为画布坐标，整组包围盒中心落在该点、组内相对布局不变（ComfyUI 同口径）。
+// 一次撤销一步（_pushGraphUndo 只推一次，在改动前）。只读查看页禁用。
+function graphPasteNodeClipboard(point) {
+  if (_graphClipReadonly()) { _graphCtxToast('查阅模式：不能粘贴节点，退出查阅后重试'); return 0; }
+  const clip = _graphClipLoad();
+  if (!clip || !Array.isArray(clip.nodes) || !clip.nodes.length) return 0;
+  if (typeof _pushGraphUndo !== 'function') return 0;
+  _pushGraphUndo();
+  const pt = (point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
+    ? { x: Number(point.x), y: Number(point.y) }
+    : { x: 0, y: 0 };
+  const xs = clip.nodes.map(node => Number(node.x) || 0);
+  const ys = clip.nodes.map(node => Number(node.y) || 0);
+  const dx = pt.x - (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+  const dy = pt.y - (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+  const state = _graphState();
+  state.customNodes = state.customNodes || [];
+  const idMap = {};
+  const created = [];
+  clip.nodes.forEach(item => {
+    const nodeId = 'custom-copy-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    idMap[item.oid] = nodeId;
+    const kind = _graphClipSafeKind(item.kind);
+    const content = String(item.content || '');
+    const node = {
+      id: nodeId,
+      kind,
+      moduleKey: item.moduleKey || '',
+      manual: !!item.manual,
+      title: String(item.title || ''),
+      label: String(item.label || ''),
+      content,
+      // answer 非 manual 卡的正文渲染取 analysis（_renderCustomNodeContentHtml 同源），
+      // content 同步写一份，_nodeStoredContent 与知识面板按 content 取时也对得上
+      analysis: (kind === 'answer' && !item.manual) ? content : '',
+      status: 'done',
+      summary: typeof _graphSummary === 'function' ? _graphSummary(content) : content.slice(0, 120),
+      analysisHash: '',
+      inputHash: '',
+      generatedAt: Date.now(),
+      requirements: '',
+      busy: false,
+      generated: true,
+      maxItems: 0,
+      items: [],
+      edges: [],
+      fileId: '',
+      fileName: '',
+      generatedNodeIds: [],
+      category: '',
+      formulas: [],
+      knowledgeKey: '',
+      x: (Number(item.x) || 0) + dx,
+      y: (Number(item.y) || 0) + dy,
+      depth: 3,
+      targetAngle: 0,
+      isRoot: false,
+      messageIndex: -1,
+      timestamp: Date.now(),
+      pinned: false,
+      fixedX: null,
+      fixedY: null,
+      customWidth: null,
+      customHeight: null,
+      w: 0,
+      h: 0,
+      vx: 0,
+      vy: 0,
+      minimized: false,
+      hidden: false,
+    };
+    state.customNodes.push(node);
+    created.push(node);
+  });
+  if (Array.isArray(clip.edges) && clip.edges.length) {
+    state.connections = state.connections || [];
+    clip.edges.forEach(edge => {
+      const from = idMap[String(edge.from)];
+      const to = idMap[String(edge.to)];
+      if (!from || !to || from === to) return;
+      state.connections.push({ ...edge, from, to });
+    });
+  }
+  _saveGraphState(state);
+  if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
+  _graphCtxToast('已粘贴 ' + created.length + ' 个节点');
+  return created.length;
 }
 
 // ---------- 弹层渲染 ----------

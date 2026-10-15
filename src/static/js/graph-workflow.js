@@ -1531,6 +1531,33 @@ function _handleGraphKeydown(event) {
     return;
   }
   if (graphView.selectMode) return;
+  // 节点复制/粘贴（ComfyUI 式剪贴板，2026-10-15）：图谱选择集 ↔ 节点剪贴板
+  // （localStorage 镜像，跨画布/刷新都在）。有文字选择期放行给浏览器复制文本；
+  // 输入框内一律不劫持（inTextInput 已先返回）；只读查看页的粘贴禁断在落地函数内。
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'c' || event.key === 'C')) {
+    if (inTextInput) return;
+    if (typeof window.getSelection === 'function' && String(window.getSelection() || '').trim()) return;
+    if (!graphView.selectedNodeIds || !graphView.selectedNodeIds.size) return;
+    event.preventDefault();
+    const picked = Array.from(graphView.selectedNodeIds)
+      .map(id => graphView.nodeById[id])
+      .filter(Boolean);
+    if (typeof graphCopySelectedNodes === 'function') graphCopySelectedNodes(picked);
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'v' || event.key === 'V')) {
+    if (inTextInput) return;
+    if (typeof _graphClipCount !== 'function' || !_graphClipCount()) return;
+    event.preventDefault();
+    if (typeof graphPasteNodeClipboard !== 'function') return;
+    const rect = (graphCanvas && typeof graphCanvas.getBoundingClientRect === 'function')
+      ? graphCanvas.getBoundingClientRect() : null;
+    const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const cy = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    graphPasteNodeClipboard(
+      typeof _clientToGraphLocal === 'function' ? _clientToGraphLocal(cx, cy) : { x: 0, y: 0 });
+    return;
+  }
   if (event.key !== 'Delete' && event.key !== 'Backspace') return;
   if (!graphCanvas || (!graphView.selectedNodeIds.size && !graphView.selectedGroupIds.size)) return;
   if (inTextInput) return;
