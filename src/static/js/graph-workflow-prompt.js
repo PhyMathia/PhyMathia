@@ -143,6 +143,17 @@ function _collectInboundChain(node) {
   });
 }
 
+// 路径数组（_blankNodeGraphPath 产物，根→目标序）里离目标最近的问题节点——
+// 从尾反向扫（原生 for，勿用 findLast 防旧内核，T333a 同款）。旧调用点的
+// Array.find 取到的是最早的根问题，深链上空白节点生成跟着最初的问题跑（T340）。
+function _nearestUserInPath(path) {
+  const arr = path || [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] && arr[i].kind === 'user') return arr[i];
+  }
+  return null;
+}
+
 // T327：工作流上游条目的规范化顺序（_buildWorkflowContextForNode 排序用）：
 // timestamp 优先——建点时间，链上图天然「源节点在前」，与 _collectUpstreamPath
 // 的后序遍历多数场景重合；同秒/缺时间戳按 kind/module/title/label/content 稳定
@@ -186,18 +197,27 @@ function _foldHtmlFences(text) {
   return String(text || '').replace(/```html[\s\S]*?(?:```|$)/gi, '（交互可视化 HTML 页面已折叠）');
 }
 
-function _followupSourceNodeId(node) {
-  if (!node) return '';
-  const visited = new Set();
+// 从目标节点沿第一条入边上溯（跳过 draft/link 边）找**最近**的问题节点；visited
+// 由调用方传入时复用同一份（_followupSourceNodeId 来源侧的成环防护要看到同一条
+// 走过的链），没传就自建。找不到（无上游成环且无 user）返回 null。
+function _nearestQuestionNodeUpstream(node, visited) {
+  const seen = visited || new Set();
   let current = node;
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id);
-    if (current.kind === 'user') break;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.kind === 'user') return current;
     const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     current = incoming.length ? _findGraphNode(incoming[0].from) : null;
   }
-  if (!current || current.kind !== 'user') return '';
-  const parentEdges = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+  return null;
+}
+
+function _followupSourceNodeId(node) {
+  if (!node) return '';
+  const visited = new Set();
+  const question = _nearestQuestionNodeUpstream(node, visited);
+  if (!question) return '';
+  const parentEdges = _workflowEdgeTable().filter(edge => String(edge.to) === question.id && !edge.draft && !edge.link);
   let source = parentEdges.length ? _findGraphNode(parentEdges[0].from) : null;
   // T332：来源卡与问题之间隔 junction/hub（透明节点）时沿第一条入边继续上溯，
   // 透明节点不占来源名额；复用 visited 防来源侧成环——落到已访问节点即视为无
@@ -251,7 +271,9 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
 // 从目标节点向前寻找到最近的问题节点（_followupSourceNodeId，含 junction/hub
 // 穿透）；问题前面那一颗实体祖先（来源卡，不看卡片类型）走 full 原文；其余
 // 全部实体祖先（含分析节点——「之前的为摘要」）走 800 字摘要；问题之前没有
-// 上游则没有来源卡、一览皆摘要（根链零 full 已核验）。分析步/模块步/配方步/
+// 上游则没有来源卡、一览皆摘要（根链零 full 已核验）。T340：question 字段与
+// 来源卡同锚最近问题节点——旧 find 在 timestamp 升序下命中的是最早的根问题，
+// 深链追问后下游全被「原始问题：根问题」带跑。分析步/模块步/配方步/
 // 内联四路消费同一形状：answer-filter 与 analysis 特殊字段退役（T331 豁免逻辑
 // 随 filter 一并消解——分析节点本来就是普通祖先），shared 段行序改为
 // question→upstream（cp context.py，test_prefix_stability 已重钉）。
@@ -274,7 +296,13 @@ function _collectWorkflowContext(node, portMetaFor, typeLabels) {
   // 共享前缀字节；同一份上游集合任何时候拼出同串字节
   allUpstream.sort(_workflowUpstreamCompare);
   const sourceId = _followupSourceNodeId(node);
-  const questionNode = allUpstream.find(item => item.kind === 'user');
+  // T340：question 与来源卡同锚「最近问题节点」（总纲"向前寻找到最近的问题节点"
+  // 的同一口径）。旧 allUpstream.find 在 timestamp 升序里命中的是最早的根问题——
+  // 深链追问后，下游模块步/分析兜底的「原始问题」全是最初那问，真正的追问只剩
+  // 上游清单里 800 字一条（用户实测"追问答非所问"）。单问题链最近＝最早，字节零变。
+  const nearestQuestion = _nearestQuestionNodeUpstream(node);
+  const questionNode = (nearestQuestion && allUpstream.find(item => String(item.id || '') === String(nearestQuestion.id || '')))
+    || allUpstream.find(item => item.kind === 'user');
   return {
     sourceId: sourceId,
     question: questionNode ? questionNode.content : '',

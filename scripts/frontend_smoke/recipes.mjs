@@ -2260,6 +2260,62 @@ check('T331/T332/T333 追问来源卡豁免 answer-filter＋透明节点穿透�
   return true;
 });
 
+check('T340 question 锚最近问题节点：深链下游 question=最近追问，单问题链同值字节零变', () => {
+  // 旧 allUpstream.find 在 timestamp 升序里取到最早的根问题——深链追问后模块步/
+  // 分析兜底/空白节点的「原始问题」全是最初那问，真正的追问只剩 800 字一条
+  // （用户实测：问链条后面的节点，回答跟着最初的问题跑）。修后 question 与来源卡
+  // 同锚 _nearestQuestionNodeUpstream（总纲"最近"口径）；单问题链最近＝最早。
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: [], removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_t340_nearest_question';
+  try {
+    // 双层链 问题A→分析(A)→M1→追问A1→分析(A1)→M11（T333 场景三同形）
+    const aQ = { id: 'AQ', kind: 'user', manual: true, messageIndex: -1, timestamp: 100, content: '根问题 A' };
+    const aAns = { id: 'AA', kind: 'answer', manual: false, messageIndex: -1, timestamp: 101, content: '', analysis: '第一层分析（问题分析(A)）' };
+    const m1 = { id: 'M1', kind: 'module', moduleKey: 'physics', manual: false, messageIndex: -1, timestamp: 110, content: '第一层模块' };
+    const q1 = { id: 'Q1', kind: 'user', manual: true, messageIndex: -1, timestamp: 200, content: '追问 A1' };
+    const ans1 = { id: 'AA1', kind: 'answer', manual: false, messageIndex: -1, timestamp: 201, content: '', analysis: '第二层分析（问题分析(A1)）' };
+    const m11 = { id: 'M11', kind: 'module', moduleKey: 'math', manual: false, messageIndex: -1, timestamp: 210, content: '第二层模块' };
+    vm.runInContext('graphView.nodes = [' + [aQ, aAns, m1, q1, ans1, m11].map(n => JSON.stringify(n)).join(',') + '];'
+      + 'graphView.nodeById = { AQ: graphView.nodes[0], AA: graphView.nodes[1], M1: graphView.nodes[2], Q1: graphView.nodes[3], AA1: graphView.nodes[4], M11: graphView.nodes[5] };'
+      + 'graphView.defaultEdges = []; graphView.edges = ['
+      + '{ from: "AQ", fromPort: "out-0", to: "AA", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "AA", fromPort: "out-1", to: "M1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "M1", fromPort: "out-0", to: "Q1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "Q1", fromPort: "out-0", to: "AA1", toPort: "in-0", type: "custom", custom: true },'
+      + '{ from: "AA1", fromPort: "out-1", to: "M11", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    if (sandbox._buildWorkflowContextForNode(m11).question !== '追问 A1') {
+      throw new Error('深链模块步 question 应锚最近的追问 A1，实际：' + sandbox._buildWorkflowContextForNode(m11).question);
+    }
+    // 分析步兜底路径（调用方不传问题文本时从取材函数拿）：同锚最近追问
+    if (sandbox._buildAnalysisWorkflowContext(ans1, '', { kind: 'answer', label: '问题分析' }).question !== '追问 A1') {
+      throw new Error('分析步 question 兜底也应锚最近追问 A1');
+    }
+    // 单问题链回归：第一层模块只看得到根问题，新旧同值
+    if (sandbox._buildWorkflowContextForNode(m1).question !== '根问题 A') {
+      throw new Error('第一层模块 question 仍应是根问题 A（单问题链字节不变红线）');
+    }
+    // 空白节点路径：_nearestUserInPath 反向扫（根→目标序取最后一个 user）
+    const lastQ = sandbox._nearestUserInPath([
+      { kind: 'user', content: '根' }, { kind: 'answer', content: '' },
+      { kind: 'user', content: '追' }, { kind: 'module', content: '' },
+    ]);
+    if (!lastQ || lastQ.content !== '追') throw new Error('_nearestUserInPath 应取离目标最近的 user');
+    if (sandbox._nearestUserInPath([{ kind: 'module' }]) !== null) throw new Error('无 user 的路径应返回 null');
+    if (sandbox._nearestUserInPath([]) !== null) throw new Error('空路径应返回 null');
+    if (sandbox._nearestUserInPath(null) !== null) throw new Error('null 路径应返回 null');
+  } finally {
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
 check('笔记本编辑模式（2026-10-10 ①）：总结类编辑升级全屏左右分栏，左侧上游参考右侧书写＋标题', () => {
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
