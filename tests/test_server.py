@@ -851,10 +851,15 @@ class WorkflowAnalysisInstructionTest(unittest.TestCase):
         self.assertIn("物理视角/数学视角", inst)
         self.assertIn("不要编造历史、定律或公式", inst)
 
-    def test_module_mode_keeps_analysis_injection(self):
+    def test_analysis_key_retired_from_instruction(self):
+        # 原 test_module_mode_keeps_analysis_injection。T334 第二步：analysis
+        # 特殊字段退役——analysis 键仍被 normalize 消毒（存量形状兼容），但
+        # instruction/shared 段不再渲染「隐藏问题分析」行，分析内容只经
+        # upstream 里的分析摘要条目进（前端 _collectWorkflowContext 同源）
         inst = context_mod._workflow_context_instruction({"mode": "module", "target": {"kind": "module", "module": "physics", "label": "物理视角"}, "analysis": "核心是回复力与位移成正比", "question": "简谐运动"})
-        self.assertIn("隐藏问题分析", inst)
-        self.assertIn("核心是回复力与位移成正比", inst)
+        self.assertNotIn("隐藏问题分析", inst)
+        self.assertNotIn("核心是回复力与位移成正比", inst)
+        self.assertIn("原始问题：简谐运动", inst)
 
 
 class WorkflowContextPartsSplitTest(unittest.TestCase):
@@ -884,7 +889,10 @@ class WorkflowContextPartsSplitTest(unittest.TestCase):
         s, t = context_mod._workflow_context_parts(self._ctx("physics", "物理视角"))
         self.assertIn("# 工作流节点上下文", s)
         self.assertIn("原始问题：简谐运动的物理图像与微分方程是什么", s)
-        self.assertIn("隐藏问题分析（用于保持一致）：核心是回复力与位移成正比", s)
+        # T334 第二步：analysis 特殊字段退役——_ctx 仍带 analysis 键（存量形状），
+        # shared 段不再渲染「隐藏问题分析」行，分析内容只经 upstream 条目进
+        self.assertNotIn("隐藏问题分析", s)
+        self.assertIn("问题分析：核心是回复力与位移成正比", s)
         self.assertIn("问题分析：核心是回复力与位移成正比", s)
         self.assertNotIn("当前生成目标", s)
         self.assertNotIn("当前为局部节点生成模式", s)

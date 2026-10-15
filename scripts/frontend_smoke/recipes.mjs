@@ -2230,18 +2230,27 @@ check('T331/T332/T333 追问来源卡豁免 answer-filter＋透明节点穿透�
       + '{ from: "M1", fromPort: "out-0", to: "Q1", toPort: "in-0", type: "custom", custom: true },'
       + '{ from: "Q1", fromPort: "out-0", to: "AA1", toPort: "in-0", type: "custom", custom: true },'
       + '{ from: "AA1", fromPort: "out-1", to: "M11", toPort: "in-0", type: "custom", custom: true }];', sandbox);
-    // T333a：模块步隐藏分析＝直接父分析 AA1（旧 find 取最早会错位回 AA）
+    // T334 第二步：analysis 特殊字段退役——两层分析按普通祖先摘要进 upstream
+    // （answer-filter 与 filter 的 T331 豁免逻辑一并消解：分析本就是普通祖先）。
+    // 模块步目标自身条目保留（重生成看旧文，T263 行为）
     const m11Ctx = sandbox._buildWorkflowContextForNode(m11);
-    if (m11Ctx.analysis !== '第二层分析（问题分析(A1)）') throw new Error('T333a：模块步隐藏分析应取最近的直接父分析');
+    if ('analysis' in m11Ctx) throw new Error('T334 第二步：模块步不应再发 analysis 特殊字段');
+    const m11Ans = (m11Ctx.upstream || []).filter(item => item.label === '问题分析');
+    if (m11Ans.length !== 2) throw new Error('双层链两条分析应按普通祖先进 upstream，实际 ' + m11Ans.length);
+    if (m11Ans[0].content !== '第一层分析（问题分析(A)）' || m11Ans[1].content !== '第二层分析（问题分析(A1)）') throw new Error('两层分析条目顺序/内容不对');
+    if (m11Ans.some(item => item.full || item.content.length > 800)) throw new Error('分析摘要条目应走 800 档、不标 full');
     const m1Entry = (m11Ctx.upstream || []).find(item => item.label === '物理视角');
     if (!m1Entry || m1Entry.full !== true) throw new Error('T333a 场景：来源卡 M1 条目应 full');
-    // T333b：分析步（AA1）补 analysis 字段＝第一层分析 AA（排除目标自身）
+    // 分析步（AA1）：链上第一层分析按摘要进 upstream；目标自身（AA1）不是
+    // 自己的祖先、不得进上游（旧口径靠 answer-filter 顺手剔掉，filter 退役后
+    // 由显式规则接管，否则问题文本会随空 analysis 回退重复进 shared 段）
     const ans1Ctx = sandbox._buildAnalysisWorkflowContext(ans1, q1.content, { kind: 'answer', label: '问题分析' });
-    if (ans1Ctx.analysis !== '第一层分析（问题分析(A)）') throw new Error('T333b：分析步 analysis 字段应指向直接父分析且排除自身');
-    if ((ans1Ctx.upstream || []).some(item => item.label === '问题分析')) throw new Error('T333b 场景：链上分析卡（非来源）仍应按 answer-filter 剔出 upstream');
-    // 根链回归：单层链 analysis 字段为空串（后端不渲染该行，字节零变红线）
+    if ('analysis' in ans1Ctx) throw new Error('T334 第二步：分析步不应再发 analysis 特殊字段');
+    const ans1Ans = (ans1Ctx.upstream || []).filter(item => item.label === '问题分析');
+    if (ans1Ans.length !== 1 || ans1Ans[0].content !== '第一层分析（问题分析(A)）') throw new Error('分析步上游应只含第一层分析摘要条目（目标自身 AA1 不应出现）');
+    // 根链回归：单层根链无分析祖先，上游不应出现分析条目
     const aaCtx = sandbox._buildAnalysisWorkflowContext(aAns, aQ.content, { kind: 'answer', label: '问题分析' });
-    if (aaCtx.analysis !== '') throw new Error('单层链 analysis 字段应为空串（字节零变红线）');
+    if ((aaCtx.upstream || []).some(item => item.label === '问题分析')) throw new Error('单层根链不应有问题分析条目');
   } finally {
     sandbox.window.getGraphState = prevGet;
     sandbox.window.saveGraphState = prevSave;

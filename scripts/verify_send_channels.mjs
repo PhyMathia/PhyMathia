@@ -125,6 +125,12 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(String(e && e.message || e)));
+    // T303 重生成预警（2026-10-13）给 force 重生成加了原生 confirm 门，headless
+    // 无 dialog handler 时默认 dismiss——通道⑤ runWorkflowNode(id,true) 被静默
+    // return，报错长得像「重生成 180 秒没反应」的假红。真机用户点是「确定」，
+    // handler 对齐这个语义（其余通道的产品路径不经 confirm，accept 不改变它们；
+    // 上次 9/9 全绿是 01f127b，早于 T303 落地）
+    page.on('dialog', d => d.accept());
     // 配好模型 + 跳过引导，否则发不出去（这正是硬规则 6 强调的那一点）
     // 参数传**对象**不传数组：playwright 的 addInitScript 会把数组实参再包一层，
     // 于是 `([model, slots]) => {}` 解出来 slots 是 undefined，模型静默配不上

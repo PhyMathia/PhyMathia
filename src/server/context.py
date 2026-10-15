@@ -926,14 +926,11 @@ def _workflow_context_parts(workflow_context) -> tuple:
     mode = workflow_context.get("mode") or ""
     target = workflow_context.get("target") or {}
     question = str(workflow_context.get("question") or "").strip()
-    analysis = str(workflow_context.get("analysis") or "").strip()
     requirements = str(workflow_context.get("requirements") or "").strip()
     upstream = workflow_context.get("upstream") or []
     shared_lines = ["\n\n# 工作流节点上下文"]
     if question:
         shared_lines.append(f"- 原始问题：{question[:1200]}")
-    if analysis:
-        shared_lines.append(f"- 隐藏问题分析（用于保持一致）：{analysis[:1200]}")
     # T263 喂料分路：目标配方声明具名输入口时（upstream 条目带 input_port），按口分组
     # 渲染；未声明保持旧平铺（逐条 - label：content），字节级不变
     recent_upstream = upstream[:8] if isinstance(upstream, list) else []

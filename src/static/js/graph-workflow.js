@@ -329,7 +329,6 @@ async function _generateCustomNode(node, nodeSignal) {
     await _recipeGenerateAnalysis(node, nodeSignal);
   }
   const workflowContext = _buildWorkflowContextForNode(node);
-  if (recipe && recipe.analysis_phase && node.analysis) workflowContext.analysis = node.analysis;
   const prompt = _workflowPromptForNode(node, workflowContext);
   const graphPath = _blankNodeGraphPath(node);
   const pathParent = graphPath[graphPath.length - 1];

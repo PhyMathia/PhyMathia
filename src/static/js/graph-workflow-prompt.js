@@ -247,29 +247,50 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
   return entry;
 }
 
-// T328：问题分析步的上下文。与模块步同款收全上游（A 全文），修掉「分析请求
-// 只带裸问题」——画布工作流问答不写会话消息表，后端 _recent_context_messages
-// 的历史兜底对纯画布会话也是空的，上游缺席时模型只能就着歧义记号猜领域。
-// 配方双阶段概要步（P2，analysis_phase）同源复用，target 由调用方给。
-function _buildAnalysisWorkflowContext(node, question, target) {
-  const allUpstream = _collectUpstreamPath(node);
-  // T331：追问来源卡若是「问题分析」卡则豁免 answer-filter——追问恰恰常针对
-  // 分析卡提，整条剔出的话 full 就落空、被追问内容缺席；豁免条目经
-  // _workflowUpstreamEntry 按 id 匹配 isSource，自动获 full＋大额度
-  const sourceId = _followupSourceNodeId(node);
-  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual) || String(item.id || '') === sourceId);
-  // T327 同款规范化：排序键与模块步一致，同一份上游集合任何时候拼出同串字节
-  upstream.sort(_workflowUpstreamCompare);
-  const questionNode = upstream.find(item => item.kind === 'user');
-  // T333b：链上最近的问题分析（反向遍历取第一个；必须排除目标自身——分析步的
-  // 目标自己就是 answer 且在 allUpstream 末尾，从尾找会撞上自己）。单层链没有
-  // 其他分析 → 空串，后端 shared 段 `if analysis:` 不渲染该行，字节与旧口径一致；
-  // 双层链补出直接父分析，第二层分析不再看不到第一层分析
-  let analysisNode = null;
-  for (let i = allUpstream.length - 1; i >= 0; i--) {
-    const item = allUpstream[i];
-    if (item && item.kind === 'answer' && !item.manual && item.id !== node.id) { analysisNode = item; break; }
+// T334 总纲·第二步形状统一（2026-10-15）：全仓唯一取材入口。总纲四句直读——
+// 从目标节点向前寻找到最近的问题节点（_followupSourceNodeId，含 junction/hub
+// 穿透）；问题前面那一颗实体祖先（来源卡，不看卡片类型）走 full 原文；其余
+// 全部实体祖先（含分析节点——「之前的为摘要」）走 800 字摘要；问题之前没有
+// 上游则没有来源卡、一览皆摘要（根链零 full 已核验）。分析步/模块步/配方步/
+// 内联四路消费同一形状：answer-filter 与 analysis 特殊字段退役（T331 豁免逻辑
+// 随 filter 一并消解——分析节点本来就是普通祖先），shared 段行序改为
+// question→upstream（cp context.py，test_prefix_stability 已重钉）。
+// 显式例外保留：配方声明 first_inbound 时走单链取材（配方作者的显式选择，
+// 总纲是默认行为）；问题节点多入边暂取边表第一条（真机出语义问题再拍板）。
+function _collectWorkflowContext(node, portMetaFor, typeLabels) {
+  const recipeAgg = node && node.recipeId && node.recipe ? node.recipe.aggregation : '';
+  let allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
+  // answer 目标剔自身：自己的上游不含自己（旧口径由 answer-filter 顺手剔掉，
+  // filter 退役后补成显式规则——分析节点按普通祖先摘要进 upstream（T333 统一
+  // 解法），但目标自己不是自己的祖先；answer 目标 analysis 为空时
+  // _nodeOutputContent 回退问题文本，不剔会问题文本进 shared 段两遍）。
+  // 模块/配方目标的自身条目保留——重生成时模型要看自己的旧文（T263 行为）
+  if (node && node.kind === 'answer' && !node.manual) {
+    const ownId = String(node.id || '');
+    allUpstream = allUpstream.filter(item => String(item.id || '') !== ownId);
   }
+  // T327 规范化排序：在原始条目上做——label/summary/content 三键经 entry 映射
+  // 后语义会变（来源条目 summary 置空、content 折叠截断），换序会动 T4 兄弟
+  // 共享前缀字节；同一份上游集合任何时候拼出同串字节
+  allUpstream.sort(_workflowUpstreamCompare);
+  const sourceId = _followupSourceNodeId(node);
+  const questionNode = allUpstream.find(item => item.kind === 'user');
+  return {
+    sourceId: sourceId,
+    question: questionNode ? questionNode.content : '',
+    // 来源卡 full＋6000，其余（含分析节点）800 摘要；映射逻辑见 _workflowUpstreamEntry
+    upstream: allUpstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor ? portMetaFor(item.toPort) : null, typeLabels || {})),
+  };
+}
+
+// T328：问题分析步的上下文。与模块步共用 _collectWorkflowContext 取材（分析请求
+// 带全上游，修掉「分析请求只带裸问题」——画布工作流问答不写会话消息表，后端
+// _recent_context_messages 的历史兜底对纯画布会话也是空的，上游缺席时模型只能
+// 就着歧义记号猜领域）。配方双阶段概要步（P2，analysis_phase）同源复用，
+// target 由调用方给。
+function _buildAnalysisWorkflowContext(node, question, target) {
+  // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」；
+  // 未声明（旧配方/旧快照）不设键，载荷形状与旧口径一致
   const declaredInputs = (node && node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   const portMetaFor = (toPort) => {
@@ -280,13 +301,15 @@ function _buildAnalysisWorkflowContext(node, question, target) {
     if (named) return { label: named.label, type: named.type || '' };
     return { label: '其他输入', type: '' };
   };
+  const collected = _collectWorkflowContext(node, portMetaFor, typeLabels);
   return {
     mode: 'analysis',
     target: target,
-    question: (question !== undefined && question !== null && question !== '') ? question : (questionNode ? questionNode.content : ''),
-    analysis: analysisNode ? analysisNode.analysis : '',
+    // 调用方给了 question 就用调用方的（追问模板与配方概要步自带问题文本）；
+    // 否则从上游链里找（统一取材函数已定位最近问题节点）
+    question: (question !== undefined && question !== null && question !== '') ? question : collected.question,
     requirements: (node && node.requirements) || '',
-    upstream: upstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor(item.toPort), typeLabels)),
+    upstream: collected.upstream,
   };
 }
 
@@ -312,25 +335,6 @@ function _buildWorkflowContextForNode(node) {
               : node.kind === 'relation'
                 ? { label: '知识联系' }
             : { label: '问题' };
-  // 配方单链取材（P2，aggregation: first_inbound＝空白节点式）：只沿第一条入边
-  // 回溯单父链，不收全祖先——多路汇聚的画布上节点只讲它直接挂着的那条线
-  const recipeAgg = node.recipeId && node.recipe ? node.recipe.aggregation : '';
-  const allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
-  // T331：追问来源卡豁免 answer-filter（来源若是分析卡也要进 upstream 拿 full）
-  const sourceId = _followupSourceNodeId(node);
-  // T333a：隐藏分析取「最近」的问题分析——反向遍历取第一个匹配（勿用 findLast，
-  // 防旧内核）。单层链唯一分析、结果与旧 find 一致（字节零变）；双层链修正为
-  // 直接父分析，不再错位回最早那层
-  let analysisNode = null;
-  for (let i = allUpstream.length - 1; i >= 0; i--) {
-    const item = allUpstream[i];
-    if (item && item.kind === 'answer' && !item.manual) { analysisNode = item; break; }
-  }
-  const upstream = allUpstream.filter(item => !(item.kind === 'answer' && !item.manual) || String(item.id || '') === sourceId);
-  // T327：规范化顺序——排序键是节点属性的稳定函数，与边插入序无关（见
-  // _workflowUpstreamCompare 注）；同一份上游集合永远拼出同一串上下文字节
-  upstream.sort(_workflowUpstreamCompare);
-  const questionNode = upstream.find(item => item.kind === 'user');
   // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」，
   // 结构化载荷与内联文本都按口分组；未声明（旧配方/旧快照）不设键，载荷形状与今日一致
   const declaredInputs = (node.recipeId && typeof _recipeInputPorts === 'function') ? _recipeInputPorts(node) : [];
@@ -343,15 +347,15 @@ function _buildWorkflowContextForNode(node) {
     if (named) return { label: named.label, type: named.type || '' };
     return { label: '其他输入', type: '' };
   };
-  // T328：追问来源卡（A）全文条目——与分析步同规则同额度，见
-  // _workflowUpstreamEntry 注；非来源条目字节与旧口径逐字节一致
+  // T328：追问来源卡（A）全文条目 full＋6000、其余祖先 800——规则见
+  // _workflowUpstreamEntry 注；分析节点（如有）随普通祖先摘要进 upstream
+  const collected = _collectWorkflowContext(node, portMetaFor, typeLabels);
   return {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
-    question: questionNode ? questionNode.content : '',
-    analysis: analysisNode ? analysisNode.analysis : '',
+    question: collected.question,
     mode: 'module',
     requirements: node.requirements || '',
-    upstream: upstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor(item.toPort), typeLabels)),
+    upstream: collected.upstream,
   };
 }
 
@@ -411,6 +415,10 @@ function _recipeWorkflowPrompt(node, recipe, workflowContext, targetLabel) {
     parts.push('只输出该节点正文，不要输出完整学习卡片的 XML 标签，不要重复其他模块内容。');
   }
   if (g.prompt) parts.push(g.prompt);
+  // T334 第二步：双阶段配方概要步产物（phase1 输出存节点自身 analysis 字段，
+  // 不在上游链里）——analysis 特殊键退役后改由 prompt 段承载，prompt_inline
+  // 与结构化两条通道都覆盖（graph-workflow.js 原注入点已删）
+  if (node.analysis) parts.push('问题分析（概要）：\n' + node.analysis);
   if (g.strict_output) parts.push(g.strict_output);
   if (inline) {
     parts.push('如出现公式仍按 <formula> 规范标注。\n\n' + (inline || '（暂无已连接的上游内容）'));
