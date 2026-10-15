@@ -1403,6 +1403,20 @@
   margin-top: 8px !important;
 }
 
+/* 取消键紧挨发送键（用户 2026-10-15 拍板）：.graph-draft-send 自带 margin-left:auto
+   会把取消顶到行最左；面板内收掉这口气，两颗键成对靠右。追问取材面板（.graph-draft-actions）
+   的「发送提问」仍靠 auto 独占右侧，不受影响 */
+.graph-regenerate-actions .graph-draft-send {
+  margin-left: 0 !important;
+}
+
+/* 带要求重生成面板开着的宿主节点抬到兄弟之上：画布节点按 DOM 顺序叠放，下游节点
+   会整卡压住面板按钮排（2026-10-15 真机实证，T336 遮挡同族）。20 压过兄弟节点
+   （无 z-index）又低于工具条/侧栏（--z-toolbar: 30 起） */
+.graph-node.graph-regen-open {
+  z-index: 20 !important;
+}
+
 .graph-regenerate-error {
   margin-top: 8px !important;
   color: var(--danger-fg);

@@ -1045,6 +1045,7 @@ function graphOpenRegenerate(nodeId) {
   const existing = el.querySelector('.graph-regenerate-panel');
   if (existing) {
     existing.remove();
+    el.classList.remove('graph-regen-open');
     _measureNodes();
     _updateNodeTransforms();
     return;
@@ -1055,13 +1056,17 @@ function graphOpenRegenerate(nodeId) {
   const warnHtml = downstreamCount
     ? '<div class="graph-regenerate-warn">该节点重新生成后，下游 ' + downstreamCount + ' 颗节点可能失效</div>'
     : '';
+  // 面板开着的宿主节点抬到兄弟节点之上：画布按 DOM 顺序叠放，下游节点常压住面板
+  // 按钮排（真机实证：物理视角的面板被正下方的数学视角整卡盖住，按钮点不到——
+  // T336 遮挡同族）。面板收起/节点重绘时随重建自然回落
+  el.classList.add('graph-regen-open');
   main.insertAdjacentHTML('beforeend',
     '<div class="graph-regenerate-panel">'
     + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里不满意，或想加点什么？可留空。例如：第三步跳步了 / 太啰嗦 / 换个比喻"></textarea>'
     + warnHtml
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'
-    + '<button class="graph-draft-btn graph-draft-send graph-icon-btn" onclick="submitRegenerateNode(\'' + nodeId + '\')" title="重新生成此节点">' + _regenIconHtml() + '</button>'
+    + '<button class="graph-draft-btn graph-draft-send graph-icon-btn" onclick="submitRegenerateNode(\'' + nodeId + '\')" title="重新生成此节点">' + _sendPlaneIconHtml() + '</button>'
     + '</div></div>'
   );
   _measureNodes();
@@ -1072,6 +1077,7 @@ function graphOpenRegenerate(nodeId) {
 function closeRegeneratePanel(nodeId) {
   const el = graphInner?.querySelector('[data-node-id="' + nodeId + '"]');
   el?.querySelector('.graph-regenerate-panel')?.remove();
+  el?.classList.remove('graph-regen-open');
   _measureNodes();
   _redrawEdges();
   _updateNodeTransforms();
@@ -1166,6 +1172,15 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     return runWorkflowNode(nodeId, true, false, null, true);
   }
   _regeneratingNodes.add(nodeId);
+  // 修订式也要进工作流忙态（2026-10-15 用户实证：徽标全程钉在「完成」，看不出在跑）：
+  // 置 busy 后重绘，徽标「完成→生成中」、按钮区「生成中...」，与留空直发同观感。
+  // 顺序照 _generateCustomNode 的老套路：先改账→快照→重绘（重绘从快照重建节点对象，
+  // 之后的账一律 _findGraphNode 重取）。重绘会把面板收走，用户写的要求已随 text 带走。
+  node.busy = true;
+  node.status = 'running';
+  if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+  if (typeof _refreshWorkflowNodeStatusUi === 'function') _refreshWorkflowNodeStatusUi(node);
+  else if (typeof renderGraphCanvas === 'function') renderGraphCanvas();
   const jobAbort = new AbortController();
   const taskId = (typeof _taskBeginNodeJob === 'function')
     ? _taskBeginNodeJob({ title: _regenNodeActionLabel(node), nodeId: nodeId, nodeKind: node.kind })
@@ -1187,6 +1202,15 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     done = true;
   } catch (err) {
     const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
+    // 忙账就地结清（与 _generateCustomNode 的 catch 同口径）：失败→「失败」徽标可重试；
+    // 中止→旧内容一字未动，回「完成」。重绘从快照重建，账必须读画布上活着的那个
+    const liveErr = _findGraphNode(nodeId);
+    if (liveErr) {
+      liveErr.busy = false;
+      liveErr.status = aborted ? 'done' : 'error';
+    }
+    if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+    if (typeof _refreshWorkflowNodeStatusUi === 'function') _refreshWorkflowNodeStatusUi(liveErr);
     if (taskId && typeof _taskFinish === 'function') {
       _taskFinish(taskId, aborted ? 'stopped' : 'error', aborted ? '已停止' : ((err && err.message) || '重新生成失败'));
     }
@@ -1254,12 +1278,19 @@ async function submitRegenerateNode(nodeId) {
     }
   } catch (err) {
     console.warn('Regenerate module failed:', err);
-    const errorEl = panel.querySelector('.graph-regenerate-error');
-    if (errorEl) errorEl.textContent = '重新生成失败：' + (err.message || err);
-    else panel.insertAdjacentHTML('beforeend', '<div class="graph-regenerate-error">重新生成失败：' + escapeHtml(err.message || String(err)) + '</div>');
-    buttons.forEach(btn => { btn.disabled = false; });
-    input.disabled = false;
-    panel.classList.remove('busy');
+    // 修订式（工作流节点）一开工就把节点刷进「生成中」忙态、面板随重绘收走——
+    // 此刻错误只剩 toast＋任务面板两条路；消息模块路不重绘，面板还挂着，照旧写回面板
+    if (panel.isConnected) {
+      const errorEl = panel.querySelector('.graph-regenerate-error');
+      if (errorEl) errorEl.textContent = '重新生成失败：' + (err.message || err);
+      else panel.insertAdjacentHTML('beforeend', '<div class="graph-regenerate-error">重新生成失败：' + escapeHtml(err.message || String(err)) + '</div>');
+      buttons.forEach(btn => { btn.disabled = false; });
+      input.disabled = false;
+      panel.classList.remove('busy');
+    } else if (typeof showToast === 'function') {
+      const aborted = err && err.name === 'AbortError';
+      showToast(aborted ? '已停止重新生成' : '重新生成失败：' + (err.message || String(err)));
+    }
   }
 }
 
