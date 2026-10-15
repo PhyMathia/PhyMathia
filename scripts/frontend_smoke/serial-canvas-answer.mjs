@@ -966,6 +966,42 @@ check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋rege
   }
 });
 
+// 静态契约（2026-10-15 T338）：播放三角「从头生成」——有内容工作流节点在循环箭头旁
+// 多一颗三角键：不开面板、不带当前内容，一键 runWorkflowNode 原管线整体重跑（＝重生成
+// 面板留空直发同一条通道）。变异验证：三角入口删掉、排到循环箭头前、误带 confirmed
+// 绕 T303 下游 confirm 闸，下面立刻红。
+check('播放三角「从头生成」：不带内容直跑原管线＋T303 下游闸不旁路（2026-10-15 T338）', () => {
+  const extract = (src, name) => {
+    const i = src.indexOf('function ' + name + '(');
+    if (i < 0) return null;
+    let depth = 0, started = false;
+    for (let j = src.indexOf('{', i); j < src.length; j++) {
+      if (src[j] === '{') { depth++; started = true; }
+      else if (src[j] === '}') { depth--; if (started && depth === 0) return src.slice(i, j); }
+    }
+    return null;
+  };
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const actionsBody = extract(grSrc, '_nodeActions');
+  if (actionsBody === null) throw new Error('找不到 _nodeActions——断言本身该更新了');
+  if (!actionsBody.includes("_iconPlayButton('runWorkflowNode(\\'' + node.id + '\\',true)'")) {
+    throw new Error('工作流节点丢了播放三角「从头生成」直跑入口（T338）');
+  }
+  // 三角必须排在循环箭头（面板入口）之后：_syncBlankNodeControls 取首个 .graph-regen-btn
+  // 重置标题，排前面会被误当宿主按钮
+  if (actionsBody.indexOf('_iconPlayButton') < actionsBody.indexOf("_iconRegenButton('graphOpenRegenerate")) {
+    throw new Error('播放三角排到了循环箭头之前——会被 _syncBlankNodeControls 误当宿主按钮');
+  }
+  // force=true 真重跑；confirmed 必须留缺省——有下游时 T303 confirm 闸照走，误传 true＝绕闸
+  if (actionsBody.includes("runWorkflowNode(\\'' + node.id + '\\',true,true)")
+      || actionsBody.includes("runWorkflowNode(\\'' + node.id + '\\',true,false,null,true)")) {
+    throw new Error('播放三角误带了 confirmed=true——绕过 T303 下游 confirm 闸');
+  }
+  if (!grSrc.includes('function _playIconHtml') || !grSrc.includes('function _iconPlayButton')) {
+    throw new Error('播放三角图标/按钮函数丢了（T338）');
+  }
+});
+
 // 静态契约（2026-10-11）：画布上的节点生成也走同一台队列，且生成中能切画布。
 // 用户原话：「我给他设置任务列表就是想要可以启动多个任务排队的，但是目前来看似乎还是
 // 无法实现，一个画布正在生成的时候不能切换画布，一些节点在生成的时候也不能继续开启新任务」。

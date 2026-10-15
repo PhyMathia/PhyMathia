@@ -73,6 +73,10 @@ function _nodeActions(node) {
     }
     return '<div class="graph-node-actions">'
       + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
+      // 播放三角（T338）：不带当前内容的「从头生成」，force=true 真重跑；confirmed 留缺省
+      // ＝有下游时照 T303 直接按钮路的 confirm 口径，无下游静默放行。排在循环箭头之后：
+      // _syncBlankNodeControls 按 .graph-regen-btn 取首个按钮重置标题，别让它捞到三角
+      + _iconPlayButton('runWorkflowNode(\'' + node.id + '\',true)', regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy)
       + '</div>';
   }
   if (node.kind === 'module' && node.moduleKey !== 'socratic') {
@@ -114,6 +118,18 @@ function _regenIconHtml() {
 // 节点头上的「重新生成」小按钮仍用 _regenIconHtml 的循环箭头（语义是刷新重来），两处不混用
 function _sendPlaneIconHtml() {
   return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+}
+
+// 播放三角（feather play，2026-10-15 用户拍板）：「从头生成」专用——不带节点当前内容、
+// 不开面板，一键直跑 runWorkflowNode 原管线整体重跑（＝重生成面板留空直发那条路）。
+// 与循环箭头分工：循环箭头＝开面板（留空直发/带字修订都在面板里），三角＝跳过面板直接从头跑。
+// 类名保留 graph-regen-btn：导出/只读查看器的按钮剥离清单按它匹配，三角必须一起剥
+function _playIconHtml() {
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+}
+
+function _iconPlayButton(onclick, title, disabled) {
+  return '<button class="graph-regen-btn graph-play-btn graph-icon-btn" onclick="' + onclick + '" title="' + escapeHtml(title) + '"' + (disabled ? ' disabled' : '') + '>' + _playIconHtml() + '</button>';
 }
 
 function _iconRegenButton(onclick, title, disabled) {

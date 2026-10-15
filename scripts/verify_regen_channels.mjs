@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // 一次性真发验证（2026-10-13 带要求重生成，硬规则 6）：mock 上游 + 临时数据目录 + 真机 UI。
-// 三条通道：
+// 四条通道：
 //   A 工作流节点带字修订：点「重新生成」→ 面板写字 → 发送（走 _applyWorkflowNodeRegenerate）
 //   B 工作流节点留空直发：面板不写字直接发（回 runWorkflowNode 原管线整体重跑）
 //   C 消息模块面板路：真发 _regenerateModuleContent（没看懂/带要求 prompt 泛化后的通道）
+//   D 播放三角「从头生成」（T338）：点节点上的三角键，不开面板、不带当前内容直跑原管线
 // 常驻：改重生成发送链后跑一次（硬规则 6）——node scripts/verify_regen_channels.mjs（约 2 分钟，用完即杀不碰 data/）
 import { fileURLToPath } from 'node:url';
 import { cpSync, mkdtempSync } from 'node:fs';
@@ -200,6 +201,39 @@ try {
     if (String(msg).includes('旧内容ABC')) throw new Error('模块替换没生效（仍含旧内容）');
     ok('通道 C 消息模块面板路（泛化 prompt）：真发 ✓（mock 第 ' + s1 + ' 次请求），旧模块已被替换');
   } catch (e) { bad('通道 C 消息模块面板路', e); }
+
+  // —— 通道 D：播放三角「从头生成」（T338）——不开面板、不带当前内容，一键原管线重跑
+  try {
+    const contentBeforeD = await physContent(physId);
+    const s0d = await stats();
+    // B 收尾可能还挂着流式尾巴：等三角键从忙态解锁再点（60s 兜底）
+    const dlEnable = Date.now() + 60000;
+    while (Date.now() < dlEnable) {
+      const enabled = await page.evaluate((nid) => {
+        const b = document.querySelector('[data-node-id="' + nid + '"] .graph-node-actions .graph-play-btn');
+        return !!b && !b.disabled;
+      }, physId);
+      if (enabled) break;
+      await wait(800);
+    }
+    // 有下游时 T303 confirm 会弹（直接按钮路口径）：Playwright 默认拒掉对话框＝点按被
+    // 静默取消，必须显式接受；无下游则这个监听空挂，无害
+    page.once('dialog', d => d.accept());
+    await page.evaluate((nid) => {
+      document.querySelector('[data-node-id="' + nid + '"] .graph-node-actions .graph-play-btn').click();
+    }, physId);
+    let contentD = '';
+    const dlD = Date.now() + 90000;
+    while (Date.now() < dlD) {
+      await wait(900);
+      const c = await physContent(physId);
+      if (c && c !== contentBeforeD) { contentD = c; break; }
+    }
+    const s1d = await stats();
+    if (!contentD) throw new Error('90s 内节点内容没有变化（按钮没找到 / confirm 被拒 / 发送链没跑）');
+    if (s1d <= s0d) throw new Error('mock 请求数没有增加——播放三角没真发');
+    ok('通道 D 播放三角「从头生成」：不带面板原管线重跑出新内容（mock 第 ' + s1d + ' 次请求），真发 ✓');
+  } catch (e) { bad('通道 D 播放三角「从头生成」', e); }
 
   if (pageErrors.length) console.log('!! 页面 JS 错误：' + pageErrors.slice(0, 3).join(' | '));
 } catch (e) {
