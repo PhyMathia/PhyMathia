@@ -311,7 +311,9 @@ function _nodeInputLabel(node) {
   if (node.kind === 'hub') return '汇聚输入';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '我的总结';
-  if (node.kind === 'user') return '任意输入';
+  // 问题节点（kind==='user'）的入口就是上游拖出来的那条「追问」连线——基础口
+  // 沿用出口同词（与 blank 出口「追问」一个口径），不再叫泛泛的「任意输入」
+  if (node.kind === 'user') return '追问';
   if (node.kind === 'source') return '文件输入';
   if (node.kind === 'knowledge') return '知识点来源';
   if (node.kind === 'relation') return '联系输入';

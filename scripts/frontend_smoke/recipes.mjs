@@ -1589,10 +1589,11 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
     if (html.includes('graph-port-label-blank')) throw new Error('已连线口不应再空白');
     if (!html.includes('>追问</span>')) throw new Error('连线后基本口「追问」仍应保持原名');
 
-    // 3. 连到匿名输入口（user 的任意输入）：继承标签文本、无类型徽标
+    // 3. 连到匿名输入口（user＝问题节点，基础口叫「追问」）：继承标签文本、无类型徽标
+    //    （继承词与 physics 基本口「追问」同词，故计 2 处：基本口＋继承来的附加口）
     setView([{ from: 'm1', fromPort: 'out-1', to: 'u1', toPort: 'in-0' }], { u1: userNode });
     html = String(sandbox._renderOutputPorts(moduleNode, [], state));
-    if (!html.includes('>任意输入</span>')) throw new Error('匿名输入口应回落其品类标签');
+    if (html.split('>追问</span>').length - 1 !== 2) throw new Error('匿名输出口应继承问题节点输入口的品类标签「追问」');
     if (html.includes('graph-port-type')) throw new Error('匿名输入口无类型，输出口不应挂徽标');
 
     // 4. 断开即回空白（不新增持久化字段，身份纯由连线派生）
@@ -1968,9 +1969,9 @@ check('附加输入口「待命名」态（2026-10-10 统一）：加出来的�
     const userNode = { id: 'u1', kind: 'user', branchType: 'followup', messageIndex: -1, timestamp: 4, isRoot: false };
     setView([{ from: 'm1', fromPort: 'out-1', to: 'u1', toPort: 'in-1' }], { m1: moduleNode, u1: userNode });
     html = String(sandbox._renderInputPorts(userNode, { portCounts: {}, inputPortCounts: { u1: 1 } }));
-    if (!html.includes('>任意输入</span>')) throw new Error('互连环路中的附加输入口应回落宿主品类标签（用户节点＝任意输入）');
+    if (html.split('>追问</span>').length - 1 !== 2) throw new Error('互连环路中的附加输入口应回落宿主品类标签（用户节点＝追问），匿名输出口随之继承');
     html = String(sandbox._renderOutputPorts(moduleNode, [], { portCounts: { m1: 2 }, inputPortCounts: {} }));
-    if (!html.includes('>任意输入</span>')) throw new Error('互连环路中的匿名输出口应继承输入口的回落标签');
+    if (html.split('>追问</span>').length - 1 !== 2) throw new Error('互连环路中的匿名输出口应继承输入口的回落标签（追问）');
 
     // 4b. 用户实测场景复现：summary 基础口 in-0 ＋ 附加口 in-1，两个匿名出口各接一口，
     //     两对都得有身份（基础口那对继承「AI 总结」，附加口那对回落宿主标签同值）
