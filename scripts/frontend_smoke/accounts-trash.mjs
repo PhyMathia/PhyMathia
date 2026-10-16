@@ -409,7 +409,7 @@ check('只读查阅：大陆六文件写点闸（localStorage 写跳过/提交�
   // ① localStorage 浏览痕迹：跳过落盘（读对方、写跳过）
   for (const [a, b, what] of [
     ['function _continentSaveCollapsed', 'function _continentToggleCollapse', '折叠清单'],
-    ['function _continentPersistView', 'function _continentToggleFullscreen', '视口保存'],
+    ['function _continentPersistView', 'function _continentBindViewport', '视口保存'],
   ]) {
     if (!between(a, b).includes('phyIsReadonly()')) throw new Error(what + '缺查阅态写跳过');
   }

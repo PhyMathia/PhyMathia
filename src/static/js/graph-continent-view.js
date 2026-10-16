@@ -175,24 +175,10 @@ function _continentPersistView() {
   } catch (e) { /* 存储不可用就只留在内存，不阻断 */ }
 }
 
-// T49：浏览器全屏切换（topbar「⤢ 全屏」）。continentLayer 整层提进 top layer，
-// 样式层有 .continent-layer:fullscreen 钉满视口；退出路径三条（按钮/Esc/F11）
-// 都走 fullscreenchange 统一同步按钮文案，不各自维护状态。
-// 2026-10-16 全屏普适化：进退改走 utils.js 共享把手（全局 F11 同用一套），
-// 本函数只管目标元素是大陆层。
-function _continentToggleFullscreen() {
-  const layer = document.getElementById('continentLayer');
-  if (!layer) return;
-  phyToggleBrowserFullscreen(layer);
-}
-
-function _continentSyncFullBtn() {
-  const btn = document.getElementById('continentFullBtn');
-  if (!btn) return;
-  const on = phyIsBrowserFullscreen();
-  btn.textContent = on ? '⤢ 退出全屏' : '⤢ 全屏';
-  btn.title = on ? '退出浏览器全屏（Esc 或 F11 也行）' : '浏览器全屏显示大陆（F11 或再点一次；Esc 退出）';
-}
+// 全屏（2026-10-16 二轮）：大陆私有的 ⤢ 按钮与元素全屏退役——层底透明是用户拍板
+// 的设计，元素全屏提进 top layer 后透明处露出的是浏览器黑 ::backdrop 而非壁纸
+// （真机即「一进全屏就黑屏」），全屏从此只走全局 F11 整页一条路（ui.js）。防止
+// 复发的「关图先退全屏」护栏仍在 closeContinentView 里。
 
 function _continentBindViewport(viewport) {
   if (!viewport || !viewport.addEventListener) return;

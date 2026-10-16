@@ -492,7 +492,7 @@ function _continentEnsureLayer() {
         // 位置本身带信息（相邻=有亲缘），两种画风改的只是视觉密度，不改谁挨着谁。
         '<button class="continent-tool is-quiet" id="continentStyleBtn" title="画风：有机（岛与卡在网格里各偏一点，有厚度）↔ 网格（整齐正交）。两种画风的亲缘排序完全相同，只改视觉">有机</button>' +
         '<button class="continent-tool is-quiet" id="continentFitBtn" title="手动适配：把整张大陆缩放到当前窗口内并居中（打开时自动适配之外的常驻手柄）">⌂ 适配</button>' +
-        '<button class="continent-tool is-quiet" id="continentFullBtn" title="浏览器全屏显示大陆（F11 或再点一次；Esc 退出）">⤢ 全屏</button>' +
+        // ⤢ 全屏钮 2026-10-16 退役：层底透明，元素全屏露黑 ::backdrop；全屏只走全局 F11（ui.js）
         '<button class="continent-tool is-quiet" id="continentGateBtn" hidden title="让 Φ 读卡片内容做领域归类（词面认不出的它来补；打开大陆本身不烧调用，点了才跑）">Φ 归类</button>' +
         '<button class="continent-tool is-quiet" id="continentRouteBtn" hidden title="航线的全局显示（总开关 / 透明度）；单条样式点线本身调">航线</button>' +
         '<button class="continent-tool is-quiet" id="continentFamilyBtn" title="概念族表（❖ 联运港与海域的证据来源）：可加族、改词条、删自定义族；也管归类纠正记录">族表</button>' +
@@ -559,17 +559,6 @@ function _continentEnsureLayer() {
       _continentFitView();
       _continentPersistView();
     });
-  }
-  const fullBtn = document.getElementById('continentFullBtn');
-  if (fullBtn && fullBtn.addEventListener) {
-    fullBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      _continentToggleFullscreen();
-    });
-    // 全屏态跟随（含用户按 Esc 退出的情形）；ensureLayer 只建一次层，监听不会重复挂
-    document.addEventListener('fullscreenchange', _continentSyncFullBtn);
-    document.addEventListener('webkitfullscreenchange', _continentSyncFullBtn);
-    _continentSyncFullBtn();
   }
   // v8：顶栏搜索（输入防抖；唯一命中回车直达——铁律「跳转不猜」的搜索版）
   const searchInput = document.getElementById('continentSearch');

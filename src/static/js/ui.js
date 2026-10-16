@@ -674,17 +674,15 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// F11 全屏（2026-10-16 普适化）：知识大陆开着全屏大陆层（与顶栏 ⤢ 同一把手，按钮
-// 文案同步仍走 fullscreenchange），否则全屏整页——可视化全屏/节点阅读层这些页内
-// 遮罩天然跟着整页走。preventDefault 接管浏览器原生 F11：原生那套目标不可控也不经
-// 应用，大陆按钮文案会失去同步。
+// F11 全屏（2026-10-16 普适化，同日二轮收敛）：只全屏整页——可视化全屏/节点阅读
+// 层这些页内遮罩天然跟着整页走。不给知识大陆层做元素全屏：层底透明（用户拍板的
+// 设计），提进 top layer 后透明处露出的是浏览器黑 ::backdrop 而非壁纸（真机即
+// 「一进全屏就黑屏」，大陆 ⤢ 按钮因此退役）。preventDefault 接管浏览器原生 F11。
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'F11') return;
   e.preventDefault();
   if (typeof phyToggleBrowserFullscreen !== 'function') return;
-  const continentLayer = document.getElementById('continentLayer');
-  if (continentLayer && !continentLayer.hidden) phyToggleBrowserFullscreen(continentLayer);
-  else phyToggleBrowserFullscreen(document.documentElement);
+  phyToggleBrowserFullscreen(document.documentElement);
 });
 
 // ====== 页面加载 ======

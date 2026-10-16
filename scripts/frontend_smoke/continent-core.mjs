@@ -1683,7 +1683,7 @@ check('graph-continent: 全屏共享把手行为（判态/进/退/切换，前�
   }
 });
 
-check('graph-continent: 全局 F11 全屏接线（大陆开着全屏大陆层，否则整页）', () => {
+check('graph-continent: 全局 F11 全屏接线（只全屏整页；透明层元素全屏露黑底，不许接大陆层）', () => {
   const start = code.indexOf('/* ui.js */');
   if (start < 0) throw new Error('app.js 缺 ui.js 块');
   let end = code.indexOf('/* ', start + 5);
@@ -1691,9 +1691,9 @@ check('graph-continent: 全局 F11 全屏接线（大陆开着全屏大陆层，
   const uiChunk = code.slice(start, end);
   if (uiChunk.indexOf('F11') < 0) throw new Error('ui.js 没挂全局 F11 全屏键');
   if (uiChunk.indexOf('phyToggleBrowserFullscreen') < 0) throw new Error('F11 没走 utils.js 共享把手');
-  if (uiChunk.indexOf('continentLayer') < 0) throw new Error('F11 没接「大陆开着全屏大陆层」的目标选择');
-  if (uiChunk.indexOf('documentElement') < 0) throw new Error('F11 缺整页兜底目标');
-  if (!/key!=="F11"|key!=='F11'|key\s*!==\s*'F11'/.test(uiChunk)) throw new Error('F11 键没有早退分流（其他按键会误入全屏分支）');
+  if (uiChunk.indexOf('documentElement') < 0) throw new Error('F11 缺整页目标');
+  if (uiChunk.indexOf('continentLayer') >= 0) throw new Error('F11 不得指向大陆层（层底透明，元素全屏露 ::backdrop 黑底）');
+  if (!/key\s*(===|!==)\s*["']F11["']/.test(uiChunk)) throw new Error('F11 键没有比较分流（其他按键会误入全屏分支）');
   if (uiChunk.indexOf('preventDefault') < 0) throw new Error('F11 必须 preventDefault 接管浏览器原生全屏');
   return true;
 });

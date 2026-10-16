@@ -35,11 +35,11 @@ export function run() {
     return true;
   });
 
-  qcheck('T49：大陆顶栏补「⌂ 适配 / ⤢ 全屏」手动手柄＋全屏态样式', () => {
+  qcheck('T49：大陆顶栏「⌂ 适配」手动手柄（⤢ 全屏钮 2026-10-16 退役：透明层元素全屏露黑底，全屏只留全局 F11 整页）', () => {
     if (!contSrc.includes('id="continentFitBtn"')) throw new Error('缺适配按钮');
-    if (!contSrc.includes('id="continentFullBtn"')) throw new Error('缺全屏按钮');
-    if (!contSrc.includes('_continentToggleFullscreen') || !contSrc.includes('_continentSyncFullBtn')) throw new Error('缺全屏切换/文案同步函数');
-    if (!panelsCss.includes('.continent-layer:fullscreen')) throw new Error('缺全屏态样式');
+    if (contSrc.includes('id="continentFullBtn"')) throw new Error('⤢ 全屏按钮应已删除（透明层元素全屏＝黑底，全屏只留 F11 整页）');
+    if (contSrc.includes('_continentToggleFullscreen') || contSrc.includes('_continentSyncFullBtn')) throw new Error('大陆私有全屏切换/文案同步函数应已删除');
+    if (panelsCss.includes('.continent-layer:fullscreen')) throw new Error('.continent-layer:fullscreen 应已删除（不再元素全屏）');
     return true;
   });
 
