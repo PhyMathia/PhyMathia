@@ -140,14 +140,63 @@ function closeHumanNoteNodeModal() {
 function saveHumanNoteNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node) return;
-  node.label = document.getElementById('humanNoteTitle')?.value?.trim() || '我的理解';
-  node.content = document.getElementById('humanNoteContent')?.value || '';
-  node.formula = document.getElementById('humanNoteFormula')?.value?.trim() || '';
+  const nextLabel = document.getElementById('humanNoteTitle')?.value?.trim() || '我的理解';
+  const nextContent = document.getElementById('humanNoteContent')?.value || '';
+  const nextFormula = document.getElementById('humanNoteFormula')?.value?.trim() || '';
+  // 内容编辑也要占一个撤销点：此前只有增删结构记历史，改写「我的理解」在历史面板与
+  // Ctrl+Z 里都是隐形的（2026-10-16 用户实测「编辑节点内容不进修改历史」）
+  if (nextLabel !== (node.label || '我的理解') || nextContent !== (node.content || '') || nextFormula !== (node.formula || '')) {
+    _pushGraphUndo(false, { source: 'user', summary: '人工编辑：我的理解' });
+  }
+  node.label = nextLabel;
+  node.content = nextContent;
+  node.formula = nextFormula;
   node.status = 'done';
   node.summary = node.content.slice(0, 120);
   _saveCustomNodes();
   closeHumanNoteNodeModal();
   renderGraphCanvas();
+}
+
+// ===== 人工编辑模块：代码围栏在编辑态剥掉、保存时按需补回 =====
+// viz（```html）与知识图谱（```mermaid）的围栏是渲染层分发到 iframe/SVG 的凭据
+// （render.js 认围栏＋完整标记才转），存储态必须留着；但对人是纯噪音——改 HTML 时误删
+// 一行反引号，保存后节点就退回代码块显示（白屏）。编辑框只给本体，围栏交给保存侧补。
+function _moduleFenceLang(node) {
+  if (!node) return '';
+  if (node.moduleKey === 'graph') return 'mermaid';
+  if (node.recipe && node.recipe.content_kind === 'mermaid') return 'mermaid';
+  if (node.moduleKey === 'viz') return 'html';
+  if (node.recipe && node.recipe.content_kind === 'html_iframe') return 'html';
+  return '';
+}
+
+// 剥掉「独占一行」的围栏标记（```html / ```mermaid / ```）：按行过滤，围栏内的 HTML 或
+// mermaid 源码即使自带反引号也不在行首，不会被误伤；围栏外的说明文字原样留着。
+function _stripModuleFence(text) {
+  const raw = String(text == null ? '' : text);
+  if (raw.indexOf('```') < 0) return raw.trim();
+  return raw.split(/\r?\n/)
+    .filter(function (line) { return !/^[ \t]*```[a-zA-Z0-9_+-]*[ \t]*$/.test(line); })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// 保存态还原：用户自己写了围栏就原样尊重；空内容或不像一页 HTML 的占位文案不加围栏；
+// 其余按载体语言补回，让渲染侧照旧认出这是代码块。
+function _restoreModuleFence(text, lang) {
+  const raw = String(text == null ? '' : text).trim();
+  if (!lang || !raw) return raw;
+  if (raw.indexOf('```') >= 0) return raw;
+  if (lang === 'html' && !/<html[\s>]|<!doctype|<body[\s>]/i.test(raw)) return raw;
+  return '```' + lang + '\n' + raw + '\n```';
+}
+
+// 编辑前后是否真有变化：围栏态统一剥掉再比（用户手动补回围栏不算改动）
+function _moduleTextChanged(before, after, fenceLang) {
+  if (!fenceLang) return String(before || '') !== String(after || '');
+  return _stripModuleFence(before) !== _stripModuleFence(after);
 }
 
 function editModuleNode(nodeId) {
@@ -156,13 +205,18 @@ function editModuleNode(nodeId) {
   closeModuleNodeModal();
   const messages = _getChatHistory();
   const msg = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
-  const current = node.messageIndex >= 0 ? _nodeContent(msg, node) : (node.content || '');
+  const fenceLang = _moduleFenceLang(node);
+  const stored = node.messageIndex >= 0 ? _nodeContent(msg, node) : (node.content || '');
+  const current = fenceLang ? _stripModuleFence(stored) : stored;
   const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || '模块';
+  const editLabel = fenceLang
+    ? (fenceLang === 'html' ? 'HTML 页面源码' : '图谱源码') + '（```' + fenceLang + ' 围栏保存时自动补回，不用手打）'
+    : '模块内容';
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';
   overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
     + '<div class="graph-network-modal-head"><span>人工编辑：' + escapeHtml(label) + '</span><button onclick="closeModuleNodeModal()" title="关闭">×</button></div>'
-    + '<label>模块内容</label>'
+    + '<label>' + escapeHtml(editLabel) + '</label>'
     + '<textarea id="moduleNodeContent" rows="8">' + escapeHtml(current) + '</textarea>'
     + '<div class="graph-network-modal-actions">'
     + '<button class="graph-network-modal-save" onclick="saveModuleNode(\'' + node.id + '\')">保存</button>'
@@ -183,17 +237,31 @@ function closeModuleNodeModal() {
 function saveModuleNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'module') return;
-  const content = document.getElementById('moduleNodeContent')?.value || '';
+  const fenceLang = _moduleFenceLang(node);
+  const content = fenceLang
+    ? _restoreModuleFence(document.getElementById('moduleNodeContent')?.value || '', fenceLang)
+    : (document.getElementById('moduleNodeContent')?.value || '');
+  const moduleLabel = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || '模块';
   if (node.messageIndex >= 0) {
     const messages = _getChatHistory();
     const msg = messages[node.messageIndex];
     if (!msg) return;
+    // 撤销点必须在改写 msg.content 之前记，且必须带 messages：这类模块的内容住在消息里、
+    // 图状态一字不动，只比 state 的快照会被判重吞掉（见 _pushGraphUndo 的同异比对）。
+    // 编辑前后逐字相同就不记——开编辑器直接按保存不该在历史里留一条空条目。
+    if (_moduleTextChanged(_nodeContent(msg, node), content, fenceLang)) {
+      _pushGraphUndo(true, { source: 'user', summary: '人工编辑：' + moduleLabel });
+    }
     msg.content = _replaceModuleSection(msg.content, node.moduleKey, content);
     if (typeof window.updateChatHistoryMessage === 'function') {
       window.updateChatHistoryMessage(String(msg.timestamp || ''), () => msg);
     }
     if (typeof window.saveCurrentSession === 'function') window.saveCurrentSession();
   } else {
+    // 自定义/配方模块：内容在 state.customNodes 里，状态变化本身就足以占一个版本
+    if (_moduleTextChanged(node.content, content, fenceLang)) {
+      _pushGraphUndo(false, { source: 'user', summary: '人工编辑：' + moduleLabel });
+    }
     node.content = content;
     node.status = 'done';
     node.summary = content.slice(0, 120);
@@ -373,6 +441,13 @@ function _notebookEditableKind(node) {
   return !!node && (node.kind === 'summary' || node.kind === 'note' || (node.kind === 'answer' && node.manual));
 }
 
+// 笔记本编辑的历史摘要：品类名＋用户刚起的标题，历史面板里认得出改的是哪一颗
+function _notebookEditLabel(node, nextTitle) {
+  const kindLabel = node.kind === 'summary' ? 'AI 总结' : node.kind === 'note' ? '我的总结' : '我的回答';
+  const title = String(nextTitle || node.title || '').trim();
+  return title ? kindLabel + '「' + title + '」' : kindLabel;
+}
+
 // 上游条目的显示名：与喂料标签同词表（graph-workflow-prompt.js），有标题用标题
 function _notebookSourceLabel(item) {
   if (item.kind === 'user') return '问题';
@@ -454,8 +529,15 @@ function saveCustomNodeContent(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0 || !_notebookEditableKind(node)) return;
   const titleBox = document.getElementById('customNodeTitleBox');
-  node.title = titleBox && titleBox.value ? String(titleBox.value).trim().slice(0, 24) : '';
-  node.content = document.getElementById('customNodeContentBox')?.value || '';
+  const nextTitle = titleBox && titleBox.value ? String(titleBox.value).trim().slice(0, 24) : '';
+  const nextContent = document.getElementById('customNodeContentBox')?.value || '';
+  // 笔记本模式（AI 总结/我的总结/我的回答）：内容编辑也要占一个撤销点，否则改写
+  // 在历史面板与 Ctrl+Z 里都看不见（2026-10-16 用户实测）
+  if (nextTitle !== (node.title || '') || nextContent !== (node.content || '')) {
+    _pushGraphUndo(false, { source: 'user', summary: '人工编辑：' + _notebookEditLabel(node, nextTitle) });
+  }
+  node.title = nextTitle;
+  node.content = nextContent;
   node.summary = _graphSummary(node.content);
   node.status = (node.content || '').trim() ? 'done' : 'waiting';
   // 人工改写后同步 inputHash 为当前值，避免「全部开始」因上游未变化而误判需要重新生成
@@ -470,7 +552,12 @@ function saveCustomNodeContent(nodeId) {
 function updateCustomNodeContent(nodeId, value) {
   const node = _findGraphNode(nodeId);
   if (!node || node.messageIndex >= 0) return;
-  node.content = String(value || '');
+  const next = String(value || '');
+  // 卡内 textarea 失焦即存：变了才记撤销点（没变时记了也会被同异比对吞掉）
+  if (next !== (node.content || '')) {
+    _pushGraphUndo(false, { source: 'user', summary: '编辑节点内容' });
+  }
+  node.content = next;
   node.summary = _graphSummary(node.content);
   const state = _graphState();
   state.customNodes = graphView.nodes

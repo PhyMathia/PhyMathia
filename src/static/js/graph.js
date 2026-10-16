@@ -547,10 +547,20 @@ function _pushGraphUndo(withMessages, meta) {
     graphUndoStack = [];
     graphRedoStack = [];
   }
+  // 同异比对要连 messages 一起看。messageIndex≥0 的模块节点编辑只写回 msg.content、
+  // 图状态一字未动，此前只比 state，整次编辑被判重吞掉——历史面板看不到条目、Ctrl+Z
+  // 也恢复不了（2026-10-16 用户实测「编辑节点内容不进修改历史」）。反向同样成立：
+  // 消息编辑之后紧接一次状态编辑（推送发生在变更前，两者 state 同为变更前那份），只看
+  // state 会把后者也吞掉。带 messages 的快照与不带的之间按「不可证同」处理（持久化
+  // 不进 messages，从 localStorage 读回的旧条目是 undefined），宁多记不漏记。
+  const messagesSame = !last || last.sessionId !== snapshot.sessionId
+    || JSON.stringify(last.messages || null) === JSON.stringify(snapshot.messages || null);
+  const stateSame = !!last && last.sessionId === snapshot.sessionId
+    && JSON.stringify(last.state) === JSON.stringify(snapshot.state);
   if (last && last.sessionId === snapshot.sessionId) {
-    if (JSON.stringify(last.state) === JSON.stringify(snapshot.state)) return;
+    if (stateSame && messagesSame) return;
     const diff = _diffGraphStates(last.state, snapshot.state);
-    if (diff.layoutOnly) {
+    if (diff.layoutOnly && messagesSame) {
       // 布局变化不占版本：直接忽略，保持栈顶为“上次编辑前”的完整快照
       return;
     }
@@ -565,8 +575,14 @@ function _pushGraphUndo(withMessages, meta) {
   if (!summary) {
     if (last) {
       const diff = _diffGraphStates(last.state, snapshot.state);
-      summary = diff.summary;
-      source = diff.layoutOnly ? "user" : source;
+      if (!messagesSame && !diff.ops.length && meta && meta.summary) {
+        // 纯消息编辑（图状态一字未动，state diff 一个 op 都没有）：摘要只能取自调用点，
+        // 否则条目挂一句「修改了图」，用户在历史面板里看不出改了什么
+        summary = String(meta.summary);
+      } else {
+        summary = diff.summary;
+        source = diff.layoutOnly ? "user" : source;
+      }
     } else {
       summary = "初始状态";
       source = "init";

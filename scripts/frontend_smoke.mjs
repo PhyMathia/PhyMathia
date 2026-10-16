@@ -36,6 +36,7 @@
 //   storage-lru             本机会话缓存 LRU（T348：保留窗口＝当前＋最近 N；T342 删除回收 history 键）
 //   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
 //   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
+//   graph-edit-history      人工编辑节点内容进撤销历史＋viz/mermaid 围栏编辑态往返（2026-10-16）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -67,6 +68,7 @@ import { run as _storage_fetch } from './frontend_smoke/storage-fetch.mjs';
 import { run as _storage_lru } from './frontend_smoke/storage-lru.mjs';
 import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
+import { run as _graph_edit_history } from './frontend_smoke/graph-edit-history.mjs';
 
 _recipes();
 _phi();
@@ -98,4 +100,5 @@ _storage_fetch();
 await _storage_lru();
 await _graph_busy_sweep();
 await _graph_mirror_slim();
+await _graph_edit_history();
 await finish();
