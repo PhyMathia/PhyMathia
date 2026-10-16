@@ -1428,6 +1428,18 @@ def _socratic_state_instruction(ref: str, mode: str = "answer",
                                account: str = DEFAULT_ACCOUNT) -> str:
     state = _read_socratic_state(ref, account)
     if not state:
+        # T351：无进行中闭环时（首卡第一次点提示/讲解）也不能整体丢模式指令——
+        # 丢了 AI 就退回「按闭环规则只推进一层」口径，用户要的提示/讲解一场空。
+        if mode == "hint":
+            return (
+                "用户请求【提示】：只给出最小提示，不要展开完整讲解、不要直接给答案；"
+                "然后再次用带难度前缀的问题请其重试（本次回复不输出 <socratic_meta>）。"
+            )
+        if mode == "explain":
+            return (
+                "用户请求【讲解】：直接给出完整讲解与小结，末尾输出 "
+                "<socratic_meta correct=\"partial\" done=\"true\" /> 结束追问。"
+            )
         return ""
     level = state.get("level", "") or "basic"
     streak = int(state.get("correctStreak", 0) or 0)

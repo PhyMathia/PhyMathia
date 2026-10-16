@@ -15,7 +15,6 @@ const _vizStore={},_vizSlotKeys={},_vizContentIndex={},_vizHashOfId={},_vizLastU
       <div class="socratic-question">${escapeHtml(u)}</div>
       <div class="socratic-actions">
         <button class="socratic-btn socratic-answer level-${d}" type="button" data-socratic-answer="${p}" data-socratic-level="${d}" data-parent-msg="${n}" data-socratic-source="${o}">我来回答</button>
-        <button class="socratic-btn socratic-ask level-${d}" type="button" data-send="${p}" data-parent-msg="${n}" data-source-module="${o}" data-branch-type="continue" data-branch-label="${_escapeAttr("直接问AI："+u)}">直接问AI</button>
         <button class="socratic-btn socratic-hint level-${d}" type="button" data-socratic-hint="${p}" data-socratic-level="${d}" data-parent-msg="${n}" data-socratic-source="${o}">给点提示</button>
         <button class="socratic-btn socratic-explain level-${d}" type="button" data-socratic-explain="${p}" data-socratic-level="${d}" data-parent-msg="${n}" data-socratic-source="${o}">看讲解</button>
       </div>

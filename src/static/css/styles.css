@@ -2584,14 +2584,12 @@
     .socratic-actions .socratic-btn {
       flex: 1 1 auto;
     }
-    .socratic-answer,
-    .socratic-ask {
+    .socratic-answer {
       background: var(--socratic-bg);
       border-color: var(--socratic-border);
       color: var(--text-primary);
     }
-    .socratic-answer:hover,
-    .socratic-ask:hover {
+    .socratic-answer:hover {
       background: var(--hover-bg2);
       border-color: var(--accent);
       color: var(--text-primary);

@@ -1785,9 +1785,10 @@ check('sq 派生追问节点渲染：与手建苏格拉底追问节点同款（m
     if (!html.includes('graph-attr-socratic')) throw new Error('缺苏格拉底属性色');
     if (!html.includes('socratic-item')) throw new Error('缺问题列表');
     if (!html.includes('data-parent-msg="999"')) throw new Error('按钮 parent 应指向反馈消息');
-    for (const t of ['我来回答', '直接问AI', '给点提示', '看讲解']) {
+    for (const t of ['我来回答', '给点提示', '看讲解']) {
       if (!html.includes(t)) throw new Error('缺按钮 ' + t);
     }
+    if (html.includes('直接问AI')) throw new Error('T350：卡片不应再出直接问AI（合入看讲解）');
     if (!html.includes('status-done') || !html.includes('完成')) throw new Error('缺完成徽章');
     if (!html.includes('graph-node-edit-toggle') || !html.includes('graph-node-delete-toggle')) throw new Error('缺编辑/删除钮（自定义节点原生能力）');
     if (!html.includes('问题1')) throw new Error('缺问题输出端口');
