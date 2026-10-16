@@ -15,8 +15,26 @@ function _scheduleGraphSync() {
   _graphSyncTimer = setTimeout(() => {
     _graphSyncTimer = null;
     if (typeof _measureNodes === 'function') _measureNodes();
-    if (typeof _updateNodeTransforms === 'function') _updateNodeTransforms();
-    if (typeof _redrawEdges === 'function') _redrawEdges();
+    // 谁真的动了：写同一个 transform 字符串的节点不算（绝大多数节点每拍都是白写）
+    const moved = (typeof _updateNodeTransforms === 'function') ? _updateNodeTransforms() : null;
+    // 2026-10-16：这一拍原先无条件 `_redrawEdges()`——把整层 <path> 拆掉重铺。真流式
+    // 期间实测每秒 2~3 次（SVG 子树每秒 30+ 次增删、每秒重建 13 个边元素），正是
+    // 「重新生成节点时边框与连线快速闪动」的机器侧来源：整层失效 + 边光晕滤镜重新
+    // 光栅化，机器越快越看不出来，Windows/Edge 上就是可见的闪。
+    // 现在走拖拽/缩放同款的增量路径：只有真动了的节点所连的边改 d。
+    // 两道闸保证不丢结构：①层签名对不上（新边/删边/换画布）→ 整层重建；②快速路径
+    // 自己返回 false（边元素缺失/曲线编辑中）→ 整层重建。
+    const layerStale = (typeof _edgeLayerSigOk === 'function') && !_edgeLayerSigOk();
+    if (layerStale) {
+      if (typeof _redrawEdges === 'function') _redrawEdges();
+      return;
+    }
+    if (!moved || !moved.length) return;
+    const keys = (typeof _edgesTouchingNodeIds === 'function') ? _edgesTouchingNodeIds(moved) : null;
+    if (!keys || !keys.length) return;
+    if (typeof _refreshEdgeGeometry !== 'function' || !_refreshEdgeGeometry(keys)) {
+      if (typeof _redrawEdges === 'function') _redrawEdges();
+    }
   }, 150);
 }
 

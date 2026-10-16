@@ -1354,16 +1354,24 @@ function _graphPortEl(nodeId, portId) {
 }
 
 function _updateNodeTransforms(onlyIds) {
-  if (!graphInner) return;
+  if (!graphInner) return [];
   // onlyIds：拖拽时只写被拖节点的 transform（省掉全量 querySelector+写）；
   // 不传保持旧行为全量刷新（renderGraphCanvas、撤销等路径用）。
   const ids = (onlyIds && onlyIds.length) ? onlyIds : null;
   const list = ids || graphView.nodes.map(node => node.id);
+  // 返回「transform 真的变了」的节点 id（2026-10-16）：流式同步只拿它去刷新相连的边，
+  // 不再整层重建 SVG。写同一个字符串不算变（浏览器序列化一致）——绝大多数节点每拍都白写一次。
+  const moved = [];
   for (const id of list) {
     const node = graphView.nodeById[id];
     const el = _graphNodeEl(id);
-    if (node && el) el.style.transform = 'translate(' + (node.x - (node.w || 0) / 2) + 'px, ' + (node.y - (node.h || 0) / 2) + 'px)';
+    if (!node || !el) continue;
+    const next = 'translate(' + (node.x - (node.w || 0) / 2) + 'px, ' + (node.y - (node.h || 0) / 2) + 'px)';
+    if (el.style.transform === next) continue;
+    el.style.transform = next;
+    moved.push(id);
   }
+  return moved;
 }
 
 // 复合缩放：graphInner 自身 scale(zoom) 之外还有祖先变换——大陆下钻转场把
@@ -1530,6 +1538,22 @@ function _redrawEdges() {
   const cache = _graphElCache();
   if (cache) cache.edges.clear();
   _linkDragPathEl = null;
+  // 这层是按「此刻的边表」铺的：签名留在层元素上，增量刷新前先对一次（见 _edgeLayerSigOk）
+  try { graphEdgeLayer.setAttribute('data-edge-sig', _edgeTableSig()); } catch (e) {}
+}
+
+// ===== 边的增量刷新与整层重建之间的仲裁（2026-10-16）=====
+// `_refreshEdgeGeometry` 只改已有 <path> 的 d，不校结构：边表变了（新边/删边/换层/换画布）
+// 它照样「改完就返回 true」，缺的边不会自己长出来。所以给它配一道签名闸：
+// 整层重建时把当时的边表签名写在层元素上，增量前比对，对不上就退回 `_redrawEdges()`。
+// 用元素属性而不是模块变量：全量重建会换掉整个 <svg>，新元素天然没有签名＝自动失效。
+function _edgeTableSig() {
+  return (graphView.edges || []).map(_edgeKey).join('|');
+}
+
+function _edgeLayerSigOk() {
+  if (!graphEdgeLayer) return false;
+  try { return graphEdgeLayer.getAttribute('data-edge-sig') === _edgeTableSig(); } catch (e) { return false; }
 }
 
 // ===== 拖拽快速路径：只改被涉及边的 d/标签位置，不重建 SVG 子树 =====
