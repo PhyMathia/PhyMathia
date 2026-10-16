@@ -708,4 +708,95 @@ check('graph-poster: 导出接线（菜单海报段 + 主包/查看器双注册�
   }
   return true;
 });
+
+// ===== 分组 × 自动整理：成员归属稳定性（2026-10-16 用户实测「多次整理后节点莫名进出组」）=====
+check('canvas 分组: 多次自动整理成员不漂移（不吞人不掉组）且组框随整理落档', () => {
+  const run = (js) => vm.runInContext(js, sandbox);
+  // 存档打桩：沙箱无真 DOM、session.js 初始化没跑，现搭一个最小存储让 _graphState 可用
+  const realGet = sandbox.window.getGraphState;
+  const realSave = sandbox.window.saveGraphState;
+  const realSid = sandbox.window.getCurrentSessionId;
+  const snapshot = run(`JSON.stringify({
+    nodes: graphView.nodes, edges: graphView.edges, groups: graphView.groups,
+    nodeById: graphView.nodeById, selectedNodeIds: [...graphView.selectedNodeIds],
+    selectedGroupIds: [...graphView.selectedGroupIds],
+  })`);
+  try {
+    run(`
+      window.__grpStore = {};
+      window.getCurrentSessionId = () => 'smoke-grp';
+      window.getGraphState = (sid) => {
+        if (!window.__grpStore[sid]) window.__grpStore[sid] = _normalizeGraphState(null);
+        return { ...window.__grpStore[sid] };
+      };
+      window.saveGraphState = (sid, state) => { window.__grpStore[sid] = state; };
+      graphView.nodes = []; graphView.edges = []; graphView.groups = [];
+      graphView.nodeById = {}; graphView.selectedNodeIds = new Set(); graphView.selectedGroupIds = new Set();
+      const mk = (id, kind, x, y, w, h, ts) => {
+        const n = { id, kind, label: id, x, y, w, h, timestamp: ts, depth: 0, isRoot: false };
+        graphView.nodes.push(n); graphView.nodeById[id] = n; return n;
+      };
+      const root = mk('q', 'question', 0, 0, 300, 140, 't0'); root.isRoot = true;
+      for (let i = 0; i < 4; i++) {
+        const pfx = 'm' + i;
+        const n = mk(pfx, 'physics', 700, (i - 1.5) * 1100, 340, 220, 't' + i); n.depth = 1;
+        graphView.edges.push({ from: 'q', to: pfx, type: 'primary' });
+        for (let k = 0; k < 5; k++) {
+          const c = mk(pfx + '-f' + k, 'followup', 1400 + (k % 2) * 120, (i - 1.5) * 1100 + (k - 2) * 330, 240, 160, 't' + pfx + k);
+          c.depth = 2; graphView.edges.push({ from: pfx, to: c.id, type: 'primary' });
+        }
+      }
+      // 用户只框了 m0 与它的前两颗追问；同列 m0-f2/m0-f3 仍应是自由节点
+      const ids = ['m0', 'm0-f0', 'm0-f1'];
+      const b = _graphGroupBounds(ids);
+      graphView.groups = [{ id: 'grp', name: 'g1', color: 'c', nodeIds: ids, x: b.x, y: b.y, width: b.width, height: b.height }];
+      _saveGraphState(Object.assign(_graphState(), { groups: graphView.groups.map(g => ({ ...g })) }));
+    `);
+    const seq = [];
+    for (let round = 0; round < 3; round++) {
+      run('autoArrangeGraph()');
+      seq.push(run('JSON.stringify(graphView.groups[0].nodeIds)'));
+      // 整理后的组框/成员必须落档：重渲（renderGraphCanvas:149）按存档重建 graphView.groups，
+      // 只存 positions 会把整理前的旧框当现役框，成员随即被整批置换
+      const saved = JSON.parse(run('JSON.stringify((_graphState().groups || [])[0] || null)'));
+      const live = JSON.parse(run('JSON.stringify(graphView.groups[0])'));
+      if (!saved) throw new Error('整理后存档里没有分组');
+      if (saved.x !== live.x || saved.y !== live.y || saved.width !== live.width || saved.height !== live.height
+        || JSON.stringify(saved.nodeIds) !== JSON.stringify(live.nodeIds)) {
+        throw new Error('整理后的组框/成员没落档：存档 ' + JSON.stringify(saved) + ' vs 实际 ' + JSON.stringify(live));
+      }
+      // 成员必须整块留在组框内（整理把成员当原子块搬）
+      const escaped = JSON.parse(run(`JSON.stringify(graphView.groups[0].nodeIds.filter(id => {
+        const n = graphView.nodes.find(x => x.id === id);
+        const g = graphView.groups[0];
+        return !(n.x - n.w / 2 >= g.x - 0.01 && n.y - n.h / 2 >= g.y - 0.01
+          && n.x + n.w / 2 <= g.x + g.width + 0.01 && n.y + n.h / 2 <= g.y + g.height + 0.01);
+      }))`));
+      if (escaped.length) throw new Error('成员被整理搬出组框：' + JSON.stringify(escaped));
+      // 模拟一次重渲：按存档重建 + _measureNodes 收尾的包含同步
+      run(`graphView.groups = (_graphState().groups || []).map(g => ({...g}))`);
+      run('_syncGroupMembersByContainment()');
+    }
+    if (!(seq[0] === seq[1] && seq[1] === seq[2])) {
+      throw new Error('成员随整理次数漂移：' + seq.join(' → '));
+    }
+    if (seq[0] !== '["m0","m0-f0","m0-f1"]') {
+      throw new Error('分组吞入了用户没框选的节点（同列兄弟被静默吸进组）：' + seq[0]);
+    }
+    return true;
+  } finally {
+    const prev = JSON.parse(snapshot);
+    run(`graphView.nodes = ${JSON.stringify(prev.nodes.filter(Boolean))};`);
+    run(`graphView.edges = ${JSON.stringify(prev.edges)};`);
+    run(`graphView.groups = ${JSON.stringify(prev.groups)};`);
+    run(`graphView.nodeById = ${JSON.stringify(prev.nodeById || {})};`);
+    run(`graphView.selectedNodeIds = new Set(${JSON.stringify(prev.selectedNodeIds || [])});`);
+    run(`graphView.selectedGroupIds = new Set(${JSON.stringify(prev.selectedGroupIds || [])});`);
+    run('delete window.__grpStore;');
+    sandbox.window.getGraphState = realGet;
+    sandbox.window.saveGraphState = realSave;
+    sandbox.window.getCurrentSessionId = realSid;
+  }
+});
 }
+

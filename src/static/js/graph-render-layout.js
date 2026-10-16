@@ -408,6 +408,10 @@ function autoArrangeGraph(preservePinned) {
   state.layoutVersion = LAYOUT_VERSION;
   state.positions = {};
   state.pinned = {};
+  // 组框必须跟着整理落档：重渲（renderGraphCanvas:149）是按存档重建 graphView.groups 的，
+  // 只存 positions 会把整理前的旧框当现役框，下一次 _measureNodes 按旧框算成员归属，
+  // 成员被整批踢出、旧框里碰巧在的自由节点被整批吞进（2026-10-16 实测复现）。
+  state.groups = graphView.groups.map(group => ({ ...group }));
   graphView.nodes.forEach(node => {
     if (node.kind === 'draft') return;
     state.positions[node.id] = { x: node.x, y: node.y };

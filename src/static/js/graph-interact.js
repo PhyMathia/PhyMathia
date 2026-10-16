@@ -2041,6 +2041,17 @@ function _endPointerDrag(event) {
     if (dropGroupEl && !event.target.closest('.graph-group input, .graph-group button')) {
       droppedIntoGroup = _addNodeIdsToGroup(dropGroupEl.dataset.groupId, Object.keys(graphView.dragStartPositions || {}));
     }
+    if (!droppedIntoGroup) {
+      // 组框画在节点 DOM 之下，落在组框内的节点身上时 event.target 是那颗节点而不是组框，
+      // 上面那条 closest('.graph-group') 抓不到。按落点节点是否完整落进组框矩形补一次
+      // 显式加入——只认拖拽松手这一下，不按包含关系自动改成员（见 _syncGroupMembersByContainment）。
+      const draggedIds = Object.keys(graphView.dragStartPositions || {});
+      const hitGroup = (graphView.groups || []).find(group => draggedIds.some(id => {
+        const node = _findGraphNode(id);
+        return !!node && _isNodeFullyInsideGroup(node, group);
+      }));
+      if (hitGroup) droppedIntoGroup = _addNodeIdsToGroup(hitGroup.id, draggedIds);
+    }
     graphInner?.querySelectorAll('.graph-node.dragging').forEach(el => el.classList.remove('dragging'));
     graphView.dragNodeId = null;
     graphView.dragStartPositions = {};

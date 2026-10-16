@@ -993,9 +993,14 @@ function _syncGroupMembersByContainment() {
       _fitGroupToMembers(normalized);
       changed = true;
     }
-    const containedIds = graphView.nodes
-      .filter(node => _isNodeFullyInsideGroup(node, normalized))
-      .map(node => node.id);
+    // 只按包含关系「减」成员，绝不「加」：组框是成员包围盒＋内边距，同列兄弟节点
+    // 天生落在框内（追问是一列竖排的），按包含关系加人会把用户没框选的节点静默吞进组，
+    // 下一次自动整理就跟着整组一起被搬走——实测「点几次整理后节点莫名进组」就是这么来的。
+    // 入组只认显式操作：新建分组、组框上的「＋」、拖拽落点（graph-interact.js _endPointerDrag）。
+    const containedIds = nextIds.filter(id => {
+      const node = validIds.has(id) ? graphView.nodes.find(item => item.id === id) : null;
+      return !!node && _isNodeFullyInsideGroup(node, normalized);
+    });
     if (containedIds.length !== nextIds.length) changed = true;
     normalized.nodeIds = containedIds;
     return normalized;
