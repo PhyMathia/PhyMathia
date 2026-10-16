@@ -210,7 +210,7 @@ function editModuleNode(nodeId) {
   const current = fenceLang ? _stripModuleFence(stored) : stored;
   const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || '模块';
   const editLabel = fenceLang
-    ? (fenceLang === 'html' ? 'HTML 页面源码' : '图谱源码') + '（```' + fenceLang + ' 围栏保存时自动补回，不用手打）'
+    ? (fenceLang === 'html' ? 'HTML 页面源码' : '图谱源码')
     : '模块内容';
   const overlay = document.createElement('div');
   overlay.className = 'graph-network-modal-overlay';

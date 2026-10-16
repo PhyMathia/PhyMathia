@@ -87,7 +87,7 @@ export async function run() {
       const html = String(runCtx('moduleNodeModalOverlay.innerHTML'));
       if (/```/.test(html.split('rows="8">')[1] || '')) throw new Error('编辑框预填仍带 ``` 围栏');
       if (!html.includes(FULL_HTML)) throw new Error('编辑框预填丢了 HTML 本体');
-      if (!/围栏保存时自动补回/.test(html)) throw new Error('编辑框缺围栏自动补回提示');
+      if (/围栏保存时自动补回/.test(html)) throw new Error('编辑框不应再带围栏自动补回提示');
       sandbox.__fx.field({ moduleNodeContent: FULL_HTML.replace('hello viz', 'hello viz v2') });
       sandbox.saveModuleNode('viz1');
       if (!/```html[\s\S]*?```/.test(sandbox.__fx.chat()[1].content)) throw new Error('保存后没补回 ```html 围栏');
