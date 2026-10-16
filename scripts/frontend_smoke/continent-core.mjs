@@ -1645,6 +1645,101 @@ check('graph-continent: 开合冒烟（幂等 + 全程不写存储键）', async
   return true;
 });
 
+// ===== 全屏普适化（2026-10-16）：共享把手行为 + F11 接线 + 关图先退全屏 =====
+
+check('graph-continent: 全屏共享把手行为（判态/进/退/切换，前缀缺失不炸）', () => {
+  for (const fn of ['phyBrowserFullscreenTarget', 'phyIsBrowserFullscreen', 'phyRequestBrowserFullscreen', 'phyExitBrowserFullscreen', 'phyToggleBrowserFullscreen']) {
+    if (typeof sandbox[fn] !== 'function') throw new Error('utils.js 全屏共享把手未暴露: ' + fn);
+  }
+  const origFs = sandbox.document.fullscreenElement;
+  const origWFs = sandbox.document.webkitFullscreenElement;
+  const origExit = sandbox.document.exitFullscreen;
+  let exitCalled = 0, reqOn = null;
+  const el = { requestFullscreen: () => { reqOn = el; return { catch() {} }; } };
+  try {
+    // 关态：两个全屏指针都显式钉 null（沙箱 loose 代理未设属性时读出来是真值）
+    sandbox.document.fullscreenElement = null;
+    sandbox.document.webkitFullscreenElement = null;
+    if (sandbox.phyIsBrowserFullscreen()) throw new Error('无全屏指针时判了全屏态');
+    if (sandbox.phyBrowserFullscreenTarget() !== null) throw new Error('无全屏指针时目标不是 null');
+    sandbox.phyToggleBrowserFullscreen(el);
+    if (reqOn !== el) throw new Error('关态切换没向目标元素要全屏');
+    // 开态：切换应走退出而不是再要全屏
+    sandbox.document.fullscreenElement = el;
+    sandbox.document.exitFullscreen = () => { exitCalled++; return { catch() {} }; };
+    if (!sandbox.phyIsBrowserFullscreen()) throw new Error('有全屏指针时没判全屏态');
+    sandbox.phyToggleBrowserFullscreen(el);
+    if (exitCalled !== 1) throw new Error('开态切换没退全屏');
+    // 前缀缺失不炸：全屏 API 全无的元素与文档都调一遍
+    sandbox.document.fullscreenElement = null;
+    sandbox.document.exitFullscreen = undefined;
+    sandbox.phyToggleBrowserFullscreen({});
+    sandbox.phyExitBrowserFullscreen();
+    return true;
+  } finally {
+    sandbox.document.fullscreenElement = origFs;
+    sandbox.document.webkitFullscreenElement = origWFs;
+    sandbox.document.exitFullscreen = origExit;
+  }
+});
+
+check('graph-continent: 全局 F11 全屏接线（大陆开着全屏大陆层，否则整页）', () => {
+  const start = code.indexOf('/* ui.js */');
+  if (start < 0) throw new Error('app.js 缺 ui.js 块');
+  let end = code.indexOf('/* ', start + 5);
+  if (end < 0) end = code.length;
+  const uiChunk = code.slice(start, end);
+  if (uiChunk.indexOf('F11') < 0) throw new Error('ui.js 没挂全局 F11 全屏键');
+  if (uiChunk.indexOf('phyToggleBrowserFullscreen') < 0) throw new Error('F11 没走 utils.js 共享把手');
+  if (uiChunk.indexOf('continentLayer') < 0) throw new Error('F11 没接「大陆开着全屏大陆层」的目标选择');
+  if (uiChunk.indexOf('documentElement') < 0) throw new Error('F11 缺整页兜底目标');
+  if (!/key!=="F11"|key!=='F11'|key\s*!==\s*'F11'/.test(uiChunk)) throw new Error('F11 键没有早退分流（其他按键会误入全屏分支）');
+  if (uiChunk.indexOf('preventDefault') < 0) throw new Error('F11 必须 preventDefault 接管浏览器原生全屏');
+  return true;
+});
+
+check('graph-continent: 关大陆先退浏览器全屏（假死修复契约）', async () => {
+  const src = readContinentSrc();
+  const start = src.indexOf('function closeContinentView');
+  if (start < 0) throw new Error('closeContinentView 丢失');
+  const body = src.slice(start, src.indexOf('function enterContinentSession', start));
+  if (body.indexOf('phyBrowserFullscreenTarget()') < 0 || body.indexOf('phyExitBrowserFullscreen') < 0) {
+    throw new Error('closeContinentView 没有退浏览器全屏（全屏开着关大陆会假死）');
+  }
+  if (!/phyBrowserFullscreenTarget\(\)\s*===/.test(body)) {
+    throw new Error('关大陆只应没收大陆层的全屏，不能没收用户 F11 的整页全屏（缺目标比较）');
+  }
+  const exitAt = body.indexOf('phyExitBrowserFullscreen');
+  const hideAt = body.indexOf('hidden = true');
+  if (hideAt < 0) throw new Error('closeContinentView 未藏 layer（切片失真）');
+  if (exitAt > hideAt) throw new Error('退全屏必须先于藏层（时序契约）');
+  // 行为面：真跑一遍「开着全屏关大陆」——层桩与全屏指针指向同一对象，退出必须被调
+  const origGet = sandbox.document.getElementById;
+  const origFs = sandbox.document.fullscreenElement;
+  const origWFs = sandbox.document.webkitFullscreenElement;
+  const origExit = sandbox.document.exitFullscreen;
+  const layer = {
+    id: 'continentLayer', hidden: true, style: {},
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+  };
+  let exitCalled = 0;
+  try {
+    sandbox.document.getElementById = (id) => (id === 'continentLayer' ? layer : origGet(id));
+    sandbox.document.fullscreenElement = layer;
+    sandbox.document.webkitFullscreenElement = null;
+    sandbox.document.exitFullscreen = () => { exitCalled++; return { catch() {} }; };
+    await sandbox.openContinentView(); // 沙箱 fetch 兜底 → 失败分支收场，但 _continentOpen 已置位
+    sandbox.closeContinentView();
+    if (exitCalled !== 1) throw new Error('全屏开着关大陆：exitFullscreen 没被调（假死未修）');
+    return true;
+  } finally {
+    sandbox.document.getElementById = origGet;
+    sandbox.document.fullscreenElement = origFs;
+    sandbox.document.webkitFullscreenElement = origWFs;
+    sandbox.document.exitFullscreen = origExit;
+  }
+});
+
 
 await drain();
 // 串行边界用例：proxyChatWithModel 需替换全局 fetch，放到全部并发检查结束后单独跑

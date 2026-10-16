@@ -163,3 +163,49 @@ function graphDefaultGroupColor() {
   if (!_graphGroupDefaultColorCache) _graphGroupDefaultColorCache = cssVarValue('--graph-group-default');
   return _graphGroupDefaultColorCache;
 }
+
+// ===== 浏览器全屏共享把手（2026-10-16 全屏普适化）=====
+// 知识大陆 ⤢ 与全局 F11（ui.js）同用一套：判态/进/退带 -webkit- 前缀兜底，promise
+// 拒绝静默（全屏可被浏览器策略拒绝，静默但调用方按钮仍在——原大陆实现同口径）。
+function phyBrowserFullscreenTarget() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function phyIsBrowserFullscreen() {
+  return !!phyBrowserFullscreenTarget();
+}
+
+function phyRequestBrowserFullscreen(el) {
+  if (!el) return;
+  try {
+    if (el.requestFullscreen) {
+      const p = el.requestFullscreen();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen();
+    }
+  } catch (e) { /* 全屏被策略拒绝：静默 */ }
+}
+
+function phyExitBrowserFullscreen() {
+  try {
+    if (document.exitFullscreen) {
+      const p = document.exitFullscreen();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+// el 缺省整页（documentElement）：可视化全屏/节点阅读层这些页内遮罩天然跟着整页走
+function phyToggleBrowserFullscreen(el) {
+  if (phyIsBrowserFullscreen()) phyExitBrowserFullscreen();
+  else phyRequestBrowserFullscreen(el || document.documentElement);
+}
+
+window.phyBrowserFullscreenTarget = phyBrowserFullscreenTarget;
+window.phyIsBrowserFullscreen = phyIsBrowserFullscreen;
+window.phyRequestBrowserFullscreen = phyRequestBrowserFullscreen;
+window.phyExitBrowserFullscreen = phyExitBrowserFullscreen;
+window.phyToggleBrowserFullscreen = phyToggleBrowserFullscreen;

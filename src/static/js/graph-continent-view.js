@@ -178,27 +178,20 @@ function _continentPersistView() {
 // T49：浏览器全屏切换（topbar「⤢ 全屏」）。continentLayer 整层提进 top layer，
 // 样式层有 .continent-layer:fullscreen 钉满视口；退出路径三条（按钮/Esc/F11）
 // 都走 fullscreenchange 统一同步按钮文案，不各自维护状态。
+// 2026-10-16 全屏普适化：进退改走 utils.js 共享把手（全局 F11 同用一套），
+// 本函数只管目标元素是大陆层。
 function _continentToggleFullscreen() {
   const layer = document.getElementById('continentLayer');
   if (!layer) return;
-  try {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-    } else if (layer.requestFullscreen) {
-      layer.requestFullscreen().catch(() => {});
-    } else if (layer.webkitRequestFullscreen) {
-      layer.webkitRequestFullscreen();
-    }
-  } catch (e) { /* 全屏被策略拒绝：静默，按钮仍在 */ }
+  phyToggleBrowserFullscreen(layer);
 }
 
 function _continentSyncFullBtn() {
   const btn = document.getElementById('continentFullBtn');
   if (!btn) return;
-  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const on = phyIsBrowserFullscreen();
   btn.textContent = on ? '⤢ 退出全屏' : '⤢ 全屏';
-  btn.title = on ? '退出浏览器全屏（Esc 也行）' : '浏览器全屏显示大陆（再点一次或按 Esc 退出）';
+  btn.title = on ? '退出浏览器全屏（Esc 或 F11 也行）' : '浏览器全屏显示大陆（F11 或再点一次；Esc 退出）';
 }
 
 function _continentBindViewport(viewport) {
@@ -622,6 +615,12 @@ function _continentSettleWorld(entrySession, fromBreadcrumb) {
 function closeContinentView() {
   if (!_continentOpen) return; // 未开先关必须幂等
   _continentOpen = false;
+  // 全屏普适化（2026-10-16）：层还挂着浏览器全屏就先退干净——display:none 不会可
+  // 靠把已全屏的元素踢出 top layer，留着就是「大陆没了、屏幕仍被全屏层罩住」的假死。
+  // ✕ 按钮/Esc/下钻三条退出路径全经这里，一处收口。只没收大陆自己的全屏：
+  // 用户用 F11 全屏整页后关大陆，整页全屏不没收（目标不是大陆层就不动）。
+  const layerFs = _continentLayerEl();
+  if (layerFs && phyBrowserFullscreenTarget() === layerFs) phyExitBrowserFullscreen();
   _continentFlushZoomSettle();   // 手停在半路就关图：档位/词流先落定再退场
   // v7.1b：在途的 Φ 批量归类随大陆关闭中止（已完成的批已落盘，不丢）
   if (_continentGateCtrl) {
