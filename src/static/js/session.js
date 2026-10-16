@@ -156,6 +156,8 @@
                     delete localSessions[dsid];
                     localStorage.removeItem('phymathia_msgs_' + dsid);
                     localStorage.removeItem('phymathia_graph_' + dsid);
+                    // T342：history 键同批回收（与「清空所有画布」startsWith('phymathia_graph_') 口径对齐）
+                    localStorage.removeItem('phymathia_graph_history_' + dsid);
                     changed = true;
                   }
                   if (sessions[dsid]) {
@@ -170,6 +172,9 @@
           }
           const localSessionIds = Object.keys(localSessions);
           const serverSessionIds = Object.keys(serverSessions);
+          // T348：LRU 只能删「服务端已确认存在」的会话缓存——本地独有且还没上传成功的
+          // 画布是唯一副本，删了就真丢。每轮同步刷新一次确认集。
+          _serverKnownLocalCacheSids = new Set(serverSessionIds);
 
           // 合并策略：session 取并集，同 ID 以 updatedAt 更新的为准
           const merged = { ...localSessions };
@@ -194,11 +199,17 @@
           // 全部会话消息＋每会话 3 次全量 stringify，稳态下全是空转。判据：会话
           // updatedAt 服务端更新（消息链路的写入点都会 bump 它），或本地消息键
           // 缺失（首次落库/被清，须从服务端补全——时间戳帮不上忙）。
+          // T348：本地消息缓存缺失只在「保留窗口内」补拉——LRU 清掉的旧会话若每轮
+          // 同步都回拉，空间立刻涨回去。切回旧画布时 switchToSession 按需单独拉。
+          const lruKeepSids = _localCacheKeepSids(merged,
+            currentSessionId || localStorage.getItem(STORAGE_KEY_CURRENT),
+            (typeof _streamingSessionId === 'function' ? _streamingSessionId() : ''),
+            SESSION_LOCAL_CACHE_KEEP);
           const pullIds = [];
           for (const sid of serverSessionIds) {
             const localTime = (localSessions[sid] && localSessions[sid].updatedAt) || 0;
             if ((serverSessions[sid].updatedAt || 0) > localTime
-              || localStorage.getItem('phymathia_msgs_' + sid) === null) {
+              || (localStorage.getItem('phymathia_msgs_' + sid) === null && lruKeepSids.has(sid))) {
               pullIds.push(sid);
             }
           }
@@ -303,6 +314,9 @@
             localStorage.setItem(STORAGE_KEY_CURRENT, cv.value);
           }
         }
+        // T348：同步尾部对本机会话缓存做一次 LRU——启动后台同步与 15 秒轮询都覆盖，
+        // 清理点刻意只在启动/切会话（退出时机不可靠，见 T348 补充约束②）。
+        pruneLocalSessionCaches('sync', mergedSessions);
         return changed;
       } catch (e) {
         console.warn('[Storage] Sync failed:', e);
@@ -835,7 +849,23 @@
       if (typeof window.clearBranchAnchor === 'function') window.clearBranchAnchor();
       chatHistory = loadSessionMessages(id);
       SESSION_ID = sessions[id].sessionId;
+      // T348：本地消息缓存可能已被 LRU 清掉——切回旧画布时按需从服务端补一次
+      // （与画布状态拉取并行，不额外拖慢切换），否则侧栏点进去先看到空画布。
+      const needMsgFetch = !chatHistory.length && !(sessions[id] && sessions[id].provisional);
+      const msgFetch = needMsgFetch ? _fetchServerMessagesBatch([id]) : null;
       await _loadGraphStateFromServer(id);
+      if (needMsgFetch) {
+        try {
+          const fetched = await msgFetch;
+          if (currentSessionId === id) {
+            const serverMsgs = (fetched && Array.isArray(fetched[id])) ? fetched[id] : [];
+            if (serverMsgs.length) {
+              chatHistory = serverMsgs;
+              safeLocalStorageSet('phymathia_msgs_' + id, JSON.stringify(serverMsgs));
+            }
+          }
+        } catch (e) { /* 离线/失败：下一轮同步补，不阻断切换 */ }
+      }
 
       // 重新渲染。renderCurrentChat 内部已触发一次 renderGraphCanvas（聊天容器退役后
       // 它的唯一职责就是这一次画布渲染），这里不再重复调——曾经每次切会话全图
@@ -850,6 +880,8 @@
       if (leavingWithStream && typeof showToast === 'function') {
         showToast('这轮回答还在写，会落回刚才那张画布', TOAST_MS_LONG);
       }
+      // T348：切会话是本机缓存 LRU 的第二个清理点（第一个在启动同步尾部）
+      pruneLocalSessionCaches('switch');
     }
 
     // 这一轮流式回答写在哪张画布上（没在生成时为空串）。chat.js 在开跑前记下它，
@@ -908,6 +940,80 @@
       return true;
     }
 
+    // ====== 本机会话缓存 LRU（T348，2026-10-16）======
+    // 本机 msgs_/graph_/graph_history_ 只是「下次打开更快」的缓存，权威数据在服务端
+    // （会话/消息/画布 KV/图历史镜像）。启动与切会话时只保留当前会话＋最近
+    // SESSION_LOCAL_CACHE_KEEP 个会话的本机缓存，更老的删掉，空间封顶。切回旧画布
+    // 时消息由 switchToSession 按需补拉、画布状态由 _loadGraphStateFromServer 拉回、
+    // 撤销历史由 _upgradeGraphHistoryFromServer 从服务端镜像补回（T348 补充约束①：
+    // 只清本机会被「存档更长才采纳」灌回＝LRU 工作集语义，空间仍由「只留最近 N 个」封顶）。
+    // 清理点刻意只在启动与切会话：beforeunload/pagehide 崩溃/强杀不触发，退出清＝白清
+    // （T348 补充约束②）。服务端镜像一字不动（T212「只减重、绝不删条目」）。
+    const SESSION_LOCAL_CACHE_KEEP = 5;
+    // 服务端确认存在的会话 id 集（_syncFromServer 每轮刷新）；LRU 只删集合内会话的本地缓存
+    let _serverKnownLocalCacheSids = null;
+    function _localCacheSidOf(key) {
+      // graph_history_ 必须先于 graph_ 判：否则历史键会被当普通图键解析出 'history_*'
+      if (key.startsWith('phymathia_graph_history_')) return key.slice('phymathia_graph_history_'.length);
+      if (key.startsWith('phymathia_graph_')) return key.slice('phymathia_graph_'.length);
+      if (key.startsWith('phymathia_msgs_')) return key.slice('phymathia_msgs_'.length);
+      return null;
+    }
+    function _localCacheKeepSids(sessionMap, currentId, streamingId, keepN) {
+      const keep = new Set();
+      if (currentId) keep.add(currentId);
+      if (streamingId) keep.add(streamingId);
+      // 引导示例画布用 window.getCurrentSessionId 覆盖活动指针（不在 sessions 名单），
+      // 不额外保它会被同步尾部的 LRU 误删、打断新手引导的撤销演示
+      const active = (typeof window.getCurrentSessionId === 'function') ? window.getCurrentSessionId() : '';
+      if (active) keep.add(active);
+      const ids = Object.keys(sessionMap || {}).sort(function (a, b) {
+        const ta = (sessionMap[a] && sessionMap[a].updatedAt) || 0;
+        const tb = (sessionMap[b] && sessionMap[b].updatedAt) || 0;
+        return tb - ta;
+      });
+      const n = Math.max(0, Number(keepN) || 0);
+      for (let i = 0; i < n && i < ids.length; i++) keep.add(ids[i]);
+      return keep;
+    }
+    function _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids) {
+      const keep = _localCacheKeepSids(sessionMap, currentId, streamingId, keepN);
+      const evict = [];
+      for (const key of lsKeys()) {
+        const sid = _localCacheSidOf(key);
+        if (!sid || keep.has(sid)) continue;
+        // 传入确认集时，只删服务端确认存在的会话（本地独有＝唯一副本，不动）
+        if (serverKnownSids && !serverKnownSids.has(sid)) continue;
+        evict.push(key);
+      }
+      return evict;
+    }
+    function _pruneLocalSessionCachesCore(sessionMap, currentId, streamingId, keepN, serverKnownSids) {
+      const evict = _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids);
+      for (const key of evict) {
+        const sid = _localCacheSidOf(key);
+        localStorage.removeItem(key);
+        // graph_ 普通键删了要连内存缓存一起失效，防止下次 getGraphState 读到已删键的旧副本
+        if (sid && key.startsWith('phymathia_graph_') && !key.startsWith('phymathia_graph_history_')) {
+          _invalidateGraphStateCache(sid);
+        }
+      }
+      return evict;
+    }
+    function pruneLocalSessionCaches(reason, sessionMap) {
+      // 服务端不可达时不清：本地可能是「还没上传成功」的唯一副本
+      if (_serverAvailable !== true) return 0;
+      // _syncFromServer 传本轮的 merged（模块 sessions 那时还没刷新）
+      const evict = _pruneLocalSessionCachesCore(sessionMap || sessions, currentSessionId,
+        (typeof _streamingSessionId === 'function' ? _streamingSessionId() : ''), SESSION_LOCAL_CACHE_KEEP,
+        _serverKnownLocalCacheSids);
+      if (evict.length) console.log('[Storage] LRU 清理本机会话缓存(' + reason + '):', evict.length, '个键');
+      return evict.length;
+    }
+    window.pruneLocalSessionCaches = pruneLocalSessionCaches;
+    window._localCacheEvictKeys = _localCacheEvictKeys;
+    window._pruneLocalSessionCachesCore = _pruneLocalSessionCachesCore;
+
     // 单个画布的删除内核（单删与多选批量共用同一条路径，清理口径不分叉）：
     // 只清资料不动名单，返回 { ok, offline } —— 名单移除与 UI 刷新交给调用方，
     // 批量删除才能把 saveSessions() 收成一次（逐条调用是 O(n²) 次 upsert 请求）。
@@ -917,9 +1023,13 @@
       const serverOk = await _deleteOnServer('/api/sessions/' + id);
       if (!serverOk && (await _checkServer())) return { ok: false, offline: false };
 
-      // 删除消息
+      // 删除消息与图状态。T342：撤销历史本地键一并回收——它只 startsWith('phymathia_graph_')
+      // 才被「清空所有画布」命中，此前两条删除路径口径不一致，history 键（配额最大头）残留。
+      // 服务端镜像一字不动（T212「只减重、绝不删条目」；整会话删除由 DELETE /api/sessions
+      // 连 kv/<sid>.json 一起清，见 server/session_routes.py _purge_session_files）。
       localStorage.removeItem('phymathia_msgs_' + id);
       localStorage.removeItem('phymathia_graph_' + id);
+      localStorage.removeItem('phymathia_graph_history_' + id);
       await _deleteGraphStateOnServer(id);
       await deleteKnowledgeBySession(id);
       await deleteFormulasBySession(id);
@@ -1692,6 +1802,8 @@
       renderCurrentChat();
       renderSessionList();
       updateDataStats();
+      // T348：启动清理点（服务端可达时才生效；首次启动的清理在 _syncFromServer 尾部）
+      pruneLocalSessionCaches('startup');
     }
 
 
