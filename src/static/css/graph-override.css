@@ -3326,7 +3326,9 @@ html[data-theme="light"] .graph-node-fs,
   padding: 5px 9px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
-  background: rgba(10, 15, 35, 0.46);
+  /* 主题适配：与 composer textarea 同支 --input-bg（浅色暖白/深色墨蓝），
+     原硬编码 rgba(10,15,35,.46) 两主题同色——浅色主题里是一块发暗的输入框 */
+  background: var(--input-bg);
   color: var(--text-primary);
   font-size: var(--fs-sm);
 }
@@ -3483,7 +3485,9 @@ html[data-theme="light"] .graph-node-fs,
 }
 
 .graph-harness-status-running {
-  color: #38bdf8;
+  /* 与同行的 busy 转圈（border: var(--accent)）同色：accent 派生，深色星夜蓝/
+     浅色暖金/霓虹紫各跟各的；原硬编码 #38bdf8 两主题同色，浅色暖底上对比不足 */
+  color: var(--accent);
 }
 
 .graph-harness-status-ok {
@@ -3967,7 +3971,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-harness-warnings {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(250, 204, 21, 0.4);
+  /* 底色本就走 --warn-bg，描边补齐同族 --warn-border（原硬编码琥珀两主题同色） */
+  border: 1px solid var(--warn-border);
   background: var(--warn-bg);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
@@ -3980,8 +3985,11 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-harness-selfcheck {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  background: rgba(56, 189, 248, 0.08);
+  /* 主题适配（2026-10-16）：原硬编码天蓝 rgba(56,189,248) 两主题同色——浅色暖米
+     面板里横一块发蓝的块、霓虹紫面板里也不搭。底色/描边一律跟当前主题 accent
+     派生（T252 口径）：深色星夜蓝、浅色暖金、霓虹紫各跟各的。 */
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
   border-radius: var(--r-md);
   font-size: var(--fs-sm);
   line-height: 1.6;
@@ -4002,9 +4010,11 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   gap: 8px;
   margin-top: 8px;
 }
+/* hover 底色此前落到未定义的 --phi-accent 青色 fallback（T260）：任何主题下澄清
+   选项 hover 都是青的。改 accent 派生后深色星夜蓝/浅色暖金/霓虹紫各跟各的。 */
 .graph-harness-clarify-opt {
-  border: 1px solid var(--phi-border, #164e63);
-  background: var(--phi-surface, rgba(15, 60, 80, 0.55));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   color: inherit;
   border-radius: var(--r-md);
   padding: 6px 12px;
@@ -4013,7 +4023,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   transition: background 0.15s ease;
 }
 .graph-harness-clarify-opt:hover {
-  background: var(--phi-accent, rgba(34, 211, 238, 0.18));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .graph-harness-composer .graph-harness-actions button {
   margin-left: 6px;
@@ -4751,8 +4761,12 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   display: none;
 }
 .graph-harness-status-running {
-  background: rgba(56, 189, 248, 0.14);
-  color: #38bdf8;
+  /* 主题适配：与 ok/error/warning 三兄弟同构——accent 派生一对（底色/文字）。
+     原硬编码 rgba(56,189,248,.14)/#38bdf8 两主题同色：浅色暖米面板里一块发蓝的
+     胶囊、霓虹紫面板里也不搭。深色星夜蓝≈原蓝观感不变。
+     注：本块与 :3487 同名规则并存（后者先写、此块后写故本块生效）。 */
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 .graph-harness-status-ok {
   background: var(--success-bg);
@@ -4767,7 +4781,9 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   color: var(--warn-fg);
 }
 [data-theme="light"] .graph-harness-status-running {
-  background: rgba(56, 189, 248, 0.16);
+  /* 主题适配（2026-10-16）：与 ok/error/warning 三兄弟的浅色档对齐（全走 token），
+     原硬编码浅蓝 rgba(56,189,248,.16) 让浅色胶囊底在暖米面板里发蓝 */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 [data-theme="light"] .graph-harness-status-ok {
   background: var(--success-bg);
