@@ -33,10 +33,6 @@
 
 响应包含 `summary`、`operations`、`next_snapshot`、`diff` 和 `errors`。
 
-### POST /api/harness/graph/apply
-
-纯函数接口，不调用模型。输入 `snapshot` 和 `operations`，返回校验后的 `next_snapshot` 与 `diff`。
-
 ## 操作类型
 
 - `create_node`
