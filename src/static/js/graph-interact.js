@@ -194,19 +194,74 @@ function graphModuleAction(action, nodeId) {
     return;
   }
   const messages = _getChatHistory();
-  const message = messages[node.messageIndex];
-  if (!message) return;
-  const parentId = String(message.timestamp || '');
+  const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
+  const parentId = String((message && message.timestamp) || node.timestamp || '');
+  // T361：追问/没看懂一律落工作流链路（宿主节点现场解析），消息簇链路退役——
+  // 自定义节点（messageIndex<0）过去在这里直接 return，两条链路语义不一致（T363）。
   if (action === 'followup') {
-    if (typeof followUpModule === 'function') followUpModule(node.moduleKey, parentId);
+    if (typeof followUpModule === 'function') followUpModule(node.moduleKey || 'extend', parentId, undefined, node.id);
   } else if (action === 'confused') {
-    if (typeof dontUnderstandModule === 'function') dontUnderstandModule(node.moduleKey, parentId);
+    if (typeof dontUnderstandModule === 'function') dontUnderstandModule(node.moduleKey || 'extend', parentId, undefined, node.id);
   } else if (action === 'delete') {
-    if (confirm('确定删除这个节点及其子分支吗？') && typeof window.deleteGraphMessageByTimestamp === 'function') {
-      _pushGraphUndo(true);
-      window.deleteGraphMessageByTimestamp(message.timestamp);
-    }
+    _deleteSingleGraphNode(node);
   }
+}
+
+// ===== T361：分支入口的宿主节点解析（消息派生节点与自定义节点同口径）=====
+// 画布上的「追问/没看懂/方向钮/苏格拉底作答」过去各自按消息锚点走消息链；退役后一律
+// 先解析出宿主节点 id（自定义节点按 timestamp+moduleKey 匹配，消息派生节点按
+// m-<ts>-<module> 复原，都落空再退回同 timestamp 的模块/回答节点），再交工作流建点。
+function _resolveBranchHostNode(parentTs, sourceModule) {
+  const ts = String(parentTs || '');
+  if (!ts) return null;
+  const state = (typeof _graphState === 'function') ? _graphState() : {};
+  const custom = (typeof _findCustomBranchParent === 'function')
+    ? _findCustomBranchParent(state.customNodes || [], ts, sourceModule || '')
+    : null;
+  if (custom) {
+    const live = _findGraphNode(custom.id);
+    if (live) return live;
+  }
+  const candidates = [];
+  if (sourceModule) candidates.push(_graphNodeId('m', ts, sourceModule));
+  if (sourceModule === 'extend') {
+    candidates.push(_graphNodeId('m', ts, 'socratic'));
+    candidates.push(_graphNodeId('m', ts, 'learn'));
+  }
+  candidates.push(_graphNodeId('a', ts));
+  for (const id of candidates) {
+    const node = _findGraphNode(id);
+    if (node) return node;
+  }
+  // 兜底：同 timestamp 的模块/回答节点（自定义节点 timestamp 可能与消息不同）
+  const byTs = (graphView.nodes || []).find(n => String(n.timestamp || '') === ts
+    && (n.kind === 'module' || n.kind === 'answer')
+    && (!sourceModule || !n.moduleKey || n.moduleKey === sourceModule));
+  return byTs || null;
+}
+
+// 分支从宿主节点的哪个输出口长出去：按端口标签（追问/进阶学习/回答练习）在已渲染的
+// 输出口里找，找不到退回 out-0（各模块基础出口表的第一口正好就是它）。
+function _branchSourcePort(node, branchType) {
+  if (!node) return 'out-0';
+  const want = branchType === 'learn' ? ['进阶学习', '进阶方向']
+    : branchType === 'socratic' ? ['回答练习', '问题1']
+      : ['追问'];
+  try {
+    const el = (typeof graphInner !== 'undefined' && graphInner && graphInner.querySelector)
+      ? graphInner.querySelector('[data-node-id="' + node.id + '"]') : null;
+    if (el) {
+      const raw = el.querySelectorAll ? el.querySelectorAll('.graph-output-port') : null;
+      const ports = (raw && typeof raw.length === 'number') ? Array.prototype.slice.call(raw) : [];
+      const decode = (v) => { try { return v ? decodeURIComponent(v) : ''; } catch (e) { return v || ''; } };
+      for (const port of ports) {
+        const label = decode(port.dataset && port.dataset.portLabel);
+        if (want.includes(label)) return (port.dataset && port.dataset.portId) || 'out-0';
+      }
+      if (ports.length) return (ports[0].dataset && ports[0].dataset.portId) || 'out-0';
+    }
+  } catch (e) { /* 沙箱/半渲染态取不到 DOM 时按基础第一口 */ }
+  return 'out-0';
 }
 
 function _toggleGraphNodeMinimize(node) {
@@ -803,8 +858,11 @@ function draftSocraticAnswer(nodeId) {
   if (!node) return;
   const meta = node.portMeta || {};
   if (typeof window.startSocraticAnswer === 'function') {
-    // 第 7 参传来源端口：回答完成后新节点连回被拖出的那个问题端口
-    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend', node.x, node.y, meta.fromPort || '');
+    // 第 7 参传来源端口：回答完成后新节点连回被拖出的那个问题端口；
+    // 第 8 参（T361）：草稿知道自己从哪颗节点拖出来，直接带给工作流落点，
+    // 不靠 timestamp 反查（草稿端口是「问题1/2/3」，反查要落到 socratic 模块节点上）
+    window.startSocraticAnswer(meta.question || '', meta.level || 'basic', meta.parentId || '', meta.sourceModule || 'extend', node.x, node.y, meta.fromPort || '',
+      { sourceNodeId: _findDraftSourceNodeId(nodeId) || '', sourcePort: meta.fromPort || '' });
   }
 }
 
@@ -2104,12 +2162,74 @@ function _endPointerDrag(event) {
   graphCanvas?.classList.remove('panning');
 }
 
+// ===== T362：删除范围真值（确认文案与计数按「真正会消失的节点」报）=====
+// 消息派生节点是整条回答消息的切片：删一颗＝删整条消息＝同簇并列模块连坐，再沿
+// parentId 级联删光该卡下的下游拓展。这里把「将删的消息集合」与「将消失的画布节点」
+// 算成真值，确认文案如实报全，不再拿去重消息数冒充节点数、也不再让未选中者静默陪葬。
+function _deletionScopeForTimestamps(timestamps) {
+  const messages = _getChatHistory();
+  const removed = new Set(Array.from(timestamps || []).map(String).filter(Boolean));
+  // 与 _performDeleteMessages 同口径之一：user 消息连带其后连续 assistant 消息
+  for (const target of Array.from(removed)) {
+    const idx = messages.findIndex(m => String(m.timestamp || '') === target);
+    if (idx >= 0 && messages[idx].role === 'user') {
+      for (let i = idx + 1; i < messages.length; i++) {
+        if (messages[i].role === 'assistant') removed.add(String(messages[i].timestamp || ''));
+        else break;
+      }
+    }
+  }
+  // 与 _performDeleteMessages 同口径之二：沿 parentId 传递级联（循环到不动点）
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const msg of messages) {
+      const ts = String(msg.timestamp || '');
+      if (removed.has(ts)) continue;
+      if (removed.has(String(msg.parentId || ''))) {
+        removed.add(ts);
+        changed = true;
+      }
+    }
+  }
+  const nodes = (graphView.nodes || []).filter(n => n.messageIndex >= 0
+    && messages[n.messageIndex]
+    && removed.has(String(messages[n.messageIndex].timestamp || '')));
+  return { messages: removed, nodes: nodes };
+}
+
+// 单颗节点删除（节点头上的删除钮 / 右键菜单）：自定义节点逐颗删；消息派生节点按
+// 整条消息删，但把同簇与级联的真实颗数写进确认文案（T362）。
+function _deleteSingleGraphNode(node) {
+  if (!node) return;
+  if (node.messageIndex < 0) {
+    if (node.kind === 'blank') { deleteBlankNode(node.id, true); return; }
+    if (node.kind === 'draft') { removeDraftNode(node.id); return; }
+    if (GRAPH_CUSTOM_NODE_KINDS.includes(node.kind)) { deleteCustomNode(node.id, true); return; }
+    return;
+  }
+  const message = _getChatHistory()[node.messageIndex];
+  if (!message) return;
+  const scope = _deletionScopeForTimestamps([String(message.timestamp || '')]);
+  const others = scope.nodes.filter(n => String(n.id) !== String(node.id)).length;
+  const text = others > 0
+    ? '确定删除这个节点吗？它属于同一轮回答的 ' + scope.nodes.length + ' 颗并列节点，'
+      + '删除会连同未点名的另外 ' + others + ' 颗一起移除（消息簇按整条回答删除，不能只删其中一颗）。'
+    : '确定删除这个节点及其子分支吗？';
+  if (!confirm(text)) return;
+  _pushGraphUndo(true);
+  if (typeof window.deleteGraphMessageByTimestamp === 'function') {
+    window.deleteGraphMessageByTimestamp(message.timestamp);
+  }
+}
+
 async function _deleteSelectedGraphNodes(ids) {
-  const timestamps = new Set();
+  const selected = Array.from(ids || []);
   const drafts = [];
   const blanks = [];
   const customs = [];
-  for (const id of ids) {
+  const messageNodes = [];
+  for (const id of selected) {
     const node = _findGraphNode(id);
     if (!node) continue;
     if (node.kind === 'blank') {
@@ -2124,10 +2244,15 @@ async function _deleteSelectedGraphNodes(ids) {
       customs.push(id);
       continue;
     }
-    const message = _getChatHistory()[node.messageIndex];
-    if (message) timestamps.add(String(message.timestamp || ''));
+    messageNodes.push(node);
   }
-  if (!timestamps.size) {
+  const selectedTs = new Set();
+  for (const node of messageNodes) {
+    const message = _getChatHistory()[node.messageIndex];
+    if (message) selectedTs.add(String(message.timestamp || ''));
+  }
+  if (!selectedTs.size) {
+    // 纯自定义/草稿/空白：逐颗删除（工作流链路的终态语义），不弹确认
     _pushGraphUndo();
     drafts.forEach(id => removeDraftNode(id));
     blanks.forEach(id => deleteBlankNode(id, false));
@@ -2136,15 +2261,29 @@ async function _deleteSelectedGraphNodes(ids) {
     _syncGraphSelectionClasses();
     return;
   }
-  if (!confirm('确定删除选中的 ' + timestamps.size + ' 个节点及其子分支吗？')) return;
+  const scope = _deletionScopeForTimestamps(selectedTs);
+  const selectedIds = new Set(selected.map(String));
+  const unselectedCluster = scope.nodes.filter(n => !selectedIds.has(String(n.id))).length;
+  const totalNodes = scope.nodes.length + drafts.length + blanks.length + customs.length;
+  // T362：计数按真实将删节点数报（旧文案按去重消息数报：同簇选 3 颗报「1 个节点」），
+  // 同簇未点名的并列模块与级联下游如实写出来，不再静默陪葬
+  let confirmText;
+  if (unselectedCluster > 0) {
+    confirmText = '确定删除吗？选中的 ' + messageNodes.length + ' 颗节点属于 ' + selectedTs.size
+      + ' 轮回答，删除会连同该消息簇里未点名的 ' + unselectedCluster
+      + ' 颗并列/下游节点一起移除（共 ' + totalNodes + ' 个节点）。';
+  } else {
+    confirmText = '确定删除选中的 ' + totalNodes + ' 个节点及其子分支吗？';
+  }
+  if (!confirm(confirmText)) return;
   _pushGraphUndo(true);
   drafts.forEach(id => removeDraftNode(id));
   blanks.forEach(id => deleteBlankNode(id, false));
   customs.forEach(id => deleteCustomNode(id, false));
   if (typeof window.deleteGraphMessagesByTimestamps === 'function') {
-    await window.deleteGraphMessagesByTimestamps(Array.from(timestamps));
+    await window.deleteGraphMessagesByTimestamps(Array.from(selectedTs));
   } else if (typeof window.deleteGraphMessageByTimestamp === 'function') {
-    for (const ts of timestamps) await window.deleteGraphMessageByTimestamp(ts);
+    for (const ts of selectedTs) await window.deleteGraphMessageByTimestamp(ts);
   }
 }
 

@@ -318,6 +318,15 @@ function replyOf(body) {
   if (t.includes('完整学习卡片') || t.includes('<physics>')) {
     return text('<physics>\n简谐运动是回复力与位移成正比且反向的运动 ' + sfx + '。\n<formula>x(t)=A\\cos(\\omega t+\\varphi_0)</formula>\n</physics>\n<math>\n微分方程 <formula>\\frac{d^2x}{dt^2}+\\omega^2 x=0</formula> 的解即余弦型。\n</math>\n<extend>\n### 进阶学习方向\n1. 阻尼振动的运动方程\n2. 受迫振动与共振\n3. 从简谐运动到傅里叶分析\n### 苏格拉底追问\n1. [基础] 弹簧振子的回复力与位移有什么关系？\n2. [进阶] 如何由胡克定律与牛顿第二定律建立运动方程？\n3. [拓展] 加入阻尼后运动会如何变化？\n</extend>\n<summary>简谐运动＝线性回复力下的二阶线性微分方程解 ' + sfx + '。</summary>');
   }
+  // —— T361 苏格拉底闭环作答（verify_send_channels ⑩）：反馈＋建议追问＋闭环元数据 ——
+  // 必须排在通用「苏格拉底追问」分支**之前**：闭环状态指令里含「苏格拉底追问闭环」
+  // 字样（context 块拼在 user 消息里），后置会被截胡成问题列表、派生节点验不出来。
+  if (t.includes('[苏格拉底回答]')) {
+    return text('回答得不错：回复力与位移成正比且方向相反，这就是 F=-kx 的来历。' + sfx
+      + '\n\n1. [基础] 那么比例系数 k 的物理意义是什么？'
+      + '\n2. [进阶] 加入阻尼后运动方程会如何变化？'
+      + '\n<socratic_meta correct="correct" done="false" />');
+  }
   if (t.includes('苏格拉底追问') || (t.includes('三条编号行') && t.includes('[基础]'))) {
     return text('### 苏格拉底追问 ' + sfx + '\n1. [基础] 弹簧振子的回复力与位移有什么关系？\n2. [进阶] 如何由胡克定律与牛顿第二定律建立运动方程？\n3. [拓展] 加入阻尼后运动如何改变？');
   }

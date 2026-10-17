@@ -712,6 +712,12 @@ function _renderCustomNodeContentHtml(node) {
   if (node.kind === 'answer' && !node.manual && typeof stripSuggestedModulesLine === 'function') {
     text = stripSuggestedModulesLine(text);
   }
+  // T361：苏格拉底反馈尾部的建议追问（1. [基础] …）已由 _materializeSocraticFollowup
+  // 派生成独立「苏格拉底追问」节点，卡上不重复渲染（与消息链 _graphSocraticDisplayContent
+  // 同口径）；<socratic_meta> 交给 renderMarkdown 剥。
+  if (node.socraticMeta && typeof _graphStripSuggestedFollowups === 'function') {
+    text = _graphStripSuggestedFollowups(text);
+  }
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
   else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   // 配方载体分派（P1 plain / P2 mermaid·html_iframe）：plain 不解析 Markdown、
@@ -1159,7 +1165,7 @@ function _renderNodeHtml(node, messages, state) {
   const customHeight = node.customHeight
     ? 'min-height:' + node.customHeight + 'px !important;height:' + node.customHeight + 'px !important;'
     : '';
-  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : '问题分析') : ''));
+  const badge = node.isRoot ? '核心问题' : (node.isBranch ? '延伸追问' : (node.kind === 'answer' ? (node.manual ? '我的回答' : (node.socraticMeta ? '苏格拉底反馈' : '问题分析')) : ''));
   const badgeHtml = badge ? '<span class="graph-node-badge">' + escapeHtml(badge) + '</span>' : '';
   const label = node.recipeId && node.recipe && node.recipe.name
     ? node.recipe.name
@@ -1172,7 +1178,7 @@ function _renderNodeHtml(node, messages, state) {
         : node.kind === 'note'
           ? '我的总结'
           : (node.kind === 'answer' && node.messageIndex < 0
-            ? (node.manual ? '我的回答' : '问题分析')
+            ? (node.manual ? '我的回答' : (node.socraticMeta ? '苏格拉底反馈' : '问题分析'))
             : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
   // T69：折叠卡不建内容子树（CSS 本就 display:none），展开时整卡重建补水

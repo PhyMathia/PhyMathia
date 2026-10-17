@@ -227,7 +227,10 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     // handoffTaskId：排队那条「提问」任务的 id。轮到它跑起来时，工作流任务接手，
     // 面板上就地把它结掉——不然同一个动作会留两行（等待中的提问 + 进行中的工作流）。
     // text 给面板当标题：只写「提问」两个字，用户认不出等的是哪句问题。
-    _enqueueSend('提问', function(taskId) { return startQuestionWorkflow(capturedQuestion, capturedOpts, taskId, true); },
+    // queueLabel（T361）：画布按钮来的追问/方向钮在任务列表上仍叫「追问/进阶学习」，
+    // 不一律显示成「提问」
+    _enqueueSend((capturedOpts && capturedOpts.queueLabel) || '提问',
+      function(taskId) { return startQuestionWorkflow(capturedQuestion, capturedOpts, taskId, true); },
       { text: capturedQuestion });
     return;
   }
@@ -321,3 +324,144 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
   }
 }
+
+// ===== 苏格拉底闭环 → 工作流承载（T361，2026-10-17 用户拍板退役「一次生成再拆开」）=====
+// 作答/提示/讲解过去走 sendQuick 落一条 assistant 消息、画布再按消息切片成簇（同簇连坐删）；
+// 现在建「我的回答/提示/讲解（user-custom）＋苏格拉底反馈（answer-custom，带 socraticMeta）」
+// 两颗自定义节点，逐颗生成、逐颗删除。服务端口径一字未改：prompt 仍以 [苏格拉底回答]/
+// [苏格拉底提示]/[苏格拉底讲解] 开头、branch_id 仍传分支 ref——/api/models/chat 的闭环
+// 状态机（_socratic_state_instruction、<socratic_meta> 记账）原样接住，变的只是落点：
+// 从消息表换成画布节点（不写 chatHistory，也不再派生消息簇）。
+const SOCRATIC_USER_NODE_LABELS = { answer: '我的回答', hint: '苏格拉底提示', explain: '苏格拉底讲解' };
+
+function _socraticUserNodeLabel(mode) {
+  return SOCRATIC_USER_NODE_LABELS[mode] || SOCRATIC_USER_NODE_LABELS.answer;
+}
+
+function _socraticTaskTitle(mode) {
+  return mode === 'hint' ? '苏格拉底提示' : mode === 'explain' ? '苏格拉底讲解' : '苏格拉底反馈';
+}
+
+function _createSocraticWorkflowTemplate(promptText, meta, worldSid) {
+  const state = _graphStateFor(worldSid);
+  state.customNodes = state.customNodes || [];
+  state.connections = state.connections || [];
+  const now = Date.now();
+  const uid = () => Math.random().toString(36).slice(2, 7);
+  const m = meta || {};
+  const sourceNodeId = String(m.sourceNodeId || '');
+  const sourcePort = String(m.sourcePort || 'out-0');
+  const sourceNode = sourceNodeId ? _findGraphNode(sourceNodeId) : null;
+  let baseX = 120;
+  let baseY = 40;
+  if (m.position && Number.isFinite(m.position.x) && Number.isFinite(m.position.y)) {
+    baseX = m.position.x;
+    baseY = m.position.y;
+  } else if (sourceNode) {
+    const sourceW = sourceNode.w || sourceNode.customWidth || 300;
+    baseX = (Number.isFinite(sourceNode.x) ? sourceNode.x : 120) + sourceW / 2 + 240;
+    baseY = Number.isFinite(sourceNode.y) ? sourceNode.y : 120;
+  }
+  const userNode = {
+    id: 'user-custom-' + now + '-' + uid(),
+    kind: 'user', moduleKey: '', manual: true, nodeType: '', label: '', formula: '',
+    source: 'human', content: promptText, status: 'done', summary: '', analysis: '',
+    analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
+    generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
+    generatedNodeIds: [], category: 'other', formulas: [], knowledgeKey: '',
+    x: baseX, y: baseY, depth: 1, targetAngle: 0, isRoot: false, timestamp: now,
+    pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
+    w: 0, h: 0, vx: 0, vy: 0,
+  };
+  const answerNode = {
+    id: 'answer-custom-' + now + '-' + uid(),
+    kind: 'answer', moduleKey: '', manual: false, nodeType: '', label: '', formula: '',
+    source: 'ai', content: '', status: 'empty', summary: '', analysis: '',
+    analysisHash: '', inputHash: '', generatedAt: 0, requirements: '', busy: false,
+    generated: false, maxItems: 0, items: [], edges: [], fileId: '', fileName: '',
+    generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '',
+    x: baseX, y: baseY + 170, depth: 2, targetAngle: 0, isRoot: false, timestamp: now + 1,
+    pinned: false, fixedX: null, fixedY: null, customWidth: 300, customHeight: null,
+    w: 0, h: 0, vx: 0, vy: 0,
+    // 生成口径随节点走：重生成（runWorkflowNode）也吃这一份，不再回落到问题分析提示词。
+    // prompt 是提交瞬间定稿的原文——上游 user 节点被人工编辑不影响闭环指令与状态同步。
+    socraticMeta: {
+      prompt: promptText,
+      mode: m.mode || 'answer',
+      question: m.question || '',
+      level: m.level || 'basic',
+      branchId: m.branchId || '',
+      sourceModule: m.sourceModule || 'socratic',
+      parentId: m.parentId || '',
+      branchLabel: m.branchLabel || '',
+    },
+  };
+  state.customNodes.push(userNode, answerNode);
+  if (sourceNodeId) {
+    state.connections.push({ from: sourceNodeId, fromPort: sourcePort, to: userNode.id, toPort: 'in-0', type: 'custom', custom: true });
+  }
+  state.connections.push({ from: userNode.id, fromPort: 'out-0', to: answerNode.id, toPort: 'in-0', type: 'custom', custom: true });
+  _saveGraphStateFor(worldSid, state);
+  renderGraphCanvas();
+  return { userNode, answerNode };
+}
+
+// 苏格拉底闭环的工作流入口（T361 起是唯一入口）：忙碌口径与 startQuestionWorkflow 同款
+// （统一 _isSendBusy + fromQueue 放行旁路——排队放行时 _sendQueueFlushing 仍算忙，没有
+// 旁路会原地自我重入）。返回生成 promise：send-queue 的 flush 靠 await 它确认真跑完。
+async function startSocraticWorkflow(promptText, meta, handoffTaskId, fromQueue) {
+  if (phyIsReadonly()) { phyReadonlyBlock('作答追问'); return; }
+  const text = String(promptText || '').trim();
+  if (!text) return;
+  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
+    const capturedText = text;
+    const capturedMeta = meta ? { ...meta } : null;
+    const queueLabel = (capturedMeta && _socraticTaskTitle(capturedMeta.mode)) || '苏格拉底作答';
+    _enqueueSend(queueLabel, function(taskId) {
+      return startSocraticWorkflow(capturedText, capturedMeta, taskId, true);
+    }, { text: (capturedMeta && capturedMeta.question) || text, kind: 'workflow' });
+    return;
+  }
+  const m = meta || {};
+  const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
+    || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  const template = _createSocraticWorkflowTemplate(text, m, worldSid);
+  const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
+  // T313：先钉世界再生成——人切走之后读写仍落苏格拉底所属的那张画布
+  if (worldSid && typeof _taskBeginWorkflowWorld === 'function') {
+    _taskBeginWorkflowWorld(worldSid, [template.userNode.id, liveAnswer.id]);
+  }
+  const title = _socraticTaskTitle(m.mode);
+  const controller = new AbortController();
+  const taskId = handoffTaskId || ((typeof _taskBeginNodeJob === 'function')
+    ? _taskBeginNodeJob({ title, nodeId: liveAnswer.id, nodeKind: 'answer' })
+    : null);
+  if (taskId && typeof _taskBindCancel === 'function') {
+    _taskBindCancel(taskId, function() { controller.abort(); });
+  }
+  try {
+    workflowRunActive = true;
+    workflowAbortController = new AbortController();
+    _setWorkflowStopButton(true);
+    workflowInFlightControllers.add(controller);
+    if (typeof showProgress === 'function') showProgress('thinking', 8, '正在' + title);
+    try {
+      await _generateCustomNode(liveAnswer, controller.signal);
+    } finally {
+      workflowInFlightControllers.delete(controller);
+    }
+    if (taskId && typeof _taskFinish === 'function') {
+      const live = _findGraphNode(liveAnswer.id) || liveAnswer;
+      if (controller.signal.aborted) _taskFinish(taskId, 'stopped', '已停止');
+      else if (live.status === 'done') _taskFinish(taskId, 'done');
+      else _taskFinish(taskId, 'error', '生成失败');
+    }
+  } finally {
+    workflowAbortController = null;
+    workflowRunActive = false;
+    _setWorkflowStopButton(false);
+    if (typeof hideProgress === 'function') hideProgress();
+    if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
+  }
+}
+

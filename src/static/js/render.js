@@ -479,15 +479,15 @@ function _vizCheckRegenerate(verdict, badge) {
     return;
   }
   if (node.messageIndex >= 0) {
-    // 消息派生节点：内容在聊天历史里，以它为父节点开一条 viz 追问分支
-    const anchor = {
-      parentId: String(node.timestamp || ''),
-      sourceModule: 'viz',
-      branchType: 'followup',
-      branchId: _genBranchId(),
-      branchLabel: '重做可视化',
-    };
-    if (typeof window.sendBranchQuick === 'function') { window.sendBranchQuick(text, anchor); return; }
+    // T361：消息派生节点以自己为来源开一条工作流追问分支（消息簇链路退役）
+    if (typeof window.startQuestionWorkflow === 'function') {
+      window.startQuestionWorkflow(text, {
+        sourceNodeId: node.id,
+        sourcePort: (typeof _branchSourcePort === 'function') ? _branchSourcePort(node, 'followup') : 'out-0',
+        queueLabel: '重做可视化',
+      });
+      return;
+    }
   }
   // 工作流 viz 节点：把重做要求写进 requirements（会进入 workflow_context），
   // 强制重跑该节点——工作流失败重试/重生成的既有通道
@@ -1203,34 +1203,55 @@ function _modulePrompt(moduleKey, type, originalQuestion) {
   return modulePrompts[type] || modulePrompts.followup;
 }
 
-function followUpModule(moduleKey, messageId, event) {
-  event?.stopPropagation();
-  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const originalQuestion = _findOriginalQuestion(messageId);
-  const anchor = {
+// T361：分支主题取材——消息派生节点按锚点回溯原始问题；自定义节点没有消息表，
+// 退回节点自身的标题/正文首段（工作流的真实上下文由上游连线带，这里只做弹窗预填）。
+function _branchTopicForNode(node) {
+  if (!node) return '';
+  if (node.messageIndex >= 0) {
+    const msg = (typeof _getChatHistory === 'function' ? _getChatHistory() : [])[node.messageIndex];
+    return _findOriginalQuestion(String((msg && msg.timestamp) || node.timestamp || ''));
+  }
+  const content = (typeof _nodeStoredContent === 'function') ? _nodeStoredContent(node) : (node.content || '');
+  const text = String(node.title || node.label || content || '').replace(/\s+/g, ' ').trim();
+  return text.slice(0, 80);
+}
+
+// 分支锚点统一构造（T361）：带宿主节点 id/端口时，弹窗提交走工作流链路；
+// 解析不到宿主（存量消息已被删/画布已切）才回落旧锚点发送。
+function _branchAnchorFor(node, messageId, moduleKey, branchType, label) {
+  const host = node || ((typeof _resolveBranchHostNode === 'function')
+    ? _resolveBranchHostNode(messageId, moduleKey) : null);
+  return {
     parentId: messageId || '',
     sourceModule: moduleKey,
-    branchType: 'followup',
+    branchType: branchType,
     branchId: _genBranchId(),
-    branchLabel: '追问：' + meta.label,
+    branchLabel: label,
+    ...(host ? {
+      nodeId: host.id,
+      sourcePort: (typeof _branchSourcePort === 'function') ? _branchSourcePort(host, branchType) : 'out-0',
+    } : {}),
   };
+}
+
+function followUpModule(moduleKey, messageId, event, nodeId) {
+  event?.stopPropagation();
+  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
+  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
+  const originalQuestion = _branchTopicForNode(node) || _findOriginalQuestion(messageId);
+  const anchor = _branchAnchorFor(node, messageId, moduleKey, 'followup', '追问：' + meta.label);
   const question = _modulePrompt(moduleKey, 'followup', originalQuestion);
   // 旧「无弹窗时退回输入框」回退已随输入框一起退役（2026-09-25 化石清扫）：
   // openBranchModal 是唯一通道，锚点在弹窗确认时才挂上
   window.openBranchModal('追问：' + meta.label, question, anchor);
 }
 
-function dontUnderstandModule(moduleKey, messageId, event) {
+function dontUnderstandModule(moduleKey, messageId, event, nodeId) {
   event?.stopPropagation();
   const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const originalQuestion = _findOriginalQuestion(messageId);
-  const anchor = {
-    parentId: messageId || '',
-    sourceModule: moduleKey,
-    branchType: 'confused',
-    branchId: _genBranchId(),
-    branchLabel: '没看懂：' + meta.label,
-  };
+  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
+  const originalQuestion = _branchTopicForNode(node) || _findOriginalQuestion(messageId);
+  const anchor = _branchAnchorFor(node, messageId, moduleKey, 'confused', '没看懂：' + meta.label);
   const question = _modulePrompt(moduleKey, 'confused', originalQuestion);
   window.openBranchModal('没看懂：' + meta.label, question, anchor);
 }
@@ -1247,7 +1268,7 @@ function dontUnderstandViz(btn) {
   const nodeId = nodeEl ? nodeEl.dataset.nodeId : '';
   const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
   if (node && node.messageIndex >= 0) {
-    dontUnderstandModule('viz', String(node.timestamp || ''));
+    dontUnderstandModule('viz', String(node.timestamp || ''), undefined, node.id);
     return;
   }
   if (typeof showToast === 'function') showToast('请在画布上该回答节点的分支菜单里选择「没看懂」');
@@ -1319,6 +1340,24 @@ function convertSocraticQuestions(html, renderCtx = {}) {
   });
 }
 
+// T361：按钮 → 宿主节点解析（内容按钮只带 timestamp+模块名，宿主节点现场反查）
+function _branchEntryHost(btn) {
+  const parentMsg = btn.getAttribute('data-parent-msg') || '';
+  const sourceModule = btn.getAttribute('data-socratic-source')
+    || btn.getAttribute('data-source-module') || 'extend';
+  const host = (typeof _resolveBranchHostNode === 'function')
+    ? _resolveBranchHostNode(parentMsg, sourceModule) : null;
+  return { parentMsg: parentMsg, sourceModule: sourceModule, host: host };
+}
+
+function _branchEntryOpts(info, branchType) {
+  const host = info && info.host;
+  return {
+    sourceNodeId: (host && host.id) || '',
+    sourcePort: (host && typeof _branchSourcePort === 'function') ? _branchSourcePort(host, branchType) : '',
+  };
+}
+
 document.addEventListener('click', function(e) {
   const answerBtn = e.target.closest('[data-socratic-answer]');
   if (answerBtn) {
@@ -1327,7 +1366,9 @@ document.addEventListener('click', function(e) {
     const level = answerBtn.getAttribute('data-socratic-level') || 'basic';
     // 旧「无闭环函数时退回输入框」回退已退役（2026-09-25 化石清扫）：
     // startSocraticAnswer 是唯一通道（聊天分支闭环的状态机入口）
-    window.startSocraticAnswer(question, level, answerBtn.getAttribute('data-parent-msg') || '', answerBtn.getAttribute('data-socratic-source') || 'extend');
+    const info = _branchEntryHost(answerBtn);
+    window.startSocraticAnswer(question, level, info.parentMsg, info.sourceModule,
+      undefined, undefined, undefined, _branchEntryOpts(info, 'socratic'));
     return;
   }
   const hintBtn = e.target.closest('[data-socratic-hint]');
@@ -1336,7 +1377,8 @@ document.addEventListener('click', function(e) {
     const question = decodeURIComponent(hintBtn.getAttribute('data-socratic-hint'));
     const level = hintBtn.getAttribute('data-socratic-level') || 'basic';
     if (typeof window.startSocraticHint === 'function') {
-      window.startSocraticHint(question, level, hintBtn.getAttribute('data-parent-msg') || '', hintBtn.getAttribute('data-socratic-source') || 'extend');
+      const info = _branchEntryHost(hintBtn);
+      window.startSocraticHint(question, level, info.parentMsg, info.sourceModule, _branchEntryOpts(info, 'socratic'));
     }
     return;
   }
@@ -1346,30 +1388,49 @@ document.addEventListener('click', function(e) {
     const question = decodeURIComponent(explainBtn.getAttribute('data-socratic-explain'));
     const level = explainBtn.getAttribute('data-socratic-level') || 'basic';
     if (typeof window.startSocraticExplain === 'function') {
-      window.startSocraticExplain(question, level, explainBtn.getAttribute('data-parent-msg') || '', explainBtn.getAttribute('data-socratic-source') || 'extend');
+      const info = _branchEntryHost(explainBtn);
+      window.startSocraticExplain(question, level, info.parentMsg, info.sourceModule, _branchEntryOpts(info, 'socratic'));
     }
     return;
   }
   const quickBtn = e.target.closest('[data-send]');
   if (quickBtn) {
     e.preventDefault();
-    const question = decodeURIComponent(quickBtn.getAttribute('data-send'));
-    const branchType = quickBtn.getAttribute('data-branch-type');
-    const anchor = branchType ? {
-      parentId: quickBtn.getAttribute('data-parent-msg') || '',
-      sourceModule: quickBtn.getAttribute('data-source-module') || 'extend',
-      branchType,
-      branchId: _genBranchId(),
-      branchLabel: quickBtn.getAttribute('data-branch-label') || question,
-    } : null;
-    if (anchor && typeof window.sendBranchQuick === 'function') {
-      window.sendBranchQuick(question, anchor);
-    } else if (typeof showToast === 'function') {
-      // 2026-09-25 线性主聊天退役：无锚快捷发送已删（在站按钮全部带 branch-type）
-      showToast('快捷提问丢失锚点，请在画布节点上重试');
-    }
+    _submitBranchQuickButton(quickBtn);
   }
 });
+
+// T361：方向钮/快捷提问钮的落点（抽成具名函数，行为可测）。宿主节点解析得到就走
+// 工作流链路（问题＋分析＋模块逐节点生成）；解析不到才回落旧锚点发送。
+function _submitBranchQuickButton(btn) {
+  const question = decodeURIComponent(btn.getAttribute('data-send'));
+  const branchType = btn.getAttribute('data-branch-type');
+  const info = _branchEntryHost(btn);
+  if (info.host && branchType && typeof window.startQuestionWorkflow === 'function') {
+    window.startQuestionWorkflow(question, {
+      sourceNodeId: info.host.id,
+      sourcePort: _branchEntryOpts(info, branchType).sourcePort || 'out-0',
+      queueLabel: branchType === 'learn' ? '进阶学习' : '追问',
+    });
+    return true;
+  }
+  const anchor = branchType ? {
+    parentId: info.parentMsg,
+    sourceModule: info.sourceModule,
+    branchType,
+    branchId: _genBranchId(),
+    branchLabel: btn.getAttribute('data-branch-label') || question,
+  } : null;
+  if (anchor && typeof window.sendBranchQuick === 'function') {
+    window.sendBranchQuick(question, anchor);
+    return true;
+  }
+  if (typeof showToast === 'function') {
+    // 2026-09-25 线性主聊天退役：无锚快捷发送已删（在站按钮全部带 branch-type）
+    showToast('快捷提问丢失锚点，请在画布节点上重试');
+  }
+  return false;
+}
 
 function sanitizeMermaidCode(code) {
   // 1. 确保 flowchart 声明存在

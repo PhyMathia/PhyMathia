@@ -4,6 +4,9 @@
     var pendingSocraticConfidence = 'ok';
     var pendingSocraticPosition = null;
     var pendingSocraticFromPort = '';
+    // T361：作答落工作流时要知道从哪颗节点长出去（草稿路显式带，内容按钮路靠 timestamp 反查）
+    var pendingSocraticSourceNodeId = '';
+    var pendingSocraticSourcePort = '';
     function clearBranchAnchor() {
       setActiveBranchAnchor(null);
     }
@@ -26,7 +29,7 @@
       return level === 'advanced' ? '进阶' : level === 'expand' ? '拓展' : '基础';
     }
 
-    function startSocraticAnswer(question, level, parentMsg, sourceModule, posX, posY, fromPort) {
+    function startSocraticAnswer(question, level, parentMsg, sourceModule, posX, posY, fromPort, opts) {
       pendingSocraticQuestion = question || '';
       pendingSocraticLevel = level || 'basic';
       pendingSocraticParentMsg = parentMsg || '';
@@ -35,6 +38,8 @@
       pendingSocraticPosition = (Number.isFinite(posX) && Number.isFinite(posY)) ? { x: posX, y: posY } : null;
       // 记录来源端口：画布从苏格拉底问题端口发起时，回答完成后新节点要连回同一端口
       pendingSocraticFromPort = fromPort || '';
+      pendingSocraticSourceNodeId = (opts && opts.sourceNodeId) || '';
+      pendingSocraticSourcePort = (opts && opts.sourcePort) || '';
       // 若当前已有未结束的苏格拉底闭环，沿用同一分支，保证连对次数与上下文跨轮连续
       pendingSocraticNewLoop = !(currentBranch === 'socratic' && currentBranchId);
       pendingSocraticBranchId = pendingSocraticNewLoop ? _genBranchId() : currentBranchId;
@@ -63,6 +68,8 @@
       pendingSocraticSourceModule = 'extend';
       pendingSocraticPosition = null;
       pendingSocraticFromPort = '';
+      pendingSocraticSourceNodeId = '';
+      pendingSocraticSourcePort = '';
     }
 
     function setSocraticConfidence(value, btn) {
@@ -84,13 +91,15 @@
         confidence: pendingSocraticConfidence,
         newLoop: pendingSocraticNewLoop,
         fromPort: pendingSocraticFromPort,
+        sourceNodeId: pendingSocraticSourceNodeId,
+        sourcePort: pendingSocraticSourcePort,
         branchId: pendingSocraticBranchId || _genBranchId(),
         position: pendingSocraticPosition ? { ...pendingSocraticPosition } : null,
         answer: answerEl ? answerEl.value.trim() : '',
       };
     }
 
-    async function _runSocraticAnswer(snap) {
+    async function _runSocraticAnswer(snap, fromQueue) {
       const levelLabel = snap.level === 'advanced' ? '进阶' : snap.level === 'expand' ? '拓展' : '基础';
       const confidenceLabel = snap.confidence === 'confident' ? '很有把握' : snap.confidence === 'guess' ? '猜的' : '一般';
       const message = '[苏格拉底回答]\n追问等级：' + levelLabel + '\n把握程度：' + confidenceLabel + '\n追问问题：' + snap.question + '\n我的回答：' + snap.answer;
@@ -117,17 +126,31 @@
         }
         currentBranch = 'socratic';
         currentBranchId = snap.branchId;
-        setActiveBranchAnchor({
-          parentId: snap.parentMsg,
-          sourceModule: snap.sourceModule,
-          branchType: 'socratic',
+        // T361：作答落工作流链路（user-custom 作答原文＋answer-custom 苏格拉底反馈，
+        // 逐颗生成/逐颗删除）——消息簇链路退役，不再往 chatHistory 写分支消息。
+        // 返回生成 promise：flush 靠 await 它确认这一条真发出去了，才轮到下一条。
+        const host = snap.sourceNodeId
+          ? _findGraphNode(snap.sourceNodeId)
+          : ((typeof _resolveBranchHostNode === 'function') ? _resolveBranchHostNode(snap.parentMsg, snap.sourceModule) : null);
+        if (typeof window.startSocraticWorkflow !== 'function') {
+          if (typeof showToast === 'function') showToast('苏格拉底闭环需要工作流通道，请刷新页面后重试');
+          return;
+        }
+        // fromQueue：排队放行的那条闭包必须带旁路（放行期间 _isSendBusy 仍含
+        // _sendQueueFlushing）——不带的话工作流入口会把它再收进队列，flush 循环
+        // 每圈收一条、事件循环被饿死（T225 同型，2026-10-17 自查发现）
+        return window.startSocraticWorkflow(message, {
+          mode: 'answer',
+          question: snap.question,
+          level: snap.level,
           branchId: snap.branchId,
-          ...(snap.fromPort ? { fromPort: snap.fromPort } : {}),
+          sourceModule: snap.sourceModule || 'socratic',
+          parentId: snap.parentMsg,
           branchLabel: '苏格拉底：' + levelLabel,
-          ...(snap.position ? { position: snap.position } : {}),
-        });
-        // 返回 sendQuick 的 promise：flush 靠 await 它确认这一条真发出去了，才轮到下一条
-        return sendQuick(message);
+          sourceNodeId: (host && host.id) || snap.sourceNodeId || '',
+          sourcePort: snap.sourcePort || ((host && typeof _branchSourcePort === 'function') ? _branchSourcePort(host, 'socratic') : 'out-0'),
+          position: snap.position,
+        }, null, !!fromQueue);
       } finally {
         socraticSubmitting = false;
       }
@@ -147,7 +170,7 @@
       if (typeof _isSendBusy === 'function' && _isSendBusy()) {
         closeSocraticModal();
         pendingSocraticNewLoop = false;
-        _enqueueSend('苏格拉底回答', function() { return _runSocraticAnswer(snap); },
+        _enqueueSend('苏格拉底回答', function() { return _runSocraticAnswer(snap, true); },
           { text: (snap && (snap.question || snap.answer)) || '' });
         return;
       }
@@ -164,18 +187,33 @@
     // T42：给点提示 / 看讲解过去是裸 `if (isStreaming) return;`，点了毫无回音。
     // 改成忙时排队。分支复用的判定（reuse）刻意留在闭包里**发的时候**再算——
     // 那才是真正要接着走的那一轮的状态，比在点击瞬间算更准。
-    function _queueOrRunSocraticExit(label, prefix, question, level, parentMsg, sourceModule) {
-      const run = function() {
+    function _queueOrRunSocraticExit(label, prefix, question, level, parentMsg, sourceModule, opts) {
+      const run = function(taskId) {
         const message = _socraticExitMessage(prefix, level, question);
         const reuse = currentBranch === 'socratic' && currentBranchId;
-        setActiveBranchAnchor({
+        const branchId = reuse ? currentBranchId : _genBranchId();
+        currentBranch = 'socratic';
+        currentBranchId = branchId;
+        // T361：提示/讲解同样落工作流链路（工作流入口自带忙碌排队，见 startSocraticWorkflow）
+        const host = (opts && opts.sourceNodeId ? _findGraphNode(opts.sourceNodeId) : null)
+          || ((typeof _resolveBranchHostNode === 'function') ? _resolveBranchHostNode(parentMsg, sourceModule || 'socratic') : null);
+        if (typeof window.startSocraticWorkflow !== 'function') {
+          if (typeof showToast === 'function') showToast('苏格拉底闭环需要工作流通道，请刷新页面后重试');
+          return;
+        }
+        // taskId 是队列放行时给的（flush 调 run(taskId)）：当作 handoff 账＋fromQueue
+        // 旁路，避免工作流入口在放行期间把这条再收进队列（T225 同型）
+        return window.startSocraticWorkflow(message, {
+          mode: prefix === '[苏格拉底提示]' ? 'hint' : 'explain',
+          question: question,
+          level: level,
+          branchId: branchId,
+          sourceModule: sourceModule || 'socratic',
           parentId: parentMsg || '',
-          sourceModule: sourceModule || 'extend',
-          branchType: 'socratic',
-          branchId: reuse ? currentBranchId : _genBranchId(),
           branchLabel: label,
-        });
-        return sendQuick(message);
+          sourceNodeId: (host && host.id) || '',
+          sourcePort: (opts && opts.sourcePort) || ((host && typeof _branchSourcePort === 'function') ? _branchSourcePort(host, 'socratic') : 'out-0'),
+        }, taskId || null, !!taskId);
       };
       if (typeof _isSendBusy === 'function' && _isSendBusy()) {
         _enqueueSend(label, run, { text: question });
@@ -184,12 +222,12 @@
       return run();
     }
 
-    function startSocraticHint(question, level, parentMsg, sourceModule) {
-      return _queueOrRunSocraticExit('苏格拉底提示', '[苏格拉底提示]', question, level, parentMsg, sourceModule);
+    function startSocraticHint(question, level, parentMsg, sourceModule, opts) {
+      return _queueOrRunSocraticExit('苏格拉底提示', '[苏格拉底提示]', question, level, parentMsg, sourceModule, opts);
     }
 
-    function startSocraticExplain(question, level, parentMsg, sourceModule) {
-      return _queueOrRunSocraticExit('苏格拉底讲解', '[苏格拉底讲解]', question, level, parentMsg, sourceModule);
+    function startSocraticExplain(question, level, parentMsg, sourceModule, opts) {
+      return _queueOrRunSocraticExit('苏格拉底讲解', '[苏格拉底讲解]', question, level, parentMsg, sourceModule, opts);
     }
 
     function resetSocraticBranch() {
@@ -230,7 +268,23 @@
         return;
       }
       const anchor = pendingBranchModal;
+      // T361：分支拓展一律落工作流链路（消息簇链路退役）——宿主节点由锚点现场解析
+      // （nodeId 优先，其次 timestamp+sourceModule），建「问题＋分析＋模块」逐节点生成。
+      // 忙碌排队交给 startQuestionWorkflow 自己（它带 fromQueue 放行旁路，这里再包一层
+      // _enqueueSend 会在放行时自我重入，见 T225）。
+      const host = anchor
+        ? (anchor.nodeId ? _findGraphNode(anchor.nodeId)
+          : ((typeof _resolveBranchHostNode === 'function') ? _resolveBranchHostNode(anchor.parentId, anchor.sourceModule) : null))
+        : null;
+      if (anchor && host && typeof window.startQuestionWorkflow === 'function') {
+        const sourcePort = anchor.sourcePort
+          || ((typeof _branchSourcePort === 'function') ? _branchSourcePort(host, anchor.branchType) : 'out-0');
+        closeBranchModal();
+        window.startQuestionWorkflow(text, { sourceNodeId: host.id, sourcePort: sourcePort, queueLabel: '追问' });
+        return;
+      }
       if (anchor && typeof window.sendBranchQuick === 'function') {
+        // 存量兜底（宿主节点已不在画布上：消息被删、画布已切）：旧锚点发送仍可用
         // T42：必须先判忙、再关窗。原来的顺序是「关窗 → 发送 → 被守卫静默吞掉」，
         // 结果弹窗关了、用户打的字凭空消失、什么都没发生——比「点了没反应」更糟，
         // 那是实打实的丢东西。排队这条路让字有去处，也不再假装发出去了。

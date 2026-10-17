@@ -347,6 +347,12 @@ async function _generateAnalysis(node, nodeSignal) {
 }
 
 function _slotCallForWorkflowNode(node) {
+  // T361：苏格拉底反馈节点沿用闭环的 branch 槽（旧消息链 sendQuick 走 proxyChat 的
+  // isSocraticOrLearn 判定），不跟随主模型——本地/便宜模型跑闭环是既有配置能力。
+  if (node && node.socraticMeta && typeof getActiveModelForRole === 'function') {
+    const socraticModel = getActiveModelForRole('branch');
+    if (socraticModel) return { model: socraticModel, role: 'branch' };
+  }
   // 配方声明模型槽位（P2，model_role）：优先用指定槽（html/branch/graph/quiz/descriptor），
   // 槽位没配模型时回落主模型——与官方 viz 的 html 槽回落口径一致。
   // 2026-10-11 起同时返回落点槽位 role：思考档位跟提供模型的槽走（getSlotThinkingForRole）
@@ -383,7 +389,9 @@ function _normalizeWorkflowVizContent(content) {
 
 async function _generateCustomNode(node, nodeSignal) {
   if (!node || node.busy) return;
-  if (node.kind === 'answer' && !node.manual) return;
+  // T361：苏格拉底反馈节点也是 answer 底座，但它走自己的闭环口径（见下方 soc 分支），
+  // 不再被「answer 节点一律走问题分析」的旧闸门挡在门外。
+  if (node.kind === 'answer' && !node.manual && !node.socraticMeta) return;
   if (node.kind === 'hub') return;
   // 版本账（T339）：旧内容先收进账本再清空——生成期间节点从空白重写，旧版随时 ‹› 切回
   _beginWorkflowNodeVersionCycle(node);
@@ -394,16 +402,30 @@ async function _generateCustomNode(node, nodeSignal) {
   else renderGraphCanvas();
 
   const recipe = node.recipeId && node.recipe ? node.recipe : null;
+  // T361：苏格拉底闭环节点（socraticMeta）走闭环自己的口径——prompt 是提交瞬间定稿的
+  // [苏格拉底回答]/[提示]/[讲解] 原文；**不带 workflow_context**（服务端据此选
+  // BRANCH_SYSTEM_PROMPT 而不是 MODULE_SYSTEM_PROMPT）；branch_type=socratic 与
+  // branch_id 原样进 /api/models/chat，闭环状态机（连对次数/已答轮数）与
+  // <socratic_meta> 记账一字不改地接着跑。
+  const socratic = node.socraticMeta && typeof node.socraticMeta === 'object' ? node.socraticMeta : null;
   // 配方双阶段（P2，analysis_phase＝问题分析式）：正文生成前先产出问题概要，写进
   // 自身 analysis——提示词与 workflow_context 拿到与官方 answer 同款的「隐藏分析」
   if (recipe && recipe.analysis_phase) {
     await _recipeGenerateAnalysis(node, nodeSignal);
   }
-  const workflowContext = _buildWorkflowContextForNode(node);
-  const prompt = _workflowPromptForNode(node, workflowContext);
+  const workflowContext = socratic ? {} : _buildWorkflowContextForNode(node);
+  const prompt = socratic ? String(socratic.prompt || '') : _workflowPromptForNode(node, workflowContext);
   const graphPath = _blankNodeGraphPath(node);
   const pathParent = graphPath[graphPath.length - 1];
-  const branchMeta = {
+  const branchMeta = socratic ? {
+    parentId: socratic.parentId || (pathParent ? String(pathParent.timestamp || '') : String(node.timestamp || '')),
+    sourceModule: socratic.sourceModule || 'socratic',
+    branchType: 'socratic',
+    branchId: socratic.branchId || '',
+    branchLabel: socratic.branchLabel || '苏格拉底闭环',
+    graphPath,
+    wfStats: _wfStatsForNode(node),
+  } : {
     parentId: pathParent ? String(pathParent.timestamp || '') : String(node.timestamp || ''),
     sourceModule: node.moduleKey || '',
     branchType: 'blank',
@@ -558,6 +580,9 @@ async function _generateCustomNode(node, nodeSignal) {
     _commitWorkflowNodeVersion(live);
     // on_generated 编排钩子（P2）：生成成功后按声明自动建链（进阶学习四步链的数据版）
     if (live && recipe && recipe.on_generated) _recipeAfterGenerated(live);
+    // T361：苏格拉底反馈落地后把回复里的建议追问抽成派生「苏格拉底追问」节点
+    // （闭环下一题），并结算本轮（profile 记账＋闭环结束复位）
+    if (live && live.socraticMeta) _materializeSocraticFollowup(live);
   } catch (err) {
     const live = _findGraphNode(node.id);
     if (live) {
@@ -570,6 +595,113 @@ async function _generateCustomNode(node, nodeSignal) {
     _refreshWorkflowNodeStatusUi(live);
     if (err.name !== 'AbortError' && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
   }
+}
+
+
+// ===== T361：苏格拉底反馈 → 派生「苏格拉底追问」节点（闭环下一题）=====
+// 旧消息链里 sq- 节点由 _buildGraphData 从 assistant 消息切片时顺手派生；工作流链不写
+// 消息表，派生改在这里显式落地：解析 <socratic_meta>（结算闭环状态/画像记账）＋建议
+// 追问列表（1. [基础] …），写一颗 module/socratic 自定义节点挂在该反馈节点下，下一轮
+// 「我来回答」就落在它身上。同一颗反馈节点重生成时更新既有派生节点，不重复长点。
+function _parseSocraticMetaAttrs(content) {
+  const match = String(content || '').match(/<socratic_meta\b([^>]*?)\/?>/i);
+  if (!match) return null;
+  const attrs = match[1] || '';
+  const pick = (name) => {
+    const found = attrs.match(new RegExp('\\b' + name + '\\s*=\\s*["\']([^"\']*)["\']', 'i'));
+    return found ? found[1] : '';
+  };
+  return {
+    correct: pick('correct').trim().toLowerCase(),
+    done: ['1', 'true', 'yes'].includes(pick('done').trim().toLowerCase()),
+  };
+}
+
+function _materializeSocraticFollowup(answerNode) {
+  const live = (typeof _findGraphNode === 'function' ? _findGraphNode(answerNode.id) : null) || answerNode;
+  if (!live || !live.socraticMeta) return;
+  const content = String(live.content || '');
+  const meta = _parseSocraticMetaAttrs(content);
+  const suggested = (typeof _parseSuggestedFollowupQuestions === 'function')
+    ? _parseSuggestedFollowupQuestions(content) : [];
+  // 闭环结束（done）或连对达标：复位内存里的闭环指针，下一题重开一条分支
+  if (meta && meta.done) {
+    if (typeof currentBranch !== 'undefined') currentBranch = null;
+    if (typeof currentBranchId !== 'undefined') currentBranchId = null;
+  }
+  // 画像/检测记账：与旧消息链 chat.js 的 recordSocraticAnswer 同一口径。同一颗节点
+  // 重生成出同样判定时不重复记账（旧链路每次生成都是新消息、无从去重；节点化之后
+  // 有稳定身份，按「判定签名」去重才不虚增答题统计）。
+  const sm = live.socraticMeta || {};
+  const recordKey = meta && meta.correct ? meta.correct + '/' + (meta.done ? '1' : '0') : '';
+  if (recordKey && sm.recordedMeta !== recordKey && typeof window.recordSocraticAnswer === 'function') {
+    sm.recordedMeta = recordKey;
+    _saveCustomNodes();
+    window.recordSocraticAnswer({
+      title: sm.question || '苏格拉底追问',
+      question: sm.question || '',
+      correct: meta.correct === 'correct',
+      sessionId: _workflowSessionId(),
+      level: sm.level === 'advanced' ? '进阶' : sm.level === 'expand' ? '拓展' : '基础',
+    });
+  }
+  if (!suggested.length) return;
+  const worldSid = _workflowWorldSid() || _workflowSessionId();
+  const state = _graphStateFor(worldSid);
+  state.customNodes = state.customNodes || [];
+  state.connections = state.connections || [];
+  const text = '### 苏格拉底追问\n\n' + suggested.map(q => '- [' + q.levelName + '] ' + q.question).join('\n');
+  const summary = suggested.map(q => q.question).join('；').slice(0, 120);
+  const existing = state.customNodes.find(cn => cn && cn.sqAuto && String(cn.parentId || '') === String(live.id));
+  if (existing) {
+    existing.content = text;
+    existing.items = suggested;
+    existing.summary = summary;
+    existing.status = 'done';
+    existing.generated = true;
+    existing.busy = false;
+    _saveGraphStateFor(worldSid, state);
+    renderGraphCanvas();
+    if (typeof _taskExtendWorkflowWorld === 'function') _taskExtendWorkflowWorld([existing.id]);
+    return;
+  }
+  const sqId = 'sq-' + live.id;
+  const savedPos = (state.positions || {})[sqId];
+  const sqNode = {
+    id: sqId,
+    kind: 'module',
+    moduleKey: 'socratic',
+    sqAuto: true,
+    manual: false,
+    content: text,
+    status: 'done',
+    summary: summary,
+    items: suggested,
+    parentId: live.id,
+    timestamp: Date.now(),
+    createdAt: Date.now(),
+    x: savedPos ? savedPos.x : (Number.isFinite(live.x) ? live.x + 460 : 120),
+    y: savedPos ? savedPos.y : (Number.isFinite(live.y) ? live.y + 250 : 320),
+    depth: (Number.isFinite(live.depth) ? live.depth : 2) + 1,
+    targetAngle: 0,
+    isRoot: false,
+    busy: false,
+    generated: true,
+    analysis: '',
+    requirements: '',
+  };
+  state.customNodes.push(sqNode);
+  state.connections.push({
+    from: live.id,
+    fromPort: 'out-' + ANSWER_OUTPUT_INDEX.socratic,
+    to: sqId,
+    toPort: 'in-0',
+    type: 'custom',
+    custom: true,
+  });
+  _saveGraphStateFor(worldSid, state);
+  renderGraphCanvas();
+  if (typeof _taskExtendWorkflowWorld === 'function') _taskExtendWorkflowWorld([sqId]);
 }
 
 async function _processWorkflowChainItem(current, force, nodeSignal) {
@@ -593,6 +725,12 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
   }
 
   if (current.kind === 'answer' && !current.manual) {
+    // T361：苏格拉底反馈节点重生成走闭环口径（_generateCustomNode 的 socratic 分支），
+    // 不是问题分析——否则点「重新生成」会把闭环反馈换成一张问题分析。
+    if (current.socraticMeta) {
+      await _generateCustomNode(current, nodeSignal);
+      return !_workflowNodeAborted(nodeSignal);
+    }
     if (current.busy) return false;
     const question = _findQuestionContentUpstream(current);
     if (!question.trim()) {
@@ -2094,6 +2232,7 @@ window.createManualNode = createManualNode;
 
 window.runWorkflowNode = runWorkflowNode;
 window.startQuestionWorkflow = startQuestionWorkflow;
+window.startSocraticWorkflow = startSocraticWorkflow;
 window.runWorkflowNodes = runWorkflowNodes;
 
 window.runAllWorkflowNodes = runAllWorkflowNodes;

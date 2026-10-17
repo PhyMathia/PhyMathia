@@ -452,6 +452,70 @@ async function main() {
         ok('⑥ 进阶支线：已发通（learn 端口「' + port.meta.label + '」→ 预填草稿 → 发送提问），流式收到 ' + st.len + ' 字');
       } catch (e) { bad('⑥ 进阶支线', e); }
 
+      // ===== ⑨ 方向钮（T361：learn 模块卡正文里的方向条目钮 → 工作流逐节点）=====
+      // 与 ⑥ 不是同一条：⑥ 是拖 learn 端口出草稿再发；⑨ 是点卡片正文里的
+      // .learn-dir-btn（convertLearnDirections 渲染的按钮）。T361 之前它走消息簇
+      // 链路（sendBranchQuick），现在与端口拖拽同落 startQuestionWorkflow——
+      // 两条都要真发，单链路语义才算验到。
+      try {
+        await waitIdle('⑨ 方向钮');
+        const created = await page.evaluate(async () => {
+          const nodes = [...document.querySelectorAll('.graph-node-module.graph-module-learn')];
+          let btn = null;
+          for (const el of nodes) { const b = el.querySelector('.learn-dir-btn'); if (b) { btn = b; break; } }
+          if (!btn) return { err: '画布上没有渲染出方向条目钮（learn 模块卡正文）' };
+          const before = graphView.nodes.length;
+          btn.click();
+          await new Promise(r => setTimeout(r, 1200));
+          return { beforeCount: before, label: String(btn.textContent || '').slice(0, 20) };
+        });
+        if (created.err) throw new Error(created.err);
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
+        if (!ans.id) throw new Error('点方向钮后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        ok('⑨ 方向钮：已发通（learn 卡方向钮「' + created.label + '」→ 工作流逐节点），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('⑨ 方向钮', e); }
+
+      // ===== ⑩ 苏格拉底闭环作答（T361：卡上「我来回答」→ 弹窗 → 工作流承载）=====
+      // 与 ④ 不是同一条：④ 是拖 socratic 端口出草稿点「直接问AI」；⑩ 是 socratic
+      // 模块卡正文里的「我来回答」→ 弹窗 → 提交作答。T361 之前落一条 assistant
+      // 消息（消息簇），现在建 user-custom 作答＋answer-custom 反馈两颗自定义节点，
+      // branch_id 闭环状态与建议追问派生都随迁——本通道把三件都断言上。
+      try {
+        await waitIdle('⑩ 苏格拉底闭环作答');
+        const opened = await page.evaluate(async () => {
+          const nodes = [...document.querySelectorAll('.graph-node-module.graph-module-socratic')];
+          let btn = null;
+          for (const el of nodes) { const b = el.querySelector('.socratic-answer'); if (b) { btn = b; break; } }
+          if (!btn) return { err: '画布上没有可作答的苏格拉底问题钮（socratic 模块卡正文）' };
+          btn.click();
+          await new Promise(r => setTimeout(r, 500));
+          const modal = document.getElementById('socraticModal');
+          if (!modal || modal.hidden) return { err: '点「我来回答」后弹窗没打开' };
+          const ta = document.getElementById('socraticModalAnswer');
+          if (!ta) return { err: '弹窗里没有作答输入框' };
+          ta.value = '回复力与位移成正比、方向相反，所以 F=-kx。';
+          const before = graphView.nodes.length;
+          window.submitSocraticAnswer();
+          return { beforeCount: before };
+        });
+        if (opened.err) throw new Error(opened.err);
+        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), opened);
+        if (!ans.id) throw new Error('提交作答后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有反馈节点');
+        const st = await waitNodeSettled(page, ans.id, 180000);
+        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
+        const carried = await page.evaluate(id => {
+          const n = graphView.nodeById[id];
+          const sq = graphView.nodes.find(x => x.sqAuto && String(x.parentId) === String(id));
+          return { messageIndex: n ? n.messageIndex : null, hasMeta: !!(n && n.socraticMeta), sq: !!sq };
+        }, ans.id);
+        if (carried.messageIndex >= 0) throw new Error('反馈仍落在消息派生节点上（messageIndex=' + carried.messageIndex + '）');
+        if (!carried.hasMeta) throw new Error('反馈节点没带闭环元数据（socraticMeta）');
+        if (!carried.sq) throw new Error('建议追问没有派生成独立节点（闭环下一题断）');
+        ok('⑩ 苏格拉底闭环作答：已发通（卡上「我来回答」→ 弹窗 → 工作流节点对，流式 ' + st.len + ' 字，建议追问已派生）');
+      } catch (e) { bad('⑩ 苏格拉底闭环作答', e); }
+
       // ===== 7. Φ 创造模式（preset 相位 → create_recipe）=====
       // 真实入口：打开 Φ 面板 → 模式按钮开菜单 → 点「✦ 创造」→ 填指令 → 发送。
       // 后端 preset 相位返回 operations（mock 上游回 create_recipe tool_calls），
@@ -604,7 +668,7 @@ async function main() {
           + '第二轮答完出配方操作行' + (round2.digest ? '，预览含「入 2」端口摘要' : '') + '）');
       } catch (e) { bad('⑫ 创造模式访谈', e); }
     } else {
-      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑦ 创造模式', '⑧ 答疑模式'].forEach(n =>
+      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑨ 方向钮', '⑩ 苏格拉底闭环作答', '⑦ 创造模式', '⑧ 答疑模式'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));
     }
 

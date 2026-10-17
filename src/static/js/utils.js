@@ -68,7 +68,9 @@ function formatRelativeTime(ts) {
 // 探索网分支 ID：内嵌完整会话标识（后端 _socratic_branch_prefixes 按完整标识
 // 精确匹配；旧版截 18 字符会让前缀相同的两个会话互相误删/误认苏格拉底状态）
 function _genBranchId() {
-  const sessionPart = (typeof currentSessionId !== 'undefined' ? currentSessionId : 'sess').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  // currentSessionId 在会话尚未立起来时是 null（启动早期/沙箱），空值兜底别抛
+  const raw = (typeof currentSessionId !== 'undefined' && currentSessionId) ? currentSessionId : 'sess';
+  const sessionPart = String(raw).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   return 'br_' + (sessionPart || 'sess') + '_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 }
 
