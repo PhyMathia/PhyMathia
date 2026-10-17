@@ -1027,6 +1027,31 @@ function _countDownstreamNodes(nodeId) {
   return seen.size - 1;
 }
 
+// 下游里人工定稿（T355 humanDone）的颗数：重生成上游不会覆盖这些节点的内容，
+// 预警里单独点名，用户才知道哪些下游受保护、哪些才是真的可能失效
+function _countDownstreamHumanDone(nodeId) {
+  const state = _graphState();
+  const connections = (state && state.connections) || [];
+  const start = String(nodeId);
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.shift();
+    connections.forEach(c => {
+      if (!c) return;
+      const to = String(c.to || '');
+      if (String(c.from) === cur && to && !seen.has(to)) { seen.add(to); queue.push(to); }
+    });
+  }
+  let count = 0;
+  seen.forEach(id => {
+    if (id === start) return;
+    const node = typeof _findGraphNode === 'function' ? _findGraphNode(id) : null;
+    if (node && node.humanDone) count += 1;
+  });
+  return count;
+}
+
 // 用户拍板口径：说「可能失效」不说「会失效」——下游是按旧内容生成的，对不对得
 // 上要看新旧内容差多少，系统不替用户断言。面板路（没看懂/重新生成）提示写在面板
 // 里、点发送即确认；直接按钮路（工作流/空白/知识点）走 confirm。无下游一律不打扰。
@@ -1035,7 +1060,9 @@ function _warnDownstreamBeforeRegenerate(node) {
   if (!node) return true;
   const n = _countDownstreamNodes(node.id);
   if (!n) return true;
-  return confirm('该节点重新生成后，下游 ' + n + ' 颗节点可能失效。\n仍要重新生成吗？');
+  const humanCount = _countDownstreamHumanDone(node.id);
+  const humanNote = humanCount ? '\n其中 ' + humanCount + ' 颗是你人工定稿的内容，重新生成不会覆盖它们。' : '';
+  return confirm('该节点重新生成后，下游 ' + n + ' 颗节点可能失效。' + humanNote + '\n仍要重新生成吗？');
 }
 
 function graphOpenRegenerate(nodeId) {
@@ -1053,8 +1080,10 @@ function graphOpenRegenerate(nodeId) {
   const main = el.querySelector('.graph-node-main');
   if (!main) return;
   const downstreamCount = _countDownstreamNodes(nodeId);
+  const humanCount = typeof _countDownstreamHumanDone === 'function' ? _countDownstreamHumanDone(nodeId) : 0;
   const warnHtml = downstreamCount
-    ? '<div class="graph-regenerate-warn">该节点重新生成后，下游 ' + downstreamCount + ' 颗节点可能失效</div>'
+    ? '<div class="graph-regenerate-warn">该节点重新生成后，下游 ' + downstreamCount + ' 颗节点可能失效'
+      + (humanCount ? '；其中 ' + humanCount + ' 颗人工定稿内容不会被覆盖' : '') + '</div>'
     : '';
   // 面板开着的宿主节点抬到兄弟节点之上：画布按 DOM 顺序叠放，下游节点常压住面板
   // 按钮排（真机实证：物理视角的面板被正下方的数学视角整卡盖住，按钮点不到——

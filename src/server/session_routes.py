@@ -124,7 +124,23 @@ async def api_accounts_delete(request: Request):
 async def api_get_sessions(request: Request = None):
     # T241：_read_json_cached 的 stat 也在 _JSON_LOCK 内做——后台线程持锁写大文件时，
     # 这次 stat 会把事件循环堵在锁上（前端 15 秒同步反复打这个端点）。读盘整体离线程。
-    return await asyncio.to_thread(_read_json_cached, _account_paths(request).sessions_path, {})
+    paths = _account_paths(request)
+    data = await asyncio.to_thread(_read_json_cached, paths.sessions_path, {})
+    # T356：消息文件在位标记（msgSaved）——历史缺口（写穿欠账/跨机迁移）以前对前端
+    # 完全不可见：同步只拉不补、窗口外会话永不补传，缺口画布两边齐空转。给每条
+    # 会话标上服务端 messages/<sid>.json 是否存在，前端据此定向补传。代价＝一次
+    # readdir（只看文件名，不解析消息体）；读的是缓存对象，标注必须落在浅拷贝上，
+    # 否则会把 _read_json_cached 的缓存污染掉。
+    try:
+        have_msgs = {p.stem for p in paths.messages_dir.glob("*.json")}
+    except OSError:
+        have_msgs = set()
+    if isinstance(data, dict):
+        return {
+            sid: ({**s, "msgSaved": sid in have_msgs} if isinstance(s, dict) else s)
+            for sid, s in data.items()
+        }
+    return data
 
 
 @router.post("/api/sessions")
@@ -588,9 +604,10 @@ async def api_save_messages(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid session id")
 
     tombstoned_msgs = False
+    wrote_msgs = False
 
     def msgs_updater(existing):
-        nonlocal tombstoned_msgs
+        nonlocal tombstoned_msgs, wrote_msgs
         # T271 墓碑闸门：已删会话的消息推送静默不落盘（不建孤儿消息文件）。
         # 与删除登记同持全局 _JSON_LOCK，无竞窗；响应仍 ok（信标/同步调用方
         # 只看 resp.ok，静默跳过防重试风暴）。
@@ -603,20 +620,24 @@ async def api_save_messages(session_id: str, request: Request):
         # 空列表同样不许写：它是本地读档失败/竞态的表现（合法清空走 DELETE
         # 路由），空列表清空服务端唯一副本（09-20 修复，不许回退）。
         if not isinstance(existing, list):
+            wrote_msgs = True
             return messages
         if not messages:
             return None
         merged = merge_message_lists(existing, messages)
         if merged == existing:
             return None  # 没有任何新东西：不写盘
+        wrote_msgs = True
         return merged
 
     # T201：读并+合并+写盘挪 to_thread，长会话保存不再卡流式下发
     # （storage._JSON_LOCK 是 threading.RLock，跨线程照常串行，语义不变）
     await asyncio.to_thread(_mutate_json, msgs_path, msgs_updater, default=[])
+    # T356：written＝这轮真落盘了没有。200 从此不等于「已存」——空推送/无增量/
+    # 墓碑窗口都如实回报，调用方与日志能看出「推送了但没写」这件事。
     if tombstoned_msgs:
-        return {"ok": True, "count": 0, "tombstoned": True}
-    return {"ok": True, "count": len(messages)}
+        return {"ok": True, "count": 0, "tombstoned": True, "written": False}
+    return {"ok": True, "count": len(messages), "written": wrote_msgs}
 
 
 @router.delete("/api/sessions/{session_id}/messages")

@@ -18,6 +18,9 @@ function _workflowItemNeedsProgress(node) {
   if (!node) return false;
   if (node.messageIndex >= 0) return false;
   if (node.manual) return false;
+  // 人工定稿（T355）：内容是用户亲手写/改/粘贴并保存过的，工作流不再收编——
+  // 上游变了也保持人工版本，只有该节点自己的显式重生成才会换掉内容
+  if (node.humanDone) return false;
   if (node.kind === 'user') return false;
   if (node.kind === 'hub') return false;
   if (node.kind === 'summary') {

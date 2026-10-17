@@ -263,8 +263,9 @@ function saveModuleNode(nodeId) {
       _pushGraphUndo(false, { source: 'user', summary: '人工编辑：' + moduleLabel });
     }
     node.content = content;
-    node.status = 'done';
     node.summary = content.slice(0, 120);
+    // 人工定稿（T355）：弹窗保存即用户定稿，工作流整链跑动不再收编重写
+    _markNodeHumanFinalized(node);
     _saveCustomNodes();
   }
   closeModuleNodeModal();
@@ -539,14 +540,27 @@ function saveCustomNodeContent(nodeId) {
   node.title = nextTitle;
   node.content = nextContent;
   node.summary = _graphSummary(node.content);
-  node.status = (node.content || '').trim() ? 'done' : 'waiting';
-  // 人工改写后同步 inputHash 为当前值，避免「全部开始」因上游未变化而误判需要重新生成
-  if (typeof _nodeInputHash === 'function') {
-    try { node.inputHash = _nodeInputHash(node); } catch (e) { /* 保持原值 */ }
-  }
+  // 人工定稿（T355）：置 done＋同步 inputHash＋打 humanDone，全部开始不再收编
+  _markNodeHumanFinalized(node);
   _saveCustomNodes();
   closeModuleNodeModal();
   renderGraphCanvas();
+}
+
+// 人工定稿标记（T355）：四条内容编辑路（模块弹窗/笔记本弹窗/卡内 textarea/粘贴）
+// 统一在保存时打 humanDone——「全部开始」与整链跑动都跳过这颗节点（语义同 manual
+// 家族），上游重生成导致的 hash 失配也不再触发重写；只有节点自己的显式重生成
+// （修订面板/从头生成）才会换掉内容。空内容不算定稿（工作流口径里空节点仍待生成）。
+function _markNodeHumanFinalized(node) {
+  if (!node || node.messageIndex >= 0) return;
+  if (!(node.content || '').trim()) { node.humanDone = false; return; }
+  node.status = 'done';
+  node.humanDone = true;
+  // inputHash 同步到当前上游：上游未变时旧三连判定本来就豁免，上游变了之后由
+  // humanDone 接管豁免，两个条件不再互相掣肘
+  if (typeof _nodeInputHash === 'function') {
+    try { node.inputHash = _nodeInputHash(node); } catch (e) { /* 保持原值 */ }
+  }
 }
 
 function updateCustomNodeContent(nodeId, value) {
@@ -559,6 +573,8 @@ function updateCustomNodeContent(nodeId, value) {
   }
   node.content = next;
   node.summary = _graphSummary(node.content);
+  // 粘贴/卡内直改同为人工定稿（T355）：此前这条路不记账，工作流一律收编重写
+  _markNodeHumanFinalized(node);
   const state = _graphState();
   state.customNodes = graphView.nodes
     .filter(item => item.messageIndex < 0 && GRAPH_CUSTOM_NODE_KINDS.includes(item.kind))

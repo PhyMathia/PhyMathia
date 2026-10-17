@@ -37,6 +37,7 @@
 //   graph-busy-sweep        生成中断电清扫（T275：busy/running 残留的启动清扫＋历史回放清洗）
 //   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
 //   graph-edit-history      人工编辑节点内容进撤销历史＋viz/mermaid 围栏编辑态往返（2026-10-16）
+//   graph-human-finalize    人工定稿防工作流重生成（T355：humanDone 标记＋判定跳过＋链上护栏＋版本生命周期，2026-10-17）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -69,6 +70,7 @@ import { run as _storage_lru } from './frontend_smoke/storage-lru.mjs';
 import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs';
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
 import { run as _graph_edit_history } from './frontend_smoke/graph-edit-history.mjs';
+import { run as _graph_human_finalize } from './frontend_smoke/graph-human-finalize.mjs';
 
 _recipes();
 _phi();
@@ -101,4 +103,5 @@ await _storage_lru();
 await _graph_busy_sweep();
 await _graph_mirror_slim();
 await _graph_edit_history();
+await _graph_human_finalize();
 await finish();

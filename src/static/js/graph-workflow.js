@@ -554,6 +554,13 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
   }
 
   const inputHash = _nodeInputHash(current);
+  // 人工定稿护栏（T355）：整链跑动会拉上游依赖进子图，人工定稿节点即使 hash 因上游
+  // 重生成而失配，也不许在这里被 _generateCustomNode 静默覆盖。force（显式从头生成
+  // 这颗）例外——那是用户点名要换掉这颗的内容
+  if (!force && current.humanDone && (current.content || '').trim()) {
+    current.status = 'done';
+    return true;
+  }
   if (!force && (current.content || '').trim() && current.inputHash === inputHash && current.status === 'done') return true;
   await _generateCustomNode(current, nodeSignal);
   return !_workflowNodeAborted(nodeSignal);
@@ -982,9 +989,12 @@ function _commitWorkflowNodeVersion(node) {
   const av = _nodeActiveVersionIndex(node, versions);
   if (versions[av] && versions[av].content === content) {
     node.activeVersion = av;
+    versions[av].humanDone = !!node.humanDone;
     return;
   }
-  versions.push({ content: content, at: Date.now() });
+  // humanDone（T355）随版本入账：切版/回滚时标记跟着内容走，不会出现「内容是人工
+  // 定稿、标记却丢在工作流重写里」的错位
+  versions.push({ content: content, at: Date.now(), humanDone: !!node.humanDone });
   if (versions.length > GRAPH_NODE_VERSION_MAX) versions.splice(0, versions.length - GRAPH_NODE_VERSION_MAX);
   node.activeVersion = versions.length - 1;
 }
@@ -995,6 +1005,9 @@ function _beginWorkflowNodeVersionCycle(node) {
   if (!node || node.messageIndex >= 0) return;
   _commitWorkflowNodeVersion(node);
   node.content = '';
+  // 人工定稿就此交棒给 AI 重写（T355）：旧版已入账且带着标记，失败回滚或 ‹› 切回
+  // 时标记随内容恢复；生成成功则节点回到 AI 内容口径
+  node.humanDone = false;
 }
 
 // 失败/中止结算：content 兜回 activeVersion 那一版（草稿不算数）；账上没版本就清空回未生成态
@@ -1003,6 +1016,7 @@ function _restoreWorkflowNodeVersion(node) {
   const versions = _nodeVersionsOf(node);
   if (!versions.length) {
     node.activeVersion = undefined;
+    node.humanDone = false;
     if ((node.content || '') !== '') {
       node.content = '';
       node.summary = '';
@@ -1011,6 +1025,7 @@ function _restoreWorkflowNodeVersion(node) {
   }
   const av = _nodeActiveVersionIndex(node, versions);
   node.activeVersion = av;
+  node.humanDone = !!versions[av].humanDone;
   if (String(node.content || '') !== versions[av].content) {
     node.content = versions[av].content;
     node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
@@ -1030,6 +1045,7 @@ function graphNodeVersionStep(nodeId, dir) {
   node.activeVersion = next;
   node.content = versions[next].content;
   node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
+  node.humanDone = !!versions[next].humanDone;
   _saveCustomNodes();
   if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
   renderGraphCanvas();
@@ -1049,10 +1065,12 @@ function graphNodeVersionDelete(nodeId) {
     node.activeVersion = Math.min(av, versions.length - 1);
     node.content = versions[node.activeVersion].content;
     node.summary = typeof _graphSummary === 'function' ? _graphSummary(node.content) : node.content.slice(0, 120);
+    node.humanDone = !!versions[node.activeVersion].humanDone;
   } else {
     node.activeVersion = undefined;
     node.content = '';
     node.summary = '';
+    node.humanDone = false;
   }
   _saveCustomNodes();
   if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();

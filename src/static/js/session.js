@@ -206,11 +206,25 @@
             (typeof _streamingSessionId === 'function' ? _streamingSessionId() : ''),
             SESSION_LOCAL_CACHE_KEEP);
           const pullIds = [];
+          const pushGapIds = new Set();
+          // 每轮重建：补传成功后服务端 msgSaved 翻真，下一轮不再入名单，LRU 护栏
+          // 同步解除（否则缺口会话的本机副本永远不回收，T348 空间封顶失效）
+          _serverMsgGapSids.clear();
+          // T356：服务端确认缺消息文件（msgSaved=false，服务端在会话列表里标注）而
+          // 本地有消息的会话＝历史缺口（写穿欠账/跨机迁移），进补传名单。旧口径下
+          // 同步只拉不补，「服务端不比本地新＋本地键还在」的缺口画布永无补传窗口。
+          // 本地有货的判据用原串长度（'[]'＝空），不为筛名单解析 JSON。
           for (const sid of serverSessionIds) {
             const localTime = (localSessions[sid] && localSessions[sid].updatedAt) || 0;
             if ((serverSessions[sid].updatedAt || 0) > localTime
               || (localStorage.getItem('phymathia_msgs_' + sid) === null && lruKeepSids.has(sid))) {
               pullIds.push(sid);
+            } else if (serverSessions[sid].msgSaved === false
+              && !_tombstonedSids.has(sid)
+              && !(localSessions[sid] && localSessions[sid].provisional)
+              && (localStorage.getItem('phymathia_msgs_' + sid) || '').length > 2) {
+              pushGapIds.add(sid);
+              _serverMsgGapSids.add(sid);
             }
           }
           // T305：图内容量批拉与消息批量拉取并行（图状态按需加载，空徽标需要
@@ -236,7 +250,9 @@
             try {
               const isServerSession = serverSessionIds.includes(sid);
               // 时间戳与本地持平且本地已有消息：两边已收敛，parse/stringify 全跳
-              if (isServerSession && !pullIds.includes(sid)) continue;
+              // T356：补传名单里的会话也放行——serverMessages 没拉它时按空数组处理，
+              // merge 结果＝本地全量，下方「与 serverMsgs 不一致就推回」自然完成补传
+              if (isServerSession && !pullIds.includes(sid) && !pushGapIds.has(sid)) continue;
               const localMsgsRaw = localStorage.getItem('phymathia_msgs_' + sid);
               const localMsgs = localMsgsRaw ? JSON.parse(localMsgsRaw) : [];
 
@@ -866,6 +882,16 @@
           }
         } catch (e) { /* 离线/失败：下一轮同步补，不阻断切换 */ }
       }
+      // T356：本地有历史而服务端确认缺消息文件（缺口名单由 15 秒同步按 msgSaved
+      // 维护）——打开即补传，「换机前把要带的画布逐个打开一遍」从此自动化。
+      // 火后不管：失败由同步循环的缺口补传兜底；缺口名单本轮不清，多推一次只是
+      // 服务端合并空转。
+      if (chatHistory.length && _serverMsgGapSids.has(id)
+        && !(sessions[id] && sessions[id].provisional) && !_tombstonedSids.has(id)) {
+        _saveMessagesToServer(id, chatHistory).catch(function (e) {
+          console.warn('[Storage] 打开画布补传消息失败:', e);
+        });
+      }
 
       // 重新渲染。renderCurrentChat 内部已触发一次 renderGraphCanvas（聊天容器退役后
       // 它的唯一职责就是这一次画布渲染），这里不再重复调——曾经每次切会话全图
@@ -952,6 +978,10 @@
     const SESSION_LOCAL_CACHE_KEEP = 5;
     // 服务端确认存在的会话 id 集（_syncFromServer 每轮刷新）；LRU 只删集合内会话的本地缓存
     let _serverKnownLocalCacheSids = null;
+    // T356：服务端确认「还没有消息文件」的会话 id 集（每轮同步重建）。这些会话的
+    // phymathia_msgs_ 本地键可能是全宇宙最后一份副本（历史缺口/换机欠账），LRU 清掉
+    // ＝数据毁灭；补传完成后下一轮自动出名单，照常回收。
+    const _serverMsgGapSids = new Set();
     function _localCacheSidOf(key) {
       // graph_history_ 必须先于 graph_ 判：否则历史键会被当普通图键解析出 'history_*'
       if (key.startsWith('phymathia_graph_history_')) return key.slice('phymathia_graph_history_'.length);
@@ -976,7 +1006,7 @@
       for (let i = 0; i < n && i < ids.length; i++) keep.add(ids[i]);
       return keep;
     }
-    function _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids) {
+    function _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids, msgGapSids) {
       const keep = _localCacheKeepSids(sessionMap, currentId, streamingId, keepN);
       const evict = [];
       for (const key of lsKeys()) {
@@ -984,12 +1014,15 @@
         if (!sid || keep.has(sid)) continue;
         // 传入确认集时，只删服务端确认存在的会话（本地独有＝唯一副本，不动）
         if (serverKnownSids && !serverKnownSids.has(sid)) continue;
+        // T356：服务端确认还没有该会话的消息文件时，msgs 本地键可能是最后一份副本，
+        // 不清（补传成功后的下一轮同步会话自动出缺口名单，届时照常回收）
+        if (key.startsWith('phymathia_msgs_') && msgGapSids && msgGapSids.has(sid)) continue;
         evict.push(key);
       }
       return evict;
     }
-    function _pruneLocalSessionCachesCore(sessionMap, currentId, streamingId, keepN, serverKnownSids) {
-      const evict = _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids);
+    function _pruneLocalSessionCachesCore(sessionMap, currentId, streamingId, keepN, serverKnownSids, msgGapSids) {
+      const evict = _localCacheEvictKeys(sessionMap, currentId, streamingId, keepN, serverKnownSids, msgGapSids);
       for (const key of evict) {
         const sid = _localCacheSidOf(key);
         localStorage.removeItem(key);
@@ -1006,7 +1039,7 @@
       // _syncFromServer 传本轮的 merged（模块 sessions 那时还没刷新）
       const evict = _pruneLocalSessionCachesCore(sessionMap || sessions, currentSessionId,
         (typeof _streamingSessionId === 'function' ? _streamingSessionId() : ''), SESSION_LOCAL_CACHE_KEEP,
-        _serverKnownLocalCacheSids);
+        _serverKnownLocalCacheSids, _serverMsgGapSids);
       if (evict.length) console.log('[Storage] LRU 清理本机会话缓存(' + reason + '):', evict.length, '个键');
       return evict.length;
     }

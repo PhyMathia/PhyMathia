@@ -160,8 +160,9 @@ class _HTTPChecks(unittest.TestCase):
             }
         self.assertEqual(self.request("POST", "/api/sessions", json=sessions), {"ok": True, "count": 2})
         for sid, items in messages.items():
+            # T356 起消息保存响应带 written（这轮真落盘了没有）——200 从此不等于「已存」
             self.assertEqual(self.request("POST", f"/api/sessions/{sid}/messages", json={"messages": items}),
-                             {"ok": True, "count": 2})
+                             {"ok": True, "count": 2, "written": True})
         self.assertEqual(self.request("POST", "/api/knowledge", json={"items": knowledge}),
                          {"ok": True, "count": 2})
         self.assertEqual(self.request("POST", "/api/formulas", json={"items": list(formulas.values())}),

@@ -85,8 +85,8 @@ export async function run() {
     if (!src.includes('_serverKnownLocalCacheSids = new Set(serverSessionIds)')) {
       throw new Error('LRU 缺「服务端确认存在」安全闸（本地独有画布是唯一副本，不可删）');
     }
-    if (!src.includes('_serverKnownLocalCacheSids);')) {
-      throw new Error('LRU 未把服务端确认集喂给清理核');
+    if (!src.includes('_serverKnownLocalCacheSids, _serverMsgGapSids);')) {
+      throw new Error('LRU 未把服务端确认集喂给清理核（T356 起连缺口名单一起喂）');
     }
     return true;
   });
@@ -97,6 +97,54 @@ export async function run() {
     if (!ensure.includes('_upgradeGraphHistoryFromServer(sid)')) throw new Error('切会话/加载未接服务端历史补回');
     const slim = src.slice(src.indexOf('function _graphHistoryMirrorSlim'), src.indexOf('function _scheduleGraphHistoryMirror'));
     if (!slim.includes('pruned')) throw new Error('T212 服务端镜像减重口径被动过');
+    return true;
+  });
+
+  // ===== T356：消息镜像缺口（2026-10-17 答辩后修复轮） =====
+  check('T356: LRU 缺口护栏——服务端确认缺消息文件的会话，msgs 本地键不清、graph 照常回收', () => {
+    const f = sandbox.window._localCacheEvictKeys;
+    if (typeof f !== 'function') throw new Error('_localCacheEvictKeys 未暴露');
+    const keys = [
+      'phymathia_msgs_gap_s', 'phymathia_graph_gap_s', 'phymathia_graph_history_gap_s',
+      'phymathia_msgs_ok_s',
+    ];
+    sandbox.window.getCurrentSessionId = () => '';
+    keys.forEach(k => { storageData[k] = 'x'; });
+    const gapSids = new Set(['gap_s']);
+    try {
+      // 两会话都不在保留窗口（当前空＋keep 0），都在服务端名录里（serverKnownSids 放行）
+      const evict = f({ gap_s: { updatedAt: 1 }, ok_s: { updatedAt: 2 } }, '', '', 0,
+        new Set(['gap_s', 'ok_s']), gapSids);
+      const set = new Set(evict);
+      // gap_s 的消息键是最后一份副本：不清；它的画布/撤销键服务端有镜像，照常回收
+      if (set.has('phymathia_msgs_gap_s')) throw new Error('缺口会话的 msgs 键被 LRU 清了');
+      if (!set.has('phymathia_graph_gap_s') || !set.has('phymathia_graph_history_gap_s')) {
+        throw new Error('缺口护栏误伤同会话的 graph/history 键回收');
+      }
+      // 服务端有消息文件的会话（不在缺口名单）：msgs 照旧回收
+      if (!set.has('phymathia_msgs_ok_s')) throw new Error('非缺口会话的 msgs 键没按旧口径回收');
+      // 不传缺口名单（旧调用方）：行为与 T348 原口径完全一致
+      const evictOld = f({ gap_s: { updatedAt: 1 } }, '', '', 0, new Set(['gap_s']));
+      if (!new Set(evictOld).has('phymathia_msgs_gap_s')) throw new Error('旧口径被改动（应照清）');
+      return true;
+    } finally {
+      keys.forEach(k => { delete storageData[k]; });
+      restoreActive();
+    }
+  });
+
+  check('T356: 同步缺口补传三件套在源码里（pushGapIds 名单＋循环放行＋切会话补传）', () => {
+    const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+    if (!src.includes('const pushGapIds = new Set()')) throw new Error('同步循环缺补传名单');
+    if (!src.includes("serverSessions[sid].msgSaved === false")) {
+      throw new Error('补传判据没接服务端 msgSaved 标注');
+    }
+    if (!src.includes("_serverMsgGapSids.clear()")) throw new Error('缺口名单每轮不重建，补传后护栏永不解除');
+    if (!src.includes('!pullIds.includes(sid) && !pushGapIds.has(sid)')) {
+      throw new Error('合并循环没放行补传名单会话');
+    }
+    if (!src.includes('_serverMsgGapSids.has(id)')) throw new Error('切会话没有打开即补传');
+    if (!src.includes('msgGapSids && msgGapSids.has(sid)')) throw new Error('LRU 清理核缺缺口护栏');
     return true;
   });
 
