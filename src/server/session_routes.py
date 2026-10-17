@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from . import accounts, continent, context, profile, storage, trash
+from . import accounts, continent, context, graph_merge, profile, storage, trash
 from .context import _delete_socratic_state, _graph_message_summary, merge_message_lists
 from .knowledge import _delete_items_by_session
 from .request_ctx import _account_id, _account_id_raw, _account_paths, _parse_json_object
@@ -687,6 +687,24 @@ async def api_set_kv(key: str, request: Request):
                     profile.record_implicit_event(_device_id, _events, account=account)
             except Exception as e:
                 logger.warning(f"Quiz stats implicit diff failed: {e}")
+    # 画布图状态（T360）：带 graph_merge 的保存走节点级三方合并，防旧设备/旧标签页
+    # 整图覆盖抹掉另一台设备刚生成的节点内容。规则见 server/graph_merge.py。
+    # 读—合并—写在同一次 await 之间完成（中间无 await），不会被并发请求插队。
+    if key.startswith("graph:") and isinstance(payload.get("graph_merge"), dict) and isinstance(payload.get("value"), dict):
+        merge_info = payload["graph_merge"]
+        value = payload["value"]
+        try:
+            merged, did_merge = graph_merge.merge_graph_states(
+                storage.kv_read(key, None, account=account),
+                value,
+                merge_info.get("base_node_sigs"),
+            )
+        except Exception as e:
+            # 合并出岔子不该让保存失败：退回整份照存（旧口径），并留日志
+            logger.warning(f"Graph state merge failed, storing as-is: {e}")
+            merged, did_merge = value, False
+        storage.kv_write(key, merged, account=account)
+        return {"ok": True, "merged": did_merge, "updatedAt": merged.get("updatedAt") if isinstance(merged, dict) else None}
     storage.kv_write(key, payload.get("value", ""), account=account)
     return {"ok": True}
 

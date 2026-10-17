@@ -47,6 +47,32 @@ function _scheduleGraphSync() {
 // 那是 2026-09-15「旋度那座岛全程静默消失」的根因（docs/dev/knowledge-pipeline.md）。
 // 将来真要思维链，在这里显式加第二个 yield，不许改回或的那个。
 //
+// 读帧静默看门狗（T359，2026-10-17）：上游把字出完却不断连（没有 [DONE]、也不再发帧）
+// 时，reader.read() 永远挂着、for-await 永不结束——屏幕上是全文，收尾落盘那一行却永远
+// 执行不到，换设备/刷新后就是空卡。这里给每次读帧配一个静默上限：超时即取消读流并抛出，
+// 落到各调用方的 catch（复位忙账＋版本账兜回上一版＋落盘）——坏连接从「静默丢内容」变成
+// 一次可见的生成失败。名字用 TimeoutError 不用 AbortError：中止是用户动作（回等待态），
+// 超时是失败（该报错、该可重试）。上限取 2 分钟：思考型模型两次增量之间偶有长静默，
+// 别把正常慢流误判成挂死。
+const GRAPH_STREAM_IDLE_TIMEOUT_MS = 120000;
+function _readStreamChunk(reader) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      // 取消读流＝放弃这条响应体（上游连接随之断开），免得挂死的连接一直占着
+      try { reader.cancel(); } catch (e) { /* 已结束/已取消：忽略 */ }
+      const err = new Error('AI 流式响应超时：' + Math.round(GRAPH_STREAM_IDLE_TIMEOUT_MS / 1000) + ' 秒没有收到新内容，已断开');
+      err.name = 'TimeoutError';
+      reject(err);
+    }, GRAPH_STREAM_IDLE_TIMEOUT_MS);
+    reader.read().then(
+      (result) => { if (settled) return; settled = true; clearTimeout(timer); resolve(result); },
+      (err) => { if (settled) return; settled = true; clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 // 每 4 帧让出一次事件循环：流式期间合成 DOM 渲染有帧预算，别让读流饿死它。
 // （让出的时机从「渲染前」挪到了「渲染后」——两者都是每 4 帧喘一次，语义等价。）
 async function* _sseContentFrames(resp) {
@@ -55,7 +81,7 @@ async function* _sseContentFrames(resp) {
   let buffer = '';
   let frameCount = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await _readStreamChunk(reader);
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const parts = buffer.split('\n\n');
@@ -85,6 +111,7 @@ async function* _sseContentFrames(resp) {
 async function _streamCustomNodeResponse(resp, node) {
   let content = '';
   let renderPending = false;
+  let saveTimer = null;
 
   function scheduleRender() {
     if (renderPending) return;
@@ -109,12 +136,36 @@ async function _streamCustomNodeResponse(resp, node) {
     }, GRAPH_STREAM_RENDER_MS);
   }
 
-  for await (const piece of _sseContentFrames(resp)) {
-    content += piece;
-    _scheduleWorkflowStreamProgress(content.length);
-    scheduleRender();
+  // 流式周期落盘（T359，对齐 blank 路的 scheduleSave）：这一路原先只在 for-await 收尾
+  // 保存一次——中途关页/刷新/断流（含 T359 看门狗掐断前的所有帧）屏幕上明明已有全文，
+  // 盘上却还是空的（用户 2026-10-17 报「屏幕已见全文、换设备回空」的正主）。400ms 一拍
+  // 与 blank 路同档：够便宜，又保证「看到过的字」最多丢半秒。
+  function scheduleSave() {
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      _saveCustomNodes();
+    }, 400);
   }
 
+  try {
+    for await (const piece of _sseContentFrames(resp)) {
+      content += piece;
+      _scheduleWorkflowStreamProgress(content.length);
+      scheduleRender();
+      scheduleSave();
+    }
+  } catch (err) {
+    // 半成品随错误一起交出去（T359）：连接断在半路时，字只攒在这个局部变量里，抛出去
+    // 调用方就再也看不到「屏幕上已经出现过的内容」了——挂在 err 上让它能兜住。
+    if (err && typeof err === 'object') err.streamPartial = content;
+    throw err;
+  }
+
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
   let cleaned = node.kind === 'module' ? _cleanBlankNodeContent(node, content) : content;
   if (!cleaned.trim()) cleaned = content;
   const live = _findGraphNode(node.id);
@@ -398,6 +449,25 @@ async function _generateCustomNode(node, nodeSignal) {
       streamError = err;
       console.warn('Viz module direct stream failed, will try fallback:', err);
       const failedLive = _findGraphNode(node.id);
+      const vizCarrier = (node.kind === 'module' && node.moduleKey === 'viz')
+        || !!(recipe && recipe.content_kind === 'html_iframe');
+      const partial = String((err && err.streamPartial) || '');
+      // 超时断流的半成品兜底（T359）：上游字出完却不断连是「内容多半已经全了」的断法，
+      // 按未跑完入账落地——屏幕上的字不消失，用户看得见、可再点重新生成；viz 载体半页
+      // HTML 不可用，仍走下面的归一+重试/兜回旧版。
+      if (failedLive && !vizCarrier && err && err.name === 'TimeoutError' && partial.trim()) {
+        const salvage = node.kind === 'module' ? _cleanBlankNodeContent(failedLive, partial) : partial;
+        failedLive.content = salvage.trim() ? salvage : partial;
+        failedLive.summary = _graphSummary(failedLive.content);
+        failedLive.busy = false;
+        failedLive.status = 'error';
+        // 版本账（T339）：这一版按「未跑完」入账（旧文仍在前一位，‹› 可回）
+        _commitWorkflowNodeVersion(failedLive);
+        _saveCustomNodes();
+        _refreshWorkflowNodeStatusUi(failedLive);
+        if (typeof showToast === 'function') showToast('连接超时、生成没跑完：已保留收到的内容，可重新生成');
+        return;
+      }
       if (failedLive) {
         failedLive.content = '';
         failedLive.busy = false;
@@ -1247,11 +1317,17 @@ async function _streamBlankNodeResponse(resp, node) {
     }, 400);
   }
 
-  for await (const piece of _sseContentFrames(resp)) {
-    content += piece;
-    _scheduleWorkflowStreamProgress(content.length);
-    scheduleRender();
-    scheduleSave();
+  try {
+    for await (const piece of _sseContentFrames(resp)) {
+      content += piece;
+      _scheduleWorkflowStreamProgress(content.length);
+      scheduleRender();
+      scheduleSave();
+    }
+  } catch (err) {
+    // 半成品随错误一起交出去（T359）：见 _streamCustomNodeResponse 同注
+    if (err && typeof err === 'object') err.streamPartial = content;
+    throw err;
   }
 
   if (saveTimer) {
@@ -1413,11 +1489,27 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
     if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
     const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
+    const live = _findGraphNode(nodeId);
+    const partial = String((err && err.streamPartial) || '');
+    // 超时断流的半成品兜底（T359）：与 _generateCustomNode 同口径——字已经收到就留住，
+    // 按「未跑完」入账（状态失败），viz 之外不留空卡也不吞掉屏幕上出现过的内容。
+    if (!aborted && live && err && err.name === 'TimeoutError' && partial.trim()) {
+      live.content = partial;
+      live.summary = _graphSummary(partial);
+      live.busy = false;
+      live.status = 'error';
+      _commitWorkflowNodeVersion(live);
+      if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '连接超时，已保留收到的内容');
+      _saveCustomNodes();
+      renderGraphCanvas();
+      if (typeof showToast === 'function') showToast('连接超时、生成没跑完：已保留收到的内容，可重新生成');
+      if (typeof hideProgress === 'function') hideProgress();
+      return;
+    }
     if (taskId && typeof _taskFinish === 'function') {
       _taskFinish(taskId, aborted ? 'stopped' : 'error',
         aborted ? '已停止' : (((err && err.message) || String(err) || '生成失败')));
     }
-    const live = _findGraphNode(nodeId);
     if (live) {
       live.busy = false;
       // 版本账（T339）：流式草稿不算数，兜回上一版

@@ -44,11 +44,15 @@ export async function run() {
     storageData[histKey] = JSON.stringify([{ state: { customNodes: [{ id: 'h1', busy: true, status: 'running' }] } }]);
     const posts = [];
     const realFetch = sandbox.fetch;
+    // T360 起镜像回写走合并通道（_postGraphState），沙箱要补 AbortSignal 才走得过去
+    const realAbortSignal = sandbox.AbortSignal;
+    sandbox.AbortSignal = { timeout: () => undefined };
     sandbox.fetch = (url, opts) => { posts.push({ url, opts }); return realFetch(url, opts); };
     try {
       sandbox._sweepStaleBusyGraphKeys();
     } finally {
       sandbox.fetch = realFetch;
+      sandbox.AbortSignal = realAbortSignal;
     }
     const swept = JSON.parse(localStorage.getItem(graphKey));
     if (swept.customNodes[0].busy !== false || swept.customNodes[0].status !== '') return false;
@@ -59,6 +63,11 @@ export async function run() {
     if (posts[0].url !== '/api/kv/' + encodeURIComponent('graph:' + sid)) return false;
     const body = JSON.parse(posts[0].opts.body);
     if (body.value.customNodes[0].busy !== false || body.value.customNodes[0].status !== '') return false;
+    // T360：这条回写必须走合并通道（带 graph_merge）——直连整份 POST 正是「旧设备开机
+    // 触发清扫、一次回写抹掉另一台设备内容」的那条路
+    if (!body.graph_merge || typeof body.graph_merge.base_node_sigs !== 'object') {
+      throw new Error('启动清扫的镜像回写没走合并通道');
+    }
     // 历史快照键必须原样（回放时有 _restoreGraphVersion 兜底，启动不重写大数组）
     const hist = JSON.parse(localStorage.getItem(histKey));
     if (hist[0].state.customNodes[0].busy !== true) return false;

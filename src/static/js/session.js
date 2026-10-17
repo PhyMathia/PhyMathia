@@ -594,6 +594,8 @@
         harnessNodeOverrides: p.harnessNodeOverrides || {},
         harnessCheckpoint: p.harnessCheckpoint || null,
         expandedAnswers: p.expandedAnswers || {},
+        // T360：节点内容签名表（含 {d:时间戳} 删除墓碑）——跨设备合并的判据，随状态落盘
+        nodeSigs: (p.nodeSigs && typeof p.nodeSigs === 'object') ? p.nodeSigs : {},
         updatedAt: p.updatedAt || 0,
       };
     }
@@ -650,19 +652,99 @@
     let _graphStateSyncTimer = null;
     let _graphStatePendingSave = null;
 
+    // ===== T360：画布图状态跨设备合并（2026-10-17）=====
+    // 旧口径：整图 updatedAt 定胜负，此后任意一次保存（连纯平移/缩放）都把整份 state
+    // 全量 POST 覆写服务端——旧设备或长开的旧标签页一次触碰，就把另一台设备刚生成的
+    // 节点内容整图抹掉。新口径：保存随包带 base_node_sigs＝「我上次同步时服务端那一版
+    // 各节点的内容签名」。服务端拿它与自己的现值比对：一致＝快路径整份照存；不一致＝
+    // 按节点三方合并，只有本设备这一侧真改过的节点才服从本次保存，对端改过的留下来。
+    // 签名只覆盖内容字段：坐标/尺寸/折叠是纯视图字段（同 harness.js 的画布指纹口径），
+    // 拖一下节点、挪一下画布都不该让这个节点看起来「被改过」。
+    const GRAPH_NODE_SIG_VIEW_KEYS = ['x', 'y', 'w', 'h', 'minimized', 'hidden', 'pinned', 'z'];
+    // 删除墓碑（签名表里的 { d: 时间戳 }）：本设备删掉的节点 id 留在表里，挡对端把它
+    // 复活。30 天够跨设备迁移用，过期即回收——不然签名表只涨不消。
+    const GRAPH_NODE_TOMBSTONE_TTL_MS = 30 * 24 * 3600 * 1000;
+    function _graphSigHash(text) {
+      let hash = 2166136261;
+      const source = String(text || '');
+      for (let i = 0; i < source.length; i++) {
+        hash ^= source.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(16);
+    }
+
+    function _graphNodeSig(node) {
+      if (!node || typeof node !== 'object') return '';
+      const parts = [];
+      // 键排序保证同一颗节点在任何设备/任何写入顺序下算出同一个签名
+      const keys = Object.keys(node).sort();
+      for (const key of keys) {
+        if (GRAPH_NODE_SIG_VIEW_KEYS.indexOf(key) !== -1) continue;
+        let value;
+        try { value = JSON.stringify(node[key]); } catch (e) { value = ''; }
+        parts.push(key + ':' + (value === undefined ? '' : value));
+      }
+      return _graphSigHash(parts.join('|'));
+    }
+
+    function _isGraphNodeTombstone(entry) {
+      return !!entry && typeof entry === 'object' && Number.isFinite(Number(entry.d));
+    }
+
+    // 就地写 state.nodeSigs（当前各节点签名＋未过期墓碑），返回随包发给服务端的合并信息。
+    // base 就是改之前的那张签名表＝「我上次同步时服务端是什么」；服务端拿它与自己的现值
+    // 比对：一致＝快路径整份照存，不一致＝按节点三方合并（ts 版本号判不出「内容是留了
+    // 对方那版」，2026-10-17 真机两设备实测踩过，判据只能是签名表）。
+    function _graphSyncMergePayload(sid, state) {
+      const prev = (state && state.nodeSigs && typeof state.nodeSigs === 'object') ? state.nodeSigs : {};
+      const nodes = Array.isArray(state.customNodes) ? state.customNodes : [];
+      const sigs = {};
+      for (const node of nodes) {
+        if (!node || node.id == null) continue;
+        sigs[String(node.id)] = _graphNodeSig(node);
+      }
+      const now = Date.now();
+      for (const id of Object.keys(prev)) {
+        if (Object.prototype.hasOwnProperty.call(sigs, id)) continue;
+        const entry = prev[id];
+        if (_isGraphNodeTombstone(entry)) {
+          const at = Number(entry.d);
+          if (now - at <= GRAPH_NODE_TOMBSTONE_TTL_MS) sigs[id] = { d: at };  // 未过期：继续挡复活
+          continue;
+        }
+        // 上次同步时还在、现在没了＝本设备删了它（记住，别让对端把它加回来）
+        sigs[id] = { d: now };
+      }
+      state.nodeSigs = sigs;
+      return { base_node_sigs: prev };
+    }
+
     async function _postGraphState(sid, state) {
       if (_isBadGraphSid(sid)) return;
+      let merge = null;
+      try { merge = _graphSyncMergePayload(sid, state); } catch (e) { merge = null; }
       try {
-        await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+        const resp = await fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: state }),
+          body: JSON.stringify(merge ? { value: state, graph_merge: merge } : { value: state }),
           // 超时兜底（T83）：挂死的保存会卡住切会话时的 _flushGraphStateServerSave
           signal: AbortSignal.timeout(10000),
         });
       } catch (err) {
         console.warn('[GraphState] Failed to save server state:', err);
       }
+    }
+
+    // T359：水合结算中断生成（草稿入账/旧版兜回）。清洗助手在 graph.js（typeof 守卫：
+    // 它是启动清扫的同一份口径），本地赢、服务端赢两条路都要过——两边都可能是上次
+    // 关页时留下的「生成中」残留。
+    function _healHydratedGraphState(state) {
+      if (!state || typeof _sanitizeStaleBusyCustomNodes !== 'function') return state;
+      const fixed = _sanitizeStaleBusyCustomNodes(state.customNodes);
+      if (fixed === state.customNodes) return state;
+      return _normalizeGraphState({ ...state, customNodes: fixed });
     }
 
     async function _loadGraphStateFromServer(sessionId) {
@@ -680,11 +762,19 @@
         if (!serverState || typeof serverState !== 'object') return;
         const local = getGraphState(sid);
         const useServer = !local.updatedAt || !serverState.updatedAt || serverState.updatedAt >= local.updatedAt;
+        const effective = useServer ? _normalizeGraphState({ ...local, ...serverState }) : local;
+        const healed = _healHydratedGraphState(effective);
         if (useServer) {
-          const merged = _normalizeGraphState({ ...local, ...serverState });
-          _graphStateMemCache.set(sid, merged);
-          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(merged));
+          _graphStateMemCache.set(sid, healed);
+          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(healed));
           _emptyBadgeCache.delete(sid);
+        } else if (healed !== effective) {
+          // 本地赢但盘上有中断残留：就地结清并回写（不回写服务端的话，下次「服务端较新」
+          // 分支又把脏数据盖回来——与 T275 启动清扫同款口径）
+          _graphStateMemCache.set(sid, healed);
+          safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(healed));
+          _emptyBadgeCache.delete(sid);
+          _scheduleGraphStateServerSave(sid, healed);
         }
       } catch (err) {
         console.warn('[GraphState] Failed to load server state:', err);
@@ -789,6 +879,10 @@
     window.saveGraphState = saveGraphState;
     window.flushGraphStateServerSave = _flushGraphStateServerSave;
     window.flushGraphStateLocalSave = _flushGraphStateLocalSave;
+    // T360：把一份（不经 saveGraphState 队列的）图状态立刻按合并口径推给服务端。
+    // 现存唯一调用方是 graph.js 的启动清扫（它要逐会话回写、不能共用单条待存队列），
+    // 直连 fetch 会拿整份本地状态盖掉另一台设备的内容——正是 T360 要堵的那条路。
+    window.postGraphStateMerged = (sid, state) => _postGraphState(sid || '', state);
     window.setModuleVisibility = setModuleVisibility;
     window.getCurrentSessionId = () => currentSessionId;
 

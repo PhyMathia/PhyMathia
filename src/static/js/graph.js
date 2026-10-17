@@ -62,16 +62,68 @@ function _nodeCanAddOutputPorts(node) {
 // 生成入口（graph-workflow/graph-custom）都是「先存 busy=true/status='running'
 // 再发请求」，页面中途被关后负责复位的 catch/finally 永远不会跑——持久层把
 // 「生成中」原样带回重启后的画布，节点永久转圈，且生成守卫让重生成点不动。
-// 口径：凡「从外部存储水合」的时刻（启动、历史版本回放）不可能仍有合法生成
-// 在跑，busy 一律剥除、status==='running' 归位空串；勿接进每帧渲染与常规保存
+// 口径：凡「从外部存储水合」的时刻（启动、历史版本回放、服务端状态落地）不可能仍有
+// 合法生成在跑，busy 一律剥除、status==='running' 归位空串；勿接进每帧渲染与常规保存
 // ——生成期间的重渲染和落盘恰恰靠持久层里的 busy 存活。
+//
+// T359（2026-10-17）在同一条清扫上补「中断结算」：生成开跑会先清空 content 并立刻落盘
+// （2026-10-15 用户拍板：不许旧文压着新流），旧文进 versions 账本（T339）；流式期间还有
+// 400ms 周期落盘（T359 补齐），所以盘上可能是「空卡」或「流到一半的草稿」。剥离 busy 的
+// 同时把这次中断结清，别让用户屏幕上见过的内容凭空消失：
+//   ①盘上有草稿（content 非空且不等于账本 activeVersion 那版）→ 收进账本当最新一版：
+//     用户见过的内容比账本里的旧文新，不能回退成旧文；
+//   ②盘上没内容而账本有版 → 兜回 activeVersion（旧文找回来，不再只剩 ‹› 手动切）；
+//   ③这次生成没跑完 → status 归 'error'（徽章「失败」，全部开始会重新收编它）。
+// 活页面里正在跑的那颗不动（流没断，busy 是它自己写的；服务端水合也会走这道清洗，
+// 误伤在途生成会把它的落点节点对象换掉）。
+function _settleInterruptedCustomNode(node) {
+  const next = { ...node, busy: false, status: node.status === 'running' ? '' : node.status };
+  const content = typeof next.content === 'string' ? next.content : '';
+  const versions = Array.isArray(next.versions) ? next.versions : null;
+  if (versions && versions.length) {
+    const total = versions.length;
+    const av = (typeof next.activeVersion === 'number' && next.activeVersion >= 0 && next.activeVersion < total)
+      ? next.activeVersion : total - 1;
+    const active = versions[av];
+    if (content.trim()) {
+      if (String((active && active.content) || '') !== content) {
+        // 草稿入账（浅拷一份账本，入参一字不动）：新一版就是屏幕上那一版
+        const ledger = versions.map(v => ({ ...v }));
+        ledger.push({ content: content, at: Date.now(), humanDone: !!next.humanDone });
+        next.versions = ledger;
+        next.activeVersion = ledger.length - 1;
+      } else {
+        next.activeVersion = av;
+      }
+    } else if (active && String(active.content || '').trim()) {
+      next.content = String(active.content);
+      next.summary = typeof _graphSummary === 'function'
+        ? _graphSummary(next.content) : next.content.slice(0, 120);
+      next.activeVersion = av;
+      next.humanDone = !!active.humanDone;
+    } else {
+      next.activeVersion = av;
+    }
+    next.status = 'error';
+    return next;
+  }
+  // 账本都没有＝首次生成被打断：草稿留着（屏幕上见过的字不删），只是它还不算一版——
+  // 与「人工写的内容也不在账本里」同口径，不硬造账本；状态仍按 T275 归空串。
+  return next;
+}
+
 function _sanitizeStaleBusyCustomNodes(list) {
   if (!Array.isArray(list)) return list;
   let changed = false;
   const next = list.map(cn => {
     if (cn && typeof cn === 'object' && (cn.busy || cn.status === 'running')) {
+      // 在途生成守卫：这颗节点的流还在本页面里跑（busy 是它自己写的），别动它
+      if (typeof _findGraphNode === 'function') {
+        const live = _findGraphNode(cn.id);
+        if (live && live.busy) return cn;
+      }
       changed = true;
-      return { ...cn, busy: false, status: cn.status === 'running' ? '' : cn.status };
+      return _settleInterruptedCustomNode(cn);
     }
     return cn;
   });
@@ -97,12 +149,20 @@ function _sweepStaleBusyGraphKeys() {
       if (cleaned === parsed.customNodes) continue; // busy 只出现在 checkpoint 等无关字段：不动
       parsed.customNodes = cleaned;
       try { localStorage.setItem(key, JSON.stringify(parsed)); } catch (e) { continue; }
+      const sid = key.slice('phymathia_graph_'.length);
       try {
-        fetch('/api/kv/' + encodeURIComponent('graph:' + key.slice('phymathia_graph_'.length)), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: parsed }),
-        }).catch(function () {});
+        // T360：回写走合并通道（见 session.js 的 _graphSyncMergePayload）——直连 POST 会
+        // 拿整份本地状态盖掉另一台设备刚生成的内容，而「旧设备开机触发清扫」正是 T360
+        // 报告里那条路径。HARNESS 之外的调用方缺失时（viewer 子集）退回直连。
+        if (typeof window.postGraphStateMerged === 'function') {
+          window.postGraphStateMerged(sid, parsed);
+        } else {
+          fetch('/api/kv/' + encodeURIComponent('graph:' + sid), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: parsed }),
+          }).catch(function () {});
+        }
       } catch (e) { /* 服务端洗不动无害：本地已净，下次启动再补 */ }
     }
   } catch (e) { /* localStorage 不可用等：清扫只是兜底，不阻断启动 */ }

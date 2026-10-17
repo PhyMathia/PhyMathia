@@ -38,6 +38,8 @@
 //   graph-mirror-slim       服务端镜像体量治理（T212：只减重不删条目＋读回水合丢弃）
 //   graph-edit-history      人工编辑节点内容进撤销历史＋viz/mermaid 围栏编辑态往返（2026-10-16）
 //   graph-human-finalize    人工定稿防工作流重生成（T355：humanDone 标记＋判定跳过＋链上护栏＋版本生命周期，2026-10-17）
+//   graph-draft-recover     生成中断后的草稿回收（T359：水合结算＋module 周期落盘＋流式读帧看门狗，2026-10-17）
+//   graph-sync-merge        画布图状态跨设备节点级合并（T360：内容签名/删除墓碑/随包 base 版本，2026-10-17）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -71,6 +73,8 @@ import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs'
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
 import { run as _graph_edit_history } from './frontend_smoke/graph-edit-history.mjs';
 import { run as _graph_human_finalize } from './frontend_smoke/graph-human-finalize.mjs';
+import { run as _graph_draft_recover } from './frontend_smoke/graph-draft-recover.mjs';
+import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs';
 
 _recipes();
 _phi();
@@ -104,4 +108,6 @@ await _graph_busy_sweep();
 await _graph_mirror_slim();
 await _graph_edit_history();
 await _graph_human_finalize();
+await _graph_draft_recover();
+await _graph_sync_merge();
 await finish();

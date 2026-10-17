@@ -704,7 +704,12 @@
       let buffer = '';
       let content = '';
       while (true) {
-        const { done, value } = await reader.read();
+        // 读帧静默看门狗（T359）：这条读流喂的是画布侧的 viz 生成/带字修订，上游字出完
+        // 却不断连时 for-await 永不结束、节点一直转圈。走 graph-workflow 的同一支看门狗
+        // （超时取消读流抛 TimeoutError，落各调用方既有 catch）；函数缺席时退回裸读。
+        const { done, value } = typeof _readStreamChunk === 'function'
+          ? await _readStreamChunk(reader)
+          : await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split('\n\n');
