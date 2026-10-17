@@ -44,7 +44,7 @@ const _obSteps = [
     get desc() {
       return document.querySelector('.graph-new-session-node')
         ? '在画布中央的<strong>中心节点</strong>输入物理或数学问题，答案会从中心向外展开成探索网。'
-        : '在探索网中点击气泡上的<strong>追问</strong>、<strong>没看懂</strong>或<strong>删除</strong>，管理当前画布分支。';
+        : '在探索网中点击气泡上的<strong>追问</strong>或<strong>删除</strong>，管理当前画布分支。';
     }
   },
   {
@@ -290,7 +290,7 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '模块节点：独立可追问',
     icon: UI_ICON_SVG.book,
-    desc: '物理、数学、图谱、可视化等模块都是独立节点，可以单独<strong>追问</strong>、<strong>没看懂</strong>、<strong>编辑</strong>、<strong>最小化</strong>或删除。',
+    desc: '物理、数学、图谱、可视化等模块都是独立节点，可以单独<strong>追问</strong>、<strong>编辑</strong>、<strong>最小化</strong>或删除。',
     points: ['节点右下角按钮可重新生成或追问。', '双击节点标题/内容区不会误触添加节点。'],
     target: '[data-node-id="demo-physics"]',
   },
@@ -312,7 +312,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '交互可视化节点',
     icon: UI_ICON_SVG.monitor,
     desc: '可视化模块内嵌可交互 HTML：可以拖动滑块、全屏、复制源码或新窗口打开。真实生成失败时会显示红色“失败”。',
-    points: ['在示例图中直接拖动滑块试试。', '“没看懂”会只要求重讲这个可视化。'],
+    points: ['在示例图中直接拖动滑块试试。', '对效果不满意可在节点按钮里带要求重新生成。'],
     target: '[data-node-id="demo-viz"]',
   },
   {

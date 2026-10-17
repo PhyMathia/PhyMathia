@@ -248,7 +248,8 @@ function _moduleOutputPorts(node, message) {
   return defaults.map(label => ({
     label,
     type: 'branch',
-    branchType: label === '没看懂' ? 'confused' : label === '直接问AI' ? 'continue' : 'followup',
+    // confused 臂已随「没看懂」退役（2026-10-17 T335）——端口名单里没有这个标签。
+    branchType: label === '直接问AI' ? 'continue' : 'followup',
     attribute: node.moduleKey,
     question: '',
   }));
@@ -256,9 +257,6 @@ function _moduleOutputPorts(node, message) {
 
 function _draftPrefill(meta) {
   if (meta.type === 'custom' || !meta.sourceModule) return meta.question || '';
-  if (meta.type === 'confused' && typeof _modulePrompt === 'function') {
-    return _modulePrompt(meta.sourceModule, 'confused', meta.question || '当前问题');
-  }
   if (meta.branchType === 'followup' && typeof _modulePrompt === 'function') {
     return _modulePrompt(meta.sourceModule, 'followup', meta.question || '当前问题');
   }

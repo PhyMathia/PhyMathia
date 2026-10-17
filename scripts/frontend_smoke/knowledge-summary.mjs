@@ -265,7 +265,7 @@ check('九项修复回归（T39/T43/T54/T119+T58/T127/T143/T144/T146/T148）静�
     throw new Error('graph-workflow.js 忙时没有排队（_enqueueNodeJob）——点节点生成又会撞回「稍候再…」的拒绝');
   }
   if (!srcInteract.includes('_enqueueNodeJob(')) {
-    throw new Error('graph-interact.js 忙时没有排队（_enqueueNodeJob）——可视化/没看懂又会撞回拒绝');
+    throw new Error('graph-interact.js 忙时没有排队（_enqueueNodeJob）——可视化/带要求重生成又会撞回拒绝');
   }
 
   // T58：可视化重生成忙态标志（防并发重入）

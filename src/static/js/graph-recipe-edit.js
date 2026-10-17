@@ -112,8 +112,6 @@ function openRecipeForm(prefill) {
     + '<textarea id="recipeStrict" rows="3" placeholder="例如：只输出三段，每段以「### 」标题开头；不要前言和结语。">' + escapeHtml(gen.strict_output || '') + '</textarea>'
     + '<label>「追问」预填模板（可选）</label>'
     + '<input id="recipeFollowup" maxlength="800" placeholder="从该节点出口拖出提问草稿时的预填文本" value="' + escapeHtml(gen.followup_prompt || '') + '">'
-    + '<label>「没看懂」重讲提示词（可选）</label>'
-    + '<input id="recipeConfused" maxlength="800" placeholder="用户点「没看懂」时的重讲指令" value="' + escapeHtml(gen.confused_prompt || '') + '">'
     + '<label>上游内容怎么给 AI（视角模块底座）</label>'
     + '<select id="recipeChannel">'
     + '<option value="workflow_context"' + (!gen.context_channel || gen.context_channel === 'workflow_context' ? ' selected' : '') + '>结构化上下文（官方模块方式，省 token）</option>'
@@ -731,7 +729,6 @@ function _recipeCollectForm() {
       prompt: val('recipePrompt'),
       strict_output: val('recipeStrict'),
       followup_prompt: val('recipeFollowup'),
-      confused_prompt: val('recipeConfused'),
       retry_prompt: val('recipeRetryPrompt'),
       context_channel: val('recipeChannel') || 'workflow_context',
       model_role: val('recipeModelRole') || 'agent',
@@ -901,7 +898,6 @@ function recipeFromNode(nodeId) {
       prompt: (node.recipe && node.recipe.generate && node.recipe.generate.prompt) || '',
       strict_output: (node.recipe && node.recipe.generate && node.recipe.generate.strict_output) || '',
       followup_prompt: '',
-      confused_prompt: '',
       context_channel: (node.recipe && node.recipe.generate && node.recipe.generate.context_channel) || 'workflow_context',
     },
     ports: {

@@ -247,10 +247,11 @@ def normalize_recipe_input(raw: Any) -> Optional[Dict[str, Any]]:
             if custom_color else {"palette": palette, "shape": shape}
         ),
         "generate": {
+            # 困惑语槽已随「没看懂」分支退役（2026-10-17 T335）；
+            # 存量配方里的旧键不再被拷进归一结果，随下次保存自然消失。
             "prompt": _text(g.get("prompt"))[: RECIPE_PROMPT_BUDGET * 2],
             "strict_output": _text(g.get("strict_output"))[: RECIPE_PROMPT_BUDGET * 2],
             "followup_prompt": _text(g.get("followup_prompt"))[: RECIPE_PROMPT_BUDGET * 2],
-            "confused_prompt": _text(g.get("confused_prompt"))[: RECIPE_PROMPT_BUDGET * 2],
             "retry_prompt": _text(g.get("retry_prompt"))[: RECIPE_PROMPT_BUDGET * 2],
             "context_channel": channel if channel in RECIPE_CONTEXT_CHANNELS else "workflow_context",
             "model_role": model_role,
@@ -299,7 +300,7 @@ def validate_recipe(recipe: Any, existing: Optional[List[Any]] = None) -> Dict[s
     if len(desc) > RECIPE_DESC_MAX:
         errors.append(f"描述最长 {RECIPE_DESC_MAX} 字")
     g = recipe.get("generate") if isinstance(recipe.get("generate"), dict) else {}
-    for slot in ("prompt", "strict_output", "followup_prompt", "confused_prompt", "retry_prompt"):
+    for slot in ("prompt", "strict_output", "followup_prompt", "retry_prompt"):
         text = _text(g.get(slot))
         if len(text) > RECIPE_PROMPT_BUDGET:
             errors.append(f"提示词槽「{slot}」超预算（建议单项 ≤{RECIPE_PROMPT_BUDGET} 字，当前 {len(text)}）")

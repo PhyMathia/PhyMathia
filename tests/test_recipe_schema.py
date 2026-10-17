@@ -114,7 +114,6 @@ def _valid_sample() -> dict:
             "prompt": "针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。",
             "strict_output": "只输出三段，每段以「### 」标题开头；不要前言和结语。",
             "followup_prompt": "",
-            "confused_prompt": "",
             "context_channel": "workflow_context",
         },
         "ports": {"static": [{"label": "追问", "drag_form": "draft"}],

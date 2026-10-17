@@ -60,7 +60,6 @@ function _smokeValidRecipe() {
       prompt: '针对当前问题输出考后复盘，分三段：考点回顾 / 易错点 / 记忆口诀。',
       strict_output: '只输出三段，每段以「### 」标题开头。',
       followup_prompt: '',
-      confused_prompt: '',
       context_channel: 'workflow_context',
     },
     ports: { static: [
@@ -572,7 +571,7 @@ check('配方库 op 应用（P3）：create/update/delete 落库＋配方实例�
     const createdRecipe = {
       id: 'recipe-hn-1', name: '考前速记', desc: '', builtin: false,
       base: { kind: 'module' }, appearance: { palette: 'teal', shape: 'is-round' },
-      generate: { prompt: 'x', strict_output: '', followup_prompt: '', confused_prompt: '', retry_prompt: '', context_channel: 'workflow_context', model_role: 'agent', on_incomplete: { max_retries: 1 } },
+      generate: { prompt: 'x', strict_output: '', followup_prompt: '', retry_prompt: '', context_channel: 'workflow_context', model_role: 'agent', on_incomplete: { max_retries: 1 } },
       ports: { static: [{ label: '再测一道', drag_form: 'user' }] },
       content_kind: 'markdown', aggregation: 'ancestors', analysis_phase: false,
       createdAt: 1, updatedAt: 1,
@@ -650,7 +649,7 @@ check('update_recipe 预览行字段差异（T242）：被抹掉的字段带着 
   const old = {
     name: '三级追问', desc: 'd', base: { kind: 'module' },
     appearance: { palette: 'amber', shape: 'is-round' },
-    generate: { prompt: '输出三级追问', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    generate: { prompt: '输出三级追问', followup_prompt: '', retry_prompt: '', strict_output: '' },
     ports: {
       static: [{ label: '追问', drag_form: 'draft' }, { label: '再测一道', drag_form: 'user' }],
       dynamic: { parser: { level_tags: ['基础', '进阶', '拓展'], pattern: 'numbered_list', max: 12, label_from: 'index_question' } },
@@ -661,7 +660,7 @@ check('update_recipe 预览行字段差异（T242）：被抹掉的字段带着 
   const bare = {
     name: '三级追问', desc: 'd', base: { kind: 'module' },
     appearance: { palette: 'amber', shape: 'is-round' },
-    generate: { prompt: '', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    generate: { prompt: '', followup_prompt: '', retry_prompt: '', strict_output: '' },
     ports: { static: [{ label: '追问', drag_form: 'draft' }] },
     content_kind: 'markdown',
   };
@@ -892,7 +891,7 @@ check('配方字段差异（T242 补齐）：同数换名/换序、max、label_f
   const base = {
     name: '追问器', desc: '', base: { kind: 'module' },
     appearance: { palette: 'amber', shape: 'is-round' },
-    generate: { prompt: '输出追问', followup_prompt: '', confused_prompt: '', retry_prompt: '', strict_output: '' },
+    generate: { prompt: '输出追问', followup_prompt: '', retry_prompt: '', strict_output: '' },
     ports: {
       static: [{ label: '追问', drag_form: 'draft' }, { label: '再测一道', drag_form: 'user' }],
       dynamic: {
@@ -2400,9 +2399,10 @@ check('节点全屏阅读（2026-10-10 ⑦）：内容节点头部纯图标双�
   const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
   if (!grSrc.includes("typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node, message) : ''")) throw new Error('内联头部缺全屏钮注入');
   if (!grSrc.includes("typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : ''")) throw new Error('共享头部（知识点等卡）缺全屏钮注入');
-  // 2. viz 工具栏纯图标：四个按钮不再拼中文文字（title 兜底提示保留）
+  // 2. viz 工具栏纯图标：按钮不再拼中文文字（title 兜底提示保留）；
+  //    「没看懂」钮已随 T335 整体退役（2026-10-17），工具栏余三钮。
   const rSrc = fs.readFileSync('src/static/js/render.js', 'utf8');
-  for (const tail of [' 没看懂</button>', ' 全屏</button>', ' 复制</button>', ' 新窗口</button>']) {
+  for (const tail of [' 全屏</button>', ' 复制</button>', ' 新窗口</button>']) {
     if (rSrc.includes(tail)) throw new Error('viz 工具栏按钮仍带中文文字：' + JSON.stringify(tail));
   }
   if (!rSrc.includes("UI_ICON_SVG.expand + '</button>'") || !rSrc.includes("UI_ICON_SVG.external + '</button>'")) throw new Error('viz 全屏/新窗口按钮缺图标');

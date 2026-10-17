@@ -196,19 +196,18 @@ function graphModuleAction(action, nodeId) {
   const messages = _getChatHistory();
   const message = node.messageIndex >= 0 ? messages[node.messageIndex] : null;
   const parentId = String((message && message.timestamp) || node.timestamp || '');
-  // T361：追问/没看懂一律落工作流链路（宿主节点现场解析），消息簇链路退役——
+  // T361：追问一律落工作流链路（宿主节点现场解析），消息簇链路退役——
   // 自定义节点（messageIndex<0）过去在这里直接 return，两条链路语义不一致（T363）。
+  // confused（没看懂）分支已随 T335 整体退役（2026-10-17），不再有这条 action。
   if (action === 'followup') {
     if (typeof followUpModule === 'function') followUpModule(node.moduleKey || 'extend', parentId, undefined, node.id);
-  } else if (action === 'confused') {
-    if (typeof dontUnderstandModule === 'function') dontUnderstandModule(node.moduleKey || 'extend', parentId, undefined, node.id);
   } else if (action === 'delete') {
     _deleteSingleGraphNode(node);
   }
 }
 
 // ===== T361：分支入口的宿主节点解析（消息派生节点与自定义节点同口径）=====
-// 画布上的「追问/没看懂/方向钮/苏格拉底作答」过去各自按消息锚点走消息链；退役后一律
+// 画布上的「追问/方向钮/苏格拉底作答」过去各自按消息锚点走消息链；退役后一律
 // 先解析出宿主节点 id（自定义节点按 timestamp+moduleKey 匹配，消息派生节点按
 // m-<ts>-<module> 复原，都落空再退回同 timestamp 的模块/回答节点），再交工作流建点。
 function _resolveBranchHostNode(parentTs, sourceModule) {
@@ -629,11 +628,12 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
     _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
     return;
   }
-  const questionLike = label === '追问' || label === '直接问AI' || label === '没看懂' || label === '回答练习'
+  // 「没看懂」标签与 confused 分支已随 T335 退役（2026-10-17）——端口名单里没有它，
+  // 拖线侧不会再产生 confused。
+  const questionLike = label === '追问' || label === '直接问AI' || label === '回答练习'
     || /^追问/.test(label)
     || type === 'socratic'
     || type === 'learn'
-    || branchType === 'confused'
     || branchType === 'continue'
     || branchType === 'learn';
 
@@ -957,8 +957,9 @@ async function _regenerateModuleContent(message, moduleKey, confusion) {
 
   const moduleLabel = (GRAPH_MODULE_META[moduleKey] || {}).label || moduleKey;
   const original = _extractRawModuleSection(message?.content || '', moduleKey) || '（没有原内容）';
-  // 2026-10-13 泛化：从「没看懂→一律简讲」扩成「按用户反馈/要求定向修订」——写了具体
-  // 问题只改该问题，提出新要求按要求调，留空（可留空直发）才整体换讲法。
+  // 2026-10-13 泛化：从旧「没看懂→一律简讲」（该分支 2026-10-17 T335 已退役）扩成
+  // 「按用户反馈/要求定向修订」——写了具体问题只改该问题，提出新要求按要求调，
+  // 留空（可留空直发）才整体换讲法。
   const prompt = '用户对下面「' + moduleLabel + '」模块的当前版本不满意，或对它有新的要求。'
     + '请只重新生成这个模块，不改变其他模块。'
     + '规则：用户指出了具体问题时，只针对该问题修改，没提到的部分尽量原样保留；'
@@ -1056,7 +1057,8 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
   }
 }
 
-// 「没看懂」重生成的内核出口：任务列表的「重试」要按当初那句要求原样重跑（tasks.js 的
+// 带要求重生成的内核出口（前身「没看懂」重讲，2026-10-17 T335 退役了没看懂分支本体，
+// 面板修订路保留）：任务列表的「重试」要按当初那句要求原样重跑（tasks.js 的
 // replay.nodeJob.kind==='regen'），而那时候面板早就没了——所以留一个不经 UI 的入口。
 // 2026-10-13 起按节点分流量：消息模块节点走 _applyNodeRegenerate（写回 message），
 // 工作流节点（含知识点）走 _applyWorkflowNodeRegenerate（写回 node.content）。
@@ -1111,7 +1113,7 @@ function _countDownstreamHumanDone(nodeId) {
 }
 
 // 用户拍板口径：说「可能失效」不说「会失效」——下游是按旧内容生成的，对不对得
-// 上要看新旧内容差多少，系统不替用户断言。面板路（没看懂/重新生成）提示写在面板
+// 上要看新旧内容差多少，系统不替用户断言。面板路（带要求重生成）提示写在面板
 // 里、点发送即确认；直接按钮路（工作流/空白/知识点）走 confirm。无下游一律不打扰。
 // 返回 false＝用户取消，调用方就此打住。
 function _warnDownstreamBeforeRegenerate(node) {
@@ -1170,9 +1172,9 @@ function closeRegeneratePanel(nodeId) {
   _updateNodeTransforms();
 }
 
-// 「没看懂 / 重新生成」的内核：只干这一件事，失败**抛出去**（调用方各自决定怎么
-// 提示、怎么记账）。从面板点的那条路在上面包一层错误显示；排队那条路由队列接住异常，
-// 面板上那条任务会自动标「失败」。
+// 带要求重生成的内核（旧称「没看懂」面板，分支本体已退役、面板路保留）：只干这一件事，
+// 失败**抛出去**（调用方各自决定怎么提示、怎么记账）。从面板点的那条路在上面包一层
+// 错误显示；排队那条路由队列接住异常，面板上那条任务会自动标「失败」。
 // _regeneratingNodes 是这颗节点自己的忙态（T58「防并发重入」的正确口径）：
 // 过去画布把 `isStreaming`（别处的回答在生成）当成它的忙态、直接置灰按钮，等于把
 // 排队入口自己封了（2026-10-11 改：别处忙 → 排队；这颗自己忙 → 才置灰）。

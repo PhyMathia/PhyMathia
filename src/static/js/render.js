@@ -125,7 +125,6 @@ function buildVizCard(htmlContent, vizId) {
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
     + '<div class="viz-actions">'
-    + '<button class="viz-btn viz-dontget" onclick="dontUnderstandViz(this)" title="没看懂，请求解释">' + UI_ICON_SVG.question + '</button>'
     + '<button class="viz-btn" onclick="toggleVizFullscreen(\'' + vizId + '\')" title="全屏查看">' + UI_ICON_SVG.expand + '</button>'
     + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + '</button>'
     + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + '</button>'
@@ -1112,6 +1111,8 @@ function _extractBranchTopic(msg, content) {
     return text.replace(/^\[苏格拉底回答\]\s*/i, '').split('\n')[0].trim() || text;
   }
 
+  // 「我没看懂…」三族正则是存量兼容（2026-10-17 没看懂分支退役）：只读旧会话里
+  // 已落盘的 confused 分支消息来提取话题，不再有任何入口会产生这类消息。
   const promptPatterns = [
     /^请从(?:物理|数学)视角(?:继续深入|进一步深入)?讲解[：:]\s*/,
     /^请围绕延伸思考继续展开讲解[：:]\s*/,
@@ -1154,45 +1155,36 @@ function _findOriginalQuestion(messageId) {
 
 function _modulePrompt(moduleKey, type, originalQuestion) {
   const question = originalQuestion || '当前问题';
+  // 困惑语槽已随「没看懂」分支退役（2026-10-17），只余 followup。
   const prompts = {
     physics: {
       followup: '请从物理视角继续深入讲解：' + question,
-      confused: '你刚才从「物理视角」讲解的部分我没看懂，请换一种更简单、更生活化的方式重新讲解：' + question,
     },
     math: {
       followup: '请从数学视角进一步深入讲解：' + question,
-      confused: '你刚才从「数学视角」讲解的部分我没看懂，请放慢推导步骤，逐一解释每个符号的含义：' + question,
     },
     graph: {
       followup: '请进一步解释知识图谱中的概念关系和箭头含义：' + question,
-      confused: '你生成的「知识图谱」我没看懂，请用更直白的语言解释图中每个节点和关系：' + question,
     },
     viz: {
       followup: '请进一步解释交互式可视化中的元素如何对应物理现象和公式：' + question,
-      confused: '你生成的「交互式可视化」我没看懂，请逐步讲解图表或动画中的每个元素：' + question,
     },
     extend: {
       followup: '请围绕延伸思考继续展开讲解：' + question,
-      confused: '延伸思考里的内容我没看懂，请换一种更简单的方式解释：' + question,
     },
     socratic: {
       followup: '请围绕苏格拉底追问继续展开讲解：' + question,
-      confused: '苏格拉底追问里的问题我没看懂，请换一种更简单的方式解释：' + question,
     },
     learn: {
       followup: '请围绕进阶学习方向继续展开讲解：' + question,
-      confused: '进阶学习方向里的内容我没看懂，请换一种更简单的方式解释：' + question,
     },
   };
   // 画像化：学习画像开启时，延伸思考/进阶学习结合目标与薄弱点（静默生效，文本自然带依据）
   try {
     const _profileCtx = (typeof memoryCachedContext === 'function') ? memoryCachedContext() : '';
     if (_profileCtx) {
-      if (moduleKey === 'learn') {
-        if (type === 'followup') {
-          return '请结合我的学习画像（' + _profileCtx + '），围绕进阶学习方向推荐并讲解接下来最值得学习的内容：' + question;
-        }
-        return '进阶学习方向里的内容我没看懂，请结合我的学习情况（' + _profileCtx + '）用更简单的方式解释：' + question;
+      if (moduleKey === 'learn' && type === 'followup') {
+        return '请结合我的学习画像（' + _profileCtx + '），围绕进阶学习方向推荐并讲解接下来最值得学习的内容：' + question;
       }
       if (moduleKey === 'extend' && type === 'followup') {
         return '请结合我的学习画像（' + _profileCtx + '），围绕延伸思考继续展开讲解：' + question;
@@ -1246,33 +1238,11 @@ function followUpModule(moduleKey, messageId, event, nodeId) {
   window.openBranchModal('追问：' + meta.label, question, anchor);
 }
 
-function dontUnderstandModule(moduleKey, messageId, event, nodeId) {
-  event?.stopPropagation();
-  const meta = MODULE_BUBBLE_META[moduleKey] || MODULE_BUBBLE_META.extend;
-  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
-  const originalQuestion = _branchTopicForNode(node) || _findOriginalQuestion(messageId);
-  const anchor = _branchAnchorFor(node, messageId, moduleKey, 'confused', '没看懂：' + meta.label);
-  const question = _modulePrompt(moduleKey, 'confused', originalQuestion);
-  window.openBranchModal('没看懂：' + meta.label, question, anchor);
-}
-
 window.followUpModule = followUpModule;
-window.dontUnderstandModule = dontUnderstandModule;
-// 「没看懂」：宿主定位走画布节点（2026-09-25 线性主聊天退役，聊天气泡
-// .message.assistant 已删除，旧查询必然落空产生孤立分支）。与
-// _vizCheckRegenerate 同套路：viz-card → 最近画布节点 → 消息派生宿主开 viz
-// 追问分支；工作流 viz 节点/全屏视图找不到宿主 → 提示改走节点右键菜单。
-function dontUnderstandViz(btn) {
-  const card = btn && btn.closest ? btn.closest('.viz-card') : null;
-  const nodeEl = card ? card.closest('.graph-node[data-node-id]') : null;
-  const nodeId = nodeEl ? nodeEl.dataset.nodeId : '';
-  const node = (nodeId && typeof _findGraphNode === 'function') ? _findGraphNode(nodeId) : null;
-  if (node && node.messageIndex >= 0) {
-    dontUnderstandModule('viz', String(node.timestamp || ''), undefined, node.id);
-    return;
-  }
-  if (typeof showToast === 'function') showToast('请在画布上该回答节点的分支菜单里选择「没看懂」');
-}
+// 「没看懂」分支的两个入口函数与 viz 工具栏「?」钮已于 2026-10-17 随 T335 整体退役：
+// confused 是唯一没有真实产品入口兜底的老分支，且「换更简单讲法」的诉求已被
+// 「重新生成」面板的带字修订覆盖。检测页「这题没看懂」与画像账本是 T174 独立功能，
+// 与此处无关，勿连带。
 
 function convertLearnDirections(html, renderCtx = {}) {
   const parentId = _escapeAttr(renderCtx.parentId || '');

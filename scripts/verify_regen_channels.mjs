@@ -3,7 +3,8 @@
 // 四条通道：
 //   A 工作流节点带字修订：点「重新生成」→ 面板写字 → 发送（走 _applyWorkflowNodeRegenerate）
 //   B 工作流节点留空直发：面板不写字直接发（回 runWorkflowNode 原管线整体重跑）
-//   C 消息模块面板路：真发 _regenerateModuleContent（没看懂/带要求 prompt 泛化后的通道）
+//   C 消息模块面板路：真发 _regenerateModuleContent（带要求 prompt 通道；旧称「没看懂」，
+//     该分支本体 2026-10-17 T335 已退役，面板修订路保留）
 //   D 播放三角「从头生成」（T338）：点节点上的三角键，不开面板、不带当前内容直跑原管线
 // 常驻：改重生成发送链后跑一次（硬规则 6）——node scripts/verify_regen_channels.mjs（约 2 分钟，用完即杀不碰 data/）
 import { fileURLToPath } from 'node:url';

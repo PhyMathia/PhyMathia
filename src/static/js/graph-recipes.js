@@ -302,10 +302,11 @@ function normalizeRecipeInput(raw) {
       ? { palette: paletteKey, color: customColor, shape }
       : { palette: paletteKey, shape },
     generate: {
+      // 困惑语槽已随「没看懂」分支退役（2026-10-17 T335）；存量配方里的旧键
+      // 在此归一时静默丢弃，无需迁移。
       prompt: String(g.prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       strict_output: String(g.strict_output || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       followup_prompt: String(g.followup_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
-      confused_prompt: String(g.confused_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       retry_prompt: String(g.retry_prompt || '').trim().slice(0, RECIPE_PROMPT_BUDGET * 2),
       context_channel: RECIPE_CONTEXT_CHANNELS.includes(g.context_channel) ? g.context_channel : 'workflow_context',
       model_role: modelRole,
@@ -342,7 +343,7 @@ function validateRecipe(recipe, existing) {
   const desc = String(recipe.desc || '');
   if (desc.length > 80) fail('描述最长 80 字');
   const g = (recipe.generate && typeof recipe.generate === 'object') ? recipe.generate : {};
-  ['prompt', 'strict_output', 'followup_prompt', 'confused_prompt', 'retry_prompt'].forEach(slot => {
+  ['prompt', 'strict_output', 'followup_prompt', 'retry_prompt'].forEach(slot => {
     const text = String(g[slot] || '');
     if (text.length > RECIPE_PROMPT_BUDGET) fail('提示词槽「' + slot + '」超预算（建议单项 ≤' + RECIPE_PROMPT_BUDGET + ' 字，当前 ' + text.length + '）');
   });

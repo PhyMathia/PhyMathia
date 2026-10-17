@@ -960,8 +960,9 @@
     // 提示词槽：旧有内容、新 payload 为空 ＝ 被抹掉
     const oldG = oldRecipe.generate || {};
     const newG = newRecipe.generate || {};
+    // 困惑语（confused_prompt）槽已随「没看懂」退役（2026-10-17 T335），不再入差异账。
     const slots = [['prompt', '主提示词'], ['followup_prompt', '追问语'],
-      ['confused_prompt', '困惑语'], ['retry_prompt', '重试语'], ['strict_output', '严格输出']];
+      ['retry_prompt', '重试语'], ['strict_output', '严格输出']];
     for (const [key, label] of slots) {
       const before = String(oldG[key] || '').trim();
       const after = String(newG[key] || '').trim();

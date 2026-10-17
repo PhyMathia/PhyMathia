@@ -752,9 +752,10 @@ def _branch_context_instruction(
     parent_id: str = "",
 ) -> str:
     """为 AI 提供当前探索网分支的显式上下文。"""
+    # confused（没看懂）分支已随前端入口整体退役（2026-10-17 T335）：
+    # 不再有新请求带这个类型，指令分支一并拆除。
     labels = {
         "followup": "追问",
-        "confused": "没看懂",
         "socratic": "苏格拉底追问",
         "learn": "进阶学习",
         "continue": "自由续问",
@@ -776,9 +777,7 @@ def _branch_context_instruction(
         lines.append(f"- 分支标签：{branch_label}")
     if parent_id:
         lines.append(f"- 父回答消息 ID：{parent_id}")
-    if branch_type == "confused":
-        lines.append("- 用户没有看懂当前聚焦气泡，请换更简单、更生活化的方式只重讲这个模块，不要重复其他模块。")
-    elif branch_type == "followup":
+    if branch_type == "followup":
         lines.append("- 用户希望对当前聚焦气泡继续深入，只围绕该模块增量讲解，不重新生成完整学习卡片。")
     elif branch_type == "socratic":
         lines.append("- 用户正在回答苏格拉底追问，请按闭环规则只推进一层，不直接给出完整答案。")

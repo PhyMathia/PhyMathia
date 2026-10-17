@@ -632,7 +632,8 @@ async function _taskRegenerate(id) {
   // 放在工作流分支前面：两种 replay 互斥，谁在前都不会撞。
   if (replay && replay.nodeJob && replay.nodeJob.id) {
     const job = replay.nodeJob;
-    // viz / regen（2026-10-11 加）：可视化补生成、以及「没看懂」重生成。后者的要求
+    // viz / regen（2026-10-11 加）：可视化补生成、以及带要求重生成（旧称「没看懂」，
+    // 该分支本体 2026-10-17 T335 已退役，面板修订路保留）。后者的要求
     // 是用户当初手写的那句话，存在 replay.text 里——重试时原样再交回去。
     if (job.kind === 'viz' || job.kind === 'regen') {
       if (typeof _findGraphNode !== 'function' || !_findGraphNode(job.id)) {

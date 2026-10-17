@@ -126,7 +126,7 @@ async function main() {
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(String(e && e.message || e)));
     // T303 重生成预警（2026-10-13）给 force 重生成加了原生 confirm 门，headless
-    // 无 dialog handler 时默认 dismiss——通道⑤ runWorkflowNode(id,true) 被静默
+    // 无 dialog handler 时默认 dismiss——通道④ runWorkflowNode(id,true) 被静默
     // return，报错长得像「重生成 180 秒没反应」的假红。真机用户点是「确定」，
     // handler 对齐这个语义（其余通道的产品路径不经 confirm，accept 不改变它们；
     // 上次 9/9 全绿是 01f127b，早于 T303 落地）
@@ -197,19 +197,18 @@ async function main() {
       ok('通道① 工作流首问：已发通，流式收到 ' + st.len + ' 字');
     } catch (e) { bad('通道① 工作流首问', e); }
 
-    // ===== 2. 节点追问 / 3. 没看懂 / 4. 苏格拉底回答 =====
+    // ===== 2. 节点追问 / 3. 苏格拉底回答 =====
     //
     // 2026-09-27 重写（见 docs/backlog.md T40）。**旧版三条通道全走「拖输出端口」一条路，
     // 且从 `node.outputPorts` 取端口——那个字段全仓只存在于本脚本里，产品从来没有过。**
     // 端口是渲染时从 `_nodeOutputLabels()` 推导、写在 DOM 的 data-* 上的，所以旧版必然
     // 报「源节点没有可用输出端口：[]」——**换任何 key 都验不了**，而且那条报错长得像产品回归。
     //
-    // 更根本的是：三条通道在产品里根本不是同一条路，各走各的真实入口——
+    // 更根本的是：这些通道在产品里根本不是同一条路，各走各的真实入口——
     //   ② 节点追问   → 拖标签含「追问」的输出端口（物理/数学/知识图谱/可视化模块都有）
-    //   ③ 没看懂     → 模块节点上的按钮，走 `dontUnderstandModule()` 开分支弹窗，
-    //                  **没有名叫「没看懂」的输出端口**（`GRAPH_MODULE_DEFAULT_OUTPUTS`
-    //                  里 physics/math/graph/viz 只有「追问」）
-    //   ④ 苏格拉底回答 → 苏格拉底模块的端口是「问题1/2/3」、type=socratic；
+    //   （原③「没看懂」＝模块节点按钮 dontUnderstandModule() 开分支弹窗，2026-10-17
+    //     T335 随 confused 分支整体退役，见下方的重编号注记）
+    //   ③ 苏格拉底回答 → 苏格拉底模块的端口是「问题1/2/3」、type=socratic；
     //                  「回答练习」只存在于 `GRAPH_MODULE_DEFAULT_OUTPUTS.socratic`，
     //                  而 `_moduleOutputPorts` 对 socratic 提前 return，那条配置走不到
     // 下面 `__verifyPorts()` 按产品同构的方式从 DOM 组 portMeta，取不到就把**实际存在的
@@ -349,40 +348,13 @@ async function main() {
         ok('通道② 节点追问：已发通（模块「追问」端口 → 草稿 → 发送提问），流式收到 ' + st.len + ' 字');
       } catch (e) { bad('通道② 节点追问', e); }
 
-      // ③ 没看懂：走 confused 分支。模块节点**没有 messageIndex**（内容存在 node.content 上），
-      //    所以锚点要用节点自己的 timestamp —— 这也是产品自己的做法
-      //    （graph-render.js 的 _vizCheckRegenerate 就是 `parentId: String(node.timestamp||'')`）。
-      //    与⑤「重新生成」不是同一条路：⑤是 runWorkflowNode 重跑模块，
-      //    ③是 sendBranchQuick 带锚点发一条新问题。
-      try {
-        await waitIdle('③ 没看懂');
-        const created = await page.evaluate(async () => {
-          const picked = window.__verifyPickModule();
-          if (!picked) return { err: '画布上没有已生成内容的模块节点' };
-          const node = graphView.nodeById[picked.id];
-          if (!node) return { err: '源节点不在了' };
-          const parentId = String(node.timestamp || '');
-          if (!parentId) return { err: '源节点没有 timestamp 可作锚点' };
-          const before = graphView.nodes.length;
-          window.dontUnderstandModule(node.moduleKey || 'extend', parentId);
-          await new Promise(r => setTimeout(r, 600));
-          const modal = document.getElementById('branchModal');
-          if (!modal || modal.hidden) return { err: '调 dontUnderstandModule 后分支弹窗没打开' };
-          window.submitBranchModal();
-          await new Promise(r => setTimeout(r, 1200));
-          return { beforeCount: before, moduleKey: node.moduleKey || 'extend' };
-        });
-        if (created.err) throw new Error(created.err);
-        const ans = await page.evaluate(c => window.__verifyWaitAnswer(c.beforeCount, 60000), created);
-        if (!ans.id) throw new Error('提交分支弹窗后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
-        const st = await waitNodeSettled(page, ans.id, 180000);
-        if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
-        ok('通道③ 没看懂：已发通（confused 分支，源模块 ' + created.moduleKey + '），流式收到 ' + st.len + ' 字');
-      } catch (e) { bad('通道③ 没看懂', e); }
+      // （原通道③「没看懂」已随 T335 退役，2026-10-17：入口按钮与 confused 分支整体拆除，
+      //   幸存通道重编号——现③=苏格拉底回答，④=重试，⑤=进阶支线，⑥=方向钮，
+      //   ⑦=苏格拉底闭环作答，⑧=创造模式，⑨=答疑模式，⑩=创造模式访谈。）
 
-      // ④ 苏格拉底回答：苏格拉底模块的「问题N」端口（type=socratic）→ 草稿点「直接问AI」
+      // ③ 苏格拉底回答：苏格拉底模块的「问题N」端口（type=socratic）→ 草稿点「直接问AI」
       try {
-        await waitIdle('④ 苏格拉底回答');
+        await waitIdle('③ 苏格拉底回答');
         const port = await pickPort({ type: 'socratic' });
         const created = await page.evaluate(p => window.__verifyBranchFromPort(p,
           '请围绕苏格拉底追问继续展开讲解：为什么瑞利散射公式里的四次方与分子尺度的关系要这样取？'), port);
@@ -391,10 +363,10 @@ async function main() {
         if (!ans.id) throw new Error('草稿发出后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
         const st = await waitNodeSettled(page, ans.id, 180000);
         if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
-        ok('通道④ 苏格拉底回答：已发通（源端口「' + port.meta.label + '」），流式收到 ' + st.len + ' 字');
-      } catch (e) { bad('通道④ 苏格拉底回答', e); }
+        ok('通道③ 苏格拉底回答：已发通（源端口「' + port.meta.label + '」），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('通道③ 苏格拉底回答', e); }
 
-      // ===== 5. 重试（重新生成）=====
+      // ===== 4. 重试（重新生成）=====
       //
       // ⚠️ 这一条**曾是假通过**，一并修掉。原来调的是 `submitRegenerateNode()`：
       // 它第一件事是 `const s = _getChatHistory()[t.messageIndex]; if (!s) return;`，
@@ -410,7 +382,7 @@ async function main() {
       // 还要**等工作流空闲**：`runWorkflowNode` 的守卫里有 `|| workflowRunActive`，
       // 而 ②③④ 每条都启动了一次完整工作流，不等它跑完就调 → 静默 return（本轮踩过）。
       try {
-        await waitIdle('⑤ 重试');
+        await waitIdle('④ 重试');
         const regen = await page.evaluate(async () => {
           const picked = window.__verifyPickModule();
           if (!picked) return { err: '画布上没有已生成内容的模块节点' };
@@ -432,15 +404,15 @@ async function main() {
         if (regen.err) throw new Error(regen.err);
         const st = await waitNodeSettled(page, regen.node, 180000);
         if (st.len < 20) throw new Error('重生成后内容为空（' + st.len + ' 字）');
-        ok('⑤ 重试：已发通，重生成后 ' + st.len + ' 字（原 ' + regen.beforeLen + ' 字，'
+        ok('④ 重试：已发通，重生成后 ' + st.len + ' 字（原 ' + regen.beforeLen + ' 字，'
           + Math.round(regen.waited / 1000) + ' 秒后确实变了）');
-      } catch (e) { bad('⑤ 重试', e); }
+      } catch (e) { bad('④ 重试', e); }
 
-      // ===== 6. 进阶支线（learn 端口 → 「请详细讲解」预填草稿 → 发送提问）=====
+      // ===== 5. 进阶支线（learn 端口 → 「请详细讲解」预填草稿 → 发送提问）=====
       // 与 ②④ 同一条 __verifyBranchFromPort 真实入口，但端口类型不同：learn 端口的
       // 草稿预填是「请详细讲解：{问题}」，验证的是 type=learn 的拖出路由与预填模板。
       try {
-        await waitIdle('⑥ 进阶支线');
+        await waitIdle('⑤ 进阶支线');
         const port = await pickPort({ type: 'learn' });
         const created = await page.evaluate(p => window.__verifyBranchFromPort(p,
           '请详细讲解：瑞利散射的四次方依赖是怎么来的？'), port);
@@ -449,16 +421,16 @@ async function main() {
         if (!ans.id) throw new Error('草稿发出后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
         const st = await waitNodeSettled(page, ans.id, 180000);
         if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
-        ok('⑥ 进阶支线：已发通（learn 端口「' + port.meta.label + '」→ 预填草稿 → 发送提问），流式收到 ' + st.len + ' 字');
-      } catch (e) { bad('⑥ 进阶支线', e); }
+        ok('⑤ 进阶支线：已发通（learn 端口「' + port.meta.label + '」→ 预填草稿 → 发送提问），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('⑤ 进阶支线', e); }
 
-      // ===== ⑨ 方向钮（T361：learn 模块卡正文里的方向条目钮 → 工作流逐节点）=====
+      // ===== ⑥ 方向钮（T361：learn 模块卡正文里的方向条目钮 → 工作流逐节点）=====
       // 与 ⑥ 不是同一条：⑥ 是拖 learn 端口出草稿再发；⑨ 是点卡片正文里的
       // .learn-dir-btn（convertLearnDirections 渲染的按钮）。T361 之前它走消息簇
       // 链路（sendBranchQuick），现在与端口拖拽同落 startQuestionWorkflow——
       // 两条都要真发，单链路语义才算验到。
       try {
-        await waitIdle('⑨ 方向钮');
+        await waitIdle('⑥ 方向钮');
         const created = await page.evaluate(async () => {
           const nodes = [...document.querySelectorAll('.graph-node-module.graph-module-learn')];
           let btn = null;
@@ -474,16 +446,16 @@ async function main() {
         if (!ans.id) throw new Error('点方向钮后 ' + Math.round(ans.waited / 1000) + ' 秒仍没有回答节点');
         const st = await waitNodeSettled(page, ans.id, 180000);
         if (st.len < 20) throw new Error('流式内容为空或过短（' + st.len + ' 字）');
-        ok('⑨ 方向钮：已发通（learn 卡方向钮「' + created.label + '」→ 工作流逐节点），流式收到 ' + st.len + ' 字');
-      } catch (e) { bad('⑨ 方向钮', e); }
+        ok('⑥ 方向钮：已发通（learn 卡方向钮「' + created.label + '」→ 工作流逐节点），流式收到 ' + st.len + ' 字');
+      } catch (e) { bad('⑥ 方向钮', e); }
 
-      // ===== ⑩ 苏格拉底闭环作答（T361：卡上「我来回答」→ 弹窗 → 工作流承载）=====
+      // ===== ⑦ 苏格拉底闭环作答（T361：卡上「我来回答」→ 弹窗 → 工作流承载）=====
       // 与 ④ 不是同一条：④ 是拖 socratic 端口出草稿点「直接问AI」；⑩ 是 socratic
       // 模块卡正文里的「我来回答」→ 弹窗 → 提交作答。T361 之前落一条 assistant
       // 消息（消息簇），现在建 user-custom 作答＋answer-custom 反馈两颗自定义节点，
       // branch_id 闭环状态与建议追问派生都随迁——本通道把三件都断言上。
       try {
-        await waitIdle('⑩ 苏格拉底闭环作答');
+        await waitIdle('⑦ 苏格拉底闭环作答');
         const opened = await page.evaluate(async () => {
           const nodes = [...document.querySelectorAll('.graph-node-module.graph-module-socratic')];
           let btn = null;
@@ -513,10 +485,10 @@ async function main() {
         if (carried.messageIndex >= 0) throw new Error('反馈仍落在消息派生节点上（messageIndex=' + carried.messageIndex + '）');
         if (!carried.hasMeta) throw new Error('反馈节点没带闭环元数据（socraticMeta）');
         if (!carried.sq) throw new Error('建议追问没有派生成独立节点（闭环下一题断）');
-        ok('⑩ 苏格拉底闭环作答：已发通（卡上「我来回答」→ 弹窗 → 工作流节点对，流式 ' + st.len + ' 字，建议追问已派生）');
-      } catch (e) { bad('⑩ 苏格拉底闭环作答', e); }
+        ok('⑦ 苏格拉底闭环作答：已发通（卡上「我来回答」→ 弹窗 → 工作流节点对，流式 ' + st.len + ' 字，建议追问已派生）');
+      } catch (e) { bad('⑦ 苏格拉底闭环作答', e); }
 
-      // ===== 7. Φ 创造模式（preset 相位 → create_recipe）=====
+      // ===== 8. Φ 创造模式（preset 相位 → create_recipe）=====
       // 真实入口：打开 Φ 面板 → 模式按钮开菜单 → 点「✦ 创造」→ 填指令 → 发送。
       // 后端 preset 相位返回 operations（mock 上游回 create_recipe tool_calls），
       // 预览面板出现配方行即发通。
@@ -526,7 +498,7 @@ async function main() {
       // create_recipe 剧本、后端解析/校验/全循环实弹均正常）。修法＝发送前先把
       // 当前 Φ 会话绑到当前画布；toggle 是开关，先查绑定态防反向解绑。
       try {
-        await waitIdle('⑦ 创造模式');
+        await waitIdle('⑧ 创造模式');
         const preset = await page.evaluate(async () => {
           if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
           const panel = document.querySelector('.graph-harness-window');
@@ -568,14 +540,14 @@ async function main() {
         });
         if (preset.err) throw new Error(preset.err);
         if (!preset.hasRecipe) throw new Error('返回了操作但不像配方操作：' + preset.text);
-        ok('⑦ 创造模式：已发通（模式菜单进入 preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
-      } catch (e) { bad('⑦ 创造模式', e); }
+        ok('⑧ 创造模式：已发通（模式菜单进入 preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
+      } catch (e) { bad('⑧ 创造模式', e); }
 
-      // ===== 8. Φ 答疑模式（chat 相位：只读不改图）=====
+      // ===== 9. Φ 答疑模式（chat 相位：只读不改图）=====
       // 真实入口：模式菜单点「答疑」→ 填问题 → 发送。答疑走纯文字回答路径
       // （mock 上游兜底中文一句），回答气泡出现且画布节点数不变＝发通且确实没动图。
       try {
-        await waitIdle('⑧ 答疑模式');
+        await waitIdle('⑨ 答疑模式');
         const chat = await page.evaluate(async () => {
           const countNodes = () => {
             try { return Object.keys(graphView.nodeById).length; } catch (e) { return -1; }
@@ -613,14 +585,14 @@ async function main() {
         if (chat.nodeCountAfter !== chat.nodeCountBefore) {
           throw new Error('答疑模式动了图（节点数 ' + chat.nodeCountBefore + '→' + chat.nodeCountAfter + '）');
         }
-        ok('⑧ 答疑模式：已发通（chat 相位纯文字回答「' + chat.text + '…」，画布未被改动）');
-      } catch (e) { bad('⑧ 答疑模式', e); }
-      // ===== ⑫ Φ 创造模式访谈流（T263：ask_user 追问 → 用户答 → create_recipe）=====
+        ok('⑨ 答疑模式：已发通（chat 相位纯文字回答「' + chat.text + '…」，画布未被改动）');
+      } catch (e) { bad('⑨ 答疑模式', e); }
+      // ===== ⑩ Φ 创造模式访谈流（T263：ask_user 追问 → 用户答 → create_recipe）=====
       // 创造模式从「浅层单问 clarify」升级成多轮访谈：第一轮模型调 ask_user（后端
       // 短路成 clarify、问题文本必须渲染进气泡），用户答完第二轮才出配方操作行。
       // 真发两轮验整条链：问得出、显示得出、答完续得上（历史带问题文本不失忆）。
       try {
-        await waitIdle('⑫ 创造模式访谈');
+        await waitIdle('⑩ 创造模式访谈');
         const round1 = await page.evaluate(async () => {
           if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
           const panel = document.querySelector('.graph-harness-window');
@@ -664,11 +636,11 @@ async function main() {
           return { err: '第二轮配方操作行未出现（访谈历史携带或 mock 第二轮剧本断）' };
         });
         if (round2.err) throw new Error(round2.err);
-        ok('⑫ 创造模式访谈：已发通（第一轮 ask_user 追问含 ' + round1.options + ' 个选项、问题文本进气泡；'
+        ok('⑩ 创造模式访谈：已发通（第一轮 ask_user 追问含 ' + round1.options + ' 个选项、问题文本进气泡；'
           + '第二轮答完出配方操作行' + (round2.digest ? '，预览含「入 2」端口摘要' : '') + '）');
-      } catch (e) { bad('⑫ 创造模式访谈', e); }
+      } catch (e) { bad('⑩ 创造模式访谈', e); }
     } else {
-      ['② 节点追问', '③ 没看懂', '④ 苏格拉底回答', '⑤ 重试', '⑥ 进阶支线', '⑨ 方向钮', '⑩ 苏格拉底闭环作答', '⑦ 创造模式', '⑧ 答疑模式'].forEach(n =>
+      ['② 节点追问', '③ 苏格拉底回答', '④ 重试', '⑤ 进阶支线', '⑥ 方向钮', '⑦ 苏格拉底闭环作答', '⑧ 创造模式', '⑨ 答疑模式', '⑩ 创造模式访谈'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));
     }
 

@@ -1,8 +1,10 @@
 // 分支拓展单链路化（T361/T362/T363，2026-10-17 用户拍板退役「一次生成再拆开」）：
-// ① 三个活入口（方向钮/追问没看懂/苏格拉底闭环）一律落工作流链路，不再产生消息簇；
+// ① 三个活入口（方向钮/追问/苏格拉底闭环）一律落工作流链路，不再产生消息簇；
 // ② 苏格拉底反馈落自定义节点后把建议追问派生成 sq 节点、闭环状态与画像记账随迁；
 // ③ 存量消息簇的删除确认按「真正会消失的节点」报数（同簇并列＋parentId 级联），
 //    不再拿去重消息数冒充节点数。
+// ④「没看懂」（confused）分支已随 T335 整体退役（同日）：入口/提示词/端口臂全拆，
+//    本域尾部有退役钉死契约；检测页「这题没看懂」是 T174 独立功能，不在退役范围。
 // 本域全部同步用例在前、唯一一条 async 用例殿后把两条含 await 的用例串起来跑
 //（硬规则 4：异步用例的让出窗口里别的用例若重置共享沙箱会假红——见 graph-human-finalize
 // 的同款说明；这里 2026-10-17 实踩过一次：多选删除的 await 让出时后一条同步用例
@@ -98,7 +100,7 @@ export async function run() {
       return true;
     });
 
-    check('T361 追问/没看懂：锚点带宿主节点 id（弹窗提交即可落工作流）', () => {
+    check('T361 追问/苏格拉底：锚点带宿主节点 id（弹窗提交即可落工作流）', () => {
       _seed();
       const btn = _fakeButton({
         'data-socratic-answer': encodeURIComponent('甲题'),
@@ -122,7 +124,7 @@ export async function run() {
       const prevDoc = sandbox.document;
       sandbox.document = { getElementById: id => (id === 'branchModalText' ? { value: '请进一步解释知识图谱中的概念关系' } : null) };
       try {
-        vm.runInContext('pendingBranchModal = { parentId: "1001", sourceModule: "graph", branchType: "confused", nodeId: "m-1001-physics", sourcePort: "out-0" };', sandbox);
+        vm.runInContext('pendingBranchModal = { parentId: "1001", sourceModule: "graph", branchType: "followup", nodeId: "m-1001-physics", sourcePort: "out-0" };', sandbox);
         vm.runInContext('submitBranchModal();', sandbox);
       } finally {
         sandbox.document = prevDoc;
@@ -221,6 +223,37 @@ export async function run() {
       if (!renderNode || renderNode.indexOf('_graphStripSuggestedFollowups') < 0) {
         throw new Error('苏格拉底反馈卡没剥建议追问（会与派生节点重复渲染）');
       }
+      return true;
+    });
+
+    check('T335 退役钉死：「没看懂」入口/confused 分支/配方槽位全拆（源码级，2026-10-17）', () => {
+      const renderSrc = _read('render.js');
+      if (renderSrc.includes('dontUnderstandModule') || renderSrc.includes('dontUnderstandViz')) {
+        throw new Error('render.js 还留着「没看懂」入口函数');
+      }
+      if (renderSrc.includes('viz-dontget')) throw new Error('viz 工具栏还挂着「没看懂」按钮');
+      const mp = _body(renderSrc, '_modulePrompt');
+      if (mp && /['"]confused['"]/.test(mp)) throw new Error('_modulePrompt 还留着 confused 提示词槽');
+      const act = _body(_read('graph-interact.js'), 'graphModuleAction');
+      if (act && /['"]confused['"]/.test(act)) throw new Error('graphModuleAction 还收 confused action');
+      const gr = _read('graph-render.js');
+      if (/label === '没看懂'/.test(gr)) throw new Error('端口 branchType 三元还有「没看懂」臂');
+      const prefill = _body(gr, '_draftPrefill');
+      if (prefill && /['"]confused['"]/.test(prefill)) {
+        throw new Error('_draftPrefill 还留 confused 预填分支');
+      }
+      const obSrc = _read('ui-onboarding.js');
+      if (obSrc.includes('没看懂')) throw new Error('新手引导还在教「没看懂」按钮（检测页 T174 同名功能在 quiz-ui/quiz-render，不受此契约管）');
+      const recipeEdit = _read('graph-recipe-edit.js');
+      if (recipeEdit.includes('recipeConfused') || recipeEdit.includes('confused_prompt')) {
+        throw new Error('配方编辑表单还留着 confused_prompt 槽');
+      }
+      const recipeNorm = _read('graph-recipes.js');
+      if (recipeNorm.includes('confused_prompt')) throw new Error('配方归一/校验还带 confused_prompt');
+      const recipesPy = fs.readFileSync('harness/recipes.py', 'utf8');
+      if (recipesPy.includes('confused_prompt')) throw new Error('后端配方 schema 还带 confused_prompt');
+      const ctxPy = fs.readFileSync('src/server/context.py', 'utf8');
+      if (/branch_type == "confused"/.test(ctxPy)) throw new Error('context.py 还留 confused 分支指令（知识提取守卫里的 branchType 比对是存量兼容，不算）');
       return true;
     });
 

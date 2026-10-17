@@ -219,7 +219,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
         "type": "object",
         "description": "配方完整 JSON：name(必填≤24字) / desc(≤80) / base:{kind:module|summary|knowledge|relation|note|human_note|manual|question} / "
         "appearance:{palette:amber|blue|rose|teal|violet|human|note}（外观只有颜色，形状按底座推导、别写 shape） / "
-        "generate:{prompt(必填≤800字), strict_output, followup_prompt, confused_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
+        "generate:{prompt(必填≤800字), strict_output, followup_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
         "model_role:agent|html|branch|graph|quiz|descriptor, on_incomplete:{max_retries:0|1|2}} / "
         "ports:{static:[{label≤12字, drag_form:draft|user|connected:<官方key>, type:text|formula|diagram|html}], "
         "inputs:[{label≤12字, type:text|formula|diagram|html}](具名输入端口：这条线等什么材料；type 留空＝不限), "

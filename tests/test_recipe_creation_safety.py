@@ -30,7 +30,6 @@ def _recipe(name="错题复盘", recipe_id="r1", dynamic=True):
             "prompt": "输出错因与正确思路",
             "strict_output": "",
             "followup_prompt": "",
-            "confused_prompt": "",
             "retry_prompt": "",
             "context_channel": "workflow_context",
             "model_role": "agent",
