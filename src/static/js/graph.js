@@ -227,6 +227,10 @@ const GRAPH_HISTORY_STORAGE_MAX = 1500000;
 let graphUndoStack = [];
 let graphRedoStack = [];
 let graphHistorySession = "";
+// T349：清空/删除画布作废撤销历史时的纪元号。在途的服务端存档补回
+// （_upgradeGraphHistoryFromServer）起飞前记号、落地时对号，号变了就地丢弃——
+// 防止清空后一张迟到的旧存档把清空前的撤销栈整段接回来。
+let _graphHistoryWipeEpoch = 0;
 let graphHistoryPanel = null;
 let graphHistoryPreviewing = -1;
 let graphHistoryDiffSummary = "";
@@ -298,7 +302,11 @@ function _graphHistoryDedupe(arr) {
       const state = {};
       Object.keys(x.state).forEach(function (k) { state[k] = x.state[k]; });
       state.harnessCheckpoint = null;
-      out.push({ sessionId: x.sessionId, state: state, meta: x.meta || null, checkpointRef: true });
+      // T353：messages/msgDelta 跟行带走——checkpoint 去重不得顺手把消息增量链剪断
+      const row = { sessionId: x.sessionId, state: state, meta: x.meta || null, checkpointRef: true };
+      if (x.messages) row.messages = x.messages;
+      if (x.msgDelta) row.msgDelta = x.msgDelta;
+      out.push(row);
       return;
     }
     prevCp = cp; // 首条实体也在此记录指纹，后续相邻比较以它为基准
@@ -310,6 +318,7 @@ function _graphHistoryDedupe(arr) {
 function _graphHistoryHydrate(arr) {
   const out = (Array.isArray(arr) ? arr : []).filter(function (x) { return x && x.state; });
   let lastCp = null;
+  let lastMsgs = null; // T353：消息增量链的重建基准＝前一个 message 型条目的消息
   out.forEach(function (x) {
     if (x.checkpointRef && x.state.harnessCheckpoint == null && lastCp != null) {
       x.state.harnessCheckpoint = JSON.parse(JSON.stringify(lastCp));
@@ -317,14 +326,84 @@ function _graphHistoryHydrate(arr) {
       lastCp = x.state.harnessCheckpoint;
     }
     delete x.checkpointRef; // 读回即还原成无标记格式，内存态不携带序列化细节
+    // T353：message 型条目的增量沿链重建。链头（首个全量条目）被本地截断/镜像
+    // pruned 砍掉时重建不到，保持无 messages——该条撤销只退图状态，与 checkpointRef
+    // 断链同一降级口径（T353 之前所有条目本来就是这个形态）。
+    if (x.messages) {
+      lastMsgs = x.messages;
+    } else if (x.msgDelta) {
+      const rebuilt = _applyMsgDelta(lastMsgs, x.msgDelta);
+      if (rebuilt) { x.messages = rebuilt; lastMsgs = rebuilt; }
+    }
+    delete x.msgDelta;
   });
   return out;
 }
 
+// ===== T353：message 型快照的持久化增量 =====
+// _pushGraphUndo(true) 的快照（viz 模块人工编辑、删消息节点）messages 此前只活在
+// 内存栈——持久化/镜像一律丢弃（T53 体量口径：整份会话消息动辄数百 KB，30 步栈
+// 全量复写会把 localStorage 与服务端镜像顶爆），刷新后这类条目只能退图状态、退不了
+// 消息内容。改法：序列化时 message 型条目按「与前一个 message 型条目的差量」落盘
+// （sets=改写内容、adds=新追加、dels=被删，全按消息 timestamp 作键；本应用的消息
+// 数组只追加/原位改/删、不重排），栈内首个 message 型条目存全量作链头；读回统一经
+// _graphHistoryHydrate 沿链重建。序列化时就地回验（重建结果逐字比对），对不上
+// （未预见的形态）整条回退全量，宁大勿错。内存栈与撤销行为零变化，减重只发生在
+// 持久化/镜像这一条路径上（与 T53 checkpoint 去重、T212 镜像 pruned 同一口径）。
+// 每份序列化数组至多一个链头全量，链头被截断/pruned 的降级见 _graphHistoryHydrate。
+function _msgDeltaFrom(base, target) {
+  const delta = { sets: [], adds: [], dels: [] };
+  const baseAt = new Map();
+  (base || []).forEach(function (m, i) { baseAt.set(String(m && m.timestamp), i); });
+  const keptTs = new Set();
+  (target || []).forEach(function (m) { keptTs.add(String(m && m.timestamp)); });
+  baseAt.forEach(function (i, ts) { if (!keptTs.has(ts)) delta.dels.push(ts); });
+  (target || []).forEach(function (m, i) {
+    const ts = String(m && m.timestamp);
+    if (!baseAt.has(ts)) { delta.adds.push({ at: i, msg: m }); return; }
+    if (JSON.stringify(base[baseAt.get(ts)]) !== JSON.stringify(m)) delta.sets.push({ ts: ts, msg: m });
+  });
+  return delta;
+}
+
+function _applyMsgDelta(base, delta) {
+  if (!base || !delta) return null;
+  const arr = JSON.parse(JSON.stringify(base));
+  (delta.dels || []).forEach(function (ts) {
+    const i = arr.findIndex(function (m) { return String(m && m.timestamp) === String(ts); });
+    if (i >= 0) arr.splice(i, 1);
+  });
+  (delta.sets || []).forEach(function (s) {
+    const i = arr.findIndex(function (m) { return String(m && m.timestamp) === String(s.ts); });
+    if (i >= 0) arr[i] = JSON.parse(JSON.stringify(s.msg));
+  });
+  (delta.adds || []).slice().sort(function (a, b) { return a.at - b.at; }).forEach(function (a) {
+    arr.splice(Math.min(a.at, arr.length), 0, JSON.parse(JSON.stringify(a.msg)));
+  });
+  return arr;
+}
+
 function _persistGraphHistory() {
   const sid = graphHistorySession;
-  const arr = graphUndoStack.map(function (x) {
-    return { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
+  // T353：message 型条目按增量落盘，链基准沿栈向上传递；内存栈保持全量不动
+  const arr = [];
+  let chainMsgs = null;
+  graphUndoStack.forEach(function (x) {
+    const row = { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
+    if (x.messages) {
+      let stored = false;
+      if (chainMsgs) {
+        const delta = _msgDeltaFrom(chainMsgs, x.messages);
+        const rebuilt = _applyMsgDelta(chainMsgs, delta);
+        if (rebuilt && JSON.stringify(rebuilt) === JSON.stringify(x.messages)) {
+          row.msgDelta = delta;
+          stored = true;
+        }
+      }
+      if (!stored) row.messages = x.messages;
+      chainMsgs = x.messages;
+    }
+    arr.push(row);
   });
   const slim = _graphHistoryDedupe(arr);
   let s = JSON.stringify(slim);
@@ -392,9 +471,11 @@ function _flushGraphHistoryMirror() {
 // 是更早开始积累的全量副本；本地更新则不动，避免回退撤销栈）
 function _upgradeGraphHistoryFromServer(sid) {
   if (!sid) return;
+  const wipeEpoch = _graphHistoryWipeEpoch; // T349：起飞后发生过清空/删除，旧存档作废
   fetch('/api/kv/graph_history:' + sid)
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
+      if (wipeEpoch !== _graphHistoryWipeEpoch) return;
       const arr = data && data.value;
       if (!Array.isArray(arr) || !arr.length) return;
       if (graphHistorySession !== sid) return;
@@ -404,6 +485,32 @@ function _upgradeGraphHistoryFromServer(sid) {
     })
     .catch(function () { /* 无存档/离线：本地为准 */ });
 }
+
+// ===== T349：清空当前画布同步作废撤销历史 =====
+// clearChat 此前只删 msgs_/graph_：撤销历史的三个落点全留着——内存栈（本页 Ctrl+Z
+// 直接退回清空前快照）、localStorage 键、服务端镜像 graph_history:<sid>（刷新后
+// _upgradeGraphHistoryFromServer「存档更长才采纳」会把旧栈整段接回来）。与 T342
+// 删除画布口径对齐：清空＝这张画布的撤销历史一并作废。在途镜像必须一并作废，否则
+// 800ms 防抖会在下面的 DELETE 之后把旧栈又 POST 回服务端。
+function discardGraphHistoryForSession(sid) {
+  if (!sid) return Promise.resolve();
+  if (_graphHistoryMirrorPending && _graphHistoryMirrorPending.sid === sid) {
+    _graphHistoryMirrorPending = null;
+  }
+  if (_graphHistoryMirrorTimer) { clearTimeout(_graphHistoryMirrorTimer); _graphHistoryMirrorTimer = null; }
+  _graphHistoryWipeEpoch++;
+  if (graphHistorySession === sid) {
+    graphUndoStack = [];
+    graphRedoStack = [];
+    if (typeof _refreshGraphHistoryPanel === "function") _refreshGraphHistoryPanel();
+  }
+  try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断清空 */ }
+  return fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(10000),
+  }).catch(function () { /* 镜像删除失败静默：清空主流程不被它卡住 */ });
+}
+window.discardGraphHistoryForSession = discardGraphHistoryForSession;
 
 function _graphVersionNodeIndex(state) {
   const idx = {};
@@ -551,8 +658,9 @@ function _pushGraphUndo(withMessages, meta) {
   // 图状态一字未动，此前只比 state，整次编辑被判重吞掉——历史面板看不到条目、Ctrl+Z
   // 也恢复不了（2026-10-16 用户实测「编辑节点内容不进修改历史」）。反向同样成立：
   // 消息编辑之后紧接一次状态编辑（推送发生在变更前，两者 state 同为变更前那份），只看
-  // state 会把后者也吞掉。带 messages 的快照与不带的之间按「不可证同」处理（持久化
-  // 不进 messages，从 localStorage 读回的旧条目是 undefined），宁多记不漏记。
+  // state 会把后者也吞掉。带 messages 的快照与不带的之间按「不可证同」处理（旧持久化
+  // 格式不进 messages、读回是 undefined；T353 起增量重建让读回条目也带 messages，
+  // 比对随之更准），宁多记不漏记。
   const messagesSame = !last || last.sessionId !== snapshot.sessionId
     || JSON.stringify(last.messages || null) === JSON.stringify(snapshot.messages || null);
   const stateSame = !!last && last.sessionId === snapshot.sessionId

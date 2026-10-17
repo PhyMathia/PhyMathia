@@ -3,7 +3,7 @@
 // （T212）；切回旧画布时消息/画布/撤销历史按需从服务端补回。回归四面：键→会话
 // id 归类（history 不误判成 graph）、保留窗口选择、按窗口真删、源码契约
 // （T342 删除回收 history 键 / 清理点无退出钩子）。
-import { check, drain, sandbox, storageData, fs } from './_runner.mjs';
+import { check, drain, sandbox, storageData, fs, vm } from './_runner.mjs';
 
 export async function run() {
   const realActive = sandbox.window.getCurrentSessionId;
@@ -146,6 +146,83 @@ export async function run() {
     if (!src.includes('_serverMsgGapSids.has(id)')) throw new Error('切会话没有打开即补传');
     if (!src.includes('msgGapSids && msgGapSids.has(sid)')) throw new Error('LRU 清理核缺缺口护栏');
     return true;
+  });
+
+  // ===== T349：清空画布回收撤销历史（2026-10-17）=====
+  check('T349: discardGraphHistoryForSession 三清——内存栈/本地键/在途镜像，服务端镜像发 DELETE', () => {
+    if (typeof sandbox.window.discardGraphHistoryForSession !== 'function') {
+      throw new Error('graph.js 未暴露 discardGraphHistoryForSession');
+    }
+    const sid = 'sess_clear_hist';
+    const histKey = 'phymathia_graph_history_' + sid;
+    sandbox.window.getCurrentSessionId = () => sid;
+    const posts = [];
+    const realFetch = sandbox.fetch;
+    sandbox.fetch = (url, opts) => { posts.push({ url, opts }); return realFetch(url, opts); };
+    storageData[histKey] = '[]';
+    try {
+      vm.runInContext('graphHistorySession = ' + JSON.stringify(sid) + ';'
+        + 'graphUndoStack = [{ sessionId: ' + JSON.stringify(sid) + ', state: { a: 1 }, messages: null, meta: { source: "user", summary: "x", ts: 1 } }];'
+        + 'graphRedoStack = [{ sessionId: ' + JSON.stringify(sid) + ', state: { b: 2 }, messages: null, meta: null }];'
+        + '_scheduleGraphHistoryMirror(' + JSON.stringify(sid) + ', [{ sessionId: ' + JSON.stringify(sid) + ', state: {}, meta: null }]);', sandbox);
+      sandbox.window.discardGraphHistoryForSession(sid);   // 同步副作用当场生效，DELETE 浮空走桩
+      if (vm.runInContext('graphUndoStack.length + "/" + graphRedoStack.length', sandbox) !== '0/0') {
+        throw new Error('内存撤销/重做栈没清');
+      }
+      if (storageData[histKey] !== undefined) throw new Error('本地 history 键没删');
+      if (vm.runInContext('_graphHistoryMirrorPending', sandbox) !== null) {
+        throw new Error('在途镜像没作废（800ms 防抖会把旧栈 POST 回服务端）');
+      }
+      if (posts.length !== 1 || posts[0].opts.method !== 'DELETE') throw new Error('服务端镜像没发 DELETE');
+      if (posts[0].url !== '/api/kv/' + encodeURIComponent('graph_history:' + sid)) {
+        throw new Error('DELETE 键不对：' + posts[0].url);
+      }
+      return true;
+    } finally {
+      sandbox.fetch = realFetch;
+      delete storageData[histKey];
+      restoreActive();
+    }
+  });
+
+  check('T349: clearChat 接撤销历史回收（与 T342 删除画布同口径）', () => {
+    const src = fs.readFileSync('src/static/js/session.js', 'utf8');
+    if (!src.includes('await window.discardGraphHistoryForSession(currentSessionId)')) {
+      throw new Error('clearChat 未接 discardGraphHistoryForSession');
+    }
+    return true;
+  });
+
+  // 本文件唯一的异步用例，放最后：check 不 await 异步断言，放中间会与后续同步用例
+  // 并发跑同一沙箱（AGENTS 混排坑）
+  check('T349: 清空后迟到的服务端存档补回被纪元号作废', async () => {
+    const sid = 'sess_wipe_epoch';
+    sandbox.window.getCurrentSessionId = () => sid;
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const old = [{ sessionId: sid, state: { old: 1 }, meta: null }];
+    const realFetch = sandbox.fetch;
+    sandbox.fetch = async (url, opts) => {
+      if (opts && opts.method === 'DELETE') return realFetch(url, opts);  // 清空的 DELETE 放行
+      await gate;                                                          // 存档 GET 停在闸门
+      return { ok: true, status: 200, json: async () => ({ value: old }) };
+    };
+    try {
+      vm.runInContext('graphHistorySession = ' + JSON.stringify(sid) + '; graphUndoStack = []; graphRedoStack = [];', sandbox);
+      sandbox._upgradeGraphHistoryFromServer(sid);
+      await new Promise(r => setTimeout(r, 5));          // 补回起飞、停在闸门
+      sandbox.window.discardGraphHistoryForSession(sid); // 清空：纪元号 +1（不 await）
+      release();
+      await new Promise(r => setTimeout(r, 10));
+      if (vm.runInContext('graphUndoStack.length', sandbox) !== 0) {
+        throw new Error('迟到存档把清空后的栈接回来了（纪元号闸失效）');
+      }
+      return true;
+    } finally {
+      sandbox.fetch = realFetch;
+      release();
+      restoreActive();
+    }
   });
 
   await drain();

@@ -1881,6 +1881,11 @@
         await fetch(`/api/sessions/${currentSessionId}/messages`, { method: 'DELETE', signal: AbortSignal.timeout(10000) });
       } catch(e) { console.warn('[Clear] Failed to delete messages from server:', e); }
       await _deleteGraphStateOnServer(currentSessionId);
+      // T349：撤销历史同口径回收（内存栈＋本地键＋服务端镜像）——清空后 Ctrl+Z／
+      // 修改历史面板不得再达清空前快照；镜像不删的话刷新后会被「存档更长才采纳」接回来
+      if (typeof window.discardGraphHistoryForSession === 'function') {
+        await window.discardGraphHistoryForSession(currentSessionId);
+      }
       await deleteKnowledgeBySession(currentSessionId);
       await deleteFormulasBySession(currentSessionId);
       if (typeof window.deleteQuizStatsBySession === 'function') window.deleteQuizStatsBySession(currentSessionId);
