@@ -285,7 +285,15 @@ let _graphMermaidTimer = null;
 const GRAPH_UNDO_LIMIT = 30;
 const GRAPH_HISTORY_STORAGE_MAX = 1500000;
 let graphUndoStack = [];
-let graphRedoStack = [];
+// T365 游标模型（2026-10-18，替代旧的双栈 undo/redo 暂存）：一份版本列表
+// ＋当前位置游标（Photoshop 式时间旅行）。graphUndoStack 仍是「编辑前快照」序列，
+// 条目语义与序列化格式（checkpointRef/msgDelta）不动；graphHistoryCursor 取值
+// 0..graphUndoStack.length，=== length 表示停在「最新」（live 虚拟位，当前图状态本身
+// 不占条目）；< length 表示时间旅行中，当前所见＝graphUndoStack[cursor]。
+let graphHistoryCursor = 0;
+// 离开 live 位（撤销/跳转）时懒捕获的「最新」锚点， redo/跳回最新/持久化都吃它；
+// 停在 live 位时恒为 null。没有它，「未来」就只剩内存外无落点的悬空状态。
+let graphHistoryLive = null;
 let graphHistorySession = "";
 // T349：清空/删除画布作废撤销历史时的纪元号。在途的服务端存档补回
 // （_upgradeGraphHistoryFromServer）起飞前记号、落地时对号，号变了就地丢弃——
@@ -325,20 +333,37 @@ function _currentSessionId() {
   return typeof window.getCurrentSessionId === "function" ? window.getCurrentSessionId() : "";
 }
 
+// 历史载荷装载（T365）：v2 信封 {v:2, e:条目, c:游标, l:最新锚点} 与旧裸数组两吃。
+// 旧格式＝游标在末尾、无锚点；游标越界一律钳回合法区间，锚点只在时间旅行位才有意义。
+function _adoptGraphHistoryPayload(parsed) {
+  const isEnv = !!(parsed && !Array.isArray(parsed) && Array.isArray(parsed.e));
+  if (!Array.isArray(parsed) && !isEnv) return false;
+  const entries = _graphHistoryHydrate(isEnv ? parsed.e : parsed);
+  graphUndoStack = entries;
+  const c = isEnv ? Number(parsed.c) : NaN;
+  graphHistoryCursor = (Number.isFinite(c) && c >= 0 && c <= entries.length) ? c : entries.length;
+  if (graphHistoryCursor >= entries.length) {
+    graphHistoryCursor = entries.length;
+    graphHistoryLive = null;
+  } else {
+    const l = (isEnv && parsed.l) ? _graphHistoryHydrate([parsed.l]) : null;
+    graphHistoryLive = (l && l[0]) || null;
+  }
+  return true;
+}
+
 function _ensureGraphHistory() {
   const sid = _currentSessionId();
   if (graphHistorySession === sid && graphUndoStack.length) return;
   if (graphHistorySession !== sid) _flushGraphHistoryMirror();
   graphHistorySession = sid;
   graphUndoStack = [];
-  graphRedoStack = [];
+  graphHistoryCursor = 0;
+  graphHistoryLive = null;
   try {
     const raw = localStorage.getItem(_graphHistoryKey(sid));
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) graphUndoStack = _graphHistoryHydrate(arr);
-    }
-  } catch (e) { graphUndoStack = []; }
+    if (raw) _adoptGraphHistoryPayload(JSON.parse(raw));
+  } catch (e) { graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; }
   _upgradeGraphHistoryFromServer(sid);
 }
 
@@ -376,6 +401,8 @@ function _graphHistoryDedupe(arr) {
 }
 
 function _graphHistoryHydrate(arr) {
+  // T365：统一入口两吃——v2 信封 {v:2,e,...} 就地解包（游标/锚点由 _adoptGraphHistoryPayload 消费）
+  if (arr && !Array.isArray(arr) && Array.isArray(arr.e)) arr = arr.e;
   const out = (Array.isArray(arr) ? arr : []).filter(function (x) { return x && x.state; });
   let lastCp = null;
   let lastMsgs = null; // T353：消息增量链的重建基准＝前一个 message 型条目的消息
@@ -466,18 +493,29 @@ function _persistGraphHistory() {
     arr.push(row);
   });
   const slim = _graphHistoryDedupe(arr);
-  let s = JSON.stringify(slim);
+  // T365：游标与「最新」锚点随盘——刷新后时间旅行位与重做能力都不丢。锚点单独
+  // 序列化成全量实体（不进条目数组，checkpoint 不置引用标记，体量最多多一份快照）。
+  let liveRow = null;
+  if (graphHistoryLive) {
+    liveRow = { sessionId: graphHistoryLive.sessionId, state: graphHistoryLive.state, meta: graphHistoryLive.meta || null };
+    if (graphHistoryLive.messages) liveRow.messages = graphHistoryLive.messages;
+  }
+  const envelope = { v: 2, e: slim, c: Math.min(graphHistoryCursor, slim.length), l: liveRow };
+  let s = JSON.stringify(envelope);
   if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
     const per = Math.max(1, Math.floor(s.length / (slim.length || 1)));
     const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
-    // 本地格子有限可截断；全量数组交给下面的服务端镜像，历史一条不丢
-    s = JSON.stringify(slim.slice(-keep));
+    // 本地格子有限可截断（砍头部，游标同步重定基）；全量交给下面的服务端镜像
+    const cut = Math.max(0, slim.length - keep);
+    envelope.e = slim.slice(cut);
+    envelope.c = Math.max(0, envelope.c - cut);
+    s = JSON.stringify(envelope);
   }
   safeLocalStorageSet(_graphHistoryKey(sid), s);
   // 硬盘保险：镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。本地配额满
   // 或被截断时服务端是更宽的存档窗口（体量治理见下节：最新窗口全量＋更老占位），
   // 换设备/清浏览器数据也能从存档读回整个撤销窗口。
-  _scheduleGraphHistoryMirror(sid, slim);
+  _scheduleGraphHistoryMirror(sid, envelope);
 }
 
 // ===== 探索网历史的服务端镜像（图历史上限 30 步撤销是既有设计，这里只保存储安全） =====
@@ -500,12 +538,24 @@ function _graphHistoryMirrorSlim(arr) {
   });
 }
 
+// T365：信封级减重——条目走既有 _graphHistoryMirrorSlim（保持其数组级冒烟契约不动）。
+// 注意 T212 口径是「只减重、绝不删条目」：头部换成 pruned 占位、条数不变，但读回
+// hydrate 会丢占位——游标落在（或越过）占位区段时按头部占位数重定基，防读回后越界。
+function _graphHistoryMirrorEnvelopeSlim(envelope) {
+  if (!envelope || !Array.isArray(envelope.e)) return envelope;
+  const e = _graphHistoryMirrorSlim(envelope.e);
+  if (e === envelope.e) return envelope;
+  const cut = (envelope.e.length > _GRAPH_HISTORY_MIRROR_KEEP)
+    ? envelope.e.length - _GRAPH_HISTORY_MIRROR_KEEP : 0;
+  return { v: 2, e: e, c: Math.max(0, (Number(envelope.c) || 0) - cut), l: envelope.l || null };
+}
+
 let _graphHistoryMirrorTimer = null;
 let _graphHistoryMirrorPending = null;
 
-function _scheduleGraphHistoryMirror(sid, arr) {
-  if (!sid || !arr.length) return;
-  _graphHistoryMirrorPending = { sid: sid, value: _graphHistoryMirrorSlim(arr) };
+function _scheduleGraphHistoryMirror(sid, envelope) {
+  if (!sid || !envelope || !Array.isArray(envelope.e) || !envelope.e.length) return;
+  _graphHistoryMirrorPending = { sid: sid, value: _graphHistoryMirrorEnvelopeSlim(envelope) };
   if (_graphHistoryMirrorTimer) clearTimeout(_graphHistoryMirrorTimer);
   _graphHistoryMirrorTimer = setTimeout(_flushGraphHistoryMirror, 800);
 }
@@ -528,7 +578,9 @@ function _flushGraphHistoryMirror() {
 }
 
 // 切回会话时用存档补齐本地被截断/丢失的历史（只在存档更长时采纳——它按时间
-// 是更早开始积累的全量副本；本地更新则不动，避免回退撤销栈）
+// 是更早开始积累的全量副本；本地更新则不动，避免回退撤销栈）。T365：游标随存档
+// 一并采纳（另一台设备停在哪就到哪）；T365 后跳转不再截断条目，本地/服务端条数
+// 只因新编辑产生差异，「更长才采纳」棘轮口径不变。
 function _upgradeGraphHistoryFromServer(sid) {
   if (!sid) return;
   const wipeEpoch = _graphHistoryWipeEpoch; // T349：起飞后发生过清空/删除，旧存档作废
@@ -536,11 +588,13 @@ function _upgradeGraphHistoryFromServer(sid) {
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
       if (wipeEpoch !== _graphHistoryWipeEpoch) return;
-      const arr = data && data.value;
-      if (!Array.isArray(arr) || !arr.length) return;
+      const value = data && data.value;
+      const count = (value && !Array.isArray(value) && Array.isArray(value.e)) ? value.e.length
+        : (Array.isArray(value) ? value.length : 0);
+      if (!count) return;
       if (graphHistorySession !== sid) return;
-      if (arr.length <= graphUndoStack.length) return;
-      graphUndoStack = _graphHistoryHydrate(arr);
+      if (count <= graphUndoStack.length) return;
+      _adoptGraphHistoryPayload(value);
       if (typeof _refreshGraphHistoryPanel === 'function') _refreshGraphHistoryPanel();
     })
     .catch(function () { /* 无存档/离线：本地为准 */ });
@@ -561,7 +615,8 @@ function discardGraphHistoryForSession(sid) {
   _graphHistoryWipeEpoch++;
   if (graphHistorySession === sid) {
     graphUndoStack = [];
-    graphRedoStack = [];
+    graphHistoryCursor = 0;
+    graphHistoryLive = null;
     if (typeof _refreshGraphHistoryPanel === "function") _refreshGraphHistoryPanel();
   }
   try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断清空 */ }
@@ -712,8 +767,23 @@ function _pushGraphUndo(withMessages, meta) {
   const last = graphUndoStack[graphUndoStack.length - 1];
   if (last && last.sessionId && sid && last.sessionId !== sid) {
     graphUndoStack = [];
-    graphRedoStack = [];
+    graphHistoryCursor = 0;
+    graphHistoryLive = null;
   }
+  // T365 游标在历史中位（时间旅行后落新编辑）：被跳过的「未来」在此截断（业界惯例，
+  // 面板会有截断提示）。但无变化／纯布局漂移的推送不算编辑——照旧早退，未来版本
+  // 原样保留（与 live 位「值未变不记」同一口径，不许因误触推送白丢重做链）。
+  if (graphHistoryCursor < graphUndoStack.length) {
+    const atCursor = graphUndoStack[graphHistoryCursor];
+    const ttMessagesSame = JSON.stringify(atCursor.messages || null) === JSON.stringify(snapshot.messages || null);
+    const ttStateSame = JSON.stringify(atCursor.state) === JSON.stringify(snapshot.state);
+    if (ttStateSame && ttMessagesSame) return;
+    const ttDiff = _diffGraphStates(atCursor.state, snapshot.state);
+    if (ttDiff.layoutOnly && ttMessagesSame) return;
+    graphUndoStack = graphUndoStack.slice(0, graphHistoryCursor + 1);
+    graphHistoryLive = null;
+  }
+  const last2 = graphUndoStack[graphUndoStack.length - 1];
   // 同异比对要连 messages 一起看。messageIndex≥0 的模块节点编辑只写回 msg.content、
   // 图状态一字未动，此前只比 state，整次编辑被判重吞掉——历史面板看不到条目、Ctrl+Z
   // 也恢复不了（2026-10-16 用户实测「编辑节点内容不进修改历史」）。反向同样成立：
@@ -721,13 +791,13 @@ function _pushGraphUndo(withMessages, meta) {
   // state 会把后者也吞掉。带 messages 的快照与不带的之间按「不可证同」处理（旧持久化
   // 格式不进 messages、读回是 undefined；T353 起增量重建让读回条目也带 messages，
   // 比对随之更准），宁多记不漏记。
-  const messagesSame = !last || last.sessionId !== snapshot.sessionId
-    || JSON.stringify(last.messages || null) === JSON.stringify(snapshot.messages || null);
-  const stateSame = !!last && last.sessionId === snapshot.sessionId
-    && JSON.stringify(last.state) === JSON.stringify(snapshot.state);
-  if (last && last.sessionId === snapshot.sessionId) {
+  const messagesSame = !last2 || last2.sessionId !== snapshot.sessionId
+    || JSON.stringify(last2.messages || null) === JSON.stringify(snapshot.messages || null);
+  const stateSame = !!last2 && last2.sessionId === snapshot.sessionId
+    && JSON.stringify(last2.state) === JSON.stringify(snapshot.state);
+  if (last2 && last2.sessionId === snapshot.sessionId) {
     if (stateSame && messagesSame) return;
-    const diff = _diffGraphStates(last.state, snapshot.state);
+    const diff = _diffGraphStates(last2.state, snapshot.state);
     if (diff.layoutOnly && messagesSame) {
       // 布局变化不占版本：直接忽略，保持栈顶为“上次编辑前”的完整快照
       return;
@@ -741,8 +811,8 @@ function _pushGraphUndo(withMessages, meta) {
   // 显式 meta（如 harness 摘要）只作为“即将发生的编辑”描述，供 live 版本展示；
   // 落库条目的 meta 始终由自动 diff 生成，避免错位。
   if (!summary) {
-    if (last) {
-      const diff = _diffGraphStates(last.state, snapshot.state);
+    if (last2) {
+      const diff = _diffGraphStates(last2.state, snapshot.state);
       if (!messagesSame && !diff.ops.length && meta && meta.summary) {
         // 纯消息编辑（图状态一字未动，state diff 一个 op 都没有）：摘要只能取自调用点，
         // 否则条目挂一句「修改了图」，用户在历史面板里看不出改了什么
@@ -757,9 +827,11 @@ function _pushGraphUndo(withMessages, meta) {
     }
   }
   snapshot.meta = { source: source, summary: summary, ts: Date.now() };
-  graphRedoStack = [];
   graphUndoStack.push(snapshot);
   if (graphUndoStack.length > GRAPH_UNDO_LIMIT) graphUndoStack.shift();
+  // T365：新编辑落定即停在最新位；时间旅行分支截断掉的「未来」到此正式丢弃
+  graphHistoryCursor = graphUndoStack.length;
+  graphHistoryLive = null;
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
 }
@@ -787,25 +859,29 @@ async function _restoreGraphVersion(snapshot) {
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
 }
 
+// _captureGraphLiveMeta（T365）：离开 live 位（撤销/回退）前把当前状态锚在历史顶，
+// 作为「最新」一格留给人/面板/持久化——这是重做链不再随刷新蒸发的前提。
+function _captureGraphLive(sid) {
+  const liveState = _graphState();
+  graphHistoryLive = {
+    sessionId: sid,
+    state: liveState ? JSON.parse(JSON.stringify(liveState)) : null,
+    messages: typeof window.getChatHistory === "function" ? JSON.parse(JSON.stringify(window.getChatHistory())) : null,
+    meta: { source: "now", summary: "最新状态", ts: Date.now() },
+  };
+}
+
 async function _undoGraphAction() {
   _ensureGraphHistory();
   const currentSessionId = _currentSessionId();
-  const snapshot = graphUndoStack[graphUndoStack.length - 1];
-  if (!snapshot) return;
-  if (snapshot.sessionId && currentSessionId && snapshot.sessionId !== currentSessionId) return;
-  graphUndoStack.pop();
+  if (graphHistoryCursor <= 0) return;
+  const target = graphUndoStack[graphHistoryCursor - 1];
+  if (!target) return;
+  if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
+  if (graphHistoryCursor >= graphUndoStack.length) _captureGraphLive(currentSessionId);
+  graphHistoryCursor--;
   graphPendingLiveMeta = null;
-  const liveState = _graphState();
-  const liveMessages = typeof window.getChatHistory === "function" ? JSON.parse(JSON.stringify(window.getChatHistory())) : null;
-  graphRedoStack.push({
-    sessionId: currentSessionId,
-    state: liveState ? JSON.parse(JSON.stringify(liveState)) : null,
-    messages: liveMessages,
-    meta: { source: "undo", summary: "撤销：" + ((snapshot.meta && snapshot.meta.summary) || "上一步修改"), ts: Date.now() },
-    prev: snapshot,
-  });
-  if (graphRedoStack.length > GRAPH_UNDO_LIMIT) graphRedoStack.shift();
-  await _restoreGraphVersion(snapshot);
+  await _restoreGraphVersion(target);
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
 }
@@ -813,16 +889,15 @@ async function _undoGraphAction() {
 async function _redoGraphAction() {
   _ensureGraphHistory();
   const currentSessionId = _currentSessionId();
-  const entry = graphRedoStack[graphRedoStack.length - 1];
-  if (!entry) return;
-  if (entry.sessionId && currentSessionId && entry.sessionId !== currentSessionId) return;
-  graphRedoStack.pop();
+  if (graphHistoryCursor >= graphUndoStack.length) return;
+  const next = graphHistoryCursor + 1;
+  const target = next >= graphUndoStack.length ? graphHistoryLive : graphUndoStack[next];
+  if (!target) return;
+  if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
+  graphHistoryCursor = next;
   graphPendingLiveMeta = null;
-  if (entry.prev && entry.prev.sessionId === currentSessionId) {
-    graphUndoStack.push(entry.prev);
-    if (graphUndoStack.length > GRAPH_UNDO_LIMIT) graphUndoStack.shift();
-  }
-  await _restoreGraphVersion(entry);
+  if (graphHistoryCursor >= graphUndoStack.length) graphHistoryLive = null; // 回到最新，锚点消费掉
+  await _restoreGraphVersion(target);
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
 }
@@ -840,6 +915,22 @@ function _graphVersions() {
       sessionId: entry.sessionId,
     };
   });
+  if (graphHistoryCursor < graphUndoStack.length) {
+    // T365：时间旅行中——历史顶补上「最新状态」锚点行（可重做的未来终点），
+    // 游标之后的所有行都属「未来 · 可重做」区段，由面板渲染层分组
+    const liveMeta = (graphHistoryLive && graphHistoryLive.meta)
+      ? graphHistoryLive.meta
+      : { source: "now", summary: "最新状态", ts: Date.now() };
+    list.push({
+      index: graphUndoStack.length,
+      isLive: false,
+      state: graphHistoryLive ? graphHistoryLive.state : null,
+      messages: graphHistoryLive ? graphHistoryLive.messages : null,
+      meta: liveMeta,
+      sessionId: sid,
+    });
+    return list;
+  }
   let liveMeta = graphPendingLiveMeta;
   if (!liveMeta) {
     const last = graphUndoStack[graphUndoStack.length - 1];
@@ -864,49 +955,31 @@ function _graphVersions() {
 async function _jumpGraphVersion(versionIndex) {
   _ensureGraphHistory();
   const currentSessionId = _currentSessionId();
-  if (versionIndex === graphUndoStack.length) return;
-  if (versionIndex < 0 || versionIndex >= graphUndoStack.length) return;
-  const target = graphUndoStack[versionIndex];
-  if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
-
-  // 保留跳转前的新版本，允许用户“回退错了”后再重做回来。
-  const liveState = _graphState();
-  const liveMessages = typeof window.getChatHistory === 'function'
-    ? JSON.parse(JSON.stringify(window.getChatHistory()))
-    : null;
-  const discarded = graphUndoStack.slice(versionIndex + 1);
-  const lastDiscarded = discarded.length ? discarded[discarded.length - 1] : null;
-
-  const newRedo = [];
-  // 最新 live 状态放在 redo 栈底，最后重做时恢复。
-  newRedo.push({
-    sessionId: currentSessionId,
-    state: liveState ? JSON.parse(JSON.stringify(liveState)) : null,
-    messages: liveMessages,
-    meta: { source: 'redo', summary: '回到最新版本', ts: Date.now() },
-    prev: lastDiscarded || target,
-  });
-  // 被跳过的历史快照按从新到旧依次放入 redo，保证重做顺序正确。
-  // 每个 redo 条目的 prev 是“恢复该版本后应放回 undo 栈的上一个快照”。
-  for (let i = discarded.length - 1; i >= 0; i--) {
-    const snap = discarded[i];
-    const prevSnap = i === 0 ? target : discarded[i - 1];
-    newRedo.push({
-      sessionId: currentSessionId,
-      state: snap.state ? JSON.parse(JSON.stringify(snap.state)) : null,
-      messages: snap.messages ? JSON.parse(JSON.stringify(snap.messages)) : null,
-      meta: { source: 'redo', summary: '前进到：' + ((snap.meta && snap.meta.summary) || '历史版本'), ts: Date.now() },
-      prev: prevSnap,
-    });
+  if (versionIndex === graphHistoryCursor) return;
+  if (versionIndex < 0 || versionIndex > graphUndoStack.length) return;
+  // T365 非破坏跳转：只挪游标，一条历史都不删——被跳过的版本常驻面板「未来」区段，
+  // 随时可以重做回来（或经「回到最新」一键返回）。跳转后落新编辑才截断（_pushGraphUndo）。
+  let target;
+  const goingBack = versionIndex < graphUndoStack.length;
+  if (goingBack) {
+    target = graphUndoStack[versionIndex];
+  } else {
+    // 点「最新状态」行＝撤销刚才的回退（time-travel 回 live 位）
+    target = graphHistoryLive;
+    if (!target) return;
   }
-
-  graphUndoStack = graphUndoStack.slice(0, versionIndex);
-  graphRedoStack = newRedo;
+  if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
+  if (goingBack && graphHistoryCursor >= graphUndoStack.length) _captureGraphLive(currentSessionId);
+  graphHistoryCursor = versionIndex;
+  if (!goingBack) graphHistoryLive = null; // 回到最新＝锚点消费掉
   graphPendingLiveMeta = null;
   graphHistoryPreviewing = -1;
   graphHistoryDiffSummary = "";
   await _restoreGraphVersion(target);
   _persistGraphHistory();
+  if (goingBack && typeof toastMsg === "function") {
+    toastMsg("已回到「" + ((target.meta && target.meta.summary) || "历史版本") + "」· 按 Ctrl+Y 或点「最新状态」可回来");
+  }
   _refreshGraphHistoryPanel();
 }
 
@@ -916,8 +989,8 @@ function _previewGraphVersion(versionIndex) {
   const target = versions[versionIndex];
   const live = _graphState();
   if (!target || !live) return;
-  // 再次点击正在对比的版本（或点击当前版本）→ 退出对比
-  if (target.isLive || graphHistoryPreviewing === versionIndex) {
+  // 再次点击正在对比的版本（或点击当前版本/无实体状态的锚点行）→ 退出对比
+  if (target.isLive || !target.state || graphHistoryPreviewing === versionIndex) {
     exitGraphVersionPreview();
     return;
   }
@@ -979,10 +1052,11 @@ function openGraphHistoryPanel() {
     graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog";
     graphHistoryPanel.innerHTML = ''
       + '<div class="graph-history-head-row"><span class="graph-history-title">修改历史</span>'
+      + '<span class="graph-history-pos" id="graphHistoryPos"></span>'
       + '<button type="button" class="graph-history-close" onclick="closeGraphHistoryPanel()" aria-label="关闭">✕</button></div>'
       + '<div class="graph-history-tools">'
       + '<button type="button" onclick="undoGraphAction()" title="Ctrl+Z">↩ 撤销</button>'
-      + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y">↪ 重做</button>'
+      + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y / Ctrl+Shift+Z">↪ 重做</button>'
       + '</div>'
       + '<div class="graph-history-list" id="graphHistoryList"></div>'
       + '<div class="graph-history-diff" id="graphHistoryDiffText"></div>';
@@ -1009,28 +1083,41 @@ function closeGraphHistoryPanel() {
 function _refreshGraphHistoryPanel() {
   if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
   const versions = _graphVersions();
-  const sig = graphHistoryPreviewing + "|" + versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
+  const sig = graphHistoryPreviewing + "|" + graphHistoryCursor + "|" + versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
   if (sig === graphHistoryLastSignature) return;
   graphHistoryLastSignature = sig;
   const listEl = document.getElementById("graphHistoryList");
+  const posEl = document.getElementById("graphHistoryPos");
+  if (posEl) posEl.textContent = "位置 " + (graphHistoryCursor + 1) + " / " + (graphUndoStack.length + 1);
   if (!listEl) return;
   const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+  const futureCount = graphUndoStack.length - graphHistoryCursor; // 游标之后的可重做步数
   listEl.innerHTML = versions.map(function (v) {
     const label = _graphHistorySourceLabel(v.meta && v.meta.source);
     const summary = esc((v.meta && v.meta.summary) || "");
     const time = _graphHistoryTime(v.meta && v.meta.ts);
-    const cls = v.isLive ? "graph-history-item current" : "graph-history-item";
+    // T365：游标所在行＝「你在这里」（历史行加当前标记、隐藏动作钮）；isLive 行沿用旧样式
+    const atCursor = (v.index === graphHistoryCursor) || v.isLive;
+    const cls = atCursor ? "graph-history-item current" : "graph-history-item";
     const srcCls = "src-" + ((v.meta && v.meta.source) || "user");
     const previewCls = (graphHistoryPreviewing === v.index) ? " previewing" : "";
     let actions = '';
-    if (!v.isLive) {
+    if (!atCursor) {
       actions = '<div class="graph-history-actions">'
         + '<button type="button" onclick="previewGraphVersion(' + v.index + ')">对比</button>'
-        + '<button type="button" onclick="jumpGraphVersion(' + v.index + ')">回到此版本</button>'
+        + '<button type="button" onclick="jumpGraphVersion(' + v.index + ')">'
+        + (v.index >= graphUndoStack.length ? '回到最新' : '回到此版本') + '</button>'
         + '</div>';
     }
-    return '<div class="' + cls + previewCls + '">'
+    // 未来区段分隔条：游标后第一行之前插入，把「可重做」的未来显式摆出来
+    const divider = (v.index === graphHistoryCursor + 1 && futureCount > 0)
+      ? '<div class="graph-history-future-divider">以下为未来 · 可重做 ' + futureCount + ' 步</div>'
+      : '';
+    const cursorTag = (v.index === graphHistoryCursor && !v.isLive)
+      ? '<span class="graph-history-badge graph-history-cursor-tag">当前位置</span>' : '';
+    return divider + '<div class="' + cls + previewCls + '">'
       + '<div class="graph-history-head"><span class="graph-history-badge ' + srcCls + '">' + label + '</span>'
+      + cursorTag
       + '<span class="graph-history-summary">' + summary + '</span>'
       + '<span class="graph-history-time">' + time + '</span></div>'
       + actions

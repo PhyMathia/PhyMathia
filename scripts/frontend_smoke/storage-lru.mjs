@@ -163,11 +163,12 @@ export async function run() {
     try {
       vm.runInContext('graphHistorySession = ' + JSON.stringify(sid) + ';'
         + 'graphUndoStack = [{ sessionId: ' + JSON.stringify(sid) + ', state: { a: 1 }, messages: null, meta: { source: "user", summary: "x", ts: 1 } }];'
-        + 'graphRedoStack = [{ sessionId: ' + JSON.stringify(sid) + ', state: { b: 2 }, messages: null, meta: null }];'
-        + '_scheduleGraphHistoryMirror(' + JSON.stringify(sid) + ', [{ sessionId: ' + JSON.stringify(sid) + ', state: {}, meta: null }]);', sandbox);
+        + 'graphHistoryCursor = 1;'
+        + 'graphHistoryLive = { sessionId: ' + JSON.stringify(sid) + ', state: { b: 2 }, messages: null, meta: { source: "now", summary: "最新状态", ts: 2 } };'
+        + '_scheduleGraphHistoryMirror(' + JSON.stringify(sid) + ', { v: 2, e: [{ sessionId: ' + JSON.stringify(sid) + ', state: {}, meta: null }], c: 1, l: null });', sandbox);
       sandbox.window.discardGraphHistoryForSession(sid);   // 同步副作用当场生效，DELETE 浮空走桩
-      if (vm.runInContext('graphUndoStack.length + "/" + graphRedoStack.length', sandbox) !== '0/0') {
-        throw new Error('内存撤销/重做栈没清');
+      if (vm.runInContext('graphUndoStack.length + "/" + graphHistoryCursor + "/" + graphHistoryLive', sandbox) !== '0/0/null') {
+        throw new Error('内存撤销栈/游标/最新锚点没清');
       }
       if (storageData[histKey] !== undefined) throw new Error('本地 history 键没删');
       if (vm.runInContext('_graphHistoryMirrorPending', sandbox) !== null) {
@@ -208,7 +209,7 @@ export async function run() {
       return { ok: true, status: 200, json: async () => ({ value: old }) };
     };
     try {
-      vm.runInContext('graphHistorySession = ' + JSON.stringify(sid) + '; graphUndoStack = []; graphRedoStack = [];', sandbox);
+      vm.runInContext('graphHistorySession = ' + JSON.stringify(sid) + '; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null;', sandbox);
       sandbox._upgradeGraphHistoryFromServer(sid);
       await new Promise(r => setTimeout(r, 5));          // 补回起飞、停在闸门
       sandbox.window.discardGraphHistoryForSession(sid); // 清空：纪元号 +1（不 await）

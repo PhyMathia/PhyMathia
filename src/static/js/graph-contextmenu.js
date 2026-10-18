@@ -221,20 +221,31 @@ function _graphContextItemsForMultiNodes(nodes) {
   return items;
 }
 
-// 撤销/重做可用性（M2）：栈顶判空 + 会话一致性守卫——对齐 _undoGraphAction（graph.js）的
-// no-op 条件（栈顶快照属其他会话时动作本身就是静默返回），菜单提前禁用并给 title 提示。
-// graphUndoStack/graphRedoStack 为 graph.js 顶层 let，打包同域可直接引用（graphView 先例）。
+// 撤销/重做可用性（M2）：游标判界 + 会话一致性守卫——对齐 _undoGraphAction/_redoGraphAction
+// （graph.js）的 no-op 条件（目标快照属其他会话时动作本身就是静默返回），菜单提前禁用并给
+// title 提示。T365 起是单列表＋游标模型（graphUndoStack/graphHistoryCursor/graphHistoryLive
+// 为 graph.js 顶层 let，打包同域可直接引用，graphView 先例）：undo 要求游标 > 0，redo 要求
+// 游标 < 条目数（游标的下一步是下一条目，或「最新」锚点 graphHistoryLive）。
 function _graphCtxCurrentSessionId() {
   if (typeof _currentSessionId !== 'function') return '';
   try { return String(_currentSessionId() || ''); } catch (e) { return ''; }
 }
 
-function _graphCtxHistoryUsable(stack) {
-  if (!Array.isArray(stack) || !stack.length) return false;
-  const top = stack[stack.length - 1];
-  if (!top) return false;
+function _graphCtxHistoryUsable(dir) {
+  if (!Array.isArray(graphUndoStack) || !graphUndoStack.length) return false;
+  const cursor = typeof graphHistoryCursor === 'number' ? graphHistoryCursor : graphUndoStack.length;
   const sid = _graphCtxCurrentSessionId();
-  if (top.sessionId && sid && String(top.sessionId) !== sid) return false;
+  let target;
+  if (dir === 'redo') {
+    if (cursor >= graphUndoStack.length) return false;
+    const next = cursor + 1;
+    target = next >= graphUndoStack.length ? graphHistoryLive : graphUndoStack[next];
+  } else {
+    if (cursor <= 0) return false;
+    target = graphUndoStack[cursor - 1];
+  }
+  if (!target) return false;
+  if (target.sessionId && sid && String(target.sessionId) !== sid) return false;
   return true;
 }
 
@@ -320,7 +331,7 @@ function _graphContextItemsForCanvas(point, client) {
   if (typeof _ensureGraphHistory === 'function') {
     try { _ensureGraphHistory(); } catch (e) { /* localStorage 不可用时按原栈判读 */ }
   }
-  const canUndo = _graphCtxHistoryUsable(graphUndoStack);
+  const canUndo = _graphCtxHistoryUsable('undo');
   items.push({
     key: 'undo',
     label: '撤销',
@@ -328,7 +339,7 @@ function _graphContextItemsForCanvas(point, client) {
     title: canUndo ? '' : '没有可撤销的操作',
     run: () => { if (typeof window.undoGraphAction === 'function') window.undoGraphAction(); },
   });
-  const canRedo = _graphCtxHistoryUsable(graphRedoStack);
+  const canRedo = _graphCtxHistoryUsable('redo');
   items.push({
     key: 'redo',
     label: '重做',

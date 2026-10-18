@@ -161,20 +161,21 @@ export async function run() {
       { role: 'assistant', content: '<viz>\n## 交互探索\n\n```html\n' + FULL_HTML + '\n```\n</viz>', timestamp: 2 },
     ];
     const _histBackup = () => ({
-      h: JSON.parse(runCtx('JSON.stringify({ s: graphHistorySession, u: graphUndoStack, r: graphRedoStack, m: graphPendingLiveMeta })')),
+      h: JSON.parse(runCtx('JSON.stringify({ s: graphHistorySession, u: graphUndoStack, c: graphHistoryCursor, l: graphHistoryLive, m: graphPendingLiveMeta })')),
       chat: JSON.parse(JSON.stringify(sandbox.__fx.chat())),
     });
     const _histRestore = (b, rawKey) => {
       vm.runInContext('graphHistorySession = ' + JSON.stringify(b.h.s) + ';'
         + 'graphUndoStack = ' + JSON.stringify(b.h.u) + ';'
-        + 'graphRedoStack = ' + JSON.stringify(b.h.r) + ';'
+        + 'graphHistoryCursor = ' + JSON.stringify(b.h.c) + ';'
+        + 'graphHistoryLive = ' + JSON.stringify(b.h.l === undefined ? null : b.h.l) + ';'
         + 'graphPendingLiveMeta = ' + JSON.stringify(b.h.m) + ';'
         + '_graphHistoryMirrorPending = null;', sandbox);
       sandbox.window.replaceChatHistory(b.chat);   // chatHistory 也得还回去：撤销链用例按它断言
       if (rawKey === undefined) delete storageData[histKey]; else storageData[histKey] = rawKey;
     };
     const _histStart = () => {  // 每例从确定状态起步：空栈＋确定性消息＋无本地存档
-      runCtx('graphHistorySession = "sess_edit_history"; graphUndoStack = []; graphRedoStack = []; graphPendingLiveMeta = null;');
+      runCtx('graphHistorySession = "sess_edit_history"; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; graphPendingLiveMeta = null;');
       delete storageData[histKey];
       sandbox.window.replaceChatHistory(_baseMsgs());
     };
@@ -194,7 +195,7 @@ export async function run() {
         sandbox.__fx.field({ moduleNodeContent: FULL_HTML.replace('hello viz', 'hello viz v3') });
         sandbox.saveModuleNode('viz1');                  // 消息型第二条（应走增量）
         runCtx('_persistGraphHistory();');
-        const raw = JSON.parse(storageData[histKey]);
+        const raw = JSON.parse(storageData[histKey]).e;
         if (!raw[1].messages) throw new Error('链头消息型条目未存全量');
         if (!raw[2].msgDelta) throw new Error('后续消息型条目未走增量');
         if (raw[2].messages) throw new Error('增量条目不应同时带全量');
@@ -217,7 +218,7 @@ export async function run() {
         sandbox.window.replaceChatHistory(msgs);
         runCtx('_pushGraphUndo(true);');
         runCtx('_persistGraphHistory();');
-        const raw = JSON.parse(storageData[histKey]);
+        const raw = JSON.parse(storageData[histKey]).e;
         if (!raw[0].messages) throw new Error('链头未存全量');
         if (!raw[1].msgDelta) throw new Error('删＋追形态未走增量');
         if (!raw[1].msgDelta.dels.includes('2')) throw new Error('被删消息未进增量');
@@ -237,7 +238,7 @@ export async function run() {
         sandbox.window.replaceChatHistory(msgs);
         runCtx('_pushGraphUndo(true);');                 // 消息已变：增量条目
         runCtx('_persistGraphHistory();');
-        const raw = JSON.parse(storageData[histKey]);
+        const raw = JSON.parse(storageData[histKey]).e;
         if (!raw[1] || !raw[1].msgDelta) throw new Error('前置：第二条应走增量');
         const cut = JSON.stringify(raw.slice(1));        // 砍掉链头（全量条目），只留增量
         const hydrated = JSON.parse(runCtx('JSON.stringify(_graphHistoryHydrate(JSON.parse(' + JSON.stringify(cut) + ')))'));
@@ -257,14 +258,14 @@ export async function run() {
         const msgsA = JSON.stringify([{ role: 'user', content: 'q1', timestamp: 1 }]);
         const msgsB = JSON.stringify([{ role: 'user', content: 'q2', timestamp: 1 }]);
         vm.runInContext('(function () {' +
-          'graphHistorySession = "sess_edit_history"; graphRedoStack = [];' +
+          'graphHistorySession = "sess_edit_history"; graphHistoryCursor = 2; graphHistoryLive = null;' +
           'const mk = () => Object.assign(_graphState(), { harnessCheckpoint: ' + cp + ' });' +
           'graphUndoStack = [' +
           '{ sessionId: "sess_edit_history", state: mk(), messages: ' + msgsA + ', meta: { source: "user", summary: "一", ts: 1 } },' +
           '{ sessionId: "sess_edit_history", state: mk(), messages: ' + msgsB + ', meta: { source: "user", summary: "二", ts: 2 } }' +
           '];})();', sandbox);
         runCtx('_persistGraphHistory();');
-        const raw = JSON.parse(storageData[histKey]);
+        const raw = JSON.parse(storageData[histKey]).e;
         if (raw[0].checkpointRef) throw new Error('首条应作为 checkpoint 实体原样落盘');
         if (!raw[1].checkpointRef || !raw[1].msgDelta) throw new Error('去重条目未同时携带 checkpointRef 与 msgDelta');
         const hydrated = JSON.parse(runCtx('JSON.stringify(_graphHistoryHydrate(JSON.parse(localStorage.getItem("' + histKey + '"))))'));
@@ -295,7 +296,9 @@ export async function run() {
       await undo(); await tick();
       if (sandbox.__fx.chat()[1].content.includes('v2')) throw new Error('撤销第二次 viz 编辑失败');
       await undo(); await tick();
-      if (runCtx('graphUndoStack.length') !== 0) throw new Error('撤销栈没退干净，剩 ' + runCtx('graphUndoStack.length'));
+      // T365 游标模型：撤销不再弹栈——退到底＝游标归 0，八条历史一条不少地留在列表里
+      if (runCtx('graphHistoryCursor') !== 0) throw new Error('游标没退到底，剩 ' + runCtx('graphHistoryCursor'));
+      if (runCtx('graphUndoStack.length') !== 8) throw new Error('历史条目被丢了，剩 ' + runCtx('graphUndoStack.length'));
       return true;
     });
 

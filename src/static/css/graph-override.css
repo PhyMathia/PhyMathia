@@ -4056,6 +4056,14 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   border-bottom: 1px solid var(--border);
 }
 .graph-history-title { font-weight: 600; color: var(--text-primary); }
+/* T365 游标位置指示（标题行右侧，「位置 3 / 8」）——时间旅行后一眼看到自己在第几步 */
+.graph-history-pos {
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
 .graph-history-close {
   background: none;
   border: none;
@@ -4123,6 +4131,28 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-badge.src-undo { background: #ea580c; }
 .graph-history-badge.src-init { background: #64748b; }
 .graph-history-badge.src-now { background: #0d9488; }
+/* T365：游标所在历史行的「当前位置」小标（区别于整行高亮的 .current） */
+.graph-history-cursor-tag {
+  background: var(--accent);
+  opacity: 0.92;
+}
+/* T365：「未来 · 可重做 N 步」区段分隔条——时间旅行后把可返回的未来显式摆出来 */
+.graph-history-future-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 6px;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.graph-history-future-divider::before,
+.graph-history-future-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
 .graph-history-summary {
   flex: 1;
   color: var(--text-primary);

@@ -274,7 +274,8 @@ function _applyLocalBackup(data, replace) {
     safeLocalStorageSet('phymathia_graph_' + sid, JSON.stringify(state));
   }
   for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
-    if (Array.isArray(arr)) safeLocalStorageSet('phymathia_graph_history_' + sid, JSON.stringify(arr));
+    // T365：历史键可以是旧裸数组，也可以是 v2 信封 {v:2,e,c,l}（游标随盘）——两者原样回放
+    if (Array.isArray(arr) || (arr && Array.isArray(arr.e))) safeLocalStorageSet('phymathia_graph_history_' + sid, JSON.stringify(arr));
   }
   _applyLocalSettings(data);
 }
@@ -309,7 +310,8 @@ async function _pushBackupToExistingApis(data) {
       });
     }
     for (const [sid, arr] of Object.entries(data.graphHistories || {})) {
-      if (!Array.isArray(arr)) continue;
+      // T365：旧裸数组与 v2 信封两吃（信封带游标，服务端 kv 只存不透明 JSON 串）
+      if (!Array.isArray(arr) && !(arr && Array.isArray(arr.e))) continue;
       await fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

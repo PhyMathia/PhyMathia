@@ -124,36 +124,50 @@ check('graph-contextmenu: 画布菜单项齐备且「粘贴为节点」受剪贴
   return ok;
 });
 
-check('graph-contextmenu: 撤销/重做禁用态三态（栈空 / 栈顶属当前会话 / 栈顶跨会话）', () => {
-  // graphUndoStack/graphRedoStack 是打包产物顶层 let（非全局对象属性），
+check('graph-contextmenu: 撤销/重做禁用态（T365 游标口径：空栈 / 可撤销 / 可重做 / 跨会话目标 / 存档同步）', () => {
+  // graphUndoStack/graphHistoryCursor/graphHistoryLive 是打包产物顶层 let（非全局对象属性），
   // 只能经 vm.runInContext 改同一上下文的词法绑定；当前会话经 window.getCurrentSessionId 桩
   sandbox.window.getCurrentSessionId = () => 'sess_ctx';
   const itemOf = (key) => sandbox._graphContextItemsForCanvas().find(i => i.key === key);
   // 1) 栈空：禁用 + title 提示（M2 交付范围 1）
-  vm.runInContext('graphUndoStack = []; graphRedoStack = [];', sandbox);
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null;", sandbox);
   let undo = itemOf('undo');
   let redo = itemOf('redo');
   if (undo.disabled !== true || undo.title !== '没有可撤销的操作') return false;
   if (redo.disabled !== true || redo.title !== '没有可重做的操作') return false;
-  // 2) 栈顶属当前会话：可用
-  vm.runInContext("graphUndoStack = [{ sessionId: 'sess_ctx', state: {} }]; graphRedoStack = [{ sessionId: 'sess_ctx', state: {} }];", sandbox);
+  // 2) 游标在末尾（停在最新）：撤销可用、重做不可用（没有未来）
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = [{ sessionId: 'sess_ctx', state: {} }]; graphHistoryCursor = 1; graphHistoryLive = null;", sandbox);
   undo = itemOf('undo'); redo = itemOf('redo');
-  if (undo.disabled === true || redo.disabled === true) return false;
-  // 3) 栈非空但栈顶属其他会话：同样禁用（会话一致性守卫，对齐 _undoGraphAction 的 no-op 条件）
-  vm.runInContext("graphUndoStack = [{ sessionId: 'sess_other', state: {} }]; graphRedoStack = [{ sessionId: 'sess_other', state: {} }];", sandbox);
+  if (undo.disabled === true) return false;
+  if (redo.disabled !== true || redo.title !== '没有可重做的操作') return false;
+  // 2b) 游标在历史中位（时间旅行）：重做可用——下一步是条目，或「最新」锚点
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = [{ sessionId: 'sess_ctx', state: {} }, { sessionId: 'sess_ctx', state: { b: 1 } }]; graphHistoryCursor = 0; graphHistoryLive = null;", sandbox);
+  undo = itemOf('undo'); redo = itemOf('redo');
+  if (undo.disabled !== true) return false;   // 游标 0：无可撤销
+  if (redo.disabled === true) return false;   // 下一格是条目 1
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = [{ sessionId: 'sess_ctx', state: {} }]; graphHistoryCursor = 0;"
+    + "graphHistoryLive = { sessionId: 'sess_ctx', state: { z: 1 } };", sandbox);
+  redo = itemOf('redo');
+  if (redo.disabled === true) return false;   // 下一格是最新锚点
+  // 3) 目标属其他会话：同样禁用（会话一致性守卫，对齐 _undoGraphAction/_redoGraphAction 的 no-op 条件）
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = [{ sessionId: 'sess_other', state: {} }]; graphHistoryCursor = 1; graphHistoryLive = null;", sandbox);
   undo = itemOf('undo'); redo = itemOf('redo');
   if (undo.disabled !== true || redo.disabled !== true) return false;
+  vm.runInContext("graphHistorySession = 'sess_ctx'; graphUndoStack = [{ sessionId: 'sess_other', state: {} }, { sessionId: 'sess_other', state: {} }]; graphHistoryCursor = 0;"
+    + "graphHistoryLive = { sessionId: 'sess_other', state: {} };", sandbox);
+  redo = itemOf('redo');
+  if (redo.disabled !== true) return false;   // 重做目标（锚点）跨会话同样禁用
   // 4) 刚启动/刚切换会话：内存栈为空（或属旧会话）但 localStorage 已有本会话历史——
   //    判读前须先按当前会话同步撤销栈（_undoGraphAction 首行 _ensureGraphHistory 同步），
   //    否则 Ctrl+Z 实际可撤销而菜单误禁用（审查修复回归）
   storageData['phymathia_graph_history_sess_ctx'] = JSON.stringify([
     { sessionId: 'sess_ctx', state: { customNodes: [] }, meta: null },
   ]);
-  vm.runInContext("graphHistorySession = 'sess_stale'; graphUndoStack = []; graphRedoStack = [];", sandbox);
+  vm.runInContext("graphHistorySession = 'sess_stale'; graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null;", sandbox);
   undo = itemOf('undo');
   if (undo.disabled === true) return false; // 须装载持久化历史后判可用
   delete storageData['phymathia_graph_history_sess_ctx'];
-  vm.runInContext('graphUndoStack = []; graphRedoStack = [];', sandbox);
+  vm.runInContext('graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null;', sandbox);
   return true;
 });
 

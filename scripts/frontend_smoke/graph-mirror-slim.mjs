@@ -42,7 +42,7 @@ export async function run() {
     const realFetch = sandbox.fetch;
     sandbox.fetch = (url, opts) => { posts.push({ url, opts }); return realFetch(url, opts); };
     try {
-      sandbox._scheduleGraphHistoryMirror(sid, big);
+      sandbox._scheduleGraphHistoryMirror(sid, { v: 2, e: big, c: 79, l: null });
       sandbox._flushGraphHistoryMirror();
     } finally {
       sandbox.fetch = realFetch;
@@ -50,9 +50,29 @@ export async function run() {
     if (posts.length !== 1) return false;
     if (posts[0].url !== '/api/kv/graph_history:' + sid) return false;
     const body = JSON.parse(posts[0].opts.body);
-    if (body.value.length !== 80) return false;
-    if (!body.value[0].pruned || body.value[0].state !== undefined) return false;
-    if (body.value[79].state.i !== 79) return false;
+    if (body.value.v !== 2 || !Array.isArray(body.value.e)) return false;
+    if (body.value.e.length !== 80) return false;
+    if (!body.value.e[0].pruned || body.value.e[0].state !== undefined) return false;
+    if (body.value.e[79].state.i !== 79) return false;
+    if (body.value.c !== 59) return false;       // 头部砍 20 占位，游标 79 同步重定基
+    return true;
+  });
+
+  check('T365: 信封减重砍头部时游标同步重定基（不越界、不为负）', () => {
+    if (typeof sandbox._graphHistoryMirrorEnvelopeSlim !== 'function') {
+      throw new Error('信封减重助手未暴露');
+    }
+    const big = Array.from({ length: 80 }, (_, i) => ({ sessionId: 's', state: { i }, meta: null }));
+    const out = sandbox._graphHistoryMirrorEnvelopeSlim({ v: 2, e: big, c: 70, l: { sessionId: 's', state: { z: 1 }, meta: null } });
+    if (out.e.length !== 80 || !out.e[0].pruned) return false;
+    if (out.c !== 50) return false;              // cut=20，游标 70→50
+    if (!out.l || out.l.state.z !== 1) return false;
+    const low = sandbox._graphHistoryMirrorEnvelopeSlim({ v: 2, e: big, c: 10, l: null });
+    if (low.c !== 0) return false;               // 游标落在被砍区段：钳 0，不为负
+    if (low.l !== null) return false;
+    // 窗口内（≤60 条）原信封原引用返回（零开销）
+    const small = { v: 2, e: big.slice(0, 10), c: 9, l: null };
+    if (sandbox._graphHistoryMirrorEnvelopeSlim(small) !== small) return false;
     return true;
   });
 
