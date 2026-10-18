@@ -3,14 +3,42 @@
 > **Phy**sics + **Math**ematics + Utop**ia**
 > **让物理有直觉 · 让数学看得见**
 
+**仓库地址：<https://github.com/PhyMathia/PhyMathia>**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776ab.svg)](https://www.python.org/)
+[![零 CDN 依赖](https://img.shields.io/badge/CDN-%E9%9B%B6%E4%BE%9D%E8%B5%96-success.svg)](#技术栈)
+
 PhyMathia 是一个本地部署的 Web 应用：对每一个问题，AI **同时**从「物理直觉」和「数学本质」两条路径给出解释，并且不把回答一丢了事——每次完整回答会在一块**可拖拽、可缩放的探索网画布**上生长成一簇知识节点，你的每一次追问、每一次「没看懂」，都会从对应气泡上长出新分支。学到哪里，网就织到哪里；学过的知识还会跨会话沉淀到一张「知识大陆」上，长成你自己的知识地图。
 
 画布右下角还住着一个会敲键盘的小助手 **Φ**：既能用自然语言帮你整理知识网络（先预览、后应用、一句话撤销），也能随口回答物理数学小问题，还能帮你「发明」新类型的知识节点。
 
 AI 能力接入即用——在「模型设置」里添加一个模型即可开始（DeepSeek、智谱、Kimi、OpenRouter、本地 Ollama 等 OpenAI 兼容接口均可）；KaTeX / Marked / Mermaid / DOMPurify 全部为本地副本，**零 CDN 依赖**，断网也能渲染。
 
+![PhyMathia 探索网画布：一个问题的回答长成一簇节点](baseline/shots/readme-hero.jpg)
+
 ---
 
+## 目录
+
+- [核心功能](#核心功能)
+  - [双域解释：一个问题，两条路径](#双域解释一个问题两条路径)
+  - [探索网画布：知识不是聊天记录，是一张网](#探索网画布知识不是聊天记录是一张网)
+  - [知识大陆：跨会话生长的知识地图](#知识大陆跨会话生长的知识地图)
+  - [交互可视化：亲手摸到每个变量](#交互可视化亲手摸到每个变量)
+  - [苏格拉底追问：AI 不替你思考，陪你思考](#苏格拉底追问ai-不替你思考陪你思考)
+  - [Φ 网络助手：改图、答疑、创造三种模式](#φ-网络助手改图答疑创造三种模式)
+  - [会积累的学习系统](#会积累的学习系统)
+  - [导出、分享与个性化](#导出分享与个性化)
+- [快速开始](#快速开始)
+- [项目结构](#项目结构)
+- [技术栈](#技术栈)
+- [开发者须知](#开发者须知)
+- [为什么做 PhyMathia](#为什么做-phymathia)
+- [反馈与参与](#反馈与参与)
+- [许可协议](#许可协议)
+
+---
 
 ## 核心功能
 
@@ -42,6 +70,8 @@ AI 能力接入即用——在「模型设置」里添加一个模型即可开�
 
 学过的知识点会自动投影到一张可缩放的「大陆」上——概念卡、岛、海域、城市、航线分层呈现；拉远看知识亲缘，推近无缝落回具体画布。内置本地向量模型做语义「找亲」：新知识点自动判断落在哪座岛，搜「电磁感应」也能找到只写了「法拉第」的节点。触屏双指缩放、键盘操作、搜索、加载态一应俱全。
 
+![知识大陆：跨会话沉淀的知识地图，岛 / 海域 / 航线分层呈现](baseline/shots/readme-continent.jpg)
+
 ### 交互可视化：亲手摸到每个变量
 
 每个回答簇内嵌一个 AI 生成的交互页：拖动滑块调参数，看曲线实时变化；折线图、热力图、3D 透视图、可暂停可调速的动画，按概念特点智能选择。主题随主应用切换，可全屏、可复制源码，全部运行在安全沙箱 iframe 里。
@@ -68,11 +98,15 @@ AI 能力接入即用——在「模型设置」里添加一个模型即可开�
 - **行为画像**：用户画像从日常使用中顺带记住你的学习目标与薄弱点（多次出现才固化，单次先进建议区等你确认），驱动自适应出题与举例方向；面板里一切透明可控、可清除；
 - **多账号**：学习数据按账号隔离，各自的画布、知识库、检测记录与画像互不混淆。
 
+![知识总览：对话里的知识点自动提取入库，可分类、搜索、跳回来源画布](baseline/shots/readme-knowledge.jpg)
+
 ### 导出、分享与个性化
 
 - **.pmu 快照与外发**：自有快照格式——会话记录查看、直传预览、拖回主应用恢复、单文件网页外发；外发页默认只读，防止接收方误改；
 - **主题体系**：五套面板风格（极光 / 蓝图 / 砚石 / 霓虹 / 糖果）× 节点皮肤 × 壁纸自由组合，深浅色成对适配，桌宠与导出跟随主题；
 - **更多**：难度三档（初高中 / 大学 / 科研）、PDF / Word / PPT / 图片文档上传提取知识点、任务列表面板、新手步骤引导、数据一键导出/导入/存储诊断。
+
+![浅色主题下的探索网画布](baseline/shots/readme-light.jpg)
 
 ---
 
@@ -82,9 +116,18 @@ AI 能力接入即用——在「模型设置」里添加一个模型即可开�
 
 - Python 3.10+（本手册统一写 `python3`；Windows 上改用 `python`）
 - 浏览器一个（Chrome / Edge / Firefox 均可）
-- Node.js **不需要**——仓库已附带打包好的前端产物，只有改前端源码才需要重新构建（见下文「开发者须知」）
+- Node.js **不需要**——仓库已附带打包好的前端产物，只有改前端源码才需要重新构建（见下文[开发者须知](#开发者须知)）
 
 ### 安装与启动
+
+**获取代码**
+
+```bash
+git clone https://github.com/PhyMathia/PhyMathia.git
+cd PhyMathia
+```
+
+（也可以在 <https://github.com/PhyMathia/PhyMathia> 页面上点「Code → Download ZIP」下载压缩包解压。）
 
 **方式一：一键启动（推荐新手）**
 
@@ -120,11 +163,11 @@ python3 src/main.py
 curl http://localhost:5050/health        # 返回 {"status":"ok",...} 即服务正常
 ```
 
-开发者可另跑自动化测试确认环境完整：
+开发者可另跑自动化测试确认环境完整（**基线数字以 [`AGENTS.md`](AGENTS.md) 为准**，随提交刷新）：
 
 ```bash
-python3 -m pytest tests/ -q              # 后端单测，应全部通过（基线数字见 AGENTS.md）
-node scripts/frontend_smoke.mjs          # 前端冒烟 310 条 ✓（需要 npm install 先装依赖）
+python3 -m pytest tests/ -q              # 后端单测
+node scripts/frontend_smoke.mjs          # 前端冒烟（需先 npm install 装依赖）
 ```
 
 ---
@@ -151,10 +194,9 @@ node scripts/frontend_smoke.mjs          # 前端冒烟 310 条 ✓（需要 npm
 
 ## 开发者须知
 
-- **改后端代码**（`src/main.py`、`src/server/`、`harness/`、`src/system prompt.md`）后需重启服务生效；服务默认不带热重载。
+- **改后端代码**（`src/main.py`、`src/server/`、`harness/`）后需重启服务生效；服务默认不带热重载。（提示词是代码内常量，见 `src/server/prompts.py` 与 `harness/prompts.py`——两份互不相干，别改混。）
 - **改前端源码**（`src/static/js/*.js`、CSS、`/phi/phi-pet.*`）后必须执行 `npm install && npm run build:js` 重新打包再刷新页面；只改查看器相关（`viewer-*.js`）另跑 `npm run build:viewer`。
-- **动手改代码前先读 [`AGENTS.md`](AGENTS.md)**——里面有每个会话都适用的硬规则，以及「改哪块先读哪本手册」的模块地图。
-
+- **动手改代码前先读 `AGENTS.md`**（仓库根目录）——里面有每个会话都适用的硬规则，以及「改哪块先读哪本手册」的模块地图。该文件与 `docs/` 手册按「提交范围对齐开源版」策略不入库、只在本机留存，因此 GitHub 上可能看不到。
 
 ---
 
@@ -183,10 +225,23 @@ node scripts/frontend_smoke.mjs          # 前端冒烟 310 条 ✓（需要 npm
 | 知识检测 | 检测不是打分，是发现「以为懂了、其实没懂」的地方 |
 | 公式速查 | 公式不该背，该随时可查、可重新理解 |
 
-
-
-
 我不认为我找到了最终答案，也不认为 PhyMathia 能解决教育中的所有问题。它只是我的一个理想、一次尝试。但如果没有人尝试，这种想法永远只会是想法。
+
+---
+
+## 反馈与参与
+
+项目在 GitHub 上开源：**<https://github.com/PhyMathia/PhyMathia>**
+
+- 发现 bug、想要新功能，欢迎开 [Issue](https://github.com/PhyMathia/PhyMathia/issues)；
+- 改了代码想合进来，欢迎提 [Pull Request](https://github.com/PhyMathia/PhyMathia/pulls)；
+- 觉得有意思，点个 [Star](https://github.com/PhyMathia/PhyMathia/stargazers) 就是最好的鼓励。
+
+---
+
+## 许可协议
+
+本项目以 [MIT 许可证](LICENSE) 开源。
 
 ---
 
