@@ -1570,13 +1570,15 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
       return {
         kind: item.kind,
         module: item.module || '',
+        // T364：闭环身份标签与上游条目映射同口径（_workflowUpstreamEntry）；
+        // socraticAnswer/socraticFeedback 两标记由 _blankNodeGraphPath 随副本带出
         label: item.kind === 'user'
-          ? '问题'
+          ? (item.socraticAnswer ? '我的作答' : '问题')
           : item.kind === 'answer'
-            ? '问题分析'
+            ? (item.socraticFeedback ? '苏格拉底反馈' : '问题分析')
             : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
-        summary: _graphSummary(rawContent) || '',
-        content: rawContent.slice(0, 800),
+        summary: _graphSummary(_stripSocraticAnswerMarker(rawContent)) || '',
+        content: _stripSocraticAnswerMarker(rawContent).slice(0, 800),
       };
     });
   const workflowContext = {

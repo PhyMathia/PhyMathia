@@ -1146,15 +1146,22 @@ function _blankNodeGraphPath(node) {
     current = incoming ? _findGraphNode(incoming.from) : null;
   }
   ordered.reverse();
-  return ordered.map(item => ({
-    kind: item.kind,
-    timestamp: item.timestamp || '',
-    module: item.moduleKey || '',
-    branchType: item.branchType || '',
-    content: item.messageIndex >= 0
+  // T364：闭环身份随映射副本走（副本只带 kind/content 等几个键，socraticMeta 不在
+  // 其上）——空白节点生成段的标签分设与问题判定在 graph-workflow.js 消费这两个标记
+  return ordered.map(item => {
+    const content = item.messageIndex >= 0
       ? _nodeContent(_workflowWorldMessages()[item.messageIndex] || null, item)
-      : (item.content || ''),
-  }));
+      : (item.content || '');
+    return {
+      kind: item.kind,
+      timestamp: item.timestamp || '',
+      module: item.moduleKey || '',
+      branchType: item.branchType || '',
+      socraticAnswer: _isSocraticLoopAnswer({ kind: item.kind, content: content }),
+      socraticFeedback: !!(item.kind === 'answer' && !item.manual && item.socraticMeta),
+      content: content,
+    };
+  });
 }
 
 window.pasteSourceNodeText = pasteSourceNodeText;

@@ -24,12 +24,35 @@ function _nodeStoredContent(node) {
   return node.summary || node.content || '';
 }
 
+// ===== T364：苏格拉底闭环作答卡识别（2026-10-18）=====
+// 闭环每轮作答是 kind:'user' 的 user-custom 节点（graph-workflow-template.js
+// _createSocraticWorkflowTemplate，内容＝提交瞬间定稿的 prompt 原文，一律以
+// [苏格拉底回答]/[苏格拉底提示]/[苏格拉底讲解] 开头，与服务端口径同款——
+// context.py _SOCRATIC_PROMPT_PREFIXES）。它是学生的回答不是问题：三处问题节点
+// 判定（_findQuestionContentUpstream/_nearestUserInPath/_nearestQuestionNodeUpstream）
+// 必须跳过它，否则闭环深链上 question 槽锚到作答原文、机器前缀漏进「原始问题」
+// 渲染（T364）。判别走内容前缀，存量闭环节点没有标记字段也能识别；用户事后
+// 改写正文去掉前缀＝退化成普通手写卡，与服务器同口径，属预期。
+const _SOCRATIC_LOOP_ANSWER_PREFIXES = ['[苏格拉底回答]', '[苏格拉底提示]', '[苏格拉底讲解]'];
+
+function _isSocraticLoopAnswer(node) {
+  if (!node || node.kind !== 'user') return false;
+  const text = String(node.content || '').replace(/^\s+/, '');
+  return _SOCRATIC_LOOP_ANSWER_PREFIXES.some(prefix => text.indexOf(prefix) === 0);
+}
+
+// 作答卡进下游喂料前剥掉机器前缀——「我的作答」标签已表达身份，前缀是服务端
+// 状态机的识别暗号，不该出现在给模型的正文里（非作答卡无前缀，replace 为 no-op）
+function _stripSocraticAnswerMarker(text) {
+  return String(text || '').replace(/^\s*\[(?:苏格拉底回答|苏格拉底提示|苏格拉底讲解)\]\s*/, '');
+}
+
 function _findQuestionContentUpstream(node) {
   const visited = new Set();
   function walk(current) {
     if (!current || visited.has(current.id)) return '';
     visited.add(current.id);
-    if (current.kind === 'user') return _nodeStoredContent(current);
+    if (current.kind === 'user' && !_isSocraticLoopAnswer(current)) return _nodeStoredContent(current);
     const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
@@ -58,6 +81,9 @@ function _nodeOutputContent(node, seen) {
       .join('\n\n');
   }
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) {
+    // T364：闭环反馈卡（socraticMeta）正文在 content、analysis 恒空——旧回退把它
+    // 替换成根问题文本，反馈的判定/提示/讲解从来进不了下游上下文
+    if (node.socraticMeta) return _nodeStoredContent(node);
     return node.analysis || _findQuestionContentUpstream(node) || '';
   }
   return _nodeStoredContent(node);
@@ -93,6 +119,10 @@ function _collectUpstreamPath(node) {
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
       manual: !!item.manual,
+      // T364：闭环身份随条目走——标签分设「我的作答/苏格拉底反馈」、最近反馈卡
+      // 全文额度都在 _workflowUpstreamEntry 消费这两个标记
+      socraticAnswer: _isSocraticLoopAnswer(item),
+      socraticFeedback: !!(item.kind === 'answer' && !item.manual && item.socraticMeta),
       // 节点标题（2026-10-10 ③）：note/我的回答 起的名优先于品类名进下游喂料标签
       title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
@@ -134,6 +164,9 @@ function _collectInboundChain(node) {
       timestamp: item.timestamp || '',
       module: item.moduleKey || '',
       manual: !!item.manual,
+      // T364：与 _collectUpstreamPath 同款闭环身份标记
+      socraticAnswer: _isSocraticLoopAnswer(item),
+      socraticFeedback: !!(item.kind === 'answer' && !item.manual && item.socraticMeta),
       title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
       summary: _graphSummary(raw) || '',
@@ -146,10 +179,11 @@ function _collectInboundChain(node) {
 // 路径数组（_blankNodeGraphPath 产物，根→目标序）里离目标最近的问题节点——
 // 从尾反向扫（原生 for，勿用 findLast 防旧内核，T333a 同款）。旧调用点的
 // Array.find 取到的是最早的根问题，深链上空白节点生成跟着最初的问题跑（T340）。
+// T364：闭环作答卡（kind user 但内容是 [苏格拉底回答] 定稿）不算问题，跳过。
 function _nearestUserInPath(path) {
   const arr = path || [];
   for (let i = arr.length - 1; i >= 0; i--) {
-    if (arr[i] && arr[i].kind === 'user') return arr[i];
+    if (arr[i] && arr[i].kind === 'user' && !_isSocraticLoopAnswer(arr[i])) return arr[i];
   }
   return null;
 }
@@ -200,12 +234,29 @@ function _foldHtmlFences(text) {
 // 从目标节点沿第一条入边上溯（跳过 draft/link 边）找**最近**的问题节点；visited
 // 由调用方传入时复用同一份（_followupSourceNodeId 来源侧的成环防护要看到同一条
 // 走过的链），没传就自建。找不到（无上游成环且无 user）返回 null。
+// T364：闭环作答卡不算问题——否则闭环深链的 question 槽锚到学生作答原文。
 function _nearestQuestionNodeUpstream(node, visited) {
   const seen = visited || new Set();
   let current = node;
   while (current && !seen.has(current.id)) {
     seen.add(current.id);
-    if (current.kind === 'user') return current;
+    if (current.kind === 'user' && !_isSocraticLoopAnswer(current)) return current;
+    const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
+    current = incoming.length ? _findGraphNode(incoming[0].from) : null;
+  }
+  return null;
+}
+
+// T364：从目标节点沿第一条入边上溯找**最近**的闭环反馈卡（answer-custom 带
+// socraticMeta）。它的判定/提示/讲解是闭环链下游生成（sq 下一题重生成、反馈卡下
+// 挂空白节点等）最该看全的一段，给它来源卡同款 6000 字全文额度；更早的轮次维持
+// 800 字摘要。非闭环链上溯不到反馈卡，返回 null——零字节变化。
+function _nearestSocraticFeedbackUpstream(node) {
+  const seen = new Set();
+  let current = node;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.kind === 'answer' && !current.manual && current.socraticMeta) return current;
     const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     current = incoming.length ? _findGraphNode(incoming[0].from) : null;
   }
@@ -235,31 +286,37 @@ function _followupSourceNodeId(node) {
 // 上游条目映射（模块步与分析步共用，原 _buildWorkflowContextForNode 内联 logic
 // 提来共用）。追问来源条目：full 标记＋6000 字额度＋summary 置空——后端 shared
 // 段渲染是 summary 优先，不置空的话 A 的 <summary> 会抢先、全文仍旧进不去。
-function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
+// T364：闭环反馈卡同款 full 额度（feedbackFullId＝最近一颗，调用方算好传入）；
+// 闭环身份标签分设「我的作答/苏格拉底反馈」，作答卡正文剥机器前缀。
+function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFullId) {
   const isSource = !!sourceId && String(item.id || '') === sourceId;
+  const isFeedbackFull = !!feedbackFullId && String(item.id || '') === String(feedbackFullId || '');
+  const isFull = isSource || isFeedbackFull;
   const entry = {
     kind: item.kind,
     module: item.module,
-    label: item.kind === 'user'
-      ? '问题'
-      : item.kind === 'note'
-        ? (item.title || '我的总结')
-        : item.kind === 'knowledge'
-          ? '知识点'
-          : item.kind === 'relation'
-            ? '知识联系'
-            : item.kind === 'source'
-              ? '输入'
-          : item.kind === 'answer'
-            ? (item.manual ? (item.title || '我的回答') : '问题分析')
-            : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
-    summary: isSource ? '' : item.summary,
+    label: item.socraticAnswer
+      ? '我的作答'
+      : item.kind === 'user'
+        ? '问题'
+        : item.kind === 'note'
+          ? (item.title || '我的总结')
+          : item.kind === 'knowledge'
+            ? '知识点'
+            : item.kind === 'relation'
+              ? '知识联系'
+              : item.kind === 'source'
+                ? '输入'
+            : item.kind === 'answer'
+              ? (item.manual ? (item.title || '我的回答') : (item.socraticFeedback ? '苏格拉底反馈' : '问题分析'))
+              : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
+    summary: isFull ? '' : _stripSocraticAnswerMarker(item.summary || ''),
     analysis: item.analysis || '',
-    content: isSource
-      ? _foldHtmlFences(item.content || '').slice(0, WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS)
-      : (item.content || '').slice(0, WORKFLOW_UPSTREAM_MAX_CHARS),
+    content: isFull
+      ? _foldHtmlFences(_stripSocraticAnswerMarker(item.content || '')).slice(0, WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS)
+      : _stripSocraticAnswerMarker(item.content || '').slice(0, WORKFLOW_UPSTREAM_MAX_CHARS),
   };
-  if (isSource) entry.full = true;
+  if (isFull) entry.full = true;
   if (portMeta) {
     entry.input_port = portMeta.label;
     if (portMeta.type) entry.input_type = (typeLabels || {})[portMeta.type] || portMeta.type;
@@ -279,6 +336,9 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels) {
 // question→upstream（cp context.py，test_prefix_stability 已重钉）。
 // 显式例外保留：配方声明 first_inbound 时走单链取材（配方作者的显式选择，
 // 总纲是默认行为）；问题节点多入边暂取边表第一条（真机出语义问题再拍板）。
+// T364（2026-10-18）：闭环链两条补丁——问题节点判定跳过作答卡（question 不再
+// 锚到 [苏格拉底回答] 原文）；最近一颗反馈卡给来源卡同款 full 额度。非闭环链
+// 两条都不触发，字节零变。
 function _collectWorkflowContext(node, portMetaFor, typeLabels) {
   const recipeAgg = node && node.recipeId && node.recipe ? node.recipe.aggregation : '';
   let allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
@@ -296,18 +356,27 @@ function _collectWorkflowContext(node, portMetaFor, typeLabels) {
   // 共享前缀字节；同一份上游集合任何时候拼出同串字节
   allUpstream.sort(_workflowUpstreamCompare);
   const sourceId = _followupSourceNodeId(node);
+  // T364：最近反馈卡全文额度（feedbackFullId）。_nearestSocraticFeedbackUpstream
+  // 与 _nearestQuestionNodeUpstream 同一条第一入边链，上溯结果必在 allUpstream 里；
+  // 非闭环链返回 null，条目映射零变化
+  const nearestFeedback = _nearestSocraticFeedbackUpstream(node);
   // T340：question 与来源卡同锚「最近问题节点」（总纲"向前寻找到最近的问题节点"
   // 的同一口径）。旧 allUpstream.find 在 timestamp 升序里命中的是最早的根问题——
   // 深链追问后，下游模块步/分析兜底的「原始问题」全是最初那问，真正的追问只剩
   // 上游清单里 800 字一条（用户实测"追问答非所问"）。单问题链最近＝最早，字节零变。
   const nearestQuestion = _nearestQuestionNodeUpstream(node);
   const questionNode = (nearestQuestion && allUpstream.find(item => String(item.id || '') === String(nearestQuestion.id || '')))
-    || allUpstream.find(item => item.kind === 'user');
+    || allUpstream.find(item => item.kind === 'user' && !item.socraticAnswer);
   return {
     sourceId: sourceId,
     question: questionNode ? questionNode.content : '',
     // 来源卡 full＋6000，其余（含分析节点）800 摘要；映射逻辑见 _workflowUpstreamEntry
-    upstream: allUpstream.map(item => _workflowUpstreamEntry(item, sourceId, portMetaFor ? portMetaFor(item.toPort) : null, typeLabels || {})),
+    upstream: allUpstream.map(item => _workflowUpstreamEntry(
+      item, sourceId,
+      portMetaFor ? portMetaFor(item.toPort) : null,
+      typeLabels || {},
+      nearestFeedback ? String(nearestFeedback.id || '') : ''
+    )),
   };
 }
 

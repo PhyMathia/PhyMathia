@@ -5,6 +5,9 @@
 //    不再拿去重消息数冒充节点数。
 // ④「没看懂」（confused）分支已随 T335 整体退役（同日）：入口/提示词/端口臂全拆，
 //    本域尾部有退役钉死契约；检测页「这题没看懂」是 T174 独立功能，不在退役范围。
+// ⑤ T364（2026-10-18）：闭环链上下文语义——「向前找问题节点」跳过作答卡（作答是
+//    kind:'user' 但内容是 [苏格拉底回答] 定稿，不是问题）；标签分设「我的作答/
+//    苏格拉底反馈」；最近反馈卡给 6000 全文额度（作答卡正文剥机器前缀）。
 // 本域全部同步用例在前、唯一一条 async 用例殿后把两条含 await 的用例串起来跑
 //（硬规则 4：异步用例的让出窗口里别的用例若重置共享沙箱会假红——见 graph-human-finalize
 // 的同款说明；这里 2026-10-17 实踩过一次：多选删除的 await 让出时后一条同步用例
@@ -51,6 +54,34 @@ function _seed() {
 
 function _fakeButton(attrs) {
   return { attrs: attrs, getAttribute: function (name) { return this.attrs[name] != null ? this.attrs[name] : null; } };
+}
+
+// T364 夹具：一条闭环链（根问题 → 分析 → socratic 模块 → 作答 user-custom →
+// 反馈 answer-custom（socraticMeta，正文 >800 字）→ sq 下一题），验证上下文取材
+// 在链上的语义。在 _seed() 之上追加，复用其沙箱接线。
+function _seedSocraticLoop() {
+  _seed();
+  const feedbackBody = '判定：正确。\n\n<讲解>' + '单摆周期公式逐段推导，从小角度近似到恢复力。'.repeat(40) + '</讲解>\n<socratic_meta correct="correct" done="false" />';
+  const loopNodes = [
+    { id: 'u-root', kind: 'user', messageIndex: -1, timestamp: 10, content: '主问题：单摆周期怎么算', status: 'done' },
+    { id: 'a-root', kind: 'answer', messageIndex: -1, timestamp: 20, content: '', analysis: '单摆分析', status: 'done' },
+    { id: 'sm-loop', kind: 'module', moduleKey: 'socratic', messageIndex: -1, timestamp: 30, content: '### 苏格拉底追问\n1. [基础] 甲题', status: 'done' },
+    { id: 'u-ans', kind: 'user', manual: true, messageIndex: -1, timestamp: 40, content: '[苏格拉底回答] 目标问题：甲题\n把握程度：basic\n我的回答：周期与小球质量无关。', status: 'done' },
+    { id: 'a-fb', kind: 'answer', messageIndex: -1, timestamp: 50, content: feedbackBody, status: 'done',
+      socraticMeta: { prompt: '[苏格拉底回答]', mode: 'answer', question: '甲题', level: 'basic', branchId: 'br_x' } },
+    { id: 'sq-1', kind: 'module', moduleKey: 'socratic', messageIndex: -1, timestamp: 60, content: '### 苏格拉底追问\n1. [基础] 下一题', status: 'done' },
+  ];
+  const edges = [
+    { from: 'u-root', fromPort: 'out-0', to: 'a-root', toPort: 'in-0' },
+    { from: 'a-root', fromPort: 'out-0', to: 'sm-loop', toPort: 'in-0' },
+    { from: 'sm-loop', fromPort: 'out-0', to: 'u-ans', toPort: 'in-0' },
+    { from: 'u-ans', fromPort: 'out-0', to: 'a-fb', toPort: 'in-0' },
+    { from: 'a-fb', fromPort: 'out-5', to: 'sq-1', toPort: 'in-0' },
+  ];
+  vm.runInContext('(function () { const __loop = ' + JSON.stringify(loopNodes) + ';'
+    + '__loop.forEach(function (n) { graphView.nodes.push(n); graphView.nodeById[n.id] = n; });'
+    + 'graphView.edges = ' + JSON.stringify(edges) + '; })();', sandbox);
+  return { feedbackBody: feedbackBody };
 }
 
 function _read(path) { return fs.readFileSync('src/static/js/' + path, 'utf8'); }
@@ -174,6 +205,59 @@ export async function run() {
       vm.runInContext('_materializeSocraticFollowup(graphView.nodeById["a-soc-2"]);', sandbox);
       if (vm.runInContext('currentBranch', sandbox) !== null) throw new Error('闭环结束后 currentBranch 没复位');
       if (vm.runInContext('currentBranchId', sandbox) !== null) throw new Error('闭环结束后 currentBranchId 没复位');
+      return true;
+    });
+
+    check('T364 闭环链取材：question 锚回真问题不作答卡；标签分设「我的作答/苏格拉底反馈」；最近反馈卡拿全文额度', () => {
+      const fx = _seedSocraticLoop();
+      const ctx = JSON.parse(vm.runInContext(
+        'JSON.stringify(_collectWorkflowContext(graphView.nodeById["sq-1"], null, {}))', sandbox));
+      if (ctx.question !== '主问题：单摆周期怎么算') {
+        throw new Error('question 槽没锚到根问题（可能锚到作答原文）：' + String(ctx.question).slice(0, 40));
+      }
+      const rows = ctx.upstream || [];
+      const ansRow = rows.find(r => r.label === '我的作答');
+      if (!ansRow) throw new Error('作答卡没有「我的作答」标签：' + JSON.stringify(rows.map(r => r.label)));
+      if (String(ansRow.content).indexOf('[苏格拉底回答]') === 0) throw new Error('作答卡正文没剥机器前缀');
+      if ((ansRow.summary || '').indexOf('[苏格拉底回答]') === 0) throw new Error('作答卡摘要没剥机器前缀');
+      if (ansRow.full) throw new Error('作答卡不该拿 full 额度');
+      if (String(ansRow.content).length > 800) throw new Error('作答卡应维持 800 字摘要额度');
+      const fbRow = rows.find(r => r.label === '苏格拉底反馈');
+      if (!fbRow) throw new Error('反馈卡没有「苏格拉底反馈」标签');
+      if (!fbRow.full) throw new Error('最近反馈卡没拿 full 额度');
+      if ((fbRow.summary || '') !== '') throw new Error('full 条目 summary 没置空（后端渲染 summary 优先会截胡）');
+      if (String(fbRow.content).indexOf('判定：正确') !== 0) throw new Error('反馈卡正文不是判定/讲解原文（_nodeOutputContent 回退没修）');
+      if (String(fbRow.content).length < 900) throw new Error('反馈卡全文额度没生效（仍按 800 截）：' + String(fbRow.content).length);
+      if (!rows.some(r => r.label === '问题')) throw new Error('根问题的「问题」标签丢了');
+      if (String(vm.runInContext('_followupSourceNodeId(graphView.nodeById["sq-1"])', sandbox)) !== '') {
+        throw new Error('闭环链来源卡应为空（根问题无上游），实得非空');
+      }
+      if (!fx.feedbackBody.startsWith('判定：正确')) throw new Error('夹具自身坏了');
+      return true;
+    });
+
+    check('T364 闭环链空白节点生成：问题取根问题而非最近作答；路径副本带闭环身份标记', () => {
+      _seedSocraticLoop();
+      const picked = JSON.parse(vm.runInContext(
+        'JSON.stringify(_nearestUserInPath(_blankNodeGraphPath(graphView.nodeById["a-fb"])))', sandbox));
+      if (!picked || picked.content !== '主问题：单摆周期怎么算') {
+        throw new Error('空白节点生成的问题没跳过作答卡：' + JSON.stringify(picked && picked.content).slice(0, 40));
+      }
+      const flags = JSON.parse(vm.runInContext(
+        'JSON.stringify(_blankNodeGraphPath(graphView.nodeById["a-fb"]).map(function (i) {'
+        + ' return { id: i.kind + (i.socraticAnswer ? "!" : "") + (i.socraticFeedback ? "?" : ""), c: (i.content || "").slice(0, 6) }; }))', sandbox));
+      if (!flags.some(f => f.id === 'user!')) throw new Error('路径副本没带 socraticAnswer 标记');
+      if (!flags.some(f => f.id === 'answer?')) throw new Error('路径副本没带 socraticFeedback 标记');
+      return true;
+    });
+
+    check('T364 源码契约：三处问题节点判定都跳过闭环作答卡（_isSocraticLoopAnswer）', () => {
+      const src = _read('graph-workflow-prompt.js');
+      for (const fn of ['_findQuestionContentUpstream', '_nearestUserInPath', '_nearestQuestionNodeUpstream']) {
+        const body = _body(src, fn);
+        if (!body || body.indexOf('_isSocraticLoopAnswer') < 0) throw new Error(fn + ' 没接闭环作答守卫');
+      }
+      if (!src.includes('_nearestSocraticFeedbackUpstream')) throw new Error('最近反馈卡全文额度入口缺失');
       return true;
     });
 
