@@ -32,6 +32,24 @@ _EVENTS_DIR = Path(__file__).resolve().parent.parent / "logs" / "harness_events"
 # 拒绝路径穿越（../、斜杠、空字节等）。
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
+# T253（2026-10-19 阶段0 A1）：事件环境标记。battery/verify/pytest 的测试流量与
+# 真实使用同住 logs/harness_events，记分牌此前只能靠「模型名 m＋亚毫秒延迟」猜
+# 哪些行是测试（159 条事件里真实使用只有 2 条）。现在每条事件落盘时带 env 字段
+# （"user"/"test"）：测试服务进程（harness_test_server / harness_self_server）启动
+# 时设 HARNESS_EVENT_ENV=test，harness_metrics 默认排除 env=="test" 的行。
+# 读一次环境变量定初值，运行中可用 set_event_env 切换（测试注入用）。
+_EVENT_ENV = "test" if str(os.environ.get("HARNESS_EVENT_ENV") or "").strip().lower() in ("test", "1", "true") else "user"
+
+
+def set_event_env(value) -> None:
+    """切换事件环境标记（T253）。测试进程/测试用例调 set_event_env("test")。"""
+    global _EVENT_ENV
+    _EVENT_ENV = "test" if str(value or "").strip().lower() in ("test", "1", "true") else "user"
+
+
+def event_env() -> str:
+    return _EVENT_ENV
+
 
 def set_events_dir(path) -> None:
     global _EVENTS_DIR
@@ -114,6 +132,8 @@ def append_event(session_id: str, event: dict) -> Optional[str]:
         return None
     evt = dict(event)
     evt.setdefault("ts", round(time.time(), 3))
+    # T253：每条事件带环境标记（调用方显式给的优先，缺省用进程级值）
+    evt.setdefault("env", _EVENT_ENV)
     try:
         _EVENTS_DIR.mkdir(parents=True, exist_ok=True)
         path = _session_path(session_id)

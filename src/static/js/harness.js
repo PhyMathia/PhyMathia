@@ -375,7 +375,10 @@ let harnessLastAppliedReport = null;
       + '<div class="graph-harness-composer">'
       + '<details id="graphHarnessRecipeGuide" class="graph-harness-recipe-guide" ontoggle="if(this.open) _refreshHarnessRecipeTargets()" hidden>'
       + '<summary>配方起草与修改</summary>'
-      + '<label>修改目标 <select id="graphHarnessRecipeTarget" aria-label="选择要修改的配方"></select></label>'
+      + '<label>修改目标 <span class="graph-harness-recipe-target-row">'
+      + '<input id="graphHarnessRecipeTargetFilter" type="text" placeholder="过滤配方名…"'
+      + ' oninput="_refreshHarnessRecipeTargets()" aria-label="按名称过滤配方列表（T250）">'
+      + '<select id="graphHarnessRecipeTarget" aria-label="选择要修改的配方"></select></span></label>'
       + '<p>选中后只把这份配方的完整配置交给 Φ，没要求改的字段会保留。修改与保存配方需先把本 Φ 会话绑定到当前画布。</p>'
       + '<div class="graph-harness-recipe-starts">'
       + '<button type="button" onclick="fillHarnessRecipeBrief(\'review\')">错题复盘</button>'
@@ -1113,12 +1116,27 @@ let harnessLastAppliedReport = null;
   function _refreshHarnessRecipeTargets() {
     const select = document.getElementById('graphHarnessRecipeTarget');
     if (!select) return;
+    // T250（2026-10-19）：配方积累到几十条后找目标要滚长列表——过滤框按名称/ID
+    // 前缀子串收窄选项；当前选中项被过滤掉时回落空值（＝未指定目标，可见可改）。
+    const filterBox = document.getElementById('graphHarnessRecipeTargetFilter');
+    const keyword = filterBox ? String(filterBox.value || '').trim().toLowerCase() : '';
     const current = select.value;
     const recipes = typeof getUserRecipes === 'function' ? getUserRecipes() : [];
+    const shown = keyword
+      ? recipes.filter(recipe => {
+          const name = String(recipe.name || '').toLowerCase();
+          const rid = String(recipe.id || '').toLowerCase();
+          return name.includes(keyword) || rid.includes(keyword);
+        })
+      : recipes;
     select.innerHTML = '<option value="">新建配方 / 未指定目标</option>'
-      + recipes.map(recipe => '<option value="' + _escapeHtml(recipe.id) + '">'
+      + shown.map(recipe => '<option value="' + _escapeHtml(recipe.id) + '">'
         + _escapeHtml(recipe.name) + '</option>').join('');
-    select.value = recipes.some(recipe => recipe.id === current) ? current : '';
+    select.value = shown.some(recipe => recipe.id === current) ? current : '';
+    if (filterBox) {
+      filterBox.title = keyword && !shown.length
+        ? '没有匹配「' + keyword + '」的配方' : '输入关键词过滤配方列表';
+    }
   }
 
   // 本次请求锁定的创造模式上下文（发送起点解析一次；排队回放经 opts 传入入队

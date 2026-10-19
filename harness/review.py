@@ -82,8 +82,10 @@ from .review_ops import (
     _assistant_tool_message,
     _readonly_call_arg,
     _readonly_tool_label,
+    SCOPE_GATE_PHASES,
+    split_ops_by_scope,
+    scope_drop_warnings,
 )
-
 
 def _compact_snapshot(snapshot: Dict[str, Any], focus_node_ids) -> Dict[str, Any]:
     """Trim non-focus node content for large snapshots; raise when still too big."""
@@ -165,6 +167,7 @@ from .semantic import (
 from .semantics import find_isolated_created_nodes, find_missing_expansion_chains, rule_selfcheck
 from .json_utils import extract_json, repair_json, strip_reasoning
 from .prompts import (
+    build_confirm_messages,
     HARNESS_CHAT_REDLINE,
     HARNESS_COACH_REPORT_PROMPT,
     _level_requirement,
@@ -267,6 +270,16 @@ _PHASE_LABELS = {
     "coach": "课程表体检",
     "undo": "撤销回滚",
 }
+
+# ---- 阶段1（2026-10-19）「先对齐、再动手」三常数（计划 §2 拍板默认值）----
+# 复述确认触发线：单批操作数 ≥CONFIRM_MIN_OPS，或范围硬闸观察到越界企图；
+# 复述由规则触发而非模型自觉——「多一道确认」不是「意图识别自动执行」（D-R6 相容）。
+CONFIRM_MIN_OPS = 4
+CONFIRM_PHASES = ("normal", "apply", "coach", "expand")
+# 大批拆分段大小（前端按此渲染分段卡、逐段应用）；超过 BATCH_OVERSIZED_OPS 的
+# 超巨批次额外给「缩小范围」建议（「快照过大」报错的体验化版本）。
+BATCH_SEGMENT_OPS = 8
+BATCH_OVERSIZED_OPS = 24
 
 # 相位默认思考档（T97，2026-09-30）：质量杠杆按相位分配——评价/创造/应用是
 # 结构化深推理，给 high；答疑是即时小问答，给 low 控延迟；normal/expand 留空
@@ -1882,6 +1895,30 @@ async def review_graph(
                         }]
                         continue
 
+                # ---- 选中即范围硬闸（阶段1-2，2026-10-19）----
+                # 选中集从提示词软提示升级为校验器硬闸：范围外既有节点的改动先带
+                # 反馈软重试（模型还有机会自己纠正），末次尝试剔除并落 warnings
+                # （T236 体例：不静默丢弃也不整批失败）。批内新建节点不算越界。
+                # scope_ids 取 full_snapshot（current 可能被焦点收缩/压缩替换过）。
+                scope_ids_all = [str(s) for s in (full_snapshot.get("scope_node_ids") or [])]
+                scope_dropped: list = []
+                if scope_ids_all and phase in SCOPE_GATE_PHASES and raw_ops:
+                    kept_ops, dropped_items = split_ops_by_scope(current, raw_ops, scope_ids_all)
+                    if dropped_items and attempt < retries:
+                        labels_all = "、".join(
+                            label for item in dropped_items for label in item["labels"]
+                        )[:300]
+                        last_errors = [{
+                            "index": "scope",
+                            "op": str(dropped_items[0]["op"].get("op") or ""),
+                            "reason": f"以下操作触及未选中的节点（{labels_all}）：本次只允许改动选中的节点，"
+                                      "请去掉对这些节点的修改，只保留对选中节点的操作",
+                        }]
+                        continue
+                    if dropped_items:
+                        raw_ops = kept_ops
+                        scope_dropped = dropped_items
+
                 result = build_next_snapshot(current, raw_ops)
                 ops_for_summary = result.get("operations") or []
                 result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
@@ -1896,6 +1933,10 @@ async def review_graph(
                         "op": err.get("op") or "tool_call",
                         "reason": f"工具调用解析失败，该步已跳过：{err.get('reason') or '未知原因'}",
                     })
+                # 阶段1-2：范围硬闸末次剔除的明细 → warnings（用户看得见剔了什么）
+                if scope_dropped:
+                    for warn in scope_drop_warnings(scope_dropped):
+                        result.setdefault("warnings", []).append(warn)
                 if phase == "apply":
                     result = _cleanup_remaining_eval_nodes(result, current)
 
@@ -2013,6 +2054,85 @@ async def review_graph(
                     result = _auto_connect_isolated(current, result, focus_node_ids, instruction)
                 if phase == "expand":
                     result = _complete_expand_chains(current, result, focus_node_ids)
+                # ---- 大批拆段提示（阶段1-3）：超 BATCH_SEGMENT_OPS 条的批次告知
+                # 拆段信息；超巨批次加「缩小范围」建议。段渲染与应用由前端按
+                # batch_segments 元数据完成（服务端不代拆——应用是前端动作）。
+                final_ops = result.get("operations") or []
+                if len(final_ops) > BATCH_SEGMENT_OPS:
+                    seg_count = (len(final_ops) + BATCH_SEGMENT_OPS - 1) // BATCH_SEGMENT_OPS
+                    seg_reason = (f"本批共 {len(final_ops)} 条操作，超过单批 {BATCH_SEGMENT_OPS} 条，"
+                                  f"已按 {BATCH_SEGMENT_OPS} 条一段拆成 {seg_count} 段，建议逐段确认应用")
+                    if len(final_ops) > BATCH_OVERSIZED_OPS:
+                        seg_reason += (f"；共 {len(final_ops)} 条属超巨批次，建议缩小范围"
+                                       "（例如先选中要整理的节点再发指令）分次进行")
+                    result.setdefault("warnings", []).append({
+                        "index": "batch",
+                        "op": "operations",
+                        "reason": seg_reason,
+                    })
+                    result["batch_segments"] = {
+                        "segment_ops": BATCH_SEGMENT_OPS,
+                        "segments": seg_count,
+                        "oversized": len(final_ops) > BATCH_OVERSIZED_OPS,
+                    }
+                # ---- 复述确认节拍（阶段1-1）：规则触发（≥CONFIRM_MIN_OPS 条或
+                # 范围闸门观察到越界企图）时，让模型用自己的话复述这批方案，
+                # 前端先出确认卡、用户点头才展示操作清单。复述是对模型的强迫
+                # 自检（说错目标名当场暴露）。失败静默降级：不带 confirm 字段，
+                # 直接出清单（T79 哲学，绝不阻断）。
+                if (phase in CONFIRM_PHASES and final_ops
+                        and (len(final_ops) >= CONFIRM_MIN_OPS or scope_dropped)):
+                    confirm_text = ""
+                    try:
+                        _emit({"type": "status", "stage": "confirm",
+                               "message": "这批改动较大，正在向你复述计划…"})
+                        label_map = {
+                            str(n.get("id") or ""): str(n.get("label") or n.get("title") or n.get("id") or "")
+                            for n in (current.get("nodes") or [])
+                        }
+                        op_lines = []
+                        for op in final_ops[:12]:
+                            name = str(op.get("op") or "")
+                            if name in ("update_node", "delete_node"):
+                                target = label_map.get(str(op.get("id") or ""),
+                                                       str(op.get("id") or ""))
+                                op_lines.append(f"{('删除' if name == 'delete_node' else '更新')}节点「{target}」")
+                            elif name == "create_node":
+                                op_lines.append(f"新建节点「{str(op.get('label') or '') or '未命名'}」")
+                            elif name == "add_edge":
+                                op_lines.append("新增连线 " + label_map.get(str(op.get("from") or ""), str(op.get("from") or ""))
+                                                + " → " + label_map.get(str(op.get("to") or ""), str(op.get("to") or "")))
+                            elif name in ("remove_edge", "update_edge"):
+                                op_lines.append(name.replace("_edge", "") + "连线 " + str(op.get("from") or "")
+                                                + " → " + str(op.get("to") or ""))
+                            else:
+                                op_lines.append(name)
+                        if len(final_ops) > 12:
+                            op_lines.append(f"…等共 {len(final_ops)} 条")
+                        raw_confirm = await _counted_call(
+                            build_confirm_messages(
+                                instruction, "\n".join(op_lines),
+                                str(result.get("summary") or ""),
+                            ),
+                            resolved_model, 400,
+                        )
+                        text_confirm, _only = _consume_model_output(raw_confirm)
+                        text_confirm = _clamp_display_summary(text_confirm)
+                        if text_confirm and not _looks_like_machine_text(text_confirm):
+                            confirm_text = text_confirm
+                    except Exception:
+                        confirm_text = ""
+                    if confirm_text:
+                        result["confirm"] = {
+                            "text": confirm_text,
+                            "reason": "ops" if len(final_ops) >= CONFIRM_MIN_OPS else "scope",
+                        }
+                        if journal is not None:
+                            journal.append({
+                                "stage": "confirm",
+                                "reason": result["confirm"]["reason"],
+                                "text": confirm_text[:400],
+                            })
                 result["phase"] = phase
                 result["model_calls"] = call_counter["n"]
                 result["out_chars"] = len(last_raw)

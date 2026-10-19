@@ -66,6 +66,29 @@ def load_events(events_dir) -> list:
     return events
 
 
+# ---- T253（阶段0 A1）：测试流量识别 ----
+# 结构化标记：2026-10-19 起事件落盘带 env 字段（测试服务进程 HARNESS_EVENT_ENV=test）。
+# 遗留启发式：env 字段出现之前的旧事件里，battery/pytest 流量的模型名固定是
+# mock 桩的 "m" 且亚毫秒延迟——用「模型名 m」判定（真实模型不会叫单字符 m）。
+# --include-test 可把测试行含回（对照管道本身是否还跑得通时用）。
+_LEGACY_TEST_MODELS = {"m"}
+
+
+def is_test_event(evt: dict) -> bool:
+    if str(evt.get("env") or "").strip().lower() == "test":
+        return True
+    if evt.get("env"):
+        return False   # 有 env 且不是 test → 明确的真实流量
+    return _model_of(evt) in _LEGACY_TEST_MODELS
+
+
+def split_test_traffic(events: list) -> tuple:
+    real, test = [], []
+    for evt in events:
+        (test if is_test_event(evt) else real).append(evt)
+    return real, test
+
+
 def week_key(ts) -> str:
     try:
         moment = datetime.datetime.fromtimestamp(float(ts or 0))
@@ -82,6 +105,42 @@ def _model_of(evt: dict) -> str:
     if isinstance(model, str) and model:
         return model
     return "未知模型"
+
+
+def _error_bucket_flags(evt: dict) -> dict:
+    """阶段2-1：错误四桶的机检代理（启发式，A3 人工分桶的自动化预筛）。
+
+    数据源＝事件里的 warnings 明细（2026-10-19 起入事件）＋ errors ＋ roundtrips 的
+    retry_feedback（重试反馈文本里带着校验器退回的具体原因）。旧事件没有 warnings
+    明细时靠 retry_feedback 仍可分桶。桶口径对齐 A3 的人工四桶：
+    目标选错／动作选错／范围过大／协议丢字段。
+    """
+    pool: list = []
+    for w in (evt.get("warnings") or []):
+        if isinstance(w, dict):
+            pool.append("w:%s|%s" % (w.get("index"), w.get("reason")))
+    for e in (evt.get("errors") or []):
+        if isinstance(e, dict):
+            pool.append("e:%s|%s" % (e.get("index"), e.get("reason")))
+    for r in (evt.get("roundtrips") or []):
+        if isinstance(r, dict):
+            pool.append("r|%s" % r.get("retry_feedback"))
+    blob = "\n".join(pool)
+    status = str(evt.get("status") or "")
+    return {
+        # 模型改/评了用户没指的节点（焦点遵从校验退回）
+        "wrong_target": any(key in blob for key in (
+            "未命中用户指定的重点节点", "请改为修改这些节点", "不要评价其他节点")),
+        # 模型有意图但产出不合格（空操作拒执行／清单未达成／critic 打回）
+        "wrong_action": any(key in blob for key in (
+            "达成清单未达成", "selfcheck", "请输出真实图操作",
+            "评价阶段必须生成", "应用阶段必须根据")),
+        # 越过选中/焦点边界动图（阶段1-2 硬闸剔除记录，或既有焦点退回文案）
+        "over_scope": ("w:scope|" in blob or "范围外" in blob),
+        # 协议层失败（JSON/工具调用解析、schema 不合）
+        "protocol_drop": (status == "parse_error" or any(key in blob for key in (
+            "不是合法 JSON", "工具调用解析失败", "必须是数组", "operations"))),
+    }
 
 
 def review_rows(events: list) -> list:
@@ -109,6 +168,7 @@ def review_rows(events: list) -> list:
             "error": status in ("error", "parse_error", "invalid"),
             "latency_ms": float(evt.get("latency_ms") or 0),
             "est_tokens": float((evt.get("snapshot_meta") or {}).get("est_tokens") or 0),
+            **_error_bucket_flags(evt),
         })
     return rows
 
@@ -209,6 +269,11 @@ def _metrics(bucket: dict) -> dict:
         "broken_edge_batches": sum(1 for r in struct if r["broken_edges"]),
         "thumbs_up": sum(1 for f in fb if f["kind"] != "bad"),
         "thumbs_down": sum(1 for f in fb if f["kind"] == "bad"),
+        # 阶段2-1：错误四桶占比（同一 review 可落多桶；n=0 时为 None）
+        "bucket_wrong_target_pct": _pct(sum(1 for r in reviews_list if r.get("wrong_target")), n),
+        "bucket_wrong_action_pct": _pct(sum(1 for r in reviews_list if r.get("wrong_action")), n),
+        "bucket_over_scope_pct": _pct(sum(1 for r in reviews_list if r.get("over_scope")), n),
+        "bucket_protocol_pct": _pct(sum(1 for r in reviews_list if r.get("protocol_drop")), n),
     }
 
 
@@ -219,14 +284,15 @@ def compute_all(events: list) -> dict:
     feedbacks = feedback_rows(events)
 
     groups: dict = {}
+    _new_bucket = lambda: {"reviews": [], "accepts": [], "structs": [], "feedbacks": []}  # noqa: E731
     for row in reviews:
-        groups.setdefault((row["week"], row["model"]), {"reviews": [], "accepts": [], "structs": [], "feedbacks": []})["reviews"].append(row)
+        groups.setdefault((row["week"], row["model"]), _new_bucket())["reviews"].append(row)
     for row in accepts:
-        groups.setdefault((row["week"], row["model"]), {"reviews": [], "accepts": [], "structs": [], "feedbacks": []})["accepts"].append(row)
+        groups.setdefault((row["week"], row["model"]), _new_bucket())["accepts"].append(row)
     for row in structs:
-        groups.setdefault((row["week"], row["model"]), {"reviews": [], "accepts": [], "structs": [], "feedbacks": []})["structs"].append(row)
+        groups.setdefault((row["week"], row["model"]), _new_bucket())["structs"].append(row)
     for row in feedbacks:
-        groups.setdefault((row["week"], row["model"]), {"reviews": [], "accepts": [], "structs": [], "feedbacks": []})["feedbacks"].append(row)
+        groups.setdefault((row["week"], row["model"]), _new_bucket())["feedbacks"].append(row)
 
     out = {
         "overall": _metrics({"reviews": reviews, "accepts": accepts,
@@ -250,7 +316,7 @@ def _fmt(value, suffix=""):
     return str(value) + suffix
 
 
-def print_report(report: dict) -> None:
+def print_report(report: dict, test_excluded: int = 0) -> None:
     counts = report["counts"]
 
     def line(label, m):
@@ -263,10 +329,18 @@ def print_report(report: dict) -> None:
                  _fmt(m["accept_ratio_pct"], "%"), m["accept_batches"],
                  _fmt(m["orphan_rate_pct"], "%"), m["replayed_batches"],
                  m["broken_edge_batches"], m["thumbs_up"], m["thumbs_down"]))
+        print("      错误分桶：目标选错 %s · 动作选错 %s · 范围过大 %s · 协议丢字段 %s"
+              % (_fmt(m["bucket_wrong_target_pct"], "%"),
+                 _fmt(m["bucket_wrong_action_pct"], "%"),
+                 _fmt(m["bucket_over_scope_pct"], "%"),
+                 _fmt(m["bucket_protocol_pct"], "%")))
 
     print("Φ 质量记分牌  ·  会话文件 %s 个 · 事件 %s 条（review %s · 未关联 applied %s）"
           % (counts["event_files"], counts["events"], counts["review"],
              counts["applied_unlinked"]))
+    if test_excluded:
+        print("已排除测试流量 %s 条（env=test 或遗留 mock 模型名；--include-test 可含回）"
+              % test_excluded)
     line("总体", report["overall"])
     for key, m in report["groups"].items():
         line(key, m)
@@ -277,9 +351,14 @@ def main(argv=None) -> int:
     parser.add_argument("--events-dir", default=str(DEFAULT_EVENTS_DIR),
                         help="事件日志目录（默认 logs/harness_events）")
     parser.add_argument("--json", default="", help="另存结构化结果到该路径")
+    parser.add_argument("--include-test", action="store_true",
+                        help="把测试流量含回统计（T253：默认排除 env=test 与遗留 mock 行）")
     args = parser.parse_args(argv)
-    report = compute_all(load_events(args.events_dir))
-    print_report(report)
+    events = load_events(args.events_dir)
+    real_events, test_events = split_test_traffic(events)
+    excluded = 0 if args.include_test else len(test_events)
+    report = compute_all(real_events if not args.include_test else events)
+    print_report(report, test_excluded=excluded)
     if args.json:
         Path(args.json).write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

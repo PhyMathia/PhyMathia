@@ -41,6 +41,7 @@
 //   graph-draft-recover     生成中断后的草稿回收（T359：水合结算＋module 周期落盘＋流式读帧看门狗，2026-10-17）
 //   graph-sync-merge        画布图状态跨设备节点级合并（T360：内容签名/删除墓碑/随包 base 版本，2026-10-17）
 //   graph-branch-workflow   分支拓展单链路化（T361/T362/T363：三入口落工作流＋删除范围真值，2026-10-17）
+//   graph-scope-confirm     Φ 阶段1 先对齐再动手（2026-10-19：复述确认卡＋选中即范围警告行＋大批拆段渲染）
 import { finish } from './frontend_smoke/_runner.mjs';
 import { run as _recipes } from './frontend_smoke/recipes.mjs';
 import { run as _phi } from './frontend_smoke/phi.mjs';
@@ -78,6 +79,7 @@ import { run as _graph_human_finalize } from './frontend_smoke/graph-human-final
 import { run as _graph_draft_recover } from './frontend_smoke/graph-draft-recover.mjs';
 import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs';
 import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-workflow.mjs';
+import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
 
 _recipes();
 _phi();
@@ -115,4 +117,5 @@ await _graph_human_finalize();
 await _graph_draft_recover();
 await _graph_sync_merge();
 await _graph_branch_workflow();
+_graph_scope_confirm();
 await finish();

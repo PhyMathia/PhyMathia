@@ -332,7 +332,7 @@
   // （对话式撤销应用的 inverse 操作，是回滚不是应用）。默认 'all' 兜住所有旧调用点。
   // eventIdOverride：从历史条目应用（keep）时传该条的 eventId——harnessResult 是
   // 「当前」结果，套在旧条目上会把归因错挂到别次请求（T96 归因链不能静默断/错）。
-  async function _applyOps(ops, cleanupEval, reportMode = 'all', eventIdOverride = '') {
+  async function _applyOps(ops, cleanupEval, reportMode = 'all', eventIdOverride = '', batchOpts = null) {
     if (!ops.length) return;
     const sessionId = _sessionId();
     const state = _harnessGraphState();
@@ -430,11 +430,29 @@
     // T88：本批已应用——置位防重入标志并禁用两个应用按钮（「撤销本次」保持可用，
     // 用户撤销后可重新应用同批建议）。只用 getElementById＋属性赋值：回归脚本的
     // element() 桩没有 toggleAttribute/closest。
-    harnessResultApplied = true;
-    const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
-    if (applySelectedBtn) applySelectedBtn.disabled = true;
-    const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
-    if (applyAllBtn) applyAllBtn.disabled = true;
+    // 阶段1-3 段应用（batchOpts.segment）：不置 T88 标志——其余段还要继续应用，
+    // 防重入改由 entry.appliedOps 索引承担；并把指纹重新锚到应用后的新版本
+    //（这次变更来自我们自己的应用，属「认可的变更」，与试用认领同一精神）。
+    if (batchOpts && batchOpts.segment) {
+      const entry = batchOpts.entry;
+      if (entry) {
+        entry.appliedOps = (Array.isArray(entry.appliedOps) ? entry.appliedOps : [])
+          .concat(batchOpts.indices || []);
+        const freshVersion = _harnessGraphVersion(_harnessBoundSid());
+        if (harnessResult && harnessResult._binding) harnessResult._binding.graphVersion = freshVersion;
+        if (harnessResult && harnessResult._binding) entry._binding = harnessResult._binding;
+        const remaining = (entry.operations || []).length - entry.appliedOps.length;
+        _setHarnessStatus('已应用本段 ' + ops.length + ' 条'
+          + (remaining > 0 ? '，剩余 ' + remaining + ' 条可继续应用其它段' : '，全部段已应用'), 'ok');
+        if (typeof _saveHarnessHistory === 'function') _saveHarnessHistory().then(_renderHarnessChat);
+      }
+    } else {
+      harnessResultApplied = true;
+      const applySelectedBtn = document.getElementById('graphHarnessApplySelectedBtn');
+      if (applySelectedBtn) applySelectedBtn.disabled = true;
+      const applyAllBtn = document.getElementById('graphHarnessApplyAllBtn');
+      if (applyAllBtn) applyAllBtn.disabled = true;
+    }
     setTimeout(() => {
       if (sessionId !== _sessionId()) return;
       Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => {
@@ -454,7 +472,15 @@
 
   function applyGraphHarness() {
     if (!_harnessCanApply(harnessResult?._binding)) return;
-    const ops = Array.isArray(harnessResult?.operations) ? harnessResult.operations : [];
+    let ops = Array.isArray(harnessResult?.operations) ? harnessResult.operations : [];
+    // 阶段1-3：分段批次里已应用过的段不再随「应用全部」重放（appliedOps 索引剔除）
+    const currentEntry = _harnessCurrentOpsEntry();
+    const appliedIdx = currentEntry && Array.isArray(currentEntry.appliedOps) ? currentEntry.appliedOps : [];
+    if (appliedIdx.length) ops = ops.filter((_, i) => appliedIdx.indexOf(i) < 0);
+    if (!ops.length) {
+      _setHarnessStatus('本批建议都已应用过：需要重来请先点「撤销本次」，或重新生成建议', 'ok');
+      return;
+    }
     _applyOps(ops, true, 'all');
   }
 
@@ -469,6 +495,57 @@
       return;
     }
     _applyOps(selected, false, 'selected');
+  }
+
+  // 阶段1-3（2026-10-19）大批拆段：只应用第 segIndex 段（HARNESS_SEGMENT_OPS 条一段，
+  // 与 harness-preview.js 的分段渲染同口径）。段内引用的配方若建在别的段，自动把
+  // 那条 create_recipe 并进本段（配方落库幂等，不并会过不了实时库预检）。
+  function applyHarnessSegment(segIndex) {
+    if (phyIsReadonly()) { phyReadonlyBlock('应用本段'); return; }
+    if (harnessBusy) { _setHarnessStatus('请等当前生成结束再应用。', 'ok'); return; }
+    if (!_harnessCanApply(harnessResult?._binding)) return;
+    const entry = _harnessCurrentOpsEntry();
+    const ops = entry && Array.isArray(entry.operations) ? entry.operations : [];
+    if (!ops.length) return;
+    const SEG = 8;
+    const segIndexSafe = Math.max(0, Math.floor(Number(segIndex) || 0));
+    const start = segIndexSafe * SEG;
+    const segIdx = [];
+    for (let i = start; i < Math.min(start + SEG, ops.length); i++) segIdx.push(i);
+    const applied = Array.isArray(entry.appliedOps) ? entry.appliedOps : [];
+    const fresh = segIdx.filter(i => applied.indexOf(i) < 0);
+    if (!fresh.length) {
+      _setHarnessStatus('这一段已经应用过了。', 'ok');
+      return;
+    }
+    // 配方依赖并段：本段 create_node 引用的 recipe_id 若其 create_recipe 在别的
+    // 未应用段里，把那条一起带上（放实例离不开配方落库）
+    const needRecipeIds = new Set();
+    fresh.forEach(i => {
+      const op = ops[i] || {};
+      if ((op.op || op.type) === 'create_node' && op.recipe_id) needRecipeIds.add(op.recipe_id);
+    });
+    const available = new Set(typeof getUserRecipes === 'function' ? getUserRecipes().map(r => r.id) : []);
+    ops.forEach((op, i) => {
+      if ((op.op || op.type) === 'create_recipe') {
+        available.add(op.recipe_id || (op.recipe && op.recipe.id));
+      }
+    });
+    fresh.forEach(i => {
+      const op = ops[i] || {};
+      if ((op.op || op.type) !== 'create_recipe') return;
+      const rid = op.recipe_id || (op.recipe && op.recipe.id);
+      if (rid) available.add(rid);
+    });
+    const extraIdx = [];
+    ops.forEach((op, i) => {
+      if ((op.op || op.type) !== 'create_recipe' || applied.indexOf(i) >= 0 || fresh.indexOf(i) >= 0) return;
+      const rid = op.recipe_id || (op.recipe && op.recipe.id);
+      if (rid && needRecipeIds.has(rid) && !available.has(rid)) extraIdx.push(i);
+    });
+    const finalIdx = fresh.concat(extraIdx);
+    _applyOps(finalIdx.map(i => ops[i]).filter(Boolean), false, 'selected', '',
+      { segment: true, entry, indices: finalIdx });
   }
 
   function undoGraphHarness() {
@@ -883,6 +960,10 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window.applyGraphHarness = applyGraphHarness;
   window.applySelectedGraphHarness = applySelectedGraphHarness;
   window.undoGraphHarness = undoGraphHarness;
+  // 阶段1-1/1-3（2026-10-19）：复述确认两出口＋分段应用（分段卡的 inline onclick 用）
+  window.confirmHarnessPlan = confirmHarnessPlan;
+  window.rejectHarnessPlan = rejectHarnessPlan;
+  window.applyHarnessSegment = applyHarnessSegment;
   // T96：撤销时间线（composer 的「🕘 撤销历史」内联 onclick 走这里；折叠折算与
   // 整图回滚一并导出，冒烟/真机脚本可直接取证）
   window.toggleHarnessUndoTimeline = toggleHarnessUndoTimeline;

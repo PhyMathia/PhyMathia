@@ -678,6 +678,13 @@
         // （渲染进气泡正文＋写进结构化历史，多轮访谈不失忆）
         clarifyOptions: _harnessClarifyOptionList(data.clarify),
         clarifyQuestions: _harnessClarifyQuestions(data.clarify),
+        // 阶段1-1（2026-10-19）复述确认：后端规则触发（≥4 op 或越界企图）时带
+        // confirm 字段——前端先出确认卡，用户点「就这么改」才渲染操作清单
+        ...(data.confirm ? {
+          confirmText: String(data.confirm.text || ''),
+          confirmReason: String(data.confirm.reason || ''),
+          confirmed: false,
+        } : {}),
         // T96：本条回复对应的服务端 review 事件 id（反馈归因用；旧数据留空）
         eventId: data.event_id || '',
         // T109：本轮模型名随条目落盘，点反馈时随 POST 上送（旧数据留空）
@@ -687,15 +694,18 @@
         decision: 'pending',
         timestamp: Date.now(),
       });
-      if (typeof window.applyGraphDiffHighlights === 'function') {
-        setTimeout(() => window.applyGraphDiffHighlights(data.operations || []), 0);
-      }
-      if (typeof window.showGraphHarnessPreview === 'function') {
-        const preview = _buildHarnessPreview(data.operations || []);
-        window.__lastHarnessPreview = preview;
-        window.showGraphHarnessPreview(preview.nodes, preview.edges);
-        if (preview.nodes.length || preview.edges.length) {
-          _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
+      // 阶段1-1：复述确认前不出预览与高亮——确认卡是第一眼，点头后再看预览
+      if (!data.confirm) {
+        if (typeof window.applyGraphDiffHighlights === 'function') {
+          setTimeout(() => window.applyGraphDiffHighlights(data.operations || []), 0);
+        }
+        if (typeof window.showGraphHarnessPreview === 'function') {
+          const preview = _buildHarnessPreview(data.operations || []);
+          window.__lastHarnessPreview = preview;
+          window.showGraphHarnessPreview(preview.nodes, preview.edges);
+          if (preview.nodes.length || preview.edges.length) {
+            _setHarnessStatus('已生成 ' + preview.nodes.length + ' 个预览节点、' + preview.edges.length + ' 条预览连线', 'ok');
+          }
         }
       }
     } catch (err) {
@@ -1181,6 +1191,9 @@
     if ((data.warnings || []).length) parts.push('⚠️ ' + data.warnings.map(w => w.reason || '').join('；'));
     if (data.status === 'undo' && ops.length) {
       parts.push('已自动应用 ' + ops.length + ' 条撤销操作，可继续对助手说话。');
+    } else if (data.confirm) {
+      // 阶段1-1：复述确认分支——下方是确认卡不是清单，引导语同步换
+      parts.push('这批改动较大：请先看下方复述，点「就这么改」再逐条勾选应用；说错了就点「不对，重说」。');
     } else if (ops.length) {
       parts.push('下方清单可逐条勾选后「应用所选」，或直接「应用全部」；不满意可「不保留修改」或撤销重跑。');
     }

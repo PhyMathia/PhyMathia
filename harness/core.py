@@ -215,6 +215,19 @@ def normalize_snapshot(snapshot: Any) -> Dict[str, Any]:
         user_recipes.insert(0, {"id": detail["id"], "name": detail["name"]})
     if user_recipes:
         normalized["user_recipes"] = user_recipes[:32]
+    # 选中即范围（2026-10-19 阶段1-2）：scope_node_ids 是前端画布选中集（提示词
+    # 参考字段＋范围硬闸输入，不是图元素），仿 quiz_weak 范式白名单穿过归一化——
+    # 此前前端一直有发、后端一 normalize 就丢，「选中」因此只能靠快照可见性软约束。
+    # 只保留快照里真实存在的节点 id（去重保序、截 200）；空集不带字段。
+    scope_seen = set()
+    scope_ids = []
+    for raw_id in snapshot.get("scope_node_ids") or []:
+        sid = _text(raw_id)
+        if sid and sid in node_ids and sid not in scope_seen:
+            scope_seen.add(sid)
+            scope_ids.append(sid)
+    if scope_ids:
+        normalized["scope_node_ids"] = scope_ids[:200]
     return normalized
 
 

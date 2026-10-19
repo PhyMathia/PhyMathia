@@ -7318,3 +7318,111 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
     inset 0 0 0 1px var(--is-edge),
     0 10px 28px var(--is-shadow) !important;
 }
+
+/* ===== 阶段1（2026-10-19 Φ 继续建设计划）：复述确认卡＋分段清单 ===== */
+
+/* 复述确认卡（先对齐、再动手）：替代操作清单渲染在最新待处理气泡内。
+   头部一行手势标题，复述正文按模型原样保留换行，两钮并排。 */
+.graph-harness-confirm-card {
+  gap: 8px;
+}
+.graph-harness-confirm-head {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.graph-harness-confirm-text {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  white-space: pre-line;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-radius: var(--r-sm);
+}
+.graph-harness-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+.graph-harness-confirm-actions button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  color: var(--text-primary, inherit);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.graph-harness-confirm-actions .graph-harness-confirm-accept {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.graph-harness-confirm-actions button:hover {
+  filter: brightness(1.1);
+}
+
+/* 分段清单（大批拆段）：每段一块，段头带序号与条数，段内操作行与原清单同款。 */
+.graph-harness-oplist-segmented {
+  gap: 10px;
+}
+.graph-harness-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.graph-harness-segment .graph-harness-op-group-title {
+  color: var(--accent);
+}
+.graph-harness-segment-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.graph-harness-segment-actions button {
+  padding: 4px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.graph-harness-segment-actions button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* 分段应用过的行：不可勾、标「已应用」（防二次应用的可视面） */
+.graph-harness-op-applied {
+  opacity: .7;
+}
+.graph-harness-op-applied-tag {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 0 4px;
+  margin-right: 6px;
+}
+
+/* T250（2026-10-19）：配方目标下拉的过滤框——与下拉同行，窄输入不抢面板宽度 */
+.graph-harness-recipe-target-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.graph-harness-recipe-target-row input {
+  width: 96px;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-xs);
+}
+.graph-harness-recipe-target-row select {
+  flex: 1;
+  min-width: 0;
+}

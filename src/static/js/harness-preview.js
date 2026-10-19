@@ -34,6 +34,11 @@
 
     if (!ops.length) {
       _setHarnessStatus('已回复（未改图）', 'ok');
+    } else if (data.confirm) {
+      // 阶段1-1：复述确认分支——清单在用户点头之后才展示
+      _setHarnessStatus('已生成 ' + ops.length + ' 条操作：请先核对下方的计划复述', 'ok');
+    } else if (data.batch_segments) {
+      _setHarnessStatus('审阅完成：' + ops.length + ' 条操作已拆成 ' + data.batch_segments.segments + ' 段，可逐段应用', 'ok');
     } else {
       const statusLabel = harnessPhase === 'evaluate'
         ? '评价节点生成候选'
@@ -58,14 +63,33 @@
   // 给更早的批次挂勾选框/应用按钮会让「应用所选」作用到错的那一批。
   // T124：更早批次整卡灰化（.graph-harness-opcard-stale）并在按钮位放「仅最新一批
   // 可勾选应用」标注，不再只靠静态字形 ☑/☐ 暗示不可用。
+  // 阶段1-1（2026-10-19）：confirmText 未确认 → 只出复述确认卡，不渲染清单；
+  // 阶段1-3：ops 超过 8 条 → 清单按 8 条一段分段渲染，每段带「应用本段」。
+  const HARNESS_SEGMENT_OPS = 8;
+
   function _harnessOpsCardHtml(entry, isCurrent) {
     const ops = Array.isArray(entry.operations) ? entry.operations : [];
     if (!ops.length) return '';
+    // 复述确认卡：未确认（confirmed 非 true 且批次仍 pending）时清单不露脸
+    if (entry.confirmText && !entry.confirmed && (!entry.decision || entry.decision === 'pending')) {
+      return '<div class="graph-harness-opcard graph-harness-confirm-card">'
+        + '<div class="graph-harness-confirm-head">✋ 动手前先对齐</div>'
+        + '<div class="graph-harness-confirm-text">' + _escapeHtml(entry.confirmText) + '</div>'
+        + (isCurrent
+          ? '<div class="graph-harness-confirm-actions">'
+            + '<button type="button" class="graph-harness-confirm-accept" onclick="confirmHarnessPlan()">就这么改</button>'
+            + '<button type="button" class="graph-harness-confirm-reject" onclick="rejectHarnessPlan()">不对，重说</button>'
+            + '</div>'
+          : '<div class="graph-harness-opcard-note">本批等待确认（仅最新一批可确认）</div>')
+        + '</div>';
+    }
     const errors = (entry.errors || []).filter(Boolean);
     const warnings = (entry.warnings || []).filter(Boolean);
     const issues = (entry.selfCheckIssues || []).filter(Boolean);
     // selectedOps 为 null ＝「还没人动过勾选」，按全选渲染（旧数据没有这个字段）
     const picked = Array.isArray(entry.selectedOps) ? entry.selectedOps : null;
+    // 阶段1-3：已应用过的段索引（applyHarnessSegment 写回）——这些行不可再勾
+    const appliedSet = new Set(Array.isArray(entry.appliedOps) ? entry.appliedOps : []);
     let html = '';
     if (warnings.length) {
       html += '<div class="graph-harness-warnings"><strong>⚠️ 注意</strong>'
@@ -81,23 +105,44 @@
       html += '<div class="graph-harness-errors"><strong>跳过的操作</strong>'
         + errors.map(item => '<div>' + _escapeHtml(item) + '</div>').join('') + '</div>';
     }
-    // T100：清单按类型分组（与聊天报告共用 _harnessGroupedOps）；勾选框 data-op-index
-    // 仍是原 ops 下标，分组绝不许重排后错位
-    const groups = typeof _harnessGroupedOps === 'function'
-      ? _harnessGroupedOps(ops)
-      : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
-    // T242 配套：配方操作已真的落到库里才挂「微调/放上画布」入口——
-    // 「保留修改」落库走 decision==='keep'，「应用全部」落库走 T88 的
-    // harnessResultApplied 标志；待处理批次不挂（配方还不存在/改的还是旧版，
-    // 入口会和应用动作打架）。
     const recipeActionsLive = entry.decision === 'keep' || (isCurrent && harnessResultApplied);
-    html += '<div class="graph-harness-oplist">'
-      + groups.map(group => ''
-        + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
-        + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
-        + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops, isCurrent, picked, recipeActionsLive)).join('')
-      ).join('')
-      + '</div>';
+    // 阶段1-3：超过 HARNESS_SEGMENT_OPS 条 → 分段渲染（段内平铺，不再按类型分组；
+    // ≤8 条的批次保持 T100 的类型分组渲染不变——冻结契约不惊动既有冒烟）
+    if (ops.length > HARNESS_SEGMENT_OPS) {
+      const segTotal = Math.ceil(ops.length / HARNESS_SEGMENT_OPS);
+      html += '<div class="graph-harness-oplist graph-harness-oplist-segmented">'
+        + Array.from({ length: segTotal }, (_, seg) => {
+          const start = seg * HARNESS_SEGMENT_OPS;
+          const segOps = ops.slice(start, start + HARNESS_SEGMENT_OPS);
+          const segApplied = segOps.every((_, k) => appliedSet.has(start + k));
+          const segPending = segOps.some((_, k) => !appliedSet.has(start + k));
+          return '<div class="graph-harness-segment">'
+            + '<div class="graph-harness-op-group-title">第 ' + (seg + 1) + '/' + segTotal
+            + ' 段（' + segOps.length + ' 条' + (segApplied ? '，已应用' : '') + '）</div>'
+            + segOps.map((op, k) => _harnessOpRowHtml(op, start + k, ops, isCurrent, picked, recipeActionsLive, appliedSet)).join('')
+            + (isCurrent && entry.decision === 'pending' && segPending
+              ? '<div class="graph-harness-segment-actions">'
+                + '<button type="button" onclick="applyHarnessSegment(' + seg + ')"'
+                + ' title="只应用这一段的操作（其余段保持待应用）">应用本段</button>'
+                + '</div>'
+              : '')
+            + '</div>';
+        }).join('')
+        + '</div>';
+    } else {
+      // T100：清单按类型分组（与聊天报告共用 _harnessGroupedOps）；勾选框 data-op-index
+      // 仍是原 ops 下标，分组绝不许重排后错位
+      const groups = typeof _harnessGroupedOps === 'function'
+        ? _harnessGroupedOps(ops)
+        : [{ key: '', title: '操作', items: ops.map((op, index) => ({ op, index })) }];
+      html += '<div class="graph-harness-oplist">'
+        + groups.map(group => ''
+          + '<div class="graph-harness-op-group"><span class="graph-harness-op-group-title">'
+          + _escapeHtml(group.title) + '（' + group.items.length + '）</span></div>'
+          + group.items.map(({ op, index }) => _harnessOpRowHtml(op, index, ops, isCurrent, picked, recipeActionsLive, appliedSet)).join('')
+        ).join('')
+        + '</div>';
+    }
     if (isCurrent && entry.decision === 'pending') {
       html += '<div class="graph-harness-apply-actions" id="graphHarnessApplyActions">'
         + '<button type="button" id="graphHarnessApplySelectedBtn" onclick="applySelectedGraphHarness()" title="应用勾选的操作">应用所选</button>'
@@ -184,18 +229,22 @@
   // 6 张就 300px，在 228px 的结果区里一张都露不出来。结构上从 <label> 改成 <div>：
   // label 会把 summary 的点击当成勾选，两处点击区互相打架。
   // data-op-index 仍是 _selectedOps 回查 operations 的唯一依据，绝不重排。
-  function _harnessOpRowHtml(op, index, ops, editable, picked, recipeActionsLive) {
-    const on = picked === null || picked.indexOf(index) >= 0;
+  // 阶段1-3：appliedSet 里的行＝该段已应用——无勾选框、打勾标「已应用」。
+  function _harnessOpRowHtml(op, index, ops, editable, picked, recipeActionsLive, appliedSet) {
+    const applied = appliedSet && appliedSet.has(index);
+    const on = applied || picked === null || picked.indexOf(index) >= 0;
     const reason = String(op.reason || '');
     const diff = _harnessOpDiffHtml(op);
-    return '<div class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '') + '">'
-      + (editable
+    return '<div class="graph-harness-op graph-harness-op-' + _escapeHtml(op.op || op.type || '')
+      + (applied ? ' graph-harness-op-applied' : '') + '">'
+      + (editable && !applied
         ? '<input type="checkbox"' + (on ? ' checked' : '') + ' data-op-index="' + index
           + '" onchange="toggleHarnessOpSelected(this)" title="勾选/取消这条改动">'
         : '<span class="graph-harness-op-tick" aria-hidden="true">' + (on ? '☑' : '☐') + '</span>')
-      + '<span class="graph-harness-op-main">' + _escapeHtml(_opDescription(op, ops))
+      + '<span class="graph-harness-op-main">' + (applied ? '<em class="graph-harness-op-applied-tag">已应用</em>' : '')
+      + _escapeHtml(_opDescription(op, ops))
       + (recipeActionsLive ? _harnessRecipeActionsHtml(op) : '')
-      + (editable && op.recipe && ['create_recipe', 'update_recipe'].includes(op.op || op.type)
+      + (editable && !applied && op.recipe && ['create_recipe', 'update_recipe'].includes(op.op || op.type)
         ? '<button type="button" class="graph-harness-op-recipe-btn" onclick="trialHarnessRecipe(' + index + ')"'
           + ' title="仅在画布放置草稿，不保存配方；手动生成可能触发多次模型调用并产生相应费用">放置草稿试用</button>' : '')
       + '</span>'
@@ -206,6 +255,43 @@
           + '</details>'
         : '')
       + '</div>';
+  }
+
+  // ===== 阶段1-1（2026-10-19）复述确认：确认卡的两个出口 =====
+  // 「就这么改」：confirmed 置位→重渲染出清单与勾选，此刻才画预览/高亮（生成时
+  // 被门控住）。「不对，重说」：decision='rejected'（本批清单从此不可应用），
+  // 指令回填输入框，用户直接换说法。
+  function confirmHarnessPlan() {
+    if (phyIsReadonly()) { phyReadonlyBlock('确认计划'); return; }
+    const entry = _harnessCurrentOpsEntry();
+    if (!entry || !entry.confirmText) return;
+    entry.confirmed = true;
+    if (typeof _saveHarnessHistory === 'function') _saveHarnessHistory().then(_renderHarnessChat);
+    if (harnessResult && Array.isArray(harnessResult.operations)) {
+      if (typeof window.applyGraphDiffHighlights === 'function') {
+        window.applyGraphDiffHighlights(harnessResult.operations);
+      }
+      if (typeof window.showGraphHarnessPreview === 'function') {
+        const preview = _buildHarnessPreview(harnessResult.operations);
+        window.__lastHarnessPreview = preview;
+        window.showGraphHarnessPreview(preview.nodes, preview.edges);
+      }
+    }
+    _setHarnessStatus('已确认计划：请在清单里勾选要应用的改动，或直接应用全部', 'ok');
+  }
+
+  function rejectHarnessPlan() {
+    const entry = _harnessCurrentOpsEntry();
+    if (!entry || !entry.confirmText) return;
+    entry.decision = 'rejected';
+    if (typeof window.clearGraphHarnessPreview === 'function') window.clearGraphHarnessPreview();
+    if (typeof window.clearGraphDiffHighlights === 'function') window.clearGraphDiffHighlights();
+    if (typeof _saveHarnessHistory === 'function') _saveHarnessHistory().then(_renderHarnessChat);
+    const input = document.getElementById('graphHarnessInstruction');
+    if (input && typeof harnessLastInstruction !== 'undefined' && harnessLastInstruction) {
+      input.value = harnessLastInstruction;
+    }
+    _setHarnessStatus('好的，本批不执行：请换个说法重新描述你想要什么', 'ok');
   }
 
   function trialHarnessRecipe(index) {
@@ -276,7 +362,11 @@
     if (!ops.length) return [];
     const picked = Array.isArray(entry.selectedOps) ? entry.selectedOps : null;
     // selectedOps 为 null ＝还没人动过勾选，按全选
-    const selected = picked === null ? ops.slice() : picked.map(i => ops[i]).filter(Boolean);
+    const indices = picked === null ? ops.map((_, i) => i) : picked.filter(i => i >= 0 && i < ops.length);
+    // 阶段1-3：分段应用写回的 appliedOps 索引不再参与「应用所选/全部」——
+    // 段应用过的行没有勾选框，这里同口径把已应用索引剔掉，防二次应用
+    const applied = Array.isArray(entry.appliedOps) ? entry.appliedOps : [];
+    const selected = indices.filter(i => applied.indexOf(i) < 0).map(i => ops[i]).filter(Boolean);
     const availableRecipes = new Set(typeof getUserRecipes === 'function' ? getUserRecipes().map(recipe => recipe.id) : []);
     for (const op of selected) {
       if ((op.op || op.type) === 'create_recipe') availableRecipes.add(op.recipe_id || (op.recipe && op.recipe.id));

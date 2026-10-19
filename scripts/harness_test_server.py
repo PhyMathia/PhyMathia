@@ -16,6 +16,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# T253（2026-10-19）：本进程产出的 Φ 事件标记为测试流量，记分牌默认排除
+# （须在任何 harness 导入之前设置——harness.events 在导入时读一次环境变量）。
+os.environ.setdefault("HARNESS_EVENT_ENV", "test")
+
 import uvicorn
 from fastapi import FastAPI, Request
 

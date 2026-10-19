@@ -499,7 +499,7 @@ HARNESS_PRESET_SYSTEM_PROMPT = """你是节点配方创造助手。用户不写�
    - AI 底座（module/summary/knowledge/relation）必须给 generate.prompt；人工底座（note/human_note/manual/question）不要调 AI、prompt 留空；
    - 动态出口（ports.dynamic）只支持 module 底座；苏格拉底式用 level_tags=["基础","进阶","拓展"]＋label_from="index_question"，进阶学习式用 level_tags=[]＋label_from="question_trunc12"；fallback 推荐用 label_questions_from_text（解析失败时兜底出口自动带上从正文截取的问题文本）；
    - 交互页面类用 content_kind="html_iframe"＋model_role="html"＋retry_prompt（要求只输出完整 HTML）；知识图谱类用 content_kind="mermaid"。
-3. 想修改/删除已有配方：update_recipe / delete_recipe，recipe_id 只能取 user_recipes 清单里列出的 id。若快照有 recipe_detail，它是用户选中的目标配方完整旧配置，优先修改它；对这份目标 update_recipe 只提交需要改变的字段，后端递归合并保留未提交字段（未提交字段保持原值，不会被重置）。数组整体替换；明确删除动态出口用 ports.dynamic=null，清空文本用空串。没有该目标的 recipe_detail 时仍须整份提交，不能凭摘要猜测旧参数，优先请用户选择目标配方（这种整份覆盖漏写字段会按默认值重置）。
+3. 想修改/删除已有配方：update_recipe / delete_recipe，recipe_id 只能取 user_recipes 清单里列出的 id。若快照有 recipe_detail，它是用户选中的目标配方完整旧配置，优先修改它；对这份目标 update_recipe 只提交需要改变的字段，后端递归合并保留未提交字段（未提交字段保持原值，不会被重置）。数组整体替换；明确删除动态出口用 ports.dynamic=null，清空文本用空串。没有该目标的 recipe_detail 时仍须整份提交，不能凭摘要猜测旧参数，优先请用户选择目标配方（这种整份覆盖漏写字段会按默认值重置）。用户没要求改名时 update_recipe 的 name 必须保持原值不变（改名＝换身份，会绕开名称查重；确要改名或新名字撞了已有配方，先向用户确认）。
 4. 用户想「在画布上放一个试试」：同批先 create_recipe(temp_recipe_id="new_recipe", recipe=完整配方)，再 create_node(temp_id=自取临时ID, kind=module, recipe_id="new_recipe", label=配方名)。kind 必须写 module（后端放置契约），节点实际底座与外观由配方快照决定，不需要你换算；不要猜测后端分配的最终 ID，同批接线用这个 temp_id 指代新实例。已有配方用 user_recipes 清单里的 ID。
 5. 同批接线（访谈第②问「材料从哪些节点接过来」有答案时就地接，先 create_node 再 add_edge）：用 add_edge 把材料接进刚放的新实例——from 写快照里用户指名的既有节点 ID，to 写新实例的 temp_id，每个来源一条；配方带具名输入口（清单条目 inputs，按序对应 in-0..k）时按材料对口写 to_port=in-N。
 6. summary 必填，用助手口吻 2~3 句说清配方的名字、能干什么、出口怎么用（给不懂编程的用户读）。
@@ -561,3 +561,28 @@ def json_dumps(value) -> str:
 
     return json.dumps(slim_snapshot(value), ensure_ascii=False, separators=(",", ":"))
 
+
+
+# ---- 复述确认节拍（2026-10-19 阶段1-1）：让模型先「用自己的话说清楚打算改什么」 ----
+# 规则触发（单批 op 数达到 CONFIRM_MIN_OPS 或范围闸门观察到越界企图），不靠模型
+# 自觉。复述是对模型的一次强迫自检：说错目标名当场暴露在确认卡上，用户点头才
+# 进操作清单。失败静默降级（跳过确认直接出清单，T79 哲学），绝不阻断主流程。
+HARNESS_CONFIRM_SYSTEM_PROMPT = """你是知识网络图编辑助手。你刚刚为用户的一句指令生成了一批图操作方案，现在需要向用户复述你打算做什么，等待用户确认后才执行。
+
+要求：
+- 用一到两句自然中文说清楚：要改哪些节点（引用具体节点标题）、怎么改（更新内容/新增节点并连接到谁/删除什么）。
+- 必须引用节点的真实标题，不得编造快照里没有的节点。
+- 不要执行任何操作，不要输出 JSON，不要列操作代码——只输出给用户看的复述正文。
+- 保持在 120 字以内。"""
+
+
+def build_confirm_messages(instruction: str, ops_text: str, summary: str = "") -> list:
+    parts = [f"用户指令：{instruction or '（空）'}"]
+    if str(summary or "").strip():
+        parts.append(f"你自己这批方案的说明：{str(summary).strip()}")
+    parts.append(f"待复述的操作方案（含节点标题）：\n{ops_text}")
+    parts.append("请向用户复述你打算怎么做。")
+    return [
+        {"role": "system", "content": HARNESS_CONFIRM_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]

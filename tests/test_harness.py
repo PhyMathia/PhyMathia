@@ -1630,9 +1630,12 @@ class HarnessExpandTest(unittest.TestCase):
                 phase="expand",
                 focus_node_ids=["K"],
             ))
-        self.assertEqual(calls["n"], 2)
+        # 阶段1-1（2026-10-19）：单批 4 条操作触发复述确认，多一次轻量复述调用
+        # （桩返回空正文 → 静默降级不带 confirm 字段，行为与无确认时一致）
+        self.assertEqual(calls["n"], 3)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(len(result["operations"]), 4)
+        self.assertNotIn("confirm", result)
 
 
 class HarnessChatTest(unittest.TestCase):
@@ -3558,11 +3561,16 @@ class HarnessSessionBucketTest(unittest.TestCase):
 
     def test_api_routes_thread_session_id_into_bucket(self):
         """graph_review / graph_resolve 都把 payload 的 session_id 置入分桶键；
-        缺失时回退进程级 id。在 _call_model 桩内读键（api 置桶 → review 层可读）。"""
+        缺失时回退进程级 id。在 _call_model 桩内读键（api 置桶 → review 层可读）。
+        T253（2026-10-19）：事件写盘重定向到临时目录并标记 test——这条测试用的
+        phi_api/phi_api2 会话此前每次跑套件都往真实 logs/harness_events 追假模型
+        "m" 事件（记分牌 159 条里 156 条测试流量的直接来源），从此不再污染。"""
+        import tempfile
         import unittest.mock
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        from harness import events as events_mod
         from harness import review as review_mod
         from harness.api import router
 
@@ -3573,31 +3581,40 @@ class HarnessSessionBucketTest(unittest.TestCase):
                 review_mod._HARNESS_SESSION_KEY.get())
             return {"content": "{\"summary\": \"好\", \"operations\": []}", "tool_calls": []}
 
-        app = FastAPI()
-        app.include_router(router, prefix="/api/harness")
-        client = TestClient(app)
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
-        with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
-            resp = client.post("/api/harness/graph/review", json={
-                "snapshot": snapshot, "instruction": "评价一下", "session_id": "phi_api",
-                "model": self.MODEL, "mode": "json", "self_check": "off",
-            })
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(captured.get("bucket"), "phi_api")
-            captured.clear()
-            resp = client.post("/api/harness/graph/review", json={
-                "snapshot": snapshot, "instruction": "评价一下",
-                "model": self.MODEL, "mode": "json", "self_check": "off",
-            })
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(captured.get("bucket"), review_mod._HARNESS_SESSION_ID)
-            captured.clear()
-            resp = client.post("/api/harness/graph/resolve", json={
-                "snapshot": snapshot, "instruction": "改一下A", "session_id": "phi_api2",
-                "model": self.MODEL,
-            })
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(captured.get("bucket"), "phi_api2")
+        with tempfile.TemporaryDirectory() as tmp:
+            original_dir = events_mod._EVENTS_DIR
+            original_env = events_mod.event_env()
+            events_mod.set_events_dir(tmp)
+            events_mod.set_event_env("test")
+            try:
+                app = FastAPI()
+                app.include_router(router, prefix="/api/harness")
+                client = TestClient(app)
+                snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+                with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
+                    resp = client.post("/api/harness/graph/review", json={
+                        "snapshot": snapshot, "instruction": "评价一下", "session_id": "phi_api",
+                        "model": self.MODEL, "mode": "json", "self_check": "off",
+                    })
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertEqual(captured.get("bucket"), "phi_api")
+                    captured.clear()
+                    resp = client.post("/api/harness/graph/review", json={
+                        "snapshot": snapshot, "instruction": "评价一下",
+                        "model": self.MODEL, "mode": "json", "self_check": "off",
+                    })
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertEqual(captured.get("bucket"), review_mod._HARNESS_SESSION_ID)
+                    captured.clear()
+                    resp = client.post("/api/harness/graph/resolve", json={
+                        "snapshot": snapshot, "instruction": "改一下A", "session_id": "phi_api2",
+                        "model": self.MODEL,
+                    })
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertEqual(captured.get("bucket"), "phi_api2")
+            finally:
+                events_mod.set_events_dir(original_dir)
+                events_mod.set_event_env(original_env)
 
 
 class HarnessPresetPhaseTest(unittest.TestCase):

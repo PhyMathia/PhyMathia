@@ -140,6 +140,10 @@ def _log_review_event(payload: dict, result: dict, t0: float, endpoint: str, jou
         "operations": result.get("operations") or [],
         "errors": errors[:20],
         "warnings_count": len(result.get("warnings") or []),
+        # 阶段2-1（2026-10-19）：warnings 明细入事件（此前只有条数）——记分牌二期
+        # 的错误分桶（范围外剔除/工具解析失败/达成清单未达成）靠 index/op 归类；
+        # 截 40 条与 errors 同体例。
+        "warnings": (result.get("warnings") or [])[:40],
         "model_calls": int(result.get("model_calls") or 0),
         "latency_ms": round((time.time() - t0) * 1000),
         # T95：本次成功是否走了备用模型（事件体不整体序列化 result，显式带上）

@@ -482,3 +482,104 @@ def _readonly_tool_label(name: str) -> str:
     if name == "graph_stats":
         return "学习体检"
     return "图中信息"
+
+
+# ===== 选中即范围（2026-10-19 阶段1-2）：范围硬闸 =====
+# 病根：focus/选中此前只是提示词软提示，模型仍可对快照里可见的任何节点落笔
+# （大图目录行、evaluate 邻域都超出选中集）。升级为校验器硬闸：选中集内的
+# 既有节点改动放行，范围外既有节点的改动在软重试（带反馈再试一次）后剔除，
+# 落 result["warnings"]（T236 体例，用户看得见剔了什么、为什么）。
+# 红线（与计划一致）：只删 op 不改 op；批内新建节点不算越界（ creations 允许，
+# 它们不修改任何既有内容）；ai_eval 节点始终放行（apply 相位的工作脚手架，
+# 结束时由 _cleanup_remaining_eval_nodes 统一清理）。
+SCOPE_GATE_PHASES = ("normal", "apply", "coach", "expand", "evaluate")
+
+
+def _scope_gate_sets(current: Dict[str, Any], ops: list) -> tuple:
+    """闸门判定用的三个集合：(既有节点 id, 允许改的既有节点 id, 批内新建 id)。"""
+    existing = {str(n.get("id") or "") for n in (current.get("nodes") or [])}
+    allowed = set(existing & {str(n.get("id") or "") for n in (current.get("nodes") or [])
+                              if str(n.get("kind") or "") == "ai_eval"})
+    created = set()
+    for op in ops:
+        if isinstance(op, dict) and str(op.get("op") or op.get("type") or "") in (
+                "create_node", "create_eval_node", "create_recipe"):
+            for key in ("assigned_id", "id", "temp_id"):
+                value = str(op.get(key) or "").strip()
+                if value:
+                    created.add(value)
+    return existing, allowed, created
+
+
+def _op_out_of_scope_refs(op: Dict[str, Any], existing: set, allowed: set, created: set) -> list:
+    """单条 op 引用的「范围外既有节点」列表（空列表＝放行）。
+
+    口径：节点内容/删除类 op 的目标必须在选中集；边类 op 分两种——
+    · add_edge（扩展）：每个「既有节点」端都必须在选中集（把选中节点接到
+      范围外既有节点＝越界扩展，剔）；
+    · remove_edge/update_edge（清理）：至少一端在选中集即可（「整理 A 的连线」
+      本就要动 A-B 边的 B 端，全部禁止会连正常清理都做不了）。
+    两端都不是既有节点（纯新建/幻觉 id）不归闸门管，交给校验器诊断（节点不存在）。
+    """
+    name = str(op.get("op") or op.get("type") or "")
+    refs = []
+    if name in ("update_node", "delete_node"):
+        refs = [str(op.get("id") or "")]
+    elif name in ("add_edge", "remove_edge", "update_edge"):
+        refs = [str(op.get("from") or ""), str(op.get("to") or "")]
+    elif name == "create_eval_node":
+        refs = [str(op.get("target_node_id") or "")]
+    else:
+        return []
+    if name in ("add_edge", "remove_edge", "update_edge"):
+        refs_existing = [r for r in refs if r in existing]
+        if not refs_existing:
+            return []
+        if name == "add_edge":
+            return [r for r in refs_existing if r not in allowed]
+        anchored = any(r in allowed or r in created for r in refs)
+        return [] if anchored else [r for r in refs_existing if r not in allowed]
+    return [r for r in refs if r and r in existing and r not in allowed and r not in created]
+
+
+def split_ops_by_scope(current: Dict[str, Any], ops: list, scope_ids) -> tuple:
+    """按选中集把 ops 拆成 (保留, 剔除明细)。
+
+    剔除明细每项 {op, refs, labels}：refs 是越界节点 id，labels 是快照里能查到的
+    标题（查不到用 id 原样），供警告行与重试反馈直接引用。
+    """
+    scope = {str(s) for s in (scope_ids or []) if str(s)}
+    if not scope or not ops:
+        return list(ops or []), []
+    existing, allowed, created = _scope_gate_sets(current, ops)
+    allowed |= scope & existing
+    label_of = {
+        str(n.get("id") or ""): str(n.get("label") or n.get("title") or n.get("id") or "")
+        for n in (current.get("nodes") or [])
+    }
+    kept, dropped = [], []
+    for op in ops:
+        if not isinstance(op, dict):
+            kept.append(op)
+            continue
+        refs = _op_out_of_scope_refs(op, existing, allowed, created)
+        if refs:
+            dropped.append({
+                "op": op,
+                "refs": refs,
+                "labels": [label_of.get(r, r) for r in refs],
+            })
+        else:
+            kept.append(op)
+    return kept, dropped
+
+
+def scope_drop_warnings(dropped: list) -> list:
+    """剔除明细 → warnings 行（T236 体例：不静默丢弃也不整批失败）。"""
+    return [{
+        "index": "scope",
+        "op": str(item["op"].get("op") or item["op"].get("type") or ""),
+        "reason": "已剔除范围外操作（触及未选中节点「%s」）：本次只处理选中的节点，"
+                  "如需改动它们请扩大选中范围或单独下指令"
+                  % "、".join(item["labels"] or item["refs"]),
+    } for item in dropped]
