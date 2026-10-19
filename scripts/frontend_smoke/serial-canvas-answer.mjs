@@ -2123,6 +2123,43 @@ checkSync('15秒推送：稳态零推送，内容变化才推整份历史，失�
     }
   }
 });
+
+// 静态契约（2026-10-19 T330）：手建「问题→问题分析」链的生成入口——分析卡（kind answer
+// 非 manual 非 socraticMeta）接标准双钮路：旧闸「answer 非 manual 一律无钮」收窄到
+// 苏格拉底反馈卡；「有没有生成过」按 analysis 判（正文不在 content）；管线 force 真
+// 重跑（不吃 hash 短路）；面板带字路对分析卡写 requirements 重跑、不进修订内核；
+// _generateAnalysis 提示词吃 requirements。变异验证：闸放宽回一律无钮／force 短路
+// 回来／requirements 丢失，下面立刻红。
+check('T330 手建分析链生成入口：反馈卡闸收窄＋analysis 判内容＋force 真重跑＋requirements 路线（2026-10-19）', () => {
+  const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+  // ① 闸收窄：无钮只留给闭环反馈卡（socraticMeta），分析卡放行
+  if (!grSrc.includes("node.kind === 'answer' && !node.manual && node.messageIndex < 0 && node.socraticMeta")) {
+    throw new Error('摘钮闸没有收窄到苏格拉底反馈卡——手建分析卡的生成入口又没了（T330）');
+  }
+  // ② 内容判定按 analysis：分析卡正文不在 content，误用 content 判会永远走「空＝直跑」
+  if (!grSrc.includes('isAnalysisCard ? node.analysis : node.content')) {
+    throw new Error('分析卡的内容判定没有按 analysis——有分析的分析卡会拿「从头生成」假直跑钮');
+  }
+  // ③ 管线 force 真重跑：分析分支不吃 hash 短路（三角「从头生成」/面板留空直发的语义）
+  const chainBody = gwSrc.slice(gwSrc.indexOf("if (current.kind === 'answer' && !current.manual) {"));
+  if (!/if \(force \|\| !current\.analysis \|\| current\.analysisHash !== analysisHash\)/.test(chainBody)) {
+    throw new Error('分析分支没有尊重 force——「从头生成」在问题没变时会静默跳过');
+  }
+  // ④ 面板带字路：分析卡写 requirements 重跑，不进修订内核（内核吃 node.content 会误报空）
+  const applyBody = giSrc.slice(giSrc.indexOf('async function _applyWorkflowNodeRegenerate'));
+  const applyHead = applyBody.slice(0, applyBody.indexOf('_regeneratingNodes.add(nodeId);'));
+  if (!/node\.kind === 'answer' && !node\.manual && !node\.socraticMeta && node\.messageIndex < 0/.test(applyHead)
+      || !applyHead.includes('node.requirements = text.trim()')) {
+    throw new Error('分析卡面板带字路没有改写 requirements——会掉进修订内核误报「节点还没有内容」');
+  }
+  // ⑤ 分析提示词吃 requirements：带要求重新分析要真的影响模型输入
+  const genAnalysis = gwSrc.slice(gwSrc.indexOf('async function _generateAnalysis'));
+  if (!genAnalysis.includes('用户对本次分析的额外要求')) {
+    throw new Error('_generateAnalysis 提示词丢了 requirements 通道——带要求重新分析不改变输出');
+  }
+});
 await syncTail;
 
 await drain();

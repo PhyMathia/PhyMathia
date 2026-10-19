@@ -57,7 +57,10 @@ function _flashInvalidConnection() {
 }
 
 function _nodeActions(node) {
-  if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) return '';
+  // 苏格拉底反馈卡不挂动作钮：闭环卡由闭环链管理，重生成走 _generateCustomNode 的
+  // socratic 分支（T361），入口在任务重试/Φ。原闸「answer 非 manual 一律无钮」连手建
+  // 「问题→问题分析」链的生成入口一起摘掉了（用户报 T330）——分析卡放行进标准双钮路
+  if (node.kind === 'answer' && !node.manual && node.messageIndex < 0 && node.socraticMeta) return '';
   // junction（2026-10-11 中转节点）同 hub：无内容可生成，卡上不挂任何动作钮
   if (node.messageIndex < 0 && (node.manual || node.kind === 'hub' || node.kind === 'junction')) return '';
   if (node.messageIndex < 0) {
@@ -65,9 +68,14 @@ function _nodeActions(node) {
     // 留空时 _applyWorkflowNodeRegenerate 回 runWorkflowNode 原管线）；没内容的「生成」
     // 保持直接跑。忙态口径同 T58：这颗自己在跑（工作流 busy / 修订中）才置灰。
     const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
+    // T330：问题分析卡正文在 node.analysis 不在 node.content——「有没有生成过」按
+    // analysis 判，才接得上标准双钮路（空＝三角直跑；有＝循环箭头面板＋三角，面板
+    // 带字路由 _applyWorkflowNodeRegenerate 改写 requirements 重跑分析）
+    const isAnalysisCard = node.kind === 'answer' && !node.manual;
+    const hasContent = !!((isAnalysisCard ? node.analysis : node.content) || '').trim();
     // 版本导航（T339）：账上有历史版本就挂 ‹ n/n › ＋删版；生成中不挂（忙态收干净）。
     // 内容为空的节点也挂——异常中断后 content 被清空时，靠它把上一版点回来。
-    if (!(node.content || '').trim()) {
+    if (!hasContent) {
       // 2026-10-15：空内容＝这颗从没生成过，本就「没有当前内容」——挂播放三角
       // （T338 从头生成口径），循环箭头只留给「重新」场景。force 仍传 false：
       // 空节点没有内容可清，true 只会多弹一次下游失效确认。

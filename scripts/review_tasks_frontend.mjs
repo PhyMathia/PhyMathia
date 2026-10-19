@@ -374,7 +374,8 @@ test('接线① 任务自带来处：有任务在跑时，画布查找与保存�
   s.graphView.nodeById = { other: { id: 'other', kind: 'module', messageIndex: -1 } };
   const taskNode = run(`_taskActiveCtx.nodes.get('n1')`);
   taskNode.content = '甲（新产出）';
-  assert.equal(run(`_taskSaveNodesOverride()`), true);
+  // T313 起合并不截胡：写进任务会话后恒返 false 放行原路（调用方也不吃返回值，T366 断言随实现改）
+  assert.equal(run(`_taskSaveNodesOverride()`), false, '有任务在跑时合并进任务会话，但不劫持保存出口');
   assert.deepEqual(s._saved, ['sess_A'], '产出必须写回任务所属的 sess_A');
   const savedState = s._graphStates.sess_A;
   assert.equal(savedState.customNodes.find(n => n.id === 'n1').content, '甲（新产出）');

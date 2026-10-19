@@ -294,7 +294,11 @@ async function _generateAnalysis(node, nodeSignal) {
   // T328：带上游（追问来源卡 A 全文）——旧实现只带裸问题，画布问答又不写
   // 会话消息表，模型在零上下文下把机械波的 T·Δs 读成热力学 T·ΔS（见 T328）
   const workflowContext = _buildAnalysisWorkflowContext(node, question, { kind: 'answer', label: '问题分析' });
+  // T330：分析卡「带要求重新分析」——requirements 由重生成面板写进来，随 hash 进
+  // 短路判定，也直接进提示词；没有要求时维持原提示词一字不变
+  const reqText = String(node.requirements || '').trim();
   const prompt = '请分析用户问题，只输出简洁的问题概要。'
+    + (reqText ? '\n用户对本次分析的额外要求（优先满足）：' + reqText + '\n' : '')
     + '要求：1) 核心物理概念；2) 核心数学结构；3) 物理与数学的关系；4) 相关知识点。'
     + '不要输出完整答案，不要输出 XML 标签，不要生成任何模块内容，控制在300字以内。';
   const branchMeta = {
@@ -741,7 +745,8 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
       return false;
     }
     const analysisHash = _simpleHash(question + '|' + (current.requirements || ''));
-    if (!current.analysis || current.analysisHash !== analysisHash) {
+    // force（T330：分析卡三角「从头生成」/面板留空直发）＝用户点名重跑，不做 hash 短路
+    if (force || !current.analysis || current.analysisHash !== analysisHash) {
       await _generateAnalysis(current, nodeSignal);
     } else {
       current.status = 'done';

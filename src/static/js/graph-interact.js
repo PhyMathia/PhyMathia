@@ -1261,6 +1261,15 @@ async function _applyWorkflowNodeRegenerate(nodeId, text) {
     // 留空直发＝现状重跑。confirmed=true：下游提醒已写在面板里，发送即确认，不再二弹。
     return runWorkflowNode(nodeId, true, false, null, true);
   }
+  // T330：问题分析卡没有 node.content 可修订（正文在 analysis，由 _generateAnalysis
+  // 产出）——带字＝写进 requirements 重跑分析（hash 随 requirements 变、force 保证真
+  // 重跑），不走 _regenWorkflowNodeContent 修订内核（它吃 node.content，对分析卡会
+  // 误报「节点还没有内容」）。
+  if (node.kind === 'answer' && !node.manual && !node.socraticMeta && node.messageIndex < 0) {
+    node.requirements = text.trim();
+    if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+    return runWorkflowNode(nodeId, true, false, null, true);
+  }
   _regeneratingNodes.add(nodeId);
   // 修订式也要进工作流忙态（2026-10-15 用户实证：徽标全程钉在「完成」，看不出在跑）：
   // 置 busy 后重绘，徽标「完成→生成中」、按钮区「生成中...」，与留空直发同观感。
