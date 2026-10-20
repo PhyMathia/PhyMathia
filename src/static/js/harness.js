@@ -1276,9 +1276,16 @@ let harnessLastAppliedReport = null;
     return next;
   }
 
-  function chooseHarnessMode(id) {
+  function chooseHarnessMode(id, opts) {
     const menu = document.getElementById('graphHarnessModeMenu');
     if (menu) menu.hidden = true;
+    // 2026-10-20 创造模式重做（P0）：点「创造」直接开节点工坊，不再在 400px 面板里
+    // 聊天。旧创造对话留一条窄口——工坊右上「旧版对话」带 legacy:true 进来切模式，
+    // 新版验证通过后（计划 P5）这条口子连同 preset 相位一起删。
+    if (id === 'preset' && !(opts && opts.legacy) && typeof openRecipeWorkshop === 'function') {
+      openRecipeWorkshop({});
+      return;
+    }
     if (!id || id === harnessMode) return;
     harnessMode = id;
     _applyHarnessModeUi();

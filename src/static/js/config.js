@@ -230,6 +230,9 @@ const ONBOARDING_KEY = 'phymathia_onboarding_done';
 const STORAGE_KEY_DEVICE_ID = 'phymathia_device_id';
 // 节点配方库（P1）：全局键（不带会话后缀），localStorage 与服务端 /api/kv/node_recipes 双写
 const STORAGE_KEY_NODE_RECIPES = 'phymathia_node_recipes';
+// 节点工坊草稿（2026-10-20，创造模式重做 P1）：全局键，500ms 防抖落盘；
+// 入册/丢弃时清空（graph-workshop.js 的 _rwSaveDraftNow / _rwClearDraftStorage）
+const STORAGE_KEY_RECIPE_DRAFT = 'phymathia_recipe_draft';
 
 // ===== Φ 智能体独立会话（2026-09-30 与画布解耦）======
 // Φ 会话有独立 id 空间（phi_<uuid>），与画布会话（sess_<uuid>）互不隶属：

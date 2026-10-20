@@ -71,6 +71,10 @@ const entries = [
   'harness-run.js',
   'harness-preview.js',
   'harness-apply.js',
+  // 节点工坊（2026-10-20，创造模式重做 P0–P4）：只按需调用（模式菜单/配方管理/
+  // 右键入口），依赖 graph-recipes.js 的归一化校验与 graph-workflow-prompt.js 的
+  // 配方提示词组装——两者都在此之前加载；不进 viewer（查看器没有配方库）。
+  'graph-workshop.js',
   'ui.js',
   // 数据备份与首次引导（2026-10-10 自 ui.js 拆出，T261 纯搬家）：两件都只按需调用
   // （面板开合 / 页面 load / 用户点击）；加载期求值的只有引导模板的 cssVarValue

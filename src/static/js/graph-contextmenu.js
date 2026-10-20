@@ -131,6 +131,17 @@ function _graphContextItemsForNode(node, point) {
       run: () => recipeFromNode(node.id),
     });
   }
+  // 用配方工坊改（2026-10-20，创造模式重做 P4）：带配方快照的节点直接拉进工坊，
+  // 改的是「另存的草稿」，原节点与原配方都不动。与「存为配方」同口径——viewer
+  // 只读页没有配方库与工坊模块，typeof 守卫 + label 白名单两处都会把它剪掉。
+  if (node.recipeId && typeof openRecipeWorkshopForNode === 'function') {
+    items.push({
+      key: 'recipe-workshop',
+      label: '用配方工坊改',
+      title: '把这份配方拉进工坊改（原节点与原配方不受影响）',
+      run: () => openRecipeWorkshopForNode(node.id),
+    });
+  }
   if (typeof _canMinimizeGraphNode === 'function' && _canMinimizeGraphNode(node)) {
     items.push({
       key: 'minimize',

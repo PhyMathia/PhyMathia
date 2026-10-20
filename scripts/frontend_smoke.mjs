@@ -80,6 +80,7 @@ import { run as _graph_draft_recover } from './frontend_smoke/graph-draft-recove
 import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs';
 import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-workflow.mjs';
 import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
+import { run as _workshop } from './frontend_smoke/workshop.mjs';
 
 _recipes();
 _phi();
@@ -118,4 +119,7 @@ await _graph_draft_recover();
 await _graph_sync_merge();
 await _graph_branch_workflow();
 _graph_scope_confirm();
+// 节点工坊（2026-10-20 创造模式重做 P0–P4）：自带收口线（补丁往返用例是异步的），
+// 放在最后——它会临时替换 fetch/getActiveModelForRole 两个全局桩，用完立刻还原。
+await _workshop();
 await finish();

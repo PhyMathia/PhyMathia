@@ -499,8 +499,12 @@ check('三模式切换器：模式下拉进面板＋状态暴露＋切换跟随'
   if (sandbox.window._harnessMode() !== 'edit') throw new Error('默认模式应为编辑');
   sandbox.window.chooseHarnessMode('chat');
   if (sandbox.window._harnessMode() !== 'chat') throw new Error('切答疑后应为 chat');
+  // 2026-10-20 创造模式重做（P0）：「创造」不再切面板相位，而是直接开节点工坊——
+  // 面板模式保持原样（旧创造对话经 legacy:true 仍可切到 preset，P5 前必须留）。
   sandbox.window.chooseHarnessMode('preset');
-  if (sandbox.window._harnessMode() !== 'preset') throw new Error('切创造后应为 preset');
+  if (sandbox.window._harnessMode() !== 'chat') throw new Error('点「创造」应开节点工坊、面板模式不动');
+  sandbox.window.chooseHarnessMode('preset', { legacy: true });
+  if (sandbox.window._harnessMode() !== 'preset') throw new Error('legacy 通道应仍能切到 preset');
   sandbox.window.chooseHarnessMode('edit');
   if (sandbox.window._harnessMode() !== 'edit') throw new Error('切回后应为 edit');
   return true;

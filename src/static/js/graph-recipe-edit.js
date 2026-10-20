@@ -820,6 +820,9 @@ function openRecipeManage() {
           + '<span class="graph-add-node-dot is-round" style="background:' + recipeAppearanceColor(recipe.appearance) + '"></span>'
           + '<span class="recipe-manage-name">' + escapeHtml(recipe.name) + '</span>'
           + '<span class="recipe-manage-meta">' + escapeHtml((meta.label || '').split('（')[0]) + ' · ' + ((recipe.ports && recipe.ports.inputs) ? recipe.ports.inputs.length : 0) + ' 入 / ' + recipe.ports.static.length + ' 出</span>'
+          // 2026-10-20 创造模式重做：管理列表多一个「工坊里改」——新作者面（节点工坊）
+          // 与旧表单并存到 P5；旧表单退为专家模式入口。
+          + '<button class="recipe-manage-edit" onclick="openRecipeWorkshopForRecipe(\'' + recipe.id + '\')">工坊里改</button>'
           + '<button class="recipe-manage-edit" onclick="openRecipeFormById(\'' + recipe.id + '\')">编辑</button>'
           + '<button class="recipe-manage-delete" onclick="deleteRecipeById(\'' + recipe.id + '\')">删除</button>'
           + '</div>';

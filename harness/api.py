@@ -614,3 +614,43 @@ async def graph_feedback(request: Request):
         return {"status": "ok", "count": len(items), "archived": archived}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"status": "error", "errors": [{"reason": str(exc)}]})
+
+
+# ===== 节点工坊草稿（2026-10-20，创造模式重做 P1/P2）=====
+# 独立路由：只产一份配方草稿（补丁合并＋归一化＋字段级校验），不产图操作、
+# 不碰画布、不写配方库——与 Φ 的 review/preset 链路完全解耦（计划 3.4 节）。
+# 失败协议沿用本文件既有口径：业务结果 200＋status，传输层/上游故障才用真实码。
+@router.post("/recipe/draft")
+async def recipe_draft(request: Request):
+    t0 = time.time()
+    payload = {}
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": f"请求不是合法 JSON: {exc}"}]})
+    try:
+        from .recipe_draft import draft_recipe
+
+        with harness_session_bucket(_payload_session(payload)):
+            result = await draft_recipe(
+                instruction=str(payload.get("instruction") or ""),
+                draft=payload.get("draft"),
+                model=payload.get("model"),
+                mode=str(payload.get("mode") or "patch"),
+                history=payload.get("history"),
+                user_recipes=payload.get("user_recipes"),
+                level=str(payload.get("level") or ""),
+                thinking=str(payload.get("thinking") or ""),
+                max_tokens=payload.get("max_tokens"),
+            )
+        _log_usage(_usage_entry(payload, result, t0, "recipe_draft"))
+        return result
+    except HarnessError as exc:
+        err = {"status": "error", "errors": [{"reason": str(exc)}], "say": str(exc)}
+        _log_usage(_usage_entry(payload, err, t0, "recipe_draft"))
+        return JSONResponse(status_code=502, content=err)
+    except Exception as exc:
+        logger.exception("harness internal error (recipe draft)")
+        err = {"status": "error", "errors": [{"reason": f"harness 内部错误: {exc}"}], "say": f"harness 内部错误: {exc}"}
+        _log_usage(_usage_entry(payload, err, t0, "recipe_draft"))
+        return JSONResponse(status_code=500, content=err)
