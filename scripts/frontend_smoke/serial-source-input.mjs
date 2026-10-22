@@ -1,7 +1,7 @@
 // 串行边界：输入节点（素材篮，2026-10-22 重做）
 // 一条素材 = 一个条目 = 一个出口（out-i ↔ items[i]）。覆盖：三入口渲染、端口=条目、
-// 删中间条目边重排、两口按口取材不混料、旧数据只读分支、命名/OCR 状态文案、
-// addSourceText 本地建条目与超长走 ingest（fetch 桩）。
+// 折叠态出口改走输出列（2026-10-22 修复）、删中间条目边重排、两口按口取材不混料、
+// 旧数据只读分支、命名/OCR 状态文案、addSourceText 本地建条目与超长走 ingest（fetch 桩）。
 // 本文件有用例会 await 且替换全局 fetch 桩——串行域契约（见 AGENTS.md 硬规则 4），
 // 执行顺序由 ../frontend_smoke.mjs 调用序列决定，收口线 drain() 之前注册完毕。
 import { check, drain, sandbox, vm } from './_runner.mjs';
@@ -50,6 +50,38 @@ check('素材篮渲染：新节点三入口＋OCR 开关＋条目行；旧数据
   } finally {
     sandbox.escapeHtml = realEsc;
     vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
+  }
+  return true;
+});
+
+check('素材篮折叠：出口改走输出列（折叠卡不再是死节点），每个口恰好一份 DOM', () => {
+  // 2026-10-22 修复回归：行内口长在 body 里，折叠卡 body 换占位符 → 行内口没了。
+  // 折叠态必须由输出列补上基础口（否则折叠的输入节点一个出口都没有）；两种形态
+  // 下每个 out-i 都只能有一份 DOM（隐藏的重复口会让 _graphPortEl 查到 rect 全 0
+  // 的那份，边锚点跑飞）。
+  const items = [
+    { id: 'it1', kind: 'text', name: '题目原文', text: '一道力学题' },
+    { id: 'it2', kind: 'image', name: '受力图', text: '' },
+  ];
+  const count = (s, sub) => s.split(sub).length - 1;
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    seedNode(items, { minimized: true });
+    const folded = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
+    if (folded.includes('graph-source-row-port')) throw new Error('折叠卡不该渲染条目行端口（body 已换占位符）');
+    if (!folded.includes('graph-node-body-ph')) throw new Error('折叠卡 body 应为占位符');
+    for (const frag of ['data-port-id="out-0"', 'data-port-id="out-1"', 'graph-port graph-output-port']) {
+      if (!folded.includes(frag)) throw new Error('折叠态出口应由输出列补上，缺：' + frag);
+    }
+    if (count(folded, 'data-port-id="out-0"') !== 1) throw new Error('折叠态 out-0 应恰好一份 DOM');
+    // 对照：同一份数据展开时回到行内口，输出列不再补基础口（同样只一份）
+    seedNode(items);
+    const expanded = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
+    if (!expanded.includes('graph-source-row-port')) throw new Error('展开态应回到条目行端口');
+    if (count(expanded, 'data-port-id="out-0"') !== 1) throw new Error('展开态 out-0 应恰好一份 DOM（行内口）');
+  } finally {
+    sandbox.escapeHtml = realEsc;
   }
   return true;
 });

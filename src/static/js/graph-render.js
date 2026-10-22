@@ -616,9 +616,13 @@ function _renderOutputPorts(node, messages, state) {
   const savedCount = (state && state.portCounts && state.portCounts[node.id]) || 0;
   const count = Math.max(ports.length, savedCount);
   // 素材篮（2026-10-22）：新数据的基础口（条目口）已行内渲染在条目行上，
-  // 输出列只补附加段（存量附加口不消失）；没附加口就不渲染整列
+  // 输出列只补附加段（存量附加口不消失）；没附加口就不渲染整列。
+  // 折叠态例外（2026-10-22 修复）：折叠卡不建条目行（body 换占位符），行内口
+  // 随之消失——若这里也跳过基础口，折叠的输入节点就成了「一个出口都没有」的
+  // 死节点（下游连线只能退回卡缘兜底锚点）。折叠时基础口照常进输出列，
+  // 展开后回到行内（渲染函数是唯一事实源，见 _toggleGraphNodeMinimize 的整卡重建）。
   let start = 0;
-  if (node.kind === 'source' && !_sourceIsLegacyNode(node)) {
+  if (node.kind === 'source' && !_sourceIsLegacyNode(node) && !node.minimized) {
     start = ports.length;
     if (count <= start && !canAddPort) return '';
   }
@@ -900,7 +904,7 @@ function _renderSourceNodeHtml(node, state) {
     const rows = items.map((item, index) => _renderSourceItemRow(node, attr, item, index)).join('');
     body = '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
       + '<label class="graph-source-ocr-toggle"><input type="checkbox"' + (ocrOn ? ' checked' : '') + ' onchange="toggleSourceOcr(\'' + node.id + '\',this.checked)"><span>图片自动转文字</span></label>'
-      + (items.length ? '<div class="graph-source-list">' + rows + '</div>' : '<div class="graph-source-empty">还没有素材：粘贴文字 / 拖入图片或文件</div>')
+      + (items.length ? '<div class="graph-source-list">' + rows + '</div>' : '<div class="graph-source-empty">还没有素材：粘贴文字 / 拖入图片或文件<br>每加一条素材，右侧就长出一个出口</div>')
       + '<div class="graph-source-add">'
       + '<textarea class="graph-source-text-input" rows="2" placeholder="粘贴文字，或 Ctrl+V 直接粘贴截图" onpaste="handleSourcePaste(event,\'' + node.id + '\')"></textarea>'
       + '<div class="graph-source-add-actions">'

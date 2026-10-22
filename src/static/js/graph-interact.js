@@ -287,7 +287,15 @@ function _toggleGraphNodeMinimize(node) {
   const el = graphInner && graphInner.querySelector ? graphInner.querySelector('[data-node-id="' + node.id + '"]') : null;
   // T69：折叠卡当初没建内容子树（占位符），首次展开走整卡重建
   // （_refreshWorkflowNodeUi 自带 KaTeX/mermaid/测量/重画），不只是切类
-  if (el && !nextMinimized && el.querySelector('[data-body-ph]')) {
+  // 素材篮（2026-10-22 修复）：输入节点的出口长在卡片体内（每行一枚），折叠态
+  // 改由输出列出口（见 _renderOutputPorts 折叠例外）。快路径只切 .minimized 类
+  // 不重建 DOM，会留下两处隐患——隐藏的旧行口被 _graphPortEl 先查到（display:none
+  // 的 rect 全 0，边锚点当场跑到画布左上角），且折叠态该有的输出列根本没生成。
+  // 两个方向都走整卡重建，渲染函数成为唯一事实源。旧版输入节点（只读）出口本在
+  // 输出列，不受影响，仍走快路径。
+  const isSourceBasket = node.kind === 'source'
+    && typeof _sourceIsLegacyNode === 'function' && !_sourceIsLegacyNode(node);
+  if (el && (isSourceBasket || (!nextMinimized && el.querySelector('[data-body-ph]')))) {
     if (typeof _refreshWorkflowNodeUi === 'function') {
       _refreshWorkflowNodeUi(node);
       return;

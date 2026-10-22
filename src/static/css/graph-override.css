@@ -7520,10 +7520,16 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
 }
 
 /* 行内条目口只露圆点：素材名已在行内明示，端口 label 再来一份只会与
-   「查看/改名/删除」按钮重叠（真机几何断言实锤）；完整名挂 title 上 */
+   「查看/改名/删除」按钮重叠（真机几何断言实锤）；完整名挂 title 上。
+   2026-10-22 修复：首版 right:-18px 把圆点摆到行框之外，而行的祖先是
+   .graph-source-list（overflow-y:auto）——按 CSS 规范另一轴 visible 计算成
+   auto，它就是个滚动容器，在 padding box 处裁剪；条目口整颗落在裁剪区外，
+   于是「DOM 里有口、屏幕上看不见也点不到」（真机 elementFromPoint 命中的
+   是节点本体），用户看到的就是「输入节点没有输出端口」。改贴行内右缘：
+   行右 padding 24px 本就是给口留的位，任何滚动条也不会压到口上。 */
 .graph-source-row-port {
   position: absolute !important;
-  right: -18px !important;
+  right: 3px !important;
   top: 50% !important;
   transform: translateY(-50%) !important;
   padding-right: 0 !important;
