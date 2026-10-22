@@ -64,11 +64,14 @@ function _findQuestionContentUpstream(node) {
   return walk(node);
 }
 
-function _nodeOutputContent(node, seen) {
+function _nodeOutputContent(node, seen, fromPort) {
   if (!node) return '';
   seen = seen || new Set();
-  if (seen.has(node.id)) return '';
-  seen.add(node.id);
+  // 素材篮（2026-10-22）：同一个输入节点的两个口是两份不同的素材——seen 按
+  // id@port 记（不按口去重会把同节点的第二个口整个吞掉），hub/junction 透传同理
+  const seenKey = node.id + '@' + (fromPort || '');
+  if (seen.has(seenKey)) return '';
+  seen.add(seenKey);
   // hub（存量汇聚）与 junction（2026-10-11 中转）都无自己的内容：入边内容拼接后
   // 当自己的输出——追问链穿过它们时，下游看到的就是上游本身。收集清单里两者都
   // 透明不出场（_collectUpstreamPath / _collectInboundChain；T273：hub 原先作为
@@ -76,9 +79,28 @@ function _nodeOutputContent(node, seen) {
   if (node.kind === 'hub' || node.kind === 'junction') {
     const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === node.id && !edge.draft && !edge.link);
     return incoming
-      .map(edge => _nodeOutputContent(_findGraphNode(edge.from), seen))
+      .map(edge => _nodeOutputContent(_findGraphNode(edge.from), seen, edge.fromPort))
       .filter(Boolean)
       .join('\n\n');
+  }
+  // 素材篮（2026-10-22）：按口取材——out-i 对应 items[i]，出口载荷=这条素材本身
+  // （文本或占位），A 的口里永远不出现 B 的内容。旧 source 节点（知识点形状
+  // items）不走此分支，保持旧口径（内容恒空）与改前一致
+  if (node.kind === 'source' && !_sourceIsLegacyNode(node)) {
+    const items = Array.isArray(node.items) ? node.items : [];
+    const m = /^out-(\d+)$/.exec(String(fromPort || ''));
+    if (m) {
+      const item = items[parseInt(m[1], 10)];
+      if (item && item.kind) return String(item.text || '') || _sourceItemPlaceholder(item);
+      return '';
+    }
+    // 不传 fromPort（节点体拖拽等兜底路径）：全部条目拼接；拼接为空回落
+    // node.content（它是拼接的缓存，兼容无 items 但带 content 的旧夹具/旧数据）
+    const joined = items
+      .map(it => it && it.kind ? (String(it.text || '') || _sourceItemPlaceholder(it)) : '')
+      .filter(Boolean)
+      .join('\n\n');
+    return joined || String(node.content || '');
   }
   if (node.kind === 'answer' && !node.manual && node.messageIndex < 0) {
     // T364：闭环反馈卡（socraticMeta）正文在 content、analysis 恒空——旧回退把它
@@ -89,30 +111,42 @@ function _nodeOutputContent(node, seen) {
   return _nodeStoredContent(node);
 }
 
+// 素材条目的出口名（out-i ↔ items[i]，名字=素材名）——取材条目 label 用它，
+// 否则同一个输入节点的两口在下游上下文里都叫「输入」
+function _sourcePortLabel(node, fromPort) {
+  const m = /^out-(\d+)$/.exec(String(fromPort || ''));
+  if (!m) return '';
+  const item = Array.isArray(node.items) ? node.items[parseInt(m[1], 10)] : null;
+  return item && item.kind ? String(item.name || '') : '';
+}
+
 function _collectUpstreamPath(node) {
   const ordered = [];
-  const orderedIds = new Set();
-  // T263 喂料分路：记录每个祖先经由哪条入边（toPort）进入，具名输入口分组用
-  function collect(current, viaPort) {
-    if (!current || orderedIds.has(current.id)) return;
+  const orderedKeys = new Set();
+  // T263 喂料分路：记录每个祖先经由哪条入边（toPort）进入，具名输入口分组用；
+  // 素材篮（2026-10-22）：递归再带上 fromPort（经由哪条出边出来）——去重键从
+  // node.id 改成 id@fromPort，同一个输入节点的两个口（两份素材）必须都留下
+  function collect(current, viaPort, fromPort) {
+    const dedupeKey = current.id + '@' + (fromPort || '');
+    if (!current || orderedKeys.has(dedupeKey)) return;
     const incoming = _workflowEdgeTable().filter(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     for (const edge of incoming) {
       const source = _findGraphNode(edge.from);
-      if (source) collect(source, edge.toPort || 'in-0');
+      if (source) collect(source, edge.toPort || 'in-0', edge.fromPort || 'out-0');
     }
-    if (!orderedIds.has(current.id)) {
-      orderedIds.add(current.id);
+    if (!orderedKeys.has(dedupeKey)) {
+      orderedKeys.add(dedupeKey);
       // 无内容节点（junction/hub）透明：上游照常递归（内容经 _nodeOutputContent
       // 直通），自身不进取材清单——否则上游每篇内容会在提示词里出现两遍（T273）
       if (current.kind !== 'junction' && current.kind !== 'hub') {
-        ordered.push({ node: current, port: viaPort || '' });
+        ordered.push({ node: current, port: viaPort || '', fromPort: fromPort || '' });
       }
     }
   }
-  collect(node, '');
+  collect(node, '', '');
   return ordered.map(entry => {
     const item = entry.node;
-    const raw = _nodeOutputContent(item);
+    const raw = _nodeOutputContent(item, undefined, entry.fromPort);
     return {
       id: item.id,
       kind: item.kind,
@@ -126,6 +160,10 @@ function _collectUpstreamPath(node) {
       // 节点标题（2026-10-10 ③）：note/我的回答 起的名优先于品类名进下游喂料标签
       title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
+      // 素材篮（2026-10-22）：条目带上出口（fromPort）与出口名（portLabel）——
+      // source 的两口是两份素材，label 与内容都按口区分
+      fromPort: entry.fromPort,
+      portLabel: item.kind === 'source' ? _sourcePortLabel(item, entry.fromPort) : '',
       summary: _graphSummary(raw) || '',
       content: raw,
       toPort: entry.port,
@@ -134,12 +172,16 @@ function _collectUpstreamPath(node) {
 }
 
 // 单父链取材（P2，空白节点式）：只沿每个节点的第一条入边回溯一条链，
-// 与 _collectUpstreamPath 输出同形（含自身，answer 仍被抽出进 analysis 槽）
+// 与 _collectUpstreamPath 输出同形（含自身，answer 仍被抽出进 analysis 槽）。
+// 素材篮（2026-10-22）：fromPorts 记录链上每颗经由哪条出边进入下一环——
+// source 的出口按口取材需要它
 function _collectInboundChain(node) {
   const chain = [];
   const ports = [];
+  const fromPorts = [];
   const visited = new Set();
   let current = node;
+  let prevIncoming = null;
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
     // 无内容节点（junction/hub）穿透：自身不进链，顺它的第一条入边继续往上走——
@@ -152,12 +194,17 @@ function _collectInboundChain(node) {
     chain.push(current);
     const incoming = _workflowEdgeTable().find(edge => String(edge.to) === current.id && !edge.draft && !edge.link);
     ports.push(incoming ? (incoming.toPort || 'in-0') : '');
+    // 本条目的出边＝上一轮（下游侧）的入边：fromPort 表达「我从哪个口出去」，
+    // 与 _collectUpstreamPath 的 fromPort 同口径（条目自己的输出口）
+    fromPorts.push(prevIncoming ? (prevIncoming.fromPort || 'out-0') : '');
+    prevIncoming = incoming;
     current = incoming ? _findGraphNode(incoming.from) : null;
   }
   chain.reverse();
   ports.reverse();
+  fromPorts.reverse();
   return chain.map((item, index) => {
-    const raw = _nodeOutputContent(item);
+    const raw = _nodeOutputContent(item, undefined, fromPorts[index] || '');
     return {
       id: item.id,
       kind: item.kind,
@@ -169,6 +216,8 @@ function _collectInboundChain(node) {
       socraticFeedback: !!(item.kind === 'answer' && !item.manual && item.socraticMeta),
       title: item.title || '',
       analysis: item.kind === 'answer' && !item.manual ? (item.analysis || '') : '',
+      fromPort: fromPorts[index] || '',
+      portLabel: item.kind === 'source' ? _sourcePortLabel(item, fromPorts[index] || '') : '',
       summary: _graphSummary(raw) || '',
       content: raw,
       toPort: ports[index] || '',
@@ -283,11 +332,18 @@ function _followupSourceNodeId(node) {
   return String(source.id || '');
 }
 
+// 素材篮（2026-10-22）：下游单条素材的 content 额度——800/6000 的通用档对
+// 素材条目不适用，单条素材恒 2000（已定口径 6），截断时明示原文长度。
+// 命名与 graph-custom 的 SOURCE_ITEM_MAX_CHARS（条目存储上限 8000）区分开
+const SOURCE_FEED_MAX_CHARS = 2000;
+
 // 上游条目映射（模块步与分析步共用，原 _buildWorkflowContextForNode 内联 logic
 // 提来共用）。追问来源条目：full 标记＋6000 字额度＋summary 置空——后端 shared
 // 段渲染是 summary 优先，不置空的话 A 的 <summary> 会抢先、全文仍旧进不去。
 // T364：闭环反馈卡同款 full 额度（feedbackFullId＝最近一颗，调用方算好传入）；
 // 闭环身份标签分设「我的作答/苏格拉底反馈」，作答卡正文剥机器前缀。
+// 素材篮（2026-10-22）：source 条目 label 用端口名（素材名——同一个输入节点的
+// 两口在下游上下文里必须可区分）；content 恒 2000 档，不被 full 6000 放大
 function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFullId) {
   const isSource = !!sourceId && String(item.id || '') === sourceId;
   const isFeedbackFull = !!feedbackFullId && String(item.id || '') === String(feedbackFullId || '');
@@ -306,16 +362,23 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFu
             : item.kind === 'relation'
               ? '知识联系'
               : item.kind === 'source'
-                ? '输入'
+                ? (item.portLabel || '输入')
             : item.kind === 'answer'
               ? (item.manual ? (item.title || '我的回答') : (item.socraticFeedback ? '苏格拉底反馈' : '问题分析'))
               : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
     summary: isFull ? '' : _stripSocraticAnswerMarker(item.summary || ''),
     analysis: item.analysis || '',
-    content: isFull
-      ? _foldHtmlFences(_stripSocraticAnswerMarker(item.content || '')).slice(0, WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS)
-      : _stripSocraticAnswerMarker(item.content || '').slice(0, WORKFLOW_UPSTREAM_MAX_CHARS),
   };
+  if (item.kind === 'source') {
+    const raw = _stripSocraticAnswerMarker(item.content || '');
+    entry.content = raw.length > SOURCE_FEED_MAX_CHARS
+      ? raw.slice(0, SOURCE_FEED_MAX_CHARS) + '（已截断，原文 ' + raw.length + ' 字）'
+      : raw;
+  } else {
+    entry.content = isFull
+      ? _foldHtmlFences(_stripSocraticAnswerMarker(item.content || '')).slice(0, WORKFLOW_FOLLOWUP_SOURCE_MAX_CHARS)
+      : _stripSocraticAnswerMarker(item.content || '').slice(0, WORKFLOW_UPSTREAM_MAX_CHARS);
+  }
   if (isFull) entry.full = true;
   if (portMeta) {
     entry.input_port = portMeta.label;
@@ -484,7 +547,9 @@ function _nodeInputHash(node) {
   // 不会触发存量节点全量重生成；新配方换口接线能正确触发重生成
   const usePorts = !!(node.recipeId && typeof _recipeInputPorts === 'function' && _recipeInputPorts(node).length);
   const parts = incoming
-    .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from)) + (usePorts ? '@' + (edge.toPort || 'in-0') : ''))
+    // 素材篮（2026-10-22）：_nodeOutputContent 补 fromPort——source 按口取材后，
+    // 同节点换口接线要触发重生成；哈希串前缀本就含 fromPort=
+    .map(edge => (edge.fromPort || 'out-0') + '=' + _nodeOutputContent(_findGraphNode(edge.from), undefined, edge.fromPort) + (usePorts ? '@' + (edge.toPort || 'in-0') : ''))
     .sort();
   return _simpleHash((node.moduleKey || '') + '|' + (node.recipeId || '') + '|' + (node.requirements || '') + '|' + parts.join('|'));
 }

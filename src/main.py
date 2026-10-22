@@ -355,10 +355,12 @@ async def health_check():
 # ====== 业务路由（T163 拆分：模型对话 / 用户数据 / 知识内容 / 画像备份四域）======
 # include 顺序＝原 main.py 路由定义顺序（chat→sessions→knowledge→profile），
 # serve_static_file 的 catch-all 必须留在所有 API 路由之后（见其节头注释）。
-from server import knowledge_routes, models_routes, profile_routes, session_routes  # noqa: E402
+from server import input_routes, knowledge_routes, models_routes, profile_routes, session_routes  # noqa: E402
 app.include_router(models_routes.router)
 app.include_router(session_routes.router)
 app.include_router(knowledge_routes.router)
+# 输入节点素材摄取（2026-10-22 重做）：机械转写通道，与 documents/parse 并存
+app.include_router(input_routes.router)
 app.include_router(profile_routes.router)
 
 # ====== 静态文件 catch-all（必须放在所有 API 路由之后）======

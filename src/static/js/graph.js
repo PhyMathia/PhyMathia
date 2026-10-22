@@ -54,7 +54,9 @@ function _nodeCanAddInputPorts(node) {
 
 function _nodeCanAddOutputPorts(node) {
   if (!node) return false;
-  if (node.kind === 'draft' || node.kind === 'junction') return false;
+  // 素材篮（2026-10-22）：source 的出口=条目（out-i ↔ items[i]），手加口会
+  // 打破端口与条目的索引对应——关加口；存量 portCounts 附加口仍按渲染口径保留
+  if (node.kind === 'draft' || node.kind === 'junction' || node.kind === 'source') return false;
   return !_nodeRecipeOutputLocked(node);
 }
 

@@ -54,9 +54,10 @@ check('graph-contextmenu: 节点菜单裁剪（端口统一门 2026-10-10/折叠
   if (draft.includes('add-input-port') || draft.includes('add-output-port')) return false;
   if (draft.includes('duplicate')) return false;
   if (!draft.includes('delete') || !draft.includes('focus')) return false;
-  // source：有输出端口、无输入端口（源头节点没有输入侧——统一门的例外之一）
+  // source：素材篮（2026-10-22）出口=条目（out-i ↔ items[i]），手加口会打破
+  // 索引对应——加口两侧都关（统一门的例外之一；旧口径「有输出端口」随素材篮退役）
   const source = keysFor({ id: 's1', kind: 'source', items: [{}] });
-  if (!source.includes('add-output-port') || source.includes('add-input-port')) return false;
+  if (source.includes('add-output-port') || source.includes('add-input-port')) return false;
   if (!source.includes('focus')) return false;
   // 端口机制统一（2026-10-10）：hub/summary 等常驻节点两侧都开放加口
   const hub = keysFor({ id: 'h1', kind: 'hub' });

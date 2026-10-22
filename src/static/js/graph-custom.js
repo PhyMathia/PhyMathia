@@ -762,286 +762,444 @@ function _buildContentPreviewPage(title, contentHtml) {
     + '<div class="cp-body">' + contentHtml + '</div></body></html>';
 }
 
-function updateSourceNodeMax(nodeId, value) {
-  const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'source') return;
-  const next = Math.max(1, Math.min(50, parseInt(value, 10) || 5));
-  node.maxItems = next;
+// ===== 输入节点（素材篮，2026-10-22 重做）=====
+// 一条素材 = 一个条目 = 一个出口：out-i 对应 items[i]，出口名 = 素材名。
+// 纯输入：不调 AI、不派生节点、不写知识面板/公式库。旧节点（items 是知识点
+// 形状，判据 items.some(it => !it.kind)）走只读分支，旧连线/子节点原样保留，
+// 不往旧节点里写新字段。
+const SOURCE_ITEM_MAX_CHARS = 8000;  // 条目文本上限（超出截断，全文在后端 <fileId>.txt）
+const SOURCE_MAX_ITEMS = 12;         // 条目上限（新增时拒绝；旧数据不裁剪）
+// 与服务端 input_routes 的 IMAGE_EXTS/TEXT_EXTS 同口径，改一边要同步另一边
+const SOURCE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'];
+const SOURCE_TEXT_EXTS = ['txt', 'md', 'markdown', 'csv', 'json', 'log', 'tex'];
+
+function _sourceIsLegacyNode(node) {
+  return !!(node && Array.isArray(node.items) && node.items.some(it => !it || !it.kind));
+}
+
+function _sourceFileKind(fileName) {
+  const ext = String(fileName || '').split('.').pop().toLowerCase();
+  if (SOURCE_IMAGE_EXTS.indexOf(ext) >= 0) return 'image';
+  if (SOURCE_TEXT_EXTS.indexOf(ext) >= 0) return 'text';
+  return 'file';
+}
+
+// 命名规则：粘贴文字取首行去空白截 20 字（空则「文本 N」）；图片/文件取文件名
+// 去扩展名截 24 字。同名允许（端口按索引区分）
+function _sourceItemName(node, kind, fileName, text) {
+  const seq = ((node && node.items) || []).length + 1;
+  if (kind === 'text') {
+    const firstLine = String(text || '').split('\n').map(s => s.trim()).find(Boolean) || '';
+    const base = firstLine.slice(0, 20).trim();
+    return base || ('文本 ' + seq);
+  }
+  const stem = String(fileName || '').replace(/\.[^.]+$/, '').trim();
+  return stem.slice(0, 24).trim() || ('素材 ' + seq);
+}
+
+// 条目进下游上下文时的占位（OCR 未转写/文件没抽出文本）
+function _sourceItemPlaceholder(item) {
+  const label = (item && (item.fileName || item.name)) || '';
+  if (item && item.kind === 'image') return '[图片「' + label + '」未转写]';
+  return '[文件「' + label + '」未提取到文本]';
+}
+
+function _sourceItemId() {
+  return 'it_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+}
+
+function _sourceOcrState(status, engine, ms, error) {
+  return { status: status || 'none', engine: engine || '', ms: ms || 0, error: error || '' };
+}
+
+function _sourcePushItem(node, item) {
+  node.items = Array.isArray(node.items) ? node.items : [];
+  node.items.push(item);
+  updateSourceNodeContent(node);
   _saveCustomNodes();
   renderGraphCanvas();
 }
 
-function _clearSourceGeneratedNodes(node) {
-  const state = _graphState();
-  const oldIds = new Set(node.generatedNodeIds || []);
-  state.customNodes = (state.customNodes || []).filter(item => !oldIds.has(item.id));
-  state.connections = (state.connections || []).filter(edge => !oldIds.has(edge.from) && !oldIds.has(edge.to));
-  if (state.positions) {
-    for (const id of oldIds) delete state.positions[id];
-  }
-  if (state.inputPortCounts) {
-    for (const id of oldIds) delete state.inputPortCounts[id];
-  }
-  node.generatedNodeIds = [];
-  _saveGraphState(state);
+// 所有条目文本拼接写 node.content（≤8000）——兜底路径（节点体拖拽等不按口
+// 取材的旧消费方）读它；按口取材的正式路径读 items[i] 本身
+function updateSourceNodeContent(node) {
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const parts = (node.items || [])
+    .map(it => it && it.kind ? (String(it.text || '') || _sourceItemPlaceholder(it)) : '')
+    .filter(Boolean);
+  node.content = parts.join('\n\n').slice(0, SOURCE_ITEM_MAX_CHARS);
 }
 
-function _sourceNodePosition(node, index, count) {
-  const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count))));
-  const row = Math.floor(index / cols);
-  const col = index % cols;
-  const colSpan = Math.max(1, count - 1);
-  return {
-    x: node.x + 430 + (col - (cols - 1) / 2) * Math.min(240, 900 / cols),
-    y: node.y + (row - Math.max(0, Math.ceil(count / cols) - 1) / 2) * 170,
-  };
+function _utf8ToBase64(text) {
+  const bytes = new TextEncoder().encode(String(text || ''));
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
-function _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes) {
-  if (!items || !items.length || typeof saveKnowledgeItems !== 'function') return;
-  const current = typeof getKnowledgeItems === 'function' ? getKnowledgeItems() : {};
-  const now = Date.now();
-  const pending = { ...current };
-  items.forEach((item, index) => {
-    const knowledgeNode = knowledgeNodes[index];
-    const id = 'kf_' + (item.id || item.title || index) + '_' + _simpleHash(node.id + ':' + index);
-    pending[id] = {
-      id,
-      title: item.title || '知识点',
-      category: item.category || 'other',
-      tags: item.tags || [],
-      summary: item.summary || '',
-      formulas: item.formulas || [],
-      source: 'file',
-      sourceType: 'file',
-      fileId: node.fileId || '',
-      fileName: node.fileName || '',
-      sessionId: typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '',
-      messageId: '',
-      moduleKey: 'knowledge',
-      nodeId: knowledgeNode ? knowledgeNode.id : '',
-      createdAt: now,
-    };
+function _readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+    reader.readAsDataURL(file);
   });
-  saveKnowledgeItems(pending);
-  if (typeof saveFormulasToServer === 'function') {
-    const formulas = [];
-    items.forEach((item, index) => {
-      for (const latex of item.formulas || []) {
-        formulas.push({
-          latex,
-          concept: item.title || '知识点',
-          meaning: '',
-          meaningSource: 'local',
-          topic: '',
-          related: item.tags || [],
-          sessionId: typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '',
-          messageId: '',
-          moduleKey: item.category === 'math' ? 'math' : item.category === 'physics' ? 'physics' : 'knowledge',
-          nodeId: knowledgeNodes[index] ? knowledgeNodes[index].id : '',
-          createdAt: now,
-        });
-      }
-    });
-    if (formulas.length) saveFormulasToServer(formulas);
-  }
 }
 
-
-function _applyParsedDocumentToNode(node, data) {
-  if (!node) return;
-  node = _findGraphNode(node.id) || node;
-  _clearSourceGeneratedNodes(node);
-  const items = Array.isArray(data.nodes) ? data.nodes.slice(0, Math.max(1, node.maxItems || 5)) : [];
-  const edges = Array.isArray(data.edges) ? data.edges : [];
-  node.items = items;
-  node.edges = edges;
-  node.fileId = data.fileId || node.fileId;
-  node.fileName = data.fileName || node.fileName;
-  node.status = 'done';
-  node.busy = false;
-
-  const state = _graphState();
-  state.customNodes = (state.customNodes || []).map(item => item.id === node.id ? ({ ...node }) : item);
-  state.connections = state.connections || [];
-  const itemToNode = {};
-  const knowledgeNodes = [];
-  const createdIds = [];
-
-  items.forEach((item, index) => {
-    const pos = _sourceNodePosition(node, index, items.length);
-    const nodeId = 'knowledge-custom-' + Date.now() + '-' + index + '-' + Math.random().toString(36).slice(2, 7);
-    const knowledgeNode = {
-      id: nodeId,
-      kind: 'knowledge',
-      moduleKey: 'knowledge',
-      manual: true,
-      content: item.summary || item.title || '',
-      status: 'done',
-      summary: item.summary || '',
-      analysis: '',
-      analysisHash: '',
-      inputHash: '',
-      generatedAt: Date.now(),
-      requirements: '',
-      busy: false,
-      generated: false,
-      maxItems: 0,
-      items: [],
-      edges: [],
-      fileId: node.fileId || '',
-      fileName: node.fileName || '',
-      generatedNodeIds: [],
-      title: item.title || '知识点',
-      category: item.category || 'other',
-      tags: item.tags || [],
-      formulas: item.formulas || [],
-      knowledgeKey: item.id || item.title || nodeId,
-      sourceNodeId: node.id,
-      x: pos.x,
-      y: pos.y,
-      depth: 3,
-      targetAngle: 0,
-      isRoot: false,
-      timestamp: Date.now(),
-      pinned: false,
-      fixedX: null,
-      fixedY: null,
-      customWidth: 260,
-      customHeight: null,
-      w: 0,
-      h: 0,
-      vx: 0,
-      vy: 0,
-    };
-    state.customNodes.push(knowledgeNode);
-    knowledgeNodes.push(knowledgeNode);
-    itemToNode[String(item.id || item.title || index)] = nodeId;
-    createdIds.push(nodeId);
-    state.connections.push({
-      from: node.id,
-      fromPort: 'out-' + index,
-      to: nodeId,
-      toPort: 'in-0',
-      type: 'knowledge',
-      custom: true,
-    });
-  });
-
-  node.generatedNodeIds = createdIds;
-  _saveGraphState(state);
-  _saveDocumentKnowledgeToPanel(node, items, knowledgeNodes);
-  renderGraphCanvas();
-  if (typeof invalidateKnowledgeCache === 'function') invalidateKnowledgeCache();
-  if (typeof renderKnowledgePanel === 'function') renderKnowledgePanel();
-  if (typeof showToast === 'function') {
-    showToast('已解析 ' + items.length + ' 个知识点');
-  }
+function _sourceDropItem(node, item, data) {
+  // ingest 成功回填：name/kind/fileName 保持本地口径（服务端只补机械转写结果）
+  item.fileId = data.fileId || '';
+  item.text = String(data.text || '');
+  item.chars = Number(data.chars) || item.text.length;
+  item.truncated = !!data.truncated;
+  item.mime = data.mime || item.mime;
+  item.size = Number(data.size) || item.size;
+  item.ocr = data.ocr ? {
+    status: String(data.ocr.status || 'none'),
+    engine: String(data.ocr.engine || ''),
+    ms: Number(data.ocr.ms) || 0,
+    error: String(data.ocr.error || '').slice(0, 200),
+  } : _sourceOcrState('none');
 }
 
-async function _parseSourceNodeFile(node, fileName, contentBase64, maxItems) {
-  if (!node || node.busy) return;
-  node.busy = true;
-  node.status = 'running';
-  node.fileName = fileName || node.fileName;
-  node.maxItems = Math.max(1, Math.min(50, maxItems || node.maxItems || 5));
-  _saveCustomNodes();
-  renderGraphCanvas();
-  node = _findGraphNode(node.id) || node;
-  if (typeof showProgress === 'function') showProgress('tool', 12, '正在读取文件并解析知识点...');
-
-  const agentModel = typeof getActiveModelForRole === 'function' ? getActiveModelForRole('agent') : null;
-  const payload = {
-    fileName: node.fileName,
-    maxItems: node.maxItems,
-    level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-    provider: agentModel ? agentModel.provider : '',
-    api_key: agentModel ? agentModel.apiKey : '',
-    model: agentModel ? agentModel.model : '',
-    base_url: agentModel ? agentModel.baseUrl : '',
-  };
-  if (node.fileId) payload.fileId = node.fileId;
-  else if (contentBase64) payload.contentBase64 = contentBase64;
-
+async function _sourceIngest(nodeId, itemId, payload, pending) {
+  let data = null;
   try {
-    if (typeof showProgress === 'function') showProgress('tool', 40, '正在调用解析服务...');
-    const resp = await fetch('/api/documents/parse', {
+    const resp = await fetch('/api/input/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (resp.status === 404 || resp.status === 405) {
-      throw new Error('后端未加载文件解析接口，请先重启 python src/main.py');
+    data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || !data.ok) {
+      throw new Error((data && (data.detail || data.error)) || '素材摄取失败');
     }
-    const data = await resp.json();
-    if (!resp.ok || !data.ok) throw new Error(data.detail || data.error || '文件解析失败');
-    if (!data.nodes || !data.nodes.length) throw new Error('未提取到知识点，请调整文件内容或数量限制');
-    if (typeof showProgress === 'function') showProgress('tool', 85, '正在生成知识网络...');
-    _applyParsedDocumentToNode(node, data);
-    if (typeof hideProgress === 'function') hideProgress();
   } catch (err) {
-    node.busy = false;
-    node.status = 'error';
-    _saveCustomNodes();
-    renderGraphCanvas();
-    if (typeof hideProgress === 'function') hideProgress();
-    if (typeof showToast === 'function') showToast('解析失败：' + (err.message || err));
+    if (pending) {
+      // 占位条目整体失败（网络/4xx）：删条目回滚，不留半成品
+      const node = _findGraphNode(nodeId);
+      if (node && Array.isArray(node.items)) {
+        node.items = node.items.filter(it => !it || it.id !== itemId);
+        updateSourceNodeContent(node);
+        _saveCustomNodes();
+        renderGraphCanvas();
+      }
+    }
+    if (typeof showToast === 'function') showToast('素材加入失败：' + (err.message || err));
+    return;
+  }
+  // 等待期间节点/条目可能被删或被撤销：找不到就地丢弃
+  const node = _findGraphNode(nodeId);
+  const item = node && Array.isArray(node.items) ? node.items.find(it => it && it.id === itemId) : null;
+  if (!item) return;
+  _sourceDropItem(node, item, data);
+  updateSourceNodeContent(node);
+  _saveCustomNodes();
+  renderGraphCanvas();
+}
+
+function addSourceText(nodeId, text) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const value = String(text || '').trim();
+  if (!value) {
+    if (typeof showToast === 'function') showToast('请先输入文本');
+    return;
+  }
+  if ((node.items || []).length >= SOURCE_MAX_ITEMS) {
+    if (typeof showToast === 'function') showToast('素材条目已达上限（' + SOURCE_MAX_ITEMS + ' 条）');
+    return;
+  }
+  const name = _sourceItemName(node, 'text', '', value);
+  if (value.length > SOURCE_ITEM_MAX_CHARS) {
+    // 超限走 ingest 落盘（全文进后端 <fileId>.txt）再截断；本地建条目会撑爆
+    // localStorage，这是唯一的落盘通道
+    const item = {
+      id: _sourceItemId(),
+      kind: 'text',
+      name: name,
+      text: '',
+      chars: value.length,
+      truncated: true,
+      fileId: '',
+      fileName: name + '.txt',
+      mime: 'text/plain',
+      size: value.length,
+      ocr: _sourceOcrState('none'),
+      legacy: false,
+      createdAt: Date.now(),
+    };
+    _sourcePushItem(node, item);
+    _sourceIngest(node.id, item.id, {
+      fileName: item.fileName,
+      contentBase64: _utf8ToBase64(value),
+    }, true);
+    return;
+  }
+  _sourcePushItem(node, {
+    id: _sourceItemId(),
+    kind: 'text',
+    name: name,
+    text: value,
+    chars: value.length,
+    truncated: false,
+    fileId: '',
+    fileName: '',
+    mime: 'text/plain',
+    size: value.length,
+    ocr: _sourceOcrState('none'),
+    legacy: false,
+    createdAt: Date.now(),
+  });
+}
+
+// 卡上「加入」按钮：读本卡 textarea 的文本入篮并清空输入框
+function addSourceTextFromCard(nodeId) {
+  const node = _findGraphNode(nodeId);
+  const box = document.querySelector('.graph-node[data-node-id="' + nodeId + '"] .graph-source-text-input');
+  const text = box ? String(box.value || '') : '';
+  if (node && !text.trim()) {
+    if (typeof showToast === 'function') showToast('请先输入文本');
+    return;
+  }
+  addSourceText(nodeId, text);
+  if (box) box.value = '';
+}
+
+function addSourceFiles(nodeId, files) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const list = Array.from(files || []).filter(Boolean);
+  for (const file of list) {
+    if ((node.items || []).length >= SOURCE_MAX_ITEMS) {
+      if (typeof showToast === 'function') showToast('素材条目已达上限（' + SOURCE_MAX_ITEMS + ' 条），已跳过后续文件');
+      break;
+    }
+    const kind = _sourceFileKind(file.name);
+    const item = {
+      id: _sourceItemId(),
+      kind: kind,
+      name: _sourceItemName(node, kind, file.name, ''),
+      text: '',
+      chars: 0,
+      truncated: false,
+      fileId: '',
+      fileName: file.name || '',
+      mime: file.type || '',
+      size: file.size || 0,
+      // 图片先置 running（卡上显示「转写中…」），文本/文件 none（抽取在服务端一次完成）
+      ocr: _sourceOcrState(kind === 'image' ? 'running' : 'none'),
+      legacy: false,
+      createdAt: Date.now(),
+    };
+    _sourcePushItem(node, item);
+    const wantOcr = node.ocrOn !== false;
+    const payload = {
+      fileName: item.fileName,
+      contentBase64: null, // 由下方 IIFE 填充
+      ocr: wantOcr,
+      engine: 'auto',
+    };
+    (async function () {
+      let base64 = '';
+      try {
+        base64 = await _readFileAsBase64(file);
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('读取文件失败：' + (err.message || err));
+        base64 = '';
+      }
+      if (!base64) {
+        const owner = _findGraphNode(node.id);
+        if (owner && Array.isArray(owner.items)) {
+          owner.items = owner.items.filter(it => !it || it.id !== item.id);
+          updateSourceNodeContent(owner);
+          _saveCustomNodes();
+          renderGraphCanvas();
+        }
+        return;
+      }
+      payload.contentBase64 = base64;
+      await _sourceIngest(node.id, item.id, payload, true);
+    })();
   }
 }
 
-function _loadSourceNodeFile(node, file, maxItems) {
-  if (!node || !file) return;
-  node.fileId = '';
-  const reader = new FileReader();
-  reader.onload = () => {
-    const base64 = String(reader.result || '').split(',')[1] || '';
-    _parseSourceNodeFile(node, file.name, base64, maxItems);
-  };
-  reader.readAsDataURL(file);
+// 剪贴板粘贴：有图片就地加条目；纯文本交给 textarea 默认行为（用户点「加入」入篮）
+function handleSourcePaste(event, nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const entries = event.clipboardData && event.clipboardData.items;
+  if (!entries) return;
+  const files = [];
+  for (const entry of entries) {
+    if (entry && entry.kind === 'file' && String(entry.type || '').indexOf('image/') === 0) {
+      const file = entry.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (files.length) {
+    event.preventDefault();
+    addSourceFiles(nodeId, files);
+  }
+}
+
+// 删条目必须重排边（风险 1）：from===nodeId 的边按端口索引左移（out-j →
+// out-(j-1)，j>i），out-i 的边删除——漏了就会「接 A 拿到 B」
+function deleteSourceItem(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const idx = (node.items || []).findIndex(it => it && it.id === itemId);
+  if (idx < 0) return;
+  if (typeof _pushGraphUndo === 'function') _pushGraphUndo();
+  node.items.splice(idx, 1);
+  const state = _graphState();
+  state.connections = (state.connections || [])
+    .filter(edge => {
+      if (String(edge.from) !== String(nodeId)) return true;
+      const portIdx = _sourcePortIndex(edge.fromPort);
+      return portIdx !== idx;
+    })
+    .map(edge => {
+      if (String(edge.from) !== String(nodeId)) return edge;
+      const portIdx = _sourcePortIndex(edge.fromPort);
+      return portIdx > idx ? { ...edge, fromPort: 'out-' + (portIdx - 1) } : edge;
+    });
+  updateSourceNodeContent(node);
+  _saveGraphState(state);
+  renderGraphCanvas();
+}
+
+function _sourcePortIndex(fromPort) {
+  const m = /^out-(\d+)$/.exec(String(fromPort || 'out-0'));
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function renameSourceItem(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const item = (node.items || []).find(it => it && it.id === itemId);
+  if (!item) return;
+  const next = String(window.prompt('素材名称（≤24 字）：', item.name || '') || '').trim();
+  if (!next || next === item.name) return;
+  item.name = next.slice(0, 24);
+  _saveCustomNodes();
+  renderGraphCanvas();
+}
+
+function toggleSourceOcr(nodeId, on) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  node.ocrOn = !!on;
+  _saveCustomNodes();
+}
+
+let sourceItemModalOverlay = null;
+
+function _sourceOcrStatusText(item) {
+  const ocr = item.ocr || {};
+  if (item.kind !== 'image') return '';
+  if (ocr.status === 'running') return '转写中…';
+  if (ocr.status === 'done') return '已转写 ' + (item.chars || 0) + ' 字';
+  if (ocr.status === 'failed') return '识别失败' + (ocr.error ? '：' + ocr.error : '') + '（可重试）';
+  if (ocr.status === 'skipped') return '未转写';
+  return '';
+}
+
+function openSourceItemModal(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const item = (node.items || []).find(it => it && it.id === itemId);
+  if (!item) return;
+  closeSourceItemModal();
+  const metaBits = ['类型：' + (item.kind === 'image' ? '图片' : item.kind === 'text' ? '文本' : '文件')];
+  if (item.fileName) metaBits.push('文件：' + item.fileName);
+  metaBits.push('字数：' + (item.chars || String(item.text || '').length || 0) + (item.truncated ? '（已截断，全文在后端）' : ''));
+  if (item.kind === 'image') {
+    metaBits.push('转写：' + (_sourceOcrStatusText(item) || '未转写')
+      + (item.ocr && item.ocr.engine ? '（引擎 ' + item.ocr.engine + (item.ocr.ms ? '，' + item.ocr.ms + 'ms' : '') + '）' : ''));
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'graph-network-modal-overlay';
+  overlay.innerHTML = '<div class="graph-network-modal aurora-glass aurora-glass--dialog">'
+    + '<div class="graph-network-modal-head"><span>素材：' + escapeHtml(item.name || '') + '</span>'
+    + '<button onclick="closeSourceItemModal()" title="关闭">×</button></div>'
+    + '<div class="graph-source-item-meta">' + escapeHtml(metaBits.join(' · ')) + '</div>'
+    + '<textarea id="sourceItemText" rows="12" placeholder="该素材的可读文本（可修改）">' + escapeHtml(item.text || '') + '</textarea>'
+    + '<div class="graph-network-modal-actions">'
+    + (item.kind === 'image'
+      ? '<button type="button" class="graph-source-ocr-retry" onclick="retrySourceItemOcr(\'' + node.id + '\',\'' + item.id + '\')">重新识别</button>'
+      : '')
+    + '<button type="button" class="graph-network-modal-save" onclick="saveSourceItemText(\'' + node.id + '\',\'' + item.id + '\')">保存</button>'
+    + '<button type="button" onclick="closeSourceItemModal()">取消</button>'
+    + '</div></div>';
+  overlay.addEventListener('click', function (ev) {
+    if (ev.target === overlay) closeSourceItemModal();
+  });
+  document.body.appendChild(overlay);
+  sourceItemModalOverlay = overlay;
+}
+
+function closeSourceItemModal() {
+  if (sourceItemModalOverlay) {
+    sourceItemModalOverlay.remove();
+    sourceItemModalOverlay = null;
+  }
+}
+
+function saveSourceItemText(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const item = (node.items || []).find(it => it && it.id === itemId);
+  const box = document.getElementById('sourceItemText');
+  if (!item || !box) return;
+  const value = String(box.value || '');
+  if (value.length > SOURCE_ITEM_MAX_CHARS) {
+    if (typeof showToast === 'function') showToast('文本超过 ' + SOURCE_ITEM_MAX_CHARS + ' 字，已截断保存');
+  }
+  item.text = value.slice(0, SOURCE_ITEM_MAX_CHARS);
+  item.chars = value.length;
+  item.truncated = value.length > SOURCE_ITEM_MAX_CHARS;
+  updateSourceNodeContent(node);
+  _saveCustomNodes();
+  closeSourceItemModal();
+  renderGraphCanvas();
+}
+
+async function retrySourceItemOcr(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const item = (node.items || []).find(it => it && it.id === itemId);
+  if (!item) return;
+  if (!item.fileId) {
+    if (typeof showToast === 'function') showToast('该素材没有可识别的源文件');
+    return;
+  }
+  item.ocr = _sourceOcrState('running');
+  _saveCustomNodes();
+  renderGraphCanvas();
+  await _sourceIngest(node.id, item.id, { fileId: item.fileId, ocr: true, engine: 'auto' }, false);
+  // 弹窗开着就刷新到识别结果
+  if (sourceItemModalOverlay) {
+    closeSourceItemModal();
+    openSourceItemModal(node.id, item.id);
+  }
 }
 
 function handleSourceNodeFile(inputEl, nodeId) {
-  const file = inputEl && inputEl.files && inputEl.files[0];
-  if (!file) return;
-  const node = _findGraphNode(nodeId);
-  if (!node) return;
-  const maxEl = inputEl.closest('.graph-node')?.querySelector('.graph-source-max-input');
-  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
-  _loadSourceNodeFile(node, file, maxItems);
-  if (inputEl) inputEl.value = '';
+  const files = inputEl && inputEl.files;
+  if (!files || !files.length) return;
+  addSourceFiles(nodeId, files);
+  inputEl.value = '';
 }
 
 function handleSourceNodeDrop(event, nodeId) {
   event.preventDefault();
-  const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-  if (!file) return;
-  const node = _findGraphNode(nodeId);
-  if (!node) return;
-  const maxEl = event.target.closest('.graph-node')?.querySelector('.graph-source-max-input');
-  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
-  _loadSourceNodeFile(node, file, maxItems);
-}
-
-function reparseSourceNode(nodeId) {
-  const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'source' || !node.fileId) return;
-  _parseSourceNodeFile(node, node.fileName, '', node.maxItems);
-}
-
-function pasteSourceNodeText(nodeId) {
-  const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'source') return;
-  const inputEl = document.querySelector('.graph-node[data-node-id="' + nodeId + '"] .graph-source-text-input');
-  const text = inputEl ? String(inputEl.value || '').trim() : '';
-  if (!text) { if (typeof showToast === 'function') showToast('请先粘贴文本'); return; }
-  const maxEl = document.querySelector('.graph-node[data-node-id="' + nodeId + '"] .graph-source-max-input');
-  const maxItems = maxEl ? parseInt(maxEl.value, 10) || 5 : (node.maxItems || 5);
-  try {
-    const file = new File([text], '粘贴文本.txt', { type: 'text/plain' });
-    _loadSourceNodeFile(node, file, maxItems);
-  } catch (e) {
-    if (typeof showToast === 'function') showToast('解析失败：' + (e.message || e));
-  }
+  const files = event.dataTransfer && event.dataTransfer.files;
+  if (!files || !files.length) return;
+  addSourceFiles(nodeId, files);
 }
 
 function openHarnessOrganizeRelations(sourceNodeId) {
@@ -1164,7 +1322,17 @@ function _blankNodeGraphPath(node) {
   });
 }
 
-window.pasteSourceNodeText = pasteSourceNodeText;
+window.addSourceText = addSourceText;
+window.addSourceTextFromCard = addSourceTextFromCard;
+window.addSourceFiles = addSourceFiles;
+window.handleSourcePaste = handleSourcePaste;
+window.deleteSourceItem = deleteSourceItem;
+window.renameSourceItem = renameSourceItem;
+window.openSourceItemModal = openSourceItemModal;
+window.closeSourceItemModal = closeSourceItemModal;
+window.saveSourceItemText = saveSourceItemText;
+window.retrySourceItemOcr = retrySourceItemOcr;
+window.toggleSourceOcr = toggleSourceOcr;
 window.openHarnessOrganizeRelations = openHarnessOrganizeRelations;
 
 

@@ -318,7 +318,7 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '基础素材：输入、知识点、我的理解',
     icon: UI_ICON_SVG.database,
-    desc: '画布还支持<strong>输入节点</strong>（文件/文本解析为知识点）、<strong>知识点节点</strong>和<strong>我的理解</strong>批注。',
+    desc: '画布还支持<strong>输入节点</strong>（粘贴文字/图片/文件，每条素材一个出口）、<strong>知识点节点</strong>和<strong>我的理解</strong>批注。',
     points: ['输入节点把内容分发为多个知识点。', '双击“我的理解”节点可直接编辑标题、正文和公式。'],
     target: '[data-node-id="demo-source"]',
   },

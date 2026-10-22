@@ -421,15 +421,31 @@ function _nodeBaseOutputPorts(node, messages) {
   }
   if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]);
   if (node.kind === 'source') {
-    return (node.items || []).map((item, index) => ({
-      label: item.title || '知识点 ' + (index + 1),
-      type: 'knowledge',
-      branchType: '',
-      attribute: 'knowledge',
-      group: 'knowledge',
-      question: '',
-      item: item,
-    }));
+    // 素材篮（2026-10-22 重做）：新条目（带 kind）type 留空——拖空不再默认建
+    // 知识点，走添加节点面板自选；旧条目（知识点形状）保持 type='knowledge'，
+    // 旧快捷方式（拖空直建知识点）不失效
+    return (node.items || []).map((item, index) => {
+      if (item && item.kind) {
+        return {
+          label: item.name || ('素材 ' + (index + 1)),
+          type: '',
+          branchType: '',
+          attribute: 'source',
+          group: 'data',
+          question: '',
+          item: item,
+        };
+      }
+      return {
+        label: item.title || '知识点 ' + (index + 1),
+        type: 'knowledge',
+        branchType: '',
+        attribute: 'knowledge',
+        group: 'knowledge',
+        question: '',
+        item: item,
+      };
+    });
   }
   if (node.kind === 'knowledge') return _knowledgeOutputPorts(node);
   if (node.kind === 'hub') {
@@ -599,10 +615,17 @@ function _renderOutputPorts(node, messages, state) {
   const canAddPort = _nodeCanAddOutputPorts(node);
   const savedCount = (state && state.portCounts && state.portCounts[node.id]) || 0;
   const count = Math.max(ports.length, savedCount);
+  // 素材篮（2026-10-22）：新数据的基础口（条目口）已行内渲染在条目行上，
+  // 输出列只补附加段（存量附加口不消失）；没附加口就不渲染整列
+  let start = 0;
+  if (node.kind === 'source' && !_sourceIsLegacyNode(node)) {
+    start = ports.length;
+    if (count <= start && !canAddPort) return '';
+  }
   if (count <= 0 && !canAddPort) return '';
   let html = '<div class="graph-port-col graph-output-col">';
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
-  for (let i = 0; i < count; i++) {
+  for (let i = start; i < count; i++) {
     // T266：匿名附加输出口的「待命名」态——未连线空白，连线后采用目标输入口的
     // 名字与内容类型（_adoptedOutputPortMeta 从 graphView.edges 现算，断开即回空白）；
     // 基本口（ports[i] 有值）一律保持建点时定死的身份，不参与
@@ -771,6 +794,10 @@ function _customNodeStatusText(node) {
     return node.status === 'applied' ? '已采纳' : '待采纳';
   }
   if (node.kind === 'source') {
+    // 素材篮（2026-10-22）：新数据按条目数报状态；旧数据保持「已解析/待解析」
+    if (!_sourceIsLegacyNode(node)) {
+      return node.items && node.items.length ? node.items.length + ' 条' : '待输入';
+    }
     if (node.busy || node.status === 'running') return '解析中';
     return node.items && node.items.length ? '已解析' : '待解析';
   }
@@ -845,25 +872,45 @@ function _customNodeHeaderHtml(node, attr, extraButtons) {
     + '</div>';
 }
 
+// 输入节点（素材篮，2026-10-22 重做）：新数据＝条目行列表（每行行内一枚条目口，
+// out-i ↔ items[i]）＋底部入口区＋图片自动转文字开关；旧数据（items 是知识点
+// 形状）走只读分支——文件名 + N 个知识点 + 保留「AI 整理关系」，不渲染条目行、
+// 不提供任何写入口。条目口的 DOM 属性与独立输出列同构（data-node-id/data-port-id
+// 等），边锚点与拖拽命中全靠这两个属性，位置随意（计划风险 1）。
 function _renderSourceNodeHtml(node, state) {
   const attr = _nodeAttribute(node);
   const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
   const minimizedClass = node.minimized ? ' minimized' : '';
   const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
-  const fileName = node.fileName ? '<div class="graph-source-filename">' + escapeHtml(node.fileName) + '</div>' : '';
-  const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
-  // T69：折叠卡不建表单/内容子树，展开时整卡重建
-  const body = node.minimized ? _minimizedBodyHtml() : (node.busy
-    ? '<div class="graph-source-busy"><span class="graph-source-spinner"></span>正在解析文件...</div>'
-    : '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
-      + '<label class="graph-source-file-btn">选择/拖入文件<input type="file" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
-      + '<textarea class="graph-source-text-input" rows="2" placeholder="或直接粘贴文本/题目/讲义内容..."></textarea>'
-      + '<button type="button" class="graph-source-paste-btn" onclick="pasteSourceNodeText(\'' + node.id + '\')">粘贴文本解析</button>'
-      + '<div class="graph-source-controls"><label>最多 <input type="number" class="graph-source-max-input" min="1" max="50" value="' + (node.maxItems || 5) + '" onchange="updateSourceNodeMax(\'' + node.id + '\',this.value)"></label>'
-      + (node.fileId ? _iconRegenButton('reparseSourceNode(\'' + node.id + '\')', '重新解析', false) : '')
+  const legacy = _sourceIsLegacyNode(node);
+  let body;
+  if (node.minimized) {
+    body = _minimizedBodyHtml();
+  } else if (legacy) {
+    const fileName = node.fileName ? '<div class="graph-source-filename">' + escapeHtml(node.fileName) + '</div>' : '';
+    const itemCount = node.items && node.items.length ? '<div class="graph-source-count">' + node.items.length + ' 个知识点</div>' : '';
+    body = '<div class="graph-source-body graph-source-legacy">'
+      + fileName + itemCount
       + (node.items && node.items.length ? '<button type="button" class="graph-source-organize-btn" onclick="openHarnessOrganizeRelations(\'' + node.id + '\')">🤖 AI 整理关系</button>' : '')
-      + '</div>' + fileName + itemCount
-      + '</div>');
+      + '<div class="graph-source-legacy-hint">旧版输入节点（已停止解析，只读保留）</div>'
+      + '</div>';
+  } else {
+    const items = Array.isArray(node.items) ? node.items : [];
+    const ocrOn = node.ocrOn !== false;
+    const rows = items.map((item, index) => _renderSourceItemRow(node, attr, item, index)).join('');
+    body = '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
+      + '<label class="graph-source-ocr-toggle"><input type="checkbox"' + (ocrOn ? ' checked' : '') + ' onchange="toggleSourceOcr(\'' + node.id + '\',this.checked)"><span>图片自动转文字</span></label>'
+      + (items.length ? '<div class="graph-source-list">' + rows + '</div>' : '<div class="graph-source-empty">还没有素材：粘贴文字 / 拖入图片或文件</div>')
+      + '<div class="graph-source-add">'
+      + '<textarea class="graph-source-text-input" rows="2" placeholder="粘贴文字，或 Ctrl+V 直接粘贴截图" onpaste="handleSourcePaste(event,\'' + node.id + '\')"></textarea>'
+      + '<div class="graph-source-add-actions">'
+      + '<button type="button" class="graph-source-add-btn" onclick="addSourceTextFromCard(\'' + node.id + '\')">加入</button>'
+      + '<label class="graph-source-file-btn">选择文件<input type="file" multiple class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
+      + '<label class="graph-source-file-btn">选择图片<input type="file" multiple accept="image/*" class="graph-source-file-input" onchange="handleSourceNodeFile(this,\'' + node.id + '\')"></label>'
+      + '</div></div>'
+      + '<div class="graph-source-drop-hint">拖文件到此处 · Ctrl+V 可粘贴截图 · 每条素材一个出口</div>'
+      + '</div>';
+  }
   return '<div class="graph-node graph-node-source graph-attr-source' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
@@ -873,6 +920,52 @@ function _renderSourceNodeHtml(node, state) {
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
     + _renderOutputPorts(node, [], state || _graphState())
+    + '</div>';
+}
+
+function _fmtSourceSize(size) {
+  const n = Number(size) || 0;
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + 'MB';
+  if (n >= 1024) return (n / 1024).toFixed(0) + 'KB';
+  return n + 'B';
+}
+
+// 条目行：类型图标 + 名字 + 元信息（字数/大小/OCR 状态）+ 操作 + 行内条目口。
+// 端口属性与独立输出列同构（_startLinkDrag 全靠 dataset），type 留空
+function _renderSourceItemRow(node, attr, item, index) {
+  if (!item || !item.kind) return '';
+  const icon = item.kind === 'image' ? '🖼' : (item.kind === 'text' ? '📝' : '📄');
+  const metaBits = [];
+  if (item.kind === 'image') {
+    metaBits.push(_sourceOcrStatusText(item) || '未转写');
+    if (item.ocr && item.ocr.engine && item.ocr.status === 'done') metaBits.push(item.ocr.engine);
+  } else {
+    metaBits.push((item.chars || String(item.text || '').length || 0) + ' 字' + (item.truncated ? '（已截断）' : ''));
+  }
+  if (item.size) metaBits.push(_fmtSourceSize(item.size));
+  const name = item.name || ('素材 ' + (index + 1));
+  const ocrFailed = item.kind === 'image' && item.ocr && item.ocr.status === 'failed';
+  const portTitle = '素材口「' + name + '」：拖到输入端口连线（下游只取这条素材），拖到空处打开节点菜单';
+  return '<div class="graph-source-row' + (ocrFailed ? ' graph-source-row-ocr-failed' : '') + '">'
+    + '<span class="graph-source-row-icon">' + icon + '</span>'
+    + '<span class="graph-source-row-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>'
+    + '<span class="graph-source-row-meta">' + escapeHtml(metaBits.join(' · ')) + '</span>'
+    + '<span class="graph-source-row-actions">'
+    + '<button type="button" title="查看/编辑文本" onclick="event.stopPropagation();openSourceItemModal(\'' + node.id + '\',\'' + item.id + '\')">查看</button>'
+    + '<button type="button" title="改名" onclick="event.stopPropagation();renameSourceItem(\'' + node.id + '\',\'' + item.id + '\')">改名</button>'
+    + '<button type="button" title="删除素材（连线随之重排）" onclick="event.stopPropagation();deleteSourceItem(\'' + node.id + '\',\'' + item.id + '\')">删除</button>'
+    + '</span>'
+    + '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + node.id + '" data-port-id="out-' + index + '"'
+    + ' data-port-type=""'
+    + ' data-port-branch="followup"'
+    + ' data-attribute="source"'
+    + ' data-port-question=""'
+    + ' data-port-label="' + encodeURIComponent(name) + '"'
+    + ' data-port-item="' + encodeURIComponent(JSON.stringify(item)) + '"'
+    + ' style="--port-color:' + attr.color + ';"'
+    + ' title="' + escapeHtml(portTitle) + '">'
+    + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(name) + '</span>'
+    + '</span>'
     + '</div>';
 }
 

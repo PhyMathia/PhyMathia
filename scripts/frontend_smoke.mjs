@@ -81,6 +81,7 @@ import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs'
 import { run as _graph_branch_workflow } from './frontend_smoke/graph-branch-workflow.mjs';
 import { run as _graph_scope_confirm } from './frontend_smoke/graph-scope-confirm.mjs';
 import { run as _workshop } from './frontend_smoke/workshop.mjs';
+import { run as _serial_source_input } from './frontend_smoke/serial-source-input.mjs';
 
 _recipes();
 _phi();
@@ -103,6 +104,7 @@ await _serial_quiz_opt();
 _demo_tuning();
 _theme_wallpaper();
 _serial_draft();
+await _serial_source_input();
 _notes_export();
 await _profile_implicit();
 await _accounts_trash();

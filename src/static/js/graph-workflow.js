@@ -2207,13 +2207,11 @@ window.deleteCustomNode = deleteCustomNode;
 
 window.updateCustomNodeContent = updateCustomNodeContent;
 
-window.updateSourceNodeMax = updateSourceNodeMax;
 
 window.handleSourceNodeFile = handleSourceNodeFile;
 
 window.handleSourceNodeDrop = handleSourceNodeDrop;
 
-window.reparseSourceNode = reparseSourceNode;
 
 window.generateKnowledgeNode = generateKnowledgeNode;
 

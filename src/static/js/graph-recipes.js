@@ -21,7 +21,7 @@ const BUILTIN_RECIPES = [
   { key: 'answer', kind: 'answer', label: '问题分析', color: 'var(--node-answer)', group: 'ai', desc: '问题分析节点（含概要，回答内容拆到各模块）' },
   { key: 'summary', kind: 'summary', label: 'AI 总结', color: 'var(--node-summary)', group: 'ai', desc: 'AI 生成总结' },
   // —— 素材组（data）——
-  { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '导入文件/文本，解析出知识点' },
+  { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '粘贴文字/图片/文件，每条素材一个出口' },
   { key: 'knowledge', kind: 'knowledge', label: '知识点', color: 'var(--node-knowledge)', group: 'data', desc: '手动记录一个知识点' },
   { key: 'question', kind: 'user', label: '问题', color: 'var(--node-question)', group: 'data', desc: '提问节点，可接问题分析' },
   // —— 人工组（human）——

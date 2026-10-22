@@ -7426,3 +7426,204 @@ g.graph-edge-link > circle.graph-curve-knob-hit {
   flex: 1;
   min-width: 0;
 }
+
+/* ===== 输入节点（素材篮，2026-10-22 重做）=====
+   条目行列表：每行 = 类型图标 + 名字 + 元信息 + 操作 + 行内条目口（out-i ↔ items[i]，
+   端口绝对定位贴右边缘，边锚点/拖拽命中只认 data-node-id/data-port-id）。
+   节点右 padding 留够 18px 给行内端口外探，端口定位规则必须带 !important
+   （.graph-port 的 position:relative!important 先加载，同特异性下后者胜）。 */
+.graph-source-ocr-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.graph-source-ocr-toggle input {
+  accent-color: var(--accent, #22d3ee);
+  margin: 0;
+}
+
+.graph-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.graph-source-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 24px 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: var(--fs-sm);
+}
+
+.graph-source-row-icon {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.graph-source-row-name {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42%;
+  flex-shrink: 1;
+}
+
+.graph-source-row-meta {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.graph-source-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.graph-source-row-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.graph-source-row-actions button:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.graph-source-row-ocr-failed .graph-source-row-meta {
+  color: var(--warn);
+}
+
+/* 行内条目口只露圆点：素材名已在行内明示，端口 label 再来一份只会与
+   「查看/改名/删除」按钮重叠（真机几何断言实锤）；完整名挂 title 上 */
+.graph-source-row-port {
+  position: absolute !important;
+  right: -18px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  padding-right: 0 !important;
+  width: 14px !important;
+}
+
+.graph-source-row-port .graph-port-label {
+  display: none !important;
+}
+
+.graph-source-empty {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  text-align: center;
+  padding: 10px 4px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+}
+
+.graph-source-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.graph-source-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.graph-source-add-btn {
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent, #22d3ee);
+  color: #06121f;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.graph-source-add-btn:hover {
+  filter: brightness(1.08);
+}
+
+.graph-source-add .graph-source-file-btn {
+  padding: 6px 10px;
+}
+
+.graph-source-drop-hint {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-align: center;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.graph-source-legacy {
+  gap: 6px;
+}
+
+.graph-source-legacy-hint {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  opacity: 0.8;
+}
+
+.graph-source-item-meta {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  padding: 2px 0 8px;
+  word-break: break-all;
+}
+
+#sourceItemText {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-container, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+}
+
+.graph-source-ocr-retry {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.graph-source-ocr-retry:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

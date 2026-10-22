@@ -615,6 +615,14 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   // T272：junction 的单出口是基础口（恒在出口表内，附加口判定够不着），但它没有
   // 自己的拖出目标——拖空同样开添加节点面板（挂起连线同款），选中后自动接回本口；
   // 过去落到默认草稿路径建 draft 提问卡，从中继往外再接一个中转凭空多两步。
+  // 素材篮条目口（2026-10-22 重做）：type 留空、身份=素材本身，拖空与待命名口
+  // 同款打开添加节点面板自选（选中后经挂起连线自动接回本口）；旧知识点条目口
+  // type='knowledge'，不进此分支（后面直建知识点，旧快捷方式不失效）
+  if (sourceNode.kind === 'source' && portMeta.item && portMeta.item.kind) {
+    openAddBlankNodeModal(x, y);
+    addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
+    return;
+  }
   if (label === '待命名' || isAdditionalPort || sourceNode.kind === 'junction') {
     openAddBlankNodeModal(x, y);
     addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };

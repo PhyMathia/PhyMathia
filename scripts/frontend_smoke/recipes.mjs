@@ -1909,7 +1909,7 @@ check('T272：junction 输出口拖空开添加节点面板（挂起连线同款
 // T273：hub 的"内容"＝上游拼接，原先作为集合点进清单＝每篇上游在提示词里两遍
 // （token 浪费＋模型可能重复引用）。与 junction 同口径：全祖先清单与单父链都穿透。
 check('T273：hub 在上游清单/单父链透明——去双写', () => {
-  const s1 = { id: 's1', kind: 'source', content: '输入甲', messageIndex: -1, timestamp: 1 };
+  const s1 = { id: 's1', kind: 'source', content: '输入甲', items: [{ title: '旧条目' }], messageIndex: -1, timestamp: 1 };
   const s2 = { id: 's2', kind: 'knowledge', content: '知识点乙', messageIndex: -1, timestamp: 2 };
   const hub = { id: 'h1', kind: 'hub', messageIndex: -1, timestamp: 3 };
   const sum = { id: 't1', kind: 'summary', messageIndex: -1, timestamp: 4 };

@@ -223,8 +223,19 @@
           label: _nodeLabel(node).slice(0, 80),
           content: (isFocus ? _harnessNodeContent(node) : _harnessNodeContent(node).slice(0, 80)).slice(0, 600),
           formula: isFocus ? String(node.formula || '').slice(0, 200) : '',
+          // 素材篮（2026-10-22）：新条目给 {name, kind, chars, text≤600}——Φ 要能
+          // 看出「这条叫什么、多长、是不是图片」；旧条目（知识点形状）继续给
+          // title/summary/formulas，旧快照口径不变
           items: node.kind === 'source' && Array.isArray(node.items)
             ? node.items.slice(0, 20).map(function (it) {
+              if (it && it.kind) {
+                return {
+                  name: String(it.name || '').slice(0, 80),
+                  kind: String(it.kind || ''),
+                  chars: Number(it.chars) || String(it.text || '').length || 0,
+                  text: String(it.text || '').slice(0, 600),
+                };
+              }
               return {
                 title: String(it.title || it.label || '').slice(0, 80),
                 summary: String(it.summary || '').slice(0, 200),
