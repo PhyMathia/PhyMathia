@@ -68,13 +68,14 @@ logs/
 *.f4v
 *.rmvb
 *.vob
-
+/archive/
 # 归档文件
 *.iso
 *.dmg
 *.rar
 *.zip
 *.gz
+
 
 # 文档类也默认加入
 *.pdf
