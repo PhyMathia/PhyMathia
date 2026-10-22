@@ -202,6 +202,39 @@ export async function run() {
     return true;
   });
 
+  check('节点工坊：空白进来默认一句话档，切手动调不丢草稿', () => {
+    resetWorkshop(true);
+    sandbox.openRecipeWorkshop({});
+    if (state().mode !== 'smart') throw new Error('空白进来应默认一句话档，实际 ' + state().mode);
+    sandbox.rwSetMode('manual');
+    if (state().mode !== 'manual') throw new Error('切手动档失败');
+    sandbox.rwEditName('模式切换测试');
+    sandbox.rwSetMode('smart');
+    if (state().mode !== 'smart') throw new Error('切回一句话档失败');
+    if (state().recipe.name !== '模式切换测试') throw new Error('切档把正在改的草稿弄丢了');
+    sandbox.rwSetMode('manual');
+    if (state().recipe.name !== '模式切换测试') throw new Error('手动档没有接上同一份草稿');
+    // 下游串行段沿用「受力分析」这份草稿，这里把名字还回去，别让模式用例把后面的断言带偏
+    sandbox.rwEditName('受力分析');
+    return true;
+  });
+
+  check('节点工坊：外观回归契约——预览卡不进滚动层、中栏不出横向滚动条、一句话档在', () => {
+    const src = fs.readFileSync('src/static/js/graph-workshop.js', 'utf8');
+    // 卡片必须在 rw-scroll 之外（2026-10-22：sticky 卡片把「名字」一行压在底下、字被渐变洗白）
+    const cardAt = src.indexOf("'<div class=\"rw-card\" id=\"rwCard\"></div>'");
+    const scrollAt = src.indexOf("'<div class=\"rw-scroll\" id=\"rwScroll\">'");
+    if (cardAt < 0 || scrollAt < 0) throw new Error('壳结构被改了：找不到 rwCard / rwScroll 的静态片段');
+    if (cardAt > scrollAt) throw new Error('预览卡又回到滚动层里了（会盖住字段）');
+    const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+    if (/\.rw-card\s*\{[^}]*position:\s*sticky/.test(css)) throw new Error('.rw-card 又写成 sticky 了（会浮在字段上面）');
+    if (!/\.rw-scroll\s*\{[^}]*overflow-x:\s*hidden/.test(css)) throw new Error('.rw-scroll 缺 overflow-x: hidden（中栏会长出横向滚动条）');
+    if (!/\.rw-smart\s*\{/.test(css)) throw new Error('一句话档的样式丢了（.rw-smart）');
+    if (!/\.rw-shell\[data-mode="smart"\]\s+\.rw-body\s*\{\s*display:\s*none/.test(css)) throw new Error('两档切换规则丢了（data-mode=smart 时不该再显示三栏）');
+    if (typeof sandbox.rwSmartGenerate !== 'function' || typeof sandbox.rwSetMode !== 'function') throw new Error('一句话档的入口没导出到 window');
+    return true;
+  });
+
   // ---- 串行段：补丁往返 → 撤回 → 入册（同一份草稿状态，必须按序）----
   const originalFetch = sandbox.fetch;
   const originalModel = sandbox.getActiveModelForRole;
@@ -312,6 +345,58 @@ export async function run() {
       const errors = state().fieldErrors || [];
       if (!errors.some(item => item.field === 'name')) throw new Error('重名错误应挂在名字上');
       return true;
+    }],
+    ['一句话档：第一句整份起草，第二句走补丁（同一份草稿）', async () => {
+      const prevFetch = sandbox.fetch;
+      try {
+        resetWorkshop(false);
+        sandbox.openRecipeWorkshop({});
+        state().smartInstruction = '做一个受力分析节点，喂一道题和受力图，出口给换个条件';
+        const firstRecipe = {
+          id: 'recipe-smart-' + Date.now(), name: '智能档测试节点', desc: '喂题和图，拆受力与方程',
+          base: { kind: 'module' },
+          ports: { inputs: [{ label: '题目', type: 'text' }], static: [{ label: '换个条件', drag_form: 'draft' }] },
+          generate: { prompt: '你在做受力分析：先研究对象，再列方程。' },
+          appearance: { palette: 'blue' }, content_kind: 'markdown',
+        };
+        let sent = null;
+        sandbox.fetch = async (url, init) => {
+          sent = JSON.parse(init.body);
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              status: 'ok', say: '配好了：喂题目，出口「换个条件」', mode: sent.mode, recipe: firstRecipe,
+              changed: [], question: null, warnings: [], field_errors: [],
+            }),
+          };
+        };
+        await sandbox.rwSmartGenerate();
+        if (!state().smartDone) throw new Error('生成成功后应进入「已配好」状态');
+        if (sent.mode !== 'draft') throw new Error('第一句应从零起草（draft），实际 ' + sent.mode);
+        if (state().recipe.name !== '智能档测试节点') throw new Error('模型给的配方没进草稿');
+        if (!state().smartSay) throw new Error('应记下模型那句人话说明');
+        const secondRecipe = JSON.parse(JSON.stringify(state().recipe));
+        secondRecipe.ports.static.push({ label: '解释假设', drag_form: 'draft' });
+        state().smartInstruction = '出口再加一个解释假设';
+        sandbox.fetch = async (url, init) => {
+          sent = JSON.parse(init.body);
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              status: 'ok', say: '加了一个出口', mode: 'patch', recipe: secondRecipe,
+              changed: ['ports.static[1].label'], question: null, warnings: [], field_errors: [],
+            }),
+          };
+        };
+        await sandbox.rwSmartGenerate();
+        if (sent.mode !== 'patch') throw new Error('第二轮应走补丁（patch），实际 ' + sent.mode);
+        if (!sent.draft || sent.draft.name !== '智能档测试节点') throw new Error('补丁请求没带上当前草稿');
+        if (!state().recipe.ports.static.some(port => port.label === '解释假设')) throw new Error('补丁没合进草稿');
+        return true;
+      } finally {
+        sandbox.fetch = prevFetch;
+        resetWorkshop(true);
+      }
     }],
   ];
 

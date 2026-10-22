@@ -5437,9 +5437,18 @@
   z-index: var(--z-panel-top);
   display: grid;
   place-items: center;
-  padding: 20px;
+  /* 2026-10-22 用户反馈「上面的东西一直压在最上面」：遮罩只留一层薄边，工作台几乎铺满
+     视口；磨砂把顶栏糊成背景，不再出现「页面顶栏露出半截压在弹窗上」的观感。 */
+  padding: clamp(6px, 1.4vh, 14px);
   background: var(--overlay-bg);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
+  backdrop-filter: blur(10px) saturate(1.04);
   animation: rwFadeIn var(--dur-base) var(--ease-out);
+}
+
+/* 不支持 backdrop-filter 时把遮罩加厚，顶栏同样只剩一团底色 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .rw-overlay { background: color-mix(in srgb, var(--overlay-bg) 72%, #000 28%); }
 }
 
 .rw-overlay[hidden] { display: none; }
@@ -5447,8 +5456,11 @@
 @keyframes rwFadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .rw-shell {
-  width: min(1360px, 96vw);
-  height: min(880px, 90vh);
+  /* 100% 而不是 96vw/90vh：壳的高度永远不超过遮罩的可用区，窄屏/小窗也不会把
+     左下角输入框挤出壳外（2026-10-22 用户截图里的「左下角白块被裁」）。 */
+  width: min(1680px, 100%);
+  height: min(1000px, 100%);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -5481,6 +5493,39 @@
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 10px var(--accent);
+}
+
+/* 两档开关：一句话（默认）/ 手动调。整颗胶囊走输入底＋活动底两种既有令牌。 */
+.rw-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--input-bg);
+  flex: 0 0 auto;
+}
+
+.rw-mode-btn {
+  padding: 3px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.rw-mode-btn:hover { color: var(--text-primary); }
+.rw-mode-btn.current {
+  background: var(--btn-active-bg);
+  border-color: var(--btn-active-border);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .rw-steps {
@@ -5538,7 +5583,9 @@
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
   min-height: 0;
+  min-width: 0;
   flex: 1;
+  overflow: hidden;   /* 三栏各自的滚动层收口，任何一栏都不许把壳撑破 */
 }
 
 .rw-chat,
@@ -5571,6 +5618,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -5632,13 +5681,18 @@
 .rw-chat-input {
   display: flex;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   align-items: flex-end;
+  flex: 0 0 auto;            /* 底栏永远完整显示：不许被聊天记录挤到壳外 */
+  min-width: 0;
 }
 
+.rw-chat-input .rw-btn { flex: 0 0 auto; }
+
 .rw-chat-input textarea {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 42px;
   max-height: 120px;
   resize: none;
@@ -5684,7 +5738,12 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 16px 8px;
+  /* 只滚竖轴：中栏任何一行都不许长出横向滚动条（2026-10-22 用户截图里左下角那条
+     粉色小横条就是它——被「长相」的色点压着，看着像一块不明物）。 */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 4px 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -5692,7 +5751,15 @@
   scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.rw-card { position: sticky; top: 0; z-index: 2; padding-bottom: 8px; background: linear-gradient(180deg, var(--panel-bg) 78%, transparent); }
+/* 预览卡是 stage 的页眉，不在滚动层里：卡片永远不盖字段，字段也不会从卡片底下穿过。
+   （旧版 sticky + 半透明渐变会把「名字」一行洗成灰字，用户以为被东西压住了） */
+.rw-card {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
 
 .rw-nodecard {
   border: 1px solid var(--border);
@@ -5730,14 +5797,32 @@
   color: var(--text-secondary);
   font-size: var(--fs-2xs);
 }
-.rw-card-saved { margin-left: auto; font-size: var(--fs-2xs); color: var(--accent); }
+.rw-card-saved { font-size: var(--fs-2xs); color: var(--accent); }
+.rw-card-fold {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.rw-card-fold:hover { color: var(--text-primary); border-color: var(--accent); }
+.rw-nodecard-mini { flex-direction: row; align-items: center; padding: 8px 12px; gap: 8px; }
+.rw-nodecard-mini .rw-card-top { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; gap: 6px; }
+.rw-nodecard-mini .rw-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rw-card-desc { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; }
 .rw-card-ports { display: flex; flex-direction: column; gap: 6px; }
 .rw-card-port-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--fs-2xs); }
 .rw-port-title { color: var(--text-secondary); min-width: 2em; }
 .rw-card-face { display: flex; align-items: center; gap: 6px; }
 
-.rw-fields { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; }
+.rw-fields { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; min-width: 0; }
 
 .rw-group {
   padding: 8px 10px;
@@ -5791,12 +5876,14 @@
 
 .rw-port-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 116px 116px 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 116px) minmax(0, 116px) 28px;
   gap: 6px;
   align-items: center;
+  min-width: 0;
 }
+.rw-port-row > * { min-width: 0; }
 .rw-port-row .rw-select { font-size: var(--fs-2xs); padding: 6px; }
-.rw-port-row:has(.rw-port-label) { grid-template-columns: minmax(0, 1fr) 116px 116px 28px; }
+.rw-port-row:has(.rw-port-label) { grid-template-columns: minmax(0, 1fr) minmax(0, 116px) minmax(0, 116px) 28px; }
 .rw-port-remove {
   width: 26px;
   height: 26px;
@@ -5822,7 +5909,8 @@
 .rw-port-limit { font-size: var(--fs-2xs); color: var(--text-secondary); }
 
 .rw-dyn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--fs-xs); color: var(--text-secondary); }
-.rw-dyn-body { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: center; }
+.rw-dyn-body { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: center; min-width: 0; }
+.rw-dyn-body > * { min-width: 0; }
 .rw-sub { font-size: var(--fs-2xs); color: var(--text-secondary); }
 
 .rw-face-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -5896,6 +5984,102 @@
 .rw-quickfix { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
 .rw-quickfix-title { font-size: var(--fs-2xs); color: var(--text-secondary); }
 
+/* ---- 一句话档（2026-10-22）----
+   智能档不渲染三栏：整块面板只留「说一句 → 看结果 → 放到画布」。
+   两档共用同一份草稿，切换不丢内容（data-mode 只看显示哪一块）。 */
+.rw-shell[data-mode="smart"] .rw-body { display: none; }
+.rw-shell[data-mode="smart"] .rw-steps { display: none; }
+.rw-shell[data-mode="manual"] .rw-smart { display: none; }
+
+.rw-smart {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: clamp(18px, 4.5vh, 52px) 20px 32px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.rw-smart-inner {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rw-smart-hero { display: flex; flex-direction: column; gap: 8px; }
+.rw-smart-kicker {
+  align-self: flex-start;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+  letter-spacing: .3px;
+}
+.rw-smart-title { margin: 0; font-size: clamp(20px, 2.2vw, 28px); font-weight: 700; letter-spacing: .01em; }
+.rw-smart-sub { margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.7; }
+
+.rw-smart-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--input-bg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .06);
+}
+.rw-smart-box textarea {
+  width: 100%;
+  min-height: 92px;
+  max-height: 240px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+.rw-smart-box textarea:focus { outline: none; border-color: var(--accent); }
+.rw-smart-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rw-smart-hint { color: var(--text-secondary); font-size: var(--fs-2xs); }
+.rw-smart-go { margin-left: auto; padding: 8px 22px; font-size: var(--fs-sm); }
+
+.rw-smart-examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-smart-error {
+  padding: 9px 12px;
+  border: 1px solid var(--danger-fg);
+  border-radius: var(--r-md);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+.rw-smart-error[hidden] { display: none; }
+.rw-smart-empty { padding: 6px 2px; color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.7; }
+.rw-smart-result { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rw-smart-preview { display: flex; min-width: 0; }
+.rw-smart-preview .rw-nodecard { width: 100%; min-width: 0; }
+.rw-smart-say { font-size: var(--fs-sm); line-height: 1.7; color: var(--text-primary); }
+.rw-smart-question {
+  padding: 9px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+.rw-smart-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-smart-actions .rw-btn { padding: 8px 16px; font-size: var(--fs-sm); }
+.rw-smart-note { color: var(--text-secondary); font-size: var(--fs-2xs); }
+
 /* ---- 通用按钮 ---- */
 .rw-btn {
   padding: 6px 12px;
@@ -5935,12 +6119,21 @@
 
 /* 窄屏：单栏堆叠（工作台仍可点，只是不再三栏并排） */
 @media (max-width: 1080px) {
-  .rw-overlay { padding: 8px; }
-  .rw-shell { width: 100%; height: 94vh; }
-  .rw-body { grid-template-columns: 1fr; grid-auto-rows: minmax(0, auto); overflow-y: auto; }
+  .rw-overlay { padding: 4px; }
+  .rw-shell { width: 100%; height: 100%; border-radius: var(--r-lg); }
+  .rw-smart { padding: 18px 14px 26px; }
+  .rw-smart-go { width: 100%; margin-left: 0; }
+  /* auto 而不是 minmax(0, auto)：中栏有 min-height，行高必须跟着内容长，
+     否则三行被均分、中栏溢出自己的行去压住「试跑」（2026-10-22 窄屏实测） */
+  .rw-body { grid-template-columns: 1fr; grid-auto-rows: auto; align-content: start; overflow-y: auto; }
   .rw-chat, .rw-run, .rw-stage { border: 0; border-bottom: 1px solid var(--border); }
-  .rw-chat { max-height: 34vh; }
-  .rw-run { max-height: 46vh; }
+  /* 单列堆叠：三栏各自给一个确定高度、整页滚动。auto 行 + 容器定高会把
+     左右两栏压成一条（横着排时它们是 flex 列，min-height:0 让内容可缩），
+     中栏也会溢出自己的行去压住「试跑」——2026-10-22 窄屏实测。 */
+  .rw-chat { height: 34vh; max-height: 320px; }
+  .rw-run { height: 46vh; max-height: 420px; }
+  .rw-stage { height: 64vh; min-height: 420px; }
+  .rw-scroll { min-height: 240px; }
   .rw-port-row { grid-template-columns: minmax(0, 1fr) 96px; }
   .rw-dyn-body { grid-template-columns: auto minmax(0, 1fr); }
 }

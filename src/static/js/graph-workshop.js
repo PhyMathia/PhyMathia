@@ -107,6 +107,8 @@ function _rwSaveDraftNow() {
       origin: recipeWorkshop.origin,
       conversation: recipeWorkshop.conversation.slice(-RECIPE_WORKSHOP_HISTORY_LIMIT),
       runs: recipeWorkshop.runs.slice(-3),
+      // 界面档位跟着草稿走：刷新后还在「一句话」或「手动调」，预览卡的收起状态也不跳
+      ui: { mode: recipeWorkshop.mode || 'smart', cardCollapsed: !!recipeWorkshop.cardCollapsed },
       savedAt: Date.now(),
     }));
   } catch (e) { /* 本地写失败：草稿只在内存里，不影响继续编辑 */ }
@@ -124,6 +126,7 @@ function _rwReadDraft() {
       origin: String(data.origin || 'new'),
       conversation: Array.isArray(data.conversation) ? data.conversation : [],
       runs: Array.isArray(data.runs) ? data.runs : [],
+      ui: (data.ui && typeof data.ui === 'object') ? data.ui : {},
     };
   } catch (e) { return null; }
 }
@@ -306,9 +309,14 @@ function _rwEnsureShell() {
   overlay.id = 'recipeWorkshop';
   overlay.className = 'rw-overlay';
   overlay.setAttribute('hidden', '');
-  overlay.innerHTML = '<div class="rw-shell aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-label="节点工坊">'
+  overlay.innerHTML = '<div class="rw-shell aurora-glass aurora-glass--dialog" role="dialog" aria-modal="true" aria-label="节点工坊" data-mode="smart">'
     + '<header class="rw-head">'
     + '<div class="rw-brand"><span class="rw-brand-dot" aria-hidden="true"></span><span>节点工坊</span></div>'
+    // 两档：一句话（模型配好整份配方）/ 手动调（三栏工作台逐项改）。同一份草稿、同一条起草通道。
+    + '<div class="rw-mode-switch" id="rwModeSwitch" role="tablist" aria-label="创作方式">'
+    + '<button type="button" class="rw-mode-btn" data-rw-mode="smart" role="tab" aria-selected="true" onclick="rwSetMode(\'smart\')" title="说一句话，名字、材料口、出口、颜色和生成要求由模型一起配好">✦ 一句话</button>'
+    + '<button type="button" class="rw-mode-btn" data-rw-mode="manual" role="tab" aria-selected="false" onclick="rwSetMode(\'manual\')" title="逐项自己调，适合改已有节点或精修每个字段">手动调</button>'
+    + '</div>'
     + '<ol class="rw-steps" id="rwSteps"></ol>'
     + '<div class="rw-head-actions">'
     + '<span class="rw-head-status" id="rwHeadStatus"></span>'
@@ -326,10 +334,11 @@ function _rwEnsureShell() {
     + '</div>'
     + '</aside>'
     + '<main class="rw-stage" aria-label="节点卡与字段">'
-    // 卡片与字段单独一层滚动：保存条必须是它下面的固定页脚，不能 sticky 盖在字段上
-    // （2026-10-20 真机：sticky 版把「自动出口」一行压在按钮底下）
-    + '<div class="rw-scroll" id="rwScroll">'
+    // 预览卡是这一栏的页眉，不在滚动区里：卡片永远不压字段，字段只在自己的滚动层走。
+    // （2026-10-20 修过一次保存条 sticky 压按钮；2026-10-22 用户反馈卡片 sticky 把
+    //  「名字」一行压在底下、字被渐变洗白——这次彻底把卡片挪出滚动流）
     + '<div class="rw-card" id="rwCard"></div>'
+    + '<div class="rw-scroll" id="rwScroll">'
     + '<div class="rw-fields" id="rwFields"></div>'
     + '</div>'
     + '<div class="rw-savebar" id="rwSaveBar"></div>'
@@ -341,6 +350,25 @@ function _rwEnsureShell() {
     + '<div class="rw-output" id="rwOutput"></div>'
     + '</aside>'
     + '</div>'
+    + '<section class="rw-smart" id="rwSmart" aria-label="一句话创造">'
+    + '<div class="rw-smart-inner">'
+    + '<div class="rw-smart-hero">'
+    + '<div class="rw-smart-kicker">✦ 一句话创造</div>'
+    + '<h2 class="rw-smart-title">想要一个什么节点？说一句就行</h2>'
+    + '<p class="rw-smart-sub">不用填表：说清「喂什么 · 要它干什么 · 吐什么」，Φ 会把名字、材料口、出口、颜色和生成要求一起配好。先给你看结果，满意再放到画布；想逐项改就切右上角「手动调」。</p>'
+    + '</div>'
+    + '<div class="rw-smart-box">'
+    + '<textarea id="rwSmartInput" rows="3" placeholder="比如：做一个受力分析节点，喂一道题和受力图，输出研究对象、受力、方程，出口给「换个条件」和「解释假设」" oninput="rwSmartInputChanged(this.value)" onkeydown="rwSmartKey(event)"></textarea>'
+    + '<div class="rw-smart-row">'
+    + '<span class="rw-smart-hint" id="rwSmartHint"></span>'
+    + '<button type="button" class="rw-btn rw-btn-primary rw-smart-go" id="rwSmartGo" onclick="rwSmartGenerate()">生成节点</button>'
+    + '</div>'
+    + '</div>'
+    + '<div class="rw-smart-examples" id="rwSmartExamples"></div>'
+    + '<div class="rw-smart-error" id="rwSmartError" hidden></div>'
+    + '<div class="rw-smart-result" id="rwSmartResult"></div>'
+    + '</div>'
+    + '</section>'
     + '</div>';
   overlay.addEventListener('pointerdown', function (event) {
     if (event.target === overlay) closeRecipeWorkshop();
@@ -375,6 +403,13 @@ function openRecipeWorkshop(opts) {
   const seed = opts.recipe
     ? (typeof normalizeRecipeInput === 'function' ? normalizeRecipeInput(opts.recipe) : opts.recipe) || opts.recipe
     : (restored && restored.recipe) || _rwEmptyRecipe();
+  const savedUi = (restored && restored.ui) || {};
+  const seedName = String((seed && seed.name) || '').trim();
+  // 默认档位：空白进来＝一句话（新用户不用先学三栏）；从配方库/画布节点进来＝手动；
+  // 接上次草稿＝上次停在哪档。显式 opts.mode 永远优先。
+  const mode = (opts.mode === 'manual' || opts.mode === 'smart')
+    ? opts.mode
+    : (savedUi.mode || (opts.recipe || seedName ? 'manual' : 'smart'));
   recipeWorkshop = {
     recipe: JSON.parse(JSON.stringify(seed || _rwEmptyRecipe())),
     origin: String(opts.origin || (restored && restored.origin) || 'new'),
@@ -401,6 +436,14 @@ function openRecipeWorkshop(opts) {
     lastRun: null,
     outputRows: [],
     inputRows: [],
+    mode: mode,                          // smart（一句话）/ manual（手动调）
+    cardCollapsed: !!savedUi.cardCollapsed,
+    smartBusy: false,
+    smartDone: mode === 'smart' && !!seedName,   // 接草稿时直接把上次配好的结果摆出来
+    smartSay: (mode === 'smart' && seedName) ? '上次那句已经配好了，接着改或直接放到画布。' : '',
+    smartQuestion: null,
+    smartError: '',
+    smartInstruction: '',
   };
   _rwSyncRowsFromRecipe();
   _rwEnsureShell();
@@ -410,11 +453,18 @@ function openRecipeWorkshop(opts) {
     _rwPushChat('phi', '把上次没弄完的草稿接上了，接着改就行。', { silent: true });
   }
   if (opts.seedText) {
-    const input = document.getElementById('rwChatInput');
-    if (input) input.value = String(opts.seedText);
+    const chatInput = document.getElementById('rwChatInput');
+    if (chatInput) chatInput.value = String(opts.seedText);
+    recipeWorkshop.smartInstruction = String(opts.seedText);
   }
   _rwRenderAll();
-  const focusTarget = String((_rwCurrentRecipe().name || '') ? 'rwName' : 'rwChatInput');
+  const smartInput = document.getElementById('rwSmartInput');
+  if (smartInput && typeof smartInput.value === 'string') {
+    smartInput.value = String(recipeWorkshop.smartInstruction || '');
+  }
+  const focusTarget = mode === 'smart'
+    ? 'rwSmartInput'
+    : (String((_rwCurrentRecipe().name || '') ? 'rwName' : 'rwChatInput'));
   const focusEl = document.getElementById(focusTarget);
   if (focusEl && typeof focusEl.focus === 'function') focusEl.focus();
   return recipeWorkshop;
@@ -454,6 +504,7 @@ function rwOpenLegacyPreset() {
 
 // ---- 统一渲染 ----
 function _rwRenderAll() {
+  _rwRenderSmart();   // 先把壳的 data-mode 与两档状态摆正，再渲染各自的面板
   _rwRenderSteps();
   _rwRenderCard();
   _rwRenderFields();
@@ -527,7 +578,11 @@ function _rwNodeKind(recipe) {
   return base;
 }
 
-function _rwCardHtml() {
+// opts.compact：只留一行（名字/底座/已保存）——手动档把预览收起时用，给字段腾高度。
+// opts.fold：是否带「收起/展开」小按钮（默认手动档才带；一句话档的结果卡不带）。
+function _rwCardHtml(opts) {
+  opts = opts || {};
+  const compact = !!opts.compact;
   const recipe = _rwCurrentRecipe();
   const appearance = recipe.appearance || {};
   const color = (typeof recipeAppearanceColor === 'function') ? recipeAppearanceColor(appearance) : 'var(--accent)';
@@ -539,6 +594,7 @@ function _rwCardHtml() {
   const desc = String(recipe.desc || '').trim();
   const shapeClass = appearance.shape || (baseMeta.shape || 'is-round');
   const saved = recipeWorkshop && recipeWorkshop.savedName;
+  const folded = recipeWorkshop && recipeWorkshop.cardCollapsed;
   const inputChips = inputs.length
     ? inputs.map(function (port) {
         const typeLabel = (typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' && RECIPE_PORT_TYPE_LABELS[port.type]) || '';
@@ -553,13 +609,22 @@ function _rwCardHtml() {
   const flashInputs = _rwIsFlashing('ports.inputs');
   const flashOutputs = _rwIsFlashing('ports.static') || _rwIsFlashing('ports.dynamic');
   const flashFace = _rwIsFlashing('appearance');
-  return '<div class="rw-nodecard ' + _rwEsc(shapeClass) + (saved ? ' rw-nodecard-saved' : '') + '" data-rw-kind="' + _rwEsc(_rwNodeKind(recipe)) + '">'
-    + '<div class="rw-card-top">'
+  const withFold = opts.fold !== false && !!(recipeWorkshop && recipeWorkshop.mode === 'manual');
+  const foldBtn = withFold
+    ? '<button type="button" class="rw-card-fold" onclick="rwToggleCard()" aria-expanded="' + (folded ? 'false' : 'true') + '" title="' + (folded ? '展开预览' : '收起预览，给字段腾地方') + '">' + (folded ? '展开 ▾' : '收起 ▴') + '</button>'
+    : '';
+  const top = '<div class="rw-card-top">'
     + '<span class="rw-card-dot" style="background:' + color + '" aria-hidden="true"></span>'
     + '<span class="rw-card-name' + (flashName ? ' rw-flash-text' : '') + '">' + _rwEsc(name || '还没起名字') + '</span>'
     + '<span class="rw-card-badge">' + _rwEsc(String(baseMeta.label || '').split('（')[0]) + '</span>'
     + (saved ? '<span class="rw-card-saved">已保存</span>' : '')
-    + '</div>'
+    + foldBtn
+    + '</div>';
+  if (compact) {
+    return '<div class="rw-nodecard rw-nodecard-mini ' + _rwEsc(shapeClass) + (saved ? ' rw-nodecard-saved' : '') + '" data-rw-kind="' + _rwEsc(_rwNodeKind(recipe)) + '">' + top + '</div>';
+  }
+  return '<div class="rw-nodecard ' + _rwEsc(shapeClass) + (saved ? ' rw-nodecard-saved' : '') + '" data-rw-kind="' + _rwEsc(_rwNodeKind(recipe)) + '">'
+    + top
     + '<div class="rw-card-desc">' + _rwEsc(desc || '还没写它做什么——下面第二行填一句就够。') + '</div>'
     + '<div class="rw-card-ports">'
     + '<div class="rw-card-port-row' + (flashInputs ? ' rw-flash-text' : '') + '"><span class="rw-port-title">输入</span>' + inputChips + '</div>'
@@ -577,7 +642,7 @@ function _rwCardHtml() {
 function _rwRenderCard() {
   const box = document.getElementById('rwCard');
   if (!box) return;
-  box.innerHTML = _rwCardHtml();
+  box.innerHTML = _rwCardHtml({ compact: !!(recipeWorkshop && recipeWorkshop.cardCollapsed) });
 }
 
 // ---- 中栏：字段区（名字 / 它做什么 / 怎么吃材料 / 吐出什么 / 长相 / 高级）----
@@ -1701,6 +1766,208 @@ function _rwEnsurePrompt() {
   return true;
 }
 
+// ---- 一句话创造（2026-10-22）----
+// 两档共用同一份草稿、同一条 /api/harness/recipe/draft：第一次是「从零起草」，
+// 之后是补丁（再说一句＝改，不会把已经配好的东西冲掉）。手动档是这台工作台的
+// 逐项版；智能档只留「说一句 → 看结果 → 放到画布」。
+function rwSetMode(mode) {
+  if (!recipeWorkshop) return;
+  const next = String(mode || '') === 'manual' ? 'manual' : 'smart';
+  if (recipeWorkshop.mode === next) return;
+  recipeWorkshop.mode = next;
+  _rwSaveDraftSoon();
+  _rwRenderAll();
+  const target = next === 'manual'
+    ? (String(_rwCurrentRecipe().name || '').trim() ? 'rwName' : 'rwChatInput')
+    : 'rwSmartInput';
+  const el = document.getElementById(target);
+  if (el && typeof el.focus === 'function' && el.focus) el.focus();
+}
+
+// 预览卡收起：手动档字段很多，卡片收起后只留一行名字，字段区多出两百来像素
+function rwToggleCard() {
+  if (!recipeWorkshop) return;
+  recipeWorkshop.cardCollapsed = !recipeWorkshop.cardCollapsed;
+  _rwSaveDraftSoon();
+  _rwRenderCard();
+}
+
+function rwSmartInputChanged(value) {
+  if (!recipeWorkshop) return;
+  recipeWorkshop.smartInstruction = String(value == null ? '' : value);
+}
+
+function rwSmartKey(event) {
+  if (!event || event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  rwSmartGenerate();
+}
+
+function rwSmartUseExample(key) {
+  const item = RECIPE_WORKSHOP_EXAMPLES.filter(function (entry) { return entry.key === String(key); })[0];
+  if (!item || !recipeWorkshop) return;
+  const input = document.getElementById('rwSmartInput');
+  if (input) input.value = item.brief;
+  recipeWorkshop.smartInstruction = item.brief;
+  rwSmartGenerate();
+}
+
+function _rwSmartModelLabel() {
+  const model = _rwModel();
+  return model ? ('用 ' + String(model.model || '当前主模型') + ' 来配') : '还没配主模型——先去「模型设置」选一个';
+}
+
+// 只更新状态区，不重刷整块智能面板：输入框里正在打的字不能被重渲染吃掉
+function _rwRenderSmart() {
+  const state = recipeWorkshop;
+  const mode = state ? (state.mode || 'smart') : 'smart';
+  const shell = document.querySelector('.rw-shell');
+  if (shell) shell.setAttribute('data-mode', mode);
+  const buttons = document.querySelectorAll('.rw-mode-btn');
+  for (let i = 0; i < buttons.length; i += 1) {
+    const btn = buttons[i];
+    const on = String(btn.getAttribute('data-rw-mode')) === mode;
+    if (btn.classList) btn.classList.toggle('current', on);
+    if (btn.setAttribute) btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  const hint = document.getElementById('rwSmartHint');
+  if (hint) hint.textContent = _rwSmartModelLabel();
+  const go = document.getElementById('rwSmartGo');
+  if (go) {
+    const busy = !!(state && (state.smartBusy || (recipeWorkshopBusy && mode === 'smart')));
+    if ('disabled' in go) go.disabled = busy;
+    go.textContent = busy ? '正在配…' : (state && state.smartDone ? '再改一句' : '生成节点');
+  }
+  const examples = document.getElementById('rwSmartExamples');
+  if (examples && !(examples.getAttribute && examples.getAttribute('data-ready'))) {
+    if (examples.setAttribute) examples.setAttribute('data-ready', '1');
+    examples.innerHTML = RECIPE_WORKSHOP_EXAMPLES.map(function (item) {
+      return '<button type="button" class="rw-example" onclick="rwSmartUseExample(\'' + item.key + '\')">' + _rwEsc(item.label) + '</button>';
+    }).join('');
+  }
+  const errBox = document.getElementById('rwSmartError');
+  if (errBox) {
+    const text = String((state && state.smartError) || '');
+    errBox.textContent = text;
+    if (text) errBox.removeAttribute('hidden');
+    else errBox.setAttribute('hidden', '');
+  }
+  const result = document.getElementById('rwSmartResult');
+  if (result) result.innerHTML = _rwSmartResultHtml();
+}
+
+function _rwSmartResultHtml() {
+  const state = recipeWorkshop;
+  if (!state) return '';
+  if (!state.smartDone) {
+    return '<div class="rw-smart-empty">配好之后这里会先给你看一张节点卡——不满意就再说一句改，满意就一键放到画布。'
+      + '也可以直接点上面的例子试试。</div>';
+  }
+  const say = String(state.smartSay || '').trim();
+  const question = state.smartQuestion && state.smartQuestion.text
+    ? '<div class="rw-smart-question">Φ 还想确认一句：' + _rwEsc(String(state.smartQuestion.text)) + '</div>'
+    : '';
+  return '<div class="rw-smart-preview">' + _rwCardHtml({ fold: false }) + '</div>'
+    + (say ? '<div class="rw-smart-say">Φ 说：' + _rwEsc(say) + '</div>' : '')
+    + question
+    + '<div class="rw-smart-actions">'
+    + '<button type="button" class="rw-btn rw-btn-primary" onclick="rwSmartPlace()">放到画布</button>'
+    + '<button type="button" class="rw-btn" onclick="rwSmartRefine()">进工坊微调</button>'
+    + '<button type="button" class="rw-btn rw-btn-ghost" onclick="rwSmartReset()">换一个想法</button>'
+    + '</div>'
+    + '<div class="rw-smart-note">「放到画布」会先入册再放节点；之后还能在配方管理里改。</div>';
+}
+
+async function rwSmartGenerate() {
+  if (!recipeWorkshop || recipeWorkshop.smartBusy || recipeWorkshopBusy) return;
+  const input = document.getElementById('rwSmartInput');
+  const typed = (input && typeof input.value === 'string') ? input.value : '';
+  const text = String(typed || recipeWorkshop.smartInstruction || '').trim();
+  if (!text) {
+    if (typeof toastMsg === 'function') toastMsg('先用一句话说清你想要什么节点');
+    if (input && typeof input.focus === 'function') input.focus();
+    return;
+  }
+  if (!_rwModel()) {
+    recipeWorkshop.smartError = '这台机器还没配主模型：关掉工坊，到右上角「模型设置」里选一个，再回来试。';
+    _rwRenderSmart();
+    return;
+  }
+  recipeWorkshop.smartInstruction = text;
+  recipeWorkshop.smartError = '';
+  recipeWorkshop.smartBusy = true;
+  _rwRenderSmart();
+  let data = null;
+  try {
+    data = await _rwRequestDraft(text);
+  } catch (err) {
+    if (recipeWorkshop) recipeWorkshop.smartError = '这次没接上模型：' + String((err && err.message) || err).slice(0, 160);
+  } finally {
+    if (recipeWorkshop) recipeWorkshop.smartBusy = false;
+  }
+  if (!recipeWorkshop) return;
+  if (data && data.status === 'ok') {
+    recipeWorkshop.smartDone = true;
+    recipeWorkshop.smartSay = String(data.say || '').trim();
+    recipeWorkshop.smartQuestion = data.question || null;
+    recipeWorkshop.smartError = '';
+    recipeWorkshop.smartInstruction = '';
+    if (input) input.value = '';
+    _rwSaveDraftNow();
+  } else if (!recipeWorkshop.smartError) {
+    const warn = (recipeWorkshop.conversation || []).slice().reverse().filter(function (item) {
+      return item && item.kind === 'warn';
+    })[0];
+    recipeWorkshop.smartError = warn ? String(warn.text || '') : '这次没生成出可用的草稿，再试一次。';
+  }
+  _rwRenderSmart();
+}
+
+function rwSmartPlace() {
+  if (!recipeWorkshop) return;
+  if (!rwSaveRecipe()) {
+    const errors = (recipeWorkshop.fieldErrors || [])
+      .map(function (item) { return String((item && item.message) || ''); })
+      .filter(Boolean);
+    recipeWorkshop.smartError = errors.length
+      ? ('还差一点：' + errors.slice(0, 3).join('；'))
+      : '还差一点才能放到画布，先「进工坊微调」补一下。';
+    _rwRenderSmart();
+    return;
+  }
+  rwPlaceOnCanvas();
+}
+
+function rwSmartRefine() {
+  if (!recipeWorkshop) return;
+  recipeWorkshop.mode = 'manual';
+  _rwSaveDraftNow();
+  _rwRenderAll();
+  if (typeof toastMsg === 'function') toastMsg('切到手动档了：每个字段都能直接点开改');
+}
+
+function rwSmartReset() {
+  if (!recipeWorkshop) return;
+  const hasWork = !!String(_rwCurrentRecipe().name || '').trim();
+  if (hasWork && typeof confirm === 'function' && !confirm('把刚配好的这个节点清掉，重新说一句？已经放到画布的节点不受影响。')) return;
+  recipeWorkshop.recipe = _rwEmptyRecipe();
+  _rwSyncRowsFromRecipe();
+  recipeWorkshop.smartDone = false;
+  recipeWorkshop.smartSay = '';
+  recipeWorkshop.smartQuestion = null;
+  recipeWorkshop.smartError = '';
+  recipeWorkshop.smartInstruction = '';
+  recipeWorkshop.wishDraft = true;      // 下一轮回到「从零起草」
+  recipeWorkshop.savedName = '';
+  recipeWorkshop.changedFields = [];
+  recipeWorkshop.fieldErrors = [];
+  recipeWorkshop.undoStack = [];
+  const input = document.getElementById('rwSmartInput');
+  if (input) input.value = '';
+  _rwSaveDraftNow();
+  _rwRenderAll();
+}
+
 // ---- 入册与落地（P4）----
 function _rwUpstreamCandidates() {
   const recipe = _rwCurrentRecipe();
@@ -1946,6 +2213,16 @@ window.rwDiscardDraft = rwDiscardDraft;
 window.rwToggleWire = rwToggleWire;
 window.rwStartFromCanvasNode = rwStartFromCanvasNode;
 window.rwPullNode = rwPullNode;
+// 一句话档（2026-10-22）与预览卡收起
+window.rwSetMode = rwSetMode;
+window.rwToggleCard = rwToggleCard;
+window.rwSmartInputChanged = rwSmartInputChanged;
+window.rwSmartKey = rwSmartKey;
+window.rwSmartUseExample = rwSmartUseExample;
+window.rwSmartGenerate = rwSmartGenerate;
+window.rwSmartPlace = rwSmartPlace;
+window.rwSmartRefine = rwSmartRefine;
+window.rwSmartReset = rwSmartReset;
 // 冒烟与后续会话用的内部探针（只读）
 function _recipeWorkshopState() { return recipeWorkshop; }
 window._recipeWorkshopState = _recipeWorkshopState;
@@ -1967,4 +2244,6 @@ window._rwSyncRowsFromRecipe = _rwSyncRowsFromRecipe;
 window._rwSaveDraftNow = _rwSaveDraftNow;
 window._rwReadDraft = _rwReadDraft;
 window._rwRequestDraft = _rwRequestDraft;
+window._rwRenderSmart = _rwRenderSmart;
+window._rwSmartResultHtml = _rwSmartResultHtml;
 window._rwChangedHuman = chopsHuman;
