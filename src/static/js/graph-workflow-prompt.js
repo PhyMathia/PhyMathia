@@ -171,25 +171,106 @@ function _collectUpstreamPath(node) {
   });
 }
 
-// 取材附图（2026-10-23）：与 _collectUpstreamPath 同一条上游路（同一套口语义），
-// 只挑素材篮的图片条目，返回 [{fileId, name}] 去重列表——发送前由发送侧取字节
-// 附进请求并裁上限，这里只管按口收集
-function _collectUpstreamImages(node) {
-  const out = [];
+// ===== 取材附图（2026-10-23 打通传图；T381 接全部发送链；T382 扫描版 PDF 页转图）=====
+// 一条消息最多几张图（服务端 CHAT_IMAGES_MAX=6 兜底，上游 4xx 会去图重发）
+const WORKFLOW_SEND_IMAGE_MAX = 4;
+// 单份扫描版 PDF 最多参与前几页（与后端 documents.PDF_PAGE_MAX 同口径；配额见
+// _allocateSendImageRefs——页多不等于张数多）
+const WORKFLOW_PDF_PAGE_MAX = 8;
+
+// 上游收集路与 workflowContext **同源**：配方声明 aggregation=first_inbound 的
+// 节点走单父链，其余走全祖先。图片素材必须跟各链的语义一致——否则提示词里的
+// 「证据」与随消息发的「图」来自两套节点集合，模型看图与读文对不上号
+function _workflowContextRoute(node) {
+  const recipeAgg = node && node.recipeId && node.recipe ? String(node.recipe.aggregation || '') : '';
+  return recipeAgg === 'first_inbound' ? 'inbound' : 'path';
+}
+
+function _workflowContextEntries(node, route) {
+  const how = route === 'inbound' || route === 'path' ? route : _workflowContextRoute(node);
+  return how === 'inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
+}
+
+// 存量条目兼容（T382 打标前的素材篮）：没有 scanned 字段时按「无文字层的 .pdf」
+// 现场判定——旧画布里的扫描件不用重新入篮也能走页转图
+function _sourceItemIsScannedPdf(item) {
+  if (!item || !item.fileId) return false;
+  if (item.kind === 'image') return false;
+  if (item.scanned === true) return true;
+  if (item.scanned === false) return false;
+  if (!/\.pdf$/i.test(String(item.fileName || item.name || ''))) return false;
+  return !String(item.text || '').trim();
+}
+
+// 一份素材能贡献的图：图片条目＝原图一张（page 0＝原字节，不经页渲染）；
+// 扫描版 PDF＝前若干页（1-based 页号）。其余条目（文字/未打标的普通文件）不产图
+function _sourceItemImageGroup(item) {
+  if (!item || !item.fileId) return null;
+  const name = item.fileName || item.name || '';
+  if (item.kind === 'image') {
+    return { fileId: item.fileId, name: name, pages: [0] };
+  }
+  if (!_sourceItemIsScannedPdf(item)) return null;
+  const declared = parseInt(item.pages, 10);
+  const total = Number.isFinite(declared) && declared > 0
+    ? Math.min(declared, WORKFLOW_PDF_PAGE_MAX)
+    : WORKFLOW_PDF_PAGE_MAX;
+  const pages = [];
+  for (let p = 1; p <= total; p++) pages.push(p);
+  return { fileId: item.fileId, name: name, pages: pages };
+}
+
+// 配额分配（T382 拍板）：图片与扫描版 PDF 页混在一个篮子里，4 张按**轮转**分——
+// 第一轮每种素材各取一张（图片＝原图，PDF＝第 1 页），还有余量再按同一顺序给
+// 扫描版 PDF 补第 2/3/… 页。三条理由：
+//   ① 每种素材都至少露一次脸：直接截前 4 张时，排在后面的素材（尤其扫描件）
+//      可能整份缺席，用户看到的是「图根本没发出去」；
+//   ② 只有一份多页扫描件时仍能用满 4 张（它自己按轮次吃满余量）；
+//   ③ 顺序只由收集顺序决定，同一份上游每次拼出同一组图，可复现、好排查。
+// 轮转在「页」粒度上做，所以两份扫描件＝各前 2 页，不会一份吃满、另一份饿死。
+function _allocateSendImageRefs(groups, max) {
+  const limit = Math.max(0, parseInt(max, 10) || 0);
+  const refs = [];
+  if (!limit) return refs;
+  const queues = (groups || []).filter(Boolean).map(group => ({
+    fileId: group.fileId,
+    name: group.name || '',
+    pages: Array.isArray(group.pages) ? group.pages.slice() : [],
+    cursor: 0,
+  }));
+  let progressed = true;
+  while (refs.length < limit && progressed) {
+    progressed = false;
+    for (const queue of queues) {
+      if (refs.length >= limit) break;
+      if (queue.cursor >= queue.pages.length) continue;
+      refs.push({ fileId: queue.fileId, name: queue.name, page: queue.pages[queue.cursor++] });
+      progressed = true;
+    }
+  }
+  return refs;
+}
+
+// 上游要发的图清单（发送侧取字节用）：按口收集 → 配额分配，返回
+// [{fileId, name, page}]。route 缺省跟随该节点的上下文收集路（见 _workflowContextRoute）；
+// 空白节点这条单父链生成显式传 'inbound'
+function _collectUpstreamImages(node, route) {
+  const groups = [];
   const seen = new Set();
-  for (const entry of _collectUpstreamPath(node)) {
+  for (const entry of _workflowContextEntries(node, route)) {
     if (entry.kind !== 'source') continue;
     const src = _findGraphNode(entry.id);
     if (!src || _sourceIsLegacyNode(src)) continue;
     const m = /^out-(\d+)$/.exec(String(entry.fromPort || ''));
     const item = (m && Array.isArray(src.items)) ? src.items[parseInt(m[1], 10)] : null;
-    if (!item || item.kind !== 'image' || !item.fileId) continue;
+    const group = _sourceItemImageGroup(item);
+    if (!group) continue;
     const key = entry.id + '@' + entry.fromPort;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ fileId: item.fileId, name: item.fileName || item.name || '' });
+    groups.push(group);
   }
-  return out;
+  return _allocateSendImageRefs(groups, WORKFLOW_SEND_IMAGE_MAX);
 }
 window._collectUpstreamImages = _collectUpstreamImages;
 
@@ -425,8 +506,9 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFu
 // 锚到 [苏格拉底回答] 原文）；最近一颗反馈卡给来源卡同款 full 额度。非闭环链
 // 两条都不触发，字节零变。
 function _collectWorkflowContext(node, portMetaFor, typeLabels) {
-  const recipeAgg = node && node.recipeId && node.recipe ? node.recipe.aggregation : '';
-  let allUpstream = recipeAgg === 'first_inbound' ? _collectInboundChain(node) : _collectUpstreamPath(node);
+  // 收集路由 _workflowContextRoute 统一定义（取材附图共用同一判断，T381）：
+  // 默认全祖先；配方显式声明 first_inbound 时走单父链
+  let allUpstream = _workflowContextEntries(node);
   // answer 目标剔自身：自己的上游不含自己（旧口径由 answer-filter 顺手剔掉，
   // filter 退役后补成显式规则——分析节点按普通祖先摘要进 upstream（T333 统一
   // 解法），但目标自己不是自己的祖先；answer 目标 analysis 为空时

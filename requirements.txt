@@ -6,6 +6,10 @@ pypdf>=4,<6
 python-docx>=1,<2
 python-pptx>=1,<2
 rapidocr-onnxruntime>=1.3,<2
+# 扫描版 PDF 页转图（T382，2026-10-23）：发送时把抽不出字的 PDF 页渲染成 JPEG
+# 走图片通道。只有这个功能用它（文字版 PDF 抽文字仍走 pypdf）；缺了它页转图
+# 静默降级成「未提取到文本」占位，其余链路零影响
+pypdfium2>=4,<5
 # 本地 embedding 模型（models/bge-small-zh-v1.5，ONNX）推理依赖。缺任何一个都只会
 # 静默降级（向量证据关闭、大陆投影退回纯词面口径），启动脚本按本文件建环境，必须显式声明
 onnxruntime>=1.20,<2

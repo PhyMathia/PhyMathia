@@ -16,7 +16,16 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .config import UPLOAD_DIR, UPLOAD_MAX_BYTES
-from .documents import _extract_document_text, _read_upload, _sanitize_filename, _save_upload
+from .documents import (
+    PDF_PAGE_MAX,
+    _extract_document_text,
+    _read_upload,
+    _sanitize_filename,
+    _save_upload,
+    pdf_is_scanned,
+    pdf_page_count,
+    render_pdf_page,
+)
 from .ocr import ocr_image
 from .request_ctx import _parse_json_object
 
@@ -93,6 +102,14 @@ async def api_input_ingest(request: Request):
     if truncated:
         await asyncio.to_thread(_write_fulltext, file_id, text)
 
+    # 扫描版 PDF 打标（T382）：文字版照旧只走抽文字；抽不出字的（图片型、无文字层）
+    # 标出来，发送时按需把前几页渲染成图片走附图通道。素材条目与 data/ 存储不动——
+    # 这里只回两个计数，不落任何渲染产物。
+    pdf_info = None
+    if Path(filename).suffix.lower() == ".pdf":
+        pages = await asyncio.to_thread(pdf_page_count, content)
+        pdf_info = {"pages": pages, "scanned": pdf_is_scanned(text, pages)}
+
     return {
         "ok": True,
         "fileId": file_id,
@@ -109,6 +126,8 @@ async def api_input_ingest(request: Request):
             "ms": int(ocr_info.get("ms") or 0),
             "error": str(ocr_info.get("error") or "")[:200],
         },
+        # 非 PDF 为 None；旧客户端不认该键，照旧读 text/truncated 即可
+        "pdf": pdf_info,
     }
 
 
@@ -126,3 +145,27 @@ async def api_input_file(file_id: str):
         raise HTTPException(status_code=404, detail="文件不存在")
     entry, content = loaded
     return Response(content=content, media_type=_guess_mime(str(entry.get("filename") or "")))
+
+
+# 扫描版 PDF 页转图（T382，2026-10-23）：发送时按需渲染，服务端不缓存、不落盘。
+# 页号 1-based，只放行前 PDF_PAGE_MAX 页——多页扫描件全发既超配额（一条消息 4 张）
+# 又烧时延；配额的分配规则在前端（_allocateSendImageRefs），这里只做单页渲染。
+@router.get("/api/input/pdf_pages")
+async def api_input_pdf_page(fileId: str = "", page: int = 1):
+    if not _FILE_ID_RE.match(str(fileId or "")):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if page < 1 or page > PDF_PAGE_MAX:
+        raise HTTPException(status_code=400, detail=f"页号超出范围（只渲染前 {PDF_PAGE_MAX} 页）")
+    loaded = await asyncio.to_thread(_read_upload, fileId)
+    if not loaded:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    entry, content = loaded
+    if Path(str(entry.get("filename") or "")).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="不是 PDF 文件")
+    jpeg = await asyncio.to_thread(render_pdf_page, content, page)
+    if not jpeg:
+        # 渲染不可用（缺 pypdfium2 / 加密 / 页号越界）——前端按「这张取不到」静默跳过
+        raise HTTPException(status_code=422, detail="这一页渲染不出来")
+    # 同一 fileId+page 的字节是确定的：允许浏览器短缓存，翻来覆去重发同一页不重复渲染
+    return Response(content=jpeg, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=600"})

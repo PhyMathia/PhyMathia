@@ -122,6 +122,27 @@ def _sanitize_chat_images(images) -> list:
     return parts
 
 
+def _attach_images_to_last_user(messages: list, image_parts: list) -> list:
+    """messages 直传格式（旧格式：重试/带字修订等）附图：把图片部件挂到最后一条
+    user 消息上，文字部件在前。无 user 消息时原样返回——不凭空造一条消息。
+
+    浅拷贝列表与目标消息，改完返回新对象：调用方（payload）结构不被就地改写，
+    「无图恒纯字符串」的回归锚也不受影响（无图时根本走不到这里）。
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        text = content if isinstance(content, str) else _message_text_for_log(message)
+        patched = dict(message)
+        patched["content"] = [{"type": "text", "text": text}] + list(image_parts)
+        out = list(messages)
+        out[index] = patched
+        return out
+    return messages
+
+
 def _message_text_for_log(message: dict) -> str:
     # 附图后 content 是多部件数组——日志与 token 估算只取文字部件，别把 base64 打进日志
     content = message.get("content")
@@ -381,8 +402,13 @@ async def api_models_chat(request: Request):
         if not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages):
             # 逐项 m.get 前先挡掉契约外形状（字符串/数字元素），别变成 500
             raise HTTPException(status_code=400, detail="'messages' must be a list of message objects")
-        raw_text = "".join(str(m.get("content") or "") for m in messages)
-        logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}, ctx_chars={len(raw_text)}, est_tokens={estimate_tokens(raw_text)}")
+        # 取材附图（T381）：messages 直传格式也收图——重试/带字修订走的是这一支，
+        # 上游素材篮的图片同样要能回到模型。无图时 messages 一字不动（回归锚）。
+        raw_image_parts = _sanitize_chat_images(payload.get("images"))
+        if raw_image_parts:
+            messages = _attach_images_to_last_user(messages, raw_image_parts)
+        raw_text = "".join(_message_text_for_log(m) for m in messages)
+        logger.info(f"AI proxy (raw msgs): {provider}/{model_name}, msg_count={len(messages)}, ctx_chars={len(raw_text)}, est_tokens={estimate_tokens(raw_text)}, images={len(raw_image_parts)}")
 
     if not base_url:
         provider_info = AI_PROVIDERS.get(provider)

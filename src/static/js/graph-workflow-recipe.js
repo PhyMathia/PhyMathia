@@ -21,13 +21,20 @@ async function _recipeGenerateAnalysis(node, nodeSignal) {
     if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
       const agentModel = getActiveModelForRole('agent');
       if (agentModel) {
-        resp = await proxyChat(prompt,
+        // 取材附图（T381）：配方概要步与 _generateAnalysis 同一支——上游素材篮的图
+        // 随概要请求走（收集路跟随 _collectWorkflowContext 的 first_inbound/全祖先）
+        const images = typeof _workflowImageDataUrls === 'function' ? await _workflowImageDataUrls(node) : null;
+        const send = imgs => proxyChat(prompt,
           typeof currentLevel !== 'undefined' ? currentLevel : 'university',
           _workflowSessionId(),
           true,
           signal,
-          { parentId: String(node.timestamp || ''), branchLabel: '配方概要', workflowContext }
+          { parentId: String(node.timestamp || ''), branchLabel: '配方概要', workflowContext },
+          imgs ? { images: imgs } : {}
         );
+        resp = typeof _sendWithImagesFallback === 'function'
+          ? await _sendWithImagesFallback(images, send)
+          : await send(null);
       }
     }
     if (!resp || !resp.ok) return;

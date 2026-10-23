@@ -943,6 +943,12 @@ function _renderSourceItemRow(node, attr, item, index) {
   if (item.kind === 'image') {
     metaBits.push(_sourceOcrStatusText(item) || '未转写');
     if (item.ocr && item.ocr.engine && item.ocr.status === 'done') metaBits.push(item.ocr.engine);
+  } else if (typeof _sourceItemIsScannedPdf === 'function' && _sourceItemIsScannedPdf(item)) {
+    // 扫描版 PDF（T382）：抽不出字不是坏文件——发送时前几页转图走图片通道
+    metaBits.push('扫描版');
+    const pages = parseInt(item.pages, 10) || 0;
+    if (pages) metaBits.push('共 ' + pages + ' 页');
+    metaBits.push('发送时转图');
   } else {
     metaBits.push((item.chars || String(item.text || '').length || 0) + ' 字' + (item.truncated ? '（已截断）' : ''));
   }

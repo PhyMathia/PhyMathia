@@ -365,7 +365,10 @@ check('配方生成维度（P2）：模型槽位优先＋回落、载体归一/�
   if (!wfSrc.includes('retry_prompt')) throw new Error('重试提示词未接 retry_prompt');
   if (!wfSrc.includes("recipe.content_kind === 'mermaid'")) throw new Error('mermaid 载体归一缺失');
   if (!wfSrc.includes('recipe.analysis_phase')) throw new Error('双阶段概要接线缺失');
-  if (!wfSrc.includes("recipeAgg === 'first_inbound' ? _collectInboundChain")) throw new Error('单链取材分派缺失');
+  // 2026-10-23 T381：分派收敛到 _workflowContextRoute/_workflowContextEntries 一处
+  // （取材附图与 workflowContext 共用同一判断，图片与「证据」必须同源）
+  if (!wfSrc.includes("recipeAgg === 'first_inbound' ? 'inbound' : 'path'")) throw new Error('单链取材分派缺失');
+  if (!wfSrc.includes('let allUpstream = _workflowContextEntries(node);')) throw new Error('workflowContext 未走统一收集路由');
   if (!wfSrc.includes('_recipeAfterGenerated(live)')) throw new Error('on_generated 钩子未挂生成完成点');
   // 单链取材行为：两条入边时 _collectInboundChain 只走第一条（空白节点式）。
   // graphView 是 graph.js 的 const 词法绑定，沙箱外不可达——经 vm.runInContext 原地改

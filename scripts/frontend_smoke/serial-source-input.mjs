@@ -312,6 +312,131 @@ check('取材附图收集：_collectUpstreamImages 按口挑图片条目，未�
   return true;
 });
 
+// ===== T382（2026-10-23）：扫描版 PDF 页转图与 4 张配额 =====
+check('扫描版 PDF 配额轮转：4 张按素材轮转分，页多不等于张数多（单文件 8 页上限）', () => {
+  const alloc = (groups, max) => vm.runInContext(
+    '_allocateSendImageRefs(' + JSON.stringify(groups) + ', ' + max + ')', sandbox);
+  const pages = (n) => Array.from({ length: n }, (_, i) => i + 1);
+  // ① 一张图 + 一份 8 页扫描件：图先、PDF 吃满余量 3 页（不会因为 PDF 在后面就整份缺席）
+  let refs = alloc([{ fileId: 'doc_img', name: '受力图', pages: [0] },
+                    { fileId: 'doc_pdf', name: '扫描讲义', pages: pages(8) }], 4);
+  if (refs.length !== 4) throw new Error('应有 4 张，实际 ' + JSON.stringify(refs));
+  if (refs[0].page !== 0 || refs[0].fileId !== 'doc_img') throw new Error('图片条目应排第一（page 0＝原图）');
+  if (refs.slice(1).map(r => r.page).join(',') !== '1,2,3') {
+    throw new Error('PDF 应补第 1/2/3 页，实际 ' + JSON.stringify(refs));
+  }
+  // ② 两份扫描件混篮：轮转＝各前 2 页（不一份吃满另一份饿死）
+  refs = alloc([{ fileId: 'p1', name: 'A', pages: pages(8) },
+                { fileId: 'p2', name: 'B', pages: pages(8) }], 4);
+  if (refs.map(r => r.fileId + ':' + r.page).join('|') !== 'p1:1|p2:1|p1:2|p2:2') {
+    throw new Error('两份扫描件应各前 2 页，实际 ' + JSON.stringify(refs));
+  }
+  // ③ 单份两页：只有两页可发，不编造
+  refs = alloc([{ fileId: 'p3', name: 'C', pages: [1, 2] }], 4);
+  if (refs.length !== 2) throw new Error('两页扫描件最多 2 张');
+  // ④ 配额 0／空清单：不产生任何图（服务端不会收到空图数组）
+  if (alloc([{ fileId: 'p3', pages: [1] }], 0).length !== 0) throw new Error('配额 0 应返回空');
+  if (alloc([], 4).length !== 0) throw new Error('无素材应返回空');
+});
+
+check('扫描版 PDF 收集：ingest 打标与旧条目现场判定两条路都产出页图引用', () => {
+  // 打标条目（T382 新数据）：kind=file + scanned + pages，text 恒空
+  seedNode([
+    { id: 'itP', kind: 'file', name: '扫描讲义', fileName: '扫描讲义.pdf', text: '', fileId: 'doc_pdf', scanned: true, pages: 12 },
+  ]);
+  const downstream = { id: 'd2', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 9, content: '' };
+  vm.runInContext('graphView.nodes.push(' + JSON.stringify(downstream) + '); graphView.nodeById["d2"] = graphView.nodes[graphView.nodes.length - 1]; graphView.edges = [{ from: "src-test", fromPort: "out-0", to: "d2", toPort: "in-0", custom: true }];', sandbox);
+  let got = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d2"])', sandbox);
+  if (got.length !== 4 || got.some(r => r.fileId !== 'doc_pdf')) throw new Error('单份扫描件应吃满 4 张页图：' + JSON.stringify(got));
+  if (got.map(r => r.page).join(',') !== '1,2,3,4') throw new Error('应取前 4 页，实际 ' + JSON.stringify(got));
+  // 页上限：12 页的扫描件只参与前 8 页（配额给到 99 也只出 8 张页图）
+  const capped = vm.runInContext('_allocateSendImageRefs([_sourceItemImageGroup('
+    + JSON.stringify({ kind: 'file', fileId: 'doc_pdf', fileName: '扫描讲义.pdf', scanned: true, pages: 12 })
+    + ')], 99)', sandbox);
+  if (capped.length !== 8) throw new Error('单份 PDF 最多 8 页（与后端 PDF_PAGE_MAX 同口径），实际 ' + capped.length);
+  // 存量条目（无 scanned 字段）：.pdf + 无文字＝现场按扫描版处理，不用重新入篮
+  seedNode([{ id: 'itL', kind: 'file', name: '旧扫描件', fileName: '旧扫描件.PDF', text: '', fileId: 'doc_old' }]);
+  vm.runInContext('graphView.nodes.push(' + JSON.stringify(downstream) + '); graphView.nodeById["d2"] = graphView.nodes[graphView.nodes.length - 1]; graphView.edges = [{ from: "src-test", fromPort: "out-0", to: "d2", toPort: "in-0", custom: true }];', sandbox);
+  got = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d2"])', sandbox);
+  if (got.length !== 4 || got[0].fileId !== 'doc_old') throw new Error('存量扫描件应按 PDF 页收集：' + JSON.stringify(got));
+  // 有文字层的 PDF（text 非空）：不产页图，照旧走文字
+  seedNode([{ id: 'itT', kind: 'file', name: '文字版', fileName: '文字版.pdf', text: '牛顿第二定律 F=ma', fileId: 'doc_text' }]);
+  vm.runInContext('graphView.nodes.push(' + JSON.stringify(downstream) + '); graphView.nodeById["d2"] = graphView.nodes[graphView.nodes.length - 1]; graphView.edges = [{ from: "src-test", fromPort: "out-0", to: "d2", toPort: "in-0", custom: true }];', sandbox);
+  if (vm.runInContext('_collectUpstreamImages(graphView.nodeById["d2"])', sandbox).length !== 0) {
+    throw new Error('有文字层的 PDF 不该触发页转图');
+  }
+});
+
+check('扫描版 PDF 文案：占位说明「非空料」、条目行标扫描版与转图', () => {
+  const item = { kind: 'file', name: '扫描讲义', fileName: '扫描讲义.pdf', text: '', fileId: 'doc_pdf', scanned: true, pages: 12 };
+  const placeholder = vm.runInContext('_sourceItemPlaceholder(' + JSON.stringify(item) + ')', sandbox);
+  for (const frag of ['扫描版 PDF', '共 12 页', '转图']) {
+    if (!placeholder.includes(frag)) throw new Error('占位缺「' + frag + '」：' + placeholder);
+  }
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    const row = vm.runInContext('_renderSourceItemRow(' + JSON.stringify({ id: 'src-x' })
+      + ', { color: "#fff" }, ' + JSON.stringify(item) + ', 0)', sandbox);
+    for (const frag of ['扫描版', '共 12 页', '发送时转图']) {
+      if (!row.includes(frag)) throw new Error('条目行缺「' + frag + '」：' + row);
+    }
+  } finally {
+    sandbox.escapeHtml = realEsc;
+  }
+});
+
+// ===== T381（2026-10-23）：附图接其余发送链 =====
+check('附图收集路线与上下文同源：普通节点收全祖先、配方 first_inbound 只收单父链', () => {
+  // 图形：S2 → A(in-1)、S1 → A(in-0)、A → D。单父链＝取 A 的第一条入边（S2），
+  // 全祖先＝两条都收。图必须跟 workflowContext 的取材路一致，否则「证据」与
+  // 「随消息发的图」来自两套节点集合。
+  seedNode([{ id: 'itS1', kind: 'image', name: 'S1 图', text: '', fileId: 'doc_s1' }]);
+  const extra = {
+    s2: { id: 's2', kind: 'source', x: 0, y: 0, messageIndex: -1, timestamp: 2, items: [{ id: 'itS2', kind: 'image', name: 'S2 图', text: '', fileId: 'doc_s2' }] },
+    a: { id: 'a', kind: 'module', moduleKey: 'physics', x: 0, y: 0, messageIndex: -1, timestamp: 3, items: [], content: '' },
+    d: { id: 'd', kind: 'module', moduleKey: 'math', x: 0, y: 0, messageIndex: -1, timestamp: 4, items: [], content: '' },
+  };
+  vm.runInContext([
+    'graphView.nodes.push(' + JSON.stringify(extra.s2) + ');',
+    'graphView.nodeById["s2"] = graphView.nodes[graphView.nodes.length - 1];',
+    'graphView.nodes.push(' + JSON.stringify(extra.a) + ');',
+    'graphView.nodeById["a"] = graphView.nodes[graphView.nodes.length - 1];',
+    'graphView.nodes.push(' + JSON.stringify(extra.d) + ');',
+    'graphView.nodeById["d"] = graphView.nodes[graphView.nodes.length - 1];',
+    'graphView.edges = [',
+    '  { from: "s2", fromPort: "out-0", to: "a", toPort: "in-1", custom: true },',
+    '  { from: "src-test", fromPort: "out-0", to: "a", toPort: "in-0", custom: true },',
+    '  { from: "a", fromPort: "out-0", to: "d", toPort: "in-0", custom: true }',
+    '];',
+  ].join(' '), sandbox);
+  const pathIds = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d"]).map(r => r.fileId)', sandbox);
+  // 全祖先按后序（边表顺序递归）：A 的第一条入边 S2 先收、再 S1——配额也按这个顺序分
+  if (pathIds.join(',') !== 'doc_s2,doc_s1') throw new Error('普通节点应收全祖先的图，实际 ' + pathIds.join(','));
+  vm.runInContext('graphView.nodeById["d"].recipeId = "r1"; graphView.nodeById["d"].recipe = { aggregation: "first_inbound" };', sandbox);
+  const inboundIds = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d"]).map(r => r.fileId)', sandbox);
+  if (inboundIds.join(',') !== 'doc_s2') throw new Error('first_inbound 只收单父链（A 的第一条入边），实际 ' + inboundIds.join(','));
+  if (vm.runInContext('_workflowContextRoute(graphView.nodeById["d"])', sandbox) !== 'inbound') {
+    throw new Error('_workflowContextRoute 应与 _collectWorkflowContext 的判定一致');
+  }
+});
+
+check('附图取字节分流源码契约：页图走 pdf_pages 路由、原图走 files 路由（真机行为另验）', () => {
+  // 取字节分流是异步 fetch，本域前面的异步发送用例已占用全局桩（AGENTS 硬规则 4：
+  // 两条异步用例不可替换同一全局桩），这里按源码契约钉住分流形状
+  const wfSrc = readFileSync(new URL('../../src/static/js/graph-workflow.js', import.meta.url), 'utf8');
+  if (!wfSrc.includes('_sourcePdfPageDataUrl(ref.fileId, ref.page)')) {
+    throw new Error('页图未走 pdf_pages 取图口');
+  }
+  if (!wfSrc.includes('_sourceImageDataUrl(ref.fileId)')) throw new Error('原图未走 files 取图口');
+  if (!wfSrc.includes('return dataUrls.length ? dataUrls : null;')) {
+    throw new Error('一张都取不到必须回落 null（纯文本发送）');
+  }
+  const customSrc = readFileSync(new URL('../../src/static/js/graph-custom.js', import.meta.url), 'utf8');
+  if (!customSrc.includes('/api/input/pdf_pages?fileId=')) throw new Error('页转图端点未接');
+  if (!customSrc.includes('item.scanned = data.pdf.scanned === true;')) throw new Error('ingest 的扫描版标记未落条目');
+});
+
 check('附图发送与回落：带图直发；4xx 去图重发一次并提示开 OCR；5xx 原样抛', async () => {
   // 本文件异步用例在 drain() 的 Promise.all 里并发收口（addSourceText 还挂着
   // 20ms 回填计时器）——本用例全程不碰共享 graphView：按口收集打桩（它有专门

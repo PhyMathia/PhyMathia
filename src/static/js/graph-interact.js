@@ -1259,7 +1259,15 @@ async function _regenWorkflowNodeContent(node, text, signal, oldContent) {
     if (typeof showToast === 'function') showToast('未配置 AI 模型，请在模型设置中配置');
     throw new Error('未配置 AI 模型，请在模型设置中配置');
   }
-  const resp = await proxyChatWithModel(model, {
+  // 取材附图（T381）：重试/带字重生成也是发送链——上游素材篮的图随修订请求走，
+  // 否则「按这张图重写」时模型看不到图。messages 直传格式的附图由服务端
+  // _attach_images_to_last_user 挂到最后一条 user 消息（无图→纯字符串，回归锚）
+  // 苏格拉底闭环作答（socraticMeta）连「带字重生成」也不带图：闭环状态机与
+  // 作答口径维持 2026-10-23 拍板（[苏格拉底回答] 提示词＋文字作答）
+  const images = (node && node.socraticMeta)
+    ? null
+    : (typeof _workflowImageDataUrls === 'function' ? await _workflowImageDataUrls(node) : null);
+  const buildBody = imgs => ({
     messages: [
       { role: 'system', content: getLevelPrompt() },
       { role: 'user', content: prompt },
@@ -1267,7 +1275,11 @@ async function _regenWorkflowNodeContent(node, text, signal, oldContent) {
     stream: true,
     session_bucket: 'phymathia-module',
     thinking: getSlotThinkingForRole(role),
-  }, signal);
+    ...(imgs ? { images: imgs } : {}),
+  });
+  const resp = typeof _sendWithImagesFallback === 'function'
+    ? await _sendWithImagesFallback(images, imgs => proxyChatWithModel(model, buildBody(imgs), signal))
+    : await proxyChatWithModel(model, buildBody(null), signal);
   const reply = await collectStreamText(resp);
   if (!(reply || '').trim()) throw new Error('模型返回了空内容');
   return reply;

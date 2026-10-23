@@ -124,6 +124,57 @@ def test_non_list_images_ignored():
     assert isinstance(body["messages"][-1]["content"], str)
 
 
+# ===== messages 直传格式（T381）：重试/带字修订走这一支，图也要能到模型 =====
+# 2026-10-23 打通传图时只接了 prompt 新格式；重试链用 messages 直传，图片在
+# 服务端被静默丢弃——「按这张图重写」时模型看不到图。现在挂到最后一条 user 消息上。
+
+def _messages_payload(**over):
+    base = {
+        "provider": "deepseek",
+        "api_key": "key",
+        "model": "test-model",
+        "base_url": "https://api.example.com",
+        "messages": [
+            {"role": "system", "content": "你是老师"},
+            {"role": "user", "content": "旧一轮"},
+            {"role": "user", "content": "按这张受力图重讲一遍"},
+        ],
+    }
+    base.update(over)
+    return base
+
+
+def test_messages_images_attached_to_last_user():
+    body = _chat(_messages_payload(images=[_IMG, _IMG]))
+    msgs = body["messages"]
+    assert isinstance(msgs[2]["content"], list), "最后一条 user 消息转多部件"
+    assert msgs[2]["content"][0] == {"type": "text", "text": "按这张受力图重讲一遍"}
+    parts = [p for p in msgs[2]["content"] if p["type"] == "image_url"]
+    assert len(parts) == 2
+    assert isinstance(msgs[1]["content"], str), "更早的 user 消息不动"
+    assert isinstance(msgs[0]["content"], str), "system 消息不动"
+
+
+def test_messages_no_images_keeps_string_content():
+    body = _chat(_messages_payload())
+    for msg in body["messages"]:
+        assert isinstance(msg["content"], str), "无图时 messages 一字不动（回归锚）"
+
+
+def test_messages_images_without_user_untouched():
+    payload = _messages_payload(messages=[{"role": "system", "content": "只有系统提示"}],
+                                images=[_IMG])
+    body = _chat(payload)
+    assert body["messages"] == [{"role": "system", "content": "只有系统提示"}], (
+        "没有 user 消息时不凭空造一条，也不改原有消息")
+
+
+def test_messages_bad_images_dropped():
+    body = _chat(_messages_payload(images=[_BAD_PREFIX, _OVERSIZE, _IMG]))
+    parts = [p for p in body["messages"][-1]["content"] if p["type"] == "image_url"]
+    assert len(parts) == 1, "坏图逐张丢弃，messages 支同样从严"
+
+
 def test_message_text_for_log_no_base64_leak():
     msg = {"content": [{"type": "text", "text": "题目"},
                        {"type": "image_url", "image_url": {"url": _IMG}}]}

@@ -32,6 +32,35 @@ def _b64(text: str) -> str:
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
+def _make_pdf(text=None, pages=1) -> bytes:
+    """造一份最小 PDF：无 text 时页面无文字层（＝扫描版的形状），有 text 时带
+    真实文本流（pypdf 能抽出字）。页数由 pages 控制。"""
+    import io as _io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=300, height=400)
+    if text:
+        stream = DecodedStreamObject()
+        stream.set_data(("BT /F1 12 Tf 20 300 Td (" + text + ") Tj ET").encode("ascii"))
+        page[NameObject("/Contents")] = writer._add_object(stream)  # noqa: SLF001
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })
+        page[NameObject("/Resources")] = DictionaryObject({
+            NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})  # noqa: SLF001
+        })
+    for _ in range(pages - 1):
+        writer.add_blank_page(width=300, height=400)
+    buf = _io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
 class IngestRouteTest(unittest.TestCase):
     """POST /api/input/ingest 的路由契约（TestClient 端到端，数据目录隔离）。"""
 
@@ -144,6 +173,101 @@ class IngestRouteTest(unittest.TestCase):
         # id 形状不合一律 404：id 只当 meta 键用，永不携带路径语义
         for bad in ("abc", "doc_xyz", "doc_12345", "DOC_0123456789ab"):
             self.assertEqual(self.client.get("/api/input/files/" + bad).status_code, 404, bad)
+
+    # ===== T382（2026-10-23）：扫描版 PDF 打标与页转图路由 =====
+
+    def test_scanned_pdf_marked_on_ingest(self):
+        data = self._post({"fileName": "扫描讲义.pdf",
+                           "contentBase64": base64.b64encode(_make_pdf(None, pages=2)).decode("ascii")}).json()
+        self.assertEqual(data["kind"], "file")
+        self.assertTrue(data["pdf"]["scanned"], "无文字层 PDF 应判为扫描版")
+        self.assertEqual(data["pdf"]["pages"], 2)
+        self.assertEqual(data["text"].strip(), "", "扫描版抽不出字：text 留空（前端按占位/转图处理）")
+
+    def test_text_pdf_not_marked_scanned(self):
+        data = self._post({"fileName": "文字版.pdf",
+                           "contentBase64": base64.b64encode(_make_pdf("Newton F equals ma", 1)).decode("ascii")}).json()
+        self.assertFalse(data["pdf"]["scanned"], "有文字层照旧只走抽文字，不页转图")
+        self.assertEqual(data["pdf"]["pages"], 1)
+        self.assertIn("Newton", data["text"])
+
+    def test_non_pdf_has_null_pdf_info(self):
+        data = self._post({"fileName": "笔记.txt", "contentBase64": _b64("正文")}).json()
+        self.assertIsNone(data["pdf"], "非 PDF 不带 pdf 键信息（旧客户端也不受影响）")
+
+    def test_pdf_page_route_contract(self):
+        # 路由契约（渲染器桩替）：200 + image/jpeg + 允许浏览器短缓存；渲染不可用时 422
+        first = self._post({"fileName": "扫描件.pdf",
+                            "contentBase64": base64.b64encode(_make_pdf(None, pages=2)).decode("ascii")}).json()
+        fake_jpeg = b"\xff\xd8\xff" + b"0" * 600
+        with mock.patch.object(input_routes, "render_pdf_page", return_value=fake_jpeg) as render:
+            resp = self.client.get("/api/input/pdf_pages",
+                                   params={"fileId": first["fileId"], "page": 2})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("image/jpeg", resp.headers.get("content-type", ""))
+        self.assertIn("max-age", resp.headers.get("cache-control", ""),
+                      "同一 fileId+page 字节确定：允许短缓存，别每轮重渲染")
+        self.assertEqual(resp.content, fake_jpeg)
+        self.assertEqual(render.call_args[0][1], 2, "页号原样交给渲染器（1-based）")
+        with mock.patch.object(input_routes, "render_pdf_page", return_value=b""):
+            resp = self.client.get("/api/input/pdf_pages",
+                                   params={"fileId": first["fileId"], "page": 1})
+        self.assertEqual(resp.status_code, 422, "渲染不出来＝这一页取不到（前端静默跳过）")
+
+    def test_pdf_page_route_renders_real_jpeg(self):
+        try:
+            import pypdfium2  # noqa: F401
+        except ImportError:
+            self.skipTest("pypdfium2 未安装：真实页渲染不可用（契约由 stub 用例盖着）")
+        first = self._post({"fileName": "扫描件.pdf",
+                            "contentBase64": base64.b64encode(_make_pdf(None, pages=2)).decode("ascii")}).json()
+        resp = self.client.get("/api/input/pdf_pages",
+                               params={"fileId": first["fileId"], "page": 1})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.content.startswith(b"\xff\xd8\xff"), "返回的必须是 JPEG 字节")
+        self.assertGreater(len(resp.content), 500, "渲染出来的页图不该是空壳")
+
+    def test_pdf_page_route_page_bounds(self):
+        first = self._post({"fileName": "扫描件.pdf",
+                            "contentBase64": base64.b64encode(_make_pdf(None, pages=2)).decode("ascii")}).json()
+        # 页号 1-based 且只放行前 PDF_PAGE_MAX 页：0 / 超上限一律 400（前端据此静默跳过）
+        for page in (0, docs.PDF_PAGE_MAX + 1):
+            resp = self.client.get("/api/input/pdf_pages",
+                                   params={"fileId": first["fileId"], "page": page})
+            self.assertEqual(resp.status_code, 400, page)
+
+    def test_pdf_page_route_rejects_non_pdf(self):
+        first = self._post({"fileName": "笔记.txt", "contentBase64": _b64("正文")}).json()
+        resp = self.client.get("/api/input/pdf_pages", params={"fileId": first["fileId"], "page": 1})
+        self.assertEqual(resp.status_code, 400, "非 PDF 不渲染（不拿别的文件当 PDF 喂 pdfium）")
+
+    def test_pdf_page_route_bad_or_unknown_id_404(self):
+        self.assertEqual(self.client.get("/api/input/pdf_pages",
+                                         params={"fileId": "abc", "page": 1}).status_code, 404)
+        self.assertEqual(self.client.get("/api/input/pdf_pages",
+                                         params={"fileId": "doc_000000000000", "page": 1}).status_code, 404)
+
+
+class PdfScanHelperTest(unittest.TestCase):
+    """documents.pdf_is_scanned / render_pdf_page 的纯函数契约（T382）。"""
+
+    def test_scanned_threshold(self):
+        self.assertFalse(docs.pdf_is_scanned("", 0), "没有页就不算扫描版（读不出来别硬标）")
+        self.assertTrue(docs.pdf_is_scanned("", 1))
+        self.assertTrue(docs.pdf_is_scanned("\n \n", 3), "只有版式空白＝抽不出字")
+        self.assertFalse(docs.pdf_is_scanned("每页都有几十字" * 40, 2))
+        # 平均每页 < 10 字才算扫描版：1 页 9 字算，11 字不算（阈值锚）
+        self.assertTrue(docs.pdf_is_scanned("九字九字九字九字九", 1))
+        self.assertFalse(docs.pdf_is_scanned("十一个字十一个字十一个字一", 1))
+
+    def test_render_page_out_of_range_returns_empty(self):
+        # 页号越界/超上限不抛异常，返回空字节（调用方静默跳过，不挡发送）
+        self.assertEqual(docs.render_pdf_page(b"not a pdf", 0), b"")
+        self.assertEqual(docs.render_pdf_page(b"not a pdf", docs.PDF_PAGE_MAX + 1), b"")
+        self.assertEqual(docs.render_pdf_page(b"not a pdf", 1), b"")
+
+    def test_pdf_page_count_broken_file(self):
+        self.assertEqual(docs.pdf_page_count(b"not a pdf"), 0)
 
 
 class OcrEngineTest(unittest.TestCase):

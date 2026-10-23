@@ -146,6 +146,81 @@ def _extract_document_text(filename: str, content: bytes) -> str:
     return ""
 
 
+# ===== 扫描版 PDF 页转图（T382，2026-10-23）=====
+# 文字版 PDF/Word/txt 照旧抽文字进管道；只有**抽不出字**的扫描版（图片型、无
+# 文字层）才需要页转图——各家供应商的文档块格式互不通用（17 家随便配），统一
+# 走「页渲染成 JPEG → 图片通道」，与素材篮附图同一套。渲染在发送时按需做
+# （GET /api/input/pdf_pages），ingest 只打标、不落任何渲染产物。
+PDF_PAGE_MAX = 8              # 单份 PDF 最多参与前 8 页（配额见前端 _allocateSendImageRefs）
+PDF_RENDER_MAX_EDGE = 1600    # 与前端压图上限同口径：渲染就不给超大图
+PDF_RENDER_QUALITY = 82
+PDF_SCANNED_AVG_CHARS = 10    # 平均每页可抽字数低于此值＝「抽不出字」（扫描版判定）
+
+
+def pdf_page_count(content: bytes) -> int:
+    """PDF 页数；读不出来返回 0（加密/损坏）。只读目录，不做渲染。"""
+    try:
+        from pypdf import PdfReader
+
+        return len(PdfReader(io.BytesIO(content)).pages)
+    except Exception as e:
+        logger.warning(f"PDF page count failed: {e}")
+        return 0
+
+
+def pdf_is_scanned(text: str, pages: int) -> bool:
+    """扫描版判定：有页却几乎抽不出字（每页平均 < PDF_SCANNED_AVG_CHARS）。
+
+    严格按空白归一后的字符数算——版式空行不算「字」。文字版 PDF 即使短也常
+    有几十字/页，不会误判；扫描版即使带页眉页码（OCR 层）也能识别。
+    """
+    if pages <= 0:
+        return False
+    chars = len(re.sub(r"\s+", "", str(text or "")))
+    return chars < pages * PDF_SCANNED_AVG_CHARS
+
+
+def render_pdf_page(content: bytes, page_number: int,
+                    max_edge: int = PDF_RENDER_MAX_EDGE,
+                    quality: int = PDF_RENDER_QUALITY) -> bytes:
+    """把第 page_number 页（1-based）渲染成 JPEG 字节；失败返回 b""。
+
+    pypdfium2 缺失/页号越界/渲染异常一律静默降级为空——页图是增益，缺了就
+    回落成「未提取到文本」的占位，不因渲染失败挡发送（与附图同口径）。
+    """
+    if page_number < 1 or page_number > PDF_PAGE_MAX:
+        return b""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        logger.warning("pypdfium2 未安装：扫描版 PDF 页渲染不可用（pip install pypdfium2）")
+        return b""
+    doc = None
+    try:
+        doc = pdfium.PdfDocument(content)
+        if page_number > len(doc):
+            return b""
+        page = doc[page_number - 1]
+        width, height = page.get_size()
+        longest = max(float(width or 0), float(height or 0), 1.0)
+        # 大页面降采样、小页面保持原尺寸：渲染侧就压到与前端同一上限，省内存
+        scale = max(1.0, min(2.0, max_edge / longest))
+        bitmap = page.render(scale=scale)
+        image = bitmap.to_pil().convert("RGB")
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"PDF page render failed (page {page_number}): {e}")
+        return b""
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+
 def _parse_document_extract_json(text: str, max_items: int):
     # 调用方直接把 data["choices"][0]["message"]["content"] 传进来（documents.py:419），
     # 而 content 是可以合法为 null 的——模型偶尔返回空消息。原先只在上一个正则里做了

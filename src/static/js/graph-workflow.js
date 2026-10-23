@@ -319,14 +319,19 @@ async function _generateAnalysis(node, nodeSignal) {
     if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
       const agentModel = getActiveModelForRole('agent');
       if (agentModel) {
-        resp = await proxyChat(
+        // 取材附图（T381）：问题分析是首问链的第一跳（追问/方向钮/苏格拉底支线
+        // 都先过这里），上游素材篮的图随分析请求一起给模型——图与分析依据同源，
+        // 否则模型只能对着「图片未转写」的占位猜
+        const images = await _workflowImageDataUrls(node);
+        resp = await _sendWithImagesFallback(images, imgs => proxyChat(
           prompt,
           typeof currentLevel !== 'undefined' ? currentLevel : 'university',
           _workflowSessionId(),
           true,
           signal,
-          branchMeta
-        );
+          branchMeta,
+          imgs ? { images: imgs } : {}
+        ));
       }
     }
     if (!resp) {
@@ -391,37 +396,53 @@ function _normalizeWorkflowVizContent(content) {
   return '';
 }
 
-// 取材附图（2026-10-23）：首问/模块生成把上游素材篮的图片原图随消息发给模型
-// （多模态直接看图）。上限 4 张——素材更多的图是罕见场景，超出取前 4；上游 4xx
-// 时去图重发一次（非视觉模型收到 image_url 常整请求 400），并提示用户开「图片
-// 自动转文字」。返回 Response；去图重发也不成时抛那次错误，原始报错链不裹一层
-const WORKFLOW_SEND_IMAGE_MAX = 4;
+// ===== 取材附图（2026-10-23 打通；T381 2026-10-23 接全部发送链）=====
+// 上游素材篮的图随消息发给模型（多模态直接看图）：图片条目＝原图，扫描版 PDF＝
+// 前几页现渲染（T382，配额与压缩分别在 _collectUpstreamImages / _sourceBlobDataUrl）。
+// 收集路与该节点的 workflowContext 同源——首问/模块生成走全祖先，配方 first_inbound
+// 与空白节点走单父链，苏格拉底闭环作答刻意不带图（维持 2026-10-23 拍板）。
+// 上限与压缩只在上一层定义一次（WORKFLOW_SEND_IMAGE_MAX / _sourceBlobDataUrl）。
+const WORKFLOW_IMAGE_4XX_TOAST = '当前模型可能不支持看图，已去掉图片重发；可在输入节点开启「图片自动转文字」';
 
-async function _workflowSendWithImages(node, slotCall, payload, signal) {
-  const imageFiles = typeof _collectUpstreamImages === 'function' ? _collectUpstreamImages(node) : [];
-  let images = null;
-  if (imageFiles.length && typeof _sourceImageDataUrl === 'function') {
-    const dataUrls = (await Promise.all(
-      imageFiles.slice(0, WORKFLOW_SEND_IMAGE_MAX).map(it => _sourceImageDataUrl(it.fileId))
-    )).filter(Boolean);
-    if (dataUrls.length) {
-      images = dataUrls;
-      payload.images = dataUrls;
+// 把收集到的图引用取成 dataURL 列表；一份都取不到＝null（调用方按纯文本发）。
+// 图是增益：任何一张取不到/压不动都静默跳过，不挡发送（与 OCR 关同口径）
+async function _workflowImageDataUrls(node, route) {
+  const refs = typeof _collectUpstreamImages === 'function'
+    ? _collectUpstreamImages(node, route) : [];
+  if (!refs.length) return null;
+  const urls = await Promise.all(refs.map(ref => {
+    if (ref && ref.page) {
+      return typeof _sourcePdfPageDataUrl === 'function'
+        ? _sourcePdfPageDataUrl(ref.fileId, ref.page) : null;
     }
-  }
+    return typeof _sourceImageDataUrl === 'function' ? _sourceImageDataUrl(ref.fileId) : null;
+  }));
+  const dataUrls = urls.filter(Boolean);
+  return dataUrls.length ? dataUrls : null;
+}
+
+// 附图发送的回落骨架（全发送链共用一支，T381）：send(images) 由调用方决定拼哪种
+// 请求体；有图被上游 4xx 拒（非视觉模型收到 image_url 常整请求 400）就去图重发
+// 一次并提示开 OCR；5xx/网络错原样抛，不吞真实故障。无图时 first 即唯一一次。
+async function _sendWithImagesFallback(images, send) {
   try {
-    return await proxyChatWithModel(slotCall.model, payload, signal);
+    return await send(images);
   } catch (err) {
     const m = /^API (\d{3}):/.exec(String((err && err.message) || ''));
     if (!images || !m || m[1][0] !== '4') throw err;
-    const retryPayload = Object.assign({}, payload);
-    delete retryPayload.images;
-    const retry = await proxyChatWithModel(slotCall.model, retryPayload, signal);
-    if (typeof showToast === 'function') {
-      showToast('当前模型可能不支持看图，已去掉图片重发；可在输入节点开启「图片自动转文字」');
-    }
+    const retry = await send(null);
+    if (typeof showToast === 'function') showToast(WORKFLOW_IMAGE_4XX_TOAST);
     return retry;
   }
+}
+
+async function _workflowSendWithImages(node, slotCall, payload, signal) {
+  const images = await _workflowImageDataUrls(node);
+  return _sendWithImagesFallback(images, imgs => proxyChatWithModel(
+    slotCall.model,
+    imgs ? Object.assign({}, payload, { images: imgs }) : payload,
+    signal
+  ));
 }
 
 async function _generateCustomNode(node, nodeSignal) {
@@ -1647,14 +1668,18 @@ async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null
     if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
       const agentModel = getActiveModelForRole('agent');
       if (agentModel) {
-        resp = await proxyChat(
+        // 取材附图（T381）：空白节点走单父链上下文（graphPath 同一条链），图片
+        // 收集也必须按 'inbound' 走——用全祖先会把链外的兄弟素材图塞进来
+        const images = await _workflowImageDataUrls(current, 'inbound');
+        resp = await _sendWithImagesFallback(images, imgs => proxyChat(
           prompt,
           typeof currentLevel !== 'undefined' ? currentLevel : 'university',
           typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
           true,
           signal,
-          branchMeta
-        );
+          branchMeta,
+          imgs ? { images: imgs } : {}
+        ));
       }
     }
     if (!resp) {

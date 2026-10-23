@@ -803,6 +803,13 @@ function _sourceItemName(node, kind, fileName, text) {
 function _sourceItemPlaceholder(item) {
   const label = (item && (item.fileName || item.name)) || '';
   if (item && item.kind === 'image') return '[图片「' + label + '」未转写]';
+  // 扫描版 PDF（T382）：文字层抽不出字，发送时按前几页转图走图片通道——占位要
+  // 说清楚「它并非空料」，否则用户以为这份素材白加了
+  if (item && typeof _sourceItemIsScannedPdf === 'function' && _sourceItemIsScannedPdf(item)) {
+    const pages = parseInt(item.pages, 10) || 0;
+    return '[扫描版 PDF「' + label + '」' + (pages ? '共 ' + pages + ' 页，' : '')
+      + '发送时按前 ' + Math.min(pages || WORKFLOW_PDF_PAGE_MAX, WORKFLOW_PDF_PAGE_MAX) + ' 页转图]';
+  }
   return '[文件「' + label + '」未提取到文本]';
 }
 
@@ -810,29 +817,48 @@ function _sourceItemPlaceholder(item) {
 // 压图是给聊天请求减负（截图原图常超 4K，b64 体积与上游时延都跟着涨）；
 // 任何一步失败返回 null，调用方静默跳过该张——图是增益，不因附图失败挡发送
 const SOURCE_IMAGE_MAX_EDGE = 1600;
+// blob → ≤1600px JPEG dataURL（压图/兜白底逻辑的唯一定义，图片与 PDF 页共用；
+// 2026-10-23 T382 页转图复用同一支，别另抄一份画布代码）
+async function _sourceBlobDataUrl(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const scale = Math.min(1, SOURCE_IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
 async function _sourceImageDataUrl(fileId) {
   try {
     const resp = await fetch('/api/input/files/' + encodeURIComponent(String(fileId || '')));
     if (!resp.ok) return null;
-    const blob = await resp.blob();
-    const bitmap = await createImageBitmap(blob);
-    const scale = Math.min(1, SOURCE_IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close();
-    return canvas.toDataURL('image/jpeg', 0.82);
+    return await _sourceBlobDataUrl(await resp.blob());
   } catch (err) {
     return null;
   }
 }
 window._sourceImageDataUrl = _sourceImageDataUrl;
+
+// 扫描版 PDF 第 page 页（1-based）→ 同款 JPEG dataURL；服务端现渲染（不落盘）。
+// 任一步失败返回 null，调用方静默跳过该张（与附图同口径：图是增益不挡发送）
+async function _sourcePdfPageDataUrl(fileId, page) {
+  try {
+    const resp = await fetch('/api/input/pdf_pages?fileId=' + encodeURIComponent(String(fileId || ''))
+      + '&page=' + encodeURIComponent(String(page || 1)));
+    if (!resp.ok) return null;
+    return await _sourceBlobDataUrl(await resp.blob());
+  } catch (err) {
+    return null;
+  }
+}
+window._sourcePdfPageDataUrl = _sourcePdfPageDataUrl;
 
 function _sourceItemId() {
   return 'it_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
@@ -893,6 +919,14 @@ function _sourceDropItem(node, item, data) {
     ms: Number(data.ocr.ms) || 0,
     error: String(data.ocr.error || '').slice(0, 200),
   } : _sourceOcrState('none');
+  // 扫描版 PDF 打标（T382，2026-10-23）：抽不出字的扫描件在素材篮里＝空料，
+  // 标出来让发送侧按前几页转图。text 清空——扫描件抽出的往往只有版式空白
+  // （pypdf 对无文字层页面返回 "\n"），留着它占位文案就不出现了
+  if (data.pdf && typeof data.pdf === 'object') {
+    item.pages = Number(data.pdf.pages) || 0;
+    item.scanned = data.pdf.scanned === true;
+    if (item.scanned) item.text = '';
+  }
 }
 
 async function _sourceIngest(nodeId, itemId, payload, pending) {
