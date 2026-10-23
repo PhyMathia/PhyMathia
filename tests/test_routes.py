@@ -1195,6 +1195,33 @@ class StaticCacheHeaderTest(RouteTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers.get("cache-control"), "no-cache")
 
+    # T377（2026-10-23）：带 ?v=<内容哈希> 的请求是构建写死在 index.html 里的
+    # 内容寻址 URL（内容变＝哈希变＝URL 变），改走 immutable 一年长缓存——刷新
+    # 不再对 app.js/三份 min.css 发条件请求；HTML 仍 no-cache，新构建普通刷新即达。
+    def test_versioned_asset_gets_immutable(self):
+        resp = self.client.get("/js/app.js?v=2331bada")
+        self.assertEqual(resp.status_code, 200)
+        cc = resp.headers.get("cache-control") or ""
+        self.assertIn("immutable", cc)
+        self.assertIn("max-age=31536000", cc)
+
+    def test_versioned_css_gets_immutable(self):
+        resp = self.client.get("/css/styles.min.css?v=5fbda300")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("immutable", resp.headers.get("cache-control") or "")
+
+    def test_non_hash_version_param_still_no_cache(self):
+        # ?v= 不是内容哈希（手输任意串）不得误进 immutable——指纹格式校验兜底
+        resp = self.client.get("/js/app.js?v=latest")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+
+    def test_304_negotiation_still_works_for_unversioned(self):
+        first = self.client.get("/js/app.js?v=2331bada")
+        etag = first.headers.get("etag")
+        second = self.client.get("/js/app.js", headers={"If-None-Match": etag})
+        self.assertEqual(second.status_code, 304)
+
 
 
 

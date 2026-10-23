@@ -261,6 +261,14 @@
     clone.style.left = '0';
     clone.style.top = '0';
     clone.style.willChange = 'auto';
+    // T376：屏外卡的 content-visibility 在克隆树里归位——快照栅格化没有「视口」
+    // 概念，留着会让按视口跳过布局的卡以占位尺寸出图（内容被 size 包含吃掉）
+    clone.querySelectorAll('.graph-node').forEach(function (el) {
+      if (el.style.contentVisibility) {
+        el.style.contentVisibility = 'visible';
+        el.style.containIntrinsicSize = '';
+      }
+    });
     clone.querySelectorAll('.selected').forEach(function (el) { el.classList.remove('selected'); });
     clone.querySelectorAll('.dimmed').forEach(function (el) { el.classList.remove('dimmed'); });
     // 拖拽中的临时元素不进画面

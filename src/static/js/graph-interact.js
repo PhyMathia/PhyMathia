@@ -155,6 +155,10 @@ function renderGraphCanvas(streaming) {
     + graphView.nodes.map(n => _renderNodeHtml(n, messages, state)).join('');
   graphInner.insertAdjacentHTML('beforeend', html);
 
+  // T376：屏外卡挂 content-visibility（占位尺寸来自持久化 sizes），得赶在首帧
+  // 布局之前——插完就挂，浏览器第一次排版即可跳过视口外的卡
+  if (typeof _applyNodeLazyLayout === 'function') _applyNodeLazyLayout(state);
+
   _applyGraphTransform();
 
   requestAnimationFrame(() => {

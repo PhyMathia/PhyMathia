@@ -1367,6 +1367,35 @@ function _renderNodeHtml(node, messages, state) {
     + '</div>';
 }
 
+// ===== T376：屏外卡免布局（content-visibility 按视口分片）=====
+// 全量重建一次性铺开 80+ 张内容卡是首屏布局的头号成本（2026-10-23 实测
+// LayoutDuration 0.39s / 87 卡）。content-visibility:auto 让浏览器只布局与
+// 视口相交的卡，屏外的以 contain-intrinsic-size 占位——占位尺寸取 graph
+// state 里持久化过的 sizes（_savePositions 测量后存盘），量出来的 w/h 与
+// 真卡一致，边路由/分组包含/自动排版都不吃假值；卡滚进视口时浏览器自行
+// 补布局，T69 的 KaTeX 视口分档 flush（每批 3 卡）已经在补铺后重测重画。
+// 两个例外：ai_eval 卡的锯齿描边故意外扩 6px（paint 包含常开会被裁）；
+// minimized 卡本就不建内容子树，无需再挂。无持久化尺寸的新卡不挂——
+// 占位与真身不符反而污染测量，宁可贵一点。
+function _applyNodeLazyLayout(state) {
+  if (!graphInner) return;
+  if (typeof CSS === 'undefined' || !CSS.supports || !CSS.supports('content-visibility', 'auto')) return;
+  const sizes = ((state && state.sizes) || (_graphState() || {}).sizes) || {};
+  const elById = new Map();
+  graphInner.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
+    elById.set(el.dataset.nodeId, el);
+  });
+  for (const node of graphView.nodes) {
+    if (node.kind === 'ai_eval' || node.minimized) continue;
+    const s = sizes[String(node.id)];
+    if (!s || !(s.w > 0) || !(s.h > 0)) continue;
+    const el = elById.get(String(node.id));
+    if (!el) continue;
+    el.style.contentVisibility = 'auto';
+    el.style.containIntrinsicSize = 'auto ' + Math.round(s.w) + 'px auto ' + Math.round(s.h) + 'px';
+  }
+}
+
 function _measureNodes() {
   if (!graphInner) return;
   // 一次 querySelectorAll 建 id->元素映射：旧实现对每个节点各做一次全子树

@@ -309,18 +309,28 @@ async def _readonly_browse_gate(request: Request, call_next):
 # （app.js 靠构建时写入 index.html 的 ?v=<内容哈希> 区分版本，HTML 本身必须每次
 # 协商才能拿到新哈希），统一发 no-cache——每次协商、ETag 命中回 304、永不 stale。
 # 别换成 max-age（哪怕很短）：/vendor/ 第三方本地副本没有版本指纹，长了就是更新不掉。
+# 例外（T377）：带 ?v=<内容哈希> 的请求是构建写死在 index.html 里的内容寻址 URL，
+# 内容变＝哈希变＝URL 变，长缓存永不 stale——这类走 immutable 一年，刷新不再发
+# 41 个条件请求；HTML 仍每次协商，新构建落地即换新 ?v=，用户普通刷新拿新产物。
 # /api/*、/v1/*、/health 走各自路由，不经静态通道，结构上不受影响。
 _CACHE_NO_CACHE = {"Cache-Control": "no-cache"}
+_CACHE_IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+# 构建写 ?v= 时用内容哈希前 8 位十六进制（build_frontend.mjs），按此放宽到 6–16 位防格式微调
+_VERSIONED_RE = re.compile(r"^[0-9a-f]{6,16}$")
 
 
 def _static_file_response(request: Request, file_path: Path) -> Response:
-    """静态文件响应：no-cache 协商口径 + If-None-Match 命中回 304。
+    """静态文件响应：?v= 内容指纹走 immutable 长缓存，其余 no-cache 协商 + 304。
 
     本环境 starlette(1.6) 的 FileResponse 只发 ETag、不再做条件判定（老版本
     会在响应类内部比对其返回 304）——no-cache 若没有 304，浏览器每次都全量
     重拉。这里按 starlette 同一算法（md5(mtime-size)）自行比对，命中即 304
     并保留缓存头；不命中走 FileResponse（它自带的 ETag 与这里一致）。
     """
+    v = request.query_params.get("v", "")
+    if _VERSIONED_RE.fullmatch(v):
+        # immutable：浏览器连协商都不发；FileResponse 仍带 ETag，只是没人再问
+        return FileResponse(str(file_path), headers=_CACHE_IMMUTABLE)
     stat = file_path.stat()
     etag = '"%s"' % hashlib.md5(
         f"{stat.st_mtime}-{stat.st_size}".encode(), usedforsecurity=False
