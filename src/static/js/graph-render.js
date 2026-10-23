@@ -1524,13 +1524,31 @@ function _updateNodeTransforms(onlyIds) {
 // 按半距算死进本地坐标（T298：下钻后边线整体悬空，拖节点触发重测重画才愈）。
 // offsetWidth 是布局宽（不受任何变换影响），与 getBoundingClientRect().width
 // 之比即真实屏幕复合缩放，对一切祖先变换免疫；取不到（display:none 等）退回 zoom。
+// T380：帧级缓存——同帧多次调用共享一次 offsetWidth+gBCR 布局读（_portAnchor 在
+// _refreshEdgeGeometry 里每条边调两次，82 节点会话一拍就是上百次重复读）。以 zoom 作键：
+// _applyGraphTransform 写完 transform 才落 graphView.zoom，同帧内 zoom 变了立刻重测；
+// rAF 到点整帧失效——大陆下钻/回退转场是 .graph-canvas 上的 CSS transition 逐帧插值，
+// 跨帧重测正是 T298 修复要的「感知祖先缩放」，同帧内祖先变换恒定可安全复用。
+const _graphCompositeScaleCache = { valid: false, zoom: 0, value: 1 };
+let _graphCompositeScaleRafPending = false;
 function _graphCompositeScale(innerRect) {
   const zoom = graphView.zoom || 1;
   if (!graphInner) return zoom;
-  const layoutW = graphInner.offsetWidth;
-  if (!layoutW) return zoom;
-  const ratio = (innerRect || graphInner.getBoundingClientRect()).width / layoutW;
-  return Number.isFinite(ratio) && ratio > 0 ? ratio : zoom;
+  const cache = _graphCompositeScaleCache;
+  if (!cache.valid || cache.zoom !== zoom) {
+    const layoutW = graphInner.offsetWidth;
+    if (!layoutW) return zoom; // display:none 等取不到布局宽：不落缓存，退回 zoom
+    const rectW = (innerRect || graphInner.getBoundingClientRect()).width;
+    const ratio = rectW / layoutW;
+    cache.zoom = zoom;
+    cache.value = Number.isFinite(ratio) && ratio > 0 ? ratio : zoom;
+    cache.valid = true;
+    if (!_graphCompositeScaleRafPending) {
+      _graphCompositeScaleRafPending = true;
+      requestAnimationFrame(() => { _graphCompositeScaleRafPending = false; cache.valid = false; });
+    }
+  }
+  return cache.value;
 }
 
 function _clientToGraphLocal(clientX, clientY) {
@@ -1789,9 +1807,11 @@ function _applyGraphTransform() {
   // T259：容器残留 scrollTop/scrollLeft（浏览器把焦点元素自动滚进视口的副作用）会把
   // 世界坐标→屏幕映射整体带偏。T39 原先只在 fitGraph 一条路归零，工作流收尾焦点、
   // Φ 预览等其余写 pan/zoom 的路径同样踩——归零收进本公共入口，所有路径统一免疫。
+  // T380：改非零才写——本函数每次 pan/zoom 落帧都进，无条件赋值会把「写 scroll 属性」
+  // 也变成每帧动作参与布局脏化；读一次已为零则跳过写。
   if (typeof graphCanvas !== 'undefined' && graphCanvas) {
-    graphCanvas.scrollTop = 0;
-    graphCanvas.scrollLeft = 0;
+    if (graphCanvas.scrollTop) graphCanvas.scrollTop = 0;
+    if (graphCanvas.scrollLeft) graphCanvas.scrollLeft = 0;
   }
   graphInner.style.transform = 'translate(' + state.pan.x + 'px, ' + state.pan.y + 'px) scale(' + state.zoom + ')';
   graphView.zoom = state.zoom;

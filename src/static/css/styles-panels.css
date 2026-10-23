@@ -915,17 +915,6 @@
       gap: 4px;
       white-space: nowrap;
     }
-    /* 可视化卡片的「没看懂」按钮：图谱青蓝色 */
-    .viz-dontget {
-      color: var(--domain-graph);
-      border-color: color-mix(in srgb, var(--domain-graph) 40%, transparent);
-      background: transparent;
-    }
-    .viz-dontget:hover {
-      background: var(--domain-graph);
-      border-color: var(--domain-graph);
-      color: var(--white);
-    }
     /* M1 可视化校验角标：pending 灰 / pass 绿 / warn 黄 / fail 红；
        unsupported 未声明约定的页面不渲染角标（宁可漏报不可误报） */
     .viz-check-badge {
@@ -5435,7 +5424,6 @@
   .token-records-row { grid-template-columns: 5em 4.4em minmax(0, 1fr) 3.6em 3em 2.2em 4em 3em; }
   .token-runs-row { grid-template-columns: minmax(0, 1.8fr) .8fr .9fr .8fr .9fr 4.2em; }
 }
-
 
 /* ===== 节点工坊（2026-10-20，创造模式重做 P0–P4）=====
    设计文档：docs/archive/创造模式重做计划-2026-10-20.md

@@ -368,7 +368,6 @@
   max-height: none !important;
 }
 
-
 /* 内容区高度随内容自适应（2026-09-26 用户拍板：生成完打开即完整可读，不拖不滚）。
    旧的固定 520px 上限改为约一屏的动态上限（max 兜底防极矮窗口）：
    内容不足一屏 → 节点刚好包住内容；超过保险线 → 仍走节点内滚动，防巨节点出视野。
@@ -857,7 +856,6 @@
   --graph-bubble-start: color-mix(in srgb, var(--node-attr, var(--accent)) 18%, transparent);
   --graph-bubble-glow: color-mix(in srgb, var(--node-attr, var(--accent)) 26%, transparent);
 }
-
 
 /* ---------- 6.5 配方节点卡片：与内置节点只差颜色（2026-10-09 用户验收反馈）----------
    六个内置模块卡各有「4px 彩框（左 7px）＋ 14% 彩色渐变 ＋ 彩色辉光」，配方节点
@@ -2194,24 +2192,6 @@
   outline: 2px dashed rgba(6, 182, 212, 0.7);
   outline-offset: 3px;
   border-radius: var(--r-md);
-}
-
-.graph-source-busy {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-
-.graph-source-spinner {
-  width: 14px;
-  height: 14px;
-  /* 与 .kp-spinner 同一套处方：环色跟 currentColor 走，别再各写一份青蓝 */
-  border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: kp-spin 0.8s linear infinite;
 }
 
 .graph-source-file-btn {
