@@ -106,7 +106,9 @@ async def _json_get_response(request: Request, path, transform, cache_key=None):
 # v2（2026-10-23 L1/L2）：岛级弃权（domainMargin/domainConsensus/三信号闸门）＋
 # 内置族表新增「材料力学」——两者都改投影产物口径，旧缓存须整体作废。
 # v3（2026-10-23 L3）：三态（domainTier）＋ familyProposals（指派反哺）——同为产物口径变更。
-_CONTINENT_CACHE_VERSION = 3
+# v4（2026-10-23 T386/T388）：灰岛候选改半门槛（弃权岛 domains 不再整空）＋反哺词条
+# 加「命中 ≥2 卡」判据（familyProposals 变少变准）——同为产物口径变更。
+_CONTINENT_CACHE_VERSION = 4
 _continent_result_cache: dict = {}   # {account: (sig, result)}
 _CONTINENT_RESULT_CACHE_MAX = 8      # 按账号一格，超限整体清（防长跑膨胀）
 

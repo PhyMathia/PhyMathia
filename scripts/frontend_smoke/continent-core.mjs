@@ -1317,9 +1317,18 @@ check('graph-continent: v7.1b 门控（提示词契约名单固定 / 判读防�
   if (pend.map(c => c.id).join() !== 'x1,x2,z1') {
     throw new Error('待打标口径错：' + pend.map(c => c.id).join());
   }
-  const entries = { x1: { hash: hash({ title: '康普顿散射', summary: '', formula: '' }), domains: [] } };
-  const pend2 = pendingCards(clusters, entries);
+  const roster = ['量子力学', '微积分'];
+  const entries = {
+    x1: { hash: hash({ title: '康普顿散射', summary: '', formula: '' }),
+          domains: [{ name: '量子力学', conf: 0.9 }] },
+  };
+  const pend2 = pendingCards(clusters, entries, roster);
   if (pend2.map(c => c.id).join() !== 'x2,z1') throw new Error('hash 增量未生效（x1 该跳过）');
+  // T387 名单过滤：gateVersion 不再随名单换代，旧打标只剩死名（族被删）时该卡重进队列
+  const pend3 = pendingCards(clusters, entries, ['微积分']);
+  if (pend3.map(c => c.id).join() !== 'x1,x2,z1') {
+    throw new Error('死名旧打标该重新进队列（T387 名单过滤）');
+  }
   // 静态契约：打开大陆不自动跑（openContinentView 不触发 classify）、入口按钮、
   // 每批落盘、关图中止、建议采纳写族表
   const src = readContinentSrc();

@@ -169,6 +169,13 @@ GATE_MIN_TOP_STRICT = 0.45  # 冠军海份额下限（≤2 卡岛）：单卡/�
 GATE_MIN_MARGIN = 0.10      # 冠军领先次名的份额差下限（错岛 0.010–0.021，正确岛最低 0.063）
 GATE_MIN_CONSENSUS = 0.50   # 卡级 top-1 落在冠军海的票占比下限（与 margin 二选一即可）
 GATE_MIN_CARDS_STRICT = 2   # 岛卡数 ≤ 此值走严判：一致率在 1–2 张卡上没有统计意义
+# 灰岛（弃权岛）的候选门槛＝GATE_MIN_P 的一半（T388，2026-10-23 分类质量计划 L4
+# 只查发现）：弃权只要求 top 不过 GATE_MIN_TOP(0.33)，候选却按 GATE_MIN_P(0.25)
+# 过滤——冠军海 0.19 的岛（行波的能量密度）既没名字也没候选，「未归类（候选：…）」
+# 文案在它身上看不见。半门槛让 0.19 过线、5% 级的长尾底噪仍进不来；**保留岛的
+# 候选口径一字不动**（别单点调 GATE_MIN_P——那会连保留岛的候选一起变）。与上面
+# 五常量同一条纪律：只影响岛级呈现，不进 _gate_weights()。
+GATE_MIN_P_UNSURE = 0.125
 # ===== 三态判定（L3，2026-10-23 分类质量计划第三件之一）=====
 # 上面四个常量回答「给不给名字」，这里回答「这个名字有多硬」——两者都只看岛级呈现，
 # 不动卡级打标：三信号全过＝`solid`（实色），过弃权闸但没全过＝`light`（淡色＋「?」），
@@ -199,21 +206,25 @@ GATE_CONF_SOLID = 0.7
 GATE_CONF_LIGHT = 0.4
 
 
-def gate_version(families: list, weights: dict = None) -> str:
-    """门控产物的版本指纹：专家名单或权重表变了，整批 KV 打标作废重打。
+def gate_version(weights: dict = None) -> str:
+    """门控产物的版本指纹：**只哈希权重快照**（T387，2026-10-23 拆分）。
 
-    这是 v7.1b 缓存三层里「version 失效比 hash 更重要」的那一环——名单加了领域、
-    权重调了参数而缓存不失效的话，地图上会新旧口径混着显示还看不出来。
+    v7.1b 老口径把「名单＋权重」一把哈希——加一个族就让全量 Φ 打标作废重打（烧钱，
+    材料力学那次就是这么整批换代的）。打标 KV 存的是「模型说这张卡是某名 ×conf」的
+    **证据**，与名单长短无关：加族后卡级 softmax 在投影时按当前名单现算，旧打标注
+    照样有效（「量子力学 0.95」换个更大的名单没变义）。于是版本拆成两层：
+    - 权重快照变了 → 版本换，整批作废（`_normalize_gate_payload` 首查）——评分口径
+      新旧混着显示才是真看不出来的问题；
+    - 名单变了 → 版本不动，靠**条目级名单过滤**兜住：服务端只认名单内的名（铁律②
+      本就如此，删族时提到该名的条目自动失效），前端复用/补打时按当前 domainList
+      过滤（`graph-continent-regions.js`，删族后旧打标只剩死名的卡重新进待打标队列）。
     """
     import hashlib
     import json
-    names = sorted(str(f.get("canonical") or "") for f in (families or []))
     w = dict(weights or {})
-    digest = hashlib.md5(
-        (json.dumps(names, ensure_ascii=False) + "|" +
-         json.dumps(w, sort_keys=True, ensure_ascii=False)).encode("utf-8")
-    ).hexdigest()
-    return digest[:10]
+    return hashlib.md5(
+        json.dumps(w, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:10]
 
 
 def _gate_weights() -> dict:
@@ -226,9 +237,12 @@ def _gate_weights() -> dict:
 
 
 def current_gate_version(families_payload=None) -> str:
-    """当前口径的 gateVersion（build_continent 与测试共用这一把——两处各算一份必然漂）。"""
-    accepted = merge_families(BUILTIN_FAMILIES, families_from_payload(families_payload))
-    return gate_version(accepted, _gate_weights())
+    """当前口径的 gateVersion（build_continent 与测试共用这一把——两处各算一份必然漂）。
+
+    T387 起版本不吃名单（见 gate_version）；`families_payload` 参数保留给调用方签名
+    稳定，不参与指纹。
+    """
+    return gate_version(_gate_weights())
 
 
 def _breadth(island_count: int) -> float:
@@ -859,6 +873,12 @@ REGION_PROPOSAL_MIN_ISLANDS = 2   # 同一名字被几座不同岛指过才提�
 REGION_PROPOSAL_MAX = 3           # 一轮最多几条（再多是刷屏，先答证据最多的）
 REGION_PROPOSAL_TERMS_MAX = 8     # 提议里带的词条上限
 REGION_PROPOSAL_NAME_MAX = 16     # 名字上限（与指派菜单/族名输入框同一把尺子）
+# 词条「学科味儿」下限（T386，2026-10-23）：至少在几张卡的标题里出现过。真学科词
+# （泊松分布/冲激响应）会在一个学科的卡片上反复出现；卡片副题短语（「交互可视化」
+# ——均匀分布岛那次污染的实例）只在自己那张卡上出现，与真词词形上无法区分（都是
+# 5 字、都像概念名、都不在族表），唯一的分界就是复现次数。命中不了 ≥2 张卡的词
+# 不提议：收进族表它会命中任何含此短语的标题，把未来的卡越拉越偏。
+REGION_PROPOSAL_TERM_MIN_HITS = 2
 
 
 def region_family_proposals(region_log, clusters, items, families, dismissed=None) -> list:
@@ -870,7 +890,9 @@ def region_family_proposals(region_log, clusters, items, families, dismissed=Non
     - 用户拒过（`dismissed`，键 `region:<名字>`）在证据没长出来之前闭嘴（与补词/
       新族候选同一条防骚扰纪律：`islands` 数不长就永远不再提）；
     - 词条从这些岛的卡片标题里提炼（`_suggest_term_from_title` 的卫生口径：会误伤
-      别的族的混词一律不要），**提不出词条就不提议**——空族会被 `families_from_payload`
+      别的族的混词一律不要），且须过「学科味儿」判据——词条要在 ≥REGION_PROPOSAL_
+      TERM_MIN_HITS 张卡的标题里出现（T386：副题短语只在自己那张卡上出现，真学科
+      词会反复出现）。**提不出词条就不提议**——空族会被 `families_from_payload`
       整条丢掉（「没有词条的族接不住任何卡」），提示一个建不成的族等于白说。
     返回 `[{key, name, count, islands:[{sid,title}], terms, lastAt}]`，按证据量降序。
     """
@@ -908,14 +930,24 @@ def region_family_proposals(region_log, clusters, items, families, dismissed=Non
         old = rej.get("region:" + name)
         if isinstance(old, dict) and int(old.get("islands") or 0) >= len(g["sids"]):
             continue
-        terms = []
+        # 这批证据岛里的全部卡先收齐：词条提炼与「学科味儿」命中计数共用一份遍历
+        cards, norm_titles = [], []
         for sid in g["sids"]:
             for row in (by_sid.get(sid) or {}).get("items") or []:
-                item = (items or {}).get(str((row or {}).get("itemId") or "")) or {}
-                term = _suggest_term_from_title(item.get("title"), prepared,
-                                                existing, canon, name)
-                if term and term not in terms:
-                    terms.append(term)
+                item = (items or {}).get(str((row or {}).get("itemId") or ""))
+                if isinstance(item, dict):
+                    cards.append(item)
+                    norm_titles.append(_normalize_title(item.get("title")))
+        terms = []
+        for item in cards:
+            term = _suggest_term_from_title(item.get("title"), prepared,
+                                            existing, canon, name)
+            if not term or term in terms:
+                continue
+            # T386 学科味儿：命中不足的词（副题短语只在自己那张卡上出现）不提议
+            if sum(1 for t in norm_titles if term in t) < REGION_PROPOSAL_TERM_MIN_HITS:
+                continue
+            terms.append(term)
         if not terms:
             continue   # 提不出词条＝建了也接不住卡（空族会被 families_from_payload 丢掉）
         out.append({"key": "region:" + name, "name": name, "count": len(g["sids"]),
@@ -1073,8 +1105,10 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     L1（2026-10-23）岛级弃权：聚合结果再过三信号闸门——top（冠军海份额）、margin
     （冠军领先次名的份额差，用**未过滤**的 ranked 算；只有一名时视为 1.0）、consensus
     （卡级 top-1 落在冠军海的票数 / 有概率的卡数；一张有概率的卡都没有时记 0）。闸门
-    不满足 → domain/domainSource 清空、domainConf=0，但 domains 候选照常按 GATE_MIN_P
-    下发（灰岛也要能报候选）；domainMargin/domainConsensus（3 位小数）两种结局都随行。
+    不满足 → domain/domainSource 清空、domainConf=0，但 domains 候选照常下发（灰岛
+    也要能报候选；门槛 T388 起分两档：保留岛 GATE_MIN_P、灰岛半门槛 GATE_MIN_P_UNSURE
+    ——冠军海 0.19 的岛按 0.25 过滤会连候选一起滤空，「未归类（候选：…）」就看不见了）；
+    domainMargin/domainConsensus（3 位小数）两种结局都随行。
 
     L3（2026-10-23）三态：留下来的岛再分两档——三个信号全过 GATE_SOLID_* 是
     `domainTier='solid'`（确定，前端实色），否则 `'light'`（疑似，淡色＋「?」）；
@@ -1125,13 +1159,17 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     else:
         src = "vote"
     domains = [{"name": d, "p": round(v / total, 3)}
-               for d, v in ranked[:GATE_TOP_K] if v / total >= GATE_MIN_P]
+               for d, v in ranked[:GATE_TOP_K]]
     derived = {"domainMargin": round(margin, 3), "domainConsensus": round(consensus, 3)}
     if len(iids) <= GATE_MIN_CARDS_STRICT:
         keep = top_share >= GATE_MIN_TOP_STRICT and margin >= GATE_MIN_MARGIN
     else:
         keep = top_share >= GATE_MIN_TOP and (margin >= GATE_MIN_MARGIN
                                               or consensus >= GATE_MIN_CONSENSUS)
+    # T388：候选门槛随结局分档——保留岛照旧 GATE_MIN_P（「人人都有第二标签」的闸
+    # 不许松），灰岛走半门槛（top 可以低到 0.19，按 0.25 过滤会把候选整空）
+    min_p = GATE_MIN_P if keep else GATE_MIN_P_UNSURE
+    domains = [d for d in domains if d["p"] >= min_p]
     if not keep:
         # 弃权：不给名字，但候选照常下发——「未归类（候选：相对论 22%、量子物理 21%）」
         return {"domain": None, "domains": domains, "domainConf": 0.0,
@@ -1328,8 +1366,8 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     accepted_families = merge_families(BUILTIN_FAMILIES, families_from_payload(families))
     prepared_families = prepare_families(accepted_families)
     # 版本指纹在这算一次，两处消费（gate 校验 / 响应回传）共用——此前
-    # current_gate_version 各算一遍，families_from_payload+merge+md5 白跑 3 次
-    gate_ver = gate_version(accepted_families, _gate_weights())
+    # current_gate_version 各算一遍，md5 白跑 3 次；T387 起指纹只吃权重快照
+    gate_ver = gate_version(_gate_weights())
     item_families, term_df, n_scored = _item_families(items, prepared_families)
     # 岛名 → 族（v7 海域层与 v6 族条目共用一份，只匹配一次）
     session_fams = {c["sessionId"]:

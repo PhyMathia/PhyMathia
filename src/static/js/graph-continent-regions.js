@@ -941,8 +941,12 @@ function _continentGateParse(raw, cardIds, domainList) {
 }
 
 // 待打标卡片：归属缺失（domain=null）或低置信（<0.4）的岛上的卡；内容 hash 没变的
-// 跳过（增量）。已有可靠归属的岛不烧调用——Φ 只补本地门控做不到的那部分
-function _continentGatePendingCards(clusters, entries) {
+// 跳过（增量）。已有可靠归属的岛不烧调用——Φ 只补本地门控做不到的那部分。
+// T387（2026-10-23）：旧打标还要**名还在名单里**才算数——版本不再随名单换代，删族
+// 后只剩死名条目的卡在这里重新进队列重打（名单过滤与后端 _normalize_gate_payload
+// 同一把尺子）。
+function _continentGatePendingCards(clusters, entries, domainList) {
+  const allowed = new Set(domainList || []);
   const out = [];
   (clusters || []).forEach(c => {
     const conf = Number(c.domainConf) || 0;
@@ -950,7 +954,8 @@ function _continentGatePendingCards(clusters, entries) {
     (c.items || []).forEach(it => {
       if (!it || !it.itemId) return;
       const e = entries && entries[it.itemId];
-      if (e && e.hash === _continentGateHash(it)) return;
+      if (e && e.hash === _continentGateHash(it)
+          && (e.domains || []).some(d => d && allowed.has(d.name))) return;
       out.push({ id: it.itemId, title: it.title || '', summary: it.summary || '',
                  formula: String(it.formula || '').slice(0, 80) });
     });
@@ -974,7 +979,9 @@ async function _continentGateClassify() {
   const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   _continentGateCtrl = ctrl;
   try {
-    // 读现有 gate KV：版本一致才沿用条目（名单/权重变了整批作废重打）
+    // 读现有 gate KV：版本一致才沿用条目。T387（2026-10-23）起版本只含权重口径——
+    // 名单变了不再整批作废，死名（族被删）在这里剪掉：条目内滤掉名单外的名，
+    // 剪空的条目整个丢弃，那批卡随之下轮重新进待打标队列；写回时携带的就是净表。
     let entries = {};
     try {
       const r = await fetch(CONTINENT_GATE_API, { cache: 'no-cache' });
@@ -982,12 +989,20 @@ async function _continentGateClassify() {
         const j = await r.json();
         const v = j && j.value;
         if (v && typeof v === 'object' && v.version === data.gateVersion
-            && v.entries && typeof v.entries === 'object') entries = v.entries;
+            && v.entries && typeof v.entries === 'object') {
+          const roster = new Set(data.domainList || []);
+          Object.keys(v.entries).forEach(id => {
+            const e = v.entries[id];
+            const doms = Array.isArray(e && e.domains)
+              ? e.domains.filter(d => d && roster.has(d.name)) : [];
+            if (doms.length) entries[id] = { hash: e.hash, domains: doms, at: e.at };
+          });
+        }
       }
     } catch (e) { /* 读不到就当全新跑 */ }
-    const pending = _continentGatePendingCards(data.clusters, entries);
-    if (!pending.length) { _continentToast('没有需要 Φ 归类的卡片'); return; }
     const domainList = data.domainList || [];
+    const pending = _continentGatePendingCards(data.clusters, entries, domainList);
+    if (!pending.length) { _continentToast('没有需要 Φ 归类的卡片'); return; }
     const kv = { version: data.gateVersion, entries: entries };
     const newDomains = [], merges = [];
     let done = 0, failed = 0;
