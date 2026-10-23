@@ -32,11 +32,11 @@ function _rwDraftKey() {
 }
 
 function _rwBaseKinds() {
-  return (typeof RECIPE_BASE_KINDS !== 'undefined') ? RECIPE_BASE_KINDS : ['module', 'summary', 'knowledge', 'relation', 'note', 'human_note', 'manual', 'question'];
+  return (typeof RECIPE_BASE_KINDS !== 'undefined') ? RECIPE_BASE_KINDS : ['module', 'summary', 'relation', 'note', 'human_note', 'manual', 'question'];
 }
 
 function _rwAiBaseKinds() {
-  return (typeof RECIPE_AI_BASE_KINDS !== 'undefined') ? RECIPE_AI_BASE_KINDS : ['module', 'summary', 'knowledge', 'relation'];
+  return (typeof RECIPE_AI_BASE_KINDS !== 'undefined') ? RECIPE_AI_BASE_KINDS : ['module', 'summary', 'relation'];
 }
 
 function _rwBaseMeta(kind) {
@@ -824,7 +824,7 @@ function _rwAdvancedHtml(recipe) {
   const kindLabels = { markdown: 'Markdown 正文', plain: '纯文本', mermaid: 'Mermaid 图', html_iframe: '交互网页' };
   const channels = (typeof RECIPE_CONTEXT_CHANNELS !== 'undefined') ? RECIPE_CONTEXT_CHANNELS : ['workflow_context', 'prompt_inline'];
   const roles = (typeof RECIPE_MODEL_ROLES !== 'undefined') ? RECIPE_MODEL_ROLES : ['agent', 'html', 'branch', 'graph', 'quiz', 'descriptor'];
-  const aggLabels = { ancestors: '收全部上游', self_fields: '读自身字段', first_inbound: '只收第一条连线', none: '不收材料' };
+  const aggLabels = { ancestors: '收全部上游', first_inbound: '只收第一条连线', none: '不收材料' };
   const baseKind = (recipe.base && recipe.base.kind) || 'module';
   const onGenerated = recipe.on_generated;
   return '<details class="rw-advanced">'
@@ -856,7 +856,7 @@ function _rwAdvancedHtml(recipe) {
     + (baseKind === 'module'
       ? _rwGroup('aggregation', '收哪些材料',
           _rwSelectHtml('rwEditAggregation(this.value)',
-            (typeof RECIPE_AGGREGATIONS !== 'undefined' ? RECIPE_AGGREGATIONS : ['ancestors', 'self_fields', 'first_inbound', 'none'])
+            (typeof RECIPE_AGGREGATIONS !== 'undefined' ? RECIPE_AGGREGATIONS : ['ancestors', 'first_inbound', 'none'])
               .map(function (key) { return _rwOption(key, aggLabels[key] || key, recipe.aggregation); }).join(''), '生成时把哪些上游算进来'), '')
         + _rwGroup('analysis_phase', '先出一段问题概要',
           '<label class="rw-check"><input type="checkbox"' + (recipe.analysis_phase ? ' checked' : '') + ' onchange="rwToggleAnalysis(this.checked)"> 生成正文前先拆题（多花一次调用）</label>', '')
@@ -942,7 +942,6 @@ function rwEditBase(kind) {
 }
 
 function _rwAggregationForBase(kind) {
-  if (kind === 'knowledge') return 'self_fields';
   if (_rwAiBaseKinds().indexOf(kind) >= 0) return 'ancestors';
   return 'none';
 }

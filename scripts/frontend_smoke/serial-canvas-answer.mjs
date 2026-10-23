@@ -830,8 +830,8 @@ check('工作流停止：总闸必须连在跑的节点一起掐断（T299）', 
   evalC('workflowInFlightControllers = new Set(); workflowAbortController = null;');
 });
 
-// 静态契约（T303）：重新生成预警「可能失效」口径——面板路提示行＋三个直接按钮路
-// confirm 闸（工作流/空白/知识点）。排队轮到与任务重试（fromQueue/handoffTaskId）
+// 静态契约（T303）：重新生成预警「可能失效」口径——面板路提示行＋两个直接按钮路
+// confirm 闸（工作流/空白；知识点节点 2026-10-23 退役）。排队轮到与任务重试（fromQueue/handoffTaskId）
 // 不得二次弹窗；Φ 直通（fromPhi）不得弹窗（自动改图链路不能被 confirm 卡死）。
 check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不弹（T303）', () => {
   const extract = (src, name) => {
@@ -865,12 +865,6 @@ check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不�
   if (blankBody === null) throw new Error('找不到 generateBlankNode——断言本身该更新了');
   if (!/!fromQueue && !handoffTaskId && \(node\.content \|\| ''\)\.trim\(\) && !_warnDownstreamBeforeRegenerate/.test(blankBody)) {
     throw new Error('空白节点重生成没接预警闸（首次生成不弹、排队不弹丢了）（T303）');
-  }
-  const gcSrc = fs.readFileSync('src/static/js/graph-custom.js', 'utf8');
-  const knowBody = extract(gcSrc, 'generateKnowledgeNode');
-  if (knowBody === null) throw new Error('找不到 generateKnowledgeNode——断言本身该更新了');
-  if (!/!\(opts && \(opts\.fromPhi \|\| opts\.confirmed\)\) && !_warnDownstreamBeforeRegenerate/.test(knowBody)) {
-    throw new Error('知识点生成没接预警闸，或丢了 Φ 直通（fromPhi）/面板（confirmed）不弹旁路（T303）');
   }
 });
 
@@ -911,10 +905,6 @@ check('带要求重生成：按钮弹面板＋留空直发＋修订内核＋rege
   const msgBranch = actionsBody.split("node.kind === 'module' && node.moduleKey !== 'socratic'")[1] || '';
   if (!msgBranch.includes('const regenBusy')) {
     throw new Error('消息模块分支丢了 regenBusy 声明——_nodeActions 会抛引用错误、整个画布渲染不出来');
-  }
-  // ② 知识点按钮：已生成过内容才弹面板，首次生成保持直跑
-  if (!grSrc.includes("_iconRegenButton('graphOpenRegenerate(\\'' + node.id + '\\')', node.busy ? '生成中' : '重新生成', node.busy)")) {
-    throw new Error('知识点节点的重新生成没有接带要求面板');
   }
   // ③ 面板提交：放行空文本（不许 if (!confusion) return 拦死）＋按节点分流＋队列 replay 带文字
   const submitBody = extract(giSrc, 'submitRegenerateNode');
@@ -1503,7 +1493,7 @@ check('问题分析节点改名：徽标/标题/端口/属性注册表全部对�
   }
   if (sandbox._nodeInputLabel({ kind: 'answer' }) !== '问题分析') throw new Error('输入口标签未改名');
   if (sandbox._nodeOutputLabels({ kind: 'user' }, []).join(',') !== '问题分析,我的回答') throw new Error('问题节点出口未改名');
-  if (sandbox._nodeOutputLabels({ kind: 'knowledge' }, []).join(',') !== '问题分析,问题') throw new Error('知识点出口未改名');
+  if (sandbox._nodeOutputLabels({ kind: 'human_note' }, []).join(',') !== '人工内容') throw new Error('我的理解出口未对齐');
   if (sandbox._nodeAttribute({ kind: 'answer' }).label !== '问题分析') throw new Error('属性注册表未改名');
   return true;
 });

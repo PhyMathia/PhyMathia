@@ -39,13 +39,13 @@ MODEL = {
 
 SNAPSHOT = {
     "version": 1,
-    "nodes": [{"id": "A", "kind": "knowledge", "label": "导数",
+    "nodes": [{"id": "A", "kind": "human_note", "label": "导数",
                "content": "瞬时变化率", "formula": "f'(x)"}],
     "edges": [],
 }
 
 GEN_OPS = [
-    {"op": "create_node", "temp_id": "cn1", "kind": "knowledge",
+    {"op": "create_node", "temp_id": "cn1", "kind": "human_note",
      "label": "导数的应用", "content": "切线斜率", "reason": "补充应用"},
     {"op": "add_edge", "from": "A", "to": "cn1", "relation": "延伸", "reason": "连接新节点"},
 ]
@@ -234,7 +234,7 @@ def test_review_stream_logs_event(client, events_dir, monkeypatch):
 
 def test_apply_report_events_snapshot_stripping_and_filters(client, events_dir):
     before1 = json.loads(json.dumps(SNAPSHOT))
-    before2 = {"version": 1, "nodes": [{"id": "B", "kind": "knowledge", "label": "积分"}], "edges": []}
+    before2 = {"version": 1, "nodes": [{"id": "B", "kind": "human_note", "label": "积分"}], "edges": []}
 
     r1 = client.post("/api/harness/graph/apply_report", json={
         "session_id": SID, "event_id": "evt_review_1",

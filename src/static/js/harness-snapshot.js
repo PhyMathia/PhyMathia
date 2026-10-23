@@ -33,7 +33,6 @@
       summary: 'AI 总结',
       note: '我的总结',
       source: '输入',
-      knowledge: '知识点',
       relation: '联系',
     };
     return labels[moduleKey] || moduleKey || '节点';
@@ -159,7 +158,6 @@
       summary: 'AI 总结',
       note: '我的总结',
       source: '输入',
-      knowledge: '知识点',
       relation: '联系',
       human_note: '我的理解',
       ai_eval: 'AI 评价',

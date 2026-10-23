@@ -15,7 +15,6 @@ const GRAPH_MODULE_META = {
   summary: { label: 'AI 总结', color: 'var(--node-summary)' },
   note: { label: '我的总结', color: 'var(--ink-human)' },
   source: { label: '输入', color: 'var(--node-source)' },
-  knowledge: { label: '知识点', color: 'var(--node-knowledge)' },
   relation: { label: '联系', color: 'var(--node-relation)' },
 };
 
@@ -188,7 +187,6 @@ const GRAPH_NODE_ATTRIBUTES = {
   summary: { key: 'summary', label: 'AI 总结', color: 'var(--node-summary)' },
   note: { key: 'note', label: '我的总结', color: 'var(--ink-human)' },
   source: { key: 'source', label: '输入', color: 'var(--node-source)' },
-  knowledge: { key: 'knowledge', label: '知识点', color: 'var(--node-knowledge)' },
   relation: { key: 'relation', label: '联系', color: 'var(--node-relation)' },
   junction: { key: 'junction', label: '中转', color: 'var(--node-junction)' },
   any: { key: 'any', label: '任意输入', color: 'var(--node-any)' },
@@ -1615,6 +1613,22 @@ function _matchSuggestedFollowupNode(nodeById, msg) {
   return null;
 }
 
+// 2026-10-23 知识点节点退役（backlog T367/T383/T384 收口）：老画布里的知识点卡片
+// 就地转成「我的理解」便签——标题、正文、公式、位置、连线都留着，只是不再是知识点
+// 节点。materializeCustom 每次建图都会过一遍，kind 改掉即幂等；改完的 cn 随下一次
+// 存盘落库，所以老数据会自然收敛，不需要单独的迁移脚本。
+function _retireLegacyKnowledgeNode(cn) {
+  cn.kind = 'human_note';
+  cn.label = cn.label || cn.title || '我的理解';
+  cn.title = cn.title || cn.label;
+  cn.content = String(cn.content || cn.summary || '');
+  const formulas = Array.isArray(cn.formulas) ? cn.formulas.map(f => String(f || '').trim()).filter(Boolean) : [];
+  if (!cn.formula && formulas.length) cn.formula = formulas.join('；');
+  cn.manual = true;
+  cn.nodeType = cn.nodeType || 'understanding';
+  delete cn.knowledgeKey;
+}
+
 function _buildGraphData(messages, state) {
   const nodes = [];
   const edges = [];
@@ -1915,6 +1929,7 @@ function _buildGraphData(messages, state) {
   // 自定义节点实体化（函数声明提升：派生追问块在消息循环内也会调用）；
   // nodeById 已有同 id 时跳过（sq 块已在循环内实体化，避免双份）
   function materializeCustom(cn) {
+    if (cn.kind === 'knowledge') _retireLegacyKnowledgeNode(cn);
     const saved = savedPositions[cn.id] || {};
     const size = savedSizes[cn.id] || {};
     const kind = GRAPH_CUSTOM_NODE_KINDS.includes(cn.kind) ? cn.kind : 'blank';
@@ -2013,9 +2028,9 @@ function _resolveGraphEdges(state, defaults, nodeById) {
   for (const customEdge of custom) {
     const inputKey = customEdge.to + ':' + customEdge.toPort;
     const toNode = nodeById[customEdge.to];
-    // hub 与 knowledge 的输入允许多路汇入：多条连线可指向同一输入端口。
+    // hub 与 junction 的输入允许多路汇入：多条连线可指向同一输入端口。
     // junction（2026-10-11 中转节点）同入此列——它的 in-0 就是单口多线 fan-in 口。
-    const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'knowledge' || toNode.kind === 'junction');
+    const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'junction');
     if (!isFanInInput && occupiedInputs.has(inputKey)) continue;
     edges.push({ ...customEdge, type: customEdge.type || 'custom', custom: true });
     if (!isFanInInput) occupiedInputs.add(inputKey);
@@ -2138,27 +2153,6 @@ function _scanGraphConsistency() {
     if (n.kind === "blank") return;
     if (incident[id]) return;
     issues.push({ type: "orphan", severity: "warning", nodeId: id, label: String(n.label || n.title || id), message: "节点没有任何连线（孤儿）" });
-  });
-  // 重复检测：知识点按“标签+内容”判定，避免同名但内容不同的节点被误报
-  const _nodeContentSig = function (n) {
-    return String(n.content || n.summary || n.analysis || n.label || n.title || "").replace(/\s+/g, " ").trim();
-  };
-  const byLabel = {};
-  nodes.forEach(function (n) {
-    if (n.kind !== "knowledge") return;
-    const label = String(n.label || n.title || "").trim();
-    if (!label) return;
-    const sig = _nodeContentSig(n);
-    const key = label + "\u0000" + sig;
-    (byLabel[key] = byLabel[key] || []).push(n);
-  });
-  Object.keys(byLabel).forEach(function (key) {
-    const list = byLabel[key];
-    if (list.length > 1) {
-      const label = String(list[0].label || list[0].title || "").trim();
-      const sig = _nodeContentSig(list[0]);
-      issues.push({ type: "duplicate_label", severity: "info", nodeId: String(list[0].id), label: label, message: "存在 " + list.length + " 个" + (sig ? "内容相同" : "同名") + "的知识点「" + label + "」" });
-    }
   });
   // 模块重复按“来源回答（消息索引）+ 模块键”判定：不同回答各自带物理/数学视角不算重复；
   // 自定义模块则额外比较内容，仅内容也相同时才判重复。

@@ -460,9 +460,7 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFu
         ? '问题'
         : item.kind === 'note'
           ? (item.title || '我的总结')
-          : item.kind === 'knowledge'
-            ? '知识点'
-            : item.kind === 'relation'
+          : item.kind === 'relation'
               ? '知识联系'
               : item.kind === 'source'
                 ? (item.portLabel || '输入')
@@ -594,9 +592,7 @@ function _buildWorkflowContextForNode(node) {
           ? { label: node.title || '我的总结' }
           : node.kind === 'source'
             ? { label: '输入' }
-            : node.kind === 'knowledge'
-              ? { label: '知识点' }
-              : node.kind === 'relation'
+            : node.kind === 'relation'
                 ? { label: '知识联系' }
             : { label: '问题' };
   // T263 喂料分路：目标配方声明了具名输入口时，上游条目标注「来自哪个输入口」，
@@ -660,7 +656,7 @@ function _nodeInputHash(node) {
 
 // 配方节点的生成提示词（P1）：按底座路由。四槽来自节点内嵌快照（node.recipe），
 // 与官方分支同构：module 走结构化 workflow_context（或声明 prompt_inline 时上游全文内联），
-// summary/relation 上游全文内联，knowledge 用自身字段；人工底座不会走到这里。
+// summary/relation 上游全文内联；人工底座不会走到这里。
 function _recipeWorkflowPrompt(node, recipe, workflowContext, targetLabel) {
   const g = (recipe.generate || {});
   const baseKind = (recipe.base && recipe.base.kind) || 'module';
@@ -668,12 +664,6 @@ function _recipeWorkflowPrompt(node, recipe, workflowContext, targetLabel) {
   let inline = '';
   if (baseKind === 'summary' || baseKind === 'relation' || (baseKind === 'module' && g.context_channel === 'prompt_inline')) {
     inline = _upstreamInlineText(workflowContext.upstream);
-  } else if (baseKind === 'knowledge') {
-    inline = [
-      node.title || name,
-      node.summary || '',
-      (node.formulas || []).join('\n'),
-    ].filter(Boolean).join('\n\n');
   }
   const parts = [];
   parts.push('请生成「' + name + '」节点内容。');
@@ -719,16 +709,6 @@ function _workflowPromptForNode(node, workflowContext) {
     return '请基于以下已连接节点，用一句简短中文说明它们之间的联系。'
       + '要求：只陈述上游内容能够支持的关系，内容简短，最好不超过100字；如果证据不足，直接说明关系尚不明确；不要输出XML标签，不要重复完整节点内容；如出现公式仍按 <formula> 规范标注。\n\n'
       + (upstreamText || '（暂无已连接的上游内容）');
-  }
-  if (node.kind === 'knowledge') {
-    const sourceText = [
-      node.title || '知识点',
-      node.summary || '',
-      (node.formulas || []).join('\n'),
-    ].filter(Boolean).join('\n\n');
-    return '请为以下知识点生成一段准确、简洁的中文解释。'
-      + '要求：说明核心含义、物理或数学本质、适用条件；不要输出XML标签；如出现公式仍按 <formula> 规范标注；不要重复来源文件全文。\n\n'
-      + (sourceText || '（暂无知识点内容）');
   }
   if (node.kind === 'answer' && !node.manual) {
     return '请根据原始问题和上游上下文生成“问题分析”节点的完整内容。'

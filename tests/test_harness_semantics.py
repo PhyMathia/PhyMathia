@@ -18,7 +18,7 @@ from harness.semantics import (
 
 def _snap(nodes, edges):
     return {
-        "nodes": [{"id": n, "kind": "knowledge", "label": n} for n in nodes],
+        "nodes": [{"id": n, "kind": "human_note", "label": n} for n in nodes],
         "edges": [{"key": f"{f}:out-0->{t}:in-0", "from": f, "to": t} for f, t in edges],
     }
 
@@ -27,14 +27,14 @@ class FindIsolatedCreatedNodesTest(unittest.TestCase):
     def test_connected_created_node_not_isolated(self):
         snapshot = _snap(["A"], [])
         ops = [
-            {"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "knowledge", "label": "新点"},
+            {"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "human_note", "label": "新点"},
             {"op": "add_edge", "from": "A", "to": "N1", "reason": "连接"},
         ]
         self.assertEqual(find_isolated_created_nodes(snapshot, ops), [])
 
     def test_unconnected_created_node_is_isolated(self):
         snapshot = _snap(["A"], [])
-        ops = [{"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "knowledge", "label": "悬空"}]
+        ops = [{"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "human_note", "label": "悬空"}]
         isolated = find_isolated_created_nodes(snapshot, ops)
         self.assertEqual([item["id"] for item in isolated], ["N1"])
 
@@ -47,8 +47,8 @@ class FindIsolatedCreatedNodesTest(unittest.TestCase):
         # 新点只连到另一个新建点，但后者连回了既有节点——传递连通不算孤岛
         snapshot = _snap(["A"], [])
         ops = [
-            {"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "knowledge", "label": "桥"},
-            {"op": "create_node", "temp_id": "t2", "assigned_id": "N2", "kind": "knowledge", "label": "新点"},
+            {"op": "create_node", "temp_id": "t1", "assigned_id": "N1", "kind": "human_note", "label": "桥"},
+            {"op": "create_node", "temp_id": "t2", "assigned_id": "N2", "kind": "human_note", "label": "新点"},
             {"op": "add_edge", "from": "A", "to": "N1", "reason": "连接"},
             {"op": "add_edge", "from": "N1", "to": "N2", "reason": "连接"},
         ]

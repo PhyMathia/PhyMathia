@@ -647,8 +647,7 @@ async function _taskRegenerate(id) {
       if (typeof window.regenNodeWith === 'function') return window.regenNodeWith(job.id, job.text || '');
       return;
     }
-    const fn = job.kind === 'knowledge' ? window.generateKnowledgeNode
-      : job.kind === 'relation' ? window.generateRelationNode
+    const fn = job.kind === 'relation' ? window.generateRelationNode
         : job.kind === 'blank' ? window.generateBlankNode
           : null;
     if (typeof fn === 'function' && typeof _findGraphNode === 'function' && _findGraphNode(job.id)) {

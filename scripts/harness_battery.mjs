@@ -16,8 +16,8 @@ function makeSnapshot() {
   return {
     version: 1,
     nodes: [
-      { id: 'A', kind: 'knowledge', label: '导数', content: '导数就是函数在某一点的瞬时变化率，表示切线的斜率。', formula: "f'(x)=\lim_{\Delta x\to 0}\frac{\Delta y}{\Delta x}" },
-      { id: 'B', kind: 'knowledge', label: '极限', content: '当自变量趋近某个值时函数值趋近的值。', formula: '' },
+      { id: 'A', kind: 'human_note', label: '导数', content: '导数就是函数在某一点的瞬时变化率，表示切线的斜率。', formula: "f'(x)=\lim_{\Delta x\to 0}\frac{\Delta y}{\Delta x}" },
+      { id: 'B', kind: 'human_note', label: '极限', content: '当自变量趋近某个值时函数值趋近的值。', formula: '' },
       { id: 'C', kind: 'module', module_key: 'physics', label: '物理视角', content: '速度是位移对时间的导数。', formula: '' },
       { id: 'D', kind: 'human_note', label: '我的理解', content: '导数就是斜率，变化越快导数越大。', formula: '' },
     ],
@@ -40,7 +40,7 @@ const scenarios = [
   { id: 'chat-only', label: '纯问答（不应改图）', instruction: '导数的物理意义是什么？', phase: 'normal', focus: [], expect: { phase: 'normal', noOps: true } },
   { id: 'ambiguous', label: '模糊指令（不应乱改）', instruction: '帮我改一下这个', phase: 'normal', focus: [], expect: { phase: 'normal', noDestructive: true } },
   { id: 'cross-ref', label: '跨引用改名（斜率→瞬时变化率）', instruction: '把斜率改成瞬时变化率', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['D'], allowedUpdateIds: ['D'] } },
-  { id: 'add-isolated', label: '新增知识点（孤点）', instruction: '新增一个知识点：链式法则，内容为复合函数求导规则', phase: 'normal', focus: [], expect: { phase: 'normal', noIsolated: true } },
+  { id: 'add-isolated', label: '新增卡片（孤点）', instruction: '新增一张卡片：链式法则，内容为复合函数求导规则', phase: 'normal', focus: [], expect: { phase: 'normal', noIsolated: true } },
   { id: 'multi-eval', label: '评价两个目标', instruction: '评价一下我的理解和物理视角', phase: 'normal', focus: ['D', 'C'], expect: { phase: 'evaluate', opType: 'create_eval_node', mustIncludeTargets: ['D', 'C'] } },
   { id: 'apply-evals', label: '应用评价（含 ai_eval 节点）', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals', expect: { noEvalCreate: true, hasRealEdit: true } },
   { id: 'edge-update', label: '修改连线关系', instruction: '把极限到导数的连线关系改成前置', phase: 'normal', focus: [], expect: { phase: 'normal', updateEdge: true } },
@@ -52,7 +52,7 @@ const scenarios = [
   { id: 'remove-edge', label: '删除连线', instruction: '把极限到导数的连线删掉', phase: 'normal', focus: [], expect: { phase: 'normal', removeEdgeKey: 'B:out-0->A:in-0' } },
   { id: 'connect-pair', label: '连接两个已有节点', instruction: '把我的理解和物理视角连接起来', phase: 'normal', focus: [], expect: { phase: 'normal', connectPair: ['D', 'C'] } },
   { id: 'add-edge-existing', label: '连接已连节点（不应重复）', instruction: '把极限和导数连接起来', phase: 'normal', focus: [], expect: { phase: 'normal', noDuplicateAddEdge: ['B:out-0->A:in-0'], noCrash: true } },
-  { id: 'multi-create', label: '一次新增两个知识点', instruction: '新增两个知识点：链式法则和隐函数求导，并给出简要内容', phase: 'normal', focus: [], expect: { phase: 'normal', createCount: 2, noIsolated: true } },
+  { id: 'multi-create', label: '一次新增两张卡片', instruction: '新增两张卡片：链式法则和隐函数求导，并给出简要内容', phase: 'normal', focus: [], expect: { phase: 'normal', createCount: 2, noIsolated: true } },
   { id: 'expand-multi', label: '两个目标进阶链', instruction: '为导数和极限都生成进阶学习链', phase: 'normal', focus: ['A', 'B'], expect: { phase: 'expand', hasAnswer: true, hasLearn: true, expandAllTargets: ['A', 'B'] } },
   { id: 'add-socratic', label: '加苏格拉底追问（聚焦 A）', instruction: '给导数加一个苏格拉底追问', phase: 'normal', focus: ['A'], expect: { phase: 'normal', createModule: 'socratic', connectedFrom: ['A'] } },
   { id: 'add-learn', label: '加进阶学习模块（聚焦 A）', instruction: '加一个进阶学习模块', phase: 'normal', focus: ['A'], expect: { phase: 'expand', hasAnswer: true, hasLearn: true } },
@@ -87,7 +87,7 @@ const scenarios = [
   // connectPair＋hasAnswer 钉建议批次形状（孤岛接桥＋薄弱点扩进阶链）；
   // summaryIncludes 钉报告引用统计事实而非泛泛而谈。依赖 mock 剧本。
   { id: 'coach-report', label: '学习教练：课程表体检报告＋建议批次（自动识别 coach 相位）', instruction: '帮我体检一下这张图的学习路线，看看该先学什么', phase: 'normal', focus: [], snapshotExtra: 'broken-route', expect: { phase: 'coach', connectPair: ['B', 'E'], hasAnswer: true, statsInjected: true, summaryIncludes: ['互不连通', '动量守恒'] } },
-  { id: 'delete-derivative', label: '删除核心知识点 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
+  { id: 'delete-derivative', label: '删除核心卡片 A', instruction: '把导数节点删掉', phase: 'normal', focus: ['A'], expect: { phase: 'normal', deleteTargets: ['A'] } },
   { id: 'ref-by-content', label: '按内容引用节点', instruction: '把「当自变量趋近某个值时函数值趋近的值」这个节点改得更清楚', phase: 'normal', focus: [], expect: { phase: 'normal', updateTargets: ['B'], allowedUpdateIds: ['B'] } },
   { id: 'apply-conflict', label: '冲突评价应用', instruction: '应用建议', phase: 'normal', focus: [], snapshotExtra: 'evals-conflict', expect: { noEvalCreate: true, hasRealEdit: true, noCrash: true } },
   { id: 'chat-thanks', label: '寒暄（不应改图）', instruction: '谢谢，明白了', phase: 'normal', focus: [], expect: { phase: 'normal', noOps: true, noCrash: true } },
@@ -134,7 +134,7 @@ const scenarios = [
   {
     id: 'undo-create', label: '撤销新增节点',
     turns: [
-      { instruction: '新增知识点：链式法则，内容为复合函数求导规则', phase: 'normal', focus: [], expect: { createCount: 1 } },
+      { instruction: '新增一张卡片：链式法则，内容为复合函数求导规则', phase: 'normal', focus: [], expect: { createCount: 1 } },
       { instruction: '把刚才新增的链式法则撤销', phase: 'normal', focus: [], expect: { statusUndo: true } },
     ],
     expect: { finalSnapshotEquals: 'before' },
@@ -192,7 +192,7 @@ const feedbackScenarios = [
   {
     id: 'fb-genealogy', label: '真实反馈：生成知识谱系',
     turns: [
-      { instruction: '帮我生成「导数」这个知识点对应的知识谱系', phase: 'normal', focus: [], expect: { noCrash: true, noRelationNode: true, hasRealEdit: true } },
+      { instruction: '帮我生成「导数」这个节点对应的知识谱系', phase: 'normal', focus: [], expect: { noCrash: true, noRelationNode: true, hasRealEdit: true } },
     ],
   },
   {
@@ -211,7 +211,7 @@ const feedbackScenarios = [
   {
     id: 'fb-create-quoted-vague', label: '真实反馈：引号目标的模糊新增',
     turns: [
-      { instruction: '帮我新增一个关于「导数」的知识点', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, allowClarify: true } },
+      { instruction: '帮我新增一张关于「导数」的我的理解卡片', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true, allowClarify: true } },
     ],
   },
 ];
@@ -323,7 +323,7 @@ const complexScenarios = [
   {
     id: 'c9-undo-created', label: '反悔新建对象：把刚才加的节点撤掉', graphs: ['G9'],
     turns: [
-      { instruction: '给「简谐运动」新增一个知识点：固有频率，内容为系统自由振动的频率', phase: 'normal', focus: ['m1-phy'], expect: { createCount: 1, noIsolated: true } },
+      { instruction: '给「简谐运动」新增一张卡片：固有频率，内容为系统自由振动的频率', phase: 'normal', focus: ['m1-phy'], expect: { createCount: 1, noIsolated: true } },
       { instruction: '把刚才加的「固有频率」撤掉', phase: 'normal', focus: ['@last:node:固有频率'], expect: { noCrash: true } },
     ],
     expect: { finalSnapshotEquals: 'before' },
@@ -364,14 +364,14 @@ const complexScenarios = [
   {
     id: 'organize-multiturn', label: '整理关系（多轮）：先整理再精简', graphs: ['G1'],
     turns: [
-      { instruction: '整理这些知识点之间的关系：删掉牵强、空泛的连线，保留能说清理由的', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
+      { instruction: '整理这些卡片之间的关系：删掉牵强、空泛的连线，保留能说清理由的', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
       { instruction: '再严格一点：只保留最核心的主线关系，把次要的也删掉', phase: 'normal', focus: [], expect: { hasEdgeCleanup: true, noRelationNode: true, noCrash: true } },
     ],
   },
   {
     id: 'organize-angle', label: '整理关系：按物理意义建立联系', graphs: ['G1'],
     turns: [
-      { instruction: '从物理意义的角度建立联系：把相关知识点按“物理意义”连起来，并给每条连线一个具体的物理理由', phase: 'normal', focus: [], expect: { hasAddEdge: true, noRelationNode: true, noCrash: true } },
+      { instruction: '从物理意义的角度建立联系：把相关卡片按“物理意义”连起来，并给每条连线一个具体的物理理由', phase: 'normal', focus: [], expect: { hasAddEdge: true, noRelationNode: true, noCrash: true } },
     ],
   },
   {
@@ -396,13 +396,13 @@ const complexScenarios = [
   {
     id: 'organize-relations-fix', label: '整理关系：删除空泛的“相关”连线', snapshotExtra: 'weak-edge',
     turns: [
-      { instruction: '整理这些知识点之间的关系：把“相关/有联系”这类空泛、牵强的连线删掉或改成有明确逻辑依据的关系，只保留能说清理由的连线；不要创建单独的“联系”节点', phase: 'normal', focus: [], expect: { noRelationNode: true, hasEdgeCleanup: true, noCrash: true } },
+      { instruction: '整理这些卡片之间的关系：把“相关/有联系”这类空泛、牵强的连线删掉或改成有明确逻辑依据的关系，只保留能说清理由的连线；不要创建单独的“联系”节点', phase: 'normal', focus: [], expect: { noRelationNode: true, hasEdgeCleanup: true, noCrash: true } },
     ],
   },
   {
     id: 'organize-relations', label: '整理关系：只用连线，不建联系节点', graphs: ['G9'],
     turns: [
-      { instruction: '整理这些知识点之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线必须用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
+      { instruction: '整理这些卡片之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线必须用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可', phase: 'normal', focus: [], expect: { noRelationNode: true, noCrash: true } },
     ],
   },
   {
@@ -415,14 +415,14 @@ const complexScenarios = [
   {
     id: 'readable-summary', label: '人性化摘要：多操作后 summary 不含原始 ID',
     turns: [
-      { instruction: '给导数补一个数学视角，并新增两个知识点：链式法则和隐函数求导，把它们连到导数上并说明关系', phase: 'normal', focus: ['A'], expect: { summaryReadable: true, hasAddEdge: true, createCount: 2, noCrash: true } },
+      { instruction: '给导数补一个数学视角，并新增两张卡片：链式法则和隐函数求导，把它们连到导数上并说明关系', phase: 'normal', focus: ['A'], expect: { summaryReadable: true, hasAddEdge: true, createCount: 2, noCrash: true } },
     ],
   },
   {
     id: 'c9-conversation', label: '对话：先问答后按上下文建点', graphs: ['G9'],
     turns: [
       { instruction: '简谐运动的回复力有什么特点？', phase: 'normal', focus: [], expect: { noOps: true } },
-      { instruction: '把刚才说的内容整理成一个知识点加进图里', phase: 'normal', focus: [], expect: { createCount: 1, noIsolated: true, noCrash: true } },
+      { instruction: '把刚才说的内容整理成一张卡片加进图里', phase: 'normal', focus: [], expect: { createCount: 1, noIsolated: true, noCrash: true } },
     ],
   },
 ];
@@ -464,8 +464,8 @@ const crossScenarios = [
     turns: [{ instruction: '整体评价这个网络', phase: 'normal', focus: [], expect: { noCrash: true, noDestructive: true } }],
   },
   {
-    id: 'x-big-add', label: '大图新增知识点', graphs: ['G5'],
-    turns: [{ instruction: '新增一个知识点：洛必达法则，用于求极限', phase: 'normal', focus: [], expect: { noCrash: true, noIsolated: true } }],
+    id: 'x-big-add', label: '大图新增卡片', graphs: ['G5'],
+    turns: [{ instruction: '新增一张卡片：洛必达法则，用于求极限', phase: 'normal', focus: [], expect: { noCrash: true, noIsolated: true } }],
   },
   {
     id: 'x-duplicate-update', label: '同名节点歧义：改「导数」', graphs: ['G6'],
@@ -527,18 +527,18 @@ function makeWeakEdgeSnapshot() {
 function makeBigSnapshot() {
   const s = makeSnapshot();
   const extraNodes = [
-    { id: 'E', kind: 'knowledge', label: '连续', content: '函数在某点连续的定义。' },
-    { id: 'F', kind: 'knowledge', label: '微分', content: '函数的线性主部。' },
+    { id: 'E', kind: 'human_note', label: '连续', content: '函数在某点连续的定义。' },
+    { id: 'F', kind: 'human_note', label: '微分', content: '函数的线性主部。' },
     { id: 'G', kind: 'module', module_key: 'math', label: '数学视角', content: '导数是差商的极限。' },
     { id: 'H', kind: 'module', module_key: 'graph', label: '知识图谱', content: '概念关系图。' },
     { id: 'I', kind: 'module', module_key: 'viz', label: '交互可视化', content: 'HTML 演示。' },
     { id: 'J', kind: 'module', module_key: 'learn', label: '进阶学习', content: '泰勒展开方向。' },
     { id: 'K', kind: 'human_note', label: '我的疑问', content: '为什么导数是极限？' },
     { id: 'L', kind: 'answer', label: 'AI 回答', content: '因为导数定义为差商极限。' },
-    { id: 'M', kind: 'knowledge', label: '复合函数', content: '链式法则。' },
-    { id: 'N', kind: 'knowledge', label: '反函数', content: '反函数求导。' },
-    { id: 'O', kind: 'knowledge', label: '隐函数', content: '隐函数求导。' },
-    { id: 'P', kind: 'knowledge', label: '参数方程', content: '参数方程求导。' },
+    { id: 'M', kind: 'human_note', label: '复合函数', content: '链式法则。' },
+    { id: 'N', kind: 'human_note', label: '反函数', content: '反函数求导。' },
+    { id: 'O', kind: 'human_note', label: '隐函数', content: '隐函数求导。' },
+    { id: 'P', kind: 'human_note', label: '参数方程', content: '参数方程求导。' },
   ];
   s.nodes.push(...extraNodes);
   s.edges.push(
@@ -838,7 +838,7 @@ function makeInitialSnapshot(sc, graph) {
 // 只有 embedding 近邻能召回「法拉第定律」。
 function makeFaradaySnapshot() {
   const snap = makeSnapshot();
-  snap.nodes.push({ id: 'F', kind: 'knowledge', label: '法拉第定律', content: '闭合回路中磁通量的变化会产生感应电动势，大小与磁通量变化率成正比。', formula: '\\varepsilon=-\\frac{d\\Phi}{dt}' });
+  snap.nodes.push({ id: 'F', kind: 'human_note', label: '法拉第定律', content: '闭合回路中磁通量的变化会产生感应电动势，大小与磁通量变化率成正比。', formula: '\\varepsilon=-\\frac{d\\Phi}{dt}' });
   snap.edges.push({ key: 'A:out-0->F:in-0', from: 'A', to: 'F', relation: '应用', label: '导数描述变化率' });
   return snap;
 }
@@ -848,7 +848,7 @@ function makeFaradaySnapshot() {
 // 先修来源。graph_stats 的分量/无先修/覆盖率三指标都得能把这些指出来。
 function makeBrokenRouteSnapshot() {
   const snap = makeSnapshot();
-  snap.nodes.push({ id: 'E', kind: 'knowledge', label: '动量守恒', content: '系统不受外力或外力矢量和为零时，总动量保持不变。', formula: '\\sum m_i v_i = \\text{const}' });
+  snap.nodes.push({ id: 'E', kind: 'human_note', label: '动量守恒', content: '系统不受外力或外力矢量和为零时，总动量保持不变。', formula: '\\sum m_i v_i = \\text{const}' });
   snap.quiz_weak = [{ title: '动量守恒', wrong: 2, mastery: 40, sessionId: 'quiz-battery' }];
   return snap;
 }
@@ -1028,7 +1028,7 @@ async function runTurns(sc, idx, graph, total) {
       const cnt = function (issues, type) { return (issues || []).filter(function (i) { return i.type === type; }).length; };
       if (cnt(healthFinal.issues, 'broken_edge') > 0) overallIssues.push('体检：最终图存在断链');
       if (cnt(healthFinal.issues, 'orphan') > cnt(healthInitial.issues, 'orphan')) overallIssues.push('体检：孤儿节点数量增加（初始 ' + cnt(healthInitial.issues, 'orphan') + ' → 最终 ' + cnt(healthFinal.issues, 'orphan') + '）');
-      if (cnt(healthFinal.issues, 'duplicate_label') > cnt(healthInitial.issues, 'duplicate_label')) overallIssues.push('体检：重复知识点增加');
+      if (cnt(healthFinal.issues, 'duplicate_label') > cnt(healthInitial.issues, 'duplicate_label')) overallIssues.push('体检：重复模块增加');
       if (cnt(healthFinal.issues, 'duplicate_module') > cnt(healthInitial.issues, 'duplicate_module')) overallIssues.push('体检：重复模块增加');
     } catch (e) {
       overallIssues.push('体检请求失败: ' + e.message);

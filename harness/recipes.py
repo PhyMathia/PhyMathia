@@ -10,7 +10,7 @@ P3 起 Φ 产出配方时后端把关（preset 相位的 create_recipe/update_re
 
 规则口径（与 JS 逐条对应）：
 - 名称必填、≤24 字、与现有清单查重（同 id 除外）
-- 底座 kind 只允许白名单（module/summary/knowledge/relation/note/human_note/manual/question）
+- 底座 kind 只允许白名单（module/summary/relation/note/human_note/manual/question）
 - 色板只允许成对令牌 key（D-R8 的预设档）；另允许可选的 ``appearance.color``
   自由色（#rrggbb / #rgb；2026-09-30 用户拍板放宽），给了就压过 palette 令牌
 - AI 底座必须有主提示词；每个提示词槽（含 retry_prompt）≤800 字
@@ -29,8 +29,8 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-RECIPE_BASE_KINDS = ("module", "summary", "knowledge", "relation", "note", "human_note", "manual", "question")
-RECIPE_AI_BASE_KINDS = ("module", "summary", "knowledge", "relation")
+RECIPE_BASE_KINDS = ("module", "summary", "relation", "note", "human_note", "manual", "question")
+RECIPE_AI_BASE_KINDS = ("module", "summary", "relation")
 RECIPE_PALETTE_KEYS = ("amber", "blue", "rose", "teal", "violet", "human", "note")
 RECIPE_SHAPES = ("is-round", "is-square", "is-diamond", "is-ring")
 RECIPE_CONTENT_KINDS = ("markdown", "plain", "mermaid", "html_iframe")
@@ -40,7 +40,7 @@ RECIPE_PARSER_PATTERNS = ("numbered_list",)
 RECIPE_LABEL_FROM = ("index_question", "question_trunc12")
 RECIPE_FALLBACK_MODES = ("static", "label_questions_from_text", "none")
 RECIPE_DYNAMIC_PORT_TYPES = ("socratic", "learn", "branch")
-RECIPE_AGGREGATIONS = ("ancestors", "self_fields", "first_inbound", "none")
+RECIPE_AGGREGATIONS = ("ancestors", "first_inbound", "none")
 RECIPE_ON_GENERATED_KINDS = ("answer", "module", "blank", "user", "note", "human_note")
 RECIPE_ON_GENERATED_CONTENT_FROM = ("", "self_content", "self_directions")
 RECIPE_PROMPT_BUDGET = 800
@@ -71,8 +71,6 @@ def _normalize_color(value: Any) -> str:
 def _aggregation_for_base(base_kind: str, override: Any = None) -> str:
     if base_kind == "module" and override == "first_inbound":
         return "first_inbound"
-    if base_kind == "knowledge":
-        return "self_fields"
     if base_kind in RECIPE_AI_BASE_KINDS:
         return "ancestors"
     return "none"
@@ -83,7 +81,6 @@ def _default_shape(base_kind: str) -> str:
     return {
         "module": "is-round",
         "summary": "is-round",
-        "knowledge": "is-ring",
         "relation": "is-ring",
         "note": "is-square",
         "human_note": "is-square",

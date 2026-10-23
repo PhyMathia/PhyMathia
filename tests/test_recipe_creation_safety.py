@@ -57,7 +57,7 @@ class UndoRecipeGuardTest(unittest.TestCase):
 
     MODEL = {"provider": "opencode", "model": "mimo-v2.5-free",
              "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
-    SNAP = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
+    SNAP = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
 
     def _run(self, instruction, snapshot=None, **kw):
         from harness import review as review_mod
@@ -109,8 +109,8 @@ class UndoRecipeGuardTest(unittest.TestCase):
 
     def test_graph_only_undo_still_deterministic(self):
         """无配方操作的批照旧走确定性逆操作（本修复不得误伤）。"""
-        before = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
-        after = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+        before = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
+        after = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}], "edges": []}
         result, called = self._run(
             "撤销",
             previous_ops=[{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "改"}],
@@ -127,7 +127,7 @@ class DeleteRecipeReferenceTest(unittest.TestCase):
 
     def _snapshot(self):
         return {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "甲", "content": "a"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "甲", "content": "a"}],
             "user_recipes": [{"id": "r1", "name": "错题复盘", "base_kind": "module"}],
             "recipe_detail": _recipe(),
         }

@@ -318,7 +318,7 @@ check('quiz：题库按画布分池（T159）——签名集合命中才复用�
 check('harness：quiz_weak 快照注入（当前会话 Top3，空则不注入）', () => {
   sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
   sandbox.window.getCurrentSessionId = () => M2_SESSION;
-  sandbox.window.getGraphViewNodes = () => [{ id: 'A', kind: 'knowledge', label: '简谐运动', content: '往复运动' }];
+  sandbox.window.getGraphViewNodes = () => [{ id: 'A', kind: 'human_note', label: '简谐运动', content: '往复运动' }];
   sandbox.window.getGraphViewEdges = () => [];
   sandbox.window.getSelectedGraphNodeIds = () => [];
   m2SeedQuizStats();

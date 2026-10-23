@@ -56,8 +56,8 @@ const ids = await page.evaluate(() => {
   createManualNode('source');
   const src = _graphState().customNodes.filter(n => n.kind === 'source').pop();
   addBlankNodePoint = { x: 700, y: 0 };
-  createManualNode('knowledge');
-  const dst = _graphState().customNodes.filter(n => n.kind === 'knowledge').pop();
+  createManualNode('human_note');
+  const dst = _graphState().customNodes.filter(n => n.kind === 'human_note').pop();
   return { src: src.id, dst: dst.id };
 });
 ok(!!ids.src && !!ids.dst, '临时会话下建点成功（不碰真实会话）', ids);
@@ -172,7 +172,7 @@ ok(back.dupOut0 === 1, '展开后每口仍只有一份 DOM', back.dupOut0);
 ok(!!back.edgeStart && !!back.anchor && Math.abs(back.edgeStart.x - back.anchor.x) <= 2 && Math.abs(back.edgeStart.y - back.anchor.y) <= 2,
   '展开后连线锚点回到行内口', { edge: back.edgeStart, port: back.anchor });
 
-// ---- E. 旧版输入节点（知识点 items）仍走输出列 ----
+// ---- E. 旧版输入节点（知识点 items）：知识点节点退役后不再出口，只读保留 ----
 const legacy = await page.evaluate(() => {
   addBlankNodePoint = { x: 0, y: 500 };
   createManualNode('source');
@@ -192,8 +192,8 @@ const legacyRes = await page.evaluate(id => {
     readOnlyHint: !!el.querySelector('.graph-source-legacy-hint'),
   };
 }, legacy);
-ok(legacyRes.legacy && legacyRes.colPorts === 2 && legacyRes.rowPorts === 0 && legacyRes.readOnlyHint,
-  '旧版输入节点（只读）出口照旧在输出列', legacyRes);
+ok(legacyRes.legacy && legacyRes.colPorts === 0 && legacyRes.rowPorts === 0 && legacyRes.readOnlyHint,
+  '旧版输入节点（只读）：不再出口（知识点链路已退役）', legacyRes);
 
 console.log(fails ? '\n❌ 失败 ' + fails + ' 项' : '\n全部通过');
 await browser.close();

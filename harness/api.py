@@ -474,7 +474,7 @@ async def graph_events_delete(request: Request):
 @router.post("/graph/health")
 async def graph_health(request: Request):
     """Structural health check for a snapshot: broken edges, orphan nodes,
-    duplicate knowledge labels / modules. Uses the raw snapshot so broken
+    duplicate module labels. Uses the raw snapshot so broken
     edges are reported instead of silently dropped."""
     try:
         payload = await request.json()

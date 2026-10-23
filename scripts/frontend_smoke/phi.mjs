@@ -194,7 +194,7 @@ check('纯问答也携带真实快照（回归：拒绝建议后全空事故）'
   // 模拟用户有 35 节点画布：即便分类为纯问答，快照也应包含真实节点而非空数组
   sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
   sandbox.window.getGraphViewNodes = () => Array.from({ length: 35 }, (_, i) => ({
-    id: 'n' + i, kind: 'knowledge', label: '节点' + i, content: '内容' + i,
+    id: 'n' + i, kind: 'human_note', label: '节点' + i, content: '内容' + i,
   }));
   sandbox.window.getGraphViewEdges = () => [];
   sandbox.buildHarnessSnapshot(true, [], null); // excludeEval=true 也不应清空非 eval 节点
@@ -240,7 +240,7 @@ check('T319 配方输入口可见性：快照节点 inputs＋连线端口＋user
   try {
     sandbox.window.getGraphState = () => ({ harnessDeleted: {} });
     sandbox.window.getGraphViewNodes = () => [
-      { id: 'k1', kind: 'knowledge', label: '知识点' },
+      { id: 'k1', kind: 'human_note', label: '知识点' },
       { id: 'mod1', kind: 'module', moduleKey: '', recipeId: 'rec_t319', label: '错题本',
         recipe: { ports: { inputs: [{ label: '题目' }, { label: '错因' }] } } },
     ];
@@ -277,7 +277,7 @@ check('T94 大图自动降级：degrade 邻域收到 1 跳、无焦点保持原�
   vm.runInContext('phiSessions = { phi_deg: { id: "phi_deg", title: "t", boundSid: "sess_test", createdAt: 1, updatedAt: 1 } }; currentPhiId = "phi_deg";', sandbox);
   // 60 节点链式大图（超过 40 节点阈值）
   const nodes = Array.from({ length: 60 }, (_, i) => ({
-    id: 'd' + i, kind: 'knowledge', label: '节点' + i, content: '内容内容内容内容' + i,
+    id: 'd' + i, kind: 'human_note', label: '节点' + i, content: '内容内容内容内容' + i,
   }));
   sandbox.window.getGraphViewNodes = () => nodes;
   sandbox.window.getGraphViewEdges = () => Array.from({ length: 59 }, (_, i) => ({ from: 'd' + i, to: 'd' + (i + 1) }));

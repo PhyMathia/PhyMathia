@@ -209,7 +209,7 @@ async function main() {
       await page.evaluate(() => {
         harnessResult = {
           summary: '真机应用验证', status: 'ok', operations: [
-            { op: 'create_node', temp_id: 'tmp_phi1', assigned_id: 'phi_node_1', kind: 'knowledge', label: '导数', content: '瞬时变化率（真机验证）' },
+            { op: 'create_node', temp_id: 'tmp_phi1', assigned_id: 'phi_node_1', kind: 'human_note', label: '导数', content: '瞬时变化率（真机验证）' },
           ],
         };
         harnessResult._binding = _harnessBinding();
@@ -367,7 +367,7 @@ async function main() {
         }, null, { timeout: 20000 });
         // mock 回包不含 ops：注入后端格式结果，仍走真实「应用全部」链（同通道④）。
         // 注入→点击最多重试 4 次：上一轮 _applyOps 尾部 setTimeout(100) 的自动内容生成
-        // （harness-apply.js 对新建 knowledge 节点调模型写回正文）会让 graphVersion 在
+        // （harness-apply.js 对新建 relation/工作流节点调模型写回正文）会让 graphVersion 在
         // 本轮取指纹之后、点应用之前发生变化，此时 _harnessCanApply（harness.js:197）
         // 按「画布或会话已变化」拒绝——守卫本身是产品设计；被拒那次未动图，重试时
         // 重新取一次指纹即可，不会重复应用（2026-09-30 偶发 8s 超时真机定位）。
@@ -379,7 +379,7 @@ async function main() {
               status: 'ok',
               event_id: 'evt_verify_' + cfg.nodeId,
               operations: [
-                { op: 'create_node', temp_id: 'tmp_' + cfg.nodeId, assigned_id: cfg.nodeId, kind: 'knowledge', label: cfg.label, content: cfg.label + '（T96 验证）' },
+                { op: 'create_node', temp_id: 'tmp_' + cfg.nodeId, assigned_id: cfg.nodeId, kind: 'human_note', label: cfg.label, content: cfg.label + '（T96 验证）' },
               ],
             };
             harnessResult._binding = _harnessBinding();
@@ -476,7 +476,7 @@ async function main() {
         st.customNodes = Array.isArray(st.customNodes) ? st.customNodes : [];
         const found = st.customNodes.find(n => n.id === 'phi_node_1');
         if (found) { found.label = '细读目标'; found.content = found.content || '真机验证节点正文'; }
-        else st.customNodes.push({ id: 'phi_node_1', kind: 'knowledge', label: '细读目标', content: '真机验证节点正文' });
+        else st.customNodes.push({ id: 'phi_node_1', kind: 'human_note', label: '细读目标', content: '真机验证节点正文' });
         saveGraphState('sess_leg1', st);
         renderGraphCanvas();
       });

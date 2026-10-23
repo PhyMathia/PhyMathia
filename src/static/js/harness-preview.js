@@ -398,7 +398,7 @@
   }
 
   function _newHarnessNode(id, op, pos) {
-    let kind = op.kind || 'knowledge';
+    let kind = op.kind || 'note';
     const label = String(op.label || op.title || '节点');
     const content = String(op.content || '');
     const formula = String(op.formula || '');
@@ -414,7 +414,7 @@
       const kindMap = { manual: 'answer', question: 'user' };
       kind = kindMap[recipeEmbed.base.kind] || recipeEmbed.base.kind;
     }
-    const isManual = ['knowledge', 'relation', 'human_note', 'note', 'source', 'blank'].includes(kind);
+    const isManual = ['relation', 'human_note', 'note', 'source', 'blank'].includes(kind);
     return {
       id,
       kind,
@@ -442,9 +442,7 @@
       generatedNodeIds: [],
       category: '',
       formulas: formula ? [formula] : [],
-      knowledgeKey: '',
       label,
-      title: kind === 'knowledge' ? label : '',
       formula,
       x: pos.x,
       y: pos.y,
@@ -455,7 +453,7 @@
       pinned: false,
       fixedX: null,
       fixedY: null,
-      customWidth: kind === 'human_note' || kind === 'knowledge' ? 260 : null,
+      customWidth: kind === 'human_note' ? 260 : null,
       customHeight: null,
       w: 0,
       h: 0,
@@ -493,7 +491,6 @@
       generatedNodeIds: [],
       category: '',
       formulas: [],
-      knowledgeKey: '',
       label: op.label || ('对「' + targetLabel + '」的建议'),
       title: '',
       formula: '',
@@ -588,7 +585,7 @@
     (ops || []).forEach(op => {
       const name = op.op || op.type || '';
       if (name === 'create_node' || name === 'create_eval_node') {
-        const kind = name === 'create_eval_node' ? 'ai_eval' : (op.kind || 'knowledge');
+        const kind = name === 'create_eval_node' ? 'ai_eval' : (op.kind || 'note');
         addPreview(op.assigned_id || op.id || op.temp_id, op, kind);
       }
     });

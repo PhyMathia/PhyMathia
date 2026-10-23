@@ -217,7 +217,7 @@ def _tool_definitions() -> Dict[str, Dict[str, Any]]:
     # ---- 节点配方 P3（创造模式）：配方是纯 JSON（D-R2），schema 枚举在后端校验器把关 ----
     recipe_obj_prop = {
         "type": "object",
-        "description": "配方完整 JSON：name(必填≤24字) / desc(≤80) / base:{kind:module|summary|knowledge|relation|note|human_note|manual|question} / "
+        "description": "配方完整 JSON：name(必填≤24字) / desc(≤80) / base:{kind:module|summary|relation|note|human_note|manual|question} / "
         "appearance:{palette:amber|blue|rose|teal|violet|human|note}（外观只有颜色，形状按底座推导、别写 shape） / "
         "generate:{prompt(必填≤800字), strict_output, followup_prompt, retry_prompt, context_channel:workflow_context|prompt_inline, "
         "model_role:agent|html|branch|graph|quiz|descriptor, on_incomplete:{max_retries:0|1|2}} / "
@@ -748,14 +748,7 @@ def _graph_stats(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], data:
         bucket = str(node_depth)
         entry["depth_histogram"][bucket] = entry["depth_histogram"].get(bucket, 0) + 1
 
-    # ③ 无先修来源的知识节点（入度为 0；模块/笔记不算——它们本就不是知识链一环）
-    no_prereq = [
-        {"id": _text(node.get("id")), "label": _text(node.get("label"))}
-        for node in nodes
-        if _text(node.get("kind")) == "knowledge" and in_degree.get(_text(node.get("id")), 0) == 0
-    ]
-
-    # ④ quiz_weak 覆盖率（快照可选参考字段；缺失时明说跳过，不猜）
+    # ③ quiz_weak 覆盖率（快照可选参考字段；缺失时明说跳过，不猜）
     quiz_raw = data.get("quiz_weak")
     if not isinstance(quiz_raw, list) or not quiz_raw:
         quiz_section: Dict[str, Any] = {"present": False, "note": "快照未带检测薄弱点（quiz_weak），跳过覆盖率统计"}
@@ -810,12 +803,6 @@ def _graph_stats(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], data:
         ),
         "isolated_nodes": isolated_nodes,
         "depth_by_kind": depth_by_kind,
-        "no_prereq_knowledge": {
-            "count": len(no_prereq),
-            "items": no_prereq[:_READONLY_STATS_NODE_LIMIT],
-            "truncated": len(no_prereq) > _READONLY_STATS_NODE_LIMIT,
-            "note": "这些知识节点没有任何先修来源连线——是真正的学习起点，还是缺了前置连线，需结合内容判断",
-        },
         "quiz_weak_coverage": quiz_section,
     }
     if cycle_locked:

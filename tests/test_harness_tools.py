@@ -85,7 +85,7 @@ class ParseToolCallsErrorsTest(unittest.TestCase):
 
 class ParseToolCallsConversionsTest(unittest.TestCase):
     def test_create_node_full(self):
-        args = ('{"temp_id":"t1","kind":"knowledge","label":"牛顿第二定律",'
+        args = ('{"temp_id":"t1","kind":"human_note","label":"牛顿第二定律",'
                 '"content":"F=ma","formula":"F=ma","reason":"补充核心定律"}')
         ops, errors = parse_tool_calls([_call("create_node", args)])
         self.assertEqual(errors, [])

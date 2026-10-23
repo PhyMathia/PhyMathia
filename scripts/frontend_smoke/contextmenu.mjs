@@ -512,7 +512,7 @@ check('graph-contextmenu: 节点剪贴板复制→粘贴 roundtrip（类型/内�
     // 联系线另一端 n_x 不在集内 → 不带
     const copied = sandbox.graphCopySelectedNodes([
       { id: 'n_a', kind: 'module', moduleKey: 'physics', messageIndex: 0, x: 100, y: 40, content: '' },
-      { id: 'n_b', kind: 'knowledge', messageIndex: -1, label: '简谐运动', content: 'kb 正文', x: 460, y: 40 },
+      { id: 'n_b', kind: 'human_note', messageIndex: -1, label: '简谐运动', content: 'kb 正文', x: 460, y: 40 },
       { id: 'n_draft', kind: 'draft', x: 0, y: 0 },
     ]);
     if (copied !== 2) throw new Error('draft 应被过滤，复制数=2：' + copied);
@@ -534,7 +534,7 @@ check('graph-contextmenu: 节点剪贴板复制→粘贴 roundtrip（类型/内�
     if (na.kind !== 'module' || na.moduleKey !== 'physics' || na.messageIndex !== -1) throw new Error('粘贴节点类型/下标错');
     if (!na.content || na.content.indexOf('回复力与摆幅成正比') < 0) throw new Error('粘贴内容丢失');
     if (na.status !== 'done' || na.generated !== true) throw new Error('粘贴节点应即「完成」态');
-    if (nb.kind !== 'knowledge' || nb.label !== '简谐运动') throw new Error('knowledge 粘贴形态错');
+    if (nb.kind !== 'human_note' || nb.label !== '简谐运动') throw new Error('human_note 粘贴形态错');
     // 原跨度 x 100..460（中心 280）、y 同为 40（中心 40）→ 平移 (+520, +260)
     if (na.x !== 620 || nb.x !== 980 || na.y !== 300 || nb.y !== 300) {
       throw new Error('相对布局/落点错：' + JSON.stringify({ ax: na.x, bx: nb.x, ay: na.y, by: nb.y }));

@@ -875,13 +875,13 @@ function recipeFromNode(nodeId) {
   const node = _findGraphNode(nodeId);
   if (!node) return;
   const kindToBase = {
-    module: 'module', summary: 'summary', knowledge: 'knowledge', relation: 'relation',
+    module: 'module', summary: 'summary', relation: 'relation',
     note: 'note', human_note: 'human_note', user: 'question',
   };
   let baseKind = kindToBase[node.kind];
   if (node.kind === 'answer') baseKind = node.manual ? 'manual' : null;
   if (!baseKind) {
-    toastMsg('这类节点暂不支持存为配方（P1 支持：模块 / 总结 / 知识点 / 联系 / 笔记 / 人工类）');
+    toastMsg('这类节点暂不支持存为配方（P1 支持：模块 / 总结 / 联系 / 笔记 / 人工类）');
     return;
   }
   const messages = _getChatHistory();

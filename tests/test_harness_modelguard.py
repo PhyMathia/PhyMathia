@@ -274,7 +274,7 @@ def _run_phase(monkeypatch, phase, instruction, thinking_kwarg=None, model_think
         model["thinking"] = model_thinking
     kwargs = {"thinking": thinking_kwarg} if thinking_kwarg is not None else {}
     asyncio.run(review_mod.review_graph(
-        {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+        {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
         instruction,
         model=model, mode="json", self_check="off", retries=0, phase=phase,
         **kwargs))

@@ -26,8 +26,8 @@ _SPEC.loader.exec_module(metrics)
 def _connected_snapshot():
     return {
         "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"},
-            {"id": "B", "kind": "knowledge", "label": "极限", "content": "趋近"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "变化率"},
+            {"id": "B", "kind": "human_note", "label": "极限", "content": "趋近"},
         ],
         "edges": [{"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"}],
     }
@@ -58,11 +58,11 @@ BAD_EVENTS = [
     _review("r2", 1759900000, "model-bad",
             [{"stage": "main", "attempt": 0}, {"stage": "main", "attempt": 1}],
             [{"op": "delete_node", "id": "B", "reason": "r"},
-             {"op": "create_node", "temp_id": "t1", "kind": "knowledge", "label": "孤岛", "reason": "r"}]),
+             {"op": "create_node", "temp_id": "t1", "kind": "human_note", "label": "孤岛", "reason": "r"}]),
     _review("r3", 1759900000, "model-bad",
             [{"stage": "main", "attempt": 0}], [], status="no_ops"),
     {"id": "a2", "type": "applied", "ts": 1759900100, "event_id": "r2", "mode": "selected",
-     "applied_ops": [{"op": "create_node", "temp_id": "t1", "kind": "knowledge",
+     "applied_ops": [{"op": "create_node", "temp_id": "t1", "kind": "human_note",
                       "label": "孤岛", "reason": "r"}],
      "before_snapshot": _connected_snapshot()},
     {"id": "f2", "type": "feedback", "ts": 1759900200, "kind": "bad",

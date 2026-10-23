@@ -83,7 +83,7 @@ def _detail(recipe_id="recipe-1", **over):
 
 def _snapshot_with_recipes(**over):
     snapshot = {
-        "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+        "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}],
         "edges": [],
         "user_recipes": [
             {"id": "recipe-1", "name": "错题复盘", "desc": "用户配方", "base_kind": "module"},
@@ -355,9 +355,9 @@ class RecipeUndoGuardTest(unittest.TestCase):
             called["n"] += 1
             return {"content": '{"summary": "已处理", "operations": []}', "tool_calls": []}
 
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}],
+        snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}],
                     "edges": []}
-        previous = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}],
+        previous = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}],
                     "edges": []}
         recipe_op = {"op": "update_recipe", "recipe_id": "recipe-1",
                      "recipe": _valid_recipe(name="错题复盘"), "reason": "改配方"}
@@ -404,8 +404,8 @@ class RecipeFocusAndPromptTest(unittest.TestCase):
     """焦点裁剪透传 recipe_detail；预设提示词/工具描述与合并契约口径一致。"""
 
     def test_focus_subgraph_carries_recipe_detail(self):
-        nodes = [{"id": "n0", "kind": "knowledge", "label": "焦点"}]
-        nodes += [{"id": f"n{i}", "kind": "knowledge", "label": f"节点{i}"} for i in range(1, 60)]
+        nodes = [{"id": "n0", "kind": "human_note", "label": "焦点"}]
+        nodes += [{"id": f"n{i}", "kind": "human_note", "label": f"节点{i}"} for i in range(1, 60)]
         detail = {"id": "recipe-1", "name": "错题复盘"}
         sub = _focus_subgraph({"nodes": nodes, "edges": [], "recipe_detail": detail}, ["n0"])
         self.assertIsNotNone(sub)

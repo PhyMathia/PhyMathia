@@ -50,7 +50,7 @@ def test_model_cannot_invoke_restore_node_and_bad_kind_is_rejected():
     from harness.core import UndoRestoreError, build_next_snapshot
 
     result = build_next_snapshot({"nodes": [], "edges": []}, [
-        {"op": "restore_node", "id": "n1", "node": {"kind": "knowledge", "content": "x"}, "reason": "r"}])
+        {"op": "restore_node", "id": "n1", "node": {"kind": "human_note", "content": "x"}, "reason": "r"}])
     assert result["status"] == "invalid"
     assert any("不支持的操作类型" in e["reason"] for e in result["errors"]), result
     with pytest.raises(UndoRestoreError):
@@ -73,7 +73,7 @@ def test_review_undo_without_lossless_before_rejects_instead_of_guessing():
     async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
         return {"content": "不应被调用", "tool_calls": []}
 
-    after = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+    after = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}], "edges": []}
     with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
         result = asyncio.run(review_mod.review_graph(
             after,

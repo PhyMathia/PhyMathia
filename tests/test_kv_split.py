@@ -207,24 +207,6 @@ class AllDataAndRestoreTest(KvSplitBase):
         self.assertEqual(storage_mod.kv_restore_bulk("junk", True), 0)
 
 
-class ConceptSplitFallbackTest(KvSplitBase):
-    def test_explicit_pairs_reads_split_graph_state(self):
-        from server import concept as concept_mod
-
-        state = {
-            "customNodes": [
-                {"id": "knowledge-custom-1", "knowledgeKey": "k1"},
-                {"id": "knowledge-custom-2", "knowledgeKey": "k2"},
-            ],
-            "connections": [
-                {"from": "knowledge-custom-1", "to": "knowledge-custom-2", "relation": "依赖"},
-            ],
-        }
-        storage_mod.kv_write("graph:sess_c", state)
-        pairs = concept_mod.explicit_pairs("sess_c")
-        self.assertEqual(pairs, [("k1", "k2", "依赖")])
-
-
 class BackupRoundtripTest(unittest.TestCase):
     """多账号 P1 夹具：patch config.DATA_DIR 一处（backup/storage/profile 全部经
     accounts.resolve_paths 调用期读取）。"""

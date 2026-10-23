@@ -1253,7 +1253,7 @@ class HarnessStreamReviewTest(RouteTestBase):
             "model": {"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
             "mode": "json",
             "self_check": "off",
-            "snapshot": {"version": 1, "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            "snapshot": {"version": 1, "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
         }
         body.update(extra)
         return body

@@ -274,20 +274,6 @@ def check_snapshot_consistency(snapshot: Any) -> Dict[str, Any]:
             "message": "节点「%s」没有任何连线" % (n["label"] or n["id"]),
         })
 
-    by_label: Dict[str, list] = {}
-    for n in nodes:
-        if n["kind"] == "knowledge" and n["label"]:
-            by_label.setdefault(n["label"], []).append(n)
-    for label, items in by_label.items():
-        if len(items) > 1:
-            issues.append({
-                "type": "duplicate_label",
-                "severity": "info",
-                "node_id": items[0]["id"],
-                "label": label,
-                "message": "存在 %d 个同名知识点「%s」" % (len(items), label),
-            })
-
     by_key: Dict[str, list] = {}
     for n in nodes:
         if n["kind"] == "module" and n["module_key"]:
