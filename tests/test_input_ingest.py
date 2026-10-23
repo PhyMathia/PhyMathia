@@ -44,6 +44,9 @@ class IngestRouteTest(unittest.TestCase):
             mock.patch.object(docs, "UPLOAD_DIR", tmp),
             mock.patch.object(input_routes, "UPLOAD_DIR", tmp),
             mock.patch.object(ocr, "OCR_DIR", tmp),
+            # meta 路径也隔离（2026-10-23 补）：此前只隔了目录，meta 一直写真实的
+            # data/uploads.json，每跑一轮测试就多几条测试条目
+            mock.patch.object(docs, "UPLOADS_META_PATH", tmp / "uploads.json"),
         ]
         for p in self._patches:
             p.start()
@@ -126,6 +129,21 @@ class IngestRouteTest(unittest.TestCase):
         self.assertTrue(second["ok"])
         self.assertEqual(second["text"], "识别出的字", "按 fileId 重调缺省开 OCR")
         self.assertEqual(second["fileName"], "b.png", "fileName 从上传 meta 取回")
+
+    def test_file_route_serves_bytes_and_mime(self):
+        first = self._post({"fileName": "note.txt", "contentBase64": _b64("素材正文")}).json()
+        resp = self.client.get("/api/input/files/" + first["fileId"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.content, "素材正文".encode("utf-8"), "按 fileId 取回源字节")
+        self.assertIn("text/plain", resp.headers.get("content-type", ""))
+
+    def test_file_route_unknown_id_404(self):
+        self.assertEqual(self.client.get("/api/input/files/doc_000000000000").status_code, 404)
+
+    def test_file_route_bad_id_shape_404(self):
+        # id 形状不合一律 404：id 只当 meta 键用，永不携带路径语义
+        for bad in ("abc", "doc_xyz", "doc_12345", "DOC_0123456789ab"):
+            self.assertEqual(self.client.get("/api/input/files/" + bad).status_code, 404, bad)
 
 
 class OcrEngineTest(unittest.TestCase):

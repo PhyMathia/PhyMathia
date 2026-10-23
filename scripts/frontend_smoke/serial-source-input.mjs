@@ -4,6 +4,7 @@
 // 旧数据只读分支、命名/OCR 状态文案、addSourceText 本地建条目与超长走 ingest（fetch 桩）。
 // 本文件有用例会 await 且替换全局 fetch 桩——串行域契约（见 AGENTS.md 硬规则 4），
 // 执行顺序由 ../frontend_smoke.mjs 调用序列决定，收口线 drain() 之前注册完毕。
+import { readFileSync } from 'node:fs';
 import { check, drain, sandbox, vm } from './_runner.mjs';
 
 function seedNode(items, extra) {
@@ -252,6 +253,106 @@ check('素材篮命名与 OCR 状态文案：首行 20 字 / 文件名 24 字 / 
   if (!failed.includes('识别失败') || !failed.includes('未识别出文字')) throw new Error('failed 态文案错：' + failed);
   if (st({ kind: 'image', ocr: { status: 'skipped' } }) !== '未转写') throw new Error('skipped 态文案错');
   if (st({ kind: 'text', ocr: { status: 'done' } }) !== '') throw new Error('非图片条目不该有 OCR 文案');
+  return true;
+});
+
+// ===== 取材附图与 OCR 默认关（2026-10-23）=====
+check('OCR 默认关：新节点开关不勾选，显式开启才勾选；toggle 写显式值', () => {
+  const realEsc = sandbox.escapeHtml;
+  const realSave = sandbox._saveCustomNodes;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  sandbox._saveCustomNodes = () => {};
+  try {
+    seedNode([]);
+    const offHtml = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
+    const m = offHtml.match(/graph-source-ocr-toggle"><input type="checkbox"([^>]*)>/);
+    if (!m) throw new Error('渲染缺 OCR 开关');
+    if (m[1].includes(' checked')) throw new Error('ocrOn 未设应默认不勾选（默认关）');
+    seedNode([], { ocrOn: true });
+    const onHtml = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: {} })', sandbox);
+    if (!/graph-source-ocr-toggle"><input type="checkbox" checked/.test(onHtml)) {
+      throw new Error('ocrOn=true 应勾选');
+    }
+    sandbox.toggleSourceOcr('src-test', false);
+    const n = vm.runInContext('graphView.nodeById["src-test"]', sandbox);
+    if (n.ocrOn !== false) throw new Error('toggleSourceOcr(false) 应显式落 false（默认语义由读取方定）');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    sandbox._saveCustomNodes = realSave;
+  }
+  return true;
+});
+
+check('OCR 默认关源码契约：addSourceFiles 严格判 ocrOn === true（加素材默认不发 OCR）', () => {
+  const src = readFileSync(new URL('../../src/static/js/graph-custom.js', import.meta.url), 'utf8');
+  if (!src.includes('const wantOcr = node.ocrOn === true;')) {
+    throw new Error('addSourceFiles 必须严格判 ocrOn === true（默认关）');
+  }
+  return true;
+});
+
+check('取材附图收集：_collectUpstreamImages 按口挑图片条目，未接线口不收、旧节点不收', () => {
+  seedNode([
+    { id: 'itA', kind: 'text', name: '文字', text: '甲' },
+    { id: 'itB', kind: 'image', name: '受力图', text: '', fileId: 'doc_img1' },
+    { id: 'itC', kind: 'image', name: '没接线的图', text: '', fileId: 'doc_img2' },
+  ]);
+  const downstream = { id: 'd1', kind: 'module', moduleKey: 'physics', messageIndex: -1, timestamp: 9, content: '' };
+  vm.runInContext('graphView.nodes.push(' + JSON.stringify(downstream) + '); graphView.nodeById["d1"] = graphView.nodes[graphView.nodes.length - 1];', sandbox);
+  vm.runInContext('graphView.edges = [{ from: "src-test", fromPort: "out-1", to: "d1", toPort: "in-0", custom: true }];', sandbox);
+  const got = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d1"])', sandbox);
+  if (got.length !== 1 || got[0].fileId !== 'doc_img1' || got[0].name !== '受力图') {
+    throw new Error('只应收接线那口的图片条目，实际 ' + JSON.stringify(got));
+  }
+  seedNode([{ id: 'n1', title: '旧' }], { fileId: 'doc_old', fileName: 'a.pdf' });
+  // seedNode 已整体重置 nodes，下游节点要重建
+  vm.runInContext('graphView.nodes.push(' + JSON.stringify(downstream) + '); graphView.nodeById["d1"] = graphView.nodes[graphView.nodes.length - 1]; graphView.edges = [{ from: "src-test", fromPort: "out-0", to: "d1", toPort: "in-0", custom: true }];', sandbox);
+  const none = vm.runInContext('_collectUpstreamImages(graphView.nodeById["d1"])', sandbox);
+  if (none.length !== 0) throw new Error('旧知识点形状节点不该收图');
+  return true;
+});
+
+check('附图发送与回落：带图直发；4xx 去图重发一次并提示开 OCR；5xx 原样抛', async () => {
+  // 本文件异步用例在 drain() 的 Promise.all 里并发收口（addSourceText 还挂着
+  // 20ms 回填计时器）——本用例全程不碰共享 graphView：按口收集打桩（它有专门
+  // 的同步用例盖着），只单测发送 helper 的附图与回落逻辑，零共享状态
+  const prevCollect = sandbox._collectUpstreamImages;
+  const prevBmp = sandbox._sourceImageDataUrl;
+  const prevChat = sandbox.proxyChatWithModel;
+  const realToast = sandbox.showToast;
+  const toasts = [];
+  sandbox.showToast = msg => toasts.push(msg);
+  sandbox._collectUpstreamImages = () => [{ fileId: 'doc_img1', name: '受力图' }];
+  sandbox._sourceImageDataUrl = async () => 'data:image/png;base64,AAA';
+  const targetNode = { id: 'd9', kind: 'module' };
+  const slotCall = { model: { provider: 'x', model: 'm', apiKey: 'k', baseUrl: 'https://u' }, role: 'agent' };
+  try {
+    let gotPayload = null;
+    sandbox.proxyChatWithModel = async (model, body) => { gotPayload = body; return { ok: true, status: 200 }; };
+    await sandbox._workflowSendWithImages(targetNode, slotCall, { prompt: 'p' }, undefined);
+    if (!gotPayload || !Array.isArray(gotPayload.images) || gotPayload.images[0] !== 'data:image/png;base64,AAA') {
+      throw new Error('发送 payload 应带压好的图');
+    }
+    const calls = [];
+    sandbox.proxyChatWithModel = async (model, body) => {
+      calls.push(body);
+      if (body.images) throw new Error('API 400: bad image');
+      return { ok: true, status: 200, retried: true };
+    };
+    const resp = await sandbox._workflowSendWithImages(targetNode, slotCall, { prompt: 'p' }, undefined);
+    if (calls.length !== 2 || !calls[0].images || calls[1].images) throw new Error('4xx 应恰好去图重发一次（首发带图、重发无图）');
+    if (!resp.retried) throw new Error('回落响应应原样返回调用方');
+    if (!toasts.some(t => String(t).includes('图片自动转文字'))) throw new Error('回落必须提示开 OCR：' + toasts.join('|'));
+    sandbox.proxyChatWithModel = async () => { throw new Error('API 500: boom'); };
+    let threw = null;
+    try { await sandbox._workflowSendWithImages(targetNode, slotCall, { prompt: 'p' }, undefined); } catch (e) { threw = e; }
+    if (!threw || !String(threw.message).includes('500')) throw new Error('5xx 不该走去图回落');
+  } finally {
+    sandbox._collectUpstreamImages = prevCollect;
+    sandbox._sourceImageDataUrl = prevBmp;
+    sandbox.proxyChatWithModel = prevChat;
+    sandbox.showToast = realToast;
+  }
   return true;
 });
 

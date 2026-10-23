@@ -100,6 +100,38 @@ def _log_cache_hit_rate(usage) -> None:
     logger.info(f"AI proxy cache: hit {hit}/{prompt_tokens} tok ({pct}%)")
 
 
+# 取材附图（2026-10-23 素材篮图片通道）：前端把上游图片素材压成 data URL 随
+# payload.images 送来，拼消息时转成 image_url 部件附在最后一条 user 消息上。
+# 消毒从严：形状/前缀/体积任一不合就丢——图是增益不是契约，坏图静默降级纯文本
+_IMAGE_DATA_URL_RE = re.compile(
+    r"^data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$")
+CHAT_IMAGES_MAX = 6
+CHAT_IMAGE_B64_MAX_CHARS = 8_000_000  # ≈6MB 原图
+
+
+def _sanitize_chat_images(images) -> list:
+    if not isinstance(images, list):
+        return []
+    parts = []
+    for item in images:
+        if len(parts) >= CHAT_IMAGES_MAX:
+            break
+        if isinstance(item, str) and len(item) <= CHAT_IMAGE_B64_MAX_CHARS \
+                and _IMAGE_DATA_URL_RE.match(item):
+            parts.append({"type": "image_url", "image_url": {"url": item}})
+    return parts
+
+
+def _message_text_for_log(message: dict) -> str:
+    # 附图后 content 是多部件数组——日志与 token 估算只取文字部件，别把 base64 打进日志
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return ""
+
+
 @router.post("/api/models/chat")
 async def api_models_chat(request: Request):
     """代理请求到 AI API，流式返回 OpenAI 格式 SSE。
@@ -332,10 +364,17 @@ async def api_models_chat(request: Request):
 
         level = payload.get("level", "university")
         level_suffix = LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])
-        messages.append({"role": "user", "content": current_text + level_suffix})
+        user_text = current_text + level_suffix
+        image_parts = _sanitize_chat_images(payload.get("images"))
+        if image_parts:
+            # 附图消息：文字部件在前、图片部件随后（多模态模型直接看素材原图）
+            messages.append({"role": "user",
+                             "content": [{"type": "text", "text": user_text}] + image_parts})
+        else:
+            messages.append({"role": "user", "content": user_text})
 
-        ctx_text = "".join(str(m.get("content") or "") for m in messages)
-        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}, budget={context_budget}")
+        ctx_text = "".join(_message_text_for_log(m) for m in messages)
+        logger.info(f"AI proxy (built msgs): {provider}/{model_name}, level={level}, msgs={len(messages)}, ctx_chars={len(ctx_text)}, est_tokens={estimate_tokens(ctx_text)}, budget={context_budget}, images={len(image_parts)}")
     else:
         # 旧格式：直接使用传入的 messages（兼容向后）
         messages = payload.get("messages", [])

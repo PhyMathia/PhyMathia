@@ -900,7 +900,7 @@ function _renderSourceNodeHtml(node, state) {
       + '</div>';
   } else {
     const items = Array.isArray(node.items) ? node.items : [];
-    const ocrOn = node.ocrOn !== false;
+    const ocrOn = node.ocrOn === true;
     const rows = items.map((item, index) => _renderSourceItemRow(node, attr, item, index)).join('');
     body = '<div class="graph-source-body" ondragover="event.preventDefault();this.classList.add(\'graph-source-drag\')" ondragleave="this.classList.remove(\'graph-source-drag\')" ondrop="handleSourceNodeDrop(event,\'' + node.id + '\')">'
       + '<label class="graph-source-ocr-toggle"><input type="checkbox"' + (ocrOn ? ' checked' : '') + ' onchange="toggleSourceOcr(\'' + node.id + '\',this.checked)"><span>图片自动转文字</span></label>'

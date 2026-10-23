@@ -391,6 +391,39 @@ function _normalizeWorkflowVizContent(content) {
   return '';
 }
 
+// 取材附图（2026-10-23）：首问/模块生成把上游素材篮的图片原图随消息发给模型
+// （多模态直接看图）。上限 4 张——素材更多的图是罕见场景，超出取前 4；上游 4xx
+// 时去图重发一次（非视觉模型收到 image_url 常整请求 400），并提示用户开「图片
+// 自动转文字」。返回 Response；去图重发也不成时抛那次错误，原始报错链不裹一层
+const WORKFLOW_SEND_IMAGE_MAX = 4;
+
+async function _workflowSendWithImages(node, slotCall, payload, signal) {
+  const imageFiles = typeof _collectUpstreamImages === 'function' ? _collectUpstreamImages(node) : [];
+  let images = null;
+  if (imageFiles.length && typeof _sourceImageDataUrl === 'function') {
+    const dataUrls = (await Promise.all(
+      imageFiles.slice(0, WORKFLOW_SEND_IMAGE_MAX).map(it => _sourceImageDataUrl(it.fileId))
+    )).filter(Boolean);
+    if (dataUrls.length) {
+      images = dataUrls;
+      payload.images = dataUrls;
+    }
+  }
+  try {
+    return await proxyChatWithModel(slotCall.model, payload, signal);
+  } catch (err) {
+    const m = /^API (\d{3}):/.exec(String((err && err.message) || ''));
+    if (!images || !m || m[1][0] !== '4') throw err;
+    const retryPayload = Object.assign({}, payload);
+    delete retryPayload.images;
+    const retry = await proxyChatWithModel(slotCall.model, retryPayload, signal);
+    if (typeof showToast === 'function') {
+      showToast('当前模型可能不支持看图，已去掉图片重发；可在输入节点开启「图片自动转文字」');
+    }
+    return retry;
+  }
+}
+
 async function _generateCustomNode(node, nodeSignal) {
   if (!node || node.busy) return;
   // T361：苏格拉底反馈节点也是 answer 底座，但它走自己的闭环口径（见下方 soc 分支），
@@ -445,7 +478,7 @@ async function _generateCustomNode(node, nodeSignal) {
     let resp = null;
     const slotCall = _slotCallForWorkflowNode(node);
     if (slotCall && typeof proxyChatWithModel === 'function') {
-      resp = await proxyChatWithModel(slotCall.model, {
+      const payload = {
         prompt,
         level: typeof currentLevel !== 'undefined' ? currentLevel : 'university',
         session_id: _workflowSessionId(),
@@ -459,7 +492,12 @@ async function _generateCustomNode(node, nodeSignal) {
         graph_path: branchMeta.graphPath,
         workflow_context: branchMeta.workflowContext,
         wfStats: branchMeta.wfStats,
-      }, signal);
+      };
+      // 苏格拉底闭环口径不动（不带图，闭环状态机不掺视觉素材）；其余首问/模块
+      // 生成走附图发送——上游素材篮的图片原图随消息给多模态模型
+      resp = socratic
+        ? await proxyChatWithModel(slotCall.model, payload, signal)
+        : await _workflowSendWithImages(node, slotCall, payload, signal);
     }
     if (!resp) {
       throw new Error('未配置 AI 模型，请在模型设置中配置');

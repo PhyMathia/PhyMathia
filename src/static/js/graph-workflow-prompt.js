@@ -171,6 +171,28 @@ function _collectUpstreamPath(node) {
   });
 }
 
+// 取材附图（2026-10-23）：与 _collectUpstreamPath 同一条上游路（同一套口语义），
+// 只挑素材篮的图片条目，返回 [{fileId, name}] 去重列表——发送前由发送侧取字节
+// 附进请求并裁上限，这里只管按口收集
+function _collectUpstreamImages(node) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of _collectUpstreamPath(node)) {
+    if (entry.kind !== 'source') continue;
+    const src = _findGraphNode(entry.id);
+    if (!src || _sourceIsLegacyNode(src)) continue;
+    const m = /^out-(\d+)$/.exec(String(entry.fromPort || ''));
+    const item = (m && Array.isArray(src.items)) ? src.items[parseInt(m[1], 10)] : null;
+    if (!item || item.kind !== 'image' || !item.fileId) continue;
+    const key = entry.id + '@' + entry.fromPort;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ fileId: item.fileId, name: item.fileName || item.name || '' });
+  }
+  return out;
+}
+window._collectUpstreamImages = _collectUpstreamImages;
+
 // 单父链取材（P2，空白节点式）：只沿每个节点的第一条入边回溯一条链，
 // 与 _collectUpstreamPath 输出同形（含自身，answer 仍被抽出进 analysis 槽）。
 // 素材篮（2026-10-22）：fromPorts 记录链上每颗经由哪条出边进入下一环——

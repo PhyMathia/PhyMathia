@@ -804,6 +804,34 @@ function _sourceItemPlaceholder(item) {
   return '[文件「' + label + '」未提取到文本]';
 }
 
+// 取材附图（2026-10-23）：按 fileId 取源文件字节，压到 ≤1600px JPEG dataURL。
+// 压图是给聊天请求减负（截图原图常超 4K，b64 体积与上游时延都跟着涨）；
+// 任何一步失败返回 null，调用方静默跳过该张——图是增益，不因附图失败挡发送
+const SOURCE_IMAGE_MAX_EDGE = 1600;
+async function _sourceImageDataUrl(fileId) {
+  try {
+    const resp = await fetch('/api/input/files/' + encodeURIComponent(String(fileId || '')));
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, SOURCE_IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } catch (err) {
+    return null;
+  }
+}
+window._sourceImageDataUrl = _sourceImageDataUrl;
+
 function _sourceItemId() {
   return 'it_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 }
@@ -996,7 +1024,9 @@ function addSourceFiles(nodeId, files) {
       createdAt: Date.now(),
     };
     _sourcePushItem(node, item);
-    const wantOcr = node.ocrOn !== false;
+    // OCR 默认关（2026-10-23 拍板）：识别交给取材附图（多模态模型直接看原图），
+    // 开关只影响之后新加的条目；非视觉模型附图失败时前端会提示开它
+    const wantOcr = node.ocrOn === true;
     const payload = {
       fileName: item.fileName,
       contentBase64: null, // 由下方 IIFE 填充

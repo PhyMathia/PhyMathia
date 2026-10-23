@@ -9,10 +9,11 @@ OCR，绝不调 AI 模型、不产知识点、不写知识面板。返回文本�
 import asyncio
 import base64
 import mimetypes
+import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from .config import UPLOAD_DIR, UPLOAD_MAX_BYTES
 from .documents import _extract_document_text, _read_upload, _sanitize_filename, _save_upload
@@ -109,3 +110,19 @@ async def api_input_ingest(request: Request):
             "error": str(ocr_info.get("error") or "")[:200],
         },
     }
+
+
+# 素材篮条目源文件下载（2026-10-23 取材附图通道）：首问发送前前端按 fileId 取
+# 字节压成 dataURL 附进聊天请求。只放行 ingest 自己落的 id 形状，不携带路径语义
+_FILE_ID_RE = re.compile(r"^doc_[0-9a-f]{12}$")
+
+
+@router.get("/api/input/files/{file_id}")
+async def api_input_file(file_id: str):
+    if not _FILE_ID_RE.match(file_id):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    loaded = await asyncio.to_thread(_read_upload, file_id)
+    if not loaded:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    entry, content = loaded
+    return Response(content=content, media_type=_guess_mime(str(entry.get("filename") or "")))
