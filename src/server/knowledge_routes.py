@@ -105,7 +105,8 @@ async def _json_get_response(request: Request, path, transform, cache_key=None):
 # 改大陆布局算法或内置族表口径时 bump 版本号，防旧结果滞留。
 # v2（2026-10-23 L1/L2）：岛级弃权（domainMargin/domainConsensus/三信号闸门）＋
 # 内置族表新增「材料力学」——两者都改投影产物口径，旧缓存须整体作废。
-_CONTINENT_CACHE_VERSION = 2
+# v3（2026-10-23 L3）：三态（domainTier）＋ familyProposals（指派反哺）——同为产物口径变更。
+_CONTINENT_CACHE_VERSION = 3
 _continent_result_cache: dict = {}   # {account: (sig, result)}
 _CONTINENT_RESULT_CACHE_MAX = 8      # 按账号一格，超限整体清（防长跑膨胀）
 
@@ -238,9 +239,15 @@ async def api_get_continent(request: Request = None):
     # T207：build_continent 本体（跨会话聚簇＋布局推导，纯本地 CPU）此前只包了向量
     # 准备、本体留在事件循环里同步跑——开一次图就占住整个循环若干秒，期间其他请求
     # 全部排队。这里一并挪出，与 card_sims 同口径。
+    # L3 指派反哺：纠正日志在 KV `continent_gate_weights`（`{log:[{from,to,sid,at}]}`），
+    # 拒绝记录与补词/新族候选共用 `continent_family_suggestions`。
+    suggest_kv = kv.get("continent_family_suggestions")
     result = await asyncio.to_thread(continent.build_continent, items, sessions,
                                      user_edges, user_families, gate, card_sims=card_sims,
-                                     sea_map=sea_map)
+                                     sea_map=sea_map,
+                                     region_log=kv.get("continent_gate_weights"),
+                                     dismissed=(suggest_kv.get("dismissed")
+                                                if isinstance(suggest_kv, dict) else None))
     if len(_continent_result_cache) >= _CONTINENT_RESULT_CACHE_MAX:
         _continent_result_cache.clear()
     _continent_result_cache[account] = (sig, result)

@@ -143,8 +143,10 @@ function _continentShortName(title, cap) {
 }
 
 // 归属解析：后端概率 + 用户覆盖（KV continent_regions，优先级①）→ 每座岛的
-// {key, tier, source}。tier 三档：solid（p≥0.7）/ light（0.4–0.7，「?」徽标）/
-// pending（<0.4，中性灰不上地盘，进「待确认」）——「不确定也要可见」。
+// {key, tier, source}。tier 三档：solid（实色）/ light（淡色，「?」徽标）/
+// pending（中性灰不上地盘，进「待确认」）——「不确定也要可见」。
+// L3 起档位优先听后端三态 `domainTier`（solid/light/null），后端没给才按 domainConf
+// 分档（旧口径：p≥0.7 / 0.4–0.7 / <0.4）。
 // 用户指派永远 solid（人说了算，conf=1）。查空是正常路径：没证据 → neutral。
 function _continentRegions(clusters, overrides, domainList, seaMap) {
   const assign = (overrides && overrides.assign) || {};
@@ -168,14 +170,35 @@ function _continentRegions(clusters, overrides, domainList, seaMap) {
     const key = c.domain || null;
     const conf = Number(c.domainConf) || 0;
     if (!key) { bySid[sid] = { key: null, tier: 'neutral', source: '' }; neutral.push(sid); return; }
-    if (conf < CONTINENT_CONF_LIGHT) {
-      bySid[sid] = { key: key, tier: 'pending', conf: conf, source: c.domainSource || '' };
-      pending.push({ sid: sid, domain: key, conf: conf, title: c.title || '' });
+    // L3 三态（2026-10-23 分类质量计划第三件之一）：后端 `domainTier` 直接决定档位——
+    // solid＝确定（实色）/ light＝疑似（淡色＋「?」）/ 没有该字段＝旧投影，落回按 conf
+    // 分档的老口径（缓存里可能还是 L1/L2 的产物，两条路都得在）。三态只改「看起来多确定」，
+    // 不改分组口径，也不新增第四档视觉。
+    const tri = (c.domainTier === 'solid' || c.domainTier === 'light') ? c.domainTier : '';
+    if (tri === 'solid' || (!tri && conf >= CONTINENT_CONF_SOLID)) {
+      bySid[sid] = { key: key, tier: 'solid', conf: conf, source: c.domainSource || '' };
+      (groups[key] = groups[key] || []).push(sid);
       return;
     }
-    bySid[sid] = { key: key, tier: conf >= CONTINENT_CONF_SOLID ? 'solid' : 'light',
-                   conf: conf, source: c.domainSource || '' };
-    (groups[key] = groups[key] || []).push(sid);
+    // 疑似（三态 light）与老口径的低置信（conf < CONTINENT_CONF_LIGHT）都进「待确认」清单，
+    // 差别在图上：疑似与老口径的中档都上海域板（淡色＋「?」），只有老口径的低置信不进板
+    // （旧行为逐字不变——旧投影走的是下面这支 legacyPending）。
+    const legacyPending = !tri && conf < CONTINENT_CONF_LIGHT;
+    bySid[sid] = { key: key, tier: legacyPending ? 'pending' : 'light', conf: conf,
+                   source: c.domainSource || '' };
+    if (tri === 'light') {
+      // 三态疑似：淡色档 + 待确认清单 + 照常上海域板（L3 新增的行为）
+      pending.push({ sid: sid, domain: key, conf: conf, title: c.title || '',
+                     tri: 'suspect', tier: 'light' });
+      (groups[key] = groups[key] || []).push(sid);
+    } else if (legacyPending) {
+      // 旧投影的低置信：中性灰 + 待确认清单，不进板（L1/L2 逐字行为，别顺手改）
+      pending.push({ sid: sid, domain: key, conf: conf, title: c.title || '',
+                     tri: 'suspect', tier: 'pending' });
+    } else {
+      // 旧投影的中档（0.4–0.7）：淡色 + 上海域板，不进清单（旧行为）
+      (groups[key] = groups[key] || []).push(sid);
+    }
   });
   // ≥2 座岛同领域才画海域板（单岛自成一国＝没有分组）；>12 片按岛数升序并「其他」
   let regions = [];

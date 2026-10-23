@@ -26,6 +26,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 os.environ.setdefault("PHYMATHIA_EMBEDDING", "0")
 
 from server.continent import (  # noqa: E402
+    FAMILY_CLUSTER_MAX_CARDS,
     FAMILY_CLUSTER_MIN_CARDS,
     FAMILY_CLUSTER_POOL_CAP,
     FAMILY_SUGGEST_MARGIN,
@@ -155,6 +156,69 @@ class SuggestRejectMemoryTest(unittest.TestCase):
                                           rejected=self._kv)
         self.assertEqual(len(trimmed), FAMILY_SUGGEST_MAX)
         self.assertNotIn("泊松分布", {s["term"] for s in trimmed})
+
+
+class FamilyClusterRelaxTest(unittest.TestCase):
+    """L3 候选判据放宽（分类质量计划第三件之二，补 R5 的盲区）。
+
+    旧口径两头不接：补词建议要求「像某个族**且**边际 ≥ FAMILY_SUGGEST_MARGIN」，
+    新族发现又要求「max < GATE_EMBED_FLOOR」——「对好几个族都像一点、都又不够像」的
+    形状两边都不收（材料力学岛六卡边际全 ≤0.017 的实测教训）。L3 起后者也进候选池，
+    但仍只进候选不自动归属，并且不放过链式大簇（本机实测 49 张调皮卡连成 47 卡巨簇）。
+    """
+
+    def setUp(self):
+        self.items = {k: _item(k, f"未知主题{k}") for k in ("q1", "q2", "q3", "q4")}
+        self.vecs = {k: [1.0, 0.01 * i] for i, k in enumerate(("q1", "q2", "q3", "q4"))}
+
+    @staticmethod
+    def _shape_sims(shape):
+        # 词面零命中的三种形状：都像一点（0.60 vs 0.58）、都不像、边际清楚的「有族可依」
+        return {"ambiguous": {PROB: 0.60, "力学": 0.58},
+                "distant": {PROB: 0.30},
+                "clear": {PROB: 0.62, "力学": 0.50}}[shape]
+
+    def _sims(self, *shapes):
+        return {iid: self._shape_sims(s) for iid, s in zip(self.items, shapes)}
+
+    def test_ambiguous_shape_enters_pool(self):
+        sims = self._sims("ambiguous", "ambiguous", "ambiguous", "clear")
+        out = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, sims, self.vecs)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["size"], 3)
+        self.assertEqual(out[0]["reason"], "ambiguous")
+        self.assertEqual(out[0]["ambiguous"], 3)
+        self.assertNotIn("q4", [c["id"] for c in out[0]["cards"]],
+                         "边际清楚的卡是补词建议的地盘，不进新族候选")
+
+    def test_mixed_cluster_reports_how_many_are_ambiguous(self):
+        sims = self._sims("ambiguous", "ambiguous", "distant", "clear")
+        out = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, sims, self.vecs)
+        self.assertEqual(out[0]["reason"], "mixed")
+        self.assertEqual(out[0]["ambiguous"], 2)
+
+    def test_distant_only_cluster_still_reports_distant(self):
+        # 原口径（「哪个族都不像」）不许因为放宽而丢掉自己的形状标记
+        sims = self._sims("distant", "distant", "distant", "clear")
+        out = family_cluster_suggestions(self.items, BUILTIN_FAMILIES, sims, self.vecs)
+        self.assertEqual(out[0]["reason"], "distant")
+        self.assertEqual(out[0]["ambiguous"], 0)
+
+    def test_oversized_chain_blob_is_not_a_new_field(self):
+        # 13 张彼此都过连边阈值的卡 → 一个超上限的连通分量：跨学科大簇不是「新领域」，
+        # 整体不提议（宁可漏报不可误报）
+        keys = ["b%02d" % i for i in range(FAMILY_CLUSTER_MAX_CARDS + 1)]
+        items = {k: _item(k, f"未知主题{k}") for k in keys}
+        vecs = {k: [1.0, 0.0] for k in keys}
+        sims = {k: {PROB: 0.60, "力学": 0.58} for k in keys}
+        self.assertEqual(family_cluster_suggestions(items, BUILTIN_FAMILIES, sims, vecs), [])
+        # 恰好在上限内照常提议（上限不是「一律不收」）
+        keep = keys[:-1]
+        out = family_cluster_suggestions({k: items[k] for k in keep},
+                                         BUILTIN_FAMILIES,
+                                         {k: sims[k] for k in keep},
+                                         {k: vecs[k] for k in keep})
+        self.assertEqual([c["size"] for c in out], [FAMILY_CLUSTER_MAX_CARDS])
 
 
 class FamilyClusterTest(unittest.TestCase):

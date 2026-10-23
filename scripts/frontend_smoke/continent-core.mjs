@@ -2399,6 +2399,102 @@ check('graph-continent: L2 材料力学族前端面（族表编辑行渲染新�
   return true;
 });
 
+check('graph-continent: L3 三态（domainTier 定档＋疑似进待确认且照上板＋旧投影按 conf 兜底）', () => {
+  const regions = sandbox._continentRegions;
+  if (typeof regions !== 'function') throw new Error('_continentRegions 未暴露');
+  const cl = (sid, domain, conf, n, tier) => ({
+    sessionId: sid, title: sid, domain: domain, domainConf: conf, domainSource: 'vote',
+    domainTier: tier, itemCount: n,
+    items: Array.from({ length: n }, (_, i) => ({ itemId: sid + '_' + i })),
+  });
+  // ① 三态优先于 conf：份额只有 0.4 但后端判了 solid（矩阵那类「分数不高、三信号都过」）
+  // 就必须实色，不许按老阈值 0.7 降成淡色
+  const solidByTier = regions([cl('s1', '代数学', 0.4, 3, 'solid')],
+    { renames: {}, assign: {} }, ['代数学']);
+  if (solidByTier.bySid.s1.tier !== 'solid') {
+    throw new Error('domainTier=solid 应按三态判实色，实际：' + solidByTier.bySid.s1.tier);
+  }
+  // ② 疑似（light）：淡色档 + 进待确认清单 + 照常并进海域板（L1 时这类岛还不进板）
+  const lightByTier = regions(
+    [cl('l1', '概率与统计', 0.343, 3, 'light'), cl('l2', '概率与统计', 0.9, 3, 'solid')],
+    { renames: {}, assign: {} }, ['概率与统计']);
+  if (lightByTier.bySid.l1.tier !== 'light') throw new Error('domainTier=light 应按三态判淡色');
+  if (lightByTier.pending.length !== 1 || lightByTier.pending[0].sid !== 'l1') {
+    throw new Error('疑似岛该进待确认清单：' + JSON.stringify(lightByTier.pending));
+  }
+  if (lightByTier.pending[0].tri !== 'suspect') throw new Error('待确认行须带三态标记 suspect');
+  if (lightByTier.regions[0].sessions.join() !== 'l1,l2') {
+    throw new Error('疑似岛照常上海域板：' + lightByTier.regions[0].sessions);
+  }
+  // ③ 未归类：domain=null（后端弃权）→ neutral，与 L1 同一条路
+  const none = regions([cl('n1', null, 0, 2, null)], { renames: {}, assign: {} }, ['概率与统计']);
+  if (none.bySid.n1.tier !== 'neutral' || none.neutral.indexOf('n1') < 0) {
+    throw new Error('弃权岛该是 neutral');
+  }
+  // ④ 旧投影兜底：没有 domainTier 字段时按 conf 分档（缓存里可能还是 L1/L2 产物）
+  const legacy = regions(
+    [cl('o1', '代数学', 0.95, 1, undefined), cl('o2', '代数学', 0.5, 1, undefined),
+     cl('o3', '量子力学', 0.33, 1, undefined)],
+    { renames: {}, assign: {} }, ['代数学', '量子力学']);
+  if (legacy.bySid.o1.tier !== 'solid' || legacy.bySid.o2.tier !== 'light'
+      || legacy.bySid.o3.tier !== 'pending') {
+    throw new Error('旧投影必须仍按 conf 分档：' + JSON.stringify(
+      [legacy.bySid.o1.tier, legacy.bySid.o2.tier, legacy.bySid.o3.tier]));
+  }
+  // ⑤ 三态不改「用户指派永远 solid」
+  const user = regions([cl('u1', '代数学', 0.1, 1, 'light')],
+    { renames: {}, assign: { u1: '力学' } }, ['代数学']);
+  if (user.bySid.u1.tier !== 'solid' || user.bySid.u1.source !== 'user') {
+    throw new Error('用户指派必须永远实色');
+  }
+  return true;
+});
+
+check('graph-continent: L3 指派反哺（提议区＋建成族/不要入口＋都走既有 KV 通道）', () => {
+  const src = readContinentSrc();
+  if (src.indexOf('你的指派可以变成一个族') < 0) throw new Error('待确认弹层缺反哺提议一节');
+  if (src.indexOf('data-proposal-create=') < 0) throw new Error('缺「建成族」入口');
+  if (src.indexOf('data-proposal-dismiss=') < 0) throw new Error('缺「不要」入口');
+  if (src.indexOf('familyProposals') < 0) throw new Error('没读后端下发的 familyProposals');
+  const at = src.indexOf('async function _continentCreateFamilyFromProposal');
+  if (at < 0) throw new Error('缺 _continentCreateFamilyFromProposal');
+  const fn = src.slice(at, src.indexOf('async function _continentDismissProposal', at));
+  // 落笔只走既有族表 KV 通道（不新开端点），源标记 user，查阅态先拦
+  if (fn.indexOf('CONTINENT_FAMILIES_KV_API') < 0) throw new Error('建族必须走既有族表 KV 通道');
+  if (fn.indexOf("source: 'user'") < 0) throw new Error('建出来的族要标「你指定」');
+  if (fn.indexOf('phyIsReadonly()') < 0) throw new Error('查阅态必须拦下（不许写对方账号）');
+  if (fn.indexOf('_continentFamilyNormalizeList') < 0) throw new Error('写前须重读并过同一把归一尺子');
+  if (fn.indexOf('CONTINENT_FAMILY_LIMIT') < 0) throw new Error('建族须守族表上限');
+  const dis = src.slice(src.indexOf('async function _continentDismissProposal'));
+  // 拒绝写进 continent_family_suggestions（与补词/新族候选同一条记性，服务端据此闭嘴）
+  if (dis.indexOf('CONTINENT_FAMILY_SUGGEST_KV_API') < 0) throw new Error('拒绝记录必须落建议 KV');
+  if (dis.indexOf('p.key ||') < 0) throw new Error('拒绝记录的键须与后端口径一致（region:<名字>）');
+  // 图例脚注要能指出「有反哺提议」——否则用户根本不知道弹层里多了东西
+  if (src.indexOf('反哺提议 ') < 0) throw new Error('图例脚注缺反哺提议提示');
+  return true;
+});
+
+check('graph-continent: L3 新族候选放宽前端面（形状说明行＋Φ 起名提示词跟上口径）', () => {
+  const src = readContinentSrc();
+  // 后端把「都像一点、都不够像」的形状也收进候选（reason=ambiguous/mixed）——前端得说清缘由
+  if (src.indexOf('cluster.ambiguous') < 0) throw new Error('候选行没读 ambiguous 计数');
+  if (src.indexOf('补词建议接不住') < 0) throw new Error('候选行缺形状说明');
+  if (src.indexOf('对好几个领域都像一点') < 0) throw new Error('Φ 起名提示词没跟上放宽口径');
+  const count = (s, sub) => s.split(sub).length - 1;
+  const cards = [{ id: 'c1', title: '未知主题' }];
+  const ambiguousRow = sandbox._continentClusterRowHtml(
+    { key: 'k1', size: 3, reason: 'ambiguous', ambiguous: 3, cards: cards }, null, {});
+  const distantRow = sandbox._continentClusterRowHtml(
+    { key: 'k2', size: 3, reason: 'distant', ambiguous: 0, cards: cards }, null, {});
+  // 沙箱里 escapeHtml 返回空串（词条正文断不了，v8.14 同口径）：只断结构——
+  // 暧昧簇多出一行说明（continent-suggest-note），原口径（全新领域）不多
+  if (count(ambiguousRow, 'continent-suggest-note') <= count(distantRow, 'continent-suggest-note')) {
+    throw new Error('暧昧簇缺说明行');
+  }
+  if (ambiguousRow.indexOf('data-cluster-name') < 0) throw new Error('候选行不该丢「让 Φ 起名」入口');
+  return true;
+});
+
 function srcIncludesSeaList() {
   const src = readContinentSrc();
   return src.includes('((data.seaList && data.seaList.length) ? data.seaList : (data.domainList || [])).slice()');

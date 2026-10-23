@@ -85,12 +85,19 @@ function _continentRenderLegend(regionInfo, data) {
   }
   const footBits = [];
   if (pending.length) {
-    footBits.push('低置信 ' + pending.length + '/' + totalIslands + '（' + pendingRatio +
-      '%）——占比高说明领域名单或词表该补了');
+    footBits.push('疑似 ' + pending.length + '/' + totalIslands + '（' + pendingRatio +
+      '%）——名字给了但证据不够硬（淡色＋「?」），占比高说明领域名单或词表该补了');
   }
   if (unclassified.length) {
     footBits.push('未归类 ' + unclassified.length + ' 座岛——证据不成立时不硬贴标签，' +
       '点「待确认」看候选并一键指派');
+  }
+  // L3 指派反哺：反复被指到同一个名字的岛群 → 一条「要不要把它变成一个族」的提议
+  // （机器只提议，落笔在「待确认」弹层里的「建成族」钮）
+  const proposals = ((data && data.familyProposals) || []).filter(p => p && p.name);
+  if (proposals.length) {
+    footBits.push('反哺提议 ' + proposals.length + ' 条——你把同样的岛指到了同一个名字，' +
+      '点「待确认」可把它建成一个族');
   }
   if (shareHint) footBits.push(shareHint);
   // v8 纠正信号可见（缺失要可见）：记了几笔在图例照报，族表弹层里可清空
@@ -575,11 +582,14 @@ async function _continentApplyRegionColor(key, hue, before, paint) {
   }
 }
 
-// 待确认清单（低置信岛）：每行「岛名 → 最优猜测（置信度）」+ 快捷指派——「不确定也
-// 要可见」的落点，机器不确定的事交给人一锤定音。v7.1b 起，Φ 归类跑出的建议（新领域
+// 待确认清单（疑似/未归类岛）：每行「岛名 → 最优猜测（置信度）」+ 快捷指派——「不确定
+// 也要可见」的落点，机器不确定的事交给人一锤定音。v7.1b 起，Φ 归类跑出的建议（新领域
 // 提名 / 归并组）也落在这里等确认——模型只建议，落笔权永远在用户。
 // L1（2026-10-23）起加「未归类（候选）」一节：弃权岛（domain=null）把候选摊开列出，
 // 每座岛带「指派海域」直达钮——与低置信岛共用 _continentDomainMenu/_continentAssignRegion。
+// L3（同日）再加两件：① 行首标「疑似」（三态里的 light，与老口径的低置信同列）；
+// ②「你的指派可以变成一个族」一节——同一名字被 ≥2 座岛指过（后端 familyProposals），
+// 用户点「建成族」才写族表 KV（机器只提议，落笔在用户）。
 function _continentPendingPopover(ev) {
   const info = _continentRegionInfo || {};
   const pending = info.pending || [];
@@ -589,11 +599,13 @@ function _continentPendingPopover(ev) {
   });
   const unclassified = (info.neutral || []).map(sid => clusterBySid[sid])
     .filter(c => c && (c.domains || []).length);
+  const proposals = ((_continentData && _continentData.familyProposals) || [])
+    .filter(p => p && p.name);
   const esc = _continentEsc;
   const rows = pending.map(p =>
     '<div class="continent-pop-row">' +
     '<span class="continent-pop-row-text">' + esc(p.title || p.sid) +
-    ' <span class="continent-pop-reason">' + esc(p.domain) + '（' +
+    ' <span class="continent-pop-reason">疑似 ' + esc(p.domain) + '（' +
     Math.round((Number(p.conf) || 0) * 100) + '%）</span></span>' +
     '<button class="continent-pop-btn is-quiet" data-pending-sid="' + esc(p.sid) + '">指派领域</button>' +
     '</div>').join('');
@@ -627,14 +639,49 @@ function _continentPendingPopover(ev) {
       '候选摊开给你看；指派后立刻上色（Ctrl+Z 可撤销），也可对它们跑一次「Φ 归类」。</div>' +
       unclassRows
     : '';
+  // L3 指派反哺：同一名字被 ≥2 座岛指过 → 提议建族（词条由后端从这些岛的标题里提炼）
+  const proposalRows = proposals.map((p, i) =>
+    '<div class="continent-pop-row">' +
+    '<span class="continent-pop-row-text">「' + esc(p.name) + '」' +
+    ' <span class="continent-pop-reason">' + (Number(p.count) || 0) + ' 座岛指到了这里：' +
+      (p.islands || []).slice(0, 3).map(x => esc((x && x.title) || (x && x.sid) || '')).join(' / ') +
+    '</span><br><span class="continent-pop-reason">词条：' +
+      ((p.terms || []).map(esc).join('、') || '（无）') + '</span></span>' +
+    '<button class="continent-pop-btn" data-proposal-create="' + i + '">建成族</button>' +
+    '<button class="continent-pop-btn is-quiet" data-proposal-dismiss="' + i + '">不要</button>' +
+    '</div>').join('');
+  const proposalHtml = proposals.length
+    ? '<div class="continent-pop-title" style="margin-top:6px">你的指派可以变成一个族</div>' +
+      '<div class="continent-pop-desc">同一个名字你已经在 ≥2 座岛上指过了——词表接不住这些卡，' +
+      '把它们建成一个族，以后同题材的新岛会自动归进来（写进族表，机器不自动落笔）。</div>' +
+      proposalRows
+    : '';
   const html =
     '<div class="continent-pop-title">待确认 ' + (pending.length + unclassified.length) + ' 座岛</div>' +
-    '<div class="continent-pop-desc">低置信岛的领域归属置信度低于 40%——机器拿不准的，你一锤定音（指派后进对应海域、Ctrl+Z 可撤销）。</div>' +
-    (rows || '<div class="continent-pop-desc">暂时没有低置信的岛。</div>') +
+    '<div class="continent-pop-desc">疑似＝机器给了名字但证据不够硬（图上淡色＋「?」）；未归类＝证据不成立、' +
+    '不硬贴标签。点一行指派，立刻上色（Ctrl+Z 可撤销）。</div>' +
+    (rows || '<div class="continent-pop-desc">暂时没有疑似的岛。</div>') +
     unclassHtml +
+    proposalHtml +
     sugHtml;
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
+  el.querySelectorAll('[data-proposal-create]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      const p = proposals[Number(btn.getAttribute('data-proposal-create'))];
+      if (p) _continentCreateFamilyFromProposal(p);
+    });
+    _kact(btn);  // T143 键盘可达
+  });
+  el.querySelectorAll('[data-proposal-dismiss]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      const p = proposals[Number(btn.getAttribute('data-proposal-dismiss'))];
+      if (p) _continentDismissProposal(p);
+    });
+    _kact(btn);  // T143 键盘可达
+  });
   el.querySelectorAll('[data-pending-sid]').forEach(btn => {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
@@ -658,6 +705,78 @@ function _continentPendingPopover(ev) {
     });
     _kact(btn);  // T143 键盘可达
   });
+}
+
+// L3 指派反哺·落笔：提案建成族（写 continent_families，走既有族表 KV 通道）。
+// 三件事都按既有纪律办：写前重读（别覆盖期间别处落的族）、查重与上限先挡、
+// 查阅态拦下。词条来自后端从这些岛标题里提炼的干净词条——用户不点头就不落笔。
+async function _continentCreateFamilyFromProposal(p) {
+  if (!p || !p.name) return;
+  if (phyIsReadonly()) { _continentToast('查阅模式：建族要写对方的族表，不可用'); return; }
+  const terms = (p.terms || []).filter(t => typeof t === 'string' && t.length >= 2);
+  if (!terms.length) { _continentToast('这条提议没有可用词条——去「族表」里手动建更稳'); return; }
+  try {
+    let list = [];
+    try {
+      const r = await fetch(CONTINENT_FAMILIES_KV_API, { cache: 'no-cache' });
+      if (r.ok) {
+        const j = await r.json();
+        const v = j && j.value;
+        list = _continentFamilyNormalizeList(
+          (v && Array.isArray(v.families)) ? v.families : (Array.isArray(v) ? v : []));
+      }
+    } catch (e) { /* 读不到就当空表：下面的查重只剩本地这一份，服务端仍会归一 */ }
+    if (list.some(f => f.canonical === p.name)) {
+      _continentToast('已有同名族——地图刷新后就能看到它'); return;
+    }
+    if (list.length >= CONTINENT_FAMILY_LIMIT) {
+      _continentToast('族表上限 ' + CONTINENT_FAMILY_LIMIT + ' 个'); return;
+    }
+    const entry = { canonical: p.name,
+                    terms: terms.slice(0, CONTINENT_FAMILY_TERMS_MAX), source: 'user' };
+    const resp = await fetch(CONTINENT_FAMILIES_KV_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { families: list.concat([entry]) } }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    _continentClosePopover();
+    await _continentRefreshAfterFamilies();
+    _continentToast('已建成族「' + p.name + '」，地图已重算');
+  } catch (err) {
+    _continentToast('保存失败：' + (err && err.message || err));
+  }
+}
+
+// L3 指派反哺·拒绝：记进 continent_family_suggestions.dismissed（键 region:<名字>），
+// 与补词/新族候选同一条「防骚扰」记性——证据没长出来（islands 数不长）就不再提。
+async function _continentDismissProposal(p) {
+  if (!p || !p.name) return;
+  if (phyIsReadonly()) { _continentToast('查阅模式：拒绝记录不会写进对方账号'); return; }
+  try {
+    let state = {};
+    try {
+      const r = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, { cache: 'no-cache' });
+      if (r.ok) {
+        const j = await r.json();
+        const v = j && j.value;
+        if (v && typeof v === 'object') state = v;
+      }
+    } catch (e) { /* 读不到就当空记录 */ }
+    const dismissed = (state.dismissed && typeof state.dismissed === 'object')
+      ? state.dismissed : (state.dismissed = {});
+    dismissed[p.key || ('region:' + p.name)] =
+      { islands: Number(p.count) || 0, at: Date.now() };
+    const resp = await fetch(CONTINENT_FAMILY_SUGGEST_KV_API, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: Object.assign({ version: 1 }, state) }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    _continentClosePopover();
+    await _continentRefreshAfterFamilies();
+    _continentToast('已记住：岛再多也不会再提这条（族表里还能手动建）');
+  } catch (err) {
+    _continentToast('记录失败：' + (err && err.message || err));
+  }
 }
 
 function _continentCopyRegionOverrides() {
@@ -1115,8 +1234,9 @@ function _continentNameMessages(cluster, knownNames) {
     (i + 1) + '. ' + ((c && c.title) || '（无标题）') +
     ((c && c.summary) ? '——' + c.summary : '')).join('\n');
   const lines = [
-    '用户的知识库里有一批知识卡：它们不属于下面任何已知领域（语义向量都离得很远），' +
-    '但彼此语义相近，可能是一个花名册上还没有的新领域。',
+    '用户的知识库里有一批知识卡：标题里没有下面任何已知领域的术语，语义上也和已知领域' +
+    '关系不成立——要么离所有领域都远，要么对好几个领域都像一点、都又不够像；' +
+    '但它们彼此语义相近，可能是一个花名册上还没有的新领域。',
     '',
     '已知领域名单：' + (known.length ? known.join('、') : '（空）'),
     '候选卡（共 ' + cards.length + ' 张）：',
@@ -1203,6 +1323,14 @@ function _continentClusterRowHtml(cluster, namedEntry, dismissed) {
     (cluster.size > 3 ? ' …' : '');
   const regrown = dismissed && dismissed.cards != null &&
     cluster.size > Number(dismissed.cards) + 2;
+  // L3 放宽后的第二类形状（reason=ambiguous/mixed）：这批卡对好几个族都像一点、都又不够像，
+  // 补词建议（要求边际 ≥0.05）接不住，才落进新领域候选——把「为什么它们在这儿」说清楚，
+  // 否则用户看到「疑似新领域」会以为模型发烧了
+  const ambiguous = Number(cluster.ambiguous) || 0;
+  const shapeNote = cluster.reason === 'ambiguous'
+    ? '这些卡对好几个族都像一点、都又不够像（补词建议接不住的形状），彼此抱团才进候选'
+    : (cluster.reason === 'mixed' && ambiguous
+      ? '其中 ' + ambiguous + ' 张对好几个族都像一点、都又不够像（补词建议接不住）' : '');
   const head = '<div class="continent-family-line">' +
       '<span class="continent-family-name">疑似新领域 · ' + cluster.size + ' 个聚落</span>' +
       (regrown ? '<span class="continent-suggest-note">上次你拒过，这次证据更多</span>' : '') +
@@ -1212,7 +1340,12 @@ function _continentClusterRowHtml(cluster, namedEntry, dismissed) {
       '<span class="continent-family-terms" title="' +
         _continentEsc(cluster.cards.map(c => (c && c.title) || '').join('、')) + '">来自：' +
         preview + '</span>' +
-    '</div>';
+    '</div>' +
+    (shapeNote
+      ? '<div class="continent-family-line continent-suggest-evidence">' +
+          '<span class="continent-suggest-note">' + _continentEsc(shapeNote) + '</span>' +
+        '</div>'
+      : '');
   const body = namedEntry && namedEntry.verdict
     ? (namedEntry.verdict === 'new'
         ? '<div class="continent-family-line">' +
@@ -1520,8 +1653,8 @@ async function _continentFamilyPopover(ev) {
                                          dismissed[c.key])).join('');
     box.innerHTML = rows
       ? '<div class="continent-pop-title" style="margin-top:8px">新领域候选</div>' +
-        '<div class="continent-pop-desc">这些卡不属于任何已知领域，但彼此抱团——可能是一个' +
-        '花名册上还没有的新领域。让 Φ 提个名，你裁决；机器不会自己落笔。</div>' + rows
+        '<div class="continent-pop-desc">这些卡词面上认不出任何已知领域、语义上也算不上亲，' +
+        '但彼此抱团——可能是一个花名册上还没有的新领域。让 Φ 提个名，你裁决；机器不会自己落笔。</div>' + rows
       : '';
   };
 
