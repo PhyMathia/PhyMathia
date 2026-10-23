@@ -225,12 +225,10 @@ class BaselineRoutingTest(unittest.TestCase):
                                    [d["name"] for d in row["domains"]]))
 
     def test_candidates(self):
-        """候选清单（按 GATE_MIN_P 过滤后）。灰岛也要能说「候选是哪两片海、各占多少」。
-
-        行波这座岛冻的是**空清单**：冠军海份额 0.19，连 GATE_MIN_P=0.25 都不到，
-        所以「未归类（候选：…）」这句文案在它身上看不见——已知缺口，登记 backlog T388。
-        冻在这里是为了让修它的人必须来改这一行（改完顺便把 T388 销账），而不是让它
-        悄悄变空或悄悄变有。
+        """候选清单。灰岛也要能说「候选是哪两片海、各占多少」——T388（2026-10-23）
+        起灰岛走半门槛 GATE_MIN_P_UNSURE=0.125（保留岛照旧 GATE_MIN_P=0.25）：
+        行波（冠军海 0.204）与均匀分布·混（次名 0.239）的候选在这里钉住，半门槛
+        再丢回去就是回归。
         """
         for island in ISLANDS:
             title, want = island["title"], island["expect"]

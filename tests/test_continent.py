@@ -979,18 +979,31 @@ class BuildContinentDomainGateTest(unittest.TestCase):
         self.assertEqual(row["domainSource"], "gate")
         self.assertGreaterEqual(row["domainConf"], 0.9)
 
-    def test_gate_version_mismatch_invalidates_whole_batch(self):
+    def test_gate_weights_mismatch_invalidates_whole_batch(self):
         from server.continent import current_gate_version
         gate = self._gate({"k1": {"domains": [{"name": "量子力学", "conf": 0.95}]}},
-                          "deadbeef00")  # 名单/权重变了之后的老版本
+                          "deadbeef00")  # 权重快照变了之后的老版本
         items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
         out = build_continent(items, self.D_SESSIONS, None, None, gate)
         self.assertIsNone(out["clusters"][0]["domain"])
-        # 版本口径单一来源：同一份 payload 两次计算必须一致，换名单必须变
+        # 版本口径单一来源：同一份 payload 两次计算必须一致
         self.assertEqual(current_gate_version(None), current_gate_version(None))
-        self.assertNotEqual(current_gate_version(None),
-                            current_gate_version({"families": [
-                                {"canonical": "新领域", "terms": ["新词"]}]}))
+
+    def test_roster_growth_keeps_version_and_labels(self):
+        # T387（2026-10-23）：版本只哈希权重快照——加一个族不再作废全量 Φ 打标
+        # （重打烧钱，材料力学那次就是整批换代的）。名单变化由条目级过滤兜住：
+        # 服务端只认名单内的名（铁律②），删族时提到该名的条目自动失效。
+        from server.continent import current_gate_version
+        families = {"families": [{"canonical": "新领域", "terms": ["新词"]}]}
+        self.assertEqual(current_gate_version(None), current_gate_version(families),
+                         "加族不许换版本（T387：全量重打是白花钱）")
+        # 旧打标在新名单下照常生效：模型当年说「量子力学 0.95」，换个更大的名单
+        # 这句话没变义——卡级 softmax 在投影时按当前名单现算
+        gate = self._gate({"k1": {"domains": [{"name": "量子力学", "conf": 0.95}]}},
+                          current_gate_version(families))
+        items = {"k1": _item("k1", "sess_g4", "1. 定义与坐标表达")}
+        out = build_continent(items, self.D_SESSIONS, None, families, gate)
+        self.assertEqual(out["clusters"][0]["domain"], "量子力学")
 
     def test_gate_ignores_names_outside_expert_list(self):
         from server.continent import current_gate_version
@@ -1099,6 +1112,19 @@ class IslandAbstainGateTest(unittest.TestCase):
         self.assertEqual([d["name"] for d in row["domains"]], ["力", "相"])
         self.assertEqual([d["p"] for d in row["domains"]], [0.52, 0.48])
 
+    def test_low_share_gray_island_keeps_candidates(self):
+        # T388：弃权只要求 top 不过 GATE_MIN_TOP(0.33)，候选却按 GATE_MIN_P(0.25)
+        # 过滤——冠军海 0.19 的岛（行波）会被滤得连候选都没有，「未归类（候选：…）」
+        # 从何谈起。灰岛走半门槛 GATE_MIN_P_UNSURE；保留岛候选口径一字不动。
+        gray = self._row([{"力": 0.30, "相": 0.28, "量": 0.24, "热": 0.18} for _ in range(3)])
+        self.assertIsNone(gray["domain"])
+        self.assertEqual([d["name"] for d in gray["domains"]], ["力", "相"],
+                         "灰岛候选不许被 GATE_MIN_P 整空（T388）")
+        kept = self._row([{"力": 0.61, "相": 0.24, "量": 0.15}] * 3)
+        self.assertEqual(kept["domain"], "力")
+        self.assertEqual([d["name"] for d in kept["domains"]], ["力"],
+                         "保留岛候选仍按 GATE_MIN_P——半门槛只属于灰岛")
+
     def test_source_cleared_with_domain_on_abstention(self):
         # domainSource 随弃权一起清空（有本地证据本该标 vote，也不许留半截口径）
         probs = [{"力": 0.40, "相": 0.35, "量": 0.25} for _ in range(3)] + \
@@ -1199,15 +1225,18 @@ class RegionFamilyProposalTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # 每座证据岛两张卡：T386 的「学科味儿」判据要求词条命中 ≥2 张卡——真学科词
+        # （零阶保持器/冲激响应）会在同学科的卡标题里复现，单卡独有词不再外提
         cls.clusters = [
             {"sessionId": "sess_mm", "title": "材料力学入门",
-             "items": [{"itemId": "k1"}]},
+             "items": [{"itemId": "k1"}, {"itemId": "k1b"}]},
             {"sessionId": "sess_el", "title": "弹性体",
-             "items": [{"itemId": "k2"}]},
+             "items": [{"itemId": "k2"}, {"itemId": "k2b"}]},
             {"sessionId": "sess_sig", "title": "信号",
              "items": [{"itemId": "k3"}]},
         ]
-        cls.items = {"k1": {"title": "零阶保持器"}, "k2": {"title": "冲激响应"},
+        cls.items = {"k1": {"title": "零阶保持器"}, "k1b": {"title": "零阶保持器的频域观"},
+                     "k2": {"title": "冲激响应"}, "k2b": {"title": "冲激响应与卷积"},
                      "k3": {"title": "泊松比"}}   # k3 标题已在族表里 → 提炼不出词条
 
     def _log(self, *entries):
@@ -1224,7 +1253,9 @@ class RegionFamilyProposalTest(unittest.TestCase):
         self.assertEqual({i["sid"] for i in p["islands"]}, {"sess_mm", "sess_el"})
         self.assertEqual(p["key"], "region:信号与系统")
         self.assertEqual(p["lastAt"], 20)
-        # 词条从这两座岛的卡片标题里提炼（「泊松比」已属材料力学 → 不重复收）
+        # 词条从这两座岛的卡片标题里提炼（「泊松比」已属材料力学 → 不重复收）；
+        # 带尾巴的长标题提炼出的词（「零阶保持器的频域观」）只命中自己那张卡，
+        # 过不了 T386 的「命中 ≥2 张卡」，只有反复出现的词进清单
         self.assertEqual(sorted(p["terms"]), ["冲激响应", "零阶保持器"])
 
     def test_one_island_or_one_decision_is_not_a_pattern(self):
@@ -1265,6 +1296,29 @@ class RegionFamilyProposalTest(unittest.TestCase):
         self.assertEqual(region_family_proposals(log, self.clusters, items,
                                                  BUILTIN_FAMILIES), [])
 
+    def test_subtitle_phrase_needs_two_card_hits(self):
+        # T386：副题短语与真学科词在词形上无法区分（「交互可视化」也是 5 字、也像
+        # 概念名、也不在族表），唯一分界是复现次数——只在自己那张卡上出现的词收进
+        # 族表会命中任何含此短语的标题，把未来的卡越拉越偏，一律不提
+        clusters = [
+            {"sessionId": "sess_a", "title": "均匀分布",
+             "items": [{"itemId": "k1"}, {"itemId": "k1b"}]},
+            {"sessionId": "sess_b", "title": "分布律",
+             "items": [{"itemId": "k2"}]},
+        ]
+        log = self._log({"to": "均匀分布补充", "sid": "sess_a", "at": 1},
+                        {"to": "均匀分布补充", "sid": "sess_b", "at": 2})
+        alone = {"k1": {"title": "交互可视化"},    # 章节壳：只此一张
+                 "k1b": {"title": "离散均匀分布"},  # 真词但孤证：也只有一张
+                 "k2": {"title": "连续均匀分布"}}   # 同上：各只命中一张
+        self.assertEqual(region_family_proposals(log, clusters, alone, []),
+                         [], "命中不了 ≥2 张卡的词不许进提议（副题短语污染）")
+        # 同一个词在第二张卡上出现 → 有复现 → 恢复提议
+        paired = dict(alone, k2={"title": "离散均匀分布的期望"})
+        out = region_family_proposals(log, clusters, paired, [])
+        self.assertEqual([p["terms"] for p in out], [["离散均匀分布"]],
+                         "反复出现的词才是学科词（T386 正例）")
+
     def test_deleted_island_is_not_evidence(self):
         # sid 已不在投影里（岛被删）→ 只剩一座有效岛，不提议
         log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
@@ -1284,7 +1338,9 @@ class RegionFamilyProposalTest(unittest.TestCase):
         log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
                         {"to": "信号与系统", "sid": "sess_el", "at": 2})
         knowledge = {"k1": _item("k1", "sess_mm", "零阶保持器"),
-                     "k2": _item("k2", "sess_el", "冲激响应")}
+                     "k1b": _item("k1b", "sess_mm", "零阶保持器的频域观"),
+                     "k2": _item("k2", "sess_el", "冲激响应"),
+                     "k2b": _item("k2b", "sess_el", "冲激响应与卷积")}
         bare = build_continent(knowledge, {})
         self.assertEqual(bare["familyProposals"], [])
         wired = build_continent(knowledge, {}, region_log={"log": log})
