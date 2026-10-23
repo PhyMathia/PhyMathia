@@ -20,7 +20,10 @@
 //      还没有 role:"tool"）只回 read_node 的 tool_calls；回灌后的第二次回 update_node
 //      编辑调用——这样一轮对话里必然出现「查询 → 回灌 → 编辑」多步循环；
 //   ⑤ T95 429 退避重试：「限流演练」关键词第一次必 429（Retry-After: 0），第二次放行；
-//      GET /__stats 返回全局计数（真机脚本核对「同一对话真的发了 ≥2 次请求」）。
+//      GET /__stats 返回全局计数（真机脚本核对「同一对话真的发了 ≥2 次请求」）；
+//   ⑥ T370 节点工坊草稿（2026-10-23）：系统提示词含「节点工坊」的请求＝工坊
+//      /api/harness/recipe/draft 链路，回 content 纯 JSON {say, recipe, question}
+//      ——⑧「三级追问」一句话初稿、⑩「访谈试炼」初稿＋追问→「访谈定稿」补丁换口。
 import http from 'node:http';
 
 const PORT = Number(process.env.PORT || 5065);
@@ -212,6 +215,65 @@ function replyOf(body) {
         },
       }],
     };
+  }
+  // —— 节点工坊草稿剧本（verify_send_channels ⑧⑩，T370 2026-10-23）——
+  // 工坊走 POST /api/harness/recipe/draft（harness _call_model json_mode，**不带
+  // tools**），系统提示词含「节点工坊」是该链路独有锚。回包是 content 里的纯 JSON
+  // 对象 {say, recipe, question}，不是 tool_calls。必须排在旧访谈剧本之前：
+  // 「访谈定稿」关键词无 tools 守卫，工坊第二轮会被 create_recipe 分支截胡。
+  if (j.systemText.includes('节点工坊')) {
+    // ⑩ 第二轮：用户答完（指令带「访谈定稿」）→ 补丁只换输入口
+    if (j.userText.includes('访谈定稿')) {
+      return text(JSON.stringify({
+        say: '访谈定稿：输入口按你的回答换成「力一」「力二」两个。',
+        recipe: { ports: { inputs: [{ label: '力一', type: 'text' }, { label: '力二', type: 'text' }] } },
+      }));
+    }
+    // ⑩ 第一轮：初稿＋一个问题同轮返回——只问不答会被后端折成兜底话并丢掉
+    // question（recipe_draft.py 空补丁分支走 _error_result），必须带 recipe。
+    if (j.userText.includes('访谈试炼')) {
+      return text(JSON.stringify({
+        say: '初稿先摆上，还差输入口没定。',
+        recipe: {
+          name: '访谈试炼节点', desc: '访谈产出的合力计算器',
+          base: { kind: 'module' },
+          appearance: { palette: 'blue', shape: 'is-round' },
+          generate: { prompt: '输入是待合成的力；输出合力讲解与示意图。', context_channel: 'workflow_context' },
+          ports: {
+            static: [{ label: '合力讲解', drag_form: 'draft', type: 'text' }, { label: '示意图', drag_form: 'draft', type: 'diagram' }],
+            inputs: [{ label: '力', type: 'text' }],
+          },
+          content_kind: 'markdown',
+        },
+        question: { field: 'ports.inputs', text: '访谈试炼：要吃的两个力怎么命名？各占一个输入口吗？' },
+      }));
+    }
+    // ⑧ 一句话档初稿：三级追问节点（动态出口）
+    if (j.userText.includes('三级追问')) {
+      return text(JSON.stringify({
+        say: '初稿好了：三级追问节点，出口按三级编号行自动长。',
+        recipe: {
+          name: '三级追问', desc: '三级追问，出口即问题',
+          base: { kind: 'module' },
+          appearance: { palette: 'rose', shape: 'is-round' },
+          generate: {
+            prompt: '针对当前问题，从基础、进阶、拓展三级各生成一个追问。',
+            strict_output: '只输出「### 追问」标题与三条编号行：1. [基础] … 2. [进阶] … 3. [拓展] …；禁止前言、答案、解释。',
+            context_channel: 'workflow_context', model_role: 'agent',
+          },
+          ports: {
+            static: [],
+            dynamic: {
+              parser: { pattern: 'numbered_list', level_tags: ['基础', '进阶', '拓展'], max: 12, label_from: 'index_question' },
+              fallback: { mode: 'label_questions_from_text', labels: ['问题1', '问题2', '问题3'] },
+              each: { type: 'socratic', branch_type: 'socratic', drag_form: 'draft' },
+            },
+          },
+          content_kind: 'markdown',
+        },
+      }));
+    }
+    // 其他工坊请求落到通用兜底（前端会提示没生成出可用草稿）
   }
   // —— T263 访谈协议剧本：第一轮回 ask_user 追问；用户答（末条用户消息含「访谈定稿」）后第二轮出配方 ——
   if (t.includes('访谈定稿')) {

@@ -24,7 +24,8 @@
 //   VERIFY_PROVIDER=opencode-go VERIFY_MODEL=mock-1 \
 //   VERIFY_BASE_URL=http://127.0.0.1:5065/v1 VERIFY_API_KEY=mock node scripts/verify_send_channels.mjs
 // mock 回包覆盖：问题概要 / 建议模块行 / 学习卡片 XML（含 <extend> 的苏格拉底＋进阶
-// 方向段——缺了产品会走兜底空端口，见 T57 坑②）/ 创造模式 create_recipe tool_calls。
+// 方向段——缺了产品会走兜底空端口，见 T57 坑②）/ 节点工坊草稿 JSON（T370：⑧⑩
+// 走 /api/harness/recipe/draft，锚在系统提示词「节点工坊」）。
 
 import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -488,15 +489,12 @@ async function main() {
         ok('⑦ 苏格拉底闭环作答：已发通（卡上「我来回答」→ 弹窗 → 工作流节点对，流式 ' + st.len + ' 字，建议追问已派生）');
       } catch (e) { bad('⑦ 苏格拉底闭环作答', e); }
 
-      // ===== 8. Φ 创造模式（preset 相位 → create_recipe）=====
-      // 真实入口：打开 Φ 面板 → 模式按钮开菜单 → 点「✦ 创造」→ 填指令 → 发送。
-      // 后端 preset 相位返回 operations（mock 上游回 create_recipe tool_calls），
-      // 预览面板出现配方行即发通。
-      // T123（2026-10-06 实弹定位）：本通道 09-30 起恒红的真因是「绑定门槛」——
-      // 未绑定画布的 Φ 会话只放行问答（chat），preset 发送被拦、请求零发出，
-      // 操作清单永远等不到（当初登记的「mock 不回配方操作」是误诊：mock 的
-      // create_recipe 剧本、后端解析/校验/全循环实弹均正常）。修法＝发送前先把
-      // 当前 Φ 会话绑到当前画布；toggle 是开关，先查绑定态防反向解绑。
+      // ===== 8. Φ 创造模式（T370：2026-10-20 起「创造」直达节点工坊，一句话档）=====
+      // 旧版在这里等 preset 相位＋graphHarnessInstruction——工坊重做后
+      // chooseHarnessMode('preset') 不带 legacy 一律 openRecipeWorkshop，旧断言
+      // 恒红（backlog T370）。现在的真实入口：Φ 面板 → 模式菜单「创造」→ 全屏工坊
+      // （空白草稿默认「一句话」档）→ 说一句 → POST /api/harness/recipe/draft →
+      // 结果卡长出配方即发通（mock 回 {say, recipe} JSON，锚在系统提示词「节点工坊」）。
       try {
         await waitIdle('⑧ 创造模式');
         const preset = await page.evaluate(async () => {
@@ -504,14 +502,6 @@ async function main() {
           const panel = document.querySelector('.graph-harness-window');
           const panelOpen = panel && !panel.hidden;
           if (!panelOpen && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
-          // T123（2026-10-06 实弹定位）：09-30 起的绑定门槛会拦掉未绑定会话的
-          // preset 发送（只放行问答、请求零发出），先绑当前画布再进模式；toggle
-          // 是开关，先查绑定态防反向解绑。注意 currentPhiId/_harnessBoundSid 是
-          // 脚本 let 全局、不在 window 上，必须裸引用——window. 前缀守卫恒假
-          // 会静默跳过绑定（第一版修法就栽在这）。
-          if (typeof currentPhiId !== 'undefined' && typeof _harnessBoundSid === 'function' && !_harnessBoundSid()) {
-            toggleHarnessSessionBinding(currentPhiId);
-          }
           const modeBtn = document.getElementById('graphHarnessModeBtn');
           if (!modeBtn) return { err: '模式按钮不在面板里' };
           modeBtn.click();
@@ -519,28 +509,45 @@ async function main() {
             .find(el => /创造/.test(el.textContent));
           if (!item) return { err: '模式菜单里没有创造项' };
           item.click();
-          if (window._harnessMode && window._harnessMode() !== 'preset') return { err: '点菜单项后未进入创造模式' };
-          const input = document.getElementById('graphHarnessInstruction');
+          await new Promise(r => setTimeout(r, 600));
+          const overlay = document.getElementById('recipeWorkshop');
+          if (!overlay || overlay.hidden) return { err: '点「创造」后节点工坊没开（入口应是模式菜单直达工坊）' };
+          const shell = overlay.querySelector('.rw-shell');
+          const shellMode = shell ? shell.getAttribute('data-mode') : '';
+          if (shellMode !== 'smart') {
+            return { err: '工坊没开在「一句话」档（data-mode=' + shellMode + '）——上一通道的草稿残留？' };
+          }
+          const input = document.getElementById('rwSmartInput');
+          if (!input) return { err: '工坊里没有一句话输入框' };
           input.value = '帮我造一个「三级追问」节点：三条编号行，级别标记 [基础][进阶][拓展]，出口从这三行解析，兜底从正文截问题文本。';
-          document.getElementById('graphHarnessSendBtn').click();
+          document.getElementById('rwSmartGo').click();
+          const cleanup = () => {
+            // 收尾：关工坊并丢草稿——不丢的话 ⑩ 会接上这份草稿（落 localStorage），
+            // 手动档第一句就不是「从零起草」了
+            if (typeof window.closeRecipeWorkshop === 'function') window.closeRecipeWorkshop({ discard: true });
+          };
           const t0 = Date.now();
           while (Date.now() - t0 < 90000) {
-            // T122：操作清单已并入对话流（渲染在助手气泡内），独立结果区已取消
-            const opRows = document.querySelectorAll('#graphHarnessChat .graph-harness-op');
-            if (opRows.length) {
-              const text = [...opRows].map(el => el.textContent).join(' ');
-              // 收尾：切回编辑模式，别把锁定状态留给下一轮
-              if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
-              return { ok: true, ops: opRows.length, hasRecipe: /配方/.test(text), text: text.slice(0, 80) };
+            const nameEl = document.querySelector('#rwSmartResult .rw-card-name');
+            if (nameEl && /三级追问/.test(nameEl.textContent || '')) {
+              const dyn = !!document.querySelector('#rwSmartResult .rw-chip-dyn');
+              const say = document.querySelector('#rwSmartResult .rw-smart-say');
+              cleanup();
+              return { ok: true, say: String((say && say.textContent) || '').slice(0, 60), dyn: dyn };
+            }
+            const errBox = document.getElementById('rwSmartError');
+            if (errBox && !errBox.hidden && String(errBox.textContent || '').trim()) {
+              cleanup();
+              return { err: '工坊起草失败：' + String(errBox.textContent).slice(0, 140) };
             }
             await new Promise(r => setTimeout(r, 1500));
           }
-          if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
-          return { err: '90 秒内没有收到创造模式操作清单' };
+          cleanup();
+          return { err: '90 秒内一句话档没长出配方结果卡' };
         });
         if (preset.err) throw new Error(preset.err);
-        if (!preset.hasRecipe) throw new Error('返回了操作但不像配方操作：' + preset.text);
-        ok('⑧ 创造模式：已发通（模式菜单进入 preset 相位 → ' + preset.ops + ' 条配方操作，预览已出）');
+        ok('⑧ 创造模式：已发通（模式菜单「创造」直达工坊一句话档 → 草稿往返，结果卡「三级追问」'
+          + (preset.dyn ? '＋动态出口' : '') + '；' + preset.say + '）');
       } catch (e) { bad('⑧ 创造模式', e); }
 
       // ===== 9. Φ 答疑模式（chat 相位：只读不改图）=====
@@ -587,57 +594,76 @@ async function main() {
         }
         ok('⑨ 答疑模式：已发通（chat 相位纯文字回答「' + chat.text + '…」，画布未被改动）');
       } catch (e) { bad('⑨ 答疑模式', e); }
-      // ===== ⑩ Φ 创造模式访谈流（T263：ask_user 追问 → 用户答 → create_recipe）=====
-      // 创造模式从「浅层单问 clarify」升级成多轮访谈：第一轮模型调 ask_user（后端
-      // 短路成 clarify、问题文本必须渲染进气泡），用户答完第二轮才出配方操作行。
-      // 真发两轮验整条链：问得出、显示得出、答完续得上（历史带问题文本不失忆）。
+      // ===== ⑩ Φ 创造模式访谈流（T370：工坊手动档补丁对话——初稿＋追问 → 答完补丁收尾）=====
+      // 旧版访谈在 Φ preset 相位的 ask_user 工具上；工坊重做后访谈＝draft 接口的
+      // question 机制：模型「初稿＋一个问题」同轮返回（只问不答会被后端折成兜底话
+      // 并丢 question，见 harness/recipe_draft.py 空补丁分支），用户答完第二轮补丁
+      // 只改要改的字段。真发两轮验整条链：问得出（.rw-question 渲染进气泡）、答完
+      // 改得上（卡片输入口换成「力一/力二」且出口原样＝深合并没有冲掉已配好的字段）。
       try {
         await waitIdle('⑩ 创造模式访谈');
         const round1 = await page.evaluate(async () => {
           if (typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
           const panel = document.querySelector('.graph-harness-window');
           if ((!panel || panel.hidden) && typeof window.toggleGraphPet === 'function') window.toggleGraphPet();
-          if (typeof currentPhiId !== 'undefined' && typeof _harnessBoundSid === 'function' && !_harnessBoundSid()) {
-            toggleHarnessSessionBinding(currentPhiId);
-          }
-          if (window.chooseHarnessMode && window._harnessMode() !== 'preset') window.chooseHarnessMode('preset');
-          const input = document.getElementById('graphHarnessInstruction');
+          const modeBtn = document.getElementById('graphHarnessModeBtn');
+          if (!modeBtn) return { err: '模式按钮不在面板里' };
+          modeBtn.click();
+          const item = [...document.querySelectorAll('#graphHarnessModeMenu .graph-harness-mode-item')]
+            .find(el => /创造/.test(el.textContent));
+          if (!item) return { err: '模式菜单里没有创造项' };
+          item.click();
+          await new Promise(r => setTimeout(r, 600));
+          const overlay = document.getElementById('recipeWorkshop');
+          if (!overlay || overlay.hidden) return { err: '点「创造」后节点工坊没开' };
+          // 访谈住在手动档的补丁对话里；⑧ 已 discard，这里从空白草稿起（第一句＝从零起草）
+          const manualBtn = overlay.querySelector('.rw-mode-btn[data-rw-mode="manual"]');
+          if (!manualBtn) return { err: '工坊里没有「手动调」档钮' };
+          manualBtn.click();
+          const input = document.getElementById('rwChatInput');
+          if (!input) return { err: '手动档里没有对话输入框' };
           input.value = '访谈试炼：帮我造一个合力计算节点';
-          document.getElementById('graphHarnessSendBtn').click();
+          document.getElementById('rwAskBtn').click();
           const t0 = Date.now();
           while (Date.now() - t0 < 90000) {
-            const opts = document.querySelectorAll('#graphHarnessChat .graph-harness-clarify-opt');
-            if (opts.length >= 2) {
-              const contents = [...document.querySelectorAll('#graphHarnessChat .graph-harness-message-content')];
-              const last = contents.length ? contents[contents.length - 1] : null;
-              return { ok: true, options: opts.length, hasQuestion: last ? /问 1/.test(last.textContent || '') : false };
+            const q = document.querySelector('#rwChatLog .rw-question-text');
+            const cardName = document.querySelector('#rwCard .rw-card-name');
+            if (q && /输入口/.test(q.textContent || '') && cardName && /访谈试炼节点/.test(cardName.textContent || '')) {
+              const ports = [...document.querySelectorAll('#rwCard .rw-card-port-row')].map(r => r.textContent || '').join(' ');
+              return { ok: true, question: String(q.textContent).slice(0, 50), round1HasL1: /力一/.test(ports) };
             }
             await new Promise(r => setTimeout(r, 1500));
           }
-          return { err: '第一轮追问未出现（ask_user 短路或选项没渲染）' };
+          return { err: '第一轮追问未出现（draft 往返或 .rw-question 渲染断）' };
         });
         if (round1.err) throw new Error(round1.err);
-        if (!round1.hasQuestion) throw new Error('追问选项在、问题文本不在气泡里（T263 渲染断）');
+        if (round1.round1HasL1) throw new Error('第一轮草稿就带了「力一」——第二轮补丁的改动将无法证明');
         const round2 = await page.evaluate(async () => {
-          const input = document.getElementById('graphHarnessInstruction');
+          const input = document.getElementById('rwChatInput');
           input.value = '访谈定稿：输入口是力一和力二，出口要合力讲解和示意图。';
-          document.getElementById('graphHarnessSendBtn').click();
+          document.getElementById('rwAskBtn').click();
           const t0 = Date.now();
           while (Date.now() - t0 < 90000) {
-            const chat = document.getElementById('graphHarnessChat');
-            const text = chat ? chat.textContent : '';
-            if (/访谈试炼节点/.test(text)) {
-              if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
-              return { ok: true, ops: chat.querySelectorAll('.graph-harness-op').length, digest: /入 2/.test(text) };
+            const ports = [...document.querySelectorAll('#rwCard .rw-card-port-row')].map(r => r.textContent || '').join(' ');
+            if (/力一/.test(ports) && /力二/.test(ports)) {
+              const keep = /合力讲解/.test(ports) && /示意图/.test(ports);
+              // 取**最后一个**改动标签：第一轮初稿也有一个（列了整份草稿的字段），
+              // 第二轮补丁的才是这次改动的清单
+              const chipList = document.querySelectorAll('#rwChatLog .rw-changed-chips');
+              const chips = chipList.length ? String(chipList[chipList.length - 1].textContent).slice(0, 40) : '';
+              // 收尾：关工坊丢草稿，别把访谈状态漏给后续轮次
+              if (typeof window.closeRecipeWorkshop === 'function') window.closeRecipeWorkshop({ discard: true });
+              return { ok: true, keep, chips };
             }
             await new Promise(r => setTimeout(r, 1500));
           }
-          if (window.chooseHarnessMode && window._harnessMode() !== 'edit') window.chooseHarnessMode('edit');
-          return { err: '第二轮配方操作行未出现（访谈历史携带或 mock 第二轮剧本断）' };
+          if (typeof window.closeRecipeWorkshop === 'function') window.closeRecipeWorkshop({ discard: true });
+          return { err: '第二轮补丁未生效（历史携带或卡片没换输入口）' };
         });
         if (round2.err) throw new Error(round2.err);
-        ok('⑩ 创造模式访谈：已发通（第一轮 ask_user 追问含 ' + round1.options + ' 个选项、问题文本进气泡；'
-          + '第二轮答完出配方操作行' + (round2.digest ? '，预览含「入 2」端口摘要' : '') + '）');
+        if (!round2.keep) throw new Error('补丁把没提到的出口冲掉了（深合并语义断）');
+        ok('⑩ 创造模式访谈：已发通（第一轮初稿＋追问「' + round1.question + '」进气泡；'
+          + '第二轮答完补丁换口，改动标签「' + round2.chips + '」，出口字段原样保留）');
       } catch (e) { bad('⑩ 创造模式访谈', e); }
     } else {
       ['② 节点追问', '③ 苏格拉底回答', '④ 重试', '⑤ 进阶支线', '⑥ 方向钮', '⑦ 苏格拉底闭环作答', '⑧ 创造模式', '⑨ 答疑模式', '⑩ 创造模式访谈'].forEach(n =>
