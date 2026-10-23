@@ -4,7 +4,6 @@ function _workflowProgressLabel(node) {
   if (!node) return '';
   if (node.recipeId && node.recipe && node.recipe.name) return node.recipe.name;
   if (node.kind === 'source') return '输入';
-  if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '知识联系';
   if (node.manual) return node.kind === 'note' ? '我的总结' : '我的回答';
   if (node.kind === 'hub') return '汇聚';

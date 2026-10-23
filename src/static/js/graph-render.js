@@ -19,7 +19,7 @@ function _nodeAttribute(node) {
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
   }
-  if (node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'relation' || node.kind === 'junction') {
+  if (node.kind === 'source' || node.kind === 'relation' || node.kind === 'junction') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.question;
   }
   if (node.kind === 'user') {
@@ -321,7 +321,6 @@ function _nodeInputLabel(node) {
   // 沿用出口同词（与 blank 出口「追问」一个口径），不再叫泛泛的「任意输入」
   if (node.kind === 'user') return '追问';
   if (node.kind === 'source') return '文件输入';
-  if (node.kind === 'knowledge') return '知识点来源';
   if (node.kind === 'relation') return '联系输入';
   if (node.kind === 'junction') return '任意汇入';
   return '来源';
@@ -353,7 +352,7 @@ function _nodeInputPortMeta(node, portIndex, seen) {
 }
 
 // 附加输入口的「待命名」继承：找落在本口上的边，取来源输出口的身份（基础口直接
-// 用表内名字；来源也是附加口时递归其继承，seen 拦环路）。fan-in 口（hub/knowledge）
+// 用表内名字；来源也是附加口时递归其继承，seen 拦环路）。fan-in 口（hub）
 // 多条边落同一口时取第一条，与苏格拉底/进阶多路口附加口取首边的口径一致。
 // 匿名输出口↔匿名输入口互为命名来源时递归撞 seen 返回空——已接线却两头无名，
 // 会永远停在「待命名」（用户实测：A/B 匿名出口接总结节点，落基础口的那对当场
@@ -421,33 +420,21 @@ function _nodeBaseOutputPorts(node, messages) {
   }
   if (node.kind === 'module') return _moduleOutputPorts(node, messages[node.messageIndex]);
   if (node.kind === 'source') {
-    // 素材篮（2026-10-22 重做）：新条目（带 kind）type 留空——拖空不再默认建
-    // 知识点，走添加节点面板自选；旧条目（知识点形状）保持 type='knowledge'，
-    // 旧快捷方式（拖空直建知识点）不失效
-    return (node.items || []).map((item, index) => {
-      if (item && item.kind) {
-        return {
-          label: item.name || ('素材 ' + (index + 1)),
-          type: '',
-          branchType: '',
-          attribute: 'source',
-          group: 'data',
-          question: '',
-          item: item,
-        };
-      }
-      return {
-        label: item.title || '知识点 ' + (index + 1),
-        type: 'knowledge',
+    // 素材篮（2026-10-22 重做）：每条素材一个出口，拖空走添加节点面板自选。
+    // 旧版无 kind 的条目（知识点形状）不再出口——2026-10-23 知识点节点退役，
+    // 旧输入节点只读保留，那条「拖空直建知识点」链路随节点一起删除。
+    return (node.items || [])
+      .filter(item => item && item.kind)
+      .map((item, index) => ({
+        label: item.name || ('素材 ' + (index + 1)),
+        type: '',
         branchType: '',
-        attribute: 'knowledge',
-        group: 'knowledge',
+        attribute: 'source',
+        group: 'data',
         question: '',
         item: item,
-      };
-    });
+      }));
   }
-  if (node.kind === 'knowledge') return _knowledgeOutputPorts(node);
   if (node.kind === 'hub') {
     return [{
       label: 'AI 总结',
@@ -506,13 +493,6 @@ function _answerOutputPorts(node, messages) {
   }));
 }
 
-function _knowledgeOutputPorts(node) {
-  return [
-    { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
-    { label: '问题', type: 'branch', branchType: 'followup', attribute: 'question', group: 'question', question: '' },
-  ];
-}
-
 function _nodeOutputCount(node, messages, state) {
   // 端口机制统一：总量＝max(基础口数, portCounts 存量)——portCounts 是绝对
   // 口径（存的是总口数，见 graph-interact 的加口公式），与 inputPortCounts
@@ -544,9 +524,9 @@ function _renderInputPorts(node, state) {
     ? baseCount + savedCount
     : (node.isRoot ? 0 : 1);
   let html = '<div class="graph-port-col graph-input-col">';
-  // junction（2026-10-11）入口同 knowledge family：任意来源可接（连线自由化后
+  // junction（2026-10-11）入口同 human_note family：任意来源可接（连线自由化后
   // 本无裁判，这里只是端口显示口径——灰点＋「可连接任意来源」）
-  const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'knowledge' || node.kind === 'junction';
+  const isAnyInput = node.kind === 'user' || node.kind === 'human_note' || node.kind === 'blank' || node.kind === 'junction';
   for (let i = 0; i < count; i++) {
     const named = declared[i] || null;
     const inputMeta = _nodeInputPortMeta(node, i);
@@ -568,7 +548,7 @@ function _renderInputPorts(node, state) {
         ? (label
           ? '输入「' + label + '」：名字与类型来自所连输出口'
           : '待命名的输入端口：连到某个输出口后，将采用该端口的名字与类型')
-        : (node.kind === 'user' || node.kind === 'human_note' || node.kind === 'knowledge' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源'));
+        : (node.kind === 'user' || node.kind === 'human_note' ? '任意输入端口：可连接任意来源' : '输入端口：拖到右侧输出可重连来源'));
     html += '<div class="graph-port graph-input-port' + anyClass + '" data-node-id="' + node.id + '" data-port-id="in-' + i + '" data-attribute="' + portAttr + '"'
       + (named ? ' data-port-label="' + encodeURIComponent(label) + '"' + (typeKey ? ' data-port-type="' + typeKey + '"' : '') : '')
       + ' style="--port-color:' + portColor + ';" title="' + escapeHtml(portTitle) + '">'
@@ -636,11 +616,9 @@ function _renderOutputPorts(node, messages, state) {
     const adopted = ports[i] ? null : _adoptedOutputPortMeta(node, i);
     const meta = ports[i] || {
       label: adopted ? adopted.label : '',
-      type: (adopted && adopted.type)
-        ? adopted.type
-        : node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'branch' : 'custom',
+      type: (adopted && adopted.type) ? adopted.type : 'custom',
       branchType: 'followup',
-      attribute: node.recipeId ? 'recipe' : node.kind === 'source' ? 'knowledge' : node.kind === 'knowledge' ? 'question' : 'followup',
+      attribute: node.recipeId ? 'recipe' : 'followup',
       question: '',
       custom: true,
     };
@@ -805,10 +783,6 @@ function _customNodeStatusText(node) {
     if (node.busy || node.status === 'running') return '解析中';
     return node.items && node.items.length ? '已解析' : '待解析';
   }
-  if (node.kind === 'knowledge') {
-    if (node.busy || node.status === 'running') return '生成中';
-    return (node.content || '').trim() ? '已填写' : '待填写';
-  }
   if (node.kind === 'relation') {
     if (node.busy || node.status === 'running') return '生成联系中';
     return (node.content || '').trim() ? '已编辑' : '待编辑';
@@ -845,7 +819,7 @@ function _customNodeStatusHtml(node, force) {
 function _canMinimizeGraphNode(node) {
   if (!node) return false;
   if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation' || node.kind === 'junction') return false;
-  if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'knowledge' || node.kind === 'human_note') return true;
+  if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'human_note') return true;
   return node.kind === 'module' || node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
 }
 
@@ -976,41 +950,6 @@ function _renderSourceItemRow(node, attr, item, index) {
     + ' title="' + escapeHtml(portTitle) + '">'
     + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(name) + '</span>'
     + '</span>'
-    + '</div>';
-}
-
-function _renderKnowledgeNodeHtml(node, state) {
-  const attr = _nodeAttribute(node);
-  const selectedClass = graphView.selectedNodeIds.has(node.id) ? ' selected' : '';
-  const minimizedClass = node.minimized ? ' minimized' : '';
-  const sizeStyle = node.minimized ? '' : (node.customWidth ? 'width:' + node.customWidth + 'px !important;min-width:' + node.customWidth + 'px !important;max-width:' + node.customWidth + 'px !important;' : '');
-  // T69：折叠卡跳公式 KaTeX 与表单（展开时整卡重建）
-  const formulas = node.minimized ? '' : ((node.formulas || []).slice(0, 4).map(f => {
-    const latex = String(f || '').replace(/^\$+|\$+$/g, '').trim();
-    let latexHtml = escapeHtml(latex);
-    try {
-      if (window.katex) latexHtml = katex.renderToString(latex, { throwOnError: false, displayMode: false });
-    } catch (e) {}
-    return '<div class="graph-knowledge-formula">' + latexHtml + '</div>';
-  }).join(''));
-  const body = node.minimized ? _minimizedBodyHtml() : ('<div class="graph-knowledge-body">'
-    + (formulas ? '<div class="graph-knowledge-formulas">' + formulas + '</div>' : '')
-    + '<textarea class="graph-custom-node-content" rows="3" onchange="updateCustomNodeContent(\'' + node.id + '\',this.value)">' + escapeHtml(node.content || node.summary || '') + '</textarea>'
-    + '<div class="graph-knowledge-actions">' + ((node.content || '').trim()
-      // 2026-10-13：已生成过内容的知识点，重新生成同样弹带要求面板（可留空直发）；
-      // 还没内容的是首次生成，保持直接跑
-      ? _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', node.busy ? '生成中' : '重新生成', node.busy)
-      : _iconRegenButton('generateKnowledgeNode(\'' + node.id + '\')', node.busy ? '生成中' : '生成', node.busy)) + '</div>'
-    + '</div>');
-  return '<div class="graph-node graph-node-knowledge graph-attr-knowledge' + selectedClass + minimizedClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
-    + _renderInputPorts(node, state)
-    + '<div class="graph-node-main">'
-    + _customNodeHeaderHtml(node, attr, '')
-    + '<div class="graph-node-label">' + escapeHtml(node.title || '知识点') + '</div>'
-    + '<div class="graph-node-full-content">' + body + '</div>'
-    + '<span class="graph-resize-handle" title="调整尺寸"></span>'
-    + '</div>'
-    + _renderOutputPorts(node, [], state || _graphState())
     + '</div>';
 }
 
@@ -1254,7 +1193,6 @@ function _renderNodeHtml(node, messages, state) {
   if (node.kind === 'blank') return _renderBlankNodeHtml(node, state);
   if (node.kind === 'draft') return _renderDraftNodeHtml(node);
   if (node.kind === 'source') return _renderSourceNodeHtml(node, state);
-  if (node.kind === 'knowledge') return _renderKnowledgeNodeHtml(node, state);
   if (node.kind === 'relation') return _renderRelationNodeHtml(node, state);
   if (node.kind === 'junction') return _renderJunctionNodeHtml(node, state);
   if (node.kind === 'human_note') return _renderHumanNoteNodeHtml(node, state);

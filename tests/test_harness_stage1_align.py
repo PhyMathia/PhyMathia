@@ -24,14 +24,14 @@ def _op_update(node_id, reason="r"):
 
 
 def _op_create(temp_id, label, reason="r"):
-    return {"op": "create_node", "temp_id": temp_id, "kind": "knowledge",
+    return {"op": "create_node", "temp_id": temp_id, "kind": "human_note",
             "label": label, "content": "正文", "reason": reason}
 
 
 TWO_NODE_SNAPSHOT = {
     "nodes": [
-        {"id": "A", "kind": "knowledge", "label": "电磁感应"},
-        {"id": "B", "kind": "knowledge", "label": "楞次定律"},
+        {"id": "A", "kind": "human_note", "label": "电磁感应"},
+        {"id": "B", "kind": "human_note", "label": "楞次定律"},
     ],
     "edges": [],
 }
@@ -78,8 +78,8 @@ class ScopeNodeIdsNormalizationTest(unittest.TestCase):
     def test_passes_through_existing_ids_only(self):
         out = normalize_snapshot({
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "a"},
-                {"id": "B", "kind": "knowledge", "label": "b"},
+                {"id": "A", "kind": "human_note", "label": "a"},
+                {"id": "B", "kind": "human_note", "label": "b"},
             ],
             "edges": [],
             "scope_node_ids": ["A", "B", "GHOST", "A"],
@@ -88,7 +88,7 @@ class ScopeNodeIdsNormalizationTest(unittest.TestCase):
 
     def test_absent_when_empty_or_all_unknown(self):
         out = normalize_snapshot({
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "a"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "a"}],
             "edges": [],
             "scope_node_ids": ["GHOST"],
         })

@@ -113,9 +113,13 @@ def normalize_node(node: Any) -> Optional[Dict[str, Any]]:
     node_id = _text(node.get("id") or node.get("node_id"))
     if not node_id:
         return None
-    kind = _text(node.get("kind"), "knowledge")
+    kind = _text(node.get("kind"), "note")
+    if kind == "knowledge":
+        # 2026-10-23 知识点节点退役：旧快照里的知识卡片按「我的理解」读，
+        # 与前端 materializeCustom 的同名迁移口径一致（该 kind 本身已不合法）
+        kind = "human_note"
     if kind not in ALLOWED_NODE_KINDS:
-        kind = "knowledge"
+        kind = "note"
     label = _text(node.get("label") or node.get("title") or node.get("name"))
     content = _text(node.get("content") or node.get("summary"))[:MAX_NODE_CONTENT_LENGTH]
     formula = _text(node.get("formula"))[:500]
@@ -348,7 +352,7 @@ def _safe_int(value: Any) -> int:
 
 def _flatten_op(op: Any) -> Any:
     """Flatten nested argument objects some models emit, e.g.
-    {"op": "create_node", "node": {"temp_id": "n1", "kind": "knowledge", ...}}."""
+    {"op": "create_node", "node": {"temp_id": "n1", "kind": "human_note", ...}}."""
     if not isinstance(op, dict):
         return op
     for key in ("node", "edge", "data", "properties"):
@@ -604,7 +608,7 @@ def build_next_snapshot(
 
         if op_name == "create_node":
             temp_id = _text(op.get("temp_id") or op.get("id"))
-            kind = _text(op.get("kind"), "knowledge")
+            kind = _text(op.get("kind"), "note")
             node_label = _text(op.get("label") or op.get("title"))
             if not temp_id:
                 errors.append({"index": index, "op": op_name, "reason": "缺少 temp_id"})

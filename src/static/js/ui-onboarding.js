@@ -185,7 +185,6 @@ function _demoNode(id, kind, x, y, options) {
     generatedNodeIds: [],
     category: opt.category || '',
     formulas: opt.formulas || [],
-    knowledgeKey: '',
     x,
     y,
     depth: kind === 'user' ? 1 : kind === 'answer' ? 2 : 3,
@@ -215,8 +214,12 @@ function _buildExampleGraphDemoState() {
     _demoNode('demo-learn', 'module', 900, 0, { moduleKey: 'learn', content: '### 进阶学习方向\n1. 阻尼振动与受迫振动\n2. 共振现象\n3. 耦合振子与简正模式' }),
     _demoNode('demo-socratic', 'module', 900, 360, { moduleKey: 'socratic', content: '### 苏格拉底追问\n1. [基础] 弹簧变硬后振动会怎样？\n2. [进阶] 能量为什么与振幅平方成正比？\n3. [拓展] 加入阻尼后方程如何变化？' }),
     _demoNode('demo-blank', 'blank', -720, 260, { requirements: '用动画解释共振现象', status: 'waiting' }),
-    _demoNode('demo-source', 'source', -260, 560, { manual: true, items: [{ title: '简谐运动' }, { title: '回复力' }, { title: '角频率' }] }),
-    _demoNode('demo-knowledge', 'knowledge', 320, 820, { manual: true, content: '简谐运动：回复力与位移成正比且反向，系统围绕平衡位置做周期性运动。', formulas: ['F=-kx'] }),
+    _demoNode('demo-source', 'source', -260, 560, { manual: true, items: [
+      { id: 'src-demo-1', kind: 'text', name: '简谐运动', text: '回复力与位移成正比且反向，系统围绕平衡位置做周期性运动。', chars: 30 },
+      { id: 'src-demo-2', kind: 'text', name: '回复力', text: 'F = -kx，方向总指向平衡位置。', chars: 18 },
+      { id: 'src-demo-3', kind: 'text', name: '角频率', text: 'ω = √(k/m)，由系统自身性质决定。', chars: 18 },
+    ] }),
+    _demoNode('demo-knowledge', 'human_note', 320, 820, { manual: true, label: '我的理解', content: '简谐运动：回复力与位移成正比且反向，系统围绕平衡位置做周期性运动。', formula: 'F=-kx' }),
     _demoNode('demo-human', 'human_note', -720, 640, { manual: true, label: '我的理解', content: '回复力像“拉回平衡位置的橡皮筋”，偏离越多拉得越强。' }),
     _demoNode('demo-summary', 'summary', 900, -420, { content: '总结：简谐运动由线性回复力 <formula>F=-kx</formula> 主导，运动方程与能量转换都源于它。', status: 'done' }),
     _demoNode('demo-note', 'note', 900, 720, { manual: true, content: '我的总结：简谐运动的核心是线性回复力，它同时决定了运动方程与能量关系。' }),
@@ -316,10 +319,10 @@ const EXAMPLE_GUIDE_STEPS = [
     target: '[data-node-id="demo-viz"]',
   },
   {
-    title: '基础素材：输入、知识点、我的理解',
+    title: '基础素材：输入与我的理解',
     icon: UI_ICON_SVG.database,
-    desc: '画布还支持<strong>输入节点</strong>（粘贴文字/图片/文件，每条素材一个出口）、<strong>知识点节点</strong>和<strong>我的理解</strong>批注。',
-    points: ['输入节点把内容分发为多个知识点。', '双击“我的理解”节点可直接编辑标题、正文和公式。'],
+    desc: '画布还支持<strong>输入节点</strong>（粘贴文字/图片/文件，每条素材一个出口）和<strong>我的理解</strong>批注。',
+    points: ['输入节点的每条素材一个出口，拖到空白处可自选要接的节点。', '双击“我的理解”节点可直接编辑标题、正文和公式。'],
     target: '[data-node-id="demo-source"]',
   },
   {
@@ -512,7 +515,6 @@ function _restoreExampleGraphBindings() {
   restore('runAllWorkflowNodes', original.runAllWorkflowNodes);
   restore('startQuestionWorkflow', original.startQuestionWorkflow);
   restore('generateBlankNode', original.generateBlankNode);
-  restore('generateKnowledgeNode', original.generateKnowledgeNode);
   restore('generateRelationNode', original.generateRelationNode);
   restore('submitRegenerateNode', original.submitRegenerateNode);
   restore('generateVizNode', original.generateVizNode);
@@ -544,7 +546,6 @@ function _enterExampleGraphDemo() {
     runAllWorkflowNodes: window.runAllWorkflowNodes,
     startQuestionWorkflow: window.startQuestionWorkflow,
     generateBlankNode: window.generateBlankNode,
-    generateKnowledgeNode: window.generateKnowledgeNode,
     generateRelationNode: window.generateRelationNode,
     submitRegenerateNode: window.submitRegenerateNode,
     generateVizNode: window.generateVizNode,
@@ -570,7 +571,7 @@ function _enterExampleGraphDemo() {
   const blockAi = () => {
     if (typeof showToast === 'function') showToast('演示模式：这里不会调用模型，退出示例后可在真实画布使用');
   };
-  ['runWorkflowNode', 'runWorkflowNodes', 'runAllWorkflowNodes', 'startQuestionWorkflow', 'generateBlankNode', 'generateKnowledgeNode', 'generateRelationNode', 'submitRegenerateNode', 'generateVizNode', 'draftAskAi', 'toggleGraphPet', 'submitDraftQuestion', 'draftSocraticAnswer', 'sendGraphNewSession'].forEach(name => {
+  ['runWorkflowNode', 'runWorkflowNodes', 'runAllWorkflowNodes', 'startQuestionWorkflow', 'generateBlankNode', 'generateRelationNode', 'submitRegenerateNode', 'generateVizNode', 'draftAskAi', 'toggleGraphPet', 'submitDraftQuestion', 'draftSocraticAnswer', 'sendGraphNewSession'].forEach(name => {
     try { window[name] = blockAi; } catch (e) {}
   });
   document.body.classList.add('example-graph-demo-active');

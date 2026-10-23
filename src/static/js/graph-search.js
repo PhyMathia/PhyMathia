@@ -31,7 +31,6 @@ function _graphSearchResultLabel(node, message) {
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '我的总结';
   if (node.kind === 'source') return '输入';
-  if (node.kind === 'knowledge') return '知识点';
   if (node.kind === 'relation') return '联系';
   if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.isBranch ? (node.branchLabel || '延伸追问') : '问题');
@@ -273,7 +272,6 @@ function _nodeSub(node) {
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return node.title || '我的总结';
   if (node.kind === 'source') return '素材输入节点';
-  if (node.kind === 'knowledge') return '知识点节点';
   if (node.kind === 'relation') return '知识联系';
   if (node.kind === 'ai_eval') return 'AI 评价';
   if (node.kind === 'human_note') return '我的理解';

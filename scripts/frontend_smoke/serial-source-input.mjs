@@ -87,7 +87,7 @@ check('素材篮折叠：出口改走输出列（折叠卡不再是死节点）�
   return true;
 });
 
-check('素材篮端口＝条目：out-i ↔ items[i]，新条目 type 留空、旧条目 type=knowledge', () => {
+check('素材篮端口＝条目：out-i ↔ items[i]，新条目 type 留空、旧条目不再出口', () => {
   seedNode([
     { id: 'it1', kind: 'text', name: '题目原文', text: '一道力学题' },
     { id: 'it2', kind: 'image', name: '受力图', text: '', ocr: { status: 'running' } },
@@ -114,12 +114,10 @@ check('素材篮端口＝条目：out-i ↔ items[i]，新条目 type 留空、�
   } finally {
     sandbox.escapeHtml = realEsc;
   }
-  // 旧条目口保持 knowledge（拖空直建知识点，旧快捷方式不失效）
+  // 旧条目（知识点形状）不再出口：2026-10-23 知识点节点退役，旧输入节点只读保留
   seedNode([{ id: 'n1', title: '牛顿定律' }]);
   const legacyPorts = vm.runInContext('_nodeBaseOutputPorts(graphView.nodeById["src-test"], [])', sandbox);
-  if (legacyPorts[0].type !== 'knowledge' || legacyPorts[0].label !== '牛顿定律') {
-    throw new Error('旧条目口应保持 type=knowledge 与 title 名');
-  }
+  if (legacyPorts.length !== 0) throw new Error('旧输入条目不出口（知识点链路已退役）');
   return true;
 });
 

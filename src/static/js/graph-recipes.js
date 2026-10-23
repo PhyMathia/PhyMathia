@@ -22,7 +22,6 @@ const BUILTIN_RECIPES = [
   { key: 'summary', kind: 'summary', label: 'AI 总结', color: 'var(--node-summary)', group: 'ai', desc: 'AI 生成总结' },
   // —— 素材组（data）——
   { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '粘贴文字/图片/文件，每条素材一个出口' },
-  { key: 'knowledge', kind: 'knowledge', label: '知识点', color: 'var(--node-knowledge)', group: 'data', desc: '手动记录一个知识点' },
   { key: 'question', kind: 'user', label: '问题', color: 'var(--node-question)', group: 'data', desc: '提问节点，可接问题分析' },
   // —— 人工组（human）——
   // manual 在 module 键空间有历史身份（后端 ALLOWED_MODULE_KEYS / GRAPH_MODULE_META 均含
@@ -32,7 +31,7 @@ const BUILTIN_RECIPES = [
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
   // —— 中转节点（junction，2026-10-11 用户拍板）——
   // 走线锚点：固定一进一出两个任意口，四种基数全合法——1→1 / 多→1（in-0 扇入，
-  // 与 hub/knowledge 共用 fan-in 白名单）/ 1→多（out-0 扇出，_connectPorts 的
+  // 与 hub 共用 fan-in 白名单）/ 1→多（out-0 扇出，_connectPorts 的
   // sameSource 替换对 junction 为源的边开口子）/ 多→多（两者叠加）。它补的是
   // hub 退役评估（backlog 267「接线职能已被覆盖」）漏看的真空白：结构边一口一边、
   // 同源互顶之外，普通节点没有任何走线中转手段。
@@ -60,7 +59,7 @@ function _recipeByKey(key) {
   return BUILTIN_RECIPES.find(recipe => recipe.key === key) || null;
 }
 
-// 添加节点面板的入口（2026-10-11 junction 复活结构组后 16 个；P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
+// 添加节点面板的入口（2026-10-23 知识点退役后 15 个；P0 与原 MANUAL_NODE_OPTIONS 字面量逐字段一致；
 // module 组原本就没有 desc，派生时 desc 为空串则不设键，保持形状不变）
 function deriveManualNodeOptions() {
   return BUILTIN_RECIPES
@@ -93,13 +92,12 @@ window.deriveGraphCustomNodeKinds = deriveGraphCustomNodeKinds;
 
 // P1 底座集合：base.kind 决定节点落库形态与生成路径（S1 九种里 answer 的
 // 双阶段与 blank 的单父链聚合是 S3 维度，P2/P3 再开）。
-const RECIPE_BASE_KINDS = ['module', 'summary', 'knowledge', 'relation', 'note', 'human_note', 'manual', 'question'];
+const RECIPE_BASE_KINDS = ['module', 'summary', 'relation', 'note', 'human_note', 'manual', 'question'];
 // 有 AI 生成槽的底座（其余为人工手填，generate 可整段缺省）
-const RECIPE_AI_BASE_KINDS = ['module', 'summary', 'knowledge', 'relation'];
+const RECIPE_AI_BASE_KINDS = ['module', 'summary', 'relation'];
 const RECIPE_BASE_META = {
   module: { label: '视角模块（AI 生成，配出口）', family: 'modules', shape: 'is-round', hint: '像「物理视角」那样：挂在上游下面生成一块内容，出口可拖出追问。' },
   summary: { label: 'AI 总结（读全部上游全文）', family: 'ai', shape: 'is-round', hint: '把上游节点全文收进提示词再生成，适合汇总、提炼类。' },
-  knowledge: { label: '知识点解释（读自身标题/摘要/公式）', family: 'data', shape: 'is-ring', hint: '像「知识点」节点：按自身字段生成解释。' },
   relation: { label: '联系（读全部上游，短文）', family: 'data', shape: 'is-ring', hint: '说明上游节点间的联系，一段短文，需至少两条入边。' },
   note: { label: '我的总结（手填）', family: 'human', shape: 'is-square', hint: '人工书写，不调 AI。' },
   human_note: { label: '我的理解（手填，纯文本）', family: 'human', shape: 'is-square', hint: '批注/笔记，内容按纯文本渲染。' },
@@ -163,7 +161,7 @@ const RECIPE_FALLBACK_MODES = ['static', 'label_questions_from_text', 'none'];
 const RECIPE_DYNAMIC_PORT_TYPES = ['socratic', 'learn', 'branch'];
 const RECIPE_MAX_DYNAMIC = 12;                          // 与官方 _parsePortQuestions 上限一致
 // ── P2 取材与编排（S3 维度）──
-const RECIPE_AGGREGATIONS = ['ancestors', 'self_fields', 'first_inbound', 'none'];
+const RECIPE_AGGREGATIONS = ['ancestors', 'first_inbound', 'none'];
 const RECIPE_ON_GENERATED_KINDS = ['answer', 'module', 'blank', 'user', 'note', 'human_note'];
 const RECIPE_ON_GENERATED_CONTENT_FROM = ['', 'self_content', 'self_directions'];
 const RECIPE_MAX_ON_GENERATED = 4;
@@ -172,7 +170,6 @@ const RECIPE_MAX_ON_GENERATED = 4;
 // （空白节点式单父链取材）；其余底座保持推导值
 function _recipeAggregationForBase(baseKind, override) {
   if (baseKind === 'module' && override === 'first_inbound') return 'first_inbound';
-  if (baseKind === 'knowledge') return 'self_fields';
   if (RECIPE_AI_BASE_KINDS.includes(baseKind)) return 'ancestors';
   return 'none';
 }

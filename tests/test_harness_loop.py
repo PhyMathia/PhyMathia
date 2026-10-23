@@ -54,8 +54,8 @@ BACKUP = {"provider": "opencode", "model": "backup", "base_url": "https://x", "a
 SNAPSHOT = {
     "version": 1,
     "nodes": [
-        {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
-        {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
+        {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
+        {"id": "B", "kind": "human_note", "label": "极限", "content": "无穷接近"},
     ],
     "edges": [{
         "key": "A:out-0->B:in-0", "from": "A", "to": "B",
@@ -208,11 +208,11 @@ class ExecuteReadonlyToolTest(unittest.TestCase):
         self.assertIn("未找到节点", out["error"])
 
     def test_list_neighbors_truncates_at_40(self):
-        nodes = [{"id": "A", "kind": "knowledge", "label": "中心", "content": ""}]
+        nodes = [{"id": "A", "kind": "human_note", "label": "中心", "content": ""}]
         edges = []
         for index in range(45):
             node_id = f"N{index}"
-            nodes.append({"id": node_id, "kind": "knowledge", "label": node_id, "content": ""})
+            nodes.append({"id": node_id, "kind": "human_note", "label": node_id, "content": ""})
             edges.append({"key": f"A:out-0->{node_id}:in-0", "from": "A", "to": node_id})
         snap = normalize_snapshot({"nodes": nodes, "edges": edges})
         out = execute_readonly_tool("list_neighbors", {"node_id": "A"}, snap)
@@ -223,10 +223,10 @@ class ExecuteReadonlyToolTest(unittest.TestCase):
     def test_search_nodes_label_first_and_truncated(self):
         nodes = []
         for index in range(2):
-            nodes.append({"id": f"L{index}", "kind": "knowledge",
+            nodes.append({"id": f"L{index}", "kind": "human_note",
                           "label": f"导数应用{index}", "content": "标签命中"})
         for index in range(12):
-            nodes.append({"id": f"C{index}", "kind": "knowledge",
+            nodes.append({"id": f"C{index}", "kind": "human_note",
                           "label": f"内容节点{index}", "content": "正文里提到导数" + "x" * 100})
         snap = normalize_snapshot({"nodes": nodes, "edges": []})
         out = execute_readonly_tool("search_nodes", {"keyword": "导数"}, snap)
@@ -236,7 +236,7 @@ class ExecuteReadonlyToolTest(unittest.TestCase):
         self.assertEqual([m["id"] for m in out["matches"][:2]], ["L0", "L1"])
         for match in out["matches"]:
             self.assertLessEqual(len(match["excerpt"]), 80)
-            self.assertEqual(match["kind"], "knowledge")
+            self.assertEqual(match["kind"], "human_note")
 
     def test_bad_arguments_return_error_without_raising(self):
         cases = [
@@ -287,9 +287,9 @@ class QueryLoopTest(unittest.TestCase):
         marker = "乙全文标记"
         nodes = []
         for index in range(42):
-            nodes.append({"id": f"N{index}", "kind": "knowledge", "label": f"节点{index}",
+            nodes.append({"id": f"N{index}", "kind": "human_note", "label": f"节点{index}",
                           "content": "甲" * 1000})
-        nodes.append({"id": "TARGET", "kind": "knowledge", "label": "目标节点",
+        nodes.append({"id": "TARGET", "kind": "human_note", "label": "目标节点",
                       "content": "甲" * 900 + marker + "丙" * 100})
         snapshot = {"version": 1, "nodes": nodes, "edges": []}
         seen = []
@@ -423,9 +423,9 @@ class QueryLoopTest(unittest.TestCase):
 
 class PhaseConvergenceTest(unittest.TestCase):
     def setUp(self):
-        self.snap = {"nodes": [{"id": "A", "kind": "knowledge"}], "edges": []}
+        self.snap = {"nodes": [{"id": "A", "kind": "human_note"}], "edges": []}
         self.with_eval = {
-            "nodes": [{"id": "A", "kind": "knowledge"}, {"id": "E", "kind": "ai_eval"}],
+            "nodes": [{"id": "A", "kind": "human_note"}, {"id": "E", "kind": "ai_eval"}],
             "edges": [],
         }
 
@@ -467,7 +467,7 @@ class PhaseConvergenceTest(unittest.TestCase):
     def test_payload_normal_apply_with_eval_nodes(self):
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "变化率"},
                 {"id": "E", "kind": "ai_eval", "label": "AI 建议", "target_node_id": "A",
                  "suggestion": "补公式", "priority": "high"},
             ],
@@ -592,9 +592,9 @@ class GraphStatsToolTest(unittest.TestCase):
     SNAP = {
         "version": 1,
         "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
-            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
-            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "human_note", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "human_note", "label": "动量守恒", "content": "无外力时总动量不变"},
             {"id": "D", "kind": "module", "label": "物理视角", "module_key": "physics"},
         ],
         "edges": [
@@ -612,15 +612,10 @@ class GraphStatsToolTest(unittest.TestCase):
         self.assertEqual(out["components"], 2, "C 孤立，必须报出两个连通分量")
         self.assertIn("互不连通", out["components_note"])
         self.assertEqual(out["isolated_nodes"], 1)
-        self.assertEqual(out["no_prereq_knowledge"]["count"], 2, "极限/动量守恒都无先修来源")
-        self.assertEqual(
-            sorted(item["label"] for item in out["no_prereq_knowledge"]["items"]),
-            ["动量守恒", "极限"],
-        )
-        knowledge = out["depth_by_kind"]["knowledge"]
-        self.assertEqual(knowledge["nodes"], 3)
-        self.assertEqual(knowledge["depth_histogram"], {"0": 2, "1": 1})
-        self.assertEqual(knowledge["max_depth"], 1)
+        cards = out["depth_by_kind"]["human_note"]
+        self.assertEqual(cards["nodes"], 3)
+        self.assertEqual(cards["depth_histogram"], {"0": 2, "1": 1})
+        self.assertEqual(cards["max_depth"], 1)
         self.assertEqual(out["depth_by_kind"]["module"]["depth_histogram"], {"2": 1})
 
     def test_quiz_weak_coverage_matched_without_chain_and_missing(self):
@@ -649,9 +644,9 @@ class GraphStatsToolTest(unittest.TestCase):
     def test_cycle_locked_not_crashed(self):
         snap = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "甲"},
-                {"id": "B", "kind": "knowledge", "label": "乙"},
-                {"id": "C", "kind": "knowledge", "label": "丙"},
+                {"id": "A", "kind": "human_note", "label": "甲"},
+                {"id": "B", "kind": "human_note", "label": "乙"},
+                {"id": "C", "kind": "human_note", "label": "丙"},
             ],
             "edges": [
                 {"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖"},
@@ -663,26 +658,14 @@ class GraphStatsToolTest(unittest.TestCase):
         self.assertEqual(out["components"], 1)
         self.assertEqual(out["cycle_locked"], 3, "A/B 成环，C 的唯一入边又来自环——三者都无法定层")
         self.assertIn("环", out["cycle_note"])
-        knowledge = out["depth_by_kind"]["knowledge"]
-        self.assertEqual(knowledge["cycle_locked"], 3)
-        self.assertEqual(knowledge["depth_histogram"], {}, "环锁节点不进直方图，不给假深度")
+        cards = out["depth_by_kind"]["human_note"]
+        self.assertEqual(cards["cycle_locked"], 3)
+        self.assertEqual(cards["depth_histogram"], {}, "环锁节点不进直方图，不给假深度")
 
     def test_empty_graph(self):
         out = execute_readonly_tool("graph_stats", {}, {"nodes": [], "edges": []})
         self.assertEqual(out["nodes"], 0)
         self.assertIn("空图", out["note"])
-
-    def test_no_prereq_list_truncated(self):
-        snap = {
-            "nodes": [{"id": f"K{i}", "kind": "knowledge", "label": f"考点{i}"} for i in range(25)],
-            "edges": [],
-        }
-        out = execute_readonly_tool("graph_stats", {}, snap)
-        self.assertEqual(out["components"], 25)
-        section = out["no_prereq_knowledge"]
-        self.assertEqual(section["count"], 25)
-        self.assertEqual(len(section["items"]), 20, "清单封顶 20 条防预算爆")
-        self.assertTrue(section["truncated"])
 
     def test_extra_arguments_accepted(self):
         # 部分模型爱传 {"include": "all"}——不接受会平白多一轮纠错往返
@@ -704,9 +687,9 @@ class GraphStatsQueryLoopTest(unittest.TestCase):
     SNAP = {
         "version": 1,
         "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
-            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
-            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "human_note", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "human_note", "label": "动量守恒", "content": "无外力时总动量不变"},
         ],
         "edges": [{
             "key": "B:out-0->A:in-0", "from": "B", "to": "A",
@@ -738,7 +721,6 @@ class GraphStatsQueryLoopTest(unittest.TestCase):
         self.assertEqual(len(tool_msgs), 1)
         payload = json.loads(tool_msgs[0]["content"])
         self.assertEqual(payload["components"], 2)
-        self.assertEqual(payload["no_prereq_knowledge"]["count"], 2)
         tool_events = [e for e in events if e.get("stage") == "tool"]
         self.assertTrue(any("学习体检" in e["message"] for e in tool_events), "进度事件应标注学习体检来源")
 
@@ -749,9 +731,9 @@ class CoachReportTest(unittest.TestCase):
     SNAP = {
         "version": 1,
         "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
-            {"id": "B", "kind": "knowledge", "label": "极限", "content": "无穷接近"},
-            {"id": "C", "kind": "knowledge", "label": "动量守恒", "content": "无外力时总动量不变"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
+            {"id": "B", "kind": "human_note", "label": "极限", "content": "无穷接近"},
+            {"id": "C", "kind": "human_note", "label": "动量守恒", "content": "无外力时总动量不变"},
         ],
         "edges": [{
             "key": "B:out-0->A:in-0", "from": "B", "to": "A",

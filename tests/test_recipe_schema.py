@@ -327,8 +327,8 @@ def test_normalize_strips_unknown_fields_and_derives_aggregation():
     assert "evil_field" not in normalized
     assert normalized["aggregation"] == "ancestors"
     assert normalized["ports"]["static"][0] == {"label": "追问", "drag_form": "draft"}
-    knowledge = normalize_recipe_input({**_valid_sample(), "base": {"kind": "knowledge"}})
-    assert knowledge["aggregation"] == "self_fields"
+    manual = normalize_recipe_input({**_valid_sample(), "base": {"kind": "human_note"}})
+    assert manual["aggregation"] == "none"
     note = normalize_recipe_input({**_valid_sample(), "base": {"kind": "note"}})
     assert note["aggregation"] == "none"
     # 未声明的可选段不设键（与前端 normalize 同形，对拍/快照友好）

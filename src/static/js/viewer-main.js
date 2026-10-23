@@ -87,7 +87,7 @@
       '.graph-node-actions,.graph-node-delete-toggle,.graph-node-edit-toggle,.graph-node-minimize-toggle,',
       '.graph-port-remove,.graph-add-port-btn,.graph-add-input-btn,.graph-resize-handle,',
       '.graph-hub-connect-btn,.graph-regen-btn,.graph-blank-actions,.graph-source-controls,',
-      '.graph-source-file-btn,.graph-source-paste-btn,.graph-knowledge-actions,.graph-relation-actions,',
+      '.graph-source-file-btn,.graph-source-paste-btn,.graph-relation-actions,',
       '.graph-ai-eval-accept,.graph-ai-eval-ignore,.graph-link-btn,.graph-tool-btn[title*="新建"],',
       '.graph-tool-btn[title*="整理"],.graph-tool-btn[title*="分组"],.graph-tool-btn[title*="联系"],',
       // 右下角画布工具栏整个不要（查看器只保留顶栏那几个动作）

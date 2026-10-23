@@ -31,7 +31,7 @@ MODEL = {"provider": "opencode", "model": "primary", "base_url": "https://x", "a
 BACKUP = {"provider": "opencode", "model": "backup", "base_url": "https://x", "api_key": ""}
 SNAPSHOT = {
     "version": 1,
-    "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"}],
+    "nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"}],
     "edges": [],
 }
 SID = "phi_test_resilience"
@@ -207,7 +207,7 @@ def _create_node_result():
             "type": "function",
             "function": {
                 "name": "create_node",
-                "arguments": json.dumps({"temp_id": "t1", "kind": "knowledge",
+                "arguments": json.dumps({"temp_id": "t1", "kind": "human_note",
                                          "label": "新节点", "reason": "补充"}),
             },
         }],

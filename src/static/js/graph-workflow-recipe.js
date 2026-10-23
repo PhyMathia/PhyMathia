@@ -155,7 +155,6 @@ function _recipeCreateOnGeneratedNodes(node, spec) {
       generatedNodeIds: [],
       category: '',
       formulas: [],
-      knowledgeKey: '',
       x: pos.x,
       y: pos.y,
       depth: kind === 'user' ? 1 : kind === 'answer' ? 2 : 3,

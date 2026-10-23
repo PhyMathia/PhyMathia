@@ -85,7 +85,7 @@ function _graphDiffGhostWidth(node) {
   const kind = node && node.kind;
   // junction（2026-10-11）：走线锚点小卡，比常规卡窄一半
   if (kind === 'junction') return 120;
-  if (kind === 'hub' || kind === 'summary' || kind === 'note' || kind === 'knowledge' || kind === 'human_note' || kind === 'source') return 260;
+  if (kind === 'hub' || kind === 'summary' || kind === 'note' || kind === 'human_note' || kind === 'source') return 260;
   return 220;
 }
 

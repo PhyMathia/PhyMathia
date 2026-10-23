@@ -83,7 +83,6 @@
         if (patch.label != null || patch.title != null) {
           const label = String((patch.label ?? patch.title) || customNode.label || customNode.title || '');
           customNode.label = label;
-          if (customNode.kind === 'knowledge') customNode.title = label;
         }
         if (patch.content != null) {
           customNode.content = String(patch.content || '');
@@ -180,10 +179,8 @@
     for (const id of ids) {
       const node = (typeof window.getGraphViewNodes === 'function' ? window.getGraphViewNodes() : []).find(item => item.id === id);
       if (!node) continue;
-      if (node.kind === 'knowledge' && typeof window.generateKnowledgeNode === 'function') {
-        // T280：Φ 在工作流跑动期间补建这两类节点，必须带 fromPhi 直通忙碌排队
-        window.generateKnowledgeNode(id, { fromPhi: true });
-      } else if (node.kind === 'relation' && typeof window.generateRelationNode === 'function') {
+      if (node.kind === 'relation' && typeof window.generateRelationNode === 'function') {
+        // T280：Φ 在工作流跑动期间补建联系节点，必须带 fromPhi 直通忙碌排队
         window.generateRelationNode(id, { fromPhi: true });
       } else if (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || (node.kind === 'answer' && !node.manual)) {
         workflowIds.push(id);
@@ -198,7 +195,7 @@
     }
   }
 
-  function _collectHarnessKnowledgeOps(ops) {
+  function _collectHarnessNodeOps(ops) {
     const map = {};
     for (const op of ops || []) {
       const name = op.op || op.type || '';
@@ -222,10 +219,12 @@
     return map;
   }
 
-  function _syncHarnessNodesToKnowledge(ops) {
+  // Φ 改动过的节点里带的公式同步进公式速查。2026-10-23 知识点节点退役前，这里还会
+  // 把 kind=knowledge 的节点写成知识库条目——那条路随节点一起删除。
+  function _syncHarnessFormulas(ops) {
     try {
       const sessionId = _sessionId();
-      const touched = _collectHarnessKnowledgeOps(ops);
+      const touched = _collectHarnessNodeOps(ops);
       const ids = Object.keys(touched);
       if (!ids.length) return;
       const nodes = (typeof window.getGraphViewNodes === 'function') ? window.getGraphViewNodes() : [];
@@ -246,50 +245,19 @@
           moduleKey: String(n.moduleKey || n.module_key || ov.module_key || t.moduleKey || ''),
         };
       });
-      const existing = (typeof getKnowledgeItems === 'function') ? getKnowledgeItems() : {};
       const formulas = [];
-      let changed = false;
-      const dedup = (title) => (typeof _knowledgeDedupKey === 'function') ? _knowledgeDedupKey(title) : String(title || '').trim().toLowerCase();
       Object.keys(finalData).forEach(id => {
         const d = finalData[id];
-        if (d.kind === 'knowledge' && d.label) {
-          const key = dedup(d.label);
-          const found = Object.values(existing).find(e => e.sessionId === sessionId && dedup(e.title) === key);
-          if (found) {
-            if (d.content && d.content.length > (found.summary || '').length) found.summary = d.content;
-            if (d.formula && !(found.formulas || []).includes(d.formula)) found.formulas = (found.formulas || []).concat([d.formula]);
-            changed = true;
-          } else {
-            const id2 = 'ki_' + (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : String(Date.now()) + Math.random().toString(36).slice(2, 8));
-            existing[id2] = {
-              id: id2,
-              title: d.label,
-              category: 'other',
-              tags: [],
-              summary: d.content || '',
-              content: d.content || '',
-              formulas: d.formula ? [d.formula] : [],
-              source: 'harness',
-              sessionId: sessionId,
-              messageId: '',
-              moduleKey: d.moduleKey || 'knowledge',
-              createdAt: Date.now(),
-            };
-            changed = true;
-          }
-        }
-        if (d.formula) {
-          formulas.push({ latex: d.formula, concept: d.label || d.kind || '知识点', meaning: '', meaningSource: 'local', topic: '', related: [], sessionId: sessionId, messageId: '', moduleKey: d.moduleKey || d.kind || '', createdAt: Date.now() });
-        }
+        if (!d.formula) return;
+        formulas.push({ latex: d.formula, concept: d.label || d.kind || '公式', meaning: '', meaningSource: 'local', topic: '', related: [], sessionId: sessionId, messageId: '', moduleKey: d.moduleKey || d.kind || '', createdAt: Date.now() });
       });
-      if (changed && typeof saveKnowledgeItems === 'function') saveKnowledgeItems(existing);
       if (formulas.length && typeof saveFormulasToServer === 'function') saveFormulasToServer(formulas);
-      if (typeof window.invalidateKnowledgeCache === 'function') window.invalidateKnowledgeCache();
-      if (typeof refreshKnowledgePanelIfOpen === 'function') refreshKnowledgePanelIfOpen();
+      if (formulas.length && typeof refreshKnowledgePanelIfOpen === 'function') refreshKnowledgePanelIfOpen();
     } catch (e) {
-      console.warn('Harness knowledge sync failed:', e);
+      console.warn('Harness formula sync failed:', e);
     }
   }
+
   // 配方依赖预检（2026-10-09，全路径守卫）：按操作顺序在「实时配方库」上推演——
   // create_recipe 入册、delete_recipe 出册，任何 create_node.recipe_id /
   // update_recipe.recipe_id 不在当前册上就整批拒绝（返回失败文案；空串＝通过）。
@@ -456,7 +424,7 @@
     setTimeout(() => {
       if (sessionId !== _sessionId()) return;
       Promise.resolve(_generateHarnessCreatedContent(ops)).catch(() => {}).then(() => {
-        if (sessionId === _sessionId()) _syncHarnessNodesToKnowledge(ops);
+        if (sessionId === _sessionId()) _syncHarnessFormulas(ops);
       });
     }, 100);
     if (typeof window.scanGraphConsistency === 'function') {
@@ -970,7 +938,7 @@ window.undoLastHarnessEdit = undoLastHarnessEdit;
   window._harnessEffectiveAppliedBatches = _harnessEffectiveAppliedBatches;
   window._restoreHarnessBeforeSnapshot = _restoreHarnessBeforeSnapshot;
   window._harnessUndoTimelineRollback = _harnessUndoTimelineRollback;
-  window.syncHarnessNodesToKnowledge = _syncHarnessNodesToKnowledge;
+  window.syncHarnessFormulas = _syncHarnessFormulas;
   // smoke 专用出口（P3）：配方三件套 op 的应用路径——配方分支不碰图状态，传空即可
   window._applyHarnessOpsForTest = ops => (ops || []).forEach(op => _applyOneHarnessOp(op, null, new Map()));
   window.buildHarnessSnapshot = buildHarnessSnapshot;

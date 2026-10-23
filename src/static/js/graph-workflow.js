@@ -782,7 +782,7 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
     current.status = current.items && current.items.length ? 'done' : 'waiting';
     return true;
   }
-  if ((current.kind === 'knowledge' || current.kind === 'relation') && !current.recipeId) {
+  if (current.kind === 'relation' && !current.recipeId) {
     current.status = (current.content || '').trim() ? 'done' : 'waiting';
     return true;
   }
@@ -2276,7 +2276,6 @@ window.handleSourceNodeFile = handleSourceNodeFile;
 window.handleSourceNodeDrop = handleSourceNodeDrop;
 
 
-window.generateKnowledgeNode = generateKnowledgeNode;
 
 window.generateRelationNode = generateRelationNode;
 

@@ -364,7 +364,7 @@ class HarnessDictArgumentsTest(unittest.TestCase):
         ops, errors = parse_tool_calls([{
             "function": {
                 "name": "create_node",
-                "arguments": {"temp_id": "n1", "kind": "knowledge",
+                "arguments": {"temp_id": "n1", "kind": "human_note",
                               "label": "测试", "reason": "补充"},
             },
         }])
@@ -388,15 +388,15 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
 
         after = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "极限内容"},
             ],
             "edges": [],
         }
         before = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "旧内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "旧内容"},
             ],
             "edges": [],
         }
@@ -418,12 +418,12 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
         from harness.review import _filter_inverse_by_targets
         before = {
             "nodes": [
-                {"id": "T", "kind": "knowledge", "label": "主题", "content": "c"},
-                {"id": "D", "kind": "knowledge", "label": "被删", "content": "d"},
+                {"id": "T", "kind": "human_note", "label": "主题", "content": "c"},
+                {"id": "D", "kind": "human_note", "label": "被删", "content": "d"},
             ],
             "edges": [{"from": "T", "to": "D"}],
         }
-        after = {"nodes": [{"id": "T", "kind": "knowledge", "label": "主题", "content": "c"}],
+        after = {"nodes": [{"id": "T", "kind": "human_note", "label": "主题", "content": "c"}],
                  "edges": []}
         inverse = build_inverse_ops(
             before, [{"op": "delete_node", "id": "D", "reason": "清理"}], after)
@@ -436,8 +436,8 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
     def test_raw_add_edge_generates_inverse(self):
         from harness.core import build_inverse_ops
         before = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "a", "content": "x"},
-                      {"id": "B", "kind": "knowledge", "label": "b", "content": "y"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "a", "content": "x"},
+                      {"id": "B", "kind": "human_note", "label": "b", "content": "y"}],
             "edges": [{"from": "A", "to": "B"}],
         }
         inverse = build_inverse_ops(
@@ -447,7 +447,7 @@ class HarnessDeterministicUndoTest(unittest.TestCase):
 
 class HarnessDiffAndPatchTest(unittest.TestCase):
     SNAP = {"version": 1,
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "旧名", "content": "内容"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "旧名", "content": "内容"}],
             "edges": []}
 
     def test_status_change_visible_in_diff(self):
@@ -501,7 +501,7 @@ class SelfcheckGateTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             asyncio.run(review_mod._selfcheck_ops(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "A"}], "edges": []},
                 "删除 H",
                 [{"op": "delete_node", "id": "H", "reason": "x"}],
                 {"provider": "opencode", "model": "mimo-v2.5-free",

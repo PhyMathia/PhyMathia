@@ -78,53 +78,6 @@ class _DataDirBase(unittest.TestCase):
         return path
 
 
-class ConceptAccountFallbackTest(_DataDirBase):
-    """T230：主文件没命中时回落拆分层，必须读同一账号的会话文件。"""
-
-    def _state(self, suffix):
-        return {
-            "customNodes": [
-                {"id": f"knowledge-custom-{suffix}1", "knowledgeKey": f"k{suffix}1"},
-                {"id": f"knowledge-custom-{suffix}2", "knowledgeKey": f"k{suffix}2"},
-            ],
-            "connections": [
-                {"from": f"knowledge-custom-{suffix}1", "to": f"knowledge-custom-{suffix}2",
-                 "relation": "依赖"},
-            ],
-        }
-
-    def test_fallback_reads_requested_account(self):
-        from server import concept as concept_mod
-
-        self.account_dir("alice")
-        storage_mod.kv_write("graph:sess_c", self._state("a"), account="alice")
-        # kv_write 把 graph:<sid> 路由到拆分层，主文件里没有该键——回落路径才会被走
-        main_file = self.root / "users" / "alice" / "kv_store.json"
-        self.assertFalse(main_file.exists())
-        self.assertEqual(concept_mod.explicit_pairs("sess_c", account="alice"),
-                         [("ka1", "ka2", "依赖")])
-
-    def test_fallback_does_not_leak_default_account(self):
-        # 两个账号的同名会话文件各有一条不同连线：实现若漏传 account 会串号
-        for account, suffix in (("default", "d"), ("alice", "a")):
-            self.account_dir(account)
-            storage_mod.kv_write("graph:sess_c", self._state(suffix), account=account)
-        from server import concept as concept_mod
-
-        self.assertEqual(concept_mod.explicit_pairs("sess_c", account="default"),
-                         [("kd1", "kd2", "依赖")])
-        self.assertEqual(concept_mod.explicit_pairs("sess_c", account="alice"),
-                         [("ka1", "ka2", "依赖")])
-
-    def test_empty_when_account_has_no_state(self):
-        from server import concept as concept_mod
-
-        self.account_dir("default")
-        storage_mod.kv_write("graph:sess_c", self._state("d"))
-        # alice 域空 → 回落读不到任何东西（而不是默默拿到 default 的图）
-        self.assertEqual(concept_mod.explicit_pairs("sess_c", account="alice"), [])
-
-
 class GraphPathItemGuardTest(unittest.TestCase):
     """T231：graph_path 项非 dict 时路由守卫必须 400（此前是 _graph_path_instruction
     里 item.get 的 500）。"""
@@ -308,9 +261,9 @@ class FocusSubgraphRecipesTest(unittest.TestCase):
     def test_user_recipes_pass_through_downsampling(self):
         from harness.review_ops import _focus_subgraph
 
-        nodes = [{"id": "n0", "kind": "knowledge", "label": "焦点"}]
+        nodes = [{"id": "n0", "kind": "human_note", "label": "焦点"}]
         for i in range(1, 60):
-            nodes.append({"id": f"n{i}", "kind": "knowledge", "label": f"节点{i}"})
+            nodes.append({"id": f"n{i}", "kind": "human_note", "label": f"节点{i}"})
         recipes = [{"id": "r1", "name": "我的错题本", "base_kind": "module",
                     "content_kind": "quiz", "desc": "错题本", "ports": []}]
         snapshot = {
@@ -328,7 +281,7 @@ class FocusSubgraphRecipesTest(unittest.TestCase):
     def test_user_recipes_absent_when_snapshot_has_none(self):
         from harness.review_ops import _focus_subgraph
 
-        snapshot = {"nodes": [{"id": "n0", "kind": "knowledge"}], "edges": []}
+        snapshot = {"nodes": [{"id": "n0", "kind": "human_note"}], "edges": []}
         sub = _focus_subgraph(snapshot, ["n0"])
         self.assertNotIn("user_recipes", sub)
 

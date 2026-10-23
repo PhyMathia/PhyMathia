@@ -63,7 +63,7 @@ class ParseSelfcheckTest(unittest.TestCase):
 
 class BuildSelfcheckMessagesTest(unittest.TestCase):
     def test_two_messages_with_instruction(self):
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+        snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []}
         messages = build_selfcheck_messages("把导数改成英文", snapshot, [{"op": "update_node"}])
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
@@ -78,10 +78,10 @@ class ResultStateExcerptTest(unittest.TestCase):
     def _snapshot():
         return {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "x" * 200, "formula": "f'(x)"},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "趋近", "formula": ""},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "x" * 200, "formula": "f'(x)"},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "趋近", "formula": ""},
                 {"id": "C", "kind": "module", "label": "物理视角", "content": "速度", "formula": ""},
-                {"id": "D", "kind": "knowledge", "label": "远岛", "content": "不相邻", "formula": ""},
+                {"id": "D", "kind": "human_note", "label": "远岛", "content": "不相邻", "formula": ""},
             ],
             "edges": [
                 {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
@@ -158,7 +158,7 @@ class CheckSnapshotConsistencyTest(unittest.TestCase):
 
     def test_broken_edge_is_error(self):
         snapshot = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "a"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "a"}],
             "edges": [{"key": "A:out-0->GHOST:in-0", "from": "A", "to": "GHOST"}],
         }
         result = check_snapshot_consistency(snapshot)
@@ -168,26 +168,25 @@ class CheckSnapshotConsistencyTest(unittest.TestCase):
 
     def test_orphan_node_is_warning(self):
         snapshot = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "孤岛"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "孤岛"}],
             "edges": [],
         }
         result = check_snapshot_consistency(snapshot)
         self.assertTrue(result["ok"])  # warning 不判死
         self.assertEqual(result["issues"][0]["type"], "orphan")
 
-    def test_duplicate_knowledge_label_is_info(self):
+    def test_duplicate_card_label_retired(self):
+        # 2026-10-23 知识点节点退役：同名卡片的 duplicate_label 体检项随节点一起删除
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
-                {"id": "B", "kind": "knowledge", "label": "导数"},
-                {"id": "C", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "B", "kind": "human_note", "label": "导数"},
+                {"id": "C", "kind": "human_note", "label": "导数"},
             ],
             "edges": [],
         }
         result = check_snapshot_consistency(snapshot)
-        dup = [i for i in result["issues"] if i["type"] == "duplicate_label"]
-        self.assertEqual(len(dup), 1)
-        self.assertIn("3 个", dup[0]["message"])
+        self.assertEqual([i for i in result["issues"] if i["type"] == "duplicate_label"], [])
 
     def test_duplicate_module_is_info(self):
         snapshot = {
@@ -204,8 +203,8 @@ class CheckSnapshotConsistencyTest(unittest.TestCase):
     def test_duplicate_edges_and_ids_deduplicated(self):
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "a"},
-                {"id": "A", "kind": "knowledge", "label": "a-copy"},  # 重复 id 只算一次
+                {"id": "A", "kind": "human_note", "label": "a"},
+                {"id": "A", "kind": "human_note", "label": "a-copy"},  # 重复 id 只算一次
             ],
             "edges": [
                 {"key": "k1", "from": "A", "to": "GHOST"},

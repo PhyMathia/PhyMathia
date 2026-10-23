@@ -283,7 +283,7 @@ function createManualNode(nodeKind) {
     id: nodeId,
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
-    manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
+    manual: option.key === 'manual' || option.key === 'note' || option.key === 'relation' || option.key === 'source',
     title: '',
     content: '',
     status: 'empty',
@@ -303,7 +303,6 @@ function createManualNode(nodeKind) {
     generatedNodeIds: [],
     category: '',
     formulas: [],
-    knowledgeKey: '',
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
@@ -374,7 +373,6 @@ function createRecipeNode(recipeId, draftRecipe) {
     generatedNodeIds: [],
     category: '',
     formulas: [],
-    knowledgeKey: '',
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
     depth: kind === 'user' ? 1 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 3),
@@ -454,7 +452,6 @@ function _notebookSourceLabel(item) {
   if (item.kind === 'user') return '问题';
   if (item.kind === 'note') return item.title || '我的总结';
   if (item.kind === 'summary') return 'AI 总结';
-  if (item.kind === 'knowledge') return item.title || '知识点';
   if (item.kind === 'relation') return '知识联系';
   if (item.kind === 'source') return '输入';
   if (item.kind === 'answer') return item.manual ? (item.title || '我的回答') : '问题分析';
@@ -593,7 +590,6 @@ function _nodeFsTitle(node) {
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '我的总结';
   if (node.kind === 'answer') return node.manual ? '我的回答' : '问题分析';
-  if (node.kind === 'knowledge') return node.label || '知识点';
   if (node.kind === 'human_note') return '我的理解';
   if (node.kind === 'relation') return '知识联系';
   if (node.kind === 'source') return '输入';
@@ -766,7 +762,7 @@ function _buildContentPreviewPage(title, contentHtml) {
 
 // ===== 输入节点（素材篮，2026-10-22 重做）=====
 // 一条素材 = 一个条目 = 一个出口：out-i 对应 items[i]，出口名 = 素材名。
-// 纯输入：不调 AI、不派生节点、不写知识面板/公式库。旧节点（items 是知识点
+// 纯输入：不调 AI、不派生节点、不写知识面板/公式库。旧节点（items 是知识点形状
 // 形状，判据 items.some(it => !it.kind)）走只读分支，旧连线/子节点原样保留，
 // 不往旧节点里写新字段。
 const SOURCE_ITEM_MAX_CHARS = 8000;  // 条目文本上限（超出截断，全文在后端 <fileId>.txt）
@@ -1271,7 +1267,7 @@ function openHarnessOrganizeRelations(sourceNodeId) {
   if (typeof window.openGraphHarness === 'function') window.openGraphHarness();
   const inputEl = document.getElementById('graphHarnessInstruction');
   if (inputEl) {
-    inputEl.value = '请整理这些知识点之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线都要用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可。';
+    inputEl.value = '请整理这些卡片之间的关系：删掉牵强的连线，补上遗漏的连线；每条连线都要用一句具体的话说明为什么有关，禁止“相关/有联系/关联”这类空泛关系；不要创建单独的“联系”节点，直接连线即可。';
   }
   const children = (graphView && graphView.edges || []).filter(e => String(e.from) === String(sourceNodeId)).map(e => String(e.to));
   const focusIds = [String(sourceNodeId)].concat(children).filter((v, i, a) => v && a.indexOf(v) === i);
@@ -1279,30 +1275,6 @@ function openHarnessOrganizeRelations(sourceNodeId) {
     window.runGraphHarnessWithFocus('normal', focusIds);
   }
 }
-function generateKnowledgeNode(nodeId, opts) {
-  const node = _findGraphNode(nodeId);
-  if (!node || node.kind !== 'knowledge' || node.busy) return;
-  // 重生成预警（T303）：Φ 直通（fromPhi）不弹——自动改图链路不能被 confirm 卡住；
-  // 2026-10-13 起面板路（带要求重生成）走 opts.confirmed 旁路——提示已写在面板里，发送即确认
-  if (!(opts && (opts.fromPhi || opts.confirmed)) && !_warnDownstreamBeforeRegenerate(node)) return;
-  const title = '生成知识节点' + (node.title ? '：' + node.title : '');
-  // T280：忙则排队（与六个画布生成入口同款「排队不是禁用」），轮到时重找节点、
-  // 以队列 taskId 做 handoff——面板上始终一行账。Φ 改图（harness-apply.js）带
-  // {fromPhi:true} 直通：它在工作流跑动期间同步补建知识/联系节点，排队会把
-  // Φ 的这条能力掐死（排到空闲才跑＝永远轮不上）。
-  if (!(opts && opts.fromPhi) && typeof _isActuallyBusy === 'function' && _isActuallyBusy()
-      && typeof _enqueueNodeJob === 'function') {
-    _enqueueNodeJob(title, function (taskId) {
-      // 轮到它时先看节点还在不在（等待期间可能被删/被撤销）：不在就地结账失败
-      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
-      const fresh = _findGraphNode(nodeId);
-      if (fresh) _generateCustomNodeAsTask(fresh, 'knowledge', title, taskId);
-    }, { kind: 'node', replay: { nodeIds: [nodeId] } });
-    return;
-  }
-  _generateCustomNodeAsTask(node, 'knowledge', title);
-}
-
 function generateRelationNode(nodeId, opts) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'relation' || node.busy) return;

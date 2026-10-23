@@ -122,7 +122,7 @@ function _graphContextItemsForNode(node, point) {
   // 存为配方（P1）：从现有节点提炼可复用类型。只读查看页（viewer）没有配方库与
   // 编辑入口，该项在 viewer 的 READONLY_MENU_LABELS 白名单外会被静默剪掉——刻意为之
   // （与「复制节点」同口径），改文案时注意别把它加进白名单。
-  const recipeBaseOk = ['module', 'summary', 'knowledge', 'relation', 'note', 'human_note', 'user']
+  const recipeBaseOk = ['module', 'summary', 'relation', 'note', 'human_note', 'user']
     .includes(node.kind) || (node.kind === 'answer' && node.manual);
   if (recipeBaseOk && typeof recipeFromNode === 'function') {
     items.push({
@@ -764,7 +764,6 @@ function graphPasteNodeClipboard(point) {
       generatedNodeIds: [],
       category: '',
       formulas: [],
-      knowledgeKey: '',
       x: (Number(item.x) || 0) + dx,
       y: (Number(item.y) || 0) + dy,
       depth: 3,

@@ -7,7 +7,7 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 输入是一份知识网络快照：
 {
   "nodes": [
-    {"id": "A", "kind": "knowledge", "label": "导数", "content": "...", "formula": ""},
+    {"id": "A", "kind": "human_note", "label": "导数", "content": "...", "formula": ""},
     {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角", "content": "...", "formula": ""}
   ],
   "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "fromPort": "out-0", "toPort": "in-0", "relation": "依赖", "label": "需要先掌握"}],
@@ -24,18 +24,18 @@ HARNESS_SYSTEM_PROMPT = """你是一个知识网络图编辑 harness：负责把
 __NODE_TYPE_LINES__
 
 关系规则：
-- 建立知识点之间的关系时，一律用 add_edge/remove_edge/update_edge 直接操作连线；系统已移除独立的“联系”节点类型，不要尝试创建 kind=relation 节点；“汇聚”节点类型也已退役，不要创建 kind=hub 节点，多路汇拢时直接给目标节点增加输入端口；“中转”节点（kind=junction）是用户手动走线的锚点工具，不要创建 kind=junction 节点，需要多路分叉时从同一输出口 add_edge 连多条边即可，穿过已有中转节点的上游内容会自动直通下游；
+- 建立节点之间的关系时，一律用 add_edge/remove_edge/update_edge 直接操作连线；系统已移除独立的“联系”节点类型，不要尝试创建 kind=relation 节点；“汇聚”节点类型也已退役，不要创建 kind=hub 节点，多路汇拢时直接给目标节点增加输入端口；“中转”节点（kind=junction）是用户手动走线的锚点工具，不要创建 kind=junction 节点，需要多路分叉时从同一输出口 add_edge 连多条边即可，穿过已有中转节点的上游内容会自动直通下游；
 - 每条连线的 relation 和 label 必须具体（用一句话说明为什么存在这个关系），禁止“相关/有联系/关联/关系密切”这类空泛描述；
 - 只保留有明确逻辑依据的关系，牵强的、说不清理由的关系不要保留；不确定时宁缺毋滥。
 
 你必须只输出一个 JSON 对象，不要输出 Markdown 说明，不要输出代码块以外的内容。结构：
 {
-  "summary": "以助手口吻用 2~4 句自然语言说明：你理解到的意图、本次做了什么（按类别计数，如“新增 3 个知识点、2 个视角、5 条连线”）、关键取舍理由、下一步建议。禁止出现节点 id/temp_id/edge_key 等原始标识，禁止罗列 operations。",
+  "summary": "以助手口吻用 2~4 句自然语言说明：你理解到的意图、本次做了什么（按类别计数，如“新增 3 张卡片、2 个视角、5 条连线”）、关键取舍理由、下一步建议。禁止出现节点 id/temp_id/edge_key 等原始标识，禁止罗列 operations。",
   "operations": [
     {
       "op": "create_node",
       "temp_id": "n_lim",
-      "kind": "knowledge",
+      "kind": "human_note",
       "label": "极限",
       "content": "...",
       "formula": "",
@@ -281,7 +281,7 @@ def build_review_messages(
 
 HARNESS_CHAT_REDLINE = """
 
-【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（create_node/update_node/delete_node/add_edge/remove_edge/update_edge）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（read_node / list_neighbors / search_nodes / search_knowledge / search_formulas / graph_stats）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。用户问“该先学什么/这张图作为学习路线合不合格/哪里薄弱”时，先调 graph_stats 拿整图统计（连通分量、链深梯度、无先修节点、检测薄弱点覆盖），回答必须引用其中的具体数字与节点，不要泛泛而谈。"""
+【答疑模式红线（最高优先级）】当前处于答疑模式：只允许用文字回答——回答问题、讨论、点评图里的内容与结构都可以，但绝对不能改动图。编辑类工具（create_node/update_node/delete_node/add_edge/remove_edge/update_edge）一律不要调用，operations 必须是空数组；即使用户要求修改/新增/删除节点，也只用文字说明你建议怎么改，并提醒用户切回「编辑」模式再执行。只读查询工具（read_node / list_neighbors / search_nodes / search_knowledge / search_formulas / graph_stats）可以自由使用，而且鼓励使用：先查图里相关节点的全文、检索用户的知识库与公式速查，再给出有依据的回答；引用时注明出处（如“你知识库里『梯度』这条笔记”）。用户问“该先学什么/这张图作为学习路线合不合格/哪里薄弱”时，先调 graph_stats 拿整图统计（连通分量、链深梯度、检测薄弱点覆盖），回答必须引用其中的具体数字与节点，不要泛泛而谈。"""
 
 # ---- 路径六第 2 档（2026-10-09）：课程表体检报告模板 ----
 # 报告机件＝「确定性指标块（build_coach_stats_block，拼 user 消息尾部）＋模板
@@ -496,7 +496,7 @@ HARNESS_PRESET_SYSTEM_PROMPT = """你是节点配方创造助手。用户不写�
    - name 必填、≤24 字、不得与 user_recipes 清单里已有配方重名；
    - ports.inputs＝访谈问清的输入端口表 [{label, type}]，type ∈ text|formula|diagram|html（留空＝不限）；输入口在访谈里一次定好。画布上输入口接受任何来源连线（类型不做连线拦截），生成时各输入口的材料会按口分组喂给生成模型——generate.prompt 里可以直接写「输入『力一』是待合成的第一个力」这类话教模型用好各口材料；
    - ports.static 出口 [{label, drag_form, type?}]，type 留空＝按内容载体自动推导（markdown→文本、mermaid→图示、html_iframe→网页），想单独标才写；
-   - AI 底座（module/summary/knowledge/relation）必须给 generate.prompt；人工底座（note/human_note/manual/question）不要调 AI、prompt 留空；
+   - AI 底座（module/summary/relation）必须给 generate.prompt；人工底座（note/human_note/manual/question）不要调 AI、prompt 留空；
    - 动态出口（ports.dynamic）只支持 module 底座；苏格拉底式用 level_tags=["基础","进阶","拓展"]＋label_from="index_question"，进阶学习式用 level_tags=[]＋label_from="question_trunc12"；fallback 推荐用 label_questions_from_text（解析失败时兜底出口自动带上从正文截取的问题文本）；
    - 交互页面类用 content_kind="html_iframe"＋model_role="html"＋retry_prompt（要求只输出完整 HTML）；知识图谱类用 content_kind="mermaid"。
 3. 想修改/删除已有配方：update_recipe / delete_recipe，recipe_id 只能取 user_recipes 清单里列出的 id。若快照有 recipe_detail，它是用户选中的目标配方完整旧配置，优先修改它；对这份目标 update_recipe 只提交需要改变的字段，后端递归合并保留未提交字段（未提交字段保持原值，不会被重置）。数组整体替换；明确删除动态出口用 ports.dynamic=null，清空文本用空串。没有该目标的 recipe_detail 时仍须整份提交，不能凭摘要猜测旧参数，优先请用户选择目标配方（这种整份覆盖漏写字段会按默认值重置）。用户没要求改名时 update_recipe 的 name 必须保持原值不变（改名＝换身份，会绕开名称查重；确要改名或新名字撞了已有配方，先向用户确认）。
@@ -607,7 +607,7 @@ HARNESS_RECIPE_DRAFT_SYSTEM_PROMPT = """你是「节点工坊」里的配方副�
 ## 字段表（只认这些，多余字段会被丢弃）
 - name：节点名，≤24 字，要能一眼看出用途（如「受力分析」）。
 - desc：一句话说明，≤80 字。
-- base.kind：底座，只能取 module（AI 生成、可挂出口）/ summary（汇总上游全文）/ knowledge（按自身字段解释）/ relation（说明上游间联系）/ note / human_note / manual / question（后四个是人工手填，不调 AI）。
+- base.kind：底座，只能取 module（AI 生成、可挂出口）/ summary（汇总上游全文）/ relation（说明上游间联系）/ note / human_note / manual / question（后四个是人工手填，不调 AI）。
 - ports.inputs：[] 具名输入口，每项 {"label": "≤12 字", "type": "text|formula|diagram|html 或留空"}，最多 8 个。用户说「要喂题目和图」就两个口。
 - ports.static：[] 出口，每项 {"label": "≤12 字", "drag_form": "draft|user", "type": 可选}，最多 8 个。
 - ports.dynamic：动态出口，只有 module 底座能用：{"parser": {"pattern": "numbered_list", "level_tags": ["基础","进阶","拓展"], "max": 1..12, "label_from": "index_question|question_trunc12"}, "fallback": {"mode": "label_questions_from_text|static|none", "labels": ["问题1"]}, "each": {"type": "socratic|learn|branch", "drag_form": "draft|user"}}。仅在用户明确要「按正文自动长出问题按钮」时才给。
@@ -619,7 +619,7 @@ HARNESS_RECIPE_DRAFT_SYSTEM_PROMPT = """你是「节点工坊」里的配方副�
 - content_kind：markdown（默认）/ plain / mermaid / html_iframe（后两种只能配 AI 底座）。
 - appearance.palette：色板，只能取 amber/blue/rose/teal/violet/human/note 其一。
 - appearance.color：可选自由色，必须是 #rrggbb。
-- aggregation：ancestors（默认，收全部上游）/ self_fields / first_inbound / none。
+- aggregation：ancestors（默认，收全部上游）/ first_inbound / none。
 - analysis_phase：true 时模块先产出一段问题分析再写正文（只有 module 能用）。
 - on_generated：想要「生成完自动长节点」才给，结构复杂，没要求就不要编。
 

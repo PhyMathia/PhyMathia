@@ -40,7 +40,7 @@ from harness.review import _history_block
 MODEL = {"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""}
 SNAPSHOT = {
     "version": 1,
-    "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"}],
+    "nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"}],
     "edges": [],
 }
 SUMMARY_TEXT = "用户定下的方案：把节点 A 的正文改成物理视角；未完成：补充单位说明。"

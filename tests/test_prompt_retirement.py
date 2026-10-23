@@ -29,7 +29,7 @@ from server import prompts as server_prompts  # noqa: E402
 
 _SNAPSHOT = {
     "version": 1,
-    "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+    "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}],
     "edges": [],
 }
 

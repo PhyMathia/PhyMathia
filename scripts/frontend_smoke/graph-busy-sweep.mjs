@@ -8,10 +8,10 @@ export async function run() {
   check('T275: _sanitizeStaleBusyCustomNodes 剥 busy/running、其余原样、不改入参', () => {
     if (typeof sandbox._sanitizeStaleBusyCustomNodes !== 'function') throw new Error('清洗助手未暴露');
     const list = [
-      { id: 'a', kind: 'knowledge', busy: true, status: 'running' },
-      { id: 'b', kind: 'knowledge', busy: false, status: 'running' },
-      { id: 'c', kind: 'knowledge', busy: true, status: 'done' },
-      { id: 'd', kind: 'knowledge', busy: false, status: 'error' },
+      { id: 'a', kind: 'human_note', busy: true, status: 'running' },
+      { id: 'b', kind: 'human_note', busy: false, status: 'running' },
+      { id: 'c', kind: 'human_note', busy: true, status: 'done' },
+      { id: 'd', kind: 'human_note', busy: false, status: 'error' },
       { id: 'e', kind: 'junction', status: 'waiting' },
     ];
     const out = sandbox._sanitizeStaleBusyCustomNodes(list);
@@ -36,7 +36,7 @@ export async function run() {
     const histKey = 'phymathia_graph_history_' + sid;
     storageData[graphKey] = JSON.stringify({
       customNodes: [
-        { id: 'k1', kind: 'knowledge', busy: true, status: 'running' },
+        { id: 'k1', kind: 'human_note', busy: true, status: 'running' },
         { id: 'k2', kind: 'blank', busy: false, status: 'done' },
       ],
       updatedAt: 123,

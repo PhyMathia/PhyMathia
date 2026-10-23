@@ -1018,7 +1018,7 @@
   function _recipeDigest(recipe) {
     const parts = [];
     const baseKind = (recipe.base && recipe.base.kind) || '';
-    const kindLabels = { module: 'AI 模块', summary: 'AI 总结', knowledge: '知识点', relation: '联系', note: '手填总结', human_note: '手填笔记', manual: '手填回答', question: '问题' };
+    const kindLabels = { module: 'AI 模块', summary: 'AI 总结', relation: '联系', note: '手填总结', human_note: '手填笔记', manual: '手填回答', question: '问题' };
     if (baseKind) parts.push(kindLabels[baseKind] || baseKind);
     const ck = String(recipe.content_kind || '');
     if (ck === 'html_iframe') parts.push('交互页面');

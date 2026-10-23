@@ -13,7 +13,7 @@ check('buildHarnessSnapshot 可调用且回结构（回归：rawCount 未定义�
   // 解耦后快照读「绑定画布」状态：注入一个绑到 sess_test 的当前 Φ 会话
   vm.runInContext('phiSessions = { phi_t: { id: "phi_t", title: "t", boundSid: "sess_test", createdAt: 1, updatedAt: 1 } }; currentPhiId = "phi_t";', sandbox);
   sandbox.window.getGraphViewNodes = () => [
-    { id: 'A', kind: 'knowledge', label: '导数', content: '瞬时变化率' },
+    { id: 'A', kind: 'human_note', label: '导数', content: '瞬时变化率' },
     { id: 'B', kind: 'module', label: '物理视角', moduleKey: 'physics' },
   ];
   sandbox.window.getGraphViewEdges = () => [];
@@ -26,11 +26,11 @@ check('buildHarnessSnapshot 可调用且回结构（回归：rawCount 未定义�
   return true;
 });
 
-check('节点配方注册表（P0）：19 条官方配方派生 16 入口与 kind 白名单（含 relation/hub/junction）', () => {
+check('节点配方注册表（P0）：18 条官方配方派生 15 入口与 kind 白名单（含 relation/hub/junction）', () => {
   const recipes = sandbox.window.BUILTIN_RECIPES;
-  if (!Array.isArray(recipes) || recipes.length !== 19) throw new Error('官方配方应为 19 条（16 入口 + relation/ai_eval/hub），实际 ' + (recipes && recipes.length));
+  if (!Array.isArray(recipes) || recipes.length !== 18) throw new Error('官方配方应为 18 条（15 入口 + relation/ai_eval/hub），实际 ' + (recipes && recipes.length));
   const options = sandbox.window.deriveManualNodeOptions();
-  if (options.length !== 16) throw new Error('添加面板入口应 16 个（2026-10-11 junction 复活结构组后），实际 ' + options.length);
+  if (options.length !== 15) throw new Error('添加面板入口应 15 个（2026-10-23 知识点退役后），实际 ' + options.length);
   if (options.some(o => !o.label || !o.color || !o.group)) throw new Error('入口字段不完整');
   // T75：relation 进 kind 白名单（旧会话 relation 节点保存不再被静默抹掉），但仍无手动入口
   const kinds = sandbox.window.deriveGraphCustomNodeKinds();
@@ -94,7 +94,7 @@ check('配方校验器（P1）：色板令牌 / 提示词预算 / 出口上限 /
   const normalized = normalize({ ..._smokeValidRecipe(), evil: 'drop me' });
   if (!normalized || normalized.evil !== undefined) throw new Error('未知字段未被剥除');
   if (normalized.aggregation !== 'ancestors') throw new Error('module 底座应推导 ancestors');
-  if (normalize({ ..._smokeValidRecipe(), base: { kind: 'knowledge' } }).aggregation !== 'self_fields') throw new Error('knowledge 底座应推导 self_fields');
+  if (normalize({ ..._smokeValidRecipe(), base: { kind: 'human_note' } }).aggregation !== 'none') throw new Error('human_note 底座应推导 none');
   if (normalize({ ..._smokeValidRecipe(), base: { kind: 'note' } }).aggregation !== 'none') throw new Error('note 底座应推导 none');
   // 形状不是配方参数（2026-10-09 用户拍板）：输入里的 shape 一律忽略，按底座推导——
   // 此前 Φ 能写、却只在「添加节点」面板圆点生效，节点卡不生效（设了不生效）。
@@ -255,10 +255,10 @@ check('配方拖出路由（P1）：drag_creates 表驱动（user 预填 / conne
   return true;
 });
 
-check('配方 P1 边界（P1）：knowledge/relation 配方节点走 AI 生成、内置仍手填；plain 载体渲染', () => {
-  // knowledge/relation 底座：有配方时不再提前返回「已填写/待填写」，走 _generateCustomNode
+check('配方 P1 边界（P1）：relation 配方节点走 AI 生成、内置仍手填；plain 载体渲染', () => {
+  // relation 底座：有配方时不再提前返回「已编辑/待编辑」，走 _generateCustomNode
   const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
-  if (!wfSrc.includes('(current.kind === \'knowledge\' || current.kind === \'relation\') && !current.recipeId')) throw new Error('knowledge/relation 配方贯通分支缺失');
+  if (!wfSrc.includes('current.kind === \'relation\' && !current.recipeId')) throw new Error('relation 配方贯通分支缺失');
   // plain 载体：纯转义，不走 markdown（沙箱的 document 是宽松代理，escapeHtml 产物
   // 会退化为 0——沿用大陆用例的恒等替换口径，断言 plain 分支原样输出、不经 markdown 管线）
   const realEsc = sandbox.escapeHtml;
@@ -1378,8 +1378,8 @@ check('配方实例落地映射（创造模式优化）：_newHarnessNode 按 ba
     const moduleNode = sandbox._newHarnessNode('n-module', { kind: 'module', label: 'x', recipe_id: 'r-module' }, pos);
     if (moduleNode.kind !== 'module') throw new Error('module 底座应保持 module，实际 ' + moduleNode.kind);
     // 无配方：op.kind 原样；库中无此 id：回落 op.kind 且不带快照
-    const plain = sandbox._newHarnessNode('n-plain', { kind: 'knowledge', label: 'y' }, pos);
-    if (plain.kind !== 'knowledge' || plain.recipeId || plain.recipe) throw new Error('无配方 op 不该改 kind/挂快照');
+    const plain = sandbox._newHarnessNode('n-plain', { kind: 'human_note', label: 'y' }, pos);
+    if (plain.kind !== 'human_note' || plain.recipeId || plain.recipe) throw new Error('无配方 op 不该改 kind/挂快照');
     const missing = sandbox._newHarnessNode('n-missing', { kind: 'summary', label: 'z', recipe_id: 'r-not-in-lib' }, pos);
     if (missing.kind !== 'summary' || missing.recipeId || missing.recipe) throw new Error('库中无此配方应回落 op.kind 且不带快照');
     return true;
@@ -1608,10 +1608,10 @@ check('输出端口「待命名」态（T266）：匿名附加口未连线空白
     if (!html.includes('graph-port-label-blank') || !html.includes('>待命名</span>')) throw new Error('断开后应回空白');
     if (html.includes('>力一</span>')) throw new Error('断开后不应残留继承名');
 
-    // 5. source 节点的匿名附加口同属待命名族（fallback type knowledge 保留给拖拽建点）
+    // 5. source 节点的匿名附加口同属待命名族；旧版条目（知识点形状）已不再出口
     const sourceNode = { id: 's1', kind: 'source', items: [{ title: '导数' }], messageIndex: -1, timestamp: 4 };
-    html = String(sandbox._renderOutputPorts(sourceNode, [], { portCounts: { s1: 2 }, inputPortCounts: {} }));
-    if (!html.includes('>导数</span>')) throw new Error('source 基本口应保持条目名');
+    html = String(sandbox._renderOutputPorts(sourceNode, [], { portCounts: { s1: 1 }, inputPortCounts: {} }));
+    if (html.includes('>导数</span>')) throw new Error('旧输入条目不应再出口（知识点链路已退役）');
     if (!html.includes('graph-port-label-blank')) throw new Error('source 附加输出口应空白');
   } finally {
     sandbox.escapeHtml = realEsc;
@@ -1712,29 +1712,20 @@ check('待命名口拖空开节点菜单（2026-10-10 拍板）：不再预设�
 });
 
 check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2026-10-10）', () => {
-  // 具名口行为回归：source 具名条目口（type knowledge）拖空仍直建知识点节点并连线，不开面板
+  // 旧版知识条目口（type knowledge）已随知识点节点退役（2026-10-23）：source 的旧条目
+  // 不再出口，也就不存在「拖空直建知识点」这条快捷方式；新素材条目口走面板自选。
   const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
   const realRender = sandbox.renderGraphCanvas;
-  const realOpenModal = sandbox.openAddBlankNodeModal;
   const srcNode = { id: 's9', kind: 'source', items: [{ title: '导数' }], fileId: '', fileName: '', messageIndex: -1, timestamp: 2 };
-  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
-  let mem = emptyState();
-  let openedCount = 0;
-  sandbox.window.getGraphState = () => mem;
-  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
-  sandbox.window.getCurrentSessionId = () => 'sess_port_named';
-  sandbox.renderGraphCanvas = () => {};
-  sandbox.openAddBlankNodeModal = () => { openedCount += 1; };
-  vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ']; graphView.nodeById = { s9: graphView.nodes[0] };', sandbox);
   try {
-    sandbox._createBranchNodeFromOutput('s9', 'out-0', { type: 'knowledge', branchType: '', attribute: 'knowledge', question: '', level: '', label: '导数', item: { title: '导数', summary: '瞬时变化率' }, dragCreates: '' }, 33, 44);
-    if (openedCount !== 0) throw new Error('具名口拖空不应打开节点菜单');
-    const conn = (mem.connections || []).find(c => c.from === 's9');
-    if (!conn) throw new Error('知识点口拖空应照旧建知识点节点并连线');
-    const node = (mem.customNodes || []).find(n => n.id === conn.to);
-    if (!node || node.kind !== 'knowledge') throw new Error('具名知识点口应直建知识点节点');
+    sandbox.window.getGraphState = () => ({ customNodes: [], connections: [] });
+    sandbox.window.saveGraphState = () => {};
+    sandbox.window.getCurrentSessionId = () => 'sess_port_named';
+    sandbox.renderGraphCanvas = () => {};
+    vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ']; graphView.nodeById = { s9: graphView.nodes[0] };', sandbox);
+    const legacyLabels = sandbox._nodeOutputLabels(srcNode, []);
+    if (legacyLabels.length !== 0) throw new Error('旧输入条目不出口（知识点链路已退役）：' + JSON.stringify(legacyLabels));
   } finally {
-    sandbox.openAddBlankNodeModal = realOpenModal;
     sandbox.renderGraphCanvas = realRender;
     sandbox.window.getGraphState = prevGet;
     sandbox.window.saveGraphState = prevSave;
@@ -1746,8 +1737,8 @@ check('待命名口拖空改道的静态契约＋具名口不进菜单分支（2
   // 附加口身份现场按基础口表重算（不信 dataset 显示名）；挂起连线三件套插点在位
   const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   const menuIdx = interactSrc.indexOf("if (label === '待命名' || isAdditionalPort || sourceNode.kind === 'junction')");
-  const knowledgeIdx = interactSrc.indexOf("if (type === 'knowledge')");
-  if (menuIdx < 0 || knowledgeIdx < 0 || menuIdx > knowledgeIdx) throw new Error('待命名菜单分支应存在且先于知识点 fallback 分支');
+  if (menuIdx < 0) throw new Error('待命名菜单分支应存在');
+  if (interactSrc.includes("if (type === 'knowledge')")) throw new Error('知识点 fallback 分支应随节点退役删除');
   if (!interactSrc.includes('const isAdditionalPort = Array.isArray(basePorts) && portIndex >= basePorts.length')) {
     throw new Error('269 附加口身份应现场按基础出口表重算（portIndex 落表外＝附加口）');
   }
@@ -1913,7 +1904,7 @@ check('T272：junction 输出口拖空开添加节点面板（挂起连线同款
 // （token 浪费＋模型可能重复引用）。与 junction 同口径：全祖先清单与单父链都穿透。
 check('T273：hub 在上游清单/单父链透明——去双写', () => {
   const s1 = { id: 's1', kind: 'source', content: '输入甲', items: [{ title: '旧条目' }], messageIndex: -1, timestamp: 1 };
-  const s2 = { id: 's2', kind: 'knowledge', content: '知识点乙', messageIndex: -1, timestamp: 2 };
+  const s2 = { id: 's2', kind: 'human_note', content: '知识点乙', messageIndex: -1, timestamp: 2 };
   const hub = { id: 'h1', kind: 'hub', messageIndex: -1, timestamp: 3 };
   const sum = { id: 't1', kind: 'summary', messageIndex: -1, timestamp: 4 };
   try {

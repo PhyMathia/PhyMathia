@@ -97,7 +97,7 @@ export function run() {
     if (raf < 0) throw new Error('找不到重建 rAF');
     if (!giSrc.slice(raf, raf + 400).includes('else if (typeof renderMath')) throw new Error('rAF 缺老路径兜底');
     const phCount = (grSrc.match(/_minimizedBodyHtml\(\)/g) || []).length;
-    if (phCount < 6) throw new Error('折叠占位符接线不足（helper＋4 builder＋generic）：' + phCount);
+    if (phCount < 5) throw new Error('折叠占位符接线不足（helper＋3 builder＋generic）：' + phCount);
     if (!giSrc.includes("el.querySelector('[data-body-ph]')")) throw new Error('展开未接占位符补水');
     if (!gwSrc.includes('[data-body-ph]')) throw new Error('定位跳转展开未接占位符补水');
     return true;

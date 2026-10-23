@@ -466,73 +466,11 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
   renderGraphCanvas();
 }
 
-function _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
-  const item = portMeta.item || {};
-  const state = _graphState();
-  _pushGraphUndo();
-  const nodeId = 'knowledge-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  state.customNodes = state.customNodes || [];
-  state.customNodes.push({
-    id: nodeId,
-    kind: 'knowledge',
-    moduleKey: 'knowledge',
-    manual: true,
-    content: item.summary || item.title || '',
-    status: 'done',
-    summary: item.summary || '',
-    analysis: '',
-    analysisHash: '',
-    inputHash: '',
-    generatedAt: 0,
-    requirements: '',
-    busy: false,
-    generated: false,
-    maxItems: 0,
-    items: [],
-    edges: [],
-    fileId: sourceNode.fileId || '',
-    fileName: sourceNode.fileName || '',
-    generatedNodeIds: [],
-    title: item.title || '知识点',
-    category: item.category || 'other',
-    tags: item.tags || [],
-    formulas: item.formulas || [],
-    knowledgeKey: item.id || item.title || nodeId,
-    sourceNodeId: sourceNode.id,
-    x,
-    y,
-    depth: 3,
-    targetAngle: 0,
-    isRoot: false,
-    timestamp: Date.now(),
-    pinned: false,
-    fixedX: null,
-    fixedY: null,
-    customWidth: 260,
-    customHeight: null,
-    w: 0,
-    h: 0,
-    vx: 0,
-    vy: 0,
-  });
-  state.connections = state.connections || [];
-  state.connections.push({
-    from: sourceNode.id,
-    fromPort: sourcePortId || 'out-0',
-    to: nodeId,
-    toPort: 'in-0',
-    type: 'custom',
-    custom: true,
-  });
-  _saveGraphState(state);
-  renderGraphCanvas();
-}
-
 function _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
   const state = _graphState();
   _pushGraphUndo();
   const nodeId = 'question-custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  const sourceText = sourceNode.title || sourceNode.summary || _nodeStoredContent(sourceNode) || '该知识点';
+  const sourceText = sourceNode.title || sourceNode.summary || _nodeStoredContent(sourceNode) || '该内容';
   state.customNodes = state.customNodes || [];
   state.customNodes.push({
     id: nodeId,
@@ -557,7 +495,6 @@ function _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y) {
     generatedNodeIds: [],
     category: sourceNode.category || 'other',
     formulas: sourceNode.formulas || [],
-    knowledgeKey: sourceNode.knowledgeKey || '',
     sourceNodeId: sourceNode.id,
     x,
     y,
@@ -610,11 +547,11 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   }
   const option = _findManualOptionByPort(portMeta);
   // 待命名附加输出口（＋手动加出、未连线继承名字）：身份未定，拖到空处不再预设
-  // 「提问」（source 的 knowledge fallback 也让位）——打开添加节点面板（与双击空白
+  // 「提问」——打开添加节点面板（与双击空白
   // 同款）由用户自己选；选中后经挂起连线（addBlankNodePendingLink →
   // _consumePendingPortLink）建点即自动连回本口，关闭面板则什么都不建。
   // 具名口不进此分支（身份已定，沿用各自拖出目标：问题/追问口→提问卡、
-  // 知识点口→知识点节点、配方口→drag_creates 声明）。
+  // 配方口→drag_creates 声明）。
   // 269：显示名可能是「连线采纳来的」（匿名附加口连上输入口后继承下游身份——名字
   // 是下游类型不是提问语义），不能只认「待命名」三个字。身份现场按基础出口表重算
   // （与渲染 adopted 判定同一事实源）：序数落在表外＝附加口，已采纳名也走面板分支；
@@ -628,8 +565,7 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   // 自己的拖出目标——拖空同样开添加节点面板（挂起连线同款），选中后自动接回本口；
   // 过去落到默认草稿路径建 draft 提问卡，从中继往外再接一个中转凭空多两步。
   // 素材篮条目口（2026-10-22 重做）：type 留空、身份=素材本身，拖空与待命名口
-  // 同款打开添加节点面板自选（选中后经挂起连线自动接回本口）；旧知识点条目口
-  // type='knowledge'，不进此分支（后面直建知识点，旧快捷方式不失效）
+  // 同款打开添加节点面板自选（选中后经挂起连线自动接回本口）
   if (sourceNode.kind === 'source' && portMeta.item && portMeta.item.kind) {
     openAddBlankNodeModal(x, y);
     addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
@@ -638,14 +574,6 @@ function _createBranchNodeFromOutput(sourceNodeId, sourcePortId, portMeta, x, y)
   if (label === '待命名' || isAdditionalPort || sourceNode.kind === 'junction') {
     openAddBlankNodeModal(x, y);
     addBlankNodePendingLink = { sourceNodeId, sourcePortId: sourcePortId || 'out-0' };
-    return;
-  }
-  if (type === 'knowledge') {
-    _createKnowledgeNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
-    return;
-  }
-  if (sourceNode.kind === 'knowledge' && (label === '问题' || portMeta.attribute === 'question')) {
-    _createQuestionNodeFromPort(sourceNode, sourcePortId, portMeta, x, y);
     return;
   }
   // 「没看懂」标签与 confused 分支已随 T335 退役（2026-10-17）——端口名单里没有它，
@@ -732,7 +660,7 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     id: nodeId,
     kind: option.kind,
     moduleKey: option.kind === 'module' || option.kind === 'hub' || option.kind === 'summary' || option.kind === 'note' ? option.key : '',
-    manual: option.key === 'manual' || option.key === 'human_note' || option.key === 'note' || option.key === 'relation' || option.key === 'source' || option.key === 'knowledge',
+    manual: option.key === 'manual' || option.key === 'human_note' || option.key === 'note' || option.key === 'relation' || option.key === 'source',
     nodeType: option.key === 'human_note' ? 'understanding' : '',
     label: option.key === 'human_note' ? option.label : '',
     formula: '',
@@ -755,7 +683,6 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     generatedNodeIds: [],
     category: '',
     formulas: [],
-    knowledgeKey: '',
     x,
     y,
     depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
@@ -1081,7 +1008,7 @@ async function generateVizNode(nodeId, fromQueue = false, handoffTaskId = null) 
 // 面板修订路保留）：任务列表的「重试」要按当初那句要求原样重跑（tasks.js 的
 // replay.nodeJob.kind==='regen'），而那时候面板早就没了——所以留一个不经 UI 的入口。
 // 2026-10-13 起按节点分流量：消息模块节点走 _applyNodeRegenerate（写回 message），
-// 工作流节点（含知识点）走 _applyWorkflowNodeRegenerate（写回 node.content）。
+// 工作流节点走 _applyWorkflowNodeRegenerate（写回 node.content）。
 window.regenNodeWith = function(nodeId, confusion) {
   const node = _findGraphNode(nodeId);
   if (node && !(node.messageIndex >= 0)) return _applyWorkflowNodeRegenerate(nodeId, confusion || '');
@@ -1134,7 +1061,7 @@ function _countDownstreamHumanDone(nodeId) {
 
 // 用户拍板口径：说「可能失效」不说「会失效」——下游是按旧内容生成的，对不对得
 // 上要看新旧内容差多少，系统不替用户断言。面板路（带要求重生成）提示写在面板
-// 里、点发送即确认；直接按钮路（工作流/空白/知识点）走 confirm。无下游一律不打扰。
+// 里、点发送即确认；直接按钮路（工作流/空白）走 confirm。无下游一律不打扰。
 // 返回 false＝用户取消，调用方就此打住。
 function _warnDownstreamBeforeRegenerate(node) {
   if (!node) return true;
@@ -1225,20 +1152,18 @@ async function _applyNodeRegenerate(nodeId, confusion) {
   }
 }
 
-// ===== 工作流节点（含知识点）的「带要求重生成」（2026-10-13）=====
+// ===== 工作流节点的「带要求重生成」（2026-10-13）=====
 // 主流程画布上只有工作流节点，「重新生成」过去点了直跑、没处写字。现在按钮也弹
 // graphOpenRegenerate 面板：留空直发＝回 runWorkflowNode 原管线整体重跑（现状行为）；
 // 写了字＝修订式——旧内容+用户反馈一起喂模型，只改用户指出的点，其余尽量保留。
 function _regenNodeActionLabel(node) {
   if (!node) return '重新生成';
-  if (node.kind === 'knowledge') return '重新生成知识点' + (node.title ? '：' + node.title : '');
   const metaLabel = (GRAPH_MODULE_META[node.moduleKey] || {}).label;
   return '重新生成' + (metaLabel || node.title || '节点');
 }
 
 async function _regenWorkflowNodeContent(node, text, signal, oldContent) {
-  const label = node.kind === 'knowledge' ? (node.title || '知识点')
-    : ((GRAPH_MODULE_META[node.moduleKey] || {}).label || node.title || '节点');
+  const label = (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.title || '节点';
   // 修订底稿由调用方显式传入（T339：开跑前 content 已被版本账清空，不能再从节点上读）
   const old = String(oldContent != null ? oldContent : node.content || '').trim();
   if (!old) throw new Error('节点还没有内容，直接用「生成」即可');
@@ -1373,7 +1298,7 @@ async function submitRegenerateNode(nodeId) {
   const input = panel?.querySelector('.graph-regenerate-input');
   if (!node || !el || !panel || !input) return;
   const text = input.value.trim();
-  // 消息模块节点走 _applyNodeRegenerate（写回 message），工作流节点/知识点走
+  // 消息模块节点走 _applyNodeRegenerate（写回 message），工作流节点走
   // _applyWorkflowNodeRegenerate（写回 node.content；留空＝原管线整体重跑）。
   const isMessageModule = node.messageIndex >= 0;
   // 忙时排队（2026-10-11）：过去这条只在 isStreaming 时被按钮置灰挡住（工作流跑着反而
@@ -2016,7 +1941,7 @@ function _endPointerDrag(event) {
     } else if (drag.mode === 'input' && graphView.moved) {
       // 拖输入口的线落到节点身上（非具体输出口）：吸附该节点第一个输出口；没有输出口
       // 或落回自己，维持原「拖走即断开」语义。不自动长输出口——出口有身份语义
-      // （追问/知识点/配方出口各自拖出不同的东西），匿名长出来没有明确指向。
+      // （追问/配方出口各自拖出不同的东西），匿名长出来没有明确指向。
       const hoverEl = _linkDragNodeEl(event);
       const outPort = hoverEl && hoverEl.dataset.nodeId !== drag.nodeId
         ? hoverEl.querySelector('.graph-output-port')

@@ -20,7 +20,7 @@ from . import accounts
 from .accounts import DEFAULT_ACCOUNT
 from .family import apply_aliases
 from .knowledge import _formula_key
-from .storage import _read_json_cached, kv_read
+from .storage import _read_json_cached
 
 # ====== 预算 ======
 CONCEPT_BLOCK_MAX_TOKENS = 800
@@ -400,67 +400,6 @@ def _prompt_has_symbol(text: str, token: str) -> bool:
     return re.search(r"(?<![0-9a-z\\])" + re.escape(token), text) is not None
 
 
-def _graph_state_keys(session_id: str) -> list:
-    """兼容两种会话标识与两种 KV 键命名（服务端 `graph:{id}` / 前端导出 `phymathia_graph_{id}`）。"""
-    sid = str(session_id or "").strip()
-    if not sid:
-        return []
-    keys = [f"graph:{sid}"]
-    if sid.startswith("phymathia_"):
-        keys.append(f"graph:sess_{sid[len('phymathia_'):]}")
-    keys.append(f"phymathia_graph_{sid}")
-    return keys
-
-
-def explicit_pairs(session_id: str, kv_path=None, account: str = DEFAULT_ACCOUNT) -> list:
-    """画布显式边：两端都是知识点节点、且用户手工连了联系线的 (item_id, item_id, relation)。
-
-    知识点条目的 nodeId 多数挂在模块气泡上（模块↔知识点不是「先导」关系），
-    因此只有 `knowledgeKey`/`knowledge-custom-*` 这类真正的知识点节点才参与判定。
-    """
-    kv = _read_json_cached(kv_path or accounts.resolve_paths(account).kv_path, {}) or {}
-    state = None
-    for key in _graph_state_keys(session_id):
-        candidate = kv.get(key)
-        if isinstance(candidate, dict):
-            state = candidate
-            break
-    if state is None and kv_path is None:
-        # 会话级 KV 已拆到 data/kv/<sid>.json（storage.kv_* 路由层）：
-        # 主文件里没有的 graph:<sid> 从拆分层取（显式 kv_path 是测试注入，不越层）
-        for key in _graph_state_keys(session_id):
-            # T230：回落读必须带同一 account——主文件读取用的是该账号 kv_path，
-            # 缺一个 account 参数就落回 storage 默认值，多账号下会读到默认账号
-            # 的会话文件（跨号拿到别人的画布连线）
-            candidate = kv_read(key, account=account)
-            if isinstance(candidate, dict):
-                state = candidate
-                break
-    if not state:
-        return []
-    node_to_knowledge = {}
-    for node in state.get("customNodes") or []:
-        if not isinstance(node, dict):
-            continue
-        node_id = str(node.get("id") or "")
-        if not node_id:
-            continue
-        key_ref = str(node.get("knowledgeKey") or "")
-        if key_ref or node_id.startswith("knowledge-custom-"):
-            node_to_knowledge[node_id] = key_ref or node_id
-    pairs = []
-    for conn in state.get("connections") or []:
-        if not isinstance(conn, dict):
-            continue
-        src = node_to_knowledge.get(str(conn.get("from") or ""))
-        dst = node_to_knowledge.get(str(conn.get("to") or ""))
-        if not src or not dst or src == dst:
-            continue
-        relation = str(conn.get("relation") or conn.get("label") or "").strip()
-        pairs.append((src, dst, relation[:RELATION_MAX_CHARS]))
-    return pairs
-
-
 def _clip(text: str, limit: int) -> str:
     s = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(s) <= limit:
@@ -501,15 +440,17 @@ def _shared_formula_neighbors(ref: str, items: dict, by_token: dict) -> list:
     return [other for other, _n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
-def build_grounding(items: dict, refs: list, session_id: str = "", pairs: list = None,
+def build_grounding(items: dict, refs: list, session_id: str = "",
                     allow_cross_session: bool = True) -> dict:
-    """三级推导先导集：① 画布显式边 → ② 共享公式结构边 → ③ 都没有则只带自身。
+    """两级推导先导集：① 共享公式结构边 → ② 都没有则只带自身。
+
+    2026-10-23 知识点节点退役前的第一级「画布显式边」（explicit_pairs）随节点一起删除：
+    那时候只有知识点卡片之间连的联系线也算先导，现在画布上已经没有这种节点。
 
     返回 {"one": [...], "two": [...], "refs": [...]}；refs 全部查不到条目时返回 {}。
     """
     if not isinstance(items, dict) or not refs:
         return {}
-    pairs = pairs or []
     refs = [r for r in _match_ids(refs) if r in items]
     if not refs:
         return {}
@@ -518,12 +459,6 @@ def build_grounding(items: dict, refs: list, session_id: str = "", pairs: list =
         if allow_cross_session:
             return True
         return str(items[item_id].get("sessionId") or "") in ("", str(session_id))
-
-    explicit = {}
-    for src, dst, relation in pairs:
-        if src in items and dst in items:
-            explicit.setdefault(src, []).append((dst, relation or "联系"))
-            explicit.setdefault(dst, []).append((src, relation or "联系"))
 
     by_token = {}
     for item_id, item in items.items():
@@ -538,14 +473,6 @@ def build_grounding(items: dict, refs: list, session_id: str = "", pairs: list =
         item = items[ref]
         anchor = str(item.get("title") or ref)
         one_added = []
-        for related, relation in explicit.get(ref, []):
-            if related in used:
-                continue
-            used.add(related)
-            row = _concept_row(related, items[related], "one", relation, session_id)
-            row.update({"anchor": anchor, "via": "explicit"})
-            one.append(row)
-            one_added.append(related)
         for other in _shared_formula_neighbors(ref, items, by_token):
             if other in used:
                 continue
@@ -607,8 +534,6 @@ def render_concept_grounding(data: dict) -> str:
                 parts.append("：" + row["summary"])
             if row.get("formula"):
                 parts.append("｜" + row["formula"])
-            if row.get("via") == "explicit":
-                parts.append("（与「" + str(row.get("anchor") or "") + "」的联系：" + (row.get("relation") or "联系") + "）")
             lines.append("- " + "".join(parts))
     two = data.get("two") or []
     if two:
@@ -638,7 +563,7 @@ def _trim_to_budget(text: str) -> str:
 
 
 def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
-                         kv_path=None, allow_cross_session: bool = True,
+                         allow_cross_session: bool = True,
                          weak_terms=None, account: str = DEFAULT_ACCOUNT) -> str:
     """主入口：问题 → 概念地基段。无命中返回空串（调用方追加空串即零回归）。
 
@@ -662,7 +587,6 @@ def concept_context_text(prompt: str, session_id: str = "", items: dict = None,
         return ""
     data = build_grounding(
         store, refs, session_id=session_id,
-        pairs=explicit_pairs(session_id, kv_path=kv_path, account=account),
         allow_cross_session=allow_cross_session,
     )
     return _trim_to_budget(render_concept_grounding(data))
@@ -674,6 +598,6 @@ def _env_scope_allows_cross() -> bool:
 
 
 __all__ = [
-    "CONCEPT_BLOCK_MAX_TOKENS", "match_concepts", "explicit_pairs", "build_grounding",
+    "CONCEPT_BLOCK_MAX_TOKENS", "match_concepts", "build_grounding",
     "render_concept_grounding", "concept_context_text",
 ]

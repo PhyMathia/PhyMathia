@@ -66,7 +66,7 @@ seqCheck('quiz-relearn：quizLocateTopic 全链路（主题解析 → 定位内�
   const calls = [];
   try {
     sandbox.window.goToKnowledgeNode = async (refId) => {
-      calls.push({ kind: 'knowledge', refId });
+      calls.push({ kind: 'locate', refId });
       sandbox._rememberLocatedGraphNode('node_kp_hm'); // 模拟定位内核回填落点
       return true;
     };
@@ -76,7 +76,7 @@ seqCheck('quiz-relearn：quizLocateTopic 全链路（主题解析 → 定位内�
     };
     const ok = await sandbox.quizLocateTopic(encodeURIComponent(M2_TOPIC_KEY));
     if (ok !== true) throw new Error('定位应成功');
-    if (!calls.length || calls[0].kind !== 'knowledge' || calls[0].refId !== 'kp_hm') {
+    if (!calls.length || calls[0].kind !== 'locate' || calls[0].refId !== 'kp_hm') {
       throw new Error('应按错题 sourceRef 走知识点定位，实际 ' + JSON.stringify(calls));
     }
     const ctx = sandbox._quizRelearnCtxGet();

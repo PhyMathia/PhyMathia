@@ -83,7 +83,7 @@ function fixture(opts = {}) {
     },
     escapeHtml: v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    GRAPH_CUSTOM_NODE_KINDS: ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'knowledge', 'human_note', 'ai_eval'],
+    GRAPH_CUSTOM_NODE_KINDS: ['blank', 'user', 'answer', 'module', 'hub', 'summary', 'note', 'source', 'human_note', 'ai_eval'],
     graphView: { nodeById: {}, nodes: [], edges: [] },
     _currentSid: 'sess_A',
     _sessions: { sess_A: { id: 'sess_A', title: '简谐运动 1' }, sess_B: { id: 'sess_B', title: '信号处理 2' } },
@@ -253,10 +253,10 @@ test('落盘走服务端 kv 全局键，不碰 localStorage（T53：localStorage
 
 test('T61 单节点生成任务：独立成账、能停、失败带重试、重放按种类回各自入口', () => {
   const { s, run } = fixture();
-  const taskId = run(`_taskBeginNodeJob({ title: '生成知识节点：简谐运动', nodeId: 'kn1', nodeKind: 'knowledge' });`);
+  const taskId = run(`_taskBeginNodeJob({ title: '生成联系节点', nodeId: 'r1', nodeKind: 'relation' });`);
   assert.ok(taskId, '要返回任务 id');
   let html = panelHtml(s);
-  assert.match(html, /生成知识节点：简谐运动/);
+  assert.match(html, /生成联系节点/);
   assert.match(html, /进行中/);
   assert.match(html, /data-task-action="cancel"/, '在跑的能停');
   assert.doesNotMatch(html, /data-task-action="pause"/, '单节点任务没有暂停——就一颗节点，停＝掐断');
@@ -271,28 +271,27 @@ test('T61 单节点生成任务：独立成账、能停、失败带重试、重�
   assert.match(panelHtml(s), /重试/);
   // 重放：节点还在画布上 → 按记下的种类回到它自己的生成入口
   run(`_findGraphNode = id => graphView.nodeById[id] || null;
-       graphView.nodeById = { kn1: { id: 'kn1', kind: 'knowledge' }, r1: { id: 'r1', kind: 'relation' } };
+       graphView.nodeById = { r1: { id: 'r1', kind: 'relation' }, b1: { id: 'b1', kind: 'blank' } };
        __replayed = [];
-       window.generateKnowledgeNode = id => { __replayed.push(['knowledge', id]); };
        window.generateRelationNode = id => { __replayed.push(['relation', id]); };
        window.generateBlankNode = id => { __replayed.push(['blank', id]); };`);
   run(`_taskRegenerate('${taskId}');`);
   // vm 沙箱里的数组与宿主 realm 原型不同，deepEqual 前先 JSON 往返（同接线①的既有做法）
-  assert.deepEqual(JSON.parse(JSON.stringify(run('__replayed'))), [['knowledge', 'kn1']],
-    '重放要回到生成知识节点的入口');
-  // 联系/空白同理（再造一条验种类分发）
-  const relId = run(`(function () {
-    const id = _taskBeginNodeJob({ title: '生成联系节点', nodeId: 'r1', nodeKind: 'relation' });
+  assert.deepEqual(JSON.parse(JSON.stringify(run('__replayed'))), [['relation', 'r1']],
+    '重放要回到生成联系节点的入口');
+  // 空白同理（再造一条验种类分发）
+  const blankId = run(`(function () {
+    const id = _taskBeginNodeJob({ title: '生成空白节点', nodeId: 'b1', nodeKind: 'blank' });
     _taskFinish(id, 'error', '生成失败');
     return id;
   })()`);
-  run(`_taskRegenerate('${relId}');`);
+  run(`_taskRegenerate('${blankId}');`);
   assert.deepEqual(JSON.parse(JSON.stringify(run('__replayed'))),
-    [['knowledge', 'kn1'], ['relation', 'r1']]);
+    [['relation', 'r1'], ['blank', 'b1']]);
   // 节点已经不在画布上：当面说明，不许静默什么都不发生
   run(`graphView.nodeById = {};
        showToast = msg => { __lastToast = String(msg); };`);
-  run(`_taskRegenerate('${relId}');`);
+  run(`_taskRegenerate('${taskId}');`);
   assert.match(String(s.__lastToast || ''), /画布|重新生成/);
 });
 
@@ -333,14 +332,13 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(blank, /_taskFinish\(taskId, 'done'\)/);
   assert.match(blank, /jobStartedAt/, '完成卡计时用本函数自己的起点');
   assert.doesNotMatch(blank, /blankStartedAt/, '旧计时残留必须清干净（它本是别的函数的局部量，成功路径曾因它抛 ReferenceError）');
-  // graph-custom.js：知识/联系两个入口都走记账包装，不许绕过。T280：忙时经统一
+  // graph-custom.js：联系入口走记账包装，不许绕过。T280：忙时经统一
   // 忙碌判定收进队列（排队不是禁用），Φ 改图带 fromPhi 直通（排队会掐死 Φ 这条能力）。
-  const knStart = customSrc.indexOf('function generateKnowledgeNode(');
-  const relEnd = customSrc.indexOf('\nfunction _blankNodeGraphPath(', knStart);
-  const pair = customSrc.slice(knStart, relEnd);
-  assert.match(pair, /_generateCustomNodeAsTask\(\w+, 'knowledge'/);
+  const relStart = customSrc.indexOf('function generateRelationNode(');
+  const relEnd = customSrc.indexOf('\nfunction _blankNodeGraphPath(', relStart);
+  const pair = customSrc.slice(relStart, relEnd);
   assert.match(pair, /_generateCustomNodeAsTask\(\w+, 'relation'/);
-  assert.equal((pair.match(/_generateCustomNode\(node\)/g) || []).length, 0, '两个入口不许绕过记账直呼生成');
+  assert.equal((pair.match(/_generateCustomNode\(node\)/g) || []).length, 0, '入口不许绕过记账直呼生成');
   assert.match(pair, /_isActuallyBusy\(\)/, 'T280：用户入口忙时必须走统一忙碌判定');
   assert.match(pair, /_enqueueNodeJob\(/, 'T280：忙时排队不是禁用');
   assert.match(pair, /fromPhi/, 'T280：Φ 改图必须有直通旁路');
@@ -349,9 +347,8 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(taskWrap, /_taskBeginNodeJob\(/);
   assert.match(taskWrap, /_generateCustomNode\(node, jobAbort\.signal\)/, 'signal 要真传进生成链');
   assert.match(taskWrap, /handoffTaskId/, 'T280：排队路径的账由队列先记，这里接手同一行');
-  // harness-apply.js：Φ 补建知识/联系节点必须带 fromPhi 直通（T280）
+  // harness-apply.js：Φ 补建联系节点必须带 fromPhi 直通（T280）
   const applySrc = readSrc('src/static/js/harness-apply.js');
-  assert.match(applySrc, /generateKnowledgeNode\(id, \{ fromPhi: true \}\)/, 'Φ 补建知识节点要直通');
   assert.match(applySrc, /generateRelationNode\(id, \{ fromPhi: true \}\)/, 'Φ 补建联系节点要直通');
   assert.match(taskWrap, /finally/, '前置段抛错也不能把账挂成进行中永不结账');
   // 工作流调度口那处直呼保持原样——那笔账由工作流任务统一记，包装后就会双份

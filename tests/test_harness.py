@@ -27,8 +27,8 @@ class HarnessCoreTest(unittest.TestCase):
     def setUp(self):
         self.snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
-                {"id": "B", "kind": "knowledge", "label": "函数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "B", "kind": "human_note", "label": "函数"},
             ],
             "edges": [
                 {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
@@ -42,7 +42,7 @@ class HarnessCoreTest(unittest.TestCase):
                 {
                     "op": "create_node",
                     "temp_id": "n_limit",
-                    "kind": "knowledge",
+                    "kind": "human_note",
                     "label": "极限",
                     "content": "趋近过程",
                     "reason": "补全基础",
@@ -233,7 +233,7 @@ class HarnessCoreTest(unittest.TestCase):
 
     def test_evaluate_prompt_includes_phymathia_standards_and_level(self):
         messages = build_evaluate_messages(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             "评价我对导数的理解",
             context="PhyMathia 系统上下文",
             level="middle",
@@ -254,8 +254,8 @@ class HarnessCoreTest(unittest.TestCase):
     def test_diff_reports_add_update_delete(self):
         after = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "瞬时变化率"},
-                {"id": "C", "kind": "knowledge", "label": "极限"},
+                {"id": "A", "kind": "human_note", "label": "瞬时变化率"},
+                {"id": "C", "kind": "human_note", "label": "极限"},
             ],
             "edges": [],
         }
@@ -269,8 +269,8 @@ class HarnessCoreTest(unittest.TestCase):
         normalized = normalize_snapshot(
             {
                 "nodes": [
-                    {"id": "ok", "kind": "knowledge", "label": "正常"},
-                    {"id": "", "kind": "knowledge", "label": "坏节点"},
+                    {"id": "ok", "kind": "human_note", "label": "正常"},
+                    {"id": "", "kind": "human_note", "label": "坏节点"},
                 ],
                 "edges": [
                     {"from": "ok", "to": "missing"},
@@ -302,7 +302,7 @@ class HarnessLevelSuffixPlacementTest(unittest.TestCase):
     )
 
     def _build(self, builder, level):
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+        snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []}
         return builder(snapshot, "评价一下", context="PhyMathia 系统上下文", level=level)
 
     def test_all_builders_put_level_at_last_user_tail_and_out_of_system(self):
@@ -346,7 +346,7 @@ class HarnessToolsTest(unittest.TestCase):
     def test_parse_tool_calls_basic(self):
         from harness.tools import parse_tool_calls
         ops, errors = parse_tool_calls([
-            {"function": {"name": "create_node", "arguments": '{"temp_id": "n_lim", "kind": "knowledge", "label": "极限", "reason": "补全基础"}'}},
+            {"function": {"name": "create_node", "arguments": '{"temp_id": "n_lim", "kind": "human_note", "label": "极限", "reason": "补全基础"}'}},
             {"function": {"name": "add_edge", "arguments": '{"from": "n_lim", "to": "A", "relation": "依赖", "reason": "导数需要极限"}'}},
             {"function": {"name": "delete_node", "arguments": '{"node_id": "H", "reason": "超纲"}'}},
             {"function": {"name": "update_node", "arguments": '{"node_id": "A", "patch": {"label": "瞬时变化率"}, "reason": "更准确"}'}},
@@ -389,7 +389,7 @@ class HarnessToolsTest(unittest.TestCase):
 class HarnessConflictTest(unittest.TestCase):
     def test_conflict_update_then_delete_skips_update(self):
         result = build_next_snapshot(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             [
                 {"op": "update_node", "id": "A", "patch": {"label": "瞬时变化率"}, "reason": "更准确"},
                 {"op": "delete_node", "id": "A", "reason": "删除错误节点"},
@@ -402,7 +402,7 @@ class HarnessConflictTest(unittest.TestCase):
 
     def test_conflict_delete_then_update_skips_update(self):
         result = build_next_snapshot(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             [
                 {"op": "delete_node", "id": "A", "reason": "删除"},
                 {"op": "update_node", "id": "A", "patch": {"label": "改"}, "reason": "再改"},
@@ -416,8 +416,8 @@ class HarnessConflictTest(unittest.TestCase):
         result = build_next_snapshot(
             {
                 "nodes": [
-                    {"id": "A", "kind": "knowledge", "label": "A"},
-                    {"id": "B", "kind": "knowledge", "label": "B"},
+                    {"id": "A", "kind": "human_note", "label": "A"},
+                    {"id": "B", "kind": "human_note", "label": "B"},
                 ],
                 "edges": [],
             },
@@ -443,7 +443,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "把导数内容改掉",
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
                 mode="json", self_check="off",
@@ -455,7 +455,7 @@ class HarnessReviewModelTest(unittest.TestCase):
         from harness.prompts import build_review_messages
 
         snap = {"version": 1, "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "c", "formula": "",
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "c", "formula": "",
              "module_key": "", "manual": False, "target_node_id": "", "target_label": "",
              "suggestion": "", "priority": "medium", "status": "", "read_only": False},
         ], "edges": []}
@@ -502,8 +502,8 @@ class HarnessReviewModelTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.resolve_focus(
                 {"nodes": [
-                    {"id": "N1", "kind": "knowledge", "label": "导数"},
-                    {"id": "N2", "kind": "knowledge", "label": "导数"},
+                    {"id": "N1", "kind": "human_note", "label": "导数"},
+                    {"id": "N2", "kind": "human_note", "label": "导数"},
                  ], "edges": []},
                 "把「导数」删掉",
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
@@ -522,7 +522,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "c"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "c"}], "edges": []},
                 "改内容",
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
                 mode="json", self_check="off",
@@ -537,8 +537,8 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         msgs = build_selfcheck_messages(
             "删掉B",
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"},
-                       {"id": "B", "kind": "knowledge", "label": "极限"}],
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"},
+                       {"id": "B", "kind": "human_note", "label": "极限"}],
              "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B"}]},
             [{"op": "delete_node", "node_id": "B", "reason": "r"}],
         )
@@ -601,8 +601,8 @@ class HarnessReviewModelTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
                 {"nodes": [
-                    {"id": "A", "kind": "knowledge", "label": "导数"},
-                    {"id": "B", "kind": "knowledge", "label": "极限"},
+                    {"id": "A", "kind": "human_note", "label": "导数"},
+                    {"id": "B", "kind": "human_note", "label": "极限"},
                  ], "edges": []},
                 "把导数的定义改得更严谨一些",
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
@@ -629,7 +629,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "把 H 节点删掉，它超纲了",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
                 mode="auto",
@@ -653,7 +653,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "给导数补充内容",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://x", "api_key": ""},
                 mode="auto",
@@ -702,7 +702,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "H", "kind": "knowledge", "label": "超纲内容"}], "edges": []},
+                {"nodes": [{"id": "H", "kind": "human_note", "label": "超纲内容"}], "edges": []},
                 "把 H 删掉",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -731,7 +731,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "H", "kind": "knowledge", "label": "超纲内容"}], "edges": []},
+                {"nodes": [{"id": "H", "kind": "human_note", "label": "超纲内容"}], "edges": []},
                 "把 H 删掉",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="auto",
@@ -754,7 +754,7 @@ class HarnessReviewModelTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "整理层级",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -767,23 +767,23 @@ class HarnessReviewModelTest(unittest.TestCase):
 class HarnessSemanticsTest(unittest.TestCase):
     def test_isolated_created_node(self):
         from harness.semantics import find_isolated_created_nodes
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []}
+        snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "A"}], "edges": []}
         ops = [
-            {"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "新节点", "kind": "knowledge"},
+            {"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "新节点", "kind": "human_note"},
             {"op": "add_edge", "from": "hn_1", "to": "A", "reason": "连接"},
         ]
         self.assertEqual(find_isolated_created_nodes(snapshot, ops), [])
-        ops2 = [{"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "新节点", "kind": "knowledge"}]
+        ops2 = [{"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "新节点", "kind": "human_note"}]
         isolated = find_isolated_created_nodes(snapshot, ops2)
         self.assertEqual(len(isolated), 1)
         self.assertEqual(isolated[0]["id"], "hn_1")
 
     def test_isolated_component_of_created_nodes(self):
         from harness.semantics import find_isolated_created_nodes
-        snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []}
+        snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "A"}], "edges": []}
         ops = [
-            {"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "X", "kind": "knowledge"},
-            {"op": "create_node", "temp_id": "n2", "assigned_id": "hn_2", "label": "Y", "kind": "knowledge"},
+            {"op": "create_node", "temp_id": "n1", "assigned_id": "hn_1", "label": "X", "kind": "human_note"},
+            {"op": "create_node", "temp_id": "n2", "assigned_id": "hn_2", "label": "Y", "kind": "human_note"},
             {"op": "add_edge", "from": "hn_1", "to": "hn_2", "reason": "互连"},
         ]
         isolated = find_isolated_created_nodes(snapshot, ops)
@@ -794,7 +794,7 @@ class HarnessSemanticsTest(unittest.TestCase):
     def test_rule_selfcheck_focus_untouched(self):
         from harness.semantics import rule_selfcheck
         result = rule_selfcheck(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "A"}], "edges": []},
             "修改 A 的标题",
             ["A"],
             [{"op": "delete_node", "id": "B", "reason": "x"}],
@@ -810,7 +810,7 @@ class HarnessSemanticsTest(unittest.TestCase):
 
     def test_rule_selfcheck_over_delete(self):
         from harness.semantics import rule_selfcheck
-        nodes = [{"id": "n%d" % i, "kind": "knowledge", "label": "n%d" % i} for i in range(10)]
+        nodes = [{"id": "n%d" % i, "kind": "human_note", "label": "n%d" % i} for i in range(10)]
         ops = [{"op": "delete_node", "id": "n%d" % i, "reason": "清理"} for i in range(6)]
         result = rule_selfcheck({"nodes": nodes, "edges": []}, "清理", [], ops)
         self.assertFalse(result["ok"])
@@ -849,20 +849,20 @@ class HarnessSelfCheckTest(unittest.TestCase):
                 return {
                     "content": "",
                     "tool_calls": [
-                        {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "knowledge", "label": "新概念", "reason": "补全"}'}},
+                        {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "新概念", "reason": "补全"}'}},
                     ],
                 }
             return {
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "knowledge", "label": "新概念", "reason": "补全"}'}},
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "新概念", "reason": "补全"}'}},
                     {"function": {"name": "add_edge", "arguments": '{"from": "n1", "to": "A", "relation": "依赖", "reason": "连接到已有节点"}'}},
                 ],
             }
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "补一个前置概念",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -883,13 +883,13 @@ class HarnessSelfCheckTest(unittest.TestCase):
             return {
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "knowledge", "label": "独立概念", "reason": "补全"}'}},
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "独立概念", "reason": "补全"}'}},
                 ],
             }
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "补一个独立概念",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -921,7 +921,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             with unittest.mock.patch.object(review_mod, "_selfcheck_ops", new=fake_selfcheck):
                 result = asyncio.run(review_mod.review_graph(
-                    {"nodes": [{"id": "B", "kind": "knowledge", "label": "B"}, {"id": "H", "kind": "knowledge", "label": "H"}], "edges": []},
+                    {"nodes": [{"id": "B", "kind": "human_note", "label": "B"}, {"id": "H", "kind": "human_note", "label": "H"}], "edges": []},
                     "把 H 删掉",
                     model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                     mode="tools",
@@ -953,7 +953,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             with unittest.mock.patch.object(review_mod, "_selfcheck_ops", new=fake_selfcheck):
                 result = asyncio.run(review_mod.review_graph(
-                    {"nodes": [{"id": "H", "kind": "knowledge", "label": "超纲"}], "edges": []},
+                    {"nodes": [{"id": "H", "kind": "human_note", "label": "超纲"}], "edges": []},
                     "把 H 删掉",
                     model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                     mode="tools",
@@ -992,8 +992,8 @@ class HarnessSelfCheckTest(unittest.TestCase):
             with unittest.mock.patch.object(review_mod, "_selfcheck_ops", new=fake_selfcheck):
                 result = asyncio.run(review_mod.review_graph(
                     {"nodes": [
-                        {"id": "A", "kind": "knowledge", "label": "A", "content": "旧正文"},
-                        {"id": "H", "kind": "knowledge", "label": "超纲"},
+                        {"id": "A", "kind": "human_note", "label": "A", "content": "旧正文"},
+                        {"id": "H", "kind": "human_note", "label": "超纲"},
                     ], "edges": []},
                     "把 A 的正文改掉并删掉 H",
                     model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
@@ -1038,7 +1038,7 @@ class HarnessSelfCheckTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod._selfcheck_ops(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "A"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "A"}], "edges": []},
                 "删除 H",
                 [{"op": "delete_node", "id": "H", "reason": "x"}],
                 {"provider": "deepseek", "model": "deepseek-chat", "base_url": "https://api.deepseek.com", "api_key": "k"},
@@ -1076,8 +1076,8 @@ class HarnessChecklistTest(unittest.TestCase):
 
     SNAPSHOT = {
         "nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "旧正文", "formula": ""},
-            {"id": "H", "kind": "knowledge", "label": "旧笔记", "content": ""},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "旧正文", "formula": ""},
+            {"id": "H", "kind": "human_note", "label": "旧笔记", "content": ""},
         ],
         "edges": [],
     }
@@ -1087,8 +1087,8 @@ class HarnessChecklistTest(unittest.TestCase):
         before = self.SNAPSHOT
         result = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新正文", "formula": "F=ma"},
-                {"id": "N1", "kind": "knowledge", "label": "新概念", "content": ""},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "新正文", "formula": "F=ma"},
+                {"id": "N1", "kind": "human_note", "label": "新概念", "content": ""},
             ],
             "edges": [{"key": "N1:out-0->A:in-0", "from": "N1", "to": "A", "relation": "支持"}],
         }
@@ -1307,7 +1307,7 @@ class HarnessSemanticSearchTest(unittest.TestCase):
         """conftest 已设 PHYMATHIA_EMBEDDING=0：召回回 []（降级＝字面行为逐字一致）。"""
         import asyncio
         from harness.semantic import semantic_node_recall
-        snap = {"nodes": [{"id": "F", "kind": "knowledge", "label": "法拉第定律",
+        snap = {"nodes": [{"id": "F", "kind": "human_note", "label": "法拉第定律",
                            "content": "磁通量变化产生感应电动势"}]}
         self.assertEqual(asyncio.run(semantic_node_recall(snap, "电磁感应")), [])
 
@@ -1317,8 +1317,8 @@ class HarnessSemanticSearchTest(unittest.TestCase):
         from harness import semantic as sem
 
         snap = {"nodes": [
-            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
+            {"id": "F", "kind": "human_note", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
         ]}
         vectors = {"F": [0.95, 0.1], "A": [0.0, 1.0]}
         gather_calls = {"n": 0}
@@ -1352,7 +1352,7 @@ class HarnessSemanticSearchTest(unittest.TestCase):
         import unittest.mock
         from harness import semantic as sem
 
-        snap = {"nodes": [{"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量"}]}
+        snap = {"nodes": [{"id": "F", "kind": "human_note", "label": "法拉第定律", "content": "磁通量"}]}
         gather_calls = {"n": 0}
 
         def fake_gather(texts):
@@ -1363,7 +1363,7 @@ class HarnessSemanticSearchTest(unittest.TestCase):
             with unittest.mock.patch.object(sem, "gather_vectors", new=fake_gather), \
                  unittest.mock.patch.object(sem, "embed_texts", new=lambda texts: [[1.0, 0.0]]):
                 await sem.semantic_node_recall(snap, "电磁感应")
-                snap["nodes"].append({"id": "A", "kind": "knowledge", "label": "导数", "content": "x"})
+                snap["nodes"].append({"id": "A", "kind": "human_note", "label": "导数", "content": "x"})
                 await sem.semantic_node_recall(snap, "电磁感应")
 
         asyncio.run(run())
@@ -1372,8 +1372,8 @@ class HarnessSemanticSearchTest(unittest.TestCase):
     def test_search_nodes_semantic_only_on_miss(self):
         from harness.tools import execute_readonly_tool
         snap = {"nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "瞬时变化率"},
-            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "瞬时变化率"},
+            {"id": "F", "kind": "human_note", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
         ], "edges": []}
         # 字面命中：输出与既有形状完全一致（不带 semantic 键）
         hit = execute_readonly_tool("search_nodes", {"keyword": "导数"}, snap)
@@ -1382,7 +1382,7 @@ class HarnessSemanticSearchTest(unittest.TestCase):
         self.assertNotIn("note", hit)
         # 字面 miss＋语义命中：补位条目带 semantic/score 标记
         miss = execute_readonly_tool("search_nodes", {"keyword": "电磁感应"}, snap, semantic_hits=[
-            {"id": "F", "label": "法拉第定律", "kind": "knowledge", "score": 0.55},
+            {"id": "F", "label": "法拉第定律", "kind": "human_note", "score": 0.55},
         ])
         self.assertEqual(miss["count"], 1)
         self.assertEqual(miss["matches"][0]["id"], "F")
@@ -1447,11 +1447,11 @@ class HarnessSemanticSearchTest(unittest.TestCase):
 
         async def fake_recall(snapshot, keyword, account="default", **kw):
             captured["keyword"] = keyword
-            return [{"id": "F", "label": "法拉第定律", "kind": "knowledge", "score": 0.55}]
+            return [{"id": "F", "label": "法拉第定律", "kind": "human_note", "score": 0.55}]
 
         snap = {"nodes": [
-            {"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"},
-            {"id": "F", "kind": "knowledge", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
+            {"id": "A", "kind": "human_note", "label": "导数", "content": "变化率"},
+            {"id": "F", "kind": "human_note", "label": "法拉第定律", "content": "磁通量变化产生感应电动势"},
         ], "edges": []}
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             with unittest.mock.patch.object(review_mod, "semantic_node_recall", new=fake_recall):
@@ -1482,7 +1482,7 @@ class HarnessSemanticSearchTest(unittest.TestCase):
             calls["count"] = len(recipes)
             return list(reversed(recipes))
 
-        base_nodes = [{"id": "A", "kind": "knowledge", "label": "导数", "content": "变化率"}]
+        base_nodes = [{"id": "A", "kind": "human_note", "label": "导数", "content": "变化率"}]
         small = {"nodes": base_nodes, "edges": [], "user_recipes": [{"id": "r1", "name": "a"}]}
         big = {"nodes": base_nodes, "edges": [],
                "user_recipes": [{"id": "r%d" % i, "name": "n%d" % i} for i in range(33)]}
@@ -1506,7 +1506,7 @@ class HarnessCompressTest(unittest.TestCase):
         from harness.review import _compact_snapshot
         nodes = []
         for i in range(100):
-            nodes.append({"id": "n%d" % i, "kind": "knowledge", "label": "节点%d" % i, "content": "内" * 500, "formula": "F=ma"})
+            nodes.append({"id": "n%d" % i, "kind": "human_note", "label": "节点%d" % i, "content": "内" * 500, "formula": "F=ma"})
         snapshot = {"version": 1, "nodes": nodes, "edges": []}
         self.assertGreater(len(json.dumps(snapshot, ensure_ascii=False)), 40000)
         compact = _compact_snapshot(snapshot, ["n0"])
@@ -1518,7 +1518,7 @@ class HarnessCompressTest(unittest.TestCase):
         from harness.review import HarnessError, _compact_snapshot
         nodes = []
         for i in range(700):
-            nodes.append({"id": "n%d" % i, "kind": "knowledge", "label": "节点%d" % i, "content": "内" * 1200, "formula": "F=ma"})
+            nodes.append({"id": "n%d" % i, "kind": "human_note", "label": "节点%d" % i, "content": "内" * 1200, "formula": "F=ma"})
         snapshot = {"version": 1, "nodes": nodes, "edges": []}
         with self.assertRaises(HarnessError):
             _compact_snapshot(snapshot, [])
@@ -1542,7 +1542,7 @@ class HarnessExpandTest(unittest.TestCase):
     def test_build_expand_messages_includes_focus(self):
         from harness.prompts import build_expand_messages
         messages = build_expand_messages(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             "如何拓展",
             focus_node_ids=["A"],
         )
@@ -1617,8 +1617,8 @@ class HarnessExpandTest(unittest.TestCase):
             result = asyncio.run(review_mod.review_graph(
                 {
                     "nodes": [
-                        {"id": "K", "kind": "knowledge", "label": "导数"},
-                        {"id": "X", "kind": "knowledge", "label": "极限"},
+                        {"id": "K", "kind": "human_note", "label": "导数"},
+                        {"id": "X", "kind": "human_note", "label": "极限"},
                     ],
                     "edges": [],
                 },
@@ -1653,7 +1653,7 @@ class HarnessChatTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "解释一下导数是什么",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -1683,7 +1683,7 @@ class HarnessChatTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "H", "kind": "knowledge", "label": "超纲"}], "edges": []},
+                {"nodes": [{"id": "H", "kind": "human_note", "label": "超纲"}], "edges": []},
                 "把 H 删掉",
                 model={"provider": "deepseek", "model": "deepseek-chat", "base_url": "https://api.deepseek.com", "api_key": ""},
                 mode="tools",
@@ -1711,7 +1711,7 @@ class HarnessSummaryFallbackTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "给导数加物理视角",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -1731,7 +1731,7 @@ class HarnessSummaryFallbackTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "解释一下导数是什么",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -1746,7 +1746,7 @@ class HarnessDedupWarningTest(unittest.TestCase):
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
             ],
             "edges": [],
@@ -1763,7 +1763,7 @@ class HarnessDedupWarningTest(unittest.TestCase):
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
             ],
             "edges": [],
@@ -1779,14 +1779,14 @@ class HarnessJsonExtractHardeningTest(unittest.TestCase):
     def test_extract_json_trailing_comma(self):
         from harness.json_utils import extract_json
 
-        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r",},],}')
+        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "human_note", "label": "L", "reason": "r",},],}')
         self.assertIsNotNone(payload)
         self.assertEqual(payload["operations"][0]["op"], "create_node")
 
     def test_extract_json_truncated_tail(self):
         from harness.json_utils import extract_json
 
-        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]}')
+        payload = extract_json('{"summary": "x", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "human_note", "label": "L", "reason": "r"}]}')
         self.assertIsNotNone(payload)
         self.assertEqual(payload["summary"], "x")
 
@@ -1802,7 +1802,7 @@ class HarnessArrayPayloadTest(unittest.TestCase):
     def test_extract_json_top_level_array(self):
         from harness.json_utils import extract_json
 
-        payload = extract_json('[{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]')
+        payload = extract_json('[{"op": "create_node", "temp_id": "n1", "kind": "human_note", "label": "L", "reason": "r"}]')
         self.assertIsInstance(payload, list)
         self.assertEqual(payload[0]["op"], "create_node")
 
@@ -1810,7 +1810,7 @@ class HarnessArrayPayloadTest(unittest.TestCase):
         from harness.json_utils import extract_json
 
         payload = extract_json("""```json
-[{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "L", "reason": "r"}]
+[{"op": "create_node", "temp_id": "n1", "kind": "human_note", "label": "L", "reason": "r"}]
 ```""")
         self.assertIsInstance(payload, list)
 
@@ -1821,13 +1821,13 @@ class HarnessArrayPayloadTest(unittest.TestCase):
 
         async def fake_call(messages, model, max_tokens, tools=None, tool_choice=None, json_mode=False):
             return {
-                "content": '[{"action": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "极限", "content": "趋近过程", "reason": "补全基础"}]',
+                "content": '[{"action": "create_node", "temp_id": "n1", "kind": "human_note", "label": "极限", "content": "趋近过程", "reason": "补全基础"}]',
                 "tool_calls": [],
             }
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "新增一个极限知识点",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -1850,7 +1850,7 @@ class HarnessArrayPayloadTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "把 A 删掉",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -1881,7 +1881,7 @@ class HarnessRobustnessTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
                 {"nodes": [
-                    {"id": "A", "kind": "knowledge", "label": "导数"},
+                    {"id": "A", "kind": "human_note", "label": "导数"},
                     {"id": "D", "kind": "human_note", "label": "我的理解"},
                 ], "edges": []},
                 "评价一下我的理解",
@@ -1905,13 +1905,13 @@ class HarnessRobustnessTest(unittest.TestCase):
             return {
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "knowledge", "label": "链式法则", "reason": "新增"}'}},
+                    {"function": {"name": "create_node", "arguments": '{"temp_id": "n1", "kind": "human_note", "label": "链式法则", "reason": "新增"}'}},
                 ],
             }
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "新增知识点：链式法则",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -1941,7 +1941,7 @@ class HarnessFallbackSummaryEvalTest(unittest.TestCase):
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
                 {"nodes": [
-                    {"id": "A", "kind": "knowledge", "label": "导数"},
+                    {"id": "A", "kind": "human_note", "label": "导数"},
                     {"id": "D", "kind": "human_note", "label": "我的理解"},
                 ], "edges": []},
                 "评价一下我的理解",
@@ -1961,12 +1961,12 @@ class HarnessNestedArgsTest(unittest.TestCase):
         from harness.core import build_next_snapshot
 
         result = build_next_snapshot(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             [
                 {
                     "op": "create_node",
                     "reason": "新增",
-                    "node": {"temp_id": "n1", "kind": "knowledge", "label": "极限", "content": "趋近过程"},
+                    "node": {"temp_id": "n1", "kind": "human_note", "label": "极限", "content": "趋近过程"},
                 },
                 {
                     "op": "add_edge",
@@ -2007,7 +2007,7 @@ class HarnessNoOpsSummaryTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -2028,7 +2028,7 @@ class HarnessRepairJsonTest(unittest.TestCase):
     def test_repair_json_truncated_before_close(self):
         from harness.json_utils import repair_json
 
-        payload = repair_json('{"temp_id": "n1", "kind": "knowledge", "label": "极限", "reason": "新增"')
+        payload = repair_json('{"temp_id": "n1", "kind": "human_note", "label": "极限", "reason": "新增"')
         self.assertIsNotNone(payload)
         self.assertEqual(payload["label"], "极限")
 
@@ -2055,7 +2055,7 @@ class HarnessRepairJsonTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "评价一下",
                 model={"provider": "opencode", "model": "deepseek-v4-flash-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -2072,8 +2072,8 @@ class HarnessEdgeRemapTest(unittest.TestCase):
 
         result = build_next_snapshot(
             {"nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
-                {"id": "B", "kind": "knowledge", "label": "极限"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "B", "kind": "human_note", "label": "极限"},
             ], "edges": [
                 {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖", "label": "需要先掌握", "custom": False},
             ]},
@@ -2098,8 +2098,8 @@ class HarnessUndoTest(unittest.TestCase):
 
         before = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原内容", "formula": ""},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容", "formula": ""},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原内容", "formula": ""},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "极限内容", "formula": ""},
             ],
             "edges": [
                 {"key": "B:out-0->A:in-0", "from": "B", "to": "A", "relation": "依赖"},
@@ -2161,8 +2161,8 @@ class HarnessUndoTest(unittest.TestCase):
             called["n"] += 1
             return {"content": "不应被调用", "tool_calls": []}
 
-        before = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
-        after = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+        before = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
+        after = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}], "edges": []}
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
                 after,
@@ -2191,7 +2191,7 @@ class HarnessUndoTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "帮我改一下这个",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -2216,7 +2216,7 @@ class HarnessUndoTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "再深入一点",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -2245,15 +2245,15 @@ class HarnessFullUndoTest(unittest.TestCase):
 
         initial = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "极限内容"},
             ],
             "edges": [],
         }
         after_all = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新"},
-                {"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "新"},
+                {"id": "B", "kind": "human_note", "label": "极限的定义", "content": "极限内容"},
                 {"id": "M", "kind": "module", "module_key": "math", "label": "数学视角", "content": "数学"},
             ],
             "edges": [],
@@ -2266,7 +2266,7 @@ class HarnessFullUndoTest(unittest.TestCase):
                 mode="tools",
                 self_check="off",
                 retries=0,
-                previous_snapshot={"nodes": [{"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"}], "edges": []},
+                previous_snapshot={"nodes": [{"id": "B", "kind": "human_note", "label": "极限", "content": "极限内容"}], "edges": []},
                 previous_ops=[{"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"}],
                 initial_snapshot=initial,
                 all_previous_ops=[
@@ -2301,8 +2301,8 @@ class HarnessFullUndoTest(unittest.TestCase):
             return {"content": "", "tool_calls": []}
 
         total = 90
-        initial = {"nodes": [{"id": f"A{i}", "kind": "knowledge", "label": f"节点{i}", "content": f"原{i}"} for i in range(total)], "edges": []}
-        after_all = {"nodes": [{"id": f"A{i}", "kind": "knowledge", "label": f"节点{i}", "content": f"新{i}"} for i in range(total)], "edges": []}
+        initial = {"nodes": [{"id": f"A{i}", "kind": "human_note", "label": f"节点{i}", "content": f"原{i}"} for i in range(total)], "edges": []}
+        after_all = {"nodes": [{"id": f"A{i}", "kind": "human_note", "label": f"节点{i}", "content": f"新{i}"} for i in range(total)], "edges": []}
         ops = [{"op": "update_node", "id": f"A{i}", "patch": {"content": f"新{i}"}, "reason": "修改"} for i in range(total)]
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
@@ -2341,13 +2341,13 @@ class HarnessFullUndoTest(unittest.TestCase):
             if calls["n"] == 1:
                 return {"content": "链式法则是复合函数求导的规则……", "tool_calls": []}
             return {
-                "content": '{"summary": "新增", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "knowledge", "label": "链式法则", "reason": "新增"}]}',
+                "content": '{"summary": "新增", "operations": [{"op": "create_node", "temp_id": "n1", "kind": "human_note", "label": "链式法则", "reason": "新增"}]}',
                 "tool_calls": [],
             }
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "新增知识点：链式法则",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="tools",
@@ -2388,7 +2388,7 @@ class HarnessContextualUndoTest(unittest.TestCase):
             {"op": "delete_node", "id": "M", "reason": "撤销"},
         ]
         current = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}, {"id": "M", "kind": "knowledge", "label": "固有频率"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}, {"id": "M", "kind": "human_note", "label": "固有频率"}],
             "edges": [{"key": "A:out-0->M:in-0", "from": "A", "to": "M", "relation": "导出"}],
         }
         kept = _filter_inverse_by_targets(inverse, ["M"], current)
@@ -2407,15 +2407,15 @@ class HarnessContextualUndoTest(unittest.TestCase):
 
         initial = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
-                {"id": "B", "kind": "knowledge", "label": "极限", "content": "极限内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原"},
+                {"id": "B", "kind": "human_note", "label": "极限", "content": "极限内容"},
             ],
             "edges": [],
         }
         after_all = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "新"},
-                {"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "新"},
+                {"id": "B", "kind": "human_note", "label": "极限的定义", "content": "极限内容"},
             ],
             "edges": [],
         }
@@ -2428,7 +2428,7 @@ class HarnessContextualUndoTest(unittest.TestCase):
                 self_check="off",
                 retries=0,
                 focus_node_ids=["A"],
-                previous_snapshot={"nodes": [{"id": "B", "kind": "knowledge", "label": "极限的定义", "content": "极限内容"}], "edges": []},
+                previous_snapshot={"nodes": [{"id": "B", "kind": "human_note", "label": "极限的定义", "content": "极限内容"}], "edges": []},
                 previous_ops=[{"op": "update_node", "id": "B", "patch": {"label": "极限的定义"}, "reason": "改名"}],
                 initial_snapshot=initial,
                 all_previous_ops=[
@@ -2454,13 +2454,13 @@ class HarnessContextualUndoTest(unittest.TestCase):
             return {"content": "", "tool_calls": []}
 
         initial = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}],
             "edges": [],
         }
         after_all = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数", "content": "原"},
-                {"id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率"},
+                {"id": "A", "kind": "human_note", "label": "导数", "content": "原"},
+                {"id": "M", "kind": "human_note", "label": "固有频率", "content": "系统自由振动的频率"},
             ],
             "edges": [
                 {"key": "A:out-0->M:in-0", "from": "A", "to": "M", "relation": "导出"},
@@ -2477,12 +2477,12 @@ class HarnessContextualUndoTest(unittest.TestCase):
                 focus_node_ids=["M"],
                 previous_snapshot=initial,
                 previous_ops=[
-                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
+                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "human_note", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
                     {"op": "add_edge", "from": "A", "to": "M", "relation": "导出", "edge_key": "A:out-0->M:in-0", "reason": "连线"},
                 ],
                 initial_snapshot=initial,
                 all_previous_ops=[
-                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "knowledge", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
+                    {"op": "create_node", "temp_id": "n_freq", "assigned_id": "M", "kind": "human_note", "label": "固有频率", "content": "系统自由振动的频率", "reason": "新增"},
                     {"op": "add_edge", "from": "A", "to": "M", "relation": "导出", "edge_key": "A:out-0->M:in-0", "reason": "连线"},
                 ],
             ))
@@ -2505,8 +2505,8 @@ class HarnessUndoShortInstructionGateTest(unittest.TestCase):
 
     MODEL = {"provider": "opencode", "model": "mimo-v2.5-free",
              "base_url": "https://opencode.ai/zen/v1", "api_key": ""}
-    BEFORE = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
-    AFTER = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}], "edges": []}
+    BEFORE = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
+    AFTER = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}], "edges": []}
     PREV_OPS = [{"op": "update_node", "id": "A", "patch": {"content": "新"}, "reason": "修改"}]
 
     def _run(self, instruction, previous_ops=None, previous_snapshot=None, snapshot=None, **kw):
@@ -2588,9 +2588,9 @@ class HarnessUndoShortInstructionGateTest(unittest.TestCase):
         """
         neighbors = 40
         before = {"nodes": [
-            {"id": "A", "kind": "knowledge", "label": "甲", "content": "a"},
-            {"id": "B", "kind": "knowledge", "label": "乙", "content": "b"},
-        ] + [{"id": f"n{i}", "kind": "knowledge", "label": f"邻{i}", "content": "c"}
+            {"id": "A", "kind": "human_note", "label": "甲", "content": "a"},
+            {"id": "B", "kind": "human_note", "label": "乙", "content": "b"},
+        ] + [{"id": f"n{i}", "kind": "human_note", "label": f"邻{i}", "content": "c"}
              for i in range(neighbors)],
             "edges": [{"key": f"A:out-0->n{i}:in-0", "from": "A", "to": f"n{i}"}
                       for i in range(neighbors)] +
@@ -2625,7 +2625,7 @@ class HarnessConsistencyTest(unittest.TestCase):
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角"},
             ],
             "edges": [
@@ -2640,7 +2640,7 @@ class HarnessConsistencyTest(unittest.TestCase):
         from harness.selfcheck import check_snapshot_consistency
 
         snapshot = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}],
             "edges": [
                 {"key": "A:out-0->X:in-0", "from": "A", "to": "X", "relation": "导出"},
             ],
@@ -2657,9 +2657,9 @@ class HarnessConsistencyTest(unittest.TestCase):
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
-                {"id": "B", "kind": "knowledge", "label": "极限"},
-                {"id": "C", "kind": "knowledge", "label": "连续"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "B", "kind": "human_note", "label": "极限"},
+                {"id": "C", "kind": "human_note", "label": "连续"},
             ],
             "edges": [{"key": "A:out-0->B:in-0", "from": "A", "to": "B", "relation": "依赖"}],
         }
@@ -2668,13 +2668,15 @@ class HarnessConsistencyTest(unittest.TestCase):
         orphan = [item for item in result["issues"] if item["type"] == "orphan"]
         self.assertEqual([item["node_id"] for item in orphan], ["C"])
 
-    def test_duplicate_label_and_module(self):
+    def test_duplicate_module(self):
+        # 2026-10-23 知识点节点退役：同名知识卡片的 duplicate_label 体检项随节点删除，
+        # 这里只剩模块重复与孤儿两类
         from harness.selfcheck import check_snapshot_consistency
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
-                {"id": "B", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
+                {"id": "B", "kind": "human_note", "label": "导数"},
                 {"id": "M1", "kind": "module", "module_key": "physics", "label": "物理视角"},
                 {"id": "M2", "kind": "module", "module_key": "physics", "label": "物理视角"},
             ],
@@ -2682,7 +2684,7 @@ class HarnessConsistencyTest(unittest.TestCase):
         }
         result = check_snapshot_consistency(snapshot)
         types = [item["type"] for item in result["issues"]]
-        self.assertIn("duplicate_label", types)
+        self.assertNotIn("duplicate_label", types)
         self.assertIn("duplicate_module", types)
         self.assertIn("orphan", types)
 
@@ -2698,7 +2700,7 @@ class HarnessConsistencyTest(unittest.TestCase):
         client = TestClient(app)
         resp = client.post("/api/harness/graph/health", json={
             "snapshot": {
-                "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+                "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}],
                 "edges": [{"key": "A:out-0->X:in-0", "from": "A", "to": "X"}],
             }
         })
@@ -2723,7 +2725,7 @@ class HarnessExpandCompletionTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "为导数生成进阶学习链",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -2750,7 +2752,7 @@ class HarnessExpandCompletionTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}, {"id": "B", "kind": "knowledge", "label": "极限"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}, {"id": "B", "kind": "human_note", "label": "极限"}], "edges": []},
                 "为导数和极限都生成进阶学习链",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -2823,8 +2825,8 @@ class HarnessToolBatchFallthroughTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"},
-                           {"id": "B", "kind": "knowledge", "label": "极限"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"},
+                           {"id": "B", "kind": "human_note", "label": "极限"}], "edges": []},
                 "把这两个知识点改准确些",
                 model=self.MODEL,
                 mode="tools",
@@ -2869,7 +2871,7 @@ class HarnessToolBatchFallthroughTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "改准确些",
                 model=self.MODEL,
                 mode="tools",
@@ -2898,7 +2900,7 @@ class HarnessNodeIdAliasTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "改一下",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 mode="json",
@@ -2912,7 +2914,7 @@ class HarnessNodeIdAliasTest(unittest.TestCase):
         from harness.core import build_next_snapshot
 
         result = build_next_snapshot(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             [{"op": "create_node", "temp_id": "e1", "kind": "ai_eval", "label": "评价", "reason": "绕过"}],
         )
         self.assertEqual(result["status"], "invalid")
@@ -2953,7 +2955,7 @@ class HarnessApplyPhaseGuardTest(unittest.TestCase):
 
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "E1", "kind": "ai_eval", "label": "对「导数」的建议", "target_node_id": "A", "suggestion": "改内容"},
             ],
             "edges": [{"key": "A:out-0->E1:in-0", "from": "A", "to": "E1", "relation": "评价"}],
@@ -2980,7 +2982,7 @@ class HarnessPlaceholderContentTest(unittest.TestCase):
 
         long_content = "这是一段非常长的正文" * 20
         result = build_next_snapshot(
-            {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+            {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
             [{"op": "create_node", "temp_id": "n1", "kind": "module", "module_key": "physics", "label": "物理视角", "content": long_content, "reason": "新增"}],
         )
         self.assertEqual(result["status"], "ok", result["errors"])
@@ -3073,7 +3075,7 @@ class HarnessAnchorAddWarningTest(unittest.TestCase):
     def _snapshot(self):
         return {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "C", "kind": "module", "module_key": "physics", "label": "物理视角"},
             ],
             "edges": [
@@ -3121,7 +3123,7 @@ class ReasoningStripTest(unittest.TestCase):
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             return asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 instruction,
                 model={"provider": "opencode", "model": "m", "base_url": "https://x", "api_key": ""},
                 mode=mode, self_check="off",
@@ -3219,10 +3221,10 @@ class FocusSubgraphTest(unittest.TestCase):
         from harness.review import _focus_subgraph
         snap = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "B", "kind": "module", "module_key": "physics", "label": "物理视角"},
-                {"id": "C", "kind": "knowledge", "label": "极限"},
-                {"id": "D", "kind": "knowledge", "label": "远节点"},
+                {"id": "C", "kind": "human_note", "label": "极限"},
+                {"id": "D", "kind": "human_note", "label": "远节点"},
                 {"id": "E", "kind": "ai_eval", "label": "AI 评价"},
             ],
             "edges": [
@@ -3244,7 +3246,7 @@ class FocusSubgraphTest(unittest.TestCase):
 
     def test_focus_subgraph_none_without_focus(self):
         from harness.review import _focus_subgraph
-        snap = {"nodes": [{"id": "A", "kind": "knowledge"}], "edges": []}
+        snap = {"nodes": [{"id": "A", "kind": "human_note"}], "edges": []}
         self.assertIsNone(_focus_subgraph(snap, []))
 
 
@@ -3253,7 +3255,7 @@ class QuizWeakSnapshotPromptTest(unittest.TestCase):
 
     def _snapshot(self):
         return {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "简谐运动"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "简谐运动"}],
             "edges": [],
             "quiz_weak": [
                 {"title": "等时性", "wrong": 2, "mastery": 40, "sessionId": "sess_x"},
@@ -3346,7 +3348,7 @@ class ContinentSharedSnapshotPromptTest(unittest.TestCase):
 
     def _snapshot(self):
         return {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "阻尼振动"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "阻尼振动"}],
             "edges": [],
             "continent_shared": [
                 {"label": "振动", "kind": "title", "my_title": "阻尼振动",
@@ -3590,7 +3592,7 @@ class HarnessSessionBucketTest(unittest.TestCase):
                 app = FastAPI()
                 app.include_router(router, prefix="/api/harness")
                 client = TestClient(app)
-                snapshot = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []}
+                snapshot = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []}
                 with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
                     resp = client.post("/api/harness/graph/review", json={
                         "snapshot": snapshot, "instruction": "评价一下", "session_id": "phi_api",
@@ -3622,7 +3624,7 @@ class HarnessPresetPhaseTest(unittest.TestCase):
 
     def setUp(self):
         self.snapshot = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数"}],
             "edges": [],
             "user_recipes": [
                 {"id": "recipe-1", "name": "错题复盘", "base_kind": "module",
@@ -3822,7 +3824,7 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         连线条目 fromPort/toPort、user_recipes 条目 inputs；垃圾/空值静默剥除。"""
         snapshot = {
             "nodes": [
-                {"id": "A", "kind": "knowledge", "label": "导数"},
+                {"id": "A", "kind": "human_note", "label": "导数"},
                 {"id": "M", "kind": "module", "label": "错题本",
                  "inputs": ["题目", "错因", "  ", None, "超长标签" * 5] + ["多余口%d" % i for i in range(10)]},
             ],
@@ -3848,11 +3850,11 @@ class HarnessPresetPhaseTest(unittest.TestCase):
         self.assertEqual(edge["toPort"], "in-0")
         self.assertEqual(normalized["user_recipes"][0]["inputs"], ["题目", "错因"])
         # inputs 非列表（旧数据/脏数据）→ 整字段剥除，不带键
-        bare = normalize_snapshot({"nodes": [{"id": "B", "kind": "knowledge", "inputs": "题目"}]})
+        bare = normalize_snapshot({"nodes": [{"id": "B", "kind": "human_note", "inputs": "题目"}]})
         self.assertNotIn("inputs", bare["nodes"][0])
         # 连线缺端口时回落默认 out-0/in-0（既有口径，防回归）
         default_edge = normalize_snapshot({"nodes": [
-            {"id": "A", "kind": "knowledge"}, {"id": "B", "kind": "knowledge"}],
+            {"id": "A", "kind": "human_note"}, {"id": "B", "kind": "human_note"}],
             "edges": [{"from": "A", "to": "B"}]})["edges"][0]
         self.assertEqual(default_edge["fromPort"], "out-0")
         self.assertEqual(default_edge["toPort"], "in-0")
@@ -3898,11 +3900,11 @@ class HarnessChatPhaseTest(unittest.TestCase):
             seen["system"] = messages[0]["content"]
             seen["tool_choice"] = tool_choice
             # 红线失效假设：模型仍输出图操作 JSON——服务端保险丝必须清空
-            return {"content": '{"summary":"已添加节点","operations":[{"op":"create_node","temp_id":"t1","kind":"knowledge","label":"X"}]}', "tool_calls": []}
+            return {"content": '{"summary":"已添加节点","operations":[{"op":"create_node","temp_id":"t1","kind":"human_note","label":"X"}]}', "tool_calls": []}
 
         with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
             result = asyncio.run(review_mod.review_graph(
-                {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数"}], "edges": []},
+                {"nodes": [{"id": "A", "kind": "human_note", "label": "导数"}], "edges": []},
                 "帮我在图上加一个节点",
                 model={"provider": "opencode", "model": "mimo-v2.5-free", "base_url": "https://opencode.ai/zen/v1", "api_key": ""},
                 phase="chat",
@@ -3927,10 +3929,10 @@ class HarnessChatPhaseTest(unittest.TestCase):
             return {"content": "", "tool_calls": []}
 
         snapshot = {
-            "nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "新"}],
+            "nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "新"}],
             "edges": [],
         }
-        previous = {"nodes": [{"id": "A", "kind": "knowledge", "label": "导数", "content": "原"}], "edges": []}
+        previous = {"nodes": [{"id": "A", "kind": "human_note", "label": "导数", "content": "原"}], "edges": []}
         for locked in ("preset", "chat"):
             with self.subTest(phase=locked):
                 with unittest.mock.patch.object(review_mod, "_call_model", new=fake_call):
@@ -3954,7 +3956,7 @@ class OperationsLimitTest(unittest.TestCase):
 
     def _ops(self, count):
         return [
-            {"op": "create_node", "temp_id": f"t{i}", "kind": "knowledge",
+            {"op": "create_node", "temp_id": f"t{i}", "kind": "human_note",
              "label": f"节点{i}", "reason": "批量"}
             for i in range(count)
         ]

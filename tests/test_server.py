@@ -1295,15 +1295,6 @@ class ConceptGroundingTest(unittest.TestCase):
         self.assertIn("胡克定律", by_title)
         self.assertEqual(by_title["胡克定律"]["via"], "formula")
 
-    def test_explicit_canvas_edge_wins(self):
-        """显式边（画布联系线）优先于结构边，并带上用户写的关系说明。"""
-        data = concept_mod.build_grounding(
-            self._fixture(), ["damped"],
-            pairs=[("damped", "shm", "小阻尼近似"), ("damped", "hooke", "")])
-        first = data["one"][0]
-        self.assertEqual(first["via"], "explicit")
-        self.assertEqual(first["relation"], "小阻尼近似")
-
     def test_self_fallback_when_no_prerequisite(self):
         """第 3 级：没有先导可推时只带概念自身（净增益，不硬凑）。"""
         items = {"solo": {"id": "solo", "title": "熵", "formulas": [],
@@ -1358,29 +1349,6 @@ class ConceptGroundingTest(unittest.TestCase):
                              concept_mod.CONCEPT_BLOCK_MAX_TOKENS)
         self.assertLessEqual(len(text.split("\n")),
                              3 + concept_mod.ONESHOT_LIMIT + 1 + concept_mod.TWOSHOT_LIMIT)
-
-    def test_explicit_pairs_reads_graph_state(self):
-        """显式边从 KV 的 graph:{session} 读；模块气泡 nodeId 不算知识点节点。"""
-        with tempfile.TemporaryDirectory() as td:
-            kv_path = Path(td) / "kv_store.json"
-            storage_mod._write_json(kv_path, {
-                "graph:sess_cur": {
-                    "customNodes": [
-                        {"id": "knowledge-custom-1", "kind": "knowledge", "knowledgeKey": "shm"},
-                        {"id": "knowledge-custom-2", "kind": "knowledge", "knowledgeKey": "hooke"},
-                        {"id": "math-custom-9", "kind": "module"},
-                    ],
-                    "connections": [
-                        {"from": "knowledge-custom-1", "to": "knowledge-custom-2",
-                         "relation": "线性回复力"},
-                        {"from": "math-custom-9", "to": "knowledge-custom-1"},
-                    ],
-                },
-            })
-            self.assertEqual(concept_mod.explicit_pairs("sess_cur", kv_path=kv_path),
-                             [("shm", "hooke", "线性回复力")])
-            self.assertEqual(concept_mod.explicit_pairs("sess_other", kv_path=kv_path), [])
-
 
 if __name__ == "__main__":
     unittest.main()
