@@ -944,8 +944,10 @@ check('graph-continent: v8.11 远景短名（纯函数封顶 / 空名兜底 / �
   if (short(null, 6) !== '未命名画布') throw new Error('null 兜底');
   if (short('  带空格  ', 6) !== '带空格') throw new Error('未 trim');
   const src = readContinentSrc();
-  if ((src.match(/continent-cluster-title-short/g) || []).length !== 2) {
-    throw new Error('短名 span 没在两个岛牌分支都接上');
+  // 2026-10-23 L1 起岛牌徽标分支合并为单份 headHtml（neutral 岛也进同一模板），
+  // 短名 span 只出现一次；「双份 DOM」指全名+短名两份，不是两个分支各一份
+  if ((src.match(/continent-cluster-title-short/g) || []).length !== 1) {
+    throw new Error('短名 span 没接进（唯一的）岛牌模板');
   }
   if (src.indexOf('CONTINENT_HORIZON_NAME_CHAR_W') < 0 || src.indexOf('horizonCap') < 0) {
     throw new Error('远景名宽预算没接进渲染');

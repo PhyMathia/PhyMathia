@@ -103,7 +103,9 @@ async def _json_get_response(request: Request, path, transform, cache_key=None):
 # 按全部输入文件的指纹缓存整份结果：knowledge/sessions/KV 全层（kv_layer_stats）
 # /向量缓存（embedding._cache_path）任一落盘即改指纹，缓存自然失效，无需主动清。
 # 改大陆布局算法或内置族表口径时 bump 版本号，防旧结果滞留。
-_CONTINENT_CACHE_VERSION = 1
+# v2（2026-10-23 L1/L2）：岛级弃权（domainMargin/domainConsensus/三信号闸门）＋
+# 内置族表新增「材料力学」——两者都改投影产物口径，旧缓存须整体作废。
+_CONTINENT_CACHE_VERSION = 2
 _continent_result_cache: dict = {}   # {account: (sig, result)}
 _CONTINENT_RESULT_CACHE_MAX = 8      # 按账号一格，超限整体清（防长跑膨胀）
 

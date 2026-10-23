@@ -2364,4 +2364,43 @@ check('graph-continent: T304 缩放分速（快速路径只写 transform，档�
   }
   return true;
 });
+
+check('graph-continent: L1 岛级弃权前端面（未归类徽标＋候选 tooltip＋图例未归类列＋指派入口）', () => {
+  const src = readContinentSrc();
+  // 灰岛渲染分支：neutral 岛（无归属/弃权）不再空白——岛牌给「未归类」徽标，
+  // tooltip 摊开后端照常下发的候选；点开仍走 data-domain-sid → _continentDomainMenu
+  if (!src.includes('>未归类</button>')) throw new Error('岛牌缺「未归类」文案');
+  if (!src.includes('证据不成立，候选：')) throw new Error('候选 tooltip 文案缺失');
+  if (!src.includes('is-neutral')) throw new Error('未归类徽标缺中性样式类');
+  if (!/is-unsure is-neutral/.test(src)) throw new Error('未归类徽标应复用 is-unsure 虚线口径');
+  // 图例：待确认按钮把未归类岛计入；弹层有「未归类（候选）」一节与指派海域直达钮
+  if (!src.includes('座岛（候选）')) throw new Error('图例弹层缺未归类（候选）一节');
+  if (!src.includes('data-unclass-sid')) throw new Error('弹层缺指派海域直达钮');
+  if (!src.includes('pending.length + unclassified.length')) throw new Error('待确认计数没并入未归类岛');
+  if (src.indexOf('未归类 ') < 0) throw new Error('图例脚注缺未归类提示');
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.continent-domain-badge.is-neutral')) throw new Error('未归类徽标样式缺失');
+  return true;
+});
+
+check('graph-continent: L2 材料力学族前端面（族表编辑行渲染新族＋⚓ 折力学海）', () => {
+  // 行渲染纯函数直接喂内置新族：族表弹层每行由它生成——新族能在编辑界面出现
+  // 依赖服务端 families_view（pytest 侧 MaterialsMechanicsFamilyTest 钉），这里钉
+  // 行模板对新族不做任何特殊假设＋⚓ 徽标显示折入的「力学」海
+  const row = sandbox._continentFamilyRowHtml(
+    { canonical: '材料力学', terms: ['杨氏模量', '泊松比', '胡克定律'], source: 'builtin' },
+    { 材料力学: '力学' }, {});
+  if (row.indexOf('data-family-canonical=') < 0) throw new Error('族行缺 canonical 锚');
+  // 词条预览经 escapeHtml（沙箱里走 DOM 返回空串），与 v8.14 check 同口径只断结构
+  if (row.indexOf('data-family-sea=') < 0) throw new Error('族行缺归属入口锚');
+  if (row.indexOf('⚓') < 0) throw new Error('族行缺归属徽标');
+  // 指派菜单用海域口径名单（seaList）——材料力学折进力学后菜单里出现的是「力学」
+  if (!srcIncludesSeaList()) throw new Error('指派菜单没换海域口径');
+  return true;
+});
+
+function srcIncludesSeaList() {
+  const src = readContinentSrc();
+  return src.includes('((data.seaList && data.seaList.length) ? data.seaList : (data.domainList || [])).slice()');
+}
 }

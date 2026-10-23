@@ -148,6 +148,56 @@ class FoldRouteTest(unittest.TestCase):
         self.assertNotIn("电磁学", out["domainList"])
 
 
+class SeaLevelAbstainTest(unittest.TestCase):
+    """L1 岛级弃权（2026-10-23 计划）：margin/consensus 按**海域**算，不是细族。
+
+    同一座岛两张卡各只认一个细族（电容→静电场、自感→电磁感应）：细族口径 50:50
+    平局该弃权；折进「电磁学」后 consensus/margin 全满该保留——折叠改变判定结论
+    本身就是「按海域算」的证据。
+    """
+
+    def test_same_sea_split_kept_identity_split_abstains(self):
+        items = {
+            "k1": _item("k1", "sess_x", "电容的定义", created=1),
+            "k2": _item("k2", "sess_x", "自感与互感", created=2),
+        }
+        sess = {"sess_x": {"id": "sess_x", "title": "随手记", "sessionId": "p1", "updatedAt": 1}}
+        plain = build_continent(items, sess)["clusters"][0]
+        folded = build_continent(items, sess, sea_map=FOLD)["clusters"][0]
+        self.assertIsNone(plain["domain"], "细族 50:50 平局该弃权")
+        self.assertEqual(plain["domainMargin"], 0.0)
+        self.assertEqual(folded["domain"], "电磁学")
+        self.assertEqual(folded["domainMargin"], 1.0)
+        self.assertEqual(folded["domainConsensus"], 1.0)
+
+
+class MaterialsMechanicsFamilyTest(unittest.TestCase):
+    """L2（2026-10-23 分类质量计划 / backlog T347）：材料力学细族进表、折进力学海。
+
+    混词护栏：术语全词收——「泊松比」只属材料力学，「泊松分布」不许把卡带进材料力学。
+    """
+
+    def test_terms_hit_only_materials_family(self):
+        prepared = family.prepare_families(family.BUILTIN_FAMILIES)
+        self.assertEqual(family.match_families("泊松比", prepared), ["材料力学"])
+        self.assertNotIn("材料力学", family.match_families("泊松分布", prepared))
+        for title in ("杨氏模量与弹性模量", "正应力与正应变", "切应力与切应变",
+                      "胡克定律", "弯曲与扭转", "弯矩与惯性矩", "强度理论", "屈服"):
+            self.assertIn("材料力学", family.match_families(title, prepared),
+                          "标题该命中材料力学：%s" % title)
+
+    def test_materials_folds_into_mechanics_sea(self):
+        fold = family.resolve_sea_map(None, [f["canonical"] for f in family.BUILTIN_FAMILIES])
+        self.assertEqual(fold["材料力学"], "力学", "材料力学必须折进力学海（不新增海域）")
+
+    def test_family_view_lists_materials(self):
+        view = family.families_view(None)
+        fam = next((f for f in view["families"] if f["canonical"] == "材料力学"), None)
+        self.assertIsNotNone(fam, "族表编辑视图（/api/families）该显示材料力学")
+        self.assertEqual(fam["source"], "builtin")
+        self.assertGreaterEqual(len(fam["terms"]), 18)
+
+
 class SeaKvRoutingTest(unittest.TestCase):
     """continent_seas 与族表同住 meta/continent.json（备份导入自动带走）。"""
 

@@ -4425,6 +4425,17 @@
   color: var(--text-secondary);
   background: rgba(128, 132, 148, 0.1);
 }
+/* L1（2026-10-23）未归类徽标：无归属/弃权岛的中性灰——不挂任何海域色相 */
+.continent-domain-badge.is-neutral {
+  border-color: rgba(128, 132, 148, 0.45);
+  color: var(--text-secondary);
+  background: rgba(128, 132, 148, 0.08);
+}
+.continent-domain-badge.is-neutral:hover { background: rgba(128, 132, 148, 0.18); }
+[data-theme="light"] .continent-domain-badge.is-neutral {
+  border-color: rgba(100, 104, 120, 0.4);
+  background: rgba(100, 104, 120, 0.08);
+}
 .continent-domain-dot {
   flex: 0 0 auto;
   width: 8px;

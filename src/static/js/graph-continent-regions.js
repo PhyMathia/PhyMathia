@@ -32,6 +32,12 @@ function _continentRenderLegend(regionInfo, data) {
   const regions = (regionInfo && regionInfo.regions) || [];
   const pending = (regionInfo && regionInfo.pending) || [];
   const totalIslands = ((data && data.clusters) || []).length;
+  // L1（2026-10-23）未归类（弃权）岛：domain=null 但 domains 带候选——图例要给出
+  // 「候选是什么」的答案面与一键指派入口（「地图不给我答案了」的缓解）
+  const clusterBySid = {};
+  ((data && data.clusters) || []).forEach(c => { clusterBySid[c.sessionId] = c; });
+  const unclassified = ((regionInfo && regionInfo.neutral) || [])
+    .map(sid => clusterBySid[sid]).filter(c => c && (c.domains || []).length);
   // T286：散岛数＝总岛 − 板上岛（单岛领域/中性/待确认都在板上之外）。有散岛时图例
   // 必须亮着——「海域在哪」的答案面常驻视口左下，滚到散岛区的人才看得到；此前
   // regions/pending 双空即 hide，全单岛领域时答案面整个隐身（2026-10-11 用户实踩）
@@ -82,6 +88,10 @@ function _continentRenderLegend(regionInfo, data) {
     footBits.push('低置信 ' + pending.length + '/' + totalIslands + '（' + pendingRatio +
       '%）——占比高说明领域名单或词表该补了');
   }
+  if (unclassified.length) {
+    footBits.push('未归类 ' + unclassified.length + ' 座岛——证据不成立时不硬贴标签，' +
+      '点「待确认」看候选并一键指派');
+  }
   if (shareHint) footBits.push(shareHint);
   // v8 纠正信号可见（缺失要可见）：记了几笔在图例照报，族表弹层里可清空
   if (_continentCorrectionCount > 0) {
@@ -98,8 +108,9 @@ function _continentRenderLegend(regionInfo, data) {
       (regions.length
         ? '<button class="continent-legend-locate" data-locate title="把镜头飞到岛上最多的那片海域（海域板都在这片大陆上，只是滚出视野了）">海域在哪</button>'
         : '') +
-      (pending.length
-        ? '<button class="continent-legend-pending" data-pending>待确认 ' + pending.length + ' 座岛</button>'
+      (pending.length || unclassified.length
+        ? '<button class="continent-legend-pending" data-pending>待确认 ' +
+          (pending.length + unclassified.length) + ' 座岛</button>'
         : '') +
     '</div>' +
     (collapsed ? '' :
@@ -566,10 +577,18 @@ async function _continentApplyRegionColor(key, hue, before, paint) {
 
 // 待确认清单（低置信岛）：每行「岛名 → 最优猜测（置信度）」+ 快捷指派——「不确定也
 // 要可见」的落点，机器不确定的事交给人一锤定音。v7.1b 起，Φ 归类跑出的建议（新领域
-// 提名 / 归并组）也落在这里等确认——模型只建议，落笔权永远在用户
+// 提名 / 归并组）也落在这里等确认——模型只建议，落笔权永远在用户。
+// L1（2026-10-23）起加「未归类（候选）」一节：弃权岛（domain=null）把候选摊开列出，
+// 每座岛带「指派海域」直达钮——与低置信岛共用 _continentDomainMenu/_continentAssignRegion。
 function _continentPendingPopover(ev) {
   const info = _continentRegionInfo || {};
   const pending = info.pending || [];
+  const clusterBySid = {};
+  ((_continentData && _continentData.clusters) || []).forEach(c => {
+    clusterBySid[c.sessionId] = c;
+  });
+  const unclassified = (info.neutral || []).map(sid => clusterBySid[sid])
+    .filter(c => c && (c.domains || []).length);
   const esc = _continentEsc;
   const rows = pending.map(p =>
     '<div class="continent-pop-row">' +
@@ -577,6 +596,14 @@ function _continentPendingPopover(ev) {
     ' <span class="continent-pop-reason">' + esc(p.domain) + '（' +
     Math.round((Number(p.conf) || 0) * 100) + '%）</span></span>' +
     '<button class="continent-pop-btn is-quiet" data-pending-sid="' + esc(p.sid) + '">指派领域</button>' +
+    '</div>').join('');
+  const unclassRows = unclassified.map(c =>
+    '<div class="continent-pop-row">' +
+    '<span class="continent-pop-row-text">' + esc(c.title || c.sessionId) +
+    ' <span class="continent-pop-reason">候选：' + (c.domains || []).slice(0, 2).map(d =>
+      esc(((d && d.name) || '?') + ' ' + Math.round((Number(d && d.p) * 100) || 0) + '%')
+    ).join(' · ') + '</span></span>' +
+    '<button class="continent-pop-btn is-quiet" data-unclass-sid="' + esc(c.sessionId) + '">指派海域</button>' +
     '</div>').join('');
   const sug = _continentGateSuggestions;
   let sugHtml = '';
@@ -593,10 +620,18 @@ function _continentPendingPopover(ev) {
       : '';
     sugHtml = '<div class="continent-pop-title" style="margin-top:6px">Φ 的建议（待你确认）</div>' + mergeRows + newRows;
   }
+  const unclassHtml = unclassified.length
+    ? '<div class="continent-pop-title" style="margin-top:6px">未归类 ' + unclassified.length +
+      ' 座岛（候选）</div>' +
+      '<div class="continent-pop-desc">这些岛的证据不成立（份额/边际/一致率都不够）——机器不给名字，' +
+      '候选摊开给你看；指派后立刻上色（Ctrl+Z 可撤销），也可对它们跑一次「Φ 归类」。</div>' +
+      unclassRows
+    : '';
   const html =
-    '<div class="continent-pop-title">待确认 ' + pending.length + ' 座岛</div>' +
-    '<div class="continent-pop-desc">这些岛的领域归属置信度低于 40%——机器拿不准的，你一锤定音（指派后进对应海域、Ctrl+Z 可撤销）。</div>' +
-    (rows || '<div class="continent-pop-desc">暂时没有待确认的岛。</div>') +
+    '<div class="continent-pop-title">待确认 ' + (pending.length + unclassified.length) + ' 座岛</div>' +
+    '<div class="continent-pop-desc">低置信岛的领域归属置信度低于 40%——机器拿不准的，你一锤定音（指派后进对应海域、Ctrl+Z 可撤销）。</div>' +
+    (rows || '<div class="continent-pop-desc">暂时没有低置信的岛。</div>') +
+    unclassHtml +
     sugHtml;
   const el = _continentOpenPopover(html, ev.clientX, ev.clientY);
   if (!el || !el.querySelectorAll) return;
@@ -604,6 +639,13 @@ function _continentPendingPopover(ev) {
     btn.addEventListener('pointerdown', e => {
       e.stopPropagation();
       _continentDomainMenu(e, btn.getAttribute('data-pending-sid'));
+    });
+    _kact(btn);  // T143 键盘可达
+  });
+  el.querySelectorAll('[data-unclass-sid]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      _continentDomainMenu(e, btn.getAttribute('data-unclass-sid'));
     });
     _kact(btn);  // T143 键盘可达
   });

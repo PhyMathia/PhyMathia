@@ -777,27 +777,29 @@ function _continentRender(data) {
     // 再留 2px 取整余量（真机实测 4 字名可超宽 2px 咬出省略号），岛内净宽除之＝放得下的
     // 字数，下限 2。全名/短名两份都进 DOM，远景档由 CSS 切换
     const horizonCap = Math.max(2, Math.floor((rect.w - 24) / CONTINENT_HORIZON_NAME_CHAR_W));
-    let headHtml =
-      '<div class="continent-cluster-head">' +
-        '<span class="continent-cluster-headline">' +
-          '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
-            (rect.collapsed ? '▸' : '▾') + '</span>' +
-          '<span class="continent-cluster-title continent-cluster-title-full">' + esc(rect.title) + '</span>' +
-          '<span class="continent-cluster-title continent-cluster-title-short" title="' + esc(rect.title) + '">' +
-            esc(_continentShortName(rect.title, horizonCap)) + '</span>' +
-          '<span class="continent-cluster-count">' + rect.itemCount + ' 个聚落</span>' +
-        '</span>' +
-        (rect.collapsed || !tagline ? '' :
-          '<span class="continent-cluster-sub">' + esc(tagline) + moreNote + '</span>') +
-      '</div>';
     // 领域徽标（v7.1a 手动纠正入口）：点开「归到哪个领域」清单——一步落笔写 KV。
-    // 徽标不在（neutral 无归属）就不占位；淡色/待确认档带「?」（不确定也要可见）。
-    // 徽标旁的色点 = 次要领域（混合岛，后端 domains[1] 概率够高才显示）
+    // 淡色/待确认档带「?」（不确定也要可见）。
+    // L1（2026-10-23）起 neutral（无归属/弃权）岛不再空白——「未归类」徽标＋候选
+    // tooltip（后端 domains 照常下发），点开同样是指派菜单；徽标旁的色点 = 次要领域。
     const secondaryDot = _continentSecondaryDot(cluster, data.seaList || data.domainList, regionInfo.colors);
+    let badgeHtml = '';
     if (info.key && tier !== 'neutral') {
       const region2 = regionInfo.regions.find(r => r.key === info.key);
       const badgeName = region2 ? region2.name : info.key;
-      headHtml =
+      badgeHtml = '<button class="continent-domain-badge' + (tier === 'solid' ? '' : ' is-unsure') + '"' +
+        ' data-domain-sid="' + esc(rect.sessionId) + '"' +
+        ' title="这座岛归在「' + esc(badgeName) + '」——点开可改归类（写进大陆记忆，Ctrl+Z 可撤销）">' +
+        esc(badgeName) + (tier === 'light' || tier === 'pending' ? ' ?' : '') +
+        '</button>';
+    } else {
+      const cand = ((cluster && cluster.domains) || []).slice(0, 3).map(d =>
+        ((d && d.name) || '?') + ' ' + Math.round((Number(d && d.p) * 100) || 0) + '%').join(' · ');
+      badgeHtml = '<button class="continent-domain-badge is-unsure is-neutral"' +
+        ' data-domain-sid="' + esc(rect.sessionId) + '"' +
+        ' title="未归类——' + (cand ? '证据不成立，候选：' + cand + '。' : '还没有足够的归类证据。') +
+        '点开手动指派（写进大陆记忆，Ctrl+Z 可撤销）">未归类</button>';
+    }
+    const headHtml =
       '<div class="continent-cluster-head">' +
         '<span class="continent-cluster-headline">' +
           '<span class="continent-cluster-fold" data-island-fold="' + esc(rect.sessionId) + '">' +
@@ -806,16 +808,11 @@ function _continentRender(data) {
           '<span class="continent-cluster-title continent-cluster-title-short" title="' + esc(rect.title) + '">' +
             esc(_continentShortName(rect.title, horizonCap)) + '</span>' +
           '<span class="continent-cluster-count">' + rect.itemCount + ' 个聚落</span>' +
-          '<button class="continent-domain-badge' + (tier === 'solid' ? '' : ' is-unsure') + '"' +
-            ' data-domain-sid="' + esc(rect.sessionId) + '"' +
-            ' title="这座岛归在「' + esc(badgeName) + '」——点开可改归类（写进大陆记忆，Ctrl+Z 可撤销）">' +
-            esc(badgeName) + (tier === 'light' || tier === 'pending' ? ' ?' : '') +
-          '</button>' + secondaryDot +
+          badgeHtml + secondaryDot +
         '</span>' +
         (rect.collapsed || !tagline ? '' :
           '<span class="continent-cluster-sub">' + esc(tagline) + moreNote + '</span>') +
       '</div>';
-    }
     el.innerHTML = headHtml + _continentCloudHtml(cluster, rect, tagline, esc);
     const badge = el.querySelector ? el.querySelector('.continent-domain-badge') : null;
     if (badge) {
