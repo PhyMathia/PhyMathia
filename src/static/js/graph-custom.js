@@ -690,7 +690,9 @@ async function openNodeNewWindow(nodeId) {
   document.body.appendChild(holder);
   if (typeof renderMath === 'function') { try { renderMath(holder); } catch (e) { /* 静态兜底 */ } }
   if (typeof renderMermaidInElement === 'function') { try { await renderMermaidInElement(holder); } catch (e) { /* 静态兜底 */ } }
-  if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder); } catch (e) { /* 静态兜底 */ } }
+  // force：离屏 holder 永不进视口，序列化读的是 innerHTML——srcdoc 必须无视
+  // T375 视口门控同步落定，否则预览页里 viz 全是空壳
+  if (typeof _initVizIframes === 'function') { try { _initVizIframes(holder, { force: true }); } catch (e) { /* 静态兜底 */ } }
   const contentHtml = holder.innerHTML;
   holder.remove();
   const page = _buildContentPreviewPage(title, contentHtml);

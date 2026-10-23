@@ -117,30 +117,42 @@ if (unregistered.length) {
   process.exit(1);
 }
 
-// 逐文件压缩改走 transform（T215）：bundle:false 本就没有模块解析，纯字符串压缩，
-// build() 的入口点解析与选项装配全是白付的；全部文件并发跑（esbuild JS API 的服务
-// 进程自动复用）。产物与 build() 实现逐字节一致（同 esbuild 版本），?v= 哈希不受影响。
-const results = await Promise.all(entries.map(async function (file) {
-  try {
-    const entry = resolve(jsDir, file);
-    const source = await readFile(entry, 'utf8');
-    const result = await transform(source, { minify: true, legalComments: 'none', charset: 'utf8' });
-    return { file, source, code: result.code.trim() };
-  } catch (e) {
-    throw new Error(`[build_frontend] ${file} 压缩失败: ${e.message}`);
-  }
-}));
-const chunks = [];
+// 单遍压缩整包（T378，2026-10-23）：此前逐文件压缩再拼包（T215 的并发优化）给
+// 不出 bundle 级 sourcemap——用户上报的异常栈只有 app.js:行:列，对不上源码。
+// 单遍与逐文件一样不改顶层名（顶层＝全局作用域，跨文件全局调用依赖此），语义
+// 等价；esbuild 处理 1.4MB 源在百毫秒级，无需并行。拼接处仍以「;」防上一文件
+// 以表达式收尾时被下一文件行首括号吞噬；每个源文件前加 banner 注释——minify
+// 会把它从产物剥掉，但它留在 map 的 sourcesContent 里，decode_client_error.mjs
+// 靠它把「原始行号」归到具体源文件。
+const banner = (file) => `\n/* ===== source: ${file} ===== */\n`;
+const sources = new Map();
 let totalIn = 0;
-for (const r of results) {
-  totalIn += Buffer.byteLength(r.source);
-  chunks.push(`/* ${r.file} */\n${r.code}`);
+for (const file of entries) {
+  const src = await readFile(resolve(jsDir, file), 'utf8');
+  sources.set(file, src);
+  totalIn += Buffer.byteLength(src);
 }
-
-const bundle = chunks.join('\n;\n') + '\n';
+const sourcesJoined = entries
+  .map((file) => banner(file) + sources.get(file))
+  .join('\n;\n');
+const minified = await transform(sourcesJoined, {
+  minify: true,
+  legalComments: 'none',
+  charset: 'utf8',
+  sourcemap: true,
+  sourcefile: 'app.bundle.src.js',
+});
+let bundle = minified.code.trim() + '\n';
+if (!/sourceMappingURL=app\.js\.map/.test(bundle)) bundle += '//# sourceMappingURL=app.js.map\n';
+// map 自带 sourcesContent（拼接源全文），离线解码不依赖仓内文件；sources 改成
+// 可读名（esbuild 会写 sourcefile 名，本就是它，这里显式钉死防漂移）
+const mapObj = JSON.parse(minified.map);
+mapObj.sources = ['app.bundle.src.js'];
+mapObj.sourcesContent = [sourcesJoined];
 await writeFile(outFile, bundle, 'utf8');
+await writeFile(resolve(jsDir, 'app.js.map'), JSON.stringify(mapObj), 'utf8');
 console.log(`[build_frontend] ${entries.length} files -> ${outFile}`);
-console.log(`[build_frontend] ${totalIn} bytes -> ${Buffer.byteLength(bundle)} bytes`);
+console.log(`[build_frontend] ${totalIn} bytes -> ${Buffer.byteLength(bundle)} bytes (+app.js.map ${Buffer.byteLength(JSON.stringify(mapObj))} bytes)`);
 
 // 缓存版本号自动化：按产物内容哈希更新 index.html 的 app.js?v=，
 // 避免忘记手动 bump 版本导致浏览器继续用旧包（“改了没反应”排障陷阱）

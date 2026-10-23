@@ -58,6 +58,20 @@ export function run() {
     return true;
   });
 
+  qcheck('壁纸预载两段化（T373）：启动只载所选两套、其余 idle＋开面板补齐', () => {
+    if (!uiSrc.includes('function _bgAllUrls')) throw new Error('全量清单未独立成函数（启动段不许直载全量）');
+    if (!uiSrc.includes('function _armBgPreloadRest')) throw new Error('缺两段预载调度');
+    if (!/requestIdleCallback\(/.test(uiSrc)) throw new Error('缺 idle 补载路径');
+    if (!/_armBgPreloadRest\(true\)/.test(uiSrc)) throw new Error('主题挑选器打开未立刻补齐预载');
+    const bootAt = uiSrc.indexOf('let currentTheme = _getInitialTheme();');
+    const boot = uiSrc.slice(bootAt, bootAt + 900);
+    if (!boot.includes('_preloadBgImages(')) throw new Error('启动段缺立即预载调用');
+    if (boot.includes('WALLPAPER_SETS.flatMap')) throw new Error('启动段不得全量预载（T373 整改点：全量 848KB 占首屏传输 48%）');
+    if (!boot.includes('_armBgPreloadRest();')) throw new Error('启动段缺 idle 补载安排');
+    if (!/WALLPAPER_SETS\.find\(s => s\.id === getWallpaperId\('dark'\)\)/.test(boot)) throw new Error('立即段未按深浅两模式各自所选取图');
+    return true;
+  });
+
   qcheck('壁纸外发：单文件打包与画布导出跟随所选，viewer 包 typeof 常量兜底仍在', () => {
     if (!uhSrc.includes('getWallpaperId')) throw new Error('utopia 单文件外发未跟随所选壁纸');
     if (!geSrc.includes('typeof getWallpaperId') || !geSrc.includes('typeof WALLPAPER_SETS')) throw new Error('画布导出缺注册表尝试');

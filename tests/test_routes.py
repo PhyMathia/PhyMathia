@@ -41,6 +41,7 @@ from server import config as config_mod  # noqa: E402
 from server import profile as profile_mod  # noqa: E402
 from server import storage as storage_mod  # noqa: E402
 from server import knowledge_routes as knowledge_routes_mod  # noqa: E402  T293 大陆结果缓存打桩位
+from server import session_routes as session_routes_mod  # noqa: E402  T378 /api/log 日志打桩位
 
 
 _MISSING = object()
@@ -1494,6 +1495,36 @@ class GraphStatsBatchTest(RouteTestBase):
         self.assertEqual(
             resp.json()["stats"][sid],
             {"custom": 0, "connections": 0, "nodes": 0})
+
+
+class ClientLogRouteTest(RouteTestBase):
+    """T378 前端全局错误上报口：字段白名单＋长度截断＋非法体 400，只进日志不落盘。"""
+
+    def test_ok_fields_whitelisted_and_truncated(self):
+        with mock.patch.object(session_routes_mod.logger, "warning") as lw:
+            resp = self.client.post("/api/log", json={
+                "kind": "error", "msg": "x" * 900,
+                "src": "http://127.0.0.1:5050/js/app.js", "line": 143, "col": 5678,
+                "stack": "s" * 3000, "v": "abcd1234",
+                "href": "http://127.0.0.1:5050/", "ua": "pytest",
+                "not_in_whitelist": "dropped",
+            })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["ok"])
+        lw.assert_called_once()
+        entry = json.loads(lw.call_args[0][1])
+        self.assertEqual(entry["kind"], "error")
+        self.assertEqual(len(entry["msg"]), 500)      # msg 截 500
+        self.assertEqual(len(entry["stack"]), 2000)   # stack 截 2000
+        self.assertEqual(entry["line"], 143)
+        self.assertNotIn("not_in_whitelist", entry)   # 白名单外字段丢弃
+
+    def test_invalid_bodies_return_400(self):
+        for body in (b"not-json", b"[1,2]"):
+            resp = self.client.post(
+                "/api/log", content=body, headers={"Content-Type": "application/json"})
+            self.assertEqual(resp.status_code, 400, body)
+
 
 if __name__ == "__main__":
     unittest.main()

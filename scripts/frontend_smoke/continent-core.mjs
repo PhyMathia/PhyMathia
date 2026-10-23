@@ -10,13 +10,21 @@ export async function run() {
 // 下钻复用 switchToSession + goToKnowledgeNode，不自建切会话协议。
 
 check('graph-continent: 打包块在场且零会话键写路径', () => {
-  const marker = code.indexOf('/* graph-continent.js */');
-  if (marker < 0) throw new Error('app.js 缺少 graph-continent.js 块（build_frontend.mjs 未注册？）');
+  // T378 单遍压缩后产物不再带 /* 文件名 */ 块标记——注册与块边界改从 app.js.map
+  // 的 sourcesContent banner 取（拼接源与产物同源），内容断言语义不变。
+  const joined = JSON.parse(fs.readFileSync('src/static/js/app.js.map', 'utf8')).sourcesContent[0];
+  const banner = (f) => '/* ===== source: ' + f + ' ===== */';
+  const marker = joined.indexOf(banner('graph-continent.js'));
+  if (marker < 0) throw new Error('app.js 打包未含 graph-continent.js（build_frontend.mjs 未注册？）');
   // 2026-10-04 T36 拆分后大陆是连续六块：切片须罩住整组（graph-continent.js …
   // graph-continent-view.js 之后才算出界），单块切片会漏掉 view 里的下钻通道。
-  let end = code.indexOf('/* ', code.indexOf('/* graph-continent-view.js */') + 5);
-  if (end < 0) end = code.length;
-  const chunk = code.slice(marker, end);
+  const viewAt = joined.indexOf(banner('graph-continent-view.js'));
+  if (viewAt < 0) throw new Error('app.js 打包未含 graph-continent-view.js');
+  let end = joined.indexOf('\n/* ===== source: ', viewAt + 10);
+  if (end < 0) end = joined.length;
+  // 断言跑在剥注释后的拼接源上——旧断言跑在压缩产物上（注释已被 minify 剥掉），
+  // sourcesContent 带注释，首行设计说明里的「绝不写 phymathia_graph_」会误伤
+  const chunk = joined.slice(marker, end).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   if (chunk.indexOf('/api/continent') < 0) throw new Error('块内没有 /api/continent 拉取');
   if (/phymathia_graph_/.test(chunk)) throw new Error('大陆模块不得读写会话图键 phymathia_graph_*');
   if (chunk.indexOf('phymathia_continent_view') < 0) throw new Error('视口记忆键缺失');
@@ -1684,11 +1692,14 @@ check('graph-continent: 全屏共享把手行为（判态/进/退/切换，前�
 });
 
 check('graph-continent: 全局 F11 全屏接线（只全屏整页；透明层元素全屏露黑底，不许接大陆层）', () => {
-  const start = code.indexOf('/* ui.js */');
-  if (start < 0) throw new Error('app.js 缺 ui.js 块');
-  let end = code.indexOf('/* ', start + 5);
-  if (end < 0) end = code.length;
-  const uiChunk = code.slice(start, end);
+  // T378 单遍压缩后产物不再带 /* 文件名 */ 块标记——块边界改从 app.js.map 的
+  // sourcesContent banner 取；continentLayer 禁入断言须剥注释（防设计说明误伤）
+  const joined = JSON.parse(fs.readFileSync('src/static/js/app.js.map', 'utf8')).sourcesContent[0];
+  const start = joined.indexOf('/* ===== source: ui.js ===== */');
+  if (start < 0) throw new Error('app.js 打包未含 ui.js');
+  let end = joined.indexOf('\n/* ===== source: ', start + 10);
+  if (end < 0) end = joined.length;
+  const uiChunk = joined.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   if (uiChunk.indexOf('F11') < 0) throw new Error('ui.js 没挂全局 F11 全屏键');
   if (uiChunk.indexOf('phyToggleBrowserFullscreen') < 0) throw new Error('F11 没走 utils.js 共享把手');
   if (uiChunk.indexOf('documentElement') < 0) throw new Error('F11 缺整页目标');

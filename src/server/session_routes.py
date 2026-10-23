@@ -713,3 +713,33 @@ async def api_set_kv(key: str, request: Request):
 async def api_delete_kv(key: str, request: Request = None):
     storage.kv_delete(key, account=_account_id(request))
     return {"ok": True}
+
+
+# ====== 前端全局错误上报（T378，2026-10-23）======
+# utils.js 的全局异常兜底（window.onerror / unhandledrejection）POST 到这里：
+# 字段白名单＋长度截断后写一条 WARNING 进服务端日志（logs/server-<端口>.log，
+# 随 5MB 轮转），不落任何持久存储、无回读。本地单机应用不做鉴权；客户端已限流
+# （同错 30s 一次、单页最多 10 条），这里不再重复设闸。产物坐标（src/line/col）
+# 用 scripts/decode_client_error.mjs 解回源文件行号。
+
+_CLIENT_LOG_TEXT_FIELDS = (("kind", 40), ("msg", 500), ("src", 200), ("stack", 2000),
+                           ("v", 40), ("href", 200), ("ua", 200))
+
+
+@router.post("/api/log")
+async def api_client_log(request: Request):
+    payload = await _parse_json_object(request)  # 非法 JSON / 非 object → 400
+    entry = {}
+    for name, cap in _CLIENT_LOG_TEXT_FIELDS:
+        raw = payload.get(name)
+        if raw is not None:
+            entry[name] = str(raw)[:cap]
+    for name in ("line", "col"):
+        raw = payload.get(name)
+        if raw is not None:
+            try:
+                entry[name] = int(raw)
+            except (TypeError, ValueError):
+                continue
+    logger.warning("[client-js] %s", json.dumps(entry, ensure_ascii=False))
+    return {"ok": True}

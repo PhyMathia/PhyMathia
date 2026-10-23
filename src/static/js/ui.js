@@ -699,20 +699,43 @@ window.addEventListener('load', async () => {
 
 // ====== 深色/浅色模式 ======
 
-// Preload all background images for instant theme switch
 // 预加载并保留句柄（2026-10-01 第四轮）：翻转时若句柄已 complete，updateBgImage
 // 可与 data-theme 同帧直换壁纸。原先句柄创建后即弃，new Image() 的 complete 在
 // 同步赋 src 的当帧必为 false（真机实测翻转后 80ms 壁纸仍旧图）。
 const _bgPreloaded = new Map();
-// 预载清单走 WALLPAPER_SETS（2026-10-02 壁纸库）：每套深浅×横竖全量预载，挑选器即点即换
-[
-  ...WALLPAPER_SETS.flatMap(s => [s.dark.land, s.dark.port, s.light.land, s.light.port]),
-  '/logo.png'
-].forEach(src => {
-  const img = new Image();
-  img.src = src;
-  _bgPreloaded.set(src, img);
-});
+function _preloadBgImages(urls) {
+  urls.forEach(function (src) {
+    if (_bgPreloaded.has(src)) return;
+    const img = new Image();
+    img.src = src;
+    _bgPreloaded.set(src, img);
+  });
+}
+// T373（2026-10-23）两段预载：全量 20 张（848KB）曾是首屏传输大头（实测占 48%），
+// 而一次只用 1 张。①启动只载「深浅两模式各自所选套」的横竖共 4 张＋logo——开机
+// 首图、深浅翻转、转屏三条即时路径不变（updateBgImage 的同帧直换依赖句柄
+// complete）；②其余壁纸 idle 再补（3s 超时兜底；主题挑选器打开时立刻补齐——
+// 用户马上要浏览缩略图）。未就绪的选择走 updateBgImage 原有的「句柄未 complete
+// 则异步等载」路径，不闪底不阻塞。
+let _bgPreloadRestDone = false;
+function _bgAllUrls() {
+  // 全量清单仍走注册表（2026-10-02 壁纸库）：每套深浅×横竖，挑选器即点即换
+  return [
+    ...WALLPAPER_SETS.flatMap(s => [s.dark.land, s.dark.port, s.light.land, s.light.port]),
+    '/logo.png'
+  ];
+}
+function _armBgPreloadRest(immediate) {
+  if (_bgPreloadRestDone && !immediate) return;
+  _bgPreloadRestDone = true;
+  try {
+    if (!immediate && typeof requestIdleCallback === 'function') {
+      requestIdleCallback(function () { _preloadBgImages(_bgAllUrls()); }, { timeout: 3000 });
+    } else {
+      _preloadBgImages(_bgAllUrls());
+    }
+  } catch (e) { /* 冒烟沙箱可能没有定时器：静默 */ }
+}
 
 // 首次访问（localStorage 无值）跟随系统偏好，手动切换后以手动选择为准
 function _getInitialTheme() {
@@ -723,6 +746,15 @@ function _getInitialTheme() {
 }
 
 let currentTheme = _getInitialTheme();
+
+// T373 第一段（立即）：深浅两模式各自所选套的横竖 4 张＋logo——只覆盖
+// updateBgImage 在两条即时路径上可能请求的全部 URL；其余交给 idle 补载。
+_preloadBgImages((function () {
+  const dark = WALLPAPER_SETS.find(s => s.id === getWallpaperId('dark')) || WALLPAPER_SETS[0];
+  const light = WALLPAPER_SETS.find(s => s.id === getWallpaperId('light')) || WALLPAPER_SETS[0];
+  return [dark.dark.land, dark.dark.port, light.light.land, light.light.port, '/logo.png'];
+})());
+_armBgPreloadRest();
 
 // 主题切换窗口（2026-10-01 渐变整体删除后保留，当天再收窄为单职责）：只负责掐掉
 // 组件自有的 hover 过渡（否则翻转时各补一段迷你淡变），250ms 足够。原「窗口内摘
@@ -1059,6 +1091,7 @@ function toggleThemePicker(e) {
   _setPanelTriggerState('themePanel', willShow);
   if (willShow) {
     renderThemePanel(); // 每次打开都重画：缩略图/高亮/默认族星标跟随当前模式（同 renderModelList 时机口径）
+    _armBgPreloadRest(true); // T373：用户要浏览各套缩略图了，其余壁纸立刻补齐预载
     ['levelPanel', 'modelPanel', 'dataPanel'].forEach(id => {
       const p = document.getElementById(id);
       if (p) p.classList.remove('show');

@@ -8,7 +8,10 @@ export function run() {
 // ===== M2 检测闭环收口（quiz-relearn.js）：建议复习动作 / 同主题重测 / 重学引导 =====
 
 check('quiz-relearn：建议复习动作接线（两按钮 + 打包注册）静态断言', () => {
-  if (!code.includes('/* quiz-relearn.js */')) throw new Error('打包未注册 quiz-relearn.js');
+  // T378 单遍压缩后产物不再带 /* 文件名 */ 块标记——注册在场改从 app.js.map 的
+  // sourcesContent banner 取（拼接源与产物同源，语义不变）
+  const mapJoined = JSON.parse(fs.readFileSync('src/static/js/app.js.map', 'utf8')).sourcesContent[0];
+  if (!mapJoined.includes('/* ===== source: quiz-relearn.js ===== */')) throw new Error('打包未注册 quiz-relearn.js');
   if (!code.includes('quiz-weak-item-actions')) throw new Error('建议复习条目缺动作容器');
   if (!code.includes("quizLocateTopic('")) throw new Error('缺「定位到画布」按钮接线');
   if (!code.includes("quizRetestTopic('")) throw new Error('缺「重测同类题」按钮接线');

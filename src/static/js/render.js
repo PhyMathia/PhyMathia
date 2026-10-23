@@ -120,7 +120,9 @@ function buildVizCard(htmlContent, vizId) {
   const isTall = safe.length > 8000 || /canvas|svg|three|chart|d3/i.test(safe);
   const heightClass = isTall ? ' viz-iframe-tall' : '';
 
-  // 使用占位 iframe，通过 JS 动态设置 srcdoc 避免属性转义问题
+  // 使用占位 iframe，通过 JS 动态设置 srcdoc 避免属性转义问题。
+  // srcdoc 的写入时机由 _initVizIframes 的视口观察器门控（T375）——这里不能写
+  // loading="lazy" 自欺：该属性只约束 src 导航，对 JS 写入的 srcdoc 无效。
   return '<div class="viz-card" id="' + vizId + '">'
     + '<div class="viz-toolbar">'
     + '<span class="viz-label"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg> 交互式可视化</span>'
@@ -129,7 +131,7 @@ function buildVizCard(htmlContent, vizId) {
     + '<button class="viz-btn" onclick="copyVizCode(\'' + vizId + '\')" title="复制源码">' + UI_ICON_SVG.copy + '</button>'
     + '<button class="viz-btn" onclick="openVizNewTab(\'' + vizId + '\')" title="新标签页打开">' + UI_ICON_SVG.external + '</button>'
     + '</div></div>'
-    + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts" data-viz-id="' + vizId + '" loading="lazy"></iframe>'
+    + '<iframe class="viz-iframe' + heightClass + '" sandbox="allow-scripts" data-viz-id="' + vizId + '"></iframe>'
     + '</div>';
 }
 
@@ -526,16 +528,41 @@ window.addEventListener('message', function (e) {
 });
 
 
-// 延迟设置 srcdoc（DOM 插入后调用）
-function _initVizIframes(container) {
+// 延迟挂载 viz iframe（DOM 插入后调用）。
+// T375（2026-10-23）：loading="lazy" 拦不住 srcdoc——旧版会话恢复时全部可视化
+// 一进页面就各自执行脚本并参与首屏布局（实测 82 节点会话：4 个 iframe 共 4,475
+// 节点、脚本合计 ≈140ms，一条 466ms 长任务在恢复段）。改为 IntersectionObserver
+// 门控：iframe 进视口（rootMargin 400px 预载，同 KaTeX 观察器先例）才写 srcdoc，
+// 之前只留 data-viz-pending 占位壳（styles-panels.css 给轻提示）。序列化场景
+// （openNodeNewWindow 的离屏 holder 永不进视口）传 {force:true} 立即挂载；
+// 无 IntersectionObserver 的环境回退立即挂载，行为同旧版。全屏/复制/新标签页
+// 都走 _vizStore，不依赖 iframe 是否已挂载。
+let _vizMountObserver = null;
+const _VIZ_MOUNT_ROOT_MARGIN = '400px 0px';
+function _vizMountSrcdoc(iframe) {
+  const html = _vizStore[iframe.getAttribute('data-viz-id')];
+  if (html) iframe.srcdoc = html;
+  iframe.removeAttribute('data-viz-id');
+  iframe.removeAttribute('data-viz-pending');
+}
+function _initVizIframes(container, opts) {
   const iframes = (container || document).querySelectorAll('iframe[data-viz-id]');
-  iframes.forEach(function(iframe) {
-    const vizId = iframe.getAttribute('data-viz-id');
-    const html = _vizStore[vizId];
-    if (html) {
-      iframe.srcdoc = html;
-      iframe.removeAttribute('data-viz-id');
-    }
+  if ((opts && opts.force) || typeof IntersectionObserver !== 'function') {
+    iframes.forEach(_vizMountSrcdoc);
+    return;
+  }
+  if (!_vizMountObserver) {
+    _vizMountObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        _vizMountObserver.unobserve(en.target);
+        _vizMountSrcdoc(en.target);
+      });
+    }, { rootMargin: _VIZ_MOUNT_ROOT_MARGIN });
+  }
+  iframes.forEach(function (iframe) {
+    iframe.setAttribute('data-viz-pending', '1');
+    _vizMountObserver.observe(iframe);
   });
 }
 

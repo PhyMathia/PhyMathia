@@ -59,7 +59,7 @@ _load_env_file(ROOT_DIR / ".env")
 STATIC_DIR = BASE_DIR / "static"
 STATIC_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".html", ".md",
-    ".webp", ".css", ".js", ".woff", ".woff2", ".ttf",
+    ".webp", ".css", ".js", ".map", ".woff", ".woff2", ".ttf",
 }
 
 # 难度档文案共三份手工同步（T132 防漂移）：改这里措辞必须同步

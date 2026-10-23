@@ -992,6 +992,23 @@
     .viz-iframe.viz-iframe-tall {
       height: 520px;
     }
+    /* T375：viz iframe 视口门控的待载态——壳已挂、srcdoc 未写；:has 不可用的
+       老内核自动退化为无提示的空壳（可接受，进视口即加载） */
+    .viz-card:has(iframe[data-viz-pending]) {
+      position: relative;
+    }
+    .viz-card:has(iframe[data-viz-pending])::after {
+      content: '交互内容进入视野时加载…';
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      color: var(--text-secondary, #888);
+      font-size: var(--fs-md);
+      letter-spacing: 0.05em;
+    }
 
     /* 全屏覆盖层 */
     .viz-fullscreen-overlay {

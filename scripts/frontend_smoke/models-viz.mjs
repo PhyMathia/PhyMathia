@@ -363,4 +363,77 @@ check('models-sync（T284）：_adoptModelsConfig 采纳服务端 blob 并镜像
   sandbox.localStorage.removeItem('phymathia_models_synced_at');
   return true;
 });
+
+// T375（2026-10-23）：viz iframe 视口门控——loading="lazy" 拦不住 srcdoc（属性只
+// 管 src 导航），旧版会话恢复即全量执行全部可视化的脚本。行为用例在隔离 vm 里
+// 跑挂载段真码：观察器模式下未进视口只挂壳、进视口才写 srcdoc 并摘两属性；
+// force（离屏序列化）与无 IO 环境立即挂载。
+check('viz-mount（T375）：进视口才写 srcdoc＋force/无IO 立即挂载', () => {
+  const src = fs.readFileSync(new URL('../../src/static/js/render.js', import.meta.url), 'utf8');
+  const em = src.match(/'<iframe class="viz-iframe[\s\S]*?iframe>'/);
+  if (!em) throw new Error('找不到 viz iframe 发射串（buildVizCard 结构变了？）');
+  if (/loading=/.test(em[0])) throw new Error('iframe 发射串仍带 loading=——该属性拦不住 srcdoc，留着只会误导');
+  const gcSrc = fs.readFileSync(new URL('../../src/static/js/graph-custom.js', import.meta.url), 'utf8');
+  if (!gcSrc.includes('_initVizIframes(holder, { force: true })')) {
+    throw new Error('离屏序列化路径未走 force——holder 永不进视口，srcdoc 会永不落定');
+  }
+  const start = src.indexOf('// 延迟挂载 viz iframe');
+  const end = src.indexOf('function _ensureVizFullscreenOverlay');
+  if (start < 0 || end < 0 || end < start) throw new Error('挂载段定位失败（render.js 结构变了？）');
+  const mountCode = src.slice(start, end);
+  const mkIframe = (id) => ({
+    _attrs: { 'data-viz-id': id },
+    _srcdoc: null,
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    removeAttribute(k) { delete this._attrs[k]; },
+    set srcdoc(v) { this._srcdoc = v; },
+    get srcdoc() { return this._srcdoc; },
+  });
+  const mkCtx = (withIO) => {
+    const s = {
+      console: { log() {}, error() {} },
+      _vizStore: { viz_a: '<html>A</html>', viz_b: '<html>B</html>' },
+    };
+    if (withIO) {
+      s._ioInstances = [];
+      s.IntersectionObserver = function (cb, opts) {
+        this.cb = cb; this.opts = opts;
+        this.observe = () => {};
+        this.unobserve = () => {};
+        this.disconnect = () => {};
+        s._ioInstances.push(this);
+      };
+    }
+    s.window = s;
+    vm.createContext(s);
+    vm.runInContext(mountCode, s);
+    return s;
+  };
+  // ① 观察器模式：壳挂 data-viz-pending、不写 srcdoc；进视口写并摘两属性
+  const a = mkCtx(true);
+  const fA = mkIframe('viz_a'), fB = mkIframe('viz_b');
+  a.holder = { querySelectorAll: () => [fA, fB] };
+  vm.runInContext('_initVizIframes(holder)', a);
+  if (fA.getAttribute('data-viz-pending') !== '1' || fB.getAttribute('data-viz-pending') !== '1') throw new Error('未进视口应挂 data-viz-pending 壳');
+  if (fA.srcdoc !== null || fB.srcdoc !== null) throw new Error('未进视口不得写 srcdoc');
+  const io = a._ioInstances[0];
+  if (!io || !/400px/.test(io.opts.rootMargin)) throw new Error('观察器缺预载边距 rootMargin');
+  io.cb([{ isIntersecting: true, target: fA }]);
+  if (fA.srcdoc !== '<html>A</html>' || fA.getAttribute('data-viz-id') !== null || fA.getAttribute('data-viz-pending') !== null) throw new Error('进视口应写 srcdoc 并摘 data-viz-id/pending');
+  if (fB.srcdoc !== null) throw new Error('未进视口的 B 不该被写');
+  // ② force：序列化路径立即全量挂载
+  vm.runInContext('_initVizIframes(holder, { force: true })', a);
+  if (fB.srcdoc !== '<html>B</html>') throw new Error('force 应立即挂载 B');
+  // ③ 无 IntersectionObserver：回退立即挂载（行为同旧版，老内核/沙箱不受损）
+  const b = mkCtx(false);
+  const fC = mkIframe('viz_a');
+  b.holder = { querySelectorAll: () => [fC] };
+  vm.runInContext('_initVizIframes(holder)', b);
+  if (fC.srcdoc !== '<html>A</html>') throw new Error('无 IO 环境应回退立即挂载');
+  // 待载态提示样式在位（:has 不可用的老内核自动退化为空壳，可接受）
+  const css = fs.readFileSync('src/static/css/styles-panels.css', 'utf8');
+  if (!css.includes('.viz-card:has(iframe[data-viz-pending])::after')) throw new Error('缺待载态提示样式');
+  return true;
+});
 }

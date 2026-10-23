@@ -19,6 +19,71 @@ function toastMsg(msg, ms) {
   else showToast(msg, ms);
 }
 
+// ---------- 全局 JS 异常兜底（T378，2026-10-23）----------
+// 用户是编程外行：未捕获异常在用户侧只表现为「点了没反应」，而且收不到任何
+// 堆栈。这里统一接住：①toast 告知（文案含「异常」二字，吃 T300 报错 toast 的
+// 复制钮与悬停暂停口径）；②POST /api/log 把位置与堆栈落进服务端日志
+// （logs/server-<端口>.log，随轮转，不落任何持久存储；坐标可用
+// scripts/decode_client_error.mjs 解回源文件行号）。
+// 限流：同（消息+位置）30 秒只报一次、单页生命周期最多 10 条——rAF 里的一处
+// 错不该每帧刷屏。上报自身全程 try/catch＋fetch 失败静默：file:// 直开、离线、
+// 无服务端的外发查看器页都不许因为兜底再抛新错。
+const _ERR_GUARD_DEDUPE_MS = 30000;
+const _ERR_GUARD_MAX_REPORTS = 10;
+const _errGuardSeen = Object.create(null);
+let _errGuardReports = 0;
+function _clientAssetVersion() {
+  try {
+    const el = document.querySelector('script[src*=".js?v="]');
+    const m = el && el.src.match(/[?&]v=([0-9A-Za-z]+)/);
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+function _reportClientError(kind, msg, src, line, col, stack) {
+  try {
+    const key = kind + '|' + msg + '|' + src + ':' + line + ':' + col;
+    const now = Date.now();
+    if (_errGuardSeen[key] && now - _errGuardSeen[key] < _ERR_GUARD_DEDUPE_MS) return;
+    _errGuardSeen[key] = now;
+    if (_errGuardReports >= _ERR_GUARD_MAX_REPORTS) return;
+    _errGuardReports++;
+    const payload = {
+      kind: kind,
+      msg: String(msg || '').slice(0, 500),
+      src: String(src || '').slice(0, 200),
+      line: line || 0,
+      col: col || 0,
+      stack: String(stack || '').slice(0, 2000),
+      v: _clientAssetVersion(),
+      href: String((typeof location !== 'undefined' && location.href) || '').slice(0, 200),
+      ua: String((typeof navigator !== 'undefined' && navigator.userAgent) || '').slice(0, 200),
+    };
+    if (typeof fetch === 'function') {
+      fetch('/api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(function () {});
+    }
+    const brief = payload.msg.split('\n')[0].slice(0, 80);
+    toastMsg('页面脚本异常：' + brief + '（详情已记录）', TOAST_MS_LONG);
+  } catch (e) { /* 兜底自身绝不抛 */ }
+}
+(function _installGlobalErrorGuard() {
+  try {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    window.addEventListener('error', function (e) {
+      if (!e || (!e.message && e.target)) return;  // 资源加载失败（img/script）不算脚本异常
+      _reportClientError('error', e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack);
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      const r = e && e.reason;
+      _reportClientError('unhandledrejection', (r && r.message) || String(r || ''), '', 0, 0, r && r.stack);
+    });
+  } catch (e) { /* 冒烟沙箱等缺 window.addEventListener：静默跳过 */ }
+})();
+
 // ---------- 连线键 ----------
 // 曾经 graph.js 与 harness.js 各写一份逐字节相同的 _edgeKey。Φ 的预览态与主画布
 // 态各算一遍连线键，两份实现只要有一份漂了，「预览里看得到、应用后没了」这类
