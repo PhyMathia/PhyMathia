@@ -156,7 +156,7 @@ async function main() {
         moduleKey: '', manual: false, label: '', formula: '', source: '', content: '', status: 'done',
         summary: '', analysis: '', analysisHash: '', inputHash: '', generatedAt: 0, requirements: '',
         busy: false, generated: false, maxItems: 0, edges: [], fileId: '', fileName: '',
-        generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '', x: 0, y: 0, depth: 1,
+        generatedNodeIds: [], category: '', formulas: [], x: 0, y: 0, depth: 1,
         targetAngle: 0, isRoot: false, messageIndex: -1, pinned: false, fixedX: null, fixedY: null,
         customWidth: 320, customHeight: null, w: 0, h: 0, vx: 0, vy: 0, timestamp: now,
       }, extra);
@@ -200,7 +200,7 @@ async function main() {
       const m = { id: 'm-e2e', kind: 'module', moduleKey: 'physics', manual: false, label: '', formula: '',
         source: 'ai', content: '', status: 'empty', summary: '', analysis: '', analysisHash: '', inputHash: '',
         generatedAt: 0, requirements: '', busy: false, generated: false, maxItems: 0, edges: [], fileId: '',
-        fileName: '', generatedNodeIds: [], category: '', formulas: [], knowledgeKey: '', x: 400, y: 0,
+        fileName: '', generatedNodeIds: [], category: '', formulas: [], x: 400, y: 0,
         depth: 3, targetAngle: 0, isRoot: false, messageIndex: -1, pinned: false, fixedX: null, fixedY: null,
         customWidth: 320, customHeight: null, w: 0, h: 0, vx: 0, vy: 0, timestamp: now };
       graphView.nodes.push(m);

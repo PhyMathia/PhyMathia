@@ -1283,7 +1283,7 @@ function generateRelationNode(nodeId, opts) {
     if (typeof showToast === 'function') showToast('请先连接至少两个上游节点');
     return;
   }
-  // T280：忙则排队（同 generateKnowledgeNode），Φ 带 {fromPhi:true} 直通
+  // T280：忙则排队（同 generateBlankNode），Φ 带 {fromPhi:true} 直通
   if (!(opts && opts.fromPhi) && typeof _isActuallyBusy === 'function' && _isActuallyBusy()
       && typeof _enqueueNodeJob === 'function') {
     _enqueueNodeJob('生成联系节点', function (taskId) {
