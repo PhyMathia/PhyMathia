@@ -169,6 +169,16 @@ GATE_MIN_TOP_STRICT = 0.45  # 冠军海份额下限（≤2 卡岛）：单卡/�
 GATE_MIN_MARGIN = 0.10      # 冠军领先次名的份额差下限（错岛 0.010–0.021，正确岛最低 0.063）
 GATE_MIN_CONSENSUS = 0.50   # 卡级 top-1 落在冠军海的票占比下限（与 margin 二选一即可）
 GATE_MIN_CARDS_STRICT = 2   # 岛卡数 ≤ 此值走严判：一致率在 1–2 张卡上没有统计意义
+# ===== 三态判定（L3，2026-10-23 分类质量计划第三件之一）=====
+# 上面四个常量回答「给不给名字」，这里回答「这个名字有多硬」——两者都只看岛级呈现，
+# 不动卡级打标：三信号全过＝`solid`（实色），过弃权闸但没全过＝`light`（淡色＋「?」），
+# 弃权＝None（中性灰「未归类」）。前端把三态直接映射到既有三档视觉，不新增层级。
+# 阈值依据 §8 基准岛集 26 岛实测：17 确定 / 6 疑似 / 3 未归类——矩阵（0.526/0.167/0.667）
+# 与积分（0.58/0.404/0.75）这类「分数不高但三个信号都过」的岛该从淡色升实色；泊松
+# （0.358/0.063/0.667）靠一致率救回来的仍留疑似。同样**不进 _gate_weights()**。
+GATE_SOLID_TOP = 0.50        # 确定档：冠军海份额下限
+GATE_SOLID_MARGIN = 0.15     # 确定档：冠军领先次名的份额差下限
+GATE_SOLID_CONSENSUS = 0.60  # 确定档：卡级 top-1 落在冠军海的票占比下限
 GATE_PRIOR_WIDE = 0.8  # 宽领域先验：logit 加 log(0.8)——「宁可选窄的」从 prompt 叮嘱变算法
 GATE_WIDE_DOMAINS = frozenset({"微积分", "数学物理方法", "概率统计"})
 DOMAIN_LIST_MAX = 32  # 前端「归到哪个领域」菜单的名单上限（防脏数据撑爆 payload）
@@ -634,43 +644,70 @@ FAMILY_SUGGEST_REGROW = 2      # 被拒过的建议，证据再长出这么多�
 FAMILY_CLUSTER_SIM = 0.55       # 无主卡两两连边的相似度阈值（2026-10-12 bge 重标定：正牌同族对「正态×泊松」0.586，0.60 会漏连）
 FAMILY_CLUSTER_COHESION = 0.50  # 簇内平均两两相似度下限：链式松簇（A-B 近、B-C 近、A-C 远）不算一伙（随 SIM 同步 -0.05）
 FAMILY_CLUSTER_MIN_CARDS = 3    # 少于 3 张卡不配建大陆：孤卡/对卡的新领域证据太薄
+# L3 落地时的实测教训（2026-10-23 本机 180 卡）：判据一放宽，暧昧卡（「都像一点、都又
+# 不够像」）会靠**链式传递**连成一整片——49 张候选连成 47 卡巨簇（平均两两相似度 0.54
+# 居然过得了 0.50 的成色闸）。那不是「一个新的学科」，那是半个库。新领域候选必须是
+# 「一小撮抱团的无名卡」，所以加一条上限：超过就整体不提议（宁可漏报不可误报）。
+FAMILY_CLUSTER_MAX_CARDS = 12   # 单簇上限：跨学科的链式大簇不是新领域候选
 FAMILY_CLUSTER_MAX = 6          # 一轮最多给用户看几个候选
 FAMILY_CLUSTER_POOL_CAP = 200   # 无主卡池上限：超过（向量降级误判全库无主时）整体不聚类，有界退化
 FAMILY_CLUSTER_CARD_CLIP = 10   # 单簇证据里最多列几张卡（size 记全量，列代表）
 
 
+def _orphan_shape(row) -> str:
+    """一张**词面零命中**的卡凭什么当新族候选（L3 放宽口径，纯函数）。
+
+    返回 `'distant'` / `'ambiguous'` / `''`（不够格）：
+    - `distant`：对每个族的余弦都不过 `GATE_EMBED_FLOOR`——「哪个族都不像」，原口径；
+    - `ambiguous`：过了下限，但**与次名差 < `FAMILY_SUGGEST_MARGIN`**——「对好几个族都像
+      一点、都又不够像」。这正是 R5 的盲区：补词建议要求 margin ≥ `FAMILY_SUGGEST_MARGIN`
+      才收（`family_term_suggestions`），旧的新族发现又要求 max < floor，于是这种形状
+      两条通道都不收（材料力学岛六卡边际全 ≤0.017 的教训）。
+    两类形状按构造与补词建议**不相交**：同一张卡不可能既进补词又进新族候选。
+    """
+    vals = sorted((float(v) for v in row.values()), reverse=True) if row else []
+    if not vals or vals[0] < GATE_EMBED_FLOOR:
+        return "distant"
+    second = vals[1] if len(vals) > 1 else 0.0
+    if vals[0] - second < FAMILY_SUGGEST_MARGIN:
+        return "ambiguous"
+    return ""
+
+
 def family_cluster_suggestions(items, families, card_sims, card_vecs) -> list:
-    """新族候选（v10 第二期，纯函数）：词面零命中 + 离所有族中心都远 + 彼此抱团的卡群。
+    """新族候选（v10 第二期，纯函数）：词面零命中 + 与已知族关系「不成立」+ 彼此抱团的卡群。
 
     三道闸（与补词建议同一条纪律：机器只发现，落笔永远在用户）：
-    ① 无主——对每个族的余弦都不过 GATE_EMBED_FLOOR（补词管「像某个族」，这里管
-       「哪个族都不像」，两类候选按构造不相交）；
-    ② 抱团——无主卡之间两两余弦 ≥ FAMILY_CLUSTER_SIM 连边，连通分量成簇；
-    ③ 成色——簇 ≥ FAMILY_CLUSTER_MIN_CARDS 张、簇内平均两两相似度 ≥
+    ① 无主——词面零命中，且按 `_orphan_shape` 属于「哪个族都不像」或「都像一点、都不够像」
+       （L3 起后者也进池；前者是原口径。补词管的「像某一个族且边际清楚」仍在门外）；
+    ② 抱团——候选卡之间两两余弦 ≥ FAMILY_CLUSTER_SIM 连边，连通分量成簇；
+    ③ 成色——簇 ≥ FAMILY_CLUSTER_MIN_CARDS 张、**≤ FAMILY_CLUSTER_MAX_CARDS 张**（超过
+       是链式串联的跨学科大簇，不是新领域）、簇内平均两两相似度 ≥
        FAMILY_CLUSTER_COHESION（A-B 近、B-C 近但 A-C 远的链式松簇不算一伙）。
+    每条候选带 `reason`（`distant` 全新 / `ambiguous` 暧昧 / `mixed` 混着）与
+    `ambiguous`（簇内暧昧卡数），前端据此说清「为什么这批卡值得起个名」。
     `card_vecs` 是 {itemId: 向量}（调用方从向量缓存取，本函数只读）；
-    族表为空或向量缺席 → 空清单（查空正常路径）。无主池超过 FAMILY_CLUSTER_POOL_CAP
+    族表为空或向量缺席 → 空清单（查空正常路径）。候选池超过 FAMILY_CLUSTER_POOL_CAP
     视为向量通道异常（全库都被判无主），整体放弃本次聚类——宁可漏报不可误报。
     """
     prepared = prepare_families(families or [])
     if not prepared or not card_vecs:
         return []
     lex_map, _, _ = _item_families(items, prepared)
-    floor = GATE_EMBED_FLOOR
-    candidates = []
+    shapes = {}   # iid → 'distant' | 'ambiguous'（唯一一张卡的形状，成簇后汇总）
     for item_id, item in (items or {}).items():
         if not isinstance(item, dict) or lex_map.get(str(item_id)):
             continue
         iid = str(item_id)
-        vec = card_vecs.get(iid)
-        if not vec:
+        if not card_vecs.get(iid):
             continue
-        row = (card_sims or {}).get(iid) or {}
-        if row and max(row.values()) >= floor:
-            continue  # 有族可依（补词建议的地盘），不算无主
+        shape = _orphan_shape((card_sims or {}).get(iid) or {})
+        if not shape:
+            continue
         if not _is_concept_like_title(item.get("title")):
             continue
-        candidates.append(iid)
+        shapes[iid] = shape
+    candidates = list(shapes)
     if len(candidates) < FAMILY_CLUSTER_MIN_CARDS or len(candidates) > FAMILY_CLUSTER_POOL_CAP:
         return []
     # 无主池很小（正常几卡到几十卡），O(n²) 两两算距离有界；并查集收连通分量
@@ -691,7 +728,7 @@ def family_cluster_suggestions(items, families, card_sims, card_vecs) -> list:
     out = []
     for members in groups.values():
         n = len(members)
-        if n < FAMILY_CLUSTER_MIN_CARDS:
+        if n < FAMILY_CLUSTER_MIN_CARDS or n > FAMILY_CLUSTER_MAX_CARDS:
             continue
         pair_sum, pair_cnt = 0.0, 0
         for a, b in itertools.combinations(members, 2):
@@ -707,8 +744,11 @@ def family_cluster_suggestions(items, families, card_sims, card_vecs) -> list:
             summary = str(item.get("summary") or "").strip() if src in ("model", "manual") else ""
             cards.append({"id": iid, "title": str(item.get("title") or "")[:48],
                           "summary": summary[:60]})
+        ambiguous = sum(1 for iid in members if shapes.get(iid) == "ambiguous")
+        reason = ("distant" if not ambiguous
+                  else ("ambiguous" if ambiguous == n else "mixed"))
         out.append({"key": hashlib.sha1(",".join(members).encode("utf-8")).hexdigest()[:12],
-                    "size": n, "cards": cards})
+                    "size": n, "cards": cards, "reason": reason, "ambiguous": ambiguous})
     out.sort(key=lambda c: (-c["size"], c["key"]))
     return out[:FAMILY_CLUSTER_MAX]
 
@@ -805,6 +845,86 @@ def family_term_suggestions(items, families, card_sims, rejected=None) -> list:
         out["regrown"] = bool(old)
         results.append(out)
     return results
+
+
+# ===== L3 指派反哺（第三件，2026-10-23 分类质量计划 / D3＝推荐项 A）=====
+# 用户反复把岛指到同一个名字，说明这个名字在他的知识里是「真学科」，只是族表里没有。
+# 信号来源＝**既有的纠正日志**（KV `continent_gate_weights` 的 `log`；前端
+# `_continentRecordCorrection` 每次指派追加 `{from,to,sid,at}`，留尾 500 条）。
+# 注意：计划原文写的「KV `continent_regions` 已有 log」有误——指派覆盖（renames/assign/
+# colors）与纠正日志是两个 KV 键，日志在 gate_weights 里，这里读的是它。
+# 铁律不变「机器只建议、用户落笔」：同一个 `to` 在 ≥2 座**不同**岛上出现才开口，
+# 用户点「建成族」才写 `continent_families`（走既有族表 KV 路径）。
+REGION_PROPOSAL_MIN_ISLANDS = 2   # 同一名字被几座不同岛指过才提议（1 座可能只是一次误点）
+REGION_PROPOSAL_MAX = 3           # 一轮最多几条（再多是刷屏，先答证据最多的）
+REGION_PROPOSAL_TERMS_MAX = 8     # 提议里带的词条上限
+REGION_PROPOSAL_NAME_MAX = 16     # 名字上限（与指派菜单/族名输入框同一把尺子）
+
+
+def region_family_proposals(region_log, clusters, items, families, dismissed=None) -> list:
+    """同一目标名被 ≥2 座不同岛指过 → 提议把它变成一个族（L3 反哺，纯函数只读）。
+
+    `region_log` 收 KV `continent_gate_weights` 的整份值（`{log: [...]}`）或裸 log 列表；
+    条目形状 `{from, to, sid, at}`，脏数据一律跳过（KV 可手改）。
+    - 已存在的族（`families` 的 canonical）不再提议：补表已经接住了这批卡；
+    - 用户拒过（`dismissed`，键 `region:<名字>`）在证据没长出来之前闭嘴（与补词/
+      新族候选同一条防骚扰纪律：`islands` 数不长就永远不再提）；
+    - 词条从这些岛的卡片标题里提炼（`_suggest_term_from_title` 的卫生口径：会误伤
+      别的族的混词一律不要），**提不出词条就不提议**——空族会被 `families_from_payload`
+      整条丢掉（「没有词条的族接不住任何卡」），提示一个建不成的族等于白说。
+    返回 `[{key, name, count, islands:[{sid,title}], terms, lastAt}]`，按证据量降序。
+    """
+    entries = region_log.get("log") if isinstance(region_log, dict) else region_log
+    if not isinstance(entries, list):
+        return []
+    by_sid = {str(c.get("sessionId") or ""): c for c in (clusters or [])}
+    grouped = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = str(e.get("to") or "").strip()[:REGION_PROPOSAL_NAME_MAX]
+        sid = str(e.get("sid") or "")
+        # to=None 是「不归类」的用户决定，不是要建族的信号；已删除的岛不再算证据
+        if not name or sid not in by_sid:
+            continue
+        g = grouped.setdefault(name, {"sids": [], "lastAt": 0})
+        if sid not in g["sids"]:
+            g["sids"].append(sid)
+        try:
+            g["lastAt"] = max(g["lastAt"], int(e.get("at") or 0))
+        except (TypeError, ValueError):
+            pass
+    prepared = prepare_families(families or [])
+    canon = {f["canonical"] for f in prepared}
+    existing = set()
+    for f in prepared:
+        existing.update(f["cjk"])
+        existing.update(f["ascii"])
+    rej = dismissed if isinstance(dismissed, dict) else {}
+    out = []
+    for name, g in grouped.items():
+        if len(g["sids"]) < REGION_PROPOSAL_MIN_ISLANDS or name in canon:
+            continue
+        old = rej.get("region:" + name)
+        if isinstance(old, dict) and int(old.get("islands") or 0) >= len(g["sids"]):
+            continue
+        terms = []
+        for sid in g["sids"]:
+            for row in (by_sid.get(sid) or {}).get("items") or []:
+                item = (items or {}).get(str((row or {}).get("itemId") or "")) or {}
+                term = _suggest_term_from_title(item.get("title"), prepared,
+                                                existing, canon, name)
+                if term and term not in terms:
+                    terms.append(term)
+        if not terms:
+            continue   # 提不出词条＝建了也接不住卡（空族会被 families_from_payload 丢掉）
+        out.append({"key": "region:" + name, "name": name, "count": len(g["sids"]),
+                    "islands": [{"sid": sid,
+                                 "title": str((by_sid.get(sid) or {}).get("title") or "")[:48]}
+                                for sid in g["sids"]],
+                    "terms": terms[:REGION_PROPOSAL_TERMS_MAX], "lastAt": g["lastAt"]})
+    out.sort(key=lambda p: (-p["count"], -p["lastAt"], p["name"]))
+    return out[:REGION_PROPOSAL_MAX]
 
 
 def _term_specificity(term: str) -> float:
@@ -956,6 +1076,12 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     不满足 → domain/domainSource 清空、domainConf=0，但 domains 候选照常按 GATE_MIN_P
     下发（灰岛也要能报候选）；domainMargin/domainConsensus（3 位小数）两种结局都随行。
 
+    L3（2026-10-23）三态：留下来的岛再分两档——三个信号全过 GATE_SOLID_* 是
+    `domainTier='solid'`（确定，前端实色），否则 `'light'`（疑似，淡色＋「?」）；
+    弃权与「一条证据都没有」的岛 `domainTier=None`（未归类）。三态只给前端做映射，
+    不改 domain/domainConf 的任何口径——旧的按 conf 分档逻辑在前端保留为兜底
+    （缓存里没有 domainTier 的旧投影照旧渲染）。
+
     domainSource 归属（图例据此标「按概念族推断 / Φ 归类 / 你指定」）：对有打标的卡
     另算一份**只含本地证据**的概率（card_probs_local），对比主导领域的岛级质量——
     没有模型证据时它连主导领域都撑不起（质量不到一半、或根本为零）→ 'gate'；
@@ -984,7 +1110,7 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
         island_contrib[d] = island_contrib.get(d, 0.0) + GATE_W_ISLAND
     if not raw:
         return {"domain": None, "domains": [], "domainConf": 0.0, "domainSource": None,
-                "domainMargin": 0.0, "domainConsensus": 0.0}
+                "domainMargin": 0.0, "domainConsensus": 0.0, "domainTier": None}
     total = sum(raw.values()) or 1.0
     ranked = sorted(raw.items(), key=lambda kv: (-kv[1], kv[0]))
     top_name = ranked[0][0]
@@ -1010,11 +1136,15 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
         # 弃权：不给名字，但候选照常下发——「未归类（候选：相对论 22%、量子物理 21%）」
         return {"domain": None, "domains": domains, "domainConf": 0.0,
                 "domainSource": None, "domainMargin": derived["domainMargin"],
-                "domainConsensus": derived["domainConsensus"]}
+                "domainConsensus": derived["domainConsensus"], "domainTier": None}
+    # 三态：三信号全过才算「确定」，否则「疑似」——留给前端的只是颜色与「?」，口径不变
+    tier = ("solid" if (top_share >= GATE_SOLID_TOP and margin >= GATE_SOLID_MARGIN
+                        and consensus >= GATE_SOLID_CONSENSUS) else "light")
     return {"domain": top_name, "domains": domains,
             "domainConf": round(top_share, 3), "domainSource": src,
             "domainMargin": derived["domainMargin"],
-            "domainConsensus": derived["domainConsensus"]}
+            "domainConsensus": derived["domainConsensus"],
+            "domainTier": tier}
 
 
 def _family_entries(items: dict, clusters: list, item_session: dict, session_rank: dict,
@@ -1068,7 +1198,8 @@ def _family_entries(items: dict, clusters: list, item_session: dict, session_ran
 
 
 def build_continent(items: dict, sessions: dict = None, user_edges=None,
-                    families=None, gate=None, card_sims=None, sea_map=None) -> dict:
+                    families=None, gate=None, card_sims=None, sea_map=None,
+                    region_log=None, dismissed=None) -> dict:
     """从知识条目推导大陆投影。纯函数：无 IO、无模型调用、不修改入参。
 
     card_sims（v9 向量证据，调用方喂参）：{itemId: {领域名: 余弦相似度}}——
@@ -1100,6 +1231,11 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
     - domainList（v7）：全部领域名（族表 canonical，含 KV 扩展）——前端「归到哪个
       领域」菜单的名单来源；gate 是 KV `continent_gate` 的原始值（v7.1b Φ 打标产物，
       版本不符整批忽略）。
+
+    region_log / dismissed（L3 指派反哺，调用方喂参，本函数不读 KV）：
+    region_log 是 KV `continent_gate_weights` 的整份值或裸 log 列表（`{from,to,sid,at}`），
+    dismissed 是 `continent_family_suggestions` 里的拒绝记录。产物走 `familyProposals`
+    键（见 `region_family_proposals`）；两者都缺省 → 空清单，投影与 L2 逐字一致。
     """
     title_index = _session_title_index(sessions)
 
@@ -1306,6 +1442,9 @@ def build_continent(items: dict, sessions: dict = None, user_edges=None,
         "domainList": [f["canonical"] for f in accepted_families][:DOMAIN_LIST_MAX],
         "seaList": sea_list[:DOMAIN_LIST_MAX],
         "seaMap": dict(fold),
+        # L3 指派反哺：反复被指到同一名字的岛群 → 提议建族（机器只提议，落笔在用户）
+        "familyProposals": region_family_proposals(region_log, clusters, items,
+                                                   accepted_families, dismissed),
         # v7.1b：当前评分口径的版本指纹——前端写 gate KV 时带上它，名单/权重变了
         # 整批作废重打（版本单一来源在此，不许前端自己算）
         "gateVersion": gate_ver,

@@ -786,10 +786,14 @@ function _continentRender(data) {
     if (info.key && tier !== 'neutral') {
       const region2 = regionInfo.regions.find(r => r.key === info.key);
       const badgeName = region2 ? region2.name : info.key;
-      badgeHtml = '<button class="continent-domain-badge' + (tier === 'solid' ? '' : ' is-unsure') + '"' +
+      // L3 三态：确定档说「确定归在」，疑似/低置信档说「疑似」并把不确定的来由讲明白
+      const sure = tier === 'solid';
+      badgeHtml = '<button class="continent-domain-badge' + (sure ? '' : ' is-unsure') + '"' +
         ' data-domain-sid="' + esc(rect.sessionId) + '"' +
-        ' title="这座岛归在「' + esc(badgeName) + '」——点开可改归类（写进大陆记忆，Ctrl+Z 可撤销）">' +
-        esc(badgeName) + (tier === 'light' || tier === 'pending' ? ' ?' : '') +
+        ' title="' + (sure ? '这座岛确定归在「' : '疑似归在「') + esc(badgeName) + '」' +
+        (sure ? '' : '（份额/边际/一致率没全过门槛，名字仅供参考）') +
+        '——点开可改归类（写进大陆记忆，Ctrl+Z 可撤销）">' +
+        esc(badgeName) + (sure ? '' : ' ?') +
         '</button>';
     } else {
       const cand = ((cluster && cluster.domains) || []).slice(0, 3).map(d =>

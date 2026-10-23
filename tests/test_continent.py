@@ -30,11 +30,15 @@ from server.continent import (  # noqa: E402
     GATE_MIN_MARGIN,
     GATE_MIN_TOP,
     GATE_MIN_TOP_STRICT,
+    GATE_SOLID_CONSENSUS,
+    GATE_SOLID_MARGIN,
+    GATE_SOLID_TOP,
     _cluster_domain_row,
     _gate_weights,
     build_continent,
     normalize_user_edge_payload,
     purge_dangling_user_edges,
+    region_family_proposals,
 )
 
 S1, S2, S3 = "sess_aaa", "sess_bbb", "sess_ccc"
@@ -1113,6 +1117,178 @@ class IslandAbstainGateTest(unittest.TestCase):
         self.assertEqual((GATE_MIN_TOP, GATE_MIN_TOP_STRICT, GATE_MIN_MARGIN,
                           GATE_MIN_CONSENSUS, GATE_MIN_CARDS_STRICT),
                          (0.33, 0.45, 0.10, 0.50, 2))
+
+
+class IslandTriStateTest(unittest.TestCase):
+    """L3 三态判定（2026-10-23 分类质量计划第三件之一）：确定 / 疑似 / 未归类。
+
+    两层判断别混：L1 弃权闸门回答「给不给名字」，这里回答「这个名字有多硬」。
+    三信号（份额 top / 边际 margin / 一致率 consensus）全过 0.50/0.15/0.60 才
+    `domainTier='solid'`，过弃权闸但没全过是 `'light'`，弃权是 `None`。
+    **不动 domain/domainConf 的任何口径**——三态只是给前端的视觉映射。
+    """
+
+    @staticmethod
+    def _row(card_probs, island_fams=()):
+        iids = ["k%d" % i for i in range(len(card_probs))]
+        items = {iid: {"formulas": []} for iid in iids}
+        return _cluster_domain_row(iids, items, dict(zip(iids, card_probs)),
+                                   {}, list(island_fams))
+
+    def test_all_three_signals_pass_is_solid(self):
+        row = self._row([{"力": 0.60, "相": 0.30, "量": 0.10}] * 6)
+        self.assertEqual(row["domain"], "力")
+        self.assertEqual(row["domainTier"], "solid")
+        # 三态不改既有口径：conf 仍是冠军海份额
+        self.assertEqual(row["domainConf"], 0.6)
+
+    def test_share_just_under_solid_line_is_light(self):
+        # 份额 0.49 过弃权闸（0.33）也过了边际/一致率，但差 0.01 到不了确定档
+        row = self._row([{"力": 0.49, "相": 0.26, "量": 0.25}] * 6)
+        self.assertEqual(row["domain"], "力")
+        self.assertEqual(row["domainTier"], "light")
+        solid = self._row([{"力": 0.51, "相": 0.25, "量": 0.24}] * 6)
+        self.assertEqual(solid["domainTier"], "solid")
+
+    def test_margin_just_under_solid_line_is_light(self):
+        # 边际 0.14 vs 0.16（份额同为 0.57/0.58，一致率都是 1.0）：只差边际这一项
+        light = self._row([{"力": 0.57, "相": 0.43}] * 6)
+        self.assertEqual(light["domainTier"], "light")
+        solid = self._row([{"力": 0.58, "相": 0.42}] * 6)
+        self.assertEqual(solid["domainTier"], "solid")
+
+    def test_low_consensus_keeps_name_but_stays_light(self):
+        # 份额 0.575、边际 0.30 都够硬，但一半的卡自己把「相」排第一（一致率 0.5）
+        # → 名字照给（L1 保留），只是不敢叫「确定」
+        probs = [{"力": 0.80, "相": 0.15, "量": 0.05}] * 3 + \
+                [{"相": 0.40, "力": 0.35, "量": 0.25}] * 3
+        row = self._row(probs)
+        self.assertEqual(row["domain"], "力")
+        self.assertEqual(row["domainConsensus"], 0.5)
+        self.assertEqual(row["domainTier"], "light")
+
+    def test_abstention_and_empty_carry_no_tier(self):
+        # 弃权岛（有候选）与「一条证据都没有」的岛都必须是 None——灰岛不许有半个名字
+        abstain = self._row([{"力": 0.40, "相": 0.35, "量": 0.25}] * 3 +
+                            [{"相": 0.36, "力": 0.34, "量": 0.30}] * 4)
+        self.assertIsNone(abstain["domain"])
+        self.assertIsNone(abstain["domainTier"])
+        self.assertTrue(abstain["domains"], "弃权也要留候选")
+        empty = self._row([{}])
+        self.assertIsNone(empty["domainTier"])
+
+    def test_solid_constants_stay_out_of_gate_version(self):
+        # 与 L1 同一条纪律：三态常量只影响呈现，进 _gate_weights() 就会让 gateVersion
+        # 变、存量 Φ 打标整批作废（这是 L3 明确不付的代价）
+        polluted = {"GATE_SOLID_TOP", "GATE_SOLID_MARGIN",
+                    "GATE_SOLID_CONSENSUS"} & set(_gate_weights())
+        self.assertEqual(polluted, set())
+        self.assertEqual((GATE_SOLID_TOP, GATE_SOLID_MARGIN, GATE_SOLID_CONSENSUS),
+                         (0.50, 0.15, 0.60))
+
+
+class RegionFamilyProposalTest(unittest.TestCase):
+    """L3 指派反哺（D3＝推荐项 A）：只提议，不自动写族表。
+
+    信号来自既有纠正日志（KV `continent_gate_weights` 的 log，条目
+    `{from,to,sid,at}`）：同一个 `to` 被 ≥2 座**不同**岛指过才开口；已存在的族、
+    用户拒过的、已删除的岛、「不归类」（to=null）都不算。
+    """
+
+    SIDS = ("sess_mm", "sess_el")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.clusters = [
+            {"sessionId": "sess_mm", "title": "材料力学入门",
+             "items": [{"itemId": "k1"}]},
+            {"sessionId": "sess_el", "title": "弹性体",
+             "items": [{"itemId": "k2"}]},
+            {"sessionId": "sess_sig", "title": "信号",
+             "items": [{"itemId": "k3"}]},
+        ]
+        cls.items = {"k1": {"title": "零阶保持器"}, "k2": {"title": "冲激响应"},
+                     "k3": {"title": "泊松比"}}   # k3 标题已在族表里 → 提炼不出词条
+
+    def _log(self, *entries):
+        return list(entries)
+
+    def test_two_distinct_islands_propose_a_family(self):
+        log = self._log({"from": "光学与声学", "to": "信号与系统", "sid": "sess_mm", "at": 10},
+                        {"from": "力学", "to": "信号与系统", "sid": "sess_el", "at": 20})
+        out = region_family_proposals(log, self.clusters, self.items, [])
+        self.assertEqual(len(out), 1)
+        p = out[0]
+        self.assertEqual(p["name"], "信号与系统")
+        self.assertEqual(p["count"], 2)
+        self.assertEqual({i["sid"] for i in p["islands"]}, {"sess_mm", "sess_el"})
+        self.assertEqual(p["key"], "region:信号与系统")
+        self.assertEqual(p["lastAt"], 20)
+        # 词条从这两座岛的卡片标题里提炼（「泊松比」已属材料力学 → 不重复收）
+        self.assertEqual(sorted(p["terms"]), ["冲激响应", "零阶保持器"])
+
+    def test_one_island_or_one_decision_is_not_a_pattern(self):
+        single = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1})
+        self.assertEqual(region_family_proposals(single, self.clusters, self.items, []), [])
+        # 同一座岛被指两次仍只是一座岛（手指抖两次不算学科）
+        twice = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
+                          {"to": "信号与系统", "sid": "sess_mm", "at": 2})
+        self.assertEqual(region_family_proposals(twice, self.clusters, self.items, []), [])
+        # 「不归类」是用户决定，不是要建族的信号
+        nulls = self._log({"to": None, "sid": "sess_mm", "at": 1},
+                          {"to": None, "sid": "sess_el", "at": 2})
+        self.assertEqual(region_family_proposals(nulls, self.clusters, self.items, []), [])
+
+    def test_existing_family_is_not_proposed_again(self):
+        log = self._log({"to": "材料力学", "sid": "sess_mm", "at": 1},
+                        {"to": "材料力学", "sid": "sess_el", "at": 2})
+        from server.family import BUILTIN_FAMILIES
+        self.assertEqual(region_family_proposals(log, self.clusters, self.items,
+                                                 BUILTIN_FAMILIES), [])
+
+    def test_dismissed_stays_quiet_until_evidence_grows(self):
+        log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
+                        {"to": "信号与系统", "sid": "sess_el", "at": 2})
+        rej = {"region:信号与系统": {"islands": 2, "at": 5}}
+        self.assertEqual(region_family_proposals(log, self.clusters, self.items, [], rej), [])
+        grown = log + [{"to": "信号与系统", "sid": "sess_sig", "at": 3}]
+        out = region_family_proposals(grown, self.clusters, self.items, [], rej)
+        self.assertEqual([p["count"] for p in out], [3], "证据长了才重新开口")
+
+    def test_no_usable_terms_means_no_proposal(self):
+        # 空族会被 families_from_payload 整条丢掉（没有词条的族接不住任何卡）——
+        # 提不出干净词条就干脆不提，省得用户点了「建成族」什么都不发生
+        from server.family import BUILTIN_FAMILIES
+        log = self._log({"to": "统计力学", "sid": "sess_mm", "at": 1},
+                        {"to": "统计力学", "sid": "sess_el", "at": 2})
+        items = {"k1": {"title": "泊松比"}, "k2": {"title": "杨氏模量"}}  # 都已在材料力学族
+        self.assertEqual(region_family_proposals(log, self.clusters, items,
+                                                 BUILTIN_FAMILIES), [])
+
+    def test_deleted_island_is_not_evidence(self):
+        # sid 已不在投影里（岛被删）→ 只剩一座有效岛，不提议
+        log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
+                        {"to": "信号与系统", "sid": "sess_gone", "at": 2})
+        self.assertEqual(region_family_proposals(log, self.clusters, self.items, []), [])
+
+    def test_dirty_kv_is_tolerated(self):
+        for junk in (None, "log", 42, {"log": None}, {"log": {}}, [None, 3, "x"],
+                     [{"to": 5, "sid": "sess_mm"}, {"to": "x" * 99, "sid": "sess_el"}]):
+            self.assertEqual(
+                region_family_proposals(junk, self.clusters, self.items, []), [],
+                "脏 KV 一律当空，不抛错（KV 可手改）")
+
+    def test_projection_carries_proposals(self):
+        # 接线：build_continent 把 region_log/dismissed 透传给纯函数（缺省＝空清单，
+        # 投影字段恒存在——前端不用判 undefined）
+        log = self._log({"to": "信号与系统", "sid": "sess_mm", "at": 1},
+                        {"to": "信号与系统", "sid": "sess_el", "at": 2})
+        knowledge = {"k1": _item("k1", "sess_mm", "零阶保持器"),
+                     "k2": _item("k2", "sess_el", "冲激响应")}
+        bare = build_continent(knowledge, {})
+        self.assertEqual(bare["familyProposals"], [])
+        wired = build_continent(knowledge, {}, region_log={"log": log})
+        self.assertEqual([p["name"] for p in wired["familyProposals"]], ["信号与系统"])
 
 
 class BuildContinentCrossSessionItemsTest(unittest.TestCase):
