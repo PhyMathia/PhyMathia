@@ -25,6 +25,13 @@ for p in (ROOT, SRC):
 os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 from server.continent import (  # noqa: E402
+    GATE_MIN_CARDS_STRICT,
+    GATE_MIN_CONSENSUS,
+    GATE_MIN_MARGIN,
+    GATE_MIN_TOP,
+    GATE_MIN_TOP_STRICT,
+    _cluster_domain_row,
+    _gate_weights,
     build_continent,
     normalize_user_edge_payload,
     purge_dangling_user_edges,
@@ -900,24 +907,28 @@ class BuildContinentDomainGateTest(unittest.TestCase):
         self.assertEqual(row["domainSource"], "vote")
         self.assertGreaterEqual(row["domainConf"], 0.7)
 
-    def test_mixed_island_has_secondary_domain(self):
-        # 混合岛：一张卡「梯度」一张卡「能量守恒」，岛名不命中 → 两个领域都在 domains 里
+    def test_mixed_island_abstains_but_lists_candidates(self):
+        # 混合岛：一张卡「梯度」一张卡「能量守恒」，岛名不命中 → 卡级票 1:1 平局。
+        # L1（2026-10-23）起这类证据不成立的岛**弃权**（domain=None），但候选照常下发
+        # ——「未归类（候选：矢量分析 50%、守恒定律 50%）」比自信地挑一边诚实。
         items = {
             "k1": _item("k1", "sess_g4", "梯度的几何意义", created=1),
             "k2": _item("k2", "sess_g4", "机械能守恒定律", created=2),
         }
         out = build_continent(items, self.D_SESSIONS)
         row = out["clusters"][0]
+        self.assertIsNone(row["domain"])
+        self.assertIsNone(row["domainSource"])
+        self.assertEqual(row["domainConf"], 0.0)
         names = [d["name"] for d in row["domains"]]
-        self.assertIn(row["domain"], ("矢量分析", "守恒定律"))
         self.assertEqual(len(names), 2)
         self.assertIn("矢量分析", names)
         self.assertIn("守恒定律", names)
-        # 概率按权重降序、和 ≤ 1、主导概率 = domainConf
         ps = [d["p"] for d in row["domains"]]
-        self.assertGreaterEqual(ps[0], ps[1])
         self.assertTrue(all(p >= 0.25 for p in ps))
-        self.assertAlmostEqual(row["domainConf"], ps[0], places=3)
+        # 派生量随行：边际 0（平局）、一致率 0.5（一半卡投冠军海）
+        self.assertEqual(row["domainMargin"], 0.0)
+        self.assertEqual(row["domainConsensus"], 0.5)
 
     def test_ambiguity_longer_more_exclusive_term_wins(self):
         # v7.1b 门控细化的招牌回归用例：「中心极限定理」必须判「概率统计」而非「微积分」
@@ -937,14 +948,18 @@ class BuildContinentDomainGateTest(unittest.TestCase):
         row = next(c for c in out["clusters"] if c["sessionId"] == "sess_g4")
         self.assertEqual(row["domain"], "热力学")
 
-    def test_low_confidence_reported_honestly(self):
-        # 三路均分（三个 2 字术语各属一族）→ conf ≈ 1/3 < 0.4：如实报最优猜测，
-        # 由前端走「中性灰 + 待确认」（后端不许硬塞 None 装作没证据）
+    def test_evidence_starved_island_abstains_honestly(self):
+        # 三路均分（三个 2 字术语各属一族）→ top ≈ 1/3 且单卡边际≈0：L1 前如实报
+        # 「最优猜测」（后端不许硬塞 None 装作没证据）；L1 起升级为**弃权**——不给
+        # 名字但候选照常列出，由前端走「中性灰 + 未归类（候选）」。
         items = {"k1": _item("k1", "sess_g4", "牛顿力学与矩阵守恒", created=1)}
         out = build_continent(items, self.D_SESSIONS)
         row = out["clusters"][0]
-        self.assertIsNotNone(row["domain"])
-        self.assertLess(row["domainConf"], 0.4)
+        self.assertIsNone(row["domain"])
+        self.assertIsNone(row["domainSource"])
+        self.assertEqual(row["domainConf"], 0.0)
+        self.assertTrue(row["domains"], "弃权时候选列表仍须非空（灰岛也要能报候选）")
+        self.assertTrue(all(d["p"] < 0.45 for d in row["domains"]))
 
     def test_gate_kv_model_evidence(self):
         from server.continent import current_gate_version
@@ -1003,6 +1018,101 @@ class BuildContinentDomainGateTest(unittest.TestCase):
         self.assertIn("矢量分析", out["domainList"])
         self.assertIn("守恒定律", out["domainList"])
         self.assertLessEqual(len(out["domainList"]), 32)
+
+
+class IslandAbstainGateTest(unittest.TestCase):
+    """L1 岛级弃权（2026-10-23 分类质量计划 / backlog T385）：三信号闸门的单元口径。
+
+    卡级 softmax 恒有 argmax，岛级照抄就会「自信地错」——这里直接喂卡级概率表，
+    逐条钉住 top/margin/consensus 的组合行为。阈值依据 §8 基准岛集（26 岛实测）：
+    错岛边际 0.010–0.021、一致率 0.17–0.33；正确岛最低 top 0.343、边际 0.063
+    （泊松，靠一致率 0.67 救回）——改这些常量先读计划 §7 与基准集，别单点调参。
+    """
+
+    @staticmethod
+    def _row(card_probs, formulas=None, island_fams=(), local=None):
+        iids = ["k%d" % i for i in range(len(card_probs))]
+        items = {iid: {"formulas": ["f"] * (formulas[i] if formulas else 0)}
+                 for i, iid in enumerate(iids)}
+        return _cluster_domain_row(
+            iids, items, dict(zip(iids, card_probs)),
+            dict(zip(iids, local)) if local else {}, list(island_fams))
+
+    def test_high_share_low_margin_abstains(self):
+        # 高份额低边际低一致率（top 0.366 过 0.33，margin 0.010、consensus 0.43 双不过）
+        # → 弃权；同形的「杨氏模量 2:2:1:1」实测形状也一并钉住
+        probs = [{"力": 0.40, "相": 0.35, "量": 0.25} for _ in range(3)] + \
+                [{"相": 0.36, "力": 0.34, "量": 0.30} for _ in range(4)]
+        row = self._row(probs)
+        self.assertIsNone(row["domain"])
+        self.assertEqual(row["domainConf"], 0.0)
+        self.assertEqual(row["domainMargin"], 0.01)
+        self.assertEqual(row["domainConsensus"], 0.429)
+        young = [
+            {"相": 0.40, "量": 0.30, "力": 0.30}, {"相": 0.40, "量": 0.30, "力": 0.30},
+            {"量": 0.40, "相": 0.30, "力": 0.30}, {"量": 0.40, "相": 0.30, "力": 0.30},
+            {"力": 0.40, "相": 0.30, "量": 0.30}, {"力": 0.34, "相": 0.33, "量": 0.33},
+        ]
+        row2 = self._row(young)
+        self.assertIsNone(row2["domain"], "2:2:1:1 分裂＋top≈1/3 的岛不许有名字")
+        self.assertEqual(row2["domainConsensus"], round(2 / 6, 3))
+
+    def test_low_share_high_consensus_keeps(self):
+        # 泊松形状：top 0.367（「低」份额）、margin 0.033 不达标，但六张卡全部把冠军
+        # 排第一（consensus 1.0）→ 保留。单看份额或边际都会误伤这座正确岛。
+        probs = [{"力": 0.38, "相": 0.34, "量": 0.28} for _ in range(4)] + \
+                [{"力": 0.34, "相": 0.33, "量": 0.33} for _ in range(2)]
+        row = self._row(probs, local=probs)
+        self.assertEqual(row["domain"], "力")
+        self.assertEqual(row["domainSource"], "vote")
+        self.assertEqual(row["domainConf"], 0.367)
+        self.assertEqual(row["domainMargin"], 0.03)
+        self.assertEqual(row["domainConsensus"], 1.0)
+
+    def test_single_card_low_margin_abstains(self):
+        # 单卡岛走严判（一致率在 1 张卡上没有统计意义）：top 过严槛但边际不过 → 弃权；
+        # 证据压倒性（0.9/0.1）时照常保留
+        row = self._row([{"力": 0.52, "相": 0.48}])
+        self.assertIsNone(row["domain"])
+        self.assertEqual(row["domainMargin"], 0.04)
+        strong = self._row([{"力": 0.9, "相": 0.1}])
+        self.assertEqual(strong["domain"], "力")
+        self.assertEqual(strong["domainMargin"], 0.8)
+
+    def test_margin_boundary_099_and_101(self):
+        # 恰在门槛两侧：0.099 弃权、0.101 保留（2 卡岛，严判分支不吃一致率）
+        below = self._row([{"力": 0.5495, "相": 0.4505}] * 2)
+        self.assertIsNone(below["domain"])
+        self.assertEqual(below["domainMargin"], 0.099)
+        above = self._row([{"力": 0.5505, "相": 0.4495}] * 2)
+        self.assertEqual(above["domain"], "力")
+        self.assertEqual(above["domainMargin"], 0.101)
+
+    def test_candidates_survive_abstention(self):
+        # 弃权不等于查空：domains 候选照常按 GATE_MIN_P 下发（灰岛也要能报候选）
+        row = self._row([{"力": 0.52, "相": 0.48}])
+        self.assertIsNone(row["domain"])
+        self.assertEqual([d["name"] for d in row["domains"]], ["力", "相"])
+        self.assertEqual([d["p"] for d in row["domains"]], [0.52, 0.48])
+
+    def test_source_cleared_with_domain_on_abstention(self):
+        # domainSource 随弃权一起清空（有本地证据本该标 vote，也不许留半截口径）
+        probs = [{"力": 0.40, "相": 0.35, "量": 0.25} for _ in range(3)] + \
+                [{"相": 0.36, "力": 0.34, "量": 0.30} for _ in range(4)]
+        row = self._row(probs, local=probs)
+        self.assertIsNone(row["domain"])
+        self.assertIsNone(row["domainSource"])
+
+    def test_constants_stay_out_of_gate_version(self):
+        # 弃权闸门只影响岛级呈现：新常量进 _gate_weights() 会让 gateVersion 变、
+        # 存量 Φ 打标整批作废——这是 L1 明确不付的代价（计划 §6-L1）
+        polluted = {"GATE_MIN_TOP", "GATE_MIN_TOP_STRICT", "GATE_MIN_MARGIN",
+                    "GATE_MIN_CONSENSUS", "GATE_MIN_CARDS_STRICT"} & set(_gate_weights())
+        self.assertEqual(polluted, set())
+        # 阈值本身钉住：动任何一个都是在改「哪些岛灰掉」，须连基准集一起重验
+        self.assertEqual((GATE_MIN_TOP, GATE_MIN_TOP_STRICT, GATE_MIN_MARGIN,
+                          GATE_MIN_CONSENSUS, GATE_MIN_CARDS_STRICT),
+                         (0.33, 0.45, 0.10, 0.50, 2))
 
 
 class BuildContinentCrossSessionItemsTest(unittest.TestCase):

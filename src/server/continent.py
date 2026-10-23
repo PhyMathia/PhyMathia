@@ -154,6 +154,21 @@ GATE_EMBED_TOPK = 3    # 一张卡的向量证据最多支持几个族：第 4 �
                        # 留着只会给 softmax 灌长尾水（实测 25 族全投，卡方岛 conf 0.06）
 GATE_TOP_K = 2        # 一张卡/一座岛最多带几个领域标签
 GATE_MIN_P = 0.25     # 概率低于此的次要领域不带（避免「人人都有第二标签」）
+# ===== 岛级弃权（L1，2026-10-23 分类质量计划 / backlog T385）=====
+# 卡级 softmax 恒有 argmax（R1），岛级聚合照抄 argmax 就会「自信地错」——杨氏模量岛
+# 六卡 top-1 是 2:2:1:1、相对论 22.3% vs 量子物理 21.0%，照样输出「相对论」。这里在
+# 岛级补三个信号：top（冠军海份额）/ margin（冠军领先次名多少，用未过滤 ranked 算）/
+# consensus（多少张卡自己把冠军海排第一）。证据不成立 → domain=None + domainConf=0，
+# 但 domains 候选照常下发（灰岛也要能说「候选：相对论 22%、量子物理 21%」）。
+# 阈值依据 §8 基准岛集（26 岛实测）：错岛边际 0.010–0.021/一致率 0.17–0.33；正确岛
+# 最低 top 0.343、边际 0.063（泊松，靠一致率 0.67 救回）——单看任何一个信号都会误伤。
+# 这些常量**不进 _gate_weights()**：只影响岛级呈现，不动卡级打标，gateVersion 不变，
+# 已有 Φ 打标缓存不作废。
+GATE_MIN_TOP = 0.33         # 冠军海份额下限（≥3 卡岛）：本库最低的正确岛是 0.343
+GATE_MIN_TOP_STRICT = 0.45  # 冠军海份额下限（≤2 卡岛）：单卡/对卡概率天然不稳，门槛更严
+GATE_MIN_MARGIN = 0.10      # 冠军领先次名的份额差下限（错岛 0.010–0.021，正确岛最低 0.063）
+GATE_MIN_CONSENSUS = 0.50   # 卡级 top-1 落在冠军海的票占比下限（与 margin 二选一即可）
+GATE_MIN_CARDS_STRICT = 2   # 岛卡数 ≤ 此值走严判：一致率在 1–2 张卡上没有统计意义
 GATE_PRIOR_WIDE = 0.8  # 宽领域先验：logit 加 log(0.8)——「宁可选窄的」从 prompt 叮嘱变算法
 GATE_WIDE_DOMAINS = frozenset({"微积分", "数学物理方法", "概率统计"})
 DOMAIN_LIST_MAX = 32  # 前端「归到哪个领域」菜单的名单上限（防脏数据撑爆 payload）
@@ -935,6 +950,12 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     没有本地证据，贡献为零（岛名兜底）。归一化后输出 top-K 概率与「谁说了算」。
     v8.14 起入参的键是**海域**（卡级概率与岛名命中由调用方先折叠，见 _maxfold_by_sea）。
 
+    L1（2026-10-23）岛级弃权：聚合结果再过三信号闸门——top（冠军海份额）、margin
+    （冠军领先次名的份额差，用**未过滤**的 ranked 算；只有一名时视为 1.0）、consensus
+    （卡级 top-1 落在冠军海的票数 / 有概率的卡数；一张有概率的卡都没有时记 0）。闸门
+    不满足 → domain/domainSource 清空、domainConf=0，但 domains 候选照常按 GATE_MIN_P
+    下发（灰岛也要能报候选）；domainMargin/domainConsensus（3 位小数）两种结局都随行。
+
     domainSource 归属（图例据此标「按概念族推断 / Φ 归类 / 你指定」）：对有打标的卡
     另算一份**只含本地证据**的概率（card_probs_local），对比主导领域的岛级质量——
     没有模型证据时它连主导领域都撑不起（质量不到一半、或根本为零）→ 'gate'；
@@ -943,6 +964,7 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
     """
     raw, raw_local = {}, {}
     vote_contrib, island_contrib = {}, {}
+    card_tops = []  # 每张有概率的卡自己的 top-1 海域（consensus 的票）
     for iid in iids:
         formulas = (items.get(iid) or {}).get("formulas") or []
         info = 1.0 + min(3, len(formulas))
@@ -951,6 +973,7 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
             for d, p in probs.items():
                 raw[d] = raw.get(d, 0.0) + info * p
                 vote_contrib[d] = vote_contrib.get(d, 0.0) + info * p
+            card_tops.append(sorted(probs.items(), key=lambda kv: (-kv[1], kv[0]))[0][0])
         probs_local = card_probs_local.get(iid)
         if probs_local:
             for d, p in probs_local.items():
@@ -960,10 +983,15 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
         raw_local[d] = raw_local.get(d, 0.0) + GATE_W_ISLAND
         island_contrib[d] = island_contrib.get(d, 0.0) + GATE_W_ISLAND
     if not raw:
-        return {"domain": None, "domains": [], "domainConf": 0.0, "domainSource": None}
+        return {"domain": None, "domains": [], "domainConf": 0.0, "domainSource": None,
+                "domainMargin": 0.0, "domainConsensus": 0.0}
     total = sum(raw.values()) or 1.0
     ranked = sorted(raw.items(), key=lambda kv: (-kv[1], kv[0]))
     top_name = ranked[0][0]
+    top_share = ranked[0][1] / total
+    second_share = ranked[1][1] / total if len(ranked) > 1 else 0.0
+    margin = top_share - second_share
+    consensus = (sum(1 for t in card_tops if t == top_name) / len(card_tops)) if card_tops else 0.0
     if raw_local.get(top_name, 0.0) < 0.5 * raw[top_name]:
         src = "gate"
     elif island_contrib.get(top_name, 0.0) > vote_contrib.get(top_name, 0.0):
@@ -972,8 +1000,21 @@ def _cluster_domain_row(iids, items, card_probs, card_probs_local, island_fams):
         src = "vote"
     domains = [{"name": d, "p": round(v / total, 3)}
                for d, v in ranked[:GATE_TOP_K] if v / total >= GATE_MIN_P]
+    derived = {"domainMargin": round(margin, 3), "domainConsensus": round(consensus, 3)}
+    if len(iids) <= GATE_MIN_CARDS_STRICT:
+        keep = top_share >= GATE_MIN_TOP_STRICT and margin >= GATE_MIN_MARGIN
+    else:
+        keep = top_share >= GATE_MIN_TOP and (margin >= GATE_MIN_MARGIN
+                                              or consensus >= GATE_MIN_CONSENSUS)
+    if not keep:
+        # 弃权：不给名字，但候选照常下发——「未归类（候选：相对论 22%、量子物理 21%）」
+        return {"domain": None, "domains": domains, "domainConf": 0.0,
+                "domainSource": None, "domainMargin": derived["domainMargin"],
+                "domainConsensus": derived["domainConsensus"]}
     return {"domain": top_name, "domains": domains,
-            "domainConf": round(ranked[0][1] / total, 3), "domainSource": src}
+            "domainConf": round(top_share, 3), "domainSource": src,
+            "domainMargin": derived["domainMargin"],
+            "domainConsensus": derived["domainConsensus"]}
 
 
 def _family_entries(items: dict, clusters: list, item_session: dict, session_rank: dict,
