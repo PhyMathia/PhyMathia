@@ -1001,7 +1001,6 @@ function addSourceFiles(nodeId, files) {
       fileName: item.fileName,
       contentBase64: null, // 由下方 IIFE 填充
       ocr: wantOcr,
-      engine: 'auto',
     };
     (async function () {
       let base64 = '';
@@ -1180,7 +1179,7 @@ async function retrySourceItemOcr(nodeId, itemId) {
   item.ocr = _sourceOcrState('running');
   _saveCustomNodes();
   renderGraphCanvas();
-  await _sourceIngest(node.id, item.id, { fileId: item.fileId, ocr: true, engine: 'auto' }, false);
+  await _sourceIngest(node.id, item.id, { fileId: item.fileId, ocr: true }, false);
   // 弹窗开着就刷新到识别结果
   if (sourceItemModalOverlay) {
     closeSourceItemModal();

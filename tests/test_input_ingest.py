@@ -109,13 +109,13 @@ class IngestRouteTest(unittest.TestCase):
         self.assertEqual(data["text"], "", "OCR 关=只存文件，文本留给前端占位")
 
     def test_image_ocr_result_merged(self):
-        fake = {"text": "F = ma", "engine": "glm", "ms": 12, "status": "done", "error": ""}
+        fake = {"text": "F = ma", "engine": "rapidocr", "ms": 12, "status": "done", "error": ""}
         with mock.patch.object(input_routes, "ocr_image", return_value=fake) as run:
             data = self._post({"fileName": "a.png", "contentBase64": _b64("x"),
-                               "ocr": True, "engine": "auto"}).json()
+                               "ocr": True}).json()
         run.assert_called_once()
         self.assertEqual(data["text"], "F = ma")
-        self.assertEqual(data["ocr"]["engine"], "glm")
+        self.assertEqual(data["ocr"]["engine"], "rapidocr")
         self.assertEqual(data["ocr"]["ms"], 12)
 
     def test_reingest_by_fileid(self):
@@ -129,7 +129,7 @@ class IngestRouteTest(unittest.TestCase):
 
 
 class OcrEngineTest(unittest.TestCase):
-    """ocr.py 引擎选路与缓存（引擎/Ollama 探测全桩替，不联网）。"""
+    """ocr.py RapidOCR 单引擎与缓存（引擎桩替，不联网）。"""
 
     def setUp(self):
         self._td = tempfile.TemporaryDirectory()
@@ -141,39 +141,13 @@ class OcrEngineTest(unittest.TestCase):
         self._td.cleanup()
 
     @staticmethod
-    def _done(text="识别", engine="rapidocr"):
-        return {"text": text, "engine": engine, "ms": 1, "status": "done", "error": ""}
-
-    def test_auto_without_ollama_uses_rapidocr(self):
-        with mock.patch.object(ocr, "_glm_available", return_value=False), \
-             mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()) as rapid, \
-             mock.patch.object(ocr, "_ocr_glm") as glm:
-            got = ocr.ocr_image(b"pic", "auto")
-        self.assertEqual(got["engine"], "rapidocr")
-        rapid.assert_called_once()
-        glm.assert_not_called()
-
-    def test_auto_glm_failure_falls_back_once(self):
-        failed = {"text": "", "engine": "glm", "ms": 1, "status": "failed", "error": "down"}
-        with mock.patch.object(ocr, "_glm_available", return_value=True), \
-             mock.patch.object(ocr, "_ocr_glm", return_value=failed), \
-             mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()) as rapid:
-            got = ocr.ocr_image(b"pic", "auto")
-        self.assertEqual((got["engine"], got["status"]), ("rapidocr", "done"), "GLM 挂了必须回落 RapidOCR")
-        rapid.assert_called_once()
-
-    def test_named_glm_does_not_fall_back(self):
-        failed = {"text": "", "engine": "glm", "ms": 1, "status": "failed", "error": "down"}
-        with mock.patch.object(ocr, "_ocr_glm", return_value=failed), \
-             mock.patch.object(ocr, "_ocr_rapid") as rapid:
-            got = ocr.ocr_image(b"pic", "glm")
-        self.assertEqual(got["status"], "failed", "点名 glm 是用户显式选引擎，失败如实报")
-        rapid.assert_not_called()
+    def _done(text="识别"):
+        return {"text": text, "engine": "rapidocr", "ms": 1, "status": "done", "error": ""}
 
     def test_done_result_cached(self):
         with mock.patch.object(ocr, "_ocr_rapid", return_value=self._done()) as rapid:
-            first = ocr.ocr_image(b"pic", "rapidocr")
-            second = ocr.ocr_image(b"pic", "rapidocr")
+            first = ocr.ocr_image(b"pic")
+            second = ocr.ocr_image(b"pic")
         self.assertEqual(first, second)
         rapid.assert_called_once(), "命中缓存不应再跑引擎"
 
@@ -181,21 +155,14 @@ class OcrEngineTest(unittest.TestCase):
         failed = {"text": "", "engine": "rapidocr", "ms": 1, "status": "failed", "error": "x"}
         ok = self._done()
         with mock.patch.object(ocr, "_ocr_rapid", side_effect=[failed, ok]) as rapid:
-            ocr.ocr_image(b"pic", "rapidocr")
-            got = ocr.ocr_image(b"pic", "rapidocr")
-        self.assertEqual(rapid.call_count, 2, "失败不缓存：重试必须真跑（Ollama 可能只是没起）")
+            ocr.ocr_image(b"pic")
+            got = ocr.ocr_image(b"pic")
+        self.assertEqual(rapid.call_count, 2, "失败不缓存：重试必须真跑")
         self.assertEqual(got["status"], "done")
 
     def test_empty_content_never_raises(self):
-        got = ocr.ocr_image(b"", "auto")
+        got = ocr.ocr_image(b"")
         self.assertEqual(got["status"], "failed")
-
-    def test_glm_available_caches_tags_probe(self):
-        ocr._tags_cache["at"] = -ocr.TAGS_CACHE_S  # 清缓存
-        with mock.patch.object(ocr.httpx, "get", return_value=mock.Mock(status_code=200, **{"json.return_value": {"models": [{"name": "glm-ocr:latest"}]}})) as probe:
-            self.assertTrue(ocr._glm_available())
-            self.assertTrue(ocr._glm_available())
-        self.assertEqual(probe.call_count, 1, "60s 窗口内 /api/tags 只探一次")
 
 
 if __name__ == "__main__":

@@ -81,9 +81,8 @@ async def api_input_ingest(request: Request):
             ocr_info = {"status": "skipped", "engine": "", "ms": 0, "error": ""}
             text = ""
         else:
-            engine = str(payload.get("engine") or "auto")
             # RapidOCR 首次加载模型是秒级同步操作，OCR 全程离事件循环
-            ocr_info = await asyncio.to_thread(ocr_image, content, engine)
+            ocr_info = await asyncio.to_thread(ocr_image, content)
             text = str(ocr_info.get("text") or "")
     else:
         text = await asyncio.to_thread(_extract_document_text, filename, content)
