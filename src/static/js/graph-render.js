@@ -391,12 +391,14 @@ function _nodeOutputPortMeta(node, portIndex, messages, seen) {
 function _nodeBaseOutputPorts(node, messages) {
   if (!node || node.kind === 'draft') return [];
   if (node.kind === 'user') {
-    // 第三口「直接回答」只能追加在末尾（out-2）：存量图的 out-0/out-1 分别绑着
-    // 问题分析/我的回答，插到前面会让旧连线接到另一个身份的出口上（2026-10-24）
+    // 第三口「直接回答」身份上只能追加在末尾（out-2）：存量图的 out-0/out-1 分别绑着
+    // 问题分析/我的回答，身份插到前面会让旧连线接到另一个身份的出口上（2026-10-24）。
+    // 屏幕顺序另走 displayOrder（问题分析→直接回答→我的回答）：身份下标不动，
+    // _renderOutputPorts 按它排 DOM，连线锚点现读端口位置自动跟随，存量图零迁移
     return [
-      { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
-      { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
-      { label: '直接回答', type: 'direct', branchType: '', attribute: 'direct', group: 'ai', question: '' },
+      { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '', displayOrder: 0 },
+      { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '', displayOrder: 2 },
+      { label: '直接回答', type: 'direct', branchType: '', attribute: 'direct', group: 'ai', question: '', displayOrder: 1 },
     ];
   }
   // 直接回答卡（2026-10-24）：成品答案的下一跳仍是追问（与空白节点同款单口），
@@ -625,7 +627,19 @@ function _renderOutputPorts(node, messages, state) {
   if (count <= 0 && !canAddPort) return '';
   let html = '<div class="graph-port-col graph-output-col">';
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
-  for (let i = start; i < count; i++) {
+  // 显示顺序（2026-10-24）：基础口声明 displayOrder 只调 DOM 排布——身份下标
+  // （data-port-id/边引用的 out-i 与循环内一切取值）不动，连线锚点现读端口元素
+  // 位置（_portAnchor），换序后旧连线自动跟到新位置，存量图零迁移；未声明者按
+  // 身份下标排，附加口仍接在基础口之后
+  const renderSlots = [];
+  for (let i = start; i < ports.length; i++) renderSlots.push(i);
+  renderSlots.sort((a, b) => {
+    const oa = ports[a] && ports[a].displayOrder != null ? ports[a].displayOrder : a;
+    const ob = ports[b] && ports[b].displayOrder != null ? ports[b].displayOrder : b;
+    return oa - ob;
+  });
+  for (let i = Math.max(start, ports.length); i < count; i++) renderSlots.push(i);
+  for (const i of renderSlots) {
     // 素材篮（2026-10-24 三）：按素材加的附加口带素材身份——名字＝素材名、色走
     // source、tooltip 专属；无绑定/缺记录的附加口＝整篮口，固定身份「全部素材」
     let sourceAddonMeta = null;
