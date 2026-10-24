@@ -199,6 +199,11 @@ const WORKFLOW_PDF_PAGE_MAX = 8;
 // 节点走单父链，其余走全祖先。图片素材必须跟各链的语义一致——否则提示词里的
 // 「证据」与随消息发的「图」来自两套节点集合，模型看图与读文对不上号
 function _workflowContextRoute(node) {
+  // 空白节点（2026-10-24 T401）：底座本身就是「单父链」语义——卡上要求是主体，上游只取
+  // 第一条入边那条链。旧 generateBlankNode 用 _blankNodeGraphPath 走同一条链、附图显式传
+  // 'inbound'；接进统一生成路后必须把这条路由写在这里，否则上下文/附图会退化成全祖先。
+  // 放在配方判断之前：空白底座没有配方，配方路由只管 module/answer 底座。
+  if (node && node.kind === 'blank') return 'inbound';
   const recipeAgg = node && node.recipeId && node.recipe ? String(node.recipe.aggregation || '') : '';
   return recipeAgg === 'first_inbound' ? 'inbound' : 'path';
 }
@@ -620,6 +625,11 @@ function _buildWorkflowContextForNode(node) {
     ? { label: node.recipe.name }
     : node.kind === 'module'
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
+    // 空白节点（2026-10-24 T401）：品类名与卡面同源（GRAPH_MODULE_META→moduleKey→
+    // 「AI 生成空白」）。没有这一支时落进最后的「问题」兜底——上下文把目标报成问题节点，
+    // 提示词也跟着走成「请生成问题节点内容。」，同一张卡两条路生成两种东西。
+    : node.kind === 'blank'
+      ? { label: (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || 'AI 生成空白' }
     : node.kind === 'answer'
       ? { label: node.manual ? (node.title || '我的回答') : '问题分析' }
       : node.kind === 'direct'
@@ -767,6 +777,22 @@ function _workflowPromptForNode(node, workflowContext) {
       + '5. 不要输出完整学习卡片 XML，不要输出 <physics>、<math>、<graph>、<viz>、<extend>、<summary> 或 <socratic_meta> 标签，不要输出「建议模块：」行。\n'
       + '6. 信息不足时写明假设与适用条件，不要编造数据、历史或结论。'
       + (req ? '\n\n用户额外要求（优先满足）：' + req : '');
+  }
+  if (node.kind === 'blank') {
+    // 空白节点（2026-10-24 T401）：卡上要求＝这一发要写的东西，必须原样进提示词
+    // （workflow_context.requirements 只是后端补充段，600 字截断）；上游走单父链
+    // （_workflowContextRoute→inbound）、附图同一条链（T381）。旧兜底
+    // 「请生成问题节点内容。」会把任意空白卡生成成问题卡——T401 的根因。
+    const req = String(node.requirements || '').trim();
+    const strictInstruction = _strictModuleOutputInstruction(node.moduleKey || workflowContext.target.module || '');
+    return '请基于当前探索路径生成「' + targetLabel + '」空白节点的完整内容。\n'
+      + '要求：\n'
+      + '1. 只写卡上要求的那份内容，不要改写成问题卡、问题分析或学习卡片里的其他模块。\n'
+      + '2. 用到上游内容时保持一致；上游没有的事实、数据、结论不要编造。\n'
+      + '3. 用 Markdown 组织；公式按 <formula>纯 LaTeX</formula> 规范标注。\n'
+      + '4. 只输出正文，不要输出 XML 标签，不要重复其他模块内容。\n'
+      + (req ? '用户要求（优先满足）：' + req : '用户要求：（卡上未填写）')
+      + (strictInstruction ? '\n\n' + strictInstruction : '');
   }
   if (node.kind === 'answer' && !node.manual) {
     return '请根据原始问题和上游上下文生成“问题分析”节点的完整内容。'

@@ -132,6 +132,18 @@ async function main() {
     // handler 对齐这个语义（其余通道的产品路径不经 confirm，accept 不改变它们；
     // 上次 9/9 全绿是 01f127b，早于 T303 落地）
     page.on('dialog', d => d.accept());
+    // 空白节点通道（⑪，2026-10-24 T403）：记住所有 target.kind='blank' 的工作流请求体。
+    // 既证明「卡上按钮／全部开始」走同一条统一发送链（带 workflow_context），也用来验证
+    // 「已经生成过的卡第二次不该再发请求」（T400 的「每次重跑」）。
+    const blankChatRequests = [];
+    page.on('request', req => {
+      if (!req.url().includes('/api/models/chat')) return;
+      try {
+        const body = JSON.parse(req.postData() || '{}');
+        const wf = body && body.workflow_context;
+        if (wf && wf.target && wf.target.kind === 'blank') blankChatRequests.push(body);
+      } catch (e) { /* 非 JSON 请求体（理论上没有）：跳过 */ }
+    });
     // 配好模型 + 跳过引导，否则发不出去（这正是硬规则 6 强调的那一点）
     // 参数传**对象**不传数组：playwright 的 addInitScript 会把数组实参再包一层，
     // 于是 `([model, slots]) => {}` 解出来 slots 是 undefined，模型静默配不上
@@ -665,8 +677,66 @@ async function main() {
         ok('⑩ 创造模式访谈：已发通（第一轮初稿＋追问「' + round1.question + '」进气泡；'
           + '第二轮答完补丁换口，改动标签「' + round2.chips + '」，出口字段原样保留）');
       } catch (e) { bad('⑩ 创造模式访谈', e); }
+      // ===== 11. 空白节点生成（2026-10-24 T403：两条路合一） =====
+      // 旧空白路自带一份提示词/流式/记账，与工作流路生成两种内容（T401）；现在卡上按钮、
+      // 任务重试、Φ、「全部开始」都走同一条 _executeParallelWorkflow。这条通道真发一次并
+      // 断言四件：①请求带 workflow_context.target.kind='blank'＋卡上要求，提示词不再是
+      // 「请生成问题节点内容。」；②收尾写 status=done＋inputHash；③再点两次「全部开始」
+      // 不再为这张卡发请求（T400 的「每次重跑」）。
+      try {
+        const blankInfo = await page.evaluate(async () => {
+          if (typeof openAddBlankNodeModal !== 'function' || typeof createManualNode !== 'function') {
+            return { err: '画布入口不在（openAddBlankNodeModal/createManualNode）' };
+          }
+          // 走真实 UI 入口：打开添加面板 → 选「AI 生成空白」（面板项调的就是 createManualNode）
+          openAddBlankNodeModal(180, 180);
+          createManualNode('blank');
+          await new Promise(r => setTimeout(r, 400));
+          const node = graphView.nodes.find(n => n.kind === 'blank');
+          if (!node) return { err: '空白节点没建出来' };
+          const ta = document.querySelector('[data-node-id="' + node.id + '"] .graph-blank-input');
+          if (!ta) return { err: '空白卡要求框没渲染出来' };
+          ta.value = '写一个反例：大角度下单摆周期会变长';
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          const btn = ta.parentElement.querySelector('.graph-regen-btn');
+          if (!btn) return { err: '空白卡生成按钮没渲染出来' };
+          btn.click();
+          return { id: node.id };
+        });
+        if (blankInfo.err) throw new Error(blankInfo.err);
+        const st = await waitNodeSettled(page, blankInfo.id, 120000);
+        if (st.len < 8) throw new Error('空白节点流式内容为空或过短（' + st.len + ' 字）——统一发送链可能没接上');
+        const settled = await page.evaluate((id) => {
+          const n = graphView.nodeById[id];
+          return n ? { status: n.status, hash: n.inputHash || '', req: n.requirements || '' } : null;
+        }, blankInfo.id);
+        if (!settled || settled.status !== 'done') throw new Error('空白节点收尾没写 status=done（当前 ' + (settled && settled.status) + '）');
+        if (!settled.hash) throw new Error('空白节点收尾没写 inputHash——「全部开始」会每次重跑（T400 回退）');
+        if (settled.req.indexOf('写一个反例') < 0) throw new Error('卡上要求没同步进节点');
+        const reqBody = blankChatRequests[blankChatRequests.length - 1];
+        if (!reqBody) throw new Error('空白节点的请求没带 workflow_context.target.kind=blank（提示词可能又走问题节点兜底）');
+        if (!String(reqBody.prompt || '').includes('写一个反例')) throw new Error('卡上要求没进提示词（T401 回退）');
+        if (String(reqBody.prompt || '').includes('请生成问题节点内容')) throw new Error('空白提示词又退化成问题节点兜底（T401 回退）');
+        if (String(reqBody.branch_type) !== 'blank') throw new Error('空白请求 branch_type 不是 blank：' + reqBody.branch_type);
+        const beforeRuns = blankChatRequests.length;
+        // 连点两次「全部开始」：不能为这张已经完成的卡再发请求
+        for (let round = 0; round < 2; round++) {
+          await page.evaluate(() => {
+            const btn = document.getElementById('runAllBtn');
+            if (btn) btn.click();
+          });
+          await page.waitForFunction(() => !(typeof _isSendBusy === 'function' && _isSendBusy())
+            && !(typeof workflowRunActive !== 'undefined' && workflowRunActive), null, { timeout: 60000 }).catch(() => {});
+          await wait(400);
+          if (blankChatRequests.length !== beforeRuns) {
+            throw new Error('「全部开始」第 ' + (round + 1) + ' 次又为已完成的空白卡发了请求（T400 回退）');
+          }
+        }
+        ok('⑪ 空白节点生成：已发通（统一工作流路，' + st.len + ' 字；收尾写 status/inputHash；「全部开始」两次零新增请求）');
+      } catch (e) { bad('⑪ 空白节点生成', e); }
+
     } else {
-      ['② 节点追问', '③ 苏格拉底回答', '④ 重试', '⑤ 进阶支线', '⑥ 方向钮', '⑦ 苏格拉底闭环作答', '⑧ 创造模式', '⑨ 答疑模式', '⑩ 创造模式访谈'].forEach(n =>
+      ['② 节点追问', '③ 苏格拉底回答', '④ 重试', '⑤ 进阶支线', '⑥ 方向钮', '⑦ 苏格拉底闭环作答', '⑧ 创造模式', '⑨ 答疑模式', '⑩ 创造模式访谈', '⑪ 空白节点生成'].forEach(n =>
         bad(n, new Error('首问未通，依赖它的通道没法验')));
     }
 

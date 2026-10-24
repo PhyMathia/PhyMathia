@@ -1100,9 +1100,14 @@ function graphOpenRegenerate(nodeId) {
   // 按钮排（真机实证：物理视角的面板被正下方的数学视角整卡盖住，按钮点不到——
   // T336 遮挡同族）。面板收起/节点重绘时随重建自然回落
   el.classList.add('graph-regen-open');
+  // 空白节点（2026-10-24 T402）：面板语义多一条「留空＝按卡上要求重跑」——卡上要求框
+  // 是输入，反馈框只改「不满意度」，两者分工要在占位文案里说清（用户拍板口径）。
+  const placeholder = node.kind === 'blank'
+    ? '哪里不满意？写字＝保留当前内容只按反馈改；留空＝按卡上要求重新生成'
+    : '哪里不满意，或想加点什么？可留空。例如：第三步跳步了 / 太啰嗦 / 换个比喻';
   main.insertAdjacentHTML('beforeend',
     '<div class="graph-regenerate-panel">'
-    + '<textarea class="graph-regenerate-input" rows="3" placeholder="哪里不满意，或想加点什么？可留空。例如：第三步跳步了 / 太啰嗦 / 换个比喻"></textarea>'
+    + '<textarea class="graph-regenerate-input" rows="3" placeholder="' + placeholder + '"></textarea>'
     + warnHtml
     + '<div class="graph-regenerate-actions">'
     + '<button class="graph-draft-btn" onclick="closeRegeneratePanel(\'' + nodeId + '\')">取消</button>'

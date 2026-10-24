@@ -306,7 +306,7 @@ test('T61 重开页面：node 类任务不退化成 send，重放信息原样保
   assert.equal(restored.history[0].replay.nodeJob.id, 'b1');
 });
 
-test('T61 源码：三条独立生成路各自接账，工作流调度口的直呼不双份记账', () => {
+test('T61 源码：空白入口委托工作流统一接账，工作流调度口的直呼不双份记账', () => {
   const wfEntrySrc = readSrc('src/static/js/graph-workflow-entry.js');
   const wfRunSrc = readSrc('src/static/js/graph-workflow-run.js');
   const customSrc = readSrc('src/static/js/graph-custom.js');
@@ -315,23 +315,22 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(tasksSrc, /function _taskBeginNodeJob\(spec\)/);
   assert.match(tasksSrc, /item\.kind === 'node' \? 'node' : 'send'/);
   assert.match(tasksSrc, /replay && replay\.nodeJob && replay\.nodeJob\.id/);
-  // graph-workflow.js：空白节点独立生成——互斥闸 + 记账 + 任务自己的 controller
+  // 空白节点（2026-10-24 T403）：独立生成路已薄封装成 runWorkflowNode 委托——排队、
+  // 任务账、任务自己的 controller 全由工作流入口统一承担。旧断言钉的是那份副本
+  // （_enqueueNodeJob/_taskBeginNodeJob/jobStartedAt 都在 generateBlankNode 里），
+  // 两条路合一后改为钉「真委托过去 + 统一入口仍接账」。
   // T397 拆分：generateBlankNode 是 entry 件的末函数，切到文件尾
   const blankStart = wfEntrySrc.indexOf('async function generateBlankNode(');
   const blank = wfEntrySrc.slice(blankStart);
   assert.ok(blankStart > 0, 'generateBlankNode 要找得到');
-  // 2026-10-11：闸门口径从「工作流跑着就拒绝」改成「忙就排队」——旧断言
-  // `if (workflowRunActive)` 已随改造作废（用户要的是能排队，不是被挡回去）。
-  // 新契约三件：统一忙碌判定 + fromQueue 放行旁路 + 真把活儿交给队列。
-  assert.match(blank, /!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy\(\)/,
-    '独立生成要在忙时排队（统一忙碌判定 + 放行旁路，同 startQuestionWorkflow 的 T225 口径）');
-  assert.match(blank, /_enqueueNodeJob\(/, '忙时要真把活儿交给队列，而不是只弹一句提示');
-  assert.match(blank, /_queuedJobNodeGuard\(/, '轮到它跑时节点可能已经不在了，要就地结账标失败');
-  assert.match(blank, /_taskBeginNodeJob\(/, '独立生成要记一笔任务账');
-  assert.match(blank, /_taskBindCancel\(taskId/);
-  assert.match(blank, /const signal = jobAbort\.signal/, 'signal 用任务自己的 controller');
-  assert.match(blank, /_taskFinish\(taskId, 'done'\)/);
-  assert.match(blank, /jobStartedAt/, '完成卡计时用本函数自己的起点');
+  assert.match(blank, /runWorkflowNode\(nodeId, force, fromQueue, handoffTaskId\)/,
+    '空白节点生成必须委托统一工作流入口（T403：两条路合一）');
+  assert.match(blank, /_syncBlankRequirementsFromCard\(nodeId\)/,
+    '空白卡的要求框要先同步进节点，否则「全部开始」/面板路拿到的是旧要求');
+  assert.match(wfEntrySrc, /_enqueueNodeJob\(label, function\(taskId\)/,
+    'runWorkflowNode 忙时仍要排队（空白入口靠它兜住）');
+  assert.match(wfEntrySrc, /_queuedJobNodeGuard\(taskId, nodeId\)/,
+    '轮到它跑时节点可能已经不在了，要就地结账标失败');
   assert.doesNotMatch(blank, /blankStartedAt/, '旧计时残留必须清干净（它本是别的函数的局部量，成功路径曾因它抛 ReferenceError）');
   // graph-custom.js：联系入口走记账包装，不许绕过。T280：忙时经统一
   // 忙碌判定收进队列（排队不是禁用），Φ 改图带 fromPhi 直通（排队会掐死 Φ 这条能力）。

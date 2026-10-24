@@ -167,7 +167,9 @@ async function _streamCustomNodeResponse(resp, node) {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  let cleaned = node.kind === 'module' ? _cleanBlankNodeContent(node, content) : content;
+  // 空白节点（2026-10-24 T403）：与模块同口径剥 XML 分节——旧 blank 路的收尾也走
+  // _cleanBlankNodeContent，两条路合一后不能丢这一步（否则卡面会带出整段标签）
+  let cleaned = (node.kind === 'module' || node.kind === 'blank') ? _cleanBlankNodeContent(node, content) : content;
   if (!cleaned.trim()) cleaned = content;
   const live = _findGraphNode(node.id);
   if (live) {

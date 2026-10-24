@@ -1754,6 +1754,22 @@
   border-color: var(--accent);
 }
 
+/* 空白卡动作区（2026-10-24 T402）：基类 .graph-node-actions 的 margin-top:auto 是为
+   模块卡「贴底」设计的；空白卡底下还跟着要求框，动作区要紧跟要求框，不留大空档。 */
+.graph-node-blank .graph-node-actions {
+  margin-top: 10px !important;
+  padding-top: 0 !important;
+}
+
+/* 动作区里的全屏钮（2026-10-24 T402）：.graph-node-actions button 的 6px 12px 内边距是给
+   文字钮的；全屏钮是 26px 定宽图标钮，24px 横向内边距会把内容盒压成 0、SVG 宽度塌成 0
+   （真机截图实测：两个空白小方块）。这里把内边距清零、尺寸对齐图标钮。 */
+.graph-node-actions .graph-node-fs-toggle {
+  padding: 0 !important;
+  width: 28px !important;
+  height: 28px !important;
+}
+
 .graph-custom-question-input {
   width: 100%;
   min-height: 44px;

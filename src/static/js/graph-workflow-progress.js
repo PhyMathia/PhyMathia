@@ -10,6 +10,8 @@ function _workflowProgressLabel(node) {
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'answer') return '问题分析';
   if (node.kind === 'direct') return '直接回答';
+  // 空白节点（2026-10-24 T400）：进度胶囊/任务行用卡面同款品类名，别再显示英文 kind
+  if (node.kind === 'blank') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey || 'AI 生成空白';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   return node.kind;
 }
@@ -33,6 +35,14 @@ function _workflowItemNeedsProgress(node) {
     const question = _findQuestionContentUpstream(node);
     const analysisHash = _simpleHash(question + '|' + (node.requirements || ''));
     return !node.analysis || node.analysisHash !== analysisHash;
+  }
+  // 空白节点（2026-10-24 T400）：与 module 同口径（内容＋输入哈希＋done 才算不用跑），
+  // 外加空要求闸门——卡上没写要求＝没有生成目标，「全部开始」不选它、进度总数也不算它
+  // （显式跑这颗时 _processWorkflowChainItem 还有同一道闸，两条入口口径一致）。
+  if (node.kind === 'blank') {
+    if (!String(node.requirements || '').trim()) return false;
+    const inputHash = _nodeInputHash(node);
+    return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
   }
   if (node.kind === 'module') {
     const inputHash = _nodeInputHash(node);

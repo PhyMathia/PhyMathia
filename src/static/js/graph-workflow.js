@@ -70,6 +70,9 @@ window.deleteBlankNode = deleteBlankNode;
 
 window.generateBlankNode = generateBlankNode;
 
+// 空白卡要求框的输入同步（2026-10-24 T403）：inline oninput 要能调到
+window.updateBlankNodeRequirements = updateBlankNodeRequirements;
+
 window.submitDraftQuestion = submitDraftQuestion;
 
 window.draftSocraticAnswer = draftSocraticAnswer;

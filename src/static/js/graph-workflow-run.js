@@ -58,6 +58,16 @@ async function _processWorkflowChainItem(current, force, nodeSignal) {
     return true;
   }
 
+  // 空白节点（2026-10-24 T403）：卡上要求是唯一的生成目标——空要求不跑。闸门放在
+  // hash 判定之前：没有要求的卡即使上游变了也不该发请求；状态落「等待输入」，让卡面
+  // 徽章/任务行说清为什么没跑（与「user 卡没填内容」同口径：上游缺料就挡住下游）。
+  if (current.kind === 'blank' && !String(current.requirements || '').trim()) {
+    current.status = 'waiting';
+    _saveCustomNodes();
+    _refreshWorkflowNodeStatusUi(current);
+    if (typeof showToast === 'function') showToast('空白节点要先写要求：在卡上写「要生成什么」，再点生成');
+    return false;
+  }
   const inputHash = _nodeInputHash(current);
   // 人工定稿护栏（T355）：整链跑动会拉上游依赖进子图，人工定稿节点即使 hash 因上游
   // 重生成而失配，也不许在这里被 _generateCustomNode 静默覆盖。force（显式从头生成
@@ -146,7 +156,7 @@ async function _runWorkflowNodeConcurrent(node, subgraph, force, processed, fail
   // 完成/进度都由在途请求自己的 worker 收尾，两次记账不会互相覆盖。正常路径
   // _workflowReadyNodes/入口 busy 门挡在前面，这里是双保险
   if (node.busy) return;
-  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary');
+  const shouldForce = force && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank');
   const shouldCount = _workflowItemNeedsProgress(node) || shouldForce;
   const taskId = runtime ? runtime.taskId : null;
   if (shouldCount) _markWorkflowCurrentNode(node);
@@ -381,7 +391,7 @@ async function _executeParallelWorkflow(targetIds, force, meta) {
   const countedNodes = [...subgraph.ids]
     .map(id => _findGraphNode(id))
     .filter(node => node && (_workflowItemNeedsProgress(node)
-      || (force && forceTargets.has(node.id) && (node.kind === 'module' || node.kind === 'summary'))));
+      || (force && forceTargets.has(node.id) && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'blank'))));
   const totalWork = countedNodes.length;
   // 任务列表：这一轮工作流 = 一条任务，节点明细 = 组里的条目（用户拍板的两级结构）。
   // 开跑前就把「要干哪几颗」记全，面板因此一眼能看到「3/6 已完成」这样的总数。

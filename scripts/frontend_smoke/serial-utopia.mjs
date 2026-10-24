@@ -80,8 +80,8 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   // 3 份。名字写成「全仓」会让人以为另外四处已被覆盖、进而不再去合并。
   // 那 4 处的合并已登记 backlog（连同真发验证要求），不在本轮范围：动发送链路按硬规则 6
   // 必须配可用模型真发验证，而现在没有可用凭证。所以这里改成如实描述作用域。
-  // 族内分布（T397 拆分后）：共享口 _sseContentFrames 与模块/分析调用点在 stream 件、
-  // 空白节点调用点在 entry 件、配方概要调用点在 recipe 件。
+  // 族内分布（T397 拆分后 / T403 空白路合一后）：共享口 _sseContentFrames 与模块/分析
+  // 调用点在 stream 件、配方概要调用点在 recipe 件；空白节点已并入模块/分析同一条流式路。
   const gw = ['graph-workflow.js', 'graph-workflow-prompt.js', 'graph-workflow-recipe.js',
     'graph-workflow-template.js', 'graph-workflow-progress.js',
     'graph-workflow-stream.js', 'graph-workflow-generate.js', 'graph-workflow-run.js',
@@ -102,8 +102,8 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
     throw new Error('共享读取口 _sseContentFrames 不见了');
   }
   const users = (gwCode.match(/for await \(const piece of _sseContentFrames\(resp\)\)/g) || []).length;
-  if (users !== 4) {
-    throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 4：模块节点 / 问题分析 / 空白节点 / 配方双阶段概要 P2）');
+  if (users !== 3) {
+    throw new Error('_sseContentFrames 的调用点 ' + users + ' 处（应为 3：模块节点（含空白节点，T403 合一）/ 问题分析 / 配方双阶段概要 P2）');
   }
   // 只吐正文增量：思维链绝不能混进正文（2026-09-15「旋度岛静默消失」的根因）
   // 在 gwCode 上切片：共享口自己那句「绝不碰 reasoning_content」的说明注释
@@ -114,7 +114,7 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   if (/reasoning_content/.test(body)) {
     throw new Error('共享读取口里出现了 reasoning_content——思维链不许混进正文');
   }
-  for (const fn of ['_streamCustomNodeResponse', '_streamAnalysisResponse', '_streamBlankNodeResponse']) {
+  for (const fn of ['_streamCustomNodeResponse', '_streamAnalysisResponse']) {
     const i = gwCode.indexOf('async function ' + fn + '(');
     if (i < 0) throw new Error('找不到 ' + fn);
     const seg = gwCode.slice(i, i + 4000);
