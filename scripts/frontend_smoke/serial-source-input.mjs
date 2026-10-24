@@ -199,9 +199,101 @@ check('素材篮加输出端口（2026-10-24）：门对新数据开、旧节点
   if (sandbox._nodeOutputContent({ id: 'e', kind: 'source', items: [], content: 'CCC' }, new Set(), 'out-0') !== 'CCC') {
     throw new Error('空篮附加口应回落 node.content');
   }
-  // 3. 图片收集静态契约：越界口收全篮图片条目、无 fromPort 兜底不掺图
+  // 3. 按素材附加口（2026-10-24 三）：绑定的只送那条素材，无绑定的仍是整篮口
+  const node2 = {
+    id: 'src2', kind: 'source',
+    items: [
+      { id: 'i0', kind: 'text', name: '文字A', text: 'AAA' },
+      { id: 'i1', kind: 'image', name: '图片B', text: '' },
+    ],
+    addonPorts: [{ item: 'i1' }, {}],
+    content: 'cached',
+  };
+  const bound = String(sandbox._nodeOutputContent(node2, new Set(), 'out-2'));
+  if (bound.includes('AAA') || !bound.includes('图片B')) throw new Error('按素材附加口应只送绑定素材：' + JSON.stringify(bound));
+  const basket2 = String(sandbox._nodeOutputContent(node2, new Set(), 'out-3'));
+  if (!basket2.includes('AAA') || !basket2.includes('图片B')) throw new Error('无绑定附加口应是整篮：' + JSON.stringify(basket2));
+  if (sandbox._sourcePortLabel(node2, 'out-0') !== '文字A') throw new Error('条目口标签＝素材名');
+  if (sandbox._sourcePortLabel(node2, 'out-2') !== '图片B') throw new Error('按素材附加口标签＝素材名');
+  if (sandbox._sourcePortLabel(node2, 'out-3') !== '全部素材') throw new Error('整篮口标签应为「全部素材」');
+  const boundImgs = sandbox._sourcePortImageItems(node2, 2);
+  if (boundImgs.length !== 1 || boundImgs[0].id !== 'i1') throw new Error('绑定口图片只收该素材');
+  const allImgs = sandbox._sourcePortImageItems(node2, 3);
+  if (allImgs.length !== 2) throw new Error('整篮口图片应收全部条目');
+  // 4. 渲染：按素材附加口显示素材名（非「待命名」）、行内有「加口」按钮
+  const realEsc = sandbox.escapeHtml;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  try {
+    seedNode([{ id: 'ib', kind: 'image', name: '受力图', text: '' }], { addonPorts: [{ item: 'ib' }] });
+    vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
+    const html2 = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: { "src-test": 2 } })', sandbox);
+    if (!html2.includes('graphAddSourceItemPort')) throw new Error('行内「加口」按钮缺失');
+    const at = html2.indexOf('data-port-id="out-1"');
+    if (at < 0) throw new Error('按素材附加口应渲染 out-1');
+    const seg = html2.slice(at, at + 400);
+    if (!seg.includes('受力图') || seg.includes('待命名')) throw new Error('按素材附加口应显示素材名而非待命名');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+  }
+  // 5. 静态契约：图片按绑定分流助手在位
   const promptSrc = readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
-  if (!promptSrc.includes('手加的附加口（out-N 越界）＝「整篮出口」')) throw new Error('整篮图片收集分支缺失');
+  if (!promptSrc.includes('function _sourcePortImageItems')) throw new Error('图片按绑定分流助手缺失');
+  return true;
+});
+
+check('素材篮按素材加口全链（2026-10-24 三）：绑定记账、条目增删平移、删绑定素材撤口、通用×删口同步', () => {
+  seedNode([
+    { id: 'it0', kind: 'text', name: 'A', text: '甲' },
+    { id: 'it1', kind: 'text', name: 'B', text: '乙' },
+  ]);
+  let mem = null;
+  const realUndo = sandbox._pushGraphUndo;
+  const realRender = sandbox.renderGraphCanvas;
+  const realSave = sandbox.saveGraphState;
+  sandbox._pushGraphUndo = () => {};
+  sandbox.renderGraphCanvas = () => {};
+  sandbox.saveGraphState = () => {};
+  try {
+    sandbox.window.getGraphState = () => mem;
+    sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+    mem = {
+      connections: [
+        { from: 'src-test', fromPort: 'out-0', to: 'x1', toPort: 'in-0', custom: true },
+        { from: 'src-test', fromPort: 'out-2', to: 'x2', toPort: 'in-0', custom: true },
+        { from: 'src-test', fromPort: 'out-3', to: 'x3', toPort: 'in-0', custom: true },
+      ],
+      removedEdges: [], portCounts: { 'src-test': 4 }, inputPortCounts: {}, customNodes: [], positions: {},
+    };
+    const node = vm.runInContext('graphView.nodeById["src-test"]', sandbox);
+    node.addonPorts = [{ item: 'it1' }, {}];
+    // 1. 给 it0 加口：绑定表追加、portCounts＝2 条目＋3 附加＝5
+    sandbox.graphAddSourceItemPort('src-test', 'it0');
+    if (!node.addonPorts[2] || node.addonPorts[2].item !== 'it0') throw new Error('新附加口应带 it0 绑定');
+    if (mem.portCounts['src-test'] !== 5) throw new Error('portCounts 应 5，实际 ' + mem.portCounts['src-test']);
+    // 2. 加条目：附加口边整体右移（out-2→out-3、out-3→out-4）、portCounts＝3＋3＝6、绑定不重排
+    sandbox._sourcePushItem(node, { id: 'it2', kind: 'text', name: 'C', text: '丙' });
+    if (mem.connections.find(c => c.to === 'x2').fromPort !== 'out-3') throw new Error('绑定口边应右移 out-3');
+    if (mem.connections.find(c => c.to === 'x3').fromPort !== 'out-4') throw new Error('整篮口边应右移 out-4');
+    if (mem.portCounts['src-test'] !== 6) throw new Error('portCounts 应 6，实际 ' + mem.portCounts['src-test']);
+    // 3. 删被绑定的素材 it1：它的条目口与绑定附加口一起撤（x2 边删），其余左移补位
+    sandbox.deleteSourceItem('src-test', 'it1');
+    if (mem.connections.some(c => c.to === 'x2')) throw new Error('被绑素材的附加口边应随素材删除');
+    const x3e = mem.connections.find(c => c.to === 'x3');
+    if (!x3e || x3e.fromPort !== 'out-2') throw new Error('整篮口边应左移 out-2，实际 ' + (x3e && x3e.fromPort));
+    if (mem.portCounts['src-test'] !== 4) throw new Error('portCounts 应 4，实际 ' + mem.portCounts['src-test']);
+    if (!mem.connections.some(c => c.to === 'x1' && c.fromPort === 'out-0')) throw new Error('it0 条目口边不动');
+    // 4. 通用×删掉附加口 out-2（此时的整篮口，x3 的线随口删除）：绑定表 splice、portCounts 同步
+    sandbox.graphRemoveOutputPort('src-test', 2);
+    if (mem.connections.some(c => c.to === 'x3')) throw new Error('删口应移除其连线');
+    if (node.addonPorts.length !== 1 || node.addonPorts[0].item !== 'it0') throw new Error('绑定表应剩 it0 一项');
+    if (mem.portCounts['src-test'] !== 3) throw new Error('portCounts 应 3，实际 ' + mem.portCounts['src-test']);
+  } finally {
+    sandbox._pushGraphUndo = realUndo;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.saveGraphState = realSave;
+    delete sandbox.window.getGraphState;
+    delete sandbox.window.saveGraphState;
+  }
   return true;
 });
 
