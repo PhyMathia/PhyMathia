@@ -827,11 +827,6 @@ def profile_context(device_id: str, max_chars: int = INJECTION_MAX_CHARS,
     return {"text": "", "factIds": [], "sections": []}
 
 
-def profile_context_text(device_id: str, max_chars: int = INJECTION_MAX_CHARS) -> str:
-    """旧入口兼容：只返回注入文本。"""
-    return profile_context(device_id, max_chars=max_chars)["text"]
-
-
 def profile_review_digest(device_id: str, max_chars: int = 220) -> str:
     """给 Φ（harness）的一句话画像摘要：与 profile_context 同一份分节口径压成一行。
 
@@ -898,7 +893,7 @@ def profile_ops_digest(device_id: str, max_lines: int = 20) -> str:
 __all__ = [
     "PROFILES_DIR", "get_profile", "save_profile", "update_profile",
     "delete_profile", "add_fact_candidates", "apply_profile_ops", "manage_profile_fact",
-    "mark_profile_used", "profile_context", "profile_context_text",
+    "mark_profile_used", "profile_context",
     "profile_review_digest", "profile_weak_terms",
     "profile_ops_digest", "_norm_fact",
     # 隐式画像层（数学模型 v1）转发：main.py 只 import profile，不直接碰 implicit

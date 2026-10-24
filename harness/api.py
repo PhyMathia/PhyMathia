@@ -35,6 +35,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _safe_int(value, default: int) -> int:
+    """payload 整数容错（T222）：坏输入（"abc"/dict/None 形变等）落默认值而非
+    抛 ValueError——裸 int() 顺着端点兜底 except 会落 500。与 graph_undo_report
+    / graph_events 既有的「坏输入落默认」拍板同款口径。调用侧保持 `or default`
+    传值以保留 0/空串走默认的既有语义。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # 错误协议（2026-09-20 起）：业务结果（ok/undo/clarify/no_ops/parse_error/
 # invalid）一律 HTTP 200 + 结构化 body，battery 与前端按 body.status 打分/分流；
 # 传输层故障才用真实状态码——坏 JSON 400、请求前提缺失/撤销与解析失败 400、
@@ -194,12 +206,12 @@ def _review_kwargs(payload: dict, context: str, journal: Optional[list] = None) 
         "account": str(payload.get("account_id") or payload.get("accountId") or "default") or "default",
         "instruction": payload.get("instruction", ""),
         "model": payload.get("model"),
-        "max_tokens": int(payload.get("max_tokens") or 4000),
+        "max_tokens": _safe_int(payload.get("max_tokens") or 4000, 4000),
         "phase": str(payload.get("phase") or "normal"),
         "context": context,
         "level": str(payload.get("level") or ""),
         "focus_node_ids": payload.get("focus_node_ids") or [],
-        "retries": int(payload.get("retries") or 2),
+        "retries": _safe_int(payload.get("retries") or 2, 2),
         "mode": str(payload.get("mode") or "auto"),
         "self_check": str(payload.get("self_check") or "auto"),
         "history": payload.get("harness_history") or payload.get("history"),
@@ -407,10 +419,7 @@ async def graph_undo_report(request: Request):
     session_id = _payload_session(payload)
     if not valid_session_id(session_id):
         return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": "缺少有效的 Φ 会话 id（session_id），无法记录撤销事件"}]})
-    try:
-        undone_from = int(payload.get("undone_from_seq") or 0)
-    except (TypeError, ValueError):
-        undone_from = 0
+    undone_from = _safe_int(payload.get("undone_from_seq") or 0, 0)
     if undone_from <= 0:
         return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": "缺少有效的 undone_from_seq（被回滚批次的 seq）"}]})
     event = {
@@ -438,10 +447,7 @@ async def graph_events(request: Request):
         return JSONResponse(status_code=400, content={"status": "error", "errors": [{"reason": "缺少有效的 Φ 会话 id（session_id）"}]})
     types = [t.strip() for t in str(request.query_params.get("types") or "").split(",") if t.strip()]
     event_id = str(request.query_params.get("event_id") or "").strip()
-    try:
-        limit = max(1, min(int(request.query_params.get("limit") or 100), 500))
-    except (TypeError, ValueError):
-        limit = 100
+    limit = max(1, min(_safe_int(request.query_params.get("limit") or 100, 100), 500))
     include_snapshot = str(request.query_params.get("include_snapshot") or "").lower() in ("1", "true", "yes")
     events = read_events(
         session_id,
@@ -501,14 +507,14 @@ async def graph_resolve(request: Request):
     try:
         context = payload.get("context") or getattr(request.app.state, "harness_context", "") or ""
         level = str(payload.get("level") or "")
-        retries = int(payload.get("retries") or 2)
+        retries = _safe_int(payload.get("retries") or 2, 2)
         # Φ 分桶按会话（2026-10-01）：resolve 也走 _call_model，同款置桶
         with harness_session_bucket(_payload_session(payload)):
             result = await resolve_focus(
                 snapshot=payload.get("snapshot"),
                 instruction=payload.get("instruction", ""),
                 model=payload.get("model"),
-                max_tokens=int(payload.get("max_tokens") or 900),
+                max_tokens=_safe_int(payload.get("max_tokens") or 900, 900),
                 context=context,
                 level=level,
                 retries=retries,
@@ -559,7 +565,7 @@ async def graph_feedback(request: Request):
             "kind": str(payload.get("kind") or "bad")[:10],
             "instruction": str(payload.get("instruction") or "")[:500],
             "summary": str(payload.get("summary") or "")[:1000],
-            "ops_count": int(payload.get("ops_count") or 0),
+            "ops_count": _safe_int(payload.get("ops_count") or 0, 0),
             "phase": str(payload.get("phase") or "")[:20],
             "note": str(payload.get("note") or "")[:500],
             "session_id": str(payload.get("session_id") or "")[:100],
