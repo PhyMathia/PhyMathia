@@ -783,6 +783,11 @@
   --node-question: #4a9eff;
   --node-followup: #6366f1;
   --node-answer: #10b981;
+  /* 直接回答（2026-10-24 深夜定色）：绿族亮一档，与问题分析 #10b981 相邻两绿可辨，
+     「AI 给出的回答」家族语义不变。特意不用薄荷绿 #34d399——那已是修改历史
+     「新增/将回」高亮环的语义色（.graph-diff-add / .graph-diff-will-return），
+     同一画布两义互相冲淡 */
+  --node-direct: #4ade80;
   --node-physics: #f59e0b;
   --node-math: #3b82f6;
   --node-graph: #0891b2;
@@ -1457,8 +1462,8 @@
 .graph-attr-question { --node-attr: var(--node-question); }
 .graph-attr-followup { --node-attr: var(--node-followup); }
 .graph-attr-answer { --node-attr: var(--node-answer); }
-/* 直接回答（2026-10-24）：与问题分析同色（同为 AI 给出的回答），靠卡头标签区分 */
-.graph-attr-direct { --node-attr: var(--node-answer); }
+/* 直接回答（2026-10-24）：与问题分析同为绿族但亮一档（--node-direct），相邻可辨 */
+.graph-attr-direct { --node-attr: var(--node-direct); }
 .graph-attr-physics { --node-attr: var(--node-physics); }
 .graph-attr-math { --node-attr: var(--node-math); }
 .graph-attr-graph { --node-attr: var(--node-graph); }
