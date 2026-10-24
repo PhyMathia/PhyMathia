@@ -1008,6 +1008,67 @@
       pruneLocalSessionCaches('switch');
     }
 
+    // ====== T389 / 4.1 另开探索线 ======
+    // 从修改历史的任意一步复制出另一张画布：消息与图状态都是那一刻的快照，原画布一字
+    // 不动，靠侧栏切换。只用现成通道（POST /api/sessions、/messages、graph kv），不新
+    // 增后端接口。标题＝「原画布 · 分支 N」；新画布的历史种子由 graph.js 写（历史信封
+    // 归它管，这边不复制序列化细节）。
+    async function forkSessionFromSnapshot(opts) {
+      if (phyIsReadonly()) { phyReadonlyBlock('另开探索线'); return null; }
+      const o = opts || {};
+      const sourceId = o.sourceId || currentSessionId;
+      const src = sessions[sourceId];
+      if (!src) return null;
+      // 源画布标题若还是占位名，先按首条提问自动命名，分支标题才带得上真实来源
+      if (sourceId === currentSessionId) _maybeAutoTitleSession(sourceId);
+      const baseTitle = String((sessions[sourceId] && sessions[sourceId].title) || '新画布');
+      const forkPrefix = baseTitle + ' · 分支 ';
+      let n = 2; // 原画布算第 1 张，第一个分叉就是「分支 2」
+      Object.keys(sessions).forEach(function (sid) {
+        const s = sessions[sid];
+        if (!s || sid === sourceId) return;
+        if (!String(s.title || '').startsWith(forkPrefix)) return;
+        const k = parseInt(String(s.title).slice(forkPrefix.length), 10);
+        if (Number.isFinite(k) && k >= n) n = k + 1;
+      });
+      const id = 'sess_' + crypto.randomUUID().replace(/-/g, '');
+      const sessionId = 'phymathia_' + crypto.randomUUID().replace(/-/g, '');
+      // 没有对话快照的那一步只复制图状态（计划 4.1）：标题里注明，免得用户以为对话丢了
+      const title = forkPrefix + n + ((Array.isArray(o.messages) && o.messages.length) ? "" : "（仅图）");
+      sessions[id] = {
+        id: id,
+        title: title,
+        sessionId: sessionId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        // 暂定画布口径照旧：真落了消息/图节点才摘帽（空分叉不污染服务端名单）
+        provisional: true,
+        forkOf: sourceId,
+      };
+      saveSessions();
+      const msgs = Array.isArray(o.messages) ? JSON.parse(JSON.stringify(o.messages)) : [];
+      if (msgs.length) await saveSessionMessages(id, msgs);
+      else safeLocalStorageSet('phymathia_msgs_' + id, '[]');
+      const state = (o.state && typeof o.state === 'object') ? JSON.parse(JSON.stringify(o.state)) : null;
+      if (state) {
+        saveGraphState(id, state);
+        // 切过去时 _loadGraphStateFromServer 按 updatedAt 比较；先把这一份送到服务端
+        // （失败不阻断：本地缓存仍是最新，后续同步会补）
+        await _flushGraphStateServerSave();
+      }
+      if (typeof window.seedForkedGraphHistory === 'function') {
+        window.seedForkedGraphHistory(id, {
+          sourceTitle: baseTitle,
+          step: Number(o.step) || 0,
+          state: state,
+          messages: msgs,
+        });
+      }
+      await switchToSession(id);
+      return { id: id, title: title, sessionId: sessionId };
+    }
+    window.forkSessionFromSnapshot = forkSessionFromSnapshot;
+
     // 这一轮流式回答写在哪张画布上（没在生成时为空串）。chat.js 在开跑前记下它，
     // 收尾时按它把回答写回去；session 这边只读来判定「切走要不要提示」。
     function _streamingSessionId() {
