@@ -240,7 +240,11 @@ check('素材篮加输出端口（2026-10-24）：门对新数据开、旧节点
     if (html2.indexOf('data-port-id="out-1"', colStart) !== -1) throw new Error('展开态输出列不得重复渲染按素材口（每口一份 DOM）');
     const basketAt = html2.indexOf('data-port-id="out-2"', colStart);
     if (basketAt < 0) throw new Error('整篮口应留在输出列');
-    if (!html2.slice(basketAt, basketAt + 900).includes('待命名')) throw new Error('整篮口（未连线）应显示待命名');
+    const basketSeg = html2.slice(basketAt, basketAt + 900);
+    // 整篮口固定身份「全部素材」（2026-10-24 六）：不再用「待命名」，连线后也不改名
+    if (!basketSeg.includes('>全部素材</span>')) throw new Error('整篮口应显示固定标签「全部素材」');
+    if (basketSeg.includes('待命名')) throw new Error('整篮口不得再显示待命名');
+    if (!html2.includes('添加整篮输出口')) throw new Error('素材篮「＋」提示应为整篮语义');
   } finally {
     sandbox.escapeHtml = realEsc;
   }
