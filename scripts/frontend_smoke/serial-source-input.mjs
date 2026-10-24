@@ -139,8 +139,10 @@ check('素材篮删中间条目：out-i 的边删除、其后端口左移一位�
   sandbox.renderGraphCanvas = () => {};
   sandbox.saveGraphState = () => {};
   try {
-    // 沙箱 window.getGraphState 由 _graphState 消费：stub 一份带 6 条边的 state
-    sandbox.window.getGraphState = () => ({
+    // 沙箱 window.getGraphState 由 _graphState 消费；删除链尾会追加 _saveCustomNodes
+    // （再存一次），桩必须用可变 mem（saveGraphState 回写），否则第二次存盘会把
+    // 未重排的原始字面量盖回 saved（生产上 memCache 会被 saveGraphState 更新，无此问题）
+    let mem = {
       connections: [
         { from: 'src-test', fromPort: 'out-0', to: 'x1', toPort: 'in-0', custom: true },
         { from: 'src-test', fromPort: 'out-1', to: 'x2', toPort: 'in-0', custom: true },
@@ -149,8 +151,9 @@ check('素材篮删中间条目：out-i 的边删除、其后端口左移一位�
         { from: 'x9', fromPort: 'out-0', to: 'src-test', toPort: 'in-0', custom: true },
       ],
       removedEdges: [], portCounts: {}, inputPortCounts: {}, customNodes: [], positions: {},
-    });
-    sandbox.window.saveGraphState = (sid, state) => { saved = state; };
+    };
+    sandbox.window.getGraphState = () => mem;
+    sandbox.window.saveGraphState = (sid, state) => { mem = state; saved = state; };
     sandbox.deleteSourceItem('src-test', 'itB');
   } finally {
     sandbox._pushGraphUndo = realUndo;
@@ -220,18 +223,24 @@ check('素材篮加输出端口（2026-10-24）：门对新数据开、旧节点
   if (boundImgs.length !== 1 || boundImgs[0].id !== 'i1') throw new Error('绑定口图片只收该素材');
   const allImgs = sandbox._sourcePortImageItems(node2, 3);
   if (allImgs.length !== 2) throw new Error('整篮口图片应收全部条目');
-  // 4. 渲染：按素材附加口显示素材名（非「待命名」）、行内有「加口」按钮
+  // 4. 渲染：按素材附加口长在素材行内（非「待命名」、不在底部输出列）；整篮口留列里
   const realEsc = sandbox.escapeHtml;
   sandbox.escapeHtml = t => (t == null ? '' : String(t));
   try {
-    seedNode([{ id: 'ib', kind: 'image', name: '受力图', text: '' }], { addonPorts: [{ item: 'ib' }] });
+    seedNode([{ id: 'ib', kind: 'image', name: '受力图', text: '' }], { addonPorts: [{ item: 'ib' }, {}] });
     vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
-    const html2 = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: { "src-test": 2 } })', sandbox);
+    const html2 = vm.runInContext('_renderSourceNodeHtml(graphView.nodeById["src-test"], { portCounts: { "src-test": 3 } })', sandbox);
     if (!html2.includes('graphAddSourceItemPort')) throw new Error('行内「加口」按钮缺失');
-    const at = html2.indexOf('data-port-id="out-1"');
-    if (at < 0) throw new Error('按素材附加口应渲染 out-1');
-    const seg = html2.slice(at, at + 400);
-    if (!seg.includes('受力图') || seg.includes('待命名')) throw new Error('按素材附加口应显示素材名而非待命名');
+    const colStart = html2.indexOf('graph-port-col graph-output-col');
+    if (colStart < 0) throw new Error('输出列缺失');
+    const boundAt = html2.indexOf('data-port-id="out-1"');
+    if (boundAt < 0 || boundAt > colStart) throw new Error('按素材附加口应渲染在素材行内（输出列之前）');
+    const boundSeg = html2.slice(boundAt, colStart);
+    if (!boundSeg.includes('受力图') || !boundSeg.includes('加口 1')) throw new Error('行内附加口应带素材名与加口序号');
+    if (html2.indexOf('data-port-id="out-1"', colStart) !== -1) throw new Error('展开态输出列不得重复渲染按素材口（每口一份 DOM）');
+    const basketAt = html2.indexOf('data-port-id="out-2"', colStart);
+    if (basketAt < 0) throw new Error('整篮口应留在输出列');
+    if (!html2.slice(basketAt, basketAt + 900).includes('待命名')) throw new Error('整篮口（未连线）应显示待命名');
   } finally {
     sandbox.escapeHtml = realEsc;
   }
@@ -266,10 +275,14 @@ check('素材篮按素材加口全链（2026-10-24 三）：绑定记账、条�
     };
     const node = vm.runInContext('graphView.nodeById["src-test"]', sandbox);
     node.addonPorts = [{ item: 'it1' }, {}];
-    // 1. 给 it0 加口：绑定表追加、portCounts＝2 条目＋3 附加＝5
+    // 1. 给 it0 加口：绑定表追加、portCounts＝2 条目＋3 附加＝5，且持久层同步
     sandbox.graphAddSourceItemPort('src-test', 'it0');
     if (!node.addonPorts[2] || node.addonPorts[2].item !== 'it0') throw new Error('新附加口应带 it0 绑定');
     if (mem.portCounts['src-test'] !== 5) throw new Error('portCounts 应 5，实际 ' + mem.portCounts['src-test']);
+    const cn1 = (mem.customNodes || []).find(n => n.id === 'src-test');
+    if (!cn1 || !cn1.addonPorts || !cn1.addonPorts[2] || cn1.addonPorts[2].item !== 'it0') {
+      throw new Error('addonPorts 必须快照进 state.customNodes（漏了会在下次重建时丢绑定）');
+    }
     // 2. 加条目：附加口边整体右移（out-2→out-3、out-3→out-4）、portCounts＝3＋3＝6、绑定不重排
     sandbox._sourcePushItem(node, { id: 'it2', kind: 'text', name: 'C', text: '丙' });
     if (mem.connections.find(c => c.to === 'x2').fromPort !== 'out-3') throw new Error('绑定口边应右移 out-3');
@@ -282,11 +295,15 @@ check('素材篮按素材加口全链（2026-10-24 三）：绑定记账、条�
     if (!x3e || x3e.fromPort !== 'out-2') throw new Error('整篮口边应左移 out-2，实际 ' + (x3e && x3e.fromPort));
     if (mem.portCounts['src-test'] !== 4) throw new Error('portCounts 应 4，实际 ' + mem.portCounts['src-test']);
     if (!mem.connections.some(c => c.to === 'x1' && c.fromPort === 'out-0')) throw new Error('it0 条目口边不动');
-    // 4. 通用×删掉附加口 out-2（此时的整篮口，x3 的线随口删除）：绑定表 splice、portCounts 同步
+    // 4. 通用×删掉附加口 out-2（此时的整篮口，x3 的线随口删除）：绑定表 splice、portCounts 同步、持久层同步
     sandbox.graphRemoveOutputPort('src-test', 2);
     if (mem.connections.some(c => c.to === 'x3')) throw new Error('删口应移除其连线');
     if (node.addonPorts.length !== 1 || node.addonPorts[0].item !== 'it0') throw new Error('绑定表应剩 it0 一项');
     if (mem.portCounts['src-test'] !== 3) throw new Error('portCounts 应 3，实际 ' + mem.portCounts['src-test']);
+    const cn4 = (mem.customNodes || []).find(n => n.id === 'src-test');
+    if (!cn4 || !cn4.addonPorts || cn4.addonPorts.length !== 1 || cn4.addonPorts[0].item !== 'it0') {
+      throw new Error('删口的绑定 splice 必须快照进 state.customNodes');
+    }
   } finally {
     sandbox._pushGraphUndo = realUndo;
     sandbox.renderGraphCanvas = realRender;
