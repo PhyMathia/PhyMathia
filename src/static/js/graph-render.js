@@ -756,12 +756,13 @@ function _renderBlankNodeHtml(node, state) {
     : (content
       ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
       : '');
-  const generateLabel = hasContent ? '重新生成' : '生成';
   const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
   // 动作区（2026-10-24 T402）：与其它工作流卡同款——版本导航 ‹n/n› → 循环箭头（带反馈
   // 重生成面板：写字＝保留当前内容只按反馈改，留空＝按卡上要求重跑）→ 三角（从头生成，
   // 强制重跑）→ 全屏。整个住在 .graph-node-actions 里：导出/只读查看器剥整行，自动消失。
   // 循环箭头只在有内容时挂（没生成过的卡没有「重新」语义；与模块卡空/有内容两分支同口径）。
+  // 三角 title 随状态切：空卡＝「按卡上的要求生成」、有内容＝「从头生成」——2026-10-24
+  // 用户拍板删掉要求框旁的循环箭头直跑钮（与动作区重复）后，首次生成的卡面入口也归三角。
   const actionsHtml = node.minimized ? '' : '<div class="graph-node-actions">'
     + _nodeVersionNavHtml(node, regenBusy)
     + (hasContent
@@ -769,7 +770,7 @@ function _renderBlankNodeHtml(node, state) {
       : '')
     // 三角走 generateBlankNode 而非 runWorkflowNode：先把要求框同步进节点再强制重跑；
     // forceOverride=true＝「从头生成」不看 hash，有下游时 T303 confirm 照走（不旁路）。
-    + _iconPlayButton('generateBlankNode(\'' + node.id + '\',false,null,true)', regenBusy ? '生成中...' : '从头生成（按卡上要求重跑）', regenBusy)
+    + _iconPlayButton('generateBlankNode(\'' + node.id + '\',false,null,true)', regenBusy ? '生成中...' : (hasContent ? '从头生成（按卡上要求重跑）' : '按卡上的要求生成'), regenBusy)
     + (typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : '')
     + '</div>';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
@@ -780,10 +781,11 @@ function _renderBlankNodeHtml(node, state) {
     + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _customNodeStatusHtml(node) + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
     + contentHtml
-    + (node.minimized ? '' : (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求（必填）→ 点生成</div>')
+    + (node.minimized ? '' : (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求（必填）→ 点 ▶ 生成</div>')
+    // 要求框只做输入（oninput 400ms 防抖同步 node.requirements），生成入口全在下方动作区；
+    // 框旁那颗循环箭头直跑钮 2026-10-24 用户拍板删除（与动作区循环箭头/三角重复），别加回。
     + '<div class="graph-blank-requirement">'
     + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + ' oninput="updateBlankNodeRequirements(\'' + node.id + '\', this.value)">' + escapeHtml(node.requirements || '') + '</textarea>'
-    + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : (hasContent ? '改要求重写' : '按卡上的要求生成'), node.busy)
     + '</div>')
     + actionsHtml
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
