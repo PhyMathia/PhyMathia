@@ -1492,7 +1492,7 @@ check('问题分析节点改名：徽标/标题/端口/属性注册表全部对�
     sandbox.escapeHtml = realEsc;
   }
   if (sandbox._nodeInputLabel({ kind: 'answer' }) !== '问题分析') throw new Error('输入口标签未改名');
-  if (sandbox._nodeOutputLabels({ kind: 'user' }, []).join(',') !== '问题分析,我的回答') throw new Error('问题节点出口未改名');
+  if (sandbox._nodeOutputLabels({ kind: 'user' }, []).join(',') !== '问题分析,我的回答,直接回答') throw new Error('问题节点出口未改名或丢了三口顺序');
   if (sandbox._nodeOutputLabels({ kind: 'human_note' }, []).join(',') !== '人工内容') throw new Error('我的理解出口未对齐');
   if (sandbox._nodeAttribute({ kind: 'answer' }).label !== '问题分析') throw new Error('属性注册表未改名');
   return true;

@@ -106,8 +106,8 @@
     }
     if (!raw) raw = String(n.label || '');
     // 「建议模块：…」内部控制行不进海报：与画布渲染层同一把尺子（utils.js
-    // stripSuggestedModulesLine），只作用于 answer 非 manual 节点的取文
-    if (n.kind === 'answer' && !n.manual && typeof stripSuggestedModulesLine === 'function') {
+    // stripSuggestedModulesLine），作用于 answer 非 manual 与 direct 节点的取文
+    if ((n.kind === 'direct' || (n.kind === 'answer' && !n.manual)) && typeof stripSuggestedModulesLine === 'function') {
       raw = stripSuggestedModulesLine(raw);
     }
     return raw;

@@ -177,6 +177,9 @@ const GRAPH_NODE_ATTRIBUTES = {
   question: { key: 'question', label: '问题', color: 'var(--node-question)' },
   followup: { key: 'followup', label: '追问', color: 'var(--node-followup)' },
   answer: { key: 'answer', label: '问题分析', color: 'var(--node-answer)' },
+  // 直接回答（2026-10-24）：AI 侧成品答案卡，与问题分析同色系（同为「AI 给出的回答」），
+  // 靠卡头标签区分；端口/属性类名 graph-attr-direct
+  direct: { key: 'direct', label: '直接回答', color: 'var(--node-answer)' },
   physics: { key: 'physics', label: '物理视角', color: 'var(--node-physics)' },
   math: { key: 'math', label: '数学视角', color: 'var(--node-math)' },
   graph: { key: 'graph', label: '知识图谱', color: 'var(--node-graph)' },
@@ -2886,7 +2889,7 @@ function _buildGraphData(messages, state) {
       y: saved.y != null ? saved.y : (cn.y || 0),
       // junction（2026-10-11）进 depth 3 组：走线锚点多落在源与目标之间，
       // 放顶层（depth 1）会被自动整理扔到画布最上一行
-      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module' || kind === 'hub' || kind === 'junction') ? 3 : kind === 'answer' ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 1)),
+      depth: cn.depth != null ? cn.depth : ((kind === 'blank' || kind === 'module' || kind === 'hub' || kind === 'junction') ? 3 : (kind === 'answer' || kind === 'direct') ? 2 : (kind === 'summary' || kind === 'note' ? 4 : 1)),
       targetAngle: cn.targetAngle != null ? cn.targetAngle : 0,
       w: 0,
       h: 0,

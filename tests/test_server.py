@@ -902,6 +902,24 @@ class WorkflowContextPartsSplitTest(unittest.TestCase):
         self.assertNotIn("原始问题", t)
         self.assertNotIn("简谐运动的物理图像与微分方程是什么", t)
 
+    def test_direct_mode_asks_for_complete_answer(self):
+        # 直接回答（2026-10-24）：mode=direct＋target.kind=direct 走成品答案口径。
+        # 三条绊线：①不能命中 answer 的「分发节点不生成正文」；②不能留通用收尾
+        # 「不重新生成完整回答」（会把答案压成摘要）；③目标标签与额外要求照常进段
+        _, t = context_mod._workflow_context_parts({
+            "mode": "direct",
+            "target": {"kind": "direct", "module": "", "label": "直接回答"},
+            "question": "简谐运动的周期由什么决定",
+            "requirements": "给出推导",
+            "upstream": [{"label": "问题", "content": "简谐运动的周期由什么决定"}],
+        })
+        self.assertIn("当前为直接回答模式", t)
+        self.assertIn("完整、可直接阅读的答案", t)
+        self.assertNotIn("分发节点，不生成正文内容", t)
+        self.assertNotIn("不重新生成完整回答", t)
+        self.assertIn("当前生成目标：直接回答", t)
+        self.assertIn("用户额外要求：给出推导", t)
+
     def test_empty_fields_yield_empty_shared_segment(self):
         # question/analysis/upstream 全空 → shared 无内容行，返回空串（不留光杆标题）
         s, t = context_mod._workflow_context_parts(

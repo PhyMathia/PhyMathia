@@ -1457,6 +1457,8 @@
 .graph-attr-question { --node-attr: var(--node-question); }
 .graph-attr-followup { --node-attr: var(--node-followup); }
 .graph-attr-answer { --node-attr: var(--node-answer); }
+/* 直接回答（2026-10-24）：与问题分析同色（同为 AI 给出的回答），靠卡头标签区分 */
+.graph-attr-direct { --node-attr: var(--node-answer); }
 .graph-attr-physics { --node-attr: var(--node-physics); }
 .graph-attr-math { --node-attr: var(--node-math); }
 .graph-attr-graph { --node-attr: var(--node-graph); }
