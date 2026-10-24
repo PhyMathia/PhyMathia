@@ -4113,10 +4113,31 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* T389（批次 4）：容量提示（标题行右侧，「已记 12/30 步 · 38 KB · 更早的 3 步已滚出」） */
+.graph-history-cap {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  margin-right: 8px;
+}
+.graph-history-tools button.graph-history-layout-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.graph-history-pin-tag {
+  font-size: var(--fs-xs);
+  color: #fbbf24;
+  margin-right: 2px;
+}
+.graph-history-actions .graph-history-pin,
+.graph-history-actions .graph-history-branch { padding: 3px 8px; }
+.graph-history-actions .graph-history-pin.active { color: #fbbf24; border-color: #fbbf24; }
+.graph-history-current-actions { justify-content: flex-end; }
 .graph-history-tools button,
 .graph-history-actions button {
   background: var(--btn-bg);
@@ -4169,6 +4190,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-badge.src-undo { background: #ea580c; }
 .graph-history-badge.src-init { background: #64748b; }
 .graph-history-badge.src-now { background: #0d9488; }
+.graph-history-badge.src-fork { background: #7c3aed; }
 /* T365：游标所在历史行的「当前位置」小标（区别于整行高亮的 .current） */
 .graph-history-cursor-tag {
   background: var(--accent);
@@ -4271,7 +4293,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-diff-item {
   display: grid;
-  grid-template-columns: 18px 46px minmax(0, 118px) minmax(0, 1fr);
+  /* T389：末列留给「恢复这一颗」，没有按钮的行该列为空不占位 */
+  grid-template-columns: 18px 46px minmax(0, 118px) minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   width: 100%;
@@ -4286,7 +4309,20 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-diff-item:hover { background: var(--btn-active-bg); }
 .graph-history-diff-item.active { border-color: var(--accent); background: var(--btn-active-bg); }
-.graph-history-diff-item:disabled { cursor: default; opacity: 0.85; }
+.graph-history-diff-item.no-focus { cursor: default; opacity: 0.85; }
+.graph-history-diff-item.no-focus:hover { background: transparent; }
+/* T389 单节点恢复：只把这一颗换回那一步的版本（不动整张图） */
+.g-hd-recover {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.g-hd-recover:hover { border-color: var(--accent); color: var(--accent); background: var(--btn-active-bg); }
 .graph-history-diff-item .g-hd-icon { font-weight: 800; text-align: center; }
 .graph-history-diff-item.will-vanish .g-hd-icon, .graph-history-diff-item.will-vanish .g-hd-will { color: #f87171; }
 .graph-history-diff-item.will-return .g-hd-icon, .graph-history-diff-item.will-return .g-hd-will { color: #34d399; }
