@@ -1,7 +1,8 @@
-// 修改历史对比（2026-10-24，R2/R3/R4/R5/R6）：本域钉「差异说人话」这一层——
+// 修改历史对比（2026-10-24，R2/R3/R4/R5/R6；同日简化批次改口）：本域钉「差异说人话」——
 //   ①内容投影：拖动/自动整理不进差异，正文改动才进；旧条目降级只比自定义节点；
 //   ②方向：回到那一步 = 现在有的会消失、那时有的会回来、两边不同会改写；
-//   ③清单/计数/图例与点行定位；④幽灵挂 graphInner、坐标不预乘 pan/zoom；
+//   ③清单/计数/图例与点行定位；④两向切换（回到这里会怎样/这一步改了什么），
+//     历史「幽灵虚影」已随简化批次退役（_graphDiffGhost* 一族仍服务 Φ 的向前对比）；
 //   ⑤800ms 深比较只算一次（脏标记缓存）；⑥行摘要回退到正文前 22 字，不再吐节点 ID。
 // 异步用例（点行定位）放最后：前面同步例各自 try/finally 自清理，别在异步让出微任务
 // 期间重置共享沙箱（AGENTS 冒烟混排坑）。
@@ -94,9 +95,10 @@ export async function run() {
     Object.keys(nodeEls).forEach(k => delete nodeEls[k]);
     runCtx('graphCanvas = null; graphInner = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
-      + ' graphHistoryCursor = 0; graphHistoryLive = null; graphHistorySlot = null;'
+      + ' graphHistoryCursor = 0; graphHistoryLive = null;'
       + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
-      + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryLiveDirty = true;');
+      + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryCompareDir = "back";'
+      + ' graphHistoryLiveDirty = true;');
     delete storageData[HIST_KEY];
   };
   const projOf = state => JSON.parse(runCtx('JSON.stringify(_graphProjectionOf(' + JSON.stringify(state) + ', []))'));
@@ -151,7 +153,7 @@ export async function run() {
       return true;
     });
 
-    check('2.2/2.3 清单：底部换成可点列表，分组、计数、图例、导航都在', () => {
+    check('2.2/2.3 清单：可点列表＋分组计数图例；两向切换就位，步进/幽灵/单节点恢复已退役', () => {
       reset();
       runCtx('graphUndoStack = ['
         + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note("keep"), _note("back")])) + ', messages: null, meta: { source: "user", summary: "两步前", ts: 1, pushedAt: 1 } },'
@@ -161,22 +163,67 @@ export async function run() {
       els.graphHistoryList = _mkEl('div');
       els.graphHistoryDiffText = _mkEl('div');
       els.graphHistoryPos = _mkEl('span');
-      els.graphHistorySlot = _mkEl('div');
       runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
       runCtx('_previewGraphVersion(0);');
       const html = els.graphHistoryDiffText.innerHTML;
       if (!html.includes('对比：回到')) throw new Error('清单没有标题');
       if (!html.includes('会消失') || !html.includes('会回来') || !html.includes('会改写')) throw new Error('三向分组/图例缺失');
       if (!html.includes('g-hd-count')) throw new Error('计数行缺失');
-      if (!html.includes('stepGraphHistoryDiff') || !html.includes('jumpGraphVersion(0)')) throw new Error('上一处/下一处/回到这一步缺失');
+      // 简化批次：两向切换钮在；步进/幽灵开关/「恢复这一颗」不再渲染
+      if (!html.includes("setGraphHistoryCompareDir('back')") || !html.includes("setGraphHistoryCompareDir('step')")) {
+        throw new Error('两向切换钮缺失');
+      }
+      if (!html.includes('jumpGraphVersion(0)')) throw new Error('回到这一步缺失');
+      if (html.includes('stepGraphHistoryDiff') || html.includes('toggleGraphHistoryGhosts') || html.includes('recoverGraphHistoryNode')) {
+        throw new Error('已退役的步进/幽灵/单节点恢复还出现在对比面板');
+      }
       const model = JSON.parse(runCtx('JSON.stringify({ items: graphHistoryDiffModel.items.length, will: graphHistoryDiffModel.items.map(i => i.will), counts: graphHistoryDiffModel.counts })'));
       if (!model.items) throw new Error('差异清单为空');
       if (model.will[0] !== 'vanish' || model.will.indexOf('return') < 0) throw new Error('清单分组顺序不对：' + JSON.stringify(model.will));
+      if (model.counts.vanish !== 1 || model.counts.ret !== 1 || model.counts.change !== 1) {
+        throw new Error('计数没从清单数：' + JSON.stringify(model.counts));
+      }
       runCtx('exitGraphVersionPreview(); closeGraphHistoryPanel();');
       return true;
     });
 
-    check('R6 幽灵：挂进 graphInner，坐标是图坐标（不预乘 pan/zoom）', () => {
+    check('两向切换（简化批次）：step＝上一版→这一版，措辞反向；第一步回落 back', () => {
+      reset();
+      runCtx('graphUndoStack = ['
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note("a")])) + ', messages: null, meta: { source: "user", summary: "初始", ts: 1, pushedAt: 1 } },'
+        + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(_state([_note("a", { content: "改了" }), _note("b")])) + ', messages: null, meta: { source: "user", summary: "那一步", ts: 2, pushedAt: 2 } }'
+        + ']; graphHistoryCursor = 2; graphHistoryLive = null; graphHistoryLiveDirty = true;');
+      mem = _state([_note('a', { content: '改了' }), _note('b')]);
+      els.graphHistoryList = _mkEl('div');
+      els.graphHistoryDiffText = _mkEl('div');
+      els.graphHistoryPos = _mkEl('span');
+      runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
+      try {
+        // 第一步没有上一版：对比面板把 step 钮置灰，切换被拒，方向仍是 back
+        runCtx('_previewGraphVersion(0);');
+        if (!els.graphHistoryDiffText.innerHTML.includes('disabled')) throw new Error('第一步的 step 钮没置灰');
+        if (runCtx('setGraphHistoryCompareDir("step")') !== false) throw new Error('第一步竟然切进了 step');
+        if (runCtx('graphHistoryCompareDir') !== 'back') throw new Error('第一步切换后方向没留在 back');
+        runCtx('exitGraphVersionPreview();');
+        // 第二步：step＝上一版→这一版（新增 b＝新出现/return，改写 a＝change）
+        runCtx('_previewGraphVersion(1);');
+        if (runCtx('setGraphHistoryCompareDir("step")') !== true) throw new Error('step 切换失败');
+        const model = JSON.parse(runCtx('JSON.stringify({ dir: graphHistoryDiffModel.dir, will: graphHistoryDiffModel.items.map(i => i.will) })'));
+        if (model.dir !== 'step') throw new Error('模型没记 step 方向');
+        if (model.will.indexOf('return') < 0) throw new Error('这一步新出现的节点没标 return：' + JSON.stringify(model.will));
+        if (model.will.indexOf('change') < 0) throw new Error('这一步改写的节点没标 change：' + JSON.stringify(model.will));
+        const html = els.graphHistoryDiffText.innerHTML;
+        if (!html.includes('这一步改了什么') || !html.includes('新出现') || !html.includes('被改了')) throw new Error('step 措辞缺失');
+        // 切回 back：回到「会消失/会回来」口径
+        runCtx('setGraphHistoryCompareDir("back");');
+        if (!els.graphHistoryDiffText.innerHTML.includes('会改写')) throw new Error('切回 back 后措辞没回来');
+      } finally {
+        runCtx('exitGraphVersionPreview(); closeGraphHistoryPanel();');
+      }
+      return true;
+    });
+
+    check('R6 幽灵（Φ 向前对比仍在用）：挂进 graphInner，坐标是图坐标（不预乘 pan/zoom）', () => {
       const tr = runCtx('_graphDiffGhostTranslate(' + JSON.stringify({ id: 'g1', kind: 'note', x: 300, y: 200, w: 220, h: 72 }) + ')');
       if (tr !== 'translate(190px, 164px)') throw new Error('幽灵坐标不对：' + tr);
       const hostSrc = runCtx('_graphDiffGhostLayerHost.toString()');

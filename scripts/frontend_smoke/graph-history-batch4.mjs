@@ -1,10 +1,10 @@
-// 修改历史 · 批次 4（T389，2026-10-25）：另开探索线 + 打磨五件
+// 修改历史 · 批次 4（T389，2026-10-25）：另开探索线 + 打磨（部分已随 2026-10-24
+// 简化批次退役：起名收藏/容量 KB/单节点恢复/排版开关，见各用例注释）
 //   ①合并连续编辑：1.2s 内对同一颗节点的连续改动只记一次；
-//   ②起名收藏：钉住的步骤不被 30 条上限挤掉，名字随条目落盘；
-//   ③容量提示：已记 X/30 步 · 体积 · 更早的 N 步已滚出；
-//   ④单节点恢复：差异清单里只把这一颗换回那一步的版本；
-//   ⑤恢复排版开关：恢复时保留当前排版（只换内容）；
-//   ⑥另开探索线：从任意一步复制成新画布，标题带来源，历史从「分叉自…」开始。
+//   ②30 步上限：挤出最老一条＋滚出计数随信封落盘（收藏择优已退役）；
+//   ③容量提示：只说「更早的 N 步已移出」（条数/KB 仪表已退役）；
+//   ④恢复固定「保留当前排版」（原开关已退役）；
+//   ⑤另开探索线：从任意一步复制成新画布，标题带来源，历史从「分叉自…」开始。
 // 执行顺序：同步例在前、异步例进串行队列（check 注册即开跑，异步例会让出给下一条）。
 import fs from 'node:fs';
 import { check, drain, sandbox, vm, storageData } from './_runner.mjs';
@@ -73,12 +73,11 @@ export async function run() {
     Object.keys(els).forEach(k => delete els[k]);
     runCtx('graphCanvas = null; graphInner = null; graphHistoryPanel = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
-      + ' graphHistoryCursor = 0; graphHistoryLive = null; graphHistorySlot = null;'
+      + ' graphHistoryCursor = 0; graphHistoryLive = null;'
       + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
       + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryLiveDirty = true;'
       + ' graphHistoryLiveMetaCache = null; graphHistorySavedAt = 0; graphHistoryDropped = 0;'
-      + ' graphHistoryBytes = 0; graphHistoryLastEffect = { op: "", touch: "", at: 0 };'
-      + ' graphHistoryKeepLayout = false; graphHistoryLastSignature = "";');
+      + ' graphHistoryLastEffect = { op: "", touch: "", at: 0 }; graphHistoryLastSignature = "";');
     delete storageData[HIST_KEY];
   };
   const push = () => runCtx('_pushGraphUndo();');
@@ -86,8 +85,6 @@ export async function run() {
     els.graphHistoryList = _mkEl('div');
     els.graphHistoryPos = _mkEl('span');
     els.graphHistoryCap = _mkEl('span');
-    els.graphHistoryLayoutToggle = _mkEl('button');
-    els.graphHistorySlot = _mkEl('div');
     els.graphHistoryDiffText = _mkEl('div');
   };
   try {
@@ -116,91 +113,46 @@ export async function run() {
       return true;
     });
 
-    check('②起名收藏：钉住的步骤不被 30 步上限挤掉，名字随条目走', () => {
+    check('②30 步上限（简化批次）：挤出最老一条＋滚出计数落盘（收藏择优已退役）', () => {
       reset();
       for (let i = 0; i < 30; i++) {
         mem = _state(Array.from({ length: i + 1 }, (_, k) => _note('n' + k)));
         push();
       }
       if (runCtx('graphUndoStack.length') !== 30) throw new Error('前置：没到 30 条：' + runCtx('graphUndoStack.length'));
-      sandbox.window.prompt = () => ' 起点 ';
-      runCtx('toggleGraphHistoryPin(0);');
-      const pinned = JSON.parse(runCtx('JSON.stringify(graphUndoStack[0].meta)'));
-      if (!pinned.pinned || pinned.name !== '起点') throw new Error('收藏没记上：' + JSON.stringify(pinned));
-      // 再推一条：超上限时先挤掉最老的「没钉住」的那条（下标 1），收藏的那条留下
+      // 再推一条：挤出最老的那条（下标 0），滚出计数＋1
       mem = _state(Array.from({ length: 31 }, (_, k) => _note('n' + k)));
       push();
       if (runCtx('graphUndoStack.length') !== 30) throw new Error('上限没顶住：' + runCtx('graphUndoStack.length'));
-      if (!runCtx('graphUndoStack[0].meta.pinned')) throw new Error('收藏的那一步被挤掉了');
+      const first = JSON.parse(runCtx('JSON.stringify(graphUndoStack[0].state.customNodes.length)'));
+      if (first !== 2) throw new Error('挤出的不是最老一条：栈首应为第 2 状态，实际 ' + first);
       if (runCtx('graphHistoryDropped') !== 1) throw new Error('滚出计数不对：' + runCtx('graphHistoryDropped'));
       const raw = JSON.parse(storageData[HIST_KEY]);
-      if (!raw.d || !raw.e[0].meta.pinned || raw.e[0].meta.name !== '起点') throw new Error('收藏与滚出计数没落盘');
-      runCtx('toggleGraphHistoryPin(0);');
-      if (runCtx('graphUndoStack[0].meta.pinned')) throw new Error('再点一次没取消收藏');
+      if (!raw.d || raw.d !== 1) throw new Error('滚出计数没落盘：' + JSON.stringify(raw.d));
+      // 收藏符号退役：源码不再有入口
+      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+      if (/toggleGraphHistoryPin/.test(src)) throw new Error('收藏函数还有残留');
       return true;
     });
 
-    check('③容量提示：面板写清已记条数 / 体积 / 更早的滚出', () => {
+    check('③容量提示（简化批次）：只说滚出条数，不再有 已记X/30 与 KB', () => {
       reset();
       for (let i = 0; i < 3; i++) {
         mem = _state(Array.from({ length: i + 1 }, (_, k) => _note('n' + k)));
         push();
       }
       runCtx('_persistGraphHistory();');
-      runCtx('graphHistoryDropped = 7;');
       panelEls();
       runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
+      if (els.graphHistoryCap.textContent !== '') throw new Error('没滚出时不该有容量文案：' + els.graphHistoryCap.textContent);
+      runCtx('graphHistoryDropped = 7; graphHistoryLastSignature = ""; _refreshGraphHistoryPanel();');
       const cap = els.graphHistoryCap.textContent;
-      if (!/已记 3\/30 步/.test(cap)) throw new Error('容量提示缺条数：' + cap);
-      if (!/KB/.test(cap)) throw new Error('容量提示缺体积：' + cap);
-      if (!/更早的 7 步已滚出/.test(cap)) throw new Error('容量提示缺滚出条数：' + cap);
+      if (!/更早的 7 步已移出/.test(cap)) throw new Error('滚出文案缺失：' + cap);
+      if (/KB/.test(cap) || /已记/.test(cap)) throw new Error('条数/KB 仪表没退役：' + cap);
       runCtx('closeGraphHistoryPanel();');
       return true;
     });
 
-    check('④单节点恢复：只把这一颗换回那一步，别的节点/位置不动', () => {
-      reset();
-      runCtx('graphUndoStack = [{ sessionId: ' + JSON.stringify(SID) + ', state: '
-        + JSON.stringify(_state([_note('n1', { content: '旧文' }), _note('n2', { content: '原样' })], { positions: { n1: { x: 100, y: 100 }, n2: { x: 300, y: 300 } } }))
-        + ', messages: null, meta: { source: "user", summary: "上一步", ts: 1, pushedAt: 1 } }];'
-        + 'graphHistoryCursor = 1; graphHistoryLive = null; graphHistoryLiveDirty = true; graphHistoryLiveMetaCache = null;');
-      mem = _state([_note('n1', { content: '新文' }), _note('n2', { content: '原样' })], { positions: { n1: { x: 700, y: 700 }, n2: { x: 900, y: 900 } } });
-      panelEls();
-      runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel(); _previewGraphVersion(0);');
-      const model = JSON.parse(runCtx('JSON.stringify({ items: graphHistoryDiffModel.items, will: graphHistoryDiffModel.items.map(i => i.will) })'));
-      const at = model.items.findIndex(it => it.nodeId === 'n1');
-      if (at < 0 || model.items[at].will !== 'change' || !model.items[at].canRecover) throw new Error('改写项没标可恢复');
-      runCtx('recoverGraphHistoryNode(' + at + ');');
-      const n1 = (mem.customNodes || []).find(n => n.id === 'n1');
-      const n2 = (mem.customNodes || []).find(n => n.id === 'n2');
-      if (!n1 || n1.content !== '旧文') throw new Error('这一颗没恢复成那一步的版本：' + JSON.stringify(n1));
-      if (!n2 || n2.content !== '原样') throw new Error('恢复一颗动了别的节点');
-      if (!mem.positions || mem.positions.n1.x !== 700) throw new Error('单节点恢复搬了位置');
-      if (runCtx('graphUndoStack.length') !== 2) throw new Error('单节点恢复没进撤销历史');
-      runCtx('exitGraphVersionPreview(); closeGraphHistoryPanel();');
-      return true;
-    });
-
-    check('④单节点恢复：那一步有、现在没有的节点能接回来，连线一并接', () => {
-      reset();
-      const target = _state([_note('n1'), _note('back', { content: '回来的' })], {
-        connections: [{ from: 'n1', fromPort: 'out-0', to: 'back', toPort: 'in-0', type: 'custom' }],
-      });
-      runCtx('graphUndoStack = [{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(target)
-        + ', messages: null, meta: { source: "user", summary: "两步前", ts: 1, pushedAt: 1 } }];'
-        + 'graphHistoryCursor = 1; graphHistoryLive = null; graphHistoryLiveDirty = true; graphHistoryLiveMetaCache = null;');
-      mem = _state([_note('n1')]);
-      panelEls();
-      runCtx('openGraphHistoryPanel(); graphHistoryLastSignature = ""; _refreshGraphHistoryPanel(); _previewGraphVersion(0);');
-      const items = JSON.parse(runCtx('JSON.stringify(graphHistoryDiffModel.items)'));
-      const at = items.findIndex(it => it.nodeId === 'back');
-      if (at < 0 || items[at].will !== 'return' || !items[at].canRecover) throw new Error('会回来的节点没标可恢复');
-      runCtx('recoverGraphHistoryNode(' + at + ');');
-      if (!(mem.customNodes || []).some(n => n.id === 'back')) throw new Error('节点没接回来');
-      if (!(mem.connections || []).length) throw new Error('连线没一起接回来');
-      runCtx('exitGraphVersionPreview(); closeGraphHistoryPanel();');
-      return true;
-    });
 
     check('⑥另开探索线：那一步没有消息快照时，按投影从当前对话还原到那一刻', () => {
       reset();
@@ -229,7 +181,7 @@ export async function run() {
 
     // ===== 异步例：串行队列逐个 await =====
     const serial = [];
-    serial.push(['⑤恢复排版开关（默认/打开两条路）', async () => {
+    serial.push(['④恢复固定保留当前排版（简化批次：原开关退役，常开）', async () => {
       reset();
       const s0 = _state([_note('n1', { content: '旧' })], { positions: { n1: { x: 100, y: 100 } } });
       const s1 = _state([_note('n1', { content: '中' })], { positions: { n1: { x: 300, y: 300 } } });
@@ -238,18 +190,16 @@ export async function run() {
         + '{ sessionId: ' + JSON.stringify(SID) + ', state: ' + JSON.stringify(s1) + ', messages: null, meta: { source: "user", summary: "上一步", ts: 2, pushedAt: 2 } }'
         + ']; graphHistoryCursor = 2; graphHistoryLive = null; graphHistoryLiveDirty = true; graphHistoryLastEffect = { op: "", touch: "", at: 0 };');
       mem = _state([_note('n1', { content: '新' })], { positions: { n1: { x: 500, y: 500 } } });
-      // 默认：整张恢复（排版也回历史）
+      // 恢复＝只换内容，坐标/视口留在现状；不再有开关与偏好键
       await runCtx('_jumpGraphVersion(1)');
-      if (mem.positions.n1.x !== 300) throw new Error('默认恢复没还原历史排版：' + mem.positions.n1.x);
-      // 打开开关：内容回去、坐标留现状
-      runCtx('toggleGraphHistoryKeepLayout();');
-      if (!runCtx('graphHistoryKeepLayout')) throw new Error('开关没打开');
+      if (mem.customNodes[0].content !== '中') throw new Error('内容没恢复：' + mem.customNodes[0].content);
+      if (mem.positions.n1.x !== 500) throw new Error('保留当前排版没生效：' + mem.positions.n1.x);
       await runCtx('_jumpGraphVersion(0)');
-      if (mem.customNodes[0].content !== '旧') throw new Error('内容没恢复：' + mem.customNodes[0].content);
-      if (mem.positions.n1.x !== 300) throw new Error('保留排版没生效：' + mem.positions.n1.x);
-      if (storageData['phymathia_graph_history_keep_layout'] !== '1') throw new Error('开关偏好没落盘');
-      runCtx('toggleGraphHistoryKeepLayout();');
-      if (runCtx('graphHistoryKeepLayout')) throw new Error('开关关不掉');
+      if (mem.customNodes[0].content !== '旧') throw new Error('第二步内容没恢复：' + mem.customNodes[0].content);
+      if (mem.positions.n1.x !== 500) throw new Error('第二次恢复又搬了位置：' + mem.positions.n1.x);
+      if (storageData['phymathia_graph_history_keep_layout'] !== undefined) throw new Error('排版偏好键还在被写');
+      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+      if (/toggleGraphHistoryKeepLayout/.test(src)) throw new Error('排版开关函数还有残留');
       return true;
     }]);
 

@@ -1,9 +1,9 @@
-// 修改历史的事件点与恢复槽（2026-10-24，R1/R7/3.1/3.2/3.3/1.2/1.3）：
+// 修改历史的事件点与截断（2026-10-24，R1/3.1/3.2/3.3/1.2/1.3；同日简化批次改口）：
 //   ①提问/重生成在建点之前落一个历史点——撤销粒度＝一整次提问；
 //   ②行时间＝形成这个状态的上一动作启动时间（摘要与时间对齐，治 R1b）；
-//   ③单槽恢复：截断未来前先存，来回切始终只有一条旁路，分叉点之前改动则旧槽作废；
-//   ④槽随 v2 信封持久化（s/l 两个可选字段），读回可接；
-//   ⑤退出结算：正常关闭才清，F5/强杀/指纹不一致/多标签都不清。
+//   ③回退后落真编辑＝按业界惯例直接丢弃被跳过的「未来」（原单槽「另一条路」退役），
+//     toast 指路「⧉ 另开」；旧信封的 s 字段读回静默忽略、不再写出；
+//   ④退出结算：正常关闭才清，F5/强杀/指纹不一致/多标签都不清。
 // 执行顺序：同步例在前、异步例全部排到最后。异步 check 注册即开跑（跑到第一个 await
 // 前是同步的），与后面的同步例共用沙箱会互相拆台（AGENTS 冒烟混排坑实锤）。
 import fs from 'node:fs';
@@ -35,6 +35,7 @@ export async function run() {
   const prevSid = sandbox.window.getCurrentSessionId, prevGet = sandbox.window.getGraphState;
   const prevSave = sandbox.window.saveGraphState, prevChat = sandbox.window.getChatHistory;
   const prevReplace = sandbox.window.replaceChatHistory, prevToast = sandbox.showToast;
+  const prevToastMsg = sandbox.toastMsg;
   const prevDoc = sandbox.document, prevEsc = sandbox.escapeHtml;
   const prevPerf = sandbox.performance;
   const prevReadonly = sandbox.window.PHYMATHIA_READONLY;
@@ -44,12 +45,14 @@ export async function run() {
   let mem = _state([]);
   let chat = [];
   const els = {};
+  const toasts = [];
   sandbox.window.getCurrentSessionId = () => SID;
   sandbox.window.getGraphState = () => mem;
   sandbox.window.saveGraphState = (_sid, state) => { Object.assign(mem, JSON.parse(JSON.stringify(state))); };
   sandbox.window.getChatHistory = () => chat.slice();
   sandbox.window.replaceChatHistory = async (msgs) => { chat = JSON.parse(JSON.stringify(msgs)); };
-  sandbox.showToast = () => {};
+  sandbox.showToast = text => { toasts.push(String(text)); };
+  sandbox.toastMsg = text => { toasts.push(String(text)); };  // 截断指路 toast 走 toastMsg
   sandbox.escapeHtml = t => String(t == null ? '' : t);
   sandbox.document = {
     createElement: tag => _mkEl(tag),
@@ -66,10 +69,11 @@ export async function run() {
   const reset = () => {
     mem = _state([]);
     chat = [];
+    toasts.length = 0;
     Object.keys(els).forEach(k => delete els[k]);
     runCtx('graphCanvas = null; graphInner = null; graphHistoryPanel = null;'
       + 'graphHistorySession = ' + JSON.stringify(SID) + '; graphUndoStack = [];'
-      + ' graphHistoryCursor = 0; graphHistoryLive = null; graphHistorySlot = null;'
+      + ' graphHistoryCursor = 0; graphHistoryLive = null;'
       + ' graphPendingLiveMeta = null; graphHistoryPendingTruncate = false;'
       + ' graphHistoryPreviewing = -1; graphHistoryDiffModel = null; graphHistoryLiveDirty = true;'
       + ' graphHistoryLiveMetaCache = null; graphHistorySavedAt = 0;');
@@ -120,23 +124,21 @@ export async function run() {
       return true;
     });
 
-    check('1.2 持久化：槽随 v2 信封（s/l）落盘，读回能接回去', () => {
-      seed(5);
-      runCtx('graphHistoryCursor = 3; graphHistoryLive = { sessionId: ' + JSON.stringify(SID) + ','
-        + ' state: ' + JSON.stringify(_state(Array.from({ length: 6 }, (_, k) => _note('n' + k)))) + ','
-        + ' messages: null, meta: { source: "now", summary: "最新状态", ts: 9 } };'
-        + ' graphHistorySlot = null; _graphHistorySlotSaveFuture(3);');
+    check('1.2 持久化（简化批次）：信封不再写 s；旧信封的 s 读回被静默忽略', () => {
+      seed(3);
       runCtx('_persistGraphHistory();');
       const raw = JSON.parse(storageData[HIST_KEY]);
-      if (!raw.s || !raw.s.e) throw new Error('信封没带槽：' + JSON.stringify(Object.keys(raw)));
-      if (!Number.isFinite(Number(raw.s.b))) throw new Error('槽没记分叉点');
+      if ('s' in raw) throw new Error('信封还在写 s 字段：' + JSON.stringify(Object.keys(raw)));
       if (!raw.t) throw new Error('信封没带落盘时间（12h 兜底要用）');
-      runCtx('graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; graphHistorySlot = null; graphHistorySession = "";');
+      if (runCtx('typeof graphHistorySlot') !== 'undefined') throw new Error('单槽符号还有残留');
+      // 旧格式（带 s 的存量信封）读回：条目/游标照常装载，s 一眼不看、不炸不接
+      const legacy = JSON.parse(JSON.stringify(raw));
+      legacy.s = { b: 1, at: 9, e: [{ sessionId: SID, state: _state([_note('old')]), meta: null }], l: null };
+      storageData[HIST_KEY] = JSON.stringify(legacy);
+      runCtx('graphHistorySession = "stale_旧会话"; graphUndoStack = [];');
       runCtx('_ensureGraphHistory();');
-      const slot = JSON.parse(runCtx('JSON.stringify(graphHistorySlot && { b: graphHistorySlot.baseIndex, entries: graphHistorySlot.entries.length, live: !!graphHistorySlot.live })'));
-      if (!slot) throw new Error('读回没恢复槽');
-      if (slot.b !== 3) throw new Error('槽分叉点读回不对：' + JSON.stringify(slot));
-      if (slot.entries + (slot.live ? 1 : 0) !== 2) throw new Error('槽里的步数读回不对：' + JSON.stringify(slot));
+      if (runCtx('graphUndoStack.length') !== 3) throw new Error('旧信封的条目没装载：' + runCtx('graphUndoStack.length'));
+      if (runCtx('typeof graphHistorySlot') !== 'undefined') throw new Error('旧信封的 s 竟然活了');
       return true;
     });
 
@@ -160,52 +162,33 @@ export async function run() {
     // 不能写成多个 async check——check 注册即调用，函数跑到第一个 await 就让出，
     // 下一个例的 seed() 会当场把上一个例的沙箱重置（AGENTS 冒烟混排坑）。
     const serial = [];
-    serial.push(['1.2/R7 单槽恢复：截断前存未来，两条路来回切，始终只有一条', async () => {
+    serial.push(['1.2 截断即丢弃（简化批次）：真编辑后未来直接没了，toast 指路另开', async () => {
       seed(8);
       await runCtx('_jumpGraphVersion(4)');
       runCtx('_pushGraphUndo();');                    // 编辑前的推送：相同→挂待截断
       if (!runCtx('graphHistoryPendingTruncate')) throw new Error('时间旅行位没挂待截断标记');
-      // 第一笔真编辑落盘＝立即截断＋存槽（不能等第二次推送）
+      // 第一笔真编辑落盘＝立即截断：未来 3 步直接丢弃（不再存槽），游标回最新位
+      toasts.length = 0;
       mem = _state(Array.from({ length: 5 }, (_, k) => _note('n' + k, { content: 'edited' })));
       runCtx('_saveGraphState(_graphState());');
       if (runCtx('graphUndoStack.length') !== 5 || runCtx('graphHistoryCursor') !== 5) {
         throw new Error('第一次编辑没截断未来：' + runCtx('graphHistoryCursor + "/" + graphUndoStack.length'));
       }
-      const slot = JSON.parse(runCtx('JSON.stringify(graphHistorySlot && { b: graphHistorySlot.baseIndex, entries: graphHistorySlot.entries.length, live: !!graphHistorySlot.live })'));
-      if (!slot || slot.b !== 4) throw new Error('槽没记分叉点：' + JSON.stringify(slot));
-      if (slot.entries + (slot.live ? 1 : 0) !== 3) throw new Error('槽里的步数不对：' + JSON.stringify(slot));
-      // 切回另一条路：条目 7 条＋端点＝8 个状态，当前状态是原第 8 步
-      await runCtx('_restoreGraphHistorySlot()');
-      if (runCtx('graphHistoryCursor + "/" + graphUndoStack.length') !== '7/7') {
-        throw new Error('恢复后不是原路径终点：' + runCtx('graphHistoryCursor + "/" + graphUndoStack.length'));
-      }
-      if ((mem.customNodes || []).length !== 8) throw new Error('恢复后图状态不对：' + mem.customNodes.length);
-      // 再切回新路：仍然只有一条旁路
-      await runCtx('_restoreGraphHistorySlot()');
-      if (runCtx('graphHistoryCursor + "/" + graphUndoStack.length') !== '5/5') {
-        throw new Error('再切回新路失败：' + runCtx('graphHistoryCursor + "/" + graphUndoStack.length'));
-      }
-      if ((mem.customNodes || []).length !== 5) throw new Error('切回新路后图状态不对：' + mem.customNodes.length);
-      const slot2 = JSON.parse(runCtx('JSON.stringify(graphHistorySlot && { b: graphHistorySlot.baseIndex, entries: graphHistorySlot.entries.length, live: !!graphHistorySlot.live })'));
-      if (!slot2 || slot2.b !== 4) throw new Error('来回切后槽没了：' + JSON.stringify(slot2));
-      if (slot2.entries + (slot2.live ? 1 : 0) !== 3) throw new Error('来回切后槽里不是 3 步：' + JSON.stringify(slot2));
-      return true;
-    }]);
-
-    serial.push(['1.2 作废规则：在分叉点之前又改一笔，旧槽被新截断顶掉（接不回旧路）', async () => {
-      seed(6);
+      const notice = toasts.find(t => t.indexOf('已舍去后面的 3 步') >= 0 && t.indexOf('另开') >= 0);
+      if (!notice) throw new Error('截断没弹指路 toast：' + JSON.stringify(toasts));
+      // 重做到头即 no-op（未来没了）；信封也不带 s
+      await runCtx('_redoGraphAction()');
+      if (runCtx('graphHistoryCursor') !== 5) throw new Error('截断后竟然还能重做');
+      const raw = JSON.parse(storageData[HIST_KEY]);
+      if ('s' in raw) throw new Error('截断后的信封还写 s');
+      // 再回退再编辑：丢弃计数按新一次算（没有旁路可以捡回来）
       await runCtx('_jumpGraphVersion(3)');
       runCtx('_pushGraphUndo();');
-      mem = _state(Array.from({ length: 4 }, (_, k) => _note('n' + k, { content: 'edited' })));
+      toasts.length = 0;
+      mem = _state([_note('n0'), _note('n1', { content: 'again' })]);
       runCtx('_saveGraphState(_graphState());');
-      if (runCtx('graphHistorySlot && graphHistorySlot.baseIndex') !== 3) throw new Error('前置：槽没建起来');
-      await runCtx('_jumpGraphVersion(1)');
-      runCtx('_pushGraphUndo();');
-      mem = _state([_note('n0'), _note('n1', { content: 'earlier' })]);
-      runCtx('_saveGraphState(_graphState());');
-      const base = runCtx('graphHistorySlot ? graphHistorySlot.baseIndex : null');
-      if (base === 3) throw new Error('分叉点之前的改动没顶掉旧槽');
-      if (base !== 1) throw new Error('新截断没记自己的分叉点：' + base);
+      if (runCtx('graphUndoStack.length') !== 4) throw new Error('第二次截断条目不对：' + runCtx('graphUndoStack.length'));
+      if (!toasts.some(t => t.indexOf('已舍去后面的 1 步') >= 0)) throw new Error('第二次截断没提示：' + JSON.stringify(toasts));
       return true;
     }]);
 
@@ -247,7 +230,6 @@ export async function run() {
       seed(3);
       els.graphHistoryList = _mkEl('div');
       els.graphHistoryPos = _mkEl('span');
-      els.graphHistorySlot = _mkEl('div');
       els.graphHistoryDiffText = _mkEl('div');
       runCtx('openGraphHistoryPanel();');
       await runCtx('settleGraphHistoryNow()');
@@ -275,6 +257,7 @@ export async function run() {
     sandbox.window.getChatHistory = prevChat;
     sandbox.window.replaceChatHistory = prevReplace;
     if (prevToast === undefined) delete sandbox.showToast; else sandbox.showToast = prevToast;
+    if (prevToastMsg === undefined) delete sandbox.toastMsg; else sandbox.toastMsg = prevToastMsg;
     sandbox.document = prevDoc;
     sandbox.escapeHtml = prevEsc;
     sandbox.performance = prevPerf;
