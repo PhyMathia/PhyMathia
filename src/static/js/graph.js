@@ -308,7 +308,7 @@ let graphHistoryDiffSummary = "";
 let graphPendingLiveMeta = null;
 let graphHistoryTimer = null;
 let graphHistoryLastSignature = "";
-// ===== 2026-10-24 修改历史增强（R1–R9，见 docs/修改历史与回退-诊断与计划-2026-10-24.md）=====
+// ===== 2026-10-24 修改历史增强（R1–R9，见 docs/archive/修改历史与回退-诊断与计划-2026-10-24.md）=====
 // 单槽恢复（R7）：在时间旅行位落真编辑＝要截断「未来」。截断前把被放弃的尾巴
 // （游标之后的条目＋「最新」锚点）整段存进这一格；新的一次截断覆盖旧的，最多
 // GRAPH_HISTORY_SLOT_MAX 步。槽里只有一条路径，来回切不会长成树。结构：
