@@ -951,6 +951,1003 @@ def _log_context_metrics(messages: list, snapshot: dict, phase: str,
         return None
 
 
+# ---- T396（2026-10-24）：review_graph 按阶段拆子函数 ----
+# 主链此前 1218 行一锅炖；现按「澄清 / 计划 / 执行 / 收尾」拆成下面的模块级
+# 子函数，review_graph 只留编排骨架（请求级闭包 _emit/_counted_call/
+# _consume_model_output/_kb/messages_for_attempt、T95 换模型候选切换与 attempt
+# 重试循环）。拆分红线不变（见文件头 2026-10-04 注记）：tests 在本模块对象上
+# monkeypatch 的名字（_call_model/_selfcheck_ops/MAX_TOOL_STEPS/预算与拆段常量
+# 等）及其调用方全部留在本文件——子函数在函数体内按模块全局查找这些名字，
+# 补丁照常生效；常量绝不做成默认参数（定义期求值会固化旧值、绕过补丁）。
+# 全部代码从主链逐字平移，行为零变化（仅删一个从未使用的 text_lower 局部量）。
+
+async def _prepare_review_request(
+    snapshot: Any,
+    instruction: str,
+    context: str,
+    phase: str,
+    focus_node_ids,
+    account: str,
+    emit,
+) -> tuple:
+    """澄清阶段：快照归一/配方排序/焦点收缩/相位识别/coach 统计/评价空图短路。
+
+    返回 (state, early_result)：state 带 current/full_snapshot/context/instruction/
+    phase/coach_block 六键（后四者可能已被本阶段改写）；early_result 非 None 时
+    （评价阶段图里没有可评价节点）主流程直接返回它，不调模型。"""
+    # T93：只读查询的取数源＝归一化后的完整快照（未做焦点收缩/正文压缩）。
+    # 必须独立 normalize 一次——_compact_snapshot 会原地裁剪节点正文，与 current
+    # 共用同一批 dict 会把「全文」提前压掉，read_node 就取不回目录行的全文了。
+    # 路径三落点三（2026-10-09）：快照配方清单超过后端截断上限（core.py 的
+    # user_recipes[:32]）时，名额从纯「最近更新」改成「与指令相关度优先＋其余
+    # 保序」——本地 embedding 计算，不发任何模型请求；语义层降级时顺序原样
+    # （与 T244 的 updatedAt 倒序行为一致）。
+    if (isinstance(snapshot, dict) and isinstance(snapshot.get("user_recipes"), list)
+            and len(snapshot["user_recipes"]) > 32 and str(instruction or "").strip()):
+        ordered = await rank_recipes_for_instruction(snapshot["user_recipes"], instruction, account)
+        if isinstance(ordered, list) and len(ordered) == len(snapshot["user_recipes"]):
+            snapshot = dict(snapshot)
+            snapshot["user_recipes"] = ordered
+    full_snapshot = normalize_snapshot(snapshot)
+    current = normalize_snapshot(snapshot)
+    if len(json.dumps(current, ensure_ascii=False)) > MAX_SNAPSHOT_CHARS:
+        sub = _focus_subgraph(current, focus_node_ids)
+        if sub is not None:
+            current = sub
+            context = str(context or "") + f"\n（本次快照过大，已省略 {sub.get('omitted_node_count', 0)} 个非焦点节点，仅保留焦点邻域供审阅。）"
+    current = _compact_snapshot(current, focus_node_ids)
+    instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
+    phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
+    # ---- 路径六第 2 档：课程表体检——确定性指标在消息 build 期前算好 ----
+    # 「确定性指标＋一次模型调用」：统计由服务端对完整未压缩快照预计算（quiz_weak
+    # 覆盖率也在这里出），拼进 user 消息尾部，模型不必（也不应）再调 graph_stats
+    # 拉一遍——比查询回灌省一轮往返。每请求一次，重试/换模型候选共用同一份。
+    coach_block = ""
+    if phase == "coach":
+        coach_stats = _graph_stats(
+            full_snapshot.get("nodes") or [], full_snapshot.get("edges") or [], full_snapshot
+        )
+        coach_block = build_coach_stats_block(coach_stats)
+        emit({
+            "type": "status",
+            "stage": "coach",
+            "message": "📊 课程表体检：整图统计已计算完毕，正在生成报告与建议批次",
+        })
+    emit({
+        "type": "status",
+        "stage": "start",
+        "message": "已理解指令（" + _PHASE_LABELS.get(phase, phase) + "），正在准备画布上下文",
+    })
+    early_result = None
+    # ---- 评价阶段确定性短路：图里没有可评价节点时无需调模型 ----
+    if phase == "evaluate":
+        editable_nodes = [
+            n for n in (current.get("nodes") or [])
+            if str(n.get("kind") or "") != "ai_eval"
+        ]
+        if not editable_nodes:
+            result = build_next_snapshot(current, [])
+            result["summary"] = "当前图还没有可评价的节点：先添加知识点或提出问题，我再帮你审阅。"
+            result["raw_has_ops"] = False
+            result["model_calls"] = 0
+            early_result = result
+    state = {
+        "current": current,
+        "full_snapshot": full_snapshot,
+        "context": context,
+        "instruction": instruction,
+        "phase": phase,
+        "coach_block": coach_block,
+    }
+    return state, early_result
+
+
+def _try_deterministic_undo(
+    instruction: str,
+    focus_node_ids,
+    previous_ops,
+    all_previous_ops,
+    previous_snapshot,
+    initial_snapshot,
+    snapshot: Any,
+    current: Dict[str, Any],
+    call_counter: Dict[str, int],
+    emit,
+) -> Optional[Dict[str, Any]]:
+    """澄清阶段：确定性撤销前置短路——无歧义撤销意图且有上一步操作时不调模型。
+
+    返回 None＝不是撤销路径，主流程继续走模型；非 None＝直接作为 review_graph
+    的结果返回。所有出口与文案从主链逐字平移（含 F5 无损前态拒绝与半撤拒绝）。"""
+    # ---- 确定性撤销：指令是无歧义撤销、有上一步操作时，不调用模型 ----
+    # T226：_detect_undo_intent 是宽泛子串匹配，复合编辑指令（如「这个公式
+    # 不要了，删掉它」）会误命中撤销词，图被反向回滚、summary 谎报成功。门槛
+    # 加在本使用处而非 _detect_undo_intent 内部（它还有 _enforce_phase_gates
+    # 的编辑意图重试判定在用）：仅短指令或明确指回「上一步」的指令才走确定性
+    # 撤销（拍板「命中即不调模型」对此原样保留）；长复合指令改走模型路径，由
+    # 模型带全套上下文自行判断它到底是编辑还是撤销。详见 review_phase.py T226 注释。
+    undo_intent = _detect_undo_intent(instruction) and _is_unambiguous_undo(instruction)
+    scope = _undo_scope(instruction, focus_node_ids)
+    use_full = scope in ("full", "targeted") and (all_previous_ops or [])
+    prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
+    prev_before = initial_snapshot if use_full else previous_snapshot
+    # 配方批整批拒绝（2026-10-09）：update/delete_recipe 没有确定性逆
+    # （build_inverse_ops 只逆 create_recipe），图撤销不会还原配方库——含这类操作的
+    # 批必须整批拒绝，绝不做「图回滚、配方不动」的半撤。判断必须放在 MAX_OPERATIONS
+    # 截片【之前】：切片保留最新 N 条，配方操作排在更早位置时会被切掉、漏检后跌回
+    # 半撤路径。op/type 两种键名都认（历史记录与不同客户端的形态不一）。
+    if undo_intent and any(
+        (op.get("op") or op.get("type")) in ("update_recipe", "delete_recipe")
+        for op in prev_ops if isinstance(op, dict)
+    ):
+        reason_text = "这批修改包含配方修改或删除，请用「撤销本次」或「撤销历史」整批恢复；整批还原会覆盖之后的手工修改。"
+        emit({"type": "status", "stage": "undo", "message": reason_text})
+        return {
+            "status": "no_ops", "summary": reason_text, "operations": [],
+            "next_snapshot": current, "diff": [], "errors": [], "warnings": [],
+            "raw_has_ops": False, "model_calls": call_counter["n"],
+        }
+    # T235：历史超单批上限时切「最新 N 条」而不是最旧——「撤销全部」要回滚的是
+    # 最近的改动，留头部会把最新改动整段留下、只回滚最旧的（语义拧反）。被切掉
+    # 的条数在撤销成功的 summary 里如实说明，不静默缩水。previous_ops（前端主
+    # 路径只带上一步）恒 ≤80，这个切片对它无操作。
+    prev_ops_truncated = len(prev_ops) > MAX_OPERATIONS
+    if prev_ops_truncated:
+        prev_ops = prev_ops[-MAX_OPERATIONS:]
+    if undo_intent and prev_ops:
+        # F5：撤销前态用后端原样快照（未截断），归一化会丢长正文与本地字段。
+        current = normalize_snapshot(snapshot)
+        if not isinstance(prev_before, dict):
+            # 没有无损前态就没有恢复依据：明确拒绝，绝不静默降级成有损猜测恢复。
+            reason_text = "缺少本次修改的撤销前态（无损快照），无法安全恢复；请使用画布的「撤销本次」按钮回退"
+            emit({"type": "status", "stage": "undo", "message": reason_text})
+            return {
+                "status": "error",
+                "summary": reason_text,
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [{"reason": reason_text}],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
+        try:
+            from .core import _InverseOperations, UndoRestoreError
+
+            inverse_ops = build_inverse_ops(
+                prev_before if isinstance(prev_before, dict) else current,
+                _InverseOperations(prev_ops),
+                current,
+            )
+            inverse_ops = _InverseOperations(_filter_inverse_by_targets(inverse_ops, focus_node_ids, current))
+            if inverse_ops:
+                emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
+                undo_result = build_next_snapshot(current, inverse_ops)
+                undo_errors = undo_result.get("errors") or []
+                if undo_errors:
+                    # T226：build_next_snapshot 部分失败时不得把 status 无条件盖成
+                    # undo「成功」——前端按 errors 非空判失败（harness-run.js 主路径
+                    # 与 harness.js harnessFetchJson 都是 status==='error' 或
+                    # errors.length 即抛），后端却报 undo 成功，两边语义打架。
+                    # 保留失败语义：status=error（与本函数其它失败出口同形状），
+                    # summary 如实写失败项数；已回滚的部分留在
+                    # operations/next_snapshot/undo_ops 里供前端与日志查证。
+                    for err in undo_errors:
+                        # T235：单批上限 error 的文案是编辑语境的「请把剩余修改拆成
+                        # 下一批指令」——撤销没有下一批，原样弹给用户是胡说。delete_node
+                        # 的逆一对多展开（restore＋每条入射边一条 add_edge）让两个多边
+                        # 删除就能顶过上限（tests/test_harness.py 的
+                        # test_undo_partial_failure_reports_error_not_undo 钉的就是这条）。
+                        # 半滚会把一条删除的 restore 和它的 add_edge 切两半，造出「节点
+                        # 回来、边没回来」的不一致态——按撤销语义重写：告知真实代价与
+                        # 可选动作（可再次撤销逐步回滚）。
+                        if "上限" in str(err.get("reason") or ""):
+                            err["reason"] = (
+                                f"本次要回滚的改动过多（逆操作 {len(inverse_ops)} 条超过单批上限 "
+                                f"{MAX_OPERATIONS} 条），只回滚一半会造成图状态不一致，画布未应用本次撤销；"
+                                "可先撤销更近的修改，再逐步回滚更早的"
+                            )
+                    undo_result["status"] = "error"
+                    undo_result["phase"] = "undo"
+                    undo_result["summary"] = f"撤销未完全成功：{len(undo_errors)} 项失败"
+                    undo_result["raw_has_ops"] = bool(inverse_ops)
+                    undo_result["undo_ops"] = inverse_ops
+                    undo_result["model_calls"] = call_counter["n"]
+                    return undo_result
+                undo_result["summary"] = "已撤销上一步修改" + (
+                    "（仅撤销指定节点相关改动）" if focus_node_ids else ""
+                ) + (
+                    # scope=full 但调用方没带完整操作历史（前端主路径只带上一步）：
+                    # 如实说明只回滚了最后一步，别让「全部撤销」静默缩水
+                    "（未收到完整操作历史，仅回滚了最后一步）"
+                    if scope == "full" and not use_full else ""
+                ) + (
+                    # T235：>80 条历史只回滚最新 N 条（见上方切片），如实说明
+                    f"（操作历史超过 {MAX_OPERATIONS} 条，仅回滚最近 {MAX_OPERATIONS} 条修改）"
+                    if prev_ops_truncated else ""
+                )
+                undo_result["status"] = "undo"
+                undo_result["phase"] = "undo"
+                undo_result["raw_has_ops"] = bool(inverse_ops)
+                undo_result["undo_ops"] = inverse_ops
+                undo_result["model_calls"] = call_counter["n"]
+                return undo_result
+        except UndoRestoreError as exc:
+            # 恢复契约不闭合（如缺少无损前态）时明确拒绝，绝不静默降级成
+            # 有损猜测恢复。给用户可操作的替代出口。
+            emit({"type": "status", "stage": "undo", "message": str(exc)})
+            return {
+                "status": "error",
+                "summary": str(exc),
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [{"reason": str(exc)}],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
+        if undo_intent and prev_ops and not inverse_ops:
+            # 焦点过滤后逆操作为空（或本就无可逆操作）：明确 no-op 返回。
+            # 此前会跌回模型路径——带着「撤销」指令和全套编辑工具自由发挥，
+            # 违反「确定性撤销不调模型」的拍板，还会跳过大图守卫把未压缩
+            # 快照原样发给模型（09-20 修复）
+            reason_text = ("上一步修改与你选中的节点无关，没有可撤销的内容。"
+                           if focus_node_ids else "上一步没有生成可撤销的修改。")
+            emit({"type": "status", "stage": "undo", "message": reason_text})
+            return {
+                "status": "undo",
+                "summary": reason_text,
+                "operations": [],
+                "next_snapshot": current,
+                "diff": [],
+                "errors": [],
+                "warnings": [],
+                "raw_has_ops": False,
+                "model_calls": call_counter["n"],
+            }
+    return None
+
+
+async def _compact_history_budget(
+    history, messages_for_attempt, resolved_model: Dict[str, Any], journal: Optional[list]
+) -> tuple:
+    """计划阶段：T94 上下文预算与自动压缩（评审路线 #9）。
+
+    每请求一次，且在首个 attempt 构建 messages 之前（重试轮与换模型候选不重复
+    压缩）。触发＝条数超阈值 或 system+user 提示词（含历史块）估算超预算；
+    触发后把更早的多轮历史摘要成一条，修复长会话后期「早期定下的方案被 6 条
+    窗口滚掉」的失忆。摘要失败降级回既有截断行为，绝不阻断。
+    返回 (history, history_compacted, context_est)。"""
+    history = list(history) if isinstance(history, (list, tuple)) else []
+
+    def _probe_context_est(hist: list) -> int:
+        """探针预算估算：messages_for_attempt("") 纯字符串拼接 + 历史块，不调模型。"""
+        try:
+            probe = messages_for_attempt("")
+        except Exception:
+            return 0
+        parts = [
+            str(m.get("content") or "")
+            for m in probe
+            if isinstance(m, dict) and m.get("role") in ("system", "user")
+        ]
+        block = _history_block(hist)
+        if block:
+            parts.append(block)
+        return estimate_tokens("".join(parts))
+
+    context_est = _probe_context_est(history)
+    history_compacted = False
+    if history and (
+        len(history) > HISTORY_COMPACT_TRIGGER_ENTRIES
+        or context_est > HARNESS_CONTEXT_BUDGET_TOKENS
+    ):
+        older = history[:-HISTORY_KEEP_RECENT] if len(history) > HISTORY_KEEP_RECENT else []
+        recent = history[-HISTORY_KEEP_RECENT:]
+        summary_entry: Optional[Dict[str, Any]] = None
+        if older:
+            try:
+                summary_text = await _summarize_history(older, resolved_model)
+            except Exception as exc:
+                # 摘要失败绝不阻断：保持原 history，退回首轮起就有的
+                # 「最近 6 条详细 + 更早一行」截断行为
+                logger.warning("harness: history compact failed, fallback to truncation: %s", exc)
+                summary_text = ""
+            if summary_text:
+                summary_entry = {
+                    "role": "compact_summary",
+                    "summary": summary_text,
+                    "covered": len(older),
+                }
+        if summary_entry is not None:
+            history = [summary_entry] + recent
+            history_compacted = True
+            # T96 journal：压缩事件（覆盖条数与摘要字数），观测压缩频率与效果
+            _journal_history_compact(journal, len(older), len(str(summary_entry["summary"])))
+            context_est = _probe_context_est(history)
+            if context_est > HARNESS_CONTEXT_BUDGET_TOKENS and len(history) > _HISTORY_HARD_KEEP + 1:
+                # 压缩后仍超预算（快照/system 本身过大）：硬截到「摘要 + 最近 4 条」
+                history = [summary_entry] + history[-_HISTORY_HARD_KEEP:]
+                context_est = _probe_context_est(history)
+        elif not older:
+            # 没有更早条目可摘要（条数不多、纯预算超）：直接硬截到最近 4 条
+            history = history[-_HISTORY_HARD_KEEP:]
+            context_est = _probe_context_est(history)
+    return history, history_compacted, context_est
+
+
+def _splice_attempt_messages(
+    messages: list, level: str, history: list, phase: str,
+    current_tools, tool_choice, readonly_enabled: bool,
+) -> list:
+    """计划阶段：T150 只增不改——工具提示/历史块/难度后缀插回最后一条 user 尾部。
+
+    harness 前缀缓存拍板（2026-10-01）：难度文本后置出 system 后，build 期已把它
+    追加到最后一条 user 尾部；工具提示与历史块要插回它前面（原文＋工具提示＋
+    history＋难度），保证发请求时难度仍居消息尾部，不落进内容中部。副本换槽
+    整表换新，build 期产出的消息本体不动；后续 tool 轮对这张表只 append，
+    provider 看到的消息序列前缀只增不减（前缀缓存不被中途改写打穿）。"""
+    level_text = _level_requirement(level)
+    level_suffix = ("\n\n" + level_text) if level_text else ""
+    base_content = messages[-1]["content"]
+    if level_suffix and base_content.endswith(level_suffix):
+        base_content = base_content[: -len(level_suffix)]
+    if current_tools:
+        if phase == "chat":
+            # 答疑模式：纯只读工具表，用专用提示（通用 AUTO 提示的
+            # 「要求修改图请使用工具」与答疑红线矛盾，不能照抄）
+            base_content += HARNESS_CHAT_TOOLS_HINT
+        else:
+            base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
+            if readonly_enabled:
+                base_content += READONLY_TOOLS_HINT
+    history_text = _history_block(history)
+    if history_text:
+        base_content += history_text
+    # T150：只增不改——拼进最后一条 user 的副本后整表换新
+    return messages[:-1] + [{**messages[-1], "content": base_content + level_suffix}]
+
+
+async def _run_readonly_query_loop(
+    raw: Dict[str, Any], messages: list, full_snapshot: Dict[str, Any], account: str,
+    kb_loader, readonly_enabled: bool, current_tools, tool_choice,
+    model_kwargs: Dict[str, Any], attempt: int, journal: Optional[list],
+    resolved_model: Dict[str, Any], max_tokens: int,
+    last_raw: str, reasoning_only_seen: bool,
+    counted_call, consume_model_output, emit,
+) -> tuple:
+    """执行阶段：T93 只读查询回灌循环——模型先查图，看完了再决定改哪。
+
+    仅当工具表含只读工具（normal/expand/apply/preset）时启用（readonly_enabled
+    由调用方判定）；查询轮不走 tools→json 降级链（对话已建立，中途降级无意义），
+    HarnessError 直接抛给外层换模型候选链接住。messages 原表 append（T150 只增
+    不减）；返回 (raw, last_raw, reasoning_only_seen)，循环未触发时原样返回入参。"""
+    tool_steps = 0
+    # 进环前先按 attempt 层口径初始化（原主链里该值来自外层作用域）；
+    # 步数上限分支剥离只读工具后会重算
+    current_choice = tool_choice if current_tools else None
+    readonly_calls = _readonly_batch(raw.get("tool_calls")) if readonly_enabled else []
+    while readonly_calls:
+        assistant_msg = _assistant_tool_message(raw)
+        messages.append(assistant_msg)
+        batch_results = []
+        for call in assistant_msg["tool_calls"]:
+            name, args = _tool_call_name_args(call)
+            if name in READONLY_TOOL_NAMES:
+                tool_steps += 1
+                emit({
+                    "type": "status",
+                    "stage": "tool",
+                    "message": "🔎 查询" + _readonly_tool_label(name) + "：" + name + "(" + _readonly_call_arg(name, args) + ")",
+                    "attempt": attempt,
+                    "step": tool_steps,
+                })
+                output = execute_readonly_tool(
+                    name, args, full_snapshot,
+                    kb=kb_loader() if name in KB_TOOL_NAMES else None,
+                )
+                # 路径三（2026-10-09）：字面完全 miss 的检索用本地
+                # embedding 补召回（字面命中≥1 条时零变化；语义层
+                # 降级回 [] 时行为与从前逐字一致）
+                if (name in ("search_nodes", "search_knowledge", "search_formulas")
+                        and isinstance(args, dict) and isinstance(output, dict)
+                        and not output.get("total")):
+                    keyword = str(args.get("keyword") or args.get("query")
+                                  or args.get("text") or "").strip()
+                    if keyword:
+                        hits = []
+                        if name == "search_nodes":
+                            hits = await semantic_node_recall(full_snapshot, keyword, account)
+                        else:
+                            hits = await semantic_kb_recall(
+                                "knowledge" if name == "search_knowledge" else "formulas",
+                                kb_loader(), keyword, account,
+                            )
+                        if hits:
+                            output = execute_readonly_tool(
+                                name, args, full_snapshot,
+                                kb=kb_loader() if name in KB_TOOL_NAMES else None,
+                                semantic_hits=hits,
+                            )
+                text = json.dumps(output, ensure_ascii=False)
+                ok = not (isinstance(output, dict) and output.get("error"))
+                if len(text) > _TOOL_RESULT_CHARS:
+                    text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
+            else:
+                # 同批混入的编辑类调用：统一下发「已暂存」结果，绝不执行；
+                # 模型须在看完查询结果后单独重发编辑方案
+                text = json.dumps(_DEFERRED_TOOL_RESULT, ensure_ascii=False)
+                ok = False
+            messages.append({
+                "role": "tool",
+                "tool_call_id": str(call.get("id") or ""),
+                "content": text,
+            })
+            batch_results.append({
+                "id": str(call.get("id") or ""),
+                "name": name,
+                "ok": ok,
+                "chars": len(text),
+            })
+        if journal is not None:
+            # 查询轮条目：stage 仍 generate，带 step 与 tool_results；
+            # messages 只在 attempt 首轮存过，这里不再重复存
+            journal.append({
+                "stage": "generate",
+                "attempt": attempt,
+                "step": tool_steps,
+                "tool_results": batch_results,
+            })
+        if tool_steps >= MAX_TOOL_STEPS:
+            # 步数上限：剥掉只读工具并明示，之后模型只能出编辑方案
+            readonly_enabled = False
+            current_tools = [
+                schema for schema in (current_tools or [])
+                if schema.get("function", {}).get("name") not in READONLY_TOOL_NAMES
+            ] or None
+            current_choice = tool_choice if current_tools else None
+            messages.append({"role": "user", "content": _TOOL_STEP_LIMIT_NOTICE})
+        emit({
+            "type": "status",
+            "stage": "model",
+            "attempt": attempt,
+            "step": tool_steps,
+            "message": f"已获得查询结果，正在继续思考方案（第 {tool_steps} 步）…",
+        })
+        raw = await counted_call(
+            messages,
+            resolved_model,
+            max_tokens,
+            tools=current_tools,
+            tool_choice=current_choice,
+            json_mode=False,
+            **model_kwargs,
+        )
+        _journal_roundtrip(
+            journal, "generate", raw,
+            attempt=attempt, step=tool_steps, messages=None,
+        )
+        last_raw, reasoning_only_seen = consume_model_output(raw)
+        readonly_calls = _readonly_batch(raw.get("tool_calls")) if readonly_enabled else []
+    return raw, last_raw, reasoning_only_seen
+
+
+def _parse_plan_output(
+    raw: Dict[str, Any], last_raw: str, reasoning_only_seen: bool,
+    current_tools, phase: str, attempt: int, retries: int,
+) -> Dict[str, Any]:
+    """执行阶段：把一次模型输出解析成操作批/摘要/达成清单，或追问、重试信号。
+
+    返回三态 dict：
+    - {"kind":"ok","ops","summary","checklist","tool_errors"}——解析成功；
+    - {"kind":"clarify","summary","clarify"}——T263 访谈 ask_user 或 JSON clarify，
+      主流程用 _clarify_result_payload 组装返回（追问轮零操作）；
+    - {"kind":"retry","errors"}——解析失败/末次前的 tool_calls 失败，带反馈重试。"""
+    pending_tool_errors = []
+    # T236：本趟尝试里解析失败的 tool_calls——末次放行时降级成 warnings
+    # （见 _assemble_result_with_selfchecks）。每次尝试重新初始化，重试成功不得带上轮残留。
+    pending_checklist: list = []
+    if raw.get("tool_calls"):
+        raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
+        # T263 访谈协议：创造模式的 ask_user＝追问，立即结束本轮返回前端
+        # （与 JSON clarify 同出口）；访谈轮不夹带配方/图操作，其余调用一并忽略
+        ask_op = next(
+            (o for o in raw_ops if isinstance(o, dict) and o.get("op") == "ask_user"),
+            None,
+        ) if phase == "preset" else None
+        if ask_op:
+            ask_summary = _clamp_display_summary(str(raw.get("content") or "").strip())
+            if _looks_like_machine_text(ask_summary):
+                ask_summary = ""
+            return {
+                "kind": "clarify",
+                "summary": ask_summary,
+                "clarify": {"questions": ask_op.get("questions") or []},
+            }
+        pending_tool_errors = tool_errors
+        if tool_errors and attempt < retries:
+            logger.warning("tool_calls 解析失败: %s", tool_errors)
+            return {"kind": "retry", "errors": tool_errors}
+        # T236：末次尝试放行已解析出的合法 ops——parse_tool_calls 逐条
+        # 解析、好坏分开返回，整批丢弃会让合法操作被连坐，重试耗尽后更只剩
+        # operations: []（parse_error 出口全丢）。此时失败项转 warnings，
+        # 与孤立节点/进阶链「有重试机会就重试、末次降 warnings」同体例；
+        # 不能留 errors：errors 非空前端 harness-run.js:604 整批抛错，
+        # 合法操作照样应用不上。
+        if tool_errors:
+            logger.warning("tool_calls 末次放行合法 ops，失败项降级 warnings: %s", tool_errors)
+        # T118：content 里常是模型独白/配方键名等机器文本（创造模式
+        # create_recipe 高发），与纯文字分支同口径 clamp＋机器文本判定；
+        # 空/机器文本回落计数摘要（结果组装处的 _fallback_summary）
+        summary = _clamp_display_summary(str(raw.get("content") or "").strip())
+        if _looks_like_machine_text(summary):
+            summary = ""
+        # 路径二第二步：工具通道下 checklist 从 content 的 JSON 外壳惰性
+        # 提取（模型自报、可选）。外壳里同时给了人话 summary 就用它顶替
+        # 整段 JSON 文本（否则会被机器文本判定整段丢掉）；纯散文 content
+        # 解析不出 dict，零影响。
+        content_payload = extract_json(str(raw.get("content") or ""))
+        if isinstance(content_payload, dict) and isinstance(content_payload.get("checklist"), list):
+            pending_checklist = normalize_checklist(content_payload.get("checklist"))
+            if pending_checklist and isinstance(content_payload.get("summary"), str) and str(content_payload.get("summary") or "").strip():
+                summary = _clamp_display_summary(str(content_payload["summary"]).strip())
+    else:
+        payload = extract_json(last_raw)
+        if payload is None and current_tools is not None:
+            # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作；
+            # 若文本是“JSON 外壳”（模型把 JSON 写进正文且引号未转义），只保留内层 summary
+            summary = _clamp_display_summary(
+                _extract_summary_from_json_shell(last_raw) or last_raw
+            )
+            if not summary.strip() and reasoning_only_seen:
+                # 正文为空且只产出裸思维链（不提升为正文，2026-09-30）：
+                # 给明确提示，不把推理散文当回复，也不让面板沉默
+                summary = "模型这一轮只输出了思考过程，没有给出正式回复，请重试或换个说法。"
+            raw_ops = []
+        elif payload is None:
+            logger.warning("模型输出不是合法 JSON: %s", last_raw[:300])
+            return {"kind": "retry", "errors": [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]}
+        elif isinstance(payload, list):
+            # 模型直接输出了顶层操作数组
+            raw_ops = payload
+            summary = ""
+        else:
+            raw_ops = payload.get("operations") or payload.get("ops") or []
+            if not isinstance(raw_ops, list):
+                return {"kind": "retry", "errors": [{"index": "schema", "op": "operations", "reason": "operations 必须是数组"}]}
+            summary = str(payload.get("summary") or "").strip()
+            # 路径二第二步：JSON 通道的 checklist 是顶层可选字段（弱模型
+            # 丢了不影响任何既有行为——normalize_checklist 坏形态回 []）
+            pending_checklist = normalize_checklist(payload.get("checklist"))
+            if isinstance(payload.get("clarify"), dict):
+                # T263：clarify 归一化——兼容旧单问 {question, options} 与新多问
+                # {questions:[...]}；全部问题为空不返回（落到下方空操作路径走重试反馈）
+                clarify_payload = normalize_ask_questions(payload["clarify"])
+                if clarify_payload:
+                    return {"kind": "clarify", "summary": summary, "clarify": clarify_payload}
+    return {
+        "kind": "ok",
+        "ops": raw_ops,
+        "summary": summary,
+        "checklist": pending_checklist,
+        "tool_errors": pending_tool_errors,
+    }
+
+
+def _enforce_phase_gates(
+    raw_ops: list, phase: str, instruction: str, summary: str,
+    current: Dict[str, Any], full_snapshot: Dict[str, Any], focus_node_ids,
+    attempt: int, retries: int,
+) -> tuple:
+    """执行阶段：相位白名单过滤与遵从校验——preset 三件套约束、chat 保险丝、
+    evaluate 单类过滤、create_eval_node 禁区、焦点遵从、apply 必须出操作、
+    选中即范围硬闸。返回 (raw_ops, summary, retry_errors, scope_dropped)：
+    retry_errors 非空＝带反馈重试（对应主链原 `continue`，含末次也重试的 preset
+    越权）；chat 保险丝会改写 summary（要带上返回）；scope_dropped 供 warnings
+    与复述确认的 reason=scope 使用。"""
+    # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
+    normalized_ops = []
+    for op in raw_ops:
+        if not isinstance(op, dict):
+            normalized_ops.append(op)
+            continue
+        op = dict(op)
+        op["op"] = str(op.get("op") or op.get("action") or op.get("operation") or op.get("type") or "")
+        if not op.get("id") and op.get("node_id"):
+            op["id"] = op.get("node_id")
+        normalized_ops.append(op)
+    raw_ops = normalized_ops
+
+    if phase == "preset":
+        # 创造模式（P3）：只放行配方三件套＋「放一个试试」的配方实例 create_node；
+        # 模型若跑偏去改普通图节点，带反馈重试而不是静默丢弃。
+        # T320 翻案（2026-10-14）：add_edge 受约束放行——to 必须是本批带 recipe_id 的
+        # create_node 的 temp_id、from 必须不是（「画布既有材料 → 本次新放实例」单向），
+        # 其余图操作照旧剥掉带反馈重试；护栏落在这里而非只靠提示词
+        preset_temp_ids: set = set()
+        for _op in raw_ops:
+            if not isinstance(_op, dict) or _op.get("op") != "create_node":
+                continue
+            if not str(_op.get("recipe_id") or _op.get("recipeId") or ""):
+                continue
+            _node_payload = _op.get("node") if isinstance(_op.get("node"), dict) else {}
+            _temp = str(_op.get("temp_id") or _op.get("id") or _node_payload.get("temp_id") or "").strip()
+            if _temp:
+                preset_temp_ids.add(_temp)
+        preset_ops = [
+            op for op in raw_ops
+            if isinstance(op, dict) and (
+                op.get("op") in ("create_recipe", "update_recipe", "delete_recipe")
+                or (op.get("op") == "create_node" and str(op.get("recipe_id") or op.get("recipeId") or ""))
+                or (op.get("op") == "add_edge"
+                    and str(op.get("to") or "") in preset_temp_ids
+                    and str(op.get("from") or "") not in preset_temp_ids)
+            )
+        ]
+        dropped = len(raw_ops) - len(preset_ops)
+        if dropped:
+            return raw_ops, summary, [{
+                "index": "phase",
+                "op": "preset",
+                "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），外加从画布既有节点接进本次新放实例的 add_edge（to 写新实例 temp_id、from 写快照既有节点，禁止既有节点之间互连或反向），本次丢弃了 {dropped} 个越权图操作",
+            }], []
+        raw_ops = preset_ops
+    if phase == "chat":
+        # 答疑模式保险丝：红线 prompt 失效时的服务端兜底——图操作一律清空，
+        # 不带反馈重试（答疑本就不该产出操作）；summary 里注明，避免「嘴上说改了」
+        if raw_ops:
+            summary = (str(summary or "") + "\n\n（答疑模式不改图：已忽略其中的图操作，需要修改请切回「编辑」模式）").strip()
+            raw_ops = []
+    if phase == "evaluate":
+        raw_ops = [
+            op for op in raw_ops
+            if isinstance(op, dict) and op.get("op") == "create_eval_node"
+        ]
+    elif phase in ("normal", "apply", "coach"):
+        eval_ops = [
+            op for op in raw_ops
+            if isinstance(op, dict) and op.get("op") == "create_eval_node"
+        ]
+        if eval_ops:
+            if phase == "normal":
+                reason = "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令"
+            elif phase == "coach":
+                reason = "课程表体检只做结构修复（补先修连线/扩进阶链），不要创建 AI 评价节点"
+            else:
+                reason = "应用阶段不能创建 AI 评价节点，请根据已有评价节点执行真实修改"
+            return raw_ops, summary, [{
+                "index": "phase",
+                "op": "create_eval_node",
+                "reason": reason,
+            }], []
+
+    # ---- 焦点遵从校验：指定了重点节点却全部未命中时，带反馈重试 ----
+    focus_set = {str(f) for f in (focus_node_ids or []) if str(f)}
+    if phase == "evaluate" and raw_ops and focus_set and attempt < retries:
+        eval_targets = {str(op.get("target_node_id") or "") for op in raw_ops}
+        if not eval_targets & focus_set:
+            focus_labels = [
+                str(n.get("label") or n.get("id"))
+                for n in current.get("nodes") or []
+                if str(n.get("id")) in focus_set
+            ]
+            return raw_ops, summary, [{
+                "index": "evaluate",
+                "op": "create_eval_node",
+                "reason": "评价目标未命中用户指定的重点节点（"
+                          + "、".join(focus_labels) + "）。只评价这些节点，不要评价其他节点",
+            }], []
+
+    if phase == "evaluate" and not raw_ops:
+        if attempt < retries and not _refusal_explained(summary):
+            return raw_ops, summary, [{
+                "index": "evaluate",
+                "op": "create_eval_node",
+                "reason": "评价阶段必须生成 create_eval_node 操作，不要只返回文字或空操作",
+            }], []
+
+    if phase == "normal" and not raw_ops and _has_edit_intent(instruction) and not _detect_undo_intent(instruction):
+        if attempt < retries and not _refusal_explained(summary):
+            return raw_ops, summary, [{
+                "index": "normal",
+                "op": "operation",
+                "reason": "指令包含明确的修改意图（新增/删除/修改/补充等），请输出真实图操作，不要只返回文字",
+            }], []
+
+    if phase == "normal" and raw_ops and focus_set and attempt < retries:
+        upd = [op for op in raw_ops if op.get("op") == "update_node"]
+        if upd and not any(str(op.get("id")) in focus_set for op in upd):
+            focus_labels = [
+                str(n.get("label") or n.get("id"))
+                for n in current.get("nodes") or []
+                if str(n.get("id")) in focus_set
+            ]
+            return raw_ops, summary, [{
+                "index": "normal",
+                "op": "update_node",
+                "reason": "修改目标未命中用户指定的重点节点（"
+                          + "、".join(focus_labels) + "）。请改为修改这些节点",
+            }], []
+
+    if phase == "apply" and not raw_ops:
+        if attempt < retries:
+            return raw_ops, summary, [{
+                "index": "apply",
+                "op": "update_node",
+                "reason": "应用阶段必须根据 ai_eval 节点输出真实修改操作（update/delete/add_edge/remove_edge/update_edge），不要只返回文字",
+            }], []
+
+    # ---- 选中即范围硬闸（阶段1-2，2026-10-19）----
+    # 选中集从提示词软提示升级为校验器硬闸：范围外既有节点的改动先带
+    # 反馈软重试（模型还有机会自己纠正），末次尝试剔除并落 warnings
+    # （T236 体例：不静默丢弃也不整批失败）。批内新建节点不算越界。
+    # scope_ids 取 full_snapshot（current 可能被焦点收缩/压缩替换过）。
+    scope_ids_all = [str(s) for s in (full_snapshot.get("scope_node_ids") or [])]
+    scope_dropped: list = []
+    if scope_ids_all and phase in SCOPE_GATE_PHASES and raw_ops:
+        kept_ops, dropped_items = split_ops_by_scope(current, raw_ops, scope_ids_all)
+        if dropped_items and attempt < retries:
+            labels_all = "、".join(
+                label for item in dropped_items for label in item["labels"]
+            )[:300]
+            return raw_ops, summary, [{
+                "index": "scope",
+                "op": str(dropped_items[0]["op"].get("op") or ""),
+                "reason": f"以下操作触及未选中的节点（{labels_all}）：本次只允许改动选中的节点，"
+                          "请去掉对这些节点的修改，只保留对选中节点的操作",
+            }], []
+        if dropped_items:
+            raw_ops = kept_ops
+            scope_dropped = dropped_items
+    return raw_ops, summary, [], scope_dropped
+
+
+async def _assemble_result_with_selfchecks(
+    current: Dict[str, Any], raw_ops: list, summary: str, phase: str,
+    instruction: str, focus_node_ids, pending_tool_errors: list,
+    pending_checklist: list, scope_dropped: list, attempt: int, retries: int,
+    self_check_enabled: bool, resolved_model: Dict[str, Any],
+    counter: Dict[str, int], journal: Optional[list], emit,
+) -> tuple:
+    """执行阶段：build_next_snapshot 落形＋warnings 降级＋语义自检四层
+    （规则零成本/孤岛软重试/进阶链软重试/达成清单机检/深度批判 critic）。
+    返回 (result, retry_errors)——retry_errors 非空＝带反馈重试（对应主链原
+    `continue`），此时 result 为 None。"""
+    result = build_next_snapshot(current, raw_ops)
+    ops_for_summary = result.get("operations") or []
+    result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
+    result["raw_has_ops"] = bool(raw_ops)
+    # T236：末次放行的失败 tool_calls 在这里降级——warnings 有可见出口
+    # （前端 harness-run.js:1009 渲染成 ⚠️ 行、:641 随条目存历史），用户
+    # 看得见哪几步被跳过、为什么；合法 ops 已由上面的 build_next_snapshot
+    # 照常应用。占 errors 会被前端整批抛错，合法操作又会被连坐。
+    for err in pending_tool_errors:
+        result.setdefault("warnings", []).append({
+            "index": err.get("index", "tool"),
+            "op": err.get("op") or "tool_call",
+            "reason": f"工具调用解析失败，该步已跳过：{err.get('reason') or '未知原因'}",
+        })
+    # 阶段1-2：范围硬闸末次剔除的明细 → warnings（用户看得见剔了什么）
+    if scope_dropped:
+        for warn in scope_drop_warnings(scope_dropped):
+            result.setdefault("warnings", []).append(warn)
+    if phase == "apply":
+        result = _cleanup_remaining_eval_nodes(result, current)
+
+    # ---- 语义自检：规则（零成本） ----
+    result["self_check"] = {
+        "rules": rule_selfcheck(current, instruction, focus_node_ids, raw_ops),
+    }
+    for issue in result["self_check"]["rules"].get("issues", []):
+        result["warnings"].append({"index": "rules", "op": "selfcheck", "reason": issue})
+
+    # ---- 语义自检：新建节点必须连线（软重试） ----
+    isolated = find_isolated_created_nodes(current, result.get("operations") or [])
+    if isolated:
+        labels = "、".join(item.get("label") or item.get("id") for item in isolated)
+        if attempt < retries:
+            return None, [{
+                "index": "isolated",
+                "op": "create_node",
+                "reason": f"新节点未连接到已有节点：{labels}。请补充 add_edge（若用户明确要独立节点，请在 summary 中说明）",
+            }]
+        result["warnings"].append({
+            "index": "isolated",
+            "op": "create_node",
+            "reason": f"新节点未连接到已有节点：{labels}",
+        })
+
+    # ---- 拓展阶段：每个目标知识点必须生成完整进阶链（软重试） ----
+    if phase == "expand":
+        missing_chains = find_missing_expansion_chains(current, result.get("operations") or [], focus_node_ids)
+        if missing_chains:
+            detail = "；".join(
+                f"节点 {item.get('id')}: {item.get('reason')}"
+                for item in missing_chains
+            )
+            if attempt < retries:
+                return None, [{
+                    "index": "expand",
+                    "op": "create_node",
+                    "reason": "进阶链不完整：" + detail,
+                }]
+            result["warnings"].append({
+                "index": "expand",
+                "op": "create_node",
+                "reason": "进阶链不完整：" + detail,
+            })
+
+    # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
+    # 路径二第二步：达成清单的本地机检先行——可机检条目（节点存在/字段
+    # 等于/边已连/已删）零成本核对 next snapshot，未达成按 T236 体例带
+    # 反馈重试（continue 在 critic 之前＝不为已知未达成的结果花质检调用）；
+    # 末次放行降 warnings。语义条目（解析不出机检结构）才交 critic。
+    checklist_state: Optional[Dict[str, Any]] = None
+    if pending_checklist and raw_ops:
+        checklist_state = verify_checklist(
+            pending_checklist, current, result.get("next_snapshot"),
+        )
+        result["self_check"]["checklist"] = checklist_state
+        machine_failed = [i for i in checklist_state["items"]
+                          if i["kind"] == "machine" and not i["passed"]]
+        if machine_failed and attempt < retries:
+            return None, [
+                {
+                    "index": "checklist",
+                    "op": "goal",
+                    "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）。"
+                              "请补上达成该目标所需的操作，或修正清单后再提交",
+                }
+                for i in machine_failed
+            ]
+        summary_line = (f"本次目标 {checklist_state['total']} 条，"
+                        f"达成 {checklist_state['achieved']} 条")
+        if checklist_state["semantic"]:
+            summary_line += f"（另有 {len(checklist_state['semantic'])} 条语义条目由深度自检核对）"
+        result["warnings"].append({"index": "checklist", "op": "goal", "reason": summary_line})
+        for i in machine_failed:
+            result["warnings"].append({
+                "index": "checklist",
+                "op": "goal",
+                "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）",
+            })
+    if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
+        emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
+        critic = await _selfcheck_ops(
+            current, instruction, raw_ops, resolved_model, counter=counter,
+            result_snapshot=result.get("next_snapshot"),
+            **({"journal": journal} if journal is not None else {}),
+            # checklist 只在有机检未覆盖的语义条目时才传（条件 kwargs：
+            # 缺 checklist 的旧路径调用形态不变，tests 固定签名桩不受扰）
+            **({"checklist": checklist_state["semantic"]}
+               if checklist_state and checklist_state.get("semantic") else {}),
+        )
+        result["self_check"]["critic"] = critic
+        if not critic.get("ok", True) and attempt < retries:
+            critic_errors = [
+                {"index": "selfcheck", "op": "critic", "reason": reason}
+                for reason in critic.get("issues", [])
+            ] + [
+                {"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason}
+                for reason in critic.get("missing", [])
+            ]
+            return None, critic_errors
+        if not critic.get("ok", True):
+            for reason in critic.get("issues", []):
+                result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": reason})
+            for reason in critic.get("missing", []):
+                result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason})
+
+    if result["errors"] and attempt < retries:
+        return None, result["errors"]
+    return result, []
+
+
+async def _finalize_review_result(
+    result: Dict[str, Any], current: Dict[str, Any], phase: str, focus_node_ids,
+    instruction: str, scope_dropped: list, last_raw: str,
+    reasoning_seen: Dict[str, bool], call_counter: Dict[str, int],
+    context_metrics: Optional[Dict[str, Any]], fallback_used: Optional[Dict[str, str]],
+    resolved_model: Dict[str, Any], journal: Optional[list],
+    counted_call, consume_model_output, emit,
+) -> Dict[str, Any]:
+    """收尾阶段：孤岛自动连线/进阶补链、大批拆段提示、复述确认节拍、结果字段
+    装配（phase/model_calls/out_chars/reasoning_stripped/context_metrics/
+    fallback_used）。返回最终 result。"""
+    if phase in ("normal", "expand", "coach"):
+        result = _auto_connect_isolated(current, result, focus_node_ids, instruction)
+    if phase == "expand":
+        result = _complete_expand_chains(current, result, focus_node_ids)
+    # ---- 大批拆段提示（阶段1-3）：超 BATCH_SEGMENT_OPS 条的批次告知
+    # 拆段信息；超巨批次加「缩小范围」建议。段渲染与应用由前端按
+    # batch_segments 元数据完成（服务端不代拆——应用是前端动作）。
+    final_ops = result.get("operations") or []
+    if len(final_ops) > BATCH_SEGMENT_OPS:
+        seg_count = (len(final_ops) + BATCH_SEGMENT_OPS - 1) // BATCH_SEGMENT_OPS
+        seg_reason = (f"本批共 {len(final_ops)} 条操作，超过单批 {BATCH_SEGMENT_OPS} 条，"
+                      f"已按 {BATCH_SEGMENT_OPS} 条一段拆成 {seg_count} 段，建议逐段确认应用")
+        if len(final_ops) > BATCH_OVERSIZED_OPS:
+            seg_reason += (f"；共 {len(final_ops)} 条属超巨批次，建议缩小范围"
+                           "（例如先选中要整理的节点再发指令）分次进行")
+        result.setdefault("warnings", []).append({
+            "index": "batch",
+            "op": "operations",
+            "reason": seg_reason,
+        })
+        result["batch_segments"] = {
+            "segment_ops": BATCH_SEGMENT_OPS,
+            "segments": seg_count,
+            "oversized": len(final_ops) > BATCH_OVERSIZED_OPS,
+        }
+    # ---- 复述确认节拍（阶段1-1）：规则触发（≥CONFIRM_MIN_OPS 条或
+    # 范围闸门观察到越界企图）时，让模型用自己的话复述这批方案，
+    # 前端先出确认卡、用户点头才展示操作清单。复述是对模型的强迫
+    # 自检（说错目标名当场暴露）。失败静默降级：不带 confirm 字段，
+    # 直接出清单（T79 哲学，绝不阻断）。
+    if (phase in CONFIRM_PHASES and final_ops
+            and (len(final_ops) >= CONFIRM_MIN_OPS or scope_dropped)):
+        confirm_text = ""
+        try:
+            emit({"type": "status", "stage": "confirm",
+                  "message": "这批改动较大，正在向你复述计划…"})
+            label_map = {
+                str(n.get("id") or ""): str(n.get("label") or n.get("title") or n.get("id") or "")
+                for n in (current.get("nodes") or [])
+            }
+            op_lines = []
+            for op in final_ops[:12]:
+                name = str(op.get("op") or "")
+                if name in ("update_node", "delete_node"):
+                    target = label_map.get(str(op.get("id") or ""),
+                                           str(op.get("id") or ""))
+                    op_lines.append(f"{('删除' if name == 'delete_node' else '更新')}节点「{target}」")
+                elif name == "create_node":
+                    op_lines.append(f"新建节点「{str(op.get('label') or '') or '未命名'}」")
+                elif name == "add_edge":
+                    op_lines.append("新增连线 " + label_map.get(str(op.get("from") or ""), str(op.get("from") or ""))
+                                    + " → " + label_map.get(str(op.get("to") or ""), str(op.get("to") or "")))
+                elif name in ("remove_edge", "update_edge"):
+                    op_lines.append(name.replace("_edge", "") + "连线 " + str(op.get("from") or "")
+                                    + " → " + str(op.get("to") or ""))
+                else:
+                    op_lines.append(name)
+            if len(final_ops) > 12:
+                op_lines.append(f"…等共 {len(final_ops)} 条")
+            raw_confirm = await counted_call(
+                build_confirm_messages(
+                    instruction, "\n".join(op_lines),
+                    str(result.get("summary") or ""),
+                ),
+                resolved_model, 400,
+            )
+            text_confirm, _only = consume_model_output(raw_confirm)
+            text_confirm = _clamp_display_summary(text_confirm)
+            if text_confirm and not _looks_like_machine_text(text_confirm):
+                confirm_text = text_confirm
+        except Exception:
+            confirm_text = ""
+        if confirm_text:
+            result["confirm"] = {
+                "text": confirm_text,
+                "reason": "ops" if len(final_ops) >= CONFIRM_MIN_OPS else "scope",
+            }
+            if journal is not None:
+                journal.append({
+                    "stage": "confirm",
+                    "reason": result["confirm"]["reason"],
+                    "text": confirm_text[:400],
+                })
+    result["phase"] = phase
+    result["model_calls"] = call_counter["n"]
+    result["out_chars"] = len(last_raw)
+    result["reasoning_stripped"] = reasoning_seen["hit"]
+    if context_metrics:
+        result["context_metrics"] = context_metrics
+    # T95：记录本次成功靠的是哪个备用模型（观测换模型率；api 事件落盘）
+    if fallback_used:
+        result["fallback_used"] = dict(fallback_used)
+    return result
 
 
 async def review_graph(
@@ -1043,216 +2040,34 @@ async def review_graph(
             reasoning_seen["hit"] = True
         return text, only
 
-    # T93：只读查询的取数源＝归一化后的完整快照（未做焦点收缩/正文压缩）。
-    # 必须独立 normalize 一次——_compact_snapshot 会原地裁剪节点正文，与 current
-    # 共用同一批 dict 会把「全文」提前压掉，read_node 就取不回目录行的全文了。
-    # 路径三落点三（2026-10-09）：快照配方清单超过后端截断上限（core.py 的
-    # user_recipes[:32]）时，名额从纯「最近更新」改成「与指令相关度优先＋其余
-    # 保序」——本地 embedding 计算，不发任何模型请求；语义层降级时顺序原样
-    # （与 T244 的 updatedAt 倒序行为一致）。
-    if (isinstance(snapshot, dict) and isinstance(snapshot.get("user_recipes"), list)
-            and len(snapshot["user_recipes"]) > 32 and str(instruction or "").strip()):
-        ordered = await rank_recipes_for_instruction(snapshot["user_recipes"], instruction, account)
-        if isinstance(ordered, list) and len(ordered) == len(snapshot["user_recipes"]):
-            snapshot = dict(snapshot)
-            snapshot["user_recipes"] = ordered
-    full_snapshot = normalize_snapshot(snapshot)
-    current = normalize_snapshot(snapshot)
-    if len(json.dumps(current, ensure_ascii=False)) > MAX_SNAPSHOT_CHARS:
-        sub = _focus_subgraph(current, focus_node_ids)
-        if sub is not None:
-            current = sub
-            context = str(context or "") + f"\n（本次快照过大，已省略 {sub.get('omitted_node_count', 0)} 个非焦点节点，仅保留焦点邻域供审阅。）"
-    current = _compact_snapshot(current, focus_node_ids)
-    instruction = str(instruction or "").strip() or "请审阅并优化这个知识网络"
-    phase = _detect_phase(str(phase or "normal"), instruction, current, focus_node_ids)
-    # ---- 路径六第 2 档：课程表体检——确定性指标在消息 build 期前算好 ----
-    # 「确定性指标＋一次模型调用」：统计由服务端对完整未压缩快照预计算（quiz_weak
-    # 覆盖率也在这里出），拼进 user 消息尾部，模型不必（也不应）再调 graph_stats
-    # 拉一遍——比查询回灌省一轮往返。每请求一次，重试/换模型候选共用同一份。
-    coach_block = ""
-    if phase == "coach":
-        coach_stats = _graph_stats(
-            full_snapshot.get("nodes") or [], full_snapshot.get("edges") or [], full_snapshot
-        )
-        coach_block = build_coach_stats_block(coach_stats)
-        _emit({
-            "type": "status",
-            "stage": "coach",
-            "message": "📊 课程表体检：整图统计已计算完毕，正在生成报告与建议批次",
-        })
-    _emit({
-        "type": "status",
-        "stage": "start",
-        "message": "已理解指令（" + _PHASE_LABELS.get(phase, phase) + "），正在准备画布上下文",
-    })
-    # ---- 评价阶段确定性短路：图里没有可评价节点时无需调模型 ----
-    if phase == "evaluate":
-        editable_nodes = [
-            n for n in (current.get("nodes") or [])
-            if str(n.get("kind") or "") != "ai_eval"
-        ]
-        if not editable_nodes:
-            result = build_next_snapshot(current, [])
-            result["summary"] = "当前图还没有可评价的节点：先添加知识点或提出问题，我再帮你审阅。"
-            result["raw_has_ops"] = False
-            result["model_calls"] = 0
-            return result
+    # ---- 澄清阶段：快照归一/相位识别/coach 统计/评价空图短路（T396 拆分）----
+    prep, early_result = await _prepare_review_request(
+        snapshot, instruction, context, phase, focus_node_ids, account, _emit,
+    )
+    if early_result is not None:
+        return early_result
+    current = prep["current"]
+    full_snapshot = prep["full_snapshot"]
+    context = prep["context"]
+    instruction = prep["instruction"]
+    phase = prep["phase"]
+    coach_block = prep["coach_block"]
+
     full_context = str(context or "")
     resolved_model = _resolve_model(model)
     _apply_thinking_default(resolved_model, thinking, phase)
     provider = resolved_model["provider"]
 
     mode = str(mode or "auto").strip().lower()
-    # ---- 确定性撤销：指令是无歧义撤销、有上一步操作时，不调用模型 ----
-    # T226：_detect_undo_intent 是宽泛子串匹配，复合编辑指令（如「这个公式
-    # 不要了，删掉它」）会误命中撤销词，图被反向回滚、summary 谎报成功。门槛
-    # 加在本使用处而非 _detect_undo_intent 内部（它还有 :1605 的编辑意图重试
-    # 判定在用）：仅短指令或明确指回「上一步」的指令才走确定性撤销（拍板
-    # 「命中即不调模型」对此原样保留）；长复合指令改走模型路径，由模型带全套
-    # 上下文自行判断它到底是编辑还是撤销。详见 review_phase.py T226 注释。
-    undo_intent = _detect_undo_intent(instruction) and _is_unambiguous_undo(instruction)
-    text_lower = str(instruction or "").lower()
-    scope = _undo_scope(instruction, focus_node_ids)
-    use_full = scope in ("full", "targeted") and (all_previous_ops or [])
-    prev_ops = list(all_previous_ops or []) if use_full else list(previous_ops or [])
-    prev_before = initial_snapshot if use_full else previous_snapshot
-    # 配方批整批拒绝（2026-10-09）：update/delete_recipe 没有确定性逆
-    # （build_inverse_ops 只逆 create_recipe），图撤销不会还原配方库——含这类操作的
-    # 批必须整批拒绝，绝不做「图回滚、配方不动」的半撤。判断必须放在 MAX_OPERATIONS
-    # 截片【之前】：切片保留最新 N 条，配方操作排在更早位置时会被切掉、漏检后跌回
-    # 半撤路径。op/type 两种键名都认（历史记录与不同客户端的形态不一）。
-    if undo_intent and any(
-        (op.get("op") or op.get("type")) in ("update_recipe", "delete_recipe")
-        for op in prev_ops if isinstance(op, dict)
-    ):
-        reason_text = "这批修改包含配方修改或删除，请用「撤销本次」或「撤销历史」整批恢复；整批还原会覆盖之后的手工修改。"
-        _emit({"type": "status", "stage": "undo", "message": reason_text})
-        return {
-            "status": "no_ops", "summary": reason_text, "operations": [],
-            "next_snapshot": current, "diff": [], "errors": [], "warnings": [],
-            "raw_has_ops": False, "model_calls": call_counter["n"],
-        }
-    # T235：历史超单批上限时切「最新 N 条」而不是最旧——「撤销全部」要回滚的是
-    # 最近的改动，留头部会把最新改动整段留下、只回滚最旧的（语义拧反）。被切掉
-    # 的条数在撤销成功的 summary 里如实说明，不静默缩水。previous_ops（前端主
-    # 路径只带上一步）恒 ≤80，这个切片对它无操作。
-    prev_ops_truncated = len(prev_ops) > MAX_OPERATIONS
-    if prev_ops_truncated:
-        prev_ops = prev_ops[-MAX_OPERATIONS:]
-    if undo_intent and prev_ops:
-        # F5：撤销前态用后端原样快照（未截断），归一化会丢长正文与本地字段。
-        current = normalize_snapshot(snapshot)
-        if not isinstance(prev_before, dict):
-            # 没有无损前态就没有恢复依据：明确拒绝，绝不静默降级成有损猜测恢复。
-            reason_text = "缺少本次修改的撤销前态（无损快照），无法安全恢复；请使用画布的「撤销本次」按钮回退"
-            _emit({"type": "status", "stage": "undo", "message": reason_text})
-            return {
-                "status": "error",
-                "summary": reason_text,
-                "operations": [],
-                "next_snapshot": current,
-                "diff": [],
-                "errors": [{"reason": reason_text}],
-                "warnings": [],
-                "raw_has_ops": False,
-                "model_calls": call_counter["n"],
-            }
-        try:
-            from .core import _InverseOperations, UndoRestoreError
+    # ---- 澄清阶段：确定性撤销前置短路（T396 拆分，不调模型直接回滚）----
+    undo_result = _try_deterministic_undo(
+        instruction, focus_node_ids, previous_ops, all_previous_ops,
+        previous_snapshot, initial_snapshot, snapshot, current,
+        call_counter, _emit,
+    )
+    if undo_result is not None:
+        return undo_result
 
-            inverse_ops = build_inverse_ops(
-                prev_before if isinstance(prev_before, dict) else current,
-                _InverseOperations(prev_ops),
-                current,
-            )
-            inverse_ops = _InverseOperations(_filter_inverse_by_targets(inverse_ops, focus_node_ids, current))
-            if inverse_ops:
-                _emit({"type": "status", "stage": "undo", "message": "检测到撤销意图，正在直接回滚（无需模型）"})
-                undo_result = build_next_snapshot(current, inverse_ops)
-                undo_errors = undo_result.get("errors") or []
-                if undo_errors:
-                    # T226：build_next_snapshot 部分失败时不得把 status 无条件盖成
-                    # undo「成功」——前端按 errors 非空判失败（harness-run.js 主路径
-                    # 与 harness.js harnessFetchJson 都是 status==='error' 或
-                    # errors.length 即抛），后端却报 undo 成功，两边语义打架。
-                    # 保留失败语义：status=error（与本函数其它失败出口同形状），
-                    # summary 如实写失败项数；已回滚的部分留在
-                    # operations/next_snapshot/undo_ops 里供前端与日志查证。
-                    for err in undo_errors:
-                        # T235：单批上限 error 的文案是编辑语境的「请把剩余修改拆成
-                        # 下一批指令」——撤销没有下一批，原样弹给用户是胡说。delete_node
-                        # 的逆一对多展开（restore＋每条入射边一条 add_edge）让两个多边
-                        # 删除就能顶过上限（tests/test_harness.py 的
-                        # test_undo_partial_failure_reports_error_not_undo 钉的就是这条）。
-                        # 半滚会把一条删除的 restore 和它的 add_edge 切两半，造出「节点
-                        # 回来、边没回来」的不一致态——按撤销语义重写：告知真实代价与
-                        # 可选动作（可再次撤销逐步回滚）。
-                        if "上限" in str(err.get("reason") or ""):
-                            err["reason"] = (
-                                f"本次要回滚的改动过多（逆操作 {len(inverse_ops)} 条超过单批上限 "
-                                f"{MAX_OPERATIONS} 条），只回滚一半会造成图状态不一致，画布未应用本次撤销；"
-                                "可先撤销更近的修改，再逐步回滚更早的"
-                            )
-                    undo_result["status"] = "error"
-                    undo_result["phase"] = "undo"
-                    undo_result["summary"] = f"撤销未完全成功：{len(undo_errors)} 项失败"
-                    undo_result["raw_has_ops"] = bool(inverse_ops)
-                    undo_result["undo_ops"] = inverse_ops
-                    undo_result["model_calls"] = call_counter["n"]
-                    return undo_result
-                undo_result["summary"] = "已撤销上一步修改" + (
-                    "（仅撤销指定节点相关改动）" if focus_node_ids else ""
-                ) + (
-                    # scope=full 但调用方没带完整操作历史（前端主路径只带上一步）：
-                    # 如实说明只回滚了最后一步，别让「全部撤销」静默缩水
-                    "（未收到完整操作历史，仅回滚了最后一步）"
-                    if scope == "full" and not use_full else ""
-                ) + (
-                    # T235：>80 条历史只回滚最新 N 条（见上面 :1029 切片），如实说明
-                    f"（操作历史超过 {MAX_OPERATIONS} 条，仅回滚最近 {MAX_OPERATIONS} 条修改）"
-                    if prev_ops_truncated else ""
-                )
-                undo_result["status"] = "undo"
-                undo_result["phase"] = "undo"
-                undo_result["raw_has_ops"] = bool(inverse_ops)
-                undo_result["undo_ops"] = inverse_ops
-                undo_result["model_calls"] = call_counter["n"]
-                return undo_result
-        except UndoRestoreError as exc:
-            # 恢复契约不闭合（如缺少无损前态）时明确拒绝，绝不静默降级成
-            # 有损猜测恢复。给用户可操作的替代出口。
-            _emit({"type": "status", "stage": "undo", "message": str(exc)})
-            return {
-                "status": "error",
-                "summary": str(exc),
-                "operations": [],
-                "next_snapshot": current,
-                "diff": [],
-                "errors": [{"reason": str(exc)}],
-                "warnings": [],
-                "raw_has_ops": False,
-                "model_calls": call_counter["n"],
-            }
-        if undo_intent and prev_ops and not inverse_ops:
-            # 焦点过滤后逆操作为空（或本就无可逆操作）：明确 no-op 返回。
-            # 此前会跌回模型路径——带着「撤销」指令和全套编辑工具自由发挥，
-            # 违反「确定性撤销不调模型」的拍板，还会跳过大图守卫把未压缩
-            # 快照原样发给模型（09-20 修复）
-            reason_text = ("上一步修改与你选中的节点无关，没有可撤销的内容。"
-                           if focus_node_ids else "上一步没有生成可撤销的修改。")
-            _emit({"type": "status", "stage": "undo", "message": reason_text})
-            return {
-                "status": "undo",
-                "summary": reason_text,
-                "operations": [],
-                "next_snapshot": current,
-                "diff": [],
-                "errors": [],
-                "warnings": [],
-                "raw_has_ops": False,
-                "model_calls": call_counter["n"],
-            }
     self_check_mode = str(self_check or "auto").strip().lower()
     self_check_enabled = (
         self_check_mode == "on"
@@ -1292,7 +2107,7 @@ async def review_graph(
             # 课程表体检：报告模板拼 system 尾（同 chat 红线的副本换槽），预计算
             # 统计块拼最后一条 user 消息尾部（副本换槽）。统计块要插在难度后缀
             # 【前面】——外层会把 user 尾部重组为「原文＋工具提示＋history＋难度」
-            # （1391-1411），若统计块压住难度后缀，重组的 endswith 剥离会失配、
+            # （见 _splice_attempt_messages），若统计块压住难度后缀，重组的 endswith 剥离会失配、
             # 难度文本在正文里出现两遍。
             messages = build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
             messages[0] = {**messages[0], "content": messages[0]["content"] + HARNESS_COACH_REPORT_PROMPT}
@@ -1308,66 +2123,10 @@ async def review_graph(
             return messages
         return build_review_messages(current, instruction, retry_errors, full_context, level, focus_node_ids)
 
-    # ---- T94 上下文预算与自动压缩（评审路线 #9）----
-    # 每请求一次，且在首个 attempt 构建 messages 之前（重试轮与换模型候选不重复
-    # 压缩）。触发＝条数超阈值 或 system+user 提示词（含历史块）估算超预算；
-    # 触发后把更早的多轮历史摘要成一条，修复长会话后期「早期定下的方案被 6 条
-    # 窗口滚掉」的失忆。摘要失败降级回既有截断行为，绝不阻断。
-    history = list(history) if isinstance(history, (list, tuple)) else []
-
-    def _probe_context_est(hist: list) -> int:
-        """探针预算估算：messages_for_attempt("") 纯字符串拼接 + 历史块，不调模型。"""
-        try:
-            probe = messages_for_attempt("")
-        except Exception:
-            return 0
-        parts = [
-            str(m.get("content") or "")
-            for m in probe
-            if isinstance(m, dict) and m.get("role") in ("system", "user")
-        ]
-        block = _history_block(hist)
-        if block:
-            parts.append(block)
-        return estimate_tokens("".join(parts))
-
-    context_est = _probe_context_est(history)
-    history_compacted = False
-    if history and (
-        len(history) > HISTORY_COMPACT_TRIGGER_ENTRIES
-        or context_est > HARNESS_CONTEXT_BUDGET_TOKENS
-    ):
-        older = history[:-HISTORY_KEEP_RECENT] if len(history) > HISTORY_KEEP_RECENT else []
-        recent = history[-HISTORY_KEEP_RECENT:]
-        summary_entry: Optional[Dict[str, Any]] = None
-        if older:
-            try:
-                summary_text = await _summarize_history(older, resolved_model)
-            except Exception as exc:
-                # 摘要失败绝不阻断：保持原 history，退回首轮起就有的
-                # 「最近 6 条详细 + 更早一行」截断行为
-                logger.warning("harness: history compact failed, fallback to truncation: %s", exc)
-                summary_text = ""
-            if summary_text:
-                summary_entry = {
-                    "role": "compact_summary",
-                    "summary": summary_text,
-                    "covered": len(older),
-                }
-        if summary_entry is not None:
-            history = [summary_entry] + recent
-            history_compacted = True
-            # T96 journal：压缩事件（覆盖条数与摘要字数），观测压缩频率与效果
-            _journal_history_compact(journal, len(older), len(str(summary_entry["summary"])))
-            context_est = _probe_context_est(history)
-            if context_est > HARNESS_CONTEXT_BUDGET_TOKENS and len(history) > _HISTORY_HARD_KEEP + 1:
-                # 压缩后仍超预算（快照/system 本身过大）：硬截到「摘要 + 最近 4 条」
-                history = [summary_entry] + history[-_HISTORY_HARD_KEEP:]
-                context_est = _probe_context_est(history)
-        elif not older:
-            # 没有更早条目可摘要（条数不多、纯预算超）：直接硬截到最近 4 条
-            history = history[-_HISTORY_HARD_KEEP:]
-            context_est = _probe_context_est(history)
+    # ---- 计划阶段：T94 上下文预算与历史压缩（T396 拆分）----
+    history, history_compacted, context_est = await _compact_history_budget(
+        history, messages_for_attempt, resolved_model, journal,
+    )
 
     # ---- T95 上游容错：主模型失败且值得换模型时，依序尝试备用候选 ----
     # fallback_models 只在用户开关开启时随 payload 出现（api 层已清洗），
@@ -1435,31 +2194,10 @@ async def review_graph(
                     schema.get("function", {}).get("name") in READONLY_TOOL_NAMES
                     for schema in current_tools
                 )
-                # harness 前缀缓存拍板（2026-10-01）：难度文本后置出 system 后，
-                # build 期已把它追加到最后一条 user 尾部；工具提示与历史块要插回
-                # 它前面（原文＋工具提示＋history＋难度），保证发请求时难度仍居
-                # 消息尾部，不落进内容中部。
-                level_text = _level_requirement(level)
-                level_suffix = ("\n\n" + level_text) if level_text else ""
-                base_content = messages[-1]["content"]
-                if level_suffix and base_content.endswith(level_suffix):
-                    base_content = base_content[: -len(level_suffix)]
-                if current_tools:
-                    if phase == "chat":
-                        # 答疑模式：纯只读工具表，用专用提示（通用 AUTO 提示的
-                        # 「要求修改图请使用工具」与答疑红线矛盾，不能照抄）
-                        base_content += HARNESS_CHAT_TOOLS_HINT
-                    else:
-                        base_content += (TOOLS_AUTO_HINT if tool_choice == "auto" else TOOLS_USER_HINT)
-                        if readonly_enabled:
-                            base_content += READONLY_TOOLS_HINT
-                history_text = _history_block(history)
-                if history_text:
-                    base_content += history_text
-                # T150：只增不改——工具提示/历史/难度拼进最后一条 user 的副本后整表换新，
-                # build 期产出的消息本体不动；后续 tool 轮对这张表只 append，
-                # provider 看到的消息序列前缀只增不减（前缀缓存不被中途改写打穿）
-                messages = messages[:-1] + [{**messages[-1], "content": base_content + level_suffix}]
+                # ---- 计划阶段：T150 尾部拼接（T396 拆分，见 _splice_attempt_messages）----
+                messages = _splice_attempt_messages(
+                    messages, level, history, phase, current_tools, tool_choice, readonly_enabled,
+                )
                 if attempt == 0:
                     context_metrics = _log_context_metrics(
                         messages, current, phase,
@@ -1542,607 +2280,64 @@ async def review_graph(
                 _emit({"type": "status", "stage": "validate", "message": "方案已生成，正在校验操作…"})
                 last_raw, reasoning_only_seen = _consume_model_output(raw)
 
-                # ---- T93 只读查询回灌循环：模型先查图，看完了再决定改哪 ----
-                # 仅当工具表含只读工具（normal/expand/apply/preset）时启用；
-                # 查询轮不走 tools→json 降级链（对话已建立，中途降级无意义），
-                # HarnessError 直接抛给外层换模型候选链接住。
+                # ---- 执行阶段：T93 只读查询回灌循环（T396 拆分）----
+                # 本调用已降级到自由 JSON（无工具通道）时查询回灌一并关闭；若模型仍
+                # 吐出只读 tool_calls，由 parse_tool_calls 的错误软重试兜底
                 if journal_fallback == "json_mode":
-                    # 本调用已降级到自由 JSON（无工具通道），查询回灌一并关闭；
-                    # 若模型仍吐出只读 tool_calls，由 parse_tool_calls 的错误软重试兜底
                     readonly_enabled = False
-                tool_steps = 0
-                readonly_calls = _readonly_batch(raw.get("tool_calls")) if readonly_enabled else []
-                while readonly_calls:
-                    assistant_msg = _assistant_tool_message(raw)
-                    messages.append(assistant_msg)
-                    batch_results = []
-                    for call in assistant_msg["tool_calls"]:
-                        name, args = _tool_call_name_args(call)
-                        if name in READONLY_TOOL_NAMES:
-                            tool_steps += 1
-                            _emit({
-                                "type": "status",
-                                "stage": "tool",
-                                "message": "🔎 查询" + _readonly_tool_label(name) + "：" + name + "(" + _readonly_call_arg(name, args) + ")",
-                                "attempt": attempt,
-                                "step": tool_steps,
-                            })
-                            output = execute_readonly_tool(
-                                name, args, full_snapshot,
-                                kb=_kb() if name in KB_TOOL_NAMES else None,
-                            )
-                            # 路径三（2026-10-09）：字面完全 miss 的检索用本地
-                            # embedding 补召回（字面命中≥1 条时零变化；语义层
-                            # 降级回 [] 时行为与从前逐字一致）
-                            if (name in ("search_nodes", "search_knowledge", "search_formulas")
-                                    and isinstance(args, dict) and isinstance(output, dict)
-                                    and not output.get("total")):
-                                keyword = str(args.get("keyword") or args.get("query")
-                                              or args.get("text") or "").strip()
-                                if keyword:
-                                    hits = []
-                                    if name == "search_nodes":
-                                        hits = await semantic_node_recall(full_snapshot, keyword, account)
-                                    else:
-                                        hits = await semantic_kb_recall(
-                                            "knowledge" if name == "search_knowledge" else "formulas",
-                                            _kb(), keyword, account,
-                                        )
-                                    if hits:
-                                        output = execute_readonly_tool(
-                                            name, args, full_snapshot,
-                                            kb=_kb() if name in KB_TOOL_NAMES else None,
-                                            semantic_hits=hits,
-                                        )
-                            text = json.dumps(output, ensure_ascii=False)
-                            ok = not (isinstance(output, dict) and output.get("error"))
-                            if len(text) > _TOOL_RESULT_CHARS:
-                                text = text[:_TOOL_RESULT_CHARS] + "…（结果过长已截断）"
-                        else:
-                            # 同批混入的编辑类调用：统一下发「已暂存」结果，绝不执行；
-                            # 模型须在看完查询结果后单独重发编辑方案
-                            text = json.dumps(_DEFERRED_TOOL_RESULT, ensure_ascii=False)
-                            ok = False
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": str(call.get("id") or ""),
-                            "content": text,
-                        })
-                        batch_results.append({
-                            "id": str(call.get("id") or ""),
-                            "name": name,
-                            "ok": ok,
-                            "chars": len(text),
-                        })
-                    if journal is not None:
-                        # 查询轮条目：stage 仍 generate，带 step 与 tool_results；
-                        # messages 只在 attempt 首轮存过，这里不再重复存
-                        journal.append({
-                            "stage": "generate",
-                            "attempt": attempt,
-                            "step": tool_steps,
-                            "tool_results": batch_results,
-                        })
-                    if tool_steps >= MAX_TOOL_STEPS:
-                        # 步数上限：剥掉只读工具并明示，之后模型只能出编辑方案
-                        readonly_enabled = False
-                        current_tools = [
-                            schema for schema in (current_tools or [])
-                            if schema.get("function", {}).get("name") not in READONLY_TOOL_NAMES
-                        ] or None
-                        current_choice = tool_choice if current_tools else None
-                        messages.append({"role": "user", "content": _TOOL_STEP_LIMIT_NOTICE})
-                    _emit({
-                        "type": "status",
-                        "stage": "model",
-                        "attempt": attempt,
-                        "step": tool_steps,
-                        "message": f"已获得查询结果，正在继续思考方案（第 {tool_steps} 步）…",
-                    })
-                    raw = await _counted_call(
-                        messages,
-                        resolved_model,
-                        max_tokens,
-                        tools=current_tools,
-                        tool_choice=current_choice,
-                        json_mode=False,
-                        **model_kwargs,
-                    )
-                    _journal_roundtrip(
-                        journal, "generate", raw,
-                        attempt=attempt, step=tool_steps, messages=None,
-                    )
-                    last_raw, reasoning_only_seen = _consume_model_output(raw)
-                    readonly_calls = _readonly_batch(raw.get("tool_calls")) if readonly_enabled else []
+                raw, last_raw, reasoning_only_seen = await _run_readonly_query_loop(
+                    raw, messages, full_snapshot, account, _kb, readonly_enabled,
+                    current_tools, tool_choice, model_kwargs, attempt, journal,
+                    resolved_model, max_tokens, last_raw, reasoning_only_seen,
+                    _counted_call, _consume_model_output, _emit,
+                )
 
-                # T236：本趟尝试里解析失败的 tool_calls——末次放行时降级成 warnings
-                # （见下面 result 组装处）。每次尝试重新初始化，重试成功不得带上轮残留。
-                pending_tool_errors = []
-                # 路径二第二步：本趟模型自报的达成清单（模型可选字段，缺失＝静默降级，
-                # 与不带 checklist 的旧路径行为逐字节一致）。每次尝试重新初始化。
-                pending_checklist: list = []
-                checklist_state: Optional[Dict[str, Any]] = None
-                if raw.get("tool_calls"):
-                    raw_ops, tool_errors = parse_tool_calls(raw["tool_calls"])
-                    # T263 访谈协议：创造模式的 ask_user＝追问，立即结束本轮返回前端
-                    # （与 JSON clarify 同出口）；访谈轮不夹带配方/图操作，其余调用一并忽略
-                    ask_op = next(
-                        (o for o in raw_ops if isinstance(o, dict) and o.get("op") == "ask_user"),
-                        None,
-                    ) if phase == "preset" else None
-                    if ask_op:
-                        ask_summary = _clamp_display_summary(str(raw.get("content") or "").strip())
-                        if _looks_like_machine_text(ask_summary):
-                            ask_summary = ""
-                        return _clarify_result_payload(
-                            ask_summary,
-                            {"questions": ask_op.get("questions") or []},
-                            current,
-                            call_counter,
-                            last_raw,
-                            reasoning_seen,
-                            fallback_used,
-                        )
-                    pending_tool_errors = tool_errors
-                    if tool_errors and attempt < retries:
-                        last_errors = tool_errors
-                        logger.warning("tool_calls 解析失败: %s", tool_errors)
-                        continue
-                    # T236：末次尝试放行已解析出的合法 ops——parse_tool_calls 逐条
-                    # 解析、好坏分开返回，整批丢弃会让合法操作被连坐，重试耗尽后更只剩
-                    # operations: []（parse_error 出口全丢）。此时失败项转 warnings，
-                    # 与孤立节点/进阶链「有重试机会就重试、末次降 warnings」同体例；
-                    # 不能留 errors：errors 非空前端 harness-run.js:604 整批抛错，
-                    # 合法操作照样应用不上。
-                    if tool_errors:
-                        logger.warning("tool_calls 末次放行合法 ops，失败项降级 warnings: %s", tool_errors)
-                    # T118：content 里常是模型独白/配方键名等机器文本（创造模式
-                    # create_recipe 高发），与纯文字分支同口径 clamp＋机器文本判定；
-                    # 空/机器文本回落计数摘要（result 组装处的 _fallback_summary）
-                    summary = _clamp_display_summary(str(raw.get("content") or "").strip())
-                    if _looks_like_machine_text(summary):
-                        summary = ""
-                    # 路径二第二步：工具通道下 checklist 从 content 的 JSON 外壳惰性
-                    # 提取（模型自报、可选）。外壳里同时给了人话 summary 就用它顶替
-                    # 整段 JSON 文本（否则会被机器文本判定整段丢掉）；纯散文 content
-                    # 解析不出 dict，零影响。
-                    content_payload = extract_json(str(raw.get("content") or ""))
-                    if isinstance(content_payload, dict) and isinstance(content_payload.get("checklist"), list):
-                        pending_checklist = normalize_checklist(content_payload.get("checklist"))
-                        if pending_checklist and isinstance(content_payload.get("summary"), str) and str(content_payload.get("summary") or "").strip():
-                            summary = _clamp_display_summary(str(content_payload["summary"]).strip())
-                else:
-                    payload = extract_json(last_raw)
-                    if payload is None and current_tools is not None:
-                        # 模型选择纯文字回答（未调用工具），视为对话，不强制图操作；
-                        # 若文本是“JSON 外壳”（模型把 JSON 写进正文且引号未转义），只保留内层 summary
-                        summary = _clamp_display_summary(
-                            _extract_summary_from_json_shell(last_raw) or last_raw
-                        )
-                        if not summary.strip() and reasoning_only_seen:
-                            # 正文为空且只产出裸思维链（不提升为正文，2026-09-30）：
-                            # 给明确提示，不把推理散文当回复，也不让面板沉默
-                            summary = "模型这一轮只输出了思考过程，没有给出正式回复，请重试或换个说法。"
-                        raw_ops = []
-                    elif payload is None:
-                        last_errors = [{"index": "parse", "op": "json", "reason": "模型输出不是合法 JSON"}]
-                        logger.warning("模型输出不是合法 JSON: %s", last_raw[:300])
-                        continue
-                    elif isinstance(payload, list):
-                        # 模型直接输出了顶层操作数组
-                        raw_ops = payload
-                        summary = ""
-                    else:
-                        raw_ops = payload.get("operations") or payload.get("ops") or []
-                        if not isinstance(raw_ops, list):
-                            last_errors = [{"index": "schema", "op": "operations", "reason": "operations 必须是数组"}]
-                            continue
-                        summary = str(payload.get("summary") or "").strip()
-                        # 路径二第二步：JSON 通道的 checklist 是顶层可选字段（弱模型
-                        # 丢了不影响任何既有行为——normalize_checklist 坏形态回 []）
-                        pending_checklist = normalize_checklist(payload.get("checklist"))
-                        if isinstance(payload.get("clarify"), dict):
-                            # T263：clarify 归一化——兼容旧单问 {question, options} 与新多问
-                            # {questions:[...]}；全部问题为空不返回（落到下方空操作路径走重试反馈）
-                            clarify_payload = normalize_ask_questions(payload["clarify"])
-                            if clarify_payload:
-                                return _clarify_result_payload(
-                                    summary,
-                                    clarify_payload,
-                                    current,
-                                    call_counter,
-                                    last_raw,
-                                    reasoning_seen,
-                                    fallback_used,
-                                )
+                # ---- 执行阶段：解析模型输出（T396 拆分，见 _parse_plan_output）----
+                parsed = _parse_plan_output(
+                    raw, last_raw, reasoning_only_seen, current_tools, phase, attempt, retries,
+                )
+                if parsed["kind"] == "clarify":
+                    # T263 访谈协议：追问轮零操作，统一走 _clarify_result_payload 出口
+                    return _clarify_result_payload(
+                        parsed["summary"], parsed["clarify"], current,
+                        call_counter, last_raw, reasoning_seen, fallback_used,
+                    )
+                if parsed["kind"] == "retry":
+                    last_errors = parsed["errors"]
+                    continue
+                raw_ops = parsed["ops"]
+                summary = parsed["summary"]
+                pending_checklist = parsed["checklist"]
+                pending_tool_errors = parsed["tool_errors"]
 
                 # 归一化操作名与字段别名：action/operation/type -> op；node_id -> id
-                normalized_ops = []
-                for op in raw_ops:
-                    if not isinstance(op, dict):
-                        normalized_ops.append(op)
-                        continue
-                    op = dict(op)
-                    op["op"] = str(op.get("op") or op.get("action") or op.get("operation") or op.get("type") or "")
-                    if not op.get("id") and op.get("node_id"):
-                        op["id"] = op.get("node_id")
-                    normalized_ops.append(op)
-                raw_ops = normalized_ops
-
-                if phase == "preset":
-                    # 创造模式（P3）：只放行配方三件套＋「放一个试试」的配方实例 create_node；
-                    # 模型若跑偏去改普通图节点，带反馈重试而不是静默丢弃。
-                    # T320 翻案（2026-10-14）：add_edge 受约束放行——to 必须是本批带 recipe_id 的
-                    # create_node 的 temp_id、from 必须不是（「画布既有材料 → 本次新放实例」单向），
-                    # 其余图操作照旧剥掉带反馈重试；护栏落在这里而非只靠提示词
-                    preset_temp_ids: set = set()
-                    for _op in raw_ops:
-                        if not isinstance(_op, dict) or _op.get("op") != "create_node":
-                            continue
-                        if not str(_op.get("recipe_id") or _op.get("recipeId") or ""):
-                            continue
-                        _node_payload = _op.get("node") if isinstance(_op.get("node"), dict) else {}
-                        _temp = str(_op.get("temp_id") or _op.get("id") or _node_payload.get("temp_id") or "").strip()
-                        if _temp:
-                            preset_temp_ids.add(_temp)
-                    preset_ops = [
-                        op for op in raw_ops
-                        if isinstance(op, dict) and (
-                            op.get("op") in ("create_recipe", "update_recipe", "delete_recipe")
-                            or (op.get("op") == "create_node" and str(op.get("recipe_id") or op.get("recipeId") or ""))
-                            or (op.get("op") == "add_edge"
-                                and str(op.get("to") or "") in preset_temp_ids
-                                and str(op.get("from") or "") not in preset_temp_ids)
-                        )
-                    ]
-                    dropped = len(raw_ops) - len(preset_ops)
-                    if dropped:
-                        last_errors = [{
-                            "index": "phase",
-                            "op": "preset",
-                            "reason": f"创造模式只允许配方操作（create_recipe / update_recipe / delete_recipe / 带 recipe_id 的 create_node），外加从画布既有节点接进本次新放实例的 add_edge（to 写新实例 temp_id、from 写快照既有节点，禁止既有节点之间互连或反向），本次丢弃了 {dropped} 个越权图操作",
-                        }]
-                        continue
-                    raw_ops = preset_ops
-                if phase == "chat":
-                    # 答疑模式保险丝：红线 prompt 失效时的服务端兜底——图操作一律清空，
-                    # 不带反馈重试（答疑本就不该产出操作）；summary 里注明，避免「嘴上说改了」
-                    if raw_ops:
-                        summary = (str(summary or "") + "\n\n（答疑模式不改图：已忽略其中的图操作，需要修改请切回「编辑」模式）").strip()
-                        raw_ops = []
-                if phase == "evaluate":
-                    raw_ops = [
-                        op for op in raw_ops
-                        if isinstance(op, dict) and op.get("op") == "create_eval_node"
-                    ]
-                elif phase in ("normal", "apply", "coach"):
-                    eval_ops = [
-                        op for op in raw_ops
-                        if isinstance(op, dict) and op.get("op") == "create_eval_node"
-                    ]
-                    if eval_ops:
-                        if phase == "normal":
-                            reason = "正常审阅不能创建 AI 评价节点，请改用“评价/建议”类指令"
-                        elif phase == "coach":
-                            reason = "课程表体检只做结构修复（补先修连线/扩进阶链），不要创建 AI 评价节点"
-                        else:
-                            reason = "应用阶段不能创建 AI 评价节点，请根据已有评价节点执行真实修改"
-                        last_errors = [{
-                            "index": "phase",
-                            "op": "create_eval_node",
-                            "reason": reason,
-                        }]
-                        continue
-
-                # ---- 焦点遵从校验：指定了重点节点却全部未命中时，带反馈重试 ----
-                focus_set = {str(f) for f in (focus_node_ids or []) if str(f)}
-                if phase == "evaluate" and raw_ops and focus_set and attempt < retries:
-                    eval_targets = {str(op.get("target_node_id") or "") for op in raw_ops}
-                    if not eval_targets & focus_set:
-                        focus_labels = [
-                            str(n.get("label") or n.get("id"))
-                            for n in current.get("nodes") or []
-                            if str(n.get("id")) in focus_set
-                        ]
-                        last_errors = [{
-                            "index": "evaluate",
-                            "op": "create_eval_node",
-                            "reason": "评价目标未命中用户指定的重点节点（"
-                                      + "、".join(focus_labels) + "）。只评价这些节点，不要评价其他节点",
-                        }]
-                        continue
-
-                if phase == "evaluate" and not raw_ops:
-                    if attempt < retries and not _refusal_explained(summary):
-                        last_errors = [{
-                            "index": "evaluate",
-                            "op": "create_eval_node",
-                            "reason": "评价阶段必须生成 create_eval_node 操作，不要只返回文字或空操作",
-                        }]
-                        continue
-
-                if phase == "normal" and not raw_ops and _has_edit_intent(instruction) and not _detect_undo_intent(instruction):
-                    if attempt < retries and not _refusal_explained(summary):
-                        last_errors = [{
-                            "index": "normal",
-                            "op": "operation",
-                            "reason": "指令包含明确的修改意图（新增/删除/修改/补充等），请输出真实图操作，不要只返回文字",
-                        }]
-                        continue
-
-                if phase == "normal" and raw_ops and focus_set and attempt < retries:
-                    upd = [op for op in raw_ops if op.get("op") == "update_node"]
-                    if upd and not any(str(op.get("id")) in focus_set for op in upd):
-                        focus_labels = [
-                            str(n.get("label") or n.get("id"))
-                            for n in current.get("nodes") or []
-                            if str(n.get("id")) in focus_set
-                        ]
-                        last_errors = [{
-                            "index": "normal",
-                            "op": "update_node",
-                            "reason": "修改目标未命中用户指定的重点节点（"
-                                      + "、".join(focus_labels) + "）。请改为修改这些节点",
-                        }]
-                        continue
-
-                if phase == "apply" and not raw_ops:
-                    if attempt < retries:
-                        last_errors = [{
-                            "index": "apply",
-                            "op": "update_node",
-                            "reason": "应用阶段必须根据 ai_eval 节点输出真实修改操作（update/delete/add_edge/remove_edge/update_edge），不要只返回文字",
-                        }]
-                        continue
-
-                # ---- 选中即范围硬闸（阶段1-2，2026-10-19）----
-                # 选中集从提示词软提示升级为校验器硬闸：范围外既有节点的改动先带
-                # 反馈软重试（模型还有机会自己纠正），末次尝试剔除并落 warnings
-                # （T236 体例：不静默丢弃也不整批失败）。批内新建节点不算越界。
-                # scope_ids 取 full_snapshot（current 可能被焦点收缩/压缩替换过）。
-                scope_ids_all = [str(s) for s in (full_snapshot.get("scope_node_ids") or [])]
-                scope_dropped: list = []
-                if scope_ids_all and phase in SCOPE_GATE_PHASES and raw_ops:
-                    kept_ops, dropped_items = split_ops_by_scope(current, raw_ops, scope_ids_all)
-                    if dropped_items and attempt < retries:
-                        labels_all = "、".join(
-                            label for item in dropped_items for label in item["labels"]
-                        )[:300]
-                        last_errors = [{
-                            "index": "scope",
-                            "op": str(dropped_items[0]["op"].get("op") or ""),
-                            "reason": f"以下操作触及未选中的节点（{labels_all}）：本次只允许改动选中的节点，"
-                                      "请去掉对这些节点的修改，只保留对选中节点的操作",
-                        }]
-                        continue
-                    if dropped_items:
-                        raw_ops = kept_ops
-                        scope_dropped = dropped_items
+                # ---- 执行阶段：相位白名单与遵从校验（T396 拆分，见 _enforce_phase_gates）----
+                raw_ops, summary, gate_errors, scope_dropped = _enforce_phase_gates(
+                    raw_ops, phase, instruction, summary, current, full_snapshot,
+                    focus_node_ids, attempt, retries,
+                )
+                if gate_errors:
+                    last_errors = gate_errors
+                    continue
 
                 result = build_next_snapshot(current, raw_ops)
-                ops_for_summary = result.get("operations") or []
-                result["summary"] = summary or _fallback_summary(ops_for_summary) or ("本次未提出图修改建议" if not ops_for_summary else "")
-                result["raw_has_ops"] = bool(raw_ops)
-                # T236：末次放行的失败 tool_calls 在这里降级——warnings 有可见出口
-                # （前端 harness-run.js:1009 渲染成 ⚠️ 行、:641 随条目存历史），用户
-                # 看得见哪几步被跳过、为什么；合法 ops 已由上面的 build_next_snapshot
-                # 照常应用。占 errors 会被前端整批抛错，合法操作又会被连坐。
-                for err in pending_tool_errors:
-                    result.setdefault("warnings", []).append({
-                        "index": err.get("index", "tool"),
-                        "op": err.get("op") or "tool_call",
-                        "reason": f"工具调用解析失败，该步已跳过：{err.get('reason') or '未知原因'}",
-                    })
-                # 阶段1-2：范围硬闸末次剔除的明细 → warnings（用户看得见剔了什么）
-                if scope_dropped:
-                    for warn in scope_drop_warnings(scope_dropped):
-                        result.setdefault("warnings", []).append(warn)
-                if phase == "apply":
-                    result = _cleanup_remaining_eval_nodes(result, current)
-
-                # ---- 语义自检：规则（零成本） ----
-                result["self_check"] = {
-                    "rules": rule_selfcheck(current, instruction, focus_node_ids, raw_ops),
-                }
-                for issue in result["self_check"]["rules"].get("issues", []):
-                    result["warnings"].append({"index": "rules", "op": "selfcheck", "reason": issue})
-
-                # ---- 语义自检：新建节点必须连线（软重试） ----
-                isolated = find_isolated_created_nodes(current, result.get("operations") or [])
-                if isolated:
-                    labels = "、".join(item.get("label") or item.get("id") for item in isolated)
-                    if attempt < retries:
-                        last_errors = [{
-                            "index": "isolated",
-                            "op": "create_node",
-                            "reason": f"新节点未连接到已有节点：{labels}。请补充 add_edge（若用户明确要独立节点，请在 summary 中说明）",
-                        }]
-                        continue
-                    result["warnings"].append({
-                        "index": "isolated",
-                        "op": "create_node",
-                        "reason": f"新节点未连接到已有节点：{labels}",
-                    })
-
-                # ---- 拓展阶段：每个目标知识点必须生成完整进阶链（软重试） ----
-                if phase == "expand":
-                    missing_chains = find_missing_expansion_chains(current, result.get("operations") or [], focus_node_ids)
-                    if missing_chains:
-                        detail = "；".join(
-                            f"节点 {item.get('id')}: {item.get('reason')}"
-                            for item in missing_chains
-                        )
-                        if attempt < retries:
-                            last_errors = [{
-                                "index": "expand",
-                                "op": "create_node",
-                                "reason": "进阶链不完整：" + detail,
-                            }]
-                            continue
-                        result["warnings"].append({
-                            "index": "expand",
-                            "op": "create_node",
-                            "reason": "进阶链不完整：" + detail,
-                        })
-
-                # ---- 语义自检：模型批判（一次轻量调用，仅在首次尝试） ----
-                # 路径二第二步：达成清单的本地机检先行——可机检条目（节点存在/字段
-                # 等于/边已连/已删）零成本核对 next snapshot，未达成按 T236 体例带
-                # 反馈重试（continue 在 critic 之前＝不为已知未达成的结果花质检调用）；
-                # 末次放行降 warnings。语义条目（解析不出机检结构）才交 critic。
-                if pending_checklist and raw_ops:
-                    checklist_state = verify_checklist(
-                        pending_checklist, current, result.get("next_snapshot"),
-                    )
-                    result["self_check"]["checklist"] = checklist_state
-                    machine_failed = [i for i in checklist_state["items"]
-                                      if i["kind"] == "machine" and not i["passed"]]
-                    if machine_failed and attempt < retries:
-                        last_errors = [
-                            {
-                                "index": "checklist",
-                                "op": "goal",
-                                "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）。"
-                                          "请补上达成该目标所需的操作，或修正清单后再提交",
-                            }
-                            for i in machine_failed
-                        ]
-                        continue
-                    summary_line = (f"本次目标 {checklist_state['total']} 条，"
-                                    f"达成 {checklist_state['achieved']} 条")
-                    if checklist_state["semantic"]:
-                        summary_line += f"（另有 {len(checklist_state['semantic'])} 条语义条目由深度自检核对）"
-                    result["warnings"].append({"index": "checklist", "op": "goal", "reason": summary_line})
-                    for i in machine_failed:
-                        result["warnings"].append({
-                            "index": "checklist",
-                            "op": "goal",
-                            "reason": "达成清单未达成：" + i["text"] + "（" + i["detail"] + "）",
-                        })
-                if self_check_enabled and raw_ops and attempt == 0 and _should_selfcheck_ops(raw_ops):
-                    _emit({"type": "status", "stage": "selfcheck", "message": "正在进行深度自检…"})
-                    critic = await _selfcheck_ops(
-                        current, instruction, raw_ops, resolved_model, counter=call_counter,
-                        result_snapshot=result.get("next_snapshot"),
-                        **({"journal": journal} if journal is not None else {}),
-                        # checklist 只在有机检未覆盖的语义条目时才传（条件 kwargs：
-                        # 缺 checklist 的旧路径调用形态不变，tests 固定签名桩不受扰）
-                        **({"checklist": checklist_state["semantic"]}
-                           if checklist_state and checklist_state.get("semantic") else {}),
-                    )
-                    result["self_check"]["critic"] = critic
-                    if not critic.get("ok", True) and attempt < retries:
-                        critic_errors = [
-                            {"index": "selfcheck", "op": "critic", "reason": reason}
-                            for reason in critic.get("issues", [])
-                        ] + [
-                            {"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason}
-                            for reason in critic.get("missing", [])
-                        ]
-                        last_errors = critic_errors
-                        continue
-                    if not critic.get("ok", True):
-                        for reason in critic.get("issues", []):
-                            result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": reason})
-                        for reason in critic.get("missing", []):
-                            result["warnings"].append({"index": "selfcheck", "op": "critic", "reason": "缺少：" + reason})
-
-                if result["errors"] and attempt < retries:
-                    last_errors = result["errors"]
+                # ---- 执行阶段：落形＋语义自检（T396 拆分，见 _assemble_result_with_selfchecks）----
+                result, check_errors = await _assemble_result_with_selfchecks(
+                    current, raw_ops, summary, phase, instruction, focus_node_ids,
+                    pending_tool_errors, pending_checklist, scope_dropped,
+                    attempt, retries, self_check_enabled, resolved_model,
+                    call_counter, journal, _emit,
+                )
+                if check_errors:
+                    last_errors = check_errors
                     continue
-                if phase in ("normal", "expand", "coach"):
-                    result = _auto_connect_isolated(current, result, focus_node_ids, instruction)
-                if phase == "expand":
-                    result = _complete_expand_chains(current, result, focus_node_ids)
-                # ---- 大批拆段提示（阶段1-3）：超 BATCH_SEGMENT_OPS 条的批次告知
-                # 拆段信息；超巨批次加「缩小范围」建议。段渲染与应用由前端按
-                # batch_segments 元数据完成（服务端不代拆——应用是前端动作）。
-                final_ops = result.get("operations") or []
-                if len(final_ops) > BATCH_SEGMENT_OPS:
-                    seg_count = (len(final_ops) + BATCH_SEGMENT_OPS - 1) // BATCH_SEGMENT_OPS
-                    seg_reason = (f"本批共 {len(final_ops)} 条操作，超过单批 {BATCH_SEGMENT_OPS} 条，"
-                                  f"已按 {BATCH_SEGMENT_OPS} 条一段拆成 {seg_count} 段，建议逐段确认应用")
-                    if len(final_ops) > BATCH_OVERSIZED_OPS:
-                        seg_reason += (f"；共 {len(final_ops)} 条属超巨批次，建议缩小范围"
-                                       "（例如先选中要整理的节点再发指令）分次进行")
-                    result.setdefault("warnings", []).append({
-                        "index": "batch",
-                        "op": "operations",
-                        "reason": seg_reason,
-                    })
-                    result["batch_segments"] = {
-                        "segment_ops": BATCH_SEGMENT_OPS,
-                        "segments": seg_count,
-                        "oversized": len(final_ops) > BATCH_OVERSIZED_OPS,
-                    }
-                # ---- 复述确认节拍（阶段1-1）：规则触发（≥CONFIRM_MIN_OPS 条或
-                # 范围闸门观察到越界企图）时，让模型用自己的话复述这批方案，
-                # 前端先出确认卡、用户点头才展示操作清单。复述是对模型的强迫
-                # 自检（说错目标名当场暴露）。失败静默降级：不带 confirm 字段，
-                # 直接出清单（T79 哲学，绝不阻断）。
-                if (phase in CONFIRM_PHASES and final_ops
-                        and (len(final_ops) >= CONFIRM_MIN_OPS or scope_dropped)):
-                    confirm_text = ""
-                    try:
-                        _emit({"type": "status", "stage": "confirm",
-                               "message": "这批改动较大，正在向你复述计划…"})
-                        label_map = {
-                            str(n.get("id") or ""): str(n.get("label") or n.get("title") or n.get("id") or "")
-                            for n in (current.get("nodes") or [])
-                        }
-                        op_lines = []
-                        for op in final_ops[:12]:
-                            name = str(op.get("op") or "")
-                            if name in ("update_node", "delete_node"):
-                                target = label_map.get(str(op.get("id") or ""),
-                                                       str(op.get("id") or ""))
-                                op_lines.append(f"{('删除' if name == 'delete_node' else '更新')}节点「{target}」")
-                            elif name == "create_node":
-                                op_lines.append(f"新建节点「{str(op.get('label') or '') or '未命名'}」")
-                            elif name == "add_edge":
-                                op_lines.append("新增连线 " + label_map.get(str(op.get("from") or ""), str(op.get("from") or ""))
-                                                + " → " + label_map.get(str(op.get("to") or ""), str(op.get("to") or "")))
-                            elif name in ("remove_edge", "update_edge"):
-                                op_lines.append(name.replace("_edge", "") + "连线 " + str(op.get("from") or "")
-                                                + " → " + str(op.get("to") or ""))
-                            else:
-                                op_lines.append(name)
-                        if len(final_ops) > 12:
-                            op_lines.append(f"…等共 {len(final_ops)} 条")
-                        raw_confirm = await _counted_call(
-                            build_confirm_messages(
-                                instruction, "\n".join(op_lines),
-                                str(result.get("summary") or ""),
-                            ),
-                            resolved_model, 400,
-                        )
-                        text_confirm, _only = _consume_model_output(raw_confirm)
-                        text_confirm = _clamp_display_summary(text_confirm)
-                        if text_confirm and not _looks_like_machine_text(text_confirm):
-                            confirm_text = text_confirm
-                    except Exception:
-                        confirm_text = ""
-                    if confirm_text:
-                        result["confirm"] = {
-                            "text": confirm_text,
-                            "reason": "ops" if len(final_ops) >= CONFIRM_MIN_OPS else "scope",
-                        }
-                        if journal is not None:
-                            journal.append({
-                                "stage": "confirm",
-                                "reason": result["confirm"]["reason"],
-                                "text": confirm_text[:400],
-                            })
-                result["phase"] = phase
-                result["model_calls"] = call_counter["n"]
-                result["out_chars"] = len(last_raw)
-                result["reasoning_stripped"] = reasoning_seen["hit"]
-                if context_metrics:
-                    result["context_metrics"] = context_metrics
-                # T95：记录本次成功靠的是哪个备用模型（观测换模型率；api 事件落盘）
-                if fallback_used:
-                    result["fallback_used"] = dict(fallback_used)
-                return result
+
+                # ---- 收尾阶段：补链/拆段提示/复述确认/字段装配（T396 拆分）----
+                return await _finalize_review_result(
+                    result, current, phase, focus_node_ids, instruction, scope_dropped,
+                    last_raw, reasoning_seen, call_counter, context_metrics, fallback_used,
+                    resolved_model, journal, _counted_call, _consume_model_output, _emit,
+                )
 
             parse_failure = {
                 "status": "parse_error",
