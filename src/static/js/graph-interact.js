@@ -1404,8 +1404,17 @@ function graphAddOutputPort(nodeId) {
   _pushGraphUndo();
   const state = _graphState();
   state.portCounts = state.portCounts || {};
-  const base = _nodeBaseOutputPorts(node, _getChatHistory()).length;
-  state.portCounts[nodeId] = Math.max(state.portCounts[nodeId] || 0, base) + 1;
+  // 素材篮（2026-10-24 三）：通用「＋」加的是无绑定附加口＝整篮口（送全部素材）；
+  // portCounts 恒等于 items.length＋addonPorts.length（与 graphAddSourceItemPort
+  // 同一不变量）。按素材加口走行内「加口」按钮 → graphAddSourceItemPort。
+  if (node.kind === 'source' && typeof _sourceIsLegacyNode === 'function' && !_sourceIsLegacyNode(node)) {
+    const savedPorts = state.portCounts[nodeId] || 0;
+    node.addonPorts = _sourceNormalizeAddons(node, savedPorts).concat([{}]);
+    state.portCounts[nodeId] = (node.items || []).length + node.addonPorts.length;
+  } else {
+    const base = _nodeBaseOutputPorts(node, _getChatHistory()).length;
+    state.portCounts[nodeId] = Math.max(state.portCounts[nodeId] || 0, base) + 1;
+  }
   _saveGraphState(state);
   renderGraphCanvas();
 }
@@ -1489,6 +1498,15 @@ function graphRemoveOutputPort(nodeId, portIndex) {
 
   removedDrafts.forEach(id => removeDraftNode(id));
   state.portCounts[nodeId] = Math.max(baseCount, current - 1);
+  // 素材篮（2026-10-24 三）：附加口带绑定（addonPorts），删第 k 个附加口须同步
+  // splice 绑定表——绑定按位置对应附加口，漏了会把「按素材口」错位成整篮口
+  if (node.kind === 'source' && typeof _sourceIsLegacyNode === 'function' && !_sourceIsLegacyNode(node)) {
+    const addons = _sourceNormalizeAddons(node, state.portCounts[nodeId] || 0);
+    const k = portIndex - baseCount;
+    if (k >= 0 && k < addons.length) addons.splice(k, 1);
+    node.addonPorts = addons;
+    state.portCounts[nodeId] = (node.items || []).length + addons.length;
+  }
   _saveGraphState(state);
   renderGraphCanvas();
 }

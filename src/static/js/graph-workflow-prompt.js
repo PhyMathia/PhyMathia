@@ -92,8 +92,13 @@ function _nodeOutputContent(node, seen, fromPort) {
     if (m) {
       const item = items[parseInt(m[1], 10)];
       if (item && item.kind) return String(item.text || '') || _sourceItemPlaceholder(item);
-      // 2026-10-24 手加的附加口（out-N 越界）＝「整篮出口」：回落全部条目拼接
-      // （空则回落 node.content），与不传 fromPort 的兜底同一条路
+      // 2026-10-24（三）按素材加的附加口：绑定的素材只送它自己；无绑定的附加口
+      // ＝整篮出口，回落全部条目拼接（空则回落 node.content，与不传 fromPort 同路）
+      const addon = (typeof _sourceAddonBinding === 'function') ? _sourceAddonBinding(node, parseInt(m[1], 10)) : null;
+      if (addon && addon.item) {
+        const bound = items.find(it => it && it.id === addon.item && it.kind);
+        if (bound) return String(bound.text || '') || _sourceItemPlaceholder(bound);
+      }
     }
     // 不传 fromPort（节点体拖拽等兜底路径）：全部条目拼接；拼接为空回落
     // node.content（它是拼接的缓存，兼容无 items 但带 content 的旧夹具/旧数据）
@@ -115,10 +120,21 @@ function _nodeOutputContent(node, seen, fromPort) {
 // 素材条目的出口名（out-i ↔ items[i]，名字=素材名）——取材条目 label 用它，
 // 否则同一个输入节点的两口在下游上下文里都叫「输入」
 function _sourcePortLabel(node, fromPort) {
+  // 旧 source 节点（知识点形状）口径恒空——新字段/新标签不写旧节点
+  if (typeof _sourceIsLegacyNode === 'function' && _sourceIsLegacyNode(node)) return '';
   const m = /^out-(\d+)$/.exec(String(fromPort || ''));
   if (!m) return '';
-  const item = Array.isArray(node.items) ? node.items[parseInt(m[1], 10)] : null;
-  return item && item.kind ? String(item.name || '') : '';
+  const idx = parseInt(m[1], 10);
+  const items = Array.isArray(node.items) ? node.items : [];
+  const item = items[idx];
+  if (item && item.kind) return String(item.name || '');
+  // 2026-10-24（三）：附加口——绑定的取素材名，无绑定的整篮口标「全部素材」
+  const addon = (typeof _sourceAddonBinding === 'function') ? _sourceAddonBinding(node, idx) : null;
+  if (addon && addon.item) {
+    const bound = items.find(it => it && it.id === addon.item && it.kind);
+    if (bound) return String(bound.name || '');
+  }
+  return items.length ? '全部素材' : '';
 }
 
 function _collectUpstreamPath(node) {
@@ -205,6 +221,19 @@ function _sourceItemIsScannedPdf(item) {
 
 // 一份素材能贡献的图：图片条目＝原图一张（page 0＝原字节，不经页渲染）；
 // 扫描版 PDF＝前若干页（1-based 页号）。其余条目（文字/未打标的普通文件）不产图
+// 2026-10-24（三）：附加口按绑定分流图片条目——绑定口只收那条素材；整篮口收
+// 全部条目；基础口越界之外与无 fromPort 兜底返回空（不掺图）
+function _sourcePortImageItems(src, portIdx) {
+  const items = Array.isArray(src.items) ? src.items : [];
+  if (portIdx < items.length) return [];
+  const addon = (typeof _sourceAddonBinding === 'function') ? _sourceAddonBinding(src, portIdx) : null;
+  if (addon && addon.item) {
+    const bound = items.find(it => it && it.id === addon.item && it.kind);
+    return bound ? [bound] : [];
+  }
+  return items.filter(it => it && it.kind);
+}
+
 function _sourceItemImageGroup(item) {
   if (!item || !item.fileId) return null;
   const name = item.fileName || item.name || '';
@@ -264,12 +293,12 @@ function _collectUpstreamImages(node, route) {
     if (!src || _sourceIsLegacyNode(src)) continue;
     const m = /^out-(\d+)$/.exec(String(entry.fromPort || ''));
     const item = (m && Array.isArray(src.items)) ? src.items[parseInt(m[1], 10)] : null;
-    // 2026-10-24 手加的附加口（out-N 越界）＝「整篮出口」：该节点全部图片/扫描件
-    // 条目各成一组（seen 键带条目 fileId，防同口多条目互吞）；无 fromPort 的兜底
-    // 路径维持旧口径不掺图
+    // 2026-10-24（三）：附加口带绑定（按素材加口）→ 只收那条素材的图；无绑定的
+    // 附加口＝整篮口，收全篮图片/扫描件条目各成一组（seen 键带条目 fileId，防同口
+    // 多条目互吞）；无 fromPort 的兜底路径维持旧口径不掺图
     const portItems = item && item.kind
       ? [item]
-      : (m ? (Array.isArray(src.items) ? src.items.filter(it => it && it.kind) : []) : []);
+      : (m ? _sourcePortImageItems(src, parseInt(m[1], 10)) : []);
     for (const it of portItems) {
       const group = _sourceItemImageGroup(it);
       if (!group) continue;

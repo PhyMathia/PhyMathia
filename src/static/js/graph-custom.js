@@ -866,18 +866,21 @@ function _sourceOcrState(status, engine, ms, error) {
 
 function _sourcePushItem(node, item) {
   node.items = Array.isArray(node.items) ? node.items : [];
-  // 2026-10-24：附加口在场（portCounts＞条目数）时，新条目会占用附加口的 out-N
-  // 索引——先把附加口边整体右移一格、portCounts＋1，保住 out-i↔items[i] 对应
-  // （与 deleteSourceItem 的左移对称）；无附加口时本块零影响。
+  // 2026-10-24：附加口在场（portCounts＞条目数或有 addonPorts）时，新条目会占用
+  // 附加口的 out-N 索引——先把附加口边整体右移一格、portCounts 按「条目数＋
+  // 附加口数」重记，保住 out-i↔items[i] 对应（与 deleteSourceItem 的左移对称）；
+  // 无附加口时本块零影响。addonPorts 按条目 id 绑定，索引平移不影响绑定。
   const state = _graphState();
   const oldLen = node.items.length;
   const savedPorts = (state.portCounts && state.portCounts[node.id]) || 0;
-  if (savedPorts > oldLen) {
+  const extraCount = Math.max(savedPorts - oldLen, _sourceAddonPorts(node).length);
+  if (extraCount > 0) {
+    _sourceNormalizeAddons(node, savedPorts);
     state.connections = (state.connections || []).map(edge =>
       (String(edge.from) === String(node.id) && _sourcePortIndex(edge.fromPort) >= oldLen)
         ? { ...edge, fromPort: 'out-' + (_sourcePortIndex(edge.fromPort) + 1) }
         : edge);
-    state.portCounts[node.id] = savedPorts + 1;
+    state.portCounts[node.id] = oldLen + 1 + extraCount;
     _saveGraphState(state);
   }
   node.items.push(item);
@@ -1131,22 +1134,41 @@ function deleteSourceItem(nodeId, itemId) {
   if (typeof _pushGraphUndo === 'function') _pushGraphUndo();
   node.items.splice(idx, 1);
   const state = _graphState();
+  // 2026-10-24（三）：删条目＝删它自己的口＋删绑它的附加口（addonPorts 按条目 id
+  // 绑定），其余端口（条目口与附加口）整体左移补位——边按 old→new 端口映射重建，
+  // 不再假设「只少一个口」（绑定的附加口可能不止一个）。
+  const oldLen = node.items.length + 1;
+  const savedPorts0 = (state.portCounts && state.portCounts[nodeId]) || 0;
+  const addons = _sourceNormalizeAddons(node, savedPorts0, oldLen);
+  const keptAddons = addons.filter(e => !e.item || e.item !== itemId);
+  const keptAddonPos = new Map();
+  let nextAddon = 0;
+  addons.forEach((entry, k) => {
+    if (!entry.item || entry.item !== itemId) keptAddonPos.set(k, nextAddon++);
+  });
+  const remapPort = (portIdx) => {
+    if (portIdx < oldLen) {
+      if (portIdx === idx) return null;
+      return portIdx > idx ? portIdx - 1 : portIdx;
+    }
+    const k = portIdx - oldLen;
+    if (!keptAddonPos.has(k)) return null;
+    return node.items.length + keptAddonPos.get(k);
+  };
   state.connections = (state.connections || [])
     .filter(edge => {
       if (String(edge.from) !== String(nodeId)) return true;
-      const portIdx = _sourcePortIndex(edge.fromPort);
-      return portIdx !== idx;
+      return remapPort(_sourcePortIndex(edge.fromPort)) !== null;
     })
     .map(edge => {
       if (String(edge.from) !== String(nodeId)) return edge;
-      const portIdx = _sourcePortIndex(edge.fromPort);
-      return portIdx > idx ? { ...edge, fromPort: 'out-' + (portIdx - 1) } : edge;
+      const nextIdx = remapPort(_sourcePortIndex(edge.fromPort));
+      const nextPort = 'out-' + nextIdx;
+      return String(edge.fromPort || 'out-0') === nextPort ? edge : { ...edge, fromPort: nextPort };
     });
-  // 2026-10-24：附加口随左移总量−1（保住「手加的附加口数」不变——portCounts 是
-  // 绝对口径，条目少一个基数就少一个）；无附加口（portCounts≤新条目数）零影响
-  const savedPorts = (state.portCounts && state.portCounts[nodeId]) || 0;
-  if (savedPorts > node.items.length) {
-    state.portCounts[nodeId] = Math.max(node.items.length, savedPorts - 1);
+  if (keptAddons.length !== addons.length) node.addonPorts = keptAddons;
+  if (addons.length || savedPorts0) {
+    state.portCounts[nodeId] = node.items.length + keptAddons.length;
   }
   updateSourceNodeContent(node);
   _saveGraphState(state);
@@ -1156,6 +1178,52 @@ function deleteSourceItem(nodeId, itemId) {
 function _sourcePortIndex(fromPort) {
   const m = /^out-(\d+)$/.exec(String(fromPort || 'out-0'));
   return m ? parseInt(m[1], 10) : 0;
+}
+
+// ===== 2026-10-24（三）按素材加口：附加口绑定 =====
+// node.addonPorts[k] 对应第 k 个附加口（绝对口序 out-(items.length+k)）：
+// {item:'<itemId>'}＝绑定该素材（只送它）；{} 或缺项＝整篮口（送全部素材）。
+// 不变量：portCounts[nodeId] === items.length + addonPorts.length（新节点）。
+// addonPorts 按条目 id 绑定，端口索引平移（加/删条目）不影响绑定本身。
+function _sourceAddonPorts(node) {
+  return (node && Array.isArray(node.addonPorts)) ? node.addonPorts : [];
+}
+
+// 归一化：portCounts 隐含的附加口若没有 addonPorts 记录（2026-10-24 上午「整篮口」
+// 那轮建的数据只写了 portCounts），补成显式的无绑定条目——绑定表长度从此恒等于
+// 附加口数，读写两侧口径合一。只在写入口调用；读路径缺记录自然回落整篮口，无需归一。
+function _sourceNormalizeAddons(node, savedPorts, itemsLen) {
+  const items = (node && Array.isArray(node.items)) ? node.items : [];
+  // itemsLen：算「隐含附加口数」时的条目基数——删条目路径在 splice 之后调用，
+  // 必须传删前的基数（oldLen），否则会把少掉的条目误当成待补的附加口
+  const base = (typeof itemsLen === 'number') ? itemsLen : items.length;
+  const implied = Math.max(0, (savedPorts || 0) - base);
+  const list = _sourceAddonPorts(node).slice();
+  while (list.length < implied) list.push({});
+  if (node && list.length && list.length !== _sourceAddonPorts(node).length) node.addonPorts = list;
+  return list;
+}
+
+function _sourceAddonBinding(node, portIndex) {
+  const items = (node && Array.isArray(node.items)) ? node.items : [];
+  const k = portIndex - items.length;
+  if (k < 0) return null;
+  return _sourceAddonPorts(node)[k] || null;
+}
+
+function graphAddSourceItemPort(nodeId, itemId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'source' || _sourceIsLegacyNode(node)) return;
+  const item = (node.items || []).find(it => it && it.id === itemId && it.kind);
+  if (!item) return;
+  if (typeof _pushGraphUndo === 'function') _pushGraphUndo();
+  const state = _graphState();
+  state.portCounts = state.portCounts || {};
+  const addons = _sourceNormalizeAddons(node, state.portCounts[nodeId] || 0);
+  node.addonPorts = addons.concat([{ item: itemId }]);
+  state.portCounts[nodeId] = (node.items || []).length + node.addonPorts.length;
+  _saveGraphState(state);
+  renderGraphCanvas();
 }
 
 function renameSourceItem(nodeId, itemId) {

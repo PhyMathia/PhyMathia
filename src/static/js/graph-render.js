@@ -610,11 +610,31 @@ function _renderOutputPorts(node, messages, state) {
   let html = '<div class="graph-port-col graph-output-col">';
   const typeLabels = typeof RECIPE_PORT_TYPE_LABELS !== 'undefined' ? RECIPE_PORT_TYPE_LABELS : {};
   for (let i = start; i < count; i++) {
+    // 素材篮（2026-10-24 三）：按素材加的附加口带素材身份——名字＝素材名、色走
+    // source、tooltip 专属；无绑定的附加口＝整篮口，维持 T266「待命名」继承态
+    let sourceAddonMeta = null;
+    if (node.kind === 'source' && !ports[i] && !_sourceIsLegacyNode(node)
+      && typeof _sourceAddonBinding === 'function') {
+      const addon = _sourceAddonBinding(node, i);
+      if (addon && addon.item) {
+        const bound = (Array.isArray(node.items) ? node.items : [])
+          .find(it => it && it.id === addon.item && it.kind);
+        if (bound) {
+          sourceAddonMeta = {
+            label: String(bound.name || '素材'),
+            type: '',
+            attribute: 'source',
+            item: bound,
+            custom: true,
+          };
+        }
+      }
+    }
     // T266：匿名附加输出口的「待命名」态——未连线空白，连线后采用目标输入口的
     // 名字与内容类型（_adoptedOutputPortMeta 从 graphView.edges 现算，断开即回空白）；
     // 基本口（ports[i] 有值）一律保持建点时定死的身份，不参与
     const adopted = ports[i] ? null : _adoptedOutputPortMeta(node, i);
-    const meta = ports[i] || {
+    const meta = ports[i] || sourceAddonMeta || {
       label: adopted ? adopted.label : '',
       type: (adopted && adopted.type) ? adopted.type : 'custom',
       branchType: 'followup',
@@ -629,11 +649,13 @@ function _renderOutputPorts(node, messages, state) {
     // 内部类型不在表内不挂徽标，只有配方内容类型（文本/公式/图示/网页）才显示
     const typeKey = (meta.type && typeLabels[meta.type]) ? meta.type : '';
     const typeLabel = typeKey ? (typeLabels[typeKey] || '') : '';
-    const portTitle = meta.custom
-      ? (adopted
-        ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处打开节点菜单（选中自动连回本口），或拖到输入端口重连'
-        : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处打开节点菜单，选择要创建的节点（自动连线）')
-      : '输出端口：拖到空处创建提问节点，或拖到输入端口重连';
+    const portTitle = sourceAddonMeta
+      ? '输出「' + label + '」：此端口只输出这条素材；拖到空处打开节点菜单，或拖到输入端口连线（要连更多节点可再点行内「加口」）'
+      : (meta.custom
+        ? (adopted
+          ? '输出「' + label + '」：名字与类型来自所连输入端口；拖到空处打开节点菜单（选中自动连回本口），或拖到输入端口重连'
+          : '待命名的输出端口：连到某个输入端口后，将采用该端口的名字与类型；拖到空处打开节点菜单，选择要创建的节点（自动连线）')
+        : '输出端口：拖到空处创建提问节点，或拖到输入端口重连');
     html += '<div class="graph-port graph-output-port" data-node-id="' + node.id + '" data-port-id="out-' + i + '"'
       + ' data-port-type="' + (meta.type || 'branch') + '"'
       + (meta.contentType ? ' data-port-content-type="' + escapeHtml(meta.contentType) + '"' : '')
@@ -937,6 +959,7 @@ function _renderSourceItemRow(node, attr, item, index) {
     + '<span class="graph-source-row-actions">'
     + '<button type="button" title="查看/编辑文本" onclick="event.stopPropagation();openSourceItemModal(\'' + node.id + '\',\'' + item.id + '\')">查看</button>'
     + '<button type="button" title="改名" onclick="event.stopPropagation();renameSourceItem(\'' + node.id + '\',\'' + item.id + '\')">改名</button>'
+    + '<button type="button" title="给这条素材再开一个输出口（可连到另一个节点，只送这条素材）" onclick="event.stopPropagation();graphAddSourceItemPort(\'' + node.id + '\',\'' + item.id + '\')">加口</button>'
     + '<button type="button" title="删除素材（连线随之重排）" onclick="event.stopPropagation();deleteSourceItem(\'' + node.id + '\',\'' + item.id + '\')">删除</button>'
     + '</span>'
     + '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + node.id + '" data-port-id="out-' + index + '"'
