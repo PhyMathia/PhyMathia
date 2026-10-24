@@ -105,9 +105,9 @@ html/
 导出图片/
 .video-build/
 
-# 本地大文件：AI 实验遗留收拢进 experiments/（Qwen 底模＋finetune 微调支线＋探针输出，2026-10-04 T160；
-# baseline/＝视觉与嵌入基线留根勿挪；录屏/演示视频＝旧落盘位，2026-10-24 T399 已迁出仓库根＝../PhyMathia-归档/）
-/experiments/
+# 本地大文件：experiments/（AI 实验遗留：Qwen 底模＋finetune 微调支线＋探针输出，2026-10-04 T160 收拢）
+# 已于 2026-10-24 迁出仓库根＝../PhyMathia-归档/experiments/，死行随删；
+# baseline/＝视觉与嵌入基线留根勿挪；录屏/演示视频＝旧落盘位，2026-10-24 T399 已迁出仓库根＝../PhyMathia-归档/
 /.tmp/
 /windows_deploy/
 
