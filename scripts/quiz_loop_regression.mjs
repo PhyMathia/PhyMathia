@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // 真机回归（playwright + 隔离数据目录）：多选画布出题的三件用户实踩
 // ①勾选一行列表瞬间翻动 ②不显示本画布题库已有题数 ③出了 105 题只有 30 题进题库
+// （三件已于 2026-10-13 修复销账，本支转为改出题链/题库容量后的按需回归档）
+// 用法：node scripts/quiz_loop_regression.mjs   （自带临时数据目录＋21 画布种子，不碰 data/；
+//   需 playwright chromium；断言口径与坑见 docs/dev/canvas-modules.md「多选画布出题」节）
 import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
