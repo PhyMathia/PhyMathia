@@ -178,8 +178,8 @@ const GRAPH_NODE_ATTRIBUTES = {
   followup: { key: 'followup', label: '追问', color: 'var(--node-followup)' },
   answer: { key: 'answer', label: '问题分析', color: 'var(--node-answer)' },
   // 直接回答（2026-10-24）：AI 侧成品答案卡，与问题分析同色系（同为「AI 给出的回答」），
-  // 靠卡头标签区分；端口/属性类名 graph-attr-direct
-  direct: { key: 'direct', label: '直接回答', color: 'var(--node-answer)' },
+  // 靠绿族亮一档（--node-direct #4ade80）与问题分析相邻可辨；端口/属性类名 graph-attr-direct
+  direct: { key: 'direct', label: '直接回答', color: 'var(--node-direct)' },
   physics: { key: 'physics', label: '物理视角', color: 'var(--node-physics)' },
   math: { key: 'math', label: '数学视角', color: 'var(--node-math)' },
   graph: { key: 'graph', label: '知识图谱', color: 'var(--node-graph)' },
