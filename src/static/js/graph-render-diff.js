@@ -1,11 +1,27 @@
 // ====== 探索网版本对比高亮与幽灵层（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）=====
 // 调用方：graph.js（window.* typeof 守卫）、harness-apply.js 同守卫；graph-workflow.js
 // 尾部导出块照旧导出 window.applyGraphDiffHighlights/clearGraphDiffHighlights。
+// 2026-10-24：新增「修改历史对比」一套（applyGraphHistoryDiff / flashGraphHistoryDiff）——
+// 方向是「回到那一步会怎样」，与 Φ 的「向前改」不是一回事，故分开，不共用一个入口。
+const GRAPH_DIFF_EXTRA_CLASSES = [
+  'graph-diff-will-vanish', 'graph-diff-will-return', 'graph-diff-will-change',
+  'graph-diff-dim', 'graph-diff-flash',
+];
+
+function _graphDiffGhostLayerHost() {
+  // 幽灵层必须挂进 graphInner（真正被 translate/scale 的那层）。挂 graphCanvas 时
+  // 坐标把 pan/zoom 算死了，一平移/缩放就和节点错位（R6）。
+  return (typeof graphInner !== 'undefined' && graphInner) ? graphInner : graphCanvas;
+}
+
 function clearGraphDiffHighlights() {
-  graphInner?.querySelectorAll('.graph-diff-add, .graph-diff-update, .graph-diff-delete').forEach(el => {
-    el.classList.remove('graph-diff-add', 'graph-diff-update', 'graph-diff-delete');
-  });
+  graphInner?.querySelectorAll('.graph-diff-add, .graph-diff-update, .graph-diff-delete')
+    .forEach(el => el.classList.remove('graph-diff-add', 'graph-diff-update', 'graph-diff-delete'));
+  graphInner?.querySelectorAll('.' + GRAPH_DIFF_EXTRA_CLASSES.join(', .'))
+    .forEach(el => el.classList.remove(...GRAPH_DIFF_EXTRA_CLASSES));
+  graphInner?.querySelectorAll('.graph-diff-badge').forEach(el => el.remove());
   graphCanvas?.querySelector('.graph-diff-ghost-layer')?.remove();
+  graphInner?.querySelector('.graph-diff-ghost-layer')?.remove();
 }
 
 function applyGraphDiffHighlights(ops, history) {
@@ -99,27 +115,24 @@ function _graphDiffNodeHidden(hiddenMap, node) {
   return keys.some(key => !!hiddenMap[key]);
 }
 
-function _graphDiffGhostTranslate(node, state) {
-  const zoom = state.zoom || 0.9;
-  const pan = state.pan || { x: 0, y: 0 };
+// 幽灵挂在 graphInner 里，坐标就是图坐标（不再预乘 pan/zoom）——平移缩放由祖先
+// transform 带着一起走（R6）。
+function _graphDiffGhostTranslate(node) {
   const width = node.w || node.customWidth || _graphDiffGhostWidth(node);
   const height = node.h || node.customHeight || 72;
-  return 'translate(' + (pan.x + (node.x - width / 2) * zoom) + 'px, '
-    + (pan.y + (node.y - height / 2) * zoom) + 'px)';
+  return 'translate(' + (node.x - width / 2) + 'px, ' + (node.y - height / 2) + 'px)';
 }
 
-function _graphDiffGhostPath(edge, ghostById, state) {
+function _graphDiffGhostPath(edge, ghostById) {
   const from = graphView.nodeById?.[edge.from] || ghostById.get(edge.from);
   const to = graphView.nodeById?.[edge.to] || ghostById.get(edge.to);
   if (!from || !to) return '';
-  const zoom = state.zoom || 0.9;
-  const pan = state.pan || { x: 0, y: 0 };
   const fromWidth = from.w || from.customWidth || _graphDiffGhostWidth(from);
   const toWidth = to.w || to.customWidth || _graphDiffGhostWidth(to);
-  const x1 = pan.x + (from.x + fromWidth / 2) * zoom;
-  const y1 = pan.y + from.y * zoom;
-  const x2 = pan.x + (to.x - toWidth / 2) * zoom;
-  const y2 = pan.y + to.y * zoom;
+  const x1 = from.x + fromWidth / 2;
+  const y1 = from.y;
+  const x2 = to.x - toWidth / 2;
+  const y2 = to.y;
   const offset = Math.max(60, Math.min(180, Math.abs(x2 - x1) * 0.45));
   return 'M' + x1.toFixed(1) + ' ' + y1.toFixed(1)
     + ' C' + (x1 + offset).toFixed(1) + ' ' + y1.toFixed(1)
@@ -127,21 +140,21 @@ function _graphDiffGhostPath(edge, ghostById, state) {
     + ', ' + x2.toFixed(1) + ' ' + y2.toFixed(1);
 }
 
-function _renderGraphDiffGhost(ghostNodes, ghostEdges) {
-  if (!graphCanvas) return;
-  graphCanvas.querySelector('.graph-diff-ghost-layer')?.remove();
+function _renderGraphDiffGhost(ghostNodes, ghostEdges, opts) {
+  const host = _graphDiffGhostLayerHost();
+  if (!host) return;
+  host.querySelector('.graph-diff-ghost-layer')?.remove();
   const nodes = Array.isArray(ghostNodes) ? ghostNodes : [];
   const edges = Array.isArray(ghostEdges) ? ghostEdges : [];
   if (!nodes.length && !edges.length) return;
-  const state = _graphState();
   const layer = document.createElement('div');
   layer.className = 'graph-diff-ghost-layer';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'graph-diff-ghost-layer-edges');
   layer.appendChild(svg);
-  const ghostById = new Map(nodes.map(node => [node.id, node]));
+  const ghostById = new Map(nodes.map(node => [String(node.id), node]));
   edges.forEach(edge => {
-    const d = _graphDiffGhostPath(edge, ghostById, state);
+    const d = _graphDiffGhostPath(edge, ghostById);
     if (!d) return;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('class', 'graph-diff-ghost-edge');
@@ -149,17 +162,101 @@ function _renderGraphDiffGhost(ghostNodes, ghostEdges) {
     path.setAttribute('d', d);
     svg.appendChild(path);
   });
+  const badgeText = (opts && opts.badge) || '该版本存在';
   nodes.forEach(node => {
     const el = document.createElement('div');
-    el.className = 'graph-diff-ghost-node';
-    el.dataset.ghostNodeId = node.id;
+    el.className = 'graph-diff-ghost-node' + (opts && opts.willReturn ? ' graph-diff-will-return' : '');
+    el.dataset.ghostNodeId = String(node.id);
     const width = node.w || node.customWidth || _graphDiffGhostWidth(node);
-    el.style.width = Math.max(160, width * (state.zoom || 0.9)) + 'px';
-    el.style.transform = _graphDiffGhostTranslate(node, state);
-    const label = String((node && (node.label || node.title || node.content)) || node.id || '节点');
-    el.innerHTML = '<span class="graph-diff-ghost-badge">该版本存在</span>'
+    el.style.width = Math.max(120, width) + 'px';
+    el.style.transform = _graphDiffGhostTranslate(node);
+    const label = (typeof _graphNodeLabelOf === 'function' ? _graphNodeLabelOf(node, node.id) : '')
+      || String((node && (node.label || node.title || node.content)) || node.id || '节点');
+    el.innerHTML = '<span class="graph-diff-ghost-badge">' + badgeText + '</span>'
       + '<span class="graph-diff-ghost-label">' + escapeHtml(label) + '</span>';
     layer.appendChild(el);
   });
-  graphCanvas.appendChild(layer);
+  host.appendChild(layer);
+}
+
+// ===== 修改历史对比（2026-10-24）：方向＝「回到这一步会发生什么」（R5/2.2/2.3） =====
+function _graphDiffAddBadge(el, text, cls) {
+  if (!el || !el.appendChild) return;
+  const badge = document.createElement('span');
+  badge.className = 'graph-diff-badge ' + cls;
+  badge.textContent = text;
+  el.appendChild(badge);
+}
+
+function applyGraphHistoryDiff(diff, opts) {
+  clearGraphDiffHighlights();
+  const ops = (diff && diff.ops) || [];
+  const vanish = new Set(); // 现在有、那一步没有 → 回去会消失
+  const change = new Set(); // 两边都有、内容不同 → 回去会改写
+  const addEdges = new Set(); // 现在有、那一步没有的边 → 回去会消失
+  const remEdges = new Set(); // 那一步有、现在没有的边 → 回去会回来
+  ops.forEach(op => {
+    const id = op.id != null ? String(op.id) : '';
+    if (op.op === 'create_node' && id) vanish.add(id);
+    else if (op.op === 'update_node' && id) change.add(id);
+    const key = op.edge_key || op.key;
+    if (op.op === 'add_edge' && key) addEdges.add(String(key));
+    else if (op.op === 'remove_edge' && key) remEdges.add(String(key));
+  });
+  const changedNodes = new Set([...vanish, ...change]);
+  const hasNodeDiff = changedNodes.size > 0;
+  const hasEdgeDiff = addEdges.size || remEdges.size;
+  // 聚光灯：有差异时未变化的节点降到 35%（2.3），只有位置变化时不压暗。
+  const spotlight = !!(hasNodeDiff || hasEdgeDiff);
+  graphView.nodes.forEach(node => {
+    const id = String(node.id);
+    const el = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
+    if (!el) return;
+    if (!changedNodes.has(id)) {
+      if (spotlight) el.classList.add('graph-diff-dim');
+      return;
+    }
+    if (vanish.has(id)) {
+      el.classList.add('graph-diff-will-vanish');
+      _graphDiffAddBadge(el, '−', 'will-vanish');
+    } else if (change.has(id)) {
+      el.classList.add('graph-diff-will-change');
+      _graphDiffAddBadge(el, '✎', 'will-change');
+    }
+  });
+  graphView.edges.forEach(edge => {
+    const key = _edgeKey(edge);
+    const el = graphEdgeLayer?.querySelector('[data-edge-key="' + key + '"]');
+    if (!el) return;
+    if (addEdges.has(key)) {
+      el.classList.add('graph-diff-will-vanish');
+      _graphDiffAddBadge(el, '−', 'will-vanish');
+    } else if (remEdges.has(key)) {
+      el.classList.add('graph-diff-will-change');
+    } else if (spotlight) {
+      el.classList.add('graph-diff-dim');
+    }
+  });
+  // 幽灵＝那一步有、现在没有的节点（回去会回来）：绿色虚线，挂 graphInner 跟随平移缩放。
+  if (opts && opts.ghostVisible !== false && opts.ghostNodes && opts.ghostNodes.length) {
+    _renderGraphDiffGhost(opts.ghostNodes, opts.ghostEdges || [], { badge: '回到这一步会出现', willReturn: true });
+  }
+}
+
+let _graphHistoryFlashTimer = null;
+function flashGraphHistoryDiff(ids) {
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean).map(String);
+  if (!list.length) return;
+  list.forEach(id => {
+    const el = graphInner?.querySelector('[data-node-id="' + id + '"]');
+    if (!el) return;
+    el.classList.remove('graph-diff-flash');
+    void el.offsetWidth;
+    el.classList.add('graph-diff-flash');
+  });
+  if (_graphHistoryFlashTimer) clearTimeout(_graphHistoryFlashTimer);
+  _graphHistoryFlashTimer = setTimeout(function () {
+    _graphHistoryFlashTimer = null;
+    graphInner?.querySelectorAll('.graph-diff-flash').forEach(el => el.classList.remove('graph-diff-flash'));
+  }, 2600);
 }

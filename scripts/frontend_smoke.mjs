@@ -75,6 +75,8 @@ import { run as _graph_busy_sweep } from './frontend_smoke/graph-busy-sweep.mjs'
 import { run as _graph_mirror_slim } from './frontend_smoke/graph-mirror-slim.mjs';
 import { run as _graph_edit_history } from './frontend_smoke/graph-edit-history.mjs';
 import { run as _graph_history_cursor } from './frontend_smoke/graph-history-cursor.mjs';
+import { run as _graph_history_diff } from './frontend_smoke/graph-history-diff.mjs';
+import { run as _graph_history_ai_steps } from './frontend_smoke/graph-history-ai-steps.mjs';
 import { run as _graph_human_finalize } from './frontend_smoke/graph-human-finalize.mjs';
 import { run as _graph_draft_recover } from './frontend_smoke/graph-draft-recover.mjs';
 import { run as _graph_sync_merge } from './frontend_smoke/graph-sync-merge.mjs';
@@ -118,6 +120,8 @@ await _graph_busy_sweep();
 await _graph_mirror_slim();
 await _graph_edit_history();
 await _graph_history_cursor();
+await _graph_history_diff();
+await _graph_history_ai_steps();
 await _graph_human_finalize();
 await _graph_draft_recover();
 await _graph_sync_merge();

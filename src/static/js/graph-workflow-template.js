@@ -258,6 +258,15 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
   // 的总根：画布工作流的世界观过去＝当前显示的画布，切画布即换）。
   const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
     || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
+  // （问题＋回答＋模块一起退）。摘要挂在「当前状态」行；条目自己的摘要仍由自动差异
+  // 生成（见 graph.js _pushGraphUndo 的口径说明）。
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, {
+      source: 'ai',
+      summary: '提问：' + (typeof _graphShorten === 'function' ? _graphShorten(question, 30) : String(question).slice(0, 30)),
+    });
+  }
   const template = _createQuestionWorkflowTemplate(question, options.sourceNodeId || '', options.sourcePort || '', draftPlacement, worldSid);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   // T299：问题分析这一段过去整段在停止伞之外——顶栏停止按钮要等 _executeParallelWorkflow
@@ -322,6 +331,9 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     // 收世界：任务行已接手的话 ctx 已由 _tasksEndWorkflow 结掉，这里对 null 空转；
     // 分析阶段就早退（被停/分析为空）的世界 ctx 在这儿收掉，不外溢到下一轮。
     if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
+    // 事件收尾（3.1）：给「当前状态」行补上这次提问的差异计数（+N −M ✎K），
+    // 刷新后面板也能靠最后一条与当前状态的差异读出来。
+    if (typeof _graphHistoryLiveEventDone === 'function') _graphHistoryLiveEventDone();
   }
 }
 
@@ -425,6 +437,13 @@ async function startSocraticWorkflow(promptText, meta, handoffTaskId, fromQueue)
   const m = meta || {};
   const worldSid = ((typeof getCurrentSessionId === 'function' && getCurrentSessionId())
     || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
+  // 3.1 事件点：苏格拉底作答同样是「一整次提问」，建点之前落点
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, {
+      source: 'ai',
+      summary: _socraticTaskTitle(m.mode) + '：' + (typeof _graphShorten === 'function' ? _graphShorten(text, 30) : String(text).slice(0, 30)),
+    });
+  }
   const template = _createSocraticWorkflowTemplate(text, m, worldSid);
   const liveAnswer = _findGraphNode(template.answerNode.id) || template.answerNode;
   // T313：先钉世界再生成——人切走之后读写仍落苏格拉底所属的那张画布
@@ -462,6 +481,7 @@ async function startSocraticWorkflow(promptText, meta, handoffTaskId, fromQueue)
     _setWorkflowStopButton(false);
     if (typeof hideProgress === 'function') hideProgress();
     if (typeof _taskEndWorkflowWorld === 'function') _taskEndWorkflowWorld();
+    if (typeof _graphHistoryLiveEventDone === 'function') _graphHistoryLiveEventDone();
   }
 }
 
