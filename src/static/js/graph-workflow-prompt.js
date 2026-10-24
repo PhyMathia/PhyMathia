@@ -92,7 +92,8 @@ function _nodeOutputContent(node, seen, fromPort) {
     if (m) {
       const item = items[parseInt(m[1], 10)];
       if (item && item.kind) return String(item.text || '') || _sourceItemPlaceholder(item);
-      return '';
+      // 2026-10-24 手加的附加口（out-N 越界）＝「整篮出口」：回落全部条目拼接
+      // （空则回落 node.content），与不传 fromPort 的兜底同一条路
     }
     // 不传 fromPort（节点体拖拽等兜底路径）：全部条目拼接；拼接为空回落
     // node.content（它是拼接的缓存，兼容无 items 但带 content 的旧夹具/旧数据）
@@ -263,12 +264,20 @@ function _collectUpstreamImages(node, route) {
     if (!src || _sourceIsLegacyNode(src)) continue;
     const m = /^out-(\d+)$/.exec(String(entry.fromPort || ''));
     const item = (m && Array.isArray(src.items)) ? src.items[parseInt(m[1], 10)] : null;
-    const group = _sourceItemImageGroup(item);
-    if (!group) continue;
-    const key = entry.id + '@' + entry.fromPort;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    groups.push(group);
+    // 2026-10-24 手加的附加口（out-N 越界）＝「整篮出口」：该节点全部图片/扫描件
+    // 条目各成一组（seen 键带条目 fileId，防同口多条目互吞）；无 fromPort 的兜底
+    // 路径维持旧口径不掺图
+    const portItems = item && item.kind
+      ? [item]
+      : (m ? (Array.isArray(src.items) ? src.items.filter(it => it && it.kind) : []) : []);
+    for (const it of portItems) {
+      const group = _sourceItemImageGroup(it);
+      if (!group) continue;
+      const key = entry.id + '@' + entry.fromPort + '@' + (it.fileId || it.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groups.push(group);
+    }
   }
   return _allocateSendImageRefs(groups, WORKFLOW_SEND_IMAGE_MAX);
 }

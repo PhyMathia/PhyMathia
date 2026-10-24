@@ -2,6 +2,8 @@
 // 一条素材 = 一个条目 = 一个出口（out-i ↔ items[i]）。覆盖：三入口渲染、端口=条目、
 // 折叠态出口改走输出列（2026-10-22 修复）、删中间条目边重排、两口按口取材不混料、
 // 旧数据只读分支、命名/OCR 状态文案、addSourceText 本地建条目与超长走 ingest（fetch 桩）。
+// 2026-10-24 追加：加输出端口（附加口＝整篮出口，取材回落全部条目拼接）与
+// 附加口随条目增删的边平移/portCounts 记账。
 // 本文件有用例会 await 且替换全局 fetch 桩——串行域契约（见 AGENTS.md 硬规则 4），
 // 执行顺序由 ../frontend_smoke.mjs 调用序列决定，收口线 drain() 之前注册完毕。
 import { readFileSync } from 'node:fs';
@@ -37,8 +39,9 @@ check('素材篮渲染：新节点三入口＋OCR 开关＋条目行；旧数据
       if (!html.includes(frag)) throw new Error('新节点渲染缺入口：' + frag);
     }
     if (html.includes('graph-source-row')) throw new Error('空篮不应渲染条目行');
-    if (html.includes('add-output-port') && html.includes('graph-add-port-btn')) {
-      throw new Error('素材篮不该有加输出端口入口（端口=条目）');
+    // 2026-10-24 开放加口：新素材篮应有「＋添加输出端口」（附加口＝整篮出口）
+    if (!(html.includes('graphAddOutputPort') && html.includes('graph-add-port-btn'))) {
+      throw new Error('新素材篮应有「＋添加输出端口」入口');
     }
     // 旧数据（items 知识点形状）：只读分支——不渲染条目行/输入区，保留 AI 整理关系
     seedNode([{ id: 'n1', title: '牛顿定律', summary: 'F=ma' }], { fileName: '讲义.pdf', fileId: 'doc_x' });
@@ -48,6 +51,7 @@ check('素材篮渲染：新节点三入口＋OCR 开关＋条目行；旧数据
     }
     if (legacyHtml.includes('addSourceTextFromCard')) throw new Error('旧数据不提供新输入入口');
     if (legacyHtml.includes('解析中')) throw new Error('旧数据只读分支不该有 busy 态');
+    if (legacyHtml.includes('graphAddOutputPort')) throw new Error('旧数据不开放加输出端口');
   } finally {
     sandbox.escapeHtml = realEsc;
     vm.runInContext('graphView.selectedNodeIds = new Set();', sandbox);
@@ -170,6 +174,80 @@ check('素材篮删中间条目：out-i 的边删除、其后端口左移一位�
   if (!conns.some(c => c.from === 'x9')) throw new Error('无关边被误删');
   if (!String(node.content || '').includes('甲') || String(node.content || '').includes('乙')) {
     throw new Error('删条目后 node.content 应剔除该条目文本');
+  }
+  return true;
+});
+
+// ===== 素材篮（2026-10-24）：加输出端口＝整篮出口 =====
+check('素材篮加输出端口（2026-10-24）：门对新数据开、旧节点关；附加口取材回落整篮拼接', () => {
+  // 1. 权限门：新数据（含空篮）开、旧数据（知识点形状）关
+  if (!sandbox._nodeCanAddOutputPorts({ kind: 'source', items: [{ id: 'a', kind: 'text', name: 'x', text: 'y' }] })) throw new Error('新素材篮应可加输出口');
+  if (!sandbox._nodeCanAddOutputPorts({ kind: 'source', items: [] })) throw new Error('空篮新节点应可加输出口');
+  if (sandbox._nodeCanAddOutputPorts({ kind: 'source', items: [{ title: '旧' }] })) throw new Error('旧素材篮不开放加口');
+  // 2. 整篮出口取材：out-N 越界回落全部条目拼接；空篮回落 node.content
+  const node = {
+    id: 'src-test', kind: 'source',
+    items: [
+      { id: 'i0', kind: 'text', name: '笔记', text: 'AAA文本' },
+      { id: 'i1', kind: 'image', name: '受力图', text: '' },
+    ],
+    content: 'cached-content',
+  };
+  if (sandbox._nodeOutputContent(node, new Set(), 'out-0') !== 'AAA文本') throw new Error('条目口仍按条目取材');
+  const whole = String(sandbox._nodeOutputContent(node, new Set(), 'out-5'));
+  if (!whole.includes('AAA文本')) throw new Error('附加口应回落整篮拼接：' + JSON.stringify(whole));
+  if (sandbox._nodeOutputContent({ id: 'e', kind: 'source', items: [], content: 'CCC' }, new Set(), 'out-0') !== 'CCC') {
+    throw new Error('空篮附加口应回落 node.content');
+  }
+  // 3. 图片收集静态契约：越界口收全篮图片条目、无 fromPort 兜底不掺图
+  const promptSrc = readFileSync('src/static/js/graph-workflow-prompt.js', 'utf8');
+  if (!promptSrc.includes('手加的附加口（out-N 越界）＝「整篮出口」')) throw new Error('整篮图片收集分支缺失');
+  return true;
+});
+
+check('素材篮附加口随条目增删平移：加条目右移＋1、删条目左移−1，portCounts 同步记账', () => {
+  seedNode([
+    { id: 'it0', kind: 'text', name: 'A', text: '甲' },
+    { id: 'it1', kind: 'text', name: 'B', text: '乙' },
+  ]);
+  let mem = null;
+  const realUndo = sandbox._pushGraphUndo;
+  const realRender = sandbox.renderGraphCanvas;
+  const realSave = sandbox.saveGraphState;
+  sandbox._pushGraphUndo = () => {};
+  sandbox.renderGraphCanvas = () => {};
+  sandbox.saveGraphState = () => {};
+  try {
+    sandbox.window.getGraphState = () => mem;
+    sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+    mem = {
+      connections: [
+        { from: 'src-test', fromPort: 'out-0', to: 'x1', toPort: 'in-0', custom: true },
+        { from: 'src-test', fromPort: 'out-2', to: 'x2', toPort: 'in-0', custom: true },
+        { from: 'x9', fromPort: 'out-0', to: 'src-test', toPort: 'in-0', custom: true },
+      ],
+      removedEdges: [], portCounts: { 'src-test': 3 }, inputPortCounts: {}, customNodes: [], positions: {},
+    };
+    const node = vm.runInContext('graphView.nodeById["src-test"]', sandbox);
+    // 1. 加条目（附加口在场）：附加口边 out-2→out-3、portCounts 3→4，新条目落索引 2
+    sandbox._sourcePushItem(node, { id: 'it2', kind: 'text', name: 'C', text: '丙' });
+    const shifted = mem.connections.find(c => c.from === 'src-test' && c.to === 'x2');
+    if (!shifted || shifted.fromPort !== 'out-3') throw new Error('附加口边应右移 out-3，实际 ' + (shifted && shifted.fromPort));
+    if (mem.portCounts['src-test'] !== 4) throw new Error('portCounts 应 3→4，实际 ' + mem.portCounts['src-test']);
+    if (node.items.length !== 3 || node.items[2].id !== 'it2') throw new Error('新条目应落原附加口索引 2');
+    // 2. 删中间条目 it1：附加口边左移回 out-2、portCounts 回 3，无关边不动
+    sandbox.deleteSourceItem('src-test', 'it1');
+    const backEdge = mem.connections.find(c => c.from === 'src-test' && c.to === 'x2');
+    if (!backEdge || backEdge.fromPort !== 'out-2') throw new Error('附加口边应左移回 out-2，实际 ' + (backEdge && backEdge.fromPort));
+    if (mem.portCounts['src-test'] !== 3) throw new Error('portCounts 应 4→3，实际 ' + mem.portCounts['src-test']);
+    if (!mem.connections.some(c => c.from === 'src-test' && c.fromPort === 'out-0' && c.to === 'x1')) throw new Error('条目口边不动');
+    if (!mem.connections.some(c => c.from === 'x9')) throw new Error('入向边不动');
+  } finally {
+    sandbox._pushGraphUndo = realUndo;
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.saveGraphState = realSave;
+    delete sandbox.window.getGraphState;
+    delete sandbox.window.saveGraphState;
   }
   return true;
 });
