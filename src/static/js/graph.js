@@ -53,9 +53,12 @@ function _nodeCanAddInputPorts(node) {
 
 function _nodeCanAddOutputPorts(node) {
   if (!node) return false;
-  // 素材篮（2026-10-22）：source 的出口=条目（out-i ↔ items[i]），手加口会
-  // 打破端口与条目的索引对应——关加口；存量 portCounts 附加口仍按渲染口径保留
-  if (node.kind === 'draft' || node.kind === 'junction' || node.kind === 'source') return false;
+  // 素材篮（2026-10-24 开放加口）：新数据的附加输出口＝「整篮出口」（out-N 越界
+  // 取材回落全部条目拼接，见 _nodeOutputContent/_collectUpstreamImages）；旧节点
+  // （知识点形状 items）只读不开放。加口后条目增删须同步平移附加口边与 portCounts
+  // （_sourcePushItem 右移＋1 / deleteSourceItem 左移−1），保住 out-i↔items[i] 对应
+  if (node.kind === 'draft' || node.kind === 'junction') return false;
+  if (node.kind === 'source') return !_sourceIsLegacyNode(node);
   return !_nodeRecipeOutputLocked(node);
 }
 

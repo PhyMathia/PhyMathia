@@ -866,6 +866,20 @@ function _sourceOcrState(status, engine, ms, error) {
 
 function _sourcePushItem(node, item) {
   node.items = Array.isArray(node.items) ? node.items : [];
+  // 2026-10-24：附加口在场（portCounts＞条目数）时，新条目会占用附加口的 out-N
+  // 索引——先把附加口边整体右移一格、portCounts＋1，保住 out-i↔items[i] 对应
+  // （与 deleteSourceItem 的左移对称）；无附加口时本块零影响。
+  const state = _graphState();
+  const oldLen = node.items.length;
+  const savedPorts = (state.portCounts && state.portCounts[node.id]) || 0;
+  if (savedPorts > oldLen) {
+    state.connections = (state.connections || []).map(edge =>
+      (String(edge.from) === String(node.id) && _sourcePortIndex(edge.fromPort) >= oldLen)
+        ? { ...edge, fromPort: 'out-' + (_sourcePortIndex(edge.fromPort) + 1) }
+        : edge);
+    state.portCounts[node.id] = savedPorts + 1;
+    _saveGraphState(state);
+  }
   node.items.push(item);
   updateSourceNodeContent(node);
   _saveCustomNodes();
@@ -1128,6 +1142,12 @@ function deleteSourceItem(nodeId, itemId) {
       const portIdx = _sourcePortIndex(edge.fromPort);
       return portIdx > idx ? { ...edge, fromPort: 'out-' + (portIdx - 1) } : edge;
     });
+  // 2026-10-24：附加口随左移总量−1（保住「手加的附加口数」不变——portCounts 是
+  // 绝对口径，条目少一个基数就少一个）；无附加口（portCounts≤新条目数）零影响
+  const savedPorts = (state.portCounts && state.portCounts[nodeId]) || 0;
+  if (savedPorts > node.items.length) {
+    state.portCounts[nodeId] = Math.max(node.items.length, savedPorts - 1);
+  }
   updateSourceNodeContent(node);
   _saveGraphState(state);
   renderGraphCanvas();
