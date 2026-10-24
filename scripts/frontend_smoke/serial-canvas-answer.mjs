@@ -863,8 +863,10 @@ check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不�
   }
   const blankBody = extract(gwSrc, 'generateBlankNode');
   if (blankBody === null) throw new Error('找不到 generateBlankNode——断言本身该更新了');
-  if (!/!fromQueue && !handoffTaskId && \(node\.content \|\| ''\)\.trim\(\) && !_warnDownstreamBeforeRegenerate/.test(blankBody)) {
-    throw new Error('空白节点重生成没接预警闸（首次生成不弹、排队不弹丢了）（T303）');
+  // 空白节点（2026-10-24 T403）：生成入口已薄封装成 runWorkflowNode 调用，T303 预警闸在
+  // runWorkflowNode 里统一执行（force 由「有没有内容」推出来）；blank 专属副本不再保留。
+  if (!/await runWorkflowNode\(nodeId, force, fromQueue, handoffTaskId\)/.test(blankBody)) {
+    throw new Error('空白节点生成没走统一工作流入口——预警/排队/记账会各写一份（T303/T403 回退）');
   }
 });
 
@@ -1071,14 +1073,15 @@ check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T3
       || !genBody.includes('_restoreWorkflowNodeVersion(live);')) {
     throw new Error('_generateCustomNode 缺版本账挂点（T339）');
   }
-  const blankStream = extract(gwEntrySrc, '_streamBlankNodeResponse');
-  if (blankStream === null || !blankStream.includes('_commitWorkflowNodeVersion(live);')) {
-    throw new Error('_streamBlankNodeResponse 缺收账挂点（T339）');
-  }
+  // 空白节点（2026-10-24 T403）：旧独立流式路已并入 _generateCustomNode /
+  // _streamCustomNodeResponse——版本账三项由上面对 genBody 的断言统一覆盖；这里钉死
+  // 「blank 真的并回了那条路」，别再长出一套自己的收账。
   const blankGen = extract(gwEntrySrc, 'generateBlankNode');
-  if (blankGen === null || !blankGen.includes('_beginWorkflowNodeVersionCycle(node);')
-      || !blankGen.includes('_restoreWorkflowNodeVersion(live);')) {
-    throw new Error('generateBlankNode 缺版本账挂点（T339）');
+  if (blankGen === null || !/runWorkflowNode\(nodeId, force, fromQueue, handoffTaskId\)/.test(blankGen)) {
+    throw new Error('generateBlankNode 没并回统一生成路——空白卡的版本账/收账会漏（T339/T403 回退）');
+  }
+  if (gwEntrySrc.includes('_streamBlankNodeResponse')) {
+    throw new Error('_streamBlankNodeResponse 已退役，别把第二套流式收账加回来（T403）');
   }
   const regenBody = extract(giSrc, '_applyWorkflowNodeRegenerate');
   if (regenBody === null || !regenBody.includes('_beginWorkflowNodeVersionCycle(node);')
@@ -1121,7 +1124,6 @@ check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口
     ['graph-workflow-entry.js', 'runWorkflowNode'],
     ['graph-workflow-entry.js', 'runWorkflowNodes'],
     ['graph-workflow-entry.js', 'runAllWorkflowNodes'],
-    ['graph-workflow-entry.js', 'generateBlankNode'],
     ['graph-interact.js', 'generateVizNode'],
     ['graph-interact.js', 'submitRegenerateNode'],
   ];
@@ -1140,6 +1142,12 @@ check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口
   }
   if (!/!fromQueue && typeof _isSendBusy/.test(grab('graph-workflow-entry.js', 'runWorkflowNode'))) {
     throw new Error('runWorkflowNode 的忙碌守卫缺 fromQueue 放行旁路：队列放行时会原地自我重入（T225 同型）');
+  }
+  // 空白节点（2026-10-24 T403）：第六个入口改成薄封装——排队仍成立，但由 runWorkflowNode
+  // 统一承担；这里只钉「真委托过去」，不许再写一份自己的排队/记账。
+  const blankEntry = grab('graph-workflow-entry.js', 'generateBlankNode');
+  if (!/runWorkflowNode\(nodeId, force, fromQueue, handoffTaskId\)/.test(blankEntry)) {
+    throw new Error('空白节点生成没有委托 runWorkflowNode——忙时排队/放行旁路会各写一份（T403）');
   }
   // ② 切画布：switchToSession 不许再有裸 isStreaming 闸门；流式回答要自带来处
   const sess = fs.readFileSync('src/static/js/session.js', 'utf8');

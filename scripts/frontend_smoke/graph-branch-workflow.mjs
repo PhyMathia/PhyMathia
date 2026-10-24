@@ -251,6 +251,105 @@ export async function run() {
       return true;
     });
 
+    // T403（2026-10-24）：空白节点并回工作流——上下文单父链、卡上要求进提示词、
+    // 进度三件套（内容＋inputHash＋done）与空要求闸门。变异验证：去掉 prompt/context
+    // 的 blank 分支、把路由改回全祖先、needsProgress 漏掉 requirements 闸，下面都会红。
+    check('T403 空白节点走工作流：单父链上下文＋卡上要求进提示词＋进度三件套＋空要求闸门', () => {
+      _seed();
+      const nodes = [
+        { id: 'u1', kind: 'user', manual: true, messageIndex: -1, timestamp: 1, content: '单摆的周期与什么有关', status: 'done' },
+        { id: 'a1', kind: 'answer', messageIndex: -1, timestamp: 2, content: '', analysis: '单摆分析', status: 'done' },
+        { id: 'b1', kind: 'blank', moduleKey: '', messageIndex: -1, timestamp: 3, content: '', status: 'empty', requirements: '写一个反例，说明大角度下周期变长' },
+        { id: 'x1', kind: 'user', manual: true, messageIndex: -1, timestamp: 4, content: '链外的兄弟问题', status: 'done' },
+      ];
+      const edges = [
+        { from: 'u1', fromPort: 'out-0', to: 'a1', toPort: 'in-0' },
+        { from: 'a1', fromPort: 'out-0', to: 'b1', toPort: 'in-0' },
+        { from: 'x1', fromPort: 'out-0', to: 'a1', toPort: 'in-1' },
+      ];
+      vm.runInContext('(function () { const __ns = ' + JSON.stringify(nodes) + ';'
+        + '__ns.forEach(function (n) { graphView.nodes.push(n); graphView.nodeById[n.id] = n; });'
+        + 'graphView.edges = graphView.edges.concat(' + JSON.stringify(edges) + '); })();', sandbox);
+      const ctx = JSON.parse(vm.runInContext(
+        'JSON.stringify(_buildWorkflowContextForNode(graphView.nodeById["b1"]))', sandbox));
+      if (ctx.target.kind !== 'blank') throw new Error('空白目标 kind 被改写成 ' + ctx.target.kind);
+      if (ctx.target.label !== 'AI 生成空白') throw new Error('空白目标品类名退化成 ' + ctx.target.label);
+      if (ctx.question !== '单摆的周期与什么有关') throw new Error('空白上下文没锚到最近问题：' + ctx.question);
+      if (ctx.requirements !== '写一个反例，说明大角度下周期变长') throw new Error('卡上要求没进上下文');
+      if (JSON.stringify(ctx.upstream || []).includes('链外的兄弟问题')) {
+        throw new Error('空白节点取全祖先了——第二条入边的兄弟问题不该进单父链上下文');
+      }
+      const prompt = String(vm.runInContext(
+        '_workflowPromptForNode(graphView.nodeById["b1"], _buildWorkflowContextForNode(graphView.nodeById["b1"]))', sandbox));
+      if (prompt.includes('请生成问题节点内容')) throw new Error('空白提示词还在用问题节点兜底（T401 回退）');
+      if (!prompt.includes('写一个反例，说明大角度下周期变长')) throw new Error('卡上要求没进提示词');
+      if (!prompt.includes('AI 生成空白')) throw new Error('提示词没点名目标品类');
+      if (vm.runInContext('_workflowProgressLabel(graphView.nodeById["b1"])', sandbox) !== 'AI 生成空白') {
+        throw new Error('进度标签没补空白节点中文名');
+      }
+      const needs = () => vm.runInContext('_workflowItemNeedsProgress(graphView.nodeById["b1"])', sandbox);
+      if (!needs()) throw new Error('有要求、没内容的空白卡应判「需要生成」');
+      vm.runInContext('graphView.nodeById["b1"].content = "反例正文";'
+        + 'graphView.nodeById["b1"].status = "done";'
+        + 'graphView.nodeById["b1"].inputHash = _nodeInputHash(graphView.nodeById["b1"]);', sandbox);
+      if (needs()) throw new Error('内容＋输入哈希＋done 齐了还判要跑——「全部开始」会每次重跑');
+      vm.runInContext('graphView.nodeById["b1"].requirements = "换个讲法";', sandbox);
+      if (!needs()) throw new Error('改了要求还判不用跑——inputHash 没跟 requirements 走');
+      vm.runInContext('graphView.nodeById["b1"].requirements = "";', sandbox);
+      if (needs()) throw new Error('空要求的空白卡不该进「全部开始」名单');
+      // 卡面动作区（T402）：空内容＝导航未出、循环箭头不挂、三角在、要求框输入同步在；
+      // 有内容＋有版本＝‹n/n› 导航、循环箭头（反馈面板）、三角、全屏四件齐。
+      const state = { portCounts: {}, inputPortCounts: {}, expandedAnswers: {} };
+      // 卡面渲染走真实 _renderBlankNodeHtml；Markdown 渲染器在回归沙箱里桩成直出
+      // （同 recipes.mjs 的 direct 卡用例——vm 里没有 marked/KaTeX）
+      const realRM = sandbox.renderMarkdown;
+      sandbox.renderMarkdown = text => String(text);
+      let htmlEmpty = '';
+      let htmlFull = '';
+      try {
+        vm.runInContext('graphView.nodeById["b1"].content = ""; graphView.nodeById["b1"].status = "empty";'
+          + 'graphView.nodeById["b1"].inputHash = "";', sandbox);
+        htmlEmpty = String(vm.runInContext(
+          '_renderNodeHtml(graphView.nodeById["b1"], [], ' + JSON.stringify(state) + ')', sandbox));
+        vm.runInContext('graphView.nodeById["b1"].content = "反例正文";'
+          + 'graphView.nodeById["b1"].versions = [{ content: "旧版", at: 1, humanDone: false }, { content: "反例正文", at: 2, humanDone: false }];'
+          + 'graphView.nodeById["b1"].activeVersion = 1;', sandbox);
+        htmlFull = String(vm.runInContext(
+          '_renderNodeHtml(graphView.nodeById["b1"], [], ' + JSON.stringify(state) + ')', sandbox));
+      } finally {
+        sandbox.renderMarkdown = realRM;
+      }
+      if (!htmlEmpty.includes('graph-node-actions') || !htmlEmpty.includes('graph-play-btn')) {
+        throw new Error('空白卡动作区缺「从头生成」三角');
+      }
+      if (htmlEmpty.includes('graph-version-nav') || htmlEmpty.includes("graphOpenRegenerate('b1')")) {
+        throw new Error('没生成过的空白卡不该挂版本导航/循环箭头');
+      }
+      if (!htmlEmpty.includes("updateBlankNodeRequirements('b1'")) {
+        throw new Error('要求框没接输入同步（面板/全部开始会读到旧要求）');
+      }
+      if (!htmlFull.includes('graph-version-nav') || !htmlFull.includes('2/2')) {
+        throw new Error('空白卡有版本却没挂 ‹n/n› 导航');
+      }
+      if (!htmlFull.includes("graphOpenRegenerate('b1')")) throw new Error('空白卡有内容却缺循环箭头（反馈面板入口）');
+      if (!htmlFull.includes('graph-node-fs-toggle')) throw new Error('空白卡有内容却缺全屏按钮');
+      const giSrc = _read('graph-interact.js');
+      if (!giSrc.includes('留空＝按卡上要求重新生成')) throw new Error('空白卡反馈面板占位没写「留空＝按卡上要求重跑」');
+      const entrySrc = _read('graph-workflow-entry.js');
+      const runBody = _body(entrySrc, 'runAllWorkflowNodes');
+      if (!runBody || runBody.indexOf("node.kind === 'blank'") < 0) throw new Error('runAllWorkflowNodes 白名单没补 blank');
+      const blankBody = _body(entrySrc, 'generateBlankNode');
+      if (!blankBody || blankBody.indexOf('runWorkflowNode(nodeId, force, fromQueue, handoffTaskId)') < 0) {
+        throw new Error('generateBlankNode 没并回统一工作流入口（T403）');
+      }
+      const runSrc = _read('graph-workflow-run.js');
+      const chainBody = _body(runSrc, '_processWorkflowChainItem');
+      const gateAt = chainBody.indexOf("current.kind === 'blank' && !String(current.requirements || '').trim()");
+      const hashAt = chainBody.indexOf('const inputHash = _nodeInputHash(current);');
+      if (gateAt < 0 || hashAt < 0 || gateAt > hashAt) throw new Error('空要求闸门缺失或排到了 hash 判定之后');
+      return true;
+    });
+
     check('T364 源码契约：三处问题节点判定都跳过闭环作答卡（_isSocraticLoopAnswer）', () => {
       const src = _read('graph-workflow-prompt.js');
       for (const fn of ['_findQuestionContentUpstream', '_nearestUserInPath', '_nearestQuestionNodeUpstream']) {

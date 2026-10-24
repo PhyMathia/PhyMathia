@@ -91,7 +91,7 @@ function _nodeActions(node) {
       + _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成', regenBusy)
       // 播放三角（T338）：不带当前内容的「从头生成」，force=true 真重跑；confirmed 留缺省
       // ＝有下游时照 T303 直接按钮路的 confirm 口径，无下游静默放行。排在循环箭头之后：
-      // _syncBlankNodeControls 按 .graph-regen-btn 取首个按钮重置标题，别让它捞到三角
+      // 固定「版本导航 → 循环箭头（面板）→ 三角（直跑）」的顺序，导出/只读按整行剥离
       + _iconPlayButton('runWorkflowNode(\'' + node.id + '\',true)', regenBusy ? '生成中...' : '从头生成（不带当前内容，重启工作流）', regenBusy)
       + '</div>';
   }
@@ -154,8 +154,8 @@ function _iconRegenButton(onclick, title, disabled) {
 
 // ===== 版本历史导航（2026-10-15 T339）：‹ 2/5 › ＋ 删当前版 =====
 // 排在循环箭头之前、整个住在 .graph-node-actions 里——导出/只读查看器剥整行，导航自动消失，
-// 不用进它们的剥离清单。类名不用 graph-regen-btn：_syncBlankNodeControls 按 .graph-regen-btn
-// 取首个按钮重置标题，导航沾这个类会被误捞。
+// 不用进它们的剥离清单。类名不用 graph-regen-btn：那个类会被导出/只读当「生成按钮」剥掉，
+// 导航沾上就会跟着消失。
 function _versionChevronLeftHtml() {
   return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
 }
@@ -749,26 +749,43 @@ function _renderBlankNodeHtml(node, state) {
   const minimizedClass = node.minimized ? ' minimized' : '';
   const sizeStyle = node.minimized ? '' : customWidth + customHeight;
   const content = _cleanBlankNodeContent(node, node.content || '');
+  const hasContent = !!content.trim();
   // T69：折叠卡不建内容子树（renderMarkdown/KaTeX 全免），展开时整卡重建
   const contentHtml = node.minimized
     ? _minimizedBodyHtml()
     : (content
       ? '<div class="graph-blank-content">' + (typeof renderMarkdown === 'function' ? renderMarkdown(content, { parentId: String(node.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(content)) + '</div>'
       : '');
-  const generateLabel = content ? '重新生成' : '生成';
+  const generateLabel = hasContent ? '重新生成' : '生成';
+  const regenBusy = !!node.busy || (typeof _regeneratingNodes !== 'undefined' && _regeneratingNodes.has(node.id));
+  // 动作区（2026-10-24 T402）：与其它工作流卡同款——版本导航 ‹n/n› → 循环箭头（带反馈
+  // 重生成面板：写字＝保留当前内容只按反馈改，留空＝按卡上要求重跑）→ 三角（从头生成，
+  // 强制重跑）→ 全屏。整个住在 .graph-node-actions 里：导出/只读查看器剥整行，自动消失。
+  // 循环箭头只在有内容时挂（没生成过的卡没有「重新」语义；与模块卡空/有内容两分支同口径）。
+  const actionsHtml = node.minimized ? '' : '<div class="graph-node-actions">'
+    + _nodeVersionNavHtml(node, regenBusy)
+    + (hasContent
+      ? _iconRegenButton('graphOpenRegenerate(\'' + node.id + '\')', regenBusy ? '生成中...' : '重新生成（可写反馈，留空按卡上要求重跑）', regenBusy)
+      : '')
+    // 三角走 generateBlankNode 而非 runWorkflowNode：先把要求框同步进节点再强制重跑；
+    // forceOverride=true＝「从头生成」不看 hash，有下游时 T303 confirm 照走（不旁路）。
+    + _iconPlayButton('generateBlankNode(\'' + node.id + '\',false,null,true)', regenBusy ? '生成中...' : '从头生成（按卡上要求重跑）', regenBusy)
+    + (typeof _nodeFsTogglesHtml === 'function' ? _nodeFsTogglesHtml(node) : '')
+    + '</div>';
   const deleteBtn = '<button class="graph-node-delete-toggle" onclick="deleteBlankNode(\'' + node.id + '\')" title="删除空白节点"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>';
   const pendingClass = _graphNodePending(node) ? ' graph-node-pending' : '';
   return '<div class="graph-node graph-node-blank graph-node-module graph-module-' + node.moduleKey + attrClass + selectedClass + busyClass + minimizedClass + pendingClass + '" data-node-id="' + node.id + '" style="transform:translate(' + node.x + 'px,' + node.y + 'px);--node-attr:' + attr.color + ';' + sizeStyle + '">'
     + _renderInputPorts(node, state)
     + '<div class="graph-node-main">'
-    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
+    + '<div class="graph-node-header"><span class="graph-node-attribute" style="color:' + attr.color + ';border-color:' + attr.color + ';">' + escapeHtml(attr.label) + '</span><span class="graph-node-badge">AI 生成</span>' + _customNodeStatusHtml(node) + _graphMinimizeToggleHtml(node) + deleteBtn + '</div>'
     + '<div class="graph-node-label">' + escapeHtml(meta.label) + '</div>'
     + contentHtml
-    + (node.minimized ? '' : (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求 → 点生成</div>')
+    + (node.minimized ? '' : (content ? '' : '<div class="graph-blank-hint">连上游（可选）→ 写要求（必填）→ 点生成</div>')
     + '<div class="graph-blank-requirement">'
-    + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + '>' + escapeHtml(node.requirements || '') + '</textarea>'
-    + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : generateLabel, node.busy)
+    + '<textarea class="graph-blank-input" rows="2" placeholder="写要求，例如：写一个反例 / 用比喻解释 / 整理时间线" ' + (node.busy ? 'disabled' : '') + ' oninput="updateBlankNodeRequirements(\'' + node.id + '\', this.value)">' + escapeHtml(node.requirements || '') + '</textarea>'
+    + _iconRegenButton('generateBlankNode(\'' + node.id + '\')', node.busy ? '生成中' : (hasContent ? '改要求重写' : '按卡上的要求生成'), node.busy)
     + '</div>')
+    + actionsHtml
     + '<span class="graph-resize-handle" title="调整尺寸"></span>'
     + '</div>'
     + _renderOutputPorts(node, [], state || _graphState())

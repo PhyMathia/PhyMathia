@@ -1,5 +1,6 @@
 // ===== 工作流：入口与空白节点（2026-10-24 自 graph-workflow.js 拆出，T397 纯搬家）=====
-// runWorkflowNode/Nodes/runAll/stop 与空白节点草稿生成；window 导出集中在主件 graph-workflow.js 尾部块。
+// runWorkflowNode/Nodes/runAll/stop 与空白节点生成入口（2026-10-24 T403 起为薄封装，
+// 内部走同一条工作流管线）；window 导出集中在主件 graph-workflow.js 尾部块。
 // 单个节点的「生成/重新生成」。忙的时候不再拒绝，改成排队（2026-10-11）：
 // 用户把任务列表当"多任务排队台"用，点一下就该有回音——收进队列、面板上看得见、
 // 轮到它时自动切回这张画布跑起来。fromQueue 是放行旁路（同 sendMessage 的 force /
@@ -86,10 +87,19 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
 }
 
 async function runAllWorkflowNodes() {
-  // 防重跑：只运行空节点/依赖发生变化的节点，已生成且未变化的直接跳过
-  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'direct') && _workflowItemNeedsProgress(node));
+  // 防重跑：只运行空节点/依赖发生变化的节点，已生成且未变化的直接跳过。
+  // 空白节点（2026-10-24 T400）：白名单补进 blank——接进工作流后吹「全部开始」也会
+  // 照顾到它；空要求卡由 _workflowItemNeedsProgress 挡在名单外（没有生成目标）。
+  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'direct' || node.kind === 'blank') && _workflowItemNeedsProgress(node));
   if (!targets.length) {
-    if (typeof showToast === 'function') showToast('没有需要生成的模块/总结/直接回答节点');
+    // 空要求空白卡不算「没有节点」——用户眼前明明有一张卡，只是缺生成目标，说清差什么
+    const awaitingRequirement = graphView.nodes.some(node => node.messageIndex < 0 && node.kind === 'blank'
+      && !String(node.requirements || '').trim());
+    if (typeof showToast === 'function') {
+      showToast(awaitingRequirement
+        ? '空白节点要先写要求：在卡上写「要生成什么」，再点生成'
+        : '没有需要生成的模块/总结/直接回答/空白节点');
+    }
     return;
   }
   const ids = targets.map(node => node.id);
@@ -145,251 +155,59 @@ function _renderBlankNodeLive(node, content) {
   if (typeof _initVizIframes === 'function') _initVizIframes(el);
 }
 
-function _syncBlankNodeControls(node) {
-  const root = graphInner?.querySelector('[data-node-id="' + node.id + '"]');
-  const btn = root?.querySelector('.graph-blank-generate-btn, .graph-regen-btn.graph-icon-btn');
-  const input = root?.querySelector('.graph-blank-input');
-  if (btn) {
-    btn.disabled = false;
-    btn.title = node.content ? '重新生成' : '生成';
-  }
-  if (input) input.disabled = false;
-}
-
-async function _streamBlankNodeResponse(resp, node) {
-  let content = '';
-  let renderPending = false;
-  let saveTimer = null;
-
-  function scheduleRender() {
-    if (renderPending) return;
-    renderPending = true;
-    setTimeout(() => {
-      renderPending = false;
-      const live = _findGraphNode(node.id);
-      if (live) live.content = content;
-      _renderBlankNodeLive(node, content);
-      _scheduleGraphSync();
-    }, GRAPH_STREAM_RENDER_MS);
-  }
-
-  function scheduleSave() {
-    if (saveTimer) return;
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      _saveCustomNodes();
-    }, 400);
-  }
-
-  try {
-    for await (const piece of _sseContentFrames(resp)) {
-      content += piece;
-      _scheduleWorkflowStreamProgress(content.length);
-      scheduleRender();
-      scheduleSave();
-    }
-  } catch (err) {
-    // 半成品随错误一起交出去（T359）：见 _streamCustomNodeResponse 同注
-    if (err && typeof err === 'object') err.streamPartial = content;
-    throw err;
-  }
-
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  const live = _findGraphNode(node.id);
-  if (live) {
-    live.content = content;
-    live.summary = _graphSummary(content);
-    live.busy = false;
-    live.generated = true;
-    // 版本账（T339）：空白节点流式成品收作新版本
-    _commitWorkflowNodeVersion(live);
-  }
-  _saveCustomNodes();
-  _renderBlankNodeLive(node, content);
-  _syncBlankNodeControls(node);
-  _measureNodes();
-  _redrawEdges();
-  _updateNodeTransforms();
-}
-
-async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null) {
+// 空白节点要求框 → 节点字段（2026-10-24 T403）：卡上要求框是「改要求重写」的快捷入口，
+// 但要求值不能只在点按钮那一刻从 DOM 读——反馈面板（留空＝按卡上要求重跑）、「全部开始」、
+// Φ/任务重试都可能绕过这颗按钮。输入即同步，任何生成路读 node.requirements 都是最新的。
+let _blankRequirementSaveTimer = null;
+function updateBlankNodeRequirements(nodeId, value) {
   const node = _findGraphNode(nodeId);
   if (!node || node.kind !== 'blank') return;
-  if (node.busy) {
-    if (typeof showToast === 'function') showToast('这个空白节点正在生成中，稍候');
-    return;
-  }
-  // 重生成预警（T303）：首次生成不弹（下游没基于任何旧内容）；重生成且有下游才确认
-  if (!fromQueue && !handoffTaskId && (node.content || '').trim() && !_warnDownstreamBeforeRegenerate(node)) return;
-  // 忙时排队（2026-10-11，同 runWorkflowNode）：过去这里是「工作流跑着就不许再起一条」的
-  // 硬闸，用户点了只得到一句「稍候再单独生成这个节点」。现在收进队列等着，轮到它时
-  // 队列把视图带回这张画布再跑——互斥仍然成立，只是把「拒绝」换成了「排队」。
-  // 这道闸同时保住下面任务自带的 AbortController 不与工作流总闸共用——
-  // 面板上的「停止」必须只掐这一条流，不能顺着共用 signal 把整轮工作流带走。
-  if (!fromQueue && typeof _isSendBusy === 'function' && _isSendBusy()) {
-    const label = '生成' + ((GRAPH_MODULE_META[node.moduleKey] || {}).label || '空白节点');
-    _enqueueNodeJob(label, function(taskId) {
-      if (typeof _queuedJobNodeGuard === 'function' && !_queuedJobNodeGuard(taskId, nodeId)) return;
-      return generateBlankNode(nodeId, true, taskId);
-    }, {
-      kind: 'node',
-      replay: { nodeJob: { id: nodeId, kind: 'blank' } },
-    });
-    return;
-  }
-  const input = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-blank-input');
-  const requirements = (input?.value || '').trim();
-  const incoming = (graphView.edges || []).find(edge => String(edge.to) === nodeId && !edge.draft);
-  if (!incoming) {
-    if (typeof showToast === 'function') showToast('请先将这个空白节点连接到问题、回答或模块节点');
-    return;
-  }
-  const parent = _findGraphNode(incoming.from);
-  if (!parent) {
-    if (typeof showToast === 'function') showToast('连线来源节点不存在');
-    return;
-  }
-
-  node.requirements = requirements;
-  // 版本账（T339）：重跑有内容的空白节点时旧内容先收账，再清空流式重写
-  _beginWorkflowNodeVersionCycle(node);
-  node.content = '';
-  node.busy = true;
-  node.generated = true;
-  _saveCustomNodes();
-  renderGraphCanvas();
-  const current = _findGraphNode(nodeId);
-  if (!current) return;
-
-  const meta = GRAPH_MODULE_META[current.moduleKey] || { label: current.moduleKey || 'AI 生成空白' };
-  // T61：空白节点的独立生成也记一笔任务账——面板看得见、停得掉、失败可重试。
-  // signal 用任务自己那颗 controller，不再借 workflowAbortController（上面已有互斥闸）。
-  const jobAbort = new AbortController();
-  const jobStartedAt = Date.now();
-  const taskId = (typeof _taskBeginNodeJob === 'function')
-    ? _taskBeginNodeJob({ title: '生成' + meta.label, nodeId: nodeId, nodeKind: 'blank' })
-    : null;
-  // 排队的那条任务被这笔真账接手：就地结掉，面板上不留两行（同「提问」的 handoffTaskId）
-  if (handoffTaskId && typeof _taskFinish === 'function') _taskFinish(handoffTaskId, 'done', '已交给生成');
-  if (taskId && typeof _taskBindCancel === 'function') {
-    _taskBindCancel(taskId, () => jobAbort.abort());
-  }
-  if (typeof showProgress === 'function') showProgress('tool', 5, '正在生成' + meta.label);
-  const graphPath = _blankNodeGraphPath(current);
-  // T340：链上问题取最近一次追问（数组是根→目标序，反向扫）——旧 find 取到根问题，
-  // 深链空白节点生成跟着最初的问题跑（与 _collectWorkflowContext 的 question 同修）
-  const pathQuestion = _nearestUserInPath(graphPath);
-  const question = pathQuestion ? pathQuestion.content || '' : '';
-  const strictInstruction = _strictModuleOutputInstruction(current.moduleKey || '');
-  const prompt = '用户问题：' + (question || '未填写') + '\n'
-    + '请基于当前探索路径生成「' + meta.label + '」空白节点的完整内容。\n'
-    + '用户额外要求：' + (requirements || '无') + '\n\n'
-    + '只输出' + meta.label + '正文，不要输出 XML 标签，不要重复其他模块内容。'
-    + (strictInstruction ? '\n\n' + strictInstruction : '');
-  const upstreamNodes = graphPath
-    .filter(item => item.kind !== 'blank' && item.kind !== 'draft')
-    .map(item => {
-      const rawContent = item.content || '';
-      return {
-        kind: item.kind,
-        module: item.module || '',
-        // T364：闭环身份标签与上游条目映射同口径（_workflowUpstreamEntry）；
-        // socraticAnswer/socraticFeedback 两标记由 _blankNodeGraphPath 随副本带出
-        label: item.kind === 'user'
-          ? (item.socraticAnswer ? '我的作答' : '问题')
-          : item.kind === 'answer'
-            ? (item.socraticFeedback ? '苏格拉底反馈' : '问题分析')
-            : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
-        summary: _graphSummary(_stripSocraticAnswerMarker(rawContent)) || '',
-        content: _stripSocraticAnswerMarker(rawContent).slice(0, 800),
-      };
-    });
-  const workflowContext = {
-    target: { kind: current.kind, module: current.moduleKey, label: meta.label },
-    question,
-    requirements,
-    upstream: upstreamNodes,
-  };
-  const pathParent = graphPath[graphPath.length - 1];
-  const branchMeta = {
-    parentId: pathParent ? String(pathParent.timestamp || '') : String(parent.timestamp || ''),
-    sourceModule: current.moduleKey,
-    branchType: 'blank',
-    branchId: '',
-    branchLabel: meta.label,
-    graphPath,
-    workflowContext,
-  };
-  const signal = jobAbort.signal;
-
-  try {
-    let resp = null;
-    if (typeof getActiveModelForRole === 'function' && typeof proxyChat === 'function') {
-      const agentModel = getActiveModelForRole('agent');
-      if (agentModel) {
-        // 取材附图（T381）：空白节点走单父链上下文（graphPath 同一条链），图片
-        // 收集也必须按 'inbound' 走——用全祖先会把链外的兄弟素材图塞进来
-        const images = await _workflowImageDataUrls(current, 'inbound');
-        resp = await _sendWithImagesFallback(images, imgs => proxyChat(
-          prompt,
-          typeof currentLevel !== 'undefined' ? currentLevel : 'university',
-          typeof SESSION_ID !== 'undefined' ? SESSION_ID : '',
-          true,
-          signal,
-          branchMeta,
-          imgs ? { images: imgs } : {}
-        ));
-      }
-    }
-    if (!resp) {
-      throw new Error('未配置 AI 模型，请在模型设置中配置');
-    }
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error('HTTP ' + resp.status + ': ' + errText.substring(0, 200));
-    }
-    await _streamBlankNodeResponse(resp, current);
-    if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'done');
-    if (typeof notifyTaskCompleted === 'function') {
-      notifyTaskCompleted(Date.now() - jobStartedAt, meta.label + '生成完成');
-    }
-    if (typeof hideProgress === 'function') hideProgress();
-  } catch (err) {
-    const aborted = jobAbort.signal.aborted || (err && err.name === 'AbortError');
-    const live = _findGraphNode(nodeId);
-    const partial = String((err && err.streamPartial) || '');
-    // 超时断流的半成品兜底（T359）：与 _generateCustomNode 同口径——字已经收到就留住，
-    // 按「未跑完」入账（状态失败），viz 之外不留空卡也不吞掉屏幕上出现过的内容。
-    if (!aborted && live && err && err.name === 'TimeoutError' && partial.trim()) {
-      live.content = partial;
-      live.summary = _graphSummary(partial);
-      live.busy = false;
-      live.status = 'error';
-      _commitWorkflowNodeVersion(live);
-      if (taskId && typeof _taskFinish === 'function') _taskFinish(taskId, 'error', '连接超时，已保留收到的内容');
-      _saveCustomNodes();
-      renderGraphCanvas();
-      if (typeof showToast === 'function') showToast('连接超时、生成没跑完：已保留收到的内容，可重新生成');
-      if (typeof hideProgress === 'function') hideProgress();
-      return;
-    }
-    if (taskId && typeof _taskFinish === 'function') {
-      _taskFinish(taskId, aborted ? 'stopped' : 'error',
-        aborted ? '已停止' : (((err && err.message) || String(err) || '生成失败')));
-    }
-    if (live) {
-      live.busy = false;
-      // 版本账（T339）：流式草稿不算数，兜回上一版
-      _restoreWorkflowNodeVersion(live);
-    }
+  const next = String(value || '');
+  if (next === String(node.requirements || '')) return;
+  node.requirements = next;
+  if (_blankRequirementSaveTimer) return;
+  _blankRequirementSaveTimer = setTimeout(() => {
+    _blankRequirementSaveTimer = null;
     _saveCustomNodes();
-    renderGraphCanvas();
-    // 面板上的「停止」不算失败，别再弹「生成失败」吓人
-    if (!aborted && typeof showToast === 'function') showToast('生成失败：' + (err.message || err));
-    if (typeof hideProgress === 'function') hideProgress();
-  }
+  }, 400);
 }
 
+// 点生成/重写时再兜一次 DOM（输入法组合结束、脚本改值等不触发 input 的边角）
+function _syncBlankRequirementsFromCard(nodeId) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'blank') return '';
+  const input = graphInner?.querySelector('[data-node-id="' + nodeId + '"] .graph-blank-input');
+  if (input) {
+    const value = String(input.value || '').trim();
+    if (value !== String(node.requirements || '')) {
+      node.requirements = value;
+      _saveCustomNodes();
+    }
+  }
+  return String(node.requirements || '').trim();
+}
+
+// 空白节点生成入口（2026-10-24 T400/T401/T402 收口）：薄封装——卡上按钮、任务重试、
+// Φ 应用、反馈面板留空直发全部走同一条 _executeParallelWorkflow 管线（排队/任务账/
+// 版本账/提示词/附图/进度统计都在那边），这里只做两件空白专属的事：
+//   ① 要求框同步进节点（改要求＝改输入，inputHash 随之失配）；
+//   ② 空要求就地拦（不开一条空任务；工作流内部同一道闸仍在，管绕过按钮的入口）；
+//   ③ force 口径：有内容＝重生成（走 T303 下游预警），没内容＝首次生成；
+//      forceOverride 给「从头生成」三角用（有内容也强制重跑，不问 hash）。
+// 旧实现自带一套提示词/流式/记账，与工作流路生成两种内容（T401）；两条路合一后
+// 同一张卡不管从哪儿触发，输入相同就产出相同。
+async function generateBlankNode(nodeId, fromQueue = false, handoffTaskId = null, forceOverride = false) {
+  const node = _findGraphNode(nodeId);
+  if (!node || node.kind !== 'blank') return;
+  _syncBlankRequirementsFromCard(nodeId);
+  const live = _findGraphNode(nodeId);
+  if (!live) return;
+  // 空要求就地在门口拦：别为一张没有生成目标的卡开一条空工作流任务（工作流内部同一道闸
+  // 仍在，管「全部开始」/Φ/重试这些绕过按钮的入口）
+  if (!String(live.requirements || '').trim()) {
+    if (typeof showToast === 'function') showToast('空白节点要先写要求：在卡上写「要生成什么」，再点生成');
+    return;
+  }
+  const force = !!forceOverride || !!(live.content || '').trim();
+  await runWorkflowNode(nodeId, force, fromQueue, handoffTaskId);
+}

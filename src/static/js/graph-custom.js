@@ -610,6 +610,12 @@ function _nodeFsSourceText(node, message) {
   if (node.kind === 'module') {
     return typeof _nodeContent === 'function' ? (_nodeContent(message, node) || '') : (node.content || '');
   }
+  // 空白节点（2026-10-24 T402）：全屏正文与卡面同口径剥 XML 分节，全屏里不该出现标签
+  if (node.kind === 'blank') {
+    return typeof _cleanBlankNodeContent === 'function'
+      ? _cleanBlankNodeContent(node, node.content || '')
+      : (node.content || '');
+  }
   return node.content || '';
 }
 
