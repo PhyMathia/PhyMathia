@@ -40,7 +40,7 @@ def read_json(path, default):
 
 
 def unwrap_items(data):
-    """兼容旧版 {"items": {...}} 包装格式（与 storage._delete_by_session 同口径）。"""
+    """兼容旧版 {"items": {...}} 包装格式（POST 直写的历史残留格式）。"""
     if isinstance(data, dict) and set(data.keys()) == {"items"} and isinstance(data.get("items"), dict):
         return data["items"], True
     return data, False

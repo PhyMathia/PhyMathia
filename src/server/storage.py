@@ -87,27 +87,6 @@ def _mutate_json(path: Path, updater, default=None):
         return data
 
 
-def _delete_by_session(path: Path, session_id: str) -> int:
-    """删除数据中属于指定会话的条目，返回删除数量。"""
-    removed = []
-
-    def updater(data):
-        nonlocal removed
-        if not isinstance(data, dict):
-            return None
-        # 兼容旧版 {"items": {...}} 包装格式（POST 直写的历史残留）：
-        # 不解包的话删除会静默失效、包装原样写回
-        if set(data.keys()) == {"items"} and isinstance(data.get("items"), dict):
-            data = data["items"]
-        removed = [k for k, v in data.items() if isinstance(v, dict) and v.get("sessionId") == session_id]
-        for k in removed:
-            data.pop(k, None)
-        return data if removed else None
-
-    _mutate_json(path, updater)
-    return len(removed)
-
-
 def _get_messages_path(session_id: str, account: str = DEFAULT_ACCOUNT) -> Path:
     # 单会话路由的 session_id 直接拼文件路径，必须白名单校验，
     # 否则 URL 编码的 "..%5C" 反斜杠在 Windows 下可穿越到 data 目录之外
@@ -386,7 +365,7 @@ def kv_restore_bulk(data, replace: bool, account: str = DEFAULT_ACCOUNT) -> int:
 
 
 __all__ = [
-    "_read_json", "_write_json", "_mutate_json", "_delete_by_session",
+    "_read_json", "_write_json", "_mutate_json",
     "_read_json_cached", "_invalidate_json_cache",
     "_get_messages_path", "_resolve_messages_path",
     "kv_read", "kv_write", "kv_delete", "kv_all_data",

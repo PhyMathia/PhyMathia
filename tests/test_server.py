@@ -44,18 +44,6 @@ class StorageTest(unittest.TestCase):
             storage_mod._mutate_json(path, lambda d: {**d, "n": d.get("n", 0) + 1})
             self.assertEqual(storage_mod._read_json(path)["n"], 2)
 
-    def test_delete_by_session(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "formulas.json"
-            storage_mod._write_json(path, {
-                "f1": {"sessionId": "sess_a"},
-                "f2": {"sessionId": "sess_b"},
-            })
-            removed = storage_mod._delete_by_session(path, "sess_a")
-            self.assertEqual(removed, 1)
-            self.assertNotIn("f1", storage_mod._read_json(path))
-            self.assertIn("f2", storage_mod._read_json(path))
-
 
 class FormulaTest(unittest.TestCase):
     def test_normalize_formula_wraps_dollars(self):

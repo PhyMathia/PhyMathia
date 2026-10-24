@@ -10,11 +10,8 @@ import time
 import uuid
 from pathlib import Path
 
-import httpx
-
-from .http_client import get_http_client
-from .llm_common import opencode_gateway_headers
-from . import usage_stats  # 共享层：token 用量与缓存命中计量落盘
+# 出网样板（URL/鉴权/网关头/记账）收口在 http_client.post_chat_completion（T222）
+from .http_client import get_http_client, post_chat_completion
 
 from .config import AI_PROVIDERS, LEVEL_PROMPTS, UPLOAD_DIR, UPLOADS_META_PATH, resolve_api_key, validate_model_target
 from .knowledge import _clean_knowledge_title, _looks_like_formula, _normalize_formula
@@ -486,27 +483,14 @@ async def _ai_extract_document_knowledge(
         {"role": "system", "content": prompt + "\n\n难度要求：" + level_suffix},
         {"role": "user", "content": message_content},
     ]
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if provider != "opencode":
-        headers["Authorization"] = f"Bearer {api_key}"
-    # 网关会话头（opencode 官方要求）：文档解析固定桶
-    headers.update(opencode_gateway_headers(base_url, "phymathia-docs"))
-    body = {"model": model, "messages": messages, "stream": False, "temperature": 0.2}
+    # 出网样板收口（T222）：构造与记账在 http_client.post_chat_completion；
+    # 桶固定 phymathia-docs。timeout=120 是文档/图片大输入的长期口径
+    # （比共享 client 默认 60s 宽，口径集中说明见该函数 docstring）
     client = get_http_client()
-    docs_t0 = time.monotonic()
-    try:
-        resp = await client.post(url, json=body, headers=headers, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
-    except (httpx.HTTPError, ValueError) as e:
-        # 失败也进账后原样再抛：调用方的回退/报错行为不变
-        usage_stats.record_failure(provider, model, "docs", "",
-                                   usage_stats.failure_detail(e), usage_stats.elapsed_ms(docs_t0))
-        raise
-    if data.get("usage"):
-        usage_stats.record_usage(provider, model, "docs", "", data["usage"],
-                                 duration_ms=usage_stats.elapsed_ms(docs_t0))
+    data = await post_chat_completion(
+        client, provider=provider, model=model, base_url=base_url, api_key=api_key,
+        messages=messages, temperature=0.2, usage_kind="docs", gateway_bucket="phymathia-docs",
+        timeout=120.0)
     content = data["choices"][0]["message"]["content"]
     return _parse_document_extract_json(content, max_items)
 

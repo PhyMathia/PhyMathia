@@ -8,11 +8,8 @@ import time
 import uuid
 from pathlib import Path
 
-import httpx
-
-from .http_client import get_http_client
-from .llm_common import opencode_gateway_headers
-from . import usage_stats  # 共享层：token 用量与缓存命中计量落盘
+# 出网样板（URL/鉴权/网关头/记账）收口在 http_client.post_chat_completion（T222）
+from .http_client import get_http_client, post_chat_completion
 
 from .config import (
     AI_PROVIDERS,
@@ -853,28 +850,13 @@ async def _ai_extract_knowledge(messages: list, provider: str, api_key: str, mod
         recent = messages[-4:]
     msgs.extend({"role": m.get("role", "user"), "content": (m.get("content") or "")[:4000]} for m in recent)
 
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if provider != "opencode":
-        headers["Authorization"] = f"Bearer {api_key}"
-    # 网关会话头（opencode 官方要求，缺失会被列 problematic clients）：提取
-    # 固定桶，同功能调用落在同一缓存桶，不与对话链路（分支/工作流）互相挤占
-    headers.update(opencode_gateway_headers(base_url, "phymathia-extract"))
-    body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.3}
+    # 出网样板收口（T222）：构造与记账在 http_client.post_chat_completion；
+    # client 仍经本模块 get_http_client() 取得（tests 打桩锚，别挪进共享函数）。
+    # 网关桶固定 phymathia-extract：同功能调用落同一缓存桶，不与对话链路挤占
     client = get_http_client()
-    extract_t0 = time.monotonic()
-    try:
-        resp = await client.post(url, json=body, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-    except (httpx.HTTPError, ValueError) as e:
-        # 失败也进账后原样再抛：调用方的回退/报错行为不变
-        usage_stats.record_failure(provider, model, "extract", "",
-                                   usage_stats.failure_detail(e), usage_stats.elapsed_ms(extract_t0))
-        raise
-    if data.get("usage"):
-        usage_stats.record_usage(provider, model, "extract", "", data["usage"],
-                                 duration_ms=usage_stats.elapsed_ms(extract_t0))
+    data = await post_chat_completion(
+        client, provider=provider, model=model, base_url=base_url, api_key=api_key,
+        messages=msgs, temperature=0.3, usage_kind="extract", gateway_bucket="phymathia-extract")
     content = data["choices"][0]["message"]["content"]
     items = _parse_extract_json(content)
     profile_facts = _parse_profile_facts(content)
@@ -1079,28 +1061,12 @@ async def _describe_formulas(summary: str, formulas: list, knowledge_items: list
         {"role": "system", "content": DESCRIBE_PROMPT + "\n\n难度要求：" + LEVEL_PROMPTS.get(level, LEVEL_PROMPTS["university"])},
         {"role": "user", "content": "\n".join(user_parts)},
     ]
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if provider != "opencode":
-        headers["Authorization"] = f"Bearer {api_key}"
-    headers.update(opencode_gateway_headers(base_url, "phymathia-describe"))
-    body = {"model": model, "messages": msgs, "stream": False, "temperature": 0.2}
+    # 出网样板收口（T222）：同 extract 处说明；桶固定 phymathia-describe
     try:
-        describe_t0 = time.monotonic()
-        try:
-            client = get_http_client()
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        except (httpx.HTTPError, ValueError) as e:
-            # 失败也进账后再抛，外层既有 except（记日志回退空值）行为不变
-            usage_stats.record_failure(provider, model, "describe", "",
-                                       usage_stats.failure_detail(e),
-                                       usage_stats.elapsed_ms(describe_t0))
-            raise
-        if data.get("usage"):
-            usage_stats.record_usage(provider, model, "describe", "", data["usage"],
-                                     duration_ms=usage_stats.elapsed_ms(describe_t0))
+        client = get_http_client()
+        data = await post_chat_completion(
+            client, provider=provider, model=model, base_url=base_url, api_key=api_key,
+            messages=msgs, temperature=0.2, usage_kind="describe", gateway_bucket="phymathia-describe")
         content = data["choices"][0]["message"]["content"]
         m = re.search(r"\{[\s\S]*\}", content)
         if not m:
