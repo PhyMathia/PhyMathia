@@ -53,13 +53,55 @@ class ModelKeysAuthfileTest(RouteTestBase):
 
     def test_clearing_key_updates_authfile(self):
         self.client.post("/api/models/config", json=BLOB)
+        # 2026-10-24 起「缺钥」不再等于「删钥」：整包上传里条目没带 apiKey 只是
+        # 这个客户端不知道这把钥，服务端必须保留（旧契约的整份重写是密钥丢失源）
         cleared = {**BLOB, "userModels": [{**BLOB["userModels"][0], "apiKey": ""}],
                    "modelGroupKeys": {}}
+        resp = self.client.post("/api/models/config", json=cleared)
+        auth = json.loads((_user_dir(self._td.name) / "auth.json").read_text(encoding="utf-8"))
+        self.assertEqual(auth["modelKeys"], {"model_abc123456789": "sk-test-key"})
+        self.assertEqual(auth["groupKeys"], {"deepseek": "sk-group-key"})
+        # 回包把合并后的钥带回去，客户端当场补回本地镜像
+        self.assertEqual(resp.json()["modelKeys"], {"model_abc123456789": "sk-test-key"})
+        self.assertEqual(resp.json()["groupKeys"], {"deepseek": "sk-group-key"})
+
+    def test_clear_keys_is_the_only_delete_path(self):
+        self.client.post("/api/models/config", json=BLOB)
+        # 显式清空口：clearKeys 点名的 id 才删；分组密钥用显式空串
+        cleared = {**BLOB, "userModels": [{**BLOB["userModels"][0], "apiKey": ""}],
+                   "modelGroupKeys": {"deepseek": ""}, "clearKeys": ["model_abc123456789"]}
         self.client.post("/api/models/config", json=cleared)
         auth = json.loads((_user_dir(self._td.name) / "auth.json").read_text(encoding="utf-8"))
         self.assertEqual(auth, {"modelKeys": {}, "groupKeys": {}})
         data = self.client.get("/api/models/config").json()
         self.assertFalse(data["userModels"][0].get("apiKey"))
+        self.assertFalse(data["modelGroupKeys"])
+
+    def test_removed_entry_prunes_its_key(self):
+        self.client.post("/api/models/config", json=BLOB)
+        # 条目被删（模型/整组删除）→ 钥随之清理，不留孤儿
+        self.client.post("/api/models/config", json={"userModels": [], "modelGroupKeys": {},
+                                                    "activeModels": {}})
+        auth = json.loads((_user_dir(self._td.name) / "auth.json").read_text(encoding="utf-8"))
+        self.assertEqual(auth, {"modelKeys": {}, "groupKeys": {}})
+
+    def test_partial_payload_keeps_other_entries_keys(self):
+        two = {**BLOB, "userModels": [
+            {**BLOB["userModels"][0]},
+            {"id": "model_second", "provider": "deepseek", "model": "deepseek-reasoner",
+             "apiKey": "sk-second", "baseUrl": ""},
+        ]}
+        self.client.post("/api/models/config", json=two)
+        # 旧标签页/导入替换：只认识第一条、且手里没有钥 → 第二条的钥不得丢
+        stale = {**two, "userModels": [{"id": "model_second", "provider": "deepseek",
+                                        "model": "deepseek-reasoner", "apiKey": ""}]}
+        self.client.post("/api/models/config", json=stale)
+        auth = json.loads((_user_dir(self._td.name) / "auth.json").read_text(encoding="utf-8"))
+        self.assertEqual(auth["modelKeys"], {"model_second": "sk-second"})
+
+    def test_clear_keys_rejects_non_list(self):
+        bad = {**BLOB, "clearKeys": "model_abc123456789"}
+        self.assertEqual(self.client.post("/api/models/config", json=bad).status_code, 400)
 
     def test_entry_without_id_gets_generated_id(self):
         no_id = {"userModels": [{"provider": "deepseek", "model": "deepseek-chat", "apiKey": "sk-x"}],

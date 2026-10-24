@@ -767,6 +767,12 @@ async def api_models_probe(request: Request):
 # auth 的钥按条目 id 回填（前端与发送链零改动），POST 拆开落两份。发送侧密钥
 # 始终来自请求 payload（resolve_api_key 只做 .env 兜底），从不读 models.json，
 # 分家不触碰发送链。
+# 密钥合并（2026-10-24 密钥丢失复盘）：整包 POST 只**补充**密钥，不再按本次
+# payload 重写整份 auth.json。别人不知道的密钥不该被删——旧标签页的整包覆盖、
+# 导入备份的替换模式（快照按设计抹空 apiKey）、密码管理器把分组密钥框填空，
+# 都会让「手里没有这把钥」的客户端删掉服务端的钥（用户实报「动不动密钥就没了」）。
+# 现在：条目还在而 payload 没带钥 → 保留原钥；条目已从列表消失 → 钥随之清理；
+# 显式清空走 clearKeys 名单。详见 _merge_auth_keys。
 
 _MODELS_CONFIG_MAX_BYTES = 512 * 1024
 _MODELS_CONFIG_EMPTY = {"userModels": [], "modelGroupKeys": {}, "activeModels": {}, "updatedAt": 0}
@@ -818,6 +824,37 @@ def _split_model_keys(clean_models: list) -> dict:
                 entry["id"] = mid
             model_keys[mid] = key[:4096]
     return model_keys
+
+
+def _merge_auth_keys(account: str, clean_models: list, incoming_model_keys: dict,
+                     incoming_group_keys: dict, clear_ids: set) -> tuple:
+    """整包上传的密钥合并（2026-10-24）：缺钥＝不知道，不等于删钥。
+
+    旧实现拿本次 payload 重写整份 auth.json，于是每一次「客户端手里没有钥」的
+    整包上传都成了删钥操作：另一个标签页的整包覆盖、导入备份的替换模式（快照
+    按设计抹空 apiKey）、密码管理器把分组密钥框填/清成空……密钥是用户重打不出来
+    的东西，删掉即永久损失。合并规则：
+      · 条目仍在列表里、payload 没带钥 → 保留服务端原钥；
+      · 条目已从列表消失（删模型/整组删）→ 它的钥随之清理；
+      · 显式清空 → 只有 clearKeys 点名的 id 才删（前端只在人主动清空时发）。
+    分组密钥同口径：payload 显式给 '' 才算清空；没提到但组里还有条目 → 保留；
+    整组条目都没了 → 连带清理。返回 (model_keys, group_keys)。"""
+    old = _read_models_auth(account)
+    present_ids = {str(m.get("id")) for m in clean_models
+                   if isinstance(m, dict) and m.get("id")}
+    providers = {str(m.get("provider")) for m in clean_models
+                 if isinstance(m, dict) and m.get("provider")}
+    model_keys = {mid: key for mid, key in old["modelKeys"].items()
+                  if mid in present_ids and mid not in clear_ids}
+    model_keys.update(incoming_model_keys)
+    group_keys = {p: key for p, key in old["groupKeys"].items()
+                  if (p in providers or p in incoming_group_keys) and p not in clear_ids}
+    for provider, key in incoming_group_keys.items():
+        if key:
+            group_keys[provider] = key
+        else:
+            group_keys.pop(provider, None)  # 显式空串＝清空该组密钥
+    return model_keys, group_keys
 
 
 def migrate_split_model_keys(account: str) -> bool:
@@ -907,19 +944,25 @@ async def api_models_config_get(request: Request):
 
 @router.post("/api/models/config")
 async def api_models_config_save(request: Request):
-    """整包写入当前账号的模型配置。前端「本地镜像即时写＋防抖整包上传」，冲突
-    新盖旧。只读查阅态由 main 的 _readonly_browse_gate 拦（POST 不在白名单），
-    这里不重复设闸；已删账号由 _account_id 咽喉 404。"""
+    """整包写入当前账号的模型配置。前端「本地镜像即时写＋防抖整包上传」，配置
+    新盖旧；**密钥只合并不重写**（见 _merge_auth_keys，clearKeys 才是唯一删钥口）。
+    只读查阅态由 main 的 _readonly_browse_gate 拦（POST 不在白名单），这里不
+    重复设闸；已删账号由 _account_id 咽喉 404。"""
     payload = await _parse_json_object(request)
     account = _account_id(request, payload)
     user_models = payload.get("userModels")
     group_keys = payload.get("modelGroupKeys")
     active_models = payload.get("activeModels")
+    clear_keys = payload.get("clearKeys")
     if not isinstance(user_models, list) or not all(isinstance(m, dict) for m in user_models):
         raise HTTPException(status_code=400, detail="userModels 必须是对象数组")
     if not isinstance(group_keys, dict) or not isinstance(active_models, dict):
         raise HTTPException(status_code=400, detail="modelGroupKeys/activeModels 必须是对象")
-    if len(user_models) > 1000:
+    if clear_keys is None:
+        clear_keys = []
+    if not isinstance(clear_keys, list):
+        raise HTTPException(status_code=400, detail="clearKeys 必须是字符串数组")
+    if len(user_models) > 1000 or len(clear_keys) > 1000:
         raise HTTPException(status_code=400, detail="userModels 条目过多")
     # 消毒：条目与键值只收标量（模型条目/槽位映射/组密钥都是平面结构），键长限幅
     clean_models = []
@@ -933,6 +976,7 @@ async def api_models_config_save(request: Request):
                   if isinstance(v, (str, int, float, bool))}
     active_models = {str(k)[:64]: str(v)[:256] for k, v in active_models.items()
                      if isinstance(v, (str, int, float, bool))}
+    clear_ids = {str(x)[:128] for x in clear_keys if isinstance(x, str) and x}
     model_keys = _split_model_keys(clean_models)  # 密钥出列：条目钥与组密钥都只进 auth.json
     blob = {
         "userModels": clean_models,
@@ -943,15 +987,21 @@ async def api_models_config_save(request: Request):
     raw = json.dumps(blob, ensure_ascii=False)
     if len(raw.encode("utf-8")) > _MODELS_CONFIG_MAX_BYTES:
         raise HTTPException(status_code=400, detail="模型配置体量异常（>512KB），拒绝写入")
-    auth_raw = json.dumps({"modelKeys": model_keys, "groupKeys": group_keys}, ensure_ascii=False)
+    merged_model_keys, merged_group_keys = _merge_auth_keys(
+        account, clean_models, model_keys, group_keys, clear_ids)
+    auth_raw = json.dumps({"modelKeys": merged_model_keys, "groupKeys": merged_group_keys},
+                          ensure_ascii=False)
     if len(auth_raw.encode("utf-8")) > 256 * 1024:
         raise HTTPException(status_code=400, detail="密钥体量异常（>256KB），拒绝写入")
     _account_paths(request, payload)  # ensure 目录（幂等；已删账号在此前已被 404 闸拦下）
     # 先密钥后配置：两写之间崩溃最坏留「新钥＋旧配置」，GET 回填与前端本地镜像
     # 都会推下一次 POST 收敛，不存在密钥丢失窗口
-    await asyncio.to_thread(_write_models_auth, account, model_keys, group_keys)
+    await asyncio.to_thread(_write_models_auth, account, merged_model_keys, merged_group_keys)
     await asyncio.to_thread(accounts._write_json, _models_config_path(account), blob)
-    return {"ok": True, "updatedAt": blob["updatedAt"]}
+    # 回传合并后的密钥（只补不删）：客户端手里本来就缺钥时（旧标签页/导入替换）
+    # 当场补回本地镜像，免得下一次发送带着空钥出去 401
+    return {"ok": True, "updatedAt": blob["updatedAt"],
+            "modelKeys": merged_model_keys, "groupKeys": merged_group_keys}
 
 
 def _strip_fix_formula_reply(content: str) -> str:
