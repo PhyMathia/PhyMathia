@@ -810,6 +810,7 @@ function _refreshWorkflowNodeUi(node) {
     _measureNodes();
     _updateNodeTransforms();
     _redrawEdges();
+    _observeNodeGeometry(); // 换过 DOM 元素，观察目标要重挂（真身尺寸后到时靠它重锚边）
   }
 }
 
@@ -1428,6 +1429,59 @@ function _measureNodes() {
   _syncGroupMembersByContainment();
 }
 
+// ===== 卡的真身尺寸后到，边得跟着重锚（T394，2026-10-24 用户报「连线在卡外悬空」）=====
+// 边端点由 _portAnchor 现读端口 getBoundingClientRect 得到，而这些读数在**画线那一刻**
+// 可能还是假的：T376 给屏外卡挂 content-visibility:auto，被跳过的卡只按持久化 sizes
+// 报占位尺寸（本图实测 sizes 215px 的卡真身 151px，965px 的真身 1062px）；随后用户
+// 平移/放大把卡带到眼前，浏览器补排真身，端口跟着上下移动——但 SVG 里那条线没人重画，
+// 端头就停在离端口几十上百像素的空中。2026-10-24 实测该图 28/37 条边错位（最大 150.7px，
+// x 不动、y 整条平移——端口列 justify-content:center，卡高一变全列一起挪），
+// 逐条 re-measure+redraw 后立刻归零；KaTeX 铺开、图片到位、端口增删同理。
+// 用 ResizeObserver 兜住「卡真的换了尺寸」这一刻：合并到一帧，只重扫受影响的节点，
+// 走 _refreshEdgeGeometry 增量改 d，不重建整层 SVG（重建会连带丢 marker 与拖拽预览）。
+// 观察是增量的（WeakSet 记已挂过的元素）：流式补丁每来一帧都会进这里，全量 disconnect
+// + observe 会让每帧都触发一轮「首回调→重扫全图」，白白翻倍流式成本。
+let _nodeGeomRO = null;
+const _nodeGeomSeen = new WeakSet();
+let _nodeGeomPending = new Set();
+let _nodeGeomRaf = 0;
+
+function _scheduleEdgeResync() {
+  if (_nodeGeomRaf) return;
+  _nodeGeomRaf = requestAnimationFrame(() => {
+    _nodeGeomRaf = 0;
+    const ids = Array.from(_nodeGeomPending);
+    _nodeGeomPending.clear();
+    if (!ids.length || !graphInner) return;
+    _measureNodes();
+    _updateNodeTransforms();
+    const keys = _edgesTouchingNodeIds(ids);
+    if (!keys.length || !_refreshEdgeGeometry(keys)) _redrawEdges();
+  });
+}
+
+// 卡的 DOM 会被全量重建（renderGraphCanvas）、流式补丁（_patchGraphStreaming）与单卡
+// 重渲（_refreshWorkflowNodeUi）换掉，所以这三处跑完 _redrawEdges 都要调一次——新元素
+// 没被观察过就挂上，旧元素随 DOM 一起走（WeakSet 不挡回收）。
+// 新目标的首个回调＝「此刻的真实尺寸」这一事实本身，正好用来兜首帧画线时的占位尺寸。
+function _observeNodeGeometry() {
+  if (typeof ResizeObserver === 'undefined' || !graphInner) return;
+  if (!_nodeGeomRO) {
+    _nodeGeomRO = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const id = entry.target && entry.target.dataset ? entry.target.dataset.nodeId : '';
+        if (id) _nodeGeomPending.add(id);
+      }
+      if (_nodeGeomPending.size) _scheduleEdgeResync();
+    });
+  }
+  graphInner.querySelectorAll('.graph-node[data-node-id]').forEach(el => {
+    if (_nodeGeomSeen.has(el)) return;
+    _nodeGeomSeen.add(el);
+    _nodeGeomRO.observe(el);
+  });
+}
+
 function _aiEvalZigzagPoints(w, h) {
   const step = 7;
   const depth = 6;
@@ -1975,5 +2029,6 @@ function _patchGraphStreaming(messages, state) {
   _measureNodes();
   _redrawEdges();
   _updateNodeTransforms();
+  _observeNodeGeometry(); // 流式补丁会新增/替换卡元素，观察目标重挂（见 _observeNodeGeometry 注释）
 }
 
