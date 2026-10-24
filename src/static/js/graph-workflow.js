@@ -451,6 +451,23 @@ async function _generateCustomNode(node, nodeSignal) {
   // 不再被「answer 节点一律走问题分析」的旧闸门挡在门外。
   if (node.kind === 'answer' && !node.manual && !node.socraticMeta) return;
   if (node.kind === 'hub') return;
+  // 直接回答（2026-10-24）：没有任何问题/上游材料时不空跑——模型对着空上下文只会
+  // 编答案。守卫放在版本账之前：拦截时旧内容与版本一条不动（与「没输入＝没生成」同口径）
+  if (node.kind === 'direct') {
+    const question = String(_findQuestionContentUpstream(node) || '').trim();
+    const hasUpstream = _workflowEdgeTable().some(edge => {
+      if (String(edge.to) !== node.id || edge.draft || edge.link) return false;
+      const source = _findGraphNode(edge.from);
+      return !!String(_nodeOutputContent(source, undefined, edge.fromPort) || '').trim();
+    });
+    if (!question && !hasUpstream) {
+      node.status = 'waiting';
+      _saveCustomNodes();
+      _refreshWorkflowNodeStatusUi(node);
+      if (typeof showToast === 'function') showToast('请先连接问题节点或上游内容');
+      return;
+    }
+  }
   // 版本账（T339）：旧内容先收进账本再清空——生成期间节点从空白重写，旧版随时 ‹› 切回
   _beginWorkflowNodeVersionCycle(node);
   node.busy = true;
@@ -486,7 +503,7 @@ async function _generateCustomNode(node, nodeSignal) {
   } : {
     parentId: pathParent ? String(pathParent.timestamp || '') : String(node.timestamp || ''),
     sourceModule: node.moduleKey || '',
-    branchType: 'blank',
+    branchType: node.kind === 'direct' ? 'direct' : 'blank',
     branchId: '',
     branchLabel: workflowContext.target.label,
     graphPath,
@@ -1406,7 +1423,7 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
   const ids = (Array.isArray(nodeIds) ? nodeIds : []).filter(id => {
     const node = _findGraphNode(id);
     return node && node.messageIndex < 0 && !node.busy
-      && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer');
+      && (node.kind === 'module' || node.kind === 'blank' || node.kind === 'summary' || node.kind === 'answer' || node.kind === 'direct');
   });
   if (!ids.length) {
     // busy 滤空（或节点已删除）也给个回音，别让按钮看起来没点上
@@ -1437,9 +1454,9 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
 
 async function runAllWorkflowNodes() {
   // 防重跑：只运行空节点/依赖发生变化的节点，已生成且未变化的直接跳过
-  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary') && _workflowItemNeedsProgress(node));
+  const targets = graphView.nodes.filter(node => node.messageIndex < 0 && (node.kind === 'module' || node.kind === 'summary' || node.kind === 'direct') && _workflowItemNeedsProgress(node));
   if (!targets.length) {
-    if (typeof showToast === 'function') showToast('没有需要生成的模块/总结节点');
+    if (typeof showToast === 'function') showToast('没有需要生成的模块/总结/直接回答节点');
     return;
   }
   const ids = targets.map(node => node.id);

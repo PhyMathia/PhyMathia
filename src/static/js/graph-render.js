@@ -16,6 +16,7 @@ function _nodeAttribute(node) {
   if (node.kind === 'human_note') return GRAPH_NODE_ATTRIBUTES.human_note;
   if (node.kind === 'ai_eval') return GRAPH_NODE_ATTRIBUTES.ai_eval;
   if (node.kind === 'answer') return node.manual ? GRAPH_NODE_ATTRIBUTES.manual : GRAPH_NODE_ATTRIBUTES.answer;
+  if (node.kind === 'direct') return GRAPH_NODE_ATTRIBUTES.direct;
   if (node.kind === 'hub' || node.kind === 'summary' || node.kind === 'note') {
     return GRAPH_NODE_ATTRIBUTES[node.kind] || GRAPH_NODE_ATTRIBUTES.manual;
   }
@@ -312,6 +313,7 @@ function _nodeInputLabel(node) {
   if (node.recipeId && node.recipe && node.recipe.name) return node.recipe.name;
   if (node.kind === 'human_note') return '任意输入';
   if (node.kind === 'answer') return node.manual ? '我的回答' : '问题分析';
+  if (node.kind === 'direct') return '直接回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   if (node.kind === 'blank') return '任意输入';
   if (node.kind === 'hub') return '汇聚输入';
@@ -389,10 +391,24 @@ function _nodeOutputPortMeta(node, portIndex, messages, seen) {
 function _nodeBaseOutputPorts(node, messages) {
   if (!node || node.kind === 'draft') return [];
   if (node.kind === 'user') {
+    // 第三口「直接回答」只能追加在末尾（out-2）：存量图的 out-0/out-1 分别绑着
+    // 问题分析/我的回答，插到前面会让旧连线接到另一个身份的出口上（2026-10-24）
     return [
       { label: '问题分析', type: 'answer', branchType: '', attribute: 'answer', group: 'ai', question: '' },
       { label: '我的回答', type: 'manual', branchType: 'manual', attribute: 'manual', group: 'manual', question: '' },
+      { label: '直接回答', type: 'direct', branchType: '', attribute: 'direct', group: 'ai', question: '' },
     ];
+  }
+  // 直接回答卡（2026-10-24）：成品答案的下一跳仍是追问（与空白节点同款单口），
+  // 不再长问题分析那六个模块口——要拆模块走「追问→问题分析」那条原路
+  if (node.kind === 'direct') {
+    return [{
+      label: '追问',
+      type: 'branch',
+      branchType: 'followup',
+      attribute: 'followup',
+      question: '',
+    }];
   }
   if (node.kind === 'blank') {
     return [{
@@ -761,8 +777,10 @@ function _cleanBlankNodeContent(node, rawContent) {
 function _renderCustomNodeContentHtml(node) {
   let text = String(node.kind === 'answer' && !node.manual ? (node.analysis || node.content || '') : (node.content || ''));
   // 问题分析末尾的「建议模块：…」是内部控制行（_parseSuggestedModules 的解析依据），
-  // 不渲染给用户；渲染时剥，存量图的 analysis 同覆盖，node.analysis 原字段不动
-  if (node.kind === 'answer' && !node.manual && typeof stripSuggestedModulesLine === 'function') {
+  // 不渲染给用户；渲染时剥，存量图的 analysis 同覆盖，node.analysis 原字段不动。
+  // direct（2026-10-24）同剥：提示词明令不输出，但模型偶发跟学分析口径，这行对
+  // 成品答案没有任何用户价值（真机 mock 实测第一发就带出来了）
+  if ((node.kind === 'direct' || (node.kind === 'answer' && !node.manual)) && typeof stripSuggestedModulesLine === 'function') {
     text = stripSuggestedModulesLine(text);
   }
   // T361：苏格拉底反馈尾部的建议追问（1. [基础] …）已由 _materializeSocraticFollowup
@@ -772,7 +790,7 @@ function _renderCustomNodeContentHtml(node) {
     text = _graphStripSuggestedFollowups(text);
   }
   if (node.kind === 'module') text = _cleanBlankNodeContent(node, text);
-  else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
+  else if ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'direct') && typeof stripXmlTags === 'function') text = stripXmlTags(text);
   // 配方载体分派（P1 plain / P2 mermaid·html_iframe）：plain 不解析 Markdown、
   // 纯转义渲染（human_note 同口径）；mermaid / html_iframe 不在此分叉——生成侧
   // 已把内容归一成 ```mermaid / ```html 代码块，renderMarkdown 会分派到现成渲染器
@@ -863,7 +881,7 @@ function _canMinimizeGraphNode(node) {
   if (!node) return false;
   if (node.kind === 'draft' || node.kind === 'ai_eval' || node.kind === 'relation' || node.kind === 'junction') return false;
   if (node.kind === 'blank' || node.kind === 'source' || node.kind === 'human_note') return true;
-  return node.kind === 'module' || node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
+  return node.kind === 'module' || node.kind === 'answer' || node.kind === 'direct' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'hub';
 }
 
 function _graphMinimizeToggleHtml(node) {
@@ -876,7 +894,7 @@ function _graphMinimizeToggleHtml(node) {
 function _graphNodePending(node) {
   if (!node || node.messageIndex >= 0) return false;
   if (node.busy || node.status === 'running') return false;
-  if (!['blank', 'module', 'summary', 'note', 'hub'].includes(node.kind)) return false;
+  if (!['blank', 'module', 'summary', 'note', 'hub', 'direct'].includes(node.kind)) return false;
   return !(String(node.content || '').trim() || String(node.analysis || '').trim() || String(node.summary || '').trim());
 }
 
@@ -1290,7 +1308,9 @@ function _renderNodeHtml(node, messages, state) {
         ? 'AI 总结'
         : node.kind === 'note'
           ? '我的总结'
-          : (node.kind === 'answer' && node.messageIndex < 0
+          : node.kind === 'direct'
+            ? '直接回答'
+            : (node.kind === 'answer' && node.messageIndex < 0
             ? (node.manual ? '我的回答' : (node.socraticMeta ? '苏格拉底反馈' : '问题分析'))
             : (node.label || _nodeContent(message, node)));
   const hasCustomContent = !!((node.content || '').trim() || (node.kind === 'answer' && !node.manual && (node.analysis || '').trim()));
@@ -1301,7 +1321,7 @@ function _renderNodeHtml(node, messages, state) {
     : '';
   const customBody = skipBody ? '' : (node.messageIndex < 0
     ? (customFill
-        || ((node.kind === 'module' || node.kind === 'summary')
+        || ((node.kind === 'module' || node.kind === 'summary' || node.kind === 'direct')
           ? (hasCustomContent
               ? '<div class="graph-custom-node-render">' + _renderCustomNodeContentHtml(node) + '</div>'
               : (node.busy || node.status === 'running'
@@ -1321,7 +1341,7 @@ function _renderNodeHtml(node, messages, state) {
     : '');
   let body = skipBody ? '' : (node.kind === 'module'
     ? (customBody || (typeof renderMarkdown === 'function' ? renderMarkdown(_nodeContent(message, node), { parentId: String(message.timestamp || ''), sourceModule: node.moduleKey }) : escapeHtml(_nodeContent(message, node))))
-    : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note') ? customBody : ''));
+    : ((node.kind === 'answer' || node.kind === 'summary' || node.kind === 'note' || node.kind === 'direct') ? customBody : ''));
   // answer 展开：正文区换完整渲染管线（renderMarkdown 剥 socratic_meta、转公式定界）
   const expandable = _graphAnswerExpandable(node, message);
   const expanded = expandable && !!(((state || _graphState()).expandedAnswers || {})[node.id]);

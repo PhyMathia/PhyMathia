@@ -32,6 +32,9 @@ NODE_KIND_LABELS = {
     # junction（2026-10-11 中转节点）：走线锚点，用户面板可见但 Φ 不建——
     # 见下方 REMOVED_CREATE_KINDS 说明
     "junction": "中转",
+    # direct（2026-10-24 直接回答）：问题的第三个出口长出的成品答案卡，
+    # 面板可见但 Φ 不建（同 junction 口径，见 REMOVED_CREATE_KINDS）
+    "direct": "直接回答",
 }
 
 # module_key → 中文标签（kind=module 的六个视角模块 + manual）
@@ -49,9 +52,11 @@ MODULE_LABELS = {
 # hub 于 2026-10-10 退役（backlog 267，多端口任意连后接线职能已被「＋加输入口」取代）；
 # junction 于 2026-10-11 新增（用户拍板的走线锚点，面板可见但定位是用户手动工具——
 # 提示词红线「勿建 kind=junction」，多路分叉时 Φ 从同一输出口 add_edge 多条边即可）。
+# direct 于 2026-10-24 新增（直接回答卡）：它是问题节点出口派生出的用户手动工具，
+# Φ 不该凭空造答案卡——提示词类型表不列它，创建口径同 junction。
 # ALLOWED_CREATE_KINDS 均不含它们；但快照里允许出现（旧会话数据存续／junction 为用户
-# 手建），更新/删除/连线穿过不受限。
-REMOVED_CREATE_KINDS = ("relation", "hub", "junction")
+# 手建／direct 为用户拖出），更新/删除/连线穿过不受限。
+REMOVED_CREATE_KINDS = ("relation", "hub", "junction", "direct")
 
 ALLOWED_NODE_KINDS = set(NODE_KIND_LABELS) | {"module"}
 ALLOWED_CREATE_KINDS = ALLOWED_NODE_KINDS - set(REMOVED_CREATE_KINDS)

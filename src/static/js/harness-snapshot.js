@@ -44,6 +44,9 @@
     if (node.title) return node.title;
     if (node.kind === 'user') return node.isRoot ? '核心问题' : (node.branchLabel || '问题');
     if (node.kind === 'answer') return node.branchLabel || node.summary || _harnessNodeContent(node).slice(0, 40) || '问题分析';
+    // direct（2026-10-24）：不给分支的话会落到「summary || content」兜底，把整篇答案
+    // 塞进快照的节点名里（Φ 侧动辄几千字），这里固定品类名
+    if (node.kind === 'direct') return '直接回答';
     if (node.kind === 'module') return _moduleLabel(node.moduleKey);
     return node.summary || node.content || '节点';
   }

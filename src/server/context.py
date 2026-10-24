@@ -977,6 +977,14 @@ def _workflow_context_parts(workflow_context) -> tuple:
         target_lines.append("- 概要至少说明：用户真正要解决的问题、关键概念或变量、必要假设/适用条件，以及物理视角和数学视角各自的讲解重点；不要展开完整推导，不要替下游节点写成品正文。")
         target_lines.append("- 对题意歧义、缺失参数或结论依赖的条件要明确标出，不要擅自补齐；不要编造历史、定律或公式。")
         target_lines.append("- 概要末尾单独一行列出建议生成的知识网络模块方向，格式：建议模块：物理视角、数学视角（候选：物理视角/数学视角/知识图谱/交互可视化/苏格拉底追问/进阶学习；追问等场景按实际需要选择，不必全部列出，也不要超出候选）。")
+    if mode == "direct":
+        # 直接回答（2026-10-24）：与 analysis 相反——成品答案，不是概要、不拆模块。
+        # 这段必须在 target 段之前：target 段末尾那句「只生成当前目标节点内容」对
+        # direct 会改成完整作答口径（见下方 else）
+        target_lines.append("- 当前为直接回答模式：为原始问题生成一份完整、可直接阅读的答案，不是问题概要，也不要拆成多个模块节点。")
+        target_lines.append("- 允许把上游要点完整展开作为论证基础；「只补充上游缺失内容」的通用规则在本模式不适用。")
+        target_lines.append("- 先结论后推导，兼顾物理直觉与数学本质；信息不足时写明假设与适用条件，不要编造数据、历史或结论。")
+        target_lines.append("- 不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary/socratic_meta 容器标签，不要输出「建议模块：」行。")
     if target:
         target_label = target.get("label") or target.get("module") or target.get("kind") or "目标节点"
         target_lines.append(f"- 当前生成目标：{target_label}")
@@ -989,6 +997,8 @@ def _workflow_context_parts(workflow_context) -> tuple:
                 target_lines.append(strict_instruction)
         elif target.get("kind") == "answer":
             target_lines.append("- AI 回答节点是分发节点，不生成正文内容。")
+        elif target.get("kind") == "direct":
+            target_lines.append("- 当前生成目标是「直接回答」节点：输出完整答案正文（先结论后推导，可展开上游要点）。")
         elif target.get("kind") == "summary":
             target_lines.append("- 当前为 AI 总结节点：根据上游内容生成简明总结正文。")
             target_lines.append("- 只输出总结正文，可使用 Markdown/LaTeX；不要输出完整学习卡片 XML，不要输出 physics/math/graph/viz/extend/summary 标签，不要输出 socratic_meta。")
@@ -1000,7 +1010,12 @@ def _workflow_context_parts(workflow_context) -> tuple:
             target_lines.append("- 人工总结节点由用户手动填写，AI 不生成正文。")
     if requirements:
         target_lines.append(f"- 用户额外要求：{requirements[:600]}")
-    target_lines.append("- 只生成当前目标节点内容，不重新生成完整回答；上游内容以摘要形式提供，不要重复无关模块。")
+    if mode == "direct":
+        # direct 的成品口径：完整作答不是「重新生成完整卡片」，别让上面那句通用
+        # 收尾把答案压成摘要（2026-10-24）
+        target_lines.append("- 只生成当前目标节点（直接回答）的内容；上游内容以摘要形式提供，不要重复无关模块。")
+    else:
+        target_lines.append("- 只生成当前目标节点内容，不重新生成完整回答；上游内容以摘要形式提供，不要重复无关模块。")
     shared = "\n".join(shared_lines) if len(shared_lines) > 1 else ""
     target_text = "\n".join(target_lines) if len(target_lines) > 1 else ""
     return (shared, target_text)

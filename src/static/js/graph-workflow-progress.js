@@ -9,6 +9,7 @@ function _workflowProgressLabel(node) {
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'answer') return '问题分析';
+  if (node.kind === 'direct') return '直接回答';
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || {}).label || node.moduleKey;
   return node.kind;
 }
@@ -22,7 +23,9 @@ function _workflowItemNeedsProgress(node) {
   if (node.humanDone) return false;
   if (node.kind === 'user') return false;
   if (node.kind === 'hub') return false;
-  if (node.kind === 'summary') {
+  // direct（2026-10-24）：成品答案卡与 summary 同口径——吃内容＋输入哈希，
+  // 上游或要求变了才算「需要重跑」；不进 answer 分支（那条查 analysis）
+  if (node.kind === 'summary' || node.kind === 'direct') {
     const inputHash = _nodeInputHash(node);
     return !((node.content || '').trim() && node.inputHash === inputHash && node.status === 'done');
   }

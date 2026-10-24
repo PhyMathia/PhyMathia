@@ -504,7 +504,9 @@ function _workflowUpstreamEntry(item, sourceId, portMeta, typeLabels, feedbackFu
                 ? (item.portLabel || '输入')
             : item.kind === 'answer'
               ? (item.manual ? (item.title || '我的回答') : (item.socraticFeedback ? '苏格拉底反馈' : '问题分析'))
-              : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
+              : item.kind === 'direct'
+                ? '直接回答'
+                : ((GRAPH_MODULE_META[item.module] || {}).label || item.module || '上游节点'),
     summary: isFull ? '' : _stripSocraticAnswerMarker(item.summary || ''),
     analysis: item.analysis || '',
   };
@@ -620,7 +622,9 @@ function _buildWorkflowContextForNode(node) {
     ? (GRAPH_MODULE_META[node.moduleKey] || { label: node.moduleKey || '模块节点' })
     : node.kind === 'answer'
       ? { label: node.manual ? (node.title || '我的回答') : '问题分析' }
-      : node.kind === 'hub'
+      : node.kind === 'direct'
+        ? { label: '直接回答' }
+        : node.kind === 'hub'
         ? { label: '汇聚' }
         : node.kind === 'junction'
           ? { label: '中转' }
@@ -651,7 +655,9 @@ function _buildWorkflowContextForNode(node) {
   return {
     target: { kind: node.kind, module: node.moduleKey || '', label: meta.label || node.moduleKey || '节点' },
     question: collected.question,
-    mode: 'module',
+    // direct（2026-10-24）：后端据 mode='direct' 走「完整作答」指令块，不再套
+    // 模块步的「只补上游缺失内容」口径；其余目标维持 module 字节不变
+    mode: node.kind === 'direct' ? 'direct' : 'module',
     requirements: node.requirements || '',
     upstream: collected.upstream,
   };
@@ -747,6 +753,20 @@ function _workflowPromptForNode(node, workflowContext) {
     return '请基于以下已连接节点，用一句简短中文说明它们之间的联系。'
       + '要求：只陈述上游内容能够支持的关系，内容简短，最好不超过100字；如果证据不足，直接说明关系尚不明确；不要输出XML标签，不要重复完整节点内容；如出现公式仍按 <formula> 规范标注。\n\n'
       + (upstreamText || '（暂无已连接的上游内容）');
+  }
+  if (node.kind === 'direct') {
+    // 直接回答（2026-10-24）：与问题分析相反——要成品答案，不要概要、不拆模块。
+    // 与 _buildWorkflowContextForNode 的 mode='direct' 配套（后端补同口径指令块）
+    const req = String(node.requirements || '').trim();
+    return '请直接回答原始问题，输出一份完整、可直接阅读的答案正文（不是问题概要，也不要拆成多个模块）。\n'
+      + '要求：\n'
+      + '1. 先给结论与核心思路，再按需要展开推导、公式与例子，推导要能自洽走通。\n'
+      + '2. 同时讲清物理直觉（现实中发生了什么、为什么）与数学本质（对象、关系、成立条件）。\n'
+      + '3. 用 Markdown 小标题组织答案；公式按 <formula>纯 LaTeX</formula> 规范标注。\n'
+      + '4. 上游内容（问题分析、我的回答、素材等）是依据与上下文：可引用、可展开，但不要与之矛盾；发现上游有误时明确指出并给出正确版本。\n'
+      + '5. 不要输出完整学习卡片 XML，不要输出 <physics>、<math>、<graph>、<viz>、<extend>、<summary> 或 <socratic_meta> 标签，不要输出「建议模块：」行。\n'
+      + '6. 信息不足时写明假设与适用条件，不要编造数据、历史或结论。'
+      + (req ? '\n\n用户额外要求（优先满足）：' + req : '');
   }
   if (node.kind === 'answer' && !node.manual) {
     return '请根据原始问题和上游上下文生成“问题分析”节点的完整内容。'

@@ -27,6 +27,7 @@ function _graphNodeSearchText(message, node) {
 function _graphSearchResultLabel(node, message) {
   if (node.kind === 'module') return (GRAPH_MODULE_META[node.moduleKey] || { label: '模块' }).label;
   if (node.kind === 'answer') return node.manual ? '我的回答' : '问题分析';
+  if (node.kind === 'direct') return '直接回答';
   if (node.kind === 'hub') return '汇聚';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return '我的总结';
@@ -268,6 +269,7 @@ function _nodeSub(node) {
   if (node.isRoot) return '核心问题';
   if (node.kind === 'user') return node.isBranch ? (node.branchLabel || '延伸追问') : '问题';
   if (node.kind === 'answer') return node.manual ? (node.title || '我的回答') : (node.branchLabel || '问题分析');
+  if (node.kind === 'direct') return node.title || '直接回答';
   if (node.kind === 'hub') return '汇聚节点';
   if (node.kind === 'summary') return 'AI 总结';
   if (node.kind === 'note') return node.title || '我的总结';

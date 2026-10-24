@@ -305,7 +305,7 @@ function createManualNode(nodeKind) {
     formulas: [],
     x: addBlankNodePoint.x,
     y: addBlankNodePoint.y,
-    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
+    depth: option.kind === 'user' ? 1 : (option.kind === 'answer' || option.kind === 'direct') ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
     messageIndex: -1,

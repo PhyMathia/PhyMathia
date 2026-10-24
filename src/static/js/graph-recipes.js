@@ -19,6 +19,10 @@ const BUILTIN_RECIPES = [
   // —— AI 组 ——
   { key: 'blank', kind: 'blank', label: 'AI 生成空白', color: 'var(--node-any)', group: 'ai', desc: '输入任意要求，AI 生成任意内容' },
   { key: 'answer', kind: 'answer', label: '问题分析', color: 'var(--node-answer)', group: 'ai', desc: '问题分析节点（含概要，回答内容拆到各模块）' },
+  // direct（2026-10-24 用户拍板）：问题的第三个出口「直接回答」——不拆模块，按问题＋
+  // 上游上下文生成一份完整答案。独立 kind 不复用 answer：answer 的 analysis/manual
+  // 语义与「分发器不生成正文」的后端口径会把直答卡误伤（见 canvas 手册当日节）
+  { key: 'direct', kind: 'direct', label: '直接回答', color: 'var(--node-answer)', group: 'ai', desc: '不拆模块，按问题与上游上下文生成完整答案' },
   { key: 'summary', kind: 'summary', label: 'AI 总结', color: 'var(--node-summary)', group: 'ai', desc: 'AI 生成总结' },
   // —— 素材组（data）——
   { key: 'source', kind: 'source', label: '输入', color: 'var(--node-source)', group: 'data', desc: '粘贴文字/图片/文件，每条素材一个出口' },

@@ -279,8 +279,8 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '问题节点：探索的起点',
     icon: UI_ICON_SVG.pencil,
-    desc: '问题节点保存原始问题，右侧有两个输出端口：<strong>问题分析</strong>和<strong>我的回答</strong>，分别连接 AI 自动分析或手写回答。',
-    points: ['把输出端口拖到空白处可快速创建下一级节点。', '问题文本可以直接在节点中编辑。'],
+    desc: '问题节点保存原始问题，右侧有三个输出端口：<strong>问题分析</strong>、<strong>直接回答</strong>和<strong>我的回答</strong>——分别连接 AI 分析（概要＋模块）、AI 完整作答或手写回答。',
+    points: ['把输出端口拖到空白处可快速创建下一级节点。', '「直接回答」不拆模块，适合想先看一份完整答案的时候。', '问题文本可以直接在节点中编辑。'],
     target: '[data-node-id="demo-question"]',
   },
   {

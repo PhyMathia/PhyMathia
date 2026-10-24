@@ -26,11 +26,11 @@ check('buildHarnessSnapshot 可调用且回结构（回归：rawCount 未定义�
   return true;
 });
 
-check('节点配方注册表（P0）：18 条官方配方派生 15 入口与 kind 白名单（含 relation/hub/junction）', () => {
+check('节点配方注册表（P0）：19 条官方配方派生 16 入口与 kind 白名单（含 relation/hub/junction/direct）', () => {
   const recipes = sandbox.window.BUILTIN_RECIPES;
-  if (!Array.isArray(recipes) || recipes.length !== 18) throw new Error('官方配方应为 18 条（15 入口 + relation/ai_eval/hub），实际 ' + (recipes && recipes.length));
+  if (!Array.isArray(recipes) || recipes.length !== 19) throw new Error('官方配方应为 19 条（16 入口 + relation/ai_eval/hub），实际 ' + (recipes && recipes.length));
   const options = sandbox.window.deriveManualNodeOptions();
-  if (options.length !== 15) throw new Error('添加面板入口应 15 个（2026-10-23 知识点退役后），实际 ' + options.length);
+  if (options.length !== 16) throw new Error('添加面板入口应 16 个（2026-10-24 直接回答新增后），实际 ' + options.length);
   if (options.some(o => !o.label || !o.color || !o.group)) throw new Error('入口字段不完整');
   // T75：relation 进 kind 白名单（旧会话 relation 节点保存不再被静默抹掉），但仍无手动入口
   const kinds = sandbox.window.deriveGraphCustomNodeKinds();
@@ -41,6 +41,11 @@ check('节点配方注册表（P0）：18 条官方配方派生 15 入口与 kin
   // （存量图/viewer 存续），Φ 不建（后端 REMOVED_CREATE_KINDS 对拍见 pytest）
   if (!kinds.includes('junction')) throw new Error('kind 白名单缺 junction（2026-10-11 走线锚点）');
   if (!options.some(o => o.key === 'junction')) throw new Error('junction 应进添加面板（结构组）');
+  // 2026-10-24 直接回答：问题节点第三口派生＋面板 AI 组入口；kind 进白名单（存续），Φ 不建
+  if (!kinds.includes('direct')) throw new Error('kind 白名单缺 direct（2026-10-24 直接回答）');
+  if (!options.some(o => o.key === 'direct' && o.kind === 'direct' && o.label === '直接回答' && o.group === 'ai')) {
+    throw new Error('direct 应进添加面板 AI 组且标签为「直接回答」');
+  }
   if (options.some(o => o.key === 'relation' || o.key === 'ai_eval' || o.key === 'hub')) throw new Error('hidden 类型不得进添加面板');
   return true;
 });
@@ -1870,6 +1875,84 @@ check('端口机制统一（2026-10-10）：常驻节点两侧开放加口、sum
   } finally {
     sandbox.escapeHtml = realEsc;
     vm.runInContext('graphView.edges = []; graphView.nodeById = {};', sandbox);
+  }
+  return true;
+});
+// 直接回答（2026-10-24 用户拍板）：问题的第三个出口 out-2 拖出 kind=direct 的成品答案卡。
+// 五条不变量：①三出口顺序（out-0/1 身份不许动，direct 只能追加在末尾）；②卡面/标签走
+// direct 分支（不能把正文当标题）；③上下文 mode=direct＋target.kind=direct 与提示词成品
+// 口径；④进度判定走内容＋输入哈希（不进 answer 的 analysis 分支）；⑤空输入守卫在版本账
+// 之前（拦截不毁旧版）。变异：把 direct 口插到队首／漏登记 kind／提示词退回「只生成问题
+// 节点内容」／守卫挪到版本账之后，下面立刻红。
+check('直接回答（2026-10-24）：问题第三出口＋direct 卡端口/渲染/上下文/提示词/进度', () => {
+  const realEsc = sandbox.escapeHtml;
+  const realRM = sandbox.renderMarkdown;
+  sandbox.escapeHtml = t => (t == null ? '' : String(t));
+  sandbox.renderMarkdown = t => 'RM(' + String(t == null ? '' : t) + ')';
+  try {
+    // ① 出口表：user 三口顺序固定；direct 只有「追问」一口
+    const userPorts = sandbox._nodeBaseOutputPorts({ kind: 'user' }, []);
+    const labels = (userPorts || []).map(p => p && p.label);
+    if (labels.join('|') !== '问题分析|我的回答|直接回答') {
+      throw new Error('问题节点出口顺序不对（direct 必须追加在末尾）：' + labels.join('|'));
+    }
+    if (userPorts[2].type !== 'direct' || userPorts[2].attribute !== 'direct') throw new Error('第三口身份不是 direct');
+    const directPorts = sandbox._nodeBaseOutputPorts({ kind: 'direct' }, []);
+    if (directPorts.length !== 1 || directPorts[0].label !== '追问') throw new Error('direct 卡应只有一个「追问」出口');
+    // ② 属性/输入标签/kind 白名单
+    const attr = sandbox._nodeAttribute({ kind: 'direct' });
+    if (!attr || attr.label !== '直接回答') throw new Error('direct 属性标签不对');
+    if (sandbox._nodeInputLabel({ kind: 'direct' }) !== '直接回答') throw new Error('direct 输入口标签不对');
+    if (!sandbox.deriveGraphCustomNodeKinds().includes('direct')) throw new Error('direct 未进 kind 白名单（存档会被兜底成 blank）');
+    // ③ 卡面渲染：标题固定品类名，正文进正文区
+    const node = { id: 'd1', kind: 'direct', manual: false, messageIndex: -1, timestamp: 11, content: '完整答案正文。', status: 'done', summary: '' };
+    const html = String(sandbox._renderNodeHtml(node, [], { portCounts: {}, inputPortCounts: {}, expandedAnswers: {} }));
+    if (!html.includes('graph-node-direct')) throw new Error('卡面缺 graph-node-direct');
+    if (!html.includes('<div class="graph-node-label">直接回答</div>')) throw new Error('卡面标题应固定为「直接回答」而不是正文');
+    if (!html.includes('完整答案正文')) throw new Error('direct 卡没渲染正文');
+    if (!html.includes('追问')) throw new Error('direct 卡缺追问出口');
+    // 「建议模块：…」是分析口径的内部控制行（真机 mock 首发实测会跟学带出来）
+    const htmlSuggest = String(sandbox._renderNodeHtml(
+      { ...node, content: '答案正文。\n建议模块：物理视角、数学视角' }, [],
+      { portCounts: {}, inputPortCounts: {}, expandedAnswers: {} }));
+    if (htmlSuggest.includes('建议模块')) throw new Error('direct 卡应剥掉「建议模块」内部控制行');
+    // ④ 上下文/提示词：mode=direct＋target.kind=direct＋成品答案口径
+    const q = { id: 'dq', kind: 'user', manual: true, messageIndex: -1, timestamp: 10, content: '单摆周期为什么与振幅无关' };
+    const dn = { id: 'dd', kind: 'direct', manual: false, messageIndex: -1, timestamp: 12, content: '', status: 'empty', requirements: '' };
+    vm.runInContext('graphView.nodes = [' + JSON.stringify(q) + ',' + JSON.stringify(dn) + '];'
+      + 'graphView.nodeById = { dq: graphView.nodes[0], dd: graphView.nodes[1] };'
+      + 'graphView.edges = [{ from: "dq", fromPort: "out-2", to: "dd", toPort: "in-0", type: "custom", custom: true }];', sandbox);
+    const ctx = sandbox._buildWorkflowContextForNode(dn);
+    if (ctx.mode !== 'direct') throw new Error('direct 目标的工作流上下文 mode 应为 direct，实际 ' + ctx.mode);
+    if (ctx.target.kind !== 'direct' || ctx.target.label !== '直接回答') throw new Error('direct target 形状不对');
+    if (ctx.question !== q.content) throw new Error('direct 上下文没锚到问题原文');
+    const prompt = String(sandbox._workflowPromptForNode(dn, ctx));
+    if (!prompt.includes('请直接回答原始问题')) throw new Error('direct 提示词没走成品答案口径');
+    if (!prompt.includes('不要拆成多个模块')) throw new Error('direct 提示词缺「不拆模块」约束');
+    dn.requirements = '只给结论';
+    if (!String(sandbox._workflowPromptForNode(dn, ctx)).includes('用户额外要求（优先满足）：只给结论')) {
+      throw new Error('direct 提示词丢了 requirements 通道');
+    }
+    // ⑤ 进度判定：空＝要跑；内容＋哈希齐＝跳；要求变了＝再跑
+    if (!sandbox._workflowItemNeedsProgress(dn)) throw new Error('空 direct 卡应判「需要生成」');
+    dn.content = '答案';
+    dn.status = 'done';
+    dn.inputHash = sandbox._nodeInputHash(dn);
+    if (sandbox._workflowItemNeedsProgress(dn)) throw new Error('内容与输入哈希齐的 direct 卡不该再跑');
+    dn.requirements = '换个讲法';
+    if (!sandbox._workflowItemNeedsProgress(dn)) throw new Error('要求变了 direct 卡应重跑');
+    // ⑥ 静态契约：建点 depth 把 direct 当同级；空输入守卫在版本账之前
+    const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
+    if (!interactSrc.includes("option.kind === 'answer' || option.kind === 'direct'")) throw new Error('拖出口建点 depth 没把 direct 当同级');
+    const workflowSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+    const genBody = workflowSrc.slice(workflowSrc.indexOf('async function _generateCustomNode'));
+    const guardAt = genBody.indexOf("node.kind === 'direct'");
+    const cycleAt = genBody.indexOf('_beginWorkflowNodeVersionCycle(node);');
+    if (guardAt < 0 || cycleAt < 0 || guardAt > cycleAt) throw new Error('direct 空输入守卫必须在版本账之前（否则拦截会清掉旧内容）');
+  } finally {
+    sandbox.escapeHtml = realEsc;
+    sandbox.renderMarkdown = realRM;
+    vm.runInContext('graphView.nodes = []; graphView.nodeById = {}; graphView.edges = [];', sandbox);
   }
   return true;
 });

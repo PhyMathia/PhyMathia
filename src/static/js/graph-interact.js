@@ -689,7 +689,7 @@ function _createConnectedManualNode(optionKey, x, y, sourceNodeId, sourcePortId)
     formulas: [],
     x,
     y,
-    depth: option.kind === 'user' ? 1 : option.kind === 'answer' ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
+    depth: option.kind === 'user' ? 1 : (option.kind === 'answer' || option.kind === 'direct') ? 2 : (option.key === 'summary' || option.key === 'note' ? 4 : 3),
     targetAngle: 0,
     isRoot: false,
     timestamp: Date.now(),
@@ -1162,7 +1162,8 @@ async function _applyNodeRegenerate(nodeId, confusion) {
 // 写了字＝修订式——旧内容+用户反馈一起喂模型，只改用户指出的点，其余尽量保留。
 function _regenNodeActionLabel(node) {
   if (!node) return '重新生成';
-  const metaLabel = (GRAPH_MODULE_META[node.moduleKey] || {}).label;
+  const metaLabel = (GRAPH_MODULE_META[node.moduleKey] || {}).label
+    || (typeof _workflowProgressLabel === 'function' ? _workflowProgressLabel(node) : '');
   return '重新生成' + (metaLabel || node.title || '节点');
 }
 
