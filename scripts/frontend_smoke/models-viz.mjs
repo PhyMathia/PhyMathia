@@ -260,7 +260,76 @@ check('model-add：组密钥写入同步到组内全部条目（组外不触碰�
   return true;
 });
 
-// ===== 组级「更新模型列表」（组头 ↻ → 上游 diff → 勾选应用） =====
+// ===== 密钥不丢三件（2026-10-24 密钥丢失复盘）=====
+// ① 逐键落盘已删：分组密钥框只在失焦（onchange）提交——旧版 oninput 每敲一个字符
+//    就把半截钥写进 localStorage＋整包上传，密码管理器动一下框也会写。
+// ② 组密钥只灌给「继承」的条目：单条目在配置弹窗里单独设过的钥不被覆盖。
+// ③ 清空＝显式：继承条目清空时把 id 记进 clearKeys 清单（服务端合并语义下
+//    「缺钥」只代表不知道，清单才是唯一删钥口），且整包 blob 恒带这个字段。
+check('model-key-guard：组密钥逐键落盘已删（onchange 提交）＋清空走显式清单', () => {
+  if (/oninput="saveGroupKey\(/.test(code)) throw new Error('分组密钥框仍挂着 oninput 逐键落盘（密钥会被半截值覆盖）');
+  if (!/onchange="saveGroupKeyCommitted\(/.test(code)) throw new Error('分组密钥框缺失焦提交');
+  if (!/autocomplete="new-password"/.test(code)) throw new Error('分组密钥框未关掉密码管理器自动填充');
+  const blobFn = sandbox._modelsSyncBlob();
+  if (!Array.isArray(blobFn.clearKeys)) throw new Error('整包 blob 应恒带 clearKeys 数组');
+  for (const k of ['userModels', 'modelGroupKeys', 'activeModels']) {
+    if (!(k in blobFn)) throw new Error('整包 blob 缺字段：' + k);
+  }
+  if (!code.includes('clearKeys')) throw new Error('打包产物缺 clearKeys 契约');
+  return true;
+});
+
+check('model-key-guard：组密钥不覆盖单条目自有钥（继承口径）＋清空登记 clearKeys', () => {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
+  sandbox.loadUserModels();
+  const preset = sandbox.window.MODEL_PRESETS['opencode-go'];
+  sandbox.addModelsForProvider('opencode-go', 'sk-group-old', preset.baseUrl, [
+    { model: 'keep-inherit', label: '继承条目' }, { model: 'own-key', label: '自定义钥条目' },
+  ]);
+  const own = sandbox.getAllModels().find(m => m.name.includes('自定义钥条目'));
+  sandbox.updateUserModel(own.id, { apiKey: 'sk-own-override' });
+  // 改组密钥：继承的那条跟着换，自定义那条不许被冲掉
+  sandbox.saveGroupKey('opencode-go', 'sk-group-new');
+  if (sandbox.getModelById(own.id).apiKey !== 'sk-own-override') throw new Error('组密钥覆盖了单条目自有钥');
+  const inherit = sandbox.getAllModels().find(m => m.name.includes('继承条目'));
+  if (sandbox.getModelById(inherit.id).apiKey !== 'sk-group-new') throw new Error('继承条目未跟随组密钥更新');
+  // 清空组密钥：继承条目清空并登记 clearKeys，自定义钥条目保留（且不入清单）
+  sandbox.saveGroupKey('opencode-go', '');
+  const blob = sandbox._modelsSyncBlob();
+  if (!blob.clearKeys.includes(inherit.id)) throw new Error('清空继承条目钥未登记 clearKeys');
+  if (blob.clearKeys.includes(own.id)) throw new Error('自定义钥条目不该进清空清单');
+  if (sandbox.getModelById(own.id).apiKey !== 'sk-own-override') throw new Error('清空组密钥把自定义钥也清了');
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
+  return true;
+});
+
+check('model-key-guard：回包补钥只填空位（服务端合并后本地镜像自愈）', () => {
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
+  sandbox.loadUserModels();
+  const preset = sandbox.window.MODEL_PRESETS.deepseek;
+  sandbox.addModelsForProvider('deepseek', '', preset.baseUrl, [{ model: 'm-1', label: '补钥模型' }]);
+  const m = sandbox.getAllModels()[0];
+  if (sandbox.getModelById(m.id).apiKey) throw new Error('播种条目不该有钥');
+  sandbox._applyServerKeyMerge({ modelKeys: { [m.id]: 'sk-restored' }, groupKeys: { deepseek: 'sk-group-restored' } });
+  if (sandbox.getModelById(m.id).apiKey !== 'sk-restored') throw new Error('回包补钥未生效');
+  if (sandbox.getGroupKey('deepseek') !== 'sk-group-restored') throw new Error('回包组密钥未补回');
+  // 本地已有钥不被回包覆盖
+  sandbox.updateUserModel(m.id, { apiKey: 'sk-local' });
+  sandbox._applyServerKeyMerge({ modelKeys: { [m.id]: 'sk-restored' } });
+  if (sandbox.getModelById(m.id).apiKey !== 'sk-local') throw new Error('回包覆盖了本地已有钥');
+  sandbox.localStorage.removeItem('phymathia_user_models');
+  sandbox.localStorage.removeItem('phymathia_model_group_keys');
+  sandbox.localStorage.removeItem('phymathia_active_models');
+  return true;
+});
+
+
 check('model-update：组级更新接线（组头 ↻ 按钮 + 更新弹窗 + diff/应用函数）静态断言', () => {
   for (const t of ['openModelListUpdate', 'refetchModelListUpdate', 'closeModelListUpdate', 'applyModelListUpdate', 'diffUpstreamModels', '_applyModelListDiff', '_fetchModelListForUpdate', 'toggleUmSectionAll', 'model-group-refresh', 'updateModelsDialog']) {
     if (!code.includes(t)) throw new Error('打包产物缺：' + t);

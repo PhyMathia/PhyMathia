@@ -276,15 +276,26 @@ function getGroupKey(provider) {
   return modelGroupKeys[provider] || '';
 }
 
+// 组密钥写入（2026-10-24 重做语义，密钥丢失复盘）：
+//  · trim 后落盘——粘贴带换行/空格的钥原样送上游必 401（看着像「钥没了」）
+//  · 只同步给**继承了组密钥**的条目（自己没钥，或钥＝旧组钥）；单条目在配置
+//    弹窗里单独设过的钥是用户的显式选择，不被组密钥覆盖（旧版无差别覆盖）
+//  · 清空＝显式动作：继承的条目钥一并清，并把条目 id 记进「待清空清单」——
+//    服务端整包上传默认「缺钥＝保留」，只有清单点名的才真删
 function saveGroupKey(provider, key) {
-  modelGroupKeys[provider] = String(key || '');
-  try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch {}
+  const prev = modelGroupKeys[provider] || '';
+  const next = String(key == null ? '' : key).trim();
+  modelGroupKeys[provider] = next;
+  try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch (e) {}
   let changed = false;
   for (const cfg of userModelConfigs) {
-    if (cfg.provider === provider && cfg.apiKey !== modelGroupKeys[provider]) {
-      cfg.apiKey = modelGroupKeys[provider];
-      changed = true;
-    }
+    if (cfg.provider !== provider) continue;
+    const inherited = !cfg.apiKey || cfg.apiKey === prev; // 空＝还没有钥，等于旧组钥＝继承来的
+    if (!inherited) continue;                            // 单条目自有钥：不动
+    if (cfg.apiKey === next) continue;
+    if (cfg.apiKey && !next) _markModelKeyCleared(cfg.id);
+    cfg.apiKey = next;
+    changed = true;
   }
   if (changed) saveUserModels();
   else scheduleModelsSync(); // 只动了组密钥、条目没变也要上传（saveUserModels 里已含镜像写入）
@@ -334,9 +345,22 @@ function toggleModelGroup(provider) {
   });
 }
 
-// 分组密钥失焦提交：全量重渲染（刷新组内徽标）+ 输入框闪绿提示保存成功
+// 分组密钥失焦提交：全量重渲染（刷新组内徽标）+ 输入框闪绿提示保存成功。
+// 空值只可能是人主动清空（或密码管理器把框清掉）——清空前确认一次：点开面板、
+// 按了下退格再点别处，不该把整组密钥抹掉（旧版 oninput 逐键落盘，这种手滑当场
+// 就写进了 auth.json）。逐键保存已经删掉：只有失焦这一处落盘。
 function saveGroupKeyCommitted(provider, inputEl) {
-  saveGroupKey(provider, inputEl.value);
+  const raw = String((inputEl && inputEl.value) || '').trim();
+  const prev = getGroupKey(provider);
+  if (!raw && prev) {
+    const preset = MODEL_PRESETS[provider];
+    const name = (preset && preset.name) || provider;
+    if (!confirm('清空「' + name + '」的分组密钥？组内继承该密钥的模型会一起失去密钥。')) {
+      renderModelList();
+      return;
+    }
+  }
+  saveGroupKey(provider, raw);
   renderModelList();
   renderModelSelects();
   try {
@@ -409,6 +433,15 @@ let _modelsSyncTimer = null;
 let _modelsSyncInflight = false;
 let _modelsDirtyAfterInflight = false;
 let _modelsSyncedAt = 0; // 服务端最后确认的 updatedAt（上传成功或采纳服务端时推进）
+// 显式清空清单（2026-10-24）：服务端整包上传的密钥是**合并**语义——缺钥＝不知道，
+// 保留原钥。所以「人主动把钥清空」必须单独点名，否则清不掉（且会被回包补回来）。
+// 这份清单随下一次整包上传发出，成功才销账（失败＝403 只读查阅/离线，留着下次）。
+let _pendingModelKeyClears = [];
+function _markModelKeyCleared(id) {
+  const mid = String(id || '');
+  if (!mid) return;
+  if (!_pendingModelKeyClears.includes(mid)) _pendingModelKeyClears.push(mid);
+}
 
 // 纯函数（冒烟直测）：给定服务端时间戳与本地状态，决定同步动作。
 // serverTs<=0＝服务端还没有存档：本地有数据就整体上传（首启迁移／服务端存档丢失自愈）。
@@ -425,12 +458,52 @@ function _localModelsHasAny() {
 }
 
 function _modelsSyncBlob() {
-  return { userModels: userModelConfigs, modelGroupKeys: modelGroupKeys, activeModels: activeModels };
+  return {
+    userModels: userModelConfigs,
+    modelGroupKeys: modelGroupKeys,
+    activeModels: activeModels,
+    clearKeys: _pendingModelKeyClears.slice(), // 显式清空清单（服务端唯一删钥口）
+  };
+}
+
+// 回包补钥（2026-10-24）：服务端合并后把 auth 里的钥回传，本地镜像缺的按 id 补回。
+// 只补不删、只填空位——不覆盖本地已有钥，也不触发二次上传。
+function _applyServerKeyMerge(data) {
+  if (!data || typeof data !== 'object') return false;
+  const keys = data.modelKeys, groups = data.groupKeys;
+  let changed = false;
+  if (keys && typeof keys === 'object') {
+    for (const cfg of userModelConfigs) {
+      if (!cfg || !cfg.id || cfg.apiKey) continue;
+      const k = keys[cfg.id];
+      if (typeof k === 'string' && k) { cfg.apiKey = k; changed = true; }
+    }
+  }
+  if (groups && typeof groups === 'object') {
+    for (const provider of Object.keys(groups)) {
+      if (groups[provider] && !modelGroupKeys[provider]) { modelGroupKeys[provider] = groups[provider]; changed = true; }
+    }
+  }
+  if (!changed) return false;
+  try { localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify(userModelConfigs)); } catch (e) {}
+  try { localStorage.setItem(MODEL_GROUP_KEYS_STORAGE, JSON.stringify(modelGroupKeys)); } catch (e) {}
+  // 面板正开着且焦点在密钥框里时不重渲染（会吞掉正在输入的字符），徽标下一帧再说
+  try {
+    const active = document.activeElement;
+    if (!active || !active.classList || !active.classList.contains('model-group-key')) {
+      renderModelList();
+      renderModelSelects();
+    }
+    for (const provider of Object.keys(modelGroupKeys)) _refreshGroupKeyBadges(provider);
+  } catch (e) {}
+  return true;
 }
 
 // 服务端 blob → 内存＋本地镜像。返回是否采纳（调用方负责按需重渲染）。
+// 采纳＝服务端赢：挂起的清空清单一并丢弃（它针对的是旧本地状态，留着会误删）
 function _adoptModelsConfig(blob) {
   if (!blob || typeof blob !== 'object') return false;
+  _pendingModelKeyClears = [];
   if (Array.isArray(blob.userModels)) userModelConfigs = blob.userModels.filter(m => m && typeof m === 'object');
   if (blob.modelGroupKeys && typeof blob.modelGroupKeys === 'object') modelGroupKeys = { ...blob.modelGroupKeys };
   if (blob.activeModels && typeof blob.activeModels === 'object') activeModels = { ...blob.activeModels };
@@ -460,6 +533,7 @@ function scheduleModelsSync(delay = 400) {
 async function flushModelsSync() {
   if (_modelsSyncInflight) { _modelsDirtyAfterInflight = true; return; }
   _modelsSyncInflight = true;
+  const sentClears = _pendingModelKeyClears.slice(); // 本次随包发出的清空清单
   try {
     const resp = await fetch(MODELS_CONFIG_SYNC_PATH, {
       method: 'POST',
@@ -469,6 +543,8 @@ async function flushModelsSync() {
     if (resp.ok) {
       const data = await resp.json().catch(() => null);
       if (data && typeof data.updatedAt === 'number') _stampSynced(data.updatedAt);
+      _applyServerKeyMerge(data); // 服务端保留下来的钥补回本地镜像
+      _pendingModelKeyClears = _pendingModelKeyClears.filter(id => !sentClears.includes(id));
     }
     // 非 2xx（含只读查阅 403、离线）：静默放弃，本地镜像仍在；下次改动或下次加载再收敛
   } catch (e) {
@@ -600,7 +676,7 @@ function getAllModels() {
   for (const cfg of userModelConfigs) {
     const preset = MODEL_PRESETS[cfg.provider];
     const display = cfg.label || cfg.model;
-    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!cfg.apiKey });
+    result.push({ id: cfg.id, name: (preset?.name || cfg.provider) + ' · ' + display, desc: preset?.name || cfg.provider, tags: [display], provider: cfg.provider, hasKey: !!(cfg.apiKey || getGroupKey(cfg.provider)) });
   }
   return result;
 }
@@ -608,8 +684,14 @@ function getAllModels() {
 // 六个槽位键：agent_model 等（模型引用）＋ <role>_thinking（槽位思考档位，2026-10-11 起）
 const SLOT_MODEL_KEYS = { agent: 'agent_model', html: 'html_model', descriptor: 'descriptor_model', quiz: 'quiz_model', graph: 'graph_model', branch: 'branch_model' };
 
+// 条目读取：条目自己没有钥时按组密钥回落（返回浅拷贝，调用点只读）。
+// 有这一层，组密钥与条目钥万一不同步（历史遗留、某一版把组钥写空又写回），
+// 发送链也不会带着空钥出去 401——8 处直读 model.apiKey 的调用点零改动受益。
 function getModelById(id) {
-  return userModelConfigs.find(m => m.id === id) || null;
+  const cfg = userModelConfigs.find(m => m.id === id) || null;
+  if (!cfg || cfg.apiKey) return cfg;
+  const groupKey = getGroupKey(cfg.provider);
+  return groupKey ? { ...cfg, apiKey: groupKey } : cfg;
 }
 
 function getActiveModelForRole(role) {
@@ -859,7 +941,7 @@ function renderModelList() {
       <div class="model-group-header">
         <button class="model-group-toggle" onclick="toggleModelGroup('${jsProvider}')" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▶' : '▼'}</button>
         <div class="model-group-title">${escapeHtml(groupName)}<span class="model-group-count">${models.length} 个模型</span></div>
-        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" oninput="saveGroupKey('${jsProvider}', this.value)" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内所有模型的密钥（单个模型仍可在其配置里覆盖）">
+        <input type="password" class="model-group-key" placeholder="分组密钥（${escapeHtml(hint)}）" value="${escapeHtml(getGroupKey(provider))}" autocomplete="new-password" spellcheck="false" data-lpignore="true" onchange="saveGroupKeyCommitted('${jsProvider}', this)" title="统一配置组内密钥；单条目在配置里单独设过的钥不会被覆盖。失焦才落盘（逐键写会把半截钥存进去）">
         <button class="model-group-refresh" onclick="openModelListUpdate('${jsProvider}')" title="从上游更新模型列表（对比新增 / 已下线）">${UI_ICON_SVG.reset}</button>
         <button class="model-group-del" onclick="confirmDeleteModelGroup('${jsProvider}')" title="删除该分组的全部模型">${UI_ICON_SVG.trash}</button>
       </div>
@@ -892,6 +974,9 @@ function saveModelConfig() {
   const model = document.getElementById('mcModel').value.trim();
   const baseUrl = document.getElementById('mcBaseUrl').value.trim();
   if (!model) { alert('请填写模型名称'); return; }
+  // 人主动把条目密钥清空 → 点名删除（服务端合并语义下缺钥只代表「不知道」）
+  const stored = userModelConfigs.find(m => m.id === id) || null;
+  if (stored && stored.apiKey && !apiKey) _markModelKeyCleared(id);
   const ok = updateUserModel(id, { apiKey, model, baseUrl });
   if (ok) {
     closeModelConfig();
