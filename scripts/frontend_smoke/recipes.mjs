@@ -540,12 +540,19 @@ check('使用引导覆盖答疑先查再答与配方放置（2026-10-03 智能�
   return true;
 });
 
-check('首次使用引导覆盖版本新功能（2026-10-07：大陆/检测/多账号/回收站/导出/Φ）', () => {
+check('首次使用引导覆盖当前功能面（2026-10-24 重写：大陆/检测/账号/回收站/用量/工具栏＋示例讲解的直接回答/素材篮）', () => {
+  // 这条守的是「引导讲的东西＝产品现在有的东西」：功能下线或改名时它会先红。
+  // 红了两条路：改文案，或者确认这项不该再教、把词从名单里删掉——别把断言改成永真。
   const uiSrc = fs.readFileSync('src/static/js/ui-onboarding.js', 'utf8');
   const m = uiSrc.match(/const _obSteps = \[([\s\S]*?)\n\];/);
   if (!m) throw new Error('_obSteps 未找到');
-  for (const needle of ['知识大陆', '知识检测', '多账号', '回收站', '导出', 'Φ 智能体', '只读查阅', '先查知识库']) {
-    if (!m[1].includes(needle)) throw new Error('引导缺少「' + needle + '」');
+  for (const needle of ['知识大陆', '知识检测', '多账号', '回收站', '只读查阅', '用量统计', '修改历史', '导出', 'Φ 智能体', '知识库']) {
+    if (!m[1].includes(needle)) throw new Error('首次使用引导缺少「' + needle + '」');
+  }
+  const g = uiSrc.match(/const EXAMPLE_GUIDE_STEPS = \[([\s\S]*?)\n\];/);
+  if (!g) throw new Error('EXAMPLE_GUIDE_STEPS 未找到');
+  for (const needle of ['直接回答', '素材篮', '自动整理', '节点工坊']) {
+    if (!g[1].includes(needle)) throw new Error('示例图讲解缺少「' + needle + '」');
   }
   return true;
 });

@@ -9,94 +9,118 @@ let _obStep = -1;
 let _obClickBinding = null;
 const _isMobile = () => window.innerWidth <= 768;
 const ONBOARDING_EXAMPLE_QUESTION = '请解释简谐运动的物理和数学本质，并生成交互式可视化';
+// 2026-10-24 重写：每步＝kicker（你在哪）＋标题（讲什么）＋一段引子＋术语/解释两列，
+// 卡片头部走「图标＋kicker＋步数」，底部走「节点链进度」——视觉语法对齐画布上的节点卡。
+// 文案口径：短句、动词开头、不写破折号串，功能名用界面上真实存在的词（知识检测/用量统计…）。
 const _obSteps = [
   {
     type: 'welcome',
-    icon: '<img src="/logo.png" style="width:48px;height:48px;border-radius:12px;" />',
+    kicker: '开始之前',
+    icon: '<img src="/logo.png" alt="" />',
     title: '欢迎来到 PhyMathia',
+    desc: '每个问题都从两头回答：物理给直觉，数学给结构。答案会拆成节点，在画布上长成一张能接着问的网。',
     features: [
-      { icon: UI_ICON_SVG.formula, text: '<strong>双域解释</strong> — 每个问题同时从物理直觉和数学本质给出答案' },
-      { icon: UI_ICON_SVG.monitor, text: '<strong>交互可视化</strong> — 生成可动手操作的 HTML 可视化页面' },
-      { icon: UI_ICON_SVG.formula, text: '<strong>网络图探索</strong> — 新画布从中心节点开始，答案与模块向外铺展' },
-      { icon: UI_ICON_SVG.book, text: '<strong>知识积累</strong> — 自动提取知识点，跨会话长成可探索的「知识大陆」' },
-      { icon: UI_ICON_SVG.lightbulb, text: '<strong>Φ 智能体</strong> — 画布上的 AI 助手：改图、答疑，回答前先查知识库' },
+      { term: '双域解释', text: '一次回答出两张卡：物理视角讲机制，数学视角讲结构' },
+      { term: '探索网', text: '回答拆成节点，想深究哪一块就从哪一块往下问' },
+      { term: '交互可视化', text: '参数能拖的 HTML 演示，跟着节点留在画布上' },
+      { term: 'Φ 智能体', text: '画布上的助手，动手改图之前先查你攒下的知识库' },
     ]
   },
   {
     type: 'welcome',
     example: true,
+    kicker: '内置示例',
     icon: UI_ICON_SVG.sparkles,
     title: '内置示例图讲解',
-    desc: '打开一张内置的「简谐运动」示例探索网，在<strong>真实画布</strong>上逐步讲解：双击添加节点、端口拖线、节点类型、工具栏、选择编辑和状态显示。',
+    desc: '画布上已经摆好一张简谐运动的示例网。跟着走一遍，把双击加点、端口拉线、工具栏和选中编辑都试到手。',
     exampleQuestion: ONBOARDING_EXAMPLE_QUESTION,
-    exampleNote: '演示图不会调用模型，关闭后会恢复你原来的画布。',
+    exampleNote: '示例不调用模型，也不写进你的会话；关掉就回到原来的画布。',
     features: [
-      { icon: UI_ICON_SVG.pencil, text: '<strong>边点边学</strong> — 聚光灯指到哪，右侧就讲解到哪' },
-      { icon: UI_ICON_SVG.monitor, text: '<strong>真实画布</strong> — 可直接拖动、缩放、双击和拉线体验' },
-      { icon: UI_ICON_SVG.book, text: '<strong>不产生数据</strong> — 演示改动不会写入当前会话或知识库' },
+      { term: '边点边学', text: '聚光灯照到哪儿，讲解就跟到哪儿' },
+      { term: '真实画布', text: '可以直接拖、缩放、双击、拉线' },
+      { term: '不留痕迹', text: '演示里的改动不落盘，退出即还原' },
     ]
   },
   {
     type: 'spotlight',
+    kicker: '画布',
     get target() { return document.querySelector('.graph-new-session-node') ? '.graph-new-session-node' : '.graph-canvas'; },
     icon: UI_ICON_SVG.pencil,
     get title() { return document.querySelector('.graph-new-session-node') ? '在中心节点提问' : '继续探索'; },
     get desc() {
       return document.querySelector('.graph-new-session-node')
-        ? '在画布中央的<strong>中心节点</strong>输入物理或数学问题，答案会从中心向外展开成探索网。'
-        : '在探索网中点击气泡上的<strong>追问</strong>或<strong>删除</strong>，管理当前画布分支。';
+        ? '画布中央的中心节点就是入口。把问题打进去回车，答案从中心往外铺成一整张网。'
+        : '点节点上的追问，顺着一条线往下挖；点删除，收掉不要的分支。';
     }
   },
   {
     type: 'spotlight',
+    kicker: '顶栏',
     get target() { return _isMobile() ? '.header-secondary-bar' : '.header-actions'; },
     icon: UI_ICON_SVG.sliders,
     title: '个性化设置',
     get desc() {
       return _isMobile()
-        ? '顶栏可切换<strong>深色/浅色主题</strong>和<strong>难度等级</strong>；这里可设置<strong>AI 模型</strong>、打开<strong>知识总览</strong>、管理数据和清空画布。'
-        : '在这里切换<strong>深色/浅色主题</strong>、选择<strong>AI 模型</strong>和<strong>难度等级</strong>（中学 / 大学 / 科研），点击书本图标打开<strong>知识总览</strong>面板，查看 AI 自动提取的知识点和你收藏的内容。';
+        ? '这里能换深浅色和难度；模型、知识总览、数据管理也都在这一排。'
+        : '这一排决定 AI 怎么答：模型、难度（中学 / 大学 / 科研）、深色或浅色。旁边翻开的本子是知识总览。';
     }
   },
   {
     type: 'click',
     target: '.menu-btn',
+    kicker: '画布列表',
     icon: UI_ICON_SVG.book,
     title: '试试点击菜单按钮',
-    desc: '点击左上角的菜单按钮，打开侧边栏管理<strong>多张画布</strong>，随时切换不同话题。',
+    desc: '点左上角这个按钮打开画布列表。一张画布放一个话题，随时切。',
     onClick() { document.getElementById('sidebar').classList.add('open'); }
   },
   {
     type: 'spotlight',
+    kicker: '画布列表',
     get target() { return _isMobile() ? '.sidebar-sessions' : '.session-item'; },
     icon: UI_ICON_SVG.pencil,
     title: '个性化画布',
-    get desc() {
-      return '点击画布图标可以<strong>切换力学、电磁、光学等图标</strong>，点击重命名按钮可以<strong>重命名画布</strong>，让你的画布列表更清晰有序。';
-    },
+    desc: '画布图标能换成力学、电磁、光学这类学科标记，重命名按钮改标题。列表一长，靠它们认路。',
+    placement: 'right',
     beforeShow() { document.getElementById('sidebar').classList.add('open'); }
   },
   {
     type: 'welcome',
+    kicker: '侧边栏',
     icon: UI_ICON_SVG.layout,
-    title: '侧边栏里还有一排工具',
+    title: '列表底下这排工具',
+    desc: '这一排跨画布干活：换张画布，它们照样管全局。',
+    beforeShow() { document.getElementById('sidebar').classList.add('open'); },
     features: [
-      { icon: UI_ICON_SVG.globe, text: '<strong>知识大陆</strong> — 所有画布的知识投影成一张可缩放、可探索的地图' },
-      { icon: UI_ICON_SVG.check, text: '<strong>知识检测</strong> — 对本画布出题摸底，「检测总览」汇总所有画布' },
-      { icon: UI_ICON_SVG.user, text: '<strong>多账号</strong> — 本机可建多个账号，数据互相隔离，还能只读查阅对方账号' },
-      { icon: UI_ICON_SVG.trash, text: '<strong>回收站</strong> — 画布与账号的删除先进站暂存，保留期内随时恢复' },
-      { icon: UI_ICON_SVG.download, text: '<strong>导出分享</strong> — PNG 知识海报与 .pmu 快照，外发网页默认只读' },
+      { term: '知识大陆', text: '所有画布的知识点投到同一张地图上，能缩放、能钻进去看' },
+      { term: '知识检测', text: '给本画布出题摸底；检测总览看每张画布的答对率' },
+      { term: '多账号', text: '本机可建多个账号，数据互不相通，也能只读查阅对方' },
+      { term: '回收站', text: '删掉的画布先进回收站，保留期内能捞回来' },
+      { term: '用量统计', text: '每次调用花了多少 token，按模型和日期记账' },
     ]
   },
   {
-    type: 'welcome',
-    icon: UI_ICON_SVG.sparkles,
-    title: '记忆功能（默认开启）',
-    desc: 'PhyMathia 会记住你的<strong>学习画像</strong>（学段、目标、兴趣、薄弱点、回答偏好），让回答风格、出题方向更贴合你。画像仅存本机，可随时关闭或清除。',
+    type: 'spotlight',
+    kicker: '画布',
+    icon: UI_ICON_SVG.sliders,
+    title: '两块工具栏',
+    desc: '画布右下和左下各有一簇按钮，分工不一样。',
     features: [
-      { icon: UI_ICON_SVG.check, text: '<strong>个性化</strong> — 回答详略、术语密度、检测出题按你的画像调整' },
-      { icon: UI_ICON_SVG.book, text: '<strong>本地存储</strong> — 画像保存在本机；对话内容仍会发送给模型服务商' },
-      { icon: UI_ICON_SVG.sliders, text: '<strong>完全可控</strong> — 侧边栏「记忆」中可查看、编辑、删除，也可一键关闭或清除' },
+      { term: '右下角', text: '看图与产出：搜索、缩放、适配、自动整理、Φ 助手、导出' },
+      { term: '左下角', text: '改图与审查：图体检、修改历史、选择文字、联系模式、分组' },
+    ],
+    target: '.graph-canvas-toolbar'
+  },
+  {
+    type: 'welcome',
+    kicker: '记忆',
+    icon: UI_ICON_SVG.sparkles,
+    title: '记忆（默认开启）',
+    desc: '它记着你的学段、目标、兴趣、薄弱点和回答偏好。下次回答和出题照这个来，不用每次重讲。',
+    features: [
+      { term: '存在本机', text: '画像不出这台机器；对话内容照旧发给模型服务商' },
+      { term: '随时改', text: '侧边栏「记忆」里能看、能改、能删' },
+      { term: '随时关', text: '一键关闭或清空，之后不再写新内容' },
     ]
   }
 ];
@@ -265,28 +289,28 @@ const EXAMPLE_GUIDE_STEPS = [
   {
     title: '这是内置演示图',
     icon: UI_ICON_SVG.sparkles,
-    desc: '已经载入一张以「简谐运动」为主题的示例探索网，并已使用画布自带的<strong>自动整理</strong>重新排布：问题 → 问题分析 → 各模块 → 延伸与结构节点，层级更清晰。',
-    points: ['演示期间不会调用模型，也不会写入你的会话。', '你也可以随时点击右下角工具栏的“自动整理”再次重排。', '关闭示例后，画布会恢复成你原来的图。'],
+    desc: '已经载入一张简谐运动的示例网，并按画布自带的<strong>自动整理</strong>排过一遍：问题在最左，问题分析往下分到各个模块，延伸和结构节点在右侧。',
+    points: ['演示期间不会调用模型，也不会写入你的会话。', '想再排一次，点右下角工具栏的「自动整理」。', '关闭示例后，画布会恢复成你原来的图。'],
     target: '[data-node-id="demo-answer"]',
   },
   {
     title: '双击空白处添加节点',
     icon: UI_ICON_SVG.plus,
-    desc: '在画布空白处<strong>双击</strong>，会弹出“添加节点”菜单，可选择 AI 生成、视角模块、基础素材、人工内容和结构节点。',
+    desc: '在画布空白处<strong>双击</strong>，会弹出添加节点菜单，分 AI 生成、视角模块、基础素材、人工内容和结构五组。',
     points: ['可以现在就双击右侧空白区域试一试。', '选择节点后，它会出现在你双击的位置。'],
     spot: 'blank',
   },
   {
     title: '问题节点：探索的起点',
     icon: UI_ICON_SVG.pencil,
-    desc: '问题节点保存原始问题，右侧有三个输出端口：<strong>问题分析</strong>、<strong>直接回答</strong>和<strong>我的回答</strong>——分别连接 AI 分析（概要＋模块）、AI 完整作答或手写回答。',
+    desc: '问题节点保存原始问题，右侧三个输出端口各走一条路：问题分析拆成概要加模块，直接回答给一份完整答案，我的回答留给你自己写。',
     points: ['把输出端口拖到空白处可快速创建下一级节点。', '「直接回答」不拆模块，适合想先看一份完整答案的时候。', '问题文本可以直接在节点中编辑。'],
     target: '[data-node-id="demo-question"]',
   },
   {
-    title: '问题分析节点：概要 ＋ 模块分发器',
+    title: '问题分析节点：先给概要，再分模块',
     icon: UI_ICON_SVG.sparkles,
-    desc: '问题分析节点先给出一段问题概要，再把内容拆成物理视角、数学视角、知识图谱、交互可视化、进阶学习和苏格拉底追问等<strong>模块节点</strong>——深入内容都在模块里。',
+    desc: '问题分析节点先给一段问题概要，再把内容拆成物理视角、数学视角、知识图谱、交互可视化、进阶学习和苏格拉底追问等<strong>模块节点</strong>。深入的内容都在模块里，不在概要里。',
     points: ['每个输出端口对应一个模块。', '状态徽标会显示“分析中 / 完成 / 失败”。'],
     target: '[data-node-id="demo-answer"]',
   },
@@ -319,10 +343,10 @@ const EXAMPLE_GUIDE_STEPS = [
     target: '[data-node-id="demo-viz"]',
   },
   {
-    title: '基础素材：输入与我的理解',
+    title: '素材篮：一条素材一个出口',
     icon: UI_ICON_SVG.database,
-    desc: '画布还支持<strong>输入节点</strong>（粘贴文字/图片/文件，每条素材一个出口）和<strong>我的理解</strong>批注。',
-    points: ['输入节点的每条素材一个出口，拖到空白处可自选要接的节点。', '双击“我的理解”节点可直接编辑标题、正文和公式。'],
+    desc: '输入节点是一个<strong>素材篮</strong>：每一行一条素材，各占一个出口，拖出去就是给下游的材料。图片会跟问题一起发给看得见图的模型；扫描版 PDF 按页转成图再送。',
+    points: ['拖出口到空白处，可以自选接给哪个节点。', '「我的理解」写自己的批注，双击就能改标题、正文和公式。'],
     target: '[data-node-id="demo-source"]',
   },
   {
@@ -343,7 +367,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '画布工具栏',
     icon: UI_ICON_SVG.sliders,
     desc: '画布工具栏分两簇：右下角是看图与产出（搜索、缩放/适配、自动整理、Φ 助手、导出图片），左下角是改图与审查（图体检、修改历史、文字选择、联系模式、分组）。讲解本步时面板已临时移到左侧，不会再遮挡工具栏。',
-    points: ['联系模式：依次点两个节点即可添加联系箭头。', '选中多个节点后可创建分组或批量删除。', 'Φ 按钮只管小助手的显示/隐藏，点画布上的小助手本体才能打开对话面板。'],
+    points: ['联系模式：依次点两个节点即可添加联系箭头。', '选中多个节点后可创建分组或批量删除。', 'Φ 按钮只管小助手的显示/隐藏，点画布上的小助手本体才能打开对话面板。', '面板顶上的「模式：编辑」里切到「创造」，会打开节点工坊：一句话描述你想要的节点，试跑满意后一键入册。'],
     target: '.graph-canvas-toolbar',
     panelSide: 'left',
   },
@@ -351,7 +375,7 @@ const EXAMPLE_GUIDE_STEPS = [
     title: '选择、编辑、删除与撤销',
     icon: UI_ICON_SVG.pencil,
     desc: '单击选中节点，按住 Ctrl/Cmd 多选，空白处拖拽可框选；拖动节点、右下角缩放尺寸，Delete 删除，顶部历史按钮可撤销/重做。',
-    points: ['节点右上角按钮：最小化、编辑、删除。', '拖拽分组框可整体移动组内节点。'],
+    points: ['节点右上角按钮：最小化、编辑、删除。', 'Ctrl+C 复制选中节点，换张画布也能 Ctrl+V 粘回去，连线和组内布局一起带走。', '拖拽分组框可整体移动组内节点。'],
     target: '[data-node-id="demo-blank"]',
   },
   {
@@ -439,7 +463,9 @@ function _renderExampleGuideStep() {
   const dotsEl = document.getElementById('exampleGuideDots');
   const prevBtn = document.getElementById('exampleGuidePrevBtn');
   const nextBtn = document.getElementById('exampleGuideNextBtn');
+  const countEl = document.getElementById('exampleGuideStepCount');
   if (iconEl) iconEl.innerHTML = step.icon || '';
+  if (countEl) countEl.textContent = (_exampleGuideStep + 1) + ' / ' + EXAMPLE_GUIDE_STEPS.length;
   if (titleEl) titleEl.textContent = step.title;
   if (descEl) descEl.innerHTML = step.desc;
   if (pointsEl) pointsEl.innerHTML = (step.points || []).map(point => '<li>' + point + '</li>').join('');
@@ -661,6 +687,46 @@ function jumpExampleGuideStep(index) {
   _renderExampleGuideStep();
 }
 
+// 卡片头部：图标章＋kicker（你在哪一步的地界）＋右端 3 / 9 步数
+function _obHeadHtml(step) {
+  return '<div class="ob-head">'
+    + '<span class="ob-mark">' + (step.icon || '') + '</span>'
+    + '<span class="ob-kicker">' + (step.kicker || '使用引导') + '</span>'
+    + '<span class="ob-count">' + (_obStep + 1) + ' / ' + _obSteps.length + '</span>'
+    + '</div>';
+}
+
+// 底部进度＝一条缩小的探索网：走过的节点实心、当前节点带光晕、没到的是空心。
+// 用节点链而不是圆点，是因为这东西本身就是「一张网」——进度条重复产品自己的语法。
+function _obRailHtml() {
+  let html = '';
+  for (let i = 0; i < _obSteps.length; i++) {
+    if (i) html += '<span class="ob-rail-line"></span>';
+    html += '<span class="ob-rail-dot' + (i === _obStep ? ' active' : (i < _obStep ? ' done' : '')) + '"></span>';
+  }
+  return '<div class="ob-rail" aria-hidden="true">' + html + '</div>';
+}
+
+// 术语/解释两列：左边是界面上的真实叫法，右边一句话说清它干什么。
+// 不用图标也不用逐条方框——列表本身有分隔线，再套盒子只会变成一排表单。
+function _obListHtml(step) {
+  const rows = step.features || [];
+  if (!rows.length) return '';
+  return '<dl class="ob-list">' + rows.map(row =>
+    '<div class="ob-row"><dt class="ob-term">' + row.term + '</dt><dd class="ob-text">' + row.text + '</dd></div>'
+  ).join('') + '</dl>';
+}
+
+function _obExampleHtml(step) {
+  if (!step.exampleQuestion) return '';
+  return '<figure class="ob-quote">'
+    + '<figcaption class="ob-quote-label">示例问题</figcaption>'
+    + '<blockquote class="ob-quote-text">' + step.exampleQuestion + '</blockquote>'
+    + '<div class="ob-quote-note">' + (step.exampleNote || '') + '</div>'
+    + (step.exampleLink ? '<a class="ob-example-link" href="' + step.exampleLink + '" target="_blank" rel="noopener noreferrer">' + UI_ICON_SVG.external + ' 打开内置演示页</a>' : '')
+    + '</figure>';
+}
+
 function _renderObStep() {
   if (_obStep < 0 || _obStep >= _obSteps.length) { endOnboarding(); return; }
   const step = _obSteps[_obStep];
@@ -684,6 +750,8 @@ function _renderObStep() {
   setTimeout(() => {
     if (step.type === 'welcome') {
       spotlight.style.display = 'none';
+      // welcome 步也可以带 beforeShow（「列表底下这排工具」要把侧栏打开才看得见）
+      if (step.beforeShow) step.beforeShow();
       card.className = 'onboarding-card ob-welcome aurora-glass aurora-glass--dialog';
       const isLast = _obStep === _obSteps.length - 1;
       const primaryAction = step.example
@@ -691,39 +759,29 @@ function _renderObStep() {
           + '<button class="ob-btn ob-btn-next" onclick="openExampleGuide()">进入示例图 ' + UI_ICON_SVG.arrowRight + '</button>'
         : '<button class="ob-btn ' + (isLast ? 'ob-btn-finish' : 'ob-btn-next') + '" onclick="' + (isLast ? 'endOnboarding()' : 'nextObStep()') + '">' + (isLast ? '开始使用 ' + UI_ICON_SVG.sparkles : '开始了解 ' + UI_ICON_SVG.arrowRight) + '</button>';
       card.innerHTML = `
-        <span class="ob-icon">${step.icon}</span>
-        <div class="ob-title">${step.title}</div>
-        ${step.desc ? `<div class="ob-desc">${step.desc}</div>` : ''}
-        ${step.exampleQuestion ? `
-          <div class="ob-example-box">
-            <div class="ob-example-label">${UI_ICON_SVG.pencil} 示例问题</div>
-            <div class="ob-example-question">${step.exampleQuestion}</div>
-            <div class="ob-example-note">${step.exampleNote || ''}</div>
-            ${step.exampleLink ? `<a class="ob-example-link" href="${step.exampleLink}" target="_blank" rel="noopener noreferrer">${UI_ICON_SVG.external} 打开内置演示页</a>` : ''}
-          </div>` : ''}
-        <div class="ob-features">
-          ${(step.features || []).map(f => `
-            <div class="ob-feature">
-              <span class="ob-feature-icon">${f.icon}</span>
-              <span class="ob-feature-text">${f.text}</span>
-            </div>
-          `).join('')}
+        ${_obHeadHtml(step)}
+        <div class="ob-body">
+          <div class="ob-title">${step.title}</div>
+          ${step.desc ? `<p class="ob-desc">${step.desc}</p>` : ''}
+          ${_obExampleHtml(step)}
+          ${_obListHtml(step)}
         </div>
         <div class="onboarding-footer">
-          <div class="onboarding-dots">
-            ${_obSteps.map((_, i) => `<div class="onboarding-dot ${i === _obStep ? 'active' : ''}"></div>`).join('')}
-          </div>
+          ${_obRailHtml()}
           <div class="onboarding-actions">
             <button class="ob-btn ob-btn-skip" onclick="endOnboarding()">跳过</button>
             ${primaryAction}
           </div>
         </div>
       `;
-    } else {
-      // Spotlight mode
-      if (step.beforeShow) step.beforeShow();
-      const needsDelay = !!step.beforeShow;
-      const renderSpotlight = () => {
+      // 入场：先落内容再挂 visible，让 opacity/translate 从真位置起跑
+      requestAnimationFrame(() => { card.classList.add('visible'); });
+      return;
+    }
+    // 聚光灯型：卡片贴在目标旁边，目标以外压暗
+    if (step.beforeShow) step.beforeShow();
+    const needsDelay = !!step.beforeShow;
+    const renderSpotlight = () => {
       const target = document.querySelector(step.target);
       if (target) {
         const rect = target.getBoundingClientRect();
@@ -740,33 +798,15 @@ function _renderObStep() {
 
       card.className = 'onboarding-card aurora-glass aurora-glass--dialog';
       const isLast = _obStep === _obSteps.length - 1;
-
-      // Position card near the target
-      if (target) {
-        const rect = target.getBoundingClientRect();
-        const cardW = 380;
-        const cardH = 220;
-        // Try below the target first, then above
-        let top = rect.bottom + 16;
-        let left = rect.left + rect.width / 2 - cardW / 2;
-        // Clamp to viewport
-        left = Math.max(16, Math.min(left, window.innerWidth - cardW - 16));
-        if (top + cardH > window.innerHeight - 16) {
-          top = rect.top - cardH - 16;
-        }
-        if (top < 16) top = 16;
-        card.style.left = left + 'px';
-        card.style.top = top + 'px';
-      }
-
       card.innerHTML = `
-        <span class="ob-icon">${step.icon}</span>
-        <div class="ob-title">${step.title}</div>
-        <div class="ob-desc">${step.desc}</div>
+        ${_obHeadHtml(step)}
+        <div class="ob-body">
+          <div class="ob-title">${step.title}</div>
+          <p class="ob-desc">${step.desc}</p>
+          ${_obListHtml(step)}
+        </div>
         <div class="onboarding-footer">
-          <div class="onboarding-dots">
-            ${_obSteps.map((_, i) => `<div class="onboarding-dot ${i === _obStep ? 'active' : ''}"></div>`).join('')}
-          </div>
+          ${_obRailHtml()}
           <div class="onboarding-actions">
             <button class="ob-btn ob-btn-skip" onclick="endOnboarding()">跳过</button>
             ${isLast
@@ -778,51 +818,74 @@ function _renderObStep() {
           </div>
         </div>
       `;
-      }; // end renderSpotlight
 
-      // Bind click handler for type:'click' steps
-      const bindClickHandler = () => {
-        if (step.type === 'click' && step.onClick) {
-          // Allow clicks to pass through overlay to the target element
-          spotlight.style.pointerEvents = 'none';
-          const targetEl = document.querySelector(step.target);
-          if (targetEl) {
-            // T228：绑新前先摘旧绑定——上一步的 click 监听只在被点时自摘，
-            // 用户没点中就换步/跳过时旧的会残留
-            if (_obClickBinding) {
-              _obClickBinding.target.removeEventListener('click', _obClickBinding.handler);
-              _obClickBinding = null;
-            }
-            const handler = (e) => {
-              e.stopPropagation();
-              targetEl.removeEventListener('click', handler);
-              _obClickBinding = null;
-              step.onClick();
-              nextObStep();
-            };
-            targetEl.addEventListener('click', handler);
-            _obClickBinding = { target: targetEl, handler };
-          }
+      // 卡片高度随文案变：先落内容再量真高重夹一次，固定估高会让长卡片钻出屏幕底
+      if (target) {
+        const rect = target.getBoundingClientRect();
+        const cardW = card.offsetWidth || 400;
+        const cardH = card.offsetHeight || 220;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let left = rect.left + rect.width / 2 - cardW / 2;
+        let top = rect.bottom + 16;
+        // placement:'right'＝目标占了屏幕一侧的整条（画布列表项），卡片让到它右边，
+        // 否则居中落点会被夹到左缘、正好压住要讲解的那一列。窄屏仍是上下排。
+        if (step.placement === 'right' && vw > 760) {
+          left = rect.right + 18;
+          top = rect.top;
+          if (top + cardH > vh - 16) top = Math.max(16, vh - cardH - 16);
         }
-      };
-      if (needsDelay) {
-        setTimeout(() => { renderSpotlight(); if(step.afterShow) step.afterShow(); bindClickHandler(); requestAnimationFrame(() => { card.classList.add('visible'); }); }, 350);
-      } else {
-        renderSpotlight();
-        if(step.afterShow) step.afterShow();
-        bindClickHandler();
-        // Animate card in
-        requestAnimationFrame(() => {
-          card.classList.add('visible');
-        });
+        left = Math.max(16, Math.min(left, vw - cardW - 16));
+        // 目标铺满整屏（空画布那步的 target 就是整块 .graph-canvas）：上下都有位置，
+        // 干脆落到屏幕底部当一条说明带——压顶栏会盖住 logo 与顶栏按钮
+        if (rect.height > vh * 0.7 && rect.width > vw * 0.7) {
+          top = vh - cardH - 24;
+        } else if (top + cardH > vh - 16) {
+          top = rect.top - cardH - 16;
+        }
+        if (top + cardH > vh - 16) top = Math.max(16, vh - cardH - 16);
+        if (top < 16) top = 16;
+        card.style.left = left + 'px';
+        card.style.top = top + 'px';
       }
-      return;
-    }
+    };
 
-    // Animate card in
-    requestAnimationFrame(() => {
-      card.classList.add('visible');
-    });
+    // Bind click handler for type:'click' steps
+    const bindClickHandler = () => {
+      if (step.type === 'click' && step.onClick) {
+        // Allow clicks to pass through overlay to the target element
+        spotlight.style.pointerEvents = 'none';
+        const targetEl = document.querySelector(step.target);
+        if (targetEl) {
+          // T228：绑新前先摘旧绑定——上一步的 click 监听只在被点时自摘，
+          // 用户没点中就换步/跳过时旧的会残留
+          if (_obClickBinding) {
+            _obClickBinding.target.removeEventListener('click', _obClickBinding.handler);
+            _obClickBinding = null;
+          }
+          const handler = (e) => {
+            e.stopPropagation();
+            targetEl.removeEventListener('click', handler);
+            _obClickBinding = null;
+            step.onClick();
+            nextObStep();
+          };
+          targetEl.addEventListener('click', handler);
+          _obClickBinding = { target: targetEl, handler };
+        }
+      }
+    };
+    if (needsDelay) {
+      setTimeout(() => { renderSpotlight(); if(step.afterShow) step.afterShow(); bindClickHandler(); requestAnimationFrame(() => { card.classList.add('visible'); }); }, 350);
+    } else {
+      renderSpotlight();
+      if(step.afterShow) step.afterShow();
+      bindClickHandler();
+      // Animate card in
+      requestAnimationFrame(() => {
+        card.classList.add('visible');
+      });
+    }
   }, 150);
 }
 
