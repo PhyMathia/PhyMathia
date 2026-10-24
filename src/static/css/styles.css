@@ -295,8 +295,12 @@
       --kp-panel-bg: rgba(10,12,22,0.85);
       --kp-panel-border: color-mix(in srgb, var(--accent) 12%, transparent);
       --kp-panel-shadow: rgba(0,0,0,0);
-      --onboarding-backdrop: rgba(5, 8, 25, 0.1);
-      --onboarding-spotlight: rgba(5, 8, 25, 0);
+      /* 引导遮罩两层：backdrop 是常驻底纱（欢迎页也盖），spotlight 是聚光灯切口的
+         外部遮罩（.onboarding-spotlight 的 9999px box-shadow 画的，只有聚光灯步才在）。
+         两层叠加＝「切口外更暗、切口里最亮」，目标才真的被点亮；旧值 0.1/0 等于没遮，
+         卡片和壁纸亮度拉不开（2026-10-24 视觉重做） */
+      --onboarding-backdrop: rgba(5, 8, 25, 0.28);
+      --onboarding-spotlight: rgba(3, 7, 18, 0.5);
       --session-rename-bg: var(--bg-panel);
       --session-rename-color: #e0e0e0;
       --icon-picker-bg: var(--bg-panel);
@@ -561,8 +565,9 @@
       --kp-panel-bg: rgba(255,255,255,0.82);
       --kp-panel-border: color-mix(in srgb, var(--accent) 10%, transparent);
       --kp-panel-shadow: rgba(0,0,0,0.06);
-      --onboarding-backdrop: rgba(245, 240, 232, 0.2);
-      --onboarding-spotlight: rgba(245, 240, 232, 0);
+      /* 浅色用暖墨遮罩（不是白色提亮）：白纱压在白米色壁纸上看不出边界 */
+      --onboarding-backdrop: rgba(38, 32, 22, 0.2);
+      --onboarding-spotlight: rgba(38, 32, 22, 0.34);
       --session-rename-bg: #fff;
       --session-rename-color: #1a1d2e;
       --icon-picker-bg: #ffffff;
