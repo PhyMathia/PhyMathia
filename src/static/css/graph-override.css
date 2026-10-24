@@ -1728,16 +1728,12 @@
 }
 
 .graph-blank-requirement {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
   width: 100%;
   margin-top: 10px;
 }
 
 .graph-blank-input {
-  flex: 1 1 auto;
-  min-width: 0;
+  width: 100%;
   min-height: 44px;
   padding: 8px 10px;
   border: 1px solid var(--border);

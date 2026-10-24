@@ -133,7 +133,7 @@ async function main() {
     // 上次 9/9 全绿是 01f127b，早于 T303 落地）
     page.on('dialog', d => d.accept());
     // 空白节点通道（⑪，2026-10-24 T403）：记住所有 target.kind='blank' 的工作流请求体。
-    // 既证明「卡上按钮／全部开始」走同一条统一发送链（带 workflow_context），也用来验证
+    // 既证明「卡面三角／全部开始」走同一条统一发送链（带 workflow_context），也用来验证
     // 「已经生成过的卡第二次不该再发请求」（T400 的「每次重跑」）。
     const blankChatRequests = [];
     page.on('request', req => {
@@ -678,7 +678,7 @@ async function main() {
           + '第二轮答完补丁换口，改动标签「' + round2.chips + '」，出口字段原样保留）');
       } catch (e) { bad('⑩ 创造模式访谈', e); }
       // ===== 11. 空白节点生成（2026-10-24 T403：两条路合一） =====
-      // 旧空白路自带一份提示词/流式/记账，与工作流路生成两种内容（T401）；现在卡上按钮、
+      // 旧空白路自带一份提示词/流式/记账，与工作流路生成两种内容（T401）；现在卡面三角、
       // 任务重试、Φ、「全部开始」都走同一条 _executeParallelWorkflow。这条通道真发一次并
       // 断言四件：①请求带 workflow_context.target.kind='blank'＋卡上要求，提示词不再是
       // 「请生成问题节点内容。」；②收尾写 status=done＋inputHash；③再点两次「全部开始」
@@ -698,8 +698,10 @@ async function main() {
           if (!ta) return { err: '空白卡要求框没渲染出来' };
           ta.value = '写一个反例：大角度下单摆周期会变长';
           ta.dispatchEvent(new Event('input', { bubbles: true }));
-          const btn = ta.parentElement.querySelector('.graph-regen-btn');
-          if (!btn) return { err: '空白卡生成按钮没渲染出来' };
+          // 2026-10-24 用户拍板删掉要求框旁的循环箭头直跑钮（与动作区重复）——真发入口
+          // 改走动作区三角（generateBlankNode(id,false,null,true)，同一条统一链）
+          const btn = document.querySelector('[data-node-id="' + node.id + '"] .graph-node-actions .graph-play-btn');
+          if (!btn) return { err: '空白卡「生成」三角没渲染出来' };
           btn.click();
           return { id: node.id };
         });
@@ -732,9 +734,9 @@ async function main() {
             throw new Error('「全部开始」第 ' + (round + 1) + ' 次又为已完成的空白卡发了请求（T400 回退）');
           }
         }
-        // 另一张**没点过卡上按钮**的空白卡：第一次「全部开始」要真把它跑起来（白名单＋
+        // 另一张**没用过生成入口**的空白卡：第一次「全部开始」要真把它跑起来（白名单＋
         // 进度判定＋记账整链的正面），第二次再点不重复发（反面）。这才是用户验收口径的
-        // 「连点两次全部开始」——上面那张是按钮生成的，只能证明已完成卡不重跑。
+        // 「连点两次全部开始」——上面那张是三角生成的，只能证明已完成卡不重跑。
         const blank2 = await page.evaluate(async () => {
           openAddBlankNodeModal(560, 430);
           createManualNode('blank');
