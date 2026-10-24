@@ -3690,20 +3690,93 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 
 /* ---------- 修改历史对比：历史版本独有（当前已删除）的虚化标记 ---------- */
 .graph-diff-ghost-layer {
+  /* 2026-10-24：挂进 graphInner（跟随平移缩放的那层），坐标即图坐标；
+     容器只占 1×1，靠 overflow:visible 让子元素画到外面（同 graph-edge-layer 口径）。 */
   position: absolute;
-  inset: 0;
-  overflow: hidden;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
   pointer-events: none;
   z-index: 71;
 }
 
 .graph-diff-ghost-layer-edges {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
   overflow: visible;
   pointer-events: none;
+}
+
+/* ===== 修改历史对比（2026-10-24，R4/R5/2.3/2.5）=====
+   方向固定「回到这一步会发生什么」：绿色＝会回来、红色＝会消失、黄色＝会改写。
+   深色主题不再换色（旧 .graph-diff-add 在深色下变橙，同一个概念两种颜色）。 */
+.graph-node.graph-diff-will-vanish,
+.graph-diff-ghost-node.graph-diff-will-return {
+  outline: 3px solid #f87171 !important;
+  outline-offset: 2px !important;
+}
+.graph-node.graph-diff-will-return {
+  outline: 3px solid #34d399 !important;
+  outline-offset: 2px !important;
+}
+.graph-node.graph-diff-will-change {
+  outline: 3px solid #fbbf24 !important;
+  outline-offset: 2px !important;
+}
+.graph-node.graph-diff-dim,
+.graph-edge.graph-diff-dim {
+  opacity: 0.35 !important;
+}
+.graph-node.graph-diff-flash {
+  animation: graph-diff-breathe 1.3s ease-in-out 2;
+}
+@keyframes graph-diff-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+  50% { box-shadow: 0 0 0 10px rgba(52, 211, 153, 0.28); }
+}
+.graph-diff-badge {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  z-index: 90;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.graph-diff-badge.will-vanish { background: #ef4444; }
+.graph-diff-badge.will-return { background: #10b981; }
+.graph-diff-badge.will-change { background: #f59e0b; }
+.graph-edge.graph-diff-will-vanish path {
+  stroke: #f87171 !important;
+  stroke-width: 3 !important;
+}
+.graph-edge.graph-diff-will-return path {
+  stroke: #34d399 !important;
+  stroke-width: 3 !important;
+  stroke-dasharray: 6 5;
+}
+.graph-diff-ghost-node.graph-diff-will-return {
+  border-color: rgba(52, 211, 153, 0.9);
+  background: rgba(52, 211, 153, 0.08);
+}
+.graph-diff-ghost-node.graph-diff-will-return .graph-diff-ghost-badge {
+  background: rgba(52, 211, 153, 0.16);
+  color: #34d399;
 }
 
 .graph-diff-ghost-node {
@@ -4002,8 +4075,8 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   left: 16px;
   top: auto;
   bottom: 72px;
-  width: 340px;
-  max-height: min(70vh, calc(100vh - 140px));
+  width: 384px;
+  max-height: min(78vh, calc(100vh - 140px));
   display: flex;
   flex-direction: column;
   /* 底色/磨砂/阴影交给 .aurora-glass（本规则再写 background 简写会盖掉极光层） */
@@ -4135,22 +4208,125 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   gap: 6px;
   margin-top: 6px;
 }
+/* ===== 差异清单（2026-10-24，2.2/2.3）：底部从一行字换成可点列表 ===== */
 .graph-history-diff {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 12px;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
   border-top: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
-  max-height: 80px;
+  max-height: min(40vh, 340px);
   overflow-y: auto;
-  white-space: pre-wrap;
 }
-.graph-history-diff-summary {
-  flex: 1;
+.graph-history-diff:not(:empty) { display: flex; }
+.graph-history-diff-head {
+  padding: 8px 12px 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.graph-history-diff-title {
+  color: var(--text-primary);
+  font-weight: 600;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.graph-history-diff-counts {
+  display: flex;
+  gap: 8px;
+  font-size: var(--fs-xs);
+}
+.g-hd-count.will-vanish, .g-hd-legend.will-vanish { color: #f87171; }
+.g-hd-count.will-return, .g-hd-legend.will-return { color: #34d399; }
+.g-hd-count.will-change, .g-hd-legend.will-change { color: #fbbf24; }
+.graph-history-diff-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 12px 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  align-items: center;
+}
+.g-hd-ghost-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  padding: 0;
+}
+.g-hd-ghost-toggle:hover { color: var(--accent); }
+.graph-history-diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+}
+.graph-history-diff-item {
+  display: grid;
+  grid-template-columns: 18px 46px minmax(0, 118px) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.graph-history-diff-item:hover { background: var(--btn-active-bg); }
+.graph-history-diff-item.active { border-color: var(--accent); background: var(--btn-active-bg); }
+.graph-history-diff-item:disabled { cursor: default; opacity: 0.85; }
+.graph-history-diff-item .g-hd-icon { font-weight: 800; text-align: center; }
+.graph-history-diff-item.will-vanish .g-hd-icon, .graph-history-diff-item.will-vanish .g-hd-will { color: #f87171; }
+.graph-history-diff-item.will-return .g-hd-icon, .graph-history-diff-item.will-return .g-hd-will { color: #34d399; }
+.graph-history-diff-item.will-change .g-hd-icon, .graph-history-diff-item.will-change .g-hd-will { color: #fbbf24; }
+.graph-history-diff-item .g-hd-label {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-history-diff-item .g-hd-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+}
+.graph-history-diff-empty {
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.graph-history-diff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px 10px;
+  border-top: 1px solid var(--border);
+}
+.graph-history-diff-actions button {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text-primary);
+  border-radius: var(--r-sm);
+  padding: 3px 10px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.graph-history-diff-actions button:hover { background: var(--btn-active-bg); border-color: var(--accent); }
+.graph-history-diff-actions .g-hd-jump { border-color: var(--accent); color: var(--accent); }
+.graph-history-diff-actions .graph-history-exit-preview { margin-left: auto; }
 .graph-history-exit-preview {
   flex: none;
   background: var(--btn-bg);
@@ -4167,6 +4343,53 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* 行内差异计数（+2 −1 ✎3） */
+.graph-history-counts {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* 单槽恢复条（R7/1.2）：常驻面板底部，点「恢复」在两条路之间来回切 */
+.graph-history-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: var(--fs-sm);
+}
+.graph-history-slot[hidden] { display: none; }
+.graph-history-slot-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.graph-history-slot-btn {
+  flex: none;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--white);
+  border-radius: var(--r-sm);
+  padding: 2px 10px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.graph-history-slot-x {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.graph-history-badge.src-ai { background: var(--accent); }
+.graph-history-settle { margin-left: auto; }
 
 /* ===== 节点/消息加粗强调（主题色） ===== */
 .graph-node strong{

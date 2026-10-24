@@ -1383,6 +1383,14 @@ async function runWorkflowNode(nodeId, force = false, fromQueue = false, handoff
     });
     return;
   }
+  // 3.1 事件点（2026-10-24）：生成/重生成在改写内容之前落一个历史点——撤销粒度
+  // ＝这一颗节点的这一轮生成。摘要挂在「当前状态」行，条目差异由自动投影生成。
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, {
+      source: 'ai',
+      summary: (force ? '重新生成：' : '生成：') + _workflowProgressLabel(node),
+    });
+  }
   await _executeParallelWorkflow([nodeId], force, {
     title: '生成' + _workflowProgressLabel(node),
     handoffTaskId,
@@ -1418,6 +1426,10 @@ async function runWorkflowNodes(nodeIds, force = false, fromQueue = false, hando
       sessionId: anchorSid || undefined,
     });
     return true;
+  }
+  // 3.1 事件点：一组节点的重生成同样一整次入栈
+  if (typeof _pushGraphUndo === 'function') {
+    _pushGraphUndo(false, { source: 'ai', summary: '重新生成 ' + ids.length + ' 个节点' });
   }
   await _executeParallelWorkflow(ids, !!force, { title: '生成 ' + ids.length + ' 个节点', handoffTaskId });
   return true;

@@ -469,6 +469,10 @@
     window.addEventListener('beforeunload', () => {
       // 画布状态本地写是防抖的（150ms），卸载前同步冲刷——localStorage 同步写在卸载阶段仍有效
       _flushGraphStateLocalSave();
+      // 2（2026-10-24 退出结算）：正常关闭只写「干净退出」标记，下次打开时才结算
+      // （清理点刻意不放在卸载阶段——崩溃/强杀不触发，退出清＝白清，见 session.js
+      // 既有拍板）。标记只读本地存档，不发网络；只读查阅态内部自行跳过。
+      if (typeof window.markGraphHistoryCleanExit === 'function') window.markGraphHistoryCleanExit();
       // 只读查阅（P3）：查阅态绝不向服务端回写——此时冲刷的全是对方的会话数据，
       // 且 sendBeacon 不经 fetch 包装、服务端兜底闸门也拦不住，必须在此掐断
       if (phyIsReadonly()) return;
@@ -1931,6 +1935,11 @@
       updateDataStats();
       // T348：启动清理点（服务端可达时才生效；首次启动的清理在 _syncFromServer 尾部）
       pruneLocalSessionCaches('startup');
+      // 2026-10-24 退出结算：上次正常退出＋指纹对得上才清（F5/强杀/多标签不动）。
+      // 放在图渲染之后：结算可能要先把「停在历史版本」的视图拉回最新再清。
+      if (typeof window.settleGraphHistoryOnOpen === 'function') {
+        Promise.resolve(window.settleGraphHistoryOnOpen()).catch(() => {});
+      }
     }
 
 

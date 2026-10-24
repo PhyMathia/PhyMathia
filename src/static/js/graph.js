@@ -308,6 +308,34 @@ let graphHistoryDiffSummary = "";
 let graphPendingLiveMeta = null;
 let graphHistoryTimer = null;
 let graphHistoryLastSignature = "";
+// ===== 2026-10-24 修改历史增强（R1–R9，见 docs/修改历史与回退-诊断与计划-2026-10-24.md）=====
+// 单槽恢复（R7）：在时间旅行位落真编辑＝要截断「未来」。截断前把被放弃的尾巴
+// （游标之后的条目＋「最新」锚点）整段存进这一格；新的一次截断覆盖旧的，最多
+// GRAPH_HISTORY_SLOT_MAX 步。槽里只有一条路径，来回切不会长成树。结构：
+// {sessionId, baseIndex, entries:[{state,messages,meta}], at}——entries 末条即那条
+// 路的端点（切回去时它成为当前状态）。接不回去（改了分叉点之前）时整格作废。
+let graphHistorySlot = null;
+const GRAPH_HISTORY_SLOT_MAX = 5;
+// 退出结算（§6）：正常关闭/刷新只写标记，下次打开时结算。标记键走 localStorage
+// 垫片（多账号自动隔离），只记「条数＋末条时间戳＋游标」的轻量指纹，卸载期不算全量哈希。
+const GRAPH_HISTORY_EXIT_KEY = "phymathia_graph_history_exit_";
+const GRAPH_HISTORY_STALE_SETTLE_MS = 12 * 3600 * 1000;
+let graphHistorySavedAt = 0;        // 本地信封落盘时间（12h 兜底结算用）
+// 面板 800ms 刷新的脏标记（T219/R9）：只有图真被写过才重算「当前状态」与它跟最后
+// 一条的差异；打开面板先算一次。没有它，面板常开时每 800ms 做一次全图深比较。
+let graphHistoryLiveDirty = true;
+let graphHistoryLiveMetaCache = null;
+let graphHistoryLastScrollCursor = -1;
+// 对比清单与导航（R4）：当前对比的条目、清单、聚焦序号。
+let graphHistoryDiffModel = null;
+// 幽灵显隐（2.4）：旧坐标可能误导，允许一键收起「回到这一步会回来」的虚影。
+let graphHistoryGhostVisible = true;
+// 投影构建期间屏蔽存盘副作用（_buildGraphData 派生苏格拉底节点后会顺手存盘）。
+let _graphProjQuiet = 0;
+// 时间旅行位的「待截断」标记（1.2）：推送发生在编辑之前，所以第一次编辑的推送与
+// 「什么都没改的推送」长得一模一样，不能当场截断未来的重做链。这里先挂个标记，
+// 等真正的图状态写到（_saveGraphState，内容确实变了）再截断＋存槽（立即生效）。
+let graphHistoryPendingTruncate = false;
 let graphSearchOpen = false;
 let graphSearchScope = 'current';
 let graphSearchQuery = '';
@@ -352,6 +380,25 @@ function _adoptGraphHistoryPayload(parsed) {
     const l = (isEnv && parsed.l) ? _graphHistoryHydrate([parsed.l]) : null;
     graphHistoryLive = (l && l[0]) || null;
   }
+  graphHistorySavedAt = (isEnv && Number(parsed.t)) ? Number(parsed.t) : 0;
+  // 单槽恢复随信封走（可选字段 s）：分隔点越界（本地被截断/换设备）就整格丢弃，
+  // 绝不把接不上的尾巴硬接回来。
+  graphHistorySlot = null;
+  if (isEnv && parsed.s && ((Array.isArray(parsed.s.e) && parsed.s.e.length) || (parsed.s.l && parsed.s.l.state))) {
+    const slotEntries = Array.isArray(parsed.s.e) ? _graphHistoryHydrate(parsed.s.e) : [];
+    const slotLive = parsed.s.l ? _graphHistoryHydrate([parsed.s.l])[0] || null : null;
+    const base = Number(parsed.s.b);
+    if ((slotEntries.length || (slotLive && slotLive.state)) && Number.isFinite(base) && base >= 0 && base < entries.length) {
+      graphHistorySlot = {
+        sessionId: _currentSessionId(),
+        baseIndex: base,
+        entries: slotEntries.slice(-GRAPH_HISTORY_SLOT_MAX),
+        live: slotLive,
+        at: Number(parsed.s.at) || 0,
+      };
+    }
+  }
+  graphHistoryLiveDirty = true;
   return true;
 }
 
@@ -363,10 +410,14 @@ function _ensureGraphHistory() {
   graphUndoStack = [];
   graphHistoryCursor = 0;
   graphHistoryLive = null;
+  graphHistorySlot = null;
+  graphHistorySavedAt = 0;
+  graphHistoryPendingTruncate = false;
+  graphHistoryLiveDirty = true;
   try {
     const raw = localStorage.getItem(_graphHistoryKey(sid));
     if (raw) _adoptGraphHistoryPayload(JSON.parse(raw));
-  } catch (e) { graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; }
+  } catch (e) { graphUndoStack = []; graphHistoryCursor = 0; graphHistoryLive = null; graphHistorySlot = null; }
   _upgradeGraphHistoryFromServer(sid);
 }
 
@@ -503,8 +554,29 @@ function _persistGraphHistory() {
     liveRow = { sessionId: graphHistoryLive.sessionId, state: graphHistoryLive.state, meta: graphHistoryLive.meta || null };
     if (graphHistoryLive.messages) liveRow.messages = graphHistoryLive.messages;
   }
-  const envelope = { v: 2, e: slim, c: Math.min(graphHistoryCursor, slim.length), l: liveRow };
+  // 单槽恢复（2026-10-24 R7）：槽按全量快照存（至多 5 步），不参与 checkpointRef/
+  // msgDelta 链——它是另一条路的完整尾巴，借主链的引用会把链剪断。体量超限时先扔槽
+  // （它是可再生的救生圈，主历史才是本体），再按既有口径砍条目。
+  let slotRow = null;
+  if (graphHistorySlot && ((graphHistorySlot.entries && graphHistorySlot.entries.length) || (graphHistorySlot.live && graphHistorySlot.live.state))) {
+    const slotEntryRow = function (x) {
+      const row = { sessionId: x.sessionId, state: x.state, meta: x.meta || null };
+      if (x.messages) row.messages = x.messages;
+      return row;
+    };
+    slotRow = {
+      b: graphHistorySlot.baseIndex,
+      at: graphHistorySlot.at || 0,
+      e: (graphHistorySlot.entries || []).map(slotEntryRow),
+      l: (graphHistorySlot.live && graphHistorySlot.live.state) ? slotEntryRow(graphHistorySlot.live) : null,
+    };
+  }
+  const envelope = { v: 2, e: slim, c: Math.min(graphHistoryCursor, slim.length), l: liveRow, t: Date.now(), s: slotRow };
   let s = JSON.stringify(envelope);
+  if (s.length > GRAPH_HISTORY_STORAGE_MAX && envelope.s) {
+    envelope.s = null;
+    s = JSON.stringify(envelope);
+  }
   if (s.length > GRAPH_HISTORY_STORAGE_MAX) {
     const per = Math.max(1, Math.floor(s.length / (slim.length || 1)));
     const keep = Math.max(5, Math.floor(GRAPH_HISTORY_STORAGE_MAX / per));
@@ -512,8 +584,14 @@ function _persistGraphHistory() {
     const cut = Math.max(0, slim.length - keep);
     envelope.e = slim.slice(cut);
     envelope.c = Math.max(0, envelope.c - cut);
+    // 槽的分叉点随头部一起左移；落到被砍掉的区段＝接不回去，整格丢弃
+    if (envelope.s) {
+      envelope.s.b = Number(envelope.s.b) - cut;
+      if (envelope.s.b < 0) envelope.s = null;
+    }
     s = JSON.stringify(envelope);
   }
+  graphHistorySavedAt = envelope.t;
   safeLocalStorageSet(_graphHistoryKey(sid), s);
   // 硬盘保险：镜像到服务端 KV——KV 拆分后每会话一文件，写它很便宜。本地配额满
   // 或被截断时服务端是更宽的存档窗口（体量治理见下节：最新窗口全量＋更老占位），
@@ -550,7 +628,14 @@ function _graphHistoryMirrorEnvelopeSlim(envelope) {
   if (e === envelope.e) return envelope;
   const cut = (envelope.e.length > _GRAPH_HISTORY_MIRROR_KEEP)
     ? envelope.e.length - _GRAPH_HISTORY_MIRROR_KEEP : 0;
-  return { v: 2, e: e, c: Math.max(0, (Number(envelope.c) || 0) - cut), l: envelope.l || null };
+  // 单槽恢复的分叉点同样重定基；落进 pruned 区段（接不回去）就整格丢弃——T212
+  // 「只减重、绝不删条目」只管条目数组，槽是可选救生圈。
+  let slot = envelope.s || null;
+  if (slot) {
+    slot = { b: Number(slot.b) - cut, at: slot.at || 0, e: slot.e, l: slot.l || null };
+    if (slot.b < 0) slot = null;
+  }
+  return { v: 2, e: e, c: Math.max(0, (Number(envelope.c) || 0) - cut), l: envelope.l || null, t: envelope.t || 0, s: slot };
 }
 
 let _graphHistoryMirrorTimer = null;
@@ -616,25 +701,28 @@ function discardGraphHistoryForSession(sid) {
   }
   if (_graphHistoryMirrorTimer) { clearTimeout(_graphHistoryMirrorTimer); _graphHistoryMirrorTimer = null; }
   _graphHistoryWipeEpoch++;
+  // 先删本地键再清内存：清空后的面板刷新会走 _ensureGraphHistory，此时栈已空而键还在，
+  // 会被当场从 localStorage 重新装载回来（2026-10-24 定稿清空实踩）。
+  try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断清空 */ }
+  try { localStorage.removeItem(GRAPH_HISTORY_EXIT_KEY + sid); } catch (e) { /* 同上 */ }
   if (graphHistorySession === sid) {
     graphUndoStack = [];
     graphHistoryCursor = 0;
     graphHistoryLive = null;
+    graphHistorySlot = null;
+    graphPendingLiveMeta = null;
+    graphHistoryPendingTruncate = false;
+    graphHistoryLiveDirty = true;
     if (typeof _refreshGraphHistoryPanel === "function") _refreshGraphHistoryPanel();
   }
-  try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 配额异常不阻断清空 */ }
   return fetch('/api/kv/' + encodeURIComponent('graph_history:' + sid), {
     method: 'DELETE',
-    signal: AbortSignal.timeout(10000),
+    // 旧运行时/测试沙箱没有 AbortSignal.timeout：缺了也不该让清空链在这里断掉
+    signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
+      ? AbortSignal.timeout(10000) : undefined,
   }).catch(function () { /* 镜像删除失败静默：清空主流程不被它卡住 */ });
 }
 window.discardGraphHistoryForSession = discardGraphHistoryForSession;
-
-function _graphVersionNodeIndex(state) {
-  const idx = {};
-  (state && state.customNodes || []).forEach(function (n, i) { idx[String(n.id)] = { index: i, node: n }; });
-  return idx;
-}
 
 function _graphEdgeKeyOf(e) {
   // removedEdges 里存的是 _edgeKey 产出的完整字符串（from:port->to:port），
@@ -645,80 +733,285 @@ function _graphEdgeKeyOf(e) {
   return _edgeKey(e || {});
 }
 
+// ===== 内容投影差异（2026-10-24 R2/R3/R5）=====
+// 旧口径拿整颗节点 JSON 逐字比：拖动（x/y）、自动整理、生成中的 busy 都会变成
+// 「修改节点」，真正的正文改动被噪声淹没；而且只比 state.customNodes，消息派生的
+// 回答/模块节点根本不参与（R3）。新口径先把一个版本投影成「用户读得懂的内容」：
+//   节点＝id / 类型 / 可读名 / 正文前 64 字 / 内容签名（排除坐标、尺寸、忙闲、时间戳）
+//   边＝解析后的边键集合；分组与端口各压一串签名
+// 几何差异单独计「仅位置变化」，不进主清单。旧条目没有投影也没有消息时降级为
+// 「只比自定义节点」并打 degraded 标——不迁移、不报错（§8 旧数据兼容）。
+const GRAPH_PROJ_VIEW_KEYS = {
+  x: 1, y: 1, w: 1, h: 1, vx: 1, vy: 1, customWidth: 1, customHeight: 1,
+  minimized: 1, pinned: 1, fixedX: 1, fixedY: 1, busy: 1, status: 1,
+  depth: 1, targetAngle: 1, angle: 1, generatedAt: 1, analysisHash: 1, inputHash: 1,
+  id: 1, timestamp: 1, messageIndex: 1, _patchSig: 1, _proj: 1, nodeSigs: 1,
+};
+const GRAPH_PROJ_PREVIEW_MAX = 64;
+
+function _graphProjHash(text) {
+  let hash = 2166136261;
+  const source = String(text == null ? "" : text);
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function _graphShorten(text, max) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max) + "…";
+}
+
+// 节点可读名（R9）：显式 label/title → 模块中文名 → 正文/摘要前 22 字 → 类型名。
+// 提问/回答节点的 label 常为空，旧口径会吐出「节点user-custom-1697…」这种不可读 ID。
+const GRAPH_PROJ_KIND_LABELS = {
+  user: "提问", answer: "回答", module: "模块", note: "我的总结", summary: "AI 总结",
+  human_note: "我的理解", source: "输入", hub: "汇聚", junction: "中转", blank: "AI 节点",
+  relation: "联系", draft: "草稿", ai_eval: "评审建议",
+};
+
 function _graphNodeLabelOf(node, id) {
-  return String((node && (node.label || node.title || node.summary)) || "") || "节点" + String(id || "").slice(0, 12);
+  if (!node) return "节点" + String(id || "").slice(0, 8);
+  const explicit = String(node.label || node.title || "").trim();
+  if (explicit) return _graphShorten(explicit, 22);
+  if (node.kind === "module" && node.moduleKey && typeof GRAPH_MODULE_META !== "undefined") {
+    const meta = GRAPH_MODULE_META[node.moduleKey];
+    if (meta && meta.label) return String(meta.label);
+  }
+  const text = String(node.content || node.analysis || node.summary || "")
+    .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (text) return _graphShorten(text, 22);
+  return GRAPH_PROJ_KIND_LABELS[node.kind] || ("节点" + String(id || "").slice(0, 8));
 }
 
 function _graphShortList(items) {
-  const arr = items.slice(0, 5);
+  const arr = items.slice(0, 5).map(function (x) { return _graphShorten(x, 12); });
   let s = "「" + arr.join("」「") + "」";
   if (items.length > 5) s += " 等" + items.length + "个";
   return s;
 }
 
-function _graphDiffSummary(diff) {
+// 内容签名：键排序后逐字段序列化，排除纯视图字段；正文另外显式并入（消息派生节点的
+// 正文不落在 node.content 上，得由 _nodeContent 算出来再传进来）。
+function _graphNodeContentSig(node, text) {
+  if (!node) return "";
   const parts = [];
-  const created = (diff.ops || []).filter(function (o) { return o.op === "create_node"; }).map(function (o) { return o.label || o.id; });
-  const updated = (diff.ops || []).filter(function (o) { return o.op === "update_node"; }).map(function (o) { return o.label || o.id; });
-  const deleted = (diff.ops || []).filter(function (o) { return o.op === "delete_node"; }).map(function (o) { return o.label || o.id; });
-  const addEdges = (diff.ops || []).filter(function (o) { return o.op === "add_edge"; }).length;
-  const remEdges = (diff.ops || []).filter(function (o) { return o.op === "remove_edge"; }).length;
+  const keys = Object.keys(node).sort();
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (GRAPH_PROJ_VIEW_KEYS[key]) continue;
+    let value = "";
+    try { const json = JSON.stringify(node[key]); value = json === undefined ? "" : json; } catch (e) { value = ""; }
+    parts.push(key + "=" + value);
+  }
+  if (text != null) parts.push("__content=" + String(text));
+  return _graphProjHash(parts.join("|"));
+}
+
+function _graphProjPreview(text) {
+  let s = String(text || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (s.length > GRAPH_PROJ_PREVIEW_MAX) s = s.slice(0, GRAPH_PROJ_PREVIEW_MAX) + "…";
+  return s;
+}
+
+// 消息派生节点的正文：口径与画布展示一致（_nodeContent），但 overrides 取快照自己的
+// state——旧实现读 _graphState() 会拿当前画布的覆盖去比历史版本，比出来的差异是假的。
+function _graphProjNodeText(node, message, state) {
+  if (message && typeof _nodeContent === "function") {
+    try { return String(_nodeContent(message, node, state) || ""); } catch (e) { return ""; }
+  }
+  return String((node && (node.content || node.analysis || node.summary)) || "");
+}
+
+function _graphProjectionOf(state, messages) {
+  const safeState = (state && typeof state === "object") ? state : {};
+  // _buildGraphData 会往 state.customNodes 里补自动派生的苏格拉底节点并顺手存盘
+  // （渲染路径的既有行为）。投影只读：传浅拷贝，存盘用 _graphProjQuiet 掐掉。
+  const clone = Object.assign({}, safeState);
+  clone.customNodes = Array.isArray(safeState.customNodes) ? safeState.customNodes.map(function (n) { return n; }) : [];
+  clone.connections = Array.isArray(safeState.connections) ? safeState.connections.slice() : [];
+  const msgs = Array.isArray(messages) ? messages : [];
+  let data = { nodes: [], edges: [], nodeById: {} };
+  _graphProjQuiet++;
+  try { data = _buildGraphData(msgs, clone); }
+  catch (e) { data = { nodes: [], edges: [], nodeById: {} }; }
+  finally { _graphProjQuiet--; }
+  const nodes = {};
+  (data.nodes || []).forEach(function (n) {
+    if (!n || n.id == null) return;
+    const id = String(n.id);
+    const msg = (n.messageIndex >= 0 && msgs[n.messageIndex]) ? msgs[n.messageIndex] : null;
+    const text = _graphProjNodeText(n, msg, clone);
+    nodes[id] = {
+      id: id,
+      k: String(n.kind || ""),
+      l: _graphNodeLabelOf(n, id),
+      p: _graphProjPreview(text || n.summary || n.label || ""),
+      s: _graphNodeContentSig(n, text),
+      v: n.hidden ? 1 : 0,
+      m: n.messageIndex >= 0 ? 1 : 0,
+      x: Math.round(Number(n.x) || 0),
+      y: Math.round(Number(n.y) || 0),
+    };
+  });
+  const edges = [];
+  try {
+    _resolveGraphEdges(clone, data.edges || [], data.nodeById || {}).forEach(function (e) {
+      const key = _graphEdgeKeyOf(e);
+      if (key && edges.indexOf(key) < 0) edges.push(key);
+    });
+  } catch (e) { /* 旧脏数据：边集合留空，节点差异照报 */ }
+  edges.sort();
+  const groups = (Array.isArray(clone.groups) ? clone.groups : []).map(function (g) {
+    return [String(g.id || ""), String(g.name || ""), (Array.isArray(g.nodeIds) ? g.nodeIds.map(String).sort() : []), String(g.color || "")];
+  });
+  return {
+    n: nodes,
+    e: edges,
+    g: JSON.stringify(groups),
+    p: JSON.stringify([clone.portCounts || {}, clone.inputPortCounts || {}]),
+  };
+}
+
+function _graphVersionProjection(entry) {
+  if (!entry) return null;
+  if (entry.meta && entry.meta.proj) return entry.meta.proj;
+  if (entry._proj) return entry._proj;
+  let proj;
+  if (Array.isArray(entry.messages)) {
+    proj = _graphProjectionOf(entry.state, entry.messages);
+  } else {
+    // 本功能上线前落盘的旧条目：没有投影、通常也没有消息——只能比自定义节点。
+    proj = _graphProjectionOf(entry.state, []);
+    proj.degraded = true;
+  }
+  entry._proj = proj;
+  return proj;
+}
+
+function _graphVersionProjectionOf(obj) {
+  if (!obj) return null;
+  if (obj.meta && obj.meta.proj) return obj.meta.proj;
+  if (obj.state) return _graphVersionProjection(obj);
+  return _graphProjectionOf(obj, []);
+}
+
+function _graphLiveProjection() {
+  return _graphProjectionOf(_graphState(), typeof _getChatHistory === "function" ? _getChatHistory() : []);
+}
+
+// prev → next 的差异。ops 保持旧词表（create_node/delete_node/update_node/add_edge/
+// remove_edge），另加 will 字段说明「回到 prev 会怎样」：vanish=会消失、return=会回来、
+// change=会改写——面板与描边只认 will，不再让用户自己换算方向（R5）。
+function _graphDiffFromProjections(prevProj, nextProj) {
+  const a = prevProj || { n: {}, e: [], g: "", p: "" };
+  const b = nextProj || { n: {}, e: [], g: "", p: "" };
+  const aNodes = a.n || {};
+  const bNodes = b.n || {};
+  const degraded = !!(a.degraded || b.degraded);
+  const ops = [];
+  let layoutChanges = 0;
+  const ids = {};
+  Object.keys(aNodes).forEach(function (id) { ids[id] = true; });
+  Object.keys(bNodes).forEach(function (id) { ids[id] = true; });
+  Object.keys(ids).forEach(function (id) {
+    const pa = aNodes[id];
+    const pb = bNodes[id];
+    // 降级对比：派生节点在无消息的一侧必然缺席，别把它报成新增/删除。
+    if (degraded && ((pa && pa.m) || (pb && pb.m))) return;
+    if (!pa) {
+      ops.push({ op: "create_node", id: id, label: pb.l, kind: pb.k, preview: pb.p, will: "vanish" });
+      return;
+    }
+    if (!pb) {
+      ops.push({ op: "delete_node", id: id, label: pa.l, kind: pa.k, preview: pa.p, will: "return" });
+      return;
+    }
+    if (pa.s !== pb.s) {
+      ops.push({ op: "update_node", id: id, label: pb.l || pa.l, kind: pb.k || pa.k, before: pa.p, after: pb.p, will: "change" });
+    } else if (pa.x !== pb.x || pa.y !== pb.y) {
+      layoutChanges++;
+    }
+  });
+  const aEdges = {};
+  (a.e || []).forEach(function (k) { aEdges[k] = true; });
+  const bEdges = {};
+  (b.e || []).forEach(function (k) { bEdges[k] = true; });
+  Object.keys(bEdges).forEach(function (k) { if (!aEdges[k]) ops.push({ op: "add_edge", edge_key: k, will: "vanish" }); });
+  Object.keys(aEdges).forEach(function (k) { if (!bEdges[k]) ops.push({ op: "remove_edge", edge_key: k, will: "return" }); });
+  if ((a.g || "") !== (b.g || "")) ops.push({ op: "update_groups", label: "分组", will: "change" });
+  if ((a.p || "") !== (b.p || "")) ops.push({ op: "update_ports", label: "端口", will: "change" });
+  const counts = _graphDiffCounts(ops);
+  return {
+    ops: ops,
+    counts: counts,
+    layoutOnly: !ops.length && layoutChanges > 0,
+    layoutChanges: layoutChanges,
+    degraded: degraded,
+    newDeleted: ops.filter(function (o) { return o.op === "delete_node"; }).map(function (o) { return o.id; }),
+    unDeleted: ops.filter(function (o) { return o.op === "create_node"; }).map(function (o) { return o.id; }),
+    summary: _graphDiffSummary({ ops: ops, layoutChanges: layoutChanges, degraded: degraded }),
+  };
+}
+
+function _graphDiffCounts(ops) {
+  const counts = { vanish: 0, ret: 0, change: 0, addEdge: 0, remEdge: 0 };
+  (ops || []).forEach(function (o) {
+    if (o.op === "create_node") counts.vanish++;
+    else if (o.op === "delete_node") counts.ret++;
+    else if (o.op === "update_node" || o.op === "update_groups" || o.op === "update_ports") counts.change++;
+    else if (o.op === "add_edge") counts.addEdge++;
+    else if (o.op === "remove_edge") counts.remEdge++;
+  });
+  return counts;
+}
+
+function _graphDiffCountText(counts) {
+  if (!counts) return "";
+  const bits = [];
+  if (counts.vanish) bits.push("−" + counts.vanish);
+  if (counts.ret) bits.push("+" + counts.ret);
+  if (counts.change) bits.push("✎" + counts.change);
+  if (counts.addEdge) bits.push("连线−" + counts.addEdge);
+  if (counts.remEdge) bits.push("连线+" + counts.remEdge);
+  return bits.join(" ");
+}
+
+function _graphDiffSummary(diff) {
+  const ops = diff.ops || [];
+  const created = ops.filter(function (o) { return o.op === "create_node"; }).map(function (o) { return o.label || o.id; });
+  const updated = ops.filter(function (o) { return o.op === "update_node"; }).map(function (o) { return o.label || o.id; });
+  const deleted = ops.filter(function (o) { return o.op === "delete_node"; }).map(function (o) { return o.label || o.id; });
+  const addEdges = ops.filter(function (o) { return o.op === "add_edge"; }).length;
+  const remEdges = ops.filter(function (o) { return o.op === "remove_edge"; }).length;
+  const groups = ops.some(function (o) { return o.op === "update_groups"; });
+  const ports = ops.some(function (o) { return o.op === "update_ports"; });
+  const parts = [];
   if (created.length) parts.push("新增节点" + _graphShortList(created));
   if (deleted.length) parts.push("删除节点" + _graphShortList(deleted));
-  if (updated.length) parts.push("修改节点" + _graphShortList(updated));
-  if (diff.newDeleted && diff.newDeleted.length) parts.push("隐藏节点" + _graphShortList(diff.newDeleted));
-  if (diff.unDeleted && diff.unDeleted.length) parts.push("恢复节点" + _graphShortList(diff.unDeleted));
+  if (updated.length) parts.push("改写节点" + _graphShortList(updated));
   if (addEdges) parts.push("新增连线" + addEdges + "条");
   if (remEdges) parts.push("删除连线" + remEdges + "条");
-  return parts.join("；") || "修改了图";
+  if (groups) parts.push("分组变化");
+  if (ports) parts.push("端口变化");
+  if (parts.length) return parts.join("；");
+  if (diff.layoutChanges) return "仅位置变化";
+  return "修改了图";
 }
 
 function _diffGraphStates(prev, next) {
-  const layoutOnly = { value: true };
-  const ops = [];
-  const prevNodes = _graphVersionNodeIndex(prev);
-  const nextNodes = _graphVersionNodeIndex(next);
-  const prevIds = Object.keys(prevNodes);
-  const nextIds = Object.keys(nextNodes);
-  const seen = {};
-  nextIds.forEach(function (id) {
-    seen[id] = true;
-    const pn = prevNodes[id];
-    const nn = nextNodes[id];
-    if (!pn) {
-      layoutOnly.value = false;
-      ops.push({ op: "create_node", id: id, label: _graphNodeLabelOf(nn.node, id) });
-    } else if (JSON.stringify(pn.node) !== JSON.stringify(nn.node)) {
-      layoutOnly.value = false;
-      ops.push({ op: "update_node", id: id, label: _graphNodeLabelOf(nn.node, id) });
-    }
-  });
-  prevIds.forEach(function (id) {
-    if (seen[id]) return;
-    layoutOnly.value = false;
-    ops.push({ op: "delete_node", id: id, label: _graphNodeLabelOf(prevNodes[id].node, id) });
-  });
-  const prevDel = Object.keys((prev && prev.harnessDeleted) || {});
-  const nextDel = Object.keys((next && next.harnessDeleted) || {});
-  const newDeleted = nextDel.filter(function (k) { return prevDel.indexOf(k) < 0; });
-  const unDeleted = prevDel.filter(function (k) { return nextDel.indexOf(k) < 0; });
-  if (newDeleted.length || unDeleted.length) layoutOnly.value = false;
-  const prevRem = {};
-  ((prev && prev.removedEdges) || []).forEach(function (e) { prevRem[_graphEdgeKeyOf(e)] = true; });
-  const nextRem = {};
-  ((next && next.removedEdges) || []).forEach(function (e) { nextRem[_graphEdgeKeyOf(e)] = true; });
-  Object.keys(nextRem).forEach(function (k) { if (!prevRem[k]) { layoutOnly.value = false; ops.push({ op: "remove_edge", edge_key: k }); } });
-  Object.keys(prevRem).forEach(function (k) { if (!nextRem[k]) { layoutOnly.value = false; ops.push({ op: "add_edge", edge_key: k }); } });
-  const prevConn = {};
-  ((prev && prev.connections) || []).forEach(function (e) { prevConn[_graphEdgeKeyOf(e)] = true; });
-  const nextConn = {};
-  ((next && next.connections) || []).forEach(function (e) { nextConn[_graphEdgeKeyOf(e)] = true; });
-  Object.keys(nextConn).forEach(function (k) { if (!prevConn[k]) { layoutOnly.value = false; ops.push({ op: "add_edge", edge_key: k }); } });
-  Object.keys(prevConn).forEach(function (k) { if (!nextConn[k]) { layoutOnly.value = false; ops.push({ op: "remove_edge", edge_key: k }); } });
-  ["groups", "portCounts", "inputPortCounts"].forEach(function (f) {
-    if (JSON.stringify((prev || {})[f] || null) !== JSON.stringify((next || {})[f] || null)) layoutOnly.value = false;
-  });
-  return { layoutOnly: layoutOnly.value, ops: ops, newDeleted: newDeleted, unDeleted: unDeleted, summary: _graphDiffSummary({ ops: ops, newDeleted: newDeleted, unDeleted: unDeleted }) };
+  return _graphDiffFromProjections(_graphProjectionOf(prev, []), _graphProjectionOf(next, []));
+}
+
+function _diffGraphVersions(prevEntry, nextEntry) {
+  return _graphDiffFromProjections(_graphVersionProjectionOf(prevEntry), _graphVersionProjectionOf(nextEntry));
 }
 
 function _graphState() {
@@ -745,10 +1038,91 @@ function _graphState() {
   };
 }
 
+// 时间旅行位的第一笔真编辑（1.2/R7）：推送早退后等这次存盘来确认「确实改了内容」，
+// 当场截断未来存进单槽——用户改完立刻看到「原来的第 X–Y 步已存起来」。
+function _graphHistoryTruncateOnEdit(state) {
+  if (!graphHistoryPendingTruncate) return;
+  if (graphHistoryCursor >= graphUndoStack.length) { graphHistoryPendingTruncate = false; return; }
+  const atCursor = graphUndoStack[graphHistoryCursor];
+  if (!atCursor) { graphHistoryPendingTruncate = false; return; }
+  let diff = null;
+  try { diff = _graphDiffFromProjections(_graphVersionProjection(atCursor), _graphProjectionOf(state, _getChatHistory())); }
+  catch (e) { return; }
+  if (!diff || !diff.ops.length) return; // 只挪位置/缩放：不算编辑，未来原样保留
+  graphHistoryPendingTruncate = false;
+  const rows = _graphHistorySlotSaveFuture(graphHistoryCursor);
+  graphUndoStack = graphUndoStack.slice(0, graphHistoryCursor + 1);
+  graphHistoryLive = null;
+  graphHistoryCursor = graphUndoStack.length;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryLastSignature = "";
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+  if (rows) _showGraphHistorySlotNotice(rows);
+}
+
 function _saveGraphState(state, opts) {
+  if (_graphProjQuiet > 0) return; // 投影构建只读：派生节点的存盘副作用掐掉
+  if (graphHistoryPendingTruncate) _graphHistoryTruncateOnEdit(state);
+  graphHistoryLiveDirty = true;    // 图真被写过：面板的「当前状态」摘要下次刷新重算
   if (typeof window.saveGraphState === "function") {
     window.saveGraphState(window.getCurrentSessionId ? window.getCurrentSessionId() : "", state, opts);
   }
+}
+
+// 单槽恢复（1.2）：把「游标之后的未来」整段存进槽。返回被存起来的行数（0＝无未来）。
+// 作废规则：分叉点在游标之前（更早的地方又改了一笔）＝那条尾巴接不回去，整格丢弃；
+// 同一分叉点的截断＝新的一次丢弃，覆盖旧槽（永远只有一条旁路，不会长成树）。
+function _graphSnapshotSame(a, b) {
+  if (!a || !b) return false;
+  // 空消息数组与 null 等价：_captureGraphLive 抓的是 getChatHistory()（可能是 []），
+  // 条目没带消息时是 null——不归一化会把同一条路误判成两条。
+  const msgs = function (x) { return (Array.isArray(x) && x.length) ? x : null; };
+  return JSON.stringify(a.state || null) === JSON.stringify(b.state || null)
+    && JSON.stringify(msgs(a.messages)) === JSON.stringify(msgs(b.messages));
+}
+
+function _graphHistorySlotSaveFuture(baseIndex) {
+  const future = graphUndoStack.slice(baseIndex + 1);
+  const anchor = (graphHistoryLive && graphHistoryLive.state) ? graphHistoryLive : null;
+  if (!future.length && !anchor) return 0;
+  if (graphHistorySlot && graphHistorySlot.baseIndex > baseIndex) graphHistorySlot = null;
+  // 端点单独存 live（与主历史「条目＝过去、当前状态不入栈」同一口径）：
+  // 若锚点与未来末条相同就去重；没有锚点则把末条提为端点。这样切回去之后
+  // Ctrl+Z 退到的是倒数第二个状态，不会原地空转。
+  let entries = future.slice();
+  let live = anchor;
+  if (live && entries.length && _graphSnapshotSame(entries[entries.length - 1], live)) entries.pop();
+  else if (!live && entries.length) live = entries.pop();
+  const total = entries.length + (live ? 1 : 0);
+  if (!total) return 0;
+  const keepEntries = Math.max(0, GRAPH_HISTORY_SLOT_MAX - (live ? 1 : 0));
+  graphHistorySlot = {
+    sessionId: _currentSessionId(),
+    baseIndex: baseIndex,
+    entries: entries.slice(-keepEntries),
+    live: live,
+    at: Date.now(),
+  };
+  return total;
+}
+
+function _graphHistorySlotStepRange(slot) {
+  const start = (slot && slot.baseIndex != null ? slot.baseIndex : 0) + 2; // 行号＝下标+1，未来首行
+  const count = ((slot && slot.entries ? slot.entries.length : 0) + ((slot && slot.live && slot.live.state) ? 1 : 0)) || 1;
+  return { start: start, end: start + Math.max(0, count - 1) };
+}
+
+function _captureGraphLiveSnapshot() {
+  const st = _graphState();
+  if (!st) return null;
+  return {
+    sessionId: _currentSessionId(),
+    state: JSON.parse(JSON.stringify(st)),
+    messages: typeof window.getChatHistory === "function" ? JSON.parse(JSON.stringify(window.getChatHistory())) : null,
+    meta: { source: "now", summary: "另一条路", ts: Date.now(), pushedAt: Date.now() },
+  };
 }
 
 function _pushGraphUndo(withMessages, meta) {
@@ -756,23 +1130,35 @@ function _pushGraphUndo(withMessages, meta) {
   const state = _graphState();
   if (!state) return;
   _ensureGraphHistory();
-  graphPendingLiveMeta = null;
   const sid = _currentSessionId();
+  const now = Date.now();
+  const explicitMeta = (meta && typeof meta === "object" && (meta.summary || meta.source))
+    ? { source: meta.source || "user", summary: String(meta.summary || "修改"), ts: now, pushedAt: now }
+    : null;
+  const carried = graphPendingLiveMeta; // 上一个动作（提问/重生成/Φ）的描述
+  // 本次动作的描述挂在「当前状态」行（3.1）：动作才开始，还没形成新版本；条目自己的
+  // 摘要仍由自动差异生成。早退分支也先挂上——点了提问至少当前行能看到「提问：…」。
+  graphPendingLiveMeta = explicitMeta;
   const snapshot = {
     sessionId: sid,
     state: JSON.parse(JSON.stringify(state)),
     messages: null,
     meta: null,
+    _proj: null,
   };
-  if (withMessages && typeof window.getChatHistory === "function") {
-    snapshot.messages = JSON.parse(JSON.stringify(window.getChatHistory()));
-  }
+  const chat = typeof window.getChatHistory === "function" ? window.getChatHistory() : [];
+  if (withMessages) snapshot.messages = JSON.parse(JSON.stringify(chat));
+  // 投影在推送时定格（2.1/R3）：快照只存图状态，消息派生的节点不在里面；此刻消息
+  // 还没被这次编辑改写，正好是快照对应那一版的内容。持久化时随 meta 落盘。
+  snapshot._proj = _graphProjectionOf(snapshot.state, chat);
   const last = graphUndoStack[graphUndoStack.length - 1];
   if (last && last.sessionId && sid && last.sessionId !== sid) {
     graphUndoStack = [];
     graphHistoryCursor = 0;
     graphHistoryLive = null;
+    graphHistorySlot = null;
   }
+  let slotRows = 0;
   // T365 游标在历史中位（时间旅行后落新编辑）：被跳过的「未来」在此截断（业界惯例，
   // 面板会有截断提示）。但无变化／纯布局漂移的推送不算编辑——照旧早退，未来版本
   // 原样保留（与 live 位「值未变不记」同一口径，不许因误触推送白丢重做链）。
@@ -780,9 +1166,14 @@ function _pushGraphUndo(withMessages, meta) {
     const atCursor = graphUndoStack[graphHistoryCursor];
     const ttMessagesSame = JSON.stringify(atCursor.messages || null) === JSON.stringify(snapshot.messages || null);
     const ttStateSame = JSON.stringify(atCursor.state) === JSON.stringify(snapshot.state);
-    if (ttStateSame && ttMessagesSame) return;
-    const ttDiff = _diffGraphStates(atCursor.state, snapshot.state);
-    if (ttDiff.layoutOnly && ttMessagesSame) return;
+    // 推送在编辑之前：此刻 state 与游标条目相同＝还没改。先挂「待截断」，等存盘确认
+    // 内容真的变了再截断（1.2）——不能凭一次无变化推送就白丢重做链（T365 契约）。
+    if (ttStateSame && ttMessagesSame) { graphHistoryPendingTruncate = true; return; }
+    const ttDiff = _diffGraphVersions(atCursor, snapshot);
+    if (ttDiff.layoutOnly && ttMessagesSame) { graphHistoryPendingTruncate = true; return; }
+    graphHistoryPendingTruncate = false;
+    // R7：截断前先把被放弃的未来存进单槽，用户随时能捡回来
+    slotRows = _graphHistorySlotSaveFuture(graphHistoryCursor);
     graphUndoStack = graphUndoStack.slice(0, graphHistoryCursor + 1);
     graphHistoryLive = null;
   }
@@ -798,9 +1189,10 @@ function _pushGraphUndo(withMessages, meta) {
     || JSON.stringify(last2.messages || null) === JSON.stringify(snapshot.messages || null);
   const stateSame = !!last2 && last2.sessionId === snapshot.sessionId
     && JSON.stringify(last2.state) === JSON.stringify(snapshot.state);
+  let diff = null;
   if (last2 && last2.sessionId === snapshot.sessionId) {
     if (stateSame && messagesSame) return;
-    const diff = _diffGraphStates(last2.state, snapshot.state);
+    diff = _diffGraphVersions(last2, snapshot);
     if (diff.layoutOnly && messagesSame) {
       // 布局变化不占版本：直接忽略，保持栈顶为“上次编辑前”的完整快照
       return;
@@ -808,35 +1200,46 @@ function _pushGraphUndo(withMessages, meta) {
   }
   let source = "user";
   let summary = "";
-  if (meta && typeof meta === "object" && (meta.summary || meta.source)) {
-    graphPendingLiveMeta = { source: meta.source || "user", summary: String(meta.summary || "修改"), ts: Date.now() };
-  }
-  // 显式 meta（如 harness 摘要）只作为“即将发生的编辑”描述，供 live 版本展示；
-  // 落库条目的 meta 始终由自动 diff 生成，避免错位。
-  if (!summary) {
-    if (last2) {
-      const diff = _diffGraphStates(last2.state, snapshot.state);
-      if (!messagesSame && !diff.ops.length && meta && meta.summary) {
-        // 纯消息编辑（图状态一字未动，state diff 一个 op 都没有）：摘要只能取自调用点，
-        // 否则条目挂一句「修改了图」，用户在历史面板里看不出改了什么
-        summary = String(meta.summary);
-      } else {
-        summary = diff.summary;
-        source = diff.layoutOnly ? "user" : source;
-      }
+  if (last2) {
+    if (!diff) diff = _diffGraphVersions(last2, snapshot);
+    if (!messagesSame && !diff.ops.length && meta && meta.summary) {
+      // 纯消息编辑（图状态一字未动，投影 diff 一个 op 都没有）：摘要只能取自调用点，
+      // 否则条目挂一句「修改了图」，用户在历史面板里看不出改了什么
+      summary = String(meta.summary);
+      source = (meta && meta.source) || (carried && carried.source) || "user";
     } else {
-      summary = "初始状态";
-      source = "init";
+      summary = diff.summary;
+      // 形成这个状态的上一动作是谁：AI 提问/重生成、Φ 改图、还是手动
+      const prevSource = (carried && carried.source) || "user";
+      if (diff.ops.length && (prevSource === "harness" || prevSource === "ai")) source = prevSource;
+    }
+  } else {
+    summary = "初始状态";
+    source = "init";
+  }
+  // 3.3 时间与摘要对齐：这一版是上一个动作启动时开始形成的，行的时间就用上一个
+  // 动作的启动时间（旧口径用本次推送时间，行时间与行摘要总差一步——R1b）。
+  const formedAt = (last2 && last2.meta && (last2.meta.pushedAt || last2.meta.ts)) || now;
+  snapshot.meta = { source: source, summary: summary, ts: formedAt, pushedAt: now };
+  if (diff) snapshot.meta.counts = diff.counts;
+  snapshot.meta.proj = snapshot._proj;
+  graphUndoStack.push(snapshot);
+  if (graphUndoStack.length > GRAPH_UNDO_LIMIT) {
+    graphUndoStack.shift();
+    if (graphHistorySlot) {
+      graphHistorySlot.baseIndex--;
+      if (graphHistorySlot.baseIndex < 0) graphHistorySlot = null;
     }
   }
-  snapshot.meta = { source: source, summary: summary, ts: Date.now() };
-  graphUndoStack.push(snapshot);
-  if (graphUndoStack.length > GRAPH_UNDO_LIMIT) graphUndoStack.shift();
   // T365：新编辑落定即停在最新位；时间旅行分支截断掉的「未来」到此正式丢弃
   graphHistoryCursor = graphUndoStack.length;
   graphHistoryLive = null;
+  graphHistoryPendingTruncate = false;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
+  if (slotRows) _showGraphHistorySlotNotice(slotRows);
 }
 
 async function _restoreGraphVersion(snapshot) {
@@ -862,6 +1265,64 @@ async function _restoreGraphVersion(snapshot) {
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
 }
 
+// 恢复槽的两条路来回切（1.2 / §5.2）：把当前尾巴（分叉点之后的条目＋此刻的活状态）
+// 写回槽，再把槽里的尾巴接上。切入点只允许停在最新位——停在历史中位时先去最新，
+// 否则「当前路径的端点」不明确。末条即端点，恢复后游标落在最新位。
+async function _restoreGraphHistorySlot() {
+  _ensureGraphHistory();
+  const slot = graphHistorySlot;
+  const slotHasEntries = !!(slot && Array.isArray(slot.entries) && slot.entries.length);
+  const slotHasLive = !!(slot && slot.live && slot.live.state);
+  if (!slot || (!slotHasEntries && !slotHasLive)) return false;
+  const base = Number(slot.baseIndex);
+  if (!(base >= 0 && base < graphUndoStack.length)) {
+    graphHistorySlot = null;
+    _refreshGraphHistoryPanel();
+    if (typeof toastMsg === "function") toastMsg("那条路已经接不回来了（分叉点之前的步骤被改过）");
+    return false;
+  }
+  // 当前路径的尾巴＝分叉点之后的条目；端点（此刻的活状态）单独存，与槽同一口径
+  const tail = graphUndoStack.slice(base + 1);
+  const liveNow = _captureGraphLiveSnapshot();
+  if (liveNow && tail.length && _graphSnapshotSame(tail[tail.length - 1], liveNow)) tail.pop();
+  graphUndoStack = graphUndoStack.slice(0, base + 1).concat(slot.entries || []);
+  graphHistoryCursor = graphUndoStack.length;
+  const endpoint = slot.live || (graphUndoStack.length ? graphUndoStack[graphUndoStack.length - 1] : null);
+  if (!endpoint) {
+    graphHistorySlot = null;
+    _refreshGraphHistoryPanel();
+    return false;
+  }
+  graphHistoryLive = null;
+  const keepTail = Math.max(0, GRAPH_HISTORY_SLOT_MAX - (liveNow ? 1 : 0));
+  graphHistorySlot = {
+    sessionId: _currentSessionId(),
+    baseIndex: base,
+    entries: tail.slice(-keepTail),
+    live: liveNow,
+    at: Date.now(),
+  };
+  graphPendingLiveMeta = null;
+  graphHistoryPendingTruncate = false;
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  await _restoreGraphVersion(endpoint);
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+  if (typeof toastMsg === "function") toastMsg("已切到另一条路 · 再点「恢复」可切回");
+  return true;
+}
+
+function _showGraphHistorySlotNotice(rows) {
+  const range = _graphHistorySlotStepRange(graphHistorySlot);
+  const text = "原来的第 " + range.start + (range.end > range.start ? "–" + range.end : "") + " 步已存起来"
+    + " · 打开修改历史可恢复";
+  if (typeof toastMsg === "function") toastMsg(text, 5200);
+  else if (typeof showToast === "function") showToast(text, 5200);
+}
+
 // _captureGraphLiveMeta（T365）：离开 live 位（撤销/回退）前把当前状态锚在历史顶，
 // 作为「最新」一格留给人/面板/持久化——这是重做链不再随刷新蒸发的前提。
 function _captureGraphLive(sid) {
@@ -884,6 +1345,11 @@ async function _undoGraphAction() {
   if (graphHistoryCursor >= graphUndoStack.length) _captureGraphLive(currentSessionId);
   graphHistoryCursor--;
   graphPendingLiveMeta = null;
+  graphHistoryPendingTruncate = false;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
   await _restoreGraphVersion(target);
   _persistGraphHistory();
   _refreshGraphHistoryPanel();
@@ -899,6 +1365,11 @@ async function _redoGraphAction() {
   if (target.sessionId && currentSessionId && target.sessionId !== currentSessionId) return;
   graphHistoryCursor = next;
   graphPendingLiveMeta = null;
+  graphHistoryPendingTruncate = false;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffSummary = "";
   if (graphHistoryCursor >= graphUndoStack.length) graphHistoryLive = null; // 回到最新，锚点消费掉
   await _restoreGraphVersion(target);
   _persistGraphHistory();
@@ -915,6 +1386,8 @@ function _graphVersions() {
       state: entry.state,
       messages: entry.messages,
       meta: entry.meta || { source: "user", summary: "", ts: 0 },
+      counts: (entry.meta && entry.meta.counts) || null,
+      raw: entry,
       sessionId: entry.sessionId,
     };
   });
@@ -930,18 +1403,31 @@ function _graphVersions() {
       state: graphHistoryLive ? graphHistoryLive.state : null,
       messages: graphHistoryLive ? graphHistoryLive.messages : null,
       meta: liveMeta,
+      counts: null,
+      raw: graphHistoryLive,
       sessionId: sid,
     });
     return list;
   }
+  // 当前状态行：T219/R9——过去每 800ms 做一次全图深比较。现在只有图真被写过
+  // （_saveGraphState / 推送 / 时间旅行）才重算，其余时候吃缓存。
   let liveMeta = graphPendingLiveMeta;
+  let liveCounts = (graphPendingLiveMeta && graphPendingLiveMeta.counts) || null;
   if (!liveMeta) {
-    const last = graphUndoStack[graphUndoStack.length - 1];
-    const liveState = _graphState();
-    if (last && liveState) {
-      const diff = _diffGraphStates(last.state, liveState);
-      if (!diff.layoutOnly) liveMeta = { source: "user", summary: diff.summary, ts: Date.now() };
+    if (graphHistoryLiveDirty || !graphHistoryLiveMetaCache) {
+      graphHistoryLiveDirty = false;
+      let computed = null;
+      const last = graphUndoStack[graphUndoStack.length - 1];
+      if (last) {
+        const diff = _graphDiffFromProjections(_graphVersionProjection(last), _graphLiveProjection());
+        if (!diff.layoutOnly) {
+          computed = { meta: { source: "user", summary: diff.summary, ts: Date.now() }, counts: diff.counts };
+        }
+      }
+      graphHistoryLiveMetaCache = computed || { meta: null, counts: null };
     }
+    liveMeta = graphHistoryLiveMetaCache.meta;
+    liveCounts = graphHistoryLiveMetaCache.counts;
   }
   if (!liveMeta) liveMeta = { source: "now", summary: "当前状态", ts: Date.now() };
   list.push({
@@ -950,6 +1436,8 @@ function _graphVersions() {
     state: null,
     messages: null,
     meta: liveMeta,
+    counts: liveCounts,
+    raw: null,
     sessionId: sid,
   });
   return list;
@@ -976,6 +1464,8 @@ async function _jumpGraphVersion(versionIndex) {
   graphHistoryCursor = versionIndex;
   if (!goingBack) graphHistoryLive = null; // 回到最新＝锚点消费掉
   graphPendingLiveMeta = null;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
   graphHistoryPreviewing = -1;
   graphHistoryDiffSummary = "";
   await _restoreGraphVersion(target);
@@ -986,59 +1476,325 @@ async function _jumpGraphVersion(versionIndex) {
   _refreshGraphHistoryPanel();
 }
 
-function _previewGraphVersion(versionIndex) {
+// ===== 对比模型（2.2）：把 diff 翻成「回到这一步会多什么、少什么、改什么」=====
+// 方向固定为「回到那一步」：create=现在有、那时没有 → 会消失；delete=那时有、现在
+// 没有 → 会回来；update=两边都有但内容不同 → 会改写（R5）。
+function _graphDiffWillIcon(will) {
+  if (will === "vanish") return "−";
+  if (will === "return") return "＋";
+  return "✎";
+}
+
+function _graphDiffWillLabel(will) {
+  if (will === "vanish") return "会消失";
+  if (will === "return") return "会回来";
+  return "会改写";
+}
+
+function _graphHistoryCompareModel(versionIndex) {
+  const target = _graphHistoryVersionOf(versionIndex);
+  if (!target || target.isLive || !target.state) return null;
+  const raw = target.raw || { state: target.state, messages: target.messages, meta: target.meta };
+  const targetProj = _graphVersionProjection(raw);
+  const diff = _graphDiffFromProjections(targetProj, _graphLiveProjection());
+  const items = [];
+  const liveIds = new Set(Object.keys(_graphLiveProjection().n || {}));
+  let targetData = null;
+  try { targetData = _buildGraphData(target.messages || [], target.state); } catch (e) { targetData = null; }
+  const targetNodes = (targetData && targetData.nodes) || [];
+  const ghostNodes = [];
+  const hiddenNow = (_graphState() || {}).hidden || {};
+  targetNodes.forEach(function (n) {
+    if (!n || n.id == null) return;
+    if (liveIds.has(String(n.id))) return;
+    if (typeof _graphDiffNodeHidden === "function" && _graphDiffNodeHidden(hiddenNow, n)) return;
+    ghostNodes.push(n);
+  });
+  const ghostById = {};
+  ghostNodes.forEach(function (n) { ghostById[String(n.id)] = n; });
+  diff.ops.forEach(function (op) {
+    if (op.op === "create_node") {
+      items.push({
+        will: "vanish", nodeId: op.id, label: op.label || op.id,
+        detail: op.preview ? ("现在：" + op.preview) : "现在有、那一步没有",
+      });
+    } else if (op.op === "delete_node") {
+      items.push({
+        will: "return", nodeId: op.id, label: op.label || op.id,
+        detail: op.preview ? ("当年：" + op.preview) : "那一步有、现在没有",
+      });
+    } else if (op.op === "update_node") {
+      items.push({
+        will: "change", nodeId: op.id, label: op.label || op.id,
+        detail: "「" + _graphShorten(op.before || "（空）", 40) + "」→「" + _graphShorten(op.after || "（空）", 40) + "」",
+      });
+    } else if (op.op === "update_groups") {
+      items.push({ will: "change", nodeId: "", label: "分组", detail: "分组归属或命名变了" });
+    } else if (op.op === "update_ports") {
+      items.push({ will: "change", nodeId: "", label: "端口", detail: "端口的数量或名字变了" });
+    }
+  });
+  const order = { vanish: 0, change: 1, return: 2 };
+  items.sort(function (a, b) { return (order[a.will] || 0) - (order[b.will] || 0); });
+  const counts = diff.counts;
+  return {
+    index: versionIndex,
+    target: target,
+    diff: diff,
+    items: items,
+    counts: counts,
+    targetData: targetData,
+    ghostNodes: ghostNodes,
+    ghostEdges: (function () {
+      if (!targetData) return [];
+      const current = new Set(graphView.edges.map(function (e) { return _edgeKey(e); }));
+      let edges = [];
+      try { edges = _resolveGraphEdges(target.state, targetData.edges, targetData.nodeById); } catch (e) { edges = []; }
+      return edges.filter(function (e) { return !current.has(_edgeKey(e)); });
+    })(),
+    focusIndex: -1,
+  };
+}
+
+function _graphHistoryVersionOf(versionIndex) {
   _ensureGraphHistory();
   const versions = _graphVersions();
-  const target = versions[versionIndex];
-  const live = _graphState();
-  if (!target || !live) return;
+  return versions[versionIndex] || null;
+}
+
+// 事件点收尾（3.1/3.4）：提问/重生成跑完后，把「当前状态」行的差异计数补上。
+// 摘要仍是「提问：…」（动作名），计数告诉用户这一次到底加了/改了多少。
+function _graphHistoryLiveEventDone() {
+  if (!graphPendingLiveMeta) return;
+  const last = graphUndoStack[graphUndoStack.length - 1];
+  if (last) {
+    const diff = _graphDiffFromProjections(_graphVersionProjection(last), _graphLiveProjection());
+    if (!diff.layoutOnly) graphPendingLiveMeta = Object.assign({}, graphPendingLiveMeta, { counts: diff.counts });
+  }
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryLastSignature = "";
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
+}
+
+function _graphHistoryVersionTitle(model) {
+  const meta = (model && model.target && model.target.meta) || {};
+  const time = _graphHistoryTime(meta.ts);
+  const summary = meta.summary || "历史版本";
+  return (time ? time + " " : "") + summary;
+}
+
+function _previewGraphVersion(versionIndex) {
+  _ensureGraphHistory();
+  const target = _graphHistoryVersionOf(versionIndex);
+  if (!target) return;
   // 再次点击正在对比的版本（或点击当前版本/无实体状态的锚点行）→ 退出对比
   if (target.isLive || !target.state || graphHistoryPreviewing === versionIndex) {
     exitGraphVersionPreview();
     return;
   }
-  // 语义对齐：把「选中的历史版本」作为旧版本、当前状态作为新版本做 diff，
-  // 这样 create=当前新增、delete=相对该版本已被删除、update=被修改，
-  // 与 _graphVersions/_pushGraphUndo 里 live summary 的方向一致。
-  const diff = _diffGraphStates(target.state, live);
+  const model = _graphHistoryCompareModel(versionIndex);
+  if (!model) return;
   graphHistoryPreviewing = versionIndex;
-  graphHistoryDiffSummary = "版本 " + (versionIndex + 1) + " 与当前差异：" + diff.summary;
-  if (typeof window.applyGraphDiffHighlights === "function") {
-    window.applyGraphDiffHighlights(diff.ops, {
-      state: target.state,
-      messages: target.messages || [],
+  graphHistoryDiffModel = model;
+  graphHistoryDiffSummary = "版本 " + (versionIndex + 1) + " 与当前差异：" + model.diff.summary;
+  if (typeof window.applyGraphHistoryDiff === "function") {
+    window.applyGraphHistoryDiff(model.diff, {
+      targetState: target.state,
+      targetMessages: target.messages || [],
+      targetData: model.targetData,
+      ghostNodes: model.ghostNodes,
+      ghostEdges: model.ghostEdges,
+      ghostVisible: graphHistoryGhostVisible,
+    });
+  }
+  // 1.1：点对比就把镜头框到差异处（变化可能在屏外；全景缩放下 3px 描边≈1px）
+  _graphFocusHistoryDiffModel(model);
+  _renderGraphHistoryFooter();
+  _refreshGraphHistoryPanel();
+}
+
+// 镜头框到差异：变化节点（现在存在的）＋「会回来」的幽灵节点一起进包围盒。
+function _graphFocusHistoryDiffModel(model) {
+  if (!model) return false;
+  const ids = [];
+  model.diff.ops.forEach(function (op) {
+    if ((op.op === "create_node" || op.op === "update_node") && op.id) ids.push(String(op.id));
+  });
+  (model.ghostNodes || []).forEach(function (n) { ids.push(String(n.id)); });
+  const bounds = _graphModelBounds(model, ids);
+  if (!bounds) return false;
+  _graphFocusBounds(bounds);
+  if (typeof window.flashGraphHistoryDiff === "function" && ids.length) window.flashGraphHistoryDiff(ids);
+  return true;
+}
+
+function _graphModelBounds(model, ids) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, found = 0;
+  const ghostById = {};
+  ((model && model.ghostNodes) || []).forEach(function (n) { ghostById[String(n.id)] = n; });
+  (ids || []).forEach(function (id) {
+    const node = (graphView.nodeById && graphView.nodeById[String(id)]) || ghostById[String(id)];
+    if (!node) return;
+    found++;
+    const w = node.w || node.customWidth || 220;
+    const h = node.h || node.customHeight || 72;
+    minX = Math.min(minX, node.x - w / 2);
+    minY = Math.min(minY, node.y - h / 2);
+    maxX = Math.max(maxX, node.x + w / 2);
+    maxY = Math.max(maxY, node.y + h / 2);
+  });
+  if (!found) return null;
+  return { x1: minX, y1: minY, x2: maxX, y2: maxY, count: found };
+}
+
+function _graphFocusBounds(bounds) {
+  if (!bounds || typeof graphCanvas === "undefined" || !graphCanvas) return false;
+  let rect = { width: 0, height: 0 };
+  try { rect = graphCanvas.getBoundingClientRect(); } catch (e) { return false; }
+  if (!(rect.width > 0) || !(rect.height > 0)) return false;
+  const state = _graphState();
+  if (!state) return false;
+  if (!state.pan || typeof state.pan !== "object") state.pan = { x: 0, y: 0 };
+  const w = Math.max(180, bounds.x2 - bounds.x1);
+  const h = Math.max(120, bounds.y2 - bounds.y1);
+  const minZoom = typeof GRAPH_MIN_ZOOM === "number" ? GRAPH_MIN_ZOOM : 0.1;
+  const maxZoom = typeof GRAPH_MAX_ZOOM === "number" ? GRAPH_MAX_ZOOM : 4;
+  const zoom = Math.max(minZoom, Math.min(maxZoom, Math.min((rect.width - 120) / w, (rect.height - 160) / h, 1.3)));
+  state.zoom = zoom;
+  state.pan.x = rect.width / 2 - ((bounds.x1 + bounds.x2) / 2) * zoom;
+  state.pan.y = rect.height / 2 - ((bounds.y1 + bounds.y2) / 2) * zoom;
+  _saveGraphState(state, { deferLocalWrite: true });
+  if (typeof _applyGraphTransform === "function") _applyGraphTransform();
+  return true;
+}
+
+// 清单里点一行：镜头飞过去＋呼吸闪烁（2.2/2.3）。没有节点可定位的行（分组/端口）
+// 只高亮清单项，不挪镜头。
+function focusGraphHistoryDiff(index) {
+  const model = graphHistoryDiffModel;
+  if (!model) return;
+  const item = (model.items || [])[index];
+  if (!item) return;
+  model.focusIndex = index;
+  if (item.nodeId) {
+    const bounds = _graphModelBounds(model, [item.nodeId]);
+    if (bounds) _graphFocusBounds(bounds);
+    if (typeof window.flashGraphHistoryDiff === "function") window.flashGraphHistoryDiff([item.nodeId]);
+  }
+  _renderGraphHistoryFooter();
+}
+
+function stepGraphHistoryDiff(dir) {
+  const model = graphHistoryDiffModel;
+  if (!model || !model.items || !model.items.length) return;
+  const total = model.items.length;
+  let idx = model.focusIndex == null ? -1 : model.focusIndex;
+  for (let i = 0; i < total; i++) {
+    idx = (idx + (dir < 0 ? -1 : 1) + total) % total;
+    if (model.items[idx] && model.items[idx].nodeId) { focusGraphHistoryDiff(idx); return; }
+  }
+}
+
+function toggleGraphHistoryGhosts() {
+  graphHistoryGhostVisible = !graphHistoryGhostVisible;
+  if (graphHistoryDiffModel && typeof window.applyGraphHistoryDiff === "function") {
+    window.applyGraphHistoryDiff(graphHistoryDiffModel.diff, {
+      targetState: graphHistoryDiffModel.target.state,
+      targetMessages: graphHistoryDiffModel.target.messages || [],
+      targetData: graphHistoryDiffModel.targetData,
+      ghostNodes: graphHistoryDiffModel.ghostNodes,
+      ghostEdges: graphHistoryDiffModel.ghostEdges,
+      ghostVisible: graphHistoryGhostVisible,
     });
   }
   _renderGraphHistoryFooter();
-  _refreshGraphHistoryPanel();
 }
 
 function _renderGraphHistoryFooter() {
   const footer = document.getElementById("graphHistoryDiffText");
   if (!footer) return;
-  if (graphHistoryPreviewing >= 0 && graphHistoryDiffSummary) {
-    const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
-    footer.innerHTML = '<span class="graph-history-diff-summary">' + esc(graphHistoryDiffSummary) + '</span>'
-      + '<button type="button" class="graph-history-exit-preview" onclick="exitGraphVersionPreview()">✕ 退出对比</button>';
-  } else {
-    footer.innerHTML = '';
-  }
+  const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+  const model = graphHistoryDiffModel;
+  if (graphHistoryPreviewing < 0 || !model) { footer.innerHTML = ''; return; }
+  const counts = model.counts || {};
+  const head = '<div class="graph-history-diff-head">'
+    + '<div class="graph-history-diff-title">对比：回到「' + esc(_graphHistoryVersionTitle(model)) + '」</div>'
+    + '<div class="graph-history-diff-counts">'
+    + '<span class="g-hd-count will-vanish">会消失 ' + (counts.vanish || 0) + '</span>'
+    + '<span class="g-hd-count will-return">会回来 ' + (counts.ret || 0) + '</span>'
+    + '<span class="g-hd-count will-change">会改写 ' + (counts.change || 0) + '</span>'
+    + '</div></div>';
+  const list = model.items.length
+    ? '<div class="graph-history-diff-list">' + model.items.map(function (it, i) {
+      const icon = _graphDiffWillIcon(it.will);
+      const active = model.focusIndex === i ? " active" : "";
+      return '<button type="button" class="graph-history-diff-item will-' + it.will + active + '"'
+        + (it.nodeId ? ' onclick="focusGraphHistoryDiff(' + i + ')"' : ' disabled')
+        + '><span class="g-hd-icon">' + icon + '</span>'
+        + '<span class="g-hd-will">' + _graphDiffWillLabel(it.will) + '</span>'
+        + '<span class="g-hd-label">' + esc(it.label) + '</span>'
+        + '<span class="g-hd-detail">' + esc(it.detail) + '</span></button>';
+    }).join('') + '</div>'
+    : '<div class="graph-history-diff-empty">' + (model.diff.layoutChanges ? '只有位置变化（拖动/自动整理），内容没变' : '这一步与现在一致') + '</div>';
+  const legend = '<div class="graph-history-diff-legend">'
+    + '<span class="g-hd-legend will-return">＋ 会回来</span>'
+    + '<span class="g-hd-legend will-vanish">− 会消失</span>'
+    + '<span class="g-hd-legend will-change">✎ 会改写</span>'
+    + (model.ghostNodes.length ? '<button type="button" class="g-hd-ghost-toggle" onclick="toggleGraphHistoryGhosts()">'
+      + (graphHistoryGhostVisible ? '👻 已显示将回来的节点' : '👻 已隐藏将回来的节点') + '</button>' : '')
+    + '</div>';
+  const actions = '<div class="graph-history-diff-actions">'
+    + '<button type="button" onclick="stepGraphHistoryDiff(-1)">↑ 上一处</button>'
+    + '<button type="button" onclick="stepGraphHistoryDiff(1)">↓ 下一处</button>'
+    + '<button type="button" class="g-hd-jump" onclick="jumpGraphVersion(' + model.index + ')">回到这一步</button>'
+    + '<button type="button" class="graph-history-exit-preview" onclick="exitGraphVersionPreview()">✕ 退出对比</button>'
+    + '</div>';
+  footer.innerHTML = head + legend + list + actions;
 }
 
 function exitGraphVersionPreview() {
   if (typeof window.clearGraphDiffHighlights === "function") window.clearGraphDiffHighlights();
   graphHistoryPreviewing = -1;
   graphHistoryDiffSummary = "";
+  graphHistoryDiffModel = null;
   _renderGraphHistoryFooter();
   _refreshGraphHistoryPanel();
 }
 
 function _graphHistorySourceLabel(source) {
-  if (source === "harness") return "AI";
+  if (source === "harness" || source === "ai") return "AI";
   if (source === "undo") return "撤销";
   if (source === "init") return "初始";
   if (source === "now") return "现在";
   return "手动";
+}
+
+// 单槽恢复条（1.2）：槽在就常驻在面板底部，点「恢复」来回切。没有槽时整条隐藏。
+function _renderGraphHistorySlot() {
+  const el = document.getElementById("graphHistorySlot");
+  if (!el) return;
+  const slot = graphHistorySlot;
+  if (!slot || ((!slot.entries || !slot.entries.length) && !(slot.live && slot.live.state))) {
+    el.innerHTML = '';
+    el.hidden = true;
+    return;
+  }
+  const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
+  const range = _graphHistorySlotStepRange(slot);
+  const label = "另一条路：从第 " + (slot.baseIndex + 1) + " 步分出的 "
+    + range.start + (range.end > range.start ? "–" + range.end : "") + " 步";
+  el.hidden = false;
+  el.innerHTML = '<span class="graph-history-slot-text">' + esc(label) + '</span>'
+    + '<button type="button" class="graph-history-slot-btn" onclick="restoreGraphHistorySlot()">恢复</button>'
+    + '<button type="button" class="graph-history-slot-x" onclick="dismissGraphHistorySlot()" title="丢弃另一条路">✕</button>';
+}
+
+function dismissGraphHistorySlot() {
+  graphHistorySlot = null;
+  _persistGraphHistory();
+  _refreshGraphHistoryPanel();
 }
 
 function _graphHistoryTime(ts) {
@@ -1060,8 +1816,10 @@ function openGraphHistoryPanel() {
       + '<div class="graph-history-tools">'
       + '<button type="button" onclick="undoGraphAction()" title="Ctrl+Z">↩ 撤销</button>'
       + '<button type="button" onclick="redoGraphAction()" title="Ctrl+Y / Ctrl+Shift+Z">↪ 重做</button>'
+      + '<button type="button" class="graph-history-settle" onclick="settleGraphHistoryNow()" title="清空修改历史，保留当前图状态（定稿）">定稿清空</button>'
       + '</div>'
       + '<div class="graph-history-list" id="graphHistoryList"></div>'
+      + '<div class="graph-history-slot" id="graphHistorySlot" hidden></div>'
       + '<div class="graph-history-diff" id="graphHistoryDiffText"></div>';
     document.body.appendChild(graphHistoryPanel);
   }
@@ -1083,15 +1841,164 @@ function closeGraphHistoryPanel() {
   graphHistoryDiffSummary = "";
 }
 
+// ===== 退出结算（1.3 / §6）：正常关闭只写标记，下次打开时结算 =====
+// 仓库既有拍板（session.js）：清理点不放在 beforeunload——崩溃/强杀不触发。所以这里
+// 只落一个轻量标记（条数＋末条时间戳＋游标），下次打开对指纹、看是不是刷新、看当时
+// 是不是停在最新，全部对上才清。宁可留着，不清错。
+function _graphHistoryExitKeyFor(sid) {
+  return GRAPH_HISTORY_EXIT_KEY + (sid || "default");
+}
+
+function _graphHistoryExitFingerprint() {
+  const last = graphUndoStack[graphUndoStack.length - 1];
+  const ts = (last && last.meta && (last.meta.pushedAt || last.meta.ts)) || 0;
+  return [graphUndoStack.length, ts, graphHistoryCursor].join("|");
+}
+
+function markGraphHistoryCleanExit() {
+  if (typeof phyIsReadonly === "function" && phyIsReadonly()) return false;
+  const sid = _currentSessionId();
+  if (!sid) return false;
+  try {
+    // 同步读本地存档（不发网络）：卸载阶段只有同步 localStorage 写靠得住
+    _ensureGraphHistory();
+    localStorage.setItem(_graphHistoryExitKeyFor(sid), JSON.stringify({
+      sid: sid,
+      at: Date.now(),
+      fp: _graphHistoryExitFingerprint(),
+      atLatest: graphHistoryCursor >= graphUndoStack.length,
+    }));
+    return true;
+  } catch (e) { return false; }
+}
+
+function _graphHistoryNavType() {
+  try {
+    const entries = performance.getEntriesByType && performance.getEntriesByType("navigation");
+    return (entries && entries[0] && entries[0].type) || "";
+  } catch (e) { return ""; }
+}
+
+async function _settleGraphHistoryToLive() {
+  if (graphHistoryCursor >= graphUndoStack.length) return true;
+  const live = graphHistoryLive;
+  if (!live || !live.state) return false; // 回不到最新就不清（宁可留着）
+  graphHistoryCursor = graphUndoStack.length;
+  graphHistoryLive = null;
+  graphPendingLiveMeta = null;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffModel = null;
+  await _restoreGraphVersion(live);
+  _persistGraphHistory();
+  return true;
+}
+
+function _settleClearGraphHistory(reason) {
+  const sid = _currentSessionId();
+  if (!sid) return false;
+  const had = graphUndoStack.length > 0 || !!graphHistorySlot;
+  if (had && typeof discardGraphHistoryForSession === "function") {
+    // 复用既有清空链：内存栈/游标/槽＋本地键＋服务端镜像（含纪元号作废在途补回）
+    discardGraphHistoryForSession(sid);
+  } else {
+    graphUndoStack = [];
+    graphHistoryCursor = 0;
+    graphHistoryLive = null;
+    graphHistorySlot = null;
+    try { localStorage.removeItem(_graphHistoryKey(sid)); } catch (e) { /* 同上 */ }
+  }
+  graphPendingLiveMeta = null;
+  graphHistoryLiveDirty = true;
+  graphHistoryLiveMetaCache = null;
+  graphHistoryPreviewing = -1;
+  graphHistoryDiffModel = null;
+  graphHistoryLastSignature = "";
+  try { localStorage.removeItem(_graphHistoryExitKeyFor(sid)); } catch (e) { /* best effort */ }
+  _refreshGraphHistoryPanel();
+  if (had) {
+    const text = reason || "历史已清空，从当前状态重新开始";
+    if (typeof toastMsg === "function") toastMsg(text, 4200);
+    else if (typeof showToast === "function") showToast(text, 4200);
+  }
+  return true;
+}
+
+async function settleGraphHistoryOnOpen() {
+  if (typeof phyIsReadonly === "function" && phyIsReadonly()) return false;
+  const sid = _currentSessionId();
+  if (!sid) return false;
+  _ensureGraphHistory();
+  let marker = null;
+  try { marker = JSON.parse(localStorage.getItem(_graphHistoryExitKeyFor(sid)) || "null"); } catch (e) { marker = null; }
+  const nav = _graphHistoryNavType();
+  if (nav === "reload") {
+    // F5 刷新不丢撤销：清掉标记，历史原样
+    try { localStorage.removeItem(_graphHistoryExitKeyFor(sid)); } catch (e) { /* best effort */ }
+    return false;
+  }
+  if (marker) {
+    if (marker.sid && marker.sid !== sid) return false;
+    if (marker.fp !== _graphHistoryExitFingerprint()) {
+      // 多标签改过历史 / 指纹对不上：不清，只把标记作废（否则下次会拿旧指纹误判）
+      try { localStorage.removeItem(_graphHistoryExitKeyFor(sid)); } catch (e) { /* best effort */ }
+      return false;
+    }
+    if (!marker.atLatest) {
+      const back = await _settleGraphHistoryToLive();
+      if (!back) return false;
+    }
+    if (graphHistoryCursor < graphUndoStack.length) return false;
+    return _settleClearGraphHistory("上次已正常退出 · 历史已从当前状态重新开始");
+  }
+  // 无标记（崩溃/强杀/桌面端没发 pagehide）→ 不清；距上次活动超过 12 小时再按时间兜底
+  if (graphUndoStack.length && graphHistorySavedAt
+    && Date.now() - graphHistorySavedAt > GRAPH_HISTORY_STALE_SETTLE_MS) {
+    return _settleClearGraphHistory("这张画布超过 12 小时没动 · 历史已从当前状态重新开始");
+  }
+  return false;
+}
+
+// 面板里的手动口（§6.1.4「定稿并清空历史」）：随时可清，和自动结算走同一条路。
+async function settleGraphHistoryNow() {
+  if (typeof phyIsReadonly === "function" && phyIsReadonly()) {
+    if (typeof phyReadonlyBlock === "function") phyReadonlyBlock("清空修改历史");
+    return false;
+  }
+  return _settleClearGraphHistory("历史已清空（定稿）· 当前图状态保留");
+}
+
+function _scrollGraphHistoryToCurrent() {
+  // R9：打开面板默认停在最老一行，当前步在最下面。滚到「当前位置」那一行。
+  const listEl = document.getElementById("graphHistoryList");
+  if (!listEl || typeof listEl.querySelector !== "function") return;
+  let row = null;
+  try { row = listEl.querySelector(".graph-history-item.current"); } catch (e) { row = null; }
+  if (row && typeof row.scrollIntoView === "function") {
+    try { row.scrollIntoView({ block: "nearest" }); } catch (e) { /* 老浏览器只认无参 */ }
+  }
+}
+
 function _refreshGraphHistoryPanel() {
   if (!graphHistoryPanel || graphHistoryPanel.hidden) return;
   const versions = _graphVersions();
-  const sig = graphHistoryPreviewing + "|" + graphHistoryCursor + "|" + versions.map(function (v) { return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|" + ((v.meta && v.meta.summary) || ""); }).join("~");
-  if (sig === graphHistoryLastSignature) return;
+  const sig = graphHistoryPreviewing + "|" + graphHistoryCursor + "|" + (graphHistoryGhostVisible ? 1 : 0) + "|"
+    + (graphHistorySlot ? (graphHistorySlot.baseIndex + ":" + ((graphHistorySlot.entries || []).length + (graphHistorySlot.live ? 1 : 0))) : "0") + "|"
+    + ((graphHistoryDiffModel && graphHistoryDiffModel.focusIndex) || -1) + "|"
+    + versions.map(function (v) {
+      return v.index + "|" + (v.isLive ? 1 : 0) + "|" + (v.meta && v.meta.source) + "|"
+        + ((v.meta && v.meta.summary) || "") + "|" + (v.counts ? _graphDiffCountText(v.counts) : "");
+    }).join("~");
+  if (sig === graphHistoryLastSignature) {
+    _renderGraphHistoryFooter();
+    return;
+  }
   graphHistoryLastSignature = sig;
   const listEl = document.getElementById("graphHistoryList");
   const posEl = document.getElementById("graphHistoryPos");
   if (posEl) posEl.textContent = "位置 " + (graphHistoryCursor + 1) + " / " + (graphUndoStack.length + 1);
+  _renderGraphHistorySlot();
   if (!listEl) return;
   const esc = typeof window.escapeHtml === "function" ? window.escapeHtml : function (s) { return String(s); };
   const futureCount = graphUndoStack.length - graphHistoryCursor; // 游标之后的可重做步数
@@ -1099,6 +2006,7 @@ function _refreshGraphHistoryPanel() {
     const label = _graphHistorySourceLabel(v.meta && v.meta.source);
     const summary = esc((v.meta && v.meta.summary) || "");
     const time = _graphHistoryTime(v.meta && v.meta.ts);
+    const counts = v.counts ? _graphDiffCountText(v.counts) : "";
     // T365：游标所在行＝「你在这里」（历史行加当前标记、隐藏动作钮）；isLive 行沿用旧样式
     const atCursor = (v.index === graphHistoryCursor) || v.isLive;
     const cls = atCursor ? "graph-history-item current" : "graph-history-item";
@@ -1108,6 +2016,7 @@ function _refreshGraphHistoryPanel() {
     if (!atCursor) {
       actions = '<div class="graph-history-actions">'
         + '<button type="button" onclick="previewGraphVersion(' + v.index + ')">对比</button>'
+        + (v.index > 0 ? '<button type="button" class="graph-history-compare-prev" onclick="previewGraphVersion(' + (v.index - 1) + ')" title="这一步改了什么">与上一步对比</button>' : '')
         + '<button type="button" onclick="jumpGraphVersion(' + v.index + ')">'
         + (v.index >= graphUndoStack.length ? '回到最新' : '回到此版本') + '</button>'
         + '</div>';
@@ -1122,10 +2031,15 @@ function _refreshGraphHistoryPanel() {
       + '<div class="graph-history-head"><span class="graph-history-badge ' + srcCls + '">' + label + '</span>'
       + cursorTag
       + '<span class="graph-history-summary">' + summary + '</span>'
+      + (counts ? '<span class="graph-history-counts">' + esc(counts) + '</span>' : '')
       + '<span class="graph-history-time">' + time + '</span></div>'
       + actions
       + '</div>';
   }).join('');
+  if (graphHistoryLastScrollCursor !== graphHistoryCursor) {
+    graphHistoryLastScrollCursor = graphHistoryCursor;
+    _scrollGraphHistoryToCurrent();
+  }
   _renderGraphHistoryFooter();
 }
 
@@ -1138,6 +2052,19 @@ window.openGraphHistoryPanel = openGraphHistoryPanel;
 window.toggleGraphHistoryPanel = toggleGraphHistoryPanel;
 window.closeGraphHistoryPanel = closeGraphHistoryPanel;
 window.getGraphVersionList = _graphVersions;
+// 2026-10-24 修改历史增强：单槽恢复 / 差异清单导航 / 幽灵显隐 / 退出结算
+window.restoreGraphHistorySlot = _restoreGraphHistorySlot;
+window.dismissGraphHistorySlot = dismissGraphHistorySlot;
+window.focusGraphHistoryDiff = focusGraphHistoryDiff;
+window.stepGraphHistoryDiff = stepGraphHistoryDiff;
+window.toggleGraphHistoryGhosts = toggleGraphHistoryGhosts;
+window.settleGraphHistoryNow = settleGraphHistoryNow;
+window.markGraphHistoryCleanExit = markGraphHistoryCleanExit;
+window.settleGraphHistoryOnOpen = settleGraphHistoryOnOpen;
+window.getGraphHistoryFingerprint = _graphHistoryExitFingerprint;
+window.getGraphHistorySlot = function () { return graphHistorySlot; };
+window.graphHistoryLiveEventDone = _graphHistoryLiveEventDone;
+window.graphEventText = function (text) { return _graphShorten(String(text || ""), 30); };
 
 function _getChatHistory() {
   const base = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
@@ -2074,9 +3001,13 @@ function _stripModuleHeading(content, moduleKey) {
   return pattern ? text.replace(pattern, '').trim() : text;
 }
 
-function _nodeContent(message, node) {
+// stateArg（2026-10-24）：历史对比要按"那个版本自己的覆盖表"取正文，不能读当前画布的
+// _graphState()——否则旧版本会被当前覆盖污染，比出来的差异是假的。不传＝原行为。
+function _nodeContent(message, node, stateArg) {
   if (!message) return node.content || '';
-    const _state = typeof _graphState === 'function' ? _graphState() : {};
+    const _state = (stateArg && typeof stateArg === 'object')
+      ? stateArg
+      : (typeof _graphState === 'function' ? _graphState() : {});
     const _ov = ((_state && _state.harnessNodeOverrides) || {})[node.id];
     if (_ov && _ov.content != null) {
       const _text = String(_ov.content);
