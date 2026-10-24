@@ -2027,14 +2027,61 @@ check('统一吸附/自动长口（2026-10-10 ②）：连线对任意可加口�
     edges = mem.connections || [];
     if (!edges.some(c => c.from === 'p1' && c.fromPort === 'out-1' && c.to === 's1' && c.toPort === 'in-2')) throw new Error('瞄准占用口应顺延到 in-2');
     if ((mem.inputPortCounts || {}).s1 !== 2) throw new Error('附加口数应记 2，实际 ' + (mem.inputPortCounts || {}).s1);
-    // 4. 同一输出口重连别处：旧线被撤走（一口一线），不残留双线
-    sandbox._connectPorts('p1', 'out-1', 's1', '');
+    // 4. 输出口扇出（2026-10-24）：同一输出口连第二个目标，旧线保留不顶掉
+    sandbox._connectPorts('p1', 'out-1', 'n1', '');
     edges = (mem.connections || []).filter(c => c.from === 'p1' && c.fromPort === 'out-1');
-    if (edges.length !== 1) throw new Error('同一输出口重连应撤旧线只留一条');
+    if (edges.length !== 2) throw new Error('同一输出口应可带两条边（扇出），实际 ' + edges.length);
+    if (!edges.some(c => c.to === 's1') || !edges.some(c => c.to === 'n1')) throw new Error('扇出两条边目标应分别为 s1/n1');
     // 5. 静态契约：松手分支与悬停高亮在位（行为级 pointerup 事件不在沙盒模拟范围）
     const iaSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
     if (!iaSrc.includes('function _updateLinkDragHover') || !iaSrc.includes('function _linkDragNodeEl')) throw new Error('吸附悬停高亮函数缺失');
     if (!iaSrc.includes('_nodeCanAddInputPorts(toNode)')) throw new Error('连线吸附未走统一加口门');
+  } finally {
+    sandbox.renderGraphCanvas = realRender;
+    sandbox.window.getGraphState = prevGet;
+    sandbox.window.saveGraphState = prevSave;
+    sandbox.window.getCurrentSessionId = prevSid;
+    vm.runInContext('graphView.nodes = []; graphView.edges = []; graphView.nodeById = {}; graphView.defaultEdges = [];', sandbox);
+  }
+  return true;
+});
+
+check('输出口扇出（2026-10-24）：一口多边为通例、同边不重复建、hub 同口替换保留', () => {
+  const prevGet = sandbox.window.getGraphState, prevSave = sandbox.window.saveGraphState, prevSid = sandbox.window.getCurrentSessionId;
+  const realRender = sandbox.renderGraphCanvas;
+  sandbox.renderGraphCanvas = () => {};
+  // 素材篮一条图片条目＝一个出口（out-0），两个下游 + 一个存量 hub
+  const srcNode = { id: 'src1', kind: 'source', items: [{ id: 'it1', kind: 'image', name: '受力图', text: '斜面受力示意' }], messageIndex: -1, timestamp: 1 };
+  const sumNode = { id: 'sa', kind: 'summary', moduleKey: 'summary', manual: true, messageIndex: -1, timestamp: 2 };
+  const noteNode = { id: 'nb', kind: 'note', moduleKey: 'note', manual: true, messageIndex: -1, timestamp: 3 };
+  const hubNode = { id: 'hb', kind: 'hub', messageIndex: -1, timestamp: 4 };
+  const emptyState = () => ({ collapsed: {}, hidden: {}, positions: {}, pinned: {}, sizes: {}, pan: { x: 80, y: 80 }, zoom: 0.9, layoutVersion: 1, connections: null, removedEdges: [], portCounts: {}, inputPortCounts: {}, groups: [], customNodes: [], harnessDeleted: {}, harnessCheckpoint: null });
+  let mem = emptyState();
+  sandbox.window.getGraphState = () => mem;
+  sandbox.window.saveGraphState = (_sid, state) => { mem = state; };
+  sandbox.window.getCurrentSessionId = () => 'sess_fanout_2026_10_24';
+  vm.runInContext('graphView.nodes = [' + JSON.stringify(srcNode) + ',' + JSON.stringify(sumNode) + ',' + JSON.stringify(noteNode) + ',' + JSON.stringify(hubNode) + '];'
+    + 'graphView.nodeById = { src1: graphView.nodes[0], sa: graphView.nodes[1], nb: graphView.nodes[2], hb: graphView.nodes[3] }; graphView.defaultEdges = []; graphView.edges = [];', sandbox);
+  try {
+    // 1. 图片素材口连两个下游：两条边共存（此前第二条会顶掉第一条——用户本轮报的正是这个）
+    sandbox._connectPorts('src1', 'out-0', 'sa', '');
+    sandbox._connectPorts('src1', 'out-0', 'nb', '');
+    let edges = (mem.connections || []).filter(c => c.from === 'src1');
+    if (edges.length !== 2) throw new Error('素材口应可扇出两条边，实际 ' + edges.length);
+    if (!edges.some(c => c.to === 'sa' && c.toPort === 'in-0') || !edges.some(c => c.to === 'nb' && c.toPort === 'in-0')) throw new Error('扇出两边应各落各的 in-0');
+    // 2. 完全相同的边重连：不重复建（dup 护栏在 undo 入栈前拦截）
+    sandbox._connectPorts('src1', 'out-0', 'sa', 'in-0');
+    edges = (mem.connections || []).filter(c => c.from === 'src1' && c.to === 'sa');
+    if (edges.length !== 1) throw new Error('同边重连不应重复建，实际 ' + edges.length);
+    // 3. 解析层双双放行：渲染/喂料看到的 edges 里同口两条都在
+    const resolved = sandbox._resolveGraphEdges(mem, [], vm.runInContext('graphView.nodeById', sandbox));
+    const fan = resolved.filter(e => String(e.from) === 'src1' && String(e.fromPort || 'out-0') === 'out-0');
+    if (fan.length !== 2) throw new Error('_resolveGraphEdges 应放行同口两条边，实际 ' + fan.length);
+    // 4. hub 汇聚口「同口替换来源」旧语义保留：第二个源顶掉第一个
+    sandbox._connectPorts('src1', 'out-0', 'hb', 'in-0');
+    sandbox._connectPorts('nb', 'out-0', 'hb', 'in-0');
+    const hubEdges = (mem.connections || []).filter(c => c.to === 'hb');
+    if (hubEdges.length !== 1 || hubEdges[0].from !== 'nb') throw new Error('hub 同口应保留替换语义，实际 ' + JSON.stringify(hubEdges));
   } finally {
     sandbox.renderGraphCanvas = realRender;
     sandbox.window.getGraphState = prevGet;
