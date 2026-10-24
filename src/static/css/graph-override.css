@@ -4118,25 +4118,14 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
-/* T389（批次 4）：容量提示（标题行右侧，「已记 12/30 步 · 38 KB · 更早的 3 步已滚出」） */
+/* T389 容量提示，简化批次后只显示「更早的 N 步已移出」（条数/KB 仪表已退役） */
 .graph-history-cap {
   font-size: var(--fs-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   margin-right: 8px;
 }
-.graph-history-tools button.graph-history-layout-toggle.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.graph-history-pin-tag {
-  font-size: var(--fs-xs);
-  color: #fbbf24;
-  margin-right: 2px;
-}
-.graph-history-actions .graph-history-pin,
 .graph-history-actions .graph-history-branch { padding: 3px 8px; }
-.graph-history-actions .graph-history-pin.active { color: #fbbf24; border-color: #fbbf24; }
 .graph-history-current-actions { justify-content: flex-end; }
 .graph-history-tools button,
 .graph-history-actions button {
@@ -4275,16 +4264,6 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   color: var(--text-secondary);
   align-items: center;
 }
-.g-hd-ghost-toggle {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  padding: 0;
-}
-.g-hd-ghost-toggle:hover { color: var(--accent); }
 .graph-history-diff-list {
   display: flex;
   flex-direction: column;
@@ -4293,8 +4272,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 }
 .graph-history-diff-item {
   display: grid;
-  /* T389：末列留给「恢复这一颗」，没有按钮的行该列为空不占位 */
-  grid-template-columns: 18px 46px minmax(0, 118px) minmax(0, 1fr) auto;
+  grid-template-columns: 18px 46px minmax(0, 118px) minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   width: 100%;
@@ -4311,18 +4289,6 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
 .graph-history-diff-item.active { border-color: var(--accent); background: var(--btn-active-bg); }
 .graph-history-diff-item.no-focus { cursor: default; opacity: 0.85; }
 .graph-history-diff-item.no-focus:hover { background: transparent; }
-/* T389 单节点恢复：只把这一颗换回那一步的版本（不动整张图） */
-.g-hd-recover {
-  background: var(--btn-bg);
-  border: 1px solid var(--btn-border);
-  color: var(--text-secondary);
-  border-radius: var(--r-sm);
-  padding: 2px 8px;
-  font-size: var(--fs-xs);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.g-hd-recover:hover { border-color: var(--accent); color: var(--accent); background: var(--btn-active-bg); }
 .graph-history-diff-item .g-hd-icon { font-weight: 800; text-align: center; }
 .graph-history-diff-item.will-vanish .g-hd-icon, .graph-history-diff-item.will-vanish .g-hd-will { color: #f87171; }
 .graph-history-diff-item.will-return .g-hd-icon, .graph-history-diff-item.will-return .g-hd-will { color: #34d399; }
@@ -4361,6 +4327,9 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   cursor: pointer;
 }
 .graph-history-diff-actions button:hover { background: var(--btn-active-bg); border-color: var(--accent); }
+/* 两向切换（简化批次）：back＝回到这里会怎样 / step＝这一步改了什么 */
+.graph-history-diff-actions .g-hd-dir.active { border-color: var(--accent); color: var(--accent); }
+.graph-history-diff-actions .g-hd-dir:disabled { opacity: 0.45; cursor: default; }
 .graph-history-diff-actions .g-hd-jump { border-color: var(--accent); color: var(--accent); }
 .graph-history-diff-actions .graph-history-exit-preview { margin-left: auto; }
 .graph-history-exit-preview {
@@ -4386,44 +4355,7 @@ html[data-theme="dark"] .graph-edge.graph-diff-add path {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
-/* 单槽恢复条（R7/1.2）：常驻面板底部，点「恢复」在两条路之间来回切 */
-.graph-history-slot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  font-size: var(--fs-sm);
-}
-.graph-history-slot[hidden] { display: none; }
-.graph-history-slot-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-.graph-history-slot-btn {
-  flex: none;
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: var(--white);
-  border-radius: var(--r-sm);
-  padding: 2px 10px;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.graph-history-slot-x {
-  flex: none;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
+/* 单槽恢复条（R7）已随 2026-10-24 简化批次退役删除（横幅/恢复/✕ 整块） */
 .graph-history-badge.src-ai { background: var(--accent); }
 .graph-history-settle { margin-left: auto; }
 

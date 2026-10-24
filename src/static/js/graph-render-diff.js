@@ -1,8 +1,10 @@
-// ====== 探索网版本对比高亮与幽灵层（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）=====
+// ====== 探索网版本对比高亮（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）=====
 // 调用方：graph.js（window.* typeof 守卫）、harness-apply.js 同守卫；graph-workflow.js
 // 尾部导出块照旧导出 window.applyGraphDiffHighlights/clearGraphDiffHighlights。
 // 2026-10-24：新增「修改历史对比」一套（applyGraphHistoryDiff / flashGraphHistoryDiff）——
 // 方向是「回到那一步会怎样」，与 Φ 的「向前改」不是一回事，故分开，不共用一个入口。
+// 同日简化批次：历史对比支持两向（opts.dir 'back'|'step'），历史侧幽灵虚影退役
+//（用户看不懂旧坐标虚影卡）；_renderGraphDiffGhost 一族仍服务 Φ 的「向前改」对比。
 const GRAPH_DIFF_EXTRA_CLASSES = [
   'graph-diff-will-vanish', 'graph-diff-will-return', 'graph-diff-will-change',
   'graph-diff-dim', 'graph-diff-flash',
@@ -179,7 +181,7 @@ function _renderGraphDiffGhost(ghostNodes, ghostEdges, opts) {
   host.appendChild(layer);
 }
 
-// ===== 修改历史对比（2026-10-24）：方向＝「回到这一步会发生什么」（R5/2.2/2.3） =====
+// ===== 修改历史对比（2026-10-24）：两向，默认「回到这一步会发生什么」（R5/2.2/2.3） =====
 function _graphDiffAddBadge(el, text, cls) {
   if (!el || !el.appendChild) return;
   const badge = document.createElement('span');
@@ -191,21 +193,26 @@ function _graphDiffAddBadge(el, text, cls) {
 function applyGraphHistoryDiff(diff, opts) {
   clearGraphDiffHighlights();
   const ops = (diff && diff.ops) || [];
-  const vanish = new Set(); // 现在有、那一步没有 → 回去会消失
-  const change = new Set(); // 两边都有、内容不同 → 回去会改写
-  const addEdges = new Set(); // 现在有、那一步没有的边 → 回去会消失
-  const remEdges = new Set(); // 那一步有、现在没有的边 → 回去会回来
+  // step 方向（这一步改了什么）：这一步新出现的上绿（will-return）；被删的当前画布
+  // 本来就没有、不上描边。back 方向＝原口径（现在有的会消失、内容不同的会改写）。
+  const step = !!(opts && opts.dir === 'step');
+  const vanish = new Set(); // back：现在有、那一步没有 → 回去会消失；step：这一步删掉的边
+  const appear = new Set(); // step：这一步新出现的
+  const change = new Set(); // 两边都有、内容不同 → 会改写／被改了
+  const addEdges = new Set(); // back：现在有、那一步没有的边 → 回去会消失
+  const appearEdges = new Set(); // step：这一步新接的边
+  const remEdges = new Set(); // back：那一步有、现在没有的边 → 会回来
   ops.forEach(op => {
     const id = op.id != null ? String(op.id) : '';
-    if (op.op === 'create_node' && id) vanish.add(id);
+    if (op.op === 'create_node' && id) { if (step) appear.add(id); else vanish.add(id); }
     else if (op.op === 'update_node' && id) change.add(id);
     const key = op.edge_key || op.key;
-    if (op.op === 'add_edge' && key) addEdges.add(String(key));
+    if (op.op === 'add_edge' && key) { if (step) appearEdges.add(String(key)); else addEdges.add(String(key)); }
     else if (op.op === 'remove_edge' && key) remEdges.add(String(key));
   });
-  const changedNodes = new Set([...vanish, ...change]);
+  const changedNodes = new Set([...vanish, ...appear, ...change]);
   const hasNodeDiff = changedNodes.size > 0;
-  const hasEdgeDiff = addEdges.size || remEdges.size;
+  const hasEdgeDiff = addEdges.size || remEdges.size || appearEdges.size;
   // 聚光灯：有差异时未变化的节点降到 35%（2.3），只有位置变化时不压暗。
   const spotlight = !!(hasNodeDiff || hasEdgeDiff);
   graphView.nodes.forEach(node => {
@@ -219,6 +226,9 @@ function applyGraphHistoryDiff(diff, opts) {
     if (vanish.has(id)) {
       el.classList.add('graph-diff-will-vanish');
       _graphDiffAddBadge(el, '−', 'will-vanish');
+    } else if (appear.has(id)) {
+      el.classList.add('graph-diff-will-return');
+      _graphDiffAddBadge(el, '＋', 'will-return');
     } else if (change.has(id)) {
       el.classList.add('graph-diff-will-change');
       _graphDiffAddBadge(el, '✎', 'will-change');
@@ -228,19 +238,17 @@ function applyGraphHistoryDiff(diff, opts) {
     const key = _edgeKey(edge);
     const el = graphEdgeLayer?.querySelector('[data-edge-key="' + key + '"]');
     if (!el) return;
-    if (addEdges.has(key)) {
+    if (addEdges.has(key) || (step && remEdges.has(key))) {
       el.classList.add('graph-diff-will-vanish');
       _graphDiffAddBadge(el, '−', 'will-vanish');
     } else if (remEdges.has(key)) {
       el.classList.add('graph-diff-will-change');
+    } else if (appearEdges.has(key)) {
+      el.classList.add('graph-diff-will-return');
     } else if (spotlight) {
       el.classList.add('graph-diff-dim');
     }
   });
-  // 幽灵＝那一步有、现在没有的节点（回去会回来）：绿色虚线，挂 graphInner 跟随平移缩放。
-  if (opts && opts.ghostVisible !== false && opts.ghostNodes && opts.ghostNodes.length) {
-    _renderGraphDiffGhost(opts.ghostNodes, opts.ghostEdges || [], { badge: '回到这一步会出现', willReturn: true });
-  }
 }
 
 let _graphHistoryFlashTimer = null;

@@ -306,8 +306,11 @@ export async function run() {
       const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
       const body = src.slice(src.indexOf('function _pushGraphUndo('), src.indexOf('async function _restoreGraphVersion'));
       if (!/const messagesSame =/.test(body)) throw new Error('_pushGraphUndo 没有 messagesSame 判定');
-      if (!/stateSame && messagesSame\) return;/.test(body)) throw new Error('状态型去重没并上 messages 条件');
-      if (!/diff\.layoutOnly && messagesSame/.test(body)) throw new Error('布局型去重没并上 messages 条件');
+      // 简化批次（2026-10-24）：恢复固定保留当前排版，state 视图字段与条目天然不同，
+      // 「没改」判据从裸 state 全等换成内容投影——messages 条件照旧必须并在里面
+      if (!/ttMessagesSame && !ttDiff\.ops\.length\)/.test(body)) throw new Error('时间旅行位的待截断判据没并上 messages 条件');
+      if (!/!diff\.ops\.length && messagesSame\) return;/.test(body)) throw new Error('投影型去重没并上 messages 条件');
+      if (/stateSame/.test(body)) throw new Error('裸 state 全等判据还在（会被「保留当前排版」误触发）');
       return true;
     });
 
