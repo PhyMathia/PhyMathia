@@ -16,7 +16,8 @@
    continent.py 的纯函数里（测试注入假向量，不依赖模型）。
 
 模型：bge-small-zh-v1.5（int8 ONNX，Xenova 社区转换版，2026-10-12 换型上线；
-此前用 Qwen3-Embedding-0.6B，现归档在 models/_archive/Qwen3-Embedding，env 指回去仍可用），
+此前用 Qwen3-Embedding-0.6B，2026-10-24 迁出仓库根，现归档在
+   ../PhyMathia-归档/models-archive/Qwen3-Embedding，env 指回去仍可用），
 离线本地推理，CPU 毫秒级。池化按架构自适应：解码器架构（有 KV-cache 输入）＝
 左侧填充 + 取最后一个位置的隐状态；BERT 编码器架构（bge 系）＝右侧填充 + 取 CLS；
 输出一律 L2 归一。向量缓存落 `data/embedding_cache.json`
@@ -44,7 +45,8 @@ _CACHE_MAX_ENTRIES = 3000       # 512 维 × 3 位小数 ≈ 2.8KB/条，封顶 
 _CACHE_SUMMARY_CLIP = 200       # 摘要并入向量文本时的截断（与投影 formula 同级宽松度）
 
 # 模型目录：env 覆盖 → 项目根 models/bge-small-zh-v1.5（2026-10-12 自 Qwen3-0.6B 换型，
-# 旧模型归档在 models/_archive/Qwen3-Embedding；env 仍可指向任意处，如指回归档的旧模型做 A/B）
+# 旧模型归档在 ../PhyMathia-归档/models-archive/Qwen3-Embedding（2026-10-24 迁出）；
+# env 仍可指向任意处，如指回归档的旧模型做 A/B）
 _ENV_DIR = "PHYMATHIA_EMBEDDING_DIR"
 _MODEL_FILE = "model_int8.onnx"
 _TOKENIZER_FILE = "tokenizer.json"
