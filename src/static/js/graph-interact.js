@@ -171,6 +171,10 @@ function renderGraphCanvas(streaming) {
     if (needsFit) _runLayout(true);
     else _updateNodeTransforms();
     _redrawEdges();
+    // 首帧的边是拿「此刻」的端口矩形画的：屏外卡（T376 content-visibility）此刻只有
+    // 占位尺寸，真身要等它进视口才排——把卡几何交给 ResizeObserver 盯着，尺寸一变就
+    // 重锚受影响的边，免得用户把卡放大到眼前时线端悬在卡外（详见 _observeNodeGeometry）
+    if (typeof _observeNodeGeometry === 'function') _observeNodeGeometry();
     // 预览渲染归族至 harness-preview.js（T261 拆分）：viewer 子集无该文件，守卫调用
     if (typeof _renderGraphHarnessPreview === 'function') _renderGraphHarnessPreview();
     _scheduleGraphMermaidRender();
