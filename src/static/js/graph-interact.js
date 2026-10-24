@@ -423,21 +423,18 @@ function _connectPorts(fromNodeId, fromPort, toNodeId, toPort) {
     _flashInvalidConnection();
     return;
   }
+  _pushGraphUndo();
   const state = _graphState();
   state.connections = state.connections || [];
-  // 输出口扇出（2026-10-24，用户拍板）：同源边不再互顶——一条素材/一个口可分别
-  // 连到多个下游（junction 2026-10-11 的特例由此收编为通例）。完全相同的边
-  // （同源同口同目标同入口）不重复建；入口占用由 _freeModuleInputPort 顺延/长口。
-  const dupExists = state.connections.some(c =>
-    c.from === fromNodeId && (c.fromPort || 'out-0') === (fromPort || 'out-0')
-    && c.to === toNodeId && (c.toPort || 'in-0') === (toPort || 'in-0'));
-  if (dupExists) return;
-  _pushGraphUndo();
   state.removedEdges = state.removedEdges || [];
   state.connections = state.connections.filter(c => {
-    // hub 汇聚口保留旧语义：同口新边替换来源（hub 2026-10-10 退役、仅存量图）
+    const sameSource = c.from === fromNodeId && (c.fromPort || 'out-0') === fromPort;
     const sameInput = c.to === toNodeId && (c.toPort || 'in-0') === toPort;
-    return toNode.kind !== 'hub' || !sameInput;
+    // junction（2026-10-11）扇出口子：源是中转节点时同源边不顶掉——out-0 一源
+    // 可带多目标（1→多/多→多都靠这条）。hub 的同口互顶（汇聚口按"替换来源"语义）
+    // 与 junction 的单口多线 fan-in 不互斥，各自原样。
+    if (sameSource && fromNode.kind === 'junction') return true;
+    return !sameSource && (toNode.kind !== 'hub' || !sameInput);
   });
   let resolvedToPort = toPort || 'in-0';
   // 统一吸附/自动长口（2026-10-10）：凡是过加口门的节点，连线一律「瞄准的口空着就用

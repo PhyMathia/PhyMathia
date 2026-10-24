@@ -2030,8 +2030,6 @@ function _resolveGraphEdges(state, defaults, nodeById) {
     const toNode = nodeById[customEdge.to];
     // hub 与 junction 的输入允许多路汇入：多条连线可指向同一输入端口。
     // junction（2026-10-11 中转节点）同入此列——它的 in-0 就是单口多线 fan-in 口。
-    // 输出口侧自定义边从不互相去重（2026-10-24 扇出通例）：occupiedOutputs 只在
-    // 下一循环压「同口已被自定义边占用」的默认结构边，不拦自定义边自己。
     const isFanInInput = toNode && (toNode.kind === 'hub' || toNode.kind === 'junction');
     if (!isFanInInput && occupiedInputs.has(inputKey)) continue;
     edges.push({ ...customEdge, type: customEdge.type || 'custom', custom: true });

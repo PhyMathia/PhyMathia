@@ -31,8 +31,8 @@ const BUILTIN_RECIPES = [
   { key: 'note', kind: 'note', label: '我的总结', color: 'var(--ink-human)', group: 'human', desc: '汇聚后的手动总结' },
   // —— 中转节点（junction，2026-10-11 用户拍板）——
   // 走线锚点：固定一进一出两个任意口，四种基数全合法——1→1 / 多→1（in-0 扇入，
-  // 与 hub 共用 fan-in 白名单）/ 1→多（out-0 扇出；2026-10-24 起扇出是全体节点
-  // 的通例，junction 不再是特例）/ 多→多（两者叠加）。它补的是
+  // 与 hub 共用 fan-in 白名单）/ 1→多（out-0 扇出，_connectPorts 的
+  // sameSource 替换对 junction 为源的边开口子）/ 多→多（两者叠加）。它补的是
   // hub 退役评估（backlog 267「接线职能已被覆盖」）漏看的真空白：结构边一口一边、
   // 同源互顶之外，普通节点没有任何走线中转手段。
   // 无内容、无生成/追问行为（_nodeActions 屏蔽、右键只剩结构与删除项）——追问链
