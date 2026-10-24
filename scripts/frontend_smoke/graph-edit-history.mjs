@@ -303,7 +303,7 @@ export async function run() {
     });
 
     check('静态契约：_pushGraphUndo 同异比对必须连 messages 一起看', () => {
-      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+      const src = fs.readFileSync('src/static/js/graph-history-diff.js', 'utf8');
       const body = src.slice(src.indexOf('function _pushGraphUndo('), src.indexOf('async function _restoreGraphVersion'));
       if (!/const messagesSame =/.test(body)) throw new Error('_pushGraphUndo 没有 messagesSame 判定');
       // 简化批次（2026-10-24）：恢复固定保留当前排版，state 视图字段与条目天然不同，

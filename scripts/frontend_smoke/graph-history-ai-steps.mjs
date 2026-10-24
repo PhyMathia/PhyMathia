@@ -151,7 +151,7 @@ export async function run() {
       if (q.indexOf('_pushGraphUndo') > q.indexOf('_createQuestionWorkflowTemplate(question')) throw new Error('提问历史点在建节点之后（粒度过细）');
       const s = tpl.slice(tpl.indexOf('async function startSocraticWorkflow'));
       if (s.indexOf('_pushGraphUndo') < 0) throw new Error('苏格拉底入口没落历史点');
-      const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+      const wf = fs.readFileSync('src/static/js/graph-workflow-entry.js', 'utf8');
       const regen = wf.slice(wf.indexOf('async function runWorkflowNode'), wf.indexOf('async function runWorkflowNodes'));
       if (regen.indexOf('_pushGraphUndo') < 0) throw new Error('重生成入口没落历史点');
       if (regen.indexOf('_pushGraphUndo') > regen.indexOf('await _executeParallelWorkflow([nodeId]')) throw new Error('重生成历史点在改写之后');

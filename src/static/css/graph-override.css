@@ -802,7 +802,7 @@
   --node-knowledge: #84cc16;
   --node-relation: var(--node-socratic);
   --node-any: #94a3b8;
-  /* 分组框默认色（graph.js/_renderGroupHtml 与新分组创建读它） */
+  /* 分组框默认色（graph-data.js/_renderGroupHtml 与新分组创建读它） */
   --graph-group-default: #38bdf8;
   /* 海报导出配色（T166）：graph-poster.js 读计算值（canvas 不认 var()），深浅两档 */
   --poster-dot: rgba(230,235,245,.06);

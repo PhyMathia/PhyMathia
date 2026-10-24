@@ -260,7 +260,7 @@ async function startQuestionWorkflow(text, opts, handoffTaskId, fromQueue) {
     || (typeof currentSessionId !== 'undefined' ? currentSessionId : '') || '');
   // 3.1 事件点（2026-10-24）：提问在建节点之前落一个历史点——撤销粒度＝一整次提问
   // （问题＋回答＋模块一起退）。摘要挂在「当前状态」行；条目自己的摘要仍由自动差异
-  // 生成（见 graph.js _pushGraphUndo 的口径说明）。
+  // 生成（见 graph-history-diff.js _pushGraphUndo 的口径说明）。
   if (typeof _pushGraphUndo === 'function') {
     _pushGraphUndo(false, {
       source: 'ai',

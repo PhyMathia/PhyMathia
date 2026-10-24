@@ -388,7 +388,7 @@ check('graph-contextmenu: 联系线菜单接线静态断言（data-edge-key 定�
 });
 
 check('graph-contextmenu: 画布事件接线（pointerdown 右键过滤 + contextmenu 三分支放行）', () => {
-  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wf = fs.readFileSync('src/static/js/graph-events.js', 'utf8');
   // 防冲突（P1 核心修复回归）：pointerdown 处理器入口必须先按 button 过滤，
   // 才轮到 _startCanvasPan/_startNodeDrag/_startGroupDrag 等手势入口
   const pd = wf.indexOf("graphCanvas.addEventListener('pointerdown'");
@@ -460,9 +460,9 @@ check('graph-contextmenu: M2 语义补强接线（新增项 / 高亮 / 导出锚
     if (!code.includes(sym)) throw new Error('打包产物缺符号: ' + sym);
   }
   if (!code.includes('phymathia_node_clipboard')) throw new Error('打包产物缺剪贴板镜像键');
-  // 快捷键接线（graph-workflow.js 的 _handleGraphKeydown）：Ctrl+C/Ctrl+V 分支 +
+  // 快捷键接线（graph-events.js 的 _handleGraphKeydown）：Ctrl+C/Ctrl+V 分支 +
   // 文字选择期/输入框放行 + selectMode 早退在前
-  const wf = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wf = fs.readFileSync('src/static/js/graph-events.js', 'utf8');
   const kh = wf.indexOf('function _handleGraphKeydown');
   if (kh < 0) throw new Error('_handleGraphKeydown 未找到');
   const khBody = wf.slice(kh, wf.indexOf('function _initGraphCanvasEvents'));

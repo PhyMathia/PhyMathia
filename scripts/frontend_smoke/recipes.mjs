@@ -262,7 +262,7 @@ check('配方拖出路由（P1）：drag_creates 表驱动（user 预填 / conne
 
 check('配方 P1 边界（P1）：relation 配方节点走 AI 生成、内置仍手填；plain 载体渲染', () => {
   // relation 底座：有配方时不再提前返回「已编辑/待编辑」，走 _generateCustomNode
-  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8');
   if (!wfSrc.includes('current.kind === \'relation\' && !current.recipeId')) throw new Error('relation 配方贯通分支缺失');
   // plain 载体：纯转义，不走 markdown（沙箱的 document 是宽松代理，escapeHtml 产物
   // 会退化为 0——沿用大陆用例的恒等替换口径，断言 plain 分支原样输出、不经 markdown 管线）
@@ -363,7 +363,10 @@ check('配方生成维度（P2）：模型槽位优先＋回落、载体归一/�
   // 双阶段概要与 on_generated 钩子的接线（这些分支要真模型才走到，行为留真机验收）。
   // T261 拆分后接线散在工作流族内（主件生成段+recipe 件+prompt 件），按族拼接断言
   const wfSrc = ['graph-workflow.js', 'graph-workflow-prompt.js', 'graph-workflow-recipe.js',
-    'graph-workflow-template.js', 'graph-workflow-progress.js']
+    'graph-workflow-template.js', 'graph-workflow-progress.js',
+    // T397（2026-10-24）自 graph-workflow.js 再拆的五件：
+    'graph-workflow-stream.js', 'graph-workflow-generate.js', 'graph-workflow-run.js',
+    'graph-workflow-entry.js', 'graph-events.js']
     .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   if (!wfSrc.includes("recipe.content_kind === 'html_iframe'")) throw new Error('viz 收口未覆盖配方 html_iframe');
   if (!wfSrc.includes('on_incomplete.max_retries')) throw new Error('重试预算未接 on_incomplete');
@@ -1951,7 +1954,7 @@ check('直接回答（2026-10-24）：问题第三出口＋direct 卡端口/渲�
     // ⑥ 静态契约：建点 depth 把 direct 当同级；空输入守卫在版本账之前
     const interactSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
     if (!interactSrc.includes("option.kind === 'answer' || option.kind === 'direct'")) throw new Error('拖出口建点 depth 没把 direct 当同级');
-    const workflowSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+    const workflowSrc = fs.readFileSync('src/static/js/graph-workflow-generate.js', 'utf8');
     const genBody = workflowSrc.slice(workflowSrc.indexOf('async function _generateCustomNode'));
     const guardAt = genBody.indexOf("node.kind === 'direct'");
     const cycleAt = genBody.indexOf('_beginWorkflowNodeVersionCycle(node);');

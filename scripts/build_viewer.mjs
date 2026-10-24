@@ -21,6 +21,13 @@ const entries = [
   'render.js',
   'graph-recipes.js',
   'graph.js',
+  // T397 拆分随迁（2026-10-24，纯搬家）：graph.js 原文件整段拆五件，viewer 原先就
+  // 载了整份 graph.js，五件按原语句序全带，行为一字不变
+  'graph-history.js',
+  'graph-history-diff.js',
+  'graph-history-panel.js',
+  'graph-data.js',
+  'graph-consistency.js',
   'graph-search.js',
   'graph-render.js',
   // T261 拆分随迁：graph-interact 裸调 _runLayout/_savePositions、graph.js 守卫调
@@ -29,11 +36,17 @@ const entries = [
   'graph-render-layout.js',
   'graph-interact.js',
   'graph-custom.js',
-  // 工作流族四件随迁（T261 拆分）：主件尾部导出块与 DOMContentLoaded 初始化引用族内函数
+  // 工作流族随迁（T261 拆出四件；2026-10-24 T397 再拆五件同带）：主件尾部导出块与
+  // DOMContentLoaded 初始化引用族内函数
   'graph-workflow-prompt.js',
   'graph-workflow-recipe.js',
   'graph-workflow-template.js',
   'graph-workflow-progress.js',
+  'graph-workflow-stream.js',
+  'graph-workflow-generate.js',
+  'graph-workflow-run.js',
+  'graph-workflow-entry.js',
+  'graph-events.js',
   'graph-workflow.js',
   'graph-poster.js',
   'graph-export.js',

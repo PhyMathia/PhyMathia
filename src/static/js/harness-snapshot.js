@@ -9,7 +9,7 @@
     return typeof window.getGraphViewEdges === 'function' ? window.getGraphViewEdges() : [];
   }
 
-  // _edgeKey 已上移到 utils.js（与 graph.js 共用一份）。这里直接用全局的，
+  // _edgeKey 已上移到 utils.js（与画布侧共用一份）。这里直接用全局的，
   // 不再各算一遍——Φ 预览态与主画布态的连线键必须逐字一致，否则「预览里看得到、
   // 应用后没了」这类症状查不出根因。
 

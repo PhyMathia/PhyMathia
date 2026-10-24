@@ -92,7 +92,7 @@ export async function run() {
   });
 
   check('T348: 服务端撤销镜像补回链路未动（跨开关页面撤销靠它）', () => {
-    const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+    const src = fs.readFileSync('src/static/js/graph-history.js', 'utf8');
     const ensure = src.slice(src.indexOf('function _ensureGraphHistory'), src.indexOf('function _graphHistoryDedupe'));
     if (!ensure.includes('_upgradeGraphHistoryFromServer(sid)')) throw new Error('切会话/加载未接服务端历史补回');
     const slim = src.slice(src.indexOf('function _graphHistoryMirrorSlim'), src.indexOf('function _scheduleGraphHistoryMirror'));
@@ -151,7 +151,7 @@ export async function run() {
   // ===== T349：清空画布回收撤销历史（2026-10-17）=====
   check('T349: discardGraphHistoryForSession 三清——内存栈/本地键/在途镜像，服务端镜像发 DELETE', () => {
     if (typeof sandbox.window.discardGraphHistoryForSession !== 'function') {
-      throw new Error('graph.js 未暴露 discardGraphHistoryForSession');
+      throw new Error('graph-history.js 未暴露 discardGraphHistoryForSession（window 导出随件）');
     }
     const sid = 'sess_clear_hist';
     const histKey = 'phymathia_graph_history_' + sid;

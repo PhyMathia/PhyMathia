@@ -130,7 +130,8 @@ export async function run() {
       const raw = JSON.parse(storageData[HIST_KEY]);
       if (!raw.d || raw.d !== 1) throw new Error('滚出计数没落盘：' + JSON.stringify(raw.d));
       // 收藏符号退役：源码不再有入口
-      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+      const src = ['graph.js', 'graph-history.js', 'graph-history-diff.js', 'graph-history-panel.js']
+        .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
       if (/toggleGraphHistoryPin/.test(src)) throw new Error('收藏函数还有残留');
       return true;
     });
@@ -198,7 +199,8 @@ export async function run() {
       if (mem.customNodes[0].content !== '旧') throw new Error('第二步内容没恢复：' + mem.customNodes[0].content);
       if (mem.positions.n1.x !== 500) throw new Error('第二次恢复又搬了位置：' + mem.positions.n1.x);
       if (storageData['phymathia_graph_history_keep_layout'] !== undefined) throw new Error('排版偏好键还在被写');
-      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+      const src = ['graph.js', 'graph-history.js', 'graph-history-diff.js', 'graph-history-panel.js']
+        .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
       if (/toggleGraphHistoryKeepLayout/.test(src)) throw new Error('排版开关函数还有残留');
       return true;
     }]);

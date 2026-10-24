@@ -2172,8 +2172,8 @@ check('aurora-glass 载体全覆盖：全部面板/弹窗都挂玻璃（第 4 �
 
   // ② JS 动态建的面板同样挂类（JS 里 className 是整串赋值，漏了就整块实底）
   for (const [file, key, name] of [
-    ['src/static/js/graph.js', 'graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog"', '修改历史面板'],
-    ['src/static/js/graph.js', 'graphConsistencyPanel.className = "graph-consistency-panel aurora-glass aurora-glass--dialog"', '图体检面板'],
+    ['src/static/js/graph-history-panel.js', 'graphHistoryPanel.className = "graph-history-panel aurora-glass aurora-glass--dialog"', '修改历史面板'],
+    ['src/static/js/graph-consistency.js', 'graphConsistencyPanel.className = "graph-consistency-panel aurora-glass aurora-glass--dialog"', '图体检面板'],
     ['src/static/js/graph-export.js', "menu.className = 'graph-export-menu aurora-glass aurora-glass--dialog'", '导出菜单'],
     ['src/static/js/graph-continent.js', "el.className = 'continent-popover aurora-glass aurora-glass--dialog'", '大陆弹层'],
     ['src/static/js/session.js', "panel.className = 'icon-picker-panel aurora-glass aurora-glass--dialog'", '图标选择面板'],
