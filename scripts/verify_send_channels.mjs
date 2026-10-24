@@ -732,7 +732,52 @@ async function main() {
             throw new Error('「全部开始」第 ' + (round + 1) + ' 次又为已完成的空白卡发了请求（T400 回退）');
           }
         }
-        ok('⑪ 空白节点生成：已发通（统一工作流路，' + st.len + ' 字；收尾写 status/inputHash；「全部开始」两次零新增请求）');
+        // 另一张**没点过卡上按钮**的空白卡：第一次「全部开始」要真把它跑起来（白名单＋
+        // 进度判定＋记账整链的正面），第二次再点不重复发（反面）。这才是用户验收口径的
+        // 「连点两次全部开始」——上面那张是按钮生成的，只能证明已完成卡不重跑。
+        const blank2 = await page.evaluate(async () => {
+          openAddBlankNodeModal(560, 430);
+          createManualNode('blank');
+          await new Promise(r => setTimeout(r, 350));
+          const nodes = graphView.nodes.filter(n => n.kind === 'blank');
+          const n = nodes[nodes.length - 1];
+          if (!n) return { err: '第二张空白卡没建出来' };
+          const ta = document.querySelector('[data-node-id="' + n.id + '"] .graph-blank-input');
+          if (!ta) return { err: '第二张空白卡要求框没渲染出来' };
+          ta.value = '用一句话总结这张卡要生成什么';
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return { id: n.id };
+        });
+        if (blank2.err) throw new Error(blank2.err);
+        const beforeAll = blankChatRequests.length;
+        await page.evaluate(() => {
+          const btn = document.getElementById('runAllBtn');
+          if (btn) btn.click();
+        });
+        await page.waitForFunction((n) => {
+          const node = graphView.nodeById[n];
+          return node && !node.busy && node.status === 'done' && String(node.content || '').length > 0;
+        }, blank2.id, { timeout: 90000 });
+        if (blankChatRequests.length !== beforeAll + 1) {
+          throw new Error('「全部开始」没有为待生成的空白卡发请求（白名单/进度判定漏了）');
+        }
+        if (!String((blankChatRequests[blankChatRequests.length - 1] || {}).workflow_context.target.label || '').includes('空白')) {
+          throw new Error('「全部开始」跑的空白卡目标标签不对');
+        }
+        // 这一轮可能还带着别的待生成节点：等整轮收工再点第二次
+        await page.waitForFunction(() => !(typeof _isSendBusy === 'function' && _isSendBusy())
+          && !(typeof workflowRunActive !== 'undefined' && workflowRunActive), null, { timeout: 90000 }).catch(() => {});
+        const beforeAgain = blankChatRequests.length;
+        await page.evaluate(() => {
+          const btn = document.getElementById('runAllBtn');
+          if (btn) btn.click();
+        });
+        await wait(1600);
+        if (blankChatRequests.length !== beforeAgain) {
+          throw new Error('第二张空白卡完成后「全部开始」又重跑了（inputHash/status 没记上）');
+        }
+        ok('⑪ 空白节点生成：已发通（统一工作流路，' + st.len + ' 字；收尾写 status/inputHash；'
+          + '「全部开始」能生成新卡、连点两次零新增请求）');
       } catch (e) { bad('⑪ 空白节点生成', e); }
 
     } else {
