@@ -136,7 +136,7 @@ let harnessLastAppliedReport = null;
     return typeof window.getCurrentSessionId === 'function' ? window.getCurrentSessionId() : '';
   }
 
-  // 与 graph.js 的同名函数**故意不合并**：那边在 getGraphState 缺失时返回一份默认
+  // 与 graph-history-diff.js 的同名函数（_graphState）**故意不合并**：那边在 getGraphState 缺失时返回一份默认
   // 状态，这边返回 null（表示「还没有状态」）。合成一份会静默改掉 Φ 的空态语义。
   // 下次看到两处同名想合并，先读这一行。
   // 解耦后（2026-09-30）：不带参读「当前 Φ 会话绑定的画布」——未绑定返回 null；

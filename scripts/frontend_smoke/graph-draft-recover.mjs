@@ -159,7 +159,7 @@ export async function run() {
   });
 
   check('T359: 静态契约——流式读帧必须走看门狗、module 路必须有周期落盘', () => {
-    const src = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+    const src = fs.readFileSync('src/static/js/graph-workflow-stream.js', 'utf8');
     const framesStart = src.indexOf('async function* _sseContentFrames');
     const framesEnd = src.indexOf('async function _streamCustomNodeResponse');
     if (framesStart === -1 || framesEnd === -1 || framesEnd <= framesStart) throw new Error('找不到流式读帧段');

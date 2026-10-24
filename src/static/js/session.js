@@ -1011,7 +1011,7 @@
     // ====== T389 / 4.1 另开探索线 ======
     // 从修改历史的任意一步复制出另一张画布：消息与图状态都是那一刻的快照，原画布一字
     // 不动，靠侧栏切换。只用现成通道（POST /api/sessions、/messages、graph kv），不新
-    // 增后端接口。标题＝「原画布 · 分支 N」；新画布的历史种子由 graph.js 写（历史信封
+    // 增后端接口。标题＝「原画布 · 分支 N」；新画布的历史种子由 graph-history 族写（历史信封
     // 归它管，这边不复制序列化细节）。
     async function forkSessionFromSnapshot(opts) {
       if (phyIsReadonly()) { phyReadonlyBlock('另开探索线'); return null; }

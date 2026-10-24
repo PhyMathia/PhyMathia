@@ -613,7 +613,7 @@ check('附图收集路线与上下文同源：普通节点收全祖先、配方 
 check('附图取字节分流源码契约：页图走 pdf_pages 路由、原图走 files 路由（真机行为另验）', () => {
   // 取字节分流是异步 fetch，本域前面的异步发送用例已占用全局桩（AGENTS 硬规则 4：
   // 两条异步用例不可替换同一全局桩），这里按源码契约钉住分流形状
-  const wfSrc = readFileSync(new URL('../../src/static/js/graph-workflow.js', import.meta.url), 'utf8');
+  const wfSrc = readFileSync(new URL('../../src/static/js/graph-workflow-generate.js', import.meta.url), 'utf8');
   if (!wfSrc.includes('_sourcePdfPageDataUrl(ref.fileId, ref.page)')) {
     throw new Error('页图未走 pdf_pages 取图口');
   }

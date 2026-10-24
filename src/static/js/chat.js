@@ -1,7 +1,7 @@
 // ===== PhyMathia 对话核心：进度指示与分支/苏格拉底流式发送 =====
 // 2026-09-25 线性主聊天退役：sendMessage 瘦身为「强制带画布锚点的分支/苏格拉底
 // 传输通道」——无锚请求一律拒绝；新话题提问走工作流 startQuestionWorkflow。
-// 流式内容经 streamingAssistant 直驱画布节点（graph.js 读 getStreamingAssistant），
+// 流式内容经 streamingAssistant 直驱画布节点（graph-data.js 读 getStreamingAssistant），
 // 不再创建聊天气泡 DOM。被删的线性管线与恢复方式见 docs/dev/linear-chat-retired.md。
 
     // ====== 进度指示器 ======
@@ -254,7 +254,7 @@
       if (typeof window.stopWorkflowRun === 'function') window.stopWorkflowRun();
     }
 
-    // ====== 画布直驱流式：内容写入 streamingAssistant，graph.js 定时取走渲染 ======
+    // ====== 画布直驱流式：内容写入 streamingAssistant，graph-workflow-stream.js 定时取走渲染 ======
 
     // force 仅供排队重放使用：flush 时把之前抓下来的正文与锚点还原成全局态再走一遍
     // 正常路径，而不是另开一条发送实现——这样各入口原有的收尾动作一处不漏。

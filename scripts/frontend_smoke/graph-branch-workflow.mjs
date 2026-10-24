@@ -299,7 +299,7 @@ export async function run() {
       if (!submit || submit.indexOf('startQuestionWorkflow') < 0) throw new Error('分支弹窗没走工作流链路');
       const quick = _body(_read('render.js'), '_submitBranchQuickButton');
       if (!quick || quick.indexOf('startQuestionWorkflow') < 0) throw new Error('方向钮没走工作流链路');
-      const gen = _body(_read('graph-workflow.js'), '_generateCustomNode');
+      const gen = _body(_read('graph-workflow-generate.js'), '_generateCustomNode');
       if (!gen || gen.indexOf('socraticMeta') < 0 || gen.indexOf('_materializeSocraticFollowup') < 0) {
         throw new Error('苏格拉底反馈节点的生成口径没接上（socraticMeta / 派生追问）');
       }

@@ -80,9 +80,12 @@ check('graph-workflow: 三个流式通道共用一份 SSE 读取（作用域限�
   // 3 份。名字写成「全仓」会让人以为另外四处已被覆盖、进而不再去合并。
   // 那 4 处的合并已登记 backlog（连同真发验证要求），不在本轮范围：动发送链路按硬规则 6
   // 必须配可用模型真发验证，而现在没有可用凭证。所以这里改成如实描述作用域。
-  // 族内分布：共享口 _sseContentFrames 与 3 个调用点在主件、配方概要调用点在 recipe 件。
+  // 族内分布（T397 拆分后）：共享口 _sseContentFrames 与模块/分析调用点在 stream 件、
+  // 空白节点调用点在 entry 件、配方概要调用点在 recipe 件。
   const gw = ['graph-workflow.js', 'graph-workflow-prompt.js', 'graph-workflow-recipe.js',
-    'graph-workflow-template.js', 'graph-workflow-progress.js']
+    'graph-workflow-template.js', 'graph-workflow-progress.js',
+    'graph-workflow-stream.js', 'graph-workflow-generate.js', 'graph-workflow-run.js',
+    'graph-workflow-entry.js', 'graph-events.js']
     .map(f => fs.readFileSync('src/static/js/' + f, 'utf8')).join('\n');
   // 数代码，不数散文：先把注释剥掉再数。上面那段说明里就写了 getReader() 字面量，
   // 原先直接对原文匹配，注释一改就假红——这正是本项目吃过亏的那类「护栏自己变摆设」。

@@ -87,7 +87,7 @@ export function run() {
   };
   const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
   const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
-  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-events.js', 'utf8');
 
   qcheck('T69：KaTeX 可视性分档（屏外不铺公式进视口补铺）＋折叠跳内容子树', () => {
     if (!grSrc.includes('function _graphKatexVisiblePass') || !grSrc.includes('function _minimizedBodyHtml')) throw new Error('缺 T69 助手');

@@ -89,7 +89,7 @@ function _reportClientError(kind, msg, src, line, col, stack) {
 // 态各算一遍连线键，两份实现只要有一份漂了，「预览里看得到、应用后没了」这类
 // 症状就查不出根因。收到这里，两个包都加载、都早于它们，调用点一个字不用改。
 //
-// **只合并了 _edgeKey，没合并 _graphState**：那两份不是重复实现——graph.js 在
+// **只合并了 _edgeKey，没合并 _graphState**：那两份不是重复实现——graph-history-diff.js 在
 // getGraphState 缺失时返回一份默认状态，harness.js 返回 null（表示「还没有状态」）。
 // 合成一份会静默改掉 Φ 的空态语义，那是行为变更不是清理，要改单独立一轮。
 function _edgeKey(edge) {

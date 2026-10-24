@@ -738,7 +738,7 @@ check('工作流世界：开场立世界/建点带世界会话/发送链会话�
       throw new Error(f + ' 还有裸读 graphView.edges 的运行期读取（T313：切画布即换世界观）');
     }
   }
-  const depBody = extract(fs.readFileSync('src/static/js/graph-workflow.js', 'utf8'), '_workflowDependencyEdges');
+  const depBody = extract(fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8'), '_workflowDependencyEdges');
   if (depBody === null || !depBody.includes('_workflowEdgeTable()')) {
     throw new Error('工作流子图的边表没走 _workflowEdgeTable（T313 窗口 B 的根）');
   }
@@ -759,7 +759,7 @@ check('工作流停链：任务行 canceller 绑在总闸 stopWorkflowRun 上（
     }
     return null;
   };
-  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8');
   const body = extract(wfSrc, '_executeParallelWorkflow');
   if (body === null) throw new Error('找不到 _executeParallelWorkflow——断言本身该更新了');
   if (!body.includes('_tasksBeginWorkflow')) {
@@ -795,7 +795,7 @@ check('工作流停止：总闸必须连在跑的节点一起掐断（T299）', 
     }
     return null;
   };
-  const wfSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const wfSrc = fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8');
   // 静态半①：节点开工登记、收工摘除（漏任一半都会重演/泄漏）
   const nodeBody = extract(wfSrc, '_runWorkflowNodeConcurrent');
   if (nodeBody === null) throw new Error('找不到 _runWorkflowNodeConcurrent——断言本身该更新了');
@@ -808,8 +808,8 @@ check('工作流停止：总闸必须连在跑的节点一起掐断（T299）', 
   if (!nodeBody.includes('workflowInFlightControllers.delete(nodeController)')) {
     throw new Error('节点收工没摘登记：登记簿只涨不消，下一轮总闸会去 abort 早已结束的 controller（T299）');
   }
-  // 静态半②：总闸函数体必须广播到登记簿
-  const stopBody = extract(wfSrc, 'stopWorkflowRun');
+  // 静态半②：总闸函数体必须广播到登记簿（T397 拆分后 stopWorkflowRun 在 entry 件）
+  const stopBody = extract(fs.readFileSync('src/static/js/graph-workflow-entry.js', 'utf8'), 'stopWorkflowRun');
   if (stopBody === null) throw new Error('找不到 stopWorkflowRun——断言本身该更新了');
   if (!stopBody.includes('workflowAbortController') || !stopBody.includes('workflowInFlightControllers')) {
     throw new Error('stopWorkflowRun 没管登记簿：在跑节点不会随总闸中断（T299）');
@@ -855,7 +855,7 @@ check('重生成预警：面板提示行＋直接按钮 confirm 闸＋旁路不�
     throw new Error('重新生成面板丢了「下游可能失效」提示行（T303 回退）');
   }
   // 直接按钮路：三个入口都要接闸（2026-10-13 起面板路 confirmed 旁路入列，意图不变）
-  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow-entry.js', 'utf8');
   const runBody = extract(gwSrc, 'runWorkflowNode');
   if (runBody === null) throw new Error('找不到 runWorkflowNode——断言本身该更新了');
   if (!/force && !fromQueue && !handoffTaskId && !confirmed && !_warnDownstreamBeforeRegenerate/.test(runBody)) {
@@ -1040,10 +1040,13 @@ check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T3
   };
   const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
   const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const gwRunSrc = fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8');
+  const gwGenSrc = fs.readFileSync('src/static/js/graph-workflow-generate.js', 'utf8');
+  const gwEntrySrc = fs.readFileSync('src/static/js/graph-workflow-entry.js', 'utf8');
   const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   // 账本三件套在
   for (const fn of ['_beginWorkflowNodeVersionCycle', '_commitWorkflowNodeVersion', '_restoreWorkflowNodeVersion']) {
-    if (!gwSrc.includes('function ' + fn)) throw new Error('版本账函数丢了：' + fn + '（T339）');
+    if (!gwRunSrc.includes('function ' + fn)) throw new Error('版本账函数丢了：' + fn + '（T339）');
   }
   // 渲染层：导航函数在、忙态收干净、不沾 regen 类
   const navBody = extract(grSrc, '_nodeVersionNavHtml');
@@ -1062,17 +1065,17 @@ check('节点版本历史：旧版保留＋‹›切换＋删版（2026-10-15 T3
     throw new Error('版本导航排到了循环箭头之后（T339）');
   }
   // 三个生成口的挂点：开跑收账清空、成功收新账、失败/中止兜回
-  const genBody = extract(gwSrc, '_generateCustomNode');
+  const genBody = extract(gwGenSrc, '_generateCustomNode');
   if (genBody === null || !genBody.includes('_beginWorkflowNodeVersionCycle(node);')
       || !genBody.includes('_commitWorkflowNodeVersion(live);')
       || !genBody.includes('_restoreWorkflowNodeVersion(live);')) {
     throw new Error('_generateCustomNode 缺版本账挂点（T339）');
   }
-  const blankStream = extract(gwSrc, '_streamBlankNodeResponse');
+  const blankStream = extract(gwEntrySrc, '_streamBlankNodeResponse');
   if (blankStream === null || !blankStream.includes('_commitWorkflowNodeVersion(live);')) {
     throw new Error('_streamBlankNodeResponse 缺收账挂点（T339）');
   }
-  const blankGen = extract(gwSrc, 'generateBlankNode');
+  const blankGen = extract(gwEntrySrc, 'generateBlankNode');
   if (blankGen === null || !blankGen.includes('_beginWorkflowNodeVersionCycle(node);')
       || !blankGen.includes('_restoreWorkflowNodeVersion(live);')) {
     throw new Error('generateBlankNode 缺版本账挂点（T339）');
@@ -1115,10 +1118,10 @@ check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口
   };
   // ① 六个节点生成入口：统一忙碌判定 + 放行旁路 + 交给队列
   const entries = [
-    ['graph-workflow.js', 'runWorkflowNode'],
-    ['graph-workflow.js', 'runWorkflowNodes'],
-    ['graph-workflow.js', 'runAllWorkflowNodes'],
-    ['graph-workflow.js', 'generateBlankNode'],
+    ['graph-workflow-entry.js', 'runWorkflowNode'],
+    ['graph-workflow-entry.js', 'runWorkflowNodes'],
+    ['graph-workflow-entry.js', 'runAllWorkflowNodes'],
+    ['graph-workflow-entry.js', 'generateBlankNode'],
     ['graph-interact.js', 'generateVizNode'],
     ['graph-interact.js', 'submitRegenerateNode'],
   ];
@@ -1135,7 +1138,7 @@ check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口
       throw new Error(file + ' 的 ' + fn + ' 又出现了「忙就拒绝」的老写法：忙时要排队，不是挡回去');
     }
   }
-  if (!/!fromQueue && typeof _isSendBusy/.test(grab('graph-workflow.js', 'runWorkflowNode'))) {
+  if (!/!fromQueue && typeof _isSendBusy/.test(grab('graph-workflow-entry.js', 'runWorkflowNode'))) {
     throw new Error('runWorkflowNode 的忙碌守卫缺 fromQueue 放行旁路：队列放行时会原地自我重入（T225 同型）');
   }
   // ② 切画布：switchToSession 不许再有裸 isStreaming 闸门；流式回答要自带来处
@@ -1156,7 +1159,7 @@ check('画布生成排队 + 生成中可切画布（2026-10-11）：六个入口
   if (!/appendMessageToSession\(sourceSessionId/.test(chat)) {
     throw new Error('chat.js 收尾没有按会话寻址落盘（appendMessageToSession）——回答会被写进用户后来切到的那张画布');
   }
-  const graphSrc = fs.readFileSync('src/static/js/graph.js', 'utf8');
+  const graphSrc = fs.readFileSync('src/static/js/graph-data.js', 'utf8');
   if (!/live\.sessionId !== sid/.test(graphSrc)) {
     throw new Error('_getChatHistory 没按会话过滤在写的回答——别的画布上会出现幽灵节点');
   }
@@ -2122,7 +2125,8 @@ checkSync('15秒推送：稳态零推送，内容变化才推整份历史，失�
 // 回来／requirements 丢失，下面立刻红。
 check('T330 手建分析链生成入口：反馈卡闸收窄＋analysis 判内容＋force 真重跑＋requirements 路线（2026-10-19）', () => {
   const grSrc = fs.readFileSync('src/static/js/graph-render.js', 'utf8');
-  const gwSrc = fs.readFileSync('src/static/js/graph-workflow.js', 'utf8');
+  const gwSrc = fs.readFileSync('src/static/js/graph-workflow-run.js', 'utf8');
+  const gwGenSrc = fs.readFileSync('src/static/js/graph-workflow-generate.js', 'utf8');
   const giSrc = fs.readFileSync('src/static/js/graph-interact.js', 'utf8');
   // ① 闸收窄：无钮只留给闭环反馈卡（socraticMeta），分析卡放行
   if (!grSrc.includes("node.kind === 'answer' && !node.manual && node.messageIndex < 0 && node.socraticMeta")) {
@@ -2145,7 +2149,7 @@ check('T330 手建分析链生成入口：反馈卡闸收窄＋analysis 判内�
     throw new Error('分析卡面板带字路没有改写 requirements——会掉进修订内核误报「节点还没有内容」');
   }
   // ⑤ 分析提示词吃 requirements：带要求重新分析要真的影响模型输入
-  const genAnalysis = gwSrc.slice(gwSrc.indexOf('async function _generateAnalysis'));
+  const genAnalysis = gwGenSrc.slice(gwGenSrc.indexOf('async function _generateAnalysis'));
   if (!genAnalysis.includes('用户对本次分析的额外要求')) {
     throw new Error('_generateAnalysis 提示词丢了 requirements 通道——带要求重新分析不改变输出');
   }

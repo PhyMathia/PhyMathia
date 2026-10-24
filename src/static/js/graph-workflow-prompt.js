@@ -1,6 +1,6 @@
 // ====== 工作流上下文收集与提示词拼装（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家）=====
 // 纯函数段：从节点上游链收集问题/输出生成 workflowContext，拼各模块提示词；
-// 被 graph-workflow.js 的生成段与配方段运行期调用（函数声明全脚本提升）。
+// 被 graph-workflow-generate.js（生成段）与 graph-workflow-recipe.js 运行期调用（函数声明全脚本提升）。
 function _simpleHash(value) {
   let hash = 5381;
   const text = String(value || '');

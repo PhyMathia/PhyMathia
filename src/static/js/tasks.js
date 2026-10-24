@@ -586,7 +586,7 @@ function _taskForget(id) {
 // 失败/中断/干成的记录一并清掉，点完账本就是空的。与「清除记录」的分工：那边只清
 // 干成的、失败与中断的留着等重试（清记录不该把待办也清了）；这边是用户明说「全都
 // 不要了」。在跑的按下 canceller 就放手，它稍后的结账（_taskFinish/_tasksEndWorkflow）
-// 找不到活账自然空转——graph-workflow.js 收尾段靠的就是这个空转安全，不会搅乱流程。
+// 找不到活账自然空转——graph-workflow 族收尾段（run/entry 件）靠的就是这个空转安全，不会搅乱流程。
 function _tasksClearAll() {
   const active = [..._taskActive];
   const removed = active.length + _taskHistory.length;

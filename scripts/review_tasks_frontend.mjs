@@ -307,7 +307,8 @@ test('T61 重开页面：node 类任务不退化成 send，重放信息原样保
 });
 
 test('T61 源码：三条独立生成路各自接账，工作流调度口的直呼不双份记账', () => {
-  const wfSrc = readSrc('src/static/js/graph-workflow.js');
+  const wfEntrySrc = readSrc('src/static/js/graph-workflow-entry.js');
+  const wfRunSrc = readSrc('src/static/js/graph-workflow-run.js');
   const customSrc = readSrc('src/static/js/graph-custom.js');
   const tasksSrc = readSrc('src/static/js/tasks.js');
   // tasks.js：记账接口 + 重载保留 node 类型 + 重放分支
@@ -315,10 +316,10 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(tasksSrc, /item\.kind === 'node' \? 'node' : 'send'/);
   assert.match(tasksSrc, /replay && replay\.nodeJob && replay\.nodeJob\.id/);
   // graph-workflow.js：空白节点独立生成——互斥闸 + 记账 + 任务自己的 controller
-  const blankStart = wfSrc.indexOf('async function generateBlankNode(');
-  const blankEnd = wfSrc.indexOf('\nfunction _addNodeIdsToGroup(', blankStart);
-  const blank = wfSrc.slice(blankStart, blankEnd);
-  assert.ok(blankStart > 0 && blankEnd > blankStart, 'generateBlankNode 要找得到');
+  // T397 拆分：generateBlankNode 是 entry 件的末函数，切到文件尾
+  const blankStart = wfEntrySrc.indexOf('async function generateBlankNode(');
+  const blank = wfEntrySrc.slice(blankStart);
+  assert.ok(blankStart > 0, 'generateBlankNode 要找得到');
   // 2026-10-11：闸门口径从「工作流跑着就拒绝」改成「忙就排队」——旧断言
   // `if (workflowRunActive)` 已随改造作废（用户要的是能排队，不是被挡回去）。
   // 新契约三件：统一忙碌判定 + fromQueue 放行旁路 + 真把活儿交给队列。
@@ -352,7 +353,7 @@ test('T61 源码：三条独立生成路各自接账，工作流调度口的直�
   assert.match(applySrc, /generateRelationNode\(id, \{ fromPhi: true \}\)/, 'Φ 补建联系节点要直通');
   assert.match(taskWrap, /finally/, '前置段抛错也不能把账挂成进行中永不结账');
   // 工作流调度口那处直呼保持原样——那笔账由工作流任务统一记，包装后就会双份
-  assert.match(wfSrc, /await _generateCustomNode\(current, nodeSignal\);/,
+  assert.match(wfRunSrc, /await _generateCustomNode\(current, nodeSignal\);/,
     '工作流内部生成必须保持直呼 _generateCustomNode，不许改走记账包装');
 });
 
@@ -380,14 +381,14 @@ test('接线① 任务自带来处：有任务在跑时，画布查找与保存�
 });
 
 test('接线① 源码：_findGraphNode 与 _saveCustomNodes 各留了一个任务上下文出口', () => {
-  const graphSrc = readSrc('src/static/js/graph.js');
+  const graphSrc = readSrc('src/static/js/graph-data.js');
   assert.match(graphSrc, /_taskNodeOverride/);
   const customSrc = readSrc('src/static/js/graph-custom.js');
   assert.match(customSrc, /_taskSaveNodesOverride/);
 });
 
 test('接线② 源码：每颗节点自己的 controller，signal 传进链内；暂停闸门在调度口', () => {
-  const src = readSrc('src/static/js/graph-workflow.js');
+  const src = readSrc('src/static/js/graph-workflow-run.js');
   const start = src.indexOf('async function _runWorkflowNodeConcurrent(');
   const body = src.slice(start, src.indexOf('\nasync function _runWorkflowGraph('));
   assert.ok(body.includes('new AbortController()'), '每颗节点要有自己的 controller');

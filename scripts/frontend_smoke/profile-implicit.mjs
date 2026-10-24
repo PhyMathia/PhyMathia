@@ -32,8 +32,8 @@ check('隐式画像：前端上报器与仪表盘渲染（行为画像 v1）', (
 });
 
 check('隐式画像：前端接线契约（expand/visualize/difficulty/confused/kv device_id/面板区块）', () => {
-  const graph = fs.readFileSync('src/static/js/graph.js', 'utf8');
-  if (!graph.includes("window.reportProfileEvent('expand')")) throw new Error('graph.js 展开未上报 expand');
+  const graph = fs.readFileSync('src/static/js/graph-data.js', 'utf8');
+  if (!graph.includes("window.reportProfileEvent('expand')")) throw new Error('graph-data.js 展开未上报 expand');
   const render = fs.readFileSync('src/static/js/render.js', 'utf8');
   if (!render.includes("window.reportProfileEvent('visualize')")) throw new Error('render.js 可视化未上报');
   const ui = fs.readFileSync('src/static/js/ui.js', 'utf8');

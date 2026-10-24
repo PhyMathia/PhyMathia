@@ -77,7 +77,7 @@ export async function run() {
   });
 
   check('T275: _restoreGraphVersion 回放落盘前必须过清洗（静态契约）', () => {
-    const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
+    const src = fs.readFileSync('src/static/js/graph-history-diff.js', 'utf8');
     const start = src.indexOf('async function _restoreGraphVersion');
     const end = src.indexOf('async function _undoGraphAction');
     if (start === -1 || end === -1 || end <= start) throw new Error('找不到 _restoreGraphVersion 段');

@@ -12,7 +12,7 @@ window.__UTOPIA__ = {
 
 // ---------- 只读护栏：localStorage 换内存门面 ----------
 // 子集里有两条真实写路径：config.js 首次访问会生成并保存设备 id（用户画像标识），
-// graph.js 的撤销栈会按会话写 graph_history。查看器是只读产物，不能往用户浏览器里塞键。
+// graph-history 族的撤销栈会按会话写 graph_history。查看器是只读产物，不能往用户浏览器里塞键。
 // 实现：把 window.localStorage 换成内存门面——读得到本页自己的写，关掉页面即消失，绝不落盘。
 (function () {
   var real = window.localStorage;

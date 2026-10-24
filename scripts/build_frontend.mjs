@@ -23,6 +23,13 @@ const entries = [
   'chat-branch.js',
   'graph-recipes.js',
   'graph.js',
+  // 修改历史三件＋图数据＋体检（2026-10-24 自 graph.js 拆出，T397 纯搬家）：组内顺序
+  // 即原文件语句序（核心状态 const 在 graph.js，历史/数据件运行期取用，提升安全）
+  'graph-history.js',
+  'graph-history-diff.js',
+  'graph-history-panel.js',
+  'graph-data.js',
+  'graph-consistency.js',
   'graph-search.js',
   'graph-render.js',
   // 版本对比高亮与自动布局（2026-10-10 自 graph-render.js 拆出，T261 纯搬家）：
@@ -35,13 +42,18 @@ const entries = [
   'graph-interact.js',
   'graph-custom.js',
   'graph-recipe-edit.js',
-  // 工作流族（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家）：主件留尾部——
-  // 其尾部 window 导出块加载期执行、引用族内各件函数（同 graph-continent view 最后的先例）；
-  // 流式/生成段（T218 在案）留守主件未动
+  // 工作流族（2026-10-10 自 graph-workflow.js 拆出，T261 纯搬家；2026-10-24 T397 再拆
+  // 流式/生成/执行/入口与 graph-events 五件，同为纯搬家）：主件留尾部——其尾部
+  // window 导出块加载期执行、引用族内各件函数（同 graph-continent view 最后的先例）
   'graph-workflow-prompt.js',
   'graph-workflow-recipe.js',
   'graph-workflow-template.js',
   'graph-workflow-progress.js',
+  'graph-workflow-stream.js',
+  'graph-workflow-generate.js',
+  'graph-workflow-run.js',
+  'graph-workflow-entry.js',
+  'graph-events.js',
   'graph-workflow.js',
   'graph-export.js',
   'graph-poster.js',

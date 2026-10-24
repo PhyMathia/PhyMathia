@@ -104,13 +104,17 @@ export async function run() {
     });
 
     check('T365: 静态契约——跳转不再截断条目、推送带时间旅行分支、双栈符号零残留', () => {
-      const src = fs.readFileSync('src/static/js/graph.js', 'utf8');
-      const jump = src.slice(src.indexOf('async function _jumpGraphVersion'), src.indexOf('function _previewGraphVersion'));
+      // T397 拆分：撤销链在 graph-history-diff.js，_jumpGraphVersion 是该件末函数（切到文件尾）
+      const src = fs.readFileSync('src/static/js/graph-history-diff.js', 'utf8');
+      const jump = src.slice(src.indexOf('async function _jumpGraphVersion'));
       if (/slice\(0,\s*versionIndex\)/.test(jump)) throw new Error('跳转还在截断历史（非破坏契约被破）');
       if (!/graphHistoryCursor = versionIndex/.test(jump)) throw new Error('跳转没挪游标');
       const push = src.slice(src.indexOf('function _pushGraphUndo('), src.indexOf('async function _restoreGraphVersion'));
       if (!/graphHistoryCursor < graphUndoStack\.length/.test(push)) throw new Error('_pushGraphUndo 没有时间旅行截断分支');
-      if (src.includes('graphRedoStack')) throw new Error('双栈符号 graphRedoStack 残留');
+      if (['graph.js', 'graph-history.js', 'graph-history-diff.js', 'graph-history-panel.js']
+        .some(f => fs.readFileSync('src/static/js/' + f, 'utf8').includes('graphRedoStack'))) {
+        throw new Error('双栈符号 graphRedoStack 残留');
+      }
       return true;
     });
 
