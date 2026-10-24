@@ -1172,6 +1172,10 @@ function deleteSourceItem(nodeId, itemId) {
   }
   updateSourceNodeContent(node);
   _saveGraphState(state);
+  // 条目与绑定表都是节点字段：先落 state（重排后的边/计数），再 _saveCustomNodes
+  // 快照活节点进 customNodes——只存 state 的话下次重建会回滚删除（2026-10-24 四
+  // 与 graphAddSourceItemPort 同坑；此前条目删除靠后续编辑的 _saveCustomNodes 顺带救回）
+  if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
   renderGraphCanvas();
 }
 
@@ -1222,7 +1226,12 @@ function graphAddSourceItemPort(nodeId, itemId) {
   const addons = _sourceNormalizeAddons(node, state.portCounts[nodeId] || 0);
   node.addonPorts = addons.concat([{ item: itemId }]);
   state.portCounts[nodeId] = (node.items || []).length + node.addonPorts.length;
-  _saveGraphState(state);
+  // 节点字段改动必须走 _saveCustomNodes（把 graphView 活节点快照进 state.customNodes
+  // 再落盘）——只 _saveGraphState 存的是旧快照，下次整画布重建（materializeCustom
+  // 从 state.customNodes 拷贝）绑定就被冲掉（2026-10-24 实锤：首版漏了这步，
+  // 真机上按素材口全部退化成「待命名」整篮口）
+  if (typeof _saveCustomNodes === 'function') _saveCustomNodes();
+  else _saveGraphState(state);
   renderGraphCanvas();
 }
 

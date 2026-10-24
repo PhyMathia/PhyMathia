@@ -1500,14 +1500,20 @@ function graphRemoveOutputPort(nodeId, portIndex) {
   state.portCounts[nodeId] = Math.max(baseCount, current - 1);
   // 素材篮（2026-10-24 三）：附加口带绑定（addonPorts），删第 k 个附加口须同步
   // splice 绑定表——绑定按位置对应附加口，漏了会把「按素材口」错位成整篮口
+  let sourceAddonsTouched = false;
   if (node.kind === 'source' && typeof _sourceIsLegacyNode === 'function' && !_sourceIsLegacyNode(node)) {
     const addons = _sourceNormalizeAddons(node, state.portCounts[nodeId] || 0);
     const k = portIndex - baseCount;
     if (k >= 0 && k < addons.length) addons.splice(k, 1);
     node.addonPorts = addons;
     state.portCounts[nodeId] = (node.items || []).length + addons.length;
+    sourceAddonsTouched = true;
   }
   _saveGraphState(state);
+  // 绑定表是节点字段：先落 state（ connections/portCounts），再 _saveCustomNodes
+  // 快照活节点（含 addonPorts）覆盖回缓存——顺序反了会把快照冲掉（同
+  // graphAddSourceItemPort 的踩坑，2026-10-24 四）
+  if (sourceAddonsTouched && typeof _saveCustomNodes === 'function') _saveCustomNodes();
   renderGraphCanvas();
 }
 

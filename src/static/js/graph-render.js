@@ -630,6 +630,10 @@ function _renderOutputPorts(node, messages, state) {
         }
       }
     }
+    // 2026-10-24（四）：展开态下按素材附加口已渲染在素材行内（_renderSourceItemRow），
+    // 输出列跳过——否则同口两份 DOM（行内一份、列里一份，边锚点/点击全乱）。
+    // 折叠态例外：行内口随行消失，绑定口回列里渲染（每口恰好一份 DOM 不变量）
+    if (sourceAddonMeta && !node.minimized) continue;
     // T266：匿名附加输出口的「待命名」态——未连线空白，连线后采用目标输入口的
     // 名字与内容类型（_adoptedOutputPortMeta 从 graphView.edges 现算，断开即回空白）；
     // 基本口（ports[i] 有值）一律保持建点时定死的身份，不参与
@@ -952,7 +956,28 @@ function _renderSourceItemRow(node, attr, item, index) {
   const name = item.name || ('素材 ' + (index + 1));
   const ocrFailed = item.kind === 'image' && item.ocr && item.ocr.status === 'failed';
   const portTitle = '素材口「' + name + '」：拖到输入端口连线（下游只取这条素材），拖到空处打开节点菜单';
-  return '<div class="graph-source-row' + (ocrFailed ? ' graph-source-row-ocr-failed' : '') + '">'
+  // 按素材附加口（2026-10-24 四）：绑这条素材的附加口直接渲染在本行内（主口右侧
+  // 依次排开，行 padding 让位）——底部输出列只留整篮口，口与素材的归属一眼可见
+  const addonList = (typeof _sourceAddonPorts === 'function') ? _sourceAddonPorts(node) : [];
+  const itemsLen = Array.isArray(node.items) ? node.items.length : 0;
+  const boundPorts = [];
+  addonList.forEach((entry, k) => {
+    if (entry && entry.item === item.id) boundPorts.push(itemsLen + k);
+  });
+  const rowStyle = boundPorts.length ? ' style="padding-right:' + (24 + 22 * boundPorts.length) + 'px;"' : '';
+  const boundPortHtml = boundPorts.map((absIdx, n) =>
+    '<span class="graph-port graph-output-port graph-source-row-port" data-node-id="' + node.id + '" data-port-id="out-' + absIdx + '"'
+    + ' data-port-type=""'
+    + ' data-port-branch="followup"'
+    + ' data-attribute="source"'
+    + ' data-port-question=""'
+    + ' data-port-label="' + encodeURIComponent(name) + '"'
+    + ' data-port-item="' + encodeURIComponent(JSON.stringify(item)) + '"'
+    + ' style="--port-color:' + attr.color + ';right:' + (25 + 22 * n) + 'px !important;"'
+    + ' title="' + escapeHtml('素材口「' + name + '」（加口 ' + (n + 1) + '）：只输出这条素材，拖到输入端口连线或拖到空处打开节点菜单') + '">'
+    + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(name) + '</span>'
+    + '</span>').join('');
+  return '<div class="graph-source-row' + (ocrFailed ? ' graph-source-row-ocr-failed' : '') + '"' + rowStyle + '>'
     + '<span class="graph-source-row-icon">' + icon + '</span>'
     + '<span class="graph-source-row-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>'
     + '<span class="graph-source-row-meta">' + escapeHtml(metaBits.join(' · ')) + '</span>'
@@ -973,6 +998,7 @@ function _renderSourceItemRow(node, attr, item, index) {
     + ' title="' + escapeHtml(portTitle) + '">'
     + '<span class="graph-port-dot"></span><span class="graph-port-label">' + escapeHtml(name) + '</span>'
     + '</span>'
+    + boundPortHtml
     + '</div>';
 }
 
