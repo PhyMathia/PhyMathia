@@ -1,0 +1,22 @@
+{
+  "name": "phymathia-promo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PhyMathia project intro film - Remotion",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render PhyMathia out/PhyMathia-80s-1080p.mp4 --concurrency=10 --gl=swangle --codec=h264 --crf=17 --jpeg-quality=95 --audio-codec=aac --audio-bitrate=256k --overwrite --browser-executable=$HOME/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+    "still": "remotion still PhyMathia out/still.png --frame=1500 --gl=swangle --browser-executable=$HOME/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell",
+    "score": "python3 scripts/make_score.py"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "remotion": "4.0.538",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.9.2"
+  }
+}
