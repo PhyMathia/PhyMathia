@@ -1198,6 +1198,12 @@
   box-shadow: 0 0 0 2px var(--btn-active-border) !important;
 }
 
+/* 建议问题作灰色占位提示（placeholder 不是真实内容，点进去输入即消失）；opacity 顶死防浏览器自带再降透明 */
+.graph-draft-input::placeholder {
+  color: var(--text-secondary) !important;
+  opacity: 0.75 !important;
+}
+
 .graph-draft-actions {
   display: flex !important;
   flex-wrap: wrap !important;
